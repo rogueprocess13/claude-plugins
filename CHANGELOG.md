@@ -17,6 +17,46 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.45.1 (2026-09-08), fleet-controller 0.26.1
+
+Fix `detect-resume.sh`'s and fleet-controller's "done" detection requiring
+the terminal `META|outcome|info|completed:` line to be the LITERAL LAST
+line of a ticket's pipeline log — any write appended after it (most
+concretely, fleet-controller's own orphan-reconciliation appending
+`META|fleet-restart|info|...` to an already-shipped ticket a week later,
+misreading "no recent heartbeat" as an orphan signal) silently defeated
+the shortcut and made a fully-completed ticket look unfinished, risking a
+needless restart/resume of shipped work (#314).
+
+- `detect-resume.sh`'s "done" check now searches backward for the LAST
+  `META|outcome|info|completed:` line and treats it as authoritative
+  unless a genuine phase/gate line follows it — tolerating an explicit,
+  conservative allowlist of trailing bookkeeping-only META subtypes
+  (`worker-exit`, `fleet-restart`, `fleet-intervention`, `schema`,
+  `migration`, `tokens`, `cache-tokens`) that carry no routing meaning of
+  their own. A fresh run's own preamble writes (autonomy/branch-context/
+  title/run-id/version) are deliberately NOT on the allowlist — those mean
+  a genuine new run started and must still invalidate completion.
+- fleet-controller's own terminal-state classifier
+  (`fleet_ticket_terminal_state`, via `_last_effective_line`/
+  `_pipeline_last_effective_line` in `fleet-detect.sh`) had an independent
+  copy of the same bug — it skipped only a trailing `worker-exit` run, not
+  its own `fleet-restart` marker. Fixed with the same allowlist, so
+  orphan-reconciliation (`fleet_reconcile_orphans`) now correctly leaves
+  an already-completed ticket alone instead of restarting it — no
+  shell-out to `detect-resume.sh` needed, since the existing
+  done/incomplete branch in `fleet_reconcile_orphans` already skips
+  restart for `done`. The Python mirror `_log_reached_terminal`
+  (`fleetd/supervisor.py`) is updated to match, per its existing
+  keep-in-sync contract with the bash classifier.
+- New tests: `test-detect-resume.sh` (a trailing `fleet-restart` line, and
+  several stacked trailing bookkeeping lines, still report `done`; a
+  genuine new phase line after `completed:` still does NOT);
+  `test-fleet-reconcile.sh` (`fleet_ticket_terminal_state` classifies
+  `done` despite a trailing `fleet-restart` line, and
+  `fleet_reconcile_orphans` does not re-enqueue such a ticket);
+  `test_supervisor.py` (the Python mirror agrees).
+
 ## 0.45.0 (2026-09-07)
 
 Fix `ticket-pr-review`/`ticket-auto` false no-PR stop and unnecessary retro

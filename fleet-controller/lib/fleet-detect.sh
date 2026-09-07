@@ -25,6 +25,26 @@ fi
 
 # ── Helpers ──────────────────────────────────────────────────────────────────────
 
+# Trailing pipeline-log META subtypes that never count as a new pipeline
+# state when found at the tail — pure bookkeeping/observability annotations
+# written after a run has already finished, with no routing meaning of
+# their own. GitHub #314: fleet-controller's own orphan-reconciliation
+# appends `META|fleet-restart|...` to a completed ticket's log (e.g. after a
+# week of no heartbeat, misread as an orphan signal on an already-shipped
+# run); `_last_effective_line`/`_pipeline_last_effective_line` previously
+# skipped only `worker-exit`, so that restart marker became the new
+# "effective last line" and `fleet_ticket_terminal_state` re-classified a
+# fully-completed ticket as `incomplete` — restart-eligible forever after.
+# Deliberately conservative: anything NOT on this list (a genuine new
+# phase/gate line, or a fresh run's own preamble writes such as
+# autonomy/branch-context/title/run-id/version) still counts, because those
+# mean a real new run happened. Keep in sync with
+# ticket-auto-pipeline/skills/ticket-detect-resume/detect-resume.sh's
+# `_DONE_TRAILING_META_ALLOWLIST` and fleetd/supervisor.py's
+# `_HARMLESS_TRAILING_META_STEPS` — three independent implementations of the
+# same rule that must not drift apart.
+_HARMLESS_TRAILING_META_STEPS='^(worker-exit|fleet-restart|fleet-intervention|schema|migration|tokens|cache-tokens)$'
+
 # ── Pipeline-log input source ────────────────────────────────────────────────────
 # The one seam through which every pipeline-log-driven engine reads. When the
 # fleet state store is available the lines come from `log_events`, parsed once at
@@ -154,39 +174,45 @@ _last_msg() {
   tail -1 "$file" | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i<NF?"|":"")}'
 }
 
-# Emits the log's last line, skipping any trailing run of `META|worker-exit`
-# entries. fleetd's reap path appends `META|worker-exit|...` after a
-# worker's own generation exits (fleet-controller/CLAUDE.md "Worker exit
-# records") — an annotation of the exit, not a new pipeline state — so a
-# genuinely completed pipeline's log ends with worker-exit as its literal
-# last line once fleetd has reaped it. Any classifier that took the raw
+# Emits the log's last line, skipping any trailing run of harmless
+# bookkeeping-only META entries (see `_HARMLESS_TRAILING_META_STEPS` above —
+# worker-exit, fleet-restart, fleet-intervention, schema/migration,
+# tokens/cache-tokens). fleetd's reap path appends `META|worker-exit|...`
+# after a worker's own generation exits (fleet-controller/CLAUDE.md "Worker
+# exit records"), and fleet-controller's own orphan-reconciliation appends
+# `META|fleet-restart|...` (GitHub #314) — both are annotations of the exit
+# or of a restart decision, not a new pipeline state — so a genuinely
+# completed pipeline's log can end with one of these as its literal last
+# line long after it actually finished. Any classifier that took the raw
 # last line here would misclassify an already-terminal pipeline as
 # incomplete on the very next call (e.g. a stale queue-consume check would
-# stop skipping re-spawn of a finished ticket). Arg: file
+# stop skipping re-spawn of a finished ticket, or orphan-reconciliation
+# would restart a shipped ticket every time it re-scans). Arg: file
 _last_effective_line() {
   local file="$1"
   if [ ! -f "$file" ] || [ ! -s "$file" ]; then
     echo ""
     return
   fi
-  tac "$file" | awk -F'|' '$3 != "worker-exit" {print; exit}'
+  tac "$file" | awk -F'|' -v allow="$_HARMLESS_TRAILING_META_STEPS" '$3 !~ allow {print; exit}'
 }
 
 # ── Outcome classification ──────────────────────────────────────────────────
 # Pipeline-finalize.sh's tail-check guarantee means only the log's LAST line
 # needs inspecting — a stale "held:"/"stopped:" outcome earlier in a
 # crash-resumed log must never override a later, real resolution. "Last
-# line" skips any trailing `META|worker-exit` entries for the same reason
-# _last_effective_line does — fleetd appends one of those after reap, and it
-# is an annotation of the exit, not a new pipeline state.
+# line" skips any trailing harmless bookkeeping-only META entries for the
+# same reason _last_effective_line does — fleetd/fleet-controller append
+# those after reap or restart decisions, and they are annotations, not a
+# new pipeline state.
 
-# Emits the pipeline's effective last line (trailing worker-exit entries
-# skipped), or nothing when there is no history at all.
+# Emits the pipeline's effective last line (trailing bookkeeping-only META
+# entries skipped), or nothing when there is no history at all.
 # Usage: _pipeline_last_effective_line <tid> [workspace]
 _pipeline_last_effective_line() {
   local tid="$1"
   local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
-  _pipeline_lines "$tid" "$workspace" | tac | awk -F'|' '$3 != "worker-exit" {print; exit}'
+  _pipeline_lines "$tid" "$workspace" | tac | awk -F'|' -v allow="$_HARMLESS_TRAILING_META_STEPS" '$3 !~ allow {print; exit}'
 }
 
 # Emits the pipeline's last outcome message, or nothing when the effective
