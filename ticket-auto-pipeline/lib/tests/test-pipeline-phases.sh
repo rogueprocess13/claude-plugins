@@ -390,9 +390,10 @@ test_router_retro_condition_2_uses_success_markers() {
     return 1
   }
   # PR-REVIEW's own Verdict tokens are OK/WARN/BLOCK, never PASS (that's
-  # VERIFY-only) — GitHub #149.
-  echo "$block" | grep -q 'PR-REVIEW|pr-review|done|OK' || {
-    echo "retro condition 2 does not check PR-review OK marker"
+  # VERIFY-only) — GitHub #149. N/A is also a legitimate success marker
+  # (verification-only ticket, no PR to review) — GitHub #318.
+  echo "$block" | grep -qF 'PR-REVIEW\|pr-review\|done\|(OK|N/A)' || {
+    echo "retro condition 2 does not check PR-review OK/N-A marker"
     return 1
   }
   echo "$block" | grep -q 'PR-REVIEW|pr-review|done|PASS' && {
@@ -404,6 +405,64 @@ test_router_retro_condition_2_uses_success_markers() {
     return 1
   }
   return 0
+}
+
+# GitHub #318 — a verification-only ticket (IMPLEMENT made no source diff) has
+# no PR to review, so ticket-pr-review writes `done|N/A` directly instead of a
+# false "no PR found" stop. STEP_6's Condition 2 must not flag that as
+# retro-worthy. These tests eval the *actual* extracted condition against a
+# synthetic log — not just a string match on the SKILL.md prose — so a future
+# edit that reintroduces the #149-style false positive is caught here too.
+_extract_retro_condition_2() {
+  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
+  sed -n '/Condition 2: did the ticket NOT reach/,/^fi/p' "$skill_md" | grep -v '^#'
+}
+
+test_router_retro_condition_2_accepts_n_a_marker() {
+  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local cond
+  cond="$(_extract_retro_condition_2)"
+  [ -n "$cond" ] || return 1
+
+  local log
+  log=$(mktemp)
+  printf '%s\n' \
+    '2026-09-07T19:50:00Z|VERIFY|verify|done|PASS' \
+    '2026-09-07T19:54:53Z|PR-REVIEW|pr-review|done|N/A — no PR (verification-only ticket, no source diff produced by IMPLEMENT)' \
+    >"$log"
+
+  local NEEDS_RETRO=false
+  eval "${cond//\{LOG_FILE\}/$log}"
+  rm -f "$log"
+
+  [ "$NEEDS_RETRO" = "false" ] || {
+    echo "retro condition 2 flags a clean N/A (no-diff) outcome as retro-worthy"
+    return 1
+  }
+}
+
+test_router_retro_condition_2_still_flags_missing_pr_review() {
+  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local cond
+  cond="$(_extract_retro_condition_2)"
+  [ -n "$cond" ] || return 1
+
+  local log
+  log=$(mktemp)
+  printf '%s\n' \
+    '2026-09-07T19:50:00Z|VERIFY|verify|done|PASS' \
+    >"$log"
+
+  local NEEDS_RETRO=false
+  eval "${cond//\{LOG_FILE\}/$log}"
+  rm -f "$log"
+
+  [ "$NEEDS_RETRO" = "true" ] || {
+    echo "retro condition 2 no longer flags a ticket with no PR-REVIEW outcome at all"
+    return 1
+  }
 }
 
 test_router_verify_dispatch_uses_verdict_tokens() {

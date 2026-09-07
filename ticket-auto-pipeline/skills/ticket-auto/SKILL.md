@@ -1286,7 +1286,10 @@ fi
 # PASS — PASS is VERIFY-only. The literal 'PASS' check below never matched a real
 # PR-REVIEW success line, so this condition was true on every run regardless of
 # outcome (false-positive retro trigger — GitHub #149).
-if ! grep -q '^[^|]*|VERIFY|verify|done|PASS' "{LOG_FILE}" || ! grep -q '^[^|]*|PR-REVIEW|pr-review|done|OK' "{LOG_FILE}"; then
+# N/A is also a legitimate success marker: a verification-only ticket whose
+# IMPLEMENT phase made no source diff has no PR to review, and ticket-pr-review
+# writes `done|N/A` directly for that case (GitHub #318) — it is not retro-worthy.
+if ! grep -q '^[^|]*|VERIFY|verify|done|PASS' "{LOG_FILE}" || ! grep -qE '^[^|]*\|PR-REVIEW\|pr-review\|done\|(OK|N/A)' "{LOG_FILE}"; then
   NEEDS_RETRO=true
 fi
 # Condition 3: did any heartbeat fallback event fire?
