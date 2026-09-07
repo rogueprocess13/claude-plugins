@@ -17,6 +17,34 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.44.1 (2026-09-07)
+
+Fix `skills/ticket-retro/retro.sh`'s failure-aggregation loop silently
+skipping `GATE`-phase hold lines (#319).
+
+- The loop's phase guard only accepted `phase == META`, so
+  `gate-check.sh`'s own entry-gate hold line
+  (`GATE|gate|fail|held:...` — a distinct, earlier-stage event from the
+  `META|gate-stop|` hard-stop codes) never reached the Failure Histogram. A
+  recurring `nav_gap`/`user_gap`/`repro_gap` cross-validation false-hold, or
+  any other entry-gate hold, could never accumulate toward the count>=2
+  threshold that drives an automated diff proposal or GitHub issue filing.
+- New `GATE|gate|fail|` branch buckets by a small, maintained case match
+  against `gate-check.sh`'s known hold-message shapes
+  (`GATE_HELD_CRITIQUE_CROSS_VALIDATION`,
+  `GATE_HELD_MISSING_VERIFICATION_PREREQS`, `GATE_HELD_COMPLEX_TICKET`,
+  `GATE_HELD_MANUAL_MODE`, `GATE_HELD_CONTENT_QUALITY_SCORE`,
+  `GATE_HELD_DEFAULT_FALLBACK`) rather than a naive first-word split — several
+  of those messages share a leading word ("plan missing ... (mode=build
+  ...)" vs "... (mode=ui ...)") that would otherwise collapse distinct holds
+  into one bucket and lose the signal the histogram exists for. Falls back to
+  a visibly generic normalized-first-word key for any future hold message not
+  yet classified.
+- 5 new tests (`test-retro-gate-held.sh`): a GATE hold now appears in the
+  histogram, a `META|gate-stop|fail|`-only log is unaffected, distinct
+  hold shapes bucket distinctly, an unrecognized message falls back
+  visibly, and a recurring hold across two tickets' logs crosses count>=2.
+
 ## fleet-controller 0.26.0 (2026-09-06)
 
 Task group 10.1 of `openspec/changes/fleetd-phase-supervisor` (design.md D22):
