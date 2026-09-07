@@ -2555,6 +2555,264 @@ class HoldReconcilePassTest(unittest.TestCase):
         self.assertEqual(ticket['hold_id'], '')
 
 
+class HumanHoldIntakePassTest(unittest.TestCase):
+    """The CREATE half of the human-hold lifecycle (#305).
+
+    `_hold_reconcile_pass` above only ever releases a hold that already
+    exists as a row; before `_human_hold_intake_pass`, nothing converted a
+    fresh `META|human-hold|waiting|{json}` pipeline-log record into that
+    row at all — `store.set_hold` had no live caller for `hold_kind='human'`
+    anywhere outside a test file. These tests pin the creation half.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self._tmp.name)
+
+    def tearDown(self):
+        _safe_tmp_cleanup(self._tmp)
+
+    def _supervisor(self):
+        from fleetd.supervisor import Supervisor
+        return Supervisor(
+            state_dir=str(self.workspace),
+            pidfile=str(self.workspace / 'test.pid'),
+            spawn_enabled=False,
+        )
+
+    def _write_human_hold_log(self, tid, reason='CREDENTIALS_MISSING',
+                              blocks='notes.md#AC1', questions=None,
+                              extra_lines=None):
+        """A pipeline log carrying one valid, unreleased
+        `META|human-hold|waiting|{json}` record — the same shape
+        `lib/human-hold-parse.sh` writes, with fleetd-owned fields
+        (`hold_id`, `held_at`) absent, as the parser guarantees."""
+        questions = questions if questions is not None else [
+            {'id': 1, 'text': 'Which credential should this use?'}]
+        record = {
+            'schema_version': 1,
+            'phase': 'IMPLEMENT',
+            'reason': reason,
+            'blocks': blocks,
+            'supersedes': '',
+            'questions': questions,
+            'parse_status': 'ok',
+            'parse_error': '',
+        }
+        log_file = self.workspace / f'{tid}-pipeline.log'
+        lines = [
+            '2026-09-08T00:00:00Z|META|schema|info|1',
+            f'2026-09-08T00:01:00Z|META|human-hold|waiting|{json.dumps(record)}',
+        ]
+        if extra_lines:
+            lines.extend(extra_lines)
+        log_file.write_text('\n'.join(lines) + '\n')
+        return log_file
+
+    def _append_queue_entry(self, tid):
+        queue_file = self.workspace / 'fleet-default-spawn-queue.jsonl'
+        with open(queue_file, 'a') as f:
+            f.write(json.dumps({'tid': tid, 'reason': 'test'}) + '\n')
+
+    def _spy_set_hold(self):
+        from fleetd import store
+        calls = []
+        orig = store.FleetStore.set_hold
+
+        def spy(self_store, tid, kind, hold_id, reason='', generation=0):
+            calls.append(
+                {'tid': tid, 'kind': kind, 'hold_id': hold_id,
+                 'reason': reason, 'generation': generation})
+            return orig(self_store, tid, kind, hold_id, reason=reason,
+                       generation=generation)
+
+        store.FleetStore.set_hold = spy
+        return calls, orig
+
+    def test_fresh_record_creates_row_with_correct_fields(self):
+        """Verification checklist item 1: a fresh valid record with no
+        existing row calls `store.set_hold` once, with the correct
+        `hold_id`/`hold_kind`/`hold_reason`."""
+        from fleetd import store
+
+        self._write_human_hold_log('TST-HH1', reason='CREDENTIALS_MISSING')
+        sup = self._supervisor()
+        calls, orig = self._spy_set_hold()
+        sup.acquire_lock()
+        try:
+            sup._human_hold_intake_pass()
+        finally:
+            store.FleetStore.set_hold = orig
+            sup.release_lock()
+
+        self.assertEqual(len(calls), 1, 'set_hold must be called exactly once')
+        call = calls[0]
+        self.assertEqual(call['tid'], 'TST-HH1')
+        self.assertEqual(call['kind'], 'human')
+        self.assertEqual(call['hold_id'], 'hold:TST-HH1:g0:a1')
+        self.assertEqual(call['reason'], 'CREDENTIALS_MISSING')
+
+        with store.open_store(self.workspace) as st:
+            row = st.get_ticket('TST-HH1')
+        self.assertEqual(row['held'], 1)
+        self.assertEqual(row['hold_kind'], 'human')
+        self.assertEqual(row['hold_id'], 'hold:TST-HH1:g0:a1')
+        self.assertEqual(row['hold_reason'], 'CREDENTIALS_MISSING')
+
+    def test_running_the_pass_twice_is_idempotent(self):
+        """Verification checklist item 2: running the intake pass twice on
+        the same record calls `set_hold` at most once — the second pass's
+        `_store_ticket_is_held` guard now sees the row the first pass
+        created and skips the ticket before `set_hold` is even attempted."""
+        from fleetd import store
+
+        self._write_human_hold_log('TST-HH2')
+        sup = self._supervisor()
+        calls, orig = self._spy_set_hold()
+        sup.acquire_lock()
+        try:
+            sup._human_hold_intake_pass()
+            sup._human_hold_intake_pass()
+        finally:
+            store.FleetStore.set_hold = orig
+            sup.release_lock()
+
+        self.assertLessEqual(len(calls), 1,
+                             'set_hold must not be called more than once '
+                             'across two passes over the same record')
+
+    def test_attempts_at_max_writes_gate_stop_and_creates_no_row(self):
+        """Verification checklist item 3: `hold_attempts` already at
+        `FLEET_HOLD_MAX_ATTEMPTS` writes `HUMAN_HOLD_EXHAUSTED` instead of
+        creating another hold row, and never calls
+        `post_human_hold_comment`."""
+        import fleetd.gate_hold as gate_hold_mod
+        from fleetd import store
+
+        tid = 'TST-HH3'
+        # Exhaust the default cap (3) via the existing ask -> release cycle,
+        # exactly as TestAttemptsExhaustedThenGateStop does in
+        # test_human_hold_integration.py — hold_attempts never resets on
+        # release.
+        with store.open_store(self.workspace) as st:
+            for attempt in (1, 2, 3):
+                hold_id = st.mint_hold_id(tid, 0, attempt)
+                st.set_hold(tid, 'human', hold_id, reason='ask', generation=0)
+                st.release_hold(tid, hold_id)
+            row = st.get_ticket(tid)
+        self.assertEqual(row['hold_attempts'], 3)
+        self.assertEqual(row['held'], 0)
+
+        self._write_human_hold_log(tid, reason='APPROVAL_REQUIRED')
+
+        comment_calls = []
+        real_comment = gate_hold_mod.post_human_hold_comment
+        gate_hold_mod.post_human_hold_comment = (
+            lambda *a, **k: comment_calls.append((a, k)) or (True, True))
+        sup = self._supervisor()
+        sup.acquire_lock()
+        try:
+            sup._human_hold_intake_pass()
+        finally:
+            gate_hold_mod.post_human_hold_comment = real_comment
+            sup.release_lock()
+
+        log_text = (self.workspace / f'{tid}-pipeline.log').read_text()
+        self.assertIn('HUMAN_HOLD_EXHAUSTED', log_text)
+        self.assertIn('|META|gate-stop|fail|', log_text)
+
+        with store.open_store(self.workspace) as st:
+            row = st.get_ticket(tid)
+        self.assertEqual(row['held'], 0, 'no new hold row must be created')
+        self.assertEqual(row['hold_attempts'], 3,
+                         'hold_attempts must not change on an exhausted attempt')
+        self.assertEqual(comment_calls, [],
+                         'post_human_hold_comment must not be called when exhausted')
+
+    def test_genuinely_terminal_ticket_is_skipped_entirely(self):
+        """Verification checklist item 4: a ticket whose log already shows
+        genuine completion is never converted into a hold, no matter what
+        an earlier human-hold record in the same log says."""
+        from fleetd import store
+
+        tid = 'TST-HH4'
+        self._write_human_hold_log(
+            tid, extra_lines=[
+                '2026-09-08T00:02:00Z|META|outcome|info|done: merged'])
+
+        sup = self._supervisor()
+        sup.acquire_lock()
+        try:
+            sup._human_hold_intake_pass()
+        finally:
+            sup.release_lock()
+
+        with store.open_store(self.workspace) as st:
+            row = st.get_ticket(tid)
+        self.assertIsNone(row, 'a terminal ticket must never gain a hold row')
+
+    def test_created_hold_defers_a_fresh_spawn_queue_entry(self):
+        """Verification checklist item 5: once the intake pass creates the
+        row, `_consume_queue`'s existing `_store_ticket_is_held` guard
+        actually engages — a re-enqueue for the same tid is deferred, not
+        spawned over the active hold."""
+        tid = 'TST-HH5'
+        self._write_human_hold_log(tid)
+        sup = self._supervisor()
+        sup.acquire_lock()
+        try:
+            sup._human_hold_intake_pass()
+            self._append_queue_entry(tid)
+            consumed = sup._consume_queue(
+                cmd_override=_make_worker_cmd(sleep_secs=5))
+        finally:
+            sup.release_lock()
+
+        self.assertEqual(consumed, set(),
+                         'a freshly held ticket must not be spawned')
+        queue_file = self.workspace / 'fleet-default-spawn-queue.jsonl'
+        self.assertIn(tid, queue_file.read_text(),
+                     'the queue entry must survive, not be dropped')
+
+    def test_comment_and_notify_each_called_exactly_once(self):
+        """Verification checklist item 6: `post_human_hold_comment` and
+        `fleet_notify_hold` are each called exactly once per hold created."""
+        import fleetd.gate_hold as gate_hold_mod
+        import fleetd.supervisor as supervisor_mod
+
+        self._write_human_hold_log('TST-HH6')
+        sup = self._supervisor()
+
+        comment_calls = []
+        notify_calls = []
+        real_comment = gate_hold_mod.post_human_hold_comment
+        real_notify = supervisor_mod._notify_hold
+        gate_hold_mod.post_human_hold_comment = (
+            lambda *a, **k: comment_calls.append((a, k)) or (True, True))
+        supervisor_mod._notify_hold = (
+            lambda *a, **k: notify_calls.append((a, k)))
+        sup.acquire_lock()
+        try:
+            sup._human_hold_intake_pass()
+        finally:
+            gate_hold_mod.post_human_hold_comment = real_comment
+            supervisor_mod._notify_hold = real_notify
+            sup.release_lock()
+
+        self.assertEqual(len(comment_calls), 1,
+                         'post_human_hold_comment must be called exactly once')
+        self.assertEqual(len(notify_calls), 1,
+                         'fleet_notify_hold must be called exactly once')
+        # Sanity: called with the tid and the row's own hold_id, not a
+        # placeholder.
+        comment_args = comment_calls[0][0]
+        self.assertEqual(comment_args[0], 'TST-HH6')
+        self.assertEqual(comment_args[1], 'hold:TST-HH6:g0:a1')
+        notify_args = notify_calls[0][0]
+        self.assertEqual(notify_args[2], 'TST-HH6')
+        self.assertEqual(notify_args[3], 'created')
+
+
 class DualInvocationInterlockTest(unittest.TestCase):
     """The dual-invocation interlock (task 4.19) actually gates the live
     ticket-level spawn path — `_consume_queue` — not just its own unit
