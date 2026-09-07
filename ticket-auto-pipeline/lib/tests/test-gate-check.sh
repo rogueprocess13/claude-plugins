@@ -1638,6 +1638,74 @@ ARTEOF
   }
 }
 
+# Helper: artifact with a real test user, a real (but unlisted-route) feature
+# path, and an incidental bare localhost:PORT mention in a Setup line — no
+# named infra keyword (Eureka/Zipkin/actuator/registry/discovery/config-server)
+# anywhere in the artifact.
+_scaffold_artifact_bare_hostport_no_infra_keyword() {
+  local path="${1:-${_ws}/simple-fix.md}"
+  cat >"$path" <<'ARTEOF'
+# Simple Fix — Test
+
+## Summary
+Fix the CSV export on the Invoices report.
+
+**User:** test@example.com
+
+## How to implement
+1. Click the Export button on the Invoices tab within /reports/
+2. Confirm the downloaded CSV includes every visible row
+
+## Expected Behavior
+- The exported CSV should include every visible invoice row
+
+## Setup
+- Local URL: http://localhost:4200
+- Seed data: 12 invoices pre-loaded for the test tenant
+ARTEOF
+}
+
+# 46. Real test user + real (unlisted) feature path + incidental bare
+# localhost:PORT mention in a Setup section, with NO named infra keyword
+# anywhere → must stay in browser mode, NOT be reclassified to infra-only.
+# This project's own LOCAL_URL convention is almost always a bare
+# localhost:PORT value, and it's routine for a plan's Setup/Environment line
+# to state it separately from the step-by-step nav instructions — a bare
+# host:port alone must never be sufficient to flag infra on its own. The
+# critique's "No navigation path" finding is still genuinely unresolved by
+# the plan here, so the nav_gap cross-validation must still fire — proving
+# the hold path wasn't silently bypassed by a false infra-only
+# reclassification (which would drop required prerequisites from 4 to 2 and
+# skip this exact cross-validation).
+test_cross_val_bare_hostport_alone_stays_browser_mode() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _scaffold_context_md 2 "feature" "true"
+  _scaffold_critique_with_findings 65 "WARNINGS" "- [WARNING] No navigation path specified. Verifier will need to discover the feature location from code."
+  _scaffold_artifact_bare_hostport_no_infra_keyword "${_ws}/simple-fix.md"
+
+  _gate_entry
+  local rc=$?
+
+  local cross_val_line infra_mode_line
+  cross_val_line=$(grep 'cross-validation failed' "$LOG_FILE" 2>/dev/null || true)
+  infra_mode_line=$(grep 'mode=infra-only' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 1 ] || {
+    echo "expected exit 1 (held: browser-mode nav_gap cross-validation still applies), got $rc"
+    return 1
+  }
+  [ -n "$cross_val_line" ] || {
+    echo "expected cross-validation hold: a bare localhost:PORT mention must not reclassify this real browser ticket to infra-only and skip nav_gap validation"
+    return 1
+  }
+  [ -z "$infra_mode_line" ] || {
+    echo "unexpected infra-only reclassification: bare host:port alone (no named infra keyword) must not trigger it"
+    return 1
+  }
+}
+
 # ── Commercial Evidence MVP (Branch B): META|complexity single-writer ──────────
 
 # META|complexity is written exactly once per ticket, on the standard route.
@@ -1755,6 +1823,7 @@ for fn in \
   test_cross_val_infra_dashboard_nav_gap_not_held \
   test_cross_val_missing_nav_and_user_still_held \
   test_browser_mode_unaffected_with_feature_path_and_user \
+  test_cross_val_bare_hostport_alone_stays_browser_mode \
   test_complexity_line_written_once \
   test_complexity_line_not_duplicated_on_second_entry \
   test_complexity_line_written_on_planned_fast_path; do

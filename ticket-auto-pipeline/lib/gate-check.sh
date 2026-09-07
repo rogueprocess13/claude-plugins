@@ -374,10 +374,18 @@ _gate_entry() {
       # recognizes. Left unhandled, _ticket_mode falls through to its "browser"
       # default and the cross-validation block below false-holds on nav_gap no
       # matter how the plan phrases its navigation targets.
-      local _feature_path_signals _infra_signals
+      # A bare localhost:PORT/127.0.0.1:PORT mention is NOT sufficient on its own to
+      # signal infra: this project's own convention (LOCAL_URL in CLAUDE.md) is almost
+      # always a bare localhost:PORT value, and it's routine for a plan's Setup/
+      # Environment line to state it separately from the step-by-step nav instructions.
+      # Two-step check: a named infra keyword (Eureka/Zipkin/actuator/registry/
+      # discovery/config-server) must be present somewhere in the artifact for
+      # infra-only reclassification — a bare host:port mention with no named infra
+      # term anywhere in the artifact never triggers it on its own.
+      local _feature_path_signals _infra_named_signals
       _feature_path_signals=$(grep -ciP '/(handover|admin|user-permission|organisation|portfolio)/' "$artifact_path" 2>/dev/null || true)
-      _infra_signals=$(grep -ciP '(eureka|zipkin|actuator|config[- ]server|service registry|discovery server|localhost:[0-9]{2,5}|127\.0\.0\.1:[0-9]{2,5})' "$artifact_path" 2>/dev/null || true)
-      if [ "${_feature_path_signals//[^0-9]/}" = "0" ] 2>/dev/null && [ "${_infra_signals//[^0-9]/}" != "0" ] 2>/dev/null; then
+      _infra_named_signals=$(grep -ciP '(eureka|zipkin|actuator|config[- ]server|service registry|discovery server)' "$artifact_path" 2>/dev/null || true)
+      if [ "${_feature_path_signals//[^0-9]/}" = "0" ] 2>/dev/null && [ "${_infra_named_signals//[^0-9]/}" != "0" ] 2>/dev/null; then
         _ticket_mode="infra-only"
       fi
     fi
