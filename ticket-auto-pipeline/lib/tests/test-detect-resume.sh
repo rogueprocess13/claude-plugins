@@ -578,6 +578,57 @@ EOF
   [ "$warn_count" -eq 1 ] || return 1
 }
 
+# ── Trailing non-phase META lines after "done" (#314) ───────────────────────
+
+test_resume_step_done_despite_trailing_fleet_restart_line() {
+  # fleet-controller's orphan-reconciliation appends
+  # META|fleet-restart|info|... to a completed ticket's log (e.g. a week
+  # after it shipped, misreading "no recent heartbeat" as an orphan
+  # signal). That write must not defeat the "done" shortcut — it is
+  # bookkeeping, not a new pipeline state.
+  local out
+  out=$(_detect_resume_with_log "GH-314-1" \
+    "2026-08-31T10:00:00Z|META|schema|info|2" \
+    "2026-08-31T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
+    "2026-08-31T10:00:02Z|MAINTENANCE|maintenance|done|clean" \
+    "2026-08-31T10:00:03Z|META|outcome|info|completed: STEP_6" \
+    "2026-09-07T20:01:11Z|META|fleet-restart|info|restart orphan-reconciliation")
+  [ "$(_field "$out" RESUME_STEP)" = "done" ]
+}
+
+test_resume_step_done_despite_multiple_trailing_bookkeeping_lines() {
+  # Several harmless trailing entries can stack up (token-tracker's
+  # tokens/cache-tokens lines, then a later fleet-restart) — all of them
+  # must be tolerated, not just a single trailing line.
+  local out
+  out=$(_detect_resume_with_log "GH-314-2" \
+    "2026-08-31T10:00:00Z|META|schema|info|2" \
+    "2026-08-31T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
+    "2026-08-31T10:00:02Z|MAINTENANCE|maintenance|done|clean" \
+    "2026-08-31T10:00:03Z|META|outcome|info|completed: STEP_6" \
+    "2026-08-31T10:00:04Z|META|tokens|info|MAINTENANCE:100/50" \
+    "2026-08-31T10:00:05Z|META|cache-tokens|info|MAINTENANCE:10/5" \
+    "2026-09-07T20:01:11Z|META|fleet-restart|info|restart orphan-reconciliation")
+  [ "$(_field "$out" RESUME_STEP)" = "done" ]
+}
+
+test_resume_step_not_done_when_genuine_step_follows_outcome() {
+  # Regression safety: a genuine new phase/gate line after the outcome
+  # line (a real re-opened/resumed ticket, not mere bookkeeping) must
+  # still fall through to the normal backward-scan and must NOT report
+  # "done" — the allowlist is conservative on purpose.
+  local out
+  out=$(_detect_resume_with_log "GH-314-3" \
+    "2026-08-31T10:00:00Z|META|schema|info|2" \
+    "2026-08-31T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
+    "2026-08-31T10:00:02Z|MAINTENANCE|maintenance|done|clean" \
+    "2026-08-31T10:00:03Z|META|outcome|info|completed: STEP_6" \
+    "2026-09-07T20:01:11Z|IMPLEMENT|implement|done|Smooth, branch: gh-314-3--fix")
+  local resume_step
+  resume_step=$(_field "$out" RESUME_STEP)
+  [ "$resume_step" != "done" ]
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -743,7 +794,10 @@ for fn in \
   test_resume_step_done_on_completed_outcome \
   test_resume_step_not_done_on_held_outcome \
   test_resume_step_not_done_on_stopped_outcome \
-  test_schema_v1_warning_does_not_repollute_done_on_rerun; do
+  test_schema_v1_warning_does_not_repollute_done_on_rerun \
+  test_resume_step_done_despite_trailing_fleet_restart_line \
+  test_resume_step_done_despite_multiple_trailing_bookkeeping_lines \
+  test_resume_step_not_done_when_genuine_step_follows_outcome; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

@@ -14,6 +14,53 @@ source "$LIB_DIR/notes-parse.sh"
 
 CURRENT_SCHEMA_VERSION=2
 
+# Trailing META subtypes that never invalidate a completed run when they
+# appear AFTER the terminal `META|outcome|info|completed:` line — pure
+# bookkeeping/observability annotations with no routing meaning of their
+# own. Deliberately conservative (GitHub #314): anything NOT on this list —
+# including a fresh run's own preamble writes (autonomy/branch-context/
+# title/run-id/version) — still invalidates completion, because those mean
+# a genuine new run actually started.
+#   worker-exit       — fleetd's post-reap annotation of a worker's exit.
+#   fleet-restart      — fleet-controller's orphan-reconciliation/live-reap
+#                        restart marker (the exact GitHub #314 trigger: a
+#                        fully-shipped ticket's log outliving its own
+#                        completion by long enough for orphan-reconciliation
+#                        to misread "no recent heartbeat" as unfinished).
+#   fleet-intervention — fleet-controller's other intervention marker.
+#   schema / migration — this script's own idempotent v0/v1-grace notices.
+#   tokens / cache-tokens — token-tracker.sh's SubagentStop-hook usage
+#                        lines, which land after the phase terminal write.
+_DONE_TRAILING_META_ALLOWLIST='^(worker-exit|fleet-restart|fleet-intervention|schema|migration|tokens|cache-tokens)$'
+
+# _log_effectively_done <log_file>
+# True when the LAST `META|outcome|info|completed:` line in the log is not
+# superseded by any later, substantive line — i.e. the "done" shortcut may
+# still fire even though a harmless trailing entry (see allowlist above) is
+# the log's literal last line. Without this, any post-completion write —
+# including fleet-controller's own bookkeeping — silently defeats the old
+# literal-last-line check and a fully-completed ticket reads as unfinished
+# on the next detect-resume.sh call (GitHub #314).
+_log_effectively_done() {
+  local log_file="$1"
+  local outcome_lineno
+  outcome_lineno=$(grep -n '|META|outcome|info|completed:' "$log_file" 2>/dev/null | tail -1 | cut -d: -f1 || true)
+  [ -n "$outcome_lineno" ] || return 1
+
+  local rest
+  rest=$(tail -n "+$((outcome_lineno + 1))" "$log_file" 2>/dev/null || true)
+  [ -z "$rest" ] && return 0
+
+  local line step
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    step=$(echo "$line" | awk -F'|' '{print $3}')
+    echo "$step" | grep -qE "$_DONE_TRAILING_META_ALLOWLIST" || return 1
+  done <<<"$rest"
+
+  return 0
+}
+
 usage() {
   echo "Usage: $0 <TICKET-ID>" >&2
   echo "  Reads \$PWD/logs/{TICKET-ID}-pipeline.log to determine where the last" >&2
@@ -98,12 +145,18 @@ else
   # finished — never for "held: gate" (GATE_HELD, awaiting re-approval) or
   # "stopped: ..." (gate-stop/exhaustion) outcomes, which must fall through to
   # the normal backward-scan below so their own resume points are detected.
-  # Checked first and only against the tail line, so a stale outcome earlier
-  # in a crash-resumed log never falsely reports a live pipeline as done.
   # Without this, a naive /ticket-auto re-run after completion loops STEP_6
   # forever (#168).
-  _last_line=$(tail -1 "$LOG_FILE" 2>/dev/null || true)
-  if echo "$_last_line" | grep -q '|META|outcome|info|completed:'; then
+  #
+  # Checked via a backward search (#314), not a literal last-line compare:
+  # any write appended after the outcome line — including fleet-controller's
+  # own bookkeeping — used to silently defeat the shortcut and make a
+  # fully-shipped ticket look unfinished. _log_effectively_done tolerates an
+  # explicit, conservative allowlist of trailing bookkeeping-only META
+  # subtypes; anything else after the outcome line (a genuine new phase/gate
+  # line, or a fresh run's own preamble writes) still falls through to the
+  # normal backward-scan below exactly as before.
+  if _log_effectively_done "$LOG_FILE"; then
     RESUME_STEP="done"
   # Phase order: APPRAISE → REPRODUCE → EXEC → GATE → IMPLEMENT → VERIFY → PR-REVIEW → MAINTENANCE → REPORT
   # Check from latest phase backward.

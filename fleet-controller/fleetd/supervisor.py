@@ -2414,6 +2414,28 @@ def _collect_stop_pinned_tids(state_dir):
     return pinned
 
 
+# Trailing pipeline-log META subtypes that never count as a new pipeline
+# state when found at the tail — pure bookkeeping/observability
+# annotations written after a run has already finished, with no routing
+# meaning of their own. GitHub #314: orphan-reconciliation's own
+# `META|fleet-restart|...` marker is the concrete trigger — a fully
+# completed ticket's log outliving its own completion long enough for
+# orphan-reconciliation to misread "no recent heartbeat" as unfinished and
+# restart it. Keep in sync with fleet-detect.sh's
+# `_HARMLESS_TRAILING_META_STEPS` and detect-resume.sh's
+# `_DONE_TRAILING_META_ALLOWLIST` — three independent implementations of
+# the same rule that must not drift apart.
+_HARMLESS_TRAILING_META_STEPS = frozenset({
+    'worker-exit',
+    'fleet-restart',
+    'fleet-intervention',
+    'schema',
+    'migration',
+    'tokens',
+    'cache-tokens',
+})
+
+
 def _log_reached_terminal(state_dir, tid):
     """Whether the ticket's pipeline log shows a terminal state.
 
@@ -2461,17 +2483,21 @@ def _log_reached_terminal(state_dir, tid):
     if not lines:
         return False
 
-    # Skip any trailing run of `META|worker-exit` entries — fleetd appends
-    # one after a worker's own generation exits (fleet-controller/CLAUDE.md
-    # "Worker exit records"), an annotation of the exit rather than a new
-    # pipeline state. Without this, a genuinely completed pipeline reads as
-    # `incomplete` the moment fleetd reaps it, because the raw last line is
-    # no longer the outcome/dead-letter line (mirrors bash's
+    # Skip any trailing run of harmless bookkeeping-only META entries (see
+    # `_HARMLESS_TRAILING_META_STEPS` above) — fleetd appends
+    # `META|worker-exit|...` after a worker's own generation exits
+    # (fleet-controller/CLAUDE.md "Worker exit records"), and
+    # fleet-controller's own orphan-reconciliation appends
+    # `META|fleet-restart|...` (GitHub #314); both are annotations of the
+    # exit or of a restart decision, not a new pipeline state. Without this,
+    # a genuinely completed pipeline reads as `incomplete` the moment
+    # fleetd reaps it or orphan-reconciliation re-scans it, because the raw
+    # last line is no longer the outcome/dead-letter line (mirrors bash's
     # _last_effective_line).
     idx = len(lines) - 1
     while idx >= 0:
         fields = lines[idx].split('|')
-        if len(fields) >= 3 and fields[2] == 'worker-exit':
+        if len(fields) >= 3 and fields[2] in _HARMLESS_TRAILING_META_STEPS:
             idx -= 1
             continue
         break
