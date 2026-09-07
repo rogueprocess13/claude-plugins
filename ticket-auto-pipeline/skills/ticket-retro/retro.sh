@@ -281,6 +281,55 @@ for _i in "${!LOG_FILES[@]}"; do
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     IFS='|' read -r _ts phase step status msg <<<"$line"
+    [ "$phase" != "META" ] && [ "$phase" != "GATE" ] && continue
+
+    if [ "$phase" = "GATE" ] && [ "$step" = "gate" ] && [ "$status" = "fail" ]; then
+      # gate-check.sh's own entry-gate hold line (GitHub #319) — a distinct,
+      # earlier-stage event from the META|gate-stop| hard-stop codes below.
+      # Those codes are designed with an UPPERCASE_CODE first token (see
+      # lib/gate-check.sh's gate-stop _plog calls), so `awk '{print $1}'`
+      # reliably recovers a stable bucket key. gate-check.sh's hold messages
+      # have no such token — they're free prose ("held: complex ticket",
+      # "held: plan missing 2/4 verification prerequisites (mode=...)") — so
+      # bucketing by first word would collapse structurally distinct holds
+      # (e.g. both "plan missing ... (mode=build ...)" and "plan missing ...
+      # (mode=ui ...)" start with "plan") into one bucket and lose exactly the
+      # signal the histogram exists for. Instead, match the known hold-message
+      # shapes emitted by lib/gate-check.sh (kept in sync with it) and fall
+      # back to a generic normalized-first-word key for any future hold
+      # message not yet classified here — visibly "UNCLASSIFIED"-shaped so a
+      # maintainer notices and adds a real case instead of the bucket silently
+      # staying meaningless.
+      case "$msg" in
+      *"critique-plan cross-validation failed"*)
+        _gate_hold_key="CRITIQUE_CROSS_VALIDATION"
+        ;;
+      *"content quality score"*)
+        _gate_hold_key="CONTENT_QUALITY_SCORE"
+        ;;
+      *"plan missing"*"verification prerequisites"*)
+        _gate_hold_key="MISSING_VERIFICATION_PREREQS"
+        ;;
+      *"complex ticket"*)
+        _gate_hold_key="COMPLEX_TICKET"
+        ;;
+      *"manual mode"*)
+        _gate_hold_key="MANUAL_MODE"
+        ;;
+      *"held: default"*)
+        _gate_hold_key="DEFAULT_FALLBACK"
+        ;;
+      *)
+        _gate_hold_key=$(echo "$msg" | grep -oP '(?<=held: )[a-z_-]+' | head -1 | tr '[:lower:]-' '[:upper:]_')
+        [ -z "$_gate_hold_key" ] && _gate_hold_key="UNCLASSIFIED"
+        ;;
+      esac
+      code="GATE_HELD_${_gate_hold_key}"
+      FAILURE_COUNT["$code"]=$((${FAILURE_COUNT["$code"]:-0} + 1))
+      local_has_failure=1
+      continue
+    fi
+
     [ "$phase" != "META" ] && continue
 
     if [ "$step" = "gate-stop" ] && [ "$status" = "fail" ]; then
