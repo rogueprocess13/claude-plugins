@@ -1068,7 +1068,7 @@ _fleet_scan_initiative_dispatch() {
   # NOTE: no epic Linear-state filter — the state:execution label is the gate.
   # This matches fleet_dispatch_initiative's population exactly; a state filter
   # here made epics invisible to detection while still dispatchable.
-  local query='{"query":"{issues(filter:{labels:{name:{eq:\\"state:execution\\"}}}){nodes{id identifier title children{nodes{id identifier state{name} labels{nodes{name}}}}}}}"}'
+  local query='{"query":"{issues(filter:{labels:{name:{eq:\"state:execution\"}}}){nodes{id identifier title children{nodes{id identifier state{name} labels{nodes{name}}}}}}}"}'
 
   local epics_json attempt=1 max_attempts=3 delay=1
   while [ "$attempt" -le "$max_attempts" ]; do

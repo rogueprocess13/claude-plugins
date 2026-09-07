@@ -125,41 +125,42 @@ fleet_render_dashboard_from_data() {
 
   if [ "$total" -eq 0 ]; then
     echo "No active pipelines"
-    return 0
+  else
+    # Header
+    printf "%-12s %-12s %-6s %-8s %-9s %-9s %s\n" "TICKET" "PHASE" "STALL" "SEV" "AUTO-RETRO" "FINDINGS" "ANOMALIES"
+    printf "%-12s %-12s %-6s %-8s %-9s %-9s %s\n" "------" "------" "----" "--" "----------" "--------" "--------"
+
+    # Sort by severity descending, then by ticket ID
+    echo "$data" | jq -r '.pipelines | sort_by([-.severity, .tid]) | .[] | "\(.tid)|\(.phase)|\(.hb_age_secs)|\(.severity)|\(.anomalies)"' | while IFS='|' read -r tid phase hb_age sev anomalies; do
+      local icon label
+      IFS='|' read -r icon label <<<"$(_severity_info "${sev:-0}")"
+
+      # Format stall as human-readable
+      local stall_str="${hb_age}s"
+      if [ "${hb_age:-0}" -ge 3600 ]; then
+        stall_str="$((hb_age / 3600))h$(((hb_age % 3600) / 60))m"
+      elif [ "${hb_age:-0}" -ge 60 ]; then
+        stall_str="$((hb_age / 60))m$((hb_age % 60))s"
+      fi
+
+      # Post-mortem auto-retro open issue count
+      local pm_count
+      pm_count=$(_postmortem_issue_count "$tid" "$workspace")
+      local pm_str="${pm_count} open"
+
+      local findings_str
+      findings_str=$(_observer_findings_summary "$tid" "$workspace")
+
+      printf "%-12s %-12s %-6s %s %-9s %-9s %s\n" "${tid}" "${phase}" "${stall_str}" "${icon}${label}" "${pm_str}" "${findings_str}" "${anomalies}"
+    done
+
+    echo ""
+    echo "Summary: ${total} active — ${healthy} healthy, ${warn} warn, ${kill} kill, ${restart} restart"
   fi
 
-  # Header
-  printf "%-12s %-12s %-6s %-8s %-9s %-9s %s\n" "TICKET" "PHASE" "STALL" "SEV" "AUTO-RETRO" "FINDINGS" "ANOMALIES"
-  printf "%-12s %-12s %-6s %-8s %-9s %-9s %s\n" "------" "------" "----" "--" "----------" "--------" "--------"
-
-  # Sort by severity descending, then by ticket ID
-  echo "$data" | jq -r '.pipelines | sort_by([-.severity, .tid]) | .[] | "\(.tid)|\(.phase)|\(.hb_age_secs)|\(.severity)|\(.anomalies)"' | while IFS='|' read -r tid phase hb_age sev anomalies; do
-    local icon label
-    IFS='|' read -r icon label <<<"$(_severity_info "${sev:-0}")"
-
-    # Format stall as human-readable
-    local stall_str="${hb_age}s"
-    if [ "${hb_age:-0}" -ge 3600 ]; then
-      stall_str="$((hb_age / 3600))h$(((hb_age % 3600) / 60))m"
-    elif [ "${hb_age:-0}" -ge 60 ]; then
-      stall_str="$((hb_age / 60))m$((hb_age % 60))s"
-    fi
-
-    # Post-mortem auto-retro open issue count
-    local pm_count
-    pm_count=$(_postmortem_issue_count "$tid" "$workspace")
-    local pm_str="${pm_count} open"
-
-    local findings_str
-    findings_str=$(_observer_findings_summary "$tid" "$workspace")
-
-    printf "%-12s %-12s %-6s %s %-9s %-9s %s\n" "${tid}" "${phase}" "${stall_str}" "${icon}${label}" "${pm_str}" "${findings_str}" "${anomalies}"
-  done
-
-  echo ""
-  echo "Summary: ${total} active — ${healthy} healthy, ${warn} warn, ${kill} kill, ${restart} restart"
-
-  # Fleet-wide detectors
+  # Fleet-wide detectors — must run regardless of active-pipeline count: an
+  # idle workspace (0 active pipelines) is exactly when an operator most
+  # needs to see a fleet-wide finding (e.g. D-11 "epic ready to dispatch").
   local fw_count
   fw_count=$(echo "$data" | jq -r '.fleet_wide | length // 0' 2>/dev/null || echo "0")
   if [ "${fw_count:-0}" -gt 0 ]; then
@@ -203,24 +204,27 @@ fleet_write_report_from_data() {
       echo "No active pipelines"
       echo ""
       echo "**Summary:** 0 active pipelines"
-      return
+      echo ""
+    else
+      echo "## Health Table"
+      echo ""
+      echo "| Ticket | Phase | Stall | Severity | Findings | Anomalies |"
+      echo "|--------|-------|-------|----------|----------|-----------|"
+
+      echo "$data" | jq -r '.pipelines | sort_by([-.severity, .tid]) | .[] | "\(.tid)|\(.phase)|\(.hb_age_secs)|\(.severity)|\(.anomalies)"' | while IFS='|' read -r tid phase hb_age sev anomalies; do
+        local findings_str
+        findings_str=$(_observer_findings_summary "$tid" "$workspace")
+        echo "| ${tid} | ${phase} | ${hb_age}s | ${sev} | ${findings_str} | ${anomalies} |"
+      done
+
+      echo ""
+      echo "**Summary:** ${total} active — ${healthy} 🟢 healthy, ${warn} 🟡 warn, ${kill} 🔴 kill, ${restart} 💀 restart"
     fi
 
-    echo "## Health Table"
-    echo ""
-    echo "| Ticket | Phase | Stall | Severity | Findings | Anomalies |"
-    echo "|--------|-------|-------|----------|----------|-----------|"
-
-    echo "$data" | jq -r '.pipelines | sort_by([-.severity, .tid]) | .[] | "\(.tid)|\(.phase)|\(.hb_age_secs)|\(.severity)|\(.anomalies)"' | while IFS='|' read -r tid phase hb_age sev anomalies; do
-      local findings_str
-      findings_str=$(_observer_findings_summary "$tid" "$workspace")
-      echo "| ${tid} | ${phase} | ${hb_age}s | ${sev} | ${findings_str} | ${anomalies} |"
-    done
-
-    echo ""
-    echo "**Summary:** ${total} active — ${healthy} 🟢 healthy, ${warn} 🟡 warn, ${kill} 🔴 kill, ${restart} 💀 restart"
-
-    # Fleet-wide detector section in markdown
+    # Fleet-wide detector section in markdown — must run regardless of
+    # active-pipeline count: an idle workspace (0 active pipelines) is
+    # exactly when an operator most needs to see a fleet-wide finding
+    # (e.g. D-11 "epic ready to dispatch").
     local fw_count
     fw_count=$(echo "$data" | jq -r '.fleet_wide | length // 0' 2>/dev/null || echo "0")
     if [ "${fw_count:-0}" -gt 0 ]; then
@@ -229,7 +233,7 @@ fleet_write_report_from_data() {
       echo "| Detector | Severity | Findings |"
       echo "|----------|----------|----------|"
 
-      echo "$data" | jq -r '.fleet_wide[] | "\(.name)|\(.severity)|\(.findings // \"clear\")"' 2>/dev/null | while IFS='|' read -r dname dsev dfindings; do
+      echo "$data" | jq -r '.fleet_wide[] | "\(.name)|\(.severity)|\(.findings // "clear")"' 2>/dev/null | while IFS='|' read -r dname dsev dfindings; do
         local icon label
         IFS='|' read -r icon label <<<"$(_severity_info "${dsev:-0}")"
         echo "| ${dname} | ${icon} ${label} (${dsev}) | ${dfindings:-clear} |"
