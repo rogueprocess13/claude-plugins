@@ -2203,6 +2203,40 @@ class SpawnAndReapTest(unittest.TestCase):
         # Empty log → not terminal.
         self.assertFalse(self._log_terminal(''))
 
+    def test_log_reached_terminal_tolerates_trailing_fleet_restart_line(self):
+        """GitHub #314: orphan-reconciliation's own META|fleet-restart|...
+        marker, appended to a completed ticket's log long after it shipped,
+        must not flip a genuinely-finished pipeline back to non-terminal.
+        Before the fix, the trailing-skip loop only recognised
+        `worker-exit`, so this restart marker became the new "effective
+        last line" and the ticket re-classified as incomplete — restart-
+        eligible forever after. Mirrors
+        test_classify_done_despite_trailing_fleet_restart_line in
+        lib/tests/test-fleet-reconcile.sh."""
+        self.assertTrue(self._log_terminal(
+            '2026-01-01T00:00:00Z|APPRAISE|appraise|start|investigating\n'
+            '2026-01-01T00:00:01Z|META|outcome|info|completed: STEP_6\n'
+            '2026-01-01T00:00:02Z|META|fleet-restart|info|'
+            'restart orphan-reconciliation\n'))
+        # Several harmless trailing entries stacked up (token-tracker's
+        # tokens/cache-tokens lines, then a later fleet-restart) must all be
+        # tolerated together, not just a single trailing line.
+        self.assertTrue(self._log_terminal(
+            '2026-01-01T00:00:00Z|APPRAISE|appraise|start|investigating\n'
+            '2026-01-01T00:00:01Z|META|outcome|info|completed: STEP_6\n'
+            '2026-01-01T00:00:02Z|META|tokens|info|MAINTENANCE:100/50\n'
+            '2026-01-01T00:00:03Z|META|cache-tokens|info|MAINTENANCE:10/5\n'
+            '2026-01-01T00:00:04Z|META|fleet-restart|info|'
+            'restart orphan-reconciliation\n'))
+        # Regression safety: a genuine new phase line after the outcome
+        # line (a real re-opened/resumed ticket) must still read as NOT
+        # terminal — the allowlist is conservative on purpose.
+        self.assertFalse(self._log_terminal(
+            '2026-01-01T00:00:00Z|APPRAISE|appraise|start|investigating\n'
+            '2026-01-01T00:00:01Z|META|outcome|info|completed: STEP_6\n'
+            '2026-01-01T00:00:02Z|IMPLEMENT|implement|done|'
+            'Smooth, branch: tst-l1--fix\n'))
+
     def test_poll_adopted_workers_preserves_generation(self):
         """poll_adopted_workers preserves the last-known generation before
         deleting the registry — same contract as scan_registry."""

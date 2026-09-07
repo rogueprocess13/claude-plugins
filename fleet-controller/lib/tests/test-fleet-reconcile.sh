@@ -82,6 +82,29 @@ test_classify_done() {
   }
 }
 
+# GitHub #314: fleet-controller's own orphan-reconciliation appends
+# META|fleet-restart|... to a completed ticket's log (e.g. a week after it
+# shipped, misreading "no recent heartbeat" as an orphan signal). Before the
+# fix, `_last_effective_line` only skipped a trailing `worker-exit` run, so
+# this restart marker became the new "effective last line" and the ticket
+# re-classified as incomplete — restart-eligible forever after. Must still
+# classify done.
+test_classify_done_despite_trailing_fleet_restart_line() {
+  local ws
+  ws=$(_setup_workspace)
+  local log_file="${ws}/CRE-15-pipeline.log"
+  _plog_line "$log_file" "APPRAISE" "appraise" "start" "investigating"
+  _plog_line "$log_file" "META" "outcome" "info" "completed: STEP_6"
+  _plog_line "$log_file" "META" "fleet-restart" "info" "restart orphan-reconciliation"
+
+  local state
+  state=$(fleet_ticket_terminal_state "CRE-15" "$log_file")
+  [ "$state" = "done" ] || {
+    echo "expected done, got $state" >&2
+    return 1
+  }
+}
+
 # A bare gate-stop marker with no outcome line: the process died before
 # pipeline-finalize.sh could finalize (the CRE-9 incident shape). The gate is
 # structural, but its condition may since have been fixed by a human — so it
@@ -384,6 +407,32 @@ test_done_and_gate_held_left_alone() {
     }
     ! grep -q '"tid":"CRE-11"' "$queue_file" 2>/dev/null || {
       echo "gate-held ticket CRE-11 was re-enqueued" >&2
+      return 1
+    }
+  fi
+  return 0
+}
+
+# GitHub #314 end-to-end: a genuinely-completed ticket whose log picked up a
+# stray META|fleet-restart|... line after its outcome (the exact CRE-15/
+# CRE-17/CRE-19/WIL-62 incident shape) must not be re-enqueued by orphan
+# reconciliation — it is already done, not an orphan.
+test_completed_ticket_with_trailing_fleet_restart_not_reenqueued() {
+  local ws
+  ws=$(_setup_workspace)
+  _reconcile_env "$ws"
+  local queue_file
+  queue_file=$(_reconcile_queue_file "$ws")
+  rm -f "$queue_file" "${queue_file%.jsonl}-dead-letter.jsonl"
+
+  _plog_line "${ws}/CRE-15-pipeline.log" "META" "outcome" "info" "completed: STEP_6"
+  _plog_line "${ws}/CRE-15-pipeline.log" "META" "fleet-restart" "info" "restart orphan-reconciliation"
+
+  fleet_reconcile_orphans "$ws" "$queue_file" "" >/dev/null
+
+  if [ -f "$queue_file" ]; then
+    ! grep -q '"tid":"CRE-15"' "$queue_file" 2>/dev/null || {
+      echo "completed ticket CRE-15 was re-enqueued despite trailing fleet-restart line" >&2
       return 1
     }
   fi
@@ -987,6 +1036,7 @@ test_empty_tids_global_behavior_unchanged() {
 # ── Run all tests ────────────────────────────────────────────────────────────────
 
 _run "classify done" test_classify_done
+_run "classify done despite trailing fleet-restart line" test_classify_done_despite_trailing_fleet_restart_line
 _run "classify bare gate-stop marker as gate-stopped" test_classify_gate_stop
 _run "classify clean-exit gate-stop outcome as gate-stopped" test_classify_gate_stop_clean_exit_outcome_message
 _run "classify VERIFY_EXHAUSTED as gate-stopped" test_classify_verify_exhausted_is_gate_stopped
@@ -1002,6 +1052,7 @@ _run "classify missing log" test_classify_missing_log
 _run "classify dead-letter terminal" test_classify_dead_letter_terminal
 _run "orphan re-enqueued exactly once" test_orphan_reenqueued_exactly_once
 _run "done and gate-held left alone" test_done_and_gate_held_left_alone
+_run "completed ticket with trailing fleet-restart line not re-enqueued" test_completed_ticket_with_trailing_fleet_restart_not_reenqueued
 _run "adopted-live skipped" test_adopted_live_skipped
 _run "live worker process skipped" test_live_worker_process_skipped
 _run "auto-restart default enabled" test_auto_restart_default_enabled
