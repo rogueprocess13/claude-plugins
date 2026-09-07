@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## fleet-controller 0.27.0 (2026-09-08)
+## fleet-controller 0.28.0 (2026-09-08)
 
 D-11's GraphQL query for `state:execution` epics used doubled backslashes
 inside a single-quoted bash literal, producing invalid JSON — Linear
@@ -46,6 +46,45 @@ matching the escaping other Linear-query builders in this codebase use
 The broader "first-class epic-discovery capability" question raised in
 #313 (a `/fleet-controller discover`/`next` mode) is intentionally out of
 scope here — these are the two named, concretely-scoped bug fixes.
+
+## fleet-controller 0.27.0 (2026-09-08)
+
+Wires the missing CREATE half of the `'human'` hold lifecycle (#305).
+`_hold_reconcile_pass` has always handled RELEASE for both `'gate'` and
+`'human'` hold kinds — it reads rows `store.held_tickets()` already
+returns — but nothing ever called `store.set_hold(tid, 'human', ...)` for
+a fresh request: a repo-wide search found it exercised only by test files.
+Effect: when a phase agent emitted a valid `=== HUMAN_HOLD ===` block and
+`lib/human-hold-parse.sh` wrote the `META|human-hold|waiting|{json}`
+record, no row was ever created, so `_consume_queue_locked`'s `held=1`
+spawn guard never engaged — a re-enqueue could spawn a fresh worker over
+an active, unresolved hold.
+
+- New `Supervisor._human_hold_intake_pass`, called from `run_observe`'s
+  cycle body on its own cadence (`gate_hold.is_due`/
+  `FLEET_GATE_RECONCILE_INTERVAL`, tracked independently of the release
+  pass's own timer). For every ticket with a pipeline log, skips one
+  already held (`_store_ticket_is_held`) or genuinely terminal
+  (`_log_reached_terminal`), finds the latest valid unreleased
+  `META|human-hold` record (`_find_unreleased_human_hold` — a Python port
+  of `pipeline-finalize.sh`'s `_pf_has_unreleased_human_hold`), checks
+  `gate_hold.human_hold_attempt_exceeds_max` **before** minting a hold
+  (writing `META|gate-stop|fail|HUMAN_HOLD_EXHAUSTED` instead when it
+  would exceed `FLEET_HOLD_MAX_ATTEMPTS`), then mints the hold id and
+  calls `store.set_hold`, `gate_hold.post_human_hold_comment`, and
+  `fleet_notify_hold` on success.
+- Every store call goes through the existing `_store_do` fail-soft
+  wrapper — a store outage degrades to "creation deferred to next pass,"
+  never raises. Closes the gap for `'human'` only; the identical `'gate'`
+  gap remains tracked separately (`_create_phase_dispatch_hold` already
+  has a live caller on the phase-dispatch path, task 10.1.4).
+- 6 new unit/integration tests (`HumanHoldIntakePassTest` in
+  `test_supervisor.py`): fresh record creates the row with correct
+  fields, running the pass twice is idempotent, an exhausted attempt
+  count writes the gate-stop and creates no row, a genuinely terminal
+  ticket is skipped entirely, a freshly held ticket defers a queued
+  re-spawn, and `post_human_hold_comment`/`fleet_notify_hold` are each
+  called exactly once per hold.
 
 ## 0.45.1 (2026-09-08), fleet-controller 0.26.1
 

@@ -1137,6 +1137,16 @@ def _store_resolve_dispatch_position(state_dir, tid, project_dir=None,
         'resolve dispatch position')
 
 
+def _store_get_ticket(state_dir, tid):
+    """`store.get_ticket(tid)`, or `None` on any store failure/absence.
+
+    Shared by `_store_ticket_is_held` (below) and `_human_hold_intake_pass`
+    (#305) — both need the row itself, one for a single field, the other
+    for `hold_attempts`/`generation` defaults.
+    """
+    return _store_do(state_dir, lambda st: st.get_ticket(tid), 'get ticket')
+
+
 def _store_ticket_is_held(state_dir, tid):
     """Whether `tid`'s row currently has `held = 1`.
 
@@ -1550,6 +1560,31 @@ def _notify_worker_event(fleet_lib_dir, state_dir, tid, event_type, detail=''):
              f'fleet_notify_worker_event {shlex.quote(tid)} '
              f'{shlex.quote(str(state_dir))} {shlex.quote(event_type)} '
              f'{shlex.quote(detail)}'],
+            timeout=15, capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _notify_hold(fleet_lib_dir, state_dir, tid, transition):
+    """Fire `fleet_notify_hold <tid> <state_dir> <transition>` (#305).
+
+    Same shell-out shape as `_notify_worker_event` just above — bash
+    `fleet-notify.sh` remains the one Slack transport implementation, never
+    duplicated in Python. Fail-soft: an absent script, missing SLACK_* env,
+    or a transport failure must never stop the hold row from existing — the
+    row is what actually protects the ticket, regardless of whether this
+    call succeeds.
+    """
+    notify_script = Path(fleet_lib_dir) / 'fleet-notify.sh'
+    if not notify_script.is_file():
+        return
+    try:
+        subprocess.run(
+            ['bash', '-c',
+             f'source {shlex.quote(str(notify_script))} && '
+             f'fleet_notify_hold {shlex.quote(tid)} '
+             f'{shlex.quote(str(state_dir))} {shlex.quote(transition)}'],
             timeout=15, capture_output=True,
         )
     except (OSError, subprocess.SubprocessError):
@@ -2539,6 +2574,61 @@ def _log_reached_terminal(state_dir, tid):
     return False
 
 
+def _find_unreleased_human_hold(state_dir, tid):
+    """The latest valid, unreleased `META|human-hold` record for `tid`, or
+    `None`.
+
+    Python port of `_pf_has_unreleased_human_hold`
+    (ticket-auto-pipeline/lib/pipeline-finalize.sh) — same "latest valid
+    record, no later release marker" idempotency logic, ported here rather
+    than shelled out to because the intake pass needs the record's own
+    fields (`reason`, `blocks`, `questions`), not just a boolean. Keep the
+    two in sync; the bash version remains authoritative for what
+    `pipeline-finalize.sh` itself writes as `held: human`.
+
+    A record is a candidate only when its JSON parses and
+    `parse_status == "ok"` — `pipeline-finalize.sh` matches the same
+    substring; a present-but-`invalid` record (docs/human-hold-schema.md:
+    "An invalid request creates no hold row") never converts into a hold.
+    The latest candidate is unreleased iff no `META|human-hold-released`
+    line follows it — same forward scan, one pass over the log rather than
+    the bash version's two, since a single index comparison serves the same
+    purpose here as the bash version's separate `released_lineno`.
+
+    Returns `None` on a missing/unreadable log, no valid record at all, or
+    a valid record already superseded by a later release marker.
+    """
+    log_file = Path(state_dir) / f'{tid}-pipeline.log'
+    try:
+        lines = [ln for ln in log_file.read_text().splitlines() if ln]
+    except OSError:
+        return None
+
+    last_valid_idx = -1
+    last_valid_record = None
+    released_idx = -1
+    for idx, line in enumerate(lines):
+        fields = line.split('|')
+        if len(fields) < 3:
+            continue
+        step = fields[2]
+        if step == 'human-hold':
+            msg = '|'.join(fields[4:]) if len(fields) > 4 else ''
+            try:
+                record = json.loads(msg)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(record, dict) and record.get('parse_status') == 'ok':
+                last_valid_idx = idx
+                last_valid_record = record
+        elif step == 'human-hold-released':
+            released_idx = idx
+
+    if last_valid_idx < 0 or released_idx > last_valid_idx:
+        return None
+    return last_valid_record
+
+
 def _foreign_run_for_tid(state_dir, tid):
     """Read a ticket's log/activity state and ask `detect_foreign_run`.
 
@@ -2696,6 +2786,13 @@ class Supervisor:
         # "never run", so the first cycle always probes any held ticket
         # rather than waiting a full interval after a restart.
         self._hold_reconcile_last_run = None
+        # Human-hold intake pass's own cadence (#305) — the CREATE half of
+        # the hold lifecycle, tracked independently of the RELEASE half's
+        # timer above so either can be retuned without moving the other.
+        # Same `None`-means-never-run-yet convention: the first cycle
+        # always scans for a fresh record rather than waiting a full
+        # interval after a restart.
+        self._human_hold_intake_last_run = None
         # Deterministic-failure circuit breaker (worker-reap-recovery task
         # 3.8): a streak of fast, non-zero exits across the fleet — expired
         # auth, a bad CLAUDE_CMD — halts dispatch rather than burning
@@ -4292,6 +4389,97 @@ class Supervisor:
                     decision.gate_stop_code or 'GATE_HOLD_RECONCILE_FAILED')
             # HOLD / UNAVAILABLE: the row is deliberately left untouched.
 
+    def _human_hold_intake_pass(self):
+        """Creation half of the `'human'` hold lifecycle (#305).
+
+        `_hold_reconcile_pass` above only ever *releases* a hold — it reads
+        rows `store.held_tickets()` already returns, and that method only
+        ever returns rows where `held = 1`. Nothing converted a fresh
+        `META|human-hold|waiting|{json}` pipeline-log record into that row
+        in the first place, so the release pass, `_store_ticket_is_held`'s
+        spawn guard, and `post_human_hold_comment`/`fleet_notify_hold` all
+        shipped fully tested with zero live traffic. This is the missing
+        creation half — closes the gap for `'human'` only; the identical
+        gap for `'gate'` (`_create_phase_dispatch_hold` has its own caller
+        already, task 10.1.4) is out of scope here.
+
+        For every ticket with a pipeline log in this state dir, skips one
+        already held (`_store_ticket_is_held`) or genuinely terminal
+        (`_log_reached_terminal` — a completed or dead-lettered ticket is
+        never converted into a hold no matter what its last human-hold
+        record says). Finds the latest unreleased valid record via
+        `_find_unreleased_human_hold`; nothing to do if there is none.
+
+        `human_hold_attempt_exceeds_max` runs BEFORE `set_hold`, exactly
+        like `_reconcile_gate_hold`'s own pre-dispatch cap check — a ticket
+        that would exceed `FLEET_HOLD_MAX_ATTEMPTS` gets
+        `META|gate-stop|fail|HUMAN_HOLD_EXHAUSTED` instead of one more hold
+        row, and `post_human_hold_comment`/`fleet_notify_hold` are never
+        called for it.
+
+        Every store call goes through `_store_do`'s fail-soft wrapper (via
+        the `_store_*` module functions): a store outage degrades to
+        "creation deferred to next pass" for every step here, never a
+        raised exception — `mint_hold_id`/`set_hold` returning falsy just
+        means the loop moves to the next ticket and tries this one again
+        next pass.
+
+        Called from `run_observe`'s cycle body only, on its own cadence
+        (`_human_hold_intake_last_run`) — same reasoning as
+        `_hold_reconcile_pass`: `post_human_hold_comment` is a Linear round
+        trip, so this is not the 30s detection sweep either.
+        """
+        if _gate_hold_mod is None:
+            return
+        for log_file in sorted(self._state_dir.glob('*-pipeline.log')):
+            tid = log_file.name[:-len('-pipeline.log')]
+            if not tid:
+                continue
+            if _store_ticket_is_held(self._state_dir, tid):
+                continue
+            if _log_reached_terminal(self._state_dir, tid):
+                continue
+
+            record = _find_unreleased_human_hold(self._state_dir, tid)
+            if record is None:
+                continue
+
+            row = _store_get_ticket(self._state_dir, tid) or {}
+            hold_attempts = int(row.get('hold_attempts') or 0)
+            generation = int(row.get('generation') or 0)
+
+            if _gate_hold_mod.human_hold_attempt_exceeds_max(hold_attempts):
+                _append_pipeline_log_line(
+                    self._state_dir, tid, 'META', 'gate-stop', 'fail',
+                    'HUMAN_HOLD_EXHAUSTED')
+                continue
+
+            hold_id = _store_mint_hold_id(
+                self._state_dir, tid, generation, hold_attempts + 1)
+            if not hold_id:
+                # Store unavailable this pass — deferred to the next one,
+                # per the fail-soft contract above.
+                continue
+
+            rowcount = _store_set_hold(
+                self._state_dir, tid, 'human', hold_id,
+                reason=record.get('reason', ''), generation=generation)
+            if not rowcount:
+                # Already converted by an earlier pass (idempotent), or the
+                # store went away between mint and set — either way, no
+                # duplicate row and no duplicate comment/notification.
+                continue
+
+            questions = [
+                (q.get('id'), q.get('text', ''))
+                for q in (record.get('questions') or [])
+                if isinstance(q, dict)
+            ]
+            _gate_hold_mod.post_human_hold_comment(
+                tid, hold_id, record.get('blocks', ''), questions,
+                lib_dir=str(self._fleet_lib_dir))
+            _notify_hold(self._fleet_lib_dir, self._state_dir, tid, 'created')
+
     # ── run ─────────────────────────────────────────────────────────────────
 
     # ── OTel exporter supervision ──────────────────────────────────────────
@@ -4526,6 +4714,17 @@ class Supervisor:
                         self._hold_reconcile_last_run):
                     self._hold_reconcile_pass()
                     self._hold_reconcile_last_run = time.time()
+
+                # 4a-2. Human-hold intake pass (#305) — the CREATE half of
+                # the same lifecycle, on its own cadence (tracked
+                # separately from the release pass above, though it shares
+                # the same interval today). `post_human_hold_comment` is
+                # itself a Linear round trip per newly-detected hold, so
+                # this belongs beside 4a, not the 30s detection sweep.
+                if _gate_hold_mod is not None and _gate_hold_mod.is_due(
+                        self._human_hold_intake_last_run):
+                    self._human_hold_intake_pass()
+                    self._human_hold_intake_last_run = time.time()
 
                 # 4b. Restart the exporter if it died (no-op when disabled,
                 # already running, or still inside its backoff window).
