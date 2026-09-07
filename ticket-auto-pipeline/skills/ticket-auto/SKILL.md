@@ -1229,6 +1229,16 @@ FAIL_ACTION=warn-continue
 NEXT_PHASE=MAINTENANCE
 ```
 
+**After both spawns complete**, write the STEP_5 rollup line. `detect-resume.sh`'s
+STEP_5→STEP_6 transition looks for this exact marker — neither sub-skill writes it on
+its own (`ticket-document` writes its own `MAINTENANCE|document|done|` line and
+`wiki-maintenance` writes `MAINTENANCE|wiki-maintenance|done|`). Without this rollup
+line, a resumed run loops STEP_5 indefinitely:
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|maintenance|done|clean" >> "{LOG_FILE}"
+```
+
 ### STEP_5_5 — PR Comment Reconciliation
 
 **Before dispatching**, check `PR_FEEDBACK_CYCLE` from `detect-resume.sh`. Caps at 3,
