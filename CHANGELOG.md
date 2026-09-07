@@ -17,6 +17,34 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.45.0 (2026-09-07)
+
+Fix `ticket-pr-review`/`ticket-auto` false no-PR stop and unnecessary retro
+trigger for verification-only tickets (#318, follow-on to #149). A ticket
+whose IMPLEMENT phase makes no source diff (logged
+`IMPLEMENT|commit-push|skip|no source diff to commit`) never opens a PR by
+design — dispatching the real `ticket-pr-review` agent for one searched for a
+nonexistent PR and stopped with a false "no PR found" error. Found live on
+CRE-24 (a 5-microservice Phase A smoke-test ticket with no code diff).
+
+- **`ticket-pr-review/SKILL.md` Step 3** now recognizes the no-diff marker:
+  when IMPLEMENT logged `commit-push|skip` and the PR search returns no
+  results, it writes the terminal `PR-REVIEW|pr-review|done|N/A` line
+  directly and stops — there is no code to review. A genuine code-change
+  ticket that fails to open a PR still gets the original "Open a PR first"
+  stop.
+- **`ticket-auto/SKILL.md` STEP_6 retro-trigger Condition 2** (fixed for the
+  `PASS`-vs-`OK` bug in #149) widened to also accept the `N/A` marker
+  alongside `OK` — otherwise a fully successful no-diff verification ticket
+  still spawned an unnecessary retro every time.
+- Both diffs land together: STEP_6's fix is meaningless without PR-REVIEW
+  actually emitting the `N/A` marker it expects.
+- Two new behavioral tests in `test-pipeline-phases.sh` eval the *actual*
+  extracted Condition 2 bash against synthetic log fixtures — one confirming
+  `N/A` no longer triggers a retro, one confirming a genuinely missing
+  PR-REVIEW outcome still does. `make lint`/`fmt-check`/`check-generated` all
+  green.
+
 ## fleet-controller 0.26.0 (2026-09-06)
 
 Task group 10.1 of `openspec/changes/fleetd-phase-supervisor` (design.md D22):

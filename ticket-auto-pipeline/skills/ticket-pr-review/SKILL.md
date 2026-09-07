@@ -103,13 +103,26 @@ Record the checklist — it drives the validation in Step 5.
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|find-pr|start|Finding PR" >> "$LOG_FILE"
 
 ```bash
-gh pr list --search "{TICKET-ID} in:head" --json number,headRefName,baseRefName,url
+PR_LIST=$(gh pr list --search "{TICKET-ID} in:head" --json number,headRefName,baseRefName,url)
 ```
 
-If no PR is found → stop and tell the user:
+**No-diff exemption:** if IMPLEMENT logged `commit-push|skip` (no source diff — a
+verification-only ticket) and the search above returned no results, this is not a
+missing-PR error — it's the expected outcome for a ticket whose scope was
+verify-only. Write the terminal marker directly and stop; there is no code to
+review:
+
+```bash
+if [ -n "$LOG_FILE" ] && grep -q '|IMPLEMENT|commit-push|skip|' "$LOG_FILE" && [ "$(echo "$PR_LIST" | jq 'length')" = "0" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|pr-review|done|N/A — no PR (verification-only ticket, no source diff produced by IMPLEMENT)" >> "$LOG_FILE"
+  exit 0
+fi
+```
+
+Otherwise, if no PR is found → stop and tell the user:
 > "No open PR found for {TICKET-ID}. Open a PR first, then re-run."
 
-Capture: `number`, `headRefName`, `baseRefName`, `url`.
+Capture: `number`, `headRefName`, `baseRefName`, `url` (from `$PR_LIST`).
 Extract `owner` and `repo` from the PR URL (`https://github.com/{owner}/{repo}/pull/{number}`) for REST API calls in subsequent steps.
 
 Resolve the repo path from the CLAUDE.md codebase map based on the affected service.
