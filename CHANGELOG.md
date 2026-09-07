@@ -17,6 +17,36 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.28.0 (2026-09-08)
+
+D-11's GraphQL query for `state:execution` epics used doubled backslashes
+inside a single-quoted bash literal, producing invalid JSON — Linear
+returned HTTP 400 and the error was swallowed, so the detector always
+reported `{"severity":0,"findings":""}`. Reduced to a single backslash so
+the decoded query carries real quote characters around `"state:execution"`,
+matching the escaping other Linear-query builders in this codebase use
+(#313).
+
+- `fleet-dashboard.sh`'s report writer and terminal renderer both returned
+  early on 0 active per-ticket pipelines, before ever reaching the
+  Fleet-Wide Detectors section — so an idle workspace (exactly when an
+  operator most needs to see "here's an epic ready to dispatch") could
+  never surface a fleet-wide finding. Restructured both functions so the
+  per-ticket listing is skipped on zero pipelines but fleet-wide
+  detectors always run.
+- Fixed a pre-existing jq escaping bug in the same report-writer section
+  that silently dropped every detector finding's severity/text regardless
+  of active-pipeline count.
+- New regression tests in `test-fleet-detect.sh` (captures the actual
+  GraphQL request body and asserts it decodes as valid JSON with a
+  correctly-quoted `state:execution` filter) and
+  `test-fleet-dashboard.sh` (fleet-wide detectors surface with zero
+  active pipelines; jq escaping preserves finding severity/text).
+
+The broader "first-class epic-discovery capability" question raised in
+#313 (a `/fleet-controller discover`/`next` mode) is intentionally out of
+scope here — these are the two named, concretely-scoped bug fixes.
+
 ## fleet-controller 0.27.0 (2026-09-08)
 
 Wires the missing CREATE half of the `'human'` hold lifecycle (#305).

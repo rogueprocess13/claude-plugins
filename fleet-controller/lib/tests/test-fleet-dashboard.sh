@@ -264,10 +264,12 @@ test_write_report_includes_fleet_wide_section() {
   data='{"summary":{"total":0,"healthy":0,"warn":0,"kill":0,"restart":0},"pipelines":[],"fleet_wide":[{"name":"detect_planner_feedback","severity":1,"findings":"3 uncollected","type":"fleet-wide"}]}'
   fleet_write_report_from_data "$data" "$tmpdir" 2>/dev/null
   local report_file="$tmpdir/reports/fleet-dashboard.md"
+  local ok=1
   grep -q "Fleet-Wide Detectors" "$report_file" &&
     grep -q "detect_planner_feedback" "$report_file" &&
-    grep -q "3 uncollected" "$report_file"
+    grep -q "3 uncollected" "$report_file" && ok=0
   rm -rf "$tmpdir"
+  return "$ok"
 }
 
 test_write_report_fleet_wide_table_has_detector_row() {
@@ -277,12 +279,51 @@ test_write_report_fleet_wide_table_has_detector_row() {
   data='{"summary":{"total":0,"healthy":0,"warn":0,"kill":0,"restart":0},"pipelines":[],"fleet_wide":[{"name":"detect_blocked_by","severity":0,"findings":"clear","type":"fleet-wide"},{"name":"detect_initiative_dispatch","severity":1,"findings":"5 undispatched","type":"fleet-wide"}]}'
   fleet_write_report_from_data "$data" "$tmpdir" 2>/dev/null
   local report_file="$tmpdir/reports/fleet-dashboard.md"
+  local ok=1
   # Table header present
   grep -q "| Detector | Severity | Findings |" "$report_file" &&
     grep -q "detect_blocked_by" "$report_file" &&
     grep -q "detect_initiative_dispatch" "$report_file" &&
-    grep -q "5 undispatched" "$report_file"
+    grep -q "5 undispatched" "$report_file" && ok=0
   rm -rf "$tmpdir"
+  return "$ok"
+}
+
+# ── Bug B regression (issue #313): fleet-wide detectors must survive the
+# 0-active-pipelines early return, in BOTH the markdown report writer and the
+# terminal renderer. Before the fix, `total -eq 0` returned before the
+# Fleet-Wide Detectors section was ever reached — the two tests above passed
+# even on the buggy code because their final statement was `rm -rf`, whose
+# own exit status (not the preceding grep chain's) was implicitly returned.
+# These tests assert explicitly and also cover fleet_render_dashboard_from_data
+# (the terminal path used by `/fleet-controller monitor`/`status`, the exact
+# repro path in the issue), which the two tests above never exercised.
+
+test_write_report_fleet_wide_section_survives_zero_active_pipelines() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local data
+  data='{"summary":{"total":0,"healthy":0,"warn":0,"kill":0,"restart":0},"pipelines":[],"fleet_wide":[{"name":"detect_initiative_dispatch","severity":1,"findings":"1 undispatched: WIL-74(1)","type":"fleet-wide"}]}'
+  fleet_write_report_from_data "$data" "$tmpdir" 2>/dev/null
+  local report_file="$tmpdir/reports/fleet-dashboard.md"
+  local ok=1
+  grep -q "No active pipelines" "$report_file" &&
+    grep -q "## Fleet-Wide Detectors" "$report_file" &&
+    grep -q "detect_initiative_dispatch" "$report_file" &&
+    grep -q "WIL-74" "$report_file" && ok=0
+  rm -rf "$tmpdir"
+  return "$ok"
+}
+
+test_render_fleet_wide_section_survives_zero_active_pipelines() {
+  local data
+  data='{"summary":{"total":0,"healthy":0,"warn":0,"kill":0,"restart":0},"pipelines":[],"fleet_wide":[{"name":"detect_initiative_dispatch","severity":1,"findings":"1 undispatched: WIL-74(1)","type":"fleet-wide"}]}'
+  local output
+  output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
+  echo "$output" | grep -q "No active pipelines" &&
+    echo "$output" | grep -q "Fleet-Wide Detectors" &&
+    echo "$output" | grep -q "detect_initiative_dispatch" &&
+    echo "$output" | grep -q "WIL-74"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -309,6 +350,8 @@ for fn in \
   test_render_fleet_wide_clear_detector \
   test_write_report_includes_fleet_wide_section \
   test_write_report_fleet_wide_table_has_detector_row \
+  test_write_report_fleet_wide_section_survives_zero_active_pipelines \
+  test_render_fleet_wide_section_survives_zero_active_pipelines \
   test_findings_summary_no_files_returns_dash \
   test_findings_summary_counts_high_and_warn_separately \
   test_findings_summary_ignores_other_tickets \

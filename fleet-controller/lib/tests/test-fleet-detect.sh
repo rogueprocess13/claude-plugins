@@ -1173,6 +1173,52 @@ test_initiative_dispatch_no_stop_note_when_unstopped() {
   return 0
 }
 
+# ── D-11 query construction (issue #313 bug A) ────────────────────────────────────
+# _fleet_scan_initiative_dispatch's GraphQL query string was malformed
+# (\\"state:execution\\" inside a single-quoted bash literal produced invalid
+# JSON, so Linear returned HTTP 400, swallowed as {"severity":0,"findings":""}).
+# Capture the actual request body handed to curl (rather than discarding it,
+# as the other tests in this file do) and assert it is valid JSON whose
+# decoded .query field carries real quote characters around "state:execution".
+
+test_initiative_dispatch_query_is_valid_json() {
+  local ws
+  ws=$(_setup_workspace)
+  local captured="$ws/captured-request-body.json"
+  get_issue() { :; }
+  fleet_dispatch_initiative() { :; }
+  curl() {
+    cat >"$captured" # consume the -d @- body instead of discarding it
+    echo '{"data":{"issues":{"nodes":[]}}}'
+  }
+  source "$LIB_DIR/fleet-detect.sh"
+  _fleet_scan_initiative_dispatch "$ws" >/dev/null 2>&1
+
+  [ -s "$captured" ] || {
+    echo "curl was never invoked — no request body captured" >&2
+    rm -rf "$ws"
+    return 1
+  }
+
+  jq . "$captured" >/dev/null 2>&1 || {
+    echo "request body is not valid JSON: $(cat "$captured")" >&2
+    rm -rf "$ws"
+    return 1
+  }
+
+  local decoded_query
+  decoded_query=$(jq -r '.query' "$captured" 2>/dev/null)
+  rm -rf "$ws"
+
+  # The decoded GraphQL text must contain a real quoted string literal
+  # ("state:execution"), not a literal backslash-quote sequence.
+  echo "$decoded_query" | grep -qF '{eq:"state:execution"}' || {
+    echo "decoded query does not contain a correctly-quoted eq:\"state:execution\" filter: $decoded_query" >&2
+    return 1
+  }
+  return 0
+}
+
 # ── Gate-hold lifecycle detection (gate-check.sh compatibility) ───────────────────
 
 test_gate_held_fresh_not_stall() {
@@ -1298,6 +1344,7 @@ for fn in \
   test_gate_stop_from_gate_check_detected \
   test_initiative_dispatch_notes_stop_file \
   test_initiative_dispatch_no_stop_note_when_unstopped \
+  test_initiative_dispatch_query_is_valid_json \
   test_observer_finding_line_does_not_change_phase_failure_verdict \
   test_observer_findings_high_in_current_bracket_returns_warn \
   test_observer_findings_warn_severity_finding_does_not_escalate \
