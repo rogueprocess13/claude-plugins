@@ -366,10 +366,34 @@ _gate_entry() {
           _ticket_mode="api-only"
         fi
       fi
+    elif [ "${has_nav_path:-0}" = "0" ]; then
+      # has_nav_path=0 but has_test_user=1 (the only other way to reach this
+      # branch) — a ticket can have a genuine test user (e.g. an API-auth smoke
+      # test) while its only navigation targets are infra dashboards/registries
+      # (Eureka, Zipkin, a bare host:port) that has_nav_path's regex never
+      # recognizes. Left unhandled, _ticket_mode falls through to its "browser"
+      # default and the cross-validation block below false-holds on nav_gap no
+      # matter how the plan phrases its navigation targets.
+      local _feature_path_signals _infra_signals
+      _feature_path_signals=$(grep -ciP '/(handover|admin|user-permission|organisation|portfolio)/' "$artifact_path" 2>/dev/null || true)
+      _infra_signals=$(grep -ciP '(eureka|zipkin|actuator|config[- ]server|service registry|discovery server|localhost:[0-9]{2,5}|127\.0\.0\.1:[0-9]{2,5})' "$artifact_path" 2>/dev/null || true)
+      if [ "${_feature_path_signals//[^0-9]/}" = "0" ] 2>/dev/null && [ "${_infra_signals//[^0-9]/}" != "0" ] 2>/dev/null; then
+        _ticket_mode="infra-only"
+      fi
     fi
 
     missing_count=0
     case "$_ticket_mode" in
+    infra-only)
+      # Infra-only: dashboards/registries with no feature-path UI to navigate.
+      # Same shape as api-only (expected behavior + env prereqs only) — and,
+      # since this moves _ticket_mode away from "browser", it also prevents the
+      # nav_gap cross-validation false-hold at the block below (gated on
+      # `_ticket_mode = "browser"`).
+      _required_count=2
+      [ "$has_expected_behavior" = "0" ] && missing_count=$((missing_count + 1))
+      [ "$has_env_prereqs" = "0" ] && missing_count=$((missing_count + 1))
+      ;;
     build-only)
       # Build-only: require a concrete build/verify command plus a stated
       # success outcome, in place of browser/API-shaped prerequisites that
