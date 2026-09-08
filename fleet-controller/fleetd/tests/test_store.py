@@ -442,7 +442,13 @@ class TestRebuild(StoreTestCase):
     def test_pruning_removes_only_rows_past_the_retention_window(self):
         # Timestamps are generated relative to now, not hard-coded, so the
         # test does not start failing once the fixture dates age past the
-        # retention window.
+        # retention window. StoreTestCase.setUp's own CRE-1 pipeline/activity
+        # fixtures use hard-coded dates instead (by design, for tests that
+        # don't care about retention) — remove both here so neither can cross
+        # the 5-day window and inflate `removed` (prune_log_events sums
+        # log_events and activity_events together) as calendar time passes.
+        self.log.unlink()
+        self.activity.unlink()
         recent = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
         stale = time.strftime('%Y-%m-%dT%H:%M:%SZ',
                               time.gmtime(time.time() - 10 * 86400))
