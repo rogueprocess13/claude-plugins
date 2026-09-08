@@ -9,7 +9,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Resolve personas dir relative to plugin root (available in agent spawns), with
 # fallback to script-relative for local dev/testing. Follows the same pattern as
 # gate-check.sh and notes-parse.sh which use ${CLAUDE_PLUGIN_ROOT:-<fallback>}.
+# CLAUDE_PLUGIN_ROOT can be non-empty but wrong (e.g. a spawned worker's env
+# carries a different plugin's root) — ${VAR:-fallback} only falls back on
+# unset/empty, so validate the resolved dir actually has a personas/
+# subdirectory before trusting it; otherwise fall back to script-relative.
 PERSONAS_DIR="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/personas"
+if [ ! -d "$PERSONAS_DIR" ]; then
+  PERSONAS_DIR="$SCRIPT_DIR/../personas"
+fi
 
 # ── Usage ──────────────────────────────────────────────────────────────────────
 
@@ -430,7 +437,7 @@ main() {
   base_path=$(_persona_path "base/${base_role}.md")
 
   if [ -z "$base_path" ]; then
-    echo "ERROR: Base persona file not found: personas/base/${base_role}.md" >&2
+    echo "ERROR: Base persona file not found: personas/base/${base_role}.md (resolved PERSONAS_DIR=$PERSONAS_DIR)" >&2
     exit 2
   fi
 

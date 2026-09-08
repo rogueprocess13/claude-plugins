@@ -281,6 +281,49 @@ rc=$?
 set -e
 assert_exit_code "invalid --phase → exit 1" 1 "$rc"
 
+# ── Test: CLAUDE_PLUGIN_ROOT resolution (issue #328) ───────────────────────────
+
+echo "## CLAUDE_PLUGIN_ROOT resolution"
+
+# CLAUDE_PLUGIN_ROOT set to a path with no personas/ subdirectory (a wrong
+# plugin's root, as seen in a spawned worker's env) must fall back to
+# $SCRIPT_DIR/../personas and still resolve a real base persona file.
+output=$(CLAUDE_PLUGIN_ROOT="$TMPDIR/unknown-project" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "CLAUDE_PLUGIN_ROOT w/o personas/ → falls back to script-relative" "$output" "PERSONA_BASE" "backend-developer"
+
+fallback_base_path=$(echo "$output" | grep "^PERSONA_BASE=" | cut -d'=' -f2-)
+if [ -n "$fallback_base_path" ] && [ -f "$fallback_base_path" ]; then
+  PASS=$((PASS + 1))
+  echo "  PASS: fallback PERSONA_BASE path resolves to a real file"
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: fallback PERSONA_BASE path does not exist: $fallback_base_path" >&2
+fi
+
+# CLAUDE_PLUGIN_ROOT unset entirely (the original/default env) still works
+# exactly as before — regression guard for the pre-existing fallback.
+output=$(env -u CLAUDE_PLUGIN_ROOT "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "CLAUDE_PLUGIN_ROOT unset → still resolves backend-developer" "$output" "PERSONA_BASE" "backend-developer"
+
+# True not-found: CLAUDE_PLUGIN_ROOT points at a dir that DOES have a
+# personas/ subdirectory (so it is trusted and not falled back from), but is
+# missing the specific persona file. The error message must include the
+# resolved PERSONAS_DIR value, not just the relative path that was tried.
+mkdir -p "$TMPDIR/fake-plugin-root/personas/base"
+set +e
+CLAUDE_PLUGIN_ROOT="$TMPDIR/fake-plugin-root" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement >/dev/null 2>"$TMPDIR/stderr.txt"
+rc=$?
+set -e
+assert_exit_code "true not-found (valid root, missing file) → exit 2" 2 "$rc"
+
+if grep -q "PERSONAS_DIR=$TMPDIR/fake-plugin-root/personas" "$TMPDIR/stderr.txt"; then
+  PASS=$((PASS + 1))
+  echo "  PASS: not-found error includes resolved PERSONAS_DIR"
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: not-found error missing resolved PERSONAS_DIR — got: $(cat "$TMPDIR/stderr.txt")" >&2
+fi
+
 # ── Test: All emitted paths reference existing files ───────────────────────────
 
 echo "## Path existence"

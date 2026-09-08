@@ -6,7 +6,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# CLAUDE_PLUGIN_ROOT can be non-empty but wrong (e.g. a spawned worker's env
+# carries a different plugin's root) — ${VAR:-fallback} only falls back on
+# unset/empty, so validate the resolved dir actually has a personas/
+# subdirectory before trusting it; otherwise fall back to script-relative.
+# Same pattern as persona-select.sh.
 PERSONAS_DIR="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/personas"
+if [ ! -d "$PERSONAS_DIR" ]; then
+  PERSONAS_DIR="$SCRIPT_DIR/../personas"
+fi
 CHANGELOG="$PERSONAS_DIR/CHANGELOG.md"
 
 # ── Usage ──────────────────────────────────────────────────────────────────────
