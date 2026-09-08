@@ -17,6 +17,32 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.45.2 (2026-09-08)
+
+Fixes `persona-select.sh` failing to resolve `personas/base/backend-developer.md`
+(and other base persona files) even though every installed plugin version ships
+it (#328). `PERSONAS_DIR="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/personas"` only
+falls back to the script-relative path when `CLAUDE_PLUGIN_ROOT` is unset or
+empty — a spawned worker's environment can carry a non-empty `CLAUDE_PLUGIN_ROOT`
+that points at the wrong plugin's root, in which case `_persona_path` silently
+returned empty for every lookup and `main()` reported a generic "not found"
+error with no way to tell what `PERSONAS_DIR` actually resolved to.
+
+- `persona-select.sh` and `persona-refresh.sh` (same 2-line pattern, same root
+  cause) now validate that the resolved `CLAUDE_PLUGIN_ROOT/personas` exists as
+  a directory before trusting it, falling back to `$SCRIPT_DIR/../personas`
+  when it doesn't. The `CLAUDE_PLUGIN_ROOT` override mechanism itself is
+  unchanged — `gate-check.sh` and `notes-parse.sh` still rely on the same
+  `${CLAUDE_PLUGIN_ROOT:-<fallback>}` convention.
+- The base-persona-not-found error in `main()` now logs the resolved
+  `PERSONAS_DIR` alongside the relative path that was tried, so a genuine
+  not-found is self-diagnosing instead of requiring a manual repro.
+- New tests in `test-persona-select.sh`: `CLAUDE_PLUGIN_ROOT` pointing at a
+  directory with no `personas/` subdirectory falls back and still resolves
+  `backend-developer`; a true not-found (valid root, missing file) error
+  includes the resolved `PERSONAS_DIR` in its stderr; `CLAUDE_PLUGIN_ROOT`
+  unset still resolves as before (regression guard).
+
 ## fleet-controller 0.28.0 (2026-09-08)
 
 D-11's GraphQL query for `state:execution` epics used doubled backslashes
