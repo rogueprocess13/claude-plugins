@@ -1087,6 +1087,121 @@ test_auto_mode_blocks_integrated_in_fleet_detect_all() {
   [ "$sev" -eq 1 ] && echo "$anomalies" | grep -q "auto-block(S1)"
 }
 
+# ── Tool error detection (8th detector) — cross-generation scoping (#327) ────────
+# GitHub #327: {tid}-tool-errors.log spans a ticket's whole lifetime, never
+# rotated at a fleet-restart/campaign-resume boundary. Left unscoped, 3+
+# distinct errors from a STALE generation (a prior attempt, hours earlier)
+# false-KILL a brand-new, healthy generation that produced zero errors of its
+# own (WIL-75, WIL-76). Fix scopes the read to the live generation's
+# run-registry started_at, falling back to whole-file scanning when there is
+# no registry entry.
+
+_err_log() {
+  # Appends one {tid}-tool-errors.log line: iso|tool|type|phase|msg
+  local dir="$1" tid="$2" tool="$3" type="$4" iso="$5"
+  mkdir -p "$dir"
+  echo "${iso}|${tool}|${type}|IMPLEMENT|tool failed" >>"${dir}/${tid}-tool-errors.log"
+}
+
+_run_registry() {
+  # Writes a minimal {tid}-run.json registry entry with the given started_at.
+  local dir="$1" tid="$2" started_at="$3"
+  mkdir -p "$dir"
+  jq -nc --arg tid "$tid" --arg started_at "$started_at" \
+    '{tid: $tid, pid: "123", generation: 2, started_at: $started_at, reason: "resume"}' \
+    >"${dir}/${tid}-run.json"
+}
+
+test_tool_errors_no_file_returns_ok() {
+  local ws
+  ws=$(_setup_workspace)
+  source "$LIB_DIR/fleet-detect.sh"
+  local r
+  r=$(detect_tool_errors "NOEXIST-99" "$ws")
+  rm -rf "$ws"
+  [ "$r" -eq 0 ]
+}
+
+test_tool_errors_stale_generation_excluded_returns_ok() {
+  # 3+ distinct errors, all before started_at (a prior generation's original
+  # attempt), zero errors in the current generation → must not KILL.
+  local ws
+  ws=$(_setup_workspace)
+  _err_log "$ws" "WIL-75" "Bash" "timeout" "2026-09-08T01:00:00Z"
+  _err_log "$ws" "WIL-75" "Read" "not_found" "2026-09-08T01:01:00Z"
+  _err_log "$ws" "WIL-75" "Edit" "conflict" "2026-09-08T01:02:00Z"
+  _run_registry "$ws" "WIL-75" "2026-09-08T05:00:00Z"
+  source "$LIB_DIR/fleet-detect.sh"
+  local r
+  r=$(detect_tool_errors "WIL-75" "$ws")
+  rm -rf "$ws"
+  [ "$r" -eq 0 ]
+}
+
+test_tool_errors_current_generation_still_detected() {
+  # Regression guard: 3+ distinct errors AFTER started_at must still KILL.
+  local ws
+  ws=$(_setup_workspace)
+  _run_registry "$ws" "WIL-76" "2026-09-08T05:00:00Z"
+  _err_log "$ws" "WIL-76" "Bash" "timeout" "2026-09-08T05:01:00Z"
+  _err_log "$ws" "WIL-76" "Read" "not_found" "2026-09-08T05:02:00Z"
+  _err_log "$ws" "WIL-76" "Edit" "conflict" "2026-09-08T05:03:00Z"
+  source "$LIB_DIR/fleet-detect.sh"
+  local r
+  r=$(detect_tool_errors "WIL-76" "$ws")
+  rm -rf "$ws"
+  [ "$r" -eq 2 ]
+}
+
+test_tool_errors_mixed_generations_only_fresh_count() {
+  # 2 distinct stale errors (pre-started_at) + 1 distinct fresh error →
+  # only the fresh one counts, so this stays at WARN (1), not KILL.
+  local ws
+  ws=$(_setup_workspace)
+  _err_log "$ws" "WIL-77" "Bash" "timeout" "2026-09-08T01:00:00Z"
+  _err_log "$ws" "WIL-77" "Read" "not_found" "2026-09-08T01:01:00Z"
+  _run_registry "$ws" "WIL-77" "2026-09-08T05:00:00Z"
+  _err_log "$ws" "WIL-77" "Edit" "conflict" "2026-09-08T05:05:00Z"
+  source "$LIB_DIR/fleet-detect.sh"
+  local r
+  r=$(detect_tool_errors "WIL-77" "$ws")
+  rm -rf "$ws"
+  [ "$r" -eq 1 ]
+}
+
+test_tool_errors_no_registry_falls_back_to_whole_file() {
+  # No {tid}-run.json at all → whole-file scanning preserved (the pre-fix
+  # behaviour, still correct for a human running the pipeline by hand).
+  local ws
+  ws=$(_setup_workspace)
+  _err_log "$ws" "WIL-78" "Bash" "timeout" "2026-09-08T01:00:00Z"
+  _err_log "$ws" "WIL-78" "Read" "not_found" "2026-09-08T01:01:00Z"
+  _err_log "$ws" "WIL-78" "Edit" "conflict" "2026-09-08T01:02:00Z"
+  source "$LIB_DIR/fleet-detect.sh"
+  local r
+  r=$(detect_tool_errors "WIL-78" "$ws")
+  rm -rf "$ws"
+  [ "$r" -eq 2 ]
+}
+
+test_tool_errors_unreadable_started_at_falls_back_to_whole_file() {
+  # A registry entry exists but started_at is missing/unparseable →
+  # treated the same as no registry: whole-file scanning.
+  local ws
+  ws=$(_setup_workspace)
+  _err_log "$ws" "WIL-79" "Bash" "timeout" "2026-09-08T01:00:00Z"
+  _err_log "$ws" "WIL-79" "Read" "not_found" "2026-09-08T01:01:00Z"
+  _err_log "$ws" "WIL-79" "Edit" "conflict" "2026-09-08T01:02:00Z"
+  mkdir -p "$ws"
+  jq -nc --arg tid "WIL-79" '{tid: $tid, pid: "123", generation: 2, reason: "resume"}' \
+    >"${ws}/WIL-79-run.json"
+  source "$LIB_DIR/fleet-detect.sh"
+  local r
+  r=$(detect_tool_errors "WIL-79" "$ws")
+  rm -rf "$ws"
+  [ "$r" -eq 2 ]
+}
+
 # ── D-11 auto-dispatch workspace threading ────────────────────────────────────────
 # Regression: _fleet_scan_initiative_dispatch must forward its workspace to
 # fleet_dispatch_initiative. Without it the spawn queue resolved to a
@@ -1338,6 +1453,12 @@ for fn in \
   test_auto_mode_blocks_agent_log_denial_pattern \
   test_auto_mode_blocks_combined_pipeline_and_agent_blocks \
   test_auto_mode_blocks_integrated_in_fleet_detect_all \
+  test_tool_errors_no_file_returns_ok \
+  test_tool_errors_stale_generation_excluded_returns_ok \
+  test_tool_errors_current_generation_still_detected \
+  test_tool_errors_mixed_generations_only_fresh_count \
+  test_tool_errors_no_registry_falls_back_to_whole_file \
+  test_tool_errors_unreadable_started_at_falls_back_to_whole_file \
   test_auto_dispatch_forwards_workspace \
   test_gate_held_fresh_not_stall \
   test_gate_held_abandoned_detected \

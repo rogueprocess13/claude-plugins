@@ -896,6 +896,19 @@ detect_auto_mode_blocks() {
 # 8. Tool error detection — scans {tid}-tool-errors.log for agent tool-call failures.
 #    Deduplicates by TOOL_NAME+ERROR_TYPE within FLEET_TOOL_ERROR_WINDOW seconds.
 #    Severity scales with distinct error count.
+#
+# GitHub #327: {tid}-tool-errors.log is never rotated or truncated at a
+# fleet-restart/campaign-resume boundary — other consumers read it for full
+# history, so this function must not mutate it. Left unscoped, a resumed
+# worker's brand-new generation gets 3+ unique_errors carried over from a
+# prior generation's original attempt (hours earlier), false-KILLing a
+# generation that has produced zero real errors of its own (WIL-75, WIL-76).
+# Fix: resolve the live generation's spawn timestamp from the run registry
+# (same state_dir resolution _fleet_owns_ticket uses) and drop any log line
+# older than it BEFORE the dedup loop below sees it — the loop's own
+# key/window semantics are otherwise unchanged. No run-registry entry (or an
+# unreadable started_at) falls back to whole-file scanning, same as before
+# this fix — the normal case for a human running the pipeline by hand.
 detect_tool_errors() {
   local tid="$1"
   local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
@@ -904,6 +917,24 @@ detect_tool_errors() {
   if [ ! -f "$err_file" ] || [ ! -s "$err_file" ]; then
     echo "0"
     return
+  fi
+
+  local run_file=""
+  if declare -f _fleet_run_file >/dev/null 2>&1; then
+    run_file=$(_fleet_run_file "$tid" "$workspace" 2>/dev/null || true)
+  elif [ -n "${FLEET_STATE_DIR:-}" ]; then
+    run_file="${FLEET_STATE_DIR}/${tid}-run.json"
+  else
+    run_file="${workspace}/${tid}-run.json"
+  fi
+
+  local started_epoch=""
+  if [ -n "$run_file" ] && [ -f "$run_file" ]; then
+    local started_at
+    started_at=$(jq -r '.started_at // empty' "$run_file" 2>/dev/null || true)
+    if [ -n "$started_at" ]; then
+      started_epoch=$(date -d "$started_at" +%s 2>/dev/null || true)
+    fi
   fi
 
   local unique_errors=0
@@ -918,6 +949,14 @@ detect_tool_errors() {
     local epoch
     epoch=$(date -d "$iso" +%s 2>/dev/null || echo "0")
     [ "$epoch" = "0" ] && continue
+
+    # Generation-boundary filter (#327): a line older than the current
+    # generation's own spawn time belongs to a prior attempt — never enters
+    # the dedup state below, so it cannot count toward this generation's
+    # unique_errors or seed prev_key/prev_epoch for it.
+    if [ -n "$started_epoch" ] && [ "$epoch" -lt "$started_epoch" ]; then
+      continue
+    fi
 
     if [ "$key" != "$prev_key" ] || [ $((epoch - prev_epoch)) -ge "$window" ]; then
       unique_errors=$((unique_errors + 1))
