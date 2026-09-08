@@ -43,6 +43,34 @@ error with no way to tell what `PERSONAS_DIR` actually resolved to.
   includes the resolved `PERSONAS_DIR` in its stderr; `CLAUDE_PLUGIN_ROOT`
   unset still resolves as before (regression guard).
 
+## fleet-controller 0.28.1 (2026-09-08)
+
+`detect_tool_errors` read the ENTIRE `{tid}-tool-errors.log` file for a
+ticket's whole lifetime, with no scoping to the current generation/restart.
+Because the file is never rotated or truncated at a fleet-restart/campaign-
+resume boundary, tool errors from a ticket's original attempt (a prior
+generation, hours earlier) counted toward the KILL threshold for a
+brand-new, healthy generation that had produced zero real errors of its
+own — false-KILLing resumed workers WIL-75 and WIL-76 (8+ minutes, 18+
+cycles of false `tool-errors(S2)` flags) (#327).
+
+- Scoped the log read to entries at/after the current generation's spawn
+  timestamp: resolves `{tid}-run.json`'s `started_at` via the same
+  state-directory precedence `_fleet_owns_ticket` already uses (`_fleet_run_file`
+  → `FLEET_STATE_DIR` → workspace), then drops any tool-error line older
+  than it before the existing dedup loop runs. The dedup/window semantics
+  themselves (300s gap re-triggers a key as "new") are unchanged.
+- Read-time filter only — `{tid}-tool-errors.log` itself is never mutated,
+  since other consumers still read it for full history.
+- No run-registry entry (or an unreadable `started_at`) falls back to
+  whole-file scanning, preserving prior behavior for tickets not tracked
+  via the registry (e.g. a human running the pipeline by hand).
+- New regression coverage in `test-fleet-detect.sh`: a stale-generation
+  3+-distinct-error ticket now returns `0` instead of `2`; a
+  current-generation 3+-distinct-error ticket still returns `2`; mixed
+  stale+fresh errors count only the fresh ones; no-registry and
+  unreadable-`started_at` cases both fall back to whole-file scanning.
+
 ## fleet-controller 0.28.0 (2026-09-08)
 
 D-11's GraphQL query for `state:execution` epics used doubled backslashes
