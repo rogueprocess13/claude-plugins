@@ -82,7 +82,27 @@ def _run_startup_env_check():
         sys.exit(1)
 
 
+def _line_buffer_stdio():
+    """Force line-buffered stdout/stderr.
+
+    fleetd is normally started with stdout/stderr redirected to a log file
+    (`fleet-start.sh > fleetd.log 2>&1`), and a file-backed stream is
+    block-buffered by default — `print()` calls sit in Python's internal
+    buffer until it fills, so `fleetd.log` shows nothing but tracebacks
+    (which happen to coincide with process exit, flushing everything at
+    once) while the daemon is otherwise silently alive in between. `python3
+    -u` fixes this from the outside; this makes the daemon correct
+    regardless of how it is invoked.
+    """
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError, OSError):
+        pass  # e.g. stdout already closed/redirected in a way reconfigure rejects
+
+
 def main():
+    _line_buffer_stdio()
     args = sys.argv[1:]
     port = None
     state_dir = None

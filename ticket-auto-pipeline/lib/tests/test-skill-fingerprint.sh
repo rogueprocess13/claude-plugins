@@ -88,7 +88,7 @@ _sandbox() {
       "step_id": "STEP_A",
       "spawn": {
         "step": "alpha",
-        "skill": "/alpha",
+        "skill": "/ticket-auto-pipeline:alpha",
         "extra_flags": "--from-auto",
         "instructions": "run alpha carefully",
         "agent": "fake:alpha-agent"
@@ -98,7 +98,7 @@ _sandbox() {
       "step_id": "STEP_B",
       "spawn": {
         "step": "beta",
-        "skill": "/beta",
+        "skill": "/ticket-auto-pipeline:beta",
         "instructions": "run beta"
       }
     }
@@ -444,7 +444,7 @@ test_no_tmp_files_left_behind() {
 test_unmanifested_spawn_skill_is_reported() {
   local sb f
   sb=$(_sandbox)
-  _edit_table "$sb" '.steps += [{"step_id":"STEP_G","spawn":{"skill":"/gamma"}}]'
+  _edit_table "$sb" '.steps += [{"step_id":"STEP_G","spawn":{"skill":"/ticket-auto-pipeline:gamma"}}]'
 
   _hook "$sb" || {
     echo "  an unmanifested skill must not fail the hook"
@@ -477,7 +477,7 @@ test_nested_spawn_shapes_count_as_spawns() {
   # post_dispatch / sub_steps / sequence entries carry their own skill and
   # instructions and reach the model identically to a top-level spawn. The real
   # table uses all three shapes, so the union must not be steps[].spawn only.
-  _edit_table "$sb" '.steps[1].post_dispatch = [{"skill":"/delta","kind":"inspector"}]'
+  _edit_table "$sb" '.steps[1].post_dispatch = [{"skill":"/ticket-auto-pipeline:delta","kind":"inspector"}]'
 
   _hook "$sb" || return 1
   f=$(_artifact "$sb")
@@ -492,7 +492,7 @@ test_nested_spawn_shapes_count_as_spawns() {
 test_spawn_block_in_nested_shape_feeds_hash() {
   local sb before after
   sb=$(_sandbox)
-  _edit_table "$sb" '.steps[1].post_dispatch = [{"skill":"/alpha","instructions":"post alpha"}]'
+  _edit_table "$sb" '.steps[1].post_dispatch = [{"skill":"/ticket-auto-pipeline:alpha","instructions":"post alpha"}]'
   _hook "$sb" || return 1
   before=$(_sha "$sb" alpha)
 

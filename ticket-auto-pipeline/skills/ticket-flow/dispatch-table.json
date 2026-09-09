@@ -26,7 +26,7 @@
       "spawn": {
         "step": "appraise",
         "phase": "APPRAISE",
-        "skill": "/ticket-appraise",
+        "skill": "/ticket-auto-pipeline:ticket-appraise",
         "from_step_var": "APPRAISE_FROM",
         "extra_flags": null,
         "next_phase": "APPRAISE",
@@ -62,7 +62,7 @@
       "spawn": {
         "step": "reproduce",
         "phase": "REPRODUCE",
-        "skill": "/ticket-reproduce",
+        "skill": "/ticket-auto-pipeline:ticket-reproduce",
         "from_step_var": "REPRODUCE_FROM",
         "extra_flags": null,
         "next_phase": "REPRODUCE",
@@ -84,7 +84,7 @@
       "spawn": {
         "step": "exec",
         "phase": "EXEC",
-        "skill": "/ticket-appraise-exec",
+        "skill": "/ticket-auto-pipeline:ticket-appraise-exec",
         "from_step_var": "EXEC_FROM",
         "extra_flags": null,
         "next_phase": "EXEC",
@@ -155,7 +155,7 @@
       "spawn": {
         "step": "reconcile",
         "phase": "GATE",
-        "skill": "/ticket-gate-reconcile",
+        "skill": "/ticket-auto-pipeline:ticket-gate-reconcile",
         "from_step_var": null,
         "extra_flags": null,
         "next_phase": "GATE",
@@ -177,7 +177,7 @@
       "spawn": {
         "step": "implement",
         "phase": "IMPLEMENT",
-        "skill": "/ticket-implement",
+        "skill": "/ticket-auto-pipeline:ticket-implement",
         "from_step_var": "IMPLEMENT_FROM",
         "extra_flags": "--from-auto --mode extract",
         "next_phase": "IMPLEMENT",
@@ -219,7 +219,7 @@
           "kind": "inspector",
           "phase": "IMPLEMENT",
           "step": "phase-inspector-implement",
-          "skill": "/guidance-extractor",
+          "skill": "/ticket-auto-pipeline:guidance-extractor",
           "blocking": false,
           "description": "RLVR Phase 1 advisory inspection. Spawned only when assemble_inspector_context yields INSPECTOR_INSTRUCTIONS. Captured with ATTEMPT=inspector so it appends rather than overwriting the implement agent's own capture.",
           "agent": "ticket-auto-pipeline:guidance-extractor-agent"
@@ -254,7 +254,7 @@
       "spawn": {
         "step": "verify",
         "phase": "VERIFY",
-        "skill": "/ticket-verify",
+        "skill": "/ticket-auto-pipeline:ticket-verify",
         "from_step_var": "VERIFY_FROM",
         "extra_flags": "--from-auto --mode extract",
         "next_phase": "VERIFY",
@@ -300,7 +300,7 @@
           "kind": "inspector",
           "phase": "VERIFY",
           "step": "phase-inspector-verify",
-          "skill": "/guidance-extractor",
+          "skill": "/ticket-auto-pipeline:guidance-extractor",
           "blocking": false,
           "description": "Runs before the retry/advance decision but does not affect it.",
           "agent": "ticket-auto-pipeline:guidance-extractor-agent"
@@ -328,7 +328,7 @@
       "spawn": {
         "step": "pr-review",
         "phase": "PR-REVIEW",
-        "skill": "/ticket-pr-review",
+        "skill": "/ticket-auto-pipeline:ticket-pr-review",
         "from_step_var": null,
         "extra_flags": null,
         "next_phase": "PR-REVIEW",
@@ -353,7 +353,7 @@
         {
           "step": "pr-iterate",
           "phase": "PR-REVIEW",
-          "skill": "/ticket-pr-iterate",
+          "skill": "/ticket-auto-pipeline:ticket-pr-iterate",
           "next_phase": "PR-REVIEW",
           "description": "Iterate on PR feedback",
           "instructions": "Apply the requested changes from the PR review."
@@ -365,7 +365,7 @@
           "kind": "inspector",
           "phase": "PR-REVIEW",
           "step": "phase-inspector-pr-review",
-          "skill": "/guidance-extractor",
+          "skill": "/ticket-auto-pipeline:guidance-extractor",
           "blocking": false,
           "description": "Advisory inspection; does not affect the verdict routing.",
           "agent": "ticket-auto-pipeline:guidance-extractor-agent"
@@ -396,7 +396,7 @@
         {
           "step": "document",
           "phase": "MAINTENANCE",
-          "skill": "/ticket-document",
+          "skill": "/ticket-auto-pipeline:ticket-document",
           "next_phase": "MAINTENANCE",
           "description": "Generate ai-context.md documentation",
           "instructions": "Follow the skill exactly.",
@@ -405,7 +405,7 @@
         {
           "step": "wiki-maintenance",
           "phase": "MAINTENANCE",
-          "skill": "/wiki-maintenance",
+          "skill": "/ticket-auto-pipeline:wiki-maintenance",
           "next_phase": "MAINTENANCE",
           "description": "Process wiki errata and update documentation",
           "instructions": "Follow the skill exactly.",
@@ -434,7 +434,7 @@
       "spawn": {
         "step": "pr-reconcile",
         "phase": "PR-REVIEW",
-        "skill": "/ticket-pr-iterate",
+        "skill": "/ticket-auto-pipeline:ticket-pr-iterate",
         "from_step_var": null,
         "extra_flags": null,
         "next_phase": "PR-REVIEW",
@@ -465,7 +465,7 @@
       "spawn": {
         "step": "retro",
         "phase": "MAINTENANCE",
-        "skill": "/ticket-retro",
+        "skill": "/ticket-auto-pipeline:ticket-retro",
         "conditional_on": "NEEDS_RETRO",
         "agent": null
       },

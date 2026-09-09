@@ -109,7 +109,15 @@ while IFS= read -r skill; do
   # Every spawn-shaped block naming this skill, in document order. Deliberately
   # not just .steps[].spawn: post_dispatch, sub_steps and sequence entries carry
   # their own instructions and reach the model identically.
-  spawns=$(jq -c --arg s "/$skill" \
+  #
+  # dispatch-table.json's `skill` values are plugin-qualified
+  # (`/ticket-auto-pipeline:ticket-verify`, headless-worker-isolation Task C —
+  # a bare `/ticket-verify` can be shadowed at skill-resolution time by a
+  # stale personal skill of the same name under ~/.claude/skills/, which is
+  # exactly the failure this table now avoids at spawn time); prompt_manifests
+  # keys stay bare (`ticket-verify`) since they are just artifact labels, so
+  # the qualifier is re-added here for the comparison.
+  spawns=$(jq -c --arg s "/ticket-auto-pipeline:$skill" \
     '[.. | objects | select(has("skill")) | select(.skill == $s)]' \
     "$TABLE" 2>/dev/null || echo "[]")
 
@@ -140,8 +148,11 @@ done < <(jq -r '.prompt_manifests | keys[]' "$TABLE" 2>/dev/null || true)
 
 # A spawnable skill with no manifest is a report, never an error: a newly added
 # spawn step becomes an observable fact in the artifact instead of a silent hole.
+# Strip both the leading "/" and the plugin qualifier before comparing against
+# prompt_manifests' bare keys (see the `spawns` comment above).
 UNMANIFESTED=$(jq -c '
-  ([.. | objects | select(has("skill")) | .skill | ltrimstr("/")] | unique)
+  ([.. | objects | select(has("skill")) | .skill
+    | ltrimstr("/") | ltrimstr("ticket-auto-pipeline:")] | unique)
   - (.prompt_manifests | keys)' "$TABLE" 2>/dev/null || echo "[]")
 
 OUT_TMP="${OUT_FILE}.tmp.$$"

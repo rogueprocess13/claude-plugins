@@ -17,6 +17,48 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.49.0 (2026-09-09)
+
+Also `fleet-controller` 0.30.0. Root-caused from a live WIL-77 failure: three consecutive
+generations of a fleetd-spawned `/ticket-auto` worker ran `ps aux | grep ticket-auto`, matched
+their own command line, concluded a conflicting worker was already running, and stopped to ask a
+nonexistent human which one should win — each false stop became a claude-mem observation that
+seeded the next generation's context, compounding the mistake across restarts. Headless-worker
+isolation, three changes:
+
+1. **No-questions, no-ps-inspection contract** (`fleet-controller`): every worker fleetd spawns
+   now carries `HEADLESS_WORKER_CONTRACT` via `--append-system-prompt` (`_build_worker_cmd`) —
+   forbids process-table inspection and asking a question, points the worker at its own
+   `FLEET_WORKER_PID` env var instead of `ps`. Skipped when `CLAUDE_CMD` already sets its own
+   system prompt.
+2. **User-scope settings isolation** (`fleet-controller`): `FLEET_WORKER_ISOLATE_SETTINGS`
+   (default true) appends `--setting-sources project,local` plus a `--settings` override
+   re-enabling only `ticket-auto-pipeline`/`fleet-controller` — live-probed as the actual
+   mechanism that silences claude-mem's plugin SessionStart hook (the 12KB "recent context"
+   block that seeded the false positive above), output-style hooks, and caveman mode, all three
+   enabled only at user scope. Secrets are unaffected — they reach the worker via fleetd's own
+   process environment, never Claude Code's user-settings merge.
+3. **Plugin-qualified skill invocation** (`ticket-auto-pipeline`): every `spawn.skill` value in
+   `dispatch-table.json`, plus fleetd's default `/ticket-auto` invocation and the hardcoded
+   `/ticket-pr-iterate` retry spawn, now read `/ticket-auto-pipeline:{skill}` — a bare
+   `/ticket-auto` can resolve to a stale personal skill of the same name under
+   `~/.claude/skills/` instead of the plugin's current version, which is exactly what the WIL-77
+   worker ran (a months-out-of-date `SKILL.md`, per its own transcript). `hooks/skill-fingerprint.sh`
+   updated to match the qualified strings against `prompt_manifests`' bare keys. Also fixes
+   `fleetd`'s log blindness (block-buffered stdout hid everything but tracebacks from
+   `fleetd.log`) with `sys.stdout.reconfigure(line_buffering=True)`.
+
+Also fixed: `detect-resume.sh` fell through an unresolved `ADVERSARIAL_BLOCKED` gate-stop to
+`STEP_2_5` instead of forcing a resume that replays both `regression-guard` and
+`adversarial-review`.
+
+Out of scope for this release, tracked separately: the pre-plugin-era personal skill directories
+under `~/.claude/skills/ticket-*` (a dotfiles-repo artifact of `install.sh`'s historical
+host-side migration) still shadow the plugin for a *human* typing a bare `/ticket-auto`
+interactively — change 3 above closes this for every fleetd-spawned worker, the only place it
+was silently dangerous, but does not migrate the ~60-file `~/.claude/skills/lib/` mirroring
+convention itself.
+
 ## 0.48.0 (2026-09-09)
 
 The project wiki (`WIKI_ROOT`) is the only cross-repo knowledge source the pipeline has, but it

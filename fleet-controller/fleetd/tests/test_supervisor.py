@@ -3320,9 +3320,9 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
         default = _build_worker_cmd('CRE-9', claude_bin='claude')
         phased = _build_worker_cmd('CRE-9', claude_bin='claude',
                                    prompt='/ticket-verify CRE-9 --from-auto')
-        self.assertIn('/ticket-auto CRE-9 --auto --from-planned', default)
+        self.assertIn('/ticket-auto-pipeline:ticket-auto CRE-9 --auto --from-planned', default)
         self.assertIn('/ticket-verify CRE-9 --from-auto', phased)
-        self.assertNotIn('/ticket-auto CRE-9 --auto --from-planned', phased)
+        self.assertNotIn('/ticket-auto-pipeline:ticket-auto CRE-9 --auto --from-planned', phased)
         # Everything that is not the prompt is identical — session handling,
         # output format and permission mode are properties of a headless
         # worker, not of which phase it runs.
@@ -3401,6 +3401,109 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
         idx = cmd.index('--output-format')
         self.assertEqual(cmd[idx + 1], 'json')
         self.assertNotIn('--verbose', cmd)
+
+    def test_build_worker_cmd_appends_headless_contract_by_default(self):
+        """headless-worker-isolation: every worker gets the no-questions,
+        no-ps-inspection contract, ticket-level and phase-level alike."""
+        from fleetd.supervisor import (
+            HEADLESS_WORKER_CONTRACT, _build_worker_cmd,
+        )
+
+        for is_phase_worker in (False, True):
+            cmd = _build_worker_cmd('CRE-9', claude_bin='claude',
+                                    is_phase_worker=is_phase_worker)
+            self.assertIn('--append-system-prompt', cmd)
+            idx = cmd.index('--append-system-prompt')
+            self.assertEqual(cmd[idx + 1], HEADLESS_WORKER_CONTRACT)
+            # A fully rendered string — no leftover Python format
+            # placeholder from a broken template.
+            self.assertNotIn('{', HEADLESS_WORKER_CONTRACT)
+            self.assertNotIn('}', HEADLESS_WORKER_CONTRACT)
+            # Content assertions that matter for the failure mode this
+            # fixes (WIL-77): must forbid ps/process-table inspection and
+            # must forbid asking a question.
+            self.assertIn('never ask a question', HEADLESS_WORKER_CONTRACT)
+            self.assertIn('never inspect the process', HEADLESS_WORKER_CONTRACT)
+            self.assertIn('`ps`', HEADLESS_WORKER_CONTRACT)
+            self.assertIn('FLEET_WORKER_PID', HEADLESS_WORKER_CONTRACT)
+
+    def test_build_worker_cmd_skips_system_prompt_when_cmd_already_sets_it(self):
+        """CLAUDE_CMD specifying its own system prompt takes precedence —
+        same override pattern as --permission-mode and --agent."""
+        from fleetd.supervisor import _build_worker_cmd
+
+        cmd = _build_worker_cmd(
+            'CRE-9',
+            claude_cmd='claude --append-system-prompt "custom contract"')
+        self.assertEqual(cmd.count('--append-system-prompt'), 1)
+        idx = cmd.index('--append-system-prompt')
+        self.assertEqual(cmd[idx + 1], 'custom contract')
+
+    def test_build_worker_cmd_isolates_settings_by_default(self):
+        """headless-worker-isolation Task B: drop user-scope settings
+        (claude-mem/output-style/caveman all live only there) but re-enable
+        the two plugins the pipeline needs via an explicit --settings
+        override, so skill/agent resolution survives the drop."""
+        import json as _json
+        from fleetd.supervisor import _build_worker_cmd
+
+        cmd = _build_worker_cmd('CRE-9', claude_bin='claude')
+        self.assertIn('--setting-sources', cmd)
+        idx = cmd.index('--setting-sources')
+        self.assertEqual(cmd[idx + 1], 'project,local')
+        self.assertIn('--settings', cmd)
+        settings_idx = cmd.index('--settings')
+        payload = _json.loads(cmd[settings_idx + 1])
+        enabled = payload['enabledPlugins']
+        self.assertTrue(enabled['ticket-auto-pipeline@willard-pro-claude-plugins'])
+        self.assertTrue(enabled['fleet-controller@willard-pro-claude-plugins'])
+        # Nothing else gets re-enabled — the two pipeline plugins only.
+        self.assertEqual(len(enabled), 2)
+
+    def test_build_worker_cmd_settings_isolation_uses_configured_marketplace(self):
+        """FLEET_WORKER_PLUGIN_MARKETPLACE overrides the default slug — the
+        marketplace name is a property of how a given host added it, not of
+        the plugins themselves."""
+        import json as _json
+        from unittest import mock
+        from fleetd import supervisor as sup_mod
+        from fleetd.supervisor import _build_worker_cmd
+
+        with mock.patch.object(sup_mod, 'FLEET_WORKER_PLUGIN_MARKETPLACE',
+                                'custom-marketplace'):
+            cmd = _build_worker_cmd('CRE-9', claude_bin='claude')
+        settings_idx = cmd.index('--settings')
+        payload = _json.loads(cmd[settings_idx + 1])
+        self.assertIn('ticket-auto-pipeline@custom-marketplace',
+                      payload['enabledPlugins'])
+        self.assertIn('fleet-controller@custom-marketplace',
+                      payload['enabledPlugins'])
+
+    def test_build_worker_cmd_skips_settings_isolation_when_disabled(self):
+        """FLEET_WORKER_ISOLATE_SETTINGS=false is the escape hatch back to
+        pre-Task-B behavior — an operator who wants their own user-scope
+        customizations on the worker can opt out."""
+        from unittest import mock
+        from fleetd import supervisor as sup_mod
+        from fleetd.supervisor import _build_worker_cmd
+
+        with mock.patch.object(sup_mod, 'FLEET_WORKER_ISOLATE_SETTINGS', False):
+            cmd = _build_worker_cmd('CRE-9', claude_bin='claude')
+        self.assertNotIn('--setting-sources', cmd)
+        self.assertNotIn('--settings', cmd)
+
+    def test_build_worker_cmd_skips_settings_isolation_when_cmd_already_sets_it(self):
+        """CLAUDE_CMD specifying its own --setting-sources takes precedence
+        — same override pattern as permission mode, --agent and the system
+        prompt above."""
+        from fleetd.supervisor import _build_worker_cmd
+
+        cmd = _build_worker_cmd(
+            'CRE-9', claude_cmd='claude --setting-sources user,project,local')
+        self.assertEqual(cmd.count('--setting-sources'), 1)
+        idx = cmd.index('--setting-sources')
+        self.assertEqual(cmd[idx + 1], 'user,project,local')
+        self.assertNotIn('--settings', cmd)
 
     def test_spawn_worker_writes_ndjson_stdout_for_a_phase_worker_when_observer_enabled(self):
         """spawn_worker's own file-extension choice, independent of cmd_override."""
