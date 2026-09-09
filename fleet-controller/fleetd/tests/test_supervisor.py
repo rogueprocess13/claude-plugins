@@ -36,6 +36,10 @@ from pathlib import Path
 FLEETD_DIR = Path(__file__).resolve().parent.parent
 FLEET_CONTROLLER_DIR = FLEETD_DIR.parent
 MODULE = 'fleet-controller.fleetd'
+TABLE_PATH = (
+    FLEET_CONTROLLER_DIR.parent / 'ticket-auto-pipeline' / 'skills'
+    / 'ticket-flow' / 'dispatch-table.json'
+)
 
 # These tests spawn real fleetd subprocesses to exercise supervisor
 # mechanics (health endpoint, single-instance lock, registry, reap/advance
@@ -3533,19 +3537,31 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
         self.assertTrue((self.workspace / 'TST-OBS2-gen1.json').is_file())
 
     def test_spawn_phase_worker_builds_from_the_canonical_table(self):
-        """End to end: a step id in, a forked phase worker out."""
+        """End to end: a step id in, a forked phase worker out.
+
+        Loads the table from the repo path explicitly rather than through
+        `spawn_phase_worker`'s own ambient `DispatchTable.load()` default,
+        which prefers an installed `~/.claude/skills/ticket-flow/` mirror
+        over the repo copy when one exists on the machine running the test
+        (`dispatch_table_path()`'s deliberate "never silently prefer a stale
+        checkout" precedence) — this assertion cares about the table's exact
+        content, so it must not depend on what happens to be mirrored there.
+        """
+        from fleetd import phase_dispatch as phase_mod
         from fleetd.supervisor import spawn_phase_worker
 
+        table = phase_mod.DispatchTable.load(TABLE_PATH)
         pid, session_id, spawn = spawn_phase_worker(
             'TST-SPW', 'STEP_4_5', 1, str(self.workspace),
             log_file='/w/logs/TST-SPW-pipeline.log',
-            counters={'VERIFY_ATTEMPTS': 0}, attempt=1,
+            table=table, counters={'VERIFY_ATTEMPTS': 0}, attempt=1,
             cmd_override=[sys.executable, '-c', 'import time; time.sleep(1)'],
         )
         try:
             self.assertEqual(spawn.phase, 'VERIFY')
             self.assertEqual(spawn.step, 'verify')
-            self.assertTrue(spawn.prompt.startswith('/ticket-verify TST-SPW'))
+            self.assertTrue(spawn.prompt.startswith(
+                '/ticket-auto-pipeline:ticket-verify TST-SPW'))
             self.assertTrue(session_id)
             entry = json.loads(
                 (self.workspace / 'TST-SPW-verify-run.json').read_text())
