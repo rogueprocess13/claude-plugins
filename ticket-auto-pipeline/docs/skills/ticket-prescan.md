@@ -38,6 +38,7 @@ Call manually via `/ticket-prescan [path]` or auto-invoked by the ticket-auto ro
 | `INDEX.md` | `.ticket-auto/<slug>/docs/INDEX.md` | Lookup by Topic/Service tables (technical-writer) |
 | `system.md` | `.ticket-auto/system.md` | Cross-repo FE→BE contract map |
 | CLAUDE.md block | Repo `CLAUDE.md` | Managed `<!-- ticket-auto:agent-knowledge -->` block |
+| Cross-repo row | `.ticket-auto/<slug>/docs/INDEX.md` | `\| Cross-repo \| {WIKI_ROOT}/index.md \|` row in Lookup by Topic, when `WIKI_ROOT` is configured |
 
 ## How it works
 
@@ -71,10 +72,10 @@ flowchart TD
 | `prescan-docs.sh` | Graph→markdown distiller — gitnexus JSON to `services/*.md`, `routes.md`, `processes.md`, `INDEX.md` |
 | `prescan-route.sh` | INDEX.md keyword→file router — deterministic keyword matching for appraise Tier 1 consumption |
 | `prescan-verify.sh` | Post-scan quality assertions — file existence, content quality, security warning, INDEX.md tables |
-| `prescan-wire-claude-md.sh` | Managed block injection — idempotent CLAUDE.md `<!-- ticket-auto:agent-knowledge -->` block |
+| `prescan-wire-claude-md.sh` | Managed block injection — idempotent CLAUDE.md `<!-- ticket-auto:agent-knowledge -->` block, plus an idempotent `Cross-repo` row in INDEX.md's Lookup by Topic table when `--wiki-root` is given |
 
 ## Related skills
 
-- [`/ticket-appraise`](ticket-appraise.md) — consumes prescan docs in Step 3a (Tier 1: INDEX.md routing, Tier 2: corpus fallback, Tier 3: wiki)
+- [`/ticket-appraise`](ticket-appraise.md) — consumes prescan docs (per-repo, Tier 1 INDEX.md routing + Tier 2 corpus fallback) and `WIKI_ROOT` (cross-repo, loaded alongside prescan) in Step 3a
 - [`/ticket-auto`](ticket-auto.md) — auto-invokes prescan before Step 1 if docs are stale/missing
 - [`/ticket-setup`](ticket-setup.md) — Step 0 env-check and repo enumeration reused by prescan

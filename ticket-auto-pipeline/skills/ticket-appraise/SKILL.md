@@ -419,11 +419,25 @@ Do NOT block the pipeline on GitNexus availability. The complexity classificatio
 
 Based on the ticket's description and labels, identify which service(s) are involved. Use the codebase map from CLAUDE.md to find the right repository under `{REPOS_ROOT}` (resolved in Step 0.5).
 
-### 3a — Load prescan knowledge (Tier 1), then wiki (Tier 3)
+### 3a — Load prescan knowledge (per-repo) and wiki (cross-repo) together
 
-Prescan-agent docs under `REPOS_ROOT/.ticket-auto/<repo-slug>/docs/` are the preferred knowledge source — pre-built, freshness-tracked, and verified against live source. The fallthrough chain is:
+Prescan-agent docs under `REPOS_ROOT/.ticket-auto/<repo-slug>/docs/` are the preferred
+**per-repo** knowledge source — pre-built, freshness-tracked, and verified against live source.
+`WIKI_ROOT` is the cross-repo counterpart: prescan is scoped to one repo at scan time and
+cannot answer a ticket that spans services (billing across bom + credit-report, a handover
+export across gateway + debt-collection), or document a convention that cuts across all of
+them — no matter how fresh that one repo's prescan is. A ticket that only ever reaches prescan
+never sees that knowledge, and prescan can itself go stale on exactly the facts wiki holds
+durably: `.ticket-auto/gateway/docs/overview.md` describing a routing layer a service migration
+already replaced is a per-repo doc being right about its own repo and wrong about the
+cross-cutting picture.
 
-**Tier 1 → prescan INDEX.md routing** → **Tier 2 → claude-mem corpus** → **Tier 3 → WIKI_ROOT** → **Path B from-scratch**
+So both are loaded in the same step, not staged as a fallback chain ending in wiki:
+
+**Tier 1 → prescan INDEX.md routing (per-repo)** → **Tier 2 → claude-mem corpus (per-repo,
+semantic)** → **wiki (cross-repo — loaded alongside Tier 1 in 3a.0b, routed to as a primary
+source whenever the ticket's scope is multi-repo or a wiki index topic matches; also the
+fallback when Tiers 1-2 return nothing for a single-repo ticket)** → **Path B from-scratch**
 
 ---
 
@@ -445,7 +459,38 @@ For each repo in the list, derive the slug and check freshness:
 3. Record the status:
    - `PRESCAN_STATUS=fresh` → trust prescan docs, tag findings `(prescan-confirmed)`
    - `PRESCAN_STATUS=stale` or `decayed` → load prescan docs but treat ALL entries as **unconfirmed** — re-verify every file:line reference against live source before trusting. Demote unverifiable entries to open questions.
-   - `PRESCAN_STATUS=missing` → skip prescan entirely, fall through to Tier 3 (wiki).
+   - `PRESCAN_STATUS=missing` → skip prescan entirely for that repo, fall through to the wiki (3a.3).
+
+Count `${#REPOS[@]}` — this is the ticket's affected-repo count, needed by 3a.0b below. It
+counts every repo under `REPOS_ROOT` that `prescan-route.sh` considers plausibly in scope for
+this ticket (title/description/labels match), not just repos with a fresh prescan.
+
+---
+
+#### 3a.0b — Always load WIKI_ROOT/index.md, and decide whether to route to it
+
+Regardless of prescan status, if `{WIKI_ROOT}` is set (from Step 0.5), read `{WIKI_ROOT}/index.md`
+now. It is short by design (~110 lines) — cheap enough to load unconditionally rather than wait
+for Tiers 1-2 to come up empty first. Prescan is per-repo and cannot answer a cross-repo
+question no matter how fresh it is, so there is nothing to lose by loading the wiki's own index
+alongside prescan's.
+
+Determine two routing signals:
+
+1. **Multi-repo scope** — is `${#REPOS[@]}` from 3a.0 more than 1, or does the ticket's
+   `Affected Services` field (Planner Context, if present) name more than one service?
+2. **Index topic match** — does any keyword in the wiki index's **Lookup by Topic** section
+   (read just now) match the ticket's title, description, or labels? Use the same
+   case-insensitive substring matching `prescan-route.sh` uses for prescan's own INDEX.md — this
+   is a routing decision, not a judgment call, so don't hand-wave it.
+
+If either signal fires, set `WIKI_ROUTE=true`: 3a.3 loads wiki files as a **primary** source,
+run in addition to Tiers 1-2 rather than only as their fallback. If neither fires, `WIKI_ROUTE=false`
+and the wiki index stays loaded only as the fallback path already described in 3a.3 — a
+single-repo ticket with no topic match has no reason to pull in cross-repo context.
+
+Record the decision in notes.md under Initial Investigation:
+`**Wiki routing:** {multi-repo (N repos) | topic match: {topic} | not routed — per-repo ticket}`
 
 ---
 
@@ -468,7 +513,7 @@ MATCHED=$(bash "$HOME/.claude/skills/lib/prescan-route.sh" --mode index \
 2. **Verify against live source**: For every file:line reference found in prescan docs, confirm the referenced symbol still exists via `smart_search` or `smart_outline` on the source repo. Confirmed entries → tag `(prescan-confirmed)`. Unconfirmed entries → tag `(prescan-unconfirmed)` and note as open questions if `PRESCAN_STATUS` is stale/decayed.
 3. Set `{PRESCAN_FLOW}` = the shortest non-index matched file (most focused prescan doc). Each doc contains pre-traced call chains with real class names, endpoints, and entity fields. If multiple files match, prefer `services/*.md` over top-level docs because service files are more targeted.
 4. Record prescan docs loaded in notes.md under Initial Investigation: `**Prescan bootstrap:** {list of files loaded} ({fresh|stale|decayed}) — routed by prescan-route.sh`
-5. **If `PRESCAN_ROUTE_COUNT = 0`:** INDEX.md keyword matching found nothing → fall through to Tier 2 (claude-mem corpus).
+5. **If `PRESCAN_ROUTE_COUNT = 0`:** INDEX.md keyword matching found nothing for this repo → fall through to Tier 2 (claude-mem corpus) for the per-repo search. This is independent of the wiki decision already made in 3a.0b.
 
 ---
 
@@ -479,25 +524,62 @@ MATCHED=$(bash "$HOME/.claude/skills/lib/prescan-route.sh" --mode index \
 1. Prime the corpus: `mcp__plugin_claude-mem_mcp-search__prime_corpus(name="prescan-<repo-slug>")`
 2. Query semantically: `mcp__plugin_claude-mem_mcp-search__query_corpus(name="prescan-<repo-slug>", question="{ticket title + description}")`
 3. If the corpus returns relevant doc references → load and verify those files (same verification as Tier 1 step 3).
-4. If corpus query returns nothing, or claude-mem MCP is unavailable → fall through to Tier 3.
+4. If corpus query returns nothing, or claude-mem MCP is unavailable → this repo's per-repo search is exhausted; 3a.3 below is where the wiki picks up, either because it was already routed to (3a.0b) or as the fallback here.
 5. Record: `**Prescan corpus:** <repo-slug> — {matches found | no match | unavailable}`
 
-**If `PRESCAN_STATUS` is `missing` (no prescan exists):** skip directly to Tier 3.
+**If `PRESCAN_STATUS` is `missing` (no prescan exists) for this repo:** its per-repo search is exhausted immediately; proceed to 3a.3.
 
 ---
 
-#### 3a.3 — Tier 3: Wiki context (existing path, unchanged)
+#### 3a.3 — Wiki context: primary (routed) or fallback
 
-**If Tiers 1 and 2 produced no usable results, and `{WIKI_ROOT}` is set (from Step 0.5):**
+The wiki index was already loaded in 3a.0b. Load the wiki's flow files now in either of two
+cases — they are not mutually exclusive with prescan, and not gated on prescan having failed:
 
-1. Read `{WIKI_ROOT}/index.md`. It contains a **Lookup by Topic** section with keyword-to-file mappings, and a **Lookup by Service** table. Match the ticket's labels, title, and description against the topic keywords in the index to identify which wiki files to load. The index is the authoritative routing table — do not use any hardcoded keyword list.
+- **`WIKI_ROUTE=true`** (3a.0b fired on multi-repo scope or a topic match) — load wiki files as
+  a primary source, in addition to whatever Tiers 1-2 found per-repo. A multi-repo ticket needs
+  both: prescan for each repo's local implementation detail, wiki for how the repos connect.
+- **`WIKI_ROUTE=false` but Tiers 1-2 produced no usable results for a repo** — load wiki files
+  as the fallback, same as before this change: a single-repo ticket prescan couldn't answer.
+
+**If neither condition holds** (single-repo ticket, no topic match, and Tier 1 or 2 already
+found what's needed) — skip wiki file loading entirely. The index was loaded, cost nothing, and
+isn't needed further.
+
+When loading:
+
+1. `{WIKI_ROOT}/index.md`'s **Lookup by Topic** section maps keywords to files, and **Lookup by
+   Service** maps services to files. Match the ticket's labels, title, and description (already
+   done once for the routing decision in 3a.0b — reuse that match) to identify which wiki files
+   to load. The index is the authoritative routing table — do not use any hardcoded keyword list.
 2. **Scoped loading via smart_search**: Instead of loading every matched wiki file, use `smart_search` with the ticket's keywords, service names, and entity names against the wiki root to identify the most relevant files. Then use `smart_outline` on candidate files to confirm relevance before reading. Only Read the files (or sections) that smart_search confirms as relevant.
 3. Set `{WIKI_FLOW}` = the first flow file loaded (or the most relevant). Each file contains pre-traced call chains with real class names, endpoints, and entity fields.
 4. Also load `{WIKI_ROOT}/services.md` (service responsibilities and Feign wiring) — outline first, then read only the relevant service sections.
-5. Record the wiki files loaded in notes.md under Initial Investigation: `**Wiki bootstrap:** {list of files loaded}`
+5. Record the wiki files loaded in notes.md under Initial Investigation: `**Wiki bootstrap:** {list of files loaded} ({routed: multi-repo|topic-match | fallback: tiers-1-2-empty})`
 6. If no topic in the index matches, or smart_search returns no results, leave `{WIKI_FLOW}` empty — fall through to full discovery in 3c.
 
-**If `{WIKI_ROOT}` is empty and no prescan docs were found:** skip to 3b. No knowledge base is available for this project.
+**Freshness gate on each loaded wiki file** — run before trusting any of them, mirroring the
+prescan freshness gate in 3a.0:
+
+```bash
+bash "$HOME/.claude/skills/lib/wiki-check.sh" --wiki-root "$WIKI_ROOT" --repos-root "$REPOS_ROOT" --file "{loaded-wiki-file}"
+```
+
+Read the `freshness=` field from the `WIKI_CHECK|...` line it emits:
+- `fresh` → trust the file, tag findings `(wiki-confirmed)` as usual.
+- `stale` → load it, but treat entries as **unconfirmed** — re-verify each file:line reference
+  against live source before trusting, same as a stale prescan.
+- `decayed` → **do not trust blindly.** Demote any claim sourced from this file that you cannot
+  independently re-verify to `## Open Questions` (`[agent-resolvable]`, per the tagging rule in
+  Step 2) instead of writing it into Initial Investigation as fact. A decayed wiki file is
+  exactly the failure mode this whole change exists to close — don't let it re-enter silently
+  through the tier that's supposed to be authoritative.
+
+Non-blocking: if `wiki-check.sh` errors (missing script, `WIKI_ROOT` not readable), log a
+warning and proceed treating the file as `stale` (the conservative middle ground) rather than
+either extreme.
+
+**If `{WIKI_ROOT}` is empty and no prescan docs were found for any affected repo:** skip to 3b. No knowledge base is available for this project.
 
 ---
 
@@ -517,6 +599,18 @@ For each layer listed in the prescan doc, use `smart_search` or `smart_outline` 
 
 If a symbol was renamed or moved, note the discrepancy and mark the finding `(prescan-stale)`. For stale/decayed prescans, demote unverifiable entries to the Open Questions section.
 
+**Close the loop now — don't just note it and move on.** Appraise already did the work of
+finding this; nothing downstream re-derives it for free.
+- Append a `source=prescan` CORRECTIONS block to notes.md right now (`corrections-parse.sh`'s
+  `append_correction "{ticket-dir}/notes.md" "{stale reference}" "prescan" "{what changed,
+  with current file:line}"`) — `wiki-maintenance` Step 2.6 already evaluates `source=prescan`
+  corrections for promotion into the wiki.
+- If a wiki file is *also* loaded for this ticket (`{WIKI_FLOW}` non-empty — a multi-repo ticket
+  running Path P and Path A together per 3a.0b) and that wiki file documents the same symbol,
+  append a wiki errata entry directly instead of only writing the correction — appraise already
+  has the exact evidence, so route it straight to the durable store rather than through an
+  intermediate signal.
+
 Skip the full traversal instructions below — you already have your roadmap.
 
 **Path A — Wiki-bootstrapped (`{WIKI_FLOW}` was loaded in 3a.3):**
@@ -524,6 +618,19 @@ Skip the full traversal instructions below — you already have your roadmap.
 For each layer listed in the wiki flow file, use Serena to confirm the file and method still exist at the listed paths. Read only the pinpointed method — do not scan whole files. After confirming each layer, append the confirmed path to Initial Investigation with: `(wiki-confirmed)`.
 
 If a class has been renamed or moved, note the discrepancy but continue. The wiki may be slightly stale — your job is to verify and update, not rediscover.
+
+**Close the loop now.** Append an errata entry to the wiki flow file directly, using the
+canonical schema from `wiki-maintenance` Step 1:
+
+```markdown
+### {TICKET-ID}
+**Gap:** {what the wiki said vs. what you found — the renamed/moved symbol}
+**Fix:** {the corrected class name, path, or signature}
+```
+
+If the file already has an `## Errata` section, append to it; otherwise create it. Do this at
+discovery time — do not defer to `ticket-implement`'s mismatch-gated write-back (which may never
+fire if this ticket turns out `Smooth`) or to `wiki-maintenance` finding it independently later.
 
 Skip the full traversal instructions below — you already have your roadmap.
 
@@ -544,6 +651,31 @@ Do not stop at the first plausible file. Trace the feature end-to-end across all
 For each layer, use Serena to locate the specific file and method. Read only the relevant section after Serena has pinpointed it — do not scan whole files.
 
 **Write findings to notes.md as you go — do not wait until the end of the step.** After each layer is traced, append what you found to the **Initial Investigation** section immediately.
+
+**Conflict resolution — prescan vs. wiki disagreement:**
+
+On a multi-repo ticket, Path P and Path A can both run (3a.0b routes the wiki in alongside
+prescan). When they describe the same cross-cutting fact differently — a different Feign client
+method, a different contract shape, a different owning service — do not silently pick one:
+
+1. **Compare freshness.** The prescan side's timestamp is the owning repo's `meta.json`
+   `last_scanned_at` (already surfaced as `PRESCAN_STATUS` by `prescan-check.sh` in 3a.0). The
+   wiki side's timestamp is the consulted file's frontmatter `verified_at` (the freshness
+   contract `lib/wiki-check.sh` lints — §5 of the wiki-cross-repo-knowledge-layer change). A
+   wiki file with no frontmatter yet (pre-adoption) is treated as older than any prescan
+   timestamp — it has no verified claim to weigh against a dated one.
+2. **Trust whichever side is newer.** Tag the finding `(prescan-confirmed)` or
+   `(wiki-confirmed)` per the conventions above, based on which source won.
+3. **Record the conflict itself** — resolving it silently throws away a signal that one side
+   needs fixing:
+   ```markdown
+   **Conflict:** {prescan file}:{line} says {X} ({prescan repo's last_scanned_at}); {wiki file}
+   says {Y} (`verified_at` {date}). Trusted {prescan|wiki} — newer.
+   ```
+   Append this immediately below the resolved finding in Initial Investigation.
+4. **Close the loop on the losing side** the same way Path P/Path A already do above — if
+   prescan lost, write the `source=prescan` correction; if the wiki lost, append the wiki
+   errata entry directly.
 
 ### 3d — Confirm data availability
 
@@ -575,12 +707,13 @@ Remove or demote anything that is assumption rather than confirmed evidence.
 
 ### 3-Agent-a — Load prescan knowledge and wiki context
 
-Run exactly the same multi-tier loading logic as Step 3a above:
+Run exactly the same loading logic as Step 3a above — wiki alongside prescan, not after it:
 
-1. **Tier 1 (prescan INDEX.md):** Read `REPOS_ROOT/.ticket-auto/<repo-slug>/docs/INDEX.md`, run `prescan-check.sh` for freshness, match ticket keywords against Lookup by Topic/Service tables, load and verify identified files, tag confirmed entries `(prescan-confirmed)`, set `{PRESCAN_FLOW}` if a relevant doc is found.
-2. **Tier 2 (claude-mem corpus):** If Tier 1 misses, prime and query the prescan corpus semantically.
-3. **Tier 3 (wiki):** If prescan produced nothing and `{WIKI_ROOT}` is set, load wiki index and flow files as before. Set `{WIKI_FLOW}` to the most relevant flow file or leave empty.
-4. **Cross-repo:** For multi-repo tickets, load `REPOS_ROOT/.ticket-auto/system.md`.
+1. **Wiki index (3a.0b):** Always load `{WIKI_ROOT}/index.md` if `{WIKI_ROOT}` is set. Decide `WIKI_ROUTE` from multi-repo scope or an index topic match.
+2. **Tier 1 (prescan INDEX.md):** Read `REPOS_ROOT/.ticket-auto/<repo-slug>/docs/INDEX.md`, run `prescan-check.sh` for freshness, match ticket keywords against Lookup by Topic/Service tables, load and verify identified files, tag confirmed entries `(prescan-confirmed)`, set `{PRESCAN_FLOW}` if a relevant doc is found.
+3. **Tier 2 (claude-mem corpus):** If Tier 1 misses, prime and query the prescan corpus semantically.
+4. **Wiki files (3a.3):** Load wiki flow files as a primary source when `WIKI_ROUTE=true`, or as the fallback when Tiers 1-2 produced nothing. Set `{WIKI_FLOW}` to the most relevant flow file or leave empty.
+5. **Cross-repo:** For multi-repo tickets, load `REPOS_ROOT/.ticket-auto/system.md`.
 
 Record all findings in notes.md. This runs for BOTH paths — simple (3a) and complex (here).
 
@@ -603,8 +736,10 @@ Repos to search (under {REPOS_ROOT} — resolved from the project CLAUDE.md code
 {If PRESCAN_FLOW was loaded above, include this paragraph verbatim:}
 A prescan doc at `{PRESCAN_FLOW}` contains a pre-traced call chain for this feature area. Read it now. It lists real class names, method signatures, endpoints, and entity fields that were verified against source at scan time. Start by CONFIRMING those paths — do not rediscover from scratch. If a symbol was renamed or moved, note it. For stale/decayed prescans, re-verify every reference against live source; demote unverifiable entries to open questions.
 
-{If WIKI_FLOW was loaded above (and no prescan was available), include this paragraph verbatim:}
-A wiki file at `{WIKI_FLOW}` contains a pre-traced call chain for this feature area. Read it now. It lists real class names, method signatures, endpoints, and entity fields. Start by CONFIRMING those paths — do not rediscover from scratch. If a class was renamed or moved, note it but follow the wiki's structure.
+{If WIKI_FLOW was loaded above, include this paragraph verbatim — this can be true alongside the
+PRESCAN_FLOW paragraph on a multi-repo ticket, since prescan (per-repo) and wiki (cross-repo)
+are loaded together, not one instead of the other:}
+A wiki file at `{WIKI_FLOW}` contains a pre-traced call chain for this feature area. Read it now. It lists real class names, method signatures, endpoints, and entity fields. Start by CONFIRMING those paths — do not rediscover from scratch. If a class was renamed or moved, note it but follow the wiki's structure. If this and the PRESCAN_FLOW paragraph above describe the same cross-cutting fact differently, flag it as a conflict rather than silently picking one — the calling appraisal step resolves it by freshness (§3c conflict resolution).
 
 IMPORTANT — Prefer smart_search for code navigation: use `smart_search` to locate symbols by name, `smart_outline` for structural views, `smart_unfold` or `Read` to load only confirmed symbols. Fall back to Serena if smart_search returns nothing: symbol search or go_to_definition to locate, find_references to trace usages, symbols_overview for file structure. Only Read after pinpointing — never scan whole files. Use grep only as last resort.
 

@@ -9,16 +9,24 @@ set -eo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: prescan-wire-claude-md.sh --claude-md <path> --prescan-index <path> [--repo-slug <slug>]
+Usage: prescan-wire-claude-md.sh --claude-md <path> --prescan-index <path> [--repo-slug <slug>] [--wiki-root <path>]
 
 Inserts or replaces a managed block in CLAUDE.md pointing to prescan docs.
 If the START/END markers exist, content between them is replaced.
 If they don't exist, the block is appended at the end of the file.
 
+Also, when --wiki-root is given, ensures a "Cross-repo" row exists in the
+prescan INDEX.md's "Lookup by Topic" table pointing at WIKI_ROOT/index.md —
+prescan is per-repo and cannot answer a cross-repo question, so its own
+routing table should say where to go for one (wiki-cross-repo-knowledge-layer).
+
 Options:
   --claude-md <path>     Path to the repo's CLAUDE.md
   --prescan-index <path> Path to the prescan INDEX.md for this repo
   --repo-slug <slug>     Repo slug (optional, derived from path if omitted)
+  --wiki-root <path>     WIKI_ROOT path (optional). When set, ensures a
+                         Cross-repo row in --prescan-index's Lookup by Topic
+                         table pointing at <wiki-root>/index.md.
   --dry-run              Print what would be done, don't modify files
 
 Exit: 0 on success, 1 if CLAUDE.md not found, 2 on write error
@@ -51,10 +59,46 @@ $END_MARKER
 BLOCKEOF
 }
 
+# ── Cross-repo row in INDEX.md ──────────────────────────────────────────────────
+# Ensures a "| Cross-repo | <wiki-root>/index.md |" row exists in the "Lookup by
+# Topic" table of the prescan INDEX.md. Idempotent: any prior Cross-repo row
+# (e.g. pointing at a stale wiki-root value) is dropped and replaced, never
+# duplicated. INDEX.md is normally regenerated wholesale by prescan-docs.sh
+# before this script runs, so in practice there is nothing to drop — this
+# handles the case of this script being re-run standalone.
+_wire_index_cross_repo_row() {
+  local index_path="$1" wiki_root="$2" dry_run="$3"
+
+  [ -z "$wiki_root" ] && return 0
+  [ -f "$index_path" ] || return 0
+
+  local row="| Cross-repo | ${wiki_root%/}/index.md |"
+
+  if [ "$dry_run" = "true" ]; then
+    echo "[dry-run] Would ensure cross-repo row in $index_path: $row"
+    return 0
+  fi
+
+  local tmp="${index_path}.tmp.$$"
+  awk -v row="$row" -v marker="## Lookup by Topic" '
+    BEGIN { in_topic = 0; inserted = 0 }
+    /^\| Cross-repo \|/ { next }
+    {
+      print
+      if ($0 == marker) { in_topic = 1 }
+      else if (in_topic && $0 ~ /^\|-+\|-+\|$/ && !inserted) {
+        print row
+        inserted = 1
+        in_topic = 0
+      }
+    }
+  ' "$index_path" >"$tmp" && mv "$tmp" "$index_path"
+}
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 main() {
-  local claude_md="" index_path="" slug="" dry_run="false"
+  local claude_md="" index_path="" slug="" dry_run="false" wiki_root=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -68,6 +112,10 @@ main() {
       ;;
     --repo-slug)
       slug="${2:-}"
+      shift 2
+      ;;
+    --wiki-root)
+      wiki_root="${2:-}"
       shift 2
       ;;
     --dry-run)
@@ -98,6 +146,14 @@ main() {
 
   if [ -z "$slug" ]; then
     slug=$(basename "$(dirname "$(dirname "$index_path")")")
+  fi
+
+  # Cross-repo row in INDEX.md — independent of the CLAUDE.md block below, so it
+  # runs first and its own dry-run/no-op paths return internally without
+  # affecting the CLAUDE.md wiring that follows.
+  _wire_index_cross_repo_row "$index_path" "$wiki_root" "$dry_run"
+  if [ -n "$wiki_root" ] && [ -f "$index_path" ] && [ "$dry_run" != "true" ]; then
+    echo "PRESCAN_WIRE_INDEX_STATUS=done"
   fi
 
   local block_text

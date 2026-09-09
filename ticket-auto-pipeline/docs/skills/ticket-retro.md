@@ -4,7 +4,7 @@
 
 ## What it does
 
-Aggregates pipeline log failures across a configurable time window, classifies recurring patterns (gate-stops, flow errors, complexity mismatches), and generates minimal unified diffs targeting the specific skill file sections where failures originate. Also scans the Claude log for failure signals, improvement hints, and insight blocks. Writes a dated proposal to `~/.claude/state/ticket-retro/proposals/` with a failure histogram, complexity prediction accuracy table, per-failure-class pattern analysis, and apply instructions. Never modifies skill files directly.
+Aggregates pipeline log failures across a configurable time window, classifies recurring patterns (gate-stops, flow errors, complexity mismatches), and generates minimal unified diffs targeting the specific skill file sections where failures originate. Also scans the Claude log for failure signals, improvement hints, and insight blocks, and reads each mismatched ticket's own notes.md for the `source=appraise`/`source=exec` CORRECTIONS entries `ticket-implement` wrote — the qualitative gap behind the accuracy number. Writes a dated proposal to `~/.claude/state/ticket-retro/proposals/` with a failure histogram, complexity prediction accuracy table, complexity calibration notes, per-failure-class pattern analysis, and apply instructions. Never modifies skill files directly.
 
 ## Trigger
 

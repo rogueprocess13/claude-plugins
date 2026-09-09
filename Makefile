@@ -95,6 +95,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-prescan-route.sh
 	bash ticket-auto-pipeline/lib/tests/test-index-schema-contract.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-docs.sh
+	bash ticket-auto-pipeline/lib/tests/test-prescan-wire-claude-md.sh
+	bash ticket-auto-pipeline/lib/tests/test-wiki-check.sh
 	# pipeline-integrity tests
 	bash ticket-auto-pipeline/lib/tests/test-return-completeness.sh
 	bash ticket-auto-pipeline/lib/tests/test-phase-result-parse.sh
