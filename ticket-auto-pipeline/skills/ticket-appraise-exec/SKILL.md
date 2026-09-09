@@ -312,6 +312,8 @@ Map: clear → PASS, CONFLICT → WARN, ADJACENT → WARN, SUPERSEDES → PASS.
 
 Spawn a `general-purpose` agent with an adversarial framing. Its sole job is to find what's wrong, missing, or under-specified in the implementation plan — not to confirm it's correct.
 
+**⚠️ MANDATORY — read before spawning:** The `Task` tool call below returns control to *you*, the orchestrating agent, in this same session. That return is a normal mid-skill event, **not the end of `ticket-appraise-exec`**. The instant the `Task` call completes — with a result, an error, anything — you MUST immediately keep going in the same turn: read the sub-agent's output, follow **"When the agent returns"** below, then continue straight through the rest of this skill in order — Step 3.7 (derive verification plan) → Step 3.8 (verification-readiness) → Step 4 (re-appraisal check) → Step 5 (post the appraisal comment to Linear) → Step 6 (move the ticket to Approve) → Step 7 (report). Do not end your turn, summarize, or hand back to the caller right after the `Task` call returns — that is exactly the failure mode this warning exists to prevent (a clean sub-agent return has been observed to make the orchestrator stop dead here, leaving the ticket dead-lettered with no Linear comment ever posted). If your task tracker (Step 1.5) is active, do not mark Step 3.6 complete and then stop — marking it complete is itself the cue to immediately open and start the next task.
+
 **Prompt the agent with:**
 
 ```
@@ -388,6 +390,8 @@ Use PASS if the plan is solid across all angles.
 
 Append its output verbatim to notes.md under the `## Adversarial Review` heading. Do not reinterpret or summarise.
 
+**Then keep going — do not stop here.** After appending the review to notes.md, immediately evaluate the verdict below and proceed. This step is not the last step of the skill: Steps 3.7, 3.8, 4, 5, and 6 still have to run in this same session before the ticket is actually assigned, commented on, and moved to Approve.
+
 **Gate on BLOCKED:**
 
 If the agent's verdict is BLOCKED:
@@ -407,7 +411,7 @@ See ## Adversarial Review in notes.md for details.
 Fix the plan, then re-run /ticket-appraise-exec {TICKET-ID} --from-step create-artifact.
 ```
 
-If WARNINGS or PASS, proceed to Step 4.
+If WARNINGS or PASS, proceed to Step 3.7 — do NOT skip ahead to Step 4; Steps 3.7 and 3.8 both apply in this same complex-ticket branch and still have to run first.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|adversarial-review|done|{PASS|WARNINGS|BLOCKED}" >> "$LOG_FILE"
 

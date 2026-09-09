@@ -211,6 +211,88 @@ fleet_ticket_terminal_state() {
   return 0
 }
 
+# _fleet_dead_letter_reason <tid> <pipeline_log_path>
+# GitHub #331 mitigation. Every restart-cap dead-letter written below used a
+# single hardcoded reason (`orphaned-after-max-restarts`) regardless of why
+# the pipeline kept dying — a real crash loop and a harness-level silent
+# exit right after a clean `Task`-tool sub-agent return looked identical in
+# the log. This gives the latter a distinct, greppable reason so an operator
+# does not have to open the log to tell them apart, WITHOUT changing when a
+# ticket gets dead-lettered or how the restart cap is counted — this is
+# read-only classification of an outcome that has already been decided.
+#
+# Signature, checked over the tail of the log since the LAST
+# `META|fleet-restart` marker (or the whole log, if this is the ticket's
+# first-ever restart) — scoping to the most recent attempt only, so a
+# signature left over from an earlier, already-superseded attempt can never
+# mislabel a later, differently-caused exhaustion:
+#   1. The last `|EXEC|<step>|start|` line in that window has no matching
+#      `|EXEC|<step>|done|` or `|fail|` anywhere after it — the phase's own
+#      skill-level step markers (SKILL.md's inline `start`/`done` echoes,
+#      not the router's `waiting`/`done` bracket grammar) show a step that
+#      began and never closed.
+#   2. No `META|gate-stop|fail|` line follows that open step — a real
+#      structural gate-stop is a distinct, already-named cause and must
+#      never be relabeled.
+#   3. A `META|worker-exit|done|...code=0 type=exit...` line follows it —
+#      fleetd's reaper (fleetd/supervisor.py) recorded a genuine, voluntary
+#      zero-exit for that generation, not a crash/OOM/signal/fleet-kill
+#      (see the worker-exit line's own `type=`/`killed_by_fleet=` fields).
+#
+# All three must hold. Read-only, best-effort: a missing log, an empty
+# match, or an awk failure all fall through to the generic reason rather
+# than guessing — this must never block or alter the dead-letter write
+# itself, only its label.
+_fleet_dead_letter_reason() {
+  local tid="$1"
+  local log_file="$2"
+  local default_reason="orphaned-after-max-restarts"
+
+  [ -f "$log_file" ] || {
+    echo "$default_reason"
+    return 0
+  }
+
+  local since_line
+  since_line=$(awk -F'|' '$2=="META" && $3=="fleet-restart" { n=NR } END { print n+0 }' "$log_file" 2>/dev/null)
+  since_line="${since_line:-0}"
+
+  local open_line
+  open_line=$(awk -F'|' -v since="$since_line" '
+    NR>since && $2=="EXEC" && $4=="start" { open=NR; step=$3 }
+    NR>since && $2=="EXEC" && $3==step && ($4=="done" || $4=="fail") { open=0 }
+    END { print open+0 }
+  ' "$log_file" 2>/dev/null)
+  open_line="${open_line:-0}"
+
+  case "$open_line" in
+  '' | *[!0-9]*)
+    echo "$default_reason"
+    return 0
+    ;;
+  esac
+  [ "$open_line" -gt 0 ] || {
+    echo "$default_reason"
+    return 0
+  }
+
+  if awk -F'|' -v from="$open_line" \
+    'NR>from && $2=="META" && $3=="gate-stop" && $4=="fail" { f=1 } END { exit !f }' \
+    "$log_file" 2>/dev/null; then
+    echo "$default_reason"
+    return 0
+  fi
+
+  if awk -F'|' -v from="$open_line" \
+    'NR>from && $2=="META" && $3=="worker-exit" && $4=="done" && $0 ~ /code=0 type=exit/ { f=1 } END { exit !f }' \
+    "$log_file" 2>/dev/null; then
+    echo "exec-silent-exit-after-subagent-return"
+    return 0
+  fi
+
+  echo "$default_reason"
+}
+
 # _reconcile_entry <tid> <reason> [state_dir]
 # Builds a spawn-queue entry identical in shape to a normal initial-dispatch
 # entry — no branch, base, integration, or epic fields; the re-spawned worker
@@ -385,18 +467,23 @@ fleet_reconcile_orphans() {
           echo "[DRY-RUN] would dead-letter ${tid} (restart cap)"
           continue
         fi
-        local dead_letter_file entry
+        local dead_letter_file entry dl_reason
         dead_letter_file="${queue_file%.jsonl}-dead-letter.jsonl"
-        entry=$(_reconcile_entry "$tid" "orphaned-after-max-restarts" "$state_dir")
+        # GitHub #331: distinguishes the EXEC-silent-exit-after-subagent-
+        # return signature from a generic crash loop. Falls back to the
+        # original hardcoded reason whenever the signature isn't present —
+        # see _fleet_dead_letter_reason's docstring above.
+        dl_reason=$(_fleet_dead_letter_reason "$tid" "$log_file")
+        entry=$(_reconcile_entry "$tid" "$dl_reason" "$state_dir")
         echo "$entry" >>"$dead_letter_file"
         # Terminal marker on the ticket's own log (also keeps classification
         # idempotent) + structured notification line.
-        _log_pipeline "$log_file" "META" "dead-letter" "warn" "reason=orphaned-after-max-restarts"
+        _log_pipeline "$log_file" "META" "dead-letter" "warn" "reason=${dl_reason}"
         if declare -f fleet_notify_worker_event >/dev/null 2>&1; then
-          fleet_notify_worker_event "$tid" "$state_dir" "dead-letter" "orphaned-after-max-restarts" || true
+          fleet_notify_worker_event "$tid" "$state_dir" "dead-letter" "$dl_reason" || true
         fi
-        echo "fleet-dead-letter|tid=${tid}|reason=orphaned-after-max-restarts"
-        echo "fleet_reconcile: ${tid} — restart cap reached (${restarts}/${max_restarts}), dead-lettered as orphaned-after-max-restarts"
+        echo "fleet-dead-letter|tid=${tid}|reason=${dl_reason}"
+        echo "fleet_reconcile: ${tid} — restart cap reached (${restarts}/${max_restarts}), dead-lettered as ${dl_reason}"
         continue
       fi
       echo "fleet_reconcile: ${tid} — not restartable now (${not_restartable_reason}), left alone"

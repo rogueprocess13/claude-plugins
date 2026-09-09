@@ -614,6 +614,148 @@ test_at_cap_dead_lettered_not_reenqueued() {
   return 0
 }
 
+# ── Dead-letter reason classification (_fleet_dead_letter_reason, GitHub #331) ──
+# Mitigation: distinguish the EXEC-phase-silent-exit-after-a-clean-Task-
+# sub-agent-return dead-letter cause from a generic crash-loop dead-letter,
+# without changing when/whether a ticket gets dead-lettered.
+
+test_dead_letter_reason_exec_silent_exit_signature() {
+  local ws
+  ws=$(_setup_workspace)
+  local log_file="${ws}/CRE-60-pipeline.log"
+  _plog_line "$log_file" "META" "fleet-restart" "info" "restart orphan-reconciliation"
+  _plog_line "$log_file" "EXEC" "adversarial-review" "start" "Spawning adversarial agent"
+  _plog_line "$log_file" "META" "worker-exit" "done" "code=0 type=exit gen=2 killed_by_fleet=false"
+
+  local reason
+  reason=$(_fleet_dead_letter_reason "CRE-60" "$log_file")
+  rm -rf "$ws"
+  [ "$reason" = "exec-silent-exit-after-subagent-return" ] || {
+    echo "expected exec-silent-exit-after-subagent-return, got $reason" >&2
+    return 1
+  }
+  return 0
+}
+
+test_dead_letter_reason_generic_crash_not_relabeled() {
+  local ws
+  ws=$(_setup_workspace)
+  local log_file="${ws}/CRE-61-pipeline.log"
+  _plog_line "$log_file" "META" "fleet-restart" "info" "restart orphan-reconciliation"
+  _plog_line "$log_file" "IMPLEMENT" "implement" "start" "implementing"
+  _plog_line "$log_file" "META" "worker-exit" "fail" "code=1 type=exit gen=2 killed_by_fleet=false"
+
+  local reason
+  reason=$(_fleet_dead_letter_reason "CRE-61" "$log_file")
+  rm -rf "$ws"
+  [ "$reason" = "orphaned-after-max-restarts" ] || {
+    echo "expected generic reason for a non-EXEC crash, got $reason" >&2
+    return 1
+  }
+  return 0
+}
+
+test_dead_letter_reason_completed_exec_step_not_relabeled() {
+  local ws
+  ws=$(_setup_workspace)
+  local log_file="${ws}/CRE-62-pipeline.log"
+  _plog_line "$log_file" "META" "fleet-restart" "info" "restart orphan-reconciliation"
+  _plog_line "$log_file" "EXEC" "adversarial-review" "start" "Spawning adversarial agent"
+  _plog_line "$log_file" "EXEC" "adversarial-review" "done" "PASS"
+  _plog_line "$log_file" "META" "worker-exit" "fail" "code=1 type=exit gen=2 killed_by_fleet=false"
+
+  local reason
+  reason=$(_fleet_dead_letter_reason "CRE-62" "$log_file")
+  rm -rf "$ws"
+  [ "$reason" = "orphaned-after-max-restarts" ] || {
+    echo "expected generic reason once the EXEC step closed cleanly, got $reason" >&2
+    return 1
+  }
+  return 0
+}
+
+test_dead_letter_reason_real_gate_stop_not_relabeled() {
+  local ws
+  ws=$(_setup_workspace)
+  local log_file="${ws}/CRE-63-pipeline.log"
+  _plog_line "$log_file" "META" "fleet-restart" "info" "restart orphan-reconciliation"
+  _plog_line "$log_file" "EXEC" "adversarial-review" "start" "Spawning adversarial agent"
+  _plog_line "$log_file" "META" "gate-stop" "fail" "ADVERSARIAL_BLOCKED — blocking issues"
+  _plog_line "$log_file" "META" "worker-exit" "fail" "code=1 type=exit gen=2 killed_by_fleet=false"
+
+  local reason
+  reason=$(_fleet_dead_letter_reason "CRE-63" "$log_file")
+  rm -rf "$ws"
+  [ "$reason" = "orphaned-after-max-restarts" ] || {
+    echo "expected generic reason — a real gate-stop must never be relabeled as a silent exit, got $reason" >&2
+    return 1
+  }
+  return 0
+}
+
+test_dead_letter_reason_scoped_to_latest_restart_window() {
+  local ws
+  ws=$(_setup_workspace)
+  local log_file="${ws}/CRE-64-pipeline.log"
+  # An EARLIER attempt shows the silent-exit signature...
+  _plog_line "$log_file" "EXEC" "adversarial-review" "start" "Spawning adversarial agent"
+  _plog_line "$log_file" "META" "worker-exit" "done" "code=0 type=exit gen=1 killed_by_fleet=false"
+  _plog_line "$log_file" "META" "fleet-restart" "info" "restart orphan-reconciliation"
+  # ...but the LATEST attempt is a plain crash, unrelated to that signature.
+  _plog_line "$log_file" "IMPLEMENT" "implement" "start" "implementing"
+  _plog_line "$log_file" "META" "worker-exit" "fail" "code=1 type=exit gen=2 killed_by_fleet=false"
+
+  local reason
+  reason=$(_fleet_dead_letter_reason "CRE-64" "$log_file")
+  rm -rf "$ws"
+  [ "$reason" = "orphaned-after-max-restarts" ] || {
+    echo "expected generic reason — a stale earlier-attempt signature must not leak into the current classification, got $reason" >&2
+    return 1
+  }
+  return 0
+}
+
+# Integration: fleet_reconcile_orphans' dead-letter branch actually calls the
+# classifier and threads the result through every write site (queue entry,
+# pipeline-log marker, structured stdout line) — not just that the classifier
+# itself works in isolation.
+test_dead_letter_wiring_uses_exec_silent_exit_reason() {
+  local ws
+  ws=$(_setup_workspace)
+  _reconcile_env "$ws"
+  FLEET_MAX_RESTARTS=2
+  local queue_file
+  queue_file=$(_reconcile_queue_file "$ws")
+  rm -f "$queue_file" "${queue_file%.jsonl}-dead-letter.jsonl"
+
+  local log_file="${ws}/CRE-65-pipeline.log"
+  _plog_line "$log_file" "APPRAISE" "appraise" "start" "investigating"
+  _plog_line "$log_file" "META" "fleet-restart" "info" "restart stall-kill"
+  _plog_line "$log_file" "META" "fleet-restart" "info" "restart zombie-kill"
+  # The latest (capped) attempt shows the silent-exit signature.
+  _plog_line "$log_file" "EXEC" "adversarial-review" "start" "Spawning adversarial agent"
+  _plog_line "$log_file" "META" "worker-exit" "done" "code=0 type=exit gen=3 killed_by_fleet=false"
+
+  local out
+  out=$(fleet_reconcile_orphans "$ws" "$queue_file" "" 2>&1)
+
+  local dead_letter_file="${queue_file%.jsonl}-dead-letter.jsonl"
+  grep -q '"tid":"CRE-65"' "$dead_letter_file" 2>/dev/null &&
+    grep -q '"reason":"exec-silent-exit-after-subagent-return"' "$dead_letter_file" || {
+    echo "expected distinct reason in dead-letter file: $(cat "$dead_letter_file" 2>/dev/null)" >&2
+    return 1
+  }
+  echo "$out" | grep -q "fleet-dead-letter|tid=CRE-65|reason=exec-silent-exit-after-subagent-return" || {
+    echo "expected structured fleet-dead-letter line with distinct reason, got: $out" >&2
+    return 1
+  }
+  grep -q '|META|dead-letter|warn|reason=exec-silent-exit-after-subagent-return' "$log_file" || {
+    echo "distinct reason missing from pipeline log META marker" >&2
+    return 1
+  }
+  return 0
+}
+
 # Generation continuity: a reconcile entry must exceed any fenced
 # predecessor, or the bash monitor/consume path would spawn the resumed
 # worker at generation 1 and flow.sh's fence guard would reject it as a
@@ -1058,6 +1200,12 @@ _run "live worker process skipped" test_live_worker_process_skipped
 _run "auto-restart default enabled" test_auto_restart_default_enabled
 _run "auto-restart disabled skipped with reason" test_auto_restart_disabled_skipped_with_reason
 _run "at cap dead-lettered not re-enqueued" test_at_cap_dead_lettered_not_reenqueued
+_run "dead-letter reason: EXEC silent exit signature" test_dead_letter_reason_exec_silent_exit_signature
+_run "dead-letter reason: generic crash not relabeled" test_dead_letter_reason_generic_crash_not_relabeled
+_run "dead-letter reason: closed EXEC step not relabeled" test_dead_letter_reason_completed_exec_step_not_relabeled
+_run "dead-letter reason: real gate-stop not relabeled" test_dead_letter_reason_real_gate_stop_not_relabeled
+_run "dead-letter reason: scoped to latest restart window" test_dead_letter_reason_scoped_to_latest_restart_window
+_run "dead-letter wiring uses exec-silent-exit reason end to end" test_dead_letter_wiring_uses_exec_silent_exit_reason
 _run "reconcile entry continues fenced generation" test_reconcile_entry_continues_fenced_generation
 _run "chained crash-resume reaches cap then dead-letters" test_chained_crash_resume_reaches_cap
 _run "live-reap and reconcile share one cap" test_live_reap_and_reconcile_share_one_cap

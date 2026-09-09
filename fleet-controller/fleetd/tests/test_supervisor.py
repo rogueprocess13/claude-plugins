@@ -4391,6 +4391,81 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         finally:
             sup.release_lock()
 
+    def test_natural_reap_worker_exit_line_carries_last_output_from_hook(self):
+        """GitHub #331 mitigation: the `META|worker-exit` pipeline-log line
+        itself (not just the `-exit.json` sidecar) carries a `last_output=`
+        snippet when a Stop-hook capture is present, so an operator sees the
+        diagnosable trace by reading the pipeline log alone — the surface
+        every dashboard/detector already reads — rather than having to know
+        the per-generation sidecar file naming convention exists."""
+        tid = 'TST-R5B'
+        self._append_queue_entry(tid)
+        sup = self._make_sup()
+        sup.acquire_lock()
+        try:
+            cmd = _make_worker_cmd(sleep_secs=1, exit_code=0)
+            sup._consume_queue(cmd_override=cmd)
+            hook_file = self.workspace / f'{tid}-gen1-hook.json'
+            hook_file.write_text(json.dumps({'last_assistant_message': 'need clarification'}))
+            time.sleep(2)
+            sup._reap_children()
+
+            log_file = self.workspace / f'{tid}-pipeline.log'
+            lines = [ln for ln in log_file.read_text().splitlines()
+                     if '|META|worker-exit|' in ln]
+            self.assertEqual(len(lines), 1)
+            self.assertIn('last_output="need clarification"', lines[0])
+        finally:
+            sup.release_lock()
+
+    def test_natural_reap_worker_exit_line_falls_back_to_stdout_envelope(self):
+        """No Stop-hook capture (e.g. the hook never fired) but a captured
+        stdout envelope exists — the fallback (`worker_return_text`) still
+        surfaces something in the `META|worker-exit` line instead of leaving
+        an operator with only `code=0 type=exit ...` for a clean, silent
+        exit."""
+        tid = 'TST-R5C'
+        self._append_queue_entry(tid)
+        sup = self._make_sup()
+        sup.acquire_lock()
+        try:
+            cmd = _make_worker_cmd(sleep_secs=1, exit_code=0)
+            sup._consume_queue(cmd_override=cmd)
+            gen_file = self.workspace / f'{tid}-gen1.json'
+            gen_file.write_text(json.dumps({'result': 'adversarial review returned clean'}))
+            time.sleep(2)
+            sup._reap_children()
+
+            log_file = self.workspace / f'{tid}-pipeline.log'
+            lines = [ln for ln in log_file.read_text().splitlines()
+                     if '|META|worker-exit|' in ln]
+            self.assertEqual(len(lines), 1)
+            self.assertIn('last_output="adversarial review returned clean"', lines[0])
+        finally:
+            sup.release_lock()
+
+    def test_natural_reap_worker_exit_line_omits_last_output_when_absent(self):
+        """No hook capture and no stdout envelope (e.g. SIGKILL before any
+        output) — the line stays exactly as before, with no dangling empty
+        `last_output=""` token."""
+        tid = 'TST-R5D'
+        self._append_queue_entry(tid)
+        sup = self._make_sup()
+        sup.acquire_lock()
+        try:
+            cmd = _make_worker_cmd(sleep_secs=1, exit_code=0)
+            sup._consume_queue(cmd_override=cmd)
+            time.sleep(2)
+            sup._reap_children()
+
+            log_file = self.workspace / f'{tid}-pipeline.log'
+            lines = [ln for ln in log_file.read_text().splitlines()
+                     if '|META|worker-exit|' in ln]
+            self.assertEqual(len(lines), 1)
+            self.assertNotIn('last_output', lines[0])
+        finally:
+            sup.release_lock()
+
     def test_hook_capture_merges_into_killed_by_fleet_exit_record(self):
         """A hook capture present at kill time (e.g. cooperative stop, which
         lets the worker exit on its own and so can fire Stop) still merges
