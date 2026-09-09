@@ -19,6 +19,7 @@ The properties under test are the ones D5 and D11 rest on:
   enters the ticket reap path.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -47,12 +48,18 @@ class RecordingEmitter:
         self.spans = []
         self.closed = []
         self.shutdowns = 0
+        self.run_ids = []  # run_id passed to each emit() call, parallel to self.spans
+        self.closed_tags = []  # tags passed to each close_ticket() call
+        self.propagate_calls = []  # (propagate, span_id_hex) per emit() call
 
-    def emit(self, span):
+    def emit(self, span, run_id=None, propagate=False, span_id_hex=None):
         self.spans.append(span)
+        self.run_ids.append(run_id)
+        self.propagate_calls.append((propagate, span_id_hex))
 
-    def close_ticket(self, ticket, outcome, end_ts):
+    def close_ticket(self, ticket, outcome, end_ts, tags=None):
         self.closed.append((ticket, outcome))
+        self.closed_tags.append(tags)
 
     def shutdown(self):
         self.shutdowns += 1
@@ -407,6 +414,253 @@ class TestMultipleTickets(TempWorkspace):
         self.assertNotIn('gen_ai.usage.input_tokens', by_tid['FFF-5'])
 
 
+# ── Execution identity (otel-span-identity, langfuse-evidence-layer §4/§6) ──
+
+class TestExecutionIdentity(TempWorkspace):
+    def test_two_runs_produce_two_roots_with_correctly_parented_spans(self):
+        # task 6.1 / scenario "Two runs of one ticket produce two traces"
+        self.ws.pipeline('RUN-1', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-1-A","gen":1}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+            f'{iso(699)}|META|outcome|info|complete',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        self.assertEqual(rec.run_ids, ['RUN-1-A'])
+        self.assertEqual(rec.closed, [('RUN-1', 'complete')])
+
+        self.ws.pipeline('RUN-1', [
+            f'{iso(600)}|META|run-id|info|{{"run_id":"RUN-1-B","gen":2}}',
+            f'{iso(500)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(400)}|IMPLEMENT|implement|done|ok',
+            f'{iso(399)}|META|outcome|info|complete',
+        ])
+        ex.poll_once()
+        self.assertEqual(rec.run_ids, ['RUN-1-A', 'RUN-1-B'])
+        self.assertEqual(rec.closed, [('RUN-1', 'complete'), ('RUN-1', 'complete')])
+
+    def test_a_new_run_id_closes_the_previous_open_root(self):
+        # task 6.2 / scenario "A new run closes the previous root" — no
+        # META|outcome between the two META|run-id lines.
+        self.ws.pipeline('RUN-2', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-2-A","gen":1}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+            f'{iso(600)}|META|run-id|info|{{"run_id":"RUN-2-B","gen":2}}',
+            f'{iso(500)}|VERIFY|verify|waiting|x',
+            f'{iso(400)}|VERIFY|verify|done|PASS',
+            f'{iso(399)}|META|outcome|info|complete',
+        ])
+        config = otel.ExporterConfig(log_dir=str(self.ws.root), span_grace_secs=3600)
+        rec = RecordingEmitter()
+        ex = otel.Exporter(config, rec)
+        ex.poll_once()
+        # The first root was closed (superseded) before the second run's
+        # spans could attach to it — no span from run B on root A.
+        self.assertIn(('RUN-2', 'superseded-by-new-run'), rec.closed)
+        self.assertEqual(rec.run_ids, ['RUN-2-A', 'RUN-2-B'])
+
+    def test_run_id_arriving_after_the_first_bracket_is_still_attributed(self):
+        # task 6.3 — the first phase bracket precedes its META|run-id line.
+        self.ws.pipeline('RUN-3', [
+            f'{iso(900)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(800)}|META|run-id|info|{{"run_id":"RUN-3-A","gen":1}}',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        self.assertEqual(rec.run_ids, ['RUN-3-A'])
+
+    def test_a_log_with_no_run_id_line_still_exports(self):
+        # task 6.4 — historical replay, ticket-keyed fallback.
+        self.ws.pipeline('RUN-4', [
+            f'{iso(300)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(200)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()
+        self.assertEqual(ex.poll_once(), 1)
+        self.assertEqual(rec.run_ids, [None])
+
+    def test_every_span_repeats_session_identity_two_runs_never_share_it(self):
+        # task 6.5
+        self.ws.pipeline('RUN-5', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-5-A","gen":1}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+            f'{iso(600)}|VERIFY|verify|waiting|x',
+            f'{iso(500)}|VERIFY|verify|done|PASS',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        session_ids = {s.attributes['langfuse.session.id'] for s in rec.spans}
+        self.assertEqual(session_ids, {'RUN-5-A'})
+
+        self.ws.pipeline('RUN-5b', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-5-B","gen":1}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex.poll_once()
+        second = [s for s in rec.spans if s.ticket == 'RUN-5b']
+        self.assertEqual(second[0].attributes['langfuse.session.id'], 'RUN-5-B')
+
+    def test_ticket_is_metadata_and_tag_never_the_session_id(self):
+        # task 6.6
+        self.ws.pipeline('RUN-6', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-6-A","gen":1}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        attrs = rec.spans[0].attributes
+        self.assertEqual(attrs['langfuse.trace.metadata.ticket_id'], 'RUN-6')
+        self.assertIn('ticket:RUN-6', attrs['langfuse.trace.tags'])
+        self.assertNotEqual(attrs['langfuse.session.id'], 'RUN-6')
+
+    def test_no_span_carries_content_bearing_attributes(self):
+        # task 6.7 — no prompt/completion/tool-content, ever.
+        self.ws.pipeline('RUN-7', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-7-A","gen":1}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+        ])
+        self.ws.activity('RUN-7', [(iso(750), 'IMPLEMENT', 'Bash')])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        banned = ('prompt', 'completion', 'input', 'output', 'tool.content', 'tool.input',
+                  'tool.output', 'raw_body')
+        for span in rec.spans:
+            for key in span.attributes:
+                lowered = key.lower()
+                self.assertFalse(
+                    any(b in lowered for b in banned) and 'usage' not in lowered,
+                    f'content-shaped attribute leaked: {key}')
+
+    def test_cost_lands_when_present_and_is_omitted_when_absent(self):
+        # task 6.8
+        self.ws.pipeline('RUN-8', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-8-A","gen":1}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+        ])
+        with open(self.ws.root / 'runs.jsonl', 'a') as fh:
+            fh.write(json.dumps({
+                'kind': 'cost', 'tid': 'RUN-8', 'run_id': 'RUN-8-A', 'gen': 1,
+                'phase': 'IMPLEMENT', 'usd': 0.42,
+            }) + '\n')
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        self.assertEqual(rec.spans[0].attributes['pipeline.cost.usd'], 0.42)
+
+    def test_no_cost_evidence_omits_the_attribute_not_a_zero(self):
+        self.ws.pipeline('RUN-9', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-9-A","gen":1}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        self.assertNotIn('pipeline.cost.usd', rec.spans[0].attributes)
+
+    def test_a_cost_event_written_after_flush_is_not_backfilled(self):
+        self.ws.pipeline('RUN-10', [
+            f'{iso(60)}|META|run-id|info|{{"run_id":"RUN-10-A","gen":1}}',
+            f'{iso(50)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(40)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()  # span_grace_secs=0 — flushes immediately
+        ex.poll_once()
+        self.assertNotIn('pipeline.cost.usd', rec.spans[0].attributes)
+        with open(self.ws.root / 'runs.jsonl', 'a') as fh:
+            fh.write(json.dumps({
+                'kind': 'cost', 'tid': 'RUN-10', 'run_id': 'RUN-10-A', 'gen': 1,
+                'phase': 'IMPLEMENT', 'usd': 1.23,
+            }) + '\n')
+        # No re-export mechanism exists — a second poll with no new lines
+        # must not touch the already-emitted span.
+        ex.poll_once()
+        self.assertEqual(len(rec.spans), 1)
+        self.assertNotIn('pipeline.cost.usd', rec.spans[0].attributes)
+
+    def test_a_phase_span_carries_the_recorded_worker_session_id(self):
+        # task 6.9
+        self.ws.pipeline('RUN-11', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-11-A","gen":1}}',
+            f'{iso(850)}|META|trace-context|info|'
+            f'{{"run_id":"RUN-11-A","session_id":"worker-sess-1","gen":1,"phase":"IMPLEMENT","propagate":false}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        self.assertEqual(
+            rec.spans[0].attributes['langfuse.trace.metadata.worker_session_id'],
+            'worker-sess-1')
+
+    def test_a_phase_with_no_recorded_session_exports_without_the_attribute(self):
+        self.ws.pipeline('RUN-12', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-12-A","gen":1}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        self.assertNotIn('langfuse.trace.metadata.worker_session_id', rec.spans[0].attributes)
+
+    def test_outcome_tag_lands_on_the_root_at_close(self):
+        # task 4.9
+        self.ws.pipeline('RUN-13', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-13-A","gen":1}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+            f'{iso(699)}|META|outcome|info|complete',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        self.assertIn('outcome:complete', rec.closed_tags[0])
+
+    def test_phase_span_is_marked_as_an_agent_observation(self):
+        # task 4.7
+        self.ws.pipeline('RUN-15', [
+            f'{iso(300)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(200)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        self.assertEqual(rec.spans[0].attributes['langfuse.observation.type'], 'agent')
+
+    def test_model_lands_under_the_metadata_namespace_too(self):
+        # task 4.6 — "model" is one of the listed filterable-metadata keys,
+        # not only the pre-existing vendor-neutral gen_ai.request.model.
+        self.ws.pipeline('RUN-16', [
+            f'{iso(400)}|META|model|info|{{"phase":"IMPLEMENT","model":"claude-opus-5"}}',
+            f'{iso(300)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(200)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        self.assertEqual(
+            rec.spans[0].attributes['langfuse.trace.metadata.model'], 'claude-opus-5')
+
+    def test_genai_convention_attributes_survive_alongside_identity(self):
+        # task 4.7 / "Vendor-neutral attributes are preserved"
+        self.ws.pipeline('RUN-14', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-14-A","gen":1}}',
+            f'{iso(400)}|META|model|info|{{"phase":"IMPLEMENT","model":"claude-opus-5"}}',
+            f'{iso(300)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(200)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        attrs = rec.spans[0].attributes
+        self.assertEqual(attrs['gen_ai.system'], 'anthropic')
+        self.assertEqual(attrs['gen_ai.agent.name'], 'implement.implement')
+        self.assertEqual(attrs['gen_ai.request.model'], 'claude-opus-5')
+        self.assertEqual(attrs['langfuse.session.id'], 'RUN-14-A')
+
+
 # ── Fail-soft contract (D11, task 8.6) ──────────────────────────────────────
 
 class TestFailSoft(unittest.TestCase):
@@ -624,11 +878,15 @@ class TestRealSdk(unittest.TestCase):
         cfg = otel.ExporterConfig(span_grace_secs=0)
         emitter = otel.OtlpEmitter(cfg)
         exporter = InMemorySpanExporter()
-        provider = TracerProvider(resource=Resource.create({'service.name': 'test'}))
+        id_generator = otel.build_queued_id_generator()
+        provider = TracerProvider(
+            resource=Resource.create({'service.name': 'test'}),
+            id_generator=id_generator)
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         emitter._provider = provider
         emitter._trace = trace
         emitter._tracer = provider.get_tracer('test')
+        emitter._id_generator = id_generator
         emitter.available = True
         return emitter, exporter
 
@@ -663,6 +921,96 @@ class TestRealSdk(unittest.TestCase):
             msg='FAIL criterion 2'))
         span = exporter.get_finished_spans()[0]
         self.assertEqual(span.status.status_code, StatusCode.ERROR)
+
+    # ── Trace-context propagation adoption (trace-context-propagation, task 7.9) ─
+
+    def test_the_root_adopts_the_derived_trace_id_when_propagation_is_on(self):
+        emitter, exporter = self._emitter_with_memory_exporter()
+        run_id = 'SDK-3-2026-01-01T00:00:00Z-1'
+        span = otel.DerivedSpan(
+            ticket='SDK-3', phase='IMPLEMENT', step='implement',
+            start=NOW - timedelta(seconds=10), end=NOW, ok=True)
+        span_id_hex = otel.derive_span_id_hex(run_id, 'IMPLEMENT', 1)
+        emitter.emit(span, run_id=run_id, propagate=True, span_id_hex=span_id_hex)
+        emitter.close_ticket('SDK-3', 'complete', NOW)
+        finished = exporter.get_finished_spans()
+        root = next(s for s in finished if s.name == 'pipeline SDK-3')
+        expected_trace_id = int(otel.derive_trace_id_hex(run_id), 16)
+        self.assertEqual(root.context.trace_id, expected_trace_id)
+
+    def test_the_phase_span_adopts_exactly_the_exported_span_id(self):
+        emitter, exporter = self._emitter_with_memory_exporter()
+        run_id = 'SDK-4-2026-01-01T00:00:00Z-1'
+        span = otel.DerivedSpan(
+            ticket='SDK-4', phase='VERIFY', step='verify',
+            start=NOW - timedelta(seconds=10), end=NOW, ok=True)
+        span_id_hex = otel.derive_span_id_hex(run_id, 'VERIFY', 2)
+        emitter.emit(span, run_id=run_id, propagate=True, span_id_hex=span_id_hex)
+        finished = exporter.get_finished_spans()
+        phase_span = next(s for s in finished if s.name.startswith('invoke_agent'))
+        self.assertEqual(phase_span.context.span_id, int(span_id_hex, 16))
+
+    def test_two_phases_of_one_run_share_a_trace_but_not_a_span(self):
+        emitter, exporter = self._emitter_with_memory_exporter()
+        run_id = 'SDK-5-2026-01-01T00:00:00Z-1'
+        span1 = otel.DerivedSpan(
+            ticket='SDK-5', phase='IMPLEMENT', step='implement',
+            start=NOW - timedelta(seconds=20), end=NOW - timedelta(seconds=10), ok=True)
+        span2 = otel.DerivedSpan(
+            ticket='SDK-5', phase='VERIFY', step='verify',
+            start=NOW - timedelta(seconds=10), end=NOW, ok=True)
+        emitter.emit(span1, run_id=run_id, propagate=True,
+                     span_id_hex=otel.derive_span_id_hex(run_id, 'IMPLEMENT', 1))
+        emitter.emit(span2, run_id=run_id, propagate=True,
+                     span_id_hex=otel.derive_span_id_hex(run_id, 'VERIFY', 1))
+        finished = exporter.get_finished_spans()
+        phase_spans = [s for s in finished if s.name.startswith('invoke_agent')]
+        self.assertEqual(len(phase_spans), 2)
+        self.assertEqual(phase_spans[0].context.trace_id, phase_spans[1].context.trace_id)
+        self.assertNotEqual(phase_spans[0].context.span_id, phase_spans[1].context.span_id)
+
+    def test_propagation_off_produces_random_ids_as_before(self):
+        emitter, exporter = self._emitter_with_memory_exporter()
+        span = otel.DerivedSpan(
+            ticket='SDK-6', phase='IMPLEMENT', step='implement',
+            start=NOW - timedelta(seconds=10), end=NOW, ok=True)
+        emitter.emit(span, run_id='SDK-6-A', propagate=False, span_id_hex=None)
+        finished = exporter.get_finished_spans()
+        phase_span = finished[0]
+        # Never equal to the derived value by construction (astronomically
+        # unlikely collision aside) — proves propagation:false takes the
+        # untouched random path, not merely that *a* span exists.
+        self.assertNotEqual(
+            phase_span.context.span_id,
+            int(otel.derive_span_id_hex('SDK-6-A', 'IMPLEMENT', 1), 16))
+
+
+class TraceContextDerivationTest(unittest.TestCase):
+    """Pure-function tests for derive_trace_id_hex/derive_span_id_hex (task 7.2) —
+    no SDK required, since these never touch it."""
+
+    def test_same_inputs_always_yield_the_same_context(self):
+        a = otel.derive_trace_context('RID-1', 'IMPLEMENT', 1)
+        b = otel.derive_trace_context('RID-1', 'IMPLEMENT', 1)
+        self.assertEqual(a, b)
+
+    def test_different_phases_of_one_run_share_a_trace_id_not_a_span_id(self):
+        trace1, span1 = otel.derive_trace_context('RID-2', 'IMPLEMENT', 1)
+        trace2, span2 = otel.derive_trace_context('RID-2', 'VERIFY', 1)
+        self.assertEqual(trace1, trace2)
+        self.assertNotEqual(span1, span2)
+
+    def test_different_runs_of_one_ticket_do_not_share_a_trace_id(self):
+        trace1, _ = otel.derive_trace_context('RID-3-A', 'IMPLEMENT', 1)
+        trace2, _ = otel.derive_trace_context('RID-3-B', 'IMPLEMENT', 1)
+        self.assertNotEqual(trace1, trace2)
+
+    def test_trace_id_is_32_hex_chars_span_id_is_16(self):
+        trace_id, span_id = otel.derive_trace_context('RID-4', 'IMPLEMENT', 1)
+        self.assertEqual(len(trace_id), 32)
+        self.assertEqual(len(span_id), 16)
+        int(trace_id, 16)  # must not raise
+        int(span_id, 16)
 
 
 def sup_backoff_max():

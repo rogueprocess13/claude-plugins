@@ -85,6 +85,25 @@ _run_identity_cc_version() {
   return 0
 }
 
+# ── Inherited run-id handoff (RI1/RI2, langfuse-evidence-layer) ────────────────
+# fleetd mints (or reuses an open run's) run_id *before* the spawn — see
+# fleetd/supervisor.py's `_open_run_id` — and hands it down as TICKET_RUN_ID,
+# because every telemetry value derived from run identity has to exist at
+# spawn time, before this file's own stamp would otherwise mint one. This is
+# identity only: TICKET_RUN_ID carries no endpoint, no credential, and no
+# notion that a telemetry backend exists, so the pipeline behaves identically
+# with telemetry enabled or absent.
+
+# _run_identity_valid_run_id TID VALUE
+# A conforming id is TID-ISO8601-PID — the exact shape both this file's own
+# minting and fleetd's `_open_run_id` produce. Anything else is refused rather
+# than propagated (RI2): telemetry may degrade, run identity may not.
+_run_identity_valid_run_id() {
+  local tid="$1" value="$2"
+  [ -n "$value" ] || return 1
+  [[ "$value" =~ ^${tid}-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z-[0-9]+$ ]]
+}
+
 # ── run_identity_stamp ────────────────────────────────────────────────────────
 
 # run_identity_stamp TID LOG_FILE [--new]
@@ -111,7 +130,12 @@ run_identity_stamp() {
     trigger="fleetd"
   fi
 
-  local run_id="${tid}-$(_iso_now)-$$"
+  local run_id
+  if [ -n "${TICKET_RUN_ID:-}" ] && _run_identity_valid_run_id "$tid" "$TICKET_RUN_ID"; then
+    run_id="$TICKET_RUN_ID"
+  else
+    run_id="${tid}-$(_iso_now)-$$"
+  fi
 
   local run_id_json
   if [ -n "${FLEET_GENERATION:-}" ]; then

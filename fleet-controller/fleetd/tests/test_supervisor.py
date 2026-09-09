@@ -3408,6 +3408,84 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
         self.assertFalse(
             (self.workspace / 'TST-CTR2-appraise-contract.json').is_file())
 
+    def test_traceparent_is_exported_when_propagation_is_enabled(self):
+        """trace-context-propagation, task 7.9: the phase span's identifiers
+        must equal those exported to that phase's worker."""
+        from unittest import mock
+        from fleetd import supervisor as sup_mod, otel as otel_mod
+        from fleetd.supervisor import spawn_phase_worker
+
+        log_file = self.workspace / 'TST-TP1-pipeline.log'
+        log_file.write_text('')
+        out = self.workspace / 'TST-TP1-implement-gen1.json'
+        with mock.patch.object(sup_mod, 'FLEET_TRACE_PROPAGATE_ENABLE', True):
+            pid, session_id, spawn = spawn_phase_worker(
+                'TST-TP1', 'STEP_4', 1, str(self.workspace),
+                log_file=str(log_file),
+                cmd_override=[
+                    sys.executable, '-c',
+                    'import os; print(os.environ.get("TRACEPARENT"))'],
+            )
+        os.waitpid(pid, 0)
+        deadline = time.time() + 5
+        while time.time() < deadline and not (
+                out.is_file() and out.stat().st_size > 0):
+            time.sleep(0.05)
+        printed = out.read_text().strip()
+
+        log_content = log_file.read_text()
+        self.assertIn('META|trace-context', log_content)
+        trace_line = json.loads(log_content.strip().split('|', 4)[4])
+        self.assertTrue(trace_line['propagate'])
+        run_id = trace_line['run_id']
+        self.assertTrue(run_id)
+        expected_trace_id, expected_span_id = otel_mod.derive_trace_context(
+            run_id, 'IMPLEMENT', 1)
+        self.assertEqual(trace_line['trace_id'], expected_trace_id)
+        self.assertEqual(trace_line['span_id'], expected_span_id)
+        # The worker's own environment carries exactly this pair — the
+        # traceparent explicitly set here overrides any ambient TRACEPARENT
+        # this dev shell's own OTel instrumentation might already carry
+        # (spawn.env is applied last, after dict(os.environ)).
+        self.assertEqual(
+            printed, f'00-{expected_trace_id}-{expected_span_id}-01')
+
+    def test_no_traceparent_and_propagate_false_when_flag_is_off(self):
+        """task 7.7/7.8: with the flag off, the spawn environment and the
+        recorded context are unchanged from phase 2."""
+        from unittest import mock
+        from fleetd.supervisor import spawn_phase_worker
+
+        log_file = self.workspace / 'TST-TP2-pipeline.log'
+        log_file.write_text('')
+        out = self.workspace / 'TST-TP2-implement-gen1.json'
+        # This dev shell's own OTel instrumentation may already export a
+        # TRACEPARENT — cleared for the duration of the spawn so the
+        # assertion below tests *this code's* behaviour, not an ambient fact
+        # about the environment the test happens to run in.
+        clean_env = {k: v for k, v in os.environ.items() if k != 'TRACEPARENT'}
+        with mock.patch.dict(os.environ, clean_env, clear=True):
+            pid, session_id, spawn = spawn_phase_worker(
+                'TST-TP2', 'STEP_4', 1, str(self.workspace),
+                log_file=str(log_file),
+                cmd_override=[
+                    sys.executable, '-c',
+                    'import os; print(os.environ.get("TRACEPARENT"))'],
+            )
+        os.waitpid(pid, 0)
+        self.assertNotIn('TRACEPARENT', spawn.env)
+        deadline = time.time() + 5
+        while time.time() < deadline and not (
+                out.is_file() and out.stat().st_size > 0):
+            time.sleep(0.05)
+        self.assertEqual(out.read_text().strip(), 'None')
+
+        log_content = log_file.read_text()
+        trace_line = json.loads(log_content.strip().split('|', 4)[4])
+        self.assertFalse(trace_line['propagate'])
+        self.assertNotIn('trace_id', trace_line)
+        self.assertNotIn('span_id', trace_line)
+
     def test_redirection_failure_does_not_abort_spawn(self):
         """A stdio-redirect failure still lets the worker spawn and exec."""
         from fleetd.supervisor import Supervisor
@@ -5238,6 +5316,103 @@ class WorkerSpawnEnvironmentTest(unittest.TestCase):
              mock.patch.object(Path, 'read_text', side_effect=OSError('nope')):
             self.assertEqual(sup_mod._fleet_plugin_version(), '')
 
+    def test_worker_environment_carries_ticket_run_id(self):
+        from fleetd.supervisor import spawn_worker
+
+        out = self.workspace / 'TST-RUNID-gen1.json'
+        pid, _ = spawn_worker(
+            tid='TST-RUNID', generation=1, state_dir=str(self.workspace),
+            cmd_override=[
+                sys.executable, '-c',
+                'import os; print(os.environ.get("TICKET_RUN_ID"))'],
+        )
+        os.waitpid(pid, 0)
+        deadline = time.time() + 5
+        while time.time() < deadline and not (
+                out.is_file() and out.stat().st_size > 0):
+            time.sleep(0.05)
+        printed = out.read_text().strip()
+        self.assertTrue(printed.startswith('TST-RUNID-'))
+
+    def test_a_phase_spawn_carries_otel_resource_attributes(self):
+        """task 6.10 — the env builder is unit-tested in isolation
+        (test_worker_telemetry_env.py); this is the one assertion that a real
+        `spawn_worker` phase-level call actually stamps the result."""
+        from fleetd.supervisor import spawn_worker
+
+        out = self.workspace / 'TST-OTELENV-implement-gen1.json'
+        pid, _ = spawn_worker(
+            tid='TST-OTELENV', generation=1, state_dir=str(self.workspace),
+            phase='IMPLEMENT',
+            cmd_override=[
+                sys.executable, '-c',
+                'import os; print(os.environ.get("OTEL_RESOURCE_ATTRIBUTES"))'],
+        )
+        os.waitpid(pid, 0)
+        deadline = time.time() + 5
+        while time.time() < deadline and not (
+                out.is_file() and out.stat().st_size > 0):
+            time.sleep(0.05)
+        printed = out.read_text().strip()
+        self.assertIn('langfuse.trace.metadata.ticket_id=TST-OTELENV', printed)
+        self.assertIn('langfuse.trace.metadata.phase=IMPLEMENT', printed)
+        self.assertIn('deployment.environment=', printed)
+
+
+class OpenRunIdTest(unittest.TestCase):
+    """`_open_run_id` — RI1: minted before spawn, reused across a resumed run."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self._tmp.name)
+
+    def tearDown(self):
+        _safe_tmp_cleanup(self._tmp)
+
+    def _log(self, tid):
+        return self.workspace / f'{tid}-pipeline.log'
+
+    def test_mints_a_fresh_id_with_no_log(self):
+        from fleetd.supervisor import _open_run_id
+
+        run_id = _open_run_id(str(self.workspace), 'TST-OR1', 1)
+        self.assertTrue(run_id.startswith('TST-OR1-'))
+
+    def test_reuses_the_open_runs_identifier(self):
+        """Task 3.6 — a resumed spawn must not mint a second run id."""
+        from fleetd.supervisor import _open_run_id
+
+        tid = 'TST-OR2'
+        first = _open_run_id(str(self.workspace), tid, 1)
+        self._log(tid).write_text(
+            '2026-01-01T00:00:00Z|META|run-id|info|'
+            + json.dumps({'run_id': first, 'gen': 1}) + '\n')
+        second = _open_run_id(str(self.workspace), tid, 1)
+        self.assertEqual(first, second)
+
+    def test_mints_a_new_id_after_an_outcome_closes_the_run(self):
+        from fleetd.supervisor import _open_run_id
+
+        tid = 'TST-OR3'
+        first = _open_run_id(str(self.workspace), tid, 1)
+        self._log(tid).write_text(
+            '2026-01-01T00:00:00Z|META|run-id|info|'
+            + json.dumps({'run_id': first, 'gen': 1}) + '\n'
+            + '2026-01-01T00:05:00Z|META|outcome|info|{"status":"complete"}\n')
+        # The mint format has one-second resolution; without this a mint
+        # immediately following the closed run's own mint, in the same test
+        # process, can collide on second + pid alone.
+        time.sleep(1.1)
+        second = _open_run_id(str(self.workspace), tid, 2)
+        self.assertNotEqual(first, second)
+        self.assertTrue(second.startswith(f'{tid}-'))
+
+    def test_unreadable_log_still_mints(self):
+        from fleetd.supervisor import _open_run_id
+
+        run_id = _open_run_id('/nonexistent/state/dir', 'TST-OR4', 1)
+        self.assertTrue(run_id.startswith('TST-OR4-'))
+
 
 # ── Commercial Evidence MVP Branch C: fleet-merge-poll-cadence ───────────
 
@@ -5298,6 +5473,69 @@ class MergePollSweepTest(unittest.TestCase):
             sup._merge_poll_sweep()  # must not raise
 
 
+class ScoreExportSweepTest(unittest.TestCase):
+    """`_score_export_sweep` shells out to run-score-export.sh, fail-soft
+    throughout (task 11.9/11.10) — same shape as `_merge_poll_sweep`."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self._tmp.name)
+
+    def tearDown(self):
+        _safe_tmp_cleanup(self._tmp)
+
+    def _make_supervisor(self):
+        from fleetd.supervisor import Supervisor
+        return Supervisor(
+            state_dir=str(self.workspace), pidfile=str(self.workspace / 't.pid'))
+
+    def test_missing_script_is_a_noop(self):
+        from unittest import mock
+
+        sup = self._make_supervisor()
+        with mock.patch.object(Path, 'is_file', return_value=False), \
+             mock.patch('subprocess.run') as run:
+            sup._score_export_sweep()
+            run.assert_not_called()
+
+    def test_invokes_the_script_with_an_outer_timeout(self):
+        from unittest import mock
+
+        sup = self._make_supervisor()
+        with mock.patch.object(Path, 'is_file', return_value=True), \
+             mock.patch('subprocess.run') as run:
+            sup._score_export_sweep()
+            run.assert_called_once()
+            _, kwargs = run.call_args
+            self.assertEqual(kwargs.get('timeout'), 60)
+
+    def test_a_hanging_sweep_does_not_propagate(self):
+        from unittest import mock
+
+        sup = self._make_supervisor()
+        with mock.patch.object(Path, 'is_file', return_value=True), \
+             mock.patch('subprocess.run',
+                        side_effect=subprocess.TimeoutExpired(cmd='x', timeout=60)):
+            sup._score_export_sweep()  # must not raise
+
+    def test_the_real_script_runs_cleanly_with_no_credentials(self):
+        """Not a mock — the actual shipped script, actual subprocess, no
+        FLEET_SCORE_EXPORT_ENABLE/credentials set. Proves the no-credentials
+        no-op path end to end, not just that a mock was called."""
+        sup = self._make_supervisor()
+        env_backup = {
+            k: os.environ.pop(k, None) for k in (
+                'FLEET_SCORE_EXPORT_ENABLE', 'LANGFUSE_HOST',
+                'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY')
+        }
+        try:
+            sup._score_export_sweep()  # must not raise, must not hang
+        finally:
+            for k, v in env_backup.items():
+                if v is not None:
+                    os.environ[k] = v
+
+
 class MergePollCadenceTest(unittest.TestCase):
     """run_observe fires the sweep every FLEET_MERGE_POLL_CYCLES cycles."""
 
@@ -5326,6 +5564,7 @@ class MergePollCadenceTest(unittest.TestCase):
         sup.poll_adopted_workers = lambda: None
         sup.maybe_spawn_otel = lambda: None
         sup._merge_poll_sweep = lambda: calls.append('sweep')
+        sup._score_export_sweep = lambda: calls.append('score-export')
 
         counter = {'n': 0}
 
@@ -5345,7 +5584,8 @@ class MergePollCadenceTest(unittest.TestCase):
             sup, calls = self._make_patched_supervisor(cycles_before_exit=2)
             with self.assertRaises(SystemExit):
                 sup.run_observe()
-            self.assertEqual(calls, ['sweep'])
+            # score-export shares the merge-poll cadence (task 11.9).
+            self.assertEqual(calls, ['sweep', 'score-export'])
 
     def test_sweep_does_not_fire_off_cadence(self):
         from unittest import mock

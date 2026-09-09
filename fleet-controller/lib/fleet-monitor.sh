@@ -279,8 +279,12 @@ fleet_monitor_cycle() {
           fi
         fi
       else
-        # KILL only (severity 2)
-        fleet_kill_pipeline "$tid" "auto-kill" "$workspace" 2>/dev/null || true
+        # KILL only (severity 2). The triggering anomaly rides along in the
+        # reason string (run-failure-classification SC7/task 9.1) so a stall
+        # or watchdog kill is distinguishable from any other kill by reading
+        # the pipeline log alone — "auto-kill" stays a literal prefix so any
+        # existing consumer matching that bare string still matches.
+        fleet_kill_pipeline "$tid" "auto-kill: ${anomalies}" "$workspace" 2>/dev/null || true
       fi
     fi
   done

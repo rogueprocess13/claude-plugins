@@ -144,6 +144,74 @@ test_new_flag_forces_a_fresh_run_id_inside_an_open_run() {
   return $ok
 }
 
+test_adopts_valid_inherited_run_id() {
+  _sandbox_new
+  local log="$_SANDBOX/logs/T.log"
+  : >"$log"
+  TICKET_RUN_ID="T-30-2026-01-01T00:00:00Z-4242" \
+    bash -c "source '$_SANDBOX/lib/run-identity.sh'; run_identity_stamp T-30 '$log'" >/dev/null
+  local ok
+  [ "$(grep '|META|run-id|info|' "$log" | cut -d'|' -f5- | jq -r '.run_id')" = \
+    "T-30-2026-01-01T00:00:00Z-4242" ]
+  ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_unset_inherited_run_id_mints_as_before() {
+  _sandbox_new
+  local log="$_SANDBOX/logs/T.log"
+  : >"$log"
+  env -u TICKET_RUN_ID bash -c "source '$_SANDBOX/lib/run-identity.sh'; run_identity_stamp T-31 '$log'" >/dev/null
+  local ok
+  echo "$(grep '|META|run-id|info|' "$log" | cut -d'|' -f5-)" | jq -e '.run_id | test("^T-31-")' >/dev/null
+  ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_malformed_inherited_run_id_is_refused() {
+  _sandbox_new
+  local log="$_SANDBOX/logs/T.log"
+  : >"$log"
+  TICKET_RUN_ID="not-a-conforming-value" \
+    bash -c "source '$_SANDBOX/lib/run-identity.sh'; run_identity_stamp T-32 '$log'" >/dev/null
+  local run_id ok
+  run_id=$(grep '|META|run-id|info|' "$log" | cut -d'|' -f5- | jq -r '.run_id')
+  [ "$run_id" != "not-a-conforming-value" ] && echo "$run_id" | grep -q '^T-32-'
+  ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_empty_inherited_run_id_mints_as_before() {
+  _sandbox_new
+  local log="$_SANDBOX/logs/T.log"
+  : >"$log"
+  TICKET_RUN_ID="" \
+    bash -c "source '$_SANDBOX/lib/run-identity.sh'; run_identity_stamp T-33 '$log'" >/dev/null
+  local ok
+  echo "$(grep '|META|run-id|info|' "$log" | cut -d'|' -f5-)" | jq -e '.run_id | test("^T-33-")' >/dev/null
+  ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_inherited_run_id_for_another_ticket_is_refused() {
+  _sandbox_new
+  local log="$_SANDBOX/logs/T.log"
+  : >"$log"
+  # A value that conforms to the shape but was minted for a different ticket
+  # must not be adopted — the tid prefix is part of the conformance check.
+  TICKET_RUN_ID="T-OTHER-2026-01-01T00:00:00Z-1" \
+    bash -c "source '$_SANDBOX/lib/run-identity.sh'; run_identity_stamp T-34 '$log'" >/dev/null
+  local ok
+  echo "$(grep '|META|run-id|info|' "$log" | cut -d'|' -f5-)" | jq -e '.run_id | test("^T-34-")' >/dev/null
+  ok=$?
+  _sandbox_rm
+  return $ok
+}
+
 test_trigger_is_fleetd_from_worker_pid() {
   _sandbox_new
   local log="$_SANDBOX/logs/T.log"
@@ -418,6 +486,11 @@ _run "run-id line has expected fields" test_run_id_line_has_expected_fields
 _run "second stamp in open run is a no-op" test_second_stamp_in_open_run_is_a_no_op
 _run "new run after an outcome" test_new_run_after_an_outcome
 _run "--new forces a fresh run-id inside an open run" test_new_flag_forces_a_fresh_run_id_inside_an_open_run
+_run "adopts a valid inherited run id" test_adopts_valid_inherited_run_id
+_run "unset inherited run id mints as before" test_unset_inherited_run_id_mints_as_before
+_run "malformed inherited run id is refused" test_malformed_inherited_run_id_is_refused
+_run "empty inherited run id mints as before" test_empty_inherited_run_id_mints_as_before
+_run "inherited run id for another ticket is refused" test_inherited_run_id_for_another_ticket_is_refused
 _run "trigger is fleetd from FLEET_WORKER_PID" test_trigger_is_fleetd_from_worker_pid
 _run "gen is null without FLEET_GENERATION" test_gen_is_null_without_fleet_generation
 _run "gen carries FLEET_GENERATION when set" test_gen_carries_fleet_generation_when_set

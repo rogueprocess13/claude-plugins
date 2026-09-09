@@ -79,6 +79,42 @@ FLEET_OTEL_SPAN_GRACE_SECS="${FLEET_OTEL_SPAN_GRACE_SECS:-30}"
 # capped, with pipeline.tool_calls_truncated set when the cap bites.
 FLEET_OTEL_MAX_TOOL_EVENTS="${FLEET_OTEL_MAX_TOOL_EVENTS:-100}"
 
+# Extra headers on the exporter's OTLP HTTP requests, `key1=val1,key2=val2`
+# (e.g. an ingestion auth header). Also forwarded, unchanged, as
+# OTEL_EXPORTER_OTLP_HEADERS on every worker spawn (worker-telemetry-env) so
+# the agent runtime's own OTLP export authenticates against the same
+# collector with no separate configuration. Empty by default — no headers.
+FLEET_OTEL_HEADERS="${FLEET_OTEL_HEADERS:-}"
+
+# ── Worker telemetry env (worker-telemetry-env, WE1-WE5) ─────────────────────────
+# fleetd stamps `OTEL_RESOURCE_ATTRIBUTES` onto every spawned worker's
+# environment — separate from, and unconditional on, FLEET_OTEL_ENABLE above:
+# this feeds the agent runtime's *own* OTel stream, not fleetd's log-derived
+# exporter. A runtime with its own telemetry disabled never reads these vars;
+# one with it enabled joins the run's session with no trace propagation
+# required (WE2, design.md Gate verdicts).
+
+# The `deployment.environment` value stamped on every worker — separates
+# autonomous pipeline execution from interactive use on the same backend.
+FLEET_OTEL_WORKER_ENVIRONMENT="${FLEET_OTEL_WORKER_ENVIRONMENT:-pipeline}"
+
+# `OTEL_BSP_SCHEDULE_DELAY` (milliseconds) stamped on every worker — shortens
+# the runtime's own batch-export interval below its SDK default so a worker
+# terminated by intervention or fleet-kill has less unexported telemetry
+# buffered at the moment it dies (WE5). Never affects fleetd's own exporter.
+FLEET_OTEL_WORKER_EXPORT_MS="${FLEET_OTEL_WORKER_EXPORT_MS:-2000}"
+
+# ── Trace-context propagation (trace-context-propagation, TP3) ──────────────────
+# Off by default and never load-bearing: deriving, recording and exporting a
+# parent trace context are each best-effort, and no spawn is validated
+# against, delayed by, or failed by any of it. When enabled, fleetd exports a
+# derived TRACEPARENT into each phase worker's environment so the agent
+# runtime's own observations nest beneath the derived phase span instead of
+# only joining its session (WE2) — a strictly additive refinement, not a
+# replacement for the session-level join, which already answers every
+# question this programme exists to answer on its own.
+FLEET_TRACE_PROPAGATE_ENABLE="${FLEET_TRACE_PROPAGATE_ENABLE:-false}"
+
 # ── Agent Observer ───────────────────────────────────────────────────────────────
 # When false (the default), fleetd is byte-identical to today: phase-level workers
 # still spawn with --output-format json, and no fleetd/observer.py sidecar runs.
@@ -152,6 +188,20 @@ FLEET_DISPATCH_LOCK_TIMEOUT="${FLEET_DISPATCH_LOCK_TIMEOUT:-5}"
 # Namespace for spawn queue, stop files, run registry, and fence markers.
 # Prevents collisions between multiple fleet controller instances on the same host.
 FLEET_INSTANCE_ID="${FLEET_INSTANCE_ID:-default}"
+
+# ── Run score export (run-score-export, langfuse-evidence-layer Phase 5) ────────
+# fleetd's periodic sweeper turns finished runs in runs.jsonl into per-run
+# Langfuse scores plus a ticket-level rollup on the merged run. Off by default
+# and credential-gated: absent configuration, absent credentials, an
+# unreachable backend, or a malformed record each warn and continue — the
+# sweeper never blocks fleetd's loop and never touches a ticket.
+FLEET_SCORE_EXPORT_ENABLE="${FLEET_SCORE_EXPORT_ENABLE:-false}"
+
+# Langfuse project credentials and host. All optional — the sweeper no-ops
+# without every one of them set (in addition to the enable flag above).
+LANGFUSE_HOST="${LANGFUSE_HOST:-}"
+LANGFUSE_PUBLIC_KEY="${LANGFUSE_PUBLIC_KEY:-}"
+LANGFUSE_SECRET_KEY="${LANGFUSE_SECRET_KEY:-}"
 
 # ── State directory resolver ────────────────────────────────────────────────────
 # Resolves the durable-state directory from FLEET_STATE_DIR env var, falling back

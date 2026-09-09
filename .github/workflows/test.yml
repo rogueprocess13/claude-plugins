@@ -29,6 +29,13 @@ jobs:
       - name: Generated-section drift check
         run: make check-generated
 
+      - name: Observability backend stays out of skills/agents (langfuse-evidence-layer)
+        run: |
+          if grep -ril langfuse ticket-auto-pipeline/skills ticket-auto-pipeline/agents ticket-planner grill-me knowledge-curator; then
+            echo "A skill, agent, or skill-invoked library references the observability backend — this boundary must hold (design.md)." >&2
+            exit 1
+          fi
+
       - name: Unit tests
         run: make test
 

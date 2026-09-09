@@ -120,10 +120,12 @@ echo "${_iso}|META|postmortem|info|{\"run_id\":\"${_run_id}\",\"status\":\"start
 _GI_LIB="$(_resolve_lib "github-issues.sh")"
 _GIR_LIB="$(_resolve_lib "github-issue-retro.sh")"
 _CP_LIB="$(_resolve_lib "corrections-parse.sh")"
+_EP_LIB="$(_resolve_lib "exit-path.sh")"
 
 [ -f "$_GI_LIB" ] && source "$_GI_LIB"
 [ -f "$_GIR_LIB" ] && source "$_GIR_LIB"
 [ -f "$_CP_LIB" ] && source "$_CP_LIB"
+[ -f "$_EP_LIB" ] && source "$_EP_LIB"
 
 # ── Helper: emit a postmortem META entry ─────────────────────────────────────────
 
@@ -250,45 +252,10 @@ _collect_signals() {
 
 # ── Exit-path derivation ─────────────────────────────────────────────────────────
 # Derives the exit path from log evidence (primary) with --exit-code as hint.
-
-_derive_exit_path() {
-  local tmp="$1"
-
-  # Gate-stop takes priority, but detect exhaustion wrapped as gate-stop
-  # (F15: production writes exhaustion as META|gate-stop|fail|VERIFY_EXHAUSTED)
-  if grep -q '|META|gate-stop|fail|' "$LOG_FILE" 2>/dev/null; then
-    local _code
-    _code=$(grep '|META|gate-stop|fail|' "$LOG_FILE" | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
-    case "$_code" in
-    VERIFY_EXHAUSTED) echo "verify-exhausted" ;;
-    PR_FEEDBACK_EXHAUSTED) echo "pr-feedback-exhausted" ;;
-    PR_REVIEW_EXHAUSTED) echo "pr-review-exhausted" ;;
-    *) echo "gate-stop:${_code}" ;;
-    esac
-    return
-  fi
-
-  # Router error
-  if grep -q '|META|router-error|' "$LOG_FILE" 2>/dev/null; then
-    echo "router-error"
-    return
-  fi
-
-  # Fleet kill
-  if grep -q 'stopped: fleet-kill' "$LOG_FILE" 2>/dev/null; then
-    echo "fleet-kill"
-    return
-  fi
-
-  # Non-zero exit code with no clear signal
-  if [ "${EXIT_CODE:-0}" -ne 0 ]; then
-    echo "interrupted:exit-code-${EXIT_CODE}"
-    return
-  fi
-
-  # Default: reached STEP_6
-  echo "completed"
-}
+# `_derive_exit_path` itself now lives in exit-path.sh (SC1,
+# langfuse-evidence-layer) — extracted verbatim, sourced above — so the
+# post-mortem and the failure classifier share one implementation instead of
+# drifting two copies of the same ladder.
 
 # ── Deterministic signature builder ──────────────────────────────────────────────
 

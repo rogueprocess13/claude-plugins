@@ -60,6 +60,77 @@ test_monitor_cycle_empty_workspace_total_zero() {
   [ "$total" = "0" ]
 }
 
+# ── Kill-reason anomaly threading (run-failure-classification, task 9.3) ───────
+# `fleet_detect_all`/`fleet_kill_pipeline`/`fleet_restart_pipeline` are
+# redefined as stubs *after* fleet-monitor.sh is sourced — several of its
+# transitive dependencies (fleet-reconcile.sh, sourced via fleet-dispatch.sh)
+# unconditionally re-source fleet-detect.sh/fleet-intervene.sh with no
+# declare-f guard, which would clobber a stub declared beforehand. Bash
+# resolves a function at call time, so redefining after source and before
+# calling `fleet_monitor_cycle` sticks.
+
+test_severity_2_kill_carries_the_stall_anomaly() {
+  local tmpdir capture
+  tmpdir=$(mktemp -d)
+  capture="$tmpdir/kill-args.txt"
+  (cd "$LIB_DIR/.." && FLEET_LOG_FILE=/dev/null FLEET_HB_LOG_FILE=/dev/null \
+    KILL_CAPTURE="$capture" bash -c '
+      source "'"$LIB_DIR"'/fleet-monitor.sh"
+      fleet_detect_all() {
+        echo "{\"pipelines\":[{\"tid\":\"T-1\",\"severity\":2,\"anomalies\":\"stall(S2)\"}]}"
+      }
+      fleet_kill_pipeline() { printf "%s\n" "$*" >> "$KILL_CAPTURE"; }
+      fleet_monitor_cycle "'"$tmpdir"'"
+    ') >/dev/null 2>&1
+  local ok
+  [ -f "$capture" ] && grep -q '^T-1 auto-kill: stall(S2) ' "$capture"
+  ok=$?
+  rm -rf "$tmpdir"
+  return $ok
+}
+
+test_non_stall_kill_reason_is_unchanged_in_shape() {
+  local tmpdir capture
+  tmpdir=$(mktemp -d)
+  capture="$tmpdir/kill-args.txt"
+  (cd "$LIB_DIR/.." && FLEET_LOG_FILE=/dev/null FLEET_HB_LOG_FILE=/dev/null \
+    KILL_CAPTURE="$capture" bash -c '
+      source "'"$LIB_DIR"'/fleet-monitor.sh"
+      fleet_detect_all() {
+        echo "{\"pipelines\":[{\"tid\":\"T-2\",\"severity\":2,\"anomalies\":\"tool-errors(S2)\"}]}"
+      }
+      fleet_kill_pipeline() { printf "%s\n" "$*" >> "$KILL_CAPTURE"; }
+      fleet_monitor_cycle "'"$tmpdir"'"
+    ') >/dev/null 2>&1
+  local ok
+  [ -f "$capture" ] && grep -q '^T-2 auto-kill: tool-errors(S2) ' "$capture" &&
+    ! grep -q 'stall' "$capture"
+  ok=$?
+  rm -rf "$tmpdir"
+  return $ok
+}
+
+test_severity_3_restart_path_is_unaffected_by_the_kill_reason_change() {
+  local tmpdir capture
+  tmpdir=$(mktemp -d)
+  capture="$tmpdir/restart-args.txt"
+  (cd "$LIB_DIR/.." && FLEET_LOG_FILE=/dev/null FLEET_HB_LOG_FILE=/dev/null \
+    FLEET_AUTO_RESTART=true RESTART_CAPTURE="$capture" bash -c '
+      source "'"$LIB_DIR"'/fleet-monitor.sh"
+      fleet_detect_all() {
+        echo "{\"pipelines\":[{\"tid\":\"T-3\",\"severity\":3,\"anomalies\":\"loop(S3)\"}]}"
+      }
+      fleet_kill_pipeline() { echo "unexpected-kill-call: $*" >&2; exit 1; }
+      fleet_restart_pipeline() { printf "%s\n" "$*" >> "$RESTART_CAPTURE"; return 1; }
+      fleet_monitor_cycle "'"$tmpdir"'"
+    ') >/dev/null 2>&1
+  local ok
+  [ -f "$capture" ] && grep -q '^T-3 auto-restart ' "$capture"
+  ok=$?
+  rm -rf "$tmpdir"
+  return $ok
+}
+
 # ── Spawn queue tests ──────────────────────────────────────────────────────────
 
 test_spawn_queue_writes_valid_json() {
@@ -388,7 +459,10 @@ for fn in \
   test_path_consistency_run_file_uses_state_dir \
   test_stop_file_agreement_default_config \
   test_stop_file_agreement_custom_state_dir \
-  test_stop_file_pinger_watchdog_agree_on_dir; do
+  test_stop_file_pinger_watchdog_agree_on_dir \
+  test_severity_2_kill_carries_the_stall_anomaly \
+  test_non_stall_kill_reason_is_unchanged_in_shape \
+  test_severity_3_restart_path_is_unaffected_by_the_kill_reason_change; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

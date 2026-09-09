@@ -1452,6 +1452,80 @@ def _last_run_id_for_generation(state_dir, tid, generation):
     return None
 
 
+def _open_run_id(state_dir, tid, generation):
+    """Determine the run identifier before the worker is spawned (RI1).
+
+    The worker's own preamble (`run-identity.sh`) mints `run_id` *after*
+    spawn, but the spawn environment and every trace identifier derived from
+    run identity have to exist *before* it — so fleetd decides first. Mirrors
+    `run_identity_current`'s open-run guard: the last `META|run-id` line is
+    open iff no `META|outcome` line follows it. A resumed spawn (task 3.6)
+    finds that open run and reuses its id instead of minting a second one;
+    a fresh execution mints `{tid}-{iso}-{pid}` — the same TID-ISO-PID shape
+    `run-identity.sh` mints, using fleetd's own pid since the worker's pid
+    does not exist yet at this point.
+    """
+    log_file = Path(state_dir) / f'{tid}-pipeline.log'
+    try:
+        lines = log_file.read_text().splitlines()
+    except OSError:
+        lines = []
+
+    open_run_id = None
+    for line in lines:
+        parts = line.split('|', 4)
+        if len(parts) != 5 or parts[1] != 'META':
+            continue
+        if parts[2] == 'run-id':
+            try:
+                open_run_id = json.loads(parts[4]).get('run_id') or None
+            except (ValueError, TypeError, AttributeError):
+                open_run_id = None
+        elif parts[2] == 'outcome':
+            open_run_id = None  # the run that line closes is no longer open
+
+    if open_run_id:
+        return open_run_id
+    return f'{tid}-{datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}-{os.getpid()}'
+
+
+def _write_trace_context(log_file, payload):
+    """Append `META|trace-context` at spawn (TP2), best-effort throughout.
+
+    Carries the facts already known at spawn time — run id, worker session
+    id, generation and phase — so the exporter can attach the worker's own
+    runtime session to its phase span (SI5) without reaching outside the
+    pipeline log for it. `trace_id`/`span_id` are added by trace-context
+    derivation (phase 3) when propagation is enabled; until then `propagate`
+    stays `false` and this line is a pure identity record.
+
+    Honors the pipeline log's own invariant that nothing is appended after a
+    run's `META|outcome` line (TP2/pipeline-log-format.md rule 6) — a race
+    where the phase's own outcome landed before this call reaches here must
+    not violate it. Never raises: a failure here costs one log line of
+    telemetry addressability, never the spawn that already happened.
+    """
+    if not log_file:
+        return
+    try:
+        lines = Path(log_file).read_text().splitlines()
+    except OSError:
+        lines = []
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        parts = line.split('|', 4)
+        if len(parts) >= 3 and parts[1] == 'META' and parts[2] == 'outcome':
+            return
+        break
+    iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    try:
+        with open(log_file, 'a') as fh:
+            fh.write(f'{iso}|META|trace-context|info|{json.dumps(payload)}\n')
+    except OSError:
+        pass
+
+
 def _append_runs_event(state_dir, event):
     """Append one JSON line to runs.jsonl, flock-guarded, fail-soft.
 
@@ -1966,6 +2040,27 @@ FLEET_OBSERVER_ENABLE = os.environ.get('FLEET_OBSERVER_ENABLE', 'false') == 'tru
 FLEET_PHASE_DISPATCH_ENABLE = os.environ.get(
     'FLEET_PHASE_DISPATCH_ENABLE', 'false') == 'true'
 
+# Trace-context propagation (langfuse-evidence-layer phase 3, TP3). False (the
+# default) means the recorded META|trace-context carries `propagate: false`
+# and no worker ever receives a TRACEPARENT from fleetd — a session-level join
+# (WE2 + SI5) already answers every question this programme exists to answer,
+# so this stays off until a real end-to-end ticket confirms the derived parent
+# reconciles with its children (design.md Gate verdicts, Open Questions).
+FLEET_TRACE_PROPAGATE_ENABLE = os.environ.get(
+    'FLEET_TRACE_PROPAGATE_ENABLE', 'false') == 'true'
+
+# Worker telemetry env (worker-telemetry-env, WE1-WE5). Stamped into every
+# spawned worker's environment unconditionally — this is a resource-attribute
+# stamp for the agent runtime's *own* OTel stream, a separate concern from
+# FLEET_OTEL_ENABLE (which gates only fleetd's own log-derived exporter). A
+# runtime with its own telemetry disabled simply never reads these; a runtime
+# with it enabled joins the run's session with no propagation required (WE2,
+# design.md Gate verdicts).
+FLEET_OTEL_WORKER_ENVIRONMENT = os.environ.get(
+    'FLEET_OTEL_WORKER_ENVIRONMENT', 'pipeline')
+FLEET_OTEL_WORKER_EXPORT_MS = _env_int('FLEET_OTEL_WORKER_EXPORT_MS', 2000)
+FLEET_OTEL_HEADERS = os.environ.get('FLEET_OTEL_HEADERS', '')
+
 # Markers indicating CLAUDE_CMD already supplies its own permission mode —
 # fleetd must not double-specify (the CLI rejects conflicting/duplicate
 # permission flags).
@@ -2046,6 +2141,52 @@ def _build_worker_cmd(tid, claude_bin=None, claude_cmd=None, session_id=None,
     return prefix + args
 
 
+def _otel_pct_encode(value):
+    """Percent-encode a resource-attribute value (WE3): `,`, `=` and
+    whitespace are reserved by the `OTEL_RESOURCE_ATTRIBUTES` list syntax and
+    would otherwise corrupt attributes that follow. Returns `None` on any
+    encoding failure — the caller omits the attribute (WE4) rather than
+    emitting it raw.
+    """
+    import urllib.parse
+
+    try:
+        return urllib.parse.quote(str(value), safe='')
+    except Exception:
+        return None
+
+
+def _worker_otel_resource_attributes(run_id, tid, phase=None,
+                                     environment=None):
+    """Build the `OTEL_RESOURCE_ATTRIBUTES` value stamped onto a worker spawn
+    (WE1/WE2): the run id under the backend's session key, ticket and phase
+    under its filterable-metadata namespace, and the deployment environment
+    that separates pipeline execution from interactive use.
+
+    `phase` is included only for a phase-level spawn (WE3) — an empty
+    attribute is worse than an absent one, since it creates a queryable
+    "unknown" value that then has to be excluded from every aggregate by
+    hand. Any single value that cannot be encoded is omitted rather than
+    aborting the whole stamp (WE4): a spawn must never be blocked, delayed,
+    or altered by an observability string.
+    """
+    environment = environment or FLEET_OTEL_WORKER_ENVIRONMENT
+    pairs = []
+    for key, value in (
+        ('langfuse.session.id', run_id),
+        ('langfuse.trace.metadata.ticket_id', tid),
+        ('langfuse.trace.metadata.phase', phase or None),
+        ('deployment.environment', environment),
+    ):
+        if not value:
+            continue
+        encoded = _otel_pct_encode(value)
+        if encoded is None:
+            continue
+        pairs.append(f'{key}={encoded}')
+    return ','.join(pairs)
+
+
 def _read_own_start_ticks():
     """Read this process's own /proc/self/stat field-22 start ticks.
 
@@ -2096,7 +2237,7 @@ class SpawnError(Exception):
 def spawn_worker(tid, generation, state_dir, reason='dispatched',
                  cmd_override=None, claude_bin=None, claude_cmd=None,
                  prompt=None, phase='', extra_env=None, session_id=None,
-                 agent=None):
+                 agent=None, run_id=None):
     """Fork and exec a worker for `tid`. Returns the child PID.
 
     The child is placed in its own process group so that kill escalation
@@ -2143,6 +2284,20 @@ def spawn_worker(tid, generation, state_dir, reason='dispatched',
     stdout_path = Path(state_dir) / f'{slug}-gen{generation}{stdout_ext}'
     stderr_path = Path(state_dir) / f'{slug}-gen{generation}.stderr'
 
+    # Resolved before the fork (RI1) so parent and child agree on one value —
+    # the child stamps it into the worker's environment, the parent (via
+    # `spawn_phase_worker`) uses the same value to record `META|trace-context`.
+    # Best-effort: a failure here costs telemetry attribution, never the
+    # spawn — run-identity.sh mints its own id exactly as it does today when
+    # this is unset.
+    if run_id is None:
+        try:
+            run_id = _open_run_id(state_dir, tid, generation)
+        except Exception as exc:
+            print(f'fleetd: run-id handoff failed for {tid}: {exc}',
+                  file=sys.stderr)
+            run_id = None
+
     pid = os.fork()
     if pid == 0:
         # Child: create new process group, exec the worker.
@@ -2187,6 +2342,19 @@ def spawn_worker(tid, generation, state_dir, reason='dispatched',
         # process having FLEET_STATE_DIR set — it may have resolved state_dir
         # via the DEFAULT_WORKSPACE fallback instead.
         worker_env['FLEET_STATE_DIR'] = str(state_dir)
+        if run_id:
+            worker_env['TICKET_RUN_ID'] = run_id
+        # Worker telemetry env (WE1-WE5) — best-effort, never blocks a spawn.
+        try:
+            attrs = _worker_otel_resource_attributes(run_id, tid, phase=phase)
+            if attrs:
+                worker_env['OTEL_RESOURCE_ATTRIBUTES'] = attrs
+                worker_env['OTEL_BSP_SCHEDULE_DELAY'] = str(FLEET_OTEL_WORKER_EXPORT_MS)
+                if FLEET_OTEL_HEADERS:
+                    worker_env['OTEL_EXPORTER_OTLP_HEADERS'] = FLEET_OTEL_HEADERS
+        except Exception as exc:
+            print(f'fleetd: worker telemetry env failed for {tid}: {exc}',
+                  file=sys.stderr)
         start_ticks = _read_own_start_ticks()
         if start_ticks:
             worker_env['FLEET_WORKER_START_TICKS'] = start_ticks
@@ -2275,12 +2443,51 @@ def spawn_phase_worker(tid, step_id, generation, state_dir, log_file,
             print(f"fleetd[{os.getpid()}]: phase contract write failed for "
                   f"{tid}/{spawn.phase}: {exc}", file=sys.stderr)
 
+    # Resolved once here rather than left to spawn_worker's own default, so
+    # this same value can also go into META|trace-context below (RI1) — both
+    # must name the same run, and spawn_worker forks a child that cannot hand
+    # a value back to this process.
+    try:
+        run_id = _open_run_id(state_dir, tid, generation)
+    except Exception as exc:
+        print(f'fleetd: run-id handoff failed for {tid}: {exc}',
+              file=sys.stderr)
+        run_id = None
+
+    # Trace-context derivation (trace-context-propagation, TP1/TP3) — every
+    # step best-effort: a failure here must never alter the spawn, its
+    # command line, or its exit handling. Off by default
+    # (FLEET_TRACE_PROPAGATE_ENABLE=false): trace_id/span_id stay unset and
+    # this block is a no-op, leaving `spawn.env` and the recorded context
+    # exactly as they were before this capability existed (TP3, task 7.7).
+    trace_id = span_id = None
+    if FLEET_TRACE_PROPAGATE_ENABLE and run_id:
+        try:
+            trace_id, span_id = _otel_mod.derive_trace_context(
+                run_id, spawn.phase, generation)
+            spawn.env['TRACEPARENT'] = f'00-{trace_id}-{span_id}-01'
+        except Exception as exc:
+            print(f'fleetd: trace-context derivation failed for {tid}: {exc}',
+                  file=sys.stderr)
+            trace_id = span_id = None
+
     pid, session_id = spawn_worker(
         tid, generation, state_dir, reason=reason, cmd_override=cmd_override,
         claude_bin=claude_bin, claude_cmd=claude_cmd,
         prompt=spawn.prompt, phase=spawn.phase, extra_env=spawn.env,
-        session_id=session_id, agent=spawn.agent,
+        session_id=session_id, agent=spawn.agent, run_id=run_id,
     )
+    trace_context_payload = {
+        'run_id': run_id,
+        'session_id': session_id,
+        'gen': generation,
+        'phase': spawn.phase,
+        'propagate': bool(FLEET_TRACE_PROPAGATE_ENABLE and trace_id and span_id),
+    }
+    if trace_id and span_id:
+        trace_context_payload['trace_id'] = trace_id
+        trace_context_payload['span_id'] = span_id
+    _write_trace_context(log_file, trace_context_payload)
     _store_record_spawn(state_dir, tid, pid, generation, reason, session_id,
                         phase=spawn.phase)
     # Position is recorded here, not inferred afterwards — this dispatch
@@ -4342,6 +4549,32 @@ class Supervisor:
         except (OSError, subprocess.SubprocessError):
             pass
 
+    def _score_export_sweep(self):
+        """Periodic run-score-export sweep (task 11.9).
+
+        Shells out to `lib/run-score-export.sh` — fleet-controller's own
+        library, not ticket-auto-pipeline's, since the sweeper is fleetd's
+        concern alone (design.md: "never by a skill"). Off by default and
+        credential-gated inside the script itself; this method's only job is
+        cadence, same division of labour as `_merge_poll_sweep`. A missing
+        script or any failure is a silent no-op — this sweep must never gate
+        or disturb the supervisor's own cycle.
+        """
+        script = Path(__file__).parent.parent / 'lib' / 'run-score-export.sh'
+        if not script.is_file():
+            return
+        runs_file = self._state_dir / 'runs.jsonl'
+        try:
+            subprocess.run(
+                ['bash', '-c',
+                 'source "$SCORE_EXPORT_SCRIPT" && run_score_export_sweep "$RUNS_FILE"'],
+                env={**os.environ, 'SCORE_EXPORT_SCRIPT': str(script),
+                     'RUNS_FILE': str(runs_file)},
+                timeout=60, capture_output=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
     def _hold_reconcile_pass(self):
         """Probe every held ticket's release predicate and apply the result.
 
@@ -4702,6 +4935,12 @@ class Supervisor:
                 # 3b. Periodic merge-poll sweep (fleet-merge-poll-cadence).
                 if cycle_num % FLEET_MERGE_POLL_CYCLES == 0:
                     self._merge_poll_sweep()
+
+                # 3c. Periodic run-score-export sweep, the same cadence as
+                # the merge-poll sweep above (task 11.9) — both are
+                # runs.jsonl-driven, low-frequency, evidence-only passes.
+                if cycle_num % FLEET_MERGE_POLL_CYCLES == 0:
+                    self._score_export_sweep()
 
                 # 4. Consume spawn queue (no-op when spawn is disabled).
                 self._consume_queue(cmd_override=cmd_override)

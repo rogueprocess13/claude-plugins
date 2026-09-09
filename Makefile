@@ -31,6 +31,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-trajectory.sh
 	bash ticket-auto-pipeline/lib/tests/test-verifier-result.sh
 	bash ticket-auto-pipeline/lib/tests/test-pipeline-postmortem.sh
+	bash ticket-auto-pipeline/lib/tests/test-exit-path.sh
 	bash ticket-auto-pipeline/lib/tests/test-phase-inspector.sh
 	bash ticket-auto-pipeline/lib/tests/test-inspect-verifiers.sh
 	bash ticket-auto-pipeline/lib/tests/test-skill-fingerprint.sh
@@ -51,6 +52,7 @@ test-lib:
 	bash fleet-controller/lib/tests/test-plugin-structure.sh
 	bash fleet-controller/lib/tests/test-fleet-env-check.sh
 	bash fleet-controller/lib/tests/test-fleet-notify.sh
+	bash fleet-controller/lib/tests/test-run-score-export.sh
 	# ticket-planner enrichment tests
 	bash ticket-auto-pipeline/lib/tests/test-planned-ticket-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-appraise-fast-path.sh
