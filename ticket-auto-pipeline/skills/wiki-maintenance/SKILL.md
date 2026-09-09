@@ -30,7 +30,7 @@ If `--from-auto` is set: source the project context env file instead of reading 
 source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
 ```
 
-Use `$WIKI_ROOT` from the environment. If `$WIKI_ROOT` is empty, fall back to reading CLAUDE.md in the current directory.
+Use `$WIKI_ROOT` from the environment. If `$WIKI_ROOT` is empty, fall back to reading CLAUDE.md in the current directory — and when you resolve a value that way, `export WIKI_ROOT="<resolved absolute path>"` explicitly. Every later step in this skill (including the Step 4 commit guard) reads `$WIKI_ROOT` as a real shell variable, not by re-parsing this section's prose — an unexported value here reads as "not configured" downstream, which is the safe failure mode but not the correct one if a wiki actually exists.
 
 Stop here if no `WIKI_ROOT` is available — no wiki exists for this project.
 
@@ -247,8 +247,11 @@ Before committing (Step 4), run the freshness/completeness lint over every file 
 touched:
 
 ```bash
-bash "$HOME/.claude/skills/lib/wiki-check.sh" --wiki-root "{WIKI_ROOT}" --repos-root "{REPOS_ROOT}" --changed-only
+bash "$HOME/.claude/skills/lib/wiki-check.sh" --wiki-root "$WIKI_ROOT" --repos-root "$REPOS_ROOT" --changed-only
 ```
+
+(`$REPOS_ROOT` may be empty in standalone, non-`--from-auto` runs — `wiki-check.sh` degrades
+gracefully, skipping only the backticked-class-name check when it's unset.)
 
 `wiki-check.sh` (§5 of the wiki-cross-repo-knowledge-layer change) reports per file: line
 count, frontmatter completeness, broken `related:` links, backticked class names that don't
@@ -264,18 +267,32 @@ when `--from-auto`) and proceeds; a human incorporates lint fixes on the next pa
 ## Step 4 — Commit WIKI_ROOT
 
 `WIKI_ROOT` is its own docs repo with no branches — after Steps 1-3 land their edits (and the
-lint has run), commit them scoped strictly to that directory:
+lint has run), commit them scoped strictly to that directory. The guard below is a literal
+precondition on the commit, not just a rule to reason about: `git -C ""` is documented, standard
+git behavior for "leave the working directory unchanged" — it is **not** an error and does
+**not** fail to resolve — so an empty or unset `WIKI_ROOT` reaching a bare `git -C "$WIKI_ROOT"
+commit` would silently commit against whatever the shell's current working directory happens to
+be (potentially a source repo). `[ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git" ]` is the
+deterministic bash check that makes that impossible regardless of how the empty value got there:
 
 ```bash
-git -C "{WIKI_ROOT}" add -A
-git -C "{WIKI_ROOT}" commit -m "docs(wiki): {TICKET-ID} {one-line summary of what was incorporated}"
+if [ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git" ]; then
+  echo "WARNING: WIKI_ROOT not configured or not a git repo — skipping wiki commit" >&2
+  [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|skip|WIKI_ROOT not configured or not a git repo" >> "$LOG_FILE"
+else
+  git -C "$WIKI_ROOT" add -A
+  if git -C "$WIKI_ROOT" diff --cached --quiet; then
+    echo "Nothing staged in WIKI_ROOT — skipping commit."
+  else
+    git -C "$WIKI_ROOT" commit -m "docs(wiki): {TICKET-ID} {one-line summary of what was incorporated}"
+  fi
+fi
 ```
 
-Always use `git -C "{WIKI_ROOT}"` — never a bare `git commit` from the pipeline's working
+Always use `git -C "$WIKI_ROOT"` — never a bare `git commit` from the pipeline's working
 directory, which would catch unrelated changes in a source repo. See
 `agents/ticket-maintenance-agent.md` for why this is the one commit this agent is allowed to
-make. Skip the commit (log a warning, do not fail the phase) if `WIKI_ROOT` is not a git
-repository, or if there is nothing staged (no edits landed this run).
+make.
 
 ---
 
