@@ -216,6 +216,72 @@ test_resume_step_2_5_on_exec_create_artifact_done() {
   [ "$(_field "$out" RESUME_STEP)" = "STEP_2_5" ]
 }
 
+# WIL-77, 2026-09-09: a gate-stopped ADVERSARIAL_BLOCKED review, hand-revised
+# afterward with no re-review having run since, used to fall through to the
+# EXEC|create-artifact|done| line above and resolve STEP_2_5 (gate-check) —
+# for an already-approved complex ticket that sails straight to implement
+# with zero re-verification. Must resume EXEC instead, and specifically at
+# create-artifact (ticket-appraise-exec's own documented recovery step),
+# not the generic per-sub-step scan's answer.
+test_adversarial_blocked_unresolved_resumes_at_create_artifact() {
+  local out
+  out=$(_detect_resume_with_log "TEST-17" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=complex" \
+    "2026-07-05T10:00:02Z|EXEC|create-artifact|done|openspec" \
+    "2026-07-05T10:00:03Z|EXEC|regression-guard|done|clear" \
+    "2026-07-05T10:00:04Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — TEST-17 adversarial review found blocking issues")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_2" ] || {
+    echo "RESUME_STEP: $(_field "$out" RESUME_STEP)" >&2
+    return 1
+  }
+  [ "$(_field "$out" EXEC_FROM)" = "create-artifact" ] || {
+    echo "EXEC_FROM: $(_field "$out" EXEC_FROM)" >&2
+    return 1
+  }
+}
+
+# A re-review already ran (and passed) after the gate-stop — the normal
+# chain must win; must NOT loop back to STEP_2 a second time.
+test_adversarial_blocked_resolved_by_rereview_falls_through_normally() {
+  local out
+  out=$(_detect_resume_with_log "TEST-18" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=complex" \
+    "2026-07-05T10:00:02Z|EXEC|create-artifact|done|openspec" \
+    "2026-07-05T10:00:03Z|EXEC|regression-guard|done|clear" \
+    "2026-07-05T10:00:04Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — TEST-18 adversarial review found blocking issues" \
+    "2026-07-06T09:00:00Z|META|recovery|info|manual-recovery after ADVERSARIAL_BLOCKED gate-stop — plan revised" \
+    "2026-07-06T09:00:05Z|EXEC|adversarial-review|done|PASS")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_2_5" ] || {
+    echo "RESUME_STEP: $(_field "$out" RESUME_STEP)" >&2
+    return 1
+  }
+}
+
+# A re-review ran and blocked again — still unresolved, must still route
+# back rather than being satisfied by a stale (superseded) recovery note.
+test_adversarial_blocked_twice_still_resumes_at_create_artifact() {
+  local out
+  out=$(_detect_resume_with_log "TEST-19" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=complex" \
+    "2026-07-05T10:00:02Z|EXEC|create-artifact|done|openspec" \
+    "2026-07-05T10:00:03Z|EXEC|regression-guard|done|clear" \
+    "2026-07-05T10:00:04Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — TEST-19 adversarial review found blocking issues" \
+    "2026-07-06T09:00:00Z|META|recovery|info|manual-recovery after ADVERSARIAL_BLOCKED gate-stop — plan revised" \
+    "2026-07-06T09:01:00Z|EXEC|regression-guard|done|clear" \
+    "2026-07-06T09:02:00Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — TEST-19 adversarial review found blocking issues (round 2)")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_2" ] || {
+    echo "RESUME_STEP: $(_field "$out" RESUME_STEP)" >&2
+    return 1
+  }
+  [ "$(_field "$out" EXEC_FROM)" = "create-artifact" ] || {
+    echo "EXEC_FROM: $(_field "$out" EXEC_FROM)" >&2
+    return 1
+  }
+}
+
 # Like _detect_resume_with_log but echoes the resulting pipeline log rather
 # than the result block, so tests can assert on the lines the script writes
 # (zombie detection reports itself in the log, not in DETECT_RESUME_RESULT).
@@ -769,6 +835,9 @@ for fn in \
   test_artifact_type_openspec_from_create_artifact_line \
   test_artifact_type_simple_fix_from_create_artifact_line \
   test_resume_step_2_5_on_exec_create_artifact_done \
+  test_adversarial_blocked_unresolved_resumes_at_create_artifact \
+  test_adversarial_blocked_resolved_by_rereview_falls_through_normally \
+  test_adversarial_blocked_twice_still_resumes_at_create_artifact \
   test_zombie_detection_triggers_on_old_waiting \
   test_zombie_fires_when_no_other_worker_alive \
   test_zombie_suppressed_by_live_phase_worker \

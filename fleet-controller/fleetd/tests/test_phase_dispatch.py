@@ -736,7 +736,8 @@ class TestPhaseSpawnConstruction(unittest.TestCase):
 
     def test_prompt_is_a_slash_command_for_the_step_s_skill(self):
         spawn = build_phase_spawn(self.table, 'STEP_1', 'CRE-9', '/w/log')
-        self.assertTrue(spawn.prompt.startswith('/ticket-appraise CRE-9 '))
+        self.assertTrue(spawn.prompt.startswith(
+            '/ticket-auto-pipeline:ticket-appraise CRE-9 '))
         self.assertEqual(spawn.phase, 'APPRAISE')
         self.assertEqual(spawn.step, 'appraise')
 
@@ -1628,7 +1629,7 @@ class TestBuildPrIterateSpawn(unittest.TestCase):
         spawn = build_pr_iterate_spawn('CRE-9', '/tmp/x-pipeline.log')
         self.assertEqual(spawn.step_id, PR_ITERATE)
         self.assertEqual(spawn.phase, 'PR-REVIEW')
-        self.assertEqual(spawn.skill, '/ticket-pr-iterate')
+        self.assertEqual(spawn.skill, '/ticket-auto-pipeline:ticket-pr-iterate')
         self.assertIn('CRE-9', spawn.prompt)
         self.assertEqual(spawn.env['FLEET_TICKET_ID'], 'CRE-9')
         self.assertEqual(spawn.env['FLEET_DISPATCH_STEP_ID'], PR_ITERATE)

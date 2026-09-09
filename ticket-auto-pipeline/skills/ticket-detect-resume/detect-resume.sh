@@ -234,6 +234,29 @@ else
     # EXEC phase claimed done but artifact was never written — re-run EXEC
     RESUME_STEP="STEP_2"
     hb_gate "resume-point" "ok" "EXEC_NO_ARTIFACT detected — resuming at STEP_2 (re-run EXEC)"
+  elif {
+    _adv_ln=$(grep -n '^[^|]*|META|gate-stop|fail|ADVERSARIAL_BLOCKED' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d: -f1 || true)
+    [ -n "$_adv_ln" ]
+  } && ! tail -n "+$((_adv_ln + 1))" "$LOG_FILE" 2>/dev/null | grep -q '^[^|]*|EXEC|adversarial-review|done|'; then
+    # An ADVERSARIAL_BLOCKED gate-stop halted EXEC and nothing since has
+    # re-run adversarial-review to confirm a fix actually landed. Without
+    # this branch, resume falls through to the EXEC|create-artifact|done|
+    # match below and resolves STEP_2_5 (gate-check) — which, for an
+    # already-approved complex ticket, sails straight to implement with
+    # zero automated re-verification that a hand-revised plan actually
+    # fixed the blocking defects (WIL-77, 2026-09-09; a human only
+    # *claimed* the revision was correct). Re-run EXEC from create-artifact
+    # — ticket-appraise-exec's own documented recovery instruction (SKILL.md
+    # Step 3.6) — which replays regression-guard then adversarial-review in
+    # order, exactly the two checks a plan edit invalidates. EXEC_FROM is
+    # forced to "create-artifact" below (Level 2), overriding whatever the
+    # generic per-sub-step extraction finds, because regression-guard's own
+    # `done` line is written *before* adversarial-review runs and blocks —
+    # the generic scan would otherwise resolve "regression-guard" and skip
+    # straight past adversarial-review again.
+    RESUME_STEP="STEP_2"
+    _ADV_BLOCKED_RESUME=1
+    hb_gate "resume-point" "ok" "ADVERSARIAL_BLOCKED unresolved — resuming at STEP_2 (re-run from create-artifact)"
   elif grep -q '^[^|]*|EXEC|create-artifact|done|' "$LOG_FILE"; then
     RESUME_STEP="STEP_2_5"
   elif grep -q '^[^|]*|REPRODUCE|reproduce|' "$LOG_FILE" && ! grep -q '^[^|]*|REPRODUCE|reproduce|done|' "$LOG_FILE"; then
@@ -464,6 +487,13 @@ if [ -s "$LOG_FILE" ]; then
   EXEC_FROM=$(grep '^[^|]*|EXEC|[^|]*|done|' "$LOG_FILE" 2>/dev/null |
     grep -v '|EXEC|exec|done|' |
     tail -1 | awk -F'|' '{print $3}' || true)
+
+  # An unresolved ADVERSARIAL_BLOCKED gate-stop (Level 1 above) always
+  # resumes at create-artifact, overriding the generic scan above — see the
+  # comment on that branch for why the generic result can't be trusted here.
+  if [ "${_ADV_BLOCKED_RESUME:-}" = "1" ]; then
+    EXEC_FROM="create-artifact"
+  fi
 
   IMPLEMENT_FROM=$(grep '^[^|]*|IMPLEMENT|[^|]*|done|' "$LOG_FILE" 2>/dev/null |
     grep -v '|IMPLEMENT|implement|done|' |

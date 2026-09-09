@@ -2019,8 +2019,8 @@ def build_pr_iterate_spawn(tid, log_file, hb_log_file='', env_file='',
         step_id=PR_ITERATE,
         step='pr-iterate',
         phase='PR-REVIEW',
-        skill='/ticket-pr-iterate',
-        prompt=f'/ticket-pr-iterate {tid}. '
+        skill='/ticket-auto-pipeline:ticket-pr-iterate',
+        prompt=f'/ticket-auto-pipeline:ticket-pr-iterate {tid}. '
                f'Apply the requested changes from the PR review.',
         env=env,
         attempt=None,

@@ -680,18 +680,18 @@ After state detection, enter the stateless dispatch loop. Re-run `detect-resume.
 
 | Skill | subagent_type |
 |-------|---------------|
-| `/ticket-appraise` | `ticket-auto-pipeline:ticket-appraise-agent` |
-| `/ticket-reproduce` | `ticket-auto-pipeline:ticket-appraise-agent` |
-| `/ticket-appraise-exec` | `ticket-auto-pipeline:ticket-appraise-agent` |
-| `/ticket-gate-reconcile` | `ticket-auto-pipeline:ticket-gate-reconcile-agent` |
-| `/ticket-implement` | `ticket-auto-pipeline:ticket-implement-agent` |
-| `/guidance-extractor` | `ticket-auto-pipeline:guidance-extractor-agent` |
-| `/ticket-verify` | `ticket-auto-pipeline:ticket-verify-agent` |
-| `/ticket-pr-review` | `ticket-auto-pipeline:ticket-pr-review-agent` |
-| `/ticket-document` | `ticket-auto-pipeline:ticket-maintenance-agent` |
-| `/wiki-maintenance` | `ticket-auto-pipeline:ticket-maintenance-agent` |
-| `/ticket-pr-iterate` | `general-purpose` |
-| `/ticket-retro` | `general-purpose` |
+| `/ticket-auto-pipeline:ticket-appraise` | `ticket-auto-pipeline:ticket-appraise-agent` |
+| `/ticket-auto-pipeline:ticket-reproduce` | `ticket-auto-pipeline:ticket-appraise-agent` |
+| `/ticket-auto-pipeline:ticket-appraise-exec` | `ticket-auto-pipeline:ticket-appraise-agent` |
+| `/ticket-auto-pipeline:ticket-gate-reconcile` | `ticket-auto-pipeline:ticket-gate-reconcile-agent` |
+| `/ticket-auto-pipeline:ticket-implement` | `ticket-auto-pipeline:ticket-implement-agent` |
+| `/ticket-auto-pipeline:guidance-extractor` | `ticket-auto-pipeline:guidance-extractor-agent` |
+| `/ticket-auto-pipeline:ticket-verify` | `ticket-auto-pipeline:ticket-verify-agent` |
+| `/ticket-auto-pipeline:ticket-pr-review` | `ticket-auto-pipeline:ticket-pr-review-agent` |
+| `/ticket-auto-pipeline:ticket-document` | `ticket-auto-pipeline:ticket-maintenance-agent` |
+| `/ticket-auto-pipeline:wiki-maintenance` | `ticket-auto-pipeline:ticket-maintenance-agent` |
+| `/ticket-auto-pipeline:ticket-pr-iterate` | `general-purpose` |
+| `/ticket-auto-pipeline:ticket-retro` | `general-purpose` |
 <!-- GENERATED:dispatch-table END -->
 
 ### STEP_1 — Appraise
