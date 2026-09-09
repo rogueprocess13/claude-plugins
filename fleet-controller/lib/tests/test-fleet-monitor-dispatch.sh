@@ -224,6 +224,81 @@ test_queue_consume_drops_terminal_entry() {
   return 0
 }
 
+# GitHub #332: an entry stamped override_terminal: true (the shape
+# fleet_requeue_dead_letter, fleet-dispatch.sh, produces) must bypass the
+# terminal-state drop and actually be consumed/spawned, even though its
+# pipeline log ends in a dead-letter marker.
+test_queue_consume_override_terminal_bypasses_drop() {
+  local ws queue_file
+  ws=$(_setup_workspace)
+  queue_file=$(_setup_queue "$ws" "test-override")
+
+  echo '{"tid":"CRE-OVR","reason":"requeue-attempt","timestamp":"2026-07-07T10:00:00Z","restarts":0,"dispatch_type":"initial","override_terminal":true}' >"$queue_file"
+  echo "2026-07-07T10:00:00Z|META|dead-letter|warn|reason=orphaned-after-max-restarts" >"${ws}/CRE-OVR-pipeline.log"
+
+  local output
+  output=$(bash -c "
+    FLEET_STATE_DIR='$ws' FLEET_INSTANCE_ID=test-override FLEET_MAX_CONCURRENT=3 FLEET_LOG_FILE='$ws/monitor.log' CLAUDE_CODE_SESSION_ID=dummy
+    unset -f _iso_now 2>/dev/null || true
+    unset -f _ensure_dir_for 2>/dev/null || true
+    unset -f hb_fleet_action 2>/dev/null || true
+    _iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+    _ensure_dir_for() { mkdir -p \"\$(dirname \"\$1\")\" 2>/dev/null || true; }
+    hb_fleet_action() { return 0; }
+    source '$LIB_DIR/fleet-monitor.sh' 2>/dev/null
+    _spawn_queue_consume '$ws' 0 2>&1
+  " 2>/dev/null || true)
+
+  echo "$output" | grep -q "ACTION:spawn-auto tid=CRE-OVR" || {
+    echo "override_terminal entry was not spawned; output: $output" >&2
+    return 1
+  }
+  grep -q "fleet-requeue-override|tid=CRE-OVR" "$ws/monitor.log" 2>/dev/null || {
+    echo "expected requeue-override marker in monitor log; log: $(cat "$ws/monitor.log" 2>/dev/null)" >&2
+    return 1
+  }
+  return 0
+}
+
+# Same dead-letter log as above, but WITHOUT override_terminal: must still
+# be dropped exactly as before — the bypass must not leak to entries that
+# don't carry it.
+test_queue_consume_dead_letter_dropped_without_override() {
+  local ws queue_file
+  ws=$(_setup_workspace)
+  queue_file=$(_setup_queue "$ws" "test-nooverride")
+
+  echo '{"tid":"CRE-NOV","reason":"requeue-attempt","timestamp":"2026-07-07T10:00:00Z","restarts":0,"dispatch_type":"initial"}' >"$queue_file"
+  echo "2026-07-07T10:00:00Z|META|dead-letter|warn|reason=orphaned-after-max-restarts" >"${ws}/CRE-NOV-pipeline.log"
+
+  local output
+  output=$(bash -c "
+    FLEET_STATE_DIR='$ws' FLEET_INSTANCE_ID=test-nooverride FLEET_MAX_CONCURRENT=3 FLEET_LOG_FILE='$ws/monitor.log' CLAUDE_CODE_SESSION_ID=dummy
+    unset -f _iso_now 2>/dev/null || true
+    unset -f _ensure_dir_for 2>/dev/null || true
+    unset -f hb_fleet_action 2>/dev/null || true
+    _iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+    _ensure_dir_for() { mkdir -p \"\$(dirname \"\$1\")\" 2>/dev/null || true; }
+    hb_fleet_action() { return 0; }
+    source '$LIB_DIR/fleet-monitor.sh' 2>/dev/null
+    _spawn_queue_consume '$ws' 0 2>&1
+  " 2>/dev/null || true)
+
+  if echo "$output" | grep -q "ACTION:spawn-auto tid=CRE-NOV"; then
+    echo "dead-lettered entry without override_terminal was spawned; output: $output" >&2
+    return 1
+  fi
+  grep -q "fleet-stale-queue-drop|tid=CRE-NOV|reason=pipeline-log-terminal" "$ws/monitor.log" 2>/dev/null || {
+    echo "expected stale-queue-drop marker in monitor log; log: $(cat "$ws/monitor.log" 2>/dev/null)" >&2
+    return 1
+  }
+  [ ! -f "$queue_file" ] || [ ! -s "$queue_file" ] || {
+    echo "dead-lettered entry not removed from queue" >&2
+    return 1
+  }
+  return 0
+}
+
 # F04: sourcing fleet-monitor.sh (and its transitive fleet-dispatch.sh →
 # linear-api.sh) must NOT mutate the caller's shell flags. A fresh shell has
 # errexit off and pipefail off; both must survive the source.
@@ -254,6 +329,8 @@ _run "queue_consume_malformed_skipped" test_queue_consume_malformed_skipped
 _run "queue_write_creates_entry" test_queue_write_creates_entry
 _run "monitor_cycle_consume_uses_live_only_count" test_monitor_cycle_consume_uses_live_only_count
 _run "queue_consume_drops_terminal_entry" test_queue_consume_drops_terminal_entry
+_run "queue_consume_override_terminal_bypasses_drop" test_queue_consume_override_terminal_bypasses_drop
+_run "queue_consume_dead_letter_dropped_without_override" test_queue_consume_dead_letter_dropped_without_override
 _run "monitor_flags_not_leaked" test_monitor_flags_not_leaked
 
 echo ""

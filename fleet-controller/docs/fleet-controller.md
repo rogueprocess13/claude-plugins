@@ -418,6 +418,17 @@ The raw `|META|outcome|` grep it replaces would have dropped the
 campaign-resume entries the classification fix produces. Keep the two in
 sync: both sides carry cross-referencing comments.
 
+A queue entry with `override_terminal: true` bypasses this check on both
+sides — `_consume_queue_locked`'s call to `_log_reached_terminal` and
+`fleet-monitor.sh`'s `_spawn_queue_consume` call to
+`fleet_ticket_terminal_state` both look for the field on the entry itself
+before classifying, not inside the classifier. Only the explicit
+`fleet_requeue_dead_letter` helper (`fleet-dispatch.sh`) sets it; normal
+dispatch and reconciliation never do. Without the field, both consume paths
+classify exactly as before — dead-letter is still permanently terminal. See
+"Dead-lettered tickets are surfaced" below for the operator-facing replay
+procedure this exists for (GitHub #332).
+
 ### Generation continuity across stale-registry deletion
 
 Before `scan_registry` deletes a stale `{tid}-run.json` (dead PID or
@@ -437,11 +448,48 @@ Every dead-letter write (queue-contention-exhausted from the append path,
 orphaned-after-max-restarts from reconciliation) also emits a structured line
 — `fleet-dead-letter|tid=<TID>|reason=<REASON>` — and the reconciliation path
 writes a `META|dead-letter|warn|reason=<REASON>` marker to the ticket's own
-pipeline log. The dead-letter file is human-readable and replayable — feed
-its lines back through `_fleet_queue_append` to re-queue. No shipped
+pipeline log. The dead-letter file is human-readable, but **do not** feed its
+lines back through plain `_fleet_queue_append` — a fresh entry appended that
+way is accepted onto the queue and then silently dropped the moment either
+consume loop reads it, because the ticket's own pipeline log still ends in
+that `META|dead-letter` marker and `_log_reached_terminal` /
+`fleet_ticket_terminal_state` correctly (and permanently) classify it as
+terminal. The queue empties, no worker spawns, and nothing distinguishes
+that outcome from a successful requeue (GitHub #332).
+
+**To actually requeue a dead-lettered ticket**, feed the dead-letter line
+through `fleet_requeue_dead_letter <entry_json> <queue_file>`
+(`fleet-dispatch.sh`) instead of `_fleet_queue_append` directly. It stamps
+`override_terminal: true` onto the entry before appending — a field both
+consume paths check for and bypass the terminal-state guard on, precisely
+for this entry, without weakening the guard for anything else still on the
+queue:
+
+```bash
+source fleet-controller/lib/fleet-dispatch.sh
+tail -1 "${state_dir}/fleet-default-spawn-queue-dead-letter.jsonl" \
+  | while read -r entry; do
+      fleet_requeue_dead_letter "$entry" "${state_dir}/fleet-default-spawn-queue.jsonl"
+    done
+```
+
+The requeued run gets a fresh generation the normal way (fleetd/the monitor
+resolve it at spawn time, same as any other entry) — `override_terminal`
+only affects the terminal-state check, nothing else about how the entry is
+consumed. Once the new run produces its own terminal outcome (a fresh
+`META|outcome` or `META|dead-letter` line), that becomes the ticket's new
+last line and governs future consume decisions normally; the override is
+per-entry, not sticky.
+
+Every drop and every bypass is logged with a structured, greppable marker so
+a silent one never happens again: a stale entry dropped as terminal prints
+`fleet-stale-queue-drop|tid=<TID>|reason=pipeline-log-terminal` (fleetd
+stdout, or the monitor's `FLEET_LOG_FILE` for the cron/monitor path); an
+override bypass prints `fleet-requeue-override|tid=<TID>`. No shipped
 consumer scans dead-letters yet (`/ticket-overseer` does not); wire one
 before assuming visibility. A permanently-stuck ticket no longer sits
-silently on disk, but it needs an operator (or a future dashboard) to see it.
+silently on disk, but it needs an operator (or a future dashboard) to see
+it.
 
 ## Related Docs
 

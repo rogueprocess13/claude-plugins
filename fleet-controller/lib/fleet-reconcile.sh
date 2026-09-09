@@ -91,6 +91,16 @@ _fleet_tid_live() {
 # The Python mirror _log_reached_terminal (fleetd/supervisor.py) must agree
 # with this function; it has the same three routes plus the same
 # worker-exit skip. Change both together.
+#
+# This function stays a PURE classifier — it takes no queue entry and knows
+# nothing about override_terminal (GitHub #332), the deliberate operator
+# bypass a human-requeue helper (fleet_requeue_dead_letter, this file's
+# sibling fleet-dispatch.sh) stamps on a queue entry to force a dead-lettered
+# ticket back through the pipeline. The bypass is applied at each consume
+# call site instead — fleet-monitor.sh's _spawn_queue_consume on the bash
+# side, _consume_queue_locked's call to _log_reached_terminal on the Python
+# side — so this classifier's dead-letter-is-terminal rule (below) is never
+# weakened for the entries that do NOT carry the override.
 fleet_ticket_terminal_state() {
   local tid="$1"
   local log_file="$2"
@@ -171,7 +181,11 @@ fleet_ticket_terminal_state() {
   # A dead-letter marker as the last line is terminal: the ticket was
   # surfaced for a human rather than lost. Classifying it done keeps
   # reconciliation idempotent across restarts (no duplicate dead-letter
-  # entries, no re-enqueue of a permanently-stuck ticket).
+  # entries, no re-enqueue of a permanently-stuck ticket). This never
+  # expires on its own — an operator requeuing a dead-lettered ticket via
+  # fleet_requeue_dead_letter bypasses it at the consume call site, not by
+  # changing the classification here (see the docstring above and GitHub
+  # #332).
   #
   # This MUST be checked before the gate-stop marker grep below. A ticket
   # that gate-stopped, was retried to the restart cap and then dead-lettered

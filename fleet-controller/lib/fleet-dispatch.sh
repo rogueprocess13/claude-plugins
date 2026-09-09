@@ -329,6 +329,43 @@ _fleet_queue_append() {
   return 1
 }
 
+# fleet_requeue_dead_letter <entry_json> <queue_file>
+# The ONLY sanctioned way to set `override_terminal: true` on a queue entry
+# (GitHub #332). Stamps the field onto the given entry — typically a line
+# copied verbatim from `{queue_file%.jsonl}-dead-letter.jsonl` per
+# docs/fleet-controller.md's replay instructions — and appends it through the
+# shared _fleet_queue_append. This is a deliberate, human-invoked operator
+# override of the terminal-state guard both consume paths apply to every
+# other entry (`_log_reached_terminal` in fleetd/supervisor.py,
+# `fleet_ticket_terminal_state` at the `_spawn_queue_consume` call site in
+# fleet-monitor.sh): without the field, a dead-letter marker is permanent and
+# a freshly requeued entry for that tid is silently dropped the moment either
+# consume loop sees it — no worker spawns, no error, and an empty queue looks
+# identical to success.
+#
+# Normal dispatch (fleet_dispatch_initiative) and reconciliation
+# (fleet_reconcile_orphans) must NEVER call this or otherwise set
+# override_terminal themselves — only an explicit operator action (this
+# function, or the equivalent hand-edit described in the docs) may bypass the
+# terminal check. Doing so from any automated path would defeat the guard's
+# whole purpose: distinguishing a stale leftover entry for a genuinely
+# finished ticket from an intentional requeue.
+#
+# Exit codes and dead-letter behavior are identical to _fleet_queue_append
+# (0 = appended, 1 = re-dead-lettered — queue contention, not resolved by the
+# override).
+fleet_requeue_dead_letter() {
+  local entry="$1"
+  local queue_file="$2"
+  local stamped
+  stamped=$(echo "$entry" | jq -c '. + {override_terminal: true}' 2>/dev/null)
+  if [ -z "$stamped" ]; then
+    echo "fleet_requeue_dead_letter: malformed entry JSON, refusing to requeue" >&2
+    return 1
+  fi
+  _fleet_queue_append "$stamped" "$queue_file" "requeue-contention-exhausted"
+}
+
 # Source fleet-reconcile.sh for the campaign-resume hook (Step 1.75) and its
 # kill-aware terminal classifier. Deliberately placed AFTER _fleet_queue_append:
 # fleet-reconcile.sh conditionally sources fleet-dispatch.sh when

@@ -173,11 +173,23 @@ _spawn_queue_consume() {
       # a wait, and a gate-stop's condition may since have been fixed (a
       # scoped campaign resume enqueues exactly such entries, so dropping
       # them here would silently defeat it).
-      if declare -f fleet_ticket_terminal_state >/dev/null 2>&1; then
+      #
+      # override_terminal: true (GitHub #332) is the deliberate operator
+      # bypass stamped only by fleet_requeue_dead_letter (fleet-dispatch.sh)
+      # — never by normal dispatch or reconciliation. It must be honored
+      # HERE, at the call site, not inside fleet_ticket_terminal_state
+      # itself: that function stays a pure classifier (its Python mirror,
+      # _log_reached_terminal, applies the identical contract at ITS call
+      # site in _consume_queue_locked — keep the two in sync).
+      local override_terminal
+      override_terminal=$(echo "$line" | jq -r '.override_terminal // false' 2>/dev/null)
+      if [ "$override_terminal" = "true" ]; then
+        fl_write "INFO" "queue" "override_terminal set on queue entry, bypassing terminal-state check: ${tid} (fleet-requeue-override|tid=${tid})"
+      elif declare -f fleet_ticket_terminal_state >/dev/null 2>&1; then
         local term_state
         term_state=$(fleet_ticket_terminal_state "$tid" "${state_dir}/${tid}-pipeline.log")
         if [ "$term_state" = "done" ]; then
-          fl_write "INFO" "queue" "Dropping stale queue entry: ${tid} (log terminal)"
+          fl_write "INFO" "queue" "Dropping stale queue entry: ${tid} (log terminal) (fleet-stale-queue-drop|tid=${tid}|reason=pipeline-log-terminal)"
           consumed=$((consumed + 1))
           continue
         fi
