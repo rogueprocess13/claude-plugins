@@ -445,7 +445,10 @@ generation 1 and IS rejected by `fleet-generation-fencing`.
 ### Dead-lettered tickets are surfaced
 
 Every dead-letter write (queue-contention-exhausted from the append path,
-orphaned-after-max-restarts from reconciliation) also emits a structured line
+orphaned-after-max-restarts from reconciliation — or, when
+`_fleet_dead_letter_reason` recognizes the EXEC-phase-silent-exit-after-a-
+clean-Task-return signature described in GitHub #331, the more specific
+`exec-silent-exit-after-subagent-return`) also emits a structured line
 — `fleet-dead-letter|tid=<TID>|reason=<REASON>` — and the reconciliation path
 writes a `META|dead-letter|warn|reason=<REASON>` marker to the ticket's own
 pipeline log. The dead-letter file is human-readable, but **do not** feed its

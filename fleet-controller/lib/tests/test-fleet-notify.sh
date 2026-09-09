@@ -178,12 +178,17 @@ test_dead_letter_event_includes_reason() {
 test_notify_call_site_is_scoped_to_dead_letter_branch() {
   # fleet-reconcile.sh must call fleet_notify_worker_event exactly once —
   # inside the dead-letter branch, never on the "done"/clean-completion
-  # classification path.
+  # classification path. GitHub #331: the reason passed is `$dl_reason`,
+  # not a hardcoded literal any more — this checks the call passes that
+  # variable, and that the variable is itself assigned from
+  # `_fleet_dead_letter_reason` just above the call — proof this is still
+  # the restart-cap dead-letter branch, not some other call site.
   local reconcile="$LIB_DIR/fleet-reconcile.sh"
   local call_count
   call_count=$(grep -c 'fleet_notify_worker_event "\$tid"' "$reconcile")
   [ "$call_count" -eq 1 ] &&
-    grep -B5 'fleet_notify_worker_event "\$tid"' "$reconcile" | grep -q "orphaned-after-max-restarts"
+    grep -B10 'fleet_notify_worker_event "\$tid"' "$reconcile" | grep -q '"\$dl_reason"' &&
+    grep -B10 'fleet_notify_worker_event "\$tid"' "$reconcile" | grep -q 'dl_reason=\$(_fleet_dead_letter_reason'
 }
 
 # ── fleet_notify_hold (human-hold-protocol) ─────────────────────────────────

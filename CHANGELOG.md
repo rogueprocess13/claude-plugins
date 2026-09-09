@@ -17,6 +17,50 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.46.1 (2026-09-09)
+
+Also moves `fleet-controller` to 0.29.2. Mitigation for #331
+(`PIPELINE_ORCHESTRATOR_SILENT_EXIT_AFTER_TASK_RETURN`): on WIL-77, the EXEC
+phase's adversarial-review `Task` sub-agent returned cleanly, and the
+orchestrating agent then made no further move — no more LLM turns, a
+voluntary `exit(0)` ~23s later — leaving the ticket dead-lettered with no
+Linear comment ever posted. The harness-level root cause is outside this
+repo's code and stays unconfirmed; this is diagnosability and prompt
+hardening, not a fix for the silent exit itself.
+
+- **`ticket-appraise-exec` SKILL.md** — Step 3.6 (Adversarial Review) now
+  carries an explicit, impossible-to-miss directive that a `Task` tool
+  return is a normal mid-skill event, not the end of the skill, and that
+  the orchestrator must continue straight through Steps 3.7 → 3.8 → 4 → 5 →
+  6 in the same session. Also fixed an adjacent routing bug in the same
+  step: the post-review text said "proceed to Step 4", silently skipping
+  the two steps (3.7, 3.8) that sit between — a probable contributor to the
+  same class of confusion.
+- **`fleetd/supervisor.py`** — the reap-time `META|worker-exit` pipeline-log
+  line now carries a `last_output="..."` snippet (the Stop hook's captured
+  `last_assistant_message`, falling back to the worker's own stdout
+  envelope) whenever either is available, so a future occurrence of this
+  exact failure mode leaves a diagnosable trace an operator can find by
+  reading the pipeline log alone, instead of nothing.
+- **`fleet-controller/lib/fleet-reconcile.sh`** — a new
+  `_fleet_dead_letter_reason` classifier distinguishes the "EXEC phase
+  exited with an unterminated step marker right after a recorded clean
+  worker exit" signature from a generic crash-loop dead-letter, tagging it
+  `reason=exec-silent-exit-after-subagent-return` instead of the generic
+  `orphaned-after-max-restarts` — in the dead-letter queue entry, the
+  `META|dead-letter` pipeline-log marker, the structured
+  `fleet-dead-letter|` line, and (already, with zero extra wiring) the
+  Slack dead-letter notification. Read-only classification: does not touch
+  when/whether a ticket gets dead-lettered or how the restart cap is
+  counted.
+- New/extended tests: `fleetd/tests/test_supervisor.py` (3 new cases for
+  the `last_output` field — hook-capture source, stdout-envelope fallback,
+  and the no-output no-op case) and
+  `fleet-controller/lib/tests/test-fleet-reconcile.sh` (6 new cases for
+  `_fleet_dead_letter_reason`, including that a real gate-stop and a stale
+  earlier-attempt signature are never relabeled, plus one end-to-end wiring
+  test through `fleet_reconcile_orphans`).
+
 ## fleet-controller 0.29.1 (2026-09-09)
 
 `docs/fleet-controller.md` claimed a dead-lettered ticket could be re-queued

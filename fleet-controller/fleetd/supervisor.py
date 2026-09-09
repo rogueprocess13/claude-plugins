@@ -1599,6 +1599,42 @@ def _read_hook_capture(state_dir, tid, generation):
         return {}
 
 
+def _worker_exit_diagnostic_tail(hook_capture, gen_file, limit=200):
+    """Best-effort last-output snippet for the `META|worker-exit` line.
+
+    Mitigation for GitHub #331: a worker that exits cleanly (exit 0) with no
+    gate-stop, no fail marker and no further LLM turn — e.g. the harness
+    silently stopping right after a Task-tool sub-agent's clean return —
+    previously left `code=0 type=exit ...` as the only trace in the pipeline
+    log, with the actually-useful evidence (the assistant's last words, or
+    the CLI's own final output) sitting unindexed in per-generation sidecar
+    files (`{tid}-gen{N}-hook.json` / `{tid}-gen{N}.json`) that nothing
+    greps. This surfaces one of them inline so a future occurrence is
+    diagnosable from the pipeline log alone.
+
+    Prefers `hook_capture`'s `last_assistant_message` (the `Stop` hook's
+    capture of the model's own final text) over the raw stdout envelope's
+    `result` field, since the hook capture is closer to "what the agent was
+    doing" — but the hook never fires for SIGINT/SIGKILL, so this falls back
+    to `worker_return_text` (handles both the `--output-format json` and
+    `stream-json`/NDJSON envelope shapes) when the hook produced nothing.
+    Returns '' (never None) when neither source yields text, so callers can
+    omit the field cleanly rather than emit an empty `last_output=""`.
+    """
+    text = hook_capture.get('last_assistant_message') or ''
+    if not text and _phase_mod is not None:
+        text = _phase_mod.worker_return_text(gen_file) or ''
+    if not text:
+        return ''
+    # Collapse to a single line and truncate — this becomes one token inside
+    # a single pipeline-log MSG field; an embedded newline would otherwise
+    # fracture the log into extra lines with no ISO/PHASE/STEP prefix.
+    flat = ' '.join(text.split())
+    if len(flat) > limit:
+        flat = flat[:limit] + '...'
+    return flat
+
+
 def _update_exit_record_action(state_dir, tid, generation, action):
     """Best-effort update of an already-written exit record's `action` field.
 
@@ -3730,10 +3766,10 @@ class Supervisor:
 
                     hook_capture = _read_hook_capture(str(self._state_dir), tid, generation)
                     phase = entry.get('phase', '')
+                    gen_file = _worker_gen_file(str(self._state_dir), tid, phase, generation)
                     cost_usd = None
                     if _phase_mod is not None:
-                        cost_usd = _phase_mod.worker_cost_usd(
-                            _worker_gen_file(str(self._state_dir), tid, phase, generation))
+                        cost_usd = _phase_mod.worker_cost_usd(gen_file)
                     _write_exit_record(
                         str(self._state_dir), tid, generation, pid,
                         exit_code, exit_type,
@@ -3749,10 +3785,16 @@ class Supervisor:
                     _store_record_exit(
                         str(self._state_dir), tid, pid, exit_code, exit_type)
                     status = 'done' if (exit_type == 'exit' and exit_code == 0) else 'fail'
-                    _append_pipeline_log_line(
-                        str(self._state_dir), tid, 'META', 'worker-exit', status,
+                    exit_line_msg = (
                         f'code={exit_code} type={exit_type} gen={generation} '
                         f'killed_by_fleet=false'
+                    )
+                    last_output = _worker_exit_diagnostic_tail(hook_capture, gen_file)
+                    if last_output:
+                        exit_line_msg += f' last_output="{last_output}"'
+                    _append_pipeline_log_line(
+                        str(self._state_dir), tid, 'META', 'worker-exit', status,
+                        exit_line_msg
                     )
                     _sweep_stale_generation_files(str(self._state_dir), tid, generation, phase=phase)
 
