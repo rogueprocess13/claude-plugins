@@ -37,6 +37,25 @@ FLEET_PIPELINE_LOG_DIR="${FLEET_PIPELINE_LOG_DIR:-${PIPELINE_LOGS_DIR:-./logs}}"
 BASE_BRANCH="${BASE_BRANCH:-develop}"
 BRANCH_PREFIX="${BRANCH_PREFIX:-feat/}"
 
+# ── ticket-verify isolated worktrees + single-flight lock ──────────────────
+# Consumed by: lib/verify-worktree.sh, lib/verify-lock.sh.
+
+# TTL (hours) before an idle REPOS_ROOT/.verify-worktrees/{repo}/{TICKET_ID}
+# worktree is swept by verify_worktree_gc. Matches the pipeline's other
+# scratch-file TTL default (TICKET_TMP_TTL_MIN=1440min=24h).
+VERIFY_WORKTREE_TTL_HOURS="${VERIFY_WORKTREE_TTL_HOURS:-24}"
+
+# Well-known lockfile serializing ticket-verify's local app stack — only one
+# verify run's stack is ever up at a time (hardcoded ports collide otherwise).
+VERIFY_LOCK_FILE="${VERIFY_LOCK_FILE:-/tmp/ticket-verify.lock}"
+# How long a waiter blocks for the lock before giving up (seconds).
+# Comfortably over the documented 30-minute verify phase timeout.
+VERIFY_LOCK_TIMEOUT_SECS="${VERIFY_LOCK_TIMEOUT_SECS:-2400}"
+# Crash backstop: the lock's holder process self-terminates (and so
+# releases the flock) after this many seconds even if verify_lock_release
+# is never called — e.g. the calling agent itself gets killed.
+VERIFY_LOCK_MAX_HOLD_SECS="${VERIFY_LOCK_MAX_HOLD_SECS:-3600}"
+
 # ── Ticket audit ────────────────────────────────────────────────────────────
 
 AUDIT_DIR="${AUDIT_DIR:-./logs/audit}"

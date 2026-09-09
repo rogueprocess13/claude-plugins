@@ -221,6 +221,8 @@ TRACE
 
 Skip entirely if `--env=uat`, `--no-env-start`, or `VERIFY_MODE=build-only` is set — build-only verification runs `mvn`/`gradle` directly against the worktree and never touches a running service. Do **not** skip for `VERIFY_MODE=live-backend` — a live-backend ticket's whole point is that a running service must be checked, so `env-start.sh` still needs to run.
 
+**Everything from here through Step 5 touches the shared local app stack** — fixed ports, one set of JVMs, no per-run namespacing. Steps 1.6a2 and 1.6a3 below (isolated worktrees, then the single-flight lock) run *before* anything starts or restarts a service, precisely because whatever branch/checkout is live in the shared `REPOS_ROOT` clones and whatever process currently owns those ports is otherwise undefined — a human debugging `env-start.sh` locally, or a second concurrent verify run, can silently make this run test the wrong code or collide on ports/memory/CPU.
+
 ### 1.6a — Detect affected backend services
 
 Extract service names from the ticket's notes.md and context.md:
@@ -232,9 +234,72 @@ grep -oP '(?<=microservices/)[a-z][a-z-]+' {ticket-dir}/notes.md {ticket-dir}/co
 
 If the ticket dir is not found (no local workspace), affected services = empty (env-start.sh will start all).
 
+### 1.6a2 — Prepare isolated worktrees for affected repos
+
+Whatever branch happens to be checked out in the shared `REPOS_ROOT` clones at verify time is what `env-start.sh` would actually build and run — nothing about the shared clone ties it to *this* ticket's branch. Resolve an isolated, per-repo, per-ticket worktree instead, checked out to the ticket's actual branch, before starting anything:
+
+```bash
+source "$HOME/.claude/skills/lib/verify-worktree.sh"
+
+# Cheap, zero-network, zero-LLM TTL sweep of old verify worktrees.
+# Opportunistic — runs on every verify invocation rather than needing a
+# separate hook. See VERIFY_WORKTREE_TTL_HOURS (config.sh, default 24h).
+verify_worktree_gc
+
+_branch="{the ticket's branch — from notes.md's pre-implementation-checkpoint
+  'Worktree:'/branch entry, or branch-resolve.sh's BRANCH_CONTEXT_RESULT for
+  this ticket}"
+
+# Affected services from 1.6a; if 1.6a found none, use every repo directory
+# directly under REPOS_ROOT that has a .git (mirrors env-start.sh's own
+# "no specific services → everything" fallback).
+_verify_services="{affected services from 1.6a, or every REPOS_ROOT/*/.git repo}"
+
+for _svc in $_verify_services; do
+  _repo_path="$REPOS_ROOT/$_svc"
+  [ -d "$_repo_path/.git" ] || continue
+  _wt=$(ensure_verify_worktree "{TICKET-ID}" "$_repo_path" "$_branch") || {
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_WORKTREE_FAILED — $_svc @ $_branch" >> "$LOG_FILE"
+    echo "ticket-verify: could not prepare an isolated worktree for $_svc on branch $_branch — see stderr above." >&2
+    exit 1
+  }
+  _svc_env=$(echo "$_svc" | tr '[:lower:]-' '[:upper:]_')
+  export "VERIFY_REPO_PATH_${_svc_env}=$_wt"
+done
+
+[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|worktree-setup|done|worktrees ready for ${_branch}" >> "$LOG_FILE"
+```
+
+Each resolved path is exported as `VERIFY_REPO_PATH_<SERVICE>` (service name upper-cased, `-`→`_` — e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`). **If `{TICKETS_ROOT}/env-start.sh` (or this workspace's equivalent) accepts per-service repo path overrides, pass these through in Step 1.6b so the stack builds and runs from the isolated checkout instead of the shared clone.** `env-start.sh` lives in the consuming workspace, not this plugin, so whether it currently reads these is unknown here — check deterministically rather than guessing:
+
+```bash
+if ! grep -q "VERIFY_REPO_PATH" "{TICKETS_ROOT}/env-start.sh" 2>/dev/null; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|verify-worktree-unwired|warn|env-start.sh does not read VERIFY_REPO_PATH_* — branch isolation is partial (worktree checkout is correct; the running app stack may still build from the shared clone) until env-start.sh is updated to consume it" >> "$LOG_FILE"
+fi
+```
+
+This is not a blocking condition — proceed either way. Worktrees are **not** torn down at the end of a normal run: they're left in place (the next run's `ensure_verify_worktree` re-syncs to the branch's current remote tip) and reaped only once idle past `VERIFY_WORKTREE_TTL_HOURS` (default 24h) by the `verify_worktree_gc` call above — the same age-based approach as `hooks/tmp-sweep.sh`, scoped to `REPOS_ROOT/.verify-worktrees/` and run inline here rather than as a separate `SessionStart` hook, since it only needs to fire when a verify run actually happens.
+
+### 1.6a3 — Acquire the single-flight verify lock
+
+The local dev stack hardcodes ports (gateway:8080, bom:8081, credit-report:8082, bridge-endpoint:8085, debt-collection:8088, gateway-fe:9000) with no per-run namespacing. Two verify app stacks up at once means two sets of JVMs racing on those same ports plus shared memory/disk/CPU — so only one verify's app stack is ever up at a time; a concurrent request queues instead of racing:
+
+```bash
+source "$HOME/.claude/skills/lib/verify-lock.sh"
+
+if ! verify_lock_acquire "{TICKET-ID}"; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|verify-lock|fail|timed out waiting for the app-stack lock" >> "$LOG_FILE"
+  echo "ticket-verify: could not acquire the single-flight verify lock — see the diagnostic above for who currently holds it. Retry later." >&2
+  exit 1
+fi
+[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|verify-lock|done|acquired" >> "$LOG_FILE"
+```
+
+`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at the two earlier points that can exit before Step 5 — Step 1.6b's `env-start.sh` failure, and Step 1.7a's "no test user found" SKIP exit. `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
+
 ### 1.6b — Run env-start.sh (BE + FE)
 
-Always start all services including the gateway FE. `env-start.sh` skips anything already running.
+Always start all services including the gateway FE. `env-start.sh` skips anything already running. If it accepts per-service repo path overrides, pass the `VERIFY_REPO_PATH_<SERVICE>` values exported in 1.6a2 so it builds/runs from the isolated worktrees.
 
 If no specific affected services were detected in 1.6a (or ticket dir missing):
 
@@ -248,7 +313,12 @@ If specific affected services were detected and the ticket dir exists, restart o
 bash {TICKETS_ROOT}/env-start.sh --restart {affected-services} gateway-fe
 ```
 
-Block until the script exits. If it exits non-zero, abort ticket-verify with the script's error — do not proceed to browser.
+Block until the script exits. If it exits non-zero, release the verify lock and abort ticket-verify with the script's error — do not proceed to browser:
+
+```bash
+source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
+verify_lock_release
+```
 
 ---
 
@@ -279,6 +349,11 @@ Use this priority chain (stop at first match):
   Write to log:
   ```bash
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|pre-flight|fail|No test user found" >> "$LOG_FILE"
+  ```
+  This is a SKIP exit that does not route through Step 5/6/7 — if Step 1.6a3 acquired the verify lock (browser/live-backend modes), release it explicitly before exiting:
+  ```bash
+  source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
+  verify_lock_release
   ```
   Exit with SKIP (no failure — the ticket needs human input).
 
@@ -687,6 +762,13 @@ Proceed to Step 5.
 ---
 
 ## Step 5 — Evaluate pass/fail
+
+Release the verify lock now, before evaluating — the app stack is no longer needed once checks have finished, so free it for the next queued verify run as early as possible rather than waiting for the pass/fail report to finish. Idempotent no-op when the lock was never acquired (`--env uat`, `--no-env-start`, or `VERIFY_MODE=build-only`):
+
+```bash
+source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
+verify_lock_release
+```
 
 ### Pass
 
@@ -1114,6 +1196,7 @@ information, and any consumer must then fall back to whole-run classification.
 
 ## Notes
 
+- **Isolated worktrees + single-flight lock (Step 1.6a2/1.6a3):** browser and live-backend verification no longer run against whatever branch happens to be checked out in the shared `REPOS_ROOT` clones. Step 1.6a2 resolves a per-repo, per-ticket worktree via `lib/verify-worktree.sh` (`REPOS_ROOT/.verify-worktrees/{repo}/{TICKET-ID}`, distinct from `ticket-implement`'s own `.ticket-auto/worktrees/{TICKET-ID}/{repo}` — verify must never read a directory implement might still be writing to, and always re-syncs to the branch's remote tip on reuse rather than preserving local state) and exports `VERIFY_REPO_PATH_<SERVICE>` for `env-start.sh` to consume if/when it's updated to accept per-service path overrides — that script lives in the consuming workspace, not this plugin, so this skill checks deterministically (`grep` for `VERIFY_REPO_PATH`) rather than assuming either way. Step 1.6a3 then serializes the app stack itself via `lib/verify-lock.sh` — a well-known lockfile (`VERIFY_LOCK_FILE`, default `/tmp/ticket-verify.lock`) held across the whole "start stack → checks" window, since the local dev stack's ports aren't namespaced per run. Both are skipped exactly when Step 1.6 itself is skipped (`--env uat`, `--no-env-start`, `VERIFY_MODE=build-only`). Worktrees are swept by TTL (`verify_worktree_gc`, default 24h idle) rather than torn down every run; the lock is released at Step 5 (or explicitly at the two earlier exit points that can precede it — see 1.6a3) and self-expires past `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) even if release is never called, so a killed agent can't wedge the lock open indefinitely.
 - **Session reuse:** If the browser is already open and logged in at the correct environment, skip Step 3b. Detect this from the snapshot — if the nav shows a user name, proceed directly to Step 4.
 - **Snapshot verbosity:** Trim snapshots to the relevant component subtree in all reports. Full snapshots can be hundreds of lines — include only what is needed to understand the failure.
 - **Multiple failing criteria:** If more than one criterion fails, report all of them in 7b and 7c. The WHAT_FAILED and SNAPSHOT_EXCERPT should cover the first failure point; list subsequent failures under a `ADDITIONAL_FAILURES:` key in the brief.
