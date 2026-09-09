@@ -1,11 +1,11 @@
 ---
 name: wiki-maintenance
-description: Incorporates unresolved errata entries from ticket-implement feedback into wiki flow files. Reads all ## Errata sections under the project's WIKI_ROOT, applies each gap fix to the relevant flow section, and marks entries resolved. Use when wiki errata has accumulated (~5+ unresolved entries), or the user says "maintain wiki", "update wiki from errata", "incorporate errata", or "fix wiki gaps".
+description: Incorporates unresolved errata entries from ticket-appraise and ticket-implement feedback into wiki flow files. Reads all ## Errata sections under the project's WIKI_ROOT, applies each gap fix to the relevant flow section, deletes the entry once incorporated (git is the audit trail), lints the result, and commits WIKI_ROOT. Use when wiki errata has accumulated (~5+ unresolved entries), or the user says "maintain wiki", "update wiki from errata", "incorporate errata", or "fix wiki gaps".
 ---
 
 # Wiki Maintenance — Errata Incorporation
 
-You are maintaining pre-traced call-chain wiki files. Your input is errata entries appended by `ticket-implement` Step 4c — each entry describes a gap found during actual ticket work. Your job is to incorporate those fixes into the flow content and mark them resolved.
+You are maintaining pre-traced call-chain wiki files. Your input is errata entries appended by `ticket-appraise` Step 3c and `ticket-implement` Step 4c — each entry describes a gap found during actual ticket work. Your job is to incorporate those fixes into the flow content, deleting each entry once its fix lands (git already keeps the history), then lint and commit `WIKI_ROOT`.
 
 ## Logging (--from-auto)
 
@@ -51,11 +51,13 @@ find {WIKI_ROOT} -name "*.md" ! -name "index.md" | sort
 
 For each file, grep for `## Errata` — if found, read the errata section. Parse each entry to identify:
 
-- **Status**: Unresolved entries are normal markdown. Resolved entries are struck through (`~~entire line~~`).
-- **Ticket ID** — the ticket that discovered the gap
-- **Gap** — what was missed
-- **Root cause** — why the wiki didn't catch it
+- **Ticket ID** — the ticket that discovered the gap (provenance tag, e.g. `CRE-47`)
+- **Gap** — what was missed, in terms of code/paths — not dates, not outcome labels
 - **Fix** — what should be added/changed
+
+Every entry under `## Errata` is unresolved by construction — once an entry is incorporated it is
+deleted (see Step 2c), not struck through. Git history is the audit trail for what was fixed and
+when; the wiki file itself only ever shows current, actionable gaps.
 
 If no unresolved entries exist across all files, report:
 ```
@@ -77,6 +79,16 @@ If entries exist, summarize:
 | flows/billing.md | CRE-52 | BodyServiceResourceUsage.reference field use undocumented |
 ```
 
+**Style rule — applies to every write this skill makes**, both here and in Step 2.5/2.6:
+what the code does and where it lives (repo-relative paths, never line numbers — those drift
+the moment the file changes); ticket IDs only as `(CRE-XX)`-style provenance tags on the
+content they support, never as a standalone changelog entry; no dates, outcome labels
+(Smooth/Rough/Hard, predicted-vs-actual), adversarial-review counts, or "not yet
+merged/fixed" status lines — this kind of content rots in days (a CRE-69 section once
+described a fix mechanism that was never merged in that form, and stayed wrong for months
+because nothing re-checked it). If you're about to write something that will read as false in
+three months, cut it.
+
 Proceed to Step 2.
 
 ---
@@ -88,25 +100,31 @@ Work through unresolved entries in order. For each:
 ### 2a — Read the context
 
 1. Read the errata entry's `Fix:` line — this tells you what to add.
-2. Read the relevant section of the flow file that the errata references. The `Gap:` and `Root cause:` lines tell you where.
+2. Read the relevant section of the flow file that the errata references. The `Gap:` line tells you where.
 
 ### 2b — Apply the fix
 
-Edit the flow file to incorporate the missing detail. Common patterns:
+Edit the flow file to incorporate the missing detail directly into the existing flow structure
+— a fix is a content change, not a new changelog line. Tag the inserted content with the
+source ticket as a trailing provenance marker, `(CRE-XX)`, and nothing else (no date, no
+outcome label). Common patterns:
 
 | Gap type | Where to fix | Example change |
 |----------|-------------|----------------|
-| Missing Feign client call in flow | Add a sub-step to the flow section listing the Feign call | "6. Call `BomFeignClient.charge(reserve=true, usage)` via `POST /body-service-resource-usages/charge`" |
-| Entity field not documented | Add the field to the entity table | `amount` \| `BigDecimal(21,2)` \| Recovery amount |
+| Missing Feign client call in flow | Add a sub-step to the flow section listing the Feign call | "6. Call `BomFeignClient.charge(reserve=true, usage)` via `POST /body-service-resource-usages/charge` (CRE-47)" |
+| Entity field not documented | Add the field to the entity table | `amount` \| `BigDecimal(21,2)` \| Recovery amount (CRE-52) |
 | Method signature stale | Update class name or method name in the Key Classes table | Replace `ReportJobService.setStatus()` with correct method |
 | Missing endpoint | Add to REST Endpoints table | Add row with method, path, purpose |
-| Cross-service dependency undocumented | Add a "## Dependencies" section or note in the flow | "Requires BOM service for commission calculation via `BomFeignClient`" |
+| Cross-service dependency undocumented | Add a "## Dependencies" section or note in the flow | "Requires BOM service for commission calculation via `BomFeignClient` (CRE-61)" |
 
-After editing, the flow file must still read as a coherent document — the errata entry should describe a fix, but you apply it as part of the regular flow structure.
+After editing, the flow file must still read as a coherent document — the errata entry
+described a fix, but you apply it as part of the regular flow structure, not as an appended note.
 
 **If the fix requires creating a new wiki file** (e.g. a flow that has no wiki page yet):
 
-1. Create the file with YAML frontmatter — use this schema:
+1. Create the file with YAML frontmatter — use this schema (the freshness fields are the
+   contract `lib/wiki-check.sh` lints, see the Freshness contract note at the bottom of this
+   skill):
    ```yaml
    ---
    services: [list of microservice names]
@@ -114,25 +132,31 @@ After editing, the flow file must still read as a coherent document — the erra
    flows: [list of flow names this file covers]
    keywords: [searchable terms a ticket description might contain]
    related: ["path/to/related-file.md", ...]
+   verified_at: "{today, YYYY-MM-DD}"
+   verified_against: {repo: "{repo-slug}", sha: "{HEAD sha of that repo right now}"}
+   stale_after: 90
+   verified: machine-verified
    ---
    ```
+   `verified: machine-verified` is correct for content this skill itself wrote from a
+   ticket-implement/appraise finding — reserve `human-reviewed` for content a person actually
+   read and confirmed, and `unverified` for content copied in without independent checking.
 2. Add a row to the **File Registry** table in `{WIKI_ROOT}/index.md`.
 3. Add entries to the **Lookup by Topic** and **Lookup by Service** sections of `index.md`.
 4. Add the new file to the `related:` frontmatter field of any existing files it is related to.
 
+**If editing an existing file**, refresh its frontmatter the same way: set `verified_at` to
+today and `verified_against` to the sha of the repo the fix was verified against. A fix applied
+without updating `verified_at` leaves the file's freshness classification (`lib/wiki-check.sh`,
+§5) wrong — it would still show as decayed relative to the *old* verification, undercutting the
+work just done.
+
 ### 2c — Mark resolved
 
-After incorporating the fix, strike through the errata entry and append a resolution date:
-
-```markdown
-### ~~CRE-47 — Hard (predicted simple) — incorporated 2026-05-15~~
-~~**Date:** 2026-05-10~~
-~~**Gap:** BomFeignClient not in payment flow~~
-~~**Root cause:** Wiki only traced HandoverPaymentServiceImpl~~
-~~**Fix:** Add BomFeignClient.charge() step~~
-```
-
-Do NOT delete the entry — the struck-through history shows what has been maintained and when.
+After incorporating the fix, **delete** the errata entry — do not strike it through and keep
+it. Git history is the record of what was fixed and when; the wiki file itself should only ever
+show gaps still open. If `## Errata` is empty after removing the entry, remove the empty
+heading too.
 
 ---
 
@@ -148,7 +172,7 @@ Find `ai-context.md` files created within the last 90 days:
 find . -path "*/tickets/*/ai-context.md" -newermt "90 days ago" 2>/dev/null | head -50
 ```
 
-If the `tickets` directory is elsewhere, derive the path from the ticket-auto workspace structure or search from the repo root. If no files are found, skip to Step 3.
+If the `tickets` directory is elsewhere, derive the path from the ticket-auto workspace structure or search from the repo root. If no files are found, skip to Step 3 — Lint before commit (a no-op when nothing changed this run).
 
 ### 2.5b — Read and evaluate each file
 
@@ -172,59 +196,90 @@ For each finding that meets inclusion criteria, check if the wiki already has a 
 
 **If the finding is already documented:** update the existing entry with the additional source ticket reference (e.g., add `(WIL-67)` to an existing line). Do NOT create a duplicate entry.
 
-**If the finding is new:** add it to the appropriate wiki file. Each entry has two sections:
+**If the finding is new:** add it to the appropriate wiki file as one section — a single
+audience reads this file (appraise, and any human skimming alongside it), so a duplicated
+human/AI pair is just two places for the same fact to go stale:
 
 ```markdown
-### {topic} (human)
+### {topic}
 
-**Summary:** {high-level summary of what's changed in this area — terse, skimmable}
-**Convention changes:** {new or updated conventions — one-liners}
-**Notable gotchas:** {watch-out items — one per line, with source ticket IDs}
-
-### {topic} (AI)
-
-**File paths:** {list of relevant files with one-line role descriptions}
-**Call chains:** {trace paths if applicable}
-**Patterns:** {pattern descriptions with rationale}
-**Decisions:** {decision rationales with context}
-**Source tickets:** {list of ticket IDs that contributed to this entry}
+**Summary:** {what's true about this area now — terse, skimmable}
+**File paths:** {relevant files with one-line role descriptions}
+**Conventions / gotchas:** {conventions and watch-out items as flat bullets, each ending in a
+`(TICKET-ID)` provenance tag — no separate changelog}
 ```
 
-The human-facing section (`(human)`) is for quick skimming — it answers "what's changed here recently?" The AI-facing section (`(AI)`) is what the appraise agent reads — it provides the details needed to implement in this area.
+Omit any subsection with nothing to say — a two-line entry with just Summary and one
+convention bullet is complete on its own. Provenance lives on the bullet it supports, not in a
+separate ticket list — a bullet with two contributing tickets carries both: `(CRE-47, CRE-61)`.
 
 ### 2.5d — Count and track
 
-Track the number of ai-context.md files processed and the number of findings promoted to wiki. These counts are included in the Step 3 report alongside errata counts.
+Track the number of ai-context.md files processed and the number of findings promoted to wiki. These counts are included in the Step 5 report alongside errata counts.
 
 ---
 
 ## Step 2.6 — Incorporate CORRECTIONS from ai-context.md
 
-When `ticket-document` writes ai-context.md, it carries forward CORRECTIONS blocks written by `ticket-implement` Step 4c Part 4. These corrections identify mismatches between predicted complexity and actual outcome, tagged with a source (`appraise`, `exec`, `prescan`, or `wiki`). This step processes corrections alongside errata entries.
+When `ticket-document` writes ai-context.md, it carries forward CORRECTIONS blocks written by `ticket-appraise` and `ticket-implement`. These corrections identify a specific fact that turned out wrong or missing, tagged with a source (`appraise`, `exec`, `prescan`, or `wiki`). This step processes corrections alongside errata entries — but only the sources that are actually wiki-material:
 
-For each `ai-context.md` file read in Step 2.5, check the `## Corrections from Implementation` section:
+1. **source=wiki**: Treat these as direct wiki errata — they describe gaps in wiki flow files discovered during appraisal or implementation. Apply the same fix workflow as Step 2b (read context, apply fix to the appropriate wiki file, refresh its `verified_at`/`verified_against`). If the fix lands cleanly, delete the correction. If unclear, append a `<!-- UNCLEAR: {why} -->` comment and skip.
 
-1. **source=wiki**: Treat these as direct wiki errata — they describe gaps in wiki flow files discovered during implementation. Apply the same fix workflow as Step 2b (read context, apply fix to the appropriate wiki file). If the fix lands cleanly, strike through the correction as resolved. If unclear, append a `<!-- UNCLEAR: {why} -->` comment and skip.
+2. **source=prescan**: Describes a prescan-doc investigation gap, not a wiki-file defect on its own. Evaluate it: if it reveals a reproducible pattern the wiki should warn about (e.g., "entity X always needs field Y but the wiki doesn't mention it"), promote it into the appropriate wiki flow file using the same fix workflow as Step 2b. If it is a one-off ticket-specific miss, skip — it is not actionable for the wiki.
 
-2. **source=prescan** or **source=appraise**: These describe appraisal/investigation gaps, not wiki file defects. Evaluate each entry: if it reveals a reproducible pattern that the wiki should warn about (e.g., "entity X always needs field Y but the wiki doesn't mention it"), promote it to a wiki entry under the relevant flow file. If it is a one-off ticket-specific miss (e.g., "ticket description was vague"), skip — it is not actionable for the wiki.
+3. **source=appraise**: This is complexity-calibration feedback — predicted vs. actual outcome for `ticket-appraise`'s own scoring, not a codebase or wiki fact. **Never promote it to the wiki.** `ticket-retro` Step 1.6 is the consumer for these entries, reading them directly from each ticket's notes.md — leave them there and skip here.
 
-3. **source=exec**: These describe plan-artifact gaps. Skip — exec-level corrections are plan-specific and not wiki-material.
+4. **source=exec**: Describes a plan-artifact gap. Skip — exec-level corrections are plan-specific, not wiki-material.
 
-Append resolved corrections to the wiki errata sections in the same struck-through format as Step 2c, with a `[corrections]` tag to distinguish them from implement-phase errata:
+For every correction actually incorporated (sources 1 and 2 above), no further write is needed
+once Step 2b's edit lands — the fix itself, committed to `WIKI_ROOT` (§4), is the audit trail.
+Do not create a separate struck-through record in the wiki for it, and do not edit the
+originating `ai-context.md`/notes.md — those are immutable per-ticket historical records, not a
+work queue this skill maintains.
 
-```markdown
-### ~~{TICKET-ID} — {Smooth|Rough|Hard} (predicted {simple|complex}) [corrections] — incorporated {date}~~
-~~**Date:** {date}~~
-~~**Fact:** {fact from corrections block}~~
-~~**Source:** {appraise|prescan|wiki}~~
-~~**Corrected:** {corrected detail}~~
-```
-
-Track resolved correction count separately from errata count. Include both in the Step 3 report.
+Track resolved correction count separately from errata count. Include both in the Step 5 report.
 
 ---
 
-## Step 3 — Report
+## Step 3 — Lint before commit
+
+Before committing (Step 4), run the freshness/completeness lint over every file this run
+touched:
+
+```bash
+bash "$HOME/.claude/skills/lib/wiki-check.sh" --wiki-root "{WIKI_ROOT}" --repos-root "{REPOS_ROOT}" --changed-only
+```
+
+`wiki-check.sh` (§5 of the wiki-cross-repo-knowledge-layer change) reports per file: line
+count, frontmatter completeness, broken `related:` links, backticked class names that don't
+resolve to any known repo, and a freshness classification (`fresh`/`stale`/`decayed`) derived
+from `verified_against` + `stale_after` + commit activity since. A file this run just edited
+without refreshing `verified_at`/`verified_against` (Step 2b) will show up `decayed` here —
+treat that as a signal you skipped the frontmatter refresh, not as noise to ignore. Non-zero
+exit does not block the commit — wiki-maintenance logs the findings (`META|wiki-lint|warn|...`
+when `--from-auto`) and proceeds; a human incorporates lint fixes on the next pass.
+
+---
+
+## Step 4 — Commit WIKI_ROOT
+
+`WIKI_ROOT` is its own docs repo with no branches — after Steps 1-3 land their edits (and the
+lint has run), commit them scoped strictly to that directory:
+
+```bash
+git -C "{WIKI_ROOT}" add -A
+git -C "{WIKI_ROOT}" commit -m "docs(wiki): {TICKET-ID} {one-line summary of what was incorporated}"
+```
+
+Always use `git -C "{WIKI_ROOT}"` — never a bare `git commit` from the pipeline's working
+directory, which would catch unrelated changes in a source repo. See
+`agents/ticket-maintenance-agent.md` for why this is the one commit this agent is allowed to
+make. Skip the commit (log a warning, do not fail the phase) if `WIKI_ROOT` is not a git
+repository, or if there is nothing staged (no edits landed this run).
+
+---
+
+## Step 5 — Report
 
 ```
 ## Wiki maintenance complete
@@ -232,6 +287,7 @@ Track resolved correction count separately from errata count. Include both in th
 **Errata processed:** {count}
 **ai-context findings promoted:** {count}
 **Files modified:** {list}
+**Committed:** {commit sha, or "skipped — {reason}"}
 
 **Changes:**
 1. {file} — {what was added/changed}
@@ -242,8 +298,9 @@ Track resolved correction count separately from errata count. Include both in th
 
 ## Notes
 
-- **One entry at a time** — read context, apply fix, mark resolved, then move to the next. Do not batch.
-- **Errna format is canonical** — the `### {TICKET-ID} — {Hard|Rough} (predicted {simple|complex})` header identifies the entry. Do not alter existing resolved entries.
+- **One entry at a time** — read context, apply fix, delete the entry, then move to the next. Do not batch.
+- **Errata format is canonical** — the `### {TICKET-ID}` header identifies the entry (`Gap:`/`Fix:` below it). An entry that's been incorporated is deleted, never left behind struck through.
 - **If an errata entry is unclear** — mark it with a comment and skip: `<!-- UNCLEAR: {why} -->` instead of resolving.
 - **Source is authoritative** — if an errata entry contradicts the wiki flow, trust the errata (it comes from actual ticket implementation, not pre-computed analysis). Verify by reading the referenced source code if needed.
 - **Scope** — writes only to files under `{WIKI_ROOT}/`. Does not modify source code.
+- **Freshness contract** — every file this skill writes or edits carries `verified_at`, `verified_against: {repo, sha}`, `stale_after`, and `verified` frontmatter (schema in Step 2b). `lib/wiki-check.sh` (Step 3) is the lint for that contract; `ticket-appraise` Step 3a reads its `decayed` classification the same way it already reads decayed prescan docs.

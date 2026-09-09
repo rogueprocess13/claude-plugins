@@ -35,8 +35,8 @@ Executes the implementation plan produced during appraisal. Checks the approval 
 | Unit tests | Affected repos | New/modified tests for changed logic |
 | Outcome label | Linear | Smooth/Rough/Hard applied |
 | Commit + push | Remote branch | Changes pushed to origin |
-| Wiki errata | WIKI_ROOT flow files | Errata appended on complexity mismatch |
-| Feedback memory | claude-mem | Pattern recorded for mismatch analysis |
+| Wiki errata | WIKI_ROOT flow files | Errata appended whenever a consulted wiki fact turns out wrong or missing — independent of complexity mismatch |
+| Feedback memory | claude-mem | Pattern recorded for mismatch analysis (mismatch-gated) |
 
 ## How it works
 

@@ -17,6 +17,59 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.48.0 (2026-09-09)
+
+The project wiki (`WIKI_ROOT`) is the only cross-repo knowledge source the pipeline has, but it
+was treated as a Tier-3 last resort, its feedback loop starved on a misprediction gate, and it
+had no freshness contract at all — an errata block could sit unresolved and unreviewable for
+months with no way to tell if the wiki file it lived in was still accurate. Five changes (#335),
+all in `ticket-auto-pipeline`. The external reference commit cited in the issue
+(`credit-network-biz/wiki@38fdc17`) was not accessible from this environment; the freshness
+contract and lint (change 5) were implemented from the issue's own prose spec instead.
+
+1. **Wiki reachable from Tier 1, not Tier 3** (`skills/ticket-appraise/SKILL.md` Step 3a):
+   `WIKI_ROOT/index.md` now loads alongside prescan's own INDEX.md in every appraisal (3a.0b),
+   not only after prescan comes up empty. Routes to wiki files as a **primary** source whenever
+   the ticket's scope is multi-repo or an index topic matches — prescan is per-repo by
+   construction and cannot answer a ticket that spans services, no matter how fresh. Prescan
+   stays the per-repo, file:line source (Tiers 1-2, unchanged). `lib/prescan-wire-claude-md.sh`
+   gained `--wiki-root`, which idempotently ensures a `Cross-repo` row in each repo's own
+   INDEX.md Lookup by Topic table pointing at `WIKI_ROOT/index.md` — `ticket-prescan` passes it
+   whenever `WIKI_ROOT` is configured. Step 3c gained explicit conflict resolution: when prescan
+   and wiki disagree on a cross-cutting fact, the newer `verified_at`/`last_scanned_at` wins, and
+   the conflict is recorded inline rather than silently resolved.
+2. **Feedback loop closed at discovery time, not gated on misprediction**: `ticket-appraise`
+   Step 3c now writes the correction (or a direct wiki errata entry) the moment a stale prescan
+   or wiki symbol is found, instead of noting it and dropping it. `ticket-implement` Step 4c's
+   wiki-errata write is no longer gated on a complexity misprediction — any wiki file consulted
+   that turns out wrong or missing gets an entry regardless of whether the ticket ran `Smooth`.
+   Pure complexity-calibration feedback (`Hard`/`Rough` vs. predicted, `source=appraise`
+   corrections) now routes to `ticket-retro` (new Step 1.6, new "Complexity Calibration Notes"
+   report section) instead of the wiki — `wiki-maintenance` Step 2.6 no longer considers
+   promoting `source=appraise` entries at all.
+3. **Write format**: `wiki-maintenance` deletes an errata entry once its fix is incorporated
+   instead of keeping a struck-through "Do NOT delete" record — git history is the audit trail.
+   The paired `### {topic} (human)` / `### {topic} (AI)` sections collapse into one section
+   written directly into the flow's existing structure, with `(TICKET-ID)` provenance tags on
+   individual bullets rather than a separate changelog. New explicit style rule: repo-relative
+   paths (never line numbers), no dates, no outcome labels, no adversarial-review counts, no
+   "not yet merged/fixed" status lines — content of that shape was found actively wrong months
+   after being written.
+4. **`WIKI_ROOT` commits**: `ticket-maintenance-agent` may now run `git -C "$WIKI_ROOT" commit`
+   — a deliberate, narrow exception to the pipeline's "agents reason, bash mutates" boundary,
+   scoped so it can never touch a source repo. `wiki-maintenance` gained Step 4 (commit) with
+   message `docs(wiki): <TICKET-ID> <summary>`. Before this, wiki edits sat uncommitted
+   indefinitely — the wiki repo's git history had nothing in it to be the audit trail §3 relies on.
+5. **Freshness contract + lint** (`lib/wiki-check.sh`, new): per-file frontmatter
+   (`verified_at`, `verified_against: {repo, sha}`, `stale_after`,
+   `verified: unverified|machine-verified|human-reviewed`), lint reports line count, frontmatter
+   completeness, broken `related:` links, backticked class names unresolved against any repo
+   under `REPOS_ROOT` (best-effort), and a `fresh`/`stale`/`decayed` classification from age vs.
+   `stale_after` plus one `git rev-list --count` per file (not per commit line). Wired into
+   `wiki-maintenance` Step 3 (before the new commit) and `ticket-appraise` Step 3a — a `decayed`
+   wiki file is now demoted the same way a decayed prescan doc already was: verify before
+   trusting, don't take it as fact.
+
 ## 0.47.0 (2026-09-09)
 
 `ticket-verify` now runs against isolated git worktrees instead of the shared

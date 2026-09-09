@@ -50,6 +50,12 @@ if [ -z "$REPOS_ROOT" ]; then
   exit 1
 fi
 
+# Resolve WIKI_ROOT from CLAUDE.md (optional — prescan proceeds without it).
+# Threaded through to prescan-wire-claude-md.sh's --wiki-root below so every
+# repo's INDEX.md gets a "Cross-repo -> WIKI_ROOT/index.md" routing row
+# (wiki-cross-repo-knowledge-layer, appraise Step 3a reads it).
+WIKI_ROOT="${WIKI_ROOT:-$(grep 'WIKI_ROOT:' "$HOME/.claude/CLAUDE.md" 2>/dev/null | head -1 | sed 's/.*WIKI_ROOT: *//' || true)}"
+
 # Enumerate repos: if user passed a path, use it; otherwise find all repos
 if [ -n "${1:-}" ] && [ -d "$1" ]; then
   REPOS=("$1")
@@ -375,15 +381,24 @@ jq --arg sha "$HEAD_SHA" --arg now "$NOW" \
 Use the deterministic `prescan-wire-claude-md.sh` script — no LLM-written sed commands:
 
 ```bash
-bash "$HOME/.claude/skills/lib/prescan-wire-claude-md.sh" \
-  --claude-md "$repo/CLAUDE.md" \
-  --prescan-index "$REPOS_ROOT/.ticket-auto/$slug/docs/INDEX.md" \
+_wire_args=(
+  --claude-md "$repo/CLAUDE.md"
+  --prescan-index "$REPOS_ROOT/.ticket-auto/$slug/docs/INDEX.md"
   --repo-slug "$slug"
+)
+[ -n "$WIKI_ROOT" ] && _wire_args+=(--wiki-root "$WIKI_ROOT")
+
+bash "$HOME/.claude/skills/lib/prescan-wire-claude-md.sh" "${_wire_args[@]}"
 
 _plog "PRESCAN" "wire" "done" "$slug: CLAUDE.md wired"
 ```
 
 The script handles both first-time insertion (appends block) and replacement (content between START/END markers). Idempotent — running twice produces identical output. Existing surrounding content is preserved.
+
+When `WIKI_ROOT` is set, the same call also ensures a `| Cross-repo | {WIKI_ROOT}/index.md |`
+row exists in this repo's own INDEX.md **Lookup by Topic** table — prescan is per-repo and
+cannot answer a cross-repo question, so its own routing table should say where to go for one.
+This is what `ticket-appraise` Step 3a reads to know it isn't the only knowledge source in play.
 
 ---
 

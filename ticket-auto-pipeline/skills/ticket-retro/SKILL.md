@@ -50,6 +50,47 @@ Parse the JSON output into the following variables:
 - `{LOGS_BY_SOURCE}` — object `{"ticket-auto": {scanned, skipped, with_failures}, "planner": {scanned, skipped, with_failures}}`. `ticket-auto` scans `./logs/*-pipeline.log`; `planner` scans `${REPOS_ROOT}/.ticket-auto/initiatives/*/state.log` ([#177](https://github.com/willard-pro/claude-plugins/issues/177)). Both sources feed the same `{FAILURE_HISTOGRAM}` — this field is purely for reporting where each count came from. `planner` counts are `0` when `REPOS_ROOT` is unset or no initiatives exist; nothing else about ticket-auto scanning changes in that case.
 - `{ERROR_DIAGNOSTICS}` — object with `total_errors`, `errors_by_ticket`, `error_category_histogram` (from heartbeat structured error events)
 
+---
+
+## Step 1.6 — Complexity calibration corrections
+
+`{COMPLEXITY_PREDICTIONS}` (above) gives the aggregate accuracy number but not *why* a
+prediction missed. `ticket-implement` Step 4c already writes the qualitative gap for every
+mismatch as a `source=appraise` (complexity sweep) or `source=exec` (plan artifact) CORRECTIONS
+block in the ticket's own notes.md — this is scoring feedback for `ticket-appraise`, not
+codebase knowledge, so it belongs here rather than in the wiki (`wiki-maintenance` Step 2.6
+deliberately skips `source=appraise` entries and routes them here instead).
+
+Runs regardless of whether `{FAILURE_HISTOGRAM}` is empty — a complexity mismatch is not a
+gate-stop failure, so a "clean window" on failures can still have calibration signal to report.
+
+For each entry in `{COMPLEXITY_PREDICTIONS}` where `declared` and `actual` disagree (the same
+mismatch condition `ticket-implement` uses: `simple`+`Rough`/`Hard`, or `complex`+`Smooth`):
+
+```bash
+source "$HOME/.claude/skills/lib/ticket-dir.sh"
+source "$HOME/.claude/skills/lib/corrections-parse.sh"
+
+_tdir=$(resolve_ticket_dir "{ticket}" "." 2>/dev/null) || _tdir=""
+if [ -n "$_tdir" ] && [ -f "$_tdir/notes.md" ]; then
+  eval "$(get_corrections_by_source "$_tdir/notes.md" appraise)"
+  # CORRECTION_{N}_FACT / _SOURCE / _CORRECTED, N = 0..CORRECTION_COUNT-1 — appraise hits
+  _appraise_count="${CORRECTION_COUNT:-0}"
+  eval "$(get_corrections_by_source "$_tdir/notes.md" exec)"
+  # Same shape — exec hits (overwrites CORRECTION_COUNT/CORRECTION_*; read appraise first)
+fi
+```
+
+A ticket directory that can't be resolved (workspace already cleaned up, or retro is being run
+from a directory other than the tickets root) is skipped silently for that ticket — this
+section is best-effort enrichment layered on top of the log-derived accuracy table, never a
+blocker on the rest of the retro run.
+
+Collect every hit into `{CALIBRATION_NOTES}` — a list of `{ticket, source, fact, corrected}` —
+for the Step 4 report section below.
+
+---
+
 If `{FAILURE_HISTOGRAM}` is empty (no failures), skip to Step 4 to write a short "clean window" report.
 
 ---
@@ -245,6 +286,28 @@ Table of predicted vs. actual complexity with per-ticket rows and aggregate accu
 
 **Accuracy:** 0.750 (3/4 correct)
 ```
+
+### Section: Complexity Calibration Notes (if {CALIBRATION_NOTES} non-empty)
+
+The qualitative counterpart to the accuracy table above — what specifically each mismatch
+missed, sourced from Step 1.6:
+
+```markdown
+## Complexity Calibration Notes
+
+| Ticket | Source | Gap |
+|--------|--------|-----|
+| CRE-47 | appraise | Complexity sweep underestimated — undiscovered Feign dependency |
+| CRE-48 | exec | Plan artifact missed a required DB migration |
+
+**Corrected:**
+- CRE-47: {corrected text from the appraise-source CORRECTIONS entry}
+- CRE-48: {corrected text from the exec-source CORRECTIONS entry}
+```
+
+Omit this section entirely when `{CALIBRATION_NOTES}` is empty — a mismatch existing in the
+accuracy table with no resolvable notes.md (ticket dir cleaned up, or no CORRECTIONS block
+written) is not itself an error worth reporting here.
 
 ### Section: Claude Log Failures (if scan ran)
 

@@ -440,23 +440,53 @@ A mismatch means the appraisal missed something. When `simple` + `Rough`/`Hard`,
    - What signal the complexity sweep missed
    - What to look for next time in that area
 
-3. **Append wiki errata (only if wiki was used for this ticket):** Check notes.md for a `Wiki bootstrap:` line under Initial Investigation. If found, open the referenced wiki flow file(s) and append an errata entry at the end:
+This mismatch signal is scoring feedback for `ticket-appraise` — not codebase knowledge — so it
+never touches the wiki. It's written to notes.md as a `source=appraise`/`source=exec`
+CORRECTIONS block in Part 4 below, and `ticket-retro` Step 1.6 is its consumer.
 
-   ```markdown
-   ### {TICKET-ID} — {Hard | Rough} (predicted {simple | complex})
-   **Date:** {today's date}
-   **Gap:** {What was missed: undiscovered Feign dependency? Entity field not in wiki? Method signature wrong?}
-   **Root cause:** {Why the wiki didn't catch it — missing section, stale path, assumption in flow description}
-   **Fix:** {What to add/change in this wiki file to prevent the next ticket from hitting the same gap}
-   ```
+### Part 3 — Wiki errata (always checked — never gated on complexity mismatch)
 
-   - If the file already has an `## Errata` section, append to it. If not, create the section.
-   - If multiple wiki files were loaded, append to the most specific flow file. If the gap is cross-service (e.g. credit-report → BOM interaction), append to both.
-   - If no `Wiki bootstrap:` line exists, skip — the mismatch was not wiki-related.
+Check notes.md for a `Wiki bootstrap:` line under Initial Investigation (written by
+`ticket-appraise` Step 3a when it loaded a wiki flow file for this ticket). If no such line
+exists, skip this Part entirely — there is nothing wiki-sourced to check.
 
-### Part 4 — Write CORRECTIONS to notes.md (only on mismatch)
+If the wiki was consulted, ask independently of the mismatch check above: **did anything the
+wiki said turn out wrong, stale, or missing during implementation?** A wrong class name, a
+Feign client the flow didn't mention, an entity field the wiki didn't document, a call-chain
+step that no longer matches the code — any of these counts, on any outcome label. A `Smooth`
+ticket that quietly worked around a wrong class name in the wiki is exactly the case a
+misprediction-only gate misses: the wiki stays wrong and nothing ever reports it.
 
-When the outcome label (`Smooth`/`Rough`/`Hard`) disagrees with the complexity prediction (`simple`/`complex`), append a CORRECTIONS block to notes.md so downstream skills (`ticket-document`, `wiki-maintenance`, `ticket-prescan`) can feed the signal back into their own artifacts.
+- **No gap found:** log `META|wiki-check|info|wiki consulted, no gap found` (via `$LOG_FILE`
+  when `--from-auto`) and move on. Nothing to write.
+- **Gap found:** open the referenced wiki flow file(s) and append an errata entry using the
+  canonical schema from `wiki-maintenance` Step 1 (`Gap:`/`Fix:` — no date, no outcome label,
+  the ticket ID is the header):
+
+  ```markdown
+  ### {TICKET-ID}
+  **Gap:** {What was missed: undiscovered Feign dependency? Entity field not in wiki? Method signature wrong?}
+  **Fix:** {What to add/change in this wiki file to prevent the next ticket from hitting the same gap}
+  ```
+
+  - If the file already has an `## Errata` section, append to it. If not, create the section.
+  - If multiple wiki files were loaded, append to the most specific flow file. If the gap is cross-service (e.g. credit-report → BOM interaction), append to both.
+  - Also write a `source=wiki` correction to notes.md (Part 4 below) — unconditionally when a
+    gap was found here, regardless of whether this ticket's outcome matched its predicted
+    complexity.
+
+### Part 4 — Write CORRECTIONS to notes.md
+
+Two independent triggers write to the same CORRECTIONS block in notes.md, so downstream skills
+(`ticket-document`, `wiki-maintenance`, `ticket-retro`, `ticket-prescan`) can feed the signal
+back into their own artifacts:
+
+- **Complexity mismatch** (outcome label disagrees with prediction) → `source=appraise` or
+  `source=exec`, per the mapping table below. Gated on mismatch — this is scoring feedback, not
+  a standing fact, so it is only meaningful when the prediction was actually wrong.
+- **Wiki gap found in Part 3** → `source=wiki`. Gated on "a gap was found", never on mismatch —
+  this is the fix for the bug this change closes: a wiki gap discovered on a `Smooth` ticket is
+  just as real as one discovered on a `Hard` one.
 
 The source maps to the skill whose prediction was overturned:
 
@@ -473,7 +503,7 @@ Use the atomic `.tmp` → `mv` pattern from `corrections-parse.sh`:
 ```bash
 source "$HOME/.claude/skills/lib/corrections-parse.sh"
 
-# Choose the source based on the mismatch table above
+# Only when there is a complexity mismatch (see mapping table above)
 _correction_fact="Predicted {simple|complex} but actual outcome was {Smooth|Rough|Hard}"
 _correction_source="{appraise|exec}"   # per mapping table
 _correction_detail="{What the investigation missed — concrete gap description from the mismatch comment above}"
@@ -485,10 +515,8 @@ append_correction "{ticket-dir}/notes.md" \
 || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|corrections-error|warn|append_correction failed" >> "$LOG_FILE"
 ```
 
-If wiki errata was appended (Part 3 above), also write a `source=wiki` correction:
-
 ```bash
-# Only if wiki errata was appended in Part 3
+# Only when Part 3 found a wiki gap — independent of mismatch
 append_correction "{ticket-dir}/notes.md" \
   "Wiki flow file {filename} missing or stale for {specific detail}" \
   "wiki" \
@@ -497,7 +525,8 @@ append_correction "{ticket-dir}/notes.md" \
 ```
 
 **Rules:**
-- Only write corrections when there is a mismatch — never on agreement.
+- `source=appraise`/`source=exec` corrections are written only on mismatch — never on agreement.
+- `source=wiki` corrections are written whenever Part 3 found a gap — independent of mismatch.
 - The atomic `tmp` → `mv` pattern prevents torn blocks on crash.
 - Failure to write a correction logs a `corrections-error` warning but **never halts** the implement phase.
 

@@ -1,10 +1,10 @@
 # wiki-maintenance
 
-> Incorporates unresolved errata entries from ticket-implement feedback into wiki flow files. Reads all Errata sections, applies gap fixes to the relevant flow sections, and marks entries resolved.
+> Incorporates unresolved errata entries from ticket-appraise and ticket-implement feedback into wiki flow files. Reads all Errata sections, applies gap fixes to the relevant flow sections, deletes each entry once incorporated (git is the audit trail), lints the result, and commits WIKI_ROOT.
 
 ## What it does
 
-`wiki-maintenance` keeps the project's call-chain wiki files accurate by processing the errata backlog accumulated during ticket work. When `/ticket-implement` discovers that a wiki flow section is wrong or incomplete, it appends an errata entry to that flow file rather than modifying it mid-implementation. `wiki-maintenance` collects all unresolved errata, applies the fixes to the correct flow sections, and marks each entry resolved. Run when 5+ unresolved errata entries have accumulated, or on a scheduled basis.
+`wiki-maintenance` keeps the project's call-chain wiki files accurate by processing the errata backlog accumulated during ticket work. When `/ticket-appraise` or `/ticket-implement` discovers that a wiki flow section is wrong or incomplete, it appends an errata entry to that flow file rather than modifying it mid-run — appraise closes the loop immediately at discovery time, implement closes it whenever a consulted wiki fact turns out wrong or missing, independent of whether the ticket's outcome matched its predicted complexity. `wiki-maintenance` collects all unresolved errata, applies the fixes directly into the existing flow structure (tagged `(TICKET-ID)` for provenance, not appended as a changelog), and **deletes** each entry once its fix lands — git history is the audit trail, so the wiki file itself only ever shows gaps still open. It then lints every touched file against the freshness contract (`lib/wiki-check.sh`) and commits `WIKI_ROOT`, which is its own docs repo with no branches. Run when 5+ unresolved errata entries have accumulated, or on a scheduled basis.
 
 ## Trigger
 
@@ -24,9 +24,11 @@
 
 | Artifact | Location | Description |
 |----------|----------|-------------|
-| Updated wiki flow files | `WIKI_ROOT/` | Errata gaps incorporated into flow sections |
-| Resolved errata markers | Same wiki files | `## Errata` entries marked `[resolved]` |
-| New wiki files | `WIKI_ROOT/` | Created if an errata entry references a new flow area |
+| Updated wiki flow files | `WIKI_ROOT/` | Errata gaps incorporated directly into existing flow sections, tagged `(TICKET-ID)` |
+| Deleted errata entries | Same wiki files | Incorporated `## Errata` entries removed (not struck through) — git history is the record |
+| New wiki files | `WIKI_ROOT/` | Created if an errata entry references a new flow area; carries the freshness frontmatter (`verified_at`, `verified_against`, `stale_after`, `verified`) |
+| Lint report | stdout / pipeline log | `lib/wiki-check.sh` findings for every file this run touched |
+| `WIKI_ROOT` commit | `WIKI_ROOT`'s own git history | `docs(wiki): <TICKET-ID> <summary>` — the one commit `ticket-maintenance-agent` is permitted to make |
 
 ## How it works
 
@@ -35,19 +37,24 @@ flowchart TD
     A([Start]) --> B[Resolve WIKI_ROOT\nfrom CLAUDE.md]
     B --> C[Scan all wiki .md files\nfor ## Errata sections]
     C --> D{Unresolved entries?}
-    D -- none --> E([Done — all errata resolved])
+    D -- none --> E[Step 2.5: ai-context.md synthesis\nruns regardless]
     D -- yes --> F[For each errata entry\nlocate target flow section]
     F --> G{Section found?}
-    G -- yes --> H[Apply fix\nto flow section]
-    G -- no --> I[Create new wiki file\nfor new flow area]
-    H --> J[Mark entry resolved\nin Errata section]
+    G -- yes --> H[Apply fix\ninto flow structure]
+    G -- no --> I[Create new wiki file\nwith freshness frontmatter]
+    H --> J[Delete errata entry\ngit keeps the history]
     I --> J
     J --> K{More entries?}
     K -- yes --> F
-    K -- no --> L([Done])
+    K -- no --> E
+    E --> L[Lint touched files\nlib/wiki-check.sh]
+    L --> M[Commit WIKI_ROOT\ngit -C WIKI_ROOT commit]
+    M --> N([Done])
 ```
 
 ## Related skills
 
-- [`/ticket-implement`](ticket-implement.md) — appends errata entries this skill resolves
+- [`/ticket-appraise`](ticket-appraise.md) — closes the loop immediately at discovery time (Step 3c) when a wiki fact proves stale
+- [`/ticket-implement`](ticket-implement.md) — appends errata entries whenever a consulted wiki fact turns out wrong or missing (Step 4c Part 3), independent of complexity mismatch
+- [`/ticket-retro`](ticket-retro.md) — the consumer for `source=appraise` complexity-calibration corrections, which this skill deliberately does NOT promote to the wiki
 - [`/ticket-auto`](ticket-auto.md) — can invoke this as a maintenance phase step
