@@ -14,6 +14,13 @@ jobs:
 
       - name: Install deps
         run: |
+          # The stock runner image preconfigures a google-chrome apt source we
+          # never install from. Its index has intermittently mismatched its own
+          # InRelease hash on Google's CDN, which makes `apt-get update` exit
+          # non-zero under `set -e` and block installs of packages that don't
+          # come from that repo at all. Drop it before updating rather than
+          # depending on Google's mirror being consistent for an unrelated repo.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck socat jq python3-pytest
           SHFMT_VER=3.10.0
