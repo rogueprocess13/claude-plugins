@@ -120,11 +120,14 @@ The pipeline log gains one new `META` step: `META|worker-exit|done|fail|code=<N>
 | `fleet-feedback.sh` | Feedback aggregation. Scans pipeline logs for `META\|planner-feedback`, groups by `{initiative-id}`, computes confidence drift, writes `$REPOS_ROOT/.ticket-auto/initiatives/{ID}/feedback/{rundate}.json`. |
 | `fleet-env-check.sh` | Standalone (not sourced) — validates `LINEAR_API_KEY`, `REPOS_ROOT`, `GITHUB_PERSONAL_ACCESS_TOKEN`/`GH_TOKEN` (only required when `FLEET_EPIC_AUTO_PR=true`), `SLACK_BOT_TOKEN` (optional), the fleetd worker spawn command (`CLAUDE_CMD` if set, else `CLAUDE_BIN`) including its permission mode, and `jq`/`git`/`python3`/`gh` presence. Same `NAME\|STATUS\|VALUE\|LOCATION\|NOTE` pipe-delimited contract as ticket-auto-pipeline's `env-check.sh`. Masks secret values to `****` + last 4 chars — never echoes secrets in full. The live permission probe (an actual worker turn) is opt-in via `FLEET_ENV_CHECK_LIVE_PROBE=true` — off by default so `make test`/CI never spawns a real worker. |
 | `fleet-notify.sh` | Deterministic Slack notifier: `fleet_slack_post <tid> <state_dir> <text>` (transport — `chat.postMessage`, persists/reuses `{tid}-slack-thread.json`'s `ts`), `fleet_notify_worker_event <tid> <state_dir> <event_type> [detail]` (`event_type`: `non-terminal-exit`\|`dead-letter` — builds the message from the ticket's exit record + pipeline log). Called from `supervisor.py`'s reap path and from `fleet-reconcile.sh`'s dead-letter branch. `fleet_notify_hold <tid> <state_dir> <transition>` (`transition`: `created`\|`escalate`, human-hold-protocol) reads the latest valid `META|human-hold` record straight from the pipeline log — REASON, BLOCKS, numbered questions, observed facts only, never a classification of what the question means — and posts once per hold, escalating once more at `FLEET_HOLD_ESCALATE_HOURS`. Its idempotency deliberately does **not** key off the fleet state store's `notify_state` column despite design.md D7 naming that column authoritative: a bash library has no write access to the store (fleetd is its sole writer), and the row carries no question text regardless. It keeps its own per-ticket sidecar instead (`{tid}-hold-notify.json`), the same pattern `fleet_slack_post` already uses for its own thread-ts bookkeeping — restart-safe and failure-retried by construction, just not through the row. All fail-soft throughout. |
+| `run-score-export.sh` | `run_score_export_sweep RUNS_FILE` (langfuse-evidence-layer Phase 5 — run-score-export). Reads `runs.jsonl`, ships one Langfuse score per finished-run field (outcome, verify/review/fix/reconcile counters, cycle time, cost, complexity-estimate accuracy, gate-stopped, failure class/phase from `exit-path.sh`, bridged from ticket-auto-pipeline the same way `linear-api.sh` is) plus a ticket-level rollup (`ticket_runs`, `ticket_cost_total`, `ticket_cycle_ms`, `ticket_first_pass_success`) once a merge decision is known for that run — resolved from a separate `merge`-kind event, never the run event's own (possibly stale, append-only) field. Off by default (`FLEET_SCORE_EXPORT_ENABLE`) and credential-gated (`LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`); no credentials, an unreachable backend, a request timeout, or a malformed record each warn and continue, never gating the sweep's caller. Idempotent via a per-run-id cursor (`score-export-cursor.json`) that is advisory only — every score's `id` is a deterministic hash of `(run_id, score name)`, so a lost cursor re-ships harmlessly. Cost prefers a `cost` event; when a worker was killed before writing one, falls back to `run.tokens` × a local, fleetd-owned `fleetd/model-pricing.json`, stamping `cost_source=tokens` vs `envelope`. Invoked from `supervisor.py`'s `_score_export_sweep`, on the same periodic cadence as `_merge_poll_sweep`. |
+
 ### Canonical library sources (dependency bridge)
 
-Fleet controller depends on two libraries defined in `ticket-auto-pipeline/`:
+Fleet controller depends on libraries defined in `ticket-auto-pipeline/`:
 - `linear-api.sh` — GraphQL API client (used by `fleet-dispatch.sh` for Linear queries)
 - `heartbeat.sh` — Heartbeat log helpers (used by `fleet-monitor.sh`, `fleet-dashboard.sh`, `fleet-intervene.sh`)
+- `exit-path.sh` — `derive_failure_class`/`derive_failure_phase` (used by `run-score-export.sh` to score a finished run's failure class and phase)
 
 These are sourced via `_source_if_missing` from `~/.claude/skills/lib/` (synced by the ticket-auto-pipeline SessionStart hook). Fleet controller does NOT maintain its own copies — it bridges to the canonical sources.
 
@@ -202,16 +205,29 @@ Nothing waits on the exporter or notices its absence. Stopping it, or pointing
 it at a collector that is down, costs traces and nothing else — the SDK retries
 with backoff and the process exits cleanly.
 
-**Span model.** One root span per ticket (`pipeline {TID}`), opened on first
-sight and closed on `META|outcome`; one child span per phase/step bracket
-(`invoke_agent {phase}.{step}`), from its `|waiting|` line to its terminal.
-A `|fail|` terminal sets span status ERROR. Attributes follow the GenAI
-conventions — `gen_ai.system`, `gen_ai.operation.name`, `gen_ai.agent.name`,
+**Span model (otel-span-identity, langfuse-evidence-layer).** One root span per
+**execution** — keyed by `(ticket, run_id)`, not ticket alone, so a ticket's
+separate runs are separate, comparable traces — opened on first sight (a
+provisional key if the run id isn't known yet, re-keyed on first sight per
+SI1) and closed on `META|outcome` or superseded by the next `META|run-id`. One
+child span per phase/step bracket (`invoke_agent {phase}.{step}`), from its
+`|waiting|` line to its terminal; a `|fail|` terminal sets span status ERROR.
+Every span — root and child alike — carries session identity set to the
+`run_id` (`langfuse.session.id`), never the ticket id, plus filterable
+metadata (`langfuse.trace.metadata.*`: ticket id, run id, generation, phase,
+step, model, pipeline/skill versions, and the worker's own runtime session id
+when the supervisor recorded one) and trace tags (ticket, trigger, complexity,
+autonomy, and — on the root at close — outcome). Backend-specific attributes
+are additive, never a replacement for the vendor-neutral GenAI conventions —
+`gen_ai.system`, `gen_ai.operation.name`, `gen_ai.agent.name`,
 `gen_ai.request.model` from `META|model`, `gen_ai.usage.*` from `META|tokens` —
-plus `ticket.id` and `pipeline.*`. Tool calls from the activity log attach to
-the span that contains them as a count attribute and bounded span events, not
-as spans of their own: one span per tool call would swamp a trace whose useful
-unit is the phase.
+plus `ticket.id` and `pipeline.*`. Per-phase cost attaches from a matching
+`runs.jsonl` `cost` event at flush time — present when the evidence exists,
+omitted (never zero, never re-exported) otherwise; the per-run score
+(`run-score-export.sh` below) is the authoritative cost, this is informational.
+Tool calls from the activity log attach to the span that contains them as a
+count attribute and bounded span events, not as spans of their own: one span
+per tool call would swamp a trace whose useful unit is the phase.
 
 **Why spans wait before emission.** `META|tokens|info|` is written by the
 SubagentStop hook a moment *after* the router writes the phase terminal, so a
@@ -237,6 +253,85 @@ inside the exporter *process*. Without the packages the exporter starts, says
 so once on stderr, and emits nothing — fleetd is unaffected. CI runs the whole
 suite without them for exactly that reason, then installs them in a later step
 so the real SDK path is covered too.
+
+## Worker telemetry env (worker-telemetry-env, langfuse-evidence-layer)
+
+`Supervisor.spawn_worker` stamps `OTEL_RESOURCE_ATTRIBUTES` into every spawned
+worker's environment, unconditionally — a separate concern from
+`FLEET_OTEL_ENABLE` above, since this feeds the agent runtime's *own* OTel
+stream rather than fleetd's log-derived exporter. A runtime with its own
+telemetry disabled never reads these vars; one with it enabled joins the run's
+session with no trace propagation required (WE2, probed and confirmed: the
+runtime copies resource attributes onto every span it emits, and
+`langfuse.session.id`/`langfuse.trace.metadata.*` land as first-class,
+filterable fields).
+
+`_worker_otel_resource_attributes(run_id, tid, phase, environment)`
+(`fleetd/supervisor.py`) builds the value — the run id under the session key,
+ticket under the filterable-metadata namespace, and phase too for a
+phase-level spawn (omitted, never emitted empty, for a ticket-level one).
+Every value is percent-encoded (`_otel_pct_encode`); a value that cannot be
+encoded is dropped rather than emitted raw, and a builder failure never
+touches the spawn's command line or exit handling. `OTEL_BSP_SCHEDULE_DELAY`
+is shortened alongside it (`FLEET_OTEL_WORKER_EXPORT_MS`) so a worker killed
+mid-phase has less unexported telemetry buffered at the moment it dies.
+
+`fleetd/supervisor.py` also writes `META|trace-context` at phase-spawn time
+(`_write_trace_context`) — run id, the worker's own runtime session id,
+generation, phase, a `propagate` flag, and — only when
+`FLEET_TRACE_PROPAGATE_ENABLE` is true and the run id was known at spawn time
+— the derived `trace_id`/`span_id` (trace-context-propagation, see below) —
+respecting the pipeline log's own "nothing after outcome" rule. This is the
+one place the exporter can read a phase span's worker session id from,
+without reaching outside the pipeline log for it (SI5).
+
+## Trace-context propagation (trace-context-propagation, langfuse-evidence-layer Phase 3)
+
+Off by default (`FLEET_TRACE_PROPAGATE_ENABLE=false`) and never load-bearing —
+deriving, recording or exporting a parent context is best-effort at every
+step and can never alter a spawn's command line, delay it, or change its exit
+handling. When enabled:
+
+- `fleetd/otel.py`'s `derive_trace_context(run_id, phase, generation)` — one
+  pure function, used by both the spawning path and this exporter, so both
+  sides compute identical identifiers with no shared state and no ordering
+  requirement (TP1). A trace id is `sha256("trace:{run_id}")[:32]`; a phase's
+  span id is `sha256("span:{run_id}:{phase}:{generation}")[:16]` — both
+  lowercase hex, the W3C traceparent shape.
+- `Supervisor.spawn_phase_worker` derives the pair before spawning, exports
+  `TRACEPARENT=00-{trace_id}-{span_id}-01` into the worker's environment, and
+  records both in `META|trace-context` (TP2).
+- `OtlpEmitter` installs a queued `IdGenerator` on its `TracerProvider`
+  (`build_queued_id_generator`, task 7.6): when a ticket's root span is
+  created for a run with propagation on, it queues the derived trace id
+  before creating it; when a phase span is created, it queues that phase's
+  derived span id. Both fall back to the SDK's normal random generation the
+  instant the queued value is consumed, or whenever propagation is off — the
+  emitted spans are then identical to phase 2's (task 7.7/7.8).
+- **Known limitation**, matching design.md's Risks: if the root has to open
+  under a provisional key (run id unknown at the moment the first phase
+  bracket closes) and propagation is on, its trace id was already randomly
+  assigned before the run id became known and cannot be changed after
+  creation — the derived trace id is adopted only when `run_id` is known at
+  the moment the root is first created.
+- **Not yet settled**: whether a derived phase span — which reaches the
+  backend *after* the children that attach beneath it, since the exporter is
+  a tailing reader — actually reconciles into one trace at the real backend.
+  That is phase 4 (design.md Gate verdicts), a live end-to-end ticket run
+  this change has not performed. The flag stays off until it has.
+
+## Run score export (run-score-export, langfuse-evidence-layer)
+
+`lib/run-score-export.sh`'s `run_score_export_sweep` turns finished runs in
+`runs.jsonl` into Langfuse scores — see its row in "Shared libraries" above for
+the full field mapping. Off by default (`FLEET_SCORE_EXPORT_ENABLE=false`) and
+requires `LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`; invoked
+from `Supervisor._score_export_sweep`, on the same cadence as
+`_merge_poll_sweep`. Failure classification is scoped to the specific run
+being scored — `_score_export_run_window` isolates the lines between that
+run's own `META|run-id` line and the next one (or EOF) before handing them to
+`exit-path.sh`, because a ticket's pipeline log is one continuous file across
+every run it ever had and `derive_failure_class` reads a whole file.
 
 ## Severity scale
 
@@ -325,6 +420,13 @@ All settings use `${VAR:-default}` pattern for env-var overrides:
 | `FLEET_DETERMINISTIC_FAILURE_COUNT` | 3 | Consecutive fast-failure streak length that trips the circuit breaker (halts dispatch) |
 | `FLEET_ENV_CHECK_LIVE_PROBE` | false | Opt-in: `fleet-env-check.sh` spawns one real worker turn to verify `permission_denials == []`. Off by default — never runs in `make test`/CI |
 | `SLACK_BOT_TOKEN` | (unset) | Bot token for `fleet-notify.sh`'s `chat.postMessage` calls. Absent → notifications degrade to log-only |
+| `FLEET_OTEL_WORKER_ENVIRONMENT` | `pipeline` | `deployment.environment` stamped on every worker spawn (worker-telemetry-env) — separates autonomous pipeline execution from interactive use on the same telemetry backend |
+| `FLEET_OTEL_WORKER_EXPORT_MS` | 2000 | `OTEL_BSP_SCHEDULE_DELAY` (ms) stamped on every worker spawn — shortens the runtime's own batch-export interval below its SDK default so a killed worker loses less buffered telemetry |
+| `FLEET_OTEL_HEADERS` | (unset) | `key1=val1,key2=val2` extra headers on fleetd's own OTLP exporter requests, and forwarded unchanged as `OTEL_EXPORTER_OTLP_HEADERS` on every worker spawn so both streams authenticate against the same collector |
+| `FLEET_TRACE_PROPAGATE_ENABLE` | false | trace-context-propagation (langfuse-evidence-layer Phase 3) — when true, fleetd derives a trace/span id from `(run_id, phase, generation)`, exports it into the worker's environment as `TRACEPARENT`, and the exporter's `IdGenerator` adopts the same identifiers for the derived phase span, so the runtime's own observations nest beneath it. Stays off until a real end-to-end ticket confirms a derived parent span — which reaches the backend *after* the children that attached to it — reconciles into one trace rather than two (design.md Gate verdicts, phase 4, not yet run) |
+| `FLEET_SCORE_EXPORT_ENABLE` | false | Gates `run-score-export.sh`'s periodic sweep (run-score-export). Also requires `LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` — any one missing is a no-op |
+| `LANGFUSE_HOST` | (unset) | Base URL for the score-export sweeper's `POST /api/public/scores` calls |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | (unset) | HTTP Basic Auth credentials for the score-export sweeper |
 
 ## Known sharp edges
 

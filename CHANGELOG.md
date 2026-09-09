@@ -17,6 +17,61 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.46.0 (2026-09-09)
+
+Also moves `fleet-controller` to 0.29.0. Langfuse evidence layer, Phases 2 (execution
+identity), 3 (trace-context propagation, code landed with the flag off) and 5-C0/C
+(failure classification and score export) — the pipeline becomes observable as evidence
+and forensics, not a dashboard project. Every increment is fail-soft, off by default,
+and revertible by one commit; nothing in the execution path reads telemetry, waits on
+it, or fails because of it (`openspec/changes/langfuse-evidence-layer`). Phase 1 (wire
+the exporter, on the tickets host) and phase 4 (live validation of phase 3's trace
+correlation on one real ticket) remain — both need operator config and a live host,
+outside what a repo change can complete on its own.
+
+- **Run identity becomes the trace identity.** `fleetd/otel.py` keys root spans by
+  `(ticket, run_id)` instead of ticket, so a ticket's separate runs are separate,
+  comparable traces. Every span repeats session identity, ticket/run/generation/phase/
+  step/model as filterable metadata, and trace tags (ticket, trigger, complexity,
+  autonomy, outcome) — content-free throughout, asserted by tests. Per-phase cost
+  attaches from a matching `runs.jsonl` cost event at flush, never blocking or
+  re-exporting a span.
+- **fleetd mints the run identifier before the spawn** (`_open_run_id`) and hands it
+  down as `TICKET_RUN_ID`; `run-identity.sh` adopts a conforming inherited value and
+  mints its own exactly as before otherwise, refusing anything malformed rather than
+  propagating it.
+- **Spawned workers are stamped** with `OTEL_RESOURCE_ATTRIBUTES` (deployment
+  environment, session key, ticket, phase) and a shortened export interval — probed and
+  confirmed to land as first-class, queryable fields on the agent runtime's own
+  telemetry stream, joining it to the run's session with no trace propagation required.
+- **A ten-value closed failure vocabulary** (`ticket-auto-pipeline/lib/exit-path.sh`,
+  new — extracted verbatim from `pipeline-postmortem.sh`'s exit-path reduction, plus
+  `derive_failure_class`/`derive_failure_phase`) is derived deterministically from
+  evidence the pipeline already writes, no LLM involved. Replayed read-only against 53
+  real archived pipeline logs on this workstation before shipping: 0 landed in the
+  generic `agent_failure` fallback, and the replay itself surfaced and fixed two real
+  defects — gate-stop codes routinely carry trailing detail text that defeated
+  exact-string matching, and a resolved `RETURN_INCOMPLETE` warning must not outlive
+  the run that resolved it.
+- **Trace-context propagation** (`FLEET_TRACE_PROPAGATE_ENABLE`, off by default): fleetd
+  derives a trace/span id from `(run_id, phase, generation)` — one pure function shared
+  by the spawn path and the exporter, no shared state — exports it as `TRACEPARENT` into
+  the phase worker's environment, and `otel.py`'s exporter installs a queued `IdGenerator`
+  that adopts the same identifiers so the derived phase span becomes the parent the
+  runtime's own observations attach beneath. Every step best-effort; with the flag off,
+  spawns and emitted spans are byte-identical to phase 2. Landed as inert code — whether a
+  derived parent arriving after its children actually reconciles into one trace at the
+  real backend is settled only by a live end-to-end ticket (phase 4), not yet run.
+- **A fleetd-owned sweeper** (`fleet-controller/lib/run-score-export.sh`, new) turns
+  finished runs in `runs.jsonl` into per-run Langfuse scores plus a ticket-level rollup
+  on the merged run, idempotently, on fleetd's existing merge-poll cadence. Off by
+  default, credential-gated, and fail-soft on every path — no credentials, an
+  unreachable backend, or a malformed record each warn and continue, never gating
+  fleetd's cycle. Cost falls back to a local, fleetd-owned `model-pricing.json` when a
+  worker was killed before writing its cost envelope.
+- CI gains a check asserting no skill, agent, or skill-invoked library references the
+  observability backend — the boundary this whole change is built around.
+
 ## 0.45.2 (2026-09-08)
 
 Fixes `persona-select.sh` failing to resolve `personas/base/backend-developer.md`

@@ -399,6 +399,36 @@ All three are additive — schema version stays **1**. A log predating this chan
 `META|run-id` line; `pipeline-postmortem.sh`'s run_id derivation falls back to its prior
 "ticket ID + log's first line ISO" behavior in that case.
 
+#### `TICKET_RUN_ID` handoff and `trace-context` entries (langfuse-evidence-layer)
+
+fleetd mints (or reuses an open run's) run identifier *before* it spawns a worker, because the
+spawn environment and every trace identifier derived from run identity have to exist before the
+worker's own preamble would otherwise mint one (`fleetd/supervisor.py`'s `_open_run_id`). It
+hands that value down as the `TICKET_RUN_ID` env var; `run_identity_stamp` adopts it when opening
+a new run — the exact `{TID}-{ISO}-{pid}` shape above, so a conforming value passes validation
+and an empty or malformed one is refused, never propagated (the pipeline mints its own instead,
+exactly as it does today when `TICKET_RUN_ID` is unset).
+
+```bash
+# propagation off (default) — a pure identity record, no trace_id/span_id
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|trace-context|info|{\"run_id\":\"CRE-123-2026-09-05T18:00:00Z-4821\",\"session_id\":\"3f9c…\",\"gen\":2,\"phase\":\"IMPLEMENT\",\"propagate\":false}" >> "$LOG_FILE"
+# propagation on (FLEET_TRACE_PROPAGATE_ENABLE=true) — carries the derived pair too
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|trace-context|info|{\"run_id\":\"CRE-123-2026-09-05T18:00:00Z-4821\",\"session_id\":\"3f9c…\",\"gen\":2,\"phase\":\"IMPLEMENT\",\"propagate\":true,\"trace_id\":\"a1b2…\",\"span_id\":\"c3d4…\"}" >> "$LOG_FILE"
+```
+
+Written by fleetd (`Supervisor.spawn_phase_worker`) at spawn time for a phase-level worker,
+carrying facts already known at that moment: the run id, the worker's own runtime session id
+(the cheapest navigable link from a phase span to the agent runtime's own trace — see the OTel
+exporter's `worker_session_id` metadata below), the generation, and the phase. `trace_id`/`span_id`
+(trace-context-propagation) are added only when `FLEET_TRACE_PROPAGATE_ENABLE` is true **and** the
+run id was already known at spawn time — derived deterministically from `(run_id, phase,
+generation)` by `fleetd/otel.py`'s `derive_trace_context`, the same function the exporter itself
+calls when adopting the recorded context (one implementation, two callers, TP1). With the flag off
+this is a pure identity record with those two fields absent and `propagate: false`. Respects the
+log's "nothing after outcome" rule (rule 6 below) — a race where the phase's own outcome landed
+first skips the write rather than violating it. Best-effort throughout: a failure to read, guard,
+derive, or write costs one line of trace addressability, never the spawn that already happened.
+
 ### pr-created, cache-tokens, complexity (Branch B, Commercial Evidence MVP)
 
 Three additive META lines feed `lib/run-summary.sh`'s `run` event (see
