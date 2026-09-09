@@ -441,6 +441,69 @@ test_dead_letter_on_exhausted_retries() {
   return 0
 }
 
+# GitHub #332: plain _fleet_queue_append replay of a dead-lettered entry
+# lands the entry back on the queue (test_dead_letter_on_exhausted_retries
+# above), but both consume paths then silently drop it again because the
+# ticket's own pipeline log still ends in a dead-letter marker.
+# fleet_requeue_dead_letter is the sanctioned fix: it must stamp
+# override_terminal: true onto the entry before appending.
+test_requeue_dead_letter_stamps_override_terminal() {
+  local ws
+  ws=$(_setup_workspace)
+  local queue_file="${ws}/fleet-test-req-spawn-queue.jsonl"
+  rm -f "$queue_file"
+
+  local entry='{"tid":"CRE-200","reason":"orphaned-after-max-restarts","generation":2}'
+  bash -c "
+    source '$LIB_DIR/fleet-dispatch.sh'
+    fleet_requeue_dead_letter '$entry' '$queue_file' 2>/dev/null
+  " || {
+    echo "fleet_requeue_dead_letter failed" >&2
+    rm -rf "$ws"
+    return 1
+  }
+
+  [ -f "$queue_file" ] || {
+    echo "queue file not created by fleet_requeue_dead_letter" >&2
+    rm -rf "$ws"
+    return 1
+  }
+
+  jq -e '.tid == "CRE-200" and .override_terminal == true' "$queue_file" >/dev/null 2>&1 || {
+    echo "requeued entry missing override_terminal: true: $(cat "$queue_file")" >&2
+    rm -rf "$ws"
+    return 1
+  }
+  rm -rf "$ws"
+  return 0
+}
+
+# A malformed entry must not be silently swallowed — refuse and report,
+# rather than appending garbage with a bypass field stamped onto it.
+test_requeue_dead_letter_rejects_malformed_entry() {
+  local ws
+  ws=$(_setup_workspace)
+  local queue_file="${ws}/fleet-test-req-bad-spawn-queue.jsonl"
+  rm -f "$queue_file"
+
+  bash -c "
+    source '$LIB_DIR/fleet-dispatch.sh'
+    fleet_requeue_dead_letter 'not-json' '$queue_file' 2>/dev/null
+  " && {
+    echo "fleet_requeue_dead_letter should have failed on malformed input" >&2
+    rm -rf "$ws"
+    return 1
+  }
+
+  [ -s "$queue_file" ] && {
+    echo "malformed entry should not have been appended: $(cat "$queue_file")" >&2
+    rm -rf "$ws"
+    return 1
+  }
+  rm -rf "$ws"
+  return 0
+}
+
 # ── Torn/corrupt queue line handling ────────────────────────────────────────────
 
 # A torn JSON line containing the tid substring must NOT make
@@ -1252,6 +1315,8 @@ _run "dispatch_max_concurrent_enforced" test_dispatch_fleet_max_concurrent_enfor
 _run "queue_entry_has_generation" test_queue_entry_has_generation_field
 _run "queue_entry_survives_restart" test_queue_entry_survives_simulated_restart
 _run "dead_letter_on_exhausted_retries" test_dead_letter_on_exhausted_retries
+_run "requeue_dead_letter_stamps_override_terminal" test_requeue_dead_letter_stamps_override_terminal
+_run "requeue_dead_letter_rejects_malformed_entry" test_requeue_dead_letter_rejects_malformed_entry
 _run "contended_append_retried_then_dead_lettered" test_contended_append_retried_then_dead_lettered
 _run "contended_append_retried_and_lands" test_contended_append_retried_and_lands
 _run "torn_queue_line_no_false_match" test_torn_queue_line_does_not_false_match

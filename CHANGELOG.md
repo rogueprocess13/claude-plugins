@@ -17,6 +17,51 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.29.1 (2026-09-09)
+
+`docs/fleet-controller.md` claimed a dead-lettered ticket could be re-queued
+by feeding its dead-letter-file line back through `_fleet_queue_append` —
+in practice this never worked. A freshly appended entry lands on the spawn
+queue, gets read on the next consume cycle, and is silently dropped: the
+ticket's own pipeline log still ends in the `META|dead-letter` marker, and
+both consume paths (`_consume_queue_locked`'s `_log_reached_terminal` on the
+Python side, `_spawn_queue_consume`'s `fleet_ticket_terminal_state` on the
+bash/cron-monitor side) correctly — and permanently — classify that as
+terminal. The queue empties, no worker spawns, no error surfaces; a dropped
+requeue looked identical to a successful one (#332).
+
+- Added `fleet_requeue_dead_letter <entry_json> <queue_file>`
+  (`lib/fleet-dispatch.sh`) — the one sanctioned way to stamp
+  `override_terminal: true` onto a queue entry before appending it. Normal
+  dispatch and reconciliation never set this field themselves; only an
+  explicit operator requeue does.
+- Both consume paths now check for `override_terminal: true` on the entry
+  itself, before their terminal-state classification call, and bypass the
+  guard for that one entry when it's set — `_consume_queue_locked` in
+  `fleetd/supervisor.py`, `_spawn_queue_consume` in `lib/fleet-monitor.sh`.
+  The classifiers themselves (`_log_reached_terminal`,
+  `fleet_ticket_terminal_state`) are unchanged and stay pure — an entry
+  without the field is dropped exactly as before, so the original guard
+  against re-spawning a stale leftover entry for a genuinely finished
+  ticket is untouched.
+- Both drop and bypass now print a structured, greppable line
+  (`fleet-stale-queue-drop|tid=<TID>|reason=pipeline-log-terminal` /
+  `fleet-requeue-override|tid=<TID>`) instead of a plain sentence, so
+  neither outcome sits silently in fleetd stdout or the monitor's log.
+- `docs/fleet-controller.md`'s "Dead-lettered tickets are surfaced" section
+  now describes the actual working replay procedure via
+  `fleet_requeue_dead_letter`, with the failure mode of plain
+  `_fleet_queue_append` replay called out explicitly.
+- New tests: `fleetd/tests/test_supervisor.py`
+  (`test_dead_lettered_ticket_requeues_with_override_terminal`,
+  `test_dead_lettered_ticket_dropped_without_override`),
+  `lib/tests/test-fleet-monitor-dispatch.sh`
+  (`queue_consume_override_terminal_bypasses_drop`,
+  `queue_consume_dead_letter_dropped_without_override`), and
+  `lib/tests/test-fleet-dispatch.sh`
+  (`requeue_dead_letter_stamps_override_terminal`,
+  `requeue_dead_letter_rejects_malformed_entry`).
+
 ## 0.46.0 (2026-09-09)
 
 Also moves `fleet-controller` to 0.29.0. Langfuse evidence layer, Phases 2 (execution

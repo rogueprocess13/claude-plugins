@@ -3867,11 +3867,32 @@ class Supervisor:
             # fix produces (a killed pipeline ends with a kill outcome but is
             # resumable — see _log_reached_terminal, the mirror of
             # fleet_ticket_terminal_state).
-            if _log_reached_terminal(self._state_dir, tid):
+            #
+            # `override_terminal: true` is a deliberate escape hatch for a
+            # human requeuing a dead-lettered ticket (GitHub #332):
+            # `_log_reached_terminal` intentionally never expires a
+            # dead-letter marker, so without this bypass a legitimately
+            # requeued entry is silently dropped right here — the queue
+            # empties, no worker spawns, no error surfaces. The field is
+            # stamped only by the explicit `fleet_requeue_dead_letter` helper
+            # (fleet-dispatch.sh) — never by normal dispatch or
+            # reconciliation, both of which must keep going through the
+            # unmodified `_log_reached_terminal` check above. This does NOT
+            # weaken `_log_reached_terminal` itself: entries without the
+            # field are classified exactly as before.
+            override_terminal = bool(entry.get('override_terminal'))
+            if override_terminal:
+                print(
+                    f"fleetd[{os.getpid()}]: {tid} — override_terminal set on "
+                    f"queue entry, bypassing terminal-state check "
+                    f"(fleet-requeue-override|tid={tid})"
+                )
+            elif _log_reached_terminal(self._state_dir, tid):
                 consumed.add(tid)
                 print(
                     f"fleetd[{os.getpid()}]: skipping {tid} — pipeline log "
-                    f"already terminal, removing stale queue entry"
+                    f"already terminal, removing stale queue entry "
+                    f"(fleet-stale-queue-drop|tid={tid}|reason=pipeline-log-terminal)"
                 )
                 continue
 

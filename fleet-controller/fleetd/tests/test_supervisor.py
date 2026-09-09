@@ -2109,6 +2109,80 @@ class SpawnAndReapTest(unittest.TestCase):
         finally:
             sup.release_lock()
 
+    def test_dead_lettered_ticket_dropped_without_override(self):
+        """GitHub #332 baseline: a stale queue entry for a dead-lettered
+        ticket, WITHOUT override_terminal, is still dropped exactly as
+        before — the terminal-state guard must not be weakened for the
+        entries that don't carry the deliberate operator bypass."""
+        from fleetd.supervisor import Supervisor
+
+        queue_file = self.workspace / 'fleet-default-spawn-queue.jsonl'
+        queue_file.write_text(
+            json.dumps({'tid': 'TST-DL1', 'reason': 'requeue-attempt'}) + '\n')
+        log_file = self.workspace / 'TST-DL1-pipeline.log'
+        log_file.write_text(
+            '2026-01-01T00:00:00Z|IMPLEMENT|implement|start|mid-flight\n'
+            '2026-01-01T00:00:01Z|META|dead-letter|warn|'
+            'reason=orphaned-after-max-restarts\n')
+
+        sup = Supervisor(
+            state_dir=str(self.workspace),
+            pidfile=str(self.workspace / 'test.pid'),
+            spawn_enabled=True,
+            max_concurrent=1,
+        )
+        sup.acquire_lock()
+        try:
+            consumed = sup._consume_queue(
+                cmd_override=_make_worker_cmd(sleep_secs=5))
+            self.assertEqual(consumed, {'TST-DL1'},
+                             "dead-lettered entry should be consumed (removed)")
+            self.assertIsNone(sup._children.get('TST-DL1'),
+                              "dead-lettered ticket must not be spawned "
+                              "without override_terminal")
+            remaining = (queue_file.read_text()
+                         if queue_file.is_file() else '')
+            self.assertNotIn('TST-DL1', remaining,
+                             "stale entry should be removed from the queue")
+        finally:
+            sup.release_lock()
+
+    def test_dead_lettered_ticket_requeues_with_override_terminal(self):
+        """GitHub #332 fix: a queue entry stamped override_terminal: true
+        (the shape fleet_requeue_dead_letter, lib/fleet-dispatch.sh,
+        produces) bypasses the terminal-state guard and actually spawns a
+        new generation for a dead-lettered ticket, rather than being
+        silently dropped like any other stale-terminal entry."""
+        from fleetd.supervisor import Supervisor
+
+        queue_file = self.workspace / 'fleet-default-spawn-queue.jsonl'
+        queue_file.write_text(
+            json.dumps({'tid': 'TST-DL2', 'reason': 'requeue-attempt',
+                        'override_terminal': True}) + '\n')
+        log_file = self.workspace / 'TST-DL2-pipeline.log'
+        log_file.write_text(
+            '2026-01-01T00:00:00Z|IMPLEMENT|implement|start|mid-flight\n'
+            '2026-01-01T00:00:01Z|META|dead-letter|warn|'
+            'reason=orphaned-after-max-restarts\n')
+
+        sup = Supervisor(
+            state_dir=str(self.workspace),
+            pidfile=str(self.workspace / 'test.pid'),
+            spawn_enabled=True,
+            max_concurrent=1,
+        )
+        sup.acquire_lock()
+        try:
+            consumed = sup._consume_queue(
+                cmd_override=_make_worker_cmd(sleep_secs=5))
+            self.assertEqual(consumed, {'TST-DL2'},
+                             "override_terminal entry should be consumed")
+            self.assertIsNotNone(sup._children.get('TST-DL2'),
+                                 "override_terminal must bypass the "
+                                 "terminal-state guard and actually spawn")
+        finally:
+            sup.release_lock()
+
     def _log_terminal(self, content):
         """Write the given pipeline-log content and classify it.
 
