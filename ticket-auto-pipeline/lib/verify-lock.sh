@@ -92,6 +92,14 @@ verify_lock_acquire() {
     if ! flock -w "$timeout" 9; then
       exit 1
     fi
+    # Winning the flock makes this process the sole legitimate holder, so
+    # any stop_file already sitting here is necessarily stale — leftover
+    # from a previous holder that was killed before it could reach its own
+    # cleanup (SIGKILL closes fd 9 and drops the flock instantly, but skips
+    # every line after it, including the final `rm -f` below). Without
+    # this, a freshly-won lock could see a dead holder's old stop_file on
+    # its very first poll tick and immediately, spuriously, release itself.
+    rm -f "$stop_file" 2>/dev/null || true
     echo "$BASHPID" >"$token_file"
     {
       printf 'ticket=%s\n' "$ticket_id"
@@ -153,6 +161,22 @@ verify_lock_acquire() {
 # waiter promptly rather than only after its next poll tick. Idempotent —
 # safe to call when no lock is held, and never fails the caller: release
 # is cleanup, not a correctness gate, so it always returns 0.
+#
+# Identity-safe by construction: this function can only ever have one
+# holder in mind — whichever pid token_file names the instant this call
+# starts, snapshotted BEFORE stop_file is even touched. From then on it
+# only ever acts on token_file/info_file/stop_file while their content
+# still matches that exact snapshot. This matters because release() can
+# legitimately overlap with a brand-new holder winning the lock: the
+# instant our holder notices stop_file and exits, its fd 9 closes, the
+# kernel drops the flock, and a completely different, already-waiting
+# acquirer can win and write ITS OWN token/info within milliseconds — long
+# before this loop's next 0.5s poll tick. An existence-only check
+# ("does token_file exist?") can't tell that apart from our own holder
+# simply taking a moment to notice — so it would keep waiting, then
+# eventually force-delete on timeout, destroying the new holder's live
+# bookkeeping and leaking the lock (from the new holder's own
+# now-signal-less perspective) for up to VERIFY_LOCK_MAX_HOLD_SECS.
 verify_lock_release() {
   local lockfile token_file info_file stop_file
   lockfile=$(_verify_lock_file)
@@ -160,7 +184,13 @@ verify_lock_release() {
   info_file=$(_verify_lock_info_file)
   stop_file=$(_verify_lock_stop_file)
 
-  if [ ! -f "$token_file" ]; then
+  # Snapshot identity before touching anything.
+  local _my_token
+  _my_token=$(cat "$token_file" 2>/dev/null || true)
+
+  if [ -z "$_my_token" ]; then
+    # No live holder recorded — nothing to signal. A leftover info/stop
+    # file with no token is definitionally stale.
     rm -f "$info_file" "$stop_file" 2>/dev/null || true
     return 0
   fi
@@ -168,15 +198,32 @@ verify_lock_release() {
   touch "$stop_file" 2>/dev/null || true
 
   # 0.5s ticks for ~6s total — matches the holder's own 0.5s poll tick
-  # (see verify_lock_acquire) so this doesn't wait a full extra second
-  # past when the holder could realistically have noticed.
+  # (see verify_lock_acquire). Bail out the instant token_file's content
+  # no longer matches our snapshot: either our own holder already cleaned
+  # up after itself (content now empty — the common, fast case), or a
+  # brand-new holder has already won the lock and written its own token
+  # (the race this function exists to guard against). Either way, this
+  # call's job ends the moment that's true — it must never act on a
+  # token/info/stop set that isn't provably still "our" holder's.
   local _ticks=0
-  while [ -f "$token_file" ] && [ "$_ticks" -lt 12 ]; do
+  while [ "$_ticks" -lt 12 ]; do
+    local _cur
+    _cur=$(cat "$token_file" 2>/dev/null || true)
+    [ "$_cur" = "$_my_token" ] || return 0
     sleep 0.5
     _ticks=$((_ticks + 1))
   done
 
-  rm -f "$token_file" "$info_file" "$stop_file" 2>/dev/null || true
+  # Still seeing our own token after the full wait — the holder is
+  # unusually slow to notice stop_file (scheduler contention), but nothing
+  # else has claimed the lock in the meantime. Re-check immediately before
+  # deleting (narrows, though does not fully eliminate, the gap between
+  # this check and the rm below) and only clean up if it still matches.
+  local _final
+  _final=$(cat "$token_file" 2>/dev/null || true)
+  if [ "$_final" = "$_my_token" ]; then
+    rm -f "$token_file" "$info_file" "$stop_file" 2>/dev/null || true
+  fi
   return 0
 }
 

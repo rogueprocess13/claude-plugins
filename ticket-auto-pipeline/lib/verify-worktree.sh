@@ -17,7 +17,10 @@
 #
 # Path formula: $REPOS_ROOT/.verify-worktrees/{repo-slug}/{TICKET_ID}
 #
-# Dependencies: config.sh (for $REPOS_ROOT, $VERIFY_WORKTREE_TTL_HOURS)
+# Dependencies: config.sh (for $REPOS_ROOT, $VERIFY_WORKTREE_TTL_HOURS).
+# Best-effort dependency on lib/verify-lock.sh for verify_worktree_gc's
+# lock-aware guard (see below) — sourced lazily if verify_lock_status isn't
+# already defined, and the guard simply no-ops if it still can't be found.
 #
 # Usage:
 #   source lib/verify-worktree.sh
@@ -26,11 +29,37 @@
 #   release_verify_worktree "CRE-123"
 #   verify_worktree_gc
 
+if ! declare -f verify_lock_status >/dev/null 2>&1; then
+  _verify_worktree_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+  if [ -n "$_verify_worktree_lib_dir" ] && [ -f "$_verify_worktree_lib_dir/verify-lock.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$_verify_worktree_lib_dir/verify-lock.sh" 2>/dev/null || true
+  fi
+  unset _verify_worktree_lib_dir
+fi
+
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 # Portable mtime (seconds since epoch) — GNU stat then BSD/macOS stat.
 _verify_worktree_mtime() {
   stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
+}
+
+# Marks a worktree as "just used" independent of whatever git itself did or
+# didn't touch on disk. `git reset --hard`/`clean -fdx` (ensure_verify_worktree's
+# reuse path) mutate files inside the worktree, but git's own bookkeeping for
+# a linked worktree lives under the main repo's .git/worktrees/<name>/, not
+# under the worktree root itself — so unless a reset happens to rewrite a
+# file directly at the worktree's top level (uncommon), the worktree root
+# directory's own mtime can sit frozen at its original `git worktree add`
+# creation time no matter how many times it's legitimately reused. A ticket
+# iterated across more than VERIFY_WORKTREE_TTL_HOURS (ordinary for one
+# gated on human review/PR feedback) would then look idle to
+# verify_worktree_gc while being actively reused. Called at the top of
+# every ensure_verify_worktree success path, so "last used" always reflects
+# reality regardless of git's incidental side effects.
+_verify_worktree_touch() {
+  touch "$1" 2>/dev/null || true
 }
 
 # Removes a single worktree directory: detaches it from its origin repo via
@@ -120,6 +149,7 @@ ensure_verify_worktree() {
       git -C "$wt_path" clean -fdx >/dev/null 2>&1 || true
     fi
 
+    _verify_worktree_touch "$wt_path"
     echo "$wt_path"
     return 0
   fi
@@ -143,6 +173,7 @@ ensure_verify_worktree() {
     return 1
   fi
 
+  _verify_worktree_touch "$wt_path"
   echo "$wt_path"
   return 0
 }
@@ -179,7 +210,22 @@ release_verify_worktree() {
 # approach rather than querying Linear ticket state, so it stays a cheap,
 # zero-network, zero-LLM opportunistic call ticket-verify can make on every
 # invocation (see SKILL.md Step 1.6a2) instead of a separate scheduled hook.
+# `ensure_verify_worktree` touching the worktree root on every successful
+# use (see _verify_worktree_touch) is what makes the TTL a reliable signal
+# in the first place — git's own reset/clean side effects don't reliably
+# advance a linked worktree's own directory mtime. As a second, independent
+# guard: if the single-flight verify lock is currently held by ANYONE, skip
+# the whole sweep rather than remove anything. There's no way to tell from
+# here which specific ticket's worktree a live holder might be serving
+# files from — the lock is one global flight, not per-ticket — so the safe
+# rule under contention is to touch nothing at all this pass; the next
+# opportunistic call (the very next verify run) tries again.
 verify_worktree_gc() {
+  if declare -f verify_lock_status >/dev/null 2>&1 && verify_lock_status >/dev/null 2>&1; then
+    echo "verify-worktree: skipping GC sweep — the verify lock is currently held" >&2
+    return 0
+  fi
+
   local root="${REPOS_ROOT:-.}/.verify-worktrees"
   [ -d "$root" ] || return 0
 

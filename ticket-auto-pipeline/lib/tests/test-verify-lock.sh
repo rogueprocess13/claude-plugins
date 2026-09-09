@@ -201,6 +201,54 @@ test_release_does_not_disturb_unrelated_live_holder() {
 }
 _run "a losing acquirer never touches a live holder's bookkeeping" test_release_does_not_disturb_unrelated_live_holder
 
+test_release_never_deletes_a_new_holders_bookkeeping_mid_wait() {
+  # Regression (Finding 1, adversarial review of PR #338): deterministically
+  # reproduces the exact race — a verify_lock_release() call still mid-wait
+  # for an OLD holder's token to disappear, while a NEW holder has already
+  # won the lock and overwritten token_file/info_file with its own
+  # identity. Manufactures the "OLD-HOLDER" bookkeeping directly (bypassing
+  # verify_lock_acquire) so there's no real competing background process to
+  # race against — this isolates release()'s own identity-check logic from
+  # actual `flock` timing, which is what makes the race reproducible on
+  # every run rather than only occasionally.
+  _setup_fixture
+  echo "111111" >"${VERIFY_LOCK_FILE}.holder"
+  printf 'ticket=OLD-HOLDER\npid=111111\n' >"${VERIFY_LOCK_FILE}.info"
+
+  verify_lock_release &
+  local release_pid=$!
+
+  # Let release() snapshot "111111" (its intended identity), touch
+  # stop_file, and enter its poll loop before we pull the rug.
+  sleep 0.2
+
+  # Simulate the race: a brand-new holder wins the lock and overwrites the
+  # bookkeeping while the backgrounded release() call — still bound to the
+  # OLD token by its snapshot — is mid-wait.
+  echo "222222" >"${VERIFY_LOCK_FILE}.holder"
+  printf 'ticket=NEW-HOLDER\npid=222222\n' >"${VERIFY_LOCK_FILE}.info"
+
+  wait "$release_pid" 2>/dev/null || true
+
+  [ "$(cat "${VERIFY_LOCK_FILE}.holder" 2>/dev/null)" = "222222" ] || {
+    echo "  release() deleted or overwrote the NEW holder's token file" >&2
+    rm -f "${VERIFY_LOCK_FILE}.holder" "${VERIFY_LOCK_FILE}.info" "${VERIFY_LOCK_FILE}.stop"
+    _teardown_fixture
+    return 1
+  }
+  grep -q "NEW-HOLDER" "${VERIFY_LOCK_FILE}.info" 2>/dev/null || {
+    echo "  release() deleted or overwrote the NEW holder's info file" >&2
+    rm -f "${VERIFY_LOCK_FILE}.holder" "${VERIFY_LOCK_FILE}.info" "${VERIFY_LOCK_FILE}.stop"
+    _teardown_fixture
+    return 1
+  }
+
+  rm -f "${VERIFY_LOCK_FILE}.holder" "${VERIFY_LOCK_FILE}.info" "${VERIFY_LOCK_FILE}.stop"
+  _teardown_fixture
+  return 0
+}
+_run "release() never deletes a new holder's bookkeeping mid-wait" test_release_never_deletes_a_new_holders_bookkeeping_mid_wait
+
 echo ""
 echo "=== Queued waiter handoff ==="
 echo ""
@@ -211,6 +259,8 @@ test_waiter_succeeds_once_released() {
     _teardown_fixture
     return 1
   }
+  local holder_pid
+  holder_pid=$(cat "${VERIFY_LOCK_FILE}.holder" 2>/dev/null)
 
   (
     sleep 2
@@ -232,6 +282,36 @@ test_waiter_succeeds_once_released() {
   }
   [ "$elapsed" -lt 20 ] || {
     echo "  waiter took the full timeout instead of picking up the release" >&2
+    _teardown_fixture
+    return 1
+  }
+
+  # Regression (Finding 1): the OLD holder's verify_lock_release call
+  # (backgrounded above, releasing HOLDER) can still be mid-wait at the
+  # moment WAITER wins — its release loop must recognize the token no
+  # longer names HOLDER and back off, never deleting WAITER's live
+  # bookkeeping. Assert WAITER's own token/info are intact well after that
+  # backgrounded release call has fully returned (`wait` above already
+  # guarantees it has).
+  local waiter_pid
+  waiter_pid=$(cat "${VERIFY_LOCK_FILE}.holder" 2>/dev/null)
+  [ -n "$waiter_pid" ] || {
+    echo "  WAITER's token file is missing after HOLDER's release() returned — corrupted by the old release call" >&2
+    _teardown_fixture
+    return 1
+  }
+  [ "$waiter_pid" != "$holder_pid" ] || {
+    echo "  token file still names HOLDER's pid ($holder_pid) — WAITER never actually became the holder of record" >&2
+    _teardown_fixture
+    return 1
+  }
+  kill -0 "$waiter_pid" 2>/dev/null || {
+    echo "  WAITER's own holder process is unexpectedly dead" >&2
+    _teardown_fixture
+    return 1
+  }
+  grep -q "ticket=WAITER" "${VERIFY_LOCK_FILE}.info" 2>/dev/null || {
+    echo "  WAITER's info file is missing or was overwritten/deleted" >&2
     _teardown_fixture
     return 1
   }
