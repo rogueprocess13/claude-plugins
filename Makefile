@@ -109,6 +109,9 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-branch-resolve.sh
 	bash ticket-auto-pipeline/lib/tests/test-worktree.sh
 	bash ticket-auto-pipeline/lib/tests/test-epic-branch.sh
+	# ticket-verify isolated worktrees + single-flight lock (#333)
+	bash ticket-auto-pipeline/lib/tests/test-verify-worktree.sh
+	bash ticket-auto-pipeline/lib/tests/test-verify-lock.sh
 
 test-fleetd:
 	@echo "=== fleetd supervisor tests (must run from repo root) ==="

@@ -17,6 +17,97 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.47.0 (2026-09-09)
+
+`ticket-verify` now runs against isolated git worktrees instead of the shared
+`REPOS_ROOT` clones, and serializes its local app stack with a single-flight
+lock instead of racing another concurrent verify's stack for the same ports
+(#333). Discovered as a structural gap on 2026-09-04 and hit for real on
+2026-09-08 in the credit-network-biz tickets workspace, where a human
+debugging a Java 17/25 migration checked out a different branch in several
+shared service clones while a verify run could have been mid-flight against
+them with no warning.
+
+- **Isolated per-repo, per-ticket worktrees** (`ticket-auto-pipeline/lib/verify-worktree.sh`,
+  new): `ensure_verify_worktree` resolves `REPOS_ROOT/.verify-worktrees/{repo}/{TICKET_ID}`
+  — deliberately a separate tree from `ticket-implement`'s own
+  `.ticket-auto/worktrees/{TICKET_ID}/{repo}`, since verify must never read a
+  directory implement might still be actively writing to. Unlike implement's
+  worktree, reuse always fetches and hard-resets to the branch's current
+  `origin` tip rather than preserving local state, because ticket-implement
+  can push new commits between verify retries and a stale checkout would
+  silently re-test an already-superseded attempt. Never creates a branch —
+  verify only ever checks out one implement has already pushed. Not torn
+  down after a normal run; reaped instead by a TTL sweep
+  (`verify_worktree_gc`, `VERIFY_WORKTREE_TTL_HOURS`, default 24h) run
+  inline from `ticket-verify` Step 1.6a2, mirroring `hooks/tmp-sweep.sh`'s
+  age-based approach without needing a new hook.
+- **Single-flight app-stack lock** (`ticket-auto-pipeline/lib/verify-lock.sh`,
+  new): the local dev stack's ports (gateway:8080, bom:8081, credit-report:8082,
+  bridge-endpoint:8085, debt-collection:8088, gateway-fe:9000) aren't
+  namespaced per run, so `verify_lock_acquire`/`verify_lock_release` wrap
+  the whole "start stack → checks" window in a well-known `flock`
+  (`VERIFY_LOCK_FILE`, default `/tmp/ticket-verify.lock`) so only one
+  verify's app stack is ever up at a time; a concurrent run queues and waits
+  up to `VERIFY_LOCK_TIMEOUT_SECS` (default 40min) rather than racing.
+  Because `ticket-verify`'s SKILL.md runs as many independently-invoked
+  bash blocks rather than one continuous shell, the lock is held by a small
+  detached companion process (mirrors `spawn-helper.sh`'s watchdog
+  pattern) instead of a plain `exec N>file; flock N` in the caller's own
+  process — a dead holder needs no staleness check, since the kernel drops
+  the flock the moment that process's fd closes for any reason. A bounded
+  `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) self-expires an unreleased lock
+  as a crash backstop, independent of `verify_lock_release` ever being
+  called.
+- `ticket-verify/SKILL.md` Step 1.6 gained 1.6a2 (stale-worktree TTL GC),
+  1.6a3 (lock acquire), and 1.6a4 (this run's own worktree resolve/resync)
+  ahead of the existing 1.6b (`env-start.sh`), with explicit lock-release
+  calls at every exit path that can occur before Step 5 (the single funnel
+  point on both pass and fail) — `env-start.sh` failure, worktree-setup
+  failure, and the "no test user found" SKIP exit. The destructive resync
+  (1.6a4, `reset --hard`/`clean -fdx` on reuse) deliberately runs only
+  *after* the lock is held — see the "adversarial review" note below.
+  Exports `VERIFY_REPO_PATH_<SERVICE>` per affected repo for a consuming
+  workspace's `env-start.sh` to adopt if it wants the stack itself built
+  from the isolated checkout; logs a deterministic (not guessed) warning
+  when it detects that script doesn't yet read them, since `env-start.sh`
+  lives outside this repo and isn't something a plugin change here can
+  rewrite.
+- 28 unit tests (`lib/tests/test-verify-worktree.sh`, `lib/tests/test-verify-lock.sh`)
+  cover create/reuse-resync/wrong-branch-guard/release/TTL-GC for
+  worktrees, and acquire/release/mutual-exclusion/queued-waiter-handoff/
+  max-hold-backstop/status for the lock.
+- **Adversarial review of the initial PR (#338) found and fixed three real
+  issues before merge**, each with a regression test confirmed to fail
+  against the pre-fix code:
+  - `verify_lock_release` compared `token_file` by *existence*, not
+    *content*, while waiting for a holder to notice `stop_file`. A queued
+    waiter winning the lock the instant the old holder released it — the
+    expected, common case — could see its own live bookkeeping deleted by
+    the *old* holder's still-in-flight release call, silently leaking the
+    lock for up to `VERIFY_LOCK_MAX_HOLD_SECS`. Fixed by snapshotting the
+    intended holder's identity once at the start of release and never
+    acting on the token/info/stop files again once that content changes.
+  - `verify_worktree_gc` had no signal for "a live app stack might be
+    using one of these worktrees right now" and relied on a linked
+    worktree's own directory mtime, which `git reset`/`clean` don't
+    reliably advance (git's bookkeeping for a worktree lives under the
+    main repo, not the worktree root) — a ticket reused past
+    `VERIFY_WORKTREE_TTL_HOURS` with no new pushes in between could look
+    idle while being legitimately, repeatedly reused. Fixed by having GC
+    skip its entire sweep whenever the verify lock is held by anyone, and
+    by having `ensure_verify_worktree` explicitly mark its worktree "just
+    used" on every successful call, independent of git's own side effects.
+  - The destructive worktree resync ran *before* the lock was acquired, so
+    a second `ticket-verify` invocation for the same ticket (the "zombie
+    steps" scenario — a crashed-but-not-dead agent leaves a step
+    `|waiting|` forever and gets silently re-run) could reset/clean the
+    exact worktree a still-alive first invocation's app stack was serving
+    files from. Fixed by reordering SKILL.md so the destructive resync
+    (now 1.6a4) happens only after the lock (1.6a3) is held; TTL GC (now
+    1.6a2, which never touches this run's own worktree) stays ahead of the
+    lock.
+
 ## 0.46.1 (2026-09-09)
 
 Also moves `fleet-controller` to 0.29.2. Mitigation for #331
