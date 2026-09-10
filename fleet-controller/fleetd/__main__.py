@@ -33,9 +33,18 @@ _fleetd_dir = Path(__file__).resolve().parent
 if str(_fleetd_dir) not in sys.path:
     sys.path.insert(0, str(_fleetd_dir.parent))
 
-from fleetd.supervisor import Supervisor  # noqa: E402
+from fleetd.supervisor import (  # noqa: E402
+    Supervisor, _DEFAULT_FLEET_LIB, _notify_gate_stop, _resolve_state_dir,
+)
 
 _ENV_CHECK_SCRIPT = _fleetd_dir.parent / 'lib' / 'fleet-env-check.sh'
+
+# Pseudo-tid for `_notify_gate_stop`'s Slack sidecar/thread bookkeeping — a
+# startup failure precedes any ticket, so there's no real tid to key it
+# under (issue #341 finding 3). Not a ticket id, never confused for one:
+# `-` is outside the ticket-id alphabet fleet-store.sh/flow.sh validate
+# against elsewhere, so it can never collide with a real Linear identifier.
+_STARTUP_PSEUDO_TID = 'fleetd-startup'
 
 
 def _usage():
@@ -43,7 +52,7 @@ def _usage():
     sys.exit(0)
 
 
-def _run_startup_env_check():
+def _run_startup_env_check(state_dir=None):
     """Hard-gate fleetd startup on fleet-env-check.sh.
 
     ticket-auto-pipeline gates every /ticket-auto run on validate-env.sh via
@@ -58,6 +67,14 @@ def _run_startup_env_check():
     subprocess-spawning tests, which exercise supervisor mechanics
     (health endpoint, single-instance lock, registry, reap/advance wiring)
     and have no reason to depend on a real LINEAR_API_KEY or CLAUDE_CMD.
+
+    A failure here previously reached only stderr (issue #341 finding 3) —
+    silent for an unattended cron/systemd restart, where nothing reads
+    fleetd's own stderr. Notifies via `_notify_gate_stop` under a fixed
+    pseudo-tid (there is no real ticket yet) before exiting, using the same
+    fail-soft Slack transport every other gate-stop does — degrading to
+    log-only when unconfigured, never blocking or delaying the exit either
+    way.
     """
     if os.environ.get('FLEET_STARTUP_ENV_CHECK', 'true') == 'false':
         return
@@ -79,6 +96,11 @@ def _run_startup_env_check():
             print(result.stdout, file=sys.stderr)
         if result.stderr:
             print(result.stderr, file=sys.stderr)
+        resolved_state_dir = Path(state_dir) if state_dir else _resolve_state_dir()
+        _notify_gate_stop(
+            _DEFAULT_FLEET_LIB, resolved_state_dir, _STARTUP_PSEUDO_TID,
+            'FLEETD_STARTUP_ENV_CHECK_FAILED',
+            f'Run `bash {_ENV_CHECK_SCRIPT} --show` on the host for details.')
         sys.exit(1)
 
 
@@ -128,7 +150,7 @@ def main():
             bind = args[i] if i < len(args) else bind
         i += 1
 
-    _run_startup_env_check()
+    _run_startup_env_check(state_dir)
 
     supervisor = Supervisor(
         state_dir=state_dir,

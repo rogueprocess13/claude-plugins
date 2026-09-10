@@ -351,6 +351,104 @@ test_hold_invalid_record_is_a_silent_no_op() {
   [ ! -f "$capture" ]
 }
 
+# ── fleet_notify_gate_stop (terminal-gate-stop-notify) ──────────────────────
+
+test_gate_stop_sends_code_and_detail() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_stop "TST-30" "$state_dir" \
+    "ADVERSARIAL_BLOCKED" "3rd consecutive block, iteration cap hit" >/dev/null 2>&1
+  grep -q "TST-30" "$capture" && grep -q "ADVERSARIAL_BLOCKED" "$capture" &&
+    grep -q "iteration cap hit" "$capture"
+}
+
+test_gate_stop_writes_sent_sidecar() {
+  local state_dir bindir
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" \
+    PATH="$bindir:$PATH" fleet_notify_gate_stop "TST-31" "$state_dir" \
+    "EXEC_NO_ARTIFACT" >/dev/null 2>&1
+  grep -q '"notify_state": "sent"' "$state_dir/TST-31-gate-stop-notify.json"
+}
+
+test_gate_stop_identical_repeat_sends_once() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_stop "TST-32" "$state_dir" \
+    "ADVERSARIAL_BLOCKED" "1st consecutive block" >/dev/null 2>&1
+  rm -f "$capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_stop "TST-32" "$state_dir" \
+    "ADVERSARIAL_BLOCKED" "1st consecutive block" >/dev/null 2>&1
+  [ ! -f "$capture" ]
+}
+
+test_gate_stop_new_detail_notifies_again() {
+  # A later round's gate-stop for the same ticket (same code, new detail —
+  # the iteration-cap round hit) is a genuinely new event, not a duplicate.
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_stop "TST-33" "$state_dir" \
+    "ADVERSARIAL_BLOCKED" "1st consecutive block" >/dev/null 2>&1
+  rm -f "$capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_stop "TST-33" "$state_dir" \
+    "ADVERSARIAL_BLOCKED" "3rd consecutive block, iteration cap hit" >/dev/null 2>&1
+  [ -f "$capture" ] && grep -q "iteration cap hit" "$capture"
+}
+
+test_gate_stop_transport_failure_marks_failed_and_completes() {
+  local state_dir bindir rc
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_MODE="fail" \
+    PATH="$bindir:$PATH" fleet_notify_gate_stop "TST-34" "$state_dir" \
+    "EXEC_NO_ARTIFACT" >/dev/null 2>&1
+  rc=$?
+  [ "$rc" -eq 0 ] && grep -q '"notify_state": "failed"' "$state_dir/TST-34-gate-stop-notify.json"
+}
+
+test_gate_stop_failed_send_is_retried_on_a_later_pass() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_MODE="fail" \
+    PATH="$bindir:$PATH" fleet_notify_gate_stop "TST-35" "$state_dir" \
+    "EXEC_NO_ARTIFACT" >/dev/null 2>&1
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_stop "TST-35" "$state_dir" \
+    "EXEC_NO_ARTIFACT" >/dev/null 2>&1
+  [ -f "$capture" ] && grep -q '"notify_state": "sent"' "$state_dir/TST-35-gate-stop-notify.json"
+}
+
+test_gate_stop_no_slack_config_degrades_to_log_line_and_succeeds() {
+  local rc out state_dir
+  state_dir=$(_mktemp_test_dir)
+  unset SLACK_BOT_TOKEN SLACK_CHANNEL
+  out=$(fleet_notify_gate_stop "TST-36" "$state_dir" "EXEC_NO_ARTIFACT" 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] && [[ "$out" == *"log-only"* ]]
+}
+
+test_gate_stop_empty_code_is_a_silent_no_op() {
+  local state_dir rc
+  state_dir=$(_mktemp_test_dir)
+  rc=0
+  fleet_notify_gate_stop "TST-37" "$state_dir" "" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] && [ ! -f "$state_dir/TST-37-gate-stop-notify.json" ]
+}
+
 # ── dispatch ─────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -376,7 +474,15 @@ for fn in \
   test_hold_escalation_does_not_repeat \
   test_hold_escalation_below_threshold_sends_nothing \
   test_hold_no_record_is_a_silent_no_op \
-  test_hold_invalid_record_is_a_silent_no_op; do
+  test_hold_invalid_record_is_a_silent_no_op \
+  test_gate_stop_sends_code_and_detail \
+  test_gate_stop_writes_sent_sidecar \
+  test_gate_stop_identical_repeat_sends_once \
+  test_gate_stop_new_detail_notifies_again \
+  test_gate_stop_transport_failure_marks_failed_and_completes \
+  test_gate_stop_failed_send_is_retried_on_a_later_pass \
+  test_gate_stop_no_slack_config_degrades_to_log_line_and_succeeds \
+  test_gate_stop_empty_code_is_a_silent_no_op; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

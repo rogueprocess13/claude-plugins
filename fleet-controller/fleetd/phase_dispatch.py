@@ -1839,8 +1839,10 @@ NEXT_HOLD = 'hold'
 
 NextStep = namedtuple(
     'NextStep',
-    'kind step_id exit_code gate_stop_code hold_kind resume_step_id detail',
+    'kind step_id exit_code gate_stop_code hold_kind resume_step_id detail '
+    'already_logged',
 )
+NextStep.__new__.__defaults__ = (False,)
 NextStep.__doc__ = """Where dispatch goes after one step finishes.
 
 kind           — 'advance' (dispatch `step_id` next), 'terminal' (write the
@@ -1872,6 +1874,17 @@ resume_step_id — always `STEP_3_5` today (kind='hold' only). `_hold_reconcile_
                  itself, resume at the same place — the reconcile agent,
                  never straight back to the bash gate).
 detail         — human-readable reason, for logging only.
+already_logged — kind='terminal' only, default False. True when
+                 `gate_stop_code` names a gate-stop the agent already wrote
+                 to the pipeline log itself (a `classify_phase` rung-1
+                 "gate-stop wins outright" result — see the top-of-function
+                 guard below) rather than one this function's own loop-cap
+                 logic is deciding fresh. `finalize_terminal` must not
+                 duplicate an already-written line (mirrors the existing
+                 preamble-level convention in `supervisor.py`, which passes
+                 `gate_stop_code=''` for the same reason) — but the code is
+                 still real and still passed through to `_notify_gate_stop`,
+                 which has no log line to avoid duplicating.
 """
 
 
@@ -1879,8 +1892,9 @@ def _advance(step_id, detail=''):
     return NextStep(NEXT_ADVANCE, step_id, None, '', '', '', detail)
 
 
-def _terminal(exit_code, gate_stop_code='', detail=''):
-    return NextStep(NEXT_TERMINAL, '', exit_code, gate_stop_code, '', '', detail)
+def _terminal(exit_code, gate_stop_code='', detail='', already_logged=False):
+    return NextStep(NEXT_TERMINAL, '', exit_code, gate_stop_code, '', '',
+                    detail, already_logged)
 
 
 def _hold(kind, detail=''):
@@ -1921,8 +1935,21 @@ def next_step(table, step_id, result, counters, log_lines=(), is_bug=False):
     — see design.md D22 for the full transition table and the two things
     deliberately not ported (STEP_5_5 PR-comment reconciliation, phase
     inspectors).
+
+    A gate-stop the agent wrote to its own bracket always wins outright,
+    for every step_id alike, before any step-specific routing runs
+    (issue #341 finding 2 — every branch below used to route on `step_id`
+    alone, effectively discarding a `PhaseOutcome(source='gate-stop')`
+    result for any step that isn't one of the three loop-bearing ones,
+    which check `evaluate_loop`'s own, unrelated cap instead of `result`).
+    `classify_phase`'s rung 1 already means the line is in the log — this
+    only decides routing, never writes a second copy (`already_logged=True`
+    on the returned `NextStep`).
     """
     counters = counters or {}
+
+    if isinstance(result, PhaseOutcome) and result.source == 'gate-stop':
+        return _terminal(1, result.detail, '', already_logged=True)
 
     if step_id == 'STEP_1':
         return _advance('STEP_1_5' if is_bug else 'STEP_2', 'appraise done')
