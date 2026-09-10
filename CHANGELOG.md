@@ -17,6 +17,21 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.49.3 (2026-09-10)
+
+Fixes #346: `agents/ticket-verify-agent.md` — the system prompt for the spawned VERIFY
+agent — said, verbatim, "You MUST NOT modify code or Linear issue state." But
+`skills/ticket-verify/SKILL.md` Step 6 explicitly mandates that on a local PASS
+(`--env local`), the agent must open the PR via `gh pr create` and fire
+`/ticket-flow {TICKET-ID} implement-complete`. The blanket guardrail had no carve-out for
+this one documented state change, so the agent — correctly following its own prompt —
+skipped it, self-reported the gap, and left the ticket stuck at `Ready` with a pushed
+branch and no PR; PR-REVIEW then gate-stopped downstream with `pr-review-blocked` (no open
+PR found). Root-caused on WIL-77 (manual recovery required to open the PR and fire
+`implement-complete`). Fixed by narrowing the guardrail to "MUST NOT modify source code"
+and adding an explicit, scoped exception naming Step 6's PR-open + implement-complete
+action as the only permitted state change. `ticket-auto-pipeline/agents/ticket-verify-agent.md`.
+
 ## 0.49.2 (2026-09-10)
 
 Fixes #347: `detect-resume.sh`'s zombie-detection handler carries a phase→resume-step
