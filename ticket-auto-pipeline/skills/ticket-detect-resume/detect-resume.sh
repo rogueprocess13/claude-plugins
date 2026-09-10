@@ -420,7 +420,14 @@ if [ -s "$LOG_FILE" ]; then
           GATE) RESUME_STEP="STEP_3" ;;
           IMPLEMENT) RESUME_STEP="STEP_4" ;;
           VERIFY) RESUME_STEP="STEP_4_5" ;;
-          PR-REVIEW) RESUME_STEP="STEP_5" ;;
+          # PR Review dispatches at STEP_4_6 per ticket-auto/SKILL.md, not
+          # STEP_5 (Document + Wiki Maintenance) — that stale label sent a
+          # PR-REVIEW zombie straight past PR-REVIEW into MAINTENANCE,
+          # implicitly treating an unresolved BLOCK/no-PR state as if it had
+          # passed review (WIL-77 retro, 2026-09-10; caught and overridden by
+          # the human operator, who re-dispatched PR-REVIEW manually before
+          # this could skip a genuine bad-diff BLOCK the same way).
+          PR-REVIEW) RESUME_STEP="STEP_4_6" ;;
           MAINTENANCE)
             # PHASE=MAINTENANCE is shared by two unrelated dispatch sites:
             # the Prescan gate (STEP=prescan, runs BEFORE appraise) and real
