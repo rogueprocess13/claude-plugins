@@ -1503,6 +1503,204 @@ _fleet_scan_epic_branch_ready() {
   fi
 }
 
+# D-18 (GitHub #342): per-ticket no-op wrapper, same convention as
+# detect_initiative_dispatch/detect_epic_branch_ready — this is a fleet-wide
+# detector; the real scan is _fleet_scan_stalled_approved_children, run once
+# per fleet_detect_all call, not per ticket.
+detect_stalled_approved_children() {
+  echo "0"
+}
+
+# Linear states meaning "a human/automation just said this child should
+# actively be moving" — not Backlog (fleet_dispatch_initiative's own Step 2
+# population: undispatched, not yet started) and not Done (finished).
+_FLEET_STALLED_APPROVED_STATES=" Ready Approve Review UAT "
+
+# Fleet-wide stalled-approved-children scan. Runs once per fleet_detect_all
+# call. GitHub #342: fleet_dispatch_initiative has exactly two ways a child
+# gets scheduled — Step 2 enqueues `planned`+`Backlog` children (new tickets
+# only), and Step 1.75 (fleet_reconcile_orphans) resumes a mid-flight child
+# only when ITS PIPELINE LOG shows a crash/orphan/stall signature (a clean,
+# deliberate gate-stop is correctly left alone). Neither path notices a
+# child whose Linear state/labels were changed OUTSIDE the pipeline — e.g. a
+# human amending acceptance criteria and re-approving directly via
+# ticket-flow/the Linear API after a gate-stop — because that child's
+# pipeline log never gains a resumable signature. Such a child sits at
+# Ready/Approve/Review/UAT with the `approved` label, fully unblocked, with
+# no worker and no queue entry, forever — and every ticket that names it in
+# a `blocked-by:` label stays blocked right alongside it.
+#
+# This scan closes that gap as a THIRD, independent detector rather than
+# folding the behavior into `/dispatch`'s default (see the GitHub issue's
+# "why not" section): flagging is unconditional (severity 1, WARN), matching
+# every other detector in this file; auto-resuming is opt-in via
+# FLEET_AUTO_RESUME_STALLED, mirroring FLEET_EPIC_AUTO_PR's exact
+# detect-then-optionally-actuate shape (see _fleet_scan_epic_branch_ready
+# above) so a diagnostic `/dispatch` call never gains an unconditional side
+# effect of starting new implementation work on a ticket nobody just decided
+# to move forward.
+# Usage: _fleet_scan_stalled_approved_children [workspace]
+_fleet_scan_stalled_approved_children() {
+  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+
+  if ! declare -f get_issue >/dev/null 2>&1; then
+    local _la_paths=("$HOME/.claude/skills/lib/linear-api.sh" "${_CONFIG_DIR}/../linear-api.sh")
+    for _lp in "${_la_paths[@]}"; do
+      [ -f "$_lp" ] && source "$_lp" && break
+    done
+  fi
+
+  if ! declare -f get_issue >/dev/null 2>&1; then
+    echo '{"severity":0,"findings":""}'
+    return
+  fi
+
+  # Queue inspection (_queue_has_ticket/_fleet_queue_append), liveness
+  # fallback (_fleet_tid_live/_registry_pid_alive) and the actuation entry
+  # builder (_reconcile_entry, via fleet-dispatch.sh's own sourcing of
+  # fleet-reconcile.sh) all live in fleet-dispatch.sh — same two-candidate
+  # sourcing convention _fleet_scan_epic_branch_ready uses for
+  # _fleet_repos_under_root above.
+  if ! declare -f _fleet_queue_append >/dev/null 2>&1; then
+    local _sa_dispatch_lib="${_CONFIG_DIR}/fleet-dispatch.sh"
+    [ -f "$_sa_dispatch_lib" ] && source "$_sa_dispatch_lib"
+  fi
+
+  # No epic Linear-state filter — the state:execution label is the gate,
+  # same population fleet_dispatch_initiative and the other two epic-scoped
+  # scans use.
+  local query='{"query":"{issues(filter:{labels:{name:{eq:\"state:execution\"}}}){nodes{id identifier children{nodes{id identifier state{name} labels{nodes{name}}}}}}}"}'
+
+  local epics_json attempt=1 max_attempts=3 delay=1
+  while [ "$attempt" -le "$max_attempts" ]; do
+    epics_json=$(echo "$query" | curl -s -X POST "${LINEAR_API_URL:-https://api.linear.app/graphql}" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: ${LINEAR_API_KEY}" \
+      -d @- 2>/dev/null) && break
+    attempt=$((attempt + 1))
+    [ "$attempt" -le "$max_attempts" ] && sleep "$delay" && delay=$((delay * 2))
+  done
+
+  if [ -z "$epics_json" ]; then
+    echo '{"severity":0,"findings":""}'
+    return
+  fi
+
+  local epic_count
+  epic_count=$(echo "$epics_json" | jq -r '.data.issues.nodes | length // 0' 2>/dev/null)
+  [ "${epic_count:-0}" -eq 0 ] && echo '{"severity":0,"findings":""}' && return
+
+  local auto_resume="${FLEET_AUTO_RESUME_STALLED:-false}"
+  local stalled_count=0
+  local stalled_ids=""
+  local resumed_ids=""
+  local queue_file
+  queue_file=$(_fleet_queue_file "$workspace")
+  local store_ready=1
+  if declare -f fleet_store_ready >/dev/null 2>&1 && fleet_store_ready "$workspace"; then
+    store_ready=0
+  fi
+  local in_flight_tids=""
+  if [ "$store_ready" -eq 0 ] && declare -f fleet_store_in_flight >/dev/null 2>&1; then
+    in_flight_tids=$(fleet_store_in_flight "$workspace" 2>/dev/null)
+  fi
+
+  for i in $(seq 0 $((epic_count - 1))); do
+    local epic_id
+    epic_id=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].identifier // empty" 2>/dev/null)
+    [ -z "$epic_id" ] && continue
+
+    local child_count
+    child_count=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes | length // 0" 2>/dev/null)
+    [ "${child_count:-0}" -eq 0 ] && continue
+
+    for j in $(seq 0 $((child_count - 1))); do
+      local child_state child_labels child_id
+      child_state=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes[$j].state.name // empty" 2>/dev/null)
+      child_labels=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes[$j].labels.nodes[].name // empty" 2>/dev/null)
+      child_id=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes[$j].identifier // empty" 2>/dev/null)
+      [ -z "$child_id" ] && continue
+
+      # State must be one that means "actively supposed to be moving" — not
+      # Backlog (Step 2's own population), not Done (finished), not some
+      # other custom state a workspace might define.
+      case "$_FLEET_STALLED_APPROVED_STATES" in
+      *" $child_state "*) ;;
+      *) continue ;;
+      esac
+
+      # The `approved` label is what the state machine actually requires to
+      # reach Ready/Review/UAT via the real Approve->Ready/Review->Ready/
+      # UAT->Ready triggers (state-machine.json). Without this check, a
+      # child a human moved into one of these states by hand ahead of
+      # approval — outside the automated flow entirely — would be
+      # misclassified as a stalled AUTOMATION concern.
+      if ! echo "$child_labels" | grep -q "approved" 2>/dev/null; then
+        continue
+      fi
+
+      # Live worker, preferring the fleet state store (authoritative —
+      # fleetd is its sole writer) and falling back to the same file-based
+      # liveness checks dispatch itself uses when no store is available, so
+      # this detector still functions on a host with no fleetd/sqlite3.
+      if [ "$store_ready" -eq 0 ]; then
+        if printf '%s\n' "$in_flight_tids" | grep -qx "$child_id"; then
+          continue
+        fi
+      else
+        if declare -f _fleet_tid_live >/dev/null 2>&1 && _fleet_tid_live "$child_id"; then
+          continue
+        fi
+        if declare -f _registry_pid_alive >/dev/null 2>&1 && _registry_pid_alive "$child_id" "$workspace"; then
+          continue
+        fi
+      fi
+
+      # Pending spawn-queue entry — a worker is about to pick this ticket up.
+      if declare -f _queue_has_ticket >/dev/null 2>&1 && _queue_has_ticket "$child_id" "$queue_file"; then
+        continue
+      fi
+
+      stalled_count=$((stalled_count + 1))
+      stalled_ids="${stalled_ids} ${child_id}"
+
+      # Actuation: opt-in, mirrors FLEET_EPIC_AUTO_PR's shape exactly (see
+      # _fleet_scan_epic_branch_ready above). Reuses _reconcile_entry
+      # (fleet-reconcile.sh) — the SAME entry-building function the
+      # existing manual-requeue/campaign-resume workaround already uses —
+      # so an auto-resumed stalled child gets identical fence-aware
+      # generation continuity instead of a hand-rolled duplicate that could
+      # drift from it. dispatch_type stays "initial", matching every other
+      # entry this codebase writes (there is no "resume" dispatch_type
+      # anywhere in this codebase — resume vs. fresh dispatch is
+      # distinguished by the `reason` string only, never by dispatch_type).
+      if [ "$auto_resume" = "true" ] && declare -f _reconcile_entry >/dev/null 2>&1 && declare -f _fleet_queue_append >/dev/null 2>&1; then
+        local _sa_entry
+        _sa_entry=$(_reconcile_entry "$child_id" "stalled-approved-resume from ${epic_id}" "$(_fleet_state_dir "$workspace")")
+        if _fleet_queue_append "$_sa_entry" "$queue_file" >/dev/null 2>&1; then
+          resumed_ids="${resumed_ids} ${child_id}"
+        fi
+      fi
+    done
+  done
+
+  if [ "$stalled_count" -eq 0 ]; then
+    echo '{"severity":0,"findings":""}'
+    return
+  fi
+
+  local findings
+  findings=$(echo "$stalled_ids" | sed 's/^ //')
+
+  if [ "$auto_resume" = "true" ] && [ -n "$resumed_ids" ]; then
+    local resumed_findings
+    resumed_findings=$(echo "$resumed_ids" | sed 's/^ //')
+    echo "{\"severity\":1,\"findings\":\"${stalled_count} stalled approved child(ren): ${findings} — auto-resumed: ${resumed_findings}\"}"
+  else
+    echo "{\"severity\":1,\"findings\":\"${stalled_count} stalled approved child(ren): ${findings}\"}"
+  fi
+}
+
 # Fleet-wide blocked-by scan. Runs once per fleet_detect_all call.
 # Checks all active tickets for resolved blocked-by dependencies.
 # Usage: _fleet_scan_blocked_by <workspace>
@@ -1644,10 +1842,11 @@ _fleet_workspace_guard() {
 # Enumerates active pipeline logs and runs every registered detector: 8
 # legacy per-ticket detectors + planner_feedback + blocked_by +
 # initiative_dispatch + epic_branch_ready + runaway_calls + human_hold +
-# workspace_config. Detectors 9-10 run per-ticket; 10-13 have fleet-wide
-# scans collected into the fleet_wide array; human_hold runs only inside the
-# held-ticket branch (see fleet-controller/CLAUDE.md's detector table for the
-# current count — this comment deliberately does not restate it).
+# workspace_config + stalled_approved_children. Detectors 9-10 run
+# per-ticket; 10-13 and 18 have fleet-wide scans collected into the
+# fleet_wide array; human_hold runs only inside the held-ticket branch (see
+# fleet-controller/CLAUDE.md's detector table for the current count — this
+# comment deliberately does not restate it).
 # Outputs JSON results array.
 # Usage: fleet_detect_all <workspace>
 fleet_detect_all() {
@@ -1874,6 +2073,22 @@ fleet_detect_all() {
   local ebr_sev
   ebr_sev=$(echo "$ebr_json" | jq -r '.severity // 0')
   [ "$ebr_sev" -ge 1 ] && warn=$((warn + 1))
+
+  # D-18 (GitHub #342): Stalled approved children scan
+  local sac_json
+  sac_json=$(_fleet_scan_stalled_approved_children "$workspace" 2>/dev/null || echo '{"severity":0,"findings":""}')
+  [ "$fw_first" = "false" ] && fleet_wide="$fleet_wide,"
+  fw_first=false
+  fleet_wide="${fleet_wide}$(jq -nc \
+    --arg name "detect_stalled_approved_children" \
+    --argjson severity "$(echo "$sac_json" | jq -r '.severity // 0')" \
+    --arg findings "$(echo "$sac_json" | jq -r '.findings // ""')" \
+    --arg type "fleet-wide" \
+    '{name: $name, severity: $severity, findings: $findings, type: $type}')"
+
+  local sac_sev
+  sac_sev=$(echo "$sac_json" | jq -r '.severity // 0')
+  [ "$sac_sev" -ge 1 ] && warn=$((warn + 1))
 
   # D-13: Workspace configuration guard (computed above, before the directory
   # check, so the same verdict is reported on both paths).

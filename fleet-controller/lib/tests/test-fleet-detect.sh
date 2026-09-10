@@ -1391,6 +1391,175 @@ test_initiative_dispatch_query_is_valid_json() {
   return 0
 }
 
+# ── D-18 stalled approved children scan (GitHub #342) ─────────────────────────────
+
+# GraphQL response fixture: one state:execution epic with one child.
+_make_stalled_epic_json() {
+  local epic_id="$1" child_id="$2" child_state="$3" child_labels="$4"
+  jq -nc \
+    --arg epic_id "$epic_id" \
+    --arg child_id "$child_id" \
+    --arg child_state "$child_state" \
+    --argjson child_labels "$child_labels" \
+    '{data:{issues:{nodes:[{id:"e1",identifier:$epic_id,children:{nodes:[{id:"c1",identifier:$child_id,state:{name:$child_state},labels:{nodes:$child_labels}}]}}]}}}'
+}
+
+test_stalled_approved_no_worker_no_queue_is_flagged() {
+  local ws
+  ws=$(_setup_workspace)
+  get_issue() { :; }
+  curl() {
+    cat >/dev/null # consume the -d @- body
+    _make_stalled_epic_json "INIT-42" "CRE-77" "Ready" '[{"name":"planned"},{"name":"approved"}]'
+  }
+  source "$LIB_DIR/fleet-detect.sh"
+  # Store reachable, but nothing running — the "no live worker" case.
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  local r sev findings
+  r=$(_fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  findings=$(echo "$r" | jq -r '.findings')
+  rm -rf "$ws"
+
+  [ "$sev" -eq 1 ] || {
+    echo "expected severity 1, got $sev" >&2
+    return 1
+  }
+  echo "$findings" | grep -q "CRE-77" || {
+    echo "expected CRE-77 in findings: $findings" >&2
+    return 1
+  }
+  return 0
+}
+
+test_stalled_approved_live_worker_not_flagged() {
+  local ws
+  ws=$(_setup_workspace)
+  get_issue() { :; }
+  curl() {
+    cat >/dev/null
+    _make_stalled_epic_json "INIT-42" "CRE-78" "Review" '[{"name":"planned"},{"name":"approved"}]'
+  }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { echo "CRE-78"; }
+
+  local r sev
+  r=$(_fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  rm -rf "$ws"
+  [ "$sev" -eq 0 ]
+}
+
+test_stalled_approved_pending_queue_entry_not_flagged() {
+  local ws
+  ws=$(_setup_workspace)
+  get_issue() { :; }
+  curl() {
+    cat >/dev/null
+    _make_stalled_epic_json "INIT-42" "CRE-79" "Approve" '[{"name":"planned"},{"name":"approved"}]'
+  }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  mkdir -p "$ws"
+  echo '{"tid":"CRE-79","reason":"orphan-reconciliation","timestamp":"2026-09-10T00:00:00Z","restarts":0,"dispatch_type":"initial","generation":1}' >"$ws/fleet-default-spawn-queue.jsonl"
+
+  local r sev
+  r=$(_fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  rm -rf "$ws"
+  [ "$sev" -eq 0 ]
+}
+
+test_stalled_approved_backlog_state_not_flagged() {
+  local ws
+  ws=$(_setup_workspace)
+  get_issue() { :; }
+  curl() {
+    cat >/dev/null
+    _make_stalled_epic_json "INIT-42" "CRE-80" "Backlog" '[{"name":"planned"},{"name":"approved"}]'
+  }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  local r sev
+  r=$(_fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  rm -rf "$ws"
+  [ "$sev" -eq 0 ]
+}
+
+test_stalled_approved_done_state_not_flagged() {
+  local ws
+  ws=$(_setup_workspace)
+  get_issue() { :; }
+  curl() {
+    cat >/dev/null
+    _make_stalled_epic_json "INIT-42" "CRE-81" "Done" '[{"name":"planned"},{"name":"approved"}]'
+  }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  local r sev
+  r=$(_fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  rm -rf "$ws"
+  [ "$sev" -eq 0 ]
+}
+
+# FLEET_AUTO_RESUME_STALLED, mirroring FLEET_EPIC_AUTO_PR's own test coverage
+# shape: off by default (finding reported, no queue mutation), opt-in when
+# set to enqueue a resume entry via the same _reconcile_entry the manual
+# requeue/campaign-resume workaround already uses.
+
+test_stalled_approved_auto_resume_disabled_by_default() {
+  local ws
+  ws=$(_setup_workspace)
+  get_issue() { :; }
+  curl() {
+    cat >/dev/null
+    _make_stalled_epic_json "INIT-42" "CRE-82" "Ready" '[{"name":"planned"},{"name":"approved"}]'
+  }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  _fleet_scan_stalled_approved_children "$ws" >/dev/null 2>&1
+
+  local queue_file="$ws/fleet-default-spawn-queue.jsonl"
+  local queued=0
+  [ -f "$queue_file" ] && grep -q '"tid":"CRE-82"' "$queue_file" 2>/dev/null && queued=1
+  rm -rf "$ws"
+  [ "$queued" -eq 0 ]
+}
+
+test_stalled_approved_auto_resume_enqueues_when_enabled() {
+  local ws
+  ws=$(_setup_workspace)
+  get_issue() { :; }
+  curl() {
+    cat >/dev/null
+    _make_stalled_epic_json "INIT-42" "CRE-83" "Ready" '[{"name":"planned"},{"name":"approved"}]'
+  }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  FLEET_AUTO_RESUME_STALLED=true _fleet_scan_stalled_approved_children "$ws" >/dev/null 2>&1
+
+  local queue_file="$ws/fleet-default-spawn-queue.jsonl"
+  local queued=0
+  [ -f "$queue_file" ] && grep -q '"tid":"CRE-83"' "$queue_file" 2>/dev/null && queued=1
+  rm -rf "$ws"
+  [ "$queued" -eq 1 ]
+}
+
 # ── Gate-hold lifecycle detection (gate-check.sh compatibility) ───────────────────
 
 test_gate_held_fresh_not_stall() {
@@ -1523,6 +1692,13 @@ for fn in \
   test_initiative_dispatch_notes_stop_file \
   test_initiative_dispatch_no_stop_note_when_unstopped \
   test_initiative_dispatch_query_is_valid_json \
+  test_stalled_approved_no_worker_no_queue_is_flagged \
+  test_stalled_approved_live_worker_not_flagged \
+  test_stalled_approved_pending_queue_entry_not_flagged \
+  test_stalled_approved_backlog_state_not_flagged \
+  test_stalled_approved_done_state_not_flagged \
+  test_stalled_approved_auto_resume_disabled_by_default \
+  test_stalled_approved_auto_resume_enqueues_when_enabled \
   test_observer_finding_line_does_not_change_phase_failure_verdict \
   test_observer_findings_high_in_current_bracket_returns_warn \
   test_observer_findings_warn_severity_finding_does_not_escalate \
