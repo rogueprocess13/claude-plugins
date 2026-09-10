@@ -430,7 +430,7 @@ def run_step_orchestration(table, step_id, when, ctx, lib_dir=None,
 
 
 def finalize_terminal(table, tid, exit_code, gate_stop_code, log_file,
-                      lib_dir=None, runners=None):
+                      lib_dir=None, runners=None, already_logged=False):
     """Run the finalize path a `phase_dispatch.next_step` `Terminal` result
     requires (task 10.1.5, design.md D22).
 
@@ -447,8 +447,17 @@ def finalize_terminal(table, tid, exit_code, gate_stop_code, log_file,
     ever returns `exit_code=0` for STEP_6's own terminal, so branching on that
     is equivalent to branching on "did STEP_6 finish" without threading a
     second flag through.
+
+    `already_logged=True` (issue #341 finding 2) skips the write below even
+    when `gate_stop_code` is non-empty — set by `next_step`'s top-of-function
+    gate-stop guard, whose `gate_stop_code` is the agent's own already-logged
+    line re-surfaced for the caller's benefit (`_notify_gate_stop`, which has
+    no line to avoid duplicating), not a fresh code this function should
+    record a second time. Mirrors the older convention at the preamble-level
+    call site in `supervisor.py`, which achieves the same thing by passing
+    `gate_stop_code=''` outright because it has no other use for the value.
     """
-    if gate_stop_code:
+    if gate_stop_code and not already_logged:
         _append(log_file, f'|META|gate-stop|fail|{gate_stop_code}')
     ctx = {'tid': tid, 'exit_code': exit_code, 'LOG_FILE': log_file}
     if exit_code == 0:

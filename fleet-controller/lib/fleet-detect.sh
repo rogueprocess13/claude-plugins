@@ -831,6 +831,59 @@ detect_observer_findings() {
   fi
 }
 
+# Worker API-error detection (issue #341 finding 5). `hooks/stop-failure.sh`
+# appends `META|worker-api-error|warn|` to the ticket's own pipeline log when
+# a turn ends on an API error — previously write-only, read back only by
+# `exit-path.sh`'s post-hoc retro classification, never surfaced while the
+# ticket is still live (`detect_phase_failures` explicitly `grep -v
+# '|META|'`s its own count). WARN-only by design, same rationale as
+# `detect_observer_findings`/`detect_human_hold`: an API error ending a turn
+# is not necessarily this pipeline's fault (a transient provider-side outage
+# reads identically to a real stuck worker from here), so this must never
+# drive a KILL/RESTART on its own — it exists to make sure a human sees the
+# pattern, not to act on it. Scoped to the current open spawn bracket only,
+# same `_spawn_bracket_info` convention as `detect_runaway_calls`/
+# `detect_observer_findings` — the hook fires as the worker's own process
+# turn ends, before the phase has a chance to write its own terminal line,
+# so the bracket is still open at write time; scoping still matters once a
+# retried generation opens a fresh bracket, so a resolved prior attempt's
+# line is never re-flagged forever (the same staleness class GitHub #327
+# fixed for detect_tool_errors).
+detect_worker_api_errors() {
+  local tid="$1"
+  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+
+  if ! _pipeline_has_history "$tid" "$workspace"; then
+    echo "0"
+    return
+  fi
+
+  local info
+  info=$(_spawn_bracket_info "$tid" "$workspace") || {
+    echo "0"
+    return
+  }
+
+  local start_iso
+  start_iso=$(echo "$info" | awk -F'|' '{print $2}')
+  if [ -z "$start_iso" ]; then
+    echo "0"
+    return
+  fi
+
+  local error_count
+  error_count=$(_pipeline_lines "$tid" "$workspace" |
+    awk -F'|' -v s="$start_iso" '$1 >= s' |
+    command grep -c '|META|worker-api-error|warn|' 2>/dev/null || true)
+  error_count="${error_count:-0}"
+
+  if [ "$error_count" -gt 0 ]; then
+    echo "1"
+  else
+    echo "0"
+  fi
+}
+
 # 6. Flow failure detection — scan heartbeat log for retry|flow-sh|fail entries
 detect_flow_failures() {
   local tid="$1"
@@ -1660,7 +1713,7 @@ fleet_detect_all() {
     total=$((total + 1))
 
     # Run all per-ticket detectors, collect max severity
-    local s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 max_sev anomaly_types
+    local s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 max_sev anomaly_types
     if _pipeline_is_held "$tid" "$workspace"; then
       # The router has already exited cleanly for a held ticket — no live
       # process, no open bracket, no heartbeat. The other detectors
@@ -1686,6 +1739,7 @@ fleet_detect_all() {
       # for the current-bracket scope to find here, same reasoning as
       # s1-s4/s6-s11 above.
       s13=0
+      s14=0
     else
       s1=$(detect_phase_failures "$tid" "$workspace")
       s2=$(detect_stalls "$tid" "$workspace")
@@ -1700,12 +1754,13 @@ fleet_detect_all() {
       s11=$(detect_runaway_calls "$tid" "$workspace")
       s12=0
       s13=$(detect_observer_findings "$tid" "$workspace")
+      s14=$(detect_worker_api_errors "$tid" "$workspace")
     fi
 
     max_sev=0
     anomaly_types=""
 
-    for s in "$s1" "$s2" "$s3" "$s4" "$s5" "$s6" "$s7" "$s8" "$s9" "$s10" "$s11" "$s12" "$s13"; do
+    for s in "$s1" "$s2" "$s3" "$s4" "$s5" "$s6" "$s7" "$s8" "$s9" "$s10" "$s11" "$s12" "$s13" "$s14"; do
       [ "$s" -gt "$max_sev" ] && max_sev="$s"
     done
 
@@ -1723,6 +1778,7 @@ fleet_detect_all() {
     [ "$s11" -ge 1 ] && anomaly_types="${anomaly_types} runaway-calls(S${s11})"
     [ "$s12" -ge 1 ] && anomaly_types="${anomaly_types} human-hold(S${s12})"
     [ "$s13" -ge 1 ] && anomaly_types="${anomaly_types} observer-findings(S${s13})"
+    [ "$s14" -ge 1 ] && anomaly_types="${anomaly_types} worker-api-error(S${s14})"
     anomaly_types=$(echo "$anomaly_types" | sed 's/^ //')
 
     # Cap severity at 2 (KILL) when auto-restart is disabled

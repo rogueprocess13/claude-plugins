@@ -1676,6 +1676,36 @@ def _notify_worker_event(fleet_lib_dir, state_dir, tid, event_type, detail=''):
         pass
 
 
+def _notify_gate_stop(fleet_lib_dir, state_dir, tid, gate_stop_code, detail=''):
+    """Fire `fleet_notify_gate_stop <tid> <state_dir> <code> [detail]`.
+
+    Same shell-out shape as `_notify_worker_event`/`_notify_hold` above —
+    covers the gap those two leave: a terminal `META|gate-stop|fail|<CODE>`
+    is neither a crashed/dead-lettered worker nor a human-hold row, so
+    neither existing notifier fires for it, even though `fleet-detect.sh`
+    classifies every gate-stop code severity 1 same as a hold. Fail-soft:
+    an absent script, missing SLACK_* env, or a transport failure must
+    never affect finalization — the gate-stop's own log line and exit
+    already happened before this runs.
+    """
+    if not gate_stop_code:
+        return
+    notify_script = Path(fleet_lib_dir) / 'fleet-notify.sh'
+    if not notify_script.is_file():
+        return
+    try:
+        subprocess.run(
+            ['bash', '-c',
+             f'source {shlex.quote(str(notify_script))} && '
+             f'fleet_notify_gate_stop {shlex.quote(tid)} '
+             f'{shlex.quote(str(state_dir))} {shlex.quote(gate_stop_code)} '
+             f'{shlex.quote(detail)}'],
+            timeout=15, capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def _notify_hold(fleet_lib_dir, state_dir, tid, transition):
     """Fire `fleet_notify_hold <tid> <state_dir> <transition>` (#305).
 
@@ -4191,6 +4221,9 @@ class Supervisor:
             log_file = (result.fields.get('LOG_FILE')
                        or str(self._state_dir / f'{tid}-pipeline.log'))
             _orchestration_mod.finalize_terminal(table, tid, 1, '', log_file)
+            _notify_gate_stop(
+                self._fleet_lib_dir, self._state_dir, tid,
+                result.gate_stop_code)
             print(
                 f"fleetd[{os.getpid()}]: {tid} gate-stopped in preamble "
                 f"({result.gate_stop_code})"
@@ -4357,7 +4390,10 @@ class Supervisor:
         if decision.kind == _phase_mod.NEXT_TERMINAL:
             _orchestration_mod.finalize_terminal(
                 table, tid, decision.exit_code, decision.gate_stop_code,
-                log_file)
+                log_file, already_logged=decision.already_logged)
+            _notify_gate_stop(
+                self._fleet_lib_dir, self._state_dir, tid,
+                decision.gate_stop_code, decision.detail)
             print(f"fleetd[{os.getpid()}]: {tid} finalized ({decision.detail})")
             return True
 
@@ -4820,8 +4856,11 @@ class Supervisor:
         like `_reconcile_gate_hold`'s own pre-dispatch cap check — a ticket
         that would exceed `FLEET_HOLD_MAX_ATTEMPTS` gets
         `META|gate-stop|fail|HUMAN_HOLD_EXHAUSTED` instead of one more hold
-        row, and `post_human_hold_comment`/`fleet_notify_hold` are never
-        called for it.
+        row. `post_human_hold_comment`/`fleet_notify_hold` are never called
+        for it — this is a gate-stop, not a hold — but `_notify_gate_stop`
+        is (issue #341 finding 1), so exhaustion still reaches Slack, and
+        louder than silence: a human who already failed to answer 3 times
+        must not get less signal than the original ask did.
 
         Every store call goes through `_store_do`'s fail-soft wrapper (via
         the `_store_*` module functions): a store outage degrades to
@@ -4857,6 +4896,9 @@ class Supervisor:
             if _gate_hold_mod.human_hold_attempt_exceeds_max(hold_attempts):
                 _append_pipeline_log_line(
                     self._state_dir, tid, 'META', 'gate-stop', 'fail',
+                    'HUMAN_HOLD_EXHAUSTED')
+                _notify_gate_stop(
+                    self._fleet_lib_dir, self._state_dir, tid,
                     'HUMAN_HOLD_EXHAUSTED')
                 continue
 

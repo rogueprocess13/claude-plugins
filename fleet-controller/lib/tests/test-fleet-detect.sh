@@ -142,15 +142,72 @@ test_observer_findings_from_a_closed_earlier_bracket_are_not_reflagged() {
   [ "$r" -eq 0 ]
 }
 
+# ── Worker API-error detection (issue #341 finding 5) ───────────────────────
+
+test_worker_api_error_in_open_bracket_returns_warn() {
+  local ws
+  ws=$(_setup_workspace)
+  _plog "$ws" "CRE-9" "IMPLEMENT" "implement" "waiting" "agent launched"
+  _plog "$ws" "CRE-9" "META" "worker-api-error" "warn" "turn ended on API error (session=abc)"
+  source "$LIB_DIR/fleet-detect.sh"
+  local r
+  r=$(detect_worker_api_errors "CRE-9" "$ws")
+  rm -rf "$ws"
+  [ "$r" -eq 1 ]
+}
+
+test_worker_api_error_no_open_bracket_returns_ok() {
+  local ws
+  ws=$(_setup_workspace)
+  _plog "$ws" "CRE-9" "IMPLEMENT" "implement" "done" "ok"
+  _plog "$ws" "CRE-9" "META" "worker-api-error" "warn" "turn ended on API error (session=abc)"
+  source "$LIB_DIR/fleet-detect.sh"
+  local r
+  r=$(detect_worker_api_errors "CRE-9" "$ws")
+  rm -rf "$ws"
+  [ "$r" -eq 0 ]
+}
+
+test_worker_api_error_from_a_closed_earlier_bracket_is_not_reflagged() {
+  # Same staleness class GitHub #327 fixed for detect_tool_errors: a
+  # resolved prior attempt's API error must not keep tripping this detector
+  # once a fresh generation has opened its own bracket.
+  local ws
+  ws=$(_setup_workspace)
+  _plog "$ws" "CRE-9" "APPRAISE" "appraise" "waiting" "agent launched" "2026-06-02T10:00:00Z"
+  _plog "$ws" "CRE-9" "META" "worker-api-error" "warn" "turn ended on API error (session=abc)" "2026-06-02T10:00:01Z"
+  _plog "$ws" "CRE-9" "APPRAISE" "appraise" "done" "ok" "2026-06-02T10:00:02Z"
+  _plog "$ws" "CRE-9" "IMPLEMENT" "implement" "waiting" "agent launched" "2026-06-02T10:00:03Z"
+  source "$LIB_DIR/fleet-detect.sh"
+  local r
+  r=$(detect_worker_api_errors "CRE-9" "$ws")
+  rm -rf "$ws"
+  [ "$r" -eq 0 ]
+}
+
+test_worker_api_error_never_escalates_past_warn_via_fleet_detect_all() {
+  local ws now
+  ws=$(_setup_workspace)
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  _plog "$ws" "CRE-9" "IMPLEMENT" "implement" "waiting" "agent launched" "$now"
+  _plog "$ws" "CRE-9" "META" "worker-api-error" "warn" "turn ended on API error (session=abc)" "$now"
+  source "$LIB_DIR/fleet-detect.sh"
+  local json
+  json=$(fleet_detect_all "$ws")
+  rm -rf "$ws"
+  echo "$json" | jq -e '.pipelines[0].severity == 1 and (.pipelines[0].anomalies | contains("worker-api-error"))' >/dev/null
+}
+
 test_fleet_detect_all_runs_and_reports_every_per_ticket_detector() {
   # Drift guard (task 5.5): the max-severity loop, the anomaly-labeling
   # block, and the non-held-branch assignment list must all cover exactly
   # the same s1..sN slots — a detector added to one but not the others
   # would run silently uncounted or be labeled but never contribute to
-  # max_sev. 13 as of agent-observer Inc 4 (s1-s12 pre-existing +
-  # detect_observer_findings as s13); detect_blocked_by,
-  # detect_initiative_dispatch and detect_workspace_config run in the
-  # separate fleet-wide path, not this per-ticket sweep.
+  # max_sev. 14 as of issue #341 finding 5 (s1-s12 pre-existing +
+  # detect_observer_findings as s13 + detect_worker_api_errors as s14);
+  # detect_blocked_by, detect_initiative_dispatch and
+  # detect_workspace_config run in the separate fleet-wide path, not this
+  # per-ticket sweep.
   local decl_count loop_count label_count
   # Unique slot names, not raw line count — detect_abandoned (s5) is
   # legitimately assigned in both the held and non-held branches.
@@ -158,7 +215,7 @@ test_fleet_detect_all_runs_and_reports_every_per_ticket_detector() {
     command grep -oE 's[0-9]+' | sort -u | wc -l)
   loop_count=$(command grep -oE '"\$s[0-9]+"' "$LIB_DIR/fleet-detect.sh" | sort -u | wc -l)
   label_count=$(command grep -cE '\[ "\$s[0-9]+" -ge 1 \]' "$LIB_DIR/fleet-detect.sh")
-  [ "$decl_count" -eq 13 ] && [ "$loop_count" -eq 13 ] && [ "$label_count" -eq 13 ]
+  [ "$decl_count" -eq 14 ] && [ "$loop_count" -eq 14 ] && [ "$label_count" -eq 14 ]
 }
 
 test_observer_findings_never_escalates_past_warn_via_fleet_detect_all() {
@@ -1471,6 +1528,10 @@ for fn in \
   test_observer_findings_warn_severity_finding_does_not_escalate \
   test_observer_findings_no_open_bracket_returns_ok \
   test_observer_findings_from_a_closed_earlier_bracket_are_not_reflagged \
+  test_worker_api_error_in_open_bracket_returns_warn \
+  test_worker_api_error_no_open_bracket_returns_ok \
+  test_worker_api_error_from_a_closed_earlier_bracket_is_not_reflagged \
+  test_worker_api_error_never_escalates_past_warn_via_fleet_detect_all \
   test_observer_findings_never_escalates_past_warn_via_fleet_detect_all \
   test_fleet_detect_all_runs_and_reports_every_per_ticket_detector; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue

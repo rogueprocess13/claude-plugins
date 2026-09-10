@@ -298,3 +298,90 @@ for q in d.get('questions', []):
   echo "$out"
   return 0
 }
+
+# ── fleet_notify_gate_stop (terminal-gate-stop-notify) ──────────────────────
+#
+# fleet_notify_gate_stop <tid> <state_dir> <gate_stop_code> [detail]
+#
+# A ticket that reaches ANY terminal `META|gate-stop|fail|<CODE>` — EXEC_NO_
+# ARTIFACT, ADVERSARIAL_BLOCKED, *_EXHAUSTED, BRANCH_DIRECTIVE_INVALID, and
+# every other of the ~14 gate-stop codes alike — stops cleanly and waits for
+# a human, exactly like a human-hold does. `fleet-detect.sh`'s
+# `detect_phase_failures` classifies every one of them severity 1 (see
+# CLAUDE.md's severity table), and `fleet-monitor.sh`'s intervention loop
+# only acts at severity >= 2 — so, unlike a hold (which gets an explicit
+# notify carve-out despite its own severity being hard-capped at 1, see
+# CLAUDE.md detector #15), a plain gate-stop reached no Slack channel at
+# all before this. `fleet_notify_worker_event` doesn't apply either: its own
+# docstring is explicit that it is "never called for a clean completion",
+# and a gate-stop is exactly that from the worker's point of view — it did
+# its job by stopping on purpose.
+#
+# Deliberately reuses `fleet_slack_post`'s transport and threading (same
+# `{tid}-slack-thread.json`, so this reply lands in the same thread as any
+# other notification for the ticket) but does NOT go through the human-hold
+# store (`_store_set_hold`/hold rows) — a gate-stop already has its own,
+# separate resume path (an explicit `fleet-dispatch.sh <EPIC> --resume`,
+# per fleet-reconcile.sh's `gate-stopped | gate-held)` branch), so minting a
+# hold row here would require this library to also drive that row's release
+# on resume, which nothing does — this function's only job is to make sure
+# a human doing something else finds out, not to model a new state machine.
+#
+# Idempotent per (tid, gate_stop_code, detail), same sidecar-with-a-content-
+# key idiom as `fleet_notify_hold` just above: a different code or detail
+# for the same tid (a later generation's fresh gate-stop, or the same code
+# with the iteration-cap detail text a later round adds) resets bookkeeping
+# and notifies again; an identical repeat (e.g. `finalize_terminal` running
+# twice for one event on a reap retry) does not.
+fleet_notify_gate_stop() {
+  local tid="$1" state_dir="$2" gate_stop_code="$3" detail="${4:-}"
+
+  if [ -z "$gate_stop_code" ]; then
+    echo "fleet-notify: fleet_notify_gate_stop: no gate_stop_code for ${tid} — nothing to notify"
+    return 0
+  fi
+
+  local content_key
+  if command -v sha256sum >/dev/null 2>&1; then
+    content_key=$(printf '%s\x1f%s' "$gate_stop_code" "$detail" | sha256sum | awk '{print $1}')
+  else
+    content_key=$(printf '%s\x1f%s' "$gate_stop_code" "$detail" | shasum -a 256 | awk '{print $1}')
+  fi
+
+  local sidecar="${state_dir}/${tid}-gate-stop-notify.json"
+  local sidecar_key="" notify_state=""
+  if [ -f "$sidecar" ]; then
+    sidecar_key=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('key',''))" "$sidecar" 2>/dev/null) || sidecar_key=""
+    notify_state=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('notify_state',''))" "$sidecar" 2>/dev/null) || notify_state=""
+  fi
+  if [ "$content_key" != "$sidecar_key" ]; then
+    notify_state=""
+  fi
+  if [ "$notify_state" = "sent" ]; then
+    return 0
+  fi
+
+  local text
+  text=$(printf ':octagonal_sign: *%s* gate-stopped — needs a human\nCode: %s' "$tid" "$gate_stop_code")
+  if [ -n "$detail" ]; then
+    text="${text}
+Detail: ${detail}"
+  fi
+  text="${text}
+
+Resume with \`fleet-dispatch.sh <EPIC> --resume\` once the underlying condition is fixed."
+
+  local out
+  out=$(fleet_slack_post "$tid" "$state_dir" "$text" 2>&1)
+  if [[ "$out" == *"log-only"* ]] || [[ "$out" == *"transport failure"* ]] || [[ "$out" == *"rejected"* ]] || [[ "$out" == *"construction failed"* ]]; then
+    if [[ "$out" == *"not configured"* ]]; then
+      printf '{"key": "%s", "notify_state": "sent"}' "$content_key" >"$sidecar" 2>/dev/null || true
+    else
+      printf '{"key": "%s", "notify_state": "failed"}' "$content_key" >"$sidecar" 2>/dev/null || true
+    fi
+  else
+    printf '{"key": "%s", "notify_state": "sent"}' "$content_key" >"$sidecar" 2>/dev/null || true
+  fi
+  echo "$out"
+  return 0
+}
