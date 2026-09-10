@@ -17,6 +17,26 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.49.5 (2026-09-10)
+
+Fixes #353: `detect-resume.sh`'s zombie-detection handler's `GATE` case arm unconditionally
+set `RESUME_STEP="STEP_3"`, but `dispatch-table.json` shows two distinct steps share
+`PHASE=GATE` — `STEP_2_5`/`STEP_3` (`gate-check.sh`, run synchronously inline by the router:
+it writes `GATE|gate|start` then `done`/`fail` in the same invocation and never a `|waiting|`
+bracket, so it structurally cannot zombie) and `STEP_3_5` (the isolated `ticket-gate-reconcile`
+agent, spawned via `spawn_agent_pre` with `STEP=reconcile`, which does write
+`GATE|reconcile|waiting|...` and can genuinely zombie mid-run). Routing every GATE zombie to
+`STEP_3` silently skipped the actual stuck reconciliation and re-ran `gate-check.sh`'s entry
+checks instead — the same defect class fixed for PR-REVIEW in #347/#350. `detect-resume.sh`'s
+`GATE` case now branches on `_z_step` the same way `MAINTENANCE`'s already does: `reconcile`
+resumes at `STEP_3_5`, anything else falls back to `STEP_3` (kept as a defensive default —
+confirmed unreachable today since `gate-check.sh` never writes a `waiting` bracket for
+`step=gate`). Two regression tests added in `lib/tests/test-detect-resume.sh`:
+`test_gate_reconcile_zombie_resumes_at_step_3_5` and
+`test_gate_non_reconcile_zombie_falls_back_to_step_3` (the latter synthesizes a
+`GATE|gate|waiting|` line that production code never actually emits, to lock in the fallback
+branch itself).
+
 ## 0.49.4 (2026-09-10) — also fleet-controller 0.31.2
 
 Fixes #348: the VERIFY agent's Playwright tool allowlist (`agents/ticket-verify-agent.md`

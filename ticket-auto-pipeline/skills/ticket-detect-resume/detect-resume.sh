@@ -417,7 +417,25 @@ if [ -s "$LOG_FILE" ]; then
           APPRAISE) RESUME_STEP="STEP_1" ;;
           REPRODUCE) RESUME_STEP="STEP_1_5" ;;
           EXEC) RESUME_STEP="STEP_2" ;;
-          GATE) RESUME_STEP="STEP_3" ;;
+          GATE)
+            # PHASE=GATE is shared by two dispatch-table steps: STEP_2_5/
+            # STEP_3 (gate-check.sh, synchronous bash run inline by the
+            # router — it writes GATE|gate|start then done/fail in the same
+            # invocation and never a |waiting| bracket, so it structurally
+            # cannot zombie) and STEP_3_5 (the isolated ticket-gate-reconcile
+            # agent, spawned via spawn_agent_pre with STEP=reconcile, which
+            # DOES write GATE|reconcile|waiting|... and can genuinely zombie
+            # mid-run). Routing every GATE zombie to STEP_3 silently skipped
+            # the actual stuck reconciliation and re-ran gate-check.sh's
+            # entry checks instead (GitHub #353 — same defect class as the
+            # PR-REVIEW fix above). _z_step is "gate" only for gate-check.sh
+            # (unreachable as a zombie) and "reconcile" for the agent spawn,
+            # so branch on it the same way MAINTENANCE already does below.
+            case "$_z_step" in
+            reconcile) RESUME_STEP="STEP_3_5" ;;
+            *) RESUME_STEP="STEP_3" ;;
+            esac
+            ;;
           IMPLEMENT) RESUME_STEP="STEP_4" ;;
           VERIFY) RESUME_STEP="STEP_4_5" ;;
           # PR Review dispatches at STEP_4_6 per ticket-auto/SKILL.md, not
