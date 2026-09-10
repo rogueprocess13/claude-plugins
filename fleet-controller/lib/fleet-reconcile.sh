@@ -444,6 +444,30 @@ fleet_reconcile_orphans() {
     incomplete) ;;
     gate-stopped | gate-held)
       if [ -z "$reconcile_epic" ]; then
+        # gate-held already gets its own notify at hold-creation time
+        # (supervisor.py's human-hold-intake pass) — only gate-stopped is a
+        # genuine gap: a ticket spawned as a whole ticket-auto process that
+        # self-terminates with a gate-stop already in its own log never
+        # passes through _act_on_next_step_locked, so fleet_notify_gate_stop
+        # is never fired for it anywhere else. fleet_notify_gate_stop is
+        # idempotent per (tid, code, detail) — safe to call again on every
+        # future reconcile pass over this same ticket.
+        if [ "$state" = "gate-stopped" ] && declare -f fleet_notify_gate_stop >/dev/null 2>&1; then
+          local gate_line gate_field gate_code gate_detail
+          gate_line=$(command grep '|META|gate-stop|fail|' "$log_file" 2>/dev/null | tail -1)
+          gate_field=$(printf '%s' "$gate_line" | awk -F'|' '{print $5}')
+          case "$gate_field" in
+          *" — "*)
+            gate_code="${gate_field%% — *}"
+            gate_detail="${gate_field#* — }"
+            ;;
+          *)
+            gate_code="$gate_field"
+            gate_detail=""
+            ;;
+          esac
+          fleet_notify_gate_stop "$tid" "$state_dir" "$gate_code" "$gate_detail" || true
+        fi
         echo "fleet_reconcile: ${tid} — ${state}, left alone (no epic scope)"
         continue
       fi
