@@ -372,6 +372,29 @@ test_maintenance_document_zombie_still_routes_to_step5() {
   [ "$resume_step" = "STEP_5" ]
 }
 
+test_pr_review_zombie_resumes_at_step_4_6() {
+  # GitHub #347 / WIL-77: a PR-REVIEW zombie (process died after a
+  # non-terminal log write — e.g. find-pr — without ever reaching
+  # PR-REVIEW's own terminal write) must resume PR-REVIEW itself at
+  # STEP_4_6, not skip past it into STEP_5 (Document + Wiki Maintenance).
+  # The stale phase->resume-step map previously set STEP_5 here, silently
+  # treating an unresolved BLOCK/no-PR state as if review had passed.
+  local old_ts
+  old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
+  local out
+  out=$(_detect_resume_with_log "GH-347-1" \
+    "${old_ts}|META|schema|info|2" \
+    "${old_ts}|APPRAISE|appraise|done|complexity=simple" \
+    "${old_ts}|EXEC|create-artifact|done|simple-fix" \
+    "${old_ts}|GATE|gate|done|approved" \
+    "${old_ts}|IMPLEMENT|implement|done|committed" \
+    "${old_ts}|VERIFY|verify|done|PASS 3/3" \
+    "${old_ts}|PR-REVIEW|find-pr|waiting|locating open PR")
+  local resume_step
+  resume_step=$(_field "$out" RESUME_STEP)
+  [ "$resume_step" = "STEP_4_6" ]
+}
+
 test_zombie_detection_skips_non_phase_waiting() {
   local old_ts
   old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
@@ -854,6 +877,7 @@ for fn in \
   test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4 \
   test_prescan_zombie_does_not_force_step5_on_fresh_ticket \
   test_maintenance_document_zombie_still_routes_to_step5 \
+  test_pr_review_zombie_resumes_at_step_4_6 \
   test_branch_context_survives_resume \
   test_branch_context_carries_uat_policy \
   test_uat_policy_defaults_on_log_without_field \

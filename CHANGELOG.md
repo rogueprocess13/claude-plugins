@@ -17,6 +17,24 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.49.2 (2026-09-10)
+
+Fixes #347: `detect-resume.sh`'s zombie-detection handler carries a phase→resume-step
+fallback map, used when a phase's process died mid-run without ever reaching its own
+terminal log line. The `PR-REVIEW` case mapped to `RESUME_STEP="STEP_5"` — but per
+`ticket-auto/SKILL.md`'s own step numbering, PR Review dispatches at `STEP_4_6`; `STEP_5` is
+Document + Wiki Maintenance, an unrelated later phase. A PR-REVIEW zombie therefore skipped
+re-running PR-REVIEW entirely and jumped straight to MAINTENANCE — silently treating an
+unresolved `BLOCK` verdict as if review had passed, since nothing downstream re-checks
+PR-REVIEW's verdict. Root-caused on WIL-77: a human operator caught a live occurrence
+(`META|router-override|warn`) and manually re-dispatched PR-REVIEW before this could skip a
+genuine bad-diff `BLOCK`. Fixed by correcting the single stale case-statement entry to
+`STEP_4_6`; every other phase's resume-step label in the same map (`APPRAISE`, `REPRODUCE`,
+`EXEC`, `GATE`, `IMPLEMENT`, `VERIFY`, `MAINTENANCE`) was audited against
+`ticket-auto/SKILL.md`'s step headings and `skills/ticket-flow/dispatch-table.json` and found
+correct — no further drift. `ticket-auto-pipeline/skills/ticket-detect-resume/detect-resume.sh`;
+regression test added in `lib/tests/test-detect-resume.sh`.
+
 ## 0.49.1 (2026-09-10)
 
 Fixes #345: `get_ac_count`'s fallback heuristic (used whenever `context.md` has no `##
