@@ -1460,7 +1460,7 @@ class TestPhaseContract(unittest.TestCase):
     def test_verify_claim_predicates_include_playwright_tool_prefix(self):
         c = self._contract('STEP_4_5')  # VERIFY
         self.assertEqual(c['claim_predicates']['tool_name_prefixes'],
-                         ['mcp__plugin_playwright_'])
+                         ['mcp__playwright__'])
 
     def test_non_verify_phase_has_no_playwright_predicate(self):
         c = self._contract('STEP_1')

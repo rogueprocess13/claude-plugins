@@ -101,7 +101,7 @@ test_playwright_timeout_is_distinct_from_bash_timeout() {
   # genuinely hung. Collapsing them loses the distinction.
   _setup
   local line
-  line=$(_fire "mcp__plugin_playwright_playwright__browser_click" \
+  line=$(_fire "mcp__playwright__browser_click" \
     "locator.click: Timeout 30000ms exceeded.")
   [ "$(_type_of "$line")" = "playwright_timeout" ] || {
     echo "  got: $line"
@@ -112,7 +112,7 @@ test_playwright_timeout_is_distinct_from_bash_timeout() {
 test_playwright_selector_failure_is_classified() {
   _setup
   local line
-  line=$(_fire "mcp__plugin_playwright_playwright__browser_click" \
+  line=$(_fire "mcp__playwright__browser_click" \
     "Error: strict mode violation: locator resolved to 0 elements")
   [ "$(_type_of "$line")" = "playwright_selector" ] || {
     echo "  got: $line"
@@ -123,7 +123,7 @@ test_playwright_selector_failure_is_classified() {
 test_playwright_navigation_failure_is_classified() {
   _setup
   local line
-  line=$(_fire "mcp__plugin_playwright_playwright__browser_navigate" \
+  line=$(_fire "mcp__playwright__browser_navigate" \
     "page.goto: net::ERR_CONNECTION_REFUSED at https://uat.example.test/")
   [ "$(_type_of "$line")" = "playwright_navigation" ] || {
     echo "  got: $line"
@@ -134,7 +134,7 @@ test_playwright_navigation_failure_is_classified() {
 test_playwright_target_closed_is_classified() {
   _setup
   local line
-  line=$(_fire "mcp__plugin_playwright_playwright__browser_snapshot" \
+  line=$(_fire "mcp__playwright__browser_snapshot" \
     "Target page, context or browser has been closed")
   [ "$(_type_of "$line")" = "playwright_target_closed" ] || {
     echo "  got: $line"
@@ -147,7 +147,7 @@ test_unrecognised_playwright_error_still_classifies_as_playwright() {
   # in the browser" is more useful than one that says "unknown".
   _setup
   local line
-  line=$(_fire "mcp__plugin_playwright_playwright__browser_evaluate" \
+  line=$(_fire "mcp__playwright__browser_evaluate" \
     "Something entirely unanticipated happened")
   [ "$(_type_of "$line")" = "playwright_error" ] || {
     echo "  got: $line"
@@ -278,8 +278,8 @@ test_distinct_types_are_not_deduped_against_each_other() {
   # Dedup is keyed on ticket+tool+type. Two different Playwright failures from
   # the same tool must both be recorded, or the classifier buys nothing.
   _setup
-  _fire "mcp__plugin_playwright_playwright__browser_click" "locator.click: Timeout 30000ms exceeded." >/dev/null
-  _fire "mcp__plugin_playwright_playwright__browser_click" "strict mode violation: resolved to 0 elements" >/dev/null
+  _fire "mcp__playwright__browser_click" "locator.click: Timeout 30000ms exceeded." >/dev/null
+  _fire "mcp__playwright__browser_click" "strict mode violation: resolved to 0 elements" >/dev/null
   local n
   n=$(wc -l <"${_ws}/${_tid}-tool-errors.log")
   [ "$n" -eq 2 ] || {
@@ -290,8 +290,8 @@ test_distinct_types_are_not_deduped_against_each_other() {
 
 test_repeat_of_the_same_type_is_deduped() {
   _setup
-  _fire "mcp__plugin_playwright_playwright__browser_click" "locator.click: Timeout 30000ms exceeded." >/dev/null
-  _fire "mcp__plugin_playwright_playwright__browser_click" "locator.click: Timeout 30000ms exceeded." >/dev/null
+  _fire "mcp__playwright__browser_click" "locator.click: Timeout 30000ms exceeded." >/dev/null
+  _fire "mcp__playwright__browser_click" "locator.click: Timeout 30000ms exceeded." >/dev/null
   local n
   n=$(wc -l <"${_ws}/${_tid}-tool-errors.log")
   [ "$n" -eq 1 ] || {

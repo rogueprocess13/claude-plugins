@@ -272,7 +272,7 @@
         {
           "kind": "preflight",
           "checks": [
-            "mcp__plugin_playwright_playwright__browser_navigate",
+            "mcp__playwright__browser_navigate",
             "mcp__linear-server__get_issue"
           ],
           "on_failure": "log META|preflight|fail|VERIFY_PREFLIGHT_FAILED and proceed — the failure still counts as an attempt",

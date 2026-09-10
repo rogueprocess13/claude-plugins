@@ -956,7 +956,7 @@ stops with VERIFY_EXHAUSTED.
 # Pre-spawn MCP health check — confirm Playwright and Linear MCP are reachable
 # before spawning an agent that will inevitably fail without them.
 _verify_mcp_ok=true
-mcp__plugin_playwright_playwright__browser_navigate 2>/dev/null || _verify_mcp_ok=false
+mcp__playwright__browser_navigate 2>/dev/null || _verify_mcp_ok=false
 mcp__linear-server__get_issue 2>/dev/null || _verify_mcp_ok=false
 if ! $_verify_mcp_ok; then
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|preflight|fail|VERIFY_PREFLIGHT_FAILED — MCP tools unreachable" >> "{LOG_FILE}"

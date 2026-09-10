@@ -1225,7 +1225,7 @@ def _claim_predicates(phase, env_vars):
     (`pytest`, `npm test`, `mvn test`) are substring patterns matched
     against a tool_call's command regardless of project config, since a
     phase agent may run them directly even when a project-specific wrapper
-    also exists. VERIFY additionally treats any `mcp__plugin_playwright_*`
+    also exists. VERIFY additionally treats any `mcp__playwright__*`
     tool call as test-class evidence — its "test" is a browser action, not
     a shell command.
     """
@@ -1236,7 +1236,7 @@ def _claim_predicates(phase, env_vars):
             patterns.append(value)
     predicates = {'command_substrings': patterns}
     if phase == 'VERIFY':
-        predicates['tool_name_prefixes'] = ['mcp__plugin_playwright_']
+        predicates['tool_name_prefixes'] = ['mcp__playwright__']
     return predicates
 
 
