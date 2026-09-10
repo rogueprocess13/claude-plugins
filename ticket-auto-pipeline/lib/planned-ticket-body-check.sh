@@ -32,11 +32,19 @@ fi
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 # Required sections per type:
-#   all:       Acceptance Criteria, Test User, Scope
+#   all:       Acceptance Criteria, Scope
 #   bug:       + Steps to Reproduce, Test Data Prerequisites
 #   feature:   + Navigation Path
 #   improvement: + Navigation Path
 #   security:  universal only (no type-specific extras beyond bug/feature context)
+#
+# Test User and Navigation Path are additionally skipped whenever the body's
+# own Scope table declares no FE layer — see _scope_is_backend_only. A
+# backend-only ticket (worker/API/migration work, no UI) has no test user to
+# log in as and no screen to navigate to; requiring those sections on every
+# `feature`-labeled ticket regardless of whether it touches a UI produces a
+# permanent, unresolvable PLANNED_BODY_INCOMPLETE gate-stop for backend-only
+# feature work (WIL-78).
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -102,8 +110,17 @@ check_planned_body() {
     missing+=("Acceptance Criteria")
   fi
 
-  # Universal: Test User
-  if ! _has_section_test_user "$body_content"; then
+  # A body whose Scope table declares no FE layer has no UI — Test User and
+  # Navigation Path are meaningless for it. A body with no Scope table at all
+  # is ambiguous (mode can't be determined), so it keeps the full requirement
+  # set rather than being assumed backend-only.
+  local backend_only=0
+  if _scope_is_backend_only "$body_content"; then
+    backend_only=1
+  fi
+
+  # Universal (UI tickets only): Test User
+  if [ "$backend_only" != "1" ] && ! _has_section_test_user "$body_content"; then
     missing+=("Test User")
   fi
 
@@ -123,7 +140,7 @@ check_planned_body() {
     fi
     ;;
   feature | improvement)
-    if ! _has_section_nav_path "$body_content"; then
+    if [ "$backend_only" != "1" ] && ! _has_section_nav_path "$body_content"; then
       missing+=("Navigation Path")
     fi
     ;;
@@ -205,6 +222,37 @@ _has_section_scope() {
     return 0
   fi
   return 1
+}
+
+# _scope_layers <body> — space-separated, deduplicated, uppercased Layer
+# values from the body's Scope table. Empty if no Scope table is present.
+_scope_layers() {
+  local body="$1"
+  local section_content
+  if echo "$body" | grep -qiP '##\s*Scope' 2>/dev/null; then
+    section_content=$(echo "$body" | awk '/^##[[:space:]]*Scope/ {found=1; next} found && /^##/ {exit} found {print}')
+  else
+    section_content="$body"
+  fi
+  echo "$section_content" |
+    grep -oP '^\s*\|\s*\K[A-Za-z]+(?=\s*\|)' 2>/dev/null |
+    grep -viP '^layer$' |
+    tr '[:lower:]' '[:upper:]' | sort -u | tr '\n' ' '
+}
+
+# _scope_is_backend_only <body> — true when the body's Scope table lists at
+# least one layer and none of them is FE. A body with no Scope table at all
+# is ambiguous, not backend-only — mode can't be determined without one, so
+# this returns false (full requirement set) in that case.
+_scope_is_backend_only() {
+  local body="$1"
+  local layers
+  layers=$(_scope_layers "$body")
+  [ -z "$layers" ] && return 1
+  case " $layers " in
+  *" FE "*) return 1 ;;
+  *) return 0 ;;
+  esac
 }
 
 # _has_section_nav_path <body> — true if body has a navigation path
