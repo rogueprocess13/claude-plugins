@@ -150,7 +150,15 @@ get_ac_count() {
   # lines, stopping at the first repro section heading — reproduction steps
   # are numbered but are NOT acceptance criteria.
   local prefix
-  prefix=$(sed -E '/^#*\s*(Steps to Repro|Reproduct|How to Repro|Reproduction Steps|To Reproduce|Background|Context|Environment|Notes|Setup|Prerequisites)/Iq' "$ctx" 2>/dev/null || true)
+  # Boundary must look like a real section marker: either a markdown heading
+  # (one-or-more '#', then a space) or the bare keyword at true column 0 with
+  # zero leading whitespace. The old '^#*\s*(...)' allowed BOTH zero hashes
+  # AND arbitrary leading whitespace, which collapses to "keyword anywhere
+  # near line start" — an indented prose continuation line ("  context, so
+  # behavior parity...") satisfied it purely by vocabulary and truncated the
+  # scan before the real AC section (WIL-77 retro, 2026-09-10; ac_count
+  # reported 0, actual 6).
+  prefix=$(sed -E '/^(#+ *|)(Steps to Repro|Reproduct|How to Repro|Reproduction Steps|To Reproduce|Background|Context|Environment|Notes|Setup|Prerequisites)/Iq' "$ctx" 2>/dev/null || true)
   if [ -z "$prefix" ]; then
     # sed failed or file is entirely repro steps — count from whole file as fallback
     prefix=$(cat "$ctx" 2>/dev/null || true)

@@ -134,6 +134,62 @@ test_critique_rerun_stops_at_next_heading() {
   [ "$result" = "80" ]
 }
 
+# get_ac_count fallback (no "## Acceptance Criteria" heading) tests.
+# Regression for #345: the old '^#*\s*(...)' boundary regex matched a
+# keyword preceded by ANY leading whitespace, not just the single space
+# after a markdown '#'. An indented prose continuation line satisfied it
+# purely by vocabulary and truncated the scan before the real AC section.
+
+# Indented prose line containing a boundary keyword ("context") must NOT
+# be treated as a section boundary — the scan must continue past it to
+# count the later plain-text "Acceptance criteria:" label's items.
+test_ac_count_indented_prose_not_boundary() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  printf 'Some intro line.\n\n  context, so behavior parity with the existing call sites is an explicit requirement for this change.\n\nAcceptance criteria:\n1. First criterion\n2. Second criterion\n3. Third criterion\n' >"$tmpdir/context.md"
+  local result
+  result=$(bash -c "source $LIB_DIR/notes-parse.sh; get_ac_count '$tmpdir'" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$result" = "3" ]
+}
+
+# A plain-text "Acceptance criteria:" label (no "##" heading) with no
+# interfering indented prose still counts the true number of items.
+test_ac_count_plain_text_label_no_heading() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  printf 'Some background text.\n\nAcceptance criteria:\n1. One\n2. Two\n' >"$tmpdir/context.md"
+  local result
+  result=$(bash -c "source $LIB_DIR/notes-parse.sh; get_ac_count '$tmpdir'" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$result" = "2" ]
+}
+
+# Existing "## Acceptance Criteria" heading path (primary, non-fallback)
+# still parses correctly — no regression from the fallback regex change.
+test_ac_count_heading_section_still_works() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  printf '## Acceptance Criteria\n\n1. First\n2. Second\n- [ ] Third\n' >"$tmpdir/context.md"
+  local result
+  result=$(bash -c "source $LIB_DIR/notes-parse.sh; get_ac_count '$tmpdir'" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$result" = "3" ]
+}
+
+# A real markdown heading boundary (e.g. "## Background") still stops the
+# fallback scan as intended — only indentation-based false positives were
+# the bug, not headings themselves.
+test_ac_count_heading_boundary_still_stops_fallback() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  printf '1. Leading numbered line not actually an AC\n\n## Background\n\n1. Should not be counted\n2. Should not be counted\n' >"$tmpdir/context.md"
+  local result
+  result=$(bash -c "source $LIB_DIR/notes-parse.sh; get_ac_count '$tmpdir'" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$result" = "1" ]
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -148,7 +204,11 @@ for fn in \
   test_critique_single_section_status \
   test_critique_rerun_score_takes_latest \
   test_critique_rerun_status_takes_latest \
-  test_critique_rerun_stops_at_next_heading; do
+  test_critique_rerun_stops_at_next_heading \
+  test_ac_count_indented_prose_not_boundary \
+  test_ac_count_plain_text_label_no_heading \
+  test_ac_count_heading_section_still_works \
+  test_ac_count_heading_boundary_still_stops_fallback; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

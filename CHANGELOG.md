@@ -17,6 +17,23 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.49.1 (2026-09-10)
+
+Fixes #345: `get_ac_count`'s fallback heuristic (used whenever `context.md` has no `##
+Acceptance Criteria` markdown heading) built its "stop" boundary with `^#*\s*(...)`, which
+matches zero-or-more `#` followed by *any* whitespace — including a line's leading
+indentation, not just the single space after a heading marker. An indented prose
+continuation line that merely contained one of the boundary keywords (e.g. "  context, so
+behavior parity with the existing call sites...") satisfied that regex purely by vocabulary,
+and `sed -E ... Iq` quit at the first match — discarding everything after, including the real
+AC section, before counting ever ran. Root-caused live on WIL-77: a `ZERO_AC` gate-stop fired
+even though `context.md` had 6 numbered acceptance criteria under a plain-text `Acceptance
+criteria:` label further down the file. The boundary now requires either an actual markdown
+heading (one-or-more `#`, then a space) or the bare keyword at true column 0 — never a
+keyword preceded by any indentation, since that's always continuation prose, never a section
+boundary. `ticket-auto-pipeline/lib/notes-parse.sh`; regression tests added in
+`lib/tests/test-notes-parse.sh`.
+
 ## 0.49.0 (2026-09-09)
 
 Also `fleet-controller` 0.30.0. Root-caused from a live WIL-77 failure: three consecutive
