@@ -395,6 +395,52 @@ test_pr_review_zombie_resumes_at_step_4_6() {
   [ "$resume_step" = "STEP_4_6" ]
 }
 
+test_gate_reconcile_zombie_resumes_at_step_3_5() {
+  # GitHub #353: PHASE=GATE is shared by two dispatch-table steps —
+  # STEP_2_5/STEP_3 (gate-check.sh, synchronous bash run inline by the
+  # router: writes GATE|gate|start then done/fail in the same invocation,
+  # never a |waiting| bracket, so it cannot zombie in practice) and
+  # STEP_3_5 (the isolated ticket-gate-reconcile agent, spawned via
+  # spawn_agent_pre with STEP=reconcile, which DOES write
+  # GATE|reconcile|waiting|... and can genuinely zombie mid-run). A stuck
+  # reconcile spawn must resume at STEP_3_5 (re-running the actual
+  # reconciliation), not STEP_3 (which only re-runs gate-check.sh's entry
+  # checks and performs no reconciliation at all).
+  local old_ts
+  old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
+  local out
+  out=$(_detect_resume_with_log "GH-353-1" \
+    "${old_ts}|META|schema|info|2" \
+    "${old_ts}|APPRAISE|appraise|done|complexity=simple" \
+    "${old_ts}|EXEC|create-artifact|done|simple-fix" \
+    "${old_ts}|GATE|reconcile|waiting|Agent launched — reconcile hold comments")
+  local resume_step
+  resume_step=$(_field "$out" RESUME_STEP)
+  [ "$resume_step" = "STEP_3_5" ]
+}
+
+test_gate_non_reconcile_zombie_falls_back_to_step_3() {
+  # Companion to the STEP_3_5 case above. gate-check.sh (step=gate) never
+  # writes a |waiting| bracket (confirmed: it has no spawn_agent_pre /
+  # phase_bracket_open call at all — start/done/fail are written
+  # synchronously in one invocation), so a GATE|gate|waiting| line is not
+  # structurally reachable in production. This test synthesizes one anyway
+  # to lock in the defensive fallback branch of the _z_step case (mirroring
+  # MAINTENANCE's own `*) RESUME_STEP=...` default) so a future change
+  # cannot silently drop it.
+  local old_ts
+  old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
+  local out
+  out=$(_detect_resume_with_log "GH-353-2" \
+    "${old_ts}|META|schema|info|2" \
+    "${old_ts}|APPRAISE|appraise|done|complexity=simple" \
+    "${old_ts}|EXEC|create-artifact|done|simple-fix" \
+    "${old_ts}|GATE|gate|waiting|synthetic — gate-check.sh never actually writes this")
+  local resume_step
+  resume_step=$(_field "$out" RESUME_STEP)
+  [ "$resume_step" = "STEP_3" ]
+}
+
 test_zombie_detection_skips_non_phase_waiting() {
   local old_ts
   old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
@@ -878,6 +924,8 @@ for fn in \
   test_prescan_zombie_does_not_force_step5_on_fresh_ticket \
   test_maintenance_document_zombie_still_routes_to_step5 \
   test_pr_review_zombie_resumes_at_step_4_6 \
+  test_gate_reconcile_zombie_resumes_at_step_3_5 \
+  test_gate_non_reconcile_zombie_falls_back_to_step_3 \
   test_branch_context_survives_resume \
   test_branch_context_carries_uat_policy \
   test_uat_policy_defaults_on_log_without_field \
