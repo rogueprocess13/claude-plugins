@@ -17,6 +17,27 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.49.4 (2026-09-10)
+
+Fixes #348: the VERIFY agent's Playwright tool allowlist (`agents/ticket-verify-agent.md`
+`tools:` frontmatter), `ticket-flow/dispatch-table.json`'s VERIFY preflight check, and the
+matching doc references in `ticket-verify/SKILL.md` and `ticket-auto/SKILL.md` all
+assumed Playwright is registered as a plugin-scoped MCP server
+(`mcp__plugin_playwright_playwright__*`). Every documented installation path for this
+plugin — both root `README.md` and `ticket-auto-pipeline/README.md`'s `~/.claude.json`
+MCP-server setup snippet — registers Playwright as a bare top-level stdio server instead,
+which Claude Code resolves as `mcp__playwright__*`. `plugin.json` declares no
+`mcpServers` block of its own, so there is no supported deployment shape where the old
+plugin-scoped prefix is correct; confirmed via repo-wide grep that no doc, template, or
+config disagrees. Root-caused on WIL-77: the VERIFY agent had zero working Playwright
+tools for the entire run and silently fell back to re-running pytest. Renamed every
+reference to `mcp__playwright__*` and reconciled `lib/tests/test-tool-error-capture.sh`'s
+stale fixture names to match `lib/tests/test-agent-activity.sh`'s already-correct
+convention (verified the classification logic in `hooks/tool-error-capture.sh` matches on
+a `*playwright*` glob, so both fixture spellings passed — the rename fixes fixture realism,
+not a code correctness gap). The related `detect-resume.sh` WARN-verdict resume-path gap
+noted in the issue is intentionally left unfixed as a separate follow-up.
+
 ## 0.49.3 (2026-09-10)
 
 Fixes #346: `agents/ticket-verify-agent.md` — the system prompt for the spawned VERIFY
