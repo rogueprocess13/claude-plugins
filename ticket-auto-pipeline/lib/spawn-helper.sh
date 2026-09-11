@@ -261,6 +261,16 @@ spawn_write_env() {
 
   local env_file="/tmp/ticket-auto-${TICKET_ID}-env.sh"
 
+  # Plugin root (two levels up from this file's own lib/ dir), so
+  # persona-select.sh's `${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/personas`
+  # resolves correctly regardless of which installed copy of this plugin a
+  # headless fleet worker actually runs from — a headless worker has
+  # CLAUDE_PLUGIN_ROOT unset otherwise, and both of persona-select.sh's own
+  # fallback branches then resolve under the wrong tree (2026-09-10 retro:
+  # every APPRAISE/PR-REVIEW agent that run had zero persona injection).
+  local _plugin_root
+  _plugin_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
   # Single-quote heredoc — NO shell expansion, NO injection.
   # Even BE_TEST_CMD="mvn test -Dfoo=\"bar\"" is preserved exactly.
   cat >"$env_file" <<'ENVEOF'
@@ -280,6 +290,14 @@ export LOCAL_URL="LOCAL_URL_PLACEHOLDER"
 export UAT_URL="UAT_URL_PLACEHOLDER"
 export SLACK_CHANNEL="SLACK_CHANNEL_PLACEHOLDER"
 export BASE_BRANCH="BASE_BRANCH_PLACEHOLDER"
+# Diffs must resolve the base against the remote, never the local ref. On a
+# per-epic branch strategy the local epic ref only advances when someone
+# explicitly fetches, which no pipeline phase does — so `git diff
+# $BASE_BRANCH...` silently attributes a previous ticket's commits to this
+# one (WIL-78, 2026-09-10). Consumers computing a diff/merge-base should
+# prefer BASE_REF (after `git fetch origin $BASE_BRANCH`); BASE_BRANCH
+# remains the bare name for push/PR targeting.
+export BASE_REF="origin/BASE_BRANCH_PLACEHOLDER"
 export INTEGRATION_BRANCH="INTEGRATION_BRANCH_PLACEHOLDER"
 export TICKET_BRANCH="TICKET_BRANCH_PLACEHOLDER"
 export UAT_POLICY="UAT_POLICY_PLACEHOLDER"
@@ -287,6 +305,7 @@ export AUTONOMY="AUTONOMY_PLACEHOLDER"
 export MERGE_POLICY="MERGE_POLICY_PLACEHOLDER"
 export WORKTREE_ROOT="WORKTREE_ROOT_PLACEHOLDER"
 export FROM_PLANNED="FROM_PLANNED_PLACEHOLDER"
+export CLAUDE_PLUGIN_ROOT="CLAUDE_PLUGIN_ROOT_PLACEHOLDER"
 ENVEOF
 
   # Sed-replace placeholders with actual values (escaped for sed)
@@ -313,6 +332,7 @@ ENVEOF
     -e "s|MERGE_POLICY_PLACEHOLDER|$(_sed_escape "$MERGE_POLICY")|" \
     -e "s|WORKTREE_ROOT_PLACEHOLDER|$(_sed_escape "$WORKTREE_ROOT")|" \
     -e "s|FROM_PLANNED_PLACEHOLDER|$(_sed_escape "$FROM_PLANNED")|" \
+    -e "s|CLAUDE_PLUGIN_ROOT_PLACEHOLDER|$(_sed_escape "$_plugin_root")|" \
     "$env_file"
 
   # Auto-append LINEAR_API_KEY to env file when available

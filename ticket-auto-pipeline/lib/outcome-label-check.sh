@@ -39,6 +39,22 @@ OUTCOME_LABELS="Smooth Rough Hard"
 _get_outcome_from_log() {
   local outcome
   outcome=$(grep '^[^|]*|IMPLEMENT|implement-outcome|info|' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d'|' -f5- || true)
+
+  # Fallback: agents sometimes report the outcome only inside an
+  # IMPLEMENT|implement|done| line and never invoke the flow.sh
+  # implement-outcome trigger that writes the dedicated entry above
+  # (WIL-78, 2026-09-10 — required a live router repair). Recover it, but
+  # only as a standalone Smooth/Rough/Hard token so prose like "2 files
+  # changed" still cannot match — the reason this matcher was tightened
+  # away from IMPLEMENT|implement|done| in the first place.
+  if [ -z "$outcome" ]; then
+    outcome=$(grep '^[^|]*|IMPLEMENT|implement|done|' "$LOG_FILE" 2>/dev/null \
+      | grep -oE '\b(Smooth|Rough|Hard)\b' | tail -1 || true)
+    if [ -n "$outcome" ]; then
+      echo "outcome-label-check: recovered '$outcome' from IMPLEMENT|implement|done| (dedicated line absent)" >&2
+    fi
+  fi
+
   echo "$outcome"
 }
 

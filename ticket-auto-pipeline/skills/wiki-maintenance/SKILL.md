@@ -180,10 +180,17 @@ In addition to errata (failures), scan recent `ai-context.md` files (successes) 
 Find `ai-context.md` files created within the last 90 days:
 
 ```bash
-find . -path "*/tickets/*/ai-context.md" -newermt "90 days ago" 2>/dev/null | head -50
+# Use an absolute ISO-8601 date, not GNU find's relative "90 days ago" form:
+# `find` is `bfs` on some hosts, and bfs rejects relative timestamps outright
+# rather than falling back. Combined with `2>/dev/null` and a `| head`
+# pipeline (whose exit status is head's, not find's), the rejection was
+# invisible and this step silently returned nothing on every run on such a
+# host (2026-09-10 retro).
+_cutoff=$(date -u -d '90 days ago' +%Y-%m-%d 2>/dev/null || date -u -v-90d +%Y-%m-%d)
+find . -path "*/tickets/*/ai-context.md" -newermt "$_cutoff"
 ```
 
-If the `tickets` directory is elsewhere, derive the path from the ticket-auto workspace structure or search from the repo root. If no files are found, skip to Step 3 — Lint before commit (a no-op when nothing changed this run).
+If this `find` invocation itself errors, treat it as a failure and log it — do not interpret an empty result as "no recent ai-context.md files" without confirming `find` succeeded. If the `tickets` directory is elsewhere, derive the path from the ticket-auto workspace structure or search from the repo root. If no files are found (and `find` succeeded), skip to Step 3 — Lint before commit (a no-op when nothing changed this run).
 
 ### 2.5b — Read and evaluate each file
 

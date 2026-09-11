@@ -569,7 +569,7 @@ _gate_entry() {
     approved=$(echo "$issue_json" | jq -r '[.labels.nodes[]?.name? // empty | ascii_downcase] | index("approved") != null' 2>/dev/null || echo 'false')
     if [ "$approved" = "true" ]; then
       _plog "$LOG_FILE" "GATE" "gate" "done" "auto-approved (complex + $autonomy + approved)"
-      hb_gate "entry-gate" "done" "complex auto-approved" "{\"complexity\":\"$complexity\",\"autonomy\":\"$autonomy\",\"approved\":true}"
+      hb_gate "entry-gate" "ok" "complex auto-approved" "{\"complexity\":\"$complexity\",\"autonomy\":\"$autonomy\",\"approved\":true}"
       _write_gate_verdict PASS
       # Pass through to verify flow.sh's post-trigger assertion still holds
       return 0
