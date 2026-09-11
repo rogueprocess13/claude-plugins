@@ -150,6 +150,8 @@ AMENDMENT_BODY="**Amendment cycle #${RECONCILE_N}**
 {list of new questions, or 'None'}"
 ```
 
+Run `AMENDMENT_BODY` through the `simple-english` skill (embedded mode, Plain) before posting — the open-questions list is the part users most often report as hard to follow, and this keeps it readable. Leave code blocks, identifiers, and file paths untouched.
+
 Use the Linear access strategy to post the comment (bash `save_comment` when `LINEAR_API_KEY` is set, MCP fallback otherwise).
 
 Call `re-claim` to remove the `approved` label:

@@ -35,6 +35,11 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-phase-inspector.sh
 	bash ticket-auto-pipeline/lib/tests/test-inspect-verifiers.sh
 	bash ticket-auto-pipeline/lib/tests/test-skill-fingerprint.sh
+	bash ticket-auto-pipeline/lib/tests/test-adr-store.sh
+	bash ticket-auto-pipeline/lib/tests/test-adr-check.sh
+	bash ticket-auto-pipeline/lib/tests/test-wiki-bootstrap.sh
+	bash ticket-auto-pipeline/lib/tests/test-wiki-verify.sh
+	bash ticket-auto-pipeline/lib/tests/test-adr-gate-parse.sh
 	# fleet-controller tests
 	bash fleet-controller/lib/tests/test-fleet-detect.sh
 	bash fleet-controller/lib/tests/test-fleet-detect-new.sh
@@ -155,6 +160,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-crosscheck-fixtures.sh
 	bash ticket-planner/lib/tests/test-planner-doctor.sh
 	bash ticket-planner/lib/tests/test-planner-body-template-humanizer.sh
+	bash ticket-planner/lib/tests/test-planner-adr-gate.sh
 
 test-planner-intent-gate:
 	@echo "=== planner intent gate tests ==="

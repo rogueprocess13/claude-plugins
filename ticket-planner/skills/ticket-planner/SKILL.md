@@ -826,6 +826,34 @@ For each phase to run:
 
 4. **Wait for the agent** to complete. The agent writes state log entries itself.
 
+4a. **ADR gate halt bridge (adr-governance-gate) — Architecture phase only.** If
+    `$PHASE` is `Architecture`, check for a blocking gate verdict before the retry
+    check in step 5 — a blocking verdict is a content defect the phase cannot resolve
+    itself (it needs a human to accept or resolve the ADR out of band), not a
+    transient agent failure, so it must not consume the retry budget the same way an
+    ordinary crash does:
+
+    ```bash
+    source "${CLAUDE_PLUGIN_ROOT}/lib/planner-adr-gate.sh"
+    if _adr_hit=$(planner_adr_gate_blocked "$INITIATIVE_ID" "Architecture" "design"); then
+      _adr_verdict=$(echo "$_adr_hit" | cut -f1)
+      _adr_id=$(echo "$_adr_hit" | cut -f2)
+      echo "Architecture parked on the ADR gate: ${_adr_verdict} (${_adr_id})"
+      echo ""
+      echo "architecture.md was still written — the working design is unaffected. What's"
+      echo "missing is ratification: a human accepts ${_adr_id} (or resolves the conflict,"
+      echo "for a CONFLICT verdict) out of band, then this phase resumes and re-classifies."
+      echo ""
+      echo "Artifacts:  ${STATE_DIR}/artifacts/"
+      echo "Raw log:    grep 'META|adr-gate|fail' $(planner_state_log "$INITIATIVE_ID")"
+      echo "Resume:     /ticket-planner resume ${INITIATIVE_ID}"
+      exit 0
+    fi
+    ```
+
+    This mirrors step 1a's Crosscheck halt exactly: a normal terminal outcome (`exit
+    0`, not an error), not a retry. Do not fall through to step 5 on a hit here.
+
 5. **Check the result.** The retry budget is derived from `fail` entries in the state
    log, not held in memory, so it survives a crashed router:
 

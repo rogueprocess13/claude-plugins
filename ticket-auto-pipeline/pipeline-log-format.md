@@ -778,6 +778,45 @@ envelope — this is a note for a human reader, not a machine contract.
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|assumption|info|No archived-record guidance in the ticket; assuming archived records are excluded from the export, per the existing 'active records only' default elsewhere in this service." >> "$LOG_FILE"
 ```
 
+### ADR-gate entries (adr-governance-gate)
+
+Every invocation of the reusable ADR gate (`skills/adr-gate/SKILL.md`, any phase, via
+the § 8 preamble instruction), regardless of verdict. Written by
+`lib/adr-gate-parse.sh`, which self-parses the gate's own `=== ADR_GATE_RESULT ===`
+block at the end of the gate's own run — this makes park rate measurable from the first
+invocation, not only once a calling phase separately routes on the result. The MSG is a
+JSON object:
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|adr-gate|info|{\"schema_version\":1,\"adr_required\":true,\"verdict\":\"CREATED_PROPOSED\",\"adr_id\":\"ADR-0012\",\"governing_adr\":\"\",\"conflict\":\"\",\"human_decision_required\":true,\"rationale\":\"No existing ADR addresses webhook retry strategy.\",\"parse_status\":\"ok\",\"parse_error\":\"\"}" >> "$LOG_FILE"
+```
+
+JSON fields: `schema_version` (integer), `adr_required` (boolean), `verdict` (one of the
+five closed values, see [docs/adr-gate-schema.md](docs/adr-gate-schema.md)), `adr_id`
+(may be empty — `NOT_ARCHITECTURAL` carries none), `governing_adr` (`GOVERNED` only),
+`conflict` (`CONFLICT` only), `human_decision_required` (boolean — `true` only for
+`CREATED_PROPOSED`/`SUPERSEDE_REQUIRED`), `rationale` (always populated),
+`parse_status` (`ok`|`invalid`), `parse_error` (string).
+
+**Status is `info`, not `waiting`** — the gate itself never parks anything; it returns a
+verdict and the calling phase decides separately whether to emit a `human-hold` or a
+`gate-stop` entry on the strength of that verdict (see below).
+
+**A rejected result IS still logged**, with `parse_status: "invalid"` and no usable
+`verdict` — a swallowed verdict would make park rate unmeasurable, the same reasoning
+`human-hold`'s invalid-record handling above uses. Unlike `human-hold`, there is no
+`absent` case: the gate is required to emit a result on every invocation, so a missing
+block is a parser failure like any other malformed block, not a normal non-event.
+
+The full field set, closed verdict set and routing contract are in
+[docs/adr-gate-schema.md](docs/adr-gate-schema.md).
+
+A `CREATED_PROPOSED`/`SUPERSEDE_REQUIRED` verdict is followed by an ordinary
+`META|human-hold` entry (`REASON: ARCH_COMMITMENT`) from the calling phase — this
+channel and `human-hold` are siblings, not a replacement for one another. A `CONFLICT`
+verdict is followed by `META|gate-stop|fail|ADR_CONFLICT` (see Gate-stop codes below)
+instead of a hold.
+
 ## Schema version header
 
 Every new pipeline log begins with a schema declaration as its first line:
@@ -814,6 +853,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 | `CODE_REVIEW_EXHAUSTED` | Code-review fix-and-re-review loop reached 3 cycles with medium+ severity findings still open (Step 4b) |
 | `RECONCILE_EXHAUSTED` | `RECONCILE_CYCLE` reached 3 — gate hold → re-approve → re-hold cycle capped, needs human review (Step 3.5) |
 | `HUMAN_HOLD_EXHAUSTED` | A human-hold request would push `hold_attempts` past `FLEET_HOLD_MAX_ATTEMPTS` (default 3) — the ask → partial-answer → re-ask cycle is capped, needs human review. Written by fleetd, not the router (`human-hold-protocol`, mirrors `RECONCILE_EXHAUSTED`'s shape) |
+| `ADR_CONFLICT` | The ADR gate returned `CONFLICT` — a phase's proposed approach contradicts an Accepted ADR. Not a park: the approach needs rethinking, not ratification (`adr-governance-gate`, see [docs/adr-gate-schema.md](docs/adr-gate-schema.md)) |
 
 ## Ordering guarantees
 

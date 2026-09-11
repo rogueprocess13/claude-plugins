@@ -481,7 +481,7 @@ else
 fi
 ```
 
-If set, post a summary comment to that Linear issue using `mcp__linear-server__save_comment`:
+If set, run the summary body through the `simple-english` skill (embedded mode, Plain) before posting, then post it to that Linear issue using `mcp__linear-server__save_comment`:
 
 ```markdown
 ## Retro — {YYYY-MM-DD} (window: {WINDOW})

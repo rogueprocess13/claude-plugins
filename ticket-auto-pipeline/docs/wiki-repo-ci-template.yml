@@ -1,0 +1,54 @@
+# Adoptable CI template for the separate WIKI_ROOT repository.
+#
+# design.md D12 (adr-governance-gate): this claude-plugins repo's own CI
+# cannot gate content it does not hold — WIKI_ROOT is a separate docs repo.
+# adr-check.sh (the validator) and wiki-verify.sh (the non-blocking
+# structural pass) both live here, in ticket-auto-pipeline/lib/, so the wiki
+# repo's own CI has to fetch them rather than vendor a copy that would drift.
+#
+# Copy this file into the wiki repo as .github/workflows/adr-check.yml, then:
+#   1. Replace CLAUDE_PLUGINS_REPO below with this repo's actual
+#      "org/name" slug.
+#   2. Replace CLAUDE_PLUGINS_REF with a pinned tag or commit sha, not a
+#      branch — a floating ref means the wiki repo's CI behaviour can change
+#      out from under it on an unrelated push here.
+#
+# Unlike wiki-verify.sh's non-blocking posture inside the ticket-auto
+# pipeline (design.md D13 — a structural-integrity warn, not a gate-stop,
+# because the pipeline has no safe fallback tier below it), a schema
+# violation caught here has an obvious safe response: don't merge the wiki
+# change. This job is deliberately allowed to fail the wiki repo's CI.
+#
+# Until a wiki repo actually adopts this, hand edits made directly there
+# outside `wiki-maintenance`'s own commit-time adr-check.sh gate are
+# unguarded — see docs/adr-schema.md's "Enforcement" section and design.md's
+# accepted trade-off list.
+
+name: adr-check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  adr-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this wiki repo
+        uses: actions/checkout@v4
+        with:
+          path: wiki
+
+      - name: Checkout adr-check.sh from claude-plugins
+        uses: actions/checkout@v4
+        with:
+          repository: CLAUDE_PLUGINS_REPO # e.g. your-org/willard-pro-claude-plugins
+          ref: CLAUDE_PLUGINS_REF # a pinned tag or commit sha — never a branch
+          sparse-checkout: |
+            ticket-auto-pipeline/lib/adr-check.sh
+            ticket-auto-pipeline/lib/adr-store.sh
+          sparse-checkout-cone-mode: false
+          path: claude-plugins
+
+      - name: Validate this wiki's ADR store
+        run: bash claude-plugins/ticket-auto-pipeline/lib/adr-check.sh --wiki-root wiki

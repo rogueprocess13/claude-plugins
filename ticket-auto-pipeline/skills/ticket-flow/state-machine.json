@@ -238,6 +238,26 @@
       "description": "Unblock ticket — information received",
       "precondition": "must_not_be_epic"
     },
+    "needs-adr": {
+      "from": null,
+      "to": null,
+      "adds": [
+        "needs-adr"
+      ],
+      "removes": [],
+      "description": "Block ticket — parked or stopped on an ADR gate CREATED_PROPOSED/SUPERSEDE_REQUIRED/CONFLICT verdict",
+      "precondition": "must_not_be_epic"
+    },
+    "needs-adr-resolved": {
+      "from": null,
+      "to": null,
+      "adds": [],
+      "removes": [
+        "needs-adr"
+      ],
+      "description": "Unblock ticket — the governing ADR has been accepted",
+      "precondition": "must_not_be_epic"
+    },
     "re-claim": {
       "from": null,
       "to": null,

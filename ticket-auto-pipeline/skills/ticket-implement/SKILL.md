@@ -279,6 +279,16 @@ Append to `notes.md`:
 
 **Before editing, run GitNexus blast radius:** Call `mcp__gitnexus__impact` on each target symbol from the plan. Compare the result's d=1 (WILL BREAK) callers against the affected files listed in the plan. If any d=1 symbol is NOT in the plan, append it to the implementation scope. If GitNexus is unavailable, log a warning and proceed — never block on it.
 
+**ADR gate — approach selection:** If, while working through the plan, the intended work turns
+out to require a different system-level approach than the plan assumed — not a local
+implementation detail, but a choice that would constrain how other components or future work
+must integrate — invoke the gate before committing to that approach. See § 8 ADR gate in the
+shared preamble. This is the "implement discovers an unforeseen commitment" case: the plan's
+own approach was already vetted at appraise-exec (Step 2.5 there); it is a *new* approach
+surfacing mid-implementation that has not yet been classified. Most tickets never hit this —
+only invoke the gate for a candidate that meets the reversibility test in § 8, not for an
+ordinary implementation-detail choice you're free to make yourself.
+
 ### Simple-fix mode
 
 Work through each change in `simple-fix.md` in order. **As each acceptance

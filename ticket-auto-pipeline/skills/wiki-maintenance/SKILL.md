@@ -1,11 +1,11 @@
 ---
 name: wiki-maintenance
-description: Incorporates unresolved errata entries from ticket-appraise and ticket-implement feedback into wiki flow files. Reads all ## Errata sections under the project's WIKI_ROOT, applies each gap fix to the relevant flow section, deletes the entry once incorporated (git is the audit trail), lints the result, and commits WIKI_ROOT. Use when wiki errata has accumulated (~5+ unresolved entries), or the user says "maintain wiki", "update wiki from errata", "incorporate errata", or "fix wiki gaps".
+description: Incorporates unresolved errata entries from ticket-appraise and ticket-implement feedback into wiki flow files. Reads all ## Errata sections under the project's WIKI_ROOT, applies each gap fix to the relevant flow section, deletes the entry once incorporated (git is the audit trail), simplifies the prose of every touched file with the simple-english skill, lints the result, and commits WIKI_ROOT. Use when wiki errata has accumulated (~5+ unresolved entries), or the user says "maintain wiki", "update wiki from errata", "incorporate errata", or "fix wiki gaps".
 ---
 
 # Wiki Maintenance — Errata Incorporation
 
-You are maintaining pre-traced call-chain wiki files. Your input is errata entries appended by `ticket-appraise` Step 3c and `ticket-implement` Step 4c — each entry describes a gap found during actual ticket work. Your job is to incorporate those fixes into the flow content, deleting each entry once its fix lands (git already keeps the history), then lint and commit `WIKI_ROOT`.
+You are maintaining pre-traced call-chain wiki files. Your input is errata entries appended by `ticket-appraise` Step 3c and `ticket-implement` Step 4c — each entry describes a gap found during actual ticket work. Your job is to incorporate those fixes into the flow content, deleting each entry once its fix lands (git already keeps the history), run the prose through the `simple-english` skill before it ships, then lint and commit `WIKI_ROOT`.
 
 ## Logging (--from-auto)
 
@@ -33,6 +33,17 @@ source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
 Use `$WIKI_ROOT` from the environment. If `$WIKI_ROOT` is empty, fall back to reading CLAUDE.md in the current directory — and when you resolve a value that way, `export WIKI_ROOT="<resolved absolute path>"` explicitly. Every later step in this skill (including the Step 4 commit guard) reads `$WIKI_ROOT` as a real shell variable, not by re-parsing this section's prose — an unexported value here reads as "not configured" downstream, which is the safe failure mode but not the correct one if a wiki actually exists.
 
 Stop here if no `WIKI_ROOT` is available — no wiki exists for this project.
+
+**Bootstrap (adr-governance-gate):** before reading anything under `WIKI_ROOT`, scaffold what's
+missing — a wiki that has never been through this skill before may have flow files but no
+`index.md`/`decisions/`/`glossary.md` yet:
+
+```bash
+source "$HOME/.claude/skills/lib/wiki-bootstrap.sh"
+wiki_bootstrap "$WIKI_ROOT"
+```
+
+No-op on an already-scaffolded wiki; scaffolds only what's missing on a partial one.
 
 After resolving:
 ```
@@ -194,6 +205,47 @@ Read each `ai-context.md` file. It is short by design (a single page with named 
 
 For each finding that meets inclusion criteria, check if the wiki already has a relevant entry. Read the most relevant wiki file(s) identified via `{WIKI_ROOT}/index.md`.
 
+**Idempotency check (task 6.3), before any promotion write below:** if the relevant wiki entry
+already carries this finding's source ticket id in its provenance tag (e.g. an existing line
+already ends `(WIL-67)`), skip this finding entirely — it was already promoted in an earlier
+maintenance run. `ticket-appraise` Step 0.5's `wiki-bootstrap.sh` run means `{WIKI_ROOT}/index.md`
+always exists by this point, so this check has something to read against even on a fresh wiki.
+This is ticket-scoped: it catches the same `ai-context.md` resurfacing across runs (2.5a's
+90-day discovery window), not content similarity — a genuinely new finding about the same topic
+from a *different* ticket is not a duplicate.
+
+**Findings from the Decisions section route through the ADR gate, not directly to prose.**
+Everything else below this point (Patterns used, Watch out for, cross-cutting findings) is
+unchanged from before this capability existed — write or update prose exactly as already
+described.
+
+#### Decisions-section findings (adr-governance-gate)
+
+For each surviving Decisions-section finding, invoke the gate — see § 8 ADR gate in the shared
+preamble — with `PHASE: MAINTENANCE`, `DECISION_CANDIDATE` and `IDENTIFIED_REASON` drawn from
+the finding, and `AFFECTED_COMPONENTS` from whatever the finding's source ticket named. Route on
+the verdict:
+
+- **`NOT_ARCHITECTURAL`** — this finding is decision-rationale worth capturing, but the gate
+  determined it isn't governance-worthy. Fall through to the ordinary prose path below (same
+  template as Patterns/Watch-out) rather than discarding it — a documented rationale is still
+  valuable even when it doesn't rise to an ADR.
+- **`GOVERNED`** — do not write new prose. Instead, ensure the relevant wiki file's entry (or a
+  new one, if none exists yet) references the governing ADR by id
+  (`**Decision:** See [ADR-NNNN](../decisions/{NNNN}-{slug}.md) — {one-line summary of the
+  constraint}.`) rather than restating it — the ADR is the source of truth, the wiki entry is a
+  pointer into it.
+- **`CREATED_PROPOSED`** or **`SUPERSEDE_REQUIRED`** — the gate already wrote a `proposed` ADR.
+  Emit the `=== HUMAN_HOLD ===` block per § 7/§ 8 with `REASON: ARCH_COMMITMENT`. Do not write a
+  wiki entry for this finding yet — there is nothing settled to point to until the ADR is
+  accepted; a future maintenance run's re-classification (now `GOVERNED`) is what adds the
+  pointer entry above.
+- **`CONFLICT`** — the finding describes something that contradicts an Accepted ADR. Emit the
+  `ADR_CONFLICT` gate-stop per § 8. This maintenance run does not silently continue past a
+  discovered contradiction — someone needs to look at it.
+
+#### Ordinary prose path (Patterns used, Watch out for, cross-cutting — unchanged)
+
 **If the finding is already documented:** update the existing entry with the additional source ticket reference (e.g., add `(WIL-67)` to an existing line). Do NOT create a duplicate entry.
 
 **If the finding is new:** add it to the appropriate wiki file as one section — a single
@@ -215,7 +267,27 @@ separate ticket list — a bullet with two contributing tickets carries both: `(
 
 ### 2.5d — Count and track
 
-Track the number of ai-context.md files processed and the number of findings promoted to wiki. These counts are included in the Step 5 report alongside errata counts.
+Track the number of ai-context.md files processed and the number of findings promoted to wiki. Also track the number of ADRs created (`CREATED_PROPOSED`/`SUPERSEDE_REQUIRED` verdicts from 2.5c above) and the number of Decisions-section findings that were `GOVERNED` (pointer-only, no new ADR). These counts are included in the Step 5 report alongside errata counts.
+
+### 2.5e — Glossary maintenance
+
+After processing all findings above, do two things (docs/glossary-schema.md § Glossary maintenance):
+
+1. **Define new concept terms.** If a fix incorporated in Step 2, or an ADR the gate wrote in
+   2.5c, introduces a concept term not already in `{WIKI_ROOT}/glossary.md`, add an entry for
+   it (term heading, short definition, `Avoid:`/`Related:` as applicable — see
+   [docs/glossary-schema.md](../../docs/glossary-schema.md)).
+2. **Resolve reported term drift.** Run the term-drift check:
+   ```bash
+   source "$HOME/.claude/skills/lib/wiki-bootstrap.sh"
+   wiki_term_drift_check "$WIKI_ROOT"
+   ```
+   For each `TERM_DRIFT` line reported, resolve it one of two ways: correct the usage in the
+   named file to the preferred term, or — when the "avoided" synonym turns out to denote a
+   genuinely different concept rather than a drifted usage — split the glossary entry into two,
+   defining both terms separately instead of rewriting real content to fit a bad merge.
+
+Track the number of glossary entries added and term-drift violations resolved. Include both in the Step 5 report.
 
 ---
 
@@ -264,10 +336,38 @@ when `--from-auto`) and proceeds; a human incorporates lint fixes on the next pa
 
 ---
 
+## Step 3.5 — Plain-English pass
+
+Every wiki file this run touched (Steps 2, 2.5, 2.6 — new content, edited flow sections, new
+files) gets a language pass before it ships. Invoke the `simple-english` skill (Plain mode) on
+the prose you just wrote or edited — not the whole file, just the sections you changed this run,
+so an untouched section keeps its existing wording rather than getting rewritten as a side
+effect of an unrelated fix.
+
+Apply the skill's "never touch" rule literally: code, identifiers, commands, file paths,
+class/method names, `(TICKET-ID)` provenance tags, and YAML frontmatter are exempt — only the
+surrounding descriptive/procedural prose is rewritten. A flow-section fix like "Call
+`BomFeignClient.charge(reserve=true, usage)` via `POST /body-service-resource-usages/charge`
+(CRE-47)" changes nothing (it is already scoped code/paths, not prose); an errata-derived
+paragraph explaining *why* a step exists is exactly the target.
+
+If a fix is a single terse table row or list item (the common case per the fix-pattern table in
+Step 2b), there is usually no prose left to simplify — skip it rather than padding a plain fact
+into a sentence. Reserve the pass for entries that introduced actual descriptive text (new
+"## Dependencies" notes, new flow narration, new file content from Step 2b's "create a new wiki
+file" branch, new Step 2.5c wiki entries).
+
+This runs after Step 3's lint, not before — the lint checks structure and freshness metadata
+(frontmatter completeness, broken links, staleness), none of which a wording pass touches, so
+there is nothing gained by ordering it earlier and no risk of the rewrite disturbing what the
+lint just checked.
+
+---
+
 ## Step 4 — Commit WIKI_ROOT
 
-`WIKI_ROOT` is its own docs repo with no branches — after Steps 1-3 land their edits (and the
-lint has run), commit them scoped strictly to that directory. The guard below is a literal
+`WIKI_ROOT` is its own docs repo with no branches — after Steps 1-3.5 land their edits (lint has
+run and prose is simplified), commit them scoped strictly to that directory. The guard below is a literal
 precondition on the commit, not just a rule to reason about: `git -C ""` is documented, standard
 git behavior for "leave the working directory unchanged" — it is **not** an error and does
 **not** fail to resolve — so an empty or unset `WIKI_ROOT` reaching a bare `git -C "$WIKI_ROOT"
@@ -280,6 +380,22 @@ if [ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git" ]; then
   echo "WARNING: WIKI_ROOT not configured or not a git repo — skipping wiki commit" >&2
   [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|skip|WIKI_ROOT not configured or not a git repo" >> "$LOG_FILE"
 else
+  # adr-governance-gate: run before staging — adr-check.sh's immutability check
+  # diffs the working-tree body against the last COMMITTED revision, so it must
+  # see this run's edits while the prior commit is still the comparison point.
+  _adr_check_out=$(bash "$HOME/.claude/skills/lib/adr-check.sh" --wiki-root "$WIKI_ROOT" 2>&1)
+  _adr_check_rc=$?
+  if [ "$_adr_check_rc" -ne 0 ] && echo "$_adr_check_out" | grep -q 'ACCEPTED_ADR_MODIFIED'; then
+    echo "ERROR: adr-check.sh found a modification to an Accepted ADR — refusing to commit WIKI_ROOT." >&2
+    echo "Accepted ADRs are immutable in meaning (docs/adr-schema.md). Revert the edit and draft a superseding ADR instead." >&2
+    [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|fail|ACCEPTED_ADR_MODIFIED — commit refused" >> "$LOG_FILE"
+    exit 1
+  elif [ "$_adr_check_rc" -ne 0 ]; then
+    # Other adr-check.sh violations (schema, hedging, etc.) are logged but do not
+    # block the commit — same non-fatal posture as Step 3's wiki-check.sh lint.
+    [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|adr-check|warn|violations found — see command output" >> "$LOG_FILE"
+  fi
+
   git -C "$WIKI_ROOT" add -A
   if git -C "$WIKI_ROOT" diff --cached --quiet; then
     echo "Nothing staged in WIKI_ROOT — skipping commit."
@@ -296,6 +412,35 @@ make.
 
 ---
 
+## Step 4.5 — Wiki and ADR store integrity verification
+
+Run `lib/wiki-verify.sh` as the final step of this skill, after the commit lands — unlike Step
+3's `wiki-check.sh` (`--changed-only`) and Step 4's `adr-check.sh` (a targeted immutability gate),
+this is a whole-store structural pass: registry completeness (`index.md` File Registry vs the
+filesystem, both directions), `related:` link integrity, ADR schema/duplicate-source/supersession
+backstops, decisions-index consistency, and glossary term-drift/entry-rot
+(`openspec/changes/adr-governance-gate/specs/wiki-verify/spec.md`).
+
+```bash
+if [ -n "$WIKI_ROOT" ] && [ -d "$WIKI_ROOT" ]; then
+  _wiki_verify_out=$(bash "$HOME/.claude/skills/lib/wiki-verify.sh" --wiki-root "$WIKI_ROOT" 2>&1)
+  _wiki_verify_rc=$?
+  _wiki_verify_count=$(echo "$_wiki_verify_out" | grep -oE 'violations=[0-9]+' | tail -1 | cut -d= -f2)
+  if [ "$_wiki_verify_rc" -eq 2 ]; then
+    [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-verify|fail|setup error — see command output" >> "$LOG_FILE"
+  elif [ "$_wiki_verify_rc" -ne 0 ]; then
+    [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-verify|warn|${_wiki_verify_count:-?} violations found — see command output" >> "$LOG_FILE"
+  fi
+fi
+```
+
+Non-blocking (design.md D13) — a structural-integrity violation warns and this run's report
+carries the count; it never fails the run or reverts the commit already made in Step 4. A human
+incorporates `wiki-verify.sh` findings on a later pass, the same posture Step 3's lint already
+has for freshness/link findings.
+
+---
+
 ## Step 5 — Report
 
 ```
@@ -303,8 +448,11 @@ make.
 
 **Errata processed:** {count}
 **ai-context findings promoted:** {count}
+**ADRs created:** {count} ({count} GOVERNED — pointer only, no new ADR)
+**Glossary entries added:** {count} · **Term-drift violations resolved:** {count}
 **Files modified:** {list}
 **Committed:** {commit sha, or "skipped — {reason}"}
+**Wiki-verify:** {count} violation(s) — see log, or "clean"
 
 **Changes:**
 1. {file} — {what was added/changed}
