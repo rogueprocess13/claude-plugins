@@ -17,6 +17,38 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.1 (2026-09-11) — also fleet-controller 0.31.3
+
+Four fixes from the WIL-78 run's post-pipeline retro and its follow-on hardening:
+
+- `fleet-controller`: `fleet_notify_gate_stop` was wired into fleetd's per-step dispatch
+  path but never into `fleet_reconcile_orphans`'s `gate-stopped|gate-held` branch — the
+  path that actually handles a ticket spawned as a whole `ticket-auto --auto` process
+  that self-terminates with a gate-stop already in its own pipeline log. Every gate-stop
+  reached this way (WIL-70, WIL-71, WIL-73, WIL-77, WIL-78) never notified anyone.
+- `ticket-auto-pipeline`: `check_planned_body` required "Test User" universally and
+  "Navigation Path" for every feature/improvement ticket, with no awareness of whether
+  the ticket has a UI at all — unlike `gate-check.sh`'s mode-aware verify-plan check,
+  which already skips these for no-UI tickets. A pure backend ticket (WIL-78) hit an
+  unresolvable `PLANNED_BODY_INCOMPLETE` gate-stop with no edit that could satisfy it.
+- `ticket-auto-pipeline`: six defects surfaced by WIL-78's own retro, all confirmed by
+  direct log/repro evidence — including `gate-check.sh` calling `hb_gate` with a status
+  not in `_HB_STATUSES` (aborting `check_gate()` under `set -e` before its own
+  `return 0`, silently turning a genuine complex+auto+approved GATE PASS into an
+  apparent hold) and `planned-ticket-body-check.sh` joining multiple missing sections
+  with a bare space, rendering 3 missing sections as one unreadable run-on string.
+- `fleet-controller`: `held: gate` (every complex ticket waiting on the `approved`
+  label) had no Slack notify path — only genuine gate-stops and agent-raised
+  `held: human` holds reached Slack, leaving the single most common "needs a human"
+  state also the least visible one. Adds `fleet_notify_gate_held`, wired into
+  `fleet-reconcile.sh`'s existing reap-time branch, distinguishing `held:gate` from
+  `held:human` so the latter isn't double-notified by the human-hold-intake pass.
+
+Also closes a version-tracking drift: `fleet-controller/.claude-plugin/plugin.json` had
+advanced to 0.31.2 while `.claude-plugin/marketplace.json` and root `README.md` were
+still one full minor version behind at 0.30.1 (introduced in #352, which bumped only
+`plugin.json`). All three now agree.
+
 ## 0.50.0 (2026-09-11) — also ticket-planner 0.9.0
 
 Adds the ADR governance gate (adr-governance-gate): a reusable architectural-governance
