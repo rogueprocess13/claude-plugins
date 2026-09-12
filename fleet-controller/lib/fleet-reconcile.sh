@@ -444,6 +444,43 @@ fleet_reconcile_orphans() {
     incomplete) ;;
     gate-stopped | gate-held)
       if [ -z "$reconcile_epic" ]; then
+        # `held: human` already gets its own notify at hold-creation time
+        # (supervisor.py's human-hold-intake pass, fleet_notify_hold) —
+        # only `held: gate` (the ordinary "complex ticket, needs the
+        # `approved` label" hold) had no notify path anywhere: it is not a
+        # human-hold (detect_human_hold explicitly excludes it) and not a
+        # gate-stop (no META|gate-stop|fail line exists for it). Both
+        # outcomes classify identically as `gate-held` by
+        # fleet_ticket_terminal_state, so the actual outcome message must
+        # be re-read here to tell them apart. fleet_notify_gate_held is
+        # idempotent per (tid, held-at-timestamp) — safe to call again on
+        # every future reconcile pass over this same ticket.
+        if [ "$state" = "gate-stopped" ] && declare -f fleet_notify_gate_stop >/dev/null 2>&1; then
+          local gate_line gate_field gate_code gate_detail
+          gate_line=$(command grep '|META|gate-stop|fail|' "$log_file" 2>/dev/null | tail -1)
+          gate_field=$(printf '%s' "$gate_line" | awk -F'|' '{print $5}')
+          case "$gate_field" in
+          *" — "*)
+            gate_code="${gate_field%% — *}"
+            gate_detail="${gate_field#* — }"
+            ;;
+          *)
+            gate_code="$gate_field"
+            gate_detail=""
+            ;;
+          esac
+          fleet_notify_gate_stop "$tid" "$state_dir" "$gate_code" "$gate_detail" || true
+        elif [ "$state" = "gate-held" ] && declare -f fleet_notify_gate_held >/dev/null 2>&1; then
+          local held_line held_at held_msg
+          held_line=$(command grep -E '\|META\|outcome\|info\|held: ' "$log_file" 2>/dev/null | tail -1)
+          held_msg=$(printf '%s' "$held_line" | awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}')
+          held_at=$(printf '%s' "$held_line" | cut -d'|' -f1)
+          case "$held_msg" in
+          "held: gate"*)
+            fleet_notify_gate_held "$tid" "$state_dir" "$held_at" || true
+            ;;
+          esac
+        fi
         echo "fleet_reconcile: ${tid} — ${state}, left alone (no epic scope)"
         continue
       fi

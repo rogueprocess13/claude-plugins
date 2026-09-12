@@ -385,3 +385,65 @@ Resume with \`fleet-dispatch.sh <EPIC> --resume\` once the underlying condition 
   echo "$out"
   return 0
 }
+
+# ── fleet_notify_gate_held (routine-approve-gate-notify) ────────────────────
+#
+# fleet_notify_gate_held <tid> <state_dir> <held_at>
+#
+# The ordinary "complex ticket, awaiting the `approved` label" hold —
+# pipeline-finalize.sh's `held: gate` outcome, written at STEP_2_5 of every
+# complex ticket that isn't pre-approved. This is NOT `fleet_notify_hold`
+# (that fires only for `held: human`, the agent-raised-a-question hold) and
+# NOT `fleet_notify_gate_stop` (that fires only for a genuine structural
+# `META|gate-stop|fail|<CODE>`). Before this function, `held: gate` reached
+# no Slack channel at all: `detect_human_hold` explicitly excludes it, and
+# `detect_abandoned`'s held-branch only ever surfaces it as a dashboard WARN
+# after `FLEET_ABANDON_WARN_HOURS` — never a push. Since every complex ticket
+# passes through this state, it was the single most common "needs a human"
+# moment with zero visibility.
+#
+# `held_at` is the timestamp field of the `META|outcome|info|held: gate` log
+# line (its content-key input) — a fresh hold (re-approved, re-held on a
+# later generation) carries a new timestamp and notifies again; the same
+# hold instance re-observed on a later reconcile pass does not.
+fleet_notify_gate_held() {
+  local tid="$1" state_dir="$2" held_at="${3:-}"
+
+  local content_key
+  if command -v sha256sum >/dev/null 2>&1; then
+    content_key=$(printf '%s' "$held_at" | sha256sum | awk '{print $1}')
+  else
+    content_key=$(printf '%s' "$held_at" | shasum -a 256 | awk '{print $1}')
+  fi
+
+  local sidecar="${state_dir}/${tid}-gate-held-notify.json"
+  local sidecar_key="" notify_state=""
+  if [ -f "$sidecar" ]; then
+    sidecar_key=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('key',''))" "$sidecar" 2>/dev/null) || sidecar_key=""
+    notify_state=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('notify_state',''))" "$sidecar" 2>/dev/null) || notify_state=""
+  fi
+  if [ "$content_key" != "$sidecar_key" ]; then
+    notify_state=""
+  fi
+  if [ "$notify_state" = "sent" ]; then
+    return 0
+  fi
+
+  local text
+  text=$(printf ':raised_hand: *%s* needs your approval\nComplex ticket held at the Approve gate — appraise/exec are done, waiting on the `approved` label.\n\nApprove with `/ticket-flow %s human-approve`, then re-dispatch the epic.' \
+    "$tid" "$tid")
+
+  local out
+  out=$(fleet_slack_post "$tid" "$state_dir" "$text" 2>&1)
+  if [[ "$out" == *"log-only"* ]] || [[ "$out" == *"transport failure"* ]] || [[ "$out" == *"rejected"* ]] || [[ "$out" == *"construction failed"* ]]; then
+    if [[ "$out" == *"not configured"* ]]; then
+      printf '{"key": "%s", "notify_state": "sent"}' "$content_key" >"$sidecar" 2>/dev/null || true
+    else
+      printf '{"key": "%s", "notify_state": "failed"}' "$content_key" >"$sidecar" 2>/dev/null || true
+    fi
+  else
+    printf '{"key": "%s", "notify_state": "sent"}' "$content_key" >"$sidecar" 2>/dev/null || true
+  fi
+  echo "$out"
+  return 0
+}

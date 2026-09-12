@@ -65,15 +65,18 @@ The worktree path is available as `$WORKTREE_ROOT` from the env file (the base),
 
 Run both commands from the worktree (use `$WORKTREE_PATH` resolved in Step 1):
 
+Diff against the base's **remote** ref, not the local one — on a per-epic branch strategy the local epic ref only advances when someone explicitly fetches, which no pipeline phase does, so a stale local ref silently attributes a previous ticket's commits to this one.
+
 ```bash
 source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
-git -C "$WORKTREE_PATH" diff "${BASE_BRANCH:-develop}"...{branch}
+git -C "$WORKTREE_PATH" fetch origin "${BASE_BRANCH:-develop}" --quiet 2>/dev/null || true
+git -C "$WORKTREE_PATH" diff "${BASE_REF:-origin/${BASE_BRANCH:-develop}}"...{branch}
 ```
 
 This gives the full change set — all commits on the branch that are not on the base.
 
 ```bash
-git -C "$WORKTREE_PATH" log "${BASE_BRANCH:-develop}"..{branch} --oneline
+git -C "$WORKTREE_PATH" log "${BASE_REF:-origin/${BASE_BRANCH:-develop}}"..{branch} --oneline
 ```
 
 This gives the commit messages for context on what each commit intended.

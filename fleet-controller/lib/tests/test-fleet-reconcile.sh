@@ -1092,6 +1092,54 @@ test_unscoped_leaves_gate_stopped_and_gate_held_alone() {
   return 0
 }
 
+# `held: gate` and `held: human` both classify as the generic `gate-held`
+# state — the notify wiring must tell them apart by re-reading the outcome
+# line itself. Run in a subshell with fleet-notify.sh sourced fresh and a
+# stub curl on PATH, so this does not affect any other test's environment.
+test_unscoped_gate_held_notifies_only_for_held_gate() (
+  ws=$(_setup_workspace)
+  _reconcile_env "$ws"
+  queue_file=$(_reconcile_queue_file "$ws")
+  rm -f "$queue_file" "${queue_file%.jsonl}-dead-letter.jsonl"
+
+  _plog_line "${ws}/CRE-50-pipeline.log" "META" "gate-held" "info" "held"
+  _plog_line "${ws}/CRE-50-pipeline.log" "META" "outcome" "info" "held: gate"
+  _plog_line "${ws}/CRE-51-pipeline.log" "META" "gate-held" "info" "held"
+  _plog_line "${ws}/CRE-51-pipeline.log" "META" "outcome" "info" "held: human"
+
+  bindir=$(mktemp -d)
+  cat >"$bindir/curl" <<'STUB'
+#!/usr/bin/env bash
+payload=""
+prev=""
+for arg in "$@"; do
+  [ "$prev" = "-d" ] && payload="$arg"
+  prev="$arg"
+done
+echo "$payload" >>"$FAKE_CURL_LOG"
+printf '{"ok": true, "ts": "1700000000.000100"}'
+STUB
+  chmod +x "$bindir/curl"
+
+  export FAKE_CURL_LOG="$ws/.curl-calls"
+  : >"$FAKE_CURL_LOG"
+  export SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts"
+  export PATH="$bindir:$PATH"
+  source "$LIB_DIR/fleet-notify.sh"
+
+  fleet_reconcile_orphans "$ws" "$queue_file" "" >/dev/null 2>&1
+
+  grep -q "CRE-50" "$FAKE_CURL_LOG" || {
+    echo "expected a Slack call for held:gate CRE-50, got: $(cat "$FAKE_CURL_LOG")" >&2
+    return 1
+  }
+  grep -q "CRE-51" "$FAKE_CURL_LOG" && {
+    echo "held:human CRE-51 must not go through fleet_notify_gate_held" >&2
+    return 1
+  }
+  return 0
+)
+
 # A still-broken gate-stop is bounded by the existing restart cap: it retries,
 # then dead-letters, and further scoped resumes leave it alone. No new counter,
 # no infinite-retry surface. Also covers VERIFY_EXHAUSTED, whose retry can never
@@ -1216,6 +1264,7 @@ _run "campaign resume reason" test_campaign_resume_reason
 _run "scoped resume re-enqueues gate-stopped" test_scoped_resume_reenqueues_gate_stopped
 _run "scoped resume re-enqueues gate-held" test_scoped_resume_reenqueues_gate_held
 _run "unscoped leaves gate-stopped and gate-held alone" test_unscoped_leaves_gate_stopped_and_gate_held_alone
+_run "unscoped gate-held notifies only for held:gate" test_unscoped_gate_held_notifies_only_for_held_gate
 _run "scoped resume gate-stopped caps then dead-letters" test_scoped_resume_gate_stopped_caps_then_dead_letters
 _run "empty tids global behavior unchanged" test_empty_tids_global_behavior_unchanged
 

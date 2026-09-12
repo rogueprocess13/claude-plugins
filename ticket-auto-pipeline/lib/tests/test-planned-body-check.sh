@@ -203,6 +203,39 @@ IMPROVEMENT_MISSING_NAV='## Acceptance Criteria
 _run_check "improvement missing Nav Path fails" 1 "Navigation Path" \
   "TEST-10" "improvement" "$IMPROVEMENT_MISSING_NAV" "true"
 
+# 11. Backend-only feature body (Scope has BE, no FE) — no Test User/Nav Path
+# required, passes without them (WIL-78 regression case).
+BACKEND_ONLY_FEATURE_BODY='## Acceptance Criteria
+- [ ] preparation_status transitions to needs_review on low-confidence split
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| BE    | ledgerly-worker | pdfsplit |'
+_run_check "backend-only feature body skips Test User/Nav Path" 0 "" \
+  "TEST-11" "feature" "$BACKEND_ONLY_FEATURE_BODY" "true"
+
+# 12. Feature body with no Scope table at all — ambiguous, NOT assumed
+# backend-only, so Test User/Nav Path/Scope are all still required.
+NO_SCOPE_FEATURE_BODY='## Acceptance Criteria
+- [ ] Feature works as expected'
+_run_check "feature with no Scope table stays ambiguous, requires Test User" 1 "Test User" \
+  "TEST-12" "feature" "$NO_SCOPE_FEATURE_BODY" "true"
+_run_check "feature with no Scope table stays ambiguous, requires Nav Path" 1 "Navigation Path" \
+  "TEST-12b" "feature" "$NO_SCOPE_FEATURE_BODY" "true"
+
+# 13. Backend-only bug body — Test User skipped, but Steps to Reproduce
+# (type-specific, not layer-gated) is still required.
+BACKEND_ONLY_BUG_BODY='## Acceptance Criteria
+- [ ] Dedup no longer double-counts hash collisions
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| BE    | ledgerly-worker | dedup |
+## Test Data Prerequisites
+Two fixtures with identical content hash.'
+_run_check "backend-only bug skips Test User but still needs repro steps" 1 "Steps to Reproduce" \
+  "TEST-13" "bug" "$BACKEND_ONLY_BUG_BODY" "true"
+
 # Cleanup
 rm -rf "$REPOS_ROOT/.ticket-auto"
 

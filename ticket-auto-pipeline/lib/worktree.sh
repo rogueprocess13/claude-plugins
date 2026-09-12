@@ -72,8 +72,37 @@ ensure_worktree() {
     git -C "$repo_path" worktree add -b "$branch" "$wt_path" "$base" >/dev/null 2>&1
   fi
 
+  _mirror_gitignored_env_files "$repo_path" "$wt_path"
+
   echo "$wt_path"
   return 0
+}
+
+# _mirror_gitignored_env_files <repo_path> <wt_path>
+# Gitignored runtime config (e.g. worker/.env) never lands in a fresh
+# worktree, and the failure is silent rather than loud — e.g. ledgerly's
+# worker/.env absence flips classify() to a local-model fallback and
+# manufactures a false-green base comparison (WIL-78, 2026-09-10; same class
+# as the already-known .env.local worktree gap). Mirror every gitignored env
+# file actually present in the primary checkout so the worktree matches it.
+_mirror_gitignored_env_files() {
+  local repo_path="$1"
+  local wt_path="$2"
+  local env_rel src dst
+  while IFS= read -r env_rel; do
+    [ -n "$env_rel" ] || continue
+    src="$repo_path/$env_rel"
+    dst="$wt_path/$env_rel"
+    [ -f "$src" ] || continue
+    [ -f "$dst" ] && continue
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst" 2>/dev/null || continue
+    if declare -f hb_fallback >/dev/null 2>&1; then
+      hb_fallback "worktree-env" "fired" "mirrored gitignored env file into worktree" \
+        "{\"file\":\"$env_rel\"}"
+    fi
+  done < <(git -C "$repo_path" ls-files --others --ignored --exclude-standard 2>/dev/null |
+    grep -E '(^|/)\.env(\.|$)' || true)
 }
 
 # release_worktree <TICKET_ID>

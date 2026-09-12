@@ -366,7 +366,7 @@ If tests fail → fix the code or the tests, re-run. Do not proceed until all te
 
 Spawn a `general-purpose` agent for each repo with changes. Pass it:
 - The worktree path and branch name
-- The list of changed files (`git -C "$WORKTREE_PATH" diff --name-only "$BASE_BRANCH"`)
+- The list of changed files (`git -C "$WORKTREE_PATH" fetch origin "$BASE_BRANCH" --quiet 2>/dev/null; git -C "$WORKTREE_PATH" diff --name-only "${BASE_REF:-origin/$BASE_BRANCH}"` — diff against the base's remote ref, never the local one: on a per-epic branch strategy the local epic ref only advances when someone explicitly fetches, which no pipeline phase does, so a stale local ref silently attributes a previous ticket's commits to this one)
 - The ticket ID and a one-sentence description of what was implemented
 - This exact instruction: **Invoke `Skill("superpowers:requesting-code-review")` — use the Skill tool with this exact name. Do NOT use any other review tool, plugin, or slash command.**
 

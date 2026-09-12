@@ -449,6 +449,93 @@ test_gate_stop_empty_code_is_a_silent_no_op() {
   [ "$rc" -eq 0 ] && [ ! -f "$state_dir/TST-37-gate-stop-notify.json" ]
 }
 
+test_gate_held_sends_approval_prompt() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-40" "$state_dir" \
+    "2026-09-11T07:35:16Z" >/dev/null 2>&1
+  grep -q "TST-40" "$capture" && grep -q "human-approve" "$capture"
+}
+
+test_gate_held_writes_sent_sidecar() {
+  local state_dir bindir
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-41" "$state_dir" \
+    "2026-09-11T07:35:16Z" >/dev/null 2>&1
+  grep -q '"notify_state": "sent"' "$state_dir/TST-41-gate-held-notify.json"
+}
+
+test_gate_held_identical_repeat_sends_once() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-42" "$state_dir" \
+    "2026-09-11T07:35:16Z" >/dev/null 2>&1
+  rm -f "$capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-42" "$state_dir" \
+    "2026-09-11T07:35:16Z" >/dev/null 2>&1
+  [ ! -f "$capture" ]
+}
+
+test_gate_held_new_generation_notifies_again() {
+  # A fresh hold (re-approved, re-held on a later generation) carries a new
+  # outcome-line timestamp — a genuinely new event, not a duplicate.
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-43" "$state_dir" \
+    "2026-09-11T07:35:16Z" >/dev/null 2>&1
+  rm -f "$capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-43" "$state_dir" \
+    "2026-09-12T09:00:00Z" >/dev/null 2>&1
+  [ -f "$capture" ]
+}
+
+test_gate_held_transport_failure_marks_failed_and_completes() {
+  local state_dir bindir rc
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_MODE="fail" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-44" "$state_dir" \
+    "2026-09-11T07:35:16Z" >/dev/null 2>&1
+  rc=$?
+  [ "$rc" -eq 0 ] && grep -q '"notify_state": "failed"' "$state_dir/TST-44-gate-held-notify.json"
+}
+
+test_gate_held_failed_send_is_retried_on_a_later_pass() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_MODE="fail" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-45" "$state_dir" \
+    "2026-09-11T07:35:16Z" >/dev/null 2>&1
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_gate_held "TST-45" "$state_dir" \
+    "2026-09-11T07:35:16Z" >/dev/null 2>&1
+  [ -f "$capture" ] && grep -q '"notify_state": "sent"' "$state_dir/TST-45-gate-held-notify.json"
+}
+
+test_gate_held_no_slack_config_degrades_to_log_line_and_succeeds() {
+  local rc out state_dir
+  state_dir=$(_mktemp_test_dir)
+  unset SLACK_BOT_TOKEN SLACK_CHANNEL
+  out=$(fleet_notify_gate_held "TST-46" "$state_dir" "2026-09-11T07:35:16Z" 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] && [[ "$out" == *"log-only"* ]]
+}
+
 # ── dispatch ─────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -482,7 +569,14 @@ for fn in \
   test_gate_stop_transport_failure_marks_failed_and_completes \
   test_gate_stop_failed_send_is_retried_on_a_later_pass \
   test_gate_stop_no_slack_config_degrades_to_log_line_and_succeeds \
-  test_gate_stop_empty_code_is_a_silent_no_op; do
+  test_gate_stop_empty_code_is_a_silent_no_op \
+  test_gate_held_sends_approval_prompt \
+  test_gate_held_writes_sent_sidecar \
+  test_gate_held_identical_repeat_sends_once \
+  test_gate_held_new_generation_notifies_again \
+  test_gate_held_transport_failure_marks_failed_and_completes \
+  test_gate_held_failed_send_is_retried_on_a_later_pass \
+  test_gate_held_no_slack_config_degrades_to_log_line_and_succeeds; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

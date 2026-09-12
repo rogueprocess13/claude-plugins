@@ -298,6 +298,58 @@ test_release_nonexistent() {
 }
 _run "release non-existent ticket exits 0" test_release_nonexistent
 
+# Gitignored env file (e.g. worker/.env) is mirrored into a fresh worktree
+test_mirrors_gitignored_env_file() {
+  _setup_fixture
+  mkdir -p "$FIXTURE_REPO/worker"
+  echo "SECRET=1" >"$FIXTURE_REPO/worker/.env"
+  echo "worker/.env" >"$FIXTURE_REPO/.gitignore"
+  git -C "$FIXTURE_REPO" add .gitignore
+  git -C "$FIXTURE_REPO" commit -m "gitignore worker/.env" --no-gpg-sign >/dev/null 2>&1
+
+  local wt_path
+  wt_path=$(ensure_worktree "CRE-789" "$FIXTURE_REPO" "feat/CRE-789-fix" "main" 2>&1) || return 1
+
+  [ -f "$wt_path/worker/.env" ] || {
+    echo "  worker/.env was not mirrored into the worktree" >&2
+    return 1
+  }
+  local content
+  content=$(cat "$wt_path/worker/.env")
+  [ "$content" = "SECRET=1" ] || {
+    echo "  mirrored file content mismatch: got '$content'" >&2
+    return 1
+  }
+  return 0
+}
+_run "gitignored env file is mirrored into fresh worktree" test_mirrors_gitignored_env_file
+
+# Existing worktree file is never clobbered by the mirror step
+test_does_not_clobber_existing_worktree_env() {
+  _setup_fixture
+  mkdir -p "$FIXTURE_REPO/worker"
+  echo "SECRET=primary" >"$FIXTURE_REPO/worker/.env"
+  echo "worker/.env" >"$FIXTURE_REPO/.gitignore"
+  git -C "$FIXTURE_REPO" add .gitignore
+  git -C "$FIXTURE_REPO" commit -m "gitignore worker/.env" --no-gpg-sign >/dev/null 2>&1
+
+  local wt_path
+  wt_path=$(ensure_worktree "CRE-790" "$FIXTURE_REPO" "feat/CRE-790-fix" "main" 2>&1) || return 1
+  echo "SECRET=worktree-local" >"$wt_path/worker/.env"
+
+  # Re-running ensure_worktree (idempotent reuse path) must not overwrite it
+  ensure_worktree "CRE-790" "$FIXTURE_REPO" "feat/CRE-790-fix" "main" >/dev/null 2>&1 || return 1
+
+  local content
+  content=$(cat "$wt_path/worker/.env")
+  [ "$content" = "SECRET=worktree-local" ] || {
+    echo "  existing worktree .env was clobbered: got '$content'" >&2
+    return 1
+  }
+  return 0
+}
+_run "existing worktree env file is not clobbered" test_does_not_clobber_existing_worktree_env
+
 # GC with no worktrees
 test_gc_no_worktrees() {
   _setup_fixture
