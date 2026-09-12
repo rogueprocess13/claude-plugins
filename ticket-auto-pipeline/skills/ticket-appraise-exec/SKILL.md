@@ -63,7 +63,7 @@ Extract from notes.md:
 
 ## Step 1.5 — Create task tracker
 
-Create a TaskCreate for every remaining step (Steps 2 through 6). Each task subject = the step heading. After each step is fully done, mark it completed with TaskUpdate. At session end, write a trace file:
+Create a TaskCreate for every remaining step (Steps 2 through 6, including 2.5). Each task subject = the step heading. After each step is fully done, mark it completed with TaskUpdate. At session end, write a trace file:
 
 ```bash
 cat > {ticket-dir}/appraise-exec-session.md << 'TRACE'
@@ -74,6 +74,7 @@ cat > {ticket-dir}/appraise-exec-session.md << 'TRACE'
 
 ## Step trace
 - [x] Step 2: State already set by appraise (Todo + claimed + assignee)
+- [x] Step 2.5: ADR gate check — {no candidate | NOT_ARCHITECTURAL | GOVERNED | parked/stopped}
 - [x] Step 3: Create change artifacts — {type}
 - [x] Step 3.5: Regression guard — {clear | ADJACENT | CONFLICT | skipped (no prior art)}
 - [x] Step 3.6: Adversarial review — {PASS | WARNINGS | BLOCKED | skipped (simple)}
@@ -91,6 +92,22 @@ TRACE
 ## Step 2 — State already set
 
 Ticket was already moved to `Todo` with `claimed` label and `assignee: "me"` by the router (or `ticket-appraise` when run standalone). No action needed — proceed to Step 3.
+
+---
+
+## Step 2.5 — ADR gate check
+
+Before drafting `simple-fix.md` or an openspec change, check whether notes.md's `## Initial
+Investigation` (populated by `ticket-appraise`) already names a decision candidate that looks
+architectural — including one `ticket-appraise` itself flagged but did not resolve at 3a.0b. If
+so, invoke the gate now — see § 8 ADR gate in the shared preamble — **before** Step 3 writes the
+artifact, so the artifact reflects a verdict rather than an unexamined assumption baked into the
+implementation plan. If the request results in a `CREATED_PROPOSED`, `SUPERSEDE_REQUIRED`, or
+`CONFLICT` verdict, the resulting hold or gate-stop happens here, before any artifact exists —
+there is nothing to roll back if a human's answer changes the approach.
+
+The overwhelmingly common case is nothing to check here — skip straight to Step 3 when notes.md
+carries no such candidate.
 
 ---
 

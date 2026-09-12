@@ -83,6 +83,7 @@ Each phase has one primary step. Agents may write additional `start`/`done` pair
 | `intent` | Accepted grill-me intent: readiness, recommendation, seal hash |
 | `replan` | Re-planning event: trigger, feedback runs, drift summary, counts |
 | `crosscheck` | One Crosscheck finding. `fail` = blocking (`{CODE} {message}`, blocks EpicGen — [#176](https://github.com/willard-pro/claude-plugins/issues/176)); `warn` = non-blocking (`info {CODE} {message}`); `accepted` = operator override via `resume <ID> --accept CODE:"reason"` (`{CODE} {reason}` when written at parse time, `{CODE} {message}` when a still-occurring finding is confirmed non-blocking on a later run — [#222](https://github.com/willard-pro/claude-plugins/issues/222)). One entry per finding, written by `planner_crosscheck_run` in `lib/planner-crosscheck.sh` |
+| `adr-gate` | Architecture phase's ADR gate verdict (adr-governance-gate). `fail` = a blocking verdict (`{VERDICT} ADR_ID={id}`, one of `CREATED_PROPOSED`\|`SUPERSEDE_REQUIRED`\|`CONFLICT`) — halts the dispatch loop via `planner_adr_gate_blocked` in `lib/planner-adr-gate.sh`, mirroring the `crosscheck` halt above; the planner has no human-hold infrastructure, so there is no `waiting` status here the way `ticket-auto-pipeline`'s pipeline log has for `human-hold`. `NOT_ARCHITECTURAL`/`GOVERNED` verdicts write nothing here — the phase's own `Architecture\|design\|done` line is sufficient. Written by the Architecture phase agent per `planner-phase-prompts.sh` § 4.5 |
 
 ### Invocation config
 

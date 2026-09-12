@@ -193,6 +193,25 @@ Build a requirements coverage table:
 
 ---
 
+## Step 5.5 — ADR gate check
+
+While reviewing the diff (Steps 4–5), note whether it introduces a decision that looks
+architectural — a cross-cutting constraint other components or future work would now have to
+follow — with no governing ADR cited in the PR description or commits. This is the review phase
+finding what implementation didn't flag: a change that turned out to be architectural only once
+the diff as a whole is visible, not from any single file in isolation.
+
+If such a change is present, invoke the gate now — see § 8 ADR gate in the shared preamble —
+**before** Step 6 posts findings or Step 6b merges. Route on the verdict per § 8: a `CONFLICT`
+verdict means Step 6b MUST NOT merge, regardless of requirements coverage. A `CREATED_PROPOSED`
+or `SUPERSEDE_REQUIRED` verdict likewise blocks the merge — a PR is not mergeable while it rests
+on an architectural commitment that has not yet been ratified.
+
+The overwhelmingly common case is nothing to check here — skip straight to Step 6 when the diff
+raises no such candidate.
+
+---
+
 ## Step 6 — Post findings to PR + update Linear
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|post-findings|start|Posting review findings" >> "$LOG_FILE"
@@ -290,9 +309,11 @@ This adds `reviewed` or `rejected`, keeping all other labels.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|start|Merge decision" >> "$LOG_FILE"
 
-If the verdict has ⚠️ or ❌, skip this step entirely.
+If the verdict has ⚠️ or ❌, skip this step entirely. Likewise, if Step 5.5's ADR gate check
+returned `CONFLICT`, `CREATED_PROPOSED`, or `SUPERSEDE_REQUIRED`, skip this step — treat that
+exactly as a ❌ for merge purposes, regardless of the requirements-coverage verdict.
 
-If the verdict is ✅, **first determine merge authorization** — before spending any API calls on
+If the verdict is ✅ and Step 5.5 raised nothing blocking, **first determine merge authorization** — before spending any API calls on
 CI/conflict checks. This skill's own merge is a *direct* merge (no human in the loop); it must
 never fire when the pipeline's autonomy is `manual`, nor when the ticket's epic has declared a
 Branch Directive `Merge Policy` (both existing values, `manual` and `on-all-children-done`,

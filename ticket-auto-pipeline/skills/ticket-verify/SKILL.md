@@ -245,6 +245,21 @@ verify_worktree_gc
 
 `verify_worktree_gc` removes any `REPOS_ROOT/.verify-worktrees/{repo}/{TICKET_ID}` idle past `VERIFY_WORKTREE_TTL_HOURS` (config.sh, default 24h) — mirroring `hooks/tmp-sweep.sh`'s age-based approach, run inline here rather than as a separate hook since it only needs to fire when a verify run actually happens. It self-guards against the single-flight lock from Step 1.6a3 below: if the lock is currently held by *anyone*, it skips the sweep entirely rather than remove anything, since there's no way to tell from here which specific ticket's worktree a live holder might be serving files from — the lock is one global flight, not per-ticket. Worktrees are **not** torn down at the end of a normal run; they're left in place for reuse/debugging and reaped only by this TTL sweep.
 
+### 1.6a2b — ADR gate check
+
+**This runs before the lock in 1.6a3, never after.** If verification so far (or the plan/diff
+under test) surfaces a decision candidate that looks architectural with no governing ADR,
+invoke the gate now — see § 8 ADR gate in the shared preamble — while nothing is held yet. A
+`CREATED_PROPOSED` or `SUPERSEDE_REQUIRED` verdict emits the human hold immediately, before Step
+1.6a3 would otherwise acquire the single-flight lock: a parked verify run holding that lock for
+up to `VERIFY_LOCK_MAX_HOLD_SECS` would block every other ticket's verify behind it, and a park
+can legitimately outlast that window by a wide margin. A `CONFLICT` verdict emits the
+`ADR_CONFLICT` gate-stop here for the same reason. Either way, this phase is not holding the
+lock when it stops.
+
+The overwhelmingly common case is nothing to check here — skip straight to Step 1.6a3 when
+nothing raises a candidate.
+
 ### 1.6a3 — Acquire the single-flight verify lock
 
 The local dev stack hardcodes ports (gateway:8080, bom:8081, credit-report:8082, bridge-endpoint:8085, debt-collection:8088, gateway-fe:9000) with no per-run namespacing. Two verify app stacks up at once means two sets of JVMs racing on those same ports plus shared memory/disk/CPU — so only one verify's app stack is ever up at a time; a concurrent request queues instead of racing:

@@ -46,6 +46,14 @@ jobs:
             exit 1
           fi
 
+      - name: ADR store fixture validation (adr-check.sh)
+        # This repo's CI cannot gate content in the separate WIKI_ROOT docs
+        # repo (design.md D12) — this instead runs the validator directly
+        # against a committed, real ADR store fixture, independent of the
+        # bash unit-test harness below. See
+        # ticket-auto-pipeline/lib/tests/fixtures/adr-store/README.md.
+        run: bash ticket-auto-pipeline/lib/adr-check.sh --wiki-root ticket-auto-pipeline/lib/tests/fixtures/adr-store
+
       - name: Unit tests
         run: make test
 

@@ -388,6 +388,32 @@ document the decision. You are phase 3 of 10.
    - Identify risk factors (data loss, auth bypass, performance regression, etc.).
    - Assess fit with existing codebase patterns (consistent vs. introduces new pattern).
 4. Select the recommended approach and justify why.
+4.5. **ADR gate check (adr-governance-gate).** Before writing architecture.md, decide
+   whether the recommended approach establishes a constraint other initiatives or
+   future work would have to follow — not \`architecture.md\` itself (that is an
+   initiative-scoped working design, never an ADR on its own), but a genuinely
+   cross-cutting commitment the approach would create. If so, invoke the gate:
+   compose an \`=== ADR_GATE_REQUEST ===\` block (PHASE: Architecture,
+   DECISION_CANDIDATE/IDENTIFIED_REASON/AFFECTED_COMPONENTS/CURRENT_APPROACH/
+   PROPOSED_APPROACH from what you found) to a scratch file, then invoke
+   \`/adr-gate --request-file <path> --wiki-root "\$WIKI_ROOT"\` (resolve \`WIKI_ROOT\`
+   from CLAUDE.md the same way you resolve REPOS_ROOT). \`docs/adr-gate-schema.md\` in
+   ticket-auto-pipeline is the field reference if you need it.
+
+   Route on the returned \`ADR_VERDICT\`:
+   - \`NOT_ARCHITECTURAL\` or \`GOVERNED\` — continue to step 5 normally.
+   - \`CREATED_PROPOSED\`, \`SUPERSEDE_REQUIRED\`, or \`CONFLICT\` — the planner has no
+     human-hold infrastructure (unlike ticket-auto-pipeline), so you do not emit a
+     hold block. Instead, after still writing architecture.md (step 5 — the working
+     design is not invalidated by needing ratification), write this state log entry
+     recording the block **in place of** the phase's normal \`done\`:
+     \`\`\`bash
+     planner_state_write "${initiative_id}" "META" "adr-gate" "fail" "<VERDICT> ADR_ID=<the ADR id>"
+     planner_state_write "${initiative_id}" "Architecture" "design" "fail" "parked on ADR gate: <VERDICT> <ADR id>"
+     \`\`\`
+     Do this instead of the ordinary \`done\` line below — the dispatch loop halts the
+     run on this marker and reports it to the operator, who accepts (or resolves the
+     conflict on) the ADR out of band before running \`resume\`.
 5. Write an Architecture Decision Record to ${state_dir}/artifacts/architecture.md:
    - **Decision** — one sentence: what we will do
    - **Alternatives Considered** — each with pros/cons
@@ -412,12 +438,16 @@ planner_state_write "${initiative_id}" "Architecture" "design" "start" "Evaluati
 planner_state_write "${initiative_id}" "Architecture" "design" "done" "Architecture decision: <one-line summary>"
 \`\`\`
 
-On failure, write \`fail\` instead of \`done\`.
+On failure, write \`fail\` instead of \`done\`. On an ADR gate park (step 4.5 above),
+write the two-line \`adr-gate\`/\`fail\` sequence shown there instead of this ordinary
+\`done\` — do not write both.
 
 ## Constraints
 - Consider at least 2 alternatives — don't jump to the first approach.
 - The decision must be grounded in the Discovery data — reference real symbols and constraints.
 - If discovery was shallow for a service, note that the architecture carries elevated risk there.
+- architecture.md is always written (step 5), regardless of the ADR gate outcome in step 4.5 —
+  it documents this initiative's working design either way; only the state log status changes.
 AGENT_PROMPT
 }
 

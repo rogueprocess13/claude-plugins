@@ -55,13 +55,15 @@ Reports accumulate in `./logs/reports/` and can be read by any observer.
 
 By default, reports print to stdout (for the invoking agent to capture) and write to `./logs/reports/`.
 
-To post reports to Linear, pass `--post linear:{ISSUE-ID}` — the report is saved as a comment on the specified tracking issue.
+To post reports to Linear, pass `--post linear:{ISSUE-ID}` — run the report through the `simple-english` skill (embedded mode, Plain) first, then save the result as a comment on the specified tracking issue.
 
 ### Slack
 
 The skill reads `SLACK_CHANNEL` from the project's `CLAUDE.md`. For this workspace the channel is `credit-network-biz-bot`.
 
-When Slack is configured, the skill posts the generated report to that channel via `slack_send_message`. If the channel is not found by name (e.g., it hasn't been created yet), the skill falls back to stdout-only and warns the user.
+When Slack is configured, run the generated report through the `humanizer` skill first, then post the result to that channel via `slack_send_message`. If the channel is not found by name (e.g., it hasn't been created yet), the skill falls back to stdout-only and warns the user.
+
+Linear and Slack get separately reformatted copies of the same underlying report — simple-english for the ticket comment, humanizer for the Slack message — not one shared rewrite, since the two skills optimize for different things (plain-language clarity vs. natural, non-AI-sounding prose).
 
 To look up the channel ID at runtime:
 1. Call `slack_search_channels` with the channel name from `SLACK_CHANNEL`

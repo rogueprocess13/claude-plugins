@@ -941,6 +941,79 @@ test_needs_info_does_not_change_state() {
   [ "$to_state" = "unchanged" ] || [ "$to_state" = "null" ] || [ "$to_state" = "Todo" ]
 }
 
+# ── needs-adr round-trip (adr-governance-gate task 10.12) ───────────────────
+# Same shape as the needs-info round-trip above, pinned separately since
+# needs-adr is a distinct label with its own trigger pair
+# (skills/ticket-flow/state-machine.json).
+
+_stub_lib_dir_needs_adr() {
+  local dir="$1"
+  local labels_json="$2"
+  mkdir -p "$dir"
+  cp "$PLUGIN_DIR/lib/heartbeat.sh" "$dir/"
+  cp "$PLUGIN_DIR/lib/epic-precondition.sh" "$dir/"
+  cat >"$dir/linear-api.sh" <<STUBEOF
+get_issue() {
+  jq -n --argjson labels '$labels_json' '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-todo",name:"Todo"},labels:{nodes:\$labels},description:"",project:null,parent:null}'
+}
+get_team() {
+  jq -n '{states:[{id:"state-todo",name:"Todo"}],labels:[{id:"lbl-needs-adr",name:"needs-adr"}]}'
+}
+update_issue() { jq -n '{success:true,issue:{id:"issue-1",identifier:"WIL-99"}}'; }
+get_me() { jq -n '{id:"me-1",name:"Test"}'; }
+STUBEOF
+}
+
+_needs_adr_dry_run_labels() {
+  local labels_json="$1" trigger="$2"
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib"
+  _stub_lib_dir_needs_adr "$tmpdir/lib" "$labels_json"
+
+  local out
+  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" \
+    LOG_FILE="$tmpdir/logs/WIL-99-pipeline.log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-99 "$trigger" --dry-run 2>/dev/null)
+  rm -rf "$tmpdir"
+  echo "$out" | jq -r '.computed.labels'
+}
+
+test_needs_adr_set_adds_the_label() {
+  local labels
+  labels=$(_needs_adr_dry_run_labels '[]' needs-adr)
+  echo "$labels" | tr ',' '\n' | grep -qx "needs-adr" || {
+    echo "expected needs-adr in computed labels, got: $labels"
+    return 1
+  }
+}
+
+test_needs_adr_resolved_removes_the_label() {
+  local labels
+  labels=$(_needs_adr_dry_run_labels '[{"id":"lbl-needs-adr","name":"needs-adr"}]' needs-adr-resolved)
+  echo "$labels" | tr ',' '\n' | grep -qx "needs-adr" && {
+    echo "needs-adr label survived needs-adr-resolved: $labels"
+    return 1
+  }
+  return 0
+}
+
+test_needs_adr_does_not_change_state() {
+  local tmpdir out
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib"
+  _stub_lib_dir_needs_adr "$tmpdir/lib" '[]'
+  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" \
+    LOG_FILE="$tmpdir/logs/WIL-99-pipeline.log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-99 needs-adr --dry-run 2>/dev/null)
+  rm -rf "$tmpdir"
+  local to_state
+  to_state=$(echo "$out" | jq -r '.computed.state // "unchanged"')
+  [ "$to_state" = "unchanged" ] || [ "$to_state" = "null" ] || [ "$to_state" = "Todo" ]
+}
+
 # ── test_state_machine_single_source ───────────────────────────────────────
 
 test_state_machine_single_source() {
@@ -995,6 +1068,9 @@ for fn in \
   test_needs_info_set_adds_the_label \
   test_needs_info_resolved_removes_the_label \
   test_needs_info_does_not_change_state \
+  test_needs_adr_set_adds_the_label \
+  test_needs_adr_resolved_removes_the_label \
+  test_needs_adr_does_not_change_state \
   test_state_machine_single_source \
   test_ticket_dir_disambiguation \
   test_gen_mermaid_roundtrip; do

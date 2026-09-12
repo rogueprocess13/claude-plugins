@@ -469,7 +469,16 @@ this ticket (title/description/labels match), not just repos with a fresh presca
 
 #### 3a.0b — Always load WIKI_ROOT/index.md, and decide whether to route to it
 
-Regardless of prescan status, if `{WIKI_ROOT}` is set (from Step 0.5), read `{WIKI_ROOT}/index.md`
+Regardless of prescan status, if `{WIKI_ROOT}` is set (from Step 0.5), bootstrap it first —
+covers the `--from-auto` path, where `WIKI_ROOT` reached this skill via the router's env file
+rather than Step 0.5's own CLAUDE.md read, so Step 0.5's bootstrap call never ran this run:
+
+```bash
+source "$HOME/.claude/skills/lib/wiki-bootstrap.sh"
+wiki_bootstrap "$WIKI_ROOT"
+```
+
+No-op on an already-scaffolded wiki. Then read `{WIKI_ROOT}/index.md`
 now. It is short by design (~110 lines) — cheap enough to load unconditionally rather than wait
 for Tiers 1-2 to come up empty first. Prescan is per-repo and cannot answer a cross-repo
 question no matter how fresh it is, so there is nothing to lose by loading the wiki's own index
@@ -491,6 +500,14 @@ single-repo ticket with no topic match has no reason to pull in cross-repo conte
 
 Record the decision in notes.md under Initial Investigation:
 `**Wiki routing:** {multi-repo (N repos) | topic match: {topic} | not routed — per-repo ticket}`
+
+**ADR gate:** If investigation so far has already surfaced a decision candidate that looks
+architectural (a cross-cutting constraint the ticket would establish, not a routine
+implementation choice), invoke the gate now — see § 8 ADR gate in the shared preamble — rather
+than carrying the question forward unexamined into the artifact `ticket-appraise-exec` drafts.
+`WIKI_ROOT` is already resolved (Step 0.5) and the index you just loaded above is exactly what
+the gate's own candidate discovery consults, so this is the cheapest point in the phase to ask.
+Most tickets surface nothing here — this is not a mandatory step per ticket, only per candidate.
 
 ---
 

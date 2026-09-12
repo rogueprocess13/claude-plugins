@@ -66,6 +66,8 @@ When `$LINEAR_API_KEY` is set in the environment, use bash calls to `~/.claude/s
 Always check `$LINEAR_API_KEY` before each operation and use the appropriate method.
 ```
 
+**Comment formatting.** Before every `save_comment` call, run the comment body through the `simple-english` skill (embedded mode, Plain) so tickets stay clear and consistent for a human reader — this applies especially to open-questions and amendment text, which tends to run dense when drafted straight from notes.md. Leave code blocks, identifiers, file paths, and quoted command output untouched; only the prose gets simplified.
+
 <!-- endif -->
 
 **Standard operation rows:**
@@ -110,6 +112,14 @@ Standard field meanings:
 - `BE_TEST_CMD` — backend test command from Build & Test section
 - `FE_TEST_CMD` — frontend test command (skip FE tests if absent)
 - `WIKI_ROOT` — path to wiki directory; if not found in CLAUDE.md, look for a default wiki path
+
+If `WIKI_ROOT` is among `{PROJECT_CONTEXT_FIELDS}` and resolved to a non-empty value, bootstrap
+it before any later step reads from it (adr-governance-gate):
+```bash
+source "$HOME/.claude/skills/lib/wiki-bootstrap.sh"
+wiki_bootstrap "$WIKI_ROOT"
+```
+No-op on an already-scaffolded wiki; scaffolds only what's missing on a partial one.
 
 <!-- endif -->
 

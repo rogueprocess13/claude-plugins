@@ -17,6 +17,46 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.0 (2026-09-11) — also ticket-planner 0.9.0
+
+Adds the ADR governance gate (adr-governance-gate): a reusable architectural-governance
+primitive any pipeline phase — and ticket-planner's Architecture phase — can invoke on a
+potential architectural decision, so "an architectural decision requires human
+ratification" is enforced rather than a convention.
+
+New `adr-gate` skill classifies a reported decision candidate into one of five closed
+verdicts (`NOT_ARCHITECTURAL`/`GOVERNED`/`CREATED_PROPOSED`/`CONFLICT`/
+`SUPERSEDE_REQUIRED`) against a durable ADR store under `{WIKI_ROOT}/decisions/`
+(`lib/adr-store.sh`, gap-tolerant numbering, per-source idempotency, `flock`-guarded
+writes) validated by `lib/adr-check.sh` (schema, status transitions, supersession
+reciprocity, Accepted-ADR immutability via git history, a hedging-modal ban on
+`## Decision`). `lib/wiki-bootstrap.sh` scaffolds `index.md`/`decisions/index.md`/
+`glossary.md` on first use and implements the glossary term-drift check;
+`lib/wiki-verify.sh` runs whole-store structural verification (registry completeness,
+link integrity, supersession reciprocity, glossary rot) as the final step of
+`wiki-maintenance`. `lib/adr-gate-parse.sh` parses the gate's `=== ADR_GATE_RESULT ===`
+block the same way `human-hold-parse.sh` parses a hold — tolerant at transport, strict
+at contract — and writes `META|adr-gate` on every invocation, so park rate is
+measurable from the first run.
+
+Wired into all 5 pipeline call sites (`ticket-appraise`, `ticket-appraise-exec`,
+`ticket-implement`, `ticket-pr-review`, `ticket-verify` — the last one explicitly
+*before* `verify_lock_acquire`, so a parked verify never holds the global single-flight
+lock) via the shared preamble's new § 8, plus `wiki-maintenance` (Decisions-section
+findings now route through the gate instead of writing flow-file prose) and
+ticket-planner's Architecture phase (a blocking verdict halts the dispatch loop the way
+a blocking Crosscheck finding already does). New `needs-adr` label (add on
+`CREATED_PROPOSED`/`SUPERSEDE_REQUIRED`/`CONFLICT`, clear once the governing ADR is
+accepted) and `ADR_CONFLICT` gate-stop code (17th).
+
+Fixed during Group 10 verification: `adr-check.sh`'s transition-validity check compared
+the working tree against the commit *before* the last one (`git log --skip=1`) instead
+of the last commit itself, so a legitimate `accepted → superseded` supersession was
+misreported as an invalid `proposed → superseded` transition. Corrected to compare
+against the tip commit, matching how `wiki-maintenance` actually invokes it (pre-stage,
+against a dirty working tree). Added regression tests for both this and the
+previously-untested Accepted-ADR-immutability check.
+
 ## 0.49.5 (2026-09-10)
 
 Fixes #353: `detect-resume.sh`'s zombie-detection handler's `GATE` case arm unconditionally

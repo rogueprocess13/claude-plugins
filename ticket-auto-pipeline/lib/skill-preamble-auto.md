@@ -71,6 +71,8 @@ When `$LINEAR_API_KEY` is set in the environment, use bash calls to `~/.claude/s
 Always check `$LINEAR_API_KEY` before each operation and use the appropriate method.
 ```
 
+**Comment formatting.** Before every `save_comment` call, run the comment body through the `simple-english` skill (embedded mode, Plain) so tickets stay clear and consistent for a human reader — this applies especially to open-questions and amendment text, which tends to run dense when drafted straight from notes.md. Leave code blocks, identifiers, file paths, and quoted command output untouched; only the prose gets simplified.
+
 <!-- endif -->
 
 **Standard operation rows:**
@@ -287,6 +289,82 @@ Rules:
   answered, others were not), carry `SUPERSEDES: <the previous hold_id>` — the id was
   in the Linear comment you were answered on.
 - Do not fabricate a `hold_id` anywhere in your return. You never have one to give.
+- `QUESTION_N` text is posted to Slack verbatim, with no further rewriting — fleet-notify.sh
+  is a deterministic bash script, not an LLM, and copies this text as-is into the notification.
+  Apply the `humanizer` skill's plain-prose principles as you write each question (no stock
+  AI phrasing, no padded qualifiers, state the ask directly) so it reads clearly on first
+  glance in Slack.
 
 `docs/human-hold-schema.md` is the source of truth for the field set and the enums. Do
 not restate the grammar anywhere else.
+
+---
+
+## 8. ADR gate
+
+If, while doing this phase's work, you meet a potential architectural decision — a
+choice that would materially change the architecture or constrain future implementation
+if reversed — you do not decide whether it needs governance. Invoke the gate; it owns
+that classification.
+
+You are not restricted to a fixed list of trigger moments. Any time you are about to
+commit to (or you observe) an approach that establishes a constraint other components or
+future work must follow, invoke the gate before proceeding on the strength of your own
+judgment.
+
+Compose a request file and invoke the gate:
+
+```bash
+_adr_gate_req="$(mktemp)"
+cat >"$_adr_gate_req" <<'REQUEST'
+=== ADR_GATE_REQUEST ===
+SCHEMA_VERSION: 1
+PHASE: {PHASE}
+DECISION_CANDIDATE: <plain description of the matter you observed>
+IDENTIFIED_REASON: <why this looked worth raising — your observation, not your conclusion>
+AFFECTED_COMPONENTS: <comma-separated components/services, if you can name them>
+EVIDENCE: <file:line references or other pointers>
+CURRENT_APPROACH: <what exists today, if the candidate concerns changing something>
+PROPOSED_APPROACH: <what you are about to do, if applicable>
+=== END ADR_GATE_REQUEST ===
+REQUEST
+```
+
+Then invoke `/adr-gate --request-file "$_adr_gate_req" --wiki-root "$WIKI_ROOT" --log-file
+"$LOG_FILE"`. Read the `=== ADR_GATE_RESULT ===` block it returns and route on
+`ADR_VERDICT` directly from that block — do not re-invoke `lib/adr-gate-parse.sh`
+yourself, the gate already self-parsed its own result once for the log:
+
+- **`NOT_ARCHITECTURAL`** — continue. Nothing further to do. If the ticket currently
+  carries `needs-adr` (a prior run parked or stopped on this same matter and a human has
+  since acted), clear it: `/ticket-flow {TICKET-ID} needs-adr-resolved`.
+- **`GOVERNED`** — continue, bound by the stated constraint. No hold. Same clearing step
+  as `NOT_ARCHITECTURAL` above if the ticket still carries `needs-adr` from an earlier
+  run — this is the re-run case where the governing ADR has since been accepted.
+- **`CREATED_PROPOSED`** or **`SUPERSEDE_REQUIRED`** — the gate already wrote a `proposed`
+  ADR. Emit the `=== HUMAN_HOLD ===` block from § 7 above with `REASON: ARCH_COMMITMENT`
+  and `BLOCKS` naming the new ADR's file path and its `## Decision` section. Also apply
+  the label: `/ticket-flow {TICKET-ID} needs-adr`. Do not proceed toward implementation
+  or merge on the strength of this decision until the ADR is accepted.
+- **`CONFLICT`** — your proposed approach contradicts an Accepted decision. Emit the
+  structural gate-stop `ADR_CONFLICT` and apply the same label: `/ticket-flow {TICKET-ID}
+  needs-adr`. This is not a park; the approach itself needs rethinking, not ratification —
+  but the label is still how a human triaging the queue finds it.
+
+Either labeling call follows the same pattern `/ticket-critique` already uses for
+`needs-info` — a direct `/ticket-flow {TICKET-ID} <trigger>` invocation, non-fatal on
+failure (log a `META|flow-error` line and continue; a missing label must never prevent
+the hold/gate-stop itself from taking effect):
+
+```bash
+/ticket-flow {TICKET-ID} needs-adr
+_rc=$?
+if [ "$_rc" -ne 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: needs-adr" >> "$LOG_FILE"
+fi
+```
+
+The gate never emits a hold, a gate-stop, or a tracker mutation itself — those are always
+yours to emit, exactly as described above. `docs/adr-gate-schema.md` is the source of
+truth for the field set, the closed verdict set, and the routing contract. Do not restate
+the grammar anywhere else.
