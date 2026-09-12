@@ -158,7 +158,10 @@ check_planned_body() {
     # Navigation Path" for three separate missing sections, indistinguishable
     # from a two-section miss one word shorter). Commas are safe in both
     # _plog MSG (only "|" is rejected) and hb_write DETAIL (JSON string).
-    BODY_CHECK_MISSING=$(IFS=,; echo "${missing[*]}")
+    BODY_CHECK_MISSING=$(
+      IFS=,
+      echo "${missing[*]}"
+    )
     BODY_CHECK_EXIT_CODE=1
     return 1
   fi

@@ -48,8 +48,8 @@ _get_outcome_from_log() {
   # changed" still cannot match — the reason this matcher was tightened
   # away from IMPLEMENT|implement|done| in the first place.
   if [ -z "$outcome" ]; then
-    outcome=$(grep '^[^|]*|IMPLEMENT|implement|done|' "$LOG_FILE" 2>/dev/null \
-      | grep -oE '\b(Smooth|Rough|Hard)\b' | tail -1 || true)
+    outcome=$(grep '^[^|]*|IMPLEMENT|implement|done|' "$LOG_FILE" 2>/dev/null |
+      grep -oE '\b(Smooth|Rough|Hard)\b' | tail -1 || true)
     if [ -n "$outcome" ]; then
       echo "outcome-label-check: recovered '$outcome' from IMPLEMENT|implement|done| (dedicated line absent)" >&2
     fi

@@ -101,8 +101,8 @@ _mirror_gitignored_env_files() {
       hb_fallback "worktree-env" "fired" "mirrored gitignored env file into worktree" \
         "{\"file\":\"$env_rel\"}"
     fi
-  done < <(git -C "$repo_path" ls-files --others --ignored --exclude-standard 2>/dev/null \
-    | grep -E '(^|/)\.env(\.|$)' || true)
+  done < <(git -C "$repo_path" ls-files --others --ignored --exclude-standard 2>/dev/null |
+    grep -E '(^|/)\.env(\.|$)' || true)
 }
 
 # release_worktree <TICKET_ID>
