@@ -837,6 +837,174 @@ test_ticket_pr_review_unresolvable_repo_stops() {
   }
 }
 
+# ── issue #365: PR_REVIEW_CHECKS_JSON_SCHEMA ────────────────────────────────
+
+# `gh pr checks --json` on gh 2.x only accepts `bucket, completedAt, description,
+# event, link, name, startedAt, state, workflow` — there is no `status` or
+# `conclusion` field. Requesting them fails the command outright with
+# `Unknown JSON field: "status"`, so Step 6b's CI gate must request the real
+# field names.
+test_ticket_pr_review_checks_uses_real_json_fields() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^\*\*If `_merge_blocked_reason` is empty\*\*/,/^\*\*If the array is empty/p' "$skill_md")
+  echo "$block" | grep -q 'gh pr checks {number} --repo {owner}/{repo} --json name,state,bucket' || {
+    echo "Step 6b gh pr checks does not request --json name,state,bucket"
+    return 1
+  }
+}
+
+# Regression guard: the non-existent `status`/`conclusion` fields must not
+# reappear anywhere in the skill (the exact shape of the original bug).
+test_ticket_pr_review_no_stale_status_conclusion_fields() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  if grep -qE -- '--json name,status,conclusion' "$skill_md"; then
+    echo "found gh pr checks --json requesting the non-existent status,conclusion fields"
+    return 1
+  fi
+}
+
+# `gh pr checks --json ...` does NOT emit `[]` for a PR with zero configured
+# checks — it exits non-zero with the plain-text stderr message
+# "no checks reported on the '<branch>' branch" (populateStatusChecks in gh's
+# own pkg/cmd/pr/checks/checks.go returns before any JSON is written). A
+# blanket "non-zero exit = hard block" guard would therefore merge-block a
+# legitimately checkless PR forever — exactly the case the issue's own
+# Verification Checklist required excluded. These tests extract the actual
+# `_checks_none` detection snippet from SKILL.md and eval it against
+# simulated `gh` output, rather than grepping prose, so a future edit that
+# reintroduces the regression is caught functionally.
+_extract_checks_none_snippet() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  sed -n '/^if \[ "\$_checks_rc" -ne 0 \] && echo "\$_checks_json"/,/^fi$/p' "$skill_md"
+}
+
+test_ticket_pr_review_checks_none_snippet_exists() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local snippet
+  snippet="$(_extract_checks_none_snippet)"
+  [ -n "$snippet" ] || {
+    echo "could not locate the _checks_none detection snippet in SKILL.md"
+    return 1
+  }
+}
+
+test_ticket_pr_review_no_checks_reported_is_not_blocked() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local snippet
+  snippet="$(_extract_checks_none_snippet)"
+  [ -n "$snippet" ] || return 1
+
+  local _checks_json="no checks reported on the 'feature/foo' branch"
+  local _checks_rc=8
+  local _checks_none
+  eval "$snippet"
+
+  [ "$_checks_none" = "true" ] || {
+    echo "gh's 'no checks reported' stderr is not recognized as a checkless PR (would merge-block forever)"
+    return 1
+  }
+}
+
+test_ticket_pr_review_other_command_failure_still_blocks() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local snippet
+  snippet="$(_extract_checks_none_snippet)"
+  [ -n "$snippet" ] || return 1
+
+  local _checks_json="error connecting to api.github.com"
+  local _checks_rc=1
+  local _checks_none
+  eval "$snippet"
+
+  [ "$_checks_none" = "false" ] || {
+    echo "an unrelated gh failure is being misclassified as a checkless PR (would silently merge)"
+    return 1
+  }
+}
+
+# The checkless-PR detection must run BEFORE the generic non-zero-exit hard
+# block, or it can never fire — this is the whole point of the fix.
+test_ticket_pr_review_checks_none_evaluated_before_hard_block() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^\*\*If `_merge_blocked_reason` is empty\*\*/,/^\*\*If the array is empty/p' "$skill_md")
+  local none_line hard_block_line
+  none_line=$(echo "$block" | grep -n '_checks_none=true' | head -1 | cut -d: -f1)
+  hard_block_line=$(echo "$block" | grep -n 'treat this as a hard block' | head -1 | cut -d: -f1)
+  [ -n "$none_line" ] && [ -n "$hard_block_line" ] || {
+    echo "could not locate both the checkless-PR branch and the generic hard-block branch"
+    return 1
+  }
+  [ "$none_line" -lt "$hard_block_line" ] || {
+    echo "checkless-PR detection does not run before the generic hard-block guard"
+    return 1
+  }
+}
+
+# Step 6b must have an explicit guard for the checks command itself failing
+# (non-zero exit or unparseable JSON) — the bug report's core complaint was
+# that no such branch existed, so a command failure fell through to "no
+# blocking checks found" and merged anyway.
+test_ticket_pr_review_checks_command_failure_is_guarded() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^\*\*If `_merge_blocked_reason` is empty\*\*/,/^\*\*If the array is empty/p' "$skill_md")
+  echo "$block" | grep -qi 'exited non-zero' || {
+    echo "Step 6b does not guard against gh pr checks exiting non-zero"
+    return 1
+  }
+  echo "$block" | grep -qi 'not valid JSON' || {
+    echo "Step 6b does not guard against unparseable JSON output"
+    return 1
+  }
+  echo "$block" | tr '\n' ' ' | grep -qi 'never as "no blocking checks' || {
+    echo "Step 6b does not explicitly say a checks-command failure is a hard block, not a pass"
+    return 1
+  }
+}
+
+# The gate must be pinned to `bucket` (gh's stable rollup), block on
+# fail/cancel/pending, and treat a legitimately empty checks array as
+# not-a-failure — all three are explicit constraints in the issue's handover
+# package.
+test_ticket_pr_review_checks_bucket_evaluation() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^\*\*If `_merge_blocked_reason` is empty\*\*/,/^\*\*If the array is empty/p' "$skill_md")
+  echo "$block" | grep -q '`fail`, `cancel`.*hard block' || {
+    echo "Step 6b does not treat fail/cancel bucket as a hard block"
+    return 1
+  }
+  echo "$block" | grep -q '`pending`.*blocks the merge' || {
+    echo "Step 6b does not treat pending bucket as blocking (still running)"
+    return 1
+  }
+  echo "$block" | grep -qi 'no configured.*checks.*not a failure\|legitimately not a failure' || {
+    echo "Step 6b does not tolerate a legitimately empty checks array"
+    return 1
+  }
+}
+
+test_ticket_pr_review_checks_report_table_uses_state_bucket() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^\*\*If any check has a blocking bucket/,/^Post the same message as a PR comment\./p' "$skill_md")
+  echo "$block" | grep -q '| Check | State | Bucket |' || {
+    echo "failing-checks report table no longer reports State/Bucket columns"
+    return 1
+  }
+}
+
 # ── dispatcher ─────────────────────────────────────────────────────────────────
 
 filter="${1:-}"

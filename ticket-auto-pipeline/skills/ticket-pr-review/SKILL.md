@@ -420,26 +420,77 @@ Post the same message as a PR comment.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|done|skipped: $_merge_blocked_reason" >> "$LOG_FILE"
 
-**If `_merge_blocked_reason` is empty**, check that all GitHub build checks have passed before merging:
+**If `_merge_blocked_reason` is empty**, check that all GitHub build checks have passed before merging.
+
+**Note (issue #365):** `gh pr checks --json` does not expose `status`/`conclusion` fields —
+`gh` (2.x) only accepts `bucket, completedAt, description, event, link, name, startedAt, state,
+workflow`. Requesting the old field names fails the command outright
+(`Unknown JSON field: "status"`). Use `bucket`, which is `gh`'s own stable rollup of the raw
+`state`, instead of re-deriving pass/fail from `state` — `state` alone doesn't distinguish a
+genuinely queued check from a completed one with a non-standard conclusion string.
 
 ```bash
-gh pr checks {number} --repo {owner}/{repo} --json name,status,conclusion
+_checks_json=$(gh pr checks {number} --repo {owner}/{repo} --json name,state,bucket 2>&1)
+_checks_rc=$?
 ```
 
-Parse the JSON array. Evaluate every check:
-- `status` must be `COMPLETED` for all checks — if any is `IN_PROGRESS` or `QUEUED`, the build is still running
-- `conclusion` must be one of `SUCCESS`, `NEUTRAL`, or `SKIPPED` — any `FAILURE`, `CANCELLED`, `TIMED_OUT`, or `ACTION_REQUIRED` is a hard block
+**A non-zero exit here is not automatically a failure.** `gh pr checks` exits non-zero for two
+very different situations, and only one of them is a real problem: a genuinely checkless PR
+makes `gh` exit non-zero with the plain-text stderr message `no checks reported on the '<branch>'
+branch` — it never gets far enough to emit `[]`, so an empty JSON array is not actually
+reachable for this case. Check for that message first:
 
-**If any check is not COMPLETED, or has a blocking conclusion:**
+```bash
+if [ "$_checks_rc" -ne 0 ] && echo "$_checks_json" | grep -qi "no checks reported"; then
+  _checks_none=true
+else
+  _checks_none=false
+fi
+```
+
+**If `$_checks_none` is true** — the PR legitimately has no configured checks — treat this the
+same as an empty checks array: not a failure, proceed straight to the merge (skip the rest of
+this check-evaluation section entirely).
+
+**Otherwise, if the command exited non-zero, or `$_checks_json` is not valid JSON**
+(`echo "$_checks_json" | jq -e . >/dev/null 2>&1` fails): treat this as a hard block — never as
+"no blocking checks found". Do NOT merge. Report to the user:
+
+```
+⛔ PR #{number} — could not read CI check status, merge blocked.
+
+`gh pr checks` failed or returned unparseable output:
+{_checks_json}
+
+Investigate the checks command failure and re-run `/ticket-pr-review {TICKET-ID}` or merge
+manually once you've confirmed checks are green.
+```
+
+Post the same message as a PR comment.
+
+[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|done|blocked: checks command failed" >> "$LOG_FILE"
+
+**Otherwise, parse the JSON array.** An empty array (`[]`) means the PR has no configured
+checks — that is legitimately not a failure, proceed to the merge (this branch is a belt-and-
+braces fallback; in practice `gh` reaches the `$_checks_none` case above instead of ever
+emitting `[]`, per its `populateStatusChecks` source). Otherwise evaluate every check's
+`bucket` — `gh pr checks --help` documents this as a closed five-value enum (`pass`, `fail`,
+`pending`, `skipping`, `cancel`), gh's own rollup of the raw `state`:
+- `pass` — passed, not blocking
+- `skipping` — skipped, not blocking
+- `pending` — still running, blocks the merge (not yet a failure, just not done)
+- `fail`, `cancel` — hard block
+
+**If any check has a blocking bucket (`pending`, `fail`, or `cancel`):**
 
 Do NOT merge. Report to the user:
 
 ```
 ⛔ PR #{number} has failing or pending build checks — merge blocked.
 
-| Check | Status | Conclusion |
-|-------|--------|------------|
-| {name} | {status} | {conclusion} |
+| Check | State | Bucket |
+|-------|-------|--------|
+| {name} | {state} | {bucket} |
 ...
 
 Fix the failing checks and re-run `/ticket-pr-review {TICKET-ID}` or merge manually once they pass.
@@ -449,7 +500,7 @@ Post the same message as a PR comment.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|done|blocked: failing checks" >> "$LOG_FILE"
 
-**If all checks are COMPLETED with SUCCESS/NEUTRAL/SKIPPED:**
+**If the array is empty, or every check's bucket is `pass`/`skipping`:**
 
 Scan the diff captured in Step 4 for conflict markers before merging:
 
