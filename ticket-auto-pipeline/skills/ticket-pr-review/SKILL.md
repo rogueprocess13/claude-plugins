@@ -22,7 +22,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `fetch-ticket` | Step 2 (extract requirements) | ticket data already cached; re-fetch if needed |
 | `extract-requirements` | Step 3 (find PR) | requirements log entry or re-extract from ticket |
 | `find-pr` | Step 4 (get changed code) | PR number from log `find-pr\|done` entry |
-| `validate-diff` | Step 6 (post findings) | validation results from notes or re-run |
+| `validate-diff` | Step 5.5 (ADR gate check) | validation results from notes or re-run — routes through 5.5 and the Step 5.6 verdict write, not straight to 6, so a resumed run still passes through the ADR gate and records this run's verifier result before Step 6a's gated trigger fires (`VERDICT_FAIL_NOT_ENFORCED`, issue #368) |
 | `post-findings` | Step 6b (merge decision) | verdict from log `post-findings\|done` entry |
 | `merge-decision` | End — skill already complete | — |
 
