@@ -207,8 +207,11 @@ verdict means Step 6b MUST NOT merge, regardless of requirements coverage. A `CR
 or `SUPERSEDE_REQUIRED` verdict likewise blocks the merge — a PR is not mergeable while it rests
 on an architectural commitment that has not yet been ratified.
 
-The overwhelmingly common case is nothing to check here — skip straight to Step 6 when the diff
-raises no such candidate.
+The overwhelmingly common case is nothing to check here — skip straight to **Step 5.6** (not
+Step 6) when the diff raises no such candidate. Step 5.6 is not optional: it is where this
+run's own verdict is written before Step 6 fires the Linear trigger, and skipping straight to
+Step 6 would skip that write for the overwhelming majority of runs — exactly the ordering bug
+Step 5.6 exists to close (`VERDICT_FAIL_NOT_ENFORCED`, issue #368).
 
 ---
 

@@ -830,7 +830,11 @@ Append to `{ticket-dir}/notes.md`:
 - **Evidence:** {brief summary}
 ```
 
-### Post-verdict: Record verifier result (Phase 0 RLVR)
+### Post-verdict: Record verifier result (Phase 0 RLVR) — PASS
+
+You only reach this point on the pass branch (`### Pass` above routes here; `### Fail` routes
+to Step 7, which has its own FAIL write — see **Post-verdict: Record verifier result (Phase 0
+RLVR) — FAIL** under 7b below).
 
 **Before either state-transition branch below** — the `uat-pass` branch is gated on this
 exact record (`VERDICT_FAIL_NOT_ENFORCED`, issue #368): `flow.sh` refuses `uat-pass` when
@@ -840,27 +844,23 @@ after the trigger call — the historical order in this doc — means the router
 documented verify-retry loop (attempt 1 FAILs and gets logged, attempt 2 genuinely PASSes)
 would have attempt 2's `uat-pass` call check the log *before* its own PASS was written,
 still seeing attempt 1's stale FAIL and blocking a ticket that just legitimately passed.
-Source and call `write_verifier_result` now, while the verdict is fresh from Step 6/7:
+Source and call `write_verifier_result` now, with criteria_met=criteria_total=total passing
+criteria:
 
 ```bash
 source ~/.claude/skills/lib/verifier-result.sh
-write_verifier_result verifier=playwright_uat verdict=<PASS|FAIL> criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+write_verifier_result verifier=playwright_uat verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
 ```
-On PASS: criteria_met=criteria_total=total passing criteria. On FAIL: criteria_met=passed count, criteria_total=total.
 
 **If `VERIFY_MODE=build-only`**, use `verifier=build_only` instead of `playwright_uat`:
 ```bash
-write_verifier_result verifier=build_only verdict=<PASS|FAIL> criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+write_verifier_result verifier=build_only verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
 ```
 
 **If `VERIFY_MODE=live-backend`**, use `verifier=live_backend` instead of `playwright_uat`:
 ```bash
-write_verifier_result verifier=live_backend verdict=<PASS|FAIL> criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+write_verifier_result verifier=live_backend verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
 ```
-
-This section only applies once a verdict (PASS or FAIL) is known — i.e. after Step 6 (pass)
-or Step 7b (fail). The remainder of this Step 6 sequence covers the pass path only; the fail
-path's own state transition (`uat-fail`, not gate-declared — see [SKILL.md](../ticket-flow/SKILL.md#verdict-gate)) is Step 7f.
 
 ### If `--env local`: Open PR and close out
 
@@ -1069,6 +1069,33 @@ Print to the user:
 
 **Snapshot at failure (relevant excerpt):**
 {10–20 most relevant lines of the accessibility tree YAML, focused on the component under test}
+```
+
+### Post-verdict: Record verifier result (Phase 0 RLVR) — FAIL
+
+Same call as the pass-branch write above, now with the FAIL verdict — this is the one write
+site that actually exercises the verdict gate's namesake failure mode
+(`VERDICT_FAIL_NOT_ENFORCED`, issue #368): a real verify FAIL must land on the pipeline log so
+`verifier_latest_verdict` can see it and block any subsequent attempt (buggy retry, or a human
+manually re-running `uat-pass`) to force a Done/UAT transition while it stands as the latest
+verdict for this `(verifier, phase)` pair. Source and call `write_verifier_result` now, using
+the criteria counts from the table above:
+
+```bash
+source ~/.claude/skills/lib/verifier-result.sh
+write_verifier_result verifier=playwright_uat verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+```
+`criteria_met` is the passing-criterion count, `criteria_total` the attempted count — same
+shape as the Step 6 PASS call.
+
+**If `VERIFY_MODE=build-only`**, use `verifier=build_only` instead of `playwright_uat`:
+```bash
+write_verifier_result verifier=build_only verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+```
+
+**If `VERIFY_MODE=live-backend`**, use `verifier=live_backend` instead of `playwright_uat`:
+```bash
+write_verifier_result verifier=live_backend verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
 ```
 
 ### 7c — Emit the REMEDIATION_BRIEF
