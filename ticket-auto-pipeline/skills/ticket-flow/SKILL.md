@@ -12,7 +12,7 @@ Centralized Linear state/label executor for the ticket workflow. Every ticket sk
 Invoke with:
 
 ```
-/ticket-flow <TICKET-ID> <TRIGGER> [--data key=value] [--dry-run]
+/ticket-flow <TICKET-ID> <TRIGGER> [--data key=value] [--dry-run] [--override REASON]
 ```
 
 Where `--data` supplies trigger-specific values (e.g. `complexity=simple`, `outcome=Smooth`).
@@ -127,6 +127,28 @@ An issue counts as an epic when it carries the epic marker label (`EPIC_MARKER_L
 payload `flow.sh` fetches, so neither costs an extra request. The evaluator lives in
 `lib/epic-precondition.sh` and `flow.sh` sources it, so tests exercise the same code path the
 executor runs.
+
+### Verdict gate
+
+Independent of the epic precondition above, a trigger may also declare `"verdict_gate": true` in
+`state-machine.json`. `pr-review-pass-done`, `pr-review-pass-uat`, and `uat-pass` carry it —
+the three triggers that can land a ticket in `Done` or `UAT`. Before dispatching such a trigger,
+`flow.sh` calls `verifier_latest_verdict` (`lib/verifier-result.sh`) to find the most recently
+recorded verdict for every `(verifier, phase)` pair the pipeline log has written a
+`META|verifier-result` entry for. If any pair's **latest** verdict is `FAIL` or `BLOCK`, the
+trigger is refused (exit 11) with a clear message naming the offending pair — a later `PASS`/
+`WARN` for that same pair supersedes the earlier failure and clears the block on its own.
+
+To force the trigger through anyway (e.g. a fix verified by hand, outside the pipeline), pass
+`--override <reason>`. The reason is recorded as `META|verdict-override` alongside which
+`(verifier, phase)` pairs it superseded — never silently.
+
+A ticket with zero `META|verifier-result` entries (every ticket that predates this gate) is
+unaffected: absence of evidence is not failure.
+
+```
+flow.sh <TICKET-ID> pr-review-pass-done --override "manually verified per WIL-79, HTTP 500 fixed in 979b648"
+```
 
 ## Preflight Sentinel
 

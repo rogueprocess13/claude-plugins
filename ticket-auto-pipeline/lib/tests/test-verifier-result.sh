@@ -512,6 +512,108 @@ test_confidence_unknown_outcome() {
   _teardown
 }
 
+# ── verifier_latest_verdict (VERDICT_FAIL_NOT_ENFORCED, issue #368) ────────────
+
+test_latest_verdict_empty_log_returns_nothing() {
+  _setup
+  local out
+  out=$(verifier_latest_verdict "$_log")
+  local rc=$?
+  _teardown
+  [ -z "$out" ] && [ "$rc" -eq 0 ]
+}
+
+test_latest_verdict_missing_file_returns_nothing() {
+  local out rc
+  out=$(verifier_latest_verdict "/no/such/pipeline.log")
+  rc=$?
+  [ -z "$out" ] && [ "$rc" -eq 0 ]
+}
+
+test_latest_verdict_reports_trailing_fail() {
+  _setup
+  write_verifier_result verifier=live_backend verdict=FAIL criteria_met=3 criteria_total=6 phase=VERIFY
+  local out
+  out=$(verifier_latest_verdict "$_log")
+  _teardown
+  [ "$out" = "live_backend|VERIFY|FAIL" ] || {
+    echo "expected 'live_backend|VERIFY|FAIL', got '$out'" >&2
+    return 1
+  }
+}
+
+test_latest_verdict_reports_trailing_block() {
+  _setup
+  write_verifier_result verifier=gate_check verdict=BLOCK phase=GATE
+  local out
+  out=$(verifier_latest_verdict "$_log")
+  _teardown
+  [ "$out" = "gate_check|GATE|BLOCK" ] || {
+    echo "expected 'gate_check|GATE|BLOCK', got '$out'" >&2
+    return 1
+  }
+}
+
+test_latest_verdict_pass_clears_no_findings() {
+  _setup
+  write_verifier_result verifier=live_backend verdict=PASS criteria_met=6 criteria_total=6 phase=VERIFY
+  local out
+  out=$(verifier_latest_verdict "$_log")
+  _teardown
+  [ -z "$out" ]
+}
+
+test_latest_verdict_later_pass_supersedes_earlier_fail() {
+  _setup
+  write_verifier_result verifier=live_backend verdict=FAIL criteria_met=3 criteria_total=6 phase=VERIFY attempt=1
+  write_verifier_result verifier=live_backend verdict=PASS criteria_met=6 criteria_total=6 phase=VERIFY attempt=2
+  local out
+  out=$(verifier_latest_verdict "$_log")
+  _teardown
+  [ -z "$out" ] || {
+    echo "expected no findings once PASS supersedes FAIL, got '$out'" >&2
+    return 1
+  }
+}
+
+test_latest_verdict_tracks_per_verifier_phase_pair() {
+  # A FAIL for one verifier/phase must not be cleared by a PASS recorded
+  # under a different verifier or phase.
+  _setup
+  write_verifier_result verifier=live_backend verdict=FAIL criteria_met=3 criteria_total=6 phase=VERIFY
+  write_verifier_result verifier=return_completeness verdict=FAIL criteria_met=60 criteria_total=66 phase=IMPLEMENT
+  write_verifier_result verifier=live_backend verdict=PASS criteria_met=6 criteria_total=6 phase=IMPLEMENT
+  local out
+  out=$(verifier_latest_verdict "$_log")
+  _teardown
+  echo "$out" | grep -qx "live_backend|VERIFY|FAIL" || {
+    echo "expected live_backend|VERIFY|FAIL to survive, got: $out" >&2
+    return 1
+  }
+  echo "$out" | grep -qx "return_completeness|IMPLEMENT|FAIL" || {
+    echo "expected return_completeness|IMPLEMENT|FAIL to survive, got: $out" >&2
+    return 1
+  }
+  [ "$(echo "$out" | wc -l)" -eq 2 ] || {
+    echo "expected exactly 2 lines, got: $out" >&2
+    return 1
+  }
+}
+
+test_latest_verdict_ignores_non_verifier_result_lines() {
+  _setup
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|schema|info|1" >>"$_log"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|start|start|beginning implementation" >>"$_log"
+  write_verifier_result verifier=live_backend verdict=FAIL criteria_met=3 criteria_total=6 phase=VERIFY
+  local out
+  out=$(verifier_latest_verdict "$_log")
+  _teardown
+  [ "$out" = "live_backend|VERIFY|FAIL" ] || {
+    echo "expected 'live_backend|VERIFY|FAIL', got '$out'" >&2
+    return 1
+  }
+}
+
 # ── Run ────────────────────────────────────────────────────────────────────────
 
 _run "basic write appends to log" test_basic_pass
@@ -542,6 +644,14 @@ _run "F8: score never exceeds 1.0 (10/3→1.0)" test_score_never_above_one
 _run "FAIL with zero total criteria scores 0.0" test_fail_zero_total_div_by_zero
 _run "F9: confidence parity — Smooth=0.90" test_confidence_parity_smooth
 _run "F9: confidence parity — unknown outcome=0.70" test_confidence_unknown_outcome
+_run "verifier_latest_verdict: empty log returns nothing" test_latest_verdict_empty_log_returns_nothing
+_run "verifier_latest_verdict: missing file returns nothing" test_latest_verdict_missing_file_returns_nothing
+_run "verifier_latest_verdict: reports trailing FAIL" test_latest_verdict_reports_trailing_fail
+_run "verifier_latest_verdict: reports trailing BLOCK" test_latest_verdict_reports_trailing_block
+_run "verifier_latest_verdict: PASS clears no findings" test_latest_verdict_pass_clears_no_findings
+_run "verifier_latest_verdict: later PASS supersedes earlier FAIL" test_latest_verdict_later_pass_supersedes_earlier_fail
+_run "verifier_latest_verdict: tracks per (verifier, phase) pair independently" test_latest_verdict_tracks_per_verifier_phase_pair
+_run "verifier_latest_verdict: ignores non verifier-result log lines" test_latest_verdict_ignores_non_verifier_result_lines
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

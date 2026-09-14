@@ -158,7 +158,8 @@
         "claimed"
       ],
       "description": "PR approved with no UAT required — close to Done",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "verdict_gate": true
     },
     "pr-review-pass-uat": {
       "from": "Review",
@@ -170,7 +171,8 @@
         "rejected"
       ],
       "description": "PR approved with UAT required — move to UAT",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "verdict_gate": true
     },
     "pr-review-fail": {
       "from": null,
@@ -204,7 +206,8 @@
         "reviewed"
       ],
       "description": "UAT passed — close ticket",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "verdict_gate": true
     },
     "uat-fail": {
       "from": "UAT",

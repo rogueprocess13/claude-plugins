@@ -153,3 +153,38 @@ write_verifier_result() {
   }
   return 0
 }
+
+# ── Reader (VERDICT_FAIL_NOT_ENFORCED, issue #368) ──────────────────────────
+#
+# verifier_latest_verdict <log_file>
+#
+# Scans a pipeline log for `META|verifier-result|info|<json>` entries and,
+# for each distinct (verifier, phase) pair, keeps only the most recently
+# written verdict — a later PASS/WARN for the same pair supersedes an
+# earlier FAIL/BLOCK. Prints one line per pair whose latest verdict is FAIL
+# or BLOCK, in the form:
+#
+#   <verifier>|<phase>|<verdict>
+#
+# Prints nothing (and always returns 0) when the log is missing, empty, has
+# no verifier-result entries, or every pair's latest verdict is PASS/WARN.
+# Absence of evidence is deliberately not failure — a ticket with zero
+# verifier-results must transition exactly as it did before this reader
+# existed.
+#
+# Per pipeline-log-format.md's MSG parsing rule: join fields 5+ with awk,
+# never `cut -f5` — a JSON payload's own `|` characters would be truncated.
+verifier_latest_verdict() {
+  local log_file="$1"
+  [ -n "$log_file" ] && [ -f "$log_file" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+
+  awk -F'|' '$2=="META" && $3=="verifier-result" {
+    s=$5; for (i=6;i<=NF;i++) s=s"|"$i; print s
+  }' "$log_file" 2>/dev/null | jq -s -r '
+    reduce .[] as $e ({}; .[(($e.verifier // "")) + "|" + ($e.phase // "")] = ($e.verdict // ""))
+    | to_entries[]
+    | select(.value == "FAIL" or .value == "BLOCK")
+    | .key + "|" + .value
+  ' 2>/dev/null || true
+}

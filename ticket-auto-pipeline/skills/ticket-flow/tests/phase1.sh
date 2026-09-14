@@ -1032,6 +1032,228 @@ test_state_machine_single_source() {
   }
 }
 
+# ── verdict gate (VERDICT_FAIL_NOT_ENFORCED, issue #368) ────────────────────
+# A trailing FAIL/BLOCK verifier-result must block a verdict_gate-declared
+# trigger (pr-review-pass-done, pr-review-pass-uat, uat-pass) from mutating
+# Linear, unless a later PASS/WARN for the same (verifier, phase) supersedes
+# it or a human passes --override. Absence of any verifier-result — the
+# common case for every ticket before this change shipped — must not block.
+
+_stub_lib_dir_verdict_gate() {
+  # Like _stub_lib_dir but the issue starts in Review (pr-review-pass-done's
+  # "from" state) and the lib dir carries a real verifier-result.sh, so
+  # verifier_latest_verdict is the actual reader, not a re-implementation.
+  local dir="$1"
+  local marker="$2"
+  mkdir -p "$dir"
+  cp "$PLUGIN_DIR/lib/heartbeat.sh" "$dir/"
+  cp "$PLUGIN_DIR/lib/epic-precondition.sh" "$dir/"
+  cp "$PLUGIN_DIR/lib/verifier-result.sh" "$dir/"
+  [ -f "$PLUGIN_DIR/lib/confidence.sh" ] && cp "$PLUGIN_DIR/lib/confidence.sh" "$dir/"
+  cat >"$dir/linear-api.sh" <<STUBEOF
+get_issue() {
+  if [ -f "$marker" ]; then
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-done",name:"Done"},labels:{nodes:[{id:"lbl-reviewed",name:"reviewed"}]},description:"",project:null,parent:null}'
+  else
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-review",name:"Review"},labels:{nodes:[]},description:"",project:null,parent:null}'
+  fi
+}
+get_team() {
+  jq -n '{states:[{id:"state-review",name:"Review"},{id:"state-done",name:"Done"}],labels:[{id:"lbl-reviewed",name:"reviewed"},{id:"lbl-rejected",name:"rejected"},{id:"lbl-claimed",name:"claimed"}]}'
+}
+update_issue() {
+  touch "$marker"
+  jq -n '{success:true,issue:{id:"issue-1",identifier:"WIL-99"}}'
+}
+get_me() { jq -n '{id:"me-1",name:"Test"}'; }
+STUBEOF
+}
+
+_write_fail_verdict_line() {
+  # Appends one FAIL verifier-result line to $1, for verifier=$2 (default
+  # live_backend) phase=$3 (default VERIFY).
+  local log="$1" verifier="${2:-live_backend}" phase="${3:-VERIFY}"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|verifier-result|info|{\"verifier\":\"${verifier}\",\"verdict\":\"FAIL\",\"score\":0.5,\"criteria_met\":3,\"criteria_total\":6,\"attempt\":1,\"phase\":\"${phase}\"}" >>"$log"
+}
+
+test_flow_verdict_gate_blocks_trailing_fail() {
+  local tmpdir marker log rc
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib"
+  marker="$tmpdir/mutated.marker"
+  _stub_lib_dir_verdict_gate "$tmpdir/lib" "$marker"
+  log="$tmpdir/logs/WIL-99-pipeline.log"
+  _write_fail_verdict_line "$log"
+
+  rc=0
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-99 pr-review-pass-done >/dev/null 2>&1 || rc=$?
+
+  local blocked_logged=1
+  grep -q 'META|verdict-gate|fail' "$log" && blocked_logged=0
+  local no_mutation=1
+  [ -f "$marker" ] && no_mutation=0
+
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 11 ] && [ "$blocked_logged" -eq 0 ] && [ "$no_mutation" -eq 1 ] || {
+    echo "rc=$rc blocked_logged=$blocked_logged no_mutation=$no_mutation"
+    return 1
+  }
+}
+
+test_flow_verdict_gate_override_bypasses() {
+  local tmpdir marker log rc
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib"
+  marker="$tmpdir/mutated.marker"
+  _stub_lib_dir_verdict_gate "$tmpdir/lib" "$marker"
+  log="$tmpdir/logs/WIL-99-pipeline.log"
+  _write_fail_verdict_line "$log"
+
+  rc=0
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-99 pr-review-pass-done --override "manually verified per WIL-79" >/dev/null 2>&1 || rc=$?
+
+  local override_logged=1
+  grep -q 'META|verdict-override|info|.*reason=manually verified per WIL-79' "$log" && override_logged=0
+  local mutated=1
+  [ -f "$marker" ] && mutated=0
+
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$override_logged" -eq 0 ] && [ "$mutated" -eq 0 ] || {
+    echo "rc=$rc override_logged=$override_logged mutated=$mutated"
+    return 1
+  }
+}
+
+test_flow_verdict_gate_pass_supersedes_fail() {
+  local tmpdir marker log rc
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib"
+  marker="$tmpdir/mutated.marker"
+  _stub_lib_dir_verdict_gate "$tmpdir/lib" "$marker"
+  log="$tmpdir/logs/WIL-99-pipeline.log"
+  _write_fail_verdict_line "$log"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|verifier-result|info|{\"verifier\":\"live_backend\",\"verdict\":\"PASS\",\"score\":1.0,\"criteria_met\":6,\"criteria_total\":6,\"attempt\":2,\"phase\":\"VERIFY\"}" >>"$log"
+
+  rc=0
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-99 pr-review-pass-done >/dev/null 2>&1 || rc=$?
+
+  local mutated=1
+  [ -f "$marker" ] && mutated=0
+
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$mutated" -eq 0 ] || {
+    echo "rc=$rc mutated=$mutated"
+    return 1
+  }
+}
+
+test_flow_verdict_gate_no_verifier_result_passes() {
+  # Backward compatibility: a ticket with zero verifier-result entries (every
+  # ticket predating this change) must transition exactly as before.
+  local tmpdir marker log rc
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib"
+  marker="$tmpdir/mutated.marker"
+  _stub_lib_dir_verdict_gate "$tmpdir/lib" "$marker"
+  log="$tmpdir/logs/WIL-99-pipeline.log"
+  : >"$log"
+
+  rc=0
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-99 pr-review-pass-done >/dev/null 2>&1 || rc=$?
+
+  local mutated=1
+  [ -f "$marker" ] && mutated=0
+
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$mutated" -eq 0 ] || {
+    echo "rc=$rc mutated=$mutated"
+    return 1
+  }
+}
+
+test_flow_verdict_gate_skipped_when_not_declared() {
+  # needs-info carries no verdict_gate — a trailing FAIL must not block a
+  # trigger that never opted in. --dry-run avoids the unrelated
+  # post-trigger assertion, which the static needs-info stub (labels never
+  # reflect the mutation) can't satisfy independent of the gate.
+  local tmpdir log rc out
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib"
+  _stub_lib_dir_needs_info "$tmpdir/lib" '[]'
+  cp "$PLUGIN_DIR/lib/verifier-result.sh" "$tmpdir/lib/"
+  [ -f "$PLUGIN_DIR/lib/confidence.sh" ] && cp "$PLUGIN_DIR/lib/confidence.sh" "$tmpdir/lib/"
+  log="$tmpdir/logs/WIL-99-pipeline.log"
+  _write_fail_verdict_line "$log"
+
+  rc=0
+  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-99 needs-info --dry-run 2>&1) || rc=$?
+
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] || {
+    echo "rc=$rc output=$out"
+    return 1
+  }
+}
+
+test_flow_verdict_gate_fails_open_without_verifier_result_lib() {
+  # Version-skew guard: a runtime lib dir carrying a verifier-result.sh that
+  # predates verifier_latest_verdict (e.g. mid-rollout skew) must not make
+  # the gate reference an undefined function — it degrades to a no-op
+  # rather than erroring the mutation out. An empty stub file at the LIB_DIR
+  # path (rather than an absent one) pins this independent of flow.sh's own
+  # SCRIPT_DIR-relative fallback, which would otherwise find the real file.
+  local tmpdir marker log rc
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib"
+  marker="$tmpdir/mutated.marker"
+  cp "$PLUGIN_DIR/lib/heartbeat.sh" "$tmpdir/lib/"
+  cp "$PLUGIN_DIR/lib/epic-precondition.sh" "$tmpdir/lib/"
+  echo "#!/usr/bin/env bash" >"$tmpdir/lib/verifier-result.sh"
+  cat >"$tmpdir/lib/linear-api.sh" <<STUBEOF
+get_issue() {
+  if [ -f "$marker" ]; then
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-done",name:"Done"},labels:{nodes:[{id:"lbl-reviewed",name:"reviewed"}]},description:"",project:null,parent:null}'
+  else
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-review",name:"Review"},labels:{nodes:[]},description:"",project:null,parent:null}'
+  fi
+}
+get_team() {
+  jq -n '{states:[{id:"state-review",name:"Review"},{id:"state-done",name:"Done"}],labels:[{id:"lbl-reviewed",name:"reviewed"},{id:"lbl-rejected",name:"rejected"},{id:"lbl-claimed",name:"claimed"}]}'
+}
+update_issue() {
+  touch "$marker"
+  jq -n '{success:true,issue:{id:"issue-1",identifier:"WIL-99"}}'
+}
+get_me() { jq -n '{id:"me-1",name:"Test"}'; }
+STUBEOF
+  log="$tmpdir/logs/WIL-99-pipeline.log"
+  _write_fail_verdict_line "$log"
+
+  rc=0
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-99 pr-review-pass-done >/dev/null 2>&1 || rc=$?
+
+  local mutated=1
+  [ -f "$marker" ] && mutated=0
+
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$mutated" -eq 0 ] || {
+    echo "rc=$rc mutated=$mutated"
+    return 1
+  }
+}
+
 # ── dispatch ─────────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -1072,6 +1294,12 @@ for fn in \
   test_needs_adr_resolved_removes_the_label \
   test_needs_adr_does_not_change_state \
   test_state_machine_single_source \
+  test_flow_verdict_gate_blocks_trailing_fail \
+  test_flow_verdict_gate_override_bypasses \
+  test_flow_verdict_gate_pass_supersedes_fail \
+  test_flow_verdict_gate_no_verifier_result_passes \
+  test_flow_verdict_gate_skipped_when_not_declared \
+  test_flow_verdict_gate_fails_open_without_verifier_result_lib \
   test_ticket_dir_disambiguation \
   test_gen_mermaid_roundtrip; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
