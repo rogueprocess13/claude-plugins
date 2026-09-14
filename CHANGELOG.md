@@ -17,6 +17,36 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.5 (2026-09-14)
+
+Fixes `RETRO_CURSOR_METRIC_SKEW` (issue #367): `retro.sh`'s `complexity_accuracy` was computed
+over whatever the mtime cursor happened to leave un-skipped, not the full window population.
+A `/ticket-retro` run on 2026-09-14 reported `complexity_accuracy: 1.000` from 2 predictions
+(one with no recorded outcome) because the cursor had skipped 12 of 14 logs as "unchanged" —
+Langfuse's independent measure over the same body of work reported a true accuracy of `0.50`
+(6 accurate, 6 overestimated, 0 underestimated). The cursor exists to stop *re-reporting
+failures* already surfaced in a prior retro run; it should never have also scoped the metrics
+population.
+
+- `skills/ticket-retro/retro.sh`: the per-log loop now separates cursor-gated failure-histogram
+  scanning from cursor-independent complexity-metrics pairing. A cursor-skipped log still
+  contributes its declared/actual complexity pair; only the failure scan (and, transitively,
+  heartbeat dedup) stays gated on the cursor, exactly as before. `complexity_accuracy` is now
+  `null` (suppressed) whenever the sample size (`complexity_accuracy_n`, always emitted
+  alongside it) falls below `complexity_accuracy_min_n` (default 3, override via
+  `COMPLEXITY_ACCURACY_MIN_N`) — a 1/1 ratio no longer reads as a misleadingly confident
+  `1.000`. Two new fields, `complexity_over_count` and `complexity_under_count`, break out
+  estimation error by direction — the issue's secondary finding was that the error was
+  one-directional (6 overestimates, 0 underestimates), which the aggregate ratio alone hides.
+- `skills/ticket-retro/SKILL.md`: documents the five new/changed `retro.sh` JSON fields and
+  updates the Complexity Prediction Accuracy report section, the Linear summary comment, and
+  the final completion report to show `n` and the over/under breakdown alongside the accuracy
+  figure, and to render a suppression note instead of a ratio when `n` is below the floor.
+- `lib/tests/test-retro-complexity-accuracy-scope.sh`: five new tests — accuracy computed over
+  the full population across a cursor-warm second run (the exact repro shape from the issue),
+  over/under directionality reported correctly, failure-histogram dedup is unaffected by the
+  scope fix, small-`n` suppression, and the floor is overridable via env var.
+
 ## 0.50.4 (2026-09-14)
 
 Fixes `PR_REVIEW_CHECKS_JSON_SCHEMA` (issue #365): `ticket-pr-review` Step 6b's pre-merge CI

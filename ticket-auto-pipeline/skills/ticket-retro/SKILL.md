@@ -45,8 +45,12 @@ Parse the JSON output into the following variables:
 - `{GATE_STOP_TOTAL}` — total gate-stop events
 - `{GATE_WARN_TOTAL}` — total gate-warn events (e.g. `RETURN_INCOMPLETE` in Phase 1 warn-only mode); tracked separately since these never halt the pipeline — used to measure false-positive rate before a warn-only gate flips to enforce
 - `{COMPLEXITY_PREDICTIONS}` — array of `{ticket, declared, actual, actual_source}`
-- `{COMPLEXITY_ACCURACY}` — float 0–1
-- `{LOGS_SCANNED}`, `{LOGS_SKIPPED}`, `{LOGS_WITH_FAILURES}` — counts. `LOGS_SCANNED` counts only newly-scanned logs (not cursor-skipped). `LOGS_SKIPPED` counts logs that were skipped because their mtime matched the cursor.
+- `{COMPLEXITY_ACCURACY}` — float 0–1, or `null` when suppressed (see below). Computed over **every** ticket-auto log in the window that has both a declared and an actual complexity — deliberately independent of the failure-dedup cursor ([#367](https://github.com/willard-pro/claude-plugins/issues/367): RETRO_CURSOR_METRIC_SKEW). A prior bug computed this over whatever the cursor happened to leave un-skipped (e.g. 1–2 logs), which could read as a misleadingly confident `1.000` against a true population accuracy of `0.50`.
+- `{COMPLEXITY_ACCURACY_N}` — sample size the accuracy figure was computed over. Always report this alongside `{COMPLEXITY_ACCURACY}` — an accuracy figure with no `n` is not trustworthy on its own.
+- `{COMPLEXITY_ACCURACY_MIN_N}` — the floor (default `3`, override via `COMPLEXITY_ACCURACY_MIN_N` env var) below which `{COMPLEXITY_ACCURACY}` is suppressed (`null`) rather than shown.
+- `{COMPLEXITY_ACCURACY_SUPPRESSED}` — `true` when `{COMPLEXITY_ACCURACY_N} < {COMPLEXITY_ACCURACY_MIN_N}` and the figure was suppressed.
+- `{COMPLEXITY_OVER_COUNT}`, `{COMPLEXITY_UNDER_COUNT}` — counts of mismatches by direction: `complexity_over_count` is `declared=complex` but `actual=Smooth` (needlessly routed through the heavier path); `complexity_under_count` is `declared=simple` but `actual=Rough`/`Hard`. Report both alongside the accuracy figure — a purely one-directional error pattern (e.g. all overestimates) is a distinct, actionable finding the aggregate ratio alone hides.
+- `{LOGS_SCANNED}`, `{LOGS_SKIPPED}`, `{LOGS_WITH_FAILURES}` — counts. `LOGS_SCANNED` counts only newly-scanned logs (not cursor-skipped). `LOGS_SKIPPED` counts logs that were skipped because their mtime matched the cursor. This cursor dedup applies to the failure histogram only — it does not gate `{COMPLEXITY_ACCURACY}` (see above).
 - `{LOGS_BY_SOURCE}` — object `{"ticket-auto": {scanned, skipped, with_failures}, "planner": {scanned, skipped, with_failures}}`. `ticket-auto` scans `./logs/*-pipeline.log`; `planner` scans `${REPOS_ROOT}/.ticket-auto/initiatives/*/state.log` ([#177](https://github.com/willard-pro/claude-plugins/issues/177)). Both sources feed the same `{FAILURE_HISTOGRAM}` — this field is purely for reporting where each count came from. `planner` counts are `0` when `REPOS_ROOT` is unset or no initiatives exist; nothing else about ticket-auto scanning changes in that case.
 - `{ERROR_DIAGNOSTICS}` — object with `total_errors`, `errors_by_ticket`, `error_category_histogram` (from heartbeat structured error events)
 
@@ -274,7 +278,8 @@ Omit the "Sources scanned" line when `{LOGS_BY_SOURCE}.planner.scanned` is `0` a
 
 ### Section: Complexity Prediction Accuracy
 
-Table of predicted vs. actual complexity with per-ticket rows and aggregate accuracy:
+Table of predicted vs. actual complexity with per-ticket rows and aggregate accuracy. Always
+show `n` alongside the accuracy — never report a bare ratio:
 
 ```markdown
 ## Complexity Prediction Accuracy
@@ -284,8 +289,20 @@ Table of predicted vs. actual complexity with per-ticket rows and aggregate accu
 | CRE-47 | simple | Smooth | log |
 | CRE-48 | complex | Hard | log |
 
-**Accuracy:** 0.750 (3/4 correct)
+**Accuracy:** 0.750 (3/4 correct, n=4)
+**Direction:** 1 overestimated, 0 underestimated
 ```
+
+When `{COMPLEXITY_ACCURACY_SUPPRESSED}` is `true` (sample size below `{COMPLEXITY_ACCURACY_MIN_N}`),
+replace the `**Accuracy:**` line with a suppression note instead of showing a ratio computed
+over too few predictions to be meaningful:
+
+```markdown
+**Accuracy:** suppressed — only {COMPLEXITY_ACCURACY_N} prediction(s) this window (floor: {COMPLEXITY_ACCURACY_MIN_N})
+```
+
+Omit the `**Direction:**` line only when both `{COMPLEXITY_OVER_COUNT}` and `{COMPLEXITY_UNDER_COUNT}`
+are `0`.
 
 ### Section: Complexity Calibration Notes (if {CALIBRATION_NOTES} non-empty)
 
@@ -493,10 +510,13 @@ If set, run the summary body through the `simple-english` skill (embedded mode, 
 |------|-------|
 ...
 
-### Complexity Accuracy: {COMPLEXITY_ACCURACY}
+### Complexity Accuracy: {COMPLEXITY_ACCURACY} (n={COMPLEXITY_ACCURACY_N})
 
 Full proposal: `~/.claude/state/ticket-retro/proposals/{YYYY-MM-DD}-retro.md`
 ```
+
+When `{COMPLEXITY_ACCURACY_SUPPRESSED}` is `true`, render that line as
+`### Complexity Accuracy: suppressed (n={COMPLEXITY_ACCURACY_N}, floor={COMPLEXITY_ACCURACY_MIN_N})` instead.
 
 If `RETRO_LINEAR_ISSUE` is unset, log the warning and skip — the proposal is still written.
 
@@ -642,7 +662,7 @@ Report to the user:
 **Logs with failures:** {LOGS_WITH_FAILURES}
 **Gate-stop events:** {GATE_STOP_TOTAL}
 **Gate-warn events:** {GATE_WARN_TOTAL}
-**Complexity accuracy:** {COMPLEXITY_ACCURACY}
+**Complexity accuracy:** {COMPLEXITY_ACCURACY} (n={COMPLEXITY_ACCURACY_N})
 
 **Proposal written:** ~/.claude/state/ticket-retro/proposals/{YYYY-MM-DD}-retro.md
 {Diff count} diff proposals generated.
