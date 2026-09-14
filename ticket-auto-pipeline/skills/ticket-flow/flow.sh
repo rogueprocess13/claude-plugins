@@ -15,14 +15,23 @@ source "$LIB_DIR/linear-api.sh"
 source "$LIB_DIR/planned-ticket-check.sh" 2>/dev/null || true
 source "$LIB_DIR/branch-directive-check.sh" 2>/dev/null || true
 source "$LIB_DIR/epic-precondition.sh"
+# verifier_latest_verdict backs the verdict gate below (issue #368). Guarded
+# like gate-check.sh's own source of this file — it may not exist on a fresh
+# install where the runtime lib path hasn't been populated yet.
+if [ -f "$LIB_DIR/verifier-result.sh" ]; then
+  source "$LIB_DIR/verifier-result.sh"
+elif [ -f "$SCRIPT_DIR/../../lib/verifier-result.sh" ]; then
+  source "$SCRIPT_DIR/../../lib/verifier-result.sh"
+fi
 
 SM="$SCRIPT_DIR/state-machine.json"
 
 usage() {
-  echo "Usage: $0 <TICKET-ID> <TRIGGER> [--generation N] [--state-dir DIR] [--data key=value ...] [--dry-run]" >&2
+  echo "Usage: $0 <TICKET-ID> <TRIGGER> [--generation N] [--state-dir DIR] [--data key=value ...] [--dry-run] [--override REASON]" >&2
   echo "" >&2
   echo "  --generation N   Caller's generation token (required when fence is active)" >&2
   echo "  --state-dir DIR   Fleet state directory for fence marker lookup" >&2
+  echo "  --override REASON   Force a verdict-gated trigger past a trailing FAIL/BLOCK verifier-result" >&2
   echo "" >&2
   echo "Valid triggers (from state-machine.json):" >&2
   jq -r '.triggers | keys[]' "$SM" 2>/dev/null | sed 's/^/  /' >&2
@@ -57,6 +66,7 @@ fi
 DRY_RUN=false
 CALLER_GENERATION=""
 FLEET_STATE_DIR="${FLEET_STATE_DIR:-}"
+OVERRIDE_REASON=""
 declare -A DATA=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -67,6 +77,10 @@ while [ $# -gt 0 ]; do
     ;;
   --state-dir)
     FLEET_STATE_DIR="$2"
+    shift
+    ;;
+  --override)
+    OVERRIDE_REASON="$2"
     shift
     ;;
   --data)
@@ -227,6 +241,34 @@ for label_name in "${ADD_LABEL_NAMES[@]}"; do
   check_precondition "$_precondition" "$label_name" "$ISSUE_JSON" || _pre_rc=$?
   [ "$_pre_rc" -eq 0 ] || _precondition_reject "$label_name" "$_pre_rc"
 done
+
+# ── Verdict gate (VERDICT_FAIL_NOT_ENFORCED, issue #368) ────────────────────
+# Declared per-trigger in state-machine.json via "verdict_gate": true. A
+# trailing FAIL/BLOCK verifier-result for any (verifier, phase) pair blocks
+# the trigger until a later PASS/WARN for that same pair supersedes it — or a
+# human forces it past the block with `--override <reason>`, recorded as
+# META|verdict-override. Absence of any verifier-result is not failure —
+# a ticket with zero verifier-results transitions exactly as it did before
+# this gate existed.
+_verdict_gate=$(echo "$def" | jq -r '.verdict_gate // false')
+if [ "$_verdict_gate" = "true" ] && declare -f verifier_latest_verdict >/dev/null 2>&1 && [ -n "${LOG_FILE:-}" ]; then
+  _failing_verdicts=$(verifier_latest_verdict "$LOG_FILE")
+  if [ -n "$_failing_verdicts" ]; then
+    # _plog rejects any MSG containing '|' outright, so the joined summary
+    # (and a free-text override reason) must never carry one.
+    _failing_summary=$(printf '%s' "$_failing_verdicts" | tr '|' ':' | tr '\n' ';' | sed 's/;$//')
+    if [ -n "$OVERRIDE_REASON" ]; then
+      _override_reason_safe="${OVERRIDE_REASON//|/ }"
+      _log "META|verdict-override|info|trigger=${TRIGGER} reason=${_override_reason_safe} superseded=${_failing_summary}"
+      hb_gate "verdict-override" "ok" "verdict gate overridden" "{\"ticket\":\"$TICKET_ID\",\"trigger\":\"$TRIGGER\"}"
+    else
+      echo "flow.sh: refusing '${TRIGGER}' for ${TICKET_ID} — trailing FAIL/BLOCK verifier-result(s): ${_failing_summary}. Pass --override <reason> to force past this." >&2
+      _log "META|verdict-gate|fail|trigger=${TRIGGER} blocked by ${_failing_summary}"
+      hb_gate "verdict-gate" "fail" "trailing FAIL/BLOCK verifier-result blocks trigger" "{\"ticket\":\"$TICKET_ID\",\"trigger\":\"$TRIGGER\"}"
+      exit 11
+    fi
+  fi
+fi
 
 TEAM_JSON=$(get_team "$TEAM_ID")
 

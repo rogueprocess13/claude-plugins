@@ -854,6 +854,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 | `RECONCILE_EXHAUSTED` | `RECONCILE_CYCLE` reached 3 — gate hold → re-approve → re-hold cycle capped, needs human review (Step 3.5) |
 | `HUMAN_HOLD_EXHAUSTED` | A human-hold request would push `hold_attempts` past `FLEET_HOLD_MAX_ATTEMPTS` (default 3) — the ask → partial-answer → re-ask cycle is capped, needs human review. Written by fleetd, not the router (`human-hold-protocol`, mirrors `RECONCILE_EXHAUSTED`'s shape) |
 | `ADR_CONFLICT` | The ADR gate returned `CONFLICT` — a phase's proposed approach contradicts an Accepted ADR. Not a park: the approach needs rethinking, not ratification (`adr-governance-gate`, see [docs/adr-gate-schema.md](docs/adr-gate-schema.md)) |
+| `VERDICT_GATE_BLOCKED` | `flow.sh` refused a `verdict_gate`-declared trigger (`pr-review-pass-done`, `pr-review-pass-uat`, `uat-pass`) with exit `11` — a trailing FAIL/BLOCK verifier-result for a different `(verifier, phase)` pair on this ticket is still the latest on record, with no later PASS/WARN superseding it. Agent-emitted by `ticket-verify`/`ticket-pr-review` at the call site, not router-detected (`VERDICT_FAIL_NOT_ENFORCED`, issue #368) |
 
 ## Ordering guarantees
 

@@ -830,6 +830,38 @@ Append to `{ticket-dir}/notes.md`:
 - **Evidence:** {brief summary}
 ```
 
+### Post-verdict: Record verifier result (Phase 0 RLVR) — PASS
+
+You only reach this point on the pass branch (`### Pass` above routes here; `### Fail` routes
+to Step 7, which has its own FAIL write — see **Post-verdict: Record verifier result (Phase 0
+RLVR) — FAIL** under 7b below).
+
+**Before either state-transition branch below** — the `uat-pass` branch is gated on this
+exact record (`VERDICT_FAIL_NOT_ENFORCED`, issue #368): `flow.sh` refuses `uat-pass` when
+the latest recorded verdict for this ticket's verifier/phase pair is a trailing FAIL/BLOCK,
+and a later PASS only clears that block once it is actually on the log. Writing the verdict
+after the trigger call — the historical order in this doc — means the router's own
+documented verify-retry loop (attempt 1 FAILs and gets logged, attempt 2 genuinely PASSes)
+would have attempt 2's `uat-pass` call check the log *before* its own PASS was written,
+still seeing attempt 1's stale FAIL and blocking a ticket that just legitimately passed.
+Source and call `write_verifier_result` now, with criteria_met=criteria_total=total passing
+criteria:
+
+```bash
+source ~/.claude/skills/lib/verifier-result.sh
+write_verifier_result verifier=playwright_uat verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+```
+
+**If `VERIFY_MODE=build-only`**, use `verifier=build_only` instead of `playwright_uat`:
+```bash
+write_verifier_result verifier=build_only verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+```
+
+**If `VERIFY_MODE=live-backend`**, use `verifier=live_backend` instead of `playwright_uat`:
+```bash
+write_verifier_result verifier=live_backend verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+```
+
 ### If `--env local`: Open PR and close out
 
 Verification passed on localhost — the implementation is confirmed working. Now open the PR:
@@ -871,7 +903,9 @@ Verification passed on localhost — the implementation is confirmed working. No
    fi
    ```
 3. Capture the PR URL(s).
-4. Delegate to the flow executor:
+4. Delegate to the flow executor. `implement-complete` carries no `verdict_gate` (it only
+   opens code review — it is not a Done/UAT-reaching trigger), so no exit-11 branch applies
+   here:
    ```
    /ticket-flow {TICKET-ID} implement-complete
    _rc=$?
@@ -889,12 +923,56 @@ Verification passed on localhost — the implementation is confirmed working. No
    - Status → Review
    ```
 
-### Post findings to Linear (all environments, pass)
+6. Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set,
+   MCP `save_comment` fallback otherwise):
+   ```
+   ✅ ticket-verify PASS — local
 
-Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP `save_comment` fallback otherwise):
+   **Tested as:** {--user}
+   **Date:** {today}
+
+   | Criterion | Result |
+   |---|---|
+   | {criterion} | ✅ Pass |
+
+   All acceptance criteria confirmed. PR {URL} opened against $BASE_BRANCH.
+   ```
+7. Skip to **Post-verdict: Emit the PHASE_RESULT block** below with `VERDICT: PASS`.
+
+### If `--env uat`: Move to Done
+
+No PR creation. Delegate the state transition — this trigger carries `verdict_gate: true`
+([SKILL.md § Verdict gate](../ticket-flow/SKILL.md#verdict-gate)), so it is the one call
+site in this skill that can come back `exit 11` (gate-blocked) rather than a generic
+non-zero failure:
 
 ```
-✅ ticket-verify PASS — {env}
+/ticket-flow {TICKET-ID} uat-pass
+_rc=$?
+if [ "$_rc" -eq 11 ]; then
+  # Gate-blocked: this run's own verdict (just written above) was PASS, but flow.sh
+  # refused the transition because a trailing FAIL/BLOCK for a DIFFERENT verifier/phase
+  # is still the latest on record and nothing has superseded it. This is not the same as
+  # "verification failed" — do not post the PASS comment or emit a PASS phase result,
+  # since either would look identical to a real Done in the log/Linear (the inverted form
+  # of the bug this gate exists to fix). A human must review and either fix the other
+  # verifier's failure or re-run `/ticket-flow {TICKET-ID} uat-pass --override <reason>`.
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERDICT_GATE_BLOCKED — uat-pass refused, see flow.sh stderr" >> {LOG_FILE}
+  hb-wrap.sh gate "verdict-gate" "fail" "uat-pass blocked by trailing FAIL/BLOCK verifier-result" \
+    "{\"trigger\":\"uat-pass\",\"ticket\":\"{TICKET-ID}\"}"
+elif [ "$_rc" -ne 0 ]; then
+  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-pass failed (exit ${_rc})" \
+    "{\"trigger\":\"uat-pass\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-pass" >> {LOG_FILE}
+fi
+```
+
+This moves state → `Done` and removes `claimed` + `reviewed` — only when `_rc` is `0`.
+
+**If `_rc` was `11`** (gate-blocked): post this instead of the pass comment, then skip to
+**Post-verdict: Emit the PHASE_RESULT block** below with `VERDICT: BLOCK` (not `PASS`):
+```
+⏸️ ticket-verify PASS, but Done transition BLOCKED — uat
 
 **Tested as:** {--user}
 **Date:** {today}
@@ -903,50 +981,40 @@ Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` i
 |---|---|
 | {criterion} | ✅ Pass |
 
-All acceptance criteria confirmed. {For local: PR {URL} opened against $BASE_BRANCH. | For uat: Ticket moved to Done.}
+All acceptance criteria confirmed — this run's own verification passed. The ticket could
+**not** move to Done: `flow.sh` found a trailing FAIL/BLOCK verifier-result still on record
+for a different check on this ticket, with no later PASS/WARN superseding it
+(`VERDICT_FAIL_NOT_ENFORCED` guard, issue #368). A human needs to review the other check's
+failure and either fix it (a later PASS clears the block automatically) or re-run
+`/ticket-flow {TICKET-ID} uat-pass --override <reason>` once satisfied it's safe to close.
 ```
 
-### If `--env uat`: Move to Done
-
-No PR creation. Delegate the state transition:
-
+**Otherwise** (`_rc` was `0`, or a non-gate error was logged and the caller chooses to
+continue) post the normal pass comment via the Linear access strategy:
 ```
-/ticket-flow {TICKET-ID} uat-pass
-_rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-pass failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-pass\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-pass" >> {LOG_FILE}
-fi
+✅ ticket-verify PASS — uat
+
+**Tested as:** {--user}
+**Date:** {today}
+
+| Criterion | Result |
+|---|---|
+| {criterion} | ✅ Pass |
+
+All acceptance criteria confirmed. Ticket moved to Done.
 ```
-
-This moves state → `Done` and removes `claimed` + `reviewed`.
-
-### Post-verdict: Record verifier result (Phase 0 RLVR)
-
-After the final verdict is written to the log, source and call `write_verifier_result`:
-```bash
-source ~/.claude/skills/lib/verifier-result.sh
-write_verifier_result verifier=playwright_uat verdict=<PASS|FAIL> criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
-On PASS: criteria_met=criteria_total=total passing criteria. On FAIL: criteria_met=passed count, criteria_total=total.
-
-**If `VERIFY_MODE=build-only`**, use `verifier=build_only` instead of `playwright_uat`:
-```bash
-write_verifier_result verifier=build_only verdict=<PASS|FAIL> criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
-
-**If `VERIFY_MODE=live-backend`**, use `verifier=live_backend` instead of `playwright_uat`:
-```bash
-write_verifier_result verifier=live_backend verdict=<PASS|FAIL> criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
+Then continue to **Post-verdict: Emit the PHASE_RESULT block** below with `VERDICT: PASS`.
 
 ### Post-verdict: Emit the PHASE_RESULT block (--from-auto only)
 
 End your return with the `=== PHASE_RESULT ===` block described in **§ 6 Phase result
-emission** of the auto preamble: `PHASE: VERIFY`, `VERDICT: PASS`, `VERIFIER` set to this
-run's actual verifier, and `CRITERIA_MET`/`CRITERIA_TOTAL`/`ATTEMPT` matching the
-`write_verifier_result` call above. Nothing goes after the closing marker.
+emission** of the auto preamble: `PHASE: VERIFY`, `VERIFIER` set to this run's actual
+verifier, and `CRITERIA_MET`/`CRITERIA_TOTAL`/`ATTEMPT` matching the `write_verifier_result`
+call above. `VERDICT` is `PASS` in every case above except the gate-blocked `--env uat`
+branch, where it is `BLOCK` — "the phase found something that must stop forward progress"
+(`docs/phase-result-schema.md`'s enum) describes this exactly: this run's own check passed,
+but a downstream gate stopped the ticket from advancing. Nothing goes after the closing
+marker.
 
 ---
 
@@ -1001,6 +1069,33 @@ Print to the user:
 
 **Snapshot at failure (relevant excerpt):**
 {10–20 most relevant lines of the accessibility tree YAML, focused on the component under test}
+```
+
+### Post-verdict: Record verifier result (Phase 0 RLVR) — FAIL
+
+Same call as the pass-branch write above, now with the FAIL verdict — this is the one write
+site that actually exercises the verdict gate's namesake failure mode
+(`VERDICT_FAIL_NOT_ENFORCED`, issue #368): a real verify FAIL must land on the pipeline log so
+`verifier_latest_verdict` can see it and block any subsequent attempt (buggy retry, or a human
+manually re-running `uat-pass`) to force a Done/UAT transition while it stands as the latest
+verdict for this `(verifier, phase)` pair. Source and call `write_verifier_result` now, using
+the criteria counts from the table above:
+
+```bash
+source ~/.claude/skills/lib/verifier-result.sh
+write_verifier_result verifier=playwright_uat verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+```
+`criteria_met` is the passing-criterion count, `criteria_total` the attempted count — same
+shape as the Step 6 PASS call.
+
+**If `VERIFY_MODE=build-only`**, use `verifier=build_only` instead of `playwright_uat`:
+```bash
+write_verifier_result verifier=build_only verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+```
+
+**If `VERIFY_MODE=live-backend`**, use `verifier=live_backend` instead of `playwright_uat`:
+```bash
+write_verifier_result verifier=live_backend verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
 ```
 
 ### 7c — Emit the REMEDIATION_BRIEF

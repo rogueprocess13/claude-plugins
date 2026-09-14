@@ -22,7 +22,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `fetch-ticket` | Step 2 (extract requirements) | ticket data already cached; re-fetch if needed |
 | `extract-requirements` | Step 3 (find PR) | requirements log entry or re-extract from ticket |
 | `find-pr` | Step 4 (get changed code) | PR number from log `find-pr\|done` entry |
-| `validate-diff` | Step 6 (post findings) | validation results from notes or re-run |
+| `validate-diff` | Step 5.5 (ADR gate check) | validation results from notes or re-run — routes through 5.5 and the Step 5.6 verdict write, not straight to 6, so a resumed run still passes through the ADR gate and records this run's verifier result before Step 6a's gated trigger fires (`VERDICT_FAIL_NOT_ENFORCED`, issue #368) |
 | `post-findings` | Step 6b (merge decision) | verdict from log `post-findings\|done` entry |
 | `merge-decision` | End — skill already complete | — |
 
@@ -207,8 +207,36 @@ verdict means Step 6b MUST NOT merge, regardless of requirements coverage. A `CR
 or `SUPERSEDE_REQUIRED` verdict likewise blocks the merge — a PR is not mergeable while it rests
 on an architectural commitment that has not yet been ratified.
 
-The overwhelmingly common case is nothing to check here — skip straight to Step 6 when the diff
-raises no such candidate.
+The overwhelmingly common case is nothing to check here — skip straight to **Step 5.6** (not
+Step 6) when the diff raises no such candidate. Step 5.6 is not optional: it is where this
+run's own verdict is written before Step 6 fires the Linear trigger, and skipping straight to
+Step 6 would skip that write for the overwhelming majority of runs — exactly the ordering bug
+Step 5.6 exists to close (`VERDICT_FAIL_NOT_ENFORCED`, issue #368).
+
+---
+
+## Step 5.6 — Record verifier result (Phase 0 RLVR)
+
+**Before Step 6 posts findings, Step 6a fires the Linear trigger, or Step 6b merges** — the
+combined verdict (Step 5's requirements coverage plus Step 5.5's ADR gate outcome) is fully
+known by now, and both `pr-review-pass-done`/`pr-review-pass-uat` fired in Step 6a carry
+`verdict_gate: true` ([SKILL.md § Verdict gate](../ticket-flow/SKILL.md#verdict-gate)):
+`flow.sh` refuses either trigger when the latest recorded verdict for this ticket's
+verifier/phase pair is a trailing FAIL/BLOCK, and a later PASS only clears that block once
+it is actually on the log (`VERDICT_FAIL_NOT_ENFORCED`, issue #368). Writing the verdict
+after the trigger call — the historical order in this doc — means a second review pass that
+genuinely comes back ✅ after a first pass that came back ❌ would have its own `pr-review-pass-*`
+call check the log *before* the ✅ was written, still seeing the earlier BLOCK and refusing a
+transition that just legitimately became valid.
+
+Source and call `write_verifier_result` now, mapping ✅ → `PASS`, ⚠️ → `WARN`, and a `CONFLICT`/
+`CREATED_PROPOSED`/`SUPERSEDE_REQUIRED` ADR gate verdict (Step 5.5) → `BLOCK` regardless of the
+requirements-coverage verdict — an unratified architectural commitment blocks forward progress
+the same way a missing requirement does:
+```bash
+source ~/.claude/skills/lib/verifier-result.sh
+write_verifier_result verifier=pr_review verdict=<PASS|WARN|BLOCK> criteria_met=<met> criteria_total=<total> attempt=1 phase=PR-REVIEW
+```
 
 ---
 
@@ -258,6 +286,7 @@ Delegate to the flow executor:
   ```bash
   /ticket-flow {TICKET-ID} pr-review-fail
   _rc=$?
+  _gate_blocked=false  # pr-review-fail carries no verdict_gate — exit 11 cannot happen here
   if [ "$_rc" -ne 0 ]; then
     hb-wrap.sh retry "flow-sh" "fail" "flow.sh pr-review-fail failed (exit ${_rc})" \
       "{\"trigger\":\"pr-review-fail\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
@@ -290,7 +319,18 @@ Delegate to the flow executor:
 
   /ticket-flow {TICKET-ID} "$trigger"
   _rc=$?
-  if [ "$_rc" -ne 0 ]; then
+  _gate_blocked=false
+  if [ "$_rc" -eq 11 ]; then
+    # Gate-blocked (verdict_gate on pr-review-pass-done/pr-review-pass-uat):
+    # this run's own verdict (already written in Step 5.6) was PASS/WARN, but
+    # flow.sh refused the transition because a trailing FAIL/BLOCK for a
+    # DIFFERENT verifier/phase is still the latest on record with nothing
+    # superseding it. Do not report this as a normal merge — see Step 6b/7/8.
+    _gate_blocked=true
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERDICT_GATE_BLOCKED — ${trigger} refused, see flow.sh stderr" >> {LOG_FILE}
+    hb-wrap.sh gate "verdict-gate" "fail" "${trigger} blocked by trailing FAIL/BLOCK verifier-result" \
+      "{\"trigger\":\"${trigger}\",\"ticket\":\"{TICKET-ID}\"}"
+  elif [ "$_rc" -ne 0 ]; then
     hb-wrap.sh retry "flow-sh" "fail" "flow.sh ${trigger} failed (exit ${_rc})" \
       "{\"trigger\":\"${trigger}\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: ${trigger}" >> {LOG_FILE}
@@ -301,7 +341,9 @@ Under `UAT Policy: epic` the trigger is `pr-review-pass-done`, so the child clos
 code-level verification and its `blocked-by` dependents are released. Under `per-ticket`
 (the default) behaviour is unchanged.
 
-This adds `reviewed` or `rejected`, keeping all other labels.
+This adds `reviewed` or `rejected`, keeping all other labels — only when `_rc` is `0`.
+`_gate_blocked` (set only on the ✅ branch; always `false` on the ⚠️ branch, since
+`pr-review-fail` carries no `verdict_gate`) carries forward into Steps 6b/7/8 below.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|post-findings|done|Verdict: {✅|⚠️}" >> "$LOG_FILE"
 
@@ -311,7 +353,10 @@ This adds `reviewed` or `rejected`, keeping all other labels.
 
 If the verdict has ⚠️ or ❌, skip this step entirely. Likewise, if Step 5.5's ADR gate check
 returned `CONFLICT`, `CREATED_PROPOSED`, or `SUPERSEDE_REQUIRED`, skip this step — treat that
-exactly as a ❌ for merge purposes, regardless of the requirements-coverage verdict.
+exactly as a ❌ for merge purposes, regardless of the requirements-coverage verdict. Skip this
+step too when `_gate_blocked=true` — merging a PR whose own Linear transition was just refused
+would leave the code merged while the ticket still shows its pre-review state, exactly the
+disagreement this gate exists to prevent.
 
 If the verdict is ✅ and Step 5.5 raised nothing blocking, **first determine merge authorization** — before spending any API calls on
 CI/conflict checks. This skill's own merge is a *direct* merge (no human in the loop); it must
@@ -420,19 +465,32 @@ gh api "repos/{owner}/{repo}/pulls/{number}/merge" -X PUT -f merge_method=squash
 
 If the merge fails (conflicts, branch protection, etc.), report it to the user — do not force-merge.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|done|{merged|skipped}" >> "$LOG_FILE"
-
-### Post-verdict: Record verifier result (Phase 0 RLVR)
-
-After writing the merge decision, record the verifier result (✅ → PASS, ⚠️ → WARN, ❌ → BLOCK):
-```bash
-source ~/.claude/skills/lib/verifier-result.sh
-write_verifier_result verifier=pr_review verdict=<PASS|WARN|BLOCK> criteria_met=<met> criteria_total=<total> attempt=1 phase=PR-REVIEW
-```
+[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|done|{merged|skipped|gate-blocked}" >> "$LOG_FILE"
 
 ---
 
 ## Step 7 — Report to user
+
+**If `_gate_blocked=true`** (Step 6a's trigger came back `exit 11`), report this instead —
+this run's own review passed but the Linear transition was refused:
+
+```
+## {TICKET-ID} — PR alignment review complete, Done/UAT transition BLOCKED
+
+**PR:** {PR URL}
+**Verdict:** ✅ All requirements addressed — this run's own review passed.
+
+The ticket could **not** move to Done/UAT: `flow.sh` found a trailing FAIL/BLOCK
+verifier-result still on record for a different check on this ticket, with no later
+PASS/WARN superseding it (`VERDICT_FAIL_NOT_ENFORCED` guard, issue #368). The PR was
+**not merged**. A human needs to review the other check's failure and either fix it (a
+later PASS clears the block automatically) or re-run
+`/ticket-flow {TICKET-ID} {trigger} --override <reason>` once satisfied it's safe to close.
+
+Findings posted to PR #{number}.
+```
+
+**Otherwise**, report normally:
 
 ```
 ## {TICKET-ID} — PR alignment review complete
@@ -452,11 +510,19 @@ expensive. End your return with the `=== PHASE_RESULT ===` block described in **
 result emission** of the auto preamble, with `PHASE: PR-REVIEW` and
 `VERIFIER: pr_review`.
 
-Map `VERDICT` from the emoji verdict exactly as the `write_verifier_result` call above
-does: ✅ → `PASS`, ⚠️ → `WARN`, ❌ → `BLOCK`. Do not emit the emoji itself and do not
-invent a value — anything outside the four-value enum is rejected outright and your
-verdict is then recorded as `UNKNOWN`.
+**If `_gate_blocked=true`**: `VERDICT: BLOCK`, regardless of the ✅/⚠️ requirements verdict —
+"the phase found something that must stop forward progress" (`docs/phase-result-schema.md`'s
+enum) describes this exactly: this run's own review passed, but a downstream gate stopped the
+ticket from advancing and the PR was not merged. Do **not** report `PASS` here — that would
+look identical to a real, unblocked completion in the log and in any consumer that reads
+`VERDICT` alone, silently reintroducing the state/reality mismatch this gate exists to fix.
+
+**Otherwise**, map `VERDICT` from the emoji verdict exactly as the `write_verifier_result`
+call in Step 5.6 does: ✅ → `PASS`, ⚠️ → `WARN`, ❌ → `BLOCK`. Do not emit the emoji itself
+and do not invent a value — anything outside the four-value enum is rejected outright and
+your verdict is then recorded as `UNKNOWN`.
 
 Set `CRITERIA_MET`/`CRITERIA_TOTAL` to the requirement counts from Step 5, `EVIDENCE` to
 what you actually reviewed (files, diff size, checks run), and `UNADDRESSED` to any
-requirement you could not evaluate. Nothing goes after the closing marker.
+requirement you could not evaluate (on the gate-blocked path, name the transition that was
+refused). Nothing goes after the closing marker.

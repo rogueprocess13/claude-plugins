@@ -17,6 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.2 (2026-09-14)
+
+Fixes `VERDICT_FAIL_NOT_ENFORCED` (issue #368): a terminal `FAIL` verifier-result did not
+block a ticket from reaching `Done`. Two tickets in the VS-2 epic (WIL-79, WIL-81) recorded a
+trailing FAIL verifier-result and still reached `Done` and merged to `develop` — nothing in
+`flow.sh` ever read the verdict back before mutating state.
+
+- `lib/verifier-result.sh`: adds `verifier_latest_verdict <log_file>`, a reader that scans a
+  pipeline log's `META|verifier-result` entries and reports the most recently written verdict
+  for every `(verifier, phase)` pair. A later `PASS`/`WARN` for the same pair supersedes an
+  earlier `FAIL`/`BLOCK`; absence of any verifier-result is not treated as failure.
+- `skills/ticket-flow/flow.sh`: new verdict gate, applied to any trigger declaring
+  `"verdict_gate": true` in `state-machine.json`. Refuses the trigger (exit 11) when the latest
+  verdict for any `(verifier, phase)` pair is `FAIL`/`BLOCK`, unless `--override <reason>` is
+  passed — the reason is logged as `META|verdict-override` alongside which pairs it superseded.
+- `skills/ticket-flow/state-machine.json`: declares `"verdict_gate": true` on
+  `pr-review-pass-done`, `pr-review-pass-uat`, and `uat-pass` — the three triggers that can land
+  a ticket in `Done` or `UAT`.
+
 ## 0.50.1 (2026-09-11) — also fleet-controller 0.31.3
 
 Four fixes from the WIL-78 run's post-pipeline retro and its follow-on hardening:

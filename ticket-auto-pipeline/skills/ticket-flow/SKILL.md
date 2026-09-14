@@ -12,7 +12,7 @@ Centralized Linear state/label executor for the ticket workflow. Every ticket sk
 Invoke with:
 
 ```
-/ticket-flow <TICKET-ID> <TRIGGER> [--data key=value] [--dry-run]
+/ticket-flow <TICKET-ID> <TRIGGER> [--data key=value] [--dry-run] [--override REASON]
 ```
 
 Where `--data` supplies trigger-specific values (e.g. `complexity=simple`, `outcome=Smooth`).
@@ -127,6 +127,47 @@ An issue counts as an epic when it carries the epic marker label (`EPIC_MARKER_L
 payload `flow.sh` fetches, so neither costs an extra request. The evaluator lives in
 `lib/epic-precondition.sh` and `flow.sh` sources it, so tests exercise the same code path the
 executor runs.
+
+### Verdict gate
+
+Independent of the epic precondition above, a trigger may also declare `"verdict_gate": true` in
+`state-machine.json`. `pr-review-pass-done`, `pr-review-pass-uat`, and `uat-pass` carry it —
+the three triggers that can land a ticket in `Done` or `UAT`. Before dispatching such a trigger,
+`flow.sh` calls `verifier_latest_verdict` (`lib/verifier-result.sh`) to find the most recently
+recorded verdict for every `(verifier, phase)` pair the pipeline log has written a
+`META|verifier-result` entry for. If any pair's **latest** verdict is `FAIL` or `BLOCK`, the
+trigger is refused (exit 11) with a clear message naming the offending pair — a later `PASS`/
+`WARN` for that same pair supersedes the earlier failure and clears the block on its own.
+
+To force the trigger through anyway (e.g. a fix verified by hand, outside the pipeline), pass
+`--override <reason>`. The reason is recorded as `META|verdict-override` alongside which
+`(verifier, phase)` pairs it superseded — never silently.
+
+A ticket with zero `META|verifier-result` entries (every ticket that predates this gate) is
+unaffected: absence of evidence is not failure.
+
+```
+flow.sh <TICKET-ID> pr-review-pass-done --override "manually verified per WIL-79, HTTP 500 fixed in 979b648"
+```
+
+**Callers must write their own verdict before dispatching the gated trigger, not after.**
+`ticket-verify` and `ticket-pr-review` each call `write_verifier_result` immediately once
+their own verdict is known, strictly before the `uat-pass` / `pr-review-pass-*` call —
+otherwise the router's own documented verify-retry loop (attempt 1 FAILs and is logged,
+attempt 2 genuinely PASSes) would have attempt 2's own trigger call check the log *before*
+its own PASS was written, still see attempt 1's stale FAIL, and block a ticket that just
+legitimately passed. On a `flow.sh` exit `11`, both callers skip their normal PASS
+comment/`PHASE_RESULT` and emit `META|gate-stop|fail|VERDICT_GATE_BLOCKED` with
+`PHASE_RESULT: VERDICT: BLOCK` instead — a gate block must never look identical to a real
+completion in the log or in Linear, the inverted form of the bug this gate exists to fix.
+
+**`epic-uat-pass` deliberately carries no `verdict_gate`.** No phase writes a per-epic
+`META|verifier-result` against the epic issue's own pipeline log — verifier-results are
+written by child-ticket phases (VERIFY/PR-REVIEW) against each *child's* log. A
+`verdict_gate` on the epic trigger would read an always-empty per-epic verifier history and
+never block anything — worse than no gate, since it would look load-bearing without being
+one. See `state-machine.json`'s `epic-uat-pass` `description` field for the same note next
+to the trigger it documents.
 
 ## Preflight Sentinel
 
