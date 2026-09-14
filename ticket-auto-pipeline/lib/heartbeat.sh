@@ -186,6 +186,21 @@ hb_source() {
 # Start a background heartbeat pinger that writes periodic "orchestrator-waiting"
 # entries while the orchestrator waits for a sub-agent. Uses a stop-file
 # mechanism to survive between separate bash invocations.
+#
+# Liveness binding (GitHub #364 — orphaned pinger/watchdog loops
+# dead-lettering otherwise-healthy tickets): mirrors
+# spawn_watchdog_start's FLEET_WORKER_PID guard
+# (ticket-auto-pipeline/lib/spawn-helper.sh), which the pinger never had.
+# The watchdog and pinger are started together in the same
+# spawn_agent_pre call from the same worker environment, so the same
+# FLEET_WORKER_PID/FLEET_WORKER_START_TICKS pair identifies "the phase
+# that spawned it" for both. Without this, a router that dies mid-bracket
+# (crash, SIGKILL, closed terminal) leaves the pinger heartbeating for up
+# to max_iter*sleep_secs (2h at the defaults) with no idea its parent is
+# gone — the exact leak that produced WIL-77's 378KB/5,835-line heartbeat
+# log. See spawn_watchdog_start's docstring for the same-PID-namespace
+# requirement and the PID-reuse guard rationale.
+#
 # Args: stop_file [sleep_secs=90] [max_iter=80]
 hb_pinger_start() {
   [ -z "${HB_LOG_FILE:-}" ] && return 0
@@ -193,6 +208,15 @@ hb_pinger_start() {
   local stop_file="$1"
   local sleep_secs="${2:-90}"
   local max_iter="${3:-80}"
+  local stop_dir
+  stop_dir=$(dirname "$stop_file")
+  # Captured once at start — inherited from the worker's own environment,
+  # constant for the life of this pinger. Empty for a non-fleetd
+  # (interactive/manual) invocation, in which case only the stop-file,
+  # stop-dir-gone, and iteration-cap conditions apply — same fallback
+  # spawn_watchdog_start uses.
+  local worker_pid="${FLEET_WORKER_PID:-}"
+  local worker_start_ticks="${FLEET_WORKER_START_TICKS:-}"
 
   rm -f "$stop_file"
 
@@ -202,6 +226,25 @@ hb_pinger_start() {
     while [ "$i" -lt "$max_iter" ]; do
       sleep "$sleep_secs"
       [ -f "$stop_file" ] && break
+      # The stop file's directory is gone (workspace torn down) — nothing
+      # left to watch and no stop file will ever appear here again.
+      [ -d "$stop_dir" ] || break
+      if [ -n "$worker_pid" ]; then
+        if ! kill -0 "$worker_pid" 2>/dev/null; then
+          break
+        fi
+        # PID-reuse guard: compare the /proc start-time ticks stamped at
+        # spawn against the current occupant's — kill -0 alone succeeds
+        # for any live process holding this pid, including one the
+        # kernel recycled it to after the original worker exited.
+        if [ -n "$worker_start_ticks" ] && [ -r "/proc/$worker_pid/stat" ]; then
+          local _current_ticks
+          _current_ticks=$(awk '{print $22}' "/proc/$worker_pid/stat" 2>/dev/null)
+          if [ -n "$_current_ticks" ] && [ "$_current_ticks" != "$worker_start_ticks" ]; then
+            break
+          fi
+        fi
+      fi
       hb_heartbeat "orchestrator-waiting" "pinger ${i}/${max_iter}" || true
       i=$((i + 1))
     done

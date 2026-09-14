@@ -49,12 +49,28 @@ _flow_mutex_held() {
   return 1 # mutex not held
 }
 
-# Count fleet-restart markers in pipeline log.
+# Count fleet-restart markers in pipeline log, excluding restarts caused
+# solely by reaping an orphaned pinger/watchdog (GitHub #364).
+#
+# A restart marker is exempt from the cap when the segment of the log
+# between it and the next restart marker (or EOF) contains a
+# `META|orphan-reaped|` line (spawn_sweep_orphans, lib/spawn-helper.sh) and
+# NO phase bracket-open (`|waiting|`) line — i.e. the restarted attempt never
+# got as far as opening its first phase bracket because it spent its whole
+# life reaping a leftover orphan and exiting, so no real phase work was ever
+# attempted or lost. A restart that DOES open a bracket before exiting again
+# is always counted normally, orphan or not — that is a genuine attempt at
+# real work, and the "must not mask genuine stalls" constraint means a
+# ticket that keeps failing mid-phase must still reach the cap and
+# dead-letter. Restarts predating this change (no orphan-reaped evidence at
+# all) are unaffected — every one of them still counts, exactly as before.
+#
 # Args: log_file
 # Always emits exactly one integer line. `grep -c` prints "0" AND exits 1 on
 # zero matches, so `|| echo "0"` used to emit a second line ("0\n0") — which
-# then broke the `[ "$restarts" -ge "$cap" ]` integer comparison. `|| true`
-# keeps grep's own "0" as the single output; `${count:-0}` covers grep errors.
+# then broke the `[ "$restarts" -ge "$cap" ]` integer comparison. The awk
+# pass below always prints exactly one line by construction, so that old
+# double-line failure mode cannot recur here.
 _count_restarts() {
   local file="$1"
   if [ ! -f "$file" ]; then
@@ -62,7 +78,20 @@ _count_restarts() {
     return
   fi
   local count
-  count=$(grep -c '|META|fleet-restart|' "$file" 2>/dev/null || true)
+  count=$(awk -F'|' '
+    $2 == "META" && $3 == "fleet-restart" {
+      if (in_window && has_orphan && !has_waiting) exempt++
+      in_window = 1; has_orphan = 0; has_waiting = 0
+      total++
+      next
+    }
+    in_window && $2 == "META" && $3 == "orphan-reaped" { has_orphan = 1 }
+    in_window && $4 == "waiting" { has_waiting = 1 }
+    END {
+      if (in_window && has_orphan && !has_waiting) exempt++
+      print total - exempt + 0
+    }
+  ' "$file" 2>/dev/null)
   echo "${count:-0}"
 }
 

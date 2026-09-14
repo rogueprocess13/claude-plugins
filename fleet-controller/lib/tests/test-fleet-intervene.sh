@@ -347,6 +347,136 @@ test_count_restarts_zero_matches_single_zero_line() {
   [ "$rc" -eq 0 ]
 }
 
+# ── _count_restarts orphan-reap exemption (GitHub #364) ──────────────────────
+# WIL-77/78/79/80 dead-lettered after repeated restarts, each one consumed
+# entirely by cleaning up a leftover orphaned pinger/watchdog with no chance
+# to open even one real phase bracket. A restart whose only activity before
+# the next restart (or EOF) is a META|orphan-reaped line — no |waiting|
+# bracket-open — never got a fair shot at real work and must not count
+# against FLEET_MAX_RESTARTS. A restart that DOES open a bracket always
+# counts, orphan-reap or not, so a genuinely hung phase still dead-letters.
+
+test_count_restarts_excludes_orphan_only_restart() {
+  local ws
+  ws=$(_setup_workspace)
+  (
+    cd "$ws"
+    mkdir -p logs
+    _make_pipeline_log "./logs" "CRE-60"
+    echo "2026-06-02T10:05:00Z|META|fleet-restart|info|restart orphan-reconciliation" >>"./logs/CRE-60-pipeline.log"
+    echo "2026-06-02T10:05:01Z|META|orphan-reaped|warn|type=pinger pid=999" >>"./logs/CRE-60-pipeline.log"
+    source "$LIB_DIR/fleet-intervene.sh"
+    local count
+    count=$(_count_restarts "./logs/CRE-60-pipeline.log")
+    [ "$count" -eq 0 ] || {
+      echo "expected 0 restarts (orphan-only, no bracket opened), got $count" >&2
+      exit 1
+    }
+  )
+  local rc=$?
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ]
+}
+
+test_count_restarts_counts_restart_with_real_work_despite_orphan_reap() {
+  local ws
+  ws=$(_setup_workspace)
+  (
+    cd "$ws"
+    mkdir -p logs
+    _make_pipeline_log "./logs" "CRE-61"
+    echo "2026-06-02T10:05:00Z|META|fleet-restart|info|restart orphan-reconciliation" >>"./logs/CRE-61-pipeline.log"
+    echo "2026-06-02T10:05:01Z|META|orphan-reaped|warn|type=pinger pid=999" >>"./logs/CRE-61-pipeline.log"
+    echo "2026-06-02T10:05:10Z|IMPLEMENT|implement|waiting|" >>"./logs/CRE-61-pipeline.log"
+    echo "2026-06-02T10:06:00Z|IMPLEMENT|implement|fail|crashed" >>"./logs/CRE-61-pipeline.log"
+    source "$LIB_DIR/fleet-intervene.sh"
+    local count
+    count=$(_count_restarts "./logs/CRE-61-pipeline.log")
+    [ "$count" -eq 1 ] || {
+      echo "expected 1 restart (real phase work was attempted), got $count" >&2
+      exit 1
+    }
+  )
+  local rc=$?
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ]
+}
+
+test_count_restarts_mixed_orphan_and_genuine_restarts() {
+  # First restart is orphan-only (exempt); second genuinely hangs mid-phase
+  # (counted). A ticket that keeps failing for real reasons must still be
+  # able to reach the cap.
+  local ws
+  ws=$(_setup_workspace)
+  (
+    cd "$ws"
+    mkdir -p logs
+    _make_pipeline_log "./logs" "CRE-62"
+    echo "2026-06-02T10:05:00Z|META|fleet-restart|info|restart orphan-reconciliation" >>"./logs/CRE-62-pipeline.log"
+    echo "2026-06-02T10:05:01Z|META|orphan-reaped|warn|type=watchdog pid=888" >>"./logs/CRE-62-pipeline.log"
+    echo "2026-06-02T10:06:00Z|META|fleet-restart|info|restart worker-exit" >>"./logs/CRE-62-pipeline.log"
+    echo "2026-06-02T10:06:10Z|IMPLEMENT|implement|waiting|" >>"./logs/CRE-62-pipeline.log"
+    echo "2026-06-02T10:07:00Z|IMPLEMENT|implement|fail|crashed" >>"./logs/CRE-62-pipeline.log"
+    source "$LIB_DIR/fleet-intervene.sh"
+    local count
+    count=$(_count_restarts "./logs/CRE-62-pipeline.log")
+    [ "$count" -eq 1 ] || {
+      echo "expected 1 restart (1 exempt orphan-only + 1 genuine), got $count" >&2
+      exit 1
+    }
+  )
+  local rc=$?
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ]
+}
+
+test_count_restarts_no_orphan_evidence_counts_normally() {
+  # Pre-#364 behaviour, unaffected: a restart with no orphan-reaped line at
+  # all always counts, exactly as before this change.
+  local ws
+  ws=$(_setup_workspace)
+  (
+    cd "$ws"
+    mkdir -p logs
+    _make_pipeline_log "./logs" "CRE-63"
+    echo "2026-06-02T10:05:00Z|META|fleet-restart|info|restart worker-exit" >>"./logs/CRE-63-pipeline.log"
+    source "$LIB_DIR/fleet-intervene.sh"
+    local count
+    count=$(_count_restarts "./logs/CRE-63-pipeline.log")
+    [ "$count" -eq 1 ] || {
+      echo "expected 1 restart (no orphan evidence), got $count" >&2
+      exit 1
+    }
+  )
+  local rc=$?
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ]
+}
+
+test_count_restarts_orphan_exemption_flows_through_fleet_can_restart() {
+  # End-to-end: an orphan-only restart must not push fleet_can_restart to
+  # refuse at the cap.
+  local ws
+  ws=$(_setup_workspace)
+  (
+    cd "$ws"
+    mkdir -p logs
+    _make_pipeline_log "./logs" "CRE-64"
+    echo "2026-06-02T10:05:00Z|META|fleet-restart|info|restart orphan-reconciliation" >>"./logs/CRE-64-pipeline.log"
+    echo "2026-06-02T10:05:01Z|META|orphan-reaped|warn|type=pinger pid=999" >>"./logs/CRE-64-pipeline.log"
+    source "$LIB_DIR/fleet-intervene.sh"
+    export FLEET_AUTO_RESTART=true
+    export FLEET_MAX_RESTARTS=1
+    fleet_can_restart "CRE-64" "./logs" >/dev/null 2>&1 || {
+      echo "fleet_can_restart refused a ticket whose only restart was orphan-only" >&2
+      exit 1
+    }
+  )
+  local rc=$?
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ]
+}
+
 test_fleet_can_restart_not_exhausted_after_single_restart() {
   local ws
   ws=$(_setup_workspace)
@@ -549,6 +679,11 @@ for fn in \
   test_fleet_kill_pipeline_ignoring_worker_escalates_to_sigkill \
   test_count_restarts_single_restart_counts_one \
   test_count_restarts_zero_matches_single_zero_line \
+  test_count_restarts_excludes_orphan_only_restart \
+  test_count_restarts_counts_restart_with_real_work_despite_orphan_reap \
+  test_count_restarts_mixed_orphan_and_genuine_restarts \
+  test_count_restarts_no_orphan_evidence_counts_normally \
+  test_count_restarts_orphan_exemption_flows_through_fleet_can_restart \
   test_fleet_can_restart_not_exhausted_after_single_restart \
   test_fleet_restart_pipeline_no_restart_eligible_stdout \
   test_fleet_restart_pipeline_writes_restart_marker \
