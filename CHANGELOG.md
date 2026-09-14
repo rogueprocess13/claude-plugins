@@ -17,6 +17,26 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.3 (2026-09-14)
+
+Fixes `PR_REVIEW_REPO_UNSCOPED` (issue #366): `ticket-pr-review` Step 3's PR lookup ran a
+bare `gh pr list --search "{TICKET-ID} in:head"` with no `--repo`. `gh` falls back to
+cwd-based repo resolution, and the shared preamble guard forces cwd to the `tickets`
+workspace — itself a git repo with no code PRs — so the search returned `[]` for every
+ticket that had a real, open PR in the actual code repo. Step 3's failure branch then told
+the user to open a PR that already existed.
+
+- `skills/ticket-pr-review/SKILL.md`: Step 3 now resolves the code repo *before* searching
+  — the same worktree-path lookup Step 4 already performs (each step is a fresh shell, so
+  neither can inherit the other's variables), falling back to the `Worktree:` field of
+  notes.md's `pre-implementation checkpoint` entry when the worktree itself has been GC'd.
+  `owner/repo` is derived from that worktree's git remote and passed explicitly via
+  `gh pr list --repo "$GH_REPO"`. An unresolvable repo (no worktree, no checkpoint) now
+  stops with a clear message instead of silently falling through to the wrong repo.
+- `lib/tests/test-pipeline-phases.sh`: adds four structural tests — the PR search carries
+  `--repo`, no bare unscoped `gh pr list` remains, repo resolution runs before the search,
+  and the unresolvable-repo case still stops cleanly.
+
 ## 0.50.2 (2026-09-14)
 
 Fixes `VERDICT_FAIL_NOT_ENFORCED` (issue #368): a terminal `FAIL` verifier-result did not
