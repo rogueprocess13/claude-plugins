@@ -17,6 +17,28 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.4 (2026-09-14)
+
+Fixes `PR_REVIEW_CHECKS_JSON_SCHEMA` (issue #365): `ticket-pr-review` Step 6b's pre-merge CI
+gate ran `gh pr checks {number} --repo {owner}/{repo} --json name,status,conclusion`. On gh
+2.100.0 this exits non-zero with `Unknown JSON field: "status"` — the valid fields are
+`bucket, completedAt, description, event, link, name, startedAt, state, workflow`, and `gh`
+has no `status` or `conclusion` field at all. The step also had no error branch for the
+command itself failing, so a broken checks lookup silently fell through to "no blocking
+checks found" — the last safety gate before merging to a shared branch produced nothing to
+evaluate and let the merge through.
+
+- `skills/ticket-pr-review/SKILL.md`: Step 6b now requests `--json name,state,bucket`. An
+  explicit guard treats a non-zero exit or unparseable JSON as a hard block, never as a pass.
+  The gate evaluates every check's `bucket` — `gh`'s own stable rollup of `state`
+  (`pass`/`fail`/`pending`/`skipping`/`cancel` per `gh pr checks --help`) — blocking on
+  `fail`, `cancel`, and `pending` (still running), while a legitimately empty checks array
+  (no configured checks) is not treated as a failure.
+- `lib/tests/test-pipeline-phases.sh`: adds five structural tests — the checks call requests
+  the real field names, no stale `status,conclusion` request remains, the command-failure
+  guard is present, the bucket evaluation covers fail/cancel/pending plus the empty-array
+  tolerance, and the failing-checks report table reflects the new State/Bucket columns.
+
 ## 0.50.3 (2026-09-14)
 
 Fixes `PR_REVIEW_REPO_UNSCOPED` (issue #366): `ticket-pr-review` Step 3's PR lookup ran a
