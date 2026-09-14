@@ -34,10 +34,23 @@ evaluate and let the merge through.
   (`pass`/`fail`/`pending`/`skipping`/`cancel` per `gh pr checks --help`) — blocking on
   `fail`, `cancel`, and `pending` (still running), while a legitimately empty checks array
   (no configured checks) is not treated as a failure.
-- `lib/tests/test-pipeline-phases.sh`: adds five structural tests — the checks call requests
-  the real field names, no stale `status,conclusion` request remains, the command-failure
-  guard is present, the bucket evaluation covers fail/cancel/pending plus the empty-array
-  tolerance, and the failing-checks report table reflects the new State/Bucket columns.
+- **Review follow-up:** the first pass treated *every* non-zero `gh pr checks` exit as a hard
+  block, but `gh` never actually emits `[]` for a checkless PR — it exits non-zero with the
+  plain-text stderr `no checks reported on the '<branch>' branch` (`populateStatusChecks` in
+  gh's own source returns before any JSON is written), so that blanket guard would have
+  merge-blocked a legitimately checkless PR forever, exactly the case the issue's own
+  Verification Checklist required excluded. Added a case-insensitive `no checks reported`
+  match ahead of the generic hard-block branch to route that specific exit to the existing
+  "proceed, nothing to block on" path; every other non-zero exit or unparseable-JSON case
+  still hard-blocks.
+- `lib/tests/test-pipeline-phases.sh`: adds nine tests — five structural (the checks call
+  requests the real field names, no stale `status,conclusion` request remains, the
+  command-failure guard is present, the bucket evaluation covers fail/cancel/pending plus the
+  empty-array tolerance, and the failing-checks report table reflects the new State/Bucket
+  columns) and four functional (extract the actual `_checks_none` detection snippet from
+  SKILL.md and `eval` it against simulated `gh` stderr — a checkless-PR message proceeds, an
+  unrelated failure still blocks, the snippet is present at all, and it runs before the
+  generic hard-block branch).
 
 ## 0.50.3 (2026-09-14)
 
