@@ -294,7 +294,7 @@
       "adds": [],
       "removes": [],
       "precondition": "must_be_epic",
-      "description": "Epic UAT accepted — epic moves to Done."
+      "description": "Epic UAT accepted — epic moves to Done. Deliberately no verdict_gate (issue #368): no phase ever writes a per-epic META|verifier-result against the epic issue's own log — verifier-results are written by child-ticket phases (VERIFY/PR-REVIEW) against each child's own log. A verdict_gate here would read an always-empty per-epic verifier history and never block anything, which is worse than no gate at all — it would look load-bearing without being one."
     }
   }
 }

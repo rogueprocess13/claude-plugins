@@ -115,15 +115,45 @@ If any agent fails (error, timeout, no result) — mark it as `FAILED` and conti
 
 ### For each PASS:
 
+Each spawned agent already ran the full `ticket-verify --env uat` sequence (Step 2), which —
+per `ticket-verify`'s own `verdict_gate` handling — writes this attempt's
+`write_verifier_result` **before** calling `uat-pass` itself, so a ticket returning PASS here
+has, in the overwhelmingly common case, *already* moved to Done inside the spawned agent, with
+the correct verdict already on its own pipeline log. The call below is a redundant, idempotent
+safety net for the rarer case where the inner agent's own transition attempt failed for a
+non-gate reason (network blip, transient Linear error) and never got as far as `uat-pass` — it
+is not this skill's own primary write path, and this skill does **not** call
+`write_verifier_result` itself: doing so here, after the fact and with no attempt-tracking of
+its own, would risk writing a second, less-precise record over the inner agent's real one.
+
 Call `/ticket-flow {TICKET-ID} uat-pass` to move to Done:
 ```bash
 /ticket-flow {TICKET-ID} uat-pass
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
+if [ "$_rc" -eq 11 ]; then
+  # Gate-blocked (VERDICT_FAIL_NOT_ENFORCED guard, issue #368): a trailing FAIL/BLOCK for a
+  # DIFFERENT verifier/phase on this ticket is still the latest on record. This is not a
+  # verify failure — do not report it as one in Step 4. Mark it BLOCKED, not PASSED.
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERDICT_GATE_BLOCKED — uat-pass refused, see flow.sh stderr" >> {LOG_FILE}
+  hb-wrap.sh gate "verdict-gate" "fail" "uat-pass blocked by trailing FAIL/BLOCK verifier-result" \
+    "{\"trigger\":\"uat-pass\",\"ticket\":\"{TICKET-ID}\"}"
+elif [ "$_rc" -ne 0 ]; then
   hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-pass failed (exit ${_rc})" \
     "{\"trigger\":\"uat-pass\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-pass" >> {LOG_FILE}
 fi
+```
+Record `_rc` alongside the ticket's row for Step 4 — `11` reports as `⏸️ BLOCKED`, not `✅ PASS`.
+
+**If `_rc` was `11`**, post a comment distinct from the normal PASS comment — do **not** claim
+Done:
+```
+⏸️ ticket-verify PASS, but Done transition BLOCKED — uat (batch)
+
+This run's own verification passed. The ticket could **not** move to Done: `flow.sh` found
+a trailing FAIL/BLOCK verifier-result still on record for a different check on this ticket,
+with no later PASS/WARN superseding it. A human needs to review the other check's failure
+and either fix it or re-run `/ticket-flow {TICKET-ID} uat-pass --override <reason>`.
 ```
 
 ### For each FAIL:
@@ -157,17 +187,21 @@ fi
 ## Step 4 — Report
 
 ```
-## Batch complete — {P}/{N} passed, {F}/{N} failed
+## Batch complete — {P}/{N} passed, {F}/{N} failed{, {G}/{N} blocked if G > 0}
 
 | Ticket | Title | Verdict | Evidence |
 |---|---|---|---|
 | {ID} | {title} | ✅ PASS | {one-line evidence} |
 | {ID} | {title} | ❌ FAIL | {one-line failure reason} |
+| {ID} | {title} | ⏸️ BLOCKED | Verified PASS, but Done transition refused — trailing FAIL/BLOCK elsewhere on record |
 | {ID} | FAILED | — | Agent error: {message} |
 ...
 
 **Passed ({P}):** Already moved to Done via uat-pass.
 **Failed ({F}):** Moved back to Ready via uat-fail. Failure details posted to Linear.
+**Blocked ({G}):** Verified PASS but `uat-pass` was refused (`flow.sh` exit 11) — a trailing
+FAIL/BLOCK verifier-result for a different check is still on record for this ticket. Still in
+`UAT`, not moved. See the ticket's own pipeline log or the posted comment.
 **Errors ({E}):** Agents that crashed — re-run individually.
 
 **Trace:** batch-verify-{timestamp}.md
@@ -181,4 +215,4 @@ fi
 - **Cap at 10 tickets** — beyond that, split into multiple batch runs.
 - **Each agent gets its own browser tab** — Playwright agents operate independently.
 - **UAT only** — batch verify doesn't support localhost. Local verification needs a running dev server and is inherently one-at-a-time.
-- **State transitions are automatic** — PASS → Done, FAIL → Ready. No human review step per ticket.
+- **State transitions are automatic** — PASS → Done, FAIL → Ready. No human review step per ticket, except a PASS that comes back `⏸️ BLOCKED` (issue #368's verdict gate): the ticket stays in `UAT` and needs a human to clear the other check's failure or pass `--override`.

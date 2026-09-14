@@ -150,6 +150,25 @@ unaffected: absence of evidence is not failure.
 flow.sh <TICKET-ID> pr-review-pass-done --override "manually verified per WIL-79, HTTP 500 fixed in 979b648"
 ```
 
+**Callers must write their own verdict before dispatching the gated trigger, not after.**
+`ticket-verify` and `ticket-pr-review` each call `write_verifier_result` immediately once
+their own verdict is known, strictly before the `uat-pass` / `pr-review-pass-*` call —
+otherwise the router's own documented verify-retry loop (attempt 1 FAILs and is logged,
+attempt 2 genuinely PASSes) would have attempt 2's own trigger call check the log *before*
+its own PASS was written, still see attempt 1's stale FAIL, and block a ticket that just
+legitimately passed. On a `flow.sh` exit `11`, both callers skip their normal PASS
+comment/`PHASE_RESULT` and emit `META|gate-stop|fail|VERDICT_GATE_BLOCKED` with
+`PHASE_RESULT: VERDICT: BLOCK` instead — a gate block must never look identical to a real
+completion in the log or in Linear, the inverted form of the bug this gate exists to fix.
+
+**`epic-uat-pass` deliberately carries no `verdict_gate`.** No phase writes a per-epic
+`META|verifier-result` against the epic issue's own pipeline log — verifier-results are
+written by child-ticket phases (VERIFY/PR-REVIEW) against each *child's* log. A
+`verdict_gate` on the epic trigger would read an always-empty per-epic verifier history and
+never block anything — worse than no gate, since it would look load-bearing without being
+one. See `state-machine.json`'s `epic-uat-pass` `description` field for the same note next
+to the trigger it documents.
+
 ## Preflight Sentinel
 
 `validate-linear-config.sh` writes a sentinel file at:
