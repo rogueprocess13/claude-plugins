@@ -225,6 +225,15 @@ PRED_FIRST=1
 
 CORRECT_COUNT=0
 TOTAL_PAIRS=0
+OVER_COUNT=0
+UNDER_COUNT=0
+
+# Minimum sample size for a reportable complexity_accuracy figure (#367:
+# RETRO_CURSOR_METRIC_SKEW). Below this floor the metric is too noisy to be
+# meaningful (e.g. 1/1 = 1.000) and is suppressed (null) rather than shown.
+# Overridable for tests; production default is deliberately small since a
+# 7d window can legitimately have few tickets.
+COMPLEXITY_ACCURACY_MIN_N="${COMPLEXITY_ACCURACY_MIN_N:-3}"
 
 # ── Process each log ─────────────────────────────────────────────────────
 
@@ -248,18 +257,31 @@ for _i in "${!LOG_FILES[@]}"; do
   # planner initiative ids (INIT-...) are disjoint namespaces by construction
   # (planner-state.sh:PLANNER_ID_PATTERN), so they can't collide — a flat key
   # already dedupes each source independently without a cursor-format change.
+  #
+  # ── Dedup scope vs. metrics scope (#367: RETRO_CURSOR_METRIC_SKEW) ──
+  # The cursor exists to stop *re-reporting failures* that were already
+  # surfaced in a prior retro run — it must not also gate the *metrics*
+  # population (complexity accuracy). A cursor-skipped log still contributes
+  # its declared/actual complexity pair below; only the failure-histogram
+  # scan (and, transitively, heartbeat dedup via SCANNED_MTIMES) stays gated
+  # on the cursor, exactly as before.
   log_mtime=$(stat -c %Y "$log_file" 2>/dev/null || echo 0)
+  cursor_skip=0
   if [ "$FORCE_RESCAN" -eq 0 ] && [ -n "${CURSOR_MTIMES[$ticket_id]:-}" ]; then
     stored_mtime="${CURSOR_MTIMES[$ticket_id]}"
     if [ "$log_mtime" -eq "$stored_mtime" ] 2>/dev/null; then
-      LOGS_SKIPPED=$((LOGS_SKIPPED + 1))
-      LOGS_SKIPPED_BY_SOURCE["$log_source"]=$((${LOGS_SKIPPED_BY_SOURCE[$log_source]:-0} + 1))
-      continue
+      cursor_skip=1
     fi
   fi
-  LOGS_SCANNED=$((LOGS_SCANNED + 1))
-  LOGS_SCANNED_BY_SOURCE["$log_source"]=$((${LOGS_SCANNED_BY_SOURCE[$log_source]:-0} + 1))
-  SCANNED_MTIMES["$ticket_id"]="$log_mtime"
+
+  if [ "$cursor_skip" -eq 1 ]; then
+    LOGS_SKIPPED=$((LOGS_SKIPPED + 1))
+    LOGS_SKIPPED_BY_SOURCE["$log_source"]=$((${LOGS_SKIPPED_BY_SOURCE[$log_source]:-0} + 1))
+  else
+    LOGS_SCANNED=$((LOGS_SCANNED + 1))
+    LOGS_SCANNED_BY_SOURCE["$log_source"]=$((${LOGS_SCANNED_BY_SOURCE[$log_source]:-0} + 1))
+    SCANNED_MTIMES["$ticket_id"]="$log_mtime"
+  fi
 
   # Resolve ticket/artifact directory
   ticket_dir=""
@@ -278,91 +300,97 @@ for _i in "${!LOG_FILES[@]}"; do
   fi
 
   # ── Scan for failures ─────────────────────────────────────────────────
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    IFS='|' read -r _ts phase step status msg <<<"$line"
-    [ "$phase" != "META" ] && [ "$phase" != "GATE" ] && continue
+  # Gated on cursor_skip: this is the dedup surface the cursor exists to
+  # protect (don't re-report a failure already surfaced in a prior retro
+  # run). It must stay gated even though the complexity-metrics pairing
+  # below (population scope) does not (#367).
+  if [ "$cursor_skip" -eq 0 ]; then
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      IFS='|' read -r _ts phase step status msg <<<"$line"
+      [ "$phase" != "META" ] && [ "$phase" != "GATE" ] && continue
 
-    if [ "$phase" = "GATE" ] && [ "$step" = "gate" ] && [ "$status" = "fail" ]; then
-      # gate-check.sh's own entry-gate hold line (GitHub #319) — a distinct,
-      # earlier-stage event from the META|gate-stop| hard-stop codes below.
-      # Those codes are designed with an UPPERCASE_CODE first token (see
-      # lib/gate-check.sh's gate-stop _plog calls), so `awk '{print $1}'`
-      # reliably recovers a stable bucket key. gate-check.sh's hold messages
-      # have no such token — they're free prose ("held: complex ticket",
-      # "held: plan missing 2/4 verification prerequisites (mode=...)") — so
-      # bucketing by first word would collapse structurally distinct holds
-      # (e.g. both "plan missing ... (mode=build ...)" and "plan missing ...
-      # (mode=ui ...)" start with "plan") into one bucket and lose exactly the
-      # signal the histogram exists for. Instead, match the known hold-message
-      # shapes emitted by lib/gate-check.sh (kept in sync with it) and fall
-      # back to a generic normalized-first-word key for any future hold
-      # message not yet classified here — visibly "UNCLASSIFIED"-shaped so a
-      # maintainer notices and adds a real case instead of the bucket silently
-      # staying meaningless.
-      case "$msg" in
-      *"critique-plan cross-validation failed"*)
-        _gate_hold_key="CRITIQUE_CROSS_VALIDATION"
-        ;;
-      *"content quality score"*)
-        _gate_hold_key="CONTENT_QUALITY_SCORE"
-        ;;
-      *"plan missing"*"verification prerequisites"*)
-        _gate_hold_key="MISSING_VERIFICATION_PREREQS"
-        ;;
-      *"complex ticket"*)
-        _gate_hold_key="COMPLEX_TICKET"
-        ;;
-      *"manual mode"*)
-        _gate_hold_key="MANUAL_MODE"
-        ;;
-      *"held: default"*)
-        _gate_hold_key="DEFAULT_FALLBACK"
-        ;;
-      *)
-        _gate_hold_key=$(echo "$msg" | grep -oP '(?<=held: )[a-z_-]+' | head -1 | tr '[:lower:]-' '[:upper:]_')
-        [ -z "$_gate_hold_key" ] && _gate_hold_key="UNCLASSIFIED"
-        ;;
-      esac
-      code="GATE_HELD_${_gate_hold_key}"
-      FAILURE_COUNT["$code"]=$((${FAILURE_COUNT["$code"]:-0} + 1))
-      local_has_failure=1
-      continue
-    fi
+      if [ "$phase" = "GATE" ] && [ "$step" = "gate" ] && [ "$status" = "fail" ]; then
+        # gate-check.sh's own entry-gate hold line (GitHub #319) — a distinct,
+        # earlier-stage event from the META|gate-stop| hard-stop codes below.
+        # Those codes are designed with an UPPERCASE_CODE first token (see
+        # lib/gate-check.sh's gate-stop _plog calls), so `awk '{print $1}'`
+        # reliably recovers a stable bucket key. gate-check.sh's hold messages
+        # have no such token — they're free prose ("held: complex ticket",
+        # "held: plan missing 2/4 verification prerequisites (mode=...)") — so
+        # bucketing by first word would collapse structurally distinct holds
+        # (e.g. both "plan missing ... (mode=build ...)" and "plan missing ...
+        # (mode=ui ...)" start with "plan") into one bucket and lose exactly the
+        # signal the histogram exists for. Instead, match the known hold-message
+        # shapes emitted by lib/gate-check.sh (kept in sync with it) and fall
+        # back to a generic normalized-first-word key for any future hold
+        # message not yet classified here — visibly "UNCLASSIFIED"-shaped so a
+        # maintainer notices and adds a real case instead of the bucket silently
+        # staying meaningless.
+        case "$msg" in
+        *"critique-plan cross-validation failed"*)
+          _gate_hold_key="CRITIQUE_CROSS_VALIDATION"
+          ;;
+        *"content quality score"*)
+          _gate_hold_key="CONTENT_QUALITY_SCORE"
+          ;;
+        *"plan missing"*"verification prerequisites"*)
+          _gate_hold_key="MISSING_VERIFICATION_PREREQS"
+          ;;
+        *"complex ticket"*)
+          _gate_hold_key="COMPLEX_TICKET"
+          ;;
+        *"manual mode"*)
+          _gate_hold_key="MANUAL_MODE"
+          ;;
+        *"held: default"*)
+          _gate_hold_key="DEFAULT_FALLBACK"
+          ;;
+        *)
+          _gate_hold_key=$(echo "$msg" | grep -oP '(?<=held: )[a-z_-]+' | head -1 | tr '[:lower:]-' '[:upper:]_')
+          [ -z "$_gate_hold_key" ] && _gate_hold_key="UNCLASSIFIED"
+          ;;
+        esac
+        code="GATE_HELD_${_gate_hold_key}"
+        FAILURE_COUNT["$code"]=$((${FAILURE_COUNT["$code"]:-0} + 1))
+        local_has_failure=1
+        continue
+      fi
 
-    [ "$phase" != "META" ] && continue
+      [ "$phase" != "META" ] && continue
 
-    if [ "$step" = "gate-stop" ] && [ "$status" = "fail" ]; then
-      GATE_STOP_TOTAL=$((GATE_STOP_TOTAL + 1))
-      code=$(echo "$msg" | awk '{print $1}')
-      FAILURE_COUNT["$code"]=$((${FAILURE_COUNT["$code"]:-0} + 1))
-      local_has_failure=1
-    elif [ "$step" = "gate-warn" ] && [ "$status" = "info" ]; then
-      # Warn-only completeness-gate telemetry (RETURN_INCOMPLETE) — kept
-      # separate from GATE_STOP_TOTAL/FAILURE_COUNT since these never halt
-      # the pipeline; counted so Phase 2 can measure the false-positive rate.
-      GATE_WARN_TOTAL=$((GATE_WARN_TOTAL + 1))
-    elif [ "$step" = "crosscheck" ] && [ "$status" = "fail" ]; then
-      # ticket-planner Crosscheck blocking finding (#176). Histogram by CODE
-      # like gate-stop, not by step name — "crosscheck" alone would collapse
-      # every distinct finding code (CITATION_UNRESOLVED, RESOLUTION_NOT_-
-      # PROPAGATED, ...) into one bucket and lose the signal #176 wants.
-      CROSSCHECK_BLOCKING_TOTAL=$((CROSSCHECK_BLOCKING_TOTAL + 1))
-      code=$(echo "$msg" | awk '{print $1}')
-      FAILURE_COUNT["$code"]=$((${FAILURE_COUNT["$code"]:-0} + 1))
-      local_has_failure=1
-    elif [ "$step" = "crosscheck" ] && [ "$status" = "warn" ]; then
-      # Non-blocking Crosscheck finding, written as "info <CODE> <message>"
-      # (see planner-crosscheck.sh:_planner_crosscheck_emit_finding) — code
-      # is the second token, not the first. Counted separately, never in
-      # FAILURE_COUNT, so it can't be mistaken for a blocking finding (#176
-      # AC4).
-      CROSSCHECK_WARN_TOTAL=$((CROSSCHECK_WARN_TOTAL + 1))
-    elif [ "$status" = "fail" ] && [ "$step" != "schema" ] && [ "$step" != "migration" ]; then
-      FAILURE_COUNT["$step"]=$((${FAILURE_COUNT["$step"]:-0} + 1))
-      local_has_failure=1
-    fi
-  done <"$log_file"
+      if [ "$step" = "gate-stop" ] && [ "$status" = "fail" ]; then
+        GATE_STOP_TOTAL=$((GATE_STOP_TOTAL + 1))
+        code=$(echo "$msg" | awk '{print $1}')
+        FAILURE_COUNT["$code"]=$((${FAILURE_COUNT["$code"]:-0} + 1))
+        local_has_failure=1
+      elif [ "$step" = "gate-warn" ] && [ "$status" = "info" ]; then
+        # Warn-only completeness-gate telemetry (RETURN_INCOMPLETE) — kept
+        # separate from GATE_STOP_TOTAL/FAILURE_COUNT since these never halt
+        # the pipeline; counted so Phase 2 can measure the false-positive rate.
+        GATE_WARN_TOTAL=$((GATE_WARN_TOTAL + 1))
+      elif [ "$step" = "crosscheck" ] && [ "$status" = "fail" ]; then
+        # ticket-planner Crosscheck blocking finding (#176). Histogram by CODE
+        # like gate-stop, not by step name — "crosscheck" alone would collapse
+        # every distinct finding code (CITATION_UNRESOLVED, RESOLUTION_NOT_-
+        # PROPAGATED, ...) into one bucket and lose the signal #176 wants.
+        CROSSCHECK_BLOCKING_TOTAL=$((CROSSCHECK_BLOCKING_TOTAL + 1))
+        code=$(echo "$msg" | awk '{print $1}')
+        FAILURE_COUNT["$code"]=$((${FAILURE_COUNT["$code"]:-0} + 1))
+        local_has_failure=1
+      elif [ "$step" = "crosscheck" ] && [ "$status" = "warn" ]; then
+        # Non-blocking Crosscheck finding, written as "info <CODE> <message>"
+        # (see planner-crosscheck.sh:_planner_crosscheck_emit_finding) — code
+        # is the second token, not the first. Counted separately, never in
+        # FAILURE_COUNT, so it can't be mistaken for a blocking finding (#176
+        # AC4).
+        CROSSCHECK_WARN_TOTAL=$((CROSSCHECK_WARN_TOTAL + 1))
+      elif [ "$status" = "fail" ] && [ "$step" != "schema" ] && [ "$step" != "migration" ]; then
+        FAILURE_COUNT["$step"]=$((${FAILURE_COUNT["$step"]:-0} + 1))
+        local_has_failure=1
+      fi
+    done <"$log_file"
+  fi
 
   if [ "$local_has_failure" -eq 1 ]; then
     LOGS_WITH_FAILURES=$((LOGS_WITH_FAILURES + 1))
@@ -373,6 +401,9 @@ for _i in "${!LOG_FILES[@]}"; do
   # specific — planner initiatives have no notes.md complexity score or
   # Smooth/Rough/Hard outcome label. Its analogous quality signal is the
   # Crosscheck finding rate, already reported via crosscheck_*_total (#177).
+  # Deliberately NOT gated on cursor_skip (#367: RETRO_CURSOR_METRIC_SKEW) —
+  # this is the metrics population, computed over every ticket-auto log in
+  # the window regardless of what the cursor left unread.
   [ "$log_source" = "planner" ] && continue
 
   # ── Complexity prediction pair ─────────────────────────────────────────
@@ -398,13 +429,21 @@ for _i in "${!LOG_FILES[@]}"; do
   [ "$PRED_FIRST" -eq 1 ] && PRED_FIRST=0 || PREDICTIONS_JSON+=", "
   PREDICTIONS_JSON+="{\"ticket\":\"$ticket_id\",\"declared\":\"$declared\",\"actual\":\"$actual\",\"actual_source\":\"$actual_source\"}"
 
-  # Track accuracy
+  # Track accuracy, plus over/under-estimation directionality (#367 secondary
+  # finding: complexity error can be one-directional — e.g. all overestimates
+  # — which the aggregate accuracy figure alone hides).
   if [ "$declared" != "null" ] && [ "$actual" != "null" ]; then
     TOTAL_PAIRS=$((TOTAL_PAIRS + 1))
     _d_lower=$(echo "$declared" | tr '[:upper:]' '[:lower:]')
     if { [ "$_d_lower" = "simple" ] && [ "$actual" = "Smooth" ]; } ||
       { [ "$_d_lower" = "complex" ] && { [ "$actual" = "Rough" ] || [ "$actual" = "Hard" ]; }; }; then
       CORRECT_COUNT=$((CORRECT_COUNT + 1))
+    elif [ "$_d_lower" = "complex" ] && [ "$actual" = "Smooth" ]; then
+      # Declared more complex than it turned out to be.
+      OVER_COUNT=$((OVER_COUNT + 1))
+    elif [ "$_d_lower" = "simple" ] && { [ "$actual" = "Rough" ] || [ "$actual" = "Hard" ]; }; then
+      # Declared less complex than it turned out to be.
+      UNDER_COUNT=$((UNDER_COUNT + 1))
     fi
   fi
 done
@@ -577,10 +616,16 @@ HISTOGRAM_JSON+="}"
 rm -f /tmp/retro-hist-sorted.$$.txt
 
 # ── Compute complexity accuracy ──────────────────────────────────────────
+# Computed over TOTAL_PAIRS — the full window population of ticket-auto logs
+# with both a declared and an actual complexity, independent of cursor state
+# (#367: RETRO_CURSOR_METRIC_SKEW). Suppressed (null) below COMPLEXITY_-
+# ACCURACY_MIN_N: a 1/1 or 2/2 sample reads as a misleadingly confident 1.000.
 
-ACCURACY=0
-if [ "$TOTAL_PAIRS" -gt 0 ]; then
-  ACCURACY=$(awk "BEGIN { printf \"%.3f\", $CORRECT_COUNT / $TOTAL_PAIRS }")
+ACCURACY_JSON="null"
+ACCURACY_SUPPRESSED=true
+if [ "$TOTAL_PAIRS" -ge "$COMPLEXITY_ACCURACY_MIN_N" ]; then
+  ACCURACY_JSON=$(awk "BEGIN { printf \"%.3f\", $CORRECT_COUNT / $TOTAL_PAIRS }")
+  ACCURACY_SUPPRESSED=false
 fi
 
 # ── Build per-source counts (#177 AC1) ────────────────────────────────────
@@ -609,7 +654,12 @@ jq -n \
   --argjson gate_warn_total "$GATE_WARN_TOTAL" \
   --argjson crosscheck_blocking_total "$CROSSCHECK_BLOCKING_TOTAL" \
   --argjson crosscheck_warn_total "$CROSSCHECK_WARN_TOTAL" \
-  --argjson complexity_accuracy "$ACCURACY" \
+  --argjson complexity_accuracy "$ACCURACY_JSON" \
+  --argjson complexity_accuracy_n "$TOTAL_PAIRS" \
+  --argjson complexity_accuracy_min_n "$COMPLEXITY_ACCURACY_MIN_N" \
+  --argjson complexity_accuracy_suppressed "$ACCURACY_SUPPRESSED" \
+  --argjson complexity_over_count "$OVER_COUNT" \
+  --argjson complexity_under_count "$UNDER_COUNT" \
   --arg histogram_str "$HISTOGRAM_JSON" \
   --arg predictions_str "$PREDICTIONS_JSON" \
   --argjson hb_logs_scanned "$HB_LOGS_SCANNED" \
@@ -633,6 +683,11 @@ jq -n \
     crosscheck_warn_total: $crosscheck_warn_total,
     complexity_predictions: ($predictions_str | fromjson),
     complexity_accuracy: $complexity_accuracy,
+    complexity_accuracy_n: $complexity_accuracy_n,
+    complexity_accuracy_min_n: $complexity_accuracy_min_n,
+    complexity_accuracy_suppressed: $complexity_accuracy_suppressed,
+    complexity_over_count: $complexity_over_count,
+    complexity_under_count: $complexity_under_count,
     heartbeat: {
       logs_scanned: $hb_logs_scanned,
       logs_with_data: $hb_logs_with_data,
