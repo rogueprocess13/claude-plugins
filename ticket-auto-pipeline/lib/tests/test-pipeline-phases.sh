@@ -774,6 +774,69 @@ test_ticket_verify_pr_created_covers_both_branches() {
   }
 }
 
+# ── issue #366: PR_REVIEW_REPO_UNSCOPED ─────────────────────────────────────
+
+# Step 3's gh pr list must carry an explicit --repo. Without it, gh falls back
+# to cwd-based repo resolution — and the shared preamble guard forces cwd to
+# the `tickets` workspace, a repo with no code PRs, so the search always
+# returned [] regardless of whether a PR existed.
+test_ticket_pr_review_gh_pr_list_scoped_to_repo() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^## Step 3 /,/^## Step 4 /p' "$skill_md")
+  echo "$block" | grep -q 'PR_LIST=\$(gh pr list --repo "\$GH_REPO"' || {
+    echo "Step 3 gh pr list is not scoped with --repo \$GH_REPO"
+    return 1
+  }
+}
+
+# Regression guard: no bare, unscoped `gh pr list --search ... in:head` should
+# remain anywhere in the skill (the exact shape of the original bug).
+test_ticket_pr_review_no_bare_unscoped_pr_list() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  if grep -qE '^PR_LIST=\$\(gh pr list --search' "$skill_md"; then
+    echo "found a bare gh pr list with no --repo flag"
+    return 1
+  fi
+}
+
+# GH_REPO must be resolved (worktree, with a notes.md checkpoint fallback)
+# before the PR search runs, not after — this was the whole bug: repo
+# resolution existed in the skill already but ran too late to be useful.
+test_ticket_pr_review_resolves_repo_before_search() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^## Step 3 /,/^## Step 4 /p' "$skill_md")
+  local worktree_line search_line
+  worktree_line=$(echo "$block" | grep -n 'WORKTREE_PATH=\$(worktree_path' | head -1 | cut -d: -f1)
+  search_line=$(echo "$block" | grep -n 'PR_LIST=\$(gh pr list' | head -1 | cut -d: -f1)
+  [ -n "$worktree_line" ] && [ -n "$search_line" ] || {
+    echo "could not locate both worktree resolution and PR search lines"
+    return 1
+  }
+  [ "$worktree_line" -lt "$search_line" ] || {
+    echo "worktree/repo resolution does not run before the PR search"
+    return 1
+  }
+}
+
+# Missing-repo case must still stop cleanly with a user-facing message,
+# per the issue's verification checklist ("still stops correctly when the
+# PR genuinely does not exist").
+test_ticket_pr_review_unresolvable_repo_stops() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^## Step 3 /,/^## Step 4 /p' "$skill_md")
+  echo "$block" | grep -q 'Cannot resolve the code repo' || {
+    echo "no unresolvable-repo stop message found in Step 3"
+    return 1
+  }
+}
+
 # ── dispatcher ─────────────────────────────────────────────────────────────────
 
 filter="${1:-}"

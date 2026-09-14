@@ -102,9 +102,32 @@ Record the checklist — it drives the validation in Step 5.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|find-pr|start|Finding PR" >> "$LOG_FILE"
 
+**Resolve the code repo before searching.** The shared preamble guard forces cwd to the
+`tickets` workspace — itself a git repo with no code PRs — so a bare `gh pr list` always
+resolves against that repo and returns `[]` regardless of whether a PR exists (issue #366,
+`PR_REVIEW_REPO_UNSCOPED`). Resolve the worktree the same way Step 4 does (a fresh shell
+per step means Step 4 cannot inherit this step's variables, so both steps resolve it
+independently), then derive `owner/repo` from its git remote — never from cwd:
+
 ```bash
-PR_LIST=$(gh pr list --search "{TICKET-ID} in:head" --json number,headRefName,baseRefName,url)
+source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+source "$HOME/.claude/skills/lib/worktree.sh"
+WORKTREE_PATH=$(worktree_path "$TICKET_ID" "{repo-slug}")
+if [ ! -d "$WORKTREE_PATH/.git" ] && [ ! -f "$WORKTREE_PATH/.git" ]; then
+  # Worktree missing (e.g. GC'd) — fall back to the checkpoint notes.md recorded at
+  # implement time (`### ... — pre-implementation checkpoint`, `Worktree:` field).
+  WORKTREE_PATH=$(grep "Worktree:" {ticket-dir}/notes.md 2>/dev/null | tail -1 | sed -n 's/.*Worktree: \([^|]*\).*/\1/p' | sed 's/[[:space:]]*$//')
+fi
+GH_REPO=$(git -C "$WORKTREE_PATH" remote get-url origin 2>/dev/null | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')
+if [ -z "$GH_REPO" ]; then
+  echo "Cannot resolve the code repo for {TICKET-ID} — no worktree and no checkpoint entry in notes.md." >&2
+  exit 1
+fi
+PR_LIST=$(gh pr list --repo "$GH_REPO" --search "{TICKET-ID} in:head" --json number,headRefName,baseRefName,url)
 ```
+
+If `$GH_REPO` cannot be resolved, stop and tell the user:
+> "Cannot resolve the code repo for {TICKET-ID} — no worktree and no checkpoint entry in notes.md. Re-run /ticket-implement or specify the repo manually."
 
 **No-diff exemption:** if IMPLEMENT logged `commit-push|skip` (no source diff — a
 verification-only ticket) and the search above returned no results, this is not a
@@ -123,9 +146,7 @@ Otherwise, if no PR is found → stop and tell the user:
 > "No open PR found for {TICKET-ID}. Open a PR first, then re-run."
 
 Capture: `number`, `headRefName`, `baseRefName`, `url` (from `$PR_LIST`).
-Extract `owner` and `repo` from the PR URL (`https://github.com/{owner}/{repo}/pull/{number}`) for REST API calls in subsequent steps.
-
-Resolve the repo path from the CLAUDE.md codebase map based on the affected service.
+Extract `owner` and `repo` from the PR URL (`https://github.com/{owner}/{repo}/pull/{number}`) for REST API calls in subsequent steps — this should match `$GH_REPO` resolved above; the PR URL remains the source of truth since a ticket can in principle touch more than one repo.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|find-pr|done|PR #{number}" >> "$LOG_FILE"
 # Write PR number to pipeline log for detect-resume.sh (primary lookup, not fallback)
