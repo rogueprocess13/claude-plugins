@@ -129,31 +129,88 @@ def exporter_enabled():
 
 
 # ── Trace-context derivation (trace-context-propagation, TP1) ───────────────
-# One function, used by both the spawning path (fleetd/supervisor.py, before
-# a phase worker is spawned) and this exporter (when adopting a recorded
-# context) — no second implementation. Pure and deterministic: both sides
-# compute identical identifiers from facts already known to each, with no
-# shared state and no ordering requirement, which is the only way a tailing
-# exporter and a spawn-time environment can agree at all.
+# The trace id (`derive_trace_id_hex`, a pure function of `run_id` alone) is
+# shared verbatim by both the spawning path (fleetd/supervisor.py, before a
+# phase worker is spawned) and this exporter (which self-derives it rather
+# than reading it back off the log — see OtlpEmitter.emit and issue #361,
+# LANGFUSE_TRACE_REPLAY_INFLATION). Pure and deterministic: both sides
+# compute the identical trace id from a fact already known to each with no
+# shared state and no ordering requirement — the only way a tailing exporter
+# and a spawn-time environment can agree at all — and, just as importantly,
+# the only way a tailing exporter restarted mid-run (or replaying a log from
+# byte zero) agrees with *itself*: every export pass over the same run_id
+# derives the same trace id, so repeats are idempotent updates to the same
+# trace rather than new roots.
 #
-# Both return lowercase hex strings (the W3C traceparent shape) — 32 hex
-# chars / 128 bits for a trace id, 16 hex chars / 64 bits for a span id.
-# Callers feeding an OTel SDK IdGenerator (which wants integers) convert with
-# int(value, 16); callers building a TRACEPARENT header or a log line use the
-# hex string directly.
+# The span id (`derive_span_id_hex`) needs two more inputs than the trace id
+# does — see its own docstring for why `generation` could not carry this
+# alone (issue #361 follow-up: distinct retries and distinct steps within
+# one phase were colliding on one span id) and why the first fix attempt's
+# bracket-timestamp input could still collide (round 2: `phase_bracket_open`
+# stamps at second resolution, so a fast failure immediately followed by a
+# retry can share a timestamp). Its `occurrence` input — the count of
+# `(phase, step)` brackets already seen this run, sequential-read state this
+# exporter always has — is a fact `spawn_phase_worker` never does: it runs
+# *before* the bracket it is deriving a context for exists, so its own
+# `TRACEPARENT` derivation can share this exporter's derived trace id but not
+# its span id; see that call site.
+#
+# Both `derive_*_hex` functions return lowercase hex strings (the W3C
+# traceparent shape) — 32 hex chars / 128 bits for a trace id, 16 hex chars /
+# 64 bits for a span id. Callers feeding an OTel SDK IdGenerator (which wants
+# integers) convert with int(value, 16); callers building a TRACEPARENT
+# header or a log line use the hex string directly.
 
 def derive_trace_id_hex(run_id):
     return hashlib.sha256(f'trace:{run_id}'.encode('utf-8')).hexdigest()[:32]
 
 
-def derive_span_id_hex(run_id, phase, generation):
-    key = f'span:{run_id}:{phase}:{generation}'
+def derive_span_id_hex(run_id, phase, step, occurrence):
+    """A span id unique to one *bracket* — one open/close pair of one step
+    of one phase of one run — not one phase of one run.
+
+    `generation` was the third input here until issue #361's follow-up
+    review caught two live collisions it could not distinguish: (a)
+    `generation` (as read back from the pipeline log by
+    `TicketTranslator._feed_meta`) is stamped once by `run-identity.sh` at
+    the *first* preamble call of a run and never updated on later calls —
+    `ticket-preamble.sh` documents this as a no-op by design — so every
+    retry within one run shares the same `generation` even though fleetd's
+    own in-memory counter (`Supervisor._resolve_generation`) genuinely
+    advances per spawn; that counter is never written back to the log. (b)
+    `phase` alone conflates every step of a multi-step phase — PR-REVIEW's
+    `checkout-pr`/`merge-decision`/`pr-reconcile`/`pr-review` are four
+    brackets, one `PHASE` field. Both collisions reintroduced #361's own
+    "can't see whether there was a retry storm" problem one level down: the
+    router's own VERIFY retry loop (max 3 attempts) and PR-REVIEW's four
+    steps were each landing on one shared span id.
+
+    `step` fixes (b) outright. For (a), a first attempt fixed it by adding
+    the bracket's own `|waiting|` timestamp — reasoning that two brackets of
+    the same `(run_id, phase, step)` are never open at once, so their
+    timestamps must differ. **That reasoning was wrong**: `phase_bracket_open`
+    (`ticket-auto-pipeline/lib/spawn-helper.sh`) stamps with `date -u
+    +%Y-%m-%dT%H:%M:%SZ` — second resolution, no sub-second component — so a
+    fast, deterministic failure (a precondition/gate check before any agent
+    spawn, or a bash/`gh`-driven PR-REVIEW step) immediately followed by the
+    next bracket's `|waiting|` line can land in the same UTC second and
+    produce the identical timestamp string, hence the identical id. Fixed
+    (issue #361, round 2) by `occurrence` instead: the 0-indexed count of how
+    many `(phase, step)` brackets have completed so far in this run, counted
+    by `TicketTranslator.feed` as it reads the log in order (`self.
+    _span_occurrence`) and stamped onto each `DerivedSpan` at the moment it
+    is built. This has no timing dependency at all — two brackets of the
+    same `(run_id, phase, step)` are always the Nth and (N+1)th sighting of
+    that pair, however close together they land — and stays deterministic on
+    replay because a re-tailed log is read in the same order every time.
+    """
+    key = f'span:{run_id}:{phase}:{step}:{occurrence}'
     return hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]
 
 
-def derive_trace_context(run_id, phase, generation):
-    """(trace_id_hex, span_id_hex) for one phase of one run."""
-    return derive_trace_id_hex(run_id), derive_span_id_hex(run_id, phase, generation)
+def derive_trace_context(run_id, phase, step, occurrence):
+    """(trace_id_hex, span_id_hex) for one bracket of one run."""
+    return derive_trace_id_hex(run_id), derive_span_id_hex(run_id, phase, step, occurrence)
 
 
 def build_queued_id_generator():
@@ -173,12 +230,17 @@ def build_queued_id_generator():
         back to the wrapped generator.
 
         A root span's own creation calls both `generate_trace_id` (queued
-        when propagation is on, so the trace id equals the one the worker
-        was told) and `generate_span_id` (never queued for a root — its own
-        span id doesn't need to match anything). A phase span's creation
-        calls only `generate_span_id` (queued to the exact id exported to
-        that phase's worker); its trace id is inherited from the root's
-        context, not generated here at all.
+        whenever `run_id` is known, so the trace id is derived from the run
+        rather than random — issue #361) and `generate_span_id` (never
+        queued for a root — its own span id doesn't need to match anything).
+        A phase span's creation calls only `generate_span_id` (queued to the
+        id derived from `(run_id, phase, step, occurrence)` — see
+        `derive_span_id_hex`); its trace id is inherited from the root's
+        context, not generated here at all. `fleetd/supervisor.py` derives
+        the same *trace* id for `TRACEPARENT` when `FLEET_TRACE_PROPAGATE_ENABLE`
+        is on, but not the same span id — it runs before the worker it is
+        spawning has written that bracket's `|waiting|` line, so it has no
+        occurrence count to derive from yet; see its own call site.
         """
 
         def __init__(self, fallback):
@@ -242,6 +304,13 @@ class DerivedSpan:
     msg: str = ''
     attributes: dict = field(default_factory=dict)
     events: list = field(default_factory=list)
+    #: 0-indexed count of `(phase, step)` brackets seen so far this run,
+    #: stamped by `TicketTranslator.feed` at the moment this span is built
+    #: (`derive_span_id_hex`'s `occurrence` — issue #361 round 2: a bracket
+    #: timestamp, even the real one, is second-resolution and can collide
+    #: between a fast failure and the retry that immediately follows it;
+    #: this sequential-read count cannot, regardless of timing).
+    occurrence: int = 0
 
     @property
     def name(self):
@@ -286,6 +355,12 @@ class TicketTranslator:
         self.worker_sessions = {}  # phase -> runtime session id (SI5, 4.10)
         self.propagate_phases = {}  # phase -> span_id hex, only when propagate:true (task 7.6)
         self.propagate = False  # true once any META|trace-context reports propagate:true
+        # (phase, step) -> count of spans built so far for that pair (issue
+        # #361 round 2: derive_span_id_hex's `occurrence` input). Incremented
+        # at span creation, not bracket-open, so a terminal-with-no-open
+        # (exporter started mid-run) still gets a distinct occurrence number
+        # the same way a normal bracket would.
+        self._span_occurrence = {}
 
     def feed(self, line):
         """Consume one raw log line. Returns a list of newly completed spans."""
@@ -314,6 +389,8 @@ class TicketTranslator:
         if status in TERMINAL_STATUSES:
             opened = self.open_brackets.pop(key, None)
             start_ts = opened[0] if opened else ts
+            occurrence = self._span_occurrence.get(key, 0)
+            self._span_occurrence[key] = occurrence + 1
             span = DerivedSpan(
                 ticket=self.ticket,
                 phase=phase,
@@ -323,6 +400,7 @@ class TicketTranslator:
                 ok=(status != 'fail'),
                 msg=msg,
                 attributes=self._span_attributes(phase, step, status, opened is None),
+                occurrence=occurrence,
             )
             return [span]
 
@@ -647,23 +725,35 @@ class OtlpEmitter:
         self.available = True
         return True
 
-    def _root_context(self, ticket, run_id, start_ts, propagate=False):
+    def _root_context(self, ticket, run_id, start_ts):
         """One root span per **execution** — `(ticket, run_id)` — not per
         ticket (SI1/otel-span-identity: the run is the trace, the ticket is a
         dimension). Created on first sight and left open until the ticket's
         `META|outcome` or until a differently-run-id'd `META|run-id` line
         supersedes it (`Exporter.poll_once`, task 4.3).
 
+        The root's trace id is always derived from `run_id`
+        (`derive_trace_id_hex`) whenever `run_id` is known at creation time —
+        unconditionally, not gated behind `FLEET_TRACE_PROPAGATE_ENABLE`
+        (LANGFUSE_TRACE_REPLAY_INFLATION / issue #361). That flag governs a
+        separate concern: whether the *worker's own* runtime telemetry is
+        handed a matching `TRACEPARENT` so its independently-emitted spans
+        nest under this one. This exporter's own idempotency — the same run
+        always producing the same root trace id, so a resume or a tailing
+        restart that re-reads the log from the beginning re-sends the same
+        (trace_id, span_id) pairs rather than opening new ones — does not
+        depend on that coordination at all, and must not wait for it.
+
         `run_id` may be unknown at root-creation time (the first phase
         bracket can precede its `META|run-id` line) — the root opens under a
         provisional identity and is re-keyed on first sight (SI1's
         "provisional key" scenario): a still-open root whose run id was
         unknown gets it retroactively via `set_attribute`, which OTel permits
-        any time before `end()`. **Known limitation**: if propagation is
-        enabled and the root had to open provisionally, its trace id was
-        already randomly assigned before `run_id` became known and cannot be
-        changed after creation — the derived trace id is only adopted when
-        `run_id` is known at the moment the root is first created.
+        any time before `end()`. **Known limitation**: if the root had to
+        open provisionally, its trace id was already randomly assigned
+        before `run_id` became known and cannot be changed after creation —
+        the derived trace id is only adopted when `run_id` is known at the
+        moment the root is first created.
         """
         entry = self._roots.get(ticket)
         if entry is not None:
@@ -686,7 +776,7 @@ class OtlpEmitter:
         if run_id:
             attrs['langfuse.session.id'] = run_id
             attrs['langfuse.trace.metadata.run_id'] = run_id
-        if propagate and run_id and self._id_generator is not None:
+        if run_id and self._id_generator is not None:
             try:
                 self._id_generator.queue_trace_id(
                     int(derive_trace_id_hex(run_id), 16))
@@ -701,12 +791,31 @@ class OtlpEmitter:
         self._roots[ticket] = (root, ctx, run_id)
         return ctx
 
-    def emit(self, span, run_id=None, propagate=False, span_id_hex=None):
+    def emit(self, span, run_id=None):
+        """Emit one derived span, deriving both trace and span id from
+        `run_id` whenever it is known — unconditionally (issue #361:
+        LANGFUSE_TRACE_REPLAY_INFLATION). The span id additionally keys on
+        `span.phase`, `span.step` and `span.occurrence` (see
+        `derive_span_id_hex` — every `DerivedSpan` already carries these, so
+        nothing new needs plumbing through the caller): `occurrence` is a
+        sequential-read count, not a timestamp, so two brackets of the same
+        `(run_id, phase, step)` never collide regardless of how close
+        together in time they land — including two within the same UTC
+        second, which a bracket-timestamp-keyed id (round 1 of this fix)
+        could not distinguish. There is nothing to adopt from
+        `META|trace-context` that self-deriving here does not already
+        reproduce for the trace id, and no need to wait on
+        `FLEET_TRACE_PROPAGATE_ENABLE` (which only governs whether the
+        *worker* gets told about it) to stop a tailing restart or a resumed
+        run from opening duplicate spans.
+        """
         if not self.available:
             return
-        ctx = self._root_context(span.ticket, run_id, span.start, propagate=propagate)
-        if propagate and span_id_hex and self._id_generator is not None:
+        ctx = self._root_context(span.ticket, run_id, span.start)
+        if run_id and self._id_generator is not None:
             try:
+                span_id_hex = derive_span_id_hex(
+                    run_id, span.phase, span.step, span.occurrence)
                 self._id_generator.queue_span_id(int(span_id_hex, 16))
             except Exception:
                 pass
@@ -915,11 +1024,7 @@ class Exporter:
             cost = self._cost_for(span.ticket, generation, span.phase)
             if cost is not None:
                 span.attributes['pipeline.cost.usd'] = cost
-            self.emitter.emit(
-                span, run_id,
-                propagate=translator.propagate,
-                span_id_hex=translator.propagate_phases.get(span.phase),
-            )
+            self.emitter.emit(span, run_id)
             self.activity.prune(span.ticket, span.end)
             emitted += 1
         self.pending = still_pending

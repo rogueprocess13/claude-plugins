@@ -3632,8 +3632,15 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
         self.assertTrue(trace_line['propagate'])
         run_id = trace_line['run_id']
         self.assertTrue(run_id)
+        # occurrence=0: no `attempt` kwarg is passed to `spawn_phase_worker`
+        # here, so supervisor.py's call site falls back to occurrence 0 (it
+        # cannot compute the exporter's real sequential-read occurrence
+        # count — this runs before the worker it just spawned has written
+        # IMPLEMENT's `|waiting|` line at all — see supervisor.py's own call
+        # site and otel.py's `derive_span_id_hex`, issue #361 round 2).
+        # STEP_4's `spawn.step` is 'implement' per the dispatch table.
         expected_trace_id, expected_span_id = otel_mod.derive_trace_context(
-            run_id, 'IMPLEMENT', 1)
+            run_id, 'IMPLEMENT', 'implement', 0)
         self.assertEqual(trace_line['trace_id'], expected_trace_id)
         self.assertEqual(trace_line['span_id'], expected_span_id)
         # The worker's own environment carries exactly this pair — the
