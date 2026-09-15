@@ -123,6 +123,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-verify-lock.sh
 	# GitNexus pre-flight branch verification (#359)
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-preflight.sh
+	bash ticket-auto-pipeline/lib/tests/test-gitnexus-agent-tools.sh
 
 test-fleetd:
 	@echo "=== fleetd supervisor tests (must run from repo root) ==="

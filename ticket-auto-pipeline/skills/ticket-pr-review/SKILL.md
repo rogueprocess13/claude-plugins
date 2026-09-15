@@ -182,7 +182,7 @@ This produces the full set of changes introduced by the branch relative to its b
    source "$HOME/.claude/skills/lib/gitnexus-preflight.sh"
    gitnexus_verify_branch "$WORKTREE_PATH" "{lastCommit}" "origin/{headRefName}"
    ```
-   (`$WORKTREE_PATH` was resolved in Step 4 and already has `origin` fetched.) This checks the indexed commit is actually an ancestor of the PR's head branch, not just present in *some* branch — `list_repos`' own `staleness.commitsBehind` is computed against whatever the indexed clone currently has checked out, so it cannot detect a wrong-branch index on its own. `ok <n>` (exit 0) means verified — proceed. `wrong-branch` or `stale <n>` (exit 1), or `unresolvable <reason>` (exit 2), all mean **unverified** — log `gitnexus-health|fail|stale-or-wrong-branch` in the heartbeat and skip to the fallback below.
+   (`$WORKTREE_PATH` was resolved in Step 4 and already has `origin` fetched.) This checks the indexed commit is actually an ancestor of the PR's head branch, not just present in *some* branch — `list_repos`' own `staleness.commitsBehind` is computed against whatever the indexed clone currently has checked out, so it cannot detect a wrong-branch index on its own. `ok <n>` (exit 0) means verified — proceed. `wrong-branch`, `ahead <n>` (a rebase/force-push moved the branch — same failure mode as wrong-branch for this purpose), or `stale <n>` (all exit 1), or `unresolvable <reason>` (exit 2), all mean **unverified** — log `gitnexus-health|fail|stale-or-wrong-branch` in the heartbeat and skip to the fallback below.
 
 Only once both checks pass: call `mcp__gitnexus__detect_changes` with `scope: "compare"` and `base_ref: "{baseRefName}"`. This maps the full PR diff against the knowledge graph.
 

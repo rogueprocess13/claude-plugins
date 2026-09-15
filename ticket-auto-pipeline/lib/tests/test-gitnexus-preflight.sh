@@ -141,6 +141,26 @@ test_verify_branch_wrong_branch() {
 }
 _run "verify_branch: indexed clone on an unrelated branch is rejected" test_verify_branch_wrong_branch
 
+test_verify_branch_ahead() {
+  _setup_fixture
+  local out rc=0
+  # GitNexus indexed feat-a's later commit, but the caller is asking about an
+  # earlier point on the same branch (e.g. a rebase/force-push moved the ref
+  # backward) — same lineage, wrong direction. Distinct from wrong-branch.
+  out=$(gitnexus_verify_branch "$REPO" "$FEAT_A_SHA" "$FEAT_A_MID_SHA") || rc=$?
+  _cleanup_fixture
+  [ "$rc" -eq 1 ] || {
+    echo "  expected exit 1 (ahead), got $rc" >&2
+    return 1
+  }
+  [ "$out" = "ahead 1" ] || {
+    echo "  expected 'ahead 1', got '$out'" >&2
+    return 1
+  }
+  return 0
+}
+_run "verify_branch: indexed commit ahead of expected_ref in same lineage is labeled 'ahead', not 'wrong-branch'" test_verify_branch_ahead
+
 test_verify_branch_unknown_ref() {
   _setup_fixture
   local out rc=0

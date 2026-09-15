@@ -41,7 +41,13 @@ GITNEXUS_MAX_COMMITS_BEHIND="${GITNEXUS_MAX_COMMITS_BEHIND:-20}"
 #
 # Prints exactly one line to stdout:
 #   ok <n>              — verified; indexed commit is <n> commits behind expected_ref
-#   wrong-branch         — indexed commit is not an ancestor of expected_ref at all
+#   wrong-branch         — indexed commit shares no ancestry with expected_ref at all
+#   ahead <n>             — indexed commit is <n> commits *ahead* of expected_ref (same
+#                          lineage — e.g. a rebase/force-push moved expected_ref backward).
+#                          Functionally identical to wrong-branch for the caller (still
+#                          exit 1, still fall back) but distinguished in the output so a
+#                          human grepping the heartbeat log for "wrong-branch" doesn't
+#                          mistake a rebase for an unrelated-branch index.
 #   stale <n>            — an ancestor, but more than max_commits_behind behind
 #   unresolvable <reason> — could not evaluate (bad path, unknown ref, etc.)
 #
@@ -83,6 +89,16 @@ gitnexus_verify_branch() {
   fi
 
   if ! git -C "$repo_dir" merge-base --is-ancestor "$indexed_sha" "$expected_sha" 2>/dev/null; then
+    # Not an ancestor — but is expected_sha an ancestor of the indexed
+    # commit instead? Same lineage, wrong direction (a rebase/force-push
+    # moved expected_ref backward relative to what was indexed), as
+    # opposed to two commits with no common ancestry at all.
+    if git -C "$repo_dir" merge-base --is-ancestor "$expected_sha" "$indexed_sha" 2>/dev/null; then
+      local ahead
+      ahead=$(git -C "$repo_dir" rev-list --count "${expected_sha}..${indexed_sha}" 2>/dev/null)
+      echo "ahead ${ahead:-0}"
+      return 1
+    fi
     echo "wrong-branch"
     return 1
   fi
