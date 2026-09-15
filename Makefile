@@ -121,6 +121,8 @@ test-lib:
 	# ticket-verify isolated worktrees + single-flight lock (#333)
 	bash ticket-auto-pipeline/lib/tests/test-verify-worktree.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-lock.sh
+	# GitNexus pre-flight branch verification (#359)
+	bash ticket-auto-pipeline/lib/tests/test-gitnexus-preflight.sh
 
 test-fleetd:
 	@echo "=== fleetd supervisor tests (must run from repo root) ==="

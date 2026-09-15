@@ -561,9 +561,17 @@ append_correction "{ticket-dir}/notes.md" \
 
 For each affected repo:
 1. Run `/commit-commands:commit` from the worktree (`cd "$WORKTREE_PATH"` first).
-2. **Pre-push safety check — GitNexus `detect_changes`:** Call `mcp__gitnexus__detect_changes` with `scope: "compare"` and `base_ref: "$BASE_BRANCH"`. The worktree is a full git checkout — `detect_changes` operates on the branch, not the filesystem path.
+2. **Pre-push safety check — GitNexus `detect_changes`:** The worktree is a full git checkout — `detect_changes` operates on the branch, not the filesystem path.
+   - **Branch verification first (#359):** call `mcp__gitnexus__list_repos`, find the entry for this repo, and read its `lastCommit`. Then run:
+     ```bash
+     source "$HOME/.claude/skills/lib/gitnexus-preflight.sh"
+     gitnexus_verify_branch "$WORKTREE_PATH" "{lastCommit}" "HEAD"
+     ```
+     (Run from `$WORKTREE_PATH`, or pass it explicitly — `HEAD` here means this worktree's own current commit, i.e. the branch you're about to push.) `list_repos`' own `staleness.commitsBehind` is computed against whatever the *indexed* clone currently has checked out, not against this worktree's branch, so it cannot by itself tell you the index is safe to trust here. `ok <n>` (exit 0) means verified — proceed to `detect_changes`. `wrong-branch`/`stale <n>` (exit 1) or `unresolvable <reason>` (exit 2) mean unverified — skip `detect_changes`, log a warning, and proceed without it (never block the push on GitNexus).
+   - Only once verified: call `mcp__gitnexus__detect_changes` with `scope: "compare"` and `base_ref: "$BASE_BRANCH"`.
+   - **Sanity-check the result (#359):** compare the affected-file list against `git -C "$WORKTREE_PATH" diff --name-only "$BASE_BRANCH"...HEAD` (one path per line each) via `gitnexus_check_result_subset "$RETURNED_FILES" "$KNOWN_DIFF_FILES"`. A non-subset result (exit 1) means the structural diff named files outside this branch's actual changes — discard it, log a warning, and proceed without it.
    - If the result shows `risk_level: "high"` or `"critical"`, OR affected execution flows outside the ticket's stated scope: append a warning to the handoff output.
-   - If GitNexus is unavailable: log a warning and proceed — never block on it.
+   - If GitNexus is unavailable, unverified, or the result fails the subset check: log a warning and proceed — never block on it.
 3. Push from the worktree: `git -C "$WORKTREE_PATH" push origin {branch-name}`
 
 ### Commit title template
