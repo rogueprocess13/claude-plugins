@@ -26,14 +26,28 @@ No workspace is guaranteed — fetch everything from the Linear API directly.
    source "$SCRIPT_DIR/config.sh"
    ```
 
-2. Fetch the ticket from Linear:
+2. Fetch the ticket from Linear. A failed or malformed fetch must be a hard
+   stop, not silently-blank fields — this mode has no shared preamble
+   (`HAS_LINEAR_ACCESS=false` above) to fall back on, and a blank
+   TITLE/DESCRIPTION/LABELS/STATE would otherwise feed straight into the
+   `needs-info` label decision below as if the ticket genuinely had no
+   content (issue #362):
    ```bash
-   ISSUE_JSON=$(get_issue "{TICKET_ID}")
+   ISSUE_JSON=$(get_issue "{TICKET_ID}") || {
+     echo "ticket-critique: get_issue failed for {TICKET_ID} — stopping" >&2
+     exit 1
+   }
+   require_issue_payload "$ISSUE_JSON" || {
+     echo "ticket-critique: get_issue returned an unreadable payload for {TICKET_ID} — stopping" >&2
+     exit 1
+   }
    TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
    DESCRIPTION=$(echo "$ISSUE_JSON" | jq -r '.description // ""')
    LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[]?.name] | join(", ")')
    STATE=$(echo "$ISSUE_JSON" | jq -r '.state.name')
    ```
+   On either failure, report it and stop — do not proceed to the checklist
+   or post a `needs-info` label based on an unverified empty ticket.
 
 3. Fetch comments for additional context:
    ```bash
