@@ -41,7 +41,9 @@ GITNEXUS_MAX_COMMITS_BEHIND="${GITNEXUS_MAX_COMMITS_BEHIND:-20}"
 #
 # Prints exactly one line to stdout:
 #   ok <n>              — verified; indexed commit is <n> commits behind expected_ref
-#   wrong-branch         — indexed commit shares no ancestry with expected_ref at all
+#   wrong-branch         — indexed commit has no ancestor/descendant relationship with
+#                          expected_ref (may still share a common ancestor further back,
+#                          e.g. two sibling branches off the same base)
 #   ahead <n>             — indexed commit is <n> commits *ahead* of expected_ref (same
 #                          lineage — e.g. a rebase/force-push moved expected_ref backward).
 #                          Functionally identical to wrong-branch for the caller (still
