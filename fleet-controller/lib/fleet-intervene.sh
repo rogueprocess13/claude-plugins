@@ -52,24 +52,72 @@ _flow_mutex_held() {
 # Count fleet-restart markers in pipeline log, excluding restarts caused
 # solely by reaping an orphaned pinger/watchdog (GitHub #364).
 #
-# A restart marker is exempt from the cap when the segment of the log
-# between it and the next restart marker (or EOF) contains a
-# `META|orphan-reaped|` line (spawn_sweep_orphans, lib/spawn-helper.sh) and
-# NO phase bracket-open (`|waiting|`) line — i.e. the restarted attempt never
-# got as far as opening its first phase bracket because it spent its whole
-# life reaping a leftover orphan and exiting, so no real phase work was ever
-# attempted or lost. A restart that DOES open a bracket before exiting again
-# is always counted normally, orphan or not — that is a genuine attempt at
-# real work, and the "must not mask genuine stalls" constraint means a
-# ticket that keeps failing mid-phase must still reach the cap and
-# dead-letter. Restarts predating this change (no orphan-reaped evidence at
-# all) are unaffected — every one of them still counts, exactly as before.
+# CORRECTNESS NOTE (superseding the first cut of this exemption): a restart's
+# own bracket-open (`|waiting|`, spawn_agent_pre's phase_bracket_open) is
+# ALWAYS written before that same attempt's own proactive orphan sweep
+# (spawn_agent_pre's spawn_sweep_orphans call, which runs right after) — the
+# two are adjacent lines in one function. That means "no |waiting| line in
+# the window" can never be true for any restart that reaches spawn_agent_pre
+# at all, which is effectively every restart — the original predicate below
+# (has_orphan && !has_waiting) was checking for a log shape that real code
+# never produces, and never exempted anything. Reordering the writes doesn't
+# fix this either: the two lines are still adjacent regardless of which goes
+# first, so "no waiting line" stays unreachable in practice.
+#
+# The pipeline log alone also can't distinguish "opened a bracket, then hung
+# for hours" from "opened a bracket, then crashed instantly" by CONTENT —
+# a hang writes nothing else to the pipeline log while it hangs (heartbeats
+# go to the separate heartbeat log). The only content-independent signal
+# left is TIME: how long elapsed between this restart's own bracket-open and
+# whatever ends its window (the next restart marker, or EOF). This mirrors
+# the existing deterministic-failure circuit breaker's fast-exit concept
+# (FLEET_DETERMINISTIC_FAILURE_SECS) at the per-ticket restart-cap layer.
+#
+# A restart marker is exempt from the cap when ALL of:
+#   1. the window (from just after this marker to the next marker, or EOF)
+#      contains a `META|orphan-reaped|` line (spawn_sweep_orphans found and
+#      killed a genuine leftover from an earlier attempt) — concrete,
+#      external evidence an orphan was actually involved, not a guess;
+#   2. the window contains NO phase terminal (`|done|` or `|fail|` status,
+#      on any line) — the restarted attempt never finished anything, pass
+#      or fail;
+#   3. wall-clock time from this restart marker to the NEXT restart marker
+#      (or, for the most recent restart, to now) is
+#      <= FLEET_ORPHAN_RESTART_GRACE_SECS (default 60, two orders of
+#      magnitude below FLEET_STALL_WARN_SECS/900/1800) — this attempt's
+#      whole life, start to next restart, was short, consistent with
+#      "crashed again right after startup," not "ran for a while and then
+#      got killed."
+#
+# Elapsed time is measured to the NEXT marker's own timestamp (or now), not
+# to the last line this window happens to have logged — a real hang writes
+# NOTHING else to the pipeline log while it hangs (heartbeats go to the
+# separate heartbeat log), so anchoring elapsed to "last line in the window"
+# would understate a silent hang's true duration whenever nothing else
+# happened to get logged in between. The next-marker/now anchor is
+# meaningful in both restart paths this codebase has: a stall-triggered
+# KILL+RESTART writes `META|fleet-intervention`/`META|outcome` (with a
+# genuinely late timestamp) into THIS window before the NEXT restart marker,
+# and a natural (non-killed) exit's reap path writes nothing extra at all —
+# either way, the NEXT marker's timestamp (or now, for the open-ended final
+# window) is the one fact always available and always correct.
+#
+# Any restart whose window shows a terminal, or whose life ran past the
+# grace period, always counts — orphan evidence or not. That is what keeps
+# "must not mask genuine stalls" true: a real hang runs for the many
+# minutes/hours FLEET_STALL_WARN_SECS/FLEET_STALL_RESTART_SECS require
+# before fleet intervenes, dwarfing the grace period, and a real hang never
+# has orphan-reaped evidence in the first place, because fleet_kill_pipeline
+# stops a hung phase's pinger/watchdog cooperatively (stop-file) rather than
+# leaving them to be found as orphans. Restarts predating this change (no
+# orphan-reaped evidence at all) are unaffected — every one of them still
+# counts, exactly as before.
 #
 # Args: log_file
 # Always emits exactly one integer line. `grep -c` prints "0" AND exits 1 on
 # zero matches, so `|| echo "0"` used to emit a second line ("0\n0") — which
-# then broke the `[ "$restarts" -ge "$cap" ]` integer comparison. The awk
-# pass below always prints exactly one line by construction, so that old
+# then broke the `[ "$restarts" -ge "$cap" ]` integer comparison. This
+# function always echoes exactly one integer by construction, so that old
 # double-line failure mode cannot recur here.
 _count_restarts() {
   local file="$1"
@@ -77,22 +125,73 @@ _count_restarts() {
     echo "0"
     return
   fi
-  local count
-  count=$(awk -F'|' '
+  local grace="${FLEET_ORPHAN_RESTART_GRACE_SECS:-60}"
+
+  # One awk pass emits one tab-separated row per fleet-restart marker, in
+  # log order: <restart_ts> <has_orphan:0|1> <has_terminal:0|1> — CONTENT
+  # flags for the window that starts right after this marker and ends at
+  # the next one (or EOF). Timing is computed in the bash loop below, from
+  # each row's timestamp against the NEXT row's (or now) — not from
+  # anything awk saw inside the window.
+  local rows
+  rows=$(awk -F'|' '
     $2 == "META" && $3 == "fleet-restart" {
-      if (in_window && has_orphan && !has_waiting) exempt++
-      in_window = 1; has_orphan = 0; has_waiting = 0
-      total++
+      if (in_window) printf "%s\t%d\t%d\n", restart_ts, has_orphan, has_terminal
+      in_window = 1
+      restart_ts = $1
+      has_orphan = 0
+      has_terminal = 0
       next
     }
-    in_window && $2 == "META" && $3 == "orphan-reaped" { has_orphan = 1 }
-    in_window && $4 == "waiting" { has_waiting = 1 }
+    in_window {
+      if ($2 == "META" && $3 == "orphan-reaped") has_orphan = 1
+      if ($4 == "done" || $4 == "fail") has_terminal = 1
+    }
     END {
-      if (in_window && has_orphan && !has_waiting) exempt++
-      print total - exempt + 0
+      if (in_window) printf "%s\t%d\t%d\n", restart_ts, has_orphan, has_terminal
     }
   ' "$file" 2>/dev/null)
-  echo "${count:-0}"
+
+  [ -z "$rows" ] && {
+    echo "0"
+    return
+  }
+
+  # Read every row into a parallel set of arrays first so each row can look
+  # ahead to the NEXT row's timestamp — a plain sequential read can't peek
+  # forward.
+  local -a ts_arr orphan_arr terminal_arr
+  local restart_ts has_orphan has_terminal
+  while IFS=$'\t' read -r restart_ts has_orphan has_terminal; do
+    [ -n "$restart_ts" ] || continue
+    ts_arr+=("$restart_ts")
+    orphan_arr+=("$has_orphan")
+    terminal_arr+=("$has_terminal")
+  done <<<"$rows"
+
+  local total="${#ts_arr[@]}"
+  local exempt=0
+  local now_epoch
+  now_epoch=$(date -u +%s)
+  local i
+  for ((i = 0; i < total; i++)); do
+    [ "${orphan_arr[$i]}" = "1" ] || continue
+    [ "${terminal_arr[$i]}" = "0" ] || continue
+    local r_epoch end_epoch
+    r_epoch=$(date -d "${ts_arr[$i]}" +%s 2>/dev/null || true)
+    [ -n "$r_epoch" ] || continue
+    if [ "$((i + 1))" -lt "$total" ]; then
+      end_epoch=$(date -d "${ts_arr[$((i + 1))]}" +%s 2>/dev/null || true)
+    else
+      end_epoch="$now_epoch"
+    fi
+    [ -n "$end_epoch" ] || continue
+    local elapsed=$((end_epoch - r_epoch))
+    [ "$elapsed" -lt 0 ] && elapsed=0
+    [ "$elapsed" -le "$grace" ] && exempt=$((exempt + 1))
+  done
+
+  echo "$((total - exempt))"
 }
 
 # ── fleet_stop_background ────────────────────────────────────────────────────────

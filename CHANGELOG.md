@@ -50,13 +50,25 @@ or genuine) consumed the same `FLEET_MAX_RESTARTS` budget identically.
   ticket's own pipeline log — durable, greppable evidence of a reap instead
   of only an incidentally-captured stderr line.
 - `fleet-controller/lib/fleet-intervene.sh` — `_count_restarts` now excludes
-  a `META|fleet-restart` marker from the cap when the log segment between it
-  and the next restart marker (or EOF) shows a `META|orphan-reaped` line and
-  no phase bracket-open (`|waiting|`) — i.e. the restarted attempt never got
-  as far as opening its first phase bracket because it spent its whole life
-  reaping a leftover orphan. A restart that opens a bracket before failing
-  again always counts, orphan-reap or not, so a genuinely hung phase still
-  reaches the cap and dead-letters.
+  a `META|fleet-restart` marker from the cap when its window (from the
+  marker to the next one, or EOF) shows a `META|orphan-reaped` line, no
+  phase terminal (`|done|`/`|fail|`), and the wall-clock time from this
+  marker to the next one (or now) is under `FLEET_ORPHAN_RESTART_GRACE_SECS`
+  (default 60s). The exemption was first cut against "no bracket-open in the
+  window" — but `phase_bracket_open`'s `|waiting|` line is always written
+  immediately before `spawn_sweep_orphans`' own `orphan-reaped` line in
+  `spawn_agent_pre` (one right after the other), so that shape can never
+  occur in a real log and the first cut never exempted anything. A
+  live-code review before this shipped caught it: a real leaked pinger,
+  seeded and reaped through the actual `spawn_agent_pre`, still counted
+  against the cap. The corrected predicate reaches for the one signal the
+  pipeline log can't fake either way — elapsed wall-clock time to the next
+  restart or now — since a genuine hang writes nothing else to the pipeline
+  log while it hangs (heartbeats go to the separate heartbeat log) and
+  always runs for the many minutes `FLEET_STALL_WARN_SECS`/
+  `FLEET_STALL_RESTART_SECS` require before fleet intervenes, dwarfing the
+  grace period; a restart that reaches a real terminal always counts
+  regardless of timing.
 - New/extended tests: `lib/tests/test-heartbeat.sh` (2 new cases mirroring
   the watchdog's own `FLEET_WORKER_PID` honesty tests —
   `test_pinger_exits_when_worker_pid_dies`,
@@ -65,10 +77,14 @@ or genuine) consumed the same `FLEET_MAX_RESTARTS` budget identically.
   `spawn_sweep_orphans` kills a live ledgered process and logs it, the
   PID-reuse guard still protects a recycled pid, and `spawn_agent_pre`
   calls the sweep before starting a new pinger), and
-  `fleet-controller/lib/tests/test-fleet-intervene.sh` (5 new cases for the
-  `_count_restarts` orphan exemption, including the mixed
-  orphan-then-genuine-restart case and the pre-#364 no-orphan-evidence case
-  staying unaffected).
+  `fleet-controller/lib/tests/test-fleet-intervene.sh` (10 new cases for the
+  `_count_restarts` orphan exemption — driven through the real
+  `spawn_agent_pre`/`spawn_agent_post` rather than hand-written log lines,
+  the mistake that let the first cut ship unnoticed — covering the mixed
+  orphan-then-genuine-restart case, the pre-#364 no-orphan-evidence case
+  staying unaffected, the grace-period boundary with a real elapsed delay,
+  a genuinely hung phase still reaching the cap after 8 restarts, and 4
+  orphan-only restarts interleaved with 4 genuine ones counting only the 4).
 
 ## 0.50.5 (2026-09-14)
 
