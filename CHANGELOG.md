@@ -17,6 +17,48 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.31.7 (2026-09-15)
+
+Second follow-up to 0.31.6/0.31.5 below (issue #361, round 2). That round's
+fix keyed the span id on the bracket's own `|waiting|` timestamp, reasoning
+that two brackets of the same `(run_id, phase, step)` are never open at
+once, so their timestamps must differ. Review found that reasoning false:
+`phase_bracket_open` (`ticket-auto-pipeline/lib/spawn-helper.sh`) stamps
+with `date -u +%Y-%m-%dT%H:%M:%SZ` — second resolution, no sub-second
+component — so a fast, deterministic failure (a precondition/gate check
+before any agent spawn, or a bash/`gh`-driven PR-REVIEW step) immediately
+followed by the next bracket's `|waiting|` line can land in the same UTC
+second and produce the identical span id. The round-1 tests didn't catch
+this because every fixture used timestamps minutes apart, never the same
+second.
+
+- `derive_span_id_hex`'s key drops `start_ts` entirely in favor of
+  `occurrence` — a 0-indexed count of how many `(phase, step)` brackets have
+  completed so far in this run, with no timestamp dependency at all.
+  `TicketTranslator.feed` (`fleetd/otel.py`) counts it as it reads the log
+  in sequence (`self._span_occurrence`) and stamps it onto each
+  `DerivedSpan` at the moment the span is built, so replaying the same log
+  always recomputes the same count — the same idempotency property the
+  timestamp key was chasing, without the collision.
+- `Supervisor.spawn_phase_worker`'s still-off-by-default TRACEPARENT
+  derivation now passes `attempt - 1` (the dispatch table's own 1-based
+  retry counter, already in scope; `0` when unknown) in occurrence's place,
+  since it runs before any bracket exists to count against — a cheap,
+  explicitly-approximate substitute rather than a constant, still gated
+  behind `FLEET_TRACE_PROPAGATE_ENABLE` and still "not yet settled" per
+  `fleet-controller/CLAUDE.md`.
+- New test in `fleetd/tests/test_otel.py`,
+  `test_same_second_retries_do_not_collide` — the test that should have
+  existed in the previous round and didn't: three VERIFY brackets (two fast
+  fails plus the pass) sharing one byte-identical timestamp, through the
+  real `Exporter`/`TicketTranslator` path and a real in-memory OTel SDK,
+  asserting three distinct span ids. Other derivation tests (pure-function
+  and SDK-backed) updated from timestamp to occurrence fixtures.
+  `test_supervisor.py`'s TRACEPARENT test updated for the `attempt - 1`
+  substitution.
+
+Bumps fleet-controller to 0.31.7.
+
 ## fleet-controller 0.31.6 (2026-09-15)
 
 Follow-up to 0.31.5 below: review of that fix confirmed the trace-level

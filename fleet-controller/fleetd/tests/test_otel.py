@@ -944,14 +944,13 @@ class TestRealSdk(unittest.TestCase):
     def test_the_phase_span_adopts_the_derived_span_id(self):
         emitter, exporter = self._emitter_with_memory_exporter()
         run_id = 'SDK-4-2026-01-01T00:00:00Z-1'
-        start = NOW - timedelta(seconds=10)
         span = otel.DerivedSpan(
-            ticket='SDK-4', phase='VERIFY', step='verify', start=start, end=NOW, ok=True)
+            ticket='SDK-4', phase='VERIFY', step='verify',
+            start=NOW - timedelta(seconds=10), end=NOW, ok=True, occurrence=0)
         emitter.emit(span, run_id=run_id)
         finished = exporter.get_finished_spans()
         phase_span = next(s for s in finished if s.name.startswith('invoke_agent'))
-        expected_span_id = int(
-            otel.derive_span_id_hex(run_id, 'VERIFY', 'verify', otel._iso_str(start)), 16)
+        expected_span_id = int(otel.derive_span_id_hex(run_id, 'VERIFY', 'verify', 0), 16)
         self.assertEqual(phase_span.context.span_id, expected_span_id)
 
     def test_two_phases_of_one_run_share_a_trace_but_not_a_span(self):
@@ -976,16 +975,18 @@ class TestRealSdk(unittest.TestCase):
         # `merge-decision`, `pr-reconcile` and `pr-review` are four distinct
         # brackets under one `PHASE=PR-REVIEW` — `step` alone told them
         # apart even before `generation` was found to be frozen, but was
-        # missing from the derivation key entirely.
+        # missing from the derivation key entirely. Both spans below share
+        # the same `occurrence` (0) on purpose — this isolates `step` as
+        # what must separate them.
         emitter, exporter = self._emitter_with_memory_exporter()
         run_id = 'SDK-5B-2026-01-01T00:00:00Z-1'
         same_start = NOW - timedelta(seconds=10)
         span1 = otel.DerivedSpan(
             ticket='SDK-5B', phase='PR-REVIEW', step='checkout-pr',
-            start=same_start, end=same_start, ok=True)
+            start=same_start, end=same_start, ok=True, occurrence=0)
         span2 = otel.DerivedSpan(
             ticket='SDK-5B', phase='PR-REVIEW', step='pr-review',
-            start=same_start, end=same_start, ok=True)
+            start=same_start, end=same_start, ok=True, occurrence=0)
         emitter.emit(span1, run_id=run_id)
         emitter.emit(span2, run_id=run_id)
         finished = exporter.get_finished_spans()
@@ -996,19 +997,23 @@ class TestRealSdk(unittest.TestCase):
             'two distinct steps of one phase collided on the same span_id')
 
     def test_two_retries_of_one_step_do_not_share_a_span_id(self):
-        # Regression for the VERIFY-retry collision: `generation` (as read
-        # from the pipeline log) is frozen at a run's first spawn and never
-        # updated on later preamble calls, so it could not distinguish one
-        # retry attempt of the same step from the next. The bracket's own
-        # start timestamp always differs between attempts instead.
+        # Regression for the VERIFY-retry collision. Round 1 of this fix
+        # keyed on the bracket's own start timestamp, reasoning two brackets
+        # of the same (run_id, phase, step) are never open at once — true,
+        # but `phase_bracket_open` stamps at SECOND resolution, so a fast
+        # fail immediately followed by its retry's `|waiting|` line can
+        # still land in the same UTC second (round 2 finding). Both spans
+        # below share the identical `start`/`end` on purpose, to prove
+        # `occurrence` — not timing — is what now separates them.
         emitter, exporter = self._emitter_with_memory_exporter()
         run_id = 'SDK-5C-2026-01-01T00:00:00Z-1'
+        same_instant = NOW - timedelta(seconds=10)
         span1 = otel.DerivedSpan(
             ticket='SDK-5C', phase='VERIFY', step='verify',
-            start=NOW - timedelta(seconds=20), end=NOW - timedelta(seconds=15), ok=False)
+            start=same_instant, end=same_instant, ok=False, occurrence=0)
         span2 = otel.DerivedSpan(
             ticket='SDK-5C', phase='VERIFY', step='verify',
-            start=NOW - timedelta(seconds=10), end=NOW, ok=True)
+            start=same_instant, end=same_instant, ok=True, occurrence=1)
         emitter.emit(span1, run_id=run_id)
         emitter.emit(span2, run_id=run_id)
         finished = exporter.get_finished_spans()
@@ -1021,9 +1026,9 @@ class TestRealSdk(unittest.TestCase):
 
     def test_no_run_id_produces_random_ids_as_before(self):
         emitter, exporter = self._emitter_with_memory_exporter()
-        start = NOW - timedelta(seconds=10)
         span = otel.DerivedSpan(
-            ticket='SDK-6', phase='IMPLEMENT', step='implement', start=start, end=NOW, ok=True)
+            ticket='SDK-6', phase='IMPLEMENT', step='implement',
+            start=NOW - timedelta(seconds=10), end=NOW, ok=True, occurrence=0)
         emitter.emit(span, run_id=None)
         finished = exporter.get_finished_spans()
         phase_span = finished[0]
@@ -1032,20 +1037,19 @@ class TestRealSdk(unittest.TestCase):
         # the untouched random path, not merely that *a* span exists.
         self.assertNotEqual(
             phase_span.context.span_id,
-            int(otel.derive_span_id_hex(None, 'IMPLEMENT', 'implement', otel._iso_str(start)),
-                16))
+            int(otel.derive_span_id_hex(None, 'IMPLEMENT', 'implement', 0), 16))
 
     def test_replaying_the_same_run_from_a_fresh_emitter_reuses_the_same_ids(self):
         """The exporter's own restart-idempotency (issue #361): a fresh
         `OtlpEmitter` — standing in for a fleetd/exporter restart that
         re-tails a pipeline log from byte zero with an empty `_roots` cache
         — re-derives exactly the same root trace id and phase span id for
-        the same `(run_id, phase, step, start)`, so a replayed export
+        the same `(run_id, phase, step, occurrence)`, so a replayed export
         updates the existing trace instead of opening a new one."""
         run_id = 'SDK-7-2026-01-01T00:00:00Z-1'
         span = otel.DerivedSpan(
             ticket='SDK-7', phase='IMPLEMENT', step='implement',
-            start=NOW - timedelta(seconds=10), end=NOW, ok=True)
+            start=NOW - timedelta(seconds=10), end=NOW, ok=True, occurrence=0)
 
         first_emitter, first_exporter = self._emitter_with_memory_exporter()
         first_emitter.emit(span, run_id=run_id)
@@ -1109,58 +1113,104 @@ class TestRealSdk(unittest.TestCase):
         trace_ids = {s.context.trace_id for s in phase_spans}
         self.assertEqual(len(trace_ids), 1)
 
+    def test_same_second_retries_do_not_collide(self):
+        """The test that should have existed from round 1 and didn't: every
+        timestamp below is byte-identical, reproducing the exact scenario
+        round 2's review found — `phase_bracket_open` (`ticket-auto-pipeline/
+        lib/spawn-helper.sh`) stamps with `date -u +%Y-%m-%dT%H:%M:%SZ`
+        (second resolution, no sub-second component), so a fast,
+        deterministic failure immediately followed by its retry's
+        `|waiting|` line can land in the same UTC second. A
+        bracket-timestamp-keyed span id (round 1's fix) could not tell these
+        three brackets apart; `occurrence` — a sequential-read count, not a
+        clock reading — must."""
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'RID-9-pipeline.log'
+            same = iso(0)  # every line stamped identically, on purpose
+            lines = [
+                f'{same}|META|run-id|info|{{"run_id":"RID-9-A","gen":1}}',
+                f'{same}|VERIFY|verify|waiting|attempt 1',
+                f'{same}|VERIFY|verify|fail|FAIL criterion 1 (fast fail)',
+                f'{same}|VERIFY|verify|waiting|attempt 2',
+                f'{same}|VERIFY|verify|fail|FAIL criterion 2 (fast fail)',
+                f'{same}|VERIFY|verify|waiting|attempt 3',
+                f'{same}|VERIFY|verify|done|PASS',
+            ]
+            with open(path, 'a') as fh:
+                for ln in lines:
+                    fh.write(ln + '\n')
+            cfg = otel.ExporterConfig(log_dir=d, span_grace_secs=0)
+            emitter, exporter = self._emitter_with_memory_exporter()
+            ex = otel.Exporter(cfg, emitter)
+            ex.poll_once()
+
+        finished = exporter.get_finished_spans()
+        phase_spans = [s for s in finished if s.name.startswith('invoke_agent')]
+        self.assertEqual(len(phase_spans), 3)
+        span_ids = {s.context.span_id for s in phase_spans}
+        self.assertEqual(
+            len(span_ids), 3,
+            'same-second retries collided on the same span_id')
+        trace_ids = {s.context.trace_id for s in phase_spans}
+        self.assertEqual(len(trace_ids), 1)
+
 
 class TraceContextDerivationTest(unittest.TestCase):
     """Pure-function tests for derive_trace_id_hex/derive_span_id_hex (task 7.2,
-    extended for issue #361's follow-up: `step`/`start_ts` replaced `generation`
-    in the span-id key) — no SDK required, since these never touch it."""
+    extended across issue #361's two follow-up rounds: `generation` was
+    replaced by `step`/`start_ts` in round 1, then `start_ts` itself was
+    replaced by `occurrence` in round 2 once it turned out
+    `phase_bracket_open` stamps at second resolution and can still collide)
+    — no SDK required, since these never touch it."""
 
-    START = '2026-01-01T00:00:10Z'
-    START_2 = '2026-01-01T00:05:00Z'
+    OCC = 0
+    OCC_2 = 1
 
     def test_same_inputs_always_yield_the_same_context(self):
-        a = otel.derive_trace_context('RID-1', 'IMPLEMENT', 'implement', self.START)
-        b = otel.derive_trace_context('RID-1', 'IMPLEMENT', 'implement', self.START)
+        a = otel.derive_trace_context('RID-1', 'IMPLEMENT', 'implement', self.OCC)
+        b = otel.derive_trace_context('RID-1', 'IMPLEMENT', 'implement', self.OCC)
         self.assertEqual(a, b)
 
     def test_different_phases_of_one_run_share_a_trace_id_not_a_span_id(self):
         trace1, span1 = otel.derive_trace_context(
-            'RID-2', 'IMPLEMENT', 'implement', self.START)
-        trace2, span2 = otel.derive_trace_context('RID-2', 'VERIFY', 'verify', self.START)
+            'RID-2', 'IMPLEMENT', 'implement', self.OCC)
+        trace2, span2 = otel.derive_trace_context('RID-2', 'VERIFY', 'verify', self.OCC)
         self.assertEqual(trace1, trace2)
         self.assertNotEqual(span1, span2)
 
     def test_different_steps_of_one_phase_do_not_share_a_span_id(self):
         # Regression: PR-REVIEW's four steps — checkout-pr, merge-decision,
         # pr-reconcile, pr-review — are one PHASE field but four distinct
-        # brackets. `step` alone (independent of `start_ts`) must separate
-        # them.
+        # brackets. `step` alone (independent of `occurrence`, held fixed at
+        # 0 for every one of them here) must separate them.
         steps = ['checkout-pr', 'merge-decision', 'pr-reconcile', 'pr-review']
         span_ids = {
-            otel.derive_span_id_hex('RID-2B', 'PR-REVIEW', step, self.START)
+            otel.derive_span_id_hex('RID-2B', 'PR-REVIEW', step, self.OCC)
             for step in steps
         }
         self.assertEqual(
             len(span_ids), len(steps),
             'PR-REVIEW steps collided on the same derived span_id')
 
-    def test_different_start_timestamps_of_one_step_do_not_share_a_span_id(self):
+    def test_different_occurrences_of_one_step_do_not_share_a_span_id(self):
         # Regression: two retry attempts of the same (run_id, phase, step)
-        # must not collide just because `generation` (frozen after a run's
-        # first spawn) can no longer be relied on to vary between them —
-        # the bracket's own `|waiting|` timestamp does.
-        span1 = otel.derive_span_id_hex('RID-2C', 'VERIFY', 'verify', self.START)
-        span2 = otel.derive_span_id_hex('RID-2C', 'VERIFY', 'verify', self.START_2)
+        # must not collide. `generation` (frozen after a run's first spawn)
+        # could not distinguish them; nor, it turned out, could the
+        # bracket's own `|waiting|` timestamp (round 2: second-resolution
+        # stamps collide between a fast fail and its immediate retry).
+        # `occurrence` — a sequential-read count — has no such failure mode.
+        span1 = otel.derive_span_id_hex('RID-2C', 'VERIFY', 'verify', self.OCC)
+        span2 = otel.derive_span_id_hex('RID-2C', 'VERIFY', 'verify', self.OCC_2)
         self.assertNotEqual(span1, span2)
 
     def test_different_runs_of_one_ticket_do_not_share_a_trace_id(self):
-        trace1, _ = otel.derive_trace_context('RID-3-A', 'IMPLEMENT', 'implement', self.START)
-        trace2, _ = otel.derive_trace_context('RID-3-B', 'IMPLEMENT', 'implement', self.START)
+        trace1, _ = otel.derive_trace_context('RID-3-A', 'IMPLEMENT', 'implement', self.OCC)
+        trace2, _ = otel.derive_trace_context('RID-3-B', 'IMPLEMENT', 'implement', self.OCC)
         self.assertNotEqual(trace1, trace2)
 
     def test_trace_id_is_32_hex_chars_span_id_is_16(self):
         trace_id, span_id = otel.derive_trace_context(
-            'RID-4', 'IMPLEMENT', 'implement', self.START)
+            'RID-4', 'IMPLEMENT', 'implement', self.OCC)
         self.assertEqual(len(trace_id), 32)
         self.assertEqual(len(span_id), 16)
         int(trace_id, 16)  # must not raise

@@ -2637,22 +2637,31 @@ def spawn_phase_worker(tid, step_id, generation, state_dir, log_file,
     # this block is a no-op, leaving `spawn.env` and the recorded context
     # exactly as they were before this capability existed (TP3, task 7.7).
     #
-    # `start_ts=None` here, always — this runs *before* the worker it is
-    # about to fork writes that phase's `|waiting|` line, so the bracket
-    # start timestamp `derive_span_id_hex` keys on (issue #361 follow-up:
-    # `step`/`start_ts` replaced `generation`, which collided across retries
-    # and across a phase's own steps — see otel.py's `derive_span_id_hex`)
-    # does not exist yet at this call site. The span id this derives is
-    # therefore a distinct, deliberately approximate value from the one the
-    # exporter later derives for the same bracket from its real `start_ts` —
-    # consistent with this whole feature already being "not yet settled"
-    # (fleet-controller/CLAUDE.md, Trace-context propagation) and never
-    # load-bearing. The trace id is unaffected: it depends only on `run_id`.
+    # `derive_span_id_hex` keys on `occurrence` — a sequential count of
+    # `(phase, step)` brackets seen so far in a run (issue #361 round 2:
+    # replaced a bracket-timestamp key, which could still collide between a
+    # fast failure and the retry immediately after it, since
+    # `phase_bracket_open` stamps at second resolution). This call site
+    # cannot compute the exporter's real occurrence count — it runs *before*
+    # the worker it is about to fork writes that phase's `|waiting|` line,
+    # so it has no sequential log read to count against — but `attempt`
+    # (1-based, already computed by the dispatch-table's loop-cap logic for
+    # a retryable step; `None` for a non-loop-bearing one) is at least a
+    # per-retry-distinguishing proxy in scope here for free, so it is used
+    # in `occurrence`'s place rather than a constant. It will not generally
+    # equal the exporter's own occurrence count (which counts *all* prior
+    # spans of this `(phase, step)`, not just retry attempts), so the span
+    # id this derives is a distinct, deliberately approximate value from the
+    # one the exporter later derives for the same bracket — consistent with
+    # this whole feature already being "not yet settled" (fleet-controller/
+    # CLAUDE.md, Trace-context propagation) and never load-bearing. The
+    # trace id is unaffected: it depends only on `run_id`.
     trace_id = span_id = None
     if FLEET_TRACE_PROPAGATE_ENABLE and run_id:
         try:
+            occurrence = attempt - 1 if attempt is not None else 0
             trace_id, span_id = _otel_mod.derive_trace_context(
-                run_id, spawn.phase, spawn.step, None)
+                run_id, spawn.phase, spawn.step, occurrence)
             spawn.env['TRACEPARENT'] = f'00-{trace_id}-{span_id}-01'
         except Exception as exc:
             print(f'fleetd: trace-context derivation failed for {tid}: {exc}',
