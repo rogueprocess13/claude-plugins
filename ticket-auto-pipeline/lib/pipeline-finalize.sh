@@ -30,9 +30,11 @@ fi
 
 # ── Human hold detection (human-hold-protocol) ──────────────────────────────
 # True when the log's latest *valid* human-hold record has no later
-# `META|human-hold-released` marker. Mirrors the `held: gate` sibling: a hold
-# is a log fact here, not a store lookup — pipeline-finalize.sh runs inside
-# the router/worker process, which never opens the fleet state store. An
+# `META|human-hold-released` marker. Has a `held: gate` sibling below
+# (`_pf_has_unreleased_gate_hold`, issue #357) built on the same shape: a
+# hold is a log fact here, not a store lookup — pipeline-finalize.sh runs
+# inside the router/worker process, which never opens the fleet state
+# store. An
 # `invalid` record is deliberately NOT a hold (human-hold-request spec: "An
 # invalid request creates no hold row") — it stays visible to
 # `detect_human_hold` without parking the ticket on a premise nothing could
@@ -58,6 +60,40 @@ _pf_has_unreleased_human_hold() {
   done <"$log_file"
 
   [ "$released_lineno" -gt "$last_valid_lineno" ] && return 1
+  return 0
+}
+
+# ── Gate hold detection (FINALIZE_FALSE_SUCCESS_OUTCOME, issue #357) ────────
+# True when the log's latest `META|gate-held` marker has no later gate
+# resolution. The `held: gate` sibling of `_pf_has_unreleased_human_hold`
+# above — a call site (STEP_2_5) reaches this finalizer with `EXIT_CODE=0`
+# for a gate hold precisely because a hold is not a crash, but a bare
+# `EXIT_CODE -eq 0` check has no way to tell that apart from a genuine
+# STEP_6 completion. "Resolved" mirrors detect-resume.sh's own two gate
+# completion markers (`GATE|gate|done|` from gate-check.sh's auto-approve/
+# reapprove path, `GATE|reconcile|done|clean` from ticket-gate-reconcile) so
+# this function and the router's own resume logic never disagree about what
+# counts as "the hold is over".
+_pf_has_unreleased_gate_hold() {
+  local log_file="$1"
+  local last_held_lineno=0 lineno=0 line step
+  while IFS= read -r line; do
+    lineno=$((lineno + 1))
+    step=$(printf '%s' "$line" | awk -F'|' '{print $3}')
+    [ "$step" = "gate-held" ] && last_held_lineno=$lineno
+  done <"$log_file"
+  [ "$last_held_lineno" -gt 0 ] || return 1
+
+  local resolved_lineno=0
+  lineno=0
+  while IFS= read -r line; do
+    lineno=$((lineno + 1))
+    if printf '%s' "$line" | grep -qE '^[^|]*\|GATE\|(gate\|done\||reconcile\|done\|clean)'; then
+      resolved_lineno=$lineno
+    fi
+  done <"$log_file"
+
+  [ "$resolved_lineno" -gt "$last_held_lineno" ] && return 1
   return 0
 }
 
@@ -153,25 +189,36 @@ if [ ! -f "$LOG_FILE" ]; then
 fi
 
 # Derive outcome summary from log evidence, not exit code alone (F07 fix).
-# EXIT_CODE==0 is checked before any grep-based failure derivation: this
-# function is called at every router exit point, and on a long-lived,
-# multi-generation pipeline log a ticket that failed early (gate-stop,
-# gate-held, VERIFY_EXHAUSTED, ...) in a superseded earlier generation but
-# went on to genuinely complete would otherwise have its final "completed:
-# STEP_6" outcome permanently overwritten by that stale historical marker —
-# the grep checks below have no notion of "was this later resolved," same
-# class of bug as the zombie-detection fix in detect-resume.sh. A clean
-# exit code from the STEP_6 completion call site is unambiguous: it can only
-# mean the run succeeded just now, so it must win over any log history.
+# EXIT_CODE==0 is checked before the *generic* grep-based failure branches
+# below (gate-stop, VERIFY_EXHAUSTED, ...): this function is called at every
+# router exit point, and on a long-lived, multi-generation pipeline log a
+# ticket that failed early in a superseded earlier generation but went on to
+# genuinely complete would otherwise have its final "completed: STEP_6"
+# outcome permanently overwritten by that stale historical marker — those
+# grep checks have no notion of "was this later resolved," same class of bug
+# as the zombie-detection fix in detect-resume.sh.
+#
+# The two hold checks are deliberately evaluated *before* EXIT_CODE==0
+# instead (FINALIZE_FALSE_SUCCESS_OUTCOME, issue #357): STEP_2_5's gate-held
+# call site, and any call site that reaches STEP_6 with an unreleased human
+# hold still open, both pass `EXIT_CODE=0` on purpose — a hold is not a
+# crash — so treating a clean exit code as proof of "just succeeded" was
+# always wrong for exactly the two call sites that rely on it most. Both
+# checks are narrowly scoped to "no resolution *after* the last hold record"
+# the same way `_pf_has_unreleased_human_hold` already was, so a hold that
+# really was resolved earlier in a resumed run's history still correctly
+# yields "completed" — this is not a blanket revert of the F07 fix above,
+# only a correction for the two outcomes a hold can leave unambiguous
+# evidence for.
 _outcome_summary=""
 if [ -n "$OUTCOME_OVERRIDE" ]; then
   _outcome_summary="$OUTCOME_OVERRIDE"
-elif [ "$EXIT_CODE" -eq 0 ]; then
-  _outcome_summary="completed: STEP_6"
-elif grep -q '|META|gate-held|' "$LOG_FILE" 2>/dev/null; then
-  _outcome_summary="held: gate"
 elif _pf_has_unreleased_human_hold "$LOG_FILE"; then
   _outcome_summary="held: human"
+elif _pf_has_unreleased_gate_hold "$LOG_FILE"; then
+  _outcome_summary="held: gate"
+elif [ "$EXIT_CODE" -eq 0 ]; then
+  _outcome_summary="completed: STEP_6"
 elif grep -q '|META|gate-stop|fail|' "$LOG_FILE" 2>/dev/null; then
   _gs_code=$(grep '|META|gate-stop|fail|' "$LOG_FILE" | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
   _outcome_summary="stopped: gate-stop ${_gs_code}"

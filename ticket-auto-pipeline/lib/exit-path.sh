@@ -136,6 +136,23 @@ derive_failure_class() {
   local outcome
   outcome=$(grep '|META|outcome|info|' "$log_file" 2>/dev/null | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
 
+  # 0. Invariant: a `completed` outcome never carries a non-`none`
+  #    failure_class (FINALIZE_FALSE_SUCCESS_OUTCOME, issue #357).
+  #    pipeline-finalize.sh only ever writes "completed: STEP_6" once a run
+  #    has genuinely reached STEP_6 with no unreleased hold open (see its
+  #    own outcome-derivation comment) — an earlier gate-stop/
+  #    VERIFY_EXHAUSTED/... marker still sitting in this log is exactly the
+  #    resolved-then-completed case the branches below have no way to see
+  #    past on their own (they read for evidence anywhere in the log, not
+  #    "was this later resolved"), the same staleness class the
+  #    RETURN_INCOMPLETE branch further down already special-cased for
+  #    itself alone. Checked first so every later branch inherits the
+  #    guarantee instead of needing its own copy of it.
+  if echo "$outcome" | grep -q '^completed:'; then
+    echo "none"
+    return
+  fi
+
   # 1. human_intervention — a hold with no corresponding release entry. A
   #    released hold never leaves `held: human` as the *final* outcome line
   #    (pipeline-finalize.sh only ever writes it for an unreleased request).

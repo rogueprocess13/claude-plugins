@@ -254,6 +254,55 @@ test_class_agent_failure_via_phase_inspector() {
   return $ok
 }
 
+# ── Invariant: completed outcome never carries a failure_class (issue #357) ────
+
+test_completed_outcome_overrides_stale_gate_stop_evidence() {
+  # FINALIZE_FALSE_SUCCESS_OUTCOME: a gate-stop marker from an earlier,
+  # superseded generation must not leak into failure_class once the run's
+  # own final outcome line says the run actually completed.
+  local log
+  log=$(_tmp_log)
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|META|gate-stop|fail|RECONCILE_EXHAUSTED
+2026-01-01T00:00:10Z|IMPLEMENT|implement|done|ok
+2026-01-01T00:00:11Z|META|outcome|info|completed: STEP_6
+EOF
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "none" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_completed_outcome_overrides_stale_verify_exhausted_evidence() {
+  local log
+  log=$(_tmp_log)
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|META|gate-stop|fail|VERIFY_EXHAUSTED
+2026-01-01T00:00:10Z|VERIFY|verify|done|PASS
+2026-01-01T00:00:11Z|META|outcome|info|completed: STEP_6
+EOF
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "none" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_held_gate_outcome_still_classifies_approval_gate_not_none() {
+  # Sanity check that the new invariant's prefix match ("^completed:") is
+  # specific to a genuinely completed run and does not swallow a real
+  # held: gate outcome.
+  local log
+  log=$(_tmp_log)
+  echo '2026-01-01T00:01:01Z|META|outcome|info|held: gate' >"$log"
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "approval_gate" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
 # ── Clean-run and repeatability guarantees (task 10.8) ─────────────────────────
 
 test_clean_run_classifies_none_with_none_phase() {
@@ -393,6 +442,9 @@ _run "pre-C0 bare auto-kill string classifies infrastructure_failure" test_a_pre
 _run "class: infrastructure_failure on worker API error" test_class_infrastructure_failure_on_worker_api_error
 _run "class: agent_failure fallback" test_class_agent_failure_fallback
 _run "class: agent_failure via phase-inspector" test_class_agent_failure_via_phase_inspector
+_run "completed outcome overrides stale gate-stop evidence" test_completed_outcome_overrides_stale_gate_stop_evidence
+_run "completed outcome overrides stale VERIFY_EXHAUSTED evidence" test_completed_outcome_overrides_stale_verify_exhausted_evidence
+_run "held: gate outcome still classifies approval_gate, not none" test_held_gate_outcome_still_classifies_approval_gate_not_none
 _run "clean run classifies none/none" test_clean_run_classifies_none_with_none_phase
 _run "a resolved RETURN_INCOMPLETE warning does not override a completed run" test_a_resolved_return_incomplete_warning_does_not_override_a_completed_run
 _run "an unresolved RETURN_INCOMPLETE warning still classifies orchestration_failure" test_an_unresolved_return_incomplete_warning_still_classifies_orchestration_failure
