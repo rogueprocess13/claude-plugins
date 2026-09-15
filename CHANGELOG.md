@@ -43,7 +43,7 @@ Durability was assumed, never enforced.
   ambient CWD. `audit [--root <path>]` sweeps every `openspec/changes/*/`
   dir under a tickets repo and reports `OPENSPEC_TRACK\|...` +
   `OPENSPEC_TRACK_SUMMARY` lines — the one-off detector for artifacts that
-  went untracked before this fix shipped. 23 unit tests
+  went untracked before this fix shipped. 25 unit tests
   (`lib/tests/test-openspec-tracking-check.sh`).
 - `skills/ticket-appraise-exec/SKILL.md` Step 3.4 — on a coherence match for
   a complex ticket, force-commits the change dir into the tickets repo

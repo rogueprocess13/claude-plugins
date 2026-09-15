@@ -241,13 +241,19 @@ test_commit_refuses_path_traversal_outside_openspec_changes() {
 # the repo via this trick. The guard must reject based on the *resolved*
 # path, not a prefix test on the unresolved one.
 test_commit_refuses_traversal_embedded_after_valid_prefix() {
+  # Directory target, not a file: `_cmd_commit`'s own `[ ! -d "$dir" ]` guard
+  # rejects a file target before the traversal guard is ever reached, which
+  # would make this test pass even against the pre-fix string-prefix check
+  # (round 2) for the wrong reason. A directory target is what the real
+  # repro used and what actually exercises the resolved-path guard.
   _setup
   _write_change "wil-23"
-  echo "topsecret" >"$_ws/secrets.env"
+  mkdir -p "$_ws/secrets_dir"
+  echo "topsecret" >"$_ws/secrets_dir/creds.env"
   local rc=0
-  (cd "$_ws" && bash "$CHECK" commit "openspec/changes/wil-23--fix-thing/../../../secrets.env" WIL-23) >/dev/null 2>&1 || rc=$?
+  (cd "$_ws" && bash "$CHECK" commit "openspec/changes/wil-23--fix-thing/../../../secrets_dir" WIL-23) >/dev/null 2>&1 || rc=$?
   local leaked=0
-  git -C "$_ws" ls-files 2>/dev/null | grep -qx "secrets.env" && leaked=1
+  git -C "$_ws" ls-files 2>/dev/null | grep -qx "secrets_dir/creds.env" && leaked=1
   _teardown
   [ "$rc" -eq 2 ] && [ "$leaked" -eq 0 ]
 }
