@@ -17,6 +17,47 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.31.9 (2026-09-15)
+
+Fixes `GATE_HOLD_EMITTED_AS_ERROR` (issue #358): by-design gate holds — the
+entry gate pausing for a human on a complex ticket, manual mode, or an unmet
+prerequisite — were emitted to Langfuse at `level=ERROR`, indistinguishable
+from a genuine gate-stop fault (24x `"held: complex ticket"` observed at
+ERROR in one epic window). Any error-rate or alerting view over the pipeline
+counted deliberate pauses as failures.
+
+Root cause: `ticket-auto-pipeline/lib/gate-check.sh` writes a by-design hold
+using the same terminal `fail` pipeline-log status a genuine gate-stop
+failure uses — the log's status vocabulary (`start`/`done`/`fail`/`skip`/
+`waiting`, unchanged here) has no separate "held" status, by design. The
+`held: ` message prefix (already relied on by `pipeline-finalize.sh`'s `held:
+gate`/`held: human` outcome summaries) is the only distinguishing signal.
+`lib/heartbeat.sh`'s `hb_gate` — named in the issue's own Handover Package —
+turned out to be a red herring: it writes to a separate `*-heartbeat.log`
+liveness artifact that `fleetd/otel.py`'s exporter never tails (only
+`*-activity.log` and `*-pipeline.log`), so it has no bearing on Langfuse
+severity.
+
+- `fleetd/otel.py` — new `HELD_PREFIX`/`_is_held(msg)` helper recognizing the
+  `held: ` convention. `OtlpEmitter.emit` (held phase span) and
+  `OtlpEmitter.close_ticket` (held root outcome) both set the explicit,
+  Langfuse-specific `langfuse.observation.level` attribute to `WARNING`
+  instead of `ERROR` for a held span/outcome — the same additive-attribute
+  pattern this module already uses for `langfuse.observation.type`/
+  `langfuse.trace.tags`. The underlying OTel `StatusCode` is deliberately
+  left **UNSET** for a held span/root (neither `ERROR`, a fault it isn't, nor
+  `OK`, a pass it didn't have) — safe because nothing downstream in this repo
+  reads OTel span status (D5, "downstream, never authoritative"). A genuine
+  gate-stop failure, dead-letter, or abandoned outcome is unaffected and
+  still sets `ERROR` at both layers. A hold stays fully visible in the trace
+  either way — only its severity changes, never whether it's recorded.
+- `fleet-controller/CLAUDE.md` — documents the WARNING-for-holds behavior
+  alongside the existing span-model and root-span-closure sections.
+- `fleetd/tests/test_otel.py` — new coverage: a held gate span/root gets
+  `WARNING` + `StatusCode.UNSET`; a genuine gate-stop failure/root still gets
+  `ERROR` + `StatusCode.ERROR`; a pure-stdlib `TestHeldConvention` class for
+  `_is_held` (prefix match, not substring; empty/`None` safe).
+
 ## fleet-controller 0.31.8 (2026-09-15)
 
 Fixes `LANGFUSE_ROOT_SPAN_UNCLOSED` (issue #360): root spans never close,

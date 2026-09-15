@@ -294,6 +294,22 @@ TOKENS_RE = re.compile(r'^([A-Z-]+):(\d+)/(\d+)/(\d+)(?:\|elapsed_ms=(\d+))?')
 
 TERMINAL_STATUSES = ('done', 'fail', 'skip')
 
+#: The `held: ` message-prefix convention (GATE_HOLD_EMITTED_AS_ERROR, issue
+#: #358). `ticket-auto-pipeline/lib/gate-check.sh` writes a by-design gate
+#: hold with the same terminal `fail` status a genuine gate-stop uses — the
+#: log-status vocabulary in `pipeline-log-format.md` has no separate "held"
+#: status, and adding one would ripple into `detect-resume.sh`, dashboards,
+#: and every other parser of that file for no benefit to this issue. The
+#: hold/fault distinction lives only in this message prefix, already relied
+#: on by `pipeline-finalize.sh`'s `held: gate`/`held: human` outcome
+#: summaries. This module is a reader, never a writer, of that convention.
+HELD_PREFIX = 'held: '
+
+
+def _is_held(msg):
+    """True when `msg` carries the `held: ` by-design-hold convention."""
+    return bool(msg) and str(msg).startswith(HELD_PREFIX)
+
 
 def parse_iso(value):
     try:
@@ -881,9 +897,40 @@ class OtlpEmitter:
         for name, ts, attrs in span.events:
             otel_span.add_event(name, attributes=attrs, timestamp=_nanos(ts))
         if not span.ok:
-            from opentelemetry.trace import Status, StatusCode
+            # GATE_HOLD_EMITTED_AS_ERROR (issue #358): a by-design gate hold
+            # (`gate-check.sh` writing `fail` + `held: ...`) is not a fault —
+            # it is the entry gate pausing for a human, exactly as designed.
+            # Before this fix every hold reached Langfuse at ERROR, indistin-
+            # guishable from a genuine gate-stop, so an error-rate/alerting
+            # view over the pipeline counted deliberate pauses as failures
+            # (24x `"held: complex ticket"` observed at ERROR).
+            #
+            # `langfuse.observation.level` is the explicit, backend-specific
+            # signal Langfuse reads for its own severity/error-rate views —
+            # the same additive-attribute pattern this module already uses
+            # for `langfuse.observation.type`/`langfuse.trace.tags` elsewhere
+            # (D5: backend-specific attributes are additive, never a
+            # replacement for the vendor-neutral GenAI conventions). Setting
+            # it explicitly to WARNING for a hold is what lets a Langfuse
+            # error-rate query exclude holds without parsing message text.
+            #
+            # The underlying OTel `StatusCode` is deliberately left UNSET
+            # (not ERROR, not OK) for a held span: nothing in this repo reads
+            # OTel span status downstream (`grep -rn StatusCode` outside this
+            # file and its tests turns up nothing — the exporter is
+            # "downstream, never authoritative", D5) — so a generic
+            # OTel-status-based alert elsewhere in the org isn't blinded to
+            # held-vs-failed, it simply hasn't been told anything happened.
+            # OK would misrepresent a paused gate as having passed; ERROR is
+            # exactly the miscount this issue exists to fix. A genuine fault
+            # keeps the original ERROR status unchanged.
+            held = _is_held(span.msg)
+            otel_span.set_attribute(
+                'langfuse.observation.level', 'WARNING' if held else 'ERROR')
+            if not held:
+                from opentelemetry.trace import Status, StatusCode
 
-            otel_span.set_status(Status(StatusCode.ERROR, span.msg[:200]))
+                otel_span.set_status(Status(StatusCode.ERROR, span.msg[:200]))
         otel_span.end(end_time=_nanos(span.end))
 
     def close_ticket(self, ticket, outcome, end_ts, tags=None):
@@ -900,9 +947,20 @@ class OtlpEmitter:
         # closed this one to open its own) is not a failure: it never reached
         # a real pipeline outcome, so it must not read as an error trace.
         if outcome and outcome != 'complete' and not str(outcome).startswith('superseded'):
-            from opentelemetry.trace import Status, StatusCode
+            # GATE_HOLD_EMITTED_AS_ERROR (issue #358), root-span half. A
+            # `held: gate`/`held: human` outcome (`pipeline-finalize.sh`,
+            # issue #357) is the same by-design pause as a held phase span
+            # above, at the whole-execution level — same WARNING-not-ERROR
+            # Langfuse level, same "leave OTel StatusCode unset" reasoning.
+            # A genuine failure/gate-stop/dead-letter/abandoned outcome is
+            # unaffected and still marks the root ERROR.
+            held = _is_held(outcome)
+            root.set_attribute(
+                'langfuse.observation.level', 'WARNING' if held else 'ERROR')
+            if not held:
+                from opentelemetry.trace import Status, StatusCode
 
-            root.set_status(Status(StatusCode.ERROR, outcome[:200]))
+                root.set_status(Status(StatusCode.ERROR, outcome[:200]))
         root.end(end_time=_nanos(end_ts))
 
     def sweep_abandoned(self, now, max_age_secs):

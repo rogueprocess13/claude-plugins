@@ -219,7 +219,9 @@ provisional key if the run id isn't known yet, re-keyed on first sight per
 SI1) and closed on `META|outcome`, on `META|dead-letter` (LANGFUSE_ROOT_SPAN_UNCLOSED,
 issue #360 — see below), or superseded by the next `META|run-id`. One
 child span per phase/step bracket (`invoke_agent {phase}.{step}`), from its
-`|waiting|` line to its terminal; a `|fail|` terminal sets span status ERROR.
+`|waiting|` line to its terminal; a `|fail|` terminal sets span status ERROR —
+**except a by-design gate hold** (GATE_HOLD_EMITTED_AS_ERROR, issue #358, see
+below), which is a `|fail|` terminal too but carries a distinct severity.
 Every span — root and child alike — carries session identity set to the
 `run_id` (`langfuse.session.id`), never the ticket id, plus filterable
 metadata (`langfuse.trace.metadata.*`: ticket id, run id, generation, phase,
@@ -277,6 +279,33 @@ poll cycle also calls `OtlpEmitter.sweep_abandoned`, which force-closes any
 root span still open past `FLEET_OTEL_SPAN_MAX_AGE_SECS` (default 24h) with
 `pipeline.outcome=abandoned` and ERROR status — a name a cycle-time query can
 filter out by rather than discovering only after an implausible duration.
+
+**By-design gate holds are WARNING, not ERROR (GATE_HOLD_EMITTED_AS_ERROR,
+issue #358).** `ticket-auto-pipeline/lib/gate-check.sh` writes a by-design
+hold — the entry gate pausing for a human on a complex ticket, manual mode,
+or an unmet prerequisite — using the *same* terminal `fail` pipeline-log
+status a genuine gate-stop failure uses; the `held: ` message prefix (already
+relied on by `pipeline-finalize.sh`'s `held: gate`/`held: human` outcome
+summaries above) is the only distinguishing signal, by design — see
+"Pipeline log format" in the root CLAUDE.md for why the status vocabulary
+itself stays untouched. Before this fix every held span and every held root
+outcome reached Langfuse at `ERROR`, indistinguishable from a real fault (24x
+`"held: complex ticket"` observed at ERROR in one epic window). `otel.py`'s
+`_is_held(msg)` recognizes the prefix at both layers — `OtlpEmitter.emit` for
+a held phase span, `OtlpEmitter.close_ticket` for a held root outcome — and
+sets the explicit, Langfuse-specific `langfuse.observation.level` attribute
+to `WARNING` instead of `ERROR` (the same additive-attribute pattern this
+module already uses for `langfuse.observation.type`/`langfuse.trace.tags`
+elsewhere: backend-specific attributes never replace the vendor-neutral GenAI
+ones). The underlying OTel `StatusCode` is deliberately left **UNSET** for a
+held span/root, neither `ERROR` (the miscount this issue exists to fix) nor
+`OK` (a pass a paused gate did not have) — safe because nothing downstream in
+this repo reads OTel span status (D5, "downstream, never authoritative"); a
+genuine gate-stop failure, dead-letter, or abandoned outcome is unaffected
+and still sets both `langfuse.observation.level=ERROR` and OTel `StatusCode
+ERROR`. A hold stays fully visible in the trace either way — this changes
+only severity, never whether the hold is recorded (`pipeline.outcome`, the
+span message, and every existing attribute are untouched).
 
 **Supervision (task 8.5).** The exporter is a fleetd child under the fixed
 identifier `otel-exporter`: spawned through the same `spawn_worker` fork/exec,
