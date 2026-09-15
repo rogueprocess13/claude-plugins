@@ -23,6 +23,22 @@ if ! declare -f _plog >/dev/null 2>&1; then
   done
 fi
 
+# Reuse fleet-detect.sh's _HARMLESS_TRAILING_META_STEPS allowlist (GitHub
+# #364) rather than deriving a fourth copy — worker-exit/fleet-restart/
+# fleet-intervention/schema/migration/tokens/cache-tokens never count as a
+# real phase terminal anywhere else in this codebase (detect-resume.sh's
+# _DONE_TRAILING_META_ALLOWLIST and supervisor.py's own
+# _HARMLESS_TRAILING_META_STEPS are the other two — see fleet-detect.sh's
+# docstring for the full rationale). Guarded the same way every other
+# source in this file is: skip if already defined (fleet-reconcile.sh
+# sources both this file and fleet-detect.sh, in either order), and fall
+# back to a literal copy of the same regex if fleet-detect.sh isn't on
+# disk — fail-soft, matching this file's own posture everywhere else.
+if [ -z "${_HARMLESS_TRAILING_META_STEPS:-}" ] && [ -f "$_INTERVENE_DIR/fleet-detect.sh" ]; then
+  source "$_INTERVENE_DIR/fleet-detect.sh"
+fi
+: "${_HARMLESS_TRAILING_META_STEPS:='^(worker-exit|fleet-restart|fleet-intervention|schema|migration|tokens|cache-tokens)$'}"
+
 # ── Helpers ──────────────────────────────────────────────────────────────────────
 
 # Write a timestamped entry to the pipeline log. Creates directory if needed.
@@ -78,9 +94,23 @@ _flow_mutex_held() {
 #      contains a `META|orphan-reaped|` line (spawn_sweep_orphans found and
 #      killed a genuine leftover from an earlier attempt) — concrete,
 #      external evidence an orphan was actually involved, not a guess;
-#   2. the window contains NO phase terminal (`|done|` or `|fail|` status,
-#      on any line) — the restarted attempt never finished anything, pass
-#      or fail;
+#   2. the window contains NO phase terminal — a `|done|`/`|fail|` status
+#      line whose STEP (field 3) is a real phase step, not one of
+#      `_HARMLESS_TRAILING_META_STEPS`' bookkeeping-only names (`worker-exit`,
+#      `fleet-restart`, `fleet-intervention`, `schema`, `migration`,
+#      `tokens`, `cache-tokens`). fleetd's own reap bookkeeping —
+#      `META|worker-exit|fail|...` — lands in this exact window on BOTH its
+#      restart paths: `_record_fleet_kill_exit`'s verified-kill line, and the
+#      ordinary crash-reap path's line in `_reap_children_locked` (which
+#      fires before `reconcile_orphaned_tickets` ever writes the next
+#      restart marker). Treating that annotation as a real phase terminal —
+#      the very thing `_HARMLESS_TRAILING_META_STEPS` exists to prevent
+#      everywhere else in this codebase (fleet-detect.sh, detect-resume.sh,
+#      supervisor.py's own Python copy) — would make this predicate inert
+#      against every fleetd-reaped restart, which is the exact path that
+#      produced WIL-77/78/79/80. Verified directly: a real
+#      fleet-restart→orphan-reaped→worker-exit|fail→fleet-restart window
+#      must still exempt;
 #   3. wall-clock time from this restart marker to the NEXT restart marker
 #      (or, for the most recent restart, to now) is
 #      <= FLEET_ORPHAN_RESTART_GRACE_SECS (default 60, two orders of
@@ -98,9 +128,10 @@ _flow_mutex_held() {
 # meaningful in both restart paths this codebase has: a stall-triggered
 # KILL+RESTART writes `META|fleet-intervention`/`META|outcome` (with a
 # genuinely late timestamp) into THIS window before the NEXT restart marker,
-# and a natural (non-killed) exit's reap path writes nothing extra at all —
-# either way, the NEXT marker's timestamp (or now, for the open-ended final
-# window) is the one fact always available and always correct.
+# and fleetd's natural-exit reap path writes its own `META|worker-exit` line
+# (harmless per condition 2 above, but still real content) — either way, the
+# NEXT marker's timestamp (or now, for the open-ended final window) is the
+# one fact always available and always correct.
 #
 # Any restart whose window shows a terminal, or whose life ran past the
 # grace period, always counts — orphan evidence or not. That is what keeps
@@ -133,8 +164,15 @@ _count_restarts() {
   # the next one (or EOF). Timing is computed in the bash loop below, from
   # each row's timestamp against the NEXT row's (or now) — not from
   # anything awk saw inside the window.
+  #
+  # has_terminal excludes any done/fail line whose STEP (field 3) is on the
+  # harmless-bookkeeping allowlist (condition 2 in the docstring above) — a
+  # bare `$4=="done"||$4=="fail"` scan, unscoped by step name, would treat
+  # fleetd's own `META|worker-exit|fail|...` reap-bookkeeping line as a real
+  # phase terminal and block the exemption on every fleetd-reaped restart,
+  # which is the exact path WIL-77/78/79/80 took.
   local rows
-  rows=$(awk -F'|' '
+  rows=$(awk -F'|' -v allow="$_HARMLESS_TRAILING_META_STEPS" '
     $2 == "META" && $3 == "fleet-restart" {
       if (in_window) printf "%s\t%d\t%d\n", restart_ts, has_orphan, has_terminal
       in_window = 1
@@ -145,7 +183,7 @@ _count_restarts() {
     }
     in_window {
       if ($2 == "META" && $3 == "orphan-reaped") has_orphan = 1
-      if ($4 == "done" || $4 == "fail") has_terminal = 1
+      if (($4 == "done" || $4 == "fail") && $3 !~ allow) has_terminal = 1
     }
     END {
       if (in_window) printf "%s\t%d\t%d\n", restart_ts, has_orphan, has_terminal

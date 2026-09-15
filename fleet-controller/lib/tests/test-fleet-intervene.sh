@@ -723,6 +723,134 @@ test_count_restarts_4_orphan_only_interleaved_with_4_genuine_counts_4() {
   [ "$rc" -eq 0 ]
 }
 
+# ── fleetd-reaped shape: META|worker-exit is NOT a phase terminal ───────────
+# Round-2 review finding: fleetd (fleetd/supervisor.py) writes an
+# unconditional `META|worker-exit|<done|fail>|...` bookkeeping line on every
+# worker-process reap — both the ordinary crash-reap path
+# (_reap_children_locked, via _append_pipeline_log_line) and fleetd's own
+# verified-kill path (_record_fleet_kill_exit) — and it lands inside the
+# very window _count_restarts evaluates, before the next restart marker.
+# The bash-only manual-router fixtures above (_real_attempt_no_terminal/
+# _real_attempt_with_terminal, driven through spawn-helper.sh) never
+# produce this line, since fleetd is Python and owns that write path alone
+# — so they could not have caught a predicate that only misfires against a
+# fleetd-authored worker-exit line. These two are hand-constructed to match
+# supervisor.py's exact emitted format (verified by reading
+# fleetd/supervisor.py directly, not guessed):
+#   natural crash-reap:  f'code={exit_code} type={exit_type} gen={generation} killed_by_fleet=false'
+#   verified fleet-kill: f'code=none type={method} gen={generation} killed_by_fleet=true'
+# both written via `_append_pipeline_log_line(state_dir, tid, 'META', 'worker-exit', status, msg)`
+# — i.e. `ISO|META|worker-exit|<done|fail>|code=... type=... gen=... killed_by_fleet=...`.
+#
+# Timestamps are real current wall-clock time (not fixed 2026-06-02
+# literals like the other hand-crafted tests in this file use) because
+# these fixtures exercise the elapsed-time-to-grace-period comparison —
+# `_count_restarts` computes elapsed against `now` for a log's final,
+# still-open restart window, so a fixture timestamped in the past would
+# fail the grace-period check for reasons unrelated to what's under test.
+
+test_count_restarts_worker_exit_from_natural_reap_is_not_a_terminal() {
+  local ws
+  ws=$(_setup_workspace)
+  (
+    cd "$ws"
+    mkdir -p logs
+    tid="CRE-68"
+    log="./logs/${tid}-pipeline.log"
+    _make_pipeline_log "./logs" "$tid"
+    source "$LIB_DIR/fleet-intervene.sh"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    # fleet-restart -> orphan-reaped -> worker-exit|fail (natural crash-reap
+    # shape) -- no further restart marker yet, matching the coordinator's
+    # exact repro shape and the live-verification claim ("count=2, not
+    # exempted") this test guards against regressing.
+    cat >>"$log" <<EOF
+${now}|META|fleet-restart|info|restart orphan-reconciliation
+${now}|IMPLEMENT|implement|waiting|Agent launched
+${now}|META|orphan-reaped|warn|type=pinger pid=999
+${now}|META|worker-exit|fail|code=1 type=exit gen=3 killed_by_fleet=false
+EOF
+    local count
+    count=$(_count_restarts "$log")
+    [ "$count" -eq 0 ] || {
+      echo "expected 0 restarts (orphan-reap-only, worker-exit is bookkeeping not a phase terminal), got $count" >&2
+      exit 1
+    }
+  )
+  local rc=$?
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ]
+}
+
+test_count_restarts_worker_exit_from_fleet_kill_is_not_a_terminal() {
+  local ws
+  ws=$(_setup_workspace)
+  (
+    cd "$ws"
+    mkdir -p logs
+    tid="CRE-69"
+    log="./logs/${tid}-pipeline.log"
+    _make_pipeline_log "./logs" "$tid"
+    source "$LIB_DIR/fleet-intervene.sh"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    # _record_fleet_kill_exit's shape: code=none, killed_by_fleet=true,
+    # status is always 'fail' regardless of exit_code (which is unknown for
+    # a verified kill).
+    cat >>"$log" <<EOF
+${now}|META|fleet-restart|info|restart orphan-reconciliation
+${now}|IMPLEMENT|implement|waiting|Agent launched
+${now}|META|orphan-reaped|warn|type=watchdog pid=888
+${now}|META|worker-exit|fail|code=none type=sigterm gen=2 killed_by_fleet=true
+EOF
+    local count
+    count=$(_count_restarts "$log")
+    [ "$count" -eq 0 ] || {
+      echo "expected 0 restarts (orphan-reap-only, fleet-kill worker-exit is bookkeeping not a phase terminal), got $count" >&2
+      exit 1
+    }
+  )
+  local rc=$?
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ]
+}
+
+test_count_restarts_real_terminal_after_worker_exit_still_counts() {
+  # Sanity companion: a worker-exit line does NOT blanket-exempt a window —
+  # a genuine phase terminal appearing anywhere in the same window (e.g. a
+  # fleetd-reaped attempt that actually finished the phase before the
+  # process exited) must still count normally.
+  local ws
+  ws=$(_setup_workspace)
+  (
+    cd "$ws"
+    mkdir -p logs
+    tid="CRE-70"
+    log="./logs/${tid}-pipeline.log"
+    _make_pipeline_log "./logs" "$tid"
+    source "$LIB_DIR/fleet-intervene.sh"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    cat >>"$log" <<EOF
+${now}|META|fleet-restart|info|restart orphan-reconciliation
+${now}|IMPLEMENT|implement|waiting|Agent launched
+${now}|META|orphan-reaped|warn|type=pinger pid=999
+${now}|IMPLEMENT|implement|fail|Agent failed
+${now}|META|worker-exit|fail|code=1 type=exit gen=3 killed_by_fleet=false
+EOF
+    local count
+    count=$(_count_restarts "$log")
+    [ "$count" -eq 1 ] || {
+      echo "expected 1 restart (a real phase terminal is present, not just worker-exit bookkeeping), got $count" >&2
+      exit 1
+    }
+  )
+  local rc=$?
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ]
+}
+
 test_fleet_can_restart_not_exhausted_after_single_restart() {
   local ws
   ws=$(_setup_workspace)
@@ -933,6 +1061,9 @@ for fn in \
   test_count_restarts_does_not_exempt_past_the_grace_period \
   test_count_restarts_genuinely_hung_phase_reaches_cap_after_8_restarts \
   test_count_restarts_4_orphan_only_interleaved_with_4_genuine_counts_4 \
+  test_count_restarts_worker_exit_from_natural_reap_is_not_a_terminal \
+  test_count_restarts_worker_exit_from_fleet_kill_is_not_a_terminal \
+  test_count_restarts_real_terminal_after_worker_exit_still_counts \
   test_fleet_can_restart_not_exhausted_after_single_restart \
   test_fleet_restart_pipeline_no_restart_eligible_stdout \
   test_fleet_restart_pipeline_writes_restart_marker \
