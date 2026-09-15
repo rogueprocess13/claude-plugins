@@ -583,6 +583,44 @@ test_gate_reconcile_done_advances_past_gate_held() {
   [ "$resume_step" = "STEP_4" ]
 }
 
+test_gate_held_get_issue_fetch_failure_logs_distinct_reason() {
+  # Issue #362 (LINEAR_GET_ISSUE_NULL_CONTINUES): a failed get_issue during
+  # GATE_HELD resolution must resolve to the same safe GATE_STILL_HELD step
+  # as "checked and not approved", but the pipeline log must say WHY — a
+  # fetch failure is not the same event as a genuine missing approval, and
+  # collapsing the two silently is exactly the bug this test guards against.
+  # The test harness runs detect-resume.sh with no LINEAR_API_KEY configured,
+  # so get_issue fails deterministically without any network mock.
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  local log_file="$tmpdir/logs/GH-362-1-pipeline.log"
+  {
+    echo "2026-07-05T10:00:00Z|META|schema|info|2"
+    echo "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple"
+    echo "2026-07-05T10:00:02Z|GATE|gate|fail|held"
+  } >"$log_file"
+
+  local out
+  out=$(cd "$tmpdir" && env -u LINEAR_API_KEY bash "$DETECT_SH" "GH-362-1" 2>/dev/null)
+  local resume_step
+  resume_step=$(_field "$out" RESUME_STEP)
+
+  local fetch_failed_line
+  fetch_failed_line=$(grep 'LINEAR_FETCH_FAILED' "$log_file" 2>/dev/null || true)
+
+  rm -rf "$tmpdir"
+
+  [ "$resume_step" = "GATE_STILL_HELD" ] || {
+    echo "expected GATE_STILL_HELD, got $resume_step"
+    return 1
+  }
+  [ -n "$fetch_failed_line" ] || {
+    echo "expected LINEAR_FETCH_FAILED to be logged when get_issue cannot be verified"
+    return 1
+  }
+}
+
 test_gate_gate_done_still_advances_past_gate_held() {
   # The original marker must still work — this fix is additive, not a
   # replacement.
@@ -918,6 +956,7 @@ for fn in \
   test_schema_v1_accepted_with_warning \
   test_schema_v2_accepted \
   test_gate_reconcile_done_advances_past_gate_held \
+  test_gate_held_get_issue_fetch_failure_logs_distinct_reason \
   test_gate_gate_done_still_advances_past_gate_held \
   test_gate_reconcile_held_routes_to_gate_held_not_step_4 \
   test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4 \

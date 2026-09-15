@@ -150,15 +150,20 @@ Write the progress file via Bash: `echo "implement: editing src/auth/middleware.
 
 After every Linear API call (`get_issue`, `get_comments`, `save_comment`, `get_me`), capture failures in the heartbeat log using `~/.claude/skills/lib/hb-wrap.sh retry`. This is mandatory — never silently discard API errors.
 
-**get_issue failure pattern:**
+**get_issue failure pattern:** `get_issue` returns the issue object already unwrapped from `.data.issue` — checking `.data.issue` on its output (the old pattern below) always fails even on a successful fetch, since the unwrapped object has no `.data` key. Validate with `require_issue_payload` instead, in the same `source`d shell as the fetch, and treat any failure as a hard stop — never continue gate/label/state logic against an unreadable or placeholder payload (issue #362, LINEAR_GET_ISSUE_NULL_CONTINUES):
 ```bash
-_raw=$(bash -c "source ~/.claude/skills/lib/linear-api.sh; get_issue '{TICKET-ID}'" 2>&1)
-_rc=$?
-if [ $_rc -ne 0 ] || ! echo "$_raw" | jq -e '.data.issue' >/dev/null 2>&1; then
-  _snippet=$(echo "$_raw" | head -c 200)
-  ~/.claude/skills/lib/hb-wrap.sh retry "get-issue" "fail" "get_issue failed (exit ${_rc})" \
-    "{\"command\":\"get_issue\",\"ticket\":\"{TICKET-ID}\",\"exit_code\":\"${_rc}\",\"error_snippet\":\"$(echo "$_snippet" | tr '"' "'"  | tr '\n' ' ')\"}"
-  # Handle failure per-step (report or stop as appropriate)
+_rc=0
+_raw=$(bash -c "
+  source ~/.claude/skills/lib/linear-api.sh
+  json=\$(get_issue '{TICKET-ID}') || exit 1
+  require_issue_payload \"\$json\" || exit 1
+  echo \"\$json\"
+" 2>&1) || _rc=$?
+if [ "$_rc" -ne 0 ]; then
+  ~/.claude/skills/lib/hb-wrap.sh retry "get-issue" "fail" "get_issue failed or returned an unreadable payload (exit ${_rc})" \
+    "{\"command\":\"get_issue\",\"ticket\":\"{TICKET-ID}\",\"exit_code\":\"${_rc}\"}"
+  # Hard stop this step — never proceed with gate/label/state logic against
+  # unvalidated data. Report the failure and end the turn; do not guess.
 fi
 ```
 

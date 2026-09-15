@@ -205,15 +205,20 @@ After each step is fully done (including all sub-steps), mark it completed with 
 
 After every Linear API call (`get_issue`, `get_comments`, `save_comment`, `get_me`), capture failures in the heartbeat log using `hb_retry`. This is mandatory — never silently discard API errors.
 
-**get_issue failure pattern:**
+**get_issue failure pattern:** `get_issue` returns the issue object already unwrapped from `.data.issue` — never re-check `.data.issue` on its output, only its own fields (`.id`, `.identifier`, `.labels`, ...). A failed or malformed fetch must be treated as a hard stop for the step, never substituted with a placeholder and evaluated further — an unreadable issue is not the same thing as "an issue with zero labels" (issue #362). Validate with the shared `require_issue_payload` helper (sourced alongside `get_issue` from `linear-api.sh`) rather than a one-off `jq -e` check, and do both the fetch and the validation inside the same `source`d shell so the raw payload never has to round-trip through a second `bash -c` quoting layer:
 ```bash
-_raw=$(bash -c "source ~/.claude/skills/lib/linear-api.sh; get_issue '{TICKET-ID}'" 2>&1)
-_rc=$?
-if [ $_rc -ne 0 ] || ! echo "$_raw" | jq -e '.id' >/dev/null 2>&1; then
-  _snippet=$(echo "$_raw" | head -c 200)
-  hb_retry "get-issue" "fail" "get_issue failed (exit ${_rc})" \
-    "{\"command\":\"get_issue\",\"ticket\":\"{TICKET-ID}\",\"exit_code\":\"${_rc}\",\"error_snippet\":\"$(echo "$_snippet" | tr '"' "'"  | tr '\n' ' ')\"}"
-  # Handle failure per-step (report or stop as appropriate)
+_rc=0
+_raw=$(bash -c "
+  source ~/.claude/skills/lib/linear-api.sh
+  json=\$(get_issue '{TICKET-ID}') || exit 1
+  require_issue_payload \"\$json\" || exit 1
+  echo \"\$json\"
+" 2>&1) || _rc=$?
+if [ "$_rc" -ne 0 ]; then
+  hb_retry "get-issue" "fail" "get_issue failed or returned an unreadable payload (exit ${_rc})" \
+    "{\"command\":\"get_issue\",\"ticket\":\"{TICKET-ID}\",\"exit_code\":\"${_rc}\"}"
+  # Hard stop this step — never proceed with gate/label/state logic against
+  # unvalidated data. Report the failure and end the turn; do not guess.
 fi
 ```
 

@@ -17,6 +17,70 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.8 (2026-09-15)
+
+Fixes `LINEAR_GET_ISSUE_NULL_CONTINUES` (issue #362): `get_issue` failures
+were silently absorbed at several gate and label call sites instead of
+halting the phase, so gate decisions and label computations were made
+against a fabricated `null`/placeholder payload rather than real ticket
+state. Five occurrences across GATE, VERIFY, IMPLEMENT, and MAINTENANCE
+surfaced this via a WIL-78-window retro scan of `logs/WIL-*-tool-errors.log`
+(2026-09-04 to 2026-09-12) — `get_issue: command not found`, `jq: parse
+error: Invalid numeric literal`, `jq: error: Cannot iterate over null
+(null)`, and `jq: error: null (null) has no keys`, all exiting 5 while the
+pipeline proceeded anyway.
+
+Two root causes, both fixed:
+- `lib/linear-api.sh`'s `get_issue()` printed a literal `"null"` to stdout
+  on a malformed/missing `.data.issue` in addition to returning non-zero —
+  a caller capturing only stdout (or falling back with `|| echo 'null'`)
+  got JSON-shaped data indistinguishable from a real empty response. It now
+  prints nothing and only signals failure via exit status.
+- No shared validator existed, so five call sites (`lib/gate-check.sh`'s
+  five `get_issue` sites across `_gate_entry` and `_gate_reapprove`,
+  `lib/outcome-label-check.sh`, and `skills/ticket-detect-resume/detect-resume.sh`'s
+  GATE_HELD resume check) used `$(get_issue ... 2>/dev/null || echo 'null')`
+  — a pattern that defeats `set -e` and lets `jq`'s `?`/`//` null-safe
+  operators silently treat a **failed fetch** the same as **an issue with
+  zero labels**, two states the fix keeps distinguishable everywhere.
+
+- New `require_issue_payload()` in `lib/linear-api.sh` — validates a
+  `get_issue()` response has a non-null `.id`/`.identifier` and a
+  `.labels.nodes` array before any gate or label logic touches it. Zero
+  labels remains a valid, distinguishable pass; an unreadable payload does
+  not.
+- `lib/gate-check.sh` — new `_gate_fetch_issue()` wraps every
+  `get_issue`+`require_issue_payload` call; a failure now writes
+  `META\|gate-stop\|fail\|LINEAR_FETCH_FAILED` and gate-stops (exit 2) at
+  all five sites, instead of silently defaulting to "not approved"/"not
+  planned". Most notably, `_gate_reapprove` no longer reports a fetch
+  failure as `APPROVAL_REVOKED` — collapsing the two meant a transient
+  Linear API problem during re-approval could be misreported to a human as
+  their approval having been rejected.
+- `lib/outcome-label-check.sh` — a fetch failure now fails closed (exit 1,
+  no `flow.sh` call) instead of assuming "no outcome label yet" and
+  applying one blind.
+- `skills/ticket-detect-resume/detect-resume.sh` — the `GATE_HELD` resume
+  check now distinguishes "fetch failed" from "checked, not approved" in
+  the pipeline log (`META\|gate-warn\|fail\|LINEAR_FETCH_FAILED`), even
+  though both currently resolve to the same safe `GATE_STILL_HELD` step.
+- `lib/skill-preamble.md` / `lib/skill-preamble-auto.md` — the documented
+  "get_issue failure pattern" agents copy into ad-hoc bash (referenced by
+  `ticket-implement`, `ticket-verify`, `ticket-pr-review`, etc.) now
+  validates with `require_issue_payload` and states a hard-stop contract.
+  The `--from-auto` variant's old pattern checked `.data.issue` on
+  `get_issue`'s already-unwrapped output — a check that always failed,
+  even on a successful fetch — and is fixed as part of the same edit.
+- 20 new/updated tests: `lib/tests/test-linear-api.sh` (9, covering
+  `get_issue`'s hardened failure mode and `require_issue_payload`
+  directly), `lib/tests/test-gate-check.sh` (4, including the
+  `APPROVAL_REVOKED`-vs-`LINEAR_FETCH_FAILED` regression guard),
+  `lib/tests/test-outcome-label-check.sh` (2), `lib/tests/test-detect-resume.sh`
+  (1). `test-gate-check.sh`'s mock default `get_issue` return value also
+  moved from the sentinel `"null"` to a realistic empty-labels object, since
+  the sentinel would now legitimately gate-stop nearly every existing
+  entry-mode test at Check 2.7.
+
 ## 0.50.7 (2026-09-15)
 
 Fixes `OPENSPEC_ARTIFACTS_UNTRACKED` (issue #363): openspec change dirs — the

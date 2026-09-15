@@ -470,8 +470,19 @@ fi
 # ── GATE_HELD handling ──────────────────────────────────────────────────────
 
 if [ "$RESUME_STEP" = "GATE_HELD" ]; then
-  ISSUE_JSON=$(get_issue "$TICKET_ID" 2>/dev/null || echo 'null')
-  if echo "$ISSUE_JSON" | jq -e '.labels.nodes[] | select(.name | ascii_downcase == "approved")' >/dev/null 2>&1; then
+  # A failed/malformed fetch here must stay distinguishable from a genuine
+  # "no approved label yet" read (issue #362, LINEAR_GET_ISSUE_NULL_CONTINUES).
+  # Both currently fall through to the same safe RESUME_STEP (the router
+  # will not advance a held ticket either way), but the log line — and thus
+  # any operator or retro tooling reading it — must say which actually
+  # happened rather than silently collapsing an API failure into "not
+  # approved yet".
+  ISSUE_JSON=""
+  if ! ISSUE_JSON=$(get_issue "$TICKET_ID" 2>/dev/null) || ! require_issue_payload "$ISSUE_JSON" 2>/dev/null; then
+    RESUME_STEP="GATE_STILL_HELD"
+    hb_gate "resume-point" "fail" "gate still held — approval check unavailable (get_issue fetch failed)"
+    _plog "$LOG_FILE" "META" "gate-warn" "fail" "LINEAR_FETCH_FAILED — detect-resume could not verify approval for $TICKET_ID"
+  elif echo "$ISSUE_JSON" | jq -e '.labels.nodes[]? | select(.name | ascii_downcase == "approved")' >/dev/null 2>&1; then
     RESUME_STEP="STEP_3_5"
     hb_gate "resume-point" "ok" "gate was held but approved label found — resuming at STEP_3_5 (comment reconciliation)"
   else
