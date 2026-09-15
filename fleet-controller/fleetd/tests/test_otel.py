@@ -238,6 +238,34 @@ class TestAttributes(TempWorkspace):
         self.assertNotIn('gen_ai.request.model', rec.spans[0].attributes)
 
 
+class TestHeldConvention(unittest.TestCase):
+    """`_is_held` (GATE_HOLD_EMITTED_AS_ERROR, issue #358) — pure stdlib, no
+    SDK required, matching this file's usual split between derivation tests
+    (no SDK) and emitter tests (SDK, below in TestRealSdk)."""
+
+    def test_a_held_message_is_recognized(self):
+        self.assertTrue(otel._is_held('held: complex ticket'))
+        self.assertTrue(otel._is_held('held: plan missing verification prerequisites'))
+
+    def test_a_held_outcome_is_recognized(self):
+        self.assertTrue(otel._is_held('held: gate'))
+        self.assertTrue(otel._is_held('held: human'))
+
+    def test_a_genuine_failure_message_is_not_held(self):
+        self.assertFalse(otel._is_held('FAIL criterion 2'))
+        self.assertFalse(otel._is_held('APPROVAL_REVOKED'))
+        self.assertFalse(otel._is_held('dead-letter: restart cap exhausted'))
+
+    def test_empty_or_none_message_is_not_held(self):
+        self.assertFalse(otel._is_held(''))
+        self.assertFalse(otel._is_held(None))
+
+    def test_held_is_a_prefix_match_not_a_substring_match(self):
+        # A message that merely mentions the word "held" elsewhere must not
+        # be misclassified — only the leading `held: ` convention counts.
+        self.assertFalse(otel._is_held('the gate is not held right now'))
+
+
 class TestGraceWindow(TempWorkspace):
     def test_a_span_waits_out_its_grace_window(self):
         self.ws.pipeline('CCC-1', [
@@ -1004,6 +1032,75 @@ class TestRealSdk(unittest.TestCase):
             msg='FAIL criterion 2'))
         span = exporter.get_finished_spans()[0]
         self.assertEqual(span.status.status_code, StatusCode.ERROR)
+
+    # ── Gate holds are WARNING, not ERROR (GATE_HOLD_EMITTED_AS_ERROR,
+    # issue #358) ────────────────────────────────────────────────────────
+    # A by-design gate hold (`gate-check.sh`) writes the same terminal `fail`
+    # status a genuine gate-stop failure does — the `held: ` message prefix
+    # is the only distinguishing signal, and it is this module's job (not
+    # gate-check.sh's, not the pipeline-log status vocabulary's) to keep an
+    # error-rate/alerting view over the pipeline from double-counting a
+    # deliberate pause as a fault.
+
+    def test_a_held_gate_span_gets_warning_level_not_error_status(self):
+        from opentelemetry.trace import StatusCode
+
+        emitter, exporter = self._emitter_with_memory_exporter()
+        emitter.emit(otel.DerivedSpan(
+            ticket='SDK-HOLD', phase='GATE', step='gate',
+            start=NOW - timedelta(seconds=5), end=NOW, ok=False,
+            msg='held: complex ticket'))
+        span = exporter.get_finished_spans()[0]
+        self.assertEqual(span.attributes['langfuse.observation.level'], 'WARNING')
+        # The explicit Langfuse level attribute carries the distinction;
+        # nothing downstream in this repo reads OTel span status (D5), so
+        # a held span deliberately leaves StatusCode UNSET rather than
+        # ERROR (a fault) or OK (a pass it did not have).
+        self.assertEqual(span.status.status_code, StatusCode.UNSET)
+
+    def test_a_genuine_gate_stop_span_still_gets_error_level_and_status(self):
+        from opentelemetry.trace import StatusCode
+
+        emitter, exporter = self._emitter_with_memory_exporter()
+        emitter.emit(otel.DerivedSpan(
+            ticket='SDK-FAULT', phase='GATE', step='gate',
+            start=NOW - timedelta(seconds=5), end=NOW, ok=False,
+            msg='APPROVAL_REVOKED'))
+        span = exporter.get_finished_spans()[0]
+        self.assertEqual(span.attributes['langfuse.observation.level'], 'ERROR')
+        self.assertEqual(span.status.status_code, StatusCode.ERROR)
+
+    def test_a_held_root_outcome_gets_warning_level_not_error_status(self):
+        from opentelemetry.trace import StatusCode
+
+        for outcome in ('held: gate', 'held: human'):
+            with self.subTest(outcome=outcome):
+                emitter, exporter = self._emitter_with_memory_exporter()
+                emitter.emit(otel.DerivedSpan(
+                    ticket='SDK-ROOT-HOLD', phase='IMPLEMENT', step='implement',
+                    start=NOW - timedelta(seconds=60), end=NOW, ok=True))
+                emitter.close_ticket('SDK-ROOT-HOLD', outcome, NOW)
+                root = next(s for s in exporter.get_finished_spans()
+                            if s.name == 'pipeline SDK-ROOT-HOLD')
+                self.assertEqual(
+                    root.attributes['langfuse.observation.level'], 'WARNING')
+                self.assertEqual(root.status.status_code, StatusCode.UNSET)
+
+    def test_a_genuine_failure_root_outcome_still_gets_error(self):
+        from opentelemetry.trace import StatusCode
+
+        for outcome in ('stopped: APPROVAL_REVOKED', 'dead-letter: restart cap exhausted'):
+            with self.subTest(outcome=outcome):
+                emitter, exporter = self._emitter_with_memory_exporter()
+                emitter.emit(otel.DerivedSpan(
+                    ticket='SDK-ROOT-FAULT', phase='IMPLEMENT', step='implement',
+                    start=NOW - timedelta(seconds=60), end=NOW, ok=True))
+                emitter.close_ticket('SDK-ROOT-FAULT', outcome, NOW)
+                root = next(s for s in exporter.get_finished_spans()
+                            if s.name == 'pipeline SDK-ROOT-FAULT')
+                self.assertEqual(
+                    root.attributes['langfuse.observation.level'], 'ERROR')
+                self.assertEqual(root.status.status_code, StatusCode.ERROR)
 
     # ── Abandoned-span sweep (LANGFUSE_ROOT_SPAN_UNCLOSED, issue #360) ──────
     # Belt-and-suspenders: even if some future terminal exit path never
