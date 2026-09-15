@@ -62,6 +62,19 @@ DEFAULT_MAX_TOOL_EVENTS = 100
 #: closes always loses its token counts. 30s is generous against a hook that
 #: normally lands within one poll interval.
 DEFAULT_SPAN_GRACE_SECS = 30
+#: Age past which a still-open root span is force-closed as `abandoned`
+#: (LANGFUSE_ROOT_SPAN_UNCLOSED, issue #360). A belt-and-suspenders backstop,
+#: not the primary fix — `close_ticket` firing on every real terminal path
+#: (completion, hold, dead-letter) is the primary fix — but a future exit
+#: path this file has not learned about yet must not be able to leak a span
+#: for days the way a dead-lettered ticket already did (WIL-70: 97h). 24h is
+#: deliberately generous relative to `FLEET_ABANDON_KILL_HOURS` (4h, the
+#: threshold at which fleet-controller itself intervenes on a stuck pipeline)
+#: — by the time a root span is old enough for this sweep to touch it, every
+#: legitimate intervention (kill, restart, dead-letter) has already had six
+#: times as long to fire and either resolve the ticket or write the
+#: terminal marker this sweep exists to compensate for the absence of.
+DEFAULT_SPAN_MAX_AGE_SECS = 86400
 
 #: Fixed run-registry identifier fleetd supervises this process under. Not a
 #: ticket id — the reap path branches on it precisely so exporter exits are not
@@ -104,6 +117,7 @@ class ExporterConfig:
     poll_secs: int = DEFAULT_POLL_SECS
     max_tool_events: int = DEFAULT_MAX_TOOL_EVENTS
     span_grace_secs: int = DEFAULT_SPAN_GRACE_SECS
+    span_max_age_secs: int = DEFAULT_SPAN_MAX_AGE_SECS
     headers: str = ''
 
     @classmethod
@@ -115,6 +129,8 @@ class ExporterConfig:
             poll_secs=_env_int('FLEET_OTEL_POLL_SECS', DEFAULT_POLL_SECS),
             max_tool_events=_env_int('FLEET_OTEL_MAX_TOOL_EVENTS', DEFAULT_MAX_TOOL_EVENTS),
             span_grace_secs=_env_int('FLEET_OTEL_SPAN_GRACE_SECS', DEFAULT_SPAN_GRACE_SECS),
+            span_max_age_secs=_env_int(
+                'FLEET_OTEL_SPAN_MAX_AGE_SECS', DEFAULT_SPAN_MAX_AGE_SECS),
             headers=os.environ.get('FLEET_OTEL_HEADERS', ''),
         )
 
@@ -478,6 +494,43 @@ class TicketTranslator:
         elif step == 'outcome':
             self.outcome = msg
             self.outcome_ts = ts
+        elif step == 'dead-letter':
+            # LANGFUSE_ROOT_SPAN_UNCLOSED (issue #360): `fleet-reconcile.sh`
+            # writes `META|dead-letter|warn|reason=...` when a ticket
+            # exhausts its restart cap, and that write happens from
+            # fleet-controller's own reconciliation pass — after the worker
+            # process (and the router loop that would otherwise call
+            # `pipeline-finalize.sh`) has already exited. No `META|outcome`
+            # line follows, so without this branch `self.outcome` stays
+            # `None` forever and `Exporter.poll_once` never calls
+            # `close_ticket` for this ticket — the root span leaks
+            # indefinitely (WIL-70 observed at 97h).
+            #
+            # `self.outcome is None` alone is not enough (review round 2,
+            # confirmed by direct execution): `TailReader.offset` is
+            # in-memory only and resets to 0 on every exporter cold start,
+            # so a ticket's *entire* pipeline-log history can replay inside
+            # one `poll_once()` batch. A realistic history is `held (gate)
+            # -> resumed under a new run-id -> genuinely dead-lettered` — a
+            # gate-hold reconciliation resumes a ticket, which can later
+            # exhaust its restart cap. `held: gate`/`held: human` arrive via
+            # this same `self.outcome` field (the `META|outcome` branch
+            # above), not a distinct terminal type, so a bare "already set"
+            # guard would lock `self.outcome` at the stale held value and
+            # silently drop the real, later dead-letter — `close_ticket`
+            # would then fire with both a stale outcome string and a stale
+            # (pre-resume) timestamp against the resumed run's current root,
+            # producing a span whose end_time predates its own start_time.
+            # `held:` is therefore excluded from the "already resolved"
+            # bucket: it is a pause, not a genuine terminal resolution, so a
+            # later dead-letter must override it. A real terminal outcome
+            # (`completed: ...`, `stopped: ...`) is still protected — the
+            # "later resolution wins" rule `META|outcome` itself follows —
+            # since only those, not `held:`, mean this translator has
+            # already seen how the ticket really ended.
+            if self.outcome is None or str(self.outcome).startswith('held: '):
+                self.outcome = f'dead-letter: {msg}' if msg else 'dead-letter'
+                self.outcome_ts = ts
         return []
 
     def take_tokens(self, phase):
@@ -684,7 +737,7 @@ class OtlpEmitter:
         self.available = False
         self._tracer = None
         self._provider = None
-        self._roots = {}  # ticket -> (span, context)
+        self._roots = {}  # ticket -> (span, context, run_id, start_ts)
         self._trace = None
         self._id_generator = None  # set in start(); adopts queued ids (task 7.6)
 
@@ -757,14 +810,14 @@ class OtlpEmitter:
         """
         entry = self._roots.get(ticket)
         if entry is not None:
-            root, ctx, existing_run_id = entry
+            root, ctx, existing_run_id, root_start_ts = entry
             if existing_run_id is None and run_id:
                 try:
                     root.set_attribute('langfuse.session.id', run_id)
                     root.set_attribute('langfuse.trace.metadata.run_id', run_id)
                 except Exception:
                     pass
-                self._roots[ticket] = (root, ctx, run_id)
+                self._roots[ticket] = (root, ctx, run_id, root_start_ts)
             return ctx
 
         attrs = {
@@ -788,7 +841,7 @@ class OtlpEmitter:
             attributes=attrs,
         )
         ctx = self._trace.set_span_in_context(root)
-        self._roots[ticket] = (root, ctx, run_id)
+        self._roots[ticket] = (root, ctx, run_id, start_ts)
         return ctx
 
     def emit(self, span, run_id=None):
@@ -839,7 +892,7 @@ class OtlpEmitter:
         entry = self._roots.pop(ticket, None)
         if entry is None:
             return
-        root, _ctx, _run_id = entry
+        root, _ctx, _run_id, _start_ts = entry
         root.set_attribute('pipeline.outcome', outcome)
         if tags:
             root.set_attribute('langfuse.trace.tags', list(tags))
@@ -851,6 +904,41 @@ class OtlpEmitter:
 
             root.set_status(Status(StatusCode.ERROR, outcome[:200]))
         root.end(end_time=_nanos(end_ts))
+
+    def sweep_abandoned(self, now, max_age_secs):
+        """Force-close any root span open longer than `max_age_secs`
+        (LANGFUSE_ROOT_SPAN_UNCLOSED, issue #360).
+
+        `close_ticket` firing on every real terminal path (completion, hold,
+        dead-letter) is the primary fix for the bug this exists to catch —
+        this is the backstop for a terminal path this file has not learned
+        about yet, or a `META|outcome`/`META|dead-letter` line that simply
+        never made it to disk (a killed-mid-write worker, a corrupted log).
+        Closed with an explicit `pipeline.outcome=abandoned` and ERROR status
+        — distinct from every other outcome string this file writes — so a
+        cycle-time query can filter these out by name rather than by
+        noticing an implausible duration after the fact, which is exactly
+        the blind spot issue #360 reports. Returns the number of spans
+        closed, so a caller can log when the sweep actually did something.
+        """
+        if not self.available:
+            return 0
+        closed = 0
+        for ticket, entry in list(self._roots.items()):
+            root, _ctx, _run_id, start_ts = entry
+            if (now - start_ts).total_seconds() < max_age_secs:
+                continue
+            try:
+                root.set_attribute('pipeline.outcome', 'abandoned')
+                from opentelemetry.trace import Status, StatusCode
+
+                root.set_status(Status(StatusCode.ERROR, 'abandoned'))
+                root.end(end_time=_nanos(now))
+            except Exception:
+                pass
+            self._roots.pop(ticket, None)
+            closed += 1
+        return closed
 
     def shutdown(self):
         # End any still-open root spans so a clean stop does not strand
@@ -994,6 +1082,23 @@ class Exporter:
 
         emitted += self._flush()
         self.spans_emitted += emitted
+
+        # LANGFUSE_ROOT_SPAN_UNCLOSED (issue #360): every poll cycle, not
+        # only at shutdown — a leaked root span otherwise sits open for as
+        # long as the exporter process itself stays up, which is exactly
+        # the multi-day durations the issue reports. Runs after the per-log
+        # loop above so a ticket that reached its outcome this same cycle
+        # was already closed normally, at its real outcome timestamp,
+        # before the sweep ever sees it.
+        abandoned = self.emitter.sweep_abandoned(
+            datetime.now(timezone.utc), self.config.span_max_age_secs)
+        if abandoned:
+            print(
+                f'otel-exporter: force-closed {abandoned} abandoned root '
+                f'span(s) older than {self.config.span_max_age_secs}s',
+                file=sys.stderr,
+            )
+
         return emitted
 
     def _flush(self, force_ticket=None, now=None):

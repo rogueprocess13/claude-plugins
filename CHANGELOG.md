@@ -17,6 +17,66 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.31.8 (2026-09-15)
+
+Fixes `LANGFUSE_ROOT_SPAN_UNCLOSED` (issue #360): root spans never close,
+so trace duration reflects wall-clock until export rather than actual work
+— WIL-70 348,135s (97h), WIL-71 334,777s (93h), WIL-73 281,595s (78h),
+WIL-77 156,028s (43h).
+
+`OtlpEmitter.close_ticket` (`fleetd/otel.py`) fires from `Exporter.poll_once`
+whenever `TicketTranslator.outcome` becomes non-`None`. That already covers
+every router-owned terminal path — `ticket-auto-pipeline/lib/
+pipeline-finalize.sh` writes `META|outcome` on completion, gate-stop,
+`held: human` and `held: gate` alike (issue #357, already on `main`; verified
+current, not re-fixed here). Dead-lettering is the one terminal state that
+skips the finalizer entirely: `fleet-reconcile.sh` writes
+`META|dead-letter|warn|reason=...` from fleet-controller's own
+reconciliation pass, *after* the worker process (and the router loop that
+owns `pipeline-finalize.sh`) has already exited on restart-cap exhaustion —
+so `TicketTranslator.outcome` stayed `None` forever for a dead-lettered
+ticket, and its root span leaked indefinitely.
+
+- `fleetd/otel.py` — `TicketTranslator._feed_meta` gains a `dead-letter`
+  branch: `self.outcome = f'dead-letter: {msg}'`, gated on
+  `self.outcome is None or str(self.outcome).startswith('held: ')`. A bare
+  "already set" guard is not enough: `TailReader.offset` is in-memory only
+  and resets to 0 on cold start, so a ticket's entire pipeline-log history —
+  `held (gate) → resumed under a new run-id → genuinely dead-lettered` is a
+  realistic sequence — can replay in one `poll_once()` batch, and `held:
+  gate`/`held: human` arrive via this same `self.outcome` field. A bare
+  `is None` guard would lock the stale held value in and silently drop the
+  real, later dead-letter, closing the resumed run's root with a stale
+  outcome *and* a stale (pre-resume) timestamp — an end_time predating its
+  own start_time. `held:` is a pause, not a resolution, so a later
+  dead-letter overrides it; a genuine `completed:`/`stopped:` outcome still
+  is not (the "later resolution wins" rule `META|outcome` itself follows).
+- `fleetd/otel.py` — new `OtlpEmitter.sweep_abandoned(now, max_age_secs)`,
+  called every `Exporter.poll_once` cycle (not only at shutdown): force-closes
+  any root span older than `FLEET_OTEL_SPAN_MAX_AGE_SECS` (new env var,
+  default 24h) with `pipeline.outcome=abandoned` and ERROR status. A
+  backstop for a terminal exit path this file has not learned about yet, or
+  a `META|outcome`/`META|dead-letter` line that never made it to disk —
+  named distinctly from every other outcome string so a cycle-time query can
+  filter it out by name rather than discovering an implausible duration
+  after the fact, which is exactly issue #360's blind spot. `OtlpEmitter._roots`
+  now tracks each root's start timestamp (`ticket -> (root, ctx, run_id,
+  start_ts)`) to support the age check.
+- New tests in `fleetd/tests/test_otel.py`: a dead-lettered ticket closes its
+  root span with a `dead-letter: ...` outcome through the real
+  `Exporter`/`TicketTranslator` path; a dead-letter marker never overwrites
+  an already-seen genuine outcome (`completed: STEP_6`); a dead-letter
+  *does* override a stale `held: gate` outcome when the two arrive in one
+  cold-start replay batch alongside an intervening run-id resume, closing
+  with the real dead-letter outcome rather than the stale held one; a stale
+  root span (real in-memory OTel SDK) is force-closed as `abandoned` past
+  the threshold; a young root span is left untouched by the sweep.
+- `fleet-controller/CLAUDE.md`'s OTel exporter section and configuration
+  table updated for both the dead-letter branch and
+  `FLEET_OTEL_SPAN_MAX_AGE_SECS`.
+
+Bumps fleet-controller to 0.31.8.
+
 ## 0.50.10 (2026-09-15)
 
 Fixes `FINALIZE_FALSE_SUCCESS_OUTCOME` (issue #357): sessions scored
