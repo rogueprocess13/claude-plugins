@@ -130,11 +130,16 @@ def exporter_enabled():
 
 # ── Trace-context derivation (trace-context-propagation, TP1) ───────────────
 # One function, used by both the spawning path (fleetd/supervisor.py, before
-# a phase worker is spawned) and this exporter (when adopting a recorded
-# context) — no second implementation. Pure and deterministic: both sides
-# compute identical identifiers from facts already known to each, with no
-# shared state and no ordering requirement, which is the only way a tailing
-# exporter and a spawn-time environment can agree at all.
+# a phase worker is spawned) and this exporter (which self-derives the same
+# identifiers rather than reading them back off the log — see OtlpEmitter.emit
+# and issue #361, LANGFUSE_TRACE_REPLAY_INFLATION) — no second implementation.
+# Pure and deterministic: both sides compute identical identifiers from facts
+# already known to each, with no shared state and no ordering requirement,
+# which is the only way a tailing exporter and a spawn-time environment can
+# agree at all — and, just as importantly, the only way a tailing exporter
+# restarted mid-run (or replaying a log from byte zero) agrees with *itself*:
+# every export pass over the same run_id derives the same trace/span ids, so
+# repeats are idempotent updates to the same trace rather than new roots.
 #
 # Both return lowercase hex strings (the W3C traceparent shape) — 32 hex
 # chars / 128 bits for a trace id, 16 hex chars / 64 bits for a span id.
@@ -173,12 +178,14 @@ def build_queued_id_generator():
         back to the wrapped generator.
 
         A root span's own creation calls both `generate_trace_id` (queued
-        when propagation is on, so the trace id equals the one the worker
-        was told) and `generate_span_id` (never queued for a root — its own
-        span id doesn't need to match anything). A phase span's creation
-        calls only `generate_span_id` (queued to the exact id exported to
-        that phase's worker); its trace id is inherited from the root's
-        context, not generated here at all.
+        whenever `run_id` is known, so the trace id is derived from the run
+        rather than random — issue #361) and `generate_span_id` (never
+        queued for a root — its own span id doesn't need to match anything).
+        A phase span's creation calls only `generate_span_id` (queued to the
+        id derived from `(run_id, phase, generation)`, the same value
+        `fleetd/supervisor.py` derives for that phase's `TRACEPARENT` when
+        `FLEET_TRACE_PROPAGATE_ENABLE` is also on); its trace id is inherited
+        from the root's context, not generated here at all.
         """
 
         def __init__(self, fallback):
@@ -647,23 +654,35 @@ class OtlpEmitter:
         self.available = True
         return True
 
-    def _root_context(self, ticket, run_id, start_ts, propagate=False):
+    def _root_context(self, ticket, run_id, start_ts):
         """One root span per **execution** — `(ticket, run_id)` — not per
         ticket (SI1/otel-span-identity: the run is the trace, the ticket is a
         dimension). Created on first sight and left open until the ticket's
         `META|outcome` or until a differently-run-id'd `META|run-id` line
         supersedes it (`Exporter.poll_once`, task 4.3).
 
+        The root's trace id is always derived from `run_id`
+        (`derive_trace_id_hex`) whenever `run_id` is known at creation time —
+        unconditionally, not gated behind `FLEET_TRACE_PROPAGATE_ENABLE`
+        (LANGFUSE_TRACE_REPLAY_INFLATION / issue #361). That flag governs a
+        separate concern: whether the *worker's own* runtime telemetry is
+        handed a matching `TRACEPARENT` so its independently-emitted spans
+        nest under this one. This exporter's own idempotency — the same run
+        always producing the same root trace id, so a resume or a tailing
+        restart that re-reads the log from the beginning re-sends the same
+        (trace_id, span_id) pairs rather than opening new ones — does not
+        depend on that coordination at all, and must not wait for it.
+
         `run_id` may be unknown at root-creation time (the first phase
         bracket can precede its `META|run-id` line) — the root opens under a
         provisional identity and is re-keyed on first sight (SI1's
         "provisional key" scenario): a still-open root whose run id was
         unknown gets it retroactively via `set_attribute`, which OTel permits
-        any time before `end()`. **Known limitation**: if propagation is
-        enabled and the root had to open provisionally, its trace id was
-        already randomly assigned before `run_id` became known and cannot be
-        changed after creation — the derived trace id is only adopted when
-        `run_id` is known at the moment the root is first created.
+        any time before `end()`. **Known limitation**: if the root had to
+        open provisionally, its trace id was already randomly assigned
+        before `run_id` became known and cannot be changed after creation —
+        the derived trace id is only adopted when `run_id` is known at the
+        moment the root is first created.
         """
         entry = self._roots.get(ticket)
         if entry is not None:
@@ -686,7 +705,7 @@ class OtlpEmitter:
         if run_id:
             attrs['langfuse.session.id'] = run_id
             attrs['langfuse.trace.metadata.run_id'] = run_id
-        if propagate and run_id and self._id_generator is not None:
+        if run_id and self._id_generator is not None:
             try:
                 self._id_generator.queue_trace_id(
                     int(derive_trace_id_hex(run_id), 16))
@@ -701,13 +720,26 @@ class OtlpEmitter:
         self._roots[ticket] = (root, ctx, run_id)
         return ctx
 
-    def emit(self, span, run_id=None, propagate=False, span_id_hex=None):
+    def emit(self, span, run_id=None, generation=None):
+        """Emit one derived span, deriving both trace and span id from
+        `run_id` (and, for the span id, `phase`/`generation`) whenever
+        `run_id` is known — unconditionally (issue #361:
+        LANGFUSE_TRACE_REPLAY_INFLATION). `derive_span_id_hex` is a pure
+        function of its three inputs, so this always computes the identical
+        value `fleetd/supervisor.py` would have derived for the same
+        `(run_id, phase, generation)` at spawn time (TP1) — there is nothing
+        to adopt from `META|trace-context` that self-deriving here does not
+        already reproduce, and no need to wait on `FLEET_TRACE_PROPAGATE_ENABLE`
+        (which only governs whether the *worker* gets told about it) to stop
+        a tailing restart or a resumed run from opening duplicate spans.
+        """
         if not self.available:
             return
-        ctx = self._root_context(span.ticket, run_id, span.start, propagate=propagate)
-        if propagate and span_id_hex and self._id_generator is not None:
+        ctx = self._root_context(span.ticket, run_id, span.start)
+        if run_id and self._id_generator is not None:
             try:
-                self._id_generator.queue_span_id(int(span_id_hex, 16))
+                self._id_generator.queue_span_id(
+                    int(derive_span_id_hex(run_id, span.phase, generation), 16))
             except Exception:
                 pass
         otel_span = self._tracer.start_span(
@@ -915,11 +947,7 @@ class Exporter:
             cost = self._cost_for(span.ticket, generation, span.phase)
             if cost is not None:
                 span.attributes['pipeline.cost.usd'] = cost
-            self.emitter.emit(
-                span, run_id,
-                propagate=translator.propagate,
-                span_id_hex=translator.propagate_phases.get(span.phase),
-            )
+            self.emitter.emit(span, run_id, generation=generation)
             self.activity.prune(span.ticket, span.end)
             emitted += 1
         self.pending = still_pending

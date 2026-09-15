@@ -17,6 +17,52 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.31.5 (2026-09-15)
+
+Fixes `LANGFUSE_TRACE_REPLAY_INFLATION` (issue #361): the same pipeline run
+was appearing in Langfuse as many distinct root traces — one ticket (WIL-77)
+surfaced as 18 of them, ~109 root traces across 12 tickets — because
+`fleetd/otel.py`'s `OtlpEmitter` only derived a deterministic trace/span id
+from `run_id` when `FLEET_TRACE_PROPAGATE_ENABLE` was on (off by default,
+still pending live verification). With it off, every fresh `OtlpEmitter` —
+one is created per exporter process, and `TailReader`'s tail offset and the
+`_roots` root-span cache are both in-memory only — re-tailing a pipeline log
+from byte zero after a fleetd/exporter restart or a resumed run got the
+SDK's plain random `IdGenerator` for its root span, fanning one run out into
+a new trace on every export pass. Identical events then duplicated across
+however many traces that run had accumulated, multiplying every error count,
+cost, and latency figure the evidence layer reported.
+
+- `OtlpEmitter._root_context`/`emit` (`fleetd/otel.py`) now always derive
+  the root trace id from `run_id` and the phase span id from `(run_id,
+  phase, generation)` whenever `run_id` is known — unconditionally, not
+  gated behind `FLEET_TRACE_PROPAGATE_ENABLE`. That flag now governs only a
+  separate, still-off-by-default concern: whether the same derived pair is
+  *also* exported into the spawned worker's environment as `TRACEPARENT` so
+  the worker's own runtime telemetry nests under it. The exporter's own
+  idempotency does not depend on that coordination — a replayed export
+  updates the existing trace instead of opening a new root.
+- `emit()`'s signature simplified from `(span, run_id, propagate,
+  span_id_hex)` to `(span, run_id, generation)` — the caller no longer needs
+  to thread a `META|trace-context`-sourced span id through, since
+  `derive_span_id_hex` is a pure function of already-known inputs and always
+  reproduces the identical value.
+- New/updated tests in `fleetd/tests/test_otel.py`: root and phase span ids
+  are asserted deterministic whenever `run_id` is known (not just when
+  propagation is on), a no-`run_id` case still falls back to random ids, and
+  a new `test_replaying_the_same_run_from_a_fresh_emitter_reuses_the_same_ids`
+  exercises the exact restart scenario — two independent `OtlpEmitter`
+  instances (standing in for two exporter process lifetimes) emitting the
+  same `(run_id, phase, generation)` produce byte-identical trace and span
+  ids.
+- `fleet-controller/CLAUDE.md`'s "Trace-context propagation" section and the
+  `FLEET_TRACE_PROPAGATE_ENABLE` config table row now describe the two
+  concerns separately.
+
+Existing duplicate traces from before this fix are not retroactively merged
+— that needs an operator-side Langfuse cleanup or documented cutover, out of
+scope for this change.
+
 ## 0.50.8 (2026-09-15)
 
 Fixes `LINEAR_GET_ISSUE_NULL_CONTINUES` (issue #362): `get_issue` failures

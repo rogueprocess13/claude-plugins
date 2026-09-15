@@ -50,12 +50,12 @@ class RecordingEmitter:
         self.shutdowns = 0
         self.run_ids = []  # run_id passed to each emit() call, parallel to self.spans
         self.closed_tags = []  # tags passed to each close_ticket() call
-        self.propagate_calls = []  # (propagate, span_id_hex) per emit() call
+        self.generations = []  # generation passed to each emit() call, parallel to self.spans
 
-    def emit(self, span, run_id=None, propagate=False, span_id_hex=None):
+    def emit(self, span, run_id=None, generation=None):
         self.spans.append(span)
         self.run_ids.append(run_id)
-        self.propagate_calls.append((propagate, span_id_hex))
+        self.generations.append(generation)
 
     def close_ticket(self, ticket, outcome, end_ts, tags=None):
         self.closed.append((ticket, outcome))
@@ -505,6 +505,20 @@ class TestExecutionIdentity(TempWorkspace):
         second = [s for s in rec.spans if s.ticket == 'RUN-5b']
         self.assertEqual(second[0].attributes['langfuse.session.id'], 'RUN-5-B')
 
+    def test_emit_carries_the_generation_the_emitter_needs_to_derive_span_ids(self):
+        # The `_flush()` -> `emitter.emit()` wiring (issue #361 fix) must pass
+        # `generation` through explicitly, not rely on an `OtlpEmitter` that
+        # reads it back off `META|trace-context` — `RecordingEmitter` has no
+        # such side channel, so this only passes if `_flush()` forwards it.
+        self.ws.pipeline('RUN-5c', [
+            f'{iso(900)}|META|run-id|info|{{"run_id":"RUN-5C-A","gen":3}}',
+            f'{iso(800)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(700)}|IMPLEMENT|implement|done|ok',
+        ])
+        ex, rec = self.ws.exporter()
+        ex.poll_once()
+        self.assertEqual(rec.generations, [3])
+
     def test_ticket_is_metadata_and_tag_never_the_session_id(self):
         # task 6.6
         self.ws.pipeline('RUN-6', [
@@ -922,33 +936,38 @@ class TestRealSdk(unittest.TestCase):
         span = exporter.get_finished_spans()[0]
         self.assertEqual(span.status.status_code, StatusCode.ERROR)
 
-    # ── Trace-context propagation adoption (trace-context-propagation, task 7.9) ─
+    # ── Trace-context derivation is unconditional (issue #361,
+    # LANGFUSE_TRACE_REPLAY_INFLATION / trace-context-propagation task 7.9) ──
+    # `FLEET_TRACE_PROPAGATE_ENABLE` no longer gates the exporter's own
+    # trace/span id derivation — it only governs whether the *worker* gets a
+    # matching TRACEPARENT (a fleetd/supervisor.py concern, untouched here).
+    # The exporter always derives from `run_id` when one is known, which is
+    # what makes a resume or a tailing restart idempotent instead of a fan-out.
 
-    def test_the_root_adopts_the_derived_trace_id_when_propagation_is_on(self):
+    def test_the_root_adopts_the_derived_trace_id_whenever_run_id_is_known(self):
         emitter, exporter = self._emitter_with_memory_exporter()
         run_id = 'SDK-3-2026-01-01T00:00:00Z-1'
         span = otel.DerivedSpan(
             ticket='SDK-3', phase='IMPLEMENT', step='implement',
             start=NOW - timedelta(seconds=10), end=NOW, ok=True)
-        span_id_hex = otel.derive_span_id_hex(run_id, 'IMPLEMENT', 1)
-        emitter.emit(span, run_id=run_id, propagate=True, span_id_hex=span_id_hex)
+        emitter.emit(span, run_id=run_id, generation=1)
         emitter.close_ticket('SDK-3', 'complete', NOW)
         finished = exporter.get_finished_spans()
         root = next(s for s in finished if s.name == 'pipeline SDK-3')
         expected_trace_id = int(otel.derive_trace_id_hex(run_id), 16)
         self.assertEqual(root.context.trace_id, expected_trace_id)
 
-    def test_the_phase_span_adopts_exactly_the_exported_span_id(self):
+    def test_the_phase_span_adopts_the_derived_span_id(self):
         emitter, exporter = self._emitter_with_memory_exporter()
         run_id = 'SDK-4-2026-01-01T00:00:00Z-1'
         span = otel.DerivedSpan(
             ticket='SDK-4', phase='VERIFY', step='verify',
             start=NOW - timedelta(seconds=10), end=NOW, ok=True)
-        span_id_hex = otel.derive_span_id_hex(run_id, 'VERIFY', 2)
-        emitter.emit(span, run_id=run_id, propagate=True, span_id_hex=span_id_hex)
+        emitter.emit(span, run_id=run_id, generation=2)
         finished = exporter.get_finished_spans()
         phase_span = next(s for s in finished if s.name.startswith('invoke_agent'))
-        self.assertEqual(phase_span.context.span_id, int(span_id_hex, 16))
+        expected_span_id = int(otel.derive_span_id_hex(run_id, 'VERIFY', 2), 16)
+        self.assertEqual(phase_span.context.span_id, expected_span_id)
 
     def test_two_phases_of_one_run_share_a_trace_but_not_a_span(self):
         emitter, exporter = self._emitter_with_memory_exporter()
@@ -959,30 +978,64 @@ class TestRealSdk(unittest.TestCase):
         span2 = otel.DerivedSpan(
             ticket='SDK-5', phase='VERIFY', step='verify',
             start=NOW - timedelta(seconds=10), end=NOW, ok=True)
-        emitter.emit(span1, run_id=run_id, propagate=True,
-                     span_id_hex=otel.derive_span_id_hex(run_id, 'IMPLEMENT', 1))
-        emitter.emit(span2, run_id=run_id, propagate=True,
-                     span_id_hex=otel.derive_span_id_hex(run_id, 'VERIFY', 1))
+        emitter.emit(span1, run_id=run_id, generation=1)
+        emitter.emit(span2, run_id=run_id, generation=1)
         finished = exporter.get_finished_spans()
         phase_spans = [s for s in finished if s.name.startswith('invoke_agent')]
         self.assertEqual(len(phase_spans), 2)
         self.assertEqual(phase_spans[0].context.trace_id, phase_spans[1].context.trace_id)
         self.assertNotEqual(phase_spans[0].context.span_id, phase_spans[1].context.span_id)
 
-    def test_propagation_off_produces_random_ids_as_before(self):
+    def test_no_run_id_produces_random_ids_as_before(self):
         emitter, exporter = self._emitter_with_memory_exporter()
         span = otel.DerivedSpan(
             ticket='SDK-6', phase='IMPLEMENT', step='implement',
             start=NOW - timedelta(seconds=10), end=NOW, ok=True)
-        emitter.emit(span, run_id='SDK-6-A', propagate=False, span_id_hex=None)
+        emitter.emit(span, run_id=None, generation=None)
         finished = exporter.get_finished_spans()
         phase_span = finished[0]
         # Never equal to the derived value by construction (astronomically
-        # unlikely collision aside) — proves propagation:false takes the
-        # untouched random path, not merely that *a* span exists.
+        # unlikely collision aside) — proves an unknown run_id still takes
+        # the untouched random path, not merely that *a* span exists.
         self.assertNotEqual(
             phase_span.context.span_id,
-            int(otel.derive_span_id_hex('SDK-6-A', 'IMPLEMENT', 1), 16))
+            int(otel.derive_span_id_hex(None, 'IMPLEMENT', None), 16))
+
+    def test_replaying_the_same_run_from_a_fresh_emitter_reuses_the_same_ids(self):
+        """The exporter's own restart-idempotency (issue #361): a fresh
+        `OtlpEmitter` — standing in for a fleetd/exporter restart that
+        re-tails a pipeline log from byte zero with an empty `_roots` cache
+        — re-derives exactly the same root trace id and phase span id for
+        the same `(run_id, phase, generation)`, so a replayed export updates
+        the existing trace instead of opening a new one."""
+        run_id = 'SDK-7-2026-01-01T00:00:00Z-1'
+        span = otel.DerivedSpan(
+            ticket='SDK-7', phase='IMPLEMENT', step='implement',
+            start=NOW - timedelta(seconds=10), end=NOW, ok=True)
+
+        first_emitter, first_exporter = self._emitter_with_memory_exporter()
+        first_emitter.emit(span, run_id=run_id, generation=1)
+        first_emitter.close_ticket('SDK-7', 'complete', NOW)
+
+        # A brand-new emitter/provider/id-generator — nothing carried over
+        # from the first, exactly like a respawned exporter process.
+        second_emitter, second_exporter = self._emitter_with_memory_exporter()
+        second_emitter.emit(span, run_id=run_id, generation=1)
+        second_emitter.close_ticket('SDK-7', 'complete', NOW)
+
+        first_root = next(
+            s for s in first_exporter.get_finished_spans() if s.name == 'pipeline SDK-7')
+        second_root = next(
+            s for s in second_exporter.get_finished_spans() if s.name == 'pipeline SDK-7')
+        self.assertEqual(first_root.context.trace_id, second_root.context.trace_id)
+
+        first_phase = next(
+            s for s in first_exporter.get_finished_spans()
+            if s.name.startswith('invoke_agent'))
+        second_phase = next(
+            s for s in second_exporter.get_finished_spans()
+            if s.name.startswith('invoke_agent'))
+        self.assertEqual(first_phase.context.span_id, second_phase.context.span_id)
 
 
 class TraceContextDerivationTest(unittest.TestCase):
