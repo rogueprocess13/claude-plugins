@@ -17,6 +17,52 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.10 (2026-09-15)
+
+Fixes `FINALIZE_FALSE_SUCCESS_OUTCOME` (issue #357): sessions scored
+`outcome="completed: STEP_6"` while simultaneously carrying a non-`none`
+`failure_class` — 12 of 14 scored sessions in a WIL-75..82 Langfuse window
+ended in a failure class, and one concrete run (WIL-82's EXEC human-hold)
+scored `completed` alongside `failure_class="human_intervention"` even
+though the hold was never released.
+
+Root cause was `lib/pipeline-finalize.sh`'s own outcome-derivation order:
+`EXIT_CODE==0` was checked *before* the gate-held and unreleased-human-hold
+branches, so any call site that reaches the finalizer with a clean exit code
+always won the `elif` chain regardless of what the log actually showed. This
+made the `held: gate` branch **dead code on every single run** — the
+STEP_2_5 gate-held call site has always called
+`pipeline-finalize.sh ... 0 ...` (a hold is not a crash), so `outcome` was
+unconditionally overwritten to `"completed: STEP_6"` the moment any ticket
+hit the approval gate. The same short-circuit let a STEP_6 completion
+reached after an unreleased human hold report `completed` too, since nothing
+re-checked hold state once `EXIT_CODE` was 0.
+
+- `lib/pipeline-finalize.sh` — new `_pf_has_unreleased_gate_hold`, the
+  `held: gate` sibling of the existing `_pf_has_unreleased_human_hold`:
+  true only when the log's latest `META|gate-held` marker has no later gate
+  resolution (`GATE|gate|done|` or `GATE|reconcile|done|clean` — the same
+  two markers `detect-resume.sh` already treats as "the hold is over").
+  Both hold checks are now evaluated *before* `EXIT_CODE==0` in the outcome
+  `elif` chain, so a currently-unreleased hold always wins over a clean exit
+  code — the F07 staleness protection for the *generic* grep-anywhere
+  branches (gate-stop, `VERIFY_EXHAUSTED`, `PR_FEEDBACK_EXHAUSTED`) is
+  unchanged, since neither hold check is a bare presence grep.
+- `lib/exit-path.sh`'s `derive_failure_class` gets the symmetric half of the
+  fix: a new invariant, checked first, that a `completed:` outcome always
+  classifies `none` regardless of what stale failure evidence sits earlier
+  in the log — the same staleness class the existing `RETURN_INCOMPLETE`
+  special case already guarded against for itself alone, now general. This
+  is the "non-`none` `failure_class` cannot coexist with a `completed`
+  outcome" invariant from the issue's Handover Package.
+- New tests: `lib/tests/test-pipeline-finalize.sh` gains 5 cases covering
+  the exact WIL-82 shape (unreleased human hold with `EXIT_CODE=0`), the
+  STEP_2_5 dead-code shape (unreleased gate hold with `EXIT_CODE=0`), and
+  that a genuinely resolved hold (either release marker) still lets a clean
+  run score `completed`. `lib/tests/test-exit-path.sh` gains 3 cases for the
+  new invariant, including one confirming `held: gate` itself still
+  classifies `approval_gate` and is not swallowed by the new prefix check.
+
 ## 0.50.9 (2026-09-15)
 
 Fixes `GITNEXUS_PREFLIGHT_BRANCH_UNVERIFIED` (issue #359): the documented

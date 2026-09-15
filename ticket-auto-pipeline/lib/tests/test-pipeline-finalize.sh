@@ -97,6 +97,103 @@ EOF
   ! echo "$last" | grep -q 'held: human'
 }
 
+# ── FINALIZE_FALSE_SUCCESS_OUTCOME (issue #357) ──────────────────────────────
+# An unreleased hold must win over EXIT_CODE==0 — the router reaches STEP_6
+# (or the STEP_2_5 gate-held call site) with a clean exit code precisely
+# *because* a hold is not a crash, not because the run actually completed.
+
+test_unreleased_human_hold_wins_over_clean_exit_code() {
+  _setup
+  local log="$_ws/logs/WIL-82-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:02Z|META|human-hold|waiting|{"schema_version":1,"phase":"EXEC","reason":"SCOPE_UNDEFINED","blocks":"notes.md#AC-2","supersedes":"","questions":[{"id":1,"text":"which archive?"}],"parse_status":"ok","parse_error":""}
+EOF
+  unset LINEAR_API_KEY
+  _finalize "WIL-82" 0 "$log" >/dev/null 2>&1
+  local last
+  last=$(tail -1 "$log")
+  _teardown
+  echo "$last" | grep -q '|META|outcome|info|held: human'
+}
+
+test_released_human_hold_does_not_block_clean_completion() {
+  _setup
+  local log="$_ws/logs/CRE-12-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:02Z|META|human-hold|waiting|{"schema_version":1,"phase":"EXEC","reason":"SCOPE_UNDEFINED","blocks":"notes.md#AC-2","supersedes":"","questions":[{"id":1,"text":"which archive?"}],"parse_status":"ok","parse_error":""}
+2026-09-01T01:00:00Z|META|human-hold-released|info|hold:CRE-12:g1:a1
+EOF
+  unset LINEAR_API_KEY
+  _finalize "CRE-12" 0 "$log" >/dev/null 2>&1
+  local last
+  last=$(tail -1 "$log")
+  _teardown
+  echo "$last" | grep -q '|META|outcome|info|completed: STEP_6'
+}
+
+# ── held: gate branch (mirrors held: human, issue #357) ──────────────────────
+
+test_gate_held_written_for_unreleased_hold_even_with_clean_exit_code() {
+  # This is the STEP_2_5 call site's actual shape: gate-check.sh exits 1,
+  # the router writes META|gate-held, then calls pipeline-finalize.sh with
+  # EXIT_CODE=0 (a hold is not a crash). Before the fix, EXIT_CODE==0 was
+  # checked first and this always overwrote the hold with "completed:
+  # STEP_6" — dead code, 100% reproducible on every gate-held run.
+  _setup
+  local log="$_ws/logs/CRE-13-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|GATE|gate|fail|held: complex ticket
+2026-09-01T00:00:02Z|META|gate-held|info|held
+EOF
+  unset LINEAR_API_KEY
+  _finalize "CRE-13" 0 "$log" >/dev/null 2>&1
+  local last
+  last=$(tail -1 "$log")
+  _teardown
+  echo "$last" | grep -q '|META|outcome|info|held: gate'
+}
+
+test_resolved_gate_hold_does_not_re_hold_a_clean_completion() {
+  # A later GATE|gate|done| marker (gate-check.sh's auto-approve/reapprove
+  # completion) means the hold from earlier in this same run was resolved —
+  # the run must still score "completed" at STEP_6, not "held: gate".
+  _setup
+  local log="$_ws/logs/CRE-14-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|GATE|gate|fail|held: complex ticket
+2026-09-01T00:00:02Z|META|gate-held|info|held
+2026-09-01T01:00:00Z|GATE|gate|done|manual mode overridden: approved label + Ready state confirmed in Linear (complex ticket)
+2026-09-01T01:00:01Z|IMPLEMENT|implement|done|ok
+EOF
+  unset LINEAR_API_KEY
+  _finalize "CRE-14" 0 "$log" >/dev/null 2>&1
+  local last
+  last=$(tail -1 "$log")
+  _teardown
+  echo "$last" | grep -q '|META|outcome|info|completed: STEP_6'
+}
+
+test_resolved_gate_hold_via_reconcile_clean_does_not_re_hold() {
+  _setup
+  local log="$_ws/logs/CRE-15-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|GATE|gate|fail|held: complex ticket
+2026-09-01T00:00:02Z|META|gate-held|info|held
+2026-09-01T01:00:00Z|GATE|reconcile|done|clean
+EOF
+  unset LINEAR_API_KEY
+  _finalize "CRE-15" 0 "$log" >/dev/null 2>&1
+  local last
+  last=$(tail -1 "$log")
+  _teardown
+  echo "$last" | grep -q '|META|outcome|info|completed: STEP_6'
+}
+
 # ── Outcome ordering ─────────────────────────────────────────────────────────
 
 test_outcome_remains_last_line() {
@@ -243,6 +340,11 @@ for fn in \
   test_held_human_written_for_unreleased_valid_hold \
   test_invalid_human_hold_does_not_park \
   test_released_human_hold_does_not_re_park \
+  test_unreleased_human_hold_wins_over_clean_exit_code \
+  test_released_human_hold_does_not_block_clean_completion \
+  test_gate_held_written_for_unreleased_hold_even_with_clean_exit_code \
+  test_resolved_gate_hold_does_not_re_hold_a_clean_completion \
+  test_resolved_gate_hold_via_reconcile_clean_does_not_re_hold \
   test_outcome_remains_last_line \
   test_exactly_one_run_line \
   test_idempotent_rerun_does_not_duplicate_run_event \
