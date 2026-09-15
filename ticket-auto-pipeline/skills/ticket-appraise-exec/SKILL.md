@@ -15,6 +15,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 - **Complexity read**: after extracting complexity from notes.md, write `hb-wrap.sh decision "complexity-read" "info" "complexity: {simple|complex}" '{"score":"{COMPLEXITY}"}'`
 - **Artifact created**: after writing simple-fix.md or openspec change, write `hb-wrap.sh decision "artifact-created" "fired" "created {simple-fix|openspec}" '{"type":"{simple-fix|openspec}"}'`
 - **Coherence gate**: after complexity-coherence check, write `hb-wrap.sh gate "coherence-check" "ok|fail" "complexity-artifact match|mismatch" '{"declared":"{COMPLEXITY}","artifact":"{simple-fix|openspec}"}'`
+- **Artifact persisted**: after the openspec-tracking-check.sh commit step (complex tickets only), write `hb-wrap.sh gate "artifact-persisted" "ok|warn" "committed|noop|commit-failed" '{"dir":"{CHANGE_DIR}","rc":"{COMMIT_RC}"}'`
 - **Regression verdict**: after the regression guard, write `hb-wrap.sh decision "regression-verdict" "fired" "{CONFLICT|ADJACENT|SUPERSEDES|clear}" '{"verdict":"{CONFLICT|ADJACENT|SUPERSEDES|clear}"}'`
 - **Linear fallback**: if LINEAR_API_KEY is unset and MCP fallback is used for posting the comment, write `hb-wrap.sh fallback "linear-api" "fired" "using MCP Linear tools" '{"reason":"LINEAR_API_KEY unset"}'`
 - **Adversarial review**: after adversarial agent completes, write `hb-wrap.sh decision "adversarial-review" "fired" "{PASS|WARNINGS|BLOCKED}" '{"verdict":"{PASS|WARNINGS|BLOCKED}","issues":"{N}"}'`
@@ -251,7 +252,26 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|COMPLEXITY_ARTIFACT_MIS
 ```
 Stop with non-zero exit so `ticket-auto` halts the pipeline.
 
-On match proceed silently to Step 3.5.
+On match, if `{COMPLEXITY}` = `complex`, persist the openspec change into the tickets repo before
+proceeding — it is the plan of record and otherwise durability depends entirely on whether an
+operator happens to `git add` it later (issue #363, OPENSPEC_ARTIFACTS_UNTRACKED). `CHANGE_DIR`
+is already resolved and verified to contain `tasks.md` by the checks above.
+
+```bash
+bash ~/.claude/skills/lib/openspec-tracking-check.sh commit "$CHANGE_DIR" "{TICKET-ID}"
+COMMIT_RC=$?
+[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|$([ "$COMMIT_RC" -eq 0 ] && echo info || echo warn)|OPENSPEC_ARTIFACT_COMMIT — rc=$COMMIT_RC dir=$CHANGE_DIR" >> "$LOG_FILE"
+```
+
+A non-zero `COMMIT_RC` (not inside a git repo, or the dir vanished between the checks above and
+now) is logged as a warning but never halts the pipeline — the artifact still exists on disk and
+`ticket-implement`'s close-out re-checks tracking before the pipeline finishes, so a transient
+commit failure here is not the last chance to catch this. Force-adds (`git add -f`) past any
+blanket `openspec/` ignore in the tickets repo — that ignore rule predates this requirement and
+the tickets repo is this pipeline's designated durable home for these artifacts regardless (see
+the script's header comment for the full rationale). Never touches a code repo.
+
+On simple tickets, or once the commit step above completes, proceed silently to Step 3.5.
 
 ---
 

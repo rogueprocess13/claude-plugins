@@ -6,6 +6,8 @@
 
 Executes the implementation plan produced during appraisal. Checks the approval guard (requires `approved` or `rejected` label for UAT rework), identifies the implementation path (simple-fix.md for simple tickets, openspec change for complex), creates branches on all affected repos (branching from develop), runs the code changes, writes and runs tests, performs code review via spawned agent, rates actual complexity against the prediction (Smooth/Rough/Hard), and commits/pushes. Handles verification re-runs by reading remediation briefs from prior failures and appending verification sections to the plan.
 
+**Fixed in issue #363 (OPENSPEC_ARTIFACTS_UNTRACKED):** Step 5.5, immediately after commit + push, asserts the plan artifact (openspec change dir, for complex tickets) is durably tracked in the tickets repo. This is a backstop, not the primary fix — `ticket-appraise-exec` now commits the change dir when it first writes it — so it only ever warns (`META|gate-warn`, `notes.md`, and the final report) and never gate-stops the pipeline.
+
 ## Trigger
 
 **Slash command:** `/ticket-implement <ID>`
@@ -37,6 +39,7 @@ Executes the implementation plan produced during appraisal. Checks the approval 
 | Commit + push | Remote branch | Changes pushed to origin |
 | Wiki errata | WIKI_ROOT flow files | Errata appended whenever a consulted wiki fact turns out wrong or missing — independent of complexity mismatch |
 | Feedback memory | claude-mem | Pattern recorded for mismatch analysis (mismatch-gated) |
+| Durability warning | notes.md, final report | ⚠️ appended when the plan artifact is untracked in the tickets repo (Step 5.5, #363) |
 
 ## How it works
 
@@ -61,6 +64,11 @@ flowchart TD
     N -->|No| J
     N -->|Yes| O[Step 4c: Rate complexity]
     O --> P[Step 5: Commit + push]
+    P --> Q[Step 5.5: Plan artifact durability check]
+    Q --> R{Tracked?}
+    R -->|No| S[Warn: notes.md + report, never gate-stop]
+    R -->|Yes| T[Step 6: Emit PHASE_RESULT]
+    S --> T
 ```
 
 ## Related skills

@@ -17,6 +17,38 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.7 (2026-09-15)
+
+Fixes `OPENSPEC_ARTIFACTS_UNTRACKED` (issue #363): openspec change dirs — the
+plan of record (proposal, design.md, tasks.md, spec deltas) for complex
+tickets — were never persisted by the pipeline. Verified 2026-09-14 across
+the VS-2 epic: 6 of 8 tickets' change dirs were either gone from disk
+entirely (WIL-75/76) or untracked (WIL-77/79/80/82) in the tickets repo,
+because a blanket `openspec/` `.gitignore` rule (predating this requirement)
+silently swallowed everything `git add` would otherwise have picked up.
+Durability was assumed, never enforced.
+
+- New `lib/openspec-tracking-check.sh` — deterministic durability guard,
+  scoped to the tickets repo only (never a code repo). `commit <change-dir>
+  <TICKET-ID>` force-adds (`git add -f`) and commits a change dir past any
+  such ignore rule, idempotently (`git diff --cached --quiet` no-op check on
+  rerun). `assert <TICKET-ID> [--expect]` classifies a ticket's change dir as
+  `tracked\|partial\|untracked\|gitignored\|missing\|not-applicable`.
+  `audit [--root <path>]` sweeps every `openspec/changes/*/` dir under a
+  tickets repo and reports `OPENSPEC_TRACK\|...` + `OPENSPEC_TRACK_SUMMARY`
+  lines — the one-off detector for artifacts that went untracked before this
+  fix shipped. 17 unit tests (`lib/tests/test-openspec-tracking-check.sh`).
+- `skills/ticket-appraise-exec/SKILL.md` Step 3.4 — on a coherence match for
+  a complex ticket, force-commits the change dir into the tickets repo
+  immediately. A commit failure is logged as `META\|gate-warn`, never a
+  gate-stop — the artifact still exists on disk either way.
+- `skills/ticket-implement/SKILL.md` new Step 5.5 — close-out backstop: reruns
+  the tracking check before the phase result is emitted, so a resumed
+  appraise-exec run that skipped Step 3.4, or a commit reverted between exec
+  and implement, still gets caught. Warns loudly (`notes.md`, the final
+  report, `META\|gate-warn|OPENSPEC_ARTIFACT_UNTRACKED`) — never gate-stops;
+  losing design rationale is a durability problem, not a correctness one.
+
 ## 0.50.6 (2026-09-15)
 
 Also moves `fleet-controller` to 0.31.4. Fixes `ORPHANED_WORKER_MAX_RESTARTS`
