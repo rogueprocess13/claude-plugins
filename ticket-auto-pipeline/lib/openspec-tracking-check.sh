@@ -144,21 +144,34 @@ _cmd_commit() {
   local dir="$1" ticket_id="$2"
 
   [ -n "$dir" ] && [ -n "$ticket_id" ] || usage
-  # Defensive path guard: only ever force-add something under
-  # openspec/changes/ — never an arbitrary caller-supplied path. Matches a
-  # leading "openspec/changes/" whether or not $dir carries a trailing slash
-  # or a "./" prefix.
-  case "${dir#./}" in
-  openspec/changes/*) ;;
-  *)
-    echo "ERROR: refusing to commit a path outside openspec/changes/: $dir" >&2
-    return 2
-    ;;
-  esac
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
     echo "ERROR: not inside a git repo: $(pwd)" >&2
     return 2
   }
+
+  # Defensive path guard: only ever force-add something under
+  # openspec/changes/ — never an arbitrary caller-supplied path. A string
+  # prefix on the *unresolved* $dir is not enough: an absolute path (e.g.
+  # the CHANGE_DIR ticket-implement's Step 5.5 writes into its own
+  # remediation snippet, via `assert --root`) never starts with the literal
+  # text "openspec/changes/", and a relative path with embedded ".." can
+  # match that literal prefix while actually resolving somewhere else
+  # entirely — both would defeat a bare `case`/glob check. Resolve $dir to
+  # an absolute, `..`-collapsed path first (`realpath -m` — canonicalizes
+  # lexically, no requirement that the path exist) and require it fall
+  # strictly under the repo's own openspec/changes/, using literal (not
+  # glob) prefix stripping so a repo path containing shell glob characters
+  # can't produce a false accept.
+  local repo_root resolved prefix rest
+  repo_root=$(git rev-parse --show-toplevel)
+  resolved=$(realpath -m -- "$dir" 2>/dev/null || true)
+  prefix="${repo_root%/}/openspec/changes/"
+  rest="${resolved#"$prefix"}"
+  if [ -z "$resolved" ] || [ "$rest" = "$resolved" ] || [ -z "$rest" ]; then
+    echo "ERROR: refusing to commit a path outside openspec/changes/: $dir (resolved: ${resolved:-<unresolvable>})" >&2
+    return 2
+  fi
+
   if [ ! -d "$dir" ] || [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
     echo "ERROR: change dir not found or empty: $dir" >&2
     return 2

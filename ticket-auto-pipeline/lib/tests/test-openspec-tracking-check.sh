@@ -233,6 +233,50 @@ test_commit_refuses_path_traversal_outside_openspec_changes() {
   [ "$rc" -eq 2 ]
 }
 
+# Round 3 finding 2: a bare string-prefix check on the *unresolved* path is
+# bypassable — "openspec/changes/foo/../../../<target>" still starts with
+# the literal text "openspec/changes/" even though, once the embedded ".."
+# components collapse, it resolves to a sibling of openspec/changes/ — the
+# exact repro was force-committing a gitignored secrets file elsewhere in
+# the repo via this trick. The guard must reject based on the *resolved*
+# path, not a prefix test on the unresolved one.
+test_commit_refuses_traversal_embedded_after_valid_prefix() {
+  _setup
+  _write_change "wil-23"
+  echo "topsecret" >"$_ws/secrets.env"
+  local rc=0
+  (cd "$_ws" && bash "$CHECK" commit "openspec/changes/wil-23--fix-thing/../../../secrets.env" WIL-23) >/dev/null 2>&1 || rc=$?
+  local leaked=0
+  git -C "$_ws" ls-files 2>/dev/null | grep -qx "secrets.env" && leaked=1
+  _teardown
+  [ "$rc" -eq 2 ] && [ "$leaked" -eq 0 ]
+}
+
+# Round 3 finding 1: ticket-implement's Step 5.5 remediation snippet writes
+# the literal CHANGE_DIR `assert --root` emitted (absolute, since --root was
+# non-".") straight into `commit`'s <change-dir> argument. That must work —
+# a resolved-path check accepts an absolute path under the right directory
+# just as readily as a relative one.
+test_commit_accepts_absolute_change_dir_from_assert_root() {
+  _setup
+  _write_change "wil-24"
+  local assert_out change_dir rc=0 out
+  assert_out=$(cd /tmp && bash "$CHECK" assert WIL-24 --root "$_ws") || true
+  change_dir=$(echo "$assert_out" | grep '^CHANGE_DIR=' | cut -d= -f2-)
+  case "$change_dir" in
+  /*) ;;
+  *)
+    _teardown
+    return 1
+    ;;
+  esac
+  out=$(cd "$_ws" && bash "$CHECK" commit "$change_dir" WIL-24) || rc=$?
+  local tracked
+  tracked=$(git -C "$_ws" ls-files -- openspec/changes/wil-24--fix-thing/ | wc -l | tr -d ' ')
+  _teardown
+  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_COMMIT_STATUS=committed' && [ "$tracked" -eq 1 ]
+}
+
 test_assert_is_case_insensitive_on_ticket_id() {
   _setup
   _write_change "wil-12"
@@ -312,6 +356,8 @@ for t in test_commit_force_adds_gitignored_dir test_commit_is_idempotent_noop_on
   test_assert_root_flag_with_untracked_change_from_arbitrary_cwd \
   test_commit_refuses_path_outside_openspec_changes \
   test_commit_refuses_path_traversal_outside_openspec_changes \
+  test_commit_refuses_traversal_embedded_after_valid_prefix \
+  test_commit_accepts_absolute_change_dir_from_assert_root \
   test_assert_is_case_insensitive_on_ticket_id \
   test_audit_reports_all_clean test_audit_detects_existing_untracked_changes \
   test_audit_with_explicit_root test_audit_no_changes_is_clean test_usage_exits_2_with_no_args; do
