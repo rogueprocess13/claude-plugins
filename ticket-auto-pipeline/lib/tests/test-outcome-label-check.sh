@@ -210,6 +210,53 @@ test_outcome_label_missing_writes_meta_line_after_apply() {
   [ "$rc" -eq 0 ] && [ -n "$meta_line" ]
 }
 
+# 8. get_issue fetch failure → fail closed (return 1), never apply the label
+# based on an unverified "no label present" assumption (issue #362,
+# LINEAR_GET_ISSUE_NULL_CONTINUES).
+test_outcome_get_issue_fetch_failure_fails_closed() {
+  _setup
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Rough"
+  get_issue() { return 1; }
+
+  _outcome_label_check
+  local rc=$?
+  local flow_calls
+  flow_calls=$(cat "$_flow_log" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 1 ] || {
+    echo "expected exit 1 (fail closed), got $rc"
+    return 1
+  }
+  [ -z "$flow_calls" ] || {
+    echo "flow.sh must not be called on a get_issue fetch failure"
+    return 1
+  }
+}
+
+# 9. get_issue returns malformed payload (missing .labels.nodes) → fail
+# closed, same as an outright fetch failure.
+test_outcome_get_issue_malformed_payload_fails_closed() {
+  _setup
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Rough"
+  get_issue() { echo '{"id":"CRE-47"}'; }
+
+  _outcome_label_check
+  local rc=$?
+  local flow_calls
+  flow_calls=$(cat "$_flow_log" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 1 ] || {
+    echo "expected exit 1 (fail closed), got $rc"
+    return 1
+  }
+  [ -z "$flow_calls" ] || {
+    echo "flow.sh must not be called on a malformed issue payload"
+    return 1
+  }
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Dispatcher
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -223,7 +270,9 @@ for fn in \
   test_outcome_label_missing_calls_flow \
   test_outcome_read_from_pipeline_log \
   test_outcome_label_present_writes_meta_line \
-  test_outcome_label_missing_writes_meta_line_after_apply; do
+  test_outcome_label_missing_writes_meta_line_after_apply \
+  test_outcome_get_issue_fetch_failure_fails_closed \
+  test_outcome_get_issue_malformed_payload_fails_closed; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

@@ -93,8 +93,23 @@ _outcome_label_check() {
     return 1
   fi
 
-  # Query Linear API for current labels
-  issue_json=$(get_issue "$TICKET_ID" 2>/dev/null || echo 'null')
+  # Query Linear API for current labels. A failed/malformed fetch must never
+  # be treated as "no outcome label present" — that would apply the label
+  # blind, based on an assumption we can't actually back up (issue #362,
+  # LINEAR_GET_ISSUE_NULL_CONTINUES). Fail closed instead: report and stop,
+  # so the phase can be retried rather than silently guessing.
+  if ! issue_json=$(get_issue "$TICKET_ID" 2>/dev/null); then
+    echo "outcome-label-check: get_issue($TICKET_ID) failed — cannot verify outcome label" >&2
+    hb_gate "outcome-check" "fail" "get_issue fetch failed" "{\"outcome\":\"$outcome\"}"
+    _plog "$LOG_FILE" "META" "gate-warn" "fail" "LINEAR_FETCH_FAILED — outcome-label-check could not fetch $TICKET_ID"
+    return 1
+  fi
+  if ! require_issue_payload "$issue_json" 2>/dev/null; then
+    echo "outcome-label-check: get_issue($TICKET_ID) returned an unparseable/incomplete payload" >&2
+    hb_gate "outcome-check" "fail" "malformed issue payload" "{\"outcome\":\"$outcome\"}"
+    _plog "$LOG_FILE" "META" "gate-warn" "fail" "LINEAR_FETCH_FAILED — outcome-label-check got malformed payload for $TICKET_ID"
+    return 1
+  fi
 
   # If outcome label already present, exit clean
   if _has_outcome_label "$issue_json"; then

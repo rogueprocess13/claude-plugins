@@ -53,8 +53,14 @@ DUE_DATE=$(echo "$ISSUE_JSON" | jq -r '.dueDate // "—"')
 EPIC_TITLE="None"
 EPIC_ID="None"
 if [ -n "$PARENT_ID" ]; then
-  PARENT_JSON=$(get_issue "$PARENT_ID" 2>/dev/null || echo 'null')
-  EPIC_TITLE=$(echo "$PARENT_JSON" | jq -r '.title // "None"')
+  # Decorative only (epic title/id for display) — a failed fetch here is not
+  # a gate decision, so it degrades to the "None" default rather than
+  # halting the whole workspace scaffold. Still avoid the fabricated-'null'
+  # sentinel pattern: check the real exit status instead of substituting a
+  # string get_issue no longer produces on failure anyway.
+  if PARENT_JSON=$(get_issue "$PARENT_ID" 2>/dev/null); then
+    EPIC_TITLE=$(echo "$PARENT_JSON" | jq -r '.title // "None"')
+  fi
   EPIC_ID="$PARENT_IDENTIFIER"
 fi
 

@@ -29,7 +29,7 @@ _run() {
 _ws=""       # workspace dir
 _tid=""      # ticket ID
 _flow_log="" # tracks flow.sh calls
-_fake_issue="null"
+_fake_issue='{"id":"CRE-47","identifier":"CRE-47","title":"Test","labels":{"nodes":[]}}'
 _fake_complexity="simple"
 
 _setup() {
@@ -37,7 +37,7 @@ _setup() {
   _tid="CRE-47"
   _flow_log="${_ws}/flow-calls.log"
   touch "$_flow_log"
-  _fake_issue="null"
+  _fake_issue='{"id":"CRE-47","identifier":"CRE-47","title":"Test","labels":{"nodes":[]}}'
   _fake_complexity="simple"
 
   LOG_FILE="${_ws}/${_tid}-pipeline.log"
@@ -1771,6 +1771,116 @@ test_complexity_line_written_on_planned_fast_path() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Issue #362 (LINEAR_GET_ISSUE_NULL_CONTINUES) — get_issue fetch failures
+# must gate-stop, never fall through to a decision made against null.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 42. get_issue fetch failure at Check 2.7 → LINEAR_FETCH_FAILED gate-stop (exit 2),
+# never a silent "not planned" fallthrough.
+test_entry_get_issue_fetch_failure_gate_stops() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  get_issue() { return 1; }
+
+  _gate_entry
+  local rc=$?
+
+  local gate_stop
+  gate_stop=$(grep 'LINEAR_FETCH_FAILED' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2 (gate-stop), got $rc"
+    return 1
+  }
+  [ -n "$gate_stop" ] || {
+    echo "expected LINEAR_FETCH_FAILED gate-stop in log"
+    return 1
+  }
+}
+
+# 43. get_issue returns unparseable/malformed JSON at Check 2.7 → same gate-stop,
+# never a jq crash and never treated as "zero labels".
+test_entry_get_issue_malformed_payload_gate_stops() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  get_issue() { echo 'not-json'; }
+
+  _gate_entry
+  local rc=$?
+
+  local gate_stop
+  gate_stop=$(grep 'LINEAR_FETCH_FAILED' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2 (gate-stop), got $rc"
+    return 1
+  }
+  [ -n "$gate_stop" ] || {
+    echo "expected LINEAR_FETCH_FAILED gate-stop in log for malformed payload"
+    return 1
+  }
+}
+
+# 44. Regression guard: a get_issue fetch failure during reapprove must NEVER
+# be reported as APPROVAL_REVOKED — that would tell a human their re-approval
+# was rejected when the real cause was an unreadable API response.
+test_reapprove_get_issue_fetch_failure_not_conflated_with_revoked() {
+  _setup
+  get_issue() { return 1; }
+
+  _gate_reapprove
+  local rc=$?
+
+  local fetch_failed revoked
+  fetch_failed=$(grep 'LINEAR_FETCH_FAILED' "$LOG_FILE" 2>/dev/null || true)
+  revoked=$(grep 'APPROVAL_REVOKED' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2 (gate-stop), got $rc"
+    return 1
+  }
+  [ -n "$fetch_failed" ] || {
+    echo "expected LINEAR_FETCH_FAILED gate-stop in log"
+    return 1
+  }
+  [ -z "$revoked" ] || {
+    echo "fetch failure must never be logged as APPROVAL_REVOKED"
+    return 1
+  }
+}
+
+# 45. get_issue succeeds but returns a payload missing .labels.nodes → treated
+# the same as a fetch failure, not as "zero labels".
+test_reapprove_get_issue_missing_labels_gate_stops() {
+  _setup
+  get_issue() { echo '{"id":"CRE-47","state":{"name":"Ready"}}'; }
+
+  _gate_reapprove
+  local rc=$?
+
+  local fetch_failed revoked
+  fetch_failed=$(grep 'LINEAR_FETCH_FAILED' "$LOG_FILE" 2>/dev/null || true)
+  revoked=$(grep 'APPROVAL_REVOKED' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2 (gate-stop), got $rc"
+    return 1
+  }
+  [ -n "$fetch_failed" ] || {
+    echo "expected LINEAR_FETCH_FAILED gate-stop for payload missing .labels.nodes"
+    return 1
+  }
+  [ -z "$revoked" ] || {
+    echo "malformed payload must never be logged as APPROVAL_REVOKED"
+    return 1
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Dispatcher
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1826,7 +1936,11 @@ for fn in \
   test_cross_val_bare_hostport_alone_stays_browser_mode \
   test_complexity_line_written_once \
   test_complexity_line_not_duplicated_on_second_entry \
-  test_complexity_line_written_on_planned_fast_path; do
+  test_complexity_line_written_on_planned_fast_path \
+  test_entry_get_issue_fetch_failure_gate_stops \
+  test_entry_get_issue_malformed_payload_gate_stops \
+  test_reapprove_get_issue_fetch_failure_not_conflated_with_revoked \
+  test_reapprove_get_issue_missing_labels_gate_stops; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

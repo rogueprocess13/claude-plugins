@@ -245,6 +245,16 @@ _jq_guard() {
 }
 
 # Fetch an issue with all relevant fields. Returns JSON on stdout.
+#
+# Fails loudly (issue #362, LINEAR_GET_ISSUE_NULL_CONTINUES): on a malformed
+# or missing .data.issue, this returns non-zero and prints NOTHING to stdout
+# — never a fabricated "null" that a caller could capture as if it were a
+# real (if empty) payload. A caller that does not check the exit status gets
+# an empty string, which is still safely non-JSON — a subsequent `jq -e`
+# guard trips instead of silently succeeding on `.foo // default`-shaped
+# filters. Callers MUST check the exit status (or pipe through
+# require_issue_payload below) before using the result for gate or label
+# decisions — absence of labels is not the same thing as a failed fetch.
 get_issue() {
   local issue_id="$1"
   local query
@@ -256,11 +266,39 @@ get_issue() {
   resp=$(linear_graphql "$query")
   # Type guard: verify .data.issue exists before querying
   if ! _jq_guard "$resp" ".data.issue" "object"; then
-    echo "get_issue: unexpected response shape — .data.issue missing or not an object" >&2
-    echo "null"
+    echo "get_issue: unexpected response shape — .data.issue missing or not an object (HTTP status embedded above via linear_graphql, if available)" >&2
     return 1
   fi
   echo "$resp" | jq '.data.issue'
+}
+
+# Validate a get_issue() response before it drives any gate or label
+# decision (issue #362, LINEAR_GET_ISSUE_NULL_CONTINUES). A failed or
+# malformed fetch must never be treated as "an issue with zero labels" —
+# the two are distinguishable outcomes, and callers that collapse them
+# make gate/label decisions against null input.
+#
+# Usage: require_issue_payload <json>
+# Returns 0 when $1 is a JSON object with a non-null identifying field
+# (.id or .identifier — get_issue's query always requests both, but this
+# accepts either so callers/tests that only populate one still validate
+# correctly) and a .labels.nodes array (an empty array is valid — zero
+# labels is a real, distinguishable state). Returns 1 with a diagnostic on
+# stderr otherwise, covering: empty string, literal "null", non-JSON, or a
+# JSON value missing both identifying fields or the labels array.
+require_issue_payload() {
+  local json="$1"
+  if [ -z "$json" ]; then
+    echo "require_issue_payload: empty issue payload — get_issue fetch failed" >&2
+    return 1
+  fi
+  if ! echo "$json" | jq -e \
+    '(type == "object") and ((.id != null) or (.identifier != null)) and (.labels.nodes != null) and (.labels.nodes | type == "array")' \
+    >/dev/null 2>&1; then
+    echo "require_issue_payload: issue payload missing .id/.identifier or .labels.nodes (array) — fetch failed or malformed response" >&2
+    return 1
+  fi
+  return 0
 }
 
 # Fetch comments for an issue. Returns JSON array on stdout.

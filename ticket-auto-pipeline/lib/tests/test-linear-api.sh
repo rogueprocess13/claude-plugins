@@ -494,6 +494,94 @@ test_get_issue_query_contains_estimate() {
   return $result
 }
 
+# Issue #362 (LINEAR_GET_ISSUE_NULL_CONTINUES): a malformed/missing
+# .data.issue must fail loudly — non-zero exit and NO stdout — never a
+# fabricated "null" a caller could capture as if it were real (if empty)
+# data.
+test_get_issue_malformed_response_fails_with_no_stdout() {
+  local result exit_code=0
+  result=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo '{\"data\":{}}'; }
+    get_issue 'i1'
+  " 2>/dev/null) || exit_code=$?
+  [ "$exit_code" -ne 0 ] && [ -z "$result" ]
+}
+
+test_get_issue_null_issue_field_fails_with_no_stdout() {
+  local result exit_code=0
+  result=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo '{\"data\":{\"issue\":null}}'; }
+    get_issue 'i1'
+  " 2>/dev/null) || exit_code=$?
+  [ "$exit_code" -ne 0 ] && [ -z "$result" ]
+}
+
+# ── require_issue_payload tests (issue #362) ────────────────────────────────
+
+test_require_issue_payload_accepts_valid_object_with_empty_labels() {
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    require_issue_payload '{\"id\":\"i1\",\"identifier\":\"CRE-1\",\"labels\":{\"nodes\":[]}}'
+  " 2>/dev/null
+}
+
+test_require_issue_payload_accepts_id_only() {
+  # Some callers/tests only populate .id, not .identifier — both are real
+  # fields on every genuine get_issue response, but either alone must be
+  # accepted as proof of a successful fetch.
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    require_issue_payload '{\"id\":\"i1\",\"labels\":{\"nodes\":[]}}'
+  " 2>/dev/null
+}
+
+test_require_issue_payload_rejects_empty_string() {
+  local rc=0
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    require_issue_payload ''
+  " 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ]
+}
+
+test_require_issue_payload_rejects_literal_null() {
+  local rc=0
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    require_issue_payload 'null'
+  " 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ]
+}
+
+test_require_issue_payload_rejects_non_json() {
+  local rc=0
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    require_issue_payload 'command not found'
+  " 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ]
+}
+
+test_require_issue_payload_rejects_missing_labels() {
+  local rc=0
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    require_issue_payload '{\"id\":\"i1\",\"identifier\":\"CRE-1\"}'
+  " 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ]
+}
+
+test_require_issue_payload_rejects_missing_identifier_and_id() {
+  local rc=0
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    require_issue_payload '{\"description\":\"x\",\"labels\":{\"nodes\":[]}}'
+  " 2>/dev/null || rc=$?
+  [ "$rc" -ne 0 ]
+}
+
 # ── get_issue_history tests (Branch B, Commercial Evidence MVP) ─────────────
 
 test_get_issue_history_returns_array() {
@@ -753,6 +841,15 @@ for fn in \
   test_check_api_key_skips_dotenv_when_key_already_set \
   test_get_issue_success \
   test_get_issue_query_contains_estimate \
+  test_get_issue_malformed_response_fails_with_no_stdout \
+  test_get_issue_null_issue_field_fails_with_no_stdout \
+  test_require_issue_payload_accepts_valid_object_with_empty_labels \
+  test_require_issue_payload_accepts_id_only \
+  test_require_issue_payload_rejects_empty_string \
+  test_require_issue_payload_rejects_literal_null \
+  test_require_issue_payload_rejects_non_json \
+  test_require_issue_payload_rejects_missing_labels \
+  test_require_issue_payload_rejects_missing_identifier_and_id \
   test_get_issue_history_returns_array \
   test_get_issue_history_missing_field_returns_empty_array \
   test_get_issue_history_query_shape \
