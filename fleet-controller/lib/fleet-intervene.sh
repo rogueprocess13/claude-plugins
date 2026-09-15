@@ -23,6 +23,22 @@ if ! declare -f _plog >/dev/null 2>&1; then
   done
 fi
 
+# Reuse fleet-detect.sh's _HARMLESS_TRAILING_META_STEPS allowlist (GitHub
+# #364) rather than deriving a fourth copy — worker-exit/fleet-restart/
+# fleet-intervention/schema/migration/tokens/cache-tokens never count as a
+# real phase terminal anywhere else in this codebase (detect-resume.sh's
+# _DONE_TRAILING_META_ALLOWLIST and supervisor.py's own
+# _HARMLESS_TRAILING_META_STEPS are the other two — see fleet-detect.sh's
+# docstring for the full rationale). Guarded the same way every other
+# source in this file is: skip if already defined (fleet-reconcile.sh
+# sources both this file and fleet-detect.sh, in either order), and fall
+# back to a literal copy of the same regex if fleet-detect.sh isn't on
+# disk — fail-soft, matching this file's own posture everywhere else.
+if [ -z "${_HARMLESS_TRAILING_META_STEPS:-}" ] && [ -f "$_INTERVENE_DIR/fleet-detect.sh" ]; then
+  source "$_INTERVENE_DIR/fleet-detect.sh"
+fi
+: "${_HARMLESS_TRAILING_META_STEPS:='^(worker-exit|fleet-restart|fleet-intervention|schema|migration|tokens|cache-tokens)$'}"
+
 # ── Helpers ──────────────────────────────────────────────────────────────────────
 
 # Write a timestamped entry to the pipeline log. Creates directory if needed.
@@ -49,21 +65,171 @@ _flow_mutex_held() {
   return 1 # mutex not held
 }
 
-# Count fleet-restart markers in pipeline log.
+# Count fleet-restart markers in pipeline log, excluding restarts caused
+# solely by reaping an orphaned pinger/watchdog (GitHub #364).
+#
+# CORRECTNESS NOTE (superseding the first cut of this exemption): a restart's
+# own bracket-open (`|waiting|`, spawn_agent_pre's phase_bracket_open) is
+# ALWAYS written before that same attempt's own proactive orphan sweep
+# (spawn_agent_pre's spawn_sweep_orphans call, which runs right after) — the
+# two are adjacent lines in one function. That means "no |waiting| line in
+# the window" can never be true for any restart that reaches spawn_agent_pre
+# at all, which is effectively every restart — the original predicate below
+# (has_orphan && !has_waiting) was checking for a log shape that real code
+# never produces, and never exempted anything. Reordering the writes doesn't
+# fix this either: the two lines are still adjacent regardless of which goes
+# first, so "no waiting line" stays unreachable in practice.
+#
+# The pipeline log alone also can't distinguish "opened a bracket, then hung
+# for hours" from "opened a bracket, then crashed instantly" by CONTENT —
+# a hang writes nothing else to the pipeline log while it hangs (heartbeats
+# go to the separate heartbeat log). The only content-independent signal
+# left is TIME: how long elapsed between this restart's own bracket-open and
+# whatever ends its window (the next restart marker, or EOF). This mirrors
+# the existing deterministic-failure circuit breaker's fast-exit concept
+# (FLEET_DETERMINISTIC_FAILURE_SECS) at the per-ticket restart-cap layer.
+#
+# A restart marker is exempt from the cap when ALL of:
+#   1. the window (from just after this marker to the next marker, or EOF)
+#      contains a `META|orphan-reaped|` line (spawn_sweep_orphans found and
+#      killed a genuine leftover from an earlier attempt) — concrete,
+#      external evidence an orphan was actually involved, not a guess;
+#   2. the window contains NO phase terminal — a `|done|`/`|fail|` status
+#      line whose STEP (field 3) is a real phase step, not one of
+#      `_HARMLESS_TRAILING_META_STEPS`' bookkeeping-only names (`worker-exit`,
+#      `fleet-restart`, `fleet-intervention`, `schema`, `migration`,
+#      `tokens`, `cache-tokens`). fleetd's own reap bookkeeping —
+#      `META|worker-exit|fail|...` — lands in this exact window on BOTH its
+#      restart paths: `_record_fleet_kill_exit`'s verified-kill line, and the
+#      ordinary crash-reap path's line in `_reap_children_locked` (which
+#      fires before `reconcile_orphaned_tickets` ever writes the next
+#      restart marker). Treating that annotation as a real phase terminal —
+#      the very thing `_HARMLESS_TRAILING_META_STEPS` exists to prevent
+#      everywhere else in this codebase (fleet-detect.sh, detect-resume.sh,
+#      supervisor.py's own Python copy) — would make this predicate inert
+#      against every fleetd-reaped restart, which is the exact path that
+#      produced WIL-77/78/79/80. Verified directly: a real
+#      fleet-restart→orphan-reaped→worker-exit|fail→fleet-restart window
+#      must still exempt;
+#   3. wall-clock time from this restart marker to the NEXT restart marker
+#      (or, for the most recent restart, to now) is
+#      <= FLEET_ORPHAN_RESTART_GRACE_SECS (default 60, two orders of
+#      magnitude below FLEET_STALL_WARN_SECS/900/1800) — this attempt's
+#      whole life, start to next restart, was short, consistent with
+#      "crashed again right after startup," not "ran for a while and then
+#      got killed."
+#
+# Elapsed time is measured to the NEXT marker's own timestamp (or now), not
+# to the last line this window happens to have logged — a real hang writes
+# NOTHING else to the pipeline log while it hangs (heartbeats go to the
+# separate heartbeat log), so anchoring elapsed to "last line in the window"
+# would understate a silent hang's true duration whenever nothing else
+# happened to get logged in between. The next-marker/now anchor is
+# meaningful in both restart paths this codebase has: a stall-triggered
+# KILL+RESTART writes `META|fleet-intervention`/`META|outcome` (with a
+# genuinely late timestamp) into THIS window before the NEXT restart marker,
+# and fleetd's natural-exit reap path writes its own `META|worker-exit` line
+# (harmless per condition 2 above, but still real content) — either way, the
+# NEXT marker's timestamp (or now, for the open-ended final window) is the
+# one fact always available and always correct.
+#
+# Any restart whose window shows a terminal, or whose life ran past the
+# grace period, always counts — orphan evidence or not. That is what keeps
+# "must not mask genuine stalls" true: a real hang runs for the many
+# minutes/hours FLEET_STALL_WARN_SECS/FLEET_STALL_RESTART_SECS require
+# before fleet intervenes, dwarfing the grace period, and a real hang never
+# has orphan-reaped evidence in the first place, because fleet_kill_pipeline
+# stops a hung phase's pinger/watchdog cooperatively (stop-file) rather than
+# leaving them to be found as orphans. Restarts predating this change (no
+# orphan-reaped evidence at all) are unaffected — every one of them still
+# counts, exactly as before.
+#
 # Args: log_file
 # Always emits exactly one integer line. `grep -c` prints "0" AND exits 1 on
 # zero matches, so `|| echo "0"` used to emit a second line ("0\n0") — which
-# then broke the `[ "$restarts" -ge "$cap" ]` integer comparison. `|| true`
-# keeps grep's own "0" as the single output; `${count:-0}` covers grep errors.
+# then broke the `[ "$restarts" -ge "$cap" ]` integer comparison. This
+# function always echoes exactly one integer by construction, so that old
+# double-line failure mode cannot recur here.
 _count_restarts() {
   local file="$1"
   if [ ! -f "$file" ]; then
     echo "0"
     return
   fi
-  local count
-  count=$(grep -c '|META|fleet-restart|' "$file" 2>/dev/null || true)
-  echo "${count:-0}"
+  local grace="${FLEET_ORPHAN_RESTART_GRACE_SECS:-60}"
+
+  # One awk pass emits one tab-separated row per fleet-restart marker, in
+  # log order: <restart_ts> <has_orphan:0|1> <has_terminal:0|1> — CONTENT
+  # flags for the window that starts right after this marker and ends at
+  # the next one (or EOF). Timing is computed in the bash loop below, from
+  # each row's timestamp against the NEXT row's (or now) — not from
+  # anything awk saw inside the window.
+  #
+  # has_terminal excludes any done/fail line whose STEP (field 3) is on the
+  # harmless-bookkeeping allowlist (condition 2 in the docstring above) — a
+  # bare `$4=="done"||$4=="fail"` scan, unscoped by step name, would treat
+  # fleetd's own `META|worker-exit|fail|...` reap-bookkeeping line as a real
+  # phase terminal and block the exemption on every fleetd-reaped restart,
+  # which is the exact path WIL-77/78/79/80 took.
+  local rows
+  rows=$(awk -F'|' -v allow="$_HARMLESS_TRAILING_META_STEPS" '
+    $2 == "META" && $3 == "fleet-restart" {
+      if (in_window) printf "%s\t%d\t%d\n", restart_ts, has_orphan, has_terminal
+      in_window = 1
+      restart_ts = $1
+      has_orphan = 0
+      has_terminal = 0
+      next
+    }
+    in_window {
+      if ($2 == "META" && $3 == "orphan-reaped") has_orphan = 1
+      if (($4 == "done" || $4 == "fail") && $3 !~ allow) has_terminal = 1
+    }
+    END {
+      if (in_window) printf "%s\t%d\t%d\n", restart_ts, has_orphan, has_terminal
+    }
+  ' "$file" 2>/dev/null)
+
+  [ -z "$rows" ] && {
+    echo "0"
+    return
+  }
+
+  # Read every row into a parallel set of arrays first so each row can look
+  # ahead to the NEXT row's timestamp — a plain sequential read can't peek
+  # forward.
+  local -a ts_arr orphan_arr terminal_arr
+  local restart_ts has_orphan has_terminal
+  while IFS=$'\t' read -r restart_ts has_orphan has_terminal; do
+    [ -n "$restart_ts" ] || continue
+    ts_arr+=("$restart_ts")
+    orphan_arr+=("$has_orphan")
+    terminal_arr+=("$has_terminal")
+  done <<<"$rows"
+
+  local total="${#ts_arr[@]}"
+  local exempt=0
+  local now_epoch
+  now_epoch=$(date -u +%s)
+  local i
+  for ((i = 0; i < total; i++)); do
+    [ "${orphan_arr[$i]}" = "1" ] || continue
+    [ "${terminal_arr[$i]}" = "0" ] || continue
+    local r_epoch end_epoch
+    r_epoch=$(date -d "${ts_arr[$i]}" +%s 2>/dev/null || true)
+    [ -n "$r_epoch" ] || continue
+    if [ "$((i + 1))" -lt "$total" ]; then
+      end_epoch=$(date -d "${ts_arr[$((i + 1))]}" +%s 2>/dev/null || true)
+    else
+      end_epoch="$now_epoch"
+    fi
+    [ -n "$end_epoch" ] || continue
+    local elapsed=$((end_epoch - r_epoch))
+    [ "$elapsed" -lt 0 ] && elapsed=0
+    [ "$elapsed" -le "$grace" ] && exempt=$((exempt + 1))
+  done
+
+  echo "$((total - exempt))"
 }
 
 # ── fleet_stop_background ────────────────────────────────────────────────────────

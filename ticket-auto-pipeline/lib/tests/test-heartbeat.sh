@@ -382,6 +382,92 @@ test_pinger_stops_after_stop_file_appears() {
   [ "$((count_after - count_before))" -le 1 ]
 }
 
+# ── hb_pinger FLEET_WORKER_PID honesty (GitHub #364) ──────────────────────────
+# Mirrors spawn-helper.sh's watchdog FLEET_WORKER_PID tests (test-spawn-helper.sh)
+# — the pinger never had this liveness guard, which is why the leaked orphan
+# behind WIL-77's 378KB/5,835-line heartbeat log was a "sleep 90" (the
+# pinger's own default sleep_secs), not a "sleep 60" (the watchdog's).
+
+test_pinger_exits_when_worker_pid_dies() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local stop_file="$tmpdir/pinger-stop"
+  local hb_log="$tmpdir/hb.log"
+  local pinger_pid sleeper_pid
+
+  sleep 30 &
+  sleeper_pid=$!
+
+  (
+    export HB_LOG_FILE="$hb_log"
+    export FLEET_WORKER_PID="$sleeper_pid"
+    source "$LIB_DIR/heartbeat.sh"
+    hb_init
+    hb_pinger_start "$stop_file" 1
+    echo "$!"
+  ) >"$tmpdir/pid.txt"
+  pinger_pid=$(cat "$tmpdir/pid.txt")
+
+  # Kill the "worker" — never touch the stop file.
+  kill "$sleeper_pid" 2>/dev/null || true
+  wait "$sleeper_pid" 2>/dev/null || true
+
+  local waited=0
+  while kill -0 "$pinger_pid" 2>/dev/null; do
+    if [ "$waited" -ge 30 ]; then
+      kill "$pinger_pid" 2>/dev/null || true
+      rm -rf "$tmpdir"
+      echo "pinger still alive after 3s of worker death"
+      return 1
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  local result=0
+  if grep -q 'orchestrator-waiting' "$hb_log" 2>/dev/null; then
+    result=1
+    echo "pinger emitted a heartbeat for a dead worker"
+  fi
+  rm -rf "$tmpdir"
+  return $result
+}
+
+test_pinger_exits_at_iteration_cap_when_pid_unset() {
+  # With FLEET_WORKER_PID unset (interactive/manual runs), the pinger has no
+  # liveness signal to check and must still exit eventually — the bounded
+  # iteration cap is the only thing preventing it from outliving its purpose.
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local stop_file="$tmpdir/pinger-stop"
+  local hb_log="$tmpdir/hb.log"
+  local pinger_pid
+
+  (
+    export HB_LOG_FILE="$hb_log"
+    unset FLEET_WORKER_PID FLEET_WORKER_START_TICKS 2>/dev/null || true
+    source "$LIB_DIR/heartbeat.sh"
+    hb_init
+    hb_pinger_start "$stop_file" 1 2
+    echo "$!"
+  ) >"$tmpdir/pid.txt"
+  pinger_pid=$(cat "$tmpdir/pid.txt")
+
+  # 2 iterations at 1s sleep = ~2s to the cap; allow generous headroom.
+  local waited=0
+  while kill -0 "$pinger_pid" 2>/dev/null; do
+    if [ "$waited" -ge 60 ]; then
+      kill "$pinger_pid" 2>/dev/null || true
+      rm -rf "$tmpdir"
+      echo "pinger still alive after 6s — iteration cap not honoured"
+      return 1
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  rm -rf "$tmpdir"
+  return 0
+}
+
 test_pinger_no_stdout_output() {
   # Verify hb_pinger_start produces no stdout output when called in command substitution.
   # This test exercises the real function (not a mock) — the pinger writes heartbeats
@@ -581,6 +667,8 @@ for fn in \
   test_pinger_stop_creates_stop_file \
   test_pinger_writes_heartbeat_entries_during_run \
   test_pinger_stops_after_stop_file_appears \
+  test_pinger_exits_when_worker_pid_dies \
+  test_pinger_exits_at_iteration_cap_when_pid_unset \
   test_pinger_no_stdout_output \
   test_pinger_start_removes_stale_stop_file \
   test_hb_write_rejects_hb_category \

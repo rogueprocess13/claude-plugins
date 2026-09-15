@@ -17,6 +17,81 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.6 (2026-09-15)
+
+Also moves `fleet-controller` to 0.31.4. Fixes `ORPHANED_WORKER_MAX_RESTARTS`
+(issue #364): after #332's fix, four tickets in the VS-2 epic
+(WIL-77/78/79/80) still dead-lettered from orphaned pinger/watchdog loops —
+`WIL-77-heartbeat.log` grew to 378KB (~5,835 `heartbeat|watchdog` lines)
+against 6-32KB for every other ticket in the epic. Root cause: the pinger
+(`hb_pinger_start`, `sleep 90` default) never had the `FLEET_WORKER_PID`
+liveness guard `spawn_watchdog_start` already carries — a leaked orphan
+found in prior investigation was a `sleep 90` process, not `sleep 60`,
+pointing at the pinger specifically. `spawn_sweep_orphans` also only ran
+reactively, from `spawn_agent_post`, which a run that crashes again before
+completing its own bracket never reaches — orphans from consecutive crashed
+attempts piled up unreaped across restarts, and every restart (orphan-driven
+or genuine) consumed the same `FLEET_MAX_RESTARTS` budget identically.
+
+- `lib/heartbeat.sh` — `hb_pinger_start` now binds its lifetime to
+  `FLEET_WORKER_PID`/`FLEET_WORKER_START_TICKS` (kill -0 liveness check +
+  `/proc` start-ticks PID-reuse guard + stop-file-directory-gone check),
+  mirroring `spawn_watchdog_start` exactly. An orphaned pinger now exits
+  within one `sleep_secs` interval of its parent worker dying instead of
+  running up to `max_iter * sleep_secs` (2h at the defaults) blind to
+  whether the worker is still alive.
+- `lib/spawn-helper.sh` — `spawn_sweep_orphans` now also runs proactively
+  from `spawn_agent_pre`, before a fresh bracket starts its own pinger and
+  watchdog, in addition to the existing `spawn_agent_post` call — a bracket
+  now reaps whatever a prior crashed attempt left behind before it starts
+  new helpers, not only after it completes its own. It also accepts an
+  optional `log_file` argument and, when given, appends a
+  `META|orphan-reaped|warn|type=<pinger|watchdog> pid=<pid>` line to the
+  ticket's own pipeline log — durable, greppable evidence of a reap instead
+  of only an incidentally-captured stderr line.
+- `fleet-controller/lib/fleet-intervene.sh` — `_count_restarts` now excludes
+  a `META|fleet-restart` marker from the cap when its window (from the
+  marker to the next one, or EOF) shows a `META|orphan-reaped` line, no
+  phase terminal (`|done|`/`|fail|`), and the wall-clock time from this
+  marker to the next one (or now) is under `FLEET_ORPHAN_RESTART_GRACE_SECS`
+  (default 60s). The exemption was first cut against "no bracket-open in the
+  window" — but `phase_bracket_open`'s `|waiting|` line is always written
+  immediately before `spawn_sweep_orphans`' own `orphan-reaped` line in
+  `spawn_agent_pre` (one right after the other), so that shape can never
+  occur in a real log and the first cut never exempted anything. A
+  live-code review before this shipped caught it: a real leaked pinger,
+  seeded and reaped through the actual `spawn_agent_pre`, still counted
+  against the cap. The corrected predicate reaches for the one signal the
+  pipeline log can't fake either way — elapsed wall-clock time to the next
+  restart or now — since a genuine hang writes nothing else to the pipeline
+  log while it hangs (heartbeats go to the separate heartbeat log) and
+  always runs for the many minutes `FLEET_STALL_WARN_SECS`/
+  `FLEET_STALL_RESTART_SECS` require before fleet intervenes, dwarfing the
+  grace period; a restart that reaches a real terminal always counts
+  regardless of timing.
+- New/extended tests: `lib/tests/test-heartbeat.sh` (2 new cases mirroring
+  the watchdog's own `FLEET_WORKER_PID` honesty tests —
+  `test_pinger_exits_when_worker_pid_dies`,
+  `test_pinger_exits_at_iteration_cap_when_pid_unset`),
+  `ticket-auto-pipeline/lib/tests/test-spawn-helper.sh` (3 new cases —
+  `spawn_sweep_orphans` kills a live ledgered process and logs it, the
+  PID-reuse guard still protects a recycled pid, and `spawn_agent_pre`
+  calls the sweep before starting a new pinger), and
+  `fleet-controller/lib/tests/test-fleet-intervene.sh` (11 new cases for the
+  `_count_restarts` orphan exemption — 8 driven through the real
+  `spawn_agent_pre`/`spawn_agent_post` rather than hand-written log lines,
+  the mistake that let the first cut ship unnoticed, covering the mixed
+  orphan-then-genuine-restart case, the pre-#364 no-orphan-evidence case
+  staying unaffected, the grace-period boundary with a real elapsed delay,
+  a genuinely hung phase still reaching the cap after 8 restarts, and 4
+  orphan-only restarts interleaved with 4 genuine ones counting only the 4;
+  plus 3 hand-crafted-log cases for fleetd's own `META|worker-exit` line,
+  which the bash-only spawn helpers can't produce — confirming that
+  bookkeeping line from both the natural-reap and fleet-kill paths is
+  correctly excluded from the terminal check via the shared
+  `_HARMLESS_TRAILING_META_STEPS` allowlist, while a real phase terminal in
+  the same window still counts).
+
 ## 0.50.5 (2026-09-14)
 
 Fixes `RETRO_CURSOR_METRIC_SKEW` (issue #367): `retro.sh`'s `complexity_accuracy` was computed

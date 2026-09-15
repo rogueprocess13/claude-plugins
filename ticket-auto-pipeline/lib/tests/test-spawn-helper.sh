@@ -1374,6 +1374,128 @@ test_watchdog_exits_at_iteration_cap_when_pid_unset() {
   return 0
 }
 
+# ── spawn_sweep_orphans (GitHub #364) ────────────────────────────────────────
+# WIL-77/78/79/80 dead-lettered after repeated restarts each left an orphaned
+# pinger/watchdog running unreaped — spawn_sweep_orphans only ran reactively
+# at spawn_agent_post, which a run that crashes again never reaches. These
+# tests exercise the real function (unmocked) against a real leaked process.
+
+test_spawn_sweep_orphans_kills_ledgered_process_and_logs_it() {
+  # A pinger/watchdog left in the ledger by a crashed prior attempt is still
+  # a live process by the time a fresh bracket calls spawn_sweep_orphans. It
+  # must be killed, the ledger cleared, and a durable META|orphan-reaped
+  # line written to the ticket's own pipeline log — not just stderr, which
+  # only tool-error-capture.sh happens to scrape incidentally.
+  local tmpdir
+  tmpdir=$(_mktemp_test_dir)
+  local tid="TEST-364-A"
+  local log_file="$tmpdir/pipeline.log"
+  local leaked_pid
+
+  sleep 30 &
+  leaked_pid=$!
+
+  (
+    export FLEET_STATE_DIR="$tmpdir"
+    unset -f hb_heartbeat hb_pinger_start hb_pinger_stop cl_write _plog _iso_now 2>/dev/null || true
+    source "$LIB_DIR/spawn-helper.sh"
+    local ticks ledger
+    ticks=$(_proc_start_ticks "$leaked_pid")
+    ledger=$(_worker_bg_ledger "$tid")
+    mkdir -p "$(dirname "$ledger")"
+    echo "${leaked_pid}:${ticks}:pinger" >"$ledger"
+    spawn_sweep_orphans "$tid" "$log_file"
+  )
+
+  local result=0
+  sleep 0.2
+  if kill -0 "$leaked_pid" 2>/dev/null; then
+    echo "leaked pid still alive after sweep"
+    kill -9 "$leaked_pid" 2>/dev/null || true
+    result=1
+  fi
+  local ledger_file="$tmpdir/ticket-auto-${tid}-bgpids.txt"
+  if [ -s "$ledger_file" ]; then
+    echo "ledger not cleared"
+    result=1
+  fi
+  if ! command grep -q '|META|orphan-reaped|warn|type=pinger' "$log_file" 2>/dev/null; then
+    echo "no META|orphan-reaped line written to pipeline log"
+    result=1
+  fi
+  rm -rf "$tmpdir"
+  return $result
+}
+
+test_spawn_sweep_orphans_skips_pid_reuse_mismatch() {
+  # A ledger entry whose recorded start-ticks no longer match the live
+  # occupant of that pid names a process the kernel recycled the pid to
+  # after the original helper exited — not the ledgered process. It must
+  # be left alone: no kill, no orphan-reaped line for it.
+  local tmpdir
+  tmpdir=$(_mktemp_test_dir)
+  local tid="TEST-364-B"
+  local log_file="$tmpdir/pipeline.log"
+  local live_pid
+
+  sleep 30 &
+  live_pid=$!
+
+  (
+    export FLEET_STATE_DIR="$tmpdir"
+    unset -f hb_heartbeat hb_pinger_start hb_pinger_stop cl_write _plog _iso_now 2>/dev/null || true
+    source "$LIB_DIR/spawn-helper.sh"
+    local ledger
+    ledger=$(_worker_bg_ledger "$tid")
+    mkdir -p "$(dirname "$ledger")"
+    # Deliberately bogus ticks — cannot match the live process's real ones.
+    echo "${live_pid}:999999999:watchdog" >"$ledger"
+    spawn_sweep_orphans "$tid" "$log_file"
+  )
+
+  local result=0
+  if ! kill -0 "$live_pid" 2>/dev/null; then
+    echo "PID-reuse guard failed to protect a live, non-matching pid"
+    result=1
+  fi
+  if [ -f "$log_file" ] && command grep -q '|META|orphan-reaped|' "$log_file" 2>/dev/null; then
+    echo "orphan-reaped logged for a pid the reuse guard should have skipped"
+    result=1
+  fi
+  kill "$live_pid" 2>/dev/null || true
+  wait "$live_pid" 2>/dev/null || true
+  rm -rf "$tmpdir"
+  return $result
+}
+
+test_spawn_agent_pre_sweeps_orphans_before_starting_new_pinger() {
+  # Verify spawn_agent_pre calls spawn_sweep_orphans before hb_pinger_start —
+  # a bracket must reap whatever a prior crashed attempt left behind BEFORE
+  # it starts a new pinger/watchdog pair of its own, not after (GitHub #364:
+  # spawn_sweep_orphans previously ran only reactively, from
+  # spawn_agent_post, which a run that crashes again never reaches).
+  local src="$LIB_DIR/spawn-helper.sh"
+  [ -f "$src" ] || return 1
+  local pre_func
+  pre_func=$(sed -n '/^spawn_agent_pre()/,/^}/p' "$src")
+  local sweep_line pinger_line
+  sweep_line=$(echo "$pre_func" | grep -n 'spawn_sweep_orphans' | head -1 | cut -d: -f1)
+  pinger_line=$(echo "$pre_func" | grep -n 'hb_pinger_start' | head -1 | cut -d: -f1)
+  [ -n "$sweep_line" ] || {
+    echo "spawn_sweep_orphans not found in spawn_agent_pre"
+    return 1
+  }
+  [ -n "$pinger_line" ] || {
+    echo "hb_pinger_start not found in spawn_agent_pre"
+    return 1
+  }
+  [ "$sweep_line" -lt "$pinger_line" ] || {
+    echo "spawn_sweep_orphans not called before hb_pinger_start"
+    return 1
+  }
+  return 0
+}
+
 # ── spawn_agent_post wait/reaping (Bug #4 fix) ─────────────────────────────────
 
 # ── phase_bracket_open (task 4.12) ───────────────────────────────────────────
@@ -2126,6 +2248,9 @@ for fn in \
   test_watchdog_exits_when_workspace_removed \
   test_watchdog_exits_when_worker_pid_dies \
   test_watchdog_exits_at_iteration_cap_when_pid_unset \
+  test_spawn_sweep_orphans_kills_ledgered_process_and_logs_it \
+  test_spawn_sweep_orphans_skips_pid_reuse_mismatch \
+  test_spawn_agent_pre_sweeps_orphans_before_starting_new_pinger \
   test_spawn_agent_post_waits_for_captured_pids \
   test_phase_bracket_open_writes_waiting_and_model \
   test_phase_bracket_open_suppresses_duplicate_for_a_lowercase_phase \

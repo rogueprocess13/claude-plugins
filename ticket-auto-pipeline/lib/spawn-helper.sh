@@ -123,18 +123,33 @@ _worker_bg_record() {
 
 # ── spawn_sweep_orphans ──────────────────────────────────────────────────────────
 # Kill any ledgered pinger/watchdog still alive, then clear the ledger. Called
-# from spawn_agent_post once the current bracket's helpers have been stopped
-# cooperatively — so the only survivors are orphans from a bracket whose router
-# never got to run its own cleanup.
+# from spawn_agent_pre (proactively, before starting this bracket's OWN pinger
+# and watchdog) and from spawn_agent_post (once the current bracket's helpers
+# have been stopped cooperatively) — so the only survivors it ever finds are
+# orphans from a bracket whose router never got to run its own cleanup.
+#
+# GitHub #364: the spawn_agent_post-only call site reaped reactively — only
+# once *this* run completed a bracket of its own, which never happens if the
+# same run crashes again before reaching spawn_agent_post. Orphans from
+# consecutive crashed attempts piled up unreaped across restarts, burning
+# heartbeat-log volume and restart budget on a ticket whose actual phase work
+# never got a fair shot. Sweeping at spawn_agent_pre too closes that window:
+# a fresh bracket now reaps whatever a prior crashed attempt left behind
+# before it starts a new pinger/watchdog pair of its own, instead of after.
 #
 # A ledger entry is only acted on when the pid is alive AND its current start
 # ticks match the ticks recorded at spawn. A recycled pid fails that comparison
 # and is skipped, so this can never signal an unrelated process.
 #
-# Usage: spawn_sweep_orphans <ticket_id>
-# Prints one "spawn_sweep_orphans: killed ..." line per orphan to stderr.
+# Usage: spawn_sweep_orphans <ticket_id> [log_file]
+# Prints one "spawn_sweep_orphans: killed ..." line per orphan to stderr, and
+# — when log_file is given — appends a matching META|orphan-reaped|warn| line
+# to the ticket's own pipeline log, so the reap leaves durable, greppable
+# evidence a dead-letter classifier (or a human) can find without depending on
+# stderr having been captured incidentally by an unrelated hook.
 spawn_sweep_orphans() {
   local tid="${1:-${TICKET_ID:-}}"
+  local log_file="${2:-${LOG_FILE:-}}"
   [ -n "$tid" ] || return 0
 
   local ledger
@@ -166,6 +181,9 @@ spawn_sweep_orphans() {
       kill -KILL "$pid" 2>/dev/null || true
     fi
     echo "spawn_sweep_orphans: killed orphaned ${type:-helper} pid ${pid} for ${tid}" >&2
+    if [ -n "$log_file" ] && declare -f _plog >/dev/null 2>&1; then
+      _plog "$log_file" "META" "orphan-reaped" "warn" "type=${type:-helper} pid=${pid}"
+    fi
   done <"$ledger"
 
   : >"$ledger" 2>/dev/null || true
@@ -459,6 +477,13 @@ spawn_agent_pre() {
   _model=$(phase_bracket_open \
     PHASE="$PHASE" STEP="$STEP" TICKET_ID="$TICKET_ID" \
     DESCRIPTION="$DESCRIPTION" LOG_FILE="$LOG_FILE")
+
+  # 1b. Reap any pinger/watchdog left behind by a prior crashed attempt for
+  # this ticket BEFORE starting this bracket's own — see spawn_sweep_orphans'
+  # docstring (GitHub #364). Runs unconditionally, same as the
+  # spawn_agent_post call site: an orphan from a crashed run is exactly the
+  # case where this run's own HB_LOG_FILE gate below may still be unset.
+  spawn_sweep_orphans "$TICKET_ID" "$LOG_FILE"
 
   # 2. Start heartbeat pinger and watchdog
   local PINGER_PID=""
@@ -913,7 +938,7 @@ spawn_agent_post() {
   # Sweep helpers left running by any earlier bracket for this ticket whose
   # router died before reaching this point. Runs unconditionally — an orphan
   # from a crashed run is exactly the case where HB_LOG_FILE may be unset here.
-  spawn_sweep_orphans "$TICKET_ID"
+  spawn_sweep_orphans "$TICKET_ID" "$LOG_FILE"
 
   phase_terminal_write \
     PHASE="$PHASE" \
