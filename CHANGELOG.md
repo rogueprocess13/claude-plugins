@@ -77,14 +77,20 @@ or genuine) consumed the same `FLEET_MAX_RESTARTS` budget identically.
   `spawn_sweep_orphans` kills a live ledgered process and logs it, the
   PID-reuse guard still protects a recycled pid, and `spawn_agent_pre`
   calls the sweep before starting a new pinger), and
-  `fleet-controller/lib/tests/test-fleet-intervene.sh` (10 new cases for the
-  `_count_restarts` orphan exemption — driven through the real
+  `fleet-controller/lib/tests/test-fleet-intervene.sh` (11 new cases for the
+  `_count_restarts` orphan exemption — 8 driven through the real
   `spawn_agent_pre`/`spawn_agent_post` rather than hand-written log lines,
-  the mistake that let the first cut ship unnoticed — covering the mixed
+  the mistake that let the first cut ship unnoticed, covering the mixed
   orphan-then-genuine-restart case, the pre-#364 no-orphan-evidence case
   staying unaffected, the grace-period boundary with a real elapsed delay,
   a genuinely hung phase still reaching the cap after 8 restarts, and 4
-  orphan-only restarts interleaved with 4 genuine ones counting only the 4).
+  orphan-only restarts interleaved with 4 genuine ones counting only the 4;
+  plus 3 hand-crafted-log cases for fleetd's own `META|worker-exit` line,
+  which the bash-only spawn helpers can't produce — confirming that
+  bookkeeping line from both the natural-reap and fleet-kill paths is
+  correctly excluded from the terminal check via the shared
+  `_HARMLESS_TRAILING_META_STEPS` allowlist, while a real phase terminal in
+  the same window still counts).
 
 ## 0.50.5 (2026-09-14)
 
