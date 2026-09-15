@@ -216,7 +216,8 @@ with backoff and the process exits cleanly.
 **execution** — keyed by `(ticket, run_id)`, not ticket alone, so a ticket's
 separate runs are separate, comparable traces — opened on first sight (a
 provisional key if the run id isn't known yet, re-keyed on first sight per
-SI1) and closed on `META|outcome` or superseded by the next `META|run-id`. One
+SI1) and closed on `META|outcome`, on `META|dead-letter` (LANGFUSE_ROOT_SPAN_UNCLOSED,
+issue #360 — see below), or superseded by the next `META|run-id`. One
 child span per phase/step bracket (`invoke_agent {phase}.{step}`), from its
 `|waiting|` line to its terminal; a `|fail|` terminal sets span status ERROR.
 Every span — root and child alike — carries session identity set to the
@@ -242,6 +243,40 @@ span emitted the instant its bracket closes always loses its token counts.
 Completed spans sit in a buffer for `FLEET_OTEL_SPAN_GRACE_SECS` (30) so late
 enrichment attaches. A ticket reaching its outcome flushes its spans
 immediately — nothing more can arrive for a finished ticket.
+
+**Every terminal exit path closes the root span (LANGFUSE_ROOT_SPAN_UNCLOSED,
+issue #360).** `OtlpEmitter.close_ticket` fires from `Exporter.poll_once`
+whenever `TicketTranslator.outcome` becomes non-`None` — previously that
+happened only on a `META|outcome` line, which `ticket-auto-pipeline/lib/
+pipeline-finalize.sh` writes on every router exit path (completion, gate-stop,
+`held: human`, `held: gate` — issue #357). Dead-lettering is the one terminal
+state that never goes through that finalizer: `fleet-reconcile.sh` writes
+`META|dead-letter|warn|reason=...` from fleet-controller's own reconciliation
+pass, *after* the worker process (and the router loop that owns
+`pipeline-finalize.sh`) has already exited on a restart-cap exhaustion — so no
+`META|outcome` line ever follows, and the root span leaked indefinitely (WIL-70
+observed at 97h). `TicketTranslator._feed_meta` now also treats a
+`dead-letter` step as terminal — `self.outcome = f'dead-letter: {msg}'`, gated
+on `self.outcome is None or str(self.outcome).startswith('held: ')` so a later
+*real* outcome is never clobbered, the same "first resolution wins" rule
+`META|outcome` itself already followed — but `held:` is deliberately excluded
+from that "already resolved" bucket. `TailReader.offset` is in-memory only and
+resets to 0 on every exporter cold start, so a ticket's entire pipeline-log
+history can replay inside one `poll_once()` batch, and a realistic history is
+`held (gate) → resumed under a new run-id → genuinely dead-lettered` — a
+gate-hold reconciliation resumes a ticket, which can later exhaust its restart
+cap. `held: gate`/`held: human` arrive via this same `self.outcome` field, not
+a distinct terminal type, so a bare "already set" guard would lock the stale
+held value in and silently drop the real, later dead-letter — `close_ticket`
+would then fire with both a stale outcome string and a stale (pre-resume)
+timestamp against the resumed run's current root, an end_time predating its
+own start_time. `held:` is a pause, not a genuine resolution, so a later
+dead-letter overrides it; `completed:`/`stopped:` outcomes still are not. As a
+backstop for a future exit path this file has not learned about yet, every
+poll cycle also calls `OtlpEmitter.sweep_abandoned`, which force-closes any
+root span still open past `FLEET_OTEL_SPAN_MAX_AGE_SECS` (default 24h) with
+`pipeline.outcome=abandoned` and ERROR status — a name a cycle-time query can
+filter out by rather than discovering only after an implausible duration.
 
 **Supervision (task 8.5).** The exporter is a fleetd child under the fixed
 identifier `otel-exporter`: spawned through the same `spawn_worker` fork/exec,
@@ -475,6 +510,7 @@ All settings use `${VAR:-default}` pattern for env-var overrides:
 | `FLEET_OTEL_WORKER_ENVIRONMENT` | `pipeline` | `deployment.environment` stamped on every worker spawn (worker-telemetry-env) — separates autonomous pipeline execution from interactive use on the same telemetry backend |
 | `FLEET_OTEL_WORKER_EXPORT_MS` | 2000 | `OTEL_BSP_SCHEDULE_DELAY` (ms) stamped on every worker spawn — shortens the runtime's own batch-export interval below its SDK default so a killed worker loses less buffered telemetry |
 | `FLEET_OTEL_HEADERS` | (unset) | `key1=val1,key2=val2` extra headers on fleetd's own OTLP exporter requests, and forwarded unchanged as `OTEL_EXPORTER_OTLP_HEADERS` on every worker spawn so both streams authenticate against the same collector |
+| `FLEET_OTEL_SPAN_MAX_AGE_SECS` | 86400 | LANGFUSE_ROOT_SPAN_UNCLOSED, issue #360. Age past which `OtlpEmitter.sweep_abandoned` (run every poll cycle, not only at shutdown) force-closes a still-open root span with `pipeline.outcome=abandoned` and ERROR status — a backstop for a terminal exit path this file has not learned about yet, or a `META|outcome`/`META|dead-letter` line that never made it to disk. 24h is generous relative to `FLEET_ABANDON_KILL_HOURS` (4h) — every legitimate fleet-controller intervention has had six times as long to resolve the ticket, or at least write the terminal marker this sweep compensates for the absence of, before the sweep would touch it |
 | `FLEET_TRACE_PROPAGATE_ENABLE` | false | trace-context-propagation (langfuse-evidence-layer Phase 3) — the exporter *itself* always derives a trace id from `run_id` and a span id from `(run_id, phase, step, occurrence)` regardless of this flag (fixed for issue #361, LANGFUSE_TRACE_REPLAY_INFLATION; the span key's `generation` input was replaced by `step`/`occurrence` across two follow-up rounds, after `generation` was found frozen across retries and missing `step` entirely — colliding both the router's own VERIFY-retry loop and PR-REVIEW's four steps onto one span id — and after a first `step`/timestamp fix was itself found to still collide, since `phase_bracket_open` stamps at second resolution and two brackets can share a UTC second; `occurrence`, a sequential-read count with no timing dependency, cannot). This flag governs only whether the *trace* id (not the span id — `Supervisor.spawn_phase_worker` runs before the bracket it derives a span id for even exists, so it approximates with `attempt - 1`) is *also* exported into the worker's environment as `TRACEPARENT`, so the worker's own runtime telemetry (if any) nests its observations beneath the exporter's root span instead of opening an unrelated trace. Stays off until a real end-to-end ticket confirms a derived parent span — which reaches the backend *after* the children that attached to it — reconciles into one trace rather than two (design.md Gate verdicts, phase 4, not yet run) |
 | `FLEET_SCORE_EXPORT_ENABLE` | false | Gates `run-score-export.sh`'s periodic sweep (run-score-export). Also requires `LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` — any one missing is a no-op |
 | `LANGFUSE_HOST` | (unset) | Base URL for the score-export sweeper's `POST /api/public/scores` calls |

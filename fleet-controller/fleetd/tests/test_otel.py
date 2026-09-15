@@ -59,6 +59,13 @@ class RecordingEmitter:
         self.closed.append((ticket, outcome))
         self.closed_tags.append(tags)
 
+    def sweep_abandoned(self, now, max_age_secs):
+        # No root-span bookkeeping to sweep in the recorder — Exporter.
+        # poll_once calls this unconditionally every cycle (issue #360), so
+        # it must exist and no-op rather than crash every derivation test
+        # that stands in this recorder for OtlpEmitter.
+        return 0
+
     def shutdown(self):
         self.shutdowns += 1
 
@@ -257,6 +264,84 @@ class TestGraceWindow(TempWorkspace):
         self.assertEqual(ex.poll_once(), 1)
         self.assertEqual(rec.closed, [('CCC-2', 'complete')])
         self.assertEqual(ex.pending, [])
+
+    def test_a_dead_lettered_ticket_closes_its_root_span(self):
+        # LANGFUSE_ROOT_SPAN_UNCLOSED (issue #360): fleet-reconcile.sh writes
+        # META|dead-letter — never META|outcome — when a ticket exhausts its
+        # restart cap, and that write happens from fleet-controller's own
+        # reconciliation pass, after the worker process (and the router loop
+        # that would otherwise call pipeline-finalize.sh) has already
+        # exited. Without a translator branch for this step, self.outcome
+        # stays None forever and close_ticket() is never called — the root
+        # span leaked indefinitely (WIL-70 observed at 97h).
+        self.ws.pipeline('CCC-4', [
+            f'{iso(30)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(20)}|IMPLEMENT|implement|fail|boom',
+            f'{iso(0)}|META|dead-letter|warn|reason=restart cap reached (2/2)',
+        ])
+        config = otel.ExporterConfig(log_dir=str(self.ws.root), span_grace_secs=3600)
+        rec = RecordingEmitter()
+        ex = otel.Exporter(config, rec)
+        self.assertEqual(ex.poll_once(), 1)
+        self.assertEqual(len(rec.closed), 1)
+        closed_ticket, closed_outcome = rec.closed[0]
+        self.assertEqual(closed_ticket, 'CCC-4')
+        self.assertTrue(closed_outcome.startswith('dead-letter'))
+        self.assertIn('restart cap reached', closed_outcome)
+
+    def test_a_dead_letter_never_overwrites_an_already_seen_outcome(self):
+        # Mirrors META|outcome's own "later resolution wins" guard: a
+        # dead-letter marker must not clobber an outcome this translator has
+        # already recorded (e.g. a resumed/replayed log where the real
+        # outcome line precedes a stale historical dead-letter marker).
+        self.ws.pipeline('CCC-5', [
+            f'{iso(30)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(20)}|IMPLEMENT|implement|done|ok',
+            f'{iso(10)}|META|outcome|info|completed: STEP_6',
+            f'{iso(0)}|META|dead-letter|warn|reason=stale historical marker',
+        ])
+        config = otel.ExporterConfig(log_dir=str(self.ws.root), span_grace_secs=3600)
+        rec = RecordingEmitter()
+        ex = otel.Exporter(config, rec)
+        ex.poll_once()
+        self.assertEqual(rec.closed, [('CCC-5', 'completed: STEP_6')])
+
+    def test_a_dead_letter_overrides_a_stale_held_outcome_on_replay(self):
+        # LANGFUSE_ROOT_SPAN_UNCLOSED, issue #360, review round 2:
+        # TailReader.offset is in-memory only and resets to 0 on every
+        # exporter cold start, so a ticket's *entire* pipeline-log history
+        # can replay inside one poll_once() batch. A realistic history is
+        # held (gate) -> resumed under a new run-id -> genuinely
+        # dead-lettered (gate-hold reconciliation resumes a ticket, which
+        # can later exhaust its restart cap). `held: gate` arrives via the
+        # same META|outcome step as every other outcome, so a naive
+        # "already set" guard on the dead-letter branch would lock the
+        # stale held value in permanently and the real, later dead-letter
+        # would be silently dropped.
+        self.ws.pipeline('CCC-6', [
+            f'{iso(200)}|META|run-id|info|{{"run_id": "R1", "gen": 1}}',
+            f'{iso(190)}|IMPLEMENT|implement|waiting|x',
+            f'{iso(180)}|IMPLEMENT|implement|done|ok',
+            f'{iso(170)}|META|outcome|info|held: gate',
+            f'{iso(100)}|META|run-id|info|{{"run_id": "R2", "gen": 2}}',
+            f'{iso(90)}|IMPLEMENT|implement|waiting|retry',
+            f'{iso(80)}|IMPLEMENT|implement|fail|boom',
+            f'{iso(0)}|META|dead-letter|warn|reason=restart cap reached (2/2)',
+        ])
+        config = otel.ExporterConfig(log_dir=str(self.ws.root), span_grace_secs=3600)
+        rec = RecordingEmitter()
+        ex = otel.Exporter(config, rec)
+        ex.poll_once()
+        # The final close for this ticket must reflect the real, later
+        # dead-letter — never the stale held: gate outcome from before the
+        # resume (an earlier close_ticket call for the run-id supersede is
+        # expected and fine; only the last one, driven by translator.outcome,
+        # is under test here).
+        final_ticket, final_outcome = rec.closed[-1]
+        self.assertEqual(final_ticket, 'CCC-6')
+        self.assertTrue(final_outcome.startswith('dead-letter'))
+        self.assertIn('restart cap reached', final_outcome)
+        self.assertNotIn('held', final_outcome)
 
     def test_shutdown_flushes_buffered_spans(self):
         self.ws.pipeline('CCC-3', [
@@ -919,6 +1004,43 @@ class TestRealSdk(unittest.TestCase):
             msg='FAIL criterion 2'))
         span = exporter.get_finished_spans()[0]
         self.assertEqual(span.status.status_code, StatusCode.ERROR)
+
+    # ── Abandoned-span sweep (LANGFUSE_ROOT_SPAN_UNCLOSED, issue #360) ──────
+    # Belt-and-suspenders: even if some future terminal exit path never
+    # reaches close_ticket, a root span this old is force-closed rather than
+    # left open for days, poisoning cycle-time analysis the way a
+    # dead-lettered ticket's span did before the translator fix above.
+
+    def test_a_stale_root_span_is_force_closed_as_abandoned(self):
+        from opentelemetry.trace import StatusCode
+
+        emitter, exporter = self._emitter_with_memory_exporter()
+        old_start = NOW - timedelta(hours=48)
+        emitter.emit(otel.DerivedSpan(
+            ticket='SDK-STALE', phase='IMPLEMENT', step='implement',
+            start=old_start, end=old_start + timedelta(minutes=5), ok=True))
+        # The root now exists (created on first emit()) but was never closed
+        # — exactly the shape a dead-letter/hold path that skipped
+        # close_ticket would leave behind.
+        closed = emitter.sweep_abandoned(NOW, max_age_secs=86400)
+        self.assertEqual(closed, 1)
+        self.assertEqual(emitter._roots, {})
+        root = next(s for s in exporter.get_finished_spans()
+                    if s.name == 'pipeline SDK-STALE')
+        self.assertEqual(root.status.status_code, StatusCode.ERROR)
+        self.assertEqual(root.attributes['pipeline.outcome'], 'abandoned')
+
+    def test_a_young_root_span_is_untouched_by_the_sweep(self):
+        emitter, exporter = self._emitter_with_memory_exporter()
+        recent_start = NOW - timedelta(minutes=5)
+        emitter.emit(otel.DerivedSpan(
+            ticket='SDK-YOUNG', phase='IMPLEMENT', step='implement',
+            start=recent_start, end=NOW, ok=True))
+        closed = emitter.sweep_abandoned(NOW, max_age_secs=86400)
+        self.assertEqual(closed, 0)
+        self.assertIn('SDK-YOUNG', emitter._roots)
+        self.assertFalse(any(
+            s.name == 'pipeline SDK-YOUNG' for s in exporter.get_finished_spans()))
 
     # ── Trace-context derivation is unconditional (issue #361,
     # LANGFUSE_TRACE_REPLAY_INFLATION / trace-context-propagation task 7.9) ──
