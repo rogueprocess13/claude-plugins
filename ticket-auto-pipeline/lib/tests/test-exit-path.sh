@@ -289,6 +289,46 @@ EOF
   return $ok
 }
 
+test_override_line_appears_when_evidence_is_actually_suppressed() {
+  # Cheap observability mitigation added on review of issue #357: the
+  # override must leave a breadcrumb on the log it fired against, exactly
+  # when it actually suppressed a non-none classification — so a future
+  # hold/park mechanism that forgets its own pipeline-finalize.sh check
+  # doesn't silently lose this signal the way #357 itself did.
+  local log
+  log=$(_tmp_log)
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|META|gate-stop|fail|RECONCILE_EXHAUSTED
+2026-01-01T00:00:10Z|IMPLEMENT|implement|done|ok
+2026-01-01T00:00:11Z|META|outcome|info|completed: STEP_6
+EOF
+  bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'" >/dev/null
+  local ok
+  grep -q '|META|failure-class-override|info|.*"suppressed_class":"orchestration_failure"' "$log"
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_no_override_line_on_a_genuinely_clean_completed_run() {
+  # The common case: nothing was suppressed (evidence chain already returns
+  # none on its own), so no breadcrumb should appear — logging a no-op
+  # override on every clean run would just be noise.
+  local log
+  log=$(_tmp_log)
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|IMPLEMENT|implement|waiting|x
+2026-01-01T00:00:10Z|IMPLEMENT|implement|done|ok
+2026-01-01T00:00:11Z|META|outcome|info|completed: STEP_6
+EOF
+  bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'" >/dev/null
+  local ok
+  ! grep -q 'failure-class-override' "$log"
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
 test_held_gate_outcome_still_classifies_approval_gate_not_none() {
   # Sanity check that the new invariant's prefix match ("^completed:") is
   # specific to a genuinely completed run and does not swallow a real
@@ -445,6 +485,8 @@ _run "class: agent_failure via phase-inspector" test_class_agent_failure_via_pha
 _run "completed outcome overrides stale gate-stop evidence" test_completed_outcome_overrides_stale_gate_stop_evidence
 _run "completed outcome overrides stale VERIFY_EXHAUSTED evidence" test_completed_outcome_overrides_stale_verify_exhausted_evidence
 _run "held: gate outcome still classifies approval_gate, not none" test_held_gate_outcome_still_classifies_approval_gate_not_none
+_run "override breadcrumb appears when evidence is actually suppressed" test_override_line_appears_when_evidence_is_actually_suppressed
+_run "no override breadcrumb on a genuinely clean completed run" test_no_override_line_on_a_genuinely_clean_completed_run
 _run "clean run classifies none/none" test_clean_run_classifies_none_with_none_phase
 _run "a resolved RETURN_INCOMPLETE warning does not override a completed run" test_a_resolved_return_incomplete_warning_does_not_override_a_completed_run
 _run "an unresolved RETURN_INCOMPLETE warning still classifies orchestration_failure" test_an_unresolved_return_incomplete_warning_still_classifies_orchestration_failure

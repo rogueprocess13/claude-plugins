@@ -20,6 +20,20 @@
 # runs no analysis, writes no log entry, files no issue, and creates no
 # temporary directory or state (task 10.1's acceptance test). No top-level
 # execution, no `set` flags of its own — the caller's shell options apply.
+#
+# One narrow exception (FINALIZE_FALSE_SUCCESS_OUTCOME, issue #357):
+# *calling* `derive_failure_class` appends one `META|failure-class-override`
+# line to its own `LOG_FILE` argument, and only in the one case where the
+# completed-outcome invariant below actually suppresses non-`none` evidence
+# — never on a call that returns unchanged. This is an observability
+# breadcrumb, not new evidence or a routing decision: nothing reads this key
+# today, classification behaviour is unchanged, and the write is fail-soft
+# (`|| true`) so it can never turn a read into an error. It exists so a
+# future hold/park mechanism that forgets to add its own
+# `_pf_has_unreleased_*` check to `pipeline-finalize.sh`'s outcome chain
+# doesn't silently lose the very signal that caught #357 — the override
+# firing on real evidence is now visible in the log it fired against,
+# instead of only in this function's return value.
 
 # ── Exit-path derivation (SC1 — verbatim from pipeline-postmortem.sh) ──────────
 
@@ -118,40 +132,16 @@ _failure_has_any_fail_verdict() {
   return 1
 }
 
-# derive_failure_class LOG_FILE
-# Exactly one class from the closed vocabulary, by first match in a fixed
-# precedence order. `EXIT_CODE`/`LOG_FILE` are set for the `_derive_exit_path`
-# sub-call the same way pipeline-postmortem.sh's own argument parsing sets
-# them — a caller with neither available passes EXIT_CODE=0 (the "no signal"
-# default `_derive_exit_path` itself already treats as unremarkable).
-derive_failure_class() {
-  local log_file="$1"
-  [ -f "$log_file" ] || {
-    echo "none"
-    return
-  }
-
-  # META|outcome's MSG is a bare string (not JSON) for every branch this
-  # classifier reads.
-  local outcome
-  outcome=$(grep '|META|outcome|info|' "$log_file" 2>/dev/null | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
-
-  # 0. Invariant: a `completed` outcome never carries a non-`none`
-  #    failure_class (FINALIZE_FALSE_SUCCESS_OUTCOME, issue #357).
-  #    pipeline-finalize.sh only ever writes "completed: STEP_6" once a run
-  #    has genuinely reached STEP_6 with no unreleased hold open (see its
-  #    own outcome-derivation comment) — an earlier gate-stop/
-  #    VERIFY_EXHAUSTED/... marker still sitting in this log is exactly the
-  #    resolved-then-completed case the branches below have no way to see
-  #    past on their own (they read for evidence anywhere in the log, not
-  #    "was this later resolved"), the same staleness class the
-  #    RETURN_INCOMPLETE branch further down already special-cased for
-  #    itself alone. Checked first so every later branch inherits the
-  #    guarantee instead of needing its own copy of it.
-  if echo "$outcome" | grep -q '^completed:'; then
-    echo "none"
-    return
-  fi
+# _derive_failure_class_evidence LOG_FILE OUTCOME
+# The original ten-branch precedence chain, unchanged in behaviour — pulled
+# out of `derive_failure_class` so the completed-outcome invariant (check 0
+# below) can compute "what would this have classified as" without
+# duplicating the chain, purely to decide whether its own override actually
+# suppressed something worth a breadcrumb for. `OUTCOME` is passed in rather
+# than re-read so both the invariant and this chain see the exact same
+# value from one `grep` (there's no window where they could disagree).
+_derive_failure_class_evidence() {
+  local log_file="$1" outcome="$2"
 
   # 1. human_intervention — a hold with no corresponding release entry. A
   #    released hold never leaves `held: human` as the *final* outcome line
@@ -277,6 +267,69 @@ derive_failure_class() {
 
   # 10. none — a clean run.
   echo "none"
+}
+
+# _log_failure_class_override LOG_FILE SUPPRESSED_CLASS OUTCOME
+# Appends one `META|failure-class-override|info|{json}` breadcrumb —
+# observability only, see the file-header note above. Fail-soft: a write
+# failure (read-only filesystem, missing dir, ...) never surfaces to the
+# caller, since this must never turn a pure classification read into an
+# error.
+_log_failure_class_override() {
+  local log_file="$1" suppressed_class="$2" outcome="$3"
+  {
+    printf '%s|META|failure-class-override|info|' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    jq -nc --arg class "$suppressed_class" --arg outcome "$outcome" \
+      '{suppressed_class: $class, outcome: $outcome, reason: "completed outcome overrides evidence-based failure_class"}' 2>/dev/null
+  } >>"$log_file" 2>/dev/null || true
+}
+
+# derive_failure_class LOG_FILE
+# Exactly one class from the closed vocabulary, by first match in a fixed
+# precedence order. `EXIT_CODE`/`LOG_FILE` are set for the `_derive_exit_path`
+# sub-call the same way pipeline-postmortem.sh's own argument parsing sets
+# them — a caller with neither available passes EXIT_CODE=0 (the "no signal"
+# default `_derive_exit_path` itself already treats as unremarkable).
+derive_failure_class() {
+  local log_file="$1"
+  [ -f "$log_file" ] || {
+    echo "none"
+    return
+  }
+
+  # META|outcome's MSG is a bare string (not JSON) for every branch this
+  # classifier reads.
+  local outcome
+  outcome=$(grep '|META|outcome|info|' "$log_file" 2>/dev/null | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}')
+
+  local evidence_class
+  evidence_class=$(_derive_failure_class_evidence "$log_file" "$outcome")
+
+  # 0. Invariant: a `completed` outcome never carries a non-`none`
+  #    failure_class (FINALIZE_FALSE_SUCCESS_OUTCOME, issue #357).
+  #    pipeline-finalize.sh only ever writes "completed: STEP_6" once a run
+  #    has genuinely reached STEP_6 with no unreleased hold open (see its
+  #    own outcome-derivation comment) — an earlier gate-stop/
+  #    VERIFY_EXHAUSTED/... marker still sitting in this log is exactly the
+  #    resolved-then-completed case `_derive_failure_class_evidence` has no
+  #    way to see past on its own (it reads for evidence anywhere in the
+  #    log, not "was this later resolved"), the same staleness class the
+  #    RETURN_INCOMPLETE branch inside it already special-cased for itself
+  #    alone. Checked first so every later branch inherits the guarantee
+  #    instead of needing its own copy of it.
+  if echo "$outcome" | grep -q '^completed:'; then
+    # Breadcrumb only when the override actually did something — a clean
+    # run's evidence chain already returns "none" on its own, and logging
+    # a no-op override on every completed run would just be noise nothing
+    # can distinguish from a real one.
+    if [ "$evidence_class" != "none" ]; then
+      _log_failure_class_override "$log_file" "$evidence_class" "$outcome"
+    fi
+    echo "none"
+    return
+  fi
+
+  echo "$evidence_class"
 }
 
 # derive_failure_phase LOG_FILE
