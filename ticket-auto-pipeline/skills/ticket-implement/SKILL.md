@@ -26,6 +26,10 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 - Branch name: read from notes.md checkpoint or from `IMPLEMENT|checkout-branch|done|` in `$LOG_FILE`.
 - Implementation mode: read from `IMPLEMENT|detect-path|done|` in `$LOG_FILE` (value: `simple-fix` or `openspec`).
 - Affected repos: re-derive from notes.md `Initial Investigation` section and CLAUDE.md table.
+- `$IMPLEMENT_TICKETS_ROOT`: never restored from a log or checkpoint — captured fresh via
+  `$(pwd)` before Step 0.6 on every invocation of this skill, resume or not, since the session's
+  starting CWD is always the tickets repo (see the capture instruction above the "Step 0.6"
+  heading).
 
 | `--from-step` value | Skip to | Restore |
 |---------------------|---------|---------|
@@ -38,6 +42,14 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `commit-push` | Step 5.5 (plan artifact durability check) | mode from log `detect-path\|done` entry |
 
 **Concurrency guard:** if you need to check whether another worker is already implementing this ticket, never grep the process table (`ps`/`pgrep`) for markers matching your own launch prompt or skill name — a self-checking agent's own process (and its own `spawn_agent_pre` shell) will always match those markers, producing a guaranteed false positive that aborts real work. Use file-based signals instead: an existing worktree/branch with commits already on it, a lockfile whose PID is not in your own ancestry, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line already present in `$LOG_FILE` for this ticket.
+
+**Capture the tickets repo root — the very first bash action of this session, regardless of `--from-step`.** Step 4 `cd`s into a code worktree and nothing downstream `cd`s back (Step 5's own git commands deliberately use `git -C "$WORKTREE_PATH"` instead of relying on the earlier `cd`, for exactly this reason). Every invocation of this skill — a fresh run or a `--from-step` resume — starts with CWD already at the tickets repo root (the shared preamble Guard already verified this, or the caller did for `--from-auto`), so this capture is always valid the instant the session starts, before Step 0.6 or any step-dispatch jump:
+
+```bash
+IMPLEMENT_TICKETS_ROOT="$(pwd)"
+```
+
+Step 5.5 uses `$IMPLEMENT_TICKETS_ROOT` explicitly rather than relying on ambient CWD, since by then CWD may be the code worktree.
 
 ---
 
@@ -599,15 +611,18 @@ The plan artifact that drove this implementation (openspec `tasks.md`/`design.md
 tickets) must be durably tracked in the tickets repo — not merely present on disk. This is a
 safety net for issue #363 (OPENSPEC_ARTIFACTS_UNTRACKED): `ticket-appraise-exec` now commits the
 change dir when it first writes it (Step 3.4 there), but a resumed exec run can skip that step
-entirely, and nothing prevents the commit from being reverted between exec and implement. Run
-this check from the tickets repo, not the code worktree:
+entirely, and nothing prevents the commit from being reverted between exec and implement. This
+check must resolve against the tickets repo, not wherever CWD happens to be by now — Step 5 `cd`s
+into the code worktree and never `cd`s back. Use `$IMPLEMENT_TICKETS_ROOT` (captured before Step
+0.6) explicitly, both for the mode re-derivation and for `assert`'s `--root`:
 
 ```bash
 EXPECT_FLAG=""
 # Mode was already determined in Step 2 ("detect-path"): simple-fix.md found → simple-fix,
-# else → openspec. Re-derive the same way rather than trusting carried state.
-[ -z "$(find . -name "simple-fix.md" -path "*{TICKET-ID}*" 2>/dev/null)" ] && EXPECT_FLAG="--expect"
-bash ~/.claude/skills/lib/openspec-tracking-check.sh assert "{TICKET-ID}" $EXPECT_FLAG
+# else → openspec. Re-derive the same way rather than trusting carried state — searched against
+# $IMPLEMENT_TICKETS_ROOT explicitly, not "." (CWD is the code worktree by this point).
+[ -z "$(find "$IMPLEMENT_TICKETS_ROOT" -name "simple-fix.md" -path "*{TICKET-ID}*" 2>/dev/null)" ] && EXPECT_FLAG="--expect"
+bash ~/.claude/skills/lib/openspec-tracking-check.sh assert "{TICKET-ID}" $EXPECT_FLAG --root "$IMPLEMENT_TICKETS_ROOT"
 ASSERT_RC=$?
 ```
 

@@ -167,6 +167,72 @@ test_assert_partial_when_some_files_committed_some_not() {
   [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=partial'
 }
 
+test_assert_reports_partial_for_uncommitted_modification_to_tracked_file() {
+  _setup
+  _write_change "wil-17"
+  git -C "$_ws" add -f openspec/changes/wil-17--fix-thing/
+  git -C "$_ws" commit -q -m "commit clean"
+  echo "- [ ] a second, uncommitted task" >>"$_ws/openspec/changes/wil-17--fix-thing/tasks.md"
+  local out rc=0
+  out=$(cd "$_ws" && bash "$CHECK" assert WIL-17) || rc=$?
+  _teardown
+  [ "$rc" -eq 1 ] &&
+    echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=partial' &&
+    ! echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=tracked'
+}
+
+test_assert_reports_partial_for_staged_but_uncommitted_modification() {
+  _setup
+  _write_change "wil-18"
+  git -C "$_ws" add -f openspec/changes/wil-18--fix-thing/
+  git -C "$_ws" commit -q -m "commit clean"
+  echo "- [ ] a second, staged task" >>"$_ws/openspec/changes/wil-18--fix-thing/tasks.md"
+  git -C "$_ws" add openspec/changes/wil-18--fix-thing/tasks.md
+  local out rc=0
+  out=$(cd "$_ws" && bash "$CHECK" assert WIL-18) || rc=$?
+  _teardown
+  [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=partial'
+}
+
+test_assert_root_flag_resolves_correctly_from_arbitrary_cwd() {
+  _setup
+  _write_change "wil-19"
+  git -C "$_ws" add -f openspec/changes/wil-19--fix-thing/
+  git -C "$_ws" commit -q -m "commit"
+  local out rc=0
+  # Deliberately invoked from an unrelated CWD (not $_ws) — --root must be
+  # the only thing that matters, never ambient pwd.
+  out=$(cd /tmp && bash "$CHECK" assert WIL-19 --root "$_ws") || rc=$?
+  _teardown
+  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=tracked'
+}
+
+test_assert_root_flag_with_untracked_change_from_arbitrary_cwd() {
+  _setup
+  _seed_gitignore
+  _write_change "wil-20"
+  local out rc=0
+  out=$(cd /tmp && bash "$CHECK" assert WIL-20 --root "$_ws") || rc=$?
+  _teardown
+  [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=gitignored'
+}
+
+test_commit_refuses_path_outside_openspec_changes() {
+  _setup
+  local rc=0
+  (cd "$_ws" && bash "$CHECK" commit "/etc" WIL-21) >/dev/null 2>&1 || rc=$?
+  _teardown
+  [ "$rc" -eq 2 ]
+}
+
+test_commit_refuses_path_traversal_outside_openspec_changes() {
+  _setup
+  local rc=0
+  (cd "$_ws" && bash "$CHECK" commit "../../../../etc" WIL-22) >/dev/null 2>&1 || rc=$?
+  _teardown
+  [ "$rc" -eq 2 ]
+}
+
 test_assert_is_case_insensitive_on_ticket_id() {
   _setup
   _write_change "wil-12"
@@ -239,7 +305,14 @@ for t in test_commit_force_adds_gitignored_dir test_commit_is_idempotent_noop_on
   test_commit_errors_outside_git_repo test_assert_reports_gitignored_before_commit \
   test_assert_reports_tracked_after_commit test_assert_no_change_dir_without_expect_is_not_applicable \
   test_assert_no_change_dir_with_expect_is_missing test_assert_untracked_but_not_ignored \
-  test_assert_partial_when_some_files_committed_some_not test_assert_is_case_insensitive_on_ticket_id \
+  test_assert_partial_when_some_files_committed_some_not \
+  test_assert_reports_partial_for_uncommitted_modification_to_tracked_file \
+  test_assert_reports_partial_for_staged_but_uncommitted_modification \
+  test_assert_root_flag_resolves_correctly_from_arbitrary_cwd \
+  test_assert_root_flag_with_untracked_change_from_arbitrary_cwd \
+  test_commit_refuses_path_outside_openspec_changes \
+  test_commit_refuses_path_traversal_outside_openspec_changes \
+  test_assert_is_case_insensitive_on_ticket_id \
   test_audit_reports_all_clean test_audit_detects_existing_untracked_changes \
   test_audit_with_explicit_root test_audit_no_changes_is_clean test_usage_exits_2_with_no_args; do
   if "$t"; then

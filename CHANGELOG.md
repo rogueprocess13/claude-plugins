@@ -32,18 +32,28 @@ Durability was assumed, never enforced.
   scoped to the tickets repo only (never a code repo). `commit <change-dir>
   <TICKET-ID>` force-adds (`git add -f`) and commits a change dir past any
   such ignore rule, idempotently (`git diff --cached --quiet` no-op check on
-  rerun). `assert <TICKET-ID> [--expect]` classifies a ticket's change dir as
-  `tracked\|partial\|untracked\|gitignored\|missing\|not-applicable`.
-  `audit [--root <path>]` sweeps every `openspec/changes/*/` dir under a
-  tickets repo and reports `OPENSPEC_TRACK\|...` + `OPENSPEC_TRACK_SUMMARY`
-  lines — the one-off detector for artifacts that went untracked before this
-  fix shipped. 17 unit tests (`lib/tests/test-openspec-tracking-check.sh`).
+  rerun); refuses (exit 2) any `<change-dir>` not under `openspec/changes/`.
+  `assert <TICKET-ID> [--expect] [--root <path>]` classifies a ticket's
+  change dir as `tracked\|partial\|untracked\|gitignored\|missing\|not-applicable`
+  — `partial` also covers a *tracked* file carrying an uncommitted
+  modification (checked via `git diff --quiet`/`git diff --cached --quiet`,
+  not just the `??`/`!!` prefixes `git status` reports, which a modified-but-
+  tracked file never matches — `tracked` must never silently pass a stale
+  working tree). `--root` resolves against an explicit path instead of
+  ambient CWD. `audit [--root <path>]` sweeps every `openspec/changes/*/`
+  dir under a tickets repo and reports `OPENSPEC_TRACK\|...` +
+  `OPENSPEC_TRACK_SUMMARY` lines — the one-off detector for artifacts that
+  went untracked before this fix shipped. 23 unit tests
+  (`lib/tests/test-openspec-tracking-check.sh`).
 - `skills/ticket-appraise-exec/SKILL.md` Step 3.4 — on a coherence match for
   a complex ticket, force-commits the change dir into the tickets repo
   immediately. A commit failure is logged as `META\|gate-warn`, never a
   gate-stop — the artifact still exists on disk either way.
-- `skills/ticket-implement/SKILL.md` new Step 5.5 — close-out backstop: reruns
-  the tracking check before the phase result is emitted, so a resumed
+- `skills/ticket-implement/SKILL.md` captures `$IMPLEMENT_TICKETS_ROOT="$(pwd)"`
+  as the session's first action (before Step 4's worktree `cd`, which
+  nothing downstream reverses) and new Step 5.5 — close-out backstop: reruns
+  the tracking check (`assert ... --root "$IMPLEMENT_TICKETS_ROOT"`, never
+  trusting ambient CWD) before the phase result is emitted, so a resumed
   appraise-exec run that skipped Step 3.4, or a commit reverted between exec
   and implement, still gets caught. Warns loudly (`notes.md`, the final
   report, `META\|gate-warn|OPENSPEC_ARTIFACT_UNTRACKED`) — never gate-stops;

@@ -22,12 +22,18 @@
 # Three subcommands:
 #   commit  — idempotent `git add -f` + commit of one change dir. Called by
 #             ticket-appraise-exec immediately after the artifact is written.
+#             Always runs against CWD — callers must invoke it from the
+#             tickets repo (no --root; it is meant to run right after the
+#             artifact is written, before any worktree cd happens).
 #   assert  — read-only tracked/untracked check for one ticket's change dir.
 #             Called by ticket-implement's close-out to warn (never gate-stop)
 #             when the artifact that drove the implementation was never
-#             persisted.
-#   audit   — one-off sweep of every openspec/changes/*/ dir under the current
-#             tickets repo, for detecting pre-existing untracked artifacts.
+#             persisted. Accepts --root <path> so a caller does not have to
+#             trust ambient CWD after an earlier step `cd`'d into a code
+#             worktree — pass the tickets repo path explicitly.
+#   audit   — one-off sweep of every openspec/changes/*/ dir under a tickets
+#             repo (--root <path>, default CWD), for detecting pre-existing
+#             untracked artifacts.
 #
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
@@ -45,26 +51,33 @@ fi
 usage() {
   cat >&2 <<'EOF'
 Usage: openspec-tracking-check.sh commit <change-dir> <TICKET-ID>
-       openspec-tracking-check.sh assert <TICKET-ID> [--expect]
+       openspec-tracking-check.sh assert <TICKET-ID> [--expect] [--root <path>]
        openspec-tracking-check.sh audit [--root <path>]
 
-All subcommands run `git` against the current working directory — always the
-tickets repo (the shared preamble Guard already requires this). Never point
-this script at a code repo.
+commit always runs `git` against the current working directory — always the
+tickets repo (the shared preamble Guard already requires this). assert and
+audit accept --root so a caller need not trust ambient CWD (e.g. after a
+prior step `cd`'d into a code worktree). Never point any subcommand at a
+code repo.
 
 commit <change-dir> <TICKET-ID>
   Force-adds and commits <change-dir> if it has anything untracked or
   modified relative to HEAD. Idempotent: a no-op when the dir is already
-  tracked and unchanged. Exit 0 committed or no-op, 2 usage/git error.
+  tracked and unchanged. Refuses any <change-dir> not under openspec/changes/
+  (defensive path guard — this subcommand force-adds past .gitignore).
+  Exit 0 committed or no-op, 2 usage/git error.
 
-assert <TICKET-ID> [--expect]
-  Locates the openspec change dir for TICKET-ID under ./openspec/changes/
-  (case-insensitive match on the directory name, same convention as
-  ticket-dir.sh) and reports its tracking status. Without a match: status
-  `not-applicable` (exit 0) unless --expect is given, in which case a missing
-  or empty change dir is status `missing` (exit 1) — pass --expect when the
-  ticket's notes.md declares COMPLEXITY=complex, so a deleted-on-disk change
-  dir is caught, not silently treated as "nothing to check".
+assert <TICKET-ID> [--expect] [--root <path>]
+  Locates the openspec change dir for TICKET-ID under <path>/openspec/changes/
+  (default --root: current directory; case-insensitive match on the
+  directory name, same convention as ticket-dir.sh) and reports its tracking
+  status: tracked, partial (some files untracked, or a tracked file has an
+  uncommitted modification — unstaged or staged), untracked, gitignored, or
+  missing. Without a match: status `not-applicable` (exit 0) unless --expect
+  is given, in which case a missing or empty change dir is status `missing`
+  (exit 1) — pass --expect when the ticket's notes.md declares
+  COMPLEXITY=complex, so a deleted-on-disk change dir is caught, not
+  silently treated as "nothing to check".
 
 audit [--root <path>]
   Scans <path>/openspec/changes/*/ (default: current directory) and reports
@@ -79,8 +92,10 @@ EOF
 # ── Status classification ──────────────────────────────────────────────────
 
 # Classifies a single change dir's git tracking state. Echoes one of:
-#   tracked     — every file in the dir is tracked and matches HEAD
-#   partial     — some files tracked, some untracked/modified
+#   tracked     — every file in the dir is tracked, staged clean, and matches
+#                 HEAD (no unstaged or staged-but-uncommitted modifications)
+#   partial     — some files tracked, some untracked, OR a tracked file has
+#                 an unstaged/staged modification not yet committed
 #   untracked   — dir exists, nothing in it is tracked, and it is not ignored
 #   gitignored  — dir exists, nothing in it is tracked, and it IS ignored —
 #                 the exact failure mode named in issue #363
@@ -92,14 +107,27 @@ _dir_status() {
     return
   }
 
-  local tracked_count untracked_count ignored_count
+  local tracked_count untracked_count ignored_count modified
   tracked_count=$(git ls-files -- "$dir" 2>/dev/null | wc -l | tr -d ' ')
   untracked_count=$(git status --porcelain --ignored -- "$dir" 2>/dev/null | grep -c '^??' || true)
   untracked_count="${untracked_count:-0}"
   ignored_count=$(git status --porcelain --ignored -- "$dir" 2>/dev/null | grep -c '^!!' || true)
   ignored_count="${ignored_count:-0}"
 
-  if [ "$tracked_count" -gt 0 ] && [ "$untracked_count" -eq 0 ]; then
+  # A tracked file with an uncommitted modification (unstaged OR staged) is
+  # not durable — its last-committed content is stale relative to disk, the
+  # exact "regenerated content / commit reverted between exec and implement"
+  # scenario Step 5.5 exists to catch. `git status --porcelain` above only
+  # ever reports `??`/`!!` prefixes for genuinely untracked/ignored paths —
+  # a tracked-but-modified file shows as ` M`/`M ` there, which neither
+  # counter catches, so it needs its own check.
+  modified=0
+  git diff --quiet -- "$dir" 2>/dev/null || modified=1
+  if [ "$modified" -eq 0 ]; then
+    git diff --cached --quiet -- "$dir" 2>/dev/null || modified=1
+  fi
+
+  if [ "$tracked_count" -gt 0 ] && [ "$untracked_count" -eq 0 ] && [ "$modified" -eq 0 ]; then
     echo "tracked"
   elif [ "$tracked_count" -gt 0 ]; then
     echo "partial"
@@ -116,6 +144,17 @@ _cmd_commit() {
   local dir="$1" ticket_id="$2"
 
   [ -n "$dir" ] && [ -n "$ticket_id" ] || usage
+  # Defensive path guard: only ever force-add something under
+  # openspec/changes/ — never an arbitrary caller-supplied path. Matches a
+  # leading "openspec/changes/" whether or not $dir carries a trailing slash
+  # or a "./" prefix.
+  case "${dir#./}" in
+  openspec/changes/*) ;;
+  *)
+    echo "ERROR: refusing to commit a path outside openspec/changes/: $dir" >&2
+    return 2
+    ;;
+  esac
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
     echo "ERROR: not inside a git repo: $(pwd)" >&2
     return 2
@@ -154,15 +193,45 @@ _find_change_dir() {
 }
 
 _cmd_assert() {
-  local ticket_id="$1" expect="${2:-}"
+  local ticket_id="" expect="" root="."
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --expect)
+      expect="--expect"
+      shift
+      ;;
+    --root)
+      root="${2:-.}"
+      shift 2
+      ;;
+    -*)
+      echo "Unknown flag: $1" >&2
+      usage
+      ;;
+    *)
+      if [ -z "$ticket_id" ]; then
+        ticket_id="$1"
+        shift
+      else
+        echo "Unexpected argument: $1" >&2
+        usage
+      fi
+      ;;
+    esac
+  done
   [ -n "$ticket_id" ] || usage
-  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-    echo "ERROR: not inside a git repo: $(pwd)" >&2
+
+  git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+    echo "ERROR: not inside a git repo: $root" >&2
     return 2
   }
 
+  # Every git call below must run with CWD == $root (relative pathspecs like
+  # "openspec/changes/*/" and the dir _find_change_dir/_dir_status resolve
+  # are relative to it) — a caller's ambient CWD is never trusted, only
+  # $root. Default "." preserves old behavior (CWD is the tickets repo).
   local change_dir status
-  change_dir=$(_find_change_dir "$ticket_id")
+  change_dir=$(cd "$root" && _find_change_dir "$ticket_id")
 
   if [ -z "$change_dir" ]; then
     if [ "$expect" = "--expect" ]; then
@@ -177,10 +246,14 @@ _cmd_assert() {
     return 0
   fi
 
-  status=$(_dir_status "$change_dir")
+  status=$(cd "$root" && _dir_status "$change_dir")
   echo "OPENSPEC_TRACK_STATUS=$status"
   echo "TICKET_ID=$ticket_id"
-  echo "CHANGE_DIR=$change_dir"
+  if [ "$root" = "." ]; then
+    echo "CHANGE_DIR=${change_dir}"
+  else
+    echo "CHANGE_DIR=${root%/}/${change_dir}"
+  fi
 
   case "$status" in
   tracked)
