@@ -18,6 +18,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 - **Artifact path**: after detecting the plan artifact, write `hb-wrap.sh decision "artifact-path" "info" "artifact detected" '{"type":"simple-fix|openspec"}'`
 - **Implementation mode**: after detect-path, write `hb-wrap.sh decision "implementation-mode" "fired" "simple|openspec" '{"mode":"..."}'`
 - **Code-writing progress (long-running step)**: the code-writing stage is one of the two steps enumerated in [pipeline-heartbeat-format.md § Long-running steps](../../pipeline-heartbeat-format.md#long-running-steps-enumerated). It routinely runs for many minutes inside a single step, and to anything reading the heartbeat log that silence is indistinguishable from a hang. After completing each file (simple-fix) or each task (openspec), write `hb-wrap.sh heartbeat "step-progress" "ok" "implement: <file-or-task> (N of M)" '{"step":"implement-changes","done":"N","total":"M"}'`. Advisory: nothing gates on these events and omitting them never fails the phase — it only leaves the fleet detector guessing.
+- **Plan artifact durability**: after Step 5.5's `openspec-tracking-check.sh assert` call, write `hb-wrap.sh gate "artifact-durability" "ok|warn" "tracked|not-applicable|{status}" '{"ticket":"{TICKET-ID}","status":"{OPENSPEC_TRACK_STATUS}"}'`
 
 ### Step dispatch
 **Context restoration when skipping early steps:**
@@ -25,6 +26,10 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 - Branch name: read from notes.md checkpoint or from `IMPLEMENT|checkout-branch|done|` in `$LOG_FILE`.
 - Implementation mode: read from `IMPLEMENT|detect-path|done|` in `$LOG_FILE` (value: `simple-fix` or `openspec`).
 - Affected repos: re-derive from notes.md `Initial Investigation` section and CLAUDE.md table.
+- `$IMPLEMENT_TICKETS_ROOT`: never restored from a log or checkpoint — captured fresh via
+  `$(pwd)` before Step 0.6 on every invocation of this skill, resume or not, since the session's
+  starting CWD is always the tickets repo (see the capture instruction above the "Step 0.6"
+  heading).
 
 | `--from-step` value | Skip to | Restore |
 |---------------------|---------|---------|
@@ -34,9 +39,17 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `implement` | Step 4b (write tests) | changed files from `git -C "$WORKTREE_PATH" diff --name-only "$BASE_BRANCH"` |
 | `run-tests` | Step 4b code-review | — |
 | `code-review` | Step 5 (commit/push) | — |
-| `commit-push` | End — skill already complete | — |
+| `commit-push` | Step 5.5 (plan artifact durability check) | mode from log `detect-path\|done` entry |
 
 **Concurrency guard:** if you need to check whether another worker is already implementing this ticket, never grep the process table (`ps`/`pgrep`) for markers matching your own launch prompt or skill name — a self-checking agent's own process (and its own `spawn_agent_pre` shell) will always match those markers, producing a guaranteed false positive that aborts real work. Use file-based signals instead: an existing worktree/branch with commits already on it, a lockfile whose PID is not in your own ancestry, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line already present in `$LOG_FILE` for this ticket.
+
+**Capture the tickets repo root — the very first bash action of this session, regardless of `--from-step`.** Step 4 `cd`s into a code worktree and nothing downstream `cd`s back (Step 5's own git commands deliberately use `git -C "$WORKTREE_PATH"` instead of relying on the earlier `cd`, for exactly this reason). Every invocation of this skill — a fresh run or a `--from-step` resume — starts with CWD already at the tickets repo root (the shared preamble Guard already verified this, or the caller did for `--from-auto`), so this capture is always valid the instant the session starts, before Step 0.6 or any step-dispatch jump:
+
+```bash
+IMPLEMENT_TICKETS_ROOT="$(pwd)"
+```
+
+Step 5.5 uses `$IMPLEMENT_TICKETS_ROOT` explicitly rather than relying on ambient CWD, since by then CWD may be the code worktree.
 
 ---
 
@@ -589,6 +602,46 @@ Branch: `{branch-name}` pushed to {repo}.
 No PR created yet. No Linear state change. The calling pipeline (`ticket-auto` or user) handles verification and PR creation.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|commit-push|done|Pushed {branch-name}" >> "$LOG_FILE"
+
+---
+
+## Step 5.5 — Plan artifact durability check
+
+The plan artifact that drove this implementation (openspec `tasks.md`/`design.md`, for complex
+tickets) must be durably tracked in the tickets repo — not merely present on disk. This is a
+safety net for issue #363 (OPENSPEC_ARTIFACTS_UNTRACKED): `ticket-appraise-exec` now commits the
+change dir when it first writes it (Step 3.4 there), but a resumed exec run can skip that step
+entirely, and nothing prevents the commit from being reverted between exec and implement. This
+check must resolve against the tickets repo, not wherever CWD happens to be by now — Step 5 `cd`s
+into the code worktree and never `cd`s back. Use `$IMPLEMENT_TICKETS_ROOT` (captured before Step
+0.6) explicitly, both for the mode re-derivation and for `assert`'s `--root`:
+
+```bash
+EXPECT_FLAG=""
+# Mode was already determined in Step 2 ("detect-path"): simple-fix.md found → simple-fix,
+# else → openspec. Re-derive the same way rather than trusting carried state — searched against
+# $IMPLEMENT_TICKETS_ROOT explicitly, not "." (CWD is the code worktree by this point).
+[ -z "$(find "$IMPLEMENT_TICKETS_ROOT" -name "simple-fix.md" -path "*{TICKET-ID}*" 2>/dev/null)" ] && EXPECT_FLAG="--expect"
+bash ~/.claude/skills/lib/openspec-tracking-check.sh assert "{TICKET-ID}" $EXPECT_FLAG --root "$IMPLEMENT_TICKETS_ROOT"
+ASSERT_RC=$?
+```
+
+- **Exit 0** (`tracked`, or `not-applicable` for a simple-fix ticket) — proceed silently to Step 6.
+- **Non-zero** — the change dir is `gitignored`, `untracked`, `partial`, or (with `--expect`)
+  `missing` entirely. **Warn loudly — never gate-stop.** The implementation itself is unaffected;
+  losing the design rationale is a documentation-durability problem, not a correctness one.
+  ```bash
+  [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|info|OPENSPEC_ARTIFACT_UNTRACKED — plan artifact for {TICKET-ID} is not durably tracked in the tickets repo" >> "$LOG_FILE"
+  ```
+  Append to `notes.md`:
+  ```markdown
+  ### {today's date} — plan artifact durability warning
+  - ⚠️ openspec change for {TICKET-ID} is not durably tracked in the tickets repo (status:
+    {OPENSPEC_TRACK_STATUS from the assert output}). It is one `git clean` from loss. Fix with:
+    `bash ~/.claude/skills/lib/openspec-tracking-check.sh commit "{CHANGE_DIR}" "{TICKET-ID}"`
+    from the tickets repo root.
+  ```
+  Include the same warning in the final report (Step 5's report block, above). Continue to Step 6.
 
 ---
 

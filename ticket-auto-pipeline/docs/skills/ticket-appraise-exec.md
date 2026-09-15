@@ -8,6 +8,8 @@ Consumes the investigation findings from notes.md and produces the implementatio
 
 **New in 0.12.10:** For complex tickets, Step 3.7 derives a structured verification plan — determining role scope, navigation paths, expected behaviors, and test data requirements for each acceptance criterion. If any criterion cannot be fully derived, the pipeline pushes back with gate-stop codes (`VERIFY_PLAN_NO_ROLE_SCOPE`, `VERIFY_PLAN_NO_NAV_PATH`, `VERIFY_PLAN_VAGUE_BEHAVIOR`, `VERIFY_PLAN_NO_TEST_DATA`) before implementation starts. Role scope findings are ingested into `app-knowledge/SKILL.md` under a `## Role Scope Registry` section for future appraisals. The verification-readiness gate (Step 3.8) reads the derived plan from notes.md when present, falling back to plan artifact scan for backward compat.
 
+**Fixed in issue #363 (OPENSPEC_ARTIFACTS_UNTRACKED):** Step 3.4, on a coherence match for a complex ticket, now force-commits the openspec change dir into the tickets repo (`lib/openspec-tracking-check.sh commit`) — past any blanket `openspec/` ignore rule, since the tickets repo is this pipeline's designated durable home for the plan of record regardless of that convention. A commit failure is logged as a `gate-warn`, never a gate-stop; `ticket-implement`'s Step 5.5 re-checks tracking at close-out as a backstop.
+
 Posts a summary comment to Linear and moves the ticket to the Approve state.
 
 ## Trigger
@@ -37,7 +39,7 @@ Posts a summary comment to Linear and moves the ticket to the Approve state.
 | Artifact | Location | Description |
 |----------|----------|-------------|
 | simple-fix.md | {ticket-dir}/simple-fix.md | Implementation plan for simple tickets |
-| openspec change | openspec/changes/{name}/ | Design, tasks, and specs for complex tickets |
+| openspec change | openspec/changes/{name}/ | Design, tasks, and specs for complex tickets — committed into the tickets repo at Step 3.4 (#363) |
 | Adversarial review | notes.md (## Adversarial Review) | Gap analysis from adversarial agent (complex only) |
 | Regression risk table | notes.md (## Regression Risk) | Conflict detection against prior art |
 | **Verification Plan** | **notes.md (## Verification Plan)** | **Per-criterion role scope, nav path, expected behavior, test data (complex only, Step 3.7)** |
