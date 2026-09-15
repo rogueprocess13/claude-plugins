@@ -2636,11 +2636,23 @@ def spawn_phase_worker(tid, step_id, generation, state_dir, log_file,
     # (FLEET_TRACE_PROPAGATE_ENABLE=false): trace_id/span_id stay unset and
     # this block is a no-op, leaving `spawn.env` and the recorded context
     # exactly as they were before this capability existed (TP3, task 7.7).
+    #
+    # `start_ts=None` here, always — this runs *before* the worker it is
+    # about to fork writes that phase's `|waiting|` line, so the bracket
+    # start timestamp `derive_span_id_hex` keys on (issue #361 follow-up:
+    # `step`/`start_ts` replaced `generation`, which collided across retries
+    # and across a phase's own steps — see otel.py's `derive_span_id_hex`)
+    # does not exist yet at this call site. The span id this derives is
+    # therefore a distinct, deliberately approximate value from the one the
+    # exporter later derives for the same bracket from its real `start_ts` —
+    # consistent with this whole feature already being "not yet settled"
+    # (fleet-controller/CLAUDE.md, Trace-context propagation) and never
+    # load-bearing. The trace id is unaffected: it depends only on `run_id`.
     trace_id = span_id = None
     if FLEET_TRACE_PROPAGATE_ENABLE and run_id:
         try:
             trace_id, span_id = _otel_mod.derive_trace_context(
-                run_id, spawn.phase, generation)
+                run_id, spawn.phase, spawn.step, None)
             spawn.env['TRACEPARENT'] = f'00-{trace_id}-{span_id}-01'
         except Exception as exc:
             print(f'fleetd: trace-context derivation failed for {tid}: {exc}',

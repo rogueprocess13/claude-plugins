@@ -129,36 +129,75 @@ def exporter_enabled():
 
 
 # ── Trace-context derivation (trace-context-propagation, TP1) ───────────────
-# One function, used by both the spawning path (fleetd/supervisor.py, before
-# a phase worker is spawned) and this exporter (which self-derives the same
-# identifiers rather than reading them back off the log — see OtlpEmitter.emit
-# and issue #361, LANGFUSE_TRACE_REPLAY_INFLATION) — no second implementation.
-# Pure and deterministic: both sides compute identical identifiers from facts
-# already known to each, with no shared state and no ordering requirement,
-# which is the only way a tailing exporter and a spawn-time environment can
-# agree at all — and, just as importantly, the only way a tailing exporter
-# restarted mid-run (or replaying a log from byte zero) agrees with *itself*:
-# every export pass over the same run_id derives the same trace/span ids, so
-# repeats are idempotent updates to the same trace rather than new roots.
+# The trace id (`derive_trace_id_hex`, a pure function of `run_id` alone) is
+# shared verbatim by both the spawning path (fleetd/supervisor.py, before a
+# phase worker is spawned) and this exporter (which self-derives it rather
+# than reading it back off the log — see OtlpEmitter.emit and issue #361,
+# LANGFUSE_TRACE_REPLAY_INFLATION). Pure and deterministic: both sides
+# compute the identical trace id from a fact already known to each with no
+# shared state and no ordering requirement — the only way a tailing exporter
+# and a spawn-time environment can agree at all — and, just as importantly,
+# the only way a tailing exporter restarted mid-run (or replaying a log from
+# byte zero) agrees with *itself*: every export pass over the same run_id
+# derives the same trace id, so repeats are idempotent updates to the same
+# trace rather than new roots.
 #
-# Both return lowercase hex strings (the W3C traceparent shape) — 32 hex
-# chars / 128 bits for a trace id, 16 hex chars / 64 bits for a span id.
-# Callers feeding an OTel SDK IdGenerator (which wants integers) convert with
-# int(value, 16); callers building a TRACEPARENT header or a log line use the
-# hex string directly.
+# The span id (`derive_span_id_hex`) needs one more input than the trace id
+# does — see its own docstring for why `generation` could not carry this
+# alone (issue #361 follow-up: distinct retries and distinct steps within
+# one phase were colliding on one span id). Its `start_ts` input is a bracket
+# fact this exporter always has (the `|waiting|` line it is deriving a span
+# for) but `spawn_phase_worker` never does — it runs *before* that bracket
+# exists, so its own `TRACEPARENT` derivation can share this exporter's
+# derived trace id but not its span id; see that call site.
+#
+# Both `derive_*_hex` functions return lowercase hex strings (the W3C
+# traceparent shape) — 32 hex chars / 128 bits for a trace id, 16 hex chars /
+# 64 bits for a span id. Callers feeding an OTel SDK IdGenerator (which wants
+# integers) convert with int(value, 16); callers building a TRACEPARENT
+# header or a log line use the hex string directly.
 
 def derive_trace_id_hex(run_id):
     return hashlib.sha256(f'trace:{run_id}'.encode('utf-8')).hexdigest()[:32]
 
 
-def derive_span_id_hex(run_id, phase, generation):
-    key = f'span:{run_id}:{phase}:{generation}'
+def derive_span_id_hex(run_id, phase, step, start_ts):
+    """A span id unique to one *bracket* — one open/close pair of one step
+    of one phase of one run — not one phase of one run.
+
+    `generation` was the third input here until issue #361's follow-up
+    review caught two live collisions it could not distinguish: (a)
+    `generation` (as read back from the pipeline log by
+    `TicketTranslator._feed_meta`) is stamped once by `run-identity.sh` at
+    the *first* preamble call of a run and never updated on later calls —
+    `ticket-preamble.sh` documents this as a no-op by design — so every
+    retry within one run shares the same `generation` even though fleetd's
+    own in-memory counter (`Supervisor._resolve_generation`) genuinely
+    advances per spawn; that counter is never written back to the log. (b)
+    `phase` alone conflates every step of a multi-step phase — PR-REVIEW's
+    `checkout-pr`/`merge-decision`/`pr-reconcile`/`pr-review` are four
+    brackets, one `PHASE` field. Both collisions reintroduced #361's own
+    "can't see whether there was a retry storm" problem one level down: the
+    router's own VERIFY retry loop (max 3 attempts) and PR-REVIEW's four
+    steps were each landing on one shared span id.
+
+    `step` and `start_ts` are what a `DerivedSpan` already carries for
+    every completed bracket (`self.step`, `self.start` — the bracket's own
+    `|waiting|` line), so this needs nothing new plumbed through the
+    preamble/spawn chain: two brackets of the same `(run_id, phase, step)`
+    are, by the log's own bracket-uniqueness rule, never open at once, so
+    their `|waiting|` timestamps always differ. `start_ts` must already be
+    the caller's canonical string form of that timestamp (the exporter
+    reformats its parsed `datetime` back to the log's own `%Y-%m-%dT%H:%M:%SZ`
+    shape) so replaying the same log line always derives the same id.
+    """
+    key = f'span:{run_id}:{phase}:{step}:{start_ts}'
     return hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]
 
 
-def derive_trace_context(run_id, phase, generation):
-    """(trace_id_hex, span_id_hex) for one phase of one run."""
-    return derive_trace_id_hex(run_id), derive_span_id_hex(run_id, phase, generation)
+def derive_trace_context(run_id, phase, step, start_ts):
+    """(trace_id_hex, span_id_hex) for one bracket of one run."""
+    return derive_trace_id_hex(run_id), derive_span_id_hex(run_id, phase, step, start_ts)
 
 
 def build_queued_id_generator():
@@ -182,10 +221,13 @@ def build_queued_id_generator():
         rather than random — issue #361) and `generate_span_id` (never
         queued for a root — its own span id doesn't need to match anything).
         A phase span's creation calls only `generate_span_id` (queued to the
-        id derived from `(run_id, phase, generation)`, the same value
-        `fleetd/supervisor.py` derives for that phase's `TRACEPARENT` when
-        `FLEET_TRACE_PROPAGATE_ENABLE` is also on); its trace id is inherited
-        from the root's context, not generated here at all.
+        id derived from `(run_id, phase, step, start_ts)` — see
+        `derive_span_id_hex`); its trace id is inherited from the root's
+        context, not generated here at all. `fleetd/supervisor.py` derives
+        the same *trace* id for `TRACEPARENT` when `FLEET_TRACE_PROPAGATE_ENABLE`
+        is on, but not the same span id — it runs before the worker it is
+        spawning has written that bracket's `|waiting|` line, so it has no
+        `start_ts` to derive from yet; see its own call site.
         """
 
         def __init__(self, fallback):
@@ -234,6 +276,15 @@ def parse_iso(value):
 
 def _nanos(ts):
     return int(ts.timestamp() * 1_000_000_000)
+
+
+def _iso_str(ts):
+    """The inverse of `parse_iso` — round-trips a parsed `datetime` back to
+    the log's own literal timestamp string, so a value derived from it
+    (`derive_span_id_hex`'s `start_ts`) is the same string a second parse of
+    the same log line would produce, not an artifact of `datetime`'s own
+    default string form."""
+    return ts.strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
 @dataclass
@@ -720,26 +771,30 @@ class OtlpEmitter:
         self._roots[ticket] = (root, ctx, run_id)
         return ctx
 
-    def emit(self, span, run_id=None, generation=None):
+    def emit(self, span, run_id=None):
         """Emit one derived span, deriving both trace and span id from
-        `run_id` (and, for the span id, `phase`/`generation`) whenever
-        `run_id` is known — unconditionally (issue #361:
-        LANGFUSE_TRACE_REPLAY_INFLATION). `derive_span_id_hex` is a pure
-        function of its three inputs, so this always computes the identical
-        value `fleetd/supervisor.py` would have derived for the same
-        `(run_id, phase, generation)` at spawn time (TP1) — there is nothing
-        to adopt from `META|trace-context` that self-deriving here does not
-        already reproduce, and no need to wait on `FLEET_TRACE_PROPAGATE_ENABLE`
-        (which only governs whether the *worker* gets told about it) to stop
-        a tailing restart or a resumed run from opening duplicate spans.
+        `run_id` whenever it is known — unconditionally (issue #361:
+        LANGFUSE_TRACE_REPLAY_INFLATION). The span id additionally keys on
+        `span.phase`, `span.step` and `span.start` (see `derive_span_id_hex`
+        — every DerivedSpan already carries these, so nothing new needs
+        plumbing through the caller): two brackets of the same
+        `(run_id, phase, step)` are never open at once, by the log's own
+        bracket-uniqueness rule, so their `|waiting|` timestamps always
+        differ and a retry never collides with its own predecessor. There is
+        nothing to adopt from `META|trace-context` that self-deriving here
+        does not already reproduce for the trace id, and no need to wait on
+        `FLEET_TRACE_PROPAGATE_ENABLE` (which only governs whether the
+        *worker* gets told about it) to stop a tailing restart or a resumed
+        run from opening duplicate spans.
         """
         if not self.available:
             return
         ctx = self._root_context(span.ticket, run_id, span.start)
         if run_id and self._id_generator is not None:
             try:
-                self._id_generator.queue_span_id(
-                    int(derive_span_id_hex(run_id, span.phase, generation), 16))
+                span_id_hex = derive_span_id_hex(
+                    run_id, span.phase, span.step, _iso_str(span.start))
+                self._id_generator.queue_span_id(int(span_id_hex, 16))
             except Exception:
                 pass
         otel_span = self._tracer.start_span(
@@ -947,7 +1002,7 @@ class Exporter:
             cost = self._cost_for(span.ticket, generation, span.phase)
             if cost is not None:
                 span.attributes['pipeline.cost.usd'] = cost
-            self.emitter.emit(span, run_id, generation=generation)
+            self.emitter.emit(span, run_id)
             self.activity.prune(span.ticket, span.end)
             emitted += 1
         self.pending = still_pending

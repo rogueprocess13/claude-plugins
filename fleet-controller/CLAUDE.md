@@ -300,21 +300,32 @@ Two separable concerns share this name, and only one of them is gated by
 - **The exporter's own id derivation is unconditional** (fixed for issue
   #361, LANGFUSE_TRACE_REPLAY_INFLATION — a resumed or re-tailed export was
   fanning one pipeline run out into many Langfuse root traces, ~9x
-  inflation). `fleetd/otel.py`'s `derive_trace_context(run_id, phase,
-  generation)` — one pure function, used by both the spawning path and this
-  exporter, so both sides compute identical identifiers with no shared state
-  and no ordering requirement (TP1). A trace id is
-  `sha256("trace:{run_id}")[:32]`; a phase's span id is
-  `sha256("span:{run_id}:{phase}:{generation}")[:16]` — both lowercase hex,
-  the W3C traceparent shape. `OtlpEmitter` installs a queued `IdGenerator` on
-  its `TracerProvider` (`build_queued_id_generator`, task 7.6) and always
-  queues the derived trace id before creating a ticket's root span, and the
-  derived span id before creating a phase span, whenever `run_id` is known —
-  regardless of `FLEET_TRACE_PROPAGATE_ENABLE`. This is what makes a resume,
-  or a fleetd/exporter restart that re-tails a pipeline log from byte zero
-  with an empty in-memory `_roots` cache, idempotent: the same run always
-  derives the same (trace_id, span_id) pairs, so a replayed export updates
-  the existing trace rather than opening a new root. **Known limitation**,
+  inflation). `fleetd/otel.py`'s `derive_trace_id_hex(run_id)` and
+  `derive_span_id_hex(run_id, phase, step, start_ts)` (bundled as
+  `derive_trace_context`) — pure functions, used by both the spawning path
+  and this exporter for the *trace* id, so both sides compute the identical
+  trace id with no shared state and no ordering requirement (TP1). A trace
+  id is `sha256("trace:{run_id}")[:32]`; a phase's span id is
+  `sha256("span:{run_id}:{phase}:{step}:{start_ts}")[:16]` — both lowercase
+  hex, the W3C traceparent shape. `generation` was the fourth key input
+  until #361's follow-up review found two live collisions: `generation` (as
+  the pipeline log actually records it) is stamped once at a run's first
+  spawn and frozen for every later preamble call, so retries within one run
+  shared a span id; and `phase` alone conflated every step of a multi-step
+  phase (PR-REVIEW's four steps share one `PHASE` field). `step` and
+  `start_ts` (the bracket's own `|waiting|` timestamp, always distinct
+  between two brackets of the same `(run_id, phase, step)` by the log's own
+  bracket-uniqueness rule) fix both without plumbing anything new through
+  the preamble/spawn chain — a `DerivedSpan` already carries both. `OtlpEmitter`
+  installs a queued `IdGenerator` on its `TracerProvider`
+  (`build_queued_id_generator`, task 7.6) and always queues the derived
+  trace id before creating a ticket's root span, and the derived span id
+  before creating a phase span, whenever `run_id` is known — regardless of
+  `FLEET_TRACE_PROPAGATE_ENABLE`. This is what makes a resume, or a
+  fleetd/exporter restart that re-tails a pipeline log from byte zero with
+  an empty in-memory `_roots` cache, idempotent: the same run always derives
+  the same (trace_id, span_id) pairs, so a replayed export updates the
+  existing trace rather than opening a new root. **Known limitation**,
   matching design.md's Risks: if the root has to open under a provisional
   key (run id unknown at the moment the first phase bracket closes), its
   trace id was already randomly assigned before the run id became known and
@@ -326,11 +337,17 @@ Two separable concerns share this name, and only one of them is gated by
   `TRACEPARENT=00-{trace_id}-{span_id}-01` into the worker's environment, and
   record both in `META|trace-context` (TP2) — so the worker's *own* runtime
   telemetry, if it has any, nests under the exporter's derived context rather
-  than opening an unrelated trace of its own. **Not yet settled**: whether a
-  derived phase span — which reaches the backend *after* the children that
-  attach beneath it, since the exporter is a tailing reader — actually
-  reconciles into one trace at the real backend. That is phase 4 (design.md
-  Gate verdicts), a live end-to-end ticket run this change has not
+  than opening an unrelated trace of its own. Its trace id matches the
+  exporter's exactly (both depend only on `run_id`); its span id does not —
+  this call runs *before* the worker it is spawning has written that phase's
+  `|waiting|` line, so it has no `start_ts` to key on yet and passes `None`
+  for it, deriving a value the exporter's later, real `start_ts`-keyed
+  derivation will not reproduce. **Not yet settled**: whether a derived
+  phase span — which reaches the backend *after* the children that attach
+  beneath it, since the exporter is a tailing reader — actually reconciles
+  into one trace at the real backend, span-id mismatch aside. That is phase
+  4 (design.md Gate verdicts), a live end-to-end ticket run this change has
+  not
   performed. The flag stays off until it has; the exporter's own idempotency
   above does not depend on it.
 
@@ -440,7 +457,7 @@ All settings use `${VAR:-default}` pattern for env-var overrides:
 | `FLEET_OTEL_WORKER_ENVIRONMENT` | `pipeline` | `deployment.environment` stamped on every worker spawn (worker-telemetry-env) — separates autonomous pipeline execution from interactive use on the same telemetry backend |
 | `FLEET_OTEL_WORKER_EXPORT_MS` | 2000 | `OTEL_BSP_SCHEDULE_DELAY` (ms) stamped on every worker spawn — shortens the runtime's own batch-export interval below its SDK default so a killed worker loses less buffered telemetry |
 | `FLEET_OTEL_HEADERS` | (unset) | `key1=val1,key2=val2` extra headers on fleetd's own OTLP exporter requests, and forwarded unchanged as `OTEL_EXPORTER_OTLP_HEADERS` on every worker spawn so both streams authenticate against the same collector |
-| `FLEET_TRACE_PROPAGATE_ENABLE` | false | trace-context-propagation (langfuse-evidence-layer Phase 3) — the exporter *itself* always derives a trace/span id from `(run_id, phase, generation)` regardless of this flag (fixed for issue #361, LANGFUSE_TRACE_REPLAY_INFLATION). This flag governs only whether that same id pair is *also* exported into the worker's environment as `TRACEPARENT`, so the worker's own runtime telemetry (if any) nests its observations beneath the derived phase span instead of opening an unrelated trace. Stays off until a real end-to-end ticket confirms a derived parent span — which reaches the backend *after* the children that attached to it — reconciles into one trace rather than two (design.md Gate verdicts, phase 4, not yet run) |
+| `FLEET_TRACE_PROPAGATE_ENABLE` | false | trace-context-propagation (langfuse-evidence-layer Phase 3) — the exporter *itself* always derives a trace id from `run_id` and a span id from `(run_id, phase, step, start_ts)` regardless of this flag (fixed for issue #361, LANGFUSE_TRACE_REPLAY_INFLATION; the span key's `generation` input was replaced by `step`/`start_ts` in the same issue's follow-up, after `generation` was found frozen across retries and missing `step` entirely, colliding both the router's own VERIFY-retry loop and PR-REVIEW's four steps onto one span id). This flag governs only whether the *trace* id (not the span id — `Supervisor.spawn_phase_worker` runs before the bracket it derives a span id for even exists) is *also* exported into the worker's environment as `TRACEPARENT`, so the worker's own runtime telemetry (if any) nests its observations beneath the exporter's root span instead of opening an unrelated trace. Stays off until a real end-to-end ticket confirms a derived parent span — which reaches the backend *after* the children that attached to it — reconciles into one trace rather than two (design.md Gate verdicts, phase 4, not yet run) |
 | `FLEET_SCORE_EXPORT_ENABLE` | false | Gates `run-score-export.sh`'s periodic sweep (run-score-export). Also requires `LANGFUSE_HOST`/`LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` — any one missing is a no-op |
 | `LANGFUSE_HOST` | (unset) | Base URL for the score-export sweeper's `POST /api/public/scores` calls |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | (unset) | HTTP Basic Auth credentials for the score-export sweeper |

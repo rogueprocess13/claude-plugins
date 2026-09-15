@@ -3632,8 +3632,14 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
         self.assertTrue(trace_line['propagate'])
         run_id = trace_line['run_id']
         self.assertTrue(run_id)
+        # `start_ts=None`: this call site runs before the worker it just
+        # spawned has written IMPLEMENT's `|waiting|` line, so it has no
+        # bracket start timestamp to derive from yet (issue #361 follow-up —
+        # see supervisor.py's own call site and otel.py's
+        # `derive_span_id_hex`). STEP_4's `spawn.step` is 'implement' per
+        # the dispatch table.
         expected_trace_id, expected_span_id = otel_mod.derive_trace_context(
-            run_id, 'IMPLEMENT', 1)
+            run_id, 'IMPLEMENT', 'implement', None)
         self.assertEqual(trace_line['trace_id'], expected_trace_id)
         self.assertEqual(trace_line['span_id'], expected_span_id)
         # The worker's own environment carries exactly this pair — the
