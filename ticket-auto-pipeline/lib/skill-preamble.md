@@ -232,10 +232,10 @@ if [ $_rc -ne 0 ]; then
 fi
 ```
 
-**jq extraction failure pattern:** When `jq` fails to extract a field from a Linear API response, capture it before stopping:
+**jq extraction failure pattern:** When `jq` fails to extract a field from a Linear API response, capture it before stopping. Only check jq's own exit status here — the payload itself was already validated by `require_issue_payload` above, so a `null` *field value* at this point is a legitimate Linear value (e.g. an unset `dueDate`, `assignee`, `parent`, or `project`), not a failure sentinel:
 ```bash
 _field=$(echo "$_raw" | jq -r '.fieldName' 2>&1)
-if [ $? -ne 0 ] || [ "$_field" = "null" ]; then
+if [ $? -ne 0 ]; then
   hb_retry "jq-parse" "fail" "jq extraction failed for fieldName" \
     "{\"error_type\":\"jq_parse\",\"command\":\"get_issue\",\"field\":\"fieldName\"}"
 fi
