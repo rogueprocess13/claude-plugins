@@ -17,6 +17,72 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.9 (2026-09-15)
+
+Fixes `GITNEXUS_PREFLIGHT_BRANCH_UNVERIFIED` (issue #359): the documented
+GitNexus pre-flight only checked that the MCP server was *reachable*
+(`list_repos` succeeding), never that the indexed clone was actually
+positioned to answer the question being asked. `list_repos`' own
+`staleness.commitsBehind` is computed against whatever branch the indexed
+clone currently has checked out — so reachability plus `commitsBehind == 0`
+both read healthy even when the index sits on a branch wholly unrelated to
+the PR/ticket branch in question, and `detect_changes --scope compare`
+confidently diffs that unrelated branch instead. Recurred three times
+against real runs (WIL-75: 135 unrelated symbols across files never touched
+by the PR; WIL-77: 39 files returned against an 8-file PR; WIL-82: ~60 KB of
+noise from an index still checked out on a sibling ticket's branch),
+surfaced by a WIL-75..82-window `ticket-retro` deep scan.
+
+- New `lib/gitnexus-preflight.sh`: `gitnexus_verify_branch <repo_dir>
+  <indexed_commit> <expected_ref> [max_commits_behind]` does a pure git
+  ancestor check — the indexed commit must be an ancestor of (or equal to)
+  the branch actually being asked about, and within a bounded distance of it
+  (`GITNEXUS_MAX_COMMITS_BEHIND`, default 20) — printing `ok <n>` /
+  `wrong-branch` / `ahead <n>` / `stale <n>` / `unresolvable <reason>` (exit
+  0 verified, 1 unverified, 2 usage/resolution error; 1 and 2 both mean
+  "fall back"). `ahead <n>` is a same-lineage-wrong-direction case (a
+  rebase/force-push moved `expected_ref` backward relative to what's
+  indexed) — functionally identical to `wrong-branch` for the caller, but
+  distinguished in the output so an operator grepping the heartbeat log for
+  the real cause doesn't mistake a rebase for an unrelated-branch index.
+  `gitnexus_check_result_subset <returned_files> <known_files>`
+  sanity-checks a `detect_changes` result against the real diff's file list,
+  catching a stale-but-ancestor index that still names files outside the
+  actual change — the second half of the issue's Verification Checklist.
+  Neither function makes an MCP call itself; callers pass in results they
+  already fetched.
+- `skills/ticket-pr-review/SKILL.md` Step 4.5 — the pre-flight now verifies
+  the indexed commit against `origin/{headRefName}` before trusting
+  `detect_changes`, and sanity-checks the returned file set against Step 4's
+  own `git diff --name-only` before reporting findings from it. Either
+  failure logs `gitnexus-health|fail|stale-or-wrong-branch` and falls
+  through to the existing manual-verification path — GitNexus availability
+  still never blocks the pipeline.
+- `skills/ticket-implement/SKILL.md` Step 5's pre-push `detect_changes`
+  safety check gets the same two-part verification against the worktree's
+  own `HEAD`, before its result is allowed to add a scope warning to the
+  handoff output.
+- **`agents/ticket-pr-review-agent.md` and `agents/ticket-implement-agent.md`
+  — added `mcp__gitnexus__list_repos` to both agents' `tools:` frontmatter
+  allowlist.** Without this the fix above was dead code in the real
+  pipeline: `dispatch-table.json` routes PR-REVIEW and IMPLEMENT to exactly
+  these two named agent types, and per `CLAUDE.md`'s "Sub-agent isolation"
+  section each agent's `tools:` list is an explicit per-tool grant with no
+  wildcards — neither agent had `list_repos` despite both already having
+  `detect_changes`, so the new pre-flight's reachability check would always
+  report unreachable and both `gitnexus_verify_branch` and the
+  `detect_changes` call it gates would never actually run. Caught in review
+  before this branch was pushed.
+- New `lib/tests/test-gitnexus-preflight.sh` (11 tests) against a real git
+  fixture with a base branch, a PR branch two commits ahead, and a sibling
+  branch diverging from the same base — covering exact-match, ancestor
+  within/beyond threshold, wrong-branch rejection (the WIL-75/77/82
+  scenario), the ahead-in-same-lineage case, unresolvable refs/paths, and
+  both subset-check outcomes. New `lib/tests/test-gitnexus-agent-tools.sh`
+  (5 tests) — a structural grep guard pinning both agents' `tools:` grants
+  and both SKILL.md pre-flight call sites, verified to fail against the
+  pre-fix agent frontmatter. Both wired into `make test-lib`.
+
 ## fleet-controller 0.31.7 (2026-09-15)
 
 Second follow-up to 0.31.6/0.31.5 below (issue #361, round 2). That round's

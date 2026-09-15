@@ -174,21 +174,33 @@ This produces the full set of changes introduced by the branch relative to its b
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|gitnexus-impact|start|Running detect_changes" >> "$LOG_FILE"
 
-**Pre-flight: GitNexus health check.** Before calling `detect_changes`, verify GitNexus MCP is reachable by calling `mcp__gitnexus__list_repos`. If the call fails or times out after 5 seconds, GitNexus is unavailable — skip to the fallback below. Log: `gitnexus-health|fail|unreachable` in the heartbeat.
+**Pre-flight: GitNexus reachability + branch verification (#359).** Reachability alone is not enough — `list_repos` can return healthy while the indexed clone sits on a branch completely unrelated to this PR, which silently produces a confidently-wrong diff (`detect_changes --scope compare` diffs whatever the indexed clone happens to have checked out). Verify both:
 
-Call `mcp__gitnexus__detect_changes` with `scope: "compare"` and `base_ref: "{baseRefName}"`. This maps the full PR diff against the knowledge graph.
+1. **Reachability:** call `mcp__gitnexus__list_repos`. If the call fails or times out after 5 seconds, GitNexus is unavailable — skip to the fallback below. Log: `gitnexus-health|fail|unreachable` in the heartbeat.
+2. **Branch verification:** from the `list_repos` result, find the entry for this repo and read its `lastCommit`. Then run:
+   ```bash
+   source "$HOME/.claude/skills/lib/gitnexus-preflight.sh"
+   gitnexus_verify_branch "$WORKTREE_PATH" "{lastCommit}" "origin/{headRefName}"
+   ```
+   (`$WORKTREE_PATH` was resolved in Step 4 and already has `origin` fetched.) This checks the indexed commit is actually an ancestor of the PR's head branch, not just present in *some* branch — `list_repos`' own `staleness.commitsBehind` is computed against whatever the indexed clone currently has checked out, so it cannot detect a wrong-branch index on its own. `ok <n>` (exit 0) means verified — proceed. `wrong-branch`, `ahead <n>` (a rebase/force-push moved the branch — same failure mode as wrong-branch for this purpose), or `stale <n>` (all exit 1), or `unresolvable <reason>` (exit 2), all mean **unverified** — log `gitnexus-health|fail|stale-or-wrong-branch` in the heartbeat and skip to the fallback below.
+
+Only once both checks pass: call `mcp__gitnexus__detect_changes` with `scope: "compare"` and `base_ref: "{baseRefName}"`. This maps the full PR diff against the knowledge graph.
 
 **If results are returned:**
+- **Sanity-check the result set (#359):** compare `detect_changes`' affected-file list against the real PR diff already obtained in Step 4 (`git diff --name-only origin/{baseRefName}...origin/{headRefName}`). Write both file lists (one path per line) and run:
+  ```bash
+  gitnexus_check_result_subset "$RETURNED_FILES" "$KNOWN_PR_FILES"
+  ```
+  A non-subset result (exit 1 — files GitNexus named that aren't in the actual PR diff) means the structural diff is unreliable even though the branch check passed (e.g. a stale-but-ancestor index). Discard the result, log `gitnexus-health|fail|stale-or-wrong-branch`, and fall back below — never report findings sourced from an unverified result set.
 - Record each affected execution flow with its risk level
 - **Constructor DI filter:** For each HIGH or CRITICAL risk flow, check if the change is limited to constructor parameter additions (new DI params, no logic changes). If so — downgrade risk to LOW. Constructor DI additions are structural, not behavioral — they add a new dependency parameter without changing call paths, control flow, or side effects. Log: `gitnexus-filter|info|constructor-DI downgrade: {flow-name} HIGH→LOW`
 - If any non-DI flow remains at HIGH or CRITICAL risk, flag it prominently in the findings
 
-**If zero results or GitNexus unavailable:**
-- Run pre-flight health check: `mcp__gitnexus__list_repos` (5s timeout). If unreachable, log: `gitnexus-health|fail|unreachable` in heartbeat.
-- Note that changed files have no indexed execution flows (shell scripts, config, docs — expected for some repos)
+**If zero results, GitNexus unavailable, branch unverified, or the result set failed the subset check:**
+- Note that changed files have no indexed execution flows (shell scripts, config, docs — expected for some repos), or that the index could not be verified/trusted for this branch
 - Log a warning and proceed — never block on GitNexus availability
 
-**If GitNexus's structural diff is unreliable for this repo** (e.g. the local clone isn't checked out on the PR branch, so `detect_changes --scope compare` would diff unrelated noise) and you fall back to running the project's own test command directly as manual verification: redirect that command's stdout/stderr to `{ticket-dir}/pr-review-build-{repo-slug}.log`, never to `$LOG_FILE`. `$LOG_FILE` only ever gets one structured summary line (pass/fail, test counts), e.g. `[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|manual-verify|done|{repo}: {pass|fail}, {N} tests" >> "$LOG_FILE"`. Every consumer of the pipeline log (`detect-resume.sh`, `gate-check.sh`) parses strict `ISO|PHASE|STEP|STATUS|MSG` rows — raw build console output breaks that contract even though current parsers happen to skip unmatched lines.
+**If GitNexus's structural diff is unreliable for this repo** (branch verification failed, or the result failed the subset sanity check above) and you fall back to running the project's own test command directly as manual verification: redirect that command's stdout/stderr to `{ticket-dir}/pr-review-build-{repo-slug}.log`, never to `$LOG_FILE`. `$LOG_FILE` only ever gets one structured summary line (pass/fail, test counts), e.g. `[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|manual-verify|done|{repo}: {pass|fail}, {N} tests" >> "$LOG_FILE"`. Every consumer of the pipeline log (`detect-resume.sh`, `gate-check.sh`) parses strict `ISO|PHASE|STEP|STATUS|MSG` rows — raw build console output breaks that contract even though current parsers happen to skip unmatched lines.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|gitnexus-impact|done|{N} affected flows, risk: {highest-risk}" >> "$LOG_FILE"
 
