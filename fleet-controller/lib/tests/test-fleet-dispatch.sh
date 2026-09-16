@@ -786,6 +786,63 @@ test_multi_repo_creation_failure_gate_stops() {
   return 0
 }
 
+# GH #381: the gate-stop must reach STDOUT. supervisor.py's dispatch_epic
+# reports the last stdout line as the /dispatch response message, so a
+# stderr-only gate-stop rendered as a clean empty no-op — the failure was
+# invisible to the caller that triggered the dispatch.
+test_epic_branch_gate_stop_reaches_stdout() {
+  local ws
+  ws=$(_setup_workspace)
+  local repos_root="${ws}/repos"
+  _make_multi_repo_root "$repos_root"
+
+  # stderr is discarded, so anything asserted below came from stdout.
+  local stdout_only
+  stdout_only=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-gatestop-stdout
+    REPOS_ROOT='$repos_root'
+    ensure_epic_branch() {
+      echo \"epic-branch: failed to push branch 'epic/x' to origin: HOOK-REJECTED-381\" >&2
+      return 1
+    }
+    epic_branch_sync() { return 0; }
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _mock_epic_query_with_children)
+    $(declare -f _mock_get_issue_blocker_in_progress)
+    _mock_epic_query_with_children
+    _mock_get_issue_blocker_in_progress
+    fleet_dispatch_initiative 'INIT-42' '$ws'
+  " 2>/dev/null || true)
+
+  echo "$stdout_only" | grep -q "EPIC_BRANCH_UNAVAILABLE" || {
+    echo "gate-stop did not reach stdout; stdout: $stdout_only" >&2
+    rm -rf "$ws"
+    return 1
+  }
+
+  # The reason from ensure_epic_branch must survive into the gate-stop line.
+  echo "$stdout_only" | grep -q "HOOK-REJECTED-381" || {
+    echo "gate-stop lost the underlying reason; stdout: $stdout_only" >&2
+    rm -rf "$ws"
+    return 1
+  }
+
+  # dispatch_epic's contract is the LAST stdout line.
+  local last_line
+  last_line=$(printf '%s' "$stdout_only" | tail -1)
+  case "$last_line" in
+  EPIC_BRANCH_UNAVAILABLE*) ;;
+  *)
+    echo "gate-stop is not the last stdout line; last: $last_line" >&2
+    rm -rf "$ws"
+    return 1
+    ;;
+  esac
+
+  rm -rf "$ws"
+  return 0
+}
+
 test_multi_repo_sync_failure_does_not_block() {
   local ws
   ws=$(_setup_workspace)
@@ -1324,6 +1381,7 @@ _run "dispatch_enqueues_despite_torn_queue_line" test_dispatch_enqueues_despite_
 _run "multi_repo_creation_covers_all_repos" test_multi_repo_creation_covers_all_repos
 _run "multi_repo_creation_failure_gate_stops" test_multi_repo_creation_failure_gate_stops
 _run "multi_repo_sync_failure_does_not_block" test_multi_repo_sync_failure_does_not_block
+_run "epic_branch_gate_stop_reaches_stdout" test_epic_branch_gate_stop_reaches_stdout
 _run "priority_urgent_before_low" test_priority_urgent_before_low
 _run "priority_no_priority_sorts_last" test_priority_no_priority_sorts_last_not_first
 _run "priority_all_five_levels_order" test_priority_all_five_levels_full_order

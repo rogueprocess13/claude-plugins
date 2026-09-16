@@ -555,8 +555,27 @@ _fleet_dispatch_initiative_locked() {
       # Creation failure in any one repo gate-stops the whole initiative —
       # enqueueing children at a base that does not exist somewhere would turn
       # one clear failure into one failure per child.
-      if ! ensure_epic_branch "$initiative_id" "$_epic_repo"; then
-        echo "EPIC_BRANCH_UNAVAILABLE: initiative ${initiative_id} — cannot ensure epic branch in ${_epic_repo}, skipping dispatch" >&2
+      # The gate-stop line goes to STDOUT (with a stderr copy kept for
+      # existing log consumers): supervisor.py's dispatch_epic reports the
+      # last STDOUT line to the /dispatch caller, so a stderr-only gate-stop
+      # rendered as a clean empty no-op instead of a failure (GitHub #381).
+      local _eb_out=""
+      if _eb_out=$(ensure_epic_branch "$initiative_id" "$_epic_repo" 2>&1); then
+        if [ -n "$_eb_out" ]; then
+          echo "$_eb_out"
+        fi
+      else
+        if [ -n "$_eb_out" ]; then
+          echo "$_eb_out"
+        fi
+        local _eb_msg _eb_reason
+        _eb_msg="EPIC_BRANCH_UNAVAILABLE: initiative ${initiative_id} — cannot ensure epic branch in ${_epic_repo}, skipping dispatch"
+        _eb_reason=$(printf '%s' "$_eb_out" | tail -1)
+        if [ -n "$_eb_reason" ]; then
+          _eb_msg="${_eb_msg} — ${_eb_reason}"
+        fi
+        echo "$_eb_msg"
+        echo "$_eb_msg" >&2
         return 0
       fi
 

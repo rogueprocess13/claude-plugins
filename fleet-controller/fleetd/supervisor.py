@@ -831,6 +831,18 @@ class HealthServer:
 # this file (fleetd/supervisor.py → fleet-controller/lib/).
 _DEFAULT_FLEET_LIB = str(Path(__file__).resolve().parent.parent / 'lib')
 
+# Substrings that mark a dispatch run as gate-stopped rather than merely
+# empty. fleet_dispatch_initiative returns 0 for these (the epic is declined,
+# not failed), so rc alone cannot distinguish them from a clean no-op.
+# NOTE: failure-only substrings only. 'epic-branch.sh not sourceable' is
+# deliberately NOT here: that line is a WARNING after which dispatch still
+# enqueues children, so treating it as a gate-stop would mislabel a
+# successful dispatch and eat its summary line.
+_DISPATCH_GATE_STOP_MARKERS = (
+    'EPIC_BRANCH_UNAVAILABLE',
+    'epic-branch: failed to push',
+)
+
 
 class CycleCache:
     """Per-cycle cache for detection results and external lookups.
@@ -3625,13 +3637,16 @@ class Supervisor:
         consume below.
 
         Returns {'queued': [...], 'resumed': [...], 'blocked': [...],
-                 'spawned': [...], 'message': str}.
+                 'spawned': [...], 'message': str, 'gate_stop': str}.
+        `gate_stop` names the marker that halted dispatch ('' when none);
+        `message` then carries that marker's full line.
         """
         dispatch_script = self._fleet_lib_dir / 'fleet-dispatch.sh'
         if not dispatch_script.is_file():
             return {
                 'queued': [], 'resumed': [], 'blocked': [], 'spawned': [],
                 'message': f'dispatch script not found: {dispatch_script}',
+                'gate_stop': '',
             }
 
         # epic_id comes from the HTTP body — pass it via the environment,
@@ -3682,6 +3697,19 @@ class Supervisor:
             err_lines = stderr.strip().splitlines()
             message = (err_lines or lines or ['dispatch failed'])[-1]
 
+        # Gate-stops are rc-0 by design — dispatch declines to enqueue rather
+        # than failing — so the last-stdout-line contract above reported the
+        # preceding validation line and a real failure looked like a clean
+        # no-op (GitHub #381). Scan BOTH streams for the known markers, for
+        # every rc, and promote the last match to the caller-visible message.
+        gate_stop = ''
+        for line in (stdout + '\n' + stderr).splitlines():
+            for marker in _DISPATCH_GATE_STOP_MARKERS:
+                if marker in line:
+                    gate_stop = marker
+                    message = line.strip()
+                    break
+
         spawned = []
         if not dry_run and rc == 0:
             with self._state_lock:
@@ -3689,7 +3717,7 @@ class Supervisor:
 
         return {
             'queued': queued, 'resumed': resumed, 'blocked': blocked,
-            'spawned': spawned, 'message': message,
+            'spawned': spawned, 'message': message, 'gate_stop': gate_stop,
         }
 
     def stop_epic(self, epic_id, reason=''):
