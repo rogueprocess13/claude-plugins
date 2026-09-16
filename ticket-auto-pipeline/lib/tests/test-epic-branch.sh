@@ -274,6 +274,139 @@ test_push_failure_cleans_local_ref() {
 }
 _run "push failure cleans local ref, retry succeeds" test_push_failure_cleans_local_ref
 
+# ── 2.3c: Pre-push hook handling for zero-commit ref creation (GH #381) ──────
+# The epic branch is created as a plain ref at origin/<base> — zero new
+# commits — so a repo-local pre-push hook has no code to check; it runs its
+# preflight against whatever the shared clone has checked out, which may be an
+# unrelated stale branch. ensure_epic_branch skips the hook for exactly that
+# case, and only that case.
+
+# Installs a pre-push hook that always rejects, optionally echoing $2 to stderr.
+_install_failing_pre_push_hook() {
+  local repo="$1"
+  local sentinel="${2:-}"
+  mkdir -p "$repo/.git/hooks"
+  cat >"$repo/.git/hooks/pre-push" <<EOHOOK
+#!/usr/bin/env bash
+echo "${sentinel}" >&2
+exit 1
+EOHOOK
+  chmod +x "$repo/.git/hooks/pre-push"
+}
+
+test_zero_commit_push_skips_hook() {
+  _setup_fixture
+  _install_failing_pre_push_hook "$FIXTURE_REPO"
+
+  ensure_epic_branch "CRE-100" "$FIXTURE_REPO" >/dev/null 2>&1 || {
+    echo "  ensure_epic_branch failed despite zero-commit hook skip" >&2
+    return 1
+  }
+
+  # The branch must actually have reached origin, not just been created locally.
+  git -C "$ORIGIN_REPO" rev-parse --verify "epic/test-branch" >/dev/null 2>&1 || {
+    echo "  branch missing on origin — push did not land" >&2
+    return 1
+  }
+
+  return 0
+}
+_run "zero-commit push skips pre-push hook" test_zero_commit_push_skips_hook
+
+test_push_verify_override_honours_hook() {
+  _setup_fixture
+  _install_failing_pre_push_hook "$FIXTURE_REPO"
+
+  local rc=0
+  EPIC_BRANCH_PUSH_VERIFY=true \
+    ensure_epic_branch "CRE-100" "$FIXTURE_REPO" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 1 ] || {
+    echo "  expected exit 1 with EPIC_BRANCH_PUSH_VERIFY=true, got $rc" >&2
+    return 1
+  }
+
+  # Same wedge guarantee as any other push failure.
+  git -C "$FIXTURE_REPO" rev-parse --verify "epic/test-branch" >/dev/null 2>&1 && {
+    echo "  local ref left behind after hook-rejected push" >&2
+    return 1
+  }
+
+  return 0
+}
+_run "EPIC_BRANCH_PUSH_VERIFY=true honours the hook" test_push_verify_override_honours_hook
+
+test_push_failure_reports_hook_reason() {
+  _setup_fixture
+  _install_failing_pre_push_hook "$FIXTURE_REPO" "HOOK-SENTINEL-381"
+
+  local err
+  err=$(EPIC_BRANCH_PUSH_VERIFY=true \
+    ensure_epic_branch "CRE-100" "$FIXTURE_REPO" 2>&1 >/dev/null) || true
+
+  case "$err" in
+  *HOOK-SENTINEL-381*) ;;
+  *)
+    echo "  push failure did not report the hook's reason: $err" >&2
+    return 1
+    ;;
+  esac
+
+  case "$err" in
+  *"failed to push branch"*) ;;
+  *)
+    echo "  push failure message lost its prefix: $err" >&2
+    return 1
+    ;;
+  esac
+
+  return 0
+}
+_run "push failure reports the hook's own reason" test_push_failure_reports_hook_reason
+
+# The load-bearing guard: the no-verify path must never leak to a ref that
+# actually carries commits. The creation step is intercepted so the epic ref
+# lands on a real commit beyond origin/main — ensure_epic_branch must detect
+# that the zero-commit invariant does not hold and let the hook run.
+test_non_zero_commit_push_still_verified() {
+  _setup_fixture
+  _install_failing_pre_push_hook "$FIXTURE_REPO"
+
+  # Build a commit beyond origin/main without touching the working tree.
+  local base tree extra
+  base=$(git -C "$FIXTURE_REPO" rev-parse origin/main)
+  tree=$(git -C "$FIXTURE_REPO" rev-parse "origin/main^{tree}")
+  extra=$(GIT_AUTHOR_NAME=Test GIT_AUTHOR_EMAIL=test@test.com \
+    GIT_COMMITTER_NAME=Test GIT_COMMITTER_EMAIL=test@test.com \
+    git -C "$FIXTURE_REPO" commit-tree "$tree" -p "$base" -m "extra work")
+
+  # Intercept only `git -C <repo> branch <epic-branch> origin/main`.
+  _ZERO_COMMIT_OVERRIDE_SHA="$extra"
+  git() {
+    if [ "$3" = "branch" ] && [ "$4" = "epic/test-branch" ]; then
+      command git -C "$2" branch "epic/test-branch" "$_ZERO_COMMIT_OVERRIDE_SHA"
+      return $?
+    fi
+    command git "$@"
+  }
+
+  local rc=0
+  ensure_epic_branch "CRE-100" "$FIXTURE_REPO" >/dev/null 2>&1 || rc=$?
+  unset -f git
+
+  [ "$rc" -eq 1 ] || {
+    echo "  hook was skipped for a ref carrying commits (exit $rc)" >&2
+    return 1
+  }
+
+  command git -C "$ORIGIN_REPO" rev-parse --verify "epic/test-branch" >/dev/null 2>&1 && {
+    echo "  unverified branch reached origin" >&2
+    return 1
+  }
+
+  return 0
+}
+_run "non-zero-commit push is still hook-verified" test_non_zero_commit_push_still_verified
+
 # Creation failure: the directive's base does not exist on origin, so the
 # `git branch <branch> origin/<base>` call fails. Exit 1, no local ref left.
 test_create_failure_nonexistent_base() {

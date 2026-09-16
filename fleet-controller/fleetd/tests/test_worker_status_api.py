@@ -340,10 +340,84 @@ class TestDispatchEpic(unittest.TestCase):
                              "blocked children must be reported")
             self.assertEqual(result['spawned'], [])  # spawn disabled
             self.assertIn('fleet_dispatch', result['message'])
+            self.assertEqual(result['gate_stop'], '',
+                             "clean dispatch must report no gate-stop")
 
             # Second dispatch — stub dedup: nothing new queued.
             result2 = sup.dispatch_epic('INIT-42')
             self.assertEqual(result2['queued'], [])
+
+    def test_dispatch_epic_surfaces_epic_branch_gate_stop(self):
+        """GH #381: an rc-0 gate-stop must reach the /dispatch caller.
+
+        fleet_dispatch_initiative returns 0 when it declines an epic, so the
+        last-stdout-line contract reported the preceding validation line and
+        the failure looked like a clean no-op.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp)
+            (lib / 'fleet-dispatch.sh').write_text(
+                'fleet_dispatch_initiative() {\n'
+                '  echo "fleet_dispatch: validating initiative $1"\n'
+                '  echo "fleet_dispatch: initiative $1 validated'
+                ' (state:execution)"\n'
+                '  echo "EPIC_BRANCH_UNAVAILABLE: initiative $1 — cannot'
+                ' ensure epic branch in /repos/a, skipping dispatch —'
+                ' epic-branch: failed to push branch to origin"\n'
+                '  return 0\n'
+                '}\n')
+            sup = _make_supervisor(self.state, fleet_lib_dir=lib)
+            result = sup.dispatch_epic('INIT-42')
+            self.assertEqual(result['queued'], [])
+            self.assertIn('EPIC_BRANCH_UNAVAILABLE', result['message'])
+            self.assertEqual(result['gate_stop'], 'EPIC_BRANCH_UNAVAILABLE')
+
+    def test_dispatch_epic_stderr_only_gate_stop_surfaced(self):
+        """A gate-stop written only to stderr on an rc-0 run still surfaces."""
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp)
+            (lib / 'fleet-dispatch.sh').write_text(
+                'fleet_dispatch_initiative() {\n'
+                '  echo "fleet_dispatch: validating initiative $1"\n'
+                '  echo "epic-branch: failed to push branch \'epic/x\' to'
+                ' origin: pre-push hook rejected" >&2\n'
+                '  return 0\n'
+                '}\n')
+            sup = _make_supervisor(self.state, fleet_lib_dir=lib)
+            result = sup.dispatch_epic('INIT-42')
+            self.assertEqual(result['queued'], [])
+            self.assertIn('pre-push hook rejected', result['message'])
+            self.assertEqual(result['gate_stop'],
+                             'epic-branch: failed to push')
+
+    def test_dispatch_epic_sourcing_warning_is_not_a_gate_stop(self):
+        """'epic-branch.sh not sourceable' warns but still dispatches.
+
+        It sits on the branch that SKIPS the epic-branch precondition and
+        then enqueues children normally, so treating it as a gate-stop would
+        mislabel a successful dispatch and replace its summary line — the
+        very misreporting this gate_stop key exists to prevent.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            lib = Path(tmp)
+            (lib / 'fleet-dispatch.sh').write_text(
+                'fleet_dispatch_initiative() {\n'
+                '  echo "fleet_dispatch: validating initiative $1"\n'
+                '  echo "fleet_dispatch: WARNING: epic-branch.sh not'
+                ' sourceable — epic branch precondition skipped" >&2\n'
+                '  echo "  enqueued CRE-101 (priority=1)"\n'
+                '  echo "fleet_dispatch: resumed 0 | dead-lettered 0 |'
+                ' blocked 0 | enqueued 1 ticket(s) for $1"\n'
+                '  return 0\n'
+                '}\n')
+            sup = _make_supervisor(self.state, fleet_lib_dir=lib)
+            result = sup.dispatch_epic('INIT-42')
+            self.assertEqual(result['queued'], ['CRE-101'])
+            self.assertEqual(
+                result['gate_stop'], '',
+                "a sourcing warning must not be reported as a gate-stop")
+            self.assertIn('enqueued 1 ticket(s)', result['message'],
+                          "the summary line must survive the warning")
 
     def test_dispatch_epic_dry_run_stub(self):
         from fleetd.supervisor import Supervisor

@@ -218,17 +218,61 @@ ensure_epic_branch() {
     return 1
   fi
 
+  # Zero-commit invariant. The ref just created points at origin/<base>, so
+  # the push carries no new commits. Assert that rather than assume it — a
+  # future change to the creation step must not silently inherit the hook
+  # skip below.
+  # Both assignments carry an explicit `|| _x=""` so a rev-parse failure under
+  # a `set -e` caller falls through to the safe _zero_commit=false rather than
+  # aborting the caller's script — matching base_head's convention above.
+  # Caveat: origin/<base> is the LOCAL tracking ref (refreshed by the earlier
+  # best-effort fetch). If the remote base were rewound or force-pushed, the
+  # tracking ref could name a commit no longer on origin and the push would
+  # carry objects after all. Accepted: epic bases are develop/main, which are
+  # not rewound; set EPIC_BRANCH_PUSH_VERIFY=true where that is not true.
+  local _new_sha _base_sha _zero_commit=false
+  _new_sha=$(git -C "$repo_path" rev-parse "$branch" 2>/dev/null) || _new_sha=""
+  _base_sha=$(git -C "$repo_path" rev-parse "origin/$base" 2>/dev/null) || _base_sha=""
+  if [ -n "$_new_sha" ] && [ "$_new_sha" = "$_base_sha" ]; then
+    _zero_commit=true
+  fi
+
+  # Skip the pre-push hook for a zero-commit ref creation (GitHub #381). The
+  # invariant is that the pushed ref is identical to origin/<base>, so there
+  # is nothing for the hook to meaningfully check — but a repo-local pre-push
+  # hook runs its preflight against whatever the shared clone happens to have
+  # checked out, which may be an unrelated stale branch. That made epic
+  # dispatch fail for reasons having nothing to do with the epic or its base.
+  # Real commits pushed later by implement agents are untouched: those go
+  # through a checked-out branch, _zero_commit is false, and the hook runs.
+  # Set EPIC_BRANCH_PUSH_VERIFY=true to force full verification here.
+  local -a push_args=(push origin "$branch")
+  local _hook_skipped=false
+  if [ "$_zero_commit" = "true" ] && [ "${EPIC_BRANCH_PUSH_VERIFY:-false}" != "true" ]; then
+    push_args=(push --no-verify origin "$branch")
+    _hook_skipped=true
+  fi
+
   # Push to origin. On failure, delete the local ref: leaving it behind makes
   # _branch_exists short-circuit every later cycle, so the remote branch would
   # never be (re)created — the epic wedges until manual cleanup. Deleting lets
-  # the next dispatch cycle retry creation from scratch.
-  if ! git -C "$repo_path" push origin "$branch" >/dev/null 2>&1; then
+  # the next dispatch cycle retry creation from scratch. The push output is
+  # captured, not discarded: the reason (hook rejection, auth, non-fast-forward)
+  # is the only thing that makes this failure diagnosable upstream.
+  local push_err
+  if ! push_err=$(git -C "$repo_path" "${push_args[@]}" 2>&1); then
     git -C "$repo_path" branch -D "$branch" >/dev/null 2>&1 || true
-    echo "epic-branch: failed to push branch '$branch' to origin" >&2
+    local push_reason
+    push_reason=$(printf '%s' "$push_err" | tail -3 | tr '\n' ' ')
+    echo "epic-branch: failed to push branch '$branch' to origin: ${push_reason}" >&2
     return 1
   fi
 
-  echo "epic-branch: created and pushed '$branch' (from '$base') for epic $epic_id"
+  if [ "$_hook_skipped" = "true" ]; then
+    echo "epic-branch: created and pushed '$branch' (from '$base') for epic $epic_id (hook skipped — ref identical to origin/$base)"
+  else
+    echo "epic-branch: created and pushed '$branch' (from '$base') for epic $epic_id"
+  fi
   return 0
 }
 

@@ -5,7 +5,7 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 
 > Public repo — no ticket IDs, no customer data in this file.
 
-Last reviewed: 2026-09-06 (Steps 1C/5/env-check-gate merged; Step 6 still held for real-run validation)
+Last reviewed: 2026-09-16 (issue #381 epic-branch push-hook fix added to Step 0; Step 6 still held for real-run validation)
 
 ---
 
@@ -69,6 +69,24 @@ Estimated: one sitting for all three.
       Fixed by reclassifying that branch `auto` (non-issue), matching the existing convention
       for other intentional defaults. Confirmed live afterward: fleetd boots clean from
       `../tickets`. Full fleetd suite green post-fix (745 passed / 2 skipped).
+
+- [ ] **Epic-branch push runs the pre-push hook against the wrong tree** (issue #381) —
+      `ticket-auto-pipeline/lib/epic-branch.sh:224` (`ensure_epic_branch`),
+      `fleet-controller/lib/fleet-dispatch.sh:557` (`_fleet_dispatch_initiative_locked`),
+      `fleet-controller/fleetd/supervisor.py:3680` (`dispatch_epic`). Not from a queued plan —
+      reactive, found live 2026-09-15 dispatching a real initiative. Two independent defects:
+      (a) the epic-branch ref push fires the repo's local pre-push hook, which runs the full
+      test preflight against whatever branch the shared `REPOS_ROOT` clone happens to have
+      checked out — a stale feature branch from a prior session fails a push whose ref is by
+      construction identical to `origin/<base>`; (b) the resulting gate-stop is echoed to
+      stderr while `dispatch_epic` derives `message` from the last *stdout* line, so `/dispatch`
+      returns `{"queued": [], "spawned": []}` with no error — a failure that renders as a clean
+      no-op. Fix: assert `rev-parse <epic> == rev-parse origin/<base>` and push `--no-verify`
+      only on that proven-zero-commit path (escape hatch `EPIC_BRANCH_PUSH_VERIFY=true`), move
+      the gate-stop line to stdout, and have `dispatch_epic` scan stdout+stderr for gate-stop
+      markers at all rc values plus return an additive `gate_stop` key. Rejected the
+      dedicated always-on-base worktree option — whole worktree lifecycle/GC cost to let a hook
+      test a tree with zero new commits in it.
 
 ---
 

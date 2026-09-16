@@ -17,6 +17,71 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.11 (2026-09-16) — also fleet-controller 0.31.10
+
+Fixes `EPIC_BRANCH_PUSH_HOOK` (issue #381): epic dispatch could silently
+no-op. `ensure_epic_branch` creates the epic branch as a plain ref at
+`origin/<base>` — deliberately no checkout, since the shared `REPOS_ROOT`
+clone may be in use by other processes — and then pushes it. A repo-local
+pre-push hook runs its preflight against whatever branch that shared clone
+*happens to have checked out*, which has nothing to do with the ref being
+pushed. A stale feature branch left behind by a previous implement session
+was enough to fail the push, delete the local ref, and gate-stop the whole
+initiative.
+
+Root cause, part two: that gate-stop was invisible. `ensure_epic_branch`
+discarded the push output entirely (`>/dev/null 2>&1`), and
+`_fleet_dispatch_initiative_locked` echoed `EPIC_BRANCH_UNAVAILABLE` to
+**stderr** before returning 0. `supervisor.py`'s `dispatch_epic` reports the
+last **stdout** line as the `/dispatch` response message, so the caller saw
+the preceding validation line and a `"queued": [], "spawned": []` body — a
+clean no-op, not a failure. The stop-file gate in the same function already
+echoed its skip reason to stdout; that asymmetry was the bug.
+
+- `ticket-auto-pipeline/lib/epic-branch.sh` — `ensure_epic_branch` now
+  asserts the zero-commit invariant (the new ref's sha equals
+  `origin/<base>`'s) rather than assuming it, and skips the pre-push hook
+  only when the assertion holds: a ref identical to its base carries no
+  commits for a hook to meaningfully check. `EPIC_BRANCH_PUSH_VERIFY=true`
+  forces full verification. Commit pushes by implement agents go through a
+  checked-out branch, fail the assertion, and are hook-verified exactly as
+  before. Push output is captured instead of discarded, and the last lines
+  of it are appended to the `failed to push branch ... to origin:` message,
+  so the reason (hook rejection, auth, non-fast-forward) is diagnosable. The
+  `git branch -D` wedge cleanup on failure is unchanged. The second push in
+  `epic_branch_sync` is untouched — it is preceded by a real checkout of the
+  epic branch, so its hook run is correctly targeted.
+- `fleet-controller/lib/fleet-dispatch.sh` — `_fleet_dispatch_initiative_locked`
+  captures `ensure_epic_branch`'s output and emits the `EPIC_BRANCH_UNAVAILABLE`
+  gate-stop to **stdout** (keeping a stderr copy for existing log consumers),
+  with the underlying reason appended. The last-stdout-line contract now
+  carries the gate-stop; the `return 0` and every other dispatch behaviour
+  are unchanged.
+- `fleet-controller/fleetd/supervisor.py` — `dispatch_epic` scans both
+  streams, for every return code, against a new `_DISPATCH_GATE_STOP_MARKERS`
+  tuple (`EPIC_BRANCH_UNAVAILABLE`, `epic-branch: failed to push` — both
+  failure-only; the `epic-branch.sh not sourceable` warning is deliberately
+  excluded, since dispatch still enqueues after it and marking it would
+  mislabel a successful run) and promotes the last matching line to
+  `message`. The response
+  additively gains `gate_stop` (the matched marker, `''` when none) —
+  `_handle_dispatch` serializes the whole dict, so existing clients are
+  unaffected. The `rc != 0` stderr branch is unchanged.
+- `fleet-controller/README.md`, `fleet-controller/CLAUDE.md`,
+  `fleet-controller/docs/fleet-controller.md`,
+  `ticket-auto-pipeline/CLAUDE.md` — document `EPIC_BRANCH_PUSH_VERIFY`, the
+  stdout gate-stop, and the new `gate_stop` key in the `POST /dispatch`
+  response shape.
+- Tests — `test-epic-branch.sh` gains four cases around a real failing
+  `pre-push` hook: zero-commit push succeeds anyway, `EPIC_BRANCH_PUSH_VERIFY=true`
+  honours the hook, the hook's own stderr reaches the failure message, and —
+  the load-bearing guard — a ref that actually carries commits is still
+  hook-verified and never reaches origin. `test-fleet-dispatch.sh` asserts the
+  gate-stop is the last stdout line and carries its reason.
+  `test_worker_status_api.py` covers the stdout and stderr-only gate-stop
+  paths, `gate_stop == ''` on a clean dispatch, and that the sourcing
+  warning is not misreported as a gate-stop.
+
 ## fleet-controller 0.31.9 (2026-09-15)
 
 Fixes `GATE_HOLD_EMITTED_AS_ERROR` (issue #358): by-design gate holds — the
