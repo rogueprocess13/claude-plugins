@@ -23,7 +23,13 @@ UAT_TEST_PASSWORD="${UAT_TEST_PASSWORD:-admin}"
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
 PIPELINE_LOGS_DIR="${PIPELINE_LOGS_DIR:-./logs}"
-SENTINEL_DIR="${SENTINEL_DIR:-./logs}"
+# Matches validate-linear-config.sh's default (tracker-client-consolidation
+# D/R5) — a cross-run sentinel must not be working-directory dependent.
+# config.sh is sourced transitively by linear-api.sh before
+# validate-linear-config.sh sets its own default, so this was the value
+# actually in effect in production; reconciling here fixes both the
+# declared inconsistency and the live behaviour in one edit.
+SENTINEL_DIR="${SENTINEL_DIR:-$HOME/.claude/state/ticket-flow}"
 
 # Pipeline log directory scanned by fleet controller. Override when pipeline
 # logs live in a different directory than the fleet controller's own logs.

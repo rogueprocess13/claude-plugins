@@ -19,6 +19,21 @@ _EH_LIB="$(dirname "${BASH_SOURCE[0]}")/error-handler.sh"
 
 LINEAR_API_URL="${LINEAR_API_URL:-https://api.linear.app/graphql}"
 
+# ── Response shape contract (tracker-client-consolidation) ──────────────────
+# Every function in this file that returns a Linear API result returns the
+# payload with the transport envelope stripped — the same convention
+# get_issue() already followed (returns .data.issue, never {data:{issue:...}}).
+# A caller never sees `.data` or a root query-field wrapper: get_issue()
+# returns the issue object directly, get_epics_by_label() returns the epic
+# array directly, and so on. This is the ONLY response shape any caller of
+# this file may assume. Code outside this file must never issue its own
+# HTTP request to the tracker endpoint — every read and mutation routes
+# through linear_graphql() (directly or via one of the functions below), so
+# the shape contract and the retry/backoff behavior apply uniformly. A
+# function that cannot produce a well-formed unwrapped payload MUST fail
+# loudly (non-zero return, diagnostic on stderr, nothing on stdout) rather
+# than pass through a partial or malformed result — see _jq_guard below.
+
 # Check LINEAR_API_KEY is set
 check_api_key() {
   if [ -z "${LINEAR_API_KEY:-}" ]; then
@@ -434,6 +449,66 @@ get_team() {
   done
 
   jq -cn --argjson states "$states_json" --argjson labels "$labels_json" '{states: $states, labels: $labels}'
+}
+
+# Fetch epics carrying a given label, together with their children. Returns
+# a bare JSON array on stdout (unwrapped — no .data.issues.nodes prefix),
+# one object per epic. Built on linear_graphql, so it inherits retry and
+# backoff uniformly (tracker-client-consolidation) — this replaces four
+# near-duplicate inline curl queries that differed only in selected fields
+# (fleet-detect.sh's D-11/D-12/D-18 scans and fleet-dispatch.sh's epic fetch).
+#
+# field_set selects which EPIC-level fields are included, beyond the
+# always-present id/identifier/title/labels/children (every caller needs
+# these):
+#   base        (default) — no extra epic-level fields.
+#   description — adds description.
+#   full        — adds description and state { name }.
+# Children are always fetched with the union of fields any caller needs
+# (id/identifier/title/state/labels/priority) regardless of field_set —
+# cheaper to over-fetch a few scalar child fields once than to add a second
+# selector dimension (design D1/R4: capped at the field sets callers
+# actually need, no per-caller flags).
+#
+# Usage: get_epics_by_label <label> [field_set]
+get_epics_by_label() {
+  local label="$1"
+  local field_set="${2:-base}"
+
+  if [ -z "$label" ]; then
+    echo "get_epics_by_label: label is required" >&2
+    return 1
+  fi
+
+  local epic_extra=""
+  case "$field_set" in
+  base) ;;
+  description) epic_extra="description" ;;
+  full) epic_extra="description state { name }" ;;
+  *)
+    echo "get_epics_by_label: unknown field-set '$field_set' (expected base|description|full)" >&2
+    return 1
+    ;;
+  esac
+
+  local query
+  query=$(jq -n --arg label "$label" --arg extra "$epic_extra" '{
+    query: ("query($label: String!) { issues(filter: {labels: {name: {eq: $label}}}) { nodes { id identifier title " + $extra + " labels { nodes { name } } children { nodes { id identifier title state { name } labels { nodes { name } } priority } } } } }"),
+    variables: {label: $label}
+  }')
+  local resp
+  resp=$(linear_graphql "$query")
+
+  # Type guard: verify .data.issues.nodes exists as an array before
+  # unwrapping. A malformed payload returns non-zero with a stderr
+  # diagnostic — never a fabricated empty array a caller could mistake for
+  # "no epics carry this label" (tracker-client-access spec: "Malformed
+  # response is rejected, not passed through").
+  if ! _jq_guard "$resp" ".data.issues.nodes" "array"; then
+    echo "get_epics_by_label: unexpected response shape — .data.issues.nodes missing or not an array" >&2
+    return 1
+  fi
+  echo "$resp" | jq '.data.issues.nodes'
 }
 
 # Update an issue.

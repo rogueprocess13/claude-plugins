@@ -1180,23 +1180,15 @@ _fleet_scan_initiative_dispatch() {
     return
   fi
 
-  # Query Linear for epics with state:execution label.
-  # Use GraphQL bulk query for efficiency (single round-trip vs N+1 get_issue calls).
-  # Retry pattern matches linear-api.sh: 3 attempts with exponential backoff.
-  # NOTE: no epic Linear-state filter — the state:execution label is the gate.
-  # This matches fleet_dispatch_initiative's population exactly; a state filter
-  # here made epics invisible to detection while still dispatchable.
-  local query='{"query":"{issues(filter:{labels:{name:{eq:\"state:execution\"}}}){nodes{id identifier title children{nodes{id identifier state{name} labels{nodes{name}}}}}}}"}'
-
-  local epics_json attempt=1 max_attempts=3 delay=1
-  while [ "$attempt" -le "$max_attempts" ]; do
-    epics_json=$(echo "$query" | curl -s -X POST "${LINEAR_API_URL:-https://api.linear.app/graphql}" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: ${LINEAR_API_KEY}" \
-      -d @- 2>/dev/null) && break
-    attempt=$((attempt + 1))
-    [ "$attempt" -le "$max_attempts" ] && sleep "$delay" && delay=$((delay * 2))
-  done
+  # Query Linear for epics with state:execution label, via the client
+  # (tracker-client-consolidation — get_epics_by_label, built on
+  # linear_graphql, inherits retry/backoff uniformly; no direct curl here
+  # anymore). NOTE: no epic Linear-state filter — the state:execution label
+  # is the gate. This matches fleet_dispatch_initiative's population
+  # exactly; a state filter here made epics invisible to detection while
+  # still dispatchable.
+  local epics_json
+  epics_json=$(get_epics_by_label "state:execution" 2>/dev/null)
 
   if [ -z "$epics_json" ]; then
     echo '{"severity":0,"findings":""}'
@@ -1206,27 +1198,29 @@ _fleet_scan_initiative_dispatch() {
   local undispatched=0
   local initiative_ids=""
 
-  # Extract epics and check children
+  # Extract epics and check children. get_epics_by_label returns an
+  # unwrapped array directly — no .data.issues.nodes prefix
+  # (tracker-client-consolidation).
   local epic_count
-  epic_count=$(echo "$epics_json" | jq -r '.data.issues.nodes | length // 0' 2>/dev/null)
+  epic_count=$(echo "$epics_json" | jq -r 'length // 0' 2>/dev/null)
   [ "${epic_count:-0}" -eq 0 ] && echo '{"severity":0,"findings":""}' && return
 
   for i in $(seq 0 $((epic_count - 1))); do
     local epic_id epic_identifier
-    epic_id=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].identifier // empty" 2>/dev/null)
+    epic_id=$(echo "$epics_json" | jq -r ".[$i].identifier // empty" 2>/dev/null)
     [ -z "$epic_id" ] && continue
 
     # Check child tickets
     local child_count
-    child_count=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes | length // 0" 2>/dev/null)
+    child_count=$(echo "$epics_json" | jq -r ".[$i].children.nodes | length // 0" 2>/dev/null)
     [ "${child_count:-0}" -eq 0 ] && continue
 
     local epic_undispatched=0
     for j in $(seq 0 $((child_count - 1))); do
       local child_state child_labels child_id
-      child_state=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes[$j].state.name // empty" 2>/dev/null)
-      child_labels=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes[$j].labels.nodes[].name // empty" 2>/dev/null)
-      child_id=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes[$j].identifier // empty" 2>/dev/null)
+      child_state=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].state.name // empty" 2>/dev/null)
+      child_labels=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].labels.nodes[].name // empty" 2>/dev/null)
+      child_id=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].identifier // empty" 2>/dev/null)
 
       # Check for planned label + Backlog state
       if [ "$child_state" = "Backlog" ] && echo "$child_labels" | grep -q "planned" 2>/dev/null; then
@@ -1383,22 +1377,15 @@ _fleet_scan_epic_branch_ready() {
     [ -f "$_dispatch_lib" ] && source "$_dispatch_lib"
   fi
 
-  # Query epics with state:execution label — include description and children.
-  # No epic Linear-state filter: the label is the gate, matching the dispatch
-  # population (see the same note on the D-11 query).
-  # The epic's own state{name} is added to the query the detector already
-  # issues, so the idempotency short-circuit below costs no extra request.
-  local query='{"query":"{issues(filter:{labels:{name:{eq:\\\"state:execution\\\"}}}){nodes{id identifier title description state{name} children{nodes{id identifier state{name} labels{nodes{name}}}}}}}"}'
-
-  local epics_json attempt=1 max_attempts=3 delay=1
-  while [ "$attempt" -le "$max_attempts" ]; do
-    epics_json=$(echo "$query" | curl -s -X POST "${LINEAR_API_URL:-https://api.linear.app/graphql}" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: ${LINEAR_API_KEY}" \
-      -d @- 2>/dev/null) && break
-    attempt=$((attempt + 1))
-    [ "$attempt" -le "$max_attempts" ] && sleep "$delay" && delay=$((delay * 2))
-  done
+  # Query epics with state:execution label — include description and epic
+  # state, via the client (tracker-client-consolidation — get_epics_by_label
+  # "full" field set gives description + state { name } on top of the
+  # always-present base fields; no direct curl here anymore). No epic
+  # Linear-state filter: the label is the gate, matching the dispatch
+  # population (see the same note on the D-11 query). The epic's own
+  # state{name} costs no extra request — it's part of the same field set.
+  local epics_json
+  epics_json=$(get_epics_by_label "state:execution" "full" 2>/dev/null)
 
   if [ -z "$epics_json" ]; then
     echo '{"severity":0,"findings":""}'
@@ -1408,15 +1395,17 @@ _fleet_scan_epic_branch_ready() {
   local ready_count=0
   local ready_ids=""
 
+  # get_epics_by_label returns an unwrapped array directly — no
+  # .data.issues.nodes prefix (tracker-client-consolidation).
   local epic_count
-  epic_count=$(echo "$epics_json" | jq -r '.data.issues.nodes | length // 0' 2>/dev/null)
+  epic_count=$(echo "$epics_json" | jq -r 'length // 0' 2>/dev/null)
   [ "${epic_count:-0}" -eq 0 ] && echo '{"severity":0,"findings":""}' && return
 
   for i in $(seq 0 $((epic_count - 1))); do
     local epic_id epic_description epic_state
-    epic_id=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].identifier // empty" 2>/dev/null)
-    epic_description=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].description // \"\"" 2>/dev/null)
-    epic_state=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].state.name // \"\"" 2>/dev/null)
+    epic_id=$(echo "$epics_json" | jq -r ".[$i].identifier // empty" 2>/dev/null)
+    epic_description=$(echo "$epics_json" | jq -r ".[$i].description // \"\"" 2>/dev/null)
+    epic_state=$(echo "$epics_json" | jq -r ".[$i].state.name // \"\"" 2>/dev/null)
     [ -z "$epic_id" ] && continue
 
     # Idempotency short-circuit — BEFORE any per-repository work.
@@ -1451,7 +1440,7 @@ _fleet_scan_epic_branch_ready() {
     # The helper consumes JSONL (one child object per line), matching the
     # jq -c '.children[] // empty' stream its own fetch path produces.
     local children_nodes
-    children_nodes=$(echo "$epics_json" | jq -c ".data.issues.nodes[$i].children.nodes[] // empty" 2>/dev/null)
+    children_nodes=$(echo "$epics_json" | jq -c ".[$i].children.nodes[] // empty" 2>/dev/null)
 
     if epic_branch_children_done "$epic_id" "$children_nodes"; then
       ready_count=$((ready_count + 1))
@@ -1568,26 +1557,20 @@ _fleet_scan_stalled_approved_children() {
 
   # No epic Linear-state filter — the state:execution label is the gate,
   # same population fleet_dispatch_initiative and the other two epic-scoped
-  # scans use.
-  local query='{"query":"{issues(filter:{labels:{name:{eq:\"state:execution\"}}}){nodes{id identifier children{nodes{id identifier state{name} labels{nodes{name}}}}}}}"}'
-
-  local epics_json attempt=1 max_attempts=3 delay=1
-  while [ "$attempt" -le "$max_attempts" ]; do
-    epics_json=$(echo "$query" | curl -s -X POST "${LINEAR_API_URL:-https://api.linear.app/graphql}" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: ${LINEAR_API_KEY}" \
-      -d @- 2>/dev/null) && break
-    attempt=$((attempt + 1))
-    [ "$attempt" -le "$max_attempts" ] && sleep "$delay" && delay=$((delay * 2))
-  done
+  # scans use. Via the client (tracker-client-consolidation) — no direct
+  # curl here anymore.
+  local epics_json
+  epics_json=$(get_epics_by_label "state:execution" 2>/dev/null)
 
   if [ -z "$epics_json" ]; then
     echo '{"severity":0,"findings":""}'
     return
   fi
 
+  # get_epics_by_label returns an unwrapped array directly — no
+  # .data.issues.nodes prefix (tracker-client-consolidation).
   local epic_count
-  epic_count=$(echo "$epics_json" | jq -r '.data.issues.nodes | length // 0' 2>/dev/null)
+  epic_count=$(echo "$epics_json" | jq -r 'length // 0' 2>/dev/null)
   [ "${epic_count:-0}" -eq 0 ] && echo '{"severity":0,"findings":""}' && return
 
   local auto_resume="${FLEET_AUTO_RESUME_STALLED:-false}"
@@ -1607,18 +1590,18 @@ _fleet_scan_stalled_approved_children() {
 
   for i in $(seq 0 $((epic_count - 1))); do
     local epic_id
-    epic_id=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].identifier // empty" 2>/dev/null)
+    epic_id=$(echo "$epics_json" | jq -r ".[$i].identifier // empty" 2>/dev/null)
     [ -z "$epic_id" ] && continue
 
     local child_count
-    child_count=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes | length // 0" 2>/dev/null)
+    child_count=$(echo "$epics_json" | jq -r ".[$i].children.nodes | length // 0" 2>/dev/null)
     [ "${child_count:-0}" -eq 0 ] && continue
 
     for j in $(seq 0 $((child_count - 1))); do
       local child_state child_labels child_id
-      child_state=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes[$j].state.name // empty" 2>/dev/null)
-      child_labels=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes[$j].labels.nodes[].name // empty" 2>/dev/null)
-      child_id=$(echo "$epics_json" | jq -r ".data.issues.nodes[$i].children.nodes[$j].identifier // empty" 2>/dev/null)
+      child_state=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].state.name // empty" 2>/dev/null)
+      child_labels=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].labels.nodes[].name // empty" 2>/dev/null)
+      child_id=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].identifier // empty" 2>/dev/null)
       [ -z "$child_id" ] && continue
 
       # State must be one that means "actively supposed to be moving" — not

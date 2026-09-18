@@ -15,26 +15,10 @@ Follow the pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with pa
 
 ## Linear access strategy
 
-When `$LINEAR_API_KEY` is set in the environment, use bash calls to `~/.claude/skills/lib/linear-api.sh` for **all** Linear operations. When `$LINEAR_API_KEY` is unset, fall back to MCP tools (`mcp__linear-server__*`).
-
-**Check before each Linear operation:**
-```bash
-if [ -n "${LINEAR_API_KEY:-}" ]; then
-  # Use linear-api.sh
-  result=$(bash -c "source ~/.claude/skills/lib/linear-api.sh; <function> <args>")
-else
-  # Use MCP fallback
-  mcp__linear-server__<tool>(...)
-fi
-```
-
-**Function mapping:**
-
-| Operation | linear-api.sh call | MCP fallback |
-|-----------|-------------------|--------------|
-| Fetch issue | `get_issue "<id>"` | `mcp__linear-server__get_issue(id: "<id>")` |
-| Fetch comments | `get_comments "<id>"` | `mcp__linear-server__list_comments(id: "<id>")` |
-| Post comment | `save_comment "<id>" "<body>"` | `mcp__linear-server__save_comment(issueId: "<id>", body: "<body>")` |
+Same strategy as the full preamble — see [skill-preamble.md § 2](../../lib/skill-preamble.md#2-linear-access-strategy)
+for the Function mapping table, the standard operation rows, and the
+comment-formatting rule. Single source (tracker-client-consolidation design
+D5) — do not restate it here.
 
 The `get_issue` function returns the issue object already unwrapped from `.data.issue` — use `jq` to extract fields directly (e.g., `.id`, `.title`, `.labels`). The `get_comments` function returns a JSON array of comment nodes.
 

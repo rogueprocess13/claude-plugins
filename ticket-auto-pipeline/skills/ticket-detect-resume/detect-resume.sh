@@ -12,7 +12,7 @@ source "$LIB_DIR/linear-api.sh"
 source "$LIB_DIR/ticket-dir.sh"
 source "$LIB_DIR/notes-parse.sh"
 
-CURRENT_SCHEMA_VERSION=2
+CURRENT_SCHEMA_VERSION=1
 
 # Trailing META subtypes that never invalidate a completed run when they
 # appear AFTER the terminal `META|outcome|info|completed:` line — pure

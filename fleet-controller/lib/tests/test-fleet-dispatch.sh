@@ -28,58 +28,88 @@ _setup_workspace() {
   mktemp -d
 }
 
-# Mock: _fleet_linear_query returns raw GraphQL response (with .data wrapper)
-# This is the epic query mock — fleet_dispatch_initiative calls _fleet_linear_query
-# then extracts .data.issue from the response.
-_mock_epic_query_state_execution() {
-  _fleet_linear_query() {
-    echo '{"data":{"issue":{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"},{"name":"INIT-42"}]},"children":{"nodes":[]}}}}'
+# Mock: get_issue and get_epics_by_label, both returning UNWRAPPED data
+# (tracker-client-consolidation — no direct GraphQL query in fleet-dispatch.sh
+# anymore). fleet_dispatch_initiative's Step 1 always calls get_issue on the
+# initiative id first (to preserve the distinct "not found" vs "not in
+# execution state" messages a label-filtered list alone can't make), then
+# get_epics_by_label for the children-with-priority shape. get_issue is also
+# called per blocked-by target further down, so its mock must dispatch on
+# argument rather than answering unconditionally.
+_mock_get_issue_epic_state_execution() {
+  get_issue() {
+    case "$1" in
+    INIT-42) echo '{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"},{"name":"INIT-42"}]}}' ;;
+    *) return 1 ;;
+    esac
   }
 }
 
-_mock_epic_query_no_execution() {
-  _fleet_linear_query() {
-    echo '{"data":{"issue":{"identifier":"INIT-42","labels":{"nodes":[{"name":"INIT-42"}]},"children":{"nodes":[]}}}}'
+_mock_get_issue_epic_no_execution() {
+  get_issue() {
+    case "$1" in
+    INIT-42) echo '{"identifier":"INIT-42","labels":{"nodes":[{"name":"INIT-42"}]}}' ;;
+    *) return 1 ;;
+    esac
   }
 }
 
-_mock_epic_query_with_children() {
-  _fleet_linear_query() {
-    echo '{"data":{"issue":{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
+_mock_get_issue_epic_and_blocker_in_progress() {
+  get_issue() {
+    case "$1" in
+    INIT-42) echo '{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]}}' ;;
+    CRE-100) echo '{"identifier":"CRE-100","state":{"name":"In Progress"},"labels":{"nodes":[]}}' ;;
+    *) return 1 ;;
+    esac
+  }
+}
+
+_mock_get_issue_epic_and_blocker_done() {
+  get_issue() {
+    case "$1" in
+    INIT-42) echo '{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]}}' ;;
+    CRE-100) echo '{"identifier":"CRE-100","state":{"name":"Done"},"labels":{"nodes":[]}}' ;;
+    *) return 1 ;;
+    esac
+  }
+}
+
+# get_epics_by_label returns a bare unwrapped array — one object per epic
+# carrying the label, same shape linear-api.sh's real function produces.
+_mock_epics_by_label_no_children() {
+  get_epics_by_label() {
+    echo '[{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[]}}]'
+  }
+}
+
+_mock_epics_by_label_with_children() {
+  get_epics_by_label() {
+    echo '[{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
         {"identifier":"CRE-101","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":3},
         {"identifier":"CRE-102","state":{"name":"In Progress"},"labels":{"nodes":[{"name":"planned"}]},"priority":1},
         {"identifier":"CRE-103","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"},{"name":"blocked-by:CRE-100"}]},"priority":2}
-      ]}}}}'
+      ]}}]'
   }
 }
 
-_mock_epic_query_blocker_done() {
-  _fleet_linear_query() {
-    echo '{"data":{"issue":{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
+_mock_epics_by_label_blocker_child() {
+  get_epics_by_label() {
+    echo '[{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
         {"identifier":"CRE-103","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"},{"name":"blocked-by:CRE-100"}]},"priority":2}
-      ]}}}}'
+      ]}}]'
   }
 }
 
-# Mock: get_issue returns UNWRAPPED issue data (get_issue unwraps .data.issue)
-_mock_get_issue_blocker_in_progress() {
-  get_issue() {
-    echo '{"identifier":"CRE-100","state":{"name":"In Progress"},"labels":{"nodes":[]}}'
-  }
-}
-
-_mock_get_issue_blocker_done() {
-  get_issue() {
-    echo '{"identifier":"CRE-100","state":{"name":"Done"},"labels":{"nodes":[]}}'
-  }
-}
-
-# Mock: get_issue returns an epic with no Branch Directive — ensures
-# ensure_epic_branch sees "no directive" and returns 0 (no-op).
+# No-op — retained only for call-site compatibility. Every epic mock this
+# was historically paired with omits `.description` entirely, and
+# _get_epic_description's `.description // ""` already reads an absent
+# field as "no directive" (ensure_epic_branch returns 0/no-op on that) with
+# no override needed. tracker-client-consolidation made get_issue do double
+# duty — Step 1's own epic fetch, not just the directive check's — so an
+# unconditional override here would clobber whichever get_issue mock the
+# epic-population helper it's paired with just installed.
 _mock_epic_no_directive() {
-  get_issue() {
-    echo '{"identifier":"INIT-42","description":"No branch directive here.","labels":{"nodes":[]}}'
-  }
+  :
 }
 
 # ── Tests ───────────────────────────────────────────────────────────────────────
@@ -128,8 +158,8 @@ test_dispatch_no_state_execution() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-nose
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_no_execution)
-    _mock_epic_query_no_execution
+    $(declare -f _mock_get_issue_epic_no_execution)
+    _mock_get_issue_epic_no_execution
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   echo "$output" | grep -qi "not in execution" && return 0 || {
@@ -146,10 +176,12 @@ test_dispatch_no_child_tickets() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-nochild
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_state_execution)
+    $(declare -f _mock_get_issue_epic_state_execution)
+    $(declare -f _mock_epics_by_label_no_children)
     $(declare -f _mock_epic_no_directive)
 
-    _mock_epic_query_state_execution
+    _mock_get_issue_epic_state_execution
+    _mock_epics_by_label_no_children
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -167,10 +199,10 @@ test_dispatch_with_children_extracts_correctly() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-children
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   # CRE-101: Backlog + planned → should be enqueued
@@ -178,6 +210,33 @@ test_dispatch_with_children_extracts_correctly() {
   # CRE-103: Backlog + planned + blocked-by:CRE-100 (In Progress) → skipped
   echo "$output" | grep -q "CRE-101" && return 0 || {
     echo "output: $output"
+    return 1
+  }
+}
+
+# tracker-client-consolidation design R1: the migrated get_epics_by_label
+# call site must assert a NON-EMPTY dispatchable set from a realistic
+# fixture, not merely "does not crash" (an over-unwrapped jq path can
+# silently yield `empty`, which reads identically to "nothing to dispatch").
+test_dispatch_epics_by_label_site_yields_non_empty_dispatch() {
+  local ws
+  ws=$(_setup_workspace)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-nonempty
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+
+  local enqueued
+  enqueued=$(echo "$output" | grep -c '\[DRY-RUN\] would enqueue:' || true)
+  [ "$enqueued" -gt 0 ] || {
+    echo "expected a non-empty enqueue set; output: $output" >&2
     return 1
   }
 }
@@ -190,10 +249,10 @@ test_dispatch_blocker_done_unblocks() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-unblock
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_blocker_done)
-    $(declare -f _mock_get_issue_blocker_done)
-    _mock_epic_query_blocker_done
-    _mock_get_issue_blocker_done
+    $(declare -f _mock_epics_by_label_blocker_child)
+    $(declare -f _mock_get_issue_epic_and_blocker_done)
+    _mock_epics_by_label_blocker_child
+    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   # CRE-103: blocker CRE-100 is Done → should be enqueued
@@ -214,10 +273,10 @@ test_dispatch_dry_run_no_write() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-dry-run
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   echo "$output" | grep -qi "DRY-RUN" && return 0 || {
@@ -236,10 +295,10 @@ test_dispatch_queue_idempotent() {
   bash -c "
     FLEET_INSTANCE_ID=test-idem
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
 
@@ -248,10 +307,10 @@ test_dispatch_queue_idempotent() {
   output=$(bash -c "
     FLEET_INSTANCE_ID=test-idem
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   echo "$output" | grep -q "already queued" && return 0 || {
@@ -291,10 +350,10 @@ test_dispatch_fleet_max_concurrent_enforced() {
   output=$(bash -c "
     FLEET_INSTANCE_ID=test-cap FLEET_MAX_CONCURRENT=3
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   kill "$act1_pid" "$act2_pid" 2>/dev/null || true
@@ -316,10 +375,10 @@ test_queue_entry_has_generation_field() {
   bash -c "
     FLEET_INSTANCE_ID=test-gen
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
 
@@ -341,10 +400,10 @@ test_queue_entry_survives_simulated_restart() {
   bash -c "
     FLEET_INSTANCE_ID=test-restart
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
 
@@ -387,10 +446,10 @@ test_dead_letter_on_exhausted_retries() {
     FLEET_QUEUE_MAX_RETRIES=2
     FLEET_QUEUE_RETRY_BACKOFF_SECS=1
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -542,11 +601,11 @@ test_dispatch_enqueues_despite_torn_queue_line() {
   bash -c "
     FLEET_INSTANCE_ID=test-torn-dispatch
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
     $(declare -f _mock_epic_no_directive)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
@@ -585,10 +644,10 @@ test_contended_append_retried_then_dead_lettered() {
     FLEET_QUEUE_MAX_RETRIES=2
     FLEET_QUEUE_RETRY_BACKOFF_SECS=1
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -649,10 +708,10 @@ test_contended_append_retried_and_lands() {
     FLEET_QUEUE_MAX_RETRIES=3
     FLEET_QUEUE_RETRY_BACKOFF_SECS=1
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -719,10 +778,10 @@ test_multi_repo_creation_covers_all_repos() {
     $(declare -f _mock_branch_ops)
     _mock_branch_ops '$calls_file'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -763,10 +822,10 @@ test_multi_repo_creation_failure_gate_stops() {
     $(declare -f _mock_branch_ops)
     _mock_branch_ops '$calls_file'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -807,10 +866,10 @@ test_epic_branch_gate_stop_reaches_stdout() {
     }
     epic_branch_sync() { return 0; }
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws'
   " 2>/dev/null || true)
 
@@ -859,10 +918,10 @@ test_multi_repo_sync_failure_does_not_block() {
     $(declare -f _mock_branch_ops)
     _mock_branch_ops '$calls_file'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    $(declare -f _mock_get_issue_blocker_in_progress)
-    _mock_epic_query_with_children
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_with_children)
+    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
+    _mock_epics_by_label_with_children
+    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -986,9 +1045,17 @@ test_repos_under_root_explicit_override() {
 
 # Mock epic with dispatchable children at given priorities. Prio values are
 # Linear's numeric priority: 1=Urgent, 2=High, 3=Medium, 4=Low, 0=No priority.
+# $_PRIORITY_CHILDREN_JSON carries the wrapped {"data":{"issue":{...}}} shape
+# (unchanged test literals) — derive both client-shaped mocks from it here.
 _mock_epic_query_priorities() {
-  _fleet_linear_query() {
-    echo "$_PRIORITY_CHILDREN_JSON"
+  get_issue() {
+    case "$1" in
+    INIT-42) echo "$_PRIORITY_CHILDREN_JSON" | jq -c '.data.issue | {identifier, labels}' ;;
+    *) return 1 ;;
+    esac
+  }
+  get_epics_by_label() {
+    echo "$_PRIORITY_CHILDREN_JSON" | jq -c '[.data.issue]'
   }
 }
 
@@ -1062,11 +1129,17 @@ test_priority_all_five_levels_full_order() {
 # Epic whose child TEST-1 is mid-flight (state Approve, NOT Backlog) with an
 # incomplete pipeline log, plus a normal planned Backlog child TEST-2.
 _mock_epic_query_campaign() {
-  _fleet_linear_query() {
-    echo '{"data":{"issue":{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
+  get_issue() {
+    case "$1" in
+    INIT-42) echo '{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]}}' ;;
+    *) return 1 ;;
+    esac
+  }
+  get_epics_by_label() {
+    echo '[{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
         {"identifier":"TEST-1","state":{"name":"Approve"},"labels":{"nodes":[{"name":"planned"}]},"priority":2},
         {"identifier":"TEST-2","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":3}
-      ]}}}}'
+      ]}}]'
   }
 }
 
@@ -1236,9 +1309,9 @@ test_dispatch_reports_blocked_children() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-blocked
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_blocker_done _mock_get_issue_blocker_in_progress _mock_epic_no_directive)
-    _mock_epic_query_blocker_done
-    _mock_get_issue_blocker_in_progress
+    $(declare -f _mock_epics_by_label_blocker_child _mock_get_issue_epic_and_blocker_in_progress _mock_epic_no_directive)
+    _mock_epics_by_label_blocker_child
+    _mock_get_issue_epic_and_blocker_in_progress
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -1258,13 +1331,18 @@ test_dispatch_reports_blocked_children() {
 
 # ── Campaign resume: stop pins incomplete children ──────────────────────────────
 
-# Children query mock for fleet_stop_initiative's step 0.
+# Children query mock for fleet_stop_initiative's step 0 — now routed through
+# get_parent_with_children (the client). $1 is the same wrapped
+# {"data":{"issue":{"children":{"nodes":[...]}}}} shape the old raw-curl
+# fixtures used (test literals unchanged); reshaped here into
+# get_parent_with_children's real unwrapped {parent:{...}, children:[...]}
+# output, with a non-null parent.id so the "epic exists" guard passes.
 # NOTE: _STOP_CHILDREN_JSON is deliberately global (not local) — the mock
 # reads it at call time, after _mock_stop_children_query has returned.
 _mock_stop_children_query() {
   _STOP_CHILDREN_JSON="$1"
-  _fleet_linear_query() {
-    echo "$_STOP_CHILDREN_JSON"
+  get_parent_with_children() {
+    echo "$_STOP_CHILDREN_JSON" | jq -c '{parent: {id: "epic-1", identifier: "INIT-42"}, children: .data.issue.children.nodes}'
   }
 }
 
@@ -1339,7 +1417,7 @@ test_stop_children_query_failure_degrades() {
   output=$(bash -c "
     LINEAR_API_KEY=dummy
     source '$LIB_DIR/fleet-dispatch.sh'
-    _fleet_linear_query() { return 1; }
+    get_parent_with_children() { return 1; }
     fleet_stop_initiative 'INIT-42' 'test' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -1365,6 +1443,7 @@ _run "dispatch_missing_initiative_arg" test_dispatch_missing_initiative_arg
 _run "dispatch_no_state_execution" test_dispatch_no_state_execution
 _run "dispatch_no_child_tickets" test_dispatch_no_child_tickets
 _run "dispatch_with_children_correctly" test_dispatch_with_children_extracts_correctly
+_run "dispatch_epics_by_label_non_empty" test_dispatch_epics_by_label_site_yields_non_empty_dispatch
 _run "dispatch_blocker_done_unblocks" test_dispatch_blocker_done_unblocks
 _run "dispatch_dry_run" test_dispatch_dry_run_no_write
 _run "dispatch_queue_idempotent" test_dispatch_queue_idempotent
@@ -1396,19 +1475,19 @@ test_concurrent_same_epic_dispatch_single_entry() {
   # serialize them so each ticket is enqueued exactly once.
   bash -c "
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    _mock_epic_query_with_children
-    $(declare -f _mock_get_issue_blocker_done)
-    _mock_get_issue_blocker_done
+    $(declare -f _mock_epics_by_label_with_children)
+    _mock_epics_by_label_with_children
+    $(declare -f _mock_get_issue_epic_and_blocker_done)
+    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws'
   " 2>/dev/null &
   local pid1=$!
   bash -c "
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    _mock_epic_query_with_children
-    $(declare -f _mock_get_issue_blocker_done)
-    _mock_get_issue_blocker_done
+    $(declare -f _mock_epics_by_label_with_children)
+    _mock_epics_by_label_with_children
+    $(declare -f _mock_get_issue_epic_and_blocker_done)
+    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws'
   " 2>/dev/null &
   local pid2=$!
@@ -1453,10 +1532,10 @@ test_dispatch_lock_different_epics_do_not_block() {
   local output
   output=$(bash -c "
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    _mock_epic_query_with_children
-    $(declare -f _mock_get_issue_blocker_done)
-    _mock_get_issue_blocker_done
+    $(declare -f _mock_epics_by_label_with_children)
+    _mock_epics_by_label_with_children
+    $(declare -f _mock_get_issue_epic_and_blocker_done)
+    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   wait "$holder" 2>/dev/null || true
@@ -1476,8 +1555,8 @@ test_stopped_epic_enqueues_nothing() {
   local output
   output=$(bash -c "
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    _mock_epic_query_with_children
+    $(declare -f _mock_epics_by_label_with_children)
+    _mock_epics_by_label_with_children
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -1500,10 +1579,10 @@ test_resume_clears_and_dispatches() {
   local output
   output=$(bash -c "
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    _mock_epic_query_with_children
-    $(declare -f _mock_get_issue_blocker_done)
-    _mock_get_issue_blocker_done
+    $(declare -f _mock_epics_by_label_with_children)
+    _mock_epics_by_label_with_children
+    $(declare -f _mock_get_issue_epic_and_blocker_done)
+    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws' --resume 2>&1
   " 2>/dev/null || true)
 
@@ -1530,10 +1609,10 @@ test_stop_file_inert_to_other_epics() {
   local output
   output=$(bash -c "
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_with_children)
-    _mock_epic_query_with_children
-    $(declare -f _mock_get_issue_blocker_done)
-    _mock_get_issue_blocker_done
+    $(declare -f _mock_epics_by_label_with_children)
+    _mock_epics_by_label_with_children
+    $(declare -f _mock_get_issue_epic_and_blocker_done)
+    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -1779,7 +1858,7 @@ test_stop_children_query_failure_pins_incomplete_workspace_logs() {
   output=$(bash -c "
     LINEAR_API_KEY=dummy
     source '$LIB_DIR/fleet-dispatch.sh'
-    _fleet_linear_query() { return 1; }
+    get_parent_with_children() { return 1; }
     fleet_stop_initiative 'INIT-42' 'test' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -1835,8 +1914,14 @@ test_dispatch_reconcile_respects_stop_pins() {
     source '$LIB_DIR/fleet-dispatch.sh'
     $(declare -f _mock_epic_no_directive)
     _mock_epic_no_directive
-    _fleet_linear_query() {
-      echo '{\"data\":{\"issue\":{\"identifier\":\"INIT-42\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]},\"children\":{\"nodes\":[{\"identifier\":\"TEST-P\",\"state\":{\"name\":\"Approve\"},\"labels\":{\"nodes\":[{\"name\":\"planned\"}]},\"priority\":2}]}}}}'
+    get_issue() {
+      case \"\$1\" in
+      INIT-42) echo '{\"identifier\":\"INIT-42\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]}}' ;;
+      *) return 1 ;;
+      esac
+    }
+    get_epics_by_label() {
+      echo '[{\"identifier\":\"INIT-42\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]},\"children\":{\"nodes\":[{\"identifier\":\"TEST-P\",\"state\":{\"name\":\"Approve\"},\"labels\":{\"nodes\":[{\"name\":\"planned\"}]},\"priority\":2}]}}]'
     }
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -1982,8 +2067,14 @@ test_dispatch_dead_letter_at_restart_cap_reported() {
     source '$LIB_DIR/fleet-dispatch.sh'
     $(declare -f _mock_epic_no_directive)
     _mock_epic_no_directive
-    _fleet_linear_query() {
-      echo '{\"data\":{\"issue\":{\"identifier\":\"INIT-42\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]},\"children\":{\"nodes\":[{\"identifier\":\"TEST-8\",\"state\":{\"name\":\"Approve\"},\"labels\":{\"nodes\":[{\"name\":\"planned\"}]},\"priority\":2}]}}}}'
+    get_issue() {
+      case \"\$1\" in
+      INIT-42) echo '{\"identifier\":\"INIT-42\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]}}' ;;
+      *) return 1 ;;
+      esac
+    }
+    get_epics_by_label() {
+      echo '[{\"identifier\":\"INIT-42\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]},\"children\":{\"nodes\":[{\"identifier\":\"TEST-8\",\"state\":{\"name\":\"Approve\"},\"labels\":{\"nodes\":[{\"name\":\"planned\"}]},\"priority\":2}]}}]'
     }
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)

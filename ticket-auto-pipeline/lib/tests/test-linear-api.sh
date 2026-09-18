@@ -10,6 +10,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/fixtures/linear-shapes.sh"
 
 PASS=0
 FAIL=0
@@ -798,6 +799,115 @@ test_get_team_page_two_guard_failure_is_hard_error() {
   [ "$rc" -eq 1 ] && ! echo "$result" | jq -e '.labels | length == 1' >/dev/null 2>&1
 }
 
+# ── get_epics_by_label tests (tracker-client-consolidation) ────────────────
+
+test_get_epics_by_label_returns_unwrapped_array() {
+  local result
+  result=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    source $SCRIPT_DIR/fixtures/linear-shapes.sh
+    linear_graphql() { echo '{\"data\":{\"issues\":{\"nodes\":[{\"id\":\"e1\",\"identifier\":\"INIT-1\",\"title\":\"Epic\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]},\"children\":{\"nodes\":[{\"id\":\"c1\",\"identifier\":\"CRE-1\",\"title\":\"Child\",\"state\":{\"name\":\"Backlog\"},\"labels\":{\"nodes\":[{\"name\":\"planned\"}]},\"priority\":2}]}}]}}}'; }
+    get_epics_by_label 'state:execution'
+  " 2>/dev/null) || true
+  echo "$result" | jq -e 'type == "array" and length == 1 and .[0].identifier == "INIT-1" and .[0].children.nodes[0].identifier == "CRE-1"' >/dev/null
+}
+
+test_get_epics_by_label_malformed_response_errors() {
+  local rc=0
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo '{\"data\":{}}'; }
+    get_epics_by_label 'state:execution'
+  " >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ]
+}
+
+test_get_epics_by_label_empty_result_is_valid_empty_array() {
+  local result rc=0
+  result=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo '{\"data\":{\"issues\":{\"nodes\":[]}}}'; }
+    get_epics_by_label 'state:execution'
+  " 2>/dev/null) || rc=$?
+  [ "$rc" -eq 0 ] && echo "$result" | jq -e 'type == "array" and length == 0' >/dev/null
+}
+
+test_get_epics_by_label_retries_transient_failure() {
+  local result
+  result=$(LINEAR_API_KEY=test bash -c "
+    source $LIB_DIR/linear-api.sh
+    _ctr=\$(mktemp); echo 0 > \"\$_ctr\"
+    curl() {
+      n=\$(cat \"\$_ctr\"); n=\$((n+1)); echo \$n > \"\$_ctr\"
+      if [ \$n -eq 1 ]; then
+        printf '\\n503'
+      else
+        printf '%s\\n%d' '{\"data\":{\"issues\":{\"nodes\":[{\"id\":\"e1\",\"identifier\":\"INIT-1\",\"title\":\"Epic\",\"labels\":{\"nodes\":[]},\"children\":{\"nodes\":[]}}]}}}' 200
+      fi
+      return 0
+    }
+    LINEAR_RETRY_DELAYS='0 0 0' get_epics_by_label 'state:execution'
+  " 2>/dev/null) || true
+  echo "$result" | jq -e 'length == 1 and .[0].identifier == "INIT-1"' >/dev/null
+}
+
+test_get_epics_by_label_description_field_set_included() {
+  local tmpfile
+  tmpfile=$(mktemp)
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo \"\$1\" > '$tmpfile'; echo '{\"data\":{\"issues\":{\"nodes\":[]}}}'; }
+    get_epics_by_label 'state:execution' 'description'
+  " >/dev/null 2>&1
+  local result
+  jq -e '.query | contains("description")' "$tmpfile" >/dev/null 2>&1
+  result=$?
+  rm -f "$tmpfile"
+  return $result
+}
+
+test_get_epics_by_label_full_field_set_includes_state() {
+  local tmpfile
+  tmpfile=$(mktemp)
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo \"\$1\" > '$tmpfile'; echo '{\"data\":{\"issues\":{\"nodes\":[]}}}'; }
+    get_epics_by_label 'state:execution' 'full'
+  " >/dev/null 2>&1
+  local result
+  jq -e '.query | contains("description") and contains("state { name }")' "$tmpfile" >/dev/null 2>&1
+  result=$?
+  rm -f "$tmpfile"
+  return $result
+}
+
+test_get_epics_by_label_unknown_field_set_errors() {
+  local rc=0
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo 'SENTINEL_SHOULD_NOT_BE_CALLED'; }
+    get_epics_by_label 'state:execution' 'bogus'
+  " >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ]
+}
+
+test_get_epics_by_label_query_uses_variable_not_inline_label() {
+  # Prior D-11 escaping bug came from inlining the label literally into the
+  # query string. get_epics_by_label must pass it as a GraphQL variable.
+  local tmpfile
+  tmpfile=$(mktemp)
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo \"\$1\" > '$tmpfile'; echo '{\"data\":{\"issues\":{\"nodes\":[]}}}'; }
+    get_epics_by_label 'state:execution'
+  " >/dev/null 2>&1
+  local result
+  jq -e '.variables.label == "state:execution" and (.query | contains("\"state:execution\"") | not)' "$tmpfile" >/dev/null 2>&1
+  result=$?
+  rm -f "$tmpfile"
+  return $result
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -862,7 +972,15 @@ for fn in \
   test_get_team_paginates_labels_across_multiple_pages \
   test_get_team_single_page_no_extra_call \
   test_get_team_first_page_omits_after_variable \
-  test_get_team_page_two_guard_failure_is_hard_error; do
+  test_get_team_page_two_guard_failure_is_hard_error \
+  test_get_epics_by_label_returns_unwrapped_array \
+  test_get_epics_by_label_malformed_response_errors \
+  test_get_epics_by_label_empty_result_is_valid_empty_array \
+  test_get_epics_by_label_retries_transient_failure \
+  test_get_epics_by_label_description_field_set_included \
+  test_get_epics_by_label_full_field_set_includes_state \
+  test_get_epics_by_label_unknown_field_set_errors \
+  test_get_epics_by_label_query_uses_variable_not_inline_label; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

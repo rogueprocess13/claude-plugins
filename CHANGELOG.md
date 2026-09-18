@@ -17,6 +17,44 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.12 (2026-09-19) — also fleet-controller 0.31.11
+
+Consolidates five independent tracker transports (three near-duplicate
+inline `curl` queries in `fleet-detect.sh`, one in `fleet-dispatch.sh`, one
+in `epic-branch.sh`) onto `lib/linear-api.sh`'s client, which now exposes
+`get_epics_by_label`. One declared response shape (unwrapped, matching
+`get_issue`'s existing convention), asserted by tests instead of by
+convention, with uniform retry/backoff inherited from `linear_graphql`.
+
+**Real bug fixed**: `fleet-feedback.sh`'s `_get_initiative_labels` read
+`.data.issue.labels.nodes[]?.name` against `get_issue`'s already-unwrapped
+output, so per-initiative feedback grouping returned empty on every call in
+production — silently, since "no initiative labels" is indistinguishable
+from "ticket has none". Its test stubbed the wrapped shape and passed. Fixed
+to read `.labels.nodes[]?.name` directly; the test is rewritten against the
+shape the client actually returns. **Observable behaviour change**:
+initiative-grouped feedback files now populate under
+`{REPOS_ROOT}/.ticket-auto/initiatives/{ID}/feedback/` where they
+previously did not.
+
+Also: `detect-resume.sh`'s `CURRENT_SCHEMA_VERSION` is corrected from `2`
+(nothing ever emitted that value) to `1` (matching the only writer and the
+format spec) — every real pipeline log was silently falling through the
+v0/v1 grace branch instead of the exact-match branch. `SENTINEL_DIR`'s two
+conflicting defaults (`./logs` vs `$HOME/.claude/state/ticket-flow`) are
+reconciled to the latter, since a cross-run sentinel must not be
+working-directory dependent; this was already the value in effect for
+`validate-linear-config.sh` in practice (`config.sh`'s default is sourced
+first, transitively, via `linear-api.sh`), so this closes the declared
+inconsistency without changing observed installs — beyond a one-off
+sentinel-cache revalidation for a workspace that happened to run from a
+directory where `./logs` and the new path disagreed. A phantom `list_issues`
+bash function (never implemented — only the MCP form is real) is removed
+from the documented access-strategy table, and that table's three
+copies (`lib/skill-preamble.md`, `lib/skill-preamble-auto.md`,
+`skills/ticket-auto/SKILL.md`) collapse to one source with the other two
+referencing it.
+
 ## 0.50.11 (2026-09-16) — also fleet-controller 0.31.10
 
 Fixes `EPIC_BRANCH_PUSH_HOOK` (issue #381): epic dispatch could silently

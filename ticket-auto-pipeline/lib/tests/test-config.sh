@@ -107,6 +107,17 @@ test_fleet_summary_interval_default() {
   )
 }
 
+# tracker-client-consolidation D/R5: config.sh's SENTINEL_DIR must match
+# validate-linear-config.sh's — a cross-run sentinel must not be
+# working-directory dependent (the old "./logs" default was).
+test_sentinel_dir_matches_validate_linear_config_default() {
+  (
+    unset SENTINEL_DIR
+    source "$LIB_DIR/config.sh"
+    [ "$SENTINEL_DIR" = "$HOME/.claude/state/ticket-flow" ]
+  )
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -120,7 +131,8 @@ for fn in \
   test_fleet_debug_default_false \
   test_fleet_hb_log_file_default \
   test_fleet_log_file_default \
-  test_fleet_summary_interval_default; do
+  test_fleet_summary_interval_default \
+  test_sentinel_dir_matches_validate_linear_config_default; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

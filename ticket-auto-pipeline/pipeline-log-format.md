@@ -829,6 +829,20 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|schema|info|1" >> "$LOG_FILE"
 
 Current schema version: **1**
 
+The only writer of this line is `flow.sh` (`skills/ticket-flow/flow.sh:108`), and
+`detect-resume.sh`'s `CURRENT_SCHEMA_VERSION` matches it exactly — the drift
+that used to exist here (the reader expecting `2` while nothing ever emitted
+that value, so every real log fell through the v0/v1 grace path instead of
+the exact-match branch) is resolved: `1` is canonical, and a version bump
+must accompany a real format change, not a mismatched constant
+(tracker-client-consolidation, design D4).
+
+This version number is **distinct from** `lib/heartbeat.sh:19`'s schema
+version, which belongs to the separate heartbeat log (`ISO|CATEGORY|EVENT|STATUS|MSG|DETAIL`,
+see [Heartbeat log format](pipeline-heartbeat-format.md)) — the two logs are
+different files with independent schemas, and their version numbers have no
+relationship to each other. Bumping one is never a reason to bump the other.
+
 ## Gate-stop codes
 
 When `ticket-auto` halts a pipeline for a structural reason (missing artifact, ambiguous state), it emits:
