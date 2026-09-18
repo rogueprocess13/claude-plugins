@@ -418,8 +418,91 @@ does not yet reflect a settled answer for them.
 Removal execution status:
 - `claimed` — removed. See commit history for `state-machine.json`, `SKILL.md`, and
   `skills/ticket-flow/tests/phase1.sh`.
-- `simple` / `complex` — **paused, not removed.** See § Removal complication below.
-- `pre-approved` — removed. See commit history.
+- `simple` / `complex` — **paused, not removed.** See § Removal complications below.
+- `pre-approved` — **paused, not removed — classification itself is now in question.** See
+  § Removal complications below. This is not a mechanical-risk pause like the complexity pair;
+  new evidence surfaced during removal that the `vestigial` classification may be wrong.
+
+## Removal complications (found during execution, 2026-09-19)
+
+Two of the four confirmed labels hit complications serious enough to stop on, per the
+executing agent's guardrail to pause per-label rather than force a risky change through. Neither
+`state-machine.json` nor any other file was modified for these two labels — only `claimed` was
+actually removed in this pass.
+
+### `pre-approved` — the vestigial classification is contradicted by documented project decisions
+
+The audit's classification (no decision read → vestigial) only checked whether the label is
+*currently* read. It did not check whether the label is *reserved* for documented future use —
+and it is.
+
+- `ticket-planner/CLAUDE.md` states as a Key Design Decision: **"`planned-entry-gate` stays
+  dormant by decision. Specified but deliberately unimplemented. Confidence ≥ 0.85 + `pre-approved`
+  would bypass human approval gate. Revisit only after: ≥ 10 completed initiatives with real
+  feedback data, drift consistently ≤ 0.10 at confidence ≥ 0.85, zero incidents from auto-approved
+  tickets, and explicit operator opt-in."**
+- `ticket-planner/docs/ticket-planner.md:470-487` (§ Planned-Entry Gate Dormancy) confirms this in
+  detail: the capability "is specified in `ticket-planner-enrichment` but deliberately
+  unimplemented," lists three reasons it stays dormant (independent dispatch/approval controls,
+  real cost per ticket, unproven confidence calibration) and four concrete conditions that would
+  reopen it. It closes with: **"The capability is left specified rather than removed so the design
+  rationale is preserved. Removing it would invite someone to re-specify it without understanding
+  why it was deferred."**
+- `ticket-planner/CLAUDE.md`'s plugin-purpose section additionally states the planner "Produces
+  against frozen consumption-side contracts: Planner Context block schema, `planned`/`pre-approved`/
+  `Type` labels, artifact plane, and feedback aggregation. Does not re-specify them" — `pre-approved`
+  is named explicitly as one of these frozen contract labels.
+- `planner-linear-api.sh`'s doc comment (quoted in `ticket-planner/CLAUDE.md`) calls `pre-approved`
+  one of "the 4 static contract labels ... which are assumed pre-existing," and
+  `planner-doctor.sh:51`'s `_PLANNER_DOCTOR_STATIC_LABELS` preflight-checks that it exists on the
+  Linear team, independent of whether any ticket currently carries it.
+
+This does not mean `pre-approved` is secretly `control` today — the audit's original finding that
+no code branches on the *label itself* (only on the description's `Pre-approved:` field) still
+holds. But `vestigial` requires positive evidence that *no consumer* exists, and there is
+affirmative, explicit, written project intent to consume this exact label later, once specific
+measurable conditions are met. That is the opposite of the "zero readers, fully redundant"
+evidence that confirmed `claimed`. The three-way `control`/`human-signal`/`vestigial` taxonomy has
+no category for "reserved for a specified-but-dormant future feature" — this is a real gap the
+classification rule didn't anticipate, not a judgment call within it.
+
+**Recommendation:** do not remove `pre-approved`. Its write path
+(`planner-phase-prompts.sh:1343`) and existence preflight (`planner-doctor.sh:51`) should stay
+exactly as-is until `planned-entry-gate` is either implemented or the ticket-planner team
+explicitly retires that specification. The operator should be aware this reverses this document's
+own earlier recommendation — the earlier evidence wasn't wrong, it was incomplete.
+
+### `simple` / `complex` — removal is not a JSON-only change
+
+Unlike `claimed`, `pre-approved`, these two labels are entangled with real, tested logic in
+`flow.sh` beyond `state-machine.json`'s declarations:
+
+- `flow.sh:139-151` computes `COMPLEXITY_OPPOSITE` and documents (in its own comment) a real
+  historical bug: "Simple and Complex are members of a mutually-exclusive Linear label group, so a
+  stale label left behind by an abandoned appraisal session makes the whole mutation fail" — this
+  is the fix for issue #170. Removing the labels makes this whole mechanism dead code, not just an
+  unused JSON entry.
+- `skills/ticket-flow/tests/phase1.sh` has three tests
+  (`test_flow_appraise_start_drops_stale_opposite_label`,
+  `test_flow_appraise_start_drops_stale_complex_label`,
+  `test_flow_appraise_start_no_prior_complexity_label`) that exist specifically to pin that #170
+  fix. Per design R4 these would need to be deleted (not adapted) once the labels are gone — but
+  that means deleting the only regression coverage for a real, previously-shipped bug, which is a
+  bigger and different decision than deleting a test that merely asserted a vestigial label was
+  written.
+- Every other `simple`/`complex` string match found in the test suite (`test-notes-parse.sh`,
+  `test-gate-check.sh`, `test-gate-no-template.sh`, `test-pipeline-phases.sh`,
+  `test-appraise-fast-path.sh`) is testing the **complexity value** mechanism (`notes.md` /
+  `get_complexity()` / `lib/notes-parse.sh`), which is completely separate from the Linear label
+  and is explicitly staying (per this change's non-goals). Those are not in scope and were not
+  touched.
+
+**Recommendation:** removing `simple`/`complex` is still justified by the evidence (the label
+itself has no reader — only the complexity *value*, sourced from `notes.md`, does) but should be
+done as a deliberate follow-up that explicitly also removes `flow.sh`'s now-dead
+`COMPLEXITY_OPPOSITE` mutual-exclusion logic and the three `phase1.sh` tests that pin it, with that
+tradeoff (losing #170's regression coverage) called out to the operator at that time — not folded
+silently into a JSON-only removal commit.
 
 ## Follow-up investigation: rejected / reviewed / repro-failed (2026-09-19)
 
