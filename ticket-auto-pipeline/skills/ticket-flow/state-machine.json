@@ -87,7 +87,6 @@
       ],
       "to": "Todo",
       "adds": [
-        "claimed",
         "{complexity}"
       ],
       "removes": [
@@ -112,8 +111,7 @@
         "approved"
       ],
       "removes": [
-        "rejected",
-        "claimed"
+        "rejected"
       ],
       "description": "Human approved the plan",
       "precondition": "must_not_be_epic"
@@ -155,8 +153,7 @@
         "reviewed"
       ],
       "removes": [
-        "rejected",
-        "claimed"
+        "rejected"
       ],
       "description": "PR approved with no UAT required — close to Done",
       "precondition": "must_not_be_epic",
@@ -203,7 +200,6 @@
       "to": "Done",
       "adds": [],
       "removes": [
-        "claimed",
         "reviewed"
       ],
       "description": "UAT passed — close ticket",
