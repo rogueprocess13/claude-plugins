@@ -1,4 +1,5 @@
 {
+  "_label_audit": "Every label declared below is classified (control/human-signal/vestigial) with writer/reader evidence in ../../docs/label-audit.md. Read it before adding, removing, or repurposing any label here.",
   "well_known_states": [
     "Backlog",
     "Blocked"
