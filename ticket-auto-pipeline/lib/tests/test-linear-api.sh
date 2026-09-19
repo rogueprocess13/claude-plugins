@@ -908,6 +908,103 @@ test_get_epics_by_label_query_uses_variable_not_inline_label() {
   return $result
 }
 
+# ── tracker_read (tracker-read-failure-policy) ──────────────────────────────
+
+test_tracker_read_success_echoes_real_value_and_returns_0() {
+  local out rc=0
+  out=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    fake_read() { echo 'real-payload'; return 0; }
+    tracker_read decision 'safe' -- fake_read
+  ") || rc=$?
+  [ "$rc" -eq 0 ] && [ "$out" = "real-payload" ]
+}
+
+test_tracker_read_failure_echoes_safe_value_and_returns_1() {
+  local out rc=0
+  out=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    fake_read() { return 1; }
+    tracker_read decision 'true' -- fake_read
+  ") || rc=$?
+  [ "$rc" -eq 1 ] && [ "$out" = "true" ]
+}
+
+test_tracker_read_informational_failure_echoes_empty_and_returns_1() {
+  local out rc=0
+  out=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    fake_read() { return 1; }
+    tracker_read informational '' -- fake_read
+  ") || rc=$?
+  [ "$rc" -eq 1 ] && [ -z "$out" ]
+}
+
+# Success returning nothing (a legitimate empty result) must still be
+# distinguishable, via the exit code, from a failure that substitutes the
+# safe value — this is the issue #362 guarantee generalized.
+test_tracker_read_empty_success_differs_from_failure_by_exit_code_only() {
+  local success_out success_rc=0 fail_out fail_rc=0
+  success_out=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    fake_read() { echo ''; return 0; }
+    tracker_read decision 'true' -- fake_read
+  ") || success_rc=$?
+  fail_out=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    fake_read() { return 1; }
+    tracker_read decision 'true' -- fake_read
+  ") || fail_rc=$?
+  # Both echo something a careless caller could treat alike (empty vs
+  # "true" — different here on purpose to prove the value is NOT the
+  # signal) — the exit code is what must differ.
+  [ "$success_rc" -eq 0 ] && [ "$fail_rc" -eq 1 ] && [ -z "$success_out" ] && [ "$fail_out" = "true" ]
+}
+
+# Task 3.3: two call sites of the same class, same failure, same outcome.
+test_tracker_read_two_decision_sites_same_failure_same_outcome() {
+  local out1 rc1=0 out2 rc2=0
+  out1=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    site_a() { return 1; }
+    tracker_read decision 'blocked' -- site_a
+  ") || rc1=$?
+  out2=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    site_b() { return 1; }
+    tracker_read decision 'blocked' -- site_b
+  ") || rc2=$?
+  [ "$rc1" -eq "$rc2" ] && [ "$out1" = "$out2" ]
+}
+
+test_tracker_read_logs_pipeline_failure_when_log_file_set() {
+  local tmpdir logfile out rc=0
+  tmpdir=$(mktemp -d)
+  logfile="$tmpdir/pipeline.log"
+  out=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    LOG_FILE='$logfile'
+    fake_read() { return 1; }
+    tracker_read decision 'true' -- fake_read
+  ") || rc=$?
+  local logged=1
+  grep -q '|META|tracker-read-fail|fail|class=decision' "$logfile" 2>/dev/null && logged=0
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 1 ] && [ "$logged" -eq 0 ]
+}
+
+test_tracker_read_no_op_logging_when_log_file_unset() {
+  # Must not error or write anywhere when neither LOG_FILE nor HB_LOG_FILE
+  # is set — the common case for a standalone/test invocation.
+  local rc=0
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    fake_read() { return 1; }
+    tracker_read informational '' -- fake_read
+  " >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 1 ]
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -980,7 +1077,14 @@ for fn in \
   test_get_epics_by_label_description_field_set_included \
   test_get_epics_by_label_full_field_set_includes_state \
   test_get_epics_by_label_unknown_field_set_errors \
-  test_get_epics_by_label_query_uses_variable_not_inline_label; do
+  test_get_epics_by_label_query_uses_variable_not_inline_label \
+  test_tracker_read_success_echoes_real_value_and_returns_0 \
+  test_tracker_read_failure_echoes_safe_value_and_returns_1 \
+  test_tracker_read_informational_failure_echoes_empty_and_returns_1 \
+  test_tracker_read_empty_success_differs_from_failure_by_exit_code_only \
+  test_tracker_read_two_decision_sites_same_failure_same_outcome \
+  test_tracker_read_logs_pipeline_failure_when_log_file_set \
+  test_tracker_read_no_op_logging_when_log_file_unset; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done
