@@ -6,9 +6,10 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 > Public repo — no ticket IDs, no customer data in this file.
 
 Last reviewed: 2026-09-19 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
-CI green on #386. Track B Phase B1 (`tracker-event-vocabulary-and-emitter`) implemented via
-`/opsx:apply` ahead of Step 6's hold, by explicit instruction — 41/43 tasks done, 2 acceptance tasks
-(10.1/10.2) pending a live ticket run; PR not yet opened. Step 6 still held for real-run validation)
+CI green on #386. Step 7b Track B Phase B1 merged and archived — PR #388, plus a CI-caught
+shell-flags fix. Moving to Phase B2 next, ahead of Step 6's hold, by explicit instruction — same
+override as B1, not a re-litigation of the plan's default ordering. Step 6 itself still held for
+real-run validation)
 
 ---
 
@@ -445,18 +446,30 @@ halts the pipeline — without an event system, a schema change, or moving state
 items, still unchecked in the archived task files. Code is merged; only real-traffic confirmation is
 open. Roll these into whatever live-verification pass lifts Step 6's hold.
 
-## Step 7b — Tracker decoupling, Track B Phase B1 (implemented via /opsx:apply, PR pending)
+## Step 7b — Tracker decoupling, Track B Phase B1 — COMPLETE, archived
 
 **Openspec change:** `tracker-event-vocabulary-and-emitter` — proposed 2026-09-19, applied same day
 via explicit `/opsx:apply` instruction, ahead of Step 6's hold (the plan file's own ordering would
 have held this for Step 6 first — overridden here by direct request, not by re-litigating the
-ordering). 41/43 tasks complete; `make check-generated`/`lint`/`fmt-check` clean, targeted `make
-test-lib`/`test-flow`/fleet-intervene/fleetd pytest suites green. Version-bumped to
-ticket-auto-pipeline 0.50.15 / fleet-controller 0.31.13. Not yet committed to a PR.
+ordering). Merged via **PR #388** (2026-09-19), archived
+`openspec/changes/archive/2026-09-19-tracker-event-vocabulary-and-emitter`, specs synced (new
+capabilities: `tracker-event-outbox`, `pipeline-event-vocabulary`). Version-bumped to
+ticket-auto-pipeline 0.50.15 / fleet-controller 0.31.13.
 
-**Remaining before merge:**
+**CI caught a real bug before merge**: `events.sh`/`fence-check.sh` both did `set -eo pipefail`
+unconditionally at file scope. `epic-branch.sh` and `fleet-intervene.sh` (this phase's dual-write
+wiring) source `events.sh` unconditionally too, and both are themselves sourced by
+`fleet-monitor.sh` — so the flags leaked into the whole monitor chain, exactly the class of bug
+`fleet-dispatch.sh` already documents and works around for `linear-api.sh`. Fixed by scoping the
+`set` to direct execution only (matching the CLI-entrypoint guard `fence-check.sh` already had),
+with a regression test in each library's test file. Confirmed separately with a scratch-dir smoke
+test against a real, terminal ticket before pushing the fix.
+
+**Remaining, by explicit instruction to skip and move to B2:**
 - Tasks 10.1/10.2 — a live ticket run confirming gate-held/human-hold/PR-open/merge/fleet-kill each
   produce a matching outbox entry, and that the Linear board + pipeline log stay byte-identical.
+  Deferred, same as Track A's own outstanding live-verification items — roll into whatever
+  live-verification pass eventually lifts Step 6's hold.
 - Task 7.7 — `blocked`/`unblocked` are declared in the vocabulary but have no wired call site: the
   `blocked-by:*` auto-removal feature they'd describe was found to never have been implemented (see
   the pre-existing finding below) — wiring dual-write into a mutation that doesn't exist isn't safely
@@ -464,7 +477,7 @@ ticket-auto-pipeline 0.50.15 / fleet-controller 0.31.13. Not yet committed to a 
   vocabulary.
 - Task 7.5's manual-router path (`ticket-auto/SKILL.md`) has no `verify-failed-retrying` wiring —
   only fleetd's phase-dispatch path does. Acceptable for now since phase-dispatch is not yet the
-  default, but worth closing before B2.
+  default, but worth closing before B2 if it touches the same sites.
 
 Phase B1 of 5 (B1 event vocabulary + emitter → B2 pusher/drivers → B3 local facts replace ticket
 reads → B4 inbound approval → B5 second board), per the plan's own convention of one
@@ -478,8 +491,9 @@ adds 9 previously-unemitted facts (`gate-held`, `human-hold-requested`, `pr-open
 `blocked`/`unblocked`, etc.), and splits `state-machine.json` into `workflow.json` + a driver-table
 placeholder for B2. New capabilities: `tracker-event-outbox`, `pipeline-event-vocabulary`.
 
-B2–B5 are not yet proposed — propose each once the prior phase is reviewed/applied, per plan
-convention.
+**B2 (pusher/drivers) is next, also by explicit instruction ahead of Step 6's hold** — same override
+as B1, not a re-litigation of the plan's default ordering. B3–B5 remain unproposed until B2 is
+reviewed/applied, per plan convention.
 
 **Track B in full is behind next.md Step 6.** The plan file carries the complete 5-phase design
 (event emitter and outbox, board drivers with per-board `event → column` tables, local facts,
