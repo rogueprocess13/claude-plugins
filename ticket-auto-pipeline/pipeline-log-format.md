@@ -236,6 +236,34 @@ Gate-warn codes:
 (`GATE_WARN_TOTAL` vs `GATE_STOP_TOTAL`) — they drive Phase 2 false-positive measurement,
 not severity classification.
 
+### Gate fetch-attempt entries (tracker-read-failure-policy)
+
+The entry gate's `_gate_fetch_issue` no longer gate-stops on the first unreadable/malformed
+`get_issue` response — it holds (exit 1, `held: linear fetch failed`, the same shape as any
+other entry-gate hold) for the first `GATE_FETCH_MAX_ATTEMPTS - 1` (default 3) consecutive
+failures, and only gate-stops with `LINEAR_FETCH_FAILED` once that cap is reached:
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-fetch-fail|fail|attempt=1/3 ticket=CRE-40 get_issue(CRE-40) failed (see stderr/heartbeat for detail)" >> "$LOG_FILE"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|GATE|gate|fail|held: linear fetch failed (attempt 1/3) — get_issue(CRE-40) failed (see stderr/heartbeat for detail)" >> "$LOG_FILE"
+```
+
+`gate-fetch-fail` is the attempt counter — `_gate_fetch_issue_fail` counts its own prior
+occurrences in this same log file to compute the next attempt number, so it only bounds
+retries the router itself dispatches or resumes (against the real pipeline log). Reapprove-gate
+context (`_gate_reapprove`) is unaffected and still gate-stops on the first failure — a hold
+there would be indistinguishable from an entry-gate hold to `detect-resume.sh`'s `GATE_HELD`
+resume logic and would misroute.
+
+`fleetd/gate_hold.py`'s reconcile probe runs against a fresh scratch log every pass, so it
+cannot see `gate-fetch-fail` markers across passes. It enforces its own independent cap
+(`FLEET_GATE_FETCH_MAX_ATTEMPTS`, default 3) by counting a second, reconciler-only marker
+written to the real log since the most recent `META|gate-held` marker:
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-fetch-probe|fail|attempt=1/3" >> "$LOG_FILE"
+```
+
 ### Fleet controller entries
 
 The fleet controller writes these META entries when it intervenes:
@@ -855,6 +883,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 |------|---------|
 | `EXEC_NO_ARTIFACT` | Exec phase produced no artifact file (Phase 2) |
 | `COMPLEXITY_ARTIFACT_MISMATCH` | Complexity label and artifact type disagree (Phase 2) |
+| `LINEAR_FETCH_FAILED` | The entry gate's `get_issue` call failed or returned an unparseable payload. Reached only after exhausting `GATE_FETCH_MAX_ATTEMPTS` (default 3) consecutive holds (`tracker-read-failure-policy`, see "Gate fetch-attempt entries" above) — the first attempts hold instead of gate-stopping. Reapprove-gate context (`_gate_reapprove`) is the one exception: it still gate-stops on the first failure, never conflated with `APPROVAL_REVOKED` |
 | `APPROVAL_REVOKED` | `approved` label was removed before implement phase started (Phase 2) |
 | `REMEDIATION_BRIEF_TRUNCATED` | REMEDIATION_BRIEF from verify exceeded length limit (Phase 2) |
 | `PR_REVIEW_VERDICT_UNPARSEABLE` | PR review returned no parseable ✅/⚠️/❌ verdict line (Phase 2) |

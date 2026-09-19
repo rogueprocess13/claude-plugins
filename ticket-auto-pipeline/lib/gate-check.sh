@@ -125,34 +125,82 @@ _get_artifact_type() {
 
 # Fetch an issue for gate/label evaluation and fail closed on an unreadable
 # payload (issue #362, LINEAR_GET_ISSUE_NULL_CONTINUES). Never substitutes a
-# 'null' placeholder for a failed fetch — a missing/malformed payload is a
-# structural gate-stop, not an ambiguous "no labels" state a jq `?`/`//`
-# guard could silently absorb.
+# 'null' placeholder for a failed fetch — a missing/malformed payload is
+# never silently absorbed into an ambiguous "no labels" state a jq `?`/`//`
+# guard could produce.
 #
 # Usage: _gate_fetch_issue <ticket-id> [hb-gate-context]
 # Echoes the validated issue JSON and returns 0 on success. On failure,
-# writes META|gate-stop|fail|LINEAR_FETCH_FAILED to the pipeline log and the
-# heartbeat log, and returns 1 — the caller must `return 2` immediately
-# (gate-stop code already logged here to keep the message co-located with
-# the failure it describes). [hb-gate-context] defaults to "entry-gate";
-# pass "reapprove-gate" from _gate_reapprove so a fetch failure there is
-# never conflated with a real APPROVAL_REVOKED verdict.
+# delegates to _gate_fetch_issue_fail (tracker-read-failure-policy) and
+# propagates its return code — the caller must `|| return $?` immediately so
+# a retryable hold (1) and a structural gate-stop (2) both surface correctly.
+# [hb-gate-context] defaults to "entry-gate"; pass "reapprove-gate" from
+# _gate_reapprove so a fetch failure there is never conflated with a real
+# APPROVAL_REVOKED verdict.
 _gate_fetch_issue() {
   local ticket_id="$1"
   local hb_ctx="${2:-entry-gate}"
   local issue_json
   if ! issue_json=$(get_issue "$ticket_id" 2>/dev/null); then
-    _plog "$LOG_FILE" "META" "gate-stop" "fail" "LINEAR_FETCH_FAILED — get_issue($ticket_id) failed (see stderr/heartbeat for detail)"
-    hb_gate "$hb_ctx" "fail" "LINEAR_FETCH_FAILED" "{\"ticket\":\"$ticket_id\"}"
-    return 1
+    # _gate_fetch_issue_fail always returns non-zero (1=hold, 2=gate-stop);
+    # the `||` is load-bearing under this file's `set -e` — without it, the
+    # helper's own non-zero return would abort the script before the
+    # `return $?` below ever ran.
+    _gate_fetch_issue_fail "$ticket_id" "$hb_ctx" "get_issue($ticket_id) failed (see stderr/heartbeat for detail)" || return $?
   fi
   if ! require_issue_payload "$issue_json" 2>/dev/null; then
-    _plog "$LOG_FILE" "META" "gate-stop" "fail" "LINEAR_FETCH_FAILED — get_issue($ticket_id) returned an unparseable/incomplete payload"
-    hb_gate "$hb_ctx" "fail" "LINEAR_FETCH_FAILED" "{\"ticket\":\"$ticket_id\",\"reason\":\"malformed_payload\"}"
-    return 1
+    _gate_fetch_issue_fail "$ticket_id" "$hb_ctx" "get_issue($ticket_id) returned an unparseable/incomplete payload" "malformed_payload" || return $?
   fi
   echo "$issue_json"
   return 0
+}
+
+# _gate_fetch_issue's failure handling (tracker-read-failure-policy section
+# 6). entry-gate context gets a retryable hold: it writes the same "held: "
+# shape every other entry-gate hold uses (complex ticket, manual mode, ...),
+# so it rides the existing hold infrastructure verbatim — fleetd's
+# gate_hold.py reconciler already re-runs `gate-check.sh --mode entry` on its
+# own cadence for any held ticket, and detect-resume.sh's GATE_HELD handling
+# already resumes a held ticket once the approved label appears — with zero
+# new code in either. It gate-stops only after GATE_FETCH_MAX_ATTEMPTS (3,
+# matching the verify/PR-iterate/reconcile caps) consecutive failures.
+#
+# reapprove-gate context still gate-stops immediately, unchanged from
+# before this section. A "held: " line looks identical, in the log's
+# PHASE/STEP fields, whether it came from entry or reapprove context — only
+# the message text differs — and detect-resume.sh's GATE_HELD resume logic
+# (which checks for the approved label, an entry-gate-only condition, and
+# resumes to STEP_3_5, entry-gate's own reconcile step) has no way to route
+# a resumed reapprove-context hold back into the PR-review loop it actually
+# came from. Giving reapprove-context fetch failures the same retry
+# machinery would need that routing built first; until then, an immediate,
+# correctly-attributed (never APPROVAL_REVOKED) gate-stop is the safe
+# choice (design task 6.11).
+_gate_fetch_issue_fail() {
+  local ticket_id="$1" hb_ctx="$2" detail="$3" reason="${4:-}"
+
+  if [ "$hb_ctx" != "entry-gate" ]; then
+    _plog "$LOG_FILE" "META" "gate-stop" "fail" "LINEAR_FETCH_FAILED — ${detail}"
+    hb_gate "$hb_ctx" "fail" "LINEAR_FETCH_FAILED" "{\"ticket\":\"$ticket_id\"${reason:+,\"reason\":\"$reason\"}}"
+    return 2
+  fi
+
+  local max_attempts="${GATE_FETCH_MAX_ATTEMPTS:-3}"
+  local prior_attempts attempt
+  prior_attempts=$(grep -c '|META|gate-fetch-fail|fail|' "$LOG_FILE" 2>/dev/null || true)
+  attempt=$((${prior_attempts:-0} + 1))
+
+  _plog "$LOG_FILE" "META" "gate-fetch-fail" "fail" "attempt=${attempt}/${max_attempts} ticket=${ticket_id} ${detail}"
+
+  if [ "$attempt" -ge "$max_attempts" ]; then
+    _plog "$LOG_FILE" "META" "gate-stop" "fail" "LINEAR_FETCH_FAILED — ${detail} (attempt ${attempt}/${max_attempts}, retries exhausted)"
+    hb_gate "$hb_ctx" "fail" "LINEAR_FETCH_FAILED" "{\"ticket\":\"$ticket_id\",\"attempt\":$attempt,\"max\":$max_attempts}"
+    return 2
+  fi
+
+  _plog "$LOG_FILE" "GATE" "gate" "fail" "held: linear fetch failed (attempt ${attempt}/${max_attempts}) — ${detail}"
+  hb_gate "$hb_ctx" "fail" "held: linear fetch failed" "{\"ticket\":\"$ticket_id\",\"attempt\":$attempt,\"max\":$max_attempts}"
+  return 1
 }
 
 # ── Mode: entry ────────────────────────────────────────────────────────────────
@@ -533,7 +581,7 @@ _gate_entry() {
   # via check_fast_path_eligible, which re-validates the Planner Context block
   # and routes to fast-path or full investigation based on the result.
   local issue_json planned_check_rc
-  issue_json=$(_gate_fetch_issue "$TICKET_ID") || return 2
+  issue_json=$(_gate_fetch_issue "$TICKET_ID") || return $?
   local has_planned_label
   has_planned_label=$(echo "$issue_json" | jq -r '[.labels.nodes[].name] | index("planned") != null' 2>/dev/null || echo 'false')
   if [ "$has_planned_label" = "true" ]; then
@@ -597,7 +645,7 @@ _gate_entry() {
   # non-manual modes (manual has its own check at Check 4).
   if [ "$complexity" = "complex" ] && { [ "$autonomy" = "auto" ] || [ "$autonomy" = "semi-auto" ]; }; then
     local issue_json approved
-    issue_json=$(_gate_fetch_issue "$TICKET_ID") || return 2
+    issue_json=$(_gate_fetch_issue "$TICKET_ID") || return $?
     approved=$(echo "$issue_json" | jq -r '[.labels.nodes[]?.name? // empty | ascii_downcase] | index("approved") != null' 2>/dev/null || echo 'false')
     if [ "$approved" = "true" ]; then
       _plog "$LOG_FILE" "GATE" "gate" "done" "auto-approved (complex + $autonomy + approved)"
@@ -616,7 +664,7 @@ _gate_entry() {
   # contradicting 2.8b's own comment ("manual has its own check at Check 4").
   if [ "$complexity" = "complex" ] && [ "$autonomy" = "manual" ]; then
     local _c28c_json _c28c_state _c28c_approved
-    _c28c_json=$(_gate_fetch_issue "$TICKET_ID") || return 2
+    _c28c_json=$(_gate_fetch_issue "$TICKET_ID") || return $?
     _c28c_state=$(echo "$_c28c_json" | jq -r '.state.name // empty' 2>/dev/null || true)
     _c28c_approved=$(echo "$_c28c_json" | jq -r '[.labels.nodes[]?.name? // empty | ascii_downcase] | index("approved") != null' 2>/dev/null || echo 'false')
     if [ "$_c28c_state" = "Ready" ] && [ "$_c28c_approved" = "true" ]; then
@@ -639,7 +687,7 @@ _gate_entry() {
   # has already approved it — override the local autonomy setting and pass.
   if [ "$autonomy" = "manual" ]; then
     local _live_json _live_state _live_approved
-    _live_json=$(_gate_fetch_issue "$TICKET_ID") || return 2
+    _live_json=$(_gate_fetch_issue "$TICKET_ID") || return $?
     _live_state=$(echo "$_live_json" | jq -r '.state.name // empty' 2>/dev/null || true)
     _live_approved=$(echo "$_live_json" | jq -r '[.labels.nodes[]?.name? // empty | ascii_downcase] | index("approved") != null' 2>/dev/null || echo 'false')
     if [ "$_live_state" = "Ready" ] && [ "$_live_approved" = "true" ]; then
@@ -679,7 +727,7 @@ _gate_reapprove() {
   # human having revoked approval (issue #362). _gate_fetch_issue's own
   # LINEAR_FETCH_FAILED gate-stop is distinct and keeps the two causes
   # distinguishable in the log.
-  issue_json=$(_gate_fetch_issue "$TICKET_ID" "reapprove-gate") || return 2
+  issue_json=$(_gate_fetch_issue "$TICKET_ID" "reapprove-gate") || return $?
 
   # Extract state name
   state=$(echo "$issue_json" | jq -r '.state.name // empty' 2>/dev/null || true)

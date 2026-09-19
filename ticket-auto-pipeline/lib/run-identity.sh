@@ -39,6 +39,14 @@ if ! declare -f skill_fingerprints_all >/dev/null 2>&1; then
   [ -f "$_RI_LIB_DIR/skill-version.sh" ] && source "$_RI_LIB_DIR/skill-version.sh"
 fi
 
+# linear-api.sh provides tracker_read — used only for run_identity_ticket_meta's
+# uniform failure logging below. The actual get_issue call still runs inside a
+# fresh child bash (see that function) so a sandboxed test stubbing
+# lib/linear-api.sh by path is still picked up exactly as every other caller.
+if ! declare -f tracker_read >/dev/null 2>&1; then
+  [ -f "$_RI_LIB_DIR/linear-api.sh" ] && source "$_RI_LIB_DIR/linear-api.sh"
+fi
+
 # ── Open-run guard ────────────────────────────────────────────────────────────
 
 # run_identity_current LOG_FILE
@@ -217,7 +225,7 @@ run_identity_ticket_meta() {
   [ -f "$_linear_lib" ] || return 0
 
   local issue
-  issue=$(timeout 20 bash -c "source '$_linear_lib'; get_issue '$tid'" 2>/dev/null) || return 0
+  issue=$(tracker_read informational "" -- timeout 20 bash -c "source '$_linear_lib'; get_issue '$tid'") || return 0
   [ -n "$issue" ] || return 0
   echo "$issue" | jq -e . >/dev/null 2>&1 || return 0
 

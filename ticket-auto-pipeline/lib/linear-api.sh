@@ -34,6 +34,78 @@ LINEAR_API_URL="${LINEAR_API_URL:-https://api.linear.app/graphql}"
 # loudly (non-zero return, diagnostic on stderr, nothing on stdout) rather
 # than pass through a partial or malformed result — see _jq_guard below.
 
+# ── Failure policy (tracker-read-failure-policy) ─────────────────────────────
+# Every tracker read is classified "decision" (a branch depends on the value
+# — routing, gating, dispatch, ordering, merge) or "informational" (metadata,
+# telemetry, feedback, display only). See docs/tracker-read-classification.md
+# for the full call-site inventory this classification was derived from.
+#
+# tracker_read <class> <safe-value> -- <command...>
+#
+#   <class>      "decision" or "informational" — selects the log tag only.
+#                It never changes the return contract below: both classes
+#                fail the same way, because the *consequence* of a failure
+#                (proceed vs. hold vs. gate-stop) is the caller's business,
+#                not this helper's.
+#   <safe-value> For a decision read, the value to echo when the read fails
+#                — the safe direction (e.g. "true" for an is_blocked flag,
+#                "manual" for a merge policy that should require a human
+#                rather than auto-merge). Pass "" for an informational read,
+#                which has nothing to substitute.
+#   <command...> The read to attempt, e.g. `get_issue "$id"`. The literal
+#                `--` before it is required and is only a readability
+#                separator — it is discarded, not parsed.
+#
+# Every function in this file already fails loudly per the response-shape
+# contract above (non-zero exit, nothing on stdout), so this helper does not
+# re-validate payload shape — a caller needing that still layers its own
+# guard (require_issue_payload, a _jq_guard call) on top. This helper's job
+# is the failure *consequence*, made uniform:
+#
+#   - Success (exit 0): echoes the command's real stdout verbatim, returns 0.
+#   - Failure (non-zero exit): logs the failure once — META|tracker-read-fail
+#     to the pipeline log when LOG_FILE is set, a "source" heartbeat entry
+#     when HB_LOG_FILE is set, both no-ops otherwise — echoes <safe-value>
+#     (possibly empty), and ALWAYS returns 1.
+#
+# The exit code is always the failure signal, never the presence or shape of
+# stdout — a caller that only captures stdout (never checks $?) still gets
+# the safe value rather than nothing, but a caller that branches on the exit
+# code, as every decision read in this codebase should, can always tell "read
+# failed, this is the safe substitute" apart from "read succeeded, this is
+# the real (possibly empty) result." That is the issue #362 guarantee
+# (LINEAR_GET_ISSUE_NULL_CONTINUES — a failed fetch must never be silently
+# absorbed into an ambiguous empty/default state) generalized past the one
+# call site that originally established it.
+tracker_read() {
+  local class="$1"
+  local safe_value="$2"
+  shift 2
+  [ "${1:-}" = "--" ] && shift
+  local out rc=0
+  out=$("$@" 2>/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    _tracker_read_log_fail "$class" "$*"
+    echo "$safe_value"
+    return 1
+  fi
+  echo "$out"
+  return 0
+}
+
+# Internal: uniform failure logging for tracker_read. Never fails the caller
+# — _plog and hb_source are already no-ops when their respective log-file
+# env var is unset, which covers every context this file is sourced into
+# (a standalone script with neither var set logs nothing and still works).
+_tracker_read_log_fail() {
+  local class="$1"
+  local site="$2"
+  if [ -n "${LOG_FILE:-}" ]; then
+    _plog "$LOG_FILE" "META" "tracker-read-fail" "fail" "class=${class} site=${site}"
+  fi
+  hb_source "tracker-read-fail" "fail" "class=${class} site=${site}" "{\"class\":\"${class}\"}"
+}
+
 # Check LINEAR_API_KEY is set
 check_api_key() {
   if [ -z "${LINEAR_API_KEY:-}" ]; then

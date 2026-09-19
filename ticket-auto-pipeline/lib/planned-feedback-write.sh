@@ -21,7 +21,7 @@ planned_feedback_write() {
     local has_planned=false
     if declare -f get_issue >/dev/null 2>&1; then
       local labels
-      labels=$(get_issue "$tid" 2>/dev/null | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null || true)
+      labels=$(tracker_read informational "" -- get_issue "$tid" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null || true)
       if echo "$labels" | grep -qw 'planned'; then
         has_planned=true
       fi
@@ -75,7 +75,7 @@ planned_feedback_write() {
   local confidence_predicted=0
   if declare -f get_issue >/dev/null 2>&1; then
     local description
-    description=$(get_issue "$tid" 2>/dev/null | jq -r '.description // ""' 2>/dev/null || true)
+    description=$(tracker_read informational "" -- get_issue "$tid" | jq -r '.description // ""' 2>/dev/null || true)
     if [ -n "$description" ]; then
       # Extract Confidence field from Planner Context block
       local conf_line

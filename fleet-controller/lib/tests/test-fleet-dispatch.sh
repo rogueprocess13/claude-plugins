@@ -74,6 +74,19 @@ _mock_get_issue_epic_and_blocker_done() {
   }
 }
 
+# tracker-read-failure-policy section 5: the blocker fetch itself fails
+# (network error, not-found, etc.) — distinct from a successful fetch that
+# returns a non-Done state.
+_mock_get_issue_epic_and_blocker_unreadable() {
+  get_issue() {
+    case "$1" in
+    INIT-42) echo '{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]}}' ;;
+    CRE-100) return 1 ;;
+    *) return 1 ;;
+    esac
+  }
+}
+
 # get_epics_by_label returns a bare unwrapped array — one object per epic
 # carrying the label, same shape linear-api.sh's real function produces.
 _mock_epics_by_label_no_children() {
@@ -1329,6 +1342,61 @@ test_dispatch_reports_blocked_children() {
   return 0
 }
 
+# tracker-read-failure-policy section 5 (task 5.4): an unreadable blocker
+# must fail closed — the child is withheld, not dispatched on the absence
+# of evidence.
+test_dispatch_blocker_unreadable_not_enqueued() {
+  local ws
+  ws=$(_setup_workspace)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-blocker-unreadable
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _mock_epics_by_label_blocker_child _mock_get_issue_epic_and_blocker_unreadable)
+    _mock_epics_by_label_blocker_child
+    _mock_get_issue_epic_and_blocker_unreadable
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+
+  echo "$output" | grep -q 'would enqueue.*CRE-103' && {
+    echo "CRE-103 must not be enqueued with an unreadable blocker; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q '^  blocked CRE-103$' || {
+    echo "expected '  blocked CRE-103' line for an unreadable blocker; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q 'unreadable — treating as blocked' || {
+    echo "expected the unreadable-blocker reason to be logged (design R1); output: $output" >&2
+    return 1
+  }
+  return 0
+}
+
+# tracker-read-failure-policy section 5 (task 5.5): every blocker unreadable
+# must still exit clean (0), not error out — a hard failure here would stop
+# the whole dispatch sweep rather than letting the next cycle retry.
+test_dispatch_all_blockers_unreadable_exits_clean() {
+  local ws
+  ws=$(_setup_workspace)
+
+  bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-blocker-unreadable-clean
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _mock_epics_by_label_blocker_child _mock_get_issue_epic_and_blocker_unreadable)
+    _mock_epics_by_label_blocker_child
+    _mock_get_issue_epic_and_blocker_unreadable
+    fleet_dispatch_initiative 'INIT-42' '$ws'
+  " >/dev/null 2>&1
+  local exit_code=$?
+  [ "$exit_code" -eq 0 ] || {
+    echo "expected a clean exit (0) so the next cycle retries; got $exit_code" >&2
+    return 1
+  }
+  return 0
+}
+
 # ── Campaign resume: stop pins incomplete children ──────────────────────────────
 
 # Children query mock for fleet_stop_initiative's step 0 — now routed through
@@ -2099,6 +2167,8 @@ _run "dispatch_dry_run_resume_leaves_queue_untouched" test_dispatch_dry_run_resu
 _run "dispatch_dead_log_does_not_jam_campaign" test_dispatch_dead_log_does_not_jam_campaign
 _run "dispatch_reserves_queued_for_epic_slots" test_dispatch_reserves_queued_for_epic_slots
 _run "dispatch_reports_blocked_children" test_dispatch_reports_blocked_children
+_run "dispatch_blocker_unreadable_not_enqueued" test_dispatch_blocker_unreadable_not_enqueued
+_run "dispatch_all_blockers_unreadable_exits_clean" test_dispatch_all_blockers_unreadable_exits_clean
 _run "stop_pins_incomplete_child_with_empty_queue" test_stop_pins_incomplete_child_with_empty_queue
 _run "stop_purges_campaign_resume_and_child_tid_entries" test_stop_purges_campaign_resume_and_child_tid_entries
 _run "stop_children_query_failure_degrades" test_stop_children_query_failure_degrades

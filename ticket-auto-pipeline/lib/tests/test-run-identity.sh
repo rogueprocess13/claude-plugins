@@ -58,8 +58,13 @@ _sandbox_rm() {
 }
 
 _stub_get_issue() {
-  cat >"$_SANDBOX/lib/linear-api.sh" <<STUB
-#!/usr/bin/env bash
+  # Keep the real file's other exports (tracker_read, its heartbeat wiring)
+  # intact and only override get_issue's body — a whole-file replacement
+  # previously dropped tracker_read, which run-identity.sh's top-level guard
+  # now sources from this same path (tracker-read-failure-policy).
+  cp "$LIB_DIR/linear-api.sh" "$_SANDBOX/lib/linear-api.sh"
+  cat >>"$_SANDBOX/lib/linear-api.sh" <<STUB
+
 get_issue() {
 $1
 }

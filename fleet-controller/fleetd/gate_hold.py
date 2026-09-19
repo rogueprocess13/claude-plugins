@@ -58,6 +58,7 @@ import subprocess
 import tempfile
 import time
 from collections import namedtuple
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fleetd import phase_dispatch
@@ -258,6 +259,40 @@ def _reconcile_gate_hold(table, tid, cycle, position, hold_id,
                                 hold_id, hold_generation)
 
     if exit_code == GATE_ENTRY_HELD:
+        # A tracker-read-failure-policy hold is the one HELD reason that
+        # must not stay silent forever: every other hold reason (complex
+        # ticket, manual mode, critique score, ...) is legitimately waiting
+        # on a human who has not looked yet, and could take days — the
+        # "deliberately silent" design below is correct for those. This one
+        # is waiting on the tracker itself, and gate-check.sh's own bash-side
+        # retry cap (GATE_FETCH_MAX_ATTEMPTS) cannot see across separate
+        # reconcile probes, since each runs against a fresh scratch log by
+        # design (see the module docstring's "poll that changes nothing
+        # writes nothing"). Without a cap here, a persistent tracker outage
+        # would hold and silently re-probe forever instead of eventually
+        # gate-stopping — the same silent-hold failure shape as the CRE-9
+        # 160-hour incident, just with a different root cause.
+        if _is_gate_fetch_failure_hold(lines):
+            attempts = _count_gate_fetch_probe_attempts(log_file) + 1
+            if attempts >= gate_fetch_hold_max_attempts():
+                stop_lines = [
+                    f'{_iso_now()}|META|gate-stop|fail|LINEAR_FETCH_FAILED — '
+                    f'unreadable tracker persisted across {attempts} '
+                    f'reconcile probes; retries exhausted']
+                _append(log_file, stop_lines)
+                return GateHoldDecision(
+                    GATE_STOP, tid, cycle, exit_code, 'LINEAR_FETCH_FAILED',
+                    position,
+                    'gate fetch retries exhausted across reconcile probes',
+                    hold_id, hold_generation)
+            _append(log_file, [
+                f'{_iso_now()}|META|gate-fetch-probe|fail|attempt={attempts}'
+                f'/{gate_fetch_hold_max_attempts()}'])
+            return GateHoldDecision(
+                HOLD, tid, cycle, exit_code, '', position,
+                f'still held — tracker unreadable (reconcile attempt '
+                f'{attempts})', hold_id, hold_generation)
+
         # Nothing changed. Deliberately silent — see the module docstring.
         return GateHoldDecision(HOLD, tid, cycle, exit_code, '', position,
                                 'still held', hold_id, hold_generation)
@@ -270,6 +305,72 @@ def _reconcile_gate_hold(table, tid, cycle, position, hold_id,
         UNAVAILABLE, tid, cycle, exit_code, '', position,
         f'entry gate did not answer (exit {exit_code!r})',
         hold_id, hold_generation)
+
+
+def _iso_now():
+    return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def _is_gate_fetch_failure_hold(lines):
+    """True when the scratch-log lines a probe just produced are the
+    gate-check.sh `held: linear fetch failed` shape (tracker-read-failure-policy
+    section 6), rather than a human-approval hold reason. `lines` come from
+    the probe's scratch log even though they were not appended to the real
+    one for this exit code — see `_reconcile_gate_hold`.
+    """
+    return any('held: linear fetch failed' in ln for ln in (lines or []))
+
+
+def gate_fetch_hold_max_attempts():
+    """`FLEET_GATE_FETCH_MAX_ATTEMPTS` — cap on consecutive reconcile probes
+    that may find the same tracker-read-failure-policy hold still failing
+    before this reconciler gate-stops it itself. Mirrors
+    `GATE_FETCH_MAX_ATTEMPTS` (gate-check.sh's own default of 3 for the
+    router's direct/resumed dispatch), but is a separate counter enforced
+    over a separate mechanism — this one covers the reconcile-probe path,
+    which gate-check.sh's bash-side counter cannot see across (each probe
+    runs against a fresh scratch log).
+    """
+    raw = os.environ.get('FLEET_GATE_FETCH_MAX_ATTEMPTS', '3')
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 3
+    return value if value > 0 else 3
+
+
+def _count_gate_fetch_probe_attempts(log_file):
+    """Count `META|gate-fetch-probe|fail|` lines written since the most
+    recent `META|gate-held|info|` marker — the line the router writes when
+    it first parks this specific hold (`ticket-auto-pipeline/skills/
+    ticket-auto/SKILL.md`'s exit-1 handling). Scoping to "since the last
+    gate-held marker" (the same pattern `pipeline-finalize.sh`'s
+    `_pf_has_unreleased_gate_hold` uses) keeps a prior, already-released
+    hold's attempts from bleeding into this one's count.
+    """
+    if not log_file:
+        return 0
+    try:
+        with open(log_file, 'r') as fh:
+            log_lines = fh.readlines()
+    except OSError:
+        return 0
+
+    last_held_idx = -1
+    for idx, ln in enumerate(log_lines):
+        parts = ln.rstrip('\n').split('|')
+        if len(parts) >= 3 and parts[1] == 'META' and parts[2] == 'gate-held':
+            last_held_idx = idx
+    if last_held_idx < 0:
+        return 0
+
+    count = 0
+    for ln in log_lines[last_held_idx + 1:]:
+        parts = ln.rstrip('\n').split('|')
+        if (len(parts) >= 4 and parts[1] == 'META'
+                and parts[2] == 'gate-fetch-probe' and parts[3] == 'fail'):
+            count += 1
+    return count
 
 
 def human_hold_max_attempts():
