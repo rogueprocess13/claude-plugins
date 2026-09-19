@@ -34,16 +34,17 @@ R5 (staleness must be visible, not silently trusted).
 | `approved` | control | Read at 4+ gate/detector sites to decide auto-approve, manual override, and stall detection |
 | `Smooth` / `Rough` / `Hard` | control | Self-check read for auto-merge eligibility (`outcome-label-check.sh`), per design D4 — redundant with local `META\|outcome-label` but a real decision read |
 | `claimed` | **vestigial** | Zero readers repo-wide; fully redundant with visible ticket state + assignee |
-| `simple` / `complex` | **vestigial (candidate)** | Complexity is read from `notes.md` everywhere it matters, never from the label; no human-consumer instruction found |
-| `pre-approved` | **vestigial (candidate)** | Every decision read uses the description's `Pre-approved:` field, never the Linear label; label itself is write-only + existence-preflight only |
+| `simple` / `complex` | **vestigial (evidence confirmed, removal deferred)** | Complexity is read from `notes.md` everywhere it matters, never from the label; no human-consumer instruction found — see § Final disposition for why removal is parked |
+| `pre-approved` | **human-signal (reserved)** | No current decision read, but `ticket-planner/CLAUDE.md` and `docs/ticket-planner.md` document it as a deliberately-reserved contract label for the dormant `planned-entry-gate` feature — reclassified from vestigial, see § Final disposition |
 | `needs-info` | human-signal | Written by `fleetd/gate_hold.py`; explicit human-resolve instruction in `ticket-audit-exec/SKILL.md` and `ticket-appraise/SKILL.md` |
 | `needs-adr` | human-signal | Written via ADR gate flow; explicit "how a human triaging the queue finds it" instruction in `skill-preamble-auto.md` |
 | `rejected` | human-signal (weaker evidence) | No decision read found; legend documents non-redundant status distinct from ticket state — flagged for operator judgment |
 | `reviewed` | human-signal (weaker evidence) | No decision read found; legend gives detailed operator guidance including an explicit anti-pattern warning — flagged for operator judgment |
 | `repro-failed` | human-signal (weaker evidence) | Zero writers found anywhere in code — likely a manually-applied human signal; documented meaning is specific, not generic |
 
-**Proposed vestigial list for operator confirmation:** `claimed`, `simple`, `complex`, `pre-approved`.
-See § Operator confirmation gate.
+**Proposed vestigial list for operator confirmation (as originally classified):** `claimed`,
+`simple`, `complex`, `pre-approved`. See § Operator confirmation gate for the confirmation record
+and § Final disposition for how this list changed after removal execution surfaced new evidence.
 
 ---
 
@@ -90,7 +91,7 @@ See § Operator confirmation gate.
   result rolls up to).
 - **Saved-view impact:** none known.
 
-### `pre-approved` — vestigial candidate
+### `pre-approved` — human-signal (reserved) — reclassified, see § Final disposition
 
 - **Writer:** `ticket-planner/lib/planner-phase-prompts.sh:1343` —
   `[ "$pre_approved" = "true" ] && LABELS=$(echo "$LABELS" | jq -c '. + ["pre-approved"]')`.
@@ -118,12 +119,13 @@ See § Operator confirmation gate.
   by human-reject") — none instructs a person to look for or act on the *label* specifically (as
   opposed to the ticket's actual fast-path behavior, which a human observes independently of the
   label chip). No instruction found.
-- **Recommendation:** vestigial — the label is a write-only duplicate of information already carried
-  in, and exclusively read from, the ticket description. Flagged as a *candidate*, not a settled
-  fact, because this reverses the design doc's "to be determined" open question — the operator
-  should confirm before this label stops being written.
-- **Saved-view impact:** none known. If confirmed, `ticket-planner`'s `planner-labels` capability
-  needs a delta spec per proposal.md's "Modified Capabilities" section (task 6.5).
+- **Recommendation (superseded — see § Final disposition):** this section originally recommended
+  `vestigial` on the strength of "the label is a write-only duplicate of the description field."
+  That evidence about *current* reads still holds, but removal execution surfaced documented
+  project intent to *reserve* this label for a specified-but-dormant future feature
+  (`planned-entry-gate`). The operator has reclassified `pre-approved` as `human-signal (reserved)`.
+  No spec delta is needed — the label is not being removed, so `planner-labels` is unaffected.
+- **Saved-view impact:** none known. Moot — the label is retained, not removed.
 
 ### `blocked-by:*` — control
 
@@ -563,3 +565,36 @@ most: nothing further exists to search.
 settled `human-signal` retentions. `repro-failed` remains a `human-signal` retention by the
 letter of the classification rule, but the operator may reasonably decide differently — the
 evidence is exhausted, not just thin.
+
+## Final disposition (2026-09-19, after removal execution)
+
+Removal execution (task 6) surfaced evidence the original audit pass didn't have, on two of the
+four confirmed labels. The operator reviewed the § Removal complications findings above and
+decided, per label:
+
+- **`claimed` — removed.** No new evidence; the original `vestigial` finding (zero readers
+  repo-wide) stood unchallenged. Shipped in commit `a2314c4`.
+- **`pre-approved` — reclassified `human-signal (reserved)`, retained.** The audit's original
+  `vestigial` finding was correct about *current* reads (no code branches on the label itself,
+  only on the description's `Pre-approved:` field) but incomplete: it never checked for
+  documented *future* intent. `ticket-planner/CLAUDE.md` and `docs/ticket-planner.md` state, in
+  writing, that this label is deliberately reserved for the specified-but-dormant
+  `planned-entry-gate` feature, with explicit numeric revisit criteria. That is affirmative
+  evidence of a consumer (the planner team's own documented design), which the `vestigial`
+  bar (design D2: positive evidence of *no* consumer) cannot survive. The label's write path
+  (`planner-phase-prompts.sh:1343`) and existence preflight (`planner-doctor.sh:51`) are
+  untouched. No `planner-labels` spec delta is needed, since nothing is being removed.
+- **`simple` / `complex` — evidence stands, removal deferred as separate follow-up work.** The
+  operator agreed the labels themselves are vestigial (complexity is read from `notes.md`
+  everywhere it matters) but chose not to fold the removal into this change, because it is
+  entangled with `flow.sh`'s issue #170 stale-opposite-label fix and the three `phase1.sh`
+  regression tests pinning it — deleting those tests to remove a label is a materially different
+  decision than a JSON-only removal, and deserves its own review rather than being decided as a
+  side effect of this audit. **This is not a rejection of the classification — `docs/label-audit.md`
+  continues to record `simple`/`complex` as vestigial** — it is a deferral of the removal
+  mechanics to a later, explicitly-scoped change. Both labels continue to be written exactly as
+  before until that follow-up happens.
+
+**Updated proposed-for-removal-but-not-yet-removed list:** `simple`, `complex` (follow-up work,
+not part of this change's execution). **Confirmed removed:** `claimed`. **Confirmed retained
+(reclassified):** `pre-approved`.

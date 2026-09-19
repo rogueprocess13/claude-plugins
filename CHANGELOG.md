@@ -17,6 +17,23 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.13 (2026-09-19)
+
+Tracker label audit (`docs/label-audit.md`, new): every label declared in
+`state-machine.json` classified as `control`, `human-signal`, or `vestigial`
+with file:line evidence, per the `tracker-label-inventory` capability. Removes
+the `claimed` label — zero readers repository-wide, fully redundant with
+visible ticket state and assignee. `state-machine.json` gains a pointer
+comment (`_label_audit`) to the audit file.
+
+Two other labels originally proposed for removal were not removed after
+execution surfaced evidence the audit hadn't checked: `pre-approved` is
+reclassified `human-signal (reserved)` — `ticket-planner`'s own docs describe
+it as deliberately held for a specified-but-dormant future feature, not dead
+weight — and `simple`/`complex` removal is deferred as separate follow-up
+work, since it's entangled with issue #170's stale-opposite-label regression
+tests rather than a JSON-only change. Both stay written exactly as before.
+
 ## 0.50.12 (2026-09-19) — also fleet-controller 0.31.11
 
 Consolidates five independent tracker transports (three near-duplicate
