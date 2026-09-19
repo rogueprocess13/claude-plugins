@@ -32,4 +32,4 @@ echo "$LABELS" | jq -e '.data.issue.labels.nodes[].name | select(. == "approved"
 ## Related
 
 - See `ticket-auto/SKILL.md` Step 5d for the re-approval gate logic.
-- See `ticket-flow/state-machine.json` for label-to-state mappings.
+- See `ticket-flow/workflow.json` for label-to-state mappings.

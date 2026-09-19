@@ -390,7 +390,7 @@ If a pipeline run is interrupted (session close, crash, timeout):
 | [pipeline-heartbeat-format.md](pipeline-heartbeat-format.md) | Developers | Heartbeat log schema |
 | [docs/planner-context-schema.md](docs/planner-context-schema.md) | Developers | The planner → pipeline handoff contract |
 | [docs/branch-directive-schema.md](docs/branch-directive-schema.md) | Developers | Shared epic-branch directive format |
-| [skills/ticket-flow/state-machine.json](skills/ticket-flow/state-machine.json) | Developers | Canonical state/label transition definitions |
+| [skills/ticket-flow/workflow.json](skills/ticket-flow/workflow.json) | Developers | Canonical state/label transition definitions |
 | [CLAUDE.md](CLAUDE.md) | Claude Code | Plugin architecture, library reference, sharp edges |
 | [Root README](../README.md) | Everyone | Marketplace overview, ecosystem flow, first-run walkthrough |
 

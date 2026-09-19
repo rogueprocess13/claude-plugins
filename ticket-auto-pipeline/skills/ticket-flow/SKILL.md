@@ -130,7 +130,7 @@ executor runs.
 ### Verdict gate
 
 Independent of the epic precondition above, a trigger may also declare `"verdict_gate": true` in
-`state-machine.json`. `pr-review-pass-done`, `pr-review-pass-uat`, and `uat-pass` carry it —
+`workflow.json`. `pr-review-pass-done`, `pr-review-pass-uat`, and `uat-pass` carry it —
 the three triggers that can land a ticket in `Done` or `UAT`. Before dispatching such a trigger,
 `flow.sh` calls `verifier_latest_verdict` (`lib/verifier-result.sh`) to find the most recently
 recorded verdict for every `(verifier, phase)` pair the pipeline log has written a
@@ -165,7 +165,7 @@ completion in the log or in Linear, the inverted form of the bug this gate exist
 written by child-ticket phases (VERIFY/PR-REVIEW) against each *child's* log. A
 `verdict_gate` on the epic trigger would read an always-empty per-epic verifier history and
 never block anything — worse than no gate, since it would look load-bearing without being
-one. See `state-machine.json`'s `epic-uat-pass` `description` field for the same note next
+one. See `workflow.json`'s `epic-uat-pass` `description` field for the same note next
 to the trigger it documents.
 
 ## Preflight Sentinel
@@ -175,7 +175,7 @@ to the trigger it documents.
 ~/.claude/state/ticket-flow/validated-{TEAM_ID}
 ```
 
-The sentinel contains `schema_version`, `sm_hash` (SHA256 of `state-machine.json`), and `validated_at`. `ticket-auto` Step 0.4 reads this file — if it exists and the hash matches the current `state-machine.json`, validation is skipped (warm hit). Any edit to `state-machine.json` automatically invalidates the sentinel.
+The sentinel contains `schema_version`, `sm_hash` (SHA256 of `workflow.json`), and `validated_at`. `ticket-auto` Step 0.4 reads this file — if it exists and the hash matches the current `workflow.json`, validation is skipped (warm hit). Any edit to `workflow.json` automatically invalidates the sentinel.
 
 To force re-validation:
 ```bash

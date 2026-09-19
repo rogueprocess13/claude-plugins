@@ -105,19 +105,21 @@ ticket_preamble_project_context() {
 
 # ── Preflight ─────────────────────────────────────────────────────────────────
 
-# Locate state-machine.json: monorepo layout first, then the installed skill,
-# then the plugin cache. Same cascade validate-linear-config.sh is found by.
+# Locate workflow.json (formerly state-machine.json — see
+# tracker-event-vocabulary-and-emitter Section 4): monorepo layout first,
+# then the installed skill, then the plugin cache. Same cascade
+# validate-linear-config.sh is found by.
 _tp_state_machine() {
   local cand
   for cand in \
-    "$_TP_LIB_DIR/../skills/ticket-flow/state-machine.json" \
-    "$HOME/.claude/skills/ticket-flow/state-machine.json"; do
+    "$_TP_LIB_DIR/../skills/ticket-flow/workflow.json" \
+    "$HOME/.claude/skills/ticket-flow/workflow.json"; do
     [ -f "$cand" ] && {
       printf '%s' "$cand"
       return 0
     }
   done
-  find "$HOME/.claude/plugins/cache" -name state-machine.json \
+  find "$HOME/.claude/plugins/cache" -name workflow.json \
     -path '*/ticket-flow/*' 2>/dev/null | sort | tail -1
 }
 
@@ -138,7 +140,7 @@ _tp_validate_script() {
 # Validate the Linear team config and the API key.
 #
 # The config check is sentinel-cached on the state machine's hash: it is a
-# dozen API calls that can only change when state-machine.json does. The key
+# dozen API calls that can only change when workflow.json does. The key
 # check is not cached — a revoked token is exactly the kind of thing that
 # changes between two runs, and it is one call.
 #
@@ -150,7 +152,7 @@ ticket_preamble_preflight() {
 
   sm="$(_tp_state_machine)"
   [ -n "$sm" ] || {
-    echo "preamble: state-machine.json not found" >&2
+    echo "preamble: workflow.json not found" >&2
     return $TP_LINEAR_CONFIG_INVALID
   }
   sm_hash="$(sha256sum "$sm" | cut -d' ' -f1)"

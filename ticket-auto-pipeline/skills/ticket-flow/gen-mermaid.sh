@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# gen-mermaid.sh — generate a stateDiagram-v2 block from state-machine.json.
+# gen-mermaid.sh — generate a stateDiagram-v2 block from workflow.json's
+# `triggers` table (formerly state-machine.json — see
+# tracker-event-vocabulary-and-emitter Section 4).
 # Outputs only the diagram content (no markdown fence) for embedding.
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
@@ -7,10 +9,10 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SM="$SCRIPT_DIR/state-machine.json"
+SM="$SCRIPT_DIR/workflow.json"
 
 jq -r 'empty' "$SM" 2>/dev/null || {
-  echo "state-machine.json is not valid JSON" >&2
+  echo "workflow.json is not valid JSON" >&2
   exit 1
 }
 

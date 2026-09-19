@@ -31,6 +31,8 @@
 # errors in this bash version when nounset is active. Repo convention.
 set -eo pipefail
 
+_HH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 HUMAN_HOLD_SCHEMA_VERSION=1
 
 _HH_PHASES="APPRAISE REPRODUCE EXEC GATE IMPLEMENT VERIFY PR-REVIEW MAINTENANCE"
@@ -168,6 +170,36 @@ _hh_emit() {
       echo "[human-hold] WARN: log write failed (LOG_FILE=${log_file})" >&2
     }
   fi
+
+  # Dual-write to the event outbox (tracker-event-vocabulary-and-emitter).
+  # Only on a genuinely valid block — an "invalid" record is still logged
+  # above (a swallowed ask is the bug this parser exists to fix) but is not
+  # a real question, so it emits no fact. Never calls flow.sh — a hold
+  # changes no Linear label or state. TID is derived from LOG_FILE's own
+  # {tid}-pipeline.log naming convention since this parser takes no
+  # explicit ticket id argument.
+  if [ "$status" = "ok" ] && [ -n "$log_file" ]; then
+    local _events_sh="" _cand _hh_tid _hh_question_text
+    for _cand in "$_HH_LIB_DIR/events.sh" "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/events.sh"; do
+      [ -f "$_cand" ] && {
+        _events_sh="$_cand"
+        break
+      }
+    done
+    if [ -n "$_events_sh" ]; then
+      _hh_tid=$(basename "$log_file")
+      _hh_tid="${_hh_tid%-pipeline.log}"
+      if [ -n "$_hh_tid" ] && [ "$_hh_tid" != "$(basename "$log_file")" ]; then
+        (
+          source "$_events_sh"
+          _hh_question_text=$(printf '%s' "$questions_json" | jq -r '[.[].text] | join("; ")' 2>/dev/null)
+          emit_event "$_hh_tid" human-hold-requested \
+            "$(jq -nc --arg q "$_hh_question_text" '{question: $q}')"
+        ) 2>/dev/null || true
+      fi
+    fi
+  fi
+
   return 0
 }
 

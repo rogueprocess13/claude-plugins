@@ -166,7 +166,7 @@ Before creating any log file, validate that the Linear team is correctly configu
 
 ```bash
 SENTINEL_DIR="$HOME/.claude/state/ticket-flow"
-SM="$HOME/.claude/skills/ticket-flow/state-machine.json"
+SM="$HOME/.claude/skills/ticket-flow/workflow.json"
 SM_HASH=$(sha256sum "$SM" | cut -d' ' -f1)
 
 # Resolve team ID from env or first available team

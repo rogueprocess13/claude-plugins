@@ -481,6 +481,27 @@ def probe_human_answer(tid, hold_id, held_at, lib_dir=None, timeout=30):
     return NOT_ANSWERED, 'no qualifying comment found'
 
 
+def _emit_human_hold_released(tid, lib_dir=None, timeout=15):
+    """Dual-write human-hold-released to the ticket's event outbox
+    (tracker-event-vocabulary-and-emitter). Best-effort only: shells out to
+    lib/events.sh the same way probe_human_answer shells out to
+    linear-api.sh above, and a failure here never affects the release
+    decision itself — the outbox is purely additive in this phase.
+    """
+    lib = Path(lib_dir) if lib_dir else phase_dispatch.ticket_auto_lib_dir()
+    events_sh = lib / 'events.sh'
+    if not events_sh.is_file():
+        return
+    try:
+        subprocess.run(
+            ['bash', '-c',
+             f"source '{events_sh}'; emit_event '{tid}' human-hold-released '{{}}'"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
 def _reconcile_human_hold(table, tid, cycle, position, hold_id,
                           hold_generation, log_file, hb_log_file='',
                           lib_dir=None, entry_gate=None, held_at='',
@@ -520,6 +541,7 @@ def _reconcile_human_hold(table, tid, cycle, position, hold_id,
     action, detail = probe(tid, hold_id, held_at, lib_dir=lib_dir)
 
     if action == ANSWERED:
+        _emit_human_hold_released(tid, lib_dir=lib_dir)
         return GateHoldDecision(
             RELEASE, tid, cycle + 1, None, '', position, detail,
             hold_id, hold_generation)
@@ -536,7 +558,7 @@ def post_human_hold_comment(tid, hold_id, blocks, questions, lib_dir=None,
                             timeout=30):
     """Post fleetd's one Linear comment for a newly created human hold
     (human-hold-release spec, design.md D8) and apply `needs-info` through
-    its existing `state-machine.json` trigger — no new label defined.
+    its existing `workflow.json` trigger — no new label defined.
 
     `questions` is an iterable of `(id, text)` pairs, already
     secret-redacted by `human-hold-parse.sh` before the record ever reached

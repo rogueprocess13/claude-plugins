@@ -16,17 +16,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}"
 source "$LIB_DIR/linear-api.sh"
 
-SM="$SCRIPT_DIR/state-machine.json"
+SM="$SCRIPT_DIR/workflow.json"
 SENTINEL_DIR="${SENTINEL_DIR:-$HOME/.claude/state/ticket-flow}"
 
-# ── Validate state-machine.json ──────────────────────────────────────────────
+# ── Validate workflow.json ────────────────────────────────────────────────────
 
 if ! jq '.' "$SM" >/dev/null 2>&1; then
-  echo "ERROR: state-machine.json is not valid JSON: $SM" >&2
+  echo "ERROR: workflow.json is not valid JSON: $SM" >&2
   exit 1
 fi
 
-# ── Derive expected states and labels from state-machine.json ────────────────
+# ── Derive expected states and labels from workflow.json ─────────────────────
 
 # States: union of from/to values + well_known_states
 mapfile -t EXPECTED_STATES < <(jq -r '

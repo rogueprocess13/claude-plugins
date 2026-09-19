@@ -18,6 +18,11 @@ elif [ -f "$SCRIPT_DIR/verifier-result.sh" ]; then
   source "$SCRIPT_DIR/verifier-result.sh"
 fi
 source "$LIB_DIR/notes-parse.sh"
+if [ -f "$LIB_DIR/events.sh" ]; then
+  source "$LIB_DIR/events.sh"
+elif [ -f "$SCRIPT_DIR/events.sh" ]; then
+  source "$SCRIPT_DIR/events.sh"
+fi
 
 # ── Verifier-result helper (Phase 0 RLVR) ──────────────────────────────────────
 # Writes a META|verifier-result at gate decision time.
@@ -36,6 +41,22 @@ _write_gate_verdict() {
   # every gate verdict with zero trace is worse than noisy stderr warnings.
   # write_verifier_result is fail-open (returns 0 on all error paths),
   # so stderr is the only signal of a configuration problem.
+}
+
+# ── Outbox dual-write (tracker-event-vocabulary-and-emitter) ──────────────────
+# gate-check.sh never calls flow.sh for a hold — a hold changes no Linear
+# label or state, so flow.sh's own idempotency rule would swallow the
+# emission even if it did. Guarded: not every gate-check.sh invocation runs
+# from a context where the outbox lib is installed alongside it, and this
+# must never fail the gate decision itself.
+_gate_emit_held() {
+  declare -f emit_event >/dev/null 2>&1 || return 0
+  emit_event "$TICKET_ID" gate-held "$(jq -nc --arg r "$1" '{reason: $r}')" 2>/dev/null || true
+}
+
+_gate_emit_released() {
+  declare -f emit_event >/dev/null 2>&1 || return 0
+  emit_event "$TICKET_ID" gate-released "$(jq -nc --arg p "$1" '{provenance: $p}')" 2>/dev/null || true
 }
 source "$SCRIPT_DIR/planned-ticket-check.sh"
 source "$SCRIPT_DIR/template-select.sh"
@@ -200,6 +221,7 @@ _gate_fetch_issue_fail() {
 
   _plog "$LOG_FILE" "GATE" "gate" "fail" "held: linear fetch failed (attempt ${attempt}/${max_attempts}) — ${detail}"
   hb_gate "$hb_ctx" "fail" "held: linear fetch failed" "{\"ticket\":\"$ticket_id\",\"attempt\":$attempt,\"max\":$max_attempts}"
+  _gate_emit_held "linear-fetch-failed"
   return 1
 }
 
@@ -291,6 +313,7 @@ _gate_entry() {
     if [[ "$critique_score" =~ ^[0-9]+$ ]] && [ "$critique_score" -lt 40 ]; then
       _plog "$LOG_FILE" "GATE" "gate" "fail" "held: content quality score $critique_score < 40"
       hb_gate "entry-gate" "fail" "held: content quality score below threshold" "{\"score\":\"$critique_score\",\"threshold\":40}"
+      _gate_emit_held "critique-score-below-threshold"
       return 1
     fi
 
@@ -521,9 +544,11 @@ _gate_entry() {
         if [ "$_ticket_mode" = "build-only" ]; then
           _plog "$LOG_FILE" "GATE" "gate" "fail" "held: plan missing $missing_count/${_required_count} verification prerequisites (mode=$_ticket_mode build_command=$has_build_command build_outcome=$has_build_outcome)"
           hb_gate "entry-gate" "fail" "held: plan missing verification prerequisites" "{\"artifact\":\"$artifact_path\",\"missing\":\"$missing_count\",\"required\":\"$_required_count\",\"mode\":\"$_ticket_mode\",\"build_command\":\"$has_build_command\",\"build_outcome\":\"$has_build_outcome\"}"
+          _gate_emit_held "verification-prerequisites-missing"
         else
           _plog "$LOG_FILE" "GATE" "gate" "fail" "held: plan missing $missing_count/${_required_count} verification prerequisites (mode=$_ticket_mode test_user=$has_test_user nav=$has_nav_path expected=$has_expected_behavior env=$has_env_prereqs)"
           hb_gate "entry-gate" "fail" "held: plan missing verification prerequisites" "{\"artifact\":\"$artifact_path\",\"missing\":\"$missing_count\",\"required\":\"$_required_count\",\"mode\":\"$_ticket_mode\",\"test_user\":\"$has_test_user\",\"nav\":\"$has_nav_path\",\"expected\":\"$has_expected_behavior\",\"env\":\"$has_env_prereqs\"}"
+          _gate_emit_held "verification-prerequisites-missing"
         fi
         return 1
       fi
@@ -567,6 +592,7 @@ _gate_entry() {
       if [ "$cross_failures" -ge 1 ] 2>/dev/null; then
         _plog "$LOG_FILE" "GATE" "gate" "fail" "held: critique-plan cross-validation failed — $cross_failures critique gap(s) still unaddressed (nav_gap=${critique_nav_gap:-false} user_gap=${critique_user_gap:-false} repro_gap=${critique_repro_gap:-false})"
         hb_gate "entry-gate" "fail" "held: critique-plan cross-validation failed" "{\"nav_gap\":\"${critique_nav_gap:-false}\",\"user_gap\":\"${critique_user_gap:-false}\",\"repro_gap\":\"${critique_repro_gap:-false}\",\"cross_failures\":\"$cross_failures\"}"
+        _gate_emit_held "critique-cross-validation-failed"
         return 1
       fi
     fi
@@ -679,6 +705,7 @@ _gate_entry() {
   if [ "$complexity" = "complex" ]; then
     _plog "$LOG_FILE" "GATE" "gate" "fail" "held: complex ticket"
     hb_gate "entry-gate" "fail" "held: complex ticket" "{\"complexity\":\"$complexity\"}"
+    _gate_emit_held "complex-ticket"
     return 1
   fi
 
@@ -698,6 +725,7 @@ _gate_entry() {
     fi
     _plog "$LOG_FILE" "GATE" "gate" "fail" "held: manual mode"
     hb_gate "entry-gate" "fail" "held: manual mode" "{\"autonomy\":\"$autonomy\"}"
+    _gate_emit_held "manual-mode"
     return 1
   fi
 
@@ -715,6 +743,7 @@ _gate_entry() {
   # Fallback: held (should not reach here given the checks above, but safety net)
   _plog "$LOG_FILE" "GATE" "gate" "fail" "held: default"
   hb_gate "entry-gate" "fail" "held: default fallback" "{}"
+  _gate_emit_held "default-fallback"
   return 1
 }
 
@@ -749,6 +778,10 @@ _gate_reapprove() {
   if [ "$state" = "Ready" ] && [ "$has_approved" = "true" ]; then
     _plog "$LOG_FILE" "GATE" "reapprove" "done" ""
     hb_gate "reapprove-gate" "ok" "re-approval confirmed" "{\"state\":\"$state\",\"prior_failures\":\"${verify_count:-0}\"}"
+    # reapprove-mode is only ever entered because a human set the approved
+    # label on a previously-held ticket — no automatic re-evaluation path
+    # exists in the current pipeline, so provenance is always "human" here.
+    _gate_emit_released "human"
     _write_gate_verdict PASS
     return 0
   fi

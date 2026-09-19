@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# test-state-machine-labels.sh — verify planner labels in state-machine.json
+# test-state-machine-labels.sh — verify planner labels in workflow.json
 # Usage: bash test-state-machine-labels.sh
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SM="${SCRIPT_DIR}/../../skills/ticket-flow/state-machine.json"
+SM="${SCRIPT_DIR}/../../skills/ticket-flow/workflow.json"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Source the executor's own precondition evaluator. These tests previously
@@ -35,10 +35,10 @@ _run() {
   fi
 }
 
-echo "=== state-machine.json planner labels tests ==="
+echo "=== workflow.json planner labels tests ==="
 echo ""
 
-# ── Test: state-machine.json exists and is valid JSON ──────────────────────
+# ── Test: workflow.json exists and is valid JSON ──────────────────────
 
 test_valid_json() {
   jq '.' "$SM" >/dev/null 2>&1

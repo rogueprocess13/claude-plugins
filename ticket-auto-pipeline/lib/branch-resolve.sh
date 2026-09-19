@@ -21,6 +21,10 @@ source "$_BR_LIB_DIR/config.sh" 2>/dev/null || true
 source "$_BR_LIB_DIR/linear-api.sh" 2>/dev/null || true
 source "$_BR_LIB_DIR/planned-ticket-check.sh" 2>/dev/null || true
 source "$_BR_LIB_DIR/branch-directive-check.sh" 2>/dev/null || true
+# events.sh backs uat_decide_trigger's pr-review-passed{uat_required} dual-write
+# (tracker-event-vocabulary-and-emitter). Guarded — not every branch-resolve.sh
+# caller runs from a context where the outbox lib is installed alongside it.
+declare -f emit_event >/dev/null 2>&1 || source "$_BR_LIB_DIR/events.sh" 2>/dev/null || true
 
 #   resolve_branch_context "CRE-123"
 #   resolve_branch_context "CRE-123" --branch "epic/test-x"
@@ -293,20 +297,34 @@ uat_decide_trigger() {
 
   # Epic policy wins outright — there is no environment in which one child of a
   # shared epic branch can be observed, so a UAT target is irrelevant.
+  local _uat_required=false
+  local _trigger
   if [ "$policy" = "epic" ]; then
-    echo "pr-review-pass-done"
-    return 0
-  fi
-
-  if ! $uat_url_given; then
-    uat_url=$(resolve_uat_url "$project_dir" 2>/dev/null) || uat_url=""
-  fi
-
-  if [ -n "$uat_url" ]; then
-    echo "pr-review-pass-uat"
+    _trigger="pr-review-pass-done"
   else
-    echo "pr-review-pass-done"
+    if ! $uat_url_given; then
+      uat_url=$(resolve_uat_url "$project_dir" 2>/dev/null) || uat_url=""
+    fi
+
+    if [ -n "$uat_url" ]; then
+      _trigger="pr-review-pass-uat"
+      _uat_required=true
+    else
+      _trigger="pr-review-pass-done"
+    fi
   fi
+
+  # Dual-write (tracker-event-vocabulary-and-emitter): pr-review-pass-done and
+  # pr-review-pass-uat collapse into one outbox fact, pr-review-passed,
+  # carrying the resolved boolean instead of a destination-encoding name.
+  # flow.sh's own generic dual-write wrapper deliberately does not emit for
+  # either trigger, to avoid double emission — this is the single site.
+  if [ -n "$ticket_id" ] && declare -f emit_event >/dev/null 2>&1; then
+    emit_event "$ticket_id" "pr-review-passed" \
+      "$(jq -nc --argjson u "$_uat_required" '{uat_required: $u}')" 2>/dev/null || true
+  fi
+
+  echo "$_trigger"
   return 0
 }
 

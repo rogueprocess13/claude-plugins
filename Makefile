@@ -40,6 +40,10 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-wiki-bootstrap.sh
 	bash ticket-auto-pipeline/lib/tests/test-wiki-verify.sh
 	bash ticket-auto-pipeline/lib/tests/test-adr-gate-parse.sh
+	# tracker-event-vocabulary-and-emitter
+	bash ticket-auto-pipeline/lib/tests/test-fence-check.sh
+	bash ticket-auto-pipeline/lib/tests/test-events.sh
+	bash ticket-auto-pipeline/lib/tests/test-workflow-vocabulary.sh
 	# fleet-controller tests
 	bash fleet-controller/lib/tests/test-fleet-detect.sh
 	bash fleet-controller/lib/tests/test-fleet-detect-new.sh
