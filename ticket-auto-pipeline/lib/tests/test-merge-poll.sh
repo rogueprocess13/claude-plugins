@@ -173,9 +173,10 @@ EOF
 test_sweep_gh_failure_emits_nothing_this_pass() {
   _setup
   _stub_gh_failure
-  local runs="$_ws/runs.jsonl"
-  cat >"$runs" <<'EOF'
-{"kind":"run","tid":"CRE-9","run_id":"r1","ended_at":"2026-09-05T00:00:00Z","pr":{"pr":1,"url":"https://x","repo":"acme/repo"},"observed_at":"2026-09-05T00:00:00Z"}
+  local runs="$_ws/runs.jsonl" recent_ts
+  recent_ts=$(date -u -d "1 day ago" +%Y-%m-%dT%H:%M:%SZ)
+  cat >"$runs" <<EOF
+{"kind":"run","tid":"CRE-9","run_id":"r1","ended_at":"$recent_ts","pr":{"pr":1,"url":"https://x","repo":"acme/repo"},"observed_at":"$recent_ts"}
 EOF
   merge_poll_sweep "$runs"
   local lines
@@ -190,9 +191,10 @@ EOF
 test_sweep_successful_poll_appends_merge_event_shape() {
   _setup
   _stub_gh_merged
-  local runs="$_ws/runs.jsonl"
-  cat >"$runs" <<'EOF'
-{"kind":"run","tid":"CRE-10","run_id":"r1","ended_at":"2026-09-05T00:00:00Z","pr":{"pr":1,"url":"https://x","repo":"acme/repo"},"observed_at":"2026-09-05T00:00:00Z"}
+  local runs="$_ws/runs.jsonl" recent_ts
+  recent_ts=$(date -u -d "1 day ago" +%Y-%m-%dT%H:%M:%SZ)
+  cat >"$runs" <<EOF
+{"kind":"run","tid":"CRE-10","run_id":"r1","ended_at":"$recent_ts","pr":{"pr":1,"url":"https://x","repo":"acme/repo"},"observed_at":"$recent_ts"}
 EOF
   merge_poll_sweep "$runs"
   local last

@@ -860,10 +860,6 @@ test_flow_appraise_start_no_prior_complexity_label() {
     echo "expected Complex in computed labels, got: $labels"
     return 1
   }
-  echo "$labels" | tr ',' '\n' | grep -qx "claimed" || {
-    echo "expected claimed in computed labels, got: $labels"
-    return 1
-  }
   return 0
 }
 

@@ -52,7 +52,6 @@ integration is merged and deployed → `Done` on acceptance.
 
 | Label | Meaning |
 |-------|---------|
-| `claimed` | Actively being worked (set at appraisal start, cleared at Done) |
 | `approved` | Human approved the appraisal — gates implementation |
 | `rejected` | PR review found gaps OR UAT verification failed — ticket needs rework |
 | `reviewed` | PR review passed. Under `per-ticket` UAT policy this means "awaiting QA" and is cleared by `uat-pass`. **Under `UAT Policy: epic` it does not mean that** — the child goes straight to `Done` and retains the label, because there is no per-ticket QA step. Do not key an "in flight" heuristic on it. |
@@ -70,17 +69,17 @@ integration is merged and deployed → `Done` on acceptance.
 
 | Trigger | State | Labels Added | Labels Removed | Notes |
 |---------|-------|-------------|----------------|-------|
-| `appraise-start` | `Todo` | `claimed`, `{simple\|complex}` | — | Also sets `assignee: "me"` |
+| `appraise-start` | `Todo` | `{simple\|complex}` | — | Also sets `assignee: "me"` |
 | `appraise-complete` | `Approve` | — | — | |
 | `human-approve` | `Ready` | `approved` | `rejected` | |
 | `human-reject` | `Todo` | — | — | |
 | `implement-outcome` | — | `{Smooth\|Rough\|Hard}` | — | No state change |
 | `implement-complete` | `Review` | — | `approved` | |
-| `pr-review-pass-done` | `Done` | `reviewed` | `rejected`, `claimed` | Chosen by `uat_decide_trigger` — fires under `UAT Policy: epic`, or under `per-ticket` with no UAT target |
+| `pr-review-pass-done` | `Done` | `reviewed` | `rejected` | Chosen by `uat_decide_trigger` — fires under `UAT Policy: epic`, or under `per-ticket` with no UAT target |
 | `pr-review-pass-uat` | `UAT` | `reviewed` | `rejected` | Chosen by `uat_decide_trigger` — fires under `per-ticket` policy with a UAT target |
 | `pr-review-fail` | — | `rejected` | — | No state change |
 | `pr-iterate` | `Ready` | `approved` | `reviewed`, `rejected` | |
-| `uat-pass` | `Done` | — | `claimed`, `reviewed` | |
+| `uat-pass` | `Done` | — | `reviewed` | |
 | `uat-fail` | `Ready` | `rejected` | `reviewed` | |
 | `needs-info` | — | `needs-info` | — | No state change |
 | `needs-info-resolved` | — | — | `needs-info` | No state change |

@@ -345,7 +345,7 @@ class TestTerminalWrite(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.log = Path(self._tmp.name) / 'CRE-1-pipeline.log'
-        self.log.write_text('2026-09-03T09:00:00Z|META|schema|info|2\n')
+        self.log.write_text('2026-09-03T09:00:00Z|META|schema|info|1\n')
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -1060,7 +1060,7 @@ class TestAdoptPositionAgainstTheRealScript(unittest.TestCase):
     def test_appraise_done_adopts_step_2(self):
         log = self.project_dir / 'logs' / 'CRE-4302-pipeline.log'
         log.write_text(
-            '2026-01-01T00:00:00Z|META|schema|info|2\n'
+            '2026-01-01T00:00:00Z|META|schema|info|1\n'
             '2026-01-01T00:00:01Z|APPRAISE|appraise|done|ok\n'
         )
         step, fields = adopt_position_via_detect_resume(
@@ -1071,7 +1071,7 @@ class TestAdoptPositionAgainstTheRealScript(unittest.TestCase):
     def test_completed_pipeline_adopts_done(self):
         log = self.project_dir / 'logs' / 'CRE-4303-pipeline.log'
         log.write_text(
-            '2026-01-01T00:00:00Z|META|schema|info|2\n'
+            '2026-01-01T00:00:00Z|META|schema|info|1\n'
             '2026-01-01T00:00:01Z|META|outcome|info|completed: STEP_6\n'
         )
         step, _fields = adopt_position_via_detect_resume(
@@ -1207,7 +1207,7 @@ class TestVerifyCheckpointParity(unittest.TestCase):
     def _real_verify_from(self, tid, log_lines):
         log = self.project_dir / 'logs' / f'{tid}-pipeline.log'
         log.write_text(
-            '2026-01-01T00:00:00Z|META|schema|info|2\n'
+            '2026-01-01T00:00:00Z|META|schema|info|1\n'
             + '\n'.join(log_lines) + ('\n' if log_lines else '')
         )
         env = dict(os.environ)

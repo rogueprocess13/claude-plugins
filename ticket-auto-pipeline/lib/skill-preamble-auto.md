@@ -53,35 +53,10 @@ Do NOT read CLAUDE.md to extract project context fields — they are already in 
 
 ## 2. Linear access strategy
 
-<!-- if {HAS_LINEAR_ACCESS} == true -->
-
-```
-## Linear access strategy
-
-When `$LINEAR_API_KEY` is set in the environment, use bash calls to `~/.claude/skills/lib/linear-api.sh` for **all** Linear operations. When `$LINEAR_API_KEY` is unset, fall back to MCP tools (`mcp__linear-server__*`).
-
-**Function mapping:**
-
-| Operation | linear-api.sh bash call | MCP fallback |
-|-----------|------------------------|--------------|
-<!-- for each op in {LINEAR_OPS} -->
-| {op_label} | {bash_call} | {mcp_call} |
-<!-- endfor -->
-
-Always check `$LINEAR_API_KEY` before each operation and use the appropriate method.
-```
-
-**Comment formatting.** Before every `save_comment` call, run the comment body through the `simple-english` skill (embedded mode, Plain) so tickets stay clear and consistent for a human reader — this applies especially to open-questions and amendment text, which tends to run dense when drafted straight from notes.md. Leave code blocks, identifiers, file paths, and quoted command output untouched; only the prose gets simplified.
-
-<!-- endif -->
-
-**Standard operation rows:**
-
-| Operation | Bash call | MCP fallback |
-|-----------|----------|--------------|
-| Fetch issue | `bash -c "source ~/.claude/skills/lib/linear-api.sh; get_issue '<id>'"` | `mcp__linear-server__get_issue(id: "<id>")` |
-| Fetch comments | `bash -c "source ~/.claude/skills/lib/linear-api.sh; get_comments '<id>'"` | `mcp__linear-server__list_comments(id: "<id>")` |
-| Post comment | `bash -c "source ~/.claude/skills/lib/linear-api.sh; save_comment '<id>' '<body>'"` | `mcp__linear-server__save_comment(issueId: "<id>", body: "<body>")` |
+Same strategy as the full preamble — see [skill-preamble.md § 2](skill-preamble.md#2-linear-access-strategy)
+for the templated Function mapping table, the standard operation rows, and
+the comment-formatting rule. Single source (tracker-client-consolidation
+design D5) — do not restate it here.
 
 ---
 

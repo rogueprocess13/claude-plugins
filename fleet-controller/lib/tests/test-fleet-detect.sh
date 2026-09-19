@@ -1271,11 +1271,11 @@ test_auto_dispatch_forwards_workspace() {
   # Stubs defined BEFORE sourcing fleet-detect.sh so the scan uses them
   # instead of sourcing the real linear-api.sh / fleet-dispatch.sh libs.
   get_issue() { :; }
+  get_epics_by_label() {
+    echo '[{"id":"x","identifier":"INIT-42","children":{"nodes":[{"id":"c","identifier":"CRE-900","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]}}]}}]'
+  }
   fleet_dispatch_initiative() {
     echo "$1|$2" >"$ws/dispatch-args.txt"
-  }
-  curl() {
-    echo '{"data":{"issues":{"nodes":[{"id":"x","identifier":"INIT-42","children":{"nodes":[{"id":"c","identifier":"CRE-900","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]}}]}}]}}}'
   }
   source "$LIB_DIR/fleet-detect.sh"
   FLEET_AUTO_DISPATCH=true _fleet_scan_initiative_dispatch "$ws" >/dev/null 2>&1
@@ -1300,10 +1300,10 @@ test_initiative_dispatch_notes_stop_file() {
   local ws
   ws=$(_setup_workspace)
   get_issue() { :; }
-  fleet_dispatch_initiative() { :; }
-  curl() {
-    echo '{"data":{"issues":{"nodes":[{"id":"x","identifier":"INIT-42","children":{"nodes":[{"id":"c","identifier":"CRE-900","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]}}]}}]}}}'
+  get_epics_by_label() {
+    echo '[{"id":"x","identifier":"INIT-42","children":{"nodes":[{"id":"c","identifier":"CRE-900","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]}}]}}]'
   }
+  fleet_dispatch_initiative() { :; }
   source "$LIB_DIR/fleet-detect.sh"
   echo '{"initiative_id":"INIT-42","tickets":["CRE-900"]}' >"$ws/stop-INIT-42.json"
 
@@ -1327,10 +1327,10 @@ test_initiative_dispatch_no_stop_note_when_unstopped() {
   local ws
   ws=$(_setup_workspace)
   get_issue() { :; }
-  fleet_dispatch_initiative() { :; }
-  curl() {
-    echo '{"data":{"issues":{"nodes":[{"id":"x","identifier":"INIT-42","children":{"nodes":[{"id":"c","identifier":"CRE-900","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]}}]}}]}}}'
+  get_epics_by_label() {
+    echo '[{"id":"x","identifier":"INIT-42","children":{"nodes":[{"id":"c","identifier":"CRE-900","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]}}]}}]'
   }
+  fleet_dispatch_initiative() { :; }
   source "$LIB_DIR/fleet-detect.sh"
 
   local r findings
@@ -1345,47 +1345,40 @@ test_initiative_dispatch_no_stop_note_when_unstopped() {
   return 0
 }
 
-# ── D-11 query construction (issue #313 bug A) ────────────────────────────────────
-# _fleet_scan_initiative_dispatch's GraphQL query string was malformed
-# (\\"state:execution\\" inside a single-quoted bash literal produced invalid
-# JSON, so Linear returned HTTP 400, swallowed as {"severity":0,"findings":""}).
-# Capture the actual request body handed to curl (rather than discarding it,
-# as the other tests in this file do) and assert it is valid JSON whose
-# decoded .query field carries real quote characters around "state:execution".
-
-test_initiative_dispatch_query_is_valid_json() {
+# ── D-11 query construction (issue #313 bug A / tracker-client-consolidation) ─────
+# The original bug (\\"state:execution\\" inside a single-quoted bash literal
+# producing invalid JSON) lived in a hand-rolled query string this detector
+# built itself. That responsibility has moved entirely into
+# linear-api.sh's get_epics_by_label, which passes the label as a GraphQL
+# variable rather than inlining it (regression-guarded in
+# test-linear-api.sh's test_get_epics_by_label_query_uses_variable_not_inline_label).
+# This test now guards the boundary instead: the detector must call
+# get_epics_by_label with the literal label "state:execution", not construct
+# any query of its own.
+test_initiative_dispatch_calls_client_with_state_execution_label() {
   local ws
   ws=$(_setup_workspace)
-  local captured="$ws/captured-request-body.json"
+  local captured="$ws/captured-label.txt"
   get_issue() { :; }
   fleet_dispatch_initiative() { :; }
-  curl() {
-    cat >"$captured" # consume the -d @- body instead of discarding it
-    echo '{"data":{"issues":{"nodes":[]}}}'
+  get_epics_by_label() {
+    echo "$1" >"$captured"
+    echo '[]'
   }
   source "$LIB_DIR/fleet-detect.sh"
   _fleet_scan_initiative_dispatch "$ws" >/dev/null 2>&1
 
   [ -s "$captured" ] || {
-    echo "curl was never invoked — no request body captured" >&2
+    echo "get_epics_by_label was never invoked — no label captured" >&2
     rm -rf "$ws"
     return 1
   }
 
-  jq . "$captured" >/dev/null 2>&1 || {
-    echo "request body is not valid JSON: $(cat "$captured")" >&2
-    rm -rf "$ws"
-    return 1
-  }
-
-  local decoded_query
-  decoded_query=$(jq -r '.query' "$captured" 2>/dev/null)
+  local label
+  label=$(cat "$captured")
   rm -rf "$ws"
-
-  # The decoded GraphQL text must contain a real quoted string literal
-  # ("state:execution"), not a literal backslash-quote sequence.
-  echo "$decoded_query" | grep -qF '{eq:"state:execution"}' || {
-    echo "decoded query does not contain a correctly-quoted eq:\"state:execution\" filter: $decoded_query" >&2
+  [ "$label" = "state:execution" ] || {
+    echo "expected label 'state:execution', got '$label'" >&2
     return 1
   }
   return 0
@@ -1393,7 +1386,8 @@ test_initiative_dispatch_query_is_valid_json() {
 
 # ── D-18 stalled approved children scan (GitHub #342) ─────────────────────────────
 
-# GraphQL response fixture: one state:execution epic with one child.
+# get_epics_by_label fixture (unwrapped array): one state:execution epic
+# with one child.
 _make_stalled_epic_json() {
   local epic_id="$1" child_id="$2" child_state="$3" child_labels="$4"
   jq -nc \
@@ -1401,15 +1395,14 @@ _make_stalled_epic_json() {
     --arg child_id "$child_id" \
     --arg child_state "$child_state" \
     --argjson child_labels "$child_labels" \
-    '{data:{issues:{nodes:[{id:"e1",identifier:$epic_id,children:{nodes:[{id:"c1",identifier:$child_id,state:{name:$child_state},labels:{nodes:$child_labels}}]}}]}}}'
+    '[{id:"e1",identifier:$epic_id,children:{nodes:[{id:"c1",identifier:$child_id,state:{name:$child_state},labels:{nodes:$child_labels}}]}}]'
 }
 
 test_stalled_approved_no_worker_no_queue_is_flagged() {
   local ws
   ws=$(_setup_workspace)
   get_issue() { :; }
-  curl() {
-    cat >/dev/null # consume the -d @- body
+  get_epics_by_label() {
     _make_stalled_epic_json "INIT-42" "CRE-77" "Ready" '[{"name":"planned"},{"name":"approved"}]'
   }
   source "$LIB_DIR/fleet-detect.sh"
@@ -1438,8 +1431,7 @@ test_stalled_approved_live_worker_not_flagged() {
   local ws
   ws=$(_setup_workspace)
   get_issue() { :; }
-  curl() {
-    cat >/dev/null
+  get_epics_by_label() {
     _make_stalled_epic_json "INIT-42" "CRE-78" "Review" '[{"name":"planned"},{"name":"approved"}]'
   }
   source "$LIB_DIR/fleet-detect.sh"
@@ -1457,8 +1449,7 @@ test_stalled_approved_pending_queue_entry_not_flagged() {
   local ws
   ws=$(_setup_workspace)
   get_issue() { :; }
-  curl() {
-    cat >/dev/null
+  get_epics_by_label() {
     _make_stalled_epic_json "INIT-42" "CRE-79" "Approve" '[{"name":"planned"},{"name":"approved"}]'
   }
   source "$LIB_DIR/fleet-detect.sh"
@@ -1479,8 +1470,7 @@ test_stalled_approved_backlog_state_not_flagged() {
   local ws
   ws=$(_setup_workspace)
   get_issue() { :; }
-  curl() {
-    cat >/dev/null
+  get_epics_by_label() {
     _make_stalled_epic_json "INIT-42" "CRE-80" "Backlog" '[{"name":"planned"},{"name":"approved"}]'
   }
   source "$LIB_DIR/fleet-detect.sh"
@@ -1498,8 +1488,7 @@ test_stalled_approved_done_state_not_flagged() {
   local ws
   ws=$(_setup_workspace)
   get_issue() { :; }
-  curl() {
-    cat >/dev/null
+  get_epics_by_label() {
     _make_stalled_epic_json "INIT-42" "CRE-81" "Done" '[{"name":"planned"},{"name":"approved"}]'
   }
   source "$LIB_DIR/fleet-detect.sh"
@@ -1522,8 +1511,7 @@ test_stalled_approved_auto_resume_disabled_by_default() {
   local ws
   ws=$(_setup_workspace)
   get_issue() { :; }
-  curl() {
-    cat >/dev/null
+  get_epics_by_label() {
     _make_stalled_epic_json "INIT-42" "CRE-82" "Ready" '[{"name":"planned"},{"name":"approved"}]'
   }
   source "$LIB_DIR/fleet-detect.sh"
@@ -1543,8 +1531,7 @@ test_stalled_approved_auto_resume_enqueues_when_enabled() {
   local ws
   ws=$(_setup_workspace)
   get_issue() { :; }
-  curl() {
-    cat >/dev/null
+  get_epics_by_label() {
     _make_stalled_epic_json "INIT-42" "CRE-83" "Ready" '[{"name":"planned"},{"name":"approved"}]'
   }
   source "$LIB_DIR/fleet-detect.sh"
@@ -1691,7 +1678,7 @@ for fn in \
   test_gate_stop_from_gate_check_detected \
   test_initiative_dispatch_notes_stop_file \
   test_initiative_dispatch_no_stop_note_when_unstopped \
-  test_initiative_dispatch_query_is_valid_json \
+  test_initiative_dispatch_calls_client_with_state_execution_label \
   test_stalled_approved_no_worker_no_queue_is_flagged \
   test_stalled_approved_live_worker_not_flagged \
   test_stalled_approved_pending_queue_entry_not_flagged \

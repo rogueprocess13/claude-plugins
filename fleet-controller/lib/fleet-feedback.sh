@@ -27,7 +27,9 @@ _get_initiative_labels() {
   if declare -f get_issue >/dev/null 2>&1; then
     local issue_json
     if issue_json=$(get_issue "$tid" 2>/dev/null); then
-      echo "$issue_json" | jq -r '.data.issue.labels.nodes[]?.name // empty' 2>/dev/null | grep "^${label_prefix}" || true
+      # get_issue already unwraps .data.issue (tracker-client-consolidation
+      # response-shape contract) — read labels directly, no envelope prefix.
+      echo "$issue_json" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null | grep "^${label_prefix}" || true
     fi
   fi
 }

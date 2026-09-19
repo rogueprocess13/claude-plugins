@@ -77,7 +77,6 @@ Always check `$LINEAR_API_KEY` before each operation and use the appropriate met
 | Fetch issue | `bash -c "source ~/.claude/skills/lib/linear-api.sh; get_issue '<id>'"` | `mcp__linear-server__get_issue(id: "<id>")` |
 | Fetch comments | `bash -c "source ~/.claude/skills/lib/linear-api.sh; get_comments '<id>'"` | `mcp__linear-server__list_comments(id: "<id>")` |
 | Post comment | `bash -c "source ~/.claude/skills/lib/linear-api.sh; save_comment '<id>' '<body>'"` | `mcp__linear-server__save_comment(issueId: "<id>", body: "<body>")` |
-| List issues | `bash -c "source ~/.claude/skills/lib/linear-api.sh; list_issues '<team_key>' '<state>'"` | (MCP equivalent if available) |
 
 ---
 

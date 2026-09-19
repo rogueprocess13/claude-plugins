@@ -8,17 +8,13 @@
 #
 # NOTE: Does NOT set -euo pipefail — this is a sourceable library.
 # Callers are responsible for shell flags.
-
-# ── GraphQL query helper (overridable for tests) ──────────────────────────────
-# Wraps curl call to Linear GraphQL API. Extracted as a function so tests can
-# mock it without overriding curl globally.
-_fleet_linear_query() {
-  local query="$1"
-  curl -s -X POST "${LINEAR_API_URL:-https://api.linear.app/graphql}" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: ${LINEAR_API_KEY}" \
-    -d "$query" 2>/dev/null
-}
+#
+# tracker-client-consolidation: all Linear reads route through
+# ticket-auto-pipeline/lib/linear-api.sh's client functions (get_issue,
+# get_epics_by_label, get_parent_with_children) — no direct curl to the
+# tracker endpoint from this file anymore. The former `_fleet_linear_query`
+# generic-query helper is gone; it was the transport this consolidation
+# removes.
 
 _DISPATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -497,30 +493,26 @@ _fleet_dispatch_initiative_locked() {
     return 0
   fi
 
-  # The epic query uses _fleet_linear_query (direct curl, no linear-api.sh dependency).
-  # Blocker resolution uses get_issue (from linear-api.sh) if available — degrades
-  # gracefully when unavailable, treating all blockers as unresolved.
+  # Both the epic query and blocker resolution now route through
+  # linear-api.sh's get_issue/get_epics_by_label (tracker-client-consolidation)
+  # — degrades gracefully when unavailable, treating the initiative as
+  # unvalidatable and every blocker as unresolved.
   if ! declare -f get_issue >/dev/null 2>&1; then
-    echo "fleet_dispatch: linear-api.sh not available — blocker resolution will skip" >&2
+    echo "fleet_dispatch: linear-api.sh not available — initiative validation and blocker resolution will skip" >&2
   fi
 
   # Step 1: Validate initiative epic exists and has state:execution label.
-  # Use a direct GraphQL query (not get_issue) to include children in one round-trip.
+  # Two client calls, not one round trip: get_issue first, to preserve the
+  # distinct "not found" vs "not in execution state" messages a
+  # label-filtered result set alone can't make (get_epics_by_label only ever
+  # returns epics that already carry the label); get_epics_by_label second,
+  # for the children-with-priority shape only it provides.
   echo "fleet_dispatch: validating initiative ${initiative_id}..."
-  local epic_query epic_resp epic_json
-  epic_query=$(jq -n --arg id "$initiative_id" '{
-    query: "query($id: String!) { issue(id: $id) { id identifier title description state { name } labels { nodes { name } } children { nodes { id identifier title state { name } labels { nodes { name } } priority } } } }",
-    variables: {id: $id}
-  }')
-  epic_resp=$(_fleet_linear_query "$epic_query") || {
-    echo "ERROR: initiative ${initiative_id} query failed" >&2
-    return 1
-  }
-  epic_json=$(echo "$epic_resp" | jq '.data.issue // empty' 2>/dev/null)
-  if [ -z "$epic_json" ] || [ "$epic_json" = "null" ]; then
+  local epic_json
+  epic_json=$(get_issue "$initiative_id" 2>/dev/null) || {
     echo "ERROR: initiative ${initiative_id} not found in Linear" >&2
     return 1
-  fi
+  }
 
   local epic_labels
   epic_labels=$(echo "$epic_json" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null)
@@ -530,6 +522,21 @@ _fleet_dispatch_initiative_locked() {
   fi
 
   echo "fleet_dispatch: initiative ${initiative_id} validated (state:execution)"
+
+  # Now fetch the full record (children, with priority) via the client.
+  # The label check above already confirmed this epic carries the label, so
+  # a miss here means it changed between the two calls — treat that the
+  # same as "not in execution state" rather than a hard failure.
+  local epics_json
+  epics_json=$(get_epics_by_label "state:execution" 2>/dev/null) || {
+    echo "ERROR: initiative ${initiative_id} epic-population query failed" >&2
+    return 1
+  }
+  epic_json=$(echo "$epics_json" | jq -c --arg id "$initiative_id" '[.[] | select(.identifier == $id)][0] // empty' 2>/dev/null)
+  if [ -z "$epic_json" ] || [ "$epic_json" = "null" ]; then
+    echo "initiative ${initiative_id} not in execution state (label removed between checks)" >&2
+    return 0
+  fi
 
   # Step 1.5: Epic branch precondition — ensure the declared branch exists
   # and sync it with its base before any child ticket needs it, in every
@@ -816,18 +823,23 @@ _fleet_stop_initiative_locked() {
   # list still lands in the stop-file. (The API-key guard also keeps stop
   # hermetic in offline/keyless test environments — no curl to Linear.)
   local child_set="" child_tid _fbf_log
-  local children_query children_resp children_json children_fallback=0
-  children_query=$(jq -n --arg id "$epic_id" '{
-    query: "query($id: String!) { issue(id: $id) { children { nodes { identifier } } } }",
-    variables: {id: $id}
-  }')
+  local children_resp children_json children_fallback=0
   if [ -n "${LINEAR_API_KEY:-}" ]; then
     # `|| children_resp=""`: linear-api.sh sources with `set -e`, which
     # leaks into the caller shell — a failing query (curl down, mock
-    # returning 1) must degrade here, never kill the stop.
-    children_resp=$(_fleet_linear_query "$children_query") || children_resp=""
+    # returning 1) must degrade here, never kill the stop. get_parent_with_
+    # children can itself call `exit` on a hard client failure
+    # (check_api_key/linear_graphql) — always inside this command
+    # substitution's own subshell, so it never kills the caller either.
+    children_resp=$(get_parent_with_children "$epic_id" 2>/dev/null) || children_resp=""
   fi
-  if [ -z "${children_resp:-}" ] || ! echo "${children_resp:-}" | jq -e '.data.issue.children.nodes != null' >/dev/null 2>&1; then
+  # get_parent_with_children never guards .data.issue itself, so a
+  # nonexistent epic comes back as {parent:{id:null,...}, children:[]} —
+  # indistinguishable from "real epic, zero children" by children alone.
+  # Guard on parent.id instead (the tracker-client-consolidation equivalent
+  # of the old `.data.issue.children.nodes != null` check, which caught a
+  # null `.data.issue` the same way).
+  if [ -z "${children_resp:-}" ] || ! echo "${children_resp:-}" | jq -e '.parent.id != null' >/dev/null 2>&1; then
     # Fail closed on the pin guarantee: with Linear unreachable, the true
     # child set is unknowable, and an unpinned incomplete child is exactly
     # what lets a stopped campaign resurrect on the next restart
@@ -845,7 +857,7 @@ _fleet_stop_initiative_locked() {
       child_set="${child_set}${child_tid}"$'\n'
     done
   else
-    children_json=$(echo "$children_resp" | jq -r '.data.issue.children.nodes[]?.identifier // empty' 2>/dev/null)
+    children_json=$(echo "$children_resp" | jq -r '.children[]?.identifier // empty' 2>/dev/null)
     while IFS= read -r child_tid; do
       [ -z "$child_tid" ] && continue
       child_set="${child_set}${child_tid}"$'\n'

@@ -409,31 +409,22 @@ epic_branch_children_done() {
     children_json=""
   fi
 
-  # Fetch if not provided as argument
+  # Fetch if not provided as argument — always through the client
+  # (tracker-client-consolidation, "No direct HTTP outside the client"). No
+  # raw-curl fallback: if get_parent_with_children isn't sourceable,
+  # linear-api.sh itself almost certainly isn't loaded either, and a silent
+  # direct-curl fallback would just re-introduce a second transport.
   if [ $# -lt 2 ]; then
-    if declare -f get_parent_with_children >/dev/null 2>&1; then
-      local parent_data
-      parent_data=$(get_parent_with_children "$epic_id" 2>/dev/null) || {
-        echo "epic-branch: failed to fetch children for epic $epic_id" >&2
-        return 1
-      }
-      children_json=$(echo "$parent_data" | jq -c '.children[] // empty' 2>/dev/null)
-    else
-      # Fallback: direct GraphQL query for children
-      local query resp
-      query=$(jq -n --arg id "$epic_id" '{
-        query: "query($id: String!) { issue(id: $id) { children { nodes { id identifier state { name } labels { nodes { name } } } } } }",
-        variables: {id: $id}
-      }')
-      resp=$(curl -s -X POST "${LINEAR_API_URL:-https://api.linear.app/graphql}" \
-        -H "Content-Type: application/json" \
-        -H "Authorization: ${LINEAR_API_KEY}" \
-        -d "$query" 2>/dev/null) || {
-        echo "epic-branch: failed to fetch children for epic $epic_id" >&2
-        return 1
-      }
-      children_json=$(echo "$resp" | jq -c '.data.issue.children.nodes[] // empty' 2>/dev/null)
+    if ! declare -f get_parent_with_children >/dev/null 2>&1; then
+      echo "epic-branch: get_parent_with_children not available (linear-api.sh not sourced) — cannot fetch children for epic $epic_id" >&2
+      return 1
     fi
+    local parent_data
+    parent_data=$(get_parent_with_children "$epic_id" 2>/dev/null) || {
+      echo "epic-branch: failed to fetch children for epic $epic_id" >&2
+      return 1
+    }
+    children_json=$(echo "$parent_data" | jq -c '.children[] // empty' 2>/dev/null)
   fi
 
   # Zero children — not ready

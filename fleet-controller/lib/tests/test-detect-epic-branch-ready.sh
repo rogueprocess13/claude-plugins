@@ -46,11 +46,12 @@ VALID_DIRECTIVE='## Branch Directive
 **Sync Policy:** none
 **Created:** 2026-07-25T10:00:00Z'
 
-# GraphQL response the detector's curl would return. _FIXTURE_EPICS_JSON env
-# selects between: all children Done, one child in progress, or no directive.
+# get_epics_by_label response the detector's client call would return
+# (tracker-client-consolidation — unwrapped array, no .data.issues.nodes
+# prefix). _FIXTURE_EPICS_JSON env selects between: all children Done, one
+# child in progress, or no directive.
 _mock_linear_curl() {
-  curl() {
-    cat >/dev/null # consume the -d @- body
+  get_epics_by_label() {
     echo "$_FIXTURE_EPICS_JSON"
   }
 }
@@ -61,7 +62,7 @@ _make_epics_json() {
     --argjson children "$children" \
     --arg description "$description" \
     --arg state "$epic_state" \
-    '{data:{issues:{nodes:[{id:"e1",identifier:"INIT-42",description:$description,state:{name:$state},children:{nodes:$children}}]}}}'
+    '[{id:"e1",identifier:"INIT-42",description:$description,state:{name:$state},children:{nodes:$children}}]'
 }
 
 # JSONL children streams (one child object per line) — the format

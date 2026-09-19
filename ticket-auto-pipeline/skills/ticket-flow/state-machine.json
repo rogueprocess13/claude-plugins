@@ -1,4 +1,5 @@
 {
+  "_label_audit": "Every label declared below is classified (control/human-signal/vestigial) with writer/reader evidence in ../../docs/label-audit.md. Read it before adding, removing, or repurposing any label here.",
   "well_known_states": [
     "Backlog",
     "Blocked"
@@ -86,7 +87,6 @@
       ],
       "to": "Todo",
       "adds": [
-        "claimed",
         "{complexity}"
       ],
       "removes": [
@@ -111,8 +111,7 @@
         "approved"
       ],
       "removes": [
-        "rejected",
-        "claimed"
+        "rejected"
       ],
       "description": "Human approved the plan",
       "precondition": "must_not_be_epic"
@@ -154,8 +153,7 @@
         "reviewed"
       ],
       "removes": [
-        "rejected",
-        "claimed"
+        "rejected"
       ],
       "description": "PR approved with no UAT required — close to Done",
       "precondition": "must_not_be_epic",
@@ -202,7 +200,6 @@
       "to": "Done",
       "adds": [],
       "removes": [
-        "claimed",
         "reviewed"
       ],
       "description": "UAT passed — close ticket",

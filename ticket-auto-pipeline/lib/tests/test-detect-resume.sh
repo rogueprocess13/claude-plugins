@@ -324,7 +324,7 @@ test_zombie_detection_triggers_on_old_waiting() {
   old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
   local out
   out=$(_detect_resume_with_log "ZB-1" \
-    "${old_ts}|META|schema|info|2" \
+    "${old_ts}|META|schema|info|1" \
     "${old_ts}|IMPLEMENT|implement|waiting|agent running")
   # Zombie should be detected — resume point should re-run the phase (STEP_4)
   # If pgrep finds nothing (which it shouldn't in test), zombie triggers
@@ -345,7 +345,7 @@ test_prescan_zombie_does_not_force_step5_on_fresh_ticket() {
   old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
   local out
   out=$(_detect_resume_with_log "GH-151-1" \
-    "${old_ts}|META|schema|info|2" \
+    "${old_ts}|META|schema|info|1" \
     "${old_ts}|MAINTENANCE|prescan|waiting|repo prescan triggered (decayed)")
   local resume_step
   resume_step=$(_field "$out" RESUME_STEP)
@@ -359,7 +359,7 @@ test_maintenance_document_zombie_still_routes_to_step5() {
   old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
   local out
   out=$(_detect_resume_with_log "GH-151-2" \
-    "${old_ts}|META|schema|info|2" \
+    "${old_ts}|META|schema|info|1" \
     "${old_ts}|APPRAISE|appraise|done|complexity=simple" \
     "${old_ts}|EXEC|create-artifact|done|simple-fix" \
     "${old_ts}|GATE|gate|done|approved" \
@@ -383,7 +383,7 @@ test_pr_review_zombie_resumes_at_step_4_6() {
   old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
   local out
   out=$(_detect_resume_with_log "GH-347-1" \
-    "${old_ts}|META|schema|info|2" \
+    "${old_ts}|META|schema|info|1" \
     "${old_ts}|APPRAISE|appraise|done|complexity=simple" \
     "${old_ts}|EXEC|create-artifact|done|simple-fix" \
     "${old_ts}|GATE|gate|done|approved" \
@@ -410,7 +410,7 @@ test_gate_reconcile_zombie_resumes_at_step_3_5() {
   old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
   local out
   out=$(_detect_resume_with_log "GH-353-1" \
-    "${old_ts}|META|schema|info|2" \
+    "${old_ts}|META|schema|info|1" \
     "${old_ts}|APPRAISE|appraise|done|complexity=simple" \
     "${old_ts}|EXEC|create-artifact|done|simple-fix" \
     "${old_ts}|GATE|reconcile|waiting|Agent launched — reconcile hold comments")
@@ -432,7 +432,7 @@ test_gate_non_reconcile_zombie_falls_back_to_step_3() {
   old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
   local out
   out=$(_detect_resume_with_log "GH-353-2" \
-    "${old_ts}|META|schema|info|2" \
+    "${old_ts}|META|schema|info|1" \
     "${old_ts}|APPRAISE|appraise|done|complexity=simple" \
     "${old_ts}|EXEC|create-artifact|done|simple-fix" \
     "${old_ts}|GATE|gate|waiting|synthetic — gate-check.sh never actually writes this")
@@ -446,7 +446,7 @@ test_zombie_detection_skips_non_phase_waiting() {
   old_ts=$(date -u -d "10 minutes ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "2020-01-01T00:00:00Z")
   local out
   out=$(_detect_resume_with_log "ZB-2" \
-    "${old_ts}|META|schema|info|2" \
+    "${old_ts}|META|schema|info|1" \
     "${old_ts}|META|meta-step|waiting|not a real phase")
   # META lines are skipped by zombie detection — should not cause a phase re-route
   local resume_step
@@ -467,7 +467,7 @@ test_zombie_fires_when_no_other_worker_alive() {
   # nothing else running the ticket, the zombie must be reported.
   local out
   out=$(_detect_resume_log_after "ZBL-1" \
-    "$(_old_ts)|META|schema|info|2" \
+    "$(_old_ts)|META|schema|info|1" \
     "$(_old_ts)|IMPLEMENT|implement|waiting|agent running")
   grep -q 'zombie-detected' <<<"$out"
 }
@@ -479,7 +479,7 @@ test_zombie_suppressed_by_live_phase_worker() {
   local out rc
   _fake_worker "claude -p /ticket-implement ZBL-2 --from-auto"
   out=$(_detect_resume_log_after "ZBL-2" \
-    "$(_old_ts)|META|schema|info|2" \
+    "$(_old_ts)|META|schema|info|1" \
     "$(_old_ts)|IMPLEMENT|implement|waiting|agent running")
   if grep -q 'zombie-detected' <<<"$out"; then rc=1; else rc=0; fi
   _reap "$FAKE_PID"
@@ -494,7 +494,7 @@ test_zombie_suppressed_by_run_registry_pid() {
   echo "{\"tid\":\"ZBL-3\",\"pid\":${FAKE_PID},\"generation\":1}" >"${state}/ZBL-3-run.json"
   export FLEET_STATE_DIR="$state"
   out=$(_detect_resume_log_after "ZBL-3" \
-    "$(_old_ts)|META|schema|info|2" \
+    "$(_old_ts)|META|schema|info|1" \
     "$(_old_ts)|IMPLEMENT|implement|waiting|agent running")
   unset FLEET_STATE_DIR
   if grep -q 'zombie-detected' <<<"$out"; then rc=1; else rc=0; fi
@@ -511,7 +511,7 @@ test_zombie_not_suppressed_by_dead_registry_pid() {
   echo '{"tid":"ZBL-4","pid":999999999,"generation":1}' >"${state}/ZBL-4-run.json"
   export FLEET_STATE_DIR="$state"
   out=$(_detect_resume_log_after "ZBL-4" \
-    "$(_old_ts)|META|schema|info|2" \
+    "$(_old_ts)|META|schema|info|1" \
     "$(_old_ts)|IMPLEMENT|implement|waiting|agent running")
   unset FLEET_STATE_DIR
   rm -rf "$state"
@@ -523,7 +523,7 @@ test_zombie_liveness_ignores_prefix_collision() {
   local out
   _fake_worker "claude -p /ticket-implement ZBL-50 --from-auto"
   out=$(_detect_resume_log_after "ZBL-5" \
-    "$(_old_ts)|META|schema|info|2" \
+    "$(_old_ts)|META|schema|info|1" \
     "$(_old_ts)|IMPLEMENT|implement|waiting|agent running")
   _reap "$FAKE_PID"
   grep -q 'zombie-detected' <<<"$out"
@@ -536,7 +536,7 @@ test_msg_field_preserves_embedded_pipes() {
   # The inline awk preserves embedded pipes in field 5+ extraction.
   local out
   out=$(_detect_resume_with_log "PF-1" \
-    "2026-07-05T10:00:00Z|META|schema|info|2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
     "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
     "2026-07-05T10:00:02Z|EXEC|create-artifact|done|openspec|with|extra|pipes")
   local artifact_type
@@ -545,25 +545,61 @@ test_msg_field_preserves_embedded_pipes() {
   echo "$artifact_type" | grep -q "openspec"
 }
 
-test_schema_v1_accepted_with_warning() {
+test_schema_v1_exact_match_accepted() {
+  # tracker-client-consolidation D4: schema 1 is canonical now — the writer
+  # (flow.sh), the format spec, and this reader all agree. This is the
+  # exact-match branch, not the v1-grace branch (that path emits a
+  # META|schema|warn line this one must NOT produce).
   local out
   out=$(_detect_resume_with_log "SV-1" \
     "2026-07-05T10:00:00Z|META|schema|info|1" \
     "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple")
   local resume_step
   resume_step=$(_field "$out" RESUME_STEP)
-  # Schema v1 accepted — RESUME_STEP should be STEP_2 (appraise done)
   [ "$resume_step" = "STEP_2" ]
 }
 
-test_schema_v2_accepted() {
+test_schema_v1_exact_match_emits_no_grace_warning() {
+  local tmpdir log
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  log="$tmpdir/logs/SV-1B-pipeline.log"
+  printf '%s\n' \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple" >"$log"
+  (cd "$tmpdir" && bash "$DETECT_SH" "SV-1B" >/dev/null 2>/dev/null)
+  local warn_count
+  warn_count=$(grep -c 'META|schema|warn' "$log")
+  rm -rf "$tmpdir"
+  [ "$warn_count" -eq 0 ]
+}
+
+test_schema_newer_version_rejected_as_mismatch() {
+  # A version this reader has never heard of (nothing in the pipeline emits
+  # "2" — see design D4) must be a hard SCHEMA_MISMATCH, not silently
+  # accepted and not routed through the v1-grace branch.
   local out
   out=$(_detect_resume_with_log "SV-2" \
     "2026-07-05T10:00:00Z|META|schema|info|2" \
     "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple")
-  local resume_step
-  resume_step=$(_field "$out" RESUME_STEP)
-  [ "$resume_step" = "STEP_2" ]
+  [ "$(_field "$out" RESUME_STEP)" = "SCHEMA_MISMATCH" ] || {
+    echo "output: $out" >&2
+    return 1
+  }
+  [ "$(_field "$out" SCHEMA_LOG_VERSION)" = "2" ]
+}
+
+test_schema_v0_grace_no_schema_line_still_resumes() {
+  # The genuinely-older case that must still get grace: no schema line at
+  # all (a pre-schema log). Must NOT be a SCHEMA_MISMATCH, and must still
+  # resume normally.
+  local out
+  out=$(_detect_resume_with_log "SV-0" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_2" ] || {
+    echo "output: $out" >&2
+    return 1
+  }
 }
 
 # ── GATE_HELD reconcile loop (GitHub #146) ──────────────────────────────────
@@ -574,7 +610,7 @@ test_gate_reconcile_done_advances_past_gate_held() {
   # line keeps matching and RESUME_STEP falls back to GATE_HELD forever.
   local out
   out=$(_detect_resume_with_log "GH-146-1" \
-    "2026-07-05T10:00:00Z|META|schema|info|2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
     "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
     "2026-07-05T10:00:02Z|GATE|gate|fail|held" \
     "2026-07-05T10:00:03Z|GATE|reconcile|done|clean")
@@ -596,7 +632,7 @@ test_gate_held_get_issue_fetch_failure_logs_distinct_reason() {
   mkdir -p "$tmpdir/logs"
   local log_file="$tmpdir/logs/GH-362-1-pipeline.log"
   {
-    echo "2026-07-05T10:00:00Z|META|schema|info|2"
+    echo "2026-07-05T10:00:00Z|META|schema|info|1"
     echo "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple"
     echo "2026-07-05T10:00:02Z|GATE|gate|fail|held"
   } >"$log_file"
@@ -626,7 +662,7 @@ test_gate_gate_done_still_advances_past_gate_held() {
   # replacement.
   local out
   out=$(_detect_resume_with_log "GH-146-2" \
-    "2026-07-05T10:00:00Z|META|schema|info|2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
     "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
     "2026-07-05T10:00:02Z|GATE|gate|fail|held" \
     "2026-07-05T10:00:03Z|GATE|gate|done|approved")
@@ -644,7 +680,7 @@ test_gate_reconcile_held_routes_to_gate_held_not_step_4() {
   # branch and a deliberately-held ticket resumed straight into STEP_4.
   local out
   out=$(_detect_resume_with_log "GH-195-1" \
-    "2026-07-05T10:00:00Z|META|schema|info|2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
     "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
     "2026-07-05T10:00:02Z|GATE|gate|fail|held" \
     "2026-07-05T10:00:03Z|GATE|reconcile|done|cycle#0|held: needs more detail")
@@ -659,7 +695,7 @@ test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4() {
   # regress the original #146 fix for the multi-cycle case.
   local out
   out=$(_detect_resume_with_log "GH-195-2" \
-    "2026-07-05T10:00:00Z|META|schema|info|2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
     "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
     "2026-07-05T10:00:02Z|GATE|gate|fail|held" \
     "2026-07-05T10:00:03Z|GATE|reconcile|done|cycle#0|held: needs more detail" \
@@ -678,7 +714,7 @@ test_resume_step_done_on_completed_outcome() {
   # right back into STEP_6 forever.
   local out
   out=$(_detect_resume_with_log "GH-168-1" \
-    "2026-08-31T10:00:00Z|META|schema|info|2" \
+    "2026-08-31T10:00:00Z|META|schema|info|1" \
     "2026-08-31T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
     "2026-08-31T10:00:02Z|MAINTENANCE|maintenance|done|clean" \
     "2026-08-31T10:00:03Z|META|outcome|info|completed: STEP_6")
@@ -692,7 +728,7 @@ test_resume_step_not_done_on_held_outcome() {
   # not short-circuit to "done".
   local out
   out=$(_detect_resume_with_log "GH-168-2" \
-    "2026-08-31T10:00:00Z|META|schema|info|2" \
+    "2026-08-31T10:00:00Z|META|schema|info|1" \
     "2026-08-31T10:00:01Z|APPRAISE|appraise|done|complexity=complex" \
     "2026-08-31T10:00:02Z|GATE|gate|fail|held" \
     "2026-08-31T10:00:03Z|META|outcome|info|held: gate")
@@ -706,7 +742,7 @@ test_resume_step_not_done_on_stopped_outcome() {
   # not terminal-but-complete — it must not be reported as "done" either.
   local out
   out=$(_detect_resume_with_log "GH-168-3" \
-    "2026-08-31T10:00:00Z|META|schema|info|2" \
+    "2026-08-31T10:00:00Z|META|schema|info|1" \
     "2026-08-31T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
     "2026-08-31T10:00:02Z|IMPLEMENT|implement|done|Hard, branch: gh-168-3--fix" \
     "2026-08-31T10:00:03Z|META|outcome|info|stopped: VERIFY_EXHAUSTED")
@@ -715,25 +751,21 @@ test_resume_step_not_done_on_stopped_outcome() {
   [ "$resume_step" != "done" ]
 }
 
-test_schema_v1_warning_does_not_repollute_done_on_rerun() {
-  # #210: the schema-v1 warning write was unconditional — every detect-resume.sh
-  # call against a schema-v1 log re-appended META|schema|warn|. In a real
-  # pipeline that line is first written mid-run (the router calls
-  # detect-resume.sh before every dispatch decision, long before completion).
-  # Without an idempotency guard, the *next* call after pipeline-finalize.sh
-  # writes the terminal outcome line — e.g. a naive re-invocation of
-  # /ticket-auto right after completion — appends another warning that pushes
-  # the outcome line off the tail, breaking the tail-only "done" check above
-  # and regressing #168. Reproduce the real ordering: one call establishes the
-  # warning mid-run, then two calls happen after the terminal line is written,
-  # all against the SAME tmpdir (not the throwaway one
-  # _detect_resume_with_log tears down after a single call).
+test_schema_v0_grace_write_does_not_repollute_done_on_rerun() {
+  # #210, re-scoped for tracker-client-consolidation D4: schema 1 is now
+  # canonical, so a schema-v1 log takes the exact-match branch and never
+  # warns — the original v1-warning idempotency scenario this test guarded
+  # no longer exists (nothing to repollute). The equivalent live risk is the
+  # v0-grace path (no schema line at all): its META|schema + META|migration
+  # writes must not repeat on every call, or they would eventually push the
+  # terminal outcome line off the tail-only "done" check, regressing #168.
+  # After the first v0-grace write the log carries an explicit schema line,
+  # so it must take the exact-match branch (no further writes) from then on.
   local tmpdir
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/logs"
   local log="$tmpdir/logs/GH-210-1-pipeline.log"
   cat >"$log" <<'EOF'
-2026-08-31T09:00:00Z|META|schema|info|1
 2026-08-31T09:00:01Z|APPRAISE|appraise|done|complexity=simple
 EOF
   (cd "$tmpdir" && bash "$DETECT_SH" "GH-210-1" >/dev/null 2>/dev/null)
@@ -741,14 +773,16 @@ EOF
     echo "2026-08-31T10:00:02Z|MAINTENANCE|maintenance|done|clean"
     echo "2026-08-31T10:00:03Z|META|outcome|info|completed: STEP_6"
   } >>"$log"
-  local out1 out2 warn_count
+  local out1 out2 schema_count migration_count
   out1=$(cd "$tmpdir" && bash "$DETECT_SH" "GH-210-1" 2>/dev/null)
   out2=$(cd "$tmpdir" && bash "$DETECT_SH" "GH-210-1" 2>/dev/null)
-  warn_count=$(grep -c 'META|schema|warn' "$log")
+  schema_count=$(grep -c 'META|schema|info|1' "$log")
+  migration_count=$(grep -c 'META|migration|info|v0-grace-applied' "$log")
   rm -rf "$tmpdir"
   [ "$(_field "$out1" RESUME_STEP)" = "done" ] || return 1
   [ "$(_field "$out2" RESUME_STEP)" = "done" ] || return 1
-  [ "$warn_count" -eq 1 ] || return 1
+  [ "$schema_count" -eq 1 ] || return 1
+  [ "$migration_count" -eq 1 ] || return 1
 }
 
 # ── Trailing non-phase META lines after "done" (#314) ───────────────────────
@@ -761,7 +795,7 @@ test_resume_step_done_despite_trailing_fleet_restart_line() {
   # bookkeeping, not a new pipeline state.
   local out
   out=$(_detect_resume_with_log "GH-314-1" \
-    "2026-08-31T10:00:00Z|META|schema|info|2" \
+    "2026-08-31T10:00:00Z|META|schema|info|1" \
     "2026-08-31T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
     "2026-08-31T10:00:02Z|MAINTENANCE|maintenance|done|clean" \
     "2026-08-31T10:00:03Z|META|outcome|info|completed: STEP_6" \
@@ -775,7 +809,7 @@ test_resume_step_done_despite_multiple_trailing_bookkeeping_lines() {
   # must be tolerated, not just a single trailing line.
   local out
   out=$(_detect_resume_with_log "GH-314-2" \
-    "2026-08-31T10:00:00Z|META|schema|info|2" \
+    "2026-08-31T10:00:00Z|META|schema|info|1" \
     "2026-08-31T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
     "2026-08-31T10:00:02Z|MAINTENANCE|maintenance|done|clean" \
     "2026-08-31T10:00:03Z|META|outcome|info|completed: STEP_6" \
@@ -792,7 +826,7 @@ test_resume_step_not_done_when_genuine_step_follows_outcome() {
   # "done" — the allowlist is conservative on purpose.
   local out
   out=$(_detect_resume_with_log "GH-314-3" \
-    "2026-08-31T10:00:00Z|META|schema|info|2" \
+    "2026-08-31T10:00:00Z|META|schema|info|1" \
     "2026-08-31T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
     "2026-08-31T10:00:02Z|MAINTENANCE|maintenance|done|clean" \
     "2026-08-31T10:00:03Z|META|outcome|info|completed: STEP_6" \
@@ -953,8 +987,10 @@ for fn in \
   test_zombie_liveness_ignores_prefix_collision \
   test_zombie_detection_skips_non_phase_waiting \
   test_msg_field_preserves_embedded_pipes \
-  test_schema_v1_accepted_with_warning \
-  test_schema_v2_accepted \
+  test_schema_v1_exact_match_accepted \
+  test_schema_v1_exact_match_emits_no_grace_warning \
+  test_schema_newer_version_rejected_as_mismatch \
+  test_schema_v0_grace_no_schema_line_still_resumes \
   test_gate_reconcile_done_advances_past_gate_held \
   test_gate_held_get_issue_fetch_failure_logs_distinct_reason \
   test_gate_gate_done_still_advances_past_gate_held \
@@ -974,7 +1010,7 @@ for fn in \
   test_resume_step_done_on_completed_outcome \
   test_resume_step_not_done_on_held_outcome \
   test_resume_step_not_done_on_stopped_outcome \
-  test_schema_v1_warning_does_not_repollute_done_on_rerun \
+  test_schema_v0_grace_write_does_not_repollute_done_on_rerun \
   test_resume_step_done_despite_trailing_fleet_restart_line \
   test_resume_step_done_despite_multiple_trailing_bookkeeping_lines \
   test_resume_step_not_done_when_genuine_step_follows_outcome; do

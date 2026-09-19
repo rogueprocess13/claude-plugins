@@ -705,6 +705,35 @@ EOJSON
 }
 _run "only non-planned children → not ready" test_children_only_non_planned_not_ready
 
+# ── tracker-client-consolidation: fetch path (no children_json argument) ────
+# The fallback used to issue its own raw curl on this path — now it must
+# route through get_parent_with_children (the client) and return a
+# NON-EMPTY children list, not merely "does not crash" (design R1).
+
+test_children_fetch_path_via_client_non_empty() {
+  get_parent_with_children() {
+    echo '{"parent":{"id":"epic-1","identifier":"CRE-100","title":"Epic","description":""},"children":[{"id":"child-1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}},{"id":"child-2","identifier":"CRE-2","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}]}'
+  }
+  epic_branch_children_done "CRE-100" 2>/dev/null && return 0
+  echo "  fetch path via get_parent_with_children should be ready (both Done)" >&2
+  return 1
+}
+_run "fetch path via client → non-empty children, ready" test_children_fetch_path_via_client_non_empty
+
+test_children_fetch_path_no_client_hard_fails() {
+  # Simulate linear-api.sh not sourced: get_parent_with_children undefined.
+  # No raw-curl fallback anymore — must be a hard failure, not a silent
+  # "no children" that would misread as ready-with-zero-children.
+  local rc=0
+  (
+    unset -f get_parent_with_children 2>/dev/null || true
+    epic_branch_children_done "CRE-100" 2>/dev/null
+  )
+  rc=$?
+  [ "$rc" -eq 1 ]
+}
+_run "fetch path with no client available → hard failure" test_children_fetch_path_no_client_hard_fails
+
 echo ""
 echo "=== PR tests ==="
 echo ""

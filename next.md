@@ -5,7 +5,8 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 
 > Public repo — no ticket IDs, no customer data in this file.
 
-Last reviewed: 2026-09-16 (issue #381 epic-branch push-hook fix added to Step 0; Step 6 still held for real-run validation)
+Last reviewed: 2026-09-18 (Step 7 added — tracker decoupling Track A, 3 openspec changes proposed;
+Track B scoped out and left in the plan file. Step 6 still held for real-run validation)
 
 ---
 
@@ -404,6 +405,57 @@ token, is the endpoint.
 
 Cut from MVP: `run_phase` (phase-level dispatch isn't rolled out yet), a server-side
 `/peers` registry, mTLS/signing/RBAC, dexter Workflows integration.
+
+---
+
+## Step 7 — Tracker decoupling, Track A (near-term)
+
+**Plan:** `~/.claude/plans/something-that-has-been-soft-gosling.md`
+**Openspec changes** (proposed 2026-09-18, all 4/4 artifacts, `openspec validate --strict` clean).
+Sequence — apply strictly in this order, one `/opsx:apply` + PR per change:
+
+1. **`tracker-client-consolidation`** — five raw-`curl` transports collapse onto `lib/linear-api.sh`
+   behind a new `get_epics_by_label`, one declared unwrapped response shape, uniform retry.
+   Fixes a real production defect: `_get_initiative_labels` (`fleet-feedback.sh:31`) reads
+   `.data.issue.labels.nodes[]` from already-unwrapped `get_issue` output and returns **empty on
+   every call**, so per-initiative feedback grouping has never worked; its test stubs the wrong shape
+   and passes. Also resolves the `SENTINEL_DIR` double default, deletes the documented-but-nonexistent
+   `list_issues`, collapses three drifting copies of the access-strategy table, and settles the schema
+   drift (`detect-resume.sh:15` expects `2`; nothing emits `2` for the pipeline log — canonical is `1`).
+   **Explicitly behaviour-neutral on failure semantics**, so it reverts cleanly.
+2. **`tracker-label-audit`** — classify every declared label as `control` / `human-signal` /
+   `vestigial` with file:line evidence, record it in `docs/label-audit.md`, then stop writing only the
+   vestigial ones. `claimed` is confirmed vestigial (zero readers repo-wide). The three-way split
+   exists because a grep-driven cleanup would have deleted `needs-info`, which has no code reader but
+   is the human-hold protocol's only human affordance. Operator confirms the removal list before
+   anything lands.
+3. **`tracker-read-failure-policy`** — two declared read classes through one helper. Decision reads
+   resolve in the safe direction; informational reads degrade soft. Fixes the unsafe degrade-open at
+   `fleet-dispatch.sh:658-670`, where a failed blocker fetch leaves `is_blocked=false` and dispatches
+   a ticket with its dependency state unknown (**BREAKING**: such tickets now wait). Converts
+   `LINEAR_FETCH_FAILED` from a terminal gate-stop into a retryable hold, so a tracker blip parks a run
+   instead of ending it. Depends on change 1.
+
+Addresses both halves of the operator complaint — a quieter board, and a tracker outage that no longer
+halts the pipeline — without an event system, a schema change, or moving state authority.
+
+**Track B is deliberately not proposed.** The plan file carries the full design (event emitter and
+outbox, board drivers with per-board `event → column` tables, local facts, approval intake, second
+board). It is a rewrite of the coupling layer — 12 `planned`-label readers, 22 non-test files assuming
+the Linear jq shape, 14 test files hardcoding label strings, the planner's creation path, the Branch
+Directive migration, two dashboards, `install.sh` — across five plugins, on files that took 34 commits
+in the last 30 days. Its real value is tracker *portability*, which is not needed until a second board
+is actually wanted. Revisit after Track A lands and after Step 6's hold lifts.
+
+Three findings from the Track B design work that stand on their own, whether or not it ever runs:
+- **Gate holds create no store row on the default path.** `store.set_hold(..., 'gate', ...)`'s only
+  caller is `_create_phase_dispatch_hold`, gated behind `FLEET_PHASE_DISPATCH_ENABLE` (default false).
+  Any future work assuming "held tickets are rows" is wrong for the primary hold type.
+- **`auto_remove_when: blocker_reaches_done`** (`state-machine.json:40`) is declared and **never
+  implemented** — referenced only by a test asserting the key exists.
+- **`_plog` silently drops any line whose MSG contains `|`** (`heartbeat.sh:42-46`, returns 1, and its
+  three existing JSON callers ignore the return code). Fine for metadata, disqualifying for any
+  channel of record.
 
 ---
 
