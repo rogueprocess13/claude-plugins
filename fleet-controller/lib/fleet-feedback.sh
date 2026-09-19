@@ -10,7 +10,7 @@ _FEEDBACK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source linear-api.sh from canonical path for get_issue (to look up ticket labels)
 if ! declare -f get_issue >/dev/null 2>&1; then
-  for _lp in "$HOME/.claude/skills/lib/linear-api.sh" "$_FEEDBACK_DIR/../ticket-auto-pipeline/lib/linear-api.sh"; do
+  for _lp in "$HOME/.claude/skills/lib/linear-api.sh" "$_FEEDBACK_DIR/../../ticket-auto-pipeline/lib/linear-api.sh"; do
     [ -f "$_lp" ] && source "$_lp" && break
   done
 fi
