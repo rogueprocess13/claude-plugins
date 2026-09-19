@@ -28,7 +28,17 @@
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
 # errors in this bash version when nounset is active. Repo convention.
-set -eo pipefail
+#
+# set -eo pipefail only when executed directly, never when sourced — this is
+# a sourceable library (epic-branch.sh, fleet-intervene.sh, flow.sh all
+# source it unconditionally at file scope), and every risky command in
+# emit_event already has explicit `||` error handling, so -e buys nothing
+# here while leaking into every caller's shell flags. Same convention
+# fleet-dispatch.sh documents (and works around) for linear-api.sh — this
+# library gets it right instead of needing a snapshot/restore workaround.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  set -eo pipefail
+fi
 
 _EV_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

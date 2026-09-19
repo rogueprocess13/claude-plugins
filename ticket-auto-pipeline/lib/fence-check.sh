@@ -15,7 +15,15 @@
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
 # errors in this bash version when nounset is active. Repo convention.
-set -eo pipefail
+#
+# set -eo pipefail only when executed directly, never when sourced — this is
+# a sourceable library (flow.sh and lib/events.sh both source it
+# unconditionally at file scope), and check_generation_fence already handles
+# its own failure paths explicitly. Same fix as lib/events.sh — see its
+# comment for the fuller rationale.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  set -eo pipefail
+fi
 
 _FENCE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

@@ -166,6 +166,27 @@ test_usage_errors() {
   [ "$rc1" -eq 2 ] && [ "$rc2" -eq 2 ] && [ "$rc3" -eq 2 ] && ! $wrote
 }
 
+# ── sourcing events.sh must not mutate the caller's shell flags ────────────
+# events.sh is sourced unconditionally at file scope by epic-branch.sh and
+# fleet-intervene.sh, both of which are themselves sourced by
+# fleet-monitor.sh — a leaked -e/pipefail there breaks the whole monitor
+# loop, exactly the class of bug fleet-dispatch.sh already works around for
+# linear-api.sh.
+test_sourcing_does_not_leak_shell_flags() {
+  bash -c "
+    source '$EV' >/dev/null 2>&1
+    case \$- in
+      *e*) exit 1 ;;
+    esac
+    case \$(set +o | grep -w pipefail) in
+      'set +o pipefail') ;;
+      *) exit 1 ;;
+    esac
+    exit 0
+  "
+}
+
+_run "sourcing events.sh does not leak -e/pipefail" test_sourcing_does_not_leak_shell_flags
 _run "3.6 sequential emission -> consecutive seq" test_sequential_seq_consecutive
 _run "3.7 concurrent same-ticket -> no gap/collision" test_concurrent_same_ticket_no_collision
 _run "3.8 concurrent different tickets -> independent" test_concurrent_different_tickets_independent

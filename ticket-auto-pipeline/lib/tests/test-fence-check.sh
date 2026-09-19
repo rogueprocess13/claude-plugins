@@ -106,6 +106,25 @@ test_different_tickets_independent() {
   [ "$rc" -eq 0 ] && [ "$FENCE_CHECK_STATUS" = "unfenced" ]
 }
 
+# ── sourcing fence-check.sh must not mutate the caller's shell flags ───────
+# fence-check.sh is sourced unconditionally at file scope by lib/events.sh,
+# which is itself sourced by epic-branch.sh/fleet-intervene.sh — the same
+# leak class fleet-dispatch.sh already works around for linear-api.sh.
+test_sourcing_does_not_leak_shell_flags() {
+  bash -c "
+    source '$FC' >/dev/null 2>&1
+    case \$- in
+      *e*) exit 1 ;;
+    esac
+    case \$(set +o | grep -w pipefail) in
+      'set +o pipefail') ;;
+      *) exit 1 ;;
+    esac
+    exit 0
+  "
+}
+
+_run "sourcing fence-check.sh does not leak -e/pipefail" test_sourcing_does_not_leak_shell_flags
 _run "disabled when FLEET_FENCE_ENFORCE=false" test_disabled_when_fence_enforce_false
 _run "unfenced when no marker file exists" test_unfenced_when_no_marker
 _run "missing generation token on fenced ticket -> 9" test_missing_generation_on_fenced_ticket
