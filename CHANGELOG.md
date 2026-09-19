@@ -17,6 +17,39 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.14 (2026-09-19) — also fleet-controller 0.31.12
+
+Tracker read failure policy (`tracker-read-failure-policy`): classifies every
+bash call into `linear-api.sh`'s client as **decision** (a branch depends on
+the value) or **informational**, with a documented safe direction per
+decision read (`docs/tracker-read-classification.md`, 33 decision points
+across 36 line references). Adds a shared `tracker_read <class> <safe-value>
+-- <command...>` helper in `linear-api.sh` that logs `META|tracker-read-fail`
+uniformly on failure and migrates the informational reads in
+`run-identity.sh`, `planned-feedback-write.sh`, and `fleet-feedback.sh` onto
+it.
+
+**BREAKING (fleet-controller)**: `fleet_dispatch_initiative`'s blocked-by
+resolution had no `else` branch on a failed blocker `get_issue` — a child
+whose blocker was merely unreadable (not necessarily `Done`) could dispatch
+anyway. Now fails closed: an unreadable blocker withholds the child, logged
+explicitly so "nothing dispatched this cycle" stays diagnosable. **A ticket
+that previously dispatched during a tracker outage will now wait instead.**
+
+**Behaviour change (ticket-auto-pipeline)**: the entry gate's
+`LINEAR_FETCH_FAILED` is no longer an immediate gate-stop. `_gate_fetch_issue`
+now holds (the same `held: ` shape as a complex-ticket or manual-mode hold,
+resumable via the existing hold infrastructure with zero new code) for the
+first `GATE_FETCH_MAX_ATTEMPTS - 1` (default 3) consecutive failures, and
+only gate-stops once that cap is exhausted. Reapprove-gate context is
+unaffected — still an immediate gate-stop, never conflated with
+`APPROVAL_REVOKED`. `fleetd/gate_hold.py`'s reconciler gets its own
+independent cap (`FLEET_GATE_FETCH_MAX_ATTEMPTS`) for the same reason,
+since its scratch-log probes can't see the bash-side counter across passes —
+without it, a persistent tracker outage would hold and silently re-probe
+forever via the reconciler once the (currently not-yet-default)
+phase-dispatch rollout starts creating gate-kind hold rows.
+
 ## 0.50.13 (2026-09-19)
 
 Tracker label audit (`docs/label-audit.md`, new): every label declared in
