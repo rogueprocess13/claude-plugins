@@ -73,7 +73,7 @@ Estimated: one sitting for all three.
       for other intentional defaults. Confirmed live afterward: fleetd boots clean from
       `../tickets`. Full fleetd suite green post-fix (745 passed / 2 skipped).
 
-- [ ] **Epic-branch push runs the pre-push hook against the wrong tree** (issue #381) —
+- [x] **Epic-branch push runs the pre-push hook against the wrong tree** (issue #381) —
       `ticket-auto-pipeline/lib/epic-branch.sh:224` (`ensure_epic_branch`),
       `fleet-controller/lib/fleet-dispatch.sh:557` (`_fleet_dispatch_initiative_locked`),
       `fleet-controller/fleetd/supervisor.py:3680` (`dispatch_epic`). Not from a queued plan —
@@ -90,6 +90,10 @@ Estimated: one sitting for all three.
       markers at all rc values plus return an additive `gate_stop` key. Rejected the
       dedicated always-on-base worktree option — whole worktree lifecycle/GC cost to let a hook
       test a tree with zero new commits in it.
+      Done 2026-09-16, PR #382 (`fix/issue-381-epic-branch-push-hook`, 998d9b0), same day as
+      filing — checkbox missed at the time. Both fixes landed as designed above; 30/30
+      epic-branch, 55/55 fleet-dispatch, 9/9 dispatch_epic tests. Confirmed against current
+      `main` 2026-09-19 while closing out Step 7b.
 
 ---
 
