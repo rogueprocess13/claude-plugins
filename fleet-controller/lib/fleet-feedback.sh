@@ -26,7 +26,7 @@ _get_initiative_labels() {
   local label_prefix="${FLEET_INITIATIVE_LABEL_PREFIX:-INIT-}"
   if declare -f get_issue >/dev/null 2>&1; then
     local issue_json
-    if issue_json=$(get_issue "$tid" 2>/dev/null); then
+    if issue_json=$(tracker_read informational "" -- get_issue "$tid"); then
       # get_issue already unwraps .data.issue (tracker-client-consolidation
       # response-shape contract) — read labels directly, no envelope prefix.
       echo "$issue_json" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null | grep "^${label_prefix}" || true
@@ -317,7 +317,7 @@ _fleet_confidence_predicted() {
   local tid="$1"
   local description=""
   if declare -f get_issue >/dev/null 2>&1; then
-    description=$(get_issue "$tid" 2>/dev/null | jq -r '.description // empty' 2>/dev/null || true)
+    description=$(tracker_read informational "" -- get_issue "$tid" | jq -r '.description // empty' 2>/dev/null || true)
   fi
   if [ -z "$description" ] || [ "$description" = "null" ]; then
     echo "null"
