@@ -1718,6 +1718,37 @@ def _notify_gate_stop(fleet_lib_dir, state_dir, tid, gate_stop_code, detail=''):
         pass
 
 
+def _emit_verify_failed_retrying(tid, attempt, max_iterations):
+    """Dual-write verify-failed-retrying{attempt,max} to the ticket's event
+    outbox (tracker-event-vocabulary-and-emitter). Same shell-out shape as
+    `_notify_gate_stop`/`_notify_hold` above, using ticket-auto-pipeline's
+    `lib/events.sh` (bridged via `_phase_mod.ticket_auto_lib_dir()`, the
+    same resolver `gate_hold.py`'s own emit helper uses) rather than
+    fleet-controller's own `lib/`. Fail-soft: never affects the phase-dispatch
+    retry decision itself, which has already been made by the time this runs.
+    """
+    if _phase_mod is None:
+        return
+    try:
+        lib_dir = _phase_mod.ticket_auto_lib_dir()
+    except Exception:
+        return
+    events_sh = Path(lib_dir) / 'events.sh'
+    if not events_sh.is_file():
+        return
+    data = json.dumps({'attempt': attempt, 'max': max_iterations})
+    try:
+        subprocess.run(
+            ['bash', '-c',
+             f'source {shlex.quote(str(events_sh))} && '
+             f'emit_event {shlex.quote(tid)} verify-failed-retrying '
+             f'{shlex.quote(data)}'],
+            timeout=15, capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def _notify_hold(fleet_lib_dir, state_dir, tid, transition):
     """Fire `fleet_notify_hold <tid> <state_dir> <transition>` (#305).
 
@@ -4458,7 +4489,17 @@ class Supervisor:
             )
             return True
 
-        # NEXT_ADVANCE.
+        # NEXT_ADVANCE. A VERIFY failure retrying implement is the one
+        # NEXT_ADVANCE transition the vocabulary names explicitly
+        # (verify-failed-retrying) — matched on next_step's own stable
+        # detail string for STEP_4_5's post-dispatch loop branch, the same
+        # string _notify_gate_stop's caller already treats as meaningful.
+        if decision.detail == 'verify failed, retry implement':
+            verify_loop = table.loop('STEP_4_5') or {}
+            _emit_verify_failed_retrying(
+                tid, int((counters or {}).get('VERIFY_ATTEMPTS', 0)),
+                int(verify_loop.get('max_iterations') or 0))
+
         return self._dispatch_step_locked(
             tid, decision.step_id, table, log_file, hb_log_file, env_file,
             reason, counters=counters)

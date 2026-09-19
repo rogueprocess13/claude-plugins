@@ -17,6 +17,43 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.50.15 (2026-09-19) — also fleet-controller 0.31.13
+
+Tracker event vocabulary and emitter (`tracker-event-vocabulary-and-emitter`, Phase B1 of the
+tracker-decoupling programme, Track B): a new append-only per-ticket event outbox
+(`ticket-auto-pipeline/lib/events.sh`, `emit_event <tid> <event> <json>`) and the closed, board-agnostic
+event vocabulary it validates against. Dual-write only in this phase — nothing consumes the outbox
+yet, and no call site stops writing to Linear or the pipeline log; the Linear board is unaffected.
+
+- New `lib/events.sh`: JSON-Lines outbox (`{tid}-outbox.jsonl`, one record per line — `{seq, tid, ts,
+  gen, event, data, from_hint}`), a per-ticket `flock` (deliberately separate from `flow.sh`'s own
+  lock — see design.md), the shared generation fence, and closed-vocabulary validation. Independent of
+  `flow.sh` — gate holds and human holds never call it, and `flow.sh`'s idempotency rule would swallow
+  their emission if it did.
+- New `lib/fence-check.sh`: the generation-fence decision logic extracted from `flow.sh` so both
+  `flow.sh` and `events.sh` reject a stale-generation write identically.
+- `skills/ticket-flow/state-machine.json` renamed to `workflow.json`, gaining a `vocabulary` section
+  (29 declared events) separate from the pre-existing Linear-specific `triggers` table, plus an empty
+  `board_drivers` placeholder reserved for a later phase. `pr-review-pass-done`/`pr-review-pass-uat`
+  collapse into one fact, `pr-review-passed{uat_required: bool}`, emitted by `branch-resolve.sh`'s
+  `uat_decide_trigger`; every other trigger maps 1:1 via `flow.sh`'s new generic post-mutation
+  dual-write. Ten previously-unemitted facts added: `gate-held`, `gate-released`,
+  `human-hold-requested`, `human-hold-released`, `pr-opened`, `pr-merged`, `verify-failed-retrying`,
+  `ticket-killed`, `blocked`, `unblocked`.
+- Dual-write wired at: `flow.sh` (generic, every non-collapsed trigger), `gate-check.sh` (8 hold sites,
+  1 release site), `human-hold-parse.sh` (request), `fleetd/gate_hold.py` (human-hold release),
+  `fleet-intervene.sh` (6 confirmed-kill sites), `epic-branch.sh` + `ticket-verify/SKILL.md` (PR
+  opened), `merge-poll.sh` (PR merged, sourced from `runs.jsonl`'s own `merge` event, ordered after
+  `META|outcome`), and `fleetd/supervisor.py`'s phase-dispatch verify-retry transition.
+- `validate-linear-config.sh`, `ticket-preamble.sh`, and `gen-mermaid.sh` updated to read
+  `workflow.json`. Repo-wide sweep of `state-machine.json` string literals across docs, tests, and
+  comments.
+- **Known gap, not implemented in this phase:** `blocked`/`unblocked` are declared in the vocabulary
+  but have no wired call site — `blocked-by:*` label auto-removal (`auto_remove_when:
+  blocker_reaches_done`) was found to be undocumented-but-never-implemented pre-existing behavior, not
+  something this phase can safely wire dual-write into without first building the feature it would
+  describe.
+
 ## 0.50.14 (2026-09-19) — also fleet-controller 0.31.12
 
 Tracker read failure policy (`tracker-read-failure-policy`): classifies every

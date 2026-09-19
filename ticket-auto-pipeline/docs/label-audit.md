@@ -18,6 +18,13 @@ If this file is more than a few months old relative to `state-machine.json`'s cu
 treat it as possibly stale — re-run the searches below before trusting a classification, per design
 R5 (staleness must be visible, not silently trusted).
 
+**Filename note (2026-09-19, tracker-event-vocabulary-and-emitter):** `state-machine.json` was
+renamed to `workflow.json` the same day this audit was taken — the `triggers`/`well_known_labels`/
+`planner_labels` content this audit describes is unchanged, only the filename differs. Every
+`state-machine.json` reference below (including git-log citations) describes evidence gathered under
+that filename and is left as written rather than rewritten after the fact; read `state-machine.json`
+in this file as `workflow.json` on disk.
+
 ## Summary table
 
 | Label | Classification | One-line justification |

@@ -680,6 +680,54 @@ test_trigger_is_deterministic() {
 }
 _run "uat_decide_trigger: same inputs yield the same transition" test_trigger_is_deterministic
 
+# ── uat_decide_trigger dual-write (tracker-event-vocabulary-and-emitter, task 5.3) ──
+
+test_trigger_emits_pr_review_passed_uat_required_true() {
+  local ws
+  ws=$(mktemp -d)
+  FLEET_PIPELINE_LOG_DIR="$ws" uat_decide_trigger --policy per-ticket \
+    --uat-url "https://uat.example.com" --ticket T-501 >/dev/null
+  local ok=false
+  if [ -f "$ws/T-501-outbox.jsonl" ]; then
+    local ev req
+    ev=$(jq -r '.event' "$ws/T-501-outbox.jsonl")
+    req=$(jq -r '.data.uat_required' "$ws/T-501-outbox.jsonl")
+    [ "$ev" = "pr-review-passed" ] && [ "$req" = "true" ] && ok=true
+  fi
+  rm -rf "$ws"
+  $ok
+}
+_run "uat_decide_trigger: emits pr-review-passed{uat_required:true} for UAT policy" test_trigger_emits_pr_review_passed_uat_required_true
+
+test_trigger_emits_pr_review_passed_uat_required_false() {
+  local ws
+  ws=$(mktemp -d)
+  FLEET_PIPELINE_LOG_DIR="$ws" uat_decide_trigger --policy epic \
+    --uat-url "https://uat.example.com" --ticket T-502 >/dev/null
+  local ok=false
+  if [ -f "$ws/T-502-outbox.jsonl" ]; then
+    local ev req
+    ev=$(jq -r '.event' "$ws/T-502-outbox.jsonl")
+    req=$(jq -r '.data.uat_required' "$ws/T-502-outbox.jsonl")
+    [ "$ev" = "pr-review-passed" ] && [ "$req" = "false" ] && ok=true
+  fi
+  rm -rf "$ws"
+  $ok
+}
+_run "uat_decide_trigger: emits pr-review-passed{uat_required:false} for epic policy" test_trigger_emits_pr_review_passed_uat_required_false
+
+test_trigger_no_ticket_emits_nothing() {
+  local ws
+  ws=$(mktemp -d)
+  FLEET_PIPELINE_LOG_DIR="$ws" uat_decide_trigger --policy per-ticket \
+    --uat-url "https://uat.example.com" >/dev/null
+  local no_files
+  no_files=$(find "$ws" -name '*-outbox.jsonl' | wc -l)
+  rm -rf "$ws"
+  [ "$no_files" -eq 0 ]
+}
+_run "uat_decide_trigger: no --ticket means no outbox emission" test_trigger_no_ticket_emits_nothing
+
 echo ""
 echo "=== Results: $((PASS + FAIL)) tests, $PASS passed, $FAIL failed ==="
 

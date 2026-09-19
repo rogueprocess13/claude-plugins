@@ -1614,7 +1614,7 @@ _fleet_scan_stalled_approved_children() {
 
       # The `approved` label is what the state machine actually requires to
       # reach Ready/Review/UAT via the real Approve->Ready/Review->Ready/
-      # UAT->Ready triggers (state-machine.json). Without this check, a
+      # UAT->Ready triggers (workflow.json). Without this check, a
       # child a human moved into one of these states by hand ahead of
       # approval — outside the automated flow entirely — would be
       # misclassified as a stalled AUTOMATION concern.

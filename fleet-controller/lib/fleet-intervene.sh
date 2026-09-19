@@ -23,6 +23,28 @@ if ! declare -f _plog >/dev/null 2>&1; then
   done
 fi
 
+# Source events.sh from canonical path (same bridge as heartbeat.sh above) —
+# backs the ticket-killed dual-write emission below
+# (tracker-event-vocabulary-and-emitter).
+if ! declare -f emit_event >/dev/null 2>&1; then
+  for _ep in "$_INTERVENE_DIR/events.sh" "$HOME/.claude/skills/lib/events.sh"; do
+    [ -f "$_ep" ] && source "$_ep" && break
+  done
+fi
+
+# fleet-intervene.sh is the fence WRITER for a kill, not a fenced
+# participant — it does not have its own FLEET_GENERATION to be fenced
+# against, so ticket-killed is emitted with FLEET_GENERATION overridden to
+# this call's own registry_gen (bash's temporary-environment assignment,
+# scoped to this one call — see design.md "Generation is read from
+# FLEET_GENERATION").
+_fleet_emit_ticket_killed() {
+  local tid="$1" reason="$2" gen="${3:-0}"
+  declare -f emit_event >/dev/null 2>&1 || return 0
+  FLEET_GENERATION="$gen" emit_event "$tid" ticket-killed \
+    "$(jq -nc --arg r "$reason" '{reason: $r}')" 2>/dev/null || true
+}
+
 # Reuse fleet-detect.sh's _HARMLESS_TRAILING_META_STEPS allowlist (GitHub
 # #364) rather than deriving a fourth copy — worker-exit/fleet-restart/
 # fleet-intervention/schema/migration/tokens/cache-tokens never count as a
@@ -328,6 +350,7 @@ fleet_kill_pipeline() {
     _log_pipeline "$log_file" "META" "outcome" "info" "stopped: fleet-kill (stop-files only); ${reason}"
     export HB_LOG_FILE="${hb_file}"
     hb_decision "fleet-kill" "fired" "reason=${reason}"
+    _fleet_emit_ticket_killed "$tid" "$reason" 0
     _fleet_postmortem "$tid" "$log_file" "$hb_file"
     echo "fleet_kill_pipeline: killed ${tid} (stop-files only) — ${reason}"
     return 0
@@ -343,6 +366,7 @@ fleet_kill_pipeline() {
     _log_pipeline "$log_file" "META" "outcome" "info" "stopped: fleet-kill (no registry PID); ${reason}"
     export HB_LOG_FILE="${hb_file}"
     hb_decision "fleet-kill" "fired" "reason=${reason}"
+    _fleet_emit_ticket_killed "$tid" "$reason" 0
     _fleet_postmortem "$tid" "$log_file" "$hb_file"
     echo "fleet_kill_pipeline: killed ${tid} (no registry PID, stop-files only) — ${reason}"
     return 0
@@ -363,6 +387,7 @@ fleet_kill_pipeline() {
       fence_write "$tid" "$registry_gen" "$state_dir"
     fi
 
+    _fleet_emit_ticket_killed "$tid" "$reason" "$registry_gen"
     _fleet_postmortem "$tid" "$log_file" "$hb_file"
     echo "fleet_kill_pipeline: killed ${tid} (cooperative exit) — ${reason}"
     return 0
@@ -419,6 +444,7 @@ fleet_kill_pipeline() {
       fence_write "$tid" "$registry_gen" "$state_dir"
     fi
 
+    _fleet_emit_ticket_killed "$tid" "$reason" "$registry_gen"
     _fleet_postmortem "$tid" "$log_file" "$hb_file"
     echo "fleet_kill_pipeline: killed ${tid} (SIGINT) — ${reason}"
     return 0
@@ -438,6 +464,7 @@ fleet_kill_pipeline() {
       fence_write "$tid" "$registry_gen" "$state_dir"
     fi
 
+    _fleet_emit_ticket_killed "$tid" "$reason" "$registry_gen"
     _fleet_postmortem "$tid" "$log_file" "$hb_file"
     echo "fleet_kill_pipeline: killed ${tid} (SIGTERM) — ${reason}"
     return 0
@@ -457,6 +484,7 @@ fleet_kill_pipeline() {
       fence_write "$tid" "$registry_gen" "$state_dir"
     fi
 
+    _fleet_emit_ticket_killed "$tid" "$reason" "$registry_gen"
     _fleet_postmortem "$tid" "$log_file" "$hb_file"
     echo "fleet_kill_pipeline: killed ${tid} (SIGKILL) — ${reason}"
     return 0

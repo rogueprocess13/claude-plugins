@@ -1678,7 +1678,7 @@ def last_verify_checkpoint(log_lines):
 # reimplementing the GraphQL query or the labels field shape (same
 # discipline as `preamble.py`'s D13/D17 calls) — resolve once at first
 # dispatch and cache the result; a ticket's type label is fixed at creation
-# and never toggled mid-run (`state-machine.json`'s `planner_labels` table).
+# and never toggled mid-run (`workflow.json`'s `planner_labels` table).
 
 _TICKET_TYPE_LABELS = ('bug', 'feature', 'improvement', 'security', 'chore')
 

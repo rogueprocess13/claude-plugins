@@ -877,6 +877,7 @@ Verification passed on localhost — the implementation is confirmed working. No
      WORKTREE_PATH=$(worktree_path "$TICKET_ID" "{repo-slug}")
    fi
    existing_pr=$(cd "$WORKTREE_PATH" && gh pr list --head {branch-name} --json url --jq '.[0].url' 2>/dev/null)
+   _pr_newly_created=false
    if [ -n "$existing_pr" ]; then
      echo "PR already exists: $existing_pr"
      _pr_url="$existing_pr"
@@ -891,6 +892,7 @@ Verification passed on localhost — the implementation is confirmed working. No
    - [x] ticket-verify --env local PASS ({N}/{N} criteria)
    EOF
      )")
+     _pr_newly_created=true
    fi
    # Capture pr-created evidence (Commercial Evidence MVP, Branch B) — covers
    # both the new-PR and existing-PR paths above, once per PR.
@@ -900,6 +902,15 @@ Verification passed on localhost — the implementation is confirmed working. No
      _pr_created_json=$(jq -nc --argjson pr "${_pr_num:-null}" --arg url "$_pr_url" --arg repo "$_pr_repo" \
        '{pr: $pr, url: $url, repo: (if $repo == "" then null else $repo end)}')
      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|pr-created|info|${_pr_created_json}" >> {LOG_FILE}
+   fi
+   # Dual-write (tracker-event-vocabulary-and-emitter): pr-opened{pr}, only
+   # for a genuinely new PR — reusing an already-open PR on a verify retry
+   # is not a new fact.
+   if $_pr_newly_created && [ -n "${_pr_num:-}" ]; then
+     source "$HOME/.claude/skills/lib/events.sh" 2>/dev/null || true
+     if declare -f emit_event >/dev/null 2>&1; then
+       emit_event "{TICKET_ID}" pr-opened "$(jq -nc --argjson pr "$_pr_num" '{pr: $pr}')" 2>/dev/null || true
+     fi
    fi
    ```
 3. Capture the PR URL(s).

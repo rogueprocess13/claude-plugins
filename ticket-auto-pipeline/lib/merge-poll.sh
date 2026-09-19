@@ -13,6 +13,11 @@ _MP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! declare -f runs_append >/dev/null 2>&1; then
   [ -f "$_MP_LIB_DIR/run-summary.sh" ] && source "$_MP_LIB_DIR/run-summary.sh"
 fi
+# events.sh backs the pr-merged dual-write below
+# (tracker-event-vocabulary-and-emitter).
+if ! declare -f emit_event >/dev/null 2>&1; then
+  [ -f "$_MP_LIB_DIR/events.sh" ] && source "$_MP_LIB_DIR/events.sh"
+fi
 
 MERGE_POLL_MIN_INTERVAL_SECS="${MERGE_POLL_MIN_INTERVAL_SECS:-600}"
 MERGE_POLL_MAX_AGE_DAYS="${MERGE_POLL_MAX_AGE_DAYS:-14}"
@@ -153,7 +158,30 @@ merge_poll_sweep() {
 
     local merge_event
     merge_event=$(merge_poll_one "$c_tid" "$c_pr_num" "$c_pr_repo") || continue
-    [ -n "$merge_event" ] && runs_append "$runs_file" "$merge_event"
+    [ -n "$merge_event" ] || continue
+    runs_append "$runs_file" "$merge_event"
+
+    # Dual-write (tracker-event-vocabulary-and-emitter): pr-merged{pr,sha}.
+    # Source of truth is this exact runs.jsonl merge event — pr/sha are read
+    # straight out of it, never independently reconstructed — and this site
+    # runs strictly after META|outcome, since merge_poll_candidates only
+    # ever surfaces a tid whose own `run` event (itself written post-outcome
+    # by pipeline-finalize.sh) already exists.
+    if [ "$(jq -r '.state // empty' <<<"$merge_event" 2>/dev/null)" = "merged" ] &&
+      declare -f emit_event >/dev/null 2>&1; then
+      local _pm_pr _pm_sha
+      _pm_pr=$(jq -r '.pr // empty' <<<"$merge_event" 2>/dev/null)
+      _pm_sha=$(jq -r '.merge_sha // empty' <<<"$merge_event" 2>/dev/null)
+      # FLEET_PIPELINE_LOG_DIR is overridden to this call only, to the
+      # directory RUNS_FILE actually lives in — a caller invoking this sweep
+      # (fleetd's periodic sweep, the CLI entrypoint) may not have that env
+      # var set to match, and every outbox writer for a ticket must resolve
+      # the identical directory.
+      FLEET_PIPELINE_LOG_DIR="$(dirname "$runs_file")" \
+        emit_event "$c_tid" pr-merged \
+        "$(jq -nc --argjson pr "${_pm_pr:-null}" --arg sha "${_pm_sha:-}" \
+          '{pr: $pr, sha: (if $sha == "" then null else $sha end)}')" 2>/dev/null || true
+    fi
   done < <(jq -c '.[]' <<<"$candidates" 2>/dev/null || true)
 
   return 0

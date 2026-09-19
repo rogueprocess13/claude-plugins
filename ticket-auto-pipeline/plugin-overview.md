@@ -15,7 +15,7 @@ Maintainer-facing overview of the ticket-auto-pipeline plugin. Read this before 
 ### State management
 | Component | File | Role |
 |-----------|------|------|
-| State machine definition | `skills/ticket-flow/state-machine.json` | Declares triggers, states, labels, transitions |
+| State machine definition | `skills/ticket-flow/workflow.json` | Declares triggers, states, labels, transitions |
 | State machine executor | `skills/ticket-flow/flow.sh` | Reads JSON, executes transitions with idempotency |
 | State diagram generator | `skills/ticket-flow/gen-mermaid.sh` | Generates mermaid from state machine JSON |
 | Interactive diagram | `docs/ticket-auto-pipeline-diagram.html` | Visual state diagram with drill-down (GitHub Pages) |
@@ -158,7 +158,7 @@ All pipeline agents use `lib/skill-preamble-auto.md` (thin router variant). All 
 3. Reference `lib/skill-preamble-auto.md` for shared parameter patterns (thin router variant)
 4. If the phase needs a restricted tool allowlist or its own system prompt, add a plugin-defined subagent: create `agents/<name>-agent.md` (YAML frontmatter: `name`, `description`, `tools`; body is the system prompt), then set `spawn.agent` (or `sequence[].agent`) to `ticket-auto-pipeline:<name>-agent` on the step's entry in `skills/ticket-flow/dispatch-table.json`. Otherwise leave `agent` unset/`null` — the step falls back to `general-purpose`. Regenerate the dispatch table (below) so SKILL.md's "Agent types" table picks up the mapping; fleetd's phase-dispatch path reads the same JSON field automatically.
 5. Add dispatch case to `ticket-auto/SKILL.md` dispatch table (new RESUME_STEP)
-6. Add any new state transitions to `skills/ticket-flow/state-machine.json`
+6. Add any new state transitions to `skills/ticket-flow/workflow.json`
 7. Add corresponding trigger to `flow.sh` if needed
 8. Add phase to `pipeline-log-format.md` if it writes log entries
 9. Regenerate state diagram: `bash skills/ticket-flow/gen-mermaid.sh`
@@ -167,7 +167,7 @@ All pipeline agents use `lib/skill-preamble-auto.md` (thin router variant). All 
 
 ## How to modify the state machine
 
-1. Edit `skills/ticket-flow/state-machine.json` — add/modify triggers, states, labels
+1. Edit `skills/ticket-flow/workflow.json` — add/modify triggers, states, labels
 2. Run `skills/ticket-flow/validate-linear-config.sh` to verify the Linear team has the required states/labels
 3. Run `bash skills/ticket-flow/gen-mermaid.sh` to update the diagram
 4. If adding new triggers: update `flow.sh` trigger dispatch

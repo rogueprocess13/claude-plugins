@@ -15,6 +15,15 @@
 #   epic_branch_children_done "CRE-100"
 #   epic_branch_open_pr "CRE-100" "/path/to/repo"
 
+# events.sh backs the pr-opened dual-write in epic_branch_open_pr below
+# (tracker-event-vocabulary-and-emitter). Guarded — not every caller of this
+# file has already sourced it, and this library does not enforce its own
+# dependency sourcing (see header).
+if ! declare -f emit_event >/dev/null 2>&1; then
+  _EB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$_EB_LIB_DIR/events.sh" ] && source "$_EB_LIB_DIR/events.sh"
+fi
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 # _resolve_repo <repo_path>
@@ -605,6 +614,10 @@ EOF
       '{pr: $pr, url: $url, repo: $repo, epic: true}' 2>/dev/null) || true
     if [ -n "$_pr_created_json" ]; then
       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|pr-created|info|${_pr_created_json}" >>"$LOG_FILE"
+    fi
+    # Dual-write (tracker-event-vocabulary-and-emitter): pr-opened{pr}.
+    if [ -n "${_pr_num:-}" ] && declare -f emit_event >/dev/null 2>&1; then
+      emit_event "$epic_id" pr-opened "$(jq -nc --argjson pr "$_pr_num" '{pr: $pr}')" 2>/dev/null || true
     fi
   fi
 

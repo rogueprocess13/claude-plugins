@@ -74,9 +74,9 @@ test_validate_linear_config_dry_run() {
   local tmpdir
   tmpdir=$(mktemp -d)
   local sentinel_dir="$tmpdir/state/ticket-flow"
-  local sm="$SCRIPT_DIR/../state-machine.json"
+  local sm="$SCRIPT_DIR/../workflow.json"
   [ -f "$sm" ] || {
-    echo "state-machine.json missing" >&2
+    echo "workflow.json missing" >&2
     return 1
   }
 
@@ -407,13 +407,13 @@ test_gen_mermaid_roundtrip() {
   # Use PLUGIN_DIR (set at script startup, never overwritten) rather than
   # SCRIPT_DIR which ticket-dir.sh clobbers when sourced by earlier tests.
   local gen="$PLUGIN_DIR/skills/ticket-flow/gen-mermaid.sh"
-  local sm="$PLUGIN_DIR/skills/ticket-flow/state-machine.json"
+  local sm="$PLUGIN_DIR/skills/ticket-flow/workflow.json"
   [ -f "$gen" ] || {
     echo "gen-mermaid.sh missing" >&2
     return 1
   }
   [ -f "$sm" ] || {
-    echo "state-machine.json missing" >&2
+    echo "workflow.json missing" >&2
     return 1
   }
   local readme="$PLUGIN_DIR/README.md"
@@ -1013,17 +1013,25 @@ test_needs_adr_does_not_change_state() {
 # ── test_state_machine_single_source ───────────────────────────────────────
 
 test_state_machine_single_source() {
-  # Exactly one state-machine.json must exist in the plugin tree —
-  # the canonical copy at skills/ticket-flow/state-machine.json.
+  # state-machine.json was renamed to workflow.json
+  # (tracker-event-vocabulary-and-emitter, Section 4): no state-machine.json
+  # should remain anywhere in the plugin tree, and exactly one workflow.json
+  # must exist — the canonical copy at skills/ticket-flow/workflow.json.
+  local stale_count
+  stale_count=$(find "$PLUGIN_DIR" -name "state-machine.json" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | wc -l)
+  [ "$stale_count" -eq 0 ] || {
+    echo "expected 0 remaining state-machine.json files, found $stale_count"
+    return 1
+  }
   local count
-  count=$(find "$PLUGIN_DIR" -name "state-machine.json" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | wc -l)
+  count=$(find "$PLUGIN_DIR" -name "workflow.json" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | wc -l)
   [ "$count" -eq 1 ] || {
-    echo "expected exactly 1 state-machine.json, found $count"
+    echo "expected exactly 1 workflow.json, found $count"
     return 1
   }
   # Verify the sole copy is at the expected path
-  [ -f "$PLUGIN_DIR/skills/ticket-flow/state-machine.json" ] || {
-    echo "canonical state-machine.json missing at skills/ticket-flow/"
+  [ -f "$PLUGIN_DIR/skills/ticket-flow/workflow.json" ] || {
+    echo "canonical workflow.json missing at skills/ticket-flow/"
     return 1
   }
 }

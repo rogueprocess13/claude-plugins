@@ -23,8 +23,22 @@ if [ -f "$LIB_DIR/verifier-result.sh" ]; then
 elif [ -f "$SCRIPT_DIR/../../lib/verifier-result.sh" ]; then
   source "$SCRIPT_DIR/../../lib/verifier-result.sh"
 fi
+# fence-check.sh backs the generation fence guard below (extracted so
+# lib/events.sh's outbox emission uses the identical decision logic —
+# tracker-event-vocabulary-and-emitter). events.sh backs the dual-write
+# outbox emission after a successful mutation (Section 6 of that change).
+if [ -f "$LIB_DIR/fence-check.sh" ]; then
+  source "$LIB_DIR/fence-check.sh"
+elif [ -f "$SCRIPT_DIR/../../lib/fence-check.sh" ]; then
+  source "$SCRIPT_DIR/../../lib/fence-check.sh"
+fi
+if [ -f "$LIB_DIR/events.sh" ]; then
+  source "$LIB_DIR/events.sh"
+elif [ -f "$SCRIPT_DIR/../../lib/events.sh" ]; then
+  source "$SCRIPT_DIR/../../lib/events.sh"
+fi
 
-SM="$SCRIPT_DIR/state-machine.json"
+SM="$SCRIPT_DIR/workflow.json"
 
 usage() {
   echo "Usage: $0 <TICKET-ID> <TRIGGER> [--generation N] [--state-dir DIR] [--data key=value ...] [--dry-run] [--override REASON]" >&2
@@ -33,7 +47,7 @@ usage() {
   echo "  --state-dir DIR   Fleet state directory for fence marker lookup" >&2
   echo "  --override REASON   Force a verdict-gated trigger past a trailing FAIL/BLOCK verifier-result" >&2
   echo "" >&2
-  echo "Valid triggers (from state-machine.json):" >&2
+  echo "Valid triggers (from workflow.json):" >&2
   jq -r '.triggers | keys[]' "$SM" 2>/dev/null | sed 's/^/  /' >&2
   exit 1
 }
@@ -109,10 +123,10 @@ _emit_schema_header() {
   fi
 }
 
-# ── Validate state-machine.json ─────────────────────────────────────────────
+# ── Validate workflow.json ─────────────────────────────────────────────
 
 if ! jq '.' "$SM" >/dev/null 2>&1; then
-  echo "state-machine.json is not valid JSON: $SM" >&2
+  echo "workflow.json is not valid JSON: $SM" >&2
   exit 1
 fi
 
@@ -234,7 +248,7 @@ check_precondition "$_trigger_precondition" "$TRIGGER" "$ISSUE_JSON" || _pre_rc=
 [ "$_pre_rc" -eq 0 ] || _precondition_reject "$TRIGGER" "$_pre_rc"
 
 # ── Planner label preconditions ──────────────────────────────────────────────
-# Read precondition rules from state-machine.json planner_labels section.
+# Read precondition rules from workflow.json planner_labels section.
 for label_name in "${ADD_LABEL_NAMES[@]}"; do
   _precondition=$(jq -r --arg l "$label_name" '.planner_labels[$l].precondition // empty' "$SM" 2>/dev/null)
   _pre_rc=0
@@ -243,7 +257,7 @@ for label_name in "${ADD_LABEL_NAMES[@]}"; do
 done
 
 # ── Verdict gate (VERDICT_FAIL_NOT_ENFORCED, issue #368) ────────────────────
-# Declared per-trigger in state-machine.json via "verdict_gate": true. A
+# Declared per-trigger in workflow.json via "verdict_gate": true. A
 # trailing FAIL/BLOCK verifier-result for any (verifier, phase) pair blocks
 # the trigger until a later PASS/WARN for that same pair supersedes it — or a
 # human forces it past the block with `--override <reason>`, recorded as
@@ -273,66 +287,32 @@ fi
 TEAM_JSON=$(get_team "$TEAM_ID")
 
 # ── Generation fence guard ────────────────────────────────────────────────────
-# Gate behind FLEET_FENCE_ENFORCE (default: true).
-# If a fence marker exists for this ticket, refuse mutations from superseded
-# generations. Missing generation token on a fenced ticket → fail-closed.
-FENCE_ENFORCE="${FLEET_FENCE_ENFORCE:-true}"
-if [ "$FENCE_ENFORCE" = "true" ]; then
-  # Discover and source fleet-config.sh (renamed from config.sh to avoid the
-  # SessionStart lib-sync collision) for _fleet_fence_file constructor.
-  # Look relative to this script (monorepo), then installed plugin paths.
-  # The old config.sh name is kept as a fallback for installed pre-rename
-  # fleet-controller versions.
-  _flow_config_sh=""
-  for _cand in \
-    "$SCRIPT_DIR/../../../fleet-controller/lib/fleet-config.sh" \
-    "$HOME/.claude/skills/fleet-controller/lib/fleet-config.sh" \
-    "$HOME/.claude/plugins/fleet-controller/lib/fleet-config.sh" \
-    "$SCRIPT_DIR/../../../fleet-controller/lib/config.sh" \
-    "$HOME/.claude/skills/fleet-controller/lib/config.sh" \
-    "$HOME/.claude/plugins/fleet-controller/lib/config.sh"; do
-    [ -f "$_cand" ] && {
-      _flow_config_sh="$_cand"
-      break
-    }
-  done
-  if [ -n "$_flow_config_sh" ]; then
-    source "$_flow_config_sh"
-    _fence_file=$(_fleet_fence_file "$TICKET_ID" "${FLEET_STATE_DIR:-./logs}")
-  else
-    # Fallback: match config.sh resolution logic — FLEET_STATE_DIR takes
-    # precedence, workspace-derived path second, /tmp last (backward compat).
-    if [ -n "${FLEET_STATE_DIR:-}" ]; then
-      _fence_file="${FLEET_STATE_DIR}/${TICKET_ID}-fence"
-    else
-      _fence_file="/tmp/${TICKET_ID}-fence"
-    fi
+# Decision logic lives in the shared check_generation_fence helper
+# (lib/fence-check.sh) — both flow.sh and lib/events.sh call it so a
+# stale-generation write is rejected identically regardless of whether it's a
+# Linear mutation or an outbox emission. Gated behind FLEET_FENCE_ENFORCE
+# (default: true) inside the helper itself.
+_fence_rc=0
+check_generation_fence "$TICKET_ID" "$CALLER_GENERATION" "${FLEET_STATE_DIR:-}" || _fence_rc=$?
+case "$_fence_rc" in
+0)
+  if [ "$FENCE_CHECK_STATUS" = "current" ]; then
+    _log "META|fence-guard|info|generation ${CALLER_GENERATION} > fenced ${FENCE_CHECK_FENCED_GEN}, allowed"
   fi
-
-  if [ -f "$_fence_file" ]; then
-    _fenced_gen=$(jq -r '.fenced_generation // 0' "$_fence_file" 2>/dev/null || echo "0")
-
-    # Missing generation token on a fenced ticket → refuse
-    if [ -z "$CALLER_GENERATION" ]; then
-      echo "flow.sh: fence guard — missing generation token for fenced ticket ${TICKET_ID} (fenced at generation ${_fenced_gen})" >&2
-      _log "META|fence-guard|fail|missing generation token for fenced ticket ${TICKET_ID}"
-      hb_gate "fence-guard" "fail" "missing generation token" "{\"ticket\":\"${TICKET_ID}\",\"fenced_gen\":${_fenced_gen}}"
-      exit 9
-    fi
-
-    # caller_gen <= fenced_gen → superseded, refuse
-    if [ "$CALLER_GENERATION" -le "$_fenced_gen" ] 2>/dev/null; then
-      echo "flow.sh: fence guard — generation ${CALLER_GENERATION} is superseded by fenced generation ${_fenced_gen} for ${TICKET_ID}" >&2
-      _log "META|fence-guard|fail|generation ${CALLER_GENERATION} <= fenced ${_fenced_gen}"
-      hb_gate "fence-guard" "fail" "superseded generation" "{\"ticket\":\"${TICKET_ID}\",\"caller_gen\":${CALLER_GENERATION},\"fenced_gen\":${_fenced_gen}}"
-      exit 10
-    fi
-
-    # caller_gen > fenced_gen → current generation, allowed
-    _log "META|fence-guard|info|generation ${CALLER_GENERATION} > fenced ${_fenced_gen}, allowed"
-  fi
-  # No fence marker → unrestricted (backward compatible)
-fi
+  ;;
+9)
+  echo "flow.sh: fence guard — missing generation token for fenced ticket ${TICKET_ID} (fenced at generation ${FENCE_CHECK_FENCED_GEN})" >&2
+  _log "META|fence-guard|fail|missing generation token for fenced ticket ${TICKET_ID}"
+  hb_gate "fence-guard" "fail" "missing generation token" "{\"ticket\":\"${TICKET_ID}\",\"fenced_gen\":${FENCE_CHECK_FENCED_GEN}}"
+  exit 9
+  ;;
+10)
+  echo "flow.sh: fence guard — generation ${CALLER_GENERATION} is superseded by fenced generation ${FENCE_CHECK_FENCED_GEN} for ${TICKET_ID}" >&2
+  _log "META|fence-guard|fail|generation ${CALLER_GENERATION} <= fenced ${FENCE_CHECK_FENCED_GEN}"
+  hb_gate "fence-guard" "fail" "superseded generation" "{\"ticket\":\"${TICKET_ID}\",\"caller_gen\":${CALLER_GENERATION},\"fenced_gen\":${FENCE_CHECK_FENCED_GEN}}"
+  exit 10
+  ;;
+esac
 
 # Helper: look up state ID by name
 resolve_state_id() {
@@ -509,7 +489,7 @@ if ! $IDEMPOTENT; then
     done
 
     # post_assert removed: latent RCE vector via eval on trigger-defined shell code.
-    # No trigger in state-machine.json currently uses post_assert.
+    # No trigger in workflow.json currently uses post_assert.
     # If future assertion support is needed, implement a safe DSL (e.g. predicate
     # functions like assert_label_present) rather than eval.
 
@@ -534,6 +514,32 @@ fi
 
 if [ "$TRIGGER" = "implement-outcome" ] && [ -n "${DATA[outcome]:-}" ]; then
   _log "IMPLEMENT|implement-outcome|info|${DATA[outcome]}"
+fi
+
+# ── Dual-write to the event outbox (tracker-event-vocabulary-and-emitter) ──
+# Generic 1:1 fact mapping: a vocabulary entry whose "trigger" field names
+# this TRIGGER gets emitted with a payload built from its declared
+# "data_from" keys (read out of the same DATA[] associative array flow.sh
+# already populated from --data flags). pr-review-pass-done/pr-review-pass-uat
+# deliberately have no "trigger" entry in workflow.json's vocabulary — they
+# collapse into pr-review-passed, emitted by uat_decide_trigger instead
+# (branch-resolve.sh), never here, to avoid double emission.
+if declare -f emit_event >/dev/null 2>&1; then
+  _dual_write_event=$(jq -r --arg t "$TRIGGER" \
+    '.vocabulary | to_entries[] | select(.value.trigger == $t) | .key' "$SM" 2>/dev/null | head -1)
+  if [ -n "$_dual_write_event" ]; then
+    _dual_write_fields=$(jq -r --arg t "$TRIGGER" \
+      '.vocabulary | to_entries[] | select(.value.trigger == $t) | .value.data_from[]?' "$SM" 2>/dev/null)
+    _dual_write_data="{}"
+    if [ -n "$_dual_write_fields" ]; then
+      while IFS= read -r _field; do
+        [ -z "$_field" ] && continue
+        _dual_write_data=$(jq -c --arg k "$_field" --arg v "${DATA[$_field]:-}" \
+          '.[$k] = $v' <<<"$_dual_write_data" 2>/dev/null) || _dual_write_data="{}"
+      done <<<"$_dual_write_fields"
+    fi
+    emit_event "$TICKET_ID" "$_dual_write_event" "$_dual_write_data" 2>/dev/null || true
+  fi
 fi
 
 echo "$RESULT" | jq -c '.'

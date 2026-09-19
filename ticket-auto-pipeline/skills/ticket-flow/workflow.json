@@ -1,5 +1,6 @@
 {
   "_label_audit": "Every label declared below is classified (control/human-signal/vestigial) with writer/reader evidence in ../../docs/label-audit.md. Read it before adding, removing, or repurposing any label here.",
+  "_vocabulary_note": "The `vocabulary` object below (tracker-event-vocabulary-and-emitter, Phase B1) is the board-agnostic event catalog lib/events.sh's emit_event validates against. It is a separate namespace from `triggers` on purpose — `triggers` is Linear-specific board-driver data (from/to state names, add/remove label names) that flow.sh executes unchanged; `vocabulary` describes what happened in pipeline terms, never a Linear column or label. A vocabulary entry's optional `trigger` field names the single state-machine trigger it is a 1:1 fact-equivalent of, consumed by flow.sh's generic post-mutation dual-write (Section 6 of that change); entries with no `trigger` field are emitted by a specific non-generic call site instead (see each event's `emitted_by`).",
   "well_known_states": [
     "Backlog",
     "Blocked"
@@ -293,5 +294,173 @@
       "precondition": "must_be_epic",
       "description": "Epic UAT accepted — epic moves to Done. Deliberately no verdict_gate (issue #368): no phase ever writes a per-epic META|verifier-result against the epic issue's own log — verifier-results are written by child-ticket phases (VERIFY/PR-REVIEW) against each child's own log. A verdict_gate here would read an always-empty per-epic verifier history and never block anything, which is worse than no gate at all — it would look load-bearing without being one."
     }
-  }
+  },
+  "vocabulary": {
+    "appraise-started": {
+      "trigger": "appraise-start",
+      "data_from": ["complexity"],
+      "payload": { "complexity": "string" },
+      "description": "A ticket was claimed and appraisal began."
+    },
+    "appraise-completed": {
+      "trigger": "appraise-complete",
+      "data_from": [],
+      "payload": {},
+      "description": "Appraisal finished — awaiting human review."
+    },
+    "human-approved": {
+      "trigger": "human-approve",
+      "data_from": [],
+      "payload": {},
+      "description": "A human approved the plan."
+    },
+    "human-rejected": {
+      "trigger": "human-reject",
+      "data_from": [],
+      "payload": {},
+      "description": "A human rejected the plan — returned for re-appraisal."
+    },
+    "implement-outcome-recorded": {
+      "trigger": "implement-outcome",
+      "data_from": ["outcome"],
+      "payload": { "outcome": "string" },
+      "description": "Implementation difficulty (Smooth/Rough/Hard) was recorded."
+    },
+    "implement-completed": {
+      "trigger": "implement-complete",
+      "data_from": [],
+      "payload": {},
+      "description": "Implementation was pushed — entering code review."
+    },
+    "pr-review-passed": {
+      "emitted_by": "uat_decide_trigger",
+      "data_from": [],
+      "payload": { "uat_required": "bool" },
+      "description": "A PR review passed. Collapses the destination-encoding pr-review-pass-done/pr-review-pass-uat trigger pair into one fact carrying whether UAT is required next."
+    },
+    "pr-review-failed": {
+      "trigger": "pr-review-fail",
+      "data_from": [],
+      "payload": {},
+      "description": "PR review found issues — marked rejected, no state change."
+    },
+    "pr-iteration-requested": {
+      "trigger": "pr-iterate",
+      "data_from": [],
+      "payload": {},
+      "description": "Iterating on PR feedback — returned to Ready."
+    },
+    "uat-passed": {
+      "trigger": "uat-pass",
+      "data_from": [],
+      "payload": {},
+      "description": "UAT passed — ticket closed."
+    },
+    "uat-failed": {
+      "trigger": "uat-fail",
+      "data_from": [],
+      "payload": {},
+      "description": "UAT failed — returned to Ready for another pass."
+    },
+    "needs-info-requested": {
+      "trigger": "needs-info",
+      "data_from": [],
+      "payload": {},
+      "description": "Ticket blocked — waiting for external information."
+    },
+    "needs-info-resolved": {
+      "trigger": "needs-info-resolved",
+      "data_from": [],
+      "payload": {},
+      "description": "Ticket unblocked — information received."
+    },
+    "needs-adr-requested": {
+      "trigger": "needs-adr",
+      "data_from": [],
+      "payload": {},
+      "description": "Ticket blocked — parked on an ADR gate CREATED_PROPOSED/SUPERSEDE_REQUIRED/CONFLICT verdict."
+    },
+    "needs-adr-resolved": {
+      "trigger": "needs-adr-resolved",
+      "data_from": [],
+      "payload": {},
+      "description": "Ticket unblocked — the governing ADR was accepted."
+    },
+    "re-claimed": {
+      "trigger": "re-claim",
+      "data_from": [],
+      "payload": {},
+      "description": "Approval label removed to restart the gate-hold cycle."
+    },
+    "epic-integration-opened": {
+      "trigger": "epic-integration-open",
+      "data_from": [],
+      "payload": {},
+      "description": "Epic integration PRs are open — epic moved to Review."
+    },
+    "epic-uat-started": {
+      "trigger": "epic-uat-start",
+      "data_from": [],
+      "payload": {},
+      "description": "Epic integration merged and deployed — epic moved to UAT."
+    },
+    "epic-uat-passed": {
+      "trigger": "epic-uat-pass",
+      "data_from": [],
+      "payload": {},
+      "description": "Epic UAT accepted — epic moved to Done."
+    },
+    "gate-held": {
+      "emitted_by": "gate-check.sh",
+      "payload": { "reason": "string" },
+      "description": "A ticket was held at the entry or re-approval gate. Does not call flow.sh — a hold changes no Linear label or state."
+    },
+    "gate-released": {
+      "emitted_by": "gate-check.sh",
+      "payload": { "provenance": "string" },
+      "description": "A held gate was released and the ticket proceeded. provenance distinguishes human release from automatic re-evaluation."
+    },
+    "human-hold-requested": {
+      "emitted_by": "human-hold-parse.sh",
+      "payload": { "question": "string" },
+      "description": "An agent asked a human a question it could not proceed without. Does not call flow.sh."
+    },
+    "human-hold-released": {
+      "emitted_by": "human-hold-parse.sh",
+      "payload": {},
+      "description": "A human-hold request was answered and the pipeline resumed."
+    },
+    "pr-opened": {
+      "emitted_by": "ticket-implement / ticket-pr-review",
+      "payload": { "pr": "number" },
+      "description": "A pull request was created for the ticket."
+    },
+    "pr-merged": {
+      "emitted_by": "post-outcome merge-truth site (runs.jsonl merge event)",
+      "payload": { "pr": "number", "sha": "string" },
+      "description": "The ticket's PR merged. Source of truth is runs.jsonl's merge entry; emitted only after META|outcome is already written — never from inside the phase-completion path that writes it."
+    },
+    "verify-failed-retrying": {
+      "emitted_by": "router verify-retry loop",
+      "payload": { "attempt": "number", "max": "number" },
+      "description": "A VERIFY attempt failed and the router is retrying, up to the loop cap."
+    },
+    "ticket-killed": {
+      "emitted_by": "fleet-intervene.sh",
+      "payload": { "reason": "string" },
+      "description": "fleet-controller killed the ticket's pipeline."
+    },
+    "blocked": {
+      "emitted_by": "blocked-by dependency enforcement",
+      "payload": { "by": "array" },
+      "description": "The ticket entered the Blocked state, waiting on one or more blockers. No workflow.json trigger names Blocked as a from/to state — this fact exists in the vocabulary independent of any trigger."
+    },
+    "unblocked": {
+      "emitted_by": "blocked-by dependency enforcement",
+      "payload": {},
+      "description": "The ticket left the Blocked state — its blockers resolved."
+    }
+  },
+  "_board_drivers_note": "Reserved for Phase B2 (tracker-decoupling programme, Track B): per-board driver tables mapping this file's `vocabulary` events to a specific board's columns/labels. Empty in B1 by design — B1 ships dual-write only, with no consumer of the outbox and no board driven by anything other than the existing `triggers` table above.",
+  "board_drivers": {}
 }
