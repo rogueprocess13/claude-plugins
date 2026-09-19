@@ -665,7 +665,7 @@ _fleet_dispatch_initiative_locked() {
     for blocker_id in $blocked_labels; do
       [ -z "$blocker_id" ] && continue
       local blocker_json blocker_state
-      if blocker_json=$(get_issue "$blocker_id" 2>/dev/null); then
+      if blocker_json=$(tracker_read decision "" -- get_issue "$blocker_id"); then
         blocker_state=$(echo "$blocker_json" | jq -r '.state.name // empty' 2>/dev/null)
         if [ "$blocker_state" != "Done" ]; then
           echo "    blocked by ${blocker_id} (state: ${blocker_state}) — skipping"
@@ -674,6 +674,13 @@ _fleet_dispatch_initiative_locked() {
         else
           echo "    blocked-by ${blocker_id} resolved (Done)"
         fi
+      else
+        # Unreadable blocker: fail closed. Dispatching without positive
+        # evidence the blocker is Done risks running a child ahead of a
+        # dependency that never actually finished (tracker-read-failure-policy).
+        echo "    blocker ${blocker_id} unreadable — treating as blocked (fail-closed)"
+        is_blocked=true
+        break
       fi
     done
 
