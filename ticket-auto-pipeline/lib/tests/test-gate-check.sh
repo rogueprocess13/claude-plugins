@@ -1771,54 +1771,144 @@ test_complexity_line_written_on_planned_fast_path() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Issue #362 (LINEAR_GET_ISSUE_NULL_CONTINUES) — get_issue fetch failures
-# must gate-stop, never fall through to a decision made against null.
+# Issue #362 (LINEAR_GET_ISSUE_NULL_CONTINUES) — get_issue fetch failures must
+# never fall through to a decision made against null.
+#
+# tracker-read-failure-policy section 6 changed the entry-gate consequence
+# from an immediate gate-stop to a retryable hold: the first
+# GATE_FETCH_MAX_ATTEMPTS-1 failures hold (exit 1, "held: linear fetch
+# failed"), riding the same resumable-hold path a complex-ticket or
+# manual-mode hold already uses, and only the Nth consecutive failure
+# gate-stops (exit 2, LINEAR_FETCH_FAILED) — see gate-check.sh's
+# _gate_fetch_issue_fail. reapprove-gate context is unaffected (still an
+# immediate gate-stop; see the regression guard below).
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# 42. get_issue fetch failure at Check 2.7 → LINEAR_FETCH_FAILED gate-stop (exit 2),
-# never a silent "not planned" fallthrough.
+# 42. get_issue fetch failure at Check 2.7 holds (exit 1) on the first two
+# attempts, then gate-stops (exit 2, LINEAR_FETCH_FAILED) on the third —
+# never a silent "not planned" fallthrough on any attempt.
 test_entry_get_issue_fetch_failure_gate_stops() {
   _setup
   _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
   get_issue() { return 1; }
 
-  _gate_entry
-  local rc=$?
+  local rc1 rc2 rc3
+  _gate_entry >/dev/null 2>&1
+  rc1=$?
+  _gate_entry >/dev/null 2>&1
+  rc2=$?
+  _gate_entry >/dev/null 2>&1
+  rc3=$?
 
-  local gate_stop
+  local gate_stop held_count
   gate_stop=$(grep 'LINEAR_FETCH_FAILED' "$LOG_FILE" 2>/dev/null || true)
+  held_count=$(grep -c 'held: linear fetch failed' "$LOG_FILE" 2>/dev/null || echo 0)
 
   _teardown
-  [ "$rc" -eq 2 ] || {
-    echo "expected exit 2 (gate-stop), got $rc"
+  [ "$rc1" -eq 1 ] && [ "$rc2" -eq 1 ] && [ "$rc3" -eq 2 ] || {
+    echo "expected hold, hold, gate-stop (1, 1, 2); got ($rc1, $rc2, $rc3)"
+    return 1
+  }
+  [ "$held_count" -eq 2 ] || {
+    echo "expected 2 held lines before the gate-stop, got $held_count"
     return 1
   }
   [ -n "$gate_stop" ] || {
-    echo "expected LINEAR_FETCH_FAILED gate-stop in log"
+    echo "expected LINEAR_FETCH_FAILED gate-stop in log after retries exhausted"
     return 1
   }
 }
 
-# 43. get_issue returns unparseable/malformed JSON at Check 2.7 → same gate-stop,
-# never a jq crash and never treated as "zero labels".
+# 43. get_issue returns unparseable/malformed JSON at Check 2.7 → same
+# hold-then-gate-stop shape, never a jq crash and never treated as "zero
+# labels".
 test_entry_get_issue_malformed_payload_gate_stops() {
   _setup
   _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
   get_issue() { echo 'not-json'; }
 
-  _gate_entry
-  local rc=$?
+  local rc1 rc2 rc3
+  _gate_entry >/dev/null 2>&1
+  rc1=$?
+  _gate_entry >/dev/null 2>&1
+  rc2=$?
+  _gate_entry >/dev/null 2>&1
+  rc3=$?
 
   local gate_stop
   gate_stop=$(grep 'LINEAR_FETCH_FAILED' "$LOG_FILE" 2>/dev/null || true)
 
   _teardown
-  [ "$rc" -eq 2 ] || {
-    echo "expected exit 2 (gate-stop), got $rc"
+  [ "$rc1" -eq 1 ] && [ "$rc2" -eq 1 ] && [ "$rc3" -eq 2 ] || {
+    echo "expected hold, hold, gate-stop (1, 1, 2); got ($rc1, $rc2, $rc3)"
     return 1
   }
   [ -n "$gate_stop" ] || {
-    echo "expected LINEAR_FETCH_FAILED gate-stop in log for malformed payload"
+    echo "expected LINEAR_FETCH_FAILED gate-stop in log for malformed payload after retries exhausted"
+    return 1
+  }
+}
+
+# 42c. Design task 6.7: a gate re-evaluated after a fetch-failure hold
+# applies IDENTICAL approval criteria once the fetch recovers — the prior
+# failure must never be treated as, or bleed into, an approval decision.
+# A complex ticket that recovers to a readable-but-unapproved state must
+# still hold on Check 3 ("complex ticket"), not pass because attempt
+# tracking happened to be in flight.
+test_entry_fetch_recovery_applies_same_criteria_not_a_pass() {
+  _setup
+  _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/openspec-change.md"
+  get_issue() { return 1; }
+
+  _gate_entry >/dev/null 2>&1
+  local rc1=$?
+
+  # Fetch recovers, but the ticket is still unapproved — Check 3 must still
+  # hold it, not treat the recovered read as approval.
+  get_issue() { echo '{"id":"CRE-47","identifier":"CRE-47","labels":{"nodes":[]}}'; }
+  _gate_entry >/dev/null 2>&1
+  local rc2=$?
+
+  local complex_held fetch_gate_stop
+  complex_held=$(grep '|GATE|gate|fail|held: complex ticket' "$LOG_FILE" 2>/dev/null || true)
+  fetch_gate_stop=$(grep 'LINEAR_FETCH_FAILED' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc1" -eq 1 ] && [ "$rc2" -eq 1 ] || {
+    echo "expected both calls to hold (1, 1); got ($rc1, $rc2)"
+    return 1
+  }
+  [ -n "$complex_held" ] || {
+    echo "expected the recovered call to hold on Check 3 (complex ticket), not pass"
+    return 1
+  }
+  [ -z "$fetch_gate_stop" ] || {
+    echo "a single fetch-failure attempt must never gate-stop"
+    return 1
+  }
+}
+
+# 42b. A held fetch failure never gate-stops before the cap, and rides the
+# same "held: " GATE/gate/fail shape every other entry-gate hold uses, so
+# it resumes via the existing hold machinery with zero new resume-side code.
+test_entry_get_issue_fetch_failure_holds_before_cap() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  get_issue() { return 1; }
+
+  _gate_entry >/dev/null 2>&1
+  local rc=$?
+
+  local held_line
+  held_line=$(grep '|GATE|gate|fail|held: linear fetch failed' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 1 ] || {
+    echo "expected exit 1 (held) on the first failure, got $rc"
+    return 1
+  }
+  [ -n "$held_line" ] || {
+    echo "expected a GATE|gate|fail|held: linear fetch failed line, got none"
     return 1
   }
 }
@@ -1938,6 +2028,8 @@ for fn in \
   test_complexity_line_not_duplicated_on_second_entry \
   test_complexity_line_written_on_planned_fast_path \
   test_entry_get_issue_fetch_failure_gate_stops \
+  test_entry_get_issue_fetch_failure_holds_before_cap \
+  test_entry_fetch_recovery_applies_same_criteria_not_a_pass \
   test_entry_get_issue_malformed_payload_gate_stops \
   test_reapprove_get_issue_fetch_failure_not_conflated_with_revoked \
   test_reapprove_get_issue_missing_labels_gate_stops; do

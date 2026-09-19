@@ -20,6 +20,7 @@ The gate itself is never invoked here; it is injected. What is under test is
 the decision made from its exit code, not Linear.
 """
 
+import os
 import sys
 import tempfile
 import unittest
@@ -39,6 +40,10 @@ TABLE_PATH = (
 HELD_LINE = '2026-09-03T10:00:00Z|GATE|gate|fail|held: complex ticket'
 PASS_LINE = '2026-09-03T10:00:00Z|GATE|gate|done|auto-approved'
 STOP_LINE = '2026-09-03T10:00:00Z|META|gate-stop|fail|EXEC_NO_ARTIFACT'
+FETCH_FAILED_HELD_LINE = (
+    '2026-09-03T10:00:00Z|GATE|gate|fail|held: linear fetch failed '
+    '(attempt 1/3) — get_issue(CRE-9) failed')
+GATE_HELD_MARKER = '2026-09-03T09:30:00Z|META|gate-held|info|held'
 
 
 def _gate(exit_code, lines):
@@ -93,6 +98,90 @@ class TestStillHeld(GateHoldTestBase):
             self._reconcile(gate_hold.GATE_ENTRY_HELD, [HELD_LINE],
                             reconcile_cycle=0)
         self.assertEqual(self._log_lines(), before)
+
+
+class TestGateFetchFailureHold(GateHoldTestBase):
+    """tracker-read-failure-policy section 6: a still-held gate whose
+    reason is 'linear fetch failed' must not stay silent forever the way
+    every other held reason correctly does — gate-check.sh's own bash-side
+    attempt cap cannot see across separate reconcile probes (each runs
+    against a fresh scratch log), so this reconciler-side cap is what
+    actually bounds a persistent tracker outage.
+    """
+
+    def _append_gate_held_marker(self):
+        with open(self.log, 'a') as fh:
+            fh.write(GATE_HELD_MARKER + '\n')
+
+    def test_first_fetch_failure_probe_holds_and_logs_attempt_one(self):
+        self._append_gate_held_marker()
+        d = self._reconcile(gate_hold.GATE_ENTRY_HELD,
+                            [FETCH_FAILED_HELD_LINE], reconcile_cycle=0)
+        self.assertEqual(d.action, gate_hold.HOLD)
+        lines = self._log_lines()
+        self.assertTrue(
+            any('gate-fetch-probe|fail|attempt=1/3' in ln for ln in lines),
+            lines)
+
+    def test_non_fetch_failure_held_reason_still_writes_nothing(self):
+        """The pre-existing silent-poll guarantee (complex ticket, manual
+        mode, ...) is unaffected — only the fetch-failure reason counts."""
+        self._append_gate_held_marker()
+        before = self._log_lines()
+        self._reconcile(gate_hold.GATE_ENTRY_HELD, [HELD_LINE],
+                        reconcile_cycle=0)
+        self.assertEqual(self._log_lines(), before)
+
+    def test_third_consecutive_fetch_failure_probe_gate_stops(self):
+        self._append_gate_held_marker()
+        d1 = self._reconcile(gate_hold.GATE_ENTRY_HELD,
+                             [FETCH_FAILED_HELD_LINE], reconcile_cycle=0)
+        d2 = self._reconcile(gate_hold.GATE_ENTRY_HELD,
+                             [FETCH_FAILED_HELD_LINE], reconcile_cycle=0)
+        d3 = self._reconcile(gate_hold.GATE_ENTRY_HELD,
+                             [FETCH_FAILED_HELD_LINE], reconcile_cycle=0)
+        self.assertEqual(d1.action, gate_hold.HOLD)
+        self.assertEqual(d2.action, gate_hold.HOLD)
+        self.assertEqual(d3.action, gate_hold.GATE_STOP)
+        self.assertEqual(d3.gate_stop_code, 'LINEAR_FETCH_FAILED')
+        lines = self._log_lines()
+        self.assertTrue(
+            any('META|gate-stop|fail|LINEAR_FETCH_FAILED' in ln
+                for ln in lines),
+            lines)
+
+    def test_attempt_count_is_scoped_to_the_current_hold(self):
+        """Probe attempts from a prior, already-released hold must not
+        bleed into a new hold's count — otherwise a ticket that resolves
+        one outage and later hits a fresh one would gate-stop immediately."""
+        self._append_gate_held_marker()
+        self._reconcile(gate_hold.GATE_ENTRY_HELD, [FETCH_FAILED_HELD_LINE],
+                        reconcile_cycle=0)
+        self._reconcile(gate_hold.GATE_ENTRY_HELD, [FETCH_FAILED_HELD_LINE],
+                        reconcile_cycle=0)
+        # Simulate release + a brand new hold episode starting.
+        with open(self.log, 'a') as fh:
+            fh.write(
+                '2026-09-03T11:00:00Z|GATE|gate|done|auto-approved\n')
+        self._append_gate_held_marker()
+
+        d = self._reconcile(gate_hold.GATE_ENTRY_HELD,
+                            [FETCH_FAILED_HELD_LINE], reconcile_cycle=0)
+        self.assertEqual(d.action, gate_hold.HOLD)
+        lines = self._log_lines()
+        self.assertTrue(
+            any('gate-fetch-probe|fail|attempt=1/3' in ln for ln in lines),
+            lines)
+
+    def test_max_attempts_env_override(self):
+        self._append_gate_held_marker()
+        os.environ['FLEET_GATE_FETCH_MAX_ATTEMPTS'] = '1'
+        try:
+            d = self._reconcile(gate_hold.GATE_ENTRY_HELD,
+                                [FETCH_FAILED_HELD_LINE], reconcile_cycle=0)
+        finally:
+            del os.environ['FLEET_GATE_FETCH_MAX_ATTEMPTS']
+        self.assertEqual(d.action, gate_hold.GATE_STOP)
 
 
 class TestRelease(GateHoldTestBase):
