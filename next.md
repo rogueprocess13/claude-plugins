@@ -5,11 +5,12 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 
 > Public repo — no ticket IDs, no customer data in this file.
 
-Last reviewed: 2026-09-19 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
+Last reviewed: 2026-09-20 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
 CI green on #386. Step 7b Track B Phase B1 merged and archived — PR #388, plus a CI-caught
-shell-flags fix. Moving to Phase B2 next, ahead of Step 6's hold, by explicit instruction — same
-override as B1, not a re-litigation of the plan's default ordering. Step 6 itself still held for
-real-run validation)
+shell-flags fix. Phase B2 (pusher/drivers) implemented — all 47 tasks done via `/opsx:apply`,
+version-bumped to ticket-auto-pipeline 0.51.0 / fleet-controller 0.32.0, not yet committed/PR'd.
+Deferred flow-driven-cutover follow-up filed as issue #391. Step 6 itself still held for real-run
+validation)
 
 ---
 
@@ -491,9 +492,26 @@ adds 9 previously-unemitted facts (`gate-held`, `human-hold-requested`, `pr-open
 `blocked`/`unblocked`, etc.), and splits `state-machine.json` into `workflow.json` + a driver-table
 placeholder for B2. New capabilities: `tracker-event-outbox`, `pipeline-event-vocabulary`.
 
-**B2 (pusher/drivers) is next, also by explicit instruction ahead of Step 6's hold** — same override
-as B1, not a re-litigation of the plan's default ordering. B3–B5 remain unproposed until B2 is
-reviewed/applied, per plan convention.
+**B2 (pusher/drivers) implemented 2026-09-20, also by explicit instruction ahead of Step 6's hold** —
+same override as B1. Openspec change `tracker-event-board-pusher`: all 47 tasks done via
+`/opsx:apply` — `lib/board-cursor.sh` (flock-guarded cursor), `lib/board-drivers/linear.sh` (the one
+shipped driver, no-op for every event this phase covers), the `jsonl-audit` test fixture,
+`skills/ticket-flow/outbox-drain.sh` (wired into `pipeline-finalize.sh` at every router exit),
+`fleet-controller/fleetd/pusher.py` (the same drain as a periodic fleetd pass, gated
+`FLEET_BOARD_PUSHER_ENABLE=false`), and `detect_outbox_staleness` as fleet-controller detector #19.
+`workflow.json`'s `board_drivers.linear` is now `{}` (registered, no mappings). Version-bumped to
+ticket-auto-pipeline 0.51.0 / fleet-controller 0.32.0. Not yet committed/PR'd/archived — working-tree
+implementation only as of this entry.
+
+Per design.md Decision 1, the router's ~dozen existing direct `flow.sh` call sites are deliberately
+**not** rerouted through the pusher in this phase — the literal "flow.sh becomes the pusher's
+executor" reading is a large behavioral inversion sized as its own phase, not a B2-sized addition.
+Filed as a standalone, agent-handoff-shaped follow-up rather than left as only a queue entry — this
+repo has a real precedent for that stalling (`pipeline-integrity-consolidated-plan`, archived with
+39/48 boxes unchecked): **[issue #391](https://github.com/willard-pro/claude-plugins/issues/391)**,
+"Migrate flow.sh-driven call sites through the tracker event-board pusher."
+
+B3–B5 remain unproposed until B2 is reviewed/applied/merged, per plan convention.
 
 **Track B in full is behind next.md Step 6.** The plan file carries the complete 5-phase design
 (event emitter and outbox, board drivers with per-board `event → column` tables, local facts,

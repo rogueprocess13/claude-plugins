@@ -788,6 +788,70 @@ detect_human_hold() {
   fi
 }
 
+# Outbox staleness (tracker-event-board-pusher, Phase B2). Compares a
+# ticket's event outbox latest seq against each configured board's own
+# cursor position (the flat `.{tid}-cursor-{board_id}.json` file
+# lib/board-cursor.sh and fleetd/pusher.py both read/write — read directly
+# here via jq rather than bridging that whole library, since detection only
+# ever needs a read, never the locked read-apply-write sequence the cursor
+# library exists to protect). WARN-only, by design — never escalates past
+# severity 1 regardless of staleness age, same rationale as
+# detect_human_hold/detect_observer_findings/detect_worker_api_errors:
+# there is no process to kill and, in this phase, no board mutation has
+# been lost (the shipped `linear` driver is a no-op for every event — see
+# tracker-event-board-pusher's design.md Decision 1), only delayed.
+# Detection only — never drains, dispatches, or mutates any outbox or
+# cursor. Runs regardless of held/not-held, since staleness is a property
+# of the outbox and cursor files, not of a live process.
+detect_outbox_staleness() {
+  local tid="$1"
+  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+
+  local outbox="${workspace}/${tid}-outbox.jsonl"
+  [ -f "$outbox" ] || {
+    echo "0"
+    return
+  }
+
+  local drivers="${FLEET_BOARD_DRIVERS:-linear}"
+  local threshold="${FLEET_OUTBOX_STALE_THRESHOLD_SECS:-3600}"
+  local now_epoch
+  now_epoch=$(date -u +%s)
+
+  local max_sev=0
+  local board_id
+  local _boards=()
+  IFS=',' read -ra _boards <<<"$drivers"
+  for board_id in "${_boards[@]}"; do
+    [ -z "$board_id" ] && continue
+
+    local cursor_file="${workspace}/.${tid}-cursor-${board_id}.json"
+    local cursor=0
+    if [ -f "$cursor_file" ]; then
+      cursor=$(jq -r '.seq // 0' "$cursor_file" 2>/dev/null) || cursor=0
+      [[ "$cursor" =~ ^[0-9]+$ ]] || cursor=0
+    fi
+
+    # Oldest unconsumed entry for this board: the first outbox line (in
+    # file order, which is seq order — emit_event only ever appends) with
+    # seq greater than the cursor.
+    local oldest_ts
+    oldest_ts=$(jq -r --argjson c "$cursor" 'select(.seq > $c) | .ts' "$outbox" 2>/dev/null | head -1)
+    [ -z "$oldest_ts" ] && continue
+
+    local oldest_epoch age
+    oldest_epoch=$(date -d "$oldest_ts" +%s 2>/dev/null || echo "0")
+    age=$((now_epoch - oldest_epoch))
+
+    if [ "$age" -ge "$threshold" ]; then
+      max_sev=1
+      echo "detect_outbox_staleness: ${tid}/${board_id} has an unconsumed entry ${age}s old (threshold ${threshold}s)" >&2
+    fi
+  done
+
+  echo "$max_sev"
+}
+
 # Observer findings (agent-observer Inc 4). WARN-only, by design — never
 # escalates beyond severity 1, whatever a finding's own `sev=` says: the
 # observer is non-authoritative under any configuration, and letting one of
@@ -1895,7 +1959,7 @@ fleet_detect_all() {
     total=$((total + 1))
 
     # Run all per-ticket detectors, collect max severity
-    local s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 max_sev anomaly_types
+    local s1 s2 s3 s4 s5 s6 s7 s8 s9 s10 s11 s12 s13 s14 s15 max_sev anomaly_types
     if _pipeline_is_held "$tid" "$workspace"; then
       # The router has already exited cleanly for a held ticket — no live
       # process, no open bracket, no heartbeat. The other detectors
@@ -1922,6 +1986,10 @@ fleet_detect_all() {
       # s1-s4/s6-s11 above.
       s13=0
       s14=0
+      # Outbox staleness is a property of the outbox/cursor files, not of a
+      # live process — meaningful for a held ticket exactly as for a
+      # running one.
+      s15=$(detect_outbox_staleness "$tid" "$workspace")
     else
       s1=$(detect_phase_failures "$tid" "$workspace")
       s2=$(detect_stalls "$tid" "$workspace")
@@ -1937,12 +2005,13 @@ fleet_detect_all() {
       s12=0
       s13=$(detect_observer_findings "$tid" "$workspace")
       s14=$(detect_worker_api_errors "$tid" "$workspace")
+      s15=$(detect_outbox_staleness "$tid" "$workspace")
     fi
 
     max_sev=0
     anomaly_types=""
 
-    for s in "$s1" "$s2" "$s3" "$s4" "$s5" "$s6" "$s7" "$s8" "$s9" "$s10" "$s11" "$s12" "$s13" "$s14"; do
+    for s in "$s1" "$s2" "$s3" "$s4" "$s5" "$s6" "$s7" "$s8" "$s9" "$s10" "$s11" "$s12" "$s13" "$s14" "$s15"; do
       [ "$s" -gt "$max_sev" ] && max_sev="$s"
     done
 
@@ -1961,6 +2030,7 @@ fleet_detect_all() {
     [ "$s12" -ge 1 ] && anomaly_types="${anomaly_types} human-hold(S${s12})"
     [ "$s13" -ge 1 ] && anomaly_types="${anomaly_types} observer-findings(S${s13})"
     [ "$s14" -ge 1 ] && anomaly_types="${anomaly_types} worker-api-error(S${s14})"
+    [ "$s15" -ge 1 ] && anomaly_types="${anomaly_types} outbox-stale(S${s15})"
     anomaly_types=$(echo "$anomaly_types" | sed 's/^ //')
 
     # Cap severity at 2 (KILL) when auto-restart is disabled

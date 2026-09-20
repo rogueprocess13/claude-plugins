@@ -17,6 +17,50 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.51.0 (2026-09-20) — also fleet-controller 0.32.0
+
+Tracker event-board pusher (`tracker-event-board-pusher`, Phase B2 of the tracker-decoupling
+programme, Track B): the per-ticket event outbox Phase B1 built now has a consumer. A pass drains
+each ticket's outbox in `seq` order and dispatches every entry to every configured board driver, so
+a board's column state becomes a projection of the event stream rather than something the pipeline
+writes to directly — proven on the ten hold/lifecycle events that had zero existing Linear
+projection before this phase (`gate-held`, `gate-released`, `human-hold-requested`,
+`human-hold-released`, `pr-opened`, `pr-merged`, `verify-failed-retrying`, `ticket-killed`,
+`blocked`, `unblocked`). The router's ~dozen existing direct `flow.sh` call sites are deliberately
+untouched — see design.md Decision 1 — so nothing about today's Linear board behavior changes.
+
+- New `ticket-auto-pipeline/lib/board-cursor.sh`: flock-guarded, atomic (`tmp`+`mv`) per-`(ticket,
+  board)` cursor read/advance helper, shared by the standalone drain and fleetd's pusher — one
+  implementation of the locking/read/write sequence, not two. Cursor state is a flat file beside the
+  outbox it tracks, never a `fleet-state.db` row: the standalone drain must work identically with
+  fleetd not running at all.
+- New `ticket-auto-pipeline/lib/board-drivers/linear.sh`: the one shipped production board driver.
+  Its mapping is sourced from `workflow.json`'s `board_drivers.linear` object (`{}` in this phase),
+  so every event is an explicit, logged no-op — there is nothing yet for a real mapping to
+  reproduce. Resolves its own paths via `BASH_SOURCE`, never the invoker's `$PWD`.
+- New `ticket-auto-pipeline/lib/tests/fixtures/board-drivers/jsonl-audit.sh`: a test-only fixture
+  driver (never referenced in production config) proving genuine multi-driver dispatch.
+- New `ticket-auto-pipeline/skills/ticket-flow/outbox-drain.sh`: the standalone per-ticket drain,
+  wired into `pipeline-finalize.sh` at every router exit point (success and gate-held/human-hold
+  alike) so a fleetd-down run still drains its own ticket before the process ends.
+- New `fleet-controller/fleetd/pusher.py`: the same drain as a periodic fleetd pass, glob-discovering
+  outbox files (never a registry) so a from-cold-start sweep is total. Gated behind
+  `FLEET_BOARD_PUSHER_ENABLE` (default `false`) — same "ships inert until proven" precedent
+  `FLEET_PHASE_DISPATCH_ENABLE` set. Locking is Python's own `fcntl.flock` on the identical
+  lock-file path the bash cursor library locks, which correctly excludes bash callers too.
+- New `fleet-controller` detector #19, `detect_outbox_staleness`: WARN-only, flags a `(ticket,
+  board)` pair whose oldest unconsumed outbox entry is older than
+  `FLEET_OUTBOX_STALE_THRESHOLD_SECS` — makes the accepted "no fleetd, router killed externally" gap
+  observable rather than silent. Detection only; never drains or mutates anything.
+- New env vars: `FLEET_BOARD_DRIVERS` (default `linear`), `FLEET_BOARD_PUSHER_ENABLE` (default
+  `false`), `FLEET_BOARD_PUSHER_INTERVAL` (default 300), `FLEET_OUTBOX_STALE_THRESHOLD_SECS`
+  (default 3600).
+- `workflow.json`'s `board_drivers` placeholder is now `{"linear": {}}` — driver registered, no
+  active mappings yet, distinct from the field not existing at all.
+- Unaffected: the outbox format and vocabulary from B1, every existing Linear-visible ticket state
+  (the `linear` driver is a no-op, so nothing to keep byte-identical to besides "no new writes"),
+  and the live fleetd daemon's actual behavior (the new pass ships disabled).
+
 ## 0.50.15 (2026-09-19) — also fleet-controller 0.31.13
 
 Tracker event vocabulary and emitter (`tracker-event-vocabulary-and-emitter`, Phase B1 of the

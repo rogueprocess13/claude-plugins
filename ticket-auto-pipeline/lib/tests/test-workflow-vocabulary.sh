@@ -111,9 +111,18 @@ test_ten_new_facts_all_declared() {
   return 0
 }
 
-test_board_drivers_placeholder_is_empty() {
-  local v
-  v=$(jq -c '.board_drivers' "$WF")
+test_board_drivers_linear_is_registered_with_no_mappings() {
+  # B2 (tracker-event-board-pusher) populates board_drivers.linear as {} —
+  # driver registered, no active event mappings yet, distinct from the
+  # field not existing at all. This replaces the B1-era assertion that
+  # board_drivers equalled {} at the top level.
+  local exists v
+  exists=$(jq -r '.board_drivers.linear != null' "$WF")
+  [ "$exists" = "true" ] || {
+    echo "  board_drivers.linear does not exist" >&2
+    return 1
+  }
+  v=$(jq -c '.board_drivers.linear' "$WF")
   [ "$v" = "{}" ]
 }
 
@@ -123,7 +132,7 @@ _run "every vocabulary 'trigger' field names a real trigger" test_every_vocabula
 _run "no event name is a Linear state/label name verbatim" test_no_event_name_is_a_linear_state_or_label_verbatim
 _run "pr-review-passed declares uat_required as bool" test_pr_review_passed_declared_with_bool_payload
 _run "all ten new (non-trigger) facts are declared" test_ten_new_facts_all_declared
-_run "board_drivers placeholder is empty (reserved for B2)" test_board_drivers_placeholder_is_empty
+_run "board_drivers.linear is registered with no mappings yet (B2)" test_board_drivers_linear_is_registered_with_no_mappings
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
