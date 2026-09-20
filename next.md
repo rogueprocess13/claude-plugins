@@ -7,10 +7,10 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 
 Last reviewed: 2026-09-20 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
 CI green on #386. Step 7b Track B Phase B1 merged and archived — PR #388, plus a CI-caught
-shell-flags fix. Phase B2 (pusher/drivers) implemented — all 47 tasks done via `/opsx:apply`,
-version-bumped to ticket-auto-pipeline 0.51.0 / fleet-controller 0.32.0, not yet committed/PR'd.
-Deferred flow-driven-cutover follow-up filed as issue #391. Step 6 itself still held for real-run
-validation)
+shell-flags fix. Phase B2 (pusher/drivers) merged and archived — PR #392, CI green
+(`lint-and-test: pass`), specs synced to main tree, version-bumped to ticket-auto-pipeline 0.51.0 /
+fleet-controller 0.32.0. Deferred flow-driven-cutover follow-up filed as issue #391. Step 6 itself
+still held for real-run validation)
 
 ---
 
@@ -447,7 +447,7 @@ halts the pipeline — without an event system, a schema change, or moving state
 items, still unchecked in the archived task files. Code is merged; only real-traffic confirmation is
 open. Roll these into whatever live-verification pass lifts Step 6's hold.
 
-## Step 7b — Tracker decoupling, Track B Phase B1 — COMPLETE, archived
+## Step 7b — Tracker decoupling, Track B Phases B1-B2 — COMPLETE, archived
 
 **Openspec change:** `tracker-event-vocabulary-and-emitter` — proposed 2026-09-19, applied same day
 via explicit `/opsx:apply` instruction, ahead of Step 6's hold (the plan file's own ordering would
@@ -500,8 +500,15 @@ shipped driver, no-op for every event this phase covers), the `jsonl-audit` test
 `fleet-controller/fleetd/pusher.py` (the same drain as a periodic fleetd pass, gated
 `FLEET_BOARD_PUSHER_ENABLE=false`), and `detect_outbox_staleness` as fleet-controller detector #19.
 `workflow.json`'s `board_drivers.linear` is now `{}` (registered, no mappings). Version-bumped to
-ticket-auto-pipeline 0.51.0 / fleet-controller 0.32.0. Not yet committed/PR'd/archived — working-tree
-implementation only as of this entry.
+ticket-auto-pipeline 0.51.0 / fleet-controller 0.32.0. Merged via **PR #392** (2026-09-20), CI green
+(`lint-and-test: pass`), archived `openspec/changes/archive/2026-09-20-tracker-event-board-pusher`,
+specs synced (new capabilities: `tracker-board-driver-contract`, `tracker-board-pusher`; plus an
+ADDED-requirements delta merged into the existing `fleet-detection` spec for the new detector —
+note the sync appended it as its own requirement rather than folding it into the existing
+"aggregator includes N detectors" requirement text, which still reads 12; cosmetic drift, not
+functional). Pre-existing, unrelated `ticket-planner` test failure (`test-planner-body-template-
+humanizer.sh`, EpicGen humanizer citation) confirmed present on `main` before this branch — not
+fixed here, out of scope.
 
 Per design.md Decision 1, the router's ~dozen existing direct `flow.sh` call sites are deliberately
 **not** rerouted through the pusher in this phase — the literal "flow.sh becomes the pusher's
@@ -511,7 +518,8 @@ repo has a real precedent for that stalling (`pipeline-integrity-consolidated-pl
 39/48 boxes unchecked): **[issue #391](https://github.com/willard-pro/claude-plugins/issues/391)**,
 "Migrate flow.sh-driven call sites through the tracker event-board pusher."
 
-B3–B5 remain unproposed until B2 is reviewed/applied/merged, per plan convention.
+B2 is now merged. B3–B5 remain unproposed — per plan convention (Track B sits behind Step 6's hold)
+they need the same kind of explicit override B1/B2 got before `/opsx:propose` starts on B3.
 
 **Track B in full is behind next.md Step 6.** The plan file carries the complete 5-phase design
 (event emitter and outbox, board drivers with per-board `event → column` tables, local facts,
