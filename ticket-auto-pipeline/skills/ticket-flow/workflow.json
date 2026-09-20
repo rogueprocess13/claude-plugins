@@ -461,6 +461,8 @@
       "description": "The ticket left the Blocked state — its blockers resolved."
     }
   },
-  "_board_drivers_note": "Reserved for Phase B2 (tracker-decoupling programme, Track B): per-board driver tables mapping this file's `vocabulary` events to a specific board's columns/labels. Empty in B1 by design — B1 ships dual-write only, with no consumer of the outbox and no board driven by anything other than the existing `triggers` table above.",
-  "board_drivers": {}
+  "_board_drivers_note": "Per-board driver tables mapping this file's `vocabulary` events to a specific board's columns/labels (tracker-event-board-pusher, Phase B2 of the tracker-decoupling programme, Track B). `linear` is registered here (driver shipped, wired into the pusher) with no active mappings yet — every event this phase routes through it is an explicit no-op (design.md Decision 1): the ten hold/lifecycle facts B2 covers have zero existing Linear projection to reproduce. A future phase adds real mappings once the flow-driven-sites cutover question is resolved.",
+  "board_drivers": {
+    "linear": {}
+  }
 }

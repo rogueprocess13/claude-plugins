@@ -44,11 +44,17 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-fence-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-events.sh
 	bash ticket-auto-pipeline/lib/tests/test-workflow-vocabulary.sh
+	# tracker-event-board-pusher
+	bash ticket-auto-pipeline/lib/tests/test-board-cursor.sh
+	bash ticket-auto-pipeline/lib/tests/test-board-drivers.sh
+	bash ticket-auto-pipeline/lib/tests/test-outbox-drain.sh
+	bash ticket-auto-pipeline/lib/tests/test-board-pusher-integration.sh
 	# fleet-controller tests
 	bash fleet-controller/lib/tests/test-fleet-detect.sh
 	bash fleet-controller/lib/tests/test-fleet-detect-new.sh
 	bash fleet-controller/lib/tests/test-fleet-detect-activity.sh
 	bash fleet-controller/lib/tests/test-fleet-detect-signals.sh
+	bash fleet-controller/lib/tests/test-fleet-detect-outbox-staleness.sh
 	bash fleet-controller/lib/tests/test-fleet-store-parity.sh
 	bash fleet-controller/lib/tests/test-detect-epic-branch-ready.sh
 	bash fleet-controller/lib/tests/test-fleet-intervene.sh
@@ -138,6 +144,7 @@ test-fleetd:
 	python3 -m pytest fleet-controller/fleetd/tests/test_human_hold_integration.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_preamble.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_orchestration.py -v
+	python3 -m pytest fleet-controller/fleetd/tests/test_pusher.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_otel.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_main.py -v
 	python3 -m pytest ticket-auto-pipeline/skills/ticket-auto/tests/test_dashboard_fleet.py -v

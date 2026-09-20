@@ -203,19 +203,21 @@ test_fleet_detect_all_runs_and_reports_every_per_ticket_detector() {
   # block, and the non-held-branch assignment list must all cover exactly
   # the same s1..sN slots — a detector added to one but not the others
   # would run silently uncounted or be labeled but never contribute to
-  # max_sev. 14 as of issue #341 finding 5 (s1-s12 pre-existing +
-  # detect_observer_findings as s13 + detect_worker_api_errors as s14);
-  # detect_blocked_by, detect_initiative_dispatch and
-  # detect_workspace_config run in the separate fleet-wide path, not this
-  # per-ticket sweep.
+  # max_sev. 15 as of tracker-event-board-pusher (s1-s12 pre-existing +
+  # detect_observer_findings as s13 + detect_worker_api_errors as s14 +
+  # detect_outbox_staleness as s15); detect_blocked_by,
+  # detect_initiative_dispatch and detect_workspace_config run in the
+  # separate fleet-wide path, not this per-ticket sweep.
   local decl_count loop_count label_count
   # Unique slot names, not raw line count — detect_abandoned (s5) is
-  # legitimately assigned in both the held and non-held branches.
+  # legitimately assigned in both the held and non-held branches, and
+  # detect_outbox_staleness (s15) is assigned identically in both since
+  # staleness is orthogonal to whether the ticket is currently held.
   decl_count=$(command grep -oE '^\s*s[0-9]+=\$\(detect_' "$LIB_DIR/fleet-detect.sh" |
     command grep -oE 's[0-9]+' | sort -u | wc -l)
   loop_count=$(command grep -oE '"\$s[0-9]+"' "$LIB_DIR/fleet-detect.sh" | sort -u | wc -l)
   label_count=$(command grep -cE '\[ "\$s[0-9]+" -ge 1 \]' "$LIB_DIR/fleet-detect.sh")
-  [ "$decl_count" -eq 14 ] && [ "$loop_count" -eq 14 ] && [ "$label_count" -eq 14 ]
+  [ "$decl_count" -eq 15 ] && [ "$loop_count" -eq 15 ] && [ "$label_count" -eq 15 ]
 }
 
 test_observer_findings_never_escalates_past_warn_via_fleet_detect_all() {

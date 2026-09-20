@@ -84,6 +84,17 @@ try:
 except ImportError:  # pragma: no cover - preamble unavailable
     _preamble_mod = None
 
+# Tracker event-board pusher (tracker-event-board-pusher, Phase B2). Imported
+# defensively like the modules above: without it the pusher pass simply
+# cannot run this cycle — a ticket's outbox stays undrained by fleetd and is
+# picked up by outbox-drain.sh at the router's own exit instead, never a
+# reason to take the supervisor down. Ships gated behind
+# FLEET_BOARD_PUSHER_ENABLE regardless of whether the import succeeds.
+try:
+    from fleetd import pusher as _pusher_mod
+except ImportError:  # pragma: no cover - pusher unavailable
+    _pusher_mod = None
+
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
@@ -1965,6 +1976,17 @@ FLEET_MAX_CONCURRENT = _env_int('FLEET_MAX_CONCURRENT', 3)
 # cadence) — the async complement to pipeline-finalize.sh's one-shot sweep,
 # catching PRs that merge after the pipeline process has already exited.
 FLEET_MERGE_POLL_CYCLES = _env_int('FLEET_MERGE_POLL_CYCLES', 10)
+
+# Tracker event-board pusher (tracker-event-board-pusher, Phase B2). Ships
+# wired but disabled by default — same precedent as FLEET_PHASE_DISPATCH_ENABLE
+# (design.md Decision 6): new supervisor-loop logic against live production
+# tickets stays inert until proven. FLEET_BOARD_PUSHER_INTERVAL defaults to
+# the same value as the hold-reconciliation cadence — both are periodic
+# passes over ticket state with no sub-minute-latency requirement.
+FLEET_BOARD_PUSHER_ENABLE = os.environ.get(
+    'FLEET_BOARD_PUSHER_ENABLE', 'false') == 'true'
+FLEET_BOARD_PUSHER_INTERVAL = _env_int('FLEET_BOARD_PUSHER_INTERVAL', 300)
+
 CLAUDE_BIN = os.environ.get('CLAUDE_BIN', 'claude')
 # Full worker command line (binary + leading args), e.g. "claude-deepseek 2 --bypass".
 # Takes precedence over CLAUDE_BIN when set. The ticket-auto invocation
@@ -3240,6 +3262,12 @@ class Supervisor:
         # always scans for a fresh record rather than waiting a full
         # interval after a restart.
         self._human_hold_intake_last_run = None
+        # Board pusher's own cadence (tracker-event-board-pusher, Phase B2).
+        # Same `None`-means-never-run-yet convention as the two timers above
+        # — the first cycle always attempts a drain rather than waiting a
+        # full interval after a restart. No-op regardless while
+        # FLEET_BOARD_PUSHER_ENABLE is unset (the default).
+        self._board_pusher_last_run = None
         # Deterministic-failure circuit breaker (worker-reap-recovery task
         # 3.8): a streak of fast, non-zero exits across the fleet — expired
         # auth, a bad CLAUDE_CMD — halts dispatch rather than burning
@@ -4819,6 +4847,35 @@ class Supervisor:
         )
         _sweep_stale_generation_files(state_dir, tid, generation, phase=phase)
 
+    def _board_pusher_pass(self):
+        """Tracker event-board pusher pass (tracker-event-board-pusher,
+        Phase B2). Drains every ticket's event outbox against every
+        configured board driver (`FLEET_BOARD_DRIVERS`), discovered by
+        glob-scanning the pipeline log directory for `*-outbox.jsonl` files
+        — never a registry (design.md Decision 4), so restarting fleetd
+        after any downtime re-discovers every ticket with unconsumed
+        entries with no separate bookkeeping.
+
+        Called from `run_observe`'s cycle body only, on its own cadence
+        (`_board_pusher_last_run`), gated behind
+        `FLEET_BOARD_PUSHER_ENABLE` (default `false`, design.md Decision
+        6) — this method is never called at all while the flag is unset,
+        the same shape `FLEET_PHASE_DISPATCH_ENABLE` uses elsewhere in this
+        file.
+
+        Fail-soft: `pusher.pusher_pass` already catches per-ticket
+        exceptions internally, and a missing `_pusher_mod` import (a
+        packaging problem, not a runtime one) makes this a no-op rather
+        than crashing the daemon.
+        """
+        if _pusher_mod is None:
+            return
+        try:
+            _pusher_mod.pusher_pass(log_dir=str(self._state_dir))
+        except Exception as exc:  # noqa: BLE001 - a bad cycle must not wedge the loop
+            print(f"fleetd[{os.getpid()}]: board pusher pass failed: {exc}",
+                  file=sys.stderr)
+
     def _merge_poll_sweep(self):
         """Periodic merge-truth sweep — the async complement to the
         pipeline's own one-shot sweep (fleet-merge-poll-cadence).
@@ -5269,6 +5326,19 @@ class Supervisor:
                         self._human_hold_intake_last_run):
                     self._human_hold_intake_pass()
                     self._human_hold_intake_last_run = time.time()
+
+                # 4a-3. Board pusher pass (tracker-event-board-pusher, Phase
+                # B2) — its own cadence, gated behind
+                # FLEET_BOARD_PUSHER_ENABLE (default false, design.md
+                # Decision 6). `run_observe` SHALL NOT call this pass at all
+                # when the flag is unset or false — checked before is_due so
+                # a disabled pusher never even starts its own timer.
+                if (FLEET_BOARD_PUSHER_ENABLE and _gate_hold_mod is not None
+                        and _gate_hold_mod.is_due(
+                            self._board_pusher_last_run,
+                            interval=FLEET_BOARD_PUSHER_INTERVAL)):
+                    self._board_pusher_pass()
+                    self._board_pusher_last_run = time.time()
 
                 # 4b. Restart the exporter if it died (no-op when disabled,
                 # already running, or still inside its backoff window).

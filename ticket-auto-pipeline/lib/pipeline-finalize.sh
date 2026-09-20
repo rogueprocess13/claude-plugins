@@ -244,4 +244,22 @@ fi
 
 _pf_post_outcome "$TICKET_ID" "$EXIT_CODE" "$LOG_FILE" || true
 
+# ── Outbox drain (tracker-event-board-pusher, Phase B2) ─────────────────────
+# pipeline-finalize.sh is called at every router exit point — success and
+# gate-held/human-hold exits alike (this file's own header comment) — which
+# makes it the one place that already runs on every clean exit regardless of
+# outcome. A fleetd-down run (fleetd's own pusher.py pass never runs) would
+# otherwise leave this ticket's outbox undrained until fleetd next starts;
+# draining here closes that gap for the common "no fleetd" case without a
+# second exit-path convention. Best-effort and never fatal: a drain failure
+# is retried on the next drain (either this script's next invocation, or
+# fleetd's pusher once it runs), never blocks the router's own exit.
+_od_script="$HOME/.claude/skills/ticket-flow/outbox-drain.sh"
+if [ ! -f "$_od_script" ]; then
+  _od_script=$(find "$HOME/.claude/plugins/cache" -name outbox-drain.sh -path "*/ticket-flow/*" 2>/dev/null | sort | tail -1)
+fi
+if [ -n "$_od_script" ] && [ -f "$_od_script" ]; then
+  bash "$_od_script" "$TICKET_ID" >/dev/null 2>&1 || true
+fi
+
 exit "${EXIT_CODE}"
