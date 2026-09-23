@@ -129,6 +129,70 @@ test_blocked_by_no_linear_api() {
   }
 }
 
+# ── Tests: detect_blocked_by manifest path (tracker-local-facts-read-migration) ──
+
+TAP_LIB_DIR="$(cd "$LIB_DIR/../../ticket-auto-pipeline/lib" && pwd)"
+source "$TAP_LIB_DIR/manifest-write.sh"
+
+test_blocked_by_manifest_resolved() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  _plog "$ws" "CRE-200" "IMPLEMENT" "implement" "done" "in progress"
+
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-200" "INIT-1" "bug" '["CRE-199"]' >/dev/null
+  _plog "$ws" "CRE-199" "META" "outcome" "info" "completed: STEP_6"
+
+  local sev
+  sev=$(REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$ws" detect_blocked_by "CRE-200" "$ws")
+  rm -rf "$repos_root"
+
+  [ "$sev" = "1" ] || {
+    echo "expected severity 1 when manifest blocker is Done, got $sev"
+    return 1
+  }
+}
+
+test_blocked_by_manifest_unresolved() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  _plog "$ws" "CRE-201" "IMPLEMENT" "implement" "done" "in progress"
+
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-201" "INIT-1" "bug" '["CRE-198"]' >/dev/null
+  # CRE-198 has no pipeline log at all — unstarted, unsatisfied.
+
+  local sev
+  sev=$(REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$ws" detect_blocked_by "CRE-201" "$ws")
+  rm -rf "$repos_root"
+
+  [ "$sev" = "0" ] || {
+    echo "expected severity 0 when manifest blocker has no pipeline log, got $sev"
+    return 1
+  }
+}
+
+test_blocked_by_manifest_takes_precedence_over_missing_linear_api() {
+  # No get_issue declared at all in this process — the manifest path must
+  # not depend on it.
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  _plog "$ws" "CRE-202" "IMPLEMENT" "implement" "done" "in progress"
+
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-202" "INIT-1" "bug" '["CRE-197"]' >/dev/null
+  _plog "$ws" "CRE-197" "META" "outcome" "info" "completed: STEP_6"
+
+  local sev
+  sev=$(REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$ws" detect_blocked_by "CRE-202" "$ws" 2>&1)
+  rm -rf "$repos_root"
+
+  [ "$sev" = "1" ] || {
+    echo "expected severity 1 with no live Linear dependency, got: $sev"
+    return 1
+  }
+}
+
 # ── Tests: fleet_detect_all includes fleet_wide key ──────────────────────────────
 
 test_fleet_detect_all_includes_fleet_wide() {
@@ -311,7 +375,111 @@ _run "planner_feedback_found_uncollected" test_planner_feedback_found
 _run "planner_feedback_collected" test_planner_feedback_collected
 _run "planner_feedback_no_log_file" test_planner_feedback_no_log_file
 _run "initiative_dispatch_no_linear_api_graceful" test_initiative_dispatch_no_linear_api
+
+# ── Tests: _fleet_scan_initiative_dispatch manifest path (tracker-local-facts-read-migration) ──
+
+test_initiative_dispatch_manifest_finds_undispatched() {
+  local repos_root
+  repos_root=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" write_epic_manifest "INIT-50" "epic/x" "epic" "manual" '["CRE-300","CRE-301"]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_epic_dispatch "INIT-50" >/dev/null
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-300" "INIT-50" "bug" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-301" "INIT-50" "bug" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_ticket_dispatch "CRE-300" >/dev/null
+  # CRE-301 left undispatched.
+
+  local result sev findings
+  result=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch 2>/dev/null)
+  rm -rf "$repos_root"
+
+  sev=$(echo "$result" | jq -r '.severity // -1')
+  findings=$(echo "$result" | jq -r '.findings // ""')
+  [ "$sev" = "1" ] && echo "$findings" | grep -q "INIT-50(1)" || {
+    echo "expected severity 1 with INIT-50(1) undispatched, got: $result"
+    return 1
+  }
+}
+
+test_initiative_dispatch_manifest_all_dispatched_is_silent() {
+  local repos_root
+  repos_root=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" write_epic_manifest "INIT-51" "epic/x" "epic" "manual" '["CRE-302"]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_epic_dispatch "INIT-51" >/dev/null
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-302" "INIT-51" "bug" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_ticket_dispatch "CRE-302" >/dev/null
+
+  local result sev
+  result=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch 2>/dev/null)
+  rm -rf "$repos_root"
+
+  sev=$(echo "$result" | jq -r '.severity // -1')
+  [ "$sev" = "0" ] || {
+    echo "expected severity 0 when all children dispatched, got: $result"
+    return 1
+  }
+}
+
+test_initiative_dispatch_manifest_skips_non_dispatched_epic() {
+  local repos_root
+  repos_root=$(mktemp -d)
+
+  # Epic manifest exists but dispatch is still false (state:execution never
+  # set) — must not be reported as having undispatched children.
+  REPOS_ROOT="$repos_root" write_epic_manifest "INIT-52" "epic/x" "epic" "manual" '["CRE-303"]' >/dev/null
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-303" "INIT-52" "bug" '[]' >/dev/null
+
+  local result sev
+  result=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch 2>/dev/null)
+  rm -rf "$repos_root"
+
+  sev=$(echo "$result" | jq -r '.severity // -1')
+  [ "$sev" = "0" ] || {
+    echo "expected severity 0 for a non-dispatched epic, got: $result"
+    return 1
+  }
+}
 _run "blocked_by_no_linear_api_graceful" test_blocked_by_no_linear_api
+_run "blocked_by_manifest_resolved" test_blocked_by_manifest_resolved
+_run "blocked_by_manifest_unresolved" test_blocked_by_manifest_unresolved
+_run "blocked_by_manifest_takes_precedence_over_missing_linear_api" test_blocked_by_manifest_takes_precedence_over_missing_linear_api
+_run "initiative_dispatch_manifest_finds_undispatched" test_initiative_dispatch_manifest_finds_undispatched
+_run "initiative_dispatch_manifest_all_dispatched_is_silent" test_initiative_dispatch_manifest_all_dispatched_is_silent
+_run "initiative_dispatch_manifest_skips_non_dispatched_epic" test_initiative_dispatch_manifest_skips_non_dispatched_epic
+
+test_initiative_dispatch_kill_switch_forces_live_fallback() {
+  local repos_root
+  repos_root=$(mktemp -d)
+
+  # A real manifest set that would normally report severity 1 (undispatched
+  # child CRE-305, dispatch:false).
+  REPOS_ROOT="$repos_root" write_epic_manifest "INIT-53" "epic/x" "epic" "manual" '["CRE-305"]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_epic_dispatch "INIT-53" >/dev/null
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-305" "INIT-53" "bug" '[]' >/dev/null
+
+  # Confirm the manifest alone (kill switch off) does report severity 1.
+  local baseline
+  baseline=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch 2>/dev/null | jq -r '.severity // -1')
+  [ "$baseline" = "1" ] || {
+    echo "test setup invalid — expected baseline severity 1, got $baseline"
+    rm -rf "$repos_root"
+    return 1
+  }
+
+  # With the kill switch on and no get_issue/get_epics_by_label declared,
+  # the manifest path must be completely bypassed — falls through to the
+  # live path, which degrades to severity 0 (no Linear client available).
+  local sev
+  sev=$(TICKET_LOCAL_MANIFEST_DISABLE=true REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch 2>/dev/null | jq -r '.severity // -1')
+  rm -rf "$repos_root"
+
+  [ "$sev" = "0" ] || {
+    echo "expected kill switch to force the live-fallback path (severity 0, no Linear client), got $sev"
+    return 1
+  }
+}
+_run "initiative_dispatch_kill_switch_forces_live_fallback" test_initiative_dispatch_kill_switch_forces_live_fallback
 _run "fleet_detect_all_includes_fleet_wide" test_fleet_detect_all_includes_fleet_wide
 _run "fleet_detect_all_empty_workspace" test_fleet_detect_all_empty_workspace
 _run "fleet_detect_all_with_active_pipeline" test_fleet_detect_all_with_active_pipeline

@@ -150,6 +150,28 @@ else
   _fail "has_planner_proposal: expected true when proposal.md exists"
 fi
 
+# 8. Initiative index fast path: no description/label fetch needed when an
+#    index entry exists (tracker-local-facts-read-migration, task 1.5).
+mkdir -p "$REPOS_ROOT/.ticket-auto/initiatives/_index"
+mkdir -p "$REPOS_ROOT/.ticket-auto/initiatives/INIT-77/tickets/TEST-IDX/planner"
+echo "INIT-77" >"$REPOS_ROOT/.ticket-auto/initiatives/_index/TEST-IDX.initiative"
+rc=0
+actual=$(resolve_planner_dir "TEST-IDX" 2>/dev/null) || rc=$?
+if [ "$rc" = "0" ] && echo "$actual" | grep -q "INIT-77"; then
+  _pass "resolve_planner_dir: index fast path resolves without description/label args"
+else
+  _fail "resolve_planner_dir: expected index fast path to resolve INIT-77, got rc=$rc path='$actual'"
+fi
+
+# 9. Index takes precedence over a stale/mismatched inline description.
+rc=0
+actual=$(resolve_planner_dir "TEST-IDX" "some unrelated description" "false" 2>/dev/null) || rc=$?
+if [ "$rc" = "0" ] && echo "$actual" | grep -q "INIT-77"; then
+  _pass "resolve_planner_dir: index takes precedence over inline description/label"
+else
+  _fail "resolve_planner_dir: expected index to win over inline args, got rc=$rc path='$actual'"
+fi
+
 # Cleanup
 rm -rf "$REPOS_ROOT/.ticket-auto"
 

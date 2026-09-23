@@ -729,6 +729,95 @@ test_trigger_no_ticket_emits_nothing() {
 _run "uat_decide_trigger: no --ticket means no outbox emission" test_trigger_no_ticket_emits_nothing
 
 echo ""
+echo "=== Epic manifest tests (tracker-local-facts-read-migration) ==="
+echo ""
+
+# manifest-read.sh is not sourced by the CI-safe guard block above (this
+# suite predates it) — source it directly so ticket_manifest_exists/
+# get_epic_manifest_field etc. are available for these tests, matching what
+# branch-resolve.sh itself now sources.
+source "$LIB_DIR/manifest-read.sh"
+source "$LIB_DIR/manifest-write.sh"
+
+test_manifest_branch_context() {
+  local tmp
+  tmp=$(mktemp -d)
+  REPOS_ROOT="$tmp" write_epic_manifest "CRE-100" "epic/from-manifest" "epic" "manual" '[]' >/dev/null
+
+  # NO_DIRECTIVE_PARENT's id is CRE-200, not CRE-100 — swap it so the
+  # manifest lookup (keyed by parent id) actually hits.
+  local swapped output
+  swapped=$(echo "$NO_DIRECTIVE_PARENT" | sed 's/CRE-200/CRE-100/')
+  output=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-123" \
+    --title "Fix auth bug" --parent-json "$swapped" 2>/dev/null) || {
+    rm -rf "$tmp"
+    return 1
+  }
+  rm -rf "$tmp"
+
+  local parsed
+  parsed=$(echo "$output" | _parse_result)
+  eval "$parsed"
+
+  [ "$BRANCH_SOURCE" = "epic-directive" ] || {
+    echo "  expected BRANCH_SOURCE=epic-directive, got $BRANCH_SOURCE" >&2
+    return 1
+  }
+  [ "$BASE_BRANCH" = "epic/from-manifest" ] || {
+    echo "  expected BASE_BRANCH=epic/from-manifest, got $BASE_BRANCH" >&2
+    return 1
+  }
+  [ "$UAT_POLICY" = "epic" ] || {
+    echo "  expected UAT_POLICY=epic, got $UAT_POLICY" >&2
+    return 1
+  }
+  [ "$MERGE_POLICY" = "manual" ] || {
+    echo "  expected MERGE_POLICY=manual, got $MERGE_POLICY" >&2
+    return 1
+  }
+  return 0
+}
+_run "resolve_branch_context: reads epic manifest when present, no description parse" test_manifest_branch_context
+
+test_manifest_missing_falls_back_to_live() {
+  local tmp
+  tmp=$(mktemp -d)
+  # No manifest written — REPOS_ROOT is set but epic_manifest_exists misses.
+  local output
+  output=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-123" \
+    --title "Fix auth bug" --parent-json "$VALID_DIRECTIVE_PARENT" 2>/dev/null)
+  rm -rf "$tmp"
+
+  local parsed
+  parsed=$(echo "$output" | _parse_result)
+  eval "$parsed"
+
+  [ "$BRANCH_SOURCE" = "epic-directive" ] && [ "$BASE_BRANCH" = "epic/debt-collection-v2" ]
+}
+_run "resolve_branch_context: missing epic manifest falls back to live description parse" test_manifest_missing_falls_back_to_live
+
+test_manifest_resolve_uat_policy_zero_fetch() {
+  local tmp
+  tmp=$(mktemp -d)
+  REPOS_ROOT="$tmp" write_ticket_manifest "CRE-500" "CRE-100" "bug" '[]' >/dev/null
+  REPOS_ROOT="$tmp" write_epic_manifest "CRE-100" "epic/x" "epic" "manual" '[]' >/dev/null
+
+  # get_issue must NOT be called on this path — override it to fail loudly
+  # if it is, proving resolve_uat_policy took the zero-fetch manifest path.
+  get_issue() {
+    echo "get_issue: should not be called on the zero-fetch manifest path" >&2
+    return 1
+  }
+
+  local result
+  result=$(REPOS_ROOT="$tmp" resolve_uat_policy "CRE-500" 2>/dev/null)
+  rm -rf "$tmp"
+  unset -f get_issue
+  [ "$result" = "epic" ]
+}
+_run "resolve_uat_policy: zero-fetch when both ticket and epic manifests exist" test_manifest_resolve_uat_policy_zero_fetch
+
+echo ""
 echo "=== Results: $((PASS + FAIL)) tests, $PASS passed, $FAIL failed ==="
 
 if [ "$FAIL" -gt 0 ]; then

@@ -70,6 +70,20 @@ planned_feedback_write() {
   fi
 
   # ── Confidence ───────────────────────────────────────────────────────────────
+  #
+  # tracker-local-facts-read-migration (task 6.1): declare-tolerated, not
+  # retargeted. Confidence/Affected-Services/exploration fields are planning
+  # OUTPUT, not flow-control state — the design's scope note is explicit that
+  # these stay description-derived ("continue to be read from the ticket
+  # description exactly as today — migrating that parser is not called for
+  # anywhere in the plan"). The ticket manifest schema deliberately carries
+  # none of them (only type/initiative/blocked_by/dispatch/outcome_label).
+  # This still-live `get_issue`+sed extraction is informational-only
+  # (feedback/drift computation, never a gate), and duplicates
+  # `_extract_field`'s canonical parsing rather than sharing it — a
+  # pre-existing drift risk, not something this migration introduces or
+  # fixes. Tolerated, not silently accepted: flagged here so a future
+  # reader doesn't mistake the duplication for an oversight.
 
   # Predicted confidence — extracted from Planner Context block in ticket description
   local confidence_predicted=0

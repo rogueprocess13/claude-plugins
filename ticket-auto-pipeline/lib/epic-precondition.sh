@@ -14,19 +14,38 @@
 # different convention.
 EPIC_MARKER_LABEL="${EPIC_MARKER_LABEL:-epic}"
 
+# manifest-read.sh backs the epic-manifest-presence check in is_epic_issue
+# below (tracker-local-facts-read-migration). Guarded — flow.sh's own
+# sourcing of planned-ticket-check.sh already brings this in transitively in
+# production, but this file is also sourced standalone in isolated tests.
+if ! declare -f epic_manifest_exists >/dev/null 2>&1; then
+  _EPC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$_EPC_LIB_DIR/manifest-read.sh" ] && source "$_EPC_LIB_DIR/manifest-read.sh"
+fi
+
 # is_epic_issue <issue_json>
 # Returns 0 when the issue is an epic, 1 otherwise.
 #
-# Discriminates on two properties that exist in this workspace and are already
-# present in the payload the executor fetches, so neither costs a request:
-#   1. the epic marker label
-#   2. a valid Branch Directive in the description
+# Discriminates on three properties, in cost order — none requires a live
+# fetch beyond the payload the executor already has in hand:
+#   1. an epic manifest exists for this issue's identifier
+#      (tracker-local-facts-read-migration — a manifest existing is itself
+#      proof of epic-ness, since only EpicGen writes one)
+#   2. the epic marker label
+#   3. a valid Branch Directive in the description
 #
 # It deliberately does NOT read .issueType.name: that field is undefined in this
 # workspace, so a check against it evaluates as "not an epic" for every issue.
 is_epic_issue() {
   local issue_json="$1"
   local marker="${EPIC_MARKER_LABEL:-epic}"
+
+  local identifier
+  identifier=$(echo "$issue_json" | jq -r '.identifier // .id // empty' 2>/dev/null || true)
+  if [ -n "$identifier" ] && declare -f epic_manifest_exists >/dev/null 2>&1 &&
+    epic_manifest_exists "$identifier" 2>/dev/null; then
+    return 0
+  fi
 
   local labels
   labels=$(echo "$issue_json" | jq -r '[.labels.nodes[]?.name] | join(",")' 2>/dev/null || true)

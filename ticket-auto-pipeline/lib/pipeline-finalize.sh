@@ -136,6 +136,14 @@ _pf_post_outcome() {
   fi
 
   # Human event, only when a Linear key is available.
+  #
+  # tracker-local-facts-read-migration (task 6.2): forward reference, not
+  # retargeted. Human-approval attribution is exactly the local fact B4
+  # (inbound approval / gate-hold intake pass) will eventually formalize —
+  # but B4 has no live caller yet (per fleet-controller/CLAUDE.md: "no live
+  # caller yet" for `gate_hold.py`'s hold-row creation), so there is no local
+  # field to point at today. This `get_issue_history` scan stays the interim
+  # behavior until B4 ships; revisit this comment when it does.
   if [ -n "${LINEAR_API_KEY:-}" ] && [ -f "$_PF_LIB_DIR/linear-api.sh" ]; then
     local history_json comments_json me_json my_id human_json
     history_json=$(timeout 20 bash -c "source '$_PF_LIB_DIR/linear-api.sh'; get_issue_history '$tid'" 2>/dev/null) || history_json=""

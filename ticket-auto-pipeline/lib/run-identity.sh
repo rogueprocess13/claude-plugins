@@ -233,18 +233,39 @@ run_identity_ticket_meta() {
     [ -f "$_RI_LIB_DIR/template-select.sh" ] && source "$_RI_LIB_DIR/template-select.sh"
   fi
 
-  local _type="" _labels _l
+  # tracker-local-facts-read-migration (task 5.12): manifest's type/presence
+  # fields first, live label derivation as fallback — this write is purely
+  # informational telemetry (META|ticket-meta), so this narrows which fields
+  # feed it rather than skipping the live fetch, which still runs for
+  # createdAt/startedAt/estimate/priority/labels below.
+  if ! declare -f ticket_manifest_exists >/dev/null 2>&1; then
+    [ -f "$_RI_LIB_DIR/manifest-read.sh" ] && source "$_RI_LIB_DIR/manifest-read.sh"
+  fi
+
+  local _type="" _labels _l _has_manifest=false
   _labels=$(echo "$issue" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null) || true
-  while IFS= read -r _l; do
-    [ -z "$_l" ] && continue
-    if declare -f resolve_template >/dev/null 2>&1 && resolve_template "$_l" >/dev/null 2>&1; then
-      _type="$_l"
-      break
-    fi
-  done <<<"$_labels"
+
+  if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$tid" 2>/dev/null; then
+    _has_manifest=true
+    _type=$(get_ticket_manifest_field "$tid" type 2>/dev/null)
+  fi
+
+  if [ -z "$_type" ]; then
+    while IFS= read -r _l; do
+      [ -z "$_l" ] && continue
+      if declare -f resolve_template >/dev/null 2>&1 && resolve_template "$_l" >/dev/null 2>&1; then
+        _type="$_l"
+        break
+      fi
+    done <<<"$_labels"
+  fi
 
   local planned="false"
-  echo "$_labels" | grep -qx 'planned' && planned="true"
+  if [ "$_has_manifest" = "true" ]; then
+    planned="true"
+  else
+    echo "$_labels" | grep -qx 'planned' && planned="true"
+  fi
 
   local meta_json
   meta_json=$(echo "$issue" | jq -c \

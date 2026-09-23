@@ -236,6 +236,30 @@ Two fixtures with identical content hash.'
 _run_check "backend-only bug skips Test User but still needs repro steps" 1 "Steps to Reproduce" \
   "TEST-13" "bug" "$BACKEND_ONLY_BUG_BODY" "true"
 
+# 14. tracker-local-facts-read-migration (task 5.4): manifest presence alone
+# (no live "planned" label) must still let plane resolution attempt fire on
+# the live-fetch path (no inline description/has_planned_label args).
+source "$LIB_DIR/manifest-write.sh"
+TEST14_DIR="$REPOS_ROOT/.ticket-auto/initiatives/INIT-77/tickets/TEST-14/planner"
+mkdir -p "$TEST14_DIR"
+echo "$COMPLETE_BUG_BODY" >"$TEST14_DIR/body.md"
+write_ticket_manifest "TEST-14" "INIT-77" "bug" '[]' >/dev/null
+
+test_manifest_only_plane_resolution() {
+  local orig_get_issue
+  orig_get_issue=$(declare -f get_issue 2>/dev/null || true)
+  get_issue() {
+    echo '{"description":"thin description — should not be used","labels":{"nodes":[{"name":"bug"}]}}'
+  }
+  check_planned_body "TEST-14" "bug" 2>/dev/null || true
+  local rc="$BODY_CHECK_EXIT_CODE"
+  if [ -n "$orig_get_issue" ]; then
+    eval "$orig_get_issue"
+  fi
+  [ "$rc" = "0" ]
+}
+_run "manifest only — plane body resolves with no live planned label" test_manifest_only_plane_resolution
+
 # Cleanup
 rm -rf "$REPOS_ROOT/.ticket-auto"
 

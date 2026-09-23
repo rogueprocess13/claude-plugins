@@ -6,6 +6,8 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TAP_LIB_DIR="$(cd "$LIB_DIR/../../ticket-auto-pipeline/lib" && pwd)"
+source "$TAP_LIB_DIR/manifest-write.sh"
 
 PASS=0
 FAIL=0
@@ -2194,6 +2196,145 @@ _run "stop_initiative_idempotent" test_stop_initiative_idempotent
 _run "repos_under_root_finds_nested_repos" test_repos_under_root_finds_nested_repos
 _run "repos_under_root_respects_depth_limit" test_repos_under_root_respects_depth_limit
 _run "repos_under_root_explicit_override" test_repos_under_root_explicit_override
+
+# ── tracker-local-facts-read-migration (task 4.1-4.4) ───────────────────────
+
+test_dispatch_manifest_epic_not_dispatched() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_epic_manifest "INIT-60" "epic/x" "epic" "manual" '[]' >/dev/null
+
+  local output
+  output=$(bash -c "
+    REPOS_ROOT='$repos_root'
+    FLEET_DRY_RUN=true
+    source '$LIB_DIR/fleet-dispatch.sh'
+    fleet_dispatch_initiative 'INIT-60' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q "not in execution state (manifest dispatch=false)" || {
+    echo "expected manifest-sourced not-in-execution message, got: $output" >&2
+    return 1
+  }
+  ! echo "$output" | grep -q "enqueued" || {
+    echo "should not have enqueued anything: $output" >&2
+    return 1
+  }
+}
+_run "dispatch_manifest_epic_not_dispatched" test_dispatch_manifest_epic_not_dispatched
+
+test_dispatch_manifest_full_localization() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" write_epic_manifest "INIT-61" "epic/x" "epic" "manual" \
+    '["CRE-410","CRE-411","CRE-412"]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_epic_dispatch "INIT-61" >/dev/null
+
+  # CRE-410: already dispatched — must not be re-enqueued.
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-410" "INIT-61" "bug" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_ticket_dispatch "CRE-410" >/dev/null
+
+  # CRE-411: undispatched, blocked_by an unfinished ticket (no pipeline log).
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-411" "INIT-61" "bug" '["CRE-409"]' >/dev/null
+
+  # CRE-412: undispatched, blocked_by a Done ticket — dispatchable.
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-412" "INIT-61" "bug" '["CRE-408"]' >/dev/null
+  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >"$ws/CRE-408-pipeline.log"
+
+  # No get_issue/get_epics_by_label mock declared anywhere — proves this
+  # path issues no live tracker call at all.
+  local output
+  output=$(bash -c "
+    REPOS_ROOT='$repos_root'
+    FLEET_DRY_RUN=true
+    FLEET_PIPELINE_LOG_DIR='$ws'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    fleet_dispatch_initiative 'INIT-61' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q "would enqueue: .*CRE-412" || {
+    echo "expected CRE-412 to be enqueued: $output" >&2
+    return 1
+  }
+  ! echo "$output" | grep -q "CRE-410" || {
+    echo "already-dispatched CRE-410 should never be considered: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q "blocked CRE-411" || {
+    echo "expected CRE-411 reported as blocked: $output" >&2
+    return 1
+  }
+}
+_run "dispatch_manifest_full_localization" test_dispatch_manifest_full_localization
+
+test_dispatch_manifest_per_child_fallback() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" write_epic_manifest "INIT-62" "epic/x" "epic" "manual" '["CRE-420"]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_epic_dispatch "INIT-62" >/dev/null
+  # CRE-420 has NO ticket manifest — per-child live fallback must kick in.
+
+  local output
+  output=$(bash -c "
+    REPOS_ROOT='$repos_root'
+    FLEET_DRY_RUN=true
+    FLEET_PIPELINE_LOG_DIR='$ws'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    get_issue() {
+      case \"\$1\" in
+      CRE-420) echo '{\"identifier\":\"CRE-420\",\"state\":{\"name\":\"Backlog\"},\"labels\":{\"nodes\":[{\"name\":\"planned\"}]},\"priority\":2}' ;;
+      *) return 1 ;;
+      esac
+    }
+    fleet_dispatch_initiative 'INIT-62' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q "no manifest, live fallback" || {
+    echo "expected per-child live fallback to fire for CRE-420: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q "would enqueue: .*CRE-420" || {
+    echo "expected CRE-420 to be enqueued via fallback: $output" >&2
+    return 1
+  }
+}
+_run "dispatch_manifest_per_child_fallback" test_dispatch_manifest_per_child_fallback
+
+test_dispatch_stamps_ticket_manifest_on_real_enqueue() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" write_epic_manifest "INIT-63" "epic/x" "epic" "manual" '["CRE-430"]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_epic_dispatch "INIT-63" >/dev/null
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-430" "INIT-63" "bug" '[]' >/dev/null
+
+  # Real (non-dry-run) enqueue — task 1.6's dispatch stamp must fire.
+  bash -c "
+    REPOS_ROOT='$repos_root'
+    FLEET_PIPELINE_LOG_DIR='$ws'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    fleet_dispatch_initiative 'INIT-63' '$ws' >/dev/null 2>&1
+  "
+
+  local dispatch_flag
+  dispatch_flag=$(REPOS_ROOT="$repos_root" get_ticket_manifest_field "CRE-430" dispatch 2>/dev/null)
+  rm -rf "$repos_root"
+
+  [ "$dispatch_flag" = "true" ] || {
+    echo "expected CRE-430's manifest dispatch flag to be stamped true after real enqueue, got '$dispatch_flag'" >&2
+    return 1
+  }
+}
+_run "dispatch_stamps_ticket_manifest_on_real_enqueue" test_dispatch_stamps_ticket_manifest_on_real_enqueue
 
 echo ""
 echo "=== Results ==="

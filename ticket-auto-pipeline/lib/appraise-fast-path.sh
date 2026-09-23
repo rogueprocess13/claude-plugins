@@ -19,6 +19,14 @@
 #   check_fast_path_eligible "CRE-123"              # fetches ticket via API
 #   check_fast_path_eligible "CRE-123" "$desc" "true"  # inline for testing
 
+# manifest-read.sh backs the fast-path-eligibility manifest check below
+# (tracker-local-facts-read-migration). Guarded — not every caller of this
+# file has already sourced it.
+if ! declare -f ticket_manifest_exists >/dev/null 2>&1; then
+  _AFP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$_AFP_LIB_DIR/manifest-read.sh" ] && source "$_AFP_LIB_DIR/manifest-read.sh"
+fi
+
 # ── Configuration ───────────────────────────────────────────────────────────
 
 FAST_PATH_CONFIDENCE_THRESHOLD="${FAST_PATH_CONFIDENCE_THRESHOLD:-0.85}"
@@ -80,8 +88,16 @@ check_fast_path_eligible() {
       return 1
     }
     description=$(echo "$issue_json" | jq -r '.description // ""')
-    has_planned_label=$(echo "$issue_json" | jq -r \
-      '[.labels.nodes[].name] | index("planned") != null')
+    # tracker-local-facts-read-migration (task 5.2): manifest presence is
+    # authoritative proof of "planned" when available — live label as
+    # fallback. The description is always live-fetched regardless (the
+    # Planner Context FIELD parser stays out of scope for this migration).
+    if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
+      has_planned_label="true"
+    else
+      has_planned_label=$(echo "$issue_json" | jq -r \
+        '[.labels.nodes[].name] | index("planned") != null')
+    fi
   fi
 
   # Guard: must have planned label

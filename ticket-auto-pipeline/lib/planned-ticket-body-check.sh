@@ -74,8 +74,15 @@ check_planned_body() {
       return 2
     }
     description=$(echo "$issue_json" | jq -r '.description // ""')
-    has_planned_label=$(echo "$issue_json" | jq -r \
-      '[.labels.nodes[].name] | index("planned") != null')
+    # tracker-local-facts-read-migration (task 5.4): manifest presence is
+    # authoritative proof of "planned" when available — live label as
+    # fallback. Description is always live-fetched regardless.
+    if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
+      has_planned_label="true"
+    else
+      has_planned_label=$(echo "$issue_json" | jq -r \
+        '[.labels.nodes[].name] | index("planned") != null')
+    fi
   fi
 
   # Resolve body source: plane body.md preferred, else Linear description

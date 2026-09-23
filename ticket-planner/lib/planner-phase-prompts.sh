@@ -1008,15 +1008,33 @@ if [ "\$EMIT_DIRECTIVE" = "true" ]; then
     exit 1
   }
 
-  # Check idempotency against the epic's LIVE description, not the one composed
-  # in this run: on a re-entry the directive was appended by the previous run and
-  # exists only in Linear.
-  EPIC_LIVE_DESCRIPTION=\$(planner_linear_get_issue "\$CREATED_EPIC_ID" | jq -r '.data.issue.description // ""')
-  EXISTING_BLOCK=\$(_extract_md_section "\$EPIC_LIVE_DESCRIPTION" "Branch Directive")
+  # Check idempotency — the epic manifest first (tracker-local-facts-read-
+  # migration, task 5.7), the epic's LIVE description as fallback. A
+  # manifest with a non-empty branch is proof step 5d already ran to
+  # completion on a prior pass, so this alone is enough to skip both the
+  # live fetch and the re-parse. A manifest that is absent or has no branch
+  # yet is NOT proof the directive is absent — a prior run could have
+  # appended it to the live description and crashed before step 5d wrote the
+  # manifest — so that case falls through to the live-description check
+  # exactly as before, never straight to "must append".
+  EPIC_LIVE_DESCRIPTION=""
+  EXISTING_BLOCK=""
+  IDEMPOTENT_BRANCH_NAME=""
+  planner_manifest_source_helpers 2>/dev/null || true
+  if declare -f epic_manifest_exists >/dev/null 2>&1 &&
+    epic_manifest_exists "\$CREATED_EPIC_ID" 2>/dev/null &&
+    [ -n "\$(get_epic_manifest_field "\$CREATED_EPIC_ID" branch 2>/dev/null)" ]; then
+    IDEMPOTENT_BRANCH_NAME=\$(get_epic_manifest_field "\$CREATED_EPIC_ID" branch 2>/dev/null)
+    EXISTING_BLOCK="manifest"
+  else
+    EPIC_LIVE_DESCRIPTION=\$(planner_linear_get_issue "\$CREATED_EPIC_ID" | jq -r '.data.issue.description // ""')
+    EXISTING_BLOCK=\$(_extract_md_section "\$EPIC_LIVE_DESCRIPTION" "Branch Directive")
+    [ -n "\$EXISTING_BLOCK" ] && IDEMPOTENT_BRANCH_NAME=\$(echo "\$EXISTING_BLOCK" | _extract_field "Branch")
+  fi
 
   if [ -n "\$EXISTING_BLOCK" ]; then
     planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "done" \
-      "Directive already present (idempotent): \$(echo \"\$EXISTING_BLOCK\" | _extract_field \"Branch\")"
+      "Directive already present (idempotent): \$IDEMPOTENT_BRANCH_NAME"
   else
     # Read the proposal title for the slug
     PROPOSAL_TITLE=\$(grep -m1 '^# ' "${state_dir}/artifacts/proposal.md" 2>/dev/null | sed 's/^# //' || echo "initiative")
@@ -1066,6 +1084,45 @@ else
     planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "done" \
       "SKIP REASON=heuristic:\${REASON}"
   fi
+fi
+\`\`\`
+
+### 5d. Cache the resolved directive in the epic manifest
+
+Local manifest read layer (tracker-local-facts-read-migration) — every downstream
+reader (\`branch-resolve.sh\`, \`epic-branch.sh\`, \`fleet-dispatch.sh\`,
+\`fleet-detect.sh\`) reads \`branch\`/\`uat_policy\`/\`merge_policy\` from the epic
+manifest instead of re-fetching and re-parsing the epic description on every
+call. Write it once here, after the directive decision above (whether a
+directive was freshly appended, already present, or deliberately skipped) —
+this is the one-time parse-and-cache the design calls for, not a duplicate
+parser.
+
+\`\`\`bash
+planner_manifest_source_helpers || {
+  echo "WARNING: manifest-write.sh unavailable — epic manifest not written; downstream readers fall back to live description fetch" >&2
+}
+
+# Skip entirely when 5c's idempotency check already confirmed the manifest
+# is current (EXISTING_BLOCK="manifest") — EPIC_LIVE_DESCRIPTION is empty on
+# that path (no live fetch happened), and re-parsing EPIC_DESCRIPTION (the
+# pre-directive composed body) here would overwrite an already-correct
+# manifest with empty/wrong values. Only (re-)write when a live fetch
+# actually happened this run (a fresh append, or the live-description
+# fallback branch of 5c).
+if declare -f write_epic_manifest >/dev/null 2>&1 && [ "\${EXISTING_BLOCK:-}" != "manifest" ]; then
+  # Re-parse whichever description is now current: NEW_DESCRIPTION if step 5c
+  # just appended a directive, otherwise the description already fetched.
+  MANIFEST_SOURCE_DESCRIPTION="\${NEW_DESCRIPTION:-\${EPIC_LIVE_DESCRIPTION:-\$EPIC_DESCRIPTION}}"
+  MANIFEST_DIRECTIVE_OUTPUT=\$(check_branch_directive_description "\$MANIFEST_SOURCE_DESCRIPTION" 2>/dev/null) || true
+  MANIFEST_BRANCH=\$(echo "\$MANIFEST_DIRECTIVE_OUTPUT" | sed -n "s/^BRANCH_DIRECTIVE_BRANCH='\\(.*\\)'\$/\\1/p")
+  MANIFEST_UAT_POLICY=\$(echo "\$MANIFEST_DIRECTIVE_OUTPUT" | sed -n "s/^BRANCH_DIRECTIVE_UAT_POLICY='\\(.*\\)'\$/\\1/p")
+  MANIFEST_MERGE_POLICY=\$(echo "\$MANIFEST_DIRECTIVE_OUTPUT" | sed -n "s/^BRANCH_DIRECTIVE_MERGE_POLICY='\\(.*\\)'\$/\\1/p")
+  [ -n "\$MANIFEST_UAT_POLICY" ] || MANIFEST_UAT_POLICY="per-ticket"
+
+  write_epic_manifest "\$CREATED_EPIC_ID" "\${MANIFEST_BRANCH:-}" "\$MANIFEST_UAT_POLICY" "\${MANIFEST_MERGE_POLICY:-}" '[]' || {
+    echo "WARNING: failed to write epic manifest for \$CREATED_EPIC_ID" >&2
+  }
 fi
 \`\`\`
 
@@ -1215,6 +1272,7 @@ source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-deps-check.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-context-gen.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-ticket-validate.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-linear-api.sh"
+source "\${CLAUDE_PLUGIN_ROOT}/lib/branch-directive-gen.sh"
 
 # 0. Create gate — re-verified here from the state log, not assumed from the
 # dispatcher. This phase creates every ticket in the initiative; an unauthorized
@@ -1372,6 +1430,21 @@ CREATED_TICKET_ID=\$(echo "\$TICKET_RESPONSE" | jq -r '.data.issueCreate.issue.i
 
 # Step 4: Mark created
 planner_entity_mark_created "${initiative_id}" "\$ENTITY_KEY" "\$CREATED_TICKET_ID"
+
+# Step 5: Write the ticket manifest (tracker-local-facts-read-migration) —
+# local source for type/initiative/blocked_by/dispatch, read by every
+# migrated call site (gate-check.sh, fleet-dispatch.sh, fleet-detect.sh, ...)
+# instead of a live label/description fetch. Additive — never blocks ticket
+# creation on failure, since the label writes above remain the source of
+# truth this phase (B3a is read-side only).
+planner_manifest_source_helpers || true
+if declare -f write_ticket_manifest >/dev/null 2>&1; then
+  BLOCKED_BY_JSON=\$(printf '%s\n' \${TICKET_DEPS} | jq -R -s 'split("\n") | map(select(length > 0))')
+  write_ticket_manifest "\$CREATED_TICKET_ID" "${initiative_id}" "\$TYPE_LABEL" "\$BLOCKED_BY_JSON" || {
+    echo "WARNING: failed to write ticket manifest for \$CREATED_TICKET_ID" >&2
+  }
+  add_epic_manifest_child "\$EPIC_ID" "\$CREATED_TICKET_ID" || true
+fi
 \`\`\`
 
 ## Post-creation verification
@@ -1383,6 +1456,13 @@ created_ids='["PRO-101","PRO-102"]'  # collect actual created ticket IDs
 if planner_verify_tickets "${initiative_id}" "\$created_ids"; then
   # All tickets verified — set state:execution on the parent epic
   # Use the Linear API to add the state:execution label to \$EPIC_ID
+
+  # Stamp the epic manifest's local dispatch flag in the same step
+  # (tracker-local-facts-read-migration) — one-way, mirrors state:execution
+  # exactly. Additive: the label above remains the write of record.
+  planner_manifest_source_helpers || true
+  declare -f stamp_epic_dispatch >/dev/null 2>&1 && stamp_epic_dispatch "\$EPIC_ID"
+
   planner_state_write "${initiative_id}" "TicketGen" "dispatch-gate" "done" "N tickets verified. Epic \$EPIC_ID labelled state:execution. Auto-dispatch enabled (FLEET_AUTO_DISPATCH must be true)."
 else
   planner_state_write "${initiative_id}" "TicketGen" "verify" "fail" "Post-creation verification failed — some tickets missing labels or not found in Linear. Epic NOT labelled for execution."

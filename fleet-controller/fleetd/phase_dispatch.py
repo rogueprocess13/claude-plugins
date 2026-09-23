@@ -1683,6 +1683,28 @@ def last_verify_checkpoint(log_lines):
 _TICKET_TYPE_LABELS = ('bug', 'feature', 'improvement', 'security', 'chore')
 
 
+def _resolve_ticket_type_from_manifest(tid, lib_dir, timeout):
+    """Manifest-first lookup (tracker-local-facts-read-migration, task 5.12).
+
+    Shells out to `manifest-read.sh` the same way the live path below shells
+    out to `linear-api.sh` — one transport per source, no reimplementation.
+    Returns `None` on any failure (no manifest, REPOS_ROOT unset, disabled
+    via the kill switch, ...), which the caller treats identically to "not
+    yet resolvable" and falls back to the live read for.
+    """
+    script = f'source "{lib_dir}/manifest-read.sh" >/dev/null 2>&1 && get_ticket_manifest_field "$1" type'
+    try:
+        proc = subprocess.run(
+            ['bash', '-c', script, 'bash', tid],
+            capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    value = proc.stdout.strip().lower()
+    return value if value in _TICKET_TYPE_LABELS else None
+
+
 def resolve_ticket_type(tid, lib_dir=None, timeout=30):
     """The ticket's type label (`bug`/`feature`/...), or `None` if unresolvable.
 
@@ -1690,9 +1712,18 @@ def resolve_ticket_type(tid, lib_dir=None, timeout=30):
     by every caller) rather than raising — the same fail-soft posture
     `_agent_md_path`/`_parse_env_file` already take for optional context this
     module cannot get without a live Linear read.
+
+    tracker-local-facts-read-migration (task 5.12): tries the local ticket
+    manifest first — no live tracker read at all when one exists — falling
+    back to the original live `get_issue` read below when it doesn't.
     """
     lib_dir = lib_dir or os.environ.get(
         'CLAUDE_SKILLS_LIB', os.path.expanduser('~/.claude/skills/lib'))
+
+    manifest_type = _resolve_ticket_type_from_manifest(tid, lib_dir, timeout)
+    if manifest_type is not None:
+        return manifest_type
+
     script = f'source "{lib_dir}/linear-api.sh" >/dev/null 2>&1 && get_issue "$1"'
     try:
         proc = subprocess.run(

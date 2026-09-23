@@ -327,6 +327,96 @@ test_render_fleet_wide_section_survives_zero_active_pipelines() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# tracker-local-facts-read-migration (task 7.2): manifest-backed columns
+# ═══════════════════════════════════════════════════════════════════════════════
+
+TAP_LIB_DIR="$(cd "$LIB_DIR/../../ticket-auto-pipeline/lib" && pwd)"
+source "$TAP_LIB_DIR/manifest-write.sh"
+
+test_render_includes_blocked_by_dispatch_hold_headers() {
+  local data='{"summary":{"total":1,"healthy":1,"warn":0,"kill":0,"restart":0},"pipelines":[{"tid":"WIL-1","phase":"IMPLEMENT","hb_age_secs":30,"severity":0,"anomalies":"none"}]}'
+  local output
+  output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
+  echo "$output" | grep -q "BLOCKED-BY" && echo "$output" | grep -q "DISPATCH" && echo "$output" | grep -q "HOLD"
+}
+
+test_blocked_by_helper_reads_manifest() {
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "WIL-100" "INIT-1" "bug" '["WIL-99"]' >/dev/null
+
+  local result
+  result=$(REPOS_ROOT="$repos_root" _fleet_dashboard_blocked_by "WIL-100")
+  rm -rf "$repos_root"
+  [ "$result" = "WIL-99" ]
+}
+
+test_blocked_by_helper_no_manifest_is_dash() {
+  local repos_root
+  repos_root=$(mktemp -d)
+  local result
+  result=$(REPOS_ROOT="$repos_root" _fleet_dashboard_blocked_by "WIL-101")
+  rm -rf "$repos_root"
+  [ "$result" = "-" ]
+}
+
+test_dispatch_status_helper_reads_manifest() {
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "WIL-102" "INIT-1" "bug" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_ticket_dispatch "WIL-102" >/dev/null
+
+  local result
+  result=$(REPOS_ROOT="$repos_root" _fleet_dashboard_dispatch_status "WIL-102")
+  rm -rf "$repos_root"
+  [ "$result" = "yes" ]
+}
+
+test_dispatch_status_helper_pending() {
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "WIL-103" "INIT-1" "bug" '[]' >/dev/null
+
+  local result
+  result=$(REPOS_ROOT="$repos_root" _fleet_dashboard_dispatch_status "WIL-103")
+  rm -rf "$repos_root"
+  [ "$result" = "pending" ]
+}
+
+test_hold_reason_helper_from_human_hold() {
+  local ws
+  ws=$(mktemp -d)
+  echo '2026-06-05T12:00:00Z|META|human-hold|waiting|{"REASON": "needs-clarification"}' >"$ws/WIL-104-pipeline.log"
+
+  local result
+  result=$(_fleet_dashboard_hold_reason "WIL-104" "$ws")
+  rm -rf "$ws"
+  [ "$result" = "needs-clarification" ]
+}
+
+test_hold_reason_helper_from_gate_fail() {
+  local ws
+  ws=$(mktemp -d)
+  echo '2026-06-05T12:00:00Z|GATE|gate|fail|held: complex ticket' >"$ws/WIL-105-pipeline.log"
+
+  local result
+  result=$(_fleet_dashboard_hold_reason "WIL-105" "$ws")
+  rm -rf "$ws"
+  [ "$result" = "held: complex ticket" ]
+}
+
+test_hold_reason_helper_no_hold_is_dash() {
+  local ws
+  ws=$(mktemp -d)
+  echo '2026-06-05T12:00:00Z|IMPLEMENT|implement|waiting|Agent launched' >"$ws/WIL-106-pipeline.log"
+
+  local result
+  result=$(_fleet_dashboard_hold_reason "WIL-106" "$ws")
+  rm -rf "$ws"
+  [ "$result" = "-" ]
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Runner
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -357,7 +447,15 @@ for fn in \
   test_findings_summary_ignores_other_tickets \
   test_render_includes_findings_column_header \
   test_render_shows_findings_for_a_ticket \
-  test_write_report_includes_findings_column; do
+  test_write_report_includes_findings_column \
+  test_render_includes_blocked_by_dispatch_hold_headers \
+  test_blocked_by_helper_reads_manifest \
+  test_blocked_by_helper_no_manifest_is_dash \
+  test_dispatch_status_helper_reads_manifest \
+  test_dispatch_status_helper_pending \
+  test_hold_reason_helper_from_human_hold \
+  test_hold_reason_helper_from_gate_fail \
+  test_hold_reason_helper_no_hold_is_dash; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

@@ -1149,10 +1149,42 @@ detect_blocked_by() {
   local log_file="${workspace}/${tid}-pipeline.log"
 
   # This is primarily a fleet-wide detector — per-ticket invocation
-  # checks whether THIS ticket has a blocked-by label and whether its
+  # checks whether THIS ticket has a blocked-by entry and whether its
   # blocker is Done. The fleet-wide scan aggregates all.
-  #
-  # We need linear-api.sh for this check. If unavailable, return OBSERVE.
+  if [ ! -f "$log_file" ]; then
+    echo "0"
+    return
+  fi
+
+  # tracker-local-facts-read-migration (task 3.3): read blocked_by from the
+  # ticket's own manifest and each blocker's terminal state from ITS OWN
+  # pipeline log — no live tracker query at all when a manifest exists.
+  if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+    local _tap_lib
+    for _tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+      [ -f "$_tap_lib/manifest-read.sh" ] && source "$_tap_lib/manifest-read.sh" && break
+    done
+  fi
+
+  if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$tid" 2>/dev/null; then
+    local blocked_by_json unblocked_count=0 blocker_id
+    blocked_by_json=$(get_ticket_manifest_field "$tid" blocked_by 2>/dev/null)
+    [ -z "$blocked_by_json" ] && blocked_by_json='[]'
+
+    while IFS= read -r blocker_id; do
+      [ -z "$blocker_id" ] && continue
+      ticket_pipeline_terminal_done "$blocker_id" "$workspace" && unblocked_count=$((unblocked_count + 1))
+    done < <(echo "$blocked_by_json" | jq -r '.[]?' 2>/dev/null)
+
+    if [ "$unblocked_count" -gt 0 ]; then
+      echo "1"
+    else
+      echo "0"
+    fi
+    return
+  fi
+
+  # ── Pre-migration fallback: no manifest — live Linear query ───────────────
   if ! declare -f get_issue >/dev/null 2>&1; then
     local _la_paths=("$HOME/.claude/skills/lib/linear-api.sh" "${_CONFIG_DIR}/../linear-api.sh")
     for _lp in "${_la_paths[@]}"; do
@@ -1166,15 +1198,7 @@ detect_blocked_by() {
     return
   fi
 
-  # Per-ticket: check if this ticket has blocked-by labels in its pipeline log
-  # or check Linear for the ticket's labels
-  if [ ! -f "$log_file" ]; then
-    echo "0"
-    return
-  fi
-
-  # Check if the ticket's pipeline log references blocked-by labels
-  # We use the Linear API to get current label state
+  # Check Linear for the ticket's labels
   local issue_json
   if ! issue_json=$(get_issue "$tid" 2>/dev/null); then
     echo "0"
@@ -1223,6 +1247,41 @@ detect_initiative_dispatch() {
   echo "0"
 }
 
+# _fleet_initiative_dispatch_auto_dispatch <workspace> <initiative_ids>
+# Shared actuation for _fleet_scan_initiative_dispatch's manifest and
+# fallback paths: when FLEET_AUTO_DISPATCH=true, call fleet_dispatch_initiative
+# for each initiative_ids entry ("INIT-42(3)" — strip the count suffix). The
+# human approval gate still stops every ticket — this automates dispatch,
+# not approval.
+_fleet_initiative_dispatch_auto_dispatch() {
+  local workspace="$1" initiative_ids="$2"
+
+  [ "${FLEET_AUTO_DISPATCH}" = "true" ] || return 0
+
+  if ! declare -f fleet_dispatch_initiative >/dev/null 2>&1; then
+    local _dispatch_lib="${_CONFIG_DIR}/fleet-dispatch.sh"
+    [ -f "$_dispatch_lib" ] && source "$_dispatch_lib"
+  fi
+
+  if ! declare -f fleet_dispatch_initiative >/dev/null 2>&1; then
+    echo "[FLEET_AUTO_DISPATCH] WARNING: fleet_dispatch_initiative not available — cannot auto-dispatch" >&2
+    return 0
+  fi
+
+  local epic_id
+  for epic_id in $initiative_ids; do
+    # Strip the count suffix: "INIT-42(3)" → "INIT-42"
+    local clean_id="${epic_id%(*}"
+    if [ "${FLEET_DRY_RUN:-false}" = "true" ]; then
+      echo "[FLEET_AUTO_DISPATCH] would dispatch initiative: ${clean_id}" >&2
+    else
+      fleet_dispatch_initiative "$clean_id" "${workspace:-}" 2>&1 | while IFS= read -r dispatch_msg; do
+        echo "[FLEET_AUTO_DISPATCH] ${clean_id}: ${dispatch_msg}" >&2
+      done
+    fi
+  done
+}
+
 # Fleet-wide initiative dispatch scan. Runs once per fleet_detect_all call.
 # Usage: _fleet_scan_initiative_dispatch [workspace]
 # The workspace is threaded through to fleet_dispatch_initiative so the spawn
@@ -1232,6 +1291,77 @@ detect_initiative_dispatch() {
 # somewhere fleetd never reads.
 _fleet_scan_initiative_dispatch() {
   local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+
+  # tracker-local-facts-read-migration (task 3.4): enumerate dispatch-
+  # eligible epics from local epic manifests (glob under REPOS_ROOT +
+  # dispatch:true filter) and each child's own dispatch flag from its
+  # ticket manifest — no live tracker query at all on this path. Falls back
+  # to the pre-migration live query wholesale when REPOS_ROOT is unset or no
+  # epic manifests exist at all (predates this migration).
+  if ! declare -f get_epic_manifest_field >/dev/null 2>&1; then
+    local _tap_lib
+    for _tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+      [ -f "$_tap_lib/manifest-read.sh" ] && source "$_tap_lib/manifest-read.sh" && break
+    done
+  fi
+
+  # TICKET_LOCAL_MANIFEST_DISABLE (task 9.1): this enumeration reads
+  # REPOS_ROOT directly (a directory glob, not a manifest-read.sh field
+  # lookup), so it must check the kill switch itself rather than inheriting
+  # it from _manifest_repos_root the way every other migrated site does.
+  local _repos_root=""
+  [ "${TICKET_LOCAL_MANIFEST_DISABLE:-false}" = "true" ] || _repos_root="${REPOS_ROOT:-}"
+  local _epic_manifests=""
+  if [ -n "$_repos_root" ] && [ -d "$_repos_root/.ticket-auto/initiatives" ]; then
+    _epic_manifests=$(find "$_repos_root/.ticket-auto/initiatives" -mindepth 3 -maxdepth 3 \
+      -path '*/epic/manifest.json' 2>/dev/null)
+  fi
+
+  if [ -n "$_epic_manifests" ] && declare -f get_epic_manifest_field >/dev/null 2>&1; then
+    local undispatched=0 initiative_ids=""
+    local _manifest_path epic_id
+
+    while IFS= read -r _manifest_path; do
+      [ -z "$_manifest_path" ] && continue
+      # .../.ticket-auto/initiatives/{EPIC}/epic/manifest.json
+      epic_id=$(basename "$(dirname "$(dirname "$_manifest_path")")")
+      [ -z "$epic_id" ] && continue
+
+      [ "$(get_epic_manifest_field "$epic_id" dispatch 2>/dev/null)" = "true" ] || continue
+
+      local children_json epic_undispatched=0 child_id
+      children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+      [ -z "$children_json" ] && children_json='[]'
+
+      while IFS= read -r child_id; do
+        [ -z "$child_id" ] && continue
+        [ "$(get_ticket_manifest_field "$child_id" dispatch 2>/dev/null)" = "true" ] ||
+          epic_undispatched=$((epic_undispatched + 1))
+      done < <(echo "$children_json" | jq -r '.[]?' 2>/dev/null)
+
+      if [ "$epic_undispatched" -gt 0 ]; then
+        undispatched=$((undispatched + epic_undispatched))
+        local stop_note=""
+        if [ -f "$(_fleet_epic_stop_file "$workspace" "$epic_id")" ]; then
+          stop_note=" (stopped: stop-${epic_id}.json present)"
+        fi
+        initiative_ids="${initiative_ids} ${epic_id}(${epic_undispatched})${stop_note}"
+      fi
+    done <<<"$_epic_manifests"
+
+    local findings
+    findings=$(echo "$initiative_ids" | sed 's/^ //')
+
+    if [ "$undispatched" -gt 0 ]; then
+      echo "{\"severity\":1,\"findings\":\"${undispatched} undispatched: ${findings}\"}"
+      _fleet_initiative_dispatch_auto_dispatch "$workspace" "$initiative_ids"
+    else
+      echo '{"severity":0,"findings":""}'
+    fi
+    return
+  fi
+
+  # ── Pre-migration fallback: no epic manifests found — live Linear query ──
   if ! declare -f get_issue >/dev/null 2>&1; then
     local _la_paths=("$HOME/.claude/skills/lib/linear-api.sh" "${_CONFIG_DIR}/../linear-api.sh")
     for _lp in "${_la_paths[@]}"; do
@@ -1307,34 +1437,7 @@ _fleet_scan_initiative_dispatch() {
 
   if [ "$undispatched" -gt 0 ]; then
     echo "{\"severity\":1,\"findings\":\"${undispatched} undispatched: ${findings}\"}"
-
-    # Auto-dispatch: when FLEET_AUTO_DISPATCH=true, call fleet_dispatch_initiative
-    # for each initiative with undispatched planned children.
-    # The human approval gate still stops every ticket — this automates dispatch,
-    # not approval.
-    if [ "${FLEET_AUTO_DISPATCH}" = "true" ]; then
-      # Source fleet-dispatch.sh if not already available
-      if ! declare -f fleet_dispatch_initiative >/dev/null 2>&1; then
-        local _dispatch_lib="${_CONFIG_DIR}/fleet-dispatch.sh"
-        [ -f "$_dispatch_lib" ] && source "$_dispatch_lib"
-      fi
-
-      if declare -f fleet_dispatch_initiative >/dev/null 2>&1; then
-        for epic_id in $initiative_ids; do
-          # Strip the count suffix: "INIT-42(3)" → "INIT-42"
-          local clean_id="${epic_id%(*}"
-          if [ "${FLEET_DRY_RUN:-false}" = "true" ]; then
-            echo "[FLEET_AUTO_DISPATCH] would dispatch initiative: ${clean_id}" >&2
-          else
-            fleet_dispatch_initiative "$clean_id" "${workspace:-}" 2>&1 | while IFS= read -r dispatch_msg; do
-              echo "[FLEET_AUTO_DISPATCH] ${clean_id}: ${dispatch_msg}" >&2
-            done
-          fi
-        done
-      else
-        echo "[FLEET_AUTO_DISPATCH] WARNING: fleet_dispatch_initiative not available — cannot auto-dispatch" >&2
-      fi
-    fi
+    _fleet_initiative_dispatch_auto_dispatch "$workspace" "$initiative_ids"
   else
     echo '{"severity":0,"findings":""}'
   fi
@@ -1500,13 +1603,15 @@ _fleet_scan_epic_branch_ready() {
     fi
 
     # Readiness is delegated to the single canonical children-done helper —
-    # no independent inline evaluation (duplicated checks have drifted before).
-    # The helper consumes JSONL (one child object per line), matching the
-    # jq -c '.children[] // empty' stream its own fetch path produces.
-    local children_nodes
-    children_nodes=$(echo "$epics_json" | jq -c ".[$i].children.nodes[] // empty" 2>/dev/null)
-
-    if epic_branch_children_done "$epic_id" "$children_nodes"; then
+    # no independent inline evaluation (duplicated checks have drifted
+    # before). Called with EPIC_ID only (tracker-local-facts-read-migration,
+    # task 3.1): when an epic manifest exists, the helper reads children[]
+    # and each child's own pipeline-log terminal state, no live query. Falls
+    # back to a live children fetch (via get_parent_with_children) internally
+    # when no epic manifest exists — this call site no longer pre-fetches
+    # children.nodes itself, since doing so would always win over the
+    # manifest path and defeat localizing this detector.
+    if epic_branch_children_done "$epic_id"; then
       ready_count=$((ready_count + 1))
       ready_ids="${ready_ids} ${epic_id}"
 
@@ -1754,16 +1859,24 @@ _fleet_scan_stalled_approved_children() {
 _fleet_scan_blocked_by() {
   local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
 
+  # tracker-local-facts-read-migration (task 3.3): detect_blocked_by no
+  # longer strictly requires get_issue — a ticket with a local manifest
+  # resolves entirely from disk. Best-effort source both, but no longer
+  # bail out fleet-wide just because Linear isn't available: per-ticket
+  # detect_blocked_by degrades to OBSERVE for any ticket that has neither a
+  # manifest nor a live fetch available, same end result as before for that
+  # ticket alone, not for every ticket in the fleet.
   if ! declare -f get_issue >/dev/null 2>&1; then
     local _la_paths=("$HOME/.claude/skills/lib/linear-api.sh" "${_CONFIG_DIR}/../linear-api.sh")
     for _lp in "${_la_paths[@]}"; do
       [ -f "$_lp" ] && source "$_lp" && break
     done
   fi
-
-  if ! declare -f get_issue >/dev/null 2>&1; then
-    echo '{"severity":0,"findings":""}'
-    return
+  if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+    local _tap_lib
+    for _tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+      [ -f "$_tap_lib/manifest-read.sh" ] && source "$_tap_lib/manifest-read.sh" && break
+    done
   fi
 
   # Scan all active pipeline logs and check each ticket's blocked-by status

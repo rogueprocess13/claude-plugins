@@ -10,6 +10,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}"
 source "$LIB_DIR/heartbeat.sh"
 source "$LIB_DIR/linear-api.sh"
+# manifest-write.sh backs the outcome_label mirror below (tracker-local-
+# facts-read-migration, task 5.11/1.7). Guarded — a fresh install syncs
+# lib/*.sh together, but this file is also copied standalone in some test
+# fixtures.
+if [ -f "$LIB_DIR/manifest-write.sh" ]; then
+  source "$LIB_DIR/manifest-write.sh"
+elif [ -f "$SCRIPT_DIR/manifest-write.sh" ]; then
+  source "$SCRIPT_DIR/manifest-write.sh"
+fi
 
 usage() {
   echo "Usage: $0 <TICKET-ID> <LOG-FILE>" >&2
@@ -115,6 +124,7 @@ _outcome_label_check() {
   if _has_outcome_label "$issue_json"; then
     hb_gate "outcome-check" "ok" "outcome label already present" "{\"outcome\":\"$outcome\"}"
     _plog "$LOG_FILE" "META" "outcome-label" "info" "$outcome"
+    _mirror_outcome_to_manifest "$outcome"
     return 0
   fi
 
@@ -127,7 +137,28 @@ _outcome_label_check() {
   # Authoritative source for auto-merge eligibility (ticket-auto/SKILL.md Auto-merge
   # logic) — the confirmed Linear label, not the implement terminal line.
   _plog "$LOG_FILE" "META" "outcome-label" "info" "$outcome"
+  _mirror_outcome_to_manifest "$outcome"
   return 0
+}
+
+# _mirror_outcome_to_manifest <outcome>
+# tracker-local-facts-read-migration (task 5.11/1.7): mirrors the confirmed
+# Smooth/Rough/Hard classification into the ticket's local manifest, at the
+# same close-out point the Linear label is confirmed/applied — so a local
+# reader can later obtain it without a tracker fetch. Additive and best-
+# effort: the Linear label (verified/applied above) remains the write of
+# record this phase; a missing manifest (predates this migration) is a
+# silent no-op, never a failure of the outcome-label check itself.
+#
+# Deliberately does NOT touch _has_outcome_label's live Linear read above —
+# that read exists to verify/apply this file's own write, the same
+# "confirm our own mutation landed" pattern as planner_verify_tickets
+# (task 5.6); migrating it to the manifest would make it verify against the
+# very thing it is meant to independently confirm.
+_mirror_outcome_to_manifest() {
+  local outcome="$1"
+  declare -f write_ticket_outcome_label >/dev/null 2>&1 || return 0
+  write_ticket_outcome_label "$TICKET_ID" "$outcome" 2>/dev/null || true
 }
 
 # ── Dispatch (only when executed directly) ─────────────────────────────────────

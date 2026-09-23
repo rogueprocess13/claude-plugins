@@ -323,6 +323,74 @@ BRANCH_DIRECTIVE
   return 0
 }
 
+# Resolve manifest-write.sh (which sources manifest-read.sh itself) —
+# tracker-local-facts-read-migration. Same three-level fallback as
+# _resolve_branch_directive_checker above.
+#
+# Usage: _resolve_manifest_write
+# Output: path to manifest-write.sh, or empty string if not found.
+_resolve_manifest_write() {
+  local checker script_dir
+
+  # Level 1: Plugin cache
+  checker=$(find "${HOME}/.claude/plugins/cache" -name "manifest-write.sh" \
+    -path "*/ticket-auto-pipeline/*/lib/manifest-write.sh" 2>/dev/null | sort | tail -1)
+  if [ -n "$checker" ] && [ -f "$checker" ]; then
+    echo "$checker"
+    return 0
+  fi
+
+  # Level 2: Skills lib (SessionStart hook copy / legacy installs)
+  checker="${HOME}/.claude/skills/lib/manifest-write.sh"
+  if [ -f "$checker" ]; then
+    echo "$checker"
+    return 0
+  fi
+
+  # Level 3: Relative path (sibling in same repo)
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  checker="${script_dir}/../../ticket-auto-pipeline/lib/manifest-write.sh"
+  if [ -f "$checker" ]; then
+    echo "$checker"
+    return 0
+  fi
+
+  # Not found
+  echo ""
+  return 1
+}
+
+# Make write_ticket_manifest/write_epic_manifest/add_epic_manifest_child/
+# stamp_epic_dispatch/get_epic_manifest_field/get_ticket_manifest_field
+# available in the current shell. Idempotent. Callers must not assume these
+# exist — there is no bundled copy, same discipline as
+# branch_directive_source_md_helpers above.
+#
+# Usage: planner_manifest_source_helpers
+# Returns: 0 when the helpers are declared, 1 when the source file is missing.
+planner_manifest_source_helpers() {
+  if declare -f write_ticket_manifest >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local lib
+  lib=$(_resolve_manifest_write)
+  if [ -z "$lib" ]; then
+    echo "branch-directive-gen: manifest-write.sh not found — local manifest writes unavailable (install ticket-auto-pipeline)" >&2
+    return 1
+  fi
+
+  # shellcheck source=/dev/null
+  source "$lib"
+
+  if ! declare -f write_ticket_manifest >/dev/null 2>&1; then
+    echo "branch-directive-gen: ${lib} sourced but did not define write_ticket_manifest" >&2
+    return 1
+  fi
+
+  return 0
+}
+
 # ── Self-test mode ────────────────────────────────────────────────────────────
 # Run with --self-test to smoke-check internal helpers.
 

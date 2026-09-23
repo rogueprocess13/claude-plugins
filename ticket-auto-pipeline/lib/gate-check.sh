@@ -608,8 +608,19 @@ _gate_entry() {
   # and routes to fast-path or full investigation based on the result.
   local issue_json planned_check_rc
   issue_json=$(_gate_fetch_issue "$TICKET_ID") || return $?
+  # tracker-local-facts-read-migration (task 5.1): a local ticket manifest is
+  # authoritative proof this is a planned ticket — skip the live label read
+  # when one exists. Falls back to the live label exactly as before when no
+  # manifest exists (predates this migration, or the write failed). The
+  # description is still needed regardless for 2.7a/2.7c's field-level
+  # validation, so this only narrows what decides the boolean gate, not
+  # what's fetched.
   local has_planned_label
-  has_planned_label=$(echo "$issue_json" | jq -r '[.labels.nodes[].name] | index("planned") != null' 2>/dev/null || echo 'false')
+  if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$TICKET_ID" 2>/dev/null; then
+    has_planned_label="true"
+  else
+    has_planned_label=$(echo "$issue_json" | jq -r '[.labels.nodes[].name] | index("planned") != null' 2>/dev/null || echo 'false')
+  fi
   if [ "$has_planned_label" = "true" ]; then
     local planned_desc label_names
     planned_desc=$(echo "$issue_json" | jq -r '.description // ""')
@@ -625,8 +636,13 @@ _gate_entry() {
     hb_gate "planned-check" "info" "planned ticket validated" "{\"exit_code\":\"${planned_check_rc:-0}\",\"result\":\"$CHECK_RESULT\"}"
 
     # 2.7b: Resolve Type label → template (active gate-stop)
-    local ticket_type
-    ticket_type=$(_resolve_type_label "$label_names")
+    # tracker-local-facts-read-migration (task 5.12): manifest's type field
+    # first, live label resolution as fallback.
+    local ticket_type=""
+    if declare -f get_ticket_manifest_field >/dev/null 2>&1 && ticket_manifest_exists "$TICKET_ID" 2>/dev/null; then
+      ticket_type=$(get_ticket_manifest_field "$TICKET_ID" type 2>/dev/null)
+    fi
+    [ -n "$ticket_type" ] || ticket_type=$(_resolve_type_label "$label_names")
     local template_path
     template_path=$(resolve_template "$ticket_type" 2>/dev/null) || true
     local template_rc=$?

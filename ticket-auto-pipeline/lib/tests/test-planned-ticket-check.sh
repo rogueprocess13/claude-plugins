@@ -25,6 +25,7 @@ if ! declare -f hb_gate >/dev/null 2>&1; then
 fi
 
 source "$LIB_DIR/planned-ticket-check.sh"
+source "$LIB_DIR/manifest-write.sh"
 
 PASS=0
 FAIL=0
@@ -251,6 +252,43 @@ test_api_fetch_path() {
   check_planned_ticket "CRE-100"
 }
 
+# ── Test: manifest presence drives the "is planned" gate (tracker-local-facts-read-migration) ──
+
+test_manifest_only_no_live_planned_label() {
+  # Ticket manifest exists but the live issue's labels carry no "planned"
+  # entry at all — the manifest alone must let this proceed to the
+  # description-level check (task 5.3).
+  get_issue() {
+    echo '{"description":"## Planner Context\n**Schema-Version:** 1\n**Initiative:** INIT-42\n**Epic:** CRE-100\n**Confidence:** 0.92\n**Strategy:** Balanced\n**Decision:** Fix it\n**Affected Services:** svc\n**Target Symbols:** Foo.bar:src/foo.ts:10\n**Pre-approved:** true\n**Generated:** 2026-07-07T18:00:00Z\n**Regenerate:** false","labels":{"nodes":[{"name":"feature"}]}}'
+  }
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "MANIFEST-CRE-100" "INIT-42" "feature" '[]' >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" check_planned_ticket "MANIFEST-CRE-100" 2>/dev/null || rc=$?
+  rm -rf "$repos_root"
+
+  [ "$rc" -eq 0 ] && [ "$CHECK_RESULT" = "valid" ]
+}
+
+test_manifest_absent_falls_back_to_not_planned() {
+  # No manifest anywhere — must fall back to the live label read exactly as
+  # before (not_planned, since the label is absent here).
+  get_issue() {
+    echo '{"description":"Just a regular ticket","labels":{"nodes":[{"name":"feature"}]}}'
+  }
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  local rc=0
+  REPOS_ROOT="$repos_root" check_planned_ticket "NO-MANIFEST-CRE-1" 2>/dev/null || rc=$?
+  rm -rf "$repos_root"
+
+  [ "$rc" -eq 0 ] && [ "$CHECK_RESULT" = "not_planned" ]
+}
+
 # ── Test: check_planned_ticket with not-planned ticket ─────────────────────
 
 test_not_planned_ticket() {
@@ -388,6 +426,8 @@ _run_exit_code "invalid Regenerate (yes) → exit 1" 1 test_invalid_regenerate
 _run_exit_code "Pre-approved case sensitivity (TRUE) → exit 1" 1 test_pre_approved_case_sensitivity
 _run_exit_code "Strategy case sensitivity (conservative) → exit 1" 1 test_strategy_case_sensitivity
 _run "API fetch path with mocked get_issue → exit 0" test_api_fetch_path
+_run "manifest only — no live planned label → valid" test_manifest_only_no_live_planned_label
+_run "manifest absent — falls back to not_planned" test_manifest_absent_falls_back_to_not_planned
 _run "not-planned ticket → exit 0" test_not_planned_ticket
 _run "planned ticket + valid block → exit 0" test_planned_ticket_valid
 

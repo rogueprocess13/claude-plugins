@@ -472,6 +472,31 @@ J'
   return $ok
 }
 
+test_ticket_meta_manifest_drives_type_and_planned() {
+  # tracker-local-facts-read-migration (task 5.12): a local ticket manifest
+  # must drive both type and planned, even when the live labels carry
+  # neither a matching type label nor "planned" at all.
+  _sandbox_new
+  _stub_get_issue 'cat <<J
+{"createdAt":null,"startedAt":null,"estimate":null,"priority":null,"labels":{"nodes":[{"name":"unrelated"}]}}
+J'
+  local log="$_SANDBOX/logs/T.log"
+  : >"$log"
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" bash -c "source '$_SANDBOX/lib/manifest-write.sh'; write_ticket_manifest T-20 INIT-1 chore '[]'" >/dev/null
+
+  LINEAR_API_KEY=x REPOS_ROOT="$repos_root" bash -c "source '$_SANDBOX/lib/run-identity.sh'; run_identity_ticket_meta T-20 '$log'"
+  local json ok
+  json=$(grep '|META|ticket-meta|' "$log" | cut -d'|' -f5-)
+  rm -rf "$repos_root"
+  [ "$(echo "$json" | jq -r '.type')" = "chore" ] &&
+    [ "$(echo "$json" | jq -r '.planned')" = "true" ]
+  ok=$?
+  _sandbox_rm
+  return $ok
+}
+
 # ── CLI entrypoint ─────────────────────────────────────────────────────────────
 
 test_cli_stamp_writes_run_id() {
@@ -505,6 +530,7 @@ _run "version carries skill fingerprints" test_version_carries_skill_fingerprint
 _run "version degrades without fingerprint artifact" test_version_degrades_without_fingerprint_artifact
 _run "version degrades on malformed fingerprint artifact" test_version_degrades_on_malformed_fingerprint_artifact
 _run "version counts unresolved skills" test_version_counts_unresolved_skills
+_run "ticket-meta manifest drives type and planned" test_ticket_meta_manifest_drives_type_and_planned
 _run "exactly one version line, no skill-version line" test_exactly_one_version_line_and_no_skill_version_line
 _run "current is empty with no run-id line" test_current_is_empty_with_no_run_id_line
 _run "current returns the open run id" test_current_returns_the_open_run_id
