@@ -322,12 +322,64 @@ EOF
 2026-09-01T00:00:02Z|META|pr-created|info|{"pr":42,"url":"https://github.com/acme/repo/pull/42","repo":"acme/repo"}
 EOF
   LINEAR_API_KEY=fake PATH="$_ws/bin:$PATH" HOME="$_ws/home" bash "$workdir/pipeline-finalize.sh" "CRE-7" 0 "$log" >/dev/null 2>&1
-  local run_count merge_count human_count
+  local run_count merge_count human_count has_provenance
   run_count=$(_count_kind '"kind":"run"' "$workdir/logs/runs.jsonl")
   merge_count=$(_count_kind '"kind":"merge"' "$workdir/logs/runs.jsonl")
   human_count=$(_count_kind '"kind":"human"' "$workdir/logs/runs.jsonl")
+  has_provenance=0
+  grep -q '"approval_provenance":"human"' "$workdir/logs/runs.jsonl" && has_provenance=1
   _teardown
-  [ "$run_count" -eq 1 ] && [ "$merge_count" -eq 1 ] && [ "$human_count" -eq 1 ]
+  [ "$run_count" -eq 1 ] && [ "$merge_count" -eq 1 ] && [ "$human_count" -eq 1 ] && [ "$has_provenance" -eq 1 ]
+}
+
+# ── approval_provenance attribution (tracker-inbound-approval, task 3.2) ────
+# runs.jsonl's human-approval attribution reads the manifest's
+# approval_provenance field first, live IssueHistory scan only as fallback
+# when no manifest exists. test_full_sequence_with_pr_and_linear_key above
+# already pins the no-manifest fallback case (approval_provenance:"human",
+# derived from the live scan). This test pins the manifest-present case: a
+# manifest recording "policy" wins even though the live IssueHistory scan
+# (deliberately contradictory here) would otherwise say "human".
+test_manifest_approval_provenance_read_over_live_fallback() {
+  _setup
+  cat >"$_ws/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo '{"state":"MERGED","mergedAt":"2026-09-02T00:00:00Z","mergeCommit":{"oid":"deadbeef"}}'
+EOF
+  chmod +x "$_ws/bin/gh"
+
+  cat >"$_ws/linear-api.sh" <<'EOF'
+get_issue_history() { echo '[{"id":"h1","createdAt":"2026-09-01T00:00:05Z","actor":{"id":"human-1","name":"Jane"},"botActor":null,"addedLabels":[{"name":"approved"}]}]'; }
+get_comments() { echo '[]'; }
+get_me() { echo '{"id":"bot-1","name":"pipeline-bot"}'; }
+EOF
+  local workdir="$_ws/work"
+  mkdir -p "$workdir/logs"
+  cp "$LIB_DIR/pipeline-finalize.sh" "$LIB_DIR/run-summary.sh" "$LIB_DIR/merge-poll.sh" \
+    "$LIB_DIR/manifest-write.sh" "$LIB_DIR/manifest-read.sh" "$workdir/"
+  cp "$_ws/linear-api.sh" "$workdir/linear-api.sh"
+
+  local repos_root="$_ws/repos"
+  mkdir -p "$repos_root/.ticket-auto/initiatives/_index" \
+    "$repos_root/.ticket-auto/initiatives/INIT-1/tickets/CRE-8/planner"
+  echo "INIT-1" >"$repos_root/.ticket-auto/initiatives/_index/CRE-8.initiative"
+  echo '{"type":"bug","initiative":"INIT-1","blocked_by":[],"dispatch":false,"approved":true,"approval_provenance":"policy"}' \
+    >"$repos_root/.ticket-auto/initiatives/INIT-1/tickets/CRE-8/planner/manifest.json"
+
+  local log="$workdir/logs/CRE-8-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|META|run-id|info|{"run_id":"CRE-8-a","gen":null,"trigger":"manual","pid":1}
+2026-09-01T00:00:02Z|META|pr-created|info|{"pr":42,"url":"https://github.com/acme/repo/pull/42","repo":"acme/repo"}
+EOF
+  LINEAR_API_KEY=fake REPOS_ROOT="$repos_root" PATH="$_ws/bin:$PATH" HOME="$_ws/home" \
+    bash "$workdir/pipeline-finalize.sh" "CRE-8" 0 "$log" >/dev/null 2>&1
+  local human_count has_provenance
+  human_count=$(_count_kind '"kind":"human"' "$workdir/logs/runs.jsonl")
+  has_provenance=0
+  grep -q '"approval_provenance":"policy"' "$workdir/logs/runs.jsonl" && has_provenance=1
+  _teardown
+  [ "$human_count" -eq 1 ] && [ "$has_provenance" -eq 1 ]
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -351,7 +403,8 @@ for fn in \
   test_no_linear_key_skips_human_event_only \
   test_no_gh_skips_merge_sweep_only \
   test_exit_code_preserved_nonzero \
-  test_full_sequence_with_pr_and_linear_key; do
+  test_full_sequence_with_pr_and_linear_key \
+  test_manifest_approval_provenance_read_over_live_fallback; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

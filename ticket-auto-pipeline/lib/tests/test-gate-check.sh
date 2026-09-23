@@ -39,6 +39,7 @@ _setup() {
   touch "$_flow_log"
   _fake_issue='{"id":"CRE-47","identifier":"CRE-47","title":"Test","labels":{"nodes":[]}}'
   _fake_complexity="simple"
+  _fake_manifest_exists_override=""
 
   LOG_FILE="${_ws}/${_tid}-pipeline.log"
   HB_LOG_FILE="${_ws}/${_tid}-heartbeat.log"
@@ -83,6 +84,14 @@ FLOWEOF
 
   # Override resolve_ticket_dir
   resolve_ticket_dir() { echo "${_ws}/${1}--test"; }
+
+  # Override emit_event to record calls instead of writing real outbox
+  # files (tracker-inbound-approval) — gate-check.sh sources the real
+  # events.sh, so without this override _gate_emit_held/_gate_emit_released
+  # would attempt genuine outbox writes under FLEET_PIPELINE_LOG_DIR.
+  emit_event() {
+    echo "emit_event|$1|$2|$3" >>"${_ws}/emit-calls.log"
+  }
 }
 
 # Scaffold default context.md and notes.md so checks 2.5a (ZERO_AC) and
@@ -179,6 +188,20 @@ export CLAUDE_SKILLS_LIB="$LIB_DIR"
 
 source "$LIB_DIR/gate-check.sh"
 source "$LIB_DIR/manifest-write.sh"
+
+# Captured once, before any test-local override — used by the "stale
+# manifest" guard tests below to force Check 2.7's planned-ticket branch
+# onto its live-label path (no "planned" label in _fake_issue) while
+# get_ticket_manifest_field/set_ticket_approval still read/write the real
+# manifest file underneath. Only Check 2.7 (gate-check.sh:619,642) ever
+# calls ticket_manifest_exists, so this override is scoped to exactly the
+# behavior those tests need to bypass.
+eval "$(declare -f ticket_manifest_exists | sed '1s/^ticket_manifest_exists ()/_real_ticket_manifest_exists()/')"
+_fake_manifest_exists_override=""
+ticket_manifest_exists() {
+  [ "$_fake_manifest_exists_override" = "false" ] && return 1
+  _real_ticket_manifest_exists "$@"
+}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Entry mode tests (core: 12, Check 2.5: 5, Check 2.5a: 2, Check 2.5b: 3,
@@ -1972,6 +1995,189 @@ test_reapprove_get_issue_missing_labels_gate_stops() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Outbox release-pairing (tracker-inbound-approval, Track B Phase B4)
+# gate-hold-intake spec: "Every approval-type hold-clearing path emits a
+# matching release event" — Check 5's policy auto-approve and Check
+# 2.8c/4's manual-mode override must call _gate_emit_released with the
+# correct provenance, matching the reapprove path's pre-existing behavior.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 42. Check 5 (simple + auto) auto-approve emits gate-released with policy provenance
+test_check5_auto_approve_emits_released_policy() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+
+  _gate_entry
+  local rc=$?
+
+  local emit_calls
+  emit_calls=$(cat "${_ws}/emit-calls.log" 2>/dev/null || true)
+  local flow_calls
+  flow_calls=$(cat "$_flow_log" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 0 ] || {
+    echo "expected exit 0, got $rc"
+    return 1
+  }
+  echo "$emit_calls" | grep -q 'emit_event|.*|gate-released|{"provenance":"policy"}' || {
+    echo "expected emit_event gate-released with policy provenance, got: $emit_calls"
+    return 1
+  }
+  echo "$flow_calls" | grep -q -- "--provenance policy" || {
+    echo "expected flow.sh human-approve called with --provenance policy, got: $flow_calls"
+    return 1
+  }
+}
+
+# 43. Check 2.8c (complex + manual + approved + Ready) override emits gate-released with human provenance
+test_check28c_manual_override_emits_released_human() {
+  _setup
+  _scaffold_exec_done "complex" "manual" "openspec" "${_ws}/openspec-change.md"
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Ready"},"labels":{"nodes":[{"name":"approved"},{"name":"bug"}]}}'
+
+  _gate_entry
+  local rc=$?
+
+  local emit_calls
+  emit_calls=$(cat "${_ws}/emit-calls.log" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 0 ] || {
+    echo "expected exit 0, got $rc"
+    return 1
+  }
+  echo "$emit_calls" | grep -q 'emit_event|.*|gate-released|{"provenance":"human"}' || {
+    echo "expected emit_event gate-released with human provenance, got: $emit_calls"
+    return 1
+  }
+}
+
+# 44. Check 4 (simple + manual + approved + Ready) override emits gate-released with human provenance
+test_check4_manual_override_emits_released_human() {
+  _setup
+  _scaffold_exec_done "simple" "manual" "simple-fix" "${_ws}/simple-fix.md"
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Ready"},"labels":{"nodes":[{"name":"approved"},{"name":"bug"}]}}'
+
+  _gate_entry
+  local rc=$?
+
+  local emit_calls
+  emit_calls=$(cat "${_ws}/emit-calls.log" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 0 ] || {
+    echo "expected exit 0, got $rc"
+    return 1
+  }
+  echo "$emit_calls" | grep -q 'emit_event|.*|gate-released|{"provenance":"human"}' || {
+    echo "expected emit_event gate-released with human provenance, got: $emit_calls"
+    return 1
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Approval-decision reads stay live (tracker-inbound-approval, task 4.1)
+# design.md Non-Goal: gate-check.sh's approval-decision reads (Checks 2.8b,
+# 2.8c, 4, reapprove) are NOT migrated to the manifest — a stale/contradictory
+# manifest approved=true must never override the live Linear read. Pins the
+# guard so a future change can't silently reintroduce the staleness risk.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_scaffold_stale_approved_manifest() {
+  local repos_root="$1"
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
+  # Force Check 2.7's planned-ticket branch onto its live-label path (no
+  # "planned" label in _fake_issue here) — this manifest exists only to
+  # probe approval-decision reads, not to exercise the planned-ticket flow.
+  _fake_manifest_exists_override="false"
+}
+
+# 45. Check 2.8b never reads a stale manifest approved=true
+test_check28b_ignores_stale_manifest_approved() {
+  _setup
+  _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/openspec-change.md"
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  _scaffold_stale_approved_manifest "$repos_root"
+
+  REPOS_ROOT="$repos_root" _gate_entry
+  local rc=$?
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 1 ] || {
+    echo "expected exit 1 (held: complex ticket) — a stale manifest approved=true must not override the live Linear read (Check 2.8b), got $rc"
+    return 1
+  }
+}
+
+# 46. Check 2.8c never reads a stale manifest approved=true
+test_check28c_ignores_stale_manifest_approved() {
+  _setup
+  _scaffold_exec_done "complex" "manual" "openspec" "${_ws}/openspec-change.md"
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  _scaffold_stale_approved_manifest "$repos_root"
+
+  REPOS_ROOT="$repos_root" _gate_entry
+  local rc=$?
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 1 ] || {
+    echo "expected exit 1 (held: complex ticket) — a stale manifest approved=true must not override the live Linear read (Check 2.8c), got $rc"
+    return 1
+  }
+}
+
+# 47. Check 4 never reads a stale manifest approved=true
+test_check4_ignores_stale_manifest_approved() {
+  _setup
+  _scaffold_exec_done "simple" "manual" "simple-fix" "${_ws}/simple-fix.md"
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  _scaffold_stale_approved_manifest "$repos_root"
+
+  REPOS_ROOT="$repos_root" _gate_entry
+  local rc=$?
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 1 ] || {
+    echo "expected exit 1 (held: manual mode) — a stale manifest approved=true must not override the live Linear read (Check 4), got $rc"
+    return 1
+  }
+}
+
+# 48. Reapprove path never reads a stale manifest approved=true
+test_reapprove_ignores_stale_manifest_approved() {
+  _setup
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  _scaffold_stale_approved_manifest "$repos_root"
+
+  REPOS_ROOT="$repos_root" _gate_reapprove
+  local rc=$?
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2 (APPROVAL_REVOKED) — a stale manifest approved=true must not override the live Linear read (reapprove), got $rc"
+    return 1
+  }
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Dispatcher
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2089,7 +2295,14 @@ for fn in \
   test_reapprove_get_issue_fetch_failure_not_conflated_with_revoked \
   test_reapprove_get_issue_missing_labels_gate_stops \
   test_manifest_only_drives_check_2_7 \
-  test_manifest_type_field_drives_template_resolution; do
+  test_manifest_type_field_drives_template_resolution \
+  test_check5_auto_approve_emits_released_policy \
+  test_check28c_manual_override_emits_released_human \
+  test_check4_manual_override_emits_released_human \
+  test_check28b_ignores_stale_manifest_approved \
+  test_check28c_ignores_stale_manifest_approved \
+  test_check4_ignores_stale_manifest_approved \
+  test_reapprove_ignores_stale_manifest_approved; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

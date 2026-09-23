@@ -137,15 +137,13 @@ _pf_post_outcome() {
 
   # Human event, only when a Linear key is available.
   #
-  # tracker-local-facts-read-migration (task 6.2): forward reference, not
-  # retargeted. Human-approval attribution is exactly the local fact B4
-  # (inbound approval / gate-hold intake pass) will eventually formalize —
-  # but B4 has no live caller yet (per fleet-controller/CLAUDE.md: "no live
-  # caller yet" for `gate_hold.py`'s hold-row creation), so there is no local
-  # field to point at today. This `get_issue_history` scan stays the interim
-  # behavior until B4 ships; revisit this comment when it does.
+  # tracker-inbound-approval (Track B Phase B4): approval_provenance reads
+  # the local manifest first — the informational field B4 added, written by
+  # flow.sh's human-approve/pr-iterate triggers — falling back to the live
+  # `get_issue_history` scan below only when no manifest exists, exactly as
+  # this whole block behaved before B4 shipped.
   if [ -n "${LINEAR_API_KEY:-}" ] && [ -f "$_PF_LIB_DIR/linear-api.sh" ]; then
-    local history_json comments_json me_json my_id human_json
+    local history_json comments_json me_json my_id human_json manifest_provenance
     history_json=$(timeout 20 bash -c "source '$_PF_LIB_DIR/linear-api.sh'; get_issue_history '$tid'" 2>/dev/null) || history_json=""
     comments_json=$(timeout 20 bash -c "source '$_PF_LIB_DIR/linear-api.sh'; get_comments '$tid'" 2>/dev/null) || comments_json=""
     me_json=$(timeout 20 bash -c "source '$_PF_LIB_DIR/linear-api.sh'; get_me" 2>/dev/null) || me_json=""
@@ -153,9 +151,18 @@ _pf_post_outcome() {
     echo "$comments_json" | jq -e . >/dev/null 2>&1 || comments_json="[]"
     my_id=$(echo "$me_json" | jq -r '.id // empty' 2>/dev/null) || true
 
+    manifest_provenance=""
+    if [ -f "$_PF_LIB_DIR/manifest-write.sh" ]; then
+      source "$_PF_LIB_DIR/manifest-write.sh" 2>/dev/null || true
+      if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+        manifest_provenance=$(get_ticket_manifest_field "$tid" approval_provenance 2>/dev/null) || manifest_provenance=""
+      fi
+    fi
+
     human_json=$(jq -nc \
       --argjson history "$history_json" --argjson comments "$comments_json" \
-      --arg my_id "${my_id:-}" --arg tid "$tid" --arg run_id "${run_id:-}" '
+      --arg my_id "${my_id:-}" --arg tid "$tid" --arg run_id "${run_id:-}" \
+      --arg manifest_provenance "$manifest_provenance" '
       def is_approval_label: (.addedLabels // []) | map(.name // "" | ascii_downcase) | any(contains("approved"));
       def is_human: (.botActor == null) and ((.actor.id // "") != $my_id);
       ($history | map(select(is_approval_label and is_human)) | sort_by(.createdAt) | last) as $approval |
@@ -165,6 +172,7 @@ _pf_post_outcome() {
         kind: "human", tid: $tid, run_id: (if $run_id == "" then null else $run_id end),
         approved_by: ($approval.actor.name // null),
         approved_at: ($approval.createdAt // null),
+        approval_provenance: (if $manifest_provenance != "" then $manifest_provenance elif $approval != null then "human" else null end),
         human_actions: ($human_actions | length),
         comment_words: $comment_words,
         observed_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))

@@ -210,6 +210,44 @@ write_ticket_outcome_label() {
   _manifest_atomic_write "$manifest_path" "$content"
 }
 
+# set_ticket_approval <TID> <true|false> [provenance]
+# Writes approved/approval_provenance to the manifest (tracker-inbound-
+# approval, Track B Phase B4) — informational only, never read by a gate
+# decision (ticket-local-manifest spec). Setting approved=true requires a
+# provenance of human|policy. Setting approved=false clears both fields
+# (removed, not just falsed) so a stale provenance value never survives a
+# label removal (re-claim's clear-on-removal path). No-op (exit 1) if no
+# manifest exists yet, mirroring write_ticket_outcome_label's shape.
+set_ticket_approval() {
+  local tid="$1" approved="$2" provenance="${3:-}"
+  case "$approved" in
+  true | false) ;;
+  *)
+    echo "manifest-write: invalid approved value '$approved' (expected true|false)" >&2
+    return 3
+    ;;
+  esac
+
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  local content
+  if [ "$approved" = "true" ]; then
+    case "$provenance" in
+    human | policy) ;;
+    *)
+      echo "manifest-write: invalid provenance '$provenance' (expected human|policy)" >&2
+      return 3
+      ;;
+    esac
+    content=$(jq -c --arg p "$provenance" '.approved = true | .approval_provenance = $p' "$manifest_path") || return 1
+  else
+    content=$(jq -c 'del(.approved, .approval_provenance)' "$manifest_path") || return 1
+  fi
+  _manifest_atomic_write "$manifest_path" "$content"
+}
+
 # ── Self-test mode ────────────────────────────────────────────────────────
 
 if [ "${1:-}" = "--self-test" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
@@ -237,6 +275,13 @@ if [ "${1:-}" = "--self-test" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
 
   write_ticket_outcome_label "TEST-1" "Bogus" 2>/dev/null
   [ "$?" = "3" ] && echo "✓ invalid outcome_label rejected" || echo "✗ invalid outcome_label should be rejected"
+
+  set_ticket_approval "TEST-1" "true" "human"
+  [ "$(get_ticket_manifest_field TEST-1 approved)" = "true" ] && [ "$(get_ticket_manifest_field TEST-1 approval_provenance)" = "human" ] && echo "✓ set_ticket_approval true" || echo "✗ set_ticket_approval true"
+
+  set_ticket_approval "TEST-1" "false"
+  approved_after_clear=$(get_ticket_manifest_field TEST-1 approved)
+  [ -z "$approved_after_clear" ] && echo "✓ set_ticket_approval clear" || echo "✗ set_ticket_approval clear should remove field"
 
   rm -rf "$tmp"
   echo "Self-tests complete — run test-manifest-write.sh for full coverage."

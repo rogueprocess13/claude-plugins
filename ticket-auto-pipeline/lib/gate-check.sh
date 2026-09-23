@@ -712,6 +712,7 @@ _gate_entry() {
     if [ "$_c28c_state" = "Ready" ] && [ "$_c28c_approved" = "true" ]; then
       _plog "$LOG_FILE" "GATE" "gate" "done" "manual mode overridden: approved label + Ready state confirmed in Linear (complex ticket)"
       hb_gate "entry-gate" "ok" "manual mode overridden by Linear approval (complex)" "{\"autonomy\":\"manual\",\"complexity\":\"complex\",\"linear_state\":\"$_c28c_state\"}"
+      _gate_emit_released "human"
       _write_gate_verdict PASS
       return 0
     fi
@@ -736,6 +737,7 @@ _gate_entry() {
     if [ "$_live_state" = "Ready" ] && [ "$_live_approved" = "true" ]; then
       _plog "$LOG_FILE" "GATE" "gate" "done" "manual mode overridden: approved label + Ready state confirmed in Linear"
       hb_gate "entry-gate" "ok" "manual mode overridden by Linear approval" "{\"autonomy\":\"manual\",\"linear_state\":\"$_live_state\"}"
+      _gate_emit_released "human"
       _write_gate_verdict PASS
       return 0
     fi
@@ -748,10 +750,11 @@ _gate_entry() {
   # Check 5: Simple + auto/semi-auto → auto-approve via flow.sh
   if [ "$complexity" = "simple" ] && { [ "$autonomy" = "auto" ] || [ "$autonomy" = "semi-auto" ]; }; then
     if [ -n "$FLOW_SH" ] && [ -f "$FLOW_SH" ]; then
-      bash "$FLOW_SH" "$TICKET_ID" "human-approve" || true
+      bash "$FLOW_SH" "$TICKET_ID" "human-approve" --provenance policy || true
     fi
     _plog "$LOG_FILE" "GATE" "gate" "done" "auto-approved"
     hb_gate "entry-gate" "ok" "auto-approved" "{\"complexity\":\"$complexity\",\"autonomy\":\"$autonomy\"}"
+    _gate_emit_released "policy"
     _write_gate_verdict PASS
     return 0
   fi

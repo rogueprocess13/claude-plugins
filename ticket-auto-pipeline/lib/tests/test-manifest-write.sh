@@ -115,6 +115,36 @@ write_ticket_outcome_label "NOPE-1" "Smooth" 2>/dev/null || rc=$?
 [ "$rc" = "1" ] && _pass "write_ticket_outcome_label: no-op on missing manifest" ||
   _fail "write_ticket_outcome_label: should exit 1 on missing manifest (got $rc)"
 
+# ── set_ticket_approval (tracker-inbound-approval) ───────────────────────────
+
+set_ticket_approval "TEST-1" "true" "human"
+[ "$(get_ticket_manifest_field TEST-1 approved)" = "true" ] && _pass "set_ticket_approval: writes approved=true" ||
+  _fail "set_ticket_approval: should write approved=true"
+[ "$(get_ticket_manifest_field TEST-1 approval_provenance)" = "human" ] && _pass "set_ticket_approval: writes provenance" ||
+  _fail "set_ticket_approval: should write approval_provenance"
+
+set_ticket_approval "TEST-1" "true" "policy"
+[ "$(get_ticket_manifest_field TEST-1 approval_provenance)" = "policy" ] && _pass "set_ticket_approval: overwrites provenance in place" ||
+  _fail "set_ticket_approval: should overwrite provenance"
+
+set_ticket_approval "TEST-1" "false"
+cleared=$(get_ticket_manifest_field TEST-1 approved)
+prov_after_clear=$(get_ticket_manifest_field TEST-1 approval_provenance)
+[ -z "$cleared" ] && _pass "set_ticket_approval: clearing removes approved" ||
+  _fail "set_ticket_approval: approved should be absent after clear (got '$cleared')"
+[ -z "$prov_after_clear" ] && _pass "set_ticket_approval: clearing removes provenance" ||
+  _fail "set_ticket_approval: approval_provenance should be absent after clear (got '$prov_after_clear')"
+
+rc=0
+set_ticket_approval "TEST-1" "true" "bogus" 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_approval: rejects invalid provenance" ||
+  _fail "set_ticket_approval: should reject invalid provenance (got $rc)"
+
+rc=0
+set_ticket_approval "NOPE-1" "true" "human" 2>/dev/null || rc=$?
+[ "$rc" = "1" ] && _pass "set_ticket_approval: no-op on missing manifest" ||
+  _fail "set_ticket_approval: should exit 1 on missing manifest (got $rc)"
+
 # ── atomic write leaves no .tmp artifacts ────────────────────────────────────
 
 leftover=$(find "$REPOS_ROOT/.ticket-auto" -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')

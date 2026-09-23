@@ -2891,6 +2891,231 @@ class HumanHoldIntakePassTest(unittest.TestCase):
         self.assertEqual(notify_args[3], 'created')
 
 
+class GateHoldIntakePassTest(unittest.TestCase):
+    """The CREATE half of the 'gate' hold lifecycle on the default
+    (non-phase-dispatch) path (tracker-inbound-approval, Track B Phase B4).
+
+    `_create_phase_dispatch_hold` is the only pre-existing caller of
+    `store.set_hold` for `hold_kind='gate'`, reached only when
+    `FLEET_PHASE_DISPATCH_ENABLE` is true — before `_gate_hold_intake_pass`,
+    a router-driven (default-path) gate hold never became a store row.
+    These tests pin the creation half, scoped to the 3 approval-type
+    `gate-held` reasons.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self._tmp.name)
+
+    def tearDown(self):
+        _safe_tmp_cleanup(self._tmp)
+
+    def _supervisor(self):
+        from fleetd.supervisor import Supervisor
+        return Supervisor(
+            state_dir=str(self.workspace),
+            pidfile=str(self.workspace / 'test.pid'),
+            spawn_enabled=False,
+        )
+
+    def _write_pipeline_log(self, tid, extra_lines=None):
+        log_file = self.workspace / f'{tid}-pipeline.log'
+        lines = ['2026-09-23T00:00:00Z|META|schema|info|1']
+        if extra_lines:
+            lines.extend(extra_lines)
+        log_file.write_text('\n'.join(lines) + '\n')
+        return log_file
+
+    def _write_outbox(self, tid, events):
+        """events: list of (event, data_dict). Writes seq 1..N — the same
+        shape `ticket-auto-pipeline/lib/events.sh`'s `emit_event` writes."""
+        outbox_file = self.workspace / f'{tid}-outbox.jsonl'
+        lines = []
+        for i, (event, data) in enumerate(events, start=1):
+            rec = {
+                'seq': i, 'tid': tid, 'ts': '2026-09-23T00:00:00Z',
+                'gen': 0, 'event': event, 'data': data,
+            }
+            lines.append(json.dumps(rec))
+        outbox_file.write_text('\n'.join(lines) + '\n')
+        return outbox_file
+
+    def _spy_set_hold(self):
+        from fleetd import store
+        calls = []
+        orig = store.FleetStore.set_hold
+
+        def spy(self_store, tid, kind, hold_id, reason='', generation=0):
+            calls.append(
+                {'tid': tid, 'kind': kind, 'hold_id': hold_id,
+                 'reason': reason, 'generation': generation})
+            return orig(self_store, tid, kind, hold_id, reason=reason,
+                       generation=generation)
+
+        store.FleetStore.set_hold = spy
+        return calls, orig
+
+    def test_fresh_approval_type_gate_held_creates_row(self):
+        """5.6/5.1/5.2: an unreleased approval-type gate-held event (as if
+        written before this pass first ran, simulating an already-held
+        ticket) is picked up on the pass's first run after deployment — no
+        separate backfill script needed."""
+        from fleetd import store
+
+        tid = 'TST-GH1'
+        self._write_pipeline_log(tid, extra_lines=[
+            '2026-09-23T00:01:00Z|GATE|gate|fail|held: complex ticket'])
+        self._write_outbox(tid, [('gate-held', {'reason': 'complex-ticket'})])
+
+        sup = self._supervisor()
+        calls, orig = self._spy_set_hold()
+        sup.acquire_lock()
+        try:
+            sup._gate_hold_intake_pass()
+        finally:
+            store.FleetStore.set_hold = orig
+            sup.release_lock()
+
+        self.assertEqual(len(calls), 1, 'set_hold must be called exactly once')
+        call = calls[0]
+        self.assertEqual(call['tid'], tid)
+        self.assertEqual(call['kind'], 'gate')
+        self.assertEqual(call['reason'], 'complex-ticket')
+
+        with store.open_store(self.workspace) as st:
+            row = st.get_ticket(tid)
+        self.assertEqual(row['held'], 1)
+        self.assertEqual(row['hold_kind'], 'gate')
+        self.assertEqual(row['hold_reason'], 'complex-ticket')
+
+    def test_running_the_pass_twice_is_idempotent(self):
+        from fleetd import store
+
+        tid = 'TST-GH2'
+        self._write_pipeline_log(tid)
+        self._write_outbox(tid, [('gate-held', {'reason': 'manual-mode'})])
+
+        sup = self._supervisor()
+        calls, orig = self._spy_set_hold()
+        sup.acquire_lock()
+        try:
+            sup._gate_hold_intake_pass()
+            sup._gate_hold_intake_pass()
+        finally:
+            store.FleetStore.set_hold = orig
+            sup.release_lock()
+
+        self.assertLessEqual(len(calls), 1,
+                             'set_hold must not be called more than once '
+                             'across two passes over the same record')
+
+    def test_content_type_gate_held_creates_no_row(self):
+        """5.8: a content/fetch hold reason is ignored entirely — it is
+        never converted into a hold_kind='gate' row by this pass."""
+        from fleetd import store
+
+        tid = 'TST-GH3'
+        self._write_pipeline_log(tid)
+        self._write_outbox(tid, [
+            ('gate-held', {'reason': 'linear-fetch-failed'})])
+
+        sup = self._supervisor()
+        sup.acquire_lock()
+        try:
+            sup._gate_hold_intake_pass()
+        finally:
+            sup.release_lock()
+
+        with store.open_store(self.workspace) as st:
+            row = st.get_ticket(tid)
+        self.assertIsNone(row, 'a content-type hold must never gain a gate row')
+
+    def test_released_gate_held_creates_no_row(self):
+        """A gate-held event followed by a matching gate-released event is
+        not re-intaken — the intake trigger requires no later release."""
+        from fleetd import store
+
+        tid = 'TST-GH4'
+        self._write_pipeline_log(tid)
+        self._write_outbox(tid, [
+            ('gate-held', {'reason': 'default-fallback'}),
+            ('gate-released', {'provenance': 'policy'}),
+        ])
+
+        sup = self._supervisor()
+        sup.acquire_lock()
+        try:
+            sup._gate_hold_intake_pass()
+        finally:
+            sup.release_lock()
+
+        with store.open_store(self.workspace) as st:
+            row = st.get_ticket(tid)
+        self.assertIsNone(row, 'a released hold must never gain a gate row')
+
+    def test_phase_dispatch_hold_is_not_duplicated(self):
+        """5.7: a ticket already converted via `_create_phase_dispatch_hold`
+        (the phase-dispatch path) is not double-converted by
+        `_gate_hold_intake_pass`."""
+        from fleetd import store
+        from fleetd.supervisor import _create_phase_dispatch_hold
+
+        tid = 'TST-GH5'
+        self._write_pipeline_log(tid)
+        self._write_outbox(tid, [('gate-held', {'reason': 'complex-ticket'})])
+
+        hold_id = _create_phase_dispatch_hold(
+            str(self.workspace), tid, 0, 1, reason='complex-ticket')
+        self.assertIsNotNone(hold_id)
+
+        sup = self._supervisor()
+        calls, orig = self._spy_set_hold()
+        sup.acquire_lock()
+        try:
+            sup._gate_hold_intake_pass()
+        finally:
+            store.FleetStore.set_hold = orig
+            sup.release_lock()
+
+        self.assertEqual(calls, [],
+                         'a phase-dispatch-created hold must not be touched')
+        with store.open_store(self.workspace) as st:
+            row = st.get_ticket(tid)
+        self.assertEqual(row['hold_id'], hold_id,
+                         'the original phase-dispatch hold_id must survive')
+
+    def test_no_comment_or_notify_called(self):
+        """Non-Goals: a gate hold has no free-form question — neither
+        post_human_hold_comment nor fleet_notify_hold is ever called from
+        this pass."""
+        import fleetd.gate_hold as gate_hold_mod
+        import fleetd.supervisor as supervisor_mod
+
+        tid = 'TST-GH6'
+        self._write_pipeline_log(tid)
+        self._write_outbox(tid, [('gate-held', {'reason': 'manual-mode'})])
+
+        comment_calls = []
+        notify_calls = []
+        real_comment = gate_hold_mod.post_human_hold_comment
+        real_notify = supervisor_mod._notify_hold
+        gate_hold_mod.post_human_hold_comment = (
+            lambda *a, **k: comment_calls.append((a, k)) or (True, True))
+        supervisor_mod._notify_hold = (
+            lambda *a, **k: notify_calls.append((a, k)))
+        sup = self._supervisor()
+        sup.acquire_lock()
+        try:
+            sup._gate_hold_intake_pass()
+        finally:
+            gate_hold_mod.post_human_hold_comment = real_comment
+            supervisor_mod._notify_hold = real_notify
+            sup.release_lock()
+
+        self.assertEqual(comment_calls, [])
+        self.assertEqual(notify_calls, [])
+
+
 class DualInvocationInterlockTest(unittest.TestCase):
     """The dual-invocation interlock (task 4.19) actually gates the live
     ticket-level spawn path — `_consume_queue` — not just its own unit

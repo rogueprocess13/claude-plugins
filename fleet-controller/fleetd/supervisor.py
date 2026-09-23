@@ -3098,6 +3098,76 @@ def _find_unreleased_human_hold(state_dir, tid):
     return last_valid_record
 
 
+#: The 3 `_gate_emit_held` reasons (`ticket-auto-pipeline/lib/gate-check.sh`)
+#: that represent "waiting on an approval decision" — the other 5 call sites
+#: (`linear-fetch-failed`, `critique-score-below-threshold`,
+#: `verification-prerequisites-missing`, `critique-cross-validation-failed`)
+#: are content/fetch holds that resolve by a gate re-run, not an approval,
+#: and are out of scope for `_gate_hold_intake_pass` (tracker-inbound-
+#: approval, design.md Non-Goals).
+_GATE_HOLD_APPROVAL_REASONS = frozenset(
+    {'complex-ticket', 'manual-mode', 'default-fallback'})
+
+
+def _find_unreleased_gate_hold(state_dir, tid):
+    """The latest unreleased approval-type `gate-held` outbox event for
+    `tid`, or `None` (tracker-inbound-approval, Track B Phase B4).
+
+    Reads the ticket's own event outbox
+    (`ticket-auto-pipeline/lib/events.sh`'s `{tid}-outbox.jsonl`) rather
+    than a second pipeline-log parser for the `held: ` message text —
+    design.md's Decision: "the intake trigger is the gate-held outbox
+    event, not a second log parser". Same read shape as `pusher.py`'s
+    `_read_outbox_entries` (glob-free, per-ticket file, `seq`-ordered,
+    tolerant of a malformed line), but scanned in file order for the
+    latest-record-with-no-later-release logic below rather than filtered
+    by `after_seq`.
+
+    Filters to `_GATE_HOLD_APPROVAL_REASONS` — a `gate-held` event with any
+    other reason (a content/fetch hold) is ignored entirely, exactly like
+    `_human_hold_intake_pass` ignores a malformed human-hold record.
+    `gate-check.sh`'s `_gate_emit_released` is called at every approval-type
+    hold-clearing path (Check 5's policy auto-approve, Check 2.8c/4's
+    manual-mode override, and the reapprove path), so a matching-reason
+    `gate-held` with no later `gate-released` genuinely means "still held",
+    not an incomplete outbox.
+
+    Returns the raw outbox record dict for the latest matching, unreleased
+    `gate-held` event, or `None` when there is not one.
+    """
+    log_dir = os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(state_dir)
+    outbox = Path(log_dir) / f'{tid}-outbox.jsonl'
+    if not outbox.is_file():
+        return None
+
+    latest_held = None
+    released_after_latest = False
+    try:
+        with open(outbox, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                event = rec.get('event')
+                if event == 'gate-held':
+                    reason = (rec.get('data') or {}).get('reason')
+                    if reason in _GATE_HOLD_APPROVAL_REASONS:
+                        latest_held = rec
+                        released_after_latest = False
+                elif event == 'gate-released' and latest_held is not None:
+                    released_after_latest = True
+    except OSError:
+        return None
+
+    if latest_held is None or released_after_latest:
+        return None
+    return latest_held
+
+
 def _foreign_run_for_tid(state_dir, tid):
     """Read a ticket's log/activity state and ask `detect_foreign_run`.
 
@@ -3262,6 +3332,10 @@ class Supervisor:
         # always scans for a fresh record rather than waiting a full
         # interval after a restart.
         self._human_hold_intake_last_run = None
+        # Gate hold intake's own cadence (tracker-inbound-approval, Track B
+        # Phase B4) — tracked separately from both timers above, same
+        # `None`-means-never-run-yet convention.
+        self._gate_hold_intake_last_run = None
         # Board pusher's own cadence (tracker-event-board-pusher, Phase B2).
         # Same `None`-means-never-run-yet convention as the two timers above
         # — the first cycle always attempts a drain rather than waiting a
@@ -5075,6 +5149,82 @@ class Supervisor:
                 lib_dir=str(self._fleet_lib_dir))
             _notify_hold(self._fleet_lib_dir, self._state_dir, tid, 'created')
 
+    def _gate_hold_intake_pass(self):
+        """Creation half of the `'gate'` hold lifecycle, approval-type
+        holds only (tracker-inbound-approval, Track B Phase B4).
+
+        Mirrors `_human_hold_intake_pass` above (#305) — closes the
+        identical gap `_create_phase_dispatch_hold` leaves on the default,
+        router-driven dispatch path: its only caller is
+        `_act_on_next_step_locked`'s `NEXT_HOLD` branch, reached only when
+        `FLEET_PHASE_DISPATCH_ENABLE` is true (default false), so a
+        router-driven complex/manual-mode ticket held at the entry gate
+        today produces a pipeline-log `held:` line and a `gate-held` outbox
+        event but never a `hold_kind='gate'` store row.
+
+        Scoped to the 3 approval-type `gate-held` reasons
+        (`complex-ticket`/`manual-mode`/`default-fallback`) via
+        `_find_unreleased_gate_hold` — the other 5 `_gate_emit_held` call
+        sites are content/fetch holds that resolve by a subsequent gate
+        re-run, not an approval decision, and get no row from this pass
+        (design.md Non-Goals).
+
+        Unlike `_human_hold_intake_pass`, this pass calls neither
+        `post_human_hold_comment` nor `_notify_hold` — a gate hold carries
+        no free-form question, and the operator's existing signal (the
+        pipeline-log `held:` line, the dashboard's hold-reason column,
+        `hb_gate`'s heartbeat entry) already covers it (design.md
+        Non-Goals: "no new Slack/comment notifier for gate holds").
+
+        Same fail-soft, idempotent shape as `_human_hold_intake_pass`:
+        every store call goes through the `_store_*` fail-soft wrappers, so
+        a store outage or an already-converted hold (phase-dispatch path,
+        or an earlier intake pass) degrades to "try again next pass", never
+        a raised exception. `attempt` is always `0` for `mint_hold_id` —
+        unlike a human hold's ask/re-ask loop, an approval-type gate hold
+        has no attempt counter of its own to thread through; `set_hold`'s
+        `WHERE held = 0` guard is what makes a repeated call idempotent
+        regardless.
+
+        Called from `run_observe`'s cycle body only, on its own cadence
+        (`_gate_hold_intake_last_run`) — same reasoning as
+        `_human_hold_intake_pass`: not the 30s detection sweep.
+        """
+        if _gate_hold_mod is None:
+            return
+        for log_file in sorted(self._state_dir.glob('*-pipeline.log')):
+            tid = log_file.name[:-len('-pipeline.log')]
+            if not tid:
+                continue
+            if _store_ticket_is_held(self._state_dir, tid):
+                continue
+            if _log_reached_terminal(self._state_dir, tid):
+                continue
+
+            record = _find_unreleased_gate_hold(self._state_dir, tid)
+            if record is None:
+                continue
+
+            row = _store_get_ticket(self._state_dir, tid) or {}
+            generation = int(row.get('generation') or 0)
+
+            hold_id = _store_mint_hold_id(self._state_dir, tid, generation, 0)
+            if not hold_id:
+                # Store unavailable this pass — deferred to the next one,
+                # per the fail-soft contract above.
+                continue
+
+            reason = (record.get('data') or {}).get('reason', '')
+            rowcount = _store_set_hold(
+                self._state_dir, tid, 'gate', hold_id,
+                reason=reason, generation=generation)
+            if not rowcount:
+                # Already converted by an earlier pass or the phase-dispatch
+                # path (idempotent), or the store went away between mint
+                # and set — either way, no duplicate row.
+                continue
+            # No comment/notification — see docstring above.
+
     # ── run ─────────────────────────────────────────────────────────────────
 
     # ── OTel exporter supervision ──────────────────────────────────────────
@@ -5326,6 +5476,18 @@ class Supervisor:
                         self._human_hold_intake_last_run):
                     self._human_hold_intake_pass()
                     self._human_hold_intake_last_run = time.time()
+
+                # 4a-2b. Gate-hold intake pass (tracker-inbound-approval,
+                # Track B Phase B4) — the CREATE half of the `'gate'` hold
+                # lifecycle on the default (non-phase-dispatch) path,
+                # unconditional like the human-hold intake pass above —
+                # NOT gated behind FLEET_PHASE_DISPATCH_ENABLE, since its
+                # entire purpose is covering the path that flag being false
+                # leaves uncovered.
+                if _gate_hold_mod is not None and _gate_hold_mod.is_due(
+                        self._gate_hold_intake_last_run):
+                    self._gate_hold_intake_pass()
+                    self._gate_hold_intake_last_run = time.time()
 
                 # 4a-3. Board pusher pass (tracker-event-board-pusher, Phase
                 # B2) — its own cadence, gated behind

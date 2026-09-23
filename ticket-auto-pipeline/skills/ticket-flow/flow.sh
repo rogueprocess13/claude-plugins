@@ -37,15 +37,24 @@ if [ -f "$LIB_DIR/events.sh" ]; then
 elif [ -f "$SCRIPT_DIR/../../lib/events.sh" ]; then
   source "$SCRIPT_DIR/../../lib/events.sh"
 fi
+# manifest-write.sh backs the approval-provenance manifest write below
+# (tracker-inbound-approval, Track B Phase B4) — informational only, never
+# a decision read. Guarded like every other optional lib source here.
+if [ -f "$LIB_DIR/manifest-write.sh" ]; then
+  source "$LIB_DIR/manifest-write.sh"
+elif [ -f "$SCRIPT_DIR/../../lib/manifest-write.sh" ]; then
+  source "$SCRIPT_DIR/../../lib/manifest-write.sh"
+fi
 
 SM="$SCRIPT_DIR/workflow.json"
 
 usage() {
-  echo "Usage: $0 <TICKET-ID> <TRIGGER> [--generation N] [--state-dir DIR] [--data key=value ...] [--dry-run] [--override REASON]" >&2
+  echo "Usage: $0 <TICKET-ID> <TRIGGER> [--generation N] [--state-dir DIR] [--data key=value ...] [--dry-run] [--override REASON] [--provenance human|policy]" >&2
   echo "" >&2
   echo "  --generation N   Caller's generation token (required when fence is active)" >&2
   echo "  --state-dir DIR   Fleet state directory for fence marker lookup" >&2
   echo "  --override REASON   Force a verdict-gated trigger past a trailing FAIL/BLOCK verifier-result" >&2
+  echo "  --provenance human|policy   Who approved (human-approve/pr-iterate only; default human)" >&2
   echo "" >&2
   echo "Valid triggers (from workflow.json):" >&2
   jq -r '.triggers | keys[]' "$SM" 2>/dev/null | sed 's/^/  /' >&2
@@ -81,6 +90,7 @@ DRY_RUN=false
 CALLER_GENERATION=""
 FLEET_STATE_DIR="${FLEET_STATE_DIR:-}"
 OVERRIDE_REASON=""
+PROVENANCE="human"
 declare -A DATA=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -95,6 +105,10 @@ while [ $# -gt 0 ]; do
     ;;
   --override)
     OVERRIDE_REASON="$2"
+    shift
+    ;;
+  --provenance)
+    PROVENANCE="$2"
     shift
     ;;
   --data)
@@ -121,6 +135,24 @@ _emit_schema_header() {
   if [ ! -s "$LOG_FILE" ]; then
     _log "META|schema|info|1"
   fi
+}
+
+# ── Approval-provenance manifest write (tracker-inbound-approval) ──────────
+# Called only once the Linear mutation is confirmed (idempotent no-op exit,
+# where the desired label state already holds — or the post-trigger
+# assertion above has already passed). Informational only: never a decision
+# read (ticket-local-manifest spec). Fail-soft — never alters flow.sh's own
+# exit code or the caller-visible result.
+_write_approval_manifest() {
+  declare -f set_ticket_approval >/dev/null 2>&1 || return 0
+  case "$TRIGGER" in
+  human-approve | pr-iterate)
+    set_ticket_approval "$TICKET_ID" true "$PROVENANCE" 2>/dev/null || true
+    ;;
+  re-claim)
+    set_ticket_approval "$TICKET_ID" false 2>/dev/null || true
+    ;;
+  esac
 }
 
 # ── Validate workflow.json ─────────────────────────────────────────────
@@ -411,6 +443,7 @@ if ! $STATE_CHANGED && ! $LABELS_CHANGED && [ "$SET_ASSIGNEE_ME" = "false" ]; th
   if [ "$TRIGGER" = "implement-outcome" ] && [ -n "${DATA[outcome]:-}" ]; then
     _log "IMPLEMENT|implement-outcome|info|${DATA[outcome]}"
   fi
+  _write_approval_manifest
   exit 0
 fi
 
@@ -515,6 +548,8 @@ fi
 if [ "$TRIGGER" = "implement-outcome" ] && [ -n "${DATA[outcome]:-}" ]; then
   _log "IMPLEMENT|implement-outcome|info|${DATA[outcome]}"
 fi
+
+_write_approval_manifest
 
 # ── Dual-write to the event outbox (tracker-event-vocabulary-and-emitter) ──
 # Generic 1:1 fact mapping: a vocabulary entry whose "trigger" field names
