@@ -137,11 +137,14 @@ _pf_post_outcome() {
 
   # Human event, only when a Linear key is available.
   #
-  # tracker-inbound-approval (Track B Phase B4): approval_provenance reads
-  # the local manifest first — the informational field B4 added, written by
-  # flow.sh's human-approve/pr-iterate triggers — falling back to the live
-  # `get_issue_history` scan below only when no manifest exists, exactly as
-  # this whole block behaved before B4 shipped.
+  # tracker-approval-by-script: approval_provenance reads the local
+  # manifest only — the authoritative field written by flow.sh's
+  # human-approve/pr-iterate triggers (superseding B4's informational-only
+  # stance and its live-history fallback; see ticket-local-manifest spec's
+  # "The approval fields are the authoritative approval decision"). The
+  # `get_issue_history` fetch below still backs `approved_by`/`approved_at`/
+  # `human_actions` — broader evidentiary fields this change does not touch
+  # — it just no longer supplies a provenance fallback.
   if [ -n "${LINEAR_API_KEY:-}" ] && [ -f "$_PF_LIB_DIR/linear-api.sh" ]; then
     local history_json comments_json me_json my_id human_json manifest_provenance
     history_json=$(timeout 20 bash -c "source '$_PF_LIB_DIR/linear-api.sh'; get_issue_history '$tid'" 2>/dev/null) || history_json=""
@@ -172,7 +175,7 @@ _pf_post_outcome() {
         kind: "human", tid: $tid, run_id: (if $run_id == "" then null else $run_id end),
         approved_by: ($approval.actor.name // null),
         approved_at: ($approval.createdAt // null),
-        approval_provenance: (if $manifest_provenance != "" then $manifest_provenance elif $approval != null then "human" else null end),
+        approval_provenance: (if $manifest_provenance != "" then $manifest_provenance else null end),
         human_actions: ($human_actions | length),
         comment_words: $comment_words,
         observed_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))

@@ -326,20 +326,26 @@ EOF
   run_count=$(_count_kind '"kind":"run"' "$workdir/logs/runs.jsonl")
   merge_count=$(_count_kind '"kind":"merge"' "$workdir/logs/runs.jsonl")
   human_count=$(_count_kind '"kind":"human"' "$workdir/logs/runs.jsonl")
+  # tracker-approval-by-script: no manifest exists for CRE-7 here, and there
+  # is no live-history fallback left to derive "human" from — the field is
+  # null. The addedLabels/"approved" history entry below only still backs
+  # approved_by/approved_at (a broader evidentiary concern this change
+  # doesn't touch), not approval_provenance.
   has_provenance=0
-  grep -q '"approval_provenance":"human"' "$workdir/logs/runs.jsonl" && has_provenance=1
+  grep -q '"approval_provenance":null' "$workdir/logs/runs.jsonl" && has_provenance=1
   _teardown
   [ "$run_count" -eq 1 ] && [ "$merge_count" -eq 1 ] && [ "$human_count" -eq 1 ] && [ "$has_provenance" -eq 1 ]
 }
 
-# ── approval_provenance attribution (tracker-inbound-approval, task 3.2) ────
+# ── approval_provenance attribution (tracker-approval-by-script) ────────────
 # runs.jsonl's human-approval attribution reads the manifest's
-# approval_provenance field first, live IssueHistory scan only as fallback
-# when no manifest exists. test_full_sequence_with_pr_and_linear_key above
-# already pins the no-manifest fallback case (approval_provenance:"human",
-# derived from the live scan). This test pins the manifest-present case: a
-# manifest recording "policy" wins even though the live IssueHistory scan
-# (deliberately contradictory here) would otherwise say "human".
+# approval_provenance field only — no live IssueHistory fallback remains
+# (ticket-local-manifest spec: "The approval fields are the authoritative
+# approval decision"). test_full_sequence_with_pr_and_linear_key above pins
+# the no-manifest case (null, not derived from history). This test pins the
+# manifest-present case: a manifest recording "policy" wins even though the
+# live IssueHistory scan (deliberately contradictory here) would otherwise
+# suggest "human" — proving there is no fallback to that scan at all.
 test_manifest_approval_provenance_read_over_live_fallback() {
   _setup
   cat >"$_ws/bin/gh" <<'EOF'

@@ -20,8 +20,9 @@ Three things here are decisions rather than mechanics:
   non-pass (`gate-check.sh:641`), so polling a held ticket with it would
   gate-stop a ticket whose human simply has not looked at it yet. `entry`
   returns 1 for "still held" — a non-event — and is also the check that knows
-  how a hold is legitimately cleared: an `approved` label on a complex ticket
-  (`gate-check.sh:522-536`).
+  how a hold is legitimately cleared: an approval fact in the local manifest,
+  written by /ticket-approve on a complex ticket (`gate-check.sh` Checks
+  2.8b/2.8c/4).
 
 * **A poll that changes nothing writes nothing.** `entry` logs a
   `GATE|gate|fail|held: …` line every time it holds. Run on its own cadence
@@ -115,9 +116,11 @@ def reconcile_interval_secs():
 
     Deliberately its own cadence rather than a step of the detection sweep.
     Detection reads local logs and runs often; a held-ticket re-check is a
-    Linear round trip per held ticket. Tying them together would scale API
-    traffic with the detection interval to no purpose — a human attaching an
-    `approved` label is not a sub-minute-latency event.
+    Linear round trip per held ticket (gate-check.sh's own state fetch, not an
+    approval read — approval is a local manifest fact since
+    tracker-approval-by-script). Tying them together would scale API traffic
+    with the detection interval to no purpose — a human running
+    /ticket-approve is not a sub-minute-latency event.
     """
     raw = os.environ.get('FLEET_GATE_RECONCILE_INTERVAL',
                          str(DEFAULT_RECONCILE_INTERVAL_SECS))

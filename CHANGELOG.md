@@ -17,6 +17,61 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.54.0 (2026-09-23) — also fleet-controller 0.35.0
+
+**BREAKING:** Tracker approval by script (`tracker-approval-by-script`, Track B — the authority
+flip, Change 1 of 3). A human approves a gated ticket by running `/ticket-approve {TID}`, not by
+adding the `approved` label in Linear — the label is no longer written by `human-approve`/
+`pr-iterate`, and no decision path reads it anymore. This reverses B4's "informational only, never
+a decision read" stance: B4 kept the live-label read because a script wasn't yet the sole approval
+actuator, so a stale cached manifest value was a real false-approval risk; with `/ticket-approve`
+as the only actuator, that risk no longer exists, and the manifest becomes authoritative by
+construction. All six decision reads B4 left on the tracker are migrated with no fallback:
+`gate-check.sh` Checks 2.8b/2.8c/4 and `_gate_reapprove` (via a new shared `_gate_manifest_approved`
+helper — two-factor: `approved` **and** `stage` must both match, so a manifest carrying a stale
+approval fact for a ticket that never actually transitioned cannot pass), `detect-resume.sh`'s
+`GATE_HELD` resume detection, and fleet-controller's D-18 stalled-approved-children scan. A missing
+manifest is now a distinct, logged condition (`META|manifest|warn|MANIFEST_MISSING`) rather than a
+silent "not approved." New `/ticket-reject` clears the fact on rejection. Ad-hoc (non-planner)
+tickets get a reserved `_adhoc` initiative so `/ticket-approve` never silently no-ops on one. A
+one-shot `lib/manifest-backfill.sh` seeds `approved`/`approval_provenance`/`stage` from the tracker
+for tickets already in flight — **operators must run it once** (`--dry-run` first if preferred);
+an un-backfilled ticket approved by label before this ships holds at its gate until
+`/ticket-approve` is run against it. The label is never removed from existing Linear issues, only
+stops being written to new transitions — `git revert` remains a clean rollback for this change
+alone (the next change in the programme, `tracker-flow-projection-cutover`, is a one-way door).
+
+- `manifest-write.sh`: new `ensure_ticket_manifest` (ad-hoc provisioning), `set_ticket_stage`/
+  `set_epic_stage`. Fixed a latent `set -e` landmine in `get_ticket_manifest_field` and the new
+  `ensure_ticket_manifest` — a bare `var=$(failing_cmd)` aborts the caller's whole script under
+  `set -e` (which `flow.sh`/`gate-check.sh` both set) before the return code can be checked; now
+  guarded with `|| rc=$?` everywhere a manifest-read helper's failure is a normal, expected outcome.
+  Also widened `_MANIFEST_ID_RE` to allow a leading `_` (the reserved `_adhoc` initiative needs to
+  pass the same validation every ordinary ID does).
+- `flow.sh`: writes `stage` for every trigger with a non-null destination; bootstraps the manifest
+  via `ensure_ticket_manifest` before any write; `_write_approval_manifest` now also clears the
+  fact on `implement-complete`, not only `re-claim` — a gap in the original design that would have
+  let a ticket loop `uat-fail` back to `Ready` with a stale `approved: true` still on record.
+- New skills `ticket-approve`/`ticket-reject`, thin wrappers around `flow.sh human-approve`/
+  `human-reject` plus a manifest read-back verification.
+- `gate-check.sh`, `detect-resume.sh`: now source `manifest-read.sh` directly — previously absent
+  from both, so the pre-existing manifest-first read in `gate-check.sh` Check 2.7b was unreachable
+  in production (`bash gate-check.sh` runs as its own subprocess with nothing pre-sourced).
+- `pipeline-finalize.sh`: `runs.jsonl`'s `approval_provenance` reads the manifest only — the live
+  `IssueHistory` fallback for provenance is removed (the history fetch itself stays, for the
+  broader `approved_by`/`approved_at`/`human_actions` fields this change doesn't touch).
+- `fleet-detect.sh` D-18: reads the child's manifest `approved`+`stage` instead of a live-label
+  `grep`, same two-factor shape.
+- `tracker-label-inventory` gains a fourth classification, `projected` — a formerly-`control` label
+  whose every decision read has been relocated with no fallback remaining, and which may therefore
+  stop being written without further reader search. `approved` is the first label this audit has
+  ever reclassified off `control` (see `docs/label-audit.md`).
+- Regression tests: `test-manifest-write.sh`/`test-manifest-read.sh` (ad-hoc provisioning, stage
+  round-trip), `test-ticket-approve.sh` (new), `test-manifest-backfill.sh` (new), `test-gate-check.sh`
+  (two-factor pass/hold/missing-manifest-warn matrix across all four checks), `phase1.sh` (stage
+  writes, the `uat-fail` invariant), `test-fleet-detect.sh` (D-18 manifest-only), `test-detect-resume.sh`
+  (`GATE_HELD` manifest-missing distinct from not-approved).
+
 ## 0.53.0 (2026-09-23) — also fleet-controller 0.34.0
 
 Tracker inbound approval (`tracker-inbound-approval`, Track B Phase B4 of the tracker-decoupling

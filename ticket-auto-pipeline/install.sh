@@ -122,3 +122,13 @@ done
 if [ "$ADDED" -eq 0 ] && [ "$SKIPPED" -gt 0 ]; then
   echo "  (all rules already present — nothing to add)"
 fi
+
+echo ""
+echo "tracker-approval-by-script: approval is now a local manifest fact, set"
+echo "only by /ticket-approve — the tracker's own 'approved' label is no"
+echo "longer written or read. Tickets already in flight need a one-time"
+echo "backfill so nothing in progress is stranded at a gate:"
+echo "  bash ~/.claude/skills/lib/manifest-backfill.sh [--dry-run] [LOG-DIR]"
+echo "Idempotent and safe to re-run. Any held ticket not covered by the"
+echo "backfill (or approved by label before this install) needs a manual"
+echo "/ticket-approve to clear its gate."

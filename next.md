@@ -685,7 +685,7 @@ Three findings from the Track B design work that stand on their own, whether or 
 
 ---
 
-## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — PROPOSED, not yet applied
+## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — Change 1 (`tracker-approval-by-script`) implemented 2026-09-23, PR pending; Changes 2/3 still PROPOSED
 
 **Why this exists:** 2026-09-23, after B4 shipped, the operator restated the original complaint
 directly — Linear tickets are noisy with labels, and none of B1-B4 addressed that. Investigation
@@ -711,17 +711,37 @@ before being finalized. Three openspec changes, one PR each, in this order — l
 on manifest fields and classifications the earlier ones add, so the order is load-bearing, not
 just a size-limiting convention:
 
-1. **`tracker-approval-by-script`** (proposed 2026-09-23, `openspec validate --strict` clean,
-   40 tasks) — new `/ticket-approve` / `/ticket-reject` commands become the only approval actuator;
-   manifest gains `stage`; all six approval-decision reads (`gate-check.sh` Checks 2.8b/2.8c/4/
-   reapprove, `detect-resume.sh`, fleet-detect D-18) move to the manifest with no tracker fallback;
-   `approved` stops being written. Adds a fourth label classification, **`projected`**, to
-   `tracker-label-inventory` — a control label whose every read has been relocated with no fallback
-   remaining, which is the rule that actually permits a write to stop (the missing piece B1-B4
-   never added). Ad-hoc (non-planned) tickets get a reserved `_adhoc` initiative so they're
-   manifest-addressable at all — today `set_ticket_approval` silently no-ops on one. One-shot
-   `manifest-backfill.sh` seeds in-flight tickets. Clean `git revert` rollback — the label is never
-   removed from existing issues, only stops being written to new transitions.
+1. **`tracker-approval-by-script`** — **IMPLEMENTED 2026-09-23, 40/40 tasks, PR pending.**
+   New `/ticket-approve` / `/ticket-reject` commands are the only approval actuator; manifest
+   gains `stage`; all six approval-decision reads (`gate-check.sh` Checks 2.8b/2.8c/4/reapprove via
+   a new shared `_gate_manifest_approved` helper, `detect-resume.sh`'s `GATE_HELD` resume, fleet-
+   detect D-18) move to the manifest with no tracker fallback; `approved` stops being written
+   (`human-approve`/`pr-iterate.adds`, `implement-complete`/`re-claim.removes` in `workflow.json`).
+   Adds a fourth label classification, **`projected`**, to `tracker-label-inventory` — a control
+   label whose every read has been relocated with no fallback remaining, which is the rule that
+   actually permits a write to stop (the missing piece B1-B4 never added); `approved` is the first
+   label this audit has ever reclassified off `control` (`docs/label-audit.md`). Ad-hoc
+   (non-planned) tickets get a reserved `_adhoc` initiative via new `ensure_ticket_manifest` so
+   they're manifest-addressable at all. One-shot `manifest-backfill.sh` seeds in-flight tickets
+   (`--dry-run` supported). Clean `git revert` rollback — the label is never removed from existing
+   issues, only stops being written to new transitions.
+   Two real bugs found and fixed during implementation, neither anticipated by the plan: (1) a
+   latent `set -e` landmine in `manifest-read.sh`/`manifest-write.sh` — a bare `var=$(failing_cmd)`
+   aborts the caller's whole script under `set -e` (which `flow.sh`/`gate-check.sh` both set) before
+   the return code can even be checked, now guarded with `|| rc=$?` everywhere a failed manifest
+   read is a normal outcome; (2) `_write_approval_manifest` never cleared the manifest's `approved`
+   fact on `implement-complete` (only `re-claim`) — silently safe under B4 since nothing read the
+   field, but load-bearing now for the `uat-fail`-returns-to-`Ready`-without-reapproval invariant
+   design.md calls out, so a dedicated regression test (`test_uat_fail_never_observes_approved_true`,
+   `phase1.sh`) pins it. Also found `gate-check.sh`/`detect-resume.sh` never sourced
+   `manifest-read.sh` themselves — both run as their own `bash` subprocess, so the pre-existing
+   Check 2.7b manifest-first read was unreachable in production before this change added the
+   source lines. Full suite green (`make check-generated && make lint && make fmt-check && make
+   test`, incl. one real regression this change's own doc-rewrite caused in
+   `test-pipeline-phases.sh`, fixed). Versions bumped: `ticket-auto-pipeline` 0.53.0→0.54.0,
+   `fleet-controller` 0.34.0→0.35.0. Task 9.4 (live verification on the tickets host) deferred to
+   the programme's consolidated live-verification pass, per the same reordering decision B3a/B3b/B4
+   already used.
 2. **`tracker-flow-projection-cutover`** (proposed, 70 tasks) — `flow.sh` stops calling Linear
    entirely; manifest gains `flags`/`rev`/`pending_event`; `emit_event` gains an idempotency key so
    a crash between manifest-write and emit can't double-fire; `board_drivers.linear` becomes the
@@ -744,9 +764,12 @@ just a size-limiting convention:
    fleet *while labels are still written*, records the comparison as a durable artefact, and only
    then lets group 4 (planner stops writing) proceed — that group is marked the point of no return.
 
-All three validated `openspec validate --strict` clean as of 2026-09-23; none applied yet. Not
-started as implementation — this is the next queued work on Track B, ahead of Step 6 by the same
-direct-override precedent B1 used.
+All three validated `openspec validate --strict` clean as of 2026-09-23. Change 1
+(`tracker-approval-by-script`) is implemented (40/40 tasks, PR pending) — see its entry above.
+Changes 2/3 are not started. Track B remains the next queued work ahead of Step 6 by the same
+direct-override precedent B1 used; Change 2 (`tracker-flow-projection-cutover`) is next up once
+Change 1's PR merges, since it depends on manifest fields (`flags`/`rev`/`pending_event`) and the
+`projected` classification Change 1 just added.
 
 ---
 

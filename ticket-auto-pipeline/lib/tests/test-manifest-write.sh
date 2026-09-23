@@ -145,6 +145,56 @@ set_ticket_approval "NOPE-1" "true" "human" 2>/dev/null || rc=$?
 [ "$rc" = "1" ] && _pass "set_ticket_approval: no-op on missing manifest" ||
   _fail "set_ticket_approval: should exit 1 on missing manifest (got $rc)"
 
+# ── set_ticket_stage / set_epic_stage (tracker-approval-by-script) ──────────
+
+set_ticket_stage "TEST-1" "Ready"
+[ "$(get_ticket_manifest_field TEST-1 stage)" = "Ready" ] && _pass "set_ticket_stage: writes stage" ||
+  _fail "set_ticket_stage: should write stage"
+
+set_ticket_stage "TEST-1" "Review"
+[ "$(get_ticket_manifest_field TEST-1 stage)" = "Review" ] && _pass "set_ticket_stage: overwrites stage in place" ||
+  _fail "set_ticket_stage: should overwrite stage"
+
+rc=0
+set_ticket_stage "NOPE-1" "Ready" 2>/dev/null || rc=$?
+[ "$rc" = "1" ] && _pass "set_ticket_stage: no-op on missing manifest" ||
+  _fail "set_ticket_stage: should exit 1 on missing manifest (got $rc)"
+
+set_epic_stage "INIT-1" "Review"
+[ "$(get_epic_manifest_field INIT-1 stage)" = "Review" ] && _pass "set_epic_stage: writes stage" ||
+  _fail "set_epic_stage: should write stage"
+
+rc=0
+set_epic_stage "NOPE-1" "Review" 2>/dev/null || rc=$?
+[ "$rc" = "1" ] && _pass "set_epic_stage: no-op on missing manifest" ||
+  _fail "set_epic_stage: should exit 1 on missing manifest (got $rc)"
+
+# ── ensure_ticket_manifest (tracker-approval-by-script) ──────────────────────
+
+ensure_ticket_manifest "TEST-1"
+[ "$(get_ticket_manifest_field TEST-1 stage)" = "Review" ] && _pass "ensure_ticket_manifest: no-op on an existing manifest" ||
+  _fail "ensure_ticket_manifest: should not touch an existing manifest"
+
+ensure_ticket_manifest "ADHOC-1"
+[ "$(cat "$REPOS_ROOT/.ticket-auto/initiatives/_index/ADHOC-1.initiative")" = "_adhoc" ] && _pass "ensure_ticket_manifest: reserves _adhoc initiative" ||
+  _fail "ensure_ticket_manifest: should reserve _adhoc initiative for a ticket with no index entry"
+[ -f "$REPOS_ROOT/.ticket-auto/initiatives/_adhoc/tickets/ADHOC-1/planner/manifest.json" ] && _pass "ensure_ticket_manifest: creates a minimal manifest" ||
+  _fail "ensure_ticket_manifest: should create a manifest file"
+[ "$(get_ticket_manifest_field ADHOC-1 dispatch)" = "false" ] && _pass "ensure_ticket_manifest: minimal manifest has dispatch=false" ||
+  _fail "ensure_ticket_manifest: minimal manifest should have dispatch=false"
+[ "$(get_ticket_manifest_field ADHOC-1 type)" = "null" ] && _pass "ensure_ticket_manifest: minimal manifest has type=null" ||
+  _fail "ensure_ticket_manifest: minimal manifest should have type=null"
+
+set_ticket_approval "ADHOC-1" "true" "human"
+ensure_ticket_manifest "ADHOC-1"
+[ "$(get_ticket_manifest_field ADHOC-1 approved)" = "true" ] && _pass "ensure_ticket_manifest: second call on ad-hoc ticket is idempotent" ||
+  _fail "ensure_ticket_manifest: second call should not clobber existing fields"
+
+rc=0
+ensure_ticket_manifest "" 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "ensure_ticket_manifest: rejects invalid ticket ID" ||
+  _fail "ensure_ticket_manifest: should reject invalid ticket ID (got $rc)"
+
 # ── atomic write leaves no .tmp artifacts ────────────────────────────────────
 
 leftover=$(find "$REPOS_ROOT/.ticket-auto" -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')

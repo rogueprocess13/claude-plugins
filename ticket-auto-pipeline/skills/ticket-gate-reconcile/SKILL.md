@@ -5,7 +5,7 @@ description: Post-gate-hold comment reconciliation agent. Spawned when a held ti
 
 # Ticket Gate Reconcile
 
-**Entry condition:** `RESUME_STEP=STEP_3_5` — gate was held, `approved` label has been re-added.
+**Entry condition:** `RESUME_STEP=STEP_3_5` — gate was held, `/ticket-approve` has been run.
 
 ## Step 1 — Load context (agent starts cold)
 
@@ -154,7 +154,7 @@ Run `AMENDMENT_BODY` through the `simple-english` skill (embedded mode, Plain) b
 
 Use the Linear access strategy to post the comment (bash `save_comment` when `LINEAR_API_KEY` is set, MCP fallback otherwise).
 
-Call `re-claim` to remove the `approved` label:
+Call `re-claim` to clear the approval fact (and remove the `pre-approved` label):
 
 ```bash
 _flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
@@ -183,7 +183,7 @@ Stop with a user-facing report:
 {list of still-unanswered questions}
 
 ### Next step
-Review the amendment comment in Linear, then add the `approved` label and re-run `/ticket-auto {TICKET-ID} --auto`.
+Review the amendment comment in Linear, then run `/ticket-approve {TICKET-ID}` and re-run `/ticket-auto {TICKET-ID} --auto`.
 ```
 
 ## Step 8 — Clean pass

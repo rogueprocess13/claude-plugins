@@ -32,7 +32,10 @@
 # Callers that need to distinguish "no manifest" from "field absent" must
 # check the exit code — never assume empty output means "not planned".
 
-_MANIFEST_ID_RE='^[A-Za-z0-9][-A-Za-z0-9]*$'
+# Leading `_` is allowed (and only meaningful) on an initiative name — the
+# reserved `_adhoc` initiative (tracker-approval-by-script) must pass this
+# same check every ordinary ticket/epic/initiative ID does.
+_MANIFEST_ID_RE='^_?[A-Za-z0-9][-A-Za-z0-9]*$'
 
 # _manifest_repos_root — prints REPOS_ROOT or returns 3
 #
@@ -54,6 +57,14 @@ _manifest_repos_root() {
 # _manifest_initiative_for_ticket <TID>
 # Looks up {INIT} for a ticket from the local initiative index.
 # Exit 0 → prints INIT, 1 → no index entry, 3 → REPOS_ROOT unset.
+#
+# An initiative name beginning with `_` (e.g. the reserved `_adhoc`
+# initiative ensure_ticket_manifest in manifest-write.sh creates for a
+# ticket with no planner-assigned initiative) needs no special-casing
+# here — it resolves through the exact same path lookup as any other
+# initiative name. The underscore prefix only matters to enumerators that
+# walk `initiatives/*` looking for dispatchable work; every such enumerator
+# skips underscore-prefixed directories (tracker-approval-by-script).
 _manifest_initiative_for_ticket() {
   local tid="$1"
   local repos_root
@@ -96,9 +107,8 @@ get_ticket_manifest_field() {
     return 3
   fi
 
-  local init
-  init=$(_manifest_initiative_for_ticket "$tid")
-  local init_rc=$?
+  local init init_rc=0
+  init=$(_manifest_initiative_for_ticket "$tid") || init_rc=$?
   [ "$init_rc" -eq 0 ] || return "$init_rc"
 
   if ! [[ "$init" =~ $_MANIFEST_ID_RE ]]; then

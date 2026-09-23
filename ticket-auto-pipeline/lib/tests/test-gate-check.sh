@@ -433,14 +433,21 @@ test_entry_fleet_detect_format() {
 # Reapprove mode tests (4)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# 12. Approved + Ready → passes (exit 0)
+# 12. Manifest approved=true + stage=Ready → passes (exit 0). No live
+# tracker read at all (tracker-approval-by-script) — _fake_issue is
+# deliberately left at its "not approved" default to prove that.
 test_reapprove_approved_and_ready_passes() {
   _setup
-  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Ready"},"labels":{"nodes":[{"name":"approved"},{"name":"bug"}]}}'
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
 
-  _gate_reapprove
+  REPOS_ROOT="$repos_root" _gate_reapprove
   local rc=$?
 
+  rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 0 ] || {
     echo "expected exit 0, got $rc"
@@ -448,14 +455,18 @@ test_reapprove_approved_and_ready_passes() {
   }
 }
 
-# 13. Label missing → APPROVAL_REVOKED (exit 2)
+# 13. Manifest exists but approved is absent → APPROVAL_REVOKED (exit 2)
 test_reapprove_label_missing_gate_stop() {
   _setup
-  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Ready"},"labels":{"nodes":[{"name":"bug"}]}}'
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
 
-  _gate_reapprove
+  REPOS_ROOT="$repos_root" _gate_reapprove
   local rc=$?
 
+  rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 2 ] || {
     echo "expected exit 2, got $rc"
@@ -463,14 +474,19 @@ test_reapprove_label_missing_gate_stop() {
   }
 }
 
-# 14. Wrong state → APPROVAL_REVOKED (exit 2)
+# 14. Manifest approved=true but wrong stage → APPROVAL_REVOKED (exit 2)
 test_reapprove_wrong_state_gate_stop() {
   _setup
-  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"In Progress"},"labels":{"nodes":[{"name":"approved"},{"name":"bug"}]}}'
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "In Progress" >/dev/null
 
-  _gate_reapprove
+  REPOS_ROOT="$repos_root" _gate_reapprove
   local rc=$?
 
+  rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 2 ] || {
     echo "expected exit 2, got $rc"
@@ -478,17 +494,20 @@ test_reapprove_wrong_state_gate_stop() {
   }
 }
 
-# 15. Both state and label wrong — single gate-stop entry
+# 15. Both approved-absent and no stage — single gate-stop entry
 test_reapprove_both_wrong_single_gate_stop() {
   _setup
-  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
 
-  _gate_reapprove
+  REPOS_ROOT="$repos_root" _gate_reapprove
   local rc=$?
 
   local gate_stop_count
   gate_stop_count=$(grep -c 'APPROVAL_REVOKED' "$LOG_FILE" 2>/dev/null || true)
 
+  rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 2 ] || {
     echo "expected exit 2, got $rc"
@@ -1443,14 +1462,22 @@ test_entry_one_missing_prereq_no_abort() {
 test_entry_complex_manual_approved_ready_passes() {
   _setup
   _scaffold_exec_done "complex" "manual" "openspec" "${_ws}/openspec-change.md"
-  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Ready"},"labels":{"nodes":[{"name":"approved"},{"name":"bug"}]}}'
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
-  _gate_entry
+  local repos_root
+  repos_root=$(mktemp -d)
+  _fake_manifest_exists_override="false"
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
+
+  REPOS_ROOT="$repos_root" _gate_entry
   local rc=$?
 
   local overridden_line
   overridden_line=$(grep 'manual mode overridden' "$LOG_FILE" 2>/dev/null || true)
 
+  rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 0 ] || {
     echo "expected exit 0 (Check 2.8c override), got $rc"
@@ -1937,59 +1964,70 @@ test_entry_get_issue_fetch_failure_holds_before_cap() {
   }
 }
 
-# 44. Regression guard: a get_issue fetch failure during reapprove must NEVER
-# be reported as APPROVAL_REVOKED — that would tell a human their re-approval
-# was rejected when the real cause was an unreadable API response.
-test_reapprove_get_issue_fetch_failure_not_conflated_with_revoked() {
+# 44. tracker-approval-by-script: _gate_reapprove no longer fetches the
+# tracker at all — a missing manifest is a distinct migration/provisioning
+# gap (D3), not conflated with an ordinary "not approved" APPROVAL_REVOKED.
+# Both still gate-stop (the ticket cannot resume without a considered
+# approval), but the log must say which happened.
+test_reapprove_missing_manifest_not_conflated_with_revoked() {
   _setup
-  get_issue() { return 1; }
+  local repos_root
+  repos_root=$(mktemp -d)
+  # No manifest written at all for $_tid.
 
-  _gate_reapprove
+  REPOS_ROOT="$repos_root" _gate_reapprove
   local rc=$?
 
-  local fetch_failed revoked
-  fetch_failed=$(grep 'LINEAR_FETCH_FAILED' "$LOG_FILE" 2>/dev/null || true)
+  local manifest_missing revoked
+  manifest_missing=$(grep 'MANIFEST_MISSING' "$LOG_FILE" 2>/dev/null || true)
   revoked=$(grep 'APPROVAL_REVOKED' "$LOG_FILE" 2>/dev/null || true)
 
+  rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 2 ] || {
     echo "expected exit 2 (gate-stop), got $rc"
     return 1
   }
-  [ -n "$fetch_failed" ] || {
-    echo "expected LINEAR_FETCH_FAILED gate-stop in log"
+  [ -n "$manifest_missing" ] || {
+    echo "expected META|manifest|warn|MANIFEST_MISSING in log"
     return 1
   }
-  [ -z "$revoked" ] || {
-    echo "fetch failure must never be logged as APPROVAL_REVOKED"
+  [ -n "$revoked" ] || {
+    echo "expected APPROVAL_REVOKED gate-stop even for a missing manifest"
     return 1
   }
 }
 
-# 45. get_issue succeeds but returns a payload missing .labels.nodes → treated
-# the same as a fetch failure, not as "zero labels".
-test_reapprove_get_issue_missing_labels_gate_stops() {
+# 45. Manifest exists, approved=true, but stage doesn't match Ready — the
+# two-factor check (D1) must reject it, and this is a plain hold, not a
+# missing-manifest warning.
+test_reapprove_manifest_wrong_stage_gate_stops() {
   _setup
-  get_issue() { echo '{"id":"CRE-47","state":{"name":"Ready"}}'; }
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Review" >/dev/null
 
-  _gate_reapprove
+  REPOS_ROOT="$repos_root" _gate_reapprove
   local rc=$?
 
-  local fetch_failed revoked
-  fetch_failed=$(grep 'LINEAR_FETCH_FAILED' "$LOG_FILE" 2>/dev/null || true)
+  local manifest_missing revoked
+  manifest_missing=$(grep 'MANIFEST_MISSING' "$LOG_FILE" 2>/dev/null || true)
   revoked=$(grep 'APPROVAL_REVOKED' "$LOG_FILE" 2>/dev/null || true)
 
+  rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 2 ] || {
     echo "expected exit 2 (gate-stop), got $rc"
     return 1
   }
-  [ -n "$fetch_failed" ] || {
-    echo "expected LINEAR_FETCH_FAILED gate-stop for payload missing .labels.nodes"
+  [ -n "$revoked" ] || {
+    echo "expected APPROVAL_REVOKED gate-stop for approved-but-wrong-stage"
     return 1
   }
-  [ -z "$revoked" ] || {
-    echo "malformed payload must never be logged as APPROVAL_REVOKED"
+  [ -z "$manifest_missing" ] || {
+    echo "a manifest that exists but has the wrong stage must not warn MANIFEST_MISSING"
     return 1
   }
 }
@@ -2030,18 +2068,26 @@ test_check5_auto_approve_emits_released_policy() {
   }
 }
 
-# 43. Check 2.8c (complex + manual + approved + Ready) override emits gate-released with human provenance
+# 43. Check 2.8c (complex + manual + manifest approved+staged) override emits gate-released with human provenance
 test_check28c_manual_override_emits_released_human() {
   _setup
   _scaffold_exec_done "complex" "manual" "openspec" "${_ws}/openspec-change.md"
-  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Ready"},"labels":{"nodes":[{"name":"approved"},{"name":"bug"}]}}'
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
-  _gate_entry
+  local repos_root
+  repos_root=$(mktemp -d)
+  _fake_manifest_exists_override="false"
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
+
+  REPOS_ROOT="$repos_root" _gate_entry
   local rc=$?
 
   local emit_calls
   emit_calls=$(cat "${_ws}/emit-calls.log" 2>/dev/null || true)
 
+  rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 0 ] || {
     echo "expected exit 0, got $rc"
@@ -2053,18 +2099,26 @@ test_check28c_manual_override_emits_released_human() {
   }
 }
 
-# 44. Check 4 (simple + manual + approved + Ready) override emits gate-released with human provenance
+# 44. Check 4 (simple + manual + manifest approved+staged) override emits gate-released with human provenance
 test_check4_manual_override_emits_released_human() {
   _setup
   _scaffold_exec_done "simple" "manual" "simple-fix" "${_ws}/simple-fix.md"
-  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Ready"},"labels":{"nodes":[{"name":"approved"},{"name":"bug"}]}}'
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
-  _gate_entry
+  local repos_root
+  repos_root=$(mktemp -d)
+  _fake_manifest_exists_override="false"
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
+
+  REPOS_ROOT="$repos_root" _gate_entry
   local rc=$?
 
   local emit_calls
   emit_calls=$(cat "${_ws}/emit-calls.log" 2>/dev/null || true)
 
+  rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 0 ] || {
     echo "expected exit 0, got $rc"
@@ -2077,14 +2131,18 @@ test_check4_manual_override_emits_released_human() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Approval-decision reads stay live (tracker-inbound-approval, task 4.1)
-# design.md Non-Goal: gate-check.sh's approval-decision reads (Checks 2.8b,
-# 2.8c, 4, reapprove) are NOT migrated to the manifest — a stale/contradictory
-# manifest approved=true must never override the live Linear read. Pins the
-# guard so a future change can't silently reintroduce the staleness risk.
+# Approval decision reads are manifest-only, no tracker fallback
+# (tracker-approval-by-script). Supersedes the B4-era "approval-decision
+# reads stay live" pin below — that was this exact guard's opposite: B4
+# deliberately left Checks 2.8b/2.8c/4/reapprove on a live Linear read and
+# pinned a test proving a manifest approved=true could never override it.
+# This change flips the authority: the manifest is the sole approval
+# decision (local-approval-authority spec), so these tests now pin the two-
+# factor check (D1: approved AND staged) and the missing-manifest-vs-
+# field-absent distinction (D3) instead.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_scaffold_stale_approved_manifest() {
+_scaffold_approved_no_stage_manifest() {
   local repos_root="$1"
   REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
   REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
@@ -2094,36 +2152,68 @@ _scaffold_stale_approved_manifest() {
   _fake_manifest_exists_override="false"
 }
 
-# 45. Check 2.8b never reads a stale manifest approved=true
-test_check28b_ignores_stale_manifest_approved() {
+# 45. Check 2.8b: approved=true + stage=Ready → passes, no live tracker read
+# (the default _fake_issue below carries no "approved" label at all).
+test_check28b_manifest_approved_and_staged_passes() {
   _setup
   _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/openspec-change.md"
   _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
   local repos_root
   repos_root=$(mktemp -d)
-  _scaffold_stale_approved_manifest "$repos_root"
+  _fake_manifest_exists_override="false"
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
 
   REPOS_ROOT="$repos_root" _gate_entry
   local rc=$?
 
   rm -rf "$repos_root"
   _teardown
-  [ "$rc" -eq 1 ] || {
-    echo "expected exit 1 (held: complex ticket) — a stale manifest approved=true must not override the live Linear read (Check 2.8b), got $rc"
+  [ "$rc" -eq 0 ] || {
+    echo "expected exit 0 (Check 2.8b auto-approve from manifest alone), got $rc"
     return 1
   }
 }
 
-# 46. Check 2.8c never reads a stale manifest approved=true
-test_check28c_ignores_stale_manifest_approved() {
+# 46. Check 2.8b: approved=true but no stage → two-factor check holds (D1)
+test_check28b_approved_without_stage_holds() {
+  _setup
+  _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/openspec-change.md"
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  _scaffold_approved_no_stage_manifest "$repos_root"
+
+  REPOS_ROOT="$repos_root" _gate_entry
+  local rc=$?
+
+  local manifest_missing
+  manifest_missing=$(grep 'MANIFEST_MISSING' "$LOG_FILE" 2>/dev/null || true)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 1 ] || {
+    echo "expected exit 1 (held: complex ticket) — approved without a matching stage must hold (Check 2.8b), got $rc"
+    return 1
+  }
+  [ -z "$manifest_missing" ] || {
+    echo "a manifest that exists but lacks a matching stage must not warn MANIFEST_MISSING"
+    return 1
+  }
+}
+
+# 47. Check 2.8c: approved=true but no stage → holds
+test_check28c_approved_without_stage_holds() {
   _setup
   _scaffold_exec_done "complex" "manual" "openspec" "${_ws}/openspec-change.md"
   _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
   local repos_root
   repos_root=$(mktemp -d)
-  _scaffold_stale_approved_manifest "$repos_root"
+  _scaffold_approved_no_stage_manifest "$repos_root"
 
   REPOS_ROOT="$repos_root" _gate_entry
   local rc=$?
@@ -2131,20 +2221,20 @@ test_check28c_ignores_stale_manifest_approved() {
   rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 1 ] || {
-    echo "expected exit 1 (held: complex ticket) — a stale manifest approved=true must not override the live Linear read (Check 2.8c), got $rc"
+    echo "expected exit 1 (held: complex ticket) — approved without a matching stage must hold (Check 2.8c), got $rc"
     return 1
   }
 }
 
-# 47. Check 4 never reads a stale manifest approved=true
-test_check4_ignores_stale_manifest_approved() {
+# 48. Check 4: approved=true but no stage → holds
+test_check4_approved_without_stage_holds() {
   _setup
   _scaffold_exec_done "simple" "manual" "simple-fix" "${_ws}/simple-fix.md"
   _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
   local repos_root
   repos_root=$(mktemp -d)
-  _scaffold_stale_approved_manifest "$repos_root"
+  _scaffold_approved_no_stage_manifest "$repos_root"
 
   REPOS_ROOT="$repos_root" _gate_entry
   local rc=$?
@@ -2152,27 +2242,67 @@ test_check4_ignores_stale_manifest_approved() {
   rm -rf "$repos_root"
   _teardown
   [ "$rc" -eq 1 ] || {
-    echo "expected exit 1 (held: manual mode) — a stale manifest approved=true must not override the live Linear read (Check 4), got $rc"
+    echo "expected exit 1 (held: manual mode) — approved without a matching stage must hold (Check 4), got $rc"
     return 1
   }
 }
 
-# 48. Reapprove path never reads a stale manifest approved=true
-test_reapprove_ignores_stale_manifest_approved() {
+# 49. Check 2.8b: a hand-applied live "approved" label with no manifest at
+# all does not approve (local-approval-authority spec: "A hand-applied
+# tracker label does not approve") — and the missing manifest warns.
+test_check28b_live_label_ignored_manifest_missing_warns() {
   _setup
+  _scaffold_exec_done "complex" "auto" "openspec" "${_ws}/openspec-change.md"
+  _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Ready"},"labels":{"nodes":[{"name":"approved"},{"name":"bug"}]}}'
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  # No manifest written at all.
+
+  REPOS_ROOT="$repos_root" _gate_entry
+  local rc=$?
+
+  local manifest_missing
+  manifest_missing=$(grep 'MANIFEST_MISSING' "$LOG_FILE" 2>/dev/null || true)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 1 ] || {
+    echo "expected exit 1 (held: complex ticket) — a hand-applied live label must not approve, got $rc"
+    return 1
+  }
+  [ -n "$manifest_missing" ] || {
+    echo "expected META|manifest|warn|MANIFEST_MISSING when no manifest exists"
+    return 1
+  }
+}
+
+# 50. Check 4: manifest exists but the approved field is plain absent (not
+# missing manifest) — holds silently, no MANIFEST_MISSING warning (D3).
+test_check4_field_absent_holds_without_warning() {
+  _setup
+  _scaffold_exec_done "simple" "manual" "simple-fix" "${_ws}/simple-fix.md"
   _fake_issue='{"id":"CRE-47","title":"Test","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"bug"}]}}'
 
   local repos_root
   repos_root=$(mktemp -d)
-  _scaffold_stale_approved_manifest "$repos_root"
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  _fake_manifest_exists_override="false"
 
-  REPOS_ROOT="$repos_root" _gate_reapprove
+  REPOS_ROOT="$repos_root" _gate_entry
   local rc=$?
+
+  local manifest_missing
+  manifest_missing=$(grep 'MANIFEST_MISSING' "$LOG_FILE" 2>/dev/null || true)
 
   rm -rf "$repos_root"
   _teardown
-  [ "$rc" -eq 2 ] || {
-    echo "expected exit 2 (APPROVAL_REVOKED) — a stale manifest approved=true must not override the live Linear read (reapprove), got $rc"
+  [ "$rc" -eq 1 ] || {
+    echo "expected exit 1 (held: manual mode) — an existing manifest with no approved field must hold, got $rc"
+    return 1
+  }
+  [ -z "$manifest_missing" ] || {
+    echo "an existing manifest with an absent field must hold silently, without MANIFEST_MISSING"
     return 1
   }
 }
@@ -2292,17 +2422,19 @@ for fn in \
   test_entry_get_issue_fetch_failure_holds_before_cap \
   test_entry_fetch_recovery_applies_same_criteria_not_a_pass \
   test_entry_get_issue_malformed_payload_gate_stops \
-  test_reapprove_get_issue_fetch_failure_not_conflated_with_revoked \
-  test_reapprove_get_issue_missing_labels_gate_stops \
+  test_reapprove_missing_manifest_not_conflated_with_revoked \
+  test_reapprove_manifest_wrong_stage_gate_stops \
   test_manifest_only_drives_check_2_7 \
   test_manifest_type_field_drives_template_resolution \
   test_check5_auto_approve_emits_released_policy \
   test_check28c_manual_override_emits_released_human \
   test_check4_manual_override_emits_released_human \
-  test_check28b_ignores_stale_manifest_approved \
-  test_check28c_ignores_stale_manifest_approved \
-  test_check4_ignores_stale_manifest_approved \
-  test_reapprove_ignores_stale_manifest_approved; do
+  test_check28b_manifest_approved_and_staged_passes \
+  test_check28b_approved_without_stage_holds \
+  test_check28c_approved_without_stage_holds \
+  test_check4_approved_without_stage_holds \
+  test_check28b_live_label_ignored_manifest_missing_warns \
+  test_check4_field_absent_holds_without_warning; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

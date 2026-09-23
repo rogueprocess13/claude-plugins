@@ -1899,8 +1899,9 @@ resume_step_id — always `STEP_3_5` today (kind='hold' only). `_hold_reconcile_
                  the ticket's position *at hold-creation time*, alongside
                  `store.set_hold`, so the position a plain release leaves
                  behind is already correct — mirrors `detect-resume.sh`'s own
-                 `GATE_HELD` + approved-label → `STEP_3_5` transition, the
-                 manual router's parity requirement (both hold sites, the
+                 `GATE_HELD` + manifest approval fact → `STEP_3_5` transition
+                 (tracker-approval-by-script), the manual router's parity
+                 requirement (both hold sites, the
                  first hold from `STEP_2_5` and a re-hold from `STEP_3_5`
                  itself, resume at the same place — the reconcile agent,
                  never straight back to the bash gate).

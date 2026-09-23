@@ -84,15 +84,22 @@ TRACE
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|check-approval|start|Checking authorization" >> "$LOG_FILE"
 
-Fetch the ticket from Linear using the Linear access strategy (bash `get_issue` when `LINEAR_API_KEY` is set, MCP fallback otherwise):
+**Determine authorization** (tracker-approval-by-script: approval is a local manifest fact, not a Linear label — no tracker fetch for this check):
 
-**Determine authorization:**
+```bash
+source ~/.claude/skills/lib/manifest-read.sh 2>/dev/null || true
+_ia_approved=""
+if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+  _ia_approved=$(get_ticket_manifest_field "{TICKET-ID}" approved 2>/dev/null)
+fi
+echo "IMPLEMENT_APPROVED=${_ia_approved:-}"
+```
 
-- If `approved` label is present → authorized. This is a fresh implementation or human-re-approved rework.
-- If `approved` is absent but `rejected` is present → authorized for UAT rework. Note: "UAT rework cycle — `rejected` label signals authorization for rework. Proceeding to Step 2 which will read the REMEDIATION_BRIEF from the plan."
-- If NEITHER `approved` nor `rejected` is present → stop and report:
+- If `IMPLEMENT_APPROVED=true` → authorized. This is a fresh implementation or human-re-approved rework (`/ticket-approve`).
+- If not approved, fetch the ticket from Linear (bash `get_issue` when `LINEAR_API_KEY` is set, MCP fallback otherwise) and check the live `rejected` label — still tracker-written, unlike `approved`. If present → authorized for UAT rework. Note: "UAT rework cycle — `rejected` label signals authorization for rework. Proceeding to Step 2 which will read the REMEDIATION_BRIEF from the plan."
+- If NEITHER the manifest's `approved` fact nor the live `rejected` label authorizes it → stop and report:
   ```
-  ⛔ {TICKET-ID} not approved yet. Add the `approved` label in Linear (or the `rejected` label for UAT rework), then re-run.
+  ⛔ {TICKET-ID} not approved yet. Run /ticket-approve {TICKET-ID} (or wait for the `rejected` label for UAT rework), then re-run.
   ```
 
 **When authorized,** find the local directory:
