@@ -749,7 +749,7 @@ Post a comment via the Linear access strategy (bash `save_comment` when `LINEAR_
 **Open questions:**
 {From notes.md Open Questions — or "None"}
 {If any Open Questions bullet is tagged `[needs-human]`, append this line directly after the Open Questions block:}
-⚠️ Answer the `[needs-human]` question(s) above in a comment before adding the `approved` label — approving without answering first will trigger an extra gate-reconcile hold cycle.
+⚠️ Answer the `[needs-human]` question(s) above in a comment before running `/ticket-approve` — approving without answering first will trigger an extra gate-reconcile hold cycle.
 
 **Next step:**
 {First concrete action from notes.md Next Steps}
@@ -805,9 +805,9 @@ This sets state → `Approve`, keeping all existing labels.
 Linear updated — assigned to you, status → Approve + `claimed` (awaiting approval).
 
 > **Full state lifecycle:**
-> Todo + `claimed` (appraise) → Approve + `claimed` (end of exec) → Ready + `approved` (human approves) → Review (after PR) → Done
+> Todo + `claimed` (appraise) → Approve + `claimed` (end of exec) → Ready, manifest `approved: true` (human approves via `/ticket-approve`) → Review (after PR) → Done
 
-Run `/ticket-implement {TICKET-ID}` once the `approved` label is added in Linear.
+Run `/ticket-implement {TICKET-ID}` once `/ticket-approve {TICKET-ID}` has been run.
 ```
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|handoff|done|Reported to user" >> "$LOG_FILE"

@@ -457,7 +457,7 @@ test_gate_held_sends_approval_prompt() {
   SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
     PATH="$bindir:$PATH" fleet_notify_gate_held "TST-40" "$state_dir" \
     "2026-09-11T07:35:16Z" >/dev/null 2>&1
-  grep -q "TST-40" "$capture" && grep -q "human-approve" "$capture"
+  grep -q "TST-40" "$capture" && grep -q "ticket-approve" "$capture"
 }
 
 test_gate_held_writes_sent_sidecar() {

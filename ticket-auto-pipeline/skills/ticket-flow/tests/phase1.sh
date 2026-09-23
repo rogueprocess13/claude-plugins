@@ -914,6 +914,272 @@ STUBEOF
   [ "$rc" -eq 0 ] && [ -z "$approved" ] && [ -z "$provenance" ]
 }
 
+# ── stage manifest write (tracker-approval-by-script, task 2.4) ─────────────
+# `stage` is written for every trigger with a non-null destination, alongside
+# the Linear column move flow.sh still performs. Reuses the human-approve
+# stub for the Ready case; implement-complete/uat-pass get their own stub
+# (different from/to state pair) but the same marker-toggle shape.
+
+test_flow_human_approve_writes_stage() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  _stub_lib_dir_approve "$tmpdir/lib" "$marker"
+  cp "$PLUGIN_DIR/lib/manifest-write.sh" "$PLUGIN_DIR/lib/manifest-read.sh" "$tmpdir/lib/"
+  _seed_approve_manifest "$tmpdir/repos"
+
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    "$FLOW_SH" WIL-99 human-approve >/dev/null 2>&1
+  local rc=$?
+
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner/manifest.json"
+  local stage
+  stage=$(jq -r '.stage // empty' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$stage" = "Ready" ]
+}
+
+_stub_lib_dir_stage_transition() {
+  # Generic from_name/to_name state toggle stub, no label churn — used for
+  # stage-only transitions (implement-complete, uat-pass) where the label
+  # adds/removes on those triggers are irrelevant to this test's assertion.
+  local dir="$1" marker="$2" from_id="$3" from_name="$4" to_id="$5" to_name="$6"
+  mkdir -p "$dir"
+  cp "$PLUGIN_DIR/lib/heartbeat.sh" "$dir/"
+  cp "$PLUGIN_DIR/lib/epic-precondition.sh" "$dir/"
+  cat >"$dir/linear-api.sh" <<STUBEOF
+get_issue() {
+  if [ -f "$marker" ]; then
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"$to_id",name:"$to_name"},labels:{nodes:[]},project:null,parent:null}'
+  else
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"$from_id",name:"$from_name"},labels:{nodes:[]},project:null,parent:null}'
+  fi
+}
+get_team() {
+  jq -n '{states:[{id:"$from_id",name:"$from_name"},{id:"$to_id",name:"$to_name"}],labels:[{id:"lbl-approved",name:"approved"},{id:"lbl-reviewed",name:"reviewed"}]}'
+}
+update_issue() {
+  touch "$marker"
+  jq -n '{success:true,issue:{id:"issue-1",identifier:"WIL-99"}}'
+}
+get_me() { jq -n '{id:"me-1",name:"Test"}'; }
+STUBEOF
+}
+
+test_flow_implement_complete_writes_stage() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  _stub_lib_dir_stage_transition "$tmpdir/lib" "$marker" state-ready Ready state-review Review
+  cp "$PLUGIN_DIR/lib/manifest-write.sh" "$PLUGIN_DIR/lib/manifest-read.sh" "$tmpdir/lib/"
+  _seed_approve_manifest "$tmpdir/repos"
+
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    "$FLOW_SH" WIL-99 implement-complete >/dev/null 2>&1
+  local rc=$?
+
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner/manifest.json"
+  local stage
+  stage=$(jq -r '.stage // empty' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$stage" = "Review" ]
+}
+
+# tracker-approval-by-script: implement-complete must clear the manifest's
+# approved fact, exactly as it strips the (now-unwritten) live label — this
+# is what makes uat-fail's Review-skip-to-Ready-without-reapproval path safe
+# (design.md Risk: "uat-fail returns a ticket to Ready without
+# re-approval"). Starts from an already-approved manifest, same shape as
+# test_flow_re_claim_clears_manifest_approval.
+test_flow_implement_complete_clears_manifest_approval() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  touch "$marker" # start at Ready; implement-complete moves to Review
+  cp "$PLUGIN_DIR/lib/heartbeat.sh" "$PLUGIN_DIR/lib/epic-precondition.sh" "$tmpdir/lib/"
+  cp "$PLUGIN_DIR/lib/manifest-write.sh" "$PLUGIN_DIR/lib/manifest-read.sh" "$tmpdir/lib/"
+  cat >"$tmpdir/lib/linear-api.sh" <<STUBEOF
+get_issue() {
+  if [ -f "$marker" ]; then
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-ready",name:"Ready"},labels:{nodes:[]},project:null,parent:null}'
+  else
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-review",name:"Review"},labels:{nodes:[]},project:null,parent:null}'
+  fi
+}
+get_team() {
+  jq -n '{states:[{id:"state-ready",name:"Ready"},{id:"state-review",name:"Review"}],labels:[]}'
+}
+update_issue() {
+  rm -f "$marker"
+  jq -n '{success:true,issue:{id:"issue-1",identifier:"WIL-99"}}'
+}
+get_me() { jq -n '{id:"me-1",name:"Test"}'; }
+STUBEOF
+  _seed_approve_manifest "$tmpdir/repos"
+  REPOS_ROOT="$tmpdir/repos" bash -c "source '$PLUGIN_DIR/lib/manifest-write.sh'; set_ticket_approval WIL-99 true human" >/dev/null 2>&1 || true
+
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    "$FLOW_SH" WIL-99 implement-complete >/dev/null 2>&1
+  local rc=$?
+
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner/manifest.json"
+  local approved provenance
+  approved=$(jq -r '.approved // empty' "$manifest" 2>/dev/null)
+  provenance=$(jq -r '.approval_provenance // empty' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ -z "$approved" ] && [ -z "$provenance" ]
+}
+
+# tracker-approval-by-script (task 7.3): the load-bearing invariant itself —
+# a ticket that reaches uat-fail must never observe approved:true, because
+# nothing re-approves it before it loops back to Ready. Seeds a manifest
+# exactly as implement-complete would have already left it (no approved
+# field) and confirms uat-fail neither requires nor restores one.
+test_uat_fail_never_observes_approved_true() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  touch "$marker" # start at UAT; uat-fail moves to Ready
+  cp "$PLUGIN_DIR/lib/heartbeat.sh" "$PLUGIN_DIR/lib/epic-precondition.sh" "$tmpdir/lib/"
+  cp "$PLUGIN_DIR/lib/manifest-write.sh" "$PLUGIN_DIR/lib/manifest-read.sh" "$tmpdir/lib/"
+  cat >"$tmpdir/lib/linear-api.sh" <<STUBEOF
+get_issue() {
+  if [ -f "$marker" ]; then
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-uat",name:"UAT"},labels:{nodes:[{id:"lbl-reviewed",name:"reviewed"}]},project:null,parent:null}'
+  else
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-ready",name:"Ready"},labels:{nodes:[{id:"lbl-rejected",name:"rejected"}]},project:null,parent:null}'
+  fi
+}
+get_team() {
+  jq -n '{states:[{id:"state-uat",name:"UAT"},{id:"state-ready",name:"Ready"}],labels:[{id:"lbl-reviewed",name:"reviewed"},{id:"lbl-rejected",name:"rejected"}]}'
+}
+update_issue() {
+  rm -f "$marker"
+  jq -n '{success:true,issue:{id:"issue-1",identifier:"WIL-99"}}'
+}
+get_me() { jq -n '{id:"me-1",name:"Test"}'; }
+STUBEOF
+  _seed_approve_manifest "$tmpdir/repos"
+  # No approved field seeded — mirrors implement-complete having already cleared it.
+
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    "$FLOW_SH" WIL-99 uat-fail >/dev/null 2>&1
+  local rc=$?
+
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner/manifest.json"
+  local approved stage
+  approved=$(jq -r '.approved // empty' "$manifest" 2>/dev/null)
+  stage=$(jq -r '.stage // empty' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ -z "$approved" ] && [ "$stage" = "Ready" ]
+}
+
+test_flow_uat_pass_writes_stage() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  _stub_lib_dir_stage_transition "$tmpdir/lib" "$marker" state-uat UAT state-done Done
+  cp "$PLUGIN_DIR/lib/manifest-write.sh" "$PLUGIN_DIR/lib/manifest-read.sh" "$tmpdir/lib/"
+  _seed_approve_manifest "$tmpdir/repos"
+
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    "$FLOW_SH" WIL-99 uat-pass >/dev/null 2>&1
+  local rc=$?
+
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner/manifest.json"
+  local stage
+  stage=$(jq -r '.stage // empty' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$stage" = "Done" ]
+}
+
+test_flow_re_claim_does_not_write_stage() {
+  # re-claim declares to:null — NEW_STATE_NAME is empty, so _write_stage_
+  # manifest must be a no-op rather than writing an empty/null stage.
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  touch "$marker"
+  cp "$PLUGIN_DIR/lib/heartbeat.sh" "$tmpdir/lib/"
+  cp "$PLUGIN_DIR/lib/epic-precondition.sh" "$tmpdir/lib/"
+  cp "$PLUGIN_DIR/lib/manifest-write.sh" "$PLUGIN_DIR/lib/manifest-read.sh" "$tmpdir/lib/"
+  cat >"$tmpdir/lib/linear-api.sh" <<STUBEOF
+get_issue() {
+  if [ -f "$marker" ]; then
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-ready",name:"Ready"},labels:{nodes:[{id:"lbl-approved",name:"approved"}]},project:null,parent:null}'
+  else
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-ready",name:"Ready"},labels:{nodes:[]},project:null,parent:null}'
+  fi
+}
+get_team() {
+  jq -n '{states:[{id:"state-ready",name:"Ready"}],labels:[{id:"lbl-approved",name:"approved"},{id:"lbl-pre-approved",name:"pre-approved"}]}'
+}
+update_issue() {
+  rm -f "$marker"
+  jq -n '{success:true,issue:{id:"issue-1",identifier:"WIL-99"}}'
+}
+get_me() { jq -n '{id:"me-1",name:"Test"}'; }
+STUBEOF
+  _seed_approve_manifest "$tmpdir/repos"
+
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    "$FLOW_SH" WIL-99 re-claim >/dev/null 2>&1
+  local rc=$?
+
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner/manifest.json"
+  local stage_present
+  stage_present=$(jq -r 'has("stage")' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$stage_present" = "false" ]
+}
+
+test_flow_adhoc_ticket_gets_manifest_via_flow() {
+  # A ticket with no pre-existing manifest and no initiative index entry —
+  # ensure_ticket_manifest, called from flow.sh, must make it addressable
+  # before the approval/stage writes so a hand-created ticket isn't
+  # silently no-op'd (D2).
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  _stub_lib_dir_approve "$tmpdir/lib" "$marker"
+  cp "$PLUGIN_DIR/lib/manifest-write.sh" "$PLUGIN_DIR/lib/manifest-read.sh" "$tmpdir/lib/"
+  # Deliberately no _seed_approve_manifest call — no index entry, no manifest.
+
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    "$FLOW_SH" WIL-99 human-approve >/dev/null 2>&1
+  local rc=$?
+
+  local init
+  init=$(cat "$tmpdir/repos/.ticket-auto/initiatives/_index/WIL-99.initiative" 2>/dev/null)
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/_adhoc/tickets/WIL-99/planner/manifest.json"
+  local approved stage
+  approved=$(jq -r '.approved // empty' "$manifest" 2>/dev/null)
+  stage=$(jq -r '.stage // empty' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$init" = "_adhoc" ] && [ "$approved" = "true" ] && [ "$stage" = "Ready" ]
+}
+
 # ── test_flow_complexity_opposite ────────────────────────────────────────────
 # appraise-start must clear a stale opposite-complexity label in the same
 # mutation that applies the new one. Simple and Complex belong to a
@@ -1428,6 +1694,13 @@ for fn in \
   test_flow_human_approve_provenance_policy_writes_manifest \
   test_flow_human_approve_defaults_to_human_provenance \
   test_flow_re_claim_clears_manifest_approval \
+  test_flow_human_approve_writes_stage \
+  test_flow_implement_complete_writes_stage \
+  test_flow_implement_complete_clears_manifest_approval \
+  test_uat_fail_never_observes_approved_true \
+  test_flow_uat_pass_writes_stage \
+  test_flow_re_claim_does_not_write_stage \
+  test_flow_adhoc_ticket_gets_manifest_via_flow \
   test_flow_appraise_start_drops_stale_opposite_label \
   test_flow_appraise_start_drops_stale_complex_label \
   test_flow_appraise_start_no_prior_complexity_label \

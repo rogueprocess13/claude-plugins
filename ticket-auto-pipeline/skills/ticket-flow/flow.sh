@@ -37,9 +37,10 @@ if [ -f "$LIB_DIR/events.sh" ]; then
 elif [ -f "$SCRIPT_DIR/../../lib/events.sh" ]; then
   source "$SCRIPT_DIR/../../lib/events.sh"
 fi
-# manifest-write.sh backs the approval-provenance manifest write below
-# (tracker-inbound-approval, Track B Phase B4) — informational only, never
-# a decision read. Guarded like every other optional lib source here.
+# manifest-write.sh backs the approval-provenance and stage manifest writes
+# below (tracker-inbound-approval Track B Phase B4; extended to the
+# authoritative decision fact and to `stage` by tracker-approval-by-script).
+# Guarded like every other optional lib source here.
 if [ -f "$LIB_DIR/manifest-write.sh" ]; then
   source "$LIB_DIR/manifest-write.sh"
 elif [ -f "$SCRIPT_DIR/../../lib/manifest-write.sh" ]; then
@@ -137,22 +138,61 @@ _emit_schema_header() {
   fi
 }
 
-# ── Approval-provenance manifest write (tracker-inbound-approval) ──────────
+# ── Manifest bootstrap (tracker-approval-by-script) ─────────────────────────
+# Makes the ticket manifest-addressable (creating a reserved `_adhoc`
+# initiative entry for a ticket the planner never touched) before any
+# manifest write below. Epics always have a manifest from ticket-planner's
+# write_epic_manifest — ensure_ticket_manifest is ticket-only and is never
+# called for an epic trigger. Fail-soft, like every write in this section:
+# a manifest-write failure must never alter flow.sh's own exit code, since
+# the Linear mutation (this script's actual contract) already succeeded.
+_ensure_manifest() {
+  declare -f ensure_ticket_manifest >/dev/null 2>&1 || return 0
+  is_epic_issue "$ISSUE_JSON" && return 0
+  ensure_ticket_manifest "$TICKET_ID" 2>/dev/null || true
+}
+
+# ── Approval-provenance manifest write ──────────────────────────────────────
 # Called only once the Linear mutation is confirmed (idempotent no-op exit,
 # where the desired label state already holds — or the post-trigger
-# assertion above has already passed). Informational only: never a decision
-# read (ticket-local-manifest spec). Fail-soft — never alters flow.sh's own
-# exit code or the caller-visible result.
+# assertion above has already passed). As of tracker-approval-by-script this
+# is the authoritative approval decision fact, not an informational mirror
+# (ticket-local-manifest spec) — but the write itself is unchanged from B4.
+# Fail-soft — never alters flow.sh's own exit code or the caller-visible
+# result.
 _write_approval_manifest() {
   declare -f set_ticket_approval >/dev/null 2>&1 || return 0
   case "$TRIGGER" in
   human-approve | pr-iterate)
     set_ticket_approval "$TICKET_ID" true "$PROVENANCE" 2>/dev/null || true
     ;;
-  re-claim)
+  re-claim | implement-complete)
+    # implement-complete clearing the fact (Ready -> Review) is what makes
+    # uat-fail's Review->Ready-without-reapproval path safe — a ticket that
+    # loops UAT-fail back to Ready must never carry a stale approved:true,
+    # since nothing re-approves it before it's dispatched again
+    # (tracker-approval-by-script design.md Risk: "uat-fail returns a
+    # ticket to Ready without re-approval"; this ordering is load-bearing).
     set_ticket_approval "$TICKET_ID" false 2>/dev/null || true
     ;;
   esac
+}
+
+# ── Stage manifest write (tracker-approval-by-script) ───────────────────────
+# Records the destination of any trigger that declares one, alongside the
+# Linear column move flow.sh still performs — the two-factor gate check
+# (D1) needs both `approved` and `stage` so a manifest carrying a stale
+# approval fact for a ticket that never actually transitioned cannot pass.
+# Same call sites and same fail-soft contract as _write_approval_manifest.
+_write_stage_manifest() {
+  [ -n "$NEW_STATE_NAME" ] || return 0
+  if is_epic_issue "$ISSUE_JSON"; then
+    declare -f set_epic_stage >/dev/null 2>&1 || return 0
+    set_epic_stage "$TICKET_ID" "$NEW_STATE_NAME" 2>/dev/null || true
+  else
+    declare -f set_ticket_stage >/dev/null 2>&1 || return 0
+    set_ticket_stage "$TICKET_ID" "$NEW_STATE_NAME" 2>/dev/null || true
+  fi
 }
 
 # ── Validate workflow.json ─────────────────────────────────────────────
@@ -443,7 +483,9 @@ if ! $STATE_CHANGED && ! $LABELS_CHANGED && [ "$SET_ASSIGNEE_ME" = "false" ]; th
   if [ "$TRIGGER" = "implement-outcome" ] && [ -n "${DATA[outcome]:-}" ]; then
     _log "IMPLEMENT|implement-outcome|info|${DATA[outcome]}"
   fi
+  _ensure_manifest
   _write_approval_manifest
+  _write_stage_manifest
   exit 0
 fi
 
@@ -549,7 +591,9 @@ if [ "$TRIGGER" = "implement-outcome" ] && [ -n "${DATA[outcome]:-}" ]; then
   _log "IMPLEMENT|implement-outcome|info|${DATA[outcome]}"
 fi
 
+_ensure_manifest
 _write_approval_manifest
+_write_stage_manifest
 
 # ── Dual-write to the event outbox (tracker-event-vocabulary-and-emitter) ──
 # Generic 1:1 fact mapping: a vocabulary entry whose "trigger" field names

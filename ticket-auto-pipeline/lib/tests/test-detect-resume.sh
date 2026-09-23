@@ -619,14 +619,18 @@ test_gate_reconcile_done_advances_past_gate_held() {
   [ "$resume_step" = "STEP_4" ]
 }
 
-test_gate_held_get_issue_fetch_failure_logs_distinct_reason() {
-  # Issue #362 (LINEAR_GET_ISSUE_NULL_CONTINUES): a failed get_issue during
-  # GATE_HELD resolution must resolve to the same safe GATE_STILL_HELD step
-  # as "checked and not approved", but the pipeline log must say WHY — a
-  # fetch failure is not the same event as a genuine missing approval, and
-  # collapsing the two silently is exactly the bug this test guards against.
-  # The test harness runs detect-resume.sh with no LINEAR_API_KEY configured,
-  # so get_issue fails deterministically without any network mock.
+test_gate_held_no_manifest_logs_distinct_reason() {
+  # tracker-approval-by-script: GATE_HELD resolution reads the local
+  # manifest only — no tracker fetch, so issue #362
+  # (LINEAR_GET_ISSUE_NULL_CONTINUES) no longer applies as originally
+  # written (there is no fetch left to fail). The surviving concern is the
+  # same shape: a missing manifest must resolve to the same safe
+  # GATE_STILL_HELD step as "checked and not approved", but the pipeline
+  # log must say WHY — a migration/provisioning gap is not the same event
+  # as a genuine missing approval (D3), and collapsing the two silently is
+  # exactly the bug this test now guards against. REPOS_ROOT is
+  # deliberately unset, so get_ticket_manifest_field fails closed with no
+  # manifest to read.
   local tmpdir
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/logs"
@@ -638,12 +642,12 @@ test_gate_held_get_issue_fetch_failure_logs_distinct_reason() {
   } >"$log_file"
 
   local out
-  out=$(cd "$tmpdir" && env -u LINEAR_API_KEY bash "$DETECT_SH" "GH-362-1" 2>/dev/null)
+  out=$(cd "$tmpdir" && env -u REPOS_ROOT bash "$DETECT_SH" "GH-362-1" 2>/dev/null)
   local resume_step
   resume_step=$(_field "$out" RESUME_STEP)
 
-  local fetch_failed_line
-  fetch_failed_line=$(grep 'LINEAR_FETCH_FAILED' "$log_file" 2>/dev/null || true)
+  local manifest_missing_line
+  manifest_missing_line=$(grep 'MANIFEST_MISSING' "$log_file" 2>/dev/null || true)
 
   rm -rf "$tmpdir"
 
@@ -651,8 +655,8 @@ test_gate_held_get_issue_fetch_failure_logs_distinct_reason() {
     echo "expected GATE_STILL_HELD, got $resume_step"
     return 1
   }
-  [ -n "$fetch_failed_line" ] || {
-    echo "expected LINEAR_FETCH_FAILED to be logged when get_issue cannot be verified"
+  [ -n "$manifest_missing_line" ] || {
+    echo "expected META|manifest|warn|MANIFEST_MISSING to be logged when no manifest exists"
     return 1
   }
 }
@@ -992,7 +996,7 @@ for fn in \
   test_schema_newer_version_rejected_as_mismatch \
   test_schema_v0_grace_no_schema_line_still_resumes \
   test_gate_reconcile_done_advances_past_gate_held \
-  test_gate_held_get_issue_fetch_failure_logs_distinct_reason \
+  test_gate_held_no_manifest_logs_distinct_reason \
   test_gate_gate_done_still_advances_past_gate_held \
   test_gate_reconcile_held_routes_to_gate_held_not_step_4 \
   test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4 \

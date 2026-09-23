@@ -1300,7 +1300,7 @@ if [ "$_rc" -ne 0 ]; then
 fi
 ```
 
-This moves state → `Ready`, adds `rejected`, removes `reviewed`. A human must run `/ticket-flow {TICKET-ID} human-approve` before the next implementation cycle can start.
+This moves state → `Ready`, adds `rejected`, removes `reviewed`. A human must run `/ticket-approve {TICKET-ID}` before the next implementation cycle can start.
 
 If `--env local`: no state change — the ticket is still in `Ready`, code just needs more work.
 

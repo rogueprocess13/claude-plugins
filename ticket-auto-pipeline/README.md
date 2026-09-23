@@ -365,7 +365,7 @@ When the pipeline halts with a gate-stop, check the pipeline log for the specifi
 | `EXEC_NO_ARTIFACT` | Appraise-exec produced no artifact file | Re-run `/ticket-appraise-exec <id>`. Check `notes.md` has a `## Complexity` section. |
 | `COMPLEXITY_ARTIFACT_MISMATCH` | Artifact type doesn't match complexity score | Re-run `/ticket-appraise <id>` to re-evaluate complexity. |
 | `ADVERSARIAL_BLOCKED` | Adversarial review found blocking issues in the plan | Review `## Adversarial Review` in notes.md, fix the plan, re-run `/ticket-appraise-exec <id> --from-step create-artifact`. |
-| `APPROVAL_REVOKED` | Approved label was removed after PR changes | Re-approve the ticket in Linear (add `approved` label). |
+| `APPROVAL_REVOKED` | The manifest records no approval at re-approve time (approval was never granted, or was cleared by `re-claim`/`/ticket-reject`) | Run `/ticket-approve <id>`. |
 | `REMEDIATION_BRIEF_TRUNCATED` | Remediation brief is incomplete or empty | Re-run `/ticket-appraise-exec <id>` with full remediation notes. |
 | `PR_REVIEW_VERDICT_UNPARSEABLE` | PR review comment format couldn't be parsed | Check the PR review comment follows the expected verdict format. Re-run `/ticket-pr-review <id>`. |
 

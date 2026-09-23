@@ -1742,6 +1742,16 @@ _fleet_scan_stalled_approved_children() {
   epic_count=$(echo "$epics_json" | jq -r 'length // 0' 2>/dev/null)
   [ "${epic_count:-0}" -eq 0 ] && echo '{"severity":0,"findings":""}' && return
 
+  # manifest-read.sh backs the approval decision read below
+  # (tracker-approval-by-script) — same two-candidate cross-plugin sourcing
+  # convention _fleet_scan_epic_branch_ready/D-12 already use above.
+  if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+    local _sa_tap_lib
+    for _sa_tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+      [ -f "$_sa_tap_lib/manifest-read.sh" ] && source "$_sa_tap_lib/manifest-read.sh" && break
+    done
+  fi
+
   local auto_resume="${FLEET_AUTO_RESUME_STALLED:-false}"
   local stalled_count=0
   local stalled_ids=""
@@ -1781,13 +1791,26 @@ _fleet_scan_stalled_approved_children() {
       *) continue ;;
       esac
 
-      # The `approved` label is what the state machine actually requires to
-      # reach Ready/Review/UAT via the real Approve->Ready/Review->Ready/
-      # UAT->Ready triggers (workflow.json). Without this check, a
-      # child a human moved into one of these states by hand ahead of
-      # approval — outside the automated flow entirely — would be
-      # misclassified as a stalled AUTOMATION concern.
-      if ! echo "$child_labels" | grep -q "approved" 2>/dev/null; then
+      # tracker-approval-by-script: the manifest's approved+stage fields are
+      # what the state machine actually requires to reach Ready via the
+      # real Approve->Ready trigger (workflow.json) — no tracker label read,
+      # no fallback. Same two-factor shape as gate-check.sh's checks: a
+      # child never approved (Approve state, or a hand-moved ticket outside
+      # the automated flow entirely) fails this and is correctly left
+      # unflagged as an AUTOMATION concern. implement-complete clears
+      # `approved` on the way to Review, so this is naturally dormant for
+      # Review/UAT states — parity with the label it replaces, which the
+      # same trigger also stripped.
+      local _sa_approved _sa_approved_rc=0 _sa_stage=""
+      if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+        _sa_approved=$(get_ticket_manifest_field "$child_id" approved 2>/dev/null) || _sa_approved_rc=$?
+      else
+        _sa_approved_rc=1
+      fi
+      if [ "$_sa_approved_rc" -eq 0 ] && [ "$_sa_approved" = "true" ]; then
+        _sa_stage=$(get_ticket_manifest_field "$child_id" stage 2>/dev/null) || true
+      fi
+      if [ "$_sa_approved_rc" -ne 0 ] || [ "$_sa_approved" != "true" ] || [ "$_sa_stage" != "Ready" ]; then
         continue
       fi
 

@@ -108,9 +108,7 @@
     "human-approve": {
       "from": "Approve",
       "to": "Ready",
-      "adds": [
-        "approved"
-      ],
+      "adds": [],
       "removes": [
         "rejected"
       ],
@@ -141,9 +139,7 @@
       "from": "Ready",
       "to": "Review",
       "adds": [],
-      "removes": [
-        "approved"
-      ],
+      "removes": [],
       "description": "Implementation pushed — enter code review",
       "precondition": "must_not_be_epic"
     },
@@ -186,9 +182,7 @@
     "pr-iterate": {
       "from": "Review",
       "to": "Ready",
-      "adds": [
-        "approved"
-      ],
+      "adds": [],
       "removes": [
         "reviewed",
         "rejected"
@@ -264,7 +258,6 @@
       "to": null,
       "adds": [],
       "removes": [
-        "approved",
         "pre-approved"
       ],
       "description": "Remove approval label to restart gate hold cycle",

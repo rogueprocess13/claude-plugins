@@ -429,8 +429,8 @@ fleet_reconcile_orphans() {
     # always eligible. `gate-stopped` and `gate-held` are eligible only
     # under an explicit epic scope — i.e. a human ran
     # `fleet-dispatch.sh <EPIC> --resume` — because their conditions are
-    # fixed OUTSIDE the pipeline (acceptance criteria edited, the `approved`
-    # label added) and only a human knows when that has happened. The
+    # fixed OUTSIDE the pipeline (acceptance criteria edited, /ticket-approve
+    # run) and only a human knows when that has happened. The
     # passive startup scan must never spend restart credits or kick off
     # implementation on its own initiative, so it keeps leaving both alone.
     #
@@ -446,8 +446,8 @@ fleet_reconcile_orphans() {
       if [ -z "$reconcile_epic" ]; then
         # `held: human` already gets its own notify at hold-creation time
         # (supervisor.py's human-hold-intake pass, fleet_notify_hold) —
-        # only `held: gate` (the ordinary "complex ticket, needs the
-        # `approved` label" hold) had no notify path anywhere: it is not a
+        # only `held: gate` (the ordinary "complex ticket, needs
+        # /ticket-approve" hold) had no notify path anywhere: it is not a
         # human-hold (detect_human_hold explicitly excludes it) and not a
         # gate-stop (no META|gate-stop|fail line exists for it). Both
         # outcomes classify identically as `gate-held` by

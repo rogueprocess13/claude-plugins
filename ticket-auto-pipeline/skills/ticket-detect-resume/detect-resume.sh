@@ -11,6 +11,14 @@ source "$LIB_DIR/heartbeat.sh"
 source "$LIB_DIR/linear-api.sh"
 source "$LIB_DIR/ticket-dir.sh"
 source "$LIB_DIR/notes-parse.sh"
+# manifest-read.sh backs the GATE_HELD resume decision below
+# (tracker-approval-by-script) — this script runs as its own `bash`
+# subprocess, so it sources the lib itself rather than relying on a caller.
+if [ -f "$LIB_DIR/manifest-read.sh" ]; then
+  source "$LIB_DIR/manifest-read.sh"
+elif [ -f "$SCRIPT_DIR/../../lib/manifest-read.sh" ]; then
+  source "$SCRIPT_DIR/../../lib/manifest-read.sh"
+fi
 
 CURRENT_SCHEMA_VERSION=1
 
@@ -470,23 +478,31 @@ fi
 # ── GATE_HELD handling ──────────────────────────────────────────────────────
 
 if [ "$RESUME_STEP" = "GATE_HELD" ]; then
-  # A failed/malformed fetch here must stay distinguishable from a genuine
-  # "no approved label yet" read (issue #362, LINEAR_GET_ISSUE_NULL_CONTINUES).
-  # Both currently fall through to the same safe RESUME_STEP (the router
-  # will not advance a held ticket either way), but the log line — and thus
-  # any operator or retro tooling reading it — must say which actually
-  # happened rather than silently collapsing an API failure into "not
-  # approved yet".
-  ISSUE_JSON=""
-  if ! ISSUE_JSON=$(get_issue "$TICKET_ID" 2>/dev/null) || ! require_issue_payload "$ISSUE_JSON" 2>/dev/null; then
-    RESUME_STEP="GATE_STILL_HELD"
-    hb_gate "resume-point" "fail" "gate still held — approval check unavailable (get_issue fetch failed)"
-    _plog "$LOG_FILE" "META" "gate-warn" "fail" "LINEAR_FETCH_FAILED — detect-resume could not verify approval for $TICKET_ID"
-  elif echo "$ISSUE_JSON" | jq -e '.labels.nodes[]? | select(.name | ascii_downcase == "approved")' >/dev/null 2>&1; then
+  # tracker-approval-by-script: the manifest is the sole approval decision
+  # read — no tracker fetch, so the old fetch-failure branch (issue #362,
+  # LINEAR_GET_ISSUE_NULL_CONTINUES) no longer applies: there is no fetch
+  # left to fail. A missing manifest is a distinct migration/provisioning
+  # gap (D3) and gets its own warning rather than being silently folded
+  # into "not approved yet".
+  GATE_HELD_APPROVED=""
+  GATE_HELD_APPROVED_RC=0
+  if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+    GATE_HELD_APPROVED=$(get_ticket_manifest_field "$TICKET_ID" approved 2>/dev/null) || GATE_HELD_APPROVED_RC=$?
+  else
+    GATE_HELD_APPROVED_RC=1
+  fi
+  GATE_HELD_STAGE=""
+  if [ "$GATE_HELD_APPROVED_RC" -eq 0 ] && [ "$GATE_HELD_APPROVED" = "true" ]; then
+    GATE_HELD_STAGE=$(get_ticket_manifest_field "$TICKET_ID" stage 2>/dev/null) || true
+  fi
+  if [ "$GATE_HELD_APPROVED_RC" -eq 0 ] && [ "$GATE_HELD_APPROVED" = "true" ] && [ "$GATE_HELD_STAGE" = "Ready" ]; then
     RESUME_STEP="STEP_3_5"
-    hb_gate "resume-point" "ok" "gate was held but approved label found — resuming at STEP_3_5 (comment reconciliation)"
+    hb_gate "resume-point" "ok" "gate was held but manifest records approval — resuming at STEP_3_5 (comment reconciliation)"
   else
     RESUME_STEP="GATE_STILL_HELD"
+    if [ "$GATE_HELD_APPROVED_RC" -ne 0 ]; then
+      _plog "$LOG_FILE" "META" "manifest" "warn" "MANIFEST_MISSING — no local manifest for $TICKET_ID at resume"
+    fi
     hb_gate "resume-point" "fail" "gate still held — requires approval"
   fi
 fi

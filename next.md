@@ -455,7 +455,7 @@ halts the pipeline — without an event system, a schema change, or moving state
 items, still unchecked in the archived task files. Code is merged; only real-traffic confirmation is
 open. Roll these into whatever live-verification pass lifts Step 6's hold.
 
-## Step 7b — Tracker decoupling, Track B Phases B1-B2 — COMPLETE, archived; B3a — COMPLETE, PR #397 merged; B3b — COMPLETE (no-op on write side, not yet merged)
+## Step 7b — Tracker decoupling, Track B Phases B1-B2 — COMPLETE, archived; B3a — COMPLETE, PR #397 merged; B3b — COMPLETE, merged PR #399; B4 — COMPLETE, merged PR #400
 
 **Openspec change:** `tracker-event-vocabulary-and-emitter` — proposed 2026-09-19, applied same day
 via explicit `/opsx:apply` instruction, ahead of Step 6's hold (the plan file's own ordering would
@@ -651,12 +651,22 @@ check-generated && make lint && make fmt-check && make test` (the one `test-plan
 via `git stash`; pre-existing, unrelated). `fleet-controller/fleetd/tests/test_supervisor.py`'s 13
 pre-existing subprocess-spawn/health-endpoint failures (`SingleInstanceTest`,
 `StartupEnvCheckGateTest`, `HealthEndpointTest`, etc.) also reproduce on unmodified `main` —
-sandbox/loopback environment flakiness, unrelated. Version bumps and commit/PR not yet done — next.
-Live-verification (hold a ticket at the gate, confirm the store row via the default path; approve via
-label, confirm `runs.jsonl` provenance) intentionally deferred to the single consolidated
-live-verification pass covering B3a/B3b/B4, per the same reordering decision recorded above.
+sandbox/loopback environment flakiness, unrelated. Version-bumped to ticket-auto-pipeline 0.53.0 /
+fleet-controller 0.34.0, committed and opened as **PR #400** (2026-09-23) on
+`feat/tracker-inbound-approval`, then archived as `2026-09-23-tracker-inbound-approval` via
+`openspec archive -y` (2 specs updated: `gate-hold-intake` created, `ticket-local-manifest` gained
+2 requirements — `openspec validate --specs --strict` clean, 51/51). PR #400 merged 2026-09-23.
+Live-verification (hold a ticket at the gate, confirm the store row via the default path;
+approve via label, confirm `runs.jsonl` provenance) intentionally deferred to the single
+consolidated live-verification pass covering B3a/B3b/B4, per the same reordering decision recorded
+above.
 
-B5 remains unproposed after B4, needing the same override in turn.
+B5, as originally scoped ("second board" — GitHub Issues alongside Linear, proving the driver owns
+the mapping), remains unproposed and is **superseded by Step 7c below**, not merely deferred: B1-B4
+built the outbox, the no-op driver and informational-only manifest fields, but none of it stopped a
+single label from being written, which was always the operator's actual complaint
+(`tracker-label-audit`, 2026-09-19, removed exactly one — `claimed`). Step 7c is the change that
+finishes what B5 was pointed at the wrong target to fix.
 
 **Track B in full is behind next.md Step 6.** The plan file carries the complete 5-phase design
 (event emitter and outbox, board drivers with per-board `event → column` tables, local facts,
@@ -672,6 +682,94 @@ Three findings from the Track B design work that stand on their own, whether or 
 - **`_plog` silently drops any line whose MSG contains `|`** (`heartbeat.sh:42-46`, returns 1, and its
   three existing JSON callers ignore the return code). Fine for metadata, disqualifying for any
   channel of record.
+
+---
+
+## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — Change 1 (`tracker-approval-by-script`) implemented 2026-09-23, PR #401 open; Changes 2/3 still PROPOSED
+
+**Why this exists:** 2026-09-23, after B4 shipped, the operator restated the original complaint
+directly — Linear tickets are noisy with labels, and none of B1-B4 addressed that. Investigation
+confirmed it: `update_issue` has exactly one non-test caller (`flow.sh:462`) and every trigger still
+adds/removes real Linear labels on every run; B3a's manifest-first reads all kept a live-label
+fallback, which made B3b's re-audit reconfirm all six migrated labels `control` rather than let any
+of them stop being written — the rule (`tracker-label-inventory`: "only vestigial labels may be
+removed") and the fallback held each other in place. B4's own design explicitly declined to make
+`approved` a decision read, reasoning that the label is revocable out-of-band via the Linear UI —
+true only because the label *was* the approval act.
+
+**The operator's target, stated directly:** a human approves via a script call that writes
+`approved` to local metadata; the ticket becomes information-tracking and comments only; Linear
+labels stop carrying machine state. Two decisions taken before proposing: approval path is
+**script-only** (no label read as input, closing B4's revocation objection by removing its
+premise); the four **human-signal** labels (`needs-info`, `needs-adr`, `rejected`, `reviewed`)
+remain as board-driver *projections* — pure output, nothing reads them back.
+
+**Plan:** `~/.claude/plans/radiant-juggling-candle.md` — built from a 3-agent codebase inventory
+(every Linear write site, every approval/state decision read, the full outbox→driver push path)
+and reviewed by 3 independent agents (approval-safety, removal-completeness, projection-design)
+before being finalized. Three openspec changes, one PR each, in this order — later changes depend
+on manifest fields and classifications the earlier ones add, so the order is load-bearing, not
+just a size-limiting convention:
+
+1. **`tracker-approval-by-script`** — **IMPLEMENTED 2026-09-23, 40/40 tasks, PR #401 open.**
+   New `/ticket-approve` / `/ticket-reject` commands are the only approval actuator; manifest
+   gains `stage`; all six approval-decision reads (`gate-check.sh` Checks 2.8b/2.8c/4/reapprove via
+   a new shared `_gate_manifest_approved` helper, `detect-resume.sh`'s `GATE_HELD` resume, fleet-
+   detect D-18) move to the manifest with no tracker fallback; `approved` stops being written
+   (`human-approve`/`pr-iterate.adds`, `implement-complete`/`re-claim.removes` in `workflow.json`).
+   Adds a fourth label classification, **`projected`**, to `tracker-label-inventory` — a control
+   label whose every read has been relocated with no fallback remaining, which is the rule that
+   actually permits a write to stop (the missing piece B1-B4 never added); `approved` is the first
+   label this audit has ever reclassified off `control` (`docs/label-audit.md`). Ad-hoc
+   (non-planned) tickets get a reserved `_adhoc` initiative via new `ensure_ticket_manifest` so
+   they're manifest-addressable at all. One-shot `manifest-backfill.sh` seeds in-flight tickets
+   (`--dry-run` supported). Clean `git revert` rollback — the label is never removed from existing
+   issues, only stops being written to new transitions.
+   Two real bugs found and fixed during implementation, neither anticipated by the plan: (1) a
+   latent `set -e` landmine in `manifest-read.sh`/`manifest-write.sh` — a bare `var=$(failing_cmd)`
+   aborts the caller's whole script under `set -e` (which `flow.sh`/`gate-check.sh` both set) before
+   the return code can even be checked, now guarded with `|| rc=$?` everywhere a failed manifest
+   read is a normal outcome; (2) `_write_approval_manifest` never cleared the manifest's `approved`
+   fact on `implement-complete` (only `re-claim`) — silently safe under B4 since nothing read the
+   field, but load-bearing now for the `uat-fail`-returns-to-`Ready`-without-reapproval invariant
+   design.md calls out, so a dedicated regression test (`test_uat_fail_never_observes_approved_true`,
+   `phase1.sh`) pins it. Also found `gate-check.sh`/`detect-resume.sh` never sourced
+   `manifest-read.sh` themselves — both run as their own `bash` subprocess, so the pre-existing
+   Check 2.7b manifest-first read was unreachable in production before this change added the
+   source lines. Full suite green (`make check-generated && make lint && make fmt-check && make
+   test`, incl. one real regression this change's own doc-rewrite caused in
+   `test-pipeline-phases.sh`, fixed). Versions bumped: `ticket-auto-pipeline` 0.53.0→0.54.0,
+   `fleet-controller` 0.34.0→0.35.0. Task 9.4 (live verification on the tickets host) deferred to
+   the programme's consolidated live-verification pass, per the same reordering decision B3a/B3b/B4
+   already used.
+2. **`tracker-flow-projection-cutover`** (proposed, 70 tasks) — `flow.sh` stops calling Linear
+   entirely; manifest gains `flags`/`rev`/`pending_event`; `emit_event` gains an idempotency key so
+   a crash between manifest-write and emit can't double-fire; `board_drivers.linear` becomes the
+   real projection table (columns + the four human-signal labels only, non-projected labels like a
+   hand-applied `bug` always preserved); pusher flips default-on. **One-way door** — no kill switch,
+   rollback is a `git revert`. Migration hazard caught in review: every existing host's outbox
+   cursors sit at 0 (the pusher's been opt-in since B2), so flipping the default without a cursor
+   fast-forward would replay each ticket's full transition history and flap its column through
+   every past state — now a spec requirement (`tracker-board-pusher`) with the code landing
+   pusher-still-off and the default flip as a separate, later commit per host.
+3. **`tracker-planner-and-fallback-cutover`** (proposed, 51 tasks) — the planner stops stamping
+   `planned`/`INIT-*`/`blocked-by:*`/`state:execution`/type/`pre-approved` at ticket and epic
+   creation; every remaining B3a live-fallback branch is deleted. Gated on a parity step: two
+   fleet-detect engines (D-12 `_fleet_scan_epic_branch_ready`, D-18
+   `_fleet_scan_stalled_approved_children`) currently enumerate epics via a live
+   `state:execution` query with **no manifest path at all** — reviewed and confirmed worse than
+   first scoped: D-12 also needs the live epic state for its never-regress short-circuit and the
+   live description for the Branch Directive, D-18 also needs the live children list. Task group 1
+   builds and verifies local enumeration for every input (not just population) against a real
+   fleet *while labels are still written*, records the comparison as a durable artefact, and only
+   then lets group 4 (planner stops writing) proceed — that group is marked the point of no return.
+
+All three validated `openspec validate --strict` clean as of 2026-09-23. Change 1
+(`tracker-approval-by-script`) is implemented (40/40 tasks, PR #401 open) — see its entry above.
+Changes 2/3 are not started. Track B remains the next queued work ahead of Step 6 by the same
+direct-override precedent B1 used; Change 2 (`tracker-flow-projection-cutover`) is next up once
+Change 1's PR merges, since it depends on manifest fields (`flags`/`rev`/`pending_event`) and the
+`projected` classification Change 1 just added.
 
 ---
 

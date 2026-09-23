@@ -1388,6 +1388,19 @@ test_initiative_dispatch_calls_client_with_state_execution_label() {
 
 # ── D-18 stalled approved children scan (GitHub #342) ─────────────────────────────
 
+# tracker-approval-by-script: D-18 reads approved+stage from the child's
+# manifest, not its live labels — seeds one at $repos_root for $child_id.
+_seed_stalled_child_manifest() {
+  local repos_root="$1" child_id="$2"
+  local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
+  (
+    source "$tap_lib/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "$child_id" "INIT-42" "feature" '[]' >/dev/null
+    REPOS_ROOT="$repos_root" set_ticket_approval "$child_id" "true" "human" >/dev/null
+    REPOS_ROOT="$repos_root" set_ticket_stage "$child_id" "Ready" >/dev/null
+  )
+}
+
 # get_epics_by_label fixture (unwrapped array): one state:execution epic
 # with one child.
 _make_stalled_epic_json() {
@@ -1412,11 +1425,15 @@ test_stalled_approved_no_worker_no_queue_is_flagged() {
   fleet_store_ready() { return 0; }
   fleet_store_in_flight() { :; }
 
+  local repos_root
+  repos_root=$(mktemp -d)
+  _seed_stalled_child_manifest "$repos_root" "CRE-77"
+
   local r sev findings
-  r=$(_fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
   sev=$(echo "$r" | jq -r '.severity')
   findings=$(echo "$r" | jq -r '.findings')
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
 
   [ "$sev" -eq 1 ] || {
     echo "expected severity 1, got $sev" >&2
@@ -1424,6 +1441,71 @@ test_stalled_approved_no_worker_no_queue_is_flagged() {
   }
   echo "$findings" | grep -q "CRE-77" || {
     echo "expected CRE-77 in findings: $findings" >&2
+    return 1
+  }
+  return 0
+}
+
+# tracker-approval-by-script (task 7.4): a live "approved" label with no
+# backing manifest fact must not flag the child — the tracker label is no
+# longer read for this decision at all.
+test_stalled_approved_live_label_no_manifest_not_flagged() {
+  local ws
+  ws=$(_setup_workspace)
+  get_issue() { :; }
+  get_epics_by_label() {
+    _make_stalled_epic_json "INIT-42" "CRE-78" "Ready" '[{"name":"planned"},{"name":"approved"}]'
+  }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  # Deliberately no manifest seeded for CRE-78.
+
+  local r sev
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 0 ] || {
+    echo "expected severity 0 (not flagged) — a live label with no manifest must be ignored, got $sev" >&2
+    return 1
+  }
+  return 0
+}
+
+# tracker-approval-by-script (task 7.4): manifest approved=false (field
+# absent) — same as no manifest, not flagged, not resumed.
+test_stalled_approved_manifest_false_not_flagged() {
+  local ws
+  ws=$(_setup_workspace)
+  get_issue() { :; }
+  get_epics_by_label() {
+    _make_stalled_epic_json "INIT-42" "CRE-79" "Ready" '[{"name":"planned"},{"name":"approved"}]'
+  }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  (
+    source "$SCRIPT_DIR/../../../ticket-auto-pipeline/lib/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-79" "INIT-42" "feature" '[]' >/dev/null
+  )
+
+  local r sev queued
+  r=$(REPOS_ROOT="$repos_root" FLEET_AUTO_RESUME_STALLED=true _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  local queue_file="$ws/fleet-default-spawn-queue.jsonl"
+  queued=0
+  [ -f "$queue_file" ] && grep -q '"tid":"CRE-79"' "$queue_file" 2>/dev/null && queued=1
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 0 ] && [ "$queued" -eq 0 ] || {
+    echo "expected severity 0 and not resumed for approved=false, got severity=$sev queued=$queued" >&2
     return 1
   }
   return 0
@@ -1540,12 +1622,16 @@ test_stalled_approved_auto_resume_enqueues_when_enabled() {
   fleet_store_ready() { return 0; }
   fleet_store_in_flight() { :; }
 
-  FLEET_AUTO_RESUME_STALLED=true _fleet_scan_stalled_approved_children "$ws" >/dev/null 2>&1
+  local repos_root
+  repos_root=$(mktemp -d)
+  _seed_stalled_child_manifest "$repos_root" "CRE-83"
+
+  REPOS_ROOT="$repos_root" FLEET_AUTO_RESUME_STALLED=true _fleet_scan_stalled_approved_children "$ws" >/dev/null 2>&1
 
   local queue_file="$ws/fleet-default-spawn-queue.jsonl"
   local queued=0
   [ -f "$queue_file" ] && grep -q '"tid":"CRE-83"' "$queue_file" 2>/dev/null && queued=1
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
   [ "$queued" -eq 1 ]
 }
 
@@ -1682,6 +1768,8 @@ for fn in \
   test_initiative_dispatch_no_stop_note_when_unstopped \
   test_initiative_dispatch_calls_client_with_state_execution_label \
   test_stalled_approved_no_worker_no_queue_is_flagged \
+  test_stalled_approved_live_label_no_manifest_not_flagged \
+  test_stalled_approved_manifest_false_not_flagged \
   test_stalled_approved_live_worker_not_flagged \
   test_stalled_approved_pending_queue_entry_not_flagged \
   test_stalled_approved_backlog_state_not_flagged \

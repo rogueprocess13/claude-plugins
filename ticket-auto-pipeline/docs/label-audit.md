@@ -710,3 +710,45 @@ label declarations, `planner_verify_tickets`'s assertion, and `manifest-read.sh`
 fallbacks are unchanged — the last of these specifically because a fallback exists precisely
 *because* the live read (and therefore the write) is confirmed still load-bearing for all six
 fields, the opposite of the condition that would have required removing it.
+
+## `approved` reclassified `projected` (2026-09-23, `tracker-approval-by-script`)
+
+The `approved` label is the first label this audit has ever reclassified off `control` — every
+other pass, including the re-audit immediately above, reconfirmed `control` because a live-label
+fallback always survived relocation. `approved` breaks that pattern because the decision it backed
+— human approval — was migrated to a script-only actuator (`/ticket-approve`, `/ticket-reject`),
+which removes the fallback's premise entirely: there is no longer a tracker mutation for `approved`
+for a fallback to defend against losing.
+
+**All six decision reads cited by the original entry above are relocated, with no fallback
+remaining:**
+
+- `lib/gate-check.sh` Check 2.8b (complex + auto/semi-auto override) — now reads the manifest's
+  `approved`+`stage` via `_gate_manifest_approved`. No live fetch.
+- `lib/gate-check.sh` Check 2.8c (complex + manual override) — same helper, same manifest-only read.
+- `lib/gate-check.sh` Check 4 (manual-mode entry) — same helper, same manifest-only read.
+- `lib/gate-check.sh` `_gate_reapprove` (post-PR-cycle reapprove-mode verification) — same helper;
+  `APPROVAL_REVOKED` now means "the manifest records no approval," not "the label is absent."
+- `skills/ticket-detect-resume/detect-resume.sh`'s `GATE_HELD` resume detection — reads
+  `get_ticket_manifest_field ... approved`/`stage` directly, no tracker fetch.
+- `fleet-controller/lib/fleet-detect.sh` D-18 (`_fleet_scan_stalled_approved_children`) — reads the
+  child's manifest `approved`+`stage` instead of `grep -q "approved"` on live labels.
+
+**Write removed.** `approved` is removed from `human-approve.adds` and `pr-iterate.adds` in
+`workflow.json`; `implement-complete.removes` and `re-claim.removes` no longer name it either — the
+manifest's `_write_approval_manifest` clears the fact directly (extended in this change to also
+fire on `implement-complete`, not only `re-claim` — the load-bearing ordering the `uat-fail`
+invariant test in `skills/ticket-flow/tests/phase1.sh` pins). The label is never removed from
+existing Linear issues that already carry it — only new transitions stop writing it — so
+`git revert` remains a clean rollback path for this change alone (the next change in the programme,
+`tracker-flow-projection-cutover`, is the first one-way door).
+
+**Per this file's own rule, updated by this change's `tracker-label-inventory` spec delta:** a
+`control` label whose every decision read has been relocated *with no fallback remaining* is
+`projected`, not `vestigial` — the label may continue to be written as a human-legible mirror, or
+may stop, at the operator's discretion, with no further reader search required. This change stops
+writing it. A hand-applied `approved` label in the Linear UI after this change lands has no effect
+on any decision — confirmed by `local-approval-authority`'s own test coverage
+(`test_check28b_live_label_ignored_manifest_missing_warns` et al., `lib/tests/test-gate-check.sh`).
+
+**Saved-view impact:** none known, same as the original entry.
