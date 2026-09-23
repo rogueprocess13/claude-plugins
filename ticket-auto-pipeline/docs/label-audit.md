@@ -605,3 +605,108 @@ decided, per label:
 **Updated proposed-for-removal-but-not-yet-removed list:** `simple`, `complex` (follow-up work,
 not part of this change's execution). **Confirmed removed:** `claimed`. **Confirmed retained
 (reclassified):** `pre-approved`.
+
+## Re-audit addendum (2026-09-23, `tracker-local-facts-write-migration` / Track B Phase B3b)
+
+Triggered by `tracker-local-facts-read-migration` (B3a, PR #397, merged 2026-09-23), which
+relocated every decision read this file cited as `control` evidence for six labels — `planned`,
+`blocked-by:*`, `state:execution`, the five type labels, `Smooth`/`Rough`/`Hard` — onto a local
+per-ticket/per-epic manifest. Per this file's own preamble ("re-run the searches below before
+trusting a classification") and the `tracker-label-inventory` capability's new requirement ("a
+relocated read triggers reclassification, not just a write-side note"), this addendum re-runs the
+code-reader and documented-consumer searches for exactly those six labels. `approved`, `INIT-*`,
+`needs-info`, `needs-adr`, `rejected`, `reviewed`, `repro-failed` are untouched by B3a and are not
+re-examined here.
+
+**Method:** re-read every site B3a's own commit cites as a migrated call site (`gate-check.sh`,
+`appraise-fast-path.sh`, `planner-artifacts.sh`, `planned-ticket-check.sh`,
+`planned-ticket-body-check.sh`, `epic-branch.sh`, `fleet-controller/lib/fleet-dispatch.sh`,
+`fleet-controller/lib/fleet-detect.sh`, `outcome-label-check.sh`, `fleetd/phase_dispatch.py`,
+`lib/run-identity.sh`) in full, in their current on-disk state, plus a fresh `grep` for
+`.labels.nodes`/`label_names` across the same five plugins to catch any reader outside that list.
+Documented-consumer search repeated `grep -rn` for each label's exact string across every plugin
+`CLAUDE.md`, `README.md`, `docs/*.md`, `skills/*/SKILL.md`, and `next.md`/`CHANGELOG.md`, reading
+every hit in context (same method as the original audit and the `rejected`/`reviewed`/
+`repro-failed` follow-up).
+
+**Finding, all six labels: B3a is not the read-removal B3b's proposal anticipated it might be —
+it is a read-migration with a deliberate, still-live fallback, and that fallback is itself a
+`control`-qualifying read.** Every migrated call site follows the identical shape: check whether a
+local manifest exists for this ticket/epic; if so, read the manifest field; **if not, fall back to
+the exact pre-B3a live label read, unchanged.** This is B3a's own explicitly stated design (design.md:
+"keeping every label write unchanged as an explicit rollback net... any reverted call site falls
+back to exactly its pre-B3a behavior") — the fallback branch was never dead code to begin with, it
+is the mechanism that makes B3a revertible. A live label read that only fires when a manifest is
+absent (predates the migration, write failed, `REPOS_ROOT` unset, `TICKET_LOCAL_MANIFEST_DISABLE`)
+is still a real decision read: the pipeline's routing/gating behavior for that ticket depends on
+the label's presence in exactly those cases. Confirmed per label:
+
+- **`planned`** — live fallback read confirmed unchanged (label-gated on `ticket_manifest_exists`)
+  at `gate-check.sh:622` (Check 2.7 gate entry), `appraise-fast-path.sh:95-99` (fast-path
+  eligibility), `planner-artifacts.sh:52-63` (`resolve_planner_dir`), `planned-ticket-check.sh:93-97`,
+  `planned-ticket-body-check.sh:80-84`, and `epic-branch.sh:511-515` (`epic_branch_children_done`'s
+  live-query branch, which additionally filters children by the label unconditionally within that
+  branch — not manifest-gated at all, since it only runs when no epic manifest exists),
+  `fleet-dispatch.sh:701-705,796-802` (per-child live fallback when no child manifest exists).
+  Documented-consumer search found only architectural/mechanism prose (`CLAUDE.md`,
+  `ticket-planner/CLAUDE.md`, `ticket-planner/docs/ticket-planner.md`,
+  `fleet-controller/CLAUDE.md`/`README.md`, `ticket-appraise/SKILL.md`) — no instruction to a human
+  to look for this label in the Linear UI, same as the original pass. Moot regardless: the live
+  fallback reader alone is sufficient `control` evidence. **Reconfirmed `control`** — classification
+  basis narrows from "primary decision read" to "fallback decision read used whenever no local
+  manifest exists," not a change in kind.
+- **`blocked-by:*`** — live fallback confirmed at `fleet-dispatch.sh:693-705` (per-child dispatch
+  eligibility, no child manifest) and `fleet-detect.sh:1187-1210` (`detect_blocked_by`'s live-query
+  branch, no ticket manifest). Same doc-mention shape as `planned` (dependency-mechanism
+  documentation in `ticket-planner/CLAUDE.md`, `ticket-planner/docs/ticket-planner.md`,
+  `fleet-controller/CLAUDE.md`/`README.md`), no imperative human instruction found. Design's own
+  Risk ("removing this label removes the last Linear-UI-visible trace of a dispatch block") is
+  accepted as a live trade-off, not evidence of a documented consumer relying on it today.
+  **Reconfirmed `control`**, same basis narrowing as `planned`.
+- **`state:execution`** — live fallback confirmed at `fleet-dispatch.sh:530-557` (epic validation,
+  no epic manifest) and `fleet-detect.sh:1364-1416,1555,1732-1772` (three separate detector call
+  sites' live-query branches, no epic manifests found under `REPOS_ROOT`). Doc mentions
+  (`ticket-planner/docs/ticket-planner.md`, `ticket-planner/plugin-overview.md`,
+  `fleet-controller/README.md`/`CLAUDE.md`) are all pipeline-mechanism descriptions of when the
+  label is set and what it gates, not operator-facing instructions. **Reconfirmed `control`**, same
+  basis narrowing.
+- **Type labels (`bug`/`feature`/`improvement`/`security`/`chore`)** — live fallback confirmed at
+  `gate-check.sh:642-645` (`ticket_type` resolution for Check 2.7b's `NO_TEMPLATE_FOR_TYPE` gate,
+  falls back to `_resolve_type_label` at `gate-check.sh:730-756`) and
+  `fleetd/phase_dispatch.py:1685-1738` (`resolve_ticket_type`, manifest-first via
+  `_resolve_ticket_type_from_manifest`, falls back to a live `get_issue` + label-set read).
+  `run-identity.sh:229-260`'s type field is manifest-first too, but that write
+  (`META|ticket-meta`) is informational/telemetry, not a decision — consistent with the original
+  audit's classification boundary, this site was never counted as `control` evidence and its
+  fallback shape doesn't change that. No new documented-consumer evidence beyond the original
+  pass's saved-view-triage framing (still unconfirmed, no saved-view data available).
+  **Reconfirmed `control`** for all five, same basis narrowing.
+- **`Smooth`/`Rough`/`Hard`** — **not actually invalidated at all.** `outcome-label-check.sh`'s own
+  in-file comment (`lib/outcome-label-check.sh:153-158`, added by the same B3a migration) states
+  explicitly: "Deliberately does NOT touch `_has_outcome_label`'s live Linear read above... migrating
+  it to the manifest would make it verify against the *write this function itself just performed*
+  instead of independently confirming the mutation landed" — `_has_outcome_label`
+  (`outcome-label-check.sh:73-83`) is unchanged, unconditional, and still the sole implementation.
+  B3a only added a write-side mirror to the manifest (`_mirror_outcome_to_manifest`,
+  `outcome-label-check.sh:158-161`) — a genuinely separate concern from this label's read path. The
+  premise that motivated re-auditing this label (a control-evidencing read relocated to local
+  state) did not occur. **Reconfirmed `control`, evidence unchanged from the 2026-09-19 pass** —
+  this is the one of the six where "re-audit" found literally nothing to reconsider.
+
+**Saved-view impact:** no new data available for any of the six, same constraint as the original
+audit and its follow-up pass.
+
+**Net effect on the operator confirmation gate: no proposed-vestigial list.** All six labels are
+reconfirmed `control` on the strength of a still-live fallback decision read (five of six) or an
+entirely untouched decision read (`Smooth`/`Rough`/`Hard`) — not on documented-consumer evidence,
+which was searched but is redundant once a code reader exists. Per this file's own governing rule
+("A label SHALL NOT stop being written unless it is classified `vestigial`"), none of the six
+qualifies, so **no operator confirmation is required and no write removal proceeds** — this is the
+"re-audit finds genuine consumers for all six, making this phase a no-op on the write side" outcome
+the change's own design.md named as an accepted, correct possibility (§ Risks / Trade-offs), not a
+partial or deferred result. `planner_linear_create_issue`, `planner_linear_ensure_label`,
+`planner_dispatch_gate`, and `outcome-label-check.sh`'s write paths are unchanged. `workflow.json`'s
+label declarations, `planner_verify_tickets`'s assertion, and `manifest-read.sh`'s live-fetch
+fallbacks are unchanged — the last of these specifically because a fallback exists precisely
+*because* the live read (and therefore the write) is confirmed still load-bearing for all six
+fields, the opposite of the condition that would have required removing it.

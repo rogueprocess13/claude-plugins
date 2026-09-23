@@ -455,7 +455,7 @@ halts the pipeline — without an event system, a schema change, or moving state
 items, still unchecked in the archived task files. Code is merged; only real-traffic confirmation is
 open. Roll these into whatever live-verification pass lifts Step 6's hold.
 
-## Step 7b — Tracker decoupling, Track B Phases B1-B2 — COMPLETE, archived; B3a — COMPLETE, PR #397 merged; B3b — proposing
+## Step 7b — Tracker decoupling, Track B Phases B1-B2 — COMPLETE, archived; B3a — COMPLETE, PR #397 merged; B3b — COMPLETE (no-op on write side, not yet merged)
 
 **Openspec change:** `tracker-event-vocabulary-and-emitter` — proposed 2026-09-19, applied same day
 via explicit `/opsx:apply` instruction, ahead of Step 6's hold (the plan file's own ordering would
@@ -577,10 +577,24 @@ paths that have never been exercised against a live Linear workspace, compoundin
 verification would have caught. Accepted in favor of not fragmenting live-testing into N separate
 passes, each requiring the same real-workspace setup. **B3b is unblocked to start now.**
 
-B3b (write-side label removal) is the next phase — openspec change to be proposed, same explicit-
-override basis as B1/B2/B3a (Track B sits behind Step 6's hold; each phase needs its own override
-before `/opsx:propose` starts). B4–B5 remain unproposed after that, needing the same override in
-turn.
+**B3b implemented 2026-09-23, same explicit-override basis as B1/B2/B3a** — openspec change
+`tracker-local-facts-write-migration`, proposed and applied same day. All 20 tasks done via
+`/opsx:apply`, but the change is a **no-op on the write side by design**: the re-audit (Section 1 of
+the change's tasks.md) re-ran the code-reader and documented-consumer searches for the six labels
+whose `control` evidence B3a relocated (`planned`, `blocked-by:*`, `state:execution`, the five type
+labels, `Smooth`/`Rough`/`Hard`) and found that every B3a-migrated call site is manifest-first with
+an **unchanged live-label fallback** — the exact rollback net B3a's own design describes — and that
+`Smooth`/`Rough`/`Hard`'s read was never touched by B3a at all (explicit in-file comment). All six
+are reconfirmed `control` on that still-live fallback reader alone; none reached the vestigial
+question, so no operator confirmation was needed and no write, `workflow.json` declaration,
+`planner_verify_tickets` assertion, or `manifest-read.sh` fallback changed. Findings recorded as a
+dated addendum in `ticket-auto-pipeline/docs/label-audit.md` (additive, original 2026-09-19 audit
+untouched). Only file changes: `docs/label-audit.md` (addendum) and this file — no code, no version
+bump needed. Pre-existing `test-planner` flakiness (a different test fails each run under
+`make test-planner`, passes standalone every time) reproduced again here — same pattern as B3a,
+confirmed unrelated to this doc-only change. **Not yet committed/PR'd as of this writing.**
+
+B4–B5 remain unproposed, needing the same override in turn.
 
 **Track B in full is behind next.md Step 6.** The plan file carries the complete 5-phase design
 (event emitter and outbox, board drivers with per-board `event → column` tables, local facts,
