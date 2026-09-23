@@ -685,7 +685,7 @@ Three findings from the Track B design work that stand on their own, whether or 
 
 ---
 
-## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — Changes 1/2 implemented 2026-09-23 (PR #401 open, Change 2 PR pending); Change 3 still PROPOSED
+## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — Changes 1/2 implemented 2026-09-23 (PR #401 and PR #402 both open); Change 3 still PROPOSED
 
 **Why this exists:** 2026-09-23, after B4 shipped, the operator restated the original complaint
 directly — Linear tickets are noisy with labels, and none of B1-B4 addressed that. Investigation
@@ -742,7 +742,9 @@ just a size-limiting convention:
    `fleet-controller` 0.34.0→0.35.0. Task 9.4 (live verification on the tickets host) deferred to
    the programme's consolidated live-verification pass, per the same reordering decision B3a/B3b/B4
    already used.
-2. **`tracker-flow-projection-cutover`** — **IMPLEMENTED 2026-09-23, 70/70 tasks** (9.3 and 10.10
+2. **`tracker-flow-projection-cutover`** — **IMPLEMENTED 2026-09-23, 70/70 tasks, PR #402 open**
+   (base: `feat/tracker-approval-by-script`, since it depends on Change 1's manifest `stage` field
+   and PR #401 hasn't merged yet — rebase both onto `main` once #401 lands) (9.3 and 10.10
    deferred to the programme's consolidated live-verification pass — both need real Linear
    credentials this sandbox doesn't have). `flow.sh` stops calling Linear entirely: no
    `get_issue`/`get_team`/`update_issue`, no post-trigger assertion (exit 7 retired, every consumer
@@ -786,7 +788,7 @@ just a size-limiting convention:
 
 All three validated `openspec validate --strict` clean as of 2026-09-23. Change 1
 (`tracker-approval-by-script`) is implemented (40/40 tasks, PR #401 open) and Change 2
-(`tracker-flow-projection-cutover`) is implemented (70/70 tasks, PR pending) — see their entries
+(`tracker-flow-projection-cutover`) is implemented (70/70 tasks, PR #402 open) — see their entries
 above. Change 2 branches off Change 1's branch (`feat/tracker-approval-by-script`), not `main`,
 since it depends on manifest fields (`stage`) Change 1 adds and PR #401 has not merged yet —
 rebase onto `main` once #401 lands.
