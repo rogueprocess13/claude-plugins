@@ -5,15 +5,19 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 
 > Public repo — no ticket IDs, no customer data in this file.
 
-Last reviewed: 2026-09-21 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
+Last reviewed: 2026-09-23 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
 CI green on #386. Step 7b Track B Phase B1 merged and archived — PR #388, plus a CI-caught
 shell-flags fix. Phase B2 (pusher/drivers) merged and archived — PR #392, CI green
 (`lint-and-test: pass`), specs synced to main tree, version-bumped to ticket-auto-pipeline 0.51.0 /
 fleet-controller 0.32.0. Deferred flow-driven-cutover follow-up filed as issue #391. Phase B3a
 (local facts replace tracker reads) implemented 2026-09-21 via `/opsx:apply` — all 52 tasks done,
 full test suite green, version-bumped to ticket-auto-pipeline 0.52.0 / ticket-planner 0.10.0 /
-fleet-controller 0.33.0 — **not yet committed/PR'd, and its 4 live-verification tests (9.3-9.6)
-have not run** (need a real Linear workspace + tickets host). Step 6 itself still held for real-run
+fleet-controller 0.33.0, committed and merged via **PR #397** (2026-09-23), pre-PR
+lint/fmt-check/test all green. **Live-verification tests reordered by explicit instruction**: the
+4 tests originally gating B3b (9.3-9.6) are no longer run per-phase — they're deferred to a single
+consolidated pass against a real epic on one of the user's own projects, run once the whole Track B
+plan (through at least B3b, possibly further) is implemented. B3b is unblocked to start now without
+waiting on 9.3-9.6. Step 6 itself still held for real-run
 validation)
 
 ---
@@ -451,7 +455,7 @@ halts the pipeline — without an event system, a schema change, or moving state
 items, still unchecked in the archived task files. Code is merged; only real-traffic confirmation is
 open. Roll these into whatever live-verification pass lifts Step 6's hold.
 
-## Step 7b — Tracker decoupling, Track B Phases B1-B2 — COMPLETE, archived; B3a — IMPLEMENTED, pending PR
+## Step 7b — Tracker decoupling, Track B Phases B1-B2 — COMPLETE, archived; B3a — COMPLETE, PR #397 merged; B3b — proposing
 
 **Openspec change:** `tracker-event-vocabulary-and-emitter` — proposed 2026-09-19, applied same day
 via explicit `/opsx:apply` instruction, ahead of Step 6's hold (the plan file's own ordering would
@@ -556,12 +560,27 @@ refinement of the plan's original single "B3" phase). All 52 tasks done:
   `test-planner-lib-root.sh`, different test failing each run under `make test-planner`) reproduced
   on unmodified `main` too — confirmed not a regression, not fixed here.
 - **Not done**: the 4 live-verification tests (9.3-9.6) — need a real Linear workspace + tickets
-  host. **B3b (write-side label removal) is scoped as the next phase**, gated on 9.3-9.6 actually
-  running clean — B3a's rollback safety (labels still written, kill switch, per-site live fallback)
-  is exactly what lets B3b wait for that rather than being rushed.
+  host.
 
-B4–B5 remain unproposed — per plan convention (Track B sits behind Step 6's hold) they need the same
-kind of explicit override B1/B2/B3a got before `/opsx:propose` starts on B4.
+**Committed and merged 2026-09-23**, sha `2f4a90a` on `feat/tracker-local-facts-read-migration`,
+**PR #397** (merge commit `ee09697`). Pre-PR `make lint && make fmt-check && make test` all green.
+No Co-Authored-By trailer per repo convention.
+
+**Ordering reconsidered by explicit instruction, 2026-09-23**: originally B3b was gated on 9.3-9.6
+running clean first, on the reasoning that B3b removes B3a's own rollback safety net (label writes,
+kill switch, per-site live fallback) and shouldn't do that before B3a itself had ever been live-
+verified. The user chose to reorder instead: **all live-verification testing (9.3-9.6, and whatever
+B3b/B4/B5 add) is deferred to one consolidated pass, run against a real epic on one of the user's own
+projects once the whole plan is implemented** — rather than gating each phase on its own live run.
+**Tradeoff flagged and accepted**: this means B3b (and potentially B4/B5) will be built on read/write
+paths that have never been exercised against a live Linear workspace, compounding whatever B3a
+verification would have caught. Accepted in favor of not fragmenting live-testing into N separate
+passes, each requiring the same real-workspace setup. **B3b is unblocked to start now.**
+
+B3b (write-side label removal) is the next phase — openspec change to be proposed, same explicit-
+override basis as B1/B2/B3a (Track B sits behind Step 6's hold; each phase needs its own override
+before `/opsx:propose` starts). B4–B5 remain unproposed after that, needing the same override in
+turn.
 
 **Track B in full is behind next.md Step 6.** The plan file carries the complete 5-phase design
 (event emitter and outbox, board drivers with per-board `event → column` tables, local facts,
