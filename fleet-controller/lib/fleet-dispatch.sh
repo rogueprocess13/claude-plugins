@@ -501,41 +501,68 @@ _fleet_dispatch_initiative_locked() {
     echo "fleet_dispatch: linear-api.sh not available — initiative validation and blocker resolution will skip" >&2
   fi
 
-  # Step 1: Validate initiative epic exists and has state:execution label.
-  # Two client calls, not one round trip: get_issue first, to preserve the
-  # distinct "not found" vs "not in execution state" messages a
-  # label-filtered result set alone can't make (get_epics_by_label only ever
-  # returns epics that already carry the label); get_epics_by_label second,
-  # for the children-with-priority shape only it provides.
-  echo "fleet_dispatch: validating initiative ${initiative_id}..."
-  local epic_json
-  epic_json=$(get_issue "$initiative_id" 2>/dev/null) || {
-    echo "ERROR: initiative ${initiative_id} not found in Linear" >&2
-    return 1
-  }
-
-  local epic_labels
-  epic_labels=$(echo "$epic_json" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null)
-  if ! echo "$epic_labels" | grep -q "state:execution"; then
-    echo "initiative ${initiative_id} not in execution state (missing state:execution label)"
-    return 0
+  # tracker-local-facts-read-migration (task 4.1): epic eligibility reads
+  # the epic manifest's dispatch flag instead of a live state:execution
+  # label fetch, when a manifest exists. epic_json stays populated only on
+  # the live-fallback path — the manifest path never needs the bulk
+  # children-with-priority record this used to fetch just to learn the
+  # label was present.
+  # manifest-write.sh sources manifest-read.sh itself, so one guard brings in
+  # both the readers used throughout this function and stamp_ticket_dispatch
+  # (used at the Step 5 enqueue point below, task 1.6).
+  if ! declare -f get_epic_manifest_field >/dev/null 2>&1; then
+    local _tap_lib
+    for _tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+      [ -f "$_tap_lib/manifest-write.sh" ] && source "$_tap_lib/manifest-write.sh" && break
+    done
   fi
 
-  echo "fleet_dispatch: initiative ${initiative_id} validated (state:execution)"
+  local epic_json="" _dispatch_via_manifest=false
+  if declare -f epic_manifest_exists >/dev/null 2>&1 && epic_manifest_exists "$initiative_id" 2>/dev/null; then
+    echo "fleet_dispatch: validating initiative ${initiative_id} (manifest)..."
+    if [ "$(get_epic_manifest_field "$initiative_id" dispatch 2>/dev/null)" != "true" ]; then
+      echo "initiative ${initiative_id} not in execution state (manifest dispatch=false)"
+      return 0
+    fi
+    echo "fleet_dispatch: initiative ${initiative_id} validated (manifest dispatch=true)"
+    _dispatch_via_manifest=true
+  else
+    # ── Pre-migration fallback: no epic manifest — live Linear query ────────
+    # Step 1: Validate initiative epic exists and has state:execution label.
+    # Two client calls, not one round trip: get_issue first, to preserve the
+    # distinct "not found" vs "not in execution state" messages a
+    # label-filtered result set alone can't make (get_epics_by_label only ever
+    # returns epics that already carry the label); get_epics_by_label second,
+    # for the children-with-priority shape only it provides.
+    echo "fleet_dispatch: validating initiative ${initiative_id}..."
+    epic_json=$(get_issue "$initiative_id" 2>/dev/null) || {
+      echo "ERROR: initiative ${initiative_id} not found in Linear" >&2
+      return 1
+    }
 
-  # Now fetch the full record (children, with priority) via the client.
-  # The label check above already confirmed this epic carries the label, so
-  # a miss here means it changed between the two calls — treat that the
-  # same as "not in execution state" rather than a hard failure.
-  local epics_json
-  epics_json=$(get_epics_by_label "state:execution" 2>/dev/null) || {
-    echo "ERROR: initiative ${initiative_id} epic-population query failed" >&2
-    return 1
-  }
-  epic_json=$(echo "$epics_json" | jq -c --arg id "$initiative_id" '[.[] | select(.identifier == $id)][0] // empty' 2>/dev/null)
-  if [ -z "$epic_json" ] || [ "$epic_json" = "null" ]; then
-    echo "initiative ${initiative_id} not in execution state (label removed between checks)" >&2
-    return 0
+    local epic_labels
+    epic_labels=$(echo "$epic_json" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null)
+    if ! echo "$epic_labels" | grep -q "state:execution"; then
+      echo "initiative ${initiative_id} not in execution state (missing state:execution label)"
+      return 0
+    fi
+
+    echo "fleet_dispatch: initiative ${initiative_id} validated (state:execution)"
+
+    # Now fetch the full record (children, with priority) via the client.
+    # The label check above already confirmed this epic carries the label, so
+    # a miss here means it changed between the two calls — treat that the
+    # same as "not in execution state" rather than a hard failure.
+    local epics_json
+    epics_json=$(get_epics_by_label "state:execution" 2>/dev/null) || {
+      echo "ERROR: initiative ${initiative_id} epic-population query failed" >&2
+      return 1
+    }
+    epic_json=$(echo "$epics_json" | jq -c --arg id "$initiative_id" '[.[] | select(.identifier == $id)][0] // empty' 2>/dev/null)
+    if [ -z "$epic_json" ] || [ "$epic_json" = "null" ]; then
+      echo "initiative ${initiative_id} not in execution state (label removed between checks)" >&2
+      return 0
+    fi
   fi
 
   # Step 1.5: Epic branch precondition — ensure the declared branch exists
@@ -605,7 +632,14 @@ _fleet_dispatch_initiative_locked() {
   # reaches here. Scoped through FLEET_RECONCILE_TIDS/EPIC/DRY_RUN, so the
   # fleetd startup path (no envs) is untouched.
   local child_tids reconcile_out
-  child_tids=$(echo "$epic_json" | jq -r '.children.nodes[]?.identifier // empty' 2>/dev/null)
+  if [ "$_dispatch_via_manifest" = "true" ]; then
+    local _manifest_children
+    _manifest_children=$(get_epic_manifest_field "$initiative_id" children 2>/dev/null)
+    [ -z "$_manifest_children" ] && _manifest_children='[]'
+    child_tids=$(echo "$_manifest_children" | jq -r '.[]?' 2>/dev/null)
+  else
+    child_tids=$(echo "$epic_json" | jq -r '.children.nodes[]?.identifier // empty' 2>/dev/null)
+  fi
   if [ -n "$child_tids" ] && declare -f fleet_reconcile_orphans >/dev/null 2>&1; then
     echo "fleet_dispatch: reconciling children of ${initiative_id}..."
     reconcile_out=$(
@@ -629,79 +663,194 @@ _fleet_dispatch_initiative_locked() {
     echo "fleet_dispatch: no children to reconcile for ${initiative_id}"
   fi
 
-  # Step 2: Find child tickets with planned label + Backlog state
-  echo "fleet_dispatch: enumerating child tickets..."
-  local children_json
-  children_json=$(echo "$epic_json" | jq -c '.children.nodes[] // empty' 2>/dev/null)
-  if [ -z "$children_json" ]; then
-    echo "no child tickets found for ${initiative_id}"
-    return 0
-  fi
-
-  # Collect dispatchable tickets
+  # Step 2: Find dispatchable child tickets, and Step 3, blocked-by
+  # resolution (tracker-local-facts-read-migration, tasks 4.2/4.3).
+  #
+  # Manifest path: eligibility is each child's own manifest `dispatch:false`
+  # (replacing the live planned-label+Backlog-state query), and blocked-by
+  # resolution reads the child's manifest `blocked_by[]` plus each blocker's
+  # OWN pipeline log terminal state (replacing a live get_issue per
+  # blocker). A child with no manifest of its own falls back individually to
+  # the pre-migration live check — a mixed manifest/no-manifest child set is
+  # expected during rollout, not an error.
+  #
+  # Priority stays a live Linear concern regardless of path — it is not part
+  # of the manifest schema (out of scope for this migration) — but is only
+  # fetched for a child that has already passed the local eligibility and
+  # blocked-by filters, not for every enumerated child.
   local dispatchable=""
-  while IFS= read -r child; do
-    [ -z "$child" ] && continue
-    local child_id child_state child_labels
-    child_id=$(echo "$child" | jq -r '.identifier // empty')
-    child_state=$(echo "$child" | jq -r '.state.name // empty')
-    child_labels=$(echo "$child" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null)
 
-    # Must have planned label AND Backlog state
-    if [ "$child_state" != "Backlog" ]; then
-      continue
-    fi
-    if ! echo "$child_labels" | grep -q "planned"; then
-      continue
+  if [ "$_dispatch_via_manifest" = "true" ]; then
+    echo "fleet_dispatch: enumerating child tickets (manifest)..."
+    if [ -z "$child_tids" ]; then
+      echo "no child tickets found for ${initiative_id}"
+      return 0
     fi
 
-    echo "  checking ${child_id} (planned, Backlog)..."
+    while IFS= read -r child_id; do
+      [ -z "$child_id" ] && continue
 
-    # Step 3: Resolve blocked-by dependencies
-    local blocked_labels
-    blocked_labels=$(echo "$child_labels" | grep -oP 'blocked-by:\K[A-Z]+-\d+' || true)
-    local is_blocked=false
+      if ! declare -f ticket_manifest_exists >/dev/null 2>&1 || ! ticket_manifest_exists "$child_id" 2>/dev/null; then
+        # Per-child fallback: no ticket manifest — live eligibility check,
+        # identical to the pre-migration path for this one child.
+        local _lc_json _lc_state _lc_labels
+        if ! _lc_json=$(tracker_read decision "" -- get_issue "$child_id"); then
+          continue
+        fi
+        _lc_state=$(echo "$_lc_json" | jq -r '.state.name // empty' 2>/dev/null)
+        _lc_labels=$(echo "$_lc_json" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null)
+        [ "$_lc_state" = "Backlog" ] || continue
+        echo "$_lc_labels" | grep -q "planned" || continue
 
-    for blocker_id in $blocked_labels; do
-      [ -z "$blocker_id" ] && continue
-      local blocker_json blocker_state
-      if blocker_json=$(tracker_read decision "" -- get_issue "$blocker_id"); then
-        blocker_state=$(echo "$blocker_json" | jq -r '.state.name // empty' 2>/dev/null)
-        if [ "$blocker_state" != "Done" ]; then
-          echo "    blocked by ${blocker_id} (state: ${blocker_state}) — skipping"
+        echo "  checking ${child_id} (planned, Backlog — no manifest, live fallback)..."
+
+        local _lc_blocked_labels _lc_is_blocked=false _lc_blocker_id
+        _lc_blocked_labels=$(echo "$_lc_labels" | grep -oP 'blocked-by:\K[A-Z]+-\d+' || true)
+        for _lc_blocker_id in $_lc_blocked_labels; do
+          [ -z "$_lc_blocker_id" ] && continue
+          local _lc_blocker_json _lc_blocker_state
+          if _lc_blocker_json=$(tracker_read decision "" -- get_issue "$_lc_blocker_id"); then
+            _lc_blocker_state=$(echo "$_lc_blocker_json" | jq -r '.state.name // empty' 2>/dev/null)
+            if [ "$_lc_blocker_state" != "Done" ]; then
+              echo "    blocked by ${_lc_blocker_id} (state: ${_lc_blocker_state}) — skipping"
+              _lc_is_blocked=true
+              break
+            else
+              echo "    blocked-by ${_lc_blocker_id} resolved (Done)"
+            fi
+          else
+            echo "    blocker ${_lc_blocker_id} unreadable — treating as blocked (fail-closed)"
+            _lc_is_blocked=true
+            break
+          fi
+        done
+        if [ "$_lc_is_blocked" = "true" ]; then
+          blocked_count=$((blocked_count + 1))
+          echo "  blocked ${child_id}"
+          continue
+        fi
+
+        local _lc_priority _lc_rank
+        _lc_priority=$(echo "$_lc_json" | jq -r '.priority // 0' 2>/dev/null)
+        [ -z "$_lc_priority" ] && _lc_priority=0
+        _lc_rank=$(_fleet_dispatch_rank "$_lc_priority")
+        dispatchable="${dispatchable}${_lc_rank}|${child_id}|${_lc_priority}"$'\n'
+        continue
+      fi
+
+      # Manifest path: dispatch:false is the eligibility gate.
+      [ "$(get_ticket_manifest_field "$child_id" dispatch 2>/dev/null)" = "true" ] && continue
+
+      echo "  checking ${child_id} (manifest dispatch=false)..."
+
+      local _mc_blocked_by_json _mc_is_blocked=false _mc_blocker_id
+      _mc_blocked_by_json=$(get_ticket_manifest_field "$child_id" blocked_by 2>/dev/null)
+      [ -z "$_mc_blocked_by_json" ] && _mc_blocked_by_json='[]'
+      while IFS= read -r _mc_blocker_id; do
+        [ -z "$_mc_blocker_id" ] && continue
+        if ticket_pipeline_terminal_done "$_mc_blocker_id" "$workspace"; then
+          echo "    blocked-by ${_mc_blocker_id} resolved (Done)"
+        else
+          echo "    blocked by ${_mc_blocker_id} (not yet Done) — skipping"
+          _mc_is_blocked=true
+          break
+        fi
+      done < <(echo "$_mc_blocked_by_json" | jq -r '.[]?' 2>/dev/null)
+
+      if [ "$_mc_is_blocked" = "true" ]; then
+        blocked_count=$((blocked_count + 1))
+        echo "  blocked ${child_id}"
+        continue
+      fi
+
+      # Get priority and map it to an explicit dispatch rank. Raw-value sorting
+      # is wrong in both directions: descending puts Low (4) before Urgent (1);
+      # ascending puts No priority (0) before Urgent (1). The rank mapping
+      # fixes the semantic: Urgent(1)→1, High(2)→2, Medium(3)→3, Low(4)→4,
+      # No priority(0)/anything unexpected→5.
+      local _mc_priority=0 _mc_rank
+      if declare -f get_issue >/dev/null 2>&1; then
+        local _mc_prio_json
+        _mc_prio_json=$(tracker_read informational "" -- get_issue "$child_id")
+        _mc_priority=$(echo "$_mc_prio_json" | jq -r '.priority // 0' 2>/dev/null)
+        [ -z "$_mc_priority" ] && _mc_priority=0
+      fi
+      _mc_rank=$(_fleet_dispatch_rank "$_mc_priority")
+      dispatchable="${dispatchable}${_mc_rank}|${child_id}|${_mc_priority}"$'\n'
+    done <<<"$child_tids"
+  else
+    # ── Pre-migration fallback: no epic manifest — live enumeration ─────────
+    echo "fleet_dispatch: enumerating child tickets..."
+    local children_json
+    children_json=$(echo "$epic_json" | jq -c '.children.nodes[] // empty' 2>/dev/null)
+    if [ -z "$children_json" ]; then
+      echo "no child tickets found for ${initiative_id}"
+      return 0
+    fi
+
+    while IFS= read -r child; do
+      [ -z "$child" ] && continue
+      local child_id child_state child_labels
+      child_id=$(echo "$child" | jq -r '.identifier // empty')
+      child_state=$(echo "$child" | jq -r '.state.name // empty')
+      child_labels=$(echo "$child" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null)
+
+      # Must have planned label AND Backlog state
+      if [ "$child_state" != "Backlog" ]; then
+        continue
+      fi
+      if ! echo "$child_labels" | grep -q "planned"; then
+        continue
+      fi
+
+      echo "  checking ${child_id} (planned, Backlog)..."
+
+      # Step 3: Resolve blocked-by dependencies
+      local blocked_labels
+      blocked_labels=$(echo "$child_labels" | grep -oP 'blocked-by:\K[A-Z]+-\d+' || true)
+      local is_blocked=false
+
+      for blocker_id in $blocked_labels; do
+        [ -z "$blocker_id" ] && continue
+        local blocker_json blocker_state
+        if blocker_json=$(tracker_read decision "" -- get_issue "$blocker_id"); then
+          blocker_state=$(echo "$blocker_json" | jq -r '.state.name // empty' 2>/dev/null)
+          if [ "$blocker_state" != "Done" ]; then
+            echo "    blocked by ${blocker_id} (state: ${blocker_state}) — skipping"
+            is_blocked=true
+            break
+          else
+            echo "    blocked-by ${blocker_id} resolved (Done)"
+          fi
+        else
+          # Unreadable blocker: fail closed. Dispatching without positive
+          # evidence the blocker is Done risks running a child ahead of a
+          # dependency that never actually finished (tracker-read-failure-policy).
+          echo "    blocker ${blocker_id} unreadable — treating as blocked (fail-closed)"
           is_blocked=true
           break
-        else
-          echo "    blocked-by ${blocker_id} resolved (Done)"
         fi
-      else
-        # Unreadable blocker: fail closed. Dispatching without positive
-        # evidence the blocker is Done risks running a child ahead of a
-        # dependency that never actually finished (tracker-read-failure-policy).
-        echo "    blocker ${blocker_id} unreadable — treating as blocked (fail-closed)"
-        is_blocked=true
-        break
+      done
+
+      if [ "$is_blocked" = "true" ]; then
+        blocked_count=$((blocked_count + 1))
+        echo "  blocked ${child_id}"
+        continue
       fi
-    done
 
-    if [ "$is_blocked" = "true" ]; then
-      blocked_count=$((blocked_count + 1))
-      echo "  blocked ${child_id}"
-      continue
-    fi
+      # Get priority and map it to an explicit dispatch rank. Raw-value sorting
+      # is wrong in both directions: descending puts Low (4) before Urgent (1);
+      # ascending puts No priority (0) before Urgent (1). The rank mapping
+      # fixes the semantic: Urgent(1)→1, High(2)→2, Medium(3)→3, Low(4)→4,
+      # No priority(0)/anything unexpected→5.
+      local priority rank
+      priority=$(echo "$child" | jq -r '.priority // 0' 2>/dev/null)
+      [ -z "$priority" ] && priority=0
+      rank=$(_fleet_dispatch_rank "$priority")
 
-    # Get priority and map it to an explicit dispatch rank. Raw-value sorting
-    # is wrong in both directions: descending puts Low (4) before Urgent (1);
-    # ascending puts No priority (0) before Urgent (1). The rank mapping
-    # fixes the semantic: Urgent(1)→1, High(2)→2, Medium(3)→3, Low(4)→4,
-    # No priority(0)/anything unexpected→5.
-    local priority rank
-    priority=$(echo "$child" | jq -r '.priority // 0' 2>/dev/null)
-    [ -z "$priority" ] && priority=0
-    rank=$(_fleet_dispatch_rank "$priority")
-
-    dispatchable="${dispatchable}${rank}|${child_id}|${priority}"$'\n'
-  done <<<"$children_json"
+      dispatchable="${dispatchable}${rank}|${child_id}|${priority}"$'\n'
+    done <<<"$children_json"
+  fi
 
   # Sort ascending on the mapped dispatch rank (Urgent first, No priority last)
   local sorted
@@ -759,6 +908,12 @@ _fleet_dispatch_initiative_locked() {
       echo "[DRY-RUN] would enqueue: ${entry}"
     elif _fleet_queue_append "$entry" "$queue_file"; then
       echo "  enqueued ${child_id} (priority=${priority})"
+      # tracker-local-facts-read-migration (task 1.6): stamp the ticket
+      # manifest's local dispatch flag at the same point a child is
+      # actually marked dispatched — enqueue into the spawn queue, mirroring
+      # state:execution's one-way semantics. Additive; no-op when the child
+      # has no manifest (predates this migration).
+      declare -f stamp_ticket_dispatch >/dev/null 2>&1 && stamp_ticket_dispatch "$child_id"
     else
       # Dead-lettered by the shared append function — the dead-letter file
       # must be manually replayed or the dispatch re-run.

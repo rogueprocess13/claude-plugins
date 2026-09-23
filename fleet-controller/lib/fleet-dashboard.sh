@@ -22,6 +22,86 @@ fi
 # Source fleet-detect.sh for fleet_detect_all if not already loaded
 _source_if_missing fleet_detect_all "$_DASH_DIR/fleet-detect.sh"
 
+# manifest-read.sh backs the blocked-by/dispatch columns below
+# (tracker-local-facts-read-migration, task 7.2).
+if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+  for _mp in "$_DASH_DIR/../../ticket-auto-pipeline/lib/manifest-read.sh" "$HOME/.claude/skills/lib/manifest-read.sh"; do
+    [ -f "$_mp" ] && source "$_mp" && break
+  done
+fi
+
+# ── Manifest-backed dashboard fields (tracker-local-facts-read-migration) ────
+# blocked_by / dispatch status read from the ticket's local manifest — never a
+# live tracker fetch. A ticket with no manifest (predates this migration)
+# renders "-" in both columns rather than a fetch or an error.
+
+# _fleet_dashboard_blocked_by <tid> — comma-separated blocked_by list, or "-".
+_fleet_dashboard_blocked_by() {
+  local tid="$1"
+  if ! declare -f ticket_manifest_exists >/dev/null 2>&1 || ! ticket_manifest_exists "$tid" 2>/dev/null; then
+    echo "-"
+    return
+  fi
+  local blocked_by
+  blocked_by=$(get_ticket_manifest_field "$tid" blocked_by 2>/dev/null)
+  if [ -z "$blocked_by" ] || [ "$blocked_by" = "[]" ]; then
+    echo "-"
+    return
+  fi
+  echo "$blocked_by" | jq -r 'join(",")' 2>/dev/null || echo "-"
+}
+
+# _fleet_dashboard_dispatch_status <tid> — "yes"/"pending"/"-" (no manifest).
+_fleet_dashboard_dispatch_status() {
+  local tid="$1"
+  if ! declare -f ticket_manifest_exists >/dev/null 2>&1 || ! ticket_manifest_exists "$tid" 2>/dev/null; then
+    echo "-"
+    return
+  fi
+  local dispatch
+  dispatch=$(get_ticket_manifest_field "$tid" dispatch 2>/dev/null)
+  if [ "$dispatch" = "true" ]; then
+    echo "yes"
+  else
+    echo "pending"
+  fi
+}
+
+# _fleet_dashboard_hold_reason <tid> <workspace> — renders an already-emitted
+# pipeline-log fact (META|human-hold, or gate-check.sh's held: message),
+# never a new read. "-" when the ticket carries no hold.
+_fleet_dashboard_hold_reason() {
+  local tid="$1"
+  local workspace="${2:-./logs}"
+  local log_file="${workspace}/${tid}-pipeline.log"
+  [ -f "$log_file" ] || {
+    echo "-"
+    return
+  }
+
+  local hh_line
+  hh_line=$(grep '|META|human-hold|waiting|' "$log_file" 2>/dev/null | tail -1 |
+    awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i<NF?"|":"")}')
+  if [ -n "$hh_line" ]; then
+    local reason
+    reason=$(echo "$hh_line" | jq -r '.REASON // empty' 2>/dev/null)
+    if [ -n "$reason" ]; then
+      echo "$reason"
+      return
+    fi
+  fi
+
+  local gate_line
+  gate_line=$(grep '|GATE|gate|fail|held:' "$log_file" 2>/dev/null | tail -1 |
+    awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i<NF?"|":"")}')
+  if [ -n "$gate_line" ]; then
+    echo "$gate_line"
+    return
+  fi
+
+  echo "-"
+}
+
 # ── Post-mortem issue count ──────────────────────────────────────────────────────
 # Reads the pipeline log for the latest META|postmortem summary and returns the
 # count of filed issues. Returns 0 if no postmortem data found.
@@ -127,8 +207,8 @@ fleet_render_dashboard_from_data() {
     echo "No active pipelines"
   else
     # Header
-    printf "%-12s %-12s %-6s %-8s %-9s %-9s %s\n" "TICKET" "PHASE" "STALL" "SEV" "AUTO-RETRO" "FINDINGS" "ANOMALIES"
-    printf "%-12s %-12s %-6s %-8s %-9s %-9s %s\n" "------" "------" "----" "--" "----------" "--------" "--------"
+    printf "%-12s %-12s %-6s %-8s %-9s %-9s %-10s %-10s %-8s %s\n" "TICKET" "PHASE" "STALL" "SEV" "AUTO-RETRO" "FINDINGS" "BLOCKED-BY" "DISPATCH" "HOLD" "ANOMALIES"
+    printf "%-12s %-12s %-6s %-8s %-9s %-9s %-10s %-10s %-8s %s\n" "------" "------" "----" "--" "----------" "--------" "----------" "--------" "----" "--------"
 
     # Sort by severity descending, then by ticket ID
     echo "$data" | jq -r '.pipelines | sort_by([-.severity, .tid]) | .[] | "\(.tid)|\(.phase)|\(.hb_age_secs)|\(.severity)|\(.anomalies)"' | while IFS='|' read -r tid phase hb_age sev anomalies; do
@@ -151,7 +231,13 @@ fleet_render_dashboard_from_data() {
       local findings_str
       findings_str=$(_observer_findings_summary "$tid" "$workspace")
 
-      printf "%-12s %-12s %-6s %s %-9s %-9s %s\n" "${tid}" "${phase}" "${stall_str}" "${icon}${label}" "${pm_str}" "${findings_str}" "${anomalies}"
+      # tracker-local-facts-read-migration (task 7.2): local-manifest fields.
+      local blocked_by_str dispatch_str hold_str
+      blocked_by_str=$(_fleet_dashboard_blocked_by "$tid")
+      dispatch_str=$(_fleet_dashboard_dispatch_status "$tid")
+      hold_str=$(_fleet_dashboard_hold_reason "$tid" "$workspace")
+
+      printf "%-12s %-12s %-6s %s %-9s %-9s %-10s %-10s %-8s %s\n" "${tid}" "${phase}" "${stall_str}" "${icon}${label}" "${pm_str}" "${findings_str}" "${blocked_by_str}" "${dispatch_str}" "${hold_str}" "${anomalies}"
     done
 
     echo ""
@@ -208,13 +294,18 @@ fleet_write_report_from_data() {
     else
       echo "## Health Table"
       echo ""
-      echo "| Ticket | Phase | Stall | Severity | Findings | Anomalies |"
-      echo "|--------|-------|-------|----------|----------|-----------|"
+      echo "| Ticket | Phase | Stall | Severity | Findings | Blocked-by | Dispatch | Hold | Anomalies |"
+      echo "|--------|-------|-------|----------|----------|------------|----------|------|-----------|"
 
       echo "$data" | jq -r '.pipelines | sort_by([-.severity, .tid]) | .[] | "\(.tid)|\(.phase)|\(.hb_age_secs)|\(.severity)|\(.anomalies)"' | while IFS='|' read -r tid phase hb_age sev anomalies; do
         local findings_str
         findings_str=$(_observer_findings_summary "$tid" "$workspace")
-        echo "| ${tid} | ${phase} | ${hb_age}s | ${sev} | ${findings_str} | ${anomalies} |"
+        # tracker-local-facts-read-migration (task 7.2): local-manifest fields.
+        local blocked_by_str dispatch_str hold_str
+        blocked_by_str=$(_fleet_dashboard_blocked_by "$tid")
+        dispatch_str=$(_fleet_dashboard_dispatch_status "$tid")
+        hold_str=$(_fleet_dashboard_hold_reason "$tid" "$workspace")
+        echo "| ${tid} | ${phase} | ${hb_age}s | ${sev} | ${findings_str} | ${blocked_by_str} | ${dispatch_str} | ${hold_str} | ${anomalies} |"
       done
 
       echo ""

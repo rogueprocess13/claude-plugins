@@ -111,7 +111,13 @@ touch "$TICKET_DIR/artifacts/.gitkeep" "$TICKET_DIR/attachments/.gitkeep"
 
 BODY_SOURCE="linear"
 PLANNER_BODY=""
-HAS_PLANNED_LABEL=$(echo "$ISSUE_JSON" | jq -r '[.labels.nodes[].name] | index("planned") != null')
+# tracker-local-facts-read-migration (task 5.5): manifest presence is
+# authoritative proof of "planned" when available — live label as fallback.
+if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$TICKET_ID" 2>/dev/null; then
+  HAS_PLANNED_LABEL="true"
+else
+  HAS_PLANNED_LABEL=$(echo "$ISSUE_JSON" | jq -r '[.labels.nodes[].name] | index("planned") != null')
+fi
 
 if [ "$HAS_PLANNED_LABEL" = "true" ]; then
   # Check if planner/body.md exists on the artifact plane

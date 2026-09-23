@@ -14,6 +14,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/planned-ticket-check.sh"
+source "$SCRIPT_DIR/manifest-read.sh"
 #
 # Usage:
 #   source lib/planner-artifacts.sh
@@ -33,44 +34,54 @@ resolve_planner_dir() {
   local description="${2:-}"
   local has_planned_label="${3:-}"
 
-  # Fetch if not provided inline (test mode bypass)
-  if [ -z "$description" ]; then
-    local issue_json
-    issue_json=$(get_issue "$ticket_id" 2>/dev/null) || {
-      echo "planner-artifacts: failed to fetch ticket $ticket_id" >&2
-      return 1
-    }
-    description=$(echo "$issue_json" | jq -r '.description // ""')
-    has_planned_label=$(echo "$issue_json" | jq -r \
-      '[.labels.nodes[].name] | index("planned") != null')
-  fi
-
-  # Guard: must have planned label
-  if [ "$has_planned_label" != "true" ]; then
-    return 1
-  fi
-
-  # Extract the Planner Context block via shared helper
-  local block
-  block=$(_extract_planner_context_block "$description")
-
-  if [ -z "$block" ]; then
-    return 2
-  fi
-
-  # Extract Initiative field
-  local initiative
-  initiative=$(echo "$block" | _extract_field "Initiative")
-
-  if [ -z "$initiative" ]; then
-    return 2
-  fi
-
   # Derive path: $REPOS_ROOT/.ticket-auto/initiatives/{INIT}/tickets/{TID}/planner/
   local repos_root="${REPOS_ROOT:-}"
   if [ -z "$repos_root" ]; then
     echo "planner-artifacts: REPOS_ROOT is not set" >&2
     return 1
+  fi
+
+  # Fast path: resolve {INIT} from the local initiative index — no live
+  # fetch needed (ticket-local-manifest spec: resolve_planner_dir "SHALL
+  # NOT fetch the ticket's description" when the index has an entry).
+  local initiative
+  initiative=$(_manifest_initiative_for_ticket "$ticket_id" 2>/dev/null)
+
+  if [ -z "$initiative" ]; then
+    # Fallback: pre-migration description-fetch-and-parse path (no index
+    # entry — ticket predates this migration, or the manifest write failed).
+
+    # Fetch if not provided inline (test mode bypass)
+    if [ -z "$description" ]; then
+      local issue_json
+      issue_json=$(get_issue "$ticket_id" 2>/dev/null) || {
+        echo "planner-artifacts: failed to fetch ticket $ticket_id" >&2
+        return 1
+      }
+      description=$(echo "$issue_json" | jq -r '.description // ""')
+      has_planned_label=$(echo "$issue_json" | jq -r \
+        '[.labels.nodes[].name] | index("planned") != null')
+    fi
+
+    # Guard: must have planned label
+    if [ "$has_planned_label" != "true" ]; then
+      return 1
+    fi
+
+    # Extract the Planner Context block via shared helper
+    local block
+    block=$(_extract_planner_context_block "$description")
+
+    if [ -z "$block" ]; then
+      return 2
+    fi
+
+    # Extract Initiative field
+    initiative=$(echo "$block" | _extract_field "Initiative")
+
+    if [ -z "$initiative" ]; then
+      return 2
+    fi
   fi
 
   # Sanitize path components — reject traversal sequences and non-ID characters.

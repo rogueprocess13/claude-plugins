@@ -19,6 +19,7 @@ import sys
 import time
 import argparse
 import glob
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -416,6 +417,17 @@ class FleetRow:
     verify_attempts: int = 0
     pr_iterations: int = 0
     last_gate: str = ""
+    # tracker-local-facts-read-migration (task 7.1): hold_reason is sourced
+    # from the pipeline log (already emitted by META|human-hold / a
+    # GATE|gate|fail|held: line) — this is display-only, not a new read.
+    # blocked_by and dispatched are read from the ticket's local manifest.json
+    # when one exists (see _read_ticket_manifest below) — never a live
+    # tracker fetch, and simply absent (None/empty) when no manifest exists
+    # (a ticket that predates this migration), matching every other
+    # migrated reader's missing-manifest posture.
+    hold_reason: str = ""
+    blocked_by: list = field(default_factory=list)
+    dispatched: Optional[bool] = None
 
 
 def _parse_iso(value: str) -> Optional[datetime]:
@@ -430,6 +442,38 @@ def _age_secs(ts: Optional[datetime], now: datetime) -> Optional[int]:
     if ts is None:
         return None
     return max(0, int((now - ts).total_seconds()))
+
+
+def _read_ticket_manifest(tid: str, repos_root: Optional[str] = None) -> Optional[dict]:
+    """Read a ticket's local manifest.json directly (tracker-local-facts-read-
+    migration) — plain file reads, no bash subprocess, keeping this data layer
+    pure stdlib for testability (see module docstring above `collect_fleet_rows`).
+
+    Returns None when REPOS_ROOT is unresolvable, the initiative index has no
+    entry for this ticket, or the manifest is missing/malformed — the same
+    "no manifest" outcome every migrated bash reader treats as a fall-through,
+    not an error. A ticket predating this migration simply shows blank
+    blocked-by/dispatch columns.
+    """
+    repos_root = repos_root or os.environ.get("REPOS_ROOT")
+    if not repos_root:
+        return None
+    index_path = os.path.join(repos_root, ".ticket-auto", "initiatives", "_index", f"{tid}.initiative")
+    try:
+        with open(index_path, "r") as fh:
+            init = fh.read().strip()
+    except OSError:
+        return None
+    if not init:
+        return None
+    manifest_path = os.path.join(
+        repos_root, ".ticket-auto", "initiatives", init, "tickets", tid, "planner", "manifest.json"
+    )
+    try:
+        with open(manifest_path, "r") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
 
 
 def read_fleet_row(log_path: str, now: Optional[datetime] = None) -> Optional[FleetRow]:
@@ -468,7 +512,17 @@ def read_fleet_row(log_path: str, now: Optional[datetime] = None) -> Optional[Fl
         if phase == "META":
             if step.startswith("gate"):
                 row.last_gate = f"{step}: {msg}"[:40]
+            if step == "human-hold":
+                # tracker-local-facts-read-migration (task 7.1): rendering an
+                # already-emitted fact (human-hold-protocol), not a new read.
+                try:
+                    row.hold_reason = (json.loads(msg).get("REASON") or "")[:40]
+                except (ValueError, AttributeError):
+                    pass
             continue
+
+        if phase == "GATE" and step == "gate" and status == "fail" and msg.startswith("held:"):
+            row.hold_reason = msg[:40]
 
         last_entry = (iso, phase, step, status)
 
@@ -495,6 +549,12 @@ def read_fleet_row(log_path: str, now: Optional[datetime] = None) -> Optional[Fl
             row.bracket_age = _age_secs(_parse_iso(iso), now)
 
     row.activity_age = _read_activity_age(os.path.dirname(log_path), tid, now)
+
+    manifest = _read_ticket_manifest(tid)
+    if manifest is not None:
+        row.blocked_by = manifest.get("blocked_by") or []
+        row.dispatched = bool(manifest.get("dispatch"))
+
     return row
 
 
@@ -573,14 +633,26 @@ def render_fleet_table(rows, log_dir: str, tick: int = 0):
     table.add_column("vfy", justify="right")
     table.add_column("pr", justify="right")
     table.add_column("last gate", overflow="ellipsis")
+    # tracker-local-facts-read-migration (task 7.1): hold reason (rendering an
+    # already-emitted log fact), blocked-by, and dispatch status — local
+    # sources only, see read_fleet_row/_read_ticket_manifest above.
+    table.add_column("hold", overflow="ellipsis")
+    table.add_column("blocked-by", overflow="ellipsis")
+    table.add_column("dispatch", justify="center")
 
     if not rows:
-        table.add_row("—", "no active pipelines", "", "", "", "", "", "")
+        table.add_row("—", "no active pipelines", "", "", "", "", "", "", "", "", "")
         return Panel(table, border_style="blue", padding=(0, 1))
 
     spin = SPINNERS[tick % len(SPINNERS)]
     for r in rows:
         marker = spin if r.bracket_age is not None else " "
+        if r.dispatched is None:
+            dispatch_cell = "-"
+        elif r.dispatched:
+            dispatch_cell = Text("✓", style="green")
+        else:
+            dispatch_cell = Text("pending", style="yellow")
         # Thresholds mirror fleet-detect.sh's stall dimensions so the dashboard
         # and the detector agree about what "late" means.
         table.add_row(
@@ -592,6 +664,9 @@ def render_fleet_table(rows, log_dir: str, tick: int = 0):
             str(r.verify_attempts),
             str(r.pr_iterations),
             r.last_gate or "-",
+            r.hold_reason or "-",
+            ", ".join(r.blocked_by) if r.blocked_by else "-",
+            dispatch_cell,
         )
     return Panel(table, border_style="blue", padding=(0, 1))
 

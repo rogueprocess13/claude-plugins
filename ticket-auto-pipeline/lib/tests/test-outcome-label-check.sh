@@ -258,6 +258,67 @@ test_outcome_get_issue_malformed_payload_fails_closed() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# tracker-local-facts-read-migration (task 5.11/1.7): manifest mirror tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# NOTE: sourcing outcome-label-check.sh above clobbers this file's own
+# SCRIPT_DIR/LIB_DIR (both declared non-local at its top too) — by this
+# point SCRIPT_DIR is outcome-label-check.sh's own directory, i.e. the real
+# lib dir, which is exactly what's needed here.
+source "$SCRIPT_DIR/manifest-write.sh"
+
+test_outcome_mirrored_to_manifest_when_already_present() {
+  _setup
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "bug" '[]' >/dev/null
+
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Smooth"
+  _fake_issue='{"id":"CRE-47","title":"Test","labels":{"nodes":[{"name":"Smooth"},{"name":"bug"}]}}'
+
+  REPOS_ROOT="$repos_root" _outcome_label_check >/dev/null 2>&1
+  local mirrored
+  mirrored=$(REPOS_ROOT="$repos_root" get_ticket_manifest_field "$_tid" outcome_label 2>/dev/null)
+  rm -rf "$repos_root"
+
+  [ "$mirrored" = "Smooth" ]
+}
+
+test_outcome_mirrored_to_manifest_after_applying_label() {
+  _setup
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "bug" '[]' >/dev/null
+
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Rough"
+  _fake_issue='{"id":"CRE-47","title":"Test","labels":{"nodes":[{"name":"bug"}]}}'
+
+  REPOS_ROOT="$repos_root" _outcome_label_check >/dev/null 2>&1
+  local mirrored
+  mirrored=$(REPOS_ROOT="$repos_root" get_ticket_manifest_field "$_tid" outcome_label 2>/dev/null)
+  rm -rf "$repos_root"
+
+  [ "$mirrored" = "Rough" ]
+}
+
+test_outcome_mirror_is_best_effort_without_manifest() {
+  # No manifest anywhere — the outcome check itself must still succeed
+  # (the mirror is additive, never a failure of the check).
+  _setup
+  local repos_root
+  repos_root=$(mktemp -d)
+
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "Hard"
+  _fake_issue='{"id":"CRE-47","title":"Test","labels":{"nodes":[{"name":"Hard"}]}}'
+
+  local rc=0
+  REPOS_ROOT="$repos_root" _outcome_label_check >/dev/null 2>&1 || rc=$?
+  rm -rf "$repos_root"
+
+  [ "$rc" -eq 0 ]
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Dispatcher
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -272,7 +333,10 @@ for fn in \
   test_outcome_label_present_writes_meta_line \
   test_outcome_label_missing_writes_meta_line_after_apply \
   test_outcome_get_issue_fetch_failure_fails_closed \
-  test_outcome_get_issue_malformed_payload_fails_closed; do
+  test_outcome_get_issue_malformed_payload_fails_closed \
+  test_outcome_mirrored_to_manifest_when_already_present \
+  test_outcome_mirrored_to_manifest_after_applying_label \
+  test_outcome_mirror_is_best_effort_without_manifest; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

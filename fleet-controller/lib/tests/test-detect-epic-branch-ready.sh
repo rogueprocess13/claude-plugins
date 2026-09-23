@@ -132,15 +132,25 @@ _mock_open_pr_noisy() {
 # epic_branch_children_done` source is skipped and the mock survives.
 _run_detector() {
   local ws="$1" repos_root="$2" auto_pr="$3" calls_file="$4" fixture="$5"
-  local children_arr="${6:-$ALL_DONE_CHILDREN_ARR}"
+  # No 6th-arg override in current use — get_parent_with_children's stub
+  # always derives from $fixture itself now (tracker-local-facts-read-
+  # migration: no epic manifest exists in these fixtures' REPOS_ROOT, so
+  # epic_branch_children_done falls back to this live-fetch mock; it must
+  # agree with $fixture's own children or the detector's readiness and the
+  # mocked fetch silently disagree).
+  local children_arr="${6:-}"
   bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
-    _STUB_CHILDREN='$children_arr'
+    _FIXTURE_EPICS_JSON='$fixture'
+    if [ -n '$children_arr' ]; then
+      _STUB_CHILDREN='$children_arr'
+    else
+      _STUB_CHILDREN=\$(echo \"\$_FIXTURE_EPICS_JSON\" | jq -c '.[0].children.nodes // []')
+    fi
     get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
     source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
-    _FIXTURE_EPICS_JSON='$fixture'
     $(declare -f _mock_linear_curl _mock_open_pr_recorder)
     _mock_linear_curl
     _mock_open_pr_recorder '$calls_file'
@@ -247,6 +257,8 @@ test_no_pr_when_auto_pr_disabled_but_finding_reported() {
   local out
   out=$(bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
+    _STUB_CHILDREN='$ALL_DONE_CHILDREN_ARR'
+    get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
     source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
@@ -355,6 +367,11 @@ test_readiness_matches_children_done_helper() {
 
   ready_out=$(bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
+    _STUB_CHILDREN='$ALL_DONE_CHILDREN_ARR'
+    get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
+    source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
     _FIXTURE_EPICS_JSON='$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE")'
     $(declare -f _mock_linear_curl)
     _mock_linear_curl
@@ -365,6 +382,11 @@ test_readiness_matches_children_done_helper() {
 
   notready_out=$(bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
+    _STUB_CHILDREN='$ONE_IN_PROGRESS_CHILDREN_ARR'
+    get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
+    source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
     _FIXTURE_EPICS_JSON='$(_make_epics_json "$ONE_IN_PROGRESS_CHILDREN_ARR" "$VALID_DIRECTIVE")'
     $(declare -f _mock_linear_curl)
     _mock_linear_curl
@@ -454,6 +476,8 @@ test_actuation_stdout_does_not_contaminate_result() {
   local out
   out=$(bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
+    _STUB_CHILDREN='$ALL_DONE_CHILDREN_ARR'
+    get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
     source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true

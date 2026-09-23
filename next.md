@@ -5,12 +5,16 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 
 > Public repo — no ticket IDs, no customer data in this file.
 
-Last reviewed: 2026-09-20 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
+Last reviewed: 2026-09-21 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
 CI green on #386. Step 7b Track B Phase B1 merged and archived — PR #388, plus a CI-caught
 shell-flags fix. Phase B2 (pusher/drivers) merged and archived — PR #392, CI green
 (`lint-and-test: pass`), specs synced to main tree, version-bumped to ticket-auto-pipeline 0.51.0 /
-fleet-controller 0.32.0. Deferred flow-driven-cutover follow-up filed as issue #391. Step 6 itself
-still held for real-run validation)
+fleet-controller 0.32.0. Deferred flow-driven-cutover follow-up filed as issue #391. Phase B3a
+(local facts replace tracker reads) implemented 2026-09-21 via `/opsx:apply` — all 52 tasks done,
+full test suite green, version-bumped to ticket-auto-pipeline 0.52.0 / ticket-planner 0.10.0 /
+fleet-controller 0.33.0 — **not yet committed/PR'd, and its 4 live-verification tests (9.3-9.6)
+have not run** (need a real Linear workspace + tickets host). Step 6 itself still held for real-run
+validation)
 
 ---
 
@@ -447,7 +451,7 @@ halts the pipeline — without an event system, a schema change, or moving state
 items, still unchecked in the archived task files. Code is merged; only real-traffic confirmation is
 open. Roll these into whatever live-verification pass lifts Step 6's hold.
 
-## Step 7b — Tracker decoupling, Track B Phases B1-B2 — COMPLETE, archived
+## Step 7b — Tracker decoupling, Track B Phases B1-B2 — COMPLETE, archived; B3a — IMPLEMENTED, pending PR
 
 **Openspec change:** `tracker-event-vocabulary-and-emitter` — proposed 2026-09-19, applied same day
 via explicit `/opsx:apply` instruction, ahead of Step 6's hold (the plan file's own ordering would
@@ -518,8 +522,46 @@ repo has a real precedent for that stalling (`pipeline-integrity-consolidated-pl
 39/48 boxes unchecked): **[issue #391](https://github.com/willard-pro/claude-plugins/issues/391)**,
 "Migrate flow.sh-driven call sites through the tracker event-board pusher."
 
-B2 is now merged. B3–B5 remain unproposed — per plan convention (Track B sits behind Step 6's hold)
-they need the same kind of explicit override B1/B2 got before `/opsx:propose` starts on B3.
+B2 is now merged. **B3a implemented 2026-09-21, same explicit-override basis as B1/B2** — openspec
+change `tracker-local-facts-read-migration`, proposed and applied same day per the plan's per-phase
+convention (this phase split into read-side-only B3a vs. write-side B3b, an implementation-time
+refinement of the plan's original single "B3" phase). All 52 tasks done:
+
+- New `ticket-auto-pipeline/lib/manifest-read.sh` / `manifest-write.sh` — the local manifest
+  (`manifest.json` per ticket and per epic, plus an initiative index) every migrated call site reads
+  instead of a live Linear label/description fetch. `TICKET_LOCAL_MANIFEST_DISABLE` kill switch
+  centralized in one function, so every site inherits it for free.
+- Migrated: `resolve_planner_dir`, `branch-resolve.sh`'s three resolvers, `epic_branch_children_done`
+  + `ensure_epic_branch`'s drift-refresh, `fleet-detect.sh`'s D-10/D-11 (D-12 partially — the
+  readiness check is local, epic *enumeration* is not, see task 3.2's scope note), the whole of
+  `fleet-dispatch.sh`'s eligibility/blocked-by resolution, `gate-check.sh`, `appraise-fast-path.sh`,
+  `planned-ticket-check.sh`/`planned-ticket-body-check.sh`, `ticket-setup/setup.sh`,
+  `planner-ticket-validate.sh`/`planner-phase-prompts.sh` (ticket-planner's write side, unchanged —
+  EpicGen/TicketGen now also *write* the manifest), `outcome-label-check.sh`, three type-label sites
+  including fleetd's `phase_dispatch.py`, and `epic-precondition.sh`'s epic discriminator. Both
+  dashboards (`dashboard.py`, `fleet-dashboard.sh`) gained hold-reason/blocked-by/dispatch columns.
+- **Design-invalidating finding corrected during implementation**: the design's premise that
+  ticket-planner "already writes body.md/exploration.md/proposal.md" per-ticket was false — that
+  directory was never populated (every reader already had a live fallback, which is why it was
+  invisible). Fixed by having the manifest writer create the directory itself.
+- **Real regression caught in verification, not by the implementing agent**: `manifest-read.sh`
+  declared a bare global `SCRIPT_DIR` (copied from this codebase's own prevailing convention), which
+  — once `epic-precondition.sh`'s migration made it transitively sourced by `flow.sh` — clobbered
+  `flow.sh`'s own `SCRIPT_DIR` and broke every `flow.sh` invocation. Caught by independently
+  re-running `ticket-flow/tests/phase1.sh` rather than trusting the fork's summary; fixed by
+  namespacing the variable. A reminder that "tests pass" claims from delegated work need independent
+  re-verification on the specific suites most likely to catch cross-file effects, not just the files
+  that were directly touched.
+- Pre-existing, unrelated `ticket-planner` flakiness (`test-planner-body-template-humanizer.sh` /
+  `test-planner-lib-root.sh`, different test failing each run under `make test-planner`) reproduced
+  on unmodified `main` too — confirmed not a regression, not fixed here.
+- **Not done**: the 4 live-verification tests (9.3-9.6) — need a real Linear workspace + tickets
+  host. **B3b (write-side label removal) is scoped as the next phase**, gated on 9.3-9.6 actually
+  running clean — B3a's rollback safety (labels still written, kill switch, per-site live fallback)
+  is exactly what lets B3b wait for that rather than being rushed.
+
+B4–B5 remain unproposed — per plan convention (Track B sits behind Step 6's hold) they need the same
+kind of explicit override B1/B2/B3a got before `/opsx:propose` starts on B4.
 
 **Track B in full is behind next.md Step 6.** The plan file carries the complete 5-phase design
 (event emitter and outbox, board drivers with per-board `event → column` tables, local facts,

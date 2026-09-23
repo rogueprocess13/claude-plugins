@@ -16,6 +16,17 @@
 #   check_planned_ticket "CRE-123"              # fetches ticket via API
 #   check_planned_ticket "CRE-123" "description" "true"  # inline for testing
 
+# manifest-read.sh backs the manifest-presence precondition in
+# check_planned_ticket below (tracker-local-facts-read-migration). Guarded —
+# not every caller of this file has already sourced it, and this same-
+# directory sibling resolution works whether this file was loaded from the
+# monorepo checkout or a cross-plugin three-level fallback (ticket-planner),
+# since manifest-read.sh ships alongside it either way.
+if ! declare -f ticket_manifest_exists >/dev/null 2>&1; then
+  _PTC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$_PTC_LIB_DIR/manifest-read.sh" ] && source "$_PTC_LIB_DIR/manifest-read.sh"
+fi
+
 # ── Configuration ───────────────────────────────────────────────────────────
 
 PLANNER_CONFIDENCE_THRESHOLD="${PLANNER_CONFIDENCE_THRESHOLD:-0.5}"
@@ -74,8 +85,17 @@ check_planned_ticket() {
       return 1
     }
     description=$(echo "$issue_json" | jq -r '.description // ""')
-    has_planned_label=$(echo "$issue_json" | jq -r \
-      '[.labels.nodes[].name] | index("planned") != null')
+    # tracker-local-facts-read-migration (task 5.3): manifest presence is
+    # authoritative proof of "planned" when available — live label as
+    # fallback. Only this boolean gate moves; the description is always
+    # live-fetched and check_planned_ticket_description's field parsing
+    # below is unchanged (out of scope for this migration).
+    if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
+      has_planned_label="true"
+    else
+      has_planned_label=$(echo "$issue_json" | jq -r \
+        '[.labels.nodes[].name] | index("planned") != null')
+    fi
   fi
 
   # If ticket doesn't have the planned label, skip validation silently

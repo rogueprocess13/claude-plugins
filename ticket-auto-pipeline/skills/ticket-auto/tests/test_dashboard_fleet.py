@@ -240,6 +240,81 @@ class TestCollection:
         assert dashboard.collect_fleet_rows(logs, NOW) == []
 
 
+class TestManifestFields:
+    """tracker-local-facts-read-migration (task 7.1): hold_reason, blocked_by,
+    dispatched — local sources only, never a live tracker fetch."""
+
+    def _write_manifest(self, repos_root, tid, init, manifest):
+        index_dir = os.path.join(repos_root, ".ticket-auto", "initiatives", "_index")
+        os.makedirs(index_dir, exist_ok=True)
+        with open(os.path.join(index_dir, f"{tid}.initiative"), "w") as fh:
+            fh.write(init)
+        manifest_dir = os.path.join(
+            repos_root, ".ticket-auto", "initiatives", init, "tickets", tid, "planner"
+        )
+        os.makedirs(manifest_dir, exist_ok=True)
+        with open(os.path.join(manifest_dir, "manifest.json"), "w") as fh:
+            import json as _json
+
+            _json.dump(manifest, fh)
+
+    def test_blocked_by_and_dispatch_read_from_manifest(self, logs, tmp_path, monkeypatch):
+        repos_root = str(tmp_path / "repos-root")
+        monkeypatch.setenv("REPOS_ROOT", repos_root)
+        self._write_manifest(
+            repos_root, "FFF-1", "INIT-1",
+            {"type": "bug", "initiative": "INIT-1", "blocked_by": ["FFF-0"], "dispatch": True},
+        )
+        write_log(logs, "FFF-1", [f"{iso(100)}|IMPLEMENT|implement|waiting|Agent launched"])
+
+        row = dashboard.read_fleet_row(os.path.join(logs, "FFF-1-pipeline.log"), NOW)
+        assert row.blocked_by == ["FFF-0"]
+        assert row.dispatched is True
+
+    def test_missing_manifest_leaves_fields_blank(self, logs, tmp_path, monkeypatch):
+        monkeypatch.setenv("REPOS_ROOT", str(tmp_path / "no-such-repos-root"))
+        write_log(logs, "FFF-2", [f"{iso(100)}|IMPLEMENT|implement|waiting|Agent launched"])
+
+        row = dashboard.read_fleet_row(os.path.join(logs, "FFF-2-pipeline.log"), NOW)
+        assert row.blocked_by == []
+        assert row.dispatched is None
+
+    def test_no_repos_root_is_not_an_error(self, logs, monkeypatch):
+        monkeypatch.delenv("REPOS_ROOT", raising=False)
+        write_log(logs, "FFF-3", [f"{iso(100)}|IMPLEMENT|implement|waiting|Agent launched"])
+
+        row = dashboard.read_fleet_row(os.path.join(logs, "FFF-3-pipeline.log"), NOW)
+        assert row.blocked_by == []
+        assert row.dispatched is None
+
+    def test_hold_reason_from_human_hold_meta_line(self, logs):
+        write_log(
+            logs,
+            "FFF-4",
+            [
+                f'{iso(200)}|META|human-hold|waiting|{{"REASON": "needs-clarification"}}',
+            ],
+        )
+        row = dashboard.read_fleet_row(os.path.join(logs, "FFF-4-pipeline.log"), NOW)
+        assert row.hold_reason == "needs-clarification"
+
+    def test_hold_reason_from_gate_fail_held_line(self, logs):
+        write_log(
+            logs,
+            "FFF-5",
+            [
+                f"{iso(200)}|GATE|gate|fail|held: complex ticket",
+            ],
+        )
+        row = dashboard.read_fleet_row(os.path.join(logs, "FFF-5-pipeline.log"), NOW)
+        assert row.hold_reason == "held: complex ticket"
+
+    def test_no_hold_leaves_reason_blank(self, logs):
+        write_log(logs, "FFF-6", [f"{iso(100)}|IMPLEMENT|implement|waiting|Agent launched"])
+        row = dashboard.read_fleet_row(os.path.join(logs, "FFF-6-pipeline.log"), NOW)
+        assert row.hold_reason == ""
+
+
 class TestFormatting:
     @pytest.mark.parametrize(
         "secs,expected",

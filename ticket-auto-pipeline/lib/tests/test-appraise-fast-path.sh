@@ -29,6 +29,7 @@ export PLANNER_CONFIDENCE_THRESHOLD="${PLANNER_CONFIDENCE_THRESHOLD:-0.50}"
 
 source "$LIB_DIR/planned-ticket-check.sh"
 source "$LIB_DIR/appraise-fast-path.sh"
+source "$LIB_DIR/manifest-write.sh"
 
 PASS=0
 FAIL=0
@@ -142,6 +143,64 @@ test_api_error() {
 test_no_planned_label() {
   check_fast_path_eligible "TEST-1" "Just a normal ticket" "false" 2>/dev/null || true
   [ "$FAST_PATH_ELIGIBLE" = "false" ] && [ "$FAST_PATH_REASON" = "not_planned" ]
+}
+
+test_manifest_only_no_live_planned_label() {
+  # tracker-local-facts-read-migration (task 5.2): a local ticket manifest
+  # alone must let a ticket past the "has planned label" gate, even when
+  # the fetched issue's labels carry no "planned" entry at all.
+  local desc
+  desc=$(_build_ticket_description "0.92" "true")
+  local escaped_desc
+  escaped_desc=$(echo "$desc" | jq -Rs .)
+
+  local orig_get_issue
+  orig_get_issue=$(declare -f get_issue 2>/dev/null || true)
+  get_issue() {
+    echo "{\"description\":${escaped_desc},\"labels\":{\"nodes\":[{\"name\":\"feature\"}]}}"
+  }
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "MANIFEST-1" "INIT-1" "feature" '[]' >/dev/null
+
+  REPOS_ROOT="$repos_root" check_fast_path_eligible "MANIFEST-1" 2>/dev/null || true
+  local result="$FAST_PATH_ELIGIBLE" reason="$FAST_PATH_REASON"
+
+  rm -rf "$repos_root"
+  if [ -n "$orig_get_issue" ]; then
+    eval "$orig_get_issue"
+  fi
+
+  [ "$result" = "true" ] && [ "$reason" = "pre_approved" ] || {
+    echo "expected eligible=true reason=pre_approved from manifest alone, got eligible=$result reason=$reason" >&2
+    return 1
+  }
+}
+
+test_manifest_absent_falls_back_to_live_label() {
+  # Same shape as above but with NO manifest — must fall back to the live
+  # label read exactly as before (not_planned, since the label is absent).
+  local orig_get_issue
+  orig_get_issue=$(declare -f get_issue 2>/dev/null || true)
+  get_issue() {
+    echo '{"description":"Just a normal ticket","labels":{"nodes":[{"name":"feature"}]}}'
+  }
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" check_fast_path_eligible "NO-MANIFEST-1" 2>/dev/null || true
+  local result="$FAST_PATH_ELIGIBLE" reason="$FAST_PATH_REASON"
+
+  rm -rf "$repos_root"
+  if [ -n "$orig_get_issue" ]; then
+    eval "$orig_get_issue"
+  fi
+
+  [ "$result" = "false" ] && [ "$reason" = "not_planned" ] || {
+    echo "expected eligible=false reason=not_planned with no manifest and no live label, got eligible=$result reason=$reason" >&2
+    return 1
+  }
 }
 
 test_pre_approved_true() {
@@ -405,6 +464,8 @@ FILTER="${1:-}"
 echo "=== Eligibility tests ==="
 _run "api_error (get_issue fails)" test_api_error
 _run "no planned label" test_no_planned_label
+_run "manifest only — no live planned label" test_manifest_only_no_live_planned_label
+_run "manifest absent — falls back to live label" test_manifest_absent_falls_back_to_live_label
 _run "pre-approved=true" test_pre_approved_true
 _run "high confidence, not pre-approved" test_high_confidence_not_pre_approved
 _run_exit_code "low confidence, not pre-approved (exit 2)" 2 test_low_confidence_not_pre_approved

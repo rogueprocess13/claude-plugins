@@ -24,6 +24,15 @@ if ! declare -f emit_event >/dev/null 2>&1; then
   [ -f "$_EB_LIB_DIR/events.sh" ] && source "$_EB_LIB_DIR/events.sh"
 fi
 
+# manifest-write.sh (which sources manifest-read.sh) backs ensure_epic_branch's
+# directive drift-refresh and epic_branch_children_done's local readiness
+# check below (tracker-local-facts-read-migration). Same guarded-source
+# pattern as events.sh above.
+if ! declare -f write_epic_manifest >/dev/null 2>&1; then
+  _EB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$_EB_LIB_DIR/manifest-write.sh" ] && source "$_EB_LIB_DIR/manifest-write.sh"
+fi
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 # _resolve_repo <repo_path>
@@ -196,6 +205,35 @@ ensure_epic_branch() {
       ;;
     esac
   }
+
+  # tracker-local-facts-read-migration (task 2.3): refresh the epic manifest's
+  # cached directive when it has drifted from the live description just read
+  # above — this is the one place the parse result is (re-)cached, since
+  # ensure_epic_branch already reads the description on every dispatch today.
+  # Also backfills a missing manifest (predates this migration, or the
+  # EpicGen-time write failed) — an absent cached value simply never matches
+  # a present directive field, so backfill and drift-refresh are the same
+  # branch below. children[] is deliberately omitted from the write so an
+  # existing list (built up by TicketGen) is preserved, not truncated.
+  # Gated on REPOS_ROOT being set at all — an unconfigured REPOS_ROOT (bare
+  # git-only invocations, most of this file's own test suite) is a normal,
+  # silent no-manifest condition here, not a failure worth warning about.
+  if [ -n "${REPOS_ROOT:-}" ] && [ "${TICKET_LOCAL_MANIFEST_DISABLE:-false}" != "true" ] &&
+    declare -f write_epic_manifest >/dev/null 2>&1; then
+    local _norm_uat="${_DIRECTIVE_UAT_POLICY:-per-ticket}"
+    local _cached_branch _cached_uat _cached_merge
+    _cached_branch=$(get_epic_manifest_field "$epic_id" branch 2>/dev/null)
+    _cached_uat=$(get_epic_manifest_field "$epic_id" uat_policy 2>/dev/null)
+    _cached_merge=$(get_epic_manifest_field "$epic_id" merge_policy 2>/dev/null)
+
+    if [ "$_cached_branch" != "${_DIRECTIVE_BRANCH:-}" ] ||
+      [ "$_cached_uat" != "$_norm_uat" ] ||
+      [ "$_cached_merge" != "${_DIRECTIVE_MERGE_POLICY:-}" ]; then
+      write_epic_manifest "$epic_id" "${_DIRECTIVE_BRANCH:-}" "$_norm_uat" "${_DIRECTIVE_MERGE_POLICY:-}" || {
+        echo "epic-branch: failed to refresh epic manifest for $epic_id" >&2
+      }
+    fi
+  fi
 
   # Shouldn't happen but guard against empty branch/base
   if [ -z "$_DIRECTIVE_BRANCH" ] || [ -z "$_DIRECTIVE_BASE" ]; then
@@ -399,15 +437,37 @@ epic_branch_sync() {
 # Checks whether every planned child of the epic is in the Done state.
 # Pure bash — no LLM involvement.
 #
-# When children_json is provided (JSON array from get_parent_with_children),
-# uses it directly for testing. Otherwise fetches from Linear via
-# get_parent_with_children.
+# tracker-local-facts-read-migration (task 3.1): when called with only
+# EPIC_ID and an epic manifest exists, reads the manifest's children[] and
+# each child's own pipeline-log terminal state — no live tracker query at
+# all. children_json (JSON array from get_parent_with_children) remains
+# supported as an explicit override — for a caller with pre-fetched live
+# data, or a test — and takes precedence, matching prior behavior exactly.
 #
 # Exit codes:
 #   0 — all children are Done
 #   1 — not ready (some children not Done OR zero children)
 epic_branch_children_done() {
   local epic_id="$1"
+
+  if [ $# -lt 2 ] && declare -f epic_manifest_exists >/dev/null 2>&1 &&
+    epic_manifest_exists "$epic_id" 2>/dev/null; then
+    local manifest_children child_count=0 done_count=0 child
+    manifest_children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+    [ -z "$manifest_children" ] && manifest_children='[]'
+
+    while IFS= read -r child; do
+      [ -z "$child" ] && continue
+      child_count=$((child_count + 1))
+      ticket_pipeline_terminal_done "$child" && done_count=$((done_count + 1))
+    done < <(echo "$manifest_children" | jq -r '.[]?' 2>/dev/null)
+
+    [ "$child_count" -eq 0 ] && return 1
+    [ "$done_count" -eq "$child_count" ]
+    return $?
+  fi
+
+  # ── Pre-migration fallback: live Linear query, or explicit override ───────
   local children_json
 
   # Distinguish "no argument" from "explicitly empty": $2 unset → fetch;

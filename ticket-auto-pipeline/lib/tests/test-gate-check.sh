@@ -178,6 +178,7 @@ _scaffold_no_meta_artifact() {
 export CLAUDE_SKILLS_LIB="$LIB_DIR"
 
 source "$LIB_DIR/gate-check.sh"
+source "$LIB_DIR/manifest-write.sh"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Entry mode tests (core: 12, Check 2.5: 5, Check 2.5a: 2, Check 2.5b: 3,
@@ -1976,6 +1977,60 @@ test_reapprove_get_issue_missing_labels_gate_stops() {
 
 FILTER="${1:-}"
 
+# tracker-local-facts-read-migration (task 5.1): a local ticket manifest
+# alone must be sufficient to drive Check 2.7, even when the live issue
+# carries no "planned" label at all.
+test_manifest_only_drives_check_2_7() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _fake_issue='{"id":"CRE-47","identifier":"CRE-47","title":"Test","description":"## Planner Context\n**Confidence:** 0.9\n","labels":{"nodes":[{"name":"feature"}]}}'
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-47" "INIT-1" "feature" '[]' >/dev/null
+
+  REPOS_ROOT="$repos_root" _gate_entry >/dev/null 2>&1 || true
+
+  local planned_check_lines
+  planned_check_lines=$(grep -c '|GATE|planned-check|' "$LOG_FILE" 2>/dev/null || echo 0)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$planned_check_lines" -ge 1 ] || {
+    echo "expected Check 2.7 to run from manifest presence alone (no live planned label), got $planned_check_lines planned-check lines"
+    return 1
+  }
+}
+
+# tracker-local-facts-read-migration (task 5.12): manifest's type field
+# drives template resolution even when the live labels carry no type label
+# at all.
+test_manifest_type_field_drives_template_resolution() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _fake_issue='{"id":"CRE-47","identifier":"CRE-47","title":"Test","description":"## Planner Context\n**Confidence:** 0.9\n","labels":{"nodes":[]}}'
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-47" "INIT-1" "feature" '[]' >/dev/null
+
+  REPOS_ROOT="$repos_root" _gate_entry >/dev/null 2>&1 || true
+
+  # grep -c already prints "0" (with exit 1) on zero matches — an `|| echo 0`
+  # fallback here would duplicate it into a two-line value.
+  local resolved
+  resolved=$(grep -c 'template resolved:' "$LOG_FILE" 2>/dev/null)
+  local no_template
+  no_template=$(grep -c 'NO_TEMPLATE_FOR_TYPE' "$LOG_FILE" 2>/dev/null)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$resolved" -ge 1 ] && [ "$no_template" -eq 0 ] || {
+    echo "expected template resolved from manifest type (no live type label present), got resolved=$resolved no_template=$no_template"
+    return 1
+  }
+}
+
 for fn in \
   test_entry_artifact_missing_gate_stop \
   test_entry_complexity_artifact_mismatch \
@@ -2032,7 +2087,9 @@ for fn in \
   test_entry_fetch_recovery_applies_same_criteria_not_a_pass \
   test_entry_get_issue_malformed_payload_gate_stops \
   test_reapprove_get_issue_fetch_failure_not_conflated_with_revoked \
-  test_reapprove_get_issue_missing_labels_gate_stops; do
+  test_reapprove_get_issue_missing_labels_gate_stops \
+  test_manifest_only_drives_check_2_7 \
+  test_manifest_type_field_drives_template_resolution; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

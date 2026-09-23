@@ -21,6 +21,7 @@ source "$_BR_LIB_DIR/config.sh" 2>/dev/null || true
 source "$_BR_LIB_DIR/linear-api.sh" 2>/dev/null || true
 source "$_BR_LIB_DIR/planned-ticket-check.sh" 2>/dev/null || true
 source "$_BR_LIB_DIR/branch-directive-check.sh" 2>/dev/null || true
+source "$_BR_LIB_DIR/manifest-read.sh" 2>/dev/null || true
 # events.sh backs uat_decide_trigger's pr-review-passed{uat_required} dual-write
 # (tracker-event-vocabulary-and-emitter). Guarded — not every branch-resolve.sh
 # caller runs from a context where the outbox lib is installed alongside it.
@@ -29,6 +30,50 @@ declare -f emit_event >/dev/null 2>&1 || source "$_BR_LIB_DIR/events.sh" 2>/dev/
 #   resolve_branch_context "CRE-123"
 #   resolve_branch_context "CRE-123" --branch "epic/test-x"
 #   resolve_branch_context "CRE-123" --title "Fix auth" --parent-json '{"id":"CRE-100","description":"..."}'
+
+# _epic_branch_directive <epic_id> <description>
+# Resolves an epic's directive fields (branch, uat_policy, merge_policy) —
+# the epic manifest first (tracker-local-facts-read-migration), falling back
+# to a live parse of <description> only when no epic manifest exists (a
+# ticket created before this migration, or a manifest write that failed).
+# Never fetches anything itself — the fallback parses whatever description
+# the caller already has in hand.
+#
+# Sets _EBD_BRANCH / _EBD_UAT_POLICY / _EBD_MERGE_POLICY and _EBD_SOURCE
+# ("manifest" | "live" | "invalid" | ""). Returns 2 when the live-fallback
+# parse finds a malformed directive (mirrors check_branch_directive_
+# description's own exit 2) — a cached manifest value is never re-validated
+# here, since it was already validated once when written.
+_epic_branch_directive() {
+  local epic_id="$1" description="$2"
+  _EBD_BRANCH="" _EBD_UAT_POLICY="" _EBD_MERGE_POLICY="" _EBD_SOURCE=""
+
+  if [ -n "$epic_id" ] && declare -f epic_manifest_exists >/dev/null 2>&1 &&
+    epic_manifest_exists "$epic_id" 2>/dev/null; then
+    _EBD_BRANCH=$(get_epic_manifest_field "$epic_id" branch 2>/dev/null)
+    _EBD_UAT_POLICY=$(get_epic_manifest_field "$epic_id" uat_policy 2>/dev/null)
+    _EBD_MERGE_POLICY=$(get_epic_manifest_field "$epic_id" merge_policy 2>/dev/null)
+    _EBD_SOURCE="manifest"
+    return 0
+  fi
+
+  [ -z "$description" ] && return 0
+
+  local directive_output directive_exit=0
+  directive_output=$(check_branch_directive_description "$description" 2>/dev/null) || directive_exit=$?
+  if [ "$directive_exit" -eq 2 ]; then
+    _EBD_SOURCE="invalid"
+    return 2
+  fi
+
+  if [ -n "$directive_output" ]; then
+    _EBD_BRANCH=$(echo "$directive_output" | sed -n "s/^BRANCH_DIRECTIVE_BRANCH='\\(.*\\)'\$/\\1/p")
+    _EBD_UAT_POLICY=$(echo "$directive_output" | sed -n "s/^BRANCH_DIRECTIVE_UAT_POLICY='\\(.*\\)'\$/\\1/p")
+    _EBD_MERGE_POLICY=$(echo "$directive_output" | sed -n "s/^BRANCH_DIRECTIVE_MERGE_POLICY='\\(.*\\)'\$/\\1/p")
+    _EBD_SOURCE="live"
+  fi
+  return 0
+}
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -69,6 +114,10 @@ resolve_branch_context() {
   local title="$inline_title"
   local parent_id=""
   local parent_description=""
+  # Kept even if parent_id is cleared by a --branch override below — UAT/merge
+  # policy is a property of the epic and must resolve regardless of which
+  # precedence rule chose the branch itself.
+  local epic_ref=""
 
   # Fetch ticket data if not provided inline
   if [ -z "$inline_title" ]; then
@@ -94,6 +143,7 @@ resolve_branch_context() {
       parent_description=$(echo "$inline_parent_json" | jq -r '.description // ""')
     fi
   fi
+  epic_ref="$parent_id"
 
   # ── Generate ticket branch name ───────────────────────────────────────────
   local ticket_branch
@@ -115,34 +165,23 @@ resolve_branch_context() {
     branch_source="flag"
     parent_id="" # explicit override, ignore parent
 
-  # Precedence 2: parent epic directive
-  elif [ -n "$parent_id" ] && [ -n "$parent_description" ]; then
-    # Validate parent description with branch-directive-check.sh
-    local directive_output
-    directive_output=$(check_branch_directive_description "$parent_description" 2>/dev/null) || {
-      local directive_exit=$?
-      if [ "$directive_exit" -eq 2 ]; then
-        # Malformed directive — gate-stop
-        echo "BRANCH_DIRECTIVE_INVALID" >&2
-        echo "branch-resolve: parent $parent_id has a malformed Branch Directive — gate-stop" >&2
-        return 2
-      fi
-      # Exit 1 = absent — fall through to default
-    }
+  # Precedence 2: parent epic directive — epic manifest first
+  # (tracker-local-facts-read-migration), live description parse as fallback.
+  elif [ -n "$parent_id" ]; then
+    _epic_branch_directive "$epic_ref" "$parent_description"
+    local _ebd_rc=$?
+    if [ "$_ebd_rc" -eq 2 ]; then
+      # Malformed directive (live-fallback path only — a cached manifest
+      # value is never re-validated here) — gate-stop.
+      echo "BRANCH_DIRECTIVE_INVALID" >&2
+      echo "branch-resolve: parent $parent_id has a malformed Branch Directive — gate-stop" >&2
+      return 2
+    fi
 
-    if [ -n "$directive_output" ]; then
-      # Parse values from check_branch_directive_description output.
-      # Output format: KEY='value' lines with single-quoted, validated values.
-      # Targeted sed extraction — no eval, no sourcing untrusted input.
-      local parsed_branch parsed_base
-      parsed_branch=$(echo "$directive_output" | sed -n "s/^BRANCH_DIRECTIVE_BRANCH='\\(.*\\)'$/\\1/p")
-      parsed_base=$(echo "$directive_output" | sed -n "s/^BRANCH_DIRECTIVE_BASE='\\(.*\\)'$/\\1/p")
-
-      if [ -n "$parsed_branch" ] && [ -n "$parsed_base" ]; then
-        base_branch="$parsed_branch"
-        integration_branch="$parsed_branch"
-        branch_source="epic-directive"
-      fi
+    if [ -n "$_EBD_BRANCH" ]; then
+      base_branch="$_EBD_BRANCH"
+      integration_branch="$_EBD_BRANCH"
+      branch_source="epic-directive"
     fi
   fi
 
@@ -152,22 +191,22 @@ resolve_branch_context() {
     branch_source="default"
   fi
 
-  # ── Resolve UAT policy ────────────────────────────────────────────────────
-  # The policy is a property of the epic, not of the branch target, so it is
+  # ── Resolve UAT policy and merge policy ───────────────────────────────────
+  # Both are properties of the epic, not of the branch target, so they are
   # read from the parent directive regardless of which precedence rule chose
   # the branch — an explicit --branch override retargets the branch, it does
-  # not detach the ticket from its epic's acceptance model.
-  local uat_policy
-  uat_policy=$(_uat_policy_from_description "$parent_description")
-
-  # ── Resolve merge policy ──────────────────────────────────────────────────
-  # Same reasoning as UAT policy above: it is a property of the epic, read
-  # from the parent directive regardless of which precedence rule chose the
-  # branch. Unlike UAT policy, absence has no normalised default — a ticket
-  # with no epic directive has no Merge Policy opinion at all, and callers
-  # must not treat empty as "auto" (that would defeat the point of the field).
-  local merge_policy
-  merge_policy=$(_merge_policy_from_description "$parent_description")
+  # not detach the ticket from its epic's acceptance model. Reuses whatever
+  # _epic_branch_directive already resolved above when the branch itself came
+  # from precedence 2; re-resolves (manifest-first, same helper) otherwise,
+  # since a --branch/default branch_source never populated _EBD_*.
+  if [ "$branch_source" != "epic-directive" ]; then
+    _epic_branch_directive "$epic_ref" "$parent_description" >/dev/null 2>&1 || true
+  fi
+  local uat_policy="${_EBD_UAT_POLICY:-per-ticket}"
+  # Unlike UAT policy, merge policy has no normalised default — a ticket with
+  # no epic directive has no Merge Policy opinion at all, and callers must not
+  # treat empty as "auto" (that would defeat the point of the field).
+  local merge_policy="${_EBD_MERGE_POLICY:-}"
 
   # ── Emit result block ─────────────────────────────────────────────────────
   cat <<EOF
@@ -200,17 +239,27 @@ EOF
 resolve_uat_policy() {
   local ticket_id="$1"
 
-  local issue_json
-  issue_json=$(get_issue "$ticket_id" 2>/dev/null) || {
-    echo "branch-resolve: failed to fetch ticket $ticket_id for UAT policy" >&2
-    echo "per-ticket"
-    return 1
-  }
+  # Zero-fetch path: the ticket's own manifest already names its initiative
+  # (== epic id in this codebase), so no live ticket fetch is needed at all
+  # when both manifests exist (tracker-local-facts-read-migration).
+  local parent_id="" parent_description=""
+  if declare -f get_ticket_manifest_field >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
+    parent_id=$(get_ticket_manifest_field "$ticket_id" initiative 2>/dev/null)
+  fi
 
-  local parent_description
-  parent_description=$(echo "$issue_json" | jq -r '.parent.description // ""' 2>/dev/null)
+  if [ -z "$parent_id" ]; then
+    local issue_json
+    issue_json=$(get_issue "$ticket_id" 2>/dev/null) || {
+      echo "branch-resolve: failed to fetch ticket $ticket_id for UAT policy" >&2
+      echo "per-ticket"
+      return 1
+    }
+    parent_id=$(echo "$issue_json" | jq -r '.parent.id // ""' 2>/dev/null)
+    parent_description=$(echo "$issue_json" | jq -r '.parent.description // ""' 2>/dev/null)
+  fi
 
-  _uat_policy_from_description "$parent_description"
+  _epic_branch_directive "$parent_id" "$parent_description" >/dev/null 2>&1 || true
+  echo "${_EBD_UAT_POLICY:-per-ticket}"
 }
 
 # resolve_merge_policy <TICKET_ID>
@@ -227,16 +276,24 @@ resolve_uat_policy() {
 resolve_merge_policy() {
   local ticket_id="$1"
 
-  local issue_json
-  issue_json=$(get_issue "$ticket_id" 2>/dev/null) || {
-    echo "branch-resolve: failed to fetch ticket $ticket_id for Merge Policy" >&2
-    return 1
-  }
+  # Zero-fetch path — see resolve_uat_policy above.
+  local parent_id="" parent_description=""
+  if declare -f get_ticket_manifest_field >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
+    parent_id=$(get_ticket_manifest_field "$ticket_id" initiative 2>/dev/null)
+  fi
 
-  local parent_description
-  parent_description=$(echo "$issue_json" | jq -r '.parent.description // ""' 2>/dev/null)
+  if [ -z "$parent_id" ]; then
+    local issue_json
+    issue_json=$(get_issue "$ticket_id" 2>/dev/null) || {
+      echo "branch-resolve: failed to fetch ticket $ticket_id for Merge Policy" >&2
+      return 1
+    }
+    parent_id=$(echo "$issue_json" | jq -r '.parent.id // ""' 2>/dev/null)
+    parent_description=$(echo "$issue_json" | jq -r '.parent.description // ""' 2>/dev/null)
+  fi
 
-  _merge_policy_from_description "$parent_description"
+  _epic_branch_directive "$parent_id" "$parent_description" >/dev/null 2>&1 || true
+  echo "${_EBD_MERGE_POLICY:-}"
 }
 
 # uat_decide_trigger [--policy <policy>] [--uat-url <url>] [--ticket <TICKET_ID>]
@@ -329,45 +386,6 @@ uat_decide_trigger() {
 }
 
 # ── Internal helpers ────────────────────────────────────────────────────────
-
-# _uat_policy_from_description <description>
-# Echoes the normalised UAT policy declared by an epic description's Branch
-# Directive, or the 'per-ticket' default when no directive is present.
-#
-# A malformed directive is not diagnosed here: when the directive is
-# load-bearing for branch selection, resolve_branch_context already gate-stops
-# on it before reaching this point.
-_uat_policy_from_description() {
-  local description="$1"
-  local directive_output="" policy=""
-
-  if [ -n "$description" ]; then
-    directive_output=$(check_branch_directive_description "$description" 2>/dev/null) || directive_output=""
-    policy=$(echo "$directive_output" | sed -n "s/^BRANCH_DIRECTIVE_UAT_POLICY='\\(.*\\)'$/\\1/p")
-  fi
-
-  echo "${policy:-per-ticket}"
-}
-
-# _merge_policy_from_description <description>
-# Echoes the Merge Policy declared by an epic description's Branch Directive,
-# or an empty string when no directive is present or the directive omits the
-# field. Unlike UAT policy, there is no normalised default: "no epic opinion"
-# and "epic requires manual merge" must stay distinguishable to callers, so a
-# malformed/absent directive is not diagnosed here either — resolve_branch_
-# context already gate-stops on it before reaching this point when the
-# directive is load-bearing for branch selection.
-_merge_policy_from_description() {
-  local description="$1"
-  local directive_output="" policy=""
-
-  if [ -n "$description" ]; then
-    directive_output=$(check_branch_directive_description "$description" 2>/dev/null) || directive_output=""
-    policy=$(echo "$directive_output" | sed -n "s/^BRANCH_DIRECTIVE_MERGE_POLICY='\\(.*\\)'$/\\1/p")
-  fi
-
-  echo "$policy"
-}
 
 # _generate_branch_name <ticket-id> <title>
 # Deterministically generates a branch name: {BRANCH_PREFIX}{ID}-{slug}

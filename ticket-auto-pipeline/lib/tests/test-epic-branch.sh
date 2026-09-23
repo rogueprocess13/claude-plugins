@@ -1138,6 +1138,224 @@ test_resolve_repo_rejects_non_git() {
 }
 _run "resolve_repo rejects non-git directory" test_resolve_repo_rejects_non_git
 
+# ── tracker-local-facts-read-migration (task 2.3, 2.5, 3.1, 3.2) ────────────
+
+source "$LIB_DIR/manifest-write.sh"
+
+test_ensure_epic_branch_backfills_manifest() {
+  _setup_fixture
+  local repos_root
+  repos_root=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" MOCK_DESCRIPTION="$MOCK_EPIC_DESC" \
+    ensure_epic_branch "CRE-100" "$FIXTURE_REPO" >/dev/null 2>&1
+
+  local branch
+  branch=$(REPOS_ROOT="$repos_root" get_epic_manifest_field "CRE-100" branch 2>/dev/null)
+  rm -rf "$repos_root"
+
+  [ "$branch" = "epic/test-branch" ] || {
+    echo "  expected manifest branch=epic/test-branch, got '$branch'" >&2
+    return 1
+  }
+  return 0
+}
+_run "ensure_epic_branch backfills a missing epic manifest" test_ensure_epic_branch_backfills_manifest
+
+test_ensure_epic_branch_refreshes_on_drift() {
+  _setup_fixture
+  local repos_root
+  repos_root=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" MOCK_DESCRIPTION="$MOCK_EPIC_DESC" \
+    ensure_epic_branch "CRE-100" "$FIXTURE_REPO" >/dev/null 2>&1
+
+  # Operator edits the directive's Merge Policy after the manifest was
+  # cached — ensure_epic_branch must re-parse and refresh on next run.
+  local drifted_desc='## Branch Directive
+**Schema-Version:** 1
+**Branch:** epic/test-branch
+**Base:** main
+**Merge Policy:** manual
+**Sync Policy:** rebase-on-base-change
+**Created:** 2026-07-25T10:00:00Z'
+
+  REPOS_ROOT="$repos_root" MOCK_DESCRIPTION="$drifted_desc" \
+    ensure_epic_branch "CRE-100" "$FIXTURE_REPO" >/dev/null 2>&1
+
+  local merge_policy
+  merge_policy=$(REPOS_ROOT="$repos_root" get_epic_manifest_field "CRE-100" merge_policy 2>/dev/null)
+  rm -rf "$repos_root"
+
+  [ "$merge_policy" = "manual" ] || {
+    echo "  expected refreshed merge_policy=manual after drift, got '$merge_policy'" >&2
+    return 1
+  }
+  return 0
+}
+_run "ensure_epic_branch refreshes the manifest on directive drift" test_ensure_epic_branch_refreshes_on_drift
+
+test_ensure_epic_branch_no_rewrite_when_no_drift() {
+  _setup_fixture
+  local repos_root
+  repos_root=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" MOCK_DESCRIPTION="$MOCK_EPIC_DESC" \
+    ensure_epic_branch "CRE-100" "$FIXTURE_REPO" >/dev/null 2>&1
+
+  # Same description again — no drift, must not rewrite (spy on the writer,
+  # in a subshell so the override never leaks to other tests).
+  local write_count_file
+  write_count_file=$(mktemp)
+  echo 0 >"$write_count_file"
+  (
+    write_epic_manifest() {
+      local n
+      n=$(cat "$write_count_file")
+      echo $((n + 1)) >"$write_count_file"
+    }
+    REPOS_ROOT="$repos_root" MOCK_DESCRIPTION="$MOCK_EPIC_DESC" \
+      ensure_epic_branch "CRE-100" "$FIXTURE_REPO" >/dev/null 2>&1
+  )
+
+  local write_count
+  write_count=$(cat "$write_count_file")
+  rm -rf "$repos_root" "$write_count_file"
+
+  [ "$write_count" -eq 0 ] || {
+    echo "  expected 0 manifest writes on no-drift re-run, got $write_count" >&2
+    return 1
+  }
+  return 0
+}
+_run "ensure_epic_branch does not rewrite the manifest when there is no drift" test_ensure_epic_branch_no_rewrite_when_no_drift
+
+test_epic_branch_children_done_reads_manifest_and_pipeline_logs() {
+  local repos_root log_dir
+  repos_root=$(mktemp -d)
+  log_dir=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" write_epic_manifest "CRE-100" "epic/x" "epic" "manual" '["CRE-1","CRE-2"]' >/dev/null
+
+  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >"$log_dir/CRE-1-pipeline.log"
+  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >"$log_dir/CRE-2-pipeline.log"
+
+  local rc=0
+  REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$log_dir" \
+    epic_branch_children_done "CRE-100" 2>/dev/null || rc=$?
+
+  rm -rf "$repos_root" "$log_dir"
+
+  [ "$rc" -eq 0 ] || {
+    echo "  expected ready (exit 0) when manifest children all show completed:, got $rc" >&2
+    return 1
+  }
+  return 0
+}
+_run "epic_branch_children_done: manifest + pipeline-log path, all done" test_epic_branch_children_done_reads_manifest_and_pipeline_logs
+
+test_epic_branch_children_done_manifest_path_not_ready() {
+  local repos_root log_dir
+  repos_root=$(mktemp -d)
+  log_dir=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" write_epic_manifest "CRE-100" "epic/x" "epic" "manual" '["CRE-1","CRE-2"]' >/dev/null
+
+  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >"$log_dir/CRE-1-pipeline.log"
+  # CRE-2 has no pipeline log at all — unstarted, unsatisfied.
+
+  local rc=0
+  REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$log_dir" \
+    epic_branch_children_done "CRE-100" 2>/dev/null || rc=$?
+
+  rm -rf "$repos_root" "$log_dir"
+
+  [ "$rc" -ne 0 ] || {
+    echo "  expected not-ready when a child has no pipeline log yet" >&2
+    return 1
+  }
+  return 0
+}
+_run "epic_branch_children_done: manifest path, missing child log is not-ready" test_epic_branch_children_done_manifest_path_not_ready
+
+test_epic_branch_children_done_2arg_bypasses_manifest() {
+  local repos_root
+  repos_root=$(mktemp -d)
+
+  # A manifest exists and would say "ready", but the explicit 2-arg override
+  # must win (backward-compat / pre-fetched-data callers) — feed it a single
+  # not-Done, non-planned-filtered child so the pre-migration path reports
+  # not ready, proving the manifest was not consulted.
+  REPOS_ROOT="$repos_root" write_epic_manifest "CRE-100" "epic/x" "epic" "manual" '["CRE-1"]' >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" epic_branch_children_done "CRE-100" \
+    '{"id":"c1","identifier":"CRE-1","state":{"name":"In Progress"},"labels":{"nodes":[{"name":"planned"}]}}' \
+    2>/dev/null || rc=$?
+  rm -rf "$repos_root"
+
+  [ "$rc" -ne 0 ] || {
+    echo "  explicit 2-arg override should have been used instead of the manifest" >&2
+    return 1
+  }
+  return 0
+}
+_run "epic_branch_children_done: explicit 2-arg override still takes precedence" test_epic_branch_children_done_2arg_bypasses_manifest
+
+test_ensure_epic_branch_kill_switch_skips_manifest_write() {
+  _setup_fixture
+  local repos_root
+  repos_root=$(mktemp -d)
+
+  TICKET_LOCAL_MANIFEST_DISABLE=true REPOS_ROOT="$repos_root" MOCK_DESCRIPTION="$MOCK_EPIC_DESC" \
+    ensure_epic_branch "CRE-100" "$FIXTURE_REPO" >/dev/null 2>&1
+
+  local manifest_path="$repos_root/.ticket-auto/initiatives/CRE-100/epic/manifest.json"
+  local exists="no"
+  [ -f "$manifest_path" ] && exists="yes"
+  rm -rf "$repos_root"
+
+  [ "$exists" = "no" ] || {
+    echo "  expected no epic manifest write while TICKET_LOCAL_MANIFEST_DISABLE=true" >&2
+    return 1
+  }
+  return 0
+}
+_run "ensure_epic_branch: kill switch skips the manifest backfill/refresh entirely" test_ensure_epic_branch_kill_switch_skips_manifest_write
+
+test_epic_branch_children_done_kill_switch_forces_live_fallback() {
+  local repos_root log_dir
+  repos_root=$(mktemp -d)
+  log_dir=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" write_epic_manifest "CRE-100" "epic/x" "epic" "manual" '["CRE-1","CRE-2"]' >/dev/null
+  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >"$log_dir/CRE-1-pipeline.log"
+  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >"$log_dir/CRE-2-pipeline.log"
+
+  # With the kill switch on, the (real, all-Done) manifest must be ignored —
+  # falls through to the live get_parent_with_children fetch. Override that
+  # mock (normally "one child, Done" per the file-level default at the top
+  # of this suite) to return a single NOT-Done child, so a "ready" result
+  # can only mean the manifest was consulted instead of the live path.
+  local rc=0
+  (
+    get_parent_with_children() {
+      echo '{"parent":{"id":"CRE-100"},"children":[{"id":"c1","identifier":"CRE-1","state":{"name":"In Progress"},"labels":{"nodes":[{"name":"planned"}]}}]}'
+    }
+    TICKET_LOCAL_MANIFEST_DISABLE=true REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$log_dir" \
+      epic_branch_children_done "CRE-100"
+  ) >/dev/null 2>&1 || rc=$?
+
+  rm -rf "$repos_root" "$log_dir"
+
+  [ "$rc" -ne 0 ] || {
+    echo "  expected kill switch to bypass the (ready) manifest and use the (not-ready) live fallback" >&2
+    return 1
+  }
+  return 0
+}
+_run "epic_branch_children_done: kill switch forces the live-fallback path" test_epic_branch_children_done_kill_switch_forces_live_fallback
+
 # ── Cleanup mock gh dirs ─────────────────────────────────────────────────────
 # The fixture cleanup is done via mktemp (system cleans /tmp eventually).
 # Mock gh dirs are in FIXTURE_DIR or MOCK_GH_DIR which are under /tmp.

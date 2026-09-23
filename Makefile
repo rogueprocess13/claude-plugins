@@ -73,6 +73,9 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-appraise-fast-path.sh
 	bash ticket-auto-pipeline/lib/tests/test-template-select.sh
 	bash ticket-auto-pipeline/lib/tests/test-planner-artifacts.sh
+	# tracker-local-facts-read-migration
+	bash ticket-auto-pipeline/lib/tests/test-manifest-read.sh
+	bash ticket-auto-pipeline/lib/tests/test-manifest-write.sh
 	bash ticket-auto-pipeline/lib/tests/test-planned-body-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-appraise-exec-planned.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \
