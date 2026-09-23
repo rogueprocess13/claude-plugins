@@ -685,7 +685,7 @@ Three findings from the Track B design work that stand on their own, whether or 
 
 ---
 
-## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — Change 1 (`tracker-approval-by-script`) implemented 2026-09-23, PR pending; Changes 2/3 still PROPOSED
+## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — Change 1 (`tracker-approval-by-script`) implemented 2026-09-23, PR #401 open; Changes 2/3 still PROPOSED
 
 **Why this exists:** 2026-09-23, after B4 shipped, the operator restated the original complaint
 directly — Linear tickets are noisy with labels, and none of B1-B4 addressed that. Investigation
@@ -711,7 +711,7 @@ before being finalized. Three openspec changes, one PR each, in this order — l
 on manifest fields and classifications the earlier ones add, so the order is load-bearing, not
 just a size-limiting convention:
 
-1. **`tracker-approval-by-script`** — **IMPLEMENTED 2026-09-23, 40/40 tasks, PR pending.**
+1. **`tracker-approval-by-script`** — **IMPLEMENTED 2026-09-23, 40/40 tasks, PR #401 open.**
    New `/ticket-approve` / `/ticket-reject` commands are the only approval actuator; manifest
    gains `stage`; all six approval-decision reads (`gate-check.sh` Checks 2.8b/2.8c/4/reapprove via
    a new shared `_gate_manifest_approved` helper, `detect-resume.sh`'s `GATE_HELD` resume, fleet-
@@ -765,7 +765,7 @@ just a size-limiting convention:
    then lets group 4 (planner stops writing) proceed — that group is marked the point of no return.
 
 All three validated `openspec validate --strict` clean as of 2026-09-23. Change 1
-(`tracker-approval-by-script`) is implemented (40/40 tasks, PR pending) — see its entry above.
+(`tracker-approval-by-script`) is implemented (40/40 tasks, PR #401 open) — see its entry above.
 Changes 2/3 are not started. Track B remains the next queued work ahead of Step 6 by the same
 direct-override precedent B1 used; Change 2 (`tracker-flow-projection-cutover`) is next up once
 Change 1's PR merges, since it depends on manifest fields (`flags`/`rev`/`pending_event`) and the
