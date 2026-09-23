@@ -137,11 +137,47 @@ test_crash_mid_write_leaves_previous_value() {
   [ "$got" = "3" ] && $tmp_survives
 }
 
+# ── tracker-flow-projection-cutover: attempts counter ───────────────────────
+test_unwritten_cursor_attempts_is_zero() {
+  _setup
+  local got
+  got=$(board_cursor_get_attempts T-6 linear)
+  _teardown
+  [ "$got" = "0" ]
+}
+
+test_note_failure_increments_attempts_leaves_seq() {
+  _setup
+  board_cursor_advance T-6 linear 5
+  board_cursor_note_failure T-6 linear
+  board_cursor_note_failure T-6 linear
+  local attempts seq
+  attempts=$(board_cursor_get_attempts T-6 linear)
+  seq=$(board_cursor_get T-6 linear)
+  _teardown
+  [ "$attempts" = "2" ] && [ "$seq" = "5" ]
+}
+
+test_advance_resets_attempts() {
+  _setup
+  board_cursor_advance T-6 linear 5
+  board_cursor_note_failure T-6 linear
+  board_cursor_note_failure T-6 linear
+  board_cursor_advance T-6 linear 6
+  local attempts
+  attempts=$(board_cursor_get_attempts T-6 linear)
+  _teardown
+  [ "$attempts" = "0" ]
+}
+
 _run "1.3 sequential single-writer advancement persists" test_sequential_advancement_persists
 _run "1.4 concurrent same-pair advancement serializes, no lost update" test_concurrent_same_pair_serializes
 _run "1.5 concurrent different-board advancement is independent" test_concurrent_different_boards_independent
 _run "1.6 unwritten cursor returns seq 0" test_unwritten_cursor_returns_zero
 _run "1.7 crash mid-write leaves previous cursor value intact" test_crash_mid_write_leaves_previous_value
+_run "1.8 unwritten cursor attempts is 0" test_unwritten_cursor_attempts_is_zero
+_run "1.9 note_failure increments attempts, leaves seq" test_note_failure_increments_attempts_leaves_seq
+_run "1.10 advance resets attempts" test_advance_resets_attempts
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="

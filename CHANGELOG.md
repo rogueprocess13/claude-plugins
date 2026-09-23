@@ -17,6 +17,68 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.55.0 (2026-09-23) — also fleet-controller 0.36.0
+
+**BREAKING, one-way door:** Tracker flow projection cutover (`tracker-flow-projection-cutover`,
+Track B — the authority flip, Change 2 of 3). `flow.sh` stops calling the tracker entirely: no
+`get_issue`, no `get_team`, no `update_issue`, no post-trigger assertion. It is now a purely local
+state machine — its inputs are `workflow.json` and the ticket's manifest, its outputs are the
+manifest (`stage`, `flags`, `rev`, `pending_event`) and exactly one outbox event per invocation,
+idempotency-keyed `{tid}:{rev}` so a crash on either side of the emit still resolves to exactly one
+record. `board_drivers.linear` goes from `{}` to a real, populated projection table; the driver
+(`lib/board-drivers/linear.sh`) now writes real desired state to the board — a column plus at most
+four human-signal labels (`needs-info`, `needs-adr`, `rejected`, `reviewed`) — preserving every
+label it does not own and declining to mutate when nothing would change. A permanently-unprojectable
+event is recorded (`META|board-projection|fail`) and skipped rather than blocking the ticket
+forever; a repeatedly-failing one is dead-lettered after `FLEET_BOARD_MAX_ATTEMPTS` (default 5)
+attempts, with a `BOARD_PROJECTION_STALLED` Slack notification. `Simple`/`Complex` are removed —
+completing the removal this repo's own `docs/label-audit.md` classified `vestigial` and deferred
+only because of `flow.sh`'s now-deleted `COMPLEXITY_OPPOSITE` machinery and the three `phase1.sh`
+tests that pinned issue #170, which cannot recur once neither label is written and are deleted
+with it. Exit code 7 (`STATE_ASSERTION_FAILED`) is retired along with the tracker assertion it
+reported; every consumer that branched on it (`skill-preamble.md`/`skill-preamble-auto.md`,
+`fleetd/orchestration.py`, `fleetd/phase_dispatch.py`) is updated.
+
+**Migration is a three-step, per-host operator action — read this before upgrading a host that
+runs `fleetd`.** The board pusher (`FLEET_BOARD_PUSHER_ENABLE`) stays `false` by default even in
+this release, deliberately: every existing host's outbox cursors sit at 0 (the pusher has been
+opt-in since Phase B2, and every mapping was a no-op until now), so flipping the default without
+first fast-forwarding them would replay each ticket's entire transition history and flap its board
+column through every past state before settling on the correct one — visible to everyone watching
+the board, and undoable by nothing. Order, exactly:
+1. Deploy this release. Projection is inert (`FLEET_BOARD_PUSHER_ENABLE` still `false`); `flow.sh`
+   itself still emits and drains its own ticket's outbox at every invocation, so nothing regresses.
+2. Run `skills/ticket-flow/board-cursor-fastforward.sh` once against each host's pipeline log
+   directory (`--dry-run` first to see the count of cursors it would advance — a non-zero count on
+   a host that has been running `fleetd` is the expected, confirming result).
+3. Set `FLEET_BOARD_PUSHER_ENABLE=true` and restart `fleetd`.
+See `fleet-controller/README.md` for the full operator walkthrough.
+
+- `lib/events.sh`: `emit_event` gains `--idem KEY` — a record already carrying that key is not
+  appended again (checked under the same per-ticket lock as the sequence assignment). The outbox
+  record gains an eighth field, `idem`, nullable.
+- `lib/manifest-write.sh`: new `set_ticket_transition`/`set_epic_transition` (the one atomic write
+  for `stage`+`flags`+`rev`+`pending_event`) and `clear_pending_event`/`clear_epic_pending_event`.
+  An empty `stage` argument means "leave the manifest's stage as it currently is," not "reject the
+  call" — needed for a `to: null` trigger firing on a ticket that has no stage yet at all.
+- `lib/board-cursor.sh`: cursor files gain an `attempts` field (`board_cursor_note_failure`
+  increments it without advancing `seq`; `board_cursor_advance` resets it to 0 on success) —
+  the basis for the dead-letter mechanism in `outbox-drain.sh` and `fleetd/pusher.py`.
+- `lib/outcome-label-check.sh`: no longer fetches the issue at all. Reads/writes the manifest's
+  `outcome_label` field directly — the outcome was never really a tracker-label check (the board
+  driver never projects it), so this was always a self-check on this file's own write.
+- `lib/branch-resolve.sh`: `uat_decide_trigger` no longer emits `pr-review-passed` itself — the
+  emission moved onto `flow.sh`, via each trigger's own `emits` declaration, so it fires only after
+  the verdict gate has allowed the transition, not before the transition is even attempted.
+- New `skills/ticket-flow/board-cursor-fastforward.sh` — the one-shot migration step, task 2 above.
+- `fleet-controller/lib/fleet-detect.sh`: `detect_flow_failures` (engine #6) is now an always-0
+  stub — its sole signal, `retry|flow-sh|fail`, was written only by `flow.sh`'s deleted non-JSON-
+  response handler and nothing writes it any more. `detect_outbox_staleness` (engine #19) now reads
+  the dead-letter marker and reports a dead-lettered entry as a lost mutation, not a pending one —
+  its comment claiming "no board mutation has been lost" was true only while the driver was a no-op.
+- Full design: `openspec/changes/tracker-flow-projection-cutover/` (or its archived spec once
+  promoted).
+
 ## 0.54.0 (2026-09-23) — also fleet-controller 0.35.0
 
 **BREAKING:** Tracker approval by script (`tracker-approval-by-script`, Track B — the authority

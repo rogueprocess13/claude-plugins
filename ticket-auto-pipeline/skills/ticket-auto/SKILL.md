@@ -1165,8 +1165,9 @@ NEXT_PHASE=PR-REVIEW
 
 After PR review ✅, check auto-merge eligibility. Both `auto` and `semi-auto` modes merge
 (only `manual` never does); the outcome is read from the `META|outcome-label|info|` line
-written by `outcome-label-check.sh` — the confirmed Linear label — not from the IMPLEMENT
-terminal line, which never carries the Smooth/Rough/Hard value:
+written by `outcome-label-check.sh` — the confirmed outcome, manifest-recorded rather than
+a tracker label — not from the IMPLEMENT terminal line, which never carries the
+Smooth/Rough/Hard value:
 
 **Resolve the PR number before the guard, not after.** The integration-PR
 guard reads `$_pr_num`, so it has to be assigned first. It used to be assigned

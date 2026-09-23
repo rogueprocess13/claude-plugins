@@ -135,12 +135,12 @@ def run_bash_item(item, ctx, lib_dir=None, timeout=600):
 def run_flow_trigger(item, ctx, lib_dir=None, timeout=180):
     """Fire one `flow.sh` trigger.
 
-    `flow.sh` stays the only party that mutates Linear (the repository's
-    determinism boundary), so this shells out to it rather than reaching for
-    the API. Exit 7 is `STATE_ASSERTION_FAILED` and is always blocking
-    regardless of what the item declares: the assertion failing means Linear
-    is not in the state the pipeline believes it is, and continuing compounds
-    the divergence — the same rule `route_exit_code` applies after a phase.
+    `flow.sh` is the only party that mutates the ticket's local manifest and
+    emits its outbox event (the repository's determinism boundary), so this
+    shells out to it rather than reimplementing the transition. It performs
+    no tracker I/O (tracker-flow-projection-cutover) and no longer exits 7 —
+    that code, and the STATE_ASSERTION_FAILED condition it reported, no
+    longer exist.
     """
     flow = _flow_script(lib_dir)
     trigger = str(item.get('trigger') or '')
@@ -161,10 +161,6 @@ def run_flow_trigger(item, ctx, lib_dir=None, timeout=180):
     except (subprocess.TimeoutExpired, OSError) as exc:
         return StepResult('flow_trigger', FAILED, f'{trigger}: {exc}',
                           blocking, None)
-    if proc.returncode == phase_dispatch.FLOW_STATE_ASSERTION_EXIT:
-        return StepResult('flow_trigger', FAILED,
-                          f'{trigger}: STATE_ASSERTION_FAILED', True,
-                          proc.returncode)
     status = OK if proc.returncode == 0 else FAILED
     return StepResult('flow_trigger', status, trigger, blocking,
                       proc.returncode)

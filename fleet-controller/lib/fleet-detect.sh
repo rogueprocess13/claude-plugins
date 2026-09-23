@@ -788,18 +788,29 @@ detect_human_hold() {
   fi
 }
 
-# Outbox staleness (tracker-event-board-pusher, Phase B2). Compares a
-# ticket's event outbox latest seq against each configured board's own
-# cursor position (the flat `.{tid}-cursor-{board_id}.json` file
+# Outbox staleness (tracker-event-board-pusher, Phase B2; real projections
+# landed in tracker-flow-projection-cutover, Change 2). Compares a ticket's
+# event outbox latest seq against each configured board's own cursor
+# position (the flat `.{tid}-cursor-{board_id}.json` file
 # lib/board-cursor.sh and fleetd/pusher.py both read/write — read directly
 # here via jq rather than bridging that whole library, since detection only
 # ever needs a read, never the locked read-apply-write sequence the cursor
 # library exists to protect). WARN-only, by design — never escalates past
-# severity 1 regardless of staleness age, same rationale as
-# detect_human_hold/detect_observer_findings/detect_worker_api_errors:
-# there is no process to kill and, in this phase, no board mutation has
-# been lost (the shipped `linear` driver is a no-op for every event — see
-# tracker-event-board-pusher's design.md Decision 1), only delayed.
+# severity 1 regardless of staleness age or dead-letter status, same
+# rationale as detect_human_hold/detect_observer_findings/
+# detect_worker_api_errors: there is no process to kill.
+#
+# CORRECTED (tracker-flow-projection-cutover task 6.7): the earlier claim
+# here — "no board mutation has been lost, only delayed" — was true only
+# while the shipped `linear` driver was a no-op for every event
+# (design.md Decision 1 of the B2 phase). Real projections mean a
+# permanently-failing entry is now dead-lettered (board-cursor.sh's
+# `attempts` field, `META|board-dead-letter` on the ticket's pipeline log)
+# rather than held forever, and a dead-lettered entry IS a lost mutation,
+# not a pending one. This detector now checks for that marker and reports
+# accordingly — a dead-lettered ticket's board never received the
+# projection, and nothing will retry it.
+#
 # Detection only — never drains, dispatches, or mutates any outbox or
 # cursor. Runs regardless of held/not-held, since staleness is a property
 # of the outbox and cursor files, not of a live process.
@@ -830,6 +841,13 @@ detect_outbox_staleness() {
     if [ -f "$cursor_file" ]; then
       cursor=$(jq -r '.seq // 0' "$cursor_file" 2>/dev/null) || cursor=0
       [[ "$cursor" =~ ^[0-9]+$ ]] || cursor=0
+    fi
+
+    local log_file="${workspace}/${tid}-pipeline.log"
+    if [ -f "$log_file" ] && grep -q '|META|board-dead-letter|warn|' "$log_file" 2>/dev/null; then
+      max_sev=1
+      echo "detect_outbox_staleness: ${tid}/${board_id} has a dead-lettered entry — a board mutation was lost, not merely delayed" >&2
+      continue
     fi
 
     # Oldest unconsumed entry for this board: the first outbox line (in
@@ -949,27 +967,16 @@ detect_worker_api_errors() {
 }
 
 # 6. Flow failure detection — scan heartbeat log for retry|flow-sh|fail entries
+# tracker-flow-projection-cutover task 6.7/8.8: this detector's sole signal
+# was `retry|flow-sh|fail`, written by flow.sh's old non-JSON-response
+# handler at the (now-deleted) exit-5 branch. flow.sh performs no tracker
+# I/O any more, so nothing writes that heartbeat line and never will again
+# — the match is retired rather than left to silently rot as dead pattern
+# matching against a signal source that no longer exists. Kept as an
+# always-0 stub (not deleted outright) so `fleet_detect_all` and the
+# detector-engine table/docs need no renumbering.
 detect_flow_failures() {
-  local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
-  local hb_file="${workspace}/${tid}-heartbeat.log"
-
-  if [ ! -f "$hb_file" ]; then
-    echo "0"
-    return
-  fi
-
-  local failures
-  failures=$(command grep -c 'retry|flow-sh|fail' "$hb_file" 2>/dev/null || true)
-  failures="${failures:-0}"
-
-  if [ "$failures" -ge 2 ]; then
-    echo "2" # KILL
-  elif [ "$failures" -ge 1 ]; then
-    echo "1" # WARN
-  else
-    echo "0"
-  fi
+  echo "0"
 }
 
 # 7. Auto-mode block detection — scans pipeline log for check-approval|fail

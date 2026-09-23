@@ -139,14 +139,63 @@ test_undeclared_event_rejected() {
   [ "$rc" -eq 3 ] && ! $wrote
 }
 
-# ── record shape: exactly the 7 declared keys, no position/column field ────
+# ── record shape: exactly the 8 declared keys, no position/column field ────
 test_record_shape_is_closed() {
   _setup
   emit_event "T-8" gate-held '{"reason":"x"}' >/dev/null
-  local keys
+  local keys idem
   keys=$(jq -c '. | keys | sort' "$(_outbox T-8)")
+  idem=$(jq -r '.idem' "$(_outbox T-8)")
   _teardown
-  [ "$keys" = '["data","event","from_hint","gen","seq","tid","ts"]' ]
+  [ "$keys" = '["data","event","from_hint","gen","idem","seq","tid","ts"]' ] && [ "$idem" = "null" ]
+}
+
+# ── tracker-flow-projection-cutover: --idem KEY dedup ───────────────────────
+test_idem_same_key_appends_once() {
+  _setup
+  emit_event --idem "T-10:1" "T-10" gate-held '{"reason":"a"}' >/dev/null
+  local rc1=$?
+  emit_event --idem "T-10:1" "T-10" gate-held '{"reason":"a"}' >/dev/null
+  local rc2=$?
+  local count
+  count=$(wc -l <"$(_outbox T-10)")
+  _teardown
+  [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$count" -eq 1 ]
+}
+
+test_idem_distinct_keys_append_two_consecutive_seqs() {
+  _setup
+  emit_event --idem "T-11:1" "T-11" gate-held '{"reason":"a"}' >/dev/null
+  emit_event --idem "T-11:2" "T-11" gate-released '{"provenance":"human"}' >/dev/null
+  local seqs
+  seqs=$(jq -r '.seq' "$(_outbox T-11)" | tr '\n' ',')
+  _teardown
+  [ "$seqs" = "1,2," ]
+}
+
+test_idem_suppressed_append_does_not_advance_seq() {
+  _setup
+  emit_event --idem "T-12:1" "T-12" gate-held '{"reason":"a"}' >/dev/null
+  emit_event --idem "T-12:1" "T-12" gate-held '{"reason":"a"}' >/dev/null
+  emit_event --idem "T-12:2" "T-12" gate-released '{"provenance":"human"}' >/dev/null
+  local seqs
+  seqs=$(jq -r '.seq' "$(_outbox T-12)" | tr '\n' ',')
+  _teardown
+  [ "$seqs" = "1,2," ]
+}
+
+test_idem_concurrent_same_key_appends_exactly_once() {
+  _setup
+  local i pids=()
+  for i in $(seq 1 10); do
+    (emit_event --idem "T-13:1" "T-13" gate-held '{"reason":"x"}' >/dev/null 2>&1) &
+    pids+=($!)
+  done
+  for p in "${pids[@]}"; do wait "$p"; done
+  local count
+  count=$(wc -l <"$(_outbox T-13)")
+  _teardown
+  [ "$count" -eq 1 ]
 }
 
 # ── missing args / invalid JSON -> usage error (2), no write ────────────────
@@ -193,8 +242,12 @@ _run "3.8 concurrent different tickets -> independent" test_concurrent_different
 _run "3.9 stale generation rejected, current succeeds" test_stale_generation_rejected_current_succeeds
 _run "3.10 pipe character in data round-trips" test_pipe_character_round_trips
 _run "3.11 undeclared event name rejected" test_undeclared_event_rejected
-_run "record shape is exactly the 7 declared keys" test_record_shape_is_closed
+_run "record shape is exactly the 8 declared keys" test_record_shape_is_closed
 _run "usage errors reject without writing" test_usage_errors
+_run "idem: same key appends once, both calls exit 0" test_idem_same_key_appends_once
+_run "idem: distinct keys append two consecutive seqs" test_idem_distinct_keys_append_two_consecutive_seqs
+_run "idem: suppressed append does not advance seq" test_idem_suppressed_append_does_not_advance_seq
+_run "idem: concurrent same-key emission appends exactly once" test_idem_concurrent_same_key_appends_exactly_once
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="

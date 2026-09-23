@@ -379,7 +379,7 @@
             "the PR head is not INTEGRATION_BRANCH"
           ],
           "command": "gh pr merge <pr> --squash --auto",
-          "description": "Runs after an OK verdict. The outcome is read from the META|outcome-label|info| line — the confirmed Linear label — never from the IMPLEMENT terminal line, which does not carry Smooth/Rough/Hard."
+          "description": "Runs after an OK verdict. The outcome is read from the META|outcome-label|info| line — the confirmed outcome (manifest-recorded, not a tracker label) — never from the IMPLEMENT terminal line, which does not carry Smooth/Rough/Hard."
         }
       ],
       "description": "PR review with router-managed iteration."

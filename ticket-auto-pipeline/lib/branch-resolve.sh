@@ -22,10 +22,6 @@ source "$_BR_LIB_DIR/linear-api.sh" 2>/dev/null || true
 source "$_BR_LIB_DIR/planned-ticket-check.sh" 2>/dev/null || true
 source "$_BR_LIB_DIR/branch-directive-check.sh" 2>/dev/null || true
 source "$_BR_LIB_DIR/manifest-read.sh" 2>/dev/null || true
-# events.sh backs uat_decide_trigger's pr-review-passed{uat_required} dual-write
-# (tracker-event-vocabulary-and-emitter). Guarded — not every branch-resolve.sh
-# caller runs from a context where the outbox lib is installed alongside it.
-declare -f emit_event >/dev/null 2>&1 || source "$_BR_LIB_DIR/events.sh" 2>/dev/null || true
 
 #   resolve_branch_context "CRE-123"
 #   resolve_branch_context "CRE-123" --branch "epic/test-x"
@@ -369,16 +365,6 @@ uat_decide_trigger() {
     else
       _trigger="pr-review-pass-done"
     fi
-  fi
-
-  # Dual-write (tracker-event-vocabulary-and-emitter): pr-review-pass-done and
-  # pr-review-pass-uat collapse into one outbox fact, pr-review-passed,
-  # carrying the resolved boolean instead of a destination-encoding name.
-  # flow.sh's own generic dual-write wrapper deliberately does not emit for
-  # either trigger, to avoid double emission — this is the single site.
-  if [ -n "$ticket_id" ] && declare -f emit_event >/dev/null 2>&1; then
-    emit_event "$ticket_id" "pr-review-passed" \
-      "$(jq -nc --argjson u "$_uat_required" '{uat_required: $u}')" 2>/dev/null || true
   fi
 
   echo "$_trigger"

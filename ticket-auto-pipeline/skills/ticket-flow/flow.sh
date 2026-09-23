@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-# ticket-flow: deterministic Linear state/label executor.
+# ticket-flow: deterministic LOCAL state-machine executor
+# (tracker-flow-projection-cutover, Change 2 of the tracker-decoupling
+# authority-flip programme).
+#
+# flow.sh performs NO tracker I/O. Its inputs are workflow.json and the
+# ticket's local manifest; its outputs are the manifest and exactly one
+# outbox event per invocation (flow-local-transitions spec). The tracker
+# receives its column/label projection later, asynchronously, from
+# lib/board-drivers/linear.sh via the outbox — never from this script.
+#
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
 # errors in this bash version when nounset is active.
@@ -8,39 +17,32 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}"
 source "$LIB_DIR/heartbeat.sh"
-source "$LIB_DIR/linear-api.sh"
-# planned-ticket-check.sh provides _extract_md_section/_extract_field, which
-# branch-directive-check.sh needs. Both are sourced for the epic discriminator
-# in the precondition checks below.
+# linear-api.sh is deliberately NOT sourced — flow.sh no longer fetches or
+# mutates the issue, fetches the team, or resolves label/state ids.
 source "$LIB_DIR/planned-ticket-check.sh" 2>/dev/null || true
 source "$LIB_DIR/branch-directive-check.sh" 2>/dev/null || true
 source "$LIB_DIR/epic-precondition.sh"
-# verifier_latest_verdict backs the verdict gate below (issue #368). Guarded
-# like gate-check.sh's own source of this file — it may not exist on a fresh
-# install where the runtime lib path hasn't been populated yet.
+# verifier_latest_verdict backs the verdict gate below (issue #368).
 if [ -f "$LIB_DIR/verifier-result.sh" ]; then
   source "$LIB_DIR/verifier-result.sh"
 elif [ -f "$SCRIPT_DIR/../../lib/verifier-result.sh" ]; then
   source "$SCRIPT_DIR/../../lib/verifier-result.sh"
 fi
-# fence-check.sh backs the generation fence guard below (extracted so
-# lib/events.sh's outbox emission uses the identical decision logic —
-# tracker-event-vocabulary-and-emitter). events.sh backs the dual-write
-# outbox emission after a successful mutation (Section 6 of that change).
+# fence-check.sh backs the generation fence guard below.
 if [ -f "$LIB_DIR/fence-check.sh" ]; then
   source "$LIB_DIR/fence-check.sh"
 elif [ -f "$SCRIPT_DIR/../../lib/fence-check.sh" ]; then
   source "$SCRIPT_DIR/../../lib/fence-check.sh"
 fi
+# events.sh: the sole way a transition's fact reaches the outbox. No longer
+# an optional dual-write side channel — every transition emits through it.
 if [ -f "$LIB_DIR/events.sh" ]; then
   source "$LIB_DIR/events.sh"
 elif [ -f "$SCRIPT_DIR/../../lib/events.sh" ]; then
   source "$SCRIPT_DIR/../../lib/events.sh"
 fi
-# manifest-write.sh backs the approval-provenance and stage manifest writes
-# below (tracker-inbound-approval Track B Phase B4; extended to the
-# authoritative decision fact and to `stage` by tracker-approval-by-script).
-# Guarded like every other optional lib source here.
+# manifest-write.sh: the manifest is now the only state flow.sh reads and
+# writes. No longer optional — every transition depends on it.
 if [ -f "$LIB_DIR/manifest-write.sh" ]; then
   source "$LIB_DIR/manifest-write.sh"
 elif [ -f "$SCRIPT_DIR/../../lib/manifest-write.sh" ]; then
@@ -74,9 +76,6 @@ shift 2 2>/dev/null || true
 }
 
 # ── Concurrent-execution lock (flock FD 9) ──────────────────────────────────
-# Lock path is anchored to a fixed directory so fleet-intervene.sh's mutex
-# check sees the same lock regardless of the caller's CWD. Resolve via env
-# var first, then fall back to the plugin directory.
 FLOW_LOCK_DIR="${TICKET_FLOW_LOCK_DIR:-$SCRIPT_DIR/locks}"
 mkdir -p "$FLOW_LOCK_DIR"
 exec 9>"${FLOW_LOCK_DIR}/.ticket-flow-${TICKET_ID}.lock"
@@ -126,7 +125,6 @@ done
 
 _log() {
   [ -n "${LOG_FILE:-}" ] || return 0
-  # $1 is the pipe-delimited suffix: "PHASE|STEP|STATUS|MSG"
   IFS='|' read -r _ph _st _status _msg <<<"$1"
   _plog "$LOG_FILE" "$_ph" "$_st" "$_status" "$_msg"
 }
@@ -138,26 +136,19 @@ _emit_schema_header() {
   fi
 }
 
-# ── Manifest bootstrap (tracker-approval-by-script) ─────────────────────────
-# Makes the ticket manifest-addressable (creating a reserved `_adhoc`
-# initiative entry for a ticket the planner never touched) before any
-# manifest write below. Epics always have a manifest from ticket-planner's
-# write_epic_manifest — ensure_ticket_manifest is ticket-only and is never
-# called for an epic trigger. Fail-soft, like every write in this section:
-# a manifest-write failure must never alter flow.sh's own exit code, since
-# the Linear mutation (this script's actual contract) already succeeded.
+# ── Manifest bootstrap ───────────────────────────────────────────────────────
+# Makes the ticket manifest-addressable before any manifest write. Epics
+# always have a manifest from ticket-planner's write_epic_manifest — this is
+# ticket-only. Fail-soft: a manifest-write failure must never silently
+# corrupt flow.sh's own exit code beyond the manifest write's own failure
+# path below.
 _ensure_manifest() {
   declare -f ensure_ticket_manifest >/dev/null 2>&1 || return 0
-  is_epic_issue "$ISSUE_JSON" && return 0
+  $IS_EPIC && return 0
   ensure_ticket_manifest "$TICKET_ID" 2>/dev/null || true
 }
 
 # ── Approval-provenance manifest write ──────────────────────────────────────
-# Called only once the Linear mutation is confirmed (idempotent no-op exit,
-# where the desired label state already holds — or the post-trigger
-# assertion above has already passed). As of tracker-approval-by-script this
-# is the authoritative approval decision fact, not an informational mirror
-# (ticket-local-manifest spec) — but the write itself is unchanged from B4.
 # Fail-soft — never alters flow.sh's own exit code or the caller-visible
 # result.
 _write_approval_manifest() {
@@ -170,29 +161,10 @@ _write_approval_manifest() {
     # implement-complete clearing the fact (Ready -> Review) is what makes
     # uat-fail's Review->Ready-without-reapproval path safe — a ticket that
     # loops UAT-fail back to Ready must never carry a stale approved:true,
-    # since nothing re-approves it before it's dispatched again
-    # (tracker-approval-by-script design.md Risk: "uat-fail returns a
-    # ticket to Ready without re-approval"; this ordering is load-bearing).
+    # since nothing re-approves it before it's dispatched again.
     set_ticket_approval "$TICKET_ID" false 2>/dev/null || true
     ;;
   esac
-}
-
-# ── Stage manifest write (tracker-approval-by-script) ───────────────────────
-# Records the destination of any trigger that declares one, alongside the
-# Linear column move flow.sh still performs — the two-factor gate check
-# (D1) needs both `approved` and `stage` so a manifest carrying a stale
-# approval fact for a ticket that never actually transitioned cannot pass.
-# Same call sites and same fail-soft contract as _write_approval_manifest.
-_write_stage_manifest() {
-  [ -n "$NEW_STATE_NAME" ] || return 0
-  if is_epic_issue "$ISSUE_JSON"; then
-    declare -f set_epic_stage >/dev/null 2>&1 || return 0
-    set_epic_stage "$TICKET_ID" "$NEW_STATE_NAME" 2>/dev/null || true
-  else
-    declare -f set_ticket_stage >/dev/null 2>&1 || return 0
-    set_ticket_stage "$TICKET_ID" "$NEW_STATE_NAME" 2>/dev/null || true
-  fi
 }
 
 # ── Validate workflow.json ─────────────────────────────────────────────
@@ -212,7 +184,6 @@ if [ -z "$def" ]; then
   exit 3
 fi
 
-# Emit trigger-def to pipeline log
 _emit_schema_header
 _log "META|trigger-def|info|${TRIGGER}:$(echo "$def" | jq -c '.')"
 hb_gate "trigger-dispatch" "fired" "trigger ${TRIGGER} dispatched" '{"trigger":"'"$TRIGGER"'"}'
@@ -220,86 +191,91 @@ hb_gate "trigger-dispatch" "fired" "trigger ${TRIGGER} dispatched" '{"trigger":"
 # ── Derive state machine variables from trigger def ─────────────────────────
 
 NEW_STATE_NAME=$(echo "$def" | jq -r '.to // empty')
-SET_ASSIGNEE_ME=$(echo "$def" | jq -r '.set_assignee == "me"')
-
-# Build label arrays — substitute {complexity}, {complexity-opposite} and
-# {outcome} placeholders.
-#
-# {complexity-opposite} resolves to whichever of simple/complex is NOT being
-# applied. Simple and Complex are members of a mutually-exclusive Linear label
-# group, so a stale label left behind by an abandoned appraisal session makes
-# the whole mutation fail. A trigger declares the cleanup in its "removes"
-# array rather than each caller reconciling by hand.
-_COMPLEXITY_VALUE=$(printf '%s' "${DATA[complexity]:-simple}" | tr '[:upper:]' '[:lower:]')
-case "$_COMPLEXITY_VALUE" in
-complex) COMPLEXITY_OPPOSITE="simple" ;;
-*) COMPLEXITY_OPPOSITE="complex" ;;
-esac
 
 ADD_LABEL_NAMES=()
 while IFS= read -r label; do
   [ -z "$label" ] && continue
-  label=$(echo "$label" | sed \
-    -e "s/{complexity}/${DATA[complexity]:-simple}/g" \
-    -e "s/{outcome}/${DATA[outcome]:-Smooth}/g")
   ADD_LABEL_NAMES+=("$label")
 done < <(echo "$def" | jq -r '.adds[]? // empty')
 
 REMOVE_LABEL_NAMES=()
 while IFS= read -r label; do
   [ -z "$label" ] && continue
-  label=$(echo "$label" | sed \
-    -e "s/{complexity-opposite}/${COMPLEXITY_OPPOSITE}/g" \
-    -e "s/{complexity}/${DATA[complexity]:-simple}/g" \
-    -e "s/{outcome}/${DATA[outcome]:-Smooth}/g")
   REMOVE_LABEL_NAMES+=("$label")
 done < <(echo "$def" | jq -r '.removes[]? // empty')
 
-# ── Fetch current ticket state ──────────────────────────────────────────────
+# ── Epic discriminator (resolved from the manifest only — flow-local-
+# transitions spec: "SHALL NOT require an issue payload fetched from the
+# tracker"). The synthetic payload carries only the identifier, so
+# is_epic_issue's manifest-existence check is the operative arm — every
+# epic already has a manifest from write_epic_manifest before any flow.sh
+# trigger fires against it, so the label/description fallback arms (which
+# need real issue data this script no longer fetches) are never reached in
+# practice.
+EPIC_PAYLOAD=$(jq -nc --arg id "$TICKET_ID" '{identifier: $id}')
+IS_EPIC=false
+is_epic_issue "$EPIC_PAYLOAD" && IS_EPIC=true
 
-ISSUE_JSON=$(get_issue "$TICKET_ID")
-TEAM_ID=$(echo "$ISSUE_JSON" | jq -r '.team.id // empty')
-CURRENT_STATE_NAME=$(echo "$ISSUE_JSON" | jq -r '.state.name // empty')
+_manifest_get() {
+  if $IS_EPIC; then
+    get_epic_manifest_field "$TICKET_ID" "$1" 2>/dev/null
+  else
+    get_ticket_manifest_field "$TICKET_ID" "$1" 2>/dev/null
+  fi
+}
+
+_manifest_set_transition() {
+  if $IS_EPIC; then
+    set_epic_transition "$TICKET_ID" "$1" "$2" "$3"
+  else
+    set_ticket_transition "$TICKET_ID" "$1" "$2" "$3"
+  fi
+}
+
+_manifest_clear_pending() {
+  if $IS_EPIC; then
+    clear_epic_pending_event "$TICKET_ID"
+  else
+    clear_pending_event "$TICKET_ID"
+  fi
+}
+
+# Guarded with `|| true` — get_ticket_manifest_field/get_epic_manifest_field
+# return 1 for "no manifest yet" (a brand-new ticket, before _ensure_manifest
+# has run below), and a bare `var=$(failing_cmd)` under `set -e` aborts the
+# whole script silently on that exit code (set-e-bare-and-guard-gotcha).
+CURRENT_STAGE=$(_manifest_get stage) || true
+CURRENT_FLAGS_JSON=$(_manifest_get flags) || true
+echo "$CURRENT_FLAGS_JSON" | jq -e 'type == "array"' >/dev/null 2>&1 || CURRENT_FLAGS_JSON='[]'
+CURRENT_REV=$(_manifest_get rev) || true
+[[ "$CURRENT_REV" =~ ^[0-9]+$ ]] || CURRENT_REV=0
 
 # ── Warn-only from-precondition check (D-2) ─────────────────────────────────
-# flow.sh has executed triggers unguarded since inception. This check logs
-# ILLEGAL_TRANSITION when the ticket's current state does not match the
-# trigger's declared "from" field, but does NOT block the mutation. Ship
-# warn-only first, gather telemetry, then decide whether to hard-enforce.
-# If "from" is null or absent, the check is skipped entirely.
-# "from" can be a single string or an array of acceptable states.
+# Compares the trigger's declared origin against the manifest's stage —
+# never a live tracker state. Still does not block the mutation.
 EXPECTED_FROM=$(echo "$def" | jq -r '.from // empty')
 if [ -n "$EXPECTED_FROM" ] && [ "$EXPECTED_FROM" != "null" ]; then
   _from_match=false
-  # Check if "from" is an array — if so, any element matching current state is valid
   if echo "$def" | jq -e '.from | type == "array"' >/dev/null 2>&1; then
-    if echo "$def" | jq -e --arg state "$CURRENT_STATE_NAME" '.from | index($state) != null' >/dev/null 2>&1; then
+    if echo "$def" | jq -e --arg state "$CURRENT_STAGE" '.from | index($state) != null' >/dev/null 2>&1; then
       _from_match=true
     fi
   else
-    # Single string value
-    if [ "$CURRENT_STATE_NAME" = "$EXPECTED_FROM" ]; then
+    if [ "$CURRENT_STAGE" = "$EXPECTED_FROM" ]; then
       _from_match=true
     fi
   fi
   if ! $_from_match; then
-    _log "META|flow-warn|info|ILLEGAL_TRANSITION — ${TICKET_ID} attempted ${TRIGGER} from ${CURRENT_STATE_NAME}, expected from ${EXPECTED_FROM}"
-    hb_gate "flow-warn" "warn" "ILLEGAL_TRANSITION" "{\"ticket\":\"${TICKET_ID}\",\"trigger\":\"${TRIGGER}\",\"actual\":\"${CURRENT_STATE_NAME}\",\"expected_from\":\"${EXPECTED_FROM}\"}"
+    _log "META|flow-warn|info|ILLEGAL_TRANSITION — ${TICKET_ID} attempted ${TRIGGER} from ${CURRENT_STAGE:-<none>}, expected from ${EXPECTED_FROM}"
+    hb_gate "flow-warn" "warn" "ILLEGAL_TRANSITION" "{\"ticket\":\"${TICKET_ID}\",\"trigger\":\"${TRIGGER}\",\"actual\":\"${CURRENT_STAGE}\",\"expected_from\":\"${EXPECTED_FROM}\"}"
   fi
 fi
 
-CURRENT_LABEL_NAMES=$(echo "$ISSUE_JSON" | jq -r '[.labels.nodes[].name] | join(",")')
-PROJECT_NAME=$(echo "$ISSUE_JSON" | jq -r '.project.name // empty')
-
 # ── Preconditions ────────────────────────────────────────────────────────────
-# The discriminator and evaluator live in lib/epic-precondition.sh so that tests
-# exercise this exact code path instead of re-implementing the condition.
-#
-# A precondition may be declared on a trigger, not only on a label, and the
-# guard is bidirectional: epic acceptance triggers refuse non-epic issues, and
-# child lifecycle triggers refuse epics. The router does not branch on which
-# trigger fired, so without the inverse an epic pushed through the ticket
-# pipeline would take a child's pass-to-Done trigger and close itself.
+# The discriminator and evaluator live in lib/epic-precondition.sh so that
+# tests exercise this exact code path instead of re-implementing the
+# condition. Resolved entirely from EPIC_PAYLOAD (manifest-backed) above —
+# no tracker fetch.
 _precondition_reject() {
   local _subject="$1"
   local _rc="$2"
@@ -316,54 +292,10 @@ _precondition_reject() {
 
 _trigger_precondition=$(echo "$def" | jq -r '.precondition // empty')
 _pre_rc=0
-check_precondition "$_trigger_precondition" "$TRIGGER" "$ISSUE_JSON" || _pre_rc=$?
+check_precondition "$_trigger_precondition" "$TRIGGER" "$EPIC_PAYLOAD" || _pre_rc=$?
 [ "$_pre_rc" -eq 0 ] || _precondition_reject "$TRIGGER" "$_pre_rc"
 
-# ── Planner label preconditions ──────────────────────────────────────────────
-# Read precondition rules from workflow.json planner_labels section.
-for label_name in "${ADD_LABEL_NAMES[@]}"; do
-  _precondition=$(jq -r --arg l "$label_name" '.planner_labels[$l].precondition // empty' "$SM" 2>/dev/null)
-  _pre_rc=0
-  check_precondition "$_precondition" "$label_name" "$ISSUE_JSON" || _pre_rc=$?
-  [ "$_pre_rc" -eq 0 ] || _precondition_reject "$label_name" "$_pre_rc"
-done
-
-# ── Verdict gate (VERDICT_FAIL_NOT_ENFORCED, issue #368) ────────────────────
-# Declared per-trigger in workflow.json via "verdict_gate": true. A
-# trailing FAIL/BLOCK verifier-result for any (verifier, phase) pair blocks
-# the trigger until a later PASS/WARN for that same pair supersedes it — or a
-# human forces it past the block with `--override <reason>`, recorded as
-# META|verdict-override. Absence of any verifier-result is not failure —
-# a ticket with zero verifier-results transitions exactly as it did before
-# this gate existed.
-_verdict_gate=$(echo "$def" | jq -r '.verdict_gate // false')
-if [ "$_verdict_gate" = "true" ] && declare -f verifier_latest_verdict >/dev/null 2>&1 && [ -n "${LOG_FILE:-}" ]; then
-  _failing_verdicts=$(verifier_latest_verdict "$LOG_FILE")
-  if [ -n "$_failing_verdicts" ]; then
-    # _plog rejects any MSG containing '|' outright, so the joined summary
-    # (and a free-text override reason) must never carry one.
-    _failing_summary=$(printf '%s' "$_failing_verdicts" | tr '|' ':' | tr '\n' ';' | sed 's/;$//')
-    if [ -n "$OVERRIDE_REASON" ]; then
-      _override_reason_safe="${OVERRIDE_REASON//|/ }"
-      _log "META|verdict-override|info|trigger=${TRIGGER} reason=${_override_reason_safe} superseded=${_failing_summary}"
-      hb_gate "verdict-override" "ok" "verdict gate overridden" "{\"ticket\":\"$TICKET_ID\",\"trigger\":\"$TRIGGER\"}"
-    else
-      echo "flow.sh: refusing '${TRIGGER}' for ${TICKET_ID} — trailing FAIL/BLOCK verifier-result(s): ${_failing_summary}. Pass --override <reason> to force past this." >&2
-      _log "META|verdict-gate|fail|trigger=${TRIGGER} blocked by ${_failing_summary}"
-      hb_gate "verdict-gate" "fail" "trailing FAIL/BLOCK verifier-result blocks trigger" "{\"ticket\":\"$TICKET_ID\",\"trigger\":\"$TRIGGER\"}"
-      exit 11
-    fi
-  fi
-fi
-
-TEAM_JSON=$(get_team "$TEAM_ID")
-
 # ── Generation fence guard ────────────────────────────────────────────────────
-# Decision logic lives in the shared check_generation_fence helper
-# (lib/fence-check.sh) — both flow.sh and lib/events.sh call it so a
-# stale-generation write is rejected identically regardless of whether it's a
-# Linear mutation or an outbox emission. Gated behind FLEET_FENCE_ENFORCE
-# (default: true) inside the helper itself.
 _fence_rc=0
 check_generation_fence "$TICKET_ID" "$CALLER_GENERATION" "${FLEET_STATE_DIR:-}" || _fence_rc=$?
 case "$_fence_rc" in
@@ -386,206 +318,116 @@ case "$_fence_rc" in
   ;;
 esac
 
-# Helper: look up state ID by name
-resolve_state_id() {
-  local name="$1"
-  local sid
-  sid=$(echo "$TEAM_JSON" | jq -r --arg n "$name" '.states[] | select(.name == $n) | .id')
-  [ -n "$sid" ] || {
-    echo "State '$name' not found in team" >&2
-    exit 3
-  }
-  echo "$sid"
-}
-
-# Helper: look up label ID by name (returns empty string if not found)
-resolve_label_id() {
-  local name="$1"
-  echo "$TEAM_JSON" | jq -r --arg n "$name" '.labels[] | select(.name | ascii_downcase == ($n | ascii_downcase)) | .id // empty'
-}
-
-# ── Compute new label IDs from current + adds - removes ────────────────────
-
-compute_label_ids() {
-  local filter="."
-  for name in "${ADD_LABEL_NAMES[@]}"; do
-    local lid
-    lid=$(resolve_label_id "$name")
-    [ -n "$lid" ] && filter="$filter + [\"$lid\"]"
-  done
-  for name in "${REMOVE_LABEL_NAMES[@]}"; do
-    local lid
-    lid=$(echo "$ISSUE_JSON" | jq -r --arg n "$name" '.labels.nodes[] | select(.name | ascii_downcase == ($n | ascii_downcase)) | .id // empty')
-    [ -n "$lid" ] && filter="$filter - [\"$lid\"]"
-  done
-  echo "$ISSUE_JSON" | jq -c "[.labels.nodes[].id] | $filter | unique"
-}
-
-NEW_LABEL_IDS=$(compute_label_ids)
-
-# ── Resolve state ID ────────────────────────────────────────────────────────
-
-NEW_STATE_ID=""
-if [ -n "$NEW_STATE_NAME" ]; then
-  NEW_STATE_ID=$(resolve_state_id "$NEW_STATE_NAME")
+# ── Verdict gate (VERDICT_FAIL_NOT_ENFORCED, issue #368) ────────────────────
+_verdict_gate=$(echo "$def" | jq -r '.verdict_gate // false')
+if [ "$_verdict_gate" = "true" ] && declare -f verifier_latest_verdict >/dev/null 2>&1 && [ -n "${LOG_FILE:-}" ]; then
+  _failing_verdicts=$(verifier_latest_verdict "$LOG_FILE")
+  if [ -n "$_failing_verdicts" ]; then
+    _failing_summary=$(printf '%s' "$_failing_verdicts" | tr '|' ':' | tr '\n' ';' | sed 's/;$//')
+    if [ -n "$OVERRIDE_REASON" ]; then
+      _override_reason_safe="${OVERRIDE_REASON//|/ }"
+      _log "META|verdict-override|info|trigger=${TRIGGER} reason=${_override_reason_safe} superseded=${_failing_summary}"
+      hb_gate "verdict-override" "ok" "verdict gate overridden" "{\"ticket\":\"$TICKET_ID\",\"trigger\":\"$TRIGGER\"}"
+    else
+      echo "flow.sh: refusing '${TRIGGER}' for ${TICKET_ID} — trailing FAIL/BLOCK verifier-result(s): ${_failing_summary}. Pass --override <reason> to force past this." >&2
+      _log "META|verdict-gate|fail|trigger=${TRIGGER} blocked by ${_failing_summary}"
+      hb_gate "verdict-gate" "fail" "trailing FAIL/BLOCK verifier-result blocks trigger" "{\"ticket\":\"$TICKET_ID\",\"trigger\":\"$TRIGGER\"}"
+      exit 11
+    fi
+  fi
 fi
 
-# ── Idempotency check ───────────────────────────────────────────────────────
+# ── Manifest bootstrap ───────────────────────────────────────────────────────
+_ensure_manifest
 
-CURRENT_STATE_ID=$(echo "$ISSUE_JSON" | jq -r '.state.id // empty')
-CURRENT_LABEL_IDS_SORTED=$(echo "$ISSUE_JSON" | jq -c '[.labels.nodes[].id] | sort')
-NEW_LABEL_IDS_SORTED=$(echo "$NEW_LABEL_IDS" | jq -c 'sort')
+# ── Emit-and-clear any pending_event found on entry ─────────────────────────
+# A pending_event present at this point means a prior invocation crashed
+# between writing the transition and the emission returning (or between the
+# emission returning and clearing the marker — the idem key makes that
+# re-emission a no-op). Its idem key is derived from CURRENT_REV, the exact
+# revision it was written alongside.
+_PENDING_JSON=$(_manifest_get pending_event) || true
+if [ -n "$_PENDING_JSON" ] && [ "$_PENDING_JSON" != "null" ]; then
+  _pending_event=$(echo "$_PENDING_JSON" | jq -r '.event // empty' 2>/dev/null)
+  _pending_data=$(echo "$_PENDING_JSON" | jq -c '.data // {}' 2>/dev/null)
+  if [ -n "$_pending_event" ] && declare -f emit_event >/dev/null 2>&1; then
+    emit_event --idem "${TICKET_ID}:${CURRENT_REV}" "$TICKET_ID" "$_pending_event" "$_pending_data" 2>/dev/null || true
+  fi
+  _manifest_clear_pending 2>/dev/null || true
+fi
 
-STATE_CHANGED=false
-[ -n "$NEW_STATE_ID" ] && [ "$NEW_STATE_ID" != "$CURRENT_STATE_ID" ] && STATE_CHANGED=true
+# ── Compute the new (stage, flags) from the manifest and the trigger ───────
+# flags is confined to the four human-signal labels the board driver is
+# permitted to project (ticket-local-manifest spec) — a trigger's adds/
+# removes naming anything else (e.g. human-reject/re-claim removing
+# pre-approved, still a planner/tracker-only label out of this change's
+# scope) is filtered out here, never landing in the manifest's flags field.
+_PROJECTED_FLAG_LABELS='["needs-info","needs-adr","rejected","reviewed"]'
+NEW_STAGE="${NEW_STATE_NAME:-$CURRENT_STAGE}"
+NEW_FLAGS_JSON=$(jq -cn \
+  --argjson cur "$CURRENT_FLAGS_JSON" \
+  --argjson adds "$(echo "$def" | jq -c '.adds // []')" \
+  --argjson removes "$(echo "$def" | jq -c '.removes // []')" \
+  --argjson allowed "$_PROJECTED_FLAG_LABELS" \
+  '(($cur - $removes) + $adds | unique) as $u
+   | [$u[] | select(. as $x | $allowed | index($x) != null)] | sort')
 
-LABELS_CHANGED=false
-[ "$NEW_LABEL_IDS_SORTED" != "$CURRENT_LABEL_IDS_SORTED" ] && LABELS_CHANGED=true
+# ── Build this transition's event name/payload from the trigger's emits ────
+_EVENT_NAME=$(echo "$def" | jq -r '.emits.event // empty')
+_EVENT_DATA="{}"
+if [ -n "$_EVENT_NAME" ]; then
+  _EVENT_DATA_RAW=$(echo "$def" | jq -c '.emits.data // {}')
+  _EVENT_DATA=$(printf '%s' "$_EVENT_DATA_RAW" | jq -c \
+    --arg complexity "${DATA[complexity]:-simple}" \
+    --arg outcome "${DATA[outcome]:-Smooth}" \
+    'with_entries(.value |= (
+       if type == "string"
+       then gsub("\\{complexity\\}"; $complexity) | gsub("\\{outcome\\}"; $outcome)
+       else . end))')
+fi
+
+NEXT_REV=$((CURRENT_REV + 1))
+IDEM_KEY="${TICKET_ID}:${NEXT_REV}"
 
 # ── Dry-run output ──────────────────────────────────────────────────────────
-
 if $DRY_RUN; then
-  NEW_LABEL_NAMES=""
-  if [ "$NEW_LABEL_IDS" != "[]" ]; then
-    NEW_LABEL_NAMES=$(echo "$TEAM_JSON" | jq -r \
-      --argjson ids "$NEW_LABEL_IDS" \
-      '[.labels[] | select(.id as $lid | $ids | index($lid)) | .name] | join(",")')
-  fi
-
-  FINAL_STATE="${NEW_STATE_NAME:-$CURRENT_STATE_NAME}"
   jq -n \
     --arg trigger "$TRIGGER" \
-    --arg current_state "$CURRENT_STATE_NAME" \
-    --arg current_labels "$CURRENT_LABEL_NAMES" \
-    --arg new_state "$FINAL_STATE" \
-    --arg new_labels "${NEW_LABEL_NAMES:-}" \
-    --argjson state_changed "$STATE_CHANGED" \
-    --argjson labels_changed "$LABELS_CHANGED" \
-    --argjson set_assignee "$SET_ASSIGNEE_ME" \
+    --arg current_stage "${CURRENT_STAGE:-}" \
+    --argjson current_flags "$CURRENT_FLAGS_JSON" \
+    --arg new_stage "$NEW_STAGE" \
+    --argjson new_flags "$NEW_FLAGS_JSON" \
+    --arg event "$_EVENT_NAME" \
+    --argjson event_data "$_EVENT_DATA" \
+    --arg idem "$IDEM_KEY" \
+    --argjson is_epic "$IS_EPIC" \
     '{
       trigger: $trigger,
       dry_run: true,
-      current: {state: $current_state, labels: $current_labels},
-      computed: {state: $new_state, labels: $new_labels},
-      state_changed: $state_changed,
-      labels_changed: $labels_changed,
-      set_assignee_me: $set_assignee
+      is_epic: $is_epic,
+      current: {stage: $current_stage, flags: $current_flags},
+      computed: {stage: $new_stage, flags: $new_flags},
+      event: {name: $event, data: $event_data, idem: $idem}
     }'
   exit 0
 fi
 
-# ── Execute mutation ────────────────────────────────────────────────────────
-
-IDEMPOTENT=false
-if ! $STATE_CHANGED && ! $LABELS_CHANGED && [ "$SET_ASSIGNEE_ME" = "false" ]; then
-  IDEMPOTENT=true
-  hb_gate "idempotent-skip" "ok" "no mutation needed, desired state matches current" '{"trigger":"'"$TRIGGER"'"}'
-  if [ "$TRIGGER" = "implement-outcome" ] && [ -n "${DATA[outcome]:-}" ]; then
-    _log "IMPLEMENT|implement-outcome|info|${DATA[outcome]}"
-  fi
-  _ensure_manifest
-  _write_approval_manifest
-  _write_stage_manifest
-  exit 0
+# ── Write the transition and emit its event ─────────────────────────────────
+# The manifest write always runs, bumping rev unconditionally — a trigger
+# whose computed (stage, flags) happen to match the current manifest still
+# gets its own distinct rev/idem, because "no manifest state change" (the
+# ticket-local-manifest spec's language) describes the observable stage/
+# flags VALUES being unchanged, not that no write occurs. Writing every time
+# is what guarantees a structurally-nil trigger (implement-outcome,
+# re-claim: always to=null, always no label delta) still gets a fresh,
+# distinct idempotency key on every invocation — the exact defect D3
+# documents the old idempotent-skip path caused.
+_PENDING_EVENT_JSON=""
+if [ -n "$_EVENT_NAME" ]; then
+  _PENDING_EVENT_JSON=$(jq -nc --arg e "$_EVENT_NAME" --argjson d "$_EVENT_DATA" '{event: $e, data: $d}')
 fi
 
-LABEL_IDS_ARG=""
-$LABELS_CHANGED && LABEL_IDS_ARG="$NEW_LABEL_IDS"
-
-ASSIGNEE_ARG=""
-if [ "$SET_ASSIGNEE_ME" = "true" ]; then
-  ASSIGNEE_ARG=$(get_me 2>/dev/null | jq -r '.id // empty')
-fi
-
-# Capture stderr alongside stdout so we can diagnose the root cause
-# when update_issue returns non-JSON output (stderr contamination, curl
-# failure, GraphQL error response, network timeout, etc.).
-_update_stderr=$(mktemp)
-RESULT=$(update_issue "$TICKET_ID" "${NEW_STATE_ID:-}" "$LABEL_IDS_ARG" "${ASSIGNEE_ARG:-}" 2>"$_update_stderr")
-_update_rc=$?
-
-if ! echo "$RESULT" | jq empty 2>/dev/null; then
-  _stderr_head=$(head -5 "$_update_stderr" 2>/dev/null || echo "(empty)")
-  rm -f "$_update_stderr"
-  echo "flow.sh: invalid JSON from update_issue for ticket $TICKET_ID" >&2
-  echo "flow.sh: update_issue exit code: ${_update_rc}" >&2
-  echo "flow.sh: update_issue stderr (first 5 lines): ${_stderr_head}" >&2
-  hb_retry "flow-sh" "fail" "update_issue returned non-JSON" "{\"ticket\":\"$TICKET_ID\",\"rc\":$_update_rc}"
-  exit 5
-fi
-rm -f "$_update_stderr"
-SUCCESS=$(echo "$RESULT" | jq -r '.success // false')
-
-if [ "$SUCCESS" != "true" ]; then
-  echo "Update failed: $RESULT" >&2
-  exit 2
-fi
-
-# ── Post-trigger state assertion ────────────────────────────────────────────
-# Skip when idempotency path was taken (no mutation occurred)
-
-if ! $IDEMPOTENT; then
-  # Bounded retry with backoff for read-after-write consistency.
-  # Linear's API is eventually consistent — a mutation may not be
-  # visible in the immediate next read. Retry once (2 total reads)
-  # with a short delay before declaring STATE_ASSERTION_FAILED.
-  _assert_attempt=0
-  _assert_max=2
-  while true; do
-    LIVE_JSON=$(get_issue "$TICKET_ID")
-    LIVE_STATE=$(echo "$LIVE_JSON" | jq -r '.state.name // empty')
-    LIVE_LABELS=$(echo "$LIVE_JSON" | jq -r '[.labels.nodes[].name]')
-
-    assert_failed=false
-    assert_details=""
-
-    # Assert state
-    if [ -n "$NEW_STATE_NAME" ] && [ "$LIVE_STATE" != "$NEW_STATE_NAME" ]; then
-      assert_failed=true
-      assert_details="state: expected=$NEW_STATE_NAME actual=$LIVE_STATE"
-    fi
-
-    # Assert added labels are present
-    for name in "${ADD_LABEL_NAMES[@]}"; do
-      if ! echo "$LIVE_LABELS" | jq -e --arg n "$name" \
-        '.[] | select(ascii_downcase == ($n | ascii_downcase))' >/dev/null 2>&1; then
-        assert_failed=true
-        assert_details="${assert_details:+$assert_details; }missing_label=$name"
-      fi
-    done
-
-    # Assert removed labels are absent
-    for name in "${REMOVE_LABEL_NAMES[@]}"; do
-      if echo "$LIVE_LABELS" | jq -e --arg n "$name" \
-        '.[] | select(ascii_downcase == ($n | ascii_downcase))' >/dev/null 2>&1; then
-        assert_failed=true
-        assert_details="${assert_details:+$assert_details; }unexpected_label=$name"
-      fi
-    done
-
-    # post_assert removed: latent RCE vector via eval on trigger-defined shell code.
-    # No trigger in workflow.json currently uses post_assert.
-    # If future assertion support is needed, implement a safe DSL (e.g. predicate
-    # functions like assert_label_present) rather than eval.
-
-    if $assert_failed; then
-      _assert_attempt=$((_assert_attempt + 1))
-      if [ "$_assert_attempt" -lt "$_assert_max" ]; then
-        _log "META|assert|warn|retry ${_assert_attempt}/${_assert_max}: read-after-write lag — ${assert_details}"
-        sleep 0.5
-        continue
-      fi
-      local_details="trigger=${TRIGGER} expected_state=${NEW_STATE_NAME:-none} actual_state=${LIVE_STATE} ${assert_details}"
-      echo "STATE_ASSERTION_FAILED: $local_details" >&2
-      _log "META|assert|fail|${local_details}"
-      hb_gate "assertion" "fail" "post-trigger assertion failed" "{\"trigger\":\"$TRIGGER\",\"detail\":\"${assert_details:0:60}\"}"
-      exit 7
-    else
-      hb_gate "assertion" "ok" "post-trigger assertion passed" "{\"trigger\":\"$TRIGGER\"}"
-      break
-    fi
-  done
-fi
+_manifest_set_transition "$NEW_STAGE" "$NEW_FLAGS_JSON" "$_PENDING_EVENT_JSON"
 
 if [ "$TRIGGER" = "implement-outcome" ] && [ -n "${DATA[outcome]:-}" ]; then
   _log "IMPLEMENT|implement-outcome|info|${DATA[outcome]}"
@@ -593,32 +435,22 @@ fi
 
 _ensure_manifest
 _write_approval_manifest
-_write_stage_manifest
 
-# ── Dual-write to the event outbox (tracker-event-vocabulary-and-emitter) ──
-# Generic 1:1 fact mapping: a vocabulary entry whose "trigger" field names
-# this TRIGGER gets emitted with a payload built from its declared
-# "data_from" keys (read out of the same DATA[] associative array flow.sh
-# already populated from --data flags). pr-review-pass-done/pr-review-pass-uat
-# deliberately have no "trigger" entry in workflow.json's vocabulary — they
-# collapse into pr-review-passed, emitted by uat_decide_trigger instead
-# (branch-resolve.sh), never here, to avoid double emission.
-if declare -f emit_event >/dev/null 2>&1; then
-  _dual_write_event=$(jq -r --arg t "$TRIGGER" \
-    '.vocabulary | to_entries[] | select(.value.trigger == $t) | .key' "$SM" 2>/dev/null | head -1)
-  if [ -n "$_dual_write_event" ]; then
-    _dual_write_fields=$(jq -r --arg t "$TRIGGER" \
-      '.vocabulary | to_entries[] | select(.value.trigger == $t) | .value.data_from[]?' "$SM" 2>/dev/null)
-    _dual_write_data="{}"
-    if [ -n "$_dual_write_fields" ]; then
-      while IFS= read -r _field; do
-        [ -z "$_field" ] && continue
-        _dual_write_data=$(jq -c --arg k "$_field" --arg v "${DATA[$_field]:-}" \
-          '.[$k] = $v' <<<"$_dual_write_data" 2>/dev/null) || _dual_write_data="{}"
-      done <<<"$_dual_write_fields"
-    fi
-    emit_event "$TICKET_ID" "$_dual_write_event" "$_dual_write_data" 2>/dev/null || true
-  fi
+if [ -n "$_EVENT_NAME" ] && declare -f emit_event >/dev/null 2>&1; then
+  emit_event --idem "$IDEM_KEY" "$TICKET_ID" "$_EVENT_NAME" "$_EVENT_DATA" 2>/dev/null || true
 fi
+_manifest_clear_pending 2>/dev/null || true
 
-echo "$RESULT" | jq -c '.'
+# ── Drain this ticket's outbox before exiting ───────────────────────────────
+# Unconditional and best-effort (flow-local-transitions spec: "A drain
+# failure SHALL NOT fail the transition" / "not gated on any inferred
+# daemon-liveness signal"). Correctness rests on the cursor lock shared
+# with fleetd's own pusher pass, not on avoiding concurrency.
+bash "$SCRIPT_DIR/outbox-drain.sh" "$TICKET_ID" >/dev/null 2>&1 || true
+
+jq -n \
+  --arg trigger "$TRIGGER" \
+  --arg stage "$NEW_STAGE" \
+  --argjson flags "$NEW_FLAGS_JSON" \
+  --argjson rev "$NEXT_REV" \
+  '{trigger: $trigger, stage: $stage, flags: $flags, rev: $rev, success: true}'

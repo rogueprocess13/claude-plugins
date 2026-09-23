@@ -111,19 +111,124 @@ test_ten_new_facts_all_declared() {
   return 0
 }
 
-test_board_drivers_linear_is_registered_with_no_mappings() {
-  # B2 (tracker-event-board-pusher) populates board_drivers.linear as {} —
-  # driver registered, no active event mappings yet, distinct from the
-  # field not existing at all. This replaces the B1-era assertion that
-  # board_drivers equalled {} at the top level.
-  local exists v
-  exists=$(jq -r '.board_drivers.linear != null' "$WF")
-  [ "$exists" = "true" ] || {
-    echo "  board_drivers.linear does not exist" >&2
+# ── tracker-flow-projection-cutover (Change 2): the projection table ───────
+
+test_every_vocabulary_event_has_board_drivers_entry() {
+  local ev has
+  while IFS= read -r ev; do
+    has=$(jq -r --arg e "$ev" '.board_drivers.linear.events | has($e)' "$WF")
+    [ "$has" = "true" ] || {
+      echo "  vocabulary event '$ev' has no board_drivers.linear.events entry (object or explicit null)" >&2
+      return 1
+    }
+  done < <(jq -r '.vocabulary | keys[]' "$WF")
+  return 0
+}
+
+test_board_drivers_labels_confined_to_projected_set() {
+  local bad
+  bad=$(jq -r '
+    .board_drivers.linear.projected_labels as $p
+    | .board_drivers.linear.events
+    | to_entries[]
+    | select(.value != null)
+    | .key as $ev
+    | (.value.add[]?, .value.remove[]?)
+    | select(. as $l | $p | index($l) | not)
+    | "\($ev): \(.)"
+  ' "$WF")
+  [ -z "$bad" ] || {
+    echo "  labels outside projected_labels found in board_drivers.linear.events: $bad" >&2
     return 1
   }
-  v=$(jq -c '.board_drivers.linear' "$WF")
-  [ "$v" = "{}" ]
+  return 0
+}
+
+test_board_drivers_agrees_with_single_trigger_label_delta() {
+  local ev triggers_producing count t_adds t_removes projected entry_add entry_remove expected_add expected_remove
+  while IFS= read -r ev; do
+    triggers_producing=$(jq -r --arg e "$ev" '[.triggers | to_entries[] | select(.value.emits.event == $e) | .key]' "$WF")
+    count=$(echo "$triggers_producing" | jq 'length')
+    [ "$count" -eq 1 ] || continue
+    t=$(echo "$triggers_producing" | jq -r '.[0]')
+    projected=$(jq -c '.board_drivers.linear.projected_labels' "$WF")
+    expected_add=$(jq -c --arg t "$t" --argjson p "$projected" \
+      '(.triggers[$t].adds // []) as $a | [$a[] | select(. as $x | $p | index($x))] | sort' "$WF")
+    expected_remove=$(jq -c --arg t "$t" --argjson p "$projected" \
+      '(.triggers[$t].removes // []) as $r | [$r[] | select(. as $x | $p | index($x))] | sort' "$WF")
+    entry_add=$(jq -c --arg e "$ev" '(.board_drivers.linear.events[$e].add // []) | sort' "$WF")
+    entry_remove=$(jq -c --arg e "$ev" '(.board_drivers.linear.events[$e].remove // []) | sort' "$WF")
+    [ "$entry_add" = "$expected_add" ] || {
+      echo "  $ev (trigger $t): board_drivers add $entry_add != trigger adds ∩ projected_labels $expected_add" >&2
+      return 1
+    }
+    [ "$entry_remove" = "$expected_remove" ] || {
+      echo "  $ev (trigger $t): board_drivers remove $entry_remove != trigger removes ∩ projected_labels $expected_remove" >&2
+      return 1
+    }
+  done < <(jq -r '.vocabulary | keys[]' "$WF")
+  return 0
+}
+
+test_every_emits_names_a_declared_vocabulary_event() {
+  local t ev exists
+  while IFS= read -r t; do
+    ev=$(jq -r --arg t "$t" '.triggers[$t].emits.event // empty' "$WF")
+    [ -z "$ev" ] && continue
+    exists=$(jq --arg e "$ev" '.vocabulary | has($e)' "$WF")
+    [ "$exists" = "true" ] || {
+      echo "  trigger '$t' emits undeclared event '$ev'" >&2
+      return 1
+    }
+  done < <(jq -r '.triggers | keys[]' "$WF")
+  return 0
+}
+
+# ── 3.6a namespace assertion: board_drivers.<board_id> is the only place a
+# board's own column/label-projection shape (the keys "column"/"add"/
+# "remove"/"assignee") may appear. A closed key-schema on `triggers[*]` and
+# `vocabulary[*]` is what actually enforces this — it is what would catch a
+# regression that moves a column mapping out of board_drivers into either
+# section, which is exactly what the fixture test below proves.
+_ALLOWED_TRIGGER_KEYS='["from","to","adds","removes","description","precondition","verdict_gate","emits"]'
+_ALLOWED_VOCAB_KEYS='["trigger","data_from","payload","description","emitted_by"]'
+
+_workflow_namespace_check() {
+  local wf="$1"
+  local bad
+  bad=$(jq -r --argjson allowed "$_ALLOWED_TRIGGER_KEYS" '
+    .triggers | to_entries[] | .key as $t | (.value | keys) as $k
+    | ($k - $allowed) | select(length > 0) | "trigger \($t): \(.)"
+  ' "$wf")
+  [ -z "$bad" ] || {
+    echo "  stray keys on triggers (board vocabulary leaked outside board_drivers): $bad" >&2
+    return 1
+  }
+  bad=$(jq -r --argjson allowed "$_ALLOWED_VOCAB_KEYS" '
+    .vocabulary | to_entries[] | .key as $e | (.value | keys) as $k
+    | ($k - $allowed) | select(length > 0) | "vocabulary \($e): \(.)"
+  ' "$wf")
+  [ -z "$bad" ] || {
+    echo "  stray keys on vocabulary (board vocabulary leaked outside board_drivers): $bad" >&2
+    return 1
+  }
+  return 0
+}
+
+test_namespace_check_passes_on_real_workflow_json() {
+  _workflow_namespace_check "$WF"
+}
+
+# Proof required by task 3.6a: the assertion fails when a column name is
+# moved from a board_drivers entry into a trigger definition — demonstrated
+# against a deliberately-broken fixture, not by inspection.
+test_namespace_check_fails_on_broken_fixture() {
+  local fixture rc=0
+  fixture=$(mktemp)
+  jq '.triggers["appraise-complete"].column = "Done"' "$WF" >"$fixture"
+  _workflow_namespace_check "$fixture" 2>/dev/null || rc=$?
+  rm -f "$fixture"
+  [ "$rc" -eq 1 ]
 }
 
 _run "workflow.json is valid JSON" test_workflow_json_is_valid
@@ -132,7 +237,12 @@ _run "every vocabulary 'trigger' field names a real trigger" test_every_vocabula
 _run "no event name is a Linear state/label name verbatim" test_no_event_name_is_a_linear_state_or_label_verbatim
 _run "pr-review-passed declares uat_required as bool" test_pr_review_passed_declared_with_bool_payload
 _run "all ten new (non-trigger) facts are declared" test_ten_new_facts_all_declared
-_run "board_drivers.linear is registered with no mappings yet (B2)" test_board_drivers_linear_is_registered_with_no_mappings
+_run "every vocabulary event has a board_drivers.linear.events entry" test_every_vocabulary_event_has_board_drivers_entry
+_run "board_drivers labels are confined to projected_labels" test_board_drivers_labels_confined_to_projected_set
+_run "board_drivers agrees with the single trigger it mirrors" test_board_drivers_agrees_with_single_trigger_label_delta
+_run "every trigger emits declaration names a declared vocabulary event" test_every_emits_names_a_declared_vocabulary_event
+_run "namespace check passes on the real workflow.json" test_namespace_check_passes_on_real_workflow_json
+_run "namespace check fails on a deliberately-broken fixture" test_namespace_check_fails_on_broken_fixture
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="

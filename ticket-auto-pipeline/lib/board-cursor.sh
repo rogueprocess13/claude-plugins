@@ -120,9 +120,35 @@ board_cursor_get() {
   echo "$seq"
 }
 
+# board_cursor_get_attempts <tid> <board_id>
+#
+# Echoes the persisted consecutive-failure count for the entry the cursor
+# is currently blocked on (0 if never written or the cursor has never
+# failed) — tracker-flow-projection-cutover's dead-letter mechanism.
+# Does NOT lock — same contract as board_cursor_get.
+board_cursor_get_attempts() {
+  local tid="$1" board_id="$2"
+  if [ -z "$tid" ] || [ -z "$board_id" ]; then
+    echo "board_cursor_get_attempts: TID and BOARD_ID are required" >&2
+    return 2
+  fi
+  local file
+  file=$(_board_cursor_file "$tid" "$board_id")
+  [ -f "$file" ] || {
+    echo 0
+    return 0
+  }
+  local attempts
+  attempts=$(jq -r '.attempts // 0' "$file" 2>/dev/null) || attempts=0
+  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=0
+  echo "$attempts"
+}
+
 # board_cursor_advance <tid> <board_id> <new_seq>
 #
-# Atomically persists new_seq as the cursor position: write to a
+# Atomically persists new_seq as the cursor position, resetting `attempts`
+# to 0 — a successful dispatch always clears the failure streak, whether it
+# followed prior failures on this same entry or not. Write to a
 # process-unique tmp file (never sharing the live cursor's name), then `mv`
 # into place — same directory, same filesystem, atomic on every filesystem
 # this pipeline runs on. A crash between the tmp write and the mv leaves the
@@ -150,13 +176,53 @@ board_cursor_advance() {
     --arg board_id "$board_id" \
     --argjson seq "$new_seq" \
     --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{tid: $tid, board_id: $board_id, seq: $seq, updated_at: $updated_at}' >"$tmp" || {
+    '{tid: $tid, board_id: $board_id, seq: $seq, attempts: 0, updated_at: $updated_at}' >"$tmp" || {
     echo "board_cursor_advance: failed to build cursor JSON for ${tid}/${board_id}" >&2
     rm -f "$tmp" 2>/dev/null || true
     return 1
   }
   mv "$tmp" "$file" || {
     echo "board_cursor_advance: mv failed for ${file}" >&2
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  }
+  return 0
+}
+
+# board_cursor_note_failure <tid> <board_id>
+#
+# Increments `attempts` by one, leaving `seq` unchanged — the cursor stays
+# blocked on the same entry, one more failed dispatch recorded against it.
+# Same atomic tmp+mv write as board_cursor_advance. Does NOT lock — a
+# caller sequencing "read cursor -> apply driver -> write cursor" holds
+# board_cursor_lock across this call too, same contract as board_cursor_get.
+board_cursor_note_failure() {
+  local tid="$1" board_id="$2"
+  if [ -z "$tid" ] || [ -z "$board_id" ]; then
+    echo "board_cursor_note_failure: TID and BOARD_ID are required" >&2
+    return 2
+  fi
+  local current_seq current_attempts
+  current_seq=$(board_cursor_get "$tid" "$board_id")
+  current_attempts=$(board_cursor_get_attempts "$tid" "$board_id")
+  local dir file tmp
+  dir=$(_board_cursor_dir)
+  mkdir -p "$dir" 2>/dev/null || true
+  file=$(_board_cursor_file "$tid" "$board_id")
+  tmp="${file}.tmp.$$"
+  jq -nc \
+    --arg tid "$tid" \
+    --arg board_id "$board_id" \
+    --argjson seq "$current_seq" \
+    --argjson attempts "$((current_attempts + 1))" \
+    --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{tid: $tid, board_id: $board_id, seq: $seq, attempts: $attempts, updated_at: $updated_at}' >"$tmp" || {
+    echo "board_cursor_note_failure: failed to build cursor JSON for ${tid}/${board_id}" >&2
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  }
+  mv "$tmp" "$file" || {
+    echo "board_cursor_note_failure: mv failed for ${file}" >&2
     rm -f "$tmp" 2>/dev/null || true
     return 1
   }
@@ -183,8 +249,16 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     shift
     board_cursor_advance "$@"
     ;;
+  get-attempts)
+    shift
+    board_cursor_get_attempts "$@"
+    ;;
+  note-failure)
+    shift
+    board_cursor_note_failure "$@"
+    ;;
   *)
-    echo "Usage: board-cursor.sh {get|advance} <TID> <BOARD_ID> [NEW_SEQ]" >&2
+    echo "Usage: board-cursor.sh {get|advance|get-attempts|note-failure} <TID> <BOARD_ID> [NEW_SEQ]" >&2
     exit 1
     ;;
   esac

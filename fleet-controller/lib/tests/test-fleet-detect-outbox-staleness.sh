@@ -129,12 +129,28 @@ test_multi_board_max_severity_still_capped_at_1() {
   [ "$sev" = "1" ]
 }
 
+# ── tracker-flow-projection-cutover task 6.7: a dead-lettered entry
+# reports as a lost mutation (severity 1), even when the entry is fresh ──
+test_dead_lettered_entry_flags_severity_1() {
+  local ws
+  ws=$(_setup_workspace)
+  _outbox_entry "$ws" "CRE-7" 1 "gate-held" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  _write_cursor "$ws" "CRE-7" "linear" 0
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|board-dead-letter|warn|seq=1" >>"$ws/CRE-7-pipeline.log"
+
+  local sev
+  sev=$(FLEET_OUTBOX_STALE_THRESHOLD_SECS=3600 detect_outbox_staleness "CRE-7" "$ws")
+  rm -rf "$ws"
+  [ "$sev" = "1" ]
+}
+
 _run "8.3 stale undrained entry flags severity 1" test_stale_undrained_entry_flags_severity_1
 _run "8.4 fully-drained ticket is not flagged" test_fully_drained_ticket_not_flagged
 _run "recent undrained entry is not flagged" test_recent_undrained_entry_not_flagged
 _run "no outbox file is not flagged" test_no_outbox_file_not_flagged
 _run "8.5 never exceeds severity 1 regardless of age" test_never_exceeds_severity_1_regardless_of_age
 _run "multi-board: one stale board still caps at severity 1" test_multi_board_max_severity_still_capped_at_1
+_run "dead-lettered entry flags severity 1 (lost, not pending)" test_dead_lettered_entry_flags_severity_1
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

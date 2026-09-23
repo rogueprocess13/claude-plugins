@@ -1977,12 +1977,23 @@ FLEET_MAX_CONCURRENT = _env_int('FLEET_MAX_CONCURRENT', 3)
 # catching PRs that merge after the pipeline process has already exited.
 FLEET_MERGE_POLL_CYCLES = _env_int('FLEET_MERGE_POLL_CYCLES', 10)
 
-# Tracker event-board pusher (tracker-event-board-pusher, Phase B2). Ships
-# wired but disabled by default — same precedent as FLEET_PHASE_DISPATCH_ENABLE
-# (design.md Decision 6): new supervisor-loop logic against live production
-# tickets stays inert until proven. FLEET_BOARD_PUSHER_INTERVAL defaults to
-# the same value as the hold-reconciliation cadence — both are periodic
-# passes over ticket state with no sub-minute-latency requirement.
+# Tracker event-board pusher (tracker-event-board-pusher Phase B2;
+# real mappings landed in tracker-flow-projection-cutover, Change 2 of the
+# tracker-decoupling authority-flip programme). Still disabled by default
+# HERE, deliberately — this is the one env default this change does NOT
+# flip, per its own migration plan (design.md, tracker-board-pusher spec
+# "Cursors are fast-forwarded before an existing installation begins
+# projecting"): every existing host's outbox cursors sit at 0 (the pusher
+# has been opt-in since B2), so flipping this default without first running
+# `skills/ticket-flow/board-cursor-fastforward.sh` on that host would
+# replay each ticket's entire transition history and flap its board column
+# through every past state before settling — visible to everyone watching
+# the board, and undoable by nothing. The three-step order (land code ->
+# fast-forward cursors -> flip this default and restart fleetd) is a
+# per-host operator action, not part of this code landing — see
+# CHANGELOG.md and README.md. FLEET_BOARD_PUSHER_INTERVAL defaults to the
+# same value as the hold-reconciliation cadence — both are periodic passes
+# over ticket state with no sub-minute-latency requirement.
 FLEET_BOARD_PUSHER_ENABLE = os.environ.get(
     'FLEET_BOARD_PUSHER_ENABLE', 'false') == 'true'
 FLEET_BOARD_PUSHER_INTERVAL = _env_int('FLEET_BOARD_PUSHER_INTERVAL', 300)
@@ -4921,6 +4932,18 @@ class Supervisor:
         )
         _sweep_stale_generation_files(state_dir, tid, generation, phase=phase)
 
+    def _board_pusher_log_dir(self):
+        """Resolves to the same directory `events.sh`'s `emit_event` writes
+        outboxes to and the gate-hold outbox reader (`:3138`) reads from —
+        `FLEET_PIPELINE_LOG_DIR` when set, `self._state_dir` otherwise. The
+        pass previously passed `self._state_dir` unconditionally
+        (tracker-flow-projection-cutover task 6.5), which silently scanned
+        the wrong directory — and therefore found nothing to drain — on any
+        host where the two are configured to differ. Same pattern as
+        `_otel_log_dir`/`_observer_log_dir` above.
+        """
+        return os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(self._state_dir)
+
     def _board_pusher_pass(self):
         """Tracker event-board pusher pass (tracker-event-board-pusher,
         Phase B2). Drains every ticket's event outbox against every
@@ -4945,7 +4968,9 @@ class Supervisor:
         if _pusher_mod is None:
             return
         try:
-            _pusher_mod.pusher_pass(log_dir=str(self._state_dir))
+            _pusher_mod.pusher_pass(log_dir=self._board_pusher_log_dir(),
+                                     fleet_lib_dir=str(self._fleet_lib_dir),
+                                     state_dir=str(self._state_dir))
         except Exception as exc:  # noqa: BLE001 - a bad cycle must not wedge the loop
             print(f"fleetd[{os.getpid()}]: board pusher pass failed: {exc}",
                   file=sys.stderr)

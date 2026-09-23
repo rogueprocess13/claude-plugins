@@ -680,41 +680,35 @@ test_trigger_is_deterministic() {
 }
 _run "uat_decide_trigger: same inputs yield the same transition" test_trigger_is_deterministic
 
-# ── uat_decide_trigger dual-write (tracker-event-vocabulary-and-emitter, task 5.3) ──
+# ── uat_decide_trigger emits nothing (tracker-flow-projection-cutover D5) ──
+# pr-review-passed moved onto flow.sh's own emits declaration, fired after
+# the verdict gate has allowed the transition — uat_decide_trigger is a
+# pure decision helper now, resolving which destination applies and
+# nothing else.
 
-test_trigger_emits_pr_review_passed_uat_required_true() {
+test_trigger_uat_policy_emits_nothing() {
   local ws
   ws=$(mktemp -d)
   FLEET_PIPELINE_LOG_DIR="$ws" uat_decide_trigger --policy per-ticket \
     --uat-url "https://uat.example.com" --ticket T-501 >/dev/null
-  local ok=false
-  if [ -f "$ws/T-501-outbox.jsonl" ]; then
-    local ev req
-    ev=$(jq -r '.event' "$ws/T-501-outbox.jsonl")
-    req=$(jq -r '.data.uat_required' "$ws/T-501-outbox.jsonl")
-    [ "$ev" = "pr-review-passed" ] && [ "$req" = "true" ] && ok=true
-  fi
+  local no_files
+  no_files=$(find "$ws" -name '*-outbox.jsonl' | wc -l)
   rm -rf "$ws"
-  $ok
+  [ "$no_files" -eq 0 ]
 }
-_run "uat_decide_trigger: emits pr-review-passed{uat_required:true} for UAT policy" test_trigger_emits_pr_review_passed_uat_required_true
+_run "uat_decide_trigger: UAT policy with --ticket emits nothing" test_trigger_uat_policy_emits_nothing
 
-test_trigger_emits_pr_review_passed_uat_required_false() {
+test_trigger_epic_policy_emits_nothing() {
   local ws
   ws=$(mktemp -d)
   FLEET_PIPELINE_LOG_DIR="$ws" uat_decide_trigger --policy epic \
     --uat-url "https://uat.example.com" --ticket T-502 >/dev/null
-  local ok=false
-  if [ -f "$ws/T-502-outbox.jsonl" ]; then
-    local ev req
-    ev=$(jq -r '.event' "$ws/T-502-outbox.jsonl")
-    req=$(jq -r '.data.uat_required' "$ws/T-502-outbox.jsonl")
-    [ "$ev" = "pr-review-passed" ] && [ "$req" = "false" ] && ok=true
-  fi
+  local no_files
+  no_files=$(find "$ws" -name '*-outbox.jsonl' | wc -l)
   rm -rf "$ws"
-  $ok
+  [ "$no_files" -eq 0 ]
 }
-_run "uat_decide_trigger: emits pr-review-passed{uat_required:false} for epic policy" test_trigger_emits_pr_review_passed_uat_required_false
+_run "uat_decide_trigger: epic policy with --ticket emits nothing" test_trigger_epic_policy_emits_nothing
 
 test_trigger_no_ticket_emits_nothing() {
   local ws

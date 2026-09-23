@@ -145,30 +145,38 @@ test_reject_clears_approval() {
   fi
 }
 
-# ── approve: non-existent ticket fails cleanly ───────────────────────────────
-
-test_approve_nonexistent_ticket_fails_cleanly() {
+# ── approve: a well-formed ticket ID with no tracker presence still succeeds ──
+# tracker-flow-projection-cutover: flow.sh performs no tracker I/O at all, so
+# it has no way to learn that a ticket ID has no corresponding Linear issue —
+# "A transition succeeds with the tracker unreachable" is the explicit spec
+# requirement (flow-local-transitions). This test used to pin the opposite
+# (a stubbed get_issue failure propagating to a non-zero approve.sh exit),
+# which is now a structurally impossible outcome: nothing in the approve
+# path reads the tracker any more. Repurposed to pin the new, correct
+# behavior — ensure_ticket_manifest ad-hoc-provisions the ticket and the
+# approval succeeds — rather than deleted outright, since "approve an
+# untracked ticket ID" is still a real, exercised path (the ad-hoc-manifest
+# test below covers the identical shape; this one is kept for the explicit
+# non-existent-ticket framing a future reader would otherwise wonder about).
+test_approve_well_formed_ticket_with_no_tracker_presence_succeeds() {
   local tmpdir
   tmpdir=$(mktemp -d)
-  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
-  mkdir -p "$tmpdir/lib"
-  cp "$LIB_DIR/heartbeat.sh" "$LIB_DIR/epic-precondition.sh" "$LIB_DIR/manifest-write.sh" "$LIB_DIR/manifest-read.sh" "$tmpdir/lib/"
-  cat >"$tmpdir/lib/linear-api.sh" <<'STUBEOF'
-get_issue() { echo "get_issue: NOPE-1 not found" >&2; return 1; }
-get_team() { jq -n '{states:[],labels:[]}'; }
-update_issue() { jq -n '{success:false}'; }
-get_me() { jq -n '{id:"me-1",name:"Test"}'; }
-STUBEOF
+  mkdir -p "$tmpdir/logs" "$tmpdir/repos"
 
-  local rc=0
-  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/NOPE-1-pipeline.log" \
+  local rc=0 out
+  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$LIB_DIR" LOG_FILE="$tmpdir/logs/NOPE-1-pipeline.log" \
     TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
-    bash "$APPROVE_SH" NOPE-1 >/dev/null 2>&1 || rc=$?
+    bash "$APPROVE_SH" NOPE-1 2>&1) || rc=$?
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/_adhoc/tickets/NOPE-1/planner/manifest.json"
+  local approved
+  approved=$(jq -r '.approved // empty' "$manifest" 2>/dev/null)
   rm -rf "$tmpdir"
 
-  [ "$rc" -ne 0 ] &&
-    _pass "approve.sh: fails cleanly (non-zero exit) on a non-existent ticket" ||
-    _fail "approve.sh: should fail non-zero on a non-existent ticket (got rc=$rc)"
+  if [ "$rc" -eq 0 ] && [ "$approved" = "true" ] && echo "$out" | grep -q "approved=true"; then
+    _pass "approve.sh: a ticket ID absent from the tracker still approves (ad-hoc manifest)"
+  else
+    _fail "approve.sh: should ad-hoc-approve regardless of tracker presence (rc=$rc approved=$approved out=$out)"
+  fi
 }
 
 test_approve_usage_error_on_missing_arg() {
@@ -184,7 +192,7 @@ test_approve_usage_error_on_missing_arg() {
 test_approve_planned_ticket
 test_approve_adhoc_ticket
 test_reject_clears_approval
-test_approve_nonexistent_ticket_fails_cleanly
+test_approve_well_formed_ticket_with_no_tracker_presence_succeeds
 test_approve_usage_error_on_missing_arg
 
 echo "---"

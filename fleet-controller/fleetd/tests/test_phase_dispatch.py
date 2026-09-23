@@ -58,7 +58,6 @@ from fleetd.phase_dispatch import (  # noqa: E402
     EXIT_ROUTE_CONTINUE,
     EXIT_ROUTE_GATE_STOP,
     EXIT_ROUTE_RETRY,
-    FLOW_STATE_ASSERTION_EXIT,
     GATE_HOLD_RESUME_STEPS,
     ResumeAdoptError,
     adopt_position_via_detect_resume,
@@ -316,14 +315,6 @@ class TestMissingPhaseResultInstrumentation(unittest.TestCase):
 
 
 class TestExitCodeRouting(unittest.TestCase):
-
-    def test_flow_state_assertion_always_gate_stops(self):
-        # flow.sh exit 7 is a state-integrity failure. Re-running the phase on
-        # top of a diverged Linear state would compound it.
-        outcome = PhaseOutcome('done', 'PASS', 'phase-result', 'ok')
-        route, detail = route_exit_code(FLOW_STATE_ASSERTION_EXIT, outcome)
-        self.assertEqual(route, EXIT_ROUTE_GATE_STOP)
-        self.assertEqual(detail, 'STATE_ASSERTION_FAILED')
 
     def test_done_continues(self):
         outcome = PhaseOutcome('done', 'PASS', 'phase-result', 'ok')

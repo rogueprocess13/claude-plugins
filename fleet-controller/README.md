@@ -289,6 +289,50 @@ Both are sourced from `~/.claude/skills/lib/` (synced by the ticket-auto-pipelin
 
 **If dispatch fails to find Linear:** launch Claude Code once with `ticket-auto-pipeline` installed so the hook syncs the shared libraries.
 
+## Migrating to board projection (tracker-flow-projection-cutover)
+
+As of `ticket-auto-pipeline` 0.55.0 / `fleet-controller` 0.36.0, `flow.sh` no longer touches
+Linear at all — the board's column and four human-signal labels (`needs-info`, `needs-adr`,
+`rejected`, `reviewed`) are written asynchronously by `lib/board-drivers/linear.sh`, draining each
+ticket's event outbox. `FLEET_BOARD_PUSHER_ENABLE` still defaults `false` in this release,
+deliberately: every host that has been running `fleetd` has outbox cursors sitting at 0 for every
+ticket (the pusher has been opt-in since Phase B2, and every board mapping was a no-op until this
+release), so flipping the default without first fast-forwarding them would replay each ticket's
+entire transition history and flap its board column through every past state before settling on
+the correct one — visible to everyone watching the board, and undoable by nothing.
+
+Enable projection on a host in this order, not any other:
+
+1. **Deploy the new code with the pusher still off.** Nothing about this step changes observable
+   behaviour — `flow.sh` still emits and drains its own ticket's outbox at every invocation
+   (`skills/ticket-flow/outbox-drain.sh`, unconditional), so a person's own commands already
+   project immediately; only `fleetd`'s periodic pusher pass stays gated off.
+2. **Fast-forward every existing cursor.** Run, from the tickets repo root:
+   ```
+   FLEET_PIPELINE_LOG_DIR=<your pipeline log dir> \
+     bash ticket-auto-pipeline/skills/ticket-flow/board-cursor-fastforward.sh --dry-run
+   ```
+   Confirm the reported `advanced=` count against your expectation (non-zero on a host that has
+   real ticket history is the expected, confirming result — a zero count means either a fresh
+   host or that the fast-forward already ran). Then re-run without `--dry-run` to actually advance
+   the cursors. The script is idempotent — safe to run again, and a second run advances nothing.
+3. **Enable the pusher and restart `fleetd`.**
+   ```
+   export FLEET_BOARD_PUSHER_ENABLE=true
+   # restart fleetd
+   ```
+   Verify on one real ticket that a transition moves the board column within one router exit
+   (or within `FLEET_BOARD_PUSHER_INTERVAL`, default 300s, if only `fleetd` is draining it).
+
+**Rollback caveat.** Every earlier change in the tracker-decoupling programme was a clean
+`git revert` — no label was ever removed from an existing issue, only stopped being written to new
+transitions. This one is not: once the driver has applied a real projection, a ticket's tracker
+column was set by the driver, not by `flow.sh` re-fetching and asserting, so a revert restores the
+old `flow.sh` but it resumes reading a tracker state the reverted code has no memory of writing.
+Treat any `BOARD_PROJECTION_STALLED` notification as requiring action (see `META|board-dead-letter`
+on the ticket's pipeline log) before rolling back — a dead-lettered entry's column is stale and a
+reverted `flow.sh` would compute its next transition from that stale state.
+
 ## Migrating from `/ticket-fleet-controller`
 
 The fleet controller used to live inside `ticket-auto-pipeline`. The old `/ticket-fleet-controller` command is a **deprecated forwarder** kept for one release cycle.
