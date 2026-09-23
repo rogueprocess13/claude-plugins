@@ -17,6 +17,43 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.53.0 (2026-09-23) — also fleet-controller 0.34.0
+
+Tracker inbound approval (`tracker-inbound-approval`, Track B Phase B4 of the tracker-decoupling
+programme): closes two gaps `approved` was left with when B1-B3b migrated every other local fact.
+(1) A router-driven complex/manual-mode ticket held at the entry gate on the default (non-phase-
+dispatch) path now gets a `hold_kind='gate'` store row — `Supervisor._gate_hold_intake_pass`
+(fleet-controller), symmetric to the existing `_human_hold_intake_pass`, reads each ticket's event
+outbox for the latest unreleased `gate-held` event whose reason is one of the 3 approval-type
+reasons (`complex-ticket`, `manual-mode`, `default-fallback` — the other 5 `_gate_emit_held` sites
+are content/fetch holds and are out of scope), mints the row via the same store primitives, and
+posts no comment/notification (a gate hold has no free-form question). Wired into `run_observe`
+unconditionally, not gated behind `FLEET_PHASE_DISPATCH_ENABLE`. (2) The ticket manifest gains
+`approved`/`approval_provenance` (`human`|`policy`) fields — informational only, **never read by a
+gate decision**: `gate-check.sh`'s approval-decision reads (Checks 2.8b, 2.8c, 4, reapprove) stay
+live-only, deliberately, because every one of those sites already fetches unconditionally for other
+reasons (a manifest-first read would skip zero fetches) and `approved` — unlike every field B3
+migrated — is not monotonic (it can be revoked outside `flow.sh`), making a stale cached `true` a
+real false-approval risk for no offsetting benefit. `flow.sh` gained `--provenance <human|policy>`
+(default `human`) on `human-approve`/`pr-iterate`, written to the manifest only after the
+post-trigger assertion confirms the mutation; `gate-check.sh` Check 5 and `ticket-pr-iterate`'s own
+machine-driven re-approval both pass `policy` explicitly; `re-claim` clears both fields.
+`pipeline-finalize.sh`'s `runs.jsonl` human-approval attribution reads the manifest field first,
+live `IssueHistory` scan as fallback — the intended consumer these fields exist for.
+
+- `gate-check.sh`: `_gate_emit_released` calls added at Check 5's policy auto-approve and Check
+  2.8c/Check 4's manual-mode Linear-approval overrides, completing the held/released outbox pair for
+  every approval-type gate hold; Check 5 passes `--provenance policy` to `flow.sh`.
+- `manifest-write.sh`: new `set_ticket_approval` (overwrite-not-append, same shape as
+  `outcome_label`; clears both fields on `false`).
+- `flow.sh`: new `--provenance` flag; manifest write sequenced after the idempotent-skip exit and
+  after the real-mutation assertion succeeds, never before.
+- `pipeline-finalize.sh`: `runs.jsonl`'s `human` event gains `approval_provenance`.
+- `fleet-controller/fleetd/supervisor.py`: new `_gate_hold_intake_pass`, `_find_unreleased_gate_hold`.
+- Regression tests: 6 new `test-gate-check.sh` cases (3 release-pairing, 4 stale-manifest-ignored,
+  sharing a helper), 2 `test-manifest-write.sh`, 1 `test-pipeline-finalize.sh`, 3 `flow.sh`
+  (`skills/ticket-flow/tests/phase1.sh`), 6 `GateHoldIntakePassTest` cases in `test_supervisor.py`.
+
 ## 0.51.0 (2026-09-20) — also fleet-controller 0.32.0
 
 Tracker event-board pusher (`tracker-event-board-pusher`, Phase B2 of the tracker-decoupling

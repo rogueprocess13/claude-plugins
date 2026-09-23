@@ -230,7 +230,7 @@ Append to `{ticket-dir}/notes.md` session log:
 Delegate to the flow executor:
 
 ```
-/ticket-flow {TICKET-ID} pr-iterate
+/ticket-flow {TICKET-ID} pr-iterate --provenance policy
 _rc=$?
 if [ "$_rc" -ne 0 ]; then
   hb-wrap.sh retry "flow-sh" "fail" "flow.sh pr-iterate failed (exit ${_rc})" \

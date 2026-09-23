@@ -777,6 +777,143 @@ test_flow_implement_outcome_logs_line_when_idempotent() {
   [ "$rc" -eq 0 ] && [ "$found" -eq 0 ]
 }
 
+# ── human-approve/pr-iterate --provenance manifest write (tracker-inbound-
+# approval, Track B Phase B4, task 2.2) ─────────────────────────────────────
+# The manifest write must happen only after the real mutation + post-trigger
+# assertion succeed — this stub's marker-toggled get_issue exercises that
+# real (non-idempotent) path exactly like test_flow_implement_outcome_logs_
+# line_on_mutation does, rather than the --dry-run shortcut most other tests
+# in this file use (which exits before flow.sh ever reaches the write).
+
+_stub_lib_dir_approve() {
+  # from=Approve (no labels) -> to=Ready (+approved), mirroring human-approve's
+  # workflow.json definition. Ready + "approved" only after update_issue touches
+  # the marker, so the post-trigger assertion sees the real transition.
+  local dir="$1"
+  local marker="$2"
+  mkdir -p "$dir"
+  cp "$PLUGIN_DIR/lib/heartbeat.sh" "$dir/"
+  cp "$PLUGIN_DIR/lib/epic-precondition.sh" "$dir/"
+  cat >"$dir/linear-api.sh" <<STUBEOF
+get_issue() {
+  if [ -f "$marker" ]; then
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-ready",name:"Ready"},labels:{nodes:[{id:"lbl-approved",name:"approved"}]},project:null,parent:null}'
+  else
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-approve",name:"Approve"},labels:{nodes:[]},project:null,parent:null}'
+  fi
+}
+get_team() {
+  jq -n '{states:[{id:"state-approve",name:"Approve"},{id:"state-ready",name:"Ready"}],labels:[{id:"lbl-approved",name:"approved"},{id:"lbl-rejected",name:"rejected"}]}'
+}
+update_issue() {
+  touch "$marker"
+  jq -n '{success:true,issue:{id:"issue-1",identifier:"WIL-99"}}'
+}
+get_me() { jq -n '{id:"me-1",name:"Test"}'; }
+STUBEOF
+}
+
+_seed_approve_manifest() {
+  local repos_root="$1"
+  mkdir -p "$repos_root/.ticket-auto/initiatives/_index" \
+    "$repos_root/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner"
+  echo "INIT-1" >"$repos_root/.ticket-auto/initiatives/_index/WIL-99.initiative"
+  echo '{"type":"bug","initiative":"INIT-1","blocked_by":[],"dispatch":false}' \
+    >"$repos_root/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner/manifest.json"
+}
+
+test_flow_human_approve_provenance_policy_writes_manifest() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  _stub_lib_dir_approve "$tmpdir/lib" "$marker"
+  cp "$PLUGIN_DIR/lib/manifest-write.sh" "$PLUGIN_DIR/lib/manifest-read.sh" "$tmpdir/lib/"
+  _seed_approve_manifest "$tmpdir/repos"
+
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    "$FLOW_SH" WIL-99 human-approve --provenance policy >/dev/null 2>&1
+  local rc=$?
+
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner/manifest.json"
+  local approved provenance
+  approved=$(jq -r '.approved // empty' "$manifest" 2>/dev/null)
+  provenance=$(jq -r '.approval_provenance // empty' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$approved" = "true" ] && [ "$provenance" = "policy" ]
+}
+
+test_flow_human_approve_defaults_to_human_provenance() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  _stub_lib_dir_approve "$tmpdir/lib" "$marker"
+  cp "$PLUGIN_DIR/lib/manifest-write.sh" "$PLUGIN_DIR/lib/manifest-read.sh" "$tmpdir/lib/"
+  _seed_approve_manifest "$tmpdir/repos"
+
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    "$FLOW_SH" WIL-99 human-approve >/dev/null 2>&1
+  local rc=$?
+
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner/manifest.json"
+  local provenance
+  provenance=$(jq -r '.approval_provenance // empty' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$provenance" = "human" ]
+}
+
+test_flow_re_claim_clears_manifest_approval() {
+  # from=null (any state) -> removes approved/pre-approved — the stub starts
+  # already-approved (marker present from the outset) so re-claim's removal
+  # actually mutates, exercising the real (non-idempotent) assertion path.
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  touch "$marker" # start approved+Ready; re-claim removes it (marker cleared)
+  mkdir -p "$tmpdir/lib"
+  cp "$PLUGIN_DIR/lib/heartbeat.sh" "$tmpdir/lib/"
+  cp "$PLUGIN_DIR/lib/epic-precondition.sh" "$tmpdir/lib/"
+  cp "$PLUGIN_DIR/lib/manifest-write.sh" "$PLUGIN_DIR/lib/manifest-read.sh" "$tmpdir/lib/"
+  cat >"$tmpdir/lib/linear-api.sh" <<STUBEOF
+get_issue() {
+  if [ -f "$marker" ]; then
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-ready",name:"Ready"},labels:{nodes:[{id:"lbl-approved",name:"approved"}]},project:null,parent:null}'
+  else
+    jq -n '{id:"issue-1",identifier:"WIL-99",team:{id:"team-1",name:"Test"},state:{id:"state-ready",name:"Ready"},labels:{nodes:[]},project:null,parent:null}'
+  fi
+}
+get_team() {
+  jq -n '{states:[{id:"state-ready",name:"Ready"}],labels:[{id:"lbl-approved",name:"approved"},{id:"lbl-pre-approved",name:"pre-approved"}]}'
+}
+update_issue() {
+  rm -f "$marker"
+  jq -n '{success:true,issue:{id:"issue-1",identifier:"WIL-99"}}'
+}
+get_me() { jq -n '{id:"me-1",name:"Test"}'; }
+STUBEOF
+  _seed_approve_manifest "$tmpdir/repos"
+  REPOS_ROOT="$tmpdir/repos" bash -c "source '$PLUGIN_DIR/lib/manifest-write.sh'; set_ticket_approval WIL-99 true human" >/dev/null 2>&1 || true
+
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    "$FLOW_SH" WIL-99 re-claim >/dev/null 2>&1
+  local rc=$?
+
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-99/planner/manifest.json"
+  local approved provenance
+  approved=$(jq -r '.approved // empty' "$manifest" 2>/dev/null)
+  provenance=$(jq -r '.approval_provenance // empty' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ -z "$approved" ] && [ -z "$provenance" ]
+}
+
 # ── test_flow_complexity_opposite ────────────────────────────────────────────
 # appraise-start must clear a stale opposite-complexity label in the same
 # mutation that applies the new one. Simple and Complex belong to a
@@ -1288,6 +1425,9 @@ for fn in \
   test_flow_from_precondition_logic \
   test_flow_implement_outcome_logs_line_on_mutation \
   test_flow_implement_outcome_logs_line_when_idempotent \
+  test_flow_human_approve_provenance_policy_writes_manifest \
+  test_flow_human_approve_defaults_to_human_provenance \
+  test_flow_re_claim_clears_manifest_approval \
   test_flow_appraise_start_drops_stale_opposite_label \
   test_flow_appraise_start_drops_stale_complex_label \
   test_flow_appraise_start_no_prior_complexity_label \

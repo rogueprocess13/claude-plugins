@@ -594,7 +594,69 @@ bump needed. Pre-existing `test-planner` flakiness (a different test fails each 
 `make test-planner`, passes standalone every time) reproduced again here — same pattern as B3a,
 confirmed unrelated to this doc-only change. **Not yet committed/PR'd as of this writing.**
 
-B4–B5 remain unproposed, needing the same override in turn.
+**B4 proposed 2026-09-23 as `tracker-inbound-approval`, same explicit-override basis as B1-B3b, then
+revised same day after 3-reviewer pass (safety, code-grounding, scope/consistency — per standing
+feedback).** 4/4 artifacts, `openspec validate --strict` clean. The reviewers together surfaced a
+proposal-invalidating finding for the originally-scoped item (3): every one of `gate-check.sh`'s
+approval-read sites already does an unconditional live Linear fetch before reading `approved` (so a
+manifest-first read would skip zero fetches), and `approved` — unlike every field B3 migrated — is
+not monotonic (it can be revoked, including by a direct Linear-UI label edit outside `flow.sh`), so
+caching it for a gate *decision* would be a real false-approval risk for no offsetting benefit.
+Revised scope: **`gate-check.sh`'s approval-decision reads are untouched by this phase, full stop**
+— no manifest involvement of any kind, not even as a fallback-preserving optimization. What remains:
+(1) `_gate_hold_intake_pass` on `Supervisor`, symmetric to `_human_hold_intake_pass`, closing the
+gap that `hold_kind='gate'` store rows are today only created behind `FLEET_PHASE_DISPATCH_ENABLE`
+(still `false` by default) — scoped to the 3 approval-type hold reasons (`complex-ticket`,
+`manual-mode`, `default-fallback`) after code-grounding review found `_gate_emit_held` actually has
+8 call sites, not 3 — the other 5 are content/fetch holds that resolve by a gate re-run, not an
+approval decision, and get no store row from this pass; (2) `approved`/`approval_provenance`
+(`human`|`policy`) added to the ticket manifest, **informational-only** — feeds `runs.jsonl`'s
+human-approval attribution (retiring a second independent re-derivation from live `IssueHistory`)
+and future dashboards, never read by a decision path. Also fixed: an ordering mismatch between
+design.md's Migration Plan and tasks.md's task groups, a punted-not-resolved Open Question (now
+resolved: no exhaustion cap needed — existing per-hold-kind severity/escalation already covers it
+once the row exists), and a silently-dropped scope item from the source plan
+(`detect-resume.sh:470-492`'s approval read — now an explicit Non-Goal, not migrated, for the same
+staleness reason as gate-check.sh). Explicitly **not** in scope: a new Slack/comment notifier for
+gate holds (they release by label/state only, same as today). Ready for `/opsx:apply`.
+
+**B4 implemented 2026-09-23 via `/opsx:apply`.** All 22 tasks complete. Shipped: (1) outbox
+completeness — `_gate_emit_released` calls added at Check 5 (`"policy"`) and Check 2.8c/Check 4's
+manual-mode overrides (`"human"`), pairing every approval-type `_gate_emit_held` call with a release;
+(2) `manifest-write.sh` gained `set_ticket_approval` (writes `approved`/`approval_provenance`,
+clears both on `false` — overwrite-not-append, same shape as `outcome_label`); `flow.sh` gained
+`--provenance <human|policy>` (default `human`) threaded through `human-approve`/`pr-iterate`, the
+manifest write sequenced strictly after the post-trigger assertion succeeds (both the idempotent-skip
+and real-mutation exit paths), and `re-claim` clears the fields via the same call; `gate-check.sh`
+Check 5 passes `--provenance policy` explicitly; a grep sweep found one more policy-driven call site
+needing it — `ticket-pr-iterate/SKILL.md`'s own `pr-iterate` invocation (machine-driven re-approval
+after a PR cycle, per design.md) — now passes `--provenance policy` too; (3)
+`pipeline-finalize.sh`'s `runs.jsonl` human-approval attribution reads the manifest's
+`approval_provenance` first, live `IssueHistory` scan only as fallback; (4) a guard-only regression
+test pins that Checks 2.8b/2.8c/4/reapprove never read the manifest for their approval decision
+(stale manifest `approved:true` still holds/gate-stops when live Linear disagrees); (5)
+`Supervisor._gate_hold_intake_pass` (fleet-controller/fleetd/supervisor.py) — symmetric to
+`_human_hold_intake_pass`, reads each ticket's outbox for the latest unreleased `gate-held` event
+whose reason is one of the 3 approval-type reasons, mints a `hold_kind='gate'` store row via the same
+primitives, posts no comment/notification (per design.md Non-Goals), wired into `run_observe`
+unconditionally (not gated behind `FLEET_PHASE_DISPATCH_ENABLE`). Regression tests: 6
+`test-gate-check.sh` cases (3 release-pairing, 4 stale-manifest-ignored — one shared helper covers
+2 of the 7), 2 `test-manifest-write.sh` cases, 1 `test-pipeline-finalize.sh` case (manifest-present
+vs. live-fallback), 3 `flow.sh` cases (`phase1.sh`: policy provenance, default-human provenance,
+re-claim clears both fields), 6 `GateHoldIntakePassTest` cases in `test_supervisor.py` (fresh
+approval-type hold, idempotent re-run, content-type hold ignored, released hold ignored,
+phase-dispatch hold not duplicated, no comment/notify called). Full suite green: `make
+check-generated && make lint && make fmt-check && make test` (the one `test-planner` failure —
+`EpicGen prompt cites issue #285: not found` — reproduces identically on unmodified `main`, confirmed
+via `git stash`; pre-existing, unrelated). `fleet-controller/fleetd/tests/test_supervisor.py`'s 13
+pre-existing subprocess-spawn/health-endpoint failures (`SingleInstanceTest`,
+`StartupEnvCheckGateTest`, `HealthEndpointTest`, etc.) also reproduce on unmodified `main` —
+sandbox/loopback environment flakiness, unrelated. Version bumps and commit/PR not yet done — next.
+Live-verification (hold a ticket at the gate, confirm the store row via the default path; approve via
+label, confirm `runs.jsonl` provenance) intentionally deferred to the single consolidated
+live-verification pass covering B3a/B3b/B4, per the same reordering decision recorded above.
+
+B5 remains unproposed after B4, needing the same override in turn.
 
 **Track B in full is behind next.md Step 6.** The plan file carries the complete 5-phase design
 (event emitter and outbox, board drivers with per-board `event → column` tables, local facts,
