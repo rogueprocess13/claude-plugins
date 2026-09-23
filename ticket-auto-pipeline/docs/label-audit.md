@@ -752,3 +752,62 @@ on any decision — confirmed by `local-approval-authority`'s own test coverage
 (`test_check28b_live_label_ignored_manifest_missing_warns` et al., `lib/tests/test-gate-check.sh`).
 
 **Saved-view impact:** none known, same as the original entry.
+
+## Follow-up: the projection table lands, `simple`/`complex` removed (tracker-flow-projection-cutover, 2026-09-23)
+
+Change 2 of the tracker-decoupling authority-flip programme (the one-way door named throughout this
+file as "the next change"). `flow.sh` stops calling the tracker entirely; `board_drivers.linear`
+goes from `{}` to a real, populated projection table (`events` + `projected_labels`), and
+`lib/board-drivers/linear.sh` gets a real `apply` rather than an explicit no-op for every event.
+
+**The projected set is the complete, closed list of labels this pipeline writes to Linear:**
+`needs-info`, `needs-adr`, `rejected`, `reviewed`. This is no longer a claim inferred from reading
+`flow.sh`'s `adds`/`removes` — it is now `workflow.json`'s `board_drivers.linear.projected_labels`
+array itself, structurally enforced by a coverage test
+(`lib/tests/test-workflow-vocabulary.sh`'s `test_board_drivers_labels_confined_to_projected_set`)
+that fails if any board-driver entry ever names a label outside this set. Every other label a
+ticket carries — `bug`, `feature`, `planned`, `INIT-*`, `pre-approved`, `blocked-by:*`, type labels —
+is preserved untouched by the driver's read-modify-write; the driver only ever computes the desired
+state of these four.
+
+**`simple`/`complex` are removed, against this document's own deferred `vestigial` finding above.**
+That finding (§ "`simple` / `complex` — removal is not a JSON-only change") already established the
+evidence — no reader of the *label*, only of the complexity *value* sourced from `notes.md` — and
+deferred only because of the entanglement it named explicitly. That entanglement is now resolved
+exactly as the finding prescribed:
+- `flow.sh`'s `COMPLEXITY_OPPOSITE` mutual-exclusion machinery (the fix for issue #170, "Simple and
+  Complex are members of a mutually-exclusive Linear label group") is deleted outright — the whole
+  label-mutation code path it protected no longer exists in `flow.sh` at all.
+- The three `skills/ticket-flow/tests/phase1.sh` tests that existed solely to pin #170
+  (`test_flow_appraise_start_drops_stale_opposite_label`,
+  `test_flow_appraise_start_drops_stale_complex_label`,
+  `test_flow_appraise_start_no_prior_complexity_label`) are deleted, not adapted — the bug they pin
+  is now structurally impossible: neither label is ever written, so no stale-opposite-label
+  mutation-rejection scenario can recur. This is the disposition the deferred finding called for
+  ("deleting the only regression coverage for a real, previously-shipped bug... called out to the
+  operator at that time — not folded silently into a JSON-only removal commit"); it is being called
+  out here.
+- `appraise-start`'s `adds` and `implement-outcome`'s `adds` no longer carry the `{complexity}`/
+  `{complexity-opposite}`/`{outcome}` placeholders at all — every trigger's `adds`/`removes` now
+  names only members of the projected set. `Smooth`/`Rough`/`Hard` (outcome) were never a `control`
+  label with a deferred-removal entry in this document, but the same placeholder strip removes them
+  from the tracker write path too — the classification is unaffected (outcome was always sourced
+  from the pipeline log for auto-merge eligibility, never from a live label read); only the write
+  disappears. `outcome-label-check.sh` now reads/writes the manifest's `outcome_label` field
+  directly instead of re-fetching the issue to confirm its own write.
+
+**Every other label this file classified `control` before this change — `planned`, `INIT-*`,
+`pre-approved`, `blocked-by:*`, `state:execution`, and the five type labels — is still written, by
+the planner, unchanged.** That is this change's explicit non-goal: the planner's creation-time
+writes, and the B3a live-fallback reads that depend on them, are `tracker-planner-and-fallback-
+cutover` (Change 3), the last step of this programme. Their classification stands as recorded
+above until that change lands.
+
+**Rollback is not clean for this change.** Every prior entry in this file could be reverted by
+`git revert` because no label was ever removed from an existing issue, only stopped being written to
+new transitions. This change is different: once the board driver has applied a real projection, a
+ticket's tracker column and labels were set by the driver, not by `flow.sh` re-fetching and
+asserting — a revert restores the old `flow.sh`, but it resumes reading a tracker state the reverted
+code never wrote and has no memory of. See `design.md`'s Migration Plan for the accepted rollback
+caveat and the ordering (land code, inactive → fast-forward every cursor → flip the pusher default)
+required before this document's projected-label claim becomes true in production on any given host.

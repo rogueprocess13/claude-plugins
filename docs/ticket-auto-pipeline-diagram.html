@@ -861,15 +861,20 @@ const DATA = {
   },
 
   transitions: [
-    { id: "t1", from: "backlog", to: "todo",    trigger: "appraise-start",      kind: "auto",   phase: "APPRAISE",   add: ["claimed", "{complexity}"] },
+    // Label adds/removes below are the board PROJECTION (tracker-flow-projection-cutover) —
+    // the four labels workflow.json's board_drivers.linear ever touches: needs-info, needs-adr,
+    // rejected, reviewed. Approval (approved) is a local manifest fact, not a tracker label
+    // (tracker-approval-by-script); complexity (Simple/Complex) and outcome (Smooth/Rough/Hard)
+    // are never written to the tracker at all.
+    { id: "t1", from: "backlog", to: "todo",    trigger: "appraise-start",      kind: "auto",   phase: "APPRAISE",   note: "board projection also sets assignee: me" },
     { id: "t2", from: "todo",    to: "approve", trigger: "appraise-complete",   kind: "auto",   phase: "EXEC" },
-    { id: "t3", from: "approve", to: "ready",   trigger: "human-approve",       kind: "human",  phase: "GATE", add: ["approved"] },
+    { id: "t3", from: "approve", to: "ready",   trigger: "human-approve",       kind: "human",  phase: "GATE", remove: ["rejected"], note: "manifest approved/approval_provenance set" },
     { id: "t4", from: "approve", to: "todo",    trigger: "human-reject",        kind: "reject", phase: "GATE", note: "human rejects — loops back to Todo" },
-    { id: "t5", from: "ready",   to: "review",  trigger: "implement-complete",  kind: "auto",   phase: "IMPLEMENT", remove: ["approved"] },
-    { id: "t6", from: "review",  to: "done",    trigger: "pr-review-pass-done", kind: "auto",   phase: "PR-REVIEW", add: ["reviewed"], remove: ["claimed"] },
-    { id: "t7", from: "review",  to: "uat",     trigger: "pr-review-pass-uat",  kind: "auto",   phase: "PR-REVIEW", add: ["reviewed"] },
-    { id: "t8", from: "review",  to: "ready",   trigger: "pr-iterate",          kind: "loopback", phase: "PR-REVIEW", add: ["approved"], remove: ["reviewed", "rejected"] },
-    { id: "t9", from: "uat",     to: "done",    trigger: "uat-pass",            kind: "auto",   phase: "VERIFY", remove: ["claimed", "reviewed"] },
+    { id: "t5", from: "ready",   to: "review",  trigger: "implement-complete",  kind: "auto",   phase: "IMPLEMENT", note: "manifest approved cleared" },
+    { id: "t6", from: "review",  to: "done",    trigger: "pr-review-pass-done", kind: "auto",   phase: "PR-REVIEW", add: ["reviewed"], remove: ["rejected"] },
+    { id: "t7", from: "review",  to: "uat",     trigger: "pr-review-pass-uat",  kind: "auto",   phase: "PR-REVIEW", add: ["reviewed"], remove: ["rejected"] },
+    { id: "t8", from: "review",  to: "ready",   trigger: "pr-iterate",          kind: "loopback", phase: "PR-REVIEW", remove: ["reviewed", "rejected"] },
+    { id: "t9", from: "uat",     to: "done",    trigger: "uat-pass",            kind: "auto",   phase: "VERIFY", remove: ["reviewed"] },
     { id: "t10", from: "uat",    to: "ready",   trigger: "uat-fail",            kind: "loopback", phase: "VERIFY", add: ["rejected"], remove: ["reviewed"] },
   ],
 

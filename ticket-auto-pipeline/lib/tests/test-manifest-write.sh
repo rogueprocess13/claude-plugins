@@ -195,6 +195,77 @@ ensure_ticket_manifest "" 2>/dev/null || rc=$?
 [ "$rc" = "3" ] && _pass "ensure_ticket_manifest: rejects invalid ticket ID" ||
   _fail "ensure_ticket_manifest: should reject invalid ticket ID (got $rc)"
 
+# ── set_ticket_transition / clear_pending_event (tracker-flow-projection-cutover) ──
+
+write_ticket_manifest "TRANS-1" "INIT-1" "bug" '[]'
+set_ticket_transition "TRANS-1" "Todo" '["needs-info","needs-adr"]' '{"event":"appraise-start","data":{}}'
+[ "$(get_ticket_manifest_field TRANS-1 stage)" = "Todo" ] && _pass "set_ticket_transition: stage written" ||
+  _fail "set_ticket_transition: stage should be written"
+[ "$(get_ticket_manifest_field TRANS-1 flags)" = '["needs-adr","needs-info"]' ] && _pass "set_ticket_transition: flags sorted on write" ||
+  _fail "set_ticket_transition: flags should be sorted"
+[ "$(get_ticket_manifest_field TRANS-1 rev)" = "1" ] && _pass "set_ticket_transition: rev starts at 1" ||
+  _fail "set_ticket_transition: rev should start at 1"
+[ "$(get_ticket_manifest_field TRANS-1 pending_event)" = '{"event":"appraise-start","data":{}}' ] && _pass "set_ticket_transition: pending_event set" ||
+  _fail "set_ticket_transition: pending_event should be set"
+
+# all four fields land in one write — assert via a single snapshot read
+snapshot=$(cat "$(get_ticket_manifest_path TRANS-1)")
+echo "$snapshot" | jq -e '.stage == "Todo" and .flags == ["needs-adr","needs-info"] and .rev == 1 and (.pending_event != null)' >/dev/null 2>&1 &&
+  _pass "set_ticket_transition: all four fields land in one snapshot" ||
+  _fail "set_ticket_transition: fields should all be visible in one snapshot"
+
+set_ticket_transition "TRANS-1" "Approve" '["needs-info"]'
+[ "$(get_ticket_manifest_field TRANS-1 rev)" = "2" ] && _pass "set_ticket_transition: rev increments by exactly one" ||
+  _fail "set_ticket_transition: rev should increment by exactly one"
+[ -z "$(get_ticket_manifest_field TRANS-1 pending_event)" ] && _pass "set_ticket_transition: empty pending clears the field" ||
+  _fail "set_ticket_transition: empty pending_event should clear the field"
+
+clear_pending_event "TRANS-1"
+set_ticket_transition "TRANS-1" "Ready" '[]' '{"event":"human-approve","data":{}}'
+clear_pending_event "TRANS-1"
+[ -z "$(get_ticket_manifest_field TRANS-1 pending_event)" ] && _pass "clear_pending_event: field removed" ||
+  _fail "clear_pending_event: pending_event should be removed"
+
+rc=0
+set_ticket_transition "NOPE-1" "Todo" '[]' '' 2>/dev/null || rc=$?
+[ "$rc" = "1" ] && _pass "set_ticket_transition: no-op on missing manifest" ||
+  _fail "set_ticket_transition: should exit 1 on missing manifest (got $rc)"
+
+rc=0
+set_ticket_transition "TRANS-1" "Todo" 'not-an-array' '' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_transition: rejects non-array flags" ||
+  _fail "set_ticket_transition: should reject non-array flags (got $rc)"
+
+# An empty stage means "leave stage as it currently is" — a to:null
+# trigger on a ticket with no stage yet (or an already-staged ticket) must
+# not be forced to invent or clear one.
+write_ticket_manifest "TRANS-2" "INIT-1" "bug" '[]'
+set_ticket_transition "TRANS-2" "" '[]' ''
+[ "$(get_ticket_manifest_field TRANS-2 rev)" = "1" ] && _pass "set_ticket_transition: empty stage still advances rev" ||
+  _fail "set_ticket_transition: empty stage should still advance rev"
+[ -z "$(get_ticket_manifest_field TRANS-2 stage)" ] && _pass "set_ticket_transition: empty stage leaves stage absent" ||
+  _fail "set_ticket_transition: empty stage should leave stage absent when never set"
+
+set_ticket_transition "TRANS-2" "Todo" '[]' ''
+set_ticket_transition "TRANS-2" "" '[]' ''
+[ "$(get_ticket_manifest_field TRANS-2 stage)" = "Todo" ] && _pass "set_ticket_transition: empty stage preserves an existing value" ||
+  _fail "set_ticket_transition: empty stage should preserve an existing value"
+
+# ── epic variants ────────────────────────────────────────────────────────────
+
+write_epic_manifest "TRANS-EPIC" "epic/trans" "epic" "manual" '[]'
+set_epic_transition "TRANS-EPIC" "Review" '["reviewed"]' '{"event":"epic-integration-open","data":{}}'
+[ "$(get_epic_manifest_field TRANS-EPIC stage)" = "Review" ] && _pass "set_epic_transition: stage written" ||
+  _fail "set_epic_transition: stage should be written"
+[ "$(get_epic_manifest_field TRANS-EPIC rev)" = "1" ] && _pass "set_epic_transition: rev starts at 1" ||
+  _fail "set_epic_transition: rev should start at 1"
+[ "$(get_epic_manifest_field TRANS-EPIC pending_event)" = '{"event":"epic-integration-open","data":{}}' ] && _pass "set_epic_transition: pending_event set" ||
+  _fail "set_epic_transition: pending_event should be set"
+
+clear_epic_pending_event "TRANS-EPIC"
+[ -z "$(get_epic_manifest_field TRANS-EPIC pending_event)" ] && _pass "clear_epic_pending_event: field removed" ||
+  _fail "clear_epic_pending_event: pending_event should be removed"
+
 # ── atomic write leaves no .tmp artifacts ────────────────────────────────────
 
 leftover=$(find "$REPOS_ROOT/.ticket-auto" -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')

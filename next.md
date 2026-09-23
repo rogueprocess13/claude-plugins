@@ -685,7 +685,7 @@ Three findings from the Track B design work that stand on their own, whether or 
 
 ---
 
-## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — Change 1 (`tracker-approval-by-script`) implemented 2026-09-23, PR #401 open; Changes 2/3 still PROPOSED
+## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — Changes 1/2 implemented 2026-09-23 (PR #401 and PR #402 both open); Change 3 still PROPOSED
 
 **Why this exists:** 2026-09-23, after B4 shipped, the operator restated the original complaint
 directly — Linear tickets are noisy with labels, and none of B1-B4 addressed that. Investigation
@@ -742,16 +742,38 @@ just a size-limiting convention:
    `fleet-controller` 0.34.0→0.35.0. Task 9.4 (live verification on the tickets host) deferred to
    the programme's consolidated live-verification pass, per the same reordering decision B3a/B3b/B4
    already used.
-2. **`tracker-flow-projection-cutover`** (proposed, 70 tasks) — `flow.sh` stops calling Linear
-   entirely; manifest gains `flags`/`rev`/`pending_event`; `emit_event` gains an idempotency key so
-   a crash between manifest-write and emit can't double-fire; `board_drivers.linear` becomes the
-   real projection table (columns + the four human-signal labels only, non-projected labels like a
-   hand-applied `bug` always preserved); pusher flips default-on. **One-way door** — no kill switch,
-   rollback is a `git revert`. Migration hazard caught in review: every existing host's outbox
-   cursors sit at 0 (the pusher's been opt-in since B2), so flipping the default without a cursor
-   fast-forward would replay each ticket's full transition history and flap its column through
-   every past state — now a spec requirement (`tracker-board-pusher`) with the code landing
-   pusher-still-off and the default flip as a separate, later commit per host.
+2. **`tracker-flow-projection-cutover`** — **IMPLEMENTED 2026-09-23, 70/70 tasks, PR #402 open**
+   (base: `feat/tracker-approval-by-script`, since it depends on Change 1's manifest `stage` field
+   and PR #401 hasn't merged yet — rebase both onto `main` once #401 lands) (9.3 and 10.10
+   deferred to the programme's consolidated live-verification pass — both need real Linear
+   credentials this sandbox doesn't have). `flow.sh` stops calling Linear entirely: no
+   `get_issue`/`get_team`/`update_issue`, no post-trigger assertion (exit 7 retired, every consumer
+   updated — `skill-preamble.md`/`-auto.md`, `fleetd/orchestration.py`, `fleetd/phase_dispatch.py`).
+   It is now a local state machine: reads `workflow.json` + the manifest, writes the manifest
+   (`stage`/`flags`/`rev`/`pending_event`, always in one atomic call via the new
+   `set_ticket_transition`/`set_epic_transition` — called on every invocation, not skipped when
+   unchanged, which is what keeps a structurally-nil trigger like `implement-outcome`/`re-claim`
+   from ever losing its event) and emits exactly one outbox event, idempotency-keyed `{tid}:{rev}`
+   (`emit_event` gained `--idem`, dedup'd under the existing per-ticket lock). `board_drivers.linear`
+   went from `{}` to the real projection table — every vocabulary event has an `events` entry
+   (object or explicit null), `projected_labels` is exactly `needs-info`/`needs-adr`/`rejected`/
+   `reviewed`, enforced by a coverage test; `lib/board-drivers/linear.sh` now writes real desired
+   state, caches team metadata, preserves labels it doesn't own, and classifies failures
+   (permanent → `META|board-projection|fail` + skip; repeated → dead-letter after
+   `FLEET_BOARD_MAX_ATTEMPTS` + `BOARD_PROJECTION_STALLED` Slack notify). `Simple`/`Complex` removed
+   against `docs/label-audit.md`'s own deferred `vestigial` finding — `COMPLEXITY_OPPOSITE` and the
+   three #170-pinning `phase1.sh` tests deleted with them. `pr-review-passed` emission moved from
+   `branch-resolve.sh`'s `uat_decide_trigger` (a decision helper) onto `flow.sh` itself, after the
+   verdict gate. **One-way door** — no kill switch, rollback is `git revert` with a caveat (see
+   design.md Migration Plan / `fleet-controller/README.md`'s new "Migrating to board projection"
+   section). `FLEET_BOARD_PUSHER_ENABLE` deliberately still defaults `false` in the shipped code —
+   the migration hazard caught in review (every existing host's outbox cursors sit at 0, so
+   enabling projection against them replays full history) is real and the fast-forward step
+   (`skills/ticket-flow/board-cursor-fastforward.sh`, new, tested against a counting stub driver
+   proving replay-vs-no-replay by invocation count) is a per-host operator action documented in
+   `CHANGELOG.md` and `fleet-controller/README.md`, not part of this code landing. Full suite green
+   (`make check-generated && make lint && make fmt-check && make test`); versions bumped
+   `ticket-auto-pipeline` 0.54.0→0.55.0, `fleet-controller` 0.35.0→0.36.0.
 3. **`tracker-planner-and-fallback-cutover`** (proposed, 51 tasks) — the planner stops stamping
    `planned`/`INIT-*`/`blocked-by:*`/`state:execution`/type/`pre-approved` at ticket and epic
    creation; every remaining B3a live-fallback branch is deleted. Gated on a parity step: two
@@ -765,7 +787,11 @@ just a size-limiting convention:
    then lets group 4 (planner stops writing) proceed — that group is marked the point of no return.
 
 All three validated `openspec validate --strict` clean as of 2026-09-23. Change 1
-(`tracker-approval-by-script`) is implemented (40/40 tasks, PR #401 open) — see its entry above.
+(`tracker-approval-by-script`) is implemented (40/40 tasks, PR #401 open) and Change 2
+(`tracker-flow-projection-cutover`) is implemented (70/70 tasks, PR #402 open) — see their entries
+above. Change 2 branches off Change 1's branch (`feat/tracker-approval-by-script`), not `main`,
+since it depends on manifest fields (`stage`) Change 1 adds and PR #401 has not merged yet —
+rebase onto `main` once #401 lands.
 Changes 2/3 are not started. Track B remains the next queued work ahead of Step 6 by the same
 direct-override precedent B1 used; Change 2 (`tracker-flow-projection-cutover`) is next up once
 Change 1's PR merges, since it depends on manifest fields (`flags`/`rev`/`pending_event`) and the

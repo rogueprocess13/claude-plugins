@@ -349,22 +349,22 @@ class TestBashAndFlowItems(unittest.TestCase):
                                                 {'tid': 'CRE-5'})
         self.assertEqual(result.status, orchestration.FAILED)
 
-    def test_state_assertion_failure_is_blocking_whatever_the_table_says(self):
-        # flow.sh exit 7 means Linear is not in the state the pipeline
-        # believes; continuing compounds the divergence, so the item's own
-        # non-blocking declaration does not apply.
+    def test_nonzero_exit_respects_the_items_own_blocking_declaration(self):
+        # tracker-flow-projection-cutover: flow.sh no longer exits 7 for any
+        # reason (the tracker assertion it reported no longer exists), so a
+        # non-zero exit is a plain failure — the item's own on_failure
+        # declaration governs whether it blocks, with no special-cased
+        # force-blocking exit code left to override it.
         import subprocess as sp
         real = sp.run
-        seen = {}
 
         def fake(args, **kw):
-            seen['args'] = args
-            return sp.CompletedProcess(args, 7, '', '')
+            return sp.CompletedProcess(args, 1, '', '')
 
         with tempfile.TemporaryDirectory() as tmp:
             flow_dir = Path(tmp) / 'skills' / 'ticket-flow'
             flow_dir.mkdir(parents=True)
-            (flow_dir / 'flow.sh').write_text('#!/usr/bin/env bash\nexit 7\n')
+            (flow_dir / 'flow.sh').write_text('#!/usr/bin/env bash\nexit 1\n')
             lib = Path(tmp) / 'lib'
             lib.mkdir()
             sp.run = fake
@@ -375,8 +375,8 @@ class TestBashAndFlowItems(unittest.TestCase):
                     {'tid': 'CRE-5'}, lib_dir=lib)
             finally:
                 sp.run = real
-        self.assertTrue(result.blocking)
-        self.assertIn('STATE_ASSERTION_FAILED', result.detail)
+        self.assertFalse(result.blocking)
+        self.assertEqual(result.status, orchestration.FAILED)
 
 
 class TestFinalizeTerminal(unittest.TestCase):

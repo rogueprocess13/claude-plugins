@@ -46,8 +46,7 @@
       "pattern": "state:execution",
       "set_by": "planner",
       "removed_by": [],
-      "precondition": "must_be_epic",
-      "description": "Marks an initiative Epic as ready for fleet controller dispatch. Epic-only — flow.sh rejects if added to non-Epic issues."
+      "description": "Marks an initiative Epic as ready for fleet controller dispatch. Epic-only. Applied directly by the planner (never through a flow.sh trigger), so the must_be_epic precondition that used to sit here had no trigger to attach to — removed by tracker-flow-projection-cutover rather than relocated; the enforcement question moves to the next change, which addresses the planner's own writes."
     },
     "bug": {
       "pattern": "bug",
@@ -87,15 +86,11 @@
         "Todo"
       ],
       "to": "Todo",
-      "adds": [
-        "{complexity}"
-      ],
-      "removes": [
-        "{complexity-opposite}"
-      ],
-      "set_assignee": "me",
+      "adds": [],
+      "removes": [],
       "description": "Claim a ticket and begin appraisal",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "appraise-started", "data": { "complexity": "{complexity}" } }
     },
     "appraise-complete": {
       "from": "Todo",
@@ -103,7 +98,8 @@
       "adds": [],
       "removes": [],
       "description": "Appraisal done — awaiting human review",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "appraise-completed", "data": {} }
     },
     "human-approve": {
       "from": "Approve",
@@ -113,7 +109,8 @@
         "rejected"
       ],
       "description": "Human approved the plan",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "human-approved", "data": {} }
     },
     "human-reject": {
       "from": "Approve",
@@ -123,17 +120,17 @@
         "pre-approved"
       ],
       "description": "Human rejected the plan — return to Todo for re-appraisal",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "human-rejected", "data": {} }
     },
     "implement-outcome": {
       "from": null,
       "to": null,
-      "adds": [
-        "{outcome}"
-      ],
+      "adds": [],
       "removes": [],
-      "description": "Record implementation difficulty label (Smooth/Rough/Hard)",
-      "precondition": "must_not_be_epic"
+      "description": "Record implementation difficulty (Smooth/Rough/Hard) locally — no longer a tracker label",
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "implement-outcome-recorded", "data": { "outcome": "{outcome}" } }
     },
     "implement-complete": {
       "from": "Ready",
@@ -141,7 +138,8 @@
       "adds": [],
       "removes": [],
       "description": "Implementation pushed — enter code review",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "implement-completed", "data": {} }
     },
     "pr-review-pass-done": {
       "from": "Review",
@@ -154,7 +152,8 @@
       ],
       "description": "PR approved with no UAT required — close to Done",
       "precondition": "must_not_be_epic",
-      "verdict_gate": true
+      "verdict_gate": true,
+      "emits": { "event": "pr-review-passed", "data": { "uat_required": false } }
     },
     "pr-review-pass-uat": {
       "from": "Review",
@@ -167,7 +166,8 @@
       ],
       "description": "PR approved with UAT required — move to UAT",
       "precondition": "must_not_be_epic",
-      "verdict_gate": true
+      "verdict_gate": true,
+      "emits": { "event": "pr-review-passed", "data": { "uat_required": true } }
     },
     "pr-review-fail": {
       "from": null,
@@ -177,7 +177,8 @@
       ],
       "removes": [],
       "description": "PR review found issues — mark rejected (no state change)",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "pr-review-failed", "data": {} }
     },
     "pr-iterate": {
       "from": "Review",
@@ -188,7 +189,8 @@
         "rejected"
       ],
       "description": "Iterating on PR feedback — return to Ready",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "pr-iteration-requested", "data": {} }
     },
     "uat-pass": {
       "from": "UAT",
@@ -199,7 +201,8 @@
       ],
       "description": "UAT passed — close ticket",
       "precondition": "must_not_be_epic",
-      "verdict_gate": true
+      "verdict_gate": true,
+      "emits": { "event": "uat-passed", "data": {} }
     },
     "uat-fail": {
       "from": "UAT",
@@ -211,7 +214,8 @@
         "reviewed"
       ],
       "description": "UAT failed — return to Ready for another pass",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "uat-failed", "data": {} }
     },
     "needs-info": {
       "from": null,
@@ -221,7 +225,8 @@
       ],
       "removes": [],
       "description": "Block ticket — waiting for external information",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "needs-info-requested", "data": {} }
     },
     "needs-info-resolved": {
       "from": null,
@@ -231,7 +236,8 @@
         "needs-info"
       ],
       "description": "Unblock ticket — information received",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "needs-info-resolved", "data": {} }
     },
     "needs-adr": {
       "from": null,
@@ -241,7 +247,8 @@
       ],
       "removes": [],
       "description": "Block ticket — parked or stopped on an ADR gate CREATED_PROPOSED/SUPERSEDE_REQUIRED/CONFLICT verdict",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "needs-adr-requested", "data": {} }
     },
     "needs-adr-resolved": {
       "from": null,
@@ -251,7 +258,8 @@
         "needs-adr"
       ],
       "description": "Unblock ticket — the governing ADR has been accepted",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "needs-adr-resolved", "data": {} }
     },
     "re-claim": {
       "from": null,
@@ -261,7 +269,8 @@
         "pre-approved"
       ],
       "description": "Remove approval label to restart gate hold cycle",
-      "precondition": "must_not_be_epic"
+      "precondition": "must_not_be_epic",
+      "emits": { "event": "re-claimed", "data": {} }
     },
     "epic-integration-open": {
       "from": "Backlog",
@@ -269,7 +278,8 @@
       "adds": [],
       "removes": [],
       "precondition": "must_be_epic",
-      "description": "Epic integration PRs are open — epic moves to Review."
+      "description": "Epic integration PRs are open — epic moves to Review.",
+      "emits": { "event": "epic-integration-opened", "data": {} }
     },
     "epic-uat-start": {
       "from": "Review",
@@ -277,7 +287,8 @@
       "adds": [],
       "removes": [],
       "precondition": "must_be_epic",
-      "description": "Epic integration merged and deployed — epic moves to UAT."
+      "description": "Epic integration merged and deployed — epic moves to UAT.",
+      "emits": { "event": "epic-uat-started", "data": {} }
     },
     "epic-uat-pass": {
       "from": "UAT",
@@ -285,7 +296,8 @@
       "adds": [],
       "removes": [],
       "precondition": "must_be_epic",
-      "description": "Epic UAT accepted — epic moves to Done. Deliberately no verdict_gate (issue #368): no phase ever writes a per-epic META|verifier-result against the epic issue's own log — verifier-results are written by child-ticket phases (VERIFY/PR-REVIEW) against each child's own log. A verdict_gate here would read an always-empty per-epic verifier history and never block anything, which is worse than no gate at all — it would look load-bearing without being one."
+      "description": "Epic UAT accepted — epic moves to Done. Deliberately no verdict_gate (issue #368): no phase ever writes a per-epic META|verifier-result against the epic issue's own log — verifier-results are written by child-ticket phases (VERIFY/PR-REVIEW) against each child's own log. A verdict_gate here would read an always-empty per-epic verifier history and never block anything, which is worse than no gate at all — it would look load-bearing without being one.",
+      "emits": { "event": "epic-uat-passed", "data": {} }
     }
   },
   "vocabulary": {
@@ -326,10 +338,10 @@
       "description": "Implementation was pushed — entering code review."
     },
     "pr-review-passed": {
-      "emitted_by": "uat_decide_trigger",
+      "emitted_by": "flow.sh",
       "data_from": [],
       "payload": { "uat_required": "bool" },
-      "description": "A PR review passed. Collapses the destination-encoding pr-review-pass-done/pr-review-pass-uat trigger pair into one fact carrying whether UAT is required next."
+      "description": "A PR review passed. Collapses the destination-encoding pr-review-pass-done/pr-review-pass-uat trigger pair into one fact carrying whether UAT is required next. Emitted by flow.sh itself (via each trigger's own emits declaration), after the verdict gate has allowed the transition — not by the branch-resolve.sh helper that resolves which destination applies, which would emit before the transition is attempted."
     },
     "pr-review-failed": {
       "trigger": "pr-review-fail",
@@ -454,8 +466,45 @@
       "description": "The ticket left the Blocked state — its blockers resolved."
     }
   },
-  "_board_drivers_note": "Per-board driver tables mapping this file's `vocabulary` events to a specific board's columns/labels (tracker-event-board-pusher, Phase B2 of the tracker-decoupling programme, Track B). `linear` is registered here (driver shipped, wired into the pusher) with no active mappings yet — every event this phase routes through it is an explicit no-op (design.md Decision 1): the ten hold/lifecycle facts B2 covers have zero existing Linear projection to reproduce. A future phase adds real mappings once the flow-driven-sites cutover question is resolved.",
+  "_board_drivers_note": "Per-board driver tables mapping this file's `vocabulary` events to a specific board's columns/labels (tracker-flow-projection-cutover, Change 2 of the tracker-decoupling authority-flip programme). `board_drivers.<board_id>` is the ONE sanctioned place in this file where a board-specific column or label name may appear — see the `pipeline-event-vocabulary` and `tracker-board-driver-contract` capabilities for the namespace rule this implements. Every vocabulary event has an entry below, an object or an explicit `null` (`null` means the event deliberately projects nothing — never means 'forgotten'; the coverage test in test-workflow-vocabulary.sh fails on a genuinely missing entry). `projected_labels` is the complete set of labels the linear driver may add or remove; every other label on an issue (a hand-applied `bug`, `security`, or a still-planner-written label like `planned`) is preserved untouched. Where an event is produced by exactly one trigger, that entry's add/remove SHALL equal the trigger's own adds/removes intersected with `projected_labels` — kept honest by the same coverage test, since this table intentionally duplicates the trigger's label delta rather than back-referencing it (design.md Decision 1: a third of the vocabulary has no trigger at all, and a second board needs its own projection of the same event).",
   "board_drivers": {
-    "linear": {}
+    "linear": {
+      "projected_labels": ["needs-info", "needs-adr", "rejected", "reviewed"],
+      "events": {
+        "appraise-started": { "column": "Todo", "assignee": "me" },
+        "appraise-completed": { "column": "Approve" },
+        "human-approved": { "column": "Ready", "remove": ["rejected"] },
+        "human-rejected": { "column": "Todo" },
+        "implement-outcome-recorded": null,
+        "implement-completed": { "column": "Review" },
+        "pr-review-passed": {
+          "column": { "from_data": "uat_required", "true": "UAT", "false": "Done" },
+          "add": ["reviewed"],
+          "remove": ["rejected"]
+        },
+        "pr-review-failed": { "add": ["rejected"] },
+        "pr-iteration-requested": { "column": "Ready", "remove": ["reviewed", "rejected"] },
+        "uat-passed": { "column": "Done", "remove": ["reviewed"] },
+        "uat-failed": { "column": "Ready", "add": ["rejected"], "remove": ["reviewed"] },
+        "needs-info-requested": { "add": ["needs-info"] },
+        "needs-info-resolved": { "remove": ["needs-info"] },
+        "needs-adr-requested": { "add": ["needs-adr"] },
+        "needs-adr-resolved": { "remove": ["needs-adr"] },
+        "re-claimed": null,
+        "epic-integration-opened": { "column": "Review" },
+        "epic-uat-started": { "column": "UAT" },
+        "epic-uat-passed": { "column": "Done" },
+        "gate-held": null,
+        "gate-released": null,
+        "human-hold-requested": null,
+        "human-hold-released": null,
+        "pr-opened": null,
+        "pr-merged": null,
+        "verify-failed-retrying": null,
+        "ticket-killed": null,
+        "blocked": null,
+        "unblocked": null
+      }
+    }
   }
 }

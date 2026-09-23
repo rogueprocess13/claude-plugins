@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
-# outcome-label-check.sh — post-implement guard that verifies Smooth/Rough/Hard
-# outcome label is present on the Linear ticket via API call, applying it if missing.
+# outcome-label-check.sh — post-implement guard that verifies the
+# Smooth/Rough/Hard outcome classification is recorded in the ticket's
+# local manifest, writing it if missing.
+#
+# tracker-flow-projection-cutover: the outcome was never a real Linear
+# label read (D10/the projection table names only needs-info/needs-adr/
+# rejected/reviewed) — flow.sh's implement-outcome trigger has always had
+# a null destination and, after the {outcome} placeholder strip, no label
+# delta at all. This file's own live re-fetch of the "outcome label" was
+# therefore a self-check on its own write, never on a real tracker
+# mutation; it now reads/writes the manifest directly and no longer
+# touches the tracker at all.
+#
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
 # errors in this bash version when nounset is active.
@@ -9,11 +20,10 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}"
 source "$LIB_DIR/heartbeat.sh"
-source "$LIB_DIR/linear-api.sh"
-# manifest-write.sh backs the outcome_label mirror below (tracker-local-
-# facts-read-migration, task 5.11/1.7). Guarded — a fresh install syncs
-# lib/*.sh together, but this file is also copied standalone in some test
-# fixtures.
+# manifest-write.sh (which sources manifest-read.sh) is the only external
+# dependency now — no tracker client, no flow.sh resolution. Guarded — a
+# fresh install syncs lib/*.sh together, but this file is also copied
+# standalone in some test fixtures.
 if [ -f "$LIB_DIR/manifest-write.sh" ]; then
   source "$LIB_DIR/manifest-write.sh"
 elif [ -f "$SCRIPT_DIR/manifest-write.sh" ]; then
@@ -24,17 +34,6 @@ usage() {
   echo "Usage: $0 <TICKET-ID> <LOG-FILE>" >&2
   exit 1
 }
-
-# ── Resolve flow.sh path dynamically ───────────────────────────────────────────
-_resolve_flow_sh() {
-  if [ -f "$HOME/.claude/skills/ticket-flow/flow.sh" ]; then
-    echo "$HOME/.claude/skills/ticket-flow/flow.sh"
-  elif command -v find &>/dev/null; then
-    find "$HOME/.claude/plugins/cache" -name "flow.sh" -path "*/ticket-flow/*" 2>/dev/null | head -1 || true
-  fi
-}
-
-FLOW_SH=$(_resolve_flow_sh)
 
 # ── Core logic ─────────────────────────────────────────────────────────────────
 
@@ -67,23 +66,18 @@ _get_outcome_from_log() {
   echo "$outcome"
 }
 
-# Check if any outcome label (Smooth/Rough/Hard) is present on the ticket.
-# Uses jq exact-match to avoid grep -qw's hyphen-as-word-boundary bug
-# (e.g. "Hard" would falsely match "Hard-blocked").
-_has_outcome_label() {
-  local issue_json="$1"
-
-  for ol in $OUTCOME_LABELS; do
-    if echo "$issue_json" | jq -e --arg ol "$ol" \
-      '[.labels.nodes[]?.name? // empty] | index($ol) != null' >/dev/null 2>&1; then
-      return 0
-    fi
-  done
-  return 1
+# _manifest_has_outcome_label — true when the manifest already carries an
+# outcome_label value. No tracker read: the manifest is the only place
+# this value has ever been written.
+_manifest_has_outcome_label() {
+  declare -f get_ticket_manifest_field >/dev/null 2>&1 || return 1
+  local current
+  current=$(get_ticket_manifest_field "$TICKET_ID" outcome_label 2>/dev/null)
+  [ -n "$current" ]
 }
 
 _outcome_label_check() {
-  local outcome issue_json
+  local outcome
 
   # Read outcome from pipeline log
   outcome=$(_get_outcome_from_log)
@@ -102,59 +96,29 @@ _outcome_label_check() {
     return 1
   fi
 
-  # Query Linear API for current labels. A failed/malformed fetch must never
-  # be treated as "no outcome label present" — that would apply the label
-  # blind, based on an assumption we can't actually back up (issue #362,
-  # LINEAR_GET_ISSUE_NULL_CONTINUES). Fail closed instead: report and stop,
-  # so the phase can be retried rather than silently guessing.
-  if ! issue_json=$(get_issue "$TICKET_ID" 2>/dev/null); then
-    echo "outcome-label-check: get_issue($TICKET_ID) failed — cannot verify outcome label" >&2
-    hb_gate "outcome-check" "fail" "get_issue fetch failed" "{\"outcome\":\"$outcome\"}"
-    _plog "$LOG_FILE" "META" "gate-warn" "fail" "LINEAR_FETCH_FAILED — outcome-label-check could not fetch $TICKET_ID"
-    return 1
-  fi
-  if ! require_issue_payload "$issue_json" 2>/dev/null; then
-    echo "outcome-label-check: get_issue($TICKET_ID) returned an unparseable/incomplete payload" >&2
-    hb_gate "outcome-check" "fail" "malformed issue payload" "{\"outcome\":\"$outcome\"}"
-    _plog "$LOG_FILE" "META" "gate-warn" "fail" "LINEAR_FETCH_FAILED — outcome-label-check got malformed payload for $TICKET_ID"
-    return 1
-  fi
-
-  # If outcome label already present, exit clean
-  if _has_outcome_label "$issue_json"; then
+  # If outcome already recorded, exit clean
+  if _manifest_has_outcome_label; then
     hb_gate "outcome-check" "ok" "outcome label already present" "{\"outcome\":\"$outcome\"}"
     _plog "$LOG_FILE" "META" "outcome-label" "info" "$outcome"
-    _mirror_outcome_to_manifest "$outcome"
     return 0
   fi
 
-  # Apply missing outcome label via flow.sh
-  if [ -n "$FLOW_SH" ] && [ -f "$FLOW_SH" ]; then
-    bash "$FLOW_SH" "$TICKET_ID" "implement-outcome" --data "outcome=${outcome}" || true
-  fi
+  _mirror_outcome_to_manifest "$outcome"
 
   hb_gate "outcome-check" "ok" "outcome label applied" "{\"outcome\":\"$outcome\"}"
-  # Authoritative source for auto-merge eligibility (ticket-auto/SKILL.md Auto-merge
-  # logic) — the confirmed Linear label, not the implement terminal line.
+  # Authoritative source for auto-merge eligibility (ticket-auto/SKILL.md
+  # Auto-merge logic) — the manifest's outcome_label, not the implement
+  # terminal line.
   _plog "$LOG_FILE" "META" "outcome-label" "info" "$outcome"
-  _mirror_outcome_to_manifest "$outcome"
   return 0
 }
 
 # _mirror_outcome_to_manifest <outcome>
-# tracker-local-facts-read-migration (task 5.11/1.7): mirrors the confirmed
-# Smooth/Rough/Hard classification into the ticket's local manifest, at the
-# same close-out point the Linear label is confirmed/applied — so a local
-# reader can later obtain it without a tracker fetch. Additive and best-
-# effort: the Linear label (verified/applied above) remains the write of
-# record this phase; a missing manifest (predates this migration) is a
-# silent no-op, never a failure of the outcome-label check itself.
-#
-# Deliberately does NOT touch _has_outcome_label's live Linear read above —
-# that read exists to verify/apply this file's own write, the same
-# "confirm our own mutation landed" pattern as planner_verify_tickets
-# (task 5.6); migrating it to the manifest would make it verify against the
-# very thing it is meant to independently confirm.
+# tracker-local-facts-read-migration (task 5.11/1.7), now the write of
+# record (tracker-flow-projection-cutover task 8.5) — records the
+# confirmed Smooth/Rough/Hard classification into the ticket's local
+# manifest. A missing manifest (a ticket predating manifest addressability)
+# is a silent no-op, never a failure of the outcome-label check itself.
 _mirror_outcome_to_manifest() {
   local outcome="$1"
   declare -f write_ticket_outcome_label >/dev/null 2>&1 || return 0

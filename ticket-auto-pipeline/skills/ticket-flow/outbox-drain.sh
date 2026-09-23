@@ -42,6 +42,59 @@ _OD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _OD_LIB_DIR="$(cd "$_OD_DIR/../../lib" && pwd)"
 
 source "$_OD_LIB_DIR/board-cursor.sh"
+source "$_OD_LIB_DIR/heartbeat.sh"
+
+# Best-effort fleet-notify.sh resolution (tracker-flow-projection-cutover
+# task 6.3) — same monorepo -> installed-plugin fallback chain events.sh
+# uses for workflow.json, but reaching into the SIBLING fleet-controller
+# plugin rather than ticket-auto-pipeline's own tree, since fleet_slack_post
+# lives there. Absence is not an error: the dead-letter marker still lands
+# in the pipeline log and the cursor still advances regardless of whether a
+# notification could be raised.
+_outbox_drain_resolve_fleet_notify() {
+  local _cand
+  for _cand in \
+    "$_OD_LIB_DIR/../../fleet-controller/lib/fleet-notify.sh" \
+    "$HOME/.claude/plugins/fleet-controller/lib/fleet-notify.sh"; do
+    [ -f "$_cand" ] && {
+      echo "$_cand"
+      return 0
+    }
+  done
+  local _found
+  _found=$(find "$HOME/.claude/plugins/cache" -name fleet-notify.sh \
+    -path "*/fleet-controller/*" 2>/dev/null | sort | tail -1)
+  if [ -n "$_found" ] && [ -f "$_found" ]; then
+    echo "$_found"
+    return 0
+  fi
+  return 1
+}
+
+# _outbox_drain_dead_letter <tid> <board_id> <seq>
+#
+# A repeatedly-failing entry is dead-lettered rather than stalling the
+# board forever (tracker-board-pusher spec): records the marker on the
+# ticket's own pipeline log, raises a best-effort operator notification,
+# advances the cursor past the entry, and resets its attempts counter —
+# so later events for this ticket keep projecting.
+_outbox_drain_dead_letter() {
+  local tid="$1" board_id="$2" seq="$3"
+  local log_file="$(_outbox_drain_dir)/${tid}-pipeline.log"
+  _plog "$log_file" "META" "board-dead-letter" "warn" "seq=${seq}" 2>/dev/null || true
+
+  local notify_lib
+  if notify_lib=$(_outbox_drain_resolve_fleet_notify); then
+    (
+      source "$notify_lib"
+      declare -f fleet_slack_post >/dev/null 2>&1 &&
+        fleet_slack_post "$tid" "${FLEET_STATE_DIR:-$(_outbox_drain_dir)}" \
+          "BOARD_PROJECTION_STALLED: ${tid}/${board_id} entry seq ${seq} dead-lettered after ${FLEET_BOARD_MAX_ATTEMPTS:-5} failed attempts"
+    ) 2>/dev/null || true
+  fi
+
+  board_cursor_advance "$tid" "$board_id" "$seq" 2>/dev/null || true
+}
 
 _outbox_drain_dir() {
   echo "${FLEET_PIPELINE_LOG_DIR:-./logs}"
@@ -98,7 +151,16 @@ _outbox_drain_one_board() {
     if bash "$driver_script" apply "$tid" "$event" "$seq" "$data"; then
       board_cursor_advance "$tid" "$board_id" "$seq"
     else
-      echo "outbox-drain.sh: driver ${driver_script} failed on ${tid}/${event} (seq ${seq}) — cursor left at last successful entry, will retry next drain" >&2
+      board_cursor_note_failure "$tid" "$board_id"
+      local attempts
+      attempts=$(board_cursor_get_attempts "$tid" "$board_id")
+      if [ "$attempts" -ge "${FLEET_BOARD_MAX_ATTEMPTS:-5}" ]; then
+        echo "outbox-drain.sh: driver ${driver_script} failed ${attempts} times on ${tid}/${event} (seq ${seq}) — dead-lettering" >&2
+        _outbox_drain_dead_letter "$tid" "$board_id" "$seq"
+        cursor="$seq"
+        continue
+      fi
+      echo "outbox-drain.sh: driver ${driver_script} failed on ${tid}/${event} (seq ${seq}), attempt ${attempts}/${FLEET_BOARD_MAX_ATTEMPTS:-5} — cursor left at last successful entry, will retry next drain" >&2
       rc=1
       break
     fi

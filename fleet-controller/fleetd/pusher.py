@@ -31,14 +31,60 @@ Stdlib only.
 import fcntl
 import json
 import os
+import shlex
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fleetd import phase_dispatch
 
 DEFAULT_DRIVERS = 'linear'
 DEFAULT_LOCK_TIMEOUT_SECS = 30
+DEFAULT_MAX_ATTEMPTS = 5
+
+
+def _pipeline_log_append(log_dir, tid, phase, step, status, msg):
+    """Append one ISO|PHASE|STEP|STATUS|MSG line — a small, deliberate
+    duplicate of `supervisor.py`'s `_append_pipeline_log_line` (same schema,
+    same timestamp format). Not imported from there: `supervisor.py`
+    imports this module, so the reverse import would be circular. Fail-soft
+    — a logging failure must never interrupt a drain cycle.
+    """
+    log_file = Path(log_dir) / f'{tid}-pipeline.log'
+    iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    msg = msg.replace('|', '/')
+    try:
+        with open(log_file, 'a') as f:
+            f.write(f'{iso}|{phase}|{step}|{status}|{msg}\n')
+    except OSError:
+        pass
+
+
+def _notify_stalled(fleet_lib_dir, state_dir, tid, board_id, seq, max_attempts):
+    """Fires a best-effort BOARD_PROJECTION_STALLED Slack notification via
+    fleet-notify.sh's `fleet_slack_post` — same shell-out shape as
+    `supervisor.py`'s `_notify_worker_event`/`_notify_gate_stop`. Fail-soft:
+    an absent script, missing SLACK_* env, or a transport failure must
+    never affect the dead-letter itself.
+    """
+    if not fleet_lib_dir:
+        return
+    notify_script = Path(fleet_lib_dir) / 'fleet-notify.sh'
+    if not notify_script.is_file():
+        return
+    text = (f'BOARD_PROJECTION_STALLED: {tid}/{board_id} entry seq {seq} '
+            f'dead-lettered after {max_attempts} failed attempts')
+    try:
+        subprocess.run(
+            ['bash', '-c',
+             f'source {shlex.quote(str(notify_script))} && '
+             f'fleet_slack_post {shlex.quote(tid)} '
+             f'{shlex.quote(str(state_dir))} {shlex.quote(text)}'],
+            timeout=15, capture_output=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def _pipeline_log_dir(log_dir=None):
@@ -146,6 +192,75 @@ def _cursor_advance(env, lib_dir, tid, board_id, new_seq):
     return proc.returncode == 0
 
 
+def _cursor_note_failure(env, lib_dir, tid, board_id):
+    script = _board_cursor_script(lib_dir)
+    try:
+        proc = subprocess.run(
+            ['bash', str(script), 'note-failure', tid, board_id],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return proc.returncode == 0
+
+
+def _cursor_get_attempts(env, lib_dir, tid, board_id):
+    script = _board_cursor_script(lib_dir)
+    try:
+        proc = subprocess.run(
+            ['bash', str(script), 'get-attempts', tid, board_id],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return 0
+    try:
+        return int(proc.stdout.strip())
+    except (TypeError, ValueError):
+        return 0
+
+
+def _cursor_seq_fast(log_dir, tid, board_id):
+    """Unlocked, subprocess-free peek at a cursor's persisted seq — used
+    only as a pre-check to skip a fully-drained ticket cheaply (task 6.6).
+    Never the authoritative read: the locked `_cursor_get` subprocess call
+    still runs on the path that decides whether to actually dispatch
+    anything. A stale or missing read here only costs a redundant (safe)
+    re-check on the next cycle, never a skipped mutation.
+    """
+    cursor_file = Path(log_dir) / f'.{tid}-cursor-{board_id}.json'
+    try:
+        data = json.loads(cursor_file.read_text())
+        seq = data.get('seq', 0)
+        return seq if isinstance(seq, int) else 0
+    except (OSError, ValueError, json.JSONDecodeError):
+        return 0
+
+
+def _outbox_tail_seq(log_dir, tid):
+    """The highest `seq` in a ticket's outbox, read directly (no
+    subprocess) — the other half of task 6.6's pre-check."""
+    outbox = Path(log_dir) / f'{tid}-outbox.jsonl'
+    if not outbox.is_file():
+        return 0
+    tail = 0
+    try:
+        with open(outbox, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                seq = rec.get('seq')
+                if isinstance(seq, int) and seq > tail:
+                    tail = seq
+    except OSError:
+        return 0
+    return tail
+
+
 def _driver_apply(env, driver_script, tid, event, seq, data):
     try:
         proc = subprocess.run(
@@ -200,7 +315,8 @@ class _CursorLock:
 
 
 def drain_ticket(tid, log_dir=None, lib_dir=None, driver_dir_override=None,
-                  drivers=None, extra_env=None):
+                  drivers=None, extra_env=None, fleet_lib_dir=None,
+                  max_attempts=None, state_dir=None):
     """Drains one ticket's outbox against every configured driver,
     independently — one driver's cursor is untouched by another driver's
     failure (`tracker-board-pusher` spec's "one board's cursor does not
@@ -212,11 +328,24 @@ def drain_ticket(tid, log_dir=None, lib_dir=None, driver_dir_override=None,
     retry next cycle). Never raises for an ordinary driver failure — only a
     lock-acquisition timeout is treated as this ticket/driver's own
     failure, same fail-soft shape as every other fleetd pass.
+
+    A repeatedly-failing entry is dead-lettered once its attempt count
+    reaches `max_attempts` (default `FLEET_BOARD_MAX_ATTEMPTS`/5): a
+    `META|board-dead-letter` marker is appended to the ticket's own
+    pipeline log, a best-effort `BOARD_PROJECTION_STALLED` notification is
+    raised, the cursor advances past the entry, and its attempt count
+    resets — so a permanently-unprojectable event cannot block every later
+    event for this ticket forever.
     """
     log_dir = _pipeline_log_dir(log_dir)
     driver_names = drivers if drivers is not None else _configured_drivers()
     env = {**os.environ, **(extra_env or {}),
            'FLEET_PIPELINE_LOG_DIR': str(log_dir)}
+    max_attempts = max_attempts or int(
+        os.environ.get('FLEET_BOARD_MAX_ATTEMPTS', DEFAULT_MAX_ATTEMPTS))
+    fleet_lib_dir = fleet_lib_dir or str(
+        Path(__file__).resolve().parent.parent / 'lib')
+    state_dir = state_dir or str(log_dir)
 
     overall_ok = True
     for board_id in driver_names:
@@ -224,6 +353,14 @@ def drain_ticket(tid, log_dir=None, lib_dir=None, driver_dir_override=None,
             board_id, lib_dir=lib_dir, driver_dir_override=driver_dir_override)
         if not driver_script.is_file():
             continue
+
+        # Task 6.6: a cheap, subprocess-free skip for a ticket whose
+        # cursor already caught up to the outbox tail — the common case on
+        # a busy fleet. Not authoritative: the locked path below still
+        # re-reads the real cursor before deciding anything.
+        if _cursor_seq_fast(log_dir, tid, board_id) >= _outbox_tail_seq(log_dir, tid):
+            continue
+
         try:
             with _CursorLock(log_dir, tid, board_id):
                 cursor = _cursor_get(env, lib_dir, tid, board_id)
@@ -236,9 +373,21 @@ def drain_ticket(tid, log_dir=None, lib_dir=None, driver_dir_override=None,
                         continue
                     if _driver_apply(env, driver_script, tid, event, seq, data):
                         _cursor_advance(env, lib_dir, tid, board_id, seq)
-                    else:
-                        overall_ok = False
-                        break
+                        continue
+
+                    _cursor_note_failure(env, lib_dir, tid, board_id)
+                    attempts = _cursor_get_attempts(env, lib_dir, tid, board_id)
+                    if attempts >= max_attempts:
+                        _pipeline_log_append(
+                            log_dir, tid, 'META', 'board-dead-letter', 'warn',
+                            f'seq={seq}')
+                        _notify_stalled(fleet_lib_dir, state_dir, tid,
+                                         board_id, seq, max_attempts)
+                        _cursor_advance(env, lib_dir, tid, board_id, seq)
+                        continue
+
+                    overall_ok = False
+                    break
         except TimeoutError:
             overall_ok = False
             continue
@@ -247,7 +396,8 @@ def drain_ticket(tid, log_dir=None, lib_dir=None, driver_dir_override=None,
 
 
 def pusher_pass(log_dir=None, lib_dir=None, driver_dir_override=None,
-                 drivers=None, extra_env=None):
+                 drivers=None, extra_env=None, fleet_lib_dir=None,
+                 max_attempts=None, state_dir=None):
     """One full cycle: discover every ticket with an outbox, drain each
     independently. A single ticket's failure never stops the pass from
     reaching the rest — the same `try/except: continue` shape
@@ -264,7 +414,8 @@ def pusher_pass(log_dir=None, lib_dir=None, driver_dir_override=None,
             results[tid] = drain_ticket(
                 tid, log_dir=log_dir, lib_dir=lib_dir,
                 driver_dir_override=driver_dir_override, drivers=drivers,
-                extra_env=extra_env)
+                extra_env=extra_env, fleet_lib_dir=fleet_lib_dir,
+                max_attempts=max_attempts, state_dir=state_dir)
         except Exception:  # noqa: BLE001 - one ticket must not sink the pass
             results[tid] = False
     return results

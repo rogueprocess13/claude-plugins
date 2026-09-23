@@ -36,16 +36,17 @@ mapfile -t EXPECTED_STATES < <(jq -r '
     (.well_known_states[]? // empty)
   ] | unique | sort[]' "$SM")
 
-# Labels: union of adds/removes with placeholder expansion + well_known_labels
+# Labels: union of adds/removes + well_known_labels. No placeholder
+# expansion needed (tracker-flow-projection-cutover task 8.4) — the
+# {complexity}/{complexity-opposite}/{outcome} placeholders that used to
+# appear in trigger adds/removes were stripped when flow.sh stopped writing
+# any of Simple/Complex/Smooth/Rough/Hard as tracker labels; every
+# adds/removes entry left is now a literal label name.
 mapfile -t EXPECTED_LABELS < <(jq -r '
   [
     (.triggers | to_entries[] | .value | (.adds[]?, .removes[]?) | select(. != null)),
     (.well_known_labels[]? // empty)
-  ] | unique | sort[]' "$SM" | sed \
-  's/{complexity-opposite}/simple\n{complexity_complex}/g;
-     s/{complexity}/simple\n{complexity_complex}/g; s/{complexity_complex}/complex/g;
-     s/{outcome}/Smooth\n{outcome_rough}\n{outcome_hard}/g;
-     s/{outcome_rough}/Rough/g; s/{outcome_hard}/Hard/g' | sort -u)
+  ] | unique | sort[]' "$SM")
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
 

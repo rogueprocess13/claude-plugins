@@ -22,6 +22,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
@@ -149,9 +150,156 @@ class PusherPassFailureIsolationTest(unittest.TestCase):
 
         fail_cursor = self.ws / '.T-FAIL-cursor-flaky.json'
         ok_cursor = self.ws / '.T-OK-cursor-flaky.json'
-        self.assertFalse(fail_cursor.is_file())
+        # tracker-flow-projection-cutover: a failed dispatch now records an
+        # attempts count (task 6.2/6.3), so the cursor file exists — but
+        # its seq must still be 0 (unchanged, never advanced past a
+        # failure).
+        self.assertTrue(fail_cursor.is_file())
+        self.assertEqual(json.loads(fail_cursor.read_text())['seq'], 0)
+        self.assertEqual(json.loads(fail_cursor.read_text())['attempts'], 1)
         self.assertTrue(ok_cursor.is_file())
         self.assertEqual(json.loads(ok_cursor.read_text())['seq'], 1)
+
+
+class DeadLetterTest(unittest.TestCase):
+    """tracker-flow-projection-cutover task 6.3/6.8: attempts increment on
+    each failed dispatch and reset on success; reaching max_attempts writes
+    a dead-letter marker, raises a best-effort notification, and advances
+    the cursor past the entry."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.ws = Path(self._tmp.name)
+        self._driver_tmp = tempfile.TemporaryDirectory()
+        self.driver_dir = Path(self._driver_tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+        self._driver_tmp.cleanup()
+
+    def _always_failing_driver(self):
+        script = self.driver_dir / 'linear.sh'
+        script.write_text('#!/usr/bin/env bash\nexit 1\n')
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+
+    def test_attempts_increment_on_each_failure(self):
+        self._always_failing_driver()
+        _write_outbox(self.ws, 'T-DL1', [('gate-held', {})])
+
+        pusher.drain_ticket(
+            'T-DL1', log_dir=self.ws, lib_dir=TICKET_AUTO_LIB,
+            driver_dir_override=self.driver_dir, drivers=['linear'],
+            max_attempts=5)
+        pusher.drain_ticket(
+            'T-DL1', log_dir=self.ws, lib_dir=TICKET_AUTO_LIB,
+            driver_dir_override=self.driver_dir, drivers=['linear'],
+            max_attempts=5)
+
+        cursor_file = self.ws / '.T-DL1-cursor-linear.json'
+        self.assertEqual(json.loads(cursor_file.read_text())['attempts'], 2)
+        self.assertEqual(json.loads(cursor_file.read_text())['seq'], 0)
+
+    def test_dead_letter_at_max_attempts_writes_marker_and_advances(self):
+        self._always_failing_driver()
+        _write_outbox(self.ws, 'T-DL2', [('gate-held', {})])
+
+        with mock.patch.object(pusher, '_notify_stalled') as notify:
+            for _ in range(3):
+                pusher.drain_ticket(
+                    'T-DL2', log_dir=self.ws, lib_dir=TICKET_AUTO_LIB,
+                    driver_dir_override=self.driver_dir, drivers=['linear'],
+                    max_attempts=3, fleet_lib_dir=str(self.ws),
+                    state_dir=str(self.ws))
+
+        notify.assert_called_once()
+        called_args = notify.call_args[0]
+        self.assertEqual(called_args[2], 'T-DL2')  # tid
+        self.assertEqual(called_args[4], 1)  # seq
+
+        log_file = self.ws / 'T-DL2-pipeline.log'
+        self.assertTrue(log_file.is_file())
+        self.assertIn('META|board-dead-letter|warn|seq=1', log_file.read_text())
+
+        cursor_file = self.ws / '.T-DL2-cursor-linear.json'
+        cursor = json.loads(cursor_file.read_text())
+        self.assertEqual(cursor['seq'], 1)
+        self.assertEqual(cursor['attempts'], 0)
+
+    def test_success_after_failures_resets_attempts(self):
+        script = self.driver_dir / 'linear.sh'
+        script.write_text(
+            '#!/usr/bin/env bash\n'
+            'if [ -f "'
+            + str(self.ws / '.fail-once')
+            + '" ]; then rm -f "'
+            + str(self.ws / '.fail-once')
+            + '"; exit 1; fi\nexit 0\n'
+        )
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        (self.ws / '.fail-once').touch()
+        _write_outbox(self.ws, 'T-DL3', [('gate-held', {})])
+
+        pusher.drain_ticket(
+            'T-DL3', log_dir=self.ws, lib_dir=TICKET_AUTO_LIB,
+            driver_dir_override=self.driver_dir, drivers=['linear'],
+            max_attempts=5)
+        pusher.drain_ticket(
+            'T-DL3', log_dir=self.ws, lib_dir=TICKET_AUTO_LIB,
+            driver_dir_override=self.driver_dir, drivers=['linear'],
+            max_attempts=5)
+
+        cursor_file = self.ws / '.T-DL3-cursor-linear.json'
+        cursor = json.loads(cursor_file.read_text())
+        self.assertEqual(cursor['seq'], 1)
+        self.assertEqual(cursor['attempts'], 0)
+
+
+class BoardPusherLogDirTest(unittest.TestCase):
+    """tracker-flow-projection-cutover task 6.5: `_board_pusher_pass`
+    resolves its log dir the same way `emit_event`/the gate-hold outbox
+    reader do — FLEET_PIPELINE_LOG_DIR when set, `_state_dir` otherwise —
+    rather than always passing `_state_dir` regardless of that env var."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.state_dir = Path(self._tmp.name) / 'state'
+        self.pipeline_dir = Path(self._tmp.name) / 'pipeline-logs'
+        self.state_dir.mkdir()
+        self.pipeline_dir.mkdir()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_log_dir_prefers_fleet_pipeline_log_dir_env(self):
+        from fleetd.supervisor import Supervisor
+        sup = Supervisor(
+            state_dir=str(self.state_dir),
+            pidfile=str(self.state_dir / 'test.pid'),
+            port=_find_free_port(),
+        )
+        old = os.environ.get('FLEET_PIPELINE_LOG_DIR')
+        os.environ['FLEET_PIPELINE_LOG_DIR'] = str(self.pipeline_dir)
+        try:
+            self.assertEqual(sup._board_pusher_log_dir(), str(self.pipeline_dir))
+        finally:
+            if old is None:
+                os.environ.pop('FLEET_PIPELINE_LOG_DIR', None)
+            else:
+                os.environ['FLEET_PIPELINE_LOG_DIR'] = old
+
+    def test_log_dir_falls_back_to_state_dir(self):
+        from fleetd.supervisor import Supervisor
+        sup = Supervisor(
+            state_dir=str(self.state_dir),
+            pidfile=str(self.state_dir / 'test.pid'),
+            port=_find_free_port(),
+        )
+        old = os.environ.pop('FLEET_PIPELINE_LOG_DIR', None)
+        try:
+            self.assertEqual(sup._board_pusher_log_dir(), str(self.state_dir))
+        finally:
+            if old is not None:
+                os.environ['FLEET_PIPELINE_LOG_DIR'] = old
 
 
 class DiscoverOutboxTicketsTest(unittest.TestCase):

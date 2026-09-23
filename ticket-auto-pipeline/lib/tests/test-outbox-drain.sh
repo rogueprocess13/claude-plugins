@@ -106,9 +106,100 @@ SCRIPT
   [ "$rc" -eq 1 ] && [ "$cursor" -eq 0 ]
 }
 
+# ── tracker-flow-projection-cutover: dead-letter after FLEET_BOARD_MAX_ATTEMPTS ──
+test_dead_letter_after_max_attempts() {
+  _setup
+  export FLEET_BOARD_MAX_ATTEMPTS=3
+  emit_event T-4 gate-held '{"reason":"a"}' >/dev/null
+
+  local failing_dir
+  failing_dir=$(mktemp -d)
+  cat >"$failing_dir/linear.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 1
+SCRIPT
+  chmod +x "$failing_dir/linear.sh"
+
+  local i
+  for i in 1 2 3; do
+    OUTBOX_DRAIN_DRIVER_DIR_OVERRIDE="$failing_dir" outbox_drain_ticket T-4 >/dev/null 2>&1 || true
+  done
+  local cursor logged
+  cursor=$(board_cursor_get T-4 linear)
+  logged=1
+  grep -q 'META|board-dead-letter|warn|seq=1' "$_ws/T-4-pipeline.log" 2>/dev/null && logged=0
+  rm -rf "$failing_dir"
+  unset FLEET_BOARD_MAX_ATTEMPTS
+  _teardown
+  [ "$cursor" -eq 1 ] && [ "$logged" -eq 0 ]
+}
+
+# ── drain-after-flow: flow.sh's own exit-time drain actually advances the
+# cursor, proving the wiring (not just outbox_drain_ticket called directly) ──
+test_drain_after_flow() {
+  _setup
+  local repos_root stub_dir
+  repos_root=$(mktemp -d)
+  # A stubbed always-succeeds driver — this test proves flow.sh's exit-time
+  # drain call is wired and effective, not that the real Linear driver
+  # succeeds without credentials (a separate, already-covered concern).
+  stub_dir=$(mktemp -d)
+  cat >"$stub_dir/linear.sh" <<'SCRIPT'
+#!/usr/bin/env bash
+exit 0
+SCRIPT
+  chmod +x "$stub_dir/linear.sh"
+
+  local rc=0
+  REPOS_ROOT="$repos_root" CLAUDE_SKILLS_LIB="$LIB_DIR" \
+    TICKET_FLOW_LOCK_DIR="$_ws/locks" \
+    OUTBOX_DRAIN_DRIVER_DIR_OVERRIDE="$stub_dir" \
+    bash "$LIB_DIR/../skills/ticket-flow/flow.sh" WIL-401 appraise-start >/dev/null 2>&1 || rc=$?
+  local cursor
+  cursor=$(board_cursor_get WIL-401 linear)
+  rm -rf "$repos_root" "$stub_dir"
+  _teardown
+  [ "$rc" -eq 0 ] && [ "$cursor" -eq 1 ]
+}
+
+# ── concurrent drain and pusher advance past each entry exactly once ───────
+test_concurrent_drain_and_pusher_exactly_once() {
+  _setup
+  emit_event T-5 gate-held '{"reason":"a"}' >/dev/null
+  emit_event T-5 gate-released '{"provenance":"human"}' >/dev/null
+  emit_event T-5 human-hold-requested '{"question":"x"}' >/dev/null
+
+  local pusher_py
+  pusher_py="$LIB_DIR/../../fleet-controller/fleetd/pusher.py"
+  if [ ! -f "$pusher_py" ]; then
+    _teardown
+    return 0 # fleet-controller not co-located in this checkout — skip gracefully
+  fi
+
+  (outbox_drain_ticket T-5 >/dev/null 2>&1) &
+  local p1=$!
+  (cd "$LIB_DIR/../.." && FLEET_PIPELINE_LOG_DIR="$_ws" python3 -c "
+import sys
+sys.path.insert(0, 'fleet-controller')
+from fleetd import pusher
+pusher.drain_ticket('T-5', log_dir='$_ws')
+" >/dev/null 2>&1) &
+  local p2=$!
+  wait "$p1"
+  wait "$p2"
+
+  local cursor
+  cursor=$(board_cursor_get T-5 linear)
+  _teardown
+  [ "$cursor" -eq 3 ]
+}
+
 _run "4.3 three entries drain in order, cursor advances to last seq" test_three_entries_drain_in_order_cursor_advances
 _run "4.4 second run with no new entries is a no-op" test_second_run_with_no_new_entries_is_noop
 _run "4.5 driver failure leaves cursor at N-1, no skip-ahead" test_driver_failure_leaves_cursor_at_n_minus_1
+_run "dead-letter after FLEET_BOARD_MAX_ATTEMPTS" test_dead_letter_after_max_attempts
+_run "drain-after-flow: flow.sh's exit-time drain advances the cursor" test_drain_after_flow
+_run "concurrent drain and pusher advance past each entry exactly once" test_concurrent_drain_and_pusher_exactly_once
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="

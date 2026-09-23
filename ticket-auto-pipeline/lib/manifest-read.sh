@@ -229,7 +229,7 @@ if [ "${1:-}" = "--self-test" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
   mkdir -p "$tmp/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner"
   mkdir -p "$tmp/.ticket-auto/initiatives/INIT-1/epic"
   echo "INIT-1" >"$tmp/.ticket-auto/initiatives/_index/TEST-1.initiative"
-  echo '{"type":"bug","initiative":"INIT-1","blocked_by":[],"dispatch":false}' \
+  echo '{"type":"bug","initiative":"INIT-1","blocked_by":[],"dispatch":false,"stage":"Ready","flags":["needs-info"],"rev":3,"pending_event":{"event":"appraise-complete","data":{}}}' \
     >"$tmp/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
   echo '{"branch":"epic/init-1","uat_policy":"epic","merge_policy":"manual","children":["TEST-1"]}' \
     >"$tmp/.ticket-auto/initiatives/INIT-1/epic/manifest.json"
@@ -241,6 +241,10 @@ if [ "${1:-}" = "--self-test" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
   get_ticket_manifest_field NOPE-1 type >/dev/null 2>&1
   [ "$?" = "1" ] && echo "✓ missing manifest is exit 1" || echo "✗ missing manifest should be exit 1"
   [ "$(get_epic_manifest_field INIT-1 branch)" = "epic/init-1" ] && echo "✓ epic field read" || echo "✗ epic field read"
+
+  [ "$(get_ticket_manifest_field TEST-1 flags)" = '["needs-info"]' ] && echo "✓ flags field read" || echo "✗ flags field read"
+  [ "$(get_ticket_manifest_field TEST-1 rev)" = "3" ] && echo "✓ rev field read" || echo "✗ rev field read"
+  [ "$(get_ticket_manifest_field TEST-1 pending_event)" = '{"event":"appraise-complete","data":{}}' ] && echo "✓ pending_event field read" || echo "✗ pending_event field read"
 
   echo 'not json' >"$tmp/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
   get_ticket_manifest_field TEST-1 type >/dev/null 2>&1

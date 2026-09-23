@@ -367,11 +367,11 @@ def missing_phase_result(phase, log_lines):
 
 # ── Exit-code routing (task 4.15) ───────────────────────────────────────────
 
-# `flow.sh` exits 7 on STATE_ASSERTION_FAILED — a Linear mutation whose
-# post-trigger assertion did not hold. That is a state-integrity failure, not
-# a phase failure, and re-running the phase on top of it would compound the
-# divergence.
-FLOW_STATE_ASSERTION_EXIT = 7
+# `flow.sh` no longer exits 7 (STATE_ASSERTION_FAILED) — tracker-flow-
+# projection-cutover removed the post-trigger tracker assertion entirely,
+# since flow.sh performs no tracker I/O to assert against. Exit code 7 is
+# retired; a consumer here that still branched on it would route on a
+# condition flow.sh can never produce again.
 
 EXIT_ROUTE_CONTINUE = 'continue'
 EXIT_ROUTE_RETRY = 'retry'
@@ -386,8 +386,6 @@ def route_exit_code(exit_code, outcome, loop_bearing=False):
     so this never promotes a clean exit into success on its own. It only
     decides what happens once `classify_phase` has spoken.
     """
-    if exit_code == FLOW_STATE_ASSERTION_EXIT:
-        return EXIT_ROUTE_GATE_STOP, 'STATE_ASSERTION_FAILED'
     if outcome.result == 'done':
         return EXIT_ROUTE_CONTINUE, ''
     if loop_bearing:

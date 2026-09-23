@@ -782,7 +782,14 @@ test_flow_failures_zero_failures_returns_ok() {
   [ "$r" -eq 0 ]
 }
 
-test_flow_failures_one_failure_returns_warn() {
+# tracker-flow-projection-cutover task 8.8: retry|flow-sh|fail was written
+# only by flow.sh's old non-JSON-response handler, deleted along with every
+# other tracker-I/O code path flow.sh had. Nothing writes this heartbeat
+# line any more — detect_flow_failures is now an always-0 stub, kept in
+# place (not deleted) so fleet_detect_all and the detector-engine table
+# need no renumbering. These two tests now pin that a line matching the
+# retired pattern, however many times it appears, reports 0.
+test_flow_failures_one_retired_pattern_line_returns_ok() {
   local ws
   ws=$(_setup_workspace)
   _hblog "$ws" "CRE-47" "retry" "flow-sh" "fail" "trigger dispatch failed"
@@ -790,10 +797,10 @@ test_flow_failures_one_failure_returns_warn() {
   local r
   r=$(detect_flow_failures "CRE-47" "$ws")
   rm -rf "$ws"
-  [ "$r" -eq 1 ]
+  [ "$r" -eq 0 ]
 }
 
-test_flow_failures_two_failures_returns_kill() {
+test_flow_failures_two_retired_pattern_lines_returns_ok() {
   local ws
   ws=$(_setup_workspace)
   _hblog "$ws" "CRE-47" "retry" "flow-sh" "fail" "attempt 1"
@@ -802,7 +809,7 @@ test_flow_failures_two_failures_returns_kill() {
   local r
   r=$(detect_flow_failures "CRE-47" "$ws")
   rm -rf "$ws"
-  [ "$r" -eq 2 ]
+  [ "$r" -eq 0 ]
 }
 
 # ── Time-window filter ──────────────────────────────────────────────────────────
@@ -1728,8 +1735,8 @@ for fn in \
   test_human_hold_aggregator_output_valid_json \
   test_flow_failures_no_hb_file_returns_ok \
   test_flow_failures_zero_failures_returns_ok \
-  test_flow_failures_one_failure_returns_warn \
-  test_flow_failures_two_failures_returns_kill \
+  test_flow_failures_one_retired_pattern_line_returns_ok \
+  test_flow_failures_two_retired_pattern_lines_returns_ok \
   test_max_log_age_filter_excludes_old_logs \
   test_max_log_age_zero_excludes_all_logs \
   test_detect_all_caps_severity_when_auto_restart_off \

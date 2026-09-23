@@ -247,9 +247,8 @@ _flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
 bash "$_flow_sh" "{TICKET-ID}" "{trigger}" 2>&1
 _rc=$?
 if [ $_rc -ne 0 ]; then
-  _error_type=$( [ $_rc -eq 7 ] && echo "state_assertion" || echo "flow_error" )
   hb_retry "flow-sh" "fail" "flow.sh {trigger} failed (exit ${_rc})" \
-    "{\"trigger\":\"{trigger}\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\",\"error_type\":\"${_error_type}\"}"
+    "{\"trigger\":\"{trigger}\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
 fi
 ```
 

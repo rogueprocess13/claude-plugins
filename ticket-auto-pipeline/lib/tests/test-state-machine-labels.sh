@@ -122,14 +122,13 @@ test_state_execution_label() {
   [ "$pattern" = "state:execution" ]
 }
 
-# ── Test: state:execution Epic-only precondition ────────────────────────────
-
-test_state_execution_precondition() {
-  local precond
-  precond=$(jq -r '.planner_labels."state:execution".precondition' "$SM")
-  # The literal must not name an issue-type field this workspace does not define.
-  [ "$precond" = "must_be_epic" ]
-}
+# state:execution's `precondition` field was removed from planner_labels by
+# tracker-flow-projection-cutover — it never had a trigger to attach to
+# (state:execution is applied directly by the planner, never through
+# flow.sh), so flow.sh's read of it was dead code. must_be_epic enforcement
+# for this label is now exercised directly via check_precondition below
+# (test_precondition_epic_passes and friends), with the precondition value
+# passed as a literal rather than read from workflow.json.
 
 # ── Test: well_known_labels unchanged ───────────────────────────────────────
 
@@ -166,8 +165,13 @@ test_re_claim_removes_pre_approved() {
 # ── Precondition evaluation (exercises the executor's real code path) ───────
 
 test_precondition_epic_passes() {
-  local precondition rc=0
-  precondition=$(jq -r '.planner_labels."state:execution".precondition // empty' "$SM")
+  # must_be_epic is a literal here, not read from workflow.json's
+  # planner_labels — tracker-flow-projection-cutover removed that field
+  # (state:execution is applied directly by the planner, never through a
+  # flow.sh trigger, so no trigger ever needed it there). These tests
+  # exercise check_precondition/epic-precondition.sh's generic behavior,
+  # not workflow.json structure.
+  local precondition="must_be_epic" rc=0
   check_precondition "$precondition" "state:execution" "$EPIC_BY_LABEL_JSON" || rc=$?
   [ "$rc" -eq 0 ] || {
     echo "  epic carrying the marker label was rejected (rc=$rc)" >&2
@@ -177,8 +181,7 @@ test_precondition_epic_passes() {
 }
 
 test_precondition_epic_by_directive_passes() {
-  local precondition rc=0
-  precondition=$(jq -r '.planner_labels."state:execution".precondition // empty' "$SM")
+  local precondition="must_be_epic" rc=0
   check_precondition "$precondition" "state:execution" "$EPIC_BY_DIRECTIVE_JSON" || rc=$?
   [ "$rc" -eq 0 ] || {
     echo "  epic identified by a valid Branch Directive was rejected (rc=$rc)" >&2
@@ -188,8 +191,7 @@ test_precondition_epic_by_directive_passes() {
 }
 
 test_precondition_bug_rejected() {
-  local precondition rc=0
-  precondition=$(jq -r '.planner_labels."state:execution".precondition // empty' "$SM")
+  local precondition="must_be_epic" rc=0
   check_precondition "$precondition" "state:execution" "$CHILD_BUG_JSON" 2>/dev/null || rc=$?
   [ "$rc" -eq 8 ] || {
     echo "  expected rejection (8) for a non-epic bug, got rc=$rc" >&2
@@ -199,8 +201,7 @@ test_precondition_bug_rejected() {
 }
 
 test_precondition_task_rejected() {
-  local precondition rc=0
-  precondition=$(jq -r '.planner_labels."state:execution".precondition // empty' "$SM")
+  local precondition="must_be_epic" rc=0
   check_precondition "$precondition" "state:execution" "$CHILD_TASK_JSON" 2>/dev/null || rc=$?
   [ "$rc" -eq 8 ] || {
     echo "  expected rejection (8) for a non-epic task, got rc=$rc" >&2
@@ -347,7 +348,6 @@ _run "pre-approved confidence threshold 0.85" test_pre_approved_confidence
 _run "blocked-by:* wildcard defined" test_blocked_by_wildcard
 _run "blocked-by auto_remove_when set" test_blocked_by_auto_remove
 _run "state:execution label defined" test_state_execution_label
-_run "state:execution Epic-only precondition" test_state_execution_precondition
 _run "well_known_labels unchanged" test_well_known_labels_unchanged
 _run "existing triggers intact" test_triggers_intact
 _run "human-reject trigger removes pre-approved" test_human_reject_removes_pre_approved

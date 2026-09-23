@@ -371,6 +371,15 @@ When the pipeline halts with a gate-stop, check the pipeline log for the specifi
 
 For detailed failure analysis, run `/ticket-retro <id>` — it reads the pipeline log and heartbeat log to classify the failure and suggest fixes.
 
+### Operator notifications (not gate-stops)
+
+These are not `META|gate-stop|fail|<CODE>` entries — they never halt the pipeline — but they are
+signals an operator should act on:
+
+| Signal | What it means | Fix |
+|--------|----------------|-----|
+| `BOARD_PROJECTION_STALLED` (`META\|board-dead-letter` on the ticket's pipeline log, plus a Slack notification) | A board projection (column/label move on Linear) failed `FLEET_BOARD_MAX_ATTEMPTS` times in a row and was dead-lettered — the pipeline's own state advanced correctly, but this one event never reached the board and nothing will retry it (tracker-flow-projection-cutover). | Check the driver's stderr for the failure reason (usually an unrecognized state/label name in `board_drivers.linear.events`). Fix the mapping or the team's Linear config, then manually run `skills/ticket-flow/outbox-drain.sh <TID>` to catch the board up. |
+
 ### Resuming an interrupted run
 
 If a pipeline run is interrupted (session close, crash, timeout):

@@ -90,21 +90,35 @@ _events_lock_file() {
   echo "$(_events_outbox_dir)/.${1}-outbox.lock"
 }
 
-# emit_event <TID> <EVENT> <JSON_DATA>
+# emit_event [--idem KEY] <TID> <EVENT> <JSON_DATA>
 #
 # JSON_DATA defaults to "{}". Must be a valid, flat-or-nested JSON value (an
 # object in every declared vocabulary entry so far, but emit_event itself
 # does not require object-shape — the vocabulary check below is what actually
 # constrains callers).
 #
+# --idem KEY: an optional idempotency key (tracker-flow-projection-cutover).
+# When supplied, a record already carrying this key in the ticket's outbox
+# suppresses the append (exit 0, no write, sequence counter unchanged) —
+# the check and the append happen under the same lock acquisition so two
+# concurrent callers with the same key cannot both append. Parsed before the
+# positional arguments so the pre-existing three-argument call shape is
+# unchanged for every caller that does not pass it.
+#
 # Exit codes:
-#   0  written
+#   0  written (or suppressed as a duplicate of an existing idem key)
 #   2  usage error (missing args, invalid JSON, workflow.json unreadable)
 #   3  undeclared event name
 #   9  fence guard — missing generation token on a fenced ticket
 #   10 fence guard — superseded generation
 #   1  lock/write failure
 emit_event() {
+  local _idem=""
+  while [ "${1:-}" = "--idem" ]; do
+    _idem="$2"
+    shift 2
+  done
+
   local tid="$1" event="$2" data="${3:-}"
   # Not "${3:-{}}" — bash's default-value parsing does not brace-match
   # arbitrary content, so a literal "{}" inside the ${VAR:-word} form leaks a
@@ -181,6 +195,14 @@ emit_event() {
     return 1
   fi
 
+  # ── Idempotency dedup (must run under the same lock as the append) ─────
+  if [ -n "$_idem" ] && [ -f "$_outbox_file" ] &&
+    jq -e --arg idem "$_idem" 'select(.idem == $idem) | true' "$_outbox_file" \
+      >/dev/null 2>&1; then
+    exec 7>&-
+    return 0
+  fi
+
   local _last_seq _next_seq
   _last_seq=$(tail -n 1 "$_outbox_file" 2>/dev/null | jq -r '.seq // 0' 2>/dev/null) || _last_seq=0
   [[ "$_last_seq" =~ ^[0-9]+$ ]] || _last_seq=0
@@ -195,8 +217,10 @@ emit_event() {
     --arg event "$event" \
     --argjson data "$data" \
     --arg from_hint "${EMIT_EVENT_FROM_HINT:-}" \
+    --arg idem "$_idem" \
     '{seq: $seq, tid: $tid, ts: $ts, gen: $gen, event: $event, data: $data,
-      from_hint: (if $from_hint == "" then null else $from_hint end)}' 2>/dev/null) || {
+      from_hint: (if $from_hint == "" then null else $from_hint end),
+      idem: (if $idem == "" then null else $idem end)}' 2>/dev/null) || {
     echo "emit_event: failed to build JSON record for ${tid}/${event}" >&2
     exec 7>&-
     return 1

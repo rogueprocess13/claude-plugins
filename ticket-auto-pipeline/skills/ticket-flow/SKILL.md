@@ -19,9 +19,7 @@ Where `--data` supplies trigger-specific values (e.g. `complexity=simple`, `outc
 
 ## Execution
 
-This skill is a thin wrapper around `flow.sh`. All state machine logic, label computation, and Linear API calls are handled deterministically by the script.
-
-`flow.sh` sources `lib/linear-api.sh` for all GraphQL operations. When `$LINEAR_API_KEY` is set, operations use direct GraphQL calls. When unset, `flow.sh` will fail with a clear error — set `$LINEAR_API_KEY` before invoking this skill.
+This skill is a thin wrapper around `flow.sh`. All state machine logic and the local manifest write are handled deterministically by the script — `flow.sh` performs no tracker I/O (tracker-flow-projection-cutover). It reads and writes only `workflow.json` and the ticket's local manifest, then emits one outbox event and drains it. `$LINEAR_API_KEY` is not required to invoke this skill; it is required only for the board projection to actually reach Linear (the driver `flow.sh` dispatches to at exit, via `outbox-drain.sh`), and its absence never fails or delays a transition.
 
 ```bash
 _flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
@@ -50,40 +48,53 @@ integration is merged and deployed → `Done` on acceptance.
 
 ### Labels
 
+Four labels — the complete set the pipeline writes to the board, per `workflow.json`'s
+`board_drivers.linear.projected_labels` (tracker-flow-projection-cutover). They are outputs:
+written by the board driver from the ticket's manifest `flags`, read by nothing. Every other
+label a ticket carries (`bug`, `feature`, a still-planner-written `planned`/`INIT-*`, or anything
+hand-applied) is preserved untouched by the driver — it only ever adds/removes these four.
+
 | Label | Meaning |
 |-------|---------|
-| `approved` | Human approved the appraisal — gates implementation |
+| `needs-info` | Blocked waiting for clarification |
+| `needs-adr` | Parked or stopped on an ADR gate verdict |
 | `rejected` | PR review found gaps OR UAT verification failed — ticket needs rework |
 | `reviewed` | PR review passed. Under `per-ticket` UAT policy this means "awaiting QA" and is cleared by `uat-pass`. **Under `UAT Policy: epic` it does not mean that** — the child goes straight to `Done` and retains the label, because there is no per-ticket QA step. Do not key an "in flight" heuristic on it. |
-| `simple` | Predicted simple (set by appraise) |
-| `complex` | Predicted complex (set by appraise) |
-| `Smooth` | Implementation went smoothly |
-| `Rough` | Implementation had friction |
-| `Hard` | Implementation was difficult |
-| `bug` | Defect fix |
-| `feature` | New capability |
-| `needs-info` | Blocked waiting for clarification |
-| `repro-failed` | Bug could not be reproduced |
+
+Approval (`approved`), predicted complexity (`Simple`/`Complex`, removed — vestigial per
+`docs/label-audit.md`), and implementation outcome (`Smooth`/`Rough`/`Hard`) are **not** tracker
+labels: approval lives in the local manifest as the authoritative decision fact
+(`/ticket-approve`/`/ticket-reject`, tracker-approval-by-script), and outcome lives in the
+manifest's `outcome_label` field (`outcome-label-check.sh`). Neither is ever written to Linear.
+
+**The board is a projection, not the source of truth.** It lags at most one pusher interval
+(`FLEET_BOARD_PUSHER_INTERVAL`, default 300s) when only `fleetd` drains a ticket's outbox; it
+updates within the same command when the router does (`flow.sh` drains at exit, unconditionally).
+Hand-editing one of the four projected labels is reconciled — reverted, if the pipeline's own
+state disagrees — on the next event that projects to that label, not immediately; every other
+label a person applies by hand is left alone indefinitely.
 
 ### Transitions
 
-| Trigger | State | Labels Added | Labels Removed | Notes |
+| Trigger | State | Flags Added | Flags Removed | Notes |
 |---------|-------|-------------|----------------|-------|
-| `appraise-start` | `Todo` | `{simple\|complex}` | — | Also sets `assignee: "me"` |
+| `appraise-start` | `Todo` | — | — | Board projection also sets `assignee: "me"` |
 | `appraise-complete` | `Approve` | — | — | |
-| `human-approve` | `Ready` | `approved` | `rejected` | |
+| `human-approve` | `Ready` | — | `rejected` | Manifest `approved`/`approval_provenance` set (tracker-approval-by-script) |
 | `human-reject` | `Todo` | — | — | |
-| `implement-outcome` | — | `{Smooth\|Rough\|Hard}` | — | No state change |
-| `implement-complete` | `Review` | — | `approved` | |
+| `implement-outcome` | — | — | — | No state or flag change; outcome recorded in the manifest, not the board |
+| `implement-complete` | `Review` | — | — | Manifest `approved` cleared |
 | `pr-review-pass-done` | `Done` | `reviewed` | `rejected` | Chosen by `uat_decide_trigger` — fires under `UAT Policy: epic`, or under `per-ticket` with no UAT target |
 | `pr-review-pass-uat` | `UAT` | `reviewed` | `rejected` | Chosen by `uat_decide_trigger` — fires under `per-ticket` policy with a UAT target |
 | `pr-review-fail` | — | `rejected` | — | No state change |
-| `pr-iterate` | `Ready` | `approved` | `reviewed`, `rejected` | |
+| `pr-iterate` | `Ready` | — | `reviewed`, `rejected` | |
 | `uat-pass` | `Done` | — | `reviewed` | |
 | `uat-fail` | `Ready` | `rejected` | `reviewed` | |
 | `needs-info` | — | `needs-info` | — | No state change |
 | `needs-info-resolved` | — | — | `needs-info` | No state change |
-| `re-claim` | — | — | `approved` | No state change; restarts gate hold cycle |
+| `needs-adr` | — | `needs-adr` | — | No state change |
+| `needs-adr-resolved` | — | — | `needs-adr` | No state change |
+| `re-claim` | — | — | — | No state change; manifest `approved` cleared; restarts gate hold cycle |
 
 **Which of the two pass triggers fires is not decided here.** It is computed by
 `uat_decide_trigger` in `lib/branch-resolve.sh`, which evaluates the epic's UAT policy *before*

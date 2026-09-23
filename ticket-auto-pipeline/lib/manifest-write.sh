@@ -327,6 +327,126 @@ set_ticket_approval() {
   _manifest_atomic_write "$manifest_path" "$content"
 }
 
+# set_ticket_transition <TID> <STAGE> <FLAGS_JSON> <PENDING_JSON>
+# The transition executor's one write (tracker-flow-projection-cutover):
+# `stage`, `flags` (sorted), `rev` (current + 1) and `pending_event` land in
+# a single atomic write so no reader ever observes a stage that does not
+# match its flags. FLAGS_JSON must be a JSON array of strings. PENDING_JSON
+# is either a JSON object (the event about to be emitted) or an empty string
+# to clear `pending_event`. No-op (exit 1) if no manifest exists yet —
+# callers call ensure_ticket_manifest first.
+set_ticket_transition() {
+  local tid="$1" stage="$2" flags="$3" pending="${4:-}"
+  # An empty stage means "leave stage as it currently is" — a trigger
+  # declaring to:null on a ticket that has never had a stage set at all
+  # (e.g. needs-info hand-applied to an ad-hoc ticket before appraise-start
+  # ever ran) must not be forced to invent one. rev/flags/pending_event
+  # still advance; only the stage field is conditionally skipped.
+  if ! echo "$flags" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "manifest-write: flags must be a JSON array, got '$flags'" >&2
+    return 3
+  fi
+  if [ -n "$pending" ] && ! echo "$pending" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    echo "manifest-write: pending_event must be a JSON object, got '$pending'" >&2
+    return 3
+  fi
+
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  local current_rev next_rev
+  current_rev=$(get_ticket_manifest_field "$tid" rev 2>/dev/null)
+  [[ "$current_rev" =~ ^[0-9]+$ ]] || current_rev=0
+  next_rev=$((current_rev + 1))
+
+  local stage_filter='.'
+  [ -n "$stage" ] && stage_filter='.stage = $s'
+
+  local content
+  if [ -n "$pending" ]; then
+    content=$(jq -c --arg s "$stage" --argjson flags "$(echo "$flags" | jq -c 'sort')" \
+      --argjson rev "$next_rev" --argjson pending "$pending" \
+      "$stage_filter"' | .flags = $flags | .rev = $rev | .pending_event = $pending' \
+      "$manifest_path") || return 1
+  else
+    content=$(jq -c --arg s "$stage" --argjson flags "$(echo "$flags" | jq -c 'sort')" \
+      --argjson rev "$next_rev" \
+      "$stage_filter"' | .flags = $flags | .rev = $rev | del(.pending_event)' \
+      "$manifest_path") || return 1
+  fi
+  _manifest_atomic_write "$manifest_path" "$content"
+}
+
+# clear_pending_event <TID>
+# Single atomic write removing `pending_event` once its emission has
+# returned (tracker-flow-projection-cutover). No-op (exit 1) if no manifest
+# exists yet.
+clear_pending_event() {
+  local tid="$1"
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  local content
+  content=$(jq -c 'del(.pending_event)' "$manifest_path") || return 1
+  _manifest_atomic_write "$manifest_path" "$content"
+}
+
+# set_epic_transition <EPIC> <STAGE> <FLAGS_JSON> <PENDING_JSON>
+# Epic-manifest equivalent of set_ticket_transition.
+set_epic_transition() {
+  local epic="$1" stage="$2" flags="$3" pending="${4:-}"
+  # See set_ticket_transition's identical comment — an empty stage means
+  # "leave stage as it currently is".
+  if ! echo "$flags" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "manifest-write: flags must be a JSON array, got '$flags'" >&2
+    return 3
+  fi
+  if [ -n "$pending" ] && ! echo "$pending" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    echo "manifest-write: pending_event must be a JSON object, got '$pending'" >&2
+    return 3
+  fi
+
+  local manifest_path
+  manifest_path=$(get_epic_manifest_path "$epic" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  local current_rev next_rev
+  current_rev=$(get_epic_manifest_field "$epic" rev 2>/dev/null)
+  [[ "$current_rev" =~ ^[0-9]+$ ]] || current_rev=0
+  next_rev=$((current_rev + 1))
+
+  local stage_filter='.'
+  [ -n "$stage" ] && stage_filter='.stage = $s'
+
+  local content
+  if [ -n "$pending" ]; then
+    content=$(jq -c --arg s "$stage" --argjson flags "$(echo "$flags" | jq -c 'sort')" \
+      --argjson rev "$next_rev" --argjson pending "$pending" \
+      "$stage_filter"' | .flags = $flags | .rev = $rev | .pending_event = $pending' \
+      "$manifest_path") || return 1
+  else
+    content=$(jq -c --arg s "$stage" --argjson flags "$(echo "$flags" | jq -c 'sort')" \
+      --argjson rev "$next_rev" \
+      "$stage_filter"' | .flags = $flags | .rev = $rev | del(.pending_event)' \
+      "$manifest_path") || return 1
+  fi
+  _manifest_atomic_write "$manifest_path" "$content"
+}
+
+# clear_epic_pending_event <EPIC>
+clear_epic_pending_event() {
+  local epic="$1"
+  local manifest_path
+  manifest_path=$(get_epic_manifest_path "$epic" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  local content
+  content=$(jq -c 'del(.pending_event)' "$manifest_path") || return 1
+  _manifest_atomic_write "$manifest_path" "$content"
+}
+
 # ── Self-test mode ────────────────────────────────────────────────────────
 
 if [ "${1:-}" = "--self-test" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
