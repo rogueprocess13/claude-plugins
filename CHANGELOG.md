@@ -17,6 +17,49 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.57.0 (2026-09-27) — also fleet-controller 0.38.0, ticket-planner 0.11.0, knowledge-curator 0.2.1
+
+**BREAKING, one-way door:** Tracker planner and fallback cutover (`tracker-planner-and-fallback-cutover`,
+Track B — the authority flip, Change 3 of 3, closing the programme `tracker-flow-projection-cutover`
+started). ticket-planner creates every epic and ticket with **no Linear labels at all** — EpicGen and
+TicketGen both pass an empty label array to `planner_linear_create_issue`. The 10 labels the planner
+used to write (`planned`, `INIT-*`, `pre-approved`, `blocked-by:*`, `state:execution`, and the 5 type
+labels `bug`/`feature`/`improvement`/`security`/`chore`) are retired outright, along with the `epic`
+marker label. Every fact they used to carry now lives in the local ticket/epic manifest instead
+(`REPOS_ROOT/.ticket-auto/initiatives/{INIT}/tickets/{TID}/planner/manifest.json` and the sibling
+`epic/manifest.json`), written once at creation time and read by every call site this and the two
+prior changes migrated: `gate-check.sh`, `appraise-fast-path.sh`, `planned-ticket-check.sh`,
+`planned-ticket-body-check.sh`, `planner-artifacts.sh`, `run-identity.sh`,
+`ticket-setup/setup.sh`, `epic-precondition.sh`, `epic-branch.sh`, `branch-resolve.sh`,
+`fleet-detect.sh`, `fleet-dispatch.sh`, `fleet-feedback.sh`, and `fleetd/phase_dispatch.py`. Every
+live-fallback branch these files used to fall back to on a missing manifest is deleted, not merely
+bypassed — a ticket or epic with no manifest now reports that condition explicitly rather than
+falling back to a live Linear read. The `TICKET_LOCAL_MANIFEST_DISABLE` kill switch is removed for
+the same reason: with no fallback left anywhere, it could only make every manifest read fail, never
+restore the retired behavior. `planner-doctor.sh`'s preflight check no longer verifies the 4 former
+contract labels exist on the team — it checks the 4 labels the board driver still projects instead
+(`needs-info`/`needs-adr`/`rejected`/`reviewed`).
+
+**The backfill step is mandatory, and its failure mode is silent, not loud.** Any ticket or epic
+created *before* this release has no local manifest yet. `manifest-backfill.sh` — introduced by
+`tracker-approval-by-script` and extended by this change to also seed `type`/`initiative`/
+`blocked_by`/`flags` on tickets and the `dispatch` stamp on epics — must be run against every host's
+`REPOS_ROOT` before upgrading a fleet that has any in-flight or dispatch-pending work.
+**An epic with no `dispatch` stamp is never enumerated by fleet-detect.sh or fleet-dispatch.sh after
+this release — it presents as an idle fleet, not an error.** There is no exception or warning printed
+anywhere in the pipeline for this case; the only way to know is to run the backfill's `--dry-run`
+first and read its per-field coverage counts.
+
+**Verification status.** Task 1.7/1.7a of this change — a side-by-side parity comparison between the
+manifest-derived and live-label-derived population/state, meant to run once before this cutover
+while the planner was still writing labels — was explicitly waived rather than performed (no live
+fleet was available when this change was authored). That evidence can never be produced again: no
+epic will exist, ever, with both live labels and a manifest to diff against once this release ships.
+Validation rests entirely on a live end-to-end functional run on the tickets host (planner creates a
+zero-label epic and tickets, fleet dispatches from manifests, `blocked_by` resolves against local
+terminal state, the epic-branch-ready and stalled-approved-children detectors both fire) — see
+`ticket-auto-pipeline/docs/label-audit.md`'s final disposition entry for the full record.
+
 ## 0.55.0 (2026-09-23) — also fleet-controller 0.36.0
 
 **BREAKING, one-way door:** Tracker flow projection cutover (`tracker-flow-projection-cutover`,

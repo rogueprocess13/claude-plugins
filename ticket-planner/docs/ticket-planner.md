@@ -30,11 +30,11 @@ The planner initializes a state directory under `${REPOS_ROOT}/.ticket-auto/init
 
 ### What auto-dispatch does
 
-When the TicketGen phase completes successfully, the initiative epic receives the `state:execution` label. The fleet-controller detector `_fleet_scan_initiative_dispatch` finds it during its next poll cycle and — when `FLEET_AUTO_DISPATCH=true` — calls `fleet_dispatch_initiative`, which:
+When the TicketGen phase completes successfully, the initiative epic manifest's `dispatch` field is stamped `true` (tracker-planner-and-fallback-cutover — a local, one-way manifest flag, not a `state:execution` label; nothing in this flow writes a Linear label any more). The fleet-controller detector `_fleet_scan_initiative_dispatch` finds it during its next poll cycle by scanning epic manifests directly and — when `FLEET_AUTO_DISPATCH=true` — calls `fleet_dispatch_initiative`, which:
 
-1. Validates the epic has `state:execution`
-2. Enumerates child tickets with `planned` label in `Backlog` state
-3. Resolves `blocked-by:{ID}` dependencies (skips blocked tickets)
+1. Enumerates epics whose manifest `dispatch` field is `true`
+2. Enumerates each epic's child tickets from its manifest `children` array, filtering to those not yet dispatched
+3. Resolves `blocked_by` dependencies from each ticket's own manifest field, checked against each blocker's local pipeline-log terminal state
 4. Writes spawn queue entries under `flock` serialization
 5. Respects `FLEET_MAX_CONCURRENT` and `FLEET_DRY_RUN`
 
@@ -47,7 +47,7 @@ The spawn queue is consumed by `fleetd` (the Python supervisor daemon), which fo
 - Dispatch decides *which* tickets enter the pipeline. Automating this removes a mechanical step a human adds no judgement to.
 - Approval decides *whether* a ticket's plan is acted on. Automating this would remove the only place a human sees the plan before code is written, on a system that spends money per ticket.
 
-The `planned-entry-gate` capability (confidence ≥ 0.85 + `pre-approved` → bypass human gate) is specified but deliberately unimplemented. See [Planned-Entry Gate Dormancy](#planned-entry-gate-dormancy) below.
+The `planned-entry-gate` capability (confidence ≥ 0.85 + the Planner Context block's `Pre-approved` field → bypass human gate) is specified but deliberately unimplemented. See [Planned-Entry Gate Dormancy](#planned-entry-gate-dormancy) below.
 
 ### Resuming after interruption
 
@@ -85,8 +85,8 @@ Crosscheck → EpicGen → TicketGen → Completed
 | 5 | **Review** | Critiques the proposal for gaps, risks, and feasibility | Review findings | — |
 | 6 | **Consensus** | Resolves review findings into a settled, actionable plan | Finalized proposal | — |
 | 7 | **Crosscheck** | *(not an agent — bash)* Runs the citation ([#172](https://github.com/willard-pro/claude-plugins/issues/172)) and cross-ticket propagation ([#173](https://github.com/willard-pro/claude-plugins/issues/173)) linters against the settled artifacts and the live repo | `META|crosscheck` findings in state.log | Blocking finding halts the dispatch loop before the create gate is even checked ([#178](https://github.com/willard-pro/claude-plugins/issues/178)) |
-| 8 | **EpicGen** | Creates the initiative epic in Linear | Linear epic with `INIT-{id}` and `epic` labels | Idempotency: records intent before creation, checks existence by initiative ID |
-| 9 | **TicketGen** | Creates planned child tickets in Backlog with full labels, Planner Context blocks, and ticket-auto-pipeline's required body sections (humanized before creation — [#285](https://github.com/willard-pro/claude-plugins/issues/285)), validates dependency DAG, sets `state:execution` on epic | Linear tickets, `state:execution` label on epic | `planner-deps-check.sh` (acyclicity), `planner-context-gen.sh` (block format), `planned-ticket-check.sh` (Planner Context block validation), `planned-ticket-body-check.sh` (required `##` section validation before creation — [#285](https://github.com/willard-pro/claude-plugins/issues/285)) |
+| 8 | **EpicGen** | Creates the initiative epic in Linear with no labels; writes the epic manifest | Linear epic, epic manifest (`branch`/`uat_policy`/`merge_policy`/`children`) | Idempotency: records intent before creation, checks existence by initiative ID |
+| 9 | **TicketGen** | Creates planned child tickets in Backlog with no labels, Planner Context blocks, and ticket-auto-pipeline's required body sections (humanized before creation — [#285](https://github.com/willard-pro/claude-plugins/issues/285)), validates dependency DAG, writes each ticket manifest, stamps the epic manifest's `dispatch` flag | Linear tickets, ticket manifests, epic manifest `dispatch=true` | `planner-deps-check.sh` (acyclicity), `planner-context-gen.sh` (block format), `planned-ticket-check.sh` (Planner Context block validation), `planned-ticket-body-check.sh` (required `##` section validation before creation — [#285](https://github.com/willard-pro/claude-plugins/issues/285)) |
 | 10 | **Completed** | Terminal phase — writes completion summary, no further transitions permitted. Dispatched automatically in the same invocation as TicketGen, never left for a separate `resume` ([#226](https://github.com/willard-pro/claude-plugins/issues/226)) | Completed state log entry, `COMPLETED.md` | Phase transition validator rejects any transition from Completed; `planner_completion_verify` refuses to report the run finished without both outputs |
 
 **Phase merge notes:** The original 12-phase design separated Proposal, OpenSpec, StoryGen, and Execution as standalone phases. These were merged into Specify (Proposal + OpenSpec) and TicketGen (StoryGen + Execution labelling) to reduce phase count from 12 to 9. The merged phases handle all the same work — no capability was removed. Crosscheck (#178) was added later as phase 7, bringing the count to 10 — it is not a merge artifact, it is new deterministic validation the original design didn't have.
@@ -190,16 +190,25 @@ required section is not created; the failure surfaces as a planner error at
 generation time, not as a `PLANNED_BODY_INCOMPLETE` gate-stop several phases
 later in ticket-auto ([#285](https://github.com/willard-pro/claude-plugins/issues/285)).
 
-### 3. Labels
+### 3. Local manifest facts (tracker-planner-and-fallback-cutover)
 
-| Label | Pattern | Set by | Lifecycle |
+Every issue the planner creates carries **no labels at all** — Epic Gen and Ticket Gen both pass
+an empty label array to `planner_linear_create_issue`. The facts these labels used to carry live
+in the local ticket/epic manifest instead
+(`${REPOS_ROOT}/.ticket-auto/initiatives/{INIT}/tickets/{TID}/planner/manifest.json` and the
+sibling `epic/manifest.json`), written once at creation time:
+
+| Former label | Manifest field | Set by | Lifecycle |
 |-------|---------|--------|-----------|
-| `planned` | exact | Ticket Gen | Once set, never removed. Provenance marker. |
-| `INIT-*` | wildcard | Ticket Gen | Links ticket to initiative. Never removed. |
-| `pre-approved` | exact | Ticket Gen (when confidence ≥ 0.85) | Accelerates fast-path. Removed by `human-reject`. |
-| `blocked-by:*` | wildcard | Ticket Gen | Dependency enforcement. Target is a sibling ticket in this initiative, or an existing Linear ID for a cross-initiative prerequisite. Auto-removed when blocker reaches Done. |
-| `state:execution` | exact | Epic Gen (on epic) | Marks initiative ready for dispatch. |
-| `Type` labels | exact | Ticket Gen | `bug`/`feature`/`improvement`/`security`/`chore`. Drives template selection. |
+| `planned` | ticket manifest existence | Ticket Gen | A manifest exists, or it doesn't. |
+| `INIT-*` | ticket manifest `initiative` | Ticket Gen | Never changes. |
+| `pre-approved` | Planner Context block `Pre-approved` field (not a manifest field) | Ticket Gen (when confidence ≥ 0.85) | Accelerates fast-path. Never a label to remove. |
+| `blocked-by:*` | ticket manifest `blocked_by` (array) | Ticket Gen | Target is a sibling ticket in this initiative, or an existing Linear ID for a cross-initiative prerequisite. Resolved against each blocker's own local pipeline-log terminal state. |
+| `state:execution` | epic manifest `dispatch` (bool) | Ticket Gen's post-creation gate, via `stamp_epic_dispatch` | One-way stamp once all children are created and verified. |
+| `Type` | ticket manifest `type` | Ticket Gen | `bug`/`feature`/`improvement`/`security`/`chore`. Drives template selection locally. |
+
+The only labels still projected onto a Linear ticket are the 4 human-signal ones the board driver
+writes (`needs-info`/`needs-adr`/`rejected`/`reviewed`) — never written by the planner.
 
 ### 4. Artifact Plane
 
@@ -269,7 +278,7 @@ A cyclic dependency set produces no tickets — the error is reported before any
 
 ## Auto-Dispatch
 
-When TicketGen completes successfully, the initiative epic gets `state:execution`. The fleet-controller detector `_fleet_scan_initiative_dispatch` finds it during its next poll cycle.
+When TicketGen completes successfully, the initiative epic manifest's `dispatch` field is stamped `true` (no Linear label write). The fleet-controller detector `_fleet_scan_initiative_dispatch` finds it during its next poll cycle by scanning epic manifests directly.
 
 **Gating:** `FLEET_AUTO_DISPATCH=true` must be set. When false (default), the detector reports undispatched initiatives at severity 1 (WARN) but does not actuate. This allows observe-only operation during rollout.
 
@@ -354,7 +363,7 @@ The router never reasons about content. Phases never mutate state directly (they
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Minimum confidence for `pre-approved` label |
+| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Minimum confidence for the Planner Context block's `Pre-approved` field |
 | `PLANNER_IDEA_MAX_LENGTH` | 2000 | Maximum idea length in chars (truncated with warning) |
 | `PLANNER_TSORT_TIMEOUT` | 30 | Seconds before timing out dependency graph sort |
 | `PLANNER_PHASE_TIMEOUT` | 600 | Seconds before timing out a hung phase agent |
@@ -467,7 +476,7 @@ so a later reader can tell where the initiative was filed without re-querying Li
 
 ## Planned-Entry Gate Dormancy
 
-The `planned-entry-gate` capability is specified in `ticket-planner-enrichment` but deliberately unimplemented. It would allow confidence ≥ 0.85 plus `pre-approved` to bypass the human approval gate.
+The `planned-entry-gate` capability is specified in `ticket-planner-enrichment` but deliberately unimplemented. It would allow confidence ≥ 0.85 plus the Planner Context block's `Pre-approved` field to bypass the human approval gate.
 
 **Why it stays dormant:**
 

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Claude Code plugin marketplace (`willard-pro-claude-plugins`). Ships five plugins:
 
 - **`ticket-planner`** — 10-phase autonomous planner turning business ideas into dependency-ordered planned tickets. Sits upstream of ticket-auto. Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → Epic Gen → Ticket Gen → Completed. Generates Branch Directives for shared epic branches.
-- **`ticket-auto-pipeline`** — fully autonomous Linear ticket pipeline that appraises, implements, verifies, and merges tickets with zero user input. Consumes planner output via the `planned` label + Planner Context block.
+- **`ticket-auto-pipeline`** — fully autonomous Linear ticket pipeline that appraises, implements, verifies, and merges tickets with zero user input. Consumes planner output via the local ticket manifest (`tracker-planner-and-fallback-cutover` — no Linear label involved any more) + Planner Context block.
 - **`fleet-controller`** — parent orchestrator above ticket-planner and ticket-auto. Dispatches planned tickets from initiative epics, monitors pipeline health via 19 detection engines, manages epic branch lifecycle (create, sync, GC), aggregates execution feedback back to the planner, and supervises an optional OpenTelemetry exporter. Bash orchestration plus a stdlib Python supervisor; zero Claude agents.
 - **`knowledge-curator`** — durable cross-project knowledge tracking. Captures ideas, decisions, lessons, and discoveries with automatic resurfacing.
 - **`grill-me`** — pre-work readiness gate. Assesses business ideas against profile-driven dimensions, asks ranked clarification questions interactively, and produces cryptographically sealed Validated Business Intent documents. Any agent can invoke it before acting. Sits upstream of ticket-planner as an optional pre-flight gate.
@@ -15,7 +15,7 @@ Claude Code plugin marketplace (`willard-pro-claude-plugins`). Ships five plugin
 ## Ecosystem architecture
 
 ```
-Business idea → [/grill-me] → sealed intent → [ticket-planner] → initiative epic + planned tickets (Planner Context + labels + Branch Directive)
+Business idea → [/grill-me] → sealed intent → [ticket-planner] → initiative epic + planned tickets (no Linear labels; Planner Context block + local ticket/epic manifests + Branch Directive)
                                                    ↓
                                              [fleet-controller] → detect initiatives → ensure epic branch → dispatch tickets → spawn queue
                                                    ↓

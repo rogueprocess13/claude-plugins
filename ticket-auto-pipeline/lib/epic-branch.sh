@@ -218,7 +218,7 @@ ensure_epic_branch() {
   # Gated on REPOS_ROOT being set at all — an unconfigured REPOS_ROOT (bare
   # git-only invocations, most of this file's own test suite) is a normal,
   # silent no-manifest condition here, not a failure worth warning about.
-  if [ -n "${REPOS_ROOT:-}" ] && [ "${TICKET_LOCAL_MANIFEST_DISABLE:-false}" != "true" ] &&
+  if [ -n "${REPOS_ROOT:-}" ] &&
     declare -f write_epic_manifest >/dev/null 2>&1; then
     local _norm_uat="${_DIRECTIVE_UAT_POLICY:-per-ticket}"
     local _cached_branch _cached_uat _cached_merge

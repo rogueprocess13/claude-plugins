@@ -292,8 +292,8 @@ _fleet_fence_file() {
 #          Callers use this to distinguish "the manifest era has nothing to
 #          say yet" (fall back to a live query) from "it said nothing for
 #          this epic" (exit 0, no output — trust it).
-# Exit 3 — REPOS_ROOT unset, TICKET_LOCAL_MANIFEST_DISABLE is set, or
-#          manifest-read.sh's get_epic_manifest_field could not be sourced.
+# Exit 3 — REPOS_ROOT unset, or manifest-read.sh's get_epic_manifest_field
+#          could not be sourced.
 fleet_local_epics() {
   if ! declare -f get_epic_manifest_field >/dev/null 2>&1; then
     local _fle_dir
@@ -305,8 +305,7 @@ fleet_local_epics() {
   fi
   declare -f get_epic_manifest_field >/dev/null 2>&1 || return 3
 
-  local _repos_root=""
-  [ "${TICKET_LOCAL_MANIFEST_DISABLE:-false}" = "true" ] || _repos_root="${REPOS_ROOT:-}"
+  local _repos_root="${REPOS_ROOT:-}"
   [ -n "$_repos_root" ] || return 3
   [ -d "$_repos_root/.ticket-auto/initiatives" ] || return 1
 

@@ -1257,113 +1257,31 @@ _fleet_initiative_dispatch_auto_dispatch() {
 _fleet_scan_initiative_dispatch() {
   local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
 
-  # tracker-planner-and-fallback-cutover (1.2): population comes from the
-  # shared fleet_local_epics helper (fleet-config.sh, D2) — no independent
-  # inline scan here anymore. Falls back to the pre-migration live query
-  # wholesale only when fleet_local_epics reports no local epic manifests
-  # exist at all (non-zero exit); a per-epic dispatch:false is a normal
-  # "nothing to report for this epic" outcome on the manifest path, not a
-  # fallback trigger.
+  # tracker-planner-and-fallback-cutover (1.2, 3.11): population comes from
+  # the shared fleet_local_epics helper (fleet-config.sh, D2) — no inline
+  # scan and no live Linear fallback. No local epic manifests at all reads
+  # as a genuinely idle fleet, not a reason to fall back to a live query.
   local _epic_ids
-  if _epic_ids=$(fleet_local_epics); then
-    local undispatched=0 initiative_ids=""
-    local epic_id
-
-    while IFS= read -r epic_id; do
-      [ -z "$epic_id" ] && continue
-
-      local children_json epic_undispatched=0 child_id
-      children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
-      [ -z "$children_json" ] && children_json='[]'
-
-      while IFS= read -r child_id; do
-        [ -z "$child_id" ] && continue
-        [ "$(get_ticket_manifest_field "$child_id" dispatch 2>/dev/null)" = "true" ] ||
-          epic_undispatched=$((epic_undispatched + 1))
-      done < <(echo "$children_json" | jq -r '.[]?' 2>/dev/null)
-
-      if [ "$epic_undispatched" -gt 0 ]; then
-        undispatched=$((undispatched + epic_undispatched))
-        local stop_note=""
-        if [ -f "$(_fleet_epic_stop_file "$workspace" "$epic_id")" ]; then
-          stop_note=" (stopped: stop-${epic_id}.json present)"
-        fi
-        initiative_ids="${initiative_ids} ${epic_id}(${epic_undispatched})${stop_note}"
-      fi
-    done <<<"$_epic_ids"
-
-    local findings
-    findings=$(echo "$initiative_ids" | sed 's/^ //')
-
-    if [ "$undispatched" -gt 0 ]; then
-      echo "{\"severity\":1,\"findings\":\"${undispatched} undispatched: ${findings}\"}"
-      _fleet_initiative_dispatch_auto_dispatch "$workspace" "$initiative_ids"
-    else
-      echo '{"severity":0,"findings":""}'
-    fi
-    return
-  fi
-
-  # ── Pre-migration fallback: no epic manifests found — live Linear query ──
-  if ! declare -f get_issue >/dev/null 2>&1; then
-    local _la_paths=("$HOME/.claude/skills/lib/linear-api.sh" "${_CONFIG_DIR}/../linear-api.sh")
-    for _lp in "${_la_paths[@]}"; do
-      [ -f "$_lp" ] && source "$_lp" && break
-    done
-  fi
-
-  if ! declare -f get_issue >/dev/null 2>&1; then
+  _epic_ids=$(fleet_local_epics) || {
     echo '{"severity":0,"findings":""}'
     return
-  fi
+  }
 
-  # Query Linear for epics with state:execution label, via the client
-  # (tracker-client-consolidation — get_epics_by_label, built on
-  # linear_graphql, inherits retry/backoff uniformly; no direct curl here
-  # anymore). NOTE: no epic Linear-state filter — the state:execution label
-  # is the gate. This matches fleet_dispatch_initiative's population
-  # exactly; a state filter here made epics invisible to detection while
-  # still dispatchable.
-  local epics_json
-  epics_json=$(get_epics_by_label "state:execution" 2>/dev/null)
+  local undispatched=0 initiative_ids=""
+  local epic_id
 
-  if [ -z "$epics_json" ]; then
-    echo '{"severity":0,"findings":""}'
-    return
-  fi
-
-  local undispatched=0
-  local initiative_ids=""
-
-  # Extract epics and check children. get_epics_by_label returns an
-  # unwrapped array directly — no .data.issues.nodes prefix
-  # (tracker-client-consolidation).
-  local epic_count
-  epic_count=$(echo "$epics_json" | jq -r 'length // 0' 2>/dev/null)
-  [ "${epic_count:-0}" -eq 0 ] && echo '{"severity":0,"findings":""}' && return
-
-  for i in $(seq 0 $((epic_count - 1))); do
-    local epic_id epic_identifier
-    epic_id=$(echo "$epics_json" | jq -r ".[$i].identifier // empty" 2>/dev/null)
+  while IFS= read -r epic_id; do
     [ -z "$epic_id" ] && continue
 
-    # Check child tickets
-    local child_count
-    child_count=$(echo "$epics_json" | jq -r ".[$i].children.nodes | length // 0" 2>/dev/null)
-    [ "${child_count:-0}" -eq 0 ] && continue
+    local children_json epic_undispatched=0 child_id
+    children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+    [ -z "$children_json" ] && children_json='[]'
 
-    local epic_undispatched=0
-    for j in $(seq 0 $((child_count - 1))); do
-      local child_state child_labels child_id
-      child_state=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].state.name // empty" 2>/dev/null)
-      child_labels=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].labels.nodes[].name // empty" 2>/dev/null)
-      child_id=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].identifier // empty" 2>/dev/null)
-
-      # Check for planned label + Backlog state
-      if [ "$child_state" = "Backlog" ] && echo "$child_labels" | grep -q "planned" 2>/dev/null; then
+    while IFS= read -r child_id; do
+      [ -z "$child_id" ] && continue
+      [ "$(get_ticket_manifest_field "$child_id" dispatch 2>/dev/null)" = "true" ] ||
         epic_undispatched=$((epic_undispatched + 1))
-      fi
-    done
+    done < <(echo "$children_json" | jq -r '.[]?' 2>/dev/null)
 
     if [ "$epic_undispatched" -gt 0 ]; then
       undispatched=$((undispatched + epic_undispatched))
@@ -1373,7 +1291,7 @@ _fleet_scan_initiative_dispatch() {
       fi
       initiative_ids="${initiative_ids} ${epic_id}(${epic_undispatched})${stop_note}"
     fi
-  done
+  done <<<"$_epic_ids"
 
   local findings
   findings=$(echo "$initiative_ids" | sed 's/^ //')
@@ -1487,192 +1405,73 @@ _fleet_scan_epic_branch_ready() {
     [ -f "$_dispatch_lib" ] && source "$_dispatch_lib"
   fi
 
-  # tracker-planner-and-fallback-cutover (1.3): manifest-first path. Selected
-  # whenever fleet_local_epics reports the manifest era has started (exit 0
-  # — even zero epics is "trust it", per D-11's identical decision boundary);
-  # the live get_epics_by_label path below is kept in place, selected only
-  # when no epic manifests exist at all, so the parity run (task 1.7) can
-  # compare both sources before the live path is deleted (task 3.11).
+  # tracker-planner-and-fallback-cutover (1.3, 3.11): manifest-only. No epic
+  # manifests at all reads as a genuinely idle fleet, not a reason to fall
+  # back to a live query.
   local _epic_ids
-  if _epic_ids=$(fleet_local_epics); then
-    local ready_count=0 ready_ids=""
-    local epic_id
-
-    while IFS= read -r epic_id; do
-      [ -z "$epic_id" ] && continue
-
-      # Never-regress short-circuit — manifest `stage` (tracker-approval-by-
-      # script) instead of a live .state.name fetch. Same three-state set as
-      # the live path below: an epic already past integration is never
-      # rescanned, including its whole repo loop.
-      local epic_stage
-      epic_stage=$(get_epic_manifest_field "$epic_id" stage 2>/dev/null)
-      case "$epic_stage" in
-      Review | UAT | Done) continue ;;
-      esac
-
-      # Branch Directive check — a non-empty `branch` field on the epic
-      # manifest IS the directive (branch-resolve.sh already reads it
-      # manifest-first the same way, :51-58); no description grep needed.
-      local epic_branch
-      epic_branch=$(get_epic_manifest_field "$epic_id" branch 2>/dev/null)
-      [ -n "$epic_branch" ] || continue
-
-      local children_json
-      children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
-      [ -z "$children_json" ] && children_json='[]'
-
-      # Readiness is delegated to the single canonical children-done helper
-      # (epic-branch.sh) — called with EPIC_ID only, deliberately: its
-      # 2-arg override form expects live Linear-shaped child objects
-      # (.state.name/.labels.nodes[]), not the manifest's flat ID array, so
-      # passing children_json here would silently break the readiness
-      # check. With no second argument the helper reads the manifest
-      # (children[] + each child's own pipeline-log terminal state) itself
-      # — see 1.5's finding that this manifest-only path already exists.
-      if epic_branch_children_done "$epic_id"; then
-        ready_count=$((ready_count + 1))
-        ready_ids="${ready_ids} ${epic_id}"
-
-        if [ "${FLEET_EPIC_AUTO_PR:-false}" = "true" ] && declare -f epic_branch_open_pr >/dev/null 2>&1; then
-          local _ebr_repo
-          local _ebr_pr_open=false
-          while IFS= read -r _ebr_repo; do
-            [ -z "$_ebr_repo" ] && continue
-            # Deliberately no cached children/description here — same
-            # shape mismatch as above applies to epic_branch_open_pr's own
-            # internal re-check. It live-fetches both itself when omitted.
-            epic_branch_open_pr "$epic_id" "$_ebr_repo" "" "" >/dev/null 2>&1 || true
-            if [ "${EPIC_BRANCH_PR_STATE:-none}" = "open" ]; then
-              _ebr_pr_open=true
-            fi
-          done < <(_fleet_repos_under_root)
-
-          if $_ebr_pr_open; then
-            _fleet_advance_epic_state "$epic_id" "$children_json"
-          fi
-        fi
-      fi
-    done <<<"$_epic_ids"
-
-    local findings
-    findings=$(echo "$ready_ids" | sed 's/^ //')
-
-    if [ "$ready_count" -gt 0 ]; then
-      echo "{\"severity\":1,\"findings\":\"${ready_count} epic(s) ready for integration PR: ${findings}\"}"
-    else
-      echo '{"severity":0,"findings":""}'
-    fi
-    return
-  fi
-
-  # ── Pre-migration fallback: no local epic manifests — live Linear query ──
-  # Query epics with state:execution label — include description and epic
-  # state, via the client (tracker-client-consolidation — get_epics_by_label
-  # "full" field set gives description + state { name } on top of the
-  # always-present base fields; no direct curl here anymore). No epic
-  # Linear-state filter: the label is the gate, matching the dispatch
-  # population (see the same note on the D-11 query). The epic's own
-  # state{name} costs no extra request — it's part of the same field set.
-  local epics_json
-  epics_json=$(get_epics_by_label "state:execution" "full" 2>/dev/null)
-
-  if [ -z "$epics_json" ]; then
+  _epic_ids=$(fleet_local_epics) || {
     echo '{"severity":0,"findings":""}'
     return
-  fi
+  }
 
-  local ready_count=0
-  local ready_ids=""
+  local ready_count=0 ready_ids=""
+  local epic_id
 
-  # get_epics_by_label returns an unwrapped array directly — no
-  # .data.issues.nodes prefix (tracker-client-consolidation).
-  local epic_count
-  epic_count=$(echo "$epics_json" | jq -r 'length // 0' 2>/dev/null)
-  [ "${epic_count:-0}" -eq 0 ] && echo '{"severity":0,"findings":""}' && return
-
-  for i in $(seq 0 $((epic_count - 1))); do
-    local epic_id epic_description epic_state
-    epic_id=$(echo "$epics_json" | jq -r ".[$i].identifier // empty" 2>/dev/null)
-    epic_description=$(echo "$epics_json" | jq -r ".[$i].description // \"\"" 2>/dev/null)
-    epic_state=$(echo "$epics_json" | jq -r ".[$i].state.name // \"\"" 2>/dev/null)
+  while IFS= read -r epic_id; do
     [ -z "$epic_id" ] && continue
 
-    # Idempotency short-circuit — BEFORE any per-repository work.
-    #
-    # Two jobs in one guard. It stops the detector dragging an epic that an
-    # operator (or a previous cycle) already advanced back to an earlier state,
-    # which on a short cycle would otherwise repeat indefinitely. And because
-    # the state:execution label that admits an epic to this population is never
-    # removed, it is also what stops a finished epic being rescanned — including
-    # its whole repo loop — on every cycle forever.
-    case "$epic_state" in
-    Review | UAT | Done)
-      continue
-      ;;
+    # Never-regress short-circuit — manifest `stage` (tracker-approval-by-
+    # script). An epic already past integration is never rescanned,
+    # including its whole repo loop.
+    local epic_stage
+    epic_stage=$(get_epic_manifest_field "$epic_id" stage 2>/dev/null)
+    case "$epic_stage" in
+    Review | UAT | Done) continue ;;
     esac
 
-    # Check for Branch Directive — skip epics without one
-    if ! echo "$epic_description" | grep -q "Branch Directive" 2>/dev/null; then
-      continue
-    fi
+    # Branch Directive check — a non-empty `branch` field on the epic
+    # manifest IS the directive (branch-resolve.sh already reads it
+    # manifest-first the same way, :51-58); no description grep needed.
+    local epic_branch
+    epic_branch=$(get_epic_manifest_field "$epic_id" branch 2>/dev/null)
+    [ -n "$epic_branch" ] || continue
 
-    # Validate directive
-    if ! declare -f check_branch_directive_description >/dev/null 2>&1; then
-      # Without the validator, check the description for a directive block
-      if ! echo "$epic_description" | command grep -q '^\*\*Branch:\*\*' 2>/dev/null; then
-        continue
-      fi
-    fi
+    local children_json
+    children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+    [ -z "$children_json" ] && children_json='[]'
 
-    # Readiness is delegated to the single canonical children-done helper —
-    # no independent inline evaluation (duplicated checks have drifted
-    # before). Called with EPIC_ID only (tracker-local-facts-read-migration,
-    # task 3.1): when an epic manifest exists, the helper reads children[]
-    # and each child's own pipeline-log terminal state, no live query. Falls
-    # back to a live children fetch (via get_parent_with_children) internally
-    # when no epic manifest exists — this call site no longer pre-fetches
-    # children.nodes itself, since doing so would always win over the
-    # manifest path and defeat localizing this detector.
+    # Readiness is delegated to the single canonical children-done helper
+    # (epic-branch.sh) — called with EPIC_ID only, deliberately: its
+    # 2-arg override form expects live Linear-shaped child objects
+    # (.state.name/.labels.nodes[]), not the manifest's flat ID array, so
+    # passing children_json here would silently break the readiness
+    # check. With no second argument the helper reads the manifest
+    # (children[] + each child's own pipeline-log terminal state) itself
+    # — see 1.5's finding that this manifest-only path already exists.
     if epic_branch_children_done "$epic_id"; then
       ready_count=$((ready_count + 1))
       ready_ids="${ready_ids} ${epic_id}"
 
-      # Actuation: once ready, open the integration PR in every repository the
-      # epic branch was created in (same repo set dispatch iterated — the
-      # shared helper, not a re-guess). epic_branch_open_pr is idempotent
-      # (existing-PR check) and never merges; it is only called when
-      # FLEET_EPIC_AUTO_PR is enabled, matching the detector's opt-in convention.
       if [ "${FLEET_EPIC_AUTO_PR:-false}" = "true" ] && declare -f epic_branch_open_pr >/dev/null 2>&1; then
         local _ebr_repo
         local _ebr_pr_open=false
         while IFS= read -r _ebr_repo; do
           [ -z "$_ebr_repo" ] && continue
-          # stdout MUST be redirected as well as stderr: this function's
-          # stdout is captured by command substitution to build the detector's
-          # JSON result, so any prose the PR helper prints would corrupt it.
-          #
-          # children_nodes and epic_description are passed in: both were fetched
-          # once for this scan, and re-fetching them per repository multiplies
-          # Linear requests by the repo count on every cycle.
-          epic_branch_open_pr "$epic_id" "$_ebr_repo" "$children_nodes" "$epic_description" >/dev/null 2>&1 || true
-          # Loop completion proves nothing — the helper returns success when it
-          # is disabled, when no directive exists, when the repo has no epic
-          # commits, and when it actually opened something. Only the observed
-          # per-repo state distinguishes them.
+          # Deliberately no cached children/description here — same
+          # shape mismatch as above applies to epic_branch_open_pr's own
+          # internal re-check. It live-fetches both itself when omitted.
+          epic_branch_open_pr "$epic_id" "$_ebr_repo" "" "" >/dev/null 2>&1 || true
           if [ "${EPIC_BRANCH_PR_STATE:-none}" = "open" ]; then
             _ebr_pr_open=true
           fi
         done < <(_fleet_repos_under_root)
 
-        # Advance the epic's own acceptance state — once per epic, not once per
-        # repository, and only on an observed open PR.
         if $_ebr_pr_open; then
-          _fleet_advance_epic_state "$epic_id" "$children_nodes"
+          _fleet_advance_epic_state "$epic_id" "$children_json"
         fi
       fi
     fi
-  done
+  done <<<"$_epic_ids"
 
   local findings
   findings=$(echo "$ready_ids" | sed 's/^ //')
@@ -1848,98 +1647,31 @@ _fleet_scan_stalled_approved_children() {
     in_flight_tids=$(fleet_store_in_flight "$workspace" 2>/dev/null)
   fi
 
-  # tracker-planner-and-fallback-cutover (1.4): population comes from the
-  # shared fleet_local_epics helper — same D1/D2 shape as D-11/D-12. The
-  # live get_epics_by_label path below is kept in place, selected only when
-  # no epic manifests exist at all (matching 1.3's condition on D-12), so
-  # the parity run (1.7) can compare both sources — this engine ACTUATES
-  # (FLEET_AUTO_RESUME_STALLED enqueues a resume), so an unverified switch
-  # here does more than under-report.
+  # tracker-planner-and-fallback-cutover (1.4, 3.11): manifest-only. No epic
+  # manifests at all reads as a genuinely idle fleet, not a reason to fall
+  # back to a live query — this engine ACTUATES (FLEET_AUTO_RESUME_STALLED
+  # enqueues a resume) so its population must be trustworthy either way.
   local _epic_ids
-  if _epic_ids=$(fleet_local_epics); then
-    local epic_id
-
-    while IFS= read -r epic_id; do
-      [ -z "$epic_id" ] && continue
-
-      local children_json child_id child_state
-      children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
-      [ -z "$children_json" ] && children_json='[]'
-
-      while IFS= read -r child_id; do
-        [ -z "$child_id" ] && continue
-        child_state=$(get_ticket_manifest_field "$child_id" stage 2>/dev/null)
-        _fleet_sa_process_child "$child_id" "$child_state" "$epic_id"
-      done < <(echo "$children_json" | jq -r '.[]?' 2>/dev/null)
-    done <<<"$_epic_ids"
-
-    if [ "$stalled_count" -eq 0 ]; then
-      echo '{"severity":0,"findings":""}'
-      return
-    fi
-
-    local findings
-    findings=$(echo "$stalled_ids" | sed 's/^ //')
-
-    if [ "$auto_resume" = "true" ] && [ -n "$resumed_ids" ]; then
-      local resumed_findings
-      resumed_findings=$(echo "$resumed_ids" | sed 's/^ //')
-      echo "{\"severity\":1,\"findings\":\"${stalled_count} stalled approved child(ren): ${findings} — auto-resumed: ${resumed_findings}\"}"
-    else
-      echo "{\"severity\":1,\"findings\":\"${stalled_count} stalled approved child(ren): ${findings}\"}"
-    fi
-    return
-  fi
-
-  # ── Pre-migration fallback: no local epic manifests — live Linear query ──
-  if ! declare -f get_issue >/dev/null 2>&1; then
-    local _la_paths=("$HOME/.claude/skills/lib/linear-api.sh" "${_CONFIG_DIR}/../linear-api.sh")
-    for _lp in "${_la_paths[@]}"; do
-      [ -f "$_lp" ] && source "$_lp" && break
-    done
-  fi
-
-  if ! declare -f get_issue >/dev/null 2>&1; then
+  _epic_ids=$(fleet_local_epics) || {
     echo '{"severity":0,"findings":""}'
     return
-  fi
+  }
 
-  # No epic Linear-state filter — the state:execution label is the gate,
-  # same population fleet_dispatch_initiative and the other two epic-scoped
-  # scans use. Via the client (tracker-client-consolidation) — no direct
-  # curl here anymore.
-  local epics_json
-  epics_json=$(get_epics_by_label "state:execution" 2>/dev/null)
+  local epic_id
 
-  if [ -z "$epics_json" ]; then
-    echo '{"severity":0,"findings":""}'
-    return
-  fi
-
-  # get_epics_by_label returns an unwrapped array directly — no
-  # .data.issues.nodes prefix (tracker-client-consolidation).
-  local epic_count
-  epic_count=$(echo "$epics_json" | jq -r 'length // 0' 2>/dev/null)
-  [ "${epic_count:-0}" -eq 0 ] && echo '{"severity":0,"findings":""}' && return
-
-  for i in $(seq 0 $((epic_count - 1))); do
-    local epic_id
-    epic_id=$(echo "$epics_json" | jq -r ".[$i].identifier // empty" 2>/dev/null)
+  while IFS= read -r epic_id; do
     [ -z "$epic_id" ] && continue
 
-    local child_count
-    child_count=$(echo "$epics_json" | jq -r ".[$i].children.nodes | length // 0" 2>/dev/null)
-    [ "${child_count:-0}" -eq 0 ] && continue
+    local children_json child_id child_state
+    children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+    [ -z "$children_json" ] && children_json='[]'
 
-    for j in $(seq 0 $((child_count - 1))); do
-      local child_state child_id
-      child_state=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].state.name // empty" 2>/dev/null)
-      child_id=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].identifier // empty" 2>/dev/null)
+    while IFS= read -r child_id; do
       [ -z "$child_id" ] && continue
-
+      child_state=$(get_ticket_manifest_field "$child_id" stage 2>/dev/null)
       _fleet_sa_process_child "$child_id" "$child_state" "$epic_id"
-    done
-  done
+    done < <(echo "$children_json" | jq -r '.[]?' 2>/dev/null)
+  done <<<"$_epic_ids"
 
   if [ "$stalled_count" -eq 0 ]; then
     echo '{"severity":0,"findings":""}'

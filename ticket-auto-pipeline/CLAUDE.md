@@ -214,22 +214,32 @@ child's pass-to-`Done` trigger and close itself. Evaluated by `lib/epic-precondi
 
 `Blocked` is orthogonal — tickets enter it when waiting on external dependencies.
 
-### Planner labels (ticket-planner enrichment)
+### Planner facts (ticket-planner enrichment)
 
-Defined in `planner_labels` section of `workflow.json`. Set by ticket-planner at ticket creation:
+**Retired (tracker-planner-and-fallback-cutover).** ticket-planner used to write 10 labels at
+ticket/epic creation — `planned`, `INIT-*`, `pre-approved`, `blocked-by:*`, `state:execution`, and
+the 5 type labels (`bug`/`feature`/`improvement`/`security`/`chore`). None of them is written any
+more: EpicGen and TicketGen create every issue with an empty label array. The `planner_labels`
+section of `workflow.json` that used to declare them is gone. Every fact those labels used to
+carry now lives in the local ticket/epic manifest instead, written once at creation time
+(`REPOS_ROOT/.ticket-auto/initiatives/{INIT}/tickets/{TID}/planner/manifest.json` and the sibling
+`epic/manifest.json`) and read by every migrated call site (`gate-check.sh`, `fleet-dispatch.sh`,
+`fleet-detect.sh`, `epic-branch.sh`, `run-identity.sh`, ...) instead of a live label/description
+fetch:
 
-| Label | Pattern | Lifecycle |
+| Former label | Manifest field | Lifecycle |
 |---|---|---|
-| `planned` | exact | Provenance marker. Once set, never removed. |
-| `INIT-*` | wildcard | Links ticket to initiative (e.g., `INIT-42`). Never removed. |
-| `pre-approved` | exact | Set when planner confidence ≥ 0.85. Accelerates ticket-appraise fast-path (skips full codebase investigation). Does NOT bypass human approval gate — standard gate rules still apply. Removed by `human-reject` or `re-claim`. |
-| `blocked-by:*` | wildcard | Dependency enforcement (e.g., `blocked-by:CRE-100`). Auto-removed when blocker reaches Done. |
-| `state:execution` | exact | Epic-only. Marks initiative as ready for fleet dispatch. flow.sh rejects non-Epic issues (exit 8). |
-| `bug` | exact | Type label — task is a bug fix. Set by planner at ticket creation. Never removed. Drives template selection and body validation. |
-| `feature` | exact | Type label — task is a new feature. Set by planner at ticket creation. Never removed. Drives template selection and body validation. |
-| `improvement` | exact | Type label — task is an improvement to existing functionality. Set by planner at ticket creation. Never removed. Drives template selection and body validation. |
-| `security` | exact | Type label — task is a security fix or hardening. Set by planner at ticket creation. Never removed. Drives template selection and body validation. |
-| `chore` | exact | Type label — task is a maintenance chore. Set by planner at ticket creation. Never removed. Drives template selection and body validation. |
+| `planned` | ticket manifest existence itself | A ticket has a manifest, or it doesn't — no separate provenance flag needed. |
+| `INIT-*` | ticket manifest `initiative` | Links ticket to initiative (e.g., `INIT-42`). Never changes. |
+| `pre-approved` | Planner Context block's `Pre-approved` field (not a manifest field, and never a label) | Set when planner confidence ≥ 0.85. Accelerates ticket-appraise fast-path. Does NOT bypass the human approval gate. |
+| `blocked-by:*` | ticket manifest `blocked_by` (array) | Dependency enforcement, resolved against each blocker's own local pipeline-log terminal state — no live tracker read. |
+| `state:execution` | epic manifest `dispatch` (bool) | One-way stamp, set once all child tickets are created and verified. `fleet_local_epics` reads it to enumerate dispatch-eligible epics. |
+| `bug`/`feature`/`improvement`/`security`/`chore` | ticket manifest `type` | Drives template selection and body validation locally — never read from a live label. |
+
+Four labels are still genuinely projected onto Linear, but by the board driver, not the planner —
+`needs-info`/`needs-adr`/`rejected`/`reviewed` (`workflow.json`'s `board_drivers.linear.projected_labels`),
+reflecting pipeline state for a human looking at the Linear UI. See
+[label-audit.md](docs/label-audit.md) for the full disposition and evidence trail.
 
 ### Planner Context block
 

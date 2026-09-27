@@ -39,16 +39,14 @@ _MANIFEST_ID_RE='^_?[A-Za-z0-9][-A-Za-z0-9]*$'
 
 # _manifest_repos_root — prints REPOS_ROOT or returns 3
 #
-# tracker-local-facts-read-migration (task 9.1): TICKET_LOCAL_MANIFEST_DISABLE
-# kill switch, centralized here rather than at every call site. Every read
-# function in this file (and manifest-write.sh, which sources it) resolves
-# REPOS_ROOT through this one function, so failing closed here uniformly
-# makes every migrated caller behave exactly as it does for "REPOS_ROOT
-# unset" — which every one of them already treats as "no manifest, fall
-# back to the pre-migration live path" rather than an error. One flag,
-# every site, no per-site changes.
+# tracker-planner-and-fallback-cutover (task 3.12): the
+# TICKET_LOCAL_MANIFEST_DISABLE kill switch this function used to centralize
+# is retired — design D3: with no live fallbacks left anywhere in the
+# codebase, the flag could no longer restore the pre-migration read path, it
+# could only make every manifest read return nothing while every caller has
+# no alternative. Every read function in this file (and manifest-write.sh,
+# which sources it) still resolves REPOS_ROOT through this one function.
 _manifest_repos_root() {
-  [ "${TICKET_LOCAL_MANIFEST_DISABLE:-false}" = "true" ] && return 3
   local repos_root="${REPOS_ROOT:-}"
   [ -n "$repos_root" ] || return 3
   echo "$repos_root"

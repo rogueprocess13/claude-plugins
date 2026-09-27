@@ -224,6 +224,27 @@ for phase in EpicGen TicketGen; do
   fi
 done
 
+# tracker-planner-and-fallback-cutover (5.4): both creating phases pass an
+# empty label array to planner_linear_create_issue — no planned/INIT-*/type/
+# epic marker/pre-approved/blocked-by:* label is ever set at creation time.
+if echo "$eg" | grep -qF "\"\$(jq -nc '[]')\""; then
+  pass "EpicGen creates the epic with an empty label array"
+else
+  fail "EpicGen creates the epic with an empty label array" "no literal empty-array label arg found"
+fi
+if echo "$tg" | grep -qF "LABELS='[]'"; then
+  pass "TicketGen creates tickets with an empty label array"
+else
+  fail "TicketGen creates tickets with an empty label array" "LABELS is not hardcoded to '[]'"
+fi
+for retired in 'planner_linear_ensure_label "\$TEAM_ID" "\$INIT_LABEL"' 'planner_linear_ensure_label "\$TEAM_ID" "\$DEP_LABEL"'; do
+  if echo "$tg$eg" | grep -qF "$retired"; then
+    fail "no retired dynamic-label ensure call remains" "found: $retired"
+  else
+    pass "no retired dynamic-label ensure call remains ($retired)"
+  fi
+done
+
 echo ""
 echo "=== planner-lib-root.sh: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]

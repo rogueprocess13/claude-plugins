@@ -7,7 +7,6 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TAP_LIB_DIR="$(cd "$LIB_DIR/../../ticket-auto-pipeline/lib" && pwd)"
-source "$TAP_LIB_DIR/tests/fixtures/linear-shapes.sh"
 
 PASS=0
 FAIL=0
@@ -158,47 +157,35 @@ test_parse_feedback_payload_invalid() {
   return 0
 }
 
-# ── _get_initiative_labels (tracker-client-consolidation, design D3) ───────
-# Stubbed against the shape get_issue ACTUALLY returns (fixture_issue_json —
-# unwrapped, no .data.issue prefix). The prior test stubbed the wrapped
-# shape and passed while the production caller — reading .data.issue.labels
-# against already-unwrapped get_issue output — returned empty on every real
-# call. This is the regression guard for that fix.
+# ── _get_ticket_initiative (tracker-planner-and-fallback-cutover, 4.6) ─────
+# Manifest-only — renamed from _get_initiative_labels, which read a live
+# INIT-* label. No get_issue stub is defined in any of these — a live
+# fallback would fail them.
 
-test_get_initiative_labels_extracts_single_label() {
-  local fixture
-  fixture=$(fixture_issue_json "i1" "CRE-101" "INIT-42,planned")
-  get_issue() { echo "$fixture"; }
+test_get_ticket_initiative_reads_manifest() {
+  local repos_root
+  repos_root=$(mktemp -d)
+  (
+    source "$TAP_LIB_DIR/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-101" "INIT-42" "feature" '[]' >/dev/null
+  )
   local result
-  result=$(_get_initiative_labels "CRE-101" 2>/dev/null)
+  result=$(REPOS_ROOT="$repos_root" _get_ticket_initiative "CRE-101" 2>/dev/null)
+  rm -rf "$repos_root"
   [ "$result" = "INIT-42" ] || {
     echo "expected 'INIT-42', got '$result'"
     return 1
   }
 }
 
-test_get_initiative_labels_no_initiative_label_yields_nothing() {
-  local fixture
-  fixture=$(fixture_issue_json "i2" "CRE-102" "planned,bug")
-  get_issue() { echo "$fixture"; }
+test_get_ticket_initiative_no_manifest_yields_nothing() {
+  local repos_root
+  repos_root=$(mktemp -d)
   local result
-  result=$(_get_initiative_labels "CRE-102" 2>/dev/null)
+  result=$(REPOS_ROOT="$repos_root" _get_ticket_initiative "CRE-102" 2>/dev/null)
+  rm -rf "$repos_root"
   [ -z "$result" ] || {
-    echo "expected no initiative label, got '$result'"
-    return 1
-  }
-}
-
-test_get_initiative_labels_rejects_stale_wrapped_shape() {
-  # Adversarial guard: a mock that still returns the WRAPPED shape (what the
-  # original bug's test fixture used) must yield NOTHING through the real
-  # extraction path — proving the fix reads .labels.nodes directly and does
-  # not accidentally also handle a .data.issue prefix.
-  get_issue() { echo '{"data":{"issue":{"identifier":"CRE-103","labels":{"nodes":[{"name":"INIT-99"}]}}}}'; }
-  local result
-  result=$(_get_initiative_labels "CRE-103" 2>/dev/null)
-  [ -z "$result" ] || {
-    echo "expected empty against a wrapped fixture, got '$result'"
+    echo "expected empty with no manifest, got '$result'"
     return 1
   }
 }
@@ -217,17 +204,11 @@ test_feedback_writer_groups_by_initiative_end_to_end() {
   _test_plog "$ws" "CRE-201" "META" "planner-feedback" "info" '{"confidence_actual":0.8}'
   _test_plog "$ws" "CRE-301" "META" "planner-feedback" "info" '{"confidence_actual":0.6}'
 
-  local fixture_201 fixture_301
-  fixture_201=$(fixture_issue_json "i201" "CRE-201" "INIT-42")
-  fixture_301=$(fixture_issue_json "i301" "CRE-301" "INIT-43")
-
-  get_issue() {
-    case "$1" in
-    CRE-201) echo "$fixture_201" ;;
-    CRE-301) echo "$fixture_301" ;;
-    *) return 1 ;;
-    esac
-  }
+  (
+    source "$TAP_LIB_DIR/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-201" "INIT-42" "feature" '[]' >/dev/null
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-301" "INIT-43" "feature" '[]' >/dev/null
+  )
 
   REPOS_ROOT="$repos_root" fleet_aggregate_feedback "$ws" >/dev/null 2>&1
 
@@ -273,9 +254,8 @@ _run "drift_minor" test_drift_minor_label
 _run "drift_major" test_drift_major_label
 _run "parse_feedback_payload_valid" test_parse_feedback_payload_valid
 _run "parse_feedback_payload_invalid" test_parse_feedback_payload_invalid
-_run "get_initiative_labels_extracts_single_label" test_get_initiative_labels_extracts_single_label
-_run "get_initiative_labels_no_initiative_label_yields_nothing" test_get_initiative_labels_no_initiative_label_yields_nothing
-_run "get_initiative_labels_rejects_stale_wrapped_shape" test_get_initiative_labels_rejects_stale_wrapped_shape
+_run "get_ticket_initiative_reads_manifest" test_get_ticket_initiative_reads_manifest
+_run "get_ticket_initiative_no_manifest_yields_nothing" test_get_ticket_initiative_no_manifest_yields_nothing
 _run "feedback_writer_groups_by_initiative_end_to_end" test_feedback_writer_groups_by_initiative_end_to_end
 
 echo ""

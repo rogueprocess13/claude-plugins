@@ -1204,33 +1204,13 @@ test_epic_branch_children_done_manifest_path_not_ready() {
 }
 _run "epic_branch_children_done: manifest path, missing child log is not-ready" test_epic_branch_children_done_manifest_path_not_ready
 
-test_ensure_epic_branch_kill_switch_skips_manifest_write() {
-  _setup_fixture
-  local repos_root
-  repos_root=$(mktemp -d)
-
-  TICKET_LOCAL_MANIFEST_DISABLE=true REPOS_ROOT="$repos_root" MOCK_DESCRIPTION="$MOCK_EPIC_DESC" \
-    ensure_epic_branch "CRE-100" "$FIXTURE_REPO" >/dev/null 2>&1
-
-  local manifest_path="$repos_root/.ticket-auto/initiatives/CRE-100/epic/manifest.json"
-  local exists="no"
-  [ -f "$manifest_path" ] && exists="yes"
-  rm -rf "$repos_root"
-
-  [ "$exists" = "no" ] || {
-    echo "  expected no epic manifest write while TICKET_LOCAL_MANIFEST_DISABLE=true" >&2
-    return 1
-  }
-  return 0
-}
-_run "ensure_epic_branch: kill switch skips the manifest backfill/refresh entirely" test_ensure_epic_branch_kill_switch_skips_manifest_write
-
-# tracker-planner-and-fallback-cutover (3.4): epic_branch_children_done no
-# longer has a live-fallback path for TICKET_LOCAL_MANIFEST_DISABLE to force
-# — with the kill switch on, epic_manifest_exists reports "no manifest" and
-# the function reports not-ready (exit 1), same as any other missing
-# manifest. The dedicated "kill switch forces live fallback" test that lived
-# here asserted the retired behavior and is removed rather than adapted.
+# tracker-planner-and-fallback-cutover (3.4, 3.12): the
+# TICKET_LOCAL_MANIFEST_DISABLE kill switch itself is retired — with no live
+# fallback left anywhere, it could only make every manifest read report
+# nothing, never restore the pre-migration behavior (design D3). The
+# dedicated kill-switch tests that lived here (this file and
+# test-manifest-read.sh/test-fleet-detect-new.sh) asserted retired behavior
+# and are removed rather than adapted.
 
 # ── Cleanup mock gh dirs ─────────────────────────────────────────────────────
 # The fixture cleanup is done via mktemp (system cleans /tmp eventually).

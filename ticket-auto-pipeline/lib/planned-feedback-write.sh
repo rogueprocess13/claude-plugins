@@ -2,29 +2,37 @@
 # planned-feedback-write.sh — Post-implement hook that emits META|planner-feedback
 # entries to the pipeline log for planned tickets.
 #
-# Conditional on the planned label or FROM_PLANNED=true — no behavior change
-# for unplanned tickets. fleet-feedback.sh aggregates these entries by initiative.
+# Conditional on FROM_PLANNED=true or a local ticket manifest existing — no
+# behavior change for unplanned tickets. fleet-feedback.sh aggregates these
+# entries by initiative.
 #
 # Usage: planned_feedback_write <TICKET_ID> <LOG_FILE>
 # Returns: 0 on success (or no-op skip), non-zero on error.
 #
 # Sourceable library — no set -euo pipefail.
 
+# manifest-read.sh backs the planned-ticket check below (tracker-planner-and-
+# fallback-cutover, 3.14 sweep). Guarded — not every caller of this file has
+# already sourced it.
+if ! declare -f ticket_manifest_exists >/dev/null 2>&1; then
+  _PFW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$_PFW_LIB_DIR/manifest-read.sh" ] && source "$_PFW_LIB_DIR/manifest-read.sh"
+fi
+
 # ── Main entry point ────────────────────────────────────────────────────────────
 
 planned_feedback_write() {
   local tid="$1" log_file="$2"
 
-  # Gate: only emit feedback for planned tickets
+  # Gate: only emit feedback for planned tickets. tracker-planner-and-
+  # fallback-cutover (3.14 sweep): manifest-only — a planned ticket always
+  # has a ticket manifest (write_ticket_manifest runs at planning time), so
+  # ticket_manifest_exists is the fallback when the caller hasn't already
+  # set FROM_PLANNED, no live Linear read needed.
   if [ "${FROM_PLANNED:-false}" != "true" ]; then
-    # Check if the ticket has the planned label via Linear API
     local has_planned=false
-    if declare -f get_issue >/dev/null 2>&1; then
-      local labels
-      labels=$(tracker_read informational "" -- get_issue "$tid" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null || true)
-      if echo "$labels" | grep -qw 'planned'; then
-        has_planned=true
-      fi
+    if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$tid"; then
+      has_planned=true
     fi
     if [ "$has_planned" != "true" ]; then
       return 0 # Not a planned ticket — silent no-op
@@ -237,11 +245,21 @@ planned_feedback_write() {
 
 # F9: _compute_actual_confidence extracted to lib/confidence.sh to prevent drift
 # between verifier-result.sh and planned-feedback-write.sh.
+#
+# confidence.sh sets `set -eo pipefail` at source time (it assumes the more
+# common caller, verifier-result.sh, which already opts into that itself) —
+# left unrestored here it leaks past this file's own "no set -euo pipefail"
+# contract (see file header) into every caller's shell, including the
+# router's own long-lived bash block in SKILL.md that sources this file
+# inline. Restored immediately after sourcing so this file's documented
+# contract actually holds.
 _PFW_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$_PFW_DIR/confidence.sh" ]; then
   source "$_PFW_DIR/confidence.sh"
+  set +e +o pipefail
 elif [ -f "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/confidence.sh" ]; then
   source "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/confidence.sh"
+  set +e +o pipefail
 fi
 
 # Compute decision drift label from predicted vs actual confidence.

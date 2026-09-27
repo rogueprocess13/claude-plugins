@@ -72,21 +72,21 @@ fi
 
 # ── Test 2: Linear team + label resolution (mocked) ─────────────────────
 
-echo "--- Test 2: team + static labels ---"
+echo "--- Test 2: team + board-projected labels ---"
 
 MOCK_TEAMS='{"data":{"teams":{"nodes":[{"id":"team-uuid-1","key":"CRE","name":"Credit"}]}}}'
 MOCK_LABELS_ALL_PRESENT='{"data":{"issueLabels":{"nodes":[
-  {"id":"lbl-planned","name":"planned","team":{"id":"team-uuid-1"}},
-  {"id":"lbl-epic","name":"epic","team":{"id":"team-uuid-1"}},
-  {"id":"lbl-pre-approved","name":"pre-approved","team":{"id":"team-uuid-1"}},
-  {"id":"lbl-state-exec","name":"state:execution","team":{"id":"team-uuid-1"}}
+  {"id":"lbl-needs-info","name":"needs-info","team":{"id":"team-uuid-1"}},
+  {"id":"lbl-needs-adr","name":"needs-adr","team":{"id":"team-uuid-1"}},
+  {"id":"lbl-rejected","name":"rejected","team":{"id":"team-uuid-1"}},
+  {"id":"lbl-reviewed","name":"reviewed","team":{"id":"team-uuid-1"}}
 ]}}}'
 MOCK_LABELS_ONE_MISSING='{"data":{"issueLabels":{"nodes":[
-  {"id":"lbl-planned","name":"planned","team":{"id":"team-uuid-1"}},
-  {"id":"lbl-epic","name":"epic","team":{"id":"team-uuid-1"}},
-  {"id":"lbl-pre-approved","name":"pre-approved","team":{"id":"team-uuid-1"}}
+  {"id":"lbl-needs-info","name":"needs-info","team":{"id":"team-uuid-1"}},
+  {"id":"lbl-needs-adr","name":"needs-adr","team":{"id":"team-uuid-1"}},
+  {"id":"lbl-rejected","name":"rejected","team":{"id":"team-uuid-1"}}
 ]}}}'
-MOCK_CREATE_LABEL='{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id":"lbl-new","name":"state:execution"}}}}'
+MOCK_CREATE_LABEL='{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id":"lbl-new","name":"reviewed"}}}}'
 
 _LABELS_RESPONSE="$MOCK_LABELS_ALL_PRESENT"
 planner_linear_graphql() {
@@ -111,20 +111,20 @@ else
   fail "team resolves" "$ROW"
 fi
 
-if echo "$OUT" | grep -q '^label:planned|ok|' &&
-  echo "$OUT" | grep -q '^label:epic|ok|' &&
-  echo "$OUT" | grep -q '^label:pre-approved|ok|' &&
-  echo "$OUT" | grep -q '^label:state:execution|ok|'; then
-  pass "all 4 static labels report ok when present"
+if echo "$OUT" | grep -q '^label:needs-info|ok|' &&
+  echo "$OUT" | grep -q '^label:needs-adr|ok|' &&
+  echo "$OUT" | grep -q '^label:rejected|ok|' &&
+  echo "$OUT" | grep -q '^label:reviewed|ok|'; then
+  pass "all 4 board-projected labels report ok when present"
 else
-  fail "all 4 static labels ok" "$OUT"
+  fail "all 4 board-projected labels ok" "$OUT"
 fi
 
 # Missing LINEAR_API_KEY → team unresolved → labels skipped, not silently ok.
 unset LINEAR_API_KEY
 OUT=$(planner_doctor_run 2>/dev/null)
 if doctor_row "$OUT" "LINEAR_TEAM_ID" | grep -q '|missing|' &&
-  echo "$OUT" | grep -q '^label:planned|warn|'; then
+  echo "$OUT" | grep -q '^label:needs-info|warn|'; then
   pass "missing LINEAR_API_KEY skips (not fakes) label checks"
 else
   fail "missing LINEAR_API_KEY skips label checks" "$OUT"
@@ -134,10 +134,10 @@ export LINEAR_API_KEY="test-key"
 # One label genuinely missing — the exact defect from #223, found twice.
 _LABELS_RESPONSE="$MOCK_LABELS_ONE_MISSING"
 OUT=$(planner_doctor_run 2>/dev/null)
-if echo "$OUT" | grep -q '^label:state:execution|missing|'; then
-  pass "a genuinely missing static label is reported missing"
+if echo "$OUT" | grep -q '^label:reviewed|missing|'; then
+  pass "a genuinely missing board-projected label is reported missing"
 else
-  fail "missing static label reported" "$OUT"
+  fail "missing board-projected label reported" "$OUT"
 fi
 EXIT_CODE=0
 planner_doctor_run >/dev/null 2>&1 || EXIT_CODE=$?
@@ -149,8 +149,8 @@ fi
 
 # --fix creates the missing label instead of only reporting it.
 OUT=$(planner_doctor_run --fix 2>/dev/null)
-if echo "$OUT" | grep -q '^label:state:execution|fixed|lbl-new|'; then
-  pass "--fix creates a genuinely missing static label"
+if echo "$OUT" | grep -q '^label:reviewed|fixed|lbl-new|'; then
+  pass "--fix creates a genuinely missing board-projected label"
 else
   fail "--fix creates missing label" "$OUT"
 fi

@@ -178,9 +178,12 @@ test_manifest_only_no_live_planned_label() {
   }
 }
 
-test_manifest_absent_falls_back_to_live_label() {
-  # Same shape as above but with NO manifest — must fall back to the live
-  # label read exactly as before (not_planned, since the label is absent).
+test_manifest_absent_not_planned_regardless_of_live_label() {
+  # tracker-planner-and-fallback-cutover (5.1): manifest-only ELIGIBILITY
+  # decision — no manifest means not_planned even when the still-live-
+  # fetched description (out of scope for this migration; see 3.2's own
+  # comment above) carries a live "feature" label. The label content is
+  # never consulted for eligibility any more, only manifest presence.
   local orig_get_issue
   orig_get_issue=$(declare -f get_issue 2>/dev/null || true)
   get_issue() {
@@ -198,7 +201,7 @@ test_manifest_absent_falls_back_to_live_label() {
   fi
 
   [ "$result" = "false" ] && [ "$reason" = "not_planned" ] || {
-    echo "expected eligible=false reason=not_planned with no manifest and no live label, got eligible=$result reason=$reason" >&2
+    echo "expected eligible=false reason=not_planned with no manifest, got eligible=$result reason=$reason" >&2
     return 1
   }
 }
@@ -465,7 +468,7 @@ echo "=== Eligibility tests ==="
 _run "api_error (get_issue fails)" test_api_error
 _run "no planned label" test_no_planned_label
 _run "manifest only — no live planned label" test_manifest_only_no_live_planned_label
-_run "manifest absent — falls back to live label" test_manifest_absent_falls_back_to_live_label
+_run "manifest absent — not_planned regardless of live label" test_manifest_absent_not_planned_regardless_of_live_label
 _run "pre-approved=true" test_pre_approved_true
 _run "high confidence, not pre-approved" test_high_confidence_not_pre_approved
 _run_exit_code "low confidence, not pre-approved (exit 2)" 2 test_low_confidence_not_pre_approved

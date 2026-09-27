@@ -20,6 +20,30 @@ plan (through at least B3b, possibly further) is implemented. B3b is unblocked t
 waiting on 9.3-9.6. Step 6 itself still held for real-run
 validation)
 
+Updated 2026-09-27: Step 7c Change 1 (`tracker-approval-by-script`, PR #401) and Change 2
+(`tracker-flow-projection-cutover`, PR #402) both merged to `main`. Change 3
+(`tracker-planner-and-fallback-cutover`) **fully implemented, all 7 groups, all 51 tasks** — groups
+1-3 landed earlier as PR #424 (`ticket-auto-pipeline` 0.56.0, `fleet-controller` 0.37.0); this
+session finished groups 4-7 on the same branch: the planner (`ticket-planner`) now creates every
+epic and ticket with **zero Linear labels** — the 10 retired labels' facts all live in the local
+ticket/epic manifest instead; the remaining live-fallback deletes (`phase_dispatch.py`'s
+`resolve_ticket_type`, `fleet-detect.sh`'s D-11/D-12/D-18 live paths, the
+`TICKET_LOCAL_MANIFEST_DISABLE` kill switch) are gone; `workflow.json`'s `planner_labels` section is
+deleted; docs (`label-audit.md`'s final disposition, `ticket-planner`/`ticket-auto-pipeline`/root
+`CLAUDE.md`, `fleet-controller/README.md`, `kc-import/SKILL.md`, `CHANGELOG.md`) are updated; and
+versions are bumped (`ticket-auto-pipeline` 0.57.0, `fleet-controller` 0.38.0, `ticket-planner`
+0.11.0, `knowledge-curator` 0.2.1). Full test sweep (148 bash files + the whole `fleetd` pytest
+suite) shows zero regressions from this work — every failure found is confirmed pre-existing on
+unmodified `main` via `git stash`. **Task 1.7/1.7a's live parity run was explicitly WAIVED by
+explicit user decision (2026-09-27)**, not merely deferred: no real fleet with live `state:
+execution` epics was available in this dev checkout, and the user chose to proceed through the full
+cutover (including the label-write removal that makes 1.7a's diff-based evidence permanently
+unproducible for any future epic) rather than pause to arrange one. **Task 7.4's live end-to-end
+functional verification on the tickets host is now the only remaining step and the hard blocker
+before merge** — it is the sole live-fleet evidence this change will ever have. See
+`ticket-auto-pipeline/docs/label-audit.md`'s final disposition entry for the full record of the
+waiver and the disposition of every formerly-`control` label.
+
 ---
 
 ## Step 0 — Extract standalone bug fixes
@@ -685,7 +709,9 @@ Three findings from the Track B design work that stand on their own, whether or 
 
 ---
 
-## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — Changes 1/2 implemented 2026-09-23 (PR #401 and PR #402 both open); Change 3 still PROPOSED
+## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — CLOSES this authority-flip programme. Changes 1/2 MERGED (PR #401, PR #402); Change 3 fully implemented (all 51 tasks, all 7 groups) on the PR #424 branch, not yet mergeable — task 7.4's live verification on the tickets host is the sole remaining blocker. Task 1.7/1.7a's pre-cutover parity run was explicitly waived by the user rather than performed; see `label-audit.md`'s final disposition entry.
+
+**What remains after this closes:** a second board driver (only `lib/board-drivers/linear.sh` is shipped; the projection architecture — `board_drivers` in `workflow.json`, `board-cursor.sh`, `pusher.py` — was built driver-agnostic on purpose, but nothing has proposed a second one) is still unproposed. That is the next natural step for this program, whenever a second tracker becomes a real requirement — nothing in this repo currently needs it.
 
 **Why this exists:** 2026-09-23, after B4 shipped, the operator restated the original complaint
 directly — Linear tickets are noisy with labels, and none of B1-B4 addressed that. Investigation

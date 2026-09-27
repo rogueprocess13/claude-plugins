@@ -118,25 +118,6 @@ get_ticket_manifest_field "../../etc" type >/dev/null 2>&1 || rc=$?
 [ "$rc" = "3" ] && _pass "get_ticket_manifest_field: traversal in ticket ID rejected" ||
   _fail "get_ticket_manifest_field: traversal in ticket ID should be rejected (got $rc)"
 
-# ── TICKET_LOCAL_MANIFEST_DISABLE kill switch (task 9.1) ────────────────────
-
-_reset
-echo '{"type":"bug"}' >"$REPOS_ROOT/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
-
-rc=0
-TICKET_LOCAL_MANIFEST_DISABLE=true get_ticket_manifest_field TEST-1 type >/dev/null 2>&1 || rc=$?
-[ "$rc" = "3" ] && _pass "kill switch: get_ticket_manifest_field fails closed (exit 3) even though the manifest exists" ||
-  _fail "kill switch: expected exit 3 with a real manifest present (got $rc)"
-
-rc=0
-TICKET_LOCAL_MANIFEST_DISABLE=true ticket_manifest_exists TEST-1 2>/dev/null && rc=1
-[ "$rc" = "0" ] && _pass "kill switch: ticket_manifest_exists reports false" ||
-  _fail "kill switch: ticket_manifest_exists should report false when disabled"
-
-actual=$(TICKET_LOCAL_MANIFEST_DISABLE=false get_ticket_manifest_field TEST-1 type)
-[ "$actual" = "bug" ] && _pass "kill switch: explicit false is a no-op (manifest read works)" ||
-  _fail "kill switch: TICKET_LOCAL_MANIFEST_DISABLE=false should not disable reads (got '$actual')"
-
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

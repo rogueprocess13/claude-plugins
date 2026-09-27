@@ -9,12 +9,15 @@
 # NOTE: Does NOT set -euo pipefail — this is a sourceable library.
 # Callers are responsible for shell flags.
 #
-# tracker-client-consolidation: all Linear reads route through
-# ticket-auto-pipeline/lib/linear-api.sh's client functions (get_issue,
-# get_epics_by_label, get_parent_with_children) — no direct curl to the
-# tracker endpoint from this file anymore. The former `_fleet_linear_query`
+# tracker-client-consolidation: any Linear read routes through
+# ticket-auto-pipeline/lib/linear-api.sh's client functions — no direct curl
+# to the tracker endpoint from this file. The former `_fleet_linear_query`
 # generic-query helper is gone; it was the transport this consolidation
-# removes.
+# removes. tracker-planner-and-fallback-cutover (3.9) made epic/child
+# enumeration and eligibility manifest-only; the two live reads still made
+# here are `get_issue` (priority ordering only — out of the manifest schema
+# by design) and `get_parent_with_children` (the stop path's children query,
+# a fail-closed pin guarantee independent of dispatch's own enumeration).
 
 _DISPATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

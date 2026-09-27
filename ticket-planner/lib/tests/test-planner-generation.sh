@@ -10,6 +10,8 @@ LIB_DIR="${SCRIPT_DIR}/.."
 source "${LIB_DIR}/planner-deps-check.sh"
 source "${LIB_DIR}/planner-context-gen.sh"
 source "${LIB_DIR}/planner-ticket-validate.sh"
+TAP_LIB_DIR="$(cd "${LIB_DIR}/../../ticket-auto-pipeline/lib" && pwd)"
+source "${TAP_LIB_DIR}/manifest-write.sh"
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -392,6 +394,28 @@ if [ "$status" = "created" ]; then
   pass "re-recording intent does not overwrite created status"
 else
   fail "re-recording intent does not overwrite created" "status=$status"
+fi
+
+# ── planner_verify_tickets (tracker-planner-and-fallback-cutover, 5.4) ────────
+# Manifest-only — no live Linear fetch, no label read.
+
+echo "--- planner_verify_tickets: passes on a real manifest ---"
+write_ticket_manifest "CRE-501" "INIT-TEST" "feature" '[]' >/dev/null
+planner_record_intent "INIT-TEST" "TicketGen" "ticket" "ticket-verify-501"
+planner_entity_mark_created "INIT-TEST" "ticket-verify-501" "CRE-501"
+if planner_verify_tickets "INIT-TEST" '["CRE-501"]' >/dev/null 2>&1; then
+  pass "verify passes when the ticket manifest exists with type+initiative"
+else
+  fail "verify passes on a real manifest" "returned non-zero"
+fi
+
+echo "--- planner_verify_tickets: fails on a missing manifest ---"
+planner_record_intent "INIT-TEST" "TicketGen" "ticket" "ticket-verify-502"
+planner_entity_mark_created "INIT-TEST" "ticket-verify-502" "CRE-502"
+if ! planner_verify_tickets "INIT-TEST" '["CRE-502"]' >/dev/null 2>&1; then
+  pass "verify fails when no ticket manifest exists"
+else
+  fail "verify fails on a missing manifest" "returned zero"
 fi
 
 echo ""

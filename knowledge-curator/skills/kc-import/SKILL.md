@@ -129,6 +129,8 @@ relates: []
 
 **Idempotency**: Re-running updates the `updated` timestamp and Linear state — does NOT create a duplicate. Never mutates Linear issue state.
 
+**Label-derived tags degrade to `[linear]` alone for planner-created tickets** (tracker-planner-and-fallback-cutover, 2026-09-27): ticket-planner used to write `planned`/`INIT-*`/a type label/etc. to every ticket it created, which this importer picked up as extra tags. It now creates every ticket with no labels at all — the facts those labels carried live in a local manifest instead, which this importer does not read. This is an explicit, accepted scope exclusion, not an unstated regression: importing from the local manifest instead of Linear labels was out of scope for that change, and remains out of scope here. A ticket imported from Linear before that change still carries its old labels' tags; one created after carries none beyond `linear`.
+
 ## Step 5 — Regenerate index
 
 After all imports:
