@@ -56,16 +56,6 @@ _mock_get_issue_epic_no_execution() {
   }
 }
 
-_mock_get_issue_epic_and_blocker_in_progress() {
-  get_issue() {
-    case "$1" in
-    INIT-42) echo '{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]}}' ;;
-    CRE-100) echo '{"identifier":"CRE-100","state":{"name":"In Progress"},"labels":{"nodes":[]}}' ;;
-    *) return 1 ;;
-    esac
-  }
-}
-
 _mock_get_issue_epic_and_blocker_done() {
   get_issue() {
     case "$1" in
@@ -76,40 +66,13 @@ _mock_get_issue_epic_and_blocker_done() {
   }
 }
 
-# tracker-read-failure-policy section 5: the blocker fetch itself fails
-# (network error, not-found, etc.) — distinct from a successful fetch that
-# returns a non-Done state.
-_mock_get_issue_epic_and_blocker_unreadable() {
-  get_issue() {
-    case "$1" in
-    INIT-42) echo '{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]}}' ;;
-    CRE-100) return 1 ;;
-    *) return 1 ;;
-    esac
-  }
-}
-
 # get_epics_by_label returns a bare unwrapped array — one object per epic
 # carrying the label, same shape linear-api.sh's real function produces.
-_mock_epics_by_label_no_children() {
-  get_epics_by_label() {
-    echo '[{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[]}}]'
-  }
-}
-
 _mock_epics_by_label_with_children() {
   get_epics_by_label() {
     echo '[{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
         {"identifier":"CRE-101","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":3},
         {"identifier":"CRE-102","state":{"name":"In Progress"},"labels":{"nodes":[{"name":"planned"}]},"priority":1},
-        {"identifier":"CRE-103","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"},{"name":"blocked-by:CRE-100"}]},"priority":2}
-      ]}}]'
-  }
-}
-
-_mock_epics_by_label_blocker_child() {
-  get_epics_by_label() {
-    echo '[{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
         {"identifier":"CRE-103","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"},{"name":"blocked-by:CRE-100"}]},"priority":2}
       ]}}]'
   }
@@ -127,24 +90,64 @@ _mock_epic_no_directive() {
   :
 }
 
+# ── Manifest seed helpers (tracker-planner-and-fallback-cutover, 3.9) ─────────────
+# fleet_dispatch_initiative no longer reads get_issue/get_epics_by_label for
+# epic eligibility, children enumeration, or blocked-by resolution — these
+# replace the _mock_get_issue_epic_*/_mock_epics_by_label_* helpers above
+# with real manifest writes. write_epic_manifest/write_ticket_manifest/
+# stamp_epic_dispatch/stamp_ticket_dispatch are already in scope inside a
+# subshell that has sourced fleet-dispatch.sh (it guard-sources
+# manifest-write.sh itself) — no separate source needed here.
+
+# _seed_epic <repos_root> <epic_id> <dispatch:true|false> [child_tid ...]
+_seed_epic() {
+  local repos_root="$1" epic_id="$2" dispatch="$3"
+  shift 3
+  local children_json='[]'
+  if [ "$#" -gt 0 ]; then
+    children_json=$(printf '%s\n' "$@" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+  fi
+  REPOS_ROOT="$repos_root" write_epic_manifest "$epic_id" "epic/x" "per-ticket" "manual" "$children_json" >/dev/null
+  [ "$dispatch" = "true" ] && REPOS_ROOT="$repos_root" stamp_epic_dispatch "$epic_id" >/dev/null
+  return 0
+}
+
+# _seed_child <repos_root> <tid> <epic_id> <dispatch:true|false> [blocked_by_csv]
+_seed_child() {
+  local repos_root="$1" tid="$2" epic_id="$3" dispatch="$4" blocked_csv="${5:-}"
+  local blocked_json='[]'
+  if [ -n "$blocked_csv" ]; then
+    blocked_json=$(echo "$blocked_csv" | tr ',' '\n' | jq -R -s -c 'split("\n") | map(select(length > 0))')
+  fi
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$tid" "$epic_id" "bug" "$blocked_json" >/dev/null
+  [ "$dispatch" = "true" ] && REPOS_ROOT="$repos_root" stamp_ticket_dispatch "$tid" >/dev/null
+  return 0
+}
+
+# _seed_blocker_done <workspace> <tid> — a completed pipeline log line, so
+# ticket_pipeline_terminal_done reports this blocker Done. Absence of any
+# log line (the default) reads as "not yet Done" — no separate "in
+# progress" seed is needed for that case.
+_seed_blocker_done() {
+  local ws="$1" tid="$2"
+  mkdir -p "$ws"
+  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >>"${ws}/${tid}-pipeline.log"
+}
+
 # ── Tests ───────────────────────────────────────────────────────────────────────
 
 test_dispatch_no_linear_api() {
   local ws
   ws=$(_setup_workspace)
-  # This is an environment-dependent test: linear-api.sh availability varies.
-  # Test that dispatch handles gracefully when API is genuinely unavailable,
-  # and that we can still source the script without fatal errors.
-  # When get_issue is available, the dispatch will validate the initiative
-  # normally; when unavailable, it will report the error.
-  # Either outcome is acceptable for this test — we're testing the guard logic.
+  # tracker-planner-and-fallback-cutover (3.9): dispatch is manifest-only
+  # now, so linear-api.sh availability no longer matters here at all — an
+  # initiative with no local epic manifest reports that directly.
   local output
   output=$(bash -c "
     source '$LIB_DIR/fleet-dispatch.sh' 2>/dev/null
     fleet_dispatch_initiative 'INIT-99' '$ws' 2>&1
   " 2>/dev/null || true)
-  # Either "not found", "not available", or "not in execution" → all valid
-  echo "$output" | grep -qi "not found\|not available\|not in execution" && return 0 || {
+  echo "$output" | grep -qi "no local epic manifest" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -166,17 +169,19 @@ test_dispatch_missing_initiative_arg() {
 }
 
 test_dispatch_no_state_execution() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
 
   local output
   output=$(bash -c "
-    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-nose
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-nose REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_get_issue_epic_no_execution)
-    _mock_get_issue_epic_no_execution
+    $(declare -f _seed_epic)
+    _seed_epic '$repos_root' INIT-42 false
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
   echo "$output" | grep -qi "not in execution" && return 0 || {
     echo "output: $output"
     return 1
@@ -184,69 +189,78 @@ test_dispatch_no_state_execution() {
 }
 
 test_dispatch_no_child_tickets() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
 
   local output
   output=$(bash -c "
-    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-nochild
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-nochild REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_get_issue_epic_state_execution)
-    $(declare -f _mock_epics_by_label_no_children)
-    $(declare -f _mock_epic_no_directive)
-
-    _mock_get_issue_epic_state_execution
-    _mock_epics_by_label_no_children
-    _mock_epic_no_directive
+    $(declare -f _seed_epic)
+    _seed_epic '$repos_root' INIT-42 true
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
   echo "$output" | grep -qi "no child tickets\|no dispatchable" && return 0 || {
     echo "output: $output"
     return 1
   }
 }
 
+# Shared manifest fixture matching the old _mock_epics_by_label_with_children
+# shape: CRE-101 eligible (dispatch:false, unblocked), CRE-102 already
+# dispatched (dispatch:true — the manifest model's only "already moving"
+# signal, replacing the old live "In Progress" state check), CRE-103
+# eligible but blocked-by CRE-100.
+_seed_with_children_fixture() {
+  local repos_root="$1"
+  _seed_epic "$repos_root" INIT-42 true CRE-101 CRE-102 CRE-103
+  _seed_child "$repos_root" CRE-101 INIT-42 false
+  _seed_child "$repos_root" CRE-102 INIT-42 true
+  _seed_child "$repos_root" CRE-103 INIT-42 false CRE-100
+}
+
 test_dispatch_with_children_extracts_correctly() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
 
   local output
   output=$(bash -c "
-    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-children
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-children REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
-  # CRE-101: Backlog + planned → should be enqueued
-  # CRE-102: In Progress → skipped (not Backlog)
-  # CRE-103: Backlog + planned + blocked-by:CRE-100 (In Progress) → skipped
+  rm -rf "$repos_root"
+  # CRE-101: dispatch:false, unblocked → should be enqueued
+  # CRE-102: dispatch:true already → skipped
+  # CRE-103: dispatch:false but blocked-by CRE-100 (no completed log) → skipped
   echo "$output" | grep -q "CRE-101" && return 0 || {
     echo "output: $output"
     return 1
   }
 }
 
-# tracker-client-consolidation design R1: the migrated get_epics_by_label
-# call site must assert a NON-EMPTY dispatchable set from a realistic
-# fixture, not merely "does not crash" (an over-unwrapped jq path can
-# silently yield `empty`, which reads identically to "nothing to dispatch").
+# tracker-client-consolidation design R1 (retargeted at the manifest path by
+# 3.9): the enumeration must assert a NON-EMPTY dispatchable set from a
+# realistic fixture, not merely "does not crash".
 test_dispatch_epics_by_label_site_yields_non_empty_dispatch() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
 
   local output
   output=$(bash -c "
-    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-nonempty
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-nonempty REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   local enqueued
   enqueued=$(echo "$output" | grep -c '\[DRY-RUN\] would enqueue:' || true)
@@ -257,19 +271,21 @@ test_dispatch_epics_by_label_site_yields_non_empty_dispatch() {
 }
 
 test_dispatch_blocker_done_unblocks() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
 
   local output
   output=$(bash -c "
-    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-unblock
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-unblock REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_blocker_child)
-    $(declare -f _mock_get_issue_epic_and_blocker_done)
-    _mock_epics_by_label_blocker_child
-    _mock_get_issue_epic_and_blocker_done
+    $(declare -f _seed_epic _seed_child _seed_blocker_done)
+    _seed_epic '$repos_root' INIT-42 true CRE-103
+    _seed_child '$repos_root' CRE-103 INIT-42 false CRE-100
+    _seed_blocker_done '$ws' CRE-100
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
   # CRE-103: blocker CRE-100 is Done → should be enqueued
   echo "$output" | grep -q "CRE-103" && return 0 || {
     echo "output: $output"
@@ -278,22 +294,22 @@ test_dispatch_blocker_done_unblocks() {
 }
 
 test_dispatch_dry_run_no_write() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   local queue_file
   queue_file="/tmp/fleet-test-dry-run-spawn-queue.jsonl"
   rm -f "$queue_file"
 
   local output
   output=$(bash -c "
-    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-dry-run
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-dry-run REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
   echo "$output" | grep -qi "DRY-RUN" && return 0 || {
     echo "output: $output"
     return 1
@@ -301,37 +317,43 @@ test_dispatch_dry_run_no_write() {
 }
 
 test_dispatch_queue_idempotent() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   local queue_file
-  queue_file="/tmp/fleet-test-idem-spawn-queue.jsonl"
+  queue_file="${ws}/fleet-test-idem-spawn-queue.jsonl"
   rm -f "$queue_file"
 
   bash -c "
-    FLEET_INSTANCE_ID=test-idem
+    FLEET_INSTANCE_ID=test-idem REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
 
-  # Run again → should not duplicate
+  # Run again → should not duplicate. tracker-planner-and-fallback-cutover
+  # (3.9): a real (non-dry-run) enqueue now stamps the child manifest's own
+  # dispatch flag at the same point (task 1.6), so a re-run excludes CRE-101
+  # from the dispatchable set one step earlier than the queue-file
+  # "already queued" check this test used to key on — that check still
+  # exists (Step 5) but is no longer reachable for THIS re-run shape. The
+  # underlying idempotency property is "enqueued 0" and exactly one queue
+  # line, which is what genuinely matters here.
   local output
   output=$(bash -c "
-    FLEET_INSTANCE_ID=test-idem
+    FLEET_INSTANCE_ID=test-idem REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
-  echo "$output" | grep -q "already queued" && return 0 || {
-    echo "output: $output"
-    return 1
-  }
+  local cre101_count
+  cre101_count=$(grep -c '"tid":"CRE-101"' "$queue_file" 2>/dev/null || true)
+  rm -rf "$repos_root"
+  if echo "$output" | grep -q "enqueued 0 ticket(s)" && [ "$cre101_count" = "1" ]; then
+    return 0
+  fi
+  echo "output: $output; CRE-101 queue lines: $cre101_count"
+  return 1
 }
 
 test_dispatch_fleet_max_concurrent_enforced() {
@@ -361,17 +383,18 @@ test_dispatch_fleet_max_concurrent_enforced() {
   echo "{\"tid\":\"ACT-001\",\"pid\":\"${act1_pid}\",\"generation\":1,\"reason\":\"test\"}" >"$ws/ACT-001-run.json"
   echo "{\"tid\":\"ACT-002\",\"pid\":\"${act2_pid}\",\"generation\":1,\"reason\":\"test\"}" >"$ws/ACT-002-run.json"
 
+  local repos_root
+  repos_root=$(mktemp -d)
   local output
   output=$(bash -c "
-    FLEET_INSTANCE_ID=test-cap FLEET_MAX_CONCURRENT=3
+    FLEET_INSTANCE_ID=test-cap FLEET_MAX_CONCURRENT=3 REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   kill "$act1_pid" "$act2_pid" 2>/dev/null || true
+  rm -rf "$repos_root"
   # 2 live + max 3 → only 1 slot available
   echo "$output" | grep -q "can enqueue up to 1" && return 0 || {
     echo "output: $output"
@@ -382,20 +405,20 @@ test_dispatch_fleet_max_concurrent_enforced() {
 # ── Queue durability tests ─────────────────────────────────────────────────────
 
 test_queue_entry_has_generation_field() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   local queue_file="${ws}/fleet-test-gen-spawn-queue.jsonl"
   rm -f "$queue_file"
 
   bash -c "
-    FLEET_INSTANCE_ID=test-gen
+    FLEET_INSTANCE_ID=test-gen REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
+  rm -rf "$repos_root"
 
   if [ -f "$queue_file" ]; then
     local has_gen
@@ -407,20 +430,20 @@ test_queue_entry_has_generation_field() {
 }
 
 test_queue_entry_survives_simulated_restart() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   local queue_file="${ws}/fleet-test-restart-spawn-queue.jsonl"
   rm -f "$queue_file"
 
   bash -c "
-    FLEET_INSTANCE_ID=test-restart
+    FLEET_INSTANCE_ID=test-restart REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
+  rm -rf "$repos_root"
 
   # Real restart simulation: a FRESH shell re-sources the library (as a
   # restarted daemon/monitor would) and re-reads the durable queue file.
@@ -452,6 +475,8 @@ test_dead_letter_on_exhausted_retries() {
   # Force the real retry→dead-letter path (flock always fails), then verify
   # the dead-letter file's claim: "human-readable and replayable" — the
   # dead-lettered entry must be replayable into a working queue.
+  local repos_root
+  repos_root=$(mktemp -d)
   local output
   output=$(bash -c "
     flock() { return 1; }
@@ -460,13 +485,13 @@ test_dead_letter_on_exhausted_retries() {
     FLEET_QUEUE_LOCK_TIMEOUT=1
     FLEET_QUEUE_MAX_RETRIES=2
     FLEET_QUEUE_RETRY_BACKOFF_SECS=1
+    REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   echo "$output" | grep -qi "dead-letter" || {
     echo "expected dead-letter message in output: $output" >&2
@@ -613,17 +638,16 @@ test_dispatch_enqueues_despite_torn_queue_line() {
   rm -f "$queue_file"
   echo '{"tid":"CRE-101","reason":"planned-dispatch from IN' >>"$queue_file"
 
+  local repos_root
+  repos_root=$(mktemp -d)
   bash -c "
-    FLEET_INSTANCE_ID=test-torn-dispatch
+    FLEET_INSTANCE_ID=test-torn-dispatch REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    $(declare -f _mock_epic_no_directive)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
-    _mock_epic_no_directive
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
+  rm -rf "$repos_root"
 
   # Match only COMPLETE single-line JSON (the torn line also contains the
   # tid substring — that is the point of the regression).
@@ -648,6 +672,8 @@ test_contended_append_retried_then_dead_lettered() {
   dead_letter_file="${queue_file%.jsonl}-dead-letter.jsonl"
   rm -f "$queue_file" "$dead_letter_file"
 
+  local repos_root
+  repos_root=$(mktemp -d)
   local output
   output=$(bash -c "
     # Mock flock to always fail (simulate permanent lock contention)
@@ -658,13 +684,13 @@ test_contended_append_retried_then_dead_lettered() {
     FLEET_QUEUE_LOCK_TIMEOUT=1
     FLEET_QUEUE_MAX_RETRIES=2
     FLEET_QUEUE_RETRY_BACKOFF_SECS=1
+    REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   # The dispatch should have written a dead-letter error to stderr and dead-letter
   # the entry to the dead-letter file
@@ -693,8 +719,9 @@ test_contended_append_retried_then_dead_lettered() {
 # Verify that when flock succeeds after a failure, the retry loop recovers
 # and the entry lands in the queue.
 test_contended_append_retried_and_lands() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   source "$LIB_DIR/fleet-config.sh"
   local instance_id="test-retry-land"
   local queue_file
@@ -722,21 +749,20 @@ test_contended_append_retried_and_lands() {
     FLEET_QUEUE_LOCK_TIMEOUT=1
     FLEET_QUEUE_MAX_RETRIES=3
     FLEET_QUEUE_RETRY_BACKOFF_SECS=1
+    REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
   # After first flock failure, second attempt should succeed
   if [ -f "$queue_file" ] && grep -q "CRE-101" "$queue_file" 2>/dev/null; then
-    rm -rf "$ws"
+    rm -rf "$ws" "$repos_root"
     return 0
   fi
   echo "queue file $queue_file missing expected CRE-101; output: $output" >&2
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
   return 1
 }
 
@@ -790,13 +816,12 @@ test_multi_repo_creation_covers_all_repos() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-mrepo
     REPOS_ROOT='$repos_root'
+    source '$TAP_LIB_DIR/manifest-write.sh'
     $(declare -f _mock_branch_ops)
     _mock_branch_ops '$calls_file'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -834,13 +859,12 @@ test_multi_repo_creation_failure_gate_stops() {
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-mrepo-fail
     REPOS_ROOT='$repos_root'
     _FAIL_REPO='repo-b'
+    source '$TAP_LIB_DIR/manifest-write.sh'
     $(declare -f _mock_branch_ops)
     _mock_branch_ops '$calls_file'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -875,16 +899,15 @@ test_epic_branch_gate_stop_reaches_stdout() {
   stdout_only=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-gatestop-stdout
     REPOS_ROOT='$repos_root'
+    source '$TAP_LIB_DIR/manifest-write.sh'
     ensure_epic_branch() {
       echo \"epic-branch: failed to push branch 'epic/x' to origin: HOOK-REJECTED-381\" >&2
       return 1
     }
     epic_branch_sync() { return 0; }
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws'
   " 2>/dev/null || true)
 
@@ -930,13 +953,12 @@ test_multi_repo_sync_failure_does_not_block() {
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-mrepo-syncfail
     REPOS_ROOT='$repos_root'
     _SYNC_FAIL_REPO='repo-a'
+    source '$TAP_LIB_DIR/manifest-write.sh'
     $(declare -f _mock_branch_ops)
     _mock_branch_ops '$calls_file'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    $(declare -f _mock_get_issue_epic_and_blocker_in_progress)
-    _mock_epics_by_label_with_children
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
@@ -1058,19 +1080,35 @@ test_repos_under_root_explicit_override() {
 
 # ── Priority ordering tests ─────────────────────────────────────────────────────
 
-# Mock epic with dispatchable children at given priorities. Prio values are
-# Linear's numeric priority: 1=Urgent, 2=High, 3=Medium, 4=Low, 0=No priority.
-# $_PRIORITY_CHILDREN_JSON carries the wrapped {"data":{"issue":{...}}} shape
-# (unchanged test literals) — derive both client-shaped mocks from it here.
-_mock_epic_query_priorities() {
+# Manifest counterpart of the old _mock_epic_query_priorities. Priority is
+# deliberately NOT part of the ticket manifest schema (out of scope for
+# tracker-planner-and-fallback-cutover) — fleet-dispatch.sh still fetches it
+# live per eligible child via get_issue — so this seeds INIT-42 (dispatch:
+# true) with each given tid as an unblocked, not-yet-dispatched child
+# manifest, then defines get_issue() to answer that tid's priority from a
+# global map. Prio values are Linear's numeric priority: 1=Urgent, 2=High,
+# 3=Medium, 4=Low, 0=No priority.
+# _seed_priority_children <repos_root> <tid:priority> [...]
+_seed_priority_children() {
+  local repos_root="$1"
+  shift
+  declare -gA _PRIORITY_MAP=()
+  local tids=() pair tid prio
+  for pair in "$@"; do
+    tid="${pair%%:*}"
+    prio="${pair##*:}"
+    tids+=("$tid")
+    _PRIORITY_MAP["$tid"]="$prio"
+  done
+  _seed_epic "$repos_root" INIT-42 true "${tids[@]}"
+  for tid in "${tids[@]}"; do
+    _seed_child "$repos_root" "$tid" INIT-42 false
+  done
   get_issue() {
-    case "$1" in
-    INIT-42) echo "$_PRIORITY_CHILDREN_JSON" | jq -c '.data.issue | {identifier, labels}' ;;
+    case "${_PRIORITY_MAP[$1]+set}" in
+    set) echo "{\"priority\":${_PRIORITY_MAP[$1]}}" ;;
     *) return 1 ;;
     esac
-  }
-  get_epics_by_label() {
-    echo "$_PRIORITY_CHILDREN_JSON" | jq -c '[.data.issue]'
   }
 }
 
@@ -1079,25 +1117,25 @@ _dispatch_order() {
   echo "$1" | grep -o '"tid":"[A-Z]*-[A-Z0-9]*"' | sed 's/"tid":"//;s/"//' | tr '\n' ' ' | sed 's/ $//'
 }
 
+# _test_dispatch_order <name> <expected order> <max_concurrent> <tid:priority> [...]
 _test_dispatch_order() {
-  local name="$1"
-  local children_json="$2"
-  local expected="$3"
-  local max_concurrent="${4:-3}"
-  local ws
+  local name="$1" expected="$2" max_concurrent="$3"
+  shift 3
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
 
   local output
   output=$(bash -c "
-    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-prio-${name}
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-prio-${name} REPOS_ROOT='$repos_root'
     FLEET_MAX_CONCURRENT=${max_concurrent}
     source '$LIB_DIR/fleet-dispatch.sh'
-    _PRIORITY_CHILDREN_JSON='$children_json'
-    $(declare -f _mock_epic_query_priorities _mock_epic_no_directive)
-    _mock_epic_query_priorities
+    $(declare -f _seed_epic _seed_child _seed_priority_children _mock_epic_no_directive)
+    _seed_priority_children '$repos_root' $*
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   local order
   order=$(_dispatch_order "$output")
@@ -1109,53 +1147,45 @@ _test_dispatch_order() {
 }
 
 test_priority_urgent_before_low() {
-  local children
-  children='{"data":{"issue":{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
-    {"identifier":"CRE-LOW","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":4},
-    {"identifier":"CRE-URG","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":1}
-  ]}}}}'
-  _test_dispatch_order "urglow" "$children" "CRE-URG CRE-LOW"
+  _test_dispatch_order "urglow" "CRE-URG CRE-LOW" 3 CRE-LOW:4 CRE-URG:1
 }
 
 test_priority_no_priority_sorts_last_not_first() {
-  local children
-  children='{"data":{"issue":{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
-    {"identifier":"CRE-NONE","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":0},
-    {"identifier":"CRE-LOW","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":4},
-    {"identifier":"CRE-URG","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":1}
-  ]}}}}'
-  _test_dispatch_order "nonelast" "$children" "CRE-URG CRE-LOW CRE-NONE"
+  _test_dispatch_order "nonelast" "CRE-URG CRE-LOW CRE-NONE" 3 CRE-NONE:0 CRE-LOW:4 CRE-URG:1
 }
 
 test_priority_all_five_levels_full_order() {
-  local children
-  children='{"data":{"issue":{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
-    {"identifier":"CRE-LOW","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":4},
-    {"identifier":"CRE-NONE","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":0},
-    {"identifier":"CRE-HIGH","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":2},
-    {"identifier":"CRE-URG","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":1},
-    {"identifier":"CRE-MED","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":3}
-  ]}}}}'
-  _test_dispatch_order "fivelevels" "$children" "CRE-URG CRE-HIGH CRE-MED CRE-LOW CRE-NONE" 5
+  _test_dispatch_order "fivelevels" "CRE-URG CRE-HIGH CRE-MED CRE-LOW CRE-NONE" 5 \
+    CRE-LOW:4 CRE-NONE:0 CRE-HIGH:2 CRE-URG:1 CRE-MED:3
 }
 
 # ── Campaign resume: dispatch reconcile hook + summary ──────────────────────────
 
-# Epic whose child TEST-1 is mid-flight (state Approve, NOT Backlog) with an
-# incomplete pipeline log, plus a normal planned Backlog child TEST-2.
-_mock_epic_query_campaign() {
-  get_issue() {
-    case "$1" in
-    INIT-42) echo '{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]}}' ;;
-    *) return 1 ;;
-    esac
-  }
-  get_epics_by_label() {
-    echo '[{"identifier":"INIT-42","labels":{"nodes":[{"name":"state:execution"}]},"children":{"nodes":[
-        {"identifier":"TEST-1","state":{"name":"Approve"},"labels":{"nodes":[{"name":"planned"}]},"priority":2},
-        {"identifier":"TEST-2","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]},"priority":3}
-      ]}}]'
-  }
+# Manifest counterpart of the old _mock_epic_query_campaign. TEST-1 is
+# "mid-flight" — already dispatched (manifest dispatch:true), so Step 2's
+# eligibility loop never sees it; it is a resume candidate only, surfaced
+# through the campaign-reconcile pass keyed off its own incomplete pipeline
+# log (seeded separately via _test_plog). TEST-2 is a normal, not-yet-
+# dispatched planned child. get_issue is stubbed (never a real match) so an
+# unmocked call never falls through fleet-dispatch.sh's own top-of-file
+# linear-api.sh sourcing to a real tracker read during these hermetic tests.
+_seed_campaign_fixture() {
+  local repos_root="$1"
+  _seed_epic "$repos_root" INIT-42 true TEST-1 TEST-2
+  _seed_child "$repos_root" TEST-1 INIT-42 true
+  _seed_child "$repos_root" TEST-2 INIT-42 false
+  get_issue() { return 1; }
+}
+
+# _seed_midflight_child <repos_root> <epic> <tid>
+# Single-child variant of _seed_campaign_fixture: <epic> (dispatch:true)
+# with exactly one already-dispatched (mid-flight) child <tid> — used by
+# tests whose only child is a resume/reconcile candidate, never a fresh
+# Step-2 eligibility one.
+_seed_midflight_child() {
+  local repos_root="$1" epic="$2" tid="$3"
+  _seed_epic "$repos_root" "$epic" true "$tid"
+  _seed_child "$repos_root" "$tid" "$epic" true
 }
 
 # Fake tid (TEST-*) — never matches a real pgrep pattern, keeping the
@@ -1167,23 +1197,25 @@ _test_plog() {
 }
 
 test_dispatch_resumes_incomplete_child() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   _test_plog "$ws" "TEST-1"
   local queue_file="${ws}/fleet-test-resume-spawn-queue.jsonl"
 
   local output
   output=$(bash -c "
-    FLEET_INSTANCE_ID=test-resume
+    FLEET_INSTANCE_ID=test-resume REPOS_ROOT='$repos_root'
     FLEET_AUTO_RESTART=true
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_campaign _mock_epic_no_directive)
-    _mock_epic_query_campaign
+    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   echo "$output" | grep -q '^  resumed TEST-1$' || {
     echo "expected '  resumed TEST-1' line; output: $output" >&2
@@ -1216,24 +1248,26 @@ test_dispatch_resumes_incomplete_child() {
 }
 
 test_dispatch_dry_run_resume_leaves_queue_untouched() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   _test_plog "$ws" "TEST-1"
   local queue_file="${ws}/fleet-test-dryresume-spawn-queue.jsonl"
 
   local output
   output=$(bash -c "
-    FLEET_INSTANCE_ID=test-dryresume
+    FLEET_INSTANCE_ID=test-dryresume REPOS_ROOT='$repos_root'
     FLEET_DRY_RUN=true
     FLEET_AUTO_RESTART=true
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_campaign _mock_epic_no_directive)
-    _mock_epic_query_campaign
+    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   echo "$output" | grep -q '\[DRY-RUN\] would resume TEST-1' || {
     echo "expected dry-run would-resume line; output: $output" >&2
@@ -1259,20 +1293,22 @@ test_dispatch_dry_run_resume_leaves_queue_untouched() {
 # A dead pipeline log (no outcome, no worker, no registry pid) must NOT
 # consume a capacity slot — the regression this whole change fixes.
 test_dispatch_dead_log_does_not_jam_campaign() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   _test_plog "$ws" "TEST-DEAD"
   local queue_file="${ws}/fleet-test-deadlog-spawn-queue.jsonl"
 
   local output
   output=$(bash -c "
-    FLEET_INSTANCE_ID=test-deadlog FLEET_MAX_CONCURRENT=1
+    FLEET_INSTANCE_ID=test-deadlog FLEET_MAX_CONCURRENT=1 REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_campaign _mock_epic_no_directive)
-    _mock_epic_query_campaign
+    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   # TEST-DEAD is not a child of INIT-42, so it was never a candidate for
   # resume — but under the old count it consumed the single slot and TEST-2
@@ -1287,20 +1323,22 @@ test_dispatch_dead_log_does_not_jam_campaign() {
 # The epic's own pending queue entries reserve capacity — a re-dispatch with
 # a pending resume entry must not over-enqueue past FLEET_MAX_CONCURRENT.
 test_dispatch_reserves_queued_for_epic_slots() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   local queue_file="${ws}/fleet-test-reserve-spawn-queue.jsonl"
   echo '{"tid":"TEST-1","reason":"campaign-resume from INIT-42","timestamp":"2026-08-18T00:00:00Z","restarts":0,"dispatch_type":"initial","generation":1}' >"$queue_file"
 
   local output
   output=$(bash -c "
-    FLEET_INSTANCE_ID=test-reserve FLEET_MAX_CONCURRENT=1
+    FLEET_INSTANCE_ID=test-reserve FLEET_MAX_CONCURRENT=1 REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_campaign _mock_epic_no_directive)
-    _mock_epic_query_campaign
+    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   # 0 live + 1 queued-for-epic = slot gone → at capacity, TEST-2 not enqueued.
   echo "$output" | grep -q "at capacity" || {
@@ -1315,21 +1353,26 @@ test_dispatch_reserves_queued_for_epic_slots() {
 }
 
 # Every child skipped by blocked-by resolution → blocked N in the summary,
-# never a silent "no dispatchable tickets".
+# never a silent "no dispatchable tickets". Manifest model: CRE-103 is
+# blocked-by CRE-100, and CRE-100 has no pipeline log at all — "no evidence
+# of Done" is what ticket_pipeline_terminal_done treats as blocked (no
+# separate live "In Progress" state to fetch anymore).
 test_dispatch_reports_blocked_children() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
 
   local output
   output=$(bash -c "
-    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-blocked
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-blocked REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_blocker_child _mock_get_issue_epic_and_blocker_in_progress _mock_epic_no_directive)
-    _mock_epics_by_label_blocker_child
-    _mock_get_issue_epic_and_blocker_in_progress
+    $(declare -f _seed_epic _seed_child _mock_epic_no_directive)
+    _seed_epic '$repos_root' INIT-42 true CRE-103
+    _seed_child '$repos_root' CRE-103 INIT-42 false CRE-100
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   echo "$output" | grep -q '^  blocked CRE-103$' || {
     echo "expected '  blocked CRE-103' line; output: $output" >&2
@@ -1344,60 +1387,16 @@ test_dispatch_reports_blocked_children() {
   return 0
 }
 
-# tracker-read-failure-policy section 5 (task 5.4): an unreadable blocker
-# must fail closed — the child is withheld, not dispatched on the absence
-# of evidence.
-test_dispatch_blocker_unreadable_not_enqueued() {
-  local ws
-  ws=$(_setup_workspace)
-
-  local output
-  output=$(bash -c "
-    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-blocker-unreadable
-    source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_blocker_child _mock_get_issue_epic_and_blocker_unreadable)
-    _mock_epics_by_label_blocker_child
-    _mock_get_issue_epic_and_blocker_unreadable
-    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
-  " 2>/dev/null || true)
-
-  echo "$output" | grep -q 'would enqueue.*CRE-103' && {
-    echo "CRE-103 must not be enqueued with an unreadable blocker; output: $output" >&2
-    return 1
-  }
-  echo "$output" | grep -q '^  blocked CRE-103$' || {
-    echo "expected '  blocked CRE-103' line for an unreadable blocker; output: $output" >&2
-    return 1
-  }
-  echo "$output" | grep -q 'unreadable — treating as blocked' || {
-    echo "expected the unreadable-blocker reason to be logged (design R1); output: $output" >&2
-    return 1
-  }
-  return 0
-}
-
-# tracker-read-failure-policy section 5 (task 5.5): every blocker unreadable
-# must still exit clean (0), not error out — a hard failure here would stop
-# the whole dispatch sweep rather than letting the next cycle retry.
-test_dispatch_all_blockers_unreadable_exits_clean() {
-  local ws
-  ws=$(_setup_workspace)
-
-  bash -c "
-    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-blocker-unreadable-clean
-    source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_blocker_child _mock_get_issue_epic_and_blocker_unreadable)
-    _mock_epics_by_label_blocker_child
-    _mock_get_issue_epic_and_blocker_unreadable
-    fleet_dispatch_initiative 'INIT-42' '$ws'
-  " >/dev/null 2>&1
-  local exit_code=$?
-  [ "$exit_code" -eq 0 ] || {
-    echo "expected a clean exit (0) so the next cycle retries; got $exit_code" >&2
-    return 1
-  }
-  return 0
-}
+# tracker-read-failure-policy's distinct "unreadable blocker" fail-closed path
+# (test_dispatch_blocker_unreadable_not_enqueued / _all_blockers_unreadable_
+# exits_clean, formerly here) was retired by tracker-planner-and-fallback-
+# cutover task 3.9: blocked-by resolution no longer calls get_issue on the
+# blocker at all — it reads the blocker's OWN pipeline log locally via
+# ticket_pipeline_terminal_done (manifest-read.sh), which has no distinct
+# "read failed" outcome, only "log shows Done" or "it doesn't" (test above
+# covers the latter). Deleted per this migration's own convention: a test
+# for a retired code path is deleted, not adapted to assert something the
+# code no longer does.
 
 # ── Campaign resume: stop pins incomplete children ──────────────────────────────
 
@@ -1538,30 +1537,28 @@ _run "priority_all_five_levels_order" test_priority_all_five_levels_full_order
 # ── Epic-scoped dispatch lock + stop-file gate ────────────────────────────────────
 
 test_concurrent_same_epic_dispatch_single_entry() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  _seed_with_children_fixture "$repos_root"
+  _seed_blocker_done "$ws" CRE-100
 
   # Two concurrent dispatches of the same epic — the epic-scoped flock must
   # serialize them so each ticket is enqueued exactly once.
   bash -c "
+    REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    _mock_epics_by_label_with_children
-    $(declare -f _mock_get_issue_epic_and_blocker_done)
-    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws'
   " 2>/dev/null &
   local pid1=$!
   bash -c "
+    REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    _mock_epics_by_label_with_children
-    $(declare -f _mock_get_issue_epic_and_blocker_done)
-    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws'
   " 2>/dev/null &
   local pid2=$!
   wait "$pid1" "$pid2" 2>/dev/null || true
+  rm -rf "$repos_root"
 
   local queue_file
   queue_file="$ws/fleet-default-spawn-queue.jsonl"
@@ -1586,8 +1583,11 @@ test_concurrent_same_epic_dispatch_single_entry() {
 }
 
 test_dispatch_lock_different_epics_do_not_block() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  _seed_with_children_fixture "$repos_root"
+  _seed_blocker_done "$ws" CRE-100
   local queue_file
   queue_file="$ws/fleet-default-spawn-queue.jsonl"
 
@@ -1601,14 +1601,12 @@ test_dispatch_lock_different_epics_do_not_block() {
 
   local output
   output=$(bash -c "
+    REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    _mock_epics_by_label_with_children
-    $(declare -f _mock_get_issue_epic_and_blocker_done)
-    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   wait "$holder" 2>/dev/null || true
+  rm -rf "$repos_root"
 
   echo "$output" | grep -q "enqueued" || {
     echo "output: $output"
@@ -1642,19 +1640,20 @@ test_stopped_epic_enqueues_nothing() {
 }
 
 test_resume_clears_and_dispatches() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  _seed_with_children_fixture "$repos_root"
+  _seed_blocker_done "$ws" CRE-100
   echo '{"initiative_id":"INIT-42","stopped_at":"2026-08-18T00:00:00Z","reason":"test","tickets":["CRE-101"]}' >"$ws/stop-INIT-42.json"
 
   local output
   output=$(bash -c "
+    REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    _mock_epics_by_label_with_children
-    $(declare -f _mock_get_issue_epic_and_blocker_done)
-    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws' --resume 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   echo "$output" | grep -q "stop-file cleared" || {
     echo "output: $output"
@@ -1672,19 +1671,20 @@ test_resume_clears_and_dispatches() {
 }
 
 test_stop_file_inert_to_other_epics() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  _seed_with_children_fixture "$repos_root"
+  _seed_blocker_done "$ws" CRE-100
   echo '{"initiative_id":"INIT-43","stopped_at":"2026-08-18T00:00:00Z","reason":"test","tickets":[]}' >"$ws/stop-INIT-43.json"
 
   local output
   output=$(bash -c "
+    REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epics_by_label_with_children)
-    _mock_epics_by_label_with_children
-    $(declare -f _mock_get_issue_epic_and_blocker_done)
-    _mock_get_issue_epic_and_blocker_done
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   echo "$output" | grep -q "enqueued" || {
     echo "output: $output"
@@ -1970,31 +1970,25 @@ test_queue_append_dedupes_under_lock() {
 # F08: dispatch's campaign-resume hook passes the workspace's stop-file pins —
 # a ticket pinned by ANY stop-file must not gain a resume entry.
 test_dispatch_reconcile_respects_stop_pins() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   _test_plog "$ws" "TEST-P"
   echo '{"initiative_id":"INIT-43","stopped_at":"2026-08-18T00:00:00Z","reason":"test","tickets":["TEST-P"]}' >"$ws/stop-INIT-43.json"
 
   local output
   output=$(bash -c "
-    FLEET_INSTANCE_ID=test-pin
+    FLEET_INSTANCE_ID=test-pin REPOS_ROOT='$repos_root'
     FLEET_AUTO_RESTART=true
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_child _seed_midflight_child _mock_epic_no_directive)
+    _seed_midflight_child '$repos_root' INIT-42 TEST-P
     _mock_epic_no_directive
-    get_issue() {
-      case \"\$1\" in
-      INIT-42) echo '{\"identifier\":\"INIT-42\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]}}' ;;
-      *) return 1 ;;
-      esac
-    }
-    get_epics_by_label() {
-      echo '[{\"identifier\":\"INIT-42\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]},\"children\":{\"nodes\":[{\"identifier\":\"TEST-P\",\"state\":{\"name\":\"Approve\"},\"labels\":{\"nodes\":[{\"name\":\"planned\"}]},\"priority\":2}]}}]'
-    }
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   echo "$output" | grep -q 'TEST-P — pinned by stop-file, left alone' || {
     echo "expected pinned-skip line; output: $output" >&2
@@ -2074,34 +2068,36 @@ test_active_count_kill_outcome_live_worker_counts_active() {
 # F16: two dispatch runs over the same workspace enqueue each ticket exactly
 # once — the second run is a no-op resume (resumed 0, enqueued 0).
 test_dispatch_twice_single_entry_per_tid() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   _test_plog "$ws" "TEST-1"
   local queue_file="${ws}/fleet-test-twice-spawn-queue.jsonl"
 
   local run1 run2
   run1=$(bash -c "
-    FLEET_INSTANCE_ID=test-twice
+    FLEET_INSTANCE_ID=test-twice REPOS_ROOT='$repos_root'
     FLEET_AUTO_RESTART=true
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_campaign _mock_epic_no_directive)
-    _mock_epic_query_campaign
+    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   run2=$(bash -c "
-    FLEET_INSTANCE_ID=test-twice
+    FLEET_INSTANCE_ID=test-twice REPOS_ROOT='$repos_root'
     FLEET_AUTO_RESTART=true
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_query_campaign _mock_epic_no_directive)
-    _mock_epic_query_campaign
+    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   for tid in TEST-1 TEST-2; do
     local n
@@ -2121,33 +2117,27 @@ test_dispatch_twice_single_entry_per_tid() {
 # F17: a child at the restart cap dead-letters during dispatch's campaign
 # reconcile — the summary surfaces it (no silent "resumed 0").
 test_dispatch_dead_letter_at_restart_cap_reported() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   echo "2026-07-07T10:00:00Z|EXEC|exec|start|mid-flight" >"$ws/TEST-8-pipeline.log"
   echo "2026-07-07T10:01:00Z|META|fleet-restart|info|restart 1" >>"$ws/TEST-8-pipeline.log"
   echo "2026-07-07T10:02:00Z|META|fleet-restart|info|restart 2" >>"$ws/TEST-8-pipeline.log"
 
   local output
   output=$(bash -c "
-    FLEET_INSTANCE_ID=test-dlc
+    FLEET_INSTANCE_ID=test-dlc REPOS_ROOT='$repos_root'
     FLEET_AUTO_RESTART=true
     FLEET_MAX_RESTARTS=2
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_child _seed_midflight_child _mock_epic_no_directive)
+    _seed_midflight_child '$repos_root' INIT-42 TEST-8
     _mock_epic_no_directive
-    get_issue() {
-      case \"\$1\" in
-      INIT-42) echo '{\"identifier\":\"INIT-42\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]}}' ;;
-      *) return 1 ;;
-      esac
-    }
-    get_epics_by_label() {
-      echo '[{\"identifier\":\"INIT-42\",\"labels\":{\"nodes\":[{\"name\":\"state:execution\"}]},\"children\":{\"nodes\":[{\"identifier\":\"TEST-8\",\"state\":{\"name\":\"Approve\"},\"labels\":{\"nodes\":[{\"name\":\"planned\"}]},\"priority\":2}]}}]'
-    }
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
+  rm -rf "$repos_root"
 
   echo "$output" | grep -q 'fleet-dead-letter|tid=TEST-8|reason=orphaned-after-max-restarts' || {
     echo "expected dead-letter line; output: $output" >&2
@@ -2169,8 +2159,6 @@ _run "dispatch_dry_run_resume_leaves_queue_untouched" test_dispatch_dry_run_resu
 _run "dispatch_dead_log_does_not_jam_campaign" test_dispatch_dead_log_does_not_jam_campaign
 _run "dispatch_reserves_queued_for_epic_slots" test_dispatch_reserves_queued_for_epic_slots
 _run "dispatch_reports_blocked_children" test_dispatch_reports_blocked_children
-_run "dispatch_blocker_unreadable_not_enqueued" test_dispatch_blocker_unreadable_not_enqueued
-_run "dispatch_all_blockers_unreadable_exits_clean" test_dispatch_all_blockers_unreadable_exits_clean
 _run "stop_pins_incomplete_child_with_empty_queue" test_stop_pins_incomplete_child_with_empty_queue
 _run "stop_purges_campaign_resume_and_child_tid_entries" test_stop_purges_campaign_resume_and_child_tid_entries
 _run "stop_children_query_failure_degrades" test_stop_children_query_failure_degrades
@@ -2272,14 +2260,20 @@ test_dispatch_manifest_full_localization() {
 }
 _run "dispatch_manifest_full_localization" test_dispatch_manifest_full_localization
 
-test_dispatch_manifest_per_child_fallback() {
+# tracker-planner-and-fallback-cutover task 3.9 retired the per-child live
+# get_issue fallback entirely (fleet-dispatch.sh:643-649) — a child named in
+# the epic manifest with no ticket manifest of its own is now a reported
+# data-integrity gap, never a live-fetch-and-enqueue path. Renamed and
+# rewritten from the old test_dispatch_manifest_per_child_fallback, which
+# asserted the retired "no manifest, live fallback" behavior.
+test_dispatch_manifest_per_child_skipped_without_manifest() {
   local ws repos_root
   ws=$(_setup_workspace)
   repos_root=$(mktemp -d)
 
   REPOS_ROOT="$repos_root" write_epic_manifest "INIT-62" "epic/x" "epic" "manual" '["CRE-420"]' >/dev/null
   REPOS_ROOT="$repos_root" stamp_epic_dispatch "INIT-62" >/dev/null
-  # CRE-420 has NO ticket manifest — per-child live fallback must kick in.
+  # CRE-420 has NO ticket manifest — must be skipped, not live-fetched.
 
   local output
   output=$(bash -c "
@@ -2287,26 +2281,22 @@ test_dispatch_manifest_per_child_fallback() {
     FLEET_DRY_RUN=true
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    get_issue() {
-      case \"\$1\" in
-      CRE-420) echo '{\"identifier\":\"CRE-420\",\"state\":{\"name\":\"Backlog\"},\"labels\":{\"nodes\":[{\"name\":\"planned\"}]},\"priority\":2}' ;;
-      *) return 1 ;;
-      esac
-    }
+    get_issue() { return 1; }
     fleet_dispatch_initiative 'INIT-62' '$ws' 2>&1
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q "no manifest, live fallback" || {
-    echo "expected per-child live fallback to fire for CRE-420: $output" >&2
+  echo "$output" | grep -q "skip CRE-420 (no ticket manifest)" || {
+    echo "expected CRE-420 to be skipped for having no ticket manifest: $output" >&2
     return 1
   }
-  echo "$output" | grep -q "would enqueue: .*CRE-420" || {
-    echo "expected CRE-420 to be enqueued via fallback: $output" >&2
+  echo "$output" | grep -q "would enqueue: .*CRE-420" && {
+    echo "CRE-420 must never be enqueued with no ticket manifest: $output" >&2
     return 1
   }
+  return 0
 }
-_run "dispatch_manifest_per_child_fallback" test_dispatch_manifest_per_child_fallback
+_run "dispatch_manifest_per_child_skipped_without_manifest" test_dispatch_manifest_per_child_skipped_without_manifest
 
 test_dispatch_stamps_ticket_manifest_on_real_enqueue() {
   local ws repos_root

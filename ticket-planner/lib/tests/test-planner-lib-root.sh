@@ -111,7 +111,12 @@ for phase in "${PHASES[@]}"; do
   prompt=$(planner_prompt_for_phase "$phase" "INIT-TEST" "an idea" "${TMPDIR}/state")
 
   # Pull the resolved root out of the emitted preamble and check it really exists.
-  root=$(echo "$prompt" | grep -m1 '^CLAUDE_PLUGIN_ROOT=' | sed 's/^CLAUDE_PLUGIN_ROOT="//;s/"$//')
+  # grep -m1 into a here-string (not `echo | grep`) — under pipefail, grep
+  # closing early after its first match can SIGPIPE an upstream echo still
+  # mid-write on a large multi-KB prompt, intermittently corrupting this
+  # pipeline's reported exit status regardless of whether the match was
+  # actually found (see the task 5.4 humanizer-test fix for the full story).
+  root=$(grep -m1 '^CLAUDE_PLUGIN_ROOT=' <<<"$prompt" | sed 's/^CLAUDE_PLUGIN_ROOT="//;s/"$//')
   if [ -n "$root" ] && [ -f "${root}/lib/planner-state.sh" ]; then
     pass "${phase} preamble resolves to a real lib dir"
   else
@@ -146,7 +151,7 @@ for needle in \
   'confidence=$(planner_confidence_derive' \
   'planner_context=$(planner_context_generate' \
   'signals_json=$(sed -n'; do
-  if echo "$tg" | grep -qF "$needle"; then
+  if grep -qF "$needle" <<<"$tg"; then
     pass "emits: ${needle}"
   else
     fail "emits: ${needle}" "assignment was evaluated at generation time (empty in prompt)"
@@ -176,7 +181,7 @@ for phase in "${PHASES[@]}"; do
   prompt=$(planner_prompt_for_phase "$phase" "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
   found=""
   for var in "${GENERATOR_LOCALS[@]}"; do
-    if echo "$prompt" | grep -qE "\\\$\{?${var}\\b"; then
+    if grep -qE "\\\$\{?${var}\\b" <<<"$prompt"; then
       found="${found}${var} "
     fi
   done
@@ -190,23 +195,23 @@ done
 # The positive half: the interpolated values must actually be there, or the fix
 # above could be "satisfied" by deleting the references entirely.
 tg=$(planner_prompt_ticketgen "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
-if echo "$tg" | grep -qF '"/repos/.ticket-auto/initiatives/INIT-TEST/state.log"'; then
+if grep -qF '"/repos/.ticket-auto/initiatives/INIT-TEST/state.log"' <<<"$tg"; then
   pass "TicketGen reads the epic id from the real state log path"
 else
   fail "TicketGen reads the real state log path" "path not interpolated"
 fi
 
 eg=$(planner_prompt_epicgen "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
-if echo "$eg" | grep -qF 'ENTITY_KEY="epic-INIT-TEST"'; then
+if grep -qF 'ENTITY_KEY="epic-INIT-TEST"' <<<"$eg"; then
   pass "the EpicGen idempotency key carries the initiative id"
 else
-  fail "EpicGen idempotency key carries the initiative id" "$(echo "$eg" | grep -m1 'ENTITY_KEY=')"
+  fail "EpicGen idempotency key carries the initiative id" "$(grep -m1 'ENTITY_KEY=' <<<"$eg")"
 fi
 
 # …and the genuinely agent-owned variables must stay escaped. ticket_slug is a
 # loop variable in the agent's shell, so interpolating it here would be the
 # opposite mistake.
-if echo "$tg" | grep -qF 'ENTITY_KEY="ticket-${ticket_slug}"'; then
+if grep -qF 'ENTITY_KEY="ticket-${ticket_slug}"' <<<"$tg"; then
   pass "agent-owned loop variables stay escaped"
 else
   fail "agent-owned loop variables stay escaped" "ticket_slug was interpolated at generation time"
@@ -215,12 +220,33 @@ fi
 # TEAM_ID is used by both creating phases and was never assigned anywhere.
 for phase in EpicGen TicketGen; do
   prompt=$(planner_prompt_for_phase "$phase" "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
-  assign=$(echo "$prompt" | grep -n '^TEAM_ID=' | head -1 | cut -d: -f1)
-  use=$(echo "$prompt" | grep -n '"\$TEAM_ID"' | head -1 | cut -d: -f1)
+  assign=$(grep -m1 -n '^TEAM_ID=' <<<"$prompt" | cut -d: -f1)
+  use=$(grep -m1 -n '"\$TEAM_ID"' <<<"$prompt" | cut -d: -f1)
   if [ -n "$assign" ] && [ -n "$use" ] && [ "$assign" -lt "$use" ]; then
     pass "${phase} assigns TEAM_ID before it is used"
   else
     fail "${phase} assigns TEAM_ID before use" "assign='${assign}' first-use='${use}'"
+  fi
+done
+
+# tracker-planner-and-fallback-cutover (5.4): both creating phases pass an
+# empty label array to planner_linear_create_issue — no planned/INIT-*/type/
+# epic marker/pre-approved/blocked-by:* label is ever set at creation time.
+if grep -qF "\"\$(jq -nc '[]')\"" <<<"$eg"; then
+  pass "EpicGen creates the epic with an empty label array"
+else
+  fail "EpicGen creates the epic with an empty label array" "no literal empty-array label arg found"
+fi
+if grep -qF "LABELS='[]'" <<<"$tg"; then
+  pass "TicketGen creates tickets with an empty label array"
+else
+  fail "TicketGen creates tickets with an empty label array" "LABELS is not hardcoded to '[]'"
+fi
+for retired in 'planner_linear_ensure_label "\$TEAM_ID" "\$INIT_LABEL"' 'planner_linear_ensure_label "\$TEAM_ID" "\$DEP_LABEL"'; do
+  if grep -qF "$retired" <<<"$tg$eg"; then
+    fail "no retired dynamic-label ensure call remains" "found: $retired"
+  else
+    pass "no retired dynamic-label ensure call remains ($retired)"
   fi
 done
 

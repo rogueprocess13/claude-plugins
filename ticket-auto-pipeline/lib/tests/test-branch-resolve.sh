@@ -32,6 +32,10 @@ source "$LIB_DIR/config.sh"
 source "$LIB_DIR/planned-ticket-check.sh"
 source "$LIB_DIR/branch-directive-check.sh"
 source "$LIB_DIR/branch-resolve.sh"
+# manifest-write.sh, for seeding epic manifests directly — the only way left
+# to exercise a directive now that _epic_branch_directive has no live
+# fallback (tracker-planner-and-fallback-cutover, 3.5).
+source "$LIB_DIR/manifest-write.sh"
 
 PASS=0
 FAIL=0
@@ -99,11 +103,6 @@ EPIC_UAT_PARENT='{
   "description": "## Branch Directive\n**Schema-Version:** 2\n**Branch:** epic/debt-collection-v2\n**Base:** develop\n**Merge Policy:** manual\n**Sync Policy:** rebase-on-base-change\n**UAT Policy:** epic\n**Created:** 2026-07-25T10:00:00Z"
 }'
 
-MALFORMED_DIRECTIVE_PARENT='{
-  "id": "CRE-100",
-  "description": "## Branch Directive\n**Schema-Version:** 1\n**Branch:** epic/bad\n**Merge Policy:** manual"
-}'
-
 NO_DIRECTIVE_PARENT='{
   "id": "CRE-200",
   "description": "Just a regular epic description."
@@ -142,12 +141,21 @@ test_flag_beats_directive() {
 }
 _run "flag beats directive" test_flag_beats_directive
 
-# Directive beats default
+# Directive beats default. Seeded epic manifest (3.5) — VALID_DIRECTIVE_
+# PARENT's description is unused, only its .id keys the manifest lookup.
 test_directive_beats_default() {
+  local tmp
+  tmp=$(mktemp -d)
+  REPOS_ROOT="$tmp" write_epic_manifest "CRE-100" "epic/debt-collection-v2" "per-ticket" "manual" '[]' >/dev/null
+
   local output
-  output=$(resolve_branch_context "CRE-123" \
+  output=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-123" \
     --title "Fix auth bug" \
-    --parent-json "$VALID_DIRECTIVE_PARENT" 2>/dev/null) || return 1
+    --parent-json "$VALID_DIRECTIVE_PARENT" 2>/dev/null) || {
+    rm -rf "$tmp"
+    return 1
+  }
+  rm -rf "$tmp"
 
   local parsed
   parsed=$(echo "$output" | _parse_result)
@@ -226,25 +234,13 @@ test_parent_no_directive() {
 }
 _run "parent without directive → default" test_parent_no_directive
 
-# Malformed directive → BRANCH_DIRECTIVE_INVALID and exit non-zero
-test_malformed_directive() {
-  local output
-  local actual=0
-  output=$(resolve_branch_context "CRE-123" \
-    --title "Fix auth bug" \
-    --parent-json "$MALFORMED_DIRECTIVE_PARENT" 2>&1) || actual=$?
-
-  [ "$actual" -ne 0 ] || {
-    echo "  expected non-zero exit" >&2
-    return 1
-  }
-  echo "$output" | grep -q "BRANCH_DIRECTIVE_INVALID" || {
-    echo "  expected BRANCH_DIRECTIVE_INVALID in output" >&2
-    return 1
-  }
-  return 0
-}
-_run "malformed directive → BRANCH_DIRECTIVE_INVALID" test_malformed_directive
+# tracker-planner-and-fallback-cutover (3.5): _epic_branch_directive no
+# longer parses (or validates) a live description — a cached manifest value
+# was already validated once when written, so BRANCH_DIRECTIVE_INVALID is
+# currently unreachable from this function (kept as a defensive backstop in
+# the code; see the comment at its call site). The malformed-directive test
+# that lived here asserted the retired live-validation path and is removed
+# rather than adapted, per the audit's rule.
 
 # Invalid --branch flag → failure
 test_invalid_flag() {
@@ -396,16 +392,24 @@ test_long_title_capped() {
 _run "very long title is capped at 60 chars" test_long_title_capped
 
 # Directive declares a base different from its branch: the directive's Branch
-# still wins for BASE_BRANCH (per branch-resolution spec), not the declared Base
+# still wins for BASE_BRANCH (per branch-resolution spec), not the declared Base.
+# tracker-planner-and-fallback-cutover (3.5): the directive comes from a
+# seeded epic manifest, not from --parent-json's description — that field
+# is no longer parsed at all, only .id (to key the manifest lookup).
 test_directive_different_base() {
-  local parent='{
-    "id": "CRE-300",
-    "description": "## Branch Directive\n**Schema-Version:** 1\n**Branch:** epic/hotfix\n**Base:** main\n**Merge Policy:** manual\n**Sync Policy:** none\n**Created:** 2026-07-25T10:00:00Z"
-  }'
+  local parent='{"id": "CRE-300"}'
+  local tmp
+  tmp=$(mktemp -d)
+  REPOS_ROOT="$tmp" write_epic_manifest "CRE-300" "epic/hotfix" "per-ticket" "manual" '[]' >/dev/null
+
   local output
-  output=$(resolve_branch_context "CRE-789" \
+  output=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-789" \
     --title "Hotfix login" \
-    --parent-json "$parent" 2>/dev/null) || return 1
+    --parent-json "$parent" 2>/dev/null) || {
+    rm -rf "$tmp"
+    return 1
+  }
+  rm -rf "$tmp"
 
   local parsed
   parsed=$(echo "$output" | _parse_result)
@@ -426,10 +430,20 @@ _run "directive Branch beats declared Base" test_directive_different_base
 # ── UAT policy on the branch-context rail ────────────────────────────────────
 
 test_uat_policy_from_directive() {
+  # tracker-planner-and-fallback-cutover (3.5): seeded epic manifest, not
+  # EPIC_UAT_PARENT's description — that field is no longer parsed.
+  local tmp
+  tmp=$(mktemp -d)
+  REPOS_ROOT="$tmp" write_epic_manifest "CRE-100" "epic/debt-collection-v2" "epic" "manual" '[]' >/dev/null
+
   local output parsed
-  output=$(resolve_branch_context "CRE-123" \
+  output=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-123" \
     --title "Fix auth bug" \
-    --parent-json "$EPIC_UAT_PARENT" 2>/dev/null) || return 1
+    --parent-json "$EPIC_UAT_PARENT" 2>/dev/null) || {
+    rm -rf "$tmp"
+    return 1
+  }
+  rm -rf "$tmp"
   parsed=$(echo "$output" | _parse_result)
   eval "$parsed"
 
@@ -476,11 +490,20 @@ _run "ticket outside a shared-branch epic resolves per-ticket" test_uat_policy_n
 test_uat_policy_survives_branch_override() {
   # --branch retargets the branch; it does not detach the ticket from its
   # epic's acceptance model. Regressing this silently re-stalls the chain.
+  # Seeded epic manifest (3.5) — EPIC_UAT_PARENT's description is unused.
+  local tmp
+  tmp=$(mktemp -d)
+  REPOS_ROOT="$tmp" write_epic_manifest "CRE-100" "epic/debt-collection-v2" "epic" "manual" '[]' >/dev/null
+
   local output parsed
-  output=$(resolve_branch_context "CRE-123" \
+  output=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-123" \
     --branch "epic/override-x" \
     --title "Fix auth bug" \
-    --parent-json "$EPIC_UAT_PARENT" 2>/dev/null) || return 1
+    --parent-json "$EPIC_UAT_PARENT" 2>/dev/null) || {
+    rm -rf "$tmp"
+    return 1
+  }
+  rm -rf "$tmp"
   parsed=$(echo "$output" | _parse_result)
   eval "$parsed"
 
@@ -510,10 +533,20 @@ _run "result block carries UAT_POLICY" test_result_block_has_uat_policy
 # ── Merge policy on the branch-context rail ──────────────────────────────────
 
 test_merge_policy_from_directive() {
+  # Seeded epic manifest (3.5) — VALID_DIRECTIVE_PARENT's description is
+  # unused.
+  local tmp
+  tmp=$(mktemp -d)
+  REPOS_ROOT="$tmp" write_epic_manifest "CRE-100" "epic/debt-collection-v2" "per-ticket" "manual" '[]' >/dev/null
+
   local output parsed
-  output=$(resolve_branch_context "CRE-123" \
+  output=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-123" \
     --title "Fix auth bug" \
-    --parent-json "$VALID_DIRECTIVE_PARENT" 2>/dev/null) || return 1
+    --parent-json "$VALID_DIRECTIVE_PARENT" 2>/dev/null) || {
+    rm -rf "$tmp"
+    return 1
+  }
+  rm -rf "$tmp"
   parsed=$(echo "$output" | _parse_result)
   eval "$parsed"
 
@@ -559,12 +592,21 @@ _run "parent without directive resolves empty MERGE_POLICY" test_merge_policy_pa
 
 test_merge_policy_survives_branch_override() {
   # --branch retargets the branch; it does not detach the ticket from its
-  # epic's Merge Policy any more than it does for UAT policy.
+  # epic's Merge Policy any more than it does for UAT policy. Seeded epic
+  # manifest (3.5) — VALID_DIRECTIVE_PARENT's description is unused.
+  local tmp
+  tmp=$(mktemp -d)
+  REPOS_ROOT="$tmp" write_epic_manifest "CRE-100" "epic/debt-collection-v2" "per-ticket" "manual" '[]' >/dev/null
+
   local output parsed
-  output=$(resolve_branch_context "CRE-123" \
+  output=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-123" \
     --branch "epic/override-x" \
     --title "Fix auth bug" \
-    --parent-json "$VALID_DIRECTIVE_PARENT" 2>/dev/null) || return 1
+    --parent-json "$VALID_DIRECTIVE_PARENT" 2>/dev/null) || {
+    rm -rf "$tmp"
+    return 1
+  }
+  rm -rf "$tmp"
   parsed=$(echo "$output" | _parse_result)
   eval "$parsed"
 
@@ -594,11 +636,22 @@ _run "result block carries MERGE_POLICY" test_result_block_has_merge_policy
 # ── resolve_merge_policy (standalone) ───────────────────────────────────────
 
 test_resolve_merge_policy_standalone() {
+  # tracker-planner-and-fallback-cutover (3.5): manifest-only — a ticket
+  # manifest naming its initiative, plus that epic's own manifest, replaces
+  # the deleted get_issue-fetch-then-parse-description fallback.
+  local tmp
+  tmp=$(mktemp -d)
+  REPOS_ROOT="$tmp" write_ticket_manifest "CRE-999" "CRE-100" "bug" '[]' >/dev/null
+  REPOS_ROOT="$tmp" write_epic_manifest "CRE-100" "epic/x" "per-ticket" "manual" '[]' >/dev/null
+
   get_issue() {
-    echo '{"id":"CRE-999","title":"Test ticket","parent":{"description":"## Branch Directive\n**Schema-Version:** 1\n**Branch:** epic/x\n**Base:** develop\n**Merge Policy:** manual\n**Sync Policy:** none\n**Created:** 2026-07-25T10:00:00Z"}}'
+    echo "get_issue: should not be called on the manifest-only path" >&2
+    return 1
   }
   local got
-  got=$(resolve_merge_policy "CRE-999" 2>/dev/null)
+  got=$(REPOS_ROOT="$tmp" resolve_merge_policy "CRE-999" 2>/dev/null)
+  rm -rf "$tmp"
+  unset -f get_issue
   [ "$got" = "manual" ] || {
     echo "  expected manual, got '$got'" >&2
     return 1
@@ -773,7 +826,13 @@ test_manifest_branch_context() {
 }
 _run "resolve_branch_context: reads epic manifest when present, no description parse" test_manifest_branch_context
 
-test_manifest_missing_falls_back_to_live() {
+# tracker-planner-and-fallback-cutover (3.5): _epic_branch_directive no
+# longer parses a live description at all — a missing epic manifest is a
+# reported condition (default branch, per-ticket UAT, empty merge policy),
+# never a fallback to VALID_DIRECTIVE_PARENT's inline description. Replaces
+# the deleted "falls back to live description parse" test, which asserted
+# exactly the behavior this change removes.
+test_manifest_missing_reports_default_no_live_parse() {
   local tmp
   tmp=$(mktemp -d)
   # No manifest written — REPOS_ROOT is set but epic_manifest_exists misses.
@@ -786,9 +845,21 @@ test_manifest_missing_falls_back_to_live() {
   parsed=$(echo "$output" | _parse_result)
   eval "$parsed"
 
-  [ "$BRANCH_SOURCE" = "epic-directive" ] && [ "$BASE_BRANCH" = "epic/debt-collection-v2" ]
+  [ "$BRANCH_SOURCE" = "default" ] || {
+    echo "  expected BRANCH_SOURCE=default (no manifest, no live parse), got $BRANCH_SOURCE" >&2
+    return 1
+  }
+  [ "$UAT_POLICY" = "per-ticket" ] || {
+    echo "  expected UAT_POLICY=per-ticket, got $UAT_POLICY" >&2
+    return 1
+  }
+  [ -z "${MERGE_POLICY:-}" ] || {
+    echo "  expected empty MERGE_POLICY, got $MERGE_POLICY" >&2
+    return 1
+  }
+  return 0
 }
-_run "resolve_branch_context: missing epic manifest falls back to live description parse" test_manifest_missing_falls_back_to_live
+_run "resolve_branch_context: missing epic manifest reports default, no live parse" test_manifest_missing_reports_default_no_live_parse
 
 test_manifest_resolve_uat_policy_zero_fetch() {
   local tmp

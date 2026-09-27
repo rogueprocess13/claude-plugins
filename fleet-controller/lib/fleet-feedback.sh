@@ -8,30 +8,28 @@
 
 _FEEDBACK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Source linear-api.sh from canonical path for get_issue (to look up ticket labels)
-if ! declare -f get_issue >/dev/null 2>&1; then
-  for _lp in "$HOME/.claude/skills/lib/linear-api.sh" "$_FEEDBACK_DIR/../../ticket-auto-pipeline/lib/linear-api.sh"; do
+# manifest-read.sh backs the initiative lookup below (tracker-planner-and-
+# fallback-cutover, 4.6) — no live Linear read for this any more.
+if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+  for _lp in "$HOME/.claude/skills/lib/manifest-read.sh" "$_FEEDBACK_DIR/../../ticket-auto-pipeline/lib/manifest-read.sh"; do
     [ -f "$_lp" ] && source "$_lp" && break
   done
 fi
 
 # ── Helpers ──────────────────────────────────────────────────────────────────────
 
-# Extract initiative-id labels from a ticket's Linear issue.
-# Uses FLEET_INITIATIVE_LABEL_PREFIX to filter (default: INIT-).
+# The ticket's initiative, read from its local manifest (tracker-planner-
+# and-fallback-cutover, 4.6 — renamed from _get_initiative_labels, which
+# read a live INIT-* label). A ticket with a manifest but no initiative
+# field is ungrouped (empty return, caller skips it same as before); a
+# ticket with no manifest at all is reported distinctly by the caller,
+# which checks ticket_manifest_exists itself before calling this.
 # Args: tid
-# Returns: space-separated initiative IDs (e.g., "INIT-42 INIT-43")
-_get_initiative_labels() {
+# Returns: the initiative id on stdout, or nothing.
+_get_ticket_initiative() {
   local tid="$1"
-  local label_prefix="${FLEET_INITIATIVE_LABEL_PREFIX:-INIT-}"
-  if declare -f get_issue >/dev/null 2>&1; then
-    local issue_json
-    if issue_json=$(tracker_read informational "" -- get_issue "$tid"); then
-      # get_issue already unwraps .data.issue (tracker-client-consolidation
-      # response-shape contract) — read labels directly, no envelope prefix.
-      echo "$issue_json" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null | grep "^${label_prefix}" || true
-    fi
-  fi
+  declare -f get_ticket_manifest_field >/dev/null 2>&1 || return 1
+  get_ticket_manifest_field "$tid" initiative 2>/dev/null
 }
 
 # Parse the planner feedback JSON payload from a pipeline log line.
@@ -154,10 +152,15 @@ fleet_aggregate_feedback() {
     fb_lines=$(command grep '|META|planner-feedback|' "$log_file" 2>/dev/null || true)
     [ -z "$fb_lines" ] && continue
 
-    # Get initiative labels for this ticket
+    # Get this ticket's initiative from its local manifest — no manifest at
+    # all and manifest-with-no-initiative are reported distinctly (4.6).
+    if ! declare -f ticket_manifest_exists >/dev/null 2>&1 || ! ticket_manifest_exists "$tid"; then
+      echo "  tid=${tid}: skipping (no ticket manifest)" >&2
+      continue
+    fi
     local initiatives
-    initiatives=$(_get_initiative_labels "$tid" 2>/dev/null || true)
-    [ -z "$initiatives" ] && echo "  tid=${tid}: skipping (no initiative labels)" >&2 && continue
+    initiatives=$(_get_ticket_initiative "$tid" 2>/dev/null || true)
+    [ -z "$initiatives" ] && echo "  tid=${tid}: skipping (manifest has no initiative)" >&2 && continue
 
     # Process each feedback entry
     while IFS= read -r line; do

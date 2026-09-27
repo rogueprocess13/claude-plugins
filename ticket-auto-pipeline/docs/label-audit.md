@@ -811,3 +811,54 @@ asserting — a revert restores the old `flow.sh`, but it resumes reading a trac
 code never wrote and has no memory of. See `design.md`'s Migration Plan for the accepted rollback
 caveat and the ordering (land code, inactive → fast-forward every cursor → flip the pusher default)
 required before this document's projected-label claim becomes true in production on any given host.
+
+## Final disposition: planner-write labels retired (tracker-planner-and-fallback-cutover, 2026-09-27)
+
+Change 3 of the tracker-decoupling authority-flip programme — the change the previous entry named as
+the pending non-goal. The 10 labels this document classified `control` and left "still written, by
+the planner, unchanged" are now retired outright: `planned`, `INIT-*`, `pre-approved`,
+`blocked-by:*`, `state:execution`, `bug`, `feature`, `improvement`, `security`, `chore`.
+
+**None of them is written to Linear any more.** EpicGen and TicketGen
+(`ticket-planner/lib/planner-phase-prompts.sh`) both pass an empty label array to
+`planner_linear_create_issue` — there is no code path left anywhere in this repository that applies
+any of these 10 labels to an issue. `workflow.json`'s `planner_labels` section, which declared them,
+is deleted outright; `well_known_labels` no longer names `bug`/`feature`. `planner-doctor.sh`'s
+preflight check no longer verifies any of them exist on the team — it checks the 4 board-projected
+labels instead (§ below).
+
+**Every fact these labels used to carry moved to a local manifest field, read by every migrated call
+site instead of a live label/description fetch:**
+
+| Former label | Relocated to | Live fallback/read deleted at |
+|---|---|---|
+| `planned` | ticket manifest existence | `gate-check.sh` (`has_planned_label`), `appraise-fast-path.sh`, `planned-feedback-write.sh` |
+| `INIT-*` | ticket manifest `initiative` | `planner-artifacts.sh`, `run-identity.sh`, `fleet-feedback.sh` (`_get_ticket_initiative`, renamed from `_get_initiative_labels`) |
+| `pre-approved` | Planner Context block `Pre-approved` field (never a manifest field either) | n/a — was never read for a decision anywhere in the pipeline (see the `pre-approved` entry above); TicketGen simply stopped setting it |
+| `blocked-by:*` | ticket manifest `blocked_by` (array), resolved against each blocker's own local pipeline-log terminal state | `fleet-detect.sh` (`detect_blocked_by`), `fleet-dispatch.sh` per-child blocked-by resolution |
+| `state:execution` | epic manifest `dispatch` (bool), stamped one-way by `stamp_epic_dispatch` | `fleet-detect.sh` (`_fleet_scan_initiative_dispatch`, `_fleet_scan_epic_branch_ready`, `_fleet_scan_stalled_approved_children`), `fleet-dispatch.sh` epic eligibility |
+| `bug`/`feature`/`improvement`/`security`/`chore` | ticket manifest `type` | `gate-check.sh` (`_resolve_type_label`, deleted outright), `fleetd/phase_dispatch.py`'s `resolve_ticket_type` |
+
+**The `epic` marker label is also retired**, though it predates this document's classified 10 —
+`is_epic_issue` (`epic-precondition.sh`) has discriminated on `epic_manifest_exists` or a valid
+Branch Directive only since `tracker-approval-by-script`; EpicGen stopped setting the marker in this
+change since nothing has read it since.
+
+**The complete, closed list of labels this pipeline still writes to Linear is unchanged from the
+previous entry: `needs-info`, `needs-adr`, `rejected`, `reviewed`** — the board driver's four,
+`workflow.json`'s `board_drivers.linear.projected_labels`. Every label this document has ever
+classified is now one of: retired (this entry and the `simple`/`complex`/outcome-label entry above),
+`projected` (the board driver's four), or a confirmed/weak-evidence `vestigial`/`human-signal` entry
+recorded earlier in this file. There is no `control` label left in this codebase.
+
+**Verification status.** Task 1.7/1.7a of this change — a side-by-side parity comparison between
+the manifest-derived and live-label-derived population/state, run while the planner was still
+writing labels — was explicitly **waived by the user** rather than performed: no real fleet with
+live `state:execution` epics was available in the dev checkout that implemented this change, and
+the user chose to proceed through this cutover rather than arrange one first. That diff-based
+evidence is now permanently unproducible — no epic will ever again carry both live labels and a
+manifest to compare. Validation instead rests entirely on this change's own task 7.4, a live
+end-to-end functional run on the tickets host (planner creates a zero-label epic and tickets, fleet
+dispatches from manifests, `blocked_by` resolves against local terminal state, D-12/D-18 both fire)
+— treat that as the only live-fleet evidence this document's `retired` classifications above will
+ever have, and do not treat this branch as mergeable until it passes.

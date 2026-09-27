@@ -36,6 +36,22 @@ _source_if_missing() {
   fi
 }
 
+# Resolves ticket-auto-pipeline's manifest-write.sh (which itself sources
+# manifest-read.sh) — tracker-planner-and-fallback-cutover, 4.4. Same
+# plugin-cache → skills-lib fallback as the planned-ticket-check.sh
+# resolution below. No bundled copy — a drifting duplicate would silently
+# disagree with the schema manifest-write.sh actually writes. Sourcing the
+# writer (not just the reader) is deliberate: planner_dispatch_gate below
+# needs stamp_epic_dispatch too, and both live in the one file.
+_planner_verify_source_manifest_read() {
+  declare -f ticket_manifest_exists >/dev/null 2>&1 && return 0
+  local lib
+  lib=$(find "${HOME}/.claude/plugins/cache" -name "manifest-write.sh" \
+    -path "*/ticket-auto-pipeline/*/lib/manifest-write.sh" 2>/dev/null | sort | tail -1)
+  [ -n "$lib" ] || lib="${HOME}/.claude/skills/lib/manifest-write.sh"
+  [ -f "$lib" ] && source "$lib"
+}
+
 # ── Ticket validation ──────────────────────────────────────────────────────────
 
 # Validate a generated ticket description before creating it in Linear.
@@ -258,8 +274,6 @@ planner_verify_tickets() {
   local failures=0 verified=0 missing=0
   local ticket_id entity_key intent_file linear_id
 
-  _source_if_missing "planner_linear_graphql" "${CLAUDE_PLUGIN_ROOT:-.}/lib/planner-linear-api.sh"
-
   for ticket_id in $(echo "$ticket_ids_json" | jq -r '.[]'); do
     # Reverse-lookup: find the intent file that recorded this Linear ID.
     # Intent files are keyed by entity slug ("ticket-{spec-slug}", e.g.
@@ -297,26 +311,26 @@ planner_verify_tickets() {
       continue
     fi
 
-    # Fetch from Linear and verify labels
-    local issue_json
-    if issue_json=$(planner_linear_get_issue "$linear_id" 2>/dev/null); then
-      local label_names
-      label_names=$(echo "$issue_json" | jq -r '.data.issue.labels.nodes[].name // ""' 2>/dev/null)
+    # Verify the ticket manifest exists and carries type + initiative
+    # (tracker-planner-and-fallback-cutover, 4.4) — manifest-only, no live
+    # Linear fetch or label read. write_ticket_manifest ran synchronously at
+    # creation time (TicketGen step 5), so its absence here is a real
+    # failure, not a timing race.
+    _planner_verify_source_manifest_read
+    if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$linear_id"; then
+      local manifest_type manifest_init
+      manifest_type=$(get_ticket_manifest_field "$linear_id" type 2>/dev/null)
+      manifest_init=$(get_ticket_manifest_field "$linear_id" initiative 2>/dev/null)
 
-      # Required labels: planned, INIT-{id}, Type label
-      local missing_labels=""
-      echo "$label_names" | grep -q "planned" || missing_labels="${missing_labels}planned "
-      echo "$label_names" | grep -q "INIT-" || missing_labels="${missing_labels}INIT-* "
-
-      if [ -n "$missing_labels" ]; then
-        echo "planner-verify: FAIL — $ticket_id ($linear_id) missing labels: $missing_labels"
-        failures=$((failures + 1))
-      else
-        echo "planner-verify: OK — $ticket_id ($linear_id) labels correct"
+      if [ -n "$manifest_type" ] && [ -n "$manifest_init" ]; then
+        echo "planner-verify: OK — $ticket_id ($linear_id) manifest carries type=$manifest_type initiative=$manifest_init"
         verified=$((verified + 1))
+      else
+        echo "planner-verify: FAIL — $ticket_id ($linear_id) manifest missing type or initiative"
+        failures=$((failures + 1))
       fi
     else
-      echo "planner-verify: FAIL — $ticket_id ($linear_id) not found in Linear (API error or deleted)"
+      echo "planner-verify: FAIL — $ticket_id ($linear_id) no ticket manifest found"
       failures=$((failures + 1))
     fi
   done
@@ -327,35 +341,46 @@ planner_verify_tickets() {
 
 # ── Dispatch gate ──────────────────────────────────────────────────────────────
 
-# Post-creation gate: verify all tickets and set state:execution on the parent
-# epic. Called by Ticket Gen after all child tickets are created and verified.
+# Post-creation gate: verify all tickets and stamp the parent epic manifest's
+# dispatch flag. Called by Ticket Gen after all child tickets are created and
+# verified. tracker-planner-and-fallback-cutover (4.4): no live Linear
+# mutation anywhere in this gate any more — verification is manifest-only
+# (planner_verify_tickets above) and the epic's dispatch flag is a local,
+# one-way manifest stamp (stamp_epic_dispatch), mirroring exactly what
+# TicketGen's own inline post-creation step already does.
 #
 # Usage: planner_dispatch_gate <initiative_id> <epic_linear_id> <ticket_ids_json>
-# Returns: 0 if gate passes (epic labelled state:execution), 1 if it fails.
+# Returns: 0 if gate passes (epic manifest stamped dispatch=true), 1 if it fails.
 planner_dispatch_gate() {
   local initiative_id="$1" epic_id="$2" ticket_ids_json="$3"
 
-  _source_if_missing "planner_linear_graphql" "${CLAUDE_PLUGIN_ROOT:-.}/lib/planner-linear-api.sh"
-
-  # Step 1: Verify all tickets exist and have correct labels
+  # Step 1: Verify all tickets have a manifest carrying type + initiative
   echo "planner-dispatch-gate: verifying $ticket_ids_json tickets..."
   if ! planner_verify_tickets "$initiative_id" "$ticket_ids_json"; then
-    echo "planner-dispatch-gate: FAIL — ticket verification failed. Epic NOT labelled for execution." >&2
+    echo "planner-dispatch-gate: FAIL — ticket verification failed. Epic manifest NOT stamped for execution." >&2
     return 1
   fi
 
-  # Step 2: Verify the parent epic exists
-  local epic_json
-  if ! epic_json=$(planner_linear_get_issue "$epic_id" 2>/dev/null); then
-    echo "planner-dispatch-gate: FAIL — cannot fetch epic $epic_id" >&2
+  # Step 2: Verify the parent epic manifest exists
+  _planner_verify_source_manifest_read
+  if ! declare -f epic_manifest_exists >/dev/null 2>&1 || ! epic_manifest_exists "$epic_id" 2>/dev/null; then
+    echo "planner-dispatch-gate: FAIL — no epic manifest for $epic_id" >&2
     return 1
   fi
-  echo "planner-dispatch-gate: epic $epic_id confirmed to exist"
+  echo "planner-dispatch-gate: epic $epic_id manifest confirmed to exist"
 
-  # Step 3: Set state:execution on the epic
-  echo "planner-dispatch-gate: labelling epic $epic_id with state:execution"
-  # The agent calls the Linear API to add the label
-  # This is a notification — the actual label mutation is done by the agent
+  # Step 3: Stamp the epic manifest's dispatch flag — fleet_local_epics reads
+  # this to enumerate dispatch-eligible epics; no live tracker write happens.
+  echo "planner-dispatch-gate: stamping epic $epic_id manifest dispatch=true"
+  if declare -f stamp_epic_dispatch >/dev/null 2>&1; then
+    stamp_epic_dispatch "$epic_id" || {
+      echo "planner-dispatch-gate: FAIL — could not stamp epic manifest for $epic_id" >&2
+      return 1
+    }
+  else
+    echo "planner-dispatch-gate: FAIL — stamp_epic_dispatch unavailable" >&2
+    return 1
+  fi
 
   return 0
 }

@@ -448,38 +448,6 @@ _run "initiative_dispatch_manifest_finds_undispatched" test_initiative_dispatch_
 _run "initiative_dispatch_manifest_all_dispatched_is_silent" test_initiative_dispatch_manifest_all_dispatched_is_silent
 _run "initiative_dispatch_manifest_skips_non_dispatched_epic" test_initiative_dispatch_manifest_skips_non_dispatched_epic
 
-test_initiative_dispatch_kill_switch_forces_live_fallback() {
-  local repos_root
-  repos_root=$(mktemp -d)
-
-  # A real manifest set that would normally report severity 1 (undispatched
-  # child CRE-305, dispatch:false).
-  REPOS_ROOT="$repos_root" write_epic_manifest "INIT-53" "epic/x" "epic" "manual" '["CRE-305"]' >/dev/null
-  REPOS_ROOT="$repos_root" stamp_epic_dispatch "INIT-53" >/dev/null
-  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-305" "INIT-53" "bug" '[]' >/dev/null
-
-  # Confirm the manifest alone (kill switch off) does report severity 1.
-  local baseline
-  baseline=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch 2>/dev/null | jq -r '.severity // -1')
-  [ "$baseline" = "1" ] || {
-    echo "test setup invalid — expected baseline severity 1, got $baseline"
-    rm -rf "$repos_root"
-    return 1
-  }
-
-  # With the kill switch on and no get_issue/get_epics_by_label declared,
-  # the manifest path must be completely bypassed — falls through to the
-  # live path, which degrades to severity 0 (no Linear client available).
-  local sev
-  sev=$(TICKET_LOCAL_MANIFEST_DISABLE=true REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch 2>/dev/null | jq -r '.severity // -1')
-  rm -rf "$repos_root"
-
-  [ "$sev" = "0" ] || {
-    echo "expected kill switch to force the live-fallback path (severity 0, no Linear client), got $sev"
-    return 1
-  }
-}
-_run "initiative_dispatch_kill_switch_forces_live_fallback" test_initiative_dispatch_kill_switch_forces_live_fallback
 _run "fleet_detect_all_includes_fleet_wide" test_fleet_detect_all_includes_fleet_wide
 _run "fleet_detect_all_empty_workspace" test_fleet_detect_all_empty_workspace
 _run "fleet_detect_all_with_active_pipeline" test_fleet_detect_all_with_active_pipeline

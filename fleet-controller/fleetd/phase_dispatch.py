@@ -1671,24 +1671,24 @@ def last_verify_checkpoint(log_lines):
 
 # ── Ticket type resolution (task 10.1.2, design.md D22) ─────────────────────
 #
-# STEP_1_5's table `condition` ("bug tickets only") needs the ticket's type
-# label. Shells out to `linear-api.sh`'s own `get_issue` rather than
-# reimplementing the GraphQL query or the labels field shape (same
-# discipline as `preamble.py`'s D13/D17 calls) — resolve once at first
-# dispatch and cache the result; a ticket's type label is fixed at creation
-# and never toggled mid-run (`workflow.json`'s `planner_labels` table).
+# STEP_1_5's table `condition` ("bug tickets only") needs the ticket's type.
+# Manifest-only since tracker-planner-and-fallback-cutover (task 3.10) —
+# shells out to `manifest-read.sh` rather than reimplementing the field
+# lookup (same discipline as `preamble.py`'s D13/D17 calls) — resolve once at
+# first dispatch and cache the result; a ticket's type is fixed at creation
+# and never toggled mid-run.
 
 _TICKET_TYPE_LABELS = ('bug', 'feature', 'improvement', 'security', 'chore')
 
 
 def _resolve_ticket_type_from_manifest(tid, lib_dir, timeout):
-    """Manifest-first lookup (tracker-local-facts-read-migration, task 5.12).
+    """Manifest lookup (tracker-local-facts-read-migration, task 5.12).
 
-    Shells out to `manifest-read.sh` the same way the live path below shells
-    out to `linear-api.sh` — one transport per source, no reimplementation.
-    Returns `None` on any failure (no manifest, REPOS_ROOT unset, disabled
-    via the kill switch, ...), which the caller treats identically to "not
-    yet resolvable" and falls back to the live read for.
+    Shells out to `manifest-read.sh` the same way `linear-api.sh` used to be
+    shelled out to before the live fallback was retired (task 3.10) — one
+    transport, no reimplementation. Returns `None` on any failure (no
+    manifest, REPOS_ROOT unset, disabled via the kill switch, no `type`
+    field, ...), which the caller reports as unresolvable.
     """
     script = f'source "{lib_dir}/manifest-read.sh" >/dev/null 2>&1 && get_ticket_manifest_field "$1" type'
     try:
@@ -1711,31 +1711,15 @@ def resolve_ticket_type(tid, lib_dir=None, timeout=30):
     `_agent_md_path`/`_parse_env_file` already take for optional context this
     module cannot get without a live Linear read.
 
-    tracker-local-facts-read-migration (task 5.12): tries the local ticket
-    manifest first — no live tracker read at all when one exists — falling
-    back to the original live `get_issue` read below when it doesn't.
+    tracker-planner-and-fallback-cutover (task 3.10): manifest-only. The live
+    `get_issue` fallback this function used to fall back to is retired — a
+    ticket with no manifest, or no `type` field on it, resolves to `None`
+    (reported, not silently fetched around).
     """
     lib_dir = lib_dir or os.environ.get(
         'CLAUDE_SKILLS_LIB', os.path.expanduser('~/.claude/skills/lib'))
 
-    manifest_type = _resolve_ticket_type_from_manifest(tid, lib_dir, timeout)
-    if manifest_type is not None:
-        return manifest_type
-
-    script = f'source "{lib_dir}/linear-api.sh" >/dev/null 2>&1 && get_issue "$1"'
-    try:
-        proc = subprocess.run(
-            ['bash', '-c', script, 'bash', tid],
-            capture_output=True, text=True, timeout=timeout)
-        issue = json.loads(proc.stdout)
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
-    nodes = ((issue.get('labels') or {}).get('nodes')) or []
-    labels = {(n.get('name') or '').lower() for n in nodes}
-    for label in _TICKET_TYPE_LABELS:
-        if label in labels:
-            return label
-    return None
+    return _resolve_ticket_type_from_manifest(tid, lib_dir, timeout)
 
 
 # ── Ticket complexity resolution (task 10.1.7, design.md D22) ──────────────

@@ -229,20 +229,16 @@ run_identity_ticket_meta() {
   [ -n "$issue" ] || return 0
   echo "$issue" | jq -e . >/dev/null 2>&1 || return 0
 
-  if ! declare -f resolve_template >/dev/null 2>&1; then
-    [ -f "$_RI_LIB_DIR/template-select.sh" ] && source "$_RI_LIB_DIR/template-select.sh"
-  fi
-
-  # tracker-local-facts-read-migration (task 5.12): manifest's type/presence
-  # fields first, live label derivation as fallback — this write is purely
-  # informational telemetry (META|ticket-meta), so this narrows which fields
-  # feed it rather than skipping the live fetch, which still runs for
-  # createdAt/startedAt/estimate/priority/labels below.
+  # tracker-planner-and-fallback-cutover (3.6): manifest's type/presence
+  # fields are the only source now — no live label derivation. This write
+  # is purely informational telemetry (META|ticket-meta); the live fetch
+  # still runs for createdAt/startedAt/estimate/priority/labels below, and
+  # `labels` stays in the emitted JSON regardless (display only).
   if ! declare -f ticket_manifest_exists >/dev/null 2>&1; then
     [ -f "$_RI_LIB_DIR/manifest-read.sh" ] && source "$_RI_LIB_DIR/manifest-read.sh"
   fi
 
-  local _type="" _labels _l _has_manifest=false
+  local _type="" _labels _has_manifest=false
   _labels=$(echo "$issue" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null) || true
 
   if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$tid" 2>/dev/null; then
@@ -250,22 +246,8 @@ run_identity_ticket_meta() {
     _type=$(get_ticket_manifest_field "$tid" type 2>/dev/null)
   fi
 
-  if [ -z "$_type" ]; then
-    while IFS= read -r _l; do
-      [ -z "$_l" ] && continue
-      if declare -f resolve_template >/dev/null 2>&1 && resolve_template "$_l" >/dev/null 2>&1; then
-        _type="$_l"
-        break
-      fi
-    done <<<"$_labels"
-  fi
-
   local planned="false"
-  if [ "$_has_manifest" = "true" ]; then
-    planned="true"
-  else
-    echo "$_labels" | grep -qx 'planned' && planned="true"
-  fi
+  [ "$_has_manifest" = "true" ] && planned="true"
 
   local meta_json
   meta_json=$(echo "$issue" | jq -c \

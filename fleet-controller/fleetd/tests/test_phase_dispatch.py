@@ -1640,89 +1640,62 @@ class TestBuildPrIterateSpawn(unittest.TestCase):
 
 
 class TestResolveTicketType(unittest.TestCase):
-    """`get_issue` shelled out to, never reimplemented (task 10.1.2)."""
+    """Manifest-only (tracker-planner-and-fallback-cutover, task 3.10). The
+    live `get_issue` fallback this used to have is retired; every case here
+    uses a real `manifest-read.sh` (copied from the real lib dir, not a fake
+    stub) and a `linear-api.sh` stub that raises if ever invoked, proving no
+    live read happens."""
 
-    def _fake_lib_dir(self, tmp, issue_json):
+    def _repos_root_with_manifest(self, repos_root, tid, initiative, manifest_fields):
+        init_dir = Path(repos_root) / '.ticket-auto' / 'initiatives' / initiative
+        (init_dir / 'tickets' / tid / 'planner').mkdir(parents=True)
+        index_dir = Path(repos_root) / '.ticket-auto' / 'initiatives' / '_index'
+        index_dir.mkdir(parents=True, exist_ok=True)
+        (index_dir / f'{tid}.initiative').write_text(f'{initiative}\n')
+        (init_dir / 'tickets' / tid / 'planner' / 'manifest.json').write_text(
+            json.dumps(manifest_fields))
+
+    def _lib_dir(self, tmp):
         lib_dir = Path(tmp)
-        (lib_dir / 'linear-api.sh').write_text(
-            'get_issue() { cat <<EOF\n' + json.dumps(issue_json) + '\nEOF\n}\n'
+        real_manifest_read = (
+            Path(__file__).resolve().parents[3]
+            / 'ticket-auto-pipeline' / 'lib' / 'manifest-read.sh'
         )
-        return str(lib_dir)
-
-    def test_resolves_the_bug_label(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            lib_dir = self._fake_lib_dir(
-                tmp, {'labels': {'nodes': [{'name': 'bug'}, {'name': 'planned'}]}})
-            self.assertEqual(resolve_ticket_type('CRE-9', lib_dir=lib_dir), 'bug')
-
-    def test_resolves_the_feature_label_case_insensitively(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            lib_dir = self._fake_lib_dir(
-                tmp, {'labels': {'nodes': [{'name': 'Feature'}]}})
-            self.assertEqual(resolve_ticket_type('CRE-9', lib_dir=lib_dir), 'feature')
-
-    def test_no_type_label_returns_none(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            lib_dir = self._fake_lib_dir(
-                tmp, {'labels': {'nodes': [{'name': 'planned'}]}})
-            self.assertIsNone(resolve_ticket_type('CRE-9', lib_dir=lib_dir))
+        (lib_dir / 'manifest-read.sh').write_text(real_manifest_read.read_text())
+        (lib_dir / 'linear-api.sh').write_text(
+            'get_issue() { echo "get_issue: should not be called" >&2; exit 1; }\n')
+        return lib_dir
 
     def test_missing_lib_returns_none_not_raise(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(resolve_ticket_type('CRE-9', lib_dir=tmp))
 
-    def test_malformed_json_returns_none_not_raise(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            lib_dir = Path(tmp)
-            (lib_dir / 'linear-api.sh').write_text(
-                'get_issue() { echo "not json"; }\n')
-            self.assertIsNone(resolve_ticket_type('CRE-9', lib_dir=str(lib_dir)))
-
-    def test_no_labels_field_returns_none(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            lib_dir = self._fake_lib_dir(tmp, {})
-            self.assertIsNone(resolve_ticket_type('CRE-9', lib_dir=lib_dir))
-
     def test_manifest_resolved_without_live_read(self):
-        # tracker-local-facts-read-migration (task 5.12): a real
-        # manifest-read.sh (copied from the real lib dir, not a fake stub)
-        # must resolve the type with no live get_issue call at all — the
-        # fake linear-api.sh in this lib_dir would raise if ever invoked.
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as repos_root:
-            lib_dir = Path(tmp)
-            real_manifest_read = (
-                Path(__file__).resolve().parents[3]
-                / 'ticket-auto-pipeline' / 'lib' / 'manifest-read.sh'
-            )
-            (lib_dir / 'manifest-read.sh').write_text(real_manifest_read.read_text())
-            (lib_dir / 'linear-api.sh').write_text(
-                'get_issue() { echo "get_issue: should not be called" >&2; exit 1; }\n')
-
-            init_dir = Path(repos_root) / '.ticket-auto' / 'initiatives' / 'INIT-1'
-            (init_dir / 'tickets' / 'CRE-9' / 'planner').mkdir(parents=True)
-            index_dir = Path(repos_root) / '.ticket-auto' / 'initiatives' / '_index'
-            index_dir.mkdir(parents=True, exist_ok=True)
-            (index_dir / 'CRE-9.initiative').write_text('INIT-1\n')
-            (init_dir / 'tickets' / 'CRE-9' / 'planner' / 'manifest.json').write_text(
-                json.dumps({'type': 'security', 'initiative': 'INIT-1', 'blocked_by': [], 'dispatch': False}))
+            lib_dir = self._lib_dir(tmp)
+            self._repos_root_with_manifest(
+                repos_root, 'CRE-9', 'INIT-1',
+                {'type': 'security', 'initiative': 'INIT-1', 'blocked_by': [], 'dispatch': False})
 
             with mock.patch.dict(os.environ, {'REPOS_ROOT': repos_root}):
                 self.assertEqual(resolve_ticket_type('CRE-9', lib_dir=str(lib_dir)), 'security')
 
-    def test_manifest_absent_falls_back_to_live_read(self):
+    def test_manifest_with_no_type_field_returns_none(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as repos_root:
-            lib_dir = Path(tmp)
-            real_manifest_read = (
-                Path(__file__).resolve().parents[3]
-                / 'ticket-auto-pipeline' / 'lib' / 'manifest-read.sh'
-            )
-            (lib_dir / 'manifest-read.sh').write_text(real_manifest_read.read_text())
-            (lib_dir / 'linear-api.sh').write_text(
-                'get_issue() { cat <<EOF\n' +
-                json.dumps({'labels': {'nodes': [{'name': 'bug'}]}}) + '\nEOF\n}\n')
+            lib_dir = self._lib_dir(tmp)
+            self._repos_root_with_manifest(
+                repos_root, 'CRE-9', 'INIT-1',
+                {'initiative': 'INIT-1', 'blocked_by': [], 'dispatch': False})
 
             with mock.patch.dict(os.environ, {'REPOS_ROOT': repos_root}):
-                self.assertEqual(resolve_ticket_type('CRE-9', lib_dir=str(lib_dir)), 'bug')
+                self.assertIsNone(resolve_ticket_type('CRE-9', lib_dir=str(lib_dir)))
+
+    def test_manifest_absent_returns_none_not_live_read(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as repos_root:
+            lib_dir = self._lib_dir(tmp)
+
+            with mock.patch.dict(os.environ, {'REPOS_ROOT': repos_root}):
+                self.assertIsNone(resolve_ticket_type('CRE-9', lib_dir=str(lib_dir)))
 
 
 class TestResolveTicketComplexity(unittest.TestCase):

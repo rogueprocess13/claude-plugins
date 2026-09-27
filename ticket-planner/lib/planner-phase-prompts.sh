@@ -499,9 +499,14 @@ ${state_dir}/artifacts/specs/<ticket-slug>.md. Each spec must include:
 
 1. **Title** — the ticket title (will become the Linear ticket title)
 2. **Description** — the ticket body. Include what needs to change, acceptance criteria (observable, testable), and any user-story narrative if helpful.
-3. **Labels** section — the Linear labels: \`planned\`, \`INIT-${initiative_id#INIT-}\`, Type label, and one \`blocked-by:<ref>\` entry per dependency. \`<ref>\` is either:
+3. **Labels** section — planning metadata TicketGen and Crosscheck parse from this
+   spec file (tracker-planner-and-fallback-cutover, 4.1: none of this is applied
+   to the Linear ticket as a live label any more — Type feeds the manifest's
+   \`type\` field and template selection, \`blocked-by:<ref>\` feeds the manifest's
+   \`blocked_by\` array): \`planned\`, \`INIT-${initiative_id#INIT-}\`, Type, and one
+   \`blocked-by:<ref>\` entry per dependency. \`<ref>\` is either:
    - a **sibling spec slug** in this initiative — the spec filename minus \`.md\`, or an unambiguous \`-\`-bounded prefix of one (\`blocked-by:exc-1\` for \`exc-1-something.md\`); or
-   - a **cross-initiative prerequisite** — the existing Linear identifier of the blocking ticket, e.g. \`blocked-by:WIL-83\`. Use this whenever work in this initiative cannot start until a ticket from *another* initiative is Done. Do not leave such a prerequisite as prose in the Description only: prose is invisible to whatever acts on \`blocked-by\` labels, so an unlabelled prerequisite is unenforceable.
+   - a **cross-initiative prerequisite** — the existing Linear identifier of the blocking ticket, e.g. \`blocked-by:WIL-83\`. Use this whenever work in this initiative cannot start until a ticket from *another* initiative is Done. Do not leave such a prerequisite as prose in the Description only: prose never reaches the ticket manifest's \`blocked_by\` array, so an unrecorded prerequisite is unenforceable.
 4. **## Signals** — a JSON code block with the 5 raw confidence signals (see below)
 
 ### Confidence signals (RAW VALUES ONLY — do NOT compute confidence)
@@ -899,17 +904,6 @@ if [ -n "\$PROJECT_REF" ]; then
     "project=\${RESOLVED_PROJECT_ID} milestone=\${RESOLVED_MILESTONE_ID:-none}"
 fi
 
-# The initiative's own INIT-* label only becomes knowable once this run assigns
-# the initiative id — it can never be pre-seeded in Linear ahead of time. Create
-# it if missing (idempotent) before referencing it by name below; do not let a
-# missing dynamic label hard-fail issueCreate the way it did for the
-# Evidence-Based initiative.
-INIT_LABEL="INIT-${initiative_id#INIT-}"
-planner_linear_ensure_label "\$TEAM_ID" "\$INIT_LABEL" >/dev/null || {
-  planner_state_write "${initiative_id}" "EpicGen" "label" "fail" "cannot ensure label '\${INIT_LABEL}'"
-  exit 1
-}
-
 # Only create when step 2 did not already bind CREATED_EPIC_ID — a re-entering
 # run must not create a second epic.
 if [ -z "\$CREATED_EPIC_ID" ]; then
@@ -919,7 +913,7 @@ if [ -z "\$CREATED_EPIC_ID" ]; then
     "\$TEAM_ID" \\
     "\$EPIC_TITLE" \\
     "\$EPIC_DESCRIPTION" \\
-    "\$(jq -nc --arg init "\$INIT_LABEL" '[\$init, "epic"]')" \\
+    "\$(jq -nc '[]')" \\
     "" \\
     "\$RESOLVED_PROJECT_ID" \\
     "\$RESOLVED_MILESTONE_ID") || {
@@ -940,12 +934,16 @@ if [ -z "\$CREATED_EPIC_ID" ]; then
 fi
 \`\`\`
 
-## Labels to set on the epic
-- \`INIT-${initiative_id#INIT-}\` — links epic to initiative
-- \`epic\` — Linear type label (if the workspace uses it)
+## No labels are set on the epic
 
-Do NOT set \`state:execution\` — that label is set deterministically by the Ticket Gen
-post-creation gate after all child tickets are created and verified.
+tracker-planner-and-fallback-cutover (4.2): the epic is created with an empty
+label set. Initiative linkage and epic discrimination are both local now —
+\`fleet_local_epics\` enumerates from the epic manifest (written in step 5
+below), and \`is_epic_issue\` (epic-precondition.sh) discriminates on
+\`epic_manifest_exists\` or a valid Branch Directive, never a live label. Do
+NOT set \`state:execution\` either — that flag is set deterministically by the
+Ticket Gen post-creation gate (\`stamp_epic_dispatch\`) after all child
+tickets are created and verified.
 
 ## Branch Directive (step 5 — after epic creation)
 
@@ -1382,23 +1380,13 @@ if planner_entity_exists "${initiative_id}" "\$ENTITY_KEY"; then
   continue
 fi
 
-# Step 3: Create the ticket via Linear API (with retry wrapper).
-# Labels are passed as NAMES — planner_linear_create_issue resolves them to the
-# UUIDs IssueCreateInput.labelIds requires, and hard-fails on any it cannot find.
-# Never drop an unresolved label: a ticket without \`planned\` is invisible to the
-# ticket-auto fast-path.
-#
-# INIT-* and blocked-by:WIL-## are dynamic labels — blocked-by:\$dep only becomes
-# knowable once \$dep's real Linear ID exists, same as the epic's INIT-* label in
-# Epic Gen, so ensure (create-if-missing) rather than assume each one exists.
-INIT_LABEL="INIT-${initiative_id#INIT-}"
-planner_linear_ensure_label "\$TEAM_ID" "\$INIT_LABEL" >/dev/null || {
-  planner_state_write "${initiative_id}" "TicketGen" "label" "fail" "cannot ensure label '\${INIT_LABEL}'"
-  continue
-}
-LABELS=\$(jq -nc --arg init "\$INIT_LABEL" --arg type "\$TYPE_LABEL" \\
-  '["planned", \$init, \$type]')
-[ "\$pre_approved" = "true" ] && LABELS=\$(echo "\$LABELS" | jq -c '. + ["pre-approved"]')
+# Step 3: Create the ticket via Linear API (with retry wrapper), with an
+# empty label set (tracker-planner-and-fallback-cutover, 4.1). Type,
+# initiative linkage, and blocked-by are all local manifest facts now (step
+# 5 below writes them) — nothing downstream reads a live label for any of
+# them any more. \`Pre-approved\` similarly lives only in the Planner Context
+# block's own field, never a label.
+LABELS='[]'
 #
 # \${TICKET_DEPS} holds one entry per \`blocked-by:<ref>\` token on the spec's
 # \`## Labels\` line, each already resolved to a real Linear identifier:
@@ -1406,14 +1394,8 @@ LABELS=\$(jq -nc --arg init "\$INIT_LABEL" --arg type "\$TYPE_LABEL" \\
 #     that slug (guaranteed to exist — tickets are created in dependency order);
 #   - a ref that is already a Linear identifier (TEAM-123) is a cross-initiative
 #     prerequisite and is used verbatim — there is no sibling to map it to.
-for dep in \${TICKET_DEPS}; do
-  DEP_LABEL="blocked-by:\$dep"
-  planner_linear_ensure_label "\$TEAM_ID" "\$DEP_LABEL" >/dev/null || {
-    planner_state_write "${initiative_id}" "TicketGen" "label" "fail" "cannot ensure label '\${DEP_LABEL}'"
-    continue 2
-  }
-  LABELS=\$(echo "\$LABELS" | jq -c --arg d "\$DEP_LABEL" '. + [\$d]')
-done
+# \${TICKET_DEPS} itself still feeds the ticket manifest's blocked_by field
+# directly (step 5 below) — no label round-trip needed to get it there.
 
 TICKET_RESPONSE=\$(planner_linear_create_issue \\
   "\$TEAM_ID" \\
@@ -1431,12 +1413,15 @@ CREATED_TICKET_ID=\$(echo "\$TICKET_RESPONSE" | jq -r '.data.issueCreate.issue.i
 # Step 4: Mark created
 planner_entity_mark_created "${initiative_id}" "\$ENTITY_KEY" "\$CREATED_TICKET_ID"
 
-# Step 5: Write the ticket manifest (tracker-local-facts-read-migration) —
-# local source for type/initiative/blocked_by/dispatch, read by every
-# migrated call site (gate-check.sh, fleet-dispatch.sh, fleet-detect.sh, ...)
-# instead of a live label/description fetch. Additive — never blocks ticket
-# creation on failure, since the label writes above remain the source of
-# truth this phase (B3a is read-side only).
+# Step 5: Write the ticket manifest (tracker-local-facts-read-migration,
+# tracker-planner-and-fallback-cutover 4.1) — the ONLY source for type/
+# initiative/blocked_by/dispatch now; every migrated call site
+# (gate-check.sh, fleet-dispatch.sh, fleet-detect.sh, ...) reads this and
+# nothing else. A failure here is a real gap, not a redundant write on top
+# of a label — but it still doesn't block ticket creation (the ticket
+# already exists in Linear by this point; failing the whole run over a
+# manifest write would leave a created-but-unrecorded ticket behind, worse
+# than a ticket the fleet doesn't yet know to dispatch).
 planner_manifest_source_helpers || true
 if declare -f write_ticket_manifest >/dev/null 2>&1; then
   BLOCKED_BY_JSON=\$(printf '%s\n' \${TICKET_DEPS} | jq -R -s 'split("\n") | map(select(length > 0))')
@@ -1454,18 +1439,17 @@ After all tickets are created, verify them:
 \`\`\`bash
 created_ids='["PRO-101","PRO-102"]'  # collect actual created ticket IDs
 if planner_verify_tickets "${initiative_id}" "\$created_ids"; then
-  # All tickets verified — set state:execution on the parent epic
-  # Use the Linear API to add the state:execution label to \$EPIC_ID
-
-  # Stamp the epic manifest's local dispatch flag in the same step
-  # (tracker-local-facts-read-migration) — one-way, mirrors state:execution
-  # exactly. Additive: the label above remains the write of record.
+  # All tickets verified — stamp the epic manifest's dispatch flag
+  # (tracker-planner-and-fallback-cutover, 4.3). This one-way local stamp
+  # IS the dispatch gate now — no state:execution label write, no live
+  # tracker mutation of any kind. fleet_local_epics reads this flag to
+  # enumerate dispatch-eligible epics.
   planner_manifest_source_helpers || true
   declare -f stamp_epic_dispatch >/dev/null 2>&1 && stamp_epic_dispatch "\$EPIC_ID"
 
-  planner_state_write "${initiative_id}" "TicketGen" "dispatch-gate" "done" "N tickets verified. Epic \$EPIC_ID labelled state:execution. Auto-dispatch enabled (FLEET_AUTO_DISPATCH must be true)."
+  planner_state_write "${initiative_id}" "TicketGen" "dispatch-gate" "done" "N tickets verified. Epic \$EPIC_ID manifest stamped dispatch=true. Auto-dispatch enabled (FLEET_AUTO_DISPATCH must be true)."
 else
-  planner_state_write "${initiative_id}" "TicketGen" "verify" "fail" "Post-creation verification failed — some tickets missing labels or not found in Linear. Epic NOT labelled for execution."
+  planner_state_write "${initiative_id}" "TicketGen" "verify" "fail" "Post-creation verification failed — some tickets missing manifests or not found in Linear. Epic manifest NOT stamped for execution."
 fi
 \`\`\`
 

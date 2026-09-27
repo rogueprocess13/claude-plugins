@@ -12,13 +12,28 @@ LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # which is why an always-true discriminator survived with a green suite.
 source "$LIB_DIR/planned-ticket-check.sh" 2>/dev/null || true
 source "$LIB_DIR/branch-directive-check.sh" 2>/dev/null || true
+source "$LIB_DIR/manifest-write.sh" 2>/dev/null || true
 source "$LIB_DIR/epic-precondition.sh"
 
-# Issue payloads in the shape get_issue returns.
+# Issue payloads in the shape get_issue returns. is_epic_issue (tracker-
+# planner-and-fallback-cutover, 3.6) reads only .identifier from these now —
+# neither the "epic" label nor the Branch Directive in the description is
+# consulted any more. Epic-ness is proven by an epic manifest existing for
+# that identifier, seeded below; the two fixture names ("by label" / "by
+# directive") are historical — both are just "an epic" today.
 EPIC_BY_LABEL_JSON='{"identifier":"INIT-42","description":"An initiative epic.","labels":{"nodes":[{"name":"epic"},{"name":"planned"}]}}'
 EPIC_BY_DIRECTIVE_JSON='{"identifier":"INIT-43","description":"## Branch Directive\n**Schema-Version:** 1\n**Branch:** epic/phase-a\n**Base:** develop\n**Merge Policy:** manual\n**Sync Policy:** none\n**Created:** 2026-07-25T10:00:00Z","labels":{"nodes":[]}}'
 CHILD_BUG_JSON='{"identifier":"CRE-9","description":"Fix the auth bug.","labels":{"nodes":[{"name":"bug"},{"name":"planned"}]}}'
 CHILD_TASK_JSON='{"identifier":"CRE-10","description":"A task.","labels":{"nodes":[{"name":"chore"}]}}'
+
+# REPOS_ROOT + epic manifests for INIT-42/INIT-43 — is_epic_issue's only
+# signal. CRE-9/CRE-10 deliberately get no manifest — they must read as
+# non-epics.
+export REPOS_ROOT="${REPOS_ROOT:-$(mktemp -d)}"
+if declare -f write_epic_manifest >/dev/null 2>&1; then
+  write_epic_manifest "INIT-42" "epic/init-42" "per-ticket" "manual" '[]' >/dev/null
+  write_epic_manifest "INIT-43" "epic/init-43" "per-ticket" "manual" '[]' >/dev/null
+fi
 
 PASS=0
 FAIL=0
@@ -44,98 +59,27 @@ test_valid_json() {
   jq '.' "$SM" >/dev/null 2>&1
 }
 
-# ── Test: planner_labels section exists ─────────────────────────────────────
+# tracker-planner-and-fallback-cutover (4.7): the planner_labels section
+# these tests used to check (planned, INIT-*, pre-approved, blocked-by:*,
+# state:execution, and the 5 type labels) is removed from workflow.json —
+# the planner writes no labels at all now, so there is nothing left to
+# assert about a section that no longer exists. must_be_epic enforcement is
+# exercised directly via check_precondition below (test_precondition_epic_passes
+# and friends), independent of any workflow.json label declaration.
 
-test_planner_labels_section() {
-  jq -e '.planner_labels' "$SM" >/dev/null 2>&1
+test_planner_labels_section_removed() {
+  jq -e '.planner_labels' "$SM" >/dev/null 2>&1 && return 1
+  return 0
 }
 
-# ── Test: planned label defined ─────────────────────────────────────────────
+# ── Test: well_known_labels reflects only genuinely required labels ────────
 
-test_planned_label() {
-  local pattern
-  pattern=$(jq -r '.planner_labels.planned.pattern' "$SM")
-  [ "$pattern" = "planned" ]
-}
-
-# ── Test: planned label never removed ───────────────────────────────────────
-
-test_planned_never_removed() {
-  local removed_by
-  removed_by=$(jq -r '.planner_labels.planned.removed_by | length' "$SM")
-  [ "$removed_by" -eq 0 ]
-}
-
-# ── Test: INIT-* wildcard defined ───────────────────────────────────────────
-
-test_init_wildcard() {
-  local pattern
-  pattern=$(jq -r '.planner_labels."INIT-*".pattern' "$SM")
-  [ "$pattern" = "INIT-*" ]
-}
-
-# ── Test: pre-approved label defined ────────────────────────────────────────
-
-test_pre_approved_label() {
-  local pattern
-  pattern=$(jq -r '.planner_labels."pre-approved".pattern' "$SM")
-  [ "$pattern" = "pre-approved" ]
-}
-
-# ── Test: pre-approved removed by human-reject and re-claim ─────────────────
-
-test_pre_approved_removers() {
-  local removers
-  removers=$(jq -r '.planner_labels."pre-approved".removed_by | join(",")' "$SM")
-  echo "$removers" | grep -q "human-reject" && echo "$removers" | grep -q "re-claim"
-}
-
-# ── Test: pre-approved confidence threshold is 0.85 ─────────────────────────
-
-test_pre_approved_confidence() {
-  local threshold
-  threshold=$(jq -r '.planner_labels."pre-approved".conditions.confidence_min' "$SM")
-  [ "$threshold" = "0.85" ]
-}
-
-# ── Test: blocked-by:* wildcard defined ─────────────────────────────────────
-
-test_blocked_by_wildcard() {
-  local pattern
-  pattern=$(jq -r '.planner_labels."blocked-by:*".pattern' "$SM")
-  [ "$pattern" = "blocked-by:*" ]
-}
-
-# ── Test: blocked-by auto-remove-when set ───────────────────────────────────
-
-test_blocked_by_auto_remove() {
-  local auto
-  auto=$(jq -r '.planner_labels."blocked-by:*".auto_remove_when' "$SM")
-  [ "$auto" = "blocker_reaches_done" ]
-}
-
-# ── Test: state:execution label defined ─────────────────────────────────────
-
-test_state_execution_label() {
-  local pattern
-  pattern=$(jq -r '.planner_labels."state:execution".pattern' "$SM")
-  [ "$pattern" = "state:execution" ]
-}
-
-# state:execution's `precondition` field was removed from planner_labels by
-# tracker-flow-projection-cutover — it never had a trigger to attach to
-# (state:execution is applied directly by the planner, never through
-# flow.sh), so flow.sh's read of it was dead code. must_be_epic enforcement
-# for this label is now exercised directly via check_precondition below
-# (test_precondition_epic_passes and friends), with the precondition value
-# passed as a literal rather than read from workflow.json.
-
-# ── Test: well_known_labels unchanged ───────────────────────────────────────
-
-test_well_known_labels_unchanged() {
+test_well_known_labels_no_retired_planner_labels() {
   local labels
   labels=$(jq -r '.well_known_labels | join(",")' "$SM")
-  echo "$labels" | grep -q "bug" && echo "$labels" | grep -q "feature" && echo "$labels" | grep -q "repro-failed"
+  echo "$labels" | grep -qw "bug" && return 1
+  echo "$labels" | grep -qw "feature" && return 1
+  return 0
 }
 
 # ── Test: existing triggers intact ──────────────────────────────────────────
@@ -338,17 +282,8 @@ test_epic_triggers_use_existing_states() {
 # ── Run tests ──────────────────────────────────────────────────────────────
 
 _run "valid JSON" test_valid_json
-_run "planner_labels section exists" test_planner_labels_section
-_run "planned label defined" test_planned_label
-_run "planned label never removed" test_planned_never_removed
-_run "INIT-* wildcard defined" test_init_wildcard
-_run "pre-approved label defined" test_pre_approved_label
-_run "pre-approved removed by human-reject and re-claim" test_pre_approved_removers
-_run "pre-approved confidence threshold 0.85" test_pre_approved_confidence
-_run "blocked-by:* wildcard defined" test_blocked_by_wildcard
-_run "blocked-by auto_remove_when set" test_blocked_by_auto_remove
-_run "state:execution label defined" test_state_execution_label
-_run "well_known_labels unchanged" test_well_known_labels_unchanged
+_run "planner_labels section removed" test_planner_labels_section_removed
+_run "well_known_labels has no retired planner labels" test_well_known_labels_no_retired_planner_labels
 _run "existing triggers intact" test_triggers_intact
 _run "human-reject trigger removes pre-approved" test_human_reject_removes_pre_approved
 _run "re-claim trigger removes pre-approved" test_re_claim_removes_pre_approved

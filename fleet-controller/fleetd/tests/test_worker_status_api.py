@@ -14,7 +14,6 @@ Run:
 """
 
 import http.client
-import http.server
 import json
 import os
 import subprocess
@@ -97,56 +96,31 @@ def _write_stub_feedback(lib_dir, value='0.9'):
         '_fleet_confidence_predicted() { echo "%s"; }\n' % value)
 
 
-class _LinearStubHandler(http.server.BaseHTTPRequestHandler):
-    response = None
-
-    def do_POST(self):
-        length = int(self.headers.get('Content-Length', '0') or '0')
-        self.rfile.read(length)
-        body = json.dumps(self.response).encode('utf-8')
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):
-        pass
-
-
-class _LinearStub:
-    """Serves a canned Linear GraphQL response for real-bash dispatch tests."""
-
-    def __init__(self, response):
-        self.httpd = http.server.HTTPServer(('127.0.0.1', 0), _LinearStubHandler)
-        _LinearStubHandler.response = response
-        self.port = self.httpd.server_address[1]
-        self.thread = threading.Thread(
-            target=self.httpd.serve_forever, daemon=True)
-        self.thread.start()
-
-    def close(self):
-        self.httpd.shutdown()
-        self.httpd.server_close()
+def _seed_epic_manifest_fs(repos_root, epic_id, children, dispatch=True):
+    """tracker-planner-and-fallback-cutover (3.9/3.11): fleet_dispatch_initiative
+    is manifest-only now — real-bash dispatch tests seed REPOS_ROOT directly
+    instead of a live Linear stub, mirroring write_epic_manifest's own
+    output shape (fleet-detect.sh/fleet-dispatch.sh's bash test suites use
+    the real bash writer for the same fixtures; this is the Python-side
+    equivalent, since these tests exercise the Python dispatch_epic wrapper
+    rather than sourcing the bash lib directly)."""
+    epic_dir = Path(repos_root) / '.ticket-auto' / 'initiatives' / epic_id / 'epic'
+    epic_dir.mkdir(parents=True, exist_ok=True)
+    (epic_dir / 'manifest.json').write_text(json.dumps({
+        'branch': 'epic/x', 'uat_policy': 'per-ticket', 'merge_policy': 'manual',
+        'children': list(children), 'dispatch': bool(dispatch),
+    }))
 
 
-def _epic_response(epic_id, children):
-    return {'data': {'issue': {
-        'id': 'epic-uuid',
-        'identifier': epic_id,
-        'title': 'Initiative',
-        'description': '',
-        'state': {'name': 'Execution'},
-        'labels': {'nodes': [{'name': 'state:execution'}]},
-        'children': {'nodes': [{
-            'id': 'child-%d' % i,
-            'identifier': c['tid'],
-            'title': 'child',
-            'state': {'name': 'Backlog'},
-            'labels': {'nodes': [{'name': 'planned'}]},
-            'priority': c.get('priority', 3),
-        } for i, c in enumerate(children)]},
-    }}}
+def _seed_child_manifest_fs(repos_root, tid, epic_id):
+    init_dir = Path(repos_root) / '.ticket-auto' / 'initiatives' / epic_id
+    (init_dir / 'tickets' / tid / 'planner').mkdir(parents=True, exist_ok=True)
+    (init_dir / 'tickets' / tid / 'planner' / 'manifest.json').write_text(json.dumps({
+        'type': 'bug', 'initiative': epic_id, 'blocked_by': [], 'dispatch': False,
+    }))
+    index_dir = Path(repos_root) / '.ticket-auto' / 'initiatives' / '_index'
+    index_dir.mkdir(parents=True, exist_ok=True)
+    (index_dir / f'{tid}.initiative').write_text(epic_id)
 
 
 def _write_queue_entry(state, tid, epic_id):
@@ -436,62 +410,55 @@ class TestDispatchEpic(unittest.TestCase):
             self.assertFalse(queue.exists())
 
     def test_dispatch_epic_real_bash(self):
-        """End-to-end: real fleet_dispatch_initiative against a stub Linear."""
+        """End-to-end: real fleet_dispatch_initiative against REPOS_ROOT
+        manifests (tracker-planner-and-fallback-cutover — manifest-only,
+        no Linear stub needed or consulted)."""
         from fleetd.supervisor import Supervisor
         with tempfile.TemporaryDirectory() as repos:
-            stub = _LinearStub(_epic_response('INIT-42', [
-                {'tid': 'CRE-101'}, {'tid': 'CRE-102'}]))
-            try:
-                sup = _make_supervisor(self.state)
-                with patch.dict(os.environ, {
-                    'LINEAR_API_URL': 'http://127.0.0.1:%d/graphql' % stub.port,
-                    'REPOS_ROOT': str(repos),
-                    'FLEET_KILL_GRACE_SECS': '1',
-                }):
-                    result = sup.dispatch_epic('INIT-42')
-                self.assertEqual(sorted(result['queued']),
-                                 ['CRE-101', 'CRE-102'])
-                self.assertEqual(result['spawned'], [])
-                queue = self.state / 'fleet-default-spawn-queue.jsonl'
-                lines = [json.loads(line) for line in
-                         queue.read_text().splitlines() if line.strip()]
-                self.assertEqual(len(lines), 2)
-                for line in lines:
-                    self.assertTrue(json.dumps(line))  # valid JSON
-            finally:
-                stub.close()
+            _seed_epic_manifest_fs(repos, 'INIT-42', ['CRE-101', 'CRE-102'])
+            _seed_child_manifest_fs(repos, 'CRE-101', 'INIT-42')
+            _seed_child_manifest_fs(repos, 'CRE-102', 'INIT-42')
+            sup = _make_supervisor(self.state)
+            with patch.dict(os.environ, {
+                'REPOS_ROOT': str(repos),
+                'FLEET_KILL_GRACE_SECS': '1',
+            }):
+                result = sup.dispatch_epic('INIT-42')
+            self.assertEqual(sorted(result['queued']),
+                             ['CRE-101', 'CRE-102'])
+            self.assertEqual(result['spawned'], [])
+            queue = self.state / 'fleet-default-spawn-queue.jsonl'
+            lines = [json.loads(line) for line in
+                     queue.read_text().splitlines() if line.strip()]
+            self.assertEqual(len(lines), 2)
+            for line in lines:
+                self.assertTrue(json.dumps(line))  # valid JSON
 
     def test_dispatch_respects_stop_file_real_bash(self):
         from fleetd.supervisor import Supervisor
         with tempfile.TemporaryDirectory() as repos:
-            stub = _LinearStub(_epic_response('INIT-42', [
-                {'tid': 'CRE-101'}]))
-            try:
-                sup = _make_supervisor(self.state)
-                stop_file = self.state / 'stop-INIT-42.json'
-                stop_file.write_text(json.dumps({
-                    'initiative_id': 'INIT-42',
-                    'stopped_at': '2026-08-18T00:00:00Z',
-                    'reason': 'operator',
-                    'tickets': ['CRE-101'],
-                }))
-                env = {
-                    'LINEAR_API_URL': 'http://127.0.0.1:%d/graphql' % stub.port,
-                    'REPOS_ROOT': str(repos),
-                }
-                with patch.dict(os.environ, env):
-                    result = sup.dispatch_epic('INIT-42')
-                self.assertEqual(result['queued'], [])
-                self.assertIn('stopped', result['message'])
-                self.assertTrue(stop_file.exists())
+            _seed_epic_manifest_fs(repos, 'INIT-42', ['CRE-101'])
+            _seed_child_manifest_fs(repos, 'CRE-101', 'INIT-42')
+            sup = _make_supervisor(self.state)
+            stop_file = self.state / 'stop-INIT-42.json'
+            stop_file.write_text(json.dumps({
+                'initiative_id': 'INIT-42',
+                'stopped_at': '2026-08-18T00:00:00Z',
+                'reason': 'operator',
+                'tickets': ['CRE-101'],
+            }))
+            env = {'REPOS_ROOT': str(repos)}
+            with patch.dict(os.environ, env):
+                result = sup.dispatch_epic('INIT-42')
+            self.assertEqual(result['queued'], [])
+            self.assertIn('stopped', result['message'])
+            self.assertTrue(stop_file.exists())
 
-                # resume clears the stop-file and dispatches.
-                with patch.dict(os.environ, env):
-                    result = sup.dispatch_epic('INIT-42', resume=True)
-                self.assertEqual(result['queued'], ['CRE-101'])
-                self.assertFalse(stop_file.exists())
-            finally:
-                stub.close()
+            # resume clears the stop-file and dispatches.
+            with patch.dict(os.environ, env):
+                result = sup.dispatch_epic('INIT-42', resume=True)
+            self.assertEqual(result['queued'], ['CRE-101'])
+            self.assertFalse(stop_file.exists())
 
     def test_stop_file_inert_to_other_epics(self):
         """A stop-file for one epic never gates another epic's dispatch."""
@@ -510,45 +477,40 @@ class TestDispatchEpic(unittest.TestCase):
         """Two concurrent dispatches of the same epic → one entry per ticket."""
         from fleetd.supervisor import Supervisor
         with tempfile.TemporaryDirectory() as repos:
-            stub = _LinearStub(_epic_response('INIT-42', [
-                {'tid': 'CRE-101'}, {'tid': 'CRE-102'}]))
-            try:
-                sup = _make_supervisor(self.state)
-                env = {
-                    'LINEAR_API_URL': 'http://127.0.0.1:%d/graphql' % stub.port,
-                    'REPOS_ROOT': str(repos),
-                }
-                stop = threading.Event()
-                results = []
+            _seed_epic_manifest_fs(repos, 'INIT-42', ['CRE-101', 'CRE-102'])
+            _seed_child_manifest_fs(repos, 'CRE-101', 'INIT-42')
+            _seed_child_manifest_fs(repos, 'CRE-102', 'INIT-42')
+            sup = _make_supervisor(self.state)
+            env = {'REPOS_ROOT': str(repos)}
+            stop = threading.Event()
+            results = []
 
-                def _dispatch():
-                    with patch.dict(os.environ, env):
-                        results.append(sup.dispatch_epic('INIT-42'))
-                    stop.set()
-
-                def _detect():
-                    while not stop.is_set():
-                        sup.run_detection_cycle()
-                        time.sleep(0.05)
-
-                threads = [threading.Thread(target=_dispatch) for _ in range(2)]
-                detector = threading.Thread(target=_detect)
-                detector.start()
-                for t in threads:
-                    t.start()
-                for t in threads:
-                    t.join(timeout=30)
+            def _dispatch():
+                with patch.dict(os.environ, env):
+                    results.append(sup.dispatch_epic('INIT-42'))
                 stop.set()
-                detector.join(timeout=10)
 
-                queue = self.state / 'fleet-default-spawn-queue.jsonl'
-                lines = [line for line in
-                         queue.read_text().splitlines() if line.strip()]
-                tids = [json.loads(line)['tid'] for line in lines]
-                self.assertEqual(sorted(tids), ['CRE-101', 'CRE-102'])
-                self.assertEqual(len(tids), len(set(tids)))  # no duplicates
-            finally:
-                stub.close()
+            def _detect():
+                while not stop.is_set():
+                    sup.run_detection_cycle()
+                    time.sleep(0.05)
+
+            threads = [threading.Thread(target=_dispatch) for _ in range(2)]
+            detector = threading.Thread(target=_detect)
+            detector.start()
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+            stop.set()
+            detector.join(timeout=10)
+
+            queue = self.state / 'fleet-default-spawn-queue.jsonl'
+            lines = [line for line in
+                     queue.read_text().splitlines() if line.strip()]
+            tids = [json.loads(line)['tid'] for line in lines]
+            self.assertEqual(sorted(tids), ['CRE-101', 'CRE-102'])
+            self.assertEqual(len(tids), len(set(tids)))  # no duplicates
 
 
 # ── 8.x: stop_epic ─────────────────────────────────────────────────────────

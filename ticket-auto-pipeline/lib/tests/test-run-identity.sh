@@ -440,22 +440,12 @@ J'
   return $ok
 }
 
-test_ticket_meta_type_derived_from_labels() {
-  _sandbox_new
-  _stub_get_issue 'cat <<J
-{"createdAt":null,"startedAt":null,"estimate":null,"priority":null,"labels":{"nodes":[{"name":"security"},{"name":"planned"}]}}
-J'
-  local log="$_SANDBOX/logs/T.log"
-  : >"$log"
-  LINEAR_API_KEY=x bash -c "source '$_SANDBOX/lib/run-identity.sh'; run_identity_ticket_meta T-14 '$log'"
-  local json ok
-  json=$(grep '|META|ticket-meta|' "$log" | cut -d'|' -f5-)
-  [ "$(echo "$json" | jq -r '.type')" = "security" ] &&
-    [ "$(echo "$json" | jq -r '.planned')" = "true" ]
-  ok=$?
-  _sandbox_rm
-  return $ok
-}
+# tracker-planner-and-fallback-cutover (3.6): the label-derivation fallback
+# this test exercised (type/planned resolved from live labels when no
+# manifest exists) is deleted — manifest presence is the only signal now,
+# already covered by test_ticket_meta_manifest_drives_type_and_planned
+# below. Removed per the audit's rule that a test asserting only a retired
+# read path is deleted, not adapted.
 
 test_ticket_meta_type_null_when_no_label_matches() {
   _sandbox_new
@@ -536,7 +526,6 @@ _run "current is empty with no run-id line" test_current_is_empty_with_no_run_id
 _run "current returns the open run id" test_current_returns_the_open_run_id
 _run "ticket-meta no-ops without LINEAR_API_KEY" test_ticket_meta_no_ops_without_linear_api_key
 _run "ticket-meta written once" test_ticket_meta_written_once
-_run "ticket-meta type derived from labels" test_ticket_meta_type_derived_from_labels
 _run "ticket-meta type null when no label matches" test_ticket_meta_type_null_when_no_label_matches
 _run "CLI stamp writes run-id" test_cli_stamp_writes_run_id
 

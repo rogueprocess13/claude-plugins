@@ -1275,28 +1275,26 @@ test_tool_errors_unreadable_started_at_falls_back_to_whole_file() {
 # {state_dir}/fleet-{instance}-spawn-queue.jsonl and never saw the entries.
 
 test_auto_dispatch_forwards_workspace() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
-  # Stubs defined BEFORE sourcing fleet-detect.sh so the scan uses them
-  # instead of sourcing the real linear-api.sh / fleet-dispatch.sh libs.
+  repos_root=$(mktemp -d)
   get_issue() { :; }
-  get_epics_by_label() {
-    echo '[{"id":"x","identifier":"INIT-42","children":{"nodes":[{"id":"c","identifier":"CRE-900","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]}}]}}]'
-  }
   fleet_dispatch_initiative() {
     echo "$1|$2" >"$ws/dispatch-args.txt"
   }
   source "$LIB_DIR/fleet-detect.sh"
-  FLEET_AUTO_DISPATCH=true _fleet_scan_initiative_dispatch "$ws" >/dev/null 2>&1
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-900"]'
+
+  REPOS_ROOT="$repos_root" FLEET_AUTO_DISPATCH=true _fleet_scan_initiative_dispatch "$ws" >/dev/null 2>&1
   local rc=$?
   [ "$rc" -eq 0 ] && [ -f "$ws/dispatch-args.txt" ] || {
     echo "stub dispatch never called" >&2
-    rm -rf "$ws"
+    rm -rf "$ws" "$repos_root"
     return 1
   }
   local args
   args=$(cat "$ws/dispatch-args.txt")
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
   [ "$args" = "INIT-42|$ws" ] || {
     echo "expected dispatch args 'INIT-42|$ws', got '$args'" >&2
     return 1
@@ -1306,20 +1304,19 @@ test_auto_dispatch_forwards_workspace() {
 # ── D-11 stop-file note ──────────────────────────────────────────────────────────
 
 test_initiative_dispatch_notes_stop_file() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   get_issue() { :; }
-  get_epics_by_label() {
-    echo '[{"id":"x","identifier":"INIT-42","children":{"nodes":[{"id":"c","identifier":"CRE-900","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]}}]}}]'
-  }
   fleet_dispatch_initiative() { :; }
   source "$LIB_DIR/fleet-detect.sh"
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-900"]'
   echo '{"initiative_id":"INIT-42","tickets":["CRE-900"]}' >"$ws/stop-INIT-42.json"
 
   local r findings
-  r=$(_fleet_scan_initiative_dispatch "$ws" 2>/dev/null)
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch "$ws" 2>/dev/null)
   findings=$(echo "$r" | jq -r '.findings')
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
 
   echo "$findings" | grep -q "INIT-42(1)" || {
     echo "expected INIT-42(1) in findings: $findings" >&2
@@ -1333,61 +1330,21 @@ test_initiative_dispatch_notes_stop_file() {
 }
 
 test_initiative_dispatch_no_stop_note_when_unstopped() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
   get_issue() { :; }
-  get_epics_by_label() {
-    echo '[{"id":"x","identifier":"INIT-42","children":{"nodes":[{"id":"c","identifier":"CRE-900","state":{"name":"Backlog"},"labels":{"nodes":[{"name":"planned"}]}}]}}]'
-  }
   fleet_dispatch_initiative() { :; }
   source "$LIB_DIR/fleet-detect.sh"
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-900"]'
 
   local r findings
-  r=$(_fleet_scan_initiative_dispatch "$ws" 2>/dev/null)
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch "$ws" 2>/dev/null)
   findings=$(echo "$r" | jq -r '.findings')
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
 
   echo "$findings" | grep -q "stopped:" && {
     echo "unexpected stop note when no stop-file exists: $findings" >&2
-    return 1
-  }
-  return 0
-}
-
-# ── D-11 query construction (issue #313 bug A / tracker-client-consolidation) ─────
-# The original bug (\\"state:execution\\" inside a single-quoted bash literal
-# producing invalid JSON) lived in a hand-rolled query string this detector
-# built itself. That responsibility has moved entirely into
-# linear-api.sh's get_epics_by_label, which passes the label as a GraphQL
-# variable rather than inlining it (regression-guarded in
-# test-linear-api.sh's test_get_epics_by_label_query_uses_variable_not_inline_label).
-# This test now guards the boundary instead: the detector must call
-# get_epics_by_label with the literal label "state:execution", not construct
-# any query of its own.
-test_initiative_dispatch_calls_client_with_state_execution_label() {
-  local ws
-  ws=$(_setup_workspace)
-  local captured="$ws/captured-label.txt"
-  get_issue() { :; }
-  fleet_dispatch_initiative() { :; }
-  get_epics_by_label() {
-    echo "$1" >"$captured"
-    echo '[]'
-  }
-  source "$LIB_DIR/fleet-detect.sh"
-  _fleet_scan_initiative_dispatch "$ws" >/dev/null 2>&1
-
-  [ -s "$captured" ] || {
-    echo "get_epics_by_label was never invoked — no label captured" >&2
-    rm -rf "$ws"
-    return 1
-  }
-
-  local label
-  label=$(cat "$captured")
-  rm -rf "$ws"
-  [ "$label" = "state:execution" ] || {
-    echo "expected label 'state:execution', got '$label'" >&2
     return 1
   }
   return 0
@@ -1397,44 +1354,42 @@ test_initiative_dispatch_calls_client_with_state_execution_label() {
 
 # tracker-approval-by-script: D-18 reads approved+stage from the child's
 # manifest, not its live labels — seeds one at $repos_root for $child_id.
+# Population itself comes from the epic manifest's children[] (see
+# _seed_epic_manifest below) — every test in this section seeds both.
 _seed_stalled_child_manifest() {
   local repos_root="$1" child_id="$2"
+  _seed_stalled_child_manifest_ex "$repos_root" "$child_id" true Ready
+}
+
+# Extended form: explicit approved/stage, for the state-filter and
+# approval-gate tests below. tracker-planner-and-fallback-cutover (3.11):
+# child_state passed into _fleet_sa_process_child IS this same manifest
+# `stage` field on the manifest-only path (there is no longer a second,
+# independently-lagging live source) — so the top-of-function state-set gate
+# and the exact-Ready approval check both read this one value.
+_seed_stalled_child_manifest_ex() {
+  local repos_root="$1" child_id="$2" approved="$3" stage="$4"
   local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
   (
     source "$tap_lib/manifest-write.sh"
     REPOS_ROOT="$repos_root" write_ticket_manifest "$child_id" "INIT-42" "feature" '[]' >/dev/null
-    REPOS_ROOT="$repos_root" set_ticket_approval "$child_id" "true" "human" >/dev/null
-    REPOS_ROOT="$repos_root" set_ticket_stage "$child_id" "Ready" >/dev/null
+    [ "$approved" = "true" ] && REPOS_ROOT="$repos_root" set_ticket_approval "$child_id" "true" "human" >/dev/null
+    REPOS_ROOT="$repos_root" set_ticket_stage "$child_id" "$stage" >/dev/null
   )
 }
 
-# get_epics_by_label fixture (unwrapped array): one state:execution epic
-# with one child.
-_make_stalled_epic_json() {
-  local epic_id="$1" child_id="$2" child_state="$3" child_labels="$4"
-  jq -nc \
-    --arg epic_id "$epic_id" \
-    --arg child_id "$child_id" \
-    --arg child_state "$child_state" \
-    --argjson child_labels "$child_labels" \
-    '[{id:"e1",identifier:$epic_id,children:{nodes:[{id:"c1",identifier:$child_id,state:{name:$child_state},labels:{nodes:$child_labels}}]}}]'
-}
-
 test_stalled_approved_no_worker_no_queue_is_flagged() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
   get_issue() { :; }
-  get_epics_by_label() {
-    _make_stalled_epic_json "INIT-42" "CRE-77" "Ready" '[{"name":"planned"},{"name":"approved"}]'
-  }
   source "$LIB_DIR/fleet-detect.sh"
   # Store reachable, but nothing running — the "no live worker" case.
   fleet_store_ready() { return 0; }
   fleet_store_in_flight() { :; }
 
-  local repos_root
   repos_root=$(mktemp -d)
   _seed_stalled_child_manifest "$repos_root" "CRE-77"
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-77"]'
 
   local r sev findings
   r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
@@ -1453,55 +1408,19 @@ test_stalled_approved_no_worker_no_queue_is_flagged() {
   return 0
 }
 
-# tracker-approval-by-script (task 7.4): a live "approved" label with no
-# backing manifest fact must not flag the child — the tracker label is no
-# longer read for this decision at all.
-test_stalled_approved_live_label_no_manifest_not_flagged() {
-  local ws
-  ws=$(_setup_workspace)
-  get_issue() { :; }
-  get_epics_by_label() {
-    _make_stalled_epic_json "INIT-42" "CRE-78" "Ready" '[{"name":"planned"},{"name":"approved"}]'
-  }
-  source "$LIB_DIR/fleet-detect.sh"
-  fleet_store_ready() { return 0; }
-  fleet_store_in_flight() { :; }
-
-  local repos_root
-  repos_root=$(mktemp -d)
-  # Deliberately no manifest seeded for CRE-78.
-
-  local r sev
-  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
-  sev=$(echo "$r" | jq -r '.severity')
-  rm -rf "$ws" "$repos_root"
-
-  [ "$sev" -eq 0 ] || {
-    echo "expected severity 0 (not flagged) — a live label with no manifest must be ignored, got $sev" >&2
-    return 1
-  }
-  return 0
-}
-
 # tracker-approval-by-script (task 7.4): manifest approved=false (field
-# absent) — same as no manifest, not flagged, not resumed.
+# absent) — not flagged, not resumed.
 test_stalled_approved_manifest_false_not_flagged() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
   get_issue() { :; }
-  get_epics_by_label() {
-    _make_stalled_epic_json "INIT-42" "CRE-79" "Ready" '[{"name":"planned"},{"name":"approved"}]'
-  }
   source "$LIB_DIR/fleet-detect.sh"
   fleet_store_ready() { return 0; }
   fleet_store_in_flight() { :; }
 
-  local repos_root
   repos_root=$(mktemp -d)
-  (
-    source "$SCRIPT_DIR/../../../ticket-auto-pipeline/lib/manifest-write.sh"
-    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-79" "INIT-42" "feature" '[]' >/dev/null
-  )
+  _seed_stalled_child_manifest_ex "$repos_root" "CRE-79" false Ready
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-79"]'
 
   local r sev queued
   r=$(REPOS_ROOT="$repos_root" FLEET_AUTO_RESUME_STALLED=true _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
@@ -1519,77 +1438,81 @@ test_stalled_approved_manifest_false_not_flagged() {
 }
 
 test_stalled_approved_live_worker_not_flagged() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
   get_issue() { :; }
-  get_epics_by_label() {
-    _make_stalled_epic_json "INIT-42" "CRE-78" "Review" '[{"name":"planned"},{"name":"approved"}]'
-  }
   source "$LIB_DIR/fleet-detect.sh"
   fleet_store_ready() { return 0; }
   fleet_store_in_flight() { echo "CRE-78"; }
 
+  repos_root=$(mktemp -d)
+  _seed_stalled_child_manifest "$repos_root" "CRE-78"
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-78"]'
+
   local r sev
-  r=$(_fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
   sev=$(echo "$r" | jq -r '.severity')
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
   [ "$sev" -eq 0 ]
 }
 
 test_stalled_approved_pending_queue_entry_not_flagged() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
   get_issue() { :; }
-  get_epics_by_label() {
-    _make_stalled_epic_json "INIT-42" "CRE-79" "Approve" '[{"name":"planned"},{"name":"approved"}]'
-  }
   source "$LIB_DIR/fleet-detect.sh"
   fleet_store_ready() { return 0; }
   fleet_store_in_flight() { :; }
+
+  repos_root=$(mktemp -d)
+  _seed_stalled_child_manifest "$repos_root" "CRE-79"
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-79"]'
 
   mkdir -p "$ws"
   echo '{"tid":"CRE-79","reason":"orphan-reconciliation","timestamp":"2026-09-10T00:00:00Z","restarts":0,"dispatch_type":"initial","generation":1}' >"$ws/fleet-default-spawn-queue.jsonl"
 
   local r sev
-  r=$(_fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
   sev=$(echo "$r" | jq -r '.severity')
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
   [ "$sev" -eq 0 ]
 }
 
 test_stalled_approved_backlog_state_not_flagged() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
   get_issue() { :; }
-  get_epics_by_label() {
-    _make_stalled_epic_json "INIT-42" "CRE-80" "Backlog" '[{"name":"planned"},{"name":"approved"}]'
-  }
   source "$LIB_DIR/fleet-detect.sh"
   fleet_store_ready() { return 0; }
   fleet_store_in_flight() { :; }
 
+  repos_root=$(mktemp -d)
+  _seed_stalled_child_manifest_ex "$repos_root" "CRE-80" true Backlog
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-80"]'
+
   local r sev
-  r=$(_fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
   sev=$(echo "$r" | jq -r '.severity')
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
   [ "$sev" -eq 0 ]
 }
 
 test_stalled_approved_done_state_not_flagged() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
   get_issue() { :; }
-  get_epics_by_label() {
-    _make_stalled_epic_json "INIT-42" "CRE-81" "Done" '[{"name":"planned"},{"name":"approved"}]'
-  }
   source "$LIB_DIR/fleet-detect.sh"
   fleet_store_ready() { return 0; }
   fleet_store_in_flight() { :; }
 
+  repos_root=$(mktemp -d)
+  _seed_stalled_child_manifest_ex "$repos_root" "CRE-81" true Done
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-81"]'
+
   local r sev
-  r=$(_fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
   sev=$(echo "$r" | jq -r '.severity')
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
   [ "$sev" -eq 0 ]
 }
 
@@ -1599,22 +1522,23 @@ test_stalled_approved_done_state_not_flagged() {
 # requeue/campaign-resume workaround already uses.
 
 test_stalled_approved_auto_resume_disabled_by_default() {
-  local ws
+  local ws repos_root
   ws=$(_setup_workspace)
   get_issue() { :; }
-  get_epics_by_label() {
-    _make_stalled_epic_json "INIT-42" "CRE-82" "Ready" '[{"name":"planned"},{"name":"approved"}]'
-  }
   source "$LIB_DIR/fleet-detect.sh"
   fleet_store_ready() { return 0; }
   fleet_store_in_flight() { :; }
 
-  _fleet_scan_stalled_approved_children "$ws" >/dev/null 2>&1
+  repos_root=$(mktemp -d)
+  _seed_stalled_child_manifest "$repos_root" "CRE-82"
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-82"]'
+
+  REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" >/dev/null 2>&1
 
   local queue_file="$ws/fleet-default-spawn-queue.jsonl"
   local queued=0
   [ -f "$queue_file" ] && grep -q '"tid":"CRE-82"' "$queue_file" 2>/dev/null && queued=1
-  rm -rf "$ws"
+  rm -rf "$ws" "$repos_root"
   [ "$queued" -eq 0 ]
 }
 
@@ -1622,9 +1546,6 @@ test_stalled_approved_auto_resume_enqueues_when_enabled() {
   local ws
   ws=$(_setup_workspace)
   get_issue() { :; }
-  get_epics_by_label() {
-    _make_stalled_epic_json "INIT-42" "CRE-83" "Ready" '[{"name":"planned"},{"name":"approved"}]'
-  }
   source "$LIB_DIR/fleet-detect.sh"
   fleet_store_ready() { return 0; }
   fleet_store_in_flight() { :; }
@@ -1632,6 +1553,7 @@ test_stalled_approved_auto_resume_enqueues_when_enabled() {
   local repos_root
   repos_root=$(mktemp -d)
   _seed_stalled_child_manifest "$repos_root" "CRE-83"
+  _seed_epic_manifest "$repos_root" "INIT-42" "epic/init-42" "true" '["CRE-83"]'
 
   REPOS_ROOT="$repos_root" FLEET_AUTO_RESUME_STALLED=true _fleet_scan_stalled_approved_children "$ws" >/dev/null 2>&1
 
@@ -1640,6 +1562,229 @@ test_stalled_approved_auto_resume_enqueues_when_enabled() {
   [ -f "$queue_file" ] && grep -q '"tid":"CRE-83"' "$queue_file" 2>/dev/null && queued=1
   rm -rf "$ws" "$repos_root"
   [ "$queued" -eq 1 ]
+}
+
+# ── tracker-planner-and-fallback-cutover (1.6): manifest-era enumeration ──────────
+# fleet_local_epics (fleet-config.sh, D2) and D-11/D-12/D-18's manifest-first
+# population.
+
+# Seeds an epic manifest at $repos_root for $epic_id. dispatch defaults to
+# "true"; pass "false" to test the exclusion path.
+_seed_epic_manifest() {
+  local repos_root="$1" epic_id="$2" branch="$3" dispatch="${4:-true}" children="${5:-[]}"
+  local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
+  (
+    source "$tap_lib/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_epic_manifest "$epic_id" "$branch" "per-ticket" "manual" "$children" >/dev/null
+    [ "$dispatch" = "true" ] && REPOS_ROOT="$repos_root" stamp_epic_dispatch "$epic_id" >/dev/null
+    :
+  )
+}
+
+test_fleet_local_epics_excludes_dispatch_false() {
+  local repos_root
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+  _seed_epic_manifest "$repos_root" "INIT-50" "epic/init-50" "true"
+  _seed_epic_manifest "$repos_root" "INIT-51" "epic/init-51" "false"
+
+  local out
+  out=$(REPOS_ROOT="$repos_root" fleet_local_epics)
+  rm -rf "$repos_root"
+
+  echo "$out" | grep -qx "INIT-50" || {
+    echo "expected INIT-50 (dispatch:true) in output: $out" >&2
+    return 1
+  }
+  echo "$out" | grep -qx "INIT-51" && {
+    echo "INIT-51 (dispatch:false) should be excluded: $out" >&2
+    return 1
+  }
+  return 0
+}
+
+test_fleet_local_epics_excludes_underscore_initiative() {
+  local repos_root
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+  _seed_epic_manifest "$repos_root" "_adhoc" "epic/adhoc" "true"
+  _seed_epic_manifest "$repos_root" "INIT-52" "epic/init-52" "true"
+
+  local out
+  out=$(REPOS_ROOT="$repos_root" fleet_local_epics)
+  rm -rf "$repos_root"
+
+  echo "$out" | grep -qx "_adhoc" && {
+    echo "_adhoc (reserved, underscore-prefixed) must never be enumerated: $out" >&2
+    return 1
+  }
+  echo "$out" | grep -qx "INIT-52" || {
+    echo "expected INIT-52 in output: $out" >&2
+    return 1
+  }
+  return 0
+}
+
+test_fleet_local_epics_no_manifests_returns_nonzero() {
+  local repos_root
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+
+  local rc=0
+  REPOS_ROOT="$repos_root" fleet_local_epics >/dev/null 2>&1 || rc=$?
+  rm -rf "$repos_root"
+  # Exit 1 (not 0, not 3) — REPOS_ROOT resolved but no epic manifests exist
+  # under it, distinct from "manifest reads are unavailable" (exit 3).
+  [ "$rc" -eq 1 ]
+}
+
+# D-11: population, undispatched count and a child with no ticket manifest
+# of its own — reported as undispatched (counted, not silently dropped),
+# not fetched live at all (no get_epics_by_label stub is defined here; a
+# fallback would call an undeclared command and this test would fail).
+test_initiative_dispatch_enumerates_from_epic_manifest() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  fleet_dispatch_initiative() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+
+  # CRE-920 has no ticket manifest at all — undispatched by definition.
+  _seed_epic_manifest "$repos_root" "INIT-60" "epic/init-60" "true" '["CRE-920"]'
+
+  local r sev findings
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  findings=$(echo "$r" | jq -r '.findings')
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 1 ] || {
+    echo "expected severity 1, got $sev: $r" >&2
+    return 1
+  }
+  echo "$findings" | grep -q "INIT-60(1)" || {
+    echo "expected INIT-60(1) (child with no manifest counted as undispatched): $findings" >&2
+    return 1
+  }
+  return 0
+}
+
+# D-12: the never-regress short-circuit fires on the epic manifest's own
+# `stage` field — an epic already at Review is skipped even though its
+# (genuinely Done) child would otherwise make it ready.
+test_epic_branch_ready_short_circuits_on_manifest_stage() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+
+  local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
+  (
+    source "$tap_lib/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-930" "INIT-70" "feature" '[]' >/dev/null
+  )
+  _plog "$ws" "CRE-930" "META" "outcome" "info" "completed: STEP_6"
+
+  _seed_epic_manifest "$repos_root" "INIT-70" "epic/init-70" "true" '["CRE-930"]'
+  (
+    source "$tap_lib/manifest-write.sh"
+    REPOS_ROOT="$repos_root" set_epic_stage "INIT-70" "Review" >/dev/null
+  )
+
+  local r sev
+  r=$(REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$ws" _fleet_scan_epic_branch_ready "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 0 ] || {
+    echo "expected severity 0 (short-circuited on manifest stage=Review), got $sev: $r" >&2
+    return 1
+  }
+  return 0
+}
+
+# D-12: manifest-path enumeration end to end — a directive-carrying epic
+# (non-empty `branch` field) at an active stage, with all children Done,
+# is flagged ready. No get_epics_by_label stub is defined — a fallback to
+# the live path would fail this test.
+test_epic_branch_ready_enumerates_from_manifest() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+
+  local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
+  (
+    source "$tap_lib/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-931" "INIT-71" "feature" '[]' >/dev/null
+  )
+  _plog "$ws" "CRE-931" "META" "outcome" "info" "completed: STEP_6"
+
+  _seed_epic_manifest "$repos_root" "INIT-71" "epic/init-71" "true" '["CRE-931"]'
+  (
+    source "$tap_lib/manifest-write.sh"
+    REPOS_ROOT="$repos_root" set_epic_stage "INIT-71" "Ready" >/dev/null
+  )
+
+  local r sev findings
+  r=$(REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$ws" _fleet_scan_epic_branch_ready "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  findings=$(echo "$r" | jq -r '.findings')
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 1 ] || {
+    echo "expected severity 1 (epic ready for integration PR), got $sev: $r" >&2
+    return 1
+  }
+  echo "$findings" | grep -q "INIT-71" || {
+    echo "expected INIT-71 in findings: $findings" >&2
+    return 1
+  }
+  return 0
+}
+
+# D-18: manifest-path enumeration end to end, and a child named in the epic
+# manifest with no ticket manifest of its own is reported distinctly — it
+# is excluded from the stalled count (no approved/stage fact to satisfy the
+# gate), never mistaken for a stalled one.
+test_stalled_approved_children_enumerates_from_epic_manifest() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  _seed_stalled_child_manifest "$repos_root" "CRE-940"
+  # CRE-941 is listed on the epic but has no ticket manifest of its own.
+  _seed_epic_manifest "$repos_root" "INIT-80" "epic/init-80" "true" '["CRE-940","CRE-941"]'
+
+  local r sev findings
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  findings=$(echo "$r" | jq -r '.findings')
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 1 ] || {
+    echo "expected severity 1, got $sev: $r" >&2
+    return 1
+  }
+  echo "$findings" | grep -q "CRE-940" || {
+    echo "expected CRE-940 (approved+stage=Ready, no worker/queue) flagged: $findings" >&2
+    return 1
+  }
+  echo "$findings" | grep -q "CRE-941" && {
+    echo "CRE-941 (no ticket manifest) must not be flagged as stalled: $findings" >&2
+    return 1
+  }
+  return 0
 }
 
 # ── Gate-hold lifecycle detection (gate-check.sh compatibility) ───────────────────
@@ -1773,9 +1918,7 @@ for fn in \
   test_gate_stop_from_gate_check_detected \
   test_initiative_dispatch_notes_stop_file \
   test_initiative_dispatch_no_stop_note_when_unstopped \
-  test_initiative_dispatch_calls_client_with_state_execution_label \
   test_stalled_approved_no_worker_no_queue_is_flagged \
-  test_stalled_approved_live_label_no_manifest_not_flagged \
   test_stalled_approved_manifest_false_not_flagged \
   test_stalled_approved_live_worker_not_flagged \
   test_stalled_approved_pending_queue_entry_not_flagged \
@@ -1783,6 +1926,13 @@ for fn in \
   test_stalled_approved_done_state_not_flagged \
   test_stalled_approved_auto_resume_disabled_by_default \
   test_stalled_approved_auto_resume_enqueues_when_enabled \
+  test_fleet_local_epics_excludes_dispatch_false \
+  test_fleet_local_epics_excludes_underscore_initiative \
+  test_fleet_local_epics_no_manifests_returns_nonzero \
+  test_initiative_dispatch_enumerates_from_epic_manifest \
+  test_epic_branch_ready_short_circuits_on_manifest_stage \
+  test_epic_branch_ready_enumerates_from_manifest \
+  test_stalled_approved_children_enumerates_from_epic_manifest \
   test_observer_finding_line_does_not_change_phase_failure_verdict \
   test_observer_findings_high_in_current_bracket_returns_warn \
   test_observer_findings_warn_severity_finding_does_not_escalate \

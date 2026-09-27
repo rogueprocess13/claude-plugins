@@ -2,7 +2,7 @@
 # planner-doctor.sh — deterministic preflight checks for ticket-planner (#232).
 #
 # Every prerequisite gap the planner has hit so far — REPOS_ROOT unset/wrong,
-# LINEAR_TEAM_ID unset, the 4 static contract labels silently missing from
+# LINEAR_TEAM_ID unset, a board-projected label silently missing from
 # Linear, a live REPOS_ROOT checkout on the wrong branch relative to what
 # Discovery explored (#217), a missing per-initiative INIT-* label (#223),
 # a referenced-but-missing cross-plugin helper script — was discovered live,
@@ -20,7 +20,7 @@
 #                  checkout for each repo Discovery explored still matches (or
 #                  that an isolated worktree can be created), the resume-time
 #                  half of #217.
-#   --fix          create any missing static contract label via
+#   --fix          create any missing board-projected label via
 #                  planner_linear_ensure_label instead of only reporting it.
 # Returns: the number of issues found (0 = clean).
 #
@@ -45,10 +45,15 @@ if ! declare -f _resolve_grill_seal >/dev/null 2>&1; then
   source "${_PLANNER_DOCTOR_LIB_DIR}/planner-intent-gate.sh"
 fi
 
-# The 4 static contract labels — same set named in ticket-planner/CLAUDE.md
-# and hard-required by planner_linear_resolve_label_ids. Not centralized
-# anywhere else in the codebase; keep in sync with that doc if it ever changes.
-_PLANNER_DOCTOR_STATIC_LABELS=(planned epic pre-approved state:execution)
+# tracker-planner-and-fallback-cutover (4.5): the 4 former static contract
+# labels (planned/epic/pre-approved/state:execution) are retired — the
+# planner creates every issue with an empty label set now, so doctor no
+# longer checks for them ahead of a run. Checks the 4 human-signal labels
+# the board driver actually projects instead (workflow.json's
+# board_drivers.linear.projected_labels — the only labels anything in this
+# pipeline still writes to Linear), since a team missing one of those is
+# the equivalent live-discoverable gap doctor exists to catch early.
+_PLANNER_DOCTOR_STATIC_LABELS=(needs-info needs-adr rejected reviewed)
 
 # Resolve planned-ticket-check.sh via the same three-level fallback
 # planner_validate_ticket (planner-ticket-validate.sh) uses inline — kept as
@@ -120,7 +125,7 @@ planner_doctor_run() {
   fi
   rm -f "$err_file"
 
-  # ── 3. Static contract labels ─────────────────────────────────────────
+  # ── 3. Board-projected labels ──────────────────────────────────────────
   local label label_ids
   if [ -n "$team_id" ]; then
     for label in "${_PLANNER_DOCTOR_STATIC_LABELS[@]}"; do

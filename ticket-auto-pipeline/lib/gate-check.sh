@@ -662,23 +662,17 @@ _gate_entry() {
   # and routes to fast-path or full investigation based on the result.
   local issue_json planned_check_rc
   issue_json=$(_gate_fetch_issue "$TICKET_ID") || return $?
-  # tracker-local-facts-read-migration (task 5.1): a local ticket manifest is
-  # authoritative proof this is a planned ticket — skip the live label read
-  # when one exists. Falls back to the live label exactly as before when no
-  # manifest exists (predates this migration, or the write failed). The
-  # description is still needed regardless for 2.7a/2.7c's field-level
-  # validation, so this only narrows what decides the boolean gate, not
-  # what's fetched.
-  local has_planned_label
+  # tracker-planner-and-fallback-cutover (3.1): the local ticket manifest is
+  # the ONLY record of "is this a planned ticket" — no live label fallback.
+  # A ticket with no manifest is reported as not-planned (2.7's checks are
+  # simply skipped for it), never silently routed onto a live label read.
+  local has_planned_label="false"
   if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$TICKET_ID" 2>/dev/null; then
     has_planned_label="true"
-  else
-    has_planned_label=$(echo "$issue_json" | jq -r '[.labels.nodes[].name] | index("planned") != null' 2>/dev/null || echo 'false')
   fi
   if [ "$has_planned_label" = "true" ]; then
-    local planned_desc label_names
+    local planned_desc
     planned_desc=$(echo "$issue_json" | jq -r '.description // ""')
-    label_names=$(echo "$issue_json" | jq -r '[.labels.nodes[].name] | join(",")' 2>/dev/null || echo '')
 
     # 2.7a: Passive Planner Context block validation (existing behavior)
     check_planned_ticket_description "$planned_desc" 2>/dev/null || planned_check_rc=$?
@@ -689,14 +683,15 @@ _gate_entry() {
     esac
     hb_gate "planned-check" "info" "planned ticket validated" "{\"exit_code\":\"${planned_check_rc:-0}\",\"result\":\"$CHECK_RESULT\"}"
 
-    # 2.7b: Resolve Type label → template (active gate-stop)
-    # tracker-local-facts-read-migration (task 5.12): manifest's type field
-    # first, live label resolution as fallback.
+    # 2.7b: Resolve Type → template (active gate-stop)
+    # tracker-planner-and-fallback-cutover (3.1): manifest's type field is
+    # the only source — no live label fallback. A ticket manifest-proven
+    # planned (has_planned_label above) but missing `type` reports as
+    # NO_TEMPLATE_FOR_TYPE below, same as any other unresolvable type.
     local ticket_type=""
-    if declare -f get_ticket_manifest_field >/dev/null 2>&1 && ticket_manifest_exists "$TICKET_ID" 2>/dev/null; then
+    if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
       ticket_type=$(get_ticket_manifest_field "$TICKET_ID" type 2>/dev/null)
     fi
-    [ -n "$ticket_type" ] || ticket_type=$(_resolve_type_label "$label_names")
     local template_path
     template_path=$(resolve_template "$ticket_type" 2>/dev/null) || true
     local template_rc=$?
@@ -871,30 +866,6 @@ _gate_reapprove() {
   hb_gate "reapprove-gate" "fail" "APPROVAL_REVOKED" "{\"reason\":\"$reason\"}"
   _write_gate_verdict BLOCK
   return 2
-}
-
-# _resolve_type_label <label-names-csv>
-# Extracts the Type label from a comma-separated list of Linear label names.
-# Known Type labels: bug, feature, improvement, security, chore, refactor.
-# refactor is an alias for improvement — it resolves to the same template
-# but is a valid Type label that must not trigger NO_TEMPLATE_FOR_TYPE.
-# Emits the first matching type, or empty string if none found.
-_resolve_type_label() {
-  local labels="$1"
-  local IFS=','
-  for label in $labels; do
-    # Trim whitespace and lowercase — Linear labels are commonly title-cased
-    # (e.g. "Feature"), and this match must be case-insensitive to match the
-    # convention already used by validate-linear-config.sh.
-    label=$(echo "$label" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')
-    case "$label" in
-    bug | feature | improvement | security | chore | refactor)
-      echo "$label"
-      return 0
-      ;;
-    esac
-  done
-  return 0
 }
 
 # ── Dispatch (only when executed directly, not when sourced for testing) ──────

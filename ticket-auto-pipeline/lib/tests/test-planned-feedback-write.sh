@@ -83,6 +83,38 @@ else
   fail "Rough + 2 corrections → 0.55" "got $actual"
 fi
 
+# --- Test 6: manifest-only planned check (tracker-planner-and-fallback-cutover, 3.14) ---
+echo "--- Test 6: manifest-based planned detection, no live Linear read ---"
+repos_root=$(mktemp -d)
+(
+  source "${LIB_DIR}/manifest-write.sh"
+  REPOS_ROOT="$repos_root" write_ticket_manifest "TEST-6" "INIT-1" "feature" '[]' >/dev/null
+)
+FROM_PLANNED=false
+log="${TMPDIR}/test6-pipeline.log"
+echo "2026-07-21T00:00:00Z|META|outcome-label|info|Smooth" >"$log"
+REPOS_ROOT="$repos_root" planned_feedback_write "TEST-6" "$log" || true
+rm -rf "$repos_root"
+if grep -q '|META|planner-feedback|info|' "$log" 2>/dev/null; then
+  pass "feedback emitted for a manifest-backed planned ticket, FROM_PLANNED unset"
+else
+  fail "feedback emitted for a manifest-backed planned ticket" "no planner-feedback entry found"
+fi
+
+# --- Test 7: no manifest and FROM_PLANNED unset → no-op ---
+echo "--- Test 7: no manifest, no FROM_PLANNED → no-op ---"
+repos_root=$(mktemp -d)
+FROM_PLANNED=false
+log="${TMPDIR}/test7-pipeline.log"
+touch "$log"
+REPOS_ROOT="$repos_root" planned_feedback_write "TEST-7" "$log" || true
+rm -rf "$repos_root"
+if ! grep -q 'planner-feedback' "$log" 2>/dev/null; then
+  pass "no feedback emitted with no manifest and FROM_PLANNED unset"
+else
+  fail "no feedback emitted" "unexpected feedback entry found"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -gt 0 ] && exit 1 || exit 0

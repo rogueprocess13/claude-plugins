@@ -218,7 +218,7 @@ ensure_epic_branch() {
   # Gated on REPOS_ROOT being set at all — an unconfigured REPOS_ROOT (bare
   # git-only invocations, most of this file's own test suite) is a normal,
   # silent no-manifest condition here, not a failure worth warning about.
-  if [ -n "${REPOS_ROOT:-}" ] && [ "${TICKET_LOCAL_MANIFEST_DISABLE:-false}" != "true" ] &&
+  if [ -n "${REPOS_ROOT:-}" ] &&
     declare -f write_epic_manifest >/dev/null 2>&1; then
     local _norm_uat="${_DIRECTIVE_UAT_POLICY:-per-ticket}"
     local _cached_branch _cached_uat _cached_merge
@@ -433,98 +433,37 @@ epic_branch_sync() {
   return 0
 }
 
-# epic_branch_children_done <EPIC_ID> [children_json]
-# Checks whether every planned child of the epic is in the Done state.
-# Pure bash — no LLM involvement.
+# epic_branch_children_done <EPIC_ID>
+# Checks whether every child recorded on the epic manifest is in a Done
+# terminal state. Pure bash — no LLM involvement, no live tracker query.
 #
-# tracker-local-facts-read-migration (task 3.1): when called with only
-# EPIC_ID and an epic manifest exists, reads the manifest's children[] and
-# each child's own pipeline-log terminal state — no live tracker query at
-# all. children_json (JSON array from get_parent_with_children) remains
-# supported as an explicit override — for a caller with pre-fetched live
-# data, or a test — and takes precedence, matching prior behavior exactly.
+# tracker-planner-and-fallback-cutover (3.4): the pre-migration live-query
+# fallback (and the 2-arg explicit-override form it also served) is
+# deleted — the epic manifest's children[] is the only population, and each
+# child's own pipeline-log terminal state (ticket_pipeline_terminal_done)
+# the only readiness signal. No epic manifest at all is reported as
+# not-ready (exit 1), same as "some children not Done" — a missing
+# manifest is never silently treated as "nothing to block on".
 #
 # Exit codes:
 #   0 — all children are Done
-#   1 — not ready (some children not Done OR zero children)
+#   1 — not ready (no manifest, some children not Done, or zero children)
 epic_branch_children_done() {
   local epic_id="$1"
 
-  if [ $# -lt 2 ] && declare -f epic_manifest_exists >/dev/null 2>&1 &&
-    epic_manifest_exists "$epic_id" 2>/dev/null; then
-    local manifest_children child_count=0 done_count=0 child
-    manifest_children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
-    [ -z "$manifest_children" ] && manifest_children='[]'
+  declare -f epic_manifest_exists >/dev/null 2>&1 && epic_manifest_exists "$epic_id" 2>/dev/null || return 1
 
-    while IFS= read -r child; do
-      [ -z "$child" ] && continue
-      child_count=$((child_count + 1))
-      ticket_pipeline_terminal_done "$child" && done_count=$((done_count + 1))
-    done < <(echo "$manifest_children" | jq -r '.[]?' 2>/dev/null)
-
-    [ "$child_count" -eq 0 ] && return 1
-    [ "$done_count" -eq "$child_count" ]
-    return $?
-  fi
-
-  # ── Pre-migration fallback: live Linear query, or explicit override ───────
-  local children_json
-
-  # Distinguish "no argument" from "explicitly empty": $2 unset → fetch;
-  # $2 set (even to empty string) → use as-is (empty means zero children).
-  if [ $# -ge 2 ]; then
-    children_json="$2"
-  else
-    children_json=""
-  fi
-
-  # Fetch if not provided as argument — always through the client
-  # (tracker-client-consolidation, "No direct HTTP outside the client"). No
-  # raw-curl fallback: if get_parent_with_children isn't sourceable,
-  # linear-api.sh itself almost certainly isn't loaded either, and a silent
-  # direct-curl fallback would just re-introduce a second transport.
-  if [ $# -lt 2 ]; then
-    if ! declare -f get_parent_with_children >/dev/null 2>&1; then
-      echo "epic-branch: get_parent_with_children not available (linear-api.sh not sourced) — cannot fetch children for epic $epic_id" >&2
-      return 1
-    fi
-    local parent_data
-    parent_data=$(get_parent_with_children "$epic_id" 2>/dev/null) || {
-      echo "epic-branch: failed to fetch children for epic $epic_id" >&2
-      return 1
-    }
-    children_json=$(echo "$parent_data" | jq -c '.children[] // empty' 2>/dev/null)
-  fi
-
-  # Zero children — not ready
-  if [ -z "$children_json" ]; then
-    return 1
-  fi
-
-  local child_count=0
-  local done_count=0
+  local manifest_children child_count=0 done_count=0 child
+  manifest_children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+  [ -z "$manifest_children" ] && manifest_children='[]'
 
   while IFS= read -r child; do
     [ -z "$child" ] && continue
-    local child_state child_labels
-    child_state=$(echo "$child" | jq -r '.state.name // empty')
-    child_labels=$(echo "$child" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null)
-    # Readiness contract: the epic's PLANNED children must all be Done.
-    # Non-planned children (future work not yet planned) are out of scope —
-    # counting them blocked readiness forever.
-    if ! echo "$child_labels" | grep -q "planned" 2>/dev/null; then
-      continue
-    fi
     child_count=$((child_count + 1))
-    if [ "$child_state" = "Done" ]; then
-      done_count=$((done_count + 1))
-    fi
-  done <<<"$children_json"
+    ticket_pipeline_terminal_done "$child" && done_count=$((done_count + 1))
+  done < <(echo "$manifest_children" | jq -r '.[]?' 2>/dev/null)
 
-  # Zero children after parsing — not ready
   [ "$child_count" -eq 0 ] && return 1
-
-  # All children must be Done
   [ "$done_count" -eq "$child_count" ]
 }
 
@@ -536,10 +475,12 @@ epic_branch_children_done() {
 # NEVER merges the PR, regardless of FLEET_EPIC_AUTO_PR or any other setting.
 # FLEET_EPIC_AUTO_PR (default false) gates whether the PR is opened automatically.
 #
-# children_json and epic_description are optional. When a caller has already
-# fetched them for the epic (a scan iterating many repositories, for instance),
-# passing them in avoids re-fetching per repository — otherwise Linear requests
-# multiply by the repo count on every cycle.
+# children_json is accepted for signature stability only (tracker-planner-
+# and-fallback-cutover, 3.4) — epic_branch_children_done's readiness check
+# is manifest-only now and takes no override, so this parameter is never
+# read. epic_description remains a genuine cache: when a caller has already
+# fetched it for the epic (a scan iterating many repositories, for
+# instance), passing it in avoids re-fetching per repository.
 #
 # Exit codes:
 #   0 — PR exists or was opened, OR nothing to do (not ready, disabled, skipped)
@@ -565,18 +506,10 @@ epic_branch_open_pr() {
   # Resolve repo
   repo_path=$(_resolve_repo "$repo_path") || return 1
 
-  # Check readiness — reuse the caller's children when supplied.
-  #
-  # Forward by arity, not by value: epic_branch_children_done treats "no second
-  # argument" as "fetch them" and "second argument present but empty" as "this
-  # epic has zero children". Passing "$children_json" unconditionally would turn
-  # an empty cache into the latter.
+  # Check readiness — manifest-only, no override (3.4); children_json is
+  # never forwarded.
   local _ready=0
-  if [ -n "$children_json" ]; then
-    epic_branch_children_done "$epic_id" "$children_json" || _ready=$?
-  else
-    epic_branch_children_done "$epic_id" || _ready=$?
-  fi
+  epic_branch_children_done "$epic_id" || _ready=$?
   if [ "$_ready" -ne 0 ]; then
     # Not ready — nothing to do
     return 0

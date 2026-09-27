@@ -95,7 +95,7 @@ touch "${FLEET_STATE_DIR}/fleet-default-controller-stop"
 /fleet-controller dispatch INIT-42 --dry-run   # preview
 ```
 
-Requires the epic to carry the `state:execution` label (the planner sets this). Finds child tickets labelled `planned` in `Backlog`, skips any still blocked by a `blocked-by:{ID}` dependency, and writes to the spawn queue. **Idempotent** — re-running won't double-queue.
+Requires the epic manifest's `dispatch` field to be `true` (the planner stamps this one-way once all child tickets are created and verified — no Linear label involved). Finds child tickets listed in the epic manifest that aren't yet dispatched, skips any still blocked per its own manifest `blocked_by` field, and writes to the spawn queue. **Idempotent** — re-running won't double-queue.
 
 Dispatch only *queues* work; `monitor` (or `fleetd`) executes it.
 
@@ -125,7 +125,7 @@ Scans pipeline logs for `META|planner-feedback`, groups by initiative, computes 
 | Tool errors | Deduplicated tool-call errors | WARN (1–2) → KILL (3+) |
 | Planner feedback | Uncollected feedback entries | WARN |
 | Blocked-by resolution | Tickets whose blocker is now Done | WARN |
-| Initiative dispatch | `state:execution` epics with undispatched tickets | WARN |
+| Initiative dispatch | Dispatch-eligible epics (manifest `dispatch=true`) with undispatched tickets | WARN |
 | Epic-branch readiness | Epics with all children Done, ready to integrate | WARN |
 
 The last four aren't failures — they're **work waiting to happen**. That's how the controller notices it should dispatch or unblock something.
@@ -262,7 +262,7 @@ All settings live in `lib/fleet-config.sh` using `${VAR:-default}` — override 
 | `FLEET_EPIC_BRANCH_SYNC` | — | Epic branch sync behaviour |
 | `FLEET_EPIC_AUTO_PR` | — | Auto-open epic integration PRs |
 | `EPIC_BRANCH_PUSH_VERIFY` | false | `true` runs the repo's pre-push hook when creating an epic branch. Default skips it: the pushed ref is identical to `origin/<base>` (zero new commits), so the hook has nothing to check and would run its preflight against whatever the shared clone has checked out. Commit pushes by implement agents are always verified. |
-| `FLEET_AUTO_DISPATCH` | false | `true` = global sweep of `state:execution` epics on each cycle; `false` = idle until explicit dispatch (skill or `POST /dispatch`) |
+| `FLEET_AUTO_DISPATCH` | false | `true` = global sweep of dispatch-eligible epics (manifest `dispatch=true`) on each cycle; `false` = idle until explicit dispatch (skill or `POST /dispatch`) |
 | `FLEETD_SPAWN_ENABLED` | unset | `1` enables fleetd worker spawning |
 
 ## Where state lives
