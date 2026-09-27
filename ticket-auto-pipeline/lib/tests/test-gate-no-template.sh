@@ -65,52 +65,14 @@ _run() {
 # We test the internal helpers directly since gate-check requires real Linear tickets.
 # Instead, test the component functions that gate-check calls.
 
-# ── Test: _resolve_type_label ─────────────────────────────────────────────────
-
-_run_output() {
-  local name="$1"
-  local expected="$2"
-  shift 2
-  local actual
-  actual=$("$@" 2>/dev/null) || true
-  if [ "$actual" = "$expected" ]; then
-    echo "PASS: $name"
-    ((PASS++)) || true
-  else
-    echo "FAIL: $name (expected '$expected', got '$actual')"
-    ((FAIL++)) || true
-  fi
-}
-
-_run_output "Type resolver: bug from mixed labels" "bug" \
-  _resolve_type_label "planned,bug,frontend"
-_run_output "Type resolver: feature from mixed labels" "feature" \
-  _resolve_type_label "feature,planned"
-_run_output "Type resolver: chore from mixed labels" "chore" \
-  _resolve_type_label "planned,chore,backend"
-_run_output "Type resolver: security" "security" \
-  _resolve_type_label "security,planned"
-_run_output "Type resolver: no type label → empty" "" \
-  _resolve_type_label "planned,frontend"
-_run_output "Type resolver: empty labels → empty" "" \
-  _resolve_type_label ""
-_run_output "Type resolver: title-cased 'Feature' matches case-insensitively" "feature" \
-  _resolve_type_label "Complex,claimed,Feature,planned"
-_run_output "Type resolver: title-cased 'Bug' matches case-insensitively" "bug" \
-  _resolve_type_label "Bug,planned"
-_run_output "Type resolver: uppercase 'CHORE' matches case-insensitively" "chore" \
-  _resolve_type_label "planned,CHORE"
-_titlecased_type=$(_resolve_type_label "Complex,claimed,Feature,planned")
-_titlecased_template=$(resolve_template "$_titlecased_type" 2>/dev/null) || true
-if [ "$_titlecased_template" = "templates/feature.md" ]; then
-  echo "PASS: title-cased 'Feature' resolves to templates/feature.md"
-  ((PASS++)) || true
-else
-  echo "FAIL: title-cased 'Feature' should resolve to templates/feature.md (got '$_titlecased_template')"
-  ((FAIL++)) || true
-fi
-
 # ── Test: resolve_template + check_planned_body integration ───────────────────
+# tracker-planner-and-fallback-cutover (3.1/5.1): _resolve_type_label (the
+# live-label fallback for gate-check.sh's 2.7b type resolution) is deleted —
+# type now comes from the ticket manifest's `type` field alone, with no
+# label parsing at all. The dedicated label-resolver unit tests that lived
+# here are deleted with it, per the audit's rule that a test asserting only
+# a retired read path is removed, not adapted. resolve_template itself is
+# untouched and still exercised below with a plain type string.
 
 # Planned ticket with valid type + complete body → both pass
 COMPLETE_BUG='## Acceptance Criteria
@@ -128,7 +90,7 @@ COMPLETE_BUG='## Acceptance Criteria
 ## Test Data Prerequisites
 At least one handover.'
 
-_type=$(_resolve_type_label "planned,bug")
+_type="bug"
 template_path=$(resolve_template "$_type" 2>/dev/null) || true
 
 [ -n "$template_path" ] && echo "PASS: type '$_type' resolves to '$template_path'" && ((PASS++)) || true

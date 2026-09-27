@@ -270,3 +270,62 @@ _fleet_fence_file() {
   local tid="$1" workspace="${2:-./logs}"
   echo "$(_fleet_state_dir "$workspace")/${tid}-fence"
 }
+
+# ── Local epic enumeration (tracker-planner-and-fallback-cutover, D2) ───────────
+# fleet_local_epics — the one implementation of "which epics does this fleet
+# know about locally", extracted from _fleet_scan_initiative_dispatch's
+# former inline scan so D-11, D-12 and D-18 all read the same population
+# instead of each re-deriving it (three independent copies is how the
+# _get_initiative_labels class of bug happens — see design.md D2).
+#
+# Reads $REPOS_ROOT/.ticket-auto/initiatives/{EPIC}/epic/manifest.json for
+# every epic, filters to dispatch == true, and skips any initiative
+# directory whose name begins with `_` (the `_adhoc` reservation from
+# tracker-approval-by-script) — a reserved initiative is never a
+# dispatchable epic regardless of its manifest content.
+#
+# Usage: fleet_local_epics
+# Prints one dispatch-eligible epic id per line on stdout.
+# Exit 0 — at least one epic manifest exists locally; zero printed lines is
+#          a normal, valid outcome (every known epic has dispatch: false).
+# Exit 1 — REPOS_ROOT resolves but no epic manifests exist under it at all.
+#          Callers use this to distinguish "the manifest era has nothing to
+#          say yet" (fall back to a live query) from "it said nothing for
+#          this epic" (exit 0, no output — trust it).
+# Exit 3 — REPOS_ROOT unset, TICKET_LOCAL_MANIFEST_DISABLE is set, or
+#          manifest-read.sh's get_epic_manifest_field could not be sourced.
+fleet_local_epics() {
+  if ! declare -f get_epic_manifest_field >/dev/null 2>&1; then
+    local _fle_dir
+    _fle_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local _fle_lib
+    for _fle_lib in "${_fle_dir}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+      [ -f "$_fle_lib/manifest-read.sh" ] && source "$_fle_lib/manifest-read.sh" && break
+    done
+  fi
+  declare -f get_epic_manifest_field >/dev/null 2>&1 || return 3
+
+  local _repos_root=""
+  [ "${TICKET_LOCAL_MANIFEST_DISABLE:-false}" = "true" ] || _repos_root="${REPOS_ROOT:-}"
+  [ -n "$_repos_root" ] || return 3
+  [ -d "$_repos_root/.ticket-auto/initiatives" ] || return 1
+
+  local _epic_manifests
+  _epic_manifests=$(find "$_repos_root/.ticket-auto/initiatives" -mindepth 3 -maxdepth 3 \
+    -path '*/epic/manifest.json' 2>/dev/null)
+  [ -n "$_epic_manifests" ] || return 1
+
+  local _manifest_path epic_id
+  while IFS= read -r _manifest_path; do
+    [ -z "$_manifest_path" ] && continue
+    # .../.ticket-auto/initiatives/{EPIC}/epic/manifest.json
+    epic_id=$(basename "$(dirname "$(dirname "$_manifest_path")")")
+    [ -z "$epic_id" ] && continue
+    case "$epic_id" in
+    _*) continue ;;
+    esac
+    [ "$(get_epic_manifest_field "$epic_id" dispatch 2>/dev/null)" = "true" ] || continue
+    echo "$epic_id"
+  done <<<"$_epic_manifests"
+  return 0
+}

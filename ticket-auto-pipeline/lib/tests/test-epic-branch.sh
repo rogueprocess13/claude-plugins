@@ -57,17 +57,6 @@ get_issue() {
   echo "{\"description\":$escaped}"
 }
 
-# Mock get_parent_with_children — returns children in Done state by default.
-# Override via MOCK_CHILDREN_JSON env var.
-get_parent_with_children() {
-  local children="${MOCK_CHILDREN_JSON:-}"
-  if [ -z "$children" ]; then
-    # Default: one child, Done
-    children='[{"id":"child-1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}]'
-  fi
-  echo "{\"parent\":{\"id\":\"$1\",\"identifier\":\"$1\",\"title\":\"Test Epic\",\"description\":\"test\"},\"children\":$children}"
-}
-
 # Source the library under test (and its transitive deps)
 source "$LIB_DIR/config.sh"
 # planned-ticket-check.sh provides _extract_md_section, _extract_field used by branch-directive-check.sh
@@ -617,122 +606,14 @@ echo "=== Readiness tests ==="
 echo ""
 
 # ── 2.9: Readiness cases ────────────────────────────────────────────────────
-
-test_children_all_done() {
-  # Inline JSON — all children Done
-  local children_json
-  children_json=$(
-    cat <<'EOJSON'
-{"id":"child-1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}
-{"id":"child-2","identifier":"CRE-2","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}
-EOJSON
-  )
-  epic_branch_children_done "CRE-100" "$children_json" 2>/dev/null && return 0
-  echo "  all children Done should be ready" >&2
-  return 1
-}
-_run "all children Done → ready" test_children_all_done
-
-test_children_one_outstanding() {
-  local children_json
-  children_json=$(
-    cat <<'EOJSON'
-{"id":"child-1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}
-{"id":"child-2","identifier":"CRE-2","state":{"name":"In Progress"},"labels":{"nodes":[{"name":"planned"}]}}
-EOJSON
-  )
-  epic_branch_children_done "CRE-100" "$children_json" 2>/dev/null && {
-    echo "  one outstanding child should NOT be ready" >&2
-    return 1
-  }
-  return 0
-}
-_run "one outstanding child → not ready" test_children_one_outstanding
-
-test_children_zero() {
-  # Empty children — not ready
-  epic_branch_children_done "CRE-100" "" 2>/dev/null && {
-    echo "  zero children should NOT be ready" >&2
-    return 1
-  }
-  return 0
-}
-_run "zero children → not ready" test_children_zero
-
-test_children_all_done_jsonl() {
-  # JSONL format (one per line) — all Done
-  local children_json
-  children_json=$(printf '%s\n' \
-    '{"id":"child-1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}' \
-    '{"id":"child-2","identifier":"CRE-2","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}' \
-    '{"id":"child-3","identifier":"CRE-3","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}')
-  epic_branch_children_done "CRE-100" "$children_json" 2>/dev/null && return 0
-  echo "  three children all Done should be ready" >&2
-  return 1
-}
-_run "three children all Done → ready" test_children_all_done_jsonl
-
-test_children_non_planned_excluded() {
-  # A Done child WITHOUT the planned label is out of scope — it must not
-  # block readiness (the doc contract is "planned children are all Done").
-  local children_json
-  children_json=$(
-    cat <<'EOJSON'
-{"id":"child-1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}
-{"id":"child-2","identifier":"CRE-2","state":{"name":"Todo"},"labels":{"nodes":[]}}
-EOJSON
-  )
-  epic_branch_children_done "CRE-100" "$children_json" 2>/dev/null && return 0
-  echo "  non-planned child must not block readiness" >&2
-  return 1
-}
-_run "non-planned child excluded from readiness" test_children_non_planned_excluded
-
-test_children_only_non_planned_not_ready() {
-  # No planned children at all — not ready (zero in-scope children).
-  local children_json
-  children_json=$(
-    cat <<'EOJSON'
-{"id":"child-1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[]}}
-{"id":"child-2","identifier":"CRE-2","state":{"name":"Done"},"labels":{"nodes":[]}}
-EOJSON
-  )
-  epic_branch_children_done "CRE-100" "$children_json" 2>/dev/null && {
-    echo "  zero planned children should NOT be ready" >&2
-    return 1
-  }
-  return 0
-}
-_run "only non-planned children → not ready" test_children_only_non_planned_not_ready
-
-# ── tracker-client-consolidation: fetch path (no children_json argument) ────
-# The fallback used to issue its own raw curl on this path — now it must
-# route through get_parent_with_children (the client) and return a
-# NON-EMPTY children list, not merely "does not crash" (design R1).
-
-test_children_fetch_path_via_client_non_empty() {
-  get_parent_with_children() {
-    echo '{"parent":{"id":"epic-1","identifier":"CRE-100","title":"Epic","description":""},"children":[{"id":"child-1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}},{"id":"child-2","identifier":"CRE-2","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}]}'
-  }
-  epic_branch_children_done "CRE-100" 2>/dev/null && return 0
-  echo "  fetch path via get_parent_with_children should be ready (both Done)" >&2
-  return 1
-}
-_run "fetch path via client → non-empty children, ready" test_children_fetch_path_via_client_non_empty
-
-test_children_fetch_path_no_client_hard_fails() {
-  # Simulate linear-api.sh not sourced: get_parent_with_children undefined.
-  # No raw-curl fallback anymore — must be a hard failure, not a silent
-  # "no children" that would misread as ready-with-zero-children.
-  local rc=0
-  (
-    unset -f get_parent_with_children 2>/dev/null || true
-    epic_branch_children_done "CRE-100" 2>/dev/null
-  )
-  rc=$?
-  [ "$rc" -eq 1 ]
-}
-_run "fetch path with no client available → hard failure" test_children_fetch_path_no_client_hard_fails
+# tracker-planner-and-fallback-cutover (3.4): epic_branch_children_done is
+# manifest-only now — no live Linear query, no 2-arg override. The inline-
+# JSON/fetch-path tests that lived here (live-shaped .state.name/.labels
+# child objects, get_parent_with_children stubs) tested exactly the
+# fallback this change deletes and are removed per the audit's rule that a
+# test asserting only a retired read path is deleted, not adapted. Manifest-
+# path readiness (all-Done, missing-child-log not-ready, no-manifest
+# not-ready) is covered by the tests further below.
 
 echo ""
 echo "=== PR tests ==="
@@ -780,11 +661,36 @@ GHSCRIPT
 # Override _get_epic_description to avoid needing Linear API
 # The mock get_issue is already set up at the top of this file
 
+# tracker-planner-and-fallback-cutover (3.4): epic_branch_open_pr's own
+# readiness check is manifest-only now — every PR test below needs a real
+# epic manifest with one Done child, not the deleted get_parent_with_children
+# live fallback. Sets REPOS_ROOT/FLEET_PIPELINE_LOG_DIR (both exported so
+# subsequent calls in the same test inherit them) and returns the two temp
+# dirs via the globals _epb_repos_root/_epb_log_dir for the caller to clean up.
+_seed_ready_epic_manifest() {
+  _epb_repos_root=$(mktemp -d)
+  _epb_log_dir=$(mktemp -d)
+  export REPOS_ROOT="$_epb_repos_root" FLEET_PIPELINE_LOG_DIR="$_epb_log_dir"
+  # write_epic_manifest, not add_epic_manifest_child: this must not depend on
+  # ensure_epic_branch having already created a manifest (its own cache-
+  # refresh only fires when REPOS_ROOT was already set, and callers here
+  # set it after their own ensure_epic_branch call). branch/uat/merge values
+  # are placeholders — epic_branch_open_pr resolves the real directive from
+  # the mocked description, never from this manifest's own fields.
+  write_epic_manifest "CRE-100" "epic/test-branch" "per-ticket" "manual" '["CRE-1"]' >/dev/null
+  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >"$_epb_log_dir/CRE-1-pipeline.log"
+}
+_cleanup_ready_epic_manifest() {
+  rm -rf "${_epb_repos_root:-}" "${_epb_log_dir:-}"
+  unset REPOS_ROOT FLEET_PIPELINE_LOG_DIR _epb_repos_root _epb_log_dir
+}
+
 test_pr_opens_when_ready() {
   _setup_fixture
 
   # Create the epic branch first
   ensure_epic_branch "CRE-100" "$FIXTURE_REPO" 2>&1 || return 1
+  _seed_ready_epic_manifest
   _commit_on_epic_branch "$FIXTURE_REPO" || return 1
 
   # Override gh as a function (more reliable than PATH-based mock). The call
@@ -823,9 +729,11 @@ test_pr_opens_when_ready() {
   # gh pr create should have been called
   if [ ! -f "$GH_PR_CREATE_MARKER" ]; then
     echo "  gh pr create was not called" >&2
+    _cleanup_ready_epic_manifest
     return 1
   fi
   rm -f "$GH_PR_CREATE_MARKER"
+  _cleanup_ready_epic_manifest
 
   return 0
 }
@@ -835,6 +743,7 @@ test_pr_not_opened_when_auto_pr_false() {
   _setup_fixture
 
   ensure_epic_branch "CRE-100" "$FIXTURE_REPO" 2>&1 || return 1
+  _seed_ready_epic_manifest
   _commit_on_epic_branch "$FIXTURE_REPO" || return 1
   git -C "$FIXTURE_REPO" remote set-url origin "git@github.com:test-org/test-repo.git"
 
@@ -864,9 +773,11 @@ test_pr_not_opened_when_auto_pr_false() {
   # gh pr create should NOT have been called
   if [ "$GH_CREATE_CALLED" = "true" ]; then
     echo "  gh pr create was called despite FLEET_EPIC_AUTO_PR=false" >&2
+    _cleanup_ready_epic_manifest
     return 1
   fi
 
+  _cleanup_ready_epic_manifest
   return 0
 }
 _run "PR not opened when readiness present but FLEET_EPIC_AUTO_PR=false" test_pr_not_opened_when_auto_pr_false
@@ -875,6 +786,7 @@ test_pr_idempotent() {
   _setup_fixture
 
   ensure_epic_branch "CRE-100" "$FIXTURE_REPO" 2>&1 || return 1
+  _seed_ready_epic_manifest
   _commit_on_epic_branch "$FIXTURE_REPO" || return 1
 
   # gh mock records its calls so the "no duplicate PR" invariant is asserted,
@@ -909,14 +821,17 @@ test_pr_idempotent() {
 
   ! grep -q "pr create" "$gh_log" || {
     echo "  gh pr create called despite existing PR: $(cat "$gh_log")" >&2
+    _cleanup_ready_epic_manifest
     return 1
   }
   local list_count
   list_count=$(grep -c "pr list" "$gh_log" 2>/dev/null || true)
   [ "$list_count" = "2" ] || {
     echo "  expected existing-PR check on both calls, got ${list_count}" >&2
+    _cleanup_ready_epic_manifest
     return 1
   }
+  _cleanup_ready_epic_manifest
   return 0
 }
 _run "idempotent PR open — second call is no-op" test_pr_idempotent
@@ -925,8 +840,11 @@ test_pr_skipped_when_no_commits_on_epic_branch() {
   _setup_fixture
 
   # Branch created AT base and left there — this repo is one the epic never
-  # touched. Note the absence of _commit_on_epic_branch.
+  # touched. Note the absence of _commit_on_epic_branch. Readiness is still
+  # seeded (manifest-only now) so this test genuinely exercises the
+  # has-commits short-circuit, which runs after the readiness check.
   ensure_epic_branch "CRE-100" "$FIXTURE_REPO" 2>&1 || return 1
+  _seed_ready_epic_manifest
   git -C "$FIXTURE_REPO" remote set-url origin "git@github.com:test-org/test-repo.git"
 
   local gh_log="${FIXTURE_DIR}/gh.log"
@@ -948,8 +866,10 @@ test_pr_skipped_when_no_commits_on_epic_branch() {
   # Skipped before any GitHub interaction at all — not merely before create.
   if [ -s "$gh_log" ]; then
     echo "  gh invoked for a repo with no epic commits: $(cat "$gh_log")" >&2
+    _cleanup_ready_epic_manifest
     return 1
   fi
+  _cleanup_ready_epic_manifest
   return 0
 }
 _run "PR skipped when epic branch has no commits beyond base" test_pr_skipped_when_no_commits_on_epic_branch
@@ -958,6 +878,7 @@ test_pr_proceeds_when_epic_branch_has_commits() {
   _setup_fixture
 
   ensure_epic_branch "CRE-100" "$FIXTURE_REPO" 2>&1 || return 1
+  _seed_ready_epic_manifest
   _commit_on_epic_branch "$FIXTURE_REPO" || return 1
   git -C "$FIXTURE_REPO" remote set-url origin "git@github.com:test-org/test-repo.git"
 
@@ -982,13 +903,18 @@ test_pr_proceeds_when_epic_branch_has_commits() {
   }
   export -f gh
 
-  FLEET_EPIC_AUTO_PR=true epic_branch_open_pr "CRE-100" "$FIXTURE_REPO" 2>&1 || return 1
+  FLEET_EPIC_AUTO_PR=true epic_branch_open_pr "CRE-100" "$FIXTURE_REPO" 2>&1 || {
+    _cleanup_ready_epic_manifest
+    return 1
+  }
 
   [ -f "$GH_PR_CREATE_MARKER" ] || {
     echo "  PR not opened despite commits on the epic branch" >&2
+    _cleanup_ready_epic_manifest
     return 1
   }
   rm -f "$GH_PR_CREATE_MARKER"
+  _cleanup_ready_epic_manifest
   return 0
 }
 _run "PR proceeds when epic branch has commits beyond base" test_pr_proceeds_when_epic_branch_has_commits
@@ -1278,30 +1204,6 @@ test_epic_branch_children_done_manifest_path_not_ready() {
 }
 _run "epic_branch_children_done: manifest path, missing child log is not-ready" test_epic_branch_children_done_manifest_path_not_ready
 
-test_epic_branch_children_done_2arg_bypasses_manifest() {
-  local repos_root
-  repos_root=$(mktemp -d)
-
-  # A manifest exists and would say "ready", but the explicit 2-arg override
-  # must win (backward-compat / pre-fetched-data callers) — feed it a single
-  # not-Done, non-planned-filtered child so the pre-migration path reports
-  # not ready, proving the manifest was not consulted.
-  REPOS_ROOT="$repos_root" write_epic_manifest "CRE-100" "epic/x" "epic" "manual" '["CRE-1"]' >/dev/null
-
-  local rc=0
-  REPOS_ROOT="$repos_root" epic_branch_children_done "CRE-100" \
-    '{"id":"c1","identifier":"CRE-1","state":{"name":"In Progress"},"labels":{"nodes":[{"name":"planned"}]}}' \
-    2>/dev/null || rc=$?
-  rm -rf "$repos_root"
-
-  [ "$rc" -ne 0 ] || {
-    echo "  explicit 2-arg override should have been used instead of the manifest" >&2
-    return 1
-  }
-  return 0
-}
-_run "epic_branch_children_done: explicit 2-arg override still takes precedence" test_epic_branch_children_done_2arg_bypasses_manifest
-
 test_ensure_epic_branch_kill_switch_skips_manifest_write() {
   _setup_fixture
   local repos_root
@@ -1323,38 +1225,12 @@ test_ensure_epic_branch_kill_switch_skips_manifest_write() {
 }
 _run "ensure_epic_branch: kill switch skips the manifest backfill/refresh entirely" test_ensure_epic_branch_kill_switch_skips_manifest_write
 
-test_epic_branch_children_done_kill_switch_forces_live_fallback() {
-  local repos_root log_dir
-  repos_root=$(mktemp -d)
-  log_dir=$(mktemp -d)
-
-  REPOS_ROOT="$repos_root" write_epic_manifest "CRE-100" "epic/x" "epic" "manual" '["CRE-1","CRE-2"]' >/dev/null
-  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >"$log_dir/CRE-1-pipeline.log"
-  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >"$log_dir/CRE-2-pipeline.log"
-
-  # With the kill switch on, the (real, all-Done) manifest must be ignored —
-  # falls through to the live get_parent_with_children fetch. Override that
-  # mock (normally "one child, Done" per the file-level default at the top
-  # of this suite) to return a single NOT-Done child, so a "ready" result
-  # can only mean the manifest was consulted instead of the live path.
-  local rc=0
-  (
-    get_parent_with_children() {
-      echo '{"parent":{"id":"CRE-100"},"children":[{"id":"c1","identifier":"CRE-1","state":{"name":"In Progress"},"labels":{"nodes":[{"name":"planned"}]}}]}'
-    }
-    TICKET_LOCAL_MANIFEST_DISABLE=true REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$log_dir" \
-      epic_branch_children_done "CRE-100"
-  ) >/dev/null 2>&1 || rc=$?
-
-  rm -rf "$repos_root" "$log_dir"
-
-  [ "$rc" -ne 0 ] || {
-    echo "  expected kill switch to bypass the (ready) manifest and use the (not-ready) live fallback" >&2
-    return 1
-  }
-  return 0
-}
-_run "epic_branch_children_done: kill switch forces the live-fallback path" test_epic_branch_children_done_kill_switch_forces_live_fallback
+# tracker-planner-and-fallback-cutover (3.4): epic_branch_children_done no
+# longer has a live-fallback path for TICKET_LOCAL_MANIFEST_DISABLE to force
+# — with the kill switch on, epic_manifest_exists reports "no manifest" and
+# the function reports not-ready (exit 1), same as any other missing
+# manifest. The dedicated "kill switch forces live fallback" test that lived
+# here asserted the retired behavior and is removed rather than adapted.
 
 # ── Cleanup mock gh dirs ─────────────────────────────────────────────────────
 # The fixture cleanup is done via mktemp (system cleans /tmp eventually).

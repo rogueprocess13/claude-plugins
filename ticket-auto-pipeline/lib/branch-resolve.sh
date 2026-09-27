@@ -28,20 +28,19 @@ source "$_BR_LIB_DIR/manifest-read.sh" 2>/dev/null || true
 #   resolve_branch_context "CRE-123" --title "Fix auth" --parent-json '{"id":"CRE-100","description":"..."}'
 
 # _epic_branch_directive <epic_id> <description>
-# Resolves an epic's directive fields (branch, uat_policy, merge_policy) —
-# the epic manifest first (tracker-local-facts-read-migration), falling back
-# to a live parse of <description> only when no epic manifest exists (a
-# ticket created before this migration, or a manifest write that failed).
-# Never fetches anything itself — the fallback parses whatever description
-# the caller already has in hand.
+# Resolves an epic's directive fields (branch, uat_policy, merge_policy) from
+# the epic manifest alone (tracker-planner-and-fallback-cutover, 3.5) — no
+# live description parse. <description> is accepted for signature stability
+# only (every caller still has one in hand from its own ticket fetch) and is
+# never read; a missing epic manifest is a reported condition (empty fields,
+# _EBD_SOURCE="") rather than a fallback trigger.
 #
 # Sets _EBD_BRANCH / _EBD_UAT_POLICY / _EBD_MERGE_POLICY and _EBD_SOURCE
-# ("manifest" | "live" | "invalid" | ""). Returns 2 when the live-fallback
-# parse finds a malformed directive (mirrors check_branch_directive_
-# description's own exit 2) — a cached manifest value is never re-validated
-# here, since it was already validated once when written.
+# ("manifest" | ""). Always returns 0 — the malformed-directive exit 2 this
+# used to produce belonged to the live parse; a cached manifest value is
+# never re-validated here, since it was already validated once when written.
 _epic_branch_directive() {
-  local epic_id="$1" description="$2"
+  local epic_id="$1"
   _EBD_BRANCH="" _EBD_UAT_POLICY="" _EBD_MERGE_POLICY="" _EBD_SOURCE=""
 
   if [ -n "$epic_id" ] && declare -f epic_manifest_exists >/dev/null 2>&1 &&
@@ -50,23 +49,6 @@ _epic_branch_directive() {
     _EBD_UAT_POLICY=$(get_epic_manifest_field "$epic_id" uat_policy 2>/dev/null)
     _EBD_MERGE_POLICY=$(get_epic_manifest_field "$epic_id" merge_policy 2>/dev/null)
     _EBD_SOURCE="manifest"
-    return 0
-  fi
-
-  [ -z "$description" ] && return 0
-
-  local directive_output directive_exit=0
-  directive_output=$(check_branch_directive_description "$description" 2>/dev/null) || directive_exit=$?
-  if [ "$directive_exit" -eq 2 ]; then
-    _EBD_SOURCE="invalid"
-    return 2
-  fi
-
-  if [ -n "$directive_output" ]; then
-    _EBD_BRANCH=$(echo "$directive_output" | sed -n "s/^BRANCH_DIRECTIVE_BRANCH='\\(.*\\)'\$/\\1/p")
-    _EBD_UAT_POLICY=$(echo "$directive_output" | sed -n "s/^BRANCH_DIRECTIVE_UAT_POLICY='\\(.*\\)'\$/\\1/p")
-    _EBD_MERGE_POLICY=$(echo "$directive_output" | sed -n "s/^BRANCH_DIRECTIVE_MERGE_POLICY='\\(.*\\)'\$/\\1/p")
-    _EBD_SOURCE="live"
   fi
   return 0
 }
@@ -167,8 +149,11 @@ resolve_branch_context() {
     _epic_branch_directive "$epic_ref" "$parent_description"
     local _ebd_rc=$?
     if [ "$_ebd_rc" -eq 2 ]; then
-      # Malformed directive (live-fallback path only — a cached manifest
-      # value is never re-validated here) — gate-stop.
+      # tracker-planner-and-fallback-cutover (3.5): _epic_branch_directive no
+      # longer parses a live description, so this exit 2 is currently
+      # unreachable — kept as a defensive backstop for the documented
+      # BRANCH_DIRECTIVE_INVALID gate-stop contract (ticket-preamble.sh),
+      # never re-validating a cached manifest value.
       echo "BRANCH_DIRECTIVE_INVALID" >&2
       echo "branch-resolve: parent $parent_id has a malformed Branch Directive — gate-stop" >&2
       return 2
@@ -225,36 +210,22 @@ EOF
 # pipeline run and therefore without an agent environment file. Echoes
 # 'per-ticket' or 'epic'.
 #
-# Reuses the parent-description read and the directive parser the pipeline path
-# already uses, so the standalone and pipeline answers cannot diverge. No new
-# component fetches parent descriptions.
-#
-# On fetch failure it echoes the 'per-ticket' default AND returns 1: a caller
-# that checks the status can react, while one that does not still gets the
-# pre-change behaviour rather than an empty string.
+# Manifest-only (3.5) — no live fetch of any kind, so this cannot fail; it
+# always echoes a value and returns 0.
 resolve_uat_policy() {
   local ticket_id="$1"
 
-  # Zero-fetch path: the ticket's own manifest already names its initiative
-  # (== epic id in this codebase), so no live ticket fetch is needed at all
-  # when both manifests exist (tracker-local-facts-read-migration).
-  local parent_id="" parent_description=""
+  # tracker-planner-and-fallback-cutover (3.5): the ticket's own manifest
+  # `initiative` field is the ONLY source of its epic id — no live ticket
+  # fetch fallback. A ticket with no manifest (or no initiative field) has
+  # no resolvable parent here and reports the 'per-ticket' default, same as
+  # a ticket whose epic has no directive.
+  local parent_id=""
   if declare -f get_ticket_manifest_field >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
     parent_id=$(get_ticket_manifest_field "$ticket_id" initiative 2>/dev/null)
   fi
 
-  if [ -z "$parent_id" ]; then
-    local issue_json
-    issue_json=$(get_issue "$ticket_id" 2>/dev/null) || {
-      echo "branch-resolve: failed to fetch ticket $ticket_id for UAT policy" >&2
-      echo "per-ticket"
-      return 1
-    }
-    parent_id=$(echo "$issue_json" | jq -r '.parent.id // ""' 2>/dev/null)
-    parent_description=$(echo "$issue_json" | jq -r '.parent.description // ""' 2>/dev/null)
-  fi
-
-  _epic_branch_directive "$parent_id" "$parent_description" >/dev/null 2>&1 || true
+  _epic_branch_directive "$parent_id" >/dev/null 2>&1 || true
   echo "${_EBD_UAT_POLICY:-per-ticket}"
 }
 
@@ -264,31 +235,20 @@ resolve_uat_policy() {
 # Echoes the declared policy (`manual` | `on-all-children-done`), or an empty
 # string when the ticket has no parent epic or the parent has no directive.
 #
-# Mirrors resolve_uat_policy — same parent-description read, same directive
-# parser — so the standalone and pipeline answers cannot diverge.
-#
-# On fetch failure it echoes nothing and returns 1: a caller that checks the
-# status can react, one that does not gets an empty (non-blocking) policy.
+# Mirrors resolve_uat_policy — manifest-only (3.5), same directive parser —
+# so the standalone and pipeline answers cannot diverge. Cannot fail; always
+# echoes a value (possibly empty — a ticket with no epic directive has no
+# Merge Policy opinion) and returns 0.
 resolve_merge_policy() {
   local ticket_id="$1"
 
   # Zero-fetch path — see resolve_uat_policy above.
-  local parent_id="" parent_description=""
+  local parent_id=""
   if declare -f get_ticket_manifest_field >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
     parent_id=$(get_ticket_manifest_field "$ticket_id" initiative 2>/dev/null)
   fi
 
-  if [ -z "$parent_id" ]; then
-    local issue_json
-    issue_json=$(get_issue "$ticket_id" 2>/dev/null) || {
-      echo "branch-resolve: failed to fetch ticket $ticket_id for Merge Policy" >&2
-      return 1
-    }
-    parent_id=$(echo "$issue_json" | jq -r '.parent.id // ""' 2>/dev/null)
-    parent_description=$(echo "$issue_json" | jq -r '.parent.description // ""' 2>/dev/null)
-  fi
-
-  _epic_branch_directive "$parent_id" "$parent_description" >/dev/null 2>&1 || true
+  _epic_branch_directive "$parent_id" >/dev/null 2>&1 || true
   echo "${_EBD_MERGE_POLICY:-}"
 }
 

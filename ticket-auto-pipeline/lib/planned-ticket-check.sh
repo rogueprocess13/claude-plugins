@@ -85,16 +85,13 @@ check_planned_ticket() {
       return 1
     }
     description=$(echo "$issue_json" | jq -r '.description // ""')
-    # tracker-local-facts-read-migration (task 5.3): manifest presence is
-    # authoritative proof of "planned" when available — live label as
-    # fallback. Only this boolean gate moves; the description is always
-    # live-fetched and check_planned_ticket_description's field parsing
-    # below is unchanged (out of scope for this migration).
+    # tracker-planner-and-fallback-cutover (3.2): manifest presence is the
+    # ONLY proof of "planned" — no live label fallback. The description is
+    # always live-fetched and check_planned_ticket_description's field
+    # parsing below is unchanged (out of scope for this change).
+    has_planned_label="false"
     if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
       has_planned_label="true"
-    else
-      has_planned_label=$(echo "$issue_json" | jq -r \
-        '[.labels.nodes[].name] | index("planned") != null')
     fi
   fi
 

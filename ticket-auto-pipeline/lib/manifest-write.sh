@@ -187,6 +187,64 @@ stamp_epic_dispatch() {
   _manifest_atomic_write "$manifest_path" "$content"
 }
 
+# backfill_ticket_fields <TID> <TYPE> <INITIATIVE> <BLOCKED_BY_JSON> <FLAGS_JSON>
+# tracker-planner-and-fallback-cutover (2.1): one-shot seed of type/
+# initiative/blocked_by/flags from the tracker's live labels — the last
+# time any of the four is ever read. Partial update onto whatever manifest
+# ensure_ticket_manifest already made addressable; never recreates the
+# manifest (write_ticket_manifest would, discarding a stage/approved value
+# a prior step of the same backfill run — or ordinary pipeline operation —
+# already wrote). TYPE/INITIATIVE are left untouched when empty, so a live
+# ticket with no matching type label or no INIT-* label doesn't overwrite
+# an existing (possibly correct) value with nothing; BLOCKED_BY_JSON and
+# FLAGS_JSON are always written, including empty, since an empty array IS
+# the live answer ("no blockers/flags right now"), not a missing one.
+# No-op (exit 1) if no manifest exists yet.
+backfill_ticket_fields() {
+  local tid="$1" type="$2" init="$3" blocked_by="${4:-[]}" flags="${5:-[]}"
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  if ! echo "$blocked_by" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "manifest-write: blocked_by must be a JSON array, got '$blocked_by'" >&2
+    return 3
+  fi
+  if ! echo "$flags" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "manifest-write: flags must be a JSON array, got '$flags'" >&2
+    return 3
+  fi
+
+  local content
+  content=$(jq -c \
+    --arg type "$type" --arg init "$init" \
+    --argjson blocked_by "$blocked_by" --argjson flags "$(echo "$flags" | jq -c 'sort')" \
+    '(if $type != "" then .type = $type else . end)
+     | (if $init != "" then .initiative = $init else . end)
+     | .blocked_by = $blocked_by
+     | .flags = $flags' \
+    "$manifest_path") || return 1
+  _manifest_atomic_write "$manifest_path" "$content"
+}
+
+# backfill_epic_manifest <EPIC> <BRANCH> <UAT_POLICY> <MERGE_POLICY> <CHILDREN_JSON>
+# tracker-planner-and-fallback-cutover (2.1): one-shot seed of an epic
+# manifest — including the `dispatch` stamp — from the tracker's live
+# `state:execution` label and Branch Directive, for an epic planned before
+# the manifest era ever wrote one. Thin wrapper composing write_epic_manifest
+# (creates/refreshes branch/uat_policy/merge_policy/children) with
+# stamp_epic_dispatch (one-way false→true, mirroring the label's semantics
+# exactly) — no new manifest shape, just the two existing writers called
+# together for the caller's convenience. BRANCH may be empty (an epic with
+# no directive still needs its `dispatch`/`children` stamped for D-11/D-18
+# to enumerate it; D-12 already treats an empty `branch` field as "no
+# directive, skip" — same as the live path's description grep did).
+backfill_epic_manifest() {
+  local epic="$1" branch="$2" uat_policy="$3" merge_policy="$4" children="${5:-[]}"
+  write_epic_manifest "$epic" "$branch" "$uat_policy" "$merge_policy" "$children" || return 1
+  stamp_epic_dispatch "$epic"
+}
+
 # write_ticket_outcome_label <TID> <Smooth|Rough|Hard>
 # Mirrors the Smooth/Rough/Hard tracker label locally (ticket-local-manifest
 # spec: "outcome_label mirrors the Smooth/Rough/Hard classification

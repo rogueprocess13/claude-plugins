@@ -67,8 +67,19 @@ mkdir -p "$TEST_DIR"
 touch "$TEST_DIR/body.md"
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
+# tracker-planner-and-fallback-cutover (3.3): resolve_planner_dir no longer
+# fetches or parses a live description at all — {INIT} resolves from the
+# local initiative index alone. Every case below seeds (or deliberately
+# omits) an `_index/{TID}.initiative` file rather than relying on an inline
+# description/has_planned_label argument, which is now ignored entirely.
+_seed_index() {
+  local tid="$1" init="$2"
+  mkdir -p "$REPOS_ROOT/.ticket-auto/initiatives/_index"
+  echo "$init" >"$REPOS_ROOT/.ticket-auto/initiatives/_index/${tid}.initiative"
+}
 
-# 1. Present dir → exit 0, correct path
+# 1. Present dir → exit 0, correct path (index-resolved, not description-parsed)
+_seed_index "TEST-1" "INIT-42"
 rc=0
 actual=$(resolve_planner_dir "TEST-1" "$PLANNER_DESC" "true" 2>/dev/null) || rc=$?
 if [ "$rc" = "0" ] && echo "$actual" | grep -q "INIT-42"; then
@@ -77,56 +88,59 @@ else
   _fail "resolve_planner_dir: expected exit 0 with INIT-42 path, got rc=$rc path='$actual'"
 fi
 
-# 2. Missing dir → exit 1
-PLANNER_DESC_99=$(echo "$PLANNER_DESC" | sed 's/INIT-42/INIT-99/')
+# 2. Index entry present but its directory was never created → exit 1
+_seed_index "TEST-2" "INIT-99"
 rc=0
-actual=$(resolve_planner_dir "TEST-2" "$PLANNER_DESC_99" "true" 2>/dev/null) || rc=$?
+actual=$(resolve_planner_dir "TEST-2" "$PLANNER_DESC" "true" 2>/dev/null) || rc=$?
 if [ "$rc" = "1" ]; then
   _pass "resolve_planner_dir: missing dir → exit 1"
 else
   _fail "resolve_planner_dir: expected exit 1 for missing dir, got rc=$rc"
 fi
 
-# 3. No Initiative → exit 2
+# 3. No index entry at all → exit 1, reported rather than falling back to a
+# live description fetch (the deleted fallback's exit-2 "no Initiative
+# field" outcome no longer exists — there is no description parsing left to
+# produce it). A description/label argument is passed here specifically to
+# prove it changes nothing.
 rc=0
-actual=$(resolve_planner_dir "TEST-3" "$NO_INITIATIVE_DESC" "true" 2>/dev/null) || rc=$?
-if [ "$rc" = "2" ]; then
-  _pass "resolve_planner_dir: no Initiative → exit 2"
-else
-  _fail "resolve_planner_dir: expected exit 2 for no Initiative, got rc=$rc"
-fi
-
-# 4. Not planned → exit 1
-rc=0
-actual=$(resolve_planner_dir "TEST-4" "some desc" "false" 2>/dev/null) || rc=$?
+actual=$(resolve_planner_dir "TEST-3-NO-INDEX" "$NO_INITIATIVE_DESC" "true" 2>/dev/null) || rc=$?
 if [ "$rc" = "1" ]; then
-  _pass "resolve_planner_dir: not planned → exit 1"
+  _pass "resolve_planner_dir: no index entry → exit 1 (reported, no live fetch)"
 else
-  _fail "resolve_planner_dir: expected exit 1 for not planned, got rc=$rc"
+  _fail "resolve_planner_dir: expected exit 1 for no index entry, got rc=$rc"
 fi
 
-# 4a. Path traversal in Initiative field → exit 1 (rejected)
-TRAVERSAL_DESC=$(echo "$PLANNER_DESC" | sed 's/INIT-42/..\/..\/..\/etc/')
+# 4a. Path traversal in the index file's own content → exit 1 (rejected).
+# The traversal-shaped value now has to come from the index itself — an
+# inline description's Initiative field is never read.
+_seed_index "TEST-TRAV" "../../../etc"
 rc=0
-actual=$(resolve_planner_dir "TEST-TRAV" "$TRAVERSAL_DESC" "true" 2>/dev/null) || rc=$?
+actual=$(resolve_planner_dir "TEST-TRAV" 2>/dev/null) || rc=$?
 if [ "$rc" = "1" ]; then
   _pass "resolve_planner_dir: path traversal rejected → exit 1"
 else
   _fail "resolve_planner_dir: expected exit 1 for path traversal, got rc=$rc"
 fi
 
-# 4b. Path traversal in ticket ID → exit 1 (rejected)
-TRAVERSAL_DESC2="$PLANNER_DESC"
+# 4b. Path traversal in ticket ID → exit 1 (rejected). Seeds a valid
+# initiative at the exact path _manifest_initiative_for_ticket resolves to
+# for this traversal-shaped ticket ID, so the call reaches (and is caught
+# by) resolve_planner_dir's own ticket-ID character validation rather than
+# short-circuiting earlier on "no index entry".
+mkdir -p "$REPOS_ROOT/.ticket-auto"
+echo "INIT-42" >"$REPOS_ROOT/.ticket-auto/etc.initiative"
 rc=0
-actual=$(resolve_planner_dir "../../etc" "$TRAVERSAL_DESC2" "true" 2>/dev/null) || rc=$?
+actual=$(resolve_planner_dir "../../etc" 2>/dev/null) || rc=$?
 if [ "$rc" = "1" ]; then
   _pass "resolve_planner_dir: path traversal in ticket ID → exit 1"
 else
   _fail "resolve_planner_dir: expected exit 1 for ticket ID traversal, got rc=$rc"
 fi
+rm -f "$REPOS_ROOT/.ticket-auto/etc.initiative"
 
 # 5. has_planner_body true
-if has_planner_body "TEST-1" "$PLANNER_DESC" "true" 2>/dev/null; then
+if has_planner_body "TEST-1" 2>/dev/null; then
   _pass "has_planner_body: true when body.md exists"
 else
   _fail "has_planner_body: expected true when body.md exists"
@@ -135,7 +149,7 @@ fi
 # 6. has_planner_body false
 rm -f "$TEST_DIR/body.md"
 rc=0
-has_planner_body "TEST-1" "$PLANNER_DESC" "true" 2>/dev/null || rc=$?
+has_planner_body "TEST-1" 2>/dev/null || rc=$?
 if [ "$rc" != "0" ]; then
   _pass "has_planner_body: false when body.md missing"
 else
@@ -144,7 +158,7 @@ fi
 
 # 7. has_planner_proposal true
 touch "$TEST_DIR/proposal.md"
-if has_planner_proposal "TEST-1" "$PLANNER_DESC" "true" 2>/dev/null; then
+if has_planner_proposal "TEST-1" 2>/dev/null; then
   _pass "has_planner_proposal: true when proposal.md exists"
 else
   _fail "has_planner_proposal: expected true when proposal.md exists"

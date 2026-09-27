@@ -1173,65 +1173,23 @@ detect_blocked_by() {
     done
   fi
 
-  if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$tid" 2>/dev/null; then
-    local blocked_by_json unblocked_count=0 blocker_id
-    blocked_by_json=$(get_ticket_manifest_field "$tid" blocked_by 2>/dev/null)
-    [ -z "$blocked_by_json" ] && blocked_by_json='[]'
-
-    while IFS= read -r blocker_id; do
-      [ -z "$blocker_id" ] && continue
-      ticket_pipeline_terminal_done "$blocker_id" "$workspace" && unblocked_count=$((unblocked_count + 1))
-    done < <(echo "$blocked_by_json" | jq -r '.[]?' 2>/dev/null)
-
-    if [ "$unblocked_count" -gt 0 ]; then
-      echo "1"
-    else
-      echo "0"
-    fi
-    return
-  fi
-
-  # ── Pre-migration fallback: no manifest — live Linear query ───────────────
-  if ! declare -f get_issue >/dev/null 2>&1; then
-    local _la_paths=("$HOME/.claude/skills/lib/linear-api.sh" "${_CONFIG_DIR}/../linear-api.sh")
-    for _lp in "${_la_paths[@]}"; do
-      [ -f "$_lp" ] && source "$_lp" && break
-    done
-  fi
-
-  # If linear-api.sh is still unavailable, return OBSERVE
-  if ! declare -f get_issue >/dev/null 2>&1; then
+  # tracker-planner-and-fallback-cutover (3.8): manifest-only — the
+  # pre-migration live Linear fallback is deleted. A ticket with no
+  # manifest reports OBSERVE (0), same as one with an empty blocked_by,
+  # never a live label query.
+  if ! declare -f ticket_manifest_exists >/dev/null 2>&1 || ! ticket_manifest_exists "$tid" 2>/dev/null; then
     echo "0"
     return
   fi
 
-  # Check Linear for the ticket's labels
-  local issue_json
-  if ! issue_json=$(get_issue "$tid" 2>/dev/null); then
-    echo "0"
-    return
-  fi
+  local blocked_by_json unblocked_count=0 blocker_id
+  blocked_by_json=$(get_ticket_manifest_field "$tid" blocked_by 2>/dev/null)
+  [ -z "$blocked_by_json" ] && blocked_by_json='[]'
 
-  # Extract labels from the issue JSON and check for blocked-by patterns
-  local blocked_by_ids
-  blocked_by_ids=$(echo "$issue_json" | jq -r '.labels.nodes[]?.name // empty' 2>/dev/null | grep -oP 'blocked-by:\K[A-Z]+-\d+' || true)
-
-  if [ -z "$blocked_by_ids" ]; then
-    echo "0"
-    return
-  fi
-
-  # Check each blocker's state
-  local unblocked_count=0
   while IFS= read -r blocker_id; do
     [ -z "$blocker_id" ] && continue
-    local blocker_json
-    if blocker_json=$(get_issue "$blocker_id" 2>/dev/null); then
-      local blocker_state
-      blocker_state=$(echo "$blocker_json" | jq -r '.state.name // empty' 2>/dev/null)
-      [ "$blocker_state" = "Done" ] && unblocked_count=$((unblocked_count + 1))
-    fi
-  done <<<"$blocked_by_ids"
+    ticket_pipeline_terminal_done "$blocker_id" "$workspace" && unblocked_count=$((unblocked_count + 1))
+  done < <(echo "$blocked_by_json" | jq -r '.[]?' 2>/dev/null)
 
   if [ "$unblocked_count" -gt 0 ]; then
     echo "1"
@@ -1299,42 +1257,20 @@ _fleet_initiative_dispatch_auto_dispatch() {
 _fleet_scan_initiative_dispatch() {
   local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
 
-  # tracker-local-facts-read-migration (task 3.4): enumerate dispatch-
-  # eligible epics from local epic manifests (glob under REPOS_ROOT +
-  # dispatch:true filter) and each child's own dispatch flag from its
-  # ticket manifest — no live tracker query at all on this path. Falls back
-  # to the pre-migration live query wholesale when REPOS_ROOT is unset or no
-  # epic manifests exist at all (predates this migration).
-  if ! declare -f get_epic_manifest_field >/dev/null 2>&1; then
-    local _tap_lib
-    for _tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
-      [ -f "$_tap_lib/manifest-read.sh" ] && source "$_tap_lib/manifest-read.sh" && break
-    done
-  fi
-
-  # TICKET_LOCAL_MANIFEST_DISABLE (task 9.1): this enumeration reads
-  # REPOS_ROOT directly (a directory glob, not a manifest-read.sh field
-  # lookup), so it must check the kill switch itself rather than inheriting
-  # it from _manifest_repos_root the way every other migrated site does.
-  local _repos_root=""
-  [ "${TICKET_LOCAL_MANIFEST_DISABLE:-false}" = "true" ] || _repos_root="${REPOS_ROOT:-}"
-  local _epic_manifests=""
-  if [ -n "$_repos_root" ] && [ -d "$_repos_root/.ticket-auto/initiatives" ]; then
-    _epic_manifests=$(find "$_repos_root/.ticket-auto/initiatives" -mindepth 3 -maxdepth 3 \
-      -path '*/epic/manifest.json' 2>/dev/null)
-  fi
-
-  if [ -n "$_epic_manifests" ] && declare -f get_epic_manifest_field >/dev/null 2>&1; then
+  # tracker-planner-and-fallback-cutover (1.2): population comes from the
+  # shared fleet_local_epics helper (fleet-config.sh, D2) — no independent
+  # inline scan here anymore. Falls back to the pre-migration live query
+  # wholesale only when fleet_local_epics reports no local epic manifests
+  # exist at all (non-zero exit); a per-epic dispatch:false is a normal
+  # "nothing to report for this epic" outcome on the manifest path, not a
+  # fallback trigger.
+  local _epic_ids
+  if _epic_ids=$(fleet_local_epics); then
     local undispatched=0 initiative_ids=""
-    local _manifest_path epic_id
+    local epic_id
 
-    while IFS= read -r _manifest_path; do
-      [ -z "$_manifest_path" ] && continue
-      # .../.ticket-auto/initiatives/{EPIC}/epic/manifest.json
-      epic_id=$(basename "$(dirname "$(dirname "$_manifest_path")")")
+    while IFS= read -r epic_id; do
       [ -z "$epic_id" ] && continue
-
-      [ "$(get_epic_manifest_field "$epic_id" dispatch 2>/dev/null)" = "true" ] || continue
 
       local children_json epic_undispatched=0 child_id
       children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
@@ -1354,7 +1290,7 @@ _fleet_scan_initiative_dispatch() {
         fi
         initiative_ids="${initiative_ids} ${epic_id}(${epic_undispatched})${stop_note}"
       fi
-    done <<<"$_epic_manifests"
+    done <<<"$_epic_ids"
 
     local findings
     findings=$(echo "$initiative_ids" | sed 's/^ //')
@@ -1551,6 +1487,86 @@ _fleet_scan_epic_branch_ready() {
     [ -f "$_dispatch_lib" ] && source "$_dispatch_lib"
   fi
 
+  # tracker-planner-and-fallback-cutover (1.3): manifest-first path. Selected
+  # whenever fleet_local_epics reports the manifest era has started (exit 0
+  # — even zero epics is "trust it", per D-11's identical decision boundary);
+  # the live get_epics_by_label path below is kept in place, selected only
+  # when no epic manifests exist at all, so the parity run (task 1.7) can
+  # compare both sources before the live path is deleted (task 3.11).
+  local _epic_ids
+  if _epic_ids=$(fleet_local_epics); then
+    local ready_count=0 ready_ids=""
+    local epic_id
+
+    while IFS= read -r epic_id; do
+      [ -z "$epic_id" ] && continue
+
+      # Never-regress short-circuit — manifest `stage` (tracker-approval-by-
+      # script) instead of a live .state.name fetch. Same three-state set as
+      # the live path below: an epic already past integration is never
+      # rescanned, including its whole repo loop.
+      local epic_stage
+      epic_stage=$(get_epic_manifest_field "$epic_id" stage 2>/dev/null)
+      case "$epic_stage" in
+      Review | UAT | Done) continue ;;
+      esac
+
+      # Branch Directive check — a non-empty `branch` field on the epic
+      # manifest IS the directive (branch-resolve.sh already reads it
+      # manifest-first the same way, :51-58); no description grep needed.
+      local epic_branch
+      epic_branch=$(get_epic_manifest_field "$epic_id" branch 2>/dev/null)
+      [ -n "$epic_branch" ] || continue
+
+      local children_json
+      children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+      [ -z "$children_json" ] && children_json='[]'
+
+      # Readiness is delegated to the single canonical children-done helper
+      # (epic-branch.sh) — called with EPIC_ID only, deliberately: its
+      # 2-arg override form expects live Linear-shaped child objects
+      # (.state.name/.labels.nodes[]), not the manifest's flat ID array, so
+      # passing children_json here would silently break the readiness
+      # check. With no second argument the helper reads the manifest
+      # (children[] + each child's own pipeline-log terminal state) itself
+      # — see 1.5's finding that this manifest-only path already exists.
+      if epic_branch_children_done "$epic_id"; then
+        ready_count=$((ready_count + 1))
+        ready_ids="${ready_ids} ${epic_id}"
+
+        if [ "${FLEET_EPIC_AUTO_PR:-false}" = "true" ] && declare -f epic_branch_open_pr >/dev/null 2>&1; then
+          local _ebr_repo
+          local _ebr_pr_open=false
+          while IFS= read -r _ebr_repo; do
+            [ -z "$_ebr_repo" ] && continue
+            # Deliberately no cached children/description here — same
+            # shape mismatch as above applies to epic_branch_open_pr's own
+            # internal re-check. It live-fetches both itself when omitted.
+            epic_branch_open_pr "$epic_id" "$_ebr_repo" "" "" >/dev/null 2>&1 || true
+            if [ "${EPIC_BRANCH_PR_STATE:-none}" = "open" ]; then
+              _ebr_pr_open=true
+            fi
+          done < <(_fleet_repos_under_root)
+
+          if $_ebr_pr_open; then
+            _fleet_advance_epic_state "$epic_id" "$children_json"
+          fi
+        fi
+      fi
+    done <<<"$_epic_ids"
+
+    local findings
+    findings=$(echo "$ready_ids" | sed 's/^ //')
+
+    if [ "$ready_count" -gt 0 ]; then
+      echo "{\"severity\":1,\"findings\":\"${ready_count} epic(s) ready for integration PR: ${findings}\"}"
+    else
+      echo '{"severity":0,"findings":""}'
+    fi
+    return
+  fi
+
+  # ── Pre-migration fallback: no local epic manifests — live Linear query ──
   # Query epics with state:execution label — include description and epic
   # state, via the client (tracker-client-consolidation — get_epics_by_label
   # "full" field set gives description + state { name } on top of the
@@ -1705,20 +1721,97 @@ _FLEET_STALLED_APPROVED_STATES=" Ready Approve Review UAT "
 # effect of starting new implementation work on a ticket nobody just decided
 # to move forward.
 # Usage: _fleet_scan_stalled_approved_children [workspace]
+# Per-child readiness + liveness + queue check + opt-in actuation, shared by
+# both the manifest-population loop and the live-population loop below (D-18,
+# tracker-planner-and-fallback-cutover 1.4) so the two paths differ only in
+# how they learn a child's id/state, never in what happens once they have it.
+#
+# Relies on bash's dynamic (call-stack) local scoping: called only from
+# inside _fleet_scan_stalled_approved_children, it reads/writes that
+# function's own locals (stalled_count, stalled_ids, resumed_ids,
+# queue_file, store_ready, in_flight_tids, auto_resume, workspace) rather
+# than redeclaring them — there is exactly one copy of each, in the caller.
+#
+# Usage: _fleet_sa_process_child <child_id> <child_state> <epic_id>
+_fleet_sa_process_child() {
+  local child_id="$1" child_state="$2" epic_id="$3"
+
+  # State must be one that means "actively supposed to be moving" — not
+  # Backlog (Step 2's own population), not Done (finished), not some other
+  # custom state a workspace might define.
+  case "$_FLEET_STALLED_APPROVED_STATES" in
+  *" $child_state "*) ;;
+  *) return 0 ;;
+  esac
+
+  # tracker-approval-by-script: the manifest's approved+stage fields are
+  # what the state machine actually requires to reach Ready via the real
+  # Approve->Ready trigger (workflow.json) — no tracker label read, no
+  # fallback. Same two-factor shape as gate-check.sh's checks: a child
+  # never approved (Approve state, or a hand-moved ticket outside the
+  # automated flow entirely) fails this and is correctly left unflagged as
+  # an AUTOMATION concern. implement-complete clears `approved` on the way
+  # to Review, so this is naturally dormant for Review/UAT states — parity
+  # with the label it replaces, which the same trigger also stripped.
+  local _sa_approved _sa_approved_rc=0 _sa_stage=""
+  if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+    _sa_approved=$(get_ticket_manifest_field "$child_id" approved 2>/dev/null) || _sa_approved_rc=$?
+  else
+    _sa_approved_rc=1
+  fi
+  if [ "$_sa_approved_rc" -eq 0 ] && [ "$_sa_approved" = "true" ]; then
+    _sa_stage=$(get_ticket_manifest_field "$child_id" stage 2>/dev/null) || true
+  fi
+  if [ "$_sa_approved_rc" -ne 0 ] || [ "$_sa_approved" != "true" ] || [ "$_sa_stage" != "Ready" ]; then
+    return 0
+  fi
+
+  # Live worker, preferring the fleet state store (authoritative — fleetd
+  # is its sole writer) and falling back to the same file-based liveness
+  # checks dispatch itself uses when no store is available, so this
+  # detector still functions on a host with no fleetd/sqlite3.
+  if [ "$store_ready" -eq 0 ]; then
+    if printf '%s\n' "$in_flight_tids" | grep -qx "$child_id"; then
+      return 0
+    fi
+  else
+    if declare -f _fleet_tid_live >/dev/null 2>&1 && _fleet_tid_live "$child_id"; then
+      return 0
+    fi
+    if declare -f _registry_pid_alive >/dev/null 2>&1 && _registry_pid_alive "$child_id" "$workspace"; then
+      return 0
+    fi
+  fi
+
+  # Pending spawn-queue entry — a worker is about to pick this ticket up.
+  if declare -f _queue_has_ticket >/dev/null 2>&1 && _queue_has_ticket "$child_id" "$queue_file"; then
+    return 0
+  fi
+
+  stalled_count=$((stalled_count + 1))
+  stalled_ids="${stalled_ids} ${child_id}"
+
+  # Actuation: opt-in, mirrors FLEET_EPIC_AUTO_PR's shape exactly (see
+  # _fleet_scan_epic_branch_ready above). Reuses _reconcile_entry
+  # (fleet-reconcile.sh) — the SAME entry-building function the existing
+  # manual-requeue/campaign-resume workaround already uses — so an
+  # auto-resumed stalled child gets identical fence-aware generation
+  # continuity instead of a hand-rolled duplicate that could drift from it.
+  # dispatch_type stays "initial", matching every other entry this
+  # codebase writes (there is no "resume" dispatch_type anywhere in this
+  # codebase — resume vs. fresh dispatch is distinguished by the `reason`
+  # string only, never by dispatch_type).
+  if [ "$auto_resume" = "true" ] && declare -f _reconcile_entry >/dev/null 2>&1 && declare -f _fleet_queue_append >/dev/null 2>&1; then
+    local _sa_entry
+    _sa_entry=$(_reconcile_entry "$child_id" "stalled-approved-resume from ${epic_id}" "$(_fleet_state_dir "$workspace")")
+    if _fleet_queue_append "$_sa_entry" "$queue_file" >/dev/null 2>&1; then
+      resumed_ids="${resumed_ids} ${child_id}"
+    fi
+  fi
+}
+
 _fleet_scan_stalled_approved_children() {
   local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
-
-  if ! declare -f get_issue >/dev/null 2>&1; then
-    local _la_paths=("$HOME/.claude/skills/lib/linear-api.sh" "${_CONFIG_DIR}/../linear-api.sh")
-    for _lp in "${_la_paths[@]}"; do
-      [ -f "$_lp" ] && source "$_lp" && break
-    done
-  fi
-
-  if ! declare -f get_issue >/dev/null 2>&1; then
-    echo '{"severity":0,"findings":""}'
-    return
-  fi
 
   # Queue inspection (_queue_has_ticket/_fleet_queue_append), liveness
   # fallback (_fleet_tid_live/_registry_pid_alive) and the actuation entry
@@ -1731,27 +1824,8 @@ _fleet_scan_stalled_approved_children() {
     [ -f "$_sa_dispatch_lib" ] && source "$_sa_dispatch_lib"
   fi
 
-  # No epic Linear-state filter — the state:execution label is the gate,
-  # same population fleet_dispatch_initiative and the other two epic-scoped
-  # scans use. Via the client (tracker-client-consolidation) — no direct
-  # curl here anymore.
-  local epics_json
-  epics_json=$(get_epics_by_label "state:execution" 2>/dev/null)
-
-  if [ -z "$epics_json" ]; then
-    echo '{"severity":0,"findings":""}'
-    return
-  fi
-
-  # get_epics_by_label returns an unwrapped array directly — no
-  # .data.issues.nodes prefix (tracker-client-consolidation).
-  local epic_count
-  epic_count=$(echo "$epics_json" | jq -r 'length // 0' 2>/dev/null)
-  [ "${epic_count:-0}" -eq 0 ] && echo '{"severity":0,"findings":""}' && return
-
-  # manifest-read.sh backs the approval decision read below
-  # (tracker-approval-by-script) — same two-candidate cross-plugin sourcing
-  # convention _fleet_scan_epic_branch_ready/D-12 already use above.
+  # manifest-read.sh backs both the population enumeration (fleet_local_epics)
+  # and the approval decision read in _fleet_sa_process_child.
   if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
     local _sa_tap_lib
     for _sa_tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
@@ -1774,6 +1848,80 @@ _fleet_scan_stalled_approved_children() {
     in_flight_tids=$(fleet_store_in_flight "$workspace" 2>/dev/null)
   fi
 
+  # tracker-planner-and-fallback-cutover (1.4): population comes from the
+  # shared fleet_local_epics helper — same D1/D2 shape as D-11/D-12. The
+  # live get_epics_by_label path below is kept in place, selected only when
+  # no epic manifests exist at all (matching 1.3's condition on D-12), so
+  # the parity run (1.7) can compare both sources — this engine ACTUATES
+  # (FLEET_AUTO_RESUME_STALLED enqueues a resume), so an unverified switch
+  # here does more than under-report.
+  local _epic_ids
+  if _epic_ids=$(fleet_local_epics); then
+    local epic_id
+
+    while IFS= read -r epic_id; do
+      [ -z "$epic_id" ] && continue
+
+      local children_json child_id child_state
+      children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+      [ -z "$children_json" ] && children_json='[]'
+
+      while IFS= read -r child_id; do
+        [ -z "$child_id" ] && continue
+        child_state=$(get_ticket_manifest_field "$child_id" stage 2>/dev/null)
+        _fleet_sa_process_child "$child_id" "$child_state" "$epic_id"
+      done < <(echo "$children_json" | jq -r '.[]?' 2>/dev/null)
+    done <<<"$_epic_ids"
+
+    if [ "$stalled_count" -eq 0 ]; then
+      echo '{"severity":0,"findings":""}'
+      return
+    fi
+
+    local findings
+    findings=$(echo "$stalled_ids" | sed 's/^ //')
+
+    if [ "$auto_resume" = "true" ] && [ -n "$resumed_ids" ]; then
+      local resumed_findings
+      resumed_findings=$(echo "$resumed_ids" | sed 's/^ //')
+      echo "{\"severity\":1,\"findings\":\"${stalled_count} stalled approved child(ren): ${findings} — auto-resumed: ${resumed_findings}\"}"
+    else
+      echo "{\"severity\":1,\"findings\":\"${stalled_count} stalled approved child(ren): ${findings}\"}"
+    fi
+    return
+  fi
+
+  # ── Pre-migration fallback: no local epic manifests — live Linear query ──
+  if ! declare -f get_issue >/dev/null 2>&1; then
+    local _la_paths=("$HOME/.claude/skills/lib/linear-api.sh" "${_CONFIG_DIR}/../linear-api.sh")
+    for _lp in "${_la_paths[@]}"; do
+      [ -f "$_lp" ] && source "$_lp" && break
+    done
+  fi
+
+  if ! declare -f get_issue >/dev/null 2>&1; then
+    echo '{"severity":0,"findings":""}'
+    return
+  fi
+
+  # No epic Linear-state filter — the state:execution label is the gate,
+  # same population fleet_dispatch_initiative and the other two epic-scoped
+  # scans use. Via the client (tracker-client-consolidation) — no direct
+  # curl here anymore.
+  local epics_json
+  epics_json=$(get_epics_by_label "state:execution" 2>/dev/null)
+
+  if [ -z "$epics_json" ]; then
+    echo '{"severity":0,"findings":""}'
+    return
+  fi
+
+  # get_epics_by_label returns an unwrapped array directly — no
+  # .data.issues.nodes prefix (tracker-client-consolidation).
+  local epic_count
+  epic_count=$(echo "$epics_json" | jq -r 'length // 0' 2>/dev/null)
+  [ "${epic_count:-0}" -eq 0 ] && echo '{"severity":0,"findings":""}' && return
+
   for i in $(seq 0 $((epic_count - 1))); do
     local epic_id
     epic_id=$(echo "$epics_json" | jq -r ".[$i].identifier // empty" 2>/dev/null)
@@ -1784,85 +1932,12 @@ _fleet_scan_stalled_approved_children() {
     [ "${child_count:-0}" -eq 0 ] && continue
 
     for j in $(seq 0 $((child_count - 1))); do
-      local child_state child_labels child_id
+      local child_state child_id
       child_state=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].state.name // empty" 2>/dev/null)
-      child_labels=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].labels.nodes[].name // empty" 2>/dev/null)
       child_id=$(echo "$epics_json" | jq -r ".[$i].children.nodes[$j].identifier // empty" 2>/dev/null)
       [ -z "$child_id" ] && continue
 
-      # State must be one that means "actively supposed to be moving" — not
-      # Backlog (Step 2's own population), not Done (finished), not some
-      # other custom state a workspace might define.
-      case "$_FLEET_STALLED_APPROVED_STATES" in
-      *" $child_state "*) ;;
-      *) continue ;;
-      esac
-
-      # tracker-approval-by-script: the manifest's approved+stage fields are
-      # what the state machine actually requires to reach Ready via the
-      # real Approve->Ready trigger (workflow.json) — no tracker label read,
-      # no fallback. Same two-factor shape as gate-check.sh's checks: a
-      # child never approved (Approve state, or a hand-moved ticket outside
-      # the automated flow entirely) fails this and is correctly left
-      # unflagged as an AUTOMATION concern. implement-complete clears
-      # `approved` on the way to Review, so this is naturally dormant for
-      # Review/UAT states — parity with the label it replaces, which the
-      # same trigger also stripped.
-      local _sa_approved _sa_approved_rc=0 _sa_stage=""
-      if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
-        _sa_approved=$(get_ticket_manifest_field "$child_id" approved 2>/dev/null) || _sa_approved_rc=$?
-      else
-        _sa_approved_rc=1
-      fi
-      if [ "$_sa_approved_rc" -eq 0 ] && [ "$_sa_approved" = "true" ]; then
-        _sa_stage=$(get_ticket_manifest_field "$child_id" stage 2>/dev/null) || true
-      fi
-      if [ "$_sa_approved_rc" -ne 0 ] || [ "$_sa_approved" != "true" ] || [ "$_sa_stage" != "Ready" ]; then
-        continue
-      fi
-
-      # Live worker, preferring the fleet state store (authoritative —
-      # fleetd is its sole writer) and falling back to the same file-based
-      # liveness checks dispatch itself uses when no store is available, so
-      # this detector still functions on a host with no fleetd/sqlite3.
-      if [ "$store_ready" -eq 0 ]; then
-        if printf '%s\n' "$in_flight_tids" | grep -qx "$child_id"; then
-          continue
-        fi
-      else
-        if declare -f _fleet_tid_live >/dev/null 2>&1 && _fleet_tid_live "$child_id"; then
-          continue
-        fi
-        if declare -f _registry_pid_alive >/dev/null 2>&1 && _registry_pid_alive "$child_id" "$workspace"; then
-          continue
-        fi
-      fi
-
-      # Pending spawn-queue entry — a worker is about to pick this ticket up.
-      if declare -f _queue_has_ticket >/dev/null 2>&1 && _queue_has_ticket "$child_id" "$queue_file"; then
-        continue
-      fi
-
-      stalled_count=$((stalled_count + 1))
-      stalled_ids="${stalled_ids} ${child_id}"
-
-      # Actuation: opt-in, mirrors FLEET_EPIC_AUTO_PR's shape exactly (see
-      # _fleet_scan_epic_branch_ready above). Reuses _reconcile_entry
-      # (fleet-reconcile.sh) — the SAME entry-building function the
-      # existing manual-requeue/campaign-resume workaround already uses —
-      # so an auto-resumed stalled child gets identical fence-aware
-      # generation continuity instead of a hand-rolled duplicate that could
-      # drift from it. dispatch_type stays "initial", matching every other
-      # entry this codebase writes (there is no "resume" dispatch_type
-      # anywhere in this codebase — resume vs. fresh dispatch is
-      # distinguished by the `reason` string only, never by dispatch_type).
-      if [ "$auto_resume" = "true" ] && declare -f _reconcile_entry >/dev/null 2>&1 && declare -f _fleet_queue_append >/dev/null 2>&1; then
-        local _sa_entry
-        _sa_entry=$(_reconcile_entry "$child_id" "stalled-approved-resume from ${epic_id}" "$(_fleet_state_dir "$workspace")")
-        if _fleet_queue_append "$_sa_entry" "$queue_file" >/dev/null 2>&1; then
-          resumed_ids="${resumed_ids} ${child_id}"
-        fi
-      fi
+      _fleet_sa_process_child "$child_id" "$child_state" "$epic_id"
     done
   done
 
@@ -1889,19 +1964,10 @@ _fleet_scan_stalled_approved_children() {
 _fleet_scan_blocked_by() {
   local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
 
-  # tracker-local-facts-read-migration (task 3.3): detect_blocked_by no
-  # longer strictly requires get_issue — a ticket with a local manifest
-  # resolves entirely from disk. Best-effort source both, but no longer
-  # bail out fleet-wide just because Linear isn't available: per-ticket
-  # detect_blocked_by degrades to OBSERVE for any ticket that has neither a
-  # manifest nor a live fetch available, same end result as before for that
-  # ticket alone, not for every ticket in the fleet.
-  if ! declare -f get_issue >/dev/null 2>&1; then
-    local _la_paths=("$HOME/.claude/skills/lib/linear-api.sh" "${_CONFIG_DIR}/../linear-api.sh")
-    for _lp in "${_la_paths[@]}"; do
-      [ -f "$_lp" ] && source "$_lp" && break
-    done
-  fi
+  # tracker-planner-and-fallback-cutover (3.8): detect_blocked_by is
+  # manifest-only now — no linear-api.sh sourcing needed here at all. A
+  # ticket with no manifest degrades to OBSERVE (per-ticket, in
+  # detect_blocked_by itself), not a fleet-wide bail-out.
   if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
     local _tap_lib
     for _tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do

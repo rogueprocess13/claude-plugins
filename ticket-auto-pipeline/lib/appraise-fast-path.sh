@@ -88,15 +88,15 @@ check_fast_path_eligible() {
       return 1
     }
     description=$(echo "$issue_json" | jq -r '.description // ""')
-    # tracker-local-facts-read-migration (task 5.2): manifest presence is
-    # authoritative proof of "planned" when available — live label as
-    # fallback. The description is always live-fetched regardless (the
-    # Planner Context FIELD parser stays out of scope for this migration).
+    # tracker-planner-and-fallback-cutover (3.2): manifest presence is the
+    # ONLY proof of "planned" — no live label fallback. A ticket with no
+    # manifest is simply not fast-path eligible (FAST_PATH_REASON
+    # "not_planned" below), never silently routed onto a live label read.
+    # The description is still always live-fetched regardless (the Planner
+    # Context FIELD parser stays out of scope for this migration).
+    has_planned_label="false"
     if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
       has_planned_label="true"
-    else
-      has_planned_label=$(echo "$issue_json" | jq -r \
-        '[.labels.nodes[].name] | index("planned") != null')
     fi
   fi
 

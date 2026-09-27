@@ -7,12 +7,9 @@
 # condition inline — the failure mode that let the previous, always-true
 # discriminator survive with a green suite.
 #
-# Dependencies (optional): branch-directive-check.sh, for the directive arm of
-# the discriminator. Absent, only the marker-label arm applies.
-
-# Marker label identifying an epic issue. Overridable for workspaces that use a
-# different convention.
-EPIC_MARKER_LABEL="${EPIC_MARKER_LABEL:-epic}"
+# Dependencies: manifest-read.sh, for the epic-manifest-presence check that
+# is the discriminator's only signal (tracker-planner-and-fallback-cutover,
+# 3.6 — the marker-label and Branch-Directive fallback arms are retired).
 
 # manifest-read.sh backs the epic-manifest-presence check in is_epic_issue
 # below (tracker-local-facts-read-migration). Guarded — flow.sh's own
@@ -26,42 +23,21 @@ fi
 # is_epic_issue <issue_json>
 # Returns 0 when the issue is an epic, 1 otherwise.
 #
-# Discriminates on three properties, in cost order — none requires a live
-# fetch beyond the payload the executor already has in hand:
-#   1. an epic manifest exists for this issue's identifier
-#      (tracker-local-facts-read-migration — a manifest existing is itself
-#      proof of epic-ness, since only EpicGen writes one)
-#   2. the epic marker label
-#   3. a valid Branch Directive in the description
-#
-# It deliberately does NOT read .issueType.name: that field is undefined in this
-# workspace, so a check against it evaluates as "not an epic" for every issue.
+# tracker-planner-and-fallback-cutover (3.6): manifest-only — an epic
+# manifest existing for this issue's identifier IS proof of epic-ness
+# (only EpicGen writes one), with no label or Branch-Directive fallback.
+# <issue_json> is kept as the parameter shape (every caller already has a
+# payload in hand, even if only `{"identifier": "..."}` — flow.sh's own
+# synthetic payload) so only `.identifier`/`.id` is ever read from it; a
+# caller with no other reason to build a payload may pass `{}` — with no
+# identifier, this correctly reports "not an epic".
 is_epic_issue() {
   local issue_json="$1"
-  local marker="${EPIC_MARKER_LABEL:-epic}"
 
   local identifier
   identifier=$(echo "$issue_json" | jq -r '.identifier // .id // empty' 2>/dev/null || true)
-  if [ -n "$identifier" ] && declare -f epic_manifest_exists >/dev/null 2>&1 &&
-    epic_manifest_exists "$identifier" 2>/dev/null; then
-    return 0
-  fi
-
-  local labels
-  labels=$(echo "$issue_json" | jq -r '[.labels.nodes[]?.name] | join(",")' 2>/dev/null || true)
-  if [ -n "$labels" ] && echo "$labels" | tr ',' '\n' | grep -qix "$marker"; then
-    return 0
-  fi
-
-  local desc
-  desc=$(echo "$issue_json" | jq -r '.description // ""' 2>/dev/null || true)
-  if [ -n "$desc" ] && declare -f check_branch_directive_description >/dev/null 2>&1; then
-    if check_branch_directive_description "$desc" >/dev/null 2>&1; then
-      return 0
-    fi
-  fi
-
-  return 1
+  [ -n "$identifier" ] && declare -f epic_manifest_exists >/dev/null 2>&1 &&
+    epic_manifest_exists "$identifier" 2>/dev/null
 }
 
 # check_precondition <precondition> <subject> <issue_json>
@@ -79,7 +55,7 @@ check_precondition() {
     if is_epic_issue "$issue_json"; then
       return 0
     fi
-    echo "precondition failed — '${subject}' applies only to epic issues (no '${EPIC_MARKER_LABEL:-epic}' label and no valid Branch Directive)" >&2
+    echo "precondition failed — '${subject}' applies only to epic issues (no epic manifest found)" >&2
     return 8
     ;;
   must_not_be_epic)
