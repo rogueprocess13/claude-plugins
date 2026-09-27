@@ -12,13 +12,28 @@ LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # which is why an always-true discriminator survived with a green suite.
 source "$LIB_DIR/planned-ticket-check.sh" 2>/dev/null || true
 source "$LIB_DIR/branch-directive-check.sh" 2>/dev/null || true
+source "$LIB_DIR/manifest-write.sh" 2>/dev/null || true
 source "$LIB_DIR/epic-precondition.sh"
 
-# Issue payloads in the shape get_issue returns.
+# Issue payloads in the shape get_issue returns. is_epic_issue (tracker-
+# planner-and-fallback-cutover, 3.6) reads only .identifier from these now —
+# neither the "epic" label nor the Branch Directive in the description is
+# consulted any more. Epic-ness is proven by an epic manifest existing for
+# that identifier, seeded below; the two fixture names ("by label" / "by
+# directive") are historical — both are just "an epic" today.
 EPIC_BY_LABEL_JSON='{"identifier":"INIT-42","description":"An initiative epic.","labels":{"nodes":[{"name":"epic"},{"name":"planned"}]}}'
 EPIC_BY_DIRECTIVE_JSON='{"identifier":"INIT-43","description":"## Branch Directive\n**Schema-Version:** 1\n**Branch:** epic/phase-a\n**Base:** develop\n**Merge Policy:** manual\n**Sync Policy:** none\n**Created:** 2026-07-25T10:00:00Z","labels":{"nodes":[]}}'
 CHILD_BUG_JSON='{"identifier":"CRE-9","description":"Fix the auth bug.","labels":{"nodes":[{"name":"bug"},{"name":"planned"}]}}'
 CHILD_TASK_JSON='{"identifier":"CRE-10","description":"A task.","labels":{"nodes":[{"name":"chore"}]}}'
+
+# REPOS_ROOT + epic manifests for INIT-42/INIT-43 — is_epic_issue's only
+# signal. CRE-9/CRE-10 deliberately get no manifest — they must read as
+# non-epics.
+export REPOS_ROOT="${REPOS_ROOT:-$(mktemp -d)}"
+if declare -f write_epic_manifest >/dev/null 2>&1; then
+  write_epic_manifest "INIT-42" "epic/init-42" "per-ticket" "manual" '[]' >/dev/null
+  write_epic_manifest "INIT-43" "epic/init-43" "per-ticket" "manual" '[]' >/dev/null
+fi
 
 PASS=0
 FAIL=0

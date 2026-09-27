@@ -139,8 +139,13 @@ _run_check "empty body → exit 2" 2 "body_source_unavailable" \
   "TEST-5" "bug" "" "true"
 
 # 6. Plane body.md preferred over description (when plane exists)
+# tracker-planner-and-fallback-cutover (3.3): resolve_planner_dir resolves
+# {INIT} from the local initiative index alone now — no description
+# parsing — so the index entry must exist for TEST-6 or resolution fails
+# and body.md is never found.
 TEST_DIR="$REPOS_ROOT/.ticket-auto/initiatives/INIT-42/tickets/TEST-6/planner"
-mkdir -p "$TEST_DIR"
+mkdir -p "$TEST_DIR" "$REPOS_ROOT/.ticket-auto/initiatives/_index"
+echo "INIT-42" >"$REPOS_ROOT/.ticket-auto/initiatives/_index/TEST-6.initiative"
 echo "$COMPLETE_BUG_BODY" >"$TEST_DIR/body.md"
 # Provide a desc with Planner Context (so plane resolves) but thin body content that
 # would fail if used — the plane body.md should be preferred instead.

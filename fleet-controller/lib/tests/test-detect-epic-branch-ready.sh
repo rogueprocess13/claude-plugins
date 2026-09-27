@@ -2,6 +2,15 @@
 # test-detect-epic-branch-ready.sh — tests for the D-12 epic-branch-readiness
 # detector's actuation wiring (epic_branch_open_pr) and its use of the
 # canonical epic_branch_children_done helper.
+#
+# tracker-planner-and-fallback-cutover (3.4/3.11): both the readiness check
+# (epic_branch_children_done) and the detector's own population/state reads
+# are manifest-only now — no live get_epics_by_label/get_parent_with_children
+# fallback exists anywhere in this call path any more. Every fixture here
+# seeds a real epic manifest (write_epic_manifest/set_epic_stage) plus each
+# child's own pipeline-log terminal state (ticket_pipeline_terminal_done),
+# instead of mocking a live Linear response.
+#
 # Usage: bash test-detect-epic-branch-ready.sh [test_name_filter]
 set -eo pipefail
 
@@ -27,59 +36,44 @@ _run() {
 # ── Stubs (CI-safe, before sourcing the library) ───────────────────────────────
 
 if ! declare -f get_issue >/dev/null 2>&1; then
-  # Unwrapped shape — get_issue in linear-api.sh returns .data.issue itself.
   get_issue() { echo '{"identifier":"STUB","description":""}'; }
 fi
 
 source "$TAP_LIB_DIR/planned-ticket-check.sh" 2>/dev/null || true
 source "$TAP_LIB_DIR/branch-directive-check.sh" 2>/dev/null || true
+source "$TAP_LIB_DIR/manifest-write.sh" 2>/dev/null || true
 source "$TAP_LIB_DIR/epic-branch.sh" 2>/dev/null || true
 source "$LIB_DIR/fleet-detect.sh" 2>/dev/null || true
 
 # ── Fixtures ────────────────────────────────────────────────────────────────────
 
-VALID_DIRECTIVE='## Branch Directive
-**Schema-Version:** 1
-**Branch:** epic/test-branch
-**Base:** develop
-**Merge Policy:** manual
-**Sync Policy:** none
-**Created:** 2026-07-25T10:00:00Z'
-
-# get_epics_by_label response the detector's client call would return
-# (tracker-client-consolidation — unwrapped array, no .data.issues.nodes
-# prefix). _FIXTURE_EPICS_JSON env selects between: all children Done, one
-# child in progress, or no directive.
-_mock_linear_curl() {
-  get_epics_by_label() {
-    echo "$_FIXTURE_EPICS_JSON"
-  }
+# Seeds an epic manifest for the detector: EPIC_ID, BRANCH (empty string —
+# not omitted — means "no directive"), CHILDREN_JSON (array of ticket ids),
+# and an optional STAGE (Backlog/Review/UAT/Done; empty leaves it unset,
+# which the never-regress short-circuit treats as active).
+_seed_epic() {
+  local repos_root="$1" epic_id="$2" branch="$3" children_json="$4" stage="${5:-}"
+  REPOS_ROOT="$repos_root" write_epic_manifest "$epic_id" "$branch" "per-ticket" "manual" "$children_json" >/dev/null
+  # fleet_local_epics (the detector's own population source) filters to
+  # dispatch == true — write_epic_manifest alone leaves it false.
+  REPOS_ROOT="$repos_root" stamp_epic_dispatch "$epic_id" >/dev/null
+  [ -n "$stage" ] && REPOS_ROOT="$repos_root" set_epic_stage "$epic_id" "$stage" >/dev/null
+  return 0
 }
 
-_make_epics_json() {
-  local children="$1" description="$2" epic_state="${3:-Backlog}"
-  jq -nc \
-    --argjson children "$children" \
-    --arg description "$description" \
-    --arg state "$epic_state" \
-    '[{id:"e1",identifier:"INIT-42",description:$description,state:{name:$state},children:{nodes:$children}}]'
+# Marks $tid's pipeline log as terminally done (ticket_pipeline_terminal_done).
+_seed_child_done() {
+  local ws="$1" tid="$2"
+  mkdir -p "$ws"
+  echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >>"${ws}/${tid}-pipeline.log"
 }
 
-# JSONL children streams (one child object per line) — the format
-# epic_branch_children_done consumes. Children carry the planned label: the
-# readiness contract is "planned children are all Done".
-ALL_DONE_CHILDREN='{"id":"c1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}
-{"id":"c2","identifier":"CRE-2","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}'
-
-ONE_IN_PROGRESS_CHILDREN='{"id":"c1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}
-{"id":"c2","identifier":"CRE-2","state":{"name":"In Progress"},"labels":{"nodes":[{"name":"planned"}]}}'
-
-# Compact JSON arrays for the GraphQL fixture (children.nodes is an array).
-ALL_DONE_CHILDREN_ARR='[{"id":"c1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}},{"id":"c2","identifier":"CRE-2","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}}]'
-ONE_IN_PROGRESS_CHILDREN_ARR='[{"id":"c1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}},{"id":"c2","identifier":"CRE-2","state":{"name":"In Progress"},"labels":{"nodes":[{"name":"planned"}]}}]'
-
-# A non-planned child (future work) that must not block readiness.
-NON_PLANNED_CHILD_ARR='[{"id":"c1","identifier":"CRE-1","state":{"name":"Done"},"labels":{"nodes":[{"name":"planned"}]}},{"id":"c2","identifier":"CRE-2","state":{"name":"Todo"},"labels":{"nodes":[]}}]'
+# $tid has a pipeline log, but it is not yet terminal — still in progress.
+_seed_child_in_progress() {
+  local ws="$1" tid="$2"
+  mkdir -p "$ws"
+  echo "2026-01-01T00:00:00Z|IMPLEMENT|implement|start|" >>"${ws}/${tid}-pipeline.log"
+}
 
 # Fixture REPOS_ROOT: two git repos (tracked set) + one non-git dir.
 _make_repos_root() {
@@ -129,30 +123,18 @@ _mock_open_pr_noisy() {
 # Run the detector in a clean subshell with the given env, capture stdout.
 # Ordering matters: the real epic-branch.sh is sourced BEFORE the open_pr
 # recorder mock is installed, so the detector's lazy `! declare -f
-# epic_branch_children_done` source is skipped and the mock survives.
+# epic_branch_children_done` source is skipped and the mock survives. Manifest
+# state (epic + pipeline logs) is seeded by the caller in the parent shell
+# before this runs — nothing here mocks a live Linear read any more.
 _run_detector() {
-  local ws="$1" repos_root="$2" auto_pr="$3" calls_file="$4" fixture="$5"
-  # No 6th-arg override in current use — get_parent_with_children's stub
-  # always derives from $fixture itself now (tracker-local-facts-read-
-  # migration: no epic manifest exists in these fixtures' REPOS_ROOT, so
-  # epic_branch_children_done falls back to this live-fetch mock; it must
-  # agree with $fixture's own children or the detector's readiness and the
-  # mocked fetch silently disagree).
-  local children_arr="${6:-}"
+  local ws="$1" repos_root="$2" auto_pr="$3" calls_file="$4"
   bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
-    _FIXTURE_EPICS_JSON='$fixture'
-    if [ -n '$children_arr' ]; then
-      _STUB_CHILDREN='$children_arr'
-    else
-      _STUB_CHILDREN=\$(echo \"\$_FIXTURE_EPICS_JSON\" | jq -c '.[0].children.nodes // []')
-    fi
-    get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
     source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/manifest-write.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
-    $(declare -f _mock_linear_curl _mock_open_pr_recorder)
-    _mock_linear_curl
+    $(declare -f _mock_open_pr_recorder)
     _mock_open_pr_recorder '$calls_file'
     REPOS_ROOT='$repos_root'
     FLEET_EPIC_AUTO_PR='$auto_pr'
@@ -165,17 +147,14 @@ _run_detector() {
 # Run the detector with a recording stub for the state-advancement helper, so
 # tests can assert how many times (and whether) the epic was advanced.
 _run_detector_recording_advance() {
-  local ws="$1" repos_root="$2" calls_file="$3" fixture="$4" advance_file="$5" mock_fn="${6:-_mock_open_pr_recorder}"
+  local ws="$1" repos_root="$2" calls_file="$3" advance_file="$4" mock_fn="${5:-_mock_open_pr_recorder}"
   bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
-    _STUB_CHILDREN='$ALL_DONE_CHILDREN_ARR'
-    get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
     source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/manifest-write.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
-    _FIXTURE_EPICS_JSON='$fixture'
-    $(declare -f _mock_linear_curl _mock_open_pr_recorder _mock_open_pr_noisy _mock_open_pr_no_pr)
-    _mock_linear_curl
+    $(declare -f _mock_open_pr_recorder _mock_open_pr_no_pr)
     $mock_fn '$calls_file'
     REPOS_ROOT='$repos_root'
     FLEET_EPIC_AUTO_PR='true'
@@ -196,10 +175,12 @@ test_opens_pr_once_per_tracked_repo_when_ready() {
   local calls_file="${ws}/calls.log"
   rm -f "$calls_file"
 
-  local fixture
-  fixture=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE")
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]'
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
+
   local out
-  out=$(_run_detector "$ws" "$repos_root" "true" "$calls_file" "$fixture")
+  out=$(_run_detector "$ws" "$repos_root" "true" "$calls_file")
 
   # Finding reported at severity 1
   [ "$(echo "$out" | jq -r '.severity')" = "1" ] || {
@@ -226,10 +207,12 @@ test_no_pr_when_not_ready() {
   local calls_file="${ws}/calls.log"
   rm -f "$calls_file"
 
-  local fixture
-  fixture=$(_make_epics_json "$ONE_IN_PROGRESS_CHILDREN_ARR" "$VALID_DIRECTIVE")
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]'
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_in_progress "$ws" "CRE-2"
+
   local out
-  out=$(_run_detector "$ws" "$repos_root" "true" "$calls_file" "$fixture")
+  out=$(_run_detector "$ws" "$repos_root" "true" "$calls_file")
 
   [ "$(echo "$out" | jq -r '.severity')" = "0" ] || {
     echo "expected severity 0 when not ready, got: $out" >&2
@@ -250,21 +233,19 @@ test_no_pr_when_auto_pr_disabled_but_finding_reported() {
   local calls_file="${ws}/calls.log"
   rm -f "$calls_file"
 
-  local fixture
-  fixture=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE")
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]'
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
 
-  # Unset FLEET_EPIC_AUTO_PR (default false)
+  # FLEET_EPIC_AUTO_PR left unset (default false).
   local out
   out=$(bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
-    _STUB_CHILDREN='$ALL_DONE_CHILDREN_ARR'
-    get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
     source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/manifest-write.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
-    _FIXTURE_EPICS_JSON='$fixture'
-    $(declare -f _mock_linear_curl _mock_open_pr_recorder)
-    _mock_linear_curl
+    $(declare -f _mock_open_pr_recorder)
     _mock_open_pr_recorder '$calls_file'
     REPOS_ROOT='$repos_root'
     FLEET_PIPELINE_LOG_DIR='$ws'
@@ -291,11 +272,12 @@ test_repeated_cycles_are_noops_via_helper_idempotency() {
   local calls_file="${ws}/calls.log"
   rm -f "$calls_file"
 
-  local fixture
-  fixture=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE")
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]'
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
 
-  _run_detector "$ws" "$repos_root" "true" "$calls_file" "$fixture" >/dev/null
-  _run_detector "$ws" "$repos_root" "true" "$calls_file" "$fixture" >/dev/null
+  _run_detector "$ws" "$repos_root" "true" "$calls_file" >/dev/null
+  _run_detector "$ws" "$repos_root" "true" "$calls_file" >/dev/null
 
   # The detector delegates idempotency to epic_branch_open_pr (existing-PR
   # check, unit-tested in test-epic-branch.sh). At the detector level the
@@ -321,8 +303,9 @@ test_never_merges_regardless_of_config() {
   local gh_log="${ws}/gh.log"
   rm -f "$calls_file" "$gh_log"
 
-  local fixture
-  fixture=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE")
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]'
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
 
   # Wrap gh so any merge invocation is recorded — none may ever occur from
   # the detector, regardless of FLEET_EPIC_AUTO_PR.
@@ -332,10 +315,9 @@ test_never_merges_regardless_of_config() {
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
     source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/manifest-write.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
-    _FIXTURE_EPICS_JSON='$fixture'
-    $(declare -f _mock_linear_curl _mock_open_pr_recorder)
-    _mock_linear_curl
+    $(declare -f _mock_open_pr_recorder)
     _mock_open_pr_recorder '$calls_file'
     REPOS_ROOT='$repos_root'
     FLEET_EPIC_AUTO_PR=true
@@ -352,47 +334,48 @@ test_never_merges_regardless_of_config() {
 }
 
 test_readiness_matches_children_done_helper() {
-  local ws
-  ws=$(mktemp -d)
+  local repos_root
+  repos_root=$(mktemp -d)
+  local ws_ready ws_notready
+  ws_ready=$(mktemp -d)
+  ws_notready=$(mktemp -d)
 
-  # Same children fixture fed to both the helper and the detector — the
+  # Same manifest shape fed to both the helper and the detector — the
   # detector's severity must agree with the helper's exit code in both
   # ready and not-ready cases.
-  local ready_out notready_out helper_ready helper_notready
-  helper_ready=0
-  helper_notready=0
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]'
+  _seed_child_done "$ws_ready" "CRE-1"
+  _seed_child_done "$ws_ready" "CRE-2"
+  _seed_child_done "$ws_notready" "CRE-1"
+  _seed_child_in_progress "$ws_notready" "CRE-2"
 
-  epic_branch_children_done "INIT-42" "$ALL_DONE_CHILDREN" 2>/dev/null || helper_ready=$?
-  epic_branch_children_done "INIT-42" "$ONE_IN_PROGRESS_CHILDREN" 2>/dev/null || helper_notready=$?
+  local helper_ready=0 helper_notready=0
+  REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$ws_ready" epic_branch_children_done "INIT-42" 2>/dev/null || helper_ready=$?
+  REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$ws_notready" epic_branch_children_done "INIT-42" 2>/dev/null || helper_notready=$?
 
+  local ready_out notready_out
   ready_out=$(bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
-    _STUB_CHILDREN='$ALL_DONE_CHILDREN_ARR'
-    get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
     source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/manifest-write.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
-    _FIXTURE_EPICS_JSON='$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE")'
-    $(declare -f _mock_linear_curl)
-    _mock_linear_curl
-    FLEET_PIPELINE_LOG_DIR='$ws'
+    REPOS_ROOT='$repos_root'
+    FLEET_PIPELINE_LOG_DIR='$ws_ready'
     source '$LIB_DIR/fleet-detect.sh'
-    _fleet_scan_epic_branch_ready '$ws' 2>/dev/null
+    _fleet_scan_epic_branch_ready '$ws_ready' 2>/dev/null
   " 2>/dev/null || true)
 
   notready_out=$(bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
-    _STUB_CHILDREN='$ONE_IN_PROGRESS_CHILDREN_ARR'
-    get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
     source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/manifest-write.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
-    _FIXTURE_EPICS_JSON='$(_make_epics_json "$ONE_IN_PROGRESS_CHILDREN_ARR" "$VALID_DIRECTIVE")'
-    $(declare -f _mock_linear_curl)
-    _mock_linear_curl
-    FLEET_PIPELINE_LOG_DIR='$ws'
+    REPOS_ROOT='$repos_root'
+    FLEET_PIPELINE_LOG_DIR='$ws_notready'
     source '$LIB_DIR/fleet-detect.sh'
-    _fleet_scan_epic_branch_ready '$ws' 2>/dev/null
+    _fleet_scan_epic_branch_ready '$ws_notready' 2>/dev/null
   " 2>/dev/null || true)
 
   [ "$helper_ready" = "0" ] || {
@@ -414,7 +397,14 @@ test_readiness_matches_children_done_helper() {
   return 0
 }
 
-test_non_planned_child_does_not_block_ready() {
+# A child listed on the epic manifest with no pipeline log at all (never
+# dispatched/started) must block readiness the same as an in-progress one —
+# the manifest-only helper has no "excluded from consideration" concept any
+# more (the retired live path's "non-planned children don't count" filter
+# no longer exists: epic_branch_children_done iterates every manifest child
+# unconditionally). This is the manifest-era replacement for the old
+# non-planned-child test, which asserted a filter that is gone.
+test_unstarted_child_blocks_ready() {
   local ws
   ws=$(mktemp -d)
   local repos_root="${ws}/repos"
@@ -422,17 +412,19 @@ test_non_planned_child_does_not_block_ready() {
   local calls_file="${ws}/calls.log"
   rm -f "$calls_file"
 
-  local fixture
-  fixture=$(_make_epics_json "$NON_PLANNED_CHILD_ARR" "$VALID_DIRECTIVE")
-  local out
-  out=$(_run_detector "$ws" "$repos_root" "true" "$calls_file" "$fixture")
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]'
+  _seed_child_done "$ws" "CRE-1"
+  # CRE-2 has no pipeline log at all.
 
-  [ "$(echo "$out" | jq -r '.severity')" = "1" ] || {
-    echo "expected severity 1 (non-planned child must not block), got: $out" >&2
+  local out
+  out=$(_run_detector "$ws" "$repos_root" "true" "$calls_file")
+
+  [ "$(echo "$out" | jq -r '.severity')" = "0" ] || {
+    echo "expected severity 0 (unstarted child blocks readiness), got: $out" >&2
     return 1
   }
-  [ -s "$calls_file" ] || {
-    echo "open_pr not called despite readiness" >&2
+  [ ! -s "$calls_file" ] || {
+    echo "open_pr called despite an unstarted child: $(cat "$calls_file")" >&2
     return 1
   }
   return 0
@@ -446,10 +438,13 @@ test_no_directive_never_reaches_actuation() {
   local calls_file="${ws}/calls.log"
   rm -f "$calls_file"
 
-  local fixture
-  fixture=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "No directive here.")
+  # Empty branch field — the manifest-only "no directive" case.
+  _seed_epic "$repos_root" "INIT-42" "" '["CRE-1","CRE-2"]'
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
+
   local out
-  out=$(_run_detector "$ws" "$repos_root" "true" "$calls_file" "$fixture")
+  out=$(_run_detector "$ws" "$repos_root" "true" "$calls_file")
 
   [ "$(echo "$out" | jq -r '.severity')" = "0" ] || {
     echo "expected severity 0 without directive, got: $out" >&2
@@ -470,20 +465,18 @@ test_actuation_stdout_does_not_contaminate_result() {
   local calls_file="${ws}/calls.log"
   rm -f "$calls_file"
 
-  local fixture
-  fixture=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE")
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]'
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
 
   local out
   out=$(bash -c "
     get_issue() { echo '{\"identifier\":\"STUB\",\"description\":\"\"}'; }
-    _STUB_CHILDREN='$ALL_DONE_CHILDREN_ARR'
-    get_parent_with_children() { echo '{\"children\":'\"\$_STUB_CHILDREN\"'}'; }
     source '$TAP_LIB_DIR/planned-ticket-check.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/branch-directive-check.sh' 2>/dev/null || true
+    source '$TAP_LIB_DIR/manifest-write.sh' 2>/dev/null || true
     source '$TAP_LIB_DIR/epic-branch.sh' 2>/dev/null || true
-    _FIXTURE_EPICS_JSON='$fixture'
-    $(declare -f _mock_linear_curl _mock_open_pr_noisy)
-    _mock_linear_curl
+    $(declare -f _mock_open_pr_noisy)
     _mock_open_pr_noisy '$calls_file'
     REPOS_ROOT='$repos_root'
     FLEET_EPIC_AUTO_PR='true'
@@ -524,10 +517,12 @@ test_epic_already_advanced_is_skipped_before_repo_work() {
   rm -f "$calls_file" "$advance_file"
 
   # Epic already at Review — an operator (or an earlier cycle) advanced it.
-  local fixture
-  fixture=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE" "Review")
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]' "Review"
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
+
   local out
-  out=$(_run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$fixture" "$advance_file")
+  out=$(_run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$advance_file")
 
   # Skipped before ANY per-repository work.
   [ ! -s "$calls_file" ] || {
@@ -546,8 +541,8 @@ test_epic_already_advanced_is_skipped_before_repo_work() {
 }
 
 test_completed_epic_is_not_rescanned() {
-  # state:execution is never removed, so without the guard a Done epic is
-  # rescanned — repo loop included — on every cycle forever.
+  # The dispatch-eligibility flag is never removed, so without the guard a
+  # Done epic is rescanned — repo loop included — on every cycle forever.
   local ws
   ws=$(mktemp -d)
   local repos_root="${ws}/repos"
@@ -556,9 +551,11 @@ test_completed_epic_is_not_rescanned() {
   local advance_file="${ws}/advance.log"
   rm -f "$calls_file" "$advance_file"
 
-  local fixture
-  fixture=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE" "Done")
-  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$fixture" "$advance_file" >/dev/null
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]' "Done"
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
+
+  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$advance_file" >/dev/null
 
   [ ! -s "$calls_file" ] || {
     echo "  completed epic was rescanned: $(cat "$calls_file")" >&2
@@ -577,9 +574,10 @@ test_epic_not_regressed_across_repeated_cycles() {
   rm -f "$calls_file" "$advance_file"
 
   # Cycle 1: epic still in Backlog — advancement expected exactly once.
-  local fixture_before
-  fixture_before=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE" "Backlog")
-  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$fixture_before" "$advance_file" >/dev/null
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]' "Backlog"
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
+  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$advance_file" >/dev/null
 
   local first_count
   first_count=$(grep -c "INIT-42" "$advance_file" 2>/dev/null || true)
@@ -588,11 +586,11 @@ test_epic_not_regressed_across_repeated_cycles() {
     return 1
   }
 
-  # Cycles 2 and 3: the epic is now at Review — no further advancement, ever.
-  local fixture_after
-  fixture_after=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE" "Review")
-  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$fixture_after" "$advance_file" >/dev/null
-  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$fixture_after" "$advance_file" >/dev/null
+  # Cycles 2 and 3: the epic is now at Review (what a real advance would set)
+  # — no further advancement, ever.
+  REPOS_ROOT="$repos_root" set_epic_stage "INIT-42" "Review" >/dev/null
+  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$advance_file" >/dev/null
+  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$advance_file" >/dev/null
 
   local total
   total=$(grep -c "INIT-42" "$advance_file" 2>/dev/null || true)
@@ -612,9 +610,10 @@ test_advance_once_per_epic_not_per_repo() {
   local advance_file="${ws}/advance.log"
   rm -f "$calls_file" "$advance_file"
 
-  local fixture
-  fixture=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE" "Backlog")
-  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$fixture" "$advance_file" >/dev/null
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]' "Backlog"
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
+  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$advance_file" >/dev/null
 
   # Two tracked repos were visited...
   local repo_calls
@@ -644,9 +643,10 @@ test_no_advance_when_no_pr_observed() {
   local advance_file="${ws}/advance.log"
   rm -f "$calls_file" "$advance_file"
 
-  local fixture
-  fixture=$(_make_epics_json "$ALL_DONE_CHILDREN_ARR" "$VALID_DIRECTIVE" "Backlog")
-  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$fixture" "$advance_file" "_mock_open_pr_no_pr" >/dev/null
+  _seed_epic "$repos_root" "INIT-42" "epic/test-branch" '["CRE-1","CRE-2"]' "Backlog"
+  _seed_child_done "$ws" "CRE-1"
+  _seed_child_done "$ws" "CRE-2"
+  _run_detector_recording_advance "$ws" "$repos_root" "$calls_file" "$advance_file" "_mock_open_pr_no_pr" >/dev/null
 
   # The loop ran over both repos and returned success...
   [ -s "$calls_file" ] || {
@@ -669,7 +669,7 @@ _run "no_pr_when_auto_pr_disabled_but_finding_reported" test_no_pr_when_auto_pr_
 _run "repeated_cycles_are_noops_via_helper_idempotency" test_repeated_cycles_are_noops_via_helper_idempotency
 _run "never_merges_regardless_of_config" test_never_merges_regardless_of_config
 _run "readiness_matches_children_done_helper" test_readiness_matches_children_done_helper
-_run "non-planned child does not block ready" test_non_planned_child_does_not_block_ready
+_run "unstarted child blocks ready" test_unstarted_child_blocks_ready
 _run "no_directive_never_reaches_actuation" test_no_directive_never_reaches_actuation
 _run "actuation_stdout_does_not_contaminate_result" test_actuation_stdout_does_not_contaminate_result
 _run "epic already advanced is skipped before repo work" test_epic_already_advanced_is_skipped_before_repo_work

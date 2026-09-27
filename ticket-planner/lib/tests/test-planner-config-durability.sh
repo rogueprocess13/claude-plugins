@@ -138,47 +138,55 @@ in_new_process 'planner_state_init INIT-PROJ "an idea" >/dev/null
 
 prompt=$(in_new_process 'planner_prompt_epicgen INIT-PROJ "an idea" /tmp/state')
 
-if echo "$prompt" | grep -qF 'PROJECT_REF="Ledgerly M1"'; then
+# Here-strings (not `echo "$var" | grep`) throughout this block — under
+# `pipefail`, `grep -q`/`grep -m1` closing early after its first match on a
+# large multi-KB prompt can SIGPIPE an upstream `echo` still mid-write,
+# intermittently corrupting the pipeline's reported exit status regardless
+# of whether the match was actually found. Confirmed as the root cause of
+# this file's long-standing CI flakiness (multiple prior observations) —
+# reproduced ~25-40% failure rate under `echo | grep -q`, 0/40 under
+# `grep <<<`.
+if grep -qF 'PROJECT_REF="Ledgerly M1"' <<<"$prompt"; then
   pass "the project ref is interpolated into the EpicGen prompt as a literal"
 else
-  fail "project ref reaches EpicGen" "$(echo "$prompt" | grep -m1 'PROJECT_REF=' || echo 'absent')"
+  fail "project ref reaches EpicGen" "$(grep -m1 'PROJECT_REF=' <<<"$prompt" || echo 'absent')"
 fi
 
-if echo "$prompt" | grep -qF 'MILESTONE_REF="Vertical Slice 1"'; then
+if grep -qF 'MILESTONE_REF="Vertical Slice 1"' <<<"$prompt"; then
   pass "the milestone ref is interpolated into the EpicGen prompt as a literal"
 else
-  fail "milestone ref reaches EpicGen" "$(echo "$prompt" | grep -m1 'MILESTONE_REF=' || echo 'absent')"
+  fail "milestone ref reaches EpicGen" "$(grep -m1 'MILESTONE_REF=' <<<"$prompt" || echo 'absent')"
 fi
 
-if echo "$prompt" | grep -qF 'BRANCH_OVERRIDE="shared"'; then
+if grep -qF 'BRANCH_OVERRIDE="shared"' <<<"$prompt"; then
   pass "the branch override is interpolated into the EpicGen prompt as a literal"
 else
-  fail "branch override reaches EpicGen" "$(echo "$prompt" | grep -m1 'BRANCH_OVERRIDE=' || echo 'absent')"
+  fail "branch override reaches EpicGen" "$(grep -m1 'BRANCH_OVERRIDE=' <<<"$prompt" || echo 'absent')"
 fi
 
-if echo "$prompt" | grep -qF 'TEAM_REF="LED"'; then
+if grep -qF 'TEAM_REF="LED"' <<<"$prompt"; then
   pass "the team ref is interpolated into the EpicGen prompt as a literal"
 else
-  fail "team ref reaches EpicGen" "$(echo "$prompt" | grep -m1 'TEAM_REF=' || echo 'absent')"
+  fail "team ref reaches EpicGen" "$(grep -m1 'TEAM_REF=' <<<"$prompt" || echo 'absent')"
 fi
 
 # The project gate is the reason an unset --project is no longer silent (#256).
 # It has to be wired into the prompt, and wired in *before* the create call —
 # after it, the epic is already filed with no project and the gate is theatre.
-if echo "$prompt" | grep -qF 'planner_project_gate_check "INIT-PROJ" "$TEAM_ID"'; then
+if grep -qF 'planner_project_gate_check "INIT-PROJ" "$TEAM_ID"' <<<"$prompt"; then
   pass "EpicGen calls the project gate"
 else
   fail "EpicGen calls the project gate" "no planner_project_gate_check call in the prompt"
 fi
 
-if echo "$prompt" | grep -qF 'source "${CLAUDE_PLUGIN_ROOT}/lib/planner-project-gate.sh"'; then
+if grep -qF 'source "${CLAUDE_PLUGIN_ROOT}/lib/planner-project-gate.sh"' <<<"$prompt"; then
   pass "EpicGen sources the gate it calls"
 else
   fail "EpicGen sources the gate" "no source line for planner-project-gate.sh"
 fi
 
-gate_line=$(echo "$prompt" | grep -n 'planner_project_gate_check' | head -1 | cut -d: -f1)
-create_line=$(echo "$prompt" | grep -n 'EPIC_RESPONSE=$(planner_linear_create_issue' | head -1 | cut -d: -f1)
+gate_line=$(grep -m1 -n 'planner_project_gate_check' <<<"$prompt" | cut -d: -f1)
+create_line=$(grep -m1 -n 'EPIC_RESPONSE=$(planner_linear_create_issue' <<<"$prompt" | cut -d: -f1)
 if [ -n "$gate_line" ] && [ -n "$create_line" ] && [ "$gate_line" -lt "$create_line" ]; then
   pass "the gate runs before the epic is created"
 else
@@ -190,7 +198,7 @@ fi
 echo "--- Test 5: TicketGen files against the resolved ids ---"
 
 tg=$(in_new_process 'planner_prompt_ticketgen INIT-PROJ "an idea" /tmp/state')
-if echo "$tg" | grep -qF '"Ledgerly M1"'; then
+if grep -qF '"Ledgerly M1"' <<<"$tg"; then
   pass "TicketGen falls back to the raw ref before EpicGen has resolved one"
 else
   fail "TicketGen falls back to the raw ref" "no project ref in the prompt"
@@ -201,8 +209,8 @@ in_new_process 'planner_config_set INIT-PROJ linear-project-id "11111111-2222-33
                 planner_config_set INIT-PROJ linear-team-id "99999999-8888-7777-6666-555555555555"'
 
 tg=$(in_new_process 'planner_prompt_ticketgen INIT-PROJ "an idea" /tmp/state')
-if echo "$tg" | grep -qF '"11111111-2222-3333-4444-555555555555"' &&
-  ! echo "$tg" | grep -qF '"Ledgerly M1"'; then
+if grep -qF '"11111111-2222-3333-4444-555555555555"' <<<"$tg" &&
+  ! grep -qF '"Ledgerly M1"' <<<"$tg"; then
   pass "TicketGen prefers the resolved project id EpicGen persisted"
 else
   fail "TicketGen prefers the resolved project id" "still using the raw ref"
@@ -211,10 +219,10 @@ fi
 # The team is the one value where a second, independent lookup would be actively
 # harmful: children on a different team from their parent epic is unrecoverable
 # without deleting and recreating them.
-if echo "$tg" | grep -qF 'TEAM_ID="99999999-8888-7777-6666-555555555555"'; then
+if grep -qF 'TEAM_ID="99999999-8888-7777-6666-555555555555"' <<<"$tg"; then
   pass "TicketGen files children against the team id EpicGen resolved"
 else
-  fail "TicketGen reuses the resolved team id" "$(echo "$tg" | grep -m1 'TEAM_ID=' || echo 'absent')"
+  fail "TicketGen reuses the resolved team id" "$(grep -m1 'TEAM_ID=' <<<"$tg" || echo 'absent')"
 fi
 
 # ── Test 6: no library reads the flag variables at use time ────────────────────
