@@ -179,6 +179,56 @@ test_approve_well_formed_ticket_with_no_tracker_presence_succeeds() {
   fi
 }
 
+# ── approve: clears a set needs-info flag (dor-readiness-gate-foundation 6.5) ─
+
+test_approve_clears_needs_info_flag() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  _stub_lib_dir "$tmpdir/lib" "$marker" state-approve Approve state-ready Ready '[]' '[{"id":"lbl-approved","name":"approved"}]'
+  _seed_manifest "$tmpdir/repos" WIL-1 INIT-1 '{"flags":["needs-info"]}'
+
+  local out rc=0
+  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
+    bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+
+  local manifest="$tmpdir/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json"
+  local flags
+  flags=$(jq -c '.flags // []' "$manifest" 2>/dev/null)
+  rm -rf "$tmpdir"
+
+  if [ "$rc" -eq 0 ] && [ "$flags" = "[]" ] && echo "$out" | grep -q "needs_info_cleared=true"; then
+    _pass "approve.sh: clears a set needs-info flag via needs-info-resolved"
+  else
+    _fail "approve.sh: should clear needs-info flag (rc=$rc flags=$flags out=$out)"
+  fi
+}
+
+# ── approve: no-op when needs-info flag is absent ────────────────────────────
+
+test_approve_noop_when_needs_info_absent() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/lib" "$tmpdir/repos"
+  local marker="$tmpdir/mutated.marker"
+  _stub_lib_dir "$tmpdir/lib" "$marker" state-approve Approve state-ready Ready '[]' '[{"id":"lbl-approved","name":"approved"}]'
+  _seed_manifest "$tmpdir/repos" WIL-1
+
+  local out rc=0
+  out=$(FLEET_FENCE_ENFORCE=false CLAUDE_SKILLS_LIB="$tmpdir/lib" LOG_FILE="$tmpdir/logs/WIL-1-pipeline.log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" FLOW_SH="$FLOW_SH_REAL" \
+    bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
+  rm -rf "$tmpdir"
+
+  if [ "$rc" -eq 0 ] && echo "$out" | grep -q "needs_info_cleared=false"; then
+    _pass "approve.sh: no-op (needs_info_cleared=false) when flag is absent"
+  else
+    _fail "approve.sh: should report needs_info_cleared=false when flag absent (rc=$rc out=$out)"
+  fi
+}
+
 test_approve_usage_error_on_missing_arg() {
   local rc=0
   bash "$APPROVE_SH" >/dev/null 2>&1 || rc=$?
@@ -193,6 +243,8 @@ test_approve_planned_ticket
 test_approve_adhoc_ticket
 test_reject_clears_approval
 test_approve_well_formed_ticket_with_no_tracker_presence_succeeds
+test_approve_clears_needs_info_flag
+test_approve_noop_when_needs_info_absent
 test_approve_usage_error_on_missing_arg
 
 echo "---"

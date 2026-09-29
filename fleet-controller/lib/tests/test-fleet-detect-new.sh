@@ -387,7 +387,9 @@ test_initiative_dispatch_manifest_finds_undispatched() {
   REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-300" "INIT-50" "bug" '[]' >/dev/null
   REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-301" "INIT-50" "bug" '[]' >/dev/null
   REPOS_ROOT="$repos_root" stamp_ticket_dispatch "CRE-300" >/dev/null
-  # CRE-301 left undispatched.
+  # CRE-301 left undispatched. Seeded ready (dor-readiness-gate-foundation
+  # task 7.3) so it counts as awaiting-dispatch, not not-ready.
+  REPOS_ROOT="$repos_root" set_ticket_readiness "CRE-301" "ready" '[]' '[]' >/dev/null
 
   local result sev findings
   result=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch 2>/dev/null)

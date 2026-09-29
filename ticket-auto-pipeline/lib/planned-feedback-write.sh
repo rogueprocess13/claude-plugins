@@ -14,7 +14,7 @@
 # manifest-read.sh backs the planned-ticket check below (tracker-planner-and-
 # fallback-cutover, 3.14 sweep). Guarded — not every caller of this file has
 # already sourced it.
-if ! declare -f ticket_manifest_exists >/dev/null 2>&1; then
+if ! declare -f ticket_is_planned >/dev/null 2>&1; then
   _PFW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   [ -f "$_PFW_LIB_DIR/manifest-read.sh" ] && source "$_PFW_LIB_DIR/manifest-read.sh"
 fi
@@ -25,13 +25,16 @@ planned_feedback_write() {
   local tid="$1" log_file="$2"
 
   # Gate: only emit feedback for planned tickets. tracker-planner-and-
-  # fallback-cutover (3.14 sweep): manifest-only — a planned ticket always
-  # has a ticket manifest (write_ticket_manifest runs at planning time), so
-  # ticket_manifest_exists is the fallback when the caller hasn't already
-  # set FROM_PLANNED, no live Linear read needed.
+  # fallback-cutover (3.14 sweep) + Section 5 discriminator fix: a real
+  # initiative, not bare manifest existence, is what makes a ticket planned —
+  # flow.sh's _ensure_manifest stamps an _adhoc manifest onto every non-epic
+  # trigger, so ticket_manifest_exists alone would misclassify an ad-hoc
+  # ticket as planned the moment any trigger fires for it.
+  # ticket_is_planned is the fallback when the caller hasn't already set
+  # FROM_PLANNED; no live Linear read needed.
   if [ "${FROM_PLANNED:-false}" != "true" ]; then
     local has_planned=false
-    if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$tid"; then
+    if declare -f ticket_is_planned >/dev/null 2>&1 && ticket_is_planned "$tid"; then
       has_planned=true
     fi
     if [ "$has_planned" != "true" ]; then

@@ -352,9 +352,52 @@ EOF
   _teardown
   echo "$json" | jq -e '
     .verify_attempts == 0 and .review_iterations == 0 and .fix_rounds == 0
-    and .reconcile_cycles == 0 and .gate_stops == [] and .pr == null
-    and .tokens.in == 0
+    and .reconcile_cycles == 0 and .readiness_stops == 0 and .gate_stops == []
+    and .pr == null and .tokens.in == 0
   ' >/dev/null
+}
+
+# ── readiness_stops (readiness-as-evidence, dor-readiness-gate-foundation §9) ──
+
+test_json_readiness_stops_counts_gate_stop_codes_and_plan_missing_line() {
+  # Same two-part match as exit-path.sh's `readiness` failure class: a
+  # gate-stop code prefix and a plan-missing entry-gate hold line, both
+  # counted here across one run's window.
+  _setup
+  local log="$_ws/CRE-17-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|META|run-id|info|{"run_id":"CRE-17-a","gen":null,"trigger":"manual","pid":1}
+2026-09-01T00:00:02Z|GATE|gate|fail|held: plan missing 2/5 verification prerequisites (mode=browser)
+2026-09-01T00:00:03Z|META|outcome|info|held: gate
+2026-09-01T02:00:00Z|META|run-id|info|{"run_id":"CRE-17-b","gen":null,"trigger":"manual","pid":2}
+2026-09-01T02:00:01Z|META|gate-stop|fail|TICKET_NOT_READY
+2026-09-01T02:00:02Z|META|outcome|info|stopped: gate-stop TICKET_NOT_READY
+EOF
+  local json count
+  json=$(run_summary_json "CRE-17" "$log" 1)
+  count=$(echo "$json" | jq -r '.readiness_stops')
+  _teardown
+  [ "$count" -eq 1 ] || {
+    echo "expected readiness_stops=1 scoped to the later run's window (the plan-missing hold belongs to the earlier run), got $count"
+    return 1
+  }
+}
+
+test_json_readiness_stops_zero_on_a_run_with_no_readiness_evidence() {
+  _setup
+  local log="$_ws/CRE-18-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|META|run-id|info|{"run_id":"CRE-18-a","gen":null,"trigger":"manual","pid":1}
+2026-09-01T00:00:02Z|META|gate-stop|fail|VERIFY_EXHAUSTED
+2026-09-01T00:00:03Z|META|outcome|info|stopped: gate-stop VERIFY_EXHAUSTED
+EOF
+  local json count
+  json=$(run_summary_json "CRE-18" "$log" 1)
+  count=$(echo "$json" | jq -r '.readiness_stops')
+  _teardown
+  [ "$count" -eq 0 ]
 }
 
 test_json_detect_resume_not_sourced() {
@@ -402,6 +445,8 @@ for fn in \
   test_json_pr_created_beats_checkout_pr \
   test_json_token_split_summed_across_phases \
   test_json_empty_window_is_valid_json_with_zero_counters \
+  test_json_readiness_stops_counts_gate_stop_codes_and_plan_missing_line \
+  test_json_readiness_stops_zero_on_a_run_with_no_readiness_evidence \
   test_json_detect_resume_not_sourced \
   test_json_versions_carries_skill_fingerprints_verbatim \
   test_json_versions_groupable_by_skill_revision \

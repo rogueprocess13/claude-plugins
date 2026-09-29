@@ -17,7 +17,12 @@
 #   source audit-test-data-check.sh "$ticket_text"
 #   if [ "$NEEDS_TEST_DATA" = "true" ]; then ...
 
-set -eo pipefail
+# set -eo pipefail only when executed directly, never when sourced — see
+# audit-ac-testability.sh's identical guard for the full rationale
+# (dor-readiness-gate-foundation task 4.5/11).
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  set -eo pipefail
+fi
 
 audit_test_data_check() {
   local text="${1:-$(cat)}"

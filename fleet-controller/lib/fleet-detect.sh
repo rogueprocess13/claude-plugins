@@ -1267,20 +1267,46 @@ _fleet_scan_initiative_dispatch() {
     return
   }
 
-  local undispatched=0 initiative_ids=""
+  # dor-check.sh backs the readiness split below (dor-readiness-gate-
+  # foundation task 7.3) — same two-candidate guard-source convention as
+  # manifest-read.sh's own sourcing elsewhere in this file.
+  if ! declare -f ensure_ticket_readiness >/dev/null 2>&1; then
+    local _id_tap_lib
+    for _id_tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+      [ -f "$_id_tap_lib/dor-check.sh" ] && source "$_id_tap_lib/dor-check.sh" && break
+    done
+  fi
+
+  local undispatched=0 not_ready_total=0 initiative_ids="" not_ready_ids=""
   local epic_id
 
   while IFS= read -r epic_id; do
     [ -z "$epic_id" ] && continue
 
-    local children_json epic_undispatched=0 child_id
+    local children_json epic_undispatched=0 epic_not_ready=0 child_id
     children_json=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
     [ -z "$children_json" ] && children_json='[]'
 
     while IFS= read -r child_id; do
       [ -z "$child_id" ] && continue
-      [ "$(get_ticket_manifest_field "$child_id" dispatch 2>/dev/null)" = "true" ] ||
+      [ "$(get_ticket_manifest_field "$child_id" dispatch 2>/dev/null)" = "true" ] && continue
+
+      # ensure_ticket_readiness self-heals a never-scanned child (computes
+      # and caches a verdict on first touch) — never a bare read of a
+      # possibly-absent `ready` field. A not-ready child is reported under
+      # its own count, not as a ticket awaiting dispatch, because nothing
+      # will spawn it until its readiness is resolved. A child with no
+      # ticket manifest at all (predates this migration, or a data-integrity
+      # gap) has no readiness object to resolve — counted undispatched, same
+      # as before this change, rather than folded into the not-ready bucket.
+      if declare -f ticket_manifest_exists >/dev/null 2>&1 && ! ticket_manifest_exists "$child_id" 2>/dev/null; then
         epic_undispatched=$((epic_undispatched + 1))
+      elif declare -f ensure_ticket_readiness >/dev/null 2>&1 &&
+        ! ensure_ticket_readiness "$child_id" >/dev/null 2>&1; then
+        epic_not_ready=$((epic_not_ready + 1))
+      else
+        epic_undispatched=$((epic_undispatched + 1))
+      fi
     done < <(echo "$children_json" | jq -r '.[]?' 2>/dev/null)
 
     if [ "$epic_undispatched" -gt 0 ]; then
@@ -1291,14 +1317,24 @@ _fleet_scan_initiative_dispatch() {
       fi
       initiative_ids="${initiative_ids} ${epic_id}(${epic_undispatched})${stop_note}"
     fi
+    if [ "$epic_not_ready" -gt 0 ]; then
+      not_ready_total=$((not_ready_total + epic_not_ready))
+      not_ready_ids="${not_ready_ids} ${epic_id}(${epic_not_ready})"
+    fi
   done <<<"$_epic_ids"
 
   local findings
   findings=$(echo "$initiative_ids" | sed 's/^ //')
+  local not_ready_findings
+  not_ready_findings=$(echo "$not_ready_ids" | sed 's/^ //')
 
   if [ "$undispatched" -gt 0 ]; then
-    echo "{\"severity\":1,\"findings\":\"${undispatched} undispatched: ${findings}\"}"
+    local msg="${undispatched} undispatched: ${findings}"
+    [ "$not_ready_total" -gt 0 ] && msg="${msg} | ${not_ready_total} not-ready: ${not_ready_findings}"
+    echo "{\"severity\":1,\"findings\":\"${msg}\"}"
     _fleet_initiative_dispatch_auto_dispatch "$workspace" "$initiative_ids"
+  elif [ "$not_ready_total" -gt 0 ]; then
+    echo "{\"severity\":0,\"findings\":\"${not_ready_total} not-ready: ${not_ready_findings}\"}"
   else
     echo '{"severity":0,"findings":""}'
   fi
@@ -1565,6 +1601,22 @@ _fleet_sa_process_child() {
     return 0
   fi
 
+  # Readiness gate (dor-readiness-gate-foundation, task 7.4): a not-ready
+  # child has a deterministic reason for not running — reporting it as
+  # stalled, or auto-resuming it, would be wrong. ensure_ticket_readiness
+  # self-heals a never-scanned child (computes and caches a verdict on first
+  # touch), never a bare read of a possibly-absent `ready` field. Stale/
+  # blocking-sibling reporting (task 7.5) is evaluated only for a child that
+  # fails this check — a ready child is reported exactly as today.
+  local _sa_readiness_rc=0
+  if declare -f ensure_ticket_readiness >/dev/null 2>&1; then
+    ensure_ticket_readiness "$child_id" >/dev/null 2>&1 || _sa_readiness_rc=$?
+  fi
+  if [ "$_sa_readiness_rc" != "0" ]; then
+    _fleet_sa_report_not_ready "$child_id" "$epic_id" "$workspace"
+    return 0
+  fi
+
   # Live worker, preferring the fleet state store (authoritative — fleetd
   # is its sole writer) and falling back to the same file-based liveness
   # checks dispatch itself uses when no store is available, so this
@@ -1609,6 +1661,80 @@ _fleet_sa_process_child() {
   fi
 }
 
+# _fleet_sa_report_not_ready <child_id> <epic_id> <workspace>
+# dor-readiness-gate-foundation task 7.5: distinct finding text for a
+# not-ready child that has been not-ready for longer than
+# FLEET_READY_STALE_HOURS (default 48), or that is named in a sibling's
+# blocked_by array — a not-ready ticket with neither trait is silently
+# skipped (task 7.4's "not reported as stalled" behavior, unchanged).
+# Severity is never raised by this function; both callers of
+# _fleet_scan_stalled_approved_children's aggregate treat a readiness finding
+# the same WARN-capped way as a stalled-child finding (design.md Decision 10:
+# "a not-ready ticket has no process to kill").
+#
+# `ready.checked_at` is the manifest's own timestamp for when the cached
+# verdict was computed — ensure_ticket_readiness (Decision 3) only computes
+# once and trusts the cache thereafter, so this timestamp is frozen at "first
+# found not-ready" until something re-scans, making it a valid proxy for
+# staleness age without a second piece of state to track.
+#
+# Relies on the same dynamic (call-stack) local scoping as
+# _fleet_sa_process_child: reads/writes the caller's own
+# ready_stale_ids/ready_blocking_ids locals.
+_fleet_sa_report_not_ready() {
+  local child_id="$1" epic_id="$2" workspace="$3"
+
+  local stale_threshold_secs=$(((${FLEET_READY_STALE_HOURS:-48}) * 3600))
+  local ready_json checked_at="" checked_epoch=0 now_epoch age_secs=0
+  ready_json=$(get_ticket_manifest_field "$child_id" ready 2>/dev/null) || ready_json=""
+  if [ -n "$ready_json" ]; then
+    checked_at=$(echo "$ready_json" | jq -r '.checked_at // empty' 2>/dev/null)
+  fi
+  now_epoch=$(date -u +%s)
+  if [ -n "$checked_at" ]; then
+    checked_epoch=$(date -u -d "$checked_at" +%s 2>/dev/null || echo 0)
+    [ "$checked_epoch" -gt 0 ] && age_secs=$((now_epoch - checked_epoch))
+  fi
+  local is_stale=false
+  [ "$age_secs" -ge "$stale_threshold_secs" ] && is_stale=true
+
+  # Blocking-sibling: is this not-ready child named in another child-of-the-
+  # same-epic's blocked_by array? Scoped to the epic — the same population
+  # this detector already enumerates — rather than a fleet-wide scan.
+  local is_blocking=false
+  local _sib_children _sib_id _sib_blocked
+  _sib_children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+  [ -z "$_sib_children" ] && _sib_children='[]'
+  while IFS= read -r _sib_id; do
+    [ -z "$_sib_id" ] && continue
+    [ "$_sib_id" = "$child_id" ] && continue
+    _sib_blocked=$(get_ticket_manifest_field "$_sib_id" blocked_by 2>/dev/null)
+    [ -z "$_sib_blocked" ] && continue
+    if echo "$_sib_blocked" | jq -e --arg c "$child_id" 'type == "array" and (index($c) != null)' >/dev/null 2>&1; then
+      is_blocking=true
+      break
+    fi
+  done < <(echo "$_sib_children" | jq -r '.[]?' 2>/dev/null)
+
+  [ "$is_stale" = "true" ] || [ "$is_blocking" = "true" ] || return 0
+
+  local _sa_state_dir
+  _sa_state_dir=$(_fleet_state_dir "$workspace")
+
+  if [ "$is_stale" = "true" ]; then
+    ready_stale_ids="${ready_stale_ids} ${child_id}"
+    if declare -f fleet_notify_readiness >/dev/null 2>&1; then
+      fleet_notify_readiness "$child_id" "$_sa_state_dir" "stale" >/dev/null 2>&1 || true
+    fi
+  fi
+  if [ "$is_blocking" = "true" ]; then
+    ready_blocking_ids="${ready_blocking_ids} ${child_id}"
+    if declare -f fleet_notify_readiness >/dev/null 2>&1; then
+      fleet_notify_readiness "$child_id" "$_sa_state_dir" "blocking-sibling" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
 _fleet_scan_stalled_approved_children() {
   local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
 
@@ -1632,10 +1758,29 @@ _fleet_scan_stalled_approved_children() {
     done
   fi
 
+  # dor-check.sh backs the readiness gate in _fleet_sa_process_child (task
+  # 7.4) — same two-candidate guard-source convention as manifest-read.sh
+  # just above.
+  if ! declare -f ensure_ticket_readiness >/dev/null 2>&1; then
+    local _sa_dor_lib
+    for _sa_dor_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+      [ -f "$_sa_dor_lib/dor-check.sh" ] && source "$_sa_dor_lib/dor-check.sh" && break
+    done
+  fi
+
+  # fleet-notify.sh backs the stale/blocking-sibling active push in
+  # _fleet_sa_report_not_ready (task 7.9) — same guard-source pattern
+  # fleet-reconcile.sh already uses for fleet_notify_worker_event.
+  if ! declare -f fleet_notify_readiness >/dev/null 2>&1; then
+    [ -f "${_CONFIG_DIR}/fleet-notify.sh" ] && source "${_CONFIG_DIR}/fleet-notify.sh"
+  fi
+
   local auto_resume="${FLEET_AUTO_RESUME_STALLED:-false}"
   local stalled_count=0
   local stalled_ids=""
   local resumed_ids=""
+  local ready_stale_ids=""
+  local ready_blocking_ids=""
   local queue_file
   queue_file=$(_fleet_queue_file "$workspace")
   local store_ready=1
@@ -1673,21 +1818,38 @@ _fleet_scan_stalled_approved_children() {
     done < <(echo "$children_json" | jq -r '.[]?' 2>/dev/null)
   done <<<"$_epic_ids"
 
-  if [ "$stalled_count" -eq 0 ]; then
+  local stalled_text=""
+  if [ "$stalled_count" -gt 0 ]; then
+    local findings
+    findings=$(echo "$stalled_ids" | sed 's/^ //')
+    if [ "$auto_resume" = "true" ] && [ -n "$resumed_ids" ]; then
+      local resumed_findings
+      resumed_findings=$(echo "$resumed_ids" | sed 's/^ //')
+      stalled_text="${stalled_count} stalled approved child(ren): ${findings} — auto-resumed: ${resumed_findings}"
+    else
+      stalled_text="${stalled_count} stalled approved child(ren): ${findings}"
+    fi
+  fi
+
+  # Stale/blocking-sibling readiness findings (task 7.5) — distinct text,
+  # same WARN-capped severity, never folded into stalled_count (a not-ready
+  # child is never reported as stalled).
+  local readiness_text=""
+  if [ -n "$ready_stale_ids" ]; then
+    readiness_text="stale not-ready: $(echo "$ready_stale_ids" | sed 's/^ //')"
+  fi
+  if [ -n "$ready_blocking_ids" ]; then
+    local blocking_text
+    blocking_text="blocking-sibling not-ready: $(echo "$ready_blocking_ids" | sed 's/^ //')"
+    readiness_text="${readiness_text}${readiness_text:+ | }${blocking_text}"
+  fi
+
+  local combined="${stalled_text}${stalled_text:+${readiness_text:+ | }}${readiness_text}"
+  if [ -z "$combined" ]; then
     echo '{"severity":0,"findings":""}'
     return
   fi
-
-  local findings
-  findings=$(echo "$stalled_ids" | sed 's/^ //')
-
-  if [ "$auto_resume" = "true" ] && [ -n "$resumed_ids" ]; then
-    local resumed_findings
-    resumed_findings=$(echo "$resumed_ids" | sed 's/^ //')
-    echo "{\"severity\":1,\"findings\":\"${stalled_count} stalled approved child(ren): ${findings} — auto-resumed: ${resumed_findings}\"}"
-  else
-    echo "{\"severity\":1,\"findings\":\"${stalled_count} stalled approved child(ren): ${findings}\"}"
-  fi
+  echo "{\"severity\":1,\"findings\":\"${combined}\"}"
 }
 
 # Fleet-wide blocked-by scan. Runs once per fleet_detect_all call.

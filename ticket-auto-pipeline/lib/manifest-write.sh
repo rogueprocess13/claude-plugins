@@ -505,6 +505,156 @@ clear_epic_pending_event() {
   _manifest_atomic_write "$manifest_path" "$content"
 }
 
+# ── Readiness lock (blocking flock, FD 200) ─────────────────────────────────
+# Serializes set_ticket_readiness/waive_ticket_readiness_code's
+# read-modify-write on a per-ticket `{manifest_path}.lock` file
+# (dor-readiness-gate-foundation). FD 200 is deliberately distinct from
+# every flock FD already in use in this codebase (events.sh FD 7,
+# board-cursor.sh/run-summary.sh FD 8, adr-store.sh/corrections-parse.sh/
+# guidance-store.sh/verify-lock.sh/flow.sh FD 9) because flow.sh holds FD 9
+# open for its own ticket-flow lock for its entire process lifetime, not
+# transiently like the other FD-9 users above — reusing 9 here would
+# silently steal and then close flow.sh's own lock the instant either
+# readiness writer runs inside the same sourced shell.
+_manifest_readiness_lock() {
+  local lock_file="$1"
+  mkdir -p "$(dirname "$lock_file")" 2>/dev/null || true
+  exec 200>"$lock_file" || {
+    echo "manifest-write: failed to open lock file ${lock_file}" >&2
+    return 1
+  }
+  if ! flock -w "${MANIFEST_LOCK_TIMEOUT_SECS:-15}" 200; then
+    echo "manifest-write: lock timeout acquiring readiness lock (${lock_file})" >&2
+    exec 200>&-
+    return 1
+  fi
+}
+
+# _manifest_readiness_unlock — releases the lock acquired by
+# _manifest_readiness_lock.
+_manifest_readiness_unlock() {
+  exec 200>&- 2>/dev/null || true
+}
+
+# set_ticket_readiness <TID> <status|ready|not-ready> <missing_json> <advisory_json>
+# Writes a freshly computed readiness verdict (ticket-local-manifest spec).
+# Deliberately takes no `waived` argument: it always reads the manifest's
+# current `ready.waived` (defaulting to `{}` if absent), writes it back
+# verbatim alongside the fresh `missing`/`advisory`/`checked_at`, and
+# recomputes `status` itself as `ready` iff every code in the new `missing`
+# list is a key of that *preserved* `waived` map — the caller's own `status`
+# argument is validated but never trusted, since it was computed with no
+# knowledge of any waiver. It is structurally impossible for a re-scan to
+# clear a waiver because this function never receives one (design.md
+# Decision 2, revised 2026-09-27 — the original draft's single `[waived_json]`
+# parameter let a re-scan silently clobber an operator's waiver). Serializes
+# under the readiness lock with waive_ticket_readiness_code so the two
+# writers cannot lose one another's update. No-op (exit 1) if no manifest
+# exists yet — callers call ensure_ticket_manifest first.
+set_ticket_readiness() {
+  local tid="$1" status="$2" missing="${3:-[]}" advisory="${4:-[]}"
+  case "$status" in
+  ready | not-ready) ;;
+  *)
+    echo "manifest-write: invalid readiness status '$status' (expected ready|not-ready)" >&2
+    return 3
+    ;;
+  esac
+  if ! echo "$missing" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "manifest-write: missing must be a JSON array, got '$missing'" >&2
+    return 3
+  fi
+  if ! echo "$advisory" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "manifest-write: advisory must be a JSON array, got '$advisory'" >&2
+    return 3
+  fi
+
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+
+  local waived
+  waived=$(jq -c '.ready.waived // {}' "$manifest_path" 2>/dev/null) || waived='{}'
+  [ -n "$waived" ] || waived='{}'
+
+  local content write_rc
+  content=$(jq -c \
+    --argjson missing "$missing" --argjson advisory "$advisory" --argjson waived "$waived" \
+    --arg checked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.ready = {
+       status: (if ($missing - ($waived | keys)) == [] then "ready" else "not-ready" end),
+       checked_at: $checked_at, missing: $missing, advisory: $advisory, waived: $waived
+     }' \
+    "$manifest_path") || {
+    _manifest_readiness_unlock
+    return 1
+  }
+  _manifest_atomic_write "$manifest_path" "$content"
+  write_rc=$?
+  _manifest_readiness_unlock
+  return "$write_rc"
+}
+
+# waive_ticket_readiness_code <TID> <CODE> <by> <reason>
+# The only writer that adds to `ready.waived`. Merges one waiver in and
+# recomputes `status` from the manifest's own current `ready.missing` against
+# the updated waiver set — never touches `missing`, `advisory`, or any other
+# code's waiver. Serializes under the same readiness lock as
+# set_ticket_readiness. No-op (exit 1) if no manifest exists yet.
+waive_ticket_readiness_code() {
+  local tid="$1" code="$2" by="$3" reason="${4:-}"
+  [ -n "$code" ] || {
+    echo "manifest-write: code must be non-empty" >&2
+    return 3
+  }
+  [ -n "$by" ] || {
+    echo "manifest-write: by must be non-empty" >&2
+    return 3
+  }
+
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+
+  local content write_rc
+  content=$(jq -c \
+    --arg code "$code" --arg by "$by" --arg reason "$reason" \
+    '.ready.waived = ((.ready.waived // {}) + {($code): {by: $by, reason: $reason}})
+     | .ready.status = (if (((.ready.missing // []) - (.ready.waived | keys)) == []) then "ready" else "not-ready" end)' \
+    "$manifest_path") || {
+    _manifest_readiness_unlock
+    return 1
+  }
+  _manifest_atomic_write "$manifest_path" "$content"
+  write_rc=$?
+  _manifest_readiness_unlock
+  return "$write_rc"
+}
+
+# add_ticket_blocked_by <TID> <BLOCKER>
+# Appends BLOCKER to the ticket manifest's blocked_by[] if not already
+# present. Idempotent. Modelled on add_epic_manifest_child. No-op (exit 1)
+# if no manifest exists yet.
+add_ticket_blocked_by() {
+  local tid="$1" blocker="$2"
+  [[ "$blocker" =~ $_MANIFEST_ID_RE ]] || return 3
+
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  local content
+  content=$(jq -c --arg blocker "$blocker" \
+    '.blocked_by = ((.blocked_by // []) + [$blocker] | unique)' \
+    "$manifest_path") || return 1
+
+  _manifest_atomic_write "$manifest_path" "$content"
+}
+
 # ── Self-test mode ────────────────────────────────────────────────────────
 
 if [ "${1:-}" = "--self-test" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then

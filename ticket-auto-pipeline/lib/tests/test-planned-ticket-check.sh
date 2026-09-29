@@ -273,6 +273,27 @@ test_manifest_only_no_live_planned_label() {
   [ "$rc" -eq 0 ] && [ "$CHECK_RESULT" = "valid" ]
 }
 
+test_adhoc_manifest_does_not_satisfy_precondition() {
+  # Section 5 discriminator fix: an _adhoc-initiative manifest (exactly what
+  # flow.sh's ensure_ticket_manifest stamps onto every non-epic trigger) must
+  # NOT satisfy the manifest-presence precondition — only a real initiative
+  # does. Before the fix, bare ticket_manifest_exists would have returned
+  # true here and run 2.7's planned checks against an ad-hoc ticket.
+  get_issue() {
+    echo '{"description":"Just a regular ticket","labels":{"nodes":[]}}'
+  }
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" ensure_ticket_manifest "ADHOC-CRE-1" >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" check_planned_ticket "ADHOC-CRE-1" 2>/dev/null || rc=$?
+  rm -rf "$repos_root"
+
+  [ "$rc" -eq 0 ] && [ "$CHECK_RESULT" = "not_planned" ]
+}
+
 test_manifest_absent_falls_back_to_not_planned() {
   # No manifest anywhere — must fall back to the live label read exactly as
   # before (not_planned, since the label is absent here).
@@ -427,6 +448,7 @@ _run_exit_code "Pre-approved case sensitivity (TRUE) → exit 1" 1 test_pre_appr
 _run_exit_code "Strategy case sensitivity (conservative) → exit 1" 1 test_strategy_case_sensitivity
 _run "API fetch path with mocked get_issue → exit 0" test_api_fetch_path
 _run "manifest only — no live planned label → valid" test_manifest_only_no_live_planned_label
+_run "_adhoc manifest — does not satisfy planned precondition" test_adhoc_manifest_does_not_satisfy_precondition
 _run "manifest absent — falls back to not_planned" test_manifest_absent_falls_back_to_not_planned
 _run "not-planned ticket → exit 0" test_not_planned_ticket
 _run "planned ticket + valid block → exit 0" test_planned_ticket_valid

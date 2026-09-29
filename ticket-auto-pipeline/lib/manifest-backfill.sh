@@ -230,4 +230,109 @@ else
   echo "manifest-backfill epics: $epic_seeded seeded, $epic_skipped already complete, $epic_failed failed"
 fi
 
-[ "$failed" -eq 0 ] && [ "$epic_failed" -eq 0 ]
+# ── Readiness backfill (dor-readiness-gate-foundation, Section 8) ──────────
+# design.md Decision 6: every planned ticket manifest lacking `ready` is
+# stamped ready-with-a-legacy-backfill-waiver, so an already-approved,
+# in-flight ticket never takes a fresh, retroactive TICKET_NOT_READY the
+# first time something touches it post-ship. Enumeration must NOT be the
+# `*-pipeline.log` glob alone: a planned ticket that has never been
+# dispatched has no log yet, and that's precisely the population
+# fleet-dispatch.sh Step 2 governs. Unioned instead from three sources —
+# the pipeline-log glob, the initiative index (one file per ticket,
+# `{TID}.initiative`), and every epic manifest's own `children[]` — de-
+# duplicated via an associative array (not a `sort -u` pipe, so a fallible
+# command inside the union build can't trip `set -eo pipefail` mid-loop).
+declare -A _backfill_readiness_seen=()
+_backfill_readiness_tids=()
+_backfill_readiness_add() {
+  local t="$1"
+  [ -n "$t" ] || return 0
+  [ -n "${_backfill_readiness_seen[$t]:-}" ] && return 0
+  _backfill_readiness_seen[$t]=1
+  _backfill_readiness_tids+=("$t")
+}
+
+for log_file in "$LOG_DIR"/*-pipeline.log; do
+  [ -f "$log_file" ] || continue
+  _rb_tid=$(basename "$log_file")
+  _backfill_readiness_add "${_rb_tid%-pipeline.log}"
+done
+
+_backfill_repos_root=$(_manifest_repos_root 2>/dev/null) || _backfill_repos_root=""
+if [ -n "$_backfill_repos_root" ]; then
+  if [ -d "$_backfill_repos_root/.ticket-auto/initiatives/_index" ]; then
+    for idx_file in "$_backfill_repos_root/.ticket-auto/initiatives/_index"/*.initiative; do
+      [ -f "$idx_file" ] || continue
+      _rb_tid=$(basename "$idx_file")
+      _backfill_readiness_add "${_rb_tid%.initiative}"
+    done
+  fi
+
+  for epic_manifest in "$_backfill_repos_root"/.ticket-auto/initiatives/*/epic/manifest.json; do
+    [ -f "$epic_manifest" ] || continue
+    _rb_children=$(jq -r '.children[]? // empty' "$epic_manifest" 2>/dev/null) || _rb_children=""
+    while IFS= read -r _rb_child_tid; do
+      _backfill_readiness_add "$_rb_child_tid"
+    done <<<"$_rb_children"
+  done
+fi
+
+echo "---"
+echo "Readiness backfill (planned tickets lacking 'ready'):"
+
+ready_seeded=0
+ready_skipped=0
+ready_failed=0
+ready_dry_count=0
+
+for tid in "${_backfill_readiness_tids[@]}"; do
+  if ! ticket_manifest_exists "$tid" 2>/dev/null; then
+    echo "$tid: SKIP (no ticket manifest)"
+    ready_skipped=$((ready_skipped + 1))
+    continue
+  fi
+
+  if ! ticket_is_planned "$tid" 2>/dev/null; then
+    echo "$tid: SKIP (ad-hoc, not planned)"
+    ready_skipped=$((ready_skipped + 1))
+    continue
+  fi
+
+  existing_ready_rc=0
+  existing_ready=$(get_ticket_manifest_field "$tid" ready 2>/dev/null) || existing_ready_rc=$?
+  if [ "$existing_ready_rc" -eq 0 ] && [ -n "$existing_ready" ]; then
+    echo "$tid: SKIP (already carries ready)"
+    ready_skipped=$((ready_skipped + 1))
+    continue
+  fi
+
+  if $DRY_RUN; then
+    echo "$tid: WOULD SEED ready=ready (legacy-backfill waiver)"
+    ready_dry_count=$((ready_dry_count + 1))
+    continue
+  fi
+
+  if ! set_ticket_readiness "$tid" ready '[]' '[]' 2>/dev/null; then
+    echo "$tid: FAIL (could not write readiness)"
+    ready_failed=$((ready_failed + 1))
+    continue
+  fi
+  if ! waive_ticket_readiness_code "$tid" "*" "legacy-backfill" \
+    "migration-granted: ticket predates the DoR readiness gate" 2>/dev/null; then
+    echo "$tid: FAIL (could not write legacy waiver)"
+    ready_failed=$((ready_failed + 1))
+    continue
+  fi
+
+  echo "$tid: SEEDED ready=ready (legacy-backfill waiver)"
+  ready_seeded=$((ready_seeded + 1))
+done
+
+echo "---"
+if $DRY_RUN; then
+  echo "manifest-backfill readiness (dry-run): $ready_dry_count would be seeded, $ready_skipped already complete/ad-hoc/no-manifest, $ready_failed failed"
+else
+  echo "manifest-backfill readiness: $ready_seeded seeded, $ready_skipped already complete/ad-hoc/no-manifest, $ready_failed failed"
+fi
+
+[ "$failed" -eq 0 ] && [ "$epic_failed" -eq 0 ] && [ "$ready_failed" -eq 0 ]

@@ -254,6 +254,115 @@ test_class_agent_failure_via_phase_inspector() {
   return $ok
 }
 
+# ── readiness (readiness-as-evidence, dor-readiness-gate-foundation §9) ────────
+
+test_class_readiness_via_ticket_not_ready_gate_stop() {
+  local log
+  log=$(_tmp_log)
+  echo '2026-01-01T00:01:01Z|META|gate-stop|fail|TICKET_NOT_READY' >"$log"
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "readiness" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_class_readiness_via_planned_body_incomplete_gate_stop() {
+  local log
+  log=$(_tmp_log)
+  echo '2026-01-01T00:01:01Z|META|gate-stop|fail|PLANNED_BODY_INCOMPLETE' >"$log"
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "readiness" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_class_readiness_via_critique_blocked_gate_stop() {
+  # CRITIQUE_BLOCKED is peeled off by the readiness branch ahead of
+  # review_failure's gate-stop:CRITIQUE_BLOCKED* case, which can no longer
+  # be reached.
+  local log
+  log=$(_tmp_log)
+  echo '2026-01-01T00:01:01Z|META|gate-stop|fail|CRITIQUE_BLOCKED' >"$log"
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "readiness" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_class_readiness_via_plan_missing_gate_hold_line_not_outcome() {
+  # pipeline-finalize.sh writes the bare literal "held: gate" for every
+  # unreleased gate hold, plan-missing or not — the design's original draft
+  # would have matched this against $outcome and found nothing. The real
+  # reason only exists in the GATE|gate|fail|held: plan missing log line
+  # (gate-check.sh), which is what this must match against instead.
+  local log
+  log=$(_tmp_log)
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|GATE|gate|fail|held: plan missing 2/5 verification prerequisites (mode=browser test_user=0 nav=1 expected=1 env=1)
+2026-01-01T00:00:01Z|META|outcome|info|held: gate
+EOF
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "readiness" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_class_approval_gate_still_wins_when_no_plan_missing_line() {
+  # A held: gate outcome with no plan-missing log line (e.g. a complex-
+  # ticket approval gate) must still classify approval_gate, not readiness —
+  # the readiness match is scoped to the specific log-line evidence, not the
+  # generic "held: gate" outcome shape.
+  local log
+  log=$(_tmp_log)
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|GATE|gate|fail|held: awaiting human approval
+2026-01-01T00:00:01Z|META|outcome|info|held: gate
+EOF
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "approval_gate" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_class_readiness_completed_run_still_classifies_none() {
+  # The completed: -> none override (FINALIZE_FALSE_SUCCESS_OUTCOME) is
+  # authoritative regardless of vocabulary additions — a run that resolved
+  # its readiness stop and went on to complete must not carry a scar.
+  local log
+  log=$(_tmp_log)
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|META|gate-stop|fail|TICKET_NOT_READY
+2026-01-01T00:00:10Z|IMPLEMENT|implement|done|ok
+2026-01-01T00:00:11Z|META|outcome|info|completed: STEP_6
+EOF
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "none" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+test_readiness_reclassification_is_retroactive_on_an_archived_log() {
+  # Design.md Decision 9's migration-safety note: derive_failure_class is a
+  # pure on-demand re-derivation, not a value frozen at write time, so an
+  # already-archived log carrying CRITIQUE_BLOCKED — dated well before this
+  # change shipped — now reports readiness instead of its former
+  # review_failure. Intentional; asserted here so it is never "discovered".
+  local log
+  log=$(_tmp_log)
+  echo '2025-01-01T00:01:01Z|META|gate-stop|fail|CRITIQUE_BLOCKED' >"$log"
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "readiness" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
 # ── Invariant: completed outcome never carries a failure_class (issue #357) ────
 
 test_completed_outcome_overrides_stale_gate_stop_evidence() {
@@ -482,6 +591,13 @@ _run "pre-C0 bare auto-kill string classifies infrastructure_failure" test_a_pre
 _run "class: infrastructure_failure on worker API error" test_class_infrastructure_failure_on_worker_api_error
 _run "class: agent_failure fallback" test_class_agent_failure_fallback
 _run "class: agent_failure via phase-inspector" test_class_agent_failure_via_phase_inspector
+_run "class: readiness via TICKET_NOT_READY gate-stop" test_class_readiness_via_ticket_not_ready_gate_stop
+_run "class: readiness via PLANNED_BODY_INCOMPLETE gate-stop" test_class_readiness_via_planned_body_incomplete_gate_stop
+_run "class: readiness via CRITIQUE_BLOCKED gate-stop" test_class_readiness_via_critique_blocked_gate_stop
+_run "class: readiness via plan-missing gate-hold log line, not outcome" test_class_readiness_via_plan_missing_gate_hold_line_not_outcome
+_run "class: approval_gate still wins with no plan-missing log line" test_class_approval_gate_still_wins_when_no_plan_missing_line
+_run "class: readiness completed run still classifies none" test_class_readiness_completed_run_still_classifies_none
+_run "readiness reclassification is retroactive on an archived log" test_readiness_reclassification_is_retroactive_on_an_archived_log
 _run "completed outcome overrides stale gate-stop evidence" test_completed_outcome_overrides_stale_gate_stop_evidence
 _run "completed outcome overrides stale VERIFY_EXHAUSTED evidence" test_completed_outcome_overrides_stale_verify_exhausted_evidence
 _run "held: gate outcome still classifies approval_gate, not none" test_held_gate_outcome_still_classifies_approval_gate_not_none

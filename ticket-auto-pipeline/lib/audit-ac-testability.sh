@@ -17,7 +17,17 @@
 #   source audit-ac-testability.sh "$ac_text"
 #   if [ "$ALL_CLEAR" != "true" ]; then ...
 
-set -eo pipefail
+# set -eo pipefail only when executed directly, never when sourced
+# (dor-readiness-gate-foundation task 4.5/11 — this file is sourced
+# unconditionally by ticket-audit and, as of this change, by
+# lib/dor-check.sh; the unconditional form used to flip errexit/pipefail on
+# in every sourcing caller's own shell the instant `source` ran this line,
+# which is the same leak class events.sh/fence-check.sh already guard
+# against). Applying this same guard here fixes ticket-audit's pre-existing
+# leak as a side effect — see CHANGELOG.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  set -eo pipefail
+fi
 
 audit_ac_testability() {
   local text="${1:-$(cat)}"

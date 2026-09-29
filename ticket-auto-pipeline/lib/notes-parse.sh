@@ -6,6 +6,19 @@
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
 # errors in this bash version when nounset is active.
+#
+# NOT guarded the way audit-ac-testability.sh/audit-test-data-check.sh are
+# (dor-readiness-gate-foundation task 4.5/11) despite the identical-looking
+# leak: several functions here (get_complexity, get_test_users_by_role,
+# get_test_users_by_env, ...) call error_return mid-function with no
+# explicit `return` after it, relying on the caller's errexit being active
+# for that non-zero return to actually abort the function early — confirmed
+# by test-notes-parse.sh's test_missing_notes_file, which regresses (12 ->
+# 2) the moment this line stops firing for a caller with no errexit of its
+# own. Guarding this file would require auditing/fixing every such
+# early-return call site first, which is out of this change's scope —
+# see lib/dor-check.sh's sourcing block for how it works around this
+# instead (declare-guard only, no unconditional source).
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

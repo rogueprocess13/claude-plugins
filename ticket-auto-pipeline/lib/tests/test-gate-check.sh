@@ -193,14 +193,21 @@ source "$LIB_DIR/manifest-write.sh"
 # manifest" guard tests below to force Check 2.7's planned-ticket branch
 # onto its live-label path (no "planned" label in _fake_issue) while
 # get_ticket_manifest_field/set_ticket_approval still read/write the real
-# manifest file underneath. Only Check 2.7 (gate-check.sh:619,642) ever
-# calls ticket_manifest_exists, so this override is scoped to exactly the
-# behavior those tests need to bypass.
+# manifest file underneath. Check 2.7 (gate-check.sh:619,642) now calls
+# ticket_is_planned (Section 5 discriminator fix), not the bare
+# ticket_manifest_exists — both are overridden here, keyed off the same
+# flag, so this override stays scoped to exactly the behavior those tests
+# need to bypass.
 eval "$(declare -f ticket_manifest_exists | sed '1s/^ticket_manifest_exists ()/_real_ticket_manifest_exists()/')"
+eval "$(declare -f ticket_is_planned | sed '1s/^ticket_is_planned ()/_real_ticket_is_planned()/')"
 _fake_manifest_exists_override=""
 ticket_manifest_exists() {
   [ "$_fake_manifest_exists_override" = "false" ] && return 1
   _real_ticket_manifest_exists "$@"
+}
+ticket_is_planned() {
+  [ "$_fake_manifest_exists_override" = "false" ] && return 1
+  _real_ticket_is_planned "$@"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -771,6 +778,69 @@ test_verify_plan_heading_without_table_falls_back() {
   }
   [ -z "$held_line" ] || {
     echo "unexpected Check 2.6 hold: should have fallen back to artifact"
+    return 1
+  }
+}
+
+# 20b. Verification plan table found only in the planner's body.md (task 3.3
+# source order: notes.md → body.md → description) → same verdict as a
+# notes.md table, and the gate's own log line names body.md as the source.
+test_verify_plan_found_in_body_md_names_source() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _scaffold_critique 75 PASS
+  # notes.md deliberately has no ## Verification Plan section at all — the
+  # source chain must fall through past it to body.md.
+  # Bare artifact (touched empty by _scaffold_exec_done) — if the table were
+  # NOT actually being read from body.md, the artifact-fallback scan would
+  # find zero prereqs and Check 2.6 would hold, failing this test.
+
+  # Check 2.7's planned-body validation is orthogonal to what this test
+  # exercises (Check 2.6's source resolution) — suppress it the same way
+  # the existing REPOS_ROOT-based tests do, via the ticket_manifest_exists
+  # mock override. This does NOT affect resolve_planner_dir, which reads
+  # the on-disk initiative index directly rather than going through that
+  # mocked function.
+  _fake_manifest_exists_override="false"
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  local planner_dir="$repos_root/.ticket-auto/initiatives/INIT-1/tickets/${_tid}/planner"
+  mkdir -p "$planner_dir"
+  cat >"$planner_dir/body.md" <<'BODYEOF'
+## Verification Plan
+**Date:** 2026-06-24
+**Derived by:** ticket-appraise-exec Step 3.7
+**Overall role scope:** global
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|----------|-----------|----------------|-----------------|-------------------|-----------|
+| 1 | Attorney clicks Send to create handover | global | /handover/ | none | Handover created and visible in list | ✓ |
+| 2 | Admin views all handovers | role: admin | /admin/ | seed data: 3 handovers | All handovers displayed in admin table | ✓ |
+BODYEOF
+
+  REPOS_ROOT="$repos_root" _gate_entry
+  local rc=$?
+
+  local held_line source_line
+  held_line=$(grep 'held: plan missing' "$LOG_FILE" 2>/dev/null || true)
+  source_line=$(grep '|GATE|vplan-source|' "$LOG_FILE" 2>/dev/null || true)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 0 ] || {
+    echo "expected exit 0 (auto-approve via body.md table), got $rc"
+    return 1
+  }
+  [ -z "$held_line" ] || {
+    echo "unexpected Check 2.6 hold: body.md table should have supplied all 4 prereqs"
+    return 1
+  }
+  echo "$source_line" | grep -q 'source=body\.md' || {
+    echo "expected vplan-source log line to name body.md, got: $source_line"
     return 1
   }
 }
@@ -2338,6 +2408,35 @@ test_manifest_only_drives_check_2_7() {
   }
 }
 
+# Section 5 (planned-vs-ad-hoc discriminator fix): an _adhoc-initiative
+# manifest — exactly what flow.sh's ensure_ticket_manifest stamps onto every
+# non-epic trigger — must never enter Check 2.7a-e. Before the fix, bare
+# ticket_manifest_exists would have driven Check 2.7 off manifest presence
+# alone, regardless of initiative.
+test_adhoc_manifest_never_enters_check_2_7() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _fake_issue='{"id":"CRE-48","identifier":"CRE-48","title":"Test","description":"Just a regular ticket","labels":{"nodes":[]}}'
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" ensure_ticket_manifest "CRE-48" >/dev/null
+
+  REPOS_ROOT="$repos_root" _gate_entry >/dev/null 2>&1 || true
+
+  # grep -c already prints "0" (with exit 1) on zero matches — an `|| echo 0`
+  # fallback here would duplicate it into a two-line value.
+  local planned_check_lines
+  planned_check_lines=$(grep -c '|GATE|planned-check|' "$LOG_FILE" 2>/dev/null)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$planned_check_lines" -eq 0 ] || {
+    echo "expected Check 2.7 to be skipped for an _adhoc-initiative manifest, got $planned_check_lines planned-check lines"
+    return 1
+  }
+}
+
 # tracker-local-facts-read-migration (task 5.12): manifest's type field
 # drives template resolution even when the live labels carry no type label
 # at all.
@@ -2367,6 +2466,150 @@ test_manifest_type_field_drives_template_resolution() {
   }
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Check 2.7e: DoR entry-gate refusal (dor-readiness-gate-foundation task 6.4)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# A body with every section check_planned_body (2.7c, loose) requires, so
+# every test below reaches 2.7e rather than gate-stopping earlier on
+# PLANNED_BODY_INCOMPLETE. Readiness itself is seeded directly onto the
+# manifest via set_ticket_readiness — the self-healing cache (design.md
+# Decision 3) trusts a present `ready` field verbatim, so this exercises
+# gate-check.sh's own consumption of ensure_ticket_readiness/
+# ticket_dispatch_blocked_by_flags without depending on dor-check.sh's live
+# body-parsing nuances (already covered by test-dor-check.sh).
+_full_planned_body='## Acceptance Criteria
+- [ ] Save button works
+- [ ] Error toast appears
+
+## Test User
+`admin` — password `admin`
+
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| FE    | gateway | page |
+
+## Navigation Path
+`Settings > Handovers > Save`
+'
+
+test_check27e_not_ready_planned_ticket_gate_stops_naming_codes() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _fake_issue=$(jq -n --arg desc "$_full_planned_body" '{id:"CRE-47",identifier:"CRE-47",title:"Test",description:$desc,labels:{nodes:[]}}')
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-47" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_readiness "CRE-47" "not-ready" '["SCOPE_MISSING","AC_VAGUE"]' '[]' >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" _gate_entry >/dev/null 2>&1 || rc=$?
+
+  local gate_stop
+  gate_stop=$(grep 'TICKET_NOT_READY' "$LOG_FILE" 2>/dev/null || true)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2, got $rc"
+    return 1
+  }
+  echo "$gate_stop" | grep -q "SCOPE_MISSING" && echo "$gate_stop" | grep -q "AC_VAGUE" || {
+    echo "expected TICKET_NOT_READY gate-stop naming SCOPE_MISSING,AC_VAGUE — got: $gate_stop"
+    return 1
+  }
+}
+
+test_check27e_ready_planned_ticket_passes() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _fake_issue=$(jq -n --arg desc "$_full_planned_body" '{id:"CRE-47",identifier:"CRE-47",title:"Test",description:$desc,labels:{nodes:[]}}')
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-47" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_readiness "CRE-47" "ready" '[]' '[]' >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" _gate_entry >/dev/null 2>&1 || rc=$?
+
+  local gate_stop
+  gate_stop=$(grep -c 'TICKET_NOT_READY' "$LOG_FILE" 2>/dev/null)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 0 ] && [ "$gate_stop" -eq 0 ] || {
+    echo "expected a ready planned ticket to pass Check 2.7e (rc=$rc gate_stop_lines=$gate_stop)"
+    return 1
+  }
+}
+
+test_check27e_never_fires_for_adhoc_even_with_not_ready_cache() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _fake_issue=$(jq -n --arg desc "$_full_planned_body" '{id:"CRE-48",identifier:"CRE-48",title:"Test",description:$desc,labels:{nodes:[]}}')
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  # ensure_ticket_manifest, not write_ticket_manifest — stamps the reserved
+  # _adhoc initiative exactly as flow.sh's _ensure_manifest does.
+  REPOS_ROOT="$repos_root" ensure_ticket_manifest "CRE-48" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_readiness "CRE-48" "not-ready" '["SCOPE_MISSING"]' '[]' >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" TICKET_ID="CRE-48" LOG_FILE="${_ws}/CRE-48-pipeline.log" \
+    _gate_entry >/dev/null 2>&1 || rc=$?
+
+  local gate_stop
+  gate_stop=$(grep -c 'TICKET_NOT_READY' "${_ws}/CRE-48-pipeline.log" 2>/dev/null)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$gate_stop" -eq 0 ] || {
+    echo "expected 2.7e to never fire for an _adhoc manifest, got $gate_stop TICKET_NOT_READY lines (rc=$rc)"
+    return 1
+  }
+}
+
+test_check27e_fires_on_needs_info_flag_alone() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _fake_issue=$(jq -n --arg desc "$_full_planned_body" '{id:"CRE-47",identifier:"CRE-47",title:"Test",description:$desc,labels:{nodes:[]}}')
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-47" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_readiness "CRE-47" "ready" '[]' '[]' >/dev/null
+
+  # No dedicated flags writer — write the flags field directly via jq
+  # against the manifest path, matching how this suite reaches into fields
+  # set_ticket_readiness itself doesn't cover.
+  local manifest_path
+  manifest_path=$(REPOS_ROOT="$repos_root" get_ticket_manifest_path "CRE-47" 2>/dev/null)
+  local tmp
+  tmp=$(jq -c '.flags = ["needs-info"]' "$manifest_path")
+  echo "$tmp" >"$manifest_path"
+
+  local rc=0
+  REPOS_ROOT="$repos_root" _gate_entry >/dev/null 2>&1 || rc=$?
+
+  local gate_stop
+  gate_stop=$(grep 'TICKET_NOT_READY' "$LOG_FILE" 2>/dev/null || true)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2, got $rc"
+    return 1
+  }
+  echo "$gate_stop" | grep -q "FLAG_NEEDS_INFO" || {
+    echo "expected TICKET_NOT_READY gate-stop naming FLAG_NEEDS_INFO — got: $gate_stop"
+    return 1
+  }
+}
+
 for fn in \
   test_entry_artifact_missing_gate_stop \
   test_entry_complexity_artifact_mismatch \
@@ -2389,6 +2632,7 @@ for fn in \
   test_verify_plan_empty_table_and_bare_artifact_holds \
   test_no_verify_plan_falls_back_to_artifact \
   test_verify_plan_heading_without_table_falls_back \
+  test_verify_plan_found_in_body_md_names_source \
   test_no_critique_skips_readiness_check \
   test_verify_plan_partial_data_falls_back \
   test_zero_ac_gate_stop \
@@ -2425,6 +2669,7 @@ for fn in \
   test_reapprove_missing_manifest_not_conflated_with_revoked \
   test_reapprove_manifest_wrong_stage_gate_stops \
   test_manifest_only_drives_check_2_7 \
+  test_adhoc_manifest_never_enters_check_2_7 \
   test_manifest_type_field_drives_template_resolution \
   test_check5_auto_approve_emits_released_policy \
   test_check28c_manual_override_emits_released_human \
@@ -2434,7 +2679,11 @@ for fn in \
   test_check28c_approved_without_stage_holds \
   test_check4_approved_without_stage_holds \
   test_check28b_live_label_ignored_manifest_missing_warns \
-  test_check4_field_absent_holds_without_warning; do
+  test_check4_field_absent_holds_without_warning \
+  test_check27e_not_ready_planned_ticket_gate_stops_naming_codes \
+  test_check27e_ready_planned_ticket_passes \
+  test_check27e_never_fires_for_adhoc_even_with_not_ready_cache \
+  test_check27e_fires_on_needs_info_flag_alone; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

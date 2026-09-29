@@ -536,6 +536,114 @@ test_gate_held_no_slack_config_degrades_to_log_line_and_succeeds() {
   [ "$rc" -eq 0 ] && [[ "$out" == *"log-only"* ]]
 }
 
+# ── fleet_notify_readiness (dor-readiness-gate-foundation task 7.10) ───────
+
+test_readiness_stale_sends_one_notification() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-50" "$state_dir" "stale" >/dev/null 2>&1
+  grep -q "TST-50" "$capture" && grep -q "not-ready" "$capture"
+}
+
+test_readiness_stale_writes_sent_sidecar() {
+  local state_dir bindir
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-51" "$state_dir" "stale" >/dev/null 2>&1
+  python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get('stale')=='sent' else 1)" \
+    "$state_dir/TST-51-readiness-notify.json"
+}
+
+test_readiness_stale_twice_sends_once() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-52" "$state_dir" "stale" >/dev/null 2>&1
+  rm -f "$capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-52" "$state_dir" "stale" >/dev/null 2>&1
+  [ ! -f "$capture" ]
+}
+
+# A ticket can be BOTH stale and blocking a sibling — each reason's own
+# "sent" state must survive the other reason's write, since both share one
+# sidecar file keyed by reason.
+test_readiness_both_reasons_independently_tracked() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-53" "$state_dir" "stale" >/dev/null 2>&1
+  rm -f "$capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-53" "$state_dir" "blocking-sibling" >/dev/null 2>&1
+  [ -f "$capture" ] && grep -q "blocking a dependent" "$capture" &&
+    python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if d.get('stale') == 'sent' and d.get('blocking-sibling') == 'sent' else 1)
+" "$state_dir/TST-53-readiness-notify.json"
+}
+
+test_readiness_transport_failure_marks_failed_and_completes() {
+  local state_dir bindir
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  local rc
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_MODE="fail" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-54" "$state_dir" "stale" >/dev/null 2>&1
+  rc=$?
+  [ "$rc" -eq 0 ] && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get('stale')=='failed' else 1)" \
+    "$state_dir/TST-54-readiness-notify.json"
+}
+
+test_readiness_failed_send_is_retried_on_a_later_pass() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_MODE="fail" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-55" "$state_dir" "stale" >/dev/null 2>&1
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-55" "$state_dir" "stale" >/dev/null 2>&1
+  [ -f "$capture" ] && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get('stale')=='sent' else 1)" \
+    "$state_dir/TST-55-readiness-notify.json"
+}
+
+test_readiness_no_slack_config_degrades_to_log_line_and_succeeds() {
+  local rc out state_dir
+  state_dir=$(_mktemp_test_dir)
+  unset SLACK_BOT_TOKEN SLACK_CHANNEL
+  out=$(fleet_notify_readiness "TST-56" "$state_dir" "stale" 2>&1)
+  rc=$?
+  [ "$rc" -eq 0 ] && [[ "$out" == *"log-only"* ]]
+}
+
+test_readiness_blocking_sibling_sends_notification() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-57" "$state_dir" "blocking-sibling" >/dev/null 2>&1
+  grep -q "TST-57" "$capture" && grep -q "blocking a dependent" "$capture"
+}
+
+test_readiness_unknown_reason_rejected() {
+  local state_dir out rc
+  state_dir=$(_mktemp_test_dir)
+  out=$(fleet_notify_readiness "TST-58" "$state_dir" "bogus" 2>&1)
+  rc=$?
+  [ "$rc" -eq 1 ] && [[ "$out" == *"unknown reason"* ]]
+}
+
 # ── dispatch ─────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -576,7 +684,16 @@ for fn in \
   test_gate_held_new_generation_notifies_again \
   test_gate_held_transport_failure_marks_failed_and_completes \
   test_gate_held_failed_send_is_retried_on_a_later_pass \
-  test_gate_held_no_slack_config_degrades_to_log_line_and_succeeds; do
+  test_gate_held_no_slack_config_degrades_to_log_line_and_succeeds \
+  test_readiness_stale_sends_one_notification \
+  test_readiness_stale_writes_sent_sidecar \
+  test_readiness_stale_twice_sends_once \
+  test_readiness_both_reasons_independently_tracked \
+  test_readiness_transport_failure_marks_failed_and_completes \
+  test_readiness_failed_send_is_retried_on_a_later_pass \
+  test_readiness_no_slack_config_degrades_to_log_line_and_succeeds \
+  test_readiness_blocking_sibling_sends_notification \
+  test_readiness_unknown_reason_rejected; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

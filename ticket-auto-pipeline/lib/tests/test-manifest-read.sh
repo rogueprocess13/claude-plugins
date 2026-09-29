@@ -101,6 +101,74 @@ ticket_manifest_exists NOPE-1 || rc=$?
 epic_manifest_exists INIT-1 && _pass "epic_manifest_exists: true when present" ||
   _fail "epic_manifest_exists: should be true when present"
 
+# ── ticket_is_ready ──────────────────────────────────────────────────────────
+
+_reset
+echo '{"type":"bug","initiative":"INIT-1","blocked_by":[],"dispatch":false}' \
+  >"$REPOS_ROOT/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
+
+rc=0
+ticket_is_ready TEST-1 || rc=$?
+[ "$rc" = "1" ] && _pass "ticket_is_ready: absent ready field reads not ready" ||
+  _fail "ticket_is_ready: absent ready field should read not ready (got $rc)"
+
+echo '{"type":"bug","initiative":"INIT-1","blocked_by":[],"dispatch":false,"ready":{"status":"ready","missing":[],"advisory":[],"waived":{}}}' \
+  >"$REPOS_ROOT/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
+ticket_is_ready TEST-1 && _pass "ticket_is_ready: ready status reads ready" ||
+  _fail "ticket_is_ready: ready status should read ready"
+
+echo '{"type":"bug","initiative":"INIT-1","blocked_by":[],"dispatch":false,"ready":{"status":"not-ready","missing":["AC_VAGUE"],"advisory":[],"waived":{}}}' \
+  >"$REPOS_ROOT/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
+rc=0
+ticket_is_ready TEST-1 || rc=$?
+[ "$rc" = "1" ] && _pass "ticket_is_ready: not-ready status reads not ready" ||
+  _fail "ticket_is_ready: not-ready status should read not ready (got $rc)"
+
+rc=0
+ticket_is_ready NOPE-1 >/dev/null 2>&1 || rc=$?
+[ "$rc" = "2" ] && _pass "ticket_is_ready: missing manifest is distinct code" ||
+  _fail "ticket_is_ready: missing manifest should be a distinct code from not-ready (got $rc)"
+
+# ── ticket_is_planned ────────────────────────────────────────────────────────
+
+_reset
+echo '{"type":null,"initiative":null,"blocked_by":[],"dispatch":false}' \
+  >"$REPOS_ROOT/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
+rc=0
+ticket_is_planned TEST-1 || rc=$?
+[ "$rc" = "1" ] && _pass "ticket_is_planned: _adhoc-shaped (null initiative) manifest is not planned" ||
+  _fail "ticket_is_planned: null initiative should not be planned (got $rc)"
+
+echo '{"type":"bug","initiative":"_adhoc","blocked_by":[],"dispatch":false}' \
+  >"$REPOS_ROOT/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
+rc=0
+ticket_is_planned TEST-1 || rc=$?
+[ "$rc" = "1" ] && _pass "ticket_is_planned: literal _adhoc initiative is not planned" ||
+  _fail "ticket_is_planned: literal _adhoc initiative should not be planned (got $rc)"
+
+echo '{"type":"bug","initiative":"INIT-1","blocked_by":[],"dispatch":false}' \
+  >"$REPOS_ROOT/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
+ticket_is_planned TEST-1 && _pass "ticket_is_planned: real initiative is planned" ||
+  _fail "ticket_is_planned: real initiative should be planned"
+
+# ── ticket_dispatch_blocked_by_flags ─────────────────────────────────────────
+
+_reset
+echo '{"type":"bug","initiative":"INIT-1","blocked_by":[],"dispatch":false,"flags":["needs-info"],"ready":{"status":"ready","missing":[],"advisory":[],"waived":{}}}' \
+  >"$REPOS_ROOT/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
+ticket_dispatch_blocked_by_flags TEST-1 &&
+  _pass "ticket_dispatch_blocked_by_flags: detected even with a stale-ready cached readiness" ||
+  _fail "ticket_dispatch_blocked_by_flags: should detect needs-info regardless of cached readiness"
+
+echo '{"type":"bug","initiative":"INIT-1","blocked_by":[],"dispatch":false,"flags":[]}' \
+  >"$REPOS_ROOT/.ticket-auto/initiatives/INIT-1/tickets/TEST-1/planner/manifest.json"
+rc=0
+ticket_dispatch_blocked_by_flags TEST-1 || rc=$?
+[ "$rc" = "1" ] && _pass "ticket_dispatch_blocked_by_flags: absent from empty flags" ||
+  _fail "ticket_dispatch_blocked_by_flags: should be absent from empty flags (got $rc)"
+
+_reset
+
 # ── REPOS_ROOT unset ────────────────────────────────────────────────────────
 
 saved_root="$REPOS_ROOT"

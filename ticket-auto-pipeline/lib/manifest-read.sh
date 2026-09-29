@@ -216,6 +216,76 @@ ticket_pipeline_terminal_done() {
   esac
 }
 
+# ticket_is_ready <TID>
+# Pure cache read of the manifest's `ready.status` — never triggers a live
+# computation (dor-readiness-gate-foundation). A consumer that must not
+# permanently treat a never-scanned ticket as blocked uses
+# ensure_ticket_readiness (lib/dor-check.sh) instead.
+# Exit 0 ready; 1 not ready (field absent, or any other value, manifest
+# exists); 2 no manifest at all (distinct from 1, per ticket-local-manifest
+# spec); 3 usage error (invalid ticket ID, REPOS_ROOT unset, or malformed
+# manifest JSON) — propagated from get_ticket_manifest_field's own 2/3.
+# Every command substitution below is guarded with `|| rc=$?` per the set -e
+# bare-assignment trap (gate-check.sh and flow.sh both set errexit).
+ticket_is_ready() {
+  local tid="$1"
+  local ready_json rc=0
+  ready_json=$(get_ticket_manifest_field "$tid" ready) || rc=$?
+  case "$rc" in
+  0) ;;
+  1) return 2 ;; # no manifest at all
+  *) return 3 ;; # malformed JSON (2) or invalid id/REPOS_ROOT unset (3)
+  esac
+
+  [ -n "$ready_json" ] || return 1
+
+  local status
+  status=$(echo "$ready_json" | jq -r '.status // empty' 2>/dev/null) || status=""
+  [ "$status" = "ready" ]
+}
+
+# ticket_is_planned <TID>
+# Exit 0 iff the manifest's `initiative` names a real initiative rather
+# than the reserved `_adhoc` value ensure_ticket_manifest writes for a
+# ticket with no planner-assigned initiative. `ensure_ticket_manifest`
+# writes `_adhoc` only to the initiative index, not to the manifest's own
+# `initiative` field — that field is left as JSON `null` for an ad-hoc
+# ticket, and get_ticket_manifest_field's `tostring` renders JSON null as
+# the literal string "null", not empty — so both "null" and "_adhoc" (in
+# case a caller ever writes the reserved value directly into the field) are
+# treated as not-planned, alongside a genuinely absent/empty field.
+# Exit 1 not planned; propagates get_ticket_manifest_field's 1/2/3 for no
+# manifest / malformed JSON / usage error.
+ticket_is_planned() {
+  local tid="$1"
+  local init rc=0
+  init=$(get_ticket_manifest_field "$tid" initiative) || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+
+  case "$init" in
+  "" | "null" | "_adhoc") return 1 ;;
+  *) return 0 ;;
+  esac
+}
+
+# ticket_dispatch_blocked_by_flags <TID>
+# Exit 0 iff the manifest's `flags` array contains `needs-info`. Always a
+# live read against the manifest's current `flags` — never satisfied from
+# the cached `ready` object — so clearing the flag un-gates a ticket
+# immediately regardless of readiness-cache staleness. Exit 1 flag absent;
+# propagates get_ticket_manifest_field's 1/2/3 for no manifest / malformed
+# JSON / usage error.
+ticket_dispatch_blocked_by_flags() {
+  local tid="$1"
+  local flags_json rc=0
+  flags_json=$(get_ticket_manifest_field "$tid" flags) || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+
+  [ -n "$flags_json" ] || return 1
+  echo "$flags_json" | jq -e 'type == "array" and (index("needs-info") != null)' \
+    >/dev/null 2>&1
+}
+
 # ── Self-test mode ────────────────────────────────────────────────────────
 
 if [ "${1:-}" = "--self-test" ] && [ "${BASH_SOURCE[0]}" = "$0" ]; then
