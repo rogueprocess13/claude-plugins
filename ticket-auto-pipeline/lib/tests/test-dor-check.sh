@@ -15,6 +15,10 @@ FIXTURES_DIR="$SCRIPT_DIR/fixtures/dor"
 source "$LIB_DIR/notes-parse.sh"
 source "$LIB_DIR/dor-check.sh"
 
+# Hermetic: a developer's untracked config/test-users.json would otherwise
+# resolve here but not in CI. Tests that need a catalog pass --catalog.
+resolve_test_user_catalog() { return 1; }
+
 PASS=0
 FAIL=0
 _pass() {
@@ -365,7 +369,7 @@ for fixture in "${!FIXTURE_TYPE[@]}"; do
     continue
   }
   frc=0
-  check_ticket_ready "FIX-${fixture}" --body "$fpath" --type "${FIXTURE_TYPE[$fixture]}" --no-fetch || frc=$?
+  check_ticket_ready "FIX-${fixture}" --body "$fpath" --type "${FIXTURE_TYPE[$fixture]}" --no-fetch --catalog "$catalog_file" || frc=$?
   expected_status="${FIXTURE_STATUS[$fixture]}"
 
   if [ "$DOR_STATUS" = "$expected_status" ]; then

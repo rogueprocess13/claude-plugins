@@ -881,9 +881,17 @@ untouched.
       sections) — 18 adversarial fixtures + 1 padding fixture, `lib/dor-check.sh` rewritten,
       `manifest-write.sh`'s `set_ticket_readiness` extras arg, `run-summary.sh`/`fleet-dispatch.sh`/
       `fleet-notify.sh` report-only consumers, full test suite green.
-- [ ] 2. `planner-phase-count-derivation` — propose, apply, PR.
-- [ ] 3. `planner-readiness-phase` — propose, apply, PR.
-- [ ] 4. Live: one planned epic on a user project through Readiness → dispatch → gate, plus an
+- [ ] 2. `planner-phase-count-derivation` — apply, PR (proposed 2026-09-30, validated). Mechanical
+      prep: phase count/index derived from `planner_phase_sequence`, no behaviour change.
+- [ ] 2b. `dor-semantic-evaluator` — apply, PR (proposed 2026-09-30, validated). LLM semantic DoR
+      pass contract in ticket-auto-pipeline: scan + audit agents (`dor-semantic-agent`), block parser,
+      `set_ticket_semantic`, `SEMANTIC_*` blocking codes (block from day one, per-host relax via
+      `DOR_SEMANTIC_ADVISORY_CODES`). Plan: `~/.claude/plans/gentle-doodling-truffle.md`.
+- [ ] 3. `planner-refinement-phase` — apply, PR (proposed 2026-09-30, validated). **Supersedes
+      `planner-readiness-phase`.** New planner phase Refinement between TicketGen and Completed: per
+      ticket deterministic DoR → LLM scan → LLM audit → per-ticket blocking; epic stamped `dispatch=true`
+      there. Answers/enablers/body rewrite from the old Readiness design stay deferred.
+- [ ] 4. Live: one planned epic on a user project through Refinement → dispatch → gate, plus an
       ad-hoc ticket confirming 2.7 is untouched. Roll into the consolidated live-verification pass.
 - [ ] 5. `planner-ready-by-construction`, `readiness-feedback-loop` — after 4 is clean.
 
