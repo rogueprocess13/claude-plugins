@@ -609,6 +609,13 @@
         "plugin:agents/ticket-maintenance-agent.md",
         "home:pipeline-log-format.md"
       ]
+    },
+    "dor-semantic": {
+      "files": [
+        "plugin:agents/dor-semantic-agent.md",
+        "lib:dor-semantic.sh",
+        "plugin:docs/dor-semantic-schema.md"
+      ]
     }
   }
 }

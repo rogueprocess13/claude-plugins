@@ -387,6 +387,131 @@ blocked_count=$(get_ticket_manifest_field READY-1 blocked_by | jq 'length')
 [ "$blocked_count" = "1" ] && _pass "add_ticket_blocked_by: idempotent" ||
   _fail "add_ticket_blocked_by: should be idempotent (got $blocked_count)"
 
+# ── set_ticket_semantic (dor-semantic-evaluator, task 4.1) ────────────────
+
+rc=0
+write_ticket_manifest "SEM-NOREADY" "INIT-1" "bug" '[]'
+set_ticket_semantic "SEM-NOREADY" '{"evaluator":"dor-semantic-v1","findings":[]}' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_semantic: exits 3 with no ready object" ||
+  _fail "set_ticket_semantic: should exit 3 with no ready object (got $rc)"
+
+write_ticket_manifest "SEM-1" "INIT-1" "bug" '[]'
+set_ticket_readiness "SEM-1" "ready" '[]' '[]' '{"score": 70, "body_hash": "sha256:body1"}'
+sem_blocking=$(jq -nc '{
+  evaluator: "dor-semantic-v1", checked_at: "2026-09-30T00:00:00Z",
+  body_hash: "sha256:body1",
+  findings: [{code:"MISSING_CORE_AC", dimension:"requirement_completeness",
+              severity:"blocking", quote:"q", detail:"d", verified:true}],
+  gaps: {}, audit: [], missed: [], score_plausible: true, score_reason: "ok"
+}')
+set_ticket_semantic "SEM-1" "$sem_blocking"
+[ "$(get_ticket_manifest_field SEM-1 ready | jq -r '.status')" = "not-ready" ] &&
+  _pass "set_ticket_semantic: blocking finding flips a ready ticket to not-ready" ||
+  _fail "set_ticket_semantic: should flip to not-ready"
+[ "$(get_ticket_manifest_field SEM-1 ready | jq -c '.missing')" = '["SEMANTIC_REQUIREMENT_COMPLETENESS"]' ] &&
+  _pass "set_ticket_semantic: SEMANTIC_<DIM> code added" ||
+  _fail "set_ticket_semantic: should add SEMANTIC_REQUIREMENT_COMPLETENESS (got $(get_ticket_manifest_field SEM-1 ready | jq -c '.missing'))"
+[ "$(get_ticket_manifest_field SEM-1 ready | jq -r '.score')" = "70" ] &&
+  _pass "set_ticket_semantic: score untouched" ||
+  _fail "set_ticket_semantic: score should be untouched"
+checked_before=$(get_ticket_manifest_field SEM-1 ready | jq -r '.checked_at')
+
+# Merge order: a second call removes the first result's SEMANTIC_* codes
+# and appends the new one's, never accumulating.
+sem_blocking2=$(jq -nc '{
+  evaluator: "dor-semantic-v1", checked_at: "2026-09-30T00:05:00Z",
+  body_hash: "sha256:body1",
+  findings: [{code:"EDGE_CASE_GAP", dimension:"edge_cases",
+              severity:"blocking", quote:"q2", detail:"d2", verified:true}],
+  gaps: {}, audit: [], missed: [], score_plausible: true, score_reason: "ok"
+}')
+set_ticket_semantic "SEM-1" "$sem_blocking2"
+[ "$(get_ticket_manifest_field SEM-1 ready | jq -c '.missing')" = '["SEMANTIC_EDGE_CASES"]' ] &&
+  _pass "set_ticket_semantic: merge order replaces old SEMANTIC_* codes, appends new" ||
+  _fail "set_ticket_semantic: should replace old codes (got $(get_ticket_manifest_field SEM-1 ready | jq -c '.missing'))"
+[ "$(get_ticket_manifest_field SEM-1 ready | jq -r '.checked_at')" = "$checked_before" ] &&
+  _pass "set_ticket_semantic: checked_at (readiness clock) untouched" ||
+  _fail "set_ticket_semantic: checked_at should be untouched"
+
+# unavailable: true adds SEMANTIC_UNAVAILABLE
+write_ticket_manifest "SEM-2" "INIT-1" "bug" '[]'
+set_ticket_readiness "SEM-2" "ready" '[]' '[]'
+set_ticket_semantic "SEM-2" '{"evaluator":"dor-semantic-v1","unavailable":true,"findings":[]}'
+[ "$(get_ticket_manifest_field SEM-2 ready | jq -r '.status')" = "not-ready" ] &&
+  _pass "set_ticket_semantic: unavailable flips to not-ready" ||
+  _fail "set_ticket_semantic: unavailable should flip to not-ready"
+[ "$(get_ticket_manifest_field SEM-2 ready | jq -c '.missing')" = '["SEMANTIC_UNAVAILABLE"]' ] &&
+  _pass "set_ticket_semantic: SEMANTIC_UNAVAILABLE added" ||
+  _fail "set_ticket_semantic: should add SEMANTIC_UNAVAILABLE"
+
+# waiving a SEMANTIC_* code flips status
+waive_ticket_readiness_code "SEM-2" "SEMANTIC_UNAVAILABLE" "operator" "retry pending"
+[ "$(get_ticket_manifest_field SEM-2 ready | jq -r '.status')" = "ready" ] &&
+  _pass "set_ticket_semantic: waiving the SEMANTIC_* code flips status to ready" ||
+  _fail "set_ticket_semantic: waiving should flip status to ready"
+
+# a genuinely unavailable/unknown-JSON semantic_json is rejected, not merged
+rc=0
+set_ticket_semantic "SEM-2" 'not-json' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_semantic: rejects non-JSON-object input" ||
+  _fail "set_ticket_semantic: should reject non-object input (got $rc)"
+
+rc=0
+set_ticket_semantic "NOPE-SEM" '{"findings":[]}' 2>/dev/null || rc=$?
+[ "$rc" = "1" ] && _pass "set_ticket_semantic: no-op on missing manifest" ||
+  _fail "set_ticket_semantic: should exit 1 on missing manifest (got $rc)"
+
+# ── set_ticket_readiness preserve/stale (dor-semantic-evaluator, 4.2) ─────
+
+write_ticket_manifest "STALE-1" "INIT-1" "bug" '[]'
+set_ticket_readiness "STALE-1" "ready" '[]' '[]' '{"body_hash": "sha256:hA"}'
+sem_a=$(jq -nc '{
+  evaluator:"dor-semantic-v1", checked_at:"2026-09-30T00:00:00Z", body_hash:"sha256:hA",
+  findings:[{code:"SCOPE_AMBIGUOUS", dimension:"scope", severity:"blocking",
+             quote:"q", detail:"d", verified:true}],
+  gaps:{}, audit:[], missed:[], score_plausible:true, score_reason:"ok"
+}')
+set_ticket_semantic "STALE-1" "$sem_a"
+[ "$(get_ticket_manifest_field STALE-1 ready | jq -c '.missing')" = '["SEMANTIC_SCOPE"]' ] &&
+  _pass "preserve/stale setup: SEMANTIC_SCOPE recorded" ||
+  _fail "preserve/stale setup: expected SEMANTIC_SCOPE"
+
+# Unchanged body: a rescan with the SAME body_hash keeps the verdict.
+set_ticket_readiness "STALE-1" "ready" '[]' '[]' '{"body_hash": "sha256:hA"}'
+[ "$(get_ticket_manifest_field STALE-1 ready | jq -c '.missing')" = '["SEMANTIC_SCOPE"]' ] &&
+  _pass "set_ticket_readiness: unchanged body keeps SEMANTIC_* codes" ||
+  _fail "set_ticket_readiness: unchanged body should keep SEMANTIC_SCOPE (got $(get_ticket_manifest_field STALE-1 ready | jq -c '.missing'))"
+[ "$(get_ticket_manifest_field STALE-1 ready | jq -r '.semantic.evaluator')" = "dor-semantic-v1" ] &&
+  _pass "set_ticket_readiness: unchanged body keeps ready.semantic" ||
+  _fail "set_ticket_readiness: unchanged body should keep ready.semantic"
+
+# Changed body: even with a fully-clean deterministic result, a changed hash
+# cannot pass on the deterministic check alone.
+set_ticket_readiness "STALE-1" "ready" '[]' '[]' '{"body_hash": "sha256:hB"}'
+[ "$(get_ticket_manifest_field STALE-1 ready | jq -c '.missing')" = '["SEMANTIC_STALE"]' ] &&
+  _pass "set_ticket_readiness: changed body yields SEMANTIC_STALE, drops old code" ||
+  _fail "set_ticket_readiness: changed body should yield only SEMANTIC_STALE (got $(get_ticket_manifest_field STALE-1 ready | jq -c '.missing'))"
+[ "$(get_ticket_manifest_field STALE-1 ready | jq -r '.status')" = "not-ready" ] &&
+  _pass "set_ticket_readiness: changed body is not-ready even with clean deterministic result" ||
+  _fail "set_ticket_readiness: changed body should be not-ready"
+[ "$(get_ticket_manifest_field STALE-1 ready | jq -r '.semantic.stale')" = "true" ] &&
+  _pass "set_ticket_readiness: semantic.stale stamped true" ||
+  _fail "set_ticket_readiness: semantic.stale should be true"
+
+# No semantic key at all: rescan behaves exactly as before this change.
+write_ticket_manifest "NOSEM-1" "INIT-1" "bug" '[]'
+set_ticket_readiness "NOSEM-1" "not-ready" '["AC_VAGUE"]' '[]'
+set_ticket_readiness "NOSEM-1" "ready" '[]' '[]'
+[ "$(get_ticket_manifest_field NOSEM-1 ready | jq -r 'has("semantic")')" = "false" ] &&
+  _pass "set_ticket_readiness: no prior semantic key means no change in behaviour" ||
+  _fail "set_ticket_readiness: should carry no semantic key when none existed"
+
+# `semantic` in extras still exits 3 (not an allowed extras key)
+rc=0
+set_ticket_readiness "STALE-1" "ready" '[]' '[]' '{"semantic": {}}' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_readiness: semantic in extras still rejected" ||
+  _fail "set_ticket_readiness: semantic extras key should exit 3 (got $rc)"
+
 # ── atomic write leaves no .tmp artifacts ────────────────────────────────────
 
 leftover=$(find "$REPOS_ROOT/.ticket-auto" -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')

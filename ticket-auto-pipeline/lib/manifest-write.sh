@@ -559,6 +559,15 @@ _manifest_readiness_unlock() {
 # `ready` object, so a fresh verdict never carries a previous verdict's score
 # or hash. A 4-arg call (no extras) writes exactly the pre-existing fields,
 # unchanged.
+#
+# Semantic preserve/stale (dor-semantic-evaluator design.md Decision 9): when
+# the manifest's existing `ready.semantic` is present, this rewrite either
+# carries it forward untouched (extras.body_hash equals semantic.body_hash —
+# every prior `SEMANTIC_*` code in `missing` survives too) or invalidates it
+# (any other case, including no fresh hash to compare) by stamping
+# `semantic.stale: true` and replacing every prior `SEMANTIC_*` code with the
+# single code `SEMANTIC_STALE`. `semantic` is never an allowed extras key —
+# only `set_ticket_semantic` writes it fresh.
 set_ticket_readiness() {
   local tid="$1" status="$2" missing="${3:-[]}" advisory="${4:-[]}" extras="${5:-}"
   case "$status" in
@@ -606,10 +615,23 @@ set_ticket_readiness() {
     --argjson missing "$missing" --argjson advisory "$advisory" --argjson waived "$waived" \
     --argjson extras "$extras" \
     --arg checked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '.ready = ({
-       status: (if ($missing - ($waived | keys)) == [] then "ready" else "not-ready" end),
-       checked_at: $checked_at, missing: $missing, advisory: $advisory, waived: $waived
-     } + $extras)' \
+    '(.ready) as $old_ready
+     | ($old_ready.semantic // null) as $old_semantic
+     | ($old_ready.missing // []) as $old_missing
+     | ($extras.body_hash // null) as $new_hash
+     | (if $old_semantic == null then
+          {semantic: null, extra_missing: []}
+        elif ($new_hash != null) and ($new_hash == ($old_semantic.body_hash // null)) then
+          {semantic: $old_semantic, extra_missing: [$old_missing[] | select(startswith("SEMANTIC_"))]}
+        else
+          {semantic: ($old_semantic + {stale: true}), extra_missing: ["SEMANTIC_STALE"]}
+        end) as $sem
+     | ($missing + $sem.extra_missing | unique) as $full_missing
+     | .ready = ({
+         status: (if ($full_missing - ($waived | keys)) == [] then "ready" else "not-ready" end),
+         checked_at: $checked_at, missing: $full_missing, advisory: $advisory, waived: $waived
+       } + $extras
+       + (if $sem.semantic != null then {semantic: $sem.semantic} else {} end))' \
     "$manifest_path") || {
     _manifest_readiness_unlock
     return 1
@@ -648,6 +670,73 @@ waive_ticket_readiness_code() {
     --arg code "$code" --arg by "$by" --arg reason "$reason" \
     '.ready.waived = ((.ready.waived // {}) + {($code): {by: $by, reason: $reason}})
      | .ready.status = (if (((.ready.missing // []) - (.ready.waived | keys)) == []) then "ready" else "not-ready" end)' \
+    "$manifest_path") || {
+    _manifest_readiness_unlock
+    return 1
+  }
+  _manifest_atomic_write "$manifest_path" "$content"
+  write_rc=$?
+  _manifest_readiness_unlock
+  return "$write_rc"
+}
+
+# set_ticket_semantic <TID> <semantic_json>
+# The third writer of `ready` (dor-semantic-evaluator design.md Decision 8),
+# modelled on waive_ticket_readiness_code. Requires an existing `ready`
+# object — exit 3, nothing written, when absent. Under the same readiness
+# lock as set_ticket_readiness/waive_ticket_readiness_code:
+#
+#   1. remove every `SEMANTIC_`-prefixed element from ready.missing;
+#   2. append `SEMANTIC_UNAVAILABLE` when semantic_json.unavailable is true;
+#   3. append `SEMANTIC_UNVERIFIED` once when any finding has verified:false,
+#      or when semantic_json.unverified_gaps is non-empty (a gap marked
+#      "finding" with no matching finding in that dimension — dor_semantic_
+#      apply's own structural check, which has no single finding to mark);
+#   4. append `SEMANTIC_<DIMENSION_UPPER>` for each finding whose
+#      severity is "blocking" (severity is decided by the caller —
+#      dor-semantic.sh's dor_semantic_apply — never by this function);
+#   5. de-duplicate, set ready.semantic to semantic_json verbatim, recompute
+#      ready.status from the new missing minus the keys of the *existing*
+#      waived map.
+#
+# checked_at, advisory, waived, score, dimensions, gaps, and body_hash are
+# never touched — checked_at stays because fleet-controller's D-18 detector
+# reads it as the not-ready-since clock.
+set_ticket_semantic() {
+  local tid="$1" semantic_json="$2"
+
+  if ! echo "$semantic_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    echo "manifest-write: semantic_json must be a JSON object, got '$semantic_json'" >&2
+    return 3
+  fi
+
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+
+  if ! jq -e '(.ready // null) != null' "$manifest_path" >/dev/null 2>&1; then
+    _manifest_readiness_unlock
+    echo "manifest-write: ticket $tid has no ready object — set_ticket_readiness must run first" >&2
+    return 3
+  fi
+
+  local content write_rc
+  content=$(jq -c \
+    --argjson semantic "$semantic_json" \
+    '($semantic.unavailable == true) as $unavailable
+     | (([$semantic.findings[]? | select(.verified == false)] | length > 0)
+        or (($semantic.unverified_gaps // []) | length > 0)) as $has_unverified
+     | ([$semantic.findings[]? | select(.severity == "blocking")
+         | ("SEMANTIC_" + (.dimension | ascii_upcase))]) as $blocking_codes
+     | ((if $unavailable then ["SEMANTIC_UNAVAILABLE"] else [] end)
+        + (if $has_unverified then ["SEMANTIC_UNVERIFIED"] else [] end)
+        + $blocking_codes | unique) as $new_semantic_codes
+     | .ready.missing = (((.ready.missing // []) | map(select(startswith("SEMANTIC_") | not)))
+                          + $new_semantic_codes | unique)
+     | .ready.semantic = $semantic
+     | .ready.status = (if ((.ready.missing - (.ready.waived // {} | keys)) == []) then "ready" else "not-ready" end)' \
     "$manifest_path") || {
     _manifest_readiness_unlock
     return 1

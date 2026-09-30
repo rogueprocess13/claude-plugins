@@ -829,13 +829,14 @@ Change 1's PR merges, since it depends on manifest fields (`flags`/`rev`/`pendin
 
 **Plan:** `~/.claude/plans/when-working-on-the-delightful-ocean.md` (re-scoped 2026-09-27 after a
 live-evidence report over both tickets hosts and a 3-reviewer + second-agent pass).
-**Openspec changes** (none proposed yet), strictly in this order, one `/opsx:propose` + `/opsx:apply`
-+ PR each:
-1. `dor-readiness-gate-foundation` (ticket-auto-pipeline + fleet-controller)
-2. `planner-phase-count-derivation` (ticket-planner, mechanical prep)
-3. `planner-readiness-phase` (ticket-planner, halt-only)
-4. `planner-ready-by-construction` (later)
-5. `readiness-feedback-loop` (later)
+**Openspec changes**, strictly in this order, one `/opsx:propose` + `/opsx:apply` + PR each:
+1. `dor-readiness-gate-foundation` (ticket-auto-pipeline + fleet-controller) — merged
+2. `dor-quality-score` (ticket-auto-pipeline, diagnostic score + 2 hard codes) — merged
+3. `planner-phase-count-derivation` (ticket-planner, mechanical prep) — merged
+4. `dor-semantic-evaluator` (ticket-auto-pipeline, LLM scan/audit contract) — in progress
+5. `planner-refinement-phase` (ticket-planner, halt-only) — **supersedes `planner-readiness-phase`**
+6. `planner-ready-by-construction` (later)
+7. `readiness-feedback-loop` (later)
 
 **Why this exists:** planner-cut tickets reached a worker with no Scope / Navigation Path / Test
 User section and no test data, and were stopped only at the entry gate after a worker was already
@@ -881,15 +882,25 @@ untouched.
       sections) — 18 adversarial fixtures + 1 padding fixture, `lib/dor-check.sh` rewritten,
       `manifest-write.sh`'s `set_ticket_readiness` extras arg, `run-summary.sh`/`fleet-dispatch.sh`/
       `fleet-notify.sh` report-only consumers, full test suite green.
-- [x] 2. `planner-phase-count-derivation` — applied 2026-09-30, **PR #427** open on
-      `feat/planner-phase-count-derivation`. Mechanical prep: `planner_phase_count`/`planner_phase_position` derived from
-      `planner_phase_sequence`; every prompt's "phase N of 10" literal and the test suite's
-      hard-coded counts/indices replaced with the derived helpers. Byte-identical prompt output
-      confirmed; full suite green; ticket-planner 0.11.0 → 0.11.1.
-- [ ] 2b. `dor-semantic-evaluator` — apply, PR (proposed 2026-09-30, validated). LLM semantic DoR
-      pass contract in ticket-auto-pipeline: scan + audit agents (`dor-semantic-agent`), block parser,
-      `set_ticket_semantic`, `SEMANTIC_*` blocking codes (block from day one, per-host relax via
-      `DOR_SEMANTIC_ADVISORY_CODES`). Plan: `~/.claude/plans/gentle-doodling-truffle.md`.
+- [x] 2. `planner-phase-count-derivation` — merged 2026-09-30 via **PR #427**. Mechanical prep:
+      `planner_phase_count`/`planner_phase_position` derived from `planner_phase_sequence`; every
+      prompt's "phase N of 10" literal and the test suite's hard-coded counts/indices replaced with
+      the derived helpers. Byte-identical prompt output confirmed; full suite green; ticket-planner
+      0.11.0 → 0.11.1.
+- [ ] 2b. `dor-semantic-evaluator` — implemented 2026-09-30, **PR #428** open on
+      `feat/dor-semantic-evaluator`. LLM semantic DoR pass contract in ticket-auto-pipeline: scan +
+      audit agents (`dor-semantic-agent`), block parser (`dor-semantic-parse.sh`, 28 tests),
+      `dor_semantic_apply`/`_dor_semantic_normalise` (`dor-semantic.sh`, 25 tests), `set_ticket_semantic`
+      (third writer of `ready`, `manifest-write.sh`), `SEMANTIC_*` blocking codes (block from day one,
+      per-host relax via `DOR_SEMANTIC_ADVISORY_CODES`), `set_ticket_readiness` preserve/stale rule,
+      fleet-dispatch/fleet-notify report-only wiring. Full suite green (2 clean `make test` runs after
+      registering the new test files in the Makefile). ticket-auto-pipeline 0.59.0 → 0.60.0,
+      fleet-controller 0.40.0 → 0.41.0. **Golden-set live verification only partial**: 2/19 fixtures
+      spot-checked with real agents (14-typo-fix matched "no blocking finding"; 01-excellent produced
+      3 specific, quote-verified findings against the same expectation — flagged, not yet tuned). Full
+      19-fixture sweep + prompt tuning deferred to a live-verification pass before
+      `planner-refinement-phase` can safely assume the evaluator's output quality. Plan:
+      `~/.claude/plans/gentle-doodling-truffle.md`.
 - [ ] 3. `planner-refinement-phase` — apply, PR (proposed 2026-09-30, validated). **Supersedes
       `planner-readiness-phase`.** New planner phase Refinement between TicketGen and Completed: per
       ticket deterministic DoR → LLM scan → LLM audit → per-ticket blocking; epic stamped `dispatch=true`

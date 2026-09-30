@@ -859,6 +859,20 @@ channel and `human-hold` are siblings, not a replacement for one another. A `CON
 verdict is followed by `META|gate-stop|fail|ADR_CONFLICT` (see Gate-stop codes below)
 instead of a hold.
 
+### Semantic DoR entries (dor-semantic-evaluator)
+
+Unlike `adr-gate-parse.sh`/`human-hold-parse.sh` above, `lib/dor-semantic-parse.sh`'s
+`parse_dor_semantic` **writes no pipeline log line at all** — the parser has no
+`--log-file` parameter and no log-write path. It is a pure function from a result file
+to canonical JSON on stdout, exit-coded 0/1/2; the caller owns its own log grammar.
+
+The only caller today is the planner's Refinement phase (`planner-refinement-phase`),
+which is not a `ticket-auto-pipeline` phase and does not write into a ticket's
+`{tid}-pipeline.log` at all — it logs to the planner's own state log
+(`state-log-format.md`, `ticket-planner`) under `Refinement|...`/`META|refinement-*`
+keys. A future ticket-auto-pipeline caller of this parser would need to write its own
+`META|dor-semantic|...` line (or similar) explicitly; nothing does that today.
+
 ## Schema version header
 
 Every new pipeline log begins with a schema declaration as its first line:

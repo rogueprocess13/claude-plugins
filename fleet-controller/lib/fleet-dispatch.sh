@@ -678,11 +678,13 @@ _fleet_dispatch_initiative_locked() {
     # the very next dispatch pass. Counted distinctly from blocked_count so a
     # fleet idling on readiness is visibly different from one idling on
     # dependencies.
-    local _mc_readiness_rc=0 _mc_flags_blocked=false _mc_score="" _mc_gaps=""
+    local _mc_readiness_rc=0 _mc_flags_blocked=false _mc_score="" _mc_gaps="" _mc_missing="" _mc_semantic=""
     if declare -f ensure_ticket_readiness >/dev/null 2>&1; then
       ensure_ticket_readiness "$child_id" >/dev/null 2>&1 || _mc_readiness_rc=$?
       _mc_score="${DOR_SCORE:-}"
       _mc_gaps="${DOR_GAPS:-}"
+      _mc_missing="${DOR_MISSING:-}"
+      _mc_semantic="${DOR_SEMANTIC:-}"
     fi
     if declare -f ticket_dispatch_blocked_by_flags >/dev/null 2>&1 &&
       ticket_dispatch_blocked_by_flags "$child_id" 2>/dev/null; then
@@ -699,6 +701,24 @@ _fleet_dispatch_initiative_locked() {
         if [ -n "$_mc_gaps" ] && [ "$_mc_gaps" != "[]" ] && [ "$_mc_gaps" != "null" ]; then
           _mc_summary_extra="${_mc_summary_extra} gaps=$(echo "$_mc_gaps" | jq -r 'join(",")' 2>/dev/null)"
         fi
+      fi
+      # dor-semantic-evaluator task 7.2: SEMANTIC_* codes (report only — the
+      # exclusion above already acted on the readiness return code, this
+      # just names why) and any disputed deterministic code, with the exact
+      # waive command an operator would run. Neither branches dispatch.
+      if [ -n "$_mc_missing" ] && [ "$_mc_missing" != "[]" ] && [ "$_mc_missing" != "null" ]; then
+        local _mc_semantic_codes
+        _mc_semantic_codes=$(echo "$_mc_missing" | jq -r '[.[] | select(startswith("SEMANTIC_"))] | join(",")' 2>/dev/null)
+        [ -n "$_mc_semantic_codes" ] && _mc_summary_extra="${_mc_summary_extra} semantic=${_mc_semantic_codes}"
+      fi
+      if [ -n "$_mc_semantic" ] && [ "$_mc_semantic" != "null" ]; then
+        local _mc_disputed
+        _mc_disputed=$(echo "$_mc_semantic" | jq -r \
+          --arg tid "$child_id" \
+          '[(.audit // [])[] | select(.verdict == "disputed")
+            | "\(.code) (\(.reason)) — waive: dor-check.sh --waive \($tid) \(.code) \"\(.reason)\""]
+           | join("; ")' 2>/dev/null)
+        [ -n "$_mc_disputed" ] && _mc_summary_extra="${_mc_summary_extra} disputed=[${_mc_disputed}]"
       fi
       echo "  not-ready ${child_id} (readiness_rc=${_mc_readiness_rc} needs_info=${_mc_flags_blocked})${_mc_summary_extra}"
       continue

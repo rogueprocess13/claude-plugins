@@ -450,13 +450,34 @@ print(d.get(sys.argv[2], ''))
   # it to the message when present.
   local _fnr_extra=""
   if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
-    local _fnr_score _fnr_gaps
-    _fnr_score=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r '.score // empty' 2>/dev/null) || _fnr_score=""
-    _fnr_gaps=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r '(.gaps // []) | join(",")' 2>/dev/null) || _fnr_gaps=""
+    local _fnr_ready _fnr_score _fnr_gaps
+    _fnr_ready=$(get_ticket_manifest_field "$tid" ready 2>/dev/null)
+    _fnr_score=$(echo "$_fnr_ready" | jq -r '.score // empty' 2>/dev/null) || _fnr_score=""
+    _fnr_gaps=$(echo "$_fnr_ready" | jq -r '(.gaps // []) | join(",")' 2>/dev/null) || _fnr_gaps=""
     if [ -n "$_fnr_score" ]; then
       _fnr_extra="
 score: ${_fnr_score}"
       [ -n "$_fnr_gaps" ] && _fnr_extra="${_fnr_extra} | gaps: ${_fnr_gaps}"
+    fi
+
+    # dor-semantic-evaluator task 7.3: SEMANTIC_* codes and disputed
+    # deterministic codes, report-only exactly like score/gaps above — this
+    # notifier never branches on them, it just reads the cached manifest.
+    local _fnr_semantic_codes
+    _fnr_semantic_codes=$(echo "$_fnr_ready" | jq -r '[(.missing // [])[] | select(startswith("SEMANTIC_"))] | join(",")' 2>/dev/null) || _fnr_semantic_codes=""
+    if [ -n "$_fnr_semantic_codes" ]; then
+      _fnr_extra="${_fnr_extra}
+semantic: ${_fnr_semantic_codes}"
+    fi
+    local _fnr_disputed
+    _fnr_disputed=$(echo "$_fnr_ready" | jq -r \
+      --arg tid "$tid" \
+      '[(.semantic.audit // [])[] | select(.verdict == "disputed")
+        | "\(.code) (\(.reason)) — waive: dor-check.sh --waive \($tid) \(.code) \"\(.reason)\""]
+       | join("; ")' 2>/dev/null) || _fnr_disputed=""
+    if [ -n "$_fnr_disputed" ]; then
+      _fnr_extra="${_fnr_extra}
+disputed: ${_fnr_disputed}"
     fi
   fi
 

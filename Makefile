@@ -79,6 +79,9 @@ test-lib:
 	# dor-readiness-gate-foundation
 	bash ticket-auto-pipeline/lib/tests/test-vplan-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-check.sh
+	# dor-semantic-evaluator
+	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-parse.sh
+	bash ticket-auto-pipeline/lib/tests/test-dor-semantic.sh
 	# tracker-approval-by-script
 	bash ticket-auto-pipeline/lib/tests/test-ticket-approve.sh
 	bash ticket-auto-pipeline/lib/tests/test-manifest-backfill.sh
