@@ -471,6 +471,34 @@ test_fully_manifested_table_reports_no_gaps() {
   return 0
 }
 
+# A manifest-only entry — no step's spawn/post_dispatch/sub_steps/sequence
+# ever names it — is still fingerprinted. This is the dor-semantic-evaluator
+# shape (design.md Decision 13): the fingerprint loop iterates
+# `.prompt_manifests | keys[]` directly, independent of whether any spawn
+# block references the key, so a skill spawned outside the dispatch loop
+# entirely (e.g. the planner's Refinement phase) still gets a real hash.
+test_manifest_only_entry_is_fingerprinted() {
+  local sb f
+  sb=$(_sandbox)
+  echo 'manifest-only doc body' >"$sb/home/.claude/skills/shared-manifest-only.md"
+  _edit_table "$sb" '.prompt_manifests.epsilon = {"files": ["home:shared-manifest-only.md"]}'
+
+  _hook "$sb" || return 1
+  f=$(_artifact "$sb")
+
+  local sha
+  sha=$(jq -r '.skills.epsilon.sha256 // "ABSENT"' "$f")
+  [ "${#sha}" -eq 64 ] || {
+    echo "  expected a 64-char sha256 for the manifest-only entry epsilon, got '$sha'"
+    return 1
+  }
+  jq -e '.unmanifested | index("epsilon") | not' "$f" >/dev/null 2>&1 || {
+    echo "  a manifest-only entry must never appear in unmanifested"
+    return 1
+  }
+  return 0
+}
+
 test_nested_spawn_shapes_count_as_spawns() {
   local sb f
   sb=$(_sandbox)
@@ -621,6 +649,7 @@ _run "missing dispatch table exits clean" test_missing_table_exits_clean
 _run "no temp files left behind" test_no_tmp_files_left_behind
 _run "unmanifested spawn skill is reported" test_unmanifested_spawn_skill_is_reported
 _run "fully manifested table reports no gaps" test_fully_manifested_table_reports_no_gaps
+_run "manifest-only entry is fingerprinted" test_manifest_only_entry_is_fingerprinted
 _run "nested spawn shapes count as spawn skills" test_nested_spawn_shapes_count_as_spawns
 _run "nested spawn block feeds the hash" test_spawn_block_in_nested_shape_feeds_hash
 _run "lookup returns sha and manifest count" test_lookup_returns_sha_and_count

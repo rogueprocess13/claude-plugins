@@ -17,6 +17,70 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-auto-pipeline 0.60.0 / fleet-controller 0.41.0 (2026-09-30)
+
+`dor-semantic-evaluator`. The deterministic DoR check (`dor-check.sh`) proves
+structural presence — a section exists, an AC line avoids known vague words. It
+cannot judge whether the ACs are the *right* ACs, whether two requirements
+contradict, whether a scope is meaningful, or whether an autonomous agent could
+execute the ticket without asking a human. This change builds the semantic
+evaluator contract that answers those questions — full schema in
+`ticket-auto-pipeline/docs/dor-semantic-schema.md`. **No ticket carries any
+effect from this change until a caller runs the evaluator** — the only caller,
+the planner's Refinement phase (`planner-refinement-phase`), is a separate,
+subsequent change.
+
+- New `lib/dor-semantic.sh`: closed 8-code vocabulary (`DOR_SEMANTIC_CODES`,
+  every value a member of `DOR_DIMENSION_KEYS`), bash-owned severity
+  (`_dor_semantic_severity` — every code blocking unless listed in
+  `DOR_SEMANTIC_ADVISORY_CODES`, default empty), `dor_semantic_prompt
+  scan|audit` (paths only, never ticket text), `dor_semantic_apply` (verbatim
+  quote verification against the normalised body — `_dor_semantic_normalise`
+  folds smart quotes/dashes to ASCII, strips markdown emphasis and table
+  pipes — before anything is stored).
+- New `lib/dor-semantic-parse.sh`: strict parser for the two agent result
+  blocks (`=== DOR_SEMANTIC_SCAN ===`/`=== DOR_SEMANTIC_AUDIT ===`), modelled
+  on `adr-gate-parse.sh`/`human-hold-parse.sh`. **Behavioural difference from
+  both**: an absent block is not a normal outcome here — exit 1, same as any
+  other invalid block — and the parser writes no pipeline log line at all
+  (the caller owns its own log grammar). `set -eo pipefail` is scoped to the
+  CLI block only, so sourcing never leaks `errexit` into the caller.
+- New `agents/dor-semantic-agent.md` (`tools: Read, Write`), spawned twice per
+  ticket — scan first (body only), audit second (body plus the deterministic
+  result) — so the scan never sees the deterministic verdict. Registered in
+  `dispatch-table.json`'s `prompt_manifests` for skill fingerprinting (a
+  manifest-only entry — no dispatch-table step references it, and the
+  fingerprint hook already iterates every `prompt_manifests` key regardless).
+- **`lib/manifest-write.sh`: `set_ticket_semantic`, the third writer of a
+  ticket manifest's `ready` object** (alongside `set_ticket_readiness` and
+  `waive_ticket_readiness_code`, sharing the same readiness lock). Merges
+  blocking findings into `ready.missing` as `SEMANTIC_<DIMENSION_UPPER>`, by
+  dimension not by code, so a waiver survives a rerun that names a sibling
+  code for the same gap. Three bash-owned codes — `SEMANTIC_UNAVAILABLE`,
+  `SEMANTIC_UNVERIFIED`, `SEMANTIC_STALE` — are always blocking, never
+  affected by `DOR_SEMANTIC_ADVISORY_CODES`.
+- **`set_ticket_readiness` preserve/stale rule (BREAKING for a ticket already
+  carrying `ready.semantic`)**: a deterministic rescan whose fresh body hash
+  still matches `semantic.body_hash` carries the semantic verdict and its
+  `SEMANTIC_*` codes forward unchanged; any other case (including a changed
+  body) stamps `semantic.stale: true` and replaces every prior `SEMANTIC_*`
+  code with the single code `SEMANTIC_STALE` — a ticket edited after its
+  semantic verdict can never pass dispatch on the deterministic check alone.
+  `semantic` remains outside `set_ticket_readiness`'s allowed extras keys.
+- `dor-check.sh`: `ensure_ticket_readiness` exports `DOR_SEMANTIC` (the cached
+  `ready.semantic`, or empty) on every return path.
+- `fleet-controller/lib/fleet-dispatch.sh` and `fleet-notify.sh`: the
+  not-ready summary line and the Slack readiness message now append
+  `SEMANTIC_*` codes and any disputed deterministic code, with its reason and
+  the exact `dor-check.sh --waive <TID> <CODE> "<reason>"` command — report
+  only, neither file branches on `ready.semantic` beyond the existing
+  readiness return code, and fleet-controller still invokes no model.
+- Tests: new `test-dor-semantic-parse.sh` (28 cases) and `test-dor-semantic.sh`
+  (25 cases, including a canned-result run over 4 real DoR fixtures);
+  extended `test-manifest-write.sh` (+19), `test-dor-check.sh` (+3),
+  `test-skill-fingerprint.sh` (+1), `test-fleet-dispatch.sh` (+1),
+  `test-fleet-notify.sh` (+1). Full suite green.
+
 ## ticket-planner 0.11.1 (2026-09-30)
 
 `planner-phase-count-derivation`. Every agent prompt hard-coded its own position

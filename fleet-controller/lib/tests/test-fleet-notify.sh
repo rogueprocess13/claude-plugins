@@ -668,6 +668,27 @@ test_readiness_message_includes_score_and_gaps_when_cached() {
   grep -q "score: 41" "$capture" && grep -q "requirement_completeness,deep_scope_ambiguity" "$capture"
 }
 
+test_readiness_message_includes_semantic_and_disputed_when_cached() {
+  local state_dir bindir capture repos_root
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  repos_root=$(_mktemp_test_dir)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "TST-61" "INIT-1" "feature" '[]'
+  REPOS_ROOT="$repos_root" set_ticket_readiness "TST-61" "not-ready" '["AC_VAGUE"]' '[]'
+  local sem
+  sem=$(jq -nc '{evaluator:"dor-semantic-v1",
+    findings:[{code:"SCOPE_AMBIGUOUS", dimension:"scope", severity:"blocking",
+               quote:"q", detail:"d", verified:true}],
+    audit:[{code:"AC_VAGUE", verdict:"disputed", reason:"AC-4 already qualifies this"}]}')
+  REPOS_ROOT="$repos_root" set_ticket_semantic "TST-61" "$sem"
+  REPOS_ROOT="$repos_root" SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-61" "$state_dir" "stale" >/dev/null 2>&1
+  grep -q "semantic: SEMANTIC_SCOPE" "$capture" &&
+    grep -q "AC_VAGUE (AC-4 already qualifies this)" "$capture" &&
+    grep -q 'waive: dor-check.sh --waive TST-61 AC_VAGUE' "$capture"
+}
+
 test_readiness_message_has_no_score_when_uncached() {
   local state_dir bindir capture
   state_dir=$(_mktemp_test_dir)
@@ -728,6 +749,7 @@ for fn in \
   test_readiness_no_slack_config_degrades_to_log_line_and_succeeds \
   test_readiness_blocking_sibling_sends_notification \
   test_readiness_message_includes_score_and_gaps_when_cached \
+  test_readiness_message_includes_semantic_and_disputed_when_cached \
   test_readiness_message_has_no_score_when_uncached \
   test_readiness_unknown_reason_rejected; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue

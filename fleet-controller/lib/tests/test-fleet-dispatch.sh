@@ -2576,6 +2576,56 @@ test_dispatch_not_ready_summary_includes_score_and_gaps() {
 }
 _run "dispatch_not_ready_summary_includes_score_and_gaps" test_dispatch_not_ready_summary_includes_score_and_gaps
 
+# dor-semantic-evaluator task 7.2: a child carrying a SEMANTIC_* code (from
+# ready.missing) is refused (excluded from enqueue, counted under
+# not_ready) and the code is named in the not-ready summary line, alongside
+# a disputed deterministic code's reason and waive command.
+test_dispatch_semantic_scope_child_refused_and_reported() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-semscope REPOS_ROOT='$repos_root'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
+    _seed_epic '$repos_root' INIT-42 true CRE-701
+    _seed_child '$repos_root' CRE-701 INIT-42 false '' not-ready
+    manifest_path=\$(get_ticket_manifest_path CRE-701)
+    tmp=\$(jq -c '.ready.missing = [\"SEMANTIC_SCOPE\", \"AC_VAGUE\"]
+      | .ready.semantic = {evaluator:\"dor-semantic-v1\",
+          audit:[{code:\"AC_VAGUE\", verdict:\"disputed\", reason:\"AC-4 already qualifies this\"}]}' \"\$manifest_path\")
+    echo \"\$tmp\" >\"\$manifest_path\"
+    _mock_epic_no_directive
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q 'not-ready CRE-701' || {
+    echo "expected CRE-701 to be reported not-ready; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q 'CRE-701 .*not enqueue' && {
+    echo "CRE-701 must not be enqueued: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q 'semantic=SEMANTIC_SCOPE' || {
+    echo "expected semantic=SEMANTIC_SCOPE in the not-ready line; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q 'disputed=\[AC_VAGUE (AC-4 already qualifies this) — waive: dor-check.sh --waive CRE-701 AC_VAGUE' || {
+    echo "expected the disputed AC_VAGUE entry with its waive command; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -qE 'not_ready [1-9]' || {
+    echo "expected the fleet summary line to count CRE-701 under not_ready; output: $output" >&2
+    return 1
+  }
+  return 0
+}
+_run "dispatch_semantic_scope_child_refused_and_reported" test_dispatch_semantic_scope_child_refused_and_reported
+
 test_dispatch_decision_identical_with_and_without_score() {
   local ws1 ws2 repos_root1 repos_root2 out_with out_without
   ws1=$(_setup_workspace)

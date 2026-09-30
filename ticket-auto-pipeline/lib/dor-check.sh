@@ -35,8 +35,11 @@
 #     check_ticket_ready and caches the result (including score/dimensions/
 #     gaps/body_hash) via set_ticket_readiness before returning it. Sets the
 #     same DOR_STATUS/DOR_MISSING/DOR_ADVISORY globals, plus DOR_SCORE/
-#     DOR_DIMENSIONS/DOR_GAPS when present in the returned verdict. Exit 0
-#     ready, 1 not-ready, 2 unavailable/uncacheable.
+#     DOR_DIMENSIONS/DOR_GAPS when present in the returned verdict, and
+#     DOR_SEMANTIC — the cached `ready.semantic` object, or empty — on every
+#     return path (dor-semantic-evaluator design.md Decision 12/spec
+#     "Semantic verdict exposed to readers"). Exit 0 ready, 1 not-ready, 2
+#     unavailable/uncacheable.
 #
 #   dor-check.sh --waive <TID> <CODE> <reason> [--by <name>]
 #     CLI-only (direct execution): wraps waive_ticket_readiness_code and
@@ -1001,6 +1004,7 @@ ensure_ticket_readiness() {
   DOR_SCORE=""
   DOR_DIMENSIONS=""
   DOR_GAPS=""
+  DOR_SEMANTIC=""
 
   local ready_json rc=0
   ready_json=$(get_ticket_manifest_field "$tid" ready 2>/dev/null) || rc=$?
@@ -1056,6 +1060,7 @@ ensure_ticket_readiness() {
         rewritten=$(get_ticket_manifest_field "$tid" ready 2>/dev/null)
         if [ -n "$rewritten" ]; then
           DOR_STATUS=$(echo "$rewritten" | jq -r '.status // "unavailable"' 2>/dev/null) || true
+          DOR_SEMANTIC=$(echo "$rewritten" | jq -c 'if has("semantic") then .semantic else empty end' 2>/dev/null) || DOR_SEMANTIC=""
           [ "$DOR_STATUS" = "ready" ] && check_rc=0 || check_rc=1
         fi
         ;;
@@ -1071,6 +1076,7 @@ ensure_ticket_readiness() {
     DOR_SCORE=$(echo "$ready_json" | jq -r 'if has("score") then (.score | tostring) else empty end' 2>/dev/null) || DOR_SCORE=""
     DOR_DIMENSIONS=$(echo "$ready_json" | jq -c 'if has("dimensions") then .dimensions else empty end' 2>/dev/null) || DOR_DIMENSIONS=""
     DOR_GAPS=$(echo "$ready_json" | jq -c 'if has("gaps") then .gaps else empty end' 2>/dev/null) || DOR_GAPS=""
+    DOR_SEMANTIC=$(echo "$ready_json" | jq -c 'if has("semantic") then .semantic else empty end' 2>/dev/null) || DOR_SEMANTIC=""
     [ "$DOR_STATUS" = "ready" ] && return 0
     return 1
   fi
@@ -1094,6 +1100,14 @@ ensure_ticket_readiness() {
       --argjson gaps "${DOR_GAPS:-null}" --arg hash "${DOR_BODY_HASH:-}" \
       '{score: $score, dimensions: $dims, gaps: $gaps} + (if $hash != "" then {body_hash: $hash} else {} end)')
     set_ticket_readiness "$tid" "$DOR_STATUS" "$DOR_MISSING" "$DOR_ADVISORY" "$extras" >/dev/null 2>&1 || true
+    # A manifest that already carried a semantic verdict (e.g. rc==2/3
+    # malformed-manifest fallback above) keeps or stales it per
+    # set_ticket_readiness's own preserve/stale rule — re-read it so this
+    # path exports DOR_SEMANTIC exactly like the other two return paths.
+    local _rewritten2
+    _rewritten2=$(get_ticket_manifest_field "$tid" ready 2>/dev/null)
+    [ -n "$_rewritten2" ] &&
+      DOR_SEMANTIC=$(echo "$_rewritten2" | jq -c 'if has("semantic") then .semantic else empty end' 2>/dev/null) || DOR_SEMANTIC=""
     ;;
   esac
 

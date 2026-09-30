@@ -191,27 +191,46 @@ the written object — a fresh verdict never carries a previous verdict's stale 
 
 `DOR_DIMENSION_KEYS` (`lib/dor-check.sh`) is the single source of the readiness dimension
 vocabulary: `intent`, `scope`, `acceptance_criteria`, `verification`, `context`, `test_uat`,
-`dependencies`, `constraints`, `edge_cases`, `completion`, `requirement_completeness`. A future
-semantic evaluator (JEV) writes:
+`dependencies`, `constraints`, `edge_cases`, `completion`, `requirement_completeness`.
+
+**Implemented (dor-semantic-evaluator).** The semantic evaluator is `dor-semantic-v1`
+(`lib/dor-semantic.sh`, `lib/dor-semantic-parse.sh`, `agents/dor-semantic-agent.md`) — full contract
+in [docs/dor-semantic-schema.md](dor-semantic-schema.md). In outline: an agent is spawned twice per
+ticket, scan (body only) then audit (body plus the deterministic result), each writing one result
+block; `dor_semantic_apply` validates every finding's quote against the body (verbatim, after
+normalisation) before storing anything, so an unverifiable claim blocks visibly
+(`SEMANTIC_UNVERIFIED`) rather than passing silently. A blocking finding joins `ready.missing` as
+`SEMANTIC_<DIMENSION_UPPER>` under the exact same status/waiver rule `set_ticket_readiness` already
+applies — no consumer or waiver mechanism needed to change:
 
 ```json
 "ready": {
   "...": "...",
   "semantic": {
-    "evaluator": "jev-v1",
+    "evaluator": "dor-semantic-v1",
     "checked_at": "2026-10-01T00:00:00Z",
     "body_hash": "sha256:ab12...",
     "findings": [
-      {"dimension": "requirement_completeness", "severity": "blocking", "code": "MISSING_CORE_AC", "detail": "..."}
-    ]
+      {"code": "MISSING_CORE_AC", "dimension": "requirement_completeness", "severity": "blocking",
+       "quote": "...", "detail": "...", "verified": true}
+    ],
+    "gaps": {"requirement_completeness": {"verdict": "finding", "reason": "..."}, "...": "..."},
+    "audit": [{"code": "AC_VAGUE", "verdict": "disputed", "reason": "..."}],
+    "missed": [], "score_plausible": true, "score_reason": "..."
   }
 }
 ```
 
-A `blocking` finding joins `ready.missing` as `SEMANTIC_<DIMENSION_UPPER>` under the exact same
-status/waiver rule `set_ticket_readiness` already applies — no consumer or waiver mechanism needs to
-change. **This capability reserves and documents this shape only; no code in this repository reads
-or writes `ready.semantic` yet.**
+`ready.semantic` is written only by `manifest-write.sh`'s `set_ticket_semantic` — the third writer of
+`ready`, alongside `set_ticket_readiness` and `waive_ticket_readiness_code`, under the same readiness
+lock. A deterministic rescan (`set_ticket_readiness`) preserves `semantic` when the fresh body hash
+still matches `semantic.body_hash`, or replaces every prior `SEMANTIC_*` code with the single code
+`SEMANTIC_STALE` when it doesn't — a ticket edited after its semantic verdict can never pass on the
+deterministic check alone. `ensure_ticket_readiness` exports the cached verdict as `DOR_SEMANTIC` on
+every return path. **The only caller today is the planner's Refinement phase**
+(`planner-refinement-phase`) — no ticket carries a `SEMANTIC_*` code until that phase runs the
+evaluator on it; `ticket-critique`'s overlapping checks (AC testability, scope, edge cases) are
+unchanged and uncoordinated with this pass, a noted follow-up.
 
 ## What stays outside deterministic evaluation
 

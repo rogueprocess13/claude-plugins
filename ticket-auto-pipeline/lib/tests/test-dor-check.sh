@@ -685,6 +685,60 @@ waived_after=$(get_ticket_manifest_field "WAIVE-HASH-1" ready 2>/dev/null | jq -
 
 unset -f resolve_planner_dir
 
+# ── ensure_ticket_readiness exports DOR_SEMANTIC (dor-semantic-evaluator, task 7.1) ──
+
+# Cache hit: a manifest whose cached `ready.semantic` matches the resolved
+# body's hash exports it verbatim, with no recompute.
+write_ticket_manifest "SEM-CACHE-1" "INIT-1" "feature" '[]'
+sem_planner_dir="$TMP_ROOT/.ticket-auto/initiatives/INIT-1/tickets/SEM-CACHE-1/planner"
+mkdir -p "$sem_planner_dir"
+sem_body='## Summary
+Ship the widget.
+
+## Background / Motivation
+The widget needs shipping because customers are waiting on it.
+
+## Proposed Behaviour
+The widget ships.
+
+## Acceptance Criteria
+- [ ] The widget ships correctly
+
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| BE    | gateway | widget |
+'
+_write_body "$sem_planner_dir/body.md" "$sem_body"
+sem_hash=$(_dor_body_hash "$sem_body")
+set_ticket_readiness "SEM-CACHE-1" "ready" '[]' '[]' "{\"body_hash\": \"${sem_hash}\"}"
+sem_obj=$(jq -nc --arg h "$sem_hash" '{evaluator:"dor-semantic-v1", checked_at:"2026-09-30T00:00:00Z", body_hash:$h, findings:[], gaps:{}, audit:[], missed:[], score_plausible:true, score_reason:"ok"}')
+set_ticket_semantic "SEM-CACHE-1" "$sem_obj"
+
+DOR_SEMANTIC=""
+resolve_planner_dir() { echo "$sem_planner_dir"; }
+ensure_ticket_readiness "SEM-CACHE-1" || true
+[ -n "$DOR_SEMANTIC" ] && [ "$(echo "$DOR_SEMANTIC" | jq -r '.evaluator')" = "dor-semantic-v1" ] &&
+  _pass "ensure_ticket_readiness: cache hit exports DOR_SEMANTIC" ||
+  _fail "ensure_ticket_readiness: cache hit should export DOR_SEMANTIC (got '$DOR_SEMANTIC')"
+unset -f resolve_planner_dir
+
+# Fresh compute (no manifest yet, live body): DOR_SEMANTIC is empty — a
+# brand-new verdict has never been evaluated by the semantic pass.
+DOR_SEMANTIC="sentinel-should-be-cleared"
+ensure_ticket_readiness "SEM-FRESH-1" --body "$sem_planner_dir/body.md" --type feature || true
+[ -z "$DOR_SEMANTIC" ] &&
+  _pass "ensure_ticket_readiness: fresh compute with no prior semantic leaves DOR_SEMANTIC empty" ||
+  _fail "ensure_ticket_readiness: fresh compute should leave DOR_SEMANTIC empty (got '$DOR_SEMANTIC')"
+
+# Unavailable: no body resolvable at all — DOR_SEMANTIC stays empty, same as
+# every other DOR_* global on this path.
+DOR_SEMANTIC="sentinel-should-be-cleared"
+ensure_ticket_readiness "SEM-NEVER-SEEN-1" || true
+[ "$DOR_STATUS" = "unavailable" ] && [ -z "$DOR_SEMANTIC" ] &&
+  _pass "ensure_ticket_readiness: unavailable path leaves DOR_SEMANTIC empty" ||
+  _fail "ensure_ticket_readiness: unavailable path should leave DOR_SEMANTIC empty (status=$DOR_STATUS semantic='$DOR_SEMANTIC')"
+
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
