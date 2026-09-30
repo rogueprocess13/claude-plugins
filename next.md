@@ -38,11 +38,16 @@ unmodified `main` via `git stash`. **Task 1.7/1.7a's live parity run was explici
 explicit user decision (2026-09-27)**, not merely deferred: no real fleet with live `state:
 execution` epics was available in this dev checkout, and the user chose to proceed through the full
 cutover (including the label-write removal that makes 1.7a's diff-based evidence permanently
-unproducible for any future epic) rather than pause to arrange one. **Task 7.4's live end-to-end
-functional verification on the tickets host is now the only remaining step and the hard blocker
-before merge** — it is the sole live-fleet evidence this change will ever have. See
-`ticket-auto-pipeline/docs/label-audit.md`'s final disposition entry for the full record of the
-waiver and the disposition of every formerly-`control` label.
+unproducible for any future epic) rather than pause to arrange one. Task 7.4's live end-to-end
+functional verification on the tickets host is the sole live-fleet evidence this change will ever
+have. See `ticket-auto-pipeline/docs/label-audit.md`'s final disposition entry for the full record
+of the waiver and the disposition of every formerly-`control` label.
+
+**Correction, 2026-09-30:** PR #424 merged the same day this note was written (2026-09-27) — the
+"hard blocker before merge" framing above was stale by the time it was read back in a later
+session. Task 7.4's live verification remains genuinely outstanding, but as a post-merge item now
+rolled into Step 8's consolidated live-verification pass, not a pre-merge gate. See Step 7c below
+for the corrected per-change status.
 
 ---
 
@@ -709,7 +714,7 @@ Three findings from the Track B design work that stand on their own, whether or 
 
 ---
 
-## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — CLOSES this authority-flip programme. Changes 1/2 MERGED (PR #401, PR #402); Change 3 fully implemented (all 51 tasks, all 7 groups) on the PR #424 branch, not yet mergeable — task 7.4's live verification on the tickets host is the sole remaining blocker. Task 1.7/1.7a's pre-cutover parity run was explicitly waived by the user rather than performed; see `label-audit.md`'s final disposition entry.
+## Step 7c — Tracker decoupling, Track B: the authority flip (labels off Linear, approval by script) — COMPLETE, all 3 changes merged. Changes 1/2/3 MERGED (PR #401, PR #402, PR #424 — #424 merged 2026-09-27, correcting this section's earlier "not yet mergeable" status). Task 7.4's live end-to-end verification on the tickets host is the only item from this programme still outstanding — rolled into Step 8's consolidated live-verification pass below. Task 1.7/1.7a's pre-cutover parity run was explicitly waived by the user rather than performed; see `label-audit.md`'s final disposition entry.
 
 **What remains after this closes:** a second board driver (only `lib/board-drivers/linear.sh` is shipped; the projection architecture — `board_drivers` in `workflow.json`, `board-cursor.sh`, `pusher.py` — was built driver-agnostic on purpose, but nothing has proposed a second one) is still unproposed. That is the next natural step for this program, whenever a second tracker becomes a real requirement — nothing in this repo currently needs it.
 
@@ -737,7 +742,8 @@ before being finalized. Three openspec changes, one PR each, in this order — l
 on manifest fields and classifications the earlier ones add, so the order is load-bearing, not
 just a size-limiting convention:
 
-1. **`tracker-approval-by-script`** — **IMPLEMENTED 2026-09-23, 40/40 tasks, PR #401 open.**
+1. **`tracker-approval-by-script`** — **IMPLEMENTED 2026-09-23, 40/40 tasks, merged via PR #401
+   (2026-09-23).**
    New `/ticket-approve` / `/ticket-reject` commands are the only approval actuator; manifest
    gains `stage`; all six approval-decision reads (`gate-check.sh` Checks 2.8b/2.8c/4/reapprove via
    a new shared `_gate_manifest_approved` helper, `detect-resume.sh`'s `GATE_HELD` resume, fleet-
@@ -768,9 +774,8 @@ just a size-limiting convention:
    `fleet-controller` 0.34.0→0.35.0. Task 9.4 (live verification on the tickets host) deferred to
    the programme's consolidated live-verification pass, per the same reordering decision B3a/B3b/B4
    already used.
-2. **`tracker-flow-projection-cutover`** — **IMPLEMENTED 2026-09-23, 70/70 tasks, PR #402 open**
-   (base: `feat/tracker-approval-by-script`, since it depends on Change 1's manifest `stage` field
-   and PR #401 hasn't merged yet — rebase both onto `main` once #401 lands) (9.3 and 10.10
+2. **`tracker-flow-projection-cutover`** — **IMPLEMENTED 2026-09-23, 70/70 tasks, merged via
+   PR #402 (2026-09-23)** (9.3 and 10.10
    deferred to the programme's consolidated live-verification pass — both need real Linear
    credentials this sandbox doesn't have). `flow.sh` stops calling Linear entirely: no
    `get_issue`/`get_team`/`update_issue`, no post-trigger assertion (exit 7 retired, every consumer
@@ -800,28 +805,21 @@ just a size-limiting convention:
    `CHANGELOG.md` and `fleet-controller/README.md`, not part of this code landing. Full suite green
    (`make check-generated && make lint && make fmt-check && make test`); versions bumped
    `ticket-auto-pipeline` 0.54.0→0.55.0, `fleet-controller` 0.35.0→0.36.0.
-3. **`tracker-planner-and-fallback-cutover`** (proposed, 51 tasks) — the planner stops stamping
+3. **`tracker-planner-and-fallback-cutover`** — **IMPLEMENTED, all 51 tasks, all 7 groups, merged
+   via PR #424 (2026-09-27).** The planner stops stamping
    `planned`/`INIT-*`/`blocked-by:*`/`state:execution`/type/`pre-approved` at ticket and epic
-   creation; every remaining B3a live-fallback branch is deleted. Gated on a parity step: two
-   fleet-detect engines (D-12 `_fleet_scan_epic_branch_ready`, D-18
-   `_fleet_scan_stalled_approved_children`) currently enumerate epics via a live
-   `state:execution` query with **no manifest path at all** — reviewed and confirmed worse than
-   first scoped: D-12 also needs the live epic state for its never-regress short-circuit and the
-   live description for the Branch Directive, D-18 also needs the live children list. Task group 1
-   builds and verifies local enumeration for every input (not just population) against a real
-   fleet *while labels are still written*, records the comparison as a durable artefact, and only
-   then lets group 4 (planner stops writing) proceed — that group is marked the point of no return.
+   creation; every remaining B3a live-fallback branch is deleted (confirmed on `main`:
+   `workflow.json`'s `planner_labels` section is gone, `TICKET_LOCAL_MANIFEST_DISABLE` kill switch
+   is retired). Task group 1's parity step (local enumeration verified against a real fleet while
+   labels were still written, for the two fleet-detect engines — D-12
+   `_fleet_scan_epic_branch_ready`, D-18 `_fleet_scan_stalled_approved_children` — that had no
+   manifest path at all) is the durable artefact that let group 4 (planner stops writing) proceed
+   past the point of no return. `ticket-auto-pipeline` 0.57.0, `fleet-controller` 0.38.0,
+   `ticket-planner` 0.11.0.
 
-All three validated `openspec validate --strict` clean as of 2026-09-23. Change 1
-(`tracker-approval-by-script`) is implemented (40/40 tasks, PR #401 open) and Change 2
-(`tracker-flow-projection-cutover`) is implemented (70/70 tasks, PR #402 open) — see their entries
-above. Change 2 branches off Change 1's branch (`feat/tracker-approval-by-script`), not `main`,
-since it depends on manifest fields (`stage`) Change 1 adds and PR #401 has not merged yet —
-rebase onto `main` once #401 lands.
-Changes 2/3 are not started. Track B remains the next queued work ahead of Step 6 by the same
-direct-override precedent B1 used; Change 2 (`tracker-flow-projection-cutover`) is next up once
-Change 1's PR merges, since it depends on manifest fields (`flags`/`rev`/`pending_event`) and the
-`projected` classification Change 1 just added.
+All three validated `openspec validate --strict` clean as of 2026-09-23 and are now merged to
+`main`. This closes the Track B authority-flip programme; task 7.4's live end-to-end verification
+is the only outstanding item, rolled into Step 8's consolidated live-verification pass.
 
 ---
 
