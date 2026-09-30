@@ -53,9 +53,15 @@
 # TEST_DATA_MISSING, TEST_DATA_UNSEEDED, VPLAN_MISSING, VPLAN_ROW_GAP,
 # VPLAN_UNVERIFIABLE, AC_IMPLEMENTATION_ONLY,
 # VERIFICATION_REQUIRED_NOT_SELF_VERIFYING. DOR_STRICT_CATALOG/
-# DOR_STRICT_TEST_DATA/DOR_STRICT_AC_IMPL/DOR_STRICT_VERIFICATION (all
-# default false) promote the catalog/test-data/impl-only/verification
-# advisory codes to hard.
+# DOR_STRICT_TEST_DATA/DOR_STRICT_AC_IMPL/DOR_STRICT_VERIFICATION/
+# DOR_STRICT_VPLAN (all default false) promote the catalog/test-data/
+# impl-only/verification/verification-plan advisory codes to hard.
+# DOR_STRICT_VPLAN (planner-ready-by-construction) promotes VPLAN_MISSING,
+# VPLAN_ROW_GAP and VPLAN_UNVERIFIABLE together — it does not affect the
+# self-verifying-AC escape hatch (VPLAN_MISSING's "satisfied-by-ac" class,
+# which stays non-blocking regardless of this flag) or
+# VERIFICATION_REQUIRED_NOT_SELF_VERIFYING, which is governed by its own
+# DOR_STRICT_VERIFICATION switch.
 #
 # `dor_quality_score` and `semantic_coverage_gaps` are diagnostic only — they
 # NEVER affect DOR_STATUS. See docs/dor-readiness.md.
@@ -653,6 +659,7 @@ check_ticket_ready() {
   local strict_test_data="${DOR_STRICT_TEST_DATA:-false}"
   local strict_ac_impl="${DOR_STRICT_AC_IMPL:-false}"
   local strict_verification="${DOR_STRICT_VERIFICATION:-false}"
+  local strict_vplan="${DOR_STRICT_VPLAN:-false}"
 
   # ── Scope + structural hard codes ────────────────────────────────────────
   local backend_only="false"
@@ -844,31 +851,46 @@ check_ticket_ready() {
     _dor_record "VERIFICATION_REQUIRED_NOT_SELF_VERIFYING" "false" "$verification_class" "Verification Plan present, or acceptance criteria are self-verifying"
   fi
 
+  local vplan_class="advisory"
+  [ "$strict_vplan" = "true" ] && vplan_class="hard"
+
   if [ "$vplan_found" = "true" ]; then
-    _dor_record "VPLAN_MISSING" "false" "advisory" "Verification Plan table present"
+    _dor_record "VPLAN_MISSING" "false" "$vplan_class" "Verification Plan table present"
 
     if [ "${VPLAN_VERIFIABLE:-0}" -eq 0 ] 2>/dev/null; then
-      advisory+=("VPLAN_UNVERIFIABLE")
-      _dor_record "VPLAN_UNVERIFIABLE" "true" "advisory" "no criteria marked verifiable in the table"
+      _dor_record "VPLAN_UNVERIFIABLE" "true" "$vplan_class" "no criteria marked verifiable in the table"
+      if [ "$strict_vplan" = "true" ]; then
+        missing+=("VPLAN_UNVERIFIABLE")
+      else
+        advisory+=("VPLAN_UNVERIFIABLE")
+      fi
     else
-      _dor_record "VPLAN_UNVERIFIABLE" "false" "advisory" "${VPLAN_VERIFIABLE} criteria marked verifiable"
+      _dor_record "VPLAN_UNVERIFIABLE" "false" "$vplan_class" "${VPLAN_VERIFIABLE} criteria marked verifiable"
     fi
 
     local ac_count_raw
     ac_count_raw=$(_dor_ac_count "$body")
     if [ "$ac_count_raw" -gt 0 ] 2>/dev/null && [ "${VPLAN_ROWS:-0}" -lt "$ac_count_raw" ] 2>/dev/null; then
-      advisory+=("VPLAN_ROW_GAP")
-      _dor_record "VPLAN_ROW_GAP" "true" "advisory" "${VPLAN_ROWS} table rows vs ${ac_count_raw} acceptance criteria"
+      _dor_record "VPLAN_ROW_GAP" "true" "$vplan_class" "${VPLAN_ROWS} table rows vs ${ac_count_raw} acceptance criteria"
+      if [ "$strict_vplan" = "true" ]; then
+        missing+=("VPLAN_ROW_GAP")
+      else
+        advisory+=("VPLAN_ROW_GAP")
+      fi
     else
-      _dor_record "VPLAN_ROW_GAP" "false" "advisory" "table rows cover acceptance criteria count"
+      _dor_record "VPLAN_ROW_GAP" "false" "$vplan_class" "table rows cover acceptance criteria count"
     fi
   elif [ "$satisfied_by_ac" = "true" ]; then
     _dor_record "VPLAN_MISSING" "null" "satisfied-by-ac" "no Verification Plan table, but ${selfverify_count}/${ac_count} acceptance criteria are self-verifying"
     _dor_record "VPLAN_ROW_GAP" "null" "inapplicable" "VPLAN_MISSING satisfied by self-verifying AC"
     _dor_record "VPLAN_UNVERIFIABLE" "null" "inapplicable" "VPLAN_MISSING satisfied by self-verifying AC"
   else
-    advisory+=("VPLAN_MISSING")
-    _dor_record "VPLAN_MISSING" "true" "advisory" "no Verification Plan table found"
+    _dor_record "VPLAN_MISSING" "true" "$vplan_class" "no Verification Plan table found"
+    if [ "$strict_vplan" = "true" ]; then
+      missing+=("VPLAN_MISSING")
+    else
+      advisory+=("VPLAN_MISSING")
+    fi
     _dor_record "VPLAN_ROW_GAP" "null" "inapplicable" "VPLAN_MISSING already covers this"
     _dor_record "VPLAN_UNVERIFIABLE" "null" "inapplicable" "VPLAN_MISSING already covers this"
   fi

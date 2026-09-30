@@ -508,6 +508,139 @@ check_ticket_ready "STRICT-06-OFF" --body "$FIXTURES_DIR/06-backend-no-verificat
   _fail "fixture 06 should be ready by default (got $DOR_STATUS)"
 
 # ══════════════════════════════════════════════════════════════════════════
+# DOR_STRICT_VPLAN tests (planner-ready-by-construction)
+# ══════════════════════════════════════════════════════════════════════════
+#
+# Two non-self-verifying AC lines (neither matches _DOR_SELFVERIFY_RE — no
+# 3-digit status codes, "within Nms/s", equals/is-set/user-can wording,
+# error message, N%/ms/kb, or quoted strings) so satisfied_by_ac never
+# applies here: selfverify_count*2 (0) >= ac_count (2) is false.
+
+vplan_base_body='## Summary
+Improve the export workflow.
+
+## Background / Motivation
+Finance needs a faster way to reconcile invoices.
+
+## Proposed Behaviour
+An export action produces a downloadable file.
+
+## Acceptance Criteria
+- [ ] The export button appears on the invoice list
+- [ ] The exported file reflects the current filter
+
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| BE    | api     | export |
+
+## Test User
+qa@example.com / password123
+'
+
+no_vplan_file="$TMP_ROOT/vplan-missing.md"
+_write_body "$no_vplan_file" "$vplan_base_body"
+
+rc=0
+DOR_STRICT_VPLAN=true check_ticket_ready "STRICT-VPLAN-MISSING" --body "$no_vplan_file" --type chore --no-fetch || rc=$?
+[ "$rc" = "1" ] && [ "$DOR_STATUS" = "not-ready" ] &&
+  echo "$DOR_MISSING" | jq -e 'index("VPLAN_MISSING") != null' >/dev/null &&
+  _pass "no table, no self-verifying AC: not-ready under DOR_STRICT_VPLAN=true" ||
+  _fail "should be not-ready under DOR_STRICT_VPLAN=true (rc=$rc status=$DOR_STATUS missing=$DOR_MISSING)"
+
+check_ticket_ready "STRICT-VPLAN-MISSING-OFF" --body "$no_vplan_file" --type chore --no-fetch || true
+[ "$DOR_STATUS" = "ready" ] &&
+  echo "$DOR_ADVISORY" | jq -e 'index("VPLAN_MISSING") != null' >/dev/null &&
+  _pass "no table, no self-verifying AC: ready but VPLAN_MISSING advisory by default" ||
+  _fail "should be ready with VPLAN_MISSING advisory by default (status=$DOR_STATUS advisory=$DOR_ADVISORY)"
+
+row_gap_body="${vplan_base_body}
+## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|-----------|-----------|------------------|-------------------|--------------------|------------|
+| 1 | Export button appears | finance | Billing > Invoices | none | button is present | Y |
+"
+row_gap_file="$TMP_ROOT/vplan-row-gap.md"
+_write_body "$row_gap_file" "$row_gap_body"
+
+rc=0
+DOR_STRICT_VPLAN=true check_ticket_ready "STRICT-VPLAN-ROWGAP" --body "$row_gap_file" --type chore --no-fetch || rc=$?
+[ "$rc" = "1" ] && [ "$DOR_STATUS" = "not-ready" ] &&
+  echo "$DOR_MISSING" | jq -e 'index("VPLAN_ROW_GAP") != null' >/dev/null &&
+  _pass "1 row vs 2 AC lines: not-ready under DOR_STRICT_VPLAN=true" ||
+  _fail "should be not-ready under DOR_STRICT_VPLAN=true (rc=$rc status=$DOR_STATUS missing=$DOR_MISSING)"
+
+check_ticket_ready "STRICT-VPLAN-ROWGAP-OFF" --body "$row_gap_file" --type chore --no-fetch || true
+[ "$DOR_STATUS" = "ready" ] &&
+  echo "$DOR_ADVISORY" | jq -e 'index("VPLAN_ROW_GAP") != null' >/dev/null &&
+  _pass "1 row vs 2 AC lines: ready but VPLAN_ROW_GAP advisory by default" ||
+  _fail "should be ready with VPLAN_ROW_GAP advisory by default (status=$DOR_STATUS advisory=$DOR_ADVISORY)"
+
+unverifiable_body="${vplan_base_body}
+## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|-----------|-----------|------------------|-------------------|--------------------|------------|
+| 1 | Export button appears | finance | Billing > Invoices | none | looks correct |   |
+| 2 | Export reflects filter | finance | Billing > Invoices | filtered invoices | behaves as expected |   |
+"
+unverifiable_file="$TMP_ROOT/vplan-unverifiable.md"
+_write_body "$unverifiable_file" "$unverifiable_body"
+
+rc=0
+DOR_STRICT_VPLAN=true check_ticket_ready "STRICT-VPLAN-UNVERIFIABLE" --body "$unverifiable_file" --type chore --no-fetch || rc=$?
+[ "$rc" = "1" ] && [ "$DOR_STATUS" = "not-ready" ] &&
+  echo "$DOR_MISSING" | jq -e 'index("VPLAN_UNVERIFIABLE") != null' >/dev/null &&
+  _pass "zero rows marked: not-ready under DOR_STRICT_VPLAN=true" ||
+  _fail "should be not-ready under DOR_STRICT_VPLAN=true (rc=$rc status=$DOR_STATUS missing=$DOR_MISSING)"
+
+check_ticket_ready "STRICT-VPLAN-UNVERIFIABLE-OFF" --body "$unverifiable_file" --type chore --no-fetch || true
+[ "$DOR_STATUS" = "ready" ] &&
+  echo "$DOR_ADVISORY" | jq -e 'index("VPLAN_UNVERIFIABLE") != null' >/dev/null &&
+  _pass "zero rows marked: ready but VPLAN_UNVERIFIABLE advisory by default" ||
+  _fail "should be ready with VPLAN_UNVERIFIABLE advisory by default (status=$DOR_STATUS advisory=$DOR_ADVISORY)"
+
+# The self-verifying-AC escape hatch is unaffected by DOR_STRICT_VPLAN in
+# either state — no Verification Plan table, but a single AC line that
+# matches _DOR_SELFVERIFY_RE ("returns 200").
+selfverify_body='## Summary
+Fix the status code returned by the health endpoint.
+
+## Background / Motivation
+The health endpoint returns the wrong status code.
+
+## Proposed Behaviour
+The endpoint returns 200 on success.
+
+## Acceptance Criteria
+- [ ] The health endpoint returns 200
+
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| BE    | api     | health |
+
+## Test User
+qa@example.com / password123
+'
+selfverify_file="$TMP_ROOT/vplan-selfverify.md"
+_write_body "$selfverify_file" "$selfverify_body"
+
+DOR_STRICT_VPLAN=true check_ticket_ready "STRICT-VPLAN-SELFVERIFY" --body "$selfverify_file" --type chore --no-fetch || true
+echo "$DOR_CHECKS" | jq -e '.VPLAN_MISSING.class == "satisfied-by-ac"' >/dev/null &&
+  _pass "self-verifying AC still satisfies VPLAN_MISSING under DOR_STRICT_VPLAN=true" ||
+  _fail "VPLAN_MISSING should stay satisfied-by-ac under strict mode (checks=$(echo "$DOR_CHECKS" | jq -c .VPLAN_MISSING))"
+
+! echo "$DOR_MISSING" | jq -e 'index("VPLAN_MISSING") != null' >/dev/null &&
+  _pass "VPLAN_MISSING does not block a self-verifying-AC ticket under DOR_STRICT_VPLAN=true" ||
+  _fail "VPLAN_MISSING must not block a self-verifying-AC ticket under DOR_STRICT_VPLAN=true (missing=$DOR_MISSING)"
+
+# ══════════════════════════════════════════════════════════════════════════
 # Widened AC_VAGUE tests (task 8.4)
 # ══════════════════════════════════════════════════════════════════════════
 

@@ -59,14 +59,19 @@ else
   fail "TicketGen prompt mentions '## Navigation Path'" "heading not found"
 fi
 
-echo "--- TicketGen prompt names the bug-only headings ---"
-for heading in '## Steps to Reproduce' '## Test Data Prerequisites'; do
-  if grep -qF "$heading" <<<"$TICKETGEN_PROMPT"; then
-    pass "TicketGen prompt mentions '${heading}'"
-  else
-    fail "TicketGen prompt mentions '${heading}'" "heading not found"
-  fi
-done
+echo "--- TicketGen prompt names the bug-only heading ---"
+if grep -qF '## Steps to Reproduce' <<<"$TICKETGEN_PROMPT"; then
+  pass "TicketGen prompt mentions '## Steps to Reproduce'"
+else
+  fail "TicketGen prompt mentions '## Steps to Reproduce'" "heading not found"
+fi
+
+echo "--- TicketGen prompt names the universal (planner-ready-by-construction widened) heading ---"
+if grep -qF '## Test Data Prerequisites' <<<"$TICKETGEN_PROMPT"; then
+  pass "TicketGen prompt mentions '## Test Data Prerequisites'"
+else
+  fail "TicketGen prompt mentions '## Test Data Prerequisites'" "heading not found"
+fi
 
 echo "--- TicketGen prompt references the issue and the gate-check it front-runs ---"
 if grep -qF '#285' <<<"$TICKETGEN_PROMPT"; then

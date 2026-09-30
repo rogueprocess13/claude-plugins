@@ -523,6 +523,30 @@ ${state_dir}/artifacts/specs/<ticket-slug>.md. Each spec must include:
    - a **sibling spec slug** in this initiative — the spec filename minus \`.md\`, or an unambiguous \`-\`-bounded prefix of one (\`blocked-by:exc-1\` for \`exc-1-something.md\`); or
    - a **cross-initiative prerequisite** — the existing Linear identifier of the blocking ticket, e.g. \`blocked-by:WIL-83\`. Use this whenever work in this initiative cannot start until a ticket from *another* initiative is Done. Do not leave such a prerequisite as prose in the Description only: prose never reaches the ticket manifest's \`blocked_by\` array, so an unrecorded prerequisite is unenforceable.
 4. **## Signals** — a JSON code block with the 5 raw confidence signals (see below)
+5. **## Verification Notes** — per acceptance criterion, which role exercises it and
+   what test data it needs (see below)
+
+### Verification Notes (planner-ready-by-construction)
+
+TicketGen builds each ticket's \`## Verification Plan\` table from this section — it
+is structured content for TicketGen to read back, the same relationship the
+\`## Signals\` JSON block already has to the confidence function below. It is NOT a
+draft of the final table (no Expected behavior wording, no Verifiable marks) — just
+the two facts TicketGen cannot derive from the AC text alone: who exercises the
+criterion and what data it needs to exist first.
+
+One short line per Acceptance Criteria line, in the same order:
+
+\`\`\`
+## Verification Notes
+
+1. Role: finance user. Test data: 5 seeded invoices with distinct dates.
+2. Role: admin. Test data: none (read-only view).
+\`\`\`
+
+When a criterion needs no special role or test data, still write the line with
+\`Role: any authenticated user. Test data: none.\` rather than omitting it — a missing
+numbered entry reads as "not considered," not "not needed."
 
 ### Confidence signals (RAW VALUES ONLY — do NOT compute confidence)
 
@@ -616,6 +640,8 @@ On failure, write \`fail\` instead of \`done\`.
 
 ## Constraints
 - Every ticket spec must have a \`## Signals\` JSON block — the bash generator needs it.
+- Every ticket spec must have a \`## Verification Notes\` section, one line per Acceptance
+  Criteria line — TicketGen's Verification Plan table reads it (planner-ready-by-construction).
 - Signals must be raw values from Discovery, not fabricated. Do NOT compute Confidence.
 - The description in each spec is the actual Linear ticket body — be precise.
 - Dependency order must be a DAG.
@@ -1262,18 +1288,59 @@ authoring guidance: wording, table columns, placeholder shape):
 - \`## Acceptance Criteria\` — atomic \`- [ ]\` observable facts, one per line, no "and"
 - \`## Test User\` — role/email + password, non-empty
 - \`## Scope\` — a \`| Layer | Service | Area |\` table, non-empty
+- \`## Test Data Prerequisites\` — what must exist before verification can run
+  (planner-ready-by-construction: widened from bug-only — every type needs this,
+  matching \`templates/feature.md\`'s own shape)
+- \`## Verification Plan\` — see the dedicated section below (planner-ready-by-construction)
 
 **feature / improvement tickets also need:**
 - \`## Navigation Path\` — click-by-click (\`Menu > Submenu > Page\`), never a URL
 
 **bug tickets also need:**
 - \`## Steps to Reproduce\` — numbered steps
-- \`## Test Data Prerequisites\` — what must exist before verification can run
 
 A heading present but left empty fails the gate-check exactly like a missing
 heading — never emit a heading with no content under it. The pre-creation
 validation below checks this mechanically, so a ticket missing a section is
 caught here, not by ticket-auto's gate three phases later.
+
+## Verification Plan table (planner-ready-by-construction) — MANDATORY
+
+ticket-auto-pipeline's deterministic readiness check
+(\`lib/dor-check.sh\`/\`lib/vplan-parse.sh\`) already scores every ticket's
+\`## Verification Plan\` table; today nothing generates one, so every planned
+ticket reports \`VPLAN_MISSING\` advisory. Write the table in this **exact**
+shape — the parser matches the subsection heading literally:
+
+\`\`\`
+## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|-----------|-----------|------------------|-------------------|--------------------|------------|
+| 1 | Export downloads a file named invoices-{date}.csv | finance | Billing > Invoices | 5 seeded invoices | invoices-2026-09-30.csv downloaded | ✓ |
+\`\`\`
+
+Rules:
+1. **Enumerate every \`## Acceptance Criteria\` line first**, then write exactly
+   one table row per line, in the same order — never fewer rows than AC lines
+   (\`VPLAN_ROW_GAP\` fires when the table has fewer rows than AC lines).
+2. **Read the spec file's \`## Verification Notes\` section** (written by
+   Specify — see its prompt) for each AC's role and test data, and use that
+   recorded signal for the Role scope / Test data needed columns rather than
+   inventing one. When a spec has no \`## Verification Notes\` section (an
+   older spec, or a spec reused across \`resume\`), still write a complete
+   table from the AC text and ticket context alone — never omit the table or
+   fail because the signal is missing.
+3. **Mark Verifiable (\`✓\`) only when earned.** Mark a row \`✓\` only when its
+   Expected behavior cell states a concrete, checkable value (a specific
+   string, count, status, or state). Leave it blank — with the cell
+   explaining why — when the criterion is inherently judgment-based (visual
+   polish, "feels right"); never invent a false concrete value just to mark
+   a row. At least one row on the ticket should be \`✓\` unless every single
+   criterion is genuinely non-checkable (\`VPLAN_UNVERIFIABLE\` fires when
+   zero rows are marked).
 
 ## Humanize the composed body (issue #285) — MANDATORY
 
@@ -1528,6 +1595,9 @@ planner_state_write "${initiative_id}" "META" "ticketgen" "done" "N tickets crea
   then tickets whose blockers already exist.
 - Confidence must vary across tickets — derive it from each ticket's signals.
 - A cyclic dependency set produces ZERO tickets. Report the cycle and exit.
+- Every ticket's \`## Verification Plan\` table must have at least one row per
+  Acceptance Criteria line and at least one row marked \`✓\` unless every
+  criterion is genuinely non-checkable (planner-ready-by-construction).
 - Idempotency is mandatory — check existence before every Linear API call.
 AGENT_PROMPT
 }

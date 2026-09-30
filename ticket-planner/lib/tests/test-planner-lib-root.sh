@@ -285,6 +285,31 @@ for phase in "${PHASES[@]}"; do
   fi
 done
 
+# ── Test 11: Verification Plan / Verification Notes contracts render ───────────
+#
+# planner-ready-by-construction: TicketGen must instruct the exact
+# vplan-parse.sh-compatible heading shape, and Specify must instruct
+# Verification Notes — both as literal text in the emitted prompt, not
+# something that could silently be dropped by a refactor.
+
+echo "--- Test 11: Verification Plan / Verification Notes contracts render ---"
+
+tg_vplan=$(planner_prompt_for_phase "TicketGen" "INIT-TEST" "an idea" "${TMPDIR}/state")
+for needle in '## Verification Plan' '### Per-Criterion Verification' '## Test Data Prerequisites'; do
+  if grep -qF "$needle" <<<"$tg_vplan"; then
+    pass "TicketGen prompt contains literal: ${needle}"
+  else
+    fail "TicketGen prompt contains literal: ${needle}" "not found"
+  fi
+done
+
+specify_vplan=$(planner_prompt_for_phase "Specify" "INIT-TEST" "an idea" "${TMPDIR}/state")
+if grep -qF '## Verification Notes' <<<"$specify_vplan"; then
+  pass "Specify prompt contains literal: ## Verification Notes"
+else
+  fail "Specify prompt contains literal: ## Verification Notes" "not found"
+fi
+
 echo ""
 echo "=== planner-lib-root.sh: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]
