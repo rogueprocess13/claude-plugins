@@ -241,6 +241,192 @@ test_feedback_writer_groups_by_initiative_end_to_end() {
   return 0
 }
 
+# ── Readiness-gap aggregation (readiness-feedback-loop) ─────────────────────
+#
+# gate-check.sh:838 writes META|gate-stop|fail|TICKET_NOT_READY — <codes>;
+# ticket-verify's Step 1.7a writes VERIFY|pre-flight|fail|No test user found.
+# Both are scanned independently of whether the same ticket ever wrote a
+# META|planner-feedback| entry.
+
+test_readiness_gap_ticket_with_no_planner_feedback_is_scanned() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(_setup_workspace)
+
+  _test_plog "$ws" "CRE-401" "META" "gate-stop" "fail" "TICKET_NOT_READY — SCOPE_MISSING"
+  (
+    source "$TAP_LIB_DIR/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-401" "INIT-77" "feature" '[]' >/dev/null
+  )
+
+  REPOS_ROOT="$repos_root" fleet_aggregate_feedback "$ws" >/dev/null 2>&1
+
+  local rundate f77 exists content
+  rundate=$(date +%Y-%m-%d)
+  f77="${repos_root}/.ticket-auto/initiatives/INIT-77/feedback/${rundate}.json"
+  exists="false"
+  [ -f "$f77" ] && exists="true"
+  content=$(cat "$f77" 2>/dev/null)
+  rm -rf "$ws" "$repos_root"
+
+  [ "$exists" = "true" ] || {
+    echo "expected INIT-77 feedback file even with zero planner-feedback entries"
+    return 1
+  }
+  echo "$content" | jq -e '.summary.readiness_gaps.gate_stop_count == 1
+    and .summary.readiness_gaps.gate_stop_codes.SCOPE_MISSING == 1
+    and (.summary.readiness_gaps.affected_tickets | index("CRE-401")) != null' >/dev/null 2>&1
+}
+
+test_readiness_gap_only_initiative_has_zeroed_feedback_fields() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(_setup_workspace)
+
+  _test_plog "$ws" "CRE-402" "META" "gate-stop" "fail" "TICKET_NOT_READY — TEST_USER_MISSING"
+  (
+    source "$TAP_LIB_DIR/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-402" "INIT-78" "feature" '[]' >/dev/null
+  )
+
+  REPOS_ROOT="$repos_root" fleet_aggregate_feedback "$ws" >/dev/null 2>&1
+
+  local rundate f78
+  rundate=$(date +%Y-%m-%d)
+  f78="${repos_root}/.ticket-auto/initiatives/INIT-78/feedback/${rundate}.json"
+  local content
+  content=$(cat "$f78" 2>/dev/null)
+  rm -rf "$ws" "$repos_root"
+
+  # The empty-entries arithmetic path (task 2.6's guard) — total_tickets=0,
+  # avg_confidence_actual=0 (not a jq division error), tickets=[].
+  echo "$content" | jq -e '.summary.total_tickets == 0
+    and .summary.avg_confidence_actual == 0
+    and (.tickets | length == 0)' >/dev/null 2>&1
+}
+
+test_readiness_gap_multiple_codes_multiple_tickets_break_down_per_code() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(_setup_workspace)
+
+  _test_plog "$ws" "CRE-403" "META" "gate-stop" "fail" "TICKET_NOT_READY — SCOPE_MISSING"
+  _test_plog "$ws" "CRE-404" "META" "gate-stop" "fail" "TICKET_NOT_READY — TEST_USER_MISSING"
+  _test_plog "$ws" "CRE-405" "META" "gate-stop" "fail" "TICKET_NOT_READY — TEST_USER_MISSING"
+  (
+    source "$TAP_LIB_DIR/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-403" "INIT-79" "feature" '[]' >/dev/null
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-404" "INIT-79" "feature" '[]' >/dev/null
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-405" "INIT-79" "feature" '[]' >/dev/null
+  )
+
+  REPOS_ROOT="$repos_root" fleet_aggregate_feedback "$ws" >/dev/null 2>&1
+
+  local rundate f79 content
+  rundate=$(date +%Y-%m-%d)
+  f79="${repos_root}/.ticket-auto/initiatives/INIT-79/feedback/${rundate}.json"
+  content=$(cat "$f79" 2>/dev/null)
+  rm -rf "$ws" "$repos_root"
+
+  echo "$content" | jq -e '.summary.readiness_gaps.gate_stop_codes.SCOPE_MISSING == 1
+    and .summary.readiness_gaps.gate_stop_codes.TEST_USER_MISSING == 2
+    and (.summary.readiness_gaps.affected_tickets | length) == 3' >/dev/null 2>&1
+}
+
+test_readiness_gap_recurrence_counts_occurrences_not_distinct_tickets() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(_setup_workspace)
+
+  # Same ticket, 3 separate resume attempts, each still gate-stopping.
+  _test_plog "$ws" "CRE-406" "META" "gate-stop" "fail" "TICKET_NOT_READY — SCOPE_MISSING" "2026-07-07T10:00:00Z"
+  _test_plog "$ws" "CRE-406" "META" "gate-stop" "fail" "TICKET_NOT_READY — SCOPE_MISSING" "2026-07-07T11:00:00Z"
+  _test_plog "$ws" "CRE-406" "META" "gate-stop" "fail" "TICKET_NOT_READY — SCOPE_MISSING" "2026-07-07T12:00:00Z"
+  (
+    source "$TAP_LIB_DIR/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-406" "INIT-80" "feature" '[]' >/dev/null
+  )
+
+  REPOS_ROOT="$repos_root" fleet_aggregate_feedback "$ws" >/dev/null 2>&1
+
+  local rundate f80 content
+  rundate=$(date +%Y-%m-%d)
+  f80="${repos_root}/.ticket-auto/initiatives/INIT-80/feedback/${rundate}.json"
+  content=$(cat "$f80" 2>/dev/null)
+  rm -rf "$ws" "$repos_root"
+
+  echo "$content" | jq -e '.summary.readiness_gaps.gate_stop_count == 3
+    and (.summary.readiness_gaps.affected_tickets | length) == 1' >/dev/null 2>&1
+}
+
+test_readiness_gap_verify_no_test_user_is_scanned() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(_setup_workspace)
+
+  _test_plog "$ws" "CRE-407" "VERIFY" "pre-flight" "fail" "No test user found"
+  (
+    source "$TAP_LIB_DIR/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-407" "INIT-81" "feature" '[]' >/dev/null
+  )
+
+  REPOS_ROOT="$repos_root" fleet_aggregate_feedback "$ws" >/dev/null 2>&1
+
+  local rundate f81 content
+  rundate=$(date +%Y-%m-%d)
+  f81="${repos_root}/.ticket-auto/initiatives/INIT-81/feedback/${rundate}.json"
+  content=$(cat "$f81" 2>/dev/null)
+  rm -rf "$ws" "$repos_root"
+
+  echo "$content" | jq -e '.summary.readiness_gaps.verify_no_test_user_count == 1' >/dev/null 2>&1
+}
+
+test_readiness_gap_clean_initiative_reports_empty_not_absent() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(_setup_workspace)
+
+  _test_plog "$ws" "CRE-408" "META" "planner-feedback" "info" '{"confidence_actual":0.9}'
+  (
+    source "$TAP_LIB_DIR/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-408" "INIT-82" "feature" '[]' >/dev/null
+  )
+
+  REPOS_ROOT="$repos_root" fleet_aggregate_feedback "$ws" >/dev/null 2>&1
+
+  local rundate f82 content
+  rundate=$(date +%Y-%m-%d)
+  f82="${repos_root}/.ticket-auto/initiatives/INIT-82/feedback/${rundate}.json"
+  content=$(cat "$f82" 2>/dev/null)
+  rm -rf "$ws" "$repos_root"
+
+  # readiness_gaps key present and empty (not absent) — regression guard for
+  # a planner-feedback-only initiative gaining exactly one new key.
+  echo "$content" | jq -e '.summary | has("readiness_gaps")
+    and .readiness_gaps.gate_stop_count == 0
+    and .readiness_gaps.verify_no_test_user_count == 0
+    and (.readiness_gaps.affected_tickets | length) == 0
+    and (.total_tickets == 1)' >/dev/null 2>&1
+}
+
+test_readiness_gap_log_marker_literals_have_not_drifted() {
+  # Cross-file tripwire (design.md Risks): fails loudly if either owning
+  # file's exact log-line literal ever changes, instead of this scan
+  # silently stopping to match.
+  local gate_check_file="$LIB_DIR/../../ticket-auto-pipeline/lib/gate-check.sh"
+  local verify_skill_file="$LIB_DIR/../../ticket-auto-pipeline/skills/ticket-verify/SKILL.md"
+
+  grep -qF 'TICKET_NOT_READY — ' "$gate_check_file" 2>/dev/null || {
+    echo "gate-check.sh no longer contains the literal 'TICKET_NOT_READY — ' substring"
+    return 1
+  }
+  grep -qF 'No test user found' "$verify_skill_file" 2>/dev/null || {
+    echo "ticket-verify/SKILL.md no longer contains the literal 'No test user found' substring"
+    return 1
+  }
+  return 0
+}
+
 # ── Run all tests ────────────────────────────────────────────────────────────────
 
 # Skip integration tests that need linear-api (just test internal helpers + dry paths)
@@ -257,6 +443,13 @@ _run "parse_feedback_payload_invalid" test_parse_feedback_payload_invalid
 _run "get_ticket_initiative_reads_manifest" test_get_ticket_initiative_reads_manifest
 _run "get_ticket_initiative_no_manifest_yields_nothing" test_get_ticket_initiative_no_manifest_yields_nothing
 _run "feedback_writer_groups_by_initiative_end_to_end" test_feedback_writer_groups_by_initiative_end_to_end
+_run "readiness_gap_ticket_with_no_planner_feedback_is_scanned" test_readiness_gap_ticket_with_no_planner_feedback_is_scanned
+_run "readiness_gap_only_initiative_has_zeroed_feedback_fields" test_readiness_gap_only_initiative_has_zeroed_feedback_fields
+_run "readiness_gap_multiple_codes_multiple_tickets_break_down_per_code" test_readiness_gap_multiple_codes_multiple_tickets_break_down_per_code
+_run "readiness_gap_recurrence_counts_occurrences_not_distinct_tickets" test_readiness_gap_recurrence_counts_occurrences_not_distinct_tickets
+_run "readiness_gap_verify_no_test_user_is_scanned" test_readiness_gap_verify_no_test_user_is_scanned
+_run "readiness_gap_clean_initiative_reports_empty_not_absent" test_readiness_gap_clean_initiative_reports_empty_not_absent
+_run "readiness_gap_log_marker_literals_have_not_drifted" test_readiness_gap_log_marker_literals_have_not_drifted
 
 echo ""
 echo "=== Results ==="

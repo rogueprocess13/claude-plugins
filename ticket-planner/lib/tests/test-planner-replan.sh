@@ -425,6 +425,84 @@ else
   fail "replan_record writes replan-result" "not found in log"
 fi
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. readiness-gaps aggregation (readiness-feedback-loop)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo "--- 6a: readiness_gaps_compute sums per-key across feedback files ---"
+rg_feedback='[
+  {"summary":{"readiness_gaps":{"gate_stop_count":2,"gate_stop_codes":{"SCOPE_MISSING":2},"verify_no_test_user_count":0,"affected_tickets":["CRE-1","CRE-2"]}}},
+  {"summary":{"readiness_gaps":{"gate_stop_count":1,"gate_stop_codes":{"SCOPE_MISSING":1,"TEST_USER_MISSING":1},"verify_no_test_user_count":1,"affected_tickets":["CRE-2","CRE-3"]}}}
+]'
+rg_computed=$(planner_readiness_gaps_compute "$rg_feedback")
+if echo "$rg_computed" | jq -e '
+    .gate_stop_count == 3
+    and .gate_stop_codes.SCOPE_MISSING == 3
+    and .gate_stop_codes.TEST_USER_MISSING == 1
+    and .verify_no_test_user_count == 1
+    and (.affected_tickets | sort) == ["CRE-1","CRE-2","CRE-3"]
+  ' >/dev/null 2>&1; then
+  pass "readiness_gaps_compute: per-key addition, not a shallow merge"
+else
+  fail "readiness_gaps_compute per-key addition" "got $rg_computed"
+fi
+
+echo "--- 6b: replan_record writes populated readiness-gaps line ---"
+planner_state_init "INIT-REPLOG-RG" "test replan readiness gaps populated"
+planner_replan_record "INIT-REPLOG-RG" "manual" "1" "1" "0" "0" \
+  '{"avg_drift":0,"systematic_overconfidence":false}' "$rg_computed"
+
+log_content=$(planner_state_read "INIT-REPLOG-RG")
+rg_line=$(echo "$log_content" | grep '|META|replan-readiness-gaps|start|' || true)
+if [ -n "$rg_line" ] && echo "$rg_line" | grep -q 'gate_stop_count":3'; then
+  pass "replan_record writes populated replan-readiness-gaps line"
+else
+  fail "replan_record writes populated replan-readiness-gaps line" "got: $rg_line"
+fi
+
+echo "--- 6c: replan_record writes literal 'none' when readiness gaps are empty ---"
+planner_state_init "INIT-REPLOG-RG-NONE" "test replan readiness gaps empty"
+empty_rg=$(planner_readiness_gaps_compute "[]")
+planner_replan_record "INIT-REPLOG-RG-NONE" "manual" "1" "1" "0" "0" \
+  '{"avg_drift":0,"systematic_overconfidence":false}' "$empty_rg"
+
+log_content=$(planner_state_read "INIT-REPLOG-RG-NONE")
+if echo "$log_content" | grep -q '|META|replan-readiness-gaps|start|none$'; then
+  pass "replan_record writes literal 'none' when readiness gaps are empty"
+else
+  fail "replan_record writes literal 'none' when empty" "got: $(echo "$log_content" | grep 'replan-readiness-gaps' || echo '(no line)')"
+fi
+
+echo "--- 6d: replan_record with no readiness_gaps_json arg (backward compat) writes 'none' ---"
+planner_state_init "INIT-REPLOG-RG-OMITTED" "test replan readiness gaps omitted"
+planner_replan_record "INIT-REPLOG-RG-OMITTED" "manual" "1" "1" "0" "0" \
+  '{"avg_drift":0,"systematic_overconfidence":false}'
+
+log_content=$(planner_state_read "INIT-REPLOG-RG-OMITTED")
+if echo "$log_content" | grep -q '|META|replan-readiness-gaps|start|none$'; then
+  pass "replan_record with omitted 8th arg → 'none' (backward compatible)"
+else
+  fail "replan_record omitted 8th arg → 'none'" "got: $(echo "$log_content" | grep 'replan-readiness-gaps' || echo '(no line)')"
+fi
+
+echo "--- 6e: regeneration eligibility is unaffected by readiness-gaps value ---"
+# Re-run the same scope-restriction scenario from section 2 — readiness gaps
+# never entered that computation, so this just reconfirms nothing in section 6
+# touched planner_replan_eligible_tickets' inputs or outputs.
+eligible_after_rg=$(planner_replan_eligible_tickets "INIT-SCOPE")
+if echo "$eligible_after_rg" | jq -e 'length == 1 and .[0] == "ticket-CRE-10"' >/dev/null 2>&1; then
+  pass "readiness-gaps computation does not affect regeneration eligibility"
+else
+  fail "readiness-gaps computation does not affect regeneration eligibility" "got $eligible_after_rg"
+fi
+
+echo "--- 6f: readiness_gaps_summarize treats a null/empty arg as 'none' ---"
+if [ "$(planner_readiness_gaps_summarize "")" = "none" ]; then
+  pass "readiness_gaps_summarize('') → none"
+else
+  fail "readiness_gaps_summarize('') → none" "got $(planner_readiness_gaps_summarize "")"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 

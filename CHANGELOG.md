@@ -17,6 +17,47 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.42.0 / ticket-planner 0.14.0 (2026-09-30)
+
+`readiness-feedback-loop`. `fleet-feedback.sh` already aggregated `META|planner-feedback` entries
+into per-initiative files `planner-replan.sh` reads — but a ticket that never reached implement
+(gate-stopped at `TICKET_NOT_READY`, or SKIPped at verify pre-flight on "No test user found") never
+wrote a `planner-feedback` entry at all, so an initiative whose tickets kept failing readiness was
+invisible to both the scan and the write loop's early-return. This change adds an independent scan
+for those two signals and closes the write-loop gap so an initiative with only readiness-gap data
+still gets a feedback file.
+
+- **`fleet-feedback.sh`**: new readiness-gap scan over every `*-pipeline.log`, independent of
+  whether a `planner-feedback` entry exists for that ticket — gate-stop `TICKET_NOT_READY` occurrences
+  (parsed per-code from the `TICKET_NOT_READY — <codes>` message) and verify no-test-user SKIPs,
+  grouped per initiative via the same `_get_ticket_initiative` manifest lookup the existing scan
+  uses. Written as a new `summary.readiness_gaps` key (`gate_stop_count`, `gate_stop_codes`,
+  `verify_no_test_user_count`, `affected_tickets`) on every feedback file — present and empty when
+  clean, never an absent key.
+- **Initiative-inclusion fix**: the early-return and per-initiative write loop were both keyed
+  solely on `planner-feedback` presence. Both now key on the union of planner-feedback and
+  readiness-gap data, so an initiative where every ticket gate-stopped before implement gets a
+  feedback file too — with `total_tickets`/`avg_confidence` at explicit zero defaults rather than a
+  `jq` division-by-zero error or an unset-array-key read.
+- **`planner-replan.sh`**: `planner_replan_record` gains an 8th parameter, `readiness_gaps_json`.
+  `planner_readiness_gaps_compute` sums `summary.readiness_gaps` across every ingested feedback
+  file — per-key addition for `gate_stop_codes`, never a shallow merge (a merge would silently
+  undercount a code recurring across files). `replan` mode writes one new
+  `META|replan-readiness-gaps` state-log line unconditionally, including the literal `none` when
+  the sum carries no gaps — report-only, and does not change regeneration logic (confidence
+  adjustment, ticket selection, dependency validation).
+- **Deferred: a `grill-me` `test_readiness` dimension.** Investigated and dropped for this change.
+  `grill-me/profiles/product-idea.json`'s 10 existing dimensions sum to exactly weight 100, and
+  `lib/tests/test-grill-score.sh` pins scoring-boundary arithmetic to that exact total — adding an
+  11th dimension means either rebalancing every existing weight (rewriting the pinned arithmetic
+  across the suite) or leaving the profile summing to 106 and silently changing every idea's score.
+  It's also structurally disconnected from this change's actual loop: grill-me gates the *idea*,
+  before any ticket exists, with no mechanism to read cross-initiative `readiness_gaps` data.
+- **Naming caveat**: despite the name, this delivers `fleet-controller` → `planner-replan`
+  visibility only — not a loop closed back to idea-gating. Nothing here changes how future tickets
+  are generated or how ideas are scored; a human (or a future phase) reads the surfaced data and
+  decides what to do with it.
+
 ## ticket-planner 0.13.0 / ticket-auto-pipeline 0.61.0 (2026-09-30)
 
 `planner-ready-by-construction`. `planner-refinement-phase` gave every planned ticket a
