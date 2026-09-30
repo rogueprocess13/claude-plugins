@@ -881,8 +881,8 @@ untouched.
       sections) — 18 adversarial fixtures + 1 padding fixture, `lib/dor-check.sh` rewritten,
       `manifest-write.sh`'s `set_ticket_readiness` extras arg, `run-summary.sh`/`fleet-dispatch.sh`/
       `fleet-notify.sh` report-only consumers, full test suite green.
-- [x] 2. `planner-phase-count-derivation` — applied 2026-09-30 on `feat/planner-phase-count-derivation`,
-      PR pending. Mechanical prep: `planner_phase_count`/`planner_phase_position` derived from
+- [x] 2. `planner-phase-count-derivation` — applied 2026-09-30, **PR #427** open on
+      `feat/planner-phase-count-derivation`. Mechanical prep: `planner_phase_count`/`planner_phase_position` derived from
       `planner_phase_sequence`; every prompt's "phase N of 10" literal and the test suite's
       hard-coded counts/indices replaced with the derived helpers. Byte-identical prompt output
       confirmed; full suite green; ticket-planner 0.11.0 → 0.11.1.
