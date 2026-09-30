@@ -901,8 +901,8 @@ untouched.
       19-fixture sweep + prompt tuning deferred to a live-verification pass before
       `planner-refinement-phase` can safely assume the evaluator's output quality. Plan:
       `~/.claude/plans/gentle-doodling-truffle.md`.
-- [ ] 3. `planner-refinement-phase` — implemented 2026-09-30, **PR #430** open on
-      `feat/planner-refinement-phase`. **Supersedes `planner-readiness-phase`.** New planner phase
+- [x] 3. `planner-refinement-phase` — implemented 2026-09-30, merged 2026-09-30 via **PR #430**.
+      **Supersedes `planner-readiness-phase`.** New planner phase
       Refinement between TicketGen and Completed (11 phases, up from 10): per-ticket deterministic
       DoR → `dor-semantic-agent` scan → audit → per-ticket blocking; epic stamped `dispatch=true`
       once every child has a verdict, ready or not. TicketGen now persists each body to
