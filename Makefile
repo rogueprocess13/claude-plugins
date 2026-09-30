@@ -190,6 +190,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-body-template-humanizer.sh
 	bash ticket-planner/lib/tests/test-planner-adr-gate.sh
 	bash ticket-planner/lib/tests/test-planner-refinement.sh
+	bash ticket-planner/lib/tests/test-planner-vplan-generation.sh
 
 test-planner-intent-gate:
 	@echo "=== planner intent gate tests ==="

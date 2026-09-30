@@ -57,13 +57,18 @@ or neither.
 | `TEST_USER_UNRESOLVED` | Named test user/role does not resolve against the test-user catalog | `DOR_STRICT_CATALOG` |
 | `TEST_DATA_MISSING` | No Test Data section | `DOR_STRICT_TEST_DATA` |
 | `TEST_DATA_UNSEEDED` | Test Data section present but has no concrete detail | `DOR_STRICT_TEST_DATA` |
-| `VPLAN_MISSING` | No Verification Plan table (unless ≥ half of unique AC lines are self-verifying — see below) | — |
-| `VPLAN_ROW_GAP` | Verification Plan table has fewer rows than acceptance criteria | — |
-| `VPLAN_UNVERIFIABLE` | No table row marked verifiable | — |
+| `VPLAN_MISSING` | No Verification Plan table (unless ≥ half of unique AC lines are self-verifying — see below) | `DOR_STRICT_VPLAN` |
+| `VPLAN_ROW_GAP` | Verification Plan table has fewer rows than acceptance criteria | `DOR_STRICT_VPLAN` |
+| `VPLAN_UNVERIFIABLE` | No table row marked verifiable | `DOR_STRICT_VPLAN` |
 | `AC_IMPLEMENTATION_ONLY` | Every unique AC line describes implementation activity with no observable outcome | `DOR_STRICT_AC_IMPL` |
 | `VERIFICATION_REQUIRED_NOT_SELF_VERIFYING` | No Verification Plan and no AC line carries a concrete expected value/result | `DOR_STRICT_VERIFICATION` |
 
-All four strict flags default `false`, preserving default behaviour on every host.
+All five strict flags default `false`, preserving default behaviour on every host.
+`DOR_STRICT_VPLAN` (planner-ready-by-construction) promotes all three `VPLAN_*` codes together —
+it does not affect the `satisfied-by-ac` self-verifying escape hatch below, and is independent of
+`DOR_STRICT_VERIFICATION`: a host can enforce the "something self-verifying exists" floor
+immediately while still observing planner-written Verification Plan tables advisory-only until it
+trusts their quality on real tickets.
 
 ### `AC_IMPLEMENTATION_ONLY`
 

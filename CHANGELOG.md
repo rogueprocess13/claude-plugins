@@ -17,6 +17,39 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.13.0 / ticket-auto-pipeline 0.61.0 (2026-09-30)
+
+`planner-ready-by-construction`. `planner-refinement-phase` gave every planned ticket a
+deterministic Definition-of-Ready check before dispatch, including three Verification Plan advisory
+codes (`VPLAN_MISSING`, `VPLAN_ROW_GAP`, `VPLAN_UNVERIFIABLE`) — but nothing on the generation side
+ever produced a `## Verification Plan` table, so every planned ticket reported `VPLAN_MISSING`
+regardless of quality. This change makes TicketGen write one, in the exact shape
+`ticket-auto-pipeline/lib/vplan-parse.sh` already parses, so the gap it reports is closed at the
+source instead of only detected after the fact.
+
+- **TicketGen's Body section contract** (`ticket-planner/lib/planner-phase-prompts.sh`) gains a
+  `## Verification Plan` requirement on every ticket type: a `### Per-Criterion Verification` table
+  with one row per Acceptance Criteria line, `✓`/`Y` marked only when the row states a genuinely
+  concrete, checkable expected value — never defaulted to trivially avoid `VPLAN_UNVERIFIABLE`. The
+  prompt embeds a literal fenced example table, not prose description alone, to reduce
+  heading/column drift risk.
+- **`## Test Data Prerequisites` widens from bug-only to every type**, closing an existing gap
+  between the prompt and `templates/feature.md`, which already carried the heading.
+- **Specify's prompt gains `## Verification Notes`** — a per-AC role/test-data signal, one line per
+  criterion, that TicketGen reads back when building the Verification Plan table instead of
+  inventing rows from the AC text alone. Falls back gracefully (builds a complete table from AC text
+  alone) when a spec predates this change or is reused across `resume`.
+- **New `DOR_STRICT_VPLAN`** (`ticket-auto-pipeline/lib/dor-check.sh`, default `false`, same
+  per-host promotion pattern as `DOR_STRICT_AC_IMPL`/`DOR_STRICT_VERIFICATION`) promotes all three
+  `VPLAN_*` codes to hard together. Off by default on every host — a host opts in once it trusts the
+  planner's table quality on real tickets. The self-verifying-AC escape hatch for `VPLAN_MISSING`
+  (`satisfied-by-ac`) is unaffected by this flag in either state.
+- No interactive component — this is pure generation-time improvement, consistent with
+  Refinement's own halt-only, non-interactive shape. Supersedes the stale pre-`planner-refinement-
+  phase` "Change 2c" sketch, which assumed the since-superseded interactive Readiness design.
+- No retroactive rewrite of already-created tickets; no change to `vplan-parse.sh`'s parsing
+  contract or the self-verifying-AC downgrade rule.
+
 ## ticket-planner 0.12.0 (2026-09-30)
 
 `planner-refinement-phase`. Planned tickets reached fleet dispatch having passed
