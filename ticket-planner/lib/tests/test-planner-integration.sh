@@ -173,7 +173,7 @@ test_cycle_detection() {
   echo ""
 }
 
-# ── Test: Phase sequence is exactly 10 phases ────────────────────────────────
+# ── Test: Phase sequence length and order ────────────────────────────────────
 
 test_phase_sequence_length() {
   echo "=== test_phase_sequence_length ==="
@@ -181,13 +181,36 @@ test_phase_sequence_length() {
   planner_phase_sequence phases
 
   local count="${#phases[@]}"
-  assert_eq "phase sequence has 10 phases" "10" "$count"
+  assert_eq "phase sequence length matches planner_phase_count" "$(planner_phase_count)" "$count"
 
-  # Verify specific positions
-  assert_eq "phase[0] is Appraisal" "Appraisal" "${phases[0]}"
-  assert_eq "phase[3] is Specify" "Specify" "${phases[3]}"
-  assert_eq "phase[6] is Crosscheck" "Crosscheck" "${phases[6]}"
-  assert_eq "phase[9] is Completed" "Completed" "${phases[9]}"
+  # Order invariants that carry real meaning, asserted by name — not by
+  # index, so inserting a phase does not require updating this test
+  # (design D3).
+  assert_eq "Appraisal is first" "Appraisal" "${phases[0]}"
+  assert_eq "Completed is last" "Completed" "${phases[$((count - 1))]}"
+
+  local specify_idx architecture_idx crosscheck_idx consensus_idx epicgen_idx
+  specify_idx=$(planner_phase_index "Specify")
+  architecture_idx=$(planner_phase_index "Architecture")
+  crosscheck_idx=$(planner_phase_index "Crosscheck")
+  consensus_idx=$(planner_phase_index "Consensus")
+  epicgen_idx=$(planner_phase_index "EpicGen")
+
+  if [ "$specify_idx" -gt "$architecture_idx" ]; then
+    echo "PASS: Specify comes after Architecture"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL: Specify comes after Architecture"
+    FAIL=$((FAIL + 1))
+  fi
+
+  if [ "$crosscheck_idx" -gt "$consensus_idx" ] && [ "$crosscheck_idx" -lt "$epicgen_idx" ]; then
+    echo "PASS: Crosscheck sits between Consensus and EpicGen"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL: Crosscheck sits between Consensus and EpicGen"
+    FAIL=$((FAIL + 1))
+  fi
 
   # Verify Story Gen and Execution are not present
   local found_storygen=0 found_execution=0

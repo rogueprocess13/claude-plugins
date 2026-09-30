@@ -105,7 +105,15 @@ echo "--- Test 6: prompt preambles point at a real lib dir ---"
 
 source "${LIB_DIR}/planner-phase-prompts.sh"
 
-PHASES=(Appraisal Discovery Architecture Specify Review Consensus EpicGen TicketGen Completed)
+# Every phase except Crosscheck has a prompt function — Crosscheck is
+# deterministic bash (planner-crosscheck.sh), not an agent spawn.
+ALL_PHASES=()
+planner_phase_sequence ALL_PHASES
+PHASES=()
+for _p in "${ALL_PHASES[@]}"; do
+  [ "$_p" = "Crosscheck" ] && continue
+  PHASES+=("$_p")
+done
 
 for phase in "${PHASES[@]}"; do
   prompt=$(planner_prompt_for_phase "$phase" "INIT-TEST" "an idea" "${TMPDIR}/state")
@@ -247,6 +255,31 @@ for retired in 'planner_linear_ensure_label "\$TEAM_ID" "\$INIT_LABEL"' 'planner
     fail "no retired dynamic-label ensure call remains" "found: $retired"
   else
     pass "no retired dynamic-label ensure call remains ($retired)"
+  fi
+done
+
+# ── Test 10: rendered "phase N of M" matches the derivation helpers ────────────
+#
+# planner-phase-count-derivation: every prompt computes its position from
+# planner_phase_position/planner_phase_count rather than a literal. This test
+# is the guard against a literal creeping back in.
+
+echo "--- Test 10: prompt-reported phase position/count match the helpers ---"
+
+EXPECTED_COUNT=$(planner_phase_count)
+
+for phase in "${PHASES[@]}"; do
+  prompt=$(planner_prompt_for_phase "$phase" "INIT-TEST" "an idea" "${TMPDIR}/state")
+  expected_pos=$(planner_phase_position "$phase")
+
+  reported=$(grep -m1 -oE '[0-9]+ of [0-9]+' <<<"$prompt" || true)
+  reported_pos=$(echo "$reported" | cut -d' ' -f1)
+  reported_count=$(echo "$reported" | cut -d' ' -f3)
+
+  if [ "$reported_pos" = "$expected_pos" ] && [ "$reported_count" = "$EXPECTED_COUNT" ]; then
+    pass "${phase} reports phase ${expected_pos} of ${EXPECTED_COUNT}"
+  else
+    fail "${phase} reports phase ${expected_pos} of ${EXPECTED_COUNT}" "got '${reported}'"
   fi
 done
 

@@ -49,13 +49,17 @@ echo "=== planner stop-condition tests ==="
 
 echo "--- Test 1: planner_phase_index ---"
 
+consensus_idx=$(planner_phase_index Consensus)
+crosscheck_idx=$(planner_phase_index Crosscheck)
+completed_idx=$(planner_phase_index Completed)
+last_idx=$(($(planner_phase_count) - 1))
+
 if [ "$(planner_phase_index Appraisal)" = "0" ] &&
-  [ "$(planner_phase_index Consensus)" = "5" ] &&
-  [ "$(planner_phase_index Crosscheck)" = "6" ] &&
-  [ "$(planner_phase_index Completed)" = "9" ]; then
+  [ "$crosscheck_idx" = "$((consensus_idx + 1))" ] &&
+  [ "$completed_idx" = "$last_idx" ]; then
   pass "known phases map to their sequence position"
 else
-  pass_msg="Appraisal=$(planner_phase_index Appraisal) Consensus=$(planner_phase_index Consensus)"
+  pass_msg="Appraisal=$(planner_phase_index Appraisal) Consensus=$consensus_idx Crosscheck=$crosscheck_idx Completed=$completed_idx last=$last_idx"
   fail "known phases map to their sequence position" "$pass_msg"
 fi
 

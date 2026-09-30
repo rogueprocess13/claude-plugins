@@ -155,10 +155,13 @@ _planner_prompt_config() {
   planner_config_get "$initiative_id" "$key" 2>/dev/null || echo ""
 }
 
-# ── Phase 1: Appraisal ──────────────────────────────────────────────────────────
+# ── Appraisal ────────────────────────────────────────────────────────────────
 
 planner_prompt_appraisal() {
   local initiative_id="$1" idea="$2" state_dir="$3"
+  local _pos _count
+  _pos=$(planner_phase_position Appraisal)
+  _count=$(planner_phase_count)
 
   # Sanitize user input before embedding in prompt
   local safe_idea
@@ -192,7 +195,7 @@ INTENT
 
   cat <<AGENT_PROMPT
 You are the **Appraisal** phase agent for the ticket-planner. Your job is to
-interpret a business idea and establish initiative scope. You are phase 1 of 10
+interpret a business idea and establish initiative scope. You are phase ${_pos} of ${_count}
 in an autonomous planning pipeline.
 
 ## Initiative
@@ -256,7 +259,7 @@ On failure, write \`fail\` instead of \`done\` and include the error reason in t
 AGENT_PROMPT
 }
 
-# ── Phase 2: Discovery ──────────────────────────────────────────────────────────
+# ── Discovery ────────────────────────────────────────────────────────────────
 
 planner_prompt_discovery() {
   local initiative_id="$1" idea="$2" state_dir="$3"
@@ -267,10 +270,14 @@ planner_prompt_discovery() {
     return 1
   }
 
+  local _pos _count
+  _pos=$(planner_phase_position Discovery)
+  _count=$(planner_phase_count)
+
   cat <<AGENT_PROMPT
 You are the **Discovery** phase agent for the ticket-planner. Your job is to
 explore affected repositories and gather concrete context: code paths, symbols,
-API contracts, and existing patterns. You are phase 2 of 10.
+API contracts, and existing patterns. You are phase ${_pos} of ${_count}.
 
 ## Initiative
 - **ID:** ${initiative_id}
@@ -353,7 +360,7 @@ On failure, write \`fail\` instead of \`done\`.
 AGENT_PROMPT
 }
 
-# ── Phase 3: Architecture ───────────────────────────────────────────────────────
+# ── Architecture ─────────────────────────────────────────────────────────────
 
 planner_prompt_architecture() {
   local initiative_id="$1" idea="$2" state_dir="$3"
@@ -364,10 +371,14 @@ planner_prompt_architecture() {
     return 1
   }
 
+  local _pos _count
+  _pos=$(planner_phase_position Architecture)
+  _count=$(planner_phase_count)
+
   cat <<AGENT_PROMPT
 You are the **Architecture** phase agent for the ticket-planner. Your job is to
 determine the technical approach: evaluate alternatives, choose the path, and
-document the decision. You are phase 3 of 10.
+document the decision. You are phase ${_pos} of ${_count}.
 
 ## Initiative
 - **ID:** ${initiative_id}
@@ -451,7 +462,7 @@ write the two-line \`adr-gate\`/\`fail\` sequence shown there instead of this or
 AGENT_PROMPT
 }
 
-# ── Phase 4: Specify (merged Proposal + OpenSpec) ──────────────────────────────
+# ── Specify (merged Proposal + OpenSpec) ────────────────────────────────────
 
 planner_prompt_specify() {
   local initiative_id="$1" idea="$2" state_dir="$3"
@@ -462,10 +473,14 @@ planner_prompt_specify() {
     return 1
   }
 
+  local _pos _count
+  _pos=$(planner_phase_position Specify)
+  _count=$(planner_phase_count)
+
   cat <<AGENT_PROMPT
 You are the **Specify** phase agent for the ticket-planner. Your job is to
 synthesize all upstream analysis into a proposal AND produce per-ticket spec files
-in a single pass. You are phase 4 of 10 — the last content-producing phase before
+in a single pass. You are phase ${_pos} of ${_count} — the last content-producing phase before
 review.
 
 ## Initiative
@@ -561,7 +576,7 @@ its title, affected service, and dependencies.
 ### Part 4: Self-lint your own citations before handoff
 
 Once proposal.md and every spec file are written, run the same citation +
-precedent linter that Crosscheck (phase 7) runs, against your own fresh
+precedent linter that Crosscheck (phase $(planner_phase_position Crosscheck)) runs, against your own fresh
 output, and fix what it finds — Review and Consensus critique content, not
 citation syntax, so a grammar defect you introduce here (annotation on the
 wrong side of \`Name:path\`, an off-by-one line range, a missing \`(new)\`
@@ -608,7 +623,7 @@ On failure, write \`fail\` instead of \`done\`.
 AGENT_PROMPT
 }
 
-# ── Phase 5: Review ─────────────────────────────────────────────────────────────
+# ── Review ───────────────────────────────────────────────────────────────────
 
 planner_prompt_review() {
   local initiative_id="$1" idea="$2" state_dir="$3"
@@ -619,10 +634,14 @@ planner_prompt_review() {
     return 1
   }
 
+  local _pos _count
+  _pos=$(planner_phase_position Review)
+  _count=$(planner_phase_count)
+
   cat <<AGENT_PROMPT
 You are the **Review** phase agent for the ticket-planner. Your job is to
 critique the proposal — find gaps, risks, and infeasibilities before we commit
-to building. You are phase 5 of 10. You are a skeptic; your job is to find
+to building. You are phase ${_pos} of ${_count}. You are a skeptic; your job is to find
 what's wrong.
 
 ## Initiative
@@ -681,7 +700,7 @@ On failure, write \`fail\` instead of \`done\`.
 AGENT_PROMPT
 }
 
-# ── Phase 6: Consensus ──────────────────────────────────────────────────────────
+# ── Consensus ────────────────────────────────────────────────────────────────
 
 planner_prompt_consensus() {
   local initiative_id="$1" idea="$2" state_dir="$3"
@@ -692,11 +711,15 @@ planner_prompt_consensus() {
     return 1
   }
 
+  local _pos _count
+  _pos=$(planner_phase_position Consensus)
+  _count=$(planner_phase_count)
+
   cat <<AGENT_PROMPT
 You are the **Consensus** phase agent for the ticket-planner. Your job is to
 resolve review findings into a settled, actionable plan. You don't re-litigate
 the proposal — you address the specific findings from Review and produce the
-final version. You are phase 6 of 10. The next phase, Crosscheck, is a
+final version. You are phase ${_pos} of ${_count}. The next phase, Crosscheck, is a
 deterministic linter that greps consensus.md and every spec file for citations
 and cross-ticket propagation — write plain prose, not something a keyword
 sweep would misread.
@@ -749,10 +772,13 @@ On failure, write \`fail\` instead of \`done\`.
 AGENT_PROMPT
 }
 
-# ── Phase 8: Epic Generation (phase 7, Crosscheck, has no prompt — see planner-crosscheck.sh) ──
+# ── Epic Generation (Crosscheck has no prompt — see planner-crosscheck.sh) ──
 
 planner_prompt_epicgen() {
   local initiative_id="$1" idea="$2" state_dir="$3"
+  local _pos _count
+  _pos=$(planner_phase_position EpicGen)
+  _count=$(planner_phase_count)
 
   local safe_idea
   safe_idea=$(planner_sanitize_input "$idea") || {
@@ -773,7 +799,7 @@ planner_prompt_epicgen() {
 
   cat <<AGENT_PROMPT
 You are the **Epic Generation** phase agent for the ticket-planner. Your job is
-to create the Linear epic that represents this initiative. You are phase 8 of 10.
+to create the Linear epic that represents this initiative. You are phase ${_pos} of ${_count}.
 
 ## Initiative
 - **ID:** ${initiative_id}
@@ -1157,10 +1183,13 @@ independently of the \`create\` step so status and replan can read it.
 AGENT_PROMPT
 }
 
-# ── Phase 9: Ticket Generation ───────────────────────────────────────────────────
+# ── Ticket Generation ────────────────────────────────────────────────────────
 
 planner_prompt_ticketgen() {
   local initiative_id="$1" idea="$2" state_dir="$3"
+  local _pos _count
+  _pos=$(planner_phase_position TicketGen)
+  _count=$(planner_phase_count)
 
   local safe_idea
   safe_idea=$(planner_sanitize_input "$idea") || {
@@ -1181,7 +1210,7 @@ planner_prompt_ticketgen() {
 
   cat <<AGENT_PROMPT
 You are the **Ticket Generation** phase agent for the ticket-planner. Your job is
-to create planned child tickets in Linear. You are phase 9 of 10 — the main
+to create planned child tickets in Linear. You are phase ${_pos} of ${_count} — the main
 entity-creation phase that produces what the pipeline consumes.
 
 ## Initiative
@@ -1473,7 +1502,7 @@ planner_state_write "${initiative_id}" "TicketGen" "generate" "done" "N tickets 
 AGENT_PROMPT
 }
 
-# ── Phase 10: Completed ──────────────────────────────────────────────────────────
+# ── Completed ────────────────────────────────────────────────────────────────
 
 planner_prompt_completed() {
   local initiative_id="$1" idea="$2" state_dir="$3"
@@ -1484,9 +1513,13 @@ planner_prompt_completed() {
     return 1
   }
 
+  local _pos _count
+  _pos=$(planner_phase_position Completed)
+  _count=$(planner_phase_count)
+
   cat <<AGENT_PROMPT
 You are the **Completed** phase agent for the ticket-planner. This is the
-terminal phase (10 of 10). No further transitions are permitted after this.
+terminal phase (${_pos} of ${_count}). No further transitions are permitted after this.
 
 ## Initiative
 - **ID:** ${initiative_id}

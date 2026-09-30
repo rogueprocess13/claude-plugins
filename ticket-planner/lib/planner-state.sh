@@ -308,6 +308,26 @@ planner_phase_sequence() {
   )
 }
 
+# Return the number of phases in the canonical sequence.
+# Usage: planner_phase_count
+# Output: integer on stdout.
+planner_phase_count() {
+  local -a seq
+  planner_phase_sequence seq
+  echo "${#seq[@]}"
+}
+
+# Return the 1-based position of a phase in the canonical sequence.
+# Usage: planner_phase_position <phase>
+# Output: 1-based position on stdout, or nothing for an unknown name.
+# Returns: 0 on success, 1 for an unknown name.
+planner_phase_position() {
+  local phase="$1"
+  local idx
+  idx=$(planner_phase_index "$phase") || return 1
+  echo "$((idx + 1))"
+}
+
 # ── Phase concurrency lock ────────────────────────────────────────────────────
 
 # Acquire a phase-level lock to prevent concurrent resume while an agent runs.
@@ -436,7 +456,7 @@ planner_position_derive() {
 # ── Validation ─────────────────────────────────────────────────────────────────
 
 # Validate that a transition from one phase to another is legal.
-# The 9-phase sequence is strictly linear — no skipping, no backtracking.
+# The phase sequence is strictly linear — no skipping, no backtracking.
 # Usage: planner_phase_validate_transition <initiative_id> <from_phase> <to_phase>
 # Returns: 0 if legal, 1 if illegal.
 planner_phase_validate_transition() {

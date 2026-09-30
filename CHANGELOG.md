@@ -17,6 +17,35 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.11.1 (2026-09-30)
+
+`planner-phase-count-derivation`. Every agent prompt hard-coded its own position
+("You are phase 4 of 10"), and the test suite hard-coded the phase count and
+specific indices. `planner_phase_sequence` was already the single source of the
+phase order, but nothing derived the count or a phase's position from it — inserting
+a phase meant hand-editing a dozen scattered literals. Prerequisite for
+`planner-refinement-phase`, which inserts a `Refinement` phase before `Completed`.
+
+- **Two new helpers in `planner-state.sh`**: `planner_phase_count` (echoes the
+  sequence length) and `planner_phase_position <phase>` (1-based, built on
+  `planner_phase_index`; exit 1 with empty output for an unknown name).
+- Every phase prompt in `planner-phase-prompts.sh` now computes `local _pos _count`
+  from those helpers before rendering, replacing every "phase N of 10" / "(N of 10)"
+  / "phase 7" literal, including the Specify prompt's reference to Crosscheck's
+  position and the section-banner comments. Byte-identical output confirmed for
+  the current 10-phase sequence.
+- Planner test suite (`test-planner-transitions.sh`, `test-planner-integration.sh`,
+  `test-planner-crosscheck.sh`, `test-planner-stop-conditions.sh`,
+  `test-planner-state.sh`, `test-planner-lib-root.sh`) now derives phase counts,
+  indices, and adjacent-transition counts from the sequence helpers instead of
+  numeric literals or hand-copied phase lists. Order invariants that carry meaning
+  (Appraisal first, Completed last, Crosscheck between Consensus and EpicGen) stay
+  as name-based assertions. New tests confirm every rendered prompt's "phase N of M"
+  matches the helpers, and that inserting a phase into the sequence grows the count
+  and shifts positions with no other edit.
+- No behaviour change: the sequence, transitions, and every prompt's rendered
+  position stay exactly as they are today.
+
 ## 0.59.0 (2026-09-30) — also fleet-controller 0.40.0
 
 DoR quality score (`dor-quality-score`). A review of `dor-readiness-gate-foundation`'s design found
