@@ -918,8 +918,8 @@ untouched.
       **Reordered 2026-09-30 by explicit operator instruction**: land every remaining phase
       (items 5a/5b below) before running this — one consolidated live pass at the end, not one
       per change.
-- [ ] 5a. `planner-ready-by-construction` — implemented 2026-09-30, **PR #434** open on
-      `feat/planner-ready-by-construction`. TicketGen writes a `## Verification Plan` table
+- [x] 5a. `planner-ready-by-construction` — implemented 2026-09-30, merged 2026-09-30 via
+      **PR #434**. TicketGen writes a `## Verification Plan` table
       (`### Per-Criterion Verification`, one row per AC line, exact `vplan-parse.sh`-compatible
       shape, embedded as a literal fenced example not prose-only) and `## Test Data Prerequisites`
       on every type, not bug-only. Specify feeds it via a new `## Verification Notes` per-AC
