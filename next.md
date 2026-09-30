@@ -915,7 +915,27 @@ untouched.
       tickets host; roll into item 4 below.
 - [ ] 4. Live: one planned epic on a user project through Refinement → dispatch → gate, plus an
       ad-hoc ticket confirming 2.7 is untouched. Roll into the consolidated live-verification pass.
-- [ ] 5. `planner-ready-by-construction`, `readiness-feedback-loop` — after 4 is clean.
+      **Reordered 2026-09-30 by explicit operator instruction**: land every remaining phase
+      (items 5a/5b below) before running this — one consolidated live pass at the end, not one
+      per change.
+- [ ] 5a. `planner-ready-by-construction` — implemented 2026-09-30, **PR #434** open on
+      `feat/planner-ready-by-construction`. TicketGen writes a `## Verification Plan` table
+      (`### Per-Criterion Verification`, one row per AC line, exact `vplan-parse.sh`-compatible
+      shape, embedded as a literal fenced example not prose-only) and `## Test Data Prerequisites`
+      on every type, not bug-only. Specify feeds it via a new `## Verification Notes` per-AC
+      role/test-data signal. New `DOR_STRICT_VPLAN` (ticket-auto-pipeline, default `false`) promotes
+      `VPLAN_MISSING`/`VPLAN_ROW_GAP`/`VPLAN_UNVERIFIABLE` to hard together — not enabled on any
+      host by this change. No interactive component, no retroactive rewrite, no `vplan-parse.sh`
+      contract change. Drafted fresh this session (the only prior design — "Change 2c" in the
+      pre-refinement-phase plan file — assumed the since-superseded interactive Readiness design)
+      and passed 3 independent reviewer passes (grounding, scope/completeness, architecture/risk)
+      before implementation. New `test-planner-vplan-generation.sh` (5 assertions, against the real
+      parser) + `test-dor-check.sh` additions (8 assertions) + 2 existing suites updated; full
+      `make test` green. ticket-planner 0.12.0→0.13.0, ticket-auto-pipeline 0.60.0→0.61.0.
+- [ ] 5b. `readiness-feedback-loop` — not yet scoped. Next up once 5a merges: needs its own
+      openspec-propose pass against current code (the only prior sketch, "Change 3" in the same
+      stale plan file, predates both `planner-refinement-phase` and `5a` and needs re-grounding the
+      same way `5a` did).
 
 ---
 
