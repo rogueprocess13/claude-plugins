@@ -508,7 +508,7 @@ Four event kinds, one writer each, folded by consumers on `tid`/`run_id`:
 # run — lib/run-summary.sh's run_summary_json, appended once per run by
 # lib/pipeline-finalize.sh's post-outcome sequence (idempotent: guarded on
 # an existing run event for this run_id).
-{"kind":"run","tid":"CRE-40","run_id":"CRE-40-2026-09-05T18:00:00Z-4821","gen":null,"trigger":"manual","versions":{"ticket_auto":"0.41.0","fleet":null,"cc":"2.1.261","model_default":null},"models":["claude-sonnet-4"],"complexity":"simple","type":"bug","planned":false,"estimate":null,"autonomy":"auto","ticket_created_at":"2026-09-01T00:00:00Z","started_at":"2026-09-05T18:00:00Z","ended_at":"2026-09-05T18:10:00Z","outcome":"completed: STEP_6","exit_code":0,"gate_held_at":null,"resumed_after_hold_ms":null,"verify_attempts":1,"review_iterations":0,"fix_rounds":0,"reconcile_cycles":0,"gate_stops":[],"pr":{"pr":42,"url":"https://github.com/acme/repo/pull/42","repo":"acme/repo"},"merge_decision":"merged","tokens":{"in":1000,"out":500,"cache":100,"cache_read":80,"cache_write":20},"phase_elapsed_ms":{"VERIFY":5000},"human_hold_requested":false,"human_hold_parse_status":null,"observed_at":"2026-09-05T18:10:01Z"}
+{"kind":"run","tid":"CRE-40","run_id":"CRE-40-2026-09-05T18:00:00Z-4821","gen":null,"trigger":"manual","versions":{"ticket_auto":"0.41.0","fleet":null,"cc":"2.1.261","model_default":null},"models":["claude-sonnet-4"],"complexity":"simple","type":"bug","planned":false,"estimate":null,"autonomy":"auto","ticket_created_at":"2026-09-01T00:00:00Z","started_at":"2026-09-05T18:00:00Z","ended_at":"2026-09-05T18:10:00Z","outcome":"completed: STEP_6","exit_code":0,"gate_held_at":null,"resumed_after_hold_ms":null,"verify_attempts":1,"review_iterations":0,"fix_rounds":0,"reconcile_cycles":0,"readiness_stops":0,"gate_stops":[],"pr":{"pr":42,"url":"https://github.com/acme/repo/pull/42","repo":"acme/repo"},"merge_decision":"merged","tokens":{"in":1000,"out":500,"cache":100,"cache_read":80,"cache_write":20},"phase_elapsed_ms":{"VERIFY":5000},"human_hold_requested":false,"human_hold_parse_status":null,"observed_at":"2026-09-05T18:10:01Z"}
 
 # merge — lib/merge-poll.sh, the single merge-truth implementation. One or
 # more per PR as state changes (open → merged/closed/stale/unknown-repo).
@@ -524,11 +524,15 @@ Four event kinds, one writer each, folded by consumers on `tid`/`run_id`:
 
 `run_summary_window LOG_FILE` (the lines from the last `META|run-id` to EOF)
 scopes per-run counters (`verify_attempts`, `review_iterations`, `fix_rounds`,
-`reconcile_cycles`) to the current run — a held-then-resumed ticket has two
-runs in one log, and a naive whole-log grep would double-count the held run's
-attempts into the resumed run's. Counters use `detect-resume.sh`'s exact grep
-patterns, copied rather than sourced (that script has zombie-synthesis side
-effects wrong to trigger from a post-outcome summarizer).
+`reconcile_cycles`, `readiness_stops`) to the current run — a held-then-resumed
+ticket has two runs in one log, and a naive whole-log grep would double-count
+the held run's attempts into the resumed run's. Most counters use `detect-resume.sh`'s
+exact grep patterns, copied rather than sourced (that script has zombie-synthesis side
+effects wrong to trigger from a post-outcome summarizer). `readiness_stops` instead
+mirrors `exit-path.sh`'s `readiness` failure-class match: a `META|gate-stop|fail|`
+line naming `TICKET_NOT_READY`/`PLANNED_BODY_INCOMPLETE`/`CRITIQUE_BLOCKED`, or a
+`GATE|gate|fail|held: plan missing` entry-gate hold line (readiness-as-evidence,
+dor-readiness-gate-foundation §9).
 
 `pipeline-finalize.sh`'s post-outcome sequence runs strictly after
 `META|outcome` is on disk: (1) append the `run` event, guarded so a retried
@@ -898,6 +902,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 | `HUMAN_HOLD_EXHAUSTED` | A human-hold request would push `hold_attempts` past `FLEET_HOLD_MAX_ATTEMPTS` (default 3) — the ask → partial-answer → re-ask cycle is capped, needs human review. Written by fleetd, not the router (`human-hold-protocol`, mirrors `RECONCILE_EXHAUSTED`'s shape) |
 | `ADR_CONFLICT` | The ADR gate returned `CONFLICT` — a phase's proposed approach contradicts an Accepted ADR. Not a park: the approach needs rethinking, not ratification (`adr-governance-gate`, see [docs/adr-gate-schema.md](docs/adr-gate-schema.md)) |
 | `VERDICT_GATE_BLOCKED` | `flow.sh` refused a `verdict_gate`-declared trigger (`pr-review-pass-done`, `pr-review-pass-uat`, `uat-pass`) with exit `11` — a trailing FAIL/BLOCK verifier-result for a different `(verifier, phase)` pair on this ticket is still the latest on record, with no later PASS/WARN superseding it. Agent-emitted by `ticket-verify`/`ticket-pr-review` at the call site, not router-detected (`VERDICT_FAIL_NOT_ENFORCED`, issue #368) |
+| `TICKET_NOT_READY` | Entry gate Check 2.7e: a planned ticket's `ensure_ticket_readiness` resolved not-ready/unavailable, or its manifest `flags` carry `needs-info` — evaluated independently, either condition gate-stops. Never fires for an ad-hoc ticket (`ticket_is_planned` scopes the whole 2.7 block). Clearing `needs-info` via `/ticket-approve` (`flow.sh <TID> needs-info-resolved`) un-gates immediately regardless of the cached readiness verdict (`dor-readiness-gate-foundation`, design.md Decisions 3 and 8) |
 
 ## Ordering guarantees
 

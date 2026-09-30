@@ -133,7 +133,8 @@ _failure_has_any_fail_verdict() {
 }
 
 # _derive_failure_class_evidence LOG_FILE OUTCOME
-# The original ten-branch precedence chain, unchanged in behaviour — pulled
+# The original ten-branch precedence chain (eleven since readiness-as-
+# evidence added the `readiness` branch), unchanged in behaviour — pulled
 # out of `derive_failure_class` so the completed-outcome invariant (check 0
 # below) can compute "what would this have classified as" without
 # duplicating the chain, purely to decide whether its own override actually
@@ -151,7 +152,31 @@ _derive_failure_class_evidence() {
     return
   fi
 
-  # 2. approval_gate — a revoked approval, or held at the gate with no resume.
+  local exit_path
+  exit_path=$(LOG_FILE="$log_file" EXIT_CODE="${EXIT_CODE:-0}" _derive_exit_path "")
+
+  # 2. readiness — a Definition-of-Ready stop: a gate-stop code naming a
+  #    readiness failure, or a plan-missing entry-gate hold. Checked ahead of
+  #    approval_gate/review_failure/orchestration_failure below (readiness-
+  #    as-evidence, Decision 9) so these DoR-specific stops are counted
+  #    distinctly instead of folding into a more generic sibling class.
+  #    The plan-missing case is matched from the `GATE|gate|fail|held: plan
+  #    missing` pipeline-log line itself, not from `$outcome` —
+  #    `pipeline-finalize.sh` writes the bare literal `"held: gate"` for
+  #    every unreleased gate hold, plan-missing or not, with no reason text;
+  #    the reason only exists in that log line (gate-check.sh).
+  case "$exit_path" in
+  gate-stop:TICKET_NOT_READY* | gate-stop:PLANNED_BODY_INCOMPLETE* | gate-stop:CRITIQUE_BLOCKED*)
+    echo "readiness"
+    return
+    ;;
+  esac
+  if grep -q '|GATE|gate|fail|held: plan missing' "$log_file" 2>/dev/null; then
+    echo "readiness"
+    return
+  fi
+
+  # 3. approval_gate — a revoked approval, or held at the gate with no resume.
   if echo "$outcome" | grep -q '^held: gate'; then
     echo "approval_gate"
     return
@@ -161,10 +186,7 @@ _derive_failure_class_evidence() {
     return
   fi
 
-  local exit_path
-  exit_path=$(LOG_FILE="$log_file" EXIT_CODE="${EXIT_CODE:-0}" _derive_exit_path "")
-
-  # 3. verification_failure — verify-retry exhaustion. `_derive_exit_path`
+  # 4. verification_failure — verify-retry exhaustion. `_derive_exit_path`
   #    normally reduces this to the bare "verify-exhausted" string, but real
   #    logs were found (task 10.10 replay) carrying trailing detail after the
   #    code (e.g. "ADVERSARIAL_BLOCKED — <description>"), which defeats that
@@ -178,28 +200,30 @@ _derive_failure_class_evidence() {
     ;;
   esac
 
-  # 4. review_failure — review/review-feedback exhaustion, an unparseable
-  #    review verdict, or a blocked adversarial review. `CRITIQUE_BLOCKED` is
-  #    accepted alongside `ADVERSARIAL_BLOCKED` — the two names for the same
-  #    gate-stop have drifted across docs; both mean the same event. Matched
-  #    by prefix, not exact string — see the task-10.10 finding above.
+  # 5. review_failure — review/review-feedback exhaustion, an unparseable
+  #    review verdict, or a blocked adversarial review. `ADVERSARIAL_BLOCKED`
+  #    and `CRITIQUE_BLOCKED` are the two names for the same gate-stop that
+  #    have drifted across docs, but `CRITIQUE_BLOCKED` is now peeled off
+  #    earlier by the readiness branch above (readiness-as-evidence,
+  #    Decision 9) — it can no longer reach this branch. Matched by prefix,
+  #    not exact string — see the task-10.10 finding above.
   case "$exit_path" in
   pr-feedback-exhausted | pr-review-exhausted | \
     gate-stop:PR_FEEDBACK_EXHAUSTED* | gate-stop:PR_REVIEW_EXHAUSTED* | \
-    gate-stop:PR_REVIEW_VERDICT_UNPARSEABLE* | gate-stop:ADVERSARIAL_BLOCKED* | gate-stop:CRITIQUE_BLOCKED*)
+    gate-stop:PR_REVIEW_VERDICT_UNPARSEABLE* | gate-stop:ADVERSARIAL_BLOCKED*)
     echo "review_failure"
     return
     ;;
   esac
 
-  # 5. test_failure — a failing test-running verifier, no higher-precedence
+  # 6. test_failure — a failing test-running verifier, no higher-precedence
   #    branch matched.
   if _failure_has_test_verifier_fail "$log_file"; then
     echo "test_failure"
     return
   fi
 
-  # 6. orchestration_failure — a router error, or any structural gate-stop.
+  # 7. orchestration_failure — a router error, or any structural gate-stop.
   #    Every gate-stop code not already peeled off by a more specific branch
   #    above is, by construction, an orchestration-level halt: the pipeline's
   #    own dispatcher stopped it, not an external test/review/timeout/infra
@@ -233,7 +257,7 @@ _derive_failure_class_evidence() {
     return
   fi
 
-  # 7. timeout — a fleet-kill whose recorded reason names a stall or
+  # 8. timeout — a fleet-kill whose recorded reason names a stall or
   #    watchdog anomaly (run-failure-classification SC7; the anomaly reaches
   #    this outcome line via fleet-monitor.sh's kill-reason threading).
   if [ "$exit_path" = "fleet-kill" ] && echo "$outcome" | grep -qiE 'stall|watchdog'; then
@@ -241,7 +265,7 @@ _derive_failure_class_evidence() {
     return
   fi
 
-  # 8. infrastructure_failure — any other fleet-kill, a worker API error, or
+  # 9. infrastructure_failure — any other fleet-kill, a worker API error, or
   #    a non-zero exit with no clearer signal.
   if [ "$exit_path" = "fleet-kill" ]; then
     echo "infrastructure_failure"
@@ -258,14 +282,14 @@ _derive_failure_class_evidence() {
     ;;
   esac
 
-  # 9. agent_failure — a failing phase-inspector verdict or another failing
+  # 10. agent_failure — a failing phase-inspector verdict or another failing
   #    verifier result, no higher-precedence branch matched.
   if _failure_has_any_fail_verdict "$log_file"; then
     echo "agent_failure"
     return
   fi
 
-  # 10. none — a clean run.
+  # 11. none — a clean run.
   echo "none"
 }
 

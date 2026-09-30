@@ -22,7 +22,7 @@
 # directory sibling resolution works whether this file was loaded from the
 # monorepo checkout or a cross-plugin three-level fallback (ticket-planner),
 # since manifest-read.sh ships alongside it either way.
-if ! declare -f ticket_manifest_exists >/dev/null 2>&1; then
+if ! declare -f ticket_is_planned >/dev/null 2>&1; then
   _PTC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   [ -f "$_PTC_LIB_DIR/manifest-read.sh" ] && source "$_PTC_LIB_DIR/manifest-read.sh"
 fi
@@ -85,12 +85,15 @@ check_planned_ticket() {
       return 1
     }
     description=$(echo "$issue_json" | jq -r '.description // ""')
-    # tracker-planner-and-fallback-cutover (3.2): manifest presence is the
-    # ONLY proof of "planned" — no live label fallback. The description is
-    # always live-fetched and check_planned_ticket_description's field
-    # parsing below is unchanged (out of scope for this change).
+    # tracker-planner-and-fallback-cutover (3.2) + Section 5 discriminator
+    # fix: a real initiative — not bare manifest existence — is the ONLY
+    # proof of "planned"; flow.sh stamps an _adhoc manifest onto every
+    # non-epic trigger, so manifest presence alone would misclassify an
+    # ad-hoc ticket. No live label fallback. The description is always
+    # live-fetched and check_planned_ticket_description's field parsing
+    # below is unchanged (out of scope for this change).
     has_planned_label="false"
-    if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
+    if declare -f ticket_is_planned >/dev/null 2>&1 && ticket_is_planned "$ticket_id" 2>/dev/null; then
       has_planned_label="true"
     fi
   fi

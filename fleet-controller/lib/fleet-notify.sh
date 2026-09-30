@@ -386,6 +386,88 @@ Resume with \`fleet-dispatch.sh <EPIC> --resume\` once the underlying condition 
   return 0
 }
 
+# ── fleet_notify_readiness (dor-readiness-gate-foundation, Decision 10) ─────
+#
+# fleet_notify_readiness <tid> <state_dir> <reason>
+# reason: "stale" | "blocking-sibling"
+#
+# Every other severity-capped-at-1 detector in this codebase
+# (`detect_human_hold`, `detect_observer_findings`, `detect_worker_api_errors`,
+# `detect_outbox_staleness`) pairs its cap with an active `fleet_notify_*`
+# push — a WARN nobody actively reads is the same failure shape as the
+# 40-day/160h invisible-hold incidents `fleet_notify_hold` (PR #326) already
+# fixed once. `detect_stalled_approved_children`'s stale/blocking-sibling
+# readiness findings (task 7.5) are no exception.
+#
+# Built on `fleet_notify_gate_stop`'s exact sidecar-with-a-content-key
+# idiom, one JSON object per ticket keyed by reason rather than one sidecar
+# file per reason — a ticket can be BOTH stale and blocking a sibling at
+# once, and each reason's own "sent" state must survive the other reason's
+# write. Fires at most once per (tid, reason); never touches severity, and
+# degrades to a log-only line (via `fleet_slack_post`) when Slack is not
+# configured, exactly like every other notifier here.
+fleet_notify_readiness() {
+  local tid="$1" state_dir="$2" reason="$3"
+
+  case "$reason" in
+  stale | blocking-sibling) ;;
+  *)
+    echo "fleet-notify: fleet_notify_readiness: unknown reason '${reason}'" >&2
+    return 1
+    ;;
+  esac
+
+  local sidecar="${state_dir}/${tid}-readiness-notify.json"
+  local notify_state=""
+  if [ -f "$sidecar" ]; then
+    notify_state=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    d = {}
+print(d.get(sys.argv[2], ''))
+" "$sidecar" "$reason" 2>/dev/null) || notify_state=""
+  fi
+  if [ "$notify_state" = "sent" ]; then
+    return 0
+  fi
+
+  local text
+  case "$reason" in
+  stale)
+    text=$(printf ':hourglass_flowing_sand: *%s* has been not-ready for over %sh\n\nCheck what it is missing with `dor-check.sh %s`, or waive a code with `dor-check.sh --waive %s <CODE> <reason>`.' \
+      "$tid" "${FLEET_READY_STALE_HOURS:-48}" "$tid" "$tid")
+    ;;
+  blocking-sibling)
+    text=$(printf ':link: *%s* is not-ready and is blocking a dependent ticket\n\nResolve its readiness (or waive the blocking code) to unblock downstream work.' "$tid")
+    ;;
+  esac
+
+  local out
+  out=$(fleet_slack_post "$tid" "$state_dir" "$text" 2>&1)
+  local write_state="sent"
+  if [[ "$out" == *"log-only"* ]] || [[ "$out" == *"transport failure"* ]] || [[ "$out" == *"rejected"* ]] || [[ "$out" == *"construction failed"* ]]; then
+    if [[ "$out" != *"not configured"* ]]; then
+      write_state="failed"
+    fi
+  fi
+  python3 -c "
+import json, sys
+path, reason, state = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path) as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+d[reason] = state
+with open(path, 'w') as f:
+    json.dump(d, f)
+" "$sidecar" "$reason" "$write_state" 2>/dev/null || true
+  echo "$out"
+  return 0
+}
+
 # ── fleet_notify_gate_held (routine-approve-gate-notify) ────────────────────
 #
 # fleet_notify_gate_held <tid> <state_dir> <held_at>

@@ -825,6 +825,69 @@ Change 1's PR merges, since it depends on manifest fields (`flags`/`rev`/`pendin
 
 ---
 
+## Step 8 — Definition of Ready (DoR) readiness gate — IN PROGRESS (change 1, Sections 1-7/10 done)
+
+**Plan:** `~/.claude/plans/when-working-on-the-delightful-ocean.md` (re-scoped 2026-09-27 after a
+live-evidence report over both tickets hosts and a 3-reviewer + second-agent pass).
+**Openspec changes** (none proposed yet), strictly in this order, one `/opsx:propose` + `/opsx:apply`
++ PR each:
+1. `dor-readiness-gate-foundation` (ticket-auto-pipeline + fleet-controller)
+2. `planner-phase-count-derivation` (ticket-planner, mechanical prep)
+3. `planner-readiness-phase` (ticket-planner, halt-only)
+4. `planner-ready-by-construction` (later)
+5. `readiness-feedback-loop` (later)
+
+**Why this exists:** planner-cut tickets reached a worker with no Scope / Navigation Path / Test
+User section and no test data, and were stopped only at the entry gate after a worker was already
+spent — `PLANNED_BODY_INCOMPLETE` on 27/52 WIL tickets, `held: gate` "plan missing N/M verification
+prerequisites" ×12, `CRITIQUE_BLOCKED` ×6. **52 % of WIL and 22 % of CRE tickets** hit a readiness
+stop post-dispatch: 2–4 wasted worker generations, 2–8 h wall clock and one human Linear edit each;
+one CRE ticket sat 40 days. Verify-time "no test user" failures are zero — the cost lands at
+dispatch → gate, so the fix is a **pre-dispatch** gate. `exit-path.sh` has no readiness class, so
+`runs.jsonl` currently reports every one of these as `none`.
+
+**Shape:** manifest `ready` object (hard codes + advisory codes + per-code waivers); slim
+`lib/dor-check.sh` (hard: Scope / Nav / Test User section presence, AC present + not vague, repro
+for bugs, `needs-info` flag; advisory in v1: catalog role resolution, test-data, Verification Plan
+— promotable per host via `DOR_STRICT_*` env once a host seeds its `test-users.json`, which neither
+host has today); hard refusal in `fleet-dispatch.sh`, fleet-detect D-11/D-18 and a new gate-check
+Check 2.7e `TICKET_NOT_READY`; backfill that enumerates from the initiative index (the log glob
+misses undispatched Backlog tickets — and zero ticket manifests exist on either host today);
+`exit-path.sh` `readiness` class. Then a new planner phase `Readiness` between TicketGen and
+Completed — scan → derive → halt with questions → `resume --answer/--waive/--confirm-enablers` →
+apply, enablers created as `chore` children in `blocked_by` and stamped ready at creation; epic
+`dispatch=true` moves there. Inline `AskUserQuestion`, planner-written Verification Plans and the
+feedback loop are later increments.
+
+**Two live defects folded into change 1** (found by review, confirmed on `main`): gate-check 2.7
+and `planned-feedback-write.sh` treat "manifest exists" as "planned", but `flow.sh` now creates an
+`_adhoc` manifest for every ad-hoc ticket on its first trigger; and `needs-info-resolved` is
+declared in `workflow.json` with zero callers, so a `needs-info` flag can never clear.
+
+**Success criteria for the first shippable increment (changes 1 + 3):** no new planned ticket can
+be fleet-dispatched or run via `/ticket-auto` while not-ready; missing Scope / Nav / Test User is
+caught before any worker is spent; legacy tickets are waived and keep running; ad-hoc tickets are
+untouched.
+
+- [ ] 1. `dor-readiness-gate-foundation` — propose, apply, PR. Mandatory `manifest-backfill.sh`
+      run per host afterwards (CHANGELOG note, same class as 0.57.0's).
+      In progress on `main`, uncommitted: Sections 1 (pre-work), 2 (manifest `ready` field +
+      locked writers + waiver CLI plumbing), 3 (shared `vplan-parse.sh`), 4 (`lib/dor-check.sh`
+      itself — `check_ticket_ready`/`ensure_ticket_readiness`/`--waive`), and 5 (planned-vs-ad-hoc
+      discriminator fix — gate-check Check 2.7, `planned-feedback-write.sh`,
+      `planned-ticket-check.sh` all switched from bare `ticket_manifest_exists` to `ticket_is_planned`)
+      and 6 (gate-check Check 2.7e entry-gate refusal + the first `needs-info-resolved` caller in
+      `/ticket-approve`) are done per `openspec/changes/dor-readiness-gate-foundation/tasks.md`.
+      Remaining: 7 (fleet-dispatch/fleet-detect consumers), 8 (backfill), 9 (`exit-path.sh` readiness
+      class), 10 (docs/CHANGELOG).
+- [ ] 2. `planner-phase-count-derivation` — propose, apply, PR.
+- [ ] 3. `planner-readiness-phase` — propose, apply, PR.
+- [ ] 4. Live: one planned epic on a user project through Readiness → dispatch → gate, plus an
+      ad-hoc ticket confirming 2.7 is untouched. Roll into the consolidated live-verification pass.
+- [ ] 5. `planner-ready-by-construction`, `readiness-feedback-loop` — after 4 is clean.
+
+---
+
 ## Ordering rationale
 
 1. **Active harm first.** Step 0's first two items mean held tickets are invisible to every
@@ -846,6 +909,11 @@ Change 1's PR merges, since it depends on manifest fields (`flags`/`rev`/`pendin
    orchestration generally, and `runs.jsonl` gives it an emission-rate measurement for free.
 6. **Largest and most diagnostic last.** Once Step 0 extracts its urgent findings, the observer's
    remaining value is investigative rather than corrective.
+7. **Step 8 (DoR gate) proposed ahead of Step 6 (Agent Mesh) by rule 1.** It is active harm
+   measured on both hosts today — half of WIL's planned tickets burn worker generations before a
+   gate stops them — and change 1 is self-contained (ticket-auto-pipeline + fleet-controller libs,
+   no fleetd reap-path contact), so it does not compound the Step 6 hold's risk. Operator decides
+   the final slot.
 
 ### Parallel track
 

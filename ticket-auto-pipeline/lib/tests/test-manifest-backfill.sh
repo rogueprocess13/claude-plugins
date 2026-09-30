@@ -244,6 +244,117 @@ test_backfill_epic_dry_run_writes_nothing() {
   fi
 }
 
+# ── readiness backfill (dor-readiness-gate-foundation, Section 8) ──────────────
+#
+# Fixture: a never-dispatched Backlog ticket — a ticket manifest under its
+# initiative PLUS an entry in the epic manifest's own children[] — but
+# deliberately no `*-pipeline.log`, since that's exactly the population the
+# old glob-only enumeration missed (design.md Decision 6).
+_new_workspace_with_never_dispatched_child() {
+  local tmpdir
+  tmpdir=$(_new_workspace)
+  source "$tmpdir/lib/manifest-write.sh"
+  REPOS_ROOT="$tmpdir/repos" write_epic_manifest "INIT-99" "" "per-ticket" "" '["WIL-5"]' >/dev/null
+  REPOS_ROOT="$tmpdir/repos" write_ticket_manifest "WIL-5" "INIT-99" "feature" >/dev/null
+  echo "$tmpdir"
+}
+
+test_backfill_readiness_stamps_never_dispatched_child() {
+  local ws
+  ws=$(_new_workspace_with_never_dispatched_child)
+  # No WIL-5-pipeline.log anywhere — must still be found via the epic's children[].
+
+  local out rc=0
+  out=$(CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" "$ws/logs" 2>&1) || rc=$?
+
+  local m status by reason missing
+  m="$ws/repos/.ticket-auto/initiatives/INIT-99/tickets/WIL-5/planner/manifest.json"
+  status=$(jq -r '.ready.status // empty' "$m" 2>/dev/null)
+  by=$(jq -r '.ready.waived["*"].by // empty' "$m" 2>/dev/null)
+  reason=$(jq -r '.ready.waived["*"].reason // empty' "$m" 2>/dev/null)
+  missing=$(jq -c '.ready.missing // empty' "$m" 2>/dev/null)
+  rm -rf "$ws"
+
+  if [ "$rc" -eq 0 ] && [ "$status" = "ready" ] && [ "$by" = "legacy-backfill" ] &&
+    [ -n "$reason" ] && [ "$missing" = "[]" ] &&
+    echo "$out" | grep -q "WIL-5: SEEDED ready=ready" &&
+    echo "$out" | grep -q "readiness: 1 seeded, 0 already complete/ad-hoc/no-manifest, 0 failed"; then
+    _pass "manifest-backfill.sh: enumerates and stamps a never-dispatched child via epic children[], recording the legacy waiver as migration-granted"
+  else
+    _fail "manifest-backfill.sh: readiness stamp mismatch (rc=$rc status=$status by=$by reason=$reason missing=$missing out=$out)"
+  fi
+}
+
+test_backfill_readiness_dry_run_writes_nothing() {
+  local ws
+  ws=$(_new_workspace_with_never_dispatched_child)
+
+  local out rc=0
+  out=$(CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" --dry-run "$ws/logs" 2>&1) || rc=$?
+
+  local m ready_field
+  m="$ws/repos/.ticket-auto/initiatives/INIT-99/tickets/WIL-5/planner/manifest.json"
+  ready_field=$(jq -r '.ready // empty' "$m" 2>/dev/null)
+  rm -rf "$ws"
+
+  if [ "$rc" -eq 0 ] && [ -z "$ready_field" ] &&
+    echo "$out" | grep -q "WIL-5: WOULD SEED ready=ready" &&
+    echo "$out" | grep -q "readiness (dry-run): 1 would be seeded"; then
+    _pass "manifest-backfill.sh: --dry-run reports the readiness stamp without writing it"
+  else
+    _fail "manifest-backfill.sh: --dry-run readiness pass should write nothing (rc=$rc ready_field=$ready_field out=$out)"
+  fi
+}
+
+test_backfill_readiness_idempotent() {
+  local ws
+  ws=$(_new_workspace_with_never_dispatched_child)
+
+  CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" "$ws/logs" >/dev/null 2>&1
+  local out rc=0
+  out=$(CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" "$ws/logs" 2>&1) || rc=$?
+  rm -rf "$ws"
+
+  if [ "$rc" -eq 0 ] && echo "$out" | grep -q "WIL-5: SKIP (already carries ready)" &&
+    echo "$out" | grep -q "readiness: 0 seeded, 1 already complete/ad-hoc/no-manifest, 0 failed"; then
+    _pass "manifest-backfill.sh: second run is a no-op for an already-stamped readiness field"
+  else
+    _fail "manifest-backfill.sh: readiness stamp should be idempotent (rc=$rc out=$out)"
+  fi
+}
+
+test_backfill_readiness_skips_adhoc_and_already_ready() {
+  local ws
+  ws=$(_new_workspace)
+  source "$ws/lib/manifest-write.sh"
+  # A planned ticket already carrying `ready` — must be skipped, not re-stamped.
+  REPOS_ROOT="$ws/repos" write_ticket_manifest "WIL-1" "INIT-1" "bug" >/dev/null
+  REPOS_ROOT="$ws/repos" set_ticket_readiness "WIL-1" not-ready '["AC_MISSING"]' '[]' >/dev/null
+  # An ad-hoc ticket with no pipeline log — enumerated only via the
+  # initiative-index union source, and must be skipped as not-planned,
+  # never stamped ready-with-waiver. (Deliberately no pipeline log: giving
+  # it one would route it through the unrelated stage/approved backfill
+  # loop above, which needs its own mocked get_issue response — out of
+  # scope for this readiness-only fixture.)
+  REPOS_ROOT="$ws/repos" ensure_ticket_manifest "WIL-9" >/dev/null
+
+  local out rc=0
+  out=$(CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" "$ws/logs" 2>&1) || rc=$?
+
+  local status1 ready9
+  status1=$(jq -r '.ready.status // empty' "$ws/repos/.ticket-auto/initiatives/INIT-1/tickets/WIL-1/planner/manifest.json" 2>/dev/null)
+  ready9=$(jq -r '.ready // empty' "$ws/repos/.ticket-auto/initiatives/_adhoc/tickets/WIL-9/planner/manifest.json" 2>/dev/null)
+  rm -rf "$ws"
+
+  if [ "$rc" -eq 0 ] && [ "$status1" = "not-ready" ] && [ -z "$ready9" ] &&
+    echo "$out" | grep -q "WIL-1: SKIP (already carries ready)" &&
+    echo "$out" | grep -q "WIL-9: SKIP (ad-hoc, not planned)"; then
+    _pass "manifest-backfill.sh: readiness pass never clobbers an existing verdict and never stamps an ad-hoc ticket"
+  else
+    _fail "manifest-backfill.sh: readiness pass should skip pre-existing ready + ad-hoc tickets (rc=$rc status1=$status1 ready9=$ready9 out=$out)"
+  fi
+}
+
 # ── run ───────────────────────────────────────────────────────────────────────
 
 test_backfill_seeds_from_mocked_get_issue
@@ -254,6 +365,10 @@ test_backfill_reports_get_issue_failure
 test_backfill_stamps_epic_dispatch_from_state_execution
 test_backfill_epic_dispatch_idempotent
 test_backfill_epic_dry_run_writes_nothing
+test_backfill_readiness_stamps_never_dispatched_child
+test_backfill_readiness_dry_run_writes_nothing
+test_backfill_readiness_idempotent
+test_backfill_readiness_skips_adhoc_and_already_ready
 
 echo "---"
 echo "$PASS passed, $FAIL failed"

@@ -17,6 +17,74 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.58.0 (2026-09-29) — also fleet-controller 0.39.0
+
+Definition of Ready readiness gate (`dor-readiness-gate-foundation`). Planner-cut tickets were
+reaching a worker without the information needed to verify them — no Scope table, no Navigation
+Path, no usable Test User section — and were stopped only at the entry gate, *after* a worker had
+already been spawned and spent. Measured across both live tickets hosts (89 pipeline logs):
+`PLANNED_BODY_INCOMPLETE` on 27 of 52 WIL tickets, `held: gate` "plan missing N/M verification
+prerequisites" ×12, `CRITIQUE_BLOCKED` ×6 — 52% of WIL and 22% of CRE planned tickets burning 2–4
+worker generations and 2–8h of wall clock each, one CRE ticket sitting 40 days across nine hold
+lines. `VERIFY|pre-flight|fail|No test user` occurs zero times on either host — the entry gate always
+caught these first — so the cost was entirely dispatch-side and, because `exit-path.sh` had no
+readiness failure class, invisible in `runs.jsonl`.
+
+- **New `lib/dor-check.sh`** — deterministic Definition-of-Ready check, no tracker mutation, no model
+  invocation. Hard codes (block): `SCOPE_MISSING`, `NAV_PATH_MISSING`, `TEST_USER_MISSING`,
+  `AC_MISSING`, `AC_VAGUE`, `REPRO_MISSING` (bug only), `FLAG_NEEDS_INFO`. Advisory codes (report
+  only): `TEST_USER_UNRESOLVED`, `TEST_DATA_MISSING`, `TEST_DATA_UNSEEDED`, `VPLAN_MISSING`,
+  `VPLAN_ROW_GAP`, `VPLAN_UNVERIFIABLE` — promotable to hard per host via the new
+  `DOR_STRICT_CATALOG`/`DOR_STRICT_TEST_DATA` flags (both default `false`; neither live host has
+  seeded a `test-users.json` yet, so a hard catalog check on day one would have refused nearly every
+  ticket). `ensure_ticket_readiness` is a **self-healing cache**, not a backfill-only field — every
+  consumer trusts the manifest's cached `ready` verdict when present, else computes and caches it
+  live, so a ticket created after backfill runs is never permanently, unrecoverably not-ready. `dor-
+  check.sh --waive <TID> <CODE> "<reason>"` is the minimal operator escape hatch for a hard-code false
+  positive; a waiver clears exactly one code and can never be silently clobbered by a concurrent
+  re-scan (both writers take a blocking `flock` — this manifest had no locking at all before this
+  change), configurable via the new `MANIFEST_LOCK_TIMEOUT_SECS` (default 15s).
+- **New `lib/vplan-parse.sh`** — the `### Per-Criterion Verification` table now has one parser shared
+  by `gate-check.sh` Check 2.6 and `dor-check.sh`, instead of a second implementation guaranteed to
+  eventually disagree with the first about what "a complete row" means.
+- **Ticket manifest gains a `ready` object** (status, checked-at, hard `missing`, advisory, per-code
+  `waived`). Hard refusal at three points: `fleet-dispatch.sh` skips a not-ready child (counted
+  distinctly from `blocked`); fleet-detect D-11/D-18 use the same predicate and D-18 additionally
+  reports (never auto-resumes) a not-ready child that's gone stale past the new
+  `FLEET_READY_STALE_HOURS` (default 48h) or is named in a sibling's `blocked_by`, notified once per
+  `(tid, reason)` via the new `fleet_notify_readiness`; the entry gate's new Check 2.7e gate-stops a
+  planned ticket with `TICKET_NOT_READY`. None of this ever fires for an ad-hoc ticket — every site
+  uses the same `ticket_is_planned` discriminator, which is now the *only* correct one:
+  `flow.sh`'s `_ensure_manifest` stamps an `_adhoc`-initiative manifest onto every non-epic trigger,
+  so bare manifest existence stopped meaning "planned" before this change shipped.
+- **`exit-path.sh` gains an 11th failure class, `readiness`**, checked ahead of
+  `approval_gate`/`review_failure`/`orchestration_failure` so a `TICKET_NOT_READY`/
+  `PLANNED_BODY_INCOMPLETE`/`CRITIQUE_BLOCKED` gate-stop, or a plan-missing entry-gate hold matched
+  from the `GATE|gate|fail|held: plan missing` log line itself (never from the bare `"held: gate"`
+  outcome string `pipeline-finalize.sh` writes), is counted as a readiness stop instead of folding
+  into a more generic sibling class. `run-summary.sh`'s `runs.jsonl` `run` event gains a matching
+  `readiness_stops` counter. **This reclassification is retroactive**: `derive_failure_class` is a
+  pure on-demand re-derivation, not a value frozen at write time, so a report comparing
+  `failure_class` counts across this release will see different numbers for the same historical
+  evidence — already-archived logs carrying `CRITIQUE_BLOCKED` or `PLANNED_BODY_INCOMPLETE` now
+  report `readiness` instead of their former `review_failure`/`orchestration_failure`. Intentional:
+  those stops were readiness problems misclassified before this change existed.
+- **Side effect, called out explicitly rather than left implicit:** fixing `dor-check.sh`'s inherited
+  `set -eo pipefail` leak (guarding `audit-ac-testability.sh`/`audit-test-data-check.sh`'s file-scope
+  `set` line the same way `lib/events.sh`/`lib/fence-check.sh` already do) also fixes `ticket-audit`'s
+  pre-existing, unrelated inheritance of the identical leak — `ticket-audit` sources both files
+  directly and has carried this since they were written. Strictly safer (removes an unintended
+  `errexit`/`pipefail` flip nobody asked for); `ticket-audit`'s existing test suites were run
+  unchanged after the fix and pass, confirming no hidden reliance on the leaked options.
+- **Two pre-existing issues observed, not fixed here** — noted so the next author doesn't read them
+  as current: the `fleet-dispatch` spec still describes live-Linear fallback scenarios that
+  `tracker-planner-and-fallback-cutover` already deleted; and `ticket-audit` has other sourcing
+  patterns, beyond the two files above, not touched by this change's fix.
+- Backfill (`manifest-backfill.sh`) is now **recommended, promptly, one time per host** rather than
+  strictly mandatory — self-healing means a new ticket no longer needs it — but still matters for an
+  already-approved, in-flight ticket, so it isn't judged live for the first time against rules that
+  postdate its approval.
+
 ## 0.57.0 (2026-09-27) — also fleet-controller 0.38.0, ticket-planner 0.11.0, knowledge-curator 0.2.1
 
 **BREAKING, one-way door:** Tracker planner and fallback cutover (`tracker-planner-and-fallback-cutover`,

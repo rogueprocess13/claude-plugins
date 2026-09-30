@@ -115,6 +115,24 @@ else
   fail "no feedback emitted" "unexpected feedback entry found"
 fi
 
+# --- Test 8: _adhoc manifest never emits feedback (Section 5 discriminator fix) ---
+echo "--- Test 8: _adhoc manifest, no FROM_PLANNED → no-op ---"
+repos_root=$(mktemp -d)
+(
+  source "${LIB_DIR}/manifest-write.sh"
+  REPOS_ROOT="$repos_root" ensure_ticket_manifest "TEST-8" >/dev/null
+)
+FROM_PLANNED=false
+log="${TMPDIR}/test8-pipeline.log"
+echo "2026-09-28T00:00:00Z|META|outcome-label|info|Smooth" >"$log"
+REPOS_ROOT="$repos_root" planned_feedback_write "TEST-8" "$log" || true
+rm -rf "$repos_root"
+if ! grep -q 'planner-feedback' "$log" 2>/dev/null; then
+  pass "no feedback emitted for an _adhoc-initiative manifest"
+else
+  fail "no feedback emitted for an _adhoc-initiative manifest" "unexpected feedback entry found"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -gt 0 ] && exit 1 || exit 0

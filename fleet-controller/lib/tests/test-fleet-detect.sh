@@ -1367,14 +1367,30 @@ _seed_stalled_child_manifest() {
 # `stage` field on the manifest-only path (there is no longer a second,
 # independently-lagging live source) — so the top-of-function state-set gate
 # and the exact-Ready approval check both read this one value.
+#
+# readiness (dor-readiness-gate-foundation task 7.8): "ready" by default —
+# every pre-existing call site keeps exercising the approval/state/liveness
+# checks unaffected by the readiness gate (task 7.4) — or "not-ready". Seeded
+# by reaching directly into the manifest's `ready` field via jq, matching
+# test-fleet-dispatch.sh's `_seed_readiness` helper — set_ticket_readiness
+# takes its own flock the fixture must not depend on.
 _seed_stalled_child_manifest_ex() {
-  local repos_root="$1" child_id="$2" approved="$3" stage="$4"
+  local repos_root="$1" child_id="$2" approved="$3" stage="$4" readiness="${5:-ready}"
   local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
   (
     source "$tap_lib/manifest-write.sh"
     REPOS_ROOT="$repos_root" write_ticket_manifest "$child_id" "INIT-42" "feature" '[]' >/dev/null
     [ "$approved" = "true" ] && REPOS_ROOT="$repos_root" set_ticket_approval "$child_id" "true" "human" >/dev/null
     REPOS_ROOT="$repos_root" set_ticket_stage "$child_id" "$stage" >/dev/null
+    if [ "$readiness" != "none" ]; then
+      manifest_path=$(REPOS_ROOT="$repos_root" get_ticket_manifest_path "$child_id" 2>/dev/null)
+      missing='[]'
+      [ "$readiness" = "not-ready" ] && missing='["SCOPE_MISSING"]'
+      content=$(jq -c --arg status "$readiness" --argjson missing "$missing" \
+        '.ready = {status: $status, checked_at: "2026-01-01T00:00:00Z", missing: $missing, advisory: [], waived: {}}' \
+        "$manifest_path")
+      echo "$content" >"$manifest_path"
+    fi
   )
 }
 
@@ -1787,6 +1803,235 @@ test_stalled_approved_children_enumerates_from_epic_manifest() {
   return 0
 }
 
+# ── Readiness split (dor-readiness-gate-foundation task 7.8) ──────────────────────
+
+# _seed_dispatch_child_manifest <repos_root> <tid> <readiness:ready|not-ready>
+# [checked_at]
+# Minimal ticket manifest for D-11 tests: dispatch:false (never dispatched)
+# with a readiness object seeded directly via jq — same "reach in directly,
+# bypass set_ticket_readiness's own flock" rationale as
+# _seed_stalled_child_manifest_ex/test-fleet-dispatch.sh's _seed_readiness.
+_seed_dispatch_child_manifest() {
+  local repos_root="$1" tid="$2" readiness="$3" checked_at="${4:-2026-01-01T00:00:00Z}"
+  local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
+  (
+    source "$tap_lib/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "$tid" "INIT-90" "feature" '[]' >/dev/null
+    manifest_path=$(REPOS_ROOT="$repos_root" get_ticket_manifest_path "$tid" 2>/dev/null)
+    missing='[]'
+    [ "$readiness" = "not-ready" ] && missing='["SCOPE_MISSING"]'
+    content=$(jq -c --arg status "$readiness" --argjson missing "$missing" --arg checked_at "$checked_at" \
+      '.ready = {status: $status, checked_at: $checked_at, missing: $missing, advisory: [], waived: {}}' \
+      "$manifest_path")
+    echo "$content" >"$manifest_path"
+  )
+}
+
+test_initiative_dispatch_not_ready_separated_from_undispatched() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  fleet_dispatch_initiative() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+
+  _seed_dispatch_child_manifest "$repos_root" "CRE-960" "ready"
+  _seed_dispatch_child_manifest "$repos_root" "CRE-961" "not-ready"
+  _seed_epic_manifest "$repos_root" "INIT-90" "epic/init-90" "true" '["CRE-960","CRE-961"]'
+
+  local r sev findings
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  findings=$(echo "$r" | jq -r '.findings')
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 1 ] || {
+    echo "expected severity 1 (a ready-undispatched child exists), got $sev: $r" >&2
+    return 1
+  }
+  echo "$findings" | grep -q "1 undispatched: INIT-90(1)" || {
+    echo "expected undispatched count to exclude the not-ready child: $findings" >&2
+    return 1
+  }
+  echo "$findings" | grep -q "not-ready: INIT-90(1)" || {
+    echo "expected the not-ready child reported under its own count: $findings" >&2
+    return 1
+  }
+  return 0
+}
+
+test_initiative_dispatch_all_not_ready_severity_zero_but_reported() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  fleet_dispatch_initiative() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+
+  _seed_dispatch_child_manifest "$repos_root" "CRE-962" "not-ready"
+  _seed_epic_manifest "$repos_root" "INIT-91" "epic/init-91" "true" '["CRE-962"]'
+
+  local r sev findings
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_initiative_dispatch "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  findings=$(echo "$r" | jq -r '.findings')
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 0 ] || {
+    echo "expected severity 0 (no ready-undispatched child, so not an awaiting-dispatch WARN), got $sev: $r" >&2
+    return 1
+  }
+  echo "$findings" | grep -q "not-ready: INIT-91(1)" || {
+    echo "expected the not-ready child still reported: $findings" >&2
+    return 1
+  }
+  return 0
+}
+
+test_stalled_approved_not_ready_child_not_reported_and_not_resumed() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  # Not stale (fresh checked_at — _seed_stalled_child_manifest_ex's own
+  # fixed 2026-01-01 default is stale relative to "now" by design, so this
+  # test overrides it explicitly) and not named in any sibling's blocked_by
+  # — a bare not-ready child is silently skipped, exactly like task 7.4 says.
+  _seed_stalled_child_manifest_ex "$repos_root" "CRE-963" true Ready not-ready
+  local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
+  (
+    source "$tap_lib/manifest-write.sh"
+    manifest_path=$(REPOS_ROOT="$repos_root" get_ticket_manifest_path "CRE-963" 2>/dev/null)
+    content=$(jq -c --arg checked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.ready.checked_at = $checked_at' "$manifest_path")
+    echo "$content" >"$manifest_path"
+  )
+  _seed_epic_manifest "$repos_root" "INIT-92" "epic/init-92" "true" '["CRE-963"]'
+
+  local r sev
+  r=$(REPOS_ROOT="$repos_root" FLEET_AUTO_RESUME_STALLED=true _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  local queue_file="$ws/fleet-default-spawn-queue.jsonl"
+  local queued=0
+  [ -f "$queue_file" ] && grep -q '"tid":"CRE-963"' "$queue_file" 2>/dev/null && queued=1
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 0 ] && [ "$queued" -eq 0 ] || {
+    echo "expected severity 0 and no auto-resume for a bare not-ready child, got severity=$sev queued=$queued" >&2
+    return 1
+  }
+  return 0
+}
+
+test_stalled_approved_stale_not_ready_reported_distinctly() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  local old_checked_at
+  old_checked_at=$(date -u -d '72 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+  _seed_stalled_child_manifest_ex "$repos_root" "CRE-964" true Ready not-ready
+  local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
+  (
+    source "$tap_lib/manifest-write.sh"
+    manifest_path=$(REPOS_ROOT="$repos_root" get_ticket_manifest_path "CRE-964" 2>/dev/null)
+    content=$(jq -c --arg checked_at "$old_checked_at" '.ready.checked_at = $checked_at' "$manifest_path")
+    echo "$content" >"$manifest_path"
+  )
+  _seed_epic_manifest "$repos_root" "INIT-93" "epic/init-93" "true" '["CRE-964"]'
+
+  local r sev findings
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  findings=$(echo "$r" | jq -r '.findings')
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 1 ] || {
+    echo "expected severity 1 for a stale not-ready child, got $sev: $r" >&2
+    return 1
+  }
+  echo "$findings" | grep -q "stale not-ready: CRE-964" || {
+    echo "expected stale not-ready finding text: $findings" >&2
+    return 1
+  }
+  return 0
+}
+
+test_stalled_approved_blocking_sibling_not_ready_reported_distinctly() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  _seed_stalled_child_manifest_ex "$repos_root" "CRE-965" true Ready not-ready
+  local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
+  (
+    source "$tap_lib/manifest-write.sh"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-966" "INIT-94" "feature" '["CRE-965"]' >/dev/null
+  )
+  _seed_epic_manifest "$repos_root" "INIT-94" "epic/init-94" "true" '["CRE-965","CRE-966"]'
+
+  local r sev findings
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  findings=$(echo "$r" | jq -r '.findings')
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 1 ] || {
+    echo "expected severity 1 for a not-ready child blocking a sibling, got $sev: $r" >&2
+    return 1
+  }
+  echo "$findings" | grep -q "blocking-sibling not-ready: CRE-965" || {
+    echo "expected blocking-sibling not-ready finding text: $findings" >&2
+    return 1
+  }
+  return 0
+}
+
+test_stalled_approved_readiness_severity_never_exceeds_one() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  get_issue() { :; }
+  source "$LIB_DIR/fleet-detect.sh"
+  fleet_store_ready() { return 0; }
+  fleet_store_in_flight() { :; }
+
+  # Far, far past the stale threshold — severity must still cap at 1.
+  local ancient_checked_at
+  ancient_checked_at=$(date -u -d '5000 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+  _seed_stalled_child_manifest_ex "$repos_root" "CRE-967" true Ready not-ready
+  local tap_lib="$SCRIPT_DIR/../../../ticket-auto-pipeline/lib"
+  (
+    source "$tap_lib/manifest-write.sh"
+    manifest_path=$(REPOS_ROOT="$repos_root" get_ticket_manifest_path "CRE-967" 2>/dev/null)
+    content=$(jq -c --arg checked_at "$ancient_checked_at" '.ready.checked_at = $checked_at' "$manifest_path")
+    echo "$content" >"$manifest_path"
+  )
+  _seed_epic_manifest "$repos_root" "INIT-95" "epic/init-95" "true" '["CRE-967"]'
+
+  local r sev
+  r=$(REPOS_ROOT="$repos_root" _fleet_scan_stalled_approved_children "$ws" 2>/dev/null)
+  sev=$(echo "$r" | jq -r '.severity')
+  rm -rf "$ws" "$repos_root"
+
+  [ "$sev" -eq 1 ] || {
+    echo "expected severity capped at 1 for an ancient not-ready ticket, got $sev: $r" >&2
+    return 1
+  }
+  return 0
+}
+
 # ── Gate-hold lifecycle detection (gate-check.sh compatibility) ───────────────────
 
 test_gate_held_fresh_not_stall() {
@@ -1933,6 +2178,12 @@ for fn in \
   test_epic_branch_ready_short_circuits_on_manifest_stage \
   test_epic_branch_ready_enumerates_from_manifest \
   test_stalled_approved_children_enumerates_from_epic_manifest \
+  test_initiative_dispatch_not_ready_separated_from_undispatched \
+  test_initiative_dispatch_all_not_ready_severity_zero_but_reported \
+  test_stalled_approved_not_ready_child_not_reported_and_not_resumed \
+  test_stalled_approved_stale_not_ready_reported_distinctly \
+  test_stalled_approved_blocking_sibling_not_ready_reported_distinctly \
+  test_stalled_approved_readiness_severity_never_exceeds_one \
   test_observer_finding_line_does_not_change_phase_failure_verdict \
   test_observer_findings_high_in_current_bracket_returns_warn \
   test_observer_findings_warn_severity_finding_does_not_escalate \

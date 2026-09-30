@@ -476,7 +476,7 @@ _fleet_dispatch_initiative_locked() {
   queue_file=$(_fleet_queue_file "$workspace")
   local max_concurrent="${FLEET_MAX_CONCURRENT:-3}"
   local dry_run="${FLEET_DRY_RUN:-false}"
-  local resume_count=0 blocked_count=0 enqueued=0 dead_letter_count=0
+  local resume_count=0 blocked_count=0 not_ready_count=0 enqueued=0 dead_letter_count=0
 
   if [ -z "$initiative_id" ]; then
     echo "ERROR: initiative_id required" >&2
@@ -509,6 +509,18 @@ _fleet_dispatch_initiative_locked() {
     local _tap_lib
     for _tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
       [ -f "$_tap_lib/manifest-write.sh" ] && source "$_tap_lib/manifest-write.sh" && break
+    done
+  fi
+
+  # dor-check.sh backs the readiness exclusion below (dor-readiness-gate-
+  # foundation task 7.6) — same two-candidate guard-source convention as
+  # every other cross-plugin dependency in this function. dor-check.sh
+  # guards its own sub-dependencies (manifest-write.sh, audit-*-check.sh,
+  # vplan-parse.sh), so nothing here is sourced twice.
+  if ! declare -f ensure_ticket_readiness >/dev/null 2>&1; then
+    local _dor_tap_lib
+    for _dor_tap_lib in "${_CONFIG_DIR}/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+      [ -f "$_dor_tap_lib/dor-check.sh" ] && source "$_dor_tap_lib/dor-check.sh" && break
     done
   fi
 
@@ -656,6 +668,30 @@ _fleet_dispatch_initiative_locked() {
 
     echo "  checking ${child_id} (manifest dispatch=false)..."
 
+    # Readiness exclusion (dor-readiness-gate-foundation task 7.1): evaluated
+    # independently of, and before, blocked-by resolution — a child with no
+    # cached `ready` verdict is computed and cached here via
+    # ensure_ticket_readiness, never treated as permanently excluded. The
+    # needs-info flag is checked separately and always live
+    # (ticket_dispatch_blocked_by_flags), never satisfied from a stale cached
+    # readiness verdict, so an approve.sh needs-info clear un-gates a child on
+    # the very next dispatch pass. Counted distinctly from blocked_count so a
+    # fleet idling on readiness is visibly different from one idling on
+    # dependencies.
+    local _mc_readiness_rc=0 _mc_flags_blocked=false
+    if declare -f ensure_ticket_readiness >/dev/null 2>&1; then
+      ensure_ticket_readiness "$child_id" >/dev/null 2>&1 || _mc_readiness_rc=$?
+    fi
+    if declare -f ticket_dispatch_blocked_by_flags >/dev/null 2>&1 &&
+      ticket_dispatch_blocked_by_flags "$child_id" 2>/dev/null; then
+      _mc_flags_blocked=true
+    fi
+    if [ "$_mc_readiness_rc" != "0" ] || [ "$_mc_flags_blocked" = "true" ]; then
+      not_ready_count=$((not_ready_count + 1))
+      echo "  not-ready ${child_id} (readiness_rc=${_mc_readiness_rc} needs_info=${_mc_flags_blocked})"
+      continue
+    fi
+
     local _mc_blocked_by_json _mc_is_blocked=false _mc_blocker_id
     _mc_blocked_by_json=$(get_ticket_manifest_field "$child_id" blocked_by 2>/dev/null)
     [ -z "$_mc_blocked_by_json" ] && _mc_blocked_by_json='[]'
@@ -699,11 +735,11 @@ _fleet_dispatch_initiative_locked() {
     # All children were skipped by blocked-by resolution (or filtered out) —
     # the summary makes that visible instead of a silent "no dispatchable
     # tickets" when nothing was actually resumable either.
-    if [ "$blocked_count" -gt 0 ] || [ "$resume_count" -gt 0 ] || [ "$dead_letter_count" -gt 0 ]; then
+    if [ "$blocked_count" -gt 0 ] || [ "$not_ready_count" -gt 0 ] || [ "$resume_count" -gt 0 ] || [ "$dead_letter_count" -gt 0 ]; then
       if [ "$dry_run" = "true" ]; then
-        echo "[DRY-RUN] would resume ${resume_count} | blocked ${blocked_count} | would enqueue 0 ticket(s) for ${initiative_id}"
+        echo "[DRY-RUN] would resume ${resume_count} | blocked ${blocked_count} | not_ready ${not_ready_count} | would enqueue 0 ticket(s) for ${initiative_id}"
       else
-        echo "fleet_dispatch: resumed ${resume_count} | dead-lettered ${dead_letter_count} | blocked ${blocked_count} | enqueued 0 ticket(s) for ${initiative_id}"
+        echo "fleet_dispatch: resumed ${resume_count} | dead-lettered ${dead_letter_count} | blocked ${blocked_count} | not_ready ${not_ready_count} | enqueued 0 ticket(s) for ${initiative_id}"
       fi
     else
       echo "no dispatchable tickets for ${initiative_id}"
@@ -768,9 +804,9 @@ _fleet_dispatch_initiative_locked() {
   # as `message` and parses the per-tid `  resumed`/`  blocked`/`  enqueued`
   # lines above into the response arrays.
   if [ "$dry_run" = "true" ]; then
-    echo "[DRY-RUN] would resume ${resume_count} | blocked ${blocked_count} | would enqueue ${enqueued} ticket(s) for ${initiative_id}"
+    echo "[DRY-RUN] would resume ${resume_count} | blocked ${blocked_count} | not_ready ${not_ready_count} | would enqueue ${enqueued} ticket(s) for ${initiative_id}"
   else
-    echo "fleet_dispatch: resumed ${resume_count} | dead-lettered ${dead_letter_count} | blocked ${blocked_count} | enqueued ${enqueued} ticket(s) for ${initiative_id}"
+    echo "fleet_dispatch: resumed ${resume_count} | dead-lettered ${dead_letter_count} | blocked ${blocked_count} | not_ready ${not_ready_count} | enqueued ${enqueued} ticket(s) for ${initiative_id}"
   fi
 
   return 0

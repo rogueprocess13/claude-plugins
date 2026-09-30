@@ -67,6 +67,18 @@ run_summary_json() {
   fix_rounds=${fix_rounds:-0}
   reconcile_cycles=${reconcile_cycles:-0}
 
+  # readiness_stops — same two-part match as exit-path.sh's `readiness`
+  # class (readiness-as-evidence, dor-readiness-gate-foundation §9): a
+  # gate-stop code naming a DoR failure, or a plan-missing entry-gate hold
+  # line. The plan-missing case is matched from the log line itself, never
+  # from `$outcome` — see exit-path.sh's comment for why.
+  local readiness_stops_code readiness_stops_gate readiness_stops
+  readiness_stops_code=$(grep -cE '\|META\|gate-stop\|fail\|(TICKET_NOT_READY|PLANNED_BODY_INCOMPLETE|CRITIQUE_BLOCKED)' <<<"$window" 2>/dev/null || true)
+  readiness_stops_gate=$(grep -c '|GATE|gate|fail|held: plan missing' <<<"$window" 2>/dev/null || true)
+  readiness_stops_code=${readiness_stops_code:-0}
+  readiness_stops_gate=${readiness_stops_gate:-0}
+  readiness_stops=$((readiness_stops_code + readiness_stops_gate))
+
   # ── gate_stops[] ────────────────────────────────────────────────────────────
   local gate_stops_json
   gate_stops_json=$(grep '|META|gate-stop|fail|' <<<"$window" 2>/dev/null | _rs_field5 |
@@ -225,6 +237,7 @@ run_summary_json() {
     --argjson review_iterations "$review_iterations" \
     --argjson fix_rounds "$fix_rounds" \
     --argjson reconcile_cycles "$reconcile_cycles" \
+    --argjson readiness_stops "$readiness_stops" \
     --argjson gate_stops "$gate_stops_json" \
     --argjson pr "$pr_json" \
     --arg merge_decision "${merge_decision:-}" \
@@ -257,6 +270,7 @@ run_summary_json() {
       review_iterations: $review_iterations,
       fix_rounds: $fix_rounds,
       reconcile_cycles: $reconcile_cycles,
+      readiness_stops: $readiness_stops,
       gate_stops: $gate_stops,
       pr: $pr,
       merge_decision: (if $merge_decision == "" then null else $merge_decision end),

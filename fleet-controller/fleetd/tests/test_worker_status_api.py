@@ -112,12 +112,24 @@ def _seed_epic_manifest_fs(repos_root, epic_id, children, dispatch=True):
     }))
 
 
-def _seed_child_manifest_fs(repos_root, tid, epic_id):
+def _seed_child_manifest_fs(repos_root, tid, epic_id, ready=True):
+    """ready=True (default, dor-readiness-gate-foundation task 7.7) seeds a
+    cached `ready` object directly — mirroring the bash-side fixtures'
+    set_ticket_readiness shape — so fleet_dispatch_initiative's readiness
+    gate (task 7.1) doesn't exclude these pre-existing dispatch tests, none
+    of which are about readiness. ready=False leaves the field unset,
+    exercising ensure_ticket_readiness's live-computation fallback."""
     init_dir = Path(repos_root) / '.ticket-auto' / 'initiatives' / epic_id
     (init_dir / 'tickets' / tid / 'planner').mkdir(parents=True, exist_ok=True)
-    (init_dir / 'tickets' / tid / 'planner' / 'manifest.json').write_text(json.dumps({
+    manifest = {
         'type': 'bug', 'initiative': epic_id, 'blocked_by': [], 'dispatch': False,
-    }))
+    }
+    if ready:
+        manifest['ready'] = {
+            'status': 'ready', 'checked_at': '2026-01-01T00:00:00Z',
+            'missing': [], 'advisory': [], 'waived': {},
+        }
+    (init_dir / 'tickets' / tid / 'planner' / 'manifest.json').write_text(json.dumps(manifest))
     index_dir = Path(repos_root) / '.ticket-auto' / 'initiatives' / '_index'
     index_dir.mkdir(parents=True, exist_ok=True)
     (index_dir / f'{tid}.initiative').write_text(epic_id)

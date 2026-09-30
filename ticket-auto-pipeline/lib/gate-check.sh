@@ -35,6 +35,16 @@ if [ -f "$LIB_DIR/manifest-read.sh" ]; then
 elif [ -f "$SCRIPT_DIR/manifest-read.sh" ]; then
   source "$SCRIPT_DIR/manifest-read.sh"
 fi
+# vplan-parse.sh backs Check 2.6's per-criterion table extraction below
+# (dor-readiness-gate-foundation task 3.2) — the same declare-guard
+# sourcing convention as manifest-read.sh above, since dor-check.sh also
+# sources this file and the two must never carry independent copies of the
+# parser (design.md Decision 5).
+if [ -f "$LIB_DIR/vplan-parse.sh" ]; then
+  source "$LIB_DIR/vplan-parse.sh"
+elif [ -f "$SCRIPT_DIR/vplan-parse.sh" ]; then
+  source "$SCRIPT_DIR/vplan-parse.sh"
+fi
 
 # ── Verifier-result helper (Phase 0 RLVR) ──────────────────────────────────────
 # Writes a META|verifier-result at gate decision time.
@@ -122,6 +132,18 @@ if [ -f "$SCRIPT_DIR/ticket-dir.sh" ]; then
   source "$SCRIPT_DIR/ticket-dir.sh"
 elif [ -f "$LIB_DIR/ticket-dir.sh" ]; then
   source "$LIB_DIR/ticket-dir.sh"
+fi
+
+# dor-check.sh backs Check 2.7e's readiness gate-stop below
+# (dor-readiness-gate-foundation task 6.1) — same declare-guard sourcing
+# convention as manifest-read.sh/vplan-parse.sh above. dor-check.sh guards
+# its own sub-dependencies (manifest-write.sh, audit-ac-testability.sh,
+# audit-test-data-check.sh) the same way, and check_planned_body is already
+# loaded above by this point, so nothing is sourced twice.
+if [ -f "$LIB_DIR/dor-check.sh" ]; then
+  source "$LIB_DIR/dor-check.sh"
+elif [ -f "$SCRIPT_DIR/dor-check.sh" ]; then
+  source "$SCRIPT_DIR/dor-check.sh"
 fi
 
 usage() {
@@ -286,6 +308,12 @@ _gate_entry() {
   _plog "$LOG_FILE" "GATE" "gate" "start" ""
 
   local artifact_path complexity autonomy artifact_type
+  # Populated by Check 2.6's vplan source resolution when it needs to fetch
+  # the issue for the description-tier fallback (task 3.3) — Check 2.7
+  # reuses it instead of fetching a second time. Stays empty when 2.6 never
+  # runs (no artifact_path) or resolves its table from notes.md/body.md
+  # without ever needing the description.
+  local _gate_c26_issue_json=""
   artifact_path=$(_get_artifact_path)
   complexity=$(_get_complexity)
   autonomy=$(_get_autonomy)
@@ -437,34 +465,73 @@ _gate_entry() {
     local has_test_user has_nav_path has_expected_behavior has_env_prereqs role_pattern missing_count
     # Build role pattern from test-users.json catalog if available, fall back to known roles
     role_pattern=$(jq -r '[.[].roles[]] | unique | join("|")' "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills}/config/test-users.json" 2>/dev/null | sed 's/_/[-_]/g' || echo 'attorney|admin|debtor|collection[-_]?agency|correspondent')
-    # Primary: check the derived verification plan in notes.md when present
-    local notes_path vplan_section
-    notes_path="$gate_td/notes.md"
-    vplan_section=""
 
-    if [ -f "$notes_path" ] && grep -q '## Verification Plan' "$notes_path" 2>/dev/null; then
-      # Extract the per-criterion table between "### Per-Criterion Verification" and the next ## heading
-      vplan_section=$(awk '/^### Per-Criterion Verification$/,/^## /' "$notes_path" 2>/dev/null || true)
-      if [ -n "$vplan_section" ]; then
-        # Check the Verifiable column for ✓ or Y entries. If at least one criterion
-        # is marked verifiable, the plan has enough info. If none are marked, all 4
-        # prereqs are effectively missing (fallback triggers).
-        local verifiable_count
-        verifiable_count=$(echo "$vplan_section" | grep -ciP '[✓Y]' 2>/dev/null || true)
-        if [ "${verifiable_count:-0}" -gt 0 ] 2>/dev/null; then
-          # At least one criterion is fully verifiable — all 4 prereqs are present
-          # for that criterion. Mark all as found.
-          has_test_user=1
-          has_nav_path=1
-          has_expected_behavior=1
-          has_env_prereqs=1
-        else
-          # No criteria are verifiable — plan is incomplete
-          has_test_user=0
-          has_nav_path=0
-          has_expected_behavior=0
-          has_env_prereqs=0
+    # Verification-plan extraction (task 3.2: delegated to the shared
+    # vplan_parse — one parser, shared with dor-check.sh, design.md
+    # Decision 5). Source order (task 3.3): notes.md → the planner's
+    # body.md → the ticket description — the first source that yields a
+    # non-empty per-criterion table wins; the chosen source is recorded in
+    # the gate's own log line below rather than only implied by which
+    # branch ran. The issue fetch this needs for the description tier is
+    # hoisted here from Check 2.7 (which used to be the only place in this
+    # function that fetched it) rather than duplicated — a fetch failure at
+    # this point surfaces exactly like a fetch failure previously did at
+    # 2.7, via the same _gate_fetch_issue/_gate_fetch_issue_fail path.
+    local vplan_section="" vplan_source="none" vplan_rows=0 vplan_verifiable=0
+    local notes_path="$gate_td/notes.md" notes_text=""
+    [ -f "$notes_path" ] && notes_text=$(cat "$notes_path" 2>/dev/null || true)
+    if declare -f vplan_parse >/dev/null 2>&1 && vplan_parse "$notes_text" 2>/dev/null; then
+      vplan_section="1"
+      vplan_source="notes.md"
+      vplan_rows="$VPLAN_ROWS"
+      vplan_verifiable="$VPLAN_VERIFIABLE"
+    fi
+
+    local planner_dir_path body_text=""
+    if [ "$vplan_source" = "none" ] && declare -f resolve_planner_dir >/dev/null 2>&1; then
+      planner_dir_path=$(resolve_planner_dir "$TICKET_ID" 2>/dev/null) || true
+      if [ -n "$planner_dir_path" ] && [ -f "$planner_dir_path/body.md" ]; then
+        body_text=$(cat "$planner_dir_path/body.md" 2>/dev/null || true)
+        if declare -f vplan_parse >/dev/null 2>&1 && vplan_parse "$body_text" 2>/dev/null; then
+          vplan_section="1"
+          vplan_source="body.md"
+          vplan_rows="$VPLAN_ROWS"
+          vplan_verifiable="$VPLAN_VERIFIABLE"
         fi
+      fi
+    fi
+
+    if [ "$vplan_source" = "none" ]; then
+      _gate_c26_issue_json=$(_gate_fetch_issue "$TICKET_ID") || return $?
+      local desc_text
+      desc_text=$(echo "$_gate_c26_issue_json" | jq -r '.description // ""')
+      if declare -f vplan_parse >/dev/null 2>&1 && vplan_parse "$desc_text" 2>/dev/null; then
+        vplan_section="1"
+        vplan_source="description"
+        vplan_rows="$VPLAN_ROWS"
+        vplan_verifiable="$VPLAN_VERIFIABLE"
+      fi
+    fi
+
+    _plog "$LOG_FILE" "GATE" "vplan-source" "done" "source=$vplan_source rows=$vplan_rows verifiable=$vplan_verifiable"
+
+    if [ -n "$vplan_section" ]; then
+      # Check the Verifiable column for ✓ or Y entries. If at least one criterion
+      # is marked verifiable, the plan has enough info. If none are marked, all 4
+      # prereqs are effectively missing (fallback triggers).
+      if [ "${vplan_verifiable:-0}" -gt 0 ] 2>/dev/null; then
+        # At least one criterion is fully verifiable — all 4 prereqs are present
+        # for that criterion. Mark all as found.
+        has_test_user=1
+        has_nav_path=1
+        has_expected_behavior=1
+        has_env_prereqs=1
+      else
+        # No criteria are verifiable — plan is incomplete
+        has_test_user=0
+        has_nav_path=0
+        has_expected_behavior=0
+        has_env_prereqs=0
       fi
     fi
 
@@ -661,13 +728,23 @@ _gate_entry() {
   # via check_fast_path_eligible, which re-validates the Planner Context block
   # and routes to fast-path or full investigation based on the result.
   local issue_json planned_check_rc
-  issue_json=$(_gate_fetch_issue "$TICKET_ID") || return $?
-  # tracker-planner-and-fallback-cutover (3.1): the local ticket manifest is
-  # the ONLY record of "is this a planned ticket" — no live label fallback.
-  # A ticket with no manifest is reported as not-planned (2.7's checks are
-  # simply skipped for it), never silently routed onto a live label read.
+  # Reuse Check 2.6's fetch (task 3.3) when it already needed the issue for
+  # its description-tier vplan fallback — avoids a second Linear call for
+  # the same ticket in the same gate run.
+  if [ -n "$_gate_c26_issue_json" ]; then
+    issue_json="$_gate_c26_issue_json"
+  else
+    issue_json=$(_gate_fetch_issue "$TICKET_ID") || return $?
+  fi
+  # tracker-planner-and-fallback-cutover (3.1) + Section 5 discriminator fix:
+  # the local ticket manifest's initiative is the ONLY record of "is this a
+  # planned ticket" — no live label fallback, and bare manifest existence is
+  # not enough: flow.sh's _ensure_manifest stamps an _adhoc-initiative
+  # manifest onto every non-epic trigger, so a ticket with only an _adhoc
+  # manifest must still report not-planned (2.7's checks are simply skipped
+  # for it), never silently routed onto a live label read.
   local has_planned_label="false"
-  if declare -f ticket_manifest_exists >/dev/null 2>&1 && ticket_manifest_exists "$TICKET_ID" 2>/dev/null; then
+  if declare -f ticket_is_planned >/dev/null 2>&1 && ticket_is_planned "$TICKET_ID" 2>/dev/null; then
     has_planned_label="true"
   fi
   if [ "$has_planned_label" = "true" ]; then
@@ -727,6 +804,40 @@ _gate_entry() {
         _plog "$LOG_FILE" "GATE" "planned-check" "warn" "exploration depth mismatch: depth=$exploration_depth complexity=$complexity services=$svc_count"
         hb_gate "planned-check" "warn" "exploration depth mismatch" "{\"depth\":\"$exploration_depth\",\"complexity\":\"$complexity\",\"services\":\"$svc_count\"}"
       fi
+    fi
+
+    # 2.7e: DoR entry-gate refusal (dor-readiness-gate-foundation task 6.1).
+    # Resolves readiness through ensure_ticket_readiness — never a raw
+    # ticket_is_ready read, so a never-scanned planned ticket is evaluated
+    # live here rather than read as permanently not-ready (design.md
+    # Decision 3) — and independently checks ticket_dispatch_blocked_by_flags.
+    # The two conditions are evaluated separately, never folded into one
+    # cached object: the flags half must stay live even when the cached
+    # `ready` object is stale, which is what lets /ticket-approve's
+    # needs-info clear un-gate a ticket immediately (design.md Decision 3/8).
+    local readiness_rc=0
+    DOR_MISSING="[]"
+    if declare -f ensure_ticket_readiness >/dev/null 2>&1; then
+      ensure_ticket_readiness "$TICKET_ID" 2>/dev/null || readiness_rc=$?
+    fi
+    local flags_blocked="false"
+    if declare -f ticket_dispatch_blocked_by_flags >/dev/null 2>&1 &&
+      ticket_dispatch_blocked_by_flags "$TICKET_ID" 2>/dev/null; then
+      flags_blocked="true"
+    fi
+    if [ "$readiness_rc" != "0" ] || [ "$flags_blocked" = "true" ]; then
+      local not_ready_codes
+      not_ready_codes=$(echo "${DOR_MISSING:-[]}" | jq -r 'join(",")' 2>/dev/null) || not_ready_codes=""
+      if [ "$readiness_rc" = "2" ] && [ -z "$not_ready_codes" ]; then
+        not_ready_codes="unavailable"
+      fi
+      if [ "$flags_blocked" = "true" ] && ! echo ",${not_ready_codes}," | grep -q ',FLAG_NEEDS_INFO,'; then
+        not_ready_codes="${not_ready_codes:+${not_ready_codes},}FLAG_NEEDS_INFO"
+      fi
+      [ -n "$not_ready_codes" ] || not_ready_codes="unknown"
+      _plog "$LOG_FILE" "META" "gate-stop" "fail" "TICKET_NOT_READY — ${not_ready_codes}"
+      hb_gate "entry-gate" "fail" "TICKET_NOT_READY" "{\"codes\":\"$not_ready_codes\"}"
+      return 2
     fi
   fi
 

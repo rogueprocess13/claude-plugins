@@ -266,6 +266,78 @@ clear_epic_pending_event "TRANS-EPIC"
 [ -z "$(get_epic_manifest_field TRANS-EPIC pending_event)" ] && _pass "clear_epic_pending_event: field removed" ||
   _fail "clear_epic_pending_event: pending_event should be removed"
 
+# ── set_ticket_readiness / waive_ticket_readiness_code / add_ticket_blocked_by ──
+
+write_ticket_manifest "READY-1" "INIT-1" "bug" '[]'
+set_ticket_readiness "READY-1" "not-ready" '["AC_VAGUE","FLAG_NEEDS_INFO"]' '["VPLAN_MISSING"]'
+[ "$(get_ticket_manifest_field READY-1 ready | jq -r '.status')" = "not-ready" ] &&
+  _pass "set_ticket_readiness: status not-ready" ||
+  _fail "set_ticket_readiness: status should be not-ready"
+[ "$(get_ticket_manifest_field READY-1 ready | jq -c '.missing')" = '["AC_VAGUE","FLAG_NEEDS_INFO"]' ] &&
+  _pass "set_ticket_readiness: missing recorded" ||
+  _fail "set_ticket_readiness: missing should be recorded"
+[ -n "$(get_ticket_manifest_field READY-1 ready | jq -r '.checked_at')" ] &&
+  _pass "set_ticket_readiness: checked_at stamped" ||
+  _fail "set_ticket_readiness: checked_at should be stamped"
+
+# Waiving one of two failing codes leaves the other failing.
+waive_ticket_readiness_code "READY-1" "AC_VAGUE" "operator" "false positive"
+[ "$(get_ticket_manifest_field READY-1 ready | jq -r '.status')" = "not-ready" ] &&
+  _pass "waive_ticket_readiness_code: other code still failing" ||
+  _fail "waive_ticket_readiness_code: status should remain not-ready"
+[ "$(get_ticket_manifest_field READY-1 ready | jq -r '.waived.AC_VAGUE.by')" = "operator" ] &&
+  _pass "waive_ticket_readiness_code: waiver recorded" ||
+  _fail "waive_ticket_readiness_code: waiver should be recorded"
+
+# Waiving the last failing code flips status to ready.
+waive_ticket_readiness_code "READY-1" "FLAG_NEEDS_INFO" "operator" "resolved"
+[ "$(get_ticket_manifest_field READY-1 ready | jq -r '.status')" = "ready" ] &&
+  _pass "waive_ticket_readiness_code: last code waived flips to ready" ||
+  _fail "waive_ticket_readiness_code: status should flip to ready"
+
+# A re-scan preserves an existing waiver rather than clobbering it.
+set_ticket_readiness "READY-1" "not-ready" '["AC_VAGUE","FLAG_NEEDS_INFO"]' '[]'
+[ "$(get_ticket_manifest_field READY-1 ready | jq -r '.status')" = "ready" ] &&
+  _pass "set_ticket_readiness: re-scan preserves existing waivers" ||
+  _fail "set_ticket_readiness: re-scan should preserve existing waivers"
+[ "$(get_ticket_manifest_field READY-1 ready | jq -r '.waived.AC_VAGUE.by')" = "operator" ] &&
+  _pass "set_ticket_readiness: re-scan does not clobber waiver content" ||
+  _fail "set_ticket_readiness: re-scan should not clobber waiver content"
+
+# The ready object is overwritten, not appended — exactly one object.
+ready_field_count=$(jq '[.ready] | length' \
+  "$REPOS_ROOT/.ticket-auto/initiatives/INIT-1/tickets/READY-1/planner/manifest.json")
+[ "$ready_field_count" = "1" ] && _pass "set_ticket_readiness: exactly one ready object" ||
+  _fail "set_ticket_readiness: should carry exactly one ready object"
+
+# A waive call and a re-scan issued back-to-back both land — neither is lost.
+write_ticket_manifest "READY-2" "INIT-1" "bug" '[]'
+set_ticket_readiness "READY-2" "not-ready" '["AC_VAGUE","VPLAN_MISSING"]' '[]'
+waive_ticket_readiness_code "READY-2" "AC_VAGUE" "operator" "seq-1"
+set_ticket_readiness "READY-2" "not-ready" '["AC_VAGUE","VPLAN_MISSING"]' '[]'
+[ "$(get_ticket_manifest_field READY-2 ready | jq -r '.waived.AC_VAGUE.reason')" = "seq-1" ] &&
+  _pass "readiness writers: sequential waive+re-scan both land" ||
+  _fail "readiness writers: sequential waive+re-scan should both land"
+[ "$(get_ticket_manifest_field READY-2 ready | jq -r '.missing | length')" = "2" ] &&
+  _pass "readiness writers: re-scan's fresh missing list lands too" ||
+  _fail "readiness writers: re-scan's fresh missing list should land too"
+
+rc=0
+set_ticket_readiness "READY-1" "bogus" '[]' '[]' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_readiness: rejects invalid status" ||
+  _fail "set_ticket_readiness: should reject invalid status (got $rc)"
+
+rc=0
+set_ticket_readiness "NOPE-READY" "ready" '[]' '[]' 2>/dev/null || rc=$?
+[ "$rc" = "1" ] && _pass "set_ticket_readiness: no-op when no manifest" ||
+  _fail "set_ticket_readiness: should no-op when no manifest (got $rc)"
+
+add_ticket_blocked_by "READY-1" "BLOCKER-1"
+add_ticket_blocked_by "READY-1" "BLOCKER-1"
+blocked_count=$(get_ticket_manifest_field READY-1 blocked_by | jq 'length')
+[ "$blocked_count" = "1" ] && _pass "add_ticket_blocked_by: idempotent" ||
+  _fail "add_ticket_blocked_by: should be idempotent (got $blocked_count)"
+
 # ── atomic write leaves no .tmp artifacts ────────────────────────────────────
 
 leftover=$(find "$REPOS_ROOT/.ticket-auto" -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')

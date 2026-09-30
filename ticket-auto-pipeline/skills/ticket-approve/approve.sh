@@ -63,4 +63,25 @@ if [ "$APPROVED" != "true" ]; then
   exit 4
 fi
 
+# needs-info clear (dor-readiness-gate-foundation task 6.3) — the first call
+# site for the needs-info-resolved trigger, declared in workflow.json with
+# zero callers before this change. Approval is the moment a human has, by
+# definition, just looked at the ticket, so clearing the flag here is what
+# lets a ticket gate-stopped at Check 2.7e for FLAG_NEEDS_INFO become
+# dispatchable again immediately, regardless of whether its cached `ready`
+# object is stale (design.md Decision 8, Decision 3). No-op when the flag
+# isn't set.
+NEEDS_INFO_CLEARED="false"
+if declare -f ticket_dispatch_blocked_by_flags >/dev/null 2>&1 &&
+  ticket_dispatch_blocked_by_flags "$TICKET_ID" 2>/dev/null; then
+  _ni_rc=0
+  bash "$FLOW_SH" "$TICKET_ID" needs-info-resolved || _ni_rc=$?
+  if [ "$_ni_rc" -eq 0 ]; then
+    NEEDS_INFO_CLEARED="true"
+  else
+    echo "ticket-approve: flow.sh needs-info-resolved failed (exit $_ni_rc) — needs-info flag not cleared" >&2
+  fi
+fi
+echo "needs_info_cleared=${NEEDS_INFO_CLEARED}"
+
 exit 0

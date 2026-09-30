@@ -112,15 +112,47 @@ _seed_epic() {
   return 0
 }
 
-# _seed_child <repos_root> <tid> <epic_id> <dispatch:true|false> [blocked_by_csv]
+# _seed_readiness <repos_root> <tid> <status:ready|not-ready> [missing_json]
+# Reaches directly into the manifest's `ready` field via jq rather than
+# set_ticket_readiness — several existing tests in this suite stub `flock`
+# globally to exercise the queue-append contention/dead-letter paths, and
+# set_ticket_readiness takes its own readiness flock internally
+# (_manifest_readiness_lock); a fixture helper must not silently no-op under
+# an unrelated test's flock mock. Same "no dedicated writer for this shape —
+# reach in directly" precedent test-gate-check.sh already uses for the
+# `flags` field.
+_seed_readiness() {
+  local repos_root="$1" tid="$2" status="$3" missing="${4:-[]}"
+  local manifest_path
+  manifest_path=$(REPOS_ROOT="$repos_root" get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  local content
+  content=$(jq -c --arg status "$status" --argjson missing "$missing" \
+    '.ready = {status: $status, checked_at: "2026-01-01T00:00:00Z", missing: $missing, advisory: [], waived: {}}' \
+    "$manifest_path") || return 1
+  echo "$content" >"$manifest_path"
+}
+
+# _seed_child <repos_root> <tid> <epic_id> <dispatch:true|false> [blocked_by_csv] [readiness]
+# readiness (dor-readiness-gate-foundation task 7.7): "ready" (default — every
+# pre-existing call site keeps exercising blocked-by/enqueue logic
+# unaffected by the readiness gate), "not-ready", or "none" (seeds no `ready`
+# field at all, exercising ensure_ticket_readiness's self-healing live
+# computation — with no LINEAR_API_KEY/body available in this test
+# environment, that live computation resolves `unavailable`, which the
+# dispatch/detect readiness gate correctly treats as not-ready).
 _seed_child() {
-  local repos_root="$1" tid="$2" epic_id="$3" dispatch="$4" blocked_csv="${5:-}"
+  local repos_root="$1" tid="$2" epic_id="$3" dispatch="$4" blocked_csv="${5:-}" readiness="${6:-ready}"
   local blocked_json='[]'
   if [ -n "$blocked_csv" ]; then
     blocked_json=$(echo "$blocked_csv" | tr ',' '\n' | jq -R -s -c 'split("\n") | map(select(length > 0))')
   fi
   REPOS_ROOT="$repos_root" write_ticket_manifest "$tid" "$epic_id" "bug" "$blocked_json" >/dev/null
   [ "$dispatch" = "true" ] && REPOS_ROOT="$repos_root" stamp_ticket_dispatch "$tid" >/dev/null
+  case "$readiness" in
+  none) ;;
+  not-ready) _seed_readiness "$repos_root" "$tid" "not-ready" '["SCOPE_MISSING"]' ;;
+  *) _seed_readiness "$repos_root" "$tid" "ready" ;;
+  esac
   return 0
 }
 
@@ -230,7 +262,7 @@ test_dispatch_with_children_extracts_correctly() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-children REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -256,7 +288,7 @@ test_dispatch_epics_by_label_site_yields_non_empty_dispatch() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-nonempty REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -279,7 +311,7 @@ test_dispatch_blocker_done_unblocks() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-unblock REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_blocker_done)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_blocker_done)
     _seed_epic '$repos_root' INIT-42 true CRE-103
     _seed_child '$repos_root' CRE-103 INIT-42 false CRE-100
     _seed_blocker_done '$ws' CRE-100
@@ -305,7 +337,7 @@ test_dispatch_dry_run_no_write() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-dry-run REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -327,7 +359,7 @@ test_dispatch_queue_idempotent() {
   bash -c "
     FLEET_INSTANCE_ID=test-idem REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
@@ -389,7 +421,7 @@ test_dispatch_fleet_max_concurrent_enforced() {
   output=$(bash -c "
     FLEET_INSTANCE_ID=test-cap FLEET_MAX_CONCURRENT=3 REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -414,7 +446,7 @@ test_queue_entry_has_generation_field() {
   bash -c "
     FLEET_INSTANCE_ID=test-gen REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
@@ -439,7 +471,7 @@ test_queue_entry_survives_simulated_restart() {
   bash -c "
     FLEET_INSTANCE_ID=test-restart REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
@@ -487,7 +519,7 @@ test_dead_letter_on_exhausted_retries() {
     FLEET_QUEUE_RETRY_BACKOFF_SECS=1
     REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -643,7 +675,7 @@ test_dispatch_enqueues_despite_torn_queue_line() {
   bash -c "
     FLEET_INSTANCE_ID=test-torn-dispatch REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1 >/dev/null
   " 2>/dev/null || true
@@ -686,7 +718,7 @@ test_contended_append_retried_then_dead_lettered() {
     FLEET_QUEUE_RETRY_BACKOFF_SECS=1
     REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -751,7 +783,7 @@ test_contended_append_retried_and_lands() {
     FLEET_QUEUE_RETRY_BACKOFF_SECS=1
     REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -820,7 +852,7 @@ test_multi_repo_creation_covers_all_repos() {
     $(declare -f _mock_branch_ops)
     _mock_branch_ops '$calls_file'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -863,7 +895,7 @@ test_multi_repo_creation_failure_gate_stops() {
     $(declare -f _mock_branch_ops)
     _mock_branch_ops '$calls_file'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -906,7 +938,7 @@ test_epic_branch_gate_stop_reaches_stdout() {
     }
     epic_branch_sync() { return 0; }
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws'
   " 2>/dev/null || true)
@@ -957,7 +989,7 @@ test_multi_repo_sync_failure_does_not_block() {
     $(declare -f _mock_branch_ops)
     _mock_branch_ops '$calls_file'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_with_children_fixture)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_with_children_fixture)
     _seed_with_children_fixture '$repos_root'
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
@@ -1130,7 +1162,7 @@ _test_dispatch_order() {
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-prio-${name} REPOS_ROOT='$repos_root'
     FLEET_MAX_CONCURRENT=${max_concurrent}
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_priority_children _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_priority_children _mock_epic_no_directive)
     _seed_priority_children '$repos_root' $*
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
@@ -1210,7 +1242,7 @@ test_dispatch_resumes_incomplete_child() {
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_campaign_fixture _mock_epic_no_directive)
     _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
@@ -1240,7 +1272,7 @@ test_dispatch_resumes_incomplete_child() {
   # Summary is the LAST stdout line.
   local last_line
   last_line=$(echo "$output" | tail -1)
-  echo "$last_line" | grep -q '^fleet_dispatch: resumed 1 | dead-lettered 0 | blocked 0 | enqueued 1 ticket(s) for INIT-42$' || {
+  echo "$last_line" | grep -q '^fleet_dispatch: resumed 1 | dead-lettered 0 | blocked 0 | not_ready 0 | enqueued 1 ticket(s) for INIT-42$' || {
     echo "expected summary as last line, got '$last_line'" >&2
     return 1
   }
@@ -1262,7 +1294,7 @@ test_dispatch_dry_run_resume_leaves_queue_untouched() {
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_campaign_fixture _mock_epic_no_directive)
     _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
@@ -1283,7 +1315,7 @@ test_dispatch_dry_run_resume_leaves_queue_untouched() {
   }
   local last_line
   last_line=$(echo "$output" | tail -1)
-  echo "$last_line" | grep -q '^\[DRY-RUN\] would resume 1 | blocked 0 | would enqueue 1 ticket(s) for INIT-42$' || {
+  echo "$last_line" | grep -q '^\[DRY-RUN\] would resume 1 | blocked 0 | not_ready 0 | would enqueue 1 ticket(s) for INIT-42$' || {
     echo "expected dry-run summary as last line, got '$last_line'" >&2
     return 1
   }
@@ -1303,7 +1335,7 @@ test_dispatch_dead_log_does_not_jam_campaign() {
   output=$(bash -c "
     FLEET_INSTANCE_ID=test-deadlog FLEET_MAX_CONCURRENT=1 REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_campaign_fixture _mock_epic_no_directive)
     _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
@@ -1333,7 +1365,7 @@ test_dispatch_reserves_queued_for_epic_slots() {
   output=$(bash -c "
     FLEET_INSTANCE_ID=test-reserve FLEET_MAX_CONCURRENT=1 REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_campaign_fixture _mock_epic_no_directive)
     _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
@@ -1366,7 +1398,7 @@ test_dispatch_reports_blocked_children() {
   output=$(bash -c "
     FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-blocked REPOS_ROOT='$repos_root'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
     _seed_epic '$repos_root' INIT-42 true CRE-103
     _seed_child '$repos_root' CRE-103 INIT-42 false CRE-100
     _mock_epic_no_directive
@@ -1380,7 +1412,7 @@ test_dispatch_reports_blocked_children() {
   }
   local last_line
   last_line=$(echo "$output" | tail -1)
-  echo "$last_line" | grep -q '^\[DRY-RUN\] would resume 0 | blocked 1 | would enqueue 0 ticket(s) for INIT-42$' || {
+  echo "$last_line" | grep -q '^\[DRY-RUN\] would resume 0 | blocked 1 | not_ready 0 | would enqueue 0 ticket(s) for INIT-42$' || {
     echo "expected blocked summary as last line, got '$last_line'" >&2
     return 1
   }
@@ -1983,7 +2015,7 @@ test_dispatch_reconcile_respects_stop_pins() {
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_midflight_child _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_midflight_child _mock_epic_no_directive)
     _seed_midflight_child '$repos_root' INIT-42 TEST-P
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
@@ -2081,7 +2113,7 @@ test_dispatch_twice_single_entry_per_tid() {
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_campaign_fixture _mock_epic_no_directive)
     _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
@@ -2092,7 +2124,7 @@ test_dispatch_twice_single_entry_per_tid() {
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_campaign_fixture _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_campaign_fixture _mock_epic_no_directive)
     _seed_campaign_fixture '$repos_root'
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
@@ -2107,7 +2139,7 @@ test_dispatch_twice_single_entry_per_tid() {
       return 1
     }
   done
-  echo "$run2" | tail -1 | grep -q 'resumed 0 | dead-lettered 0 | blocked 0 | enqueued 0' || {
+  echo "$run2" | tail -1 | grep -q 'resumed 0 | dead-lettered 0 | blocked 0 | not_ready 0 | enqueued 0' || {
     echo "expected no-op second run; got: $(echo "$run2" | tail -1)" >&2
     return 1
   }
@@ -2132,7 +2164,7 @@ test_dispatch_dead_letter_at_restart_cap_reported() {
     TICKET_FLOW_LOCK_DIR='$ws/no-flow-locks'
     FLEET_PIPELINE_LOG_DIR='$ws'
     source '$LIB_DIR/fleet-dispatch.sh'
-    $(declare -f _seed_epic _seed_child _seed_midflight_child _mock_epic_no_directive)
+    $(declare -f _seed_epic _seed_readiness _seed_child _seed_midflight_child _mock_epic_no_directive)
     _seed_midflight_child '$repos_root' INIT-42 TEST-8
     _mock_epic_no_directive
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
@@ -2225,12 +2257,15 @@ test_dispatch_manifest_full_localization() {
   # CRE-410: already dispatched — must not be re-enqueued.
   REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-410" "INIT-61" "bug" '[]' >/dev/null
   REPOS_ROOT="$repos_root" stamp_ticket_dispatch "CRE-410" >/dev/null
+  _seed_readiness "$repos_root" "CRE-410" "ready"
 
   # CRE-411: undispatched, blocked_by an unfinished ticket (no pipeline log).
   REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-411" "INIT-61" "bug" '["CRE-409"]' >/dev/null
+  _seed_readiness "$repos_root" "CRE-411" "ready"
 
   # CRE-412: undispatched, blocked_by a Done ticket — dispatchable.
   REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-412" "INIT-61" "bug" '["CRE-408"]' >/dev/null
+  _seed_readiness "$repos_root" "CRE-412" "ready"
   echo "2026-01-01T00:00:00Z|META|outcome|info|completed: STEP_6" >"$ws/CRE-408-pipeline.log"
 
   # No get_issue/get_epics_by_label mock declared anywhere — proves this
@@ -2306,6 +2341,7 @@ test_dispatch_stamps_ticket_manifest_on_real_enqueue() {
   REPOS_ROOT="$repos_root" write_epic_manifest "INIT-63" "epic/x" "epic" "manual" '["CRE-430"]' >/dev/null
   REPOS_ROOT="$repos_root" stamp_epic_dispatch "INIT-63" >/dev/null
   REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-430" "INIT-63" "bug" '[]' >/dev/null
+  _seed_readiness "$repos_root" "CRE-430" "ready"
 
   # Real (non-dry-run) enqueue — task 1.6's dispatch stamp must fire.
   bash -c "
@@ -2325,6 +2361,172 @@ test_dispatch_stamps_ticket_manifest_on_real_enqueue() {
   }
 }
 _run "dispatch_stamps_ticket_manifest_on_real_enqueue" test_dispatch_stamps_ticket_manifest_on_real_enqueue
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Readiness exclusion (dor-readiness-gate-foundation task 7.7)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# A body with every section check_planned_body requires — based on
+# test-gate-check.sh's own Check 2.7e fixture, plus a Reproduction Steps
+# section: _seed_child always writes manifest type "bug" (hardcoded, matching
+# every other fixture in this file), and REPRO_MISSING is a hard code for
+# type=bug — so a live readiness computation (no cached `ready` field)
+# resolves `ready`, not `not-ready`.
+_full_planned_body='## Acceptance Criteria
+- [ ] Save button works
+- [ ] Error toast appears
+
+## Test User
+`admin` — password `admin`
+
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| FE    | gateway | page |
+
+## Navigation Path
+`Settings > Handovers > Save`
+
+## Steps to Reproduce
+1. Open the page
+2. Click save
+'
+
+# Not-ready child excluded and counted separately from a blocked one — the
+# fleet-dispatch spec's "Not-ready children are counted distinctly from
+# blocked children" scenario.
+test_dispatch_not_ready_child_excluded_and_counted_separately() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-notready REPOS_ROOT='$repos_root'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
+    _seed_epic '$repos_root' INIT-42 true CRE-201 CRE-202
+    _seed_child '$repos_root' CRE-201 INIT-42 false '' not-ready
+    _seed_child '$repos_root' CRE-202 INIT-42 false CRE-100
+    _mock_epic_no_directive
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q '^  not-ready CRE-201 ' || {
+    echo "expected CRE-201 reported not-ready; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q '^  blocked CRE-202$' || {
+    echo "expected CRE-202 reported blocked; output: $output" >&2
+    return 1
+  }
+  local last_line
+  last_line=$(echo "$output" | tail -1)
+  echo "$last_line" | grep -q '^\[DRY-RUN\] would resume 0 | blocked 1 | not_ready 1 | would enqueue 0 ticket(s) for INIT-42$' || {
+    echo "expected blocked/not_ready counted separately, got '$last_line'" >&2
+    return 1
+  }
+  return 0
+}
+_run "dispatch_not_ready_child_excluded_and_counted_separately" test_dispatch_not_ready_child_excluded_and_counted_separately
+
+# A child with no cached readiness field at all is evaluated live via
+# ensure_ticket_readiness — the computed result, not a hardcoded exclusion,
+# decides whether it dispatches. Proven both directions: unavailable (no
+# body reachable in this test environment) excludes it, and a live body
+# resolved through a mocked get_issue lets it through.
+test_dispatch_no_readiness_field_computed_live_unavailable_excludes() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-liveunavail REPOS_ROOT='$repos_root'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
+    _seed_epic '$repos_root' INIT-42 true CRE-301
+    _seed_child '$repos_root' CRE-301 INIT-42 false '' none
+    _mock_epic_no_directive
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q '^  not-ready CRE-301 ' || {
+    echo "expected CRE-301 (no cached readiness, no body reachable) excluded as not-ready; output: $output" >&2
+    return 1
+  }
+}
+_run "dispatch_no_readiness_field_computed_live_unavailable_excludes" test_dispatch_no_readiness_field_computed_live_unavailable_excludes
+
+test_dispatch_no_readiness_field_computed_live_body_admits() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  local fake_issue
+  fake_issue=$(jq -n --arg desc "$_full_planned_body" '{id:"CRE-302",identifier:"CRE-302",title:"Test",description:$desc}')
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-livebody REPOS_ROOT='$repos_root'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
+    get_issue() { echo '$fake_issue'; }
+    _seed_epic '$repos_root' INIT-42 true CRE-302
+    _seed_child '$repos_root' CRE-302 INIT-42 false '' none
+    _mock_epic_no_directive
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q 'would enqueue: .*CRE-302' || {
+    echo "expected CRE-302 (no cached readiness, live body resolves ready) enqueued; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q '^  not-ready CRE-302 ' && {
+    echo "CRE-302 should not be excluded once live computation resolves ready; output: $output" >&2
+    return 1
+  }
+  return 0
+}
+_run "dispatch_no_readiness_field_computed_live_body_admits" test_dispatch_no_readiness_field_computed_live_body_admits
+
+# A needs-info-flagged child is excluded even with a cached `ready: ready`
+# object — the flag check is always live (ticket_dispatch_blocked_by_flags),
+# never satisfied from the cached readiness verdict.
+test_dispatch_needs_info_child_excluded() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-needsinfo REPOS_ROOT='$repos_root'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
+    _seed_epic '$repos_root' INIT-42 true CRE-303
+    _seed_child '$repos_root' CRE-303 INIT-42 false
+    _mock_epic_no_directive
+    manifest_path=\$(get_ticket_manifest_path CRE-303)
+    tmp=\$(jq -c '.flags = [\"needs-info\"]' \"\$manifest_path\")
+    echo \"\$tmp\" >\"\$manifest_path\"
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q '^  not-ready CRE-303 .*needs_info=true' || {
+    echo "expected CRE-303 excluded for needs-info flag; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q 'would enqueue: .*CRE-303' && {
+    echo "CRE-303 must never be enqueued while needs-info is set; output: $output" >&2
+    return 1
+  }
+  return 0
+}
+_run "dispatch_needs_info_child_excluded" test_dispatch_needs_info_child_excluded
 
 echo ""
 echo "=== Results ==="
