@@ -137,8 +137,10 @@ fleet_aggregate_feedback() {
   fi
 
   # Collect feedback entries by initiative
-  declare -A FEEDBACK_SOURCES # initiative_id → JSON array of feedback entries
+  declare -A FEEDBACK_SOURCES       # initiative_id → JSON array of feedback entries
+  declare -A READINESS_GAPS_BY_INIT # initiative_id → aggregated readiness_gaps JSON object
   local total_entries=0
+  local readiness_gap_total=0 # readiness-feedback-loop — sum of gate-stop + no-test-user occurrences
 
   for log_file in "$workspace"/*-pipeline.log; do
     [ -f "$log_file" ] || continue
@@ -150,7 +152,23 @@ fleet_aggregate_feedback() {
     # Find META|planner-feedback entries in this pipeline log
     local fb_lines
     fb_lines=$(command grep '|META|planner-feedback|' "$log_file" 2>/dev/null || true)
-    [ -z "$fb_lines" ] && continue
+
+    # readiness-feedback-loop: scan for the two readiness-gap signals
+    # independently of whether this ticket ever wrote a planner-feedback
+    # entry — a gate-stopped ticket never reaches implement, so it never
+    # writes one, and is the exact case this scan exists to surface.
+    local gate_stop_lines gate_stop_n verify_notuser_n
+    gate_stop_lines=$(command grep '|META|gate-stop|fail|TICKET_NOT_READY' "$log_file" 2>/dev/null || true)
+    gate_stop_n=$(printf '%s\n' "$gate_stop_lines" | grep -c . 2>/dev/null || true)
+    [ -z "$gate_stop_n" ] && gate_stop_n=0
+    verify_notuser_n=$(command grep -c '|VERIFY|pre-flight|fail|No test user found' "$log_file" 2>/dev/null || true)
+    [ -z "$verify_notuser_n" ] && verify_notuser_n=0
+
+    # Nothing of interest in this log at all — skip before any manifest
+    # lookup, preserving the original lazy-skip behavior for the common case.
+    if [ -z "$fb_lines" ] && [ "$gate_stop_n" -eq 0 ] && [ "$verify_notuser_n" -eq 0 ]; then
+      continue
+    fi
 
     # Get this ticket's initiative from its local manifest — no manifest at
     # all and manifest-with-no-initiative are reported distinctly (4.6).
@@ -161,6 +179,46 @@ fleet_aggregate_feedback() {
     local initiatives
     initiatives=$(_get_ticket_initiative "$tid" 2>/dev/null || true)
     [ -z "$initiatives" ] && echo "  tid=${tid}: skipping (manifest has no initiative)" >&2 && continue
+
+    # ── Readiness-gap accumulation (readiness-feedback-loop) ─────────────
+    if [ "$gate_stop_n" -gt 0 ] || [ "$verify_notuser_n" -gt 0 ]; then
+      readiness_gap_total=$((readiness_gap_total + gate_stop_n + verify_notuser_n))
+
+      # Per-code counts across every TICKET_NOT_READY occurrence on this
+      # ticket — a recurring gate-stop (multiple resume attempts) adds to
+      # gate_stop_count each time but contributes only one affected_tickets
+      # entry (deduplicated below).
+      local codes_json="{}"
+      if [ "$gate_stop_n" -gt 0 ]; then
+        local all_codes
+        all_codes=$(printf '%s\n' "$gate_stop_lines" | sed 's/.*TICKET_NOT_READY — //' | tr ',' '\n' | sed '/^$/d')
+        codes_json=$(printf '%s\n' "$all_codes" | jq -Rsc '
+          split("\n") | map(select(length > 0))
+          | reduce .[] as $c ({}; .[$c] = ((.[$c] // 0) + 1))
+        ' 2>/dev/null) || codes_json="{}"
+      fi
+
+      for init_id in $initiatives; do
+        [ -n "$filter_initiative" ] && [ "$init_id" != "$filter_initiative" ] && continue
+        local rkey="rg_${init_id}"
+        local existing="${READINESS_GAPS_BY_INIT[$rkey]:-}"
+        [ -z "$existing" ] && existing='{"gate_stop_count":0,"gate_stop_codes":{},"verify_no_test_user_count":0,"affected_tickets":[]}'
+        READINESS_GAPS_BY_INIT[$rkey]=$(echo "$existing" | jq -c \
+          --argjson gsc "$gate_stop_n" --argjson vnu "$verify_notuser_n" \
+          --argjson codes "$codes_json" --arg tid "$tid" \
+          '.gate_stop_count += $gsc
+           | .verify_no_test_user_count += $vnu
+           | .gate_stop_codes = (
+               reduce ($codes | to_entries[]) as $e (
+                 .gate_stop_codes; .[$e.key] = ((.[$e.key] // 0) + $e.value)
+               )
+             )
+           | .affected_tickets = ((.affected_tickets + [$tid]) | unique)' 2>/dev/null) || true
+      done
+    fi
+
+    # ── planner-feedback accumulation (existing) ──────────────────────────
+    [ -z "$fb_lines" ] && continue
 
     # Process each feedback entry
     while IFS= read -r line; do
@@ -195,28 +253,45 @@ fleet_aggregate_feedback() {
     done <<<"$fb_lines"
   done
 
-  if [ "$total_entries" -eq 0 ]; then
+  if [ "$total_entries" -eq 0 ] && [ "$readiness_gap_total" -eq 0 ]; then
     echo "no feedback to aggregate"
     return 0
   fi
 
-  echo "fleet_feedback: found ${total_entries} feedback entries across pipelines"
+  echo "fleet_feedback: found ${total_entries} feedback entries across pipelines (${readiness_gap_total} readiness-gap occurrences)"
 
-  # Write feedback per initiative
-  local written=0
+  # Write feedback per initiative — the union of both maps' initiative keys
+  # (readiness-feedback-loop): an initiative present in only one still gets a
+  # file written, with the other half's fields at their empty/zero default.
+  declare -A ALL_INIT_IDS
   for key in "${!FEEDBACK_SOURCES[@]}"; do
-    local init_id="${key#feedback_}"
-    local entries="${FEEDBACK_SOURCES[$key]}"
+    ALL_INIT_IDS["${key#feedback_}"]=1
+  done
+  for key in "${!READINESS_GAPS_BY_INIT[@]}"; do
+    ALL_INIT_IDS["${key#rg_}"]=1
+  done
 
-    # Build tickets array from entries
-    local tickets_json
-    tickets_json=$(echo "$entries" | jq -s '.' 2>/dev/null)
+  local written=0
+  for init_id in "${!ALL_INIT_IDS[@]}"; do
+    local key="feedback_${init_id}"
+    local entries="${FEEDBACK_SOURCES[$key]:-}"
 
-    # Compute summary statistics
-    local ticket_count avg_confidence drift_count
-    ticket_count=$(echo "$tickets_json" | jq -r 'length' 2>/dev/null)
-    avg_confidence=$(echo "$tickets_json" | jq -r '[.[].confidence_actual // 0] | add / length' 2>/dev/null)
-    [ -z "$avg_confidence" ] && avg_confidence=0
+    # Build tickets array from entries. An initiative present only in
+    # READINESS_GAPS_BY_INIT has no planner-feedback entries at all — the
+    # common-case jq/arithmetic below assumes at least one, so this is
+    # guarded explicitly rather than trusting `jq -s`/`add / length` to
+    # degrade cleanly on empty input (readiness-feedback-loop).
+    local tickets_json ticket_count avg_confidence
+    if [ -n "$entries" ]; then
+      tickets_json=$(echo "$entries" | jq -s '.' 2>/dev/null)
+      ticket_count=$(echo "$tickets_json" | jq -r 'length' 2>/dev/null)
+      avg_confidence=$(echo "$tickets_json" | jq -r '[.[].confidence_actual // 0] | add / length' 2>/dev/null)
+      [ -z "$avg_confidence" ] && avg_confidence=0
+    else
+      tickets_json='[]'
+      ticket_count=0
+      avg_confidence=0
+    fi
 
     # Count tickets with drift
     drift_count=0
@@ -255,6 +330,11 @@ fleet_aggregate_feedback() {
     local exploration_insufficient_ratio=0
     [ "$ticket_count" -gt 0 ] 2>/dev/null && exploration_insufficient_ratio=$(echo "scale=2; $exploration_insufficient_count / $ticket_count" | bc 2>/dev/null || echo "0")
 
+    # readiness-feedback-loop: present on every written file, empty object
+    # (not an absent key) when this initiative has no readiness-gap signal.
+    local readiness_gaps_json="${READINESS_GAPS_BY_INIT[rg_${init_id}]:-}"
+    [ -z "$readiness_gaps_json" ] && readiness_gaps_json='{"gate_stop_count":0,"gate_stop_codes":{},"verify_no_test_user_count":0,"affected_tickets":[]}'
+
     local output_dir="${repos_root}/.ticket-auto/initiatives/${init_id}/feedback"
     local output_file="${output_dir}/${rundate}.json"
 
@@ -278,6 +358,7 @@ fleet_aggregate_feedback() {
       --argjson exploration_insufficient_ratio "$exploration_insufficient_ratio" \
       --argjson missed_symbols_total "$missed_symbols_total" \
       --argjson false_traces_total "$false_traces_total" \
+      --argjson readiness_gaps "$readiness_gaps_json" \
       '{
         initiative_id: $initiative_id,
         rundate: $rundate,
@@ -292,7 +373,8 @@ fleet_aggregate_feedback() {
             insufficient_ratio: $exploration_insufficient_ratio,
             missed_symbols_total: $missed_symbols_total,
             false_traces_total: $false_traces_total
-          }
+          },
+          readiness_gaps: $readiness_gaps
         }
       }')
 

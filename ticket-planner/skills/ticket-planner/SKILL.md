@@ -819,11 +819,16 @@ When mode is `replan`:
 2. Verify the `Regenerate` flag is present in the state log or initiative artifacts.
 3. If no Regenerate flag, report that re-planning requires the flag and stop.
 4. Ingest feedback from `${state_dir}/feedback/` — read all JSON files, compute drift.
-5. Identify undispatched Backlog tickets (read intent files, cross-reference with spawn queue).
-6. For each eligible ticket, regenerate the Planner Context block with adjusted confidence.
-7. Validate the regenerated dependency set is still acyclic.
-8. Write `META|replan|done` to the state log with counts: tickets regenerated, unchanged, skipped.
-9. Do NOT modify dispatched, in-progress, or completed tickets.
+5. Compute readiness gaps: aggregate `summary.readiness_gaps` across the ingested feedback
+   files via `planner_readiness_gaps_compute` — informational only, never a regeneration
+   input (see "Re-planning details" below).
+6. Identify undispatched Backlog tickets (read intent files, cross-reference with spawn queue).
+7. For each eligible ticket, regenerate the Planner Context block with adjusted confidence.
+8. Validate the regenerated dependency set is still acyclic.
+9. Write `META|replan|done` to the state log with counts: tickets regenerated, unchanged, skipped
+   (via `planner_replan_record`, which also writes the `META|replan-readiness-gaps` line from
+   step 5).
+10. Do NOT modify dispatched, in-progress, or completed tickets.
 
 ### 7. Dispatch loop
 
@@ -1116,16 +1121,19 @@ Re-planning is gated on the `Regenerate` flag. Without it, feedback is not read 
 
 When `Regenerate` is true:
 
-1. **Ingest feedback:** Read all JSON files in `${state_dir}/feedback/`. Each file is an aggregate from `fleet-feedback.sh` containing per-ticket confidence drift data.
+1. **Ingest feedback:** Read all JSON files in `${state_dir}/feedback/`. Each file is an aggregate from `fleet-feedback.sh` containing per-ticket confidence drift data (and, since readiness-feedback-loop, a `summary.readiness_gaps` object — possibly empty, never absent).
 2. **Compute drift:** For each ticket, compare `confidence_predicted` (from the Planner Context block) against `confidence_actual` (from feedback). Drift = predicted - actual.
-3. **Adjust confidence:** Apply drift to the original confidence signal. If systematic overconfidence is detected (avg drift > 0.15), apply a uniform penalty to all regenerated tickets.
-4. **Scope restriction:** Only regenerate tickets that are:
+3. **Compute readiness gaps (report-only):** Aggregate `summary.readiness_gaps` across every ingested feedback file with `planner_readiness_gaps_compute` — gate-stop counts and per-code breakdown add numerically, `affected_tickets` unions and dedupes. This step is purely informational: it surfaces gate-stop/no-test-user patterns from `fleet-controller`'s readiness-gap scan so an operator reading the state log can see them, but it does **not** feed confidence adjustment, ticket selection, or dependency validation below. A future phase may act on it; this one only reports it.
+4. **Adjust confidence:** Apply drift to the original confidence signal. If systematic overconfidence is detected (avg drift > 0.15), apply a uniform penalty to all regenerated tickets.
+5. **Scope restriction:** Only regenerate tickets that are:
    - In `Backlog` state (not dispatched, not in progress)
    - Not present in the spawn queue (not already enqueued)
    - Not completed or merged
-5. **Re-validate:** The regenerated dependency set must be acyclic. If regeneration removes a ticket that others depend on, the dependent tickets must be updated or the regeneration aborted.
-6. **Record:** Write a `META|replan` entry to the state log with:
+6. **Re-validate:** The regenerated dependency set must be acyclic. If regeneration removes a ticket that others depend on, the dependent tickets must be updated or the regeneration aborted.
+7. **Record:** Write a `META|replan` entry to the state log with:
    - Triggering flag
    - Feedback runs considered (file paths)
    - Drift summary per ticket
    - Tickets regenerated / unchanged / skipped counts
+
+   And a `META|replan-readiness-gaps` entry (via `planner_replan_record`'s 8th parameter) with the aggregated object from step 3, or the literal `none` when it carried no gaps — written unconditionally, same convention as the drift entry.

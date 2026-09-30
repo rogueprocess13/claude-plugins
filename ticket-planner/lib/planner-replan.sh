@@ -241,6 +241,71 @@ planner_drift_compute() {
   ' 2>/dev/null || echo '{"per_ticket":[],"aggregate":{"avg_drift":0,"drift_count":0,"systematic_overconfidence":false}}'
 }
 
+# Aggregate readiness_gaps objects across feedback files (readiness-feedback-loop).
+# Input: feedback JSON (merged array from planner_feedback_read_all — each
+# element is a whole feedback-file object written by fleet-feedback.sh, not a
+# flattened ticket entry).
+# Output: one summed readiness_gaps object. gate_stop_count/verify_no_test_user_count
+# add numerically; gate_stop_codes adds per-key (never a shallow merge — see
+# planner_drift_compute's own fold, which sums one flat number and is the wrong
+# precedent for a nested object); affected_tickets unions and dedupes.
+#
+# Usage: planner_readiness_gaps_compute <feedback_json>
+# Returns: JSON object {gate_stop_count, gate_stop_codes, verify_no_test_user_count, affected_tickets}
+planner_readiness_gaps_compute() {
+  local feedback_json="$1"
+  local empty='{"gate_stop_count":0,"gate_stop_codes":{},"verify_no_test_user_count":0,"affected_tickets":[]}'
+
+  if [ -z "$feedback_json" ] || [ "$feedback_json" = "[]" ]; then
+    echo "$empty"
+    return 0
+  fi
+
+  echo "$feedback_json" | jq '
+    [ .[] | .summary.readiness_gaps // empty ] as $gaps |
+    reduce $gaps[] as $g (
+      {gate_stop_count: 0, gate_stop_codes: {}, verify_no_test_user_count: 0, affected_tickets: []};
+      {
+        gate_stop_count: (.gate_stop_count + ($g.gate_stop_count // 0)),
+        gate_stop_codes: (
+          reduce (($g.gate_stop_codes // {}) | to_entries[]) as $e (
+            .gate_stop_codes;
+            .[$e.key] = ((.[$e.key] // 0) + $e.value)
+          )
+        ),
+        verify_no_test_user_count: (.verify_no_test_user_count + ($g.verify_no_test_user_count // 0)),
+        affected_tickets: ((.affected_tickets + ($g.affected_tickets // [])) | unique)
+      }
+    )
+  ' 2>/dev/null || echo "$empty"
+}
+
+# Format a readiness_gaps object for the state-log message field.
+# Usage: planner_readiness_gaps_summarize <readiness_gaps_json>
+# Returns: the literal string "none" when the object is empty, else the
+# compact JSON itself.
+planner_readiness_gaps_summarize() {
+  local readiness_gaps_json="$1"
+
+  if [ -z "$readiness_gaps_json" ]; then
+    echo "none"
+    return 0
+  fi
+
+  local is_empty
+  is_empty=$(echo "$readiness_gaps_json" | jq -c '
+    (.gate_stop_count // 0) == 0
+    and (.verify_no_test_user_count // 0) == 0
+    and ((.affected_tickets // []) | length) == 0
+  ' 2>/dev/null)
+
+  if [ "$is_empty" = "true" ]; then
+    echo "none"
+  else
+    echo "$readiness_gaps_json" | jq -c '.' 2>/dev/null || echo "none"
+  fi
+}
+
 # ── Scope restriction ──────────────────────────────────────────────────────────
 
 # Identify tickets eligible for regeneration.
@@ -307,11 +372,16 @@ planner_replan_eligible_tickets() {
 # Record a re-plan event in the state log.
 # Usage: planner_replan_record <initiative_id> <trigger_flag> <feedback_files> \
 #          <tickets_regenerated> <tickets_unchanged> <tickets_skipped> \
-#          <drift_summary_json>
+#          <drift_summary_json> <readiness_gaps_json>
+#
+# readiness_gaps_json (readiness-feedback-loop) is informational only — it is
+# surfaced in the state log and never changes regeneration logic (confidence
+# adjustment, ticket selection, dependency validation). Written unconditionally,
+# including the literal "none" when the summed object carries no gaps.
 planner_replan_record() {
   local initiative_id="$1" trigger_flag="$2" feedback_files="$3"
   local tickets_regenerated="$4" tickets_unchanged="$5" tickets_skipped="$6"
-  local drift_summary_json="$7"
+  local drift_summary_json="$7" readiness_gaps_json="${8:-}"
 
   _source_if_missing "planner_state_write" "${CLAUDE_PLUGIN_ROOT:-.}/lib/planner-state.sh"
 
@@ -320,6 +390,9 @@ planner_replan_record() {
 
   planner_state_write "$initiative_id" "META" "replan-drift" "start" \
     "Drift summary: ${drift_summary_json}"
+
+  planner_state_write "$initiative_id" "META" "replan-readiness-gaps" "start" \
+    "$(planner_readiness_gaps_summarize "$readiness_gaps_json")"
 
   planner_state_write "$initiative_id" "META" "replan-result" "start" \
     "Regenerated: ${tickets_regenerated}, unchanged: ${tickets_unchanged}, skipped: ${tickets_skipped}"
