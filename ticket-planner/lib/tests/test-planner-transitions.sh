@@ -75,7 +75,7 @@ fi
 
 echo "--- 1e: jump to Completed from early phase ---"
 if ! planner_phase_validate_transition "INIT-JUMP" "Appraisal" "Completed" 2>/dev/null; then
-  pass "Appraisal → Completed (skipping 10 phases) is refused"
+  pass "Appraisal → Completed (skipping every phase in between) is refused"
 else
   fail "Appraisal → Completed refused" "validator accepted terminal jump"
 fi
@@ -96,10 +96,9 @@ fi
 
 echo "--- 1h: legal transitions honored ---"
 # Verify every legal adjacent transition works
-phase_sequence=(
-  "Appraisal" "Discovery" "Architecture" "Specify" "Review" "Consensus"
-  "Crosscheck" "EpicGen" "TicketGen" "Completed"
-)
+phase_sequence=()
+planner_phase_sequence phase_sequence
+expected_legal=$(($(planner_phase_count) - 1))
 all_legal_ok=true
 for ((i = 0; i < ${#phase_sequence[@]} - 1; i++)); do
   from="${phase_sequence[$i]}"
@@ -110,9 +109,9 @@ for ((i = 0; i < ${#phase_sequence[@]} - 1; i++)); do
   fi
 done
 if $all_legal_ok; then
-  pass "all 9 legal adjacent transitions accepted"
+  pass "all ${expected_legal} legal adjacent transitions accepted"
 else
-  fail "all 9 legal adjacent transitions accepted" "at least one legal transition rejected"
+  fail "all ${expected_legal} legal adjacent transitions accepted" "at least one legal transition rejected"
 fi
 
 echo "--- 1i: same-phase transition (resume) ---"

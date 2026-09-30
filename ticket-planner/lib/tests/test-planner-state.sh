@@ -2,6 +2,13 @@
 # test-planner-state.sh — Tests for planner-state.sh position derivation and state log.
 #
 # Run: bash ticket-planner/lib/tests/test-planner-state.sh
+#
+# Test 13 deliberately redefines planner_phase_sequence (sourced from
+# planner-state.sh) to prove derived count/position follow a sequence change.
+# Static analysis below flags every earlier call as "used before its later
+# local definition" (SC2218), which is backwards for a function resolved
+# dynamically at call time, not lexically.
+# shellcheck disable=SC2218
 
 set -euo pipefail
 
@@ -90,8 +97,9 @@ fi
 echo "--- Test 5: terminal phase returns empty ---"
 
 planner_state_init "INIT-DONE" "completed idea"
-for phase in "Appraisal" "Discovery" "Architecture" "Specify" "Review" "Consensus" \
-  "EpicGen" "TicketGen" "Completed"; do
+ALL_PHASES=()
+planner_phase_sequence ALL_PHASES
+for phase in "${ALL_PHASES[@]}"; do
   planner_state_write "INIT-DONE" "$phase" "$(echo "$phase" | tr '[:upper:]' '[:lower:]')" "done" "$phase complete"
 done
 
@@ -222,6 +230,75 @@ if grep -q "^PASS" "$TMPDIR/escape-test.out"; then
   pass "planner_initiative_dir_init fails (not mkdir) when planner_initiative_dir rejects the ID"
 else
   fail "planner_initiative_dir_init fails when planner_initiative_dir rejects the ID" "$(cat "$TMPDIR/escape-test.out")"
+fi
+
+# ── Test 12: planner_phase_count / planner_phase_position ──────────────────────
+
+echo "--- Test 12: planner_phase_count / planner_phase_position ---"
+
+SEQ=()
+planner_phase_sequence SEQ
+
+count=$(planner_phase_count)
+if [ "$count" = "${#SEQ[@]}" ]; then
+  pass "planner_phase_count matches planner_phase_sequence length"
+else
+  fail "planner_phase_count matches sequence length" "got '$count', expected '${#SEQ[@]}'"
+fi
+
+pos=$(planner_phase_position Appraisal)
+if [ "$pos" = "1" ]; then
+  pass "planner_phase_position Appraisal is 1"
+else
+  fail "planner_phase_position Appraisal is 1" "got '$pos'"
+fi
+
+pos=$(planner_phase_position Completed)
+if [ "$pos" = "$count" ]; then
+  pass "planner_phase_position Completed equals planner_phase_count"
+else
+  fail "planner_phase_position Completed equals planner_phase_count" "got '$pos', expected '$count'"
+fi
+
+rc=0
+out=$(planner_phase_position Banana 2>/dev/null) || rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$out" ]; then
+  pass "planner_phase_position Banana exits non-zero with empty output"
+else
+  fail "planner_phase_position Banana exits non-zero with empty output" "rc=$rc out='$out'"
+fi
+
+# ── Test 13: inserting a phase needs only the sequence edit ────────────────────
+
+echo "--- Test 13: derived count/position follow a sequence change ---"
+
+planner_phase_sequence() {
+  local -n _seq="$1"
+  _seq=(
+    "Appraisal" "Discovery" "Architecture" "Specify" "Review" "Consensus"
+    "Crosscheck" "EpicGen" "TicketGen" "Refinement" "Completed"
+  )
+}
+
+new_count=$(planner_phase_count)
+if [ "$new_count" = "$((count + 1))" ]; then
+  pass "planner_phase_count grows by one after inserting a phase"
+else
+  fail "planner_phase_count grows by one after inserting a phase" "got '$new_count', expected '$((count + 1))'"
+fi
+
+new_pos=$(planner_phase_position Completed)
+if [ "$new_pos" = "$new_count" ]; then
+  pass "Completed's derived position follows the sequence change"
+else
+  fail "Completed's derived position follows the sequence change" "got '$new_pos', expected '$new_count'"
+fi
+
+ticketgen_pos=$(planner_phase_position TicketGen)
+if [ "$ticketgen_pos" = "9" ]; then
+  pass "phases before the insertion point keep their position"
+else
+  fail "phases before the insertion point keep their position" "got '$ticketgen_pos', expected '9'"
 fi
 
 # ── Summary ─────────────────────────────────────────────────────────────────────

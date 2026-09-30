@@ -881,8 +881,11 @@ untouched.
       sections) — 18 adversarial fixtures + 1 padding fixture, `lib/dor-check.sh` rewritten,
       `manifest-write.sh`'s `set_ticket_readiness` extras arg, `run-summary.sh`/`fleet-dispatch.sh`/
       `fleet-notify.sh` report-only consumers, full test suite green.
-- [ ] 2. `planner-phase-count-derivation` — apply, PR (proposed 2026-09-30, validated). Mechanical
-      prep: phase count/index derived from `planner_phase_sequence`, no behaviour change.
+- [x] 2. `planner-phase-count-derivation` — applied 2026-09-30 on `feat/planner-phase-count-derivation`,
+      PR pending. Mechanical prep: `planner_phase_count`/`planner_phase_position` derived from
+      `planner_phase_sequence`; every prompt's "phase N of 10" literal and the test suite's
+      hard-coded counts/indices replaced with the derived helpers. Byte-identical prompt output
+      confirmed; full suite green; ticket-planner 0.11.0 → 0.11.1.
 - [ ] 2b. `dor-semantic-evaluator` — apply, PR (proposed 2026-09-30, validated). LLM semantic DoR
       pass contract in ticket-auto-pipeline: scan + audit agents (`dor-semantic-agent`), block parser,
       `set_ticket_semantic`, `SEMANTIC_*` blocking codes (block from day one, per-host relax via

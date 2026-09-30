@@ -42,10 +42,10 @@ case "$joined" in
 *) fail "Crosscheck sits between Consensus and EpicGen" "sequence: $joined" ;;
 esac
 
-if [ "${#seq[@]}" -eq 10 ]; then
-  pass "phase sequence has 10 phases"
+if [ "${#seq[@]}" -eq "$(planner_phase_count)" ]; then
+  pass "phase sequence length matches planner_phase_count"
 else
-  fail "phase sequence has 10 phases" "got ${#seq[@]}: $joined"
+  fail "phase sequence length matches planner_phase_count" "got ${#seq[@]}: $joined"
 fi
 
 if [ "$PLANNER_DRY_RUN_PHASE" = "Crosscheck" ]; then
