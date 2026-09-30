@@ -968,8 +968,11 @@ label set. Initiative linkage and epic discrimination are both local now —
 below), and \`is_epic_issue\` (epic-precondition.sh) discriminates on
 \`epic_manifest_exists\` or a valid Branch Directive, never a live label. Do
 NOT set \`state:execution\` either — that flag is set deterministically by the
-Ticket Gen post-creation gate (\`stamp_epic_dispatch\`) after all child
-tickets are created and verified.
+**Refinement** phase's gate (\`planner_refinement_gate\`, in
+\`lib/planner-refinement.sh\`), once every child ticket this phase creates has
+a deterministic-and-semantic readiness verdict (planner-refinement-phase).
+This phase no longer stamps it — see its own "Post-creation verification"
+section below.
 
 ## Branch Directive (step 5 — after epic creation)
 
@@ -1220,10 +1223,14 @@ entity-creation phase that produces what the pipeline consumes.
 
 ## Resolve parent epic ID (deterministic — do not guess)
 
-Extract the epic ID from the state log where Epic Gen recorded it:
+Extract the epic ID from the state log where Epic Gen recorded it, via the
+shared helper this phase and Refinement both use (\`planner_epic_id\`, in
+\`lib/planner-refinement.sh\`):
 
 \`\`\`bash
-EPIC_ID=\$(grep '|EpicGen|.*|done|EPIC_ID=' "${state_dir}/state.log" | tail -1 | sed 's/.*EPIC_ID=//')
+source "${_PLANNER_PROMPT_LIB_ROOT}/lib/planner-state.sh"
+source "${_PLANNER_PROMPT_LIB_ROOT}/lib/planner-refinement.sh"
+EPIC_ID=\$(planner_epic_id "${initiative_id}")
 if [ -z "\$EPIC_ID" ]; then
   echo "ERROR: could not find EPIC_ID in state log — Epic Gen may have failed" >&2
   planner_state_write "${initiative_id}" "TicketGen" "generate" "fail" "Missing EPIC_ID — cannot create tickets without parent epic"
@@ -1406,6 +1413,13 @@ planner_record_intent "${initiative_id}" "TicketGen" "ticket" "\$ENTITY_KEY"
 if planner_entity_exists "${initiative_id}" "\$ENTITY_KEY"; then
   existing_ticket="\$(planner_entity_get_id "${initiative_id}" "\$ENTITY_KEY")"
   echo "Ticket already exists: \${existing_ticket} (idempotent)"
+  # planner-refinement-phase: persist the body even on a re-entered skip —
+  # \$description was already composed for this ticket above, and Refinement
+  # has no other way to see it without a Linear fetch.
+  if [ -n "\$description" ]; then
+    mkdir -p "${state_dir}/tickets/\${existing_ticket}/planner" 2>/dev/null
+    printf '%s' "\$description" >"${state_dir}/tickets/\${existing_ticket}/planner/body.md"
+  fi
   continue
 fi
 
@@ -1442,6 +1456,15 @@ CREATED_TICKET_ID=\$(echo "\$TICKET_RESPONSE" | jq -r '.data.issueCreate.issue.i
 # Step 4: Mark created
 planner_entity_mark_created "${initiative_id}" "\$ENTITY_KEY" "\$CREATED_TICKET_ID"
 
+# Step 4b: Persist the body to the artifact plane (planner-refinement-phase)
+# — Refinement evaluates this file, never a live Linear fetch, on every run
+# whose body is unchanged since. A write failure here does not block
+# creation; Refinement's own scan fetches a missing body.md once, read-only.
+mkdir -p "${state_dir}/tickets/\${CREATED_TICKET_ID}/planner" 2>/dev/null
+printf '%s' "\$description" >"${state_dir}/tickets/\${CREATED_TICKET_ID}/planner/body.md" || {
+  echo "WARNING: failed to write body.md for \$CREATED_TICKET_ID" >&2
+}
+
 # Step 5: Write the ticket manifest (tracker-local-facts-read-migration,
 # tracker-planner-and-fallback-cutover 4.1) — the ONLY source for type/
 # initiative/blocked_by/dispatch now; every migrated call site
@@ -1468,28 +1491,35 @@ After all tickets are created, verify them:
 \`\`\`bash
 created_ids='["PRO-101","PRO-102"]'  # collect actual created ticket IDs
 if planner_verify_tickets "${initiative_id}" "\$created_ids"; then
-  # All tickets verified — stamp the epic manifest's dispatch flag
-  # (tracker-planner-and-fallback-cutover, 4.3). This one-way local stamp
-  # IS the dispatch gate now — no state:execution label write, no live
-  # tracker mutation of any kind. fleet_local_epics reads this flag to
-  # enumerate dispatch-eligible epics.
-  planner_manifest_source_helpers || true
-  declare -f stamp_epic_dispatch >/dev/null 2>&1 && stamp_epic_dispatch "\$EPIC_ID"
-
-  planner_state_write "${initiative_id}" "TicketGen" "dispatch-gate" "done" "N tickets verified. Epic \$EPIC_ID manifest stamped dispatch=true. Auto-dispatch enabled (FLEET_AUTO_DISPATCH must be true)."
+  # All tickets verified. This phase no longer stamps the epic manifest's
+  # dispatch flag or writes a dispatch-gate line (planner-refinement-phase)
+  # — that stamp now belongs to the Refinement phase's gate
+  # (\`planner_refinement_gate\`), once every child also has a readiness
+  # verdict. TicketGen's own terminal line is this \`verify|done\` — the
+  # ONLY phase-named success line TicketGen writes.
+  planner_state_write "${initiative_id}" "TicketGen" "verify" "done" "N tickets verified."
 else
-  planner_state_write "${initiative_id}" "TicketGen" "verify" "fail" "Post-creation verification failed — some tickets missing manifests or not found in Linear. Epic manifest NOT stamped for execution."
+  planner_state_write "${initiative_id}" "TicketGen" "verify" "fail" "Post-creation verification failed — some tickets missing manifests or not found in Linear."
 fi
 \`\`\`
 
 ## State log
 
+Per-ticket generation progress is \`META\` — never a \`TicketGen|...\` phase-named
+line. Position derivation (\`planner_position_derive\`) stops at the first
+\`done\`/\`skip\` it meets walking the log backwards; a phase-named
+\`generate|done\` here would let it stop before the post-creation \`verify\`
+step even runs, exactly the bug planner-refinement-phase fixes. The ONLY
+phase-named line this phase ever writes is \`TicketGen|verify|done\` (success)
+or \`TicketGen|verify|fail\` (failure), from the "Post-creation verification"
+section above:
+
 \`\`\`bash
-planner_state_write "${initiative_id}" "TicketGen" "generate" "start" "Generating N planned tickets"
+planner_state_write "${initiative_id}" "META" "ticketgen" "start" "Generating N planned tickets"
 # ... for each ticket ...
-planner_state_write "${initiative_id}" "TicketGen" "generate" "step" "Created TICK-1: <title>"
+planner_state_write "${initiative_id}" "META" "ticketgen" "step" "Created TICK-1: <title>"
 # ...
-planner_state_write "${initiative_id}" "TicketGen" "generate" "done" "N tickets created, M skipped (idempotent), K failed validation"
+planner_state_write "${initiative_id}" "META" "ticketgen" "done" "N tickets created, M skipped (idempotent), K failed validation"
 \`\`\`
 
 ## Constraints

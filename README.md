@@ -13,7 +13,7 @@ Four installable plugins. Install only what you need — they work standalone an
 | Plugin | Version | What it does |
 |--------|---------|--------------|
 | [`ticket-auto-pipeline`](ticket-auto-pipeline/README.md) | 0.60.0 | **The core.** Takes a Linear ticket and appraises, implements, verifies, and merges it with zero user input. 20+ slash commands, state-machine flow control, deterministic safety gates. |
-| [`ticket-planner`](ticket-planner/README.md) | 0.11.1 | **Upstream of the core.** Turns a one-sentence business idea into dependency-ordered, ready-to-execute tickets across 9 planning phases. Supports grill-me validated intent files as optional pre-flight gate. |
+| [`ticket-planner`](ticket-planner/README.md) | 0.12.0 | **Upstream of the core.** Turns a one-sentence business idea into dependency-ordered, ready-to-execute tickets across 11 planning phases. Supports grill-me validated intent files as optional pre-flight gate. |
 | [`fleet-controller`](fleet-controller/README.md) | 0.41.0 | **Above the core.** Dispatches planned tickets, monitors every running pipeline via 19 detection engines, kills and restarts stuck runs, feeds results back to the planner. Bash-only. |
 | [`knowledge-curator`](knowledge-curator/README.md) | 0.2.1 | **Beside the core.** Durable cross-project knowledge tracking — captures ideas, decisions, and lessons, then resurfaces them when relevant. |
 | [`grill-me`](grill-me/README.md) | 0.1.1 | **Before the core.** Pre-work readiness gate — assesses ideas against profile-driven dimensions, asks ranked clarification questions, and produces cryptographically sealed Validated Business Intent documents. |
@@ -40,7 +40,7 @@ Four installable plugins. Install only what you need — they work standalone an
 
 ```mermaid
 flowchart TD
-    idea["💡 Business idea"] --> planner["ticket-planner<br/>9 planning phases"]
+    idea["💡 Business idea"] --> planner["ticket-planner<br/>11 planning phases"]
     planner --> epic["Initiative epic +<br/>planned tickets in Linear"]
     epic --> fleet["fleet-controller<br/>dispatch + monitor"]
     fleet --> auto["ticket-auto-pipeline<br/>appraise → implement → verify → merge"]
@@ -198,7 +198,7 @@ Complex tickets **always** wait for a human. Full detail: [autonomy modes](ticke
 /ticket-planner plan "Add real-time collaboration to the document editor"
 ```
 
-The planner runs 10 phases (Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → EpicGen → TicketGen → Completed) and produces a Linear epic plus dependency-ordered tickets, each carrying a `Planner Context` block that lets the pipeline skip re-investigation.
+The planner runs 11 phases (Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → EpicGen → TicketGen → Refinement → Completed) and produces a Linear epic plus dependency-ordered tickets, each carrying a `Planner Context` block that lets the pipeline skip re-investigation. Refinement runs a deterministic Definition-of-Ready check plus a semantic evaluator pass per ticket before the epic is released to fleet dispatch.
 
 Then execute them:
 

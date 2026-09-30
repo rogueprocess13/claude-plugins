@@ -26,11 +26,11 @@ The planner is a separate plugin from `ticket-auto-pipeline` and `fleet-controll
 /ticket-planner plan "Add real-time collaboration to the document editor"
 ```
 
-The planner initializes a state directory under `${REPOS_ROOT}/.ticket-auto/initiatives/{ID}/`, writes the idea to the state log, and begins the 10-phase state machine. Each phase runs as an isolated Claude agent, except Crosscheck, which is deterministic bash. The router advances sequentially through phases with no inline reasoning between them.
+The planner initializes a state directory under `${REPOS_ROOT}/.ticket-auto/initiatives/{ID}/`, writes the idea to the state log, and begins the 11-phase state machine. Each phase runs as an isolated Claude agent, except Crosscheck and Refinement, both deterministic bash. The router advances sequentially through phases with no inline reasoning between them.
 
 ### What auto-dispatch does
 
-When the TicketGen phase completes successfully, the initiative epic manifest's `dispatch` field is stamped `true` (tracker-planner-and-fallback-cutover — a local, one-way manifest flag, not a `state:execution` label; nothing in this flow writes a Linear label any more). The fleet-controller detector `_fleet_scan_initiative_dispatch` finds it during its next poll cycle by scanning epic manifests directly and — when `FLEET_AUTO_DISPATCH=true` — calls `fleet_dispatch_initiative`, which:
+When the Refinement phase's gate passes — every child ticket has a deterministic-and-semantic readiness verdict — the initiative epic manifest's `dispatch` field is stamped `true` (planner-refinement-phase; before that change, TicketGen stamped it on successful creation alone, with no readiness verdict yet involved — tracker-planner-and-fallback-cutover made it a local, one-way manifest flag in the first place, not a `state:execution` label; nothing in this flow writes a Linear label any more). The fleet-controller detector `_fleet_scan_initiative_dispatch` finds it during its next poll cycle by scanning epic manifests directly and — when `FLEET_AUTO_DISPATCH=true` — calls `fleet_dispatch_initiative`, which:
 
 1. Enumerates epics whose manifest `dispatch` field is `true`
 2. Enumerates each epic's child tickets from its manifest `children` array, filtering to those not yet dispatched
@@ -67,11 +67,11 @@ Shows the current phase, initiative metadata, and the last few state log entries
 
 ## State Machine
 
-10 phases, strictly linear. Every phase but one runs as an isolated Claude agent; Crosscheck is deterministic bash. The router is bash — it reads the state log, derives position, and dispatches phases. It performs no reasoning of its own.
+11 phases, strictly linear. Every phase but two runs as an isolated Claude agent; Crosscheck and Refinement are deterministic bash (Refinement additionally spawns a `dor-semantic-agent` scan+audit per ticket that needs one, but the phase's own decisions stay in bash). The router is bash — it reads the state log, derives position, and dispatches phases. It performs no reasoning of its own.
 
 ```
 Appraisal → Discovery → Architecture → Specify → Review → Consensus →
-Crosscheck → EpicGen → TicketGen → Completed
+Crosscheck → EpicGen → TicketGen → Refinement → Completed
 ```
 
 ### Phase Details
@@ -86,10 +86,11 @@ Crosscheck → EpicGen → TicketGen → Completed
 | 6 | **Consensus** | Resolves review findings into a settled, actionable plan | Finalized proposal | — |
 | 7 | **Crosscheck** | *(not an agent — bash)* Runs the citation ([#172](https://github.com/willard-pro/claude-plugins/issues/172)) and cross-ticket propagation ([#173](https://github.com/willard-pro/claude-plugins/issues/173)) linters against the settled artifacts and the live repo | `META|crosscheck` findings in state.log | Blocking finding halts the dispatch loop before the create gate is even checked ([#178](https://github.com/willard-pro/claude-plugins/issues/178)) |
 | 8 | **EpicGen** | Creates the initiative epic in Linear with no labels; writes the epic manifest | Linear epic, epic manifest (`branch`/`uat_policy`/`merge_policy`/`children`) | Idempotency: records intent before creation, checks existence by initiative ID |
-| 9 | **TicketGen** | Creates planned child tickets in Backlog with no labels, Planner Context blocks, and ticket-auto-pipeline's required body sections (humanized before creation — [#285](https://github.com/willard-pro/claude-plugins/issues/285)), validates dependency DAG, writes each ticket manifest, stamps the epic manifest's `dispatch` flag | Linear tickets, ticket manifests, epic manifest `dispatch=true` | `planner-deps-check.sh` (acyclicity), `planner-context-gen.sh` (block format), `planned-ticket-check.sh` (Planner Context block validation), `planned-ticket-body-check.sh` (required `##` section validation before creation — [#285](https://github.com/willard-pro/claude-plugins/issues/285)) |
-| 10 | **Completed** | Terminal phase — writes completion summary, no further transitions permitted. Dispatched automatically in the same invocation as TicketGen, never left for a separate `resume` ([#226](https://github.com/willard-pro/claude-plugins/issues/226)) | Completed state log entry, `COMPLETED.md` | Phase transition validator rejects any transition from Completed; `planner_completion_verify` refuses to report the run finished without both outputs |
+| 9 | **TicketGen** | Creates planned child tickets in Backlog with no labels, Planner Context blocks, and ticket-auto-pipeline's required body sections (humanized before creation — [#285](https://github.com/willard-pro/claude-plugins/issues/285)), validates dependency DAG, writes each ticket manifest, persists each body to `planner/body.md`. No longer stamps the epic `dispatch` flag (planner-refinement-phase) — its only phase-named success line is `TicketGen\|verify\|done`, so a post-creation verify failure no longer hides behind an earlier `generate\|done` line | Linear tickets, ticket manifests, per-ticket `body.md` | `planner-deps-check.sh` (acyclicity), `planner-context-gen.sh` (block format), `planned-ticket-check.sh` (Planner Context block validation), `planned-ticket-body-check.sh` (required `##` section validation before creation — [#285](https://github.com/willard-pro/claude-plugins/issues/285)) |
+| 10 | **Refinement** | *(not an agent — bash + two `dor-semantic-agent` spawns per ticket)* For every child: a deterministic Definition-of-Ready check against its local `body.md`, then (unless `PLANNER_REFINEMENT_SEMANTIC=false`) a blind semantic scan and an audit of the deterministic result. Stamps the epic manifest `dispatch=true` once every child has a verdict, whether ready or not; the planner itself halts while any child is not ready | Per-ticket readiness verdicts (`ready.missing`/`ready.semantic` on the manifest), epic manifest `dispatch=true` | `dor-check.sh` (deterministic hard codes), `dor-semantic-parse.sh` + `dor_semantic_apply` (semantic result validation — quote verification against the body, `SEMANTIC_UNAVAILABLE`/`SEMANTIC_UNVERIFIED` on a bad result) |
+| 11 | **Completed** | Terminal phase — writes completion summary, no further transitions permitted. Dispatched automatically in the same invocation as Refinement's gate passing clean (or legacy-skipping), never left for a separate `resume` ([#226](https://github.com/willard-pro/claude-plugins/issues/226)) | Completed state log entry, `COMPLETED.md` | Phase transition validator rejects any transition from Completed; `planner_completion_verify` refuses to report the run finished without both outputs |
 
-**Phase merge notes:** The original 12-phase design separated Proposal, OpenSpec, StoryGen, and Execution as standalone phases. These were merged into Specify (Proposal + OpenSpec) and TicketGen (StoryGen + Execution labelling) to reduce phase count from 12 to 9. The merged phases handle all the same work — no capability was removed. Crosscheck (#178) was added later as phase 7, bringing the count to 10 — it is not a merge artifact, it is new deterministic validation the original design didn't have.
+**Phase merge notes:** The original 12-phase design separated Proposal, OpenSpec, StoryGen, and Execution as standalone phases. These were merged into Specify (Proposal + OpenSpec) and TicketGen (StoryGen + Execution labelling) to reduce phase count from 12 to 9. The merged phases handle all the same work — no capability was removed. Crosscheck (#178) was added later as phase 7, bringing the count to 10. Refinement (planner-refinement-phase) was added later still, as phase 10 — it un-merges the Execution-era epic stamp out of TicketGen and conditions it on a readiness verdict rather than ticket existence alone, bringing the count to 11.
 
 ### Failure handling
 
@@ -204,7 +205,7 @@ sibling `epic/manifest.json`), written once at creation time:
 | `INIT-*` | ticket manifest `initiative` | Ticket Gen | Never changes. |
 | `pre-approved` | Planner Context block `Pre-approved` field (not a manifest field) | Ticket Gen (when confidence ≥ 0.85) | Accelerates fast-path. Never a label to remove. |
 | `blocked-by:*` | ticket manifest `blocked_by` (array) | Ticket Gen | Target is a sibling ticket in this initiative, or an existing Linear ID for a cross-initiative prerequisite. Resolved against each blocker's own local pipeline-log terminal state. |
-| `state:execution` | epic manifest `dispatch` (bool) | Ticket Gen's post-creation gate, via `stamp_epic_dispatch` | One-way stamp once all children are created and verified. |
+| `state:execution` | epic manifest `dispatch` (bool) | Refinement's gate, via `planner_refinement_gate` (planner-refinement-phase — formerly Ticket Gen's own post-creation gate) | One-way stamp once every child has a deterministic-and-semantic readiness verdict, whether ready or not. |
 | `Type` | ticket manifest `type` | Ticket Gen | `bug`/`feature`/`improvement`/`security`/`chore`. Drives template selection locally. |
 
 The only labels still projected onto a Linear ticket are the 4 human-signal ones the board driver
@@ -404,7 +405,7 @@ Crossing the boundary takes a separate invocation:
 
 ```
 /ticket-planner plan "…"                  # → Appraisal … Crosscheck, nothing in Linear
-/ticket-planner resume INIT-42 --create   # → Epic Gen, Ticket Gen, Completed
+/ticket-planner resume INIT-42 --create   # → Epic Gen, Ticket Gen, Refinement, Completed
 ```
 
 `--create` is read once, at the top of that invocation, and written to the state log
@@ -418,6 +419,8 @@ entries. A `resume` after a crash mid-Epic-Gen proceeds without re-passing the f
 | `PLANNER_UNTIL` | *(unset)* | Phase to stop after. Read **once, during argument parsing**, and persisted as `META|stop-after` |
 | `PLANNER_REVIEW_HOLD` | false | When `true`, stop after Review — folded into `--until Review` at parsing time |
 | `PLANNER_MAX_PHASE_RETRIES` | 2 | Max retries per phase before failing the run |
+| `PLANNER_REFINEMENT_SEMANTIC` | true | When `false`, Refinement skips the `dor-semantic-agent` spawns entirely and gates on the deterministic verdict alone (planner-refinement-phase) |
+| `PLANNER_REFINEMENT_PARALLEL` | 4 | Max concurrent per-ticket semantic-pass batches in Refinement |
 
 `PLANNER_CONSENSUS_HOLD` was removed: stopping before the first Linear write is now
 the default and needs no variable.

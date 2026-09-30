@@ -40,9 +40,7 @@ _source_if_missing() {
 # manifest-read.sh) — tracker-planner-and-fallback-cutover, 4.4. Same
 # plugin-cache → skills-lib fallback as the planned-ticket-check.sh
 # resolution below. No bundled copy — a drifting duplicate would silently
-# disagree with the schema manifest-write.sh actually writes. Sourcing the
-# writer (not just the reader) is deliberate: planner_dispatch_gate below
-# needs stamp_epic_dispatch too, and both live in the one file.
+# disagree with the schema manifest-write.sh actually writes.
 _planner_verify_source_manifest_read() {
   declare -f ticket_manifest_exists >/dev/null 2>&1 && return 0
   local lib
@@ -337,50 +335,4 @@ planner_verify_tickets() {
 
   echo "planner-verify: $verified verified, $failures failed, $missing missing-intent"
   return $((failures > 0 ? 1 : 0))
-}
-
-# ── Dispatch gate ──────────────────────────────────────────────────────────────
-
-# Post-creation gate: verify all tickets and stamp the parent epic manifest's
-# dispatch flag. Called by Ticket Gen after all child tickets are created and
-# verified. tracker-planner-and-fallback-cutover (4.4): no live Linear
-# mutation anywhere in this gate any more — verification is manifest-only
-# (planner_verify_tickets above) and the epic's dispatch flag is a local,
-# one-way manifest stamp (stamp_epic_dispatch), mirroring exactly what
-# TicketGen's own inline post-creation step already does.
-#
-# Usage: planner_dispatch_gate <initiative_id> <epic_linear_id> <ticket_ids_json>
-# Returns: 0 if gate passes (epic manifest stamped dispatch=true), 1 if it fails.
-planner_dispatch_gate() {
-  local initiative_id="$1" epic_id="$2" ticket_ids_json="$3"
-
-  # Step 1: Verify all tickets have a manifest carrying type + initiative
-  echo "planner-dispatch-gate: verifying $ticket_ids_json tickets..."
-  if ! planner_verify_tickets "$initiative_id" "$ticket_ids_json"; then
-    echo "planner-dispatch-gate: FAIL — ticket verification failed. Epic manifest NOT stamped for execution." >&2
-    return 1
-  fi
-
-  # Step 2: Verify the parent epic manifest exists
-  _planner_verify_source_manifest_read
-  if ! declare -f epic_manifest_exists >/dev/null 2>&1 || ! epic_manifest_exists "$epic_id" 2>/dev/null; then
-    echo "planner-dispatch-gate: FAIL — no epic manifest for $epic_id" >&2
-    return 1
-  fi
-  echo "planner-dispatch-gate: epic $epic_id manifest confirmed to exist"
-
-  # Step 3: Stamp the epic manifest's dispatch flag — fleet_local_epics reads
-  # this to enumerate dispatch-eligible epics; no live tracker write happens.
-  echo "planner-dispatch-gate: stamping epic $epic_id manifest dispatch=true"
-  if declare -f stamp_epic_dispatch >/dev/null 2>&1; then
-    stamp_epic_dispatch "$epic_id" || {
-      echo "planner-dispatch-gate: FAIL — could not stamp epic manifest for $epic_id" >&2
-      return 1
-    }
-  else
-    echo "planner-dispatch-gate: FAIL — stamp_epic_dispatch unavailable" >&2
-    return 1
-  fi
-
-  return 0
 }

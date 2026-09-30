@@ -85,6 +85,34 @@ _planner_doctor_resolve_planned_ticket_check() {
   return 1
 }
 
+# Same three-level fallback as _planner_doctor_resolve_planned_ticket_check,
+# generalized to any ticket-auto-pipeline lib/ filename (planner-refinement-
+# phase's dor-check.sh/dor-semantic.sh/dor-semantic-parse.sh row).
+_planner_doctor_resolve_ticket_auto_lib() {
+  local name="$1" checker
+  checker=$(find "${HOME}/.claude/plugins/cache" -name "$name" \
+    -path "*/ticket-auto-pipeline/*/lib/${name}" 2>/dev/null | sort | tail -1)
+  if [ -n "$checker" ] && [ -f "$checker" ]; then
+    echo "$checker"
+    return 0
+  fi
+
+  checker="${HOME}/.claude/skills/lib/${name}"
+  if [ -f "$checker" ]; then
+    echo "$checker"
+    return 0
+  fi
+
+  checker="${_PLANNER_DOCTOR_LIB_DIR}/../../ticket-auto-pipeline/lib/${name}"
+  if [ -f "$checker" ]; then
+    echo "$checker"
+    return 0
+  fi
+
+  echo ""
+  return 1
+}
+
 planner_doctor_run() {
   local initiative_id="" fix_flag="false" arg
   for arg in "$@"; do
@@ -220,6 +248,46 @@ planner_doctor_run() {
     _row "grill-seal.sh" "ok" "$grill_checker" "grill-me" ""
   else
     _row "grill-seal.sh" "warn" "" "grill-me" "not found — only required when planning from a grill-me intent file"
+  fi
+
+  # ── 6. Refinement phase dependencies (planner-refinement-phase) ───────
+  local dor_check_lib dor_semantic_lib dor_semantic_parse_lib
+  dor_check_lib=$(_planner_doctor_resolve_ticket_auto_lib "dor-check.sh")
+  if [ -n "$dor_check_lib" ]; then
+    _row "dor-check.sh" "ok" "$dor_check_lib" "ticket-auto-pipeline" ""
+  else
+    _row "dor-check.sh" "missing" "" "ticket-auto-pipeline" "not found — Refinement's deterministic pass will hard-stop"
+    _issues=$((_issues + 1))
+  fi
+
+  dor_semantic_lib=$(_planner_doctor_resolve_ticket_auto_lib "dor-semantic.sh")
+  if [ -n "$dor_semantic_lib" ]; then
+    _row "dor-semantic.sh" "ok" "$dor_semantic_lib" "ticket-auto-pipeline" ""
+  else
+    _row "dor-semantic.sh" "missing" "" "ticket-auto-pipeline" "not found — Refinement's semantic pass will hard-stop"
+    _issues=$((_issues + 1))
+  fi
+
+  dor_semantic_parse_lib=$(_planner_doctor_resolve_ticket_auto_lib "dor-semantic-parse.sh")
+  if [ -n "$dor_semantic_parse_lib" ]; then
+    _row "dor-semantic-parse.sh" "ok" "$dor_semantic_parse_lib" "ticket-auto-pipeline" ""
+  else
+    _row "dor-semantic-parse.sh" "missing" "" "ticket-auto-pipeline" "not found — Refinement cannot parse a semantic result"
+    _issues=$((_issues + 1))
+  fi
+
+  local dor_semantic_agent
+  dor_semantic_agent=$(find "${HOME}/.claude/plugins/cache" -name "dor-semantic-agent.md" \
+    -path "*/ticket-auto-pipeline/*/agents/dor-semantic-agent.md" 2>/dev/null | sort | tail -1)
+  if [ -z "$dor_semantic_agent" ]; then
+    dor_semantic_agent="${_PLANNER_DOCTOR_LIB_DIR}/../../ticket-auto-pipeline/agents/dor-semantic-agent.md"
+    [ -f "$dor_semantic_agent" ] || dor_semantic_agent=""
+  fi
+  if [ -n "$dor_semantic_agent" ]; then
+    _row "dor-semantic-agent" "ok" "$dor_semantic_agent" "ticket-auto-pipeline" ""
+  else
+    _row "dor-semantic-agent" "missing" "" "ticket-auto-pipeline" "agent definition not found — Refinement's semantic pass will end in SEMANTIC_UNAVAILABLE for every ticket"
+    _issues=$((_issues + 1))
   fi
 
   # ── Emit ───────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # ticket-planner
 
-Autonomous 10-phase planner that turns business ideas into dependency-ordered planned tickets. Sits upstream of `ticket-auto-pipeline` and `fleet-controller` — plans, then hands off.
+Autonomous 11-phase planner that turns business ideas into dependency-ordered planned tickets. Sits upstream of `ticket-auto-pipeline` and `fleet-controller` — plans, then hands off.
 
 ## Install
 
@@ -78,7 +78,7 @@ Accepted by both `plan` and `resume`:
 
 | Flag | Effect |
 |------|--------|
-| `--create` | **`resume` only.** Authorize Linear creation, then run EpicGen → TicketGen → Completed |
+| `--create` | **`resume` only.** Authorize Linear creation, then run EpicGen → TicketGen → Refinement → Completed |
 | `--shared-branch` | Force a shared-branch directive on the epic regardless of the heuristic |
 | `--no-shared-branch` | Suppress the shared-branch directive regardless of the heuristic |
 | `--until <Phase>` | Stop the run once `<Phase>` completes |
@@ -98,11 +98,11 @@ not reach the phase that needs it.
 ### What happens
 
 1. The planner initializes a state directory under `$REPOS_ROOT/.ticket-auto/initiatives/{ID}/`
-2. Each of the 10 phases runs: Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → EpicGen → TicketGen → Completed — every one an isolated Claude agent except Crosscheck, a deterministic citation + cross-ticket propagation linter
+2. Each of the 11 phases runs: Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → EpicGen → TicketGen → Refinement → Completed — every one an isolated Claude agent except Crosscheck and Refinement, both deterministic bash (Refinement additionally spawns a `dor-semantic-agent` scan+audit per ticket that needs one)
 3. `plan` stops after Crosscheck. EpicGen is the first Linear write, and it runs only once `resume --create` has authorized it — the authorization is recorded in the state log, so it survives a crash and a plain `resume` afterwards still proceeds
-4. TicketGen creates planned Linear tickets with `## Planner Context` blocks, `planned`/`pre-approved`/`Type` labels, and validated acyclic dependencies
-5. The epic gets `state:execution` — fleet-controller auto-dispatches when `FLEET_AUTO_DISPATCH=true`
-6. `ticket-auto-pipeline` consumes the planned tickets via its fast-path (skips full investigation for `planned` + `pre-approved` tickets)
+4. TicketGen creates planned Linear tickets with `## Planner Context` blocks and validated acyclic dependencies, and persists each ticket's body to `planner/body.md`
+5. Refinement runs a deterministic Definition-of-Ready check plus a semantic evaluator pass per ticket, then stamps the epic manifest `dispatch=true` once every child has a verdict — fleet-controller auto-dispatches ready children when `FLEET_AUTO_DISPATCH=true`; a not-ready child stays held until its blocking codes are resolved or waived
+6. `ticket-auto-pipeline` consumes the planned tickets via its fast-path (skips full investigation for planned tickets with a local ticket manifest)
 
 ### Resume after interruption
 

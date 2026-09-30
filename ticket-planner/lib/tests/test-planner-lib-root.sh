@@ -105,13 +105,15 @@ echo "--- Test 6: prompt preambles point at a real lib dir ---"
 
 source "${LIB_DIR}/planner-phase-prompts.sh"
 
-# Every phase except Crosscheck has a prompt function — Crosscheck is
-# deterministic bash (planner-crosscheck.sh), not an agent spawn.
+# Every phase except Crosscheck and Refinement has a prompt function — both
+# are deterministic bash (planner-crosscheck.sh / planner-refinement.sh), not
+# an agent spawn.
 ALL_PHASES=()
 planner_phase_sequence ALL_PHASES
 PHASES=()
 for _p in "${ALL_PHASES[@]}"; do
   [ "$_p" = "Crosscheck" ] && continue
+  [ "$_p" = "Refinement" ] && continue
   PHASES+=("$_p")
 done
 
@@ -203,10 +205,10 @@ done
 # The positive half: the interpolated values must actually be there, or the fix
 # above could be "satisfied" by deleting the references entirely.
 tg=$(planner_prompt_ticketgen "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
-if grep -qF '"/repos/.ticket-auto/initiatives/INIT-TEST/state.log"' <<<"$tg"; then
-  pass "TicketGen reads the epic id from the real state log path"
+if grep -qF 'planner_epic_id "INIT-TEST"' <<<"$tg"; then
+  pass "TicketGen resolves the epic id via the shared planner_epic_id helper, with the real initiative id interpolated"
 else
-  fail "TicketGen reads the real state log path" "path not interpolated"
+  fail "TicketGen resolves the epic id via planner_epic_id" "initiative id not interpolated"
 fi
 
 eg=$(planner_prompt_epicgen "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")

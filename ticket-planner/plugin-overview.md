@@ -67,6 +67,10 @@ User invokes /ticket-planner plan "idea"
         2. planner_create_gate_check → refuse EpicGen/TicketGen unless authorized
         2a. Crosscheck is bash, not an agent: planner_crosscheck_run runs directly,
             a blocking finding stops the loop immediately (steps 3-5 skipped)
+        2b. Refinement is also bash, not an agent (planner-refinement-phase):
+            per-ticket deterministic DoR check + dor-semantic-agent scan/audit
+            spawns, then planner_refinement_gate stamps the epic and decides
+            halt vs. proceed (steps 3-5 skipped)
         3. planner_prompt_for_phase → agent prompt, config read back off disk
         4. Spawn isolated agent with prompt
         5. Agent writes state log entries via planner_state_write
@@ -88,8 +92,9 @@ User invokes /ticket-planner plan "idea"
 | 6 | Consensus | `planner_prompt_consensus` | `proposal.md` (overwritten), `consensus.md` |
 | 7 | Crosscheck | *(none — `planner_crosscheck_run`)* | `META|crosscheck` findings in state.log — **last artifact-only phase, gates EpicGen** |
 | 8 | EpicGen | `planner_prompt_epicgen` | Linear epic — **first Linear write, gated on `--create`** |
-| 9 | TicketGen | `planner_prompt_ticketgen` | Linear tickets, `state:execution` on epic |
-| 10 | Completed | `planner_prompt_completed` | `COMPLETED.md` |
+| 9 | TicketGen | `planner_prompt_ticketgen` | Linear tickets, per-ticket `planner/body.md` |
+| 10 | Refinement | *(none — bash + two `dor-semantic-agent` spawns per ticket)* | Per-ticket readiness verdicts; epic manifest `dispatch=true` once every child has one |
+| 11 | Completed | `planner_prompt_completed` | `COMPLETED.md` |
 
 ## Phase merge history
 
@@ -98,10 +103,10 @@ The original design specified 12 phases. Four were merged in implementation:
 | Original | Merged Into | Rationale |
 |----------|------------|-----------|
 | Proposal + OpenSpec | Specify (phase 4) | Proposal and spec writing share the same upstream artifacts; doing them in one pass avoids context loss between phases |
-| StoryGen | TicketGen (phase 8) | Stories are always 1:1 with tickets — no separate decomposition step needed |
-| Execution | TicketGen (phase 8) | Setting `state:execution` is a deterministic label operation after ticket verification, not a reasoning phase |
+| StoryGen | TicketGen (phase 9) | Stories are always 1:1 with tickets — no separate decomposition step needed |
+| Execution | Refinement (phase 10) | Stamping the epic manifest `dispatch=true` is a deterministic operation after every child ticket has a readiness verdict, not a reasoning phase. It lived in TicketGen until planner-refinement-phase moved it to the new Refinement phase, once readiness verdicts — not just ticket existence — became the gate |
 
-The merge reduced phase count from 12 to 9 without removing any capability. Phase agents produce all the same artifacts.
+The merge reduced phase count from 12 to 10 (11 after planner-refinement-phase added Refinement back as a genuinely new phase) without removing any capability. Phase agents produce all the same artifacts.
 
 ## Key design decisions
 
