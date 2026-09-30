@@ -873,7 +873,7 @@ untouched.
 - [x] 1. `dor-readiness-gate-foundation` — propose, apply, PR. Merged 2026-09-30 via **PR #425**
       (`ticket-auto-pipeline`/`fleet-controller` version-bumped). Mandatory `manifest-backfill.sh`
       run per host afterwards (CHANGELOG note, same class as 0.57.0's) still outstanding per-host.
-- [ ] 1b. `dor-quality-score` — propose, apply, PR. Adds `INTENT_MISSING`/`REPRO_NO_EXPECTED_ACTUAL`
+- [x] 1b. `dor-quality-score` — merged 2026-09-30 via **PR #426**. Adds `INTENT_MISSING`/`REPRO_NO_EXPECTED_ACTUAL`
       hard codes, `AC_IMPLEMENTATION_ONLY`/`VERIFICATION_REQUIRED_NOT_SELF_VERIFYING` advisory codes
       (strict-promotable), a widened `AC_VAGUE` pass, the diagnostic `dor_quality_score` (0-100,
       never gates), `semantic_coverage_gaps`, body-hash cache invalidation, and the shared dimension
