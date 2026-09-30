@@ -825,7 +825,7 @@ Change 1's PR merges, since it depends on manifest fields (`flags`/`rev`/`pendin
 
 ---
 
-## Step 8 — Definition of Ready (DoR) readiness gate — IN PROGRESS (change 1, Sections 1-7/10 done)
+## Step 8 — Definition of Ready (DoR) readiness gate — all phases implemented; live verification pending
 
 **Plan:** `~/.claude/plans/when-working-on-the-delightful-ocean.md` (re-scoped 2026-09-27 after a
 live-evidence report over both tickets hosts and a 3-reviewer + second-agent pass).
@@ -834,9 +834,13 @@ live-evidence report over both tickets hosts and a 3-reviewer + second-agent pas
 2. `dor-quality-score` (ticket-auto-pipeline, diagnostic score + 2 hard codes) — merged
 3. `planner-phase-count-derivation` (ticket-planner, mechanical prep) — merged
 4. `dor-semantic-evaluator` (ticket-auto-pipeline, LLM scan/audit contract) — merged
-5. `planner-refinement-phase` (ticket-planner, halt-only) — **supersedes `planner-readiness-phase`**
-6. `planner-ready-by-construction` (later)
-7. `readiness-feedback-loop` (later)
+5. `planner-refinement-phase` (ticket-planner, halt-only) — merged, **supersedes
+   `planner-readiness-phase`**
+6. `planner-ready-by-construction` (ticket-planner + ticket-auto-pipeline) — merged
+7. `readiness-feedback-loop` (fleet-controller + ticket-planner) — merged
+
+All 7 changes are implemented and merged. Only item 4 below (the consolidated live-verification
+pass) remains.
 
 **Why this exists:** planner-cut tickets reached a worker with no Scope / Navigation Path / Test
 User section and no test data, and were stopped only at the entry gate after a worker was already
@@ -932,10 +936,23 @@ untouched.
       before implementation. New `test-planner-vplan-generation.sh` (5 assertions, against the real
       parser) + `test-dor-check.sh` additions (8 assertions) + 2 existing suites updated; full
       `make test` green. ticket-planner 0.12.0→0.13.0, ticket-auto-pipeline 0.60.0→0.61.0.
-- [ ] 5b. `readiness-feedback-loop` — not yet scoped. Next up once 5a merges: needs its own
-      openspec-propose pass against current code (the only prior sketch, "Change 3" in the same
-      stale plan file, predates both `planner-refinement-phase` and `5a` and needs re-grounding the
-      same way `5a` did).
+- [x] 5b. `readiness-feedback-loop` — implemented 2026-09-30, merged 2026-09-30 via **PR #437**.
+      Re-scoped fresh against current code (the only prior sketch, "Change 3" in the stale plan
+      file, assumed an agent-backed Readiness phase that no longer exists — `replan` was never
+      agent-backed either). `fleet-feedback.sh` gains an independent readiness-gap scan (gate-stop
+      `TICKET_NOT_READY` codes + verify no-test-user SKIPs), closing a blind spot where a ticket
+      that never reached implement never wrote a `planner-feedback` entry and so never surfaced —
+      new `summary.readiness_gaps` key on every feedback file, plus a write-loop fix so an
+      initiative with only readiness-gap data still gets one written. `planner-replan.sh`'s
+      `planner_replan_record` gains an 8th parameter; new `planner_readiness_gaps_compute` sums
+      per-key across files (never a shallow merge); `replan` writes one new
+      `META|replan-readiness-gaps` line, report-only, never feeding regeneration logic. Deferred a
+      `grill-me` `test_readiness` dimension (pinned scoring-boundary arithmetic across 10 existing
+      dimensions; structurally disconnected from this loop anyway). Passed 3 independent reviewer
+      passes before implementation. New tests: 7 assertions in `test-fleet-feedback.sh` (20/20
+      total) + 6 in `test-planner-replan.sh` (35/35 total); full `make test` green. fleet-controller
+      0.41.0→0.42.0, ticket-planner 0.13.0→0.14.0. **Live verification not yet run** — roll into
+      item 4 above, now the last remaining item before that consolidated pass.
 
 ---
 
