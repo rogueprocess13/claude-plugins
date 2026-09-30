@@ -901,10 +901,18 @@ untouched.
       19-fixture sweep + prompt tuning deferred to a live-verification pass before
       `planner-refinement-phase` can safely assume the evaluator's output quality. Plan:
       `~/.claude/plans/gentle-doodling-truffle.md`.
-- [ ] 3. `planner-refinement-phase` — apply, PR (proposed 2026-09-30, validated). **Supersedes
-      `planner-readiness-phase`.** New planner phase Refinement between TicketGen and Completed: per
-      ticket deterministic DoR → LLM scan → LLM audit → per-ticket blocking; epic stamped `dispatch=true`
-      there. Answers/enablers/body rewrite from the old Readiness design stay deferred.
+- [ ] 3. `planner-refinement-phase` — implemented 2026-09-30, **PR #430** open on
+      `feat/planner-refinement-phase`. **Supersedes `planner-readiness-phase`.** New planner phase
+      Refinement between TicketGen and Completed (11 phases, up from 10): per-ticket deterministic
+      DoR → `dor-semantic-agent` scan → audit → per-ticket blocking; epic stamped `dispatch=true`
+      once every child has a verdict, ready or not. TicketGen now persists each body to
+      `planner/body.md` and no longer stamps the epic or writes `dispatch-gate` (BREAKING for
+      anything grepping that line — a legacy log skips Refinement). New
+      `resume --refresh-bodies` (one-shot). `planner_dispatch_gate` removed. No ticket-auto-pipeline
+      or fleet-controller code change. New `test-planner-refinement.sh` (41 assertions) + 5 existing
+      planner suites updated; full `make test` green. Answers/enablers/body rewrite from the old
+      Readiness design stay deferred. **Live verification (task 10) not yet run** — needs a real
+      tickets host; roll into item 4 below.
 - [ ] 4. Live: one planned epic on a user project through Refinement → dispatch → gate, plus an
       ad-hoc ticket confirming 2.7 is untouched. Roll into the consolidated live-verification pass.
 - [ ] 5. `planner-ready-by-construction`, `readiness-feedback-loop` — after 4 is clean.
