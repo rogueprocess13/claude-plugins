@@ -1,33 +1,42 @@
 #!/usr/bin/env bash
 # dor-check.sh — the Definition of Ready readiness check (dor-readiness-gate-
-# foundation). Sourceable bash library. Does NOT set -euo pipefail at file
-# scope (caller controls error handling) — matching planned-ticket-body-
-# check.sh's convention, since gate-check.sh and fleet-dispatch.sh both
-# source this file and neither may have its own errexit/pipefail settings
-# perturbed by doing so.
+# foundation, extended by dor-quality-score). Sourceable bash library. Does
+# NOT set -euo pipefail at file scope (caller controls error handling) —
+# matching planned-ticket-body-check.sh's convention, since gate-check.sh and
+# fleet-dispatch.sh both source this file and neither may have its own
+# errexit/pipefail settings perturbed by doing so.
 #
 # Evaluates a ticket's readiness from its body alone — no tracker mutation,
 # no model invocation. See design.md and
 # openspec/changes/dor-readiness-gate-foundation/specs/ticket-readiness-gate/
-# spec.md for the full decision record; this file implements Decisions 1-4
-# and 6-11's `check_ticket_ready`/`ensure_ticket_readiness`/`--waive` surface.
+# spec.md (promoted to openspec/specs/) and
+# openspec/changes/dor-quality-score/{design.md,specs/} for the full decision
+# record.
 #
 # Public API:
 #   check_ticket_ready <TID> [--body <file>] [--type <type>]
 #                       [--catalog <file>] [--no-fetch]
 #     Sets DOR_STATUS (ready|not-ready|unavailable), DOR_MISSING (JSON array
 #     of failing hard codes), DOR_ADVISORY (JSON array of failing advisory
-#     codes), DOR_CHECKS (JSON object: code -> {pass, class, detail}).
-#     Exit 0 ready, 1 not-ready, 2 unavailable (no body could be resolved).
+#     codes), DOR_CHECKS (JSON object: code -> {pass, class, detail}),
+#     DOR_SCORE (integer 0-100, diagnostic only, never part of the
+#     ready/not-ready decision), DOR_DIMENSIONS (JSON object: dimension key
+#     -> earned points or null when inapplicable), DOR_GAPS (JSON array of
+#     semantic coverage gap names), DOR_BODY_HASH (sha256:<hex> of the
+#     resolved body, or empty). Exit 0 ready, 1 not-ready, 2 unavailable (no
+#     body could be resolved).
 #
 #   ensure_ticket_readiness <TID> [--body <file>] [--type <type>]
 #     The single resolution path every consumer of readiness should use
 #     instead of a raw manifest read (design.md Decision 3 — self-healing
-#     cache). Returns the manifest's cached `ready` verdict if present;
-#     otherwise computes live via check_ticket_ready and caches the result
-#     via set_ticket_readiness before returning it. Sets the same
-#     DOR_STATUS/DOR_MISSING/DOR_ADVISORY globals. Exit 0 ready, 1 not-ready,
-#     2 unavailable/uncacheable.
+#     cache). Returns the manifest's cached `ready` verdict if present and
+#     still fresh (body-hash checked against local sources only — see
+#     Decision 7 in dor-quality-score/design.md); otherwise computes live via
+#     check_ticket_ready and caches the result (including score/dimensions/
+#     gaps/body_hash) via set_ticket_readiness before returning it. Sets the
+#     same DOR_STATUS/DOR_MISSING/DOR_ADVISORY globals, plus DOR_SCORE/
+#     DOR_DIMENSIONS/DOR_GAPS when present in the returned verdict. Exit 0
+#     ready, 1 not-ready, 2 unavailable/uncacheable.
 #
 #   dor-check.sh --waive <TID> <CODE> <reason> [--by <name>]
 #     CLI-only (direct execution): wraps waive_ticket_readiness_code and
@@ -35,11 +44,18 @@
 #     hard-code false positive (design.md Decision 2's revision).
 #
 # Hard codes (decide ready/not-ready): SCOPE_MISSING, NAV_PATH_MISSING,
-# TEST_USER_MISSING, AC_MISSING, AC_VAGUE, REPRO_MISSING, FLAG_NEEDS_INFO.
+# TEST_USER_MISSING, AC_MISSING, AC_VAGUE, REPRO_MISSING, FLAG_NEEDS_INFO,
+# INTENT_MISSING, REPRO_NO_EXPECTED_ACTUAL.
 # Advisory codes (reported, never block): TEST_USER_UNRESOLVED,
 # TEST_DATA_MISSING, TEST_DATA_UNSEEDED, VPLAN_MISSING, VPLAN_ROW_GAP,
-# VPLAN_UNVERIFIABLE. DOR_STRICT_CATALOG/DOR_STRICT_TEST_DATA (both default
-# false) promote the catalog/test-data advisory codes to hard.
+# VPLAN_UNVERIFIABLE, AC_IMPLEMENTATION_ONLY,
+# VERIFICATION_REQUIRED_NOT_SELF_VERIFYING. DOR_STRICT_CATALOG/
+# DOR_STRICT_TEST_DATA/DOR_STRICT_AC_IMPL/DOR_STRICT_VERIFICATION (all
+# default false) promote the catalog/test-data/impl-only/verification
+# advisory codes to hard.
+#
+# `dor_quality_score` and `semantic_coverage_gaps` are diagnostic only — they
+# NEVER affect DOR_STATUS. See docs/dor-readiness.md.
 
 _DOR_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -87,6 +103,47 @@ fi
 # tier is skipped and DOR_STATUS resolves to unavailable/2 same as any other
 # unreachable body source.
 
+# ── Shared dimension vocabulary (dor-quality-score design.md Decision 6) ───
+# The one place these keys are defined. Documented in
+# docs/dor-readiness.md. `requirement_completeness` carries no weight — only
+# a future semantic evaluator scores it (see ready.semantic in the manifest
+# spec); it stays in the vocabulary array so the score's keys and the
+# semantic evaluator's keys are drawn from one source.
+DOR_DIMENSION_KEYS=(intent scope acceptance_criteria verification context test_uat dependencies constraints edge_cases completion requirement_completeness)
+
+declare -A _DOR_DIMENSION_WEIGHTS=(
+  [acceptance_criteria]=20
+  [verification]=18
+  [scope]=15
+  [intent]=10
+  [test_uat]=10
+  [context]=8
+  [completion]=5
+  [dependencies]=5
+  [constraints]=5
+  [edge_cases]=4
+)
+
+# ── AC line pattern sets (design.md Decision 2/3/4) ─────────────────────────
+# _DOR_OUTCOME_RE/_DOR_SELFVERIFY_RE deliberately do NOT match a bare
+# backtick-quoted identifier — `PaymentRetryPolicy`, `InvoiceRepository` and
+# similar class/file references are implementation detail, not an
+# observable result, and matching them would let any AC that merely names a
+# symbol dodge AC_IMPLEMENTATION_ONLY (every classifier below matches
+# case-insensitively via `grep -qiP`, and AC lines are themselves
+# lowercased by _dor_ac_lines, so an ALL_CAPS-vs-identifier distinction
+# cannot survive either transform — a quoted *value*, never a quoted
+# *name*, is the only safe backtick signal, and even that is covered below
+# by the double-quote pattern instead). A bare 3-digit number in the HTTP
+# status range (1xx-5xx) covers "returns 422"/"a 409 error" without
+# requiring the word "status" immediately before it.
+_DOR_IMPL_VERB_RE='\b(add|create|implement|refactor|migrate|wire|introduce|update|extract|rename|install|configure)\b'
+_DOR_OUTCOME_RE='\b(returns?|responds?|displays?|shows?|renders?|emits?|logs?)\b|\b[1-5][0-9]{2}\b|within [0-9]+ ?(ms|s)\b|\bequals?\b|\bis (set|stored|visible|rejected|accepted)\b|\buser (can|cannot|sees)\b|error message|\bcount\b|[0-9]+ ?(ms|s|%|kb|mb)\b|"[^"]+"'
+_DOR_SELFVERIFY_RE='\b[1-5][0-9]{2}\b|within [0-9]+ ?(ms|s)\b|\bequals?\b|\bis (set|stored|visible|rejected|accepted)\b|\buser (can|cannot|sees)\b|error message|[0-9]+ ?(ms|s|%|kb|mb)\b|"[^"]+"'
+_DOR_EDGE_RE='\b(error|invalid|empty|expired|duplicate|limit|timeout|unauthori[sz]ed)\b'
+_DOR_VAGUE_WIDENED_RE='\b(appropriate(ly)?|reasonabl[ey]|sufficient(ly)?|robust(ly)?|intuitive(ly)?|seamless(ly)?|graceful(ly)?)\b|\b(is|are|be|gets?) handled\b'
+_DOR_BACKEND_CONTEXT_RE='`[A-Za-z0-9_./:-]*/[A-Za-z0-9_./:-]*`|\b(endpoint|controller|service|job|cron|worker|consumer|queue|CLI|command)\b'
+
 # ── Internal helpers ─────────────────────────────────────────────────────
 
 # _dor_test_user_content/_dor_test_data_content <body> — the same awk
@@ -99,6 +156,118 @@ _dor_test_user_content() {
 
 _dor_test_data_content() {
   echo "$1" | awk '/^##[[:space:]]*Test Data/ {found=1; next} found && /^##/ {exit} found {print}'
+}
+
+# _dor_section_content <body> <alias-set-name> — one shared extractor for
+# every new-hard-code section lookup (task 3.1). Alias sets are fixed
+# literal lists defined right here — no caller-built regex ever reaches
+# awk, matching _dor_test_user_content's safety convention. Tries each
+# alias heading in order (case-insensitive), echoes the first non-blank
+# section content found. Returns 1 when no alias heading yields content.
+_dor_section_content() {
+  local body="$1" set_name="$2"
+  local -a aliases=()
+  case "$set_name" in
+  why) aliases=("Background / Motivation" "Motivation" "Problem" "Why" "Context") ;;
+  outcome) aliases=("Proposed Behaviour" "Proposed Changes" "Desired Outcome" "Goal") ;;
+  expected) aliases=("Expected Behaviour") ;;
+  actual) aliases=("Actual Behaviour") ;;
+  summary) aliases=("Summary") ;;
+  out_of_scope) aliases=("Out of Scope") ;;
+  constraints) aliases=("Constraints" "Non-functional" "Non-functional Requirements" "Performance" "Security") ;;
+  dependencies) aliases=("Related Tickets" "Dependencies") ;;
+  environment) aliases=("Environment") ;;
+  *) return 1 ;;
+  esac
+
+  local a lower_a content
+  for a in "${aliases[@]}"; do
+    lower_a=$(echo "$a" | tr '[:upper:]' '[:lower:]')
+    content=$(echo "$body" | awk -v h="$lower_a" '
+      { line = tolower($0) }
+      line ~ ("^##[[:space:]]*" h "[[:space:]]*$") { found=1; next }
+      found && /^##/ { exit }
+      found { print }
+    ')
+    if [ -n "$(echo "$content" | tr -d '[:space:]')" ]; then
+      echo "$content"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# _dor_is_placeholder <text> [summary] — true (exit 0) when <text> is blank,
+# a bare TBD/TODO/N/A/none marker, consists only of unfilled `{...}`
+# template token(s), or (when a summary is given) is a near-restatement of
+# it (token Jaccard >= 0.8 — same tokenizer approach as
+# audit-title-similarity.sh).
+_dor_is_placeholder() {
+  local text="$1" summary="${2:-}"
+  local trimmed
+  trimmed=$(echo "$text" | tr -d '[:space:]')
+  [ -z "$trimmed" ] && return 0
+
+  local stripped
+  stripped=$(echo "$text" | grep -viP '^\s*(TBD|TODO|N/?A|none)\s*$' | tr -d '[:space:]')
+  [ -z "$stripped" ] && return 0
+
+  # Unfilled template token: every non-blank line is a bare {...} — no
+  # actual prose remains once brace-only lines are dropped.
+  local no_braces
+  no_braces=$(echo "$text" | grep -vP '^\s*\{[^}]*\}\s*$' | tr -d '[:space:]')
+  [ -z "$no_braces" ] && return 0
+
+  if [ -n "$summary" ]; then
+    local set1 set2 intersection union score
+    set1=$(echo "$text" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9[:space:]]//g' | tr -s '[:space:]' '\n' | sort -u | grep -v '^$')
+    set2=$(echo "$summary" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9[:space:]]//g' | tr -s '[:space:]' '\n' | sort -u | grep -v '^$')
+    if [ -n "$set1" ] && [ -n "$set2" ]; then
+      intersection=$(comm -12 <(echo "$set1") <(echo "$set2") | wc -l)
+      union=$(comm <(echo "$set1") <(echo "$set2") | wc -l)
+      if [ "$union" -gt 0 ] 2>/dev/null; then
+        score=$(awk -v i="$intersection" -v u="$union" 'BEGIN { printf "%.2f", i / u }')
+        if awk -v s="$score" 'BEGIN { exit !(s >= 0.8) }'; then
+          return 0
+        fi
+      fi
+    fi
+  fi
+
+  return 1
+}
+
+# _dor_ac_lines <body> — Acceptance Criteria section lines, normalised
+# (lowercase, collapsed whitespace, bullet/checkbox/number stripped) and
+# deduplicated (task 4.1). Falls back to the whole body when no `##
+# Acceptance Criteria` heading is found (mirrors _has_section_ac's loose
+# checkbox-anywhere fallback). Shared by every AC-derived signal: AC_VAGUE,
+# AC_IMPLEMENTATION_ONLY, VERIFICATION_REQUIRED_NOT_SELF_VERIFYING,
+# VPLAN_MISSING's satisfied-by-AC rule, and the score/gaps computation.
+_dor_ac_lines() {
+  local body="$1" section
+  section=$(echo "$body" | awk '/^##[[:space:]]*Acceptance Criteria/ {found=1; next} found && /^##/ {exit} found {print}')
+  [ -n "$(echo "$section" | tr -d '[:space:]')" ] || section="$body"
+  echo "$section" |
+    grep -E '^[[:space:]]*(-[[:space:]]*\[[ xX]\]|-|\*|[0-9]+[.)])[[:space:]]+\S' |
+    sed -E 's/^[[:space:]]*(-[[:space:]]*\[[ xX]\]|-|\*|[0-9]+[.)])[[:space:]]*//' |
+    tr '[:upper:]' '[:lower:]' |
+    sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' |
+    awk '!seen[$0]++ && length($0) > 0'
+}
+
+# Per-line classifiers (task 4.2/design.md Decision 2/4).
+_dor_ac_is_impl() {
+  echo "$1" | grep -qiP "$_DOR_IMPL_VERB_RE" 2>/dev/null
+}
+_dor_ac_is_outcome() {
+  echo "$1" | grep -qiP "$_DOR_OUTCOME_RE" 2>/dev/null
+}
+_dor_ac_is_self_verifying() {
+  echo "$1" | grep -qiP "$_DOR_SELFVERIFY_RE" 2>/dev/null
+}
+_dor_ac_is_edge_case() {
+  echo "$1" | grep -qiP "$_DOR_EDGE_RE" 2>/dev/null
 }
 
 # _dor_ac_count <body> — approximate acceptance-criteria row count, used only
@@ -227,6 +396,205 @@ _dor_resolve_body() {
   echo "$body"
 }
 
+# _dor_body_hash <text> — echoes "sha256:<hex>", or empty if neither
+# sha256sum nor shasum is available (task 5.4).
+_dor_body_hash() {
+  local text="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "sha256:$(printf '%s' "$text" | sha256sum | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    echo "sha256:$(printf '%s' "$text" | shasum -a 256 | awk '{print $1}')"
+  else
+    echo ""
+  fi
+}
+
+# _dor_score — pure function over check_ticket_ready's own already-computed
+# local variables (design.md Decision 4). Bash's dynamic scoping makes the
+# caller's `local`s visible here without threading two dozen parameters
+# through an explicit signature — this must only ever be called from inside
+# check_ticket_ready, after every dimension input below has been computed.
+# Sets DOR_SCORE (integer) and DOR_DIMENSIONS (JSON object, dimension key ->
+# earned points or null when inapplicable).
+_dor_score() {
+  local -A dims=()
+
+  # acceptance_criteria (20) — 0 if no AC; else mean over unique AC lines of
+  # (not vague * not impl-only).
+  if [ "$ac_count" -eq 0 ]; then
+    dims[acceptance_criteria]="0"
+  else
+    local _sum=0 _idx2
+    for ((_idx2 = 0; _idx2 < ac_count; _idx2++)); do
+      local _ok=1
+      [ "${ac_is_vague[$_idx2]}" = "1" ] && _ok=0
+      if [ "${ac_is_impl[$_idx2]}" = "1" ] && [ "${ac_is_outcome[$_idx2]}" != "1" ]; then
+        _ok=0
+      fi
+      _sum=$((_sum + _ok))
+    done
+    dims[acceptance_criteria]=$(awk -v s="$_sum" -v n="$ac_count" -v w=20 'BEGIN { printf "%.2f", (s / n) * w }')
+  fi
+
+  # verification (18) — 1 if vplan with >=1 verifiable and no row gap; else
+  # self-verifying AC ratio; 0.5 floor if vplan present.
+  if [ "$vplan_found" = "true" ]; then
+    local _vfrac="1"
+    if [ "${VPLAN_VERIFIABLE:-0}" -eq 0 ] 2>/dev/null; then _vfrac="0.5"; fi
+    local _ac_cnt_raw
+    _ac_cnt_raw=$(_dor_ac_count "$body")
+    if [ "$_ac_cnt_raw" -gt 0 ] 2>/dev/null && [ "${VPLAN_ROWS:-0}" -lt "$_ac_cnt_raw" ] 2>/dev/null; then
+      _vfrac="0.5"
+    fi
+    dims[verification]=$(awk -v f="$_vfrac" -v w=18 'BEGIN { printf "%.2f", f * w }')
+  elif [ "$ac_count" -gt 0 ]; then
+    dims[verification]=$(awk -v s="$selfverify_count" -v n="$ac_count" -v w=18 'BEGIN { printf "%.2f", (s / n) * w }')
+  else
+    dims[verification]="0"
+  fi
+
+  # scope (15) — 0 absent; 0.6 present; 1 present + layer column parseable.
+  if [ "$scope_present" != "true" ]; then
+    dims[scope]="0"
+  else
+    local _layers
+    _layers=$(_scope_layers "$body" 2>/dev/null)
+    if [ -n "$_layers" ]; then
+      dims[scope]="15.00"
+    else
+      dims[scope]="9.00"
+    fi
+  fi
+
+  # intent (10) — 0/0.5/1 for neither/one/both of why + outcome.
+  local _intent_frac="0"
+  if [ "$has_why" = "true" ] && [ "$has_outcome" = "true" ]; then
+    _intent_frac="1"
+  elif [ "$has_why" = "true" ] || [ "$has_outcome" = "true" ]; then
+    _intent_frac="0.5"
+  fi
+  dims[intent]=$(awk -v f="$_intent_frac" -v w=10 'BEGIN { printf "%.2f", f * w }')
+
+  # test_uat (10) — inapplicable for backend-only scope; else mean of
+  # test-user present, resolvable-or-catalog-absent, test-data ok.
+  if [ "$backend_only" = "true" ]; then
+    dims[test_uat]=""
+  else
+    local _tu_ok=0 _td_ok=0 _tu_resolve_ok=0
+    [ "$test_user_present" = "true" ] && _tu_ok=1
+    { [ "$test_user_resolved_state" = "resolved" ] || [ "$test_user_resolved_state" = "unevaluated" ]; } && _tu_resolve_ok=1
+    [ "$test_data_state" = "ok" ] && _td_ok=1
+    dims[test_uat]=$(awk -v a="$_tu_ok" -v b="$_tu_resolve_ok" -v c="$_td_ok" -v w=10 'BEGIN { printf "%.2f", ((a + b + c) / 3) * w }')
+  fi
+
+  # context (8) — FE: nav path present; BE: entry point named; + environment
+  # present.
+  local _ctx_frac="0"
+  if [ "$backend_only" = "true" ]; then
+    echo "$body" | grep -qiP "$_DOR_BACKEND_CONTEXT_RE" 2>/dev/null && _ctx_frac="0.6"
+  else
+    [ "$nav_path_present" = "true" ] && _ctx_frac="0.6"
+  fi
+  local _env_present="false"
+  _dor_section_content "$body" environment >/dev/null 2>&1 && _env_present="true"
+  if [ "$_env_present" = "true" ]; then
+    _ctx_frac=$(awk -v f="$_ctx_frac" 'BEGIN { v = f + 0.4; if (v > 1) v = 1; printf "%.2f", v }')
+  fi
+  dims[context]=$(awk -v f="$_ctx_frac" -v w=8 'BEGIN { printf "%.2f", f * w }')
+
+  # completion (5) — 1 if Out of Scope non-placeholder or AC count >= 2;
+  # else 0.5 if AC present.
+  local _oos_content=""
+  _oos_content=$(_dor_section_content "$body" out_of_scope 2>/dev/null) || _oos_content=""
+  if { [ -n "$_oos_content" ] && ! _dor_is_placeholder "$_oos_content"; } || [ "$ac_count" -ge 2 ]; then
+    dims[completion]="5.00"
+  elif [ "$ac_count" -gt 0 ]; then
+    dims[completion]="2.50"
+  else
+    dims[completion]="0"
+  fi
+
+  # dependencies (5) — 1 if Related Tickets/Dependencies non-placeholder or
+  # manifest blocked_by non-empty; 0.5 if section present with "none".
+  local _dep_content="" _blocked_by_nonempty="false"
+  _dep_content=$(_dor_section_content "$body" dependencies 2>/dev/null) || _dep_content=""
+  if [ -n "${tid:-}" ] && declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+    local _bb _bb_len
+    _bb=$(get_ticket_manifest_field "$tid" blocked_by 2>/dev/null)
+    _bb_len=$(echo "$_bb" | jq 'length' 2>/dev/null) || _bb_len=0
+    [ "${_bb_len:-0}" -gt 0 ] 2>/dev/null && _blocked_by_nonempty="true"
+  fi
+  if { [ -n "$_dep_content" ] && ! _dor_is_placeholder "$_dep_content"; } || [ "$_blocked_by_nonempty" = "true" ]; then
+    dims[dependencies]="5.00"
+  elif [ -n "$_dep_content" ]; then
+    dims[dependencies]="2.50"
+  else
+    dims[dependencies]="0"
+  fi
+
+  # constraints (5) — 1 if a Constraints/Non-functional/Performance/Security
+  # section, or an AC with a numeric bound.
+  local _constraints_content=""
+  _constraints_content=$(_dor_section_content "$body" constraints 2>/dev/null) || _constraints_content=""
+  local _has_numeric_bound="false" _idx3
+  for ((_idx3 = 0; _idx3 < ac_count; _idx3++)); do
+    echo "${ac_lines[$_idx3]}" | grep -qP '[0-9]+ ?(ms|s|%|kb|mb)\b' 2>/dev/null && _has_numeric_bound="true"
+  done
+  if { [ -n "$_constraints_content" ] && ! _dor_is_placeholder "$_constraints_content"; } || [ "$_has_numeric_bound" = "true" ]; then
+    dims[constraints]="5.00"
+  else
+    dims[constraints]="0"
+  fi
+
+  # edge_cases (4) — min(1, distinct edge-case AC lines / 2).
+  local _edge_count=0 _idx4
+  for ((_idx4 = 0; _idx4 < ac_count; _idx4++)); do
+    [ "${ac_is_edge[$_idx4]}" = "1" ] && _edge_count=$((_edge_count + 1))
+  done
+  dims[edge_cases]=$(awk -v e="$_edge_count" -v w=4 'BEGIN { f = e / 2; if (f > 1) f = 1; printf "%.2f", f * w }')
+
+  # ── assemble DOR_DIMENSIONS + DOR_SCORE ──────────────────────────────────
+  local dim_json="{}" total_earned="0" total_weight=0 _k
+  for _k in "${DOR_DIMENSION_KEYS[@]}"; do
+    if [ "$_k" = "requirement_completeness" ]; then
+      dim_json=$(jq -c --arg k "$_k" '.[$k] = null' <<<"$dim_json")
+      continue
+    fi
+    local _w="${_DOR_DIMENSION_WEIGHTS[$_k]:-0}"
+    local _v="${dims[$_k]:-}"
+    if [ -z "$_v" ]; then
+      dim_json=$(jq -c --arg k "$_k" '.[$k] = null' <<<"$dim_json")
+      continue
+    fi
+    dim_json=$(jq -c --arg k "$_k" --argjson v "$_v" '.[$k] = $v' <<<"$dim_json")
+    total_earned=$(awk -v t="$total_earned" -v v="$_v" 'BEGIN { printf "%.4f", t + v }')
+    total_weight=$((total_weight + _w))
+  done
+
+  DOR_DIMENSIONS="$dim_json"
+  if [ "$total_weight" -gt 0 ]; then
+    DOR_SCORE=$(awk -v e="$total_earned" -v t="$total_weight" 'BEGIN { printf "%.0f", (e / t) * 100 }')
+  else
+    DOR_SCORE=0
+  fi
+}
+
+# _dor_gaps — derives DOR_GAPS from already-computed caller locals plus the
+# just-computed DOR_DIMENSIONS (design.md Decision 5). Must run after
+# _dor_score.
+_dor_gaps() {
+  local -a gaps=()
+  [ "$ac_count" -gt 0 ] && gaps+=("requirement_completeness")
+  [ "$ac_count" -ge 2 ] && gaps+=("contradictory_requirements")
+  [ "$scope_present" = "true" ] && gaps+=("deep_scope_ambiguity")
+  local _edge_frac
+  _edge_frac=$(echo "$DOR_DIMENSIONS" | jq -r '.edge_cases // 0' 2>/dev/null)
+  if awk -v f="${_edge_frac:-0}" 'BEGIN { exit !(f > 0) }'; then
+    gaps+=("edge_case_sufficiency")
+  fi
+  DOR_GAPS=$(_dor_json_array "${gaps[@]}")
+}
+
 # ── Public API ────────────────────────────────────────────────────────────
 
 # check_ticket_ready <TID> [--body <file>] [--type <type>] [--catalog <file>]
@@ -261,6 +629,10 @@ check_ticket_ready() {
   DOR_MISSING="[]"
   DOR_ADVISORY="[]"
   DOR_CHECKS="{}"
+  DOR_SCORE=""
+  DOR_DIMENSIONS="{}"
+  DOR_GAPS="[]"
+  DOR_BODY_HASH=""
 
   local type body
   type=$(_dor_resolve_type "$tid" "$type_override")
@@ -271,9 +643,13 @@ check_ticket_ready() {
     return 2
   fi
 
+  DOR_BODY_HASH=$(_dor_body_hash "$body")
+
   local missing=() advisory=()
   local strict_catalog="${DOR_STRICT_CATALOG:-false}"
   local strict_test_data="${DOR_STRICT_TEST_DATA:-false}"
+  local strict_ac_impl="${DOR_STRICT_AC_IMPL:-false}"
+  local strict_verification="${DOR_STRICT_VERIFICATION:-false}"
 
   # ── Scope + structural hard codes ────────────────────────────────────────
   local backend_only="false"
@@ -281,7 +657,9 @@ check_ticket_ready() {
     backend_only="true"
   fi
 
+  local scope_present="false"
   if _has_section_scope "$body"; then
+    scope_present="true"
     _dor_record "SCOPE_MISSING" "false" "hard" "Scope table present"
   else
     missing+=("SCOPE_MISSING")
@@ -295,11 +673,13 @@ check_ticket_ready() {
     _dor_record "AC_MISSING" "true" "hard" "no Acceptance Criteria found"
   fi
 
+  local test_user_present="false" nav_path_present="false"
   if [ "$backend_only" = "true" ]; then
     _dor_record "TEST_USER_MISSING" "null" "inapplicable" "backend-only scope"
     _dor_record "NAV_PATH_MISSING" "null" "inapplicable" "backend-only scope"
   else
     if _has_section_test_user "$body"; then
+      test_user_present="true"
       _dor_record "TEST_USER_MISSING" "false" "hard" "Test User section present"
     else
       missing+=("TEST_USER_MISSING")
@@ -307,6 +687,7 @@ check_ticket_ready() {
     fi
 
     if _has_section_nav_path "$body"; then
+      nav_path_present="true"
       _dor_record "NAV_PATH_MISSING" "false" "hard" "Navigation Path present"
     else
       missing+=("NAV_PATH_MISSING")
@@ -325,15 +706,168 @@ check_ticket_ready() {
     _dor_record "REPRO_MISSING" "null" "inapplicable" "type=$type, not a bug"
   fi
 
-  # AC_VAGUE — audit_ac_testability also echoes its VAGUE_AC_COUNT/... to
-  # stdout as a side effect (its own established output contract); redirect
-  # that away so it never pollutes this function's caller.
-  audit_ac_testability "$body" >/dev/null 2>&1 || true
-  if [ "${VAGUE_AC_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+  # ── INTENT_MISSING (design.md Decision 1) ────────────────────────────────
+  local summary_content why_content outcome_content has_why="false" has_outcome="false"
+  summary_content=$(_dor_section_content "$body" summary) || summary_content=""
+  if [ "$type" = "bug" ]; then
+    why_content=$(_dor_section_content "$body" actual) || why_content=""
+    outcome_content=$(_dor_section_content "$body" expected) || outcome_content=""
+  else
+    why_content=$(_dor_section_content "$body" why) || why_content=""
+    outcome_content=$(_dor_section_content "$body" outcome) || outcome_content=""
+  fi
+  if [ -n "$why_content" ] && ! _dor_is_placeholder "$why_content" "$summary_content"; then
+    has_why="true"
+  fi
+  if [ -n "$outcome_content" ] && ! _dor_is_placeholder "$outcome_content" "$summary_content"; then
+    has_outcome="true"
+  fi
+
+  if [ "$has_why" = "true" ] && [ "$has_outcome" = "true" ]; then
+    _dor_record "INTENT_MISSING" "false" "hard" "why and outcome both present"
+  else
+    missing+=("INTENT_MISSING")
+    _dor_record "INTENT_MISSING" "true" "hard" "missing intent (why=$has_why outcome=$has_outcome)"
+  fi
+
+  # ── REPRO_NO_EXPECTED_ACTUAL (bug only, independent of REPRO_MISSING) ────
+  if [ "$type" = "bug" ]; then
+    local expected_content actual_content
+    expected_content=$(_dor_section_content "$body" expected) || expected_content=""
+    actual_content=$(_dor_section_content "$body" actual) || actual_content=""
+    if [ -n "$expected_content" ] && ! _dor_is_placeholder "$expected_content" "$summary_content" &&
+      [ -n "$actual_content" ] && ! _dor_is_placeholder "$actual_content" "$summary_content"; then
+      _dor_record "REPRO_NO_EXPECTED_ACTUAL" "false" "hard" "expected and actual behaviour both present"
+    else
+      missing+=("REPRO_NO_EXPECTED_ACTUAL")
+      _dor_record "REPRO_NO_EXPECTED_ACTUAL" "true" "hard" "missing expected/actual behaviour"
+    fi
+  else
+    _dor_record "REPRO_NO_EXPECTED_ACTUAL" "null" "inapplicable" "type=$type, not a bug"
+  fi
+
+  # ── AC line derivation (single canonical extraction + per-line
+  # classification, task 4.1/4.2 — reused by AC_VAGUE, AC_IMPLEMENTATION_ONLY,
+  # VERIFICATION_REQUIRED_NOT_SELF_VERIFYING, VPLAN_MISSING's satisfied-by-AC
+  # rule, and the score/gaps computation) ──────────────────────────────────
+  local -a ac_lines=()
+  local _al
+  while IFS= read -r _al; do
+    [ -n "$_al" ] && ac_lines+=("$_al")
+  done < <(_dor_ac_lines "$body")
+  local ac_count=${#ac_lines[@]}
+
+  local -a ac_is_vague=() ac_is_impl=() ac_is_outcome=() ac_is_selfverify=() ac_is_edge=()
+  local _idx
+  for ((_idx = 0; _idx < ac_count; _idx++)); do
+    _al="${ac_lines[$_idx]}"
+    audit_ac_testability "$_al" >/dev/null 2>&1 || true
+    if [ "${VAGUE_AC_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+      ac_is_vague+=("1")
+    elif echo "$_al" | grep -qiP "$_DOR_VAGUE_WIDENED_RE" 2>/dev/null && ! _dor_ac_is_self_verifying "$_al"; then
+      ac_is_vague+=("1")
+    else
+      ac_is_vague+=("0")
+    fi
+    _dor_ac_is_impl "$_al" && ac_is_impl+=("1") || ac_is_impl+=("0")
+    _dor_ac_is_outcome "$_al" && ac_is_outcome+=("1") || ac_is_outcome+=("0")
+    _dor_ac_is_self_verifying "$_al" && ac_is_selfverify+=("1") || ac_is_selfverify+=("0")
+    _dor_ac_is_edge_case "$_al" && ac_is_edge+=("1") || ac_is_edge+=("0")
+  done
+
+  # ── AC_VAGUE — original audit_ac_testability patterns (per line) plus the
+  # DoR-only widened pass (design.md Decision 3), merged into one code
+  # (task 4.3). audit-ac-testability.sh itself is never modified. ─────────
+  local vague_count=0 vague_lines_list=""
+  for ((_idx = 0; _idx < ac_count; _idx++)); do
+    if [ "${ac_is_vague[$_idx]}" = "1" ]; then
+      vague_count=$((vague_count + 1))
+      vague_lines_list="${vague_lines_list}${vague_lines_list:+|}${ac_lines[$_idx]:0:80}"
+    fi
+  done
+  if [ "$vague_count" -gt 0 ]; then
     missing+=("AC_VAGUE")
-    _dor_record "AC_VAGUE" "true" "hard" "${VAGUE_AC_COUNT} vague acceptance criteria: ${VAGUE_ACS}"
+    _dor_record "AC_VAGUE" "true" "hard" "${vague_count} vague acceptance criteria: ${vague_lines_list}"
   else
     _dor_record "AC_VAGUE" "false" "hard" "no vague acceptance criteria detected"
+  fi
+
+  # ── AC_IMPLEMENTATION_ONLY (task 4.4, design.md Decision 2) ──────────────
+  local impl_only_count=0
+  for ((_idx = 0; _idx < ac_count; _idx++)); do
+    if [ "${ac_is_impl[$_idx]}" = "1" ] && [ "${ac_is_outcome[$_idx]}" != "1" ]; then
+      impl_only_count=$((impl_only_count + 1))
+    fi
+  done
+  local ac_impl_class="advisory"
+  [ "$strict_ac_impl" = "true" ] && ac_impl_class="hard"
+  if [ "$ac_count" -gt 0 ] && [ "$impl_only_count" -eq "$ac_count" ]; then
+    _dor_record "AC_IMPLEMENTATION_ONLY" "true" "$ac_impl_class" "all ${ac_count} acceptance criteria are implementation-only"
+    if [ "$strict_ac_impl" = "true" ]; then
+      missing+=("AC_IMPLEMENTATION_ONLY")
+    else
+      advisory+=("AC_IMPLEMENTATION_ONLY")
+    fi
+  else
+    _dor_record "AC_IMPLEMENTATION_ONLY" "false" "$ac_impl_class" "at least one outcome-bearing acceptance criterion, or no acceptance criteria"
+  fi
+
+  # ── VERIFICATION_REQUIRED_NOT_SELF_VERIFYING + VPLAN_* (task 4.5/4.6) ────
+  local selfverify_count=0
+  for ((_idx = 0; _idx < ac_count; _idx++)); do
+    [ "${ac_is_selfverify[$_idx]}" = "1" ] && selfverify_count=$((selfverify_count + 1))
+  done
+
+  local vplan_found="false"
+  if declare -f vplan_parse >/dev/null 2>&1 && vplan_parse "$body" 2>/dev/null; then
+    vplan_found="true"
+  fi
+
+  local satisfied_by_ac="false"
+  if [ "$vplan_found" != "true" ] && [ "$ac_count" -gt 0 ] && [ $((selfverify_count * 2)) -ge "$ac_count" ]; then
+    satisfied_by_ac="true"
+  fi
+
+  local verification_class="advisory"
+  [ "$strict_verification" = "true" ] && verification_class="hard"
+  if [ "$vplan_found" != "true" ] && [ "$selfverify_count" -eq 0 ]; then
+    _dor_record "VERIFICATION_REQUIRED_NOT_SELF_VERIFYING" "true" "$verification_class" "no Verification Plan and no self-verifying acceptance criteria"
+    if [ "$strict_verification" = "true" ]; then
+      missing+=("VERIFICATION_REQUIRED_NOT_SELF_VERIFYING")
+    else
+      advisory+=("VERIFICATION_REQUIRED_NOT_SELF_VERIFYING")
+    fi
+  else
+    _dor_record "VERIFICATION_REQUIRED_NOT_SELF_VERIFYING" "false" "$verification_class" "Verification Plan present, or acceptance criteria are self-verifying"
+  fi
+
+  if [ "$vplan_found" = "true" ]; then
+    _dor_record "VPLAN_MISSING" "false" "advisory" "Verification Plan table present"
+
+    if [ "${VPLAN_VERIFIABLE:-0}" -eq 0 ] 2>/dev/null; then
+      advisory+=("VPLAN_UNVERIFIABLE")
+      _dor_record "VPLAN_UNVERIFIABLE" "true" "advisory" "no criteria marked verifiable in the table"
+    else
+      _dor_record "VPLAN_UNVERIFIABLE" "false" "advisory" "${VPLAN_VERIFIABLE} criteria marked verifiable"
+    fi
+
+    local ac_count_raw
+    ac_count_raw=$(_dor_ac_count "$body")
+    if [ "$ac_count_raw" -gt 0 ] 2>/dev/null && [ "${VPLAN_ROWS:-0}" -lt "$ac_count_raw" ] 2>/dev/null; then
+      advisory+=("VPLAN_ROW_GAP")
+      _dor_record "VPLAN_ROW_GAP" "true" "advisory" "${VPLAN_ROWS} table rows vs ${ac_count_raw} acceptance criteria"
+    else
+      _dor_record "VPLAN_ROW_GAP" "false" "advisory" "table rows cover acceptance criteria count"
+    fi
+  elif [ "$satisfied_by_ac" = "true" ]; then
+    _dor_record "VPLAN_MISSING" "null" "satisfied-by-ac" "no Verification Plan table, but ${selfverify_count}/${ac_count} acceptance criteria are self-verifying"
+    _dor_record "VPLAN_ROW_GAP" "null" "inapplicable" "VPLAN_MISSING satisfied by self-verifying AC"
+    _dor_record "VPLAN_UNVERIFIABLE" "null" "inapplicable" "VPLAN_MISSING satisfied by self-verifying AC"
+  else
+    advisory+=("VPLAN_MISSING")
+    _dor_record "VPLAN_MISSING" "true" "advisory" "no Verification Plan table found"
+    _dor_record "VPLAN_ROW_GAP" "null" "inapplicable" "VPLAN_MISSING already covers this"
+    _dor_record "VPLAN_UNVERIFIABLE" "null" "inapplicable" "VPLAN_MISSING already covers this"
   fi
 
   # FLAG_NEEDS_INFO — reported here for completeness (design.md Decision 3:
@@ -360,16 +894,20 @@ check_ticket_ready() {
 
   local test_user_class="advisory"
   [ "$strict_catalog" = "true" ] && test_user_class="hard"
+  local test_user_resolved_state="inapplicable"
 
   if [ "$backend_only" != "true" ] && _has_section_test_user "$body"; then
     if [ -z "$catalog_path" ]; then
       _dor_record "CATALOG_ABSENT" "true" "informational" "no test-user catalog resolved on this host"
       _dor_record "TEST_USER_UNRESOLVED" "null" "unevaluated" "CATALOG_ABSENT"
+      test_user_resolved_state="unevaluated"
     else
       if _dor_test_user_resolves "$body" "$catalog_path"; then
         _dor_record "TEST_USER_UNRESOLVED" "false" "$test_user_class" "test user resolves against catalog"
+        test_user_resolved_state="resolved"
       else
         _dor_record "TEST_USER_UNRESOLVED" "true" "$test_user_class" "test user does not resolve against catalog"
+        test_user_resolved_state="unresolved"
         if [ "$strict_catalog" = "true" ]; then
           missing+=("TEST_USER_UNRESOLVED")
         else
@@ -412,34 +950,14 @@ check_ticket_ready() {
     ;;
   esac
 
-  # VPLAN_MISSING / VPLAN_ROW_GAP / VPLAN_UNVERIFIABLE
-  if declare -f vplan_parse >/dev/null 2>&1 && vplan_parse "$body" 2>/dev/null; then
-    _dor_record "VPLAN_MISSING" "false" "advisory" "Verification Plan table present"
-
-    if [ "${VPLAN_VERIFIABLE:-0}" -eq 0 ] 2>/dev/null; then
-      advisory+=("VPLAN_UNVERIFIABLE")
-      _dor_record "VPLAN_UNVERIFIABLE" "true" "advisory" "no criteria marked verifiable in the table"
-    else
-      _dor_record "VPLAN_UNVERIFIABLE" "false" "advisory" "${VPLAN_VERIFIABLE} criteria marked verifiable"
-    fi
-
-    local ac_count
-    ac_count=$(_dor_ac_count "$body")
-    if [ "$ac_count" -gt 0 ] 2>/dev/null && [ "${VPLAN_ROWS:-0}" -lt "$ac_count" ] 2>/dev/null; then
-      advisory+=("VPLAN_ROW_GAP")
-      _dor_record "VPLAN_ROW_GAP" "true" "advisory" "${VPLAN_ROWS} table rows vs ${ac_count} acceptance criteria"
-    else
-      _dor_record "VPLAN_ROW_GAP" "false" "advisory" "table rows cover acceptance criteria count"
-    fi
-  else
-    advisory+=("VPLAN_MISSING")
-    _dor_record "VPLAN_MISSING" "true" "advisory" "no Verification Plan table found"
-    _dor_record "VPLAN_ROW_GAP" "null" "inapplicable" "VPLAN_MISSING already covers this"
-    _dor_record "VPLAN_UNVERIFIABLE" "null" "inapplicable" "VPLAN_MISSING already covers this"
-  fi
-
   DOR_MISSING=$(_dor_json_array "${missing[@]}")
   DOR_ADVISORY=$(_dor_json_array "${advisory[@]}")
+
+  # ── Diagnostic score, dimensions, gaps (dor-quality-score) — computed
+  # after every hard/advisory code so the score never influences DOR_STATUS
+  # below, only reflects it. ────────────────────────────────────────────────
+  _dor_score
+  _dor_gaps
 
   if [ "${#missing[@]}" -eq 0 ]; then
     DOR_STATUS="ready"
@@ -451,10 +969,12 @@ check_ticket_ready() {
 
 # ensure_ticket_readiness <TID> [--body <file>] [--type <type>]
 # The self-healing resolution path (design.md Decision 3). Trusts and
-# returns a cached `ready` object verbatim; computes and caches a live
-# verdict when none exists yet. Only a concrete ready/not-ready verdict is
-# ever cached — an `unavailable` live result (no body resolvable) is
-# returned as-is without writing, since set_ticket_readiness only accepts
+# returns a cached `ready` object when it is still fresh; computes and
+# caches a live verdict when none exists yet, or when the cached object's
+# body_hash no longer matches a locally-resolvable body (dor-quality-score
+# design.md Decision 7). Only a concrete ready/not-ready verdict is ever
+# cached — an `unavailable` live result (no body resolvable) is returned
+# as-is without writing, since set_ticket_readiness only accepts
 # ready|not-ready and a transient "no body yet" state deserves another
 # attempt later, not a frozen cache entry.
 ensure_ticket_readiness() {
@@ -478,14 +998,79 @@ ensure_ticket_readiness() {
   DOR_STATUS="unavailable"
   DOR_MISSING="[]"
   DOR_ADVISORY="[]"
+  DOR_SCORE=""
+  DOR_DIMENSIONS=""
+  DOR_GAPS=""
 
   local ready_json rc=0
   ready_json=$(get_ticket_manifest_field "$tid" ready 2>/dev/null) || rc=$?
 
   if [ "$rc" -eq 0 ] && [ -n "$ready_json" ]; then
+    # Local-only body resolution (Decision 7) — --body file, then planner
+    # body.md; NEVER a live tracker fetch on a cache hit (that would add a
+    # Linear read to every fleet dispatch tick).
+    local local_body="" local_body_path="" pdir=""
+    if [ -n "$body_file" ] && [ -f "$body_file" ]; then
+      local_body=$(cat "$body_file" 2>/dev/null || true)
+      local_body_path="$body_file"
+    elif declare -f resolve_planner_dir >/dev/null 2>&1; then
+      pdir=$(resolve_planner_dir "$tid" 2>/dev/null) || true
+      if [ -n "$pdir" ] && [ -f "$pdir/body.md" ]; then
+        local_body=$(cat "$pdir/body.md" 2>/dev/null || true)
+        local_body_path="$pdir/body.md"
+      fi
+    fi
+
+    local cached_hash
+    cached_hash=$(echo "$ready_json" | jq -r '.body_hash // ""' 2>/dev/null) || cached_hash=""
+
+    local recompute="false"
+    if [ -n "$local_body" ] && [ -n "$cached_hash" ]; then
+      local fresh_hash
+      fresh_hash=$(_dor_body_hash "$local_body")
+      if [ -n "$fresh_hash" ] && [ "$fresh_hash" != "$cached_hash" ]; then
+        recompute="true"
+      fi
+    fi
+
+    if [ "$recompute" = "true" ]; then
+      local extra_args=(--body "$local_body_path" --no-fetch)
+      [ -n "$type_override" ] && extra_args+=(--type "$type_override")
+
+      local check_rc=0
+      check_ticket_ready "$tid" "${extra_args[@]}" || check_rc=$?
+
+      case "$DOR_STATUS" in
+      ready | not-ready)
+        local extras
+        extras=$(jq -nc --argjson score "${DOR_SCORE:-null}" --argjson dims "${DOR_DIMENSIONS:-null}" \
+          --argjson gaps "${DOR_GAPS:-null}" --arg hash "${DOR_BODY_HASH:-}" \
+          '{score: $score, dimensions: $dims, gaps: $gaps} + (if $hash != "" then {body_hash: $hash} else {} end)')
+        set_ticket_readiness "$tid" "$DOR_STATUS" "$DOR_MISSING" "$DOR_ADVISORY" "$extras" >/dev/null 2>&1 || true
+        # set_ticket_readiness recomputes `status` against the manifest's
+        # preserved `ready.waived` — a status this function's own caller
+        # never sees unless it re-reads the write. Without this, a waiver
+        # covering the only fresh failure would write status:"ready" to the
+        # manifest while this call still reported/returned not-ready.
+        local rewritten
+        rewritten=$(get_ticket_manifest_field "$tid" ready 2>/dev/null)
+        if [ -n "$rewritten" ]; then
+          DOR_STATUS=$(echo "$rewritten" | jq -r '.status // "unavailable"' 2>/dev/null) || true
+          [ "$DOR_STATUS" = "ready" ] && check_rc=0 || check_rc=1
+        fi
+        ;;
+      esac
+      return "$check_rc"
+    fi
+
+    # No local body, hash matches, or legacy cache with no hash — trust the
+    # cached verdict as-is.
     DOR_STATUS=$(echo "$ready_json" | jq -r '.status // "unavailable"' 2>/dev/null) || DOR_STATUS="unavailable"
     DOR_MISSING=$(echo "$ready_json" | jq -c '.missing // []' 2>/dev/null) || DOR_MISSING="[]"
     DOR_ADVISORY=$(echo "$ready_json" | jq -c '.advisory // []' 2>/dev/null) || DOR_ADVISORY="[]"
+    DOR_SCORE=$(echo "$ready_json" | jq -r 'if has("score") then (.score | tostring) else empty end' 2>/dev/null) || DOR_SCORE=""
+    DOR_DIMENSIONS=$(echo "$ready_json" | jq -c 'if has("dimensions") then .dimensions else empty end' 2>/dev/null) || DOR_DIMENSIONS=""
+    DOR_GAPS=$(echo "$ready_json" | jq -c 'if has("gaps") then .gaps else empty end' 2>/dev/null) || DOR_GAPS=""
     [ "$DOR_STATUS" = "ready" ] && return 0
     return 1
   fi
@@ -504,7 +1089,11 @@ ensure_ticket_readiness() {
 
   case "$DOR_STATUS" in
   ready | not-ready)
-    set_ticket_readiness "$tid" "$DOR_STATUS" "$DOR_MISSING" "$DOR_ADVISORY" >/dev/null 2>&1 || true
+    local extras
+    extras=$(jq -nc --argjson score "${DOR_SCORE:-null}" --argjson dims "${DOR_DIMENSIONS:-null}" \
+      --argjson gaps "${DOR_GAPS:-null}" --arg hash "${DOR_BODY_HASH:-}" \
+      '{score: $score, dimensions: $dims, gaps: $gaps} + (if $hash != "" then {body_hash: $hash} else {} end)')
+    set_ticket_readiness "$tid" "$DOR_STATUS" "$DOR_MISSING" "$DOR_ADVISORY" "$extras" >/dev/null 2>&1 || true
     ;;
   esac
 

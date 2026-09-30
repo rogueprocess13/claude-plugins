@@ -38,6 +38,14 @@ _cleanup_test_tmpdirs() {
 trap _cleanup_test_tmpdirs EXIT
 
 source "$LIB_DIR/fleet-notify.sh"
+# manifest-write.sh (dor-quality-score task 8.8) — write capability for
+# seeding a cached ready.score/ready.gaps in the score/gaps tests below.
+# fleet-notify.sh itself only ever reads (manifest-read.sh).
+if ! declare -f write_ticket_manifest >/dev/null 2>&1; then
+  for _TFN_TAP_LIB in "$LIB_DIR/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+    [ -f "$_TFN_TAP_LIB/manifest-write.sh" ] && source "$_TFN_TAP_LIB/manifest-write.sh" && break
+  done
+fi
 
 # ── stub curl ────────────────────────────────────────────────────────────────
 # Installs a fake `curl` ahead of the real one on PATH. Reads FAKE_CURL_MODE
@@ -644,6 +652,32 @@ test_readiness_unknown_reason_rejected() {
   [ "$rc" -eq 1 ] && [[ "$out" == *"unknown reason"* ]]
 }
 
+# ── score/gaps reporting (dor-quality-score task 8.8) — reported only ──────
+
+test_readiness_message_includes_score_and_gaps_when_cached() {
+  local state_dir bindir capture repos_root
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  repos_root=$(_mktemp_test_dir)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "TST-59" "INIT-1" "feature" '[]'
+  REPOS_ROOT="$repos_root" set_ticket_readiness "TST-59" "not-ready" '["AC_VAGUE"]' '[]' \
+    '{"score": 41, "gaps": ["requirement_completeness", "deep_scope_ambiguity"]}'
+  REPOS_ROOT="$repos_root" SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-59" "$state_dir" "stale" >/dev/null 2>&1
+  grep -q "score: 41" "$capture" && grep -q "requirement_completeness,deep_scope_ambiguity" "$capture"
+}
+
+test_readiness_message_has_no_score_when_uncached() {
+  local state_dir bindir capture
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-60" "$state_dir" "stale" >/dev/null 2>&1
+  ! grep -q "score:" "$capture"
+}
+
 # ── dispatch ─────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -693,6 +727,8 @@ for fn in \
   test_readiness_failed_send_is_retried_on_a_later_pass \
   test_readiness_no_slack_config_degrades_to_log_line_and_succeeds \
   test_readiness_blocking_sibling_sends_notification \
+  test_readiness_message_includes_score_and_gaps_when_cached \
+  test_readiness_message_has_no_score_when_uncached \
   test_readiness_unknown_reason_rejected; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"

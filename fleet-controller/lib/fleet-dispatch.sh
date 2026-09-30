@@ -678,9 +678,11 @@ _fleet_dispatch_initiative_locked() {
     # the very next dispatch pass. Counted distinctly from blocked_count so a
     # fleet idling on readiness is visibly different from one idling on
     # dependencies.
-    local _mc_readiness_rc=0 _mc_flags_blocked=false
+    local _mc_readiness_rc=0 _mc_flags_blocked=false _mc_score="" _mc_gaps=""
     if declare -f ensure_ticket_readiness >/dev/null 2>&1; then
       ensure_ticket_readiness "$child_id" >/dev/null 2>&1 || _mc_readiness_rc=$?
+      _mc_score="${DOR_SCORE:-}"
+      _mc_gaps="${DOR_GAPS:-}"
     fi
     if declare -f ticket_dispatch_blocked_by_flags >/dev/null 2>&1 &&
       ticket_dispatch_blocked_by_flags "$child_id" 2>/dev/null; then
@@ -688,7 +690,17 @@ _fleet_dispatch_initiative_locked() {
     fi
     if [ "$_mc_readiness_rc" != "0" ] || [ "$_mc_flags_blocked" = "true" ]; then
       not_ready_count=$((not_ready_count + 1))
-      echo "  not-ready ${child_id} (readiness_rc=${_mc_readiness_rc} needs_info=${_mc_flags_blocked})"
+      # dor-quality-score task 7.1: score/gaps are reported only — nothing
+      # here branches on them. Omitted entirely when the readiness computation
+      # never ran (e.g. dor-check.sh unavailable) or reported no score.
+      local _mc_summary_extra=""
+      if [ -n "$_mc_score" ]; then
+        _mc_summary_extra=" score=${_mc_score}"
+        if [ -n "$_mc_gaps" ] && [ "$_mc_gaps" != "[]" ] && [ "$_mc_gaps" != "null" ]; then
+          _mc_summary_extra="${_mc_summary_extra} gaps=$(echo "$_mc_gaps" | jq -r 'join(",")' 2>/dev/null)"
+        fi
+      fi
+      echo "  not-ready ${child_id} (readiness_rc=${_mc_readiness_rc} needs_info=${_mc_flags_blocked})${_mc_summary_extra}"
       continue
     fi
 

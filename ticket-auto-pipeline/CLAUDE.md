@@ -167,7 +167,7 @@ Both new hooks deliberately avoid two payload assumptions the observed `SessionS
 | `template-select.sh` | `resolve_template <type>`. Deterministic type-to-template resolver. Maps `bug`/`feature`/`improvement`/`security`/`chore`/`refactor` (alias → improvement). Exit 3 on unknown/empty type — no silent fallback. Pure bash, zero LLM. |
 | `planner-artifacts.sh` | `resolve_planner_dir <TID>`, `has_planner_body <TID>`, `has_planner_proposal <TID>`. Resolves `$REPOS_ROOT/.ticket-auto/initiatives/{INIT}/tickets/{TID}/planner/` from the Planner Context block's Initiative field. Exit 0 present, 1 dir missing, 2 no Initiative. |
 | `planned-ticket-body-check.sh` | `check_planned_body <TID> <type>`. Validates ticket body has all required sections per type (universal: AC, Test User, Scope; bug: +Repro Steps, Test Data; feature/improvement: +Nav Path). Sets `BODY_CHECK_MISSING` and `BODY_CHECK_EXIT_CODE`. Plane body.md preferred over Linear description. |
-| `dor-check.sh` | `check_ticket_ready <TID> [--body <file>] [--type <type>] [--catalog <file>] [--no-fetch]` (Definition-of-Ready readiness check, dor-readiness-gate-foundation — evaluates a ticket's body alone, no tracker mutation, no model invocation. Sets `DOR_STATUS` (`ready`\|`not-ready`\|`unavailable`), `DOR_MISSING`/`DOR_ADVISORY` (JSON arrays of failing hard/advisory codes), `DOR_CHECKS` (per-code JSON detail). Exit 0 ready, 1 not-ready, 2 unavailable. Hard codes: `SCOPE_MISSING`, `NAV_PATH_MISSING`, `TEST_USER_MISSING`, `AC_MISSING`, `AC_VAGUE`, `REPRO_MISSING`, `FLAG_NEEDS_INFO`. Advisory codes: `TEST_USER_UNRESOLVED`, `TEST_DATA_MISSING`, `TEST_DATA_UNSEEDED`, `VPLAN_MISSING`, `VPLAN_ROW_GAP`, `VPLAN_UNVERIFIABLE` — `DOR_STRICT_CATALOG`/`DOR_STRICT_TEST_DATA` (both default `false`) promote the catalog/test-data advisory codes to hard, per-host, no code change), `ensure_ticket_readiness <TID> [--body <file>] [--type <type>]` (design.md Decision 3 — the single resolution path every consumer should use instead of a raw manifest read: returns the manifest's cached `ready` verdict if present, otherwise computes live and caches it via `set_ticket_readiness` before returning). CLI: `dor-check.sh --waive <TID> <CODE> <reason> [--by <name>]` — the minimal operator escape hatch for a hard-code false positive; only writer of `ready.waived`, via `waive_ticket_readiness_code`. Sources `vplan-parse.sh`/`manifest-read.sh`/`manifest-write.sh`/`audit-ac-testability.sh`/`audit-test-data-check.sh` with the declare-guard convention; deliberately does NOT source `notes-parse.sh` or `linear-api.sh` (both set `set -eo pipefail` at file scope, which this file's own callers — `gate-check.sh`, `fleet-dispatch.sh` — must not have perturbed), so their functions and the live-fetch tier are used only when a caller has already sourced them itself. |
+| `dor-check.sh` | `check_ticket_ready <TID> [--body <file>] [--type <type>] [--catalog <file>] [--no-fetch]` (Definition-of-Ready readiness check, dor-readiness-gate-foundation, extended by dor-quality-score — evaluates a ticket's body alone, no tracker mutation, no model invocation. Sets `DOR_STATUS` (`ready`\|`not-ready`\|`unavailable`), `DOR_MISSING`/`DOR_ADVISORY` (JSON arrays of failing hard/advisory codes), `DOR_CHECKS` (per-code JSON detail), `DOR_SCORE` (0-100 diagnostic `dor_quality_score`, never part of the ready/not-ready decision), `DOR_DIMENSIONS` (per-dimension earned points or `null`), `DOR_GAPS` (`semantic_coverage_gaps`), `DOR_BODY_HASH`. Exit 0 ready, 1 not-ready, 2 unavailable. Hard codes: `SCOPE_MISSING`, `NAV_PATH_MISSING`, `TEST_USER_MISSING`, `AC_MISSING`, `AC_VAGUE` (widened with a DoR-only vague-term pass), `REPRO_MISSING`, `FLAG_NEEDS_INFO`, `INTENT_MISSING`, `REPRO_NO_EXPECTED_ACTUAL` (bug only, independent of `REPRO_MISSING`). Advisory codes: `TEST_USER_UNRESOLVED`, `TEST_DATA_MISSING`, `TEST_DATA_UNSEEDED`, `VPLAN_MISSING` (recorded `satisfied-by-ac`, not advisory, when ≥ half of unique AC lines are self-verifying), `VPLAN_ROW_GAP`, `VPLAN_UNVERIFIABLE`, `AC_IMPLEMENTATION_ONLY`, `VERIFICATION_REQUIRED_NOT_SELF_VERIFYING` — `DOR_STRICT_CATALOG`/`DOR_STRICT_TEST_DATA`/`DOR_STRICT_AC_IMPL`/`DOR_STRICT_VERIFICATION` (all default `false`) promote the catalog/test-data/impl-only/verification advisory codes to hard, per-host, no code change), `ensure_ticket_readiness <TID> [--body <file>] [--type <type>]` (design.md Decision 3 — the single resolution path every consumer should use instead of a raw manifest read: returns the manifest's cached `ready` verdict if present and still fresh, otherwise computes live and caches it via `set_ticket_readiness` before returning; body-hash cache invalidation against local-only body sources per dor-quality-score design.md Decision 7 — see [docs/dor-readiness.md](docs/dor-readiness.md)). CLI: `dor-check.sh --waive <TID> <CODE> <reason> [--by <name>]` — the minimal operator escape hatch for a hard-code false positive; only writer of `ready.waived`, via `waive_ticket_readiness_code`. Sources `vplan-parse.sh`/`manifest-read.sh`/`manifest-write.sh`/`audit-ac-testability.sh`/`audit-test-data-check.sh` with the declare-guard convention; deliberately does NOT source `notes-parse.sh` or `linear-api.sh` (both set `set -eo pipefail` at file scope, which this file's own callers — `gate-check.sh`, `fleet-dispatch.sh` — must not have perturbed), so their functions and the live-fetch tier are used only when a caller has already sourced them itself. The `dor_quality_score`/`DOR_DIMENSIONS`/`DOR_GAPS` are diagnostic only — no consumer in this repository branches on them; see [docs/dor-readiness.md](docs/dor-readiness.md) for the full dimension weight table and the semantic-evaluator seam (`ready.semantic`, `SEMANTIC_<DIMENSION>`). |
 | `vplan-parse.sh` | `vplan_parse <text>` (reads stdin when no argument given). The one `### Per-Criterion Verification` table parser shared by `gate-check.sh` Check 2.6 and `dor-check.sh` (design.md Decision 5 — a second independent parser would let the two disagree about what "a complete row" means, on a channel that gates work). Sets `VPLAN_ROWS` (row count, by a `\|`-prefix rule that excludes the header/separator rows — a malformed row with wrong cell count or blank cells still counts, since it's evidence a criterion was attempted) and `VPLAN_VERIFIABLE` (count of ✓/Y matches, a verbatim extraction of Check 2.6's pre-existing `grep -ciP '[✓Y]'`). Exit 0 both a `## Verification Plan` section and a non-empty per-criterion subsection were found (`VPLAN_ROWS` may still be 0 with no data rows); non-zero otherwise. Does NOT set `set -eo pipefail` at file scope, written without the leak from the start (unlike `audit-ac-testability.sh`/`audit-test-data-check.sh` before task 4.5's fix). |
 | `appraise-exec-planned.sh` | `adopt_planner_proposal <TID> <change-name> [log-file]`. Adopts planner-authored proposal.md into openspec/changes/ for planned tickets. Exit 0 adopted, 1 no proposal (run /opsx:propose), 2 copy error. Extracted from SKILL.md inline bash — deterministic, zero LLM. |
 
@@ -243,7 +243,7 @@ Four labels are still genuinely projected onto Linear, but by the board driver, 
 reflecting pipeline state for a human looking at the Linear UI. See
 [label-audit.md](docs/label-audit.md) for the full disposition and evidence trail.
 
-### Readiness manifest field (`ready`, dor-readiness-gate-foundation)
+### Readiness manifest field (`ready`, dor-readiness-gate-foundation, extended by dor-quality-score)
 
 A ticket manifest gains a `ready` object once `dor-check.sh`'s `ensure_ticket_readiness` or
 `set_ticket_readiness` has touched it (never a required field — an unscanned ticket simply has no
@@ -255,7 +255,11 @@ A ticket manifest gains a `ready` object once `dor-check.sh`'s `ensure_ticket_re
   "checked_at": "2026-09-27T00:00:00Z",
   "missing": ["SCOPE_MISSING", ...],
   "advisory": ["TEST_DATA_MISSING", ...],
-  "waived": {"AC_VAGUE": {"by": "jwillard", "reason": "..."}}
+  "waived": {"AC_VAGUE": {"by": "jwillard", "reason": "..."}},
+  "score": 72,
+  "dimensions": {"intent": 10, "scope": 15, "test_uat": null, "...": "..."},
+  "gaps": ["requirement_completeness", "deep_scope_ambiguity"],
+  "body_hash": "sha256:ab12..."
 }
 ```
 
@@ -264,6 +268,16 @@ A ticket manifest gains a `ready` object once `dor-check.sh`'s `ensure_ticket_re
 writer of `waived`) re-derives it again from the manifest's own current `missing` so a waiver can
 never be silently clobbered by a concurrent re-scan or vice versa. Both writers share the same
 per-manifest readiness lock.
+
+`score`/`dimensions`/`gaps`/`body_hash` (dor-quality-score) are all optional — a manifest predating
+that change, or a legacy-backfill waiver, simply has no `score` key. They are written via
+`set_ticket_readiness`'s optional 5th `extras_json` argument (an object restricted to those four
+keys; any other key is rejected with exit 3), and are **diagnostic only**: no consumer in this
+repository branches on them, and `ensure_ticket_readiness`'s body-hash cache invalidation
+(`body_hash` differs from the resolved body's hash → recompute) never touches `status`, `missing`,
+or `advisory`'s own decision logic. See [docs/dor-readiness.md](docs/dor-readiness.md) for the full
+dimension/gap vocabulary and the semantic-evaluator seam this field's shape reserves
+(`ready.semantic`).
 
 **The `_adhoc` discriminator**: `flow.sh`'s `_ensure_manifest` stamps a manifest with initiative
 `_adhoc` onto *every* non-epic trigger, planned or not (tracker-approval-by-script) — so manifest

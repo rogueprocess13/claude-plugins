@@ -16,6 +16,17 @@
 
 _NOTIFY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# manifest-read.sh (dor-quality-score task 7.2) — read-only, for
+# fleet_notify_readiness's score/gaps lookup below. Same two-candidate
+# guard-source convention as every other cross-plugin dependency in this
+# plugin (see fleet-dispatch.sh). Absence degrades to no score/gaps in the
+# message, never a failure.
+if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+  for _NOTIFY_TAP_LIB in "$_NOTIFY_DIR/../../ticket-auto-pipeline/lib" "$HOME/.claude/skills/lib"; do
+    [ -f "$_NOTIFY_TAP_LIB/manifest-read.sh" ] && source "$_NOTIFY_TAP_LIB/manifest-read.sh" && break
+  done
+fi
+
 # Masks a secret to presence + last 4 chars, matching fleet-env-check.sh's
 # convention — never echo a bare token into logs.
 _notify_mask() {
@@ -433,14 +444,30 @@ print(d.get(sys.argv[2], ''))
     return 0
   fi
 
+  # dor-quality-score task 7.2: score/gaps are reported only — this
+  # notifier never decides anything from them, it just reads whatever is
+  # already cached on the manifest (never a live computation) and appends
+  # it to the message when present.
+  local _fnr_extra=""
+  if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+    local _fnr_score _fnr_gaps
+    _fnr_score=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r '.score // empty' 2>/dev/null) || _fnr_score=""
+    _fnr_gaps=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r '(.gaps // []) | join(",")' 2>/dev/null) || _fnr_gaps=""
+    if [ -n "$_fnr_score" ]; then
+      _fnr_extra="
+score: ${_fnr_score}"
+      [ -n "$_fnr_gaps" ] && _fnr_extra="${_fnr_extra} | gaps: ${_fnr_gaps}"
+    fi
+  fi
+
   local text
   case "$reason" in
   stale)
-    text=$(printf ':hourglass_flowing_sand: *%s* has been not-ready for over %sh\n\nCheck what it is missing with `dor-check.sh %s`, or waive a code with `dor-check.sh --waive %s <CODE> <reason>`.' \
-      "$tid" "${FLEET_READY_STALE_HOURS:-48}" "$tid" "$tid")
+    text=$(printf ':hourglass_flowing_sand: *%s* has been not-ready for over %sh%s\n\nCheck what it is missing with `dor-check.sh %s`, or waive a code with `dor-check.sh --waive %s <CODE> <reason>`.' \
+      "$tid" "${FLEET_READY_STALE_HOURS:-48}" "$_fnr_extra" "$tid" "$tid")
     ;;
   blocking-sibling)
-    text=$(printf ':link: *%s* is not-ready and is blocking a dependent ticket\n\nResolve its readiness (or waive the blocking code) to unblock downstream work.' "$tid")
+    text=$(printf ':link: *%s* is not-ready and is blocking a dependent ticket%s\n\nResolve its readiness (or waive the blocking code) to unblock downstream work.' "$tid" "$_fnr_extra")
     ;;
   esac
 

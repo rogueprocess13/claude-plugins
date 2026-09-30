@@ -869,20 +869,29 @@ be fleet-dispatched or run via `/ticket-auto` while not-ready; missing Scope / N
 caught before any worker is spent; legacy tickets are waived and keep running; ad-hoc tickets are
 untouched.
 
-- [ ] 1. `dor-readiness-gate-foundation` — propose, apply, PR. Mandatory `manifest-backfill.sh`
-      run per host afterwards (CHANGELOG note, same class as 0.57.0's).
-      In progress on `main`, uncommitted: Sections 1 (pre-work), 2 (manifest `ready` field +
-      locked writers + waiver CLI plumbing), 3 (shared `vplan-parse.sh`), 4 (`lib/dor-check.sh`
-      itself — `check_ticket_ready`/`ensure_ticket_readiness`/`--waive`), and 5 (planned-vs-ad-hoc
-      discriminator fix — gate-check Check 2.7, `planned-feedback-write.sh`,
-      `planned-ticket-check.sh` all switched from bare `ticket_manifest_exists` to `ticket_is_planned`)
-      and 6 (gate-check Check 2.7e entry-gate refusal + the first `needs-info-resolved` caller in
-      `/ticket-approve`) are done per `openspec/changes/dor-readiness-gate-foundation/tasks.md`.
-      Remaining: 7 (fleet-dispatch/fleet-detect consumers), 8 (backfill), 9 (`exit-path.sh` readiness
-      class), 10 (docs/CHANGELOG).
-- [ ] 2. `planner-phase-count-derivation` — propose, apply, PR.
-- [ ] 3. `planner-readiness-phase` — propose, apply, PR.
-- [ ] 4. Live: one planned epic on a user project through Readiness → dispatch → gate, plus an
+- [x] 1. `dor-readiness-gate-foundation` — propose, apply, PR. Merged 2026-09-30 via **PR #425**
+      (`ticket-auto-pipeline`/`fleet-controller` version-bumped). Mandatory `manifest-backfill.sh`
+      run per host afterwards (CHANGELOG note, same class as 0.57.0's) still outstanding per-host.
+- [ ] 1b. `dor-quality-score` — propose, apply, PR. Adds `INTENT_MISSING`/`REPRO_NO_EXPECTED_ACTUAL`
+      hard codes, `AC_IMPLEMENTATION_ONLY`/`VERIFICATION_REQUIRED_NOT_SELF_VERIFYING` advisory codes
+      (strict-promotable), a widened `AC_VAGUE` pass, the diagnostic `dor_quality_score` (0-100,
+      never gates), `semantic_coverage_gaps`, body-hash cache invalidation, and the shared dimension
+      vocabulary a future semantic evaluator (JEV) writes against. Implemented on
+      `feat/dor-quality-score` 2026-09-30 per `openspec/changes/dor-quality-score/tasks.md` (all 10
+      sections) — 18 adversarial fixtures + 1 padding fixture, `lib/dor-check.sh` rewritten,
+      `manifest-write.sh`'s `set_ticket_readiness` extras arg, `run-summary.sh`/`fleet-dispatch.sh`/
+      `fleet-notify.sh` report-only consumers, full test suite green.
+- [ ] 2. `planner-phase-count-derivation` — apply, PR (proposed 2026-09-30, validated). Mechanical
+      prep: phase count/index derived from `planner_phase_sequence`, no behaviour change.
+- [ ] 2b. `dor-semantic-evaluator` — apply, PR (proposed 2026-09-30, validated). LLM semantic DoR
+      pass contract in ticket-auto-pipeline: scan + audit agents (`dor-semantic-agent`), block parser,
+      `set_ticket_semantic`, `SEMANTIC_*` blocking codes (block from day one, per-host relax via
+      `DOR_SEMANTIC_ADVISORY_CODES`). Plan: `~/.claude/plans/gentle-doodling-truffle.md`.
+- [ ] 3. `planner-refinement-phase` — apply, PR (proposed 2026-09-30, validated). **Supersedes
+      `planner-readiness-phase`.** New planner phase Refinement between TicketGen and Completed: per
+      ticket deterministic DoR → LLM scan → LLM audit → per-ticket blocking; epic stamped `dispatch=true`
+      there. Answers/enablers/body rewrite from the old Readiness design stay deferred.
+- [ ] 4. Live: one planned epic on a user project through Refinement → dispatch → gate, plus an
       ad-hoc ticket confirming 2.7 is untouched. Roll into the consolidated live-verification pass.
 - [ ] 5. `planner-ready-by-construction`, `readiness-feedback-loop` — after 4 is clean.
 
