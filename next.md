@@ -869,17 +869,18 @@ be fleet-dispatched or run via `/ticket-auto` while not-ready; missing Scope / N
 caught before any worker is spent; legacy tickets are waived and keep running; ad-hoc tickets are
 untouched.
 
-- [ ] 1. `dor-readiness-gate-foundation` — propose, apply, PR. Mandatory `manifest-backfill.sh`
-      run per host afterwards (CHANGELOG note, same class as 0.57.0's).
-      In progress on `main`, uncommitted: Sections 1 (pre-work), 2 (manifest `ready` field +
-      locked writers + waiver CLI plumbing), 3 (shared `vplan-parse.sh`), 4 (`lib/dor-check.sh`
-      itself — `check_ticket_ready`/`ensure_ticket_readiness`/`--waive`), and 5 (planned-vs-ad-hoc
-      discriminator fix — gate-check Check 2.7, `planned-feedback-write.sh`,
-      `planned-ticket-check.sh` all switched from bare `ticket_manifest_exists` to `ticket_is_planned`)
-      and 6 (gate-check Check 2.7e entry-gate refusal + the first `needs-info-resolved` caller in
-      `/ticket-approve`) are done per `openspec/changes/dor-readiness-gate-foundation/tasks.md`.
-      Remaining: 7 (fleet-dispatch/fleet-detect consumers), 8 (backfill), 9 (`exit-path.sh` readiness
-      class), 10 (docs/CHANGELOG).
+- [x] 1. `dor-readiness-gate-foundation` — propose, apply, PR. Merged 2026-09-30 via **PR #425**
+      (`ticket-auto-pipeline`/`fleet-controller` version-bumped). Mandatory `manifest-backfill.sh`
+      run per host afterwards (CHANGELOG note, same class as 0.57.0's) still outstanding per-host.
+- [ ] 1b. `dor-quality-score` — propose, apply, PR. Adds `INTENT_MISSING`/`REPRO_NO_EXPECTED_ACTUAL`
+      hard codes, `AC_IMPLEMENTATION_ONLY`/`VERIFICATION_REQUIRED_NOT_SELF_VERIFYING` advisory codes
+      (strict-promotable), a widened `AC_VAGUE` pass, the diagnostic `dor_quality_score` (0-100,
+      never gates), `semantic_coverage_gaps`, body-hash cache invalidation, and the shared dimension
+      vocabulary a future semantic evaluator (JEV) writes against. Implemented on
+      `feat/dor-quality-score` 2026-09-30 per `openspec/changes/dor-quality-score/tasks.md` (all 10
+      sections) — 18 adversarial fixtures + 1 padding fixture, `lib/dor-check.sh` rewritten,
+      `manifest-write.sh`'s `set_ticket_readiness` extras arg, `run-summary.sh`/`fleet-dispatch.sh`/
+      `fleet-notify.sh` report-only consumers, full test suite green.
 - [ ] 2. `planner-phase-count-derivation` — propose, apply, PR.
 - [ ] 3. `planner-readiness-phase` — propose, apply, PR.
 - [ ] 4. Live: one planned epic on a user project through Readiness → dispatch → gate, plus an

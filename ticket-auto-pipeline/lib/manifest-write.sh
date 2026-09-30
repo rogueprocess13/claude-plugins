@@ -536,7 +536,7 @@ _manifest_readiness_unlock() {
   exec 200>&- 2>/dev/null || true
 }
 
-# set_ticket_readiness <TID> <status|ready|not-ready> <missing_json> <advisory_json>
+# set_ticket_readiness <TID> <status|ready|not-ready> <missing_json> <advisory_json> [<extras_json>]
 # Writes a freshly computed readiness verdict (ticket-local-manifest spec).
 # Deliberately takes no `waived` argument: it always reads the manifest's
 # current `ready.waived` (defaulting to `{}` if absent), writes it back
@@ -551,8 +551,16 @@ _manifest_readiness_unlock() {
 # under the readiness lock with waive_ticket_readiness_code so the two
 # writers cannot lose one another's update. No-op (exit 1) if no manifest
 # exists yet — callers call ensure_ticket_manifest first.
+#
+# `extras_json` (dor-quality-score design.md Decision 8) is optional and, when
+# given, MUST be a JSON object whose keys are limited to `score`, `dimensions`,
+# `gaps`, `body_hash` — any other key is rejected with exit 3 and the manifest
+# is left untouched. Extras omitted from the call are absent from the written
+# `ready` object, so a fresh verdict never carries a previous verdict's score
+# or hash. A 4-arg call (no extras) writes exactly the pre-existing fields,
+# unchanged.
 set_ticket_readiness() {
-  local tid="$1" status="$2" missing="${3:-[]}" advisory="${4:-[]}"
+  local tid="$1" status="$2" missing="${3:-[]}" advisory="${4:-[]}" extras="${5:-}"
   case "$status" in
   ready | not-ready) ;;
   *)
@@ -568,6 +576,20 @@ set_ticket_readiness() {
     echo "manifest-write: advisory must be a JSON array, got '$advisory'" >&2
     return 3
   fi
+  if [ -n "$extras" ]; then
+    if ! echo "$extras" | jq -e 'type == "object"' >/dev/null 2>&1; then
+      echo "manifest-write: extras must be a JSON object, got '$extras'" >&2
+      return 3
+    fi
+    local _bad_keys
+    _bad_keys=$(echo "$extras" | jq -r '[keys[] | select(. as $k | ["score","dimensions","gaps","body_hash"] | index($k) == null)] | join(",")' 2>/dev/null)
+    if [ -n "$_bad_keys" ]; then
+      echo "manifest-write: extras contains unknown key(s) '$_bad_keys' (allowed: score, dimensions, gaps, body_hash)" >&2
+      return 3
+    fi
+  else
+    extras='{}'
+  fi
 
   local manifest_path
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
@@ -582,11 +604,12 @@ set_ticket_readiness() {
   local content write_rc
   content=$(jq -c \
     --argjson missing "$missing" --argjson advisory "$advisory" --argjson waived "$waived" \
+    --argjson extras "$extras" \
     --arg checked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '.ready = {
+    '.ready = ({
        status: (if ($missing - ($waived | keys)) == [] then "ready" else "not-ready" end),
        checked_at: $checked_at, missing: $missing, advisory: $advisory, waived: $waived
-     }' \
+     } + $extras)' \
     "$manifest_path") || {
     _manifest_readiness_unlock
     return 1

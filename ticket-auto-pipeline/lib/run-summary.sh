@@ -19,6 +19,9 @@ fi
 if ! declare -f run_identity_current >/dev/null 2>&1; then
   [ -f "$_RS_LIB_DIR/run-identity.sh" ] && source "$_RS_LIB_DIR/run-identity.sh"
 fi
+if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+  [ -f "$_RS_LIB_DIR/manifest-read.sh" ] && source "$_RS_LIB_DIR/manifest-read.sh"
+fi
 
 # ── run_summary_window ───────────────────────────────────────────────────────
 # Prints the lines from the last META|run-id line (inclusive) to EOF. Falls
@@ -197,6 +200,21 @@ run_summary_json() {
   complexity=$(grep '|META|complexity|info|' "$log_file" 2>/dev/null | tail -1 | _rs_field5) || true
   autonomy=$(grep '|META|autonomy|info|' "$log_file" 2>/dev/null | tail -1 | _rs_field5) || true
 
+  # ── dor_quality_score (dor-quality-score, task 7.3) — read from the
+  # ticket manifest's ready.score, when a manifest and manifest-read.sh are
+  # both addressable. Never derived from the log; a ticket with no cached
+  # score reports null, not 0. Fail-soft: any missing dependency (no
+  # REPOS_ROOT, no manifest-read.sh, no manifest, no ready object) leaves it
+  # null.
+  local dor_quality_score="null"
+  if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+    local _dqs_raw
+    _dqs_raw=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r '.score // empty' 2>/dev/null) || _dqs_raw=""
+    if [[ "$_dqs_raw" =~ ^-?[0-9]+$ ]]; then
+      dor_quality_score="$_dqs_raw"
+    fi
+  fi
+
   # ── human_hold_requested / human_hold_parse_status (human-hold-protocol
   # task 8.1) ────────────────────────────────────────────────────────────
   # Whether THIS run's own window carries a META|human-hold record at all,
@@ -246,6 +264,7 @@ run_summary_json() {
     --argjson phase_elapsed_ms "$phase_elapsed_json" \
     --argjson human_hold_requested "$human_hold_requested" \
     --arg human_hold_parse_status "${human_hold_parse_status:-}" \
+    --argjson dor_quality_score "$dor_quality_score" \
     '{
       kind: "run",
       tid: $tid,
@@ -278,6 +297,7 @@ run_summary_json() {
       phase_elapsed_ms: $phase_elapsed_ms,
       human_hold_requested: $human_hold_requested,
       human_hold_parse_status: (if $human_hold_parse_status == "" then null else $human_hold_parse_status end),
+      dor_quality_score: $dor_quality_score,
       observed_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
     }' 2>/dev/null
 }

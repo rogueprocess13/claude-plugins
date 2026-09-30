@@ -2366,13 +2366,26 @@ _run "dispatch_stamps_ticket_manifest_on_real_enqueue" test_dispatch_stamps_tick
 # Readiness exclusion (dor-readiness-gate-foundation task 7.7)
 # ═══════════════════════════════════════════════════════════════════════════
 
-# A body with every section check_planned_body requires — based on
+# A body with every section check_planned_body (and, since dor-quality-score,
+# INTENT_MISSING/REPRO_NO_EXPECTED_ACTUAL) requires — based on
 # test-gate-check.sh's own Check 2.7e fixture, plus a Reproduction Steps
-# section: _seed_child always writes manifest type "bug" (hardcoded, matching
-# every other fixture in this file), and REPRO_MISSING is a hard code for
-# type=bug — so a live readiness computation (no cached `ready` field)
-# resolves `ready`, not `not-ready`.
-_full_planned_body='## Acceptance Criteria
+# section and Expected/Actual Behaviour: _seed_child always writes manifest
+# type "bug" (hardcoded, matching every other fixture in this file), and
+# REPRO_MISSING/REPRO_NO_EXPECTED_ACTUAL are hard codes for type=bug — so a
+# live readiness computation (no cached `ready` field) resolves `ready`, not
+# `not-ready`.
+_full_planned_body='## Steps to Reproduce
+1. Log in as `admin` (password: `admin`)
+2. Navigate via `Settings > Handovers` — do NOT paste a URL
+3. Click Save with the form in a valid state
+
+## Expected Behaviour
+The handover saves and a confirmation toast appears.
+
+## Actual Behaviour
+The Save button does nothing and no toast appears.
+
+## Acceptance Criteria
 - [ ] Save button works
 - [ ] Error toast appears
 
@@ -2527,6 +2540,80 @@ test_dispatch_needs_info_child_excluded() {
   return 0
 }
 _run "dispatch_needs_info_child_excluded" test_dispatch_needs_info_child_excluded
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Score/gaps reporting (dor-quality-score task 8.8) — reported only, never
+# routed on. A not-ready child's cached score/gaps appear in the summary
+# line; a not-ready child with no cached score changes nothing about the
+# dispatch decision itself (score presence is purely cosmetic on the line).
+# ═══════════════════════════════════════════════════════════════════════════
+
+test_dispatch_not_ready_summary_includes_score_and_gaps() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-scoregaps REPOS_ROOT='$repos_root'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
+    _seed_epic '$repos_root' INIT-42 true CRE-501
+    _seed_child '$repos_root' CRE-501 INIT-42 false '' not-ready
+    manifest_path=\$(get_ticket_manifest_path CRE-501)
+    tmp=\$(jq -c '.ready.score = 41 | .ready.gaps = [\"requirement_completeness\", \"deep_scope_ambiguity\"]' \"\$manifest_path\")
+    echo \"\$tmp\" >\"\$manifest_path\"
+    _mock_epic_no_directive
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q '^  not-ready CRE-501 .*score=41 gaps=requirement_completeness,deep_scope_ambiguity' || {
+    echo "expected CRE-501's not-ready line to report score=41 and its gaps; output: $output" >&2
+    return 1
+  }
+  return 0
+}
+_run "dispatch_not_ready_summary_includes_score_and_gaps" test_dispatch_not_ready_summary_includes_score_and_gaps
+
+test_dispatch_decision_identical_with_and_without_score() {
+  local ws1 ws2 repos_root1 repos_root2 out_with out_without
+  ws1=$(_setup_workspace)
+  repos_root1=$(mktemp -d)
+  out_with=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-withscore REPOS_ROOT='$repos_root1'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
+    _seed_epic '$repos_root1' INIT-42 true CRE-601
+    _seed_child '$repos_root1' CRE-601 INIT-42 false '' not-ready
+    manifest_path=\$(get_ticket_manifest_path CRE-601)
+    tmp=\$(jq -c '.ready.score = 41' \"\$manifest_path\")
+    echo \"\$tmp\" >\"\$manifest_path\"
+    _mock_epic_no_directive
+    fleet_dispatch_initiative 'INIT-42' '$ws1' 2>&1 | tail -1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root1"
+
+  ws2=$(_setup_workspace)
+  repos_root2=$(mktemp -d)
+  out_without=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-withoutscore REPOS_ROOT='$repos_root2'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
+    _seed_epic '$repos_root2' INIT-42 true CRE-601
+    _seed_child '$repos_root2' CRE-601 INIT-42 false '' not-ready
+    _mock_epic_no_directive
+    fleet_dispatch_initiative 'INIT-42' '$ws2' 2>&1 | tail -1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root2"
+
+  [ "$out_with" = "$out_without" ] || {
+    echo "expected the dispatch summary/decision line to be identical with and without a cached score; with='$out_with' without='$out_without'" >&2
+    return 1
+  }
+  return 0
+}
+_run "dispatch_decision_identical_with_and_without_score" test_dispatch_decision_identical_with_and_without_score
 
 echo ""
 echo "=== Results ==="

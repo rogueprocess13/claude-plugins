@@ -17,6 +17,50 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.59.0 (2026-09-30) — also fleet-controller 0.40.0
+
+DoR quality score (`dor-quality-score`). A review of `dor-readiness-gate-foundation`'s design found
+four gaps: a structurally complete ticket could still pass while never saying *why* the work exists
+or what "done" looks like; a bug ticket with reproduction steps but no expected/actual behaviour
+statement passed `REPRO_MISSING`; nothing measured how complete a *ready* ticket's evidence actually
+was, so a barely-passing ticket and an excellent one were indistinguishable; and a cached `ready`
+verdict never went stale, so an edited ticket body kept its old verdict forever.
+
+- **Two new hard codes**: `INTENT_MISSING` (body must state both a *why* and a *desired outcome*,
+  each substantive and not a restatement of the Summary line) and `REPRO_NO_EXPECTED_ACTUAL` (bug
+  tickets — `Expected Behaviour`/`Actual Behaviour` must both be present, independent of
+  `REPRO_MISSING`).
+- **Two new advisory codes**, strict-promotable per host like the existing catalog/test-data pair:
+  `AC_IMPLEMENTATION_ONLY` (`DOR_STRICT_AC_IMPL`, every AC line is implementation activity with no
+  observable outcome) and `VERIFICATION_REQUIRED_NOT_SELF_VERIFYING` (`DOR_STRICT_VERIFICATION`, no
+  Verification Plan and no AC line states a concrete expected value — when at least half the AC lines
+  are self-verifying, `VPLAN_MISSING` is satisfied by them instead of reported advisory).
+- **`AC_VAGUE` widened** with a DoR-only second pass (`appropriate`, `reasonable`, `sufficient`,
+  `robust`, `intuitive`, `seamless`, `gracefully`, `handled`) — `audit-ac-testability.sh` itself is
+  unmodified, so `ticket-audit`'s own vague-AC detection is unaffected.
+- **New diagnostic `dor_quality_score`** (0-100, ten weighted dimensions) plus a per-dimension
+  breakdown and `semantic_coverage_gaps` (`requirement_completeness`, `contradictory_requirements`,
+  `deep_scope_ambiguity`, `edge_case_sufficiency`) — computed from ratios over deduplicated
+  acceptance criteria, immune to documentation volume and repetition. **The score never participates
+  in the ready/not-ready decision** and introduces no threshold; `fleet-dispatch.sh`'s not-ready
+  summary, `fleet_notify_readiness`'s Slack message, and `runs.jsonl`'s `run` event report it, and
+  nothing branches on it. `DOR_DIMENSION_KEYS` is a single shared vocabulary a future semantic
+  evaluator (JEV) will write findings against (`ready.semantic`, reserved but unused by this change).
+- **Body-hash cache invalidation** — the manifest `ready` object now records `body_hash`;
+  `ensure_ticket_readiness` recomputes when a locally-resolvable body's hash differs from the cached
+  one (never a live tracker fetch on a cache hit). A legacy cache with no `body_hash` is still
+  trusted as-is — no retroactive mass re-gating of tickets planned before this change.
+- **`set_ticket_readiness` gains an optional 5th `extras_json` argument** (`score`, `dimensions`,
+  `gaps`, `body_hash` — any other key rejected with exit 3); existing 4-arg callers are unaffected.
+- **18 new adversarial fixture tickets** (plus a padding fixture proving volume doesn't raise the
+  score) under `ticket-auto-pipeline/lib/tests/fixtures/dor/`, replayed read-only against every
+  planner `body.md` on this host before merge to measure the new hard codes' real hit rate.
+- **New [`docs/dor-readiness.md`](ticket-auto-pipeline/docs/dor-readiness.md)** — the full hard/
+  advisory code table, dimension weights, gap vocabulary, and semantic-evaluator seam.
+- Operators: `manifest-backfill.sh`'s readiness pass is unaffected (it stamps legacy tickets `ready`
+  via a waiver, computing no score) — running it again after this release is optional, only useful
+  if you want in-flight tickets to gain a score on their next natural re-scan.
+
 ## 0.58.0 (2026-09-29) — also fleet-controller 0.39.0
 
 Definition of Ready readiness gate (`dor-readiness-gate-foundation`). Planner-cut tickets were

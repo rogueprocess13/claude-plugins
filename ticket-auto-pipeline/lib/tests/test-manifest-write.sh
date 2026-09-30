@@ -332,6 +332,55 @@ set_ticket_readiness "NOPE-READY" "ready" '[]' '[]' 2>/dev/null || rc=$?
 [ "$rc" = "1" ] && _pass "set_ticket_readiness: no-op when no manifest" ||
   _fail "set_ticket_readiness: should no-op when no manifest (got $rc)"
 
+# ── set_ticket_readiness extras (dor-quality-score, task 8.6) ──────────────
+
+write_ticket_manifest "EXTRAS-1" "INIT-1" "bug" '[]'
+set_ticket_readiness "EXTRAS-1" "ready" '[]' '[]' \
+  '{"score": 81, "gaps": ["requirement_completeness"], "body_hash": "sha256:ab12"}'
+extras_json=$(get_ticket_manifest_field "EXTRAS-1" ready)
+[ "$(echo "$extras_json" | jq -r '.score')" = "81" ] && _pass "set_ticket_readiness: extras score recorded" ||
+  _fail "set_ticket_readiness: extras score should be recorded (got $extras_json)"
+[ "$(echo "$extras_json" | jq -c '.gaps')" = '["requirement_completeness"]' ] &&
+  _pass "set_ticket_readiness: extras gaps recorded" ||
+  _fail "set_ticket_readiness: extras gaps should be recorded (got $extras_json)"
+[ "$(echo "$extras_json" | jq -r '.body_hash')" = "sha256:ab12" ] &&
+  _pass "set_ticket_readiness: extras body_hash recorded" ||
+  _fail "set_ticket_readiness: extras body_hash should be recorded (got $extras_json)"
+[ "$(echo "$extras_json" | jq -r 'has("dimensions")')" = "false" ] &&
+  _pass "set_ticket_readiness: an omitted extras key is absent, not null" ||
+  _fail "set_ticket_readiness: an omitted extras key should be absent (got $extras_json)"
+
+rc=0
+set_ticket_readiness "EXTRAS-1" "ready" '[]' '[]' '{"status": "ready"}' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_readiness: unknown extras key rejected with exit 3" ||
+  _fail "set_ticket_readiness: unknown extras key should exit 3 (got $rc)"
+still_has_score=$(get_ticket_manifest_field "EXTRAS-1" ready | jq -r '.score')
+[ "$still_has_score" = "81" ] && _pass "set_ticket_readiness: rejected extras call left the manifest untouched" ||
+  _fail "set_ticket_readiness: manifest should be untouched after a rejected extras call (got score=$still_has_score)"
+
+# A 4-arg call (no extras) carries no score/dimensions/gaps/body_hash.
+write_ticket_manifest "EXTRAS-2" "INIT-1" "bug" '[]'
+set_ticket_readiness "EXTRAS-2" "ready" '[]' '[]'
+no_extras_json=$(get_ticket_manifest_field "EXTRAS-2" ready)
+echo "$no_extras_json" | jq -e '(has("score") | not) and (has("dimensions") | not) and (has("gaps") | not) and (has("body_hash") | not)' >/dev/null &&
+  _pass "set_ticket_readiness: 4-arg call carries no extras fields" ||
+  _fail "set_ticket_readiness: 4-arg call should carry no extras fields (got $no_extras_json)"
+
+# A fresh verdict never carries a stale score from a prior write.
+set_ticket_readiness "EXTRAS-2" "ready" '[]' '[]' '{"score": 50}'
+set_ticket_readiness "EXTRAS-2" "ready" '[]' '[]'
+stale_check=$(get_ticket_manifest_field "EXTRAS-2" ready | jq -r 'has("score")')
+[ "$stale_check" = "false" ] && _pass "set_ticket_readiness: a fresh verdict with no extras drops a prior score" ||
+  _fail "set_ticket_readiness: extras omitted from a call should not survive from a prior write (got has(score)=$stale_check)"
+
+# A waiver on an extras-carrying ticket keeps the score untouched.
+write_ticket_manifest "EXTRAS-3" "INIT-1" "bug" '[]'
+set_ticket_readiness "EXTRAS-3" "not-ready" '["AC_VAGUE"]' '[]' '{"score": 64}'
+waive_ticket_readiness_code "EXTRAS-3" "AC_VAGUE" "operator" "false positive"
+[ "$(get_ticket_manifest_field "EXTRAS-3" ready | jq -r '.score')" = "64" ] &&
+  _pass "waive_ticket_readiness_code: leaves score untouched" ||
+  _fail "waive_ticket_readiness_code: score should be untouched by a waiver (got $(get_ticket_manifest_field "EXTRAS-3" ready))"
+
 add_ticket_blocked_by "READY-1" "BLOCKER-1"
 add_ticket_blocked_by "READY-1" "BLOCKER-1"
 blocked_count=$(get_ticket_manifest_field READY-1 blocked_by | jq 'length')

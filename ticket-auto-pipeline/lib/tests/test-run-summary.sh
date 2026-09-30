@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$LIB_DIR/run-summary.sh"
+source "$LIB_DIR/manifest-write.sh"
 
 PASS=0
 FAIL=0
@@ -400,6 +401,50 @@ EOF
   [ "$count" -eq 0 ]
 }
 
+# ── dor_quality_score (dor-quality-score, task 8.7) ──────────────────────────
+
+test_json_dor_quality_score_present() {
+  _setup
+  export REPOS_ROOT="$_ws/repos-root"
+  write_ticket_manifest "CRE-19" "INIT-1" "feature" '[]'
+  set_ticket_readiness "CRE-19" "ready" '[]' '[]' '{"score": 72}'
+  local log="$_ws/CRE-19-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|META|run-id|info|{"run_id":"CRE-19-a","gen":null,"trigger":"manual","pid":1}
+2026-09-01T00:00:02Z|META|outcome|info|completed: STEP_6
+EOF
+  local json
+  json=$(run_summary_json "CRE-19" "$log" 0)
+  unset REPOS_ROOT
+  _teardown
+  [ "$(echo "$json" | jq -r '.dor_quality_score')" = "72" ] || {
+    echo "expected dor_quality_score=72, got $(echo "$json" | jq -c '.dor_quality_score')"
+    return 1
+  }
+}
+
+test_json_dor_quality_score_null_without_manifest_score() {
+  _setup
+  export REPOS_ROOT="$_ws/repos-root"
+  write_ticket_manifest "CRE-20" "INIT-1" "feature" '[]'
+  set_ticket_readiness "CRE-20" "ready" '[]' '[]'
+  local log="$_ws/CRE-20-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|META|run-id|info|{"run_id":"CRE-20-a","gen":null,"trigger":"manual","pid":1}
+2026-09-01T00:00:02Z|META|outcome|info|completed: STEP_6
+EOF
+  local json
+  json=$(run_summary_json "CRE-20" "$log" 0)
+  unset REPOS_ROOT
+  _teardown
+  [ "$(echo "$json" | jq -r '.dor_quality_score')" = "null" ] || {
+    echo "expected dor_quality_score=null for a manifest with no ready.score, got $(echo "$json" | jq -c '.dor_quality_score')"
+    return 1
+  }
+}
+
 test_json_detect_resume_not_sourced() {
   # run-summary.sh must never source detect-resume.sh (zombie-synthesis
   # side effects). Grep the source, not behaviour — a reliable static check.
@@ -450,6 +495,8 @@ for fn in \
   test_json_detect_resume_not_sourced \
   test_json_versions_carries_skill_fingerprints_verbatim \
   test_json_versions_groupable_by_skill_revision \
+  test_json_dor_quality_score_present \
+  test_json_dor_quality_score_null_without_manifest_score \
   test_runs_append_concurrent_writers_all_valid; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"

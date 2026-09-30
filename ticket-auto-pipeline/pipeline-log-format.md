@@ -508,7 +508,7 @@ Four event kinds, one writer each, folded by consumers on `tid`/`run_id`:
 # run — lib/run-summary.sh's run_summary_json, appended once per run by
 # lib/pipeline-finalize.sh's post-outcome sequence (idempotent: guarded on
 # an existing run event for this run_id).
-{"kind":"run","tid":"CRE-40","run_id":"CRE-40-2026-09-05T18:00:00Z-4821","gen":null,"trigger":"manual","versions":{"ticket_auto":"0.41.0","fleet":null,"cc":"2.1.261","model_default":null},"models":["claude-sonnet-4"],"complexity":"simple","type":"bug","planned":false,"estimate":null,"autonomy":"auto","ticket_created_at":"2026-09-01T00:00:00Z","started_at":"2026-09-05T18:00:00Z","ended_at":"2026-09-05T18:10:00Z","outcome":"completed: STEP_6","exit_code":0,"gate_held_at":null,"resumed_after_hold_ms":null,"verify_attempts":1,"review_iterations":0,"fix_rounds":0,"reconcile_cycles":0,"readiness_stops":0,"gate_stops":[],"pr":{"pr":42,"url":"https://github.com/acme/repo/pull/42","repo":"acme/repo"},"merge_decision":"merged","tokens":{"in":1000,"out":500,"cache":100,"cache_read":80,"cache_write":20},"phase_elapsed_ms":{"VERIFY":5000},"human_hold_requested":false,"human_hold_parse_status":null,"observed_at":"2026-09-05T18:10:01Z"}
+{"kind":"run","tid":"CRE-40","run_id":"CRE-40-2026-09-05T18:00:00Z-4821","gen":null,"trigger":"manual","versions":{"ticket_auto":"0.41.0","fleet":null,"cc":"2.1.261","model_default":null},"models":["claude-sonnet-4"],"complexity":"simple","type":"bug","planned":false,"estimate":null,"autonomy":"auto","ticket_created_at":"2026-09-01T00:00:00Z","started_at":"2026-09-05T18:00:00Z","ended_at":"2026-09-05T18:10:00Z","outcome":"completed: STEP_6","exit_code":0,"gate_held_at":null,"resumed_after_hold_ms":null,"verify_attempts":1,"review_iterations":0,"fix_rounds":0,"reconcile_cycles":0,"readiness_stops":0,"gate_stops":[],"pr":{"pr":42,"url":"https://github.com/acme/repo/pull/42","repo":"acme/repo"},"merge_decision":"merged","tokens":{"in":1000,"out":500,"cache":100,"cache_read":80,"cache_write":20},"phase_elapsed_ms":{"VERIFY":5000},"human_hold_requested":false,"human_hold_parse_status":null,"dor_quality_score":72,"observed_at":"2026-09-05T18:10:01Z"}
 
 # merge — lib/merge-poll.sh, the single merge-truth implementation. One or
 # more per PR as state changes (open → merged/closed/stale/unknown-repo).
@@ -557,6 +557,16 @@ before any further consumer is built on it — how often is `=== HUMAN_HOLD ===`
 actually emitted (task 8.2) — because emission depends on an agent following a
 preamble instruction and no bash gate can observe compliance, the same reason
 `phase-result`'s own emission rate had to be measured rather than assumed.
+
+`dor_quality_score` (dor-quality-score, task 10.3) is the ticket manifest's `ready.score` at the
+moment `run_summary_json` ran — a number (0-100), or `null` when the manifest carries no cached
+score (no readiness scan has run, or the ticket predates dor-quality-score). It is read once from
+the manifest, never derived from the pipeline log, and is scoped to the whole ticket rather than
+the current run window (a manifest's readiness verdict is not per-run). It exists purely for later
+correlation — e.g. does a low `dor_quality_score` at dispatch time predict a higher
+`verify_attempts`/`review_iterations`/`failure_class` — never as an input to any gate or dispatch
+decision; nothing in `run-summary.sh`, `fleet-dispatch.sh`, or `fleet-notify.sh` branches on it. See
+[docs/dor-readiness.md](docs/dor-readiness.md).
 
 No schema change: `runs.jsonl` is created on first append, is independent of
 the pipeline log's own schema version, and this section is purely additive.
