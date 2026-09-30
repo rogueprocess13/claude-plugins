@@ -17,6 +17,64 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.12.0 (2026-09-30)
+
+`planner-refinement-phase`. Planned tickets reached fleet dispatch having passed
+only a structural check (`dor-check.sh`) — it can prove a section exists, not
+whether the acceptance criteria are the *right* ones, whether requirements
+contradict each other, or whether an autonomous agent could build the ticket
+without asking a human. `dor-semantic-evaluator` built that judgement; this
+change runs it where a bad ticket costs least — inside the planner, right
+after tickets are cut and before the epic is released for dispatch. 52% of
+WIL and 22% of CRE tickets previously hit a readiness stop *after* dispatch,
+each wasting 2-4 worker generations.
+
+- New phase **Refinement**, between TicketGen and Completed (now 11 phases,
+  up from 10). Driven by the dispatch loop as bash, like Crosscheck — no
+  phase prompt, not a Linear-write phase. New `lib/planner-refinement.sh`:
+  `planner_epic_id` (the shared EPIC_ID lookup, now also used by TicketGen),
+  `planner_refinement_scan` (deterministic DoR check per child against its
+  local `body.md`, caches the verdict, lists tickets needing a semantic
+  pass), `planner_refinement_prompt scan|audit`, `planner_refinement_apply`
+  (parses + applies both results via `dor-semantic-parse.sh`/
+  `dor_semantic_apply`), `planner_refinement_unavailable`,
+  `planner_refinement_gate` (stamps the epic `dispatch=true` once every
+  child has a verdict — ready or not — and decides whether the planner
+  itself halts), `planner_refinement_report` (the halt report: codes,
+  quoted findings, disputed codes with the exact `dor-check.sh --waive`
+  command), `planner_refinement_refresh_bodies`.
+- Per ticket, Refinement runs the deterministic check, then (unless
+  `PLANNER_REFINEMENT_SEMANTIC=false`) two `dor-semantic-agent` spawns in
+  batches of `PLANNER_REFINEMENT_PARALLEL` (default 4): a scan that never
+  sees the deterministic result, then an audit of it. A result that fails
+  to parse is retried once, then recorded `SEMANTIC_UNAVAILABLE`.
+- Blocking is per ticket, not per epic: the epic is stamped once every child
+  has a verdict, so fleet dispatch can release ready siblings while a held
+  ticket stays held. The planner itself is stricter — it halts at Refinement
+  (no retry-budget consumption, same treatment as a Crosscheck halt) until
+  every child is ready or waived.
+- **BREAKING (planner state log):** TicketGen now writes each ticket's final
+  body to `initiatives/{INIT}/tickets/{TID}/planner/body.md`, no longer
+  stamps the epic manifest's `dispatch` flag, and no longer writes
+  `TicketGen|dispatch-gate|done`. Its only phase-named success line is now
+  `TicketGen|verify|done`; per-ticket generation progress moved to
+  `META|ticketgen|…`. An initiative already carrying the retired
+  `TicketGen|dispatch-gate|done` line (planned before this shipped) skips
+  Refinement entirely on its next `resume`.
+- `resume` reuses every cached verdict whose body hash and evaluator version
+  are unchanged. New `resume <ID> --refresh-bodies` re-reads not-ready
+  tickets from Linear (read-only) before re-evaluating — a one-shot flag,
+  consumed and cleared, never sticky.
+- `lib/planner-doctor.sh` gains a row resolving `dor-check.sh`/
+  `dor-semantic.sh`/`dor-semantic-parse.sh` and reporting whether the
+  `dor-semantic-agent` definition is installed. The unused
+  `planner_dispatch_gate` (superseded by `planner_refinement_gate`) is
+  removed from `planner-ticket-validate.sh`.
+- No ticket-auto-pipeline or fleet-controller code change — both are
+  consumed as-is (the semantic evaluator library/agent, and fleet-dispatch's
+  existing per-ticket readiness refusal, which already treats a `SEMANTIC_*`
+  code in `ready.missing` identically to a deterministic one).
+
 ## ticket-auto-pipeline 0.60.0 / fleet-controller 0.41.0 (2026-09-30)
 
 `dor-semantic-evaluator`. The deterministic DoR check (`dor-check.sh`) proves

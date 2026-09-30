@@ -167,7 +167,7 @@
 
 <header class="app">
   <span class="dot"></span>
-  <h1>ticket-planner · 10-phase pipeline</h1>
+  <h1>ticket-planner · 11-phase pipeline</h1>
   <span class="sub">business idea → planned tickets</span>
 </header>
 
@@ -364,21 +364,42 @@
         <div class="item">Confidence derivation</div>
         <div class="item">planned-ticket-check.sh</div>
         <div class="item">Post-create verification</div>
-        <div class="item">state:execution on epic</div>
       </div>
       <div class="phase-section">
         <div class="phase-section-title">Creates</div>
         <div class="item">Planned tickets in Backlog</div>
+        <div class="item">Per-ticket planner/body.md</div>
       </div>
       <span class="gate-badge bash">Bash gates</span>
     </div>
   </div>
   <div class="arrow"><svg viewBox="0 0 24 24"><polyline points="8,4 18,12 8,20"/></svg></div>
 
-  <!-- Phase 10: Completed -->
-  <div class="phase terminal" onclick="showDetail('completed')">
+  <!-- Phase 10: Refinement -->
+  <div class="phase gate" onclick="showDetail('refinement')">
     <div class="phase-card">
       <div class="phase-num">Phase 10</div>
+      <div class="phase-name">Refinement</div>
+      <div class="phase-role">Per-ticket Definition-of-Ready check + semantic scan/audit; stamps the epic for dispatch</div>
+      <div class="phase-section">
+        <div class="phase-section-title">Checks</div>
+        <div class="item">Deterministic DoR (dor-check.sh)</div>
+        <div class="item">Semantic scan + audit (dor-semantic-agent)</div>
+      </div>
+      <div class="phase-section">
+        <div class="phase-section-title">Gate</div>
+        <div class="item">state:execution on epic — once every child has a verdict</div>
+        <div class="item">Halts while any child is not ready</div>
+      </div>
+      <span class="gate-badge bash">Deterministic bash + 2 agent spawns/ticket</span>
+    </div>
+  </div>
+  <div class="arrow"><svg viewBox="0 0 24 24"><polyline points="8,4 18,12 8,20"/></svg></div>
+
+  <!-- Phase 11: Completed -->
+  <div class="phase terminal" onclick="showDetail('completed')">
+    <div class="phase-card">
+      <div class="phase-num">Phase 11</div>
       <div class="phase-name">Completed</div>
       <div class="phase-role">Terminal — write summary, verify handoff readiness</div>
       <div class="phase-section">
@@ -488,7 +509,7 @@ const DETAILS = {
     ]
   },
   crosscheck: {
-    title: "Crosscheck — Phase 7 of 10",
+    title: "Crosscheck — Phase 7 of 11",
     meta: "runner: planner_crosscheck_run (lib/planner-crosscheck.sh)  ·  no prompt, no agent  ·  gate: blocks EpicGen",
     rows: [
       ["Role", "Deterministic bash — not an agent. Runs the citation/precedent linter (#172) and the cross-ticket propagation linter (#173) against the settled artifacts and the live repo."],
@@ -499,32 +520,46 @@ const DETAILS = {
     ]
   },
   epicgen: {
-    title: "EpicGen — Phase 8 of 10",
+    title: "EpicGen — Phase 8 of 11",
     meta: "prompt: planner_prompt_epicgen  ·  creates: Linear epic  ·  gate: bash idempotency",
     rows: [
       ["Agent role", "Creates the Linear epic that represents this initiative"],
       ["Output", "Linear epic with INIT-{id} label, epic label, linked to initiative. Epic ID recorded in state log and intent file."],
       ["Input", "proposal.md + specs/INDEX.md"],
       ["Gate", "Bash idempotency: planner_record_intent → planner_entity_exists → create → planner_entity_mark_created. Crash-safe — re-running produces exactly one epic."],
-      ["Note", "Does NOT set state:execution. That label is set by TicketGen after all child tickets are created and verified. This prevents fleet-controller from dispatching a partially-created initiative."],
+      ["Note", "Does NOT set state:execution. That flag is set by Refinement's gate, once every child ticket has a readiness verdict (planner-refinement-phase). This prevents fleet-controller from dispatching a partially-created or not-yet-evaluated initiative."],
     ]
   },
   ticketgen: {
-    title: "TicketGen — Phase 9 of 10",
-    meta: "prompt: planner_prompt_ticketgen  ·  creates: Linear tickets  ·  gates: 5 deterministic bash checks",
+    title: "TicketGen — Phase 9 of 11",
+    meta: "prompt: planner_prompt_ticketgen  ·  creates: Linear tickets  ·  gates: 4 deterministic bash checks",
     rows: [
       ["Agent role", "Creates planned child tickets in Linear Backlog with full labels and Planner Context blocks"],
       ["Gate 1", "Dependency acyclicity (tsort via planner_deps_check_acyclic) — cyclic set → zero tickets created"],
       ["Gate 2", "Missing-target detection (planner_deps_validate_targets) — dangling blocked-by → zero tickets created"],
       ["Gate 3", "Confidence derivation (planner_confidence_derive) — deterministic from 5 raw signals, never LLM-computed"],
       ["Gate 4", "Pre-creation validation (planner_validate_ticket → planned-ticket-check.sh) — malformed → skip ticket, report"],
-      ["Gate 5", "Post-creation verification (planner_verify_tickets) — missing labels → fail, state:execution NOT set"],
-      ["Dispatch gate", "After all tickets pass verification: sets state:execution on parent epic → fleet-controller can dispatch"],
-      ["Merge note", "This phase absorbs StoryGen (stories are 1:1 with tickets) and Execution (state:execution is a label operation, not a reasoning phase)."],
+      ["Post-creation", "planner_verify_tickets — missing manifest → TicketGen|verify|fail (retried); success → TicketGen|verify|done, this phase's only phase-named success line (planner-refinement-phase)"],
+      ["Body persistence", "After each successful create (and on an idempotent re-entry), writes the composed description to planner/body.md — the file Refinement evaluates, never a live Linear fetch on a cache hit (planner-refinement-phase)"],
+      ["No longer does", "Does NOT stamp state:execution on the epic and writes no TicketGen|dispatch-gate|... line — that moved to Refinement's gate, conditioned on a readiness verdict rather than ticket existence alone"],
+      ["Merge note", "This phase absorbs StoryGen (stories are 1:1 with tickets). The Execution merge (state:execution as a label operation) has since been un-merged into the new Refinement phase, which conditions the stamp on readiness."],
+    ]
+  },
+  refinement: {
+    title: "Refinement — Phase 10 of 11",
+    meta: "runner: dispatch loop step 1b (lib/planner-refinement.sh)  ·  no prompt, no phase agent — 2 dor-semantic-agent spawns per ticket that needs one  ·  gate: stamps epic, halts the planner",
+    rows: [
+      ["Role", "Deterministic bash — not an agent. For each child: a DoR check (ticket-auto-pipeline's dor-check.sh) against the ticket's local body.md, then (unless PLANNER_REFINEMENT_SEMANTIC=false) a blind dor-semantic-agent scan of the body followed by an audit of the deterministic result."],
+      ["Output", "Each child's ticket manifest gains ready.missing (deterministic + SEMANTIC_* codes) and ready.semantic (findings, quotes, disputed/missed codes). Epic manifest dispatch=true once every child has a verdict."],
+      ["Input", "Each child's planner/body.md (written by TicketGen, or fetched once from Linear if missing) + the deterministic result"],
+      ["Gate", "Epic is stamped once every child has a deterministic-and-semantic verdict, whether ready or not — fleet dispatch then refuses each not-ready child individually. The planner itself is stricter: any not-ready child halts Refinement and the run does not advance to Completed."],
+      ["Halt report", "Per not-ready ticket: deterministic codes, semantic findings with quotes, codes the evaluator thinks were missed, every disputed deterministic code with the exact dor-check.sh --waive command."],
+      ["Resume", "NOT the phase-retry budget — same treatment as a Crosscheck halt. resume re-enters Refinement and reuses every cached verdict whose body hash and evaluator version are unchanged; resume --refresh-bodies re-reads not-ready tickets from Linear first."],
+      ["Legacy", "An initiative whose log already carries the retired TicketGen|dispatch-gate|done line skips Refinement entirely and advances straight to Completed."],
     ]
   },
   completed: {
-    title: "Completed — Phase 10 of 10 (terminal)",
+    title: "Completed — Phase 11 of 11 (terminal)",
     meta: "prompt: planner_prompt_completed  ·  artifact: COMPLETED.md  ·  gate: terminal (no further transitions)",
     rows: [
       ["Agent role", "Writes completion summary and verifies handoff readiness"],

@@ -65,8 +65,13 @@ Each phase has one primary step. Agents may write additional `start`/`done` pair
 
 ### TicketGen
 `validate` — pre-creation dependency and spec validation
-`generate` — create planned child tickets with Planner Context blocks
-`dispatch-gate` — post-creation verification, set `state:execution` on epic
+`create-gate` / `team` — create-gate re-check, team resolution (`fail` only — no `done` line, per-ticket progress is `META|ticketgen|…` below)
+`verify` — post-creation verification (`planner_verify_tickets`). The **only** phase-named line TicketGen ever writes with status `done` — `fail` on a missing manifest, retried. Per-ticket generation progress (start/step/done) moved to `META|ticketgen|…` (planner-refinement-phase) so a verify failure can never hide behind an earlier `generate|done` line the way position derivation's "stop at the first done" rule used to let it. **Retired**: `dispatch-gate` — this phase no longer sets `state:execution` on the epic; see Refinement below
+
+### Refinement
+Not an agent phase — driven by the dispatch loop as bash (`lib/planner-refinement.sh`), like Crosscheck. Writes no `start`/`fail` lines of its own; progress is `META|refinement|…` (see below) and the single terminal line:
+
+`gate` — `done` once every child ticket has a deterministic-and-semantic readiness verdict *and* every one is ready (stamps the epic manifest `dispatch=true`); `skip` when the initiative is legacy (its log already carries the retired `TicketGen|dispatch-gate|done` line) — the epic is still stamped if not already, and the run advances straight to Completed. **A halt writes neither `done` nor `fail`** — only `META|refinement-gate|fail` (see below) — so `planner_phase_fail_count` never counts a halt as a retry, and `planner_position_derive` (which skips `META` lines) keeps returning `Refinement` until every child is ready.
 
 ### Completed
 `summarize` — write completion summary, verify handoff readiness
@@ -84,6 +89,9 @@ Each phase has one primary step. Agents may write additional `start`/`done` pair
 | `replan` | Re-planning event: trigger, feedback runs, drift summary, counts |
 | `crosscheck` | One Crosscheck finding. `fail` = blocking (`{CODE} {message}`, blocks EpicGen — [#176](https://github.com/willard-pro/claude-plugins/issues/176)); `warn` = non-blocking (`info {CODE} {message}`); `accepted` = operator override via `resume <ID> --accept CODE:"reason"` (`{CODE} {reason}` when written at parse time, `{CODE} {message}` when a still-occurring finding is confirmed non-blocking on a later run — [#222](https://github.com/willard-pro/claude-plugins/issues/222)). One entry per finding, written by `planner_crosscheck_run` in `lib/planner-crosscheck.sh` |
 | `adr-gate` | Architecture phase's ADR gate verdict (adr-governance-gate). `fail` = a blocking verdict (`{VERDICT} ADR_ID={id}`, one of `CREATED_PROPOSED`\|`SUPERSEDE_REQUIRED`\|`CONFLICT`) — halts the dispatch loop via `planner_adr_gate_blocked` in `lib/planner-adr-gate.sh`, mirroring the `crosscheck` halt above; the planner has no human-hold infrastructure, so there is no `waiting` status here the way `ticket-auto-pipeline`'s pipeline log has for `human-hold`. `NOT_ARCHITECTURAL`/`GOVERNED` verdicts write nothing here — the phase's own `Architecture\|design\|done` line is sufficient. Written by the Architecture phase agent per `planner-phase-prompts.sh` § 4.5 |
+| `ticketgen` | TicketGen's per-ticket generation progress (planner-refinement-phase) — `start`/`step`/`done`, e.g. "Generating N planned tickets" / "Created TICK-1: \<title\>" / "N tickets created, M skipped, K failed validation". Never a phase-named line — see TicketGen's own `verify` step above for why |
+| `refinement` | Refinement's per-ticket progress and the legacy-skip marker (planner-refinement-phase). `skip\|legacy` when the initiative predates this change; otherwise informational progress as each ticket's deterministic/semantic pass completes. Written by `lib/planner-refinement.sh` |
+| `refinement-gate` | `fail` = at least one child is not ready (`{n} of {m} not ready`), or the epic id could not be resolved from the state log (`no EpicGen EPIC_ID found in state log`) — this is the halt signal `planner_refinement_report` explains in full when the dispatch loop prints it. Never `done` — a clean pass writes the phase-named `Refinement\|gate\|done` line instead (see Refinement above) |
 
 ### Invocation config
 
@@ -101,6 +109,7 @@ time. These are written with status `done` by `planner_config_set` and read back
 | `no-project` | `true` when `--no-project` was passed — a deliberate opt-out from any Linear project, which silences Epic Gen's project gate |
 | `linear-project-id` / `linear-milestone-id` | The UUIDs Epic Gen resolved them to, reused verbatim by Ticket Gen |
 | `branch-override` | `shared` or `no-shared`, from the branch flags |
+| `refresh-bodies` | `true` when `--refresh-bodies` was passed (planner-refinement-phase) — a one-shot action, not a sticky setting: the dispatch loop clears it back to `none` immediately after Refinement consumes it, so a later plain `resume` does not keep re-fetching from Linear |
 
 Config exists as log entries rather than shell variables because the dispatch loop
 spans one process per phase — an `export` at argument-parsing time is gone by the next

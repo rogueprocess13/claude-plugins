@@ -229,7 +229,7 @@ planner_state_init() {
 # point `plan` recorded, so these steps are exempt from duplicate-done suppression.
 
 # Config keys recognised by planner_config_set / planner_config_get.
-PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id linear-project no-project linear-milestone linear-project-id linear-milestone-id branch-override"
+PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id linear-project no-project linear-milestone linear-project-id linear-milestone-id branch-override refresh-bodies"
 
 # Is <step> a config key rather than a progress marker?
 # Usage: _planner_is_config_key <step>
@@ -304,7 +304,7 @@ planner_phase_sequence() {
   local -n _seq="$1"
   _seq=(
     "Appraisal" "Discovery" "Architecture" "Specify" "Review" "Consensus"
-    "Crosscheck" "EpicGen" "TicketGen" "Completed"
+    "Crosscheck" "EpicGen" "TicketGen" "Refinement" "Completed"
   )
 }
 

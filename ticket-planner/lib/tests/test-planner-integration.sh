@@ -72,7 +72,7 @@ test_full_9_phase_run() {
   assert_eq "fresh init starts at Appraisal" "Appraisal" "$pos"
 
   # Simulate each phase completing
-  for phase in "Appraisal" "Discovery" "Architecture" "Specify" "Review" "Consensus" "Crosscheck" "EpicGen" "TicketGen" "Completed"; do
+  for phase in "Appraisal" "Discovery" "Architecture" "Specify" "Review" "Consensus" "Crosscheck" "EpicGen" "TicketGen" "Refinement" "Completed"; do
     planner_state_write "$id" "$phase" "main" "start" "Starting $phase"
     planner_state_write "$id" "$phase" "main" "done" "Completed $phase"
   done
@@ -350,12 +350,18 @@ test_phase_transitions() {
   planner_phase_validate_transition "$id" "Appraisal" "Discovery" && rc=$? || rc=$?
   assert_rc "Appraisal→Discovery valid" 0 "$rc"
 
-  planner_phase_validate_transition "$id" "TicketGen" "Completed" && rc=$? || rc=$?
-  assert_rc "TicketGen→Completed valid" 0 "$rc"
+  planner_phase_validate_transition "$id" "TicketGen" "Refinement" && rc=$? || rc=$?
+  assert_rc "TicketGen→Refinement valid" 0 "$rc"
+
+  planner_phase_validate_transition "$id" "Refinement" "Completed" && rc=$? || rc=$?
+  assert_rc "Refinement→Completed valid" 0 "$rc"
 
   # Invalid skip
   planner_phase_validate_transition "$id" "Appraisal" "Architecture" && rc=$? || rc=$?
   assert_rc "Appraisal→Architecture (skip Discovery) invalid" 1 "$rc"
+
+  planner_phase_validate_transition "$id" "TicketGen" "Completed" && rc=$? || rc=$?
+  assert_rc "TicketGen→Completed (skip Refinement) invalid" 1 "$rc"
 
   # Same phase (resume)
   planner_phase_validate_transition "$id" "Specify" "Specify" && rc=$? || rc=$?

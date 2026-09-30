@@ -177,6 +177,31 @@ else
   fail "after 3 consecutive failures, position returns Discovery" "got '$pos'"
 fi
 
+echo "--- 2f: TicketGen verify|fail leaves position at TicketGen (planner-refinement-phase) ---"
+planner_state_init "INIT-TG-FAIL" "test ticketgen verify failure"
+for _p in Appraisal Discovery Architecture Specify Review Consensus Crosscheck EpicGen; do
+  planner_state_write "INIT-TG-FAIL" "$_p" "run" "done" "ok"
+done
+# Per-ticket generation progress is META now (planner-refinement-phase task
+# 3.4) — it must not read as a phase-named done/skip that would advance
+# position past a failed verify.
+planner_state_write "INIT-TG-FAIL" "META" "ticketgen" "start" "Generating 2 planned tickets"
+planner_state_write "INIT-TG-FAIL" "META" "ticketgen" "step" "Created PRO-1: first ticket"
+planner_state_write "INIT-TG-FAIL" "META" "ticketgen" "done" "2 tickets created, 0 skipped, 0 failed validation"
+planner_state_write "INIT-TG-FAIL" "TicketGen" "verify" "fail" "some tickets missing manifests"
+
+pos=$(planner_position_derive "INIT-TG-FAIL")
+if [ "$pos" = "TicketGen" ]; then
+  pass "after TicketGen|verify|fail, position derivation returns TicketGen (re-run)"
+else
+  fail "after TicketGen|verify|fail, position returns TicketGen" "got '$pos'"
+fi
+if ! planner_phase_is_done "INIT-TG-FAIL" "TicketGen"; then
+  pass "TicketGen is not phase_is_done after a verify failure"
+else
+  fail "TicketGen phase_is_done after verify failure" "returned true"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. Crash-resume (phase started but never terminated)
 # ═══════════════════════════════════════════════════════════════════════════════

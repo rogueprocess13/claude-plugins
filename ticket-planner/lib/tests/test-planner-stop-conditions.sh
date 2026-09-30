@@ -358,10 +358,19 @@ fi
 
 # ── Test 9: the terminal phase is a phase, not a state ─────────────────────────
 #
-# `planner_position_derive` returning "Completed" means phase 10 still has to be
-# dispatched; only the empty string means the initiative is finished. Reading the
-# former as the latter is what left two live initiatives with tickets in Linear
-# and no COMPLETED.md (#226).
+# `planner_position_derive` returning "Completed" means the Completed phase
+# still has to be dispatched; only the empty string means the initiative is
+# finished. Reading the former as the latter is what left two live
+# initiatives with tickets in Linear and no COMPLETED.md (#226).
+#
+# planner-refinement-phase inserted Refinement between TicketGen and
+# Completed, and retired TicketGen's own `dispatch-gate|done` terminal line
+# in favor of `verify|done`. A legacy log (one still ending in the retired
+# `TicketGen|dispatch-gate|done` shape) derives position "Refinement" from
+# pure sequence-walking alone — position derivation has no legacy rule of
+# its own; that rule (`planner_refinement_legacy`) lives one layer up, in the
+# dispatch loop, which writes the `Refinement|gate|skip` line this test adds
+# below before checking that Completed is still pending.
 
 echo "--- Test 9: terminal phase pending vs finished ---"
 
@@ -371,26 +380,34 @@ planner_authorize_create "INIT-TERM" "test"
 for _p in Appraisal Discovery Architecture Specify Review Consensus Crosscheck EpicGen; do
   planner_state_write "INIT-TERM" "$_p" "run" "done" "ok"
 done
-planner_state_write "INIT-TERM" "TicketGen" "dispatch-gate" "done" "3 tickets verified"
+planner_state_write "INIT-TERM" "TicketGen" "verify" "done" "3 tickets verified"
+
+if [ "$(planner_position_derive INIT-TERM)" = "Refinement" ]; then
+  pass "after TicketGen's verify the position is Refinement, not Completed"
+else
+  fail "position after TicketGen|verify|done" "got '$(planner_position_derive INIT-TERM)'"
+fi
+
+planner_state_write "INIT-TERM" "Refinement" "gate" "done" "1 ticket ready, epic stamped dispatch=true"
 
 if [ "$(planner_position_derive INIT-TERM)" = "Completed" ]; then
-  pass "after TicketGen's dispatch-gate the position is Completed, not empty"
+  pass "after Refinement's gate the position is Completed, not empty"
 else
-  fail "position after dispatch-gate" "got '$(planner_position_derive INIT-TERM)'"
+  fail "position after Refinement|gate|done" "got '$(planner_position_derive INIT-TERM)'"
 fi
 
 if planner_terminal_pending "INIT-TERM"; then
   pass "planner_terminal_pending is true while Completed has not run"
 else
-  fail "planner_terminal_pending after TicketGen" "reported not pending"
+  fail "planner_terminal_pending after Refinement" "reported not pending"
 fi
 
 # Nothing gates Completed — it writes only to disk, so an authorized run with no
-# --until must not stop between TicketGen and it.
-if planner_should_stop_after "INIT-TERM" "TicketGen"; then
-  fail "an authorized run continues into Completed" "stopped after TicketGen"
+# --until must not stop between Refinement and it.
+if planner_should_stop_after "INIT-TERM" "Refinement"; then
+  fail "an authorized run continues into Completed" "stopped after Refinement"
 else
-  pass "an authorized run does not stop between TicketGen and Completed"
+  pass "an authorized run does not stop between Refinement and Completed"
 fi
 
 if planner_create_gate_check "INIT-TERM" "Completed" 2>/dev/null; then

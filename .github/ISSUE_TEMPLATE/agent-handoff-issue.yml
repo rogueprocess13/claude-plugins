@@ -30,7 +30,7 @@ body:
       label: Affected Plugin
       description: Which plugin does this belong to? (see root CLAUDE.md for the ecosystem map)
       options:
-        - ticket-planner — 10-phase business-idea → planned-tickets pipeline
+        - ticket-planner — 11-phase business-idea → planned-tickets pipeline
         - ticket-auto-pipeline — autonomous ticket implementation pipeline
         - fleet-controller — parent orchestrator / dispatch / epic branch lifecycle
         - knowledge-curator — cross-project knowledge tracking

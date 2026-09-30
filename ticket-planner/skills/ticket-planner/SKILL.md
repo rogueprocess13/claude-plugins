@@ -1,12 +1,12 @@
 ---
 name: ticket-planner
-description: 10-phase autonomous planner — turns a business idea into dependency-ordered planned tickets. Phases: Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → Epic Gen → Ticket Gen → Completed. Produces against frozen Planner Context and labels contracts.
+description: 11-phase autonomous planner — turns a business idea into dependency-ordered planned tickets. Phases: Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → Epic Gen → Ticket Gen → Refinement → Completed. Produces against frozen Planner Context and labels contracts.
 allowed-tools: Bash, Read, Agent
 ---
 
 # Ticket Planner — Idea-to-Tickets Pipeline
 
-Autonomous 10-phase planner that turns business ideas into Linear initiatives, epics, and dependency-ordered planned tickets the existing `ticket-auto` pipeline consumes without special-casing.
+Autonomous 11-phase planner that turns business ideas into Linear initiatives, epics, and dependency-ordered planned tickets the existing `ticket-auto` pipeline consumes without special-casing.
 
 Sits upstream of `ticket-auto` and `fleet-controller`. Produces against frozen consumption-side contracts — does not re-specify them.
 
@@ -71,6 +71,7 @@ process per phase and an `export` does not survive that (#144).
 | `--project <name\|id>` | Linear project for the epic and its tickets |
 | `--no-project` | File the epic and its tickets with no Linear project, deliberately — silences the project gate |
 | `--milestone <name\|id>` | Linear project milestone (needs `--project` when given by name) |
+| `--refresh-bodies` | **`resume` only.** Re-read every not-ready ticket's description from Linear before Refinement re-evaluates it. One-shot — consumed and cleared by this invocation, never sticky |
 
 The branch flags are optional. Supplying both together is an error. When neither is supplied,
 the binary heuristic decides (≥ 3 tickets **and** dependency chain depth ≥ 2).
@@ -206,7 +207,7 @@ history in the issue this mode was added for (#232).
 `doctor` never creates state and never dispatches a phase — it is safe to run
 before `plan`, before `resume`, or any time something in the pipeline feels off.
 
-## The 10 Phases
+## The 11 Phases
 
 | # | Phase | What it does | Output |
 |---|-------|-------------|--------|
@@ -217,9 +218,10 @@ before `plan`, before `resume`, or any time something in the pipeline feels off.
 | 5 | Review | Critiques the proposal and specs (internal by default) | Review findings |
 | 6 | Consensus | Resolves review findings into a settled plan | Finalized proposal |
 | 7 | Crosscheck | Deterministic bash — citation + cross-ticket propagation checks against the artifacts and the live repo | `META|crosscheck` events; gates Epic Gen on a blocking finding |
-| 8 | Epic Gen | Creates the initiative epic in Linear — **first Linear write, gated on `--create`** | Linear epic with `epic` label |
-| 9 | Ticket Gen | Creates planned child tickets, computes confidence, gate-dispatches | Linear tickets, `state:execution` on epic |
-| 10 | Completed | Terminal phase — summarizes the run; auto-dispatched right after Ticket Gen, no operator action | `COMPLETED.md`, terminal state log entry |
+| 8 | Epic Gen | Creates the initiative epic in Linear — **first Linear write, gated on `--create`** | Linear epic |
+| 9 | Ticket Gen | Creates planned child tickets, persists each body to `planner/body.md`, computes confidence | Linear tickets, per-ticket `body.md` |
+| 10 | Refinement | Deterministic bash — per-ticket DoR check plus `dor-semantic-agent` scan+audit; stamps the epic `dispatch=true` once every child has a verdict | Per-ticket readiness verdicts; epic manifest `dispatch=true` |
+| 11 | Completed | Terminal phase — summarizes the run; auto-dispatched right after Refinement's gate passes (or legacy-skips), no operator action | `COMPLETED.md`, terminal state log entry |
 
 ### Crosscheck
 
@@ -283,6 +285,51 @@ convention in every phase prompt that touches REPOS_ROOT (see Discovery's
 prompt in `planner-phase-prompts.sh`) since the planner's own agents are the
 only thing that could violate it — there is no live checkout mutation path in
 the deterministic bash libraries to guard against.
+
+### Refinement
+
+Like Crosscheck, Refinement is not an agent phase — the dispatch loop's step 1b
+runs it directly (`lib/planner-refinement.sh`), and it has no entry in
+`planner_prompt_for_phase`. It sits between Ticket Gen and Completed
+(planner-refinement-phase) and is the phase that answers a question the
+deterministic DoR check alone cannot: whether the criteria are the *right*
+ones, whether requirements contradict each other, or whether an autonomous
+agent could build the ticket without asking a human.
+
+For each child of the epic:
+
+1. **Deterministic** — `check_ticket_ready` (ticket-auto-pipeline's
+   `dor-check.sh`) against the ticket's local `planner/body.md` (written by
+   Ticket Gen; fetched once from Linear, read-only, if somehow missing).
+2. **Semantic** — unless `PLANNER_REFINEMENT_SEMANTIC=false`, two
+   `ticket-auto-pipeline:dor-semantic-agent` spawns: a **scan** of the body
+   that never sees the deterministic result, then an **audit** of that
+   result. Bash parses and applies both via `dor-semantic-parse.sh` /
+   `dor_semantic_apply`. A blocking semantic finding joins `ready.missing`
+   as a `SEMANTIC_*` code, exactly like a deterministic hard code.
+
+Blocking is **per ticket** — the epic manifest is stamped `dispatch=true`
+once every child has a verdict (deterministic, and semantic when enabled),
+whatever that verdict is. Fleet dispatch already refuses a not-ready child
+individually, so a held ticket does not stop its ready siblings from
+dispatching. The planner itself is stricter: while any child is not ready,
+Refinement halts (no `Refinement|gate|done`, no retry-budget consumption —
+same "content decision, not a transient failure" treatment as a Crosscheck
+halt) and the run does not advance to Completed.
+
+A halt prints a report per not-ready ticket — its deterministic codes,
+semantic findings with their quotes, codes the evaluator believes the
+deterministic check missed, and every deterministic code the evaluator
+disputes with its reason plus the exact `dor-check.sh --waive` command that
+releases it. `/ticket-planner resume <INIT_ID>` re-enters Refinement and
+reuses every cached verdict whose body and evaluator version are unchanged
+— only a ticket whose `body.md` changed, or whose evaluator version is
+stale, is re-evaluated. An edit made in Linear is invisible until
+`/ticket-planner resume <INIT_ID> --refresh-bodies` re-reads it.
+
+An initiative planned before this change shipped (its log already carries
+the retired `TicketGen|dispatch-gate|done` line) skips Refinement entirely
+— it has no local body and its epic may already be dispatching.
 
 ## Target Symbols Grammar
 
@@ -376,8 +423,8 @@ If a crash occurs mid-phase, the router resumes at that phase. Each entity-creat
 
 ## Determinism Boundary
 
-- **Bash side (deterministic):** State log parsing, position derivation, phase transition validation, entity idempotency checks, dependency acyclicity validation, `planned-ticket-check.sh` invocation, the Crosscheck phase itself (`planner-crosscheck.sh`).
-- **Agent side (LLM):** Per-phase content — appraisal, discovery, architecture, proposal, review, consensus, spec writing, ticket body generation.
+- **Bash side (deterministic):** State log parsing, position derivation, phase transition validation, entity idempotency checks, dependency acyclicity validation, `planned-ticket-check.sh` invocation, the Crosscheck phase itself (`planner-crosscheck.sh`), the Refinement phase's own decisions — which tickets need a semantic pass, the deterministic DoR verdict, the epic dispatch stamp, halt vs. proceed (`planner-refinement.sh`).
+- **Agent side (LLM):** Per-phase content — appraisal, discovery, architecture, proposal, review, consensus, spec writing, ticket body generation — plus, within Refinement, only the per-ticket semantic judgement itself (the two `dor-semantic-agent` spawns); everything else about that phase is bash.
 
 The router never reasons about content; phases never mutate state directly (they write log entries that the router reads).
 
@@ -397,6 +444,8 @@ The router never reasons about content; phases never mutate state directly (they
 | `LINEAR_PROJECT` | *(unset)* | Default project name or id for created epics/tickets, read once at parsing time as the fallback for `--project`. Unset ⇒ no project field is sent, and Epic Gen's project gate reports the omission (or stops on a single plausible candidate) unless `--no-project` was passed |
 | `LINEAR_PROJECT_MILESTONE` | *(unset)* | Default project milestone name or id, the fallback for `--milestone`. Requires a project when given by name |
 | `FLEET_AUTO_DISPATCH` | false | Must be true for automatic fleet-controller dispatch |
+| `PLANNER_REFINEMENT_SEMANTIC` | true | When `false`, Refinement runs only the deterministic DoR check — no `dor-semantic-agent` spawns, and the epic gate never waits on a semantic verdict |
+| `PLANNER_REFINEMENT_PARALLEL` | 4 | Max concurrent per-ticket semantic-pass batches in Refinement |
 
 Every variable in this table is read **once, in the shell that parses arguments**, and
 its effect is persisted to the state log there and then. None of them is read again
@@ -503,6 +552,7 @@ PROJECT_REF=""
 NO_PROJECT_FLAG=""
 MILESTONE_REF=""
 ACCEPT_FLAGS=()
+REFRESH_BODIES_FLAG=""
 
 # Env vars are the defaults for the corresponding flags, read once, here.
 UNTIL_PHASE="${PLANNER_UNTIL:-}"
@@ -528,6 +578,7 @@ while [ "$#" -gt 0 ]; do
     --no-project) NO_PROJECT_FLAG=true ;;
     --milestone) shift; MILESTONE_REF="${1:-}" ;;
     --milestone=*) MILESTONE_REF="${1#*=}" ;;
+    --refresh-bodies) REFRESH_BODIES_FLAG=true ;;
   esac
   shift
 done
@@ -559,6 +610,15 @@ fi
 if [ "${#ACCEPT_FLAGS[@]}" -gt 0 ] && [ "$MODE" = "plan" ]; then
   echo "ERROR: --accept is not valid for 'plan'. Accept a finding only after Crosscheck reports it:" >&2
   echo "       /ticket-planner resume <INIT_ID> --accept CODE:\"reason\"" >&2
+  exit 1
+fi
+
+# --refresh-bodies, same restriction — it re-reads not-ready tickets Refinement
+# has already held, so it is meaningless before TicketGen has run (planner-
+# refinement-phase).
+if [ "$REFRESH_BODIES_FLAG" = "true" ] && [ "$MODE" = "plan" ]; then
+  echo "ERROR: --refresh-bodies is not valid for 'plan'. It re-evaluates tickets Refinement already held:" >&2
+  echo "       /ticket-planner resume <INIT_ID> --refresh-bodies" >&2
   exit 1
 fi
 
@@ -628,6 +688,12 @@ if [ "$SHARED_BRANCH_FLAG" = "true" ]; then
 elif [ "$NO_SHARED_BRANCH_FLAG" = "true" ]; then
   planner_config_set "$INITIATIVE_ID" "branch-override" "no-shared"
 fi
+
+# --refresh-bodies (planner-refinement-phase): a one-shot action for this
+# invocation only, not a sticky setting — step 1b clears it back to "none"
+# immediately after Refinement consumes it, so a later plain `resume` does
+# not keep re-fetching from Linear forever.
+[ "$REFRESH_BODIES_FLAG" = "true" ] && planner_config_set "$INITIATIVE_ID" "refresh-bodies" "true"
 
 # --accept CODE:"reason" (#222): recorded via planner_crosscheck_accept_set, not
 # planner_config_set — a set of accepted codes, not a single last-write-wins value.
@@ -732,7 +798,18 @@ When mode is `status`:
    `planner_crosscheck_findings_report "$INITIATIVE_ID"` and report its output
    verbatim below the summary — the counts say how much is outstanding, the
    report says which artifact and which token to open first (#233).
-5. Report: current phase, initiative metadata, last 10 log entries, artifact listing.
+5. **Refinement section** (planner-refinement-phase). Source
+   `planner-refinement.sh` first if not already sourced, then resolve
+   `EPIC_ID=$(planner_epic_id "$INITIATIVE_ID")`. No epic id yet (Epic Gen
+   hasn't run) — omit the section entirely. Otherwise, for each child in the
+   epic manifest's `children[]`, read its manifest `ready` field and report
+   one line: the ticket id, `ready`/`not-ready`/`unavailable`, and — when
+   not ready — its `missing` codes (deterministic and `SEMANTIC_*` both).
+   When the current phase is still `Refinement` (the run is halted there),
+   also run `planner_refinement_report "$INITIATIVE_ID"` and print its
+   output verbatim below the per-ticket summary — same relationship as
+   Crosscheck's own summary-then-report pair above.
+6. Report: current phase, initiative metadata, last 10 log entries, artifact listing.
 
 ### 6. Replan mode
 
@@ -807,6 +884,84 @@ For each phase to run:
     outcome, not an error) and waiting for `resume` after the operator edits the
     artifacts is the correct response, exactly like the create gate. On success,
     continue to step 6 (skip 2–5).
+
+1b. **Refinement is not an agent phase either** (planner-refinement-phase). If `$PHASE`
+    is `Refinement`, run it directly and skip steps 2–5 — like Crosscheck, it has no
+    prompt in `planner_prompt_for_phase`:
+
+    ```bash
+    source "${CLAUDE_PLUGIN_ROOT}/lib/planner-refinement.sh"
+    source "${CLAUDE_PLUGIN_ROOT}/lib/planner-linear-api.sh"
+
+    if planner_refinement_legacy "$INITIATIVE_ID"; then
+      # Initiative planned before this change shipped — its log already carries
+      # TicketGen|dispatch-gate|done, it has no body.md, and its epic may already
+      # be dispatching. Skip straight through (design.md Decision 10).
+      planner_state_write "$INITIATIVE_ID" "META" "refinement" "skip" "legacy — TicketGen|dispatch-gate|done already recorded"
+      planner_state_write "$INITIATIVE_ID" "Refinement" "gate" "skip" "legacy initiative — Refinement not evaluated"
+    else
+      # --refresh-bodies is one-shot: consumed and cleared here, never sticky.
+      if [ "$(planner_config_get "$INITIATIVE_ID" "refresh-bodies")" = "true" ]; then
+        planner_refinement_refresh_bodies "$INITIATIVE_ID"
+        planner_config_set "$INITIATIVE_ID" "refresh-bodies" "none"
+      fi
+
+      NEEDS_PASS=()
+      while IFS= read -r _tid; do
+        [ -n "$_tid" ] && NEEDS_PASS+=("$_tid")
+      done < <(planner_refinement_scan "$INITIATIVE_ID")
+
+      if [ "${PLANNER_REFINEMENT_SEMANTIC:-true}" != "false" ] && [ "${#NEEDS_PASS[@]}" -gt 0 ]; then
+        _batch_size="${PLANNER_REFINEMENT_PARALLEL:-4}"
+        for ((_i = 0; _i < ${#NEEDS_PASS[@]}; _i += _batch_size)); do
+          _batch=("${NEEDS_PASS[@]:_i:_batch_size}")
+          for _tid in "${_batch[@]}"; do
+            _scan_prompt=$(planner_refinement_prompt "$INITIATIVE_ID" "$_tid" scan)
+            # Spawn Agent tool: subagent_type "ticket-auto-pipeline:dor-semantic-agent",
+            # prompt=$_scan_prompt, description="Refinement scan: $_tid". Wait for it —
+            # the audit prompt is built only after the scan stage returns (the scan
+            # never sees the deterministic result; design.md Decision 6, "the scan is
+            # blind by construction").
+            _audit_prompt=$(planner_refinement_prompt "$INITIATIVE_ID" "$_tid" audit)
+            # Spawn Agent tool again: same subagent_type, prompt=$_audit_prompt,
+            # description="Refinement audit: $_tid". Wait for it.
+            if ! planner_refinement_apply "$INITIATIVE_ID" "$_tid"; then
+              # One retry of both stages for this ticket only, then re-apply.
+              _scan_prompt=$(planner_refinement_prompt "$INITIATIVE_ID" "$_tid" scan)
+              # Spawn again, wait, then build and spawn the audit stage again, wait.
+              _audit_prompt=$(planner_refinement_prompt "$INITIATIVE_ID" "$_tid" audit)
+              if ! planner_refinement_apply "$INITIATIVE_ID" "$_tid"; then
+                planner_refinement_unavailable "$INITIATIVE_ID" "$_tid"
+              fi
+            fi
+          done
+        done
+      fi
+
+      if planner_refinement_gate "$INITIATIVE_ID"; then
+        : # every child ready — fall through to step 6, like Crosscheck's success path
+      else
+        echo "Refinement halted — one or more tickets are not ready."
+        echo ""
+        planner_refinement_report "$INITIATIVE_ID"
+        echo ""
+        echo "Artifacts:  ${STATE_DIR}/artifacts/"
+        echo "Resume:     /ticket-planner resume ${INITIATIVE_ID}"
+        exit 0
+      fi
+    fi
+    ```
+
+    Each ticket in a batch (`${_batch[@]}`, size `PLANNER_REFINEMENT_PARALLEL`,
+    default 4) is independent — call the Agent tool for every ticket's scan stage in
+    the same response to run that part of the batch concurrently, per this harness's
+    own parallel-tool-call guidance; each ticket's own audit stage still waits for
+    that same ticket's scan stage to return first.
+
+    Do not fall through to step 5's retry-budget check here — like Crosscheck, a
+    Refinement halt is a content decision (a ticket is not ready), not a transient
+    agent failure, so it never consumes `PLANNER_MAX_PHASE_RETRIES`. On a legacy-skip
+    or a clean gate pass, continue to step 6 (skip 2–5).
 
 2. **Get the prompt** for the current phase:
    ```bash
@@ -903,13 +1058,14 @@ For each phase to run:
      not run yet. Loop back to step 1 with `PHASE=$NEXT_PHASE`.
    - **The empty string is the only value that means the initiative is finished.**
 
-   `Completed` is the terminal *phase* (10 of 10), not a terminal *state*: it writes
+   `Completed` is the terminal *phase* (11 of 11), not a terminal *state*: it writes
    `artifacts/COMPLETED.md` and the final state log entry, and it is dispatched in
-   this same invocation — immediately after Ticket Gen's dispatch-gate write, never
-   left for the operator to remember to `resume` into (#226). Nothing gates it:
-   Completed writes only to disk, so `planner_create_gate_check` waves it through,
-   and step 6 has already stopped the loop first if `--until TicketGen` asked it to.
-   Use the predicate rather than comparing the string by hand:
+   this same invocation — immediately after Refinement's gate passes clean (or
+   legacy-skips), never left for the operator to remember to `resume` into (#226).
+   Nothing gates it: Completed writes only to disk, so `planner_create_gate_check`
+   waves it through, and step 6 has already stopped the loop first if `--until
+   TicketGen` or `--until Refinement` asked it to. Use the predicate rather than
+   comparing the string by hand:
 
    ```bash
    if planner_terminal_pending "$INITIATIVE_ID"; then
@@ -917,10 +1073,12 @@ For each phase to run:
    fi
    ```
 
-   Ticket Gen's dispatch-gate write is the part operators watch, because it is the
-   part that puts tickets in Linear. A run that stops there looks done from Linear
-   while the operator's primary summary document was never written — that is exactly
-   how two live initiatives ended up needing their `COMPLETED.md` written by hand.
+   Refinement's gate stamp is the part operators watch now, because it is the part
+   that lets fleet dispatch release tickets into work. A run that stops there looks
+   done from Linear (ready siblings of a held ticket already dispatch — design.md
+   Decision 2) while the operator's primary summary document was never written —
+   the same gap `Completed`'s own dispatch here closes regardless of which phase
+   did the stamping.
 
 ### 8. After completion
 
