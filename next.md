@@ -887,10 +887,19 @@ untouched.
       prompt's "phase N of 10" literal and the test suite's hard-coded counts/indices replaced with
       the derived helpers. Byte-identical prompt output confirmed; full suite green; ticket-planner
       0.11.0 → 0.11.1.
-- [ ] 2b. `dor-semantic-evaluator` — IN PROGRESS, started 2026-09-30 on `feat/dor-semantic-evaluator`
-      (proposed 2026-09-30, validated). LLM semantic DoR pass contract in ticket-auto-pipeline: scan
-      + audit agents (`dor-semantic-agent`), block parser, `set_ticket_semantic`, `SEMANTIC_*`
-      blocking codes (block from day one, per-host relax via `DOR_SEMANTIC_ADVISORY_CODES`). Plan:
+- [ ] 2b. `dor-semantic-evaluator` — implemented 2026-09-30, **PR #428** open on
+      `feat/dor-semantic-evaluator`. LLM semantic DoR pass contract in ticket-auto-pipeline: scan +
+      audit agents (`dor-semantic-agent`), block parser (`dor-semantic-parse.sh`, 28 tests),
+      `dor_semantic_apply`/`_dor_semantic_normalise` (`dor-semantic.sh`, 25 tests), `set_ticket_semantic`
+      (third writer of `ready`, `manifest-write.sh`), `SEMANTIC_*` blocking codes (block from day one,
+      per-host relax via `DOR_SEMANTIC_ADVISORY_CODES`), `set_ticket_readiness` preserve/stale rule,
+      fleet-dispatch/fleet-notify report-only wiring. Full suite green (2 clean `make test` runs after
+      registering the new test files in the Makefile). ticket-auto-pipeline 0.59.0 → 0.60.0,
+      fleet-controller 0.40.0 → 0.41.0. **Golden-set live verification only partial**: 2/19 fixtures
+      spot-checked with real agents (14-typo-fix matched "no blocking finding"; 01-excellent produced
+      3 specific, quote-verified findings against the same expectation — flagged, not yet tuned). Full
+      19-fixture sweep + prompt tuning deferred to a live-verification pass before
+      `planner-refinement-phase` can safely assume the evaluator's output quality. Plan:
       `~/.claude/plans/gentle-doodling-truffle.md`.
 - [ ] 3. `planner-refinement-phase` — apply, PR (proposed 2026-09-30, validated). **Supersedes
       `planner-readiness-phase`.** New planner phase Refinement between TicketGen and Completed: per
