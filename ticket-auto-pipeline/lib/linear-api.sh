@@ -777,6 +777,79 @@ create_issue() {
   echo "$resp" | jq '.data.issueCreate.issue'
 }
 
+# Significant title terms, one per line: lowercased, punctuation stripped,
+# stop-words and words under 4 chars dropped, crude suffix stemming
+# (-ing/-ed/-es/-s, only when 4+ chars remain), de-duplicated in first-seen
+# order. Shared by search_issues (filter terms — a stem still substring-
+# matches every inflection under containsIgnoreCase) and ticket-create's
+# duplicate scoring (so "surfaced" and "surfaces" count as the same word).
+# Usage: _title_terms <text>
+_title_terms() {
+  local stop=" this that with from into have what when where which their there then than them they been were will would should could about after before over under also only just more most some such very does make made used using upon onto ticket issue "
+  local w stem
+  local -A seen=()
+  for w in $(echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9[:space:]]/ /g'); do
+    [ "${#w}" -ge 4 ] || continue
+    [[ "$stop" == *" $w "* ]] && continue
+    stem="$w"
+    case "$w" in
+    *ing) [ "${#w}" -ge 7 ] && stem="${w%ing}" ;;
+    *ed) [ "${#w}" -ge 6 ] && stem="${w%ed}" ;;
+    *es) [ "${#w}" -ge 6 ] && stem="${w%es}" ;;
+    *ss) ;;
+    *s) [ "${#w}" -ge 5 ] && stem="${w%s}" ;;
+    esac
+    [ -n "${seen[$stem]:-}" ] && continue
+    seen[$stem]=1
+    echo "$stem"
+  done
+}
+
+# Search a team's open issues (state type not completed/canceled) whose
+# titles contain any of the significant terms of <text> (_title_terms, at
+# most 5, OR-combined, case-insensitive). Used by ticket-create's duplicate
+# check — ranking is done locally by the caller, never by Linear's opaque
+# full-text search (ticket-create-skill design D3).
+#
+# Usage: search_issues <team_id> <text> [limit]
+# Output: JSON array of {id, identifier, title, url} on stdout ([] when the
+# text has no significant terms — no query is sent). Non-zero on a malformed
+# response.
+search_issues() {
+  local team_id="$1" text="$2" limit="${3:-50}"
+  if [ -z "$team_id" ]; then
+    echo "search_issues: team_id is required" >&2
+    return 1
+  fi
+
+  local terms
+  terms=$(_title_terms "$text" | awk 'NR <= 5' | jq -R . | jq -sc .)
+  if [ "$terms" = "[]" ]; then
+    echo "[]"
+    return 0
+  fi
+
+  local query
+  query=$(jq -n --arg tid "$team_id" --argjson terms "$terms" --argjson first "$limit" '{
+    query: "query($filter: IssueFilter!, $first: Int!) { issues(filter: $filter, first: $first) { nodes { id identifier title url } } }",
+    variables: {
+      first: $first,
+      filter: {
+        team: {id: {eq: $tid}},
+        state: {type: {nin: ["completed", "canceled"]}},
+        or: [$terms[] | {title: {containsIgnoreCase: .}}]
+      }
+    }
+  }')
+  local resp
+  resp=$(linear_graphql "$query") || return 1
+  if ! _jq_guard "$resp" ".data.issues.nodes" "array"; then
+    echo "search_issues: unexpected response shape — .data.issues.nodes missing or not an array" >&2
+    return 1
+  fi
+  echo "$resp" | jq -c '.data.issues.nodes'
+}
+
 # Get current user (me) info from Linear
 get_me() {
   local query
