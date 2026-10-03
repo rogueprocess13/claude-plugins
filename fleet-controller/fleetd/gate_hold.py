@@ -56,6 +56,7 @@ Stdlib only.
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 from collections import namedtuple
@@ -592,6 +593,10 @@ def post_human_hold_comment(tid, hold_id, blocks, questions, lib_dir=None,
     body = '\n'.join(lines)
 
     comment_posted = False
+    if not linear_api.is_file():
+        print(f'fleetd: post_human_hold_comment: linear-api.sh not found at '
+              f'{linear_api}; hold comment for {tid} not posted',
+              file=sys.stderr)
     if linear_api.is_file():
         try:
             proc = subprocess.run(

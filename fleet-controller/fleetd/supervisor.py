@@ -5062,8 +5062,7 @@ class Supervisor:
             log_file = self._state_dir / f'{tid}-pipeline.log'
             try:
                 decision = _gate_hold_mod.reconcile_hold(
-                    table, tid, row, str(log_file),
-                    lib_dir=str(self._fleet_lib_dir))
+                    table, tid, row, str(log_file))
             except Exception as exc:  # noqa: BLE001 - one ticket must not sink the pass
                 print(f"fleetd[{os.getpid()}]: hold reconcile failed for "
                       f"{tid}: {exc}", file=sys.stderr)
@@ -5170,8 +5169,7 @@ class Supervisor:
                 if isinstance(q, dict)
             ]
             _gate_hold_mod.post_human_hold_comment(
-                tid, hold_id, record.get('blocks', ''), questions,
-                lib_dir=str(self._fleet_lib_dir))
+                tid, hold_id, record.get('blocks', ''), questions)
             _notify_hold(self._fleet_lib_dir, self._state_dir, tid, 'created')
 
     def _gate_hold_intake_pass(self):

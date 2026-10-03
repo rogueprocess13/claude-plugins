@@ -2595,6 +2595,28 @@ class HoldReconcilePassTest(unittest.TestCase):
             sup.release_lock()
         self.assertEqual(probe_calls, ['TST-R1', 'TST-R1'])
 
+    def test_reconcile_does_not_pass_fleet_lib_dir(self):
+        """Regression (#383): reconcile_hold needs ticket-auto-pipeline/lib
+        (gate-check.sh, linear-api.sh), never fleet-controller/lib."""
+        from fleetd import store
+        import fleetd.gate_hold as gate_hold_mod
+
+        with store.open_store(self.workspace) as st:
+            st.set_hold('TST-R2', 'gate', 'hold:TST-R2:g0:a1', 'complex')
+        sup = self._supervisor()
+        seen = []
+        real = gate_hold_mod.reconcile_hold
+        gate_hold_mod.reconcile_hold = (
+            lambda *a, **k: seen.append(k.get('lib_dir')) or mock.Mock(
+                action=gate_hold_mod.HOLD))
+        sup.acquire_lock()
+        try:
+            sup._hold_reconcile_pass()
+        finally:
+            gate_hold_mod.reconcile_hold = real
+            sup.release_lock()
+        self.assertEqual(seen, [None])
+
     def test_empty_held_set_costs_nothing(self):
         import fleetd.gate_hold as gate_hold_mod
 
@@ -2889,6 +2911,27 @@ class HumanHoldIntakePassTest(unittest.TestCase):
         notify_args = notify_calls[0][0]
         self.assertEqual(notify_args[2], 'TST-HH6')
         self.assertEqual(notify_args[3], 'created')
+
+    def test_comment_call_does_not_pass_fleet_lib_dir(self):
+        """Regression (#383): linear-api.sh lives in ticket-auto-pipeline/lib,
+        not fleet-controller/lib. The call must not hand fleet's own lib dir
+        to `post_human_hold_comment`; it must fall back to its default."""
+        import fleetd.gate_hold as gate_hold_mod
+
+        self._write_human_hold_log('TST-HH7')
+        sup = self._supervisor()
+        calls = []
+        real_comment = gate_hold_mod.post_human_hold_comment
+        gate_hold_mod.post_human_hold_comment = (
+            lambda *a, **k: calls.append((a, k)) or (True, True))
+        sup.acquire_lock()
+        try:
+            sup._human_hold_intake_pass()
+        finally:
+            gate_hold_mod.post_human_hold_comment = real_comment
+            sup.release_lock()
+        self.assertEqual(len(calls), 1)
+        self.assertIsNone(calls[0][1].get('lib_dir'))
 
 
 class GateHoldIntakePassTest(unittest.TestCase):
