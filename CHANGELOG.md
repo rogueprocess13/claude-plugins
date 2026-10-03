@@ -17,6 +17,29 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.62.0 (2026-10-03)
+
+`ticket-create-skill`. There was no skill for logging a single ticket, so an agent that found a bug
+mid-task either called the Linear MCP `save_issue` tool directly — skipping the templates, the
+readiness checks and duplicate detection — or did not log the work at all. Ad-hoc tickets never
+face the planned-ticket DoR gate, so nothing checked their bodies before implementation.
+
+- **New `/ticket-create` skill** routes a logging request (Linear ticket / GitHub issue for
+  marketplace defects / `kc-capture` for knowledge) and drives `skills/ticket-create/create.sh`,
+  which runs the body section check, the readiness check, and a duplicate check before
+  `create_issue` (no labels), then writes an `_adhoc` ticket manifest carrying the type. Exit codes
+  0–5; `--dry-run` runs every check with no writes; `--duplicate-ok "<reason>"` records an accepted
+  near-duplicate under `## Related Tickets`.
+- **New `search_issues`** in `lib/linear-api.sh` (open issues on a team whose titles contain any
+  significant term) and `_title_terms` (stop-words dropped, light suffix stemming), shared by the
+  search filter and the duplicate scoring.
+- **New `PreToolUse` hook `hooks/ticket-create-guard.sh`**: denies Linear MCP creates (no `id`) and
+  Bash calls to `create_issue` / network `issueCreate` mutations, redirecting to `/ticket-create`.
+  The planner's `planner_linear_create_issue` path and MCP updates are allowed. Fails open.
+  **Behaviour change** for every session with the plugin installed, fleetd workers included —
+  `TICKET_CREATE_GUARD=off` opts out.
+- SessionStart sync now copies `create.sh` and `templates/*.md` to `~/.claude/skills/ticket-create/`.
+
 ## fleet-controller 0.42.0 / ticket-planner 0.14.0 (2026-09-30)
 
 `readiness-feedback-loop`. `fleet-feedback.sh` already aggregated `META|planner-feedback` entries

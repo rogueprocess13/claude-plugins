@@ -188,6 +188,7 @@ Restart Claude Code after adding MCP servers.
 | `/ticket-flow <id> <trigger>` | State/label mutation executor (wraps `flow.sh`) |
 | `/ticket-setup <id>` | Ticket workspace scaffolding |
 | `/ticket-retro [id]` | Pipeline failure analysis |
+| `/ticket-create` | Log one new ticket through the standard path — template body, readiness check, duplicate check, `_adhoc` manifest. A `PreToolUse` guard denies direct Linear creates and points here (`TICKET_CREATE_GUARD=off` to bypass). |
 
 ### Monitoring & Fleet Control
 

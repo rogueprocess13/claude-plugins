@@ -84,6 +84,9 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic.sh
 	# tracker-approval-by-script
 	bash ticket-auto-pipeline/lib/tests/test-ticket-approve.sh
+	# ticket-create-skill
+	bash ticket-auto-pipeline/lib/tests/test-ticket-create.sh
+	bash ticket-auto-pipeline/lib/tests/test-ticket-create-guard.sh
 	bash ticket-auto-pipeline/lib/tests/test-manifest-backfill.sh
 	bash ticket-auto-pipeline/lib/tests/test-planned-body-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-appraise-exec-planned.sh

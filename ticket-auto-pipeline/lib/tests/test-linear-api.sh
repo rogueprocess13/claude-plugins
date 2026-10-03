@@ -347,6 +347,83 @@ test_create_issue_success_false_errors() {
   [ "$rc" -eq 1 ]
 }
 
+# ── search_issues tests (mock linear_graphql) ─────────────────────────────────
+
+# ticket-create-skill 1.1: the filter carries the team, the open-state
+# exclusion, and one containsIgnoreCase clause per significant term — short
+# words and stop-words dropped, inflections stemmed.
+test_search_issues_builds_filter_terms() {
+  local tmpfile
+  tmpfile=$(mktemp)
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo \"\$1\" > '$tmpfile'; echo '{\"data\":{\"issues\":{\"nodes\":[]}}}'; }
+    search_issues 'team-1' 'Client upload surfaces the duplicate rejection'
+  " >/dev/null 2>&1
+  jq -e '.variables.filter.team.id.eq == "team-1"
+    and .variables.filter.state.type.nin == ["completed","canceled"]
+    and ([.variables.filter.or[].title.containsIgnoreCase] == ["client","upload","surfac","duplicate","rejection"])
+    and .variables.first == 50' "$tmpfile" >/dev/null 2>&1
+  local result=$?
+  rm -f "$tmpfile"
+  return $result
+}
+
+test_search_issues_empty_result_is_empty_array() {
+  local out
+  out=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo '{\"data\":{\"issues\":{\"nodes\":[]}}}'; }
+    search_issues 'team-1' 'Client upload duplicate'
+  " 2>/dev/null) || return 1
+  [ "$out" = "[]" ]
+}
+
+test_search_issues_returns_nodes() {
+  local out
+  out=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo '{\"data\":{\"issues\":{\"nodes\":[{\"id\":\"i1\",\"identifier\":\"WIL-1\",\"title\":\"Client upload\",\"url\":\"u\"}]}}}'; }
+    search_issues 'team-1' 'Client upload duplicate'
+  " 2>/dev/null) || return 1
+  echo "$out" | jq -e 'length == 1 and .[0].identifier == "WIL-1"' >/dev/null
+}
+
+test_search_issues_malformed_response_errors() {
+  local rc=0
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo '{\"data\":{}}'; }
+    search_issues 'team-1' 'Client upload duplicate'
+  " >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 0 ]
+}
+
+test_search_issues_caps_terms_at_five() {
+  local tmpfile
+  tmpfile=$(mktemp)
+  bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo \"\$1\" > '$tmpfile'; echo '{\"data\":{\"issues\":{\"nodes\":[]}}}'; }
+    search_issues 'team-1' 'alpha bravo charlie delta foxtrot golf hotel india'
+  " >/dev/null 2>&1
+  jq -e '(.variables.filter.or | length) == 5' "$tmpfile" >/dev/null 2>&1
+  local result=$?
+  rm -f "$tmpfile"
+  return $result
+}
+
+# No significant terms → no query at all, [] on stdout.
+test_search_issues_no_terms_skips_query() {
+  local out
+  out=$(bash -c "
+    source $LIB_DIR/linear-api.sh
+    linear_graphql() { echo 'CALLED'; }
+    search_issues 'team-1' 'a to the of'
+  " 2>/dev/null) || return 1
+  [ "$out" = "[]" ]
+}
+
 # Issue #283: response-guard failure — malformed response (missing issueCreate
 # entirely) must return a clean error, not a jq crash or silent bad output.
 test_create_issue_malformed_response_errors() {
@@ -1037,6 +1114,12 @@ for fn in \
   test_create_issue_omitted_optional_fields_absent \
   test_create_issue_returns_issue_object \
   test_create_issue_success_false_errors \
+  test_search_issues_builds_filter_terms \
+  test_search_issues_empty_result_is_empty_array \
+  test_search_issues_returns_nodes \
+  test_search_issues_malformed_response_errors \
+  test_search_issues_caps_terms_at_five \
+  test_search_issues_no_terms_skips_query \
   test_create_issue_malformed_response_errors \
   test_create_issue_missing_required_field_errors \
   test_create_issue_invalid_label_ids_errors_cleanly \
