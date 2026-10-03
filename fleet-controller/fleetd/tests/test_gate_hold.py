@@ -621,6 +621,19 @@ class TestPostHumanHoldComment(unittest.TestCase):
         self.assertTrue(any('save_comment' in ' '.join(c) for c in calls
                             if isinstance(c, list)))
 
+    def test_missing_linear_api_warns_on_stderr(self):
+        import contextlib
+        import io
+        import tempfile
+
+        buf = io.StringIO()
+        with tempfile.TemporaryDirectory() as d, \
+                contextlib.redirect_stderr(buf):
+            posted, _ = gate_hold.post_human_hold_comment(
+                'CRE-9', HOLD_ID, 'x', [(1, 'q?')], lib_dir=d)
+        self.assertFalse(posted)
+        self.assertIn('linear-api.sh not found', buf.getvalue())
+
     def test_comment_body_carries_hold_id_and_numbered_questions(self):
         captured = {}
 
