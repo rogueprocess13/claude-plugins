@@ -386,7 +386,8 @@ location      := [path ':'] line ['-' line2]         -- omitting `path:` reuses 
 
 The planner does not re-specify these. They are the interface to the downstream pipeline:
 
-- **Planner Context block** — `## Planner Context` in ticket description, validated by `planned-ticket-check.sh`
+- **Planner Context block** — `## Planner Context` in ticket description, validated by `planned-ticket-check.sh` (plus optional informational `Kind` / `Serves` / `Enables` lines — planner-business-framing)
+- **Body section contract** — the per-type `##` headings `planned-ticket-body-check.sh` and `dor-check.sh` require. The business-first layout (`## Summary` → `## Outcome`/`## Enables` → the template's why/outcome headings → `## Technical Context` → the rest) is additive and never renames one; see `docs/ticket-planner.md` § Business-first layout
 - **Labels** — `planned`, `pre-approved`, `INIT-{id}`, `Type`, `blocked-by:{ID}` (the target is a sibling ticket in this initiative, or an existing Linear ID for a cross-initiative prerequisite — see `docs/ticket-planner.md` § Cross-initiative prerequisites)
 - **Artifact plane** — `planner-artifacts.sh` resolves to `${REPOS_ROOT}/.ticket-auto/initiatives/{ID}/artifacts/`
 - **Feedback** — `fleet-feedback.sh` aggregates `META|planner-feedback` from pipeline logs

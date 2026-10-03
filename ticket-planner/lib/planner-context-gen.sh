@@ -72,6 +72,22 @@ planner_context_generate() {
   generated=$(echo "$context_json" | jq -r '.Generated')
   regenerate=$(echo "$context_json" | jq -r '.Regenerate')
 
+  # Optional business-framing fields (planner-business-framing) — informational,
+  # valid under any Schema-Version, emitted only when non-empty. Arrays are
+  # accepted and joined with commas, so callers may pass Signals values as-is.
+  local kind serves enables
+  kind=$(echo "$context_json" | jq -r '.Kind // "" | if type == "array" then join(",") else tostring end')
+  serves=$(echo "$context_json" | jq -r '.Serves // "" | if type == "array" then join(",") else tostring end')
+  enables=$(echo "$context_json" | jq -r '.Enables // "" | if type == "array" then join(",") else tostring end')
+
+  case "$kind" in
+  "" | business | enabler) ;;
+  *)
+    echo "planner-context-gen: invalid Kind '$kind' (must be business|enabler)" >&2
+    return 1
+    ;;
+  esac
+
   # Validate Strategy enum
   case "$strategy" in
   Conservative | Balanced | Innovative) ;;
@@ -119,6 +135,9 @@ planner_context_generate() {
 **Generated:** ${generated}
 **Regenerate:** ${regenerate}
 PLANNER_CONTEXT
+  [ -n "$kind" ] && echo "**Kind:** ${kind}"
+  [ -n "$serves" ] && echo "**Serves:** ${serves}"
+  [ -n "$enables" ] && echo "**Enables:** ${enables}"
 
   return 0
 }

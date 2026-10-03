@@ -167,6 +167,8 @@ The planner produces against five frozen consumption-side contracts. These are s
 | Generated | ISO 8601 | When the context was created |
 | Regenerate | boolean | Whether re-planning is recommended |
 
+**Optional business-framing fields** (planner-business-framing): `Kind` (`business` | `enabler`), `Serves` and `Enables` (comma-separated Business Outcome ids). Emitted only when non-empty, after `Regenerate`; informational, ignored by every downstream parser, no Schema-Version bump. TicketGen fills them from the spec's Signals.
+
 **Validator:** `planned-ticket-check.sh` (exit 0 = valid, 1 = malformed, 2 = low confidence + not pre-approved). The ticket *body* — the required `##` sections below the Planner Context block — is validated separately by `planned-ticket-body-check.sh`'s `check_planned_body`, called from `planner_validate_ticket`'s third (`ticket_type`) argument ([#285](https://github.com/willard-pro/claude-plugins/issues/285)); see "2. Body section contract" below.
 
 **Generator:** `planner-context-gen.sh` — takes structured JSON, validates all fields, emits formatted markdown. Generate against the validator, not the schema document.
@@ -190,6 +192,38 @@ before creation when called with a `ticket_type` argument — a ticket missing a
 required section is not created; the failure surfaces as a planner error at
 generation time, not as a `PLANNED_BODY_INCOMPLETE` gate-stop several phases
 later in ticket-auto ([#285](https://github.com/willard-pro/claude-plugins/issues/285)).
+
+#### Business-first layout (planner-business-framing)
+
+The section contract above is unchanged; the business framing is additive. Every
+ticket body is rendered in this order:
+
+1. `## Summary` — what the ticket does, in plain language.
+2. `## Outcome` (Kind = business: `**Serves:**`, `**Who:**`, `**Need:**`, `**Outcome:**`)
+   or `## Enables` (Kind = enabler: the outcome id it enables, or the technical reason).
+3. The type template's own why/outcome headings — `## Background / Motivation`,
+   `## Proposed Behaviour` / `## Proposed Changes`, `## Expected Behaviour` / `## Actual Behaviour`.
+4. `## Technical Context` — files, routes, tables, symbols, line references, repository evidence.
+5. `## Acceptance Criteria` and the rest of the contract above.
+
+Step 3 is not optional. ticket-auto-pipeline's readiness check (`dor-check.sh`,
+hard code `INTENT_MISSING`) matches the why/outcome headings by exact name, and
+neither `## Outcome` nor `## Technical Context` is one of its aliases — a body with
+only Summary / Outcome / Technical Context fails Refinement.
+`test-planner-business-framing.sh` holds the golden bodies and a negative control
+for exactly this.
+
+Where it comes from: Specify writes `## Business Outcomes` (`### O<n>` with
+Who / Need / Outcome / Measure) into `proposal.md`. Sources, in order: the sealed
+`intent.md`, then `appraisal.md`, otherwise an explicit `NEEDS_HUMAN_DECISION`
+marker — the planner never invents actors, value or metrics. Each spec's Signals
+JSON carries `Kind`, `Serves` and `Enables`. Consensus carries the outcomes over;
+EpicGen renders them into the epic (`## Summary` / `## Outcomes` / `## Who benefits` /
+`## Child tickets` / `## Technical approach`, with a capability-style title and no
+phase codes); TicketGen renders the per-ticket `## Outcome` or `## Enables`.
+Business titles are actor/capability or outcome statements with no code
+identifiers; enabler titles may be technical. The proposal's `# ` H1 stays a short
+initiative name because the epic branch slug is derived from it.
 
 ### 3. Local manifest facts (tracker-planner-and-fallback-cutover)
 

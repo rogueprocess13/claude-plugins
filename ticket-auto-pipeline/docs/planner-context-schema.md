@@ -76,6 +76,16 @@ The `## Planner Context` block is a structured markdown section appended to Line
 | `Alternative Approaches` | semicolon-list | No | Brief summaries of approaches considered and rejected during exploration. Example: `Extend existing collector (rejected: too coupled); Inline fix with feature flag (selected)` |
 | `Open Questions` | semicolon-list | No | Investigation items exploration could not resolve. Non-empty signals need for human architectural input. Example: `Should collector retry on 429?; Is the payment gateway idempotent for duplicate charges?` |
 
+### Business-framing fields (optional, any Schema-Version)
+
+Added by planner-business-framing. Informational only: no ticket-auto consumer parses them, `planned-ticket-check.sh` ignores them (unknown `**Field:**` lines are skipped by `_extract_field`), and they need no Schema-Version bump. The planner emits each line only when its value is non-empty, after `Regenerate`.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `Kind` | enum | No | `business` (delivers a capability a user or business actor experiences directly) or `enabler` (technical work that enables a capability or removes technical risk). `planner_context_generate` rejects any other value. |
+| `Serves` | CSV | No | Business Outcome ids (`O1,O2`) from the initiative's `proposal.md` `## Business Outcomes` that a business ticket delivers. |
+| `Enables` | CSV | No | Business Outcome ids an enabler ticket makes possible. Never populated together with `Serves`. |
+
 ## Validation Rules
 
 1. **Block presence**: The ticket description must contain a `## Planner Context` heading followed by `**field:** value` lines.
