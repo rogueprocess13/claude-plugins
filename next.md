@@ -49,6 +49,20 @@ session. Task 7.4's live verification remains genuinely outstanding, but as a po
 rolled into Step 8's consolidated live-verification pass, not a pre-merge gate. See Step 7c below
 for the corrected per-change status.
 
+**Housekeeping, 2026-09-30:** 27 fully-merged and never-started openspec changes archived to
+`openspec/changes/archive/2026-09-30-<name>/` (`--skip-specs` — specs for the merged ones were
+already synced by hand at merge time, so the CLI's own spec-delta step was skipped to avoid
+double-applying). `complexity-classifier-calibration` was deliberately left active (real,
+unscheduled backlog item); `langfuse-evidence-layer` was left alone (still in progress, 96/112
+tasks). None of these were referenced from a `next.md` Step by name except where noted inline
+below. 14 plan files under `~/.claude/plans/` covering the same shipped/abandoned work were
+deleted at the same time — where a Step below cited one of them, the citation is marked deleted
+rather than removed, to keep the historical record intact.
+
+**Updated 2026-10-04:** new Step 9. `planner-business-framing` (PR #440) and `ticket-create-skill`
+(PR #441, ticket-auto-pipeline 0.62.0) both merged on 2026-10-03. The live checks for both are
+still open, and so is a follow-up on the gap between the templates and the DoR checks — see Step 9.
+
 ---
 
 ## Step 0 — Extract standalone bug fixes
@@ -138,7 +152,7 @@ Estimated: one sitting for all three.
 
 ## Step 1 — Commercial evidence MVP (runs.jsonl)
 
-**Plan:** `~/.claude/plans/based-on-all-we-eager-valley.md`
+**Plan:** `~/.claude/plans/based-on-all-we-eager-valley.md` (deleted 2026-09-30 — work shipped, see below)
 **Audit:** "Provable Fleet" artifact, 2026-09-05 (private) — 20-section audit of what the
 platform can prove from its own data.
 **Size:** three PR-sized branches, no schema change, no new services.
@@ -183,6 +197,8 @@ append-only event log with four kinds: `run`, `merge`, `cost`, `human`.
       (PR #301, fleet-controller 0.22.1).
 
 **Step 1 complete** (2026-09-05): all three branches implemented, tested, and merged to main.
+Openspec changes `commercial-evidence-run-identity`/`-runs-jsonl`/`-fleet-cost-events` archived
+2026-09-30 (`openspec/changes/archive/2026-09-30-commercial-evidence-*`).
 Dexter follow-up (below) can start now.
 
 Follow-up in the **dexter repo** (separate plan, not tracked here): The Bench executive view
@@ -199,7 +215,7 @@ wait (rides on the human-hold migration); merge-conflict rate under parallel dis
 
 ## Step 2 — Skill-version attribution (measurement Phase 1, **reduced**)
 
-**Plan:** `~/.claude/plans/no-edits-write-up-composed-fountain.md`
+**Plan:** `~/.claude/plans/no-edits-write-up-composed-fountain.md` (deleted 2026-09-30 — work shipped, see below)
 **Memory:** `project_skill-version-attribution-phase1`
 **Openspec change:** `skill-prompt-fingerprint` (proposed 2026-09-05, 4/4 artifacts,
 `openspec validate --strict` clean). One PR. Note the plan is stale on two points the change
@@ -211,7 +227,8 @@ Step 1A already ships `META|run-id` and `META|version` (plan items 3–4) and St
 `runs.jsonl` — so this plan shrinks to the prompt-material fingerprint and stops needing a
 bash grouper:
 
-**Status: implemented 2026-09-05 on `feat/skill-prompt-fingerprint` (ticket-auto-pipeline 0.42.0).**
+**Status: implemented 2026-09-05 on `feat/skill-prompt-fingerprint` (ticket-auto-pipeline 0.42.0).
+Archived 2026-09-30 (`openspec/changes/archive/2026-09-30-skill-prompt-fingerprint`).**
 
 - [x] 1. `prompt_manifests` block in `skills/ticket-flow/dispatch-table.json` — 12 skills.
       Membership verified per skill, not grepped: `ticket-appraise-exec`'s "Run
@@ -259,7 +276,7 @@ canary, score shipping) remain **optional** and unscheduled.
 
 ## Step 3 — Human-hold / external-wait (remainder)
 
-**Plan:** `~/.claude/plans/go-over-the-current-soft-dahl.md`
+**Plan:** `~/.claude/plans/go-over-the-current-soft-dahl.md` (deleted 2026-09-30 — work shipped, see below)
 **Memory:** `project_human-hold-external-wait`
 **Openspec changes** (proposed 2026-09-06, both 4/4 artifacts, `openspec validate --strict`
 clean). Sequence — apply strictly in this order, one `/opsx:apply` + PR per change:
@@ -291,6 +308,9 @@ clean). Sequence — apply strictly in this order, one `/opsx:apply` + PR per ch
 
 Makes "blocked on a human" a first-class recoverable fleet state — a hold is a row, not a stalled
 process. Reviewed to 10/10 on 2026-09-03. Step 0 already removed its two urgent bug fixes.
+
+Both changes archived 2026-09-30 (`openspec/changes/archive/2026-09-30-human-hold-store-foundation`,
+`openspec/changes/archive/2026-09-30-human-hold-protocol`).
 
 **Four corrections to the plan, found while writing the changes (three while proposing, one while
 implementing):**
@@ -373,7 +393,8 @@ critical path to workflow-driven execution and to finishing fleetd phase supervi
    postdating the phase's own bracket-open line. Emits `META|claim-delta` with
    `direction` (`aligned`/`optimistic`/`pessimistic`/`unknown`). Wired into
    `skills/ticket-auto/SKILL.md` immediately after `phase-result-parse.sh`,
-   same observe-only guarantees. 17/17 new tests.
+   same observe-only guarantees. 17/17 new tests. Archived 2026-09-30
+   (`openspec/changes/archive/2026-09-30-rlvr-verdict-recompute`).
 
 If the follow-up's `direction` comes back `aligned` on essentially every ticket, the routing
 increments get **dropped** — that is an intended outcome, not a failure.
@@ -382,10 +403,11 @@ increments get **dropped** — that is an intended outcome, not a failure.
 
 ## Step 5 — Agent Observer
 
-**Plan:** `~/.claude/plans/delightful-spinning-snowglobe.md`
+**Plan:** `~/.claude/plans/delightful-spinning-snowglobe.md` (deleted 2026-09-30 — work shipped, see below)
 **Memory:** `project_agent-observer-plan`
 **Openspec change:** `agent-observer` (implemented 2026-09-06, 43/43 tasks; `openspec/` is
-gitignored, exists only on local disk).
+gitignored, exists only on local disk). Archived 2026-09-30
+(`openspec/changes/archive/2026-09-30-agent-observer`).
 
 **Merged 2026-09-06 on `feat/agent-observer` (PR #309, fleet-controller 0.25.0).**
 `fleetd/observer.py`, a fleet-wide sidecar modelled on `otel.py`'s own
@@ -455,7 +477,7 @@ Cut from MVP: `run_phase` (phase-level dispatch isn't rolled out yet), a server-
 
 ## Step 7 — Tracker decoupling, Track A (near-term) — COMPLETE, archived
 
-**Plan:** `~/.claude/plans/something-that-has-been-soft-gosling.md`
+**Plan:** `~/.claude/plans/something-that-has-been-soft-gosling.md` (deleted 2026-09-30 — work shipped, see below)
 **Openspec changes** — all 3 merged to main and archived (2026-09-19), specs synced into
 `openspec/specs/`:
 
@@ -735,7 +757,7 @@ labels stop carrying machine state. Two decisions taken before proposing: approv
 premise); the four **human-signal** labels (`needs-info`, `needs-adr`, `rejected`, `reviewed`)
 remain as board-driver *projections* — pure output, nothing reads them back.
 
-**Plan:** `~/.claude/plans/radiant-juggling-candle.md` — built from a 3-agent codebase inventory
+**Plan:** `~/.claude/plans/radiant-juggling-candle.md` (deleted 2026-09-30 — work shipped, see below) — built from a 3-agent codebase inventory
 (every Linear write site, every approval/state decision read, the full outbox→driver push path)
 and reviewed by 3 independent agents (approval-safety, removal-completeness, projection-design)
 before being finalized. Three openspec changes, one PR each, in this order — later changes depend
@@ -821,12 +843,17 @@ All three validated `openspec validate --strict` clean as of 2026-09-23 and are 
 `main`. This closes the Track B authority-flip programme; task 7.4's live end-to-end verification
 is the only outstanding item, rolled into Step 8's consolidated live-verification pass.
 
+All three changes (`tracker-approval-by-script`, `tracker-flow-projection-cutover`,
+`tracker-planner-and-fallback-cutover`) archived 2026-09-30
+(`openspec/changes/archive/2026-09-30-tracker-*`).
+
 ---
 
 ## Step 8 — Definition of Ready (DoR) readiness gate — all phases implemented; live verification pending
 
-**Plan:** `~/.claude/plans/when-working-on-the-delightful-ocean.md` (re-scoped 2026-09-27 after a
-live-evidence report over both tickets hosts and a 3-reviewer + second-agent pass).
+**Plan:** `~/.claude/plans/when-working-on-the-delightful-ocean.md` (deleted 2026-09-30 — work
+shipped, see below; re-scoped 2026-09-27 after a live-evidence report over both tickets hosts and
+a 3-reviewer + second-agent pass).
 **Openspec changes**, strictly in this order, one `/opsx:propose` + `/opsx:apply` + PR each:
 1. `dor-readiness-gate-foundation` (ticket-auto-pipeline + fleet-controller) — merged
 2. `dor-quality-score` (ticket-auto-pipeline, diagnostic score + 2 hard codes) — merged
@@ -837,8 +864,11 @@ live-evidence report over both tickets hosts and a 3-reviewer + second-agent pas
 6. `planner-ready-by-construction` (ticket-planner + ticket-auto-pipeline) — merged
 7. `readiness-feedback-loop` (fleet-controller + ticket-planner) — merged
 
-All 7 changes are implemented and merged. Only item 4 below (the consolidated live-verification
-pass) remains.
+All 7 changes are implemented and merged, and all 7 archived 2026-09-30
+(`openspec/changes/archive/2026-09-30-{dor-readiness-gate-foundation,dor-quality-score,
+planner-phase-count-derivation,dor-semantic-evaluator,planner-refinement-phase,
+planner-ready-by-construction,readiness-feedback-loop}`). Only item 4 below (the consolidated
+live-verification pass) remains.
 
 **Why this exists:** planner-cut tickets reached a worker with no Scope / Navigation Path / Test
 User section and no test data, and were stopped only at the entry gate after a worker was already
@@ -902,7 +932,7 @@ untouched.
       3 specific, quote-verified findings against the same expectation — flagged, not yet tuned). Full
       19-fixture sweep + prompt tuning deferred to a live-verification pass before
       `planner-refinement-phase` can safely assume the evaluator's output quality. Plan:
-      `~/.claude/plans/gentle-doodling-truffle.md`.
+      `~/.claude/plans/gentle-doodling-truffle.md` (deleted 2026-09-30 — work shipped).
 - [x] 3. `planner-refinement-phase` — implemented 2026-09-30, merged 2026-09-30 via **PR #430**.
       **Supersedes `planner-readiness-phase`.** New planner phase
       Refinement between TicketGen and Completed (11 phases, up from 10): per-ticket deterministic
@@ -951,6 +981,46 @@ untouched.
       total) + 6 in `test-planner-replan.sh` (35/35 total); full `make test` green. fleet-controller
       0.41.0→0.42.0, ticket-planner 0.13.0→0.14.0. **Live verification not yet run** — roll into
       item 4 above, now the last remaining item before that consolidated pass.
+
+
+---
+
+## Step 9 — Agent-facing ticket quality: business framing + standard single-ticket creation — both merged; live verification pending
+
+Two changes that make tickets readable by stakeholders and stop agents from creating tickets that
+skip the checks. Both were implemented and merged on 2026-10-03.
+
+- [x] 1. `planner-business-framing`: merged via **PR #440**. The planner now writes epics and
+      tickets business-first. Each ticket is classified `business` or `enabler`. A business ticket
+      gets an `## Outcome` section (Who / Need / Outcome) and traces to outcome ids; an enabler gets
+      an `## Enables` section and no fake user story. Business titles carry no paths, routes or
+      code symbols. Implementation detail moves to `## Technical Context`. The business-wording
+      lint on titles and bodies is a deferred follow-up.
+- [x] 2. `ticket-create-skill`: merged via **PR #441** (ticket-auto-pipeline 0.62.0).
+      `/ticket-create` and `skills/ticket-create/create.sh` are now the one standard path for
+      logging a single ticket: routing (Linear ticket / GitHub issue for marketplace defects /
+      `kc-capture` for knowledge), the body section check, the readiness check
+      (`check_ticket_ready --no-fetch`), a duplicate check (`search_issues` plus Jaccard over
+      `_title_terms`), `create_issue` with no labels, and an `_adhoc` manifest. A `PreToolUse`
+      guard (`hooks/ticket-create-guard.sh`) denies direct Linear creates and redirects to the
+      skill. `TICKET_CREATE_GUARD=off` opts out. Tasks 1–6 are done (21/23); the openspec change
+      is not archived yet.
+- [ ] 3. Live verification of `ticket-create-skill` (tasks 7.1 and 7.2). Needs a new session on
+      plugin 0.62.0. (a) Ask an agent to "log a bug" without naming the skill, and confirm it uses
+      `/ticket-create`, runs the dry run, and creates one ticket with the template layout and an
+      `_adhoc` manifest. (b) Confirm a direct MCP `save_issue` create is denied with the redirect
+      message, and an MCP update to an existing ticket still works. Can be run on its own (it does
+      not need a planned epic), or rolled into Step 8's consolidated live pass. After it passes,
+      run `/opsx:archive ticket-create-skill`.
+- [ ] 4. Live: one planner run on a real idea, confirming the business-framed titles and sections
+      survive TicketGen into Linear. Roll into Step 8's consolidated live pass (item 4).
+- [ ] 5. Follow-up, not yet specced: two existing mismatches found while building `create.sh`.
+      (a) The `improvement` template's `## Desired Behaviour` is not in `dor-check.sh`'s outcome
+      aliases, and the `security` template has neither a why heading nor an outcome heading, so a
+      body written straight from either template fails with `INTENT_MISSING`. The skill currently
+      tells agents to add `## Proposed Changes` as a workaround. Fix the templates or the alias
+      list. (b) `_has_section_nav_path` accepts the Verification Plan's "Navigation path" column
+      header as a navigation path, so `NAV_PATH_MISSING` is weaker than it looks.
 
 ---
 
