@@ -619,6 +619,14 @@ if [ -s "$LOG_FILE" ]; then
   fi
 fi
 
+# Autonomy is likewise independent of RESUME_STEP: the router writes
+# META|autonomy at Step 0.1, before the first dispatch, so a fresh STEP_1 run
+# already has it on the log and must report it rather than defaulting to manual.
+if [ -s "$LOG_FILE" ]; then
+  AUTONOMY=$(grep '^[^|]*|META|autonomy|info|' "$LOG_FILE" 2>/dev/null | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", (i>5?"|":""), $i; print ""}' || true)
+fi
+AUTONOMY=${AUTONOMY:-manual}
+
 if [ "$RESUME_STEP" != "STEP_1" ] && [ "$RESUME_STEP" != "GATE_STILL_HELD" ]; then
   TICKET_DIR=$(resolve_ticket_dir "$TICKET_ID" "." 2>/dev/null || true)
 
@@ -637,9 +645,6 @@ if [ "$RESUME_STEP" != "STEP_1" ] && [ "$RESUME_STEP" != "GATE_STILL_HELD" ]; th
 
     TICKET_TITLE=$(grep '^[^|]*|META|title|info|' "$LOG_FILE" 2>/dev/null |
       tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", (i>5?"|":""), $i; print ""}' | sed 's/^[^:]*: //' || true)
-
-    AUTONOMY=$(grep '^[^|]*|META|autonomy|info|' "$LOG_FILE" 2>/dev/null | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", (i>5?"|":""), $i; print ""}' || true)
-    AUTONOMY=${AUTONOMY:-manual}
 
     # R6: count only terminal FAIL entries — a PASS naturally exits the retry
     # loop and should not inflate the 3-attempt exhaustion cap. Counting

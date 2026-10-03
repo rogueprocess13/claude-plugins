@@ -145,13 +145,13 @@ The heartbeat log must exist before preflight (Step 0.4) so failures leave a tra
 ```bash
 mkdir -p ./logs
 HB_LOG_FILE="$PWD/logs/{TICKET-ID}-heartbeat.log"
-~/.claude/skills/lib/hb-wrap.sh
+export PATH="$HOME/.claude/skills/lib:$PATH"  # makes bare hb-wrap.sh calls resolve (script is executable)
 source ~/.claude/skills/lib/capture-transcript.sh
 export HB_LOG_FILE="$HB_LOG_FILE"
 hb_init
 # Idempotency guards: skip if already written (prevents duplication on resume)
 if ! grep -q '|heartbeat|pipeline-start|' "$HB_LOG_FILE" 2>/dev/null; then
-  hb-wrap.sh heartbeat "pipeline-start" "pipeline starting — autonomy={AUTONOMY}, from-planned={FROM_PLANNED}, ticket={TICKET-ID}"
+  hb-wrap.sh heartbeat "pipeline-start" "ok" "pipeline starting — autonomy={AUTONOMY}, from-planned={FROM_PLANNED}, ticket={TICKET-ID}"
 fi
 if ! grep -q '|decision|autonomy-resolution|' "$HB_LOG_FILE" 2>/dev/null; then
   hb-wrap.sh decision "autonomy-resolution" "fired" "autonomy set to {AUTONOMY}" '{"mode":"{AUTONOMY}"}'
@@ -589,15 +589,22 @@ if flock -n "$lock_fd"; then
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|waiting|$slug prescan triggered ($PRESCAN_STATUS)" >> {LOG_FILE}
 
   # Spawn using standard bracketed pattern
+  # spawn_agent_pre accepts only its documented params (PHASE, STEP, LOG_FILE,
+  # HB_LOG_FILE, CLAUDE_LOG_FILE, TICKET_ID, SKILL, FLAGS, AGENT_TYPE,
+  # INSTRUCTIONS, DESCRIPTION, FROM_STEP, ATTEMPT) — anything else is rejected
+  # as "unknown parameter". Repo, slug and cadence travel in INSTRUCTIONS.
   _prompt=$(spawn_agent_pre \
     PHASE=MAINTENANCE STEP=prescan TICKET_ID={TICKET-ID} \
-    SKILL=/ticket-prescan REPO="$repo" REPO_SLUG="$slug" CADENCE="$PRESCAN_STATUS" \
+    LOG_FILE={LOG_FILE} HB_LOG_FILE={HB_LOG_FILE} CLAUDE_LOG_FILE=$CLAUDE_LOG_FILE \
+    SKILL=/ticket-prescan FLAGS="--from-auto" \
+    AGENT_TYPE="ticket-auto-pipeline:ticket-prescan-agent" \
     DESCRIPTION="Refresh prescan docs for $slug ($PRESCAN_STATUS)" \
-    INSTRUCTIONS="Run /ticket-prescan --from-auto on $repo. Cadence: $PRESCAN_STATUS.")
+    INSTRUCTIONS="Run /ticket-prescan --from-auto on $repo. Repo slug: $slug. Cadence: $PRESCAN_STATUS.")
 
-  AGENT_RESULT=$(Agent "$_prompt" \
-    agentType="ticket-prescan-agent" \
-    description="Prescan $slug ($PRESCAN_STATUS)")
+  # Spawn: the Agent tool is NOT a bash function. Invoke it as a tool call (see
+  # "Agent spawn template" step 2) with prompt = the text after AGENT_PROMPT= in
+  # $_prompt and subagent_type = the text after AGENT_TYPE=, then continue below
+  # with the agent's verbatim return.
 
   # Hand the return over as a file (quoted heredoc — see "Agent spawn template").
   cat > /tmp/ticket-auto-{TICKET-ID}-agent-return.txt <<'AGENT_RETURN_EOF'
