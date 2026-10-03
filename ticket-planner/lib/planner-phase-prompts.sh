@@ -496,9 +496,15 @@ Read all upstream artifacts:
 - ${state_dir}/artifacts/appraisal.md — scope, type, complexity
 - ${state_dir}/artifacts/discovery.md — code paths, symbols, prior art
 - ${state_dir}/artifacts/architecture.md — decision, rationale, risks
+- ${state_dir}/artifacts/intent.md — the sealed Validated Business Intent, **when the
+  file exists** (only initiatives started with an intent file have one)
 
-Synthesize into a proposal document at ${state_dir}/artifacts/proposal.md:
+Synthesize into a proposal document at ${state_dir}/artifacts/proposal.md. Keep its
+\`# \` H1 title a short initiative name — the epic branch slug is derived from it.
 - **Summary** — what we're building, for whom, why
+- **Business Outcomes** — a \`## Business Outcomes\` section (format and rules below),
+  written *before* the Technical Approach: the problem and the desired result come
+  before how the system will achieve it
 - **Scope** — in scope, out of scope, explicit boundaries
 - **Technical Approach** — the architecture decision, key files/symbols that change
 - **Work Breakdown** — logical decomposition into tickets (one ticket = one coherent change)
@@ -507,13 +513,65 @@ Synthesize into a proposal document at ${state_dir}/artifacts/proposal.md:
 - **Risk Register** — known risks with mitigations
 - **Strategy** — Conservative/Balanced/Innovative
 
+### Business Outcomes (planner-business-framing)
+
+Before decomposing implementation work, establish the business outcomes the
+initiative is meant to produce. Each outcome answers: WHO is affected? WHAT do
+they need? WHAT observable result should exist? Write one \`### O<n>\` subsection
+per outcome:
+
+\`\`\`
+## Business Outcomes
+
+### O1
+
+**Who:** Tax accountant
+
+**Need:** Quickly understand which client documents are ready for tax work.
+
+**Outcome:** Documents are automatically classified into actionable categories.
+
+**Measure:** Not specified.
+\`\`\`
+
+**Source priority — take outcomes from, in order:**
+1. **intent.md** (when it exists) — its Objective, Users & Problem and Success
+   Criteria sections are authoritative. Preserve the business meaning grill-me
+   already established; do not reword it into something else.
+2. **appraisal.md** — when there is no intent file, or it lacks structured
+   outcome information.
+3. **Neither gives an actor and a need** — do NOT invent one. Write
+   \`**Outcome:** NEEDS_HUMAN_DECISION — <the question a human must answer>\`
+   and repeat the question in the Risk Register.
+
+\`Measure\` is \`Not specified.\` unless a source states a measure. Never invent a
+quantitative target.
+
+**Business framing.** Do not describe implementation in an Outcome.
+- Bad: "Outcome: Create a POST /api/matters/{matterId}/lock endpoint that writes locked_at and locked_by."
+- Good: "Outcome: A firm administrator can lock a completed financial period so documents cannot be changed without an auditable record."
+
+**Problem before solution.** Do not turn a technical design decision into a
+business outcome.
+- Bad: "Outcome: Implement a classification cascade using Claude as the fallback."
+- Good: "Outcome: Documents that cannot be classified using deterministic rules receive an automated classification attempt." (The cascade belongs in Technical Context.)
+
+**No invented business value.** Never invent ROI, revenue, cost savings,
+percentage improvements, customer commitments, regulatory requirements or
+actors unless the idea, intent, appraisal, repository evidence or other
+planning evidence supports them.
+
 ### Part 2: Write per-ticket spec files
 
 For each ticket in the work breakdown, produce a spec file at
 ${state_dir}/artifacts/specs/<ticket-slug>.md. Each spec must include:
 
-1. **Title** — the ticket title (will become the Linear ticket title)
-2. **Description** — the ticket body. Include what needs to change, acceptance criteria (observable, testable), and any user-story narrative if helpful.
+1. **Title** — the ticket title (will become the Linear ticket title). Follow the
+   title rules for the ticket's Kind (see "Ticket kind" below).
+2. **Description** — the ticket body, in the business-first layout below. Include
+   what needs to change and acceptance criteria (observable, testable). Never a
+   fake user story ("As a developer, I want…") — an enabler is described as the
+   technical work it is.
 3. **Labels** section — planning metadata TicketGen and Crosscheck parse from this
    spec file (tracker-planner-and-fallback-cutover, 4.1: none of this is applied
    to the Linear ticket as a live label any more — Type feeds the manifest's
@@ -525,6 +583,75 @@ ${state_dir}/artifacts/specs/<ticket-slug>.md. Each spec must include:
 4. **## Signals** — a JSON code block with the 5 raw confidence signals (see below)
 5. **## Verification Notes** — per acceptance criterion, which role exercises it and
    what test data it needs (see below)
+
+### Ticket kind (planner-business-framing)
+
+Classify every ticket as one of two kinds and record it in Signals (\`Kind\`):
+
+- **business** — delivers a new or changed capability that a user or business
+  actor experiences directly. E.g. "Accountants can lock completed financial
+  periods", "Accountant reports only include classified documents".
+- **enabler** — technical work that enables a business capability, removes
+  technical risk, or meets a technical/platform requirement. E.g. "Migrate BOM
+  microservice to Java 17 and Spring Boot 3", "Add database indexes for document
+  search latency". Do not invent a user story for an enabler.
+
+Traceability is by outcome id, never by copying outcome text into every spec:
+a business ticket lists the outcome(s) it delivers in \`Serves\`; an enabler
+lists the outcome(s) it makes possible in \`Enables\`. Never populate both.
+
+**Title rules — business:** prefer \`<Actor> can <capability>\` or a concise
+outcome statement ("Accountants can lock completed financial periods"). At most
+~80 characters, understandable without repository knowledge. No file paths, line
+references, API routes, code symbols or implementation identifiers, no internal
+phase codes (\`VS-5\`, \`A4-1\`), no planner/ticket process terms. Do not force the
+\`<Actor> can\` form when it reads unnaturally.
+
+**Title rules — enabler:** may be technical ("Migrate BOM microservice to Java 17
+and Spring Boot 3", "Persist document classification attempts"). Do not disguise
+an enabler as a user story.
+
+**Description layout** — in this order:
+1. \`## Summary\` — what this ticket does, in plain language.
+2. \`## Outcome\` (business) — \`**Serves:** O<n>\` then \`**Who:**\`, \`**Need:**\`,
+   \`**Outcome:**\`, a short rendering of the served outcome. No implementation
+   detail in these fields. **Or** \`## Enables\` (enabler) — \`**Enables:** O<n> —
+   <short outcome reference>\` (or the technical reason when it enables no stated
+   outcome, e.g. platform support), then why the technical work is required.
+3. The type template's own why/outcome headings, unchanged — e.g.
+   \`## Background / Motivation\` + \`## Proposed Behaviour\` (feature),
+   \`## Background / Motivation\` + \`## Proposed Changes\` (chore),
+   \`## Expected Behaviour\` + \`## Actual Behaviour\` (bug). The readiness check
+   requires them by exact name; keep them in plain, behaviour-level language.
+4. \`## Technical Context\` — files, routes, tables, columns, symbols, line
+   references and repository evidence: everything ticket-auto needs to build it.
+   Nothing required for implementation is removed to make the ticket readable —
+   it moves here.
+5. \`## Acceptance Criteria\` and the remaining required sections, unchanged.
+
+The four parts have distinct jobs: **Summary** = what this ticket does;
+**Outcome** = why it matters and who benefits; **Acceptance Criteria** = what must
+be observably true when done (the executable contract — never replaced by business
+prose); **Technical Context** = how the system is expected to achieve it.
+Worked example:
+
+\`\`\`
+Summary: Add support for locking completed financial periods.
+Outcome: Who: Firm administrator. Need: Prevent changes after a financial period
+  is completed. Outcome: A completed period can be locked and subsequent changes
+  are prevented and recorded.
+Acceptance Criteria: A firm administrator can lock a completed period. Changes to
+  locked documents are rejected. Lock/unlock actions are recorded.
+Technical Context: Add matters.locked_at and matters.locked_by. Add
+  POST /api/matters/{matterId}/lock. Authorize through can(). Persist audit_log entries.
+\`\`\`
+
+Write for the ticket's reader, not about the planning process: no planner phase
+names or process narration ("this Specify pass", "post-Consensus", "verified: zero
+matches", "tickets (b)/(c)") anywhere in the body.
+
+"Business-oriented" does not mean "non-technical": technical work stays technical,
+and engineering precision is never traded for readability.
 
 ### Verification Notes (planner-ready-by-construction)
 
@@ -564,9 +691,18 @@ function — do NOT compute Confidence or Pre-approved yourself.
   "Strategy": "<Conservative|Balanced|Innovative>",
   "Decision": "<one-sentence architecture decision>",
   "AffectedServices": "<CSV from proposal>",
-  "TargetSymbols": "<semicolon-list from discovery>"
+  "TargetSymbols": "<semicolon-list from discovery>",
+  "Kind": "<business|enabler>",
+  "Serves": ["<O-id>", "..."],
+  "Enables": ["<O-id>", "..."]
 }
 \`\`\`
+
+\`Kind\`, \`Serves\` and \`Enables\` are classification, not confidence signals
+(planner-business-framing). A **business** spec has a non-empty \`Serves\` and
+\`"Enables": []\`. An **enabler** spec has \`"Serves": []\`; its \`Enables\` lists the
+outcome(s) it makes possible, or is \`[]\` when it enables no stated outcome (say
+why in its \`## Enables\` section). Never populate both.
 
 #### TargetSymbols grammar (the citation linter parses this literally)
 
@@ -644,6 +780,9 @@ On failure, write \`fail\` instead of \`done\`.
   Criteria line — TicketGen's Verification Plan table reads it (planner-ready-by-construction).
 - Signals must be raw values from Discovery, not fabricated. Do NOT compute Confidence.
 - The description in each spec is the actual Linear ticket body — be precise.
+- Every spec's Signals carries \`Kind\` and \`Serves\`/\`Enables\`; every business spec
+  serves an outcome id that exists in proposal.md's \`## Business Outcomes\`.
+- Never invent actors, business value or metrics (planner-business-framing).
 - Dependency order must be a DAG.
 - Do not invent services or symbols — every reference must appear in upstream artifacts.
 AGENT_PROMPT
@@ -764,6 +903,10 @@ sweep would misread.
 3. Produce the finalized proposal at ${state_dir}/artifacts/proposal.md
    (overwrite — the review digest is preserved in review.md). This is now the
    authoritative plan that OpenSpec and the generation phases consume.
+   Carry the \`## Business Outcomes\` section over intact — EpicGen and TicketGen
+   read it, and specs reference its outcome ids. Change an outcome only when a
+   finding requires it, never renumber existing ids, and update every spec's
+   \`Serves\`/\`Enables\` if you add or remove one (planner-business-framing).
 4. Write a consensus digest to ${state_dir}/artifacts/consensus.md:
    - **Findings Addressed** — each review finding, its disposition (accepted/rejected/deferred),
      and what changed (if anything)
@@ -835,22 +978,86 @@ to create the Linear epic that represents this initiative. You are phase ${_pos}
 ## Your task
 
 1. Read the proposal (${state_dir}/artifacts/proposal.md) and the spec index
-   (${state_dir}/artifacts/specs/INDEX.md) for context.
+   (${state_dir}/artifacts/specs/INDEX.md) for context. The proposal's
+   \`## Business Outcomes\` section is the authoritative business framing.
 2. Create a Linear epic using the Linear API. The epic represents this initiative.
 
-## Humanize the epic description before creation (issue #285) — MANDATORY
+## Epic business representation (planner-business-framing)
 
-Compose \$EPIC_DESCRIPTION from the proposal and spec index — the initiative's
-motivation, scope, and the set of child tickets it will produce. Once that text
-is fully written, and before it is ever passed to \`planner_linear_create_issue\`,
-run it through the **humanizer** skill to strip AI-sounding prose (inflated-
-importance phrasing, hedging, stock transitions — see that skill's own pattern
-catalog) from the free-text portions. Per the humanizer's own rules: keep every
-fact and claim intact, invent nothing, and preserve any heading/list/table
-structure you used exactly as written — it rewrites prose, not structure. The
+The epic is the business-level representation of the initiative. A stakeholder
+should be able to read the epic title and its first section and understand what
+capability or outcome the initiative delivers without understanding the
+implementation architecture.
+
+**Title (\$EPIC_TITLE):** state the capability or outcome — prefer
+\`<business actor> can <meaningful capability>\` or a \`<business outcome>\`
+statement:
+- Bad: "VS-5 — Storage & Provenance". Better: "Accountants can rely on filed documents as an audit-grade record".
+- Bad: "Multi-Tier AI Document Processing". Better: "Documents are automatically classified when deterministic rules are insufficient".
+
+Do not make the epic title describe files, classes, APIs, database tables,
+migrations, internal planner phases or implementation sequencing, and do not use
+internal phase identifiers (\`VS-5\`, \`Phase A\`, \`A4-1\`) as the primary title.
+For a purely technical initiative (e.g. a platform migration) a technical title
+is correct — do not dress it up as a user capability.
+
+Technical architecture stays in the epic body. Use the Business Outcomes from
+proposal.md as the business framing and do not invent outcomes, actors, value or
+metrics. If an outcome reads \`NEEDS_HUMAN_DECISION\`, carry it into the epic as
+is — do not resolve it yourself.
+
+## Epic body layout
+
+Compose \$EPIC_DESCRIPTION with these sections, in this order:
+
+\`\`\`markdown
+## Summary
+
+<one or two sentence business description of what the initiative delivers>
+
+## Outcomes
+
+### O1
+
+**Who:** <actor>
+
+**Need:** <need>
+
+**Outcome:** <outcome>
+
+**Measure:** <measure, or Not specified>
+
+## Who benefits
+
+<short business-facing description of who gains what>
+
+## Child tickets
+
+<the child tickets the initiative produces, with their dependency order>
+
+## Technical approach
+
+<the architecture decision, affected services, risks — the existing technical information>
+\`\`\`
+
+Copy the outcomes from proposal.md with their ids unchanged. All child-ticket and
+technical information the epic carried before stays — it moves under
+\`## Child tickets\` and \`## Technical approach\`, it is not dropped. No planner
+process narration (phase names, "post-Consensus", review dispositions) anywhere
+in the epic.
+
+## Humanize the epic title and description before creation (issue #285) — MANDATORY
+
+Once \$EPIC_TITLE and \$EPIC_DESCRIPTION are fully written, and before either is
+ever passed to \`planner_linear_create_issue\`, run them through the **humanizer**
+skill to strip AI-sounding prose (inflated-importance phrasing, hedging, stock
+transitions — see that skill's own pattern catalog) from the free-text portions.
+Per the humanizer's own rules: keep every fact and claim intact, invent nothing,
+and preserve the heading/list/table structure exactly as written — it rewrites
+prose, not structure. Keep the five section headings above, the \`### O<n>\` ids
+and the \`**Who:**\`/\`**Need:**\`/\`**Outcome:**\`/\`**Measure:**\` labels verbatim. The
 epic body has no ticket-auto-pipeline section-template contract (that applies
-only to child tickets — see Ticket Gen), so there is no fixed heading set to
-preserve here beyond your own organization of the proposal.
+only to child tickets — see Ticket Gen); the layout above is the planner's own.
 
 ## Idompotency — CRITICAL
 
@@ -1304,6 +1511,72 @@ heading — never emit a heading with no content under it. The pre-creation
 validation below checks this mechanically, so a ticket missing a section is
 caught here, not by ticket-auto's gate three phases later.
 
+## Body layout and ticket kind (planner-business-framing) — MANDATORY
+
+Each spec's \`## Signals\` JSON carries \`Kind\` (\`business\` | \`enabler\`),
+\`Serves\` and \`Enables\` (outcome ids from proposal.md's \`## Business Outcomes\`).
+Render every body in this order — the new sections are additive; every heading
+the contract above requires keeps its exact name:
+
+1. \`## Summary\` — what this ticket does, in plain language.
+2. \`## Outcome\` (Kind = business) **or** \`## Enables\` (Kind = enabler) — see below.
+3. The type template's own why/outcome headings, unchanged — \`## Background / Motivation\`
+   + \`## Proposed Behaviour\` (feature), \`## Background / Motivation\` + \`## Proposed Changes\`
+   (chore), \`## Expected Behaviour\` + \`## Actual Behaviour\` (bug), and so on per
+   \`templates/{type}.md\`. The readiness check (\`dor-check.sh\` \`INTENT_MISSING\`) matches
+   these by exact heading name — \`## Outcome\` and \`## Technical Context\` do not
+   satisfy it. Keep them in plain, behaviour-level language.
+4. \`## Technical Context\` — files, routes, tables, columns, symbols, line references
+   and repository evidence. Everything the implementer needs stays in the ticket —
+   it moves here rather than opening the body.
+5. \`## Acceptance Criteria\` and the remaining sections required above.
+
+**BUSINESS TICKET REPRESENTATION** (Kind = business). This ticket delivers a
+capability experienced by a user or business actor. The first part of the ticket
+explains the outcome before the implementation:
+
+\`\`\`
+## Outcome
+
+**Serves:** O1
+
+**Who:** <the actor affected by the change>
+
+**Need:** <what the actor needs to accomplish, or the problem they experience>
+
+**Outcome:** <the observable result that exists after this ticket is completed>
+\`\`\`
+
+Do not put implementation details in these fields — they belong in Technical
+Context. Do not invent actors or business value: the Business Outcome referenced
+by \`Signals.Serves\` is the source of truth, rendered short, not copied in full.
+Acceptance Criteria remain the executable contract and stay specific and
+verifiable.
+
+**ENABLER TICKET REPRESENTATION** (Kind = enabler). This ticket is technical
+work. Do not force it into a user-story format — no "As a developer…" narrative,
+and no manufactured user actor to make it look business-oriented. Technical
+terminology is appropriate. Explain: (1) what technical capability or change is
+delivered (Summary); (2) which business outcome it enables, when known, and (3)
+why the work is required (\`## Enables\`); (4) how the result is verified
+(Acceptance Criteria + Verification Plan).
+
+\`\`\`
+## Enables
+
+**Enables:** O1 — <short outcome reference>
+
+<why this technical work is required>
+\`\`\`
+
+When \`Signals.Enables\` is empty, write the technical reason in place of the
+outcome reference (e.g. "**Enables:** platform support — Spring Boot 2.x is out of
+support").
+
+Write for the ticket's reader, not about the planning process: no planner phase
+names or process narration ("this Specify pass", "post-Consensus", "verified: zero
+matches", "tickets (b)/(c)").
+
 ## Verification Plan table (planner-ready-by-construction) — MANDATORY
 
 ticket-auto-pipeline's deterministic readiness check
@@ -1354,6 +1627,8 @@ and claim intact, invent nothing, and preserve every \`##\` heading, table, and
 checklist item exactly as written, and leave the \`## Planner Context\` block's
 field values untouched — the humanizer rewrites prose inside sections, never
 heading text, table/checklist syntax, or Planner Context field values.
+Also keep the \`**Serves:**\`/\`**Who:**\`/\`**Need:**\`/\`**Outcome:**\`/\`**Enables:**\`
+labels and every outcome id (\`O1\`, \`O2\`…) exactly as written (planner-business-framing).
 
 ## Pre-creation validation (MANDATORY)
 
@@ -1443,7 +1718,10 @@ context_json=\$(jq -nc \\
     "Target Symbols": (\$signals.TargetSymbols // ""),
     "Pre-approved": (\$pre_approved == "true"),
     "Generated": \$generated,
-    "Regenerate": false
+    "Regenerate": false,
+    "Kind": (\$signals.Kind // ""),
+    "Serves": ((\$signals.Serves // []) | if type == "array" then join(",") else tostring end),
+    "Enables": ((\$signals.Enables // []) | if type == "array" then join(",") else tostring end)
   }')
 
 # Generate Planner Context block
