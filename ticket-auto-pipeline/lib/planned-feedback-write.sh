@@ -57,7 +57,8 @@ planned_feedback_write() {
   # Corrections count (from CORRECTIONS blocks in notes.md, or pipeline log)
   local corrections_count=0
   if grep -q '^[^|]*|META|corrections|' "$log_file" 2>/dev/null; then
-    corrections_count=$(grep -c '^[^|]*|META|corrections|' "$log_file" 2>/dev/null || echo 0)
+    corrections_count=$(grep -c '^[^|]*|META|corrections|' "$log_file" 2>/dev/null || true)
+    corrections_count=${corrections_count:-0}
   fi
 
   # Files changed — from IMPLEMENT phase log entries, or git diff

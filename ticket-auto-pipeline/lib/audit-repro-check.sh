@@ -65,16 +65,19 @@ audit_repro_check() {
 
   # ── Pattern 1: Numbered steps like "1. Go to..." "2. Click..." ──────────
   local numbered_count
-  numbered_count=$(echo "$text" | grep -cE '^\s*\d+[.)]\s+' 2>/dev/null || echo 0)
+  numbered_count=$(echo "$text" | grep -cE '^\s*\d+[.)]\s+' 2>/dev/null || true)
+  numbered_count=${numbered_count:-0}
 
   # ── Pattern 2: "Steps to reproduce" section with bullets ─────────────────
   local has_steps_header
-  has_steps_header=$(echo "$text" | grep -ciE 'steps to reproduce|repro steps|reproduction steps|how to reproduce' 2>/dev/null || echo 0)
+  has_steps_header=$(echo "$text" | grep -ciE 'steps to reproduce|repro steps|reproduction steps|how to reproduce' 2>/dev/null || true)
+  has_steps_header=${has_steps_header:-0}
 
   # ── Pattern 3: Sequential action words in bullets ────────────────────────
   # "Go to X", "Click Y", "Navigate to Z", "Open W"
   local action_step_count
-  action_step_count=$(echo "$text" | grep -cPiE '^\s*[-*]\s*(go to|navigate to|click|open|select|type|enter|press|choose|submit|login|log in|visit|browse to|fill|check|verify|confirm)' 2>/dev/null || echo 0)
+  action_step_count=$(echo "$text" | grep -cPiE '^\s*[-*]\s*(go to|navigate to|click|open|select|type|enter|press|choose|submit|login|log in|visit|browse to|fill|check|verify|confirm)' 2>/dev/null || true)
+  action_step_count=${action_step_count:-0}
 
   # ── Determine if repro steps exist ───────────────────────────────────────
   # Threshold: 2+ numbered steps, OR steps header + at least 1 action bullet

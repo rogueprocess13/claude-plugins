@@ -84,7 +84,8 @@ _check_file_basics() {
 _check_headings() {
   local path="$1" label="$2"
   local heading_count
-  heading_count=$(grep -c '^## ' "$path" 2>/dev/null || echo "0")
+  heading_count=$(grep -c '^## ' "$path" 2>/dev/null || true)
+  heading_count=${heading_count:-0}
   if [ "$heading_count" -lt "$MIN_HEADINGS" ] 2>/dev/null; then
     _violation "$label" "no ## headings (need $MIN_HEADINGS+)"
     return 1
@@ -121,8 +122,10 @@ _check_security_warning() {
 _check_index_tables() {
   local path="$1"
   local has_topic has_service
-  has_topic=$(grep -c '## Lookup by Topic' "$path" 2>/dev/null || echo "0")
-  has_service=$(grep -c '## Lookup by Service' "$path" 2>/dev/null || echo "0")
+  has_topic=$(grep -c '## Lookup by Topic' "$path" 2>/dev/null || true)
+  has_topic=${has_topic:-0}
+  has_service=$(grep -c '## Lookup by Service' "$path" 2>/dev/null || true)
+  has_service=${has_service:-0}
   if [ "$has_topic" = "0" ]; then
     _violation "INDEX.md" "missing Lookup by Topic table"
     return 1

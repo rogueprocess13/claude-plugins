@@ -180,7 +180,8 @@ planner_feedback_status() {
   done <<<"$files"
 
   local count
-  count=$(echo -e "$valid_files" | grep -c . 2>/dev/null || echo 0)
+  count=$(echo -e "$valid_files" | grep -c . 2>/dev/null || true)
+  count=${count:-0}
 
   if [ -n "$unreadable" ]; then
     local unreadable_json errors_json

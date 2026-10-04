@@ -29,7 +29,8 @@ audit_size_check() {
   # Signal 1: AC count > 5
   # Count bullet points and numbered list items in the text
   local ac_count
-  ac_count=$(echo "$text" | grep -cE '^\s*[-*+]\s|^\s*\d+[.)]\s' 2>/dev/null || echo 0)
+  ac_count=$(echo "$text" | grep -cE '^\s*[-*+]\s|^\s*\d+[.)]\s' 2>/dev/null || true)
+  ac_count=${ac_count:-0}
   if [ "$ac_count" -gt 5 ] 2>/dev/null; then
     signal_count=$((signal_count + 1))
     signals="${signals}ac_count "

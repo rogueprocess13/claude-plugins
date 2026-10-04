@@ -851,7 +851,7 @@ export CLAUDE_PLUGIN_ROOT
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 planner_state_write "${initiative_id}" "Review" "critique" "start" "Critiquing proposal for gaps and risks"
 # ... do your work ...
-severity_counts="\$(grep -c 'blocker' artifacts/review.md || echo 0) blockers, ..."
+severity_counts="\$(grep -c 'blocker' artifacts/review.md || true) blockers, ..."
 planner_state_write "${initiative_id}" "Review" "critique" "done" "Review complete: \${severity_counts}"
 \`\`\`
 
