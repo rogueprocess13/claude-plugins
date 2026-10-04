@@ -47,6 +47,9 @@ OUTCOME_LABELS="Smooth Rough Hard"
 _get_outcome_from_log() {
   local outcome
   outcome=$(grep '^[^|]*|IMPLEMENT|implement-outcome|info|' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d'|' -f5- || true)
+  # Some write paths copy the `--data outcome=Hard` flag syntax into the
+  # log line (issue #393). Accept an optional `outcome=` prefix.
+  outcome="${outcome#outcome=}"
 
   # Fallback: agents sometimes report the outcome only inside an
   # IMPLEMENT|implement|done| line and never invoke the flow.sh
