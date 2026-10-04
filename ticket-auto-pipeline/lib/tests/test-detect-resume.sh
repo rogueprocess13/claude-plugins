@@ -711,6 +711,41 @@ test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4() {
 
 # ── Terminal "done" state (#168) ────────────────────────────────────────────
 
+test_resume_pr_warn_routes_to_step_4_6() {
+  local out
+  out=$(_detect_resume_with_log "TEST-407A" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|done|ok" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|done|PASS" \
+    "2026-07-05T10:00:03Z|PR-REVIEW|pr-review|done|WARN — gaps found")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_4_6" ] &&
+    [ "$(_field "$out" ITERATION)" = "1" ]
+}
+
+test_resume_reimplement_after_verify_routes_to_step_4_5() {
+  local out
+  out=$(_detect_resume_with_log "TEST-407B" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|done|ok" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|done|PASS" \
+    "2026-07-05T10:00:03Z|PR-REVIEW|pr-review|done|WARN — gaps found" \
+    "2026-07-05T10:00:04Z|IMPLEMENT|implement|done|iteration fix")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]
+}
+
+test_resume_pr_ok_not_rerouted_by_warn_branch() {
+  local out
+  out=$(_detect_resume_with_log "TEST-407C" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|done|ok" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|done|PASS" \
+    "2026-07-05T10:00:03Z|PR-REVIEW|pr-review|done|WARN — gaps found" \
+    "2026-07-05T10:00:04Z|IMPLEMENT|implement|done|iteration fix" \
+    "2026-07-05T10:00:05Z|VERIFY|verify|done|PASS" \
+    "2026-07-05T10:00:06Z|PR-REVIEW|pr-review|done|OK — approved")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_5" ]
+}
+
 test_resume_step_done_on_completed_outcome() {
   # pipeline-finalize.sh's tail-guarded "completed: STEP_6" line means the
   # run genuinely finished. Without a terminal check, a naive re-run of
@@ -1044,6 +1079,9 @@ for fn in \
   test_branch_context_carries_merge_policy \
   test_merge_policy_empty_on_log_without_field \
   test_branch_context_empty_on_legacy_log \
+  test_resume_pr_warn_routes_to_step_4_6 \
+  test_resume_reimplement_after_verify_routes_to_step_4_5 \
+  test_resume_pr_ok_not_rerouted_by_warn_branch \
   test_resume_step_done_on_completed_outcome \
   test_resume_step_not_done_on_held_outcome \
   test_resume_step_not_done_on_stopped_outcome \
