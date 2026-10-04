@@ -5071,7 +5071,19 @@ class Supervisor:
                 continue
 
             if decision.action == _gate_hold_mod.RELEASE:
-                _store_release_hold(self._state_dir, tid, decision.hold_id)
+                released = _store_release_hold(
+                    self._state_dir, tid, decision.hold_id)
+                # The pipeline-log marker is what _find_unreleased_human_hold
+                # and pipeline-finalize.sh's _pf_has_unreleased_human_hold
+                # read. Without it the intake pass re-creates the same hold
+                # every cycle, ratcheting hold_attempts to HUMAN_HOLD_EXHAUSTED
+                # (#405). Skipped when the store call failed (None) so the
+                # next pass retries both together.
+                if released is not None and (
+                        row.get('hold_kind') or '') == 'human':
+                    _append_pipeline_log_line(
+                        self._state_dir, tid, 'META', 'human-hold-released',
+                        'info', decision.hold_id)
             elif decision.action == _gate_hold_mod.GATE_STOP:
                 _append_pipeline_log_line(
                     self._state_dir, tid, 'META', 'gate-stop', 'fail',
@@ -5144,6 +5156,14 @@ class Supervisor:
                 _append_pipeline_log_line(
                     self._state_dir, tid, 'META', 'gate-stop', 'fail',
                     'HUMAN_HOLD_EXHAUSTED')
+                # Idempotent (#405): one exhaustion stop per unreleased
+                # record. The released marker retires the record so later
+                # passes return None from _find_unreleased_human_hold
+                # instead of re-appending the gate-stop (and re-notifying)
+                # forever.
+                _append_pipeline_log_line(
+                    self._state_dir, tid, 'META', 'human-hold-released',
+                    'info', 'retired: HUMAN_HOLD_EXHAUSTED')
                 _notify_gate_stop(
                     self._fleet_lib_dir, self._state_dir, tid,
                     'HUMAN_HOLD_EXHAUSTED')

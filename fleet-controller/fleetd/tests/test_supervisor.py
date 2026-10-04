@@ -2838,6 +2838,69 @@ class HumanHoldIntakePassTest(unittest.TestCase):
         self.assertEqual(comment_calls, [],
                          'post_human_hold_comment must not be called when exhausted')
 
+    def test_exhaustion_is_idempotent_across_passes(self):
+        """#405: the exhausted branch appends one gate-stop and retires the
+        record with a human-hold-released marker, so a second pass neither
+        re-appends the gate-stop nor re-notifies."""
+        from fleetd import store
+
+        tid = 'TST-HH3B'
+        with store.open_store(self.workspace) as st:
+            for attempt in (1, 2, 3):
+                hold_id = st.mint_hold_id(tid, 0, attempt)
+                st.set_hold(tid, 'human', hold_id, reason='ask', generation=0)
+                st.release_hold(tid, hold_id)
+        log_file = self._write_human_hold_log(tid, reason='APPROVAL_REQUIRED')
+
+        sup = self._supervisor()
+        sup.acquire_lock()
+        try:
+            sup._human_hold_intake_pass()
+            sup._human_hold_intake_pass()
+            sup._human_hold_intake_pass()
+        finally:
+            sup.release_lock()
+
+        log_text = log_file.read_text()
+        self.assertEqual(log_text.count('HUMAN_HOLD_EXHAUSTED|'), 0)
+        self.assertEqual(log_text.count('|META|gate-stop|fail|HUMAN_HOLD_EXHAUSTED'), 1)
+        self.assertEqual(log_text.count('|META|human-hold-released|'), 1)
+
+    def test_reconcile_release_writes_marker_so_intake_does_not_rehold(self):
+        """#405: releasing a human hold must append the pipeline-log
+        human-hold-released marker; otherwise the intake pass re-mints the
+        same hold every cycle."""
+        import types
+        from fleetd import store
+        import fleetd.gate_hold as gate_hold_mod
+
+        tid = 'TST-HH5'
+        log_file = self._write_human_hold_log(tid)
+        sup = self._supervisor()
+        sup.acquire_lock()
+        real = gate_hold_mod.reconcile_hold
+        try:
+            sup._human_hold_intake_pass()
+            with store.open_store(self.workspace) as st:
+                row = st.get_ticket(tid)
+            self.assertEqual(row['held'], 1)
+            gate_hold_mod.reconcile_hold = lambda *a, **k: types.SimpleNamespace(
+                action=gate_hold_mod.RELEASE, hold_id=row['hold_id'])
+            sup._hold_reconcile_pass()
+            sup._human_hold_intake_pass()
+            sup._human_hold_intake_pass()
+        finally:
+            gate_hold_mod.reconcile_hold = real
+            sup.release_lock()
+
+        self.assertIn(
+            f'|META|human-hold-released|info|{row["hold_id"]}',
+            log_file.read_text())
+        with store.open_store(self.workspace) as st:
+            row = st.get_ticket(tid)
+        self.assertEqual(row['held'], 0, 'released hold must not be re-created')
+        self.assertEqual(row['hold_attempts'], 1)
+
     def test_genuinely_terminal_ticket_is_skipped_entirely(self):
         """Verification checklist item 4: a ticket whose log already shows
         genuine completion is never converted into a hold, no matter what
