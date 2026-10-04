@@ -186,6 +186,21 @@ else
     RESUME_STEP="STEP_5"
   elif grep -q '^[^|]*|MAINTENANCE|document|' "$LOG_FILE"; then
     RESUME_STEP="STEP_5"
+  elif _ln_impl=$(grep -n '^[^|]*|IMPLEMENT|implement|done|' "$LOG_FILE" | tail -1 | cut -d: -f1) &&
+    _ln_ver=$(grep -nE '^[^|]*\|VERIFY\|verify\|(done|fail)\|' "$LOG_FILE" | tail -1 | cut -d: -f1) &&
+    [ -n "$_ln_impl" ] && [ -n "$_ln_ver" ] && [ "$_ln_impl" -gt "$_ln_ver" ]; then
+    # A re-implement (PR-review iteration or remediation) landed after the last
+    # verify — the new commit must be re-verified before PR review sees it
+    # again (#407). Without this, the stale VERIFY PASS / PR-REVIEW WARN lines
+    # below still match and resume skips straight to STEP_5.
+    RESUME_STEP="STEP_4_5"
+  elif _last_pr=$(grep '^[^|]*|PR-REVIEW|pr-review|done|' "$LOG_FILE" | tail -1) &&
+    [[ "$_last_pr" == *'|pr-review|done|WARN'* ]]; then
+    # Latest PR-review verdict is WARN and nothing was re-implemented since:
+    # route to STEP_4_6 (re-review; a still-WARN verdict then enters the
+    # pr-iterate sub-loop, bounded by the ITERATION counter below) instead of
+    # skipping straight to Document + merge on an unresolved WARN (#407).
+    RESUME_STEP="STEP_4_6"
   elif grep -q '^[^|]*|PR-REVIEW|pr-review|done|' "$LOG_FILE"; then
     # PR merge-status check: merged → STEP_6, open with human comments → STEP_5_5, else → STEP_5
     _pr_number=$(grep '^[^|]*|PR-REVIEW|checkout-pr|done|' "$LOG_FILE" 2>/dev/null | tail -1 | awk -F'|' '{print $5}' || true)
