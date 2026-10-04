@@ -227,6 +227,19 @@ test_outcome_mirror_is_best_effort_without_manifest() {
   [ "$rc" -eq 0 ]
 }
 
+# Issue #393 — `outcome=Hard` value format in the log line is accepted.
+test_outcome_prefixed_value_accepted() {
+  _setup
+  _plog_raw "IMPLEMENT" "implement-outcome" "info" "outcome=Hard"
+
+  _outcome_label_check
+  local rc=$?
+  local meta_line
+  meta_line=$(grep '|META|outcome-label|info|Hard$' "$LOG_FILE" 2>/dev/null || true)
+  _teardown
+  [ "$rc" -eq 0 ] && [ -n "$meta_line" ]
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Dispatcher
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -245,7 +258,8 @@ for fn in \
   test_outcome_unknown_value_fails \
   test_outcome_mirrored_to_manifest_when_already_present \
   test_outcome_mirrored_to_manifest_after_applying_label \
-  test_outcome_mirror_is_best_effort_without_manifest; do
+  test_outcome_mirror_is_best_effort_without_manifest \
+  test_outcome_prefixed_value_accepted; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done
