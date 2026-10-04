@@ -192,6 +192,41 @@ test_ac_count_heading_boundary_still_stops_fallback() {
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
+# Reproduces #403: warning/blocker counts and has_finding must read the latest
+# critique section, not the superseded first one.
+_rerun_notes() {
+  printf '## Readiness Critique\n\n**Status:** BLOCKED\n**Score:** 60\n- [BLOCKER] a\n- [BLOCKER] b\n- [WARNING] w1\n- [WARNING] w2\n- [WARNING] w3\n- stale-only-finding\n\n## Readiness Critique (re-run 2026-09-24)\n\n**Status:** CLEAR\n**Score:** 100\n- [WARNING] w4\n\n## Later\n\n- [BLOCKER] ignored\n' >"$1/notes.md"
+}
+
+test_critique_rerun_blocker_count_takes_latest() {
+  local tmpdir result
+  tmpdir=$(mktemp -d)
+  _rerun_notes "$tmpdir"
+  result=$(bash -c "source $LIB_DIR/notes-parse.sh; get_critique_blocker_count '$tmpdir'" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$result" = "0" ]
+}
+
+test_critique_rerun_warning_count_takes_latest() {
+  local tmpdir result
+  tmpdir=$(mktemp -d)
+  _rerun_notes "$tmpdir"
+  result=$(bash -c "source $LIB_DIR/notes-parse.sh; get_critique_warning_count '$tmpdir'" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$result" = "1" ]
+}
+
+test_critique_rerun_has_finding_takes_latest() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  _rerun_notes "$tmpdir"
+  if bash -c "source $LIB_DIR/notes-parse.sh; get_critique_has_finding '$tmpdir' 'stale-only-finding'" >/dev/null 2>&1; then
+    rm -rf "$tmpdir"
+    return 1
+  fi
+  rm -rf "$tmpdir"
+}
+
 FILTER="${1:-}"
 
 for fn in \
@@ -205,6 +240,9 @@ for fn in \
   test_critique_rerun_score_takes_latest \
   test_critique_rerun_status_takes_latest \
   test_critique_rerun_stops_at_next_heading \
+  test_critique_rerun_blocker_count_takes_latest \
+  test_critique_rerun_warning_count_takes_latest \
+  test_critique_rerun_has_finding_takes_latest \
   test_ac_count_indented_prose_not_boundary \
   test_ac_count_plain_text_label_no_heading \
   test_ac_count_heading_section_still_works \

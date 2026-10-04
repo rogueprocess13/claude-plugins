@@ -182,7 +182,7 @@ get_ac_count() {
 }
 
 # get_critique_warning_count <ticket-dir>
-# Counts [WARNING] markers in the ## Readiness Critique section of notes.md.
+# Counts [WARNING] markers in the latest ## Readiness Critique section of notes.md.
 # Emits integer count or empty string.
 # Exit codes: 0 = found (may be 0), 1 = file unreadable, 2 = section not found
 get_critique_warning_count() {
@@ -193,20 +193,24 @@ get_critique_warning_count() {
     error_return 12 "notes-parse: file not found"
   fi
 
-  # Check section exists before counting
-  if ! grep -q '## Readiness Critique' "$notes" 2>/dev/null; then
+  # Anchor on the LAST heading: a re-run appends a new section (see
+  # get_critique_score), so the first one is superseded.
+  local start_line
+  start_line=$(grep -n '^## Readiness Critique' "$notes" 2>/dev/null | tail -1 | cut -d: -f1)
+  if [ -z "$start_line" ]; then
     return 2
   fi
 
   local count
-  count=$(sed -n '/## Readiness Critique/,/^## /p' "$notes" 2>/dev/null |
+  count=$(tail -n "+$start_line" "$notes" 2>/dev/null |
+    sed -n '1,/^## /p' |
     grep -c '\[WARNING\]' || true)
   echo "${count//[^0-9]/}"
   return 0
 }
 
 # get_critique_blocker_count <ticket-dir>
-# Counts [BLOCKER] markers in the ## Readiness Critique section of notes.md.
+# Counts [BLOCKER] markers in the latest ## Readiness Critique section of notes.md.
 # Emits integer count or empty string.
 # Exit codes: 0 = found (may be 0), 1 = file unreadable, 2 = section not found
 get_critique_blocker_count() {
@@ -217,13 +221,17 @@ get_critique_blocker_count() {
     error_return 12 "notes-parse: file not found"
   fi
 
-  # Check section exists before counting
-  if ! grep -q '## Readiness Critique' "$notes" 2>/dev/null; then
+  # Anchor on the LAST heading: a re-run appends a new section (see
+  # get_critique_score), so the first one is superseded.
+  local start_line
+  start_line=$(grep -n '^## Readiness Critique' "$notes" 2>/dev/null | tail -1 | cut -d: -f1)
+  if [ -z "$start_line" ]; then
     return 2
   fi
 
   local count
-  count=$(sed -n '/## Readiness Critique/,/^## /p' "$notes" 2>/dev/null |
+  count=$(tail -n "+$start_line" "$notes" 2>/dev/null |
+    sed -n '1,/^## /p' |
     grep -c '\[BLOCKER\]' || true)
   echo "${count//[^0-9]/}"
   return 0
@@ -357,7 +365,9 @@ get_critique_has_finding() {
     error_return 12 "notes-parse: file not found"
   fi
 
-  if ! grep -q '## Readiness Critique' "$notes" 2>/dev/null; then
+  local start_line
+  start_line=$(grep -n '^## Readiness Critique' "$notes" 2>/dev/null | tail -1 | cut -d: -f1)
+  if [ -z "$start_line" ]; then
     error_return 12 "notes-parse: file not found"
   fi
 
@@ -366,7 +376,7 @@ get_critique_has_finding() {
   # disposition, not a live finding: the critique is documenting that the
   # check doesn't apply to this ticket, not flagging a gap. Only count
   # matches that aren't qualified N/A on the same line.
-  sed -n '/## Readiness Critique/,/^## /p' "$notes" 2>/dev/null | grep "$pattern" 2>/dev/null | grep -qvi 'N/A'
+  tail -n "+$start_line" "$notes" 2>/dev/null | sed -n '1,/^## /p' | grep "$pattern" 2>/dev/null | grep -qvi 'N/A'
 }
 
 # get_test_users_by_role <role> [catalog_path]
