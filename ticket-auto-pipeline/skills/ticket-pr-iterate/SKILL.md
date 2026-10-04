@@ -199,7 +199,7 @@ Use `N` as the task group prefix (e.g., iteration 1 tasks are `1.1`, `1.2`, `1.3
 **Post-write section verify** — confirm the heading actually landed in the artifact before logging done:
 
 ```bash
-_section_count=$(grep -c "^## PR Review #${N}" "{ARTIFACT_PATH}" 2>/dev/null || echo 0)
+_section_count=$(grep -c "^## PR Review #${N}" "{ARTIFACT_PATH}" 2>/dev/null || true)
 if [ "${_section_count:-0}" -lt 1 ]; then
   [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|iterate-plan|fail|PR Review #${N} section missing after write — {ARTIFACT_PATH}" >> "$LOG_FILE"
   # Stop — a truncated write would cause ticket-implement to silently skip all gaps

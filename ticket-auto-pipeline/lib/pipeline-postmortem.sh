@@ -757,7 +757,8 @@ if [ -f "$_pm_tmp/signals.txt" ]; then
       ;;
     inspector-warn)
       # Count inspector warns; file if ≥2
-      _warn_count=$(grep -c '^inspector-warn|' "$_pm_tmp/signals.txt" 2>/dev/null || echo 0)
+      _warn_count=$(grep -c '^inspector-warn|' "$_pm_tmp/signals.txt" 2>/dev/null || true)
+      _warn_count=${_warn_count:-0}
       if [ "$_warn_count" -ge 2 ]; then
         _should_file=true
       fi

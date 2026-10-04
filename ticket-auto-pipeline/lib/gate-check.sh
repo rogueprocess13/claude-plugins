@@ -797,7 +797,9 @@ _gate_entry() {
     if [ -n "$exploration_depth" ]; then
       local affected_services_str svc_count
       affected_services_str=$(echo "$planned_desc" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\*\*Affected Services:\*\*' | head -1 | sed 's/.*\*\*Affected Services:\*\*\s*//' || true)
-      svc_count=$(echo "$affected_services_str" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -cv '^$' || echo 1)
+      svc_count=$(echo "$affected_services_str" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -cv '^$' || true)
+      svc_count=${svc_count:-1}
+      [ "$svc_count" -ge 1 ] 2>/dev/null || svc_count=1
       local mismatch_rc=0
       check_exploration_depth_mismatch "$exploration_depth" "$complexity" "$svc_count" 2>/dev/null || mismatch_rc=$?
       if [ "$mismatch_rc" = "1" ]; then
@@ -952,7 +954,8 @@ _gate_reapprove() {
   local artifact_path verify_count
   artifact_path=$(_get_artifact_path)
   if [ -n "$artifact_path" ] && [ -f "$artifact_path" ]; then
-    verify_count=$(grep -c '^## Verification #' "$artifact_path" 2>/dev/null || echo "0")
+    verify_count=$(grep -c '^## Verification #' "$artifact_path" 2>/dev/null || true)
+    verify_count=${verify_count:-0}
     if [ "$verify_count" -gt 0 ] 2>/dev/null; then
       _plog "$LOG_FILE" "GATE" "reapprove" "info" "plan has $verify_count prior verification failure(s)"
     fi
@@ -960,7 +963,7 @@ _gate_reapprove() {
 
   if [ "$_reapprove_verdict" = "pass" ]; then
     _plog "$LOG_FILE" "GATE" "reapprove" "done" ""
-    hb_gate "reapprove-gate" "ok" "re-approval confirmed" "{\"prior_failures\":\"${verify_count:-0}\"}"
+    hb_gate "reapprove-gate" "ok" "re-approval confirmed" "{\"prior_failures\":\"${verify_count:-0}\"}" || true
     # reapprove-mode is only ever entered because a human approved via
     # /ticket-approve on a previously-held ticket — no automatic
     # re-evaluation path exists in the current pipeline, so provenance is

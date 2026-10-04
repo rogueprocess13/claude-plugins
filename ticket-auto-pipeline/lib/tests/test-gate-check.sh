@@ -462,6 +462,52 @@ test_reapprove_approved_and_ready_passes() {
   }
 }
 
+# 12b. #404 regression: a plan with zero "## Verification #" sections must not
+# yield prior_failures="0\n0" (grep -c prints 0 AND exits 1). A strict
+# hb_gate stub rejects newline-bearing payloads like the real hb_write's JSON
+# validation does; the PASS verdict must still be written.
+test_reapprove_no_verification_sections_writes_pass() {
+  _setup
+  local repos_root art verdicts="${_ws}/verdicts.log" payloads="${_ws}/payloads.log"
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "$_tid" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_approval "$_tid" "true" "human" >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_stage "$_tid" "Ready" >/dev/null
+  art="${_ws}/plan.md"
+  printf '# Plan\nno verification sections\n' >"$art"
+  _plog_raw "META" "artifact" "info" "plan:${art}"
+  hb_gate() {
+    printf '%s\n' "$4" >>"$payloads"
+    case "$4" in *$'\n'*) return 1 ;; esac
+    return 0
+  }
+  _write_gate_verdict() { echo "$1" >>"$verdicts"; }
+
+  # _run invokes tests inside an `if`, which suppresses errexit here, so the
+  # set -e abort cannot be observed directly; assert on the malformed payload
+  # (the root cause) and on the verdict as well.
+  local rc=0
+  REPOS_ROOT="$repos_root" _gate_reapprove || rc=$?
+  local got bad
+  got=$(cat "$verdicts" 2>/dev/null || true)
+  bad=$(($(wc -l <"$payloads") - 1))
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 0 ] || {
+    echo "expected exit 0, got $rc"
+    return 1
+  }
+  [ "${bad:-0}" = "0" ] || {
+    echo "prior_failures payload spans multiple lines (grep -c || echo 0 bug)"
+    return 1
+  }
+  [ "$got" = "PASS" ] || {
+    echo "expected PASS verdict written, got '$got'"
+    return 1
+  }
+}
+
 # 13. Manifest exists but approved is absent → APPROVAL_REVOKED (exit 2)
 test_reapprove_label_missing_gate_stop() {
   _setup
@@ -2624,6 +2670,7 @@ for fn in \
   test_entry_artifact_path_fallback_from_create_artifact \
   test_entry_fleet_detect_format \
   test_reapprove_approved_and_ready_passes \
+  test_reapprove_no_verification_sections_writes_pass \
   test_reapprove_label_missing_gate_stop \
   test_reapprove_wrong_state_gate_stop \
   test_reapprove_both_wrong_single_gate_stop \

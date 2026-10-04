@@ -289,7 +289,8 @@ select_specializer() {
     # Check for docker-compose with multiple services
     if [ -f "$REPO/docker-compose.yml" ] || [ -f "$REPO/docker-compose.yaml" ]; then
       local svc_count
-      svc_count=$(grep -cE '^\s{2}\w+:' "$REPO/docker-compose.yml" 2>/dev/null || echo "0")
+      svc_count=$(grep -cE '^\s{2}\w+:' "$REPO/docker-compose.yml" 2>/dev/null || true)
+      svc_count=${svc_count:-0}
       if [ "${svc_count:-0}" -gt 2 ] 2>/dev/null; then
         echo "specializers/architect/microservices.md"
         return

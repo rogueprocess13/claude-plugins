@@ -139,10 +139,12 @@ if [ "${_MODE:-full}" = "validate" ]; then
   # Pipe the Authorization header via stdin to avoid exposing the token in
   # /proc/*/cmdline (curl -H would leak it in process listings).
   if [ -n "${GITHUB_PERSONAL_ACCESS_TOKEN:-}" ]; then
-    _pat_scopes=$(printf 'Authorization: token %s\r\n' "$GITHUB_PERSONAL_ACCESS_TOKEN" | curl -s -f -H @- https://api.github.com/user 2>/dev/null | grep -c '"login"' || echo "0")
+    _pat_scopes=$(printf 'Authorization: token %s\r\n' "$GITHUB_PERSONAL_ACCESS_TOKEN" | curl -s -f -H @- https://api.github.com/user 2>/dev/null | grep -c '"login"' || true)
+    _pat_scopes=${_pat_scopes:-0}
     if [ "${_pat_scopes:-0}" -gt 0 ]; then
       # Check if PAT has repo scope — needed for PR creation
-      _repo_scope=$(printf 'Authorization: token %s\r\n' "$GITHUB_PERSONAL_ACCESS_TOKEN" | curl -s -I -H @- https://api.github.com/orgs/willard-pro/repos 2>/dev/null | head -1 | grep -c '200' || echo "0")
+      _repo_scope=$(printf 'Authorization: token %s\r\n' "$GITHUB_PERSONAL_ACCESS_TOKEN" | curl -s -I -H @- https://api.github.com/orgs/willard-pro/repos 2>/dev/null | head -1 | grep -c '200' || true)
+      _repo_scope=${_repo_scope:-0}
       if [ "${_repo_scope:-0}" -gt 0 ]; then
         pass "GitHub PAT (authenticated, repo scope confirmed)"
       else
