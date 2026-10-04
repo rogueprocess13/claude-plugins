@@ -823,6 +823,21 @@ test_resume_step_done_despite_multiple_trailing_bookkeeping_lines() {
   [ "$(_field "$out" RESUME_STEP)" = "done" ]
 }
 
+test_resume_step_done_despite_trailing_manual_merge_and_pr_merged() {
+  # #395: a human's post-completion merge annotation is bookkeeping, not a
+  # new pipeline state (MERGE_POLICY: manual epics hit this every time).
+  local out
+  out=$(_detect_resume_with_log "GH-395-1" \
+    "2026-08-31T10:00:00Z|META|schema|info|1" \
+    "2026-08-31T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
+    "2026-08-31T10:00:02Z|MAINTENANCE|maintenance|done|clean" \
+    "2026-08-31T10:00:03Z|META|outcome|info|completed: STEP_6" \
+    "2026-08-31T10:00:04Z|META|manual-merge|info|PR#54 merged, human-initiated" \
+    "2026-08-31T10:00:05Z|META|pr-merged|info|PR#61 merged" \
+    "2026-09-07T20:01:11Z|META|fleet-restart|info|restart orphan-reconciliation")
+  [ "$(_field "$out" RESUME_STEP)" = "done" ]
+}
+
 test_resume_step_not_done_when_genuine_step_follows_outcome() {
   # Regression safety: a genuine new phase/gate line after the outcome
   # line (a real re-opened/resumed ticket, not mere bookkeeping) must
@@ -1035,6 +1050,7 @@ for fn in \
   test_schema_v0_grace_write_does_not_repollute_done_on_rerun \
   test_resume_step_done_despite_trailing_fleet_restart_line \
   test_resume_step_done_despite_multiple_trailing_bookkeeping_lines \
+  test_resume_step_done_despite_trailing_manual_merge_and_pr_merged \
   test_resume_step_not_done_when_genuine_step_follows_outcome; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"

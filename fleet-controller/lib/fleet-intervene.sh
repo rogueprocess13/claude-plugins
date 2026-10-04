@@ -59,7 +59,7 @@ _fleet_emit_ticket_killed() {
 if [ -z "${_HARMLESS_TRAILING_META_STEPS:-}" ] && [ -f "$_INTERVENE_DIR/fleet-detect.sh" ]; then
   source "$_INTERVENE_DIR/fleet-detect.sh"
 fi
-: "${_HARMLESS_TRAILING_META_STEPS:='^(worker-exit|fleet-restart|fleet-intervention|schema|migration|tokens|cache-tokens)$'}"
+: "${_HARMLESS_TRAILING_META_STEPS:='^(worker-exit|fleet-restart|fleet-intervention|manual-merge|pr-merged|schema|migration|tokens|cache-tokens)$'}"
 
 # ── Helpers ──────────────────────────────────────────────────────────────────────
 
@@ -119,7 +119,7 @@ _flow_mutex_held() {
 #   2. the window contains NO phase terminal — a `|done|`/`|fail|` status
 #      line whose STEP (field 3) is a real phase step, not one of
 #      `_HARMLESS_TRAILING_META_STEPS`' bookkeeping-only names (`worker-exit`,
-#      `fleet-restart`, `fleet-intervention`, `schema`, `migration`,
+#      `fleet-restart`, `fleet-intervention`, `manual-merge`, `pr-merged`, `schema`, `migration`,
 #      `tokens`, `cache-tokens`). fleetd's own reap bookkeeping —
 #      `META|worker-exit|fail|...` — lands in this exact window on BOTH its
 #      restart paths: `_record_fleet_kill_exit`'s verified-kill line, and the

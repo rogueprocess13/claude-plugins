@@ -36,10 +36,12 @@ CURRENT_SCHEMA_VERSION=1
 #                        completion by long enough for orphan-reconciliation
 #                        to misread "no recent heartbeat" as unfinished).
 #   fleet-intervention — fleet-controller's other intervention marker.
+#   manual-merge / pr-merged — a human's post-completion merge annotation
+#                        (MERGE_POLICY: manual epics; GitHub #395).
 #   schema / migration — this script's own idempotent v0/v1-grace notices.
 #   tokens / cache-tokens — token-tracker.sh's SubagentStop-hook usage
 #                        lines, which land after the phase terminal write.
-_DONE_TRAILING_META_ALLOWLIST='^(worker-exit|fleet-restart|fleet-intervention|schema|migration|tokens|cache-tokens)$'
+_DONE_TRAILING_META_ALLOWLIST='^(worker-exit|fleet-restart|fleet-intervention|manual-merge|pr-merged|schema|migration|tokens|cache-tokens)$'
 
 # _log_effectively_done <log_file>
 # True when the LAST `META|outcome|info|completed:` line in the log is not
