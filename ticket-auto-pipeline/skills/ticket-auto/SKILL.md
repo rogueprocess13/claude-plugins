@@ -1154,7 +1154,7 @@ Then evaluate verdict:
 
 ```bash
 # ✅ (VERDICT=OK) → proceed to STEP_5 (Document + Wiki)
-# ⚠️ (VERDICT=WARN) AND ITERATION < 3 → run gate-check.sh --mode reapprove, spawn pr-iterate → implement → outcome-check → implement-complete → verify → loop back to pr-review
+# ⚠️ (VERDICT=WARN) AND ITERATION < 3 → spawn pr-iterate (moves Review→Ready, re-adds approved) → THEN run gate-check.sh --mode reapprove (it asserts state=Ready AND approved, which only pr-iterate establishes) → implement → outcome-check → implement-complete → verify → loop back to pr-review
 # ❌ (VERDICT=BLOCK) → gate-stop
 # ITERATION >= 3 → gate-stop with code PR_REVIEW_EXHAUSTED (matching the VERIFY_EXHAUSTED / PR_FEEDBACK_EXHAUSTED cap convention)
 ```
