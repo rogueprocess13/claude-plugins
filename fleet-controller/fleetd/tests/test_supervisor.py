@@ -2306,6 +2306,15 @@ class SpawnAndReapTest(unittest.TestCase):
             '2026-01-01T00:00:03Z|META|cache-tokens|info|MAINTENANCE:10/5\n'
             '2026-01-01T00:00:04Z|META|fleet-restart|info|'
             'restart orphan-reconciliation\n'))
+        # GitHub #395: a human's post-completion merge annotation is also
+        # harmless bookkeeping.
+        self.assertTrue(self._log_terminal(
+            '2026-01-01T00:00:00Z|APPRAISE|appraise|start|investigating\n'
+            '2026-01-01T00:00:01Z|META|outcome|info|completed: STEP_6\n'
+            '2026-01-01T00:00:02Z|META|manual-merge|info|PR#54 merged\n'
+            '2026-01-01T00:00:03Z|META|pr-merged|info|PR#61 merged\n'
+            '2026-01-01T00:00:04Z|META|fleet-restart|info|'
+            'restart orphan-reconciliation\n'))
         # Regression safety: a genuine new phase line after the outcome
         # line (a real re-opened/resumed ticket) must still read as NOT
         # terminal — the allowlist is conservative on purpose.

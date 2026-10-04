@@ -2944,6 +2944,8 @@ _HARMLESS_TRAILING_META_STEPS = frozenset({
     'worker-exit',
     'fleet-restart',
     'fleet-intervention',
+    'manual-merge',
+    'pr-merged',
     'schema',
     'migration',
     'tokens',

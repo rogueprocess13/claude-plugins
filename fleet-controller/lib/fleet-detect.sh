@@ -43,7 +43,7 @@ fi
 # `_DONE_TRAILING_META_ALLOWLIST` and fleetd/supervisor.py's
 # `_HARMLESS_TRAILING_META_STEPS` — three independent implementations of the
 # same rule that must not drift apart.
-_HARMLESS_TRAILING_META_STEPS='^(worker-exit|fleet-restart|fleet-intervention|schema|migration|tokens|cache-tokens)$'
+_HARMLESS_TRAILING_META_STEPS='^(worker-exit|fleet-restart|fleet-intervention|manual-merge|pr-merged|schema|migration|tokens|cache-tokens)$'
 
 # ── Pipeline-log input source ────────────────────────────────────────────────────
 # The one seam through which every pipeline-log-driven engine reads. When the
@@ -176,7 +176,7 @@ _last_msg() {
 
 # Emits the log's last line, skipping any trailing run of harmless
 # bookkeeping-only META entries (see `_HARMLESS_TRAILING_META_STEPS` above —
-# worker-exit, fleet-restart, fleet-intervention, schema/migration,
+# worker-exit, fleet-restart, fleet-intervention, manual-merge, pr-merged, schema/migration,
 # tokens/cache-tokens). fleetd's reap path appends `META|worker-exit|...`
 # after a worker's own generation exits (fleet-controller/CLAUDE.md "Worker
 # exit records"), and fleet-controller's own orphan-reconciliation appends
