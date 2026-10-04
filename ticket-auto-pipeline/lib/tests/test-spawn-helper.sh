@@ -2174,6 +2174,34 @@ test_token_tracker_fleetd_phase_records_elapsed_from_start_marker() {
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
+# Issue #384: the prescan spawn example must only use params spawn_agent_pre accepts.
+test_skill_prescan_example_uses_only_accepted_params() {
+  local skill="$SCRIPT_DIR/../../skills/ticket-auto/SKILL.md" block
+  block=$(sed -n '/_prompt=\$(spawn_agent_pre \\$/,/INSTRUCTIONS=.*prescan/p' "$skill" | awk '/STEP=prescan/{f=1} f')
+  [ -n "$block" ] || return 1
+  if echo "$block" | grep -qE '(^|[[:space:]])(REPO|REPO_SLUG|CADENCE)='; then return 1; fi
+  # and the rendered call must actually succeed against the real helper
+  (
+    source "$SCRIPT_DIR/../spawn-helper.sh"
+    spawn_agent_pre PHASE=MAINTENANCE STEP=prescan TICKET_ID=T384 SKILL=/ticket-prescan \
+      FLAGS="--from-auto" AGENT_TYPE=x DESCRIPTION=d INSTRUCTIONS="repo r slug s" >/dev/null 2>&1
+  )
+}
+
+test_skill_prescan_block_does_not_call_agent_as_bash() {
+  local skill="$SCRIPT_DIR/../../skills/ticket-auto/SKILL.md"
+  ! grep -q 'AGENT_RESULT=\$(Agent ' "$skill"
+}
+
+test_hb_wrap_is_executable() {
+  [ -x "$SCRIPT_DIR/../hb-wrap.sh" ]
+}
+
+test_skill_pipeline_start_heartbeat_passes_status_arg() {
+  local skill="$SCRIPT_DIR/../../skills/ticket-auto/SKILL.md"
+  grep -q 'hb-wrap.sh heartbeat "pipeline-start" "ok" ' "$skill"
+}
+
 FILTER="${1:-}"
 
 for fn in \
@@ -2282,7 +2310,11 @@ for fn in \
   test_token_tracker_subagent_stop_ignores_fleetd_phase \
   test_token_tracker_stop_ignores_router_spawn \
   test_token_tracker_stop_never_falls_back_to_agent_transcript \
-  test_token_tracker_fleetd_phase_records_elapsed_from_start_marker; do
+  test_token_tracker_fleetd_phase_records_elapsed_from_start_marker \
+  test_skill_prescan_example_uses_only_accepted_params \
+  test_skill_prescan_block_does_not_call_agent_as_bash \
+  test_hb_wrap_is_executable \
+  test_skill_pipeline_start_heartbeat_passes_status_arg; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

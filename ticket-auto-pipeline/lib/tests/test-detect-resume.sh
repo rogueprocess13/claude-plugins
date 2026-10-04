@@ -963,6 +963,22 @@ test_branch_context_empty_on_legacy_log() {
   }
 }
 
+test_autonomy_reported_on_fresh_step_1_run() {
+  local out
+  out=$(_detect_resume_with_log "TEST-A1" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|META|autonomy|info|auto")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_1" ] || return 1
+  [ "$(_field "$out" AUTONOMY)" = "auto" ]
+}
+
+test_autonomy_defaults_to_manual_without_log_entry() {
+  local out
+  out=$(_detect_resume_with_log "TEST-A2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1")
+  [ "$(_field "$out" AUTONOMY)" = "manual" ]
+}
+
 for fn in \
   test_verify_attempts_preflight_fail_does_not_overcount \
   test_verify_attempts_two_terminal_failures_count_two \
@@ -1005,6 +1021,8 @@ for fn in \
   test_pr_review_zombie_resumes_at_step_4_6 \
   test_gate_reconcile_zombie_resumes_at_step_3_5 \
   test_gate_non_reconcile_zombie_falls_back_to_step_3 \
+  test_autonomy_reported_on_fresh_step_1_run \
+  test_autonomy_defaults_to_manual_without_log_entry \
   test_branch_context_survives_resume \
   test_branch_context_carries_uat_policy \
   test_uat_policy_defaults_on_log_without_field \
