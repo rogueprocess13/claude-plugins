@@ -223,6 +223,30 @@ test_check_and_write_are_mutually_exclusive() {
   [ "$rc" -eq 2 ]
 }
 
+# #406: reapprove gate must run AFTER pr-iterate (pr-iterate is what moves
+# Review->Ready and re-adds approved). Assertions are positional so a
+# WARN-routing change (#407) can still edit the surrounding text.
+test_pr_loop_body_runs_pr_iterate_before_reapprove() {
+  python3 - "$TABLE" <<'PYEOF'
+import json, sys
+t = json.load(open(sys.argv[1]))
+step = next(s for s in t["steps"] if s["step_id"] == "STEP_4_6")
+body = step["loop"]["body"]
+assert body.index("pr-iterate") < body.index("--mode reapprove"), body
+PYEOF
+}
+
+test_skill_warn_routing_runs_pr_iterate_before_reapprove() {
+  local line
+  line=$(grep -F 'VERDICT=WARN) AND ITERATION < 3' "$SKILL")
+  [ -n "$line" ]
+  python3 - "$line" <<'PYEOF'
+import sys
+l = sys.argv[1]
+assert l.index("pr-iterate") < l.index("--mode reapprove"), l
+PYEOF
+}
+
 # ── runner ────────────────────────────────────────────────────────────────────
 FILTER="${1:-}"
 for t in $(declare -F | awk '{print $3}' | grep '^test_'); do

@@ -83,7 +83,7 @@ ticket-auto (thin stateless dispatch router)
   │
   └─ Router-managed loops (counters from pipeline log):
       ├─ Verify retry: FAIL → re-implement → outcome-check → re-verify (max 3)
-      └─ PR iteration: ⚠️ → reapprove-check → pr-iterate → re-implement → verify → pr-review (max 3)
+      └─ PR iteration: ⚠️ → pr-iterate → reapprove-check → re-implement → verify → pr-review (max 3)
 
 Support (invoked independently):
   ticket-prescan ── manual prescan slash command (also auto-invoked by router)
