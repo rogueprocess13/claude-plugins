@@ -668,6 +668,90 @@ _planner_crosscheck_contracts_genuine_retirement() {
   return 0
 }
 
+# ── Retire-object attribution (#460) ─────────────────────────────────────────
+#
+# A retire word appearing in the same sentence as a backtick-quoted name is
+# not the same as that name being retired. Observed live on a batch-staging
+# initiative (17 → 33 false CONTRACT_CONSUMERS_UNNOTIFIED per run, none
+# real):
+#   - the retire word is ordinary domain vocabulary modifying another noun
+#     ("the number of entries removed", "the admin edits or removes the
+#     entry");
+#   - the retire word is itself an enum literal (status `REMOVED` listed next
+#     to `HandoverBatchEntryStatus`);
+#   - the structure is being *extended* ("`HandoverBatchCancel` gains an
+#     optional `atUpload` field") and some other clause carries the word.
+# A structure now counts as retired only when it is the grammatical object of
+# the retire phrase: active (`retires \`X\``, `removes the legacy \`X\``,
+# `removes \`A\`, \`B\` and \`X\``) or passive (`\`X\` is removed`,
+# `\`X\` will be deprecated`, `\`A\` and \`X\` are retired`).
+
+# Retire verbs in active voice — the structure follows. A bare `no longer`
+# takes the next word as its verb ("no longer reads `X`").
+PLANNER_CROSSCHECK_CONTRACTS_RETIRE_ACTIVE_REGEX='retires?|retired|retiring|removes?|removed|removing|deprecates?|deprecated|deprecating|replaces?|replaced|replacing|no[[:space:]]+longer[[:space:]]+[A-Za-z]+'
+
+# Retire participles in passive voice — the structure precedes.
+PLANNER_CROSSCHECK_CONTRACTS_RETIRE_PASSIVE_REGEX='retired|removed|deprecated|replaced|no[[:space:]]+longer'
+
+# Words allowed between an active retire verb and its object, or between a
+# subject and its passive auxiliary: determiners, qualifiers and structure
+# kind nouns. Deliberately excludes prepositions and domain nouns ("entries",
+# "rows", "entry") so "removes the entry via `X`" or "rows removed from `X`"
+# never attribute the retirement to `X`.
+PLANNER_CROSSCHECK_CONTRACTS_RETIRE_GAP_WORDS='the|a|an|its|their|this|that|these|those|both|all|old|older|legacy|existing|current|deprecated|obsolete|unused|stale|previous|original|interim|whole|entire|separate|field|fields|column|columns|type|types|table|tables|function|functions|method|methods|class|classes|enum|enums|key|keys|property|properties|attribute|attributes|flag|flags|endpoint|endpoints|interface|interfaces|struct|structs|module|modules|helper|helpers|constant|constants|model|models|dataclass|dataclasses|schema|schemas|payload|payloads|shape|contract|contracts|dto|dtos|record|records|event|events|parameter|parameters|param|params|argument|arguments|config|setting|settings|index|indexes|view|views'
+
+# Auxiliaries and adverbs allowed between a passive subject and its retire
+# participle ("will be", "has now been", "is fully").
+PLANNER_CROSSCHECK_CONTRACTS_RETIRE_AUX_WORDS='both|all|is|are|was|were|will|shall|must|should|would|can|could|may|be|been|being|has|have|had|gets?|got|becomes?|became|now|fully|entirely|completely|also|then|permanently|itself|themselves|eventually|simply|thereby|effectively|formally|officially'
+
+# Escape <s> (a structure-regex-shaped identifier: letters, digits, `_`, `.`,
+# optional trailing `()`) for literal use inside an ERE.
+# Usage: _planner_crosscheck_contracts_ere_escape <s>
+_planner_crosscheck_contracts_ere_escape() {
+  printf '%s' "$1" | sed -e 's/[.()]/\\&/g'
+}
+
+# True if <structure> is the grammatical object of a retire phrase in
+# <sentence> — active (`retires \`X\``) or passive (`\`X\` is removed`).
+# The retire word must stand outside backticks (a backtick-quoted `REMOVED`
+# is an enum literal, not a verb).
+# Usage: _planner_crosscheck_contracts_is_retire_object <sentence> <structure>
+_planner_crosscheck_contracts_is_retire_object() {
+  local sentence="$1" structure="$2"
+  local esc ws gap_tok active passive
+  esc=$(_planner_crosscheck_contracts_ere_escape "$structure")
+  ws='[[:space:]]+'
+  # One gap token: a gap word, another backtick name (list item, optional
+  # comma), a bare comma, or a list conjunction.
+  gap_tok="((${PLANNER_CROSSCHECK_CONTRACTS_RETIRE_GAP_WORDS})|\`[^\`]+\`,?|,|and|or|&)"
+
+  active="(^|[^A-Za-z0-9_\`])(${PLANNER_CROSSCHECK_CONTRACTS_RETIRE_ACTIVE_REGEX})${ws}(${gap_tok}${ws}){0,6}\`${esc}\`"
+  passive="\`${esc}\`,?(${ws}${gap_tok}){0,6}(${ws}(${PLANNER_CROSSCHECK_CONTRACTS_RETIRE_AUX_WORDS})){0,4}${ws}(${PLANNER_CROSSCHECK_CONTRACTS_RETIRE_PASSIVE_REGEX})([^A-Za-z0-9_\`]|$)"
+
+  echo "$sentence" | grep -qiE "$active" && return 0
+  echo "$sentence" | grep -qiE "$passive" && return 0
+  return 1
+}
+
+# True if <file> describes <structure> as gaining/adding a field anywhere —
+# a structure being extended is not being retired, whatever retire word
+# shares a sentence with it (#460: "`HandoverBatchCancel` gains an optional
+# `atUpload` field" reported as "`HandoverBatchCancel` retired").
+# Usage: _planner_crosscheck_contracts_is_extended <file> <structure>
+_planner_crosscheck_contracts_is_extended() {
+  local file="$1" structure="$2"
+  local esc member subject_first object_last
+  [ -f "$file" ] || return 1
+  esc=$(_planner_crosscheck_contracts_ere_escape "$structure")
+  member='(fields?|columns?|propert(y|ies)|attributes?|keys?|members?|parameters?|params?)'
+  # "`X` gains / gets / adds / is extended with ... field"
+  subject_first="\`${esc}\`[^.;]{0,40}[[:space:]](gains?|gaining|gets|adds?|receives?|grows?|extends?|is[[:space:]]+extended)[[:space:]][^.;]{0,60}${member}([^A-Za-z]|$)"
+  # "adds / introduces a new (optional) field ... to / on `X`"
+  object_last="(adds?|adding|added|introduces?|new|additional|extra)[[:space:]][^.;]{0,60}${member}[^.;]{0,40}[[:space:]](to|on|in)[[:space:]]+(the[[:space:]]+)?\`${esc}\`"
+  _planner_crosscheck_contracts_sentences "$(_planner_crosscheck_contracts_defenced "$file")" |
+    grep -qiE "${subject_first}|${object_last}"
+}
+
 # For every spec paragraph in this initiative that retires/removes/
 # deprecates/replaces a structure, check every OTHER spec file (in this
 # initiative or a sibling) that also mentions that structure was actually
@@ -723,10 +807,14 @@ planner_crosscheck_contract_consumers_unnotified() {
       # _planner_crosscheck_contracts_sentences for why (#225).
       local -a structures=()
       local sentence
+      # Within such a sentence, only a name that is the grammatical object of
+      # the retire phrase counts — see _is_retire_object (#460).
       while IFS= read -r sentence; do
         _planner_crosscheck_contracts_text_has_genuine_retire_phrase "$sentence" || continue
         while IFS= read -r s; do
-          [ -n "$s" ] && structures+=("$s")
+          [ -z "$s" ] && continue
+          _planner_crosscheck_contracts_is_retire_object "$sentence" "$s" || continue
+          structures+=("$s")
         done < <(echo "$sentence" | grep -oE '`[^`]+`' | sed -e 's/^`//' -e 's/`$//')
       done < <(_planner_crosscheck_contracts_sentences "$block")
       if [ "${#structures[@]}" -gt 0 ]; then
@@ -745,6 +833,7 @@ planner_crosscheck_contract_consumers_unnotified() {
         _planner_crosscheck_contracts_is_generic_word "$s" && continue
         _planner_crosscheck_contracts_is_commodity "$initiatives_root" "$s" && continue
         _planner_crosscheck_contracts_genuine_retirement "$block" "$spec_file" "$s" || continue
+        _planner_crosscheck_contracts_is_extended "$spec_file" "$s" && continue
 
         local dir
         for dir in "${other_spec_dirs[@]}"; do

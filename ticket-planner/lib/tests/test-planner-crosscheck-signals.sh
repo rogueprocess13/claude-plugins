@@ -199,6 +199,46 @@ else
   fail "no Signals block: returns 0 (only 1 spec has a parseable block)" "returned $rc, out: $out"
 fi
 
+# ── #460: single-service specs with distinct TargetSymbols ─────────────────
+
+echo "--- #460: same {1,3,true} signals but distinct TargetSymbols does not fire ---"
+INIT_I="init-i"
+SPECS_I="${REPOS_ROOT}/.ticket-auto/initiatives/${INIT_I}/artifacts/specs"
+mkdir -p "$SPECS_I"
+
+write_spec "$SPECS_I" "vs-i1" '{"services_identified": 1, "symbols_resolved": 3, "prior_art_found": true, "complexity": "simple", "exploration_depth": "standard", "TargetSymbols": "BatchService.stage:src/batch.ts:10; BatchRepo.save:src/repo.ts:20; Batch:src/batch.ts:1"}'
+write_spec "$SPECS_I" "vs-i2" '{"services_identified": 1, "symbols_resolved": 3, "prior_art_found": true, "complexity": "moderate", "exploration_depth": "standard", "TargetSymbols": "GatewayRoute.cancel:src/route.ts:30; CancelDto:src/dto.ts:5; Gateway:src/gw.ts:2"}'
+write_spec "$SPECS_I" "vs-i3" '{"services_identified": 1, "symbols_resolved": 3, "prior_art_found": true, "complexity": "simple", "exploration_depth": "deep", "TargetSymbols": "EntryStatus:src/status.ts:4; EntryList.render:src/list.tsx:12; EntryFilter:src/filter.ts:8"}'
+
+out=$(planner_crosscheck_signals "$INIT_I")
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  pass "#460 distinct TargetSymbols: returns 0"
+else
+  fail "#460 distinct TargetSymbols: returns 0" "returned $rc, out: $out"
+fi
+
+echo "--- #460: same {1,3,true} signals AND same TargetSymbols still fires ---"
+INIT_J="init-j"
+SPECS_J="${REPOS_ROOT}/.ticket-auto/initiatives/${INIT_J}/artifacts/specs"
+mkdir -p "$SPECS_J"
+
+write_spec "$SPECS_J" "vs-j1" '{"services_identified": 1, "symbols_resolved": 3, "prior_art_found": true, "complexity": "simple", "exploration_depth": "standard", "TargetSymbols": "BatchService.stage:src/batch.ts:10; BatchRepo.save:src/repo.ts:20"}'
+# Same symbols, reordered and re-spaced — still a copy.
+write_spec "$SPECS_J" "vs-j2" '{"services_identified": 1, "symbols_resolved": 3, "prior_art_found": true, "complexity": "complex", "exploration_depth": "deep", "TargetSymbols": "BatchRepo.save:src/repo.ts:20;BatchService.stage:src/batch.ts:10"}'
+
+out=$(planner_crosscheck_signals "$INIT_J")
+rc=$?
+if [ "$rc" -eq 1 ]; then
+  pass "#460 same TargetSymbols: returns 1"
+else
+  fail "#460 same TargetSymbols: returns 1" "returned $rc"
+fi
+case "$out" in
+*"SIGNALS_UNIFORM"*"near-identical"*"vs-j1.md"*"vs-j2.md"*) pass "#460 same TargetSymbols: names both specs" ;;
+*) fail "#460 same TargetSymbols: names both specs" "got: $out" ;;
+esac
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

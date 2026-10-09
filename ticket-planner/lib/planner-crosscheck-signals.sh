@@ -22,9 +22,19 @@
 #   2. Near-identical — services_identified, symbols_resolved, and
 #      prior_art_found (the three fields the issue calls out — the ones a
 #      genuine per-ticket exploration would vary) match across 2+ specs not
-#      already reported in (1). The all-zero/false combination is excluded:
-#      it is the legitimate default for a handful of genuinely trivial
-#      tickets Discovery found nothing new for, not evidence of copy-paste.
+#      already reported in (1), AND TargetSymbols matches too. The
+#      all-zero/false combination is excluded: it is the legitimate default
+#      for a handful of genuinely trivial tickets Discovery found nothing
+#      new for, not evidence of copy-paste.
+#
+#      TargetSymbols is part of the key because the three numeric/boolean
+#      fields are low-cardinality on their own: in an initiative where every
+#      ticket touches exactly one service, `{1, 3, true}` legitimately
+#      repeats across many specs (#460). A copy-paste can't fake the
+#      per-ticket symbol list — distinct TargetSymbols means each spec was
+#      explored on its own and the repeated counts are coincidence. Specs
+#      that omit TargetSymbols (or leave it empty) still group together, so
+#      a copy-paste that dropped the field is still caught.
 #
 # Code: SIGNALS_UNIFORM. Blocking (not in PLANNER_CROSSCHECK_WARN_CODES in
 # planner-crosscheck.sh) — this is the same class of defect the citation
@@ -49,8 +59,10 @@ _planner_crosscheck_signals_extract() {
   echo "$raw" | jq -S -c . 2>/dev/null
 }
 
-# The three-field near-identical key from an already-canonicalized Signals
-# JSON blob. Missing fields default the same way planner_confidence_derive
+# The near-identical key from an already-canonicalized Signals JSON blob:
+# the three confidence fields plus the normalized TargetSymbols list (split
+# on `;`, trimmed, empties dropped, sorted — so a reordered or re-spaced copy
+# still groups). Missing fields default the same way planner_confidence_derive
 # does, so a spec that omits a field still groups with one that states the
 # same default explicitly.
 # Usage: _planner_crosscheck_signals_key <canonical_json>
@@ -59,16 +71,21 @@ _planner_crosscheck_signals_key() {
   echo "$json" | jq -c '{
     services_identified: (.services_identified // 0),
     symbols_resolved: (.symbols_resolved // 0),
-    prior_art_found: (.prior_art_found // false)
+    prior_art_found: (.prior_art_found // false),
+    target_symbols: (
+      (.TargetSymbols // "")
+      | (if type == "array" then map(tostring) | join(";") else tostring end)
+      | split(";") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")) | sort
+    )
   }' 2>/dev/null
 }
 
-# True if <key> (as produced by _planner_crosscheck_signals_key) is the
-# all-zero/false default — legitimately common for trivial tickets, not
-# evidence of copy-paste on its own.
+# True if <key> (as produced by _planner_crosscheck_signals_key) carries the
+# all-zero/false confidence default — legitimately common for trivial
+# tickets, not evidence of copy-paste on its own.
 # Usage: _planner_crosscheck_signals_is_trivial_key <key>
 _planner_crosscheck_signals_is_trivial_key() {
-  [ "$1" = '{"services_identified":0,"symbols_resolved":0,"prior_art_found":false}' ]
+  echo "$1" | jq -e '.services_identified == 0 and .symbols_resolved == 0 and .prior_art_found == false' >/dev/null 2>&1
 }
 
 # For an initiative's spec files, report every group of 2+ specs whose
@@ -129,7 +146,7 @@ planner_crosscheck_signals() {
 
     files=$(printf '%s\n' "${remaining[@]}" | sort | tr '\n' ' ')
     files="${files% }"
-    out_lines+=("planner-crosscheck-signals: SIGNALS_UNIFORM ${#remaining[@]} specs share near-identical Signals (services_identified/symbols_resolved/prior_art_found): ${files} — ${group}")
+    out_lines+=("planner-crosscheck-signals: SIGNALS_UNIFORM ${#remaining[@]} specs share near-identical Signals (services_identified/symbols_resolved/prior_art_found/TargetSymbols): ${files} — ${group}")
   done
 
   [ "${#out_lines[@]}" -eq 0 ] && return 0
