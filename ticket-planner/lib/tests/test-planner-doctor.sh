@@ -3,7 +3,7 @@
 # doctor preflight command).
 #
 # Every gap this file guards against was a real mid-run failure first:
-# REPOS_ROOT unset/wrong, LINEAR_TEAM_ID unset, the 4 static contract labels
+# REPOS_ROOT unset/wrong, LINEAR_TEAM_ID unset, the 4 board-projected labels
 # silently missing, a live REPOS_ROOT checkout on the wrong branch relative
 # to Discovery (#217), a missing INIT-* label (#223).
 #
@@ -245,6 +245,42 @@ if [ "$((ACTUAL - 1))" = "$DECLARED" ]; then
   pass "ROWCOUNT matches the number of emitted data rows"
 else
   fail "ROWCOUNT matches emitted rows" "declared=$DECLARED actual_data_rows=$((ACTUAL - 1))"
+fi
+
+# ── Test 6: documented label list matches the code (#457) ───────────────
+# SKILL.md's Doctor section once listed the retired static contract labels
+# while the code checked a different set. Tie the documented list to
+# _PLANNER_DOCTOR_STATIC_LABELS, and that array to the board driver's
+# projected_labels in workflow.json, so neither can drift silently again.
+
+echo "--- Test 6: documented labels match _PLANNER_DOCTOR_STATIC_LABELS ---"
+
+SKILL_MD="${LIB_DIR}/../skills/ticket-planner/SKILL.md"
+WORKFLOW_JSON="${LIB_DIR}/../../ticket-auto-pipeline/skills/ticket-flow/workflow.json"
+
+CODE_LABELS=$(printf '%s\n' "${_PLANNER_DOCTOR_STATIC_LABELS[@]}" | sort | tr '\n' ' ')
+
+# The user-facing Doctor section, up to the next ### heading. The checked
+# labels are the backticked names inside "board-projected labels (...)".
+DOC_SECTION=$(awk '/^### Doctor \(`doctor`\)/{f=1;next} f&&/^### /{exit} f' "$SKILL_MD" | tr '\n' ' ')
+DOC_LABELS=$(echo "$DOC_SECTION" | grep -o 'board-projected labels ([^)]*)' | head -1 |
+  grep -o '`[^`]*`' | tr -d '`' | sort | tr '\n' ' ')
+
+if [ -n "$DOC_LABELS" ] && [ "$DOC_LABELS" = "$CODE_LABELS" ]; then
+  pass "SKILL.md Doctor section lists exactly the labels doctor checks"
+else
+  fail "SKILL.md Doctor labels match code" "doc='$DOC_LABELS' code='$CODE_LABELS'"
+fi
+
+if command -v jq >/dev/null 2>&1 && [ -f "$WORKFLOW_JSON" ]; then
+  WF_LABELS=$(jq -r '.board_drivers.linear.projected_labels[]' "$WORKFLOW_JSON" | sort | tr '\n' ' ')
+  if [ "$WF_LABELS" = "$CODE_LABELS" ]; then
+    pass "_PLANNER_DOCTOR_STATIC_LABELS matches workflow.json projected_labels"
+  else
+    fail "doctor labels match projected_labels" "workflow='$WF_LABELS' code='$CODE_LABELS'"
+  fi
+else
+  fail "workflow.json projected_labels readable" "jq or $WORKFLOW_JSON missing"
 fi
 
 echo ""
