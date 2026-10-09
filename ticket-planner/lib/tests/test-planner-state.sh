@@ -232,6 +232,80 @@ else
   fail "planner_initiative_dir_init fails when planner_initiative_dir rejects the ID" "$(cat "$TMPDIR/escape-test.out")"
 fi
 
+# ── Test 11b: duplicate-done guard allows re-runs (issue #452) ───────────────
+
+echo "--- Test 11b: duplicate-done guard allows done after a re-run start ---"
+
+_count_status() {
+  grep -c "^[^|]*|$2|$3|$4|" "$(planner_state_log "$1")" || true
+}
+
+_seed_through_consensus() {
+  local id="$1" p
+  planner_state_init "$id" "rerun idea" >/dev/null
+  for p in Appraisal Discovery Architecture Specify Review Consensus; do
+    planner_state_write "$id" "$p" "run" "done" "ok"
+  done
+}
+
+# Shape 1: done → start → done writes the second done
+_seed_through_consensus "INIT-RERUN-1"
+planner_state_write "INIT-RERUN-1" "Crosscheck" "check" "start" "running"
+planner_state_write "INIT-RERUN-1" "Crosscheck" "check" "done" "clean"
+planner_state_write "INIT-RERUN-1" "Crosscheck" "check" "start" "re-running"
+planner_state_write "INIT-RERUN-1" "Crosscheck" "check" "done" "clean again" 2>/dev/null
+n=$(_count_status "INIT-RERUN-1" Crosscheck check done)
+if [ "$n" = "2" ]; then
+  pass "done → start → done writes the second done"
+else
+  fail "done → start → done writes the second done" "got $n done entries, expected 2"
+fi
+pos=$(planner_position_derive "INIT-RERUN-1")
+if [ "$pos" = "EpicGen" ]; then
+  pass "position advances to EpicGen after a clean Crosscheck re-run"
+else
+  fail "position advances to EpicGen after a clean Crosscheck re-run" "got '$pos'"
+fi
+
+# Shape 2: done → start → fail → start → done writes the final done. An
+# operator amend to the post-Consensus artifacts in between makes Consensus the
+# latest completed phase, so a suppressed done leaves the trailing Crosscheck
+# start as the resume point — the live loop from the issue.
+_seed_through_consensus "INIT-RERUN-2"
+planner_state_write "INIT-RERUN-2" "Crosscheck" "check" "start" "running"
+planner_state_write "INIT-RERUN-2" "Crosscheck" "check" "done" "clean"
+planner_state_write "INIT-RERUN-2" "Consensus" "amend" "start" "operator amend"
+planner_state_write "INIT-RERUN-2" "Consensus" "amend" "done" "amended"
+planner_state_write "INIT-RERUN-2" "Crosscheck" "check" "start" "re-running"
+planner_state_write "INIT-RERUN-2" "Crosscheck" "check" "fail" "2 blocking"
+planner_state_write "INIT-RERUN-2" "Crosscheck" "check" "start" "re-running"
+planner_state_write "INIT-RERUN-2" "META" "create-authorized" "done" "operator passed --create"
+planner_state_write "INIT-RERUN-2" "Crosscheck" "check" "done" "clean" 2>/dev/null
+last=$(grep "^[^|]*|Crosscheck|check|" "$(planner_state_log "INIT-RERUN-2")" | tail -1 | cut -d'|' -f4)
+if [ "$last" = "done" ]; then
+  pass "done → start → fail → start → done writes the final done"
+else
+  fail "done → start → fail → start → done writes the final done" "last Crosscheck/check status is '$last'"
+fi
+pos=$(planner_position_derive "INIT-RERUN-2")
+if [ "$pos" = "EpicGen" ]; then
+  pass "position advances to EpicGen after fail → clean re-run"
+else
+  fail "position advances to EpicGen after fail → clean re-run" "got '$pos'"
+fi
+
+# Shape 3: done → done with no intervening start is still suppressed
+_seed_through_consensus "INIT-RERUN-3"
+planner_state_write "INIT-RERUN-3" "Crosscheck" "check" "start" "running"
+planner_state_write "INIT-RERUN-3" "Crosscheck" "check" "done" "clean"
+err=$(planner_state_write "INIT-RERUN-3" "Crosscheck" "check" "done" "dup" 2>&1 >/dev/null)
+n=$(_count_status "INIT-RERUN-3" Crosscheck check done)
+if [ "$n" = "1" ] && [[ "$err" == *"duplicate done entry for Crosscheck/check suppressed"* ]]; then
+  pass "done → done without an intervening start is still suppressed"
+else
+  fail "done → done without an intervening start is still suppressed" "got $n done entries, stderr '$err'"
+fi
+
 # ── Test 12: planner_phase_count / planner_phase_position ──────────────────────
 
 echo "--- Test 12: planner_phase_count / planner_phase_position ---"

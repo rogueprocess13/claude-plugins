@@ -17,7 +17,8 @@
 # branch-directive-gen.sh):
 #
 #   1. Plugin cache, versioned — ~/.claude/plugins/cache/*/ticket-planner/*/lib/
-#      Globbed across marketplace and version directories, newest by sort.
+#      installed_plugins.json installPath first, else the newest cached
+#      version by numeric version order (planner_cache_find, issue #454).
 #   2. Skills lib — ~/.claude/skills, whose lib/ is populated on every session
 #      by this plugin's SessionStart hook (see .claude-plugin/plugin.json).
 #   3. Relative to this file — ../ from lib/, i.e. the repo checkout.
@@ -26,6 +27,10 @@
 # "${root}/lib/planner-state.sh" form and CLAUDE_PLUGIN_ROOT stays meaningful.
 #
 # Sourceable library — no set -euo pipefail.
+
+# Version-aware plugin-cache lookup (planner_cache_find) — issue #454.
+# shellcheck source=planner-plugin-cache.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-plugin-cache.sh"
 
 # Marker file used to identify a real planner lib directory.
 _PLANNER_LIB_MARKER="planner-state.sh"
@@ -45,8 +50,7 @@ planner_resolve_lib_root() {
   fi
 
   # Level 1: Plugin cache (versioned — .../{marketplace}/ticket-planner/{version}/lib/)
-  candidate=$(find "${HOME}/.claude/plugins/cache" \
-    -path "*/ticket-planner/*/lib/${_PLANNER_LIB_MARKER}" 2>/dev/null | sort | tail -1)
+  candidate=$(planner_cache_find ticket-planner "lib/${_PLANNER_LIB_MARKER}")
   if [ -n "$candidate" ] && [ -f "$candidate" ]; then
     # .../{version}/lib/planner-state.sh → .../{version}
     echo "$(cd "$(dirname "$candidate")/.." && pwd)"

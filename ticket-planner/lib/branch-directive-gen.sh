@@ -20,6 +20,10 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Version-aware plugin-cache lookup (planner_cache_find) — issue #454.
+# shellcheck source=planner-plugin-cache.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-plugin-cache.sh"
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 BRANCH_DIRECTIVE_GEN_SCHEMA_VERSION="${BRANCH_DIRECTIVE_GEN_SCHEMA_VERSION:-1}"
@@ -115,8 +119,7 @@ _resolve_branch_directive_checker() {
   local checker script_dir
 
   # Level 1: Plugin cache
-  checker=$(find "${HOME}/.claude/plugins/cache" -name "branch-directive-check.sh" \
-    -path "*/ticket-auto-pipeline/*/lib/branch-directive-check.sh" 2>/dev/null | sort | tail -1)
+  checker=$(planner_cache_find ticket-auto-pipeline "lib/branch-directive-check.sh")
   if [ -n "$checker" ] && [ -f "$checker" ]; then
     echo "$checker"
     return 0
@@ -158,8 +161,7 @@ _resolve_planned_ticket_check() {
   local checker script_dir
 
   # Level 1: Plugin cache
-  checker=$(find "${HOME}/.claude/plugins/cache" -name "planned-ticket-check.sh" \
-    -path "*/ticket-auto-pipeline/*/lib/planned-ticket-check.sh" 2>/dev/null | sort | tail -1)
+  checker=$(planner_cache_find ticket-auto-pipeline "lib/planned-ticket-check.sh")
   if [ -n "$checker" ] && [ -f "$checker" ]; then
     echo "$checker"
     return 0
@@ -333,8 +335,7 @@ _resolve_manifest_write() {
   local checker script_dir
 
   # Level 1: Plugin cache
-  checker=$(find "${HOME}/.claude/plugins/cache" -name "manifest-write.sh" \
-    -path "*/ticket-auto-pipeline/*/lib/manifest-write.sh" 2>/dev/null | sort | tail -1)
+  checker=$(planner_cache_find ticket-auto-pipeline "lib/manifest-write.sh")
   if [ -n "$checker" ] && [ -f "$checker" ]; then
     echo "$checker"
     return 0
