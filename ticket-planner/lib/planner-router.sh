@@ -34,7 +34,7 @@ _source_if_missing "planner_initiative_dir" "${_PLANNER_ROUTER_LIB_DIR}/planner-
 planner_phase_dispatch() {
   local initiative_id="$1" phase="$2" idea="${3:-}"
   local state_dir
-  state_dir=$(planner_initiative_dir "$initiative_id")
+  state_dir=$(planner_initiative_dir "$initiative_id") || return 1
 
   # Write phase start entry
   planner_state_write "$initiative_id" "$phase" "dispatch" "start" "spawning ${phase} agent"

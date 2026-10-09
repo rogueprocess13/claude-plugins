@@ -11,6 +11,12 @@ LIB_DIR="${SCRIPT_DIR}/.."
 source "${LIB_DIR}/planner-deps-check.sh"
 source "${LIB_DIR}/planner-state.sh"
 
+# Fixtures live in a throwaway REPOS_ROOT. The libs no longer fall back to
+# ~/repos (#459), and this suite used to write its fixtures there.
+REPOS_ROOT=$(mktemp -d)
+export REPOS_ROOT
+trap 'rm -rf "$REPOS_ROOT"' EXIT
+
 PASS=0
 FAIL=0
 
@@ -23,7 +29,7 @@ FAIL=0
 make_fixture() {
   local initiative_id="$1"
   shift
-  local repos_root="${REPOS_ROOT:-${HOME}/repos}"
+  local repos_root="$REPOS_ROOT"
   local specs_dir="${repos_root}/.ticket-auto/initiatives/${initiative_id}/artifacts/specs"
 
   mkdir -p "$specs_dir"
@@ -52,7 +58,7 @@ make_fixture() {
 # Clean up fixture directory
 clean_fixture() {
   local initiative_id="$1"
-  local repos_root="${REPOS_ROOT:-${HOME}/repos}"
+  local repos_root="$REPOS_ROOT"
   rm -rf "${repos_root}/.ticket-auto/initiatives/${initiative_id}"
 }
 

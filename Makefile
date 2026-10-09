@@ -168,6 +168,7 @@ test-planner:
 	@echo "=== ticket-planner unit tests ==="
 	bash ticket-planner/lib/tests/test-planner-sanitize.sh
 	bash ticket-planner/lib/tests/test-planner-state.sh
+	bash ticket-planner/lib/tests/test-planner-repos-root-required.sh
 	bash ticket-planner/lib/tests/test-planner-lib-root.sh
 	bash ticket-planner/lib/tests/test-planner-lib-sync.sh
 	bash ticket-planner/lib/tests/test-planner-linear-api.sh
