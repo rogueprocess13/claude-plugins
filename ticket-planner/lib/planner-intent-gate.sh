@@ -24,11 +24,15 @@
 
 # Sourceable library — no set -euo pipefail.
 
+# Version-aware plugin-cache lookup (planner_cache_find) — issue #454.
+# shellcheck source=planner-plugin-cache.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-plugin-cache.sh"
+
 # ── _resolve_grill_seal ───────────────────────────────────────────────────────
 # Three-level fallback to locate grill-seal.sh from the grill-me plugin.
 # Mirrors _resolve_branch_directive_checker in branch-directive-gen.sh exactly:
 #   1. Plugin cache:  ~/.claude/plugins/cache/willard-pro-claude-plugins/grill-me/{version}/lib/
-#      (versioned — glob across version directories, take the newest by sort)
+#      (installed_plugins.json installPath, else newest by version — planner_cache_find)
 #   2. Skills lib:    ~/.claude/skills/lib/
 #   3. Relative path: ../grill-me/lib/ (from ticket-planner/lib/)
 #
@@ -38,8 +42,7 @@ _resolve_grill_seal() {
   local resolved script_dir
 
   # Level 1: Plugin cache (versioned — e.g. .../grill-me/0.1.0/lib/grill-seal.sh)
-  resolved=$(find "${HOME}/.claude/plugins/cache" -name "grill-seal.sh" \
-    -path "*/grill-me/*/lib/grill-seal.sh" 2>/dev/null | sort | tail -1)
+  resolved=$(planner_cache_find grill-me "lib/grill-seal.sh")
   if [ -n "$resolved" ] && [ -f "$resolved" ]; then
     echo "$resolved"
     return 0

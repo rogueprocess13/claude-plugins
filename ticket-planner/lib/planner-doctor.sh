@@ -29,6 +29,10 @@
 
 _PLANNER_DOCTOR_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Version-aware plugin-cache lookup (planner_cache_find) — issue #454.
+# shellcheck source=planner-plugin-cache.sh
+source "${_PLANNER_DOCTOR_LIB_DIR}/planner-plugin-cache.sh"
+
 if ! declare -f planner_state_log >/dev/null 2>&1; then
   source "${_PLANNER_DOCTOR_LIB_DIR}/planner-state.sh"
 fi
@@ -62,8 +66,7 @@ _PLANNER_DOCTOR_STATIC_LABELS=(needs-info needs-adr rejected reviewed)
 # file is reported at the point that actually needs it.
 _planner_doctor_resolve_planned_ticket_check() {
   local checker
-  checker=$(find "${HOME}/.claude/plugins/cache" -name "planned-ticket-check.sh" \
-    -path "*/ticket-auto-pipeline/*/lib/planned-ticket-check.sh" 2>/dev/null | sort | tail -1)
+  checker=$(planner_cache_find ticket-auto-pipeline "lib/planned-ticket-check.sh")
   if [ -n "$checker" ] && [ -f "$checker" ]; then
     echo "$checker"
     return 0
@@ -90,8 +93,7 @@ _planner_doctor_resolve_planned_ticket_check() {
 # phase's dor-check.sh/dor-semantic.sh/dor-semantic-parse.sh row).
 _planner_doctor_resolve_ticket_auto_lib() {
   local name="$1" checker
-  checker=$(find "${HOME}/.claude/plugins/cache" -name "$name" \
-    -path "*/ticket-auto-pipeline/*/lib/${name}" 2>/dev/null | sort | tail -1)
+  checker=$(planner_cache_find ticket-auto-pipeline "lib/${name}")
   if [ -n "$checker" ] && [ -f "$checker" ]; then
     echo "$checker"
     return 0
@@ -277,8 +279,7 @@ planner_doctor_run() {
   fi
 
   local dor_semantic_agent
-  dor_semantic_agent=$(find "${HOME}/.claude/plugins/cache" -name "dor-semantic-agent.md" \
-    -path "*/ticket-auto-pipeline/*/agents/dor-semantic-agent.md" 2>/dev/null | sort | tail -1)
+  dor_semantic_agent=$(planner_cache_find ticket-auto-pipeline "agents/dor-semantic-agent.md")
   if [ -z "$dor_semantic_agent" ]; then
     dor_semantic_agent="${_PLANNER_DOCTOR_LIB_DIR}/../../ticket-auto-pipeline/agents/dor-semantic-agent.md"
     [ -f "$dor_semantic_agent" ] || dor_semantic_agent=""

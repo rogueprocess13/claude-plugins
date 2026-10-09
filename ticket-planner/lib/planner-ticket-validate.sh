@@ -29,6 +29,10 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Version-aware plugin-cache lookup (planner_cache_find) — issue #454.
+# shellcheck source=planner-plugin-cache.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-plugin-cache.sh"
+
 _source_if_missing() {
   local name="$1" path="$2"
   if ! declare -f "$name" >/dev/null 2>&1; then
@@ -44,8 +48,7 @@ _source_if_missing() {
 _planner_verify_source_manifest_read() {
   declare -f ticket_manifest_exists >/dev/null 2>&1 && return 0
   local lib
-  lib=$(find "${HOME}/.claude/plugins/cache" -name "manifest-write.sh" \
-    -path "*/ticket-auto-pipeline/*/lib/manifest-write.sh" 2>/dev/null | sort | tail -1)
+  lib=$(planner_cache_find ticket-auto-pipeline "lib/manifest-write.sh")
   [ -n "$lib" ] || lib="${HOME}/.claude/skills/lib/manifest-write.sh"
   [ -f "$lib" ] && source "$lib"
 }
@@ -78,8 +81,7 @@ planner_validate_ticket() {
 
   # Resolve planned-ticket-check.sh
   local checker
-  checker=$(find "${HOME}/.claude/plugins/cache" -name "planned-ticket-check.sh" \
-    -path "*/ticket-auto-pipeline/*/lib/planned-ticket-check.sh" 2>/dev/null | sort | tail -1)
+  checker=$(planner_cache_find ticket-auto-pipeline "lib/planned-ticket-check.sh")
   if [ -z "$checker" ]; then
     checker="${HOME}/.claude/skills/lib/planned-ticket-check.sh"
   fi
