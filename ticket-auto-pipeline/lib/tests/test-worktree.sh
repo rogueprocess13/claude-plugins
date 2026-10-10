@@ -324,6 +324,55 @@ test_mirrors_gitignored_env_file() {
 }
 _run "gitignored env file is mirrored into fresh worktree" test_mirrors_gitignored_env_file
 
+# Relative *_DIR/*_PATH/*_ROOT values are pinned to the primary checkout
+test_pins_relative_env_paths() {
+  _setup_fixture
+  mkdir -p "$FIXTURE_REPO/worker"
+  cat >"$FIXTURE_REPO/.env.local" <<'ENVEOF'
+LOCAL_STORAGE_DIR=./data/uploads
+export CACHE_PATH="./cache"
+APP_ROOT=/abs/root
+API_URL=./not-a-dir-key
+OTHER_DIR=../up
+ENVEOF
+  printf '.env.local\n' >"$FIXTURE_REPO/.gitignore"
+  git -C "$FIXTURE_REPO" add .gitignore
+  git -C "$FIXTURE_REPO" commit -m "gitignore env" --no-gpg-sign >/dev/null 2>&1
+
+  local wt_path
+  wt_path=$(ensure_worktree "CRE-791" "$FIXTURE_REPO" "feat/CRE-791-fix" "main" 2>&1) || return 1
+
+  local f="$wt_path/.env.local" root
+  root="$(cd "$FIXTURE_REPO" && pwd)"
+  grep -qxF "LOCAL_STORAGE_DIR=$root/data/uploads" "$f" || {
+    echo "  LOCAL_STORAGE_DIR not pinned: $(cat "$f")" >&2
+    return 1
+  }
+  grep -qxF "export CACHE_PATH=\"$root/cache\"" "$f" || {
+    echo "  CACHE_PATH not pinned: $(cat "$f")" >&2
+    return 1
+  }
+  grep -qxF "APP_ROOT=/abs/root" "$f" || {
+    echo "  absolute path modified" >&2
+    return 1
+  }
+  grep -qxF "API_URL=./not-a-dir-key" "$f" || {
+    echo "  non-path key modified" >&2
+    return 1
+  }
+  grep -qxF "OTHER_DIR=../up" "$f" || {
+    echo "  ../ value modified" >&2
+    return 1
+  }
+  # source untouched
+  grep -qxF "LOCAL_STORAGE_DIR=./data/uploads" "$FIXTURE_REPO/.env.local" || {
+    echo "  source env modified" >&2
+    return 1
+  }
+  return 0
+}
+_run "relative *_DIR env values are pinned to primary checkout" test_pins_relative_env_paths
+
 # Existing worktree file is never clobbered by the mirror step
 test_does_not_clobber_existing_worktree_env() {
   _setup_fixture
