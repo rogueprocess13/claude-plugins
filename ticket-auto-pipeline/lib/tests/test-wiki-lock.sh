@@ -177,6 +177,94 @@ test_concurrent_acquire_single_winner() {
   [ "$ok" = 1 ]
 }
 
+# ── lock artifact placement (no shared /tmp) ────────────────────────────────
+
+# Every lock artifact for a git wiki — lock dir, guard, waiter file — lives
+# under .git, and nothing is created in TMPDIR.
+test_git_root_artifacts_stay_under_git() {
+  _setup
+  local ok=1
+  mkdir -p "$_ws/tmp"
+  TMPDIR="$_ws/tmp" _lock acquire --wiki-root "$_wiki" --ticket T-1
+  TMPDIR="$_ws/tmp" WIKI_LOCK_WAIT_SECS=0 _lock acquire --wiki-root "$_wiki" --ticket T-2
+  [ "$_RC" -eq 3 ] || ok=0
+  [ -e "$_wiki/.git/wiki-maintenance.lock.d.guard" ] || ok=0
+  [ -e "$_wiki/.git/wiki-maintenance.lock.d.wait.T-2" ] || ok=0
+  [ -z "$(ls -A "$_ws/tmp")" ] || ok=0
+  _teardown
+  [ "$ok" = 1 ]
+}
+
+# A non-git wiki root keeps every lock artifact in a private per-user base
+# (mode 700), never in a shared, predictable TMPDIR path.
+test_nongit_root_uses_private_base() {
+  _setup
+  local ok=1 plain="$_ws/plain-wiki" base mode
+  mkdir -p "$plain" "$_ws/tmp" "$_ws/home"
+  HOME="$_ws/home" XDG_RUNTIME_DIR="" TMPDIR="$_ws/tmp" _lock acquire --wiki-root "$plain" --ticket T-1
+  [ "$_RC" -eq 0 ] || ok=0
+  HOME="$_ws/home" XDG_RUNTIME_DIR="" TMPDIR="$_ws/tmp" WIKI_LOCK_WAIT_SECS=0 _lock acquire --wiki-root "$plain" --ticket T-2
+  [ "$_RC" -eq 3 ] || ok=0
+  base="$_ws/home/.cache/ticket-auto/wiki-lock"
+  [ -d "$base" ] && [ ! -L "$base" ] || ok=0
+  mode=$(stat -c %a "$base" 2>/dev/null || stat -f %Lp "$base")
+  [ "$mode" = 700 ] || ok=0
+  ls "$base"/*.lock.d/owner >/dev/null 2>&1 || ok=0
+  ls "$base"/*.lock.d.guard >/dev/null 2>&1 || ok=0
+  ls "$base"/*.lock.d.wait.T-2 >/dev/null 2>&1 || ok=0
+  [ -z "$(ls -A "$_ws/tmp")" ] || ok=0
+  _teardown
+  [ "$ok" = 1 ]
+}
+
+# Symlinks another local user pre-planted at the old shared-TMPDIR names are
+# never written through.
+test_nongit_preplanted_tmp_symlinks_not_followed() {
+  _setup
+  local ok=1 plain="$_ws/plain-wiki" key old
+  mkdir -p "$plain" "$_ws/tmp" "$_ws/home"
+  printf 'precious\n' >"$_ws/victim"
+  key=$(printf '%s' "$plain" | cksum | cut -d' ' -f1)
+  old="$_ws/tmp/wiki-maintenance-${key}.lock.d"
+  ln -s "$_ws/victim" "${old}.guard"
+  ln -s "$_ws/victim" "${old}.wait.T-1"
+  mkdir "$old"
+  ln -s "$_ws/victim" "$old/owner.tmp"
+  HOME="$_ws/home" XDG_RUNTIME_DIR="" TMPDIR="$_ws/tmp" WIKI_LOCK_WAIT_SECS=0 \
+    _lock acquire --wiki-root "$plain" --ticket T-1
+  [ "$_RC" -eq 0 ] || ok=0
+  [ "$(cat "$_ws/victim")" = precious ] || ok=0
+  _teardown
+  [ "$ok" = 1 ]
+}
+
+test_nongit_symlinked_base_refused() {
+  _setup
+  local ok=1 plain="$_ws/plain-wiki"
+  mkdir -p "$plain" "$_ws/xdg/ticket-auto" "$_ws/elsewhere"
+  ln -s "$_ws/elsewhere" "$_ws/xdg/ticket-auto/wiki-lock"
+  XDG_RUNTIME_DIR="$_ws/xdg" _lock acquire --wiki-root "$plain" --ticket T-1
+  [ "$_RC" -eq 7 ] || ok=0
+  echo "$_OUT" | grep -q 'symlink' || ok=0
+  [ -z "$(ls -A "$_ws/elsewhere")" ] || ok=0
+  _teardown
+  [ "$ok" = 1 ]
+}
+
+test_nongit_foreign_owned_base_refused() {
+  # "/" is owned by root; as any other user it stands in for a base dir
+  # someone else created. Skipped when the suite itself runs as root.
+  [ "$(id -u)" != 0 ] || return 0
+  _setup
+  local ok=1 plain="$_ws/plain-wiki"
+  mkdir -p "$plain"
+  WIKI_LOCK_BASE_DIR=/ _lock acquire --wiki-root "$plain" --ticket T-1
+  [ "$_RC" -eq 7 ] || ok=0
+  echo "$_OUT" | grep -q 'not owned' || ok=0
+  _teardown
+  [ "$ok" = 1 ]
+}
+
 # ── scoped commit ───────────────────────────────────────────────────────────
 
 # The issue's core scenario: another ticket left uncommitted edits in
@@ -279,7 +367,9 @@ FILTER="${1:-}"
 for t in test_acquire_fresh test_second_ticket_waits_and_logs_once \
   test_gives_up_after_max_wait test_waiter_acquires_after_release \
   test_same_ticket_reacquires test_stale_lock_broken test_release_is_identity_safe \
-  test_concurrent_acquire_single_winner \
+  test_concurrent_acquire_single_winner test_git_root_artifacts_stay_under_git \
+  test_nongit_root_uses_private_base test_nongit_preplanted_tmp_symlinks_not_followed \
+  test_nongit_symlinked_base_refused test_nongit_foreign_owned_base_refused \
   test_commit_excludes_preexisting_foreign_edits \
   test_commit_includes_predirty_file_changed_further \
   test_commit_refused_without_lock test_commit_nothing_of_this_runs \

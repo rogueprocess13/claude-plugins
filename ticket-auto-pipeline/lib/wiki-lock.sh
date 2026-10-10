@@ -45,6 +45,15 @@
 #       0 committed (WIKI_LOCK_COMMIT=<sha>), 6 nothing of this run's to
 #       commit, 5 lock not held by T, 1 git failure.
 #   2 usage error on any subcommand.
+#   7 unsafe lock location (non-git wiki only): the private per-user base is
+#     a symlink, not owned by the current user, or cannot be created.
+#
+# Lock location: `$WIKI_ROOT/.git/` for a git wiki. For a non-git wiki, a
+# private per-user base — WIKI_LOCK_BASE_DIR, else
+# `$XDG_RUNTIME_DIR/ticket-auto/wiki-lock`, else
+# `$HOME/.cache/ticket-auto/wiki-lock` — created mode 700. It is never a shared
+# TMPDIR path, where another local user could pre-plant the names. The guard
+# and waiter files always sit next to the lock dir, in that same parent.
 #
 # Env: WIKI_LOCK_WAIT_SECS (per-call wait, default 90 — fits inside the Bash
 # tool's default 2-minute timeout), WIKI_LOCK_POLL_SECS (default 15),
@@ -58,16 +67,68 @@ _wiki_lock_now() { date +%s; }
 
 _wiki_lock_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-# Lock directory for a wiki root. Inside .git when the wiki is a repo, so the
-# lock itself can never be staged; otherwise a per-path dir under TMPDIR.
+_wiki_lock_refuse() {
+  echo "wiki-lock: refusing lock base ${1}: ${2}" >&2
+  return 7
+}
+
+# Private per-user base for the non-git fallback. Never a shared, predictable
+# TMPDIR path: there, another local user could pre-create the lock dir (hold
+# the lock forever) or plant symlinks at the guard/wait/owner names so our `>`
+# writes clobber a file we can write. The base must be a real directory (not a
+# symlink), owned by us, and is forced to mode 700; anything else is refused.
+_wiki_lock_private_base() {
+  local base="${WIKI_LOCK_BASE_DIR:-}"
+  if [ -z "$base" ]; then
+    if [ -n "${XDG_RUNTIME_DIR:-}" ]; then
+      base="${XDG_RUNTIME_DIR}/ticket-auto/wiki-lock"
+    elif [ -n "${HOME:-}" ]; then
+      base="${HOME}/.cache/ticket-auto/wiki-lock"
+    else
+      _wiki_lock_refuse "(unset)" "neither XDG_RUNTIME_DIR nor HOME is set"
+      return 7
+    fi
+  fi
+  if [ -L "$base" ]; then
+    _wiki_lock_refuse "$base" "it is a symlink"
+    return 7
+  fi
+  if [ ! -e "$base" ]; then
+    (umask 077 && mkdir -p -m 700 "$base") 2>/dev/null || {
+      _wiki_lock_refuse "$base" "cannot create it"
+      return 7
+    }
+  fi
+  if [ -L "$base" ] || [ ! -d "$base" ]; then
+    _wiki_lock_refuse "$base" "not a real directory"
+    return 7
+  fi
+  local owner
+  owner=$(stat -c %u "$base" 2>/dev/null || stat -f %u "$base" 2>/dev/null)
+  if [ "$owner" != "$(id -u)" ]; then
+    _wiki_lock_refuse "$base" "not owned by the current user (owner uid ${owner:-?})"
+    return 7
+  fi
+  chmod 700 "$base" 2>/dev/null || {
+    _wiki_lock_refuse "$base" "cannot set mode 700"
+    return 7
+  }
+  echo "$base"
+}
+
+# Lock directory for a wiki root. Its guard (`<dir>.guard`) and waiter
+# (`<dir>.wait.<ticket>`) files are siblings, so they always share its parent:
+# .git when the wiki is a repo (the lock can never be staged), otherwise the
+# private per-user base above. Returns 7 when that base is unsafe.
 _wiki_lock_dir() {
   local root="${1}"
   if [ -d "$root/.git" ]; then
     echo "$root/.git/wiki-maintenance.lock.d"
   else
-    local key
+    local key base
+    base=$(_wiki_lock_private_base) || return 7
     key=$(printf '%s' "$root" | cksum | cut -d' ' -f1)
-    echo "${TMPDIR:-/tmp}/wiki-maintenance-${key}.lock.d"
+    echo "${base}/wiki-maintenance-${key}.lock.d"
   fi
 }
 
@@ -225,7 +286,7 @@ wiki_lock_acquire() {
   _wiki_lock_require_ticket || return 2
   local root="$_WL_ROOT" ticket="$_WL_TICKET" log="$_WL_LOG"
   local dir wait_file res
-  dir=$(_wiki_lock_dir "$root")
+  dir=$(_wiki_lock_dir "$root") || return 7
   wait_file="${dir}.wait.${ticket}"
   local wait="${WIKI_LOCK_WAIT_SECS:-90}" poll="${WIKI_LOCK_POLL_SECS:-15}"
   local max_wait="${WIKI_LOCK_MAX_WAIT_SECS:-3600}"
@@ -275,7 +336,7 @@ wiki_lock_release() {
   _wiki_lock_parse_args "$@" || return 2
   _wiki_lock_require_ticket || return 2
   local root="$_WL_ROOT" ticket="$_WL_TICKET" dir rc=0
-  dir=$(_wiki_lock_dir "$root")
+  dir=$(_wiki_lock_dir "$root") || return 7
   rm -f "${dir}.wait.${ticket}"
   _release_inner() {
     local owner holder
@@ -308,7 +369,7 @@ wiki_lock_release() {
 wiki_lock_status() {
   _wiki_lock_parse_args "$@" || return 2
   local dir owner
-  dir=$(_wiki_lock_dir "$_WL_ROOT")
+  dir=$(_wiki_lock_dir "$_WL_ROOT") || return 7
   owner=$(_wiki_lock_read_owner "$dir")
   if [ -z "$owner" ]; then
     echo "WIKI_LOCK_HOLDER="
@@ -335,7 +396,7 @@ wiki_lock_commit() {
     return 2
   fi
   local dir owner
-  dir=$(_wiki_lock_dir "$root")
+  dir=$(_wiki_lock_dir "$root") || return 7
   owner=$(_wiki_lock_read_owner "$dir")
   if [ "${owner%% *}" != "$ticket" ]; then
     echo "WIKI_LOCK_STATUS=not-owner"

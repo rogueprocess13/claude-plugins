@@ -61,6 +61,10 @@ Route on `WIKI_LOCK_RC` — this is a literal precondition, not a judgement call
   `Committed: skipped — WIKI_ROOT lock held by {WIKI_LOCK_HOLDER}`. The errata stay in place for
   the next run.
 - **`2`** — usage error (unresolved `WIKI_ROOT`). Treat as "no wiki" and stop.
+- **`7`** — unsafe lock location (non-git wiki only): the private per-user lock base is a
+  symlink, owned by another user, or cannot be created. The lib has already printed why. Make no
+  `WIKI_ROOT` writes: skip to Step 5 and report `Committed: skipped — unsafe WIKI_ROOT lock
+  location`. Do not try to work around it.
 
 **Release on every exit.** Once acquired, the lock must be released on every path out of this
 skill — the normal end of Step 4, and every early exit (the Step 2.5c `HUMAN_HOLD`/`ADR_CONFLICT`
