@@ -156,7 +156,9 @@ _resolve_flow_sh() {
   if [ -f "$HOME/.claude/skills/ticket-flow/flow.sh" ]; then
     echo "$HOME/.claude/skills/ticket-flow/flow.sh"
   elif command -v find &>/dev/null; then
-    find "$HOME/.claude/plugins/cache" -name "flow.sh" -path "*/ticket-flow/*" 2>/dev/null | head -1 || true
+    source "$SCRIPT_DIR/plugin-cache.sh" 2>/dev/null ||
+      source "$LIB_DIR/plugin-cache.sh" 2>/dev/null || true
+    tap_cache_find ticket-auto-pipeline skills/ticket-flow/flow.sh 2>/dev/null || true
   fi
 }
 

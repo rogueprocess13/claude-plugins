@@ -65,7 +65,12 @@ fi
 **flow.sh failure pattern:** After every `flow.sh` invocation, capture non-zero exits:
 ```bash
 _flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" -name "flow.sh" -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort | tail -1)
+# Not synced: the installed version recorded in installed_plugins.json, then the
+# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
+[ -f "$_flow_sh" ] || _flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
+  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
+[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" \
+  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
 bash "$_flow_sh" "{TICKET-ID}" "{trigger}" 2>&1
 _rc=$?
 if [ $_rc -ne 0 ]; then
@@ -193,7 +198,12 @@ if [ -f "$SENTINEL" ] && grep -q "^sm_hash=${SM_HASH}$" "$SENTINEL" 2>/dev/null;
 else
   # Cold run — run full validation
   _validate_sh="${HOME}/.claude/skills/ticket-flow/validate-linear-config.sh"
-  [ -f "$_validate_sh" ] || _validate_sh=$(find "${HOME}/.claude/plugins/cache" -name "validate-linear-config.sh" -path "*/ticket-auto-pipeline/*/validate-linear-config.sh" 2>/dev/null | sort | tail -1)
+  # Not synced: the installed version recorded in installed_plugins.json, then the
+  # newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
+  [ -f "$_validate_sh" ] || _validate_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
+    "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/validate-linear-config.sh"
+  [ -f "$_validate_sh" ] || _validate_sh=$(find "${HOME}/.claude/plugins/cache" \
+    -path "*/ticket-auto-pipeline/*/skills/ticket-flow/validate-linear-config.sh" 2>/dev/null | sort -V | tail -1)
   bash "$_validate_sh" "$TEAM_ID" || {
     echo "Preflight failed: Linear config validation error. Fix the team config and retry." >&2
     hb-wrap.sh gate "preflight" "fail" "Linear config validation failed" "{\"team_id\":\"$TEAM_ID\"}"
@@ -448,9 +458,12 @@ Resolve the `detect-resume.sh` path dynamically and invoke directly as bash — 
 ```bash
 # Resolve detect-resume.sh path dynamically
 DETECT_SH="$HOME/.claude/skills/ticket-detect-resume/detect-resume.sh"
-if [ ! -f "$DETECT_SH" ]; then
-  DETECT_SH=$(find "$HOME/.claude/plugins/cache" -name detect-resume.sh -path "*/ticket-detect-resume/*" 2>/dev/null | head -1)
-fi
+# Not synced: the installed version recorded in installed_plugins.json, then the
+# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
+[ -f "$DETECT_SH" ] || DETECT_SH="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
+  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-detect-resume/detect-resume.sh"
+[ -f "$DETECT_SH" ] || DETECT_SH=$(find "${HOME}/.claude/plugins/cache" \
+  -path "*/ticket-auto-pipeline/*/skills/ticket-detect-resume/detect-resume.sh" 2>/dev/null | sort -V | tail -1)
 [ -z "$DETECT_SH" ] && { echo "detect-resume.sh not found"; exit 1; }
 ```
 
@@ -696,7 +709,12 @@ After state detection, enter the stateless dispatch loop. Re-run `detect-resume.
 
 ```bash
 _flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" -name "flow.sh" -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort | tail -1)
+# Not synced: the installed version recorded in installed_plugins.json, then the
+# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
+[ -f "$_flow_sh" ] || _flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
+  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
+[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" \
+  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
 
 bash "$_flow_sh" "{TICKET-ID}" "appraise-start" --data complexity=simple 2>&1
 _rc=$?
@@ -875,7 +893,12 @@ bash "$_outcome_sh" "{TICKET_ID}" "{LOG_FILE}"
 Then emit planner feedback for planned tickets (no-op for unplanned):
 ```bash
 _feedback_sh="${HOME}/.claude/skills/lib/planned-feedback-write.sh"
-[ -f "$_feedback_sh" ] || _feedback_sh=$(find "${HOME}/.claude/plugins/cache" -name "planned-feedback-write.sh" -path "*/ticket-auto-pipeline/*/lib/planned-feedback-write.sh" 2>/dev/null | sort | tail -1)
+# Not synced: the installed version recorded in installed_plugins.json, then the
+# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
+[ -f "$_feedback_sh" ] || _feedback_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
+  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/lib/planned-feedback-write.sh"
+[ -f "$_feedback_sh" ] || _feedback_sh=$(find "${HOME}/.claude/plugins/cache" \
+  -path "*/ticket-auto-pipeline/*/lib/planned-feedback-write.sh" 2>/dev/null | sort -V | tail -1)
 if [ -f "$_feedback_sh" ]; then
   source "$_feedback_sh"
   planned_feedback_write "{TICKET_ID}" "{LOG_FILE}" || true
@@ -923,7 +946,12 @@ spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done MSG="Phase inspector complete
 Then transition from Ready → Review via implement-complete:
 ```bash
 flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-[ -f "$flow_sh" ] || flow_sh=$(find "${HOME}/.claude/plugins/cache" -name "flow.sh" -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort | tail -1)
+# Not synced: the installed version recorded in installed_plugins.json, then the
+# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
+[ -f "$flow_sh" ] || flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
+  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
+[ -f "$flow_sh" ] || flow_sh=$(find "${HOME}/.claude/plugins/cache" \
+  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
 if [ -z "$flow_sh" ]; then
   hb-wrap.sh retry "flow-sh" "fail" "flow.sh not found for implement-complete" \
     "{\"trigger\":\"implement-complete\",\"ticket\":\"{TICKET_ID}\",\"error_type\":\"resolution_failure\"}"

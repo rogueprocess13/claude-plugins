@@ -158,7 +158,12 @@ Call `re-claim` to clear the approval fact (and remove the `pre-approved` label)
 
 ```bash
 _flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" -name "flow.sh" -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort | tail -1)
+# Not synced: the installed version recorded in installed_plugins.json, then the
+# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
+[ -f "$_flow_sh" ] || _flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
+  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
+[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" \
+  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
 bash "$_flow_sh" "{TICKET-ID}" "re-claim"
 ```
 

@@ -119,8 +119,9 @@ _tp_state_machine() {
       return 0
     }
   done
-  find "$HOME/.claude/plugins/cache" -name workflow.json \
-    -path '*/ticket-flow/*' 2>/dev/null | sort | tail -1
+  declare -f tap_cache_find >/dev/null 2>&1 ||
+    source "$_TP_LIB_DIR/plugin-cache.sh" 2>/dev/null || true
+  tap_cache_find ticket-auto-pipeline skills/ticket-flow/workflow.json 2>/dev/null || true
 }
 
 _tp_validate_script() {
@@ -133,8 +134,9 @@ _tp_validate_script() {
       return 0
     }
   done
-  find "$HOME/.claude/plugins/cache" -name validate-linear-config.sh \
-    -path '*/ticket-flow/*' 2>/dev/null | sort | tail -1
+  declare -f tap_cache_find >/dev/null 2>&1 ||
+    source "$_TP_LIB_DIR/plugin-cache.sh" 2>/dev/null || true
+  tap_cache_find ticket-auto-pipeline skills/ticket-flow/validate-linear-config.sh 2>/dev/null || true
 }
 
 # Validate the Linear team config and the API key.
