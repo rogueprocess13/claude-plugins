@@ -65,6 +65,15 @@ test_incomplete_implementation_detected() {
   [ "$verdict" = "WARN" ] && echo "$patterns" | grep -q "incomplete_implementation"
 }
 
+# #418: RETURN_INCOMPLETE is an IMPLEMENT signal — never fires for later phases
+test_incomplete_implementation_not_for_verify_or_pr_review() {
+  local vr='[{"verifier":"playwright_uat","verdict":"PASS","score":1.0,"criteria_met":5,"criteria_total":5,"attempt":1,"phase":"VERIFY"}]'
+  local p
+  for p in VERIFY PR-REVIEW; do
+    inspect_verifiers "$vr" "true" "$p" | jq -e '[.patterns[].pattern] | index("incomplete_implementation") == null' >/dev/null || return 1
+  done
+}
+
 test_trivial_pass_detected() {
   local result
   result=$(inspect_verifiers '[
@@ -141,6 +150,7 @@ echo ""
 _run "clean verifiers produce PASS" test_clean_verifiers_pass
 _run "flaky_tests pattern detected" test_flaky_tests_detected
 _run "incomplete_implementation detected" test_incomplete_implementation_detected
+_run "#418 incomplete_implementation not raised for VERIFY/PR-REVIEW" test_incomplete_implementation_not_for_verify_or_pr_review
 _run "trivial_pass detected for single-criterion" test_trivial_pass_detected
 _run "trivial_pass excludes gate verifiers" test_trivial_pass_excludes_gates
 _run "empty input returns WARN" test_empty_input_returns_warn

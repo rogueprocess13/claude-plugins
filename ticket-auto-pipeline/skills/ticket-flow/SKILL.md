@@ -89,8 +89,8 @@ label a person applies by hand is left alone indefinitely.
 | `human-reject` | `Todo` | — | — | |
 | `implement-outcome` | — | — | — | No state or flag change; outcome recorded in the manifest, not the board |
 | `implement-complete` | `Review` | — | — | Manifest `approved` cleared |
-| `pr-review-pass-done` | `Done` | `reviewed` | `rejected` | Chosen by `uat_decide_trigger` — fires under `UAT Policy: epic`, or under `per-ticket` with no UAT target |
-| `pr-review-pass-uat` | `UAT` | `reviewed` | `rejected` | Chosen by `uat_decide_trigger` — fires under `per-ticket` policy with a UAT target |
+| `pr-review-pass-done` | `Done` | `reviewed` | `rejected` | Chosen by `uat_decide_trigger` — fires under `UAT Policy: epic`, or under `per-ticket` with no UAT target and no pending human merge |
+| `pr-review-pass-uat` | `UAT` | `reviewed` | `rejected` | Chosen by `uat_decide_trigger` — fires under `per-ticket` policy with a UAT target, or when the PR is left for a human merge (`--merge-pending`, GitHub #412) |
 | `pr-review-fail` | — | `rejected` | — | No state change |
 | `pr-iterate` | `Ready` | — | `reviewed`, `rejected` | |
 | `uat-pass` | `Done` | — | `reviewed` | |

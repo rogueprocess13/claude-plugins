@@ -133,8 +133,29 @@ assemble_inspector_context() {
     else
       _gate_warns=$(grep '^[^|]*|META|gate-warn|' "$LOG_FILE" 2>/dev/null | tail -3 || true)
     fi
-    if echo "$_gate_warns" | grep -q "RETURN_INCOMPLETE" 2>/dev/null; then
-      _has_return_incomplete="true"
+    # RETURN_INCOMPLETE is attributed by owning phase, not by time window (#418).
+    # It is written only by the router's IMPLEMENT step, AFTER spawn_capture —
+    # i.e. after every IMPLEMENT verifier-result — so the window above missed it
+    # for the IMPLEMENT inspector, while the VERIFY / PR-REVIEW inspectors
+    # (whose window is stretched back over IMPLEMENT by EXTRA_PHASES) picked it
+    # up and raised incomplete_implementation against boxes their own phase
+    # owns and was in the middle of doing. Strip it from every window, then
+    # re-add it only for the IMPLEMENT inspector, with no upper bound.
+    _gate_warns=$(printf '%s\n' "$_gate_warns" | grep -v '|META|gate-warn|[^|]*|RETURN_INCOMPLETE' || true)
+    if [ "$PHASE" = "IMPLEMENT" ]; then
+      local _ri_warns=""
+      if [ -n "$_vr_ts_first" ]; then
+        _ri_warns=$(grep '^[^|]*|META|gate-warn|[^|]*|RETURN_INCOMPLETE' "$LOG_FILE" 2>/dev/null |
+          awk -F'|' -v ts_first="$_vr_ts_first" '$1 >= ts_first {print}' | tail -1 || true)
+      fi
+      if [ -n "$_ri_warns" ]; then
+        _has_return_incomplete="true"
+        if [ -n "$_gate_warns" ]; then
+          _gate_warns=$(printf '%s\n%s' "$_gate_warns" "$_ri_warns")
+        else
+          _gate_warns="$_ri_warns"
+        fi
+      fi
     fi
   fi
 
@@ -159,7 +180,7 @@ Inspect the verifier results above. Check for these known defect patterns:
 2. **missing_requirement** (WARN): PR review OK but critique/audit found gaps
 3. **trivial_pass** (WARN): Any non-gate verifier PASS with criteria_total between 1 and 1 (single-criterion verification). Exclude verifiers with criteria_total=0 (outcome-scored) and known single-criterion gates (gate_check, return_completeness).
 4. **verdict_disagreement** (WARN): Two verifiers in the inspected phase(s) disagree (e.g., one PASS and one FAIL/BLOCK)
-5. **incomplete_implementation** (WARN): PASS verifier + RETURN_INCOMPLETE gate-warn present for the inspected phase
+5. **incomplete_implementation** (WARN): PASS verifier + "RETURN_INCOMPLETE present" is true above. Only the IMPLEMENT inspection ever reports it true — unchecked boxes left at VERIFY / PR-REVIEW time belong to those later phases and are not an implementation gap, so never raise this pattern from the gate-warn text alone.
 
 Verdict computation: worst severity wins across all detected patterns (PASS if 0 patterns, WARN if ≥1 WARN and 0 FAIL, FAIL if ≥1 FAIL).
 
