@@ -34,10 +34,10 @@ DRY_RUN=false
 RESOLVED_FILE=""
 
 while [ $# -gt 0 ]; do
-  case "$1" in
-    --file) RESOLVED_FILE="$2"; shift 2 ;;
+  case "${1}" in
+    --file) RESOLVED_FILE="${2}"; shift 2 ;;
     --dry-run) DRY_RUN=true; shift ;;
-    *) echo "Unknown flag: $1"; exit 1 ;;
+    *) echo "Unknown flag: ${1}"; exit 1 ;;
   esac
 done
 

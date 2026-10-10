@@ -567,8 +567,12 @@ TEAM_REF="${LINEAR_TEAM_ID:-}"
 PROJECT_REF="${LINEAR_PROJECT:-}"
 MILESTONE_REF="${LINEAR_PROJECT_MILESTONE:-}"
 
+# Positional params are always braced ("${1}", never a bare dollar-digit): the
+# skill loader substitutes a bare dollar-digit token with the invocation's own
+# argument before this block ever runs, so a bare one in the case below matched
+# the literal initiative id and no flag ever parsed (#455).
 while [ "$#" -gt 0 ]; do
-  case "$1" in
+  case "${1}" in
     --shared-branch) SHARED_BRANCH_FLAG=true ;;
     --no-shared-branch) NO_SHARED_BRANCH_FLAG=true ;;
     --create) CREATE_FLAG=true ;;
