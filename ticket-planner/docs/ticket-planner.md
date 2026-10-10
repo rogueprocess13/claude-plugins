@@ -30,7 +30,7 @@ The planner initializes a state directory under `${REPOS_ROOT}/.ticket-auto/init
 
 ### What auto-dispatch does
 
-When the Refinement phase's gate passes — every child ticket has a deterministic-and-semantic readiness verdict — the initiative epic manifest's `dispatch` field is stamped `true` (planner-refinement-phase; before that change, TicketGen stamped it on successful creation alone, with no readiness verdict yet involved — tracker-planner-and-fallback-cutover made it a local, one-way manifest flag in the first place, not a `state:execution` label; nothing in this flow writes a Linear label any more). The fleet-controller detector `_fleet_scan_initiative_dispatch` finds it during its next poll cycle by scanning epic manifests directly and — when `FLEET_AUTO_DISPATCH=true` — calls `fleet_dispatch_initiative`, which:
+When the Refinement phase's gate passes — every child ticket has a deterministic-and-semantic readiness verdict — the initiative epic manifest's `dispatch` field is stamped `true` (planner-refinement-phase; before that change, TicketGen stamped it on successful creation alone, with no readiness verdict yet involved — tracker-planner-and-fallback-cutover made it a local, one-way manifest flag in the first place, not the now-retired `state:execution` label; nothing in this flow writes a Linear label any more). The fleet-controller detector `_fleet_scan_initiative_dispatch` finds it during its next poll cycle by scanning epic manifests directly and — when `FLEET_AUTO_DISPATCH=true` — calls `fleet_dispatch_initiative`, which:
 
 1. Enumerates epics whose manifest `dispatch` field is `true`
 2. Enumerates each epic's child tickets from its manifest `children` array, filtering to those not yet dispatched
@@ -398,7 +398,7 @@ The router never reasons about content. Phases never mutate state directly (they
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Minimum confidence for the Planner Context block's `Pre-approved` field |
+| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Confidence at or above which TicketGen writes `Pre-approved: true` in the Planner Context block (a block field, not a label). ticket-auto-pipeline's `planned-ticket-check.sh` reads the same variable name as its low-confidence floor (default 0.5 there), so exporting it changes both |
 | `PLANNER_IDEA_MAX_LENGTH` | 2000 | Maximum idea length in chars (truncated with warning) |
 | `PLANNER_TSORT_TIMEOUT` | 30 | Seconds before timing out dependency graph sort |
 | `PLANNER_PHASE_TIMEOUT` | 600 | Seconds before timing out a hung phase agent |
