@@ -339,8 +339,8 @@
       <div class="phase-role">Create Linear epic representing the initiative</div>
       <div class="phase-section">
         <div class="phase-section-title">Creates</div>
-        <div class="item">Linear epic with INIT-{id}</div>
-        <div class="item">epic label</div>
+        <div class="item">Linear epic (no labels)</div>
+        <div class="item">Local epic manifest</div>
       </div>
       <div class="phase-section">
         <div class="phase-section-title">Gate</div>
@@ -356,7 +356,7 @@
     <div class="phase-card">
       <div class="phase-num">Phase 9</div>
       <div class="phase-name">TicketGen</div>
-      <div class="phase-role">Create planned tickets with full labels + Planner Context</div>
+      <div class="phase-role">Create planned tickets with Planner Context + local manifests</div>
       <div class="phase-section">
         <div class="phase-section-title">Gates (bash)</div>
         <div class="item">DAG acyclicity (tsort)</div>
@@ -388,7 +388,7 @@
       </div>
       <div class="phase-section">
         <div class="phase-section-title">Gate</div>
-        <div class="item">state:execution on epic — once every child has a verdict</div>
+        <div class="item">Epic manifest dispatch=true — once every child has a verdict</div>
         <div class="item">Halts while any child is not ready</div>
       </div>
       <span class="gate-badge bash">Deterministic bash + 2 agent spawns/ticket</span>
@@ -524,25 +524,25 @@ const DETAILS = {
     meta: "prompt: planner_prompt_epicgen  ·  creates: Linear epic  ·  gate: bash idempotency",
     rows: [
       ["Agent role", "Creates the Linear epic that represents this initiative"],
-      ["Output", "Linear epic with INIT-{id} label, epic label, linked to initiative. Epic ID recorded in state log and intent file."],
+      ["Output", "Linear epic created with an empty label set, plus a local epic manifest (branch, UAT/merge policy, children[]; no dispatch flag until Refinement stamps it). Epic ID recorded in state log and intent file."],
       ["Input", "proposal.md + specs/INDEX.md"],
       ["Gate", "Bash idempotency: planner_record_intent → planner_entity_exists → create → planner_entity_mark_created. Crash-safe — re-running produces exactly one epic."],
-      ["Note", "Does NOT set state:execution. That flag is set by Refinement's gate, once every child ticket has a readiness verdict (planner-refinement-phase). This prevents fleet-controller from dispatching a partially-created or not-yet-evaluated initiative."],
+      ["Note", "Does NOT make the epic dispatch-eligible. The epic manifest's dispatch flag (which replaced the retired state:execution label) is set by Refinement's gate, once every child ticket has a readiness verdict (planner-refinement-phase). This prevents fleet-controller from dispatching a partially-created or not-yet-evaluated initiative."],
     ]
   },
   ticketgen: {
     title: "TicketGen — Phase 9 of 11",
     meta: "prompt: planner_prompt_ticketgen  ·  creates: Linear tickets  ·  gates: 4 deterministic bash checks",
     rows: [
-      ["Agent role", "Creates planned child tickets in Linear Backlog with full labels and Planner Context blocks"],
+      ["Agent role", "Creates planned child tickets in Linear Backlog with no labels — Planner Context block in the body, facts (initiative, type, blocked_by) in a local ticket manifest"],
       ["Gate 1", "Dependency acyclicity (tsort via planner_deps_check_acyclic) — cyclic set → zero tickets created"],
       ["Gate 2", "Missing-target detection (planner_deps_validate_targets) — dangling blocked-by → zero tickets created"],
       ["Gate 3", "Confidence derivation (planner_confidence_derive) — deterministic from 5 raw signals, never LLM-computed"],
       ["Gate 4", "Pre-creation validation (planner_validate_ticket → planned-ticket-check.sh) — malformed → skip ticket, report"],
       ["Post-creation", "planner_verify_tickets — missing manifest → TicketGen|verify|fail (retried); success → TicketGen|verify|done, this phase's only phase-named success line (planner-refinement-phase)"],
       ["Body persistence", "After each successful create (and on an idempotent re-entry), writes the composed description to planner/body.md — the file Refinement evaluates, never a live Linear fetch on a cache hit (planner-refinement-phase)"],
-      ["No longer does", "Does NOT stamp state:execution on the epic and writes no TicketGen|dispatch-gate|... line — that moved to Refinement's gate, conditioned on a readiness verdict rather than ticket existence alone"],
-      ["Merge note", "This phase absorbs StoryGen (stories are 1:1 with tickets). The Execution merge (state:execution as a label operation) has since been un-merged into the new Refinement phase, which conditions the stamp on readiness."],
+      ["No longer does", "Does NOT stamp the epic manifest's dispatch flag and writes no TicketGen|dispatch-gate|... line — that moved to Refinement's gate, conditioned on a readiness verdict rather than ticket existence alone"],
+      ["Merge note", "This phase absorbs StoryGen (stories are 1:1 with tickets). The Execution merge (historically the state:execution label; now the epic manifest's dispatch flag) has since been un-merged into the new Refinement phase, which conditions the stamp on readiness."],
     ]
   },
   refinement: {

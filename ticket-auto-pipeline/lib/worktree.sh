@@ -78,6 +78,21 @@ ensure_worktree() {
   return 0
 }
 
+# _pin_relative_env_paths <src_env_file> <dst_env_file>
+# A relative data path in a mirrored env file (e.g. LOCAL_STORAGE_DIR=./data/uploads)
+# resolves against the worktree cwd for the worktree FE but against the primary
+# checkout for the host worker — two storage roots, uploads invisible to the
+# worker. Pin "./"-prefixed values of *_DIR / *_PATH / *_ROOT keys to the
+# directory of the source env file. Absolute paths, URLs and other keys are
+# untouched. Optional `export ` prefix and surrounding quotes are preserved.
+_pin_relative_env_paths() {
+  local src="$1" dst="$2"
+  local src_dir esc
+  src_dir="$(cd "$(dirname "$src")" 2>/dev/null && pwd)" || return 0
+  esc=$(printf '%s' "$src_dir" | sed -e 's/[\\&#]/\\&/g')
+  sed -i -E "s#^((export[[:space:]]+)?[A-Za-z0-9_]*(_DIR|_PATH|_ROOT)=[\"']?)\./#\1${esc}/#" "$dst" 2>/dev/null || true
+}
+
 # _mirror_gitignored_env_files <repo_path> <wt_path>
 # Gitignored runtime config (e.g. worker/.env) never lands in a fresh
 # worktree, and the failure is silent rather than loud — e.g. ledgerly's
@@ -97,6 +112,7 @@ _mirror_gitignored_env_files() {
     [ -f "$dst" ] && continue
     mkdir -p "$(dirname "$dst")"
     cp "$src" "$dst" 2>/dev/null || continue
+    _pin_relative_env_paths "$src" "$dst"
     if declare -f hb_fallback >/dev/null 2>&1; then
       hb_fallback "worktree-env" "fired" "mirrored gitignored env file into worktree" \
         "{\"file\":\"$env_rel\"}"
