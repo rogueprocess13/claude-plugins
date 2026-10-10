@@ -586,10 +586,37 @@ eval $(bash "$HOME/.claude/skills/lib/prescan-check.sh" "$repo" --repos-root "$R
 Branch on status:
 
 - **`fresh`**: Skip. Log nothing — overhead is one bash call per repo.
-- **`stale`, `decayed`, or `missing`**: Attempt prescan spawn.
-- **`missing` with `no_marker`**: First-time scan — full fan-out needed.
+- **`stale`**: Attempt prescan spawn. This is `/ticket-prescan`'s Path B (incremental
+  refresh), which `ticket-prescan-agent` can complete on its own.
+- **`decayed` or `missing`** (including `missing` with `no_marker`, a first-time scan): Do
+  NOT spawn. These need `/ticket-prescan`'s Path A — a per-persona `Agent` fan-out — and
+  `ticket-prescan-agent`'s tool allowlist has no `Agent` tool (a headless worker cannot spawn
+  nested sub-agents), so the spawn would fail every time and burn a spawn per ticket. Log an
+  actionable skip and move to the next repo; an operator brings the repo back to `fresh` by
+  running `/ticket-prescan <repo>` interactively. Appraise proceeds on whatever docs exist.
+- **Any other value**: Skip (unknown status — never spawn on it).
 
-### Acquire lock and spawn (if stale/decayed/missing)
+```bash
+# Inside the per-repo loop, right after the freshness-gate eval above.
+case "${PRESCAN_STATUS}" in
+fresh)
+  continue
+  ;;
+stale)
+  : # fall through to "Acquire lock and spawn" below
+  ;;
+decayed | missing)
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|$slug ${PRESCAN_STATUS} — full fan-out needs an interactive /ticket-prescan $repo (headless prescan agent has no Agent tool)" >> {LOG_FILE}
+  continue
+  ;;
+*)
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|$slug unknown prescan status '${PRESCAN_STATUS}' — not spawning" >> {LOG_FILE}
+  continue
+  ;;
+esac
+```
+
+### Acquire lock and spawn (if stale)
 
 Use flock-based concurrency — non-blocking, skip on contention:
 
@@ -705,7 +732,21 @@ After state detection, enter the stateless dispatch loop. Re-run `detect-resume.
 
 ### STEP_1 — Appraise
 
-**Before the agent spawn, claim the ticket immediately** so Linear reflects that work has started. Complexity defaults to `simple` — the appraise agent corrects it in Step 4 when the real score is known. `flow.sh` is idempotent: re-calling with the same params is a no-op.
+**First, fail fast on a structurally incomplete planned ticket** (issue #410). `gate-check.sh --mode planned` runs the entry gate's own Check 2.7 (template, required body sections, DoR readiness) before any agent is spawned. A planned ticket missing `## Test User`, `## Scope` (a `| Layer | Service | Area |` table) or `## Navigation Path` used to be stopped only at STEP_2_5, after APPRAISE and EXEC had both run to completion. Ad-hoc tickets pass straight through without a Linear call, and a failed issue fetch defers to the entry gate rather than stopping here:
+
+```bash
+_gate_sh="${HOME}/.claude/skills/lib/gate-check.sh"
+bash "$_gate_sh" "{TICKET_ID}" "{LOG_FILE}" "{HB_LOG_FILE}" --mode planned
+_pre_rc=$?
+if [ $_pre_rc -eq 2 ]; then
+  # Gate-stop (PLANNED_BODY_INCOMPLETE / NO_TEMPLATE_FOR_TYPE / TICKET_NOT_READY) — already logged
+  echo "Planned-ticket pre-check gate-stopped {TICKET_ID} before APPRAISE. Fix the ticket body (see the META|gate-stop line in the pipeline log), then re-run."
+  bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
+  exit 1
+fi
+```
+
+**Then, before the agent spawn, claim the ticket immediately** so Linear reflects that work has started. Complexity defaults to `simple` — the appraise agent corrects it in Step 4 when the real score is known. `flow.sh` is idempotent: re-calling with the same params is a no-op.
 
 ```bash
 _flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
