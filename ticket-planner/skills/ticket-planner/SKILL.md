@@ -446,7 +446,7 @@ The router never reasons about content; phases never mutate state directly (they
 | `PLANNER_MAX_PHASE_RETRIES` | 2 | Max retries per phase before failing the run |
 | `PLANNER_PHASE_TIMEOUT` | 600 | Seconds before timing out a hung phase agent |
 | `PLANNER_TSORT_TIMEOUT` | 30 | Seconds before timing out dependency graph sort |
-| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Confidence at or above which TicketGen writes `Pre-approved: true` in the Planner Context block (a block field, not a label). Downstream, `Pre-approved: true` makes the ticket eligible for ticket-appraise's fast-path at any confidence; it does not bypass the approval gate. ticket-auto-pipeline's `planned-ticket-check.sh` reads the same variable name as its low-confidence floor (default 0.5 there), so exporting it changes both |
+| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Confidence at or above which TicketGen writes `Pre-approved: true` in the Planner Context block (a block field, not a label). Downstream, `Pre-approved: true` makes the ticket eligible for ticket-appraise's fast-path at any confidence; it does not bypass the approval gate. Pre-approval only: ticket-auto-pipeline's `planned-ticket-check.sh` low-confidence floor is the separate `PLANNED_TICKET_MIN_CONFIDENCE` (default 0.5) |
 | `PLANNER_IDEA_MAX_LENGTH` | 2000 | Maximum idea length in chars (truncated with warning) |
 | `PLANNER_REQUIRE_INTENT` | false | When `true`, raw idea strings are refused — must pass a grill-me intent file |
 | `LINEAR_TEAM_ID` | *(unset)* | Team key, name or id to create on, the fallback for `--team`. Unset ⇒ the workspace's only team, or an error naming the candidates |
