@@ -344,11 +344,23 @@ Delegate to the flow executor:
   [ -z "$policy" ] && policy=$(resolve_uat_policy "{TICKET-ID}" 2>/dev/null)
   policy="${policy:-per-ticket}"
 
-  trigger=$(uat_decide_trigger --policy "$policy")
+  # Merge authorization is evaluated HERE, before the transition, not only in
+  # Step 6b (GitHub #412). If this run will leave the PR for a human to merge,
+  # a per-ticket ticket must not close to Done — its code is not on the base
+  # branch yet. merge_blocked_reason is the same function Step 6b calls, so the
+  # two steps cannot disagree about whether a human merge is required.
+  _merge_pending_flag=""
+  _merge_reason=$(merge_blocked_reason "{TICKET-ID}")
+  [ -n "$_merge_reason" ] && _merge_pending_flag="--merge-pending"
+
+  trigger=$(uat_decide_trigger --policy "$policy" ${_merge_pending_flag})
 
   # Record the decision so any Done reached without an individual UAT step is
   # explainable from the log alone.
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-policy|info|${policy}" >> {LOG_FILE}
+  if [ -n "$_merge_pending_flag" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-decision|info|trigger=${trigger}; merge pending: ${_merge_reason}" >> {LOG_FILE}
+  fi
 
   /ticket-flow {TICKET-ID} "$trigger"
   _rc=$?
@@ -371,8 +383,12 @@ Delegate to the flow executor:
   ```
 
 Under `UAT Policy: epic` the trigger is `pr-review-pass-done`, so the child closes on
-code-level verification and its `blocked-by` dependents are released. Under `per-ticket`
-(the default) behaviour is unchanged.
+code-level verification and its `blocked-by` dependents are released — `--merge-pending` does
+not change that path. Under `per-ticket` (the default), a passing review goes to `UAT` when a
+UAT target is configured **or** when the PR is being left for a human merge (pipeline autonomy
+`manual`, or any epic `Merge Policy`). It goes to `Done` only when neither applies, i.e. when
+this run is itself allowed to merge the PR in Step 6b. A ticket parked in `UAT` for a pending
+merge stays there until a human merges the PR and fires `uat-pass`.
 
 This adds `reviewed` or `rejected`, keeping all other labels — only when `_rc` is `0`.
 `_gate_blocked` (set only on the ✅ branch; always `false` on the ⚠️ branch, since
@@ -402,21 +418,12 @@ source ~/.claude/skills/lib/branch-resolve.sh
 
 # AUTONOMY/MERGE_POLICY are exported by the agent env file (--from-auto runs
 # only). A standalone invocation outside a pipeline run has neither set —
-# resolve MERGE_POLICY directly so a standalone review still honours an epic
-# directive; AUTONOMY has no standalone meaning (there is no pipeline autonomy
-# to speak of), so it stays empty and does not block a human-driven run.
-autonomy="${AUTONOMY:-}"
-merge_policy="${MERGE_POLICY:-}"
-if [ -z "$autonomy" ] && [ -z "$merge_policy" ]; then
-  merge_policy=$(resolve_merge_policy "{TICKET-ID}" 2>/dev/null)
-fi
-
-_merge_blocked_reason=""
-if [ -n "$autonomy" ] && [ "$autonomy" != "auto" ] && [ "$autonomy" != "semi-auto" ]; then
-  _merge_blocked_reason="pipeline autonomy=${autonomy} requires human merge"
-elif [ -n "$merge_policy" ]; then
-  _merge_blocked_reason="epic Branch Directive Merge Policy: ${merge_policy} requires human merge"
-fi
+# merge_blocked_reason then resolves MERGE_POLICY directly so a standalone
+# review still honours an epic directive; AUTONOMY has no standalone meaning
+# (there is no pipeline autonomy to speak of), so it stays empty and does not
+# block a human-driven run. Step 6a already called this same function to
+# choose UAT over Done when a human merge is required (GitHub #412).
+_merge_blocked_reason=$(merge_blocked_reason "{TICKET-ID}")
 ```
 
 **If `_merge_blocked_reason` is non-empty:** do NOT merge. Report to the user:

@@ -252,8 +252,41 @@ resolve_merge_policy() {
   echo "${_EBD_MERGE_POLICY:-}"
 }
 
+# merge_blocked_reason <TICKET_ID>
+# Echoes why this pipeline run must NOT merge a passing PR itself (a human
+# has to), or an empty string when the run may merge directly. Always
+# returns 0.
+#
+# The single implementation of the merge-authorization rule ticket-pr-review
+# needs twice (GitHub #412): Step 6a evaluates it BEFORE firing the Review
+# transition (a PR left for a human must not close the ticket to Done), and
+# Step 6b evaluates it to decide whether to merge. One function keeps the two
+# answers from drifting apart.
+#
+# AUTONOMY/MERGE_POLICY come from the agent env file (pipeline runs). A
+# standalone invocation has neither — MERGE_POLICY is then resolved from the
+# ticket's epic directive so a human-driven review still honours it; AUTONOMY
+# has no standalone meaning and stays empty.
+merge_blocked_reason() {
+  local ticket_id="${1:-}"
+  local autonomy="${AUTONOMY:-}"
+  local merge_policy="${MERGE_POLICY:-}"
+  if [ -z "$autonomy" ] && [ -z "$merge_policy" ] && [ -n "$ticket_id" ]; then
+    merge_policy=$(resolve_merge_policy "$ticket_id" 2>/dev/null) || merge_policy=""
+  fi
+
+  if [ -n "$autonomy" ] && [ "$autonomy" != "auto" ] && [ "$autonomy" != "semi-auto" ]; then
+    echo "pipeline autonomy=${autonomy} requires human merge"
+  elif [ -n "$merge_policy" ]; then
+    echo "epic Branch Directive Merge Policy: ${merge_policy} requires human merge"
+  else
+    echo ""
+  fi
+  return 0
+}
+
 # uat_decide_trigger [--policy <policy>] [--uat-url <url>] [--ticket <TICKET_ID>]
-#                    [--project-dir <dir>]
+#                    [--project-dir <dir>] [--merge-pending]
 # Echoes the ticket-flow trigger to fire after a passing PR review:
 #   pr-review-pass-done  (Review → Done)
 #   pr-review-pass-uat   (Review → UAT)
@@ -269,10 +302,21 @@ resolve_merge_policy() {
 # the UAT URL is exported into every pipeline agent's environment
 # unconditionally, so it is effectively always set. An epic-policy check placed
 # after a "is a UAT target configured?" check would never be reached.
+#
+# --merge-pending (GitHub #412): the caller has already determined that this
+# pipeline run will NOT merge the PR (pipeline autonomy or the epic's Merge
+# Policy requires a human). Under per-ticket policy that forces
+# pr-review-pass-uat even with no UAT target — closing to Done here would
+# claim the ticket finished while its code is still sitting in an open PR.
+# The ticket parks in UAT until a human merges and fires uat-pass. Under epic
+# policy the flag is deliberately ignored: children of a shared epic branch
+# route to Done on a passing review by design (parking them in UAT is the
+# deadlock UAT Policy: epic exists to avoid), so that path is unchanged.
 uat_decide_trigger() {
   local policy=""
   local uat_url=""
   local uat_url_given=false
+  local merge_pending=false
   local ticket_id=""
   local project_dir="."
 
@@ -294,6 +338,10 @@ uat_decide_trigger() {
     --project-dir)
       project_dir="$2"
       shift 2
+      ;;
+    --merge-pending)
+      merge_pending=true
+      shift
       ;;
     *)
       echo "uat_decide_trigger: unknown option: $1" >&2
@@ -319,7 +367,7 @@ uat_decide_trigger() {
       uat_url=$(resolve_uat_url "$project_dir" 2>/dev/null) || uat_url=""
     fi
 
-    if [ -n "$uat_url" ]; then
+    if [ -n "$uat_url" ] || $merge_pending; then
       _trigger="pr-review-pass-uat"
       _uat_required=true
     else
