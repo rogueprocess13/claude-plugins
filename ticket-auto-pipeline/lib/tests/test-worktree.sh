@@ -399,6 +399,156 @@ test_does_not_clobber_existing_worktree_env() {
 }
 _run "existing worktree env file is not clobbered" test_does_not_clobber_existing_worktree_env
 
+echo ""
+echo "=== Base ref freshness (issue #414) ==="
+echo ""
+
+# A bare "origin", a lagging clone (FIXTURE_REPO, under REPOS_ROOT) and a
+# second "other" clone that pushes new commits to origin. Both main and
+# epic/shared exist on origin. After setup, FIXTURE_REPO's local main and
+# epic/shared are both behind origin, and its remote-tracking refs are stale
+# too (it hasn't fetched) — exactly the state ensure_worktree finds in a
+# shared clone on a fast-moving epic branch.
+_setup_remote_fixture() {
+  FIXTURE_DIR=$(mktemp -d)
+  export REPOS_ROOT="$FIXTURE_DIR/repos"
+  ORIGIN_REPO="$FIXTURE_DIR/origin.git"
+  OTHER_REPO="$FIXTURE_DIR/other"
+  FIXTURE_REPO="$REPOS_ROOT/my-service"
+
+  git init -q --bare -b main "$ORIGIN_REPO" 2>/dev/null || git init -q --bare "$ORIGIN_REPO"
+  git -C "$ORIGIN_REPO" symbolic-ref HEAD refs/heads/main
+  git clone -q "$ORIGIN_REPO" "$OTHER_REPO" 2>/dev/null
+  git -C "$OTHER_REPO" config user.email "test@test.com"
+  git -C "$OTHER_REPO" config user.name "Test"
+  git -C "$OTHER_REPO" checkout -q -b main 2>/dev/null || true
+  echo "hello" >"$OTHER_REPO/README.md"
+  git -C "$OTHER_REPO" add -A
+  git -C "$OTHER_REPO" commit -q -m "initial" --no-gpg-sign
+  git -C "$OTHER_REPO" push -q origin main
+  git -C "$OTHER_REPO" push -q origin main:epic/shared
+
+  mkdir -p "$REPOS_ROOT"
+  git clone -q "$ORIGIN_REPO" "$FIXTURE_REPO" 2>/dev/null
+  git -C "$FIXTURE_REPO" config user.email "test@test.com"
+  git -C "$FIXTURE_REPO" config user.name "Test"
+  git -C "$FIXTURE_REPO" branch -q epic/shared origin/epic/shared
+
+  # Advance origin's main and epic/shared behind the lagging clone's back
+  git -C "$OTHER_REPO" fetch -q origin
+  git -C "$OTHER_REPO" checkout -q -b epic/shared origin/epic/shared
+  echo "child 1" >"$OTHER_REPO/child1.txt"
+  git -C "$OTHER_REPO" add -A
+  git -C "$OTHER_REPO" commit -q -m "child 1 merged" --no-gpg-sign
+  echo "child 2" >"$OTHER_REPO/child2.txt"
+  git -C "$OTHER_REPO" add -A
+  git -C "$OTHER_REPO" commit -q -m "child 2 merged" --no-gpg-sign
+  git -C "$OTHER_REPO" push -q origin epic/shared
+  git -C "$OTHER_REPO" checkout -q main
+  echo "main moved" >"$OTHER_REPO/main.txt"
+  git -C "$OTHER_REPO" add -A
+  git -C "$OTHER_REPO" commit -q -m "main moved" --no-gpg-sign
+  git -C "$OTHER_REPO" push -q origin main
+}
+
+# New branch off a lagging local epic ref must start at origin's epic tip
+test_new_branch_from_fresh_epic_remote() {
+  _setup_remote_fixture
+  local stale_sha origin_sha wt_path head_sha
+  stale_sha=$(git -C "$FIXTURE_REPO" rev-parse epic/shared)
+  origin_sha=$(git -C "$ORIGIN_REPO" rev-parse epic/shared)
+  [ "$stale_sha" != "$origin_sha" ] || {
+    echo "  fixture broken: local epic is not behind origin" >&2
+    return 1
+  }
+
+  wt_path=$(ensure_worktree "CRE-414" "$FIXTURE_REPO" "feat/CRE-414-x" "epic/shared") || return 1
+  head_sha=$(git -C "$wt_path" rev-parse HEAD)
+  [ "$head_sha" = "$origin_sha" ] || {
+    echo "  branched from $head_sha, expected origin epic tip $origin_sha (stale local was $stale_sha)" >&2
+    return 1
+  }
+  # The ticket branch must not silently track the epic's remote ref
+  local upstream
+  upstream=$(git -C "$FIXTURE_REPO" config --get "branch.feat/CRE-414-x.merge" || true)
+  [ -z "$upstream" ] || {
+    echo "  new branch unexpectedly tracks '$upstream'" >&2
+    return 1
+  }
+  return 0
+}
+_run "new branch starts at origin epic tip, not stale local epic" test_new_branch_from_fresh_epic_remote
+
+# Same for the default branch as base (BASE_BRANCH=develop/main case)
+test_new_branch_from_fresh_default_remote() {
+  _setup_remote_fixture
+  local origin_sha wt_path head_sha
+  origin_sha=$(git -C "$ORIGIN_REPO" rev-parse main)
+  wt_path=$(ensure_worktree "CRE-415" "$FIXTURE_REPO" "feat/CRE-415-x" "main") || return 1
+  head_sha=$(git -C "$wt_path" rev-parse HEAD)
+  [ "$head_sha" = "$origin_sha" ] || {
+    echo "  branched from $head_sha, expected origin main tip $origin_sha" >&2
+    return 1
+  }
+  return 0
+}
+_run "new branch off default base starts at origin tip" test_new_branch_from_fresh_default_remote
+
+# A base with no remote counterpart falls back to the local branch
+test_new_branch_local_only_base() {
+  _setup_remote_fixture
+  git -C "$FIXTURE_REPO" branch -q epic/local-only main
+  local local_sha wt_path head_sha
+  local_sha=$(git -C "$FIXTURE_REPO" rev-parse epic/local-only)
+  wt_path=$(ensure_worktree "CRE-416" "$FIXTURE_REPO" "feat/CRE-416-x" "epic/local-only") || return 1
+  head_sha=$(git -C "$wt_path" rev-parse HEAD 2>/dev/null || true)
+  [ "$head_sha" = "$local_sha" ] || {
+    echo "  local-only base: got '$head_sha', expected $local_sha" >&2
+    return 1
+  }
+  return 0
+}
+_run "local-only base (no origin ref) falls back to local branch" test_new_branch_local_only_base
+
+# Unpushed local commits on the base are not silently dropped
+test_new_branch_local_ahead_of_remote() {
+  _setup_remote_fixture
+  git -C "$FIXTURE_REPO" fetch -q origin
+  git -C "$FIXTURE_REPO" checkout -q epic/shared
+  git -C "$FIXTURE_REPO" reset -q --hard origin/epic/shared
+  echo "unpushed" >"$FIXTURE_REPO/unpushed.txt"
+  git -C "$FIXTURE_REPO" add -A
+  git -C "$FIXTURE_REPO" commit -q -m "unpushed" --no-gpg-sign
+  git -C "$FIXTURE_REPO" checkout -q main
+  local local_sha wt_path head_sha
+  local_sha=$(git -C "$FIXTURE_REPO" rev-parse epic/shared)
+  wt_path=$(ensure_worktree "CRE-417" "$FIXTURE_REPO" "feat/CRE-417-x" "epic/shared") || return 1
+  head_sha=$(git -C "$wt_path" rev-parse HEAD)
+  [ "$head_sha" = "$local_sha" ] || {
+    echo "  local-ahead base: got $head_sha, expected local $local_sha" >&2
+    return 1
+  }
+  return 0
+}
+_run "local base ahead of origin keeps unpushed commits" test_new_branch_local_ahead_of_remote
+
+# An already-existing ticket branch is checked out as-is, never re-pointed
+test_existing_branch_untouched_with_remote() {
+  _setup_remote_fixture
+  git -C "$FIXTURE_REPO" branch -q feat/CRE-418-x epic/shared
+  local branch_sha wt_path head_sha
+  branch_sha=$(git -C "$FIXTURE_REPO" rev-parse feat/CRE-418-x)
+  wt_path=$(ensure_worktree "CRE-418" "$FIXTURE_REPO" "feat/CRE-418-x" "epic/shared") || return 1
+  head_sha=$(git -C "$wt_path" rev-parse HEAD)
+  [ "$head_sha" = "$branch_sha" ] || {
+    echo "  existing branch moved: got $head_sha, expected $branch_sha" >&2
+    return 1
+  }
+  [ "$(git -C "$wt_path" rev-parse --abbrev-ref HEAD)" = "feat/CRE-418-x" ] || return 1
+  return 0
+}
+_run "existing ticket branch is reused, not re-pointed" test_existing_branch_untouched_with_remote
+
 # GC with no worktrees
 test_gc_no_worktrees() {
   _setup_fixture

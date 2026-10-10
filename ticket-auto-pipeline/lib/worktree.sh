@@ -68,14 +68,50 @@ ensure_worktree() {
     # Branch exists — create worktree on it
     git -C "$repo_path" worktree add "$wt_path" "$branch" >/dev/null 2>&1
   else
-    # Branch doesn't exist yet — create it off the base
-    git -C "$repo_path" worktree add -b "$branch" "$wt_path" "$base" >/dev/null 2>&1
+    # Branch doesn't exist yet — create it off the base. The fetch above only
+    # advances origin/<base>, never the local <base> branch, so branching off
+    # the bare local name silently starts from a stale point on fast-moving
+    # epic branches. Branch off the remote-tracking ref instead.
+    local base_ref
+    base_ref=$(_resolve_worktree_base_ref "$repo_path" "$base")
+    git -C "$repo_path" worktree add --no-track -b "$branch" "$wt_path" "$base_ref" >/dev/null 2>&1
   fi
 
   _mirror_gitignored_env_files "$repo_path" "$wt_path"
 
   echo "$wt_path"
   return 0
+}
+
+# _resolve_worktree_base_ref <repo_path> <base>
+# Prints the ref a new ticket branch should be created from:
+#   - <base> unchanged when it is already qualified (origin/..., refs/...)
+#     or when origin/<base> does not exist (local-only base, no remote, ...);
+#   - <base> when the local branch is strictly ahead of origin/<base>
+#     (unpushed local commits are never silently dropped);
+#   - origin/<base> otherwise (local equal, behind, or diverged, or no local
+#     branch at all).
+_resolve_worktree_base_ref() {
+  local repo_path="$1" base="$2"
+  case "$base" in
+  origin/* | refs/*)
+    echo "$base"
+    return 0
+    ;;
+  esac
+  if ! git -C "$repo_path" rev-parse --verify --quiet "refs/remotes/origin/$base^{commit}" >/dev/null 2>&1; then
+    echo "$base"
+    return 0
+  fi
+  local local_sha remote_sha
+  local_sha=$(git -C "$repo_path" rev-parse --verify --quiet "refs/heads/$base^{commit}" 2>/dev/null || true)
+  remote_sha=$(git -C "$repo_path" rev-parse --verify --quiet "refs/remotes/origin/$base^{commit}" 2>/dev/null || true)
+  if [ -n "$local_sha" ] && [ "$local_sha" != "$remote_sha" ] &&
+    git -C "$repo_path" merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+    echo "$base"
+    return 0
+  fi
+  echo "origin/$base"
 }
 
 # _pin_relative_env_paths <src_env_file> <dst_env_file>

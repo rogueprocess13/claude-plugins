@@ -39,6 +39,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-adr-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-wiki-bootstrap.sh
 	bash ticket-auto-pipeline/lib/tests/test-wiki-verify.sh
+	bash ticket-auto-pipeline/lib/tests/test-wiki-lock.sh
 	bash ticket-auto-pipeline/lib/tests/test-adr-gate-parse.sh
 	# tracker-event-vocabulary-and-emitter
 	bash ticket-auto-pipeline/lib/tests/test-fence-check.sh
