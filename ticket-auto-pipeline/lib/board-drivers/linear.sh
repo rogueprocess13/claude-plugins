@@ -245,6 +245,29 @@ _linear_driver_apply() {
     return 0
   fi
 
+  # ── Honour Linear label-group exclusivity (issue #423) ─────────────────
+  # Linear allows at most one child label per label group and rejects the
+  # whole issueUpdate when labelIds carries two siblings. A ticket can still
+  # carry a non-projected label this driver preserves — e.g. the retired
+  # `claimed` label, left on tickets claimed before its removal — that shares
+  # a group with a label this event adds (`claimed` and `needs-info` sit in
+  # the same group on real boards). Preserving it verbatim made every such
+  # needs-info projection fail, retry, and dead-letter. Adding a grouped
+  # label therefore displaces any kept sibling from the same group, exactly
+  # as Linear's own UI does. A label's group comes from the issue payload's
+  # `parent.id`, falling back to the team's label list; an ungrouped label
+  # (no parent) displaces nothing.
+  if [ "$add_ids" != "[]" ]; then
+    kept_ids=$(jq -cn --argjson k "$kept_ids" --argjson a "$add_ids" \
+      --argjson issue "$issue_json" --argjson team "$team_json" '
+      ( [ ($issue.labels.nodes // [])[], ($team.labels // [])[] ]
+        | map(select(.parent.id? != null) | {key: .id, value: .parent.id})
+        | reverse | from_entries ) as $grp
+      | ([ $a[] | $grp[.] // empty ] | unique) as $groups
+      | [ $k[] | select(. as $id | ($a | index($id)) != null
+                  or (($grp[$id] // null) as $g | $g == null or ($groups | index($g)) == null)) ]')
+  fi
+
   local desired_label_ids current_label_ids_sorted
   desired_label_ids=$(jq -cn --argjson k "$kept_ids" --argjson a "$add_ids" '($k + $a) | unique | sort')
   current_label_ids_sorted=$(echo "$issue_json" | jq -c '[.labels.nodes[].id] | sort')

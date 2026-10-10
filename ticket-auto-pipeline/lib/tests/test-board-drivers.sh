@@ -267,6 +267,49 @@ test_explicit_null_entry_noop() {
   [ "$rc" -eq 0 ] && [ "$count" -eq 0 ]
 }
 
+# ── label-group exclusivity (issue #423) ─────────────────────────────────────
+# A ticket claimed before the `claimed` label was retired still carries it,
+# and on real boards `claimed` and `needs-info` are siblings in one exclusive
+# label group. Linear rejects a labelIds set holding two siblings, so the
+# driver must drop the stale sibling when it adds needs-info — while leaving
+# an ungrouped label and a label from a different group alone.
+_grouped_team_json() {
+  echo "$TEAM_JSON" | jq -c '
+    .labels |= map(if .name == "needs-info" then . + {parent: {id: "grp-flow"}} else . end)
+    | .labels += [
+        {"id":"lbl-claimed","name":"claimed","parent":{"id":"grp-flow"}},
+        {"id":"lbl-bug","name":"bug","parent":null},
+        {"id":"lbl-hard","name":"Hard","parent":{"id":"grp-outcome"}}
+      ]'
+}
+
+test_grouped_sibling_displaced_on_add() {
+  local ws issue
+  issue=$(jq -nc '{id:"issue-1",team:{id:"team-1"},state:{id:"s-todo",name:"Todo"},assignee:null,
+    labels:{nodes:[{id:"lbl-claimed",name:"claimed",parent:{id:"grp-flow"}},
+                   {id:"lbl-bug",name:"bug",parent:null},
+                   {id:"lbl-hard",name:"Hard",parent:{id:"grp-outcome"}}]}}')
+  ws=$(_mk_workspace '{"needs-info-requested":{"add":["needs-info"]}}' "$issue" "$(_grouped_team_json)")
+  _apply "$ws" needs-info-requested 1 >/dev/null 2>&1
+  local labels
+  labels=$(cat "$ws/update_issue.labels" 2>/dev/null)
+  rm -rf "$ws"
+  [ "$labels" = '["lbl-bug","lbl-hard","lbl-needs-info"]' ]
+}
+
+# Group membership known only from the team list (an issue payload without
+# label parents) still displaces the sibling.
+test_grouped_sibling_displaced_via_team_lookup() {
+  local ws issue
+  issue=$(_issue_with_labels "lbl-claimed:claimed,lbl-bug:bug" "s-todo" "Todo")
+  ws=$(_mk_workspace '{"needs-info-requested":{"add":["needs-info"]}}' "$issue" "$(_grouped_team_json)")
+  _apply "$ws" needs-info-requested 1 >/dev/null 2>&1
+  local labels
+  labels=$(cat "$ws/update_issue.labels" 2>/dev/null)
+  rm -rf "$ws"
+  [ "$labels" = '["lbl-bug","lbl-needs-info"]' ]
+}
+
 _run "column-only move" test_column_only_move
 _run "label add" test_label_add
 _run "label remove" test_label_remove
@@ -280,6 +323,8 @@ _run "assignee resolution" test_assignee_resolution
 _run "transient failure -> non-zero" test_transient_failure_nonzero
 _run "permanent failure -> META|board-projection|fail, exit 0" test_permanent_failure_logs_and_exits_zero
 _run "explicit-null entry -> no-op" test_explicit_null_entry_noop
+_run "grouped sibling displaced on add (#423)" test_grouped_sibling_displaced_on_add
+_run "grouped sibling displaced via team lookup (#423)" test_grouped_sibling_displaced_via_team_lookup
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
