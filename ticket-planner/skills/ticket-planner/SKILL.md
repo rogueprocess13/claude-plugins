@@ -474,10 +474,15 @@ When invoked, follow this procedure:
 trusting `CLAUDE_PLUGIN_ROOT`, which is not guaranteed to be set or correct.
 
 ```bash
-# Bootstrap: find the resolver itself. Try the marketplace cache first, then the
+# Bootstrap: find the resolver itself. Try the installed version recorded in
+# installed_plugins.json first, then the newest cached version by *version*
+# order (sort -V — a plain sort puts 0.9.0 after 0.15.1, issue #454), then the
 # SessionStart-hook copy in ~/.claude/skills/lib.
-PLANNER_LIB_ROOT_SH=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-planner/*/lib/planner-lib-root.sh" 2>/dev/null | sort | tail -1)
+PLANNER_LIB_ROOT_SH=$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-planner\/[^"]*\)".*/\1/p' \
+  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | head -1)
+[ -n "$PLANNER_LIB_ROOT_SH" ] && PLANNER_LIB_ROOT_SH="${PLANNER_LIB_ROOT_SH%/}/lib/planner-lib-root.sh"
+[ -f "$PLANNER_LIB_ROOT_SH" ] || PLANNER_LIB_ROOT_SH=$(find "${HOME}/.claude/plugins/cache" \
+  -path "*/ticket-planner/*/lib/planner-lib-root.sh" 2>/dev/null | sort -V | tail -1)
 [ -f "$PLANNER_LIB_ROOT_SH" ] || PLANNER_LIB_ROOT_SH="${HOME}/.claude/skills/lib/planner-lib-root.sh"
 
 if [ ! -f "$PLANNER_LIB_ROOT_SH" ]; then
@@ -562,8 +567,12 @@ TEAM_REF="${LINEAR_TEAM_ID:-}"
 PROJECT_REF="${LINEAR_PROJECT:-}"
 MILESTONE_REF="${LINEAR_PROJECT_MILESTONE:-}"
 
+# Positional params are always braced ("${1}", never a bare dollar-digit): the
+# skill loader substitutes a bare dollar-digit token with the invocation's own
+# argument before this block ever runs, so a bare one in the case below matched
+# the literal initiative id and no flag ever parsed (#455).
 while [ "$#" -gt 0 ]; do
-  case "$1" in
+  case "${1}" in
     --shared-branch) SHARED_BRANCH_FLAG=true ;;
     --no-shared-branch) NO_SHARED_BRANCH_FLAG=true ;;
     --create) CREATE_FLAG=true ;;

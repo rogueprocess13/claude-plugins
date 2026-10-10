@@ -59,6 +59,10 @@
 
 _PLANNER_REFINEMENT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Version-aware plugin-cache lookup (planner_cache_find) — issue #454.
+# shellcheck source=planner-plugin-cache.sh
+source "${_PLANNER_REFINEMENT_LIB_DIR}/planner-plugin-cache.sh"
+
 # ── Dependency resolution ────────────────────────────────────────────────
 #
 # Three-level fallback, same pattern as planner-ticket-validate.sh /
@@ -69,8 +73,7 @@ _PLANNER_REFINEMENT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _planner_refinement_resolve() {
   local name="$1" found
 
-  found=$(find "${HOME}/.claude/plugins/cache" -name "$name" \
-    -path "*/ticket-auto-pipeline/*/lib/${name}" 2>/dev/null | sort | tail -1)
+  found=$(planner_cache_find ticket-auto-pipeline "lib/${name}")
   if [ -n "$found" ] && [ -f "$found" ]; then
     echo "$found"
     return 0

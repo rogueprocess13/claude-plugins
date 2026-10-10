@@ -144,7 +144,7 @@ planner_state_write() {
   # Ensure directory exists
   mkdir -p "$(dirname "$log_file")"
 
-  # Duplicate entry detection — reject done→done, allow fail→done
+  # Duplicate entry detection — reject done→done, allow fail→done and start→done
   if ! _planner_check_duplicate "$log_file" "$phase" "$step" "$status"; then
     return 0
   fi
@@ -647,7 +647,10 @@ planner_state_repair() {
 # ── Duplicate entry detection ───────────────────────────────────────────────────
 
 # Check whether a duplicate terminal entry exists before writing.
-# Rejects: done→done for same phase+step. Allows: fail→done (retry).
+# Rejects: done→done for same phase+step with nothing in between.
+# Allows: fail→done (retry) and start→done (a legitimate re-run — every phase
+# writes `start` before its result, so suppressing that `done` would leave a
+# trailing `start` that planner_position_derive resumes on forever).
 # Usage: _planner_check_duplicate <log_file> <phase> <step> <status>
 # Returns: 0 if write is allowed, 1 if duplicate should be suppressed.
 _planner_check_duplicate() {
@@ -668,11 +671,12 @@ _planner_check_duplicate() {
 
     # Check if a 'done' entry already exists for this phase+step
     if grep -q "^[^|]*|${phase}|${step}|done|" "$log_file" 2>/dev/null; then
-      # Check if the last entry was 'fail' (retry pattern is allowed)
+      # A 'start' or 'fail' since the last 'done' means this is a new run's
+      # result, not a duplicate of the earlier one.
       local last_status
       last_status=$(grep "^[^|]*|${phase}|${step}|" "$log_file" 2>/dev/null | tail -1 | cut -d'|' -f4)
-      if [ "$last_status" = "fail" ]; then
-        return 0 # fail→done retry is allowed
+      if [ "$last_status" = "fail" ] || [ "$last_status" = "start" ]; then
+        return 0
       fi
       echo "planner-state: WARNING — duplicate done entry for ${phase}/${step} suppressed" >&2
       return 1
