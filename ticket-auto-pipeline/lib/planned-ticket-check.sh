@@ -29,7 +29,15 @@ fi
 
 # ── Configuration ───────────────────────────────────────────────────────────
 
-PLANNER_CONFIDENCE_THRESHOLD="${PLANNER_CONFIDENCE_THRESHOLD:-0.5}"
+# Low-confidence floor: below it, a block that is not Pre-approved exits 2.
+# Read at call time (see check_planned_ticket_description), never assigned
+# here. This used to be PLANNER_CONFIDENCE_THRESHOLD, the same name
+# ticket-planner's TicketGen reads as its *pre-approval* threshold (default
+# 0.85) — so exporting it to tune pre-approval also raised this floor, and
+# sourcing this file into the planner's shell set it to 0.5 for every later
+# pre-approval decision there (issue #473). The two settings are now
+# independent; PLANNER_CONFIDENCE_THRESHOLD is deliberately not read here.
+PLANNED_TICKET_MIN_CONFIDENCE_DEFAULT="0.5"
 SCHEMA_KNOWN_MAX="${PLANNER_SCHEMA_KNOWN_MAX:-2}"
 
 # ── Required fields (Schema-Version 1) ──────────────────────────────────────
@@ -246,9 +254,10 @@ check_planned_ticket_description() {
   local pre_approved
   pre_approved=$(echo "$block" | _extract_field "Pre-approved")
 
-  if _confidence_below_threshold "$confidence" "$PLANNER_CONFIDENCE_THRESHOLD"; then
+  local min_confidence="${PLANNED_TICKET_MIN_CONFIDENCE:-$PLANNED_TICKET_MIN_CONFIDENCE_DEFAULT}"
+  if _confidence_below_threshold "$confidence" "$min_confidence"; then
     if [ "$pre_approved" != "true" ]; then
-      echo "planned-ticket-check: confidence $confidence below threshold $PLANNER_CONFIDENCE_THRESHOLD and not pre-approved — human review required" >&2
+      echo "planned-ticket-check: confidence $confidence below threshold $min_confidence (PLANNED_TICKET_MIN_CONFIDENCE) and not pre-approved — human review required" >&2
       CHECK_EXIT_CODE=2
       CHECK_RESULT="low_confidence_not_preapproved"
       return 2
