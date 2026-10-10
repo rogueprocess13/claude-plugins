@@ -86,6 +86,27 @@ grill_render() {
     echo "$result" | jq -r ".dimensions[] | select(.dimension == \"$1\") | .contribution"
   }
 
+  # Section body for a dimension: its evidence text followed by every answer
+  # folded in for that dimension (latest first, superseded ones marked).
+  # Evidence alone is the round-1 assessment; answers from later rounds would
+  # otherwise only reach the Resolved Questions table (#458).
+  # Usage: _dim_body <dimension-id> <placeholder-when-empty>
+  _dim_body() {
+    local body="${a_evidence[$1]:-}"
+    local clar
+    clar=$(_render_clarifications "$assessment" "$1" "$round")
+    if [ -n "$body" ]; then
+      echo "$body"
+    elif ! echo "$clar" | grep -q '^- \*\*Q[0-9]*\*\* (round [^)]*): '; then
+      # No evidence and no current (non-superseded) answer.
+      echo "$2"
+    fi
+    if [ -n "$clar" ]; then
+      echo
+      echo "$clar"
+    fi
+  }
+
   # ── Build sections ─────────────────────────────────────────────────────────
 
   # Header block
@@ -110,7 +131,7 @@ MD
     cat <<MD
 ## Objective
 
-$([ -n "${a_evidence[objective]:-}" ] && echo "${a_evidence[objective]}" || echo "_None specified_")
+$(_dim_body objective "_None specified_")
 
 MD
   )
@@ -121,7 +142,7 @@ MD
     cat <<MD
 ## Users & Problem
 
-$([ -n "${a_evidence[users_problem]:-}" ] && echo "${a_evidence[users_problem]}" || echo "_None specified_")
+$(_dim_body users_problem "_None specified_")
 
 MD
   )
@@ -132,7 +153,7 @@ MD
     cat <<MD
 ## Success Criteria
 
-$([ -n "${a_evidence[success_criteria]:-}" ] && echo "${a_evidence[success_criteria]}" || echo "_None identified_")
+$(_dim_body success_criteria "_None identified_")
 
 MD
   )
@@ -151,6 +172,8 @@ $([ -n "${a_evidence[scope]:-}" ] && echo "${a_evidence[scope]}" || echo "_Not s
 
 $([ -n "${a_boundary[scope]:-}" ] && echo "${a_boundary[scope]}" || echo "_Not specified_")
 
+$(_render_clarifications "$assessment" scope "$round")
+
 MD
   )
 
@@ -160,7 +183,7 @@ MD
     cat <<MD
 ## Acceptance Criteria
 
-$([ -n "${a_evidence[acceptance_criteria]:-}" ] && echo "${a_evidence[acceptance_criteria]}" || echo "_None identified_")
+$(_dim_body acceptance_criteria "_None identified_")
 
 MD
   )
@@ -171,7 +194,7 @@ MD
     cat <<MD
 ## Constraints
 
-$([ -n "${a_evidence[constraints]:-}" ] && echo "${a_evidence[constraints]}" || echo "_None identified_")
+$(_dim_body constraints "_None identified_")
 
 MD
   )
@@ -182,7 +205,7 @@ MD
     cat <<MD
 ## Dependencies
 
-$([ -n "${a_evidence[dependencies]:-}" ] && echo "${a_evidence[dependencies]}" || echo "_None identified_")
+$(_dim_body dependencies "_None identified_")
 
 MD
   )
@@ -198,6 +221,8 @@ MD
 
 ${assumptions_raw}
 
+$(_render_clarifications "$assessment" assumptions "$round")
+
 MD
   )
 
@@ -212,6 +237,8 @@ MD
 
 ${risks_raw}
 
+$(_render_clarifications "$assessment" risks "$round")
+
 MD
   )
 
@@ -221,7 +248,7 @@ MD
     cat <<MD
 ## Edge Cases
 
-$([ -n "${a_evidence[edge_cases]:-}" ] && echo "${a_evidence[edge_cases]}" || echo "_None identified_")
+$(_dim_body edge_cases "_None identified_")
 
 MD
   )
@@ -298,6 +325,9 @@ MD
 | # | Question | Dimension | Why | Round | Answer |
 |---|----------|-----------|-----|-------|--------|
 "
+  local superseded_map
+  superseded_map=$(_resolved_superseded_map "$assessment")
+
   local ri
   for ri in $(seq 0 $((r_count - 1))); do
     local q_text q_dim q_why q_round q_answer
@@ -312,11 +342,75 @@ MD
     q_why=$(echo "$q_why" | sed 's/|/\\|/g')
     q_answer=$(echo "$q_answer" | sed 's/|/\\|/g')
 
+    local q_by
+    q_by=$(echo "$superseded_map" | jq -r --arg n "$((ri + 1))" '.[$n] // empty')
+    if [ -n "$q_by" ]; then
+      q_answer="**SUPERSEDED by Q${q_by}** — ${q_answer}"
+    fi
+
     table="${table}| $((ri + 1)) | ${q_text} | ${q_dim} | ${q_why} | ${q_round} | ${q_answer} |
 "
   done
 
   echo "$table"
+}
+
+# ── _resolved_superseded_map ──────────────────────────────────────────────────
+# Usage: _resolved_superseded_map <assessment-json>
+# Emits a JSON object mapping an overridden question number (1-based position
+# in .resolved, i.e. the `#` column of the Resolved Questions table) to the
+# number of the latest question whose `supersedes` names it. `supersedes` may
+# be a number or an array of numbers; references that are not strictly earlier
+# questions are ignored, so a question never supersedes itself or a later one.
+_resolved_superseded_map() {
+  echo "$1" | jq -c '
+    [ (.resolved // []) | to_entries[]
+      | (.key + 1) as $new
+      | (.value.supersedes // []) | (if type == "array" then . else [.] end)[]
+      | (tonumber? // empty) | floor
+      | select(. >= 1 and . < $new)
+      | {old: tostring, new: $new} ]
+    | reduce .[] as $p ({}; .[$p.old] = ([.[$p.old] // 0, $p.new] | max))'
+}
+
+# ── _render_clarifications ────────────────────────────────────────────────────
+# Usage: _render_clarifications <assessment-json> <dimension-id> <max-round>
+# Renders the answers folded into .resolved for one dimension as a bullet list,
+# latest first, so a dimension section reads from its most recent answer. An
+# answer overridden by a later question (`supersedes`) stays visible as history
+# but carries a "SUPERSEDED by Qn" marker. Emits nothing when the dimension has
+# no resolved answers.
+_render_clarifications() {
+  local assessment="$1"
+  local dim="$2"
+  local max_round="$3"
+
+  local superseded_map
+  superseded_map=$(_resolved_superseded_map "$assessment")
+
+  local items
+  items=$(echo "$assessment" | jq -r --arg dim "$dim" --arg max "$max_round" \
+    --argjson sup "$superseded_map" '
+    [ (.resolved // []) | to_entries[]
+      | select(.value.dimension == $dim)
+      | (.key + 1) as $n
+      | {n: $n,
+         round: ((.value.round // $max) | tostring),
+         answer: ((.value.answer // "") | tostring | gsub("[\r\n]+"; " ")),
+         by: $sup[($n | tostring)]} ]
+    | reverse
+    | map(if .by then
+            "- **Q\(.n)** (round \(.round)) — **SUPERSEDED by Q\(.by)**, not current intent: \(.answer)"
+          else
+            "- **Q\(.n)** (round \(.round)): \(.answer)"
+          end)
+    | join("\n")')
+
+  if [ -n "$items" ]; then
+    echo "**Clarified answers (latest first; these override the text above where they conflict):**"
+    echo
+    echo "$items"
+  fi
 }
 
 # ── _render_open_gaps ─────────────────────────────────────────────────────────
