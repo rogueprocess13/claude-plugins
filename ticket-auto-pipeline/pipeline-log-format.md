@@ -576,8 +576,18 @@ the pipeline log's own schema version, and this section is purely additive.
 Written by the `guidance-extractor-agent` after each pipeline phase completes (post-IMPLEMENT, post-VERIFY, post-PR-REVIEW). Provides per-phase inspection verdicts by reading `META|verifier-result` entries and checking for known defect patterns. The inspector is advisory only — it never gates the pipeline.
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|phase-inspector|info|{\"phase\":\"IMPLEMENT\",\"verdict\":\"PASS\",\"signals\":0,\"detail\":\"All verifiers clean: unit_tests PASS, return_completeness complete, gate_check PASS\",\"verifiers_consulted\":[\"unit_tests\",\"return_completeness\",\"gate_check\"],\"patterns\":[]}" >> "$LOG_FILE"
+_pi_json=$(cat <<'JSON'
+{"phase":"IMPLEMENT","verdict":"PASS","signals":0,"detail":"All verifiers clean: unit_tests PASS, return_completeness complete, gate_check PASS","verifiers_consulted":["unit_tests","return_completeness","gate_check"],"patterns":[]}
+JSON
+)
+if _pi_line=$(printf '%s' "$_pi_json" | jq -c . 2>/dev/null) && [ -n "$_pi_line" ]; then
+  printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_pi_line" >>"$LOG_FILE"
+fi
 ```
+
+`detail` and `evidence` quote verifier output, so the JSON goes through a quoted
+`<<'JSON'` heredoc and `jq -c`, never a double-quoted `echo` string — that would
+execute any `$(...)` or backtick in the quoted text.
 
 JSON fields:
 - `phase` (string): pipeline phase being inspected — IMPLEMENT, VERIFY, or PR-REVIEW

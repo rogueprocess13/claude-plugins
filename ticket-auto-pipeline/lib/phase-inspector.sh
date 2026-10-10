@@ -163,12 +163,22 @@ Inspect the verifier results above. Check for these known defect patterns:
 
 Verdict computation: worst severity wins across all detected patterns (PASS if 0 patterns, WARN if ≥1 WARN and 0 FAIL, FAIL if ≥1 FAIL).
 
-Write exactly one line to the pipeline log (`$LOG_FILE`) with this command. The line MUST start with the ISO-8601 UTC timestamp field — the pipeline log format is `ISO|PHASE|STEP|STATUS|MSG`, and a line without its leading timestamp breaks every consumer that splits on `|`. Keep the `$(date -u +%Y-%m-%dT%H:%M:%SZ)|` prefix exactly as written:
+Write exactly one line to the pipeline log (`$LOG_FILE`) with this command block, filling in only the single JSON line between the `JSON` markers. The written line MUST start with the ISO-8601 UTC timestamp field — the pipeline log format is `ISO|PHASE|STEP|STATUS|MSG`, and a line without its leading timestamp breaks every consumer that splits on `|`. Keep the rest of the block exactly as written:
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|phase-inspector|info|{\"phase\":\"<phase>\",\"verdict\":\"<PASS|WARN|FAIL>\",\"signals\":<N>,\"detail\":\"<summary ≤ 200 chars>\",\"verifiers_consulted\":[\"<id1>\",...],\"patterns\":[{\"pattern\":\"<id>\",\"severity\":\"<warn|fail>\",\"evidence\":\"<specific>\"}]}" >> "$LOG_FILE"
+_pi_json=$(cat <<'JSON'
+{"phase":"<phase>","verdict":"<PASS|WARN|FAIL>","signals":<N>,"detail":"<summary ≤ 200 chars>","verifiers_consulted":["<id1>","<id2>"],"patterns":[{"pattern":"<id>","severity":"<warn|fail>","evidence":"<specific>"}]}
+JSON
+)
+if _pi_line=$(printf '%s' "$_pi_json" | jq -c . 2>/dev/null) && [ -n "$_pi_line" ]; then
+  printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_pi_line" >>"$LOG_FILE"
+else
+  echo "[phase-inspector] WARN: verdict JSON invalid or jq unavailable, nothing written" >&2
+fi
 ```
 
-The JSON must be valid (jq-parseable). Detail must be ≤ 200 chars. Use the phase value from the context above for the "phase" field.
+Never put the JSON inside a double-quoted `echo` string: `detail` and `evidence` quote verifier output (test names, PR text), and a double-quoted string would run any `$(...)` or backtick in that text. The quoted `<<'JSON'` heredoc keeps it literal; `jq -c` rejects invalid JSON so no partial line is ever written.
+
+The JSON must be valid (jq-parseable) and on one line. Detail must be ≤ 200 chars. Use the phase value from the context above for the "phase" field.
 PHASEINSPECT
   ) || _instructions_block=""
 
