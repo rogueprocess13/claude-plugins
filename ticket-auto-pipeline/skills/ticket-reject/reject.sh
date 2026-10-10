@@ -28,8 +28,11 @@ TICKET_ID="${1:-}"
 
 if [ -z "${FLOW_SH:-}" ]; then
   FLOW_SH="$HOME/.claude/skills/ticket-flow/flow.sh"
-  [ -f "$FLOW_SH" ] || FLOW_SH=$(find "$HOME/.claude/plugins/cache" -name "flow.sh" \
-    -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort | tail -1)
+  if [ ! -f "$FLOW_SH" ]; then
+    source "$LIB_DIR/plugin-cache.sh" 2>/dev/null ||
+      source "$SCRIPT_DIR/../../lib/plugin-cache.sh" 2>/dev/null || true
+    FLOW_SH=$(tap_cache_find ticket-auto-pipeline skills/ticket-flow/flow.sh 2>/dev/null || true)
+  fi
 fi
 if [ -z "$FLOW_SH" ] || [ ! -f "$FLOW_SH" ]; then
   echo "ticket-reject: flow.sh not found — reinstall the plugin" >&2

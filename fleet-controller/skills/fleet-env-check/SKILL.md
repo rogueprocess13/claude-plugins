@@ -20,11 +20,18 @@ No arguments. Run from the project directory containing `CLAUDE.md`.
 
 ### Step 1 — Run the check
 
-Write `fleet-env-check.sh` output to a temp file (avoids bash stdout truncation). Tries the plugin cache first (picks latest by version), falling back to the repo-relative path.
+Write `fleet-env-check.sh` output to a temp file (avoids bash stdout truncation). Tries the installed plugin version first (`installed_plugins.json`, then the newest cached version by version order), falling back to the repo-relative path.
 
 ```bash
 rm -f /tmp/fleet-env-check-output.txt
-ENV_CHECK="$(ls ~/.claude/plugins/cache/willard-pro-claude-plugins/fleet-controller/*/lib/fleet-env-check.sh 2>/dev/null | sort -V | tail -1)"
+ENV_CHECK=""
+# Not synced: the installed version recorded in installed_plugins.json, then the
+# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
+[ -f "$ENV_CHECK" ] || ENV_CHECK="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/fleet-controller\/[^"]*\)".*/\1/p' \
+  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/lib/fleet-env-check.sh"
+[ -f "$ENV_CHECK" ] || ENV_CHECK=$(find "${HOME}/.claude/plugins/cache" \
+  -path "*/fleet-controller/*/lib/fleet-env-check.sh" 2>/dev/null | sort -V | tail -1)
+[ -f "$ENV_CHECK" ] || ENV_CHECK=""
 if [ -z "$ENV_CHECK" ] && [ -f "$CLAUDE_PLUGIN_ROOT/lib/fleet-env-check.sh" ]; then
   ENV_CHECK="$CLAUDE_PLUGIN_ROOT/lib/fleet-env-check.sh"
 fi

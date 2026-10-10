@@ -66,8 +66,9 @@ _linear_driver_resolve_workflow_json() {
     }
   done
   local _found
-  _found=$(find "$HOME/.claude/plugins/cache" -name workflow.json \
-    -path "*/ticket-flow/*" 2>/dev/null | sort | tail -1)
+  declare -f tap_cache_find >/dev/null 2>&1 ||
+    source "$_LD_LIB_DIR/plugin-cache.sh" 2>/dev/null || true
+  _found=$(tap_cache_find ticket-auto-pipeline skills/ticket-flow/workflow.json 2>/dev/null || true)
   if [ -n "$_found" ] && [ -f "$_found" ]; then
     echo "$_found"
     return 0

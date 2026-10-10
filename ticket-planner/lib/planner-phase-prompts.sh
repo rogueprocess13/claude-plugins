@@ -1227,7 +1227,8 @@ label set. Initiative linkage and epic discrimination are both local now —
 \`fleet_local_epics\` enumerates from the epic manifest (written in step 5
 below), and \`is_epic_issue\` (epic-precondition.sh) discriminates on
 \`epic_manifest_exists\` or a valid Branch Directive, never a live label. Do
-NOT set \`state:execution\` either — that flag is set deterministically by the
+NOT set the epic manifest's \`dispatch\` flag either (the retired
+\`state:execution\` label's replacement) — it is set deterministically by the
 **Refinement** phase's gate (\`planner_refinement_gate\`, in
 \`lib/planner-refinement.sh\`), once every child ticket this phase creates has
 a deterministic-and-semantic readiness verdict (planner-refinement-phase).

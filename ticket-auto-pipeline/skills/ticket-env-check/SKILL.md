@@ -19,11 +19,18 @@ No arguments. Run from the project directory containing `CLAUDE.md`.
 
 ### Step 1 — Run the check
 
-Write `env-check.sh` output to a temp file (avoids bash stdout truncation). Tries the plugin cache first (picks latest by version), falling back to the synced `~/.claude/skills/lib/` path.
+Write `env-check.sh` output to a temp file (avoids bash stdout truncation). Tries the installed plugin version first (`installed_plugins.json`, then the newest cached version by version order), falling back to the synced `~/.claude/skills/lib/` path.
 
 ```bash
 rm -f /tmp/env-check-output.txt
-ENV_CHECK="$(ls ~/.claude/plugins/cache/willard-pro-claude-plugins/ticket-auto-pipeline/*/lib/env-check.sh 2>/dev/null | sort -V | tail -1)"
+ENV_CHECK=""
+# Not synced: the installed version recorded in installed_plugins.json, then the
+# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
+[ -f "$ENV_CHECK" ] || ENV_CHECK="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
+  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/lib/env-check.sh"
+[ -f "$ENV_CHECK" ] || ENV_CHECK=$(find "${HOME}/.claude/plugins/cache" \
+  -path "*/ticket-auto-pipeline/*/lib/env-check.sh" 2>/dev/null | sort -V | tail -1)
+[ -f "$ENV_CHECK" ] || ENV_CHECK=""
 if [ -z "$ENV_CHECK" ] && [ -f ~/.claude/skills/lib/env-check.sh ]; then
   ENV_CHECK=~/.claude/skills/lib/env-check.sh
 fi
