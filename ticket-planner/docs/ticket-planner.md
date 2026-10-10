@@ -398,7 +398,7 @@ The router never reasons about content. Phases never mutate state directly (they
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Minimum confidence for the Planner Context block's `Pre-approved` field |
+| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Minimum confidence for the Planner Context block's `Pre-approved` field. Pre-approval only: ticket-auto-pipeline's `planned-ticket-check.sh` floor is the separate `PLANNED_TICKET_MIN_CONFIDENCE` (default 0.5) |
 | `PLANNER_IDEA_MAX_LENGTH` | 2000 | Maximum idea length in chars (truncated with warning) |
 | `PLANNER_TSORT_TIMEOUT` | 30 | Seconds before timing out dependency graph sort |
 | `PLANNER_PHASE_TIMEOUT` | 600 | Seconds before timing out a hung phase agent |

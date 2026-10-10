@@ -446,7 +446,7 @@ The router never reasons about content; phases never mutate state directly (they
 | `PLANNER_MAX_PHASE_RETRIES` | 2 | Max retries per phase before failing the run |
 | `PLANNER_PHASE_TIMEOUT` | 600 | Seconds before timing out a hung phase agent |
 | `PLANNER_TSORT_TIMEOUT` | 30 | Seconds before timing out dependency graph sort |
-| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Minimum confidence for `pre-approved` label |
+| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Minimum confidence for the Planner Context block's `Pre-approved` field. Pre-approval only: ticket-auto-pipeline's `planned-ticket-check.sh` floor is the separate `PLANNED_TICKET_MIN_CONFIDENCE` (default 0.5) |
 | `PLANNER_IDEA_MAX_LENGTH` | 2000 | Maximum idea length in chars (truncated with warning) |
 | `PLANNER_REQUIRE_INTENT` | false | When `true`, raw idea strings are refused — must pass a grill-me intent file |
 | `LINEAR_TEAM_ID` | *(unset)* | Team key, name or id to create on, the fallback for `--team`. Unset ⇒ the workspace's only team, or an error naming the candidates |
