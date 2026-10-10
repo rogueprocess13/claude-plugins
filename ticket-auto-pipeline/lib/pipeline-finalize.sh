@@ -190,7 +190,8 @@ _pf_post_outcome() {
 
 _pm_script="$HOME/.claude/skills/lib/pipeline-postmortem.sh"
 if [ ! -f "$_pm_script" ]; then
-  _pm_script=$(find "$HOME/.claude/plugins/cache" -name pipeline-postmortem.sh -path "*/ticket-auto-pipeline/*" 2>/dev/null | sort | tail -1)
+  source "$_PF_LIB_DIR/plugin-cache.sh" 2>/dev/null || true
+  _pm_script=$(tap_cache_find ticket-auto-pipeline lib/pipeline-postmortem.sh 2>/dev/null || true)
 fi
 
 if [ -n "$_pm_script" ] && [ -f "$_pm_script" ]; then
@@ -275,7 +276,8 @@ _pf_post_outcome "$TICKET_ID" "$EXIT_CODE" "$LOG_FILE" || true
 # fleetd's pusher once it runs), never blocks the router's own exit.
 _od_script="$HOME/.claude/skills/ticket-flow/outbox-drain.sh"
 if [ ! -f "$_od_script" ]; then
-  _od_script=$(find "$HOME/.claude/plugins/cache" -name outbox-drain.sh -path "*/ticket-flow/*" 2>/dev/null | sort | tail -1)
+  source "$_PF_LIB_DIR/plugin-cache.sh" 2>/dev/null || true
+  _od_script=$(tap_cache_find ticket-auto-pipeline skills/ticket-flow/outbox-drain.sh 2>/dev/null || true)
 fi
 if [ -n "$_od_script" ] && [ -f "$_od_script" ]; then
   bash "$_od_script" "$TICKET_ID" >/dev/null 2>&1 || true

@@ -149,6 +149,9 @@ test-lib:
 	# GitNexus pre-flight branch verification (#359)
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-preflight.sh
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-agent-tools.sh
+	# version-aware plugin-cache lookup (#468)
+	bash ticket-auto-pipeline/lib/tests/test-plugin-cache.sh
+	bash fleet-controller/lib/tests/test-fleet-plugin-cache.sh
 
 test-fleetd:
 	@echo "=== fleetd supervisor tests (must run from repo root) ==="
