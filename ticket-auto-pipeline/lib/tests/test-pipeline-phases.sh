@@ -774,6 +774,50 @@ test_ticket_verify_pr_created_covers_both_branches() {
   }
 }
 
+# ── issue #415: verify re-fires implement-complete under --from-auto ────────
+
+# ticket-auto's router fires implement-complete itself after every IMPLEMENT
+# (STEP_4's post-dispatch flow_trigger). ticket-verify's local close-out used
+# to fire it again unconditionally, so every --from-auto run logged a spurious
+# ILLEGAL_TRANSITION from Review and emitted a duplicate implement-completed
+# event. The close-out item must be gated off under --from-auto, and the agent
+# definition must not mandate the call unconditionally.
+test_ticket_verify_local_closeout_skips_implement_complete_under_from_auto() {
+  local skill_md="$SKILLS_DIR/ticket-verify/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local item
+  # Item 4 of the local close-out: from its "4." line up to item 5.
+  item=$(sed -n '/^### If `--env local`: Open PR and close out/,/^### If `--env uat`/p' "$skill_md" |
+    sed -n '/^4\. /,/^5\. /p')
+  echo "$item" | grep -q '/ticket-flow {TICKET-ID} implement-complete' || {
+    echo "local close-out item 4 no longer fires implement-complete (test anchor drifted)"
+    return 1
+  }
+  echo "$item" | head -1 | grep -q 'If `--from-auto` is present: skip this item' || {
+    echo "local close-out item 4 fires implement-complete without a --from-auto skip"
+    return 1
+  }
+  local agent_md="$SKILLS_DIR/../agents/ticket-verify-agent.md"
+  [ -f "$agent_md" ] || return 1
+  grep 'implement-complete' "$agent_md" | grep -q 'only on a standalone run' || {
+    echo "ticket-verify-agent.md mandates implement-complete without excluding --from-auto"
+    return 1
+  }
+}
+
+# The other half of the contract: the trigger verify now defers to must still
+# be fired by the router's STEP_4 post-dispatch chain, or skipping it in verify
+# would strand a --from-auto ticket in Ready.
+test_router_owns_implement_complete_after_implement() {
+  local dt="$SKILLS_DIR/ticket-flow/dispatch-table.json"
+  [ -f "$dt" ] || return 1
+  jq -e '.steps[] | select(.step_id == "STEP_4") | .post_dispatch[]
+    | select(.kind == "flow_trigger" and .trigger == "implement-complete")' "$dt" >/dev/null || {
+    echo "dispatch-table STEP_4 no longer fires implement-complete"
+    return 1
+  }
+}
+
 # ── issue #366: PR_REVIEW_REPO_UNSCOPED ─────────────────────────────────────
 
 # Step 3's gh pr list must carry an explicit --repo. Without it, gh falls back

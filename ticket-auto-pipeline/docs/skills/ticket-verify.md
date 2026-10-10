@@ -34,7 +34,7 @@ Performs end-to-end browser verification of a ticket fix using Playwright. Loads
 | REMEDIATION_BRIEF | stdout + plan artifact | Structured failure context for re-implementation |
 | Verification #N section | Plan artifact | Persisted brief for ticket-implement to read |
 | PR (local pass) | GitHub | PR created against develop |
-| State transition | Linear | implement-complete, uat-pass, or uat-fail |
+| State transition | Linear | implement-complete (standalone local pass only — the ticket-auto router owns it under `--from-auto`), uat-pass, or uat-fail |
 | Nav hint | TICKETS_ROOT/nav-hints.md | New navigation path (if discovered) |
 
 ## How it works

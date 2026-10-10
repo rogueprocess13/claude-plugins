@@ -914,9 +914,17 @@ Verification passed on localhost — the implementation is confirmed working. No
    fi
    ```
 3. Capture the PR URL(s).
-4. Delegate to the flow executor. `implement-complete` carries no `verdict_gate` (it only
-   opens code review — it is not a Done/UAT-reaching trigger), so no exit-11 branch applies
-   here:
+4. **If `--from-auto` is present: skip this item entirely** and go to item 5. ticket-auto's
+   router owns `implement-complete` in that mode — it fires it itself right after IMPLEMENT
+   (STEP_4's post-spawn `flow_trigger`, and again after every re-implement in the verify-retry
+   and pr-iterate loops), so the ticket is already in `Review` by the time VERIFY runs. A second
+   call here is not a harmless no-op: `flow.sh` logs `META|flow-warn|info|ILLEGAL_TRANSITION …
+   from Review` and still advances `rev` and emits a duplicate `implement-completed` event to
+   the outbox (#415).
+
+   **Standalone runs only (no `--from-auto`):** delegate to the flow executor. `implement-complete`
+   carries no `verdict_gate` (it only opens code review — it is not a Done/UAT-reaching trigger),
+   so no exit-11 branch applies here:
    ```
    /ticket-flow {TICKET-ID} implement-complete
    _rc=$?
@@ -926,7 +934,7 @@ Verification passed on localhost — the implementation is confirmed working. No
      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: implement-complete" >> {LOG_FILE}
    fi
    ```
-   This moves state → `Review` and removes `approved`.
+   This moves state → `Review` and clears the manifest `approved` fact.
 
 5. Append to `notes.md`:
    ```markdown
@@ -1326,7 +1334,7 @@ information, and any consumer must then fall back to whole-run classification.
 - **Session reuse:** If the browser is already open and logged in at the correct environment, skip Step 3b. Detect this from the snapshot — if the nav shows a user name, proceed directly to Step 4.
 - **Snapshot verbosity:** Trim snapshots to the relevant component subtree in all reports. Full snapshots can be hundreds of lines — include only what is needed to understand the failure.
 - **Multiple failing criteria:** If more than one criterion fails, report all of them in 7b and 7c. The WHAT_FAILED and SNAPSHOT_EXCERPT should cover the first failure point; list subsequent failures under a `ADDITIONAL_FAILURES:` key in the brief.
-- **Scope:** This skill does not modify source code. It posts a verification comment to Linear on both pass and fail. On UAT fail it also triggers `uat-fail` (state → `Ready`, label `rejected`). Local pass triggers `implement-complete` (state → `Review`). The business partner handles the final UAT → Done transition manually.
+- **Scope:** This skill does not modify source code. It posts a verification comment to Linear on both pass and fail. On UAT fail it also triggers `uat-fail` (state → `Ready`, label `rejected`). Local pass triggers `implement-complete` (state → `Review`) on standalone runs only — under `--from-auto` the ticket-auto router has already fired it. The business partner handles the final UAT → Done transition manually.
 - **REMEDIATION_BRIEF format is canonical** — do not reformat the delimiter lines or key names.
 - **Build-only mode:** tickets with no UI/API surface (root parent-POM changes, dependency-version bumps, build-plugin config) skip every browser step (1.6, 1.7a/1.7b, 3, 4, 4b) and instead run the affected modules' build commands directly, evaluating pass/fail on exit codes and output rather than snapshots. Detection mirrors `gate-check.sh`'s Check 2.6 classification so both phases agree on ticket shape. The REMEDIATION_BRIEF and pass/fail report keep their canonical field names — `CONSOLE_ERRORS`/`SNAPSHOT_EXCERPT`/`CURRENT_URL` just carry build diagnostics instead of browser ones (see Step 7a).
 - **Live-backend mode:** tickets with no UI but a genuine live-system requirement (service registration, downstream-failure/circuit-breaker behaviour, inter-service calls) skip the login/navigation-specific steps (1.7a/1.7b, 3, 4, 4b) but — unlike build-only — do **not** skip Step 1.6: `env-start.sh` must bring the real services up, because the check is against a running system, not a compiled artifact. Verification runs via `env-status.sh` reads and direct `curl`/API calls (Step 4c-live) rather than a browser session or a build command. Exists because the browser/build-only split has no bucket for "running backend, no UI" — misclassifying these as build-only silently skips the actual check (nothing to compile), and misclassifying them as browser (the zero-signal default) sends the agent looking for a login page that isn't part of the AC.
