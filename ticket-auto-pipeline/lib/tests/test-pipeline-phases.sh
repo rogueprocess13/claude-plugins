@@ -648,6 +648,55 @@ test_router_prescan_skipped_on_late_resume() {
   }
 }
 
+# Issue #411 — a decayed/missing repo needs /ticket-prescan's Path A (an Agent
+# fan-out), which the headless ticket-prescan-agent cannot run (no Agent tool).
+# The router must only spawn for `stale` and log an actionable skip otherwise.
+# Executes the gate's real case block from SKILL.md for each status.
+test_router_prescan_spawns_only_for_stale() {
+  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local code
+  code=$(sed -n '/^Branch on status:/,/^### Acquire lock and spawn/p' "$skill_md" |
+    sed -n '/^```bash$/,/^```$/p' | sed '1d;$d')
+  [ -n "$code" ] || {
+    echo "prescan gate has no executable status-branch bash block"
+    return 1
+  }
+  local tmp log
+  tmp=$(mktemp -d)
+  log="$tmp/pipeline.log"
+  : >"$log"
+  code=${code//\{LOG_FILE\}/$log}
+  local reached
+  reached=$(
+    slug=repo-x
+    repo=/r/repo-x
+    for PRESCAN_STATUS in fresh stale decayed missing bogus; do
+      eval "$code"
+      echo "$PRESCAN_STATUS"
+    done
+  )
+  local rc=0
+  [ "$reached" = "stale" ] || {
+    echo "spawn reached for statuses: $(echo "$reached" | tr '\n' ' ')(want: stale)"
+    rc=1
+  }
+  grep -q '|MAINTENANCE|prescan|skip|repo-x decayed .*interactive /ticket-prescan' "$log" || {
+    echo "decayed repo not logged as an actionable skip"
+    rc=1
+  }
+  grep -q '|MAINTENANCE|prescan|skip|repo-x missing .*interactive /ticket-prescan' "$log" || {
+    echo "missing repo not logged as an actionable skip"
+    rc=1
+  }
+  grep -qE 'repo-x (fresh|stale)' "$log" && {
+    echo "fresh/stale repo wrongly logged as a skip"
+    rc=1
+  }
+  rm -rf "$tmp"
+  return $rc
+}
+
 test_router_autonomy_write_is_guarded() {
   local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
   [ -f "$skill_md" ] || return 1
@@ -770,6 +819,50 @@ test_ticket_verify_pr_created_covers_both_branches() {
   }
   echo "$block" | grep -q '_pr_url=\$(cd' || {
     echo "new-PR branch does not set _pr_url for pr-created capture"
+    return 1
+  }
+}
+
+# ── issue #415: verify re-fires implement-complete under --from-auto ────────
+
+# ticket-auto's router fires implement-complete itself after every IMPLEMENT
+# (STEP_4's post-dispatch flow_trigger). ticket-verify's local close-out used
+# to fire it again unconditionally, so every --from-auto run logged a spurious
+# ILLEGAL_TRANSITION from Review and emitted a duplicate implement-completed
+# event. The close-out item must be gated off under --from-auto, and the agent
+# definition must not mandate the call unconditionally.
+test_ticket_verify_local_closeout_skips_implement_complete_under_from_auto() {
+  local skill_md="$SKILLS_DIR/ticket-verify/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local item
+  # Item 4 of the local close-out: from its "4." line up to item 5.
+  item=$(sed -n '/^### If `--env local`: Open PR and close out/,/^### If `--env uat`/p' "$skill_md" |
+    sed -n '/^4\. /,/^5\. /p')
+  echo "$item" | grep -q '/ticket-flow {TICKET-ID} implement-complete' || {
+    echo "local close-out item 4 no longer fires implement-complete (test anchor drifted)"
+    return 1
+  }
+  echo "$item" | head -1 | grep -q 'If `--from-auto` is present: skip this item' || {
+    echo "local close-out item 4 fires implement-complete without a --from-auto skip"
+    return 1
+  }
+  local agent_md="$SKILLS_DIR/../agents/ticket-verify-agent.md"
+  [ -f "$agent_md" ] || return 1
+  grep 'implement-complete' "$agent_md" | grep -q 'only on a standalone run' || {
+    echo "ticket-verify-agent.md mandates implement-complete without excluding --from-auto"
+    return 1
+  }
+}
+
+# The other half of the contract: the trigger verify now defers to must still
+# be fired by the router's STEP_4 post-dispatch chain, or skipping it in verify
+# would strand a --from-auto ticket in Ready.
+test_router_owns_implement_complete_after_implement() {
+  local dt="$SKILLS_DIR/ticket-flow/dispatch-table.json"
+  [ -f "$dt" ] || return 1
+  jq -e '.steps[] | select(.step_id == "STEP_4") | .post_dispatch[]
+    | select(.kind == "flow_trigger" and .trigger == "implement-complete")' "$dt" >/dev/null || {
+    echo "dispatch-table STEP_4 no longer fires implement-complete"
     return 1
   }
 }
@@ -1001,6 +1094,43 @@ test_ticket_pr_review_checks_report_table_uses_state_bucket() {
   block=$(sed -n '/^\*\*If any check has a blocking bucket/,/^Post the same message as a PR comment\./p' "$skill_md")
   echo "$block" | grep -q '| Check | State | Bucket |' || {
     echo "failing-checks report table no longer reports State/Bucket columns"
+    return 1
+  }
+}
+
+# ── GitHub #412: merge authorization before the Review transition ───────────
+
+# Step 6a must evaluate merge authorization (merge_blocked_reason) and pass
+# --merge-pending to uat_decide_trigger BEFORE /ticket-flow fires the trigger —
+# otherwise a PR left for a human merge closes the ticket to Done first.
+test_ticket_pr_review_step6a_merge_pending_before_transition() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^### Step 6a/,/^### Step 6b/p' "$skill_md")
+  local reason_ln trigger_ln flow_ln
+  reason_ln=$(echo "$block" | grep -n 'merge_blocked_reason "{TICKET-ID}"' | head -1 | cut -d: -f1)
+  trigger_ln=$(echo "$block" | grep -n 'uat_decide_trigger --policy "$policy" ${_merge_pending_flag}' | head -1 | cut -d: -f1)
+  flow_ln=$(echo "$block" | grep -n '/ticket-flow {TICKET-ID} "$trigger"' | head -1 | cut -d: -f1)
+  [ -n "$reason_ln" ] && [ -n "$trigger_ln" ] && [ -n "$flow_ln" ] || {
+    echo "Step 6a missing merge_blocked_reason / --merge-pending / trigger call"
+    return 1
+  }
+  [ "$reason_ln" -lt "$trigger_ln" ] && [ "$trigger_ln" -lt "$flow_ln" ] || {
+    echo "Step 6a computes merge authorization after the transition fires"
+    return 1
+  }
+}
+
+# Step 6b must use the same shared function rather than a second inline copy
+# of the rule, so the two steps cannot disagree.
+test_ticket_pr_review_step6b_uses_shared_merge_rule() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^### Step 6b/,/^\*\*If `_merge_blocked_reason` is non-empty/p' "$skill_md")
+  echo "$block" | grep -q '_merge_blocked_reason=$(merge_blocked_reason "{TICKET-ID}")' || {
+    echo "Step 6b does not call merge_blocked_reason"
     return 1
   }
 }
