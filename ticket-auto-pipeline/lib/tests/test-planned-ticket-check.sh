@@ -164,12 +164,56 @@ test_low_confidence_pre_approved_override() {
   check_planned_ticket_description "$desc"
 }
 
-# ── Test: custom PLANNER_CONFIDENCE_THRESHOLD ──────────────────────────────
+# ── Test: custom PLANNED_TICKET_MIN_CONFIDENCE ─────────────────────────────
 
 test_custom_threshold() {
   local desc
   desc=$(_build_block "1" "0.60" "Balanced" "false")
-  PLANNER_CONFIDENCE_THRESHOLD=0.70 check_planned_ticket_description "$desc"
+  PLANNED_TICKET_MIN_CONFIDENCE=0.70 check_planned_ticket_description "$desc"
+}
+
+# ── Issue #473: the planner's pre-approval threshold is not the floor ───────
+# PLANNER_CONFIDENCE_THRESHOLD is ticket-planner's pre-approval threshold
+# (default 0.85). Exporting it must not raise this validator's floor, or every
+# block the planner did not pre-approve would exit 2.
+
+test_planner_threshold_does_not_raise_floor() {
+  local desc
+  desc=$(_build_block "1" "0.7" "Balanced" "false")
+  PLANNER_CONFIDENCE_THRESHOLD=0.85 check_planned_ticket_description "$desc"
+}
+
+# Run in a fresh shell so the export is in place before the file is sourced —
+# the way an operator's environment reaches it.
+test_planner_threshold_exported_before_source() {
+  local desc
+  desc=$(_build_block "1" "0.7" "Balanced" "false")
+  PLANNER_CONFIDENCE_THRESHOLD=0.85 DESC="$desc" LIB_DIR="$LIB_DIR" bash -c '
+    _plog() { :; }
+    hb_gate() { :; }
+    source "$LIB_DIR/planned-ticket-check.sh"
+    check_planned_ticket_description "$DESC"
+  '
+}
+
+# The new name is honoured: the same 0.7 block is held when the floor is 0.85.
+test_min_confidence_raises_floor() {
+  local desc
+  desc=$(_build_block "1" "0.7" "Balanced" "false")
+  PLANNED_TICKET_MIN_CONFIDENCE=0.85 check_planned_ticket_description "$desc"
+}
+
+# The reverse leak: ticket-planner sources this file into the shell where
+# TicketGen later reads PLANNER_CONFIDENCE_THRESHOLD for pre-approval.
+# Sourcing must leave that variable alone.
+test_source_does_not_set_planner_threshold() {
+  LIB_DIR="$LIB_DIR" bash -c '
+    unset PLANNER_CONFIDENCE_THRESHOLD
+    _plog() { :; }
+    hb_gate() { :; }
+    source "$LIB_DIR/planned-ticket-check.sh"
+    [ -z "${PLANNER_CONFIDENCE_THRESHOLD+set}" ]
+  '
 }
 
 # ── Test: confidence exactly at threshold boundary (0.5 default) ────────────
@@ -438,6 +482,10 @@ _run_exit_code "invalid Pre-approved (yes) → exit 1" 1 test_invalid_pre_approv
 _run_exit_code "low confidence + not pre-approved → exit 2" 2 test_low_confidence_not_pre_approved
 _run "low confidence + pre-approved → exit 0" test_low_confidence_pre_approved_override
 _run_exit_code "custom threshold 0.70 + conf 0.60 → exit 2" 2 test_custom_threshold
+_run "#473: PLANNER_CONFIDENCE_THRESHOLD=0.85 + conf 0.7 not pre-approved → exit 0" test_planner_threshold_does_not_raise_floor
+_run "#473: PLANNER_CONFIDENCE_THRESHOLD exported before source → exit 0" test_planner_threshold_exported_before_source
+_run_exit_code "#473: PLANNED_TICKET_MIN_CONFIDENCE=0.85 + conf 0.7 → exit 2" 2 test_min_confidence_raises_floor
+_run "#473: sourcing leaves PLANNER_CONFIDENCE_THRESHOLD unset" test_source_does_not_set_planner_threshold
 _run "confidence exactly at threshold 0.5 → exit 0" test_confidence_at_default_threshold
 _run "confidence 0.6 above default 0.5 → exit 0" test_confidence_above_default_threshold
 _run "future Schema-Version → exit 0 + warn" test_future_schema_version
