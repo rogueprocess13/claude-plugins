@@ -62,8 +62,9 @@ _outbox_drain_resolve_fleet_notify() {
     }
   done
   local _found
-  _found=$(find "$HOME/.claude/plugins/cache" -name fleet-notify.sh \
-    -path "*/fleet-controller/*" 2>/dev/null | sort | tail -1)
+  declare -f tap_cache_find >/dev/null 2>&1 ||
+    source "$_OD_LIB_DIR/plugin-cache.sh" 2>/dev/null || true
+  _found=$(tap_cache_find fleet-controller lib/fleet-notify.sh 2>/dev/null || true)
   if [ -n "$_found" ] && [ -f "$_found" ]; then
     echo "$_found"
     return 0

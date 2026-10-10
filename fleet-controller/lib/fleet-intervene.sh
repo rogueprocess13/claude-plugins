@@ -15,6 +15,10 @@ fi
 if [ -f "$_INTERVENE_DIR/fleet-registry.sh" ]; then
   source "$_INTERVENE_DIR/fleet-registry.sh"
 fi
+# Version-aware plugin-cache lookup (issue #468)
+if [ -f "$_INTERVENE_DIR/fleet-plugin-cache.sh" ]; then
+  source "$_INTERVENE_DIR/fleet-plugin-cache.sh"
+fi
 
 # Source heartbeat library from canonical path (synced by ticket-auto-pipeline SessionStart hook)
 if ! declare -f _plog >/dev/null 2>&1; then
@@ -288,7 +292,7 @@ _fleet_postmortem() {
   local _pm_script
   _pm_script="$HOME/.claude/skills/lib/pipeline-postmortem.sh"
   if [ ! -f "$_pm_script" ]; then
-    _pm_script=$(find "$HOME/.claude/plugins/cache" -name pipeline-postmortem.sh -path "*/ticket-auto-pipeline/*" 2>/dev/null | sort | tail -1)
+    _pm_script=$(fleet_cache_find ticket-auto-pipeline lib/pipeline-postmortem.sh 2>/dev/null || true)
   fi
 
   if [ -n "$_pm_script" ] && [ -f "$_pm_script" ]; then

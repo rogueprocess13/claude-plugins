@@ -72,15 +72,13 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "✓ refactor → templates/improvement.md (alias)" || echo "✗ refactor → templates/improvement.md"
 
   # Unknown/empty type → exit 3
-  if ! resolve_template "epic" 2>/dev/null; then
-    rc=$?
-    [ "$rc" = "3" ] && echo "✓ epic (unknown) → exit 3" || echo "✗ epic → exit $rc (expected 3)"
-  fi
+  rc=0
+  resolve_template "epic" 2>/dev/null || rc=$?
+  [ "$rc" = "3" ] && echo "✓ epic (unknown) → exit 3" || echo "✗ epic → exit $rc (expected 3)"
 
-  if ! resolve_template "" 2>/dev/null; then
-    rc=$?
-    [ "$rc" = "3" ] && echo "✓ empty → exit 3" || echo "✗ empty → exit $rc (expected 3)"
-  fi
+  rc=0
+  resolve_template "" 2>/dev/null || rc=$?
+  [ "$rc" = "3" ] && echo "✓ empty → exit 3" || echo "✗ empty → exit $rc (expected 3)"
 
   # Determinism: repeated calls return identical result
   r1=$(resolve_template "feature")

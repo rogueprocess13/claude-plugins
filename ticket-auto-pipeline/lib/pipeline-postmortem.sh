@@ -516,7 +516,8 @@ _render_issue_body() {
     _template="$HOME/.claude/skills/ticket-retro/templates/auto-retro-finding.md"
   fi
   if [ ! -f "$_template" ]; then
-    _template=$(find "$HOME/.claude/plugins/cache" -name auto-retro-finding.md -path "*/ticket-auto-pipeline/*" 2>/dev/null | sort | tail -1)
+    source "${_script_dir}/plugin-cache.sh" 2>/dev/null || true
+    _template=$(tap_cache_find ticket-auto-pipeline skills/ticket-retro/templates/auto-retro-finding.md 2>/dev/null || true)
   fi
 
   local _body_file="${tmp}/issue-body.md"
