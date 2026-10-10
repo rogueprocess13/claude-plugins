@@ -350,7 +350,7 @@ get_issue() {
   local issue_id="$1"
   local query
   query=$(jq -n --arg id "$issue_id" '{
-    query: "query($id: String!) { issue(id: $id) { id identifier title description priority url createdAt dueDate estimate startedAt completedAt team { id name } state { id name type } labels { nodes { id name } } project { id name } parent { id identifier title description } assignee { id name } creator { id name } } }",
+    query: "query($id: String!) { issue(id: $id) { id identifier title description priority url createdAt dueDate estimate startedAt completedAt team { id name } state { id name type } labels { nodes { id name parent { id } } } project { id name } parent { id identifier title description } assignee { id name } creator { id name } } }",
     variables: {id: $id}
   }')
   local resp
@@ -461,6 +461,9 @@ normalize_comments() {
 # variant omits the $after variable entirely rather than sending it empty.
 # states is NOT paginated — teams rarely exceed 50 workflow states, and the
 # issue is scoped to labels only.
+# Each label carries `parent { id }` (null for an ungrouped label) so the
+# board driver can honour Linear's label-group exclusivity — see
+# lib/board-drivers/linear.sh and issue #423.
 get_team() {
   local team_id="$1"
   local page_size="${LINEAR_TEAM_LABELS_PAGE_SIZE:-100}"
@@ -481,12 +484,12 @@ get_team() {
       # (CannotUseWithoutAny), so the paginated variant is only used once a
       # cursor exists.
       query=$(jq -n --arg tid "$team_id" --argjson first "$page_size" '{
-        query: "query($tid: String!, $first: Int!) { team(id: $tid) { id name states { nodes { id name type } } labels(first: $first) { nodes { id name } pageInfo { hasNextPage endCursor } } } }",
+        query: "query($tid: String!, $first: Int!) { team(id: $tid) { id name states { nodes { id name type } } labels(first: $first) { nodes { id name parent { id } } pageInfo { hasNextPage endCursor } } } }",
         variables: {tid: $tid, first: $first}
       }')
     else
       query=$(jq -n --arg tid "$team_id" --argjson first "$page_size" --arg after "$cursor" '{
-        query: "query($tid: String!, $first: Int!, $after: String) { team(id: $tid) { id name states { nodes { id name type } } labels(first: $first, after: $after) { nodes { id name } pageInfo { hasNextPage endCursor } } } }",
+        query: "query($tid: String!, $first: Int!, $after: String) { team(id: $tid) { id name states { nodes { id name type } } labels(first: $first, after: $after) { nodes { id name parent { id } } pageInfo { hasNextPage endCursor } } } }",
         variables: {tid: $tid, first: $first, after: $after}
       }')
     fi
