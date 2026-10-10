@@ -29,14 +29,15 @@
 | New wiki files | `WIKI_ROOT/` | Created if an errata entry references a new flow area; carries the freshness frontmatter (`verified_at`, `verified_against`, `stale_after`, `verified`) |
 | Lint report | stdout / pipeline log | `lib/wiki-check.sh` findings for every file this run touched |
 | Simplified prose | `WIKI_ROOT/` | Descriptive/procedural text this run wrote or edited, rewritten in Plain mode via the `simple-english` skill before commit |
-| `WIKI_ROOT` commit | `WIKI_ROOT`'s own git history | `docs(wiki): <TICKET-ID> <summary>` — the one commit `ticket-maintenance-agent` is permitted to make |
+| `WIKI_ROOT` commit | `WIKI_ROOT`'s own git history | `docs(wiki): <TICKET-ID> <summary>` — the one commit `ticket-maintenance-agent` is permitted to make. Made while holding the cross-process `WIKI_ROOT` lock (`lib/wiki-lock.sh`) and scoped to paths this run changed, so concurrent tickets never commit each other's edits |
 
 ## How it works
 
 ```mermaid
 flowchart TD
     A([Start]) --> B[Resolve WIKI_ROOT\nfrom CLAUDE.md]
-    B --> C[Scan all wiki .md files\nfor ## Errata sections]
+    B --> LK[Acquire WIKI_ROOT lock\nlib/wiki-lock.sh]
+    LK --> C[Scan all wiki .md files\nfor ## Errata sections]
     C --> D{Unresolved entries?}
     D -- none --> E[Step 2.5: ai-context.md synthesis\nruns regardless]
     D -- yes --> F[For each errata entry\nlocate target flow section]
@@ -50,8 +51,9 @@ flowchart TD
     K -- no --> E
     E --> L[Lint touched files\nlib/wiki-check.sh]
     L --> O[Simplify touched prose\nsimple-english skill]
-    O --> M[Commit WIKI_ROOT\ngit -C WIKI_ROOT commit]
-    M --> N([Done])
+    O --> M[Commit this run's paths only\nwiki-lock.sh commit]
+    M --> R[Release WIKI_ROOT lock]
+    R --> N([Done])
 ```
 
 ## Related skills

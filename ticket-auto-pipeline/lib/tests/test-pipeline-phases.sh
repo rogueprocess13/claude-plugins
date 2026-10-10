@@ -648,6 +648,55 @@ test_router_prescan_skipped_on_late_resume() {
   }
 }
 
+# Issue #411 — a decayed/missing repo needs /ticket-prescan's Path A (an Agent
+# fan-out), which the headless ticket-prescan-agent cannot run (no Agent tool).
+# The router must only spawn for `stale` and log an actionable skip otherwise.
+# Executes the gate's real case block from SKILL.md for each status.
+test_router_prescan_spawns_only_for_stale() {
+  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local code
+  code=$(sed -n '/^Branch on status:/,/^### Acquire lock and spawn/p' "$skill_md" |
+    sed -n '/^```bash$/,/^```$/p' | sed '1d;$d')
+  [ -n "$code" ] || {
+    echo "prescan gate has no executable status-branch bash block"
+    return 1
+  }
+  local tmp log
+  tmp=$(mktemp -d)
+  log="$tmp/pipeline.log"
+  : >"$log"
+  code=${code//\{LOG_FILE\}/$log}
+  local reached
+  reached=$(
+    slug=repo-x
+    repo=/r/repo-x
+    for PRESCAN_STATUS in fresh stale decayed missing bogus; do
+      eval "$code"
+      echo "$PRESCAN_STATUS"
+    done
+  )
+  local rc=0
+  [ "$reached" = "stale" ] || {
+    echo "spawn reached for statuses: $(echo "$reached" | tr '\n' ' ')(want: stale)"
+    rc=1
+  }
+  grep -q '|MAINTENANCE|prescan|skip|repo-x decayed .*interactive /ticket-prescan' "$log" || {
+    echo "decayed repo not logged as an actionable skip"
+    rc=1
+  }
+  grep -q '|MAINTENANCE|prescan|skip|repo-x missing .*interactive /ticket-prescan' "$log" || {
+    echo "missing repo not logged as an actionable skip"
+    rc=1
+  }
+  grep -qE 'repo-x (fresh|stale)' "$log" && {
+    echo "fresh/stale repo wrongly logged as a skip"
+    rc=1
+  }
+  rm -rf "$tmp"
+  return $rc
+}
+
 test_router_autonomy_write_is_guarded() {
   local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
   [ -f "$skill_md" ] || return 1
