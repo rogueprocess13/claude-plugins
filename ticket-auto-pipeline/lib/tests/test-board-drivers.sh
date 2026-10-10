@@ -421,6 +421,17 @@ _run "remove ignores a non-projected label (#489)" test_remove_ignores_non_proje
 _run "column-only event with labels, unchanged -> no call (#489)" test_column_only_event_with_labels_no_call_when_unchanged
 _run "group exclusivity applies after keep (#423+#489)" test_group_exclusivity_after_keep
 
+# The real workflow.json, not a fixture: every event that sets one review
+# verdict label must clear the other, now that unnamed labels are kept (#489).
+test_real_workflow_verdict_labels_exclusive() {
+  local wf="$(dirname "${BASH_SOURCE[0]}")/../../skills/ticket-flow/workflow.json" ev
+  for ev in pr-review-failed uat-failed; do
+    jq -e --arg e "$ev" '.board_drivers.linear.events[$e] | (.add | index("rejected")) and (.remove | index("reviewed"))' "$wf" >/dev/null || return 1
+  done
+  jq -e '.board_drivers.linear.events["pr-review-passed"] | (.add | index("reviewed")) and (.remove | index("rejected"))' "$wf" >/dev/null
+}
+_run "real workflow.json: verdict labels are mutually exclusive (#489)" test_real_workflow_verdict_labels_exclusive
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
