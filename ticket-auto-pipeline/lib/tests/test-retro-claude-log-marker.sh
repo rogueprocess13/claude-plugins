@@ -46,12 +46,14 @@ _cleanup_test_tmpdirs() {
 }
 trap _cleanup_test_tmpdirs EXIT
 
-# retro.sh has no BASH_SOURCE main-guard — sourcing it runs the full retro
-# scan. Extract just scan_claude_log_failures() by pattern so this test
-# isolates the helper without invoking the rest of the pipeline.
+# Extract the helpers by pattern rather than sourcing retro.sh, so these
+# tests exercise the helper bodies independently of retro.sh's source guard
+# (GitHub #420), which test_sourcing_* below covers on its own.
 _source_scan_helper() {
   local fn_src
   fn_src="$(awk '/^scan_claude_log_failures\(\)/,/^}/' "$RETRO_SH")"
+  eval "$fn_src"
+  fn_src="$(awk '/^correlate_failures_with_phase\(\)/,/^}/' "$RETRO_SH")"
   eval "$fn_src"
 }
 _source_scan_helper
@@ -94,13 +96,68 @@ EOF
   [ ! -s "$output" ]
 }
 
+# ── GitHub #420: grep -c || echo 0 must not yield "0\n0" ────────────────
+# correlate_failures_with_phase counts each phase with grep -c; on a phase
+# with zero failures grep -c prints "0" AND exits 1, so `|| echo 0` appended
+# a second "0" and the following `[ "$count" -gt 0 ]` printed
+# "integer expression expected" once per empty phase.
+
+test_correlate_zero_count_phase_no_integer_error() {
+  local tmpdir claude_log failures output errfile
+  tmpdir=$(_mktemp_test_dir)
+  claude_log="$tmpdir/claude.log"
+  failures="$tmpdir/failures.txt"
+  output="$tmpdir/correlated.txt"
+  errfile="$tmpdir/stderr.txt"
+  cat >"$claude_log" <<'EOF'
+some unrelated line
+fatal: could not read from remote
+EOF
+  echo "2:fatal: could not read from remote" >"$failures"
+  correlate_failures_with_phase "$claude_log" "$failures" "$output" 2>"$errfile"
+  ! grep -q "integer expression expected" "$errfile" &&
+    grep -q "^### Unknown phase — 1 failure(s)" "$output" &&
+    [ "$(grep -c '^### ' "$output")" = "1" ]
+}
+
+# Sourcing retro.sh (ticket-retro SKILL.md Step 1.5) must define the helpers
+# only — not run the whole aggregation inline in the caller's shell, and not
+# leak errexit into it.
+test_sourcing_defines_helpers_without_running_retro() {
+  local tmpdir out
+  tmpdir=$(_mktemp_test_dir)
+  out=$(HOME="$tmpdir" REPOS_ROOT="$tmpdir" bash -c '
+    set +e
+    source "$1" --window 7d
+    declare -F scan_claude_log_failures >/dev/null &&
+      declare -F correlate_failures_with_phase >/dev/null &&
+      [[ $- != *e* ]] &&
+      echo SOURCED_OK
+  ' _ "$RETRO_SH" 2>/dev/null) || true
+  [ "$out" = "SOURCED_OK" ]
+}
+
+# Direct execution must still run the aggregation (the guard only short-
+# circuits when sourced).
+test_direct_execution_still_runs() {
+  local tmpdir rc=0
+  tmpdir=$(_mktemp_test_dir)
+  HOME="$tmpdir" REPOS_ROOT="$tmpdir" bash "$RETRO_SH" --window 7d >"$tmpdir/out" 2>"$tmpdir/err" || rc=$?
+  # No logs in an empty HOME: retro.sh reports that and exits non-zero —
+  # proof the main body ran rather than returning at the guard.
+  [ "$rc" -ne 0 ] && [ -s "$tmpdir/err" ]
+}
+
 # ── dispatch ─────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
 for fn in \
   test_meta_error_fail_marker_is_caught \
   test_meta_error_fail_marker_with_unmatched_wording \
-  test_non_matching_lines_still_excluded; do
+  test_non_matching_lines_still_excluded \
+  test_correlate_zero_count_phase_no_integer_error \
+  test_sourcing_defines_helpers_without_running_retro \
+  test_direct_execution_still_runs; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

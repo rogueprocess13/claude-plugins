@@ -9,10 +9,9 @@
 #   retro.sh --window 7d
 #   retro.sh --window 1 --force ./logs/CRE-47-pipeline.log
 
-# -u (nounset) intentionally omitted: Claude Code shell snapshots inject
-# ZSH_VERSION references that trigger false-positive "unbound variable"
-# errors in this bash version when nounset is active.
-set -eo pipefail
+# Sourcing this file (ticket-retro SKILL.md Step 1.5) defines only the
+# Claude log scan helpers below; the source guard after them returns before
+# any shell option is set or the aggregation runs (GitHub #420).
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Claude Log Scan Helpers (sourced by ticket-retro SKILL.md)
@@ -96,7 +95,8 @@ correlate_failures_with_phase() {
     fi
     for p in APPRAISE EXEC GATE IMPLEMENT VERIFY PR-REVIEW MAINTENANCE Unknown; do
       local count
-      count=$(grep -c "^${p}|" "$tmp_result" 2>/dev/null || echo 0)
+      count=$(grep -c "^${p}|" "$tmp_result" 2>/dev/null || true)
+      count=${count:-0}
       if [ "$count" -gt 0 ]; then
         echo ""
         echo "### ${p} phase — ${count} failure(s)"
@@ -110,6 +110,19 @@ correlate_failures_with_phase() {
   rm -f "$boundary_file" "$tmp_result"
   return 0
 }
+
+# ── Source guard (GitHub #420) ───────────────────────────────────────────
+# When sourced, stop here: the caller wants the helpers above, not a full
+# retro aggregation run inline in its own shell (with its errexit/pipefail
+# leaking into that shell and its argument parsing reading the caller's $@).
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
+# -u (nounset) intentionally omitted: Claude Code shell snapshots inject
+# ZSH_VERSION references that trigger false-positive "unbound variable"
+# errors in this bash version when nounset is active.
+set -eo pipefail
 
 WINDOW="7d"
 POSITIONAL_LOG=""
