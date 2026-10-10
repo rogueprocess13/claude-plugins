@@ -733,6 +733,94 @@ test_trigger_is_deterministic() {
 }
 _run "uat_decide_trigger: same inputs yield the same transition" test_trigger_is_deterministic
 
+# ── uat_decide_trigger --merge-pending (GitHub #412) ─────────────────────────
+# A PR left open for a human merge must not close a per-ticket ticket to Done:
+# Done would claim the ticket finished while its code is still in an open PR.
+
+test_trigger_merge_pending_per_ticket_goes_uat() {
+  local got
+  got=$(uat_decide_trigger --policy per-ticket --uat-url "" --merge-pending)
+  [ "$got" = "pr-review-pass-uat" ] || {
+    echo "  expected pr-review-pass-uat with a pending human merge, got '$got'" >&2
+    return 1
+  }
+  return 0
+}
+_run "uat_decide_trigger: per-ticket, no UAT target, merge pending routes to UAT" test_trigger_merge_pending_per_ticket_goes_uat
+
+test_trigger_merge_pending_with_url_still_uat() {
+  local got
+  got=$(uat_decide_trigger --policy per-ticket --uat-url "https://uat.example.com" --merge-pending)
+  [ "$got" = "pr-review-pass-uat" ] || {
+    echo "  expected pr-review-pass-uat, got '$got'" >&2
+    return 1
+  }
+  return 0
+}
+_run "uat_decide_trigger: per-ticket with UAT target and merge pending routes to UAT" test_trigger_merge_pending_with_url_still_uat
+
+test_trigger_merge_pending_epic_still_done() {
+  # UAT Policy: epic children route Review -> Done by design; parking them in
+  # UAT is the deadlock that policy exists to avoid. --merge-pending must not
+  # change that path.
+  local got
+  got=$(uat_decide_trigger --policy epic --uat-url "" --merge-pending)
+  [ "$got" = "pr-review-pass-done" ] || {
+    echo "  expected epic policy to stay pr-review-pass-done, got '$got'" >&2
+    return 1
+  }
+  return 0
+}
+_run "uat_decide_trigger: epic policy ignores --merge-pending" test_trigger_merge_pending_epic_still_done
+
+# ── merge_blocked_reason (GitHub #412) ───────────────────────────────────────
+
+test_merge_blocked_reason_manual_autonomy() {
+  local got
+  got=$(AUTONOMY=manual MERGE_POLICY="" merge_blocked_reason T-601)
+  [ "$got" = "pipeline autonomy=manual requires human merge" ] || {
+    echo "  got '$got'" >&2
+    return 1
+  }
+}
+_run "merge_blocked_reason: autonomy=manual blocks the merge" test_merge_blocked_reason_manual_autonomy
+
+test_merge_blocked_reason_merge_policy() {
+  local got
+  got=$(AUTONOMY=auto MERGE_POLICY=manual merge_blocked_reason T-602)
+  [ "$got" = "epic Branch Directive Merge Policy: manual requires human merge" ] || {
+    echo "  got '$got'" >&2
+    return 1
+  }
+}
+_run "merge_blocked_reason: an epic Merge Policy blocks the merge" test_merge_blocked_reason_merge_policy
+
+test_merge_blocked_reason_auto_no_policy_empty() {
+  local got a b
+  a=$(AUTONOMY=auto MERGE_POLICY="" merge_blocked_reason T-603)
+  b=$(AUTONOMY=semi-auto MERGE_POLICY="" merge_blocked_reason T-603)
+  [ -z "$a" ] && [ -z "$b" ] || {
+    echo "  expected empty reason, got '$a' / '$b'" >&2
+    return 1
+  }
+}
+_run "merge_blocked_reason: auto/semi-auto with no Merge Policy may merge" test_merge_blocked_reason_auto_no_policy_empty
+
+test_merge_blocked_reason_standalone_resolves_policy() {
+  # Standalone (no env file): MERGE_POLICY comes from the epic directive.
+  local got
+  got=$(
+    unset AUTONOMY MERGE_POLICY
+    resolve_merge_policy() { echo "on-all-children-done"; }
+    merge_blocked_reason T-604
+  )
+  [ "$got" = "epic Branch Directive Merge Policy: on-all-children-done requires human merge" ] || {
+    echo "  got '$got'" >&2
+    return 1
+  }
+}
+_run "merge_blocked_reason: standalone run resolves the epic Merge Policy" test_merge_blocked_reason_standalone_resolves_policy
+
 # ── uat_decide_trigger emits nothing (tracker-flow-projection-cutover D5) ──
 # pr-review-passed moved onto flow.sh's own emits declaration, fired after
 # the verdict gate has allowed the transition — uat_decide_trigger is a
