@@ -110,8 +110,8 @@ CLAUDE_HINTS="/tmp/claude-log-hints.txt"
 CLAUDE_CORRELATED="/tmp/claude-log-correlated.txt"
 
 if [ -n "${CLAUDE_LOG_FILE:-}" ] && [ -f "$CLAUDE_LOG_FILE" ]; then
-  # Absolute installed path, same as Step 1 — never "$0"-relative: in a skill
-  # bash block "$0" is the shell (or a substituted argument), not this file
+  # Absolute installed path, same as Step 1 — never relative to the script name: in a skill
+  # bash block the script-name parameter is the shell (or a substituted argument), not this file
   # (GitHub #420). retro.sh's source guard makes sourcing define helpers only.
   RETRO_SH="$HOME/.claude/skills/ticket-retro/retro.sh"
   source "$RETRO_SH"
