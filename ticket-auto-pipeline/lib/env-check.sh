@@ -21,6 +21,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # source here). Both UAT_URL sites below delegate to it so there is one
 # resolution order, not three.
 [ -f "$SCRIPT_DIR/linear-api.sh" ] && source "$SCRIPT_DIR/linear-api.sh"
+# claude_md_field — the single CLAUDE.md field grammar shared with
+# resolve_uat_url and ticket-preamble.sh. Every CLAUDE.md read below goes
+# through it, so validate mode and report mode cannot drift apart (#417).
+source "$SCRIPT_DIR/claude-md-field.sh"
 
 SUMMARY_FILE=""
 SHOW=""
@@ -198,8 +202,7 @@ if [ "${_MODE:-full}" = "validate" ]; then
   fi
 
   # REPOS_ROOT
-  if grep -qE '^REPOS_ROOT\s*[=:]\s*.' "$CLAUDE_MD" 2>/dev/null; then
-    val=$(grep -oP '^REPOS_ROOT[=:]\s*\K.*' "$CLAUDE_MD" | head -1 | tr -d ' ')
+  if val=$(claude_md_field "$CLAUDE_MD" REPOS_ROOT); then
     pass "REPOS_ROOT ($val)"
   else
     DERIVED="$(_derive_repos_root "$(dirname "$CLAUDE_MD")")"
@@ -214,8 +217,7 @@ if [ "${_MODE:-full}" = "validate" ]; then
   # LOCAL_URL
   if [ -n "${LOCAL_URL:-}" ]; then
     pass "LOCAL_URL ($LOCAL_URL via env)"
-  elif grep -qi 'LOCAL_URL.*https\?://' "$CLAUDE_MD" 2>/dev/null; then
-    val=$(grep -oP 'LOCAL_URL[=:]\s*\K.*' "$CLAUDE_MD" | head -1 | tr -d ' ')
+  elif val=$(claude_md_field "$CLAUDE_MD" LOCAL_URL) && [[ "$val" =~ ^https?:// ]]; then
     pass "LOCAL_URL ($val)"
   else
     fail "LOCAL_URL" "required by ticket-verify — add to env or CLAUDE.md"
@@ -361,13 +363,6 @@ find_in_settings() {
   return 1
 }
 
-# Returns value if varname found as KEY = value or KEY: value in CLAUDE.md.
-find_in_claude_md() {
-  local varname="$1"
-  local pat='^`?'"$varname"'`?\s*[=:]\s*`?\K[^`\s]+'
-  grep -oP "$pat" "$PROJECT_DIR/CLAUDE.md" 2>/dev/null | head -1 | tr -d ' ' || true
-}
-
 GIT_NAME="$(git config user.name 2>/dev/null || true)"
 GIT_EMAIL="$(git config user.email 2>/dev/null || true)"
 
@@ -472,8 +467,7 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
   _var "CLAUDE.md" "missing" "" "CLAUDE.md" "file not found at $PROJECT_DIR/CLAUDE.md"
   issues=$((issues + 1))
 else
-  if grep -qE '^`?REPOS_ROOT`?\s*[=:]\s*.' "$PROJECT_DIR/CLAUDE.md" 2>/dev/null; then
-    VAL=$(grep -oP '^`?REPOS_ROOT`?\s*[=:]\s*`?\K[^`\s]+' "$PROJECT_DIR/CLAUDE.md" | head -1 | tr -d ' ' || true)
+  if VAL=$(claude_md_field "$PROJECT_DIR/CLAUDE.md" REPOS_ROOT); then
     _var "REPOS_ROOT" "ok" "$VAL" "CLAUDE.md" ""
   else
     DERIVED="$(_derive_repos_root "$PROJECT_DIR")"
@@ -487,8 +481,7 @@ else
 
   if [ -n "${LOCAL_URL:-}" ]; then
     _var "LOCAL_URL" "ok" "$LOCAL_URL" "settings.local.json" ""
-  elif grep -qiE '`?LOCAL_URL`?\s*[=:]\s*`?https?://' "$PROJECT_DIR/CLAUDE.md" 2>/dev/null; then
-    VAL=$(grep -oP '^`?LOCAL_URL`?\s*[=:]\s*`?\K[^`\s]+' "$PROJECT_DIR/CLAUDE.md" | head -1 | tr -d ' ' || true)
+  elif VAL=$(claude_md_field "$PROJECT_DIR/CLAUDE.md" LOCAL_URL) && [[ "$VAL" =~ ^https?:// ]]; then
     _var "LOCAL_URL" "ok" "$VAL" "CLAUDE.md" ""
   elif result=$(find_in_settings "LOCAL_URL"); then
     _var "LOCAL_URL" "warn" "(in ${result%%:*} — restart session)" "settings.local.json" "found in file but not loaded"

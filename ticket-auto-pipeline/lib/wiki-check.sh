@@ -14,7 +14,8 @@
 #
 # Zero LLM involvement — pure bash, modeled on prescan-check.sh's freshness
 # gate. Fast by design: exactly one `git rev-list --count` per file (not per
-# line), and the class-name check is capped and short-circuits per identifier.
+# line), and the class-name check is capped, short-circuits per identifier,
+# skips worktree/scratch/build trees, and runs under a hard wall-clock budget.
 #
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
@@ -25,6 +26,38 @@ set -eo pipefail
 
 DECAY_COMMIT_LIMIT="${WIKI_CHECK_DECAY_COMMIT_LIMIT:-10}"
 MAX_CLASS_CHECKS="${WIKI_CHECK_MAX_CLASS_CHECKS:-40}"
+# Hard wall-clock bound on the best-effort class-name resolution (#416).
+# CLASS_BUDGET_SECS is the total budget for the whole run (all files);
+# CLASS_GREP_TIMEOUT_SECS caps any single per-name grep. When either is hit
+# the remaining names are counted as skipped (never as unknown) and a
+# WIKI_CHECK_NOTE line goes to stderr, so stdout's grammar is unchanged.
+CLASS_BUDGET_SECS="${WIKI_CHECK_CLASS_BUDGET_SECS:-60}"
+CLASS_GREP_TIMEOUT_SECS="${WIKI_CHECK_CLASS_GREP_TIMEOUT_SECS:-10}"
+
+# Directories never walked by the class-name grep. `.ticket-auto/` holds a
+# full worktree checkout per in-flight ticket and `.verify-worktrees/` the
+# verify phase's copies; walking them multiplies the search by the number of
+# active tickets (#416). The rest are VCS metadata, dependency caches, and
+# build outputs that never hold the source of truth for a class name.
+CLASS_GREP_EXCLUDE_DIRS=(
+  .git .ticket-auto .verify-worktrees .claude node_modules target dist build
+  out .next .nuxt .gradle .venv venv __pycache__ .pytest_cache .mypy_cache
+  .tox coverage .cache vendor bower_components
+)
+
+# Resolves a `timeout` binary once (GNU coreutils `timeout`, or Homebrew's
+# `gtimeout` on macOS). Empty when neither exists; the per-grep bound then
+# degrades to the between-grep deadline check alone.
+_TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+  _TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  _TIMEOUT_BIN="gtimeout"
+fi
+
+# Absolute epoch second after which no further class-name greps start.
+# Set once in main() so the budget spans every file in the run.
+_CLASS_DEADLINE=""
 
 usage() {
   cat >&2 <<'EOF'
@@ -55,6 +88,13 @@ JSON, to match this plugin's other lib scripts.
 
 Exit: 0 no issues found, 1 issues found (incomplete frontmatter, broken
 related links, or a decayed file), 2 usage/setup error.
+
+The class-name check is best-effort and bounded: it never walks .ticket-auto/,
+.verify-worktrees/, .git, dependency caches, or build outputs, and stops after
+WIKI_CHECK_CLASS_BUDGET_SECS (default 60) total, with each grep capped at
+WIKI_CHECK_CLASS_GREP_TIMEOUT_SECS (default 10). Names left unchecked are not
+counted as unknown; a `WIKI_CHECK_NOTE|<file>|class_check=partial|...` line on
+stderr says how many were skipped.
 EOF
   exit 2
 }
@@ -85,7 +125,8 @@ _resolve_repo_path() {
       echo "$dir"
       return 0
     fi
-  done < <(find "$repos_root" -maxdepth 3 -name ".git" -printf '%h\0' 2>/dev/null || true)
+  done < <(find "$repos_root" -maxdepth 3 \( -name .ticket-auto -o -name .verify-worktrees \) -prune \
+    -o -name ".git" -printf '%h\0' 2>/dev/null || true)
   return 0
 }
 
@@ -111,6 +152,40 @@ _fm_get() {
   # incomplete-frontmatter file — the thing this script exists to detect)
   # would otherwise abort the caller via the pipefail-computed exit status.
   echo "$1" | grep -m1 "^${2}:" | sed "s/^${2}: *//" | sed 's/^"//; s/"$//' || true
+}
+
+# ── Class-name resolution (bounded) ──────────────────────────────────────────
+# _class_resolves <name> <repos_root>
+# Returns 0 if <name> appears as a whole word in any file under <repos_root>
+# (outside CLASS_GREP_EXCLUDE_DIRS), 1 if it does not, 3 if the check was
+# skipped because the run's time budget ran out or this grep hit its own
+# timeout. `grep -q` (not `-l -m1`) is load-bearing: -q exits on the first
+# match in the whole tree, where -l -m1 still opens every file.
+_class_resolves() {
+  local name="$1" root="$2"
+  local now remaining t
+  now=$(date +%s)
+  t="$CLASS_GREP_TIMEOUT_SECS"
+  if [ -n "$_CLASS_DEADLINE" ]; then
+    remaining=$((_CLASS_DEADLINE - now))
+    [ "$remaining" -le 0 ] && return 3
+    [ "$remaining" -lt "$t" ] && t="$remaining"
+  fi
+
+  local excl=() d
+  for d in "${CLASS_GREP_EXCLUDE_DIRS[@]}"; do excl+=("--exclude-dir=$d"); done
+
+  local rc=0
+  if [ -n "$_TIMEOUT_BIN" ]; then
+    "$_TIMEOUT_BIN" -k 2 "$t" grep -rqwFs "${excl[@]}" -- "$name" "$root" >/dev/null 2>&1 || rc=$?
+  else
+    grep -rqwFs "${excl[@]}" -- "$name" "$root" >/dev/null 2>&1 || rc=$?
+  fi
+  case "$rc" in
+  0) return 0 ;;
+  124 | 137) return 3 ;; # timeout fired (TERM, or KILL after -k)
+  *) return 1 ;;
+  esac
 }
 
 # ── Per-file check ───────────────────────────────────────────────────────────
@@ -183,7 +258,7 @@ _check_file() {
   # every dot-separated segment that looks CamelCase is a candidate (covers
   # both `Class.method()` and `pkg.sub.Class` shapes), meaningless args/method
   # names are dropped by the CamelCase test itself.
-  local unknown_field="0" unknown_classes=() checked=0
+  local unknown_field="0" unknown_classes=() checked=0 skipped=0
   if [ -n "$repos_root" ] && [ -d "$repos_root" ]; then
     local seen=","
     while IFS= read -r span; do
@@ -203,14 +278,19 @@ _check_file() {
         esac
         seen="${seen}${segment},"
         checked=$((checked + 1))
-        if ! grep -rlwF -m1 "$segment" "$repos_root" \
-          --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=target \
-          --exclude-dir=dist --exclude-dir=build >/dev/null 2>&1; then
-          unknown_classes+=("$segment")
-        fi
+        local grc=0
+        _class_resolves "$segment" "$repos_root" || grc=$?
+        case "$grc" in
+        0) ;;
+        3) skipped=$((skipped + 1)) ;;
+        *) unknown_classes+=("$segment") ;;
+        esac
       done
       IFS="$IFS_OLD"
     done < <(grep -oE '`[^`]+`' "$file" 2>/dev/null | sed 's/^`//; s/`$//')
+  fi
+  if [ "$skipped" -gt 0 ]; then
+    echo "WIKI_CHECK_NOTE|${rel}|class_check=partial|skipped=${skipped}|reason=time_budget (WIKI_CHECK_CLASS_BUDGET_SECS=${CLASS_BUDGET_SECS}, WIKI_CHECK_CLASS_GREP_TIMEOUT_SECS=${CLASS_GREP_TIMEOUT_SECS}); skipped names are not counted as unknown" >&2
   fi
   if [ "${#unknown_classes[@]}" -gt 0 ]; then
     unknown_field="${#unknown_classes[@]}:$(
@@ -304,6 +384,10 @@ main() {
     exit 2
   }
   wiki_root="$(cd "$wiki_root" && pwd)"
+
+  case "$CLASS_BUDGET_SECS" in '' | *[!0-9]*) CLASS_BUDGET_SECS=60 ;; esac
+  case "$CLASS_GREP_TIMEOUT_SECS" in '' | *[!0-9]* | 0) CLASS_GREP_TIMEOUT_SECS=10 ;; esac
+  _CLASS_DEADLINE=$(($(date +%s) + CLASS_BUDGET_SECS))
 
   local files=()
 
