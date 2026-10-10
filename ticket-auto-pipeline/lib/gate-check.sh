@@ -386,10 +386,35 @@ _gate_entry() {
   fi
 
   if [ -n "$critique_score" ]; then
-    # BLOCKED status is a hard stop
+    # Score plausibility cross-check (issue #422). ticket-critique's
+    # "BLOCKER score ceiling" rule caps the score at 70 for one [BLOCKER]
+    # finding and at 50 for two or more — this is the same table, so the
+    # rubric and the gate cannot disagree. Computed before the BLOCKED
+    # stop below: a BLOCKED critique carrying a high score is exactly the
+    # inconsistency this catches, and returning on BLOCKED first used to
+    # make the check unreachable for it.
+    local critique_blocker_count critique_max_plausible=""
+    critique_blocker_count=$(get_critique_blocker_count "$td" 2>/dev/null || echo "0")
+    if [[ "$critique_blocker_count" =~ ^[0-9]+$ ]] && [[ "$critique_score" =~ ^[0-9]+$ ]]; then
+      if [ "$critique_blocker_count" -ge 2 ] && [ "$critique_score" -gt 50 ]; then
+        critique_max_plausible=50
+      elif [ "$critique_blocker_count" -ge 1 ] && [ "$critique_score" -gt 70 ]; then
+        critique_max_plausible=70
+      fi
+    fi
+
+    # BLOCKED status is a hard stop. The code stays CRITIQUE_BLOCKED even
+    # when the score is implausible — the ticket genuinely has blockers, so
+    # it must still classify as a readiness stop — but the scoring defect is
+    # named in the trailing detail rather than silently discarded.
     if [ "$critique_status" = "BLOCKED" ]; then
-      _plog "$LOG_FILE" "META" "gate-stop" "fail" "CRITIQUE_BLOCKED"
-      hb_gate "entry-gate" "fail" "critique blocked" "{\"score\":\"$critique_score\",\"status\":\"$critique_status\"}"
+      if [ -n "$critique_max_plausible" ]; then
+        _plog "$LOG_FILE" "META" "gate-stop" "fail" "CRITIQUE_BLOCKED — CRITIQUE_SCORE_IMPLAUSIBLE: score $critique_score with $critique_blocker_count BLOCKER(s) (max plausible: $critique_max_plausible)"
+        hb_gate "entry-gate" "fail" "critique blocked; score implausible" "{\"score\":\"$critique_score\",\"status\":\"$critique_status\",\"blockers\":\"$critique_blocker_count\",\"max_plausible\":$critique_max_plausible}"
+      else
+        _plog "$LOG_FILE" "META" "gate-stop" "fail" "CRITIQUE_BLOCKED"
+        hb_gate "entry-gate" "fail" "critique blocked" "{\"score\":\"$critique_score\",\"status\":\"$critique_status\"}"
+      fi
       return 2
     fi
 
@@ -401,23 +426,10 @@ _gate_entry() {
       return 1
     fi
 
-    # Score plausibility cross-check: if BLOCKERs exist, score must be ≤ 70
-    # Each BLOCKER deducts at least 30 (0 AC) or 20 (no test user) or 25 (no bug repro)
-    # Worst case for 1 BLOCKER = -30 → max 70. For 2 BLOCKERs = max 50.
-    local critique_blocker_count
-    critique_blocker_count=$(get_critique_blocker_count "$td" 2>/dev/null || echo "0")
-    if [[ "$critique_blocker_count" =~ ^[0-9]+$ ]] && [[ "$critique_score" =~ ^[0-9]+$ ]]; then
-      local max_score=$((100 - (critique_blocker_count * 25)))
-      [ "$max_score" -lt 40 ] && max_score=40 # floor at 40 — below this is already caught
-      if [ "$critique_blocker_count" -ge 2 ] && [ "$critique_score" -gt 50 ]; then
-        _plog "$LOG_FILE" "META" "gate-stop" "fail" "CRITIQUE_SCORE_IMPLAUSIBLE — score $critique_score with $critique_blocker_count BLOCKERs (max plausible: 50)"
-        hb_gate "entry-gate" "fail" "critique score implausible" "{\"score\":\"$critique_score\",\"blockers\":\"$critique_blocker_count\",\"max_plausible\":50}"
-        return 2
-      elif [ "$critique_blocker_count" -ge 1 ] && [ "$critique_score" -gt 70 ]; then
-        _plog "$LOG_FILE" "META" "gate-stop" "fail" "CRITIQUE_SCORE_IMPLAUSIBLE — score $critique_score with $critique_blocker_count BLOCKER(s) (max plausible: 70)"
-        hb_gate "entry-gate" "fail" "critique score implausible" "{\"score\":\"$critique_score\",\"blockers\":\"$critique_blocker_count\",\"max_plausible\":70}"
-        return 2
-      fi
+    if [ -n "$critique_max_plausible" ]; then
+      _plog "$LOG_FILE" "META" "gate-stop" "fail" "CRITIQUE_SCORE_IMPLAUSIBLE — score $critique_score with $critique_blocker_count BLOCKER(s) (max plausible: $critique_max_plausible)"
+      hb_gate "entry-gate" "fail" "critique score implausible" "{\"score\":\"$critique_score\",\"blockers\":\"$critique_blocker_count\",\"max_plausible\":$critique_max_plausible}"
+      return 2
     fi
   fi
 

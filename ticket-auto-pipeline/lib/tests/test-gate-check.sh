@@ -1279,7 +1279,7 @@ test_critique_score_implausible_1_blocker() {
   _setup
   _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
   _scaffold_context_md 2 "feature" "true"
-  # 1 BLOCKER → max plausible score = 75. Score 82 exceeds that.
+  # 1 BLOCKER → max plausible score = 70. Score 82 exceeds that.
   _scaffold_critique_with_findings 82 "WARNINGS" "- [BLOCKER] No test user or role specified."
   _scaffold_artifact_with_prereqs "${_ws}/simple-fix.md"
 
@@ -1300,7 +1300,7 @@ test_critique_score_implausible_1_blocker() {
   }
 }
 
-# 32. Score plausibility: 1 BLOCKER with score 65 → passes (max 75, 65 ≤ 75)
+# 32. Score plausibility: 1 BLOCKER with score 65 → passes (max 70, 65 ≤ 70)
 test_critique_score_plausible_1_blocker_passes() {
   _setup
   _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
@@ -1324,6 +1324,96 @@ test_critique_score_plausible_1_blocker_passes() {
     echo "unexpected CRITIQUE_SCORE_IMPLAUSIBLE: 1 BLOCKER with score 65 is plausible"
     return 1
   }
+}
+
+# 32a. BLOCKED critique with an implausibly high score (issue #422). The
+# BLOCKED stop used to return before the plausibility check ran, so a critique
+# reading Status: BLOCKED / Score: 100 stopped with a bare CRITIQUE_BLOCKED and
+# the scoring defect was never named. The code must stay CRITIQUE_BLOCKED (a
+# readiness stop) with the implausibility appended as detail.
+test_critique_blocked_implausible_score_named() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _scaffold_context_md 2 "feature" "true"
+  _scaffold_critique_with_findings 100 "BLOCKED" "- [BLOCKER] Multi-role gap: AC requires 2 roles (admin, attorney), only 1 credential set(s) found."
+  _scaffold_artifact_with_prereqs "${_ws}/simple-fix.md"
+
+  _gate_entry
+  local rc=$?
+
+  local gate_stop
+  gate_stop=$(grep '|META|gate-stop|fail|' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2 (gate-stop), got $rc"
+    return 1
+  }
+  echo "$gate_stop" | grep -q '|fail|CRITIQUE_BLOCKED' || {
+    echo "expected the gate-stop code to stay CRITIQUE_BLOCKED, got: $gate_stop"
+    return 1
+  }
+  echo "$gate_stop" | grep -qF 'CRITIQUE_SCORE_IMPLAUSIBLE: score 100 with 1 BLOCKER(s) (max plausible: 70)' || {
+    echo "expected CRITIQUE_SCORE_IMPLAUSIBLE detail on the BLOCKED gate-stop, got: $gate_stop"
+    return 1
+  }
+}
+
+# 32b. BLOCKED critique whose score honours the ceiling → plain CRITIQUE_BLOCKED
+test_critique_blocked_plausible_score_plain() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _scaffold_context_md 2 "feature" "true"
+  _scaffold_critique_with_findings 70 "BLOCKED" "- [BLOCKER] Multi-role gap: AC requires 2 roles (admin, attorney), only 1 credential set(s) found."
+  _scaffold_artifact_with_prereqs "${_ws}/simple-fix.md"
+
+  _gate_entry
+  local rc=$?
+
+  local gate_stop
+  gate_stop=$(grep '|META|gate-stop|fail|' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2 (gate-stop), got $rc"
+    return 1
+  }
+  echo "$gate_stop" | grep -q '|fail|CRITIQUE_BLOCKED$' || {
+    echo "expected a bare CRITIQUE_BLOCKED gate-stop, got: $gate_stop"
+    return 1
+  }
+}
+
+# 32c. Rubric/gate agreement (issue #422): ticket-critique's BLOCKER score
+# ceiling must carry the same limits this gate enforces (1 → 70, 2+ → 50), and
+# the multi-role credential BLOCKER must have a deduction row.
+test_critique_rubric_ceiling_matches_gate() {
+  local skill="${LIB_DIR}/../skills/ticket-critique/SKILL.md"
+  [ -f "$skill" ] || {
+    echo "missing $skill"
+    return 1
+  }
+  grep -qF '| Multi-role credential gap (from Check 1) | -30 |' "$skill" || {
+    echo "SKILL.md has no multi-role credential gap deduction row"
+    return 1
+  }
+  grep -qF '**BLOCKER score ceiling.**' "$skill" || {
+    echo "SKILL.md has no BLOCKER score ceiling rule"
+    return 1
+  }
+  grep -qx '| 1 | 70 |' "$skill" || {
+    echo "SKILL.md ceiling for 1 BLOCKER is not 70"
+    return 1
+  }
+  grep -qx '| 2 or more | 50 |' "$skill" || {
+    echo "SKILL.md ceiling for 2+ BLOCKERs is not 50"
+    return 1
+  }
+  if ! grep -qF '"$critique_score" -gt 70' "${LIB_DIR}/gate-check.sh" ||
+    ! grep -qF '"$critique_score" -gt 50' "${LIB_DIR}/gate-check.sh"; then
+    echo "gate-check.sh plausibility limits no longer 70/50 — update SKILL.md ceiling to match"
+    return 1
+  fi
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2692,6 +2782,9 @@ for fn in \
   test_critique_score_implausible_2_blockers \
   test_critique_score_implausible_1_blocker \
   test_critique_score_plausible_1_blocker_passes \
+  test_critique_blocked_implausible_score_named \
+  test_critique_blocked_plausible_score_plain \
+  test_critique_rubric_ceiling_matches_gate \
   test_cross_val_nav_gap_unresolved_held \
   test_cross_val_nav_gap_resolved_passes \
   test_cross_val_repro_gap_always_held \
