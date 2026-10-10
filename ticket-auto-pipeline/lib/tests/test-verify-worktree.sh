@@ -405,6 +405,233 @@ test_gc_no_worktrees() {
 _run "GC with no worktrees exits 0" test_gc_no_worktrees
 
 echo ""
+echo "=== env-start.sh contract + served-checkout check (#419) ==="
+echo ""
+
+# The dev stack used to be started with nothing telling it which checkout to
+# serve, so it kept serving the primary clone — possibly another ticket's
+# branch — while VERIFY reported on it as if it were this ticket's code.
+
+test_exports_name_every_verify_worktree() {
+  _setup_fixture
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  local out
+  out=$(verify_worktree_exports "CRE-1") || return 1
+  (
+    unset VERIFY_REPO_PATH_MY_SERVICE VERIFY_TICKET_ID
+    eval "$out"
+    [ "${VERIFY_TICKET_ID:-}" = "CRE-1" ] || {
+      echo "  VERIFY_TICKET_ID not exported: $out" >&2
+      exit 1
+    }
+    [ "${VERIFY_REPO_PATH_MY_SERVICE:-}" = "$wt_path" ] || {
+      echo "  VERIFY_REPO_PATH_MY_SERVICE='${VERIFY_REPO_PATH_MY_SERVICE:-}', expected $wt_path" >&2
+      exit 1
+    }
+  )
+}
+_run "verify_worktree_exports re-derives VERIFY_REPO_PATH_<REPO> for env-start.sh" test_exports_name_every_verify_worktree
+
+test_exports_ignore_other_tickets() {
+  _setup_fixture
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null || return 1
+  local out
+  out=$(verify_worktree_exports "CRE-2")
+  if printf '%s' "$out" | grep -q VERIFY_REPO_PATH_; then
+    echo "  exports for CRE-2 leaked CRE-1's worktree: $out" >&2
+    return 1
+  fi
+  return 0
+}
+_run "verify_worktree_exports names only the requested ticket's worktrees" test_exports_ignore_other_tickets
+
+test_env_files_mirrored_on_create_and_reuse() {
+  _setup_fixture
+  echo ".env" >>"$FIXTURE_REPO/.git/info/exclude"
+  mkdir -p "$FIXTURE_REPO/worker"
+  printf 'LOCAL_STORAGE_DIR=./data\nAPI_KEY=x\n' >"$FIXTURE_REPO/worker/.env"
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  [ -f "$wt_path/worker/.env" ] || {
+    echo "  worker/.env not mirrored on create" >&2
+    return 1
+  }
+  grep -q "^LOCAL_STORAGE_DIR=$FIXTURE_REPO/worker/data$" "$wt_path/worker/.env" || {
+    echo "  relative *_DIR not pinned to the primary checkout (#408): $(cat "$wt_path/worker/.env")" >&2
+    return 1
+  }
+  # Reuse runs clean -fdx, which deletes ignored files — they must come back.
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null || return 1
+  [ -f "$wt_path/worker/.env" ] || {
+    echo "  worker/.env lost after reuse resync" >&2
+    return 1
+  }
+  return 0
+}
+_run "gitignored env files are mirrored into the verify worktree (create + reuse)" test_env_files_mirrored_on_create_and_reuse
+
+test_url_port() {
+  [ "$(verify_url_port http://localhost:3000)" = "3000" ] || return 1
+  [ "$(verify_url_port http://localhost:3000/app?x=1)" = "3000" ] || return 1
+  [ "$(verify_url_port https://example.test)" = "443" ] || return 1
+  [ "$(verify_url_port http://example.test/)" = "80" ] || return 1
+  ! verify_url_port "not-a-url" >/dev/null || return 1
+  return 0
+}
+_run "verify_url_port resolves explicit and default ports" test_url_port
+
+# Starts a real listener with the given cwd and waits until it is bound.
+# Sets SERVE_PID and SERVE_PORT.
+_serve_from() {
+  local dir="$1" i
+  SERVE_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+  (cd "$dir" && exec python3 -m http.server "$SERVE_PORT" --bind 127.0.0.1 >/dev/null 2>&1) &
+  SERVE_PID=$!
+  for i in $(seq 1 50); do
+    [ -n "$(_verify_listening_pids "$SERVE_PORT")" ] && return 0
+    sleep 0.1
+  done
+  echo "  listener on :$SERVE_PORT never came up" >&2
+  return 1
+}
+_serve_stop() {
+  [ -n "${SERVE_PID:-}" ] && kill "$SERVE_PID" 2>/dev/null
+  wait "$SERVE_PID" 2>/dev/null || true
+  SERVE_PID=""
+}
+
+_served_rc() {
+  local rc=0
+  verify_served_worktree_check "CRE-1" "$SERVE_PORT" >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+
+test_served_primary_checkout_on_other_branch_is_mismatch() {
+  _setup_fixture
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null || return 1
+  # The bug: the primary clone (on main here — could be any other ticket's
+  # branch) is what the dev server actually serves.
+  _serve_from "$FIXTURE_REPO" || return 1
+  local rc
+  rc=$(_served_rc)
+  _serve_stop
+  [ "$rc" = "1" ] || {
+    echo "  expected rc 1 (wrong checkout served), got $rc" >&2
+    return 1
+  }
+  return 0
+}
+_run "served from primary checkout on another commit -> mismatch (rc 1)" test_served_primary_checkout_on_other_branch_is_mismatch
+
+test_served_from_verify_worktree_matches() {
+  _setup_fixture
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  mkdir -p "$wt_path/fe"
+  _serve_from "$wt_path/fe" || return 1
+  local rc
+  rc=$(_served_rc)
+  _serve_stop
+  [ "$rc" = "0" ] || {
+    echo "  expected rc 0 (served from the verify worktree subdir), got $rc" >&2
+    return 1
+  }
+  return 0
+}
+_run "served from the verify worktree (subdir cwd) -> match (rc 0)" test_served_from_verify_worktree_matches
+
+test_served_other_checkout_same_commit_matches() {
+  _setup_fixture
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null || return 1
+  git -C "$FIXTURE_REPO" checkout -q --detach origin/feat/CRE-1-fix || return 1
+  _serve_from "$FIXTURE_REPO" || return 1
+  local rc
+  rc=$(_served_rc)
+  _serve_stop
+  [ "$rc" = "0" ] || {
+    echo "  expected rc 0 (clean checkout at the same commit), got $rc" >&2
+    return 1
+  }
+  return 0
+}
+_run "served from another clean checkout at the same commit -> match (rc 0)" test_served_other_checkout_same_commit_matches
+
+test_served_dirty_same_commit_is_mismatch() {
+  _setup_fixture
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null || return 1
+  git -C "$FIXTURE_REPO" checkout -q --detach origin/feat/CRE-1-fix || return 1
+  echo "local edit" >>"$FIXTURE_REPO/file.txt"
+  _serve_from "$FIXTURE_REPO" || return 1
+  local rc
+  rc=$(_served_rc)
+  _serve_stop
+  [ "$rc" = "1" ] || {
+    echo "  expected rc 1 (same commit but tracked changes), got $rc" >&2
+    return 1
+  }
+  return 0
+}
+_run "served from same commit with uncommitted tracked edits -> mismatch (rc 1)" test_served_dirty_same_commit_is_mismatch
+
+test_served_unrelated_dir_is_undeterminable() {
+  _setup_fixture
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null || return 1
+  mkdir -p "$FIXTURE_DIR/not-a-repo"
+  _serve_from "$FIXTURE_DIR/not-a-repo" || return 1
+  local rc
+  rc=$(_served_rc)
+  _serve_stop
+  [ "$rc" = "3" ] || {
+    echo "  expected rc 3 (not a checkout of a repo under test), got $rc" >&2
+    return 1
+  }
+  return 0
+}
+_run "served from a non-git dir -> undeterminable (rc 3), never a false mismatch" test_served_unrelated_dir_is_undeterminable
+
+test_served_no_listener_is_undeterminable() {
+  _setup_fixture
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null || return 1
+  SERVE_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+  local rc
+  rc=$(_served_rc)
+  [ "$rc" = "3" ] || {
+    echo "  expected rc 3 (no listener), got $rc" >&2
+    return 1
+  }
+  return 0
+}
+_run "no listener on the port -> undeterminable (rc 3)" test_served_no_listener_is_undeterminable
+
+test_skill_md_env_start_gets_worktree_contract() {
+  # The env-start.sh invocation must re-derive the worktree exports in its
+  # own block (an export in Step 1.6a4's block never reaches it) and must be
+  # followed by the served-checkout check.
+  local skill_md="$LIB_DIR/../skills/ticket-verify/SKILL.md"
+  local section
+  section=$(awk '/^### 1\.6b /{f=1} /^## Step 1\.7/{f=0} f' "$skill_md")
+  [ -n "$section" ] || {
+    echo "  Step 1.6b section not found" >&2
+    return 1
+  }
+  printf '%s' "$section" | grep -q 'eval "$(verify_worktree_exports "{TICKET-ID}")"' || {
+    echo "  Step 1.6b does not eval verify_worktree_exports before env-start.sh" >&2
+    return 1
+  }
+  printf '%s' "$section" | grep -q 'verify_served_worktree_check "{TICKET-ID}"' || {
+    echo "  Step 1.6b does not run verify_served_worktree_check" >&2
+    return 1
+  }
+  printf '%s' "$section" | grep -q 'VERIFY_SERVED_WRONG_WORKTREE' || {
+    echo "  Step 1.6b does not gate-stop on a wrong served checkout" >&2
+    return 1
+  }
+  return 0
+}
+_run "SKILL.md Step 1.6b passes the worktree contract and checks the served checkout" test_skill_md_env_start_gets_worktree_contract
+
+echo ""
 echo "=== SKILL.md step ordering ==="
 echo ""
 
