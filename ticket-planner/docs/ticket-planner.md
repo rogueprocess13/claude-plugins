@@ -398,7 +398,7 @@ The router never reasons about content. Phases never mutate state directly (they
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Confidence at or above which TicketGen writes `Pre-approved: true` in the Planner Context block (a block field, not a label). ticket-auto-pipeline's `planned-ticket-check.sh` reads the same variable name as its low-confidence floor (default 0.5 there), so exporting it changes both |
+| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Confidence at or above which TicketGen writes `Pre-approved: true` in the Planner Context block (a block field, not a label). Pre-approval only: ticket-auto-pipeline's `planned-ticket-check.sh` low-confidence floor is the separate `PLANNED_TICKET_MIN_CONFIDENCE` (default 0.5) |
 | `PLANNER_IDEA_MAX_LENGTH` | 2000 | Maximum idea length in chars (truncated with warning) |
 | `PLANNER_TSORT_TIMEOUT` | 30 | Seconds before timing out dependency graph sort |
 | `PLANNER_PHASE_TIMEOUT` | 600 | Seconds before timing out a hung phase agent |
