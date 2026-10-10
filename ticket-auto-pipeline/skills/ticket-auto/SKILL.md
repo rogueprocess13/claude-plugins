@@ -586,10 +586,37 @@ eval $(bash "$HOME/.claude/skills/lib/prescan-check.sh" "$repo" --repos-root "$R
 Branch on status:
 
 - **`fresh`**: Skip. Log nothing — overhead is one bash call per repo.
-- **`stale`, `decayed`, or `missing`**: Attempt prescan spawn.
-- **`missing` with `no_marker`**: First-time scan — full fan-out needed.
+- **`stale`**: Attempt prescan spawn. This is `/ticket-prescan`'s Path B (incremental
+  refresh), which `ticket-prescan-agent` can complete on its own.
+- **`decayed` or `missing`** (including `missing` with `no_marker`, a first-time scan): Do
+  NOT spawn. These need `/ticket-prescan`'s Path A — a per-persona `Agent` fan-out — and
+  `ticket-prescan-agent`'s tool allowlist has no `Agent` tool (a headless worker cannot spawn
+  nested sub-agents), so the spawn would fail every time and burn a spawn per ticket. Log an
+  actionable skip and move to the next repo; an operator brings the repo back to `fresh` by
+  running `/ticket-prescan <repo>` interactively. Appraise proceeds on whatever docs exist.
+- **Any other value**: Skip (unknown status — never spawn on it).
 
-### Acquire lock and spawn (if stale/decayed/missing)
+```bash
+# Inside the per-repo loop, right after the freshness-gate eval above.
+case "${PRESCAN_STATUS}" in
+fresh)
+  continue
+  ;;
+stale)
+  : # fall through to "Acquire lock and spawn" below
+  ;;
+decayed | missing)
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|$slug ${PRESCAN_STATUS} — full fan-out needs an interactive /ticket-prescan $repo (headless prescan agent has no Agent tool)" >> {LOG_FILE}
+  continue
+  ;;
+*)
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|$slug unknown prescan status '${PRESCAN_STATUS}' — not spawning" >> {LOG_FILE}
+  continue
+  ;;
+esac
+```
+
+### Acquire lock and spawn (if stale)
 
 Use flock-based concurrency — non-blocking, skip on contention:
 
