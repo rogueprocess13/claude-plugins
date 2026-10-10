@@ -110,7 +110,7 @@ CLAUDE_HINTS="/tmp/claude-log-hints.txt"
 CLAUDE_CORRELATED="/tmp/claude-log-correlated.txt"
 
 if [ -n "${CLAUDE_LOG_FILE:-}" ] && [ -f "$CLAUDE_LOG_FILE" ]; then
-  RETRO_SH="$(dirname "$(readlink -f "$0")")/retro.sh"
+  RETRO_SH="$(dirname "$(readlink -f "${0}")")/retro.sh"
   source "$RETRO_SH"
 
   # Phase 1: Failure signal scan

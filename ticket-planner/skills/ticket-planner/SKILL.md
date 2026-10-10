@@ -187,16 +187,24 @@ before starting or resuming a run. Deterministic bash, no Linear writes unless
 ```
 /ticket-planner doctor
 /ticket-planner doctor INIT-42          # also checks resume branch/sha alignment (#217)
-/ticket-planner doctor --fix            # create any missing static contract label
+/ticket-planner doctor --fix            # create any missing board-projected label
 ```
 
 Checks: `REPOS_ROOT` resolves and is a real directory; the Linear team resolves
-(`--team`/`LINEAR_TEAM_ID`/the workspace's only team); the 4 static contract
-labels (`planned`, `epic`, `pre-approved`, `state:execution`) exist on that team —
-reported individually, and created with `--fix`; when an initiative id is given,
-whether the live `REPOS_ROOT` checkout for each repo Discovery explored still
-matches the ref it pinned, or an isolated worktree is available (the same
-mechanism Crosscheck itself falls back to, see #217 below); and whether the
+(`--team`/`LINEAR_TEAM_ID`/the workspace's only team); the 4 board-projected
+labels (`needs-info`, `needs-adr`, `rejected`, `reviewed`) exist on that team —
+reported individually, and created with `--fix`. These are the only labels
+anything in the pipeline still writes to Linear (`workflow.json`'s
+`board_drivers.linear.projected_labels`, applied by the board driver). The
+former static contract labels (`planned`, `epic`, `pre-approved`,
+`state:execution`) are retired and no longer checked or created: the planner
+creates every issue with an empty label set, and what those labels carried now
+lives in the local ticket/epic manifests and the Planner Context block.
+
+Doctor also checks, when an initiative id is given, whether the live
+`REPOS_ROOT` checkout for each repo Discovery explored still matches the ref
+it pinned, or an isolated worktree is available (the same mechanism
+Crosscheck itself falls back to, see #217 below); and whether the
 cross-plugin helper scripts the phase prompts reference
 (`planned-ticket-check.sh`, `branch-directive-check.sh` from
 `ticket-auto-pipeline`, `grill-seal.sh` from `grill-me`) actually resolve on
@@ -474,10 +482,15 @@ When invoked, follow this procedure:
 trusting `CLAUDE_PLUGIN_ROOT`, which is not guaranteed to be set or correct.
 
 ```bash
-# Bootstrap: find the resolver itself. Try the marketplace cache first, then the
+# Bootstrap: find the resolver itself. Try the installed version recorded in
+# installed_plugins.json first, then the newest cached version by *version*
+# order (sort -V — a plain sort puts 0.9.0 after 0.15.1, issue #454), then the
 # SessionStart-hook copy in ~/.claude/skills/lib.
-PLANNER_LIB_ROOT_SH=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-planner/*/lib/planner-lib-root.sh" 2>/dev/null | sort | tail -1)
+PLANNER_LIB_ROOT_SH=$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-planner\/[^"]*\)".*/\1/p' \
+  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | head -1)
+[ -n "$PLANNER_LIB_ROOT_SH" ] && PLANNER_LIB_ROOT_SH="${PLANNER_LIB_ROOT_SH%/}/lib/planner-lib-root.sh"
+[ -f "$PLANNER_LIB_ROOT_SH" ] || PLANNER_LIB_ROOT_SH=$(find "${HOME}/.claude/plugins/cache" \
+  -path "*/ticket-planner/*/lib/planner-lib-root.sh" 2>/dev/null | sort -V | tail -1)
 [ -f "$PLANNER_LIB_ROOT_SH" ] || PLANNER_LIB_ROOT_SH="${HOME}/.claude/skills/lib/planner-lib-root.sh"
 
 if [ ! -f "$PLANNER_LIB_ROOT_SH" ]; then
@@ -562,8 +575,12 @@ TEAM_REF="${LINEAR_TEAM_ID:-}"
 PROJECT_REF="${LINEAR_PROJECT:-}"
 MILESTONE_REF="${LINEAR_PROJECT_MILESTONE:-}"
 
+# Positional params are always braced ("${1}", never a bare dollar-digit): the
+# skill loader substitutes a bare dollar-digit token with the invocation's own
+# argument before this block ever runs, so a bare one in the case below matched
+# the literal initiative id and no flag ever parsed (#455).
 while [ "$#" -gt 0 ]; do
-  case "$1" in
+  case "${1}" in
     --shared-branch) SHARED_BRANCH_FLAG=true ;;
     --no-shared-branch) NO_SHARED_BRANCH_FLAG=true ;;
     --create) CREATE_FLAG=true ;;
@@ -742,9 +759,13 @@ When mode is `plan`:
 1. Extract the idea from the second argument.
 2. **PLANNER_REQUIRE_INTENT check.** If `PLANNER_REQUIRE_INTENT=true` and the argument is a raw string (not an existing file), hard stop and direct the user to `/grill-me`.
 3. **Intent file gate (step 0).** If the argument resolves to an existing file:
-   - Source `planner-intent-gate.sh` and run `planner_intent_gate "$path"`.
+   - Source `planner-intent-gate.sh` and run `planner_intent_gate "$path"` **directly** —
+     not inside `$(...)`, which runs in a subshell and loses the values.
    - On hard stop (exit 1/2/3): report the reason and stop — no state created.
-   - On pass (exit 0): capture `PLANNER_INTENT_READINESS`, `PLANNER_INTENT_RECOMMENDATION`, `PLANNER_INTENT_HASH`, `PLANNER_INTENT_PROFILE`.
+   - On pass (exit 0): the gate has set and exported `PLANNER_INTENT_READINESS`,
+     `PLANNER_INTENT_RECOMMENDATION`, `PLANNER_INTENT_HASH`, `PLANNER_INTENT_PROFILE`
+     in the current shell. They must still be set at step 7 (same shell, or
+     re-export them).
    - Derive `IDEA` from the intent document's `## Objective` section: extract
      every line between the `## Objective` heading and the next `## ` heading,
      drop blank lines and the `_None specified_` placeholder, join with spaces,
@@ -765,7 +786,7 @@ When mode is `plan`:
 4. Generate an initiative ID: `INIT-$(date +%s)-$(shuf -i 1000-9999 -n 1)` to avoid collision.
 5. Initialize state: `planner_state_init "$INITIATIVE_ID" "$IDEA"`
 6. **Persist the invocation config** — run step 2b now that `$INITIATIVE_ID` exists.
-7. **If an intent file was accepted:** Copy the verified file byte-identically to `${state_dir}/artifacts/intent.md` and write a `META|intent|done|${READINESS},${RECOMMENDATION},${HASH}` state log entry.
+7. **If an intent file was accepted:** Copy the verified file byte-identically to `${state_dir}/artifacts/intent.md` and write the provenance entry with `planner_intent_record "$INITIATIVE_ID"`, which writes `META|intent|done|${PLANNER_INTENT_READINESS},${PLANNER_INTENT_RECOMMENDATION},${PLANNER_INTENT_HASH}`. Never hand-write this line: `planner_intent_record` fails loudly (non-zero, nothing written) if any of the three values is empty — on failure, stop and re-run the gate rather than logging `,,`.
 8. Run the dispatch loop (see below). It ends after Crosscheck — `plan` creates nothing in Linear.
 
 ### 4. Resume mode

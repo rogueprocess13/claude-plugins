@@ -73,7 +73,7 @@ When the recommendation is not `ready` and `--non-interactive` is not set:
 1. Rank questions (see above).
 2. Present via `AskUserQuestion`, max 4 per call, preserving rank order.
 3. Each question displays its `why` rationale.
-4. Fold answers back into the assessment — only dimensions targeted by the round's questions are re-assessed (design D9).
+4. Fold answers back into the assessment — only dimensions targeted by the round's questions are re-assessed (design D9). Each answer is appended to `resolved`; an answer that reverses an earlier one names it with `supersedes: [n]` (its 1-based `resolved` position). The renderer lists each dimension's answers in its section, latest first, and marks superseded ones `SUPERSEDED by Qn`.
 5. Re-score and repeat until `ready` or `--max-rounds` is reached.
 
 ## Non-interactive mode
