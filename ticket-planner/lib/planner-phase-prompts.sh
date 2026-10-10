@@ -1763,8 +1763,11 @@ planner_context=\$(planner_context_generate "\$context_json")
 #    Planner Context block plus every section from "Body section contract"
 #    above, filled in and non-empty.
 description="<full ticket description with Planner Context block and required section headings, humanized>"
-if ! planner_validate_ticket "\$description" "true" "\$TYPE_LABEL"; then
-  rc=\$?
+# Capture the return code WITHOUT negation: inside \`if ! cmd; then\`, \$? is
+# the inverted status (always 0), so the exit-3 hard stop would never fire.
+rc=0
+planner_validate_ticket "\$description" "true" "\$TYPE_LABEL" || rc=\$?
+if [ "\$rc" -ne 0 ]; then
   if [ "\$rc" -eq 3 ]; then
     echo "FATAL: planned-ticket-check.sh or planned-ticket-body-check.sh not available — cannot create any tickets"
     planner_state_write "${initiative_id}" "TicketGen" "validate" "fail" "Validator unavailable (exit 3) — hard stop"
