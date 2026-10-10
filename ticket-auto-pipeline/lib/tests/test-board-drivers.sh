@@ -310,6 +310,94 @@ test_grouped_sibling_displaced_via_team_lookup() {
   [ "$labels" = '["lbl-bug","lbl-needs-info"]' ]
 }
 
+# ── remove/keep semantics (issue #489) ───────────────────────────────────────
+# desired = (current - remove) + add: a projected label changes only when the
+# event's entry names it. Mappings below mirror workflow.json's real entries.
+_label_ids_of() {
+  # _label_ids_of <ws> — the labelIds the update_issue call carried, or
+  # "NOCALL" when the driver made no call.
+  local ws="$1"
+  if [ -f "$ws/update_issue.labels" ]; then cat "$ws/update_issue.labels"; else echo NOCALL; fi
+}
+
+test_column_only_event_keeps_projected_labels() {
+  local ws issue labels state
+  issue=$(_issue_with_labels "lbl-needs-info:needs-info,lbl-rejected:rejected,lbl-reviewed:Reviewed,lbl-needs-adr:needs-adr" "s-todo" "Todo")
+  ws=$(_mk_workspace '{"appraise-completed":{"column":"Approve","add":null,"remove":null}}' "$issue" "$TEAM_JSON")
+  _apply "$ws" appraise-completed 1 >/dev/null 2>&1
+  labels=$(_label_ids_of "$ws")
+  state=$(head -1 "$ws/update_issue.calls" 2>/dev/null | awk '{print $2}')
+  rm -rf "$ws"
+  [ "$state" = "s-approve" ] &&
+    [ "$labels" = '["lbl-needs-adr","lbl-needs-info","lbl-rejected","lbl-reviewed"]' ]
+}
+
+test_needs_info_resolved_removes_only_needs_info() {
+  local ws issue labels
+  issue=$(_issue_with_labels "lbl-needs-info:needs-info,lbl-needs-adr:needs-adr" "s-todo" "Todo")
+  ws=$(_mk_workspace '{"needs-info-resolved":{"column":null,"add":null,"remove":["needs-info"]}}' "$issue" "$TEAM_JSON")
+  _apply "$ws" needs-info-resolved 1 >/dev/null 2>&1
+  labels=$(_label_ids_of "$ws")
+  rm -rf "$ws"
+  [ "$labels" = '["lbl-needs-adr"]' ]
+}
+
+test_pr_iteration_requested_removes_reviewed_and_rejected() {
+  local ws issue labels
+  issue=$(_issue_with_labels "lbl-reviewed:Reviewed,lbl-rejected:rejected,lbl-needs-info:needs-info,lbl-bug:bug" "s-done" "Done")
+  ws=$(_mk_workspace '{"pr-iteration-requested":{"column":"Todo","add":null,"remove":["reviewed","rejected"]}}' "$issue" "$TEAM_JSON")
+  _apply "$ws" pr-iteration-requested 1 >/dev/null 2>&1
+  labels=$(_label_ids_of "$ws")
+  rm -rf "$ws"
+  [ "$labels" = '["lbl-bug","lbl-needs-info"]' ]
+}
+
+test_add_keeps_other_projected_and_unowned_labels() {
+  local ws issue labels
+  issue=$(_issue_with_labels "lbl-needs-adr:needs-adr,lbl-bug:bug" "s-todo" "Todo")
+  ws=$(_mk_workspace '{"needs-info-requested":{"column":null,"add":["needs-info"],"remove":null}}' "$issue" "$TEAM_JSON")
+  _apply "$ws" needs-info-requested 1 >/dev/null 2>&1
+  labels=$(_label_ids_of "$ws")
+  rm -rf "$ws"
+  [ "$labels" = '["lbl-bug","lbl-needs-adr","lbl-needs-info"]' ]
+}
+
+# A remove list never strips a label the driver does not own.
+test_remove_ignores_non_projected_label() {
+  local ws issue labels
+  issue=$(_issue_with_labels "lbl-bug:bug,lbl-needs-info:needs-info" "s-todo" "Todo")
+  ws=$(_mk_workspace '{"needs-info-resolved":{"remove":["needs-info","bug"]}}' "$issue" "$TEAM_JSON")
+  _apply "$ws" needs-info-resolved 1 >/dev/null 2>&1
+  labels=$(_label_ids_of "$ws")
+  rm -rf "$ws"
+  [ "$labels" = '["lbl-bug"]' ]
+}
+
+# A column-only event on an issue already in that column, carrying projected
+# labels, makes no API call at all.
+test_column_only_event_with_labels_no_call_when_unchanged() {
+  local ws issue count
+  issue=$(_issue_with_labels "lbl-needs-info:needs-info,lbl-reviewed:Reviewed" "s-approve" "Approve")
+  ws=$(_mk_workspace '{"appraise-completed":{"column":"Approve","add":null,"remove":null}}' "$issue" "$TEAM_JSON")
+  _apply "$ws" appraise-completed 1 >/dev/null 2>&1
+  count=$(_call_count "$ws")
+  rm -rf "$ws"
+  [ "$count" -eq 0 ]
+}
+
+# Group exclusivity composes with keep: a kept projected label in the same
+# group as an added grouped label is displaced; the rest are kept.
+test_group_exclusivity_after_keep() {
+  local ws issue labels team
+  team=$(_grouped_team_json | jq -c '.labels |= map(if .name == "needs-adr" then . + {parent: {id: "grp-flow"}} else . end)')
+  issue=$(_issue_with_labels "lbl-needs-adr:needs-adr,lbl-rejected:rejected,lbl-bug:bug" "s-todo" "Todo")
+  ws=$(_mk_workspace '{"needs-info-requested":{"add":["needs-info"]}}' "$issue" "$team")
+  _apply "$ws" needs-info-requested 1 >/dev/null 2>&1
+  labels=$(_label_ids_of "$ws")
+  rm -rf "$ws"
+  [ "$labels" = '["lbl-bug","lbl-needs-info","lbl-rejected"]' ]
+}
+
 _run "column-only move" test_column_only_move
 _run "label add" test_label_add
 _run "label remove" test_label_remove
@@ -325,6 +413,24 @@ _run "permanent failure -> META|board-projection|fail, exit 0" test_permanent_fa
 _run "explicit-null entry -> no-op" test_explicit_null_entry_noop
 _run "grouped sibling displaced on add (#423)" test_grouped_sibling_displaced_on_add
 _run "grouped sibling displaced via team lookup (#423)" test_grouped_sibling_displaced_via_team_lookup
+_run "column-only event keeps projected labels (#489)" test_column_only_event_keeps_projected_labels
+_run "needs-info-resolved removes only needs-info (#489)" test_needs_info_resolved_removes_only_needs_info
+_run "pr-iteration-requested removes reviewed+rejected (#489)" test_pr_iteration_requested_removes_reviewed_and_rejected
+_run "add keeps other projected and unowned labels (#489)" test_add_keeps_other_projected_and_unowned_labels
+_run "remove ignores a non-projected label (#489)" test_remove_ignores_non_projected_label
+_run "column-only event with labels, unchanged -> no call (#489)" test_column_only_event_with_labels_no_call_when_unchanged
+_run "group exclusivity applies after keep (#423+#489)" test_group_exclusivity_after_keep
+
+# The real workflow.json, not a fixture: every event that sets one review
+# verdict label must clear the other, now that unnamed labels are kept (#489).
+test_real_workflow_verdict_labels_exclusive() {
+  local wf="$(dirname "${BASH_SOURCE[0]}")/../../skills/ticket-flow/workflow.json" ev
+  for ev in pr-review-failed uat-failed; do
+    jq -e --arg e "$ev" '.board_drivers.linear.events[$e] | (.add | index("rejected")) and (.remove | index("reviewed"))' "$wf" >/dev/null || return 1
+  done
+  jq -e '.board_drivers.linear.events["pr-review-passed"] | (.add | index("reviewed")) and (.remove | index("rejected"))' "$wf" >/dev/null
+}
+_run "real workflow.json: verdict labels are mutually exclusive (#489)" test_real_workflow_verdict_labels_exclusive
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="

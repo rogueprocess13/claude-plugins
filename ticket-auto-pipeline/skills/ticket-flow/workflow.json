@@ -105,8 +105,10 @@
       "adds": [
         "rejected"
       ],
-      "removes": [],
-      "description": "PR review found issues — mark rejected (no state change)",
+      "removes": [
+        "reviewed"
+      ],
+      "description": "PR review found issues — mark rejected, clear any earlier reviewed verdict (no state change)",
       "precondition": "must_not_be_epic",
       "emits": { "event": "pr-review-failed", "data": {} }
     },
@@ -412,7 +414,7 @@
           "add": ["reviewed"],
           "remove": ["rejected"]
         },
-        "pr-review-failed": { "add": ["rejected"] },
+        "pr-review-failed": { "add": ["rejected"], "remove": ["reviewed"] },
         "pr-iteration-requested": { "column": "Ready", "remove": ["reviewed", "rejected"] },
         "uat-passed": { "column": "Done", "remove": ["reviewed"] },
         "uat-failed": { "column": "Ready", "add": ["rejected"], "remove": ["reviewed"] },

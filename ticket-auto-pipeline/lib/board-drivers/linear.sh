@@ -214,18 +214,25 @@ _linear_driver_apply() {
   fi
 
   # ── Resolve the desired label set ───────────────────────────────────────
-  # Keep every current label outside projected_labels untouched; add/remove
-  # only the projected labels this event's entry names (linear-board-
-  # projection spec: "writes desired state and preserves labels it does not
-  # own", case-insensitive matching).
-  local projected_labels add_names
+  # desired = (current - remove) + add (issue #489). A projected label changes
+  # only when this event's entry names it: labels in `add` are added, labels
+  # in `remove` are removed, and every other current label — projected or not
+  # — is kept, so a column-only event never strips a live human signal such
+  # as needs-info (linear-board-projection spec: "writes desired state and
+  # preserves labels it does not own", case-insensitive matching). `remove`
+  # is honoured only for names in projected_labels: the driver never removes
+  # a label it does not own, even if a mapping were to name one.
+  local projected_labels add_names remove_names
   projected_labels=$(jq -c '.board_drivers.linear.projected_labels // []' "$wf")
   add_names=$(echo "$mapping" | jq -c '.add // []')
+  remove_names=$(echo "$mapping" | jq -c --argjson proj "$projected_labels" \
+    '[(.remove // [])[] | ascii_downcase] as $r
+      | [$proj[] | ascii_downcase | select(. as $p | $r | index($p))]')
 
   local kept_ids
-  kept_ids=$(echo "$issue_json" | jq -c --argjson proj "$projected_labels" \
-    '[.labels.nodes[] | select(((.name | ascii_downcase) as $n
-      | ($proj | map(ascii_downcase) | index($n))) == null) | .id]')
+  kept_ids=$(echo "$issue_json" | jq -c --argjson rm "$remove_names" \
+    '[(.labels.nodes // [])[] | select(((.name | ascii_downcase) as $n
+      | ($rm | index($n))) == null) | .id]')
 
   local add_ids="[]" missing_label=""
   while IFS= read -r name; do
@@ -246,6 +253,9 @@ _linear_driver_apply() {
   fi
 
   # ── Honour Linear label-group exclusivity (issue #423) ─────────────────
+  # Applied after the remove/keep computation above, so it only ever narrows
+  # the kept set further — it covers a kept projected label too (e.g. two
+  # projected labels a team has put in one group).
   # Linear allows at most one child label per label group and rejects the
   # whole issueUpdate when labelIds carries two siblings. A ticket can still
   # carry a non-projected label this driver preserves — e.g. the retired
