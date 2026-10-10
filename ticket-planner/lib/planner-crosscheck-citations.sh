@@ -570,7 +570,11 @@ _planner_crosscheck_scan_precedent() {
 # Returns: 0 if clean, 1 if any finding was reported.
 planner_crosscheck_citations_one() {
   local spec_file="$1"
-  local repos_root="${2:-${REPOS_ROOT:-${HOME}/repos}}"
+  local repos_root="${2:-${REPOS_ROOT:-}}"
+  [ -n "$repos_root" ] || {
+    echo "ERROR: REPOS_ROOT is not set and no repos_root argument given — refusing to guess (#459)" >&2
+    return 1
+  }
   local failures=0
 
   if [ ! -f "$spec_file" ]; then
@@ -596,7 +600,11 @@ planner_crosscheck_citations_one() {
 # Returns: 0 if all files are clean, 1 if any file has a finding.
 planner_crosscheck_citations() {
   local initiative_id="$1"
-  local repos_root="${REPOS_ROOT:-${HOME}/repos}"
+  local repos_root="${REPOS_ROOT:-}"
+  [ -n "$repos_root" ] || {
+    echo "ERROR: REPOS_ROOT is not set — refusing to guess (#459)" >&2
+    return 1
+  }
   local artifacts_dir="${repos_root}/.ticket-auto/initiatives/${initiative_id}/artifacts"
 
   if [ ! -d "$artifacts_dir" ]; then

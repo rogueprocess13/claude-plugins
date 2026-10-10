@@ -217,7 +217,12 @@ planner_crosscheck_run() {
   local total_blocking=0 total_warn=0 total_accepted=0
   local b w a
 
-  planner_state_write "$initiative_id" "Crosscheck" "check" "start" "running citation + propagation + bypass + contracts + signals + deps checks"
+  # A state write that cannot resolve the initiative's log (REPOS_ROOT unset,
+  # #459) must stop the phase, not run every check against nothing.
+  if ! planner_state_write "$initiative_id" "Crosscheck" "check" "start" "running citation + propagation + bypass + contracts + signals + deps checks"; then
+    echo "planner-crosscheck: cannot write the state log — aborting Crosscheck" >&2
+    return 1
+  fi
 
   read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_citations "$initiative_id")
   total_blocking=$((total_blocking + b))

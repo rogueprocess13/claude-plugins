@@ -168,6 +168,7 @@ test-planner:
 	@echo "=== ticket-planner unit tests ==="
 	bash ticket-planner/lib/tests/test-planner-sanitize.sh
 	bash ticket-planner/lib/tests/test-planner-state.sh
+	bash ticket-planner/lib/tests/test-planner-repos-root-required.sh
 	bash ticket-planner/lib/tests/test-planner-lib-root.sh
 	bash ticket-planner/lib/tests/test-planner-lib-sync.sh
 	bash ticket-planner/lib/tests/test-planner-linear-api.sh
@@ -195,6 +196,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-adr-gate.sh
 	bash ticket-planner/lib/tests/test-planner-refinement.sh
 	bash ticket-planner/lib/tests/test-planner-vplan-generation.sh
+	bash ticket-planner/lib/tests/test-skill-arg-substitution.sh
 
 test-planner-intent-gate:
 	@echo "=== planner intent gate tests ==="

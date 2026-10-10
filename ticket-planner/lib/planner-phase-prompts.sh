@@ -62,6 +62,25 @@ planner_prompt_lib_root() {
   echo "$_PLANNER_PROMPT_LIB_ROOT"
 }
 
+# ── REPOS_ROOT interpolation ────────────────────────────────────────────────────
+#
+# Same reasoning as the plugin root above (#459): a spawned agent's shell is not
+# guaranteed to inherit REPOS_ROOT, and the state libs refuse to guess one. So
+# the generating shell's value is interpolated into every preamble as a literal
+# export. If the generator itself has no REPOS_ROOT, the emitted line keeps an
+# inherited value and otherwise stops the block before any state write.
+#
+# Usage: _planner_prompt_repos_root_export
+# Output: one line of bash for the agent's shell.
+_planner_prompt_repos_root_export() {
+  if [ -n "${REPOS_ROOT:-}" ]; then
+    printf 'export REPOS_ROOT=%q\n' "$REPOS_ROOT"
+  else
+    # shellcheck disable=SC2016 # emitted for the agent's shell, not expanded here
+    printf '%s\n' '[ -n "${REPOS_ROOT:-}" ] || { echo "FATAL: REPOS_ROOT is not set — export it before running this phase" >&2; exit 5; }'
+  fi
+}
+
 # ── Input sanitization ──────────────────────────────────────────────────────────
 
 # Sanitize user-provided content for safe embedding in agent prompts.
@@ -244,6 +263,7 @@ if [ ! -f "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh" ]; then
   exit 5
 fi
 export CLAUDE_PLUGIN_ROOT
+$(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 planner_state_write "${initiative_id}" "Appraisal" "scope" "start" "Interpreting idea: ${safe_idea}"
 # ... do your work ...
@@ -254,7 +274,7 @@ On failure, write \`fail\` instead of \`done\` and include the error reason in t
 
 ## Constraints
 - Read real repositories under \${REPOS_ROOT} to identify affected services — do not fabricate.
-- If \${REPOS_ROOT} is unset or empty, note that as an unknown and proceed with reasonable assumptions.
+- \${REPOS_ROOT} is exported by the state-log block above — run that block's preamble in every shell that reads repositories or writes state.
 - The scope summary drives all downstream phases — be precise about what's in and out of scope.
 AGENT_PROMPT
 }
@@ -344,6 +364,7 @@ if [ ! -f "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh" ]; then
   exit 5
 fi
 export CLAUDE_PLUGIN_ROOT
+$(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 planner_state_write "${initiative_id}" "Discovery" "explore" "start" "Exploring affected repositories"
 # ... do your work, including the repo-ref writes above ...
@@ -443,6 +464,7 @@ if [ ! -f "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh" ]; then
   exit 5
 fi
 export CLAUDE_PLUGIN_ROOT
+$(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 planner_state_write "${initiative_id}" "Architecture" "design" "start" "Evaluating technical approaches"
 # ... do your work ...
@@ -744,6 +766,7 @@ marker) would otherwise survive both of those phases untouched and only
 surface as a Crosscheck finding 3 phases later, outside this context window.
 
 \`\`\`bash
+$(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-citations.sh"
 planner_crosscheck_citations "${initiative_id}"
 \`\`\`
@@ -766,6 +789,7 @@ if [ ! -f "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh" ]; then
   exit 5
 fi
 export CLAUDE_PLUGIN_ROOT
+$(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 planner_state_write "${initiative_id}" "Specify" "synthesize" "start" "Synthesizing proposal and writing specs for N tickets"
 # ... do your work, then self-lint per Part 4 ...
@@ -848,6 +872,7 @@ if [ ! -f "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh" ]; then
   exit 5
 fi
 export CLAUDE_PLUGIN_ROOT
+$(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 planner_state_write "${initiative_id}" "Review" "critique" "start" "Critiquing proposal for gaps and risks"
 # ... do your work ...
@@ -924,6 +949,7 @@ if [ ! -f "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh" ]; then
   exit 5
 fi
 export CLAUDE_PLUGIN_ROOT
+$(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 planner_state_write "${initiative_id}" "Consensus" "resolve" "start" "Resolving N review findings"
 # ... do your work ...
@@ -1072,6 +1098,7 @@ if [ ! -f "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh" ]; then
   exit 5
 fi
 export CLAUDE_PLUGIN_ROOT
+$(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-router.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-ticket-validate.sh"
@@ -1461,6 +1488,7 @@ shared helper this phase and Refinement both use (\`planner_epic_id\`, in
 \`lib/planner-refinement.sh\`):
 
 \`\`\`bash
+$(_planner_prompt_repos_root_export)
 source "${_PLANNER_PROMPT_LIB_ROOT}/lib/planner-state.sh"
 source "${_PLANNER_PROMPT_LIB_ROOT}/lib/planner-refinement.sh"
 EPIC_ID=\$(planner_epic_id "${initiative_id}")
@@ -1642,6 +1670,7 @@ if [ ! -f "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh" ]; then
   exit 5
 fi
 export CLAUDE_PLUGIN_ROOT
+$(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-router.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-deps-check.sh"
@@ -1929,6 +1958,7 @@ if [ ! -f "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh" ]; then
   exit 5
 fi
 export CLAUDE_PLUGIN_ROOT
+$(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 
 planner_state_write "${initiative_id}" "Completed" "summarize" "start" "Writing completion summary"

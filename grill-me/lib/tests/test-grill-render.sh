@@ -340,6 +340,105 @@ else
   fail "empty .resolved still renders 'no questions' message" "$(grep -A2 '## Resolved Questions' "$OUTPUT_NONE_FILE")"
 fi
 
+echo "=== Folded answers reach their section; superseded answers are marked (#458) ==="
+
+# Regression test: dimension sections rendered only the round-1 `evidence`
+# text, so a later-round answer reached the Resolved Questions table but never
+# the narrative section it changed, and an answer overridden by a later round
+# (via `supersedes`) was rendered as if still current.
+#
+# Scenario: round 1 answers Q3 (constraints) with a design that round 3's Q11
+# reverses. The constraints section must lead with Q11 and mark Q3 superseded;
+# the Resolved Questions table must mark row 3 superseded too.
+make_assessment_superseded() {
+  local filler='{"question":"Filler question","dimension":"objective","why":"w","round":1,"answer":"filler answer"}'
+  cat <<JSON
+{
+  "profile": "product-idea",
+  "subject": "Test Subject",
+  "round": 3,
+  "dimensions": [
+    {"id":"objective","status":"present","evidence":"Build real-time collaboration","gap":""},
+    {"id":"users_problem","status":"present","evidence":"Enterprise users need co-editing","gap":""},
+    {"id":"success_criteria","status":"present","evidence":"500ms cursor update","gap":""},
+    {"id":"scope","status":"present","evidence":"Real-time cursors, doc locking","gap":""},
+    {"id":"acceptance_criteria","status":"present","evidence":"Two users open same doc simultaneously","gap":""},
+    {"id":"constraints","status":"present","evidence":"ROUND1_EVIDENCE_TEXT","gap":""},
+    {"id":"dependencies","status":"present","evidence":"WebSocket service v2","gap":""},
+    {"id":"risks","status":"present","evidence":"Network latency","gap":""},
+    {"id":"edge_cases","status":"missing","evidence":"","gap":"No edge cases discussed"},
+    {"id":"assumptions","status":"missing","evidence":"","gap":"Assumptions not stated"}
+  ],
+  "flags": {},
+  "assumptions": [],
+  "risks": [],
+  "questions": [],
+  "resolved": [
+    ${filler},
+    ${filler},
+    {"question":"How is batch progress tracked?","dimension":"constraints","why":"State model","round":1,"answer":"OLD_ANSWER_ADD_NEW_STATE"},
+    ${filler}, ${filler}, ${filler}, ${filler}, ${filler}, ${filler}, ${filler},
+    {"question":"Should we add a new state after all?","dimension":"constraints","why":"Reversal","round":3,"answer":"NEW_ANSWER_REUSE_EXISTING_STATE","supersedes":[3]}
+  ]
+}
+JSON
+}
+
+ASSESSMENT_SUP_FILE="$SCRATCH/assessment-superseded.json"
+make_assessment_superseded >"$ASSESSMENT_SUP_FILE"
+OUTPUT_SUP_FILE="$SCRATCH/output-superseded.md"
+grill_render "$RESULT_FILE" "$ASSESSMENT_SUP_FILE" "$OUTPUT_SUP_FILE" 2>/dev/null
+
+CONSTRAINTS_SECTION=$(sed -n '/^## Constraints$/,/^## Dependencies$/p' "$OUTPUT_SUP_FILE")
+SUP_TABLE=$(sed -n '/^## Resolved Questions$/,/^## Open Gaps$/p' "$OUTPUT_SUP_FILE")
+
+# Section reflects Q11 ...
+if echo "$CONSTRAINTS_SECTION" | grep -q "NEW_ANSWER_REUSE_EXISTING_STATE"; then
+  pass "later-round answer is rendered in its dimension section"
+else
+  fail "later-round answer is rendered in its dimension section" "$CONSTRAINTS_SECTION"
+fi
+
+# ... ahead of the superseded Q3, which is visibly marked.
+new_line=$(echo "$CONSTRAINTS_SECTION" | grep -n "NEW_ANSWER_REUSE_EXISTING_STATE" | head -1 | cut -d: -f1 || true)
+old_line=$(echo "$CONSTRAINTS_SECTION" | grep -n "OLD_ANSWER_ADD_NEW_STATE" | head -1 | cut -d: -f1 || true)
+if [ -n "$new_line" ] && [ -n "$old_line" ] && [ "$new_line" -lt "$old_line" ] &&
+  echo "$CONSTRAINTS_SECTION" | grep "OLD_ANSWER_ADD_NEW_STATE" | grep -q "SUPERSEDED by Q11" &&
+  ! echo "$CONSTRAINTS_SECTION" | grep "NEW_ANSWER_REUSE_EXISTING_STATE" | grep -q "SUPERSEDED"; then
+  pass "section leads with Q11 and marks Q3 SUPERSEDED by Q11"
+else
+  fail "section leads with Q11 and marks Q3 SUPERSEDED by Q11" "$CONSTRAINTS_SECTION"
+fi
+
+if echo "$SUP_TABLE" | grep "^| 3 |" | grep -q "SUPERSEDED by Q11" &&
+  ! echo "$SUP_TABLE" | grep "^| 11 |" | grep -q "SUPERSEDED"; then
+  pass "Resolved Questions table marks row 3 SUPERSEDED by Q11"
+else
+  fail "Resolved Questions table marks row 3 SUPERSEDED by Q11" "$SUP_TABLE"
+fi
+
+# Answers are scoped to their own dimension's section.
+if ! sed -n '/^## Dependencies$/,/^## Risks$/p' "$OUTPUT_SUP_FILE" | grep -q "ANSWER"; then
+  pass "folded answers do not leak into other dimension sections"
+else
+  fail "folded answers do not leak into other dimension sections" "dependencies section contains an answer"
+fi
+
+# The seal still covers the rendered result, clarifications included.
+grill_seal_generate "$OUTPUT_SUP_FILE" "product-idea" "88" "ready" "3" "2026-07-26T00:00:00Z" 2>/dev/null
+set +e
+grill_seal_verify "$OUTPUT_SUP_FILE" >/dev/null 2>&1
+sup_verify_exit=$?
+sed -i 's/NEW_ANSWER_REUSE_EXISTING_STATE/TAMPERED/' "$OUTPUT_SUP_FILE"
+grill_seal_verify "$OUTPUT_SUP_FILE" >/dev/null 2>&1
+sup_tamper_exit=$?
+set -e
+if [ "$sup_verify_exit" -eq 0 ] && [ "$sup_tamper_exit" -eq 4 ]; then
+  pass "seal covers folded clarifications (valid, then MISMATCH on edit)"
+else
+  fail "seal covers folded clarifications" "verify=$sup_verify_exit tamper=$sup_tamper_exit"
+fi
+
 echo "=== Results ==="
 TOTAL=$((PASS + FAIL))
 echo "$PASS/$TOTAL passed"

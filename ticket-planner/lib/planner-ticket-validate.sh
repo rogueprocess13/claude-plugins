@@ -29,6 +29,10 @@
 #
 # Sourceable library — no set -euo pipefail.
 
+# Version-aware plugin-cache lookup (planner_cache_find) — issue #454.
+# shellcheck source=planner-plugin-cache.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-plugin-cache.sh"
+
 _source_if_missing() {
   local name="$1" path="$2"
   if ! declare -f "$name" >/dev/null 2>&1; then
@@ -44,8 +48,7 @@ _source_if_missing() {
 _planner_verify_source_manifest_read() {
   declare -f ticket_manifest_exists >/dev/null 2>&1 && return 0
   local lib
-  lib=$(find "${HOME}/.claude/plugins/cache" -name "manifest-write.sh" \
-    -path "*/ticket-auto-pipeline/*/lib/manifest-write.sh" 2>/dev/null | sort | tail -1)
+  lib=$(planner_cache_find ticket-auto-pipeline "lib/manifest-write.sh")
   [ -n "$lib" ] || lib="${HOME}/.claude/skills/lib/manifest-write.sh"
   [ -f "$lib" ] && source "$lib"
 }
@@ -78,8 +81,7 @@ planner_validate_ticket() {
 
   # Resolve planned-ticket-check.sh
   local checker
-  checker=$(find "${HOME}/.claude/plugins/cache" -name "planned-ticket-check.sh" \
-    -path "*/ticket-auto-pipeline/*/lib/planned-ticket-check.sh" 2>/dev/null | sort | tail -1)
+  checker=$(planner_cache_find ticket-auto-pipeline "lib/planned-ticket-check.sh")
   if [ -z "$checker" ]; then
     checker="${HOME}/.claude/skills/lib/planned-ticket-check.sh"
   fi
@@ -165,7 +167,13 @@ planner_validate_ticket() {
 # Usage: _planner_intent_file <initiative_id> <entity_key>
 _planner_intent_file() {
   local initiative_id="$1" entity_key="$2"
-  local repos_root="${REPOS_ROOT:-${HOME}/repos}"
+  # No ~/repos fallback (#459): an intent file in a stray tree would defeat
+  # the idempotency check it exists for.
+  local repos_root="${REPOS_ROOT:-}"
+  if [ -z "$repos_root" ]; then
+    echo "ERROR: REPOS_ROOT is not set — refusing to guess the intent directory" >&2
+    return 1
+  fi
   echo "${repos_root}/.ticket-auto/initiatives/${initiative_id}/.intents/${entity_key}.json"
 }
 
@@ -176,7 +184,7 @@ _planner_intent_file() {
 planner_record_intent() {
   local initiative_id="$1" phase="$2" entity_type="$3" entity_key="$4"
   local intent_file iso
-  intent_file=$(_planner_intent_file "$initiative_id" "$entity_key")
+  intent_file=$(_planner_intent_file "$initiative_id" "$entity_key") || return 1
   iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
   # Already recorded — skip
@@ -237,7 +245,7 @@ planner_entity_get_id() {
 planner_entity_mark_created() {
   local initiative_id="$1" entity_key="$2" linear_id="$3"
   local intent_file iso
-  intent_file=$(_planner_intent_file "$initiative_id" "$entity_key")
+  intent_file=$(_planner_intent_file "$initiative_id" "$entity_key") || return 1
   iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
   # Read existing intent, update with creation info

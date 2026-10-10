@@ -153,12 +153,20 @@ WHILE GRILL_RECOMMENDATION != "ready" AND round < --max-rounds AND --non-interac
     Fold answers into the assessment:
       - For each answered question, update the targeted dimension's status to
         "present" (if the answer is thorough) or "partial" (if partial).
-        Preserve the original evidence and gap text.
+        Update that dimension's `evidence` so it states the current intent with the
+        answer folded in — drop any statement the answer reverses — and narrow `gap`
+        to what is still missing. Never leave round-1 evidence that a later answer
+        contradicts.
         Only re-assess dimensions targeted by the round's questions (design D9).
       - Append each question + answer pair to a `resolved` array in the assessment,
         as `{question, dimension, why, round, answer}` (carry `question`/`dimension`/`why`
         over from the original question entry; `round` is the round it was answered in).
         `grill-render.sh` reads this array directly — field names must match exactly.
+      - If an answer overrides or reverses an earlier resolved answer (on any
+        dimension), add `"supersedes": [n, ...]` to the new entry, where each `n` is
+        the earlier entry's 1-based position in `resolved` (its `#` in the Resolved
+        Questions table). Never edit or delete the earlier entry — the renderer marks
+        it `SUPERSEDED by Qn` in both its dimension section and the table.
     Increment round.
     Update assessment.round = round.
     Re-run scoring (Step 4).
@@ -225,6 +233,12 @@ The rendered document follows a fixed section order (see `intent-document` capab
 ```
 
 The `## Intent Seal` block terminates the document. `**Content-Hash:**` is always the last non-empty line.
+
+Every dimension section (and Risks / Assumptions) ends with a **Clarified answers** list holding
+the `resolved` answers for that dimension, latest first, so a section always reads from its most
+recent answer. An answer named by a later entry's `supersedes` is kept as history but marked
+`SUPERSEDED by Qn` there and in the Resolved Questions table. Treat a superseded answer as
+rejected, never as current intent. All of it sits inside the hashed region.
 
 ## How downstream agents consume this
 
