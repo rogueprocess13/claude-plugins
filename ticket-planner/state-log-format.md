@@ -66,7 +66,7 @@ Each phase has one primary step. Agents may write additional `start`/`done` pair
 ### TicketGen
 `validate` — pre-creation dependency and spec validation
 `create-gate` / `team` — create-gate re-check, team resolution (`fail` only — no `done` line, per-ticket progress is `META|ticketgen|…` below)
-`verify` — post-creation verification (`planner_verify_tickets`). The **only** phase-named line TicketGen ever writes with status `done` — `fail` on a missing manifest, retried. Per-ticket generation progress (start/step/done) moved to `META|ticketgen|…` (planner-refinement-phase) so a verify failure can never hide behind an earlier `generate|done` line the way position derivation's "stop at the first done" rule used to let it. **Retired**: `dispatch-gate` — this phase no longer sets `state:execution` on the epic; see Refinement below
+`verify` — post-creation verification (`planner_verify_tickets`). The **only** phase-named line TicketGen ever writes with status `done` — `fail` on a missing manifest, retried. Per-ticket generation progress (start/step/done) moved to `META|ticketgen|…` (planner-refinement-phase) so a verify failure can never hide behind an earlier `generate|done` line the way position derivation's "stop at the first done" rule used to let it. **Retired**: `dispatch-gate` — this phase no longer stamps the epic manifest's `dispatch` flag (historically the `state:execution` label); see Refinement below
 
 ### Refinement
 Not an agent phase — driven by the dispatch loop as bash (`lib/planner-refinement.sh`), like Crosscheck. Writes no `start`/`fail` lines of its own; progress is `META|refinement|…` (see below) and the single terminal line:
