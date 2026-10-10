@@ -193,6 +193,35 @@ test_blocked_by_manifest_takes_precedence_over_missing_linear_api() {
   }
 }
 
+# GitHub #412: a blocker that completed with its PR still open is not Done
+# for detect_blocked_by; once merge-poll records the merge, it is.
+test_blocked_by_manifest_open_pr_not_resolved_until_merged() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+  _plog "$ws" "CRE-203" "IMPLEMENT" "implement" "done" "in progress"
+
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-203" "INIT-1" "bug" '["CRE-196"]' >/dev/null
+  _plog "$ws" "CRE-196" "META" "pr-created" "info" '{"pr":196,"url":null,"repo":"acme/repo"}'
+  _plog "$ws" "CRE-196" "META" "outcome" "info" "completed: STEP_6"
+  echo '{"kind":"merge","tid":"CRE-196","pr":196,"repo":"acme/repo","state":"open"}' >>"$ws/runs.jsonl"
+
+  local sev_open sev_merged
+  sev_open=$(REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$ws" detect_blocked_by "CRE-203" "$ws")
+  echo '{"kind":"merge","tid":"CRE-196","pr":196,"repo":"acme/repo","state":"merged"}' >>"$ws/runs.jsonl"
+  sev_merged=$(REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$ws" detect_blocked_by "CRE-203" "$ws")
+  rm -rf "$repos_root"
+
+  [ "$sev_open" = "0" ] || {
+    echo "expected severity 0 while the blocker's PR is open, got $sev_open"
+    return 1
+  }
+  [ "$sev_merged" = "1" ] || {
+    echo "expected severity 1 once the blocker's PR is merged, got $sev_merged"
+    return 1
+  }
+}
+
 # ── Tests: fleet_detect_all includes fleet_wide key ──────────────────────────────
 
 test_fleet_detect_all_includes_fleet_wide() {
@@ -446,6 +475,7 @@ _run "blocked_by_no_linear_api_graceful" test_blocked_by_no_linear_api
 _run "blocked_by_manifest_resolved" test_blocked_by_manifest_resolved
 _run "blocked_by_manifest_unresolved" test_blocked_by_manifest_unresolved
 _run "blocked_by_manifest_takes_precedence_over_missing_linear_api" test_blocked_by_manifest_takes_precedence_over_missing_linear_api
+_run "blocked_by_manifest_open_pr_not_resolved_until_merged" test_blocked_by_manifest_open_pr_not_resolved_until_merged
 _run "initiative_dispatch_manifest_finds_undispatched" test_initiative_dispatch_manifest_finds_undispatched
 _run "initiative_dispatch_manifest_all_dispatched_is_silent" test_initiative_dispatch_manifest_all_dispatched_is_silent
 _run "initiative_dispatch_manifest_skips_non_dispatched_epic" test_initiative_dispatch_manifest_skips_non_dispatched_epic

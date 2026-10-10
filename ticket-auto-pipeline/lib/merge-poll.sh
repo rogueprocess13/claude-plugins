@@ -67,12 +67,15 @@ merge_poll_candidates() {
 # Prints one `merge` event JSON object on stdout, or nothing on gh failure
 # (non-zero exit, timeout, or malformed JSON) — the caller must not append
 # on empty output, leaving the candidate eligible for the next sweep.
+# `base` (the PR's baseRefName, null when gh reports none) lets manifest-
+# read.sh's ticket_pipeline_merge_state confirm a merge landed on the branch
+# the ticket targeted — under an epic directive, the epic branch (#412).
 merge_poll_one() {
   local tid="$1" pr_num="$2" repo="$3"
   [ -n "$tid" ] && [ -n "$pr_num" ] && [ -n "$repo" ] || return 1
 
   local resp
-  resp=$(timeout 20 gh pr view "$pr_num" --repo "$repo" --json state,mergedAt,mergeCommit 2>/dev/null) || return 1
+  resp=$(timeout 20 gh pr view "$pr_num" --repo "$repo" --json state,mergedAt,mergeCommit,baseRefName 2>/dev/null) || return 1
   echo "$resp" | jq -e . >/dev/null 2>&1 || return 1
 
   local gh_state norm_state merged_at merge_sha
@@ -85,14 +88,17 @@ merge_poll_one() {
   esac
   merged_at=$(echo "$resp" | jq -r '.mergedAt // empty' 2>/dev/null) || true
   merge_sha=$(echo "$resp" | jq -r '.mergeCommit.oid // empty' 2>/dev/null) || true
+  local base_ref
+  base_ref=$(echo "$resp" | jq -r '.baseRefName // empty' 2>/dev/null) || true
 
   jq -nc \
     --arg tid "$tid" --argjson pr "$pr_num" --arg repo "$repo" --arg state "$norm_state" \
-    --arg merged_at "${merged_at:-}" --arg merge_sha "${merge_sha:-}" \
+    --arg merged_at "${merged_at:-}" --arg merge_sha "${merge_sha:-}" --arg base "${base_ref:-}" \
     '{
       kind: "merge", tid: $tid, pr: $pr, repo: $repo, state: $state,
       merged_at: (if $merged_at == "" then null else $merged_at end),
       merge_sha: (if $merge_sha == "" then null else $merge_sha end),
+      base: (if $base == "" then null else $base end),
       observed_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))
     }' 2>/dev/null
 }

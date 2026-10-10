@@ -1186,6 +1186,8 @@ detect_blocked_by() {
   blocked_by_json=$(get_ticket_manifest_field "$tid" blocked_by 2>/dev/null)
   [ -z "$blocked_by_json" ] && blocked_by_json='[]'
 
+  # Merge-aware (GitHub #412): a blocker whose PR is still open, closed
+  # unmerged, or of unknown merge state does not count as Done.
   while IFS= read -r blocker_id; do
     [ -z "$blocker_id" ] && continue
     ticket_pipeline_terminal_done "$blocker_id" "$workspace" && unblocked_count=$((unblocked_count + 1))

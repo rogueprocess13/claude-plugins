@@ -203,6 +203,61 @@ EOF
   echo "$last" | jq -e '.kind == "merge" and .tid == "CRE-10" and .state == "merged" and .merge_sha == "abc123"' >/dev/null
 }
 
+test_merge_poll_one_records_pr_base() {
+  _setup
+  cat >"$_ws/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo '{"state":"MERGED","mergedAt":"2026-09-02T00:00:00Z","mergeCommit":{"oid":"abc123"},"baseRefName":"epic/x"}'
+EOF
+  chmod +x "$_ws/bin/gh"
+  local with_base without_base
+  with_base=$(merge_poll_one "CRE-1" "42" "acme/repo")
+  _stub_gh_merged
+  without_base=$(merge_poll_one "CRE-1" "42" "acme/repo")
+  _teardown
+  echo "$with_base" | jq -e '.base == "epic/x"' >/dev/null &&
+    echo "$without_base" | jq -e '.base == null' >/dev/null
+}
+
+# GitHub #412 end to end: a run completed and left its PR for a human. The
+# periodic sweep (what fleetd's _merge_poll_sweep runs) keeps re-polling the
+# open PR; once the human merges, the sweep's merge event alone flips
+# ticket_pipeline_terminal_done for a dependent — no new pipeline run.
+test_sweep_records_human_merge_releasing_dependents() {
+  _setup
+  source "$LIB_DIR/manifest-read.sh"
+  local runs="$_ws/runs.jsonl" recent_ts
+  recent_ts=$(date -u -d "1 hour ago" +%Y-%m-%dT%H:%M:%SZ)
+  {
+    echo '2026-01-01T00:00:00Z|META|branch-context|info|base=develop;integration=;source=default;ticket=feat/x;uat-policy=per-ticket;merge-policy='
+    echo '2026-01-01T00:00:01Z|META|pr-created|info|{"pr":7,"url":"https://github.com/acme/repo/pull/7","repo":"acme/repo"}'
+    echo '2026-01-01T00:00:05Z|PR-REVIEW|merge-decision|done|skipped: pipeline autonomy=manual requires human merge'
+    echo '2026-01-01T00:00:09Z|META|outcome|info|completed: STEP_6'
+  } >"$_ws/CRE-20-pipeline.log"
+  echo "{\"kind\":\"run\",\"tid\":\"CRE-20\",\"run_id\":\"r1\",\"ended_at\":\"$recent_ts\",\"pr\":{\"pr\":7,\"url\":\"https://x\",\"repo\":\"acme/repo\"},\"observed_at\":\"$recent_ts\"}" >"$runs"
+
+  cat >"$_ws/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null,"baseRefName":"develop"}'
+EOF
+  chmod +x "$_ws/bin/gh"
+  MERGE_POLL_MIN_INTERVAL_SECS=0 merge_poll_sweep "$runs"
+  local rc_open=0
+  ticket_pipeline_terminal_done CRE-20 "$_ws" || rc_open=$?
+
+  cat >"$_ws/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo '{"state":"MERGED","mergedAt":"2026-09-02T00:00:00Z","mergeCommit":{"oid":"abc123"},"baseRefName":"develop"}'
+EOF
+  MERGE_POLL_MIN_INTERVAL_SECS=0 merge_poll_sweep "$runs"
+  local rc_merged=0
+  ticket_pipeline_terminal_done CRE-20 "$_ws" || rc_merged=$?
+  local n_merge
+  n_merge=$(grep -c '"kind":"merge"' "$runs" || true)
+  _teardown
+  [ "$rc_open" -ne 0 ] && [ "$rc_merged" -eq 0 ] && [ "$n_merge" = "2" ]
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Dispatcher
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -219,7 +274,9 @@ for fn in \
   test_sweep_old_open_pr_marked_stale_not_polled \
   test_sweep_unknown_repo_reported_once \
   test_sweep_gh_failure_emits_nothing_this_pass \
-  test_sweep_successful_poll_appends_merge_event_shape; do
+  test_sweep_successful_poll_appends_merge_event_shape \
+  test_merge_poll_one_records_pr_base \
+  test_sweep_records_human_merge_releasing_dependents; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

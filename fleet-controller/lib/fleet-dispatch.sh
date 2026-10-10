@@ -724,15 +724,27 @@ _fleet_dispatch_initiative_locked() {
       continue
     fi
 
-    local _mc_blocked_by_json _mc_is_blocked=false _mc_blocker_id
+    # Merge-aware (GitHub #412): a blocker whose run completed but left its
+    # PR for a human is not Done until merge-poll.sh records the merge —
+    # fleetd's periodic sweep does, so the next dispatch pass releases the
+    # dependent with no new pipeline run. ticket_pipeline_merge_state is the
+    # shared implementation behind ticket_pipeline_terminal_done; it is
+    # called directly here only to name WHY a blocker still blocks.
+    local _mc_blocked_by_json _mc_is_blocked=false _mc_blocker_id _mc_bstate
     _mc_blocked_by_json=$(get_ticket_manifest_field "$child_id" blocked_by 2>/dev/null)
     [ -z "$_mc_blocked_by_json" ] && _mc_blocked_by_json='[]'
     while IFS= read -r _mc_blocker_id; do
       [ -z "$_mc_blocker_id" ] && continue
-      if ticket_pipeline_terminal_done "$_mc_blocker_id" "$workspace"; then
-        echo "    blocked-by ${_mc_blocker_id} resolved (Done)"
+      if _mc_bstate=$(ticket_pipeline_merge_state "$_mc_blocker_id" "$workspace"); then
+        echo "    blocked-by ${_mc_blocker_id} resolved (Done, ${_mc_bstate})"
       else
-        echo "    blocked by ${_mc_blocker_id} (not yet Done) — skipping"
+        case "$_mc_bstate" in
+        open) echo "    blocked by ${_mc_blocker_id} (run completed, PR still open — awaiting merge) — skipping" ;;
+        closed) echo "    blocked by ${_mc_blocker_id} (PR closed unmerged — needs a human decision) — skipping" ;;
+        merged-other-base) echo "    blocked by ${_mc_blocker_id} (PR merged into a branch other than its recorded base — needs a human decision) — skipping" ;;
+        unknown) echo "    blocked by ${_mc_blocker_id} (run completed, PR merge state unknown — not released) — skipping" ;;
+        *) echo "    blocked by ${_mc_blocker_id} (not yet Done) — skipping" ;;
+        esac
         _mc_is_blocked=true
         break
       fi

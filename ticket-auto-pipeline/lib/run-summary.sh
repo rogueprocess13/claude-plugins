@@ -143,8 +143,46 @@ run_summary_json() {
     checkout_pr_num=$(grep '|PR-REVIEW|checkout-pr|done|' <<<"$window" 2>/dev/null | tail -1 | _rs_field5) || true
     if [ -n "$checkout_pr_num" ]; then
       pr_json=$(jq -nc --arg n "$checkout_pr_num" '{pr: ($n | tonumber? // null), url: null, repo: null}' 2>/dev/null) || pr_json="null"
+      # A resumed run that re-entered PR-REVIEW without re-running VERIFY
+      # only has checkout-pr in its window. Borrow url/repo from an earlier
+      # pr-created line for the same PR, so merge-poll.sh can poll it rather
+      # than recording `unknown-repo` once and never looking again — a
+      # blocked-by dependent waits on that merge truth (GitHub #412).
+      local _rs_earlier
+      _rs_earlier=$(grep '|META|pr-created|info|' "$log_file" 2>/dev/null | _rs_field5 |
+        jq -cR --arg n "$checkout_pr_num" 'fromjson? | objects | select(((.pr // "") | tostring) == $n and .repo != null)' 2>/dev/null |
+        tail -1) || _rs_earlier=""
+      [ -n "$_rs_earlier" ] && pr_json="$_rs_earlier"
     else
       pr_json="null"
+      # The run's window names no PR, but an earlier, never-completed run of
+      # this ticket opened one (e.g. it crashed after PR-REVIEW and this run
+      # resumed at MAINTENANCE). That PR is still this run's PR: without it
+      # the run event carries pr:null, merge-poll never polls it, and a
+      # dependent waiting on its merge stays blocked forever (GitHub #412).
+      # A PR that already belongs to an earlier COMPLETED run is not
+      # re-attributed.
+      if declare -f ticket_pipeline_pr_ref >/dev/null 2>&1; then
+        local _rs_ref _rs_ref_ln _rs_start _rs_done_between
+        _rs_ref=$(ticket_pipeline_pr_ref "$log_file" 2>/dev/null) || _rs_ref=""
+        if [ -n "$_rs_ref" ]; then
+          _rs_ref_ln=$(printf '%s\n' "$_rs_ref" | cut -f1)
+          _rs_start=$(grep -n '|META|run-id|info|' "$log_file" 2>/dev/null | tail -1 | cut -d: -f1) || _rs_start=""
+          _rs_done_between=$(awk -v a="$_rs_ref_ln" -v b="${_rs_start:-0}" \
+            'NR > a && NR < b && /\|META\|outcome\|info\|completed:/ {c++} END {print c+0}' "$log_file" 2>/dev/null) || _rs_done_between=1
+          if [ -n "$_rs_start" ] && [ "$_rs_done_between" = "0" ]; then
+            local _rs_num _rs_repo
+            _rs_num=$(printf '%s\n' "$_rs_ref" | cut -f2)
+            _rs_repo=$(printf '%s\n' "$_rs_ref" | cut -f3)
+            pr_json=$(grep '|META|pr-created|info|' "$log_file" 2>/dev/null | _rs_field5 |
+              jq -cR --arg n "$_rs_num" 'fromjson? | objects | select(((.pr // "") | tostring) == $n)' 2>/dev/null | tail -1) || pr_json=""
+            if [ -z "$pr_json" ]; then
+              pr_json=$(jq -nc --arg n "$_rs_num" --arg repo "$_rs_repo" \
+                '{pr: ($n | tonumber? // null), url: null, repo: (if $repo == "" then null else $repo end)}' 2>/dev/null) || pr_json="null"
+            fi
+          fi
+        fi
+      fi
     fi
   fi
   [ -n "$pr_json" ] || pr_json="null"

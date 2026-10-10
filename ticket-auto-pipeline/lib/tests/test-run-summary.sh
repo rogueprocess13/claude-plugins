@@ -318,6 +318,76 @@ EOF
   }
 }
 
+# GitHub #412: merge-poll can only poll a PR whose repo the run event names.
+# A resumed run that re-entered PR-REVIEW without re-running VERIFY has only
+# checkout-pr in its window — the repo comes from the earlier pr-created.
+test_json_checkout_pr_borrows_repo_from_earlier_pr_created() {
+  _setup
+  local log="$_ws/CRE-7-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|META|run-id|info|{"run_id":"CRE-7-a","gen":null,"trigger":"manual","pid":1}
+2026-09-01T00:00:02Z|META|pr-created|info|{"pr":42,"url":"https://github.com/acme/repo/pull/42","repo":"acme/repo"}
+2026-09-01T00:00:03Z|META|run-id|info|{"run_id":"CRE-7-b","gen":null,"trigger":"manual","pid":2}
+2026-09-01T00:00:04Z|PR-REVIEW|checkout-pr|done|42
+2026-09-01T00:00:05Z|META|outcome|info|completed: STEP_6
+EOF
+  local json
+  json=$(run_summary_json "CRE-7" "$log" 0)
+  _teardown
+  echo "$json" | jq -e '.pr.pr == 42 and .pr.repo == "acme/repo"' >/dev/null || {
+    echo "expected pr 42 with repo acme/repo, got $(echo "$json" | jq -c '.pr')"
+    return 1
+  }
+}
+
+# A run whose window names no PR still owns the PR an earlier, never-
+# completed run of the same ticket opened (crash after PR-REVIEW, resumed at
+# MAINTENANCE) — otherwise merge-poll never polls it and dependents stay
+# blocked forever.
+test_json_inherits_pr_from_unfinished_earlier_run() {
+  _setup
+  local log="$_ws/CRE-8-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|META|run-id|info|{"run_id":"CRE-8-a","gen":null,"trigger":"manual","pid":1}
+2026-09-01T00:00:02Z|META|pr-created|info|{"pr":43,"url":"https://github.com/acme/repo/pull/43","repo":"acme/repo"}
+2026-09-01T00:00:03Z|PR-REVIEW|merge-decision|done|skipped: pipeline autonomy=manual requires human merge
+2026-09-01T00:00:04Z|META|run-id|info|{"run_id":"CRE-8-b","gen":null,"trigger":"manual","pid":2}
+2026-09-01T00:00:05Z|MAINTENANCE|document|done|ok
+2026-09-01T00:00:06Z|META|outcome|info|completed: STEP_6
+EOF
+  local json
+  json=$(run_summary_json "CRE-8" "$log" 0)
+  _teardown
+  echo "$json" | jq -e '.pr.pr == 43 and .pr.repo == "acme/repo"' >/dev/null || {
+    echo "expected inherited pr 43, got $(echo "$json" | jq -c '.pr')"
+    return 1
+  }
+}
+
+# ...but a PR that already belonged to an earlier COMPLETED run is not
+# re-attributed to a later no-PR run.
+test_json_does_not_inherit_pr_from_completed_earlier_run() {
+  _setup
+  local log="$_ws/CRE-9-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|META|run-id|info|{"run_id":"CRE-9-a","gen":null,"trigger":"manual","pid":1}
+2026-09-01T00:00:02Z|META|pr-created|info|{"pr":44,"url":"https://github.com/acme/repo/pull/44","repo":"acme/repo"}
+2026-09-01T00:00:03Z|META|outcome|info|completed: STEP_6
+2026-09-01T00:00:04Z|META|run-id|info|{"run_id":"CRE-9-b","gen":null,"trigger":"manual","pid":2}
+2026-09-01T00:00:06Z|META|outcome|info|completed: STEP_6
+EOF
+  local json
+  json=$(run_summary_json "CRE-9" "$log" 0)
+  _teardown
+  echo "$json" | jq -e '.pr == null' >/dev/null || {
+    echo "expected pr null, got $(echo "$json" | jq -c '.pr')"
+    return 1
+  }
+}
+
 test_json_token_split_summed_across_phases() {
   _setup
   local log="$_ws/CRE-6-pipeline.log"
@@ -488,6 +558,9 @@ for fn in \
   test_json_human_hold_requested_scoped_to_current_run_window \
   test_json_human_hold_invalid_parse_status_carried \
   test_json_pr_created_beats_checkout_pr \
+  test_json_checkout_pr_borrows_repo_from_earlier_pr_created \
+  test_json_inherits_pr_from_unfinished_earlier_run \
+  test_json_does_not_inherit_pr_from_completed_earlier_run \
   test_json_token_split_summed_across_phases \
   test_json_empty_window_is_valid_json_with_zero_counters \
   test_json_readiness_stops_counts_gate_stop_codes_and_plan_missing_line \

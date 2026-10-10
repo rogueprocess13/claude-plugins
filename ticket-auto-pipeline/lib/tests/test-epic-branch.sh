@@ -1204,6 +1204,54 @@ test_epic_branch_children_done_manifest_path_not_ready() {
 }
 _run "epic_branch_children_done: manifest path, missing child log is not-ready" test_epic_branch_children_done_manifest_path_not_ready
 
+# GitHub #412, epic path. Under `UAT Policy: epic` each child routes
+# Review → Done and every directive carries a Merge Policy, so each child's
+# run completes with its PR into the epic branch left for a human. The epic
+# is not integration-ready while any child PR is still open; once every
+# child PR is recorded merged into the epic branch it is — no UAT step on
+# the children is needed, so nothing waits on an acceptance that only
+# happens at the epic level (no deadlock).
+test_epic_branch_children_done_waits_for_child_pr_merge() {
+  local repos_root log_dir
+  repos_root=$(mktemp -d)
+  log_dir=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" write_epic_manifest "CRE-100" "epic/x" "develop" "manual" '["CRE-1","CRE-2"]' >/dev/null
+
+  local c
+  for c in 1 2; do
+    {
+      echo "2026-01-01T00:00:00Z|META|branch-context|info|base=epic/x;integration=epic/x;source=epic-directive;ticket=feat/CRE-${c};uat-policy=epic;merge-policy=manual"
+      echo "2026-01-01T00:00:01Z|META|pr-created|info|{\"pr\":${c}0,\"url\":null,\"repo\":\"acme/repo\"}"
+      echo "2026-01-01T00:00:05Z|PR-REVIEW|merge-decision|done|skipped: epic Branch Directive Merge Policy: manual requires human merge"
+      echo "2026-01-01T00:00:09Z|META|outcome|info|completed: STEP_6"
+    } >"$log_dir/CRE-${c}-pipeline.log"
+  done
+  echo '{"kind":"merge","tid":"CRE-1","pr":10,"repo":"acme/repo","state":"merged","base":"epic/x"}' >>"$log_dir/runs.jsonl"
+  echo '{"kind":"merge","tid":"CRE-2","pr":20,"repo":"acme/repo","state":"open","base":"epic/x"}' >>"$log_dir/runs.jsonl"
+
+  local rc_open=0 rc_merged=0
+  REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$log_dir" \
+    epic_branch_children_done "CRE-100" 2>/dev/null || rc_open=$?
+
+  echo '{"kind":"merge","tid":"CRE-2","pr":20,"repo":"acme/repo","state":"merged","base":"epic/x"}' >>"$log_dir/runs.jsonl"
+  REPOS_ROOT="$repos_root" FLEET_PIPELINE_LOG_DIR="$log_dir" \
+    epic_branch_children_done "CRE-100" 2>/dev/null || rc_merged=$?
+
+  rm -rf "$repos_root" "$log_dir"
+
+  [ "$rc_open" -ne 0 ] || {
+    echo "  expected not-ready while a child's PR into the epic branch is still open" >&2
+    return 1
+  }
+  [ "$rc_merged" -eq 0 ] || {
+    echo "  expected ready once every child PR is merged into the epic branch, got $rc_merged" >&2
+    return 1
+  }
+  return 0
+}
+_run "epic_branch_children_done: waits for child PRs to merge into the epic branch (#412)" test_epic_branch_children_done_waits_for_child_pr_merge
+
 # tracker-planner-and-fallback-cutover (3.4, 3.12): the
 # TICKET_LOCAL_MANIFEST_DISABLE kill switch itself is retired — with no live
 # fallback left anywhere, it could only make every manifest read report

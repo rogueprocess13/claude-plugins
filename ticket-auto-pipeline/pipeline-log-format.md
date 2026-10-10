@@ -521,7 +521,7 @@ Four event kinds, one writer each, folded by consumers on `tid`/`run_id`:
 
 # merge — lib/merge-poll.sh, the single merge-truth implementation. One or
 # more per PR as state changes (open → merged/closed/stale/unknown-repo).
-{"kind":"merge","tid":"CRE-40","pr":42,"repo":"acme/repo","state":"merged","merged_at":"2026-09-05T18:20:00Z","merge_sha":"abc123","observed_at":"2026-09-05T18:20:05Z"}
+{"kind":"merge","tid":"CRE-40","pr":42,"repo":"acme/repo","state":"merged","merged_at":"2026-09-05T18:20:00Z","merge_sha":"abc123","base":"develop","observed_at":"2026-09-05T18:20:05Z"}
 
 # human — lib/pipeline-finalize.sh, once per run when LINEAR_API_KEY is set.
 # approved_by/approved_at come from Linear's own IssueHistory, not inferred
@@ -555,7 +555,24 @@ caller's exit code or touches the pipeline log.
 once its run is older than `MERGE_POLL_MAX_AGE_DAYS` (default 14) with no
 terminal state yet — converting "we stopped checking" into an honest event
 instead of silence. A `pr` with no resolvable `repo` gets `state:"unknown-repo"`
-exactly once, never retried.
+exactly once, never retried. `base` (the PR's `baseRefName`, null when `gh`
+reports none or on events written before the field existed) is additive.
+
+**Merge events gate dependents (GitHub #412).** `manifest-read.sh`'s
+`ticket_pipeline_merge_state` — behind `ticket_pipeline_terminal_done`, the one
+check fleet dispatch's blocked-by resolution, `detect_blocked_by` and
+`epic_branch_children_done` all use — treats a `completed:*` run whose log names
+a PR (`META|pr-created`, else `PR-REVIEW|checkout-pr`) as finished only once that
+PR is merged: a `merge` event here with `state:"merged"` (and, when both sides
+are known, `base` equal to the log's recorded `branch-context` `base=`), or —
+when `gh` observed nothing decisive — the log's own `PR-REVIEW|merge-decision|done|merged`
+or a human `META|manual-merge`/`META|pr-merged` line after the PR reference. An
+`open` or `closed` observation, or no usable evidence at all (`stale`,
+`unknown-repo`, no events), keeps dependents blocked. A completed run with no
+PR is finished, as before. A `run` event's `pr` falls back to the whole log
+when its window names none (a resumed run inherits an earlier, never-completed
+run's PR) and borrows `repo` from an earlier `pr-created` for a checkout-pr-only
+window, so the periodic sweep can poll the PR the dependent is waiting on.
 
 `human_hold_requested`/`human_hold_parse_status` (human-hold-protocol task 8.1) are
 scoped to the same run window as the counters above: `true`/`"ok"` when the run's own
