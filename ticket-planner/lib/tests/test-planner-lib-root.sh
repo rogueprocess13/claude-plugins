@@ -310,6 +310,99 @@ else
   fail "Specify prompt contains literal: ## Verification Notes" "not found"
 fi
 
+# ── Test 12: version order is numeric, not textual (issue #454) ────────────────
+#
+# A text sort puts 0.9.0 after 0.15.1, so a cache holding several installs
+# resolved to the stale 0.9.0. Every resolver below must pick by version.
+
+echo "--- Test 12: multi-digit versions resolve by version order (#454) ---"
+
+h12="${TMPDIR}/home12"
+c12="${h12}/.claude/plugins/cache/willard-pro-claude-plugins"
+for v in 0.9.0 0.14.0 0.15.0 0.15.1; do
+  mkdir -p "${c12}/ticket-planner/${v}/lib"
+  touch "${c12}/ticket-planner/${v}/lib/planner-state.sh"
+  cp "${LIB_DIR}/planner-lib-root.sh" "${c12}/ticket-planner/${v}/lib/planner-lib-root.sh"
+done
+for v in 0.9.4 0.62.7; do
+  mkdir -p "${c12}/ticket-auto-pipeline/${v}/lib"
+  touch "${c12}/ticket-auto-pipeline/${v}/lib/branch-directive-check.sh"
+done
+
+# 12a: no installed_plugins.json — the version-aware cache scan picks 0.15.1.
+got=$(env -u CLAUDE_PLUGIN_ROOT HOME="$h12" bash -c \
+  "source '${LIB_DIR}/planner-lib-root.sh'; planner_resolve_lib_root")
+if [ "$got" = "${c12}/ticket-planner/0.15.1" ]; then
+  pass "cache scan picks 0.15.1 over 0.9.0"
+else
+  fail "cache scan picks 0.15.1 over 0.9.0" "got '$got'"
+fi
+
+# 12b: cross-plugin resolvers share the same lookup (0.62.7 over 0.9.4).
+got=$(env -u CLAUDE_PLUGIN_ROOT HOME="$h12" bash -c \
+  "source '${LIB_DIR}/branch-directive-gen.sh'; _resolve_branch_directive_checker")
+if [ "$got" = "${c12}/ticket-auto-pipeline/0.62.7/lib/branch-directive-check.sh" ]; then
+  pass "cross-plugin resolver picks ticket-auto-pipeline 0.62.7 over 0.9.4"
+else
+  fail "cross-plugin resolver picks 0.62.7 over 0.9.4" "got '$got'"
+fi
+
+# 12c: installed_plugins.json wins over a newer cache directory.
+cat >"${h12}/.claude/plugins/installed_plugins.json" <<JSON
+{
+  "version": 2,
+  "plugins": {
+    "ticket-planner@willard-pro-claude-plugins": [
+      {
+        "scope": "user",
+        "installPath": "${c12}/ticket-planner/0.15.0",
+        "version": "0.15.0"
+      }
+    ]
+  }
+}
+JSON
+got=$(env -u CLAUDE_PLUGIN_ROOT HOME="$h12" bash -c \
+  "source '${LIB_DIR}/planner-lib-root.sh'; planner_resolve_lib_root")
+if [ "$got" = "${c12}/ticket-planner/0.15.0" ]; then
+  pass "installed_plugins.json installPath wins over the cache scan"
+else
+  fail "installed_plugins.json installPath wins" "got '$got'"
+fi
+
+# 12d: SKILL.md's bootstrap (run verbatim) honours installPath, then version order.
+bootstrap=$(awk '/^PLANNER_LIB_ROOT_SH=\$\(sed /{on=1} on{print} on && /skills\/lib\/planner-lib-root.sh"$/{exit}' \
+  "${PLUGIN_ROOT}/skills/ticket-planner/SKILL.md")
+if [ -z "$bootstrap" ]; then
+  fail "SKILL.md bootstrap block found" "could not extract it"
+else
+  got=$(HOME="$h12" bash -c "${bootstrap}"$'\n''echo "$PLANNER_LIB_ROOT_SH"')
+  if [ "$got" = "${c12}/ticket-planner/0.15.0/lib/planner-lib-root.sh" ]; then
+    pass "SKILL.md bootstrap follows installed_plugins.json"
+  else
+    fail "SKILL.md bootstrap follows installed_plugins.json" "got '$got'"
+  fi
+  rm -f "${h12}/.claude/plugins/installed_plugins.json"
+  got=$(HOME="$h12" bash -c "${bootstrap}"$'\n''echo "$PLANNER_LIB_ROOT_SH"')
+  if [ "$got" = "${c12}/ticket-planner/0.15.1/lib/planner-lib-root.sh" ]; then
+    pass "SKILL.md bootstrap picks 0.15.1 over 0.9.0 without installed_plugins.json"
+  else
+    fail "SKILL.md bootstrap picks 0.15.1 over 0.9.0" "got '$got'"
+  fi
+fi
+
+# 12e: a stale installPath (directory gone) falls back to the version scan.
+cat >"${h12}/.claude/plugins/installed_plugins.json" <<JSON
+{"version":2,"plugins":{"ticket-planner@m":[{"installPath":"${c12}/ticket-planner/9.9.9"}]}}
+JSON
+got=$(env -u CLAUDE_PLUGIN_ROOT HOME="$h12" bash -c \
+  "source '${LIB_DIR}/planner-lib-root.sh'; planner_resolve_lib_root")
+if [ "$got" = "${c12}/ticket-planner/0.15.1" ]; then
+  pass "a stale installPath falls back to the version-ordered scan"
+else
+  fail "stale installPath falls back" "got '$got'"
+fi
+
 echo ""
 echo "=== planner-lib-root.sh: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]

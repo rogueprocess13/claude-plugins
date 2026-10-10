@@ -18,7 +18,7 @@ Prescan uses its own repo-scoped log at `~/.claude/logs/prescan-<repo-slug>.log`
 ```bash
 mkdir -p "$HOME/.claude/logs"
 PRESCAN_LOG="$HOME/.claude/logs/prescan-<repo-slug>.log"
-_plog() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|$1|$2|$3|$4" >> "$PRESCAN_LOG"; }
+_plog() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|${1}|${2}|${3}|${4}" >> "$PRESCAN_LOG"; }
 ```
 
 Run the `mkdir -p` once, before the first `_plog` call. Without it, `_plog`'s `>>` redirect fails silently against a missing directory and every log line is lost.
@@ -57,8 +57,8 @@ fi
 WIKI_ROOT="${WIKI_ROOT:-$(grep 'WIKI_ROOT:' "$HOME/.claude/CLAUDE.md" 2>/dev/null | head -1 | sed 's/.*WIKI_ROOT: *//' || true)}"
 
 # Enumerate repos: if user passed a path, use it; otherwise find all repos
-if [ -n "${1:-}" ] && [ -d "$1" ]; then
-  REPOS=("$1")
+if [ -n "${1:-}" ] && [ -d "${1}" ]; then
+  REPOS=("${1}")
 else
   REPOS=()
   while IFS= read -r -d '' dir; do
@@ -69,7 +69,7 @@ fi
 
 For each repo, derive the slug:
 ```bash
-_derive_slug() { basename "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g'; }
+_derive_slug() { basename "${1}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g'; }
 ```
 
 ---
