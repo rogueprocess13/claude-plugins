@@ -17,6 +17,10 @@ _CONFIG_LIB="$(dirname "${BASH_SOURCE[0]}")/config.sh"
 _EH_LIB="$(dirname "${BASH_SOURCE[0]}")/error-handler.sh"
 [ -f "$_EH_LIB" ] && source "$_EH_LIB"
 
+# claude_md_field — the shared CLAUDE.md field grammar resolve_uat_url uses.
+_CMF_LIB="$(dirname "${BASH_SOURCE[0]}")/claude-md-field.sh"
+[ -f "$_CMF_LIB" ] && source "$_CMF_LIB"
+
 LINEAR_API_URL="${LINEAR_API_URL:-https://api.linear.app/graphql}"
 
 # ── Response shape contract (tracker-client-consolidation) ──────────────────
@@ -928,9 +932,9 @@ resolve_uat_url() {
   [ -f "$claude_md" ] || return 1
 
   local val=""
-  # Anchored form first (the authoritative extraction env-check.sh uses),
-  # then the looser inline form it also accepts.
-  val=$(grep -oP '^`?UAT_URL`?\s*[=:]\s*`?\K[^`\s]+' "$claude_md" 2>/dev/null | head -1 | tr -d ' ' || true)
+  # Anchored form first (claude_md_field — the grammar every CLAUDE.md reader
+  # shares), then the looser inline form this resolver also accepts.
+  val=$(claude_md_field "$claude_md" UAT_URL || true)
   if [ -z "$val" ]; then
     val=$(grep -oP 'UAT_URL[=:]\s*\K\S+' "$claude_md" 2>/dev/null | head -1 | tr -d '`' | tr -d ' ' || true)
   fi
