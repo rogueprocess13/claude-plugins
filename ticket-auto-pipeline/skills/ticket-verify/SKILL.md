@@ -307,7 +307,7 @@ done
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|worktree-setup|done|worktrees ready for ${_branch}" >> "$LOG_FILE"
 ```
 
-Each resolved path is exported as `VERIFY_REPO_PATH_<SERVICE>` (service name upper-cased, `-`→`_` — e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`). **If `{TICKETS_ROOT}/env-start.sh` (or this workspace's equivalent) accepts per-service repo path overrides, pass these through in Step 1.6b so the stack builds and runs from the isolated checkout instead of the shared clone.** `env-start.sh` lives in the consuming workspace, not this plugin, so whether it currently reads these is unknown here — check deterministically rather than guessing:
+Each resolved path is exported as `VERIFY_REPO_PATH_<SERVICE>` (service name upper-cased, `-`→`_` — e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`). That export only lives as long as this block's shell — **Step 1.6b re-derives the same values with `verify_worktree_exports` in the shell that actually runs `env-start.sh`**, so the stack can build and run from the isolated checkout instead of the shared clone. Each verify worktree also gets the primary checkout's gitignored env files (`worker/.env`, `.env.local`, ...) mirrored in, with relative `*_DIR`/`*_PATH`/`*_ROOT` values pinned to the primary checkout — the same `_mirror_gitignored_env_files` implement worktrees use (#408). `env-start.sh` lives in the consuming workspace, not this plugin, so whether it currently reads these is unknown here — check deterministically rather than guessing:
 
 ```bash
 if ! grep -q "VERIFY_REPO_PATH" "{TICKETS_ROOT}/env-start.sh" 2>/dev/null; then
@@ -315,21 +315,27 @@ if ! grep -q "VERIFY_REPO_PATH" "{TICKETS_ROOT}/env-start.sh" 2>/dev/null; then
 fi
 ```
 
-This is not a blocking condition — proceed either way.
+This warning alone is not a blocking condition — proceed. Step 1.6b's served-checkout check is what decides whether the running stack is actually this ticket's code.
 
 ### 1.6b — Run env-start.sh (BE + FE)
 
-Always start all services including the gateway FE. `env-start.sh` skips anything already running. If it accepts per-service repo path overrides, pass the `VERIFY_REPO_PATH_<SERVICE>` values exported in 1.6a4 so it builds/runs from the isolated worktrees.
+Always start all services including the gateway FE. `env-start.sh` skips anything already running. Every invocation runs in **one** bash block together with `verify_worktree_exports`, which re-exports `VERIFY_TICKET_ID` and each `VERIFY_REPO_PATH_<REPO>` from 1.6a4 — a separate block would start `env-start.sh` without them (shell state does not carry over between blocks), and it would serve the primary checkout.
+
+**env-start.sh contract** (implemented in the consuming workspace, not this plugin): when `VERIFY_REPO_PATH_<REPO>` is set, build and serve that repo from that path instead of `REPOS_ROOT/<repo>`, and restart a service that is already running from a different directory rather than skipping it.
 
 If no specific affected services were detected in 1.6a (or ticket dir missing):
 
 ```bash
+source "$HOME/.claude/skills/lib/verify-worktree.sh"
+eval "$(verify_worktree_exports "{TICKET-ID}")"
 bash {TICKETS_ROOT}/env-start.sh
 ```
 
 If specific affected services were detected and the ticket dir exists, restart only those plus the FE:
 
 ```bash
+source "$HOME/.claude/skills/lib/verify-worktree.sh"
+eval "$(verify_worktree_exports "{TICKET-ID}")"
 bash {TICKETS_ROOT}/env-start.sh --restart {affected-services} gateway-fe
 ```
 
@@ -339,6 +345,33 @@ Block until the script exits. If it exits non-zero, release the verify lock and 
 source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
 verify_lock_release
 ```
+
+**Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from — a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, resolve the process listening on `LOCAL_URL`'s port and compare its checkout with this ticket's verify worktrees:
+
+```bash
+source "$HOME/.claude/skills/lib/config.sh" 2>/dev/null || true
+source "$HOME/.claude/skills/lib/verify-worktree.sh"
+_port=$(verify_url_port "{LOCAL_URL}") || _port=""
+_served_rc=0
+_served_msg=$(verify_served_worktree_check "{TICKET-ID}" "$_port" 2>&1) || _served_rc=$?
+_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+case "$_served_rc" in
+0) echo "${_ts}|VERIFY|served-worktree|done|${_served_msg}" >> "$LOG_FILE" ;;
+1)
+  if [ "${VERIFY_SERVED_WORKTREE_ENFORCE:-true}" = "true" ]; then
+    echo "${_ts}|META|gate-stop|fail|VERIFY_SERVED_WRONG_WORKTREE — ${_served_msg}" >> "$LOG_FILE"
+    echo "ticket-verify: the dev server is not serving this ticket's code — ${_served_msg}. env-start.sh must serve VERIFY_REPO_PATH_<REPO> (see the contract above)." >&2
+    source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
+    verify_lock_release
+    exit 1
+  fi
+  echo "${_ts}|META|gate-warn|warn|VERIFY_SERVED_WRONG_WORKTREE — ${_served_msg} (VERIFY_SERVED_WORKTREE_ENFORCE=false)" >> "$LOG_FILE"
+  ;;
+*) echo "${_ts}|VERIFY|served-worktree|skip|${_served_msg}" >> "$LOG_FILE" ;;
+esac
+```
+
+Exit codes: `0` served from this ticket's verify worktree (or a clean checkout of the same repo at the same commit), `1` served from a checkout of a repo under test on a different commit or with uncommitted changes — gate-stop `VERIFY_SERVED_WRONG_WORKTREE`, `3` cannot tell (no visible listener, container-served port, or the served repo is not one this ticket touches) — logged as `skip`, proceed. An operator can downgrade the gate-stop to a `gate-warn` with `VERIFY_SERVED_WORKTREE_ENFORCE=false`. Run this check for `live-backend` mode too.
 
 ---
 
@@ -914,9 +947,17 @@ Verification passed on localhost — the implementation is confirmed working. No
    fi
    ```
 3. Capture the PR URL(s).
-4. Delegate to the flow executor. `implement-complete` carries no `verdict_gate` (it only
-   opens code review — it is not a Done/UAT-reaching trigger), so no exit-11 branch applies
-   here:
+4. **If `--from-auto` is present: skip this item entirely** and go to item 5. ticket-auto's
+   router owns `implement-complete` in that mode — it fires it itself right after IMPLEMENT
+   (STEP_4's post-spawn `flow_trigger`, and again after every re-implement in the verify-retry
+   and pr-iterate loops), so the ticket is already in `Review` by the time VERIFY runs. A second
+   call here is not a harmless no-op: `flow.sh` logs `META|flow-warn|info|ILLEGAL_TRANSITION …
+   from Review` and still advances `rev` and emits a duplicate `implement-completed` event to
+   the outbox (#415).
+
+   **Standalone runs only (no `--from-auto`):** delegate to the flow executor. `implement-complete`
+   carries no `verdict_gate` (it only opens code review — it is not a Done/UAT-reaching trigger),
+   so no exit-11 branch applies here:
    ```
    /ticket-flow {TICKET-ID} implement-complete
    _rc=$?
@@ -926,7 +967,7 @@ Verification passed on localhost — the implementation is confirmed working. No
      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: implement-complete" >> {LOG_FILE}
    fi
    ```
-   This moves state → `Review` and removes `approved`.
+   This moves state → `Review` and clears the manifest `approved` fact.
 
 5. Append to `notes.md`:
    ```markdown
@@ -1326,7 +1367,7 @@ information, and any consumer must then fall back to whole-run classification.
 - **Session reuse:** If the browser is already open and logged in at the correct environment, skip Step 3b. Detect this from the snapshot — if the nav shows a user name, proceed directly to Step 4.
 - **Snapshot verbosity:** Trim snapshots to the relevant component subtree in all reports. Full snapshots can be hundreds of lines — include only what is needed to understand the failure.
 - **Multiple failing criteria:** If more than one criterion fails, report all of them in 7b and 7c. The WHAT_FAILED and SNAPSHOT_EXCERPT should cover the first failure point; list subsequent failures under a `ADDITIONAL_FAILURES:` key in the brief.
-- **Scope:** This skill does not modify source code. It posts a verification comment to Linear on both pass and fail. On UAT fail it also triggers `uat-fail` (state → `Ready`, label `rejected`). Local pass triggers `implement-complete` (state → `Review`). The business partner handles the final UAT → Done transition manually.
+- **Scope:** This skill does not modify source code. It posts a verification comment to Linear on both pass and fail. On UAT fail it also triggers `uat-fail` (state → `Ready`, label `rejected`). Local pass triggers `implement-complete` (state → `Review`) on standalone runs only — under `--from-auto` the ticket-auto router has already fired it. The business partner handles the final UAT → Done transition manually.
 - **REMEDIATION_BRIEF format is canonical** — do not reformat the delimiter lines or key names.
 - **Build-only mode:** tickets with no UI/API surface (root parent-POM changes, dependency-version bumps, build-plugin config) skip every browser step (1.6, 1.7a/1.7b, 3, 4, 4b) and instead run the affected modules' build commands directly, evaluating pass/fail on exit codes and output rather than snapshots. Detection mirrors `gate-check.sh`'s Check 2.6 classification so both phases agree on ticket shape. The REMEDIATION_BRIEF and pass/fail report keep their canonical field names — `CONSOLE_ERRORS`/`SNAPSHOT_EXCERPT`/`CURRENT_URL` just carry build diagnostics instead of browser ones (see Step 7a).
 - **Live-backend mode:** tickets with no UI but a genuine live-system requirement (service registration, downstream-failure/circuit-breaker behaviour, inter-service calls) skip the login/navigation-specific steps (1.7a/1.7b, 3, 4, 4b) but — unlike build-only — do **not** skip Step 1.6: `env-start.sh` must bring the real services up, because the check is against a running system, not a compiled artifact. Verification runs via `env-status.sh` reads and direct `curl`/API calls (Step 4c-live) rather than a browser session or a build command. Exists because the browser/build-only split has no bucket for "running backend, no UI" — misclassifying these as build-only silently skips the actual check (nothing to compile), and misclassifying them as browser (the zero-signal default) sends the agent looking for a login page that isn't part of the AC.

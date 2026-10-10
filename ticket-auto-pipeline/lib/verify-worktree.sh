@@ -26,6 +26,8 @@
 #   source lib/verify-worktree.sh
 #   verify_worktree_gc                                          # opportunistic TTL sweep
 #   path=$(ensure_verify_worktree "CRE-123" "/path/to/repo" "feat/CRE-123-fix")
+#   eval "$(verify_worktree_exports "CRE-123")"                 # env-start.sh contract
+#   verify_served_worktree_check "CRE-123" "$(verify_url_port "$LOCAL_URL")"
 #   release_verify_worktree "CRE-123"
 #   verify_worktree_gc
 
@@ -34,6 +36,21 @@ if ! declare -f verify_lock_status >/dev/null 2>&1; then
   if [ -n "$_verify_worktree_lib_dir" ] && [ -f "$_verify_worktree_lib_dir/verify-lock.sh" ]; then
     # shellcheck disable=SC1091
     source "$_verify_worktree_lib_dir/verify-lock.sh" 2>/dev/null || true
+  fi
+  unset _verify_worktree_lib_dir
+fi
+
+# Gitignored env-file mirroring (worker/.env, .env.local, ...) is shared with
+# implement's lib/worktree.sh, including #408's relative-path pinning, so a
+# verify worktree carries the same runtime config an implement worktree
+# would. Without it a dev server started from the verify worktree silently
+# runs with missing config — and the reuse path's `clean -fdx` wipes any
+# earlier copy on every resync.
+if ! declare -f _mirror_gitignored_env_files >/dev/null 2>&1; then
+  _verify_worktree_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+  if [ -n "$_verify_worktree_lib_dir" ] && [ -f "$_verify_worktree_lib_dir/worktree.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$_verify_worktree_lib_dir/worktree.sh" 2>/dev/null || true
   fi
   unset _verify_worktree_lib_dir
 fi
@@ -60,6 +77,15 @@ _verify_worktree_mtime() {
 # reality regardless of git's incidental side effects.
 _verify_worktree_touch() {
   touch "$1" 2>/dev/null || true
+}
+
+# Mirrors the primary checkout's gitignored env files into the worktree
+# (no-op when lib/worktree.sh could not be loaded).
+_verify_worktree_mirror_env() {
+  if declare -f _mirror_gitignored_env_files >/dev/null 2>&1; then
+    _mirror_gitignored_env_files "$1" "$2"
+  fi
+  return 0
 }
 
 # Removes a single worktree directory: detaches it from its origin repo via
@@ -149,6 +175,7 @@ ensure_verify_worktree() {
       git -C "$wt_path" clean -fdx >/dev/null 2>&1 || true
     fi
 
+    _verify_worktree_mirror_env "$repo_path" "$wt_path"
     _verify_worktree_touch "$wt_path"
     echo "$wt_path"
     return 0
@@ -173,9 +200,177 @@ ensure_verify_worktree() {
     return 1
   fi
 
+  _verify_worktree_mirror_env "$repo_path" "$wt_path"
   _verify_worktree_touch "$wt_path"
   echo "$wt_path"
   return 0
+}
+
+# verify_worktree_env_var <repo_slug>
+# The env var a repo's verify worktree is exported under: VERIFY_REPO_PATH_<SLUG>,
+# slug upper-cased with every char outside [A-Z0-9_] mapped to "_"
+# (credit-report -> VERIFY_REPO_PATH_CREDIT_REPORT, ledgerly -> VERIFY_REPO_PATH_LEDGERLY).
+verify_worktree_env_var() {
+  local slug
+  slug=$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9_' '_')
+  printf 'VERIFY_REPO_PATH_%s' "$slug"
+}
+
+# verify_worktree_exports <TICKET_ID>
+# Prints eval-able `export` lines — the contract a consuming workspace's
+# env-start.sh reads to serve this ticket's code instead of its primary checkout:
+#   VERIFY_TICKET_ID=<TICKET_ID>
+#   VERIFY_REPO_PATH_<SLUG>=$REPOS_ROOT/.verify-worktrees/<slug>/<TICKET_ID>
+# (one line per verify worktree on disk for this ticket). Derived from the
+# deterministic path formula, not from variables exported by an earlier step:
+# each SKILL.md bash block runs in a fresh shell, so an `export` in Step 1.6a4
+# never reaches the env-start.sh call in Step 1.6b — the values must be
+# re-derived in the same shell that runs env-start.sh.
+verify_worktree_exports() {
+  local ticket_id="$1"
+  [ -n "$ticket_id" ] || return 0
+  printf 'export VERIFY_TICKET_ID=%q\n' "$ticket_id"
+
+  local root="${REPOS_ROOT:-.}/.verify-worktrees"
+  [ -d "$root" ] || return 0
+  local wt slug
+  for wt in "$root"/*/"$ticket_id"; do
+    [ -d "$wt" ] || continue
+    [ -e "$wt/.git" ] || continue
+    slug=$(basename "$(dirname "$wt")")
+    printf 'export %s=%q\n' "$(verify_worktree_env_var "$slug")" "$wt"
+  done
+  return 0
+}
+
+# verify_url_port <url>
+# Port of an http(s) URL: the explicit port if present, else 80/443.
+# Prints nothing and returns 1 when it cannot be determined.
+verify_url_port() {
+  local url="$1" port
+  port=$(printf '%s' "$url" | sed -nE 's#^[A-Za-z][A-Za-z0-9+.-]*://([^/@]*@)?[^/:?#]+:([0-9]+).*#\2#p')
+  if [ -z "$port" ]; then
+    case "$url" in
+    https://*) port=443 ;;
+    http://*) port=80 ;;
+    *) return 1 ;;
+    esac
+  fi
+  printf '%s' "$port"
+}
+
+# Every pid listening on a TCP port (a --reload dev server has both parent and
+# child on the socket). ss first, lsof as fallback.
+_verify_listening_pids() {
+  local port="$1" pids=""
+  if command -v ss >/dev/null 2>&1; then
+    pids=$(ss -ltnpH 2>/dev/null |
+      awk -v p="$port" '{ n = split($4, a, ":"); if (a[n] == p) print }' |
+      grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true)
+  fi
+  if [ -z "$pids" ] && command -v lsof >/dev/null 2>&1; then
+    pids=$(lsof -t -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u || true)
+  fi
+  printf '%s' "$pids"
+}
+
+# Working directory of a pid (/proc first, lsof as fallback).
+_verify_pid_cwd() {
+  local pid="$1" cwd=""
+  cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || true)
+  if [ -z "$cwd" ] && command -v lsof >/dev/null 2>&1; then
+    cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+  fi
+  printf '%s' "$cwd"
+}
+
+# Absolute, symlink-resolved git common dir of a checkout ("" when not a repo).
+# Two checkouts of the same repository (primary clone, its linked worktrees)
+# share one common dir — that is how "same repo, different checkout" is told
+# apart from "an unrelated repo".
+_verify_git_common_dir() {
+  local d
+  d=$(git -C "$1" rev-parse --git-common-dir 2>/dev/null) || return 0
+  case "$d" in
+  /*) ;;
+  *) d="$1/$d" ;;
+  esac
+  (cd "$d" 2>/dev/null && pwd -P) || true
+}
+
+# verify_served_worktree_check <TICKET_ID> <port>
+# Answers, after env-start.sh, "is the server on <port> serving THIS ticket's
+# code?" — which an up/down health check (env-status.sh) cannot. For each pid
+# listening on <port>, resolves its cwd to a git checkout and compares it with
+# this ticket's verify worktrees (REPOS_ROOT/.verify-worktrees/*/<TICKET_ID>):
+#   rc 0 — served from a verify worktree, or from another checkout of the same
+#          repo that is clean and on the same commit (prints the served cwd)
+#   rc 1 — served from another checkout of a repo under test that is on a
+#          different commit or has tracked changes: the run would verify the
+#          wrong code (diagnostic on stderr)
+#   rc 3 — undeterminable or not applicable: no verify worktrees, no visible
+#          listener, unreadable cwd, cwd outside any git checkout (e.g. a
+#          container port), or the served repo is not one this ticket touches
+verify_served_worktree_check() {
+  local ticket_id="$1" port="$2"
+  if [ -z "$ticket_id" ] || [ -z "$port" ]; then
+    echo "verify_served_worktree_check: usage: verify_served_worktree_check <TICKET_ID> <port>" >&2
+    return 3
+  fi
+
+  local root="${REPOS_ROOT:-.}/.verify-worktrees"
+  local -a exp_top=() exp_common=() exp_sha=()
+  local wt
+  for wt in "$root"/*/"$ticket_id"; do
+    [ -e "$wt/.git" ] || continue
+    exp_top+=("$(cd "$wt" && pwd -P)")
+    exp_common+=("$(_verify_git_common_dir "$wt")")
+    exp_sha+=("$(git -C "$wt" rev-parse HEAD 2>/dev/null || true)")
+  done
+  if [ "${#exp_top[@]}" -eq 0 ]; then
+    echo "verify-worktree: no verify worktrees for $ticket_id — nothing to compare :$port against" >&2
+    return 3
+  fi
+
+  local pids
+  pids=$(_verify_listening_pids "$port")
+  if [ -z "$pids" ]; then
+    echo "verify-worktree: no listening process visible on :$port" >&2
+    return 3
+  fi
+
+  local pid cwd top common sha i mismatch=""
+  for pid in $pids; do
+    cwd=$(_verify_pid_cwd "$pid")
+    [ -n "$cwd" ] || continue
+    top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || continue
+    [ -n "$top" ] || continue
+    top=$(cd "$top" 2>/dev/null && pwd -P) || continue
+    common=$(_verify_git_common_dir "$top")
+    sha=$(git -C "$top" rev-parse HEAD 2>/dev/null || true)
+    for i in "${!exp_top[@]}"; do
+      if [ "$top" = "${exp_top[$i]}" ]; then
+        echo "$cwd"
+        return 0
+      fi
+      if [ -z "$common" ] || [ "$common" != "${exp_common[$i]}" ]; then
+        continue
+      fi
+      if [ -n "$sha" ] && [ "$sha" = "${exp_sha[$i]}" ] &&
+        [ -z "$(git -C "$top" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+        echo "$cwd"
+        return 0
+      fi
+      mismatch="pid $pid on :$port serves $cwd (checkout $top @ ${sha:0:12}), expected ${exp_top[$i]} @ ${exp_sha[$i]:0:12}"
+    done
+  done
+
+  if [ -n "$mismatch" ]; then
+    echo "verify-worktree: wrong checkout served — $mismatch" >&2
+    return 1
+  fi
+  echo "verify-worktree: :$port is not served from a checkout of any repo under test for $ticket_id" >&2
+  return 3
 }
 
 # release_verify_worktree <TICKET_ID>

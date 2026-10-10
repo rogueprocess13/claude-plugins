@@ -420,3 +420,95 @@ get_test_users_by_env() {
 
   jq -c --arg env "$env" '[.[] | select(.environments[]? == $env)]' "$catalog_path" 2>/dev/null || echo "[]"
 }
+
+# get_blast_radius_override <ticket-dir>
+# Applies ticket-appraise Step 2.8's complexity-override thresholds to the
+# LAST `## Blast Radius` table in notes.md, deterministically:
+#   - any target with Risk HIGH or CRITICAL          -> override
+#   - any target with 3+ d=1 callers                 -> override, UNLESS that
+#     row's Edit column is `additive`
+#   - 2+ distinct execution flows across all targets -> override
+# The Edit column (`additive` | `modifying`) is the appraiser's judgement of
+# whether the planned edit to that target can change any existing caller's
+# behaviour. Purely additive edits (new union members, new case/switch arms
+# placed before an unchanged default, new optional params, new exports)
+# cannot, so their caller count is not evidence of risk — and when it came
+# from the impact-data local-grep fallback it is a file count, not a
+# call-graph edge count, i.e. already an upper bound. A missing or
+# unrecognised Edit cell is treated as `modifying`, so a table written before
+# the column existed keeps the old (stricter) rule. The exemption applies to
+# the caller-count trigger ONLY: the risk and flow triggers still fire for an
+# additive row.
+# Emits three KEY=value lines:
+#   BLAST_OVERRIDE=complex|none
+#   BLAST_REASON=<"; "-joined trigger reasons, empty when none>
+#   BLAST_ADDITIVE_SKIP=<"; "-joined "{symbol} ({n} callers)", empty when none>
+# Exit codes: 0 = section parsed, 2 = section absent, 12 = notes.md missing
+get_blast_radius_override() {
+  local ticket_dir="$1"
+  local notes="$ticket_dir/notes.md"
+
+  if [ ! -f "$notes" ]; then
+    error_return 12 "notes-parse: file not found"
+  fi
+
+  local start_line
+  start_line=$(grep -n '^## Blast Radius' "$notes" 2>/dev/null | tail -1 | cut -d: -f1 || true)
+  if [ -z "$start_line" ]; then
+    return 2
+  fi
+
+  tail -n "+$((start_line + 1))" "$notes" 2>/dev/null | tr -d '\r' |
+    sed -n '1,/^## /p' |
+    awk -F'|' -v q="'" '
+      function trim(s) { gsub(/^[ \t`]+|[ \t`]+$/, "", s); return s }
+      function join(acc, item) { return acc == "" ? item : acc "; " item }
+      /^[ \t]*\|/ {
+        # Header row: locate columns by name, so column order and extra
+        # columns do not matter.
+        if (!have_hdr) {
+          for (i = 2; i < NF; i++) {
+            h = tolower(trim($i))
+            if (h ~ /^target/) c_t = i
+            else if (h ~ /^risk/) c_r = i
+            else if (h ~ /^d=1/) c_d1 = i
+            else if (h ~ /flow/) c_f = i
+            else if (h ~ /^edit/) c_e = i
+          }
+          have_hdr = 1
+          next
+        }
+        if ($0 ~ /^[ \t]*\|[ \t:|-]+$/) next
+        sym = c_t ? trim($c_t) : ""
+        risk = c_r ? toupper(trim($c_r)) : ""
+        d1 = 0
+        if (c_d1 && match($c_d1, /[0-9]+/)) d1 = substr($c_d1, RSTART, RLENGTH) + 0
+        edit = c_e ? tolower(trim($c_e)) : ""
+        if (risk ~ /(^|[^A-Z])(HIGH|CRITICAL)([^A-Z]|$)/)
+          reason = join(reason, "risk " risk " (" sym ")")
+        if (d1 >= 3) {
+          if (edit == "additive")
+            skip = join(skip, sym " (" d1 " callers)")
+          else
+            reason = join(reason, d1 " d=1 callers (" sym ")")
+        }
+        if (c_f) {
+          n = split($c_f, parts, ",")
+          for (j = 1; j <= n; j++) {
+            f = tolower(trim(parts[j]))
+            if (f == "" || f == "none" || f == "-" || f == "n/a") continue
+            if (!(f in flows)) { flows[f] = 1; nflows++ }
+          }
+        }
+      }
+      # Values carry symbol names (parentheses, semicolons, quotes), so each
+      # is single-quoted for safe `eval` by the caller.
+      function shq(s) { gsub(q, q "\\" q q, s); return q s q }
+      END {
+        if (nflows >= 2) reason = join(reason, nflows " execution flows")
+        print "BLAST_OVERRIDE=" (reason == "" ? "none" : "complex")
+        print "BLAST_REASON=" shq(reason)
+        print "BLAST_ADDITIVE_SKIP=" shq(skip)
+      }
+    '
+}

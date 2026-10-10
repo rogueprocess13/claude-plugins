@@ -115,7 +115,7 @@ treat those as non-matches, which is the correct conservative behavior (unknown 
 already run, capped at 3 (`PR_FEEDBACK_EXHAUSTED` gate-stop, see below):
 
 ```bash
-echo "...|PR-REVIEW|pr-reconcile|done|cycle#2 reconciled" >> "$LOG_FILE"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|pr-reconcile|done|cycle#2 reconciled" >> "$LOG_FILE"
 ```
 
 ### Code review cycle marker
@@ -127,8 +127,8 @@ findings are recorded to notes.md but never gate the commit. Exhausting all 3 cy
 medium+ findings still open is a gate-stop (`CODE_REVIEW_EXHAUSTED`, see below):
 
 ```bash
-echo "...|IMPLEMENT|code-review|done|cycle#1 clean" >> "$LOG_FILE"
-echo "...|IMPLEMENT|code-review|fail|cycle#3 CODE_REVIEW_EXHAUSTED" >> "$LOG_FILE"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|code-review|done|cycle#1 clean" >> "$LOG_FILE"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|code-review|fail|cycle#3 CODE_REVIEW_EXHAUSTED" >> "$LOG_FILE"
 ```
 
 ## META entries
@@ -192,6 +192,15 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-policy|info|epic" >> "$LOG_FILE"
 `Review → Done` via `pr-review-pass-done`; under `per-ticket` with a UAT target it transitions
 `Review → UAT` via `pr-review-pass-uat`. The decision itself is computed by `uat_decide_trigger`
 in `lib/branch-resolve.sh`, never inferred from ambient environment.
+
+When the PR is being left for a human merge (`merge_blocked_reason` is non-empty: pipeline
+autonomy `manual`, or any epic `Merge Policy`), Step 6a passes `--merge-pending` and a
+per-ticket ticket goes to `UAT` even with no UAT target, because its code is not on the base
+branch yet (GitHub #412). That case also writes one extra line naming the trigger and reason:
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-decision|info|trigger=pr-review-pass-uat; merge pending: epic Branch Directive Merge Policy: manual requires human merge" >> "$LOG_FILE"
+```
 
 `mode-change` is written to Step 0.6's `META|autonomy` guard instead of a silent re-append
 when a resume's `--mode` flag differs from the autonomy already recorded for this run —
@@ -576,8 +585,18 @@ the pipeline log's own schema version, and this section is purely additive.
 Written by the `guidance-extractor-agent` after each pipeline phase completes (post-IMPLEMENT, post-VERIFY, post-PR-REVIEW). Provides per-phase inspection verdicts by reading `META|verifier-result` entries and checking for known defect patterns. The inspector is advisory only — it never gates the pipeline.
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|phase-inspector|info|{\"phase\":\"IMPLEMENT\",\"verdict\":\"PASS\",\"signals\":0,\"detail\":\"All verifiers clean: unit_tests PASS, return_completeness complete, gate_check PASS\",\"verifiers_consulted\":[\"unit_tests\",\"return_completeness\",\"gate_check\"],\"patterns\":[]}" >> "$LOG_FILE"
+_pi_json=$(cat <<'PHASE_INSPECTOR_VERDICT_EOF'
+{"phase":"IMPLEMENT","verdict":"PASS","signals":0,"detail":"All verifiers clean: unit_tests PASS, return_completeness complete, gate_check PASS","verifiers_consulted":["unit_tests","return_completeness","gate_check"],"patterns":[]}
+PHASE_INSPECTOR_VERDICT_EOF
+)
+if _pi_line=$(printf '%s' "$_pi_json" | jq -c . 2>/dev/null) && [ -n "$_pi_line" ]; then
+  printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_pi_line" >>"$LOG_FILE"
+fi
 ```
+
+`detail` and `evidence` quote verifier output, so the JSON goes through a quoted
+`<<'PHASE_INSPECTOR_VERDICT_EOF'` heredoc and `jq -c`, never a double-quoted `echo` string — that would
+execute any `$(...)` or backtick in the quoted text.
 
 JSON fields:
 - `phase` (string): pipeline phase being inspected — IMPLEMENT, VERIFY, or PR-REVIEW
@@ -592,7 +611,7 @@ Detection patterns (Phase 1, all WARN severity):
 2. `missing_requirement` — PR review OK but critique/audit found gaps
 3. `trivial_pass` — any verifier PASS with criteria_total ≤ 1
 4. `verdict_disagreement` — two verifiers in same phase disagree
-5. `incomplete_implementation` — PASS verifier + RETURN_INCOMPLETE gate-warn
+5. `incomplete_implementation` — PASS verifier + RETURN_INCOMPLETE gate-warn (IMPLEMENT inspection only — the gate-warn is attributed to the phase that writes it, not to the VERIFY / PR-REVIEW windows that span it)
 
 **MSG parsing rule**: use awk-join (`awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}'`), never `cut -f5`. JSON payloads contain `|` characters.
 
@@ -927,6 +946,16 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 | `ADR_CONFLICT` | The ADR gate returned `CONFLICT` — a phase's proposed approach contradicts an Accepted ADR. Not a park: the approach needs rethinking, not ratification (`adr-governance-gate`, see [docs/adr-gate-schema.md](docs/adr-gate-schema.md)) |
 | `VERDICT_GATE_BLOCKED` | `flow.sh` refused a `verdict_gate`-declared trigger (`pr-review-pass-done`, `pr-review-pass-uat`, `uat-pass`) with exit `11` — a trailing FAIL/BLOCK verifier-result for a different `(verifier, phase)` pair on this ticket is still the latest on record, with no later PASS/WARN superseding it. Agent-emitted by `ticket-verify`/`ticket-pr-review` at the call site, not router-detected (`VERDICT_FAIL_NOT_ENFORCED`, issue #368) |
 | `TICKET_NOT_READY` | Entry gate Check 2.7e: a planned ticket's `ensure_ticket_readiness` resolved not-ready/unavailable, or its manifest `flags` carry `needs-info` — evaluated independently, either condition gate-stops. Never fires for an ad-hoc ticket (`ticket_is_planned` scopes the whole 2.7 block). Clearing `needs-info` via `/ticket-approve` (`flow.sh <TID> needs-info-resolved`) un-gates immediately regardless of the cached readiness verdict (`dor-readiness-gate-foundation`, design.md Decisions 3 and 8) |
+
+**Check 2.7 runs twice for a planned ticket** (issue #410). The router's STEP_1 runs
+`gate-check.sh --mode planned` before the first APPRAISE spawn. It runs the same Check 2.7
+function as the entry gate, so `NO_TEMPLATE_FOR_TYPE`, `PLANNED_BODY_INCOMPLETE` and
+`TICKET_NOT_READY` can appear with no `APPRAISE` lines before them. On a pass it writes
+`GATE|planned-precheck|done|`; when the issue fetch fails it writes `GATE|planned-precheck|skip|`
+and leaves the decision to the entry gate. It never writes a `GATE|gate|` line, a hold, or a
+`META|gate-fetch-fail` line, so `detect-resume.sh` routing and the entry gate's fetch-retry budget
+are not affected. The entry gate still runs Check 2.7 again at STEP_2_5, because the body can change
+in between.
 
 ## Ordering guarantees
 

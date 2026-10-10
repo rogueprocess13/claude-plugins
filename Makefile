@@ -39,6 +39,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-adr-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-wiki-bootstrap.sh
 	bash ticket-auto-pipeline/lib/tests/test-wiki-verify.sh
+	bash ticket-auto-pipeline/lib/tests/test-wiki-lock.sh
 	bash ticket-auto-pipeline/lib/tests/test-adr-gate-parse.sh
 	# tracker-event-vocabulary-and-emitter
 	bash ticket-auto-pipeline/lib/tests/test-fence-check.sh
@@ -122,6 +123,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-exec-dedup.sh
 	# prescan tests
 	bash ticket-auto-pipeline/lib/tests/test-prescan-check.sh
+	bash ticket-auto-pipeline/lib/tests/test-prescan-verify.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-sweep.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-route.sh
 	bash ticket-auto-pipeline/lib/tests/test-index-schema-contract.sh

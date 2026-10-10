@@ -147,7 +147,7 @@ elif [ -f "$SCRIPT_DIR/dor-check.sh" ]; then
 fi
 
 usage() {
-  echo "Usage: $0 <TICKET-ID> <LOG-FILE> <HB-LOG-FILE> --mode <entry|reapprove>" >&2
+  echo "Usage: $0 <TICKET-ID> <LOG-FILE> <HB-LOG-FILE> --mode <entry|reapprove|planned>" >&2
   exit 1
 }
 
@@ -301,6 +301,161 @@ _gate_fetch_issue_fail() {
   hb_gate "$hb_ctx" "fail" "held: linear fetch failed" "{\"ticket\":\"$ticket_id\",\"attempt\":$attempt,\"max\":$max_attempts}"
   _gate_emit_held "linear-fetch-failed"
   return 1
+}
+
+# ── Check 2.7: planned-ticket structural checks ──────────────────────────────
+#
+# _gate_planned_checks <issue_json> [complexity]
+# 2.7a Planner Context block (observe-only), 2.7b type → template, 2.7c body
+# sections (PLANNED_BODY_INCOMPLETE), 2.7d exploration-depth soft signal (only
+# when a complexity is known), 2.7e DoR readiness (TICKET_NOT_READY). A no-op
+# for an ad-hoc ticket. Returns 0 pass / not planned, 2 gate-stop (already
+# logged). Called by _gate_entry and by _gate_planned (--mode planned).
+_gate_planned_checks() {
+  local issue_json="$1"
+  local complexity="${2:-}"
+  local planned_check_rc
+  # tracker-planner-and-fallback-cutover (3.1) + Section 5 discriminator fix:
+  # the local ticket manifest's initiative is the ONLY record of "is this a
+  # planned ticket" — no live label fallback, and bare manifest existence is
+  # not enough: flow.sh's _ensure_manifest stamps an _adhoc-initiative
+  # manifest onto every non-epic trigger, so a ticket with only an _adhoc
+  # manifest must still report not-planned (2.7's checks are simply skipped
+  # for it), never silently routed onto a live label read.
+  local has_planned_label="false"
+  if declare -f ticket_is_planned >/dev/null 2>&1 && ticket_is_planned "$TICKET_ID" 2>/dev/null; then
+    has_planned_label="true"
+  fi
+  if [ "$has_planned_label" = "true" ]; then
+    local planned_desc
+    planned_desc=$(echo "$issue_json" | jq -r '.description // ""')
+
+    # 2.7a: Passive Planner Context block validation (existing behavior)
+    check_planned_ticket_description "$planned_desc" 2>/dev/null || planned_check_rc=$?
+    case "${planned_check_rc:-0}" in
+    0) _plog "$LOG_FILE" "GATE" "planned-check" "done" "valid" ;;
+    1) _plog "$LOG_FILE" "GATE" "planned-check" "warn" "malformed — Planner Context block missing or invalid" ;;
+    2) _plog "$LOG_FILE" "GATE" "planned-check" "warn" "low-confidence — confidence below threshold, not pre-approved" ;;
+    esac
+    hb_gate "planned-check" "info" "planned ticket validated" "{\"exit_code\":\"${planned_check_rc:-0}\",\"result\":\"$CHECK_RESULT\"}"
+
+    # 2.7b: Resolve Type → template (active gate-stop)
+    # tracker-planner-and-fallback-cutover (3.1): manifest's type field is
+    # the only source — no live label fallback. A ticket manifest-proven
+    # planned (has_planned_label above) but missing `type` reports as
+    # NO_TEMPLATE_FOR_TYPE below, same as any other unresolvable type.
+    local ticket_type=""
+    if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+      ticket_type=$(get_ticket_manifest_field "$TICKET_ID" type 2>/dev/null)
+    fi
+    local template_path
+    template_path=$(resolve_template "$ticket_type" 2>/dev/null) || true
+    local template_rc=$?
+    if [ "$template_rc" = "3" ] || [ -z "$template_path" ]; then
+      local display_type="${ticket_type:-<none>}"
+      _plog "$LOG_FILE" "META" "gate-stop" "fail" "NO_TEMPLATE_FOR_TYPE — no template for task type '$display_type'; add templates/${display_type}.md"
+      hb_gate "entry-gate" "fail" "NO_TEMPLATE_FOR_TYPE" "{\"type\":\"$display_type\"}"
+      return 2
+    fi
+    _plog "$LOG_FILE" "GATE" "planned-check" "done" "template resolved: $template_path"
+
+    # 2.7c: Body completeness check (active gate-stop)
+    local body_check_rc=0
+    check_planned_body "$TICKET_ID" "$ticket_type" "$planned_desc" "true" 2>/dev/null || body_check_rc=$?
+    if [ "$body_check_rc" != "0" ]; then
+      local missing_sections="${BODY_CHECK_MISSING:-unknown}"
+      _plog "$LOG_FILE" "META" "gate-stop" "fail" "PLANNED_BODY_INCOMPLETE — $ticket_type ticket missing $missing_sections"
+      hb_gate "entry-gate" "fail" "PLANNED_BODY_INCOMPLETE" "{\"type\":\"$ticket_type\",\"missing\":\"$missing_sections\"}"
+      return 2
+    fi
+    _plog "$LOG_FILE" "GATE" "planned-check" "done" "body complete for type $ticket_type"
+
+    # 2.7d: Exploration depth mismatch detection (soft signal, never blocks)
+    local exploration_depth
+    exploration_depth=$(echo "$planned_desc" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\*\*Exploration Depth:\*\*' | head -1 | sed 's/.*\*\*Exploration Depth:\*\*\s*//' || true)
+    if [ -n "$exploration_depth" ] && [ -n "$complexity" ]; then
+      local affected_services_str svc_count
+      affected_services_str=$(echo "$planned_desc" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\*\*Affected Services:\*\*' | head -1 | sed 's/.*\*\*Affected Services:\*\*\s*//' || true)
+      svc_count=$(echo "$affected_services_str" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -cv '^$' || true)
+      svc_count=${svc_count:-1}
+      [ "$svc_count" -ge 1 ] 2>/dev/null || svc_count=1
+      local mismatch_rc=0
+      check_exploration_depth_mismatch "$exploration_depth" "$complexity" "$svc_count" 2>/dev/null || mismatch_rc=$?
+      if [ "$mismatch_rc" = "1" ]; then
+        _plog "$LOG_FILE" "GATE" "planned-check" "warn" "exploration depth mismatch: depth=$exploration_depth complexity=$complexity services=$svc_count"
+        hb_gate "planned-check" "warn" "exploration depth mismatch" "{\"depth\":\"$exploration_depth\",\"complexity\":\"$complexity\",\"services\":\"$svc_count\"}"
+      fi
+    fi
+
+    # 2.7e: DoR entry-gate refusal (dor-readiness-gate-foundation task 6.1).
+    # Resolves readiness through ensure_ticket_readiness — never a raw
+    # ticket_is_ready read, so a never-scanned planned ticket is evaluated
+    # live here rather than read as permanently not-ready (design.md
+    # Decision 3) — and independently checks ticket_dispatch_blocked_by_flags.
+    # The two conditions are evaluated separately, never folded into one
+    # cached object: the flags half must stay live even when the cached
+    # `ready` object is stale, which is what lets /ticket-approve's
+    # needs-info clear un-gate a ticket immediately (design.md Decision 3/8).
+    local readiness_rc=0
+    DOR_MISSING="[]"
+    if declare -f ensure_ticket_readiness >/dev/null 2>&1; then
+      ensure_ticket_readiness "$TICKET_ID" 2>/dev/null || readiness_rc=$?
+    fi
+    local flags_blocked="false"
+    if declare -f ticket_dispatch_blocked_by_flags >/dev/null 2>&1 &&
+      ticket_dispatch_blocked_by_flags "$TICKET_ID" 2>/dev/null; then
+      flags_blocked="true"
+    fi
+    if [ "$readiness_rc" != "0" ] || [ "$flags_blocked" = "true" ]; then
+      local not_ready_codes
+      not_ready_codes=$(echo "${DOR_MISSING:-[]}" | jq -r 'join(",")' 2>/dev/null) || not_ready_codes=""
+      if [ "$readiness_rc" = "2" ] && [ -z "$not_ready_codes" ]; then
+        not_ready_codes="unavailable"
+      fi
+      if [ "$flags_blocked" = "true" ] && ! echo ",${not_ready_codes}," | grep -q ',FLAG_NEEDS_INFO,'; then
+        not_ready_codes="${not_ready_codes:+${not_ready_codes},}FLAG_NEEDS_INFO"
+      fi
+      [ -n "$not_ready_codes" ] || not_ready_codes="unknown"
+      _plog "$LOG_FILE" "META" "gate-stop" "fail" "TICKET_NOT_READY — ${not_ready_codes}"
+      hb_gate "entry-gate" "fail" "TICKET_NOT_READY" "{\"codes\":\"$not_ready_codes\"}"
+      return 2
+    fi
+  fi
+  return 0
+}
+
+# ── Mode: planned (pre-APPRAISE fail-fast, issue #410) ────────────────────────
+#
+# Runs Check 2.7 alone, before the router's first APPRAISE spawn. Without it a
+# planned ticket missing Test User / Scope / Navigation Path (or one whose DoR
+# verdict is not-ready) was only stopped at the entry gate, after APPRAISE and
+# EXEC had both run to completion — 15-20 minutes of agent time spent on a
+# ticket that could never pass. The checks are identical to the entry gate's
+# (one function), so this can only stop a ticket the entry gate would have
+# stopped anyway.
+#
+# Never holds and never gate-stops on a tracker read failure: this is an early
+# exit, not the authoritative gate. A failed fetch logs a skip and returns 0 so
+# the entry gate (with its own retry/hold policy) still decides. An ad-hoc
+# ticket costs no Linear call at all. Exit 0 pass / not planned / deferred,
+# 2 gate-stop (META|gate-stop line already written).
+_gate_planned() {
+  if ! declare -f ticket_is_planned >/dev/null 2>&1 || ! ticket_is_planned "$TICKET_ID" 2>/dev/null; then
+    return 0
+  fi
+  local issue_json
+  if ! issue_json=$(get_issue "$TICKET_ID" 2>/dev/null) ||
+    ! require_issue_payload "$issue_json" 2>/dev/null; then
+    _plog "$LOG_FILE" "GATE" "planned-precheck" "skip" "issue fetch failed — deferring to entry gate"
+    return 0
+  fi
+  local rc=0
+  _gate_planned_checks "$issue_json" "" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    return "$rc"
+  fi
+  _plog "$LOG_FILE" "GATE" "planned-precheck" "done" "planned ticket structurally complete"
+  return 0
 }
 
 # ── Mode: entry ────────────────────────────────────────────────────────────────
@@ -741,7 +896,7 @@ _gate_entry() {
   # Phase 2 (appraise-fast-path) runs independently in ticket-appraise Step 1.3
   # via check_fast_path_eligible, which re-validates the Planner Context block
   # and routes to fast-path or full investigation based on the result.
-  local issue_json planned_check_rc
+  local issue_json
   # Reuse Check 2.6's fetch (task 3.3) when it already needed the issue for
   # its description-tier vplan fallback — avoids a second Linear call for
   # the same ticket in the same gate run.
@@ -750,112 +905,11 @@ _gate_entry() {
   else
     issue_json=$(_gate_fetch_issue "$TICKET_ID") || return $?
   fi
-  # tracker-planner-and-fallback-cutover (3.1) + Section 5 discriminator fix:
-  # the local ticket manifest's initiative is the ONLY record of "is this a
-  # planned ticket" — no live label fallback, and bare manifest existence is
-  # not enough: flow.sh's _ensure_manifest stamps an _adhoc-initiative
-  # manifest onto every non-epic trigger, so a ticket with only an _adhoc
-  # manifest must still report not-planned (2.7's checks are simply skipped
-  # for it), never silently routed onto a live label read.
-  local has_planned_label="false"
-  if declare -f ticket_is_planned >/dev/null 2>&1 && ticket_is_planned "$TICKET_ID" 2>/dev/null; then
-    has_planned_label="true"
-  fi
-  if [ "$has_planned_label" = "true" ]; then
-    local planned_desc
-    planned_desc=$(echo "$issue_json" | jq -r '.description // ""')
-
-    # 2.7a: Passive Planner Context block validation (existing behavior)
-    check_planned_ticket_description "$planned_desc" 2>/dev/null || planned_check_rc=$?
-    case "${planned_check_rc:-0}" in
-    0) _plog "$LOG_FILE" "GATE" "planned-check" "done" "valid" ;;
-    1) _plog "$LOG_FILE" "GATE" "planned-check" "warn" "malformed — Planner Context block missing or invalid" ;;
-    2) _plog "$LOG_FILE" "GATE" "planned-check" "warn" "low-confidence — confidence below threshold, not pre-approved" ;;
-    esac
-    hb_gate "planned-check" "info" "planned ticket validated" "{\"exit_code\":\"${planned_check_rc:-0}\",\"result\":\"$CHECK_RESULT\"}"
-
-    # 2.7b: Resolve Type → template (active gate-stop)
-    # tracker-planner-and-fallback-cutover (3.1): manifest's type field is
-    # the only source — no live label fallback. A ticket manifest-proven
-    # planned (has_planned_label above) but missing `type` reports as
-    # NO_TEMPLATE_FOR_TYPE below, same as any other unresolvable type.
-    local ticket_type=""
-    if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
-      ticket_type=$(get_ticket_manifest_field "$TICKET_ID" type 2>/dev/null)
-    fi
-    local template_path
-    template_path=$(resolve_template "$ticket_type" 2>/dev/null) || true
-    local template_rc=$?
-    if [ "$template_rc" = "3" ] || [ -z "$template_path" ]; then
-      local display_type="${ticket_type:-<none>}"
-      _plog "$LOG_FILE" "META" "gate-stop" "fail" "NO_TEMPLATE_FOR_TYPE — no template for task type '$display_type'; add templates/${display_type}.md"
-      hb_gate "entry-gate" "fail" "NO_TEMPLATE_FOR_TYPE" "{\"type\":\"$display_type\"}"
-      return 2
-    fi
-    _plog "$LOG_FILE" "GATE" "planned-check" "done" "template resolved: $template_path"
-
-    # 2.7c: Body completeness check (active gate-stop)
-    local body_check_rc=0
-    check_planned_body "$TICKET_ID" "$ticket_type" "$planned_desc" "true" 2>/dev/null || body_check_rc=$?
-    if [ "$body_check_rc" != "0" ]; then
-      local missing_sections="${BODY_CHECK_MISSING:-unknown}"
-      _plog "$LOG_FILE" "META" "gate-stop" "fail" "PLANNED_BODY_INCOMPLETE — $ticket_type ticket missing $missing_sections"
-      hb_gate "entry-gate" "fail" "PLANNED_BODY_INCOMPLETE" "{\"type\":\"$ticket_type\",\"missing\":\"$missing_sections\"}"
-      return 2
-    fi
-    _plog "$LOG_FILE" "GATE" "planned-check" "done" "body complete for type $ticket_type"
-
-    # 2.7d: Exploration depth mismatch detection (soft signal, never blocks)
-    local exploration_depth
-    exploration_depth=$(echo "$planned_desc" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\*\*Exploration Depth:\*\*' | head -1 | sed 's/.*\*\*Exploration Depth:\*\*\s*//' || true)
-    if [ -n "$exploration_depth" ]; then
-      local affected_services_str svc_count
-      affected_services_str=$(echo "$planned_desc" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\*\*Affected Services:\*\*' | head -1 | sed 's/.*\*\*Affected Services:\*\*\s*//' || true)
-      svc_count=$(echo "$affected_services_str" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -cv '^$' || true)
-      svc_count=${svc_count:-1}
-      [ "$svc_count" -ge 1 ] 2>/dev/null || svc_count=1
-      local mismatch_rc=0
-      check_exploration_depth_mismatch "$exploration_depth" "$complexity" "$svc_count" 2>/dev/null || mismatch_rc=$?
-      if [ "$mismatch_rc" = "1" ]; then
-        _plog "$LOG_FILE" "GATE" "planned-check" "warn" "exploration depth mismatch: depth=$exploration_depth complexity=$complexity services=$svc_count"
-        hb_gate "planned-check" "warn" "exploration depth mismatch" "{\"depth\":\"$exploration_depth\",\"complexity\":\"$complexity\",\"services\":\"$svc_count\"}"
-      fi
-    fi
-
-    # 2.7e: DoR entry-gate refusal (dor-readiness-gate-foundation task 6.1).
-    # Resolves readiness through ensure_ticket_readiness — never a raw
-    # ticket_is_ready read, so a never-scanned planned ticket is evaluated
-    # live here rather than read as permanently not-ready (design.md
-    # Decision 3) — and independently checks ticket_dispatch_blocked_by_flags.
-    # The two conditions are evaluated separately, never folded into one
-    # cached object: the flags half must stay live even when the cached
-    # `ready` object is stale, which is what lets /ticket-approve's
-    # needs-info clear un-gate a ticket immediately (design.md Decision 3/8).
-    local readiness_rc=0
-    DOR_MISSING="[]"
-    if declare -f ensure_ticket_readiness >/dev/null 2>&1; then
-      ensure_ticket_readiness "$TICKET_ID" 2>/dev/null || readiness_rc=$?
-    fi
-    local flags_blocked="false"
-    if declare -f ticket_dispatch_blocked_by_flags >/dev/null 2>&1 &&
-      ticket_dispatch_blocked_by_flags "$TICKET_ID" 2>/dev/null; then
-      flags_blocked="true"
-    fi
-    if [ "$readiness_rc" != "0" ] || [ "$flags_blocked" = "true" ]; then
-      local not_ready_codes
-      not_ready_codes=$(echo "${DOR_MISSING:-[]}" | jq -r 'join(",")' 2>/dev/null) || not_ready_codes=""
-      if [ "$readiness_rc" = "2" ] && [ -z "$not_ready_codes" ]; then
-        not_ready_codes="unavailable"
-      fi
-      if [ "$flags_blocked" = "true" ] && ! echo ",${not_ready_codes}," | grep -q ',FLAG_NEEDS_INFO,'; then
-        not_ready_codes="${not_ready_codes:+${not_ready_codes},}FLAG_NEEDS_INFO"
-      fi
-      [ -n "$not_ready_codes" ] || not_ready_codes="unknown"
-      _plog "$LOG_FILE" "META" "gate-stop" "fail" "TICKET_NOT_READY — ${not_ready_codes}"
-      hb_gate "entry-gate" "fail" "TICKET_NOT_READY" "{\"codes\":\"$not_ready_codes\"}"
-      return 2
-    fi
-  fi
+  # Shared with --mode planned (issue #410), which runs these same checks
+  # before APPRAISE so a structurally incomplete planned ticket stops before
+  # any agent time is spent on it. Re-run here regardless: the body can be
+  # edited between the two, and this is the authoritative gate.
+  _gate_planned_checks "$issue_json" "$complexity" || return $?
 
   # Check 2.8b: Complex + auto/semi-auto + approved → auto-approve.
   # tracker-approval-by-script: manifest is the sole approval decision read
@@ -1018,8 +1072,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   [ -z "$TICKET_ID" ] && usage
   [ -z "$LOG_FILE" ] && usage
   [ -z "$MODE" ] && usage
-  [[ "$MODE" =~ ^(entry|reapprove)$ ]] || {
-    echo "Invalid mode: $MODE (expected entry or reapprove)" >&2
+  [[ "$MODE" =~ ^(entry|reapprove|planned)$ ]] || {
+    echo "Invalid mode: $MODE (expected entry, reapprove or planned)" >&2
     exit 1
   }
 
@@ -1028,6 +1082,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   case "$MODE" in
   entry) _gate_entry ;;
   reapprove) _gate_reapprove ;;
+  planned) _gate_planned ;;
   *) usage ;;
   esac
 fi
