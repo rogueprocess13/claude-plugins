@@ -187,16 +187,24 @@ before starting or resuming a run. Deterministic bash, no Linear writes unless
 ```
 /ticket-planner doctor
 /ticket-planner doctor INIT-42          # also checks resume branch/sha alignment (#217)
-/ticket-planner doctor --fix            # create any missing static contract label
+/ticket-planner doctor --fix            # create any missing board-projected label
 ```
 
 Checks: `REPOS_ROOT` resolves and is a real directory; the Linear team resolves
-(`--team`/`LINEAR_TEAM_ID`/the workspace's only team); the 4 static contract
-labels (`planned`, `epic`, `pre-approved`, `state:execution`) exist on that team —
-reported individually, and created with `--fix`; when an initiative id is given,
-whether the live `REPOS_ROOT` checkout for each repo Discovery explored still
-matches the ref it pinned, or an isolated worktree is available (the same
-mechanism Crosscheck itself falls back to, see #217 below); and whether the
+(`--team`/`LINEAR_TEAM_ID`/the workspace's only team); the 4 board-projected
+labels (`needs-info`, `needs-adr`, `rejected`, `reviewed`) exist on that team —
+reported individually, and created with `--fix`. These are the only labels
+anything in the pipeline still writes to Linear (`workflow.json`'s
+`board_drivers.linear.projected_labels`, applied by the board driver). The
+former static contract labels (`planned`, `epic`, `pre-approved`,
+`state:execution`) are retired and no longer checked or created: the planner
+creates every issue with an empty label set, and what those labels carried now
+lives in the local ticket/epic manifests and the Planner Context block.
+
+Doctor also checks, when an initiative id is given, whether the live
+`REPOS_ROOT` checkout for each repo Discovery explored still matches the ref
+it pinned, or an isolated worktree is available (the same mechanism
+Crosscheck itself falls back to, see #217 below); and whether the
 cross-plugin helper scripts the phase prompts reference
 (`planned-ticket-check.sh`, `branch-directive-check.sh` from
 `ticket-auto-pipeline`, `grill-seal.sh` from `grill-me`) actually resolve on
