@@ -115,7 +115,7 @@ treat those as non-matches, which is the correct conservative behavior (unknown 
 already run, capped at 3 (`PR_FEEDBACK_EXHAUSTED` gate-stop, see below):
 
 ```bash
-echo "...|PR-REVIEW|pr-reconcile|done|cycle#2 reconciled" >> "$LOG_FILE"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|pr-reconcile|done|cycle#2 reconciled" >> "$LOG_FILE"
 ```
 
 ### Code review cycle marker
@@ -127,8 +127,8 @@ findings are recorded to notes.md but never gate the commit. Exhausting all 3 cy
 medium+ findings still open is a gate-stop (`CODE_REVIEW_EXHAUSTED`, see below):
 
 ```bash
-echo "...|IMPLEMENT|code-review|done|cycle#1 clean" >> "$LOG_FILE"
-echo "...|IMPLEMENT|code-review|fail|cycle#3 CODE_REVIEW_EXHAUSTED" >> "$LOG_FILE"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|code-review|done|cycle#1 clean" >> "$LOG_FILE"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|code-review|fail|cycle#3 CODE_REVIEW_EXHAUSTED" >> "$LOG_FILE"
 ```
 
 ## META entries

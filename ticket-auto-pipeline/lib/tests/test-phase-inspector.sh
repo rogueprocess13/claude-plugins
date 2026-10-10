@@ -400,6 +400,83 @@ test_large_verifier_count() {
   return 1
 }
 
+# ── Test: every line this lib causes to be written carries the ISO timestamp ────
+# Issue #421: the agent-facing template told the guidance-extractor-agent to write
+# a bare `META|phase-inspector|...` line, so the agent's line landed in the log
+# with no leading ISO field. The agent is told not to read files, so the prompt
+# template is the only contract it follows. This test runs the exact write
+# command the template hands the agent and grammar-checks what it appends, and
+# grammar-checks the lib's own skip-path write too.
+
+_ISO_LINE_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\|'
+
+test_log_writes_carry_iso_timestamp() {
+  _setup
+  _vr_write "unit_tests" "PASS" "IMPLEMENT" 5 5
+
+  local out instructions
+  out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
+  instructions=$(_extract_instructions "$out")
+
+  # Every template line naming the phase-inspector record must be a write
+  # command that starts with the timestamp — never a bare META| line.
+  local bare
+  bare=$(printf '%s\n' "$instructions" | grep -E '^META\|phase-inspector\|' || true)
+  if [ -n "$bare" ]; then
+    echo "template still instructs a bare (untimestamped) line: $bare"
+    _teardown
+    return 1
+  fi
+
+  # Run the template's write command(s) against a scratch log.
+  local cmds agent_log="$_ws/agent.log"
+  cmds=$(printf '%s\n' "$instructions" | grep -E '\|META\|phase-inspector\|.*>> *"\$LOG_FILE"' || true)
+  if [ -z "$cmds" ]; then
+    echo "template carries no phase-inspector write command"
+    _teardown
+    return 1
+  fi
+  : >"$agent_log"
+  local cmd
+  while IFS= read -r cmd; do
+    LOG_FILE="$agent_log" eval "$cmd" || {
+      echo "template command failed to run: $cmd"
+      _teardown
+      return 1
+    }
+  done <<<"$cmds"
+
+  # Skip path: the lib's own write.
+  local skip_log="$_ws/skip.log"
+  : >"$skip_log"
+  assemble_inspector_context "VERIFY" "CRE-123" "$skip_log" >/dev/null 2>&1 || true
+
+  local f line n
+  for f in "$agent_log" "$skip_log"; do
+    n=$(wc -l <"$f" | tr -d ' ')
+    if [ "$n" -lt 1 ]; then
+      echo "no line written to $(basename "$f")"
+      _teardown
+      return 1
+    fi
+    while IFS= read -r line; do
+      if ! printf '%s\n' "$line" | grep -qE "$_ISO_LINE_RE"; then
+        echo "line without ISO timestamp in $(basename "$f"): $line"
+        _teardown
+        return 1
+      fi
+      if [ "$(printf '%s\n' "$line" | cut -d'|' -f2-3)" != "META|phase-inspector" ]; then
+        echo "line has wrong PHASE|STEP in $(basename "$f"): $line"
+        _teardown
+        return 1
+      fi
+    done <"$f"
+  done
+
+  _teardown
+  return 0
+}
+
 # ── Run ─────────────────────────────────────────────────────────────────────────
 
 echo "=== test-phase-inspector.sh ==="
@@ -419,6 +496,7 @@ _run "spawn_phase_inspector wrapper matches spec" test_spawn_phase_inspector_wra
 _run "jq absence handled gracefully" test_jq_absence_skip
 _run "sourcing preserves shell flags" test_sourcing_preserves_shell_flags
 _run "100-entry stress test extracts correct phase" test_large_verifier_count
+_run "every log line written carries the ISO timestamp (#421)" test_log_writes_carry_iso_timestamp
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

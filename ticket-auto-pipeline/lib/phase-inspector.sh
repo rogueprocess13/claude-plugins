@@ -163,9 +163,9 @@ Inspect the verifier results above. Check for these known defect patterns:
 
 Verdict computation: worst severity wins across all detected patterns (PASS if 0 patterns, WARN if ≥1 WARN and 0 FAIL, FAIL if ≥1 FAIL).
 
-Write exactly one line to the pipeline log:
-```
-META|phase-inspector|info|{"phase":"<phase>","verdict":"<PASS|WARN|FAIL>","signals":<N>,"detail":"<summary ≤ 200 chars>","verifiers_consulted":["<id1>",...],"patterns":[{"pattern":"<id>","severity":"<warn|fail>","evidence":"<specific>"}]}
+Write exactly one line to the pipeline log (`$LOG_FILE`) with this command. The line MUST start with the ISO-8601 UTC timestamp field — the pipeline log format is `ISO|PHASE|STEP|STATUS|MSG`, and a line without its leading timestamp breaks every consumer that splits on `|`. Keep the `$(date -u +%Y-%m-%dT%H:%M:%SZ)|` prefix exactly as written:
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|phase-inspector|info|{\"phase\":\"<phase>\",\"verdict\":\"<PASS|WARN|FAIL>\",\"signals\":<N>,\"detail\":\"<summary ≤ 200 chars>\",\"verifiers_consulted\":[\"<id1>\",...],\"patterns\":[{\"pattern\":\"<id>\",\"severity\":\"<warn|fail>\",\"evidence\":\"<specific>\"}]}" >> "$LOG_FILE"
 ```
 
 The JSON must be valid (jq-parseable). Detail must be ≤ 200 chars. Use the phase value from the context above for the "phase" field.
