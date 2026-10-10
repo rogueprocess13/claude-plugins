@@ -308,6 +308,71 @@ test_gate_warn_scoped_to_phase_window() {
   return 0
 }
 
+# ── #418: RETURN_INCOMPLETE is attributed to IMPLEMENT, not to a time window ─────
+# Real router ordering: IMPLEMENT verifier-results are written by the agent,
+# then the router writes the RETURN_INCOMPLETE gate-warn AFTER spawn_capture,
+# then VERIFY / PR-REVIEW write their own verifier-results later.
+
+_vr_line_418() {
+  printf '{"verifier":"%s","verdict":"PASS","score":1.0,"criteria_met":5,"criteria_total":5,"attempt":1,"phase":"%s"}' "$1" "$2"
+}
+
+_write_418_log() {
+  {
+    echo "2026-01-01T00:00:00Z|META|verifier-result|info|$(_vr_line_418 unit_tests IMPLEMENT)"
+    echo "2026-01-01T00:00:05Z|META|gate-warn|info|RETURN_INCOMPLETE — UNCHECKED_BOXES (unchecked=8/36, artifact=openspec)"
+    echo "2026-01-01T00:10:00Z|META|verifier-result|info|$(_vr_line_418 playwright_uat VERIFY)"
+    echo "2026-01-01T00:20:00Z|META|verifier-result|info|$(_vr_line_418 pr_review PR-REVIEW)"
+  } >>"$_log"
+}
+
+test_return_incomplete_detected_for_implement() {
+  _setup
+  _write_418_log
+  local out rc=0
+  out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
+  echo "$out" | grep -q 'RETURN_INCOMPLETE present\*\*: true' || rc=1
+  echo "$out" | grep -q 'unchecked=8/36' || rc=1
+  [ "$rc" -eq 0 ] || echo "IMPLEMENT inspection missed the gate-warn written after its verifier results"
+  _teardown
+  return "$rc"
+}
+
+test_return_incomplete_not_attributed_to_verify() {
+  _setup
+  _write_418_log
+  local out rc=0
+  out=$(assemble_inspector_context "VERIFY" "CRE-123" "$_log" "IMPLEMENT" 2>/dev/null) || true
+  echo "$out" | grep -q 'RETURN_INCOMPLETE present\*\*: false' || rc=1
+  if echo "$out" | grep -q 'unchecked=8/36'; then rc=1; fi
+  [ "$rc" -eq 0 ] || echo "VERIFY inspection attributed IMPLEMENT's RETURN_INCOMPLETE to itself"
+  _teardown
+  return "$rc"
+}
+
+test_return_incomplete_not_attributed_to_pr_review() {
+  _setup
+  _write_418_log
+  local out rc=0
+  out=$(assemble_inspector_context "PR-REVIEW" "CRE-123" "$_log" "IMPLEMENT VERIFY" 2>/dev/null) || true
+  echo "$out" | grep -q 'RETURN_INCOMPLETE present\*\*: false' || rc=1
+  if echo "$out" | grep -q 'unchecked=8/36'; then rc=1; fi
+  [ "$rc" -eq 0 ] || echo "PR-REVIEW inspection attributed IMPLEMENT's RETURN_INCOMPLETE to itself"
+  _teardown
+  return "$rc"
+}
+
+test_other_gate_warns_kept_for_verify() {
+  _setup
+  _write_418_log
+  echo "2026-01-01T00:05:00Z|META|gate-warn|info|SOME_OTHER_WARN — still shown" >>"$_log"
+  local out rc=0
+  out=$(assemble_inspector_context "VERIFY" "CRE-123" "$_log" "IMPLEMENT" 2>/dev/null) || true
+  echo "$out" | grep -q 'SOME_OTHER_WARN' || rc=1
+  _teardown
+  return "$rc"
+}
+
 # ── Test: spawn_phase_inspector wrapper matches spec signature (P1-4) ──────────
 
 test_spawn_phase_inspector_wrapper() {
@@ -400,6 +465,115 @@ test_large_verifier_count() {
   return 1
 }
 
+# ── Test: every line this lib causes to be written carries the ISO timestamp ────
+# Issue #421: the agent-facing template told the guidance-extractor-agent to write
+# a bare `META|phase-inspector|...` line, so the agent's line landed in the log
+# with no leading ISO field. The agent is told not to read files, so the prompt
+# template is the only contract it follows. This test runs the exact write
+# block the template hands the agent and grammar-checks what it appends, and
+# grammar-checks the lib's own skip-path write too. The block is filled with
+# verifier-style text carrying `$(...)`, backticks and `$VAR`: it must stay
+# literal in the log and never execute (a double-quoted echo would run it).
+
+_ISO_LINE_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\|'
+
+test_log_writes_carry_iso_timestamp() {
+  _setup
+  _vr_write "unit_tests" "PASS" "IMPLEMENT" 5 5
+
+  local out instructions
+  out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
+  instructions=$(_extract_instructions "$out")
+
+  # Every template line naming the phase-inspector record must be a write
+  # command that starts with the timestamp — never a bare META| line.
+  local bare
+  bare=$(printf '%s\n' "$instructions" | grep -E '^META\|phase-inspector\|' || true)
+  if [ -n "$bare" ]; then
+    echo "template still instructs a bare (untimestamped) line: $bare"
+    _teardown
+    return 1
+  fi
+
+  # Run the template's write block against a scratch log, filled the way an
+  # agent fills it — with verifier-derived text that carries shell syntax.
+  # The block must keep that text literal (no command substitution, no
+  # backtick execution, no variable expansion).
+  local block agent_log="$_ws/agent.log"
+  block=$(printf '%s\n' "$instructions" | awk '
+    /^```bash/ {inb=1; buf=""; next}
+    inb && /^```/ {inb=0; if (buf ~ /phase-inspector\|info/) {printf "%s", buf; exit}; next}
+    inb {buf = buf $0 "\n"}')
+  if [ -z "$block" ]; then
+    echo "template carries no phase-inspector write block"
+    _teardown
+    return 1
+  fi
+  local pwn_cs="$_ws/pwn-cmdsubst" pwn_bt="$_ws/pwn-backtick"
+  local detail_txt="flaky \`touch ${pwn_bt}\` seen"
+  local evidence_txt="evidence \$(touch ${pwn_cs}) and \$HOME"
+  block=${block//"<phase>"/IMPLEMENT}
+  block=${block//"<PASS|WARN|FAIL>"/WARN}
+  block=${block//"<N>"/1}
+  block=${block//"<summary ≤ 200 chars>"/"$detail_txt"}
+  block=${block//"<id1>"/unit_tests}
+  block=${block//"<id2>"/playwright_uat}
+  block=${block//"<id>"/flaky_tests}
+  block=${block//"<warn|fail>"/warn}
+  block=${block//"<specific>"/"$evidence_txt"}
+  : >"$agent_log"
+  (cd "$_ws" && LOG_FILE="$agent_log" bash -c "$block") >/dev/null 2>&1 || true
+
+  if [ -e "$pwn_cs" ] || [ -e "$pwn_bt" ]; then
+    echo "template write block executed shell syntax from verifier text"
+    _teardown
+    return 1
+  fi
+  local logged_evidence logged_detail
+  logged_evidence=$(cut -d'|' -f5- "$agent_log" | jq -r '.patterns[0].evidence' 2>/dev/null || true)
+  logged_detail=$(cut -d'|' -f5- "$agent_log" | jq -r '.detail' 2>/dev/null || true)
+  if [ "$logged_evidence" != "$evidence_txt" ] || [ "$logged_detail" != "$detail_txt" ]; then
+    echo "logged line lost the literal verifier text: $(cat "$agent_log")"
+    _teardown
+    return 1
+  fi
+  if [ "$(wc -l <"$agent_log" | tr -d ' ')" -ne 1 ]; then
+    echo "template block must append exactly one line: $(cat "$agent_log")"
+    _teardown
+    return 1
+  fi
+
+  # Skip path: the lib's own write.
+  local skip_log="$_ws/skip.log"
+  : >"$skip_log"
+  assemble_inspector_context "VERIFY" "CRE-123" "$skip_log" >/dev/null 2>&1 || true
+
+  local f line n
+  for f in "$agent_log" "$skip_log"; do
+    n=$(wc -l <"$f" | tr -d ' ')
+    if [ "$n" -lt 1 ]; then
+      echo "no line written to $(basename "$f")"
+      _teardown
+      return 1
+    fi
+    while IFS= read -r line; do
+      if ! printf '%s\n' "$line" | grep -qE "$_ISO_LINE_RE"; then
+        echo "line without ISO timestamp in $(basename "$f"): $line"
+        _teardown
+        return 1
+      fi
+      if [ "$(printf '%s\n' "$line" | cut -d'|' -f2-3)" != "META|phase-inspector" ]; then
+        echo "line has wrong PHASE|STEP in $(basename "$f"): $line"
+        _teardown
+        return 1
+      fi
+    done <"$f"
+  done
+
+  _teardown
+  return 0
+}
+
 # ── Run ─────────────────────────────────────────────────────────────────────────
 
 echo "=== test-phase-inspector.sh ==="
@@ -415,10 +589,15 @@ _run "verifier IDs appear in context" test_verifier_ids_in_context
 _run "gate-warn entries included in context" test_gate_warns_in_context
 _run "cross-phase context includes EXTRA_PHASES" test_cross_phase_context
 _run "gate-warn outside phase window excluded" test_gate_warn_scoped_to_phase_window
+_run "#418 RETURN_INCOMPLETE detected for IMPLEMENT" test_return_incomplete_detected_for_implement
+_run "#418 RETURN_INCOMPLETE not attributed to VERIFY" test_return_incomplete_not_attributed_to_verify
+_run "#418 RETURN_INCOMPLETE not attributed to PR-REVIEW" test_return_incomplete_not_attributed_to_pr_review
+_run "#418 other gate-warns kept for VERIFY" test_other_gate_warns_kept_for_verify
 _run "spawn_phase_inspector wrapper matches spec" test_spawn_phase_inspector_wrapper
 _run "jq absence handled gracefully" test_jq_absence_skip
 _run "sourcing preserves shell flags" test_sourcing_preserves_shell_flags
 _run "100-entry stress test extracts correct phase" test_large_verifier_count
+_run "every log line written carries the ISO timestamp (#421)" test_log_writes_carry_iso_timestamp
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

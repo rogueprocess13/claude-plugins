@@ -227,6 +227,77 @@ test_critique_rerun_has_finding_takes_latest() {
   rm -rf "$tmpdir"
 }
 
+# ── get_blast_radius_override (issue #413) ────────────────────────────────────
+# Step 2.8's complexity override used to fire on any target with 3+ d=1
+# callers, even when the planned edit was purely additive (a new case arm
+# before an unchanged default) and could not change any caller's behaviour.
+
+# _blast <notes-body> — writes notes.md, evals the override result into the
+# caller's scope (BLAST_OVERRIDE / BLAST_REASON / BLAST_ADDITIVE_SKIP), and
+# returns the function's own exit code.
+_blast() {
+  local tmpdir out rc=0
+  tmpdir=$(mktemp -d)
+  printf '%b' "$1" >"$tmpdir/notes.md"
+  out=$(bash -c "source $LIB_DIR/notes-parse.sh; get_blast_radius_override '$tmpdir'" 2>/dev/null) || rc=$?
+  rm -rf "$tmpdir"
+  BLAST_OVERRIDE="" BLAST_REASON="" BLAST_ADDITIVE_SKIP=""
+  eval "$out"
+  return "$rc"
+}
+
+_BR_HDR='## Blast Radius\n\n| Target | Risk | d=1 (WILL BREAK) | d=2 (LIKELY AFFECTED) | Affected Flows | Edit |\n|--------|------|-------------------|------------------------|----------------|------|\n'
+
+test_blast_additive_skips_caller_count() {
+  _blast "${_BR_HDR}| \`can()\` | LOW | 23 callers | 4 indirect | none | additive |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "none" ] && [ -z "$BLAST_REASON" ] &&
+    [ "$BLAST_ADDITIVE_SKIP" = "can() (23 callers)" ]
+}
+
+test_blast_modifying_caller_count_overrides() {
+  _blast "${_BR_HDR}| \`can()\` | LOW | 23 callers | 4 indirect | none | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "complex" ] && [ "$BLAST_REASON" = "23 d=1 callers (can())" ] &&
+    [ -z "$BLAST_ADDITIVE_SKIP" ]
+}
+
+test_blast_legacy_table_without_edit_column_overrides() {
+  _blast '## Blast Radius\n\n| Target | Risk | d=1 (WILL BREAK) | d=2 (LIKELY AFFECTED) | Affected Flows |\n|---|---|---|---|---|\n| `can()` | LOW | 3 callers | 0 indirect | none |\n' || return 1
+  [ "$BLAST_OVERRIDE" = "complex" ]
+}
+
+test_blast_additive_still_overrides_on_high_risk() {
+  _blast "${_BR_HDR}| \`can()\` | HIGH | 23 callers | 4 indirect | none | additive |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "complex" ] && [ "$BLAST_REASON" = "risk HIGH (can())" ] &&
+    [ "$BLAST_ADDITIVE_SKIP" = "can() (23 callers)" ]
+}
+
+test_blast_additive_still_overrides_on_two_flows() {
+  _blast "${_BR_HDR}| \`a\` | LOW | 5 callers | 0 indirect | Login, Checkout | additive |\n| \`b\` | LOW | 1 callers | 0 indirect | login | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "complex" ] && [ "$BLAST_REASON" = "2 execution flows" ]
+}
+
+test_blast_below_thresholds_is_none() {
+  _blast "${_BR_HDR}| \`a\` | MEDIUM | 2 callers | 9 indirect | Login | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "none" ] && [ -z "$BLAST_REASON" ]
+}
+
+test_blast_reason_is_eval_safe() {
+  _blast "${_BR_HDR}| \`it's; \$(touch /nonexistent-413)\` | CRITICAL | 0 callers | 0 indirect | none | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "complex" ] &&
+    [ "$BLAST_REASON" = "risk CRITICAL (it's; \$(touch /nonexistent-413))" ]
+}
+
+test_blast_takes_last_section() {
+  _blast "${_BR_HDR}| \`a\` | LOW | 9 callers | 0 indirect | none | modifying |\n\n${_BR_HDR}| \`a\` | LOW | 9 callers | 0 indirect | none | additive |\n\n## Later\n\n| x | HIGH | 9 | 0 | none | modifying |\n" || return 1
+  [ "$BLAST_OVERRIDE" = "none" ]
+}
+
+test_blast_section_absent_exit_2() {
+  local rc=0
+  _blast '## Complexity\n\n**Score:** simple\n' || rc=$?
+  [ "$rc" -eq 2 ]
+}
+
 FILTER="${1:-}"
 
 for fn in \
@@ -246,7 +317,16 @@ for fn in \
   test_ac_count_indented_prose_not_boundary \
   test_ac_count_plain_text_label_no_heading \
   test_ac_count_heading_section_still_works \
-  test_ac_count_heading_boundary_still_stops_fallback; do
+  test_ac_count_heading_boundary_still_stops_fallback \
+  test_blast_additive_skips_caller_count \
+  test_blast_modifying_caller_count_overrides \
+  test_blast_legacy_table_without_edit_column_overrides \
+  test_blast_additive_still_overrides_on_high_risk \
+  test_blast_additive_still_overrides_on_two_flows \
+  test_blast_below_thresholds_is_none \
+  test_blast_reason_is_eval_safe \
+  test_blast_takes_last_section \
+  test_blast_section_absent_exit_2; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

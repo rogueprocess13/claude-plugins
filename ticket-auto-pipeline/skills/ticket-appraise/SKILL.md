@@ -384,18 +384,34 @@ If the symbol is ambiguous (multiple candidates), pick the highest-relevance res
 ```markdown
 ## Blast Radius
 
-| Target | Risk | d=1 (WILL BREAK) | d=2 (LIKELY AFFECTED) | Affected Flows |
-|--------|------|-------------------|------------------------|----------------|
-| `{symbol}` | LOW/MEDIUM/HIGH/CRITICAL | {count} callers | {count} indirect | {flow names} |
+| Target | Risk | d=1 (WILL BREAK) | d=2 (LIKELY AFFECTED) | Affected Flows | Edit |
+|--------|------|-------------------|------------------------|----------------|------|
+| `{symbol}` | LOW/MEDIUM/HIGH/CRITICAL | {count} callers | {count} indirect | {comma-separated flow names, or none} | additive/modifying |
 
 **Analysis:** {one sentence summarizing what the blast radius means for this ticket}
 ```
 
-**Re-evaluate complexity:** If any target reports HIGH or CRITICAL risk, OR any target has 3+ d=1 callers, OR 2+ execution flows are affected — and the current classification (from Step 2.5 or fast-path Strategy mapping) is `simple` — override to `complex` and update the `## Complexity` section in notes.md with the reason. **Fast-path interaction:** If fast-path set complexity to `simple` (from Conservative strategy), blast radius still runs and can override to `complex`. The override reads from notes.md and applies regardless of how complexity was originally set.
+**Edit column:** record `additive` only when the planned edit to that target is purely additive — new union members, new `case`/`switch` arms placed before an unchanged `default`, new optional parameters, or new exports — so that no existing caller's inputs or outputs can change. Anything else (changed signature, changed return value, changed branch an existing input already reaches, removed member, reordered arms) is `modifying`. When unsure, write `modifying`.
+
+**Re-evaluate complexity:** the thresholds are applied by bash, not by judgement. Run:
+
+```bash
+eval "$(bash -c "source ~/.claude/skills/lib/notes-parse.sh; get_blast_radius_override '{ticket-dir}'")"
+```
+
+`BLAST_OVERRIDE=complex` fires when any target reports HIGH or CRITICAL risk, OR any target **whose Edit is not `additive`** has 3+ d=1 callers, OR 2+ distinct execution flows are affected. If `BLAST_OVERRIDE=complex` and the current classification (from Step 2.5 or fast-path Strategy mapping) is `simple`, override to `complex` and update the `## Complexity` section in notes.md with `BLAST_REASON`. **Fast-path interaction:** If fast-path set complexity to `simple` (from Conservative strategy), blast radius still runs and can override to `complex`. The override reads from notes.md and applies regardless of how complexity was originally set.
 
 ```markdown
-**Score:** complex (overridden from simple — blast radius: {reason})
+**Score:** complex (overridden from simple — blast radius: {BLAST_REASON})
 ```
+
+**Additive-change exemption (caller-count trigger only):** a purely additive edit cannot change any existing caller's behaviour, so its caller count is not evidence of risk — and counts from the `impact-data` local-grep fallback are file counts, not call-graph edges, so they are an upper bound to begin with. This trigger alone used to override additive tickets to `complex`, and every such ticket landed `Smooth`. If `BLAST_ADDITIVE_SKIP` is non-empty, record it in `## Complexity`:
+
+```markdown
+**blast-radius:** additive — caller-count override skipped ({BLAST_ADDITIVE_SKIP})
+```
+
+The HIGH/CRITICAL-risk and 2+-flows triggers still apply to additive targets.
 
 **Framework-migration override:** If the `## Complexity` section records the `cross-layer (framework-migration)` marker from Step 2.5, override `simple` → `complex` regardless of the risk level and caller counts reported above. The `impact()` thresholds are edge counts, and this class of defect has no edge — a LOW score is absence of evidence, not evidence of absence. Such tickets take the Step 3-Agent (delegated) path so the bean-wiring surface is planned adversarially rather than inline.
 

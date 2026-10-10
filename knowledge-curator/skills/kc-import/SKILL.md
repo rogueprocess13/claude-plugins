@@ -38,8 +38,11 @@ for change_dir in openspec/changes/*/; do
   title=$(head -5 "${change_dir}proposal.md" | grep "^## " | head -1 | sed 's/^## //')
 
   # Get completion from tasks.md
-  total=$(grep -c '^\- \[' "${change_dir}tasks.md" 2>/dev/null || echo 0)
-  done=$(grep -c '^\- \[x\]' "${change_dir}tasks.md" 2>/dev/null || echo 0)
+  # `|| true`, not `|| echo 0`: grep -c already prints "0" on zero matches
+  total=$(grep -c '^\- \[' "${change_dir}tasks.md" 2>/dev/null || true)
+  total=${total:-0}
+  done=$(grep -c '^\- \[x\]' "${change_dir}tasks.md" 2>/dev/null || true)
+  done=${done:-0}
 
   if [ "$done" -eq "$total" ] && [ "$total" -gt 0 ]; then
     status="done"

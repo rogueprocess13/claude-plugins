@@ -193,6 +193,94 @@ test_full_mode_ticket_autonomy_warn() {
   echo "$output" | grep 'TICKET_AUTONOMY' | grep -q 'warn'
 }
 
+# ── backticked CLAUDE.md fields (#417) ───────────────────────────────────────
+# A project CLAUDE.md documents its fields as `KEY` = value. Validate mode used
+# to anchor on a bare ^REPOS_ROOT and report a false MISS for that form, while
+# report mode (and the runtime preamble) read it fine. Every mode must agree.
+
+_mk_backticked_project_dir() {
+  local dir="$1"
+  _mk_project_dir "$dir"
+  cat >"$dir/CLAUDE.md" <<'EOF'
+`REPOS_ROOT` = /tmp/test-repos-backticked
+`LOCAL_URL` = `http://localhost:4000`
+`UAT_URL`: http://uat.example.com
+`BE_TEST_CMD` = mvn -q test
+EOF
+}
+
+test_validate_reads_backticked_repos_root() {
+  local tmpdir output
+  tmpdir=$(mktemp -d)
+  _mk_backticked_project_dir "$tmpdir"
+  output=$(LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
+    bash "$LIB_DIR/env-check.sh" --mode=validate "$tmpdir" 2>&1 || true)
+  rm -rf "$tmpdir"
+  echo "$output" | grep -q 'REPOS_ROOT (/tmp/test-repos-backticked)' &&
+    ! echo "$output" | grep 'REPOS_ROOT' | grep -q 'MISS'
+}
+
+test_validate_reads_backticked_local_url() {
+  local tmpdir output
+  tmpdir=$(mktemp -d)
+  _mk_backticked_project_dir "$tmpdir"
+  output=$(
+    unset LOCAL_URL
+    LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
+      bash "$LIB_DIR/env-check.sh" --mode=validate "$tmpdir" 2>&1 || true
+  )
+  rm -rf "$tmpdir"
+  echo "$output" | grep -q 'LOCAL_URL (http://localhost:4000)'
+}
+
+test_validate_passes_backticked_project() {
+  local tmpdir exit_code=0
+  tmpdir=$(mktemp -d)
+  _mk_backticked_project_dir "$tmpdir"
+  (
+    unset LOCAL_URL UAT_URL
+    LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
+      bash "$LIB_DIR/env-check.sh" --mode=validate "$tmpdir"
+  ) >/dev/null 2>&1 || exit_code=$?
+  rm -rf "$tmpdir"
+  [ "$exit_code" -eq 0 ]
+}
+
+test_full_mode_reads_backticked_fields() {
+  local tmpdir output
+  tmpdir=$(mktemp -d)
+  _mk_backticked_project_dir "$tmpdir"
+  output=$(
+    unset LOCAL_URL UAT_URL
+    LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
+      bash "$LIB_DIR/env-check.sh" --mode=full "$tmpdir" 2>/dev/null || true
+  )
+  rm -rf "$tmpdir"
+  echo "$output" | grep -q '^REPOS_ROOT|ok|/tmp/test-repos-backticked|' &&
+    echo "$output" | grep -q '^LOCAL_URL|ok|http://localhost:4000|' &&
+    echo "$output" | grep -q '^UAT_URL|ok|http://uat.example.com|'
+}
+
+# The shared reader the preamble (runtime) and env-check (diagnostic) both
+# call: backticks on either side, values with spaces, absent key -> rc 1.
+test_claude_md_field_grammar() {
+  local tmpdir rc=0 got
+  tmpdir=$(mktemp -d)
+  _mk_backticked_project_dir "$tmpdir"
+  got=$(
+    source "$LIB_DIR/claude-md-field.sh"
+    printf '%s|' "$(claude_md_field "$tmpdir/CLAUDE.md" REPOS_ROOT)" \
+      "$(claude_md_field "$tmpdir/CLAUDE.md" LOCAL_URL)" \
+      "$(claude_md_field "$tmpdir/CLAUDE.md" UAT_URL)" \
+      "$(claude_md_field "$tmpdir/CLAUDE.md" BE_TEST_CMD)"
+    claude_md_field "$tmpdir/CLAUDE.md" NOT_DECLARED >/dev/null && exit 9
+    exit 0
+  ) || rc=$?
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] &&
+    [ "$got" = "/tmp/test-repos-backticked|http://localhost:4000|http://uat.example.com|mvn -q test|" ]
+}
+
 # ── argument parsing edge cases ───────────────────────────────────────────────
 
 test_unknown_mode_exits_1() {
@@ -231,6 +319,11 @@ for fn in \
   test_full_mode_local_url_env_priority \
   test_full_mode_linear_key_in_dotenv \
   test_full_mode_ticket_autonomy_warn \
+  test_validate_reads_backticked_repos_root \
+  test_validate_reads_backticked_local_url \
+  test_validate_passes_backticked_project \
+  test_full_mode_reads_backticked_fields \
+  test_claude_md_field_grammar \
   test_unknown_mode_exits_1 \
   test_summary_file_flag_writes_to_path; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue

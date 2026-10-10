@@ -61,6 +61,12 @@ VERIFY_LOCK_TIMEOUT_SECS="${VERIFY_LOCK_TIMEOUT_SECS:-2400}"
 # releases the flock) after this many seconds even if verify_lock_release
 # is never called — e.g. the calling agent itself gets killed.
 VERIFY_LOCK_MAX_HOLD_SECS="${VERIFY_LOCK_MAX_HOLD_SECS:-3600}"
+# After env-start.sh, ticket-verify checks which checkout the process listening
+# on LOCAL_URL's port is actually serving (verify_served_worktree_check). When
+# it is a different checkout of a repo under test on a different commit, the
+# run gate-stops (VERIFY_SERVED_WRONG_WORKTREE) instead of producing a silent
+# false pass/fail. Set to false to downgrade that to a warning.
+VERIFY_SERVED_WORKTREE_ENFORCE="${VERIFY_SERVED_WORKTREE_ENFORCE:-true}"
 
 # ── Ticket audit ────────────────────────────────────────────────────────────
 

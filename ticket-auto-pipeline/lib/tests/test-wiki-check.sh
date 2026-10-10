@@ -305,6 +305,85 @@ test_changed_only_scopes_to_git_status() {
   [ "$has_uncommitted" -eq 0 ] && [ "$has_committed" -eq 1 ]
 }
 
+# ── #416: worktree exclusion + time bound on the class-name check ──────────────
+
+test_class_only_in_worktree_trees_is_unknown() {
+  # A class defined only inside .ticket-auto/ worktrees, .verify-worktrees/,
+  # or a build output must NOT count as resolved: those trees are excluded
+  # from the walk (they multiply the search by every in-flight ticket).
+  _setup
+  mkdir -p "$_ws/repos/.ticket-auto/worktrees/T-1--slug/src" \
+    "$_ws/repos/.verify-worktrees/T-1/src" "$_ws/repos/bom/build"
+  printf 'class TotallyMadeUpClass {}\n' >"$_ws/repos/.ticket-auto/worktrees/T-1--slug/src/A.java"
+  printf 'class TotallyMadeUpClass {}\n' >"$_ws/repos/.verify-worktrees/T-1/src/A.java"
+  printf 'class TotallyMadeUpClass {}\n' >"$_ws/repos/bom/build/A.java"
+  _write_wiki_file "a.md" "$(_fm_unknown_class)"
+  local out
+  out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md)
+  local ok=1
+  echo "$out" | grep -qF 'unknown_classes=1:TotallyMadeUpClass' && ok=0
+  _teardown
+  [ "$ok" -eq 0 ]
+}
+
+test_class_budget_exhausted_skips_not_unknown() {
+  # Budget of 0s: every name is skipped. Skipped names are not unknown, the
+  # stdout grammar is unchanged, and a WIKI_CHECK_NOTE lands on stderr.
+  _setup
+  _write_wiki_file "a.md" "$(_fm_unknown_class)"
+  local out err rc=0
+  err="$_ws/err.txt"
+  out=$(WIKI_CHECK_CLASS_BUDGET_SECS=0 bash "$CHECK" --wiki-root "$_ws/wiki" \
+    --repos-root "$_ws/repos" --file a.md 2>"$err") || rc=$?
+  local ok=1
+  if echo "$out" | grep -qF 'unknown_classes=0|' &&
+    echo "$out" | grep -q '^WIKI_CHECK_SUMMARY|' &&
+    ! echo "$out" | grep -q 'WIKI_CHECK_NOTE' &&
+    grep -qF 'WIKI_CHECK_NOTE|a.md|class_check=partial|skipped=1|' "$err" &&
+    [ "$rc" -eq 0 ]; then
+    ok=0
+  fi
+  _teardown
+  [ "$ok" -eq 0 ]
+}
+
+test_class_grep_hang_is_time_bounded() {
+  # A grep that would hang (stubbed to sleep) is killed by the per-grep
+  # timeout and degrades to "skipped" instead of blocking the lint.
+  if ! command -v timeout >/dev/null 2>&1 && ! command -v gtimeout >/dev/null 2>&1; then
+    echo "SKIP: no timeout binary"
+    return 0
+  fi
+  _setup
+  _write_wiki_file "a.md" "$(_fm_unknown_class)"
+  local real_grep
+  real_grep=$(command -v grep)
+  mkdir -p "$_ws/bin"
+  cat >"$_ws/bin/grep" <<EOF
+#!/usr/bin/env bash
+# Recursive tree walks hang; every other grep behaves normally.
+for a in "\$@"; do
+  case "\$a" in -r*) exec sleep 30 ;; esac
+done
+exec "$real_grep" "\$@"
+EOF
+  chmod +x "$_ws/bin/grep"
+  local out err start elapsed
+  err="$_ws/err.txt"
+  start=$(date +%s)
+  out=$(PATH="$_ws/bin:$PATH" WIKI_CHECK_CLASS_GREP_TIMEOUT_SECS=1 bash "$CHECK" \
+    --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md 2>"$err") || true
+  elapsed=$(($(date +%s) - start))
+  local ok=1
+  if [ "$elapsed" -lt 15 ] &&
+    echo "$out" | grep -qF 'unknown_classes=0|' &&
+    grep -qF 'class_check=partial|skipped=1|' "$err"; then
+    ok=0
+  fi
+  _teardown
+  [ "$ok" -eq 0 ]
+}
+
 # ── Runner ───────────────────────────────────────────────────────────────────
 
 for t in test_complete_frontmatter_fresh test_stale_after_one_commit \
@@ -313,7 +392,10 @@ for t in test_complete_frontmatter_fresh test_stale_after_one_commit \
   test_unknown_class_flagged test_known_class_not_flagged \
   test_no_repos_root_skips_class_check test_index_md_excluded_from_full_scan \
   test_exit_code_zero_when_clean test_exit_code_nonzero_when_issues_found \
-  test_missing_wiki_root_errors test_changed_only_scopes_to_git_status; do
+  test_missing_wiki_root_errors test_changed_only_scopes_to_git_status \
+  test_class_only_in_worktree_trees_is_unknown \
+  test_class_budget_exhausted_skips_not_unknown \
+  test_class_grep_hang_is_time_bounded; do
   if "$t"; then
     _pass "$t"
   else
