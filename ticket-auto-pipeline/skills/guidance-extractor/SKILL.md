@@ -204,10 +204,18 @@ After checking all patterns:
 Write exactly ONE line to the pipeline log (`$LOG_FILE`):
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|phase-inspector|info|{\"phase\":\"<PHASE>\",\"verdict\":\"<PASS|WARN|FAIL>\",\"signals\":<N>,\"detail\":\"<summary ≤ 200 chars>\",\"verifiers_consulted\":[\"<id1>\",\"<id2>\"],\"patterns\":[{\"pattern\":\"<pattern_id>\",\"severity\":\"<warn|fail>\",\"evidence\":\"<specific evidence>\"}]}" >> "$LOG_FILE"
+_pi_json=$(cat <<'PHASE_INSPECTOR_VERDICT_EOF'
+{"phase":"<PHASE>","verdict":"<PASS|WARN|FAIL>","signals":<N>,"detail":"<summary ≤ 200 chars>","verifiers_consulted":["<id1>","<id2>"],"patterns":[{"pattern":"<pattern_id>","severity":"<warn|fail>","evidence":"<specific evidence>"}]}
+PHASE_INSPECTOR_VERDICT_EOF
+)
+if _pi_line=$(printf '%s' "$_pi_json" | jq -c . 2>/dev/null) && [ -n "$_pi_line" ]; then
+  printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_pi_line" >>"$LOG_FILE"
+else
+  echo "[phase-inspector] WARN: verdict JSON invalid or jq unavailable, nothing written" >&2
+fi
 ```
 
-The JSON MUST be valid (jq-parseable). Verify with `jq -e .` before writing if jq is available. If the write fails, log a warning to stderr and exit 0 — never block the pipeline.
+Fill in only the one JSON line between the `JSON` markers. Never embed the JSON in a double-quoted `echo` string: `detail` and `evidence` quote verifier output, and a double-quoted string would execute any `$(...)` or backtick in it. The quoted heredoc keeps it literal, and `jq -c` validates it so an invalid payload writes nothing rather than a partial line. If the write fails, log a warning to stderr and exit 0 — never block the pipeline.
 
 ### Example: Clean phase (PASS)
 
