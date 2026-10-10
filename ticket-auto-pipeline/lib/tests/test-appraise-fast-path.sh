@@ -25,7 +25,7 @@ fi
 # Export threshold constants so tests are explicit about their values
 # rather than relying on defaults that could silently change.
 export FAST_PATH_CONFIDENCE_THRESHOLD="${FAST_PATH_CONFIDENCE_THRESHOLD:-0.85}"
-export PLANNER_CONFIDENCE_THRESHOLD="${PLANNER_CONFIDENCE_THRESHOLD:-0.50}"
+export PLANNED_TICKET_MIN_CONFIDENCE="${PLANNED_TICKET_MIN_CONFIDENCE:-0.50}"
 
 source "$LIB_DIR/planned-ticket-check.sh"
 source "$LIB_DIR/appraise-fast-path.sh"
@@ -224,7 +224,7 @@ test_low_confidence_not_pre_approved() {
   local desc
   desc=$(_build_ticket_description "0.35" "false")
   check_fast_path_eligible "TEST-1" "$desc" "true" 2>/dev/null || true
-  # Gets caught by validator (PLANNER_CONFIDENCE_THRESHOLD=0.5), not the
+  # Gets caught by validator (PLANNED_TICKET_MIN_CONFIDENCE=0.5), not the
   # fast-path confidence check (FAST_PATH_CONFIDENCE_THRESHOLD=0.85).
   [ "$FAST_PATH_ELIGIBLE" = "false" ] && [ "$FAST_PATH_REASON" = "low_confidence_not_preapproved" ]
 }
