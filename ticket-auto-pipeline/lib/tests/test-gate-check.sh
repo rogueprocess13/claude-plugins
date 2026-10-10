@@ -2656,6 +2656,154 @@ test_check27e_fires_on_needs_info_flag_alone() {
   }
 }
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# --mode planned: pre-APPRAISE fail-fast (issue #410)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# The body shape that kept recurring in the field: Acceptance Criteria only, no
+# Test User / Scope / Navigation Path. Before #410 nothing stopped it until the
+# entry gate, after APPRAISE and EXEC had both run.
+_incomplete_planned_body='## Acceptance Criteria
+- [ ] Save button works
+'
+
+test_planned_mode_incomplete_body_gate_stops_before_appraise() {
+  _setup
+  # Fresh log: no APPRAISE or EXEC progress at all — the router runs this
+  # mode before the first spawn.
+  _fake_issue=$(jq -n --arg desc "$_incomplete_planned_body" '{id:"CRE-47",identifier:"CRE-47",title:"Test",description:$desc,labels:{nodes:[]}}')
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-47" "INIT-1" "feature" '[]' >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" _gate_planned >/dev/null 2>&1 || rc=$?
+
+  local gate_stop
+  gate_stop=$(grep '|META|gate-stop|fail|PLANNED_BODY_INCOMPLETE' "$LOG_FILE" 2>/dev/null || true)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2 (gate-stop), got $rc"
+    return 1
+  }
+  echo "$gate_stop" | grep -q "Test User" &&
+    echo "$gate_stop" | grep -q "Scope" &&
+    echo "$gate_stop" | grep -q "Navigation Path" || {
+    echo "expected PLANNED_BODY_INCOMPLETE naming Test User, Scope and Navigation Path — got: $gate_stop"
+    return 1
+  }
+}
+
+test_planned_mode_not_ready_gate_stops_before_appraise() {
+  _setup
+  _fake_issue=$(jq -n --arg desc "$_full_planned_body" '{id:"CRE-47",identifier:"CRE-47",title:"Test",description:$desc,labels:{nodes:[]}}')
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-47" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_readiness "CRE-47" "not-ready" '["AC_VAGUE"]' '[]' >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" _gate_planned >/dev/null 2>&1 || rc=$?
+
+  local gate_stop
+  gate_stop=$(grep 'TICKET_NOT_READY' "$LOG_FILE" 2>/dev/null || true)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 2 ] && echo "$gate_stop" | grep -q "AC_VAGUE" || {
+    echo "expected TICKET_NOT_READY naming AC_VAGUE with exit 2 — rc=$rc got: $gate_stop"
+    return 1
+  }
+}
+
+test_planned_mode_complete_body_passes() {
+  _setup
+  _fake_issue=$(jq -n --arg desc "$_full_planned_body" '{id:"CRE-47",identifier:"CRE-47",title:"Test",description:$desc,labels:{nodes:[]}}')
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-47" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_readiness "CRE-47" "ready" '[]' '[]' >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" _gate_planned >/dev/null 2>&1 || rc=$?
+
+  local stops done_line gate_lines
+  stops=$(grep -c '|META|gate-stop|' "$LOG_FILE" 2>/dev/null)
+  done_line=$(grep -c '|GATE|planned-precheck|done|' "$LOG_FILE" 2>/dev/null)
+  # Must not write the entry gate's own markers — detect-resume.sh routes on
+  # GATE|gate|..., and a pre-APPRAISE line there would skip the real gate.
+  gate_lines=$(grep -c '|GATE|gate|' "$LOG_FILE" 2>/dev/null)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 0 ] && [ "$stops" -eq 0 ] && [ "$done_line" -eq 1 ] && [ "$gate_lines" -eq 0 ] || {
+    echo "expected pass with one planned-precheck done line and no GATE|gate lines (rc=$rc stops=$stops done=$done_line gate=$gate_lines)"
+    return 1
+  }
+}
+
+test_planned_mode_adhoc_ticket_is_noop_without_fetch() {
+  _setup
+  local fetched="${_ws}/fetched"
+  get_issue() {
+    touch "$fetched"
+    echo "$_fake_issue"
+  }
+  _fake_issue=$(jq -n --arg desc "$_incomplete_planned_body" '{id:"CRE-48",identifier:"CRE-48",title:"Test",description:$desc,labels:{nodes:[]}}')
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" ensure_ticket_manifest "CRE-48" >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" TICKET_ID="CRE-48" _gate_planned >/dev/null 2>&1 || rc=$?
+
+  local stops was_fetched="no"
+  # The log may not exist at all (nothing written) — grep -c then prints
+  # nothing, so default it.
+  stops=$(grep -c '|META|gate-stop|' "$LOG_FILE" 2>/dev/null || true)
+  stops=${stops:-0}
+  [ -f "$fetched" ] && was_fetched="yes"
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 0 ] && [ "$stops" -eq 0 ] && [ "$was_fetched" = "no" ] || {
+    echo "expected ad-hoc ticket to pass with no fetch (rc=$rc stops=$stops fetched=$was_fetched)"
+    return 1
+  }
+}
+
+test_planned_mode_fetch_failure_defers_to_entry_gate() {
+  _setup
+  get_issue() { return 1; }
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-47" "INIT-1" "feature" '[]' >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" _gate_planned >/dev/null 2>&1 || rc=$?
+
+  local stops holds skip_line
+  stops=$(grep -c '|META|gate-stop|' "$LOG_FILE" 2>/dev/null)
+  holds=$(grep -c '|META|gate-fetch-fail|' "$LOG_FILE" 2>/dev/null)
+  skip_line=$(grep -c '|GATE|planned-precheck|skip|' "$LOG_FILE" 2>/dev/null)
+
+  rm -rf "$repos_root"
+  _teardown
+  # A gate-fetch-fail line here would eat into the entry gate's own retry
+  # budget (it counts those lines), so the precheck must not write one.
+  [ "$rc" -eq 0 ] && [ "$stops" -eq 0 ] && [ "$holds" -eq 0 ] && [ "$skip_line" -eq 1 ] || {
+    echo "expected fetch failure to skip, not stop/hold (rc=$rc stops=$stops fetch_fail=$holds skip=$skip_line)"
+    return 1
+  }
+}
+
 for fn in \
   test_entry_artifact_missing_gate_stop \
   test_entry_complexity_artifact_mismatch \
@@ -2730,7 +2878,12 @@ for fn in \
   test_check27e_not_ready_planned_ticket_gate_stops_naming_codes \
   test_check27e_ready_planned_ticket_passes \
   test_check27e_never_fires_for_adhoc_even_with_not_ready_cache \
-  test_check27e_fires_on_needs_info_flag_alone; do
+  test_check27e_fires_on_needs_info_flag_alone \
+  test_planned_mode_incomplete_body_gate_stops_before_appraise \
+  test_planned_mode_not_ready_gate_stops_before_appraise \
+  test_planned_mode_complete_body_passes \
+  test_planned_mode_adhoc_ticket_is_noop_without_fetch \
+  test_planned_mode_fetch_failure_defers_to_entry_gate; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

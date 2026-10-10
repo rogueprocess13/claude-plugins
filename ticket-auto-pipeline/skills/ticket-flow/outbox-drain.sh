@@ -39,7 +39,56 @@
 set -eo pipefail
 
 _OD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_OD_LIB_DIR="$(cd "$_OD_DIR/../../lib" && pwd)"
+
+# _outbox_drain_resolve_lib_dir
+#
+# The sibling ../../lib only exists in the monorepo and plugin-cache layouts.
+# The SessionStart-synced copy (~/.claude/skills/ticket-flow/outbox-drain.sh,
+# the one flow.sh runs on a synced host) sits next to ~/.claude/skills/lib,
+# and that sync copies only lib/*.sh — never lib/board-drivers/ — so neither
+# its ../../lib nor the synced lib is usable there (#477). Take the first
+# candidate that has everything a drain needs: sibling, installed version
+# (installed_plugins.json), newest cached version by version order, synced lib.
+# Inline rather than lib/plugin-cache.sh, which lives in the dir being found.
+_outbox_drain_lib_complete() {
+  [ -f "$1/board-cursor.sh" ] && [ -f "$1/heartbeat.sh" ] && [ -d "$1/board-drivers" ]
+}
+
+_outbox_drain_resolve_lib_dir() {
+  local _installed="${HOME}/.claude/plugins/installed_plugins.json"
+  local _cand _p
+  _cand="$_OD_DIR/../../lib"
+  if _outbox_drain_lib_complete "$_cand"; then
+    (cd "$_cand" && pwd)
+    return 0
+  fi
+  if [ -f "$_installed" ]; then
+    _p=$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
+      "$_installed" 2>/dev/null | sort -V | tail -1) || true
+    if [ -n "$_p" ] && _outbox_drain_lib_complete "${_p%/}/lib"; then
+      echo "${_p%/}/lib"
+      return 0
+    fi
+  fi
+  _p=$(find "${HOME}/.claude/plugins/cache" -path "*/ticket-auto-pipeline/*/lib/board-cursor.sh" \
+    -type f 2>/dev/null | sort -V | tail -1) || true
+  if [ -n "$_p" ] && _outbox_drain_lib_complete "${_p%/board-cursor.sh}"; then
+    echo "${_p%/board-cursor.sh}"
+    return 0
+  fi
+  _cand="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}"
+  if _outbox_drain_lib_complete "$_cand"; then
+    echo "$_cand"
+    return 0
+  fi
+  return 1
+}
+
+if ! _OD_LIB_DIR=$(_outbox_drain_resolve_lib_dir); then
+  echo "outbox-drain.sh: no complete ticket-auto-pipeline lib dir (board-cursor.sh, heartbeat.sh, board-drivers/) found next to ${_OD_DIR}, in the installed plugin, the plugin cache or ${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}" >&2
+  # shellcheck disable=SC2317 # exit is reached when executed, return when sourced
+  return 1 2>/dev/null || exit 1
+fi
 
 source "$_OD_LIB_DIR/board-cursor.sh"
 source "$_OD_LIB_DIR/heartbeat.sh"

@@ -259,7 +259,7 @@ Skills plan, reason, and navigate code. `flow.sh` executes mutations with idempo
 | `fleet-detect.sh` | 6 detection engines (phase failures, stalls, zombies, loops, abandonment, flow failures). Aggregator `fleet_detect_all` outputs JSON. |
 | `fleet-intervene.sh` | Intervention executor: `fleet_kill_pipeline`, `fleet_restart_pipeline`, `fleet_can_restart`. flow.sh mutex-aware, `FLEET_DRY_RUN` guard. |
 | `fleet-dashboard.sh` | Dashboard renderer: `fleet_render_dashboard` (terminal) and `fleet_write_report` (markdown). |
-| `gate-check.sh` | Deterministic bash gate logic. `--mode entry` checks artifact, complexity, autonomy. `--mode reapprove` checks live Linear state. Replaces inline LLM reasoning. |
+| `gate-check.sh` | Deterministic bash gate logic. `--mode entry` checks artifact, complexity, autonomy. `--mode reapprove` checks live Linear state. `--mode planned` runs the planned-ticket body/readiness checks before APPRAISE (fail fast). Replaces inline LLM reasoning. |
 | `outcome-label-check.sh` | Bash-only post-implement guard for Smooth/Rough/Hard outcome label. |
 | `detect-resume.sh` | Pipeline log state parser. Called directly as bash by the thin router — outputs 21 routing variables including counters (VERIFY_ATTEMPTS, VERIFY_LAST, ITERATION, RECONCILE_CYCLE, PR_FEEDBACK_CYCLE). |
 
