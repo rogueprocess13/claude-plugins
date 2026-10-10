@@ -301,6 +301,81 @@ else
   fail "gate-call set -e leak" "caller aborted after calling the gate (got: '${LEAK_PROBE_OUT2}')"
 fi
 
+# ── #456: gate sets/exports PLANNER_INTENT_*; record refuses empty fields ─────
+echo "=== Intent provenance export + record (#456) ==="
+
+if [ -n "$GRILL_SEAL" ]; then
+  EXPORT_DOC=$(make_sealed_doc "91" "ready")
+  EXPORT_REPOS="$SCRATCH/repos-456"
+  mkdir -p "$EXPORT_REPOS"
+
+  # Following SKILL.md verbatim: call the gate directly, then record. The
+  # values must be visible in the caller's shell AND exported to children.
+  EXPORT_PROBE=$(REPOS_ROOT="$EXPORT_REPOS" bash -c "
+    source '$LIB_DIR/planner-state.sh'
+    source '$LIB_DIR/planner-intent-gate.sh'
+    planner_intent_gate '$EXPORT_DOC' >/dev/null 2>&1 || { echo GATE_FAILED; exit 0; }
+    echo \"SHELL=\${PLANNER_INTENT_READINESS:-},\${PLANNER_INTENT_RECOMMENDATION:-},\${PLANNER_INTENT_HASH:-},\${PLANNER_INTENT_PROFILE:-}\"
+    bash -c 'echo \"CHILD=\${PLANNER_INTENT_READINESS:-},\${PLANNER_INTENT_HASH:-}\"'
+    planner_intent_record INIT-test-456 2>/dev/null || echo RECORD_FAILED
+    grep '|META|intent|done|' \"\$(planner_state_log INIT-test-456)\" 2>/dev/null | cut -d'|' -f5 | sed 's/^/META=/'
+  " 2>&1)
+  EXPECTED_HASH=$(grep '^\*\*Content-Hash:\*\* sha256:' "$EXPORT_DOC" | head -1 | sed 's/.*sha256://')
+  SHELL_LINE=$(echo "$EXPORT_PROBE" | grep '^SHELL=' | cut -d= -f2- || true)
+  CHILD_LINE=$(echo "$EXPORT_PROBE" | grep '^CHILD=' | cut -d= -f2- || true)
+  META_LINE=$(echo "$EXPORT_PROBE" | grep '^META=' | tail -1 | cut -d= -f2- || true)
+
+  if [ -n "$EXPECTED_HASH" ] && [ "$SHELL_LINE" = "91,ready,${EXPECTED_HASH},product-idea" ]; then
+    pass "gate called directly sets PLANNER_INTENT_* in the caller's shell"
+  else
+    fail "gate sets PLANNER_INTENT_* in caller shell" "got '${SHELL_LINE}' (probe: ${EXPORT_PROBE})"
+  fi
+
+  if [ "$CHILD_LINE" = "91,${EXPECTED_HASH}" ]; then
+    pass "gate exports PLANNER_INTENT_* to child processes"
+  else
+    fail "gate exports PLANNER_INTENT_*" "child saw '${CHILD_LINE}'"
+  fi
+
+  if [ "$META_LINE" = "91,ready,${EXPECTED_HASH}" ]; then
+    pass "planner_intent_record writes META|intent|done|<readiness>,<rec>,<hash>"
+  else
+    fail "planner_intent_record writes full provenance" "got '${META_LINE}' (probe: ${EXPORT_PROBE})"
+  fi
+
+  # A failed gate must clear values left over from an earlier successful call.
+  STALE_PROBE=$(bash -c "
+    source '$LIB_DIR/planner-intent-gate.sh'
+    planner_intent_gate '$EXPORT_DOC' >/dev/null 2>&1
+    planner_intent_gate '$SCRATCH/nonexistent-456.md' >/dev/null 2>&1
+    echo \"\${PLANNER_INTENT_READINESS:-},\${PLANNER_INTENT_HASH:-}\"
+  ")
+  if [ "$STALE_PROBE" = "," ]; then
+    pass "failed gate clears stale PLANNER_INTENT_* values"
+  else
+    fail "failed gate clears stale values" "got '${STALE_PROBE}'"
+  fi
+fi
+
+# Record must refuse (non-zero, nothing written) when any field is empty —
+# never log `META|intent|done|,,`. Runs without grill-seal.sh.
+EMPTY_REPOS="$SCRATCH/repos-456-empty"
+mkdir -p "$EMPTY_REPOS"
+EMPTY_PROBE=$(REPOS_ROOT="$EMPTY_REPOS" bash -c "
+  source '$LIB_DIR/planner-state.sh'
+  source '$LIB_DIR/planner-intent-gate.sh'
+  unset PLANNER_INTENT_READINESS PLANNER_INTENT_RECOMMENDATION PLANNER_INTENT_HASH
+  PLANNER_INTENT_READINESS=80 PLANNER_INTENT_RECOMMENDATION=ready
+  if planner_intent_record INIT-test-456-empty 2>/dev/null; then echo RC=0; else echo RC=nonzero; fi
+  log=\$(planner_state_log INIT-test-456-empty)
+  if [ -f \"\$log\" ] && grep -q '|META|intent|' \"\$log\"; then echo WROTE; else echo NOT_WRITTEN; fi
+" 2>&1)
+if echo "$EMPTY_PROBE" | grep -q '^RC=nonzero$' && echo "$EMPTY_PROBE" | grep -q '^NOT_WRITTEN$'; then
+  pass "planner_intent_record refuses empty hash (non-zero, nothing written)"
+else
+  fail "planner_intent_record refuses empty fields" "got: ${EMPTY_PROBE}"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo "=== Results ==="
 TOTAL=$((PASS + FAIL))
