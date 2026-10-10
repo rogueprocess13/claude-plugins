@@ -165,9 +165,9 @@ Verdict computation: worst severity wins across all detected patterns (PASS if 0
 
 Write exactly one line to the pipeline log (`$LOG_FILE`) with this command block, filling in only the single JSON line between the `JSON` markers. The written line MUST start with the ISO-8601 UTC timestamp field — the pipeline log format is `ISO|PHASE|STEP|STATUS|MSG`, and a line without its leading timestamp breaks every consumer that splits on `|`. Keep the rest of the block exactly as written:
 ```bash
-_pi_json=$(cat <<'JSON'
+_pi_json=$(cat <<'PHASE_INSPECTOR_VERDICT_EOF'
 {"phase":"<phase>","verdict":"<PASS|WARN|FAIL>","signals":<N>,"detail":"<summary ≤ 200 chars>","verifiers_consulted":["<id1>","<id2>"],"patterns":[{"pattern":"<id>","severity":"<warn|fail>","evidence":"<specific>"}]}
-JSON
+PHASE_INSPECTOR_VERDICT_EOF
 )
 if _pi_line=$(printf '%s' "$_pi_json" | jq -c . 2>/dev/null) && [ -n "$_pi_line" ]; then
   printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_pi_line" >>"$LOG_FILE"
@@ -176,7 +176,7 @@ else
 fi
 ```
 
-Never put the JSON inside a double-quoted `echo` string: `detail` and `evidence` quote verifier output (test names, PR text), and a double-quoted string would run any `$(...)` or backtick in that text. The quoted `<<'JSON'` heredoc keeps it literal; `jq -c` rejects invalid JSON so no partial line is ever written.
+Never put the JSON inside a double-quoted `echo` string: `detail` and `evidence` quote verifier output (test names, PR text), and a double-quoted string would run any `$(...)` or backtick in that text. The quoted `<<'PHASE_INSPECTOR_VERDICT_EOF'` heredoc keeps it literal; `jq -c` rejects invalid JSON so no partial line is ever written. Keep the JSON on that single line: JSON strings never hold a raw newline (escape it as `\n`), so verifier text can never form a line equal to the heredoc delimiter and end the heredoc early.
 
 The JSON must be valid (jq-parseable) and on one line. Detail must be ≤ 200 chars. Use the phase value from the context above for the "phase" field.
 PHASEINSPECT

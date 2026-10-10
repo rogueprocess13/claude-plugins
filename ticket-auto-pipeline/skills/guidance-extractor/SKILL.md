@@ -203,9 +203,9 @@ After checking all patterns:
 Write exactly ONE line to the pipeline log (`$LOG_FILE`):
 
 ```bash
-_pi_json=$(cat <<'JSON'
+_pi_json=$(cat <<'PHASE_INSPECTOR_VERDICT_EOF'
 {"phase":"<PHASE>","verdict":"<PASS|WARN|FAIL>","signals":<N>,"detail":"<summary ≤ 200 chars>","verifiers_consulted":["<id1>","<id2>"],"patterns":[{"pattern":"<pattern_id>","severity":"<warn|fail>","evidence":"<specific evidence>"}]}
-JSON
+PHASE_INSPECTOR_VERDICT_EOF
 )
 if _pi_line=$(printf '%s' "$_pi_json" | jq -c . 2>/dev/null) && [ -n "$_pi_line" ]; then
   printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_pi_line" >>"$LOG_FILE"
