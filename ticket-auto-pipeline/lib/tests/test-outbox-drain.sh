@@ -194,6 +194,99 @@ pusher.drain_ticket('T-5', log_dir='$_ws')
   [ "$cursor" -eq 3 ]
 }
 
+# ── #477: the SessionStart-synced copy has no ../../lib, and the synced
+# ~/.claude/skills/lib holds only top-level *.sh (no board-drivers/) ──────
+# Builds that layout under a throwaway HOME. The full lib lives only in a
+# fixture plugin cache (optionally registered in installed_plugins.json).
+_synced_home() {
+  local h="$1" with_cache="$2"
+  mkdir -p "$h/.claude/skills/ticket-flow" "$h/.claude/skills/lib"
+  cp "$DRAIN" "$h/.claude/skills/ticket-flow/outbox-drain.sh"
+  cp "$LIB_DIR"/*.sh "$h/.claude/skills/lib/"
+  if [ "$with_cache" = cache ] || [ "$with_cache" = installed ]; then
+    local v
+    for v in 0.9.4 0.62.12; do
+      mkdir -p "$h/.claude/plugins/cache/mkt/ticket-auto-pipeline/$v"
+      cp -r "$LIB_DIR" "$h/.claude/plugins/cache/mkt/ticket-auto-pipeline/$v/lib"
+    done
+  fi
+  if [ "$with_cache" = installed ]; then
+    printf '{"plugins":{"ticket-auto-pipeline@mkt":[{"installPath":"%s"}]}}\n' \
+      "$h/.claude/plugins/cache/mkt/ticket-auto-pipeline/0.9.4" >"$h/.claude/plugins/installed_plugins.json"
+  fi
+}
+
+# The synced copy must find a complete lib and reach its own usage check (exit 2)
+# instead of dying on the missing ../../lib (exit 1).
+test_synced_copy_resolves_cache_lib() {
+  local h rc out
+  h=$(mktemp -d)
+  _synced_home "$h" cache
+  rc=0
+  out=$(HOME="$h" CLAUDE_SKILLS_LIB="" bash "$h/.claude/skills/ticket-flow/outbox-drain.sh" 2>&1) || rc=$?
+  local lib
+  lib=$(HOME="$h" CLAUDE_SKILLS_LIB="" bash -c "source '$h/.claude/skills/ticket-flow/outbox-drain.sh' && echo \"\$_OD_LIB_DIR\"" 2>/dev/null) || true
+  rm -rf "$h"
+  [ "$rc" -eq 2 ] || {
+    echo "  rc=$rc out=$out" >&2
+    return 1
+  }
+  # newest by version order, not text order (0.9.4 sorts after 0.62.12 as text)
+  [ "$lib" = "$h/.claude/plugins/cache/mkt/ticket-auto-pipeline/0.62.12/lib" ] || {
+    echo "  resolved '$lib'" >&2
+    return 1
+  }
+}
+
+# installed_plugins.json's installPath wins over a newer cache dir.
+test_synced_copy_prefers_installed_path() {
+  local h lib
+  h=$(mktemp -d)
+  _synced_home "$h" installed
+  lib=$(HOME="$h" CLAUDE_SKILLS_LIB="" bash -c "source '$h/.claude/skills/ticket-flow/outbox-drain.sh' && echo \"\$_OD_LIB_DIR\"" 2>/dev/null) || true
+  rm -rf "$h"
+  [ "$lib" = "$h/.claude/plugins/cache/mkt/ticket-auto-pipeline/0.9.4/lib" ] || {
+    echo "  resolved '$lib'" >&2
+    return 1
+  }
+}
+
+# A drain run from the synced copy dispatches through the resolved lib and
+# advances the cursor (fixture driver, so no tracker is involved).
+test_synced_copy_drains() {
+  _setup
+  local h
+  h=$(mktemp -d)
+  _synced_home "$h" cache
+  emit_event T-477 gate-held '{"reason":"a"}' >/dev/null
+  HOME="$h" CLAUDE_SKILLS_LIB="" FLEET_BOARD_DRIVERS=jsonl-audit \
+    OUTBOX_DRAIN_DRIVER_DIR_OVERRIDE="$TEST_DIR/fixtures/board-drivers" \
+    bash "$h/.claude/skills/ticket-flow/outbox-drain.sh" T-477 >/dev/null 2>&1 || true
+  rm -rf "$h"
+  local cursor
+  cursor=$(board_cursor_get T-477 jsonl-audit)
+  _teardown
+  [ "$cursor" -eq 1 ]
+}
+
+# Nowhere complete: a clear message and exit 1, not a bare cd error.
+test_no_complete_lib_fails_clearly() {
+  local h rc out
+  h=$(mktemp -d)
+  _synced_home "$h" none
+  rc=0
+  out=$(HOME="$h" CLAUDE_SKILLS_LIB="" bash "$h/.claude/skills/ticket-flow/outbox-drain.sh" 2>&1) || rc=$?
+  rm -rf "$h"
+  [ "$rc" -eq 1 ] && [[ "$out" == *"no complete ticket-auto-pipeline lib dir"* ]] || {
+    echo "  rc=$rc out=$out" >&2
+    return 1
+  }
+}
+
+_run "#477 synced copy resolves the plugin-cache lib (version order)" test_synced_copy_resolves_cache_lib
+_run "#477 synced copy prefers installed_plugins.json installPath" test_synced_copy_prefers_installed_path
+_run "#477 synced copy drains and advances the cursor" test_synced_copy_drains
+_run "#477 no complete lib anywhere fails with a clear message" test_no_complete_lib_fails_clearly
 _run "4.3 three entries drain in order, cursor advances to last seq" test_three_entries_drain_in_order_cursor_advances
 _run "4.4 second run with no new entries is a no-op" test_second_run_with_no_new_entries_is_noop
 _run "4.5 driver failure leaves cursor at N-1, no skip-ahead" test_driver_failure_leaves_cursor_at_n_minus_1
