@@ -415,7 +415,7 @@ The router never reasons about content. Phases never mutate state directly (they
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REPOS_ROOT` | `${HOME}/repos` | Root for initiative directories and repo discovery |
+| `REPOS_ROOT` | (required) | Root for initiative directories and repo discovery. No fallback: state, intent and Crosscheck helpers fail with a clear error when it is unset rather than guessing `~/repos` ([#459](https://github.com/willard-pro/claude-plugins/issues/459)). Phase prompts interpolate the dispatcher's value as a literal `export REPOS_ROOT=...` in every preamble |
 | `LINEAR_API_KEY` | (required) | Linear API authentication token |
 | `LINEAR_TEAM_ID` | *(unset)* | Team key, name or id to create on, the fallback for `--team`. Unset resolves to the workspace's only team; several visible teams is an error naming them, never a guess |
 | `LINEAR_API_URL` | `https://api.linear.app/graphql` | Linear GraphQL API endpoint |

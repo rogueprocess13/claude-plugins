@@ -185,7 +185,12 @@ planner_deps_validate_targets() {
 # Returns: 0 if decision computed, 1 if error (initiative dir missing, etc.).
 planner_branch_directive_recommend() {
   local initiative_id="$1"
-  local repos_root="${REPOS_ROOT:-${HOME}/repos}"
+  local repos_root="${REPOS_ROOT:-}"
+  if [ -z "$repos_root" ]; then
+    echo "planner-deps-check: REPOS_ROOT is not set — refusing to guess (#459)" >&2
+    echo '{"recommend":false,"reason":"REPOS_ROOT not set","ticket_count":0,"chain_depth":0}'
+    return 1
+  fi
   local specs_dir="${repos_root}/.ticket-auto/initiatives/${initiative_id}/artifacts/specs"
 
   if [ ! -d "$specs_dir" ]; then

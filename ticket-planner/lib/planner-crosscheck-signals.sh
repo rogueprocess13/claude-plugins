@@ -78,7 +78,11 @@ _planner_crosscheck_signals_is_trivial_key() {
 # Returns: 0 if clean, 1 if any finding was reported.
 planner_crosscheck_signals() {
   local initiative_id="$1"
-  local repos_root="${REPOS_ROOT:-${HOME}/repos}"
+  local repos_root="${REPOS_ROOT:-}"
+  [ -n "$repos_root" ] || {
+    echo "ERROR: REPOS_ROOT is not set — refusing to guess (#459)" >&2
+    return 1
+  }
   local specs_dir="${repos_root}/.ticket-auto/initiatives/${initiative_id}/artifacts/specs"
   [ -d "$specs_dir" ] || return 0
 

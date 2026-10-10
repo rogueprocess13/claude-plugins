@@ -45,12 +45,29 @@ planner_validate_initiative_id() {
 
 # ── State directory ────────────────────────────────────────────────────────────
 
+# Resolve REPOS_ROOT, refusing to guess (#459).
+# There is deliberately no fallback: a phase agent whose shell lost REPOS_ROOT
+# used to default to ~/repos and silently write its state entries into a
+# second, stray state.log nobody reads. Same contract as ticket-auto-pipeline's
+# _manifest_repos_root (manifest-read.sh): unset means fail, not guess.
+# Usage: planner_repos_root
+# Output: REPOS_ROOT on stdout.
+# Returns: 0 when set, 1 when unset/empty (message on stderr).
+planner_repos_root() {
+  if [ -z "${REPOS_ROOT:-}" ]; then
+    echo "ERROR: REPOS_ROOT is not set — refusing to guess a state directory. Export REPOS_ROOT (the directory holding .ticket-auto/initiatives) and retry." >&2
+    return 1
+  fi
+  echo "$REPOS_ROOT"
+}
+
 # Resolve the initiative state directory.
 # Validates the initiative_id before constructing the path.
 # Usage: planner_initiative_dir <initiative_id>
 planner_initiative_dir() {
   local initiative_id="$1"
-  local repos_root="${REPOS_ROOT:-${HOME}/repos}"
+  local repos_root
+  repos_root=$(planner_repos_root) || return 1
 
   # Path traversal guard: validate the ID
   if ! planner_validate_initiative_id "$initiative_id"; then
@@ -95,8 +112,9 @@ planner_initiative_dir_init() {
   local initiative_id="$1"
   local dir
 
-  # Validate REPOS_ROOT (P2-26)
-  local repos_root="${REPOS_ROOT:-${HOME}/repos}"
+  # Validate REPOS_ROOT (P2-26, #459)
+  local repos_root
+  repos_root=$(planner_repos_root) || return 1
   if [ ! -d "$repos_root" ]; then
     echo "ERROR: REPOS_ROOT '$repos_root' does not exist or is not a directory" >&2
     return 1
@@ -116,7 +134,8 @@ planner_initiative_dir_init() {
 planner_state_log() {
   local initiative_id="$1"
   local dir
-  dir=$(planner_initiative_dir "$initiative_id")
+  # Propagate failure: an empty dir would otherwise yield "/state.log" (#459).
+  dir=$(planner_initiative_dir "$initiative_id") || return 1
   echo "${dir}/state.log"
 }
 
@@ -126,7 +145,7 @@ planner_state_log() {
 planner_state_read() {
   local initiative_id="$1"
   local log_file
-  log_file=$(planner_state_log "$initiative_id")
+  log_file=$(planner_state_log "$initiative_id") || return 1
   if [ -f "$log_file" ]; then
     cat "$log_file"
   fi
@@ -138,7 +157,9 @@ planner_state_read() {
 planner_state_write() {
   local initiative_id="$1" phase="$2" step="$3" status="$4" message="$5"
   local log_file iso
-  log_file=$(planner_state_log "$initiative_id")
+  # Never write anywhere but the initiative's real log: an unresolvable
+  # REPOS_ROOT or invalid ID returns non-zero and creates nothing (#459).
+  log_file=$(planner_state_log "$initiative_id") || return 1
   iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
   # Ensure directory exists
@@ -168,7 +189,7 @@ planner_state_write() {
 planner_state_init() {
   local initiative_id="$1" idea="$2"
   local log_file
-  log_file=$(planner_state_log "$initiative_id")
+  log_file=$(planner_state_log "$initiative_id") || return 1
 
   # Phase concurrency lock — prevent resume during active phase
   local lock_file="${log_file}.phase-lock"

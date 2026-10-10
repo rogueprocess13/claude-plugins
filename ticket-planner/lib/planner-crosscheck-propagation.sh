@@ -350,7 +350,11 @@ planner_crosscheck_carve_scope() {
 # Returns: 0 if all clean, 1 if any check reported a finding.
 planner_crosscheck_propagation() {
   local initiative_id="$1"
-  local repos_root="${REPOS_ROOT:-${HOME}/repos}"
+  local repos_root="${REPOS_ROOT:-}"
+  [ -n "$repos_root" ] || {
+    echo "ERROR: REPOS_ROOT is not set — refusing to guess (#459)" >&2
+    return 1
+  }
   local artifacts_dir="${repos_root}/.ticket-auto/initiatives/${initiative_id}/artifacts"
   local state_log="${repos_root}/.ticket-auto/initiatives/${initiative_id}/state.log"
   local specs_dir="${artifacts_dir}/specs"
