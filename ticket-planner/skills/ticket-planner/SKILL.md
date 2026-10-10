@@ -396,7 +396,7 @@ The planner does not re-specify these. They are the interface to the downstream 
 
 - **Planner Context block** — `## Planner Context` in ticket description, validated by `planned-ticket-check.sh` (plus optional informational `Kind` / `Serves` / `Enables` lines — planner-business-framing)
 - **Body section contract** — the per-type `##` headings `planned-ticket-body-check.sh` and `dor-check.sh` require. The business-first layout (`## Summary` → `## Outcome`/`## Enables` → the template's why/outcome headings → `## Technical Context` → the rest) is additive and never renames one; see `docs/ticket-planner.md` § Business-first layout
-- **Labels** — `planned`, `pre-approved`, `INIT-{id}`, `Type`, `blocked-by:{ID}` (the target is a sibling ticket in this initiative, or an existing Linear ID for a cross-initiative prerequisite — see `docs/ticket-planner.md` § Cross-initiative prerequisites)
+- **Local manifests (no labels)** — the planner creates every issue with an empty label set. The facts its labels used to carry live in the local ticket/epic manifests: ticket manifest existence marks a ticket as planned, `initiative` is the initiative ID, `type` is the ticket type, and `blocked_by` lists dependencies (the target is a sibling ticket in this initiative, or an existing Linear ID for a cross-initiative prerequisite — see `docs/ticket-planner.md` § Cross-initiative prerequisites). Pre-approval is the Planner Context block's `Pre-approved` field. The epic manifest's `dispatch` flag marks an initiative as ready for fleet-controller. See `docs/ticket-planner.md` § Local manifest facts for the full former-label mapping. The only labels anything still writes to Linear are the 4 board-projected ones (`needs-info`, `needs-adr`, `rejected`, `reviewed`), and the planner writes none of them
 - **Artifact plane** — `planner-artifacts.sh` resolves to `${REPOS_ROOT}/.ticket-auto/initiatives/{ID}/artifacts/`
 - **Feedback** — `fleet-feedback.sh` aggregates `META|planner-feedback` from pipeline logs
 
@@ -446,7 +446,7 @@ The router never reasons about content; phases never mutate state directly (they
 | `PLANNER_MAX_PHASE_RETRIES` | 2 | Max retries per phase before failing the run |
 | `PLANNER_PHASE_TIMEOUT` | 600 | Seconds before timing out a hung phase agent |
 | `PLANNER_TSORT_TIMEOUT` | 30 | Seconds before timing out dependency graph sort |
-| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Minimum confidence for `pre-approved` label |
+| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Confidence at or above which TicketGen writes `Pre-approved: true` in the Planner Context block (a block field, not a label). Downstream, `Pre-approved: true` makes the ticket eligible for ticket-appraise's fast-path at any confidence; it does not bypass the approval gate. ticket-auto-pipeline's `planned-ticket-check.sh` reads the same variable name as its low-confidence floor (default 0.5 there), so exporting it changes both |
 | `PLANNER_IDEA_MAX_LENGTH` | 2000 | Maximum idea length in chars (truncated with warning) |
 | `PLANNER_REQUIRE_INTENT` | false | When `true`, raw idea strings are refused — must pass a grill-me intent file |
 | `LINEAR_TEAM_ID` | *(unset)* | Team key, name or id to create on, the fallback for `--team`. Unset ⇒ the workspace's only team, or an error naming the candidates |

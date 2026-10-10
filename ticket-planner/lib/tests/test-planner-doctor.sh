@@ -283,6 +283,75 @@ else
   fail "workflow.json projected_labels readable" "jq or $WORKFLOW_JSON missing"
 fi
 
+# ── Test 7: no doc describes a retired planner label as live (#469) ─────
+# #457 fixed the Doctor section only; plugin-overview.md and SKILL.md kept
+# describing `planned`/`epic`/`pre-approved`/`state:execution` as labels
+# the planner applies and ticket-auto/fleet-controller read. A mention of a
+# retired label is fine only when the same block says it is historical.
+# A block is one list item, one table (all of its `|` rows, so a "Former
+# label" header covers its rows), or one blank-line-separated paragraph.
+
+# retired_label_stragglers <file> — print every block that names a retired
+# label without a historical marker. Empty output means the file is clean.
+retired_label_stragglers() {
+  awk '
+    function flush() {
+      if (blk != "" && blk ~ /(`(planned|epic|pre-approved)`|state:execution)/ &&
+        tolower(blk) !~ /(retired|historical|former|replaced|replacement|no longer|used to|not a label|never a label)/)
+        print FILENAME ":" start ": " substr(blk, 1, 160)
+      blk = ""
+    }
+    /^```/ { flush(); fence = !fence; next }
+    fence { next }
+    /^[[:space:]]*$/ { flush(); intable = 0; next }
+    /^[[:space:]]*\|/ { if (!intable) { flush(); intable = 1; start = NR } blk = blk " " $0; next }
+    /^[[:space:]]*([-*]|[0-9]+\.)[[:space:]]/ { flush(); intable = 0; start = NR; blk = $0; next }
+    { if (blk == "") start = NR; intable = 0; blk = blk " " $0 }
+    END { flush() }
+  ' "$1"
+}
+
+echo "--- Test 7: ticket-planner docs never describe retired labels as live ---"
+
+# Negative control: the passages #469 found must be caught.
+cat >"$TMPDIR/old-doc.md" <<'OLD'
+## Key design decisions
+
+- **`state:execution` is set by TicketGen, not EpicGen.** The epic is created without the execution label.
+- [ticket-auto-pipeline](../ticket-auto-pipeline/) — Downstream consumer. Reads Planner Context blocks, fast-paths `planned`+`pre-approved` tickets.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Minimum confidence for `pre-approved` label |
+OLD
+OLD_HITS=$(retired_label_stragglers "$TMPDIR/old-doc.md" | wc -l)
+if [ "$OLD_HITS" -eq 3 ]; then
+  pass "detector catches the 3 live-label passages in the old-doc fixture"
+else
+  fail "detector catches old passages" "expected 3 hits, got $OLD_HITS"
+fi
+
+# Positive control: a mention marked as historical is allowed.
+printf '%s\n' '- The epic manifest `dispatch` flag replaced the retired `state:execution` label.' >"$TMPDIR/new-doc.md"
+if [ -z "$(retired_label_stragglers "$TMPDIR/new-doc.md")" ]; then
+  pass "detector allows a mention marked as historical"
+else
+  fail "detector allows historical mention" "$(retired_label_stragglers "$TMPDIR/new-doc.md")"
+fi
+
+PLANNER_ROOT="${LIB_DIR}/.."
+STRAGGLERS=""
+for doc in "$PLANNER_ROOT"/README.md "$PLANNER_ROOT"/CLAUDE.md "$PLANNER_ROOT"/plugin-overview.md \
+  "$PLANNER_ROOT"/state-log-format.md "$PLANNER_ROOT"/skills/ticket-planner/SKILL.md "$PLANNER_ROOT"/docs/*.md; do
+  [ -f "$doc" ] || continue
+  STRAGGLERS="${STRAGGLERS}$(retired_label_stragglers "$doc")"
+done
+if [ -z "$STRAGGLERS" ]; then
+  pass "no ticket-planner doc describes a retired label as live"
+else
+  fail "retired labels described as live" "$STRAGGLERS"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
