@@ -47,6 +47,9 @@ if ! declare -f _plog >/dev/null 2>&1; then
   [ -f "$_TP_LIB_DIR/heartbeat.sh" ] && source "$_TP_LIB_DIR/heartbeat.sh"
 fi
 
+# claude_md_field — the one CLAUDE.md field grammar (see _tp_context_field).
+source "$_TP_LIB_DIR/claude-md-field.sh"
+
 # ── Exit codes ────────────────────────────────────────────────────────────────
 # Distinct per failure so fleetd routes on the code rather than on stderr text.
 #
@@ -74,9 +77,9 @@ _TP_CONTEXT_FIELDS="REPOS_ROOT ISSUE_PREFIX BE_SERVICES WIKI_ROOT BE_TEST_CMD BE
 # Env first because fleetd's own configuration is the more specific statement:
 # an operator who exported REPOS_ROOT for the daemon meant it for the tickets
 # the daemon runs. The CLAUDE.md grammar (`KEY = value`, `KEY: value`, either
-# side optionally backticked) is env-check.sh's find_in_claude_md, kept
-# identical so /ticket-env-check and the preamble cannot disagree about what a
-# project declares.
+# side optionally backticked) is lib/claude-md-field.sh's claude_md_field —
+# the same function env-check.sh and resolve_uat_url call, so /ticket-env-check
+# and the preamble cannot disagree about what a project declares.
 _tp_context_field() {
   local varname="$1" project_dir="${2:-$PWD}"
 
@@ -86,11 +89,7 @@ _tp_context_field() {
     return 0
   fi
 
-  local claude_md="$project_dir/CLAUDE.md"
-  [ -f "$claude_md" ] || return 0
-
-  grep -oP '^`?'"$varname"'`?\s*[=:]\s*`?\K[^`]+' "$claude_md" 2>/dev/null |
-    head -1 | sed 's/[[:space:]]*$//' || true
+  claude_md_field "$project_dir/CLAUDE.md" "$varname" || true
 }
 
 # Emit `KEY=value` lines for every project-context field.

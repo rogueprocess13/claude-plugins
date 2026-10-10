@@ -43,8 +43,9 @@ if ! env_check_validate; then
   exit 1
 fi
 
-# Resolve REPOS_ROOT from CLAUDE.md
-REPOS_ROOT="${REPOS_ROOT:-$(grep 'REPOS_ROOT:' "$HOME/.claude/CLAUDE.md" 2>/dev/null | head -1 | sed 's/.*REPOS_ROOT: *//' || true)}"
+# Resolve REPOS_ROOT from CLAUDE.md (`KEY = value` or `KEY: value`, either side
+# optionally backticked — the same grammar as lib/claude-md-field.sh)
+REPOS_ROOT="${REPOS_ROOT:-$(grep -oP '`?REPOS_ROOT`?\s*[=:]\s*`?\K[^`]+' "$HOME/.claude/CLAUDE.md" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//' || true)}"
 if [ -z "$REPOS_ROOT" ]; then
   _plog "PRESCAN" "env-check" "fail" "REPOS_ROOT not set"
   exit 1
@@ -54,7 +55,7 @@ fi
 # Threaded through to prescan-wire-claude-md.sh's --wiki-root below so every
 # repo's INDEX.md gets a "Cross-repo -> WIKI_ROOT/index.md" routing row
 # (wiki-cross-repo-knowledge-layer, appraise Step 3a reads it).
-WIKI_ROOT="${WIKI_ROOT:-$(grep 'WIKI_ROOT:' "$HOME/.claude/CLAUDE.md" 2>/dev/null | head -1 | sed 's/.*WIKI_ROOT: *//' || true)}"
+WIKI_ROOT="${WIKI_ROOT:-$(grep -oP '`?WIKI_ROOT`?\s*[=:]\s*`?\K[^`]+' "$HOME/.claude/CLAUDE.md" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//' || true)}"
 
 # Enumerate repos: if user passed a path, use it; otherwise find all repos
 if [ -n "${1:-}" ] && [ -d "${1}" ]; then
