@@ -308,6 +308,71 @@ test_gate_warn_scoped_to_phase_window() {
   return 0
 }
 
+# ── #418: RETURN_INCOMPLETE is attributed to IMPLEMENT, not to a time window ─────
+# Real router ordering: IMPLEMENT verifier-results are written by the agent,
+# then the router writes the RETURN_INCOMPLETE gate-warn AFTER spawn_capture,
+# then VERIFY / PR-REVIEW write their own verifier-results later.
+
+_vr_line_418() {
+  printf '{"verifier":"%s","verdict":"PASS","score":1.0,"criteria_met":5,"criteria_total":5,"attempt":1,"phase":"%s"}' "$1" "$2"
+}
+
+_write_418_log() {
+  {
+    echo "2026-01-01T00:00:00Z|META|verifier-result|info|$(_vr_line_418 unit_tests IMPLEMENT)"
+    echo "2026-01-01T00:00:05Z|META|gate-warn|info|RETURN_INCOMPLETE — UNCHECKED_BOXES (unchecked=8/36, artifact=openspec)"
+    echo "2026-01-01T00:10:00Z|META|verifier-result|info|$(_vr_line_418 playwright_uat VERIFY)"
+    echo "2026-01-01T00:20:00Z|META|verifier-result|info|$(_vr_line_418 pr_review PR-REVIEW)"
+  } >>"$_log"
+}
+
+test_return_incomplete_detected_for_implement() {
+  _setup
+  _write_418_log
+  local out rc=0
+  out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
+  echo "$out" | grep -q 'RETURN_INCOMPLETE present\*\*: true' || rc=1
+  echo "$out" | grep -q 'unchecked=8/36' || rc=1
+  [ "$rc" -eq 0 ] || echo "IMPLEMENT inspection missed the gate-warn written after its verifier results"
+  _teardown
+  return "$rc"
+}
+
+test_return_incomplete_not_attributed_to_verify() {
+  _setup
+  _write_418_log
+  local out rc=0
+  out=$(assemble_inspector_context "VERIFY" "CRE-123" "$_log" "IMPLEMENT" 2>/dev/null) || true
+  echo "$out" | grep -q 'RETURN_INCOMPLETE present\*\*: false' || rc=1
+  if echo "$out" | grep -q 'unchecked=8/36'; then rc=1; fi
+  [ "$rc" -eq 0 ] || echo "VERIFY inspection attributed IMPLEMENT's RETURN_INCOMPLETE to itself"
+  _teardown
+  return "$rc"
+}
+
+test_return_incomplete_not_attributed_to_pr_review() {
+  _setup
+  _write_418_log
+  local out rc=0
+  out=$(assemble_inspector_context "PR-REVIEW" "CRE-123" "$_log" "IMPLEMENT VERIFY" 2>/dev/null) || true
+  echo "$out" | grep -q 'RETURN_INCOMPLETE present\*\*: false' || rc=1
+  if echo "$out" | grep -q 'unchecked=8/36'; then rc=1; fi
+  [ "$rc" -eq 0 ] || echo "PR-REVIEW inspection attributed IMPLEMENT's RETURN_INCOMPLETE to itself"
+  _teardown
+  return "$rc"
+}
+
+test_other_gate_warns_kept_for_verify() {
+  _setup
+  _write_418_log
+  echo "2026-01-01T00:05:00Z|META|gate-warn|info|SOME_OTHER_WARN — still shown" >>"$_log"
+  local out rc=0
+  out=$(assemble_inspector_context "VERIFY" "CRE-123" "$_log" "IMPLEMENT" 2>/dev/null) || true
+  echo "$out" | grep -q 'SOME_OTHER_WARN' || rc=1
+  _teardown
+  return "$rc"
+}
+
 # ── Test: spawn_phase_inspector wrapper matches spec signature (P1-4) ──────────
 
 test_spawn_phase_inspector_wrapper() {
@@ -415,6 +480,10 @@ _run "verifier IDs appear in context" test_verifier_ids_in_context
 _run "gate-warn entries included in context" test_gate_warns_in_context
 _run "cross-phase context includes EXTRA_PHASES" test_cross_phase_context
 _run "gate-warn outside phase window excluded" test_gate_warn_scoped_to_phase_window
+_run "#418 RETURN_INCOMPLETE detected for IMPLEMENT" test_return_incomplete_detected_for_implement
+_run "#418 RETURN_INCOMPLETE not attributed to VERIFY" test_return_incomplete_not_attributed_to_verify
+_run "#418 RETURN_INCOMPLETE not attributed to PR-REVIEW" test_return_incomplete_not_attributed_to_pr_review
+_run "#418 other gate-warns kept for VERIFY" test_other_gate_warns_kept_for_verify
 _run "spawn_phase_inspector wrapper matches spec" test_spawn_phase_inspector_wrapper
 _run "jq absence handled gracefully" test_jq_absence_skip
 _run "sourcing preserves shell flags" test_sourcing_preserves_shell_flags

@@ -184,6 +184,7 @@ Check the verifier results and gate warnings against these five patterns. For ea
 
 **Detection logic**:
 - Check the RETURN_INCOMPLETE flag. If true AND any verifier has `verdict: "PASS"` → flag it.
+- The flag is only ever true for an IMPLEMENT inspection. `RETURN_INCOMPLETE` is written by the IMPLEMENT step, and the boxes still open at VERIFY / PR-REVIEW time (verification runs, opening the PR) are owned by those later phases — not an implementation gap. Never raise this pattern for VERIFY or PR-REVIEW from gate-warn text alone.
 
 **Evidence format**: `"tests PASS but RETURN_INCOMPLETE gate-warn present — unchecked boxes remain"`
 

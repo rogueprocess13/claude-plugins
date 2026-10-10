@@ -145,8 +145,15 @@ inspect_verifiers() {
   fi
 
   # ── Pattern 5: incomplete_implementation (WARN) ───────────────────────
-  # PASS verifier + RETURN_INCOMPLETE present
-  if [ "$_has_pass" = "true" ] && [ "$_has_return_incomplete" = "true" ]; then
+  # PASS verifier + RETURN_INCOMPLETE present. RETURN_INCOMPLETE is an
+  # IMPLEMENT-phase signal (#418): at VERIFY / PR-REVIEW time the remaining
+  # unchecked boxes are the ones those phases own, so the pattern never fires
+  # for them even if a caller passes the flag through.
+  local _ri_applies="true"
+  case "$_phase" in
+  VERIFY | PR-REVIEW) _ri_applies="false" ;;
+  esac
+  if [ "$_has_pass" = "true" ] && [ "$_has_return_incomplete" = "true" ] && [ "$_ri_applies" = "true" ]; then
     local _incomplete_evidence
     _incomplete_evidence=$(echo "$_vr_json" | jq -r '
       [.[] | select(.verdict == "PASS") | .verifier] | join(", ")
