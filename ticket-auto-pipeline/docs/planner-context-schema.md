@@ -57,7 +57,7 @@ The `## Planner Context` block is a structured markdown section appended to Line
 | `Schema-Version` | integer | Yes | Schema version for forward-compatible parsing. Initial version: `1`. |
 | `Initiative` | string | Yes | Initiative identifier (e.g., `INIT-42`). Links ticket to its planning initiative. |
 | `Epic` | string | Yes | Epic identifier (e.g., `CRE-100`). Parent epic for this ticket. |
-| `Confidence` | float (0.0-1.0) | Yes | Planner's confidence in ticket correctness and completeness. Gates auto-approval at ≥ 0.85 (configurable via `PLANNER_CONFIDENCE_THRESHOLD`). |
+| `Confidence` | float (0.0-1.0) | Yes | Planner's confidence in ticket correctness and completeness. ticket-planner sets `Pre-approved: true` at ≥ 0.85 (its `PLANNER_CONFIDENCE_THRESHOLD`). The validator's own low-confidence floor is separate — see Exit Codes. |
 | `Strategy` | enum | Yes | `Conservative` (minimal change, low risk), `Balanced` (moderate change, standard risk), `Innovative` (significant change, higher risk). |
 | `Decision` | string | Yes | One-sentence summary of the key architectural or implementation decision. |
 | `Affected Services` | CSV | Yes | Comma-separated service names this ticket touches. Used by appraise to scope prescan routing. |
@@ -107,7 +107,7 @@ Added by planner-business-framing. Informational only: no ticket-auto consumer p
 | 1 | Missing/malformed — no block found, missing required fields, invalid field values. |
 | 2 | Low confidence, not pre-approved — Confidence < threshold AND Pre-approved is false. Flags ticket for human review. |
 
-Threshold is configurable via `PLANNER_CONFIDENCE_THRESHOLD` env var (default: 0.5).
+The floor is configurable via the `PLANNED_TICKET_MIN_CONFIDENCE` env var (default: 0.5). It is independent of ticket-planner's `PLANNER_CONFIDENCE_THRESHOLD` (the pre-approval threshold, default 0.85), which this validator does not read.
 
 ## Determinism
 
