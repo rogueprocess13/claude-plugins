@@ -193,6 +193,15 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-policy|info|epic" >> "$LOG_FILE"
 `Review → UAT` via `pr-review-pass-uat`. The decision itself is computed by `uat_decide_trigger`
 in `lib/branch-resolve.sh`, never inferred from ambient environment.
 
+When the PR is being left for a human merge (`merge_blocked_reason` is non-empty: pipeline
+autonomy `manual`, or any epic `Merge Policy`), Step 6a passes `--merge-pending` and a
+per-ticket ticket goes to `UAT` even with no UAT target, because its code is not on the base
+branch yet (GitHub #412). That case also writes one extra line naming the trigger and reason:
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-decision|info|trigger=pr-review-pass-uat; merge pending: epic Branch Directive Merge Policy: manual requires human merge" >> "$LOG_FILE"
+```
+
 `mode-change` is written to Step 0.6's `META|autonomy` guard instead of a silent re-append
 when a resume's `--mode` flag differs from the autonomy already recorded for this run —
 gate decisions upstream were made under the old mode, so the switch must be visible, not

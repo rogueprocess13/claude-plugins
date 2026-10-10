@@ -1054,6 +1054,43 @@ test_ticket_pr_review_checks_report_table_uses_state_bucket() {
   }
 }
 
+# ── GitHub #412: merge authorization before the Review transition ───────────
+
+# Step 6a must evaluate merge authorization (merge_blocked_reason) and pass
+# --merge-pending to uat_decide_trigger BEFORE /ticket-flow fires the trigger —
+# otherwise a PR left for a human merge closes the ticket to Done first.
+test_ticket_pr_review_step6a_merge_pending_before_transition() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^### Step 6a/,/^### Step 6b/p' "$skill_md")
+  local reason_ln trigger_ln flow_ln
+  reason_ln=$(echo "$block" | grep -n 'merge_blocked_reason "{TICKET-ID}"' | head -1 | cut -d: -f1)
+  trigger_ln=$(echo "$block" | grep -n 'uat_decide_trigger --policy "$policy" ${_merge_pending_flag}' | head -1 | cut -d: -f1)
+  flow_ln=$(echo "$block" | grep -n '/ticket-flow {TICKET-ID} "$trigger"' | head -1 | cut -d: -f1)
+  [ -n "$reason_ln" ] && [ -n "$trigger_ln" ] && [ -n "$flow_ln" ] || {
+    echo "Step 6a missing merge_blocked_reason / --merge-pending / trigger call"
+    return 1
+  }
+  [ "$reason_ln" -lt "$trigger_ln" ] && [ "$trigger_ln" -lt "$flow_ln" ] || {
+    echo "Step 6a computes merge authorization after the transition fires"
+    return 1
+  }
+}
+
+# Step 6b must use the same shared function rather than a second inline copy
+# of the rule, so the two steps cannot disagree.
+test_ticket_pr_review_step6b_uses_shared_merge_rule() {
+  local skill_md="$SKILLS_DIR/ticket-pr-review/SKILL.md"
+  [ -f "$skill_md" ] || return 1
+  local block
+  block=$(sed -n '/^### Step 6b/,/^\*\*If `_merge_blocked_reason` is non-empty/p' "$skill_md")
+  echo "$block" | grep -q '_merge_blocked_reason=$(merge_blocked_reason "{TICKET-ID}")' || {
+    echo "Step 6b does not call merge_blocked_reason"
+    return 1
+  }
+}
+
 # ── dispatcher ─────────────────────────────────────────────────────────────────
 
 filter="${1:-}"
