@@ -429,6 +429,122 @@ case "$out" in
 *) pass "neighboring bullet: preserved structure not flagged" ;;
 esac
 
+# ── #460: the retired structure must be the retire phrase's object ─────────
+
+REPOS_C5="${TMPDIR}/c5/repos"
+INITS_C5="${REPOS_C5}/.ticket-auto/initiatives"
+SELF_C5="${INITS_C5}/INIT-HB/artifacts/specs"
+SIB_C5="${INITS_C5}/INIT-GW/artifacts/specs"
+mkdir -p "$SELF_C5" "$SIB_C5"
+
+# One sibling consumer that reads every structure the fixtures below mention,
+# so any attribution of a retirement to one of them surfaces as a finding.
+cat >"${SIB_C5}/gw-a.md" <<'EOF'
+## Description
+
+The gateway reads `HandoverBatchEntry`, `HandoverBatchEntryStatus`,
+`HandoverBatchCancel`, `OldField`, `LegacyCancel`, and `importSummary`.
+EOF
+
+echo "--- #460 A1: retire word as domain verb on another noun does not fire ---"
+cat >"${SELF_C5}/hb-a.md" <<'EOF'
+## Description
+
+The response reports the number of entries removed, keyed by `HandoverBatchEntry`.
+Removed rows are kept in `HandoverBatchEntry` for audit.
+The admin edits or removes the entry via `HandoverBatchEntry` before import.
+EOF
+out=$(planner_crosscheck_contract_consumers_unnotified "INIT-HB" "$SELF_C5" "$REPOS_C5")
+case "$out" in
+*"CONTRACT_CONSUMERS_UNNOTIFIED"*) fail "#460 domain verb: not flagged" "got: $out" ;;
+*) pass "#460 domain verb: not flagged" ;;
+esac
+
+echo "--- #460 A1: active retirement of the structure still fires ---"
+cat >"${SELF_C5}/hb-a.md" <<'EOF'
+## Description
+
+The admin flow no longer needs it, so this ticket removes the legacy `HandoverBatchEntry` type.
+EOF
+out=$(planner_crosscheck_contract_consumers_unnotified "INIT-HB" "$SELF_C5" "$REPOS_C5")
+case "$out" in
+*"CONTRACT_CONSUMERS_UNNOTIFIED"*"HandoverBatchEntry"*"gw-a"*) pass "#460 active retirement: still flagged" ;;
+*) fail "#460 active retirement: still flagged" "got: $out" ;;
+esac
+
+echo "--- #460 A2: enum literal named like a retire word does not fire ---"
+cat >"${SELF_C5}/hb-a.md" <<'EOF'
+## Description
+
+An entry's `HandoverBatchEntryStatus` moves through `READY_FOR_IMPORT`, `REMOVED`, and `COMPLETE`.
+Entries in status `REMOVED` stay visible in `HandoverBatchEntry` listings.
+EOF
+out=$(planner_crosscheck_contract_consumers_unnotified "INIT-HB" "$SELF_C5" "$REPOS_C5")
+case "$out" in
+*"CONTRACT_CONSUMERS_UNNOTIFIED"*) fail "#460 enum literal: not flagged" "got: $out" ;;
+*) pass "#460 enum literal: not flagged" ;;
+esac
+
+echo "--- #460 A2: passive retirement of a structure still fires ---"
+cat >"${SELF_C5}/hb-a.md" <<'EOF'
+## Description
+
+`OldField` is removed once the new status model lands.
+EOF
+out=$(planner_crosscheck_contract_consumers_unnotified "INIT-HB" "$SELF_C5" "$REPOS_C5")
+case "$out" in
+*"CONTRACT_CONSUMERS_UNNOTIFIED"*"OldField"*"gw-a"*) pass "#460 passive retirement: still flagged" ;;
+*) fail "#460 passive retirement: still flagged" "got: $out" ;;
+esac
+
+echo "--- #460 A2: passive retirement in a list still fires for every member ---"
+cat >"${SELF_C5}/hb-a.md" <<'EOF'
+## Description
+
+`OldField` and `LegacyCancel` will both be removed in this release.
+EOF
+out=$(planner_crosscheck_contract_consumers_unnotified "INIT-HB" "$SELF_C5" "$REPOS_C5")
+case "$out" in
+*"OldField"*) pass "#460 passive list: first member flagged" ;;
+*) fail "#460 passive list: first member flagged" "got: $out" ;;
+esac
+case "$out" in
+*"LegacyCancel"*) pass "#460 passive list: second member flagged" ;;
+*) fail "#460 passive list: second member flagged" "got: $out" ;;
+esac
+
+echo "--- #460 A3: a structure gaining a field is not reported as retired ---"
+cat >"${SELF_C5}/hb-a.md" <<'EOF'
+## Description
+
+`HandoverBatchCancel` gains an optional `atUpload` field.
+
+The old `HandoverBatchCancel` payload is replaced by the extended shape.
+EOF
+out=$(planner_crosscheck_contract_consumers_unnotified "INIT-HB" "$SELF_C5" "$REPOS_C5")
+case "$out" in
+*"HandoverBatchCancel"*) fail "#460 addition: extended structure not flagged" "got: $out" ;;
+*) pass "#460 addition: extended structure not flagged" ;;
+esac
+
+echo "--- #460 A3: a real retirement next to an addition still fires ---"
+cat >"${SELF_C5}/hb-a.md" <<'EOF'
+## Description
+
+`HandoverBatchCancel` gains an optional `atUpload` field.
+
+This ticket retires `LegacyCancel`, which the extended shape supersedes.
+EOF
+out=$(planner_crosscheck_contract_consumers_unnotified "INIT-HB" "$SELF_C5" "$REPOS_C5")
+case "$out" in
+*"CONTRACT_CONSUMERS_UNNOTIFIED"*"LegacyCancel"*"gw-a"*) pass "#460 addition + retirement: retired structure flagged" ;;
+*) fail "#460 addition + retirement: retired structure flagged" "got: $out" ;;
+esac
+case "$out" in
+*"HandoverBatchCancel"*) fail "#460 addition + retirement: extended structure not flagged" "got: $out" ;;
+*) pass "#460 addition + retirement: extended structure not flagged" ;;
+esac
+
 # ═══════════════════════════════════════════════════════════════════════════
 # planner_crosscheck_contracts (public entry point)
 # ═══════════════════════════════════════════════════════════════════════════
