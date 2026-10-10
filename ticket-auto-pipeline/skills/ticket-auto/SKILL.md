@@ -705,7 +705,21 @@ After state detection, enter the stateless dispatch loop. Re-run `detect-resume.
 
 ### STEP_1 — Appraise
 
-**Before the agent spawn, claim the ticket immediately** so Linear reflects that work has started. Complexity defaults to `simple` — the appraise agent corrects it in Step 4 when the real score is known. `flow.sh` is idempotent: re-calling with the same params is a no-op.
+**First, fail fast on a structurally incomplete planned ticket** (issue #410). `gate-check.sh --mode planned` runs the entry gate's own Check 2.7 (template, required body sections, DoR readiness) before any agent is spawned. A planned ticket missing `## Test User`, `## Scope` (a `| Layer | Service | Area |` table) or `## Navigation Path` used to be stopped only at STEP_2_5, after APPRAISE and EXEC had both run to completion. Ad-hoc tickets pass straight through without a Linear call, and a failed issue fetch defers to the entry gate rather than stopping here:
+
+```bash
+_gate_sh="${HOME}/.claude/skills/lib/gate-check.sh"
+bash "$_gate_sh" "{TICKET_ID}" "{LOG_FILE}" "{HB_LOG_FILE}" --mode planned
+_pre_rc=$?
+if [ $_pre_rc -eq 2 ]; then
+  # Gate-stop (PLANNED_BODY_INCOMPLETE / NO_TEMPLATE_FOR_TYPE / TICKET_NOT_READY) — already logged
+  echo "Planned-ticket pre-check gate-stopped {TICKET_ID} before APPRAISE. Fix the ticket body (see the META|gate-stop line in the pipeline log), then re-run."
+  bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
+  exit 1
+fi
+```
+
+**Then, before the agent spawn, claim the ticket immediately** so Linear reflects that work has started. Complexity defaults to `simple` — the appraise agent corrects it in Step 4 when the real score is known. `flow.sh` is idempotent: re-calling with the same params is a no-op.
 
 ```bash
 _flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"

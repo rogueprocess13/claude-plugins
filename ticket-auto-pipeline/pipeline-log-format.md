@@ -928,6 +928,16 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 | `VERDICT_GATE_BLOCKED` | `flow.sh` refused a `verdict_gate`-declared trigger (`pr-review-pass-done`, `pr-review-pass-uat`, `uat-pass`) with exit `11` — a trailing FAIL/BLOCK verifier-result for a different `(verifier, phase)` pair on this ticket is still the latest on record, with no later PASS/WARN superseding it. Agent-emitted by `ticket-verify`/`ticket-pr-review` at the call site, not router-detected (`VERDICT_FAIL_NOT_ENFORCED`, issue #368) |
 | `TICKET_NOT_READY` | Entry gate Check 2.7e: a planned ticket's `ensure_ticket_readiness` resolved not-ready/unavailable, or its manifest `flags` carry `needs-info` — evaluated independently, either condition gate-stops. Never fires for an ad-hoc ticket (`ticket_is_planned` scopes the whole 2.7 block). Clearing `needs-info` via `/ticket-approve` (`flow.sh <TID> needs-info-resolved`) un-gates immediately regardless of the cached readiness verdict (`dor-readiness-gate-foundation`, design.md Decisions 3 and 8) |
 
+**Check 2.7 runs twice for a planned ticket** (issue #410). The router's STEP_1 runs
+`gate-check.sh --mode planned` before the first APPRAISE spawn. It runs the same Check 2.7
+function as the entry gate, so `NO_TEMPLATE_FOR_TYPE`, `PLANNED_BODY_INCOMPLETE` and
+`TICKET_NOT_READY` can appear with no `APPRAISE` lines before them. On a pass it writes
+`GATE|planned-precheck|done|`; when the issue fetch fails it writes `GATE|planned-precheck|skip|`
+and leaves the decision to the entry gate. It never writes a `GATE|gate|` line, a hold, or a
+`META|gate-fetch-fail` line, so `detect-resume.sh` routing and the entry gate's fetch-retry budget
+are not affected. The entry gate still runs Check 2.7 again at STEP_2_5, because the body can change
+in between.
+
 ## Ordering guarantees
 
 1. **Outcome is final**: `META|outcome|info|<result>` MUST be the last substantive entry in the log. It SHALL be written after all MAINTENANCE phase steps and retro-trigger evaluation are complete, on every exit path (success, gate-stop, no-op, crash).
