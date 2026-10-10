@@ -592,7 +592,7 @@ Detection patterns (Phase 1, all WARN severity):
 2. `missing_requirement` — PR review OK but critique/audit found gaps
 3. `trivial_pass` — any verifier PASS with criteria_total ≤ 1
 4. `verdict_disagreement` — two verifiers in same phase disagree
-5. `incomplete_implementation` — PASS verifier + RETURN_INCOMPLETE gate-warn
+5. `incomplete_implementation` — PASS verifier + RETURN_INCOMPLETE gate-warn (IMPLEMENT inspection only — the gate-warn is attributed to the phase that writes it, not to the VERIFY / PR-REVIEW windows that span it)
 
 **MSG parsing rule**: use awk-join (`awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}'`), never `cut -f5`. JSON payloads contain `|` characters.
 
