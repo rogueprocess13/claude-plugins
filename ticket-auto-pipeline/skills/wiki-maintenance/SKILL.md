@@ -34,6 +34,44 @@ Use `$WIKI_ROOT` from the environment. If `$WIKI_ROOT` is empty, fall back to re
 
 Stop here if no `WIKI_ROOT` is available — no wiki exists for this project.
 
+**Concurrency guard — acquire the WIKI_ROOT lock before any write.** `WIKI_ROOT` is one repo
+shared by every concurrent pipeline on the host, so two tickets' MAINTENANCE phases can overlap.
+Without a lock, the second run edits files the first has not committed yet, and its commit picks
+up the other ticket's half-done edits. Everything from the bootstrap below through the Step 4
+commit — including Step 2.5's ai-context promotion — writes under `WIKI_ROOT`, so the lock is
+taken here, before any of it. A `flock` would not work: it is released when the Bash call that
+took it exits, and this skill runs as many separate calls. `lib/wiki-lock.sh` uses a lock
+directory owned by the ticket id instead, aged out after `WIKI_LOCK_STALE_SECS` (default 1h) if
+its holder crashed:
+
+```bash
+bash "$HOME/.claude/skills/lib/wiki-lock.sh" acquire --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}" --log-file "${LOG_FILE:-}"
+echo "WIKI_LOCK_RC=$?"
+```
+
+Route on `WIKI_LOCK_RC` — this is a literal precondition, not a judgement call:
+
+- **`0`** — you hold the lock. Continue.
+- **`3`** — another ticket holds it; this call waited `WIKI_LOCK_WAIT_SECS` (default 90s) and
+  logged `META|wiki-contention|warn` once. Run the **same** block again, and keep re-running it
+  while it returns `3`. The total wait is bounded by the lib itself across calls, so this loop
+  always ends. Do not read or edit anything under `WIKI_ROOT` meanwhile.
+- **`4`** — gave up after `WIKI_LOCK_MAX_WAIT_SECS` (default 1h, already logged as
+  `META|wiki-contention|fail`). Make no `WIKI_ROOT` writes this run: skip to Step 5 and report
+  `Committed: skipped — WIKI_ROOT lock held by {WIKI_LOCK_HOLDER}`. The errata stay in place for
+  the next run.
+- **`2`** — usage error (unresolved `WIKI_ROOT`). Treat as "no wiki" and stop.
+
+**Release on every exit.** Once acquired, the lock must be released on every path out of this
+skill — the normal end of Step 4, and every early exit (the Step 2.5c `HUMAN_HOLD`/`ADR_CONFLICT`
+stops, Step 4's `ACCEPTED_ADR_MODIFIED` refusal, or any other abort):
+
+```bash
+bash "$HOME/.claude/skills/lib/wiki-lock.sh" release --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}"
+```
+
+Release only removes a lock this ticket owns, so it is safe to run more than once.
+
 **Bootstrap (adr-governance-gate):** before reading anything under `WIKI_ROOT`, scaffold what's
 missing — a wiki that has never been through this skill before may have flow files but no
 `index.md`/`decisions/`/`glossary.md` yet:
@@ -246,10 +284,11 @@ the verdict:
   Emit the `=== HUMAN_HOLD ===` block per § 7/§ 8 with `REASON: ARCH_COMMITMENT`. Do not write a
   wiki entry for this finding yet — there is nothing settled to point to until the ADR is
   accepted; a future maintenance run's re-classification (now `GOVERNED`) is what adds the
-  pointer entry above.
+  pointer entry above. Release the `WIKI_ROOT` lock (Step 0) before you exit.
 - **`CONFLICT`** — the finding describes something that contradicts an Accepted ADR. Emit the
   `ADR_CONFLICT` gate-stop per § 8. This maintenance run does not silently continue past a
-  discovered contradiction — someone needs to look at it.
+  discovered contradiction — someone needs to look at it. Release the `WIKI_ROOT` lock (Step 0)
+  before you exit.
 
 #### Ordinary prose path (Patterns used, Watch out for, cross-cutting — unchanged)
 
@@ -383,6 +422,7 @@ be (potentially a source repo). `[ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git"
 deterministic bash check that makes that impossible regardless of how the empty value got there:
 
 ```bash
+_wlock="$HOME/.claude/skills/lib/wiki-lock.sh"
 if [ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git" ]; then
   echo "WARNING: WIKI_ROOT not configured or not a git repo — skipping wiki commit" >&2
   [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|skip|WIKI_ROOT not configured or not a git repo" >> "$LOG_FILE"
@@ -396,6 +436,7 @@ else
     echo "ERROR: adr-check.sh found a modification to an Accepted ADR — refusing to commit WIKI_ROOT." >&2
     echo "Accepted ADRs are immutable in meaning (docs/adr-schema.md). Revert the edit and draft a superseding ADR instead." >&2
     [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|fail|ACCEPTED_ADR_MODIFIED — commit refused" >> "$LOG_FILE"
+    bash "$_wlock" release --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}" >/dev/null
     exit 1
   elif [ "$_adr_check_rc" -ne 0 ]; then
     # Other adr-check.sh violations (schema, hedging, etc.) are logged but do not
@@ -403,14 +444,36 @@ else
     [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|adr-check|warn|violations found — see command output" >> "$LOG_FILE"
   fi
 
-  git -C "$WIKI_ROOT" add -A
-  if git -C "$WIKI_ROOT" diff --cached --quiet; then
-    echo "Nothing staged in WIKI_ROOT — skipping commit."
-  else
-    git -C "$WIKI_ROOT" commit -m "docs(wiki): {TICKET-ID} {one-line summary of what was incorporated}"
-  fi
+  # Scoped commit, never `git add -A`: wiki-lock.sh stages and commits only the
+  # paths that are new or changed since this run acquired the lock (Step 0), so
+  # another ticket's uncommitted WIKI_ROOT edits are never swept into this
+  # ticket's commit. It refuses (rc 5) unless {TICKET-ID} still owns the lock.
+  bash "$_wlock" commit --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}" \
+    --message "docs(wiki): {TICKET-ID} {one-line summary of what was incorporated}"
+  _wcommit_rc=$?
+  case "$_wcommit_rc" in
+    0) ;;
+    6) echo "Nothing of this run's to commit in WIKI_ROOT — skipping commit." ;;
+    5)
+      echo "WARNING: WIKI_ROOT lock no longer held by {TICKET-ID} — commit refused" >&2
+      [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|fail|WIKI_ROOT lock not held — commit refused" >> "$LOG_FILE"
+      ;;
+    *) [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|fail|git commit failed (rc $_wcommit_rc)" >> "$LOG_FILE" ;;
+  esac
+fi
+if [ -n "$WIKI_ROOT" ] && [ -d "$WIKI_ROOT" ]; then
+  bash "$_wlock" release --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}"
 fi
 ```
+
+Before running this block, re-run the Step 0 `acquire` block once. It refreshes the lock's age,
+so a long run cannot drift into "stale", and it returns `0` only while this ticket still owns the
+lock. If it returns anything else, another run broke the lock as stale: do not run the commit
+(the guard above would refuse it anyway, with rc `5`), but still run the release line.
+
+The commit includes a file that was already dirty before this run took the lock only if this
+run changed it further. Files nobody touched this run stay out of the commit, even when they are
+dirty.
 
 Always use `git -C "$WIKI_ROOT"` — never a bare `git commit` from the pipeline's working
 directory, which would catch unrelated changes in a source repo. See
@@ -475,4 +538,5 @@ has for freshness/link findings.
 - **If an errata entry is unclear** — mark it with a comment and skip: `<!-- UNCLEAR: {why} -->` instead of resolving.
 - **Source is authoritative** — if an errata entry contradicts the wiki flow, trust the errata (it comes from actual ticket implementation, not pre-computed analysis). Verify by reading the referenced source code if needed.
 - **Scope** — writes only to files under `{WIKI_ROOT}/`. Does not modify source code.
+- **One writer at a time** — every `WIKI_ROOT` write happens while holding the `lib/wiki-lock.sh` lock (Step 0), and the commit goes through `wiki-lock.sh commit`, never `git add -A`. Do not write under `WIKI_ROOT` before the lock is acquired or after it is released.
 - **Freshness contract** — every file this skill writes or edits carries `verified_at`, `verified_against: {repo, sha}`, `stale_after`, and `verified` frontmatter (schema in Step 2b). `lib/wiki-check.sh` (Step 3) is the lint for that contract; `ticket-appraise` Step 3a reads its `decayed` classification the same way it already reads decayed prescan docs.
