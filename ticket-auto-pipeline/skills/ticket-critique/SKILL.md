@@ -277,6 +277,7 @@ After all checks complete, compute a numeric content quality score from 0-100. S
 | No acceptance criteria (0 AC) | -30 |
 | Thin acceptance criteria (1-2 AC) | -10 |
 | No test user or role mentioned | -20 |
+| Multi-role credential gap (from Check 1) | -30 |
 | No navigation path | -15 |
 | Bug ticket without reproduction steps | -25 |
 | Feature ticket with vague/unmeasurable AC | -15 per vague AC (max -30) |
@@ -288,6 +289,20 @@ After all checks complete, compute a numeric content quality score from 0-100. S
 | No API contract references (when both FE and BE services mentioned) | -10 |
 
 The score SHALL NOT go below 0. Example: a ticket with 0 AC (-30), no test user (-20), no nav path (-15), no scope (-15) = 100 - 80 = 20.
+
+**BLOCKER score ceiling.** After the table deductions, cap the score by the number of `[BLOCKER]` findings, counting every BLOCKER from every check — including one with no row in the table above, or one whose row deducts less than 30:
+
+| `[BLOCKER]` findings | Maximum score |
+|----------------------|---------------|
+| 0 | 100 (no cap) |
+| 1 | 70 |
+| 2 or more | 50 |
+
+Score = min(table score, ceiling). When the ceiling lowers the score, record it under `### Deductions` as `BLOCKER score ceiling ({N} BLOCKER(s)): capped at {ceiling}`. A BLOCKED critique can never report a score above its ceiling — `lib/gate-check.sh` applies the same table and appends `CRITIQUE_SCORE_IMPLAUSIBLE` to the gate-stop when it is violated. Examples:
+- Only BLOCKER is a multi-role credential gap, nothing else deducted: 100 - 30 = 70 → ceiling 70 → **70**.
+- Only BLOCKER is unspecified UI (-15): 100 - 15 = 85 → ceiling 70 → **70**.
+- Two BLOCKERs, no test user (-20) and undefined scope (-20): 100 - 40 = 60 → ceiling 50 → **50**.
+- The 0 AC / no test user / no nav / no scope example above: 20 → ceiling 50 → **20** (unchanged).
 
 ## Cumulative WARNING Escalation
 
