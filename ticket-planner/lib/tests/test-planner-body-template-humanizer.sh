@@ -196,6 +196,75 @@ else
   fail "SKILL.md lists planned-ticket-body-check.sh" "not found in $SKILL_MD"
 fi
 
+# ── Validation block: exit-3 hard stop actually fires (issue #472) ─────────
+#
+# The block used to read `if ! planner_validate_ticket ...; then rc=$?` —
+# inside that branch $? is the negated status (always 0), so the
+# validator-unavailable hard stop never fired. Extract the rendered block and
+# execute it against a stub validator to prove the return code survives.
+
+VALIDATE_BLOCK=$(awk '/^description="<full ticket description/ {on=1} on {print} on && /^fi$/ {exit}' <<<"$TICKETGEN_PROMPT")
+
+# Runs the extracted block inside a one-iteration loop (it uses `continue`)
+# with stubbed planner_validate_ticket/planner_state_write. set -e on
+# purpose: the capture must be errexit-safe as well as correct.
+_run_validate_block() {
+  local stub_rc="$1" state_file="$2"
+  STUB_RC="$stub_rc" STATE_FILE="$state_file" bash -c "
+set -e
+planner_validate_ticket() { return \"\$STUB_RC\"; }
+planner_state_write() { printf '%s|' \"\$@\" >>\"\$STATE_FILE\"; echo >>\"\$STATE_FILE\"; }
+TYPE_LABEL=feature
+for _ticket in one; do
+${VALIDATE_BLOCK}
+echo CREATED
+done
+" 2>&1
+}
+
+echo "--- TicketGen validation block: validator unavailable (rc 3) hard-stops ---"
+if [ -z "$VALIDATE_BLOCK" ]; then
+  fail "validation block extracted from TicketGen prompt" "block not found"
+else
+  _tmp_state=$(mktemp)
+  _rc=0
+  _run_validate_block 3 "$_tmp_state" >/dev/null || _rc=$?
+  if [ "$_rc" -eq 3 ]; then
+    pass "rc 3 from planner_validate_ticket exits the block with 3"
+  else
+    fail "rc 3 from planner_validate_ticket exits the block with 3" "got exit $_rc"
+  fi
+  if grep -qF 'TicketGen|validate|fail|Validator unavailable (exit 3) — hard stop|' "$_tmp_state"; then
+    pass "rc 3 writes the TicketGen validate hard-stop state line"
+  else
+    fail "rc 3 writes the TicketGen validate hard-stop state line" "state: $(cat "$_tmp_state")"
+  fi
+  rm -f "$_tmp_state"
+
+  for _stub in 1 2; do
+    _tmp_state=$(mktemp)
+    _rc=0
+    _out=$(_run_validate_block "$_stub" "$_tmp_state") || _rc=$?
+    if [ "$_rc" -eq 0 ] && [ ! -s "$_tmp_state" ] &&
+      grep -qF 'Ticket validation failed' <<<"$_out" && ! grep -qx 'CREATED' <<<"$_out"; then
+      pass "rc ${_stub} takes the per-ticket skip path (no hard stop, no create)"
+    else
+      fail "rc ${_stub} takes the per-ticket skip path" "exit=$_rc state=$(cat "$_tmp_state") out=$_out"
+    fi
+    rm -f "$_tmp_state"
+  done
+
+  _tmp_state=$(mktemp)
+  _rc=0
+  _out=$(_run_validate_block 0 "$_tmp_state") || _rc=$?
+  if [ "$_rc" -eq 0 ] && grep -qx 'CREATED' <<<"$_out"; then
+    pass "rc 0 falls through to ticket creation"
+  else
+    fail "rc 0 falls through to ticket creation" "exit=$_rc out=$_out"
+  fi
+  rm -f "$_tmp_state"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -gt 0 ] && exit 1 || exit 0

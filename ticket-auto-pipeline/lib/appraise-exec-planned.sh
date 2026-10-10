@@ -143,16 +143,14 @@ if [ "${1:-}" = "--self-test" ]; then
 
   # Test 2: No proposal → exit 1
   has_planner_proposal() { false; }
-  if ! adopt_planner_proposal "TEST-2" "test-2-fix" 2>/dev/null; then
-    rc=$?
-    [ "$rc" = "1" ] && echo "✓ no proposal → exit 1" || echo "✗ no proposal → exit $rc (expected 1)"
-  fi
+  rc=0
+  adopt_planner_proposal "TEST-2" "test-2-fix" 2>/dev/null || rc=$?
+  [ "$rc" = "1" ] && echo "✓ no proposal → exit 1" || echo "✗ no proposal → exit $rc (expected 1)"
 
   # Test 3: Missing args → exit 1
-  if ! adopt_planner_proposal "" "name" 2>/dev/null; then
-    rc=$?
-    [ "$rc" = "1" ] && echo "✓ missing ticket-id → exit 1" || echo "✗ missing ticket-id → exit $rc"
-  fi
+  rc=0
+  adopt_planner_proposal "" "name" 2>/dev/null || rc=$?
+  [ "$rc" = "1" ] && echo "✓ missing ticket-id → exit 1" || echo "✗ missing ticket-id → exit $rc"
 
   echo "Self-tests complete — run test-appraise-exec-planned.sh for full coverage."
   exit 0
