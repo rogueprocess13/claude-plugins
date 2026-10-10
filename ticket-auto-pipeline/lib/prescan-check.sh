@@ -151,13 +151,15 @@ _calc_churn_pct() {
   # Count total tracked source files in the current checkout (index/working
   # tree — not ref-specific; see _resolve_diff_ref for why the diff side
   # below must not silently default to whatever's checked out).
-  total_files=$(git -C "$repo" ls-files -- "${glob_args[@]}" 2>/dev/null | wc -l || echo "0")
-  total_files=$(echo "$total_files" | tr -d ' ')
+  # `|| true`, not `|| echo "0"`: under pipefail a failed git still lets wc
+  # print "0", so an echo fallback would yield "0\n0" (GitHub #420).
+  total_files=$(git -C "$repo" ls-files -- "${glob_args[@]}" 2>/dev/null | wc -l || true)
+  total_files=$(echo "${total_files:-0}" | tr -d ' ')
 
   # Count files changed since base_sha, against the resolved diff target
   # (origin/<target_branch> when one was given and resolvable, else HEAD).
-  changed_files=$(git -C "$repo" diff --name-only "$base_sha" "$diff_ref" -- "${glob_args[@]}" 2>/dev/null | wc -l || echo "0")
-  changed_files=$(echo "$changed_files" | tr -d ' ')
+  changed_files=$(git -C "$repo" diff --name-only "$base_sha" "$diff_ref" -- "${glob_args[@]}" 2>/dev/null | wc -l || true)
+  changed_files=$(echo "${changed_files:-0}" | tr -d ' ')
 
   if [ "$total_files" = "0" ]; then
     echo "0"

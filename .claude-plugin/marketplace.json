@@ -21,13 +21,13 @@
     },
     {
       "name": "ticket-auto-pipeline",
-      "version": "0.62.25",
+      "version": "0.62.26",
       "source": "./ticket-auto-pipeline",
       "description": "Fully autonomous Linear ticket pipeline — appraise, implement, verify, and merge with zero user input. Bundles 20+ skills, state machine config, pipeline safety gates, and retrospective analysis."
     },
     {
       "name": "knowledge-curator",
-      "version": "0.2.1",
+      "version": "0.2.13",
       "source": "./knowledge-curator",
       "description": "Durable cross-project knowledge tracking — capture ideas, decisions, lessons, and discoveries with low friction, automatic resurfacing, and a dispatchable work stack."
     },

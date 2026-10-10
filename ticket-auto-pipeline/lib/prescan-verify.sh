@@ -145,7 +145,11 @@ _check_services_dir() {
     return 1
   fi
   local md_count
-  md_count=$(ls -1 "$docs_dir/services"/*.md 2>/dev/null | wc -l || echo "0")
+  # `|| true`, not `|| echo "0"`: with no matches ls fails, pipefail fails the
+  # pipeline after wc already printed "0", and an echo fallback would yield
+  # "0\n0" — which never equals "0", silently passing this check (GitHub #420).
+  md_count=$(ls -1 "$docs_dir/services"/*.md 2>/dev/null | wc -l || true)
+  md_count=$(echo "${md_count:-0}" | tr -d ' ')
   if [ "$md_count" = "0" ]; then
     _violation "services/" "no .md files found"
     return 1
