@@ -190,8 +190,9 @@ declare -gA _PLANNER_LABEL_CACHE 2>/dev/null || true
 # IssueCreateInput.labelIds is typed [String!] and takes label UUIDs. Linear does
 # not create labels implicitly and has no name-based variant on this input, so
 # names must be resolved first. An unresolvable name is a hard failure: silently
-# dropping one would produce a ticket without `planned`, which planned-ticket-check.sh
-# and the whole ticket-auto fast-path depend on.
+# dropping one would produce a ticket missing a label the caller asked for. (The
+# planner itself now creates issues with an empty label set; the `planned` label
+# this comment once named is retired — ticket manifest existence replaced it.)
 #
 # The query filters on the requested names rather than listing the workspace, so
 # it stays correct in a workspace whose `blocked-by:*` and `INIT-*` families have
@@ -275,8 +276,9 @@ planner_linear_resolve_label_ids() {
 # that only gets an id once EpicGen/TicketGen creates it, so they can never be
 # pre-seeded in Linear ahead of a run. planner_linear_resolve_label_ids hard-fails
 # on an unresolvable name by design (see its own header) — correct for the
-# static contract labels (`planned`, `epic`, ...), which really are supposed to
-# exist ahead of time, but wrong for these: EpicGen's issueCreate for the
+# static contract labels (`planned`, `epic`, ... — since retired, see
+# planner-doctor.sh), which really were supposed to exist ahead of time, but
+# wrong for these: EpicGen's issueCreate for the
 # Evidence-Based initiative (INIT-1788116082-4791) failed outright because its
 # own INIT-* label did not exist yet, requiring a human to create it and retry
 # before Epic Gen could proceed.
