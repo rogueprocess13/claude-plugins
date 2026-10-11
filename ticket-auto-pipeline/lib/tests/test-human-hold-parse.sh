@@ -608,6 +608,22 @@ test_unknown_schema_version_rejected() {
   return $rc
 }
 
+test_v2_options_and_default_are_redacted() {
+  _setup
+  printf '%s\n' '=== HUMAN_HOLD ===' 'SCHEMA_VERSION: 2' 'PHASE: PLANNER' 'REASON: CREATE_GATE' \
+    'BLOCKS: state.log' 'QUESTION_1: Pick one' \
+    'QUESTION_1_OPTIONS: token=abc123secret|ghp_abcdefghijklmnopqrstuvwxyz' \
+    'QUESTION_1_DEFAULT: token=abc123secret' '=== END HUMAN_HOLD ===' | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 0 ] &&
+    [ "$(_json '.questions[0].options | join(",")')" = "token=***REDACTED***,ghp_***REDACTED***" ] &&
+    [ "$(_json '.questions[0].default')" = "token=***REDACTED***" ] &&
+    ! grep -q 'abc123secret\|abcdefghijklmnop' "$_ws/pipeline.log"
+  local rc=$?
+  _teardown
+  return $rc
+}
+
 # ── run ──────────────────────────────────────────────────────────────────────
 
 _filter="${1:-}"

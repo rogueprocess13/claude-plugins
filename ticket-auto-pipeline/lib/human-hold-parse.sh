@@ -337,7 +337,23 @@ _hh_validate_v2() {
   return 0
 }
 
+# Redact each `|`-separated option on its own: run over the joined string,
+# the key=value pattern would swallow the separator and the next option.
+_hh_redact_options() {
+  local opt out="" first=1
+  local -a opts=()
+  IFS='|' read -r -a opts <<<"$1"
+  for opt in "${opts[@]}"; do
+    [ "$first" -eq 1 ] || out="${out}|"
+    out="${out}$(_hh_redact "$opt")"
+    first=0
+  done
+  printf '%s' "$out"
+}
+
 # Serialize version-2 questions: id is QUESTION_n_ID when given, else n.
+# Every free-text value (text, options, default) is redacted, same as v1
+# question text — any of them can reach Linear and Slack.
 # Attributes appear only when the block carried them.
 _hh_questions_v2_json() {
   local i n out="[]" q
@@ -348,9 +364,9 @@ _hh_questions_v2_json() {
       --arg text "$(_hh_redact "${q_vals[$i]}")" \
       --arg qid "${q_attrs[${n}_ID]:-}" \
       --arg has_opts "${q_attrs[${n}_OPTIONS]+set}" \
-      --arg opts "${q_attrs[${n}_OPTIONS]:-}" \
+      --arg opts "$(_hh_redact_options "${q_attrs[${n}_OPTIONS]:-}")" \
       --arg has_def "${q_attrs[${n}_DEFAULT]+set}" \
-      --arg def "${q_attrs[${n}_DEFAULT]:-}" \
+      --arg def "$(_hh_redact "${q_attrs[${n}_DEFAULT]:-}")" \
       --arg has_bind "${q_attrs[${n}_BINDING]+set}" \
       --arg bind "${q_attrs[${n}_BINDING]:-}" \
       '{id: (if $qid == "" then ($n|tonumber) else $qid end), n: ($n|tonumber), text: $text}
