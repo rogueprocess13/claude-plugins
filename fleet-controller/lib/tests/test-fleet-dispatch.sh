@@ -2295,6 +2295,85 @@ test_dispatch_manifest_full_localization() {
 }
 _run "dispatch_manifest_full_localization" test_dispatch_manifest_full_localization
 
+# GitHub #412: a blocker whose run completed but left its PR for a human
+# (`completed: STEP_6` is written either way) must not release its
+# dependent until the merge is recorded. Three blockers, one per state:
+# CRE-430 PR open, CRE-431 PR closed unmerged, CRE-432 PR with no merge
+# evidence at all. Then merge-poll records CRE-430's merge — the next pass
+# (no new pipeline run) releases CRE-440.
+test_dispatch_blocker_unmerged_pr_holds_dependent() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  REPOS_ROOT="$repos_root" write_epic_manifest "INIT-63" "epic/x" "epic" "manual" \
+    '["CRE-440","CRE-441","CRE-442"]' >/dev/null
+  REPOS_ROOT="$repos_root" stamp_epic_dispatch "INIT-63" >/dev/null
+  local child blocker
+  for child in CRE-440:CRE-430 CRE-441:CRE-431 CRE-442:CRE-432; do
+    blocker="${child#*:}"
+    child="${child%%:*}"
+    REPOS_ROOT="$repos_root" write_ticket_manifest "$child" "INIT-63" "bug" "[\"$blocker\"]" >/dev/null
+    _seed_readiness "$repos_root" "$child" "ready"
+    {
+      echo "2026-01-01T00:00:01Z|META|pr-created|info|{\"pr\":${blocker#CRE-},\"url\":null,\"repo\":\"acme/repo\"}"
+      echo "2026-01-01T00:00:05Z|PR-REVIEW|merge-decision|done|skipped: pipeline autonomy=manual requires human merge"
+      echo "2026-01-01T00:00:09Z|META|outcome|info|completed: STEP_6"
+    } >"$ws/${blocker}-pipeline.log"
+  done
+  echo '{"kind":"merge","tid":"CRE-430","pr":430,"repo":"acme/repo","state":"open"}' >>"$ws/runs.jsonl"
+  echo '{"kind":"merge","tid":"CRE-431","pr":431,"repo":"acme/repo","state":"closed"}' >>"$ws/runs.jsonl"
+
+  local script="
+    REPOS_ROOT='$repos_root'
+    FLEET_DRY_RUN=true
+    FLEET_PIPELINE_LOG_DIR='$ws'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    fleet_dispatch_initiative 'INIT-63' '$ws' 2>&1
+  "
+  local output
+  output=$(bash -c "$script" 2>/dev/null || true)
+
+  local rc=0
+  echo "$output" | grep -q "blocked by CRE-430 (run completed, PR still open" || {
+    echo "expected CRE-430's open PR to block CRE-440: $output" >&2
+    rc=1
+  }
+  echo "$output" | grep -q "blocked by CRE-431 (PR closed unmerged" || {
+    echo "expected CRE-431's closed-unmerged PR to block (and be surfaced): $output" >&2
+    rc=1
+  }
+  echo "$output" | grep -q "blocked by CRE-432 (run completed, PR merge state unknown" || {
+    echo "expected CRE-432's unknown merge state to block: $output" >&2
+    rc=1
+  }
+  ! echo "$output" | grep -q "would enqueue:" || {
+    echo "nothing should be enqueued while every blocker's PR is unmerged: $output" >&2
+    rc=1
+  }
+
+  # The human merges CRE-430's PR; fleetd's periodic merge-poll sweep
+  # appends the merge event. The next dispatch pass releases CRE-440 only.
+  echo '{"kind":"merge","tid":"CRE-430","pr":430,"repo":"acme/repo","state":"merged"}' >>"$ws/runs.jsonl"
+  output=$(bash -c "$script" 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q "blocked-by CRE-430 resolved (Done, merged)" || {
+    echo "expected CRE-430 resolved once merged: $output" >&2
+    rc=1
+  }
+  echo "$output" | grep -q "would enqueue: .*CRE-440" || {
+    echo "expected CRE-440 enqueued after its blocker merged: $output" >&2
+    rc=1
+  }
+  ! echo "$output" | grep -qE "would enqueue: .*CRE-44[12]" || {
+    echo "CRE-441/CRE-442 must stay blocked: $output" >&2
+    rc=1
+  }
+  return "$rc"
+}
+_run "dispatch_blocker_unmerged_pr_holds_dependent" test_dispatch_blocker_unmerged_pr_holds_dependent
+
 # tracker-planner-and-fallback-cutover task 3.9 retired the per-child live
 # get_issue fallback entirely (fleet-dispatch.sh:643-649) — a child named in
 # the epic manifest with no ticket manifest of its own is now a reported

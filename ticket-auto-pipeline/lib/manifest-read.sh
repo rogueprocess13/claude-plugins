@@ -187,33 +187,181 @@ get_epic_manifest_path() {
   echo "$repos_root/.ticket-auto/initiatives/$epic/epic/manifest.json"
 }
 
-# ticket_pipeline_terminal_done <TID> [workspace]
-# True when TID's own pipeline log shows a genuinely completed ("Done")
-# terminal outcome — never a live tracker fetch. Mirrors pipeline-
-# finalize.sh's "completed: STEP_6" outcome message, the only outcome shape
-# that means the ticket actually reached Done (held:/stopped:/dead-letter
-# are all non-Done terminals or non-terminal holds). No pipeline log at all
-# (not yet started) is treated as unsatisfied, per ticket-local-manifest
-# spec's "blocker with no pipeline log yet is unsatisfied". The single
-# shared implementation of this check — ticket-auto-pipeline's
-# epic_branch_children_done and fleet-controller's detect_blocked_by/
-# detect_initiative_dispatch (tracker-local-facts-read-migration) all call
-# this rather than re-deriving "is it Done" independently.
-ticket_pipeline_terminal_done() {
+# _mr_field5 — join pipe-delimited fields 5..NF (JSON/messages contain `|`).
+_mr_field5() {
+  awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}'
+}
+
+# ticket_pipeline_pr_ref <LOG_FILE>
+# Prints "<lineno>\t<pr_num>\t<repo>" for the most recent PR this ticket's
+# pipeline log names, or nothing when the log names no PR at all. The latest
+# `META|pr-created` (ticket-verify / epic-branch.sh, JSON {pr,url,repo}) wins;
+# `PR-REVIEW|checkout-pr|done|<n>` (ticket-pr-review) is the fallback when no
+# pr-created line exists — the same precedence run-summary.sh uses for the
+# `run` event's `pr`, so this names the PR merge-poll.sh actually polls.
+# Reads the WHOLE log, not just the last run's
+# window: a resumed run that never re-entered VERIFY/PR-REVIEW still owns the
+# PR an earlier run of the same ticket opened. Always returns 0.
+ticket_pipeline_pr_ref() {
+  local log_file="$1"
+  [ -f "$log_file" ] || return 0
+
+  local created_line checkout_line
+  created_line=$(grep -n '|META|pr-created|info|' "$log_file" 2>/dev/null | tail -1) || created_line=""
+  checkout_line=$(grep -n '|PR-REVIEW|checkout-pr|done|' "$log_file" 2>/dev/null | tail -1) || checkout_line=""
+
+  local c_ln="" c_pr="" c_repo="" k_ln="" k_pr="" c_json=""
+  if [ -n "$created_line" ]; then
+    c_ln="${created_line%%:*}"
+    c_json=$(printf '%s\n' "${created_line#*:}" | _mr_field5) || c_json=""
+    c_pr=$(printf '%s' "$c_json" | jq -r '(.pr // empty) | tostring' 2>/dev/null | grep -oE '^[0-9]+$') || c_pr=""
+    c_repo=$(printf '%s' "$c_json" | jq -r '.repo // empty' 2>/dev/null) || c_repo=""
+    [ -n "$c_pr" ] || c_ln=""
+  fi
+  if [ -n "$checkout_line" ]; then
+    k_ln="${checkout_line%%:*}"
+    k_pr=$(printf '%s\n' "${checkout_line#*:}" | _mr_field5 | grep -oE '[0-9]+' | head -1) || k_pr=""
+    [ -n "$k_pr" ] || k_ln=""
+  fi
+
+  if [ -n "$c_ln" ]; then
+    printf '%s\t%s\t%s\n' "$c_ln" "$c_pr" "$c_repo"
+  elif [ -n "$k_ln" ]; then
+    printf '%s\t%s\t\n' "$k_ln" "$k_pr"
+  fi
+  return 0
+}
+
+# ticket_pipeline_merge_state <TID> [workspace]
+# The single merge-aware terminal check (GitHub #412). Prints one state word
+# and returns 0 when TID counts as finished for anything that waits on it
+# (blocked-by resolution, epic integration readiness), 1 otherwise:
+#
+#   not-complete       rc 1  no pipeline log, or its last outcome is not
+#                            `completed:*` (held:/stopped:/dead-letter, or no
+#                            outcome yet — "blocker with no pipeline log yet
+#                            is unsatisfied", ticket-local-manifest spec)
+#   no-pr              rc 0  completed, and the log names no PR at all (a
+#                            no-code ticket) — unchanged from before #412
+#   merged             rc 0  completed, and its PR is merged
+#   open               rc 1  completed, but its PR is still open. A run that
+#                            leaves the merge to a human (manual autonomy, an
+#                            epic Merge Policy) writes `completed: STEP_6`
+#                            exactly like one that merged.
+#   closed             rc 1  completed, but its PR was closed unmerged
+#   merged-other-base  rc 1  merged, but into a branch other than the `base=`
+#                            the ticket's own `META|branch-context` recorded
+#   unknown            rc 1  completed with a PR whose merge state cannot be
+#                            determined — fail safe: never release on missing
+#                            evidence (CLAUDE.md "Tracker read failure policy")
+#
+# Merge evidence, strongest first:
+#   1. `merge` events for this tid + PR number in `{workspace}/runs.jsonl`,
+#      written by lib/merge-poll.sh (the one merge-truth implementation) from
+#      pipeline-finalize.sh's one-shot post-outcome sweep and from fleetd's
+#      periodic sweep — which keeps re-polling an open PR, so a human merge is
+#      recorded here with no new pipeline run. A `merged` observation wins
+#      outright (a merge cannot be undone); otherwise the latest `open` or
+#      `closed` observation decides. `stale`/`unknown`/`unknown-repo` carry no
+#      state and fall through. Malformed lines are skipped, never fatal.
+#   2. The pipeline log's own record of a merge AFTER the PR reference: a
+#      `PR-REVIEW|merge-decision|done|merged` line (ticket-pr-review's direct
+#      merge) or a human's `META|manual-merge` / `META|pr-merged` annotation.
+#      Consulted only when gh observed nothing decisive — an `open`
+#      observation, always taken after the run ended, outranks the log.
+#
+# Under an epic directive the PR's base IS the epic branch (branch-resolve.sh:
+# BASE_BRANCH = the directive's Branch), so `merged` here means merged into
+# that branch — exactly what a sibling, or the epic's integration PR, needs.
+# The base check compares the merge event's `base` against the log's recorded
+# `base=`; either side absent (evidence predating the field) skips the check.
+ticket_pipeline_merge_state() {
   local tid="$1"
   local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
   local log_file="$workspace/${tid}-pipeline.log"
-  [ -f "$log_file" ] || return 1
+
+  if [ ! -f "$log_file" ]; then
+    echo "not-complete"
+    return 1
+  fi
 
   local last_outcome
-  last_outcome=$(grep '|META|outcome|info|' "$log_file" 2>/dev/null | tail -1 |
-    awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i<NF?"|":"")}')
-  [ -n "$last_outcome" ] || return 1
-
+  last_outcome=$(grep '|META|outcome|info|' "$log_file" 2>/dev/null | tail -1 | _mr_field5) || last_outcome=""
   case "$last_outcome" in
-  "completed:"*) return 0 ;;
-  *) return 1 ;;
+  "completed:"*) ;;
+  *)
+    echo "not-complete"
+    return 1
+    ;;
   esac
+
+  local pr_ref
+  pr_ref=$(ticket_pipeline_pr_ref "$log_file") || pr_ref=""
+  if [ -z "$pr_ref" ]; then
+    echo "no-pr"
+    return 0
+  fi
+
+  local pr_ln pr_num
+  pr_ln=$(printf '%s\n' "$pr_ref" | cut -f1)
+  pr_num=$(printf '%s\n' "$pr_ref" | cut -f2)
+
+  # ── 1. merge-poll observations in runs.jsonl ─────────────────────────────
+  local runs_file="$workspace/runs.jsonl" gh_line="" gh_state="" gh_base=""
+  if [ -f "$runs_file" ]; then
+    gh_line=$(jq -rRs --arg tid "$tid" --arg pr "$pr_num" '
+      [split("\n")[] | fromjson? | objects
+        | select(.kind == "merge" and .tid == $tid and ((.pr // "") | tostring) == $pr)
+        | select(.state == "merged" or .state == "open" or .state == "closed")]
+      | (map(select(.state == "merged")) | last) as $m
+      | if $m != null then "merged\t\($m.base // "")"
+        elif length > 0 then "\(last.state)\t"
+        else empty end
+    ' "$runs_file" 2>/dev/null) || gh_line=""
+    gh_state=$(printf '%s\n' "$gh_line" | cut -f1)
+    gh_base=$(printf '%s\n' "$gh_line" | cut -f2)
+  fi
+
+  case "$gh_state" in
+  merged)
+    local want_base
+    want_base=$(grep '|META|branch-context|info|' "$log_file" 2>/dev/null | tail -1 | _mr_field5 |
+      tr ';' '\n' | sed -n 's/^base=//p' | head -1) || want_base=""
+    if [ -n "$gh_base" ] && [ -n "$want_base" ] && [ "$gh_base" != "$want_base" ]; then
+      echo "merged-other-base"
+      return 1
+    fi
+    echo "merged"
+    return 0
+    ;;
+  open | closed)
+    echo "$gh_state"
+    return 1
+    ;;
+  esac
+
+  # ── 2. the pipeline's own merge record, after the PR reference ──────────
+  if tail -n "+$((pr_ln + 1))" "$log_file" 2>/dev/null |
+    grep -qE '\|PR-REVIEW\|merge-decision\|done\|merged|\|META\|(manual-merge|pr-merged)\|'; then
+    echo "merged"
+    return 0
+  fi
+
+  echo "unknown"
+  return 1
+}
+
+# ticket_pipeline_terminal_done <TID> [workspace]
+# True when TID is genuinely finished for anything that waits on it — the
+# single shared check behind ticket-auto-pipeline's epic_branch_children_done
+# and fleet-controller's blocked-by resolution (fleet-dispatch.sh,
+# detect_blocked_by). Never a live tracker fetch. A thin wrapper over
+# ticket_pipeline_merge_state above: a `completed:*` outcome alone used to be
+# enough, which released dependents while a PR a human still had to merge sat
+# open (GitHub #412). A caller that wants to say WHY a blocker is not done
+# calls ticket_pipeline_merge_state directly for the state word.
+ticket_pipeline_terminal_done() {
+  ticket_pipeline_merge_state "$@" >/dev/null
 }
 
 # ticket_is_ready <TID>

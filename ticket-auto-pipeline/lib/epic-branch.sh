@@ -441,7 +441,13 @@ epic_branch_sync() {
 # fallback (and the 2-arg explicit-override form it also served) is
 # deleted — the epic manifest's children[] is the only population, and each
 # child's own pipeline-log terminal state (ticket_pipeline_terminal_done)
-# the only readiness signal. No epic manifest at all is reported as
+# the only readiness signal. That check is merge-aware (GitHub #412): a child
+# whose run completed with its PR still open into the epic branch is not
+# Done until the merge is recorded, so the integration PR never opens over a
+# branch missing a child's code. Children route Review → Done under
+# `UAT Policy: epic` regardless — this waits on the merge, not on UAT, so it
+# cannot deadlock on an acceptance step that only happens at the epic level.
+# No epic manifest at all is reported as
 # not-ready (exit 1), same as "some children not Done" — a missing
 # manifest is never silently treated as "nothing to block on".
 #
