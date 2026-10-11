@@ -1,0 +1,9 @@
+Architecture parked on the ADR gate: CREATED_PROPOSED (ADR-0007)
+
+architecture.md was still written — the working design is unaffected. What's
+missing is ratification: a human accepts ADR-0007 (or resolves the conflict,
+for a CONFLICT verdict) out of band, then this phase resumes and re-classifies.
+
+Artifacts:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/
+Raw log:    grep 'META|adr-gate|fail' <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/state.log
+Resume:     /ticket-planner resume INIT-1700000000-4242

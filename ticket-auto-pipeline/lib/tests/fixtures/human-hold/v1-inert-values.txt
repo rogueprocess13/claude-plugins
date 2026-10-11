@@ -1,0 +1,7 @@
+=== HUMAN_HOLD ===
+SCHEMA_VERSION: 1
+PHASE: IMPLEMENT
+REASON: CREDENTIALS_MISSING
+BLOCKS: notes.md#AC-4 | pipe `tick` $(echo x)
+QUESTION_1: Run $(rm -rf /) and `id`; then a | b && c "quoted"
+=== END HUMAN_HOLD ===

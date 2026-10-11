@@ -17,6 +17,7 @@ Sits upstream of `ticket-auto` and `fleet-controller`. Produces against frozen c
 | `/ticket-planner plan "idea"` | Plan a new initiative — artifacts only, nothing in Linear |
 | `/ticket-planner resume <INIT_ID>` | Resume a crashed or paused initiative |
 | `/ticket-planner resume <INIT_ID> --create` | Authorize creation and run through to Linear |
+| `/ticket-planner resume <INIT_ID> --answers <file>` | Resume with answers to the stop's questions — headless callers (see [Headless use](#headless-use---answers)) |
 | `/ticket-planner status <INIT_ID>` | Show current phase and recent log entries |
 | `/ticket-planner replan <INIT_ID>` | Re-plan an initiative from feedback (requires Regenerate flag) |
 | `/ticket-planner doctor` | Preflight check — REPOS_ROOT, Linear team/labels, helper scripts |
@@ -72,6 +73,7 @@ process per phase and an `export` does not survive that (#144).
 | `--no-project` | File the epic and its tickets with no Linear project, deliberately — silences the project gate |
 | `--milestone <name\|id>` | Linear project milestone (needs `--project` when given by name) |
 | `--refresh-bodies` | **`resume` only.** Re-read every not-ready ticket's description from Linear before Refinement re-evaluates it. One-shot — consumed and cleared by this invocation, never sticky |
+| `--answers <file>` | **`resume` only.** Apply an answers file to the open question round from `planner-stop-describe.sh`, then resume. Each answer becomes the flag it is bound to (`--create`, `--accept`, `--project`/`--no-project`, a DoR waiver). See [Headless use](#headless-use---answers) |
 
 The branch flags are optional. Supplying both together is an error. When neither is supplied,
 the binary heuristic decides (≥ 3 tickets **and** dependency chain depth ≥ 2).
@@ -161,6 +163,44 @@ boundary, so recovering a crashed Discovery phase cannot silently authorize Epic
 
 `resume` is also the only mode that accepts a genuine-but-expected Crosscheck finding —
 see [Accepting a genuine Crosscheck finding](#accepting-a-genuine-crosscheck-finding---accept).
+
+### Headless use (`--answers`)
+
+A caller with no terminal — an orchestrator running `claude -p`, a Slack bridge, a
+script — cannot read the halt prose. It runs this loop instead:
+
+1. **Describe.** `bash lib/planner-stop-describe.sh <INIT_ID>` prints why the run
+   stopped, as a human-hold Schema-Version 2 block (`REASON`, `ROUND`, and one
+   question per decision, each with an id, options and a binding). A run with
+   nothing to ask prints one line: `REASON=COMPLETED`, `REASON=RUNNING` (just
+   resume) or `REASON=FAILED_RETRY_EXHAUSTED`.
+2. **Answer.** The caller collects answers and writes them to a JSON file: the
+   block's `ROUND`, plus `id`, `value`, `answered_by`, `role` and `ts` per answer.
+   The block format and the answers-file format are defined in
+   `ticket-auto-pipeline/docs/human-hold-schema.md` § Schema-Version 2.
+3. **Resume.** `/ticket-planner resume <INIT_ID> --answers <file>`.
+
+| Stop (`REASON`) | Question binding | What the answer does |
+|---|---|---|
+| `CREATE_GATE` | `flag:create` | `yes` = `--create`. `no` records the round; the run stops at the gate again |
+| `CROSSCHECK_BLOCKED` | `flag:accept:<CODE>` | the reason = `--accept CODE:"reason"`. `__skip__` declines |
+| `PROJECT_GATE` | `flag:project` | a name or id = `--project`. `__none__` = `--no-project` |
+| `REFINEMENT_HALT` | `waive:<TICKET>:<CODE>` | the reason = `dor-check.sh --waive <TICKET> <CODE> "reason"`. `__skip__` declines |
+| `ADR_GATE` | `note` | recorded only — accept the ADR out of band (`adr-store.sh accept` refuses inside an agent session) |
+| `UNTIL_STOP` | `note` | recorded only — resuming is what continues past the `--until` phase |
+
+`lib/planner-answers.sh` checks the file before it writes anything: the round must be
+the open one (exit 4, `STALE_ROUND`), every id must belong to it and an operator
+question needs `role: operator` (exit 2), and the file's `schema_version` major must
+be `1`. It writes `artifacts/answers/round-N.json`, applies the bindings through the
+same functions step 2b uses for the flags, and appends
+`META|human-hold|done|round=N sha=<sha256>` last. The same file again is a no-op; a
+different file for an answered round exits 3 (`ROUND_ALREADY_ANSWERED`). Answer text
+is untrusted: capped at 4 KB, stripped of control characters and code fences, stored
+with its attribution, and never evaluated.
+
+The halts themselves do not change — same prose, same exit codes. The describer reads
+the state log the halts already write.
 
 ### Status (`status`)
 
@@ -567,6 +607,7 @@ NO_PROJECT_FLAG=""
 MILESTONE_REF=""
 ACCEPT_FLAGS=()
 REFRESH_BODIES_FLAG=""
+ANSWERS_FILE=""
 
 # Env vars are the defaults for the corresponding flags, read once, here.
 UNTIL_PHASE="${PLANNER_UNTIL:-}"
@@ -597,6 +638,8 @@ while [ "$#" -gt 0 ]; do
     --milestone) shift; MILESTONE_REF="${1:-}" ;;
     --milestone=*) MILESTONE_REF="${1#*=}" ;;
     --refresh-bodies) REFRESH_BODIES_FLAG=true ;;
+    --answers) shift; ANSWERS_FILE="${1:-}" ;;
+    --answers=*) ANSWERS_FILE="${1#*=}" ;;
   esac
   shift
 done
@@ -637,6 +680,18 @@ fi
 if [ "$REFRESH_BODIES_FLAG" = "true" ] && [ "$MODE" = "plan" ]; then
   echo "ERROR: --refresh-bodies is not valid for 'plan'. It re-evaluates tickets Refinement already held:" >&2
   echo "       /ticket-planner resume <INIT_ID> --refresh-bodies" >&2
+  exit 1
+fi
+
+# --answers answers the questions a stopped run is asking (planner-headless-
+# questions), so like --create it only means something on 'resume'.
+if [ -n "$ANSWERS_FILE" ] && [ "$MODE" = "plan" ]; then
+  echo "ERROR: --answers is not valid for 'plan'. Answer a stopped run's questions on resume:" >&2
+  echo "       /ticket-planner resume <INIT_ID> --answers <file>" >&2
+  exit 1
+fi
+if [ -n "$ANSWERS_FILE" ] && [ ! -f "$ANSWERS_FILE" ]; then
+  echo "ERROR: --answers file not found: ${ANSWERS_FILE}" >&2
   exit 1
 fi
 
@@ -686,6 +741,16 @@ later phase reads, and `--create` must be durable *before* Epic Gen can be reach
 that a crash in between does not lose the authorization.
 
 ```bash
+# --answers first (planner-headless-questions): it is validated against the
+# round the run is stopped on *now*, before any other flag of this invocation
+# changes that stop. A rejected file (stale round, unknown id, wrong role)
+# stops here with nothing written; exit 0 covers both "applied" and "this
+# exact file was already applied".
+if [ -n "$ANSWERS_FILE" ]; then
+  source "${CLAUDE_PLUGIN_ROOT}/lib/planner-answers.sh"
+  planner_answers_apply "$INITIATIVE_ID" "$ANSWERS_FILE" || exit $?
+fi
+
 # Authorization first — it is the entry that must survive a crash.
 if [ "$CREATE_FLAG" = "true" ]; then
   planner_authorize_create "$INITIATIVE_ID" "operator passed --create"

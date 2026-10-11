@@ -1,0 +1,10 @@
+Some prose before the block.
+
+=== HUMAN_HOLD ===
+SCHEMA_VERSION: 1
+PHASE: APPRAISE
+REASON: SCOPE_UNDEFINED
+BLOCKS: notes.md#Acceptance-Criteria AC-2
+QUESTION_1: Should the export include archived records?
+QUESTION_2: Is a CSV format acceptable, or is XLSX required?
+=== END HUMAN_HOLD ===

@@ -407,6 +407,223 @@ EOF
   return $rc
 }
 
+# ── Schema-Version 2 (planner-headless-questions) ────────────────────────────
+
+_FIXTURES="$TEST_DIR/fixtures/human-hold"
+
+# Every v1 fixture's canonical JSON is byte-identical to the golden captured
+# before version 2 existed.
+test_v1_goldens_byte_identical() {
+  local f ph out rc=0
+  for f in "$_FIXTURES"/v1-*.txt; do
+    ph=$(grep -m1 '^PHASE:' "$f" | sed 's/PHASE: *//') || true
+    ph="${ph:-APPRAISE}"
+    # The invalid fixture exits 1 by design; capture, then compare.
+    out=$(bash "$PARSER" --phase "$ph" --return-file "$f" 2>/dev/null) || true
+    if [ "$out" != "$(cat "${f%.txt}.golden.json")" ]; then
+      echo "  golden drift: $(basename "$f")"
+      rc=1
+    fi
+  done
+  return $rc
+}
+
+_v2_block() {
+  cat <<'EOF'
+=== HUMAN_HOLD ===
+SCHEMA_VERSION: 2
+PHASE: PLANNER
+REASON: CREATE_GATE
+BLOCKS: state.log#Crosscheck
+ROUND: 1
+KIND: approval
+AUDIENCE: operator
+QUESTION_1: Authorize creating the epic and tickets in Linear?
+QUESTION_1_ID: create
+QUESTION_1_OPTIONS: yes|no
+QUESTION_1_DEFAULT: no
+QUESTION_1_BINDING: flag:create
+=== END HUMAN_HOLD ===
+EOF
+}
+
+test_v2_block_round_trip() {
+  _setup
+  _v2_block | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 0 ] &&
+    [ "$(_json .schema_version)" = "2" ] &&
+    [ "$(_json .round)" = "1" ] &&
+    [ "$(_json .kind)" = "approval" ] &&
+    [ "$(_json .audience)" = "operator" ] &&
+    [ "$(_json '.questions[0].id')" = "create" ] &&
+    [ "$(_json '.questions[0].n')" = "1" ] &&
+    [ "$(_json '.questions[0].options | join(",")')" = "yes,no" ] &&
+    [ "$(_json '.questions[0].default')" = "no" ] &&
+    [ "$(_json '.questions[0].binding')" = "flag:create" ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+# Optional keys are emitted only when present.
+test_v2_optional_keys_absent_when_not_given() {
+  _setup
+  cat <<'EOF' | _write_ret ret.txt
+=== HUMAN_HOLD ===
+SCHEMA_VERSION: 2
+PHASE: GRILL
+REASON: READINESS_GAPS
+BLOCKS: intent.md#Objective
+QUESTION_1: Who is the primary user?
+=== END HUMAN_HOLD ===
+EOF
+  _parse GRILL ret.txt
+  [ "$_RC" -eq 0 ] &&
+    [ "$(_json 'has("round") or has("kind") or has("audience")')" = "false" ] &&
+    [ "$(_json '.questions[0] | keys | join(",")')" = "id,n,text" ] &&
+    [ "$(_json '.questions[0].id')" = "1" ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+# A v1 block may not borrow a v2-only enum value.
+test_v1_block_rejects_v2_reason() {
+  _setup
+  _v2_block | sed 's/^SCHEMA_VERSION: 2/SCHEMA_VERSION: 1/' | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"not in the enum"* ]]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_values_with_shell_metacharacters_stay_inert() {
+  _setup
+  local marker="$_ws/pwned"
+  cat <<EOF | _write_ret ret.txt
+=== HUMAN_HOLD ===
+SCHEMA_VERSION: 2
+PHASE: PLANNER
+REASON: CROSSCHECK_BLOCKED
+BLOCKS: state.log#Crosscheck \$(touch $marker)
+ROUND: 2
+KIND: approval
+AUDIENCE: operator
+QUESTION_1: Accept? \$(touch $marker) \`touch $marker\` a | b; c
+QUESTION_1_ID: accept-CARVE_SCOPE_LOST
+QUESTION_1_DEFAULT: \$(touch $marker)
+QUESTION_1_BINDING: flag:accept:CARVE_SCOPE_LOST
+=== END HUMAN_HOLD ===
+EOF
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 0 ] && [ ! -e "$marker" ] &&
+    [ "$(_json '.questions[0].text')" = "Accept? \$(touch $marker) \`touch $marker\` a | b; c" ] &&
+    [ "$(_json '.questions[0].default')" = "\$(touch $marker)" ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_rejects_bad_binding() {
+  _setup
+  _v2_block | sed 's/^QUESTION_1_BINDING: .*/QUESTION_1_BINDING: shell:rm -rf/' | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"binding grammar"* ]]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_rejects_attr_without_question() {
+  _setup
+  {
+    _v2_block | sed '$d'
+    printf 'QUESTION_7_ID: orphan\n=== END HUMAN_HOLD ===\n'
+  } | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"names no QUESTION_7"* ]]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_rejects_duplicate_question_id() {
+  _setup
+  {
+    _v2_block | sed '$d'
+    printf 'QUESTION_2: again?\nQUESTION_2_ID: create\n=== END HUMAN_HOLD ===\n'
+  } | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"duplicate question id"* ]]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_rejects_default_outside_options() {
+  _setup
+  _v2_block | sed 's/^QUESTION_1_DEFAULT: no/QUESTION_1_DEFAULT: maybe/' | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"not one of its OPTIONS"* ]]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_rejects_empty_option() {
+  _setup
+  _v2_block | sed 's/^QUESTION_1_OPTIONS: yes|no/QUESTION_1_OPTIONS: yes||no/' | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"empty option"* ]]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_rejects_bad_enums() {
+  _setup
+  local rc=0
+  _v2_block | sed 's/^KIND: approval/KIND: vote/' | _write_ret a.txt
+  _parse PLANNER a.txt
+  [ "$_RC" -eq 1 ] || rc=1
+  _v2_block | sed 's/^AUDIENCE: operator/AUDIENCE: anyone/' | _write_ret b.txt
+  _parse PLANNER b.txt
+  [ "$_RC" -eq 1 ] || rc=1
+  _v2_block | sed 's/^ROUND: 1/ROUND: 0/' | _write_ret c.txt
+  _parse PLANNER c.txt
+  [ "$_RC" -eq 1 ] || rc=1
+  _teardown
+  return $rc
+}
+
+test_unknown_schema_version_rejected() {
+  _setup
+  _v2_block | sed 's/^SCHEMA_VERSION: 2/SCHEMA_VERSION: 3/' | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"unsupported SCHEMA_VERSION"* ]]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_options_and_default_are_redacted() {
+  _setup
+  printf '%s\n' '=== HUMAN_HOLD ===' 'SCHEMA_VERSION: 2' 'PHASE: PLANNER' 'REASON: CREATE_GATE' \
+    'BLOCKS: state.log' 'QUESTION_1: Pick one' \
+    'QUESTION_1_OPTIONS: token=abc123secret|ghp_abcdefghijklmnopqrstuvwxyz' \
+    'QUESTION_1_DEFAULT: token=abc123secret' '=== END HUMAN_HOLD ===' | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 0 ] &&
+    [ "$(_json '.questions[0].options | join(",")')" = "token=***REDACTED***,ghp_***REDACTED***" ] &&
+    [ "$(_json '.questions[0].default')" = "token=***REDACTED***" ] &&
+    ! grep -q 'abc123secret\|abcdefghijklmnop' "$_ws/pipeline.log"
+  local rc=$?
+  _teardown
+  return $rc
+}
+
 # ── run ──────────────────────────────────────────────────────────────────────
 
 _filter="${1:-}"
