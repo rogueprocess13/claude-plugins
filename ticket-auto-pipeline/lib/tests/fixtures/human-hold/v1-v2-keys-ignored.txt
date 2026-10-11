@@ -1,0 +1,13 @@
+=== HUMAN_HOLD ===
+SCHEMA_VERSION: 1
+PHASE: VERIFY
+REASON: APPROVAL_REQUIRED
+BLOCKS: notes.md#AC-1
+ROUND: 3
+KIND: approval
+AUDIENCE: operator
+QUESTION_1: Proceed with the destructive migration?
+QUESTION_1_ID: migrate
+QUESTION_1_OPTIONS: yes|no
+QUESTION_1_BINDING: note
+=== END HUMAN_HOLD ===

@@ -1,0 +1,9 @@
+=== HUMAN_HOLD ===
+QUESTION_3: Third?
+PHASE: EXEC
+SCHEMA_VERSION: 1
+QUESTION_1: First: with a colon
+SUPERSEDES: hold:WIL-1:g1:a1
+REASON: AC_CONFLICT
+BLOCKS: simple-fix.md#Acceptance Criteria
+=== END HUMAN_HOLD ===

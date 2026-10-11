@@ -1,6 +1,6 @@
 # Human Hold Block Schema
 
-**Schema-Version: 1**
+**Schema-Version: 1, 2** (version 2 adds optional question fields — see [§ Schema-Version 2](#schema-version-2))
 **Defined by:** `openspec/changes/human-hold-protocol/specs/human-hold-request/spec.md`
 **Parser:** `lib/human-hold-parse.sh`
 **Emitted by:** `lib/skill-preamble-auto.md` § Human hold
@@ -60,7 +60,7 @@ from value, so a value may contain further colons.
 
 | Field | Required | Type | Description |
 |---|---|---|---|
-| `SCHEMA_VERSION` | Yes | integer | Current version: `1`. |
+| `SCHEMA_VERSION` | Yes | integer | `1`, or `2` for a block using the optional fields in [§ Schema-Version 2](#schema-version-2). |
 | `PHASE` | Yes | enum | The emitting phase. One of `APPRAISE`, `REPRODUCE`, `EXEC`, `GATE`, `IMPLEMENT`, `VERIFY`, `PR-REVIEW`, `MAINTENANCE` — not restricted to the loop-bearing three `=== PHASE_RESULT ===` covers. |
 | `REASON` | Yes | enum | Closed enum, see below. |
 | `BLOCKS` | Yes | string | The artifact path plus the section or acceptance-criterion id the answer would change (e.g. `notes.md#Acceptance-Criteria AC-2`). Mandatory and non-empty — see § BLOCKS below. |
@@ -246,6 +246,155 @@ QUESTION_1: Where is the staging API key?
 ### Absent — no block at all (exit 0, nothing logged)
 
 The agent returned prose only. This is the common case and costs nothing.
+
+## Schema-Version 2
+
+**Defined by:** `openspec/changes/planner-headless-questions/specs/headless-question-contract/spec.md`
+
+Version 2 lets a caller with no terminal — an orchestrator running `claude -p`, a
+Slack bridge, a dashboard, a script — answer a hold without reading prose. It adds
+**optional** fields only. Every version-1 rule above still holds for a version-2
+block, and a version-1 block parses to byte-identical canonical JSON whatever this
+section says (the parser ignores the version-2 keys in a `SCHEMA_VERSION: 1` block,
+as unknown keys).
+
+Two emitters outside the ticket pipeline use version 2 today:
+
+- `ticket-planner/lib/planner-stop-describe.sh` — why a planner run stopped and which
+  answers resume it (`PHASE: PLANNER`).
+- grill-me's `--emit-questions` rounds (`PHASE: GRILL`).
+
+```
+=== HUMAN_HOLD ===
+SCHEMA_VERSION: 2
+PHASE: PLANNER
+REASON: CREATE_GATE
+BLOCKS: state.log#Crosscheck
+ROUND: 1
+KIND: approval
+AUDIENCE: operator
+QUESTION_1: Crosscheck passed for INIT-42. Create the epic and its tickets in Linear?
+QUESTION_1_ID: create
+QUESTION_1_OPTIONS: yes|no
+QUESTION_1_DEFAULT: no
+QUESTION_1_BINDING: flag:create
+=== END HUMAN_HOLD ===
+```
+
+### Block-level fields (all optional)
+
+| Field | Type | Description |
+|---|---|---|
+| `ROUND` | positive integer | Which question round this is. The consumer that emits the block owns the numbering (the planner: one more than the count of `META\|human-hold\|done` lines; grill-me: its `state.json` round). An answers file must name the same round. |
+| `KIND` | enum | `approval` (a decision — usually yes/no or a choice) or `input` (information only a person has). |
+| `AUDIENCE` | enum | Who may answer: `client`, `operator`, or `either`. |
+
+### Per-question fields (all optional)
+
+`n` is the same id as the question's `QUESTION_n` line. An attribute naming an `n`
+with no `QUESTION_n` is rejected.
+
+| Field | Type | Description |
+|---|---|---|
+| `QUESTION_n_ID` | `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}` | Stable question id. Unique within the block. Answers refer to questions by this id. |
+| `QUESTION_n_OPTIONS` | `\|`-separated list | Allowed answers. No empty option. A question without options takes free text. |
+| `QUESTION_n_DEFAULT` | string | The suggested answer. Must be one of the options when both are given. |
+| `QUESTION_n_BINDING` | binding | What the answer does — see the grammar below. |
+
+### Version-2 enum additions
+
+A version-2 block may also use these values. A version-1 block that names one is
+still rejected.
+
+| Field | Added values |
+|---|---|
+| `PHASE` | `PLANNER`, `GRILL` |
+| `REASON` | `CREATE_GATE`, `CROSSCHECK_BLOCKED`, `ADR_GATE`, `PROJECT_GATE`, `REFINEMENT_HALT`, `UNTIL_STOP` (planner); `READINESS_GAPS`, `ROUND_CAP` (grill-me) |
+
+### Binding grammar
+
+A binding names a deterministic action that the **consumer** performs with the
+answer. An agent never reads an answer and decides what to do with it.
+
+| Binding | Answer value | Effect (in the consumer) |
+|---|---|---|
+| `flag:create` | `yes` or `no` | Planner: `yes` is `resume --create`. `no` records the round and changes nothing. |
+| `flag:accept:<CODE>` | the reason, or `__skip__` | Planner: `resume --accept <CODE>:"<reason>"`. |
+| `flag:project` | a project name or id, or `__none__` | Planner: `resume --project <value>`, or `--no-project` for `__none__`. |
+| `waive:<TICKET>:<CODE>` | the reason, or `__skip__` | Planner: the DoR waiver `dor-check.sh --waive` records (`waive_ticket_readiness_code`). |
+| `adr:<ADR_ID>` | `accept` or `reject` | Reserved. No consumer binds it yet: `adr-store.sh accept` refuses to run inside an agent session, so the planner asks an ADR question as `note`. |
+| `grill:<dimension>` | free text | grill-me: folds the answer into `resolved[]` for that dimension. |
+| `note` | free text | Recorded only. |
+
+The parser checks the shape of a binding. Whether the consumer recognises it is the
+consumer's check.
+
+### Canonical JSON (version 2)
+
+```json
+{
+  "schema_version": 2,
+  "phase": "PLANNER",
+  "reason": "CREATE_GATE",
+  "blocks": "state.log#Crosscheck",
+  "supersedes": "",
+  "questions": [
+    {"id": "create", "n": 1, "text": "…", "options": ["yes", "no"],
+     "default": "no", "binding": "flag:create"}
+  ],
+  "round": 1,
+  "kind": "approval",
+  "audience": "operator",
+  "parse_status": "ok",
+  "parse_error": ""
+}
+```
+
+- `round`, `kind` and `audience` appear only when the block carries them.
+- In a version-2 question, `id` is `QUESTION_n_ID` when given, otherwise the number
+  `n`. `n` is always present. `options`, `default` and `binding` appear only when
+  given.
+- Questions are sorted by `n`.
+
+### Answers file
+
+Answers to a version-2 hold come back as a JSON file. The consumer that emitted the
+hold validates and applies it (planner: `resume <INIT_ID> --answers <file>`; grill-me:
+`--answers <file>`).
+
+```json
+{
+  "schema_version": 1,
+  "round": 1,
+  "answers": [
+    {"id": "create", "value": "yes", "answered_by": "U024BE7LH",
+     "role": "operator", "ts": "2026-10-11T19:30:00Z"}
+  ]
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `schema_version` | Yes | Answers-file format version, currently `1` (independent of the hold's own version). A consumer rejects an unknown major version with `UNSUPPORTED_SCHEMA_VERSION` and changes nothing. |
+| `round` | Yes | Must equal the hold's open `ROUND`. A mismatch is `STALE_ROUND` (exit 4) and changes nothing. |
+| `answers[].id` | Yes | A `QUESTION_n_ID` of that round. An unknown id changes nothing. |
+| `answers[].value` | Yes | The answer. Untrusted — see below. |
+| `answers[].answered_by` | Yes | Who answered, as the caller identifies them. |
+| `answers[].role` | Yes | `client` or `operator`. The caller attests the role. A `client` answer to an `AUDIENCE: operator` question is `ROLE_NOT_PERMITTED` and changes nothing. |
+| `answers[].ts` | Yes | When the answer was given (ISO 8601). |
+
+### Answer text is untrusted data
+
+A consumer of an answers file must:
+
+1. Cap each `value` at 4096 bytes.
+2. Strip control characters and triple-backtick fences.
+3. Store the value with its attribution (`answered_by`, `role`, `ts`).
+4. Never evaluate it, and never put it unquoted into a shell command. A value that
+   becomes a flag argument is passed as one quoted argument and checked against that
+   flag's own charset first.
+5. When it shows the value to an agent, put it inside a fenced block labelled as
+   verbatim human data, not instructions.
 
 ## Related
 

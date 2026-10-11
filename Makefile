@@ -200,6 +200,9 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-business-framing.sh
 	bash ticket-planner/lib/tests/test-planner-adr-gate.sh
 	bash ticket-planner/lib/tests/test-planner-refinement.sh
+	bash ticket-planner/lib/tests/test-planner-stop-describe.sh
+	bash ticket-planner/lib/tests/test-planner-answers.sh
+	bash ticket-planner/lib/tests/test-planner-answers-durability.sh
 	bash ticket-planner/lib/tests/test-planner-vplan-generation.sh
 	bash ticket-planner/lib/tests/test-skill-arg-substitution.sh
 
@@ -213,6 +216,7 @@ test-grill:
 	bash grill-me/lib/tests/test-grill-score.sh
 	bash grill-me/lib/tests/test-grill-seal.sh
 	bash grill-me/lib/tests/test-grill-render.sh
+	bash grill-me/lib/tests/test-grill-hold.sh
 
 test-flow:
 	@echo "=== ticket-flow tests ==="

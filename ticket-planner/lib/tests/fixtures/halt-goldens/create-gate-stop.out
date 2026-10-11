@@ -1,0 +1,5 @@
+Stopped after Crosscheck — creation not authorized — Crosscheck is the last phase before any Linear write
+Artifacts:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/
+Specs:      <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/specs/
+State log:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/state.log
+To create:  /ticket-planner resume INIT-1700000000-4242 --create

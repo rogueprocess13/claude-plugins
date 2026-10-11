@@ -1,0 +1,1 @@
+{"schema_version":1,"phase":"IMPLEMENT","reason":"CREDENTIALS_MISSING","blocks":"notes.md#AC-4 | pipe `tick` $(echo x)","supersedes":"","questions":[{"id":1,"text":"Run $(rm -rf /) and `id`; then a | b && c \"quoted\""}],"parse_status":"ok","parse_error":""}

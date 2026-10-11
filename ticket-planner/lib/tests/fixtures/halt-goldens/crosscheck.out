@@ -1,0 +1,22 @@
+Crosscheck found blocking findings — fix the cited artifacts and resume.
+
+Crosscheck findings — INIT-1700000000-4242 (most recent attempt)
+
+specs/export-csv.md
+  CITATION_UNRESOLVED — 1 blocking
+    fix: path does not resolve under REPOS_ROOT — check for an annotation on the path side of `Name:path` (move it to the Name side), a stale path, or a file that needs a `(new)` marker
+    specs/export-csv.md: src/billing/export.py:42 does not resolve
+  CONTRACT_UNDEFINED — 1 warn
+    fix: new fields are declared without canonical names — name the structure's fields explicitly in the spec
+    specs/export-csv.md: ExportRow gains fields with no names
+
+(cross-file)
+  CARVE_SCOPE_LOST — 1 blocking
+    fix: the spec-file count no longer matches the ticket count Specify declared — record the rescope in consensus.md, or restore the missing spec
+    ticket count changed 4 -> 3 after Specify; audit scope by hand
+
+TOTAL: 2 blocking, 1 warn, 0 accepted across 2 artifact group(s), 3 code(s)
+
+Raw log:    grep 'META|crosscheck|fail' <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/state.log
+Artifacts:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/
+Resume:     /ticket-planner resume INIT-1700000000-4242

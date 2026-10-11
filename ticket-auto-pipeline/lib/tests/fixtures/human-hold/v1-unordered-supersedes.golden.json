@@ -1,0 +1,1 @@
+{"schema_version":1,"phase":"EXEC","reason":"AC_CONFLICT","blocks":"simple-fix.md#Acceptance Criteria","supersedes":"hold:WIL-1:g1:a1","questions":[{"id":1,"text":"First: with a colon"},{"id":3,"text":"Third?"}],"parse_status":"ok","parse_error":""}

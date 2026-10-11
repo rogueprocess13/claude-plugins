@@ -1,0 +1,1 @@
+{"schema_version":1,"phase":"APPRAISE","reason":"SCOPE_UNDEFINED","blocks":"notes.md#Acceptance-Criteria AC-2","supersedes":"","questions":[{"id":1,"text":"Should the export include archived records?"},{"id":2,"text":"Is a CSV format acceptable, or is XLSX required?"}],"parse_status":"ok","parse_error":""}

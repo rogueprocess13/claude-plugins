@@ -63,6 +63,12 @@ rather than removed, to keep the historical record intact.
 (PR #441, ticket-auto-pipeline 0.62.0) both merged on 2026-10-03. The live checks for both are
 still open, and so is a follow-up on the gap between the templates and the DoR checks — see Step 9.
 
+**Updated 2026-10-11:** new Step 10, Slack-interactive planning. Two OpenSpec changes were proposed
+and validated: `planner-headless-questions` here, and `slack-interactive-planning` in the dexter
+repo. The claude-plugins change ships first. Later the same day `planner-headless-questions` was
+implemented on `feat/planner-headless-questions` (ticket-auto-pipeline 0.63.0, ticket-planner
+0.16.0, grill-me 0.2.0); the dexter change has not started and needs those pins.
+
 ---
 
 ## Step 0 — Extract standalone bug fixes
@@ -1024,6 +1030,68 @@ skip the checks. Both were implemented and merged on 2026-10-03.
 
 ---
 
+## Step 10 — Slack-interactive planning (grill-me + ticket-planner driven by dexter) — proposed, not started
+
+Goal: dexter starts a planning run, and the client and the operator take part only through Slack
+(no terminal), over hours or days. Pattern: the plugin writes its questions, the process exits,
+and a later invocation resumes with the answers. No process ever blocks waiting on Slack. There
+are two OpenSpec changes, one per repo, and the claude-plugins one ships first. Source plan:
+`~/.claude/plans/what-i-need-next-peaceful-tarjan.md`, reviewed by architect, QA and analyzer
+agents on 2026-10-11.
+
+- [x] 1. **claude-plugins: `planner-headless-questions`** (proposed and validated 2026-10-11;
+      implemented 2026-10-11 on `feat/planner-headless-questions`, PR pending — ticket-auto-pipeline
+      0.63.0, ticket-planner 0.16.0, grill-me 0.2.0).
+      - **Question format:** human-hold Schema-Version 2. The new fields are optional (`ROUND`,
+        `KIND`, `AUDIENCE`, plus per-question `ID`, `OPTIONS`, `DEFAULT` and `BINDING`), and v1
+        parses byte-identically.
+      - **`ticket-planner/lib/planner-stop-describe.sh`:** derives the stop from `state.log`
+        deterministically. Halt prose and exit codes are unchanged, and golden tests captured
+        first prove it.
+      - **`resume --answers <file>`** (`lib/planner-answers.sh`): maps answers onto the existing
+        flags (`--create`, `--accept`, `--project`, waivers). It is idempotent per round, and a
+        stale round exits 4.
+      - **grill-me:** new `--emit-questions` and `--answers` modes, plus a round-cap escalation
+        to the operator.
+      - **Minor breaking change:** grill-me now needs `GRILL_WORK_DIR` or `REPOS_ROOT` in every
+        mode. Accepted 2026-10-11.
+
+      CLI use of ticket-planner is otherwise unchanged. Version bumps: ticket-auto-pipeline,
+      ticket-planner, grill-me.
+
+      Implementation notes for the dexter side:
+      - ADR questions bind `note`, not `adr:<id>`: `adr-store.sh accept` refuses inside an agent
+        session, so the human accepts the ADR out of band and the answer only records it.
+      - The answers file carries its own `schema_version: 1`, separate from the hold's
+        `SCHEMA_VERSION: 2`.
+      - An operator may answer a client question (standing in for the client); a client may
+        never answer an operator question.
+      - grill-me headless rounds need the same `--id` on every call (or the same brief), since the
+        work directory is derived from it.
+- [ ] 2. **dexter: `slack-interactive-planning`** (in the dexter repo, proposed and validated
+      2026-10-11, 0/34 tasks). It depends on item 1 being released and the plugin pins bumped to
+      ticket-planner ≥ 0.16.0, grill-me ≥ 0.2.0 and ticket-auto-pipeline ≥ 0.63.0.
+      Dexter pins ticket-planner at 0.15.1 and does not list grill-me at all.
+      - **New `plugin_segment` step type:** deterministic. It runs one allowed plugin step under
+        `claude -p` with its own timeout and env allow-list, then routes on the describer's
+        output rather than on the model's prose.
+      - **Spec change:** `workflow-step-contract` is modified to allow `plugin_segment` alongside
+        `claude_prompt`.
+      - **`interactive-planning` workflow:** the grill-me loop, then the planner loop, then
+        operator retry/abort.
+      - **Slack bridge:** Socket Mode, two channels (client and operator), roles enforced on the
+        server, and exactly one resume per round. It sends reminders but never resumes on its
+        own, re-posts open questions after a restart, and runs a scrubber on client-channel
+        posts that fails closed.
+- [ ] 3. Follow-up, not yet specced: Specify stops on `NEEDS_HUMAN_DECISION`. Today an answer can
+      never reach Specify, because `planner_position_derive` moves forward past `done`. This
+      needs a `waiting` marker in the planner's state machine and its own change.
+- [ ] 4. Follow-up, not yet specced: two-way chat. When the client asks a question back, a
+      read-only Q&A session answers it, running without bypass and using only the initiative's
+      `artifacts/`.
+
+---
+
 ## Ordering rationale
 
 1. **Active harm first.** Step 0's first two items mean held tickets are invisible to every
@@ -1050,6 +1118,11 @@ skip the checks. Both were implemented and merged on 2026-10-03.
    gate stops them — and change 1 is self-contained (ticket-auto-pipeline + fleet-controller libs,
    no fleetd reap-path contact), so it does not compound the Step 6 hold's risk. Operator decides
    the final slot.
+8. **Step 10 (Slack-interactive planning) is new capability, not harm reduction**, so by rule 1
+   it sits after the outstanding live-verification passes (Steps 8 and 9). Its claude-plugins
+   half is additive and touches no file that Steps 1–5 edit, apart from the human-hold parser it
+   shares with Step 3. If Step 3 resumes first, land its parser changes before Step 10 item 1.
+   The operator decides the final slot.
 
 ### Parallel track
 

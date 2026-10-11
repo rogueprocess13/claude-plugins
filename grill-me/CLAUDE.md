@@ -12,8 +12,8 @@ Pre-work readiness gate. Any agent can invoke it before acting on an input — i
 grill-me/
   .claude-plugin/plugin.json      # Plugin manifest (name, version, hooks)
   skills/grill-me/SKILL.md        # Single skill: /grill-me
-  lib/                            # Shared bash libraries (5 files)
-  lib/tests/                      # Test suites (4 files)
+  lib/                            # Shared bash libraries (6 files)
+  lib/tests/                      # Test suites (5 files)
   profiles/                       # Dimension profiles (JSON)
   docs/                           # Architecture and reference docs
   README.md                       # Marketplace entry point
@@ -56,6 +56,7 @@ The agent SHALL NOT contain a computed score. Every scoring rule is a unit-testa
 | `grill-score.sh` | `grill_score` — assessment JSON validation, readiness computation, recommendation resolution, question ranking, `KEY=value` + `result.json` output |
 | `grill-render.sh` | `grill_render` — document rendering with fixed section order, tabular gap and score reporting |
 | `grill-seal.sh` | `grill_seal_generate`, `grill_seal_verify` — seal block generation and verification with exit-code contract |
+| `grill-hold.sh` | Headless question rounds (planner-headless-questions). `grill_work_dir` (`GRILL_WORK_DIR` → `${REPOS_ROOT}/.grill/<id>`, `<id>` = `--id` or 12 hex of the brief's sha256; fails naming both variables when neither is set), `grill_hold_emit` (ranked `result.json` questions → `round-N.hold`, a human-hold v2 block with `KIND: input`, `AUDIENCE: client`, `grill:<dimension>` bindings, plus `state.json`), `grill_answers_fold` (validate round/ids/roles, sanitise, fold into `assessment.json` `resolved[]` with attribution; same exit codes as ticket-planner's answers intake), `grill_answers_prompt` (answers fenced as verbatim human data for the re-assessment), `grill_next_step` (`NEXT=seal\|emit\|cap`), `grill_hold_cap_emit` (round cap with a critical dimension unresolved → one operator approval, `seal-with-gaps\|abort`), `grill_seal_with_gaps_prepare` (a gap seal is never `ready`) |
 
 ## Seal canonicalization
 
@@ -67,5 +68,6 @@ The `**Content-Hash:**` line must be the last non-empty line of the file. Traili
 
 - **Ported sanitizer:** `grill-input.sh` reimplements `planner_sanitize_input` from `ticket-planner/lib/planner-phase-prompts.sh` rather than sourcing it, because grill-me must install standalone. The two copies can drift. The consequence of drift is low — sanitization is defense-in-depth, not a correctness contract between the plugins. Recorded as design decision D6.
 - **Seal is tamper-evident, not tamper-proof:** An unkeyed SHA-256 hash can be recomputed by anyone. The threat model is accidental drift and casual hand-editing, not an adversarial operator who can simply re-run grill-me. `GRILL_SEAL_KEY` HMAC is noted as a future option and deliberately not built.
-- **Interactive-only gating means unattended callers get no benefit from grilling:** `--non-interactive` still scores and seals, so a fleet-controller or cron caller can gate on `GRILL_RECOMMENDATION` without a human present.
+- **Unattended callers grill through files:** `--non-interactive` scores and seals with no questions, so a fleet-controller or cron caller can gate on `GRILL_RECOMMENDATION` without a human present. `--emit-questions` / `--answers` run the full question loop through an external transport (`lib/grill-hold.sh`); only the re-assessment between rounds is an LLM step.
+- **Every mode needs a work directory (0.2.0+):** `GRILL_WORK_DIR` or `REPOS_ROOT` must be set, interactive runs included. Headless rounds span processes, so the work directory is the only state they share — there is deliberately no temporary-directory fallback.
 - **Weights and thresholds are initially unvalidated guesses:** They live in one JSON file and are overridable per-run by environment variable, so tuning needs no code change. Calibration comes from the three worked examples and real use.

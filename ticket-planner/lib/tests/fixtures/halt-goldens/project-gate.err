@@ -1,0 +1,3 @@
+ERROR: EpicGen stopped — no --project was set, but the team project 'Ledgerly' matches this initiative.
+Confirm it:  /ticket-planner resume INIT-1700000000-4242 --create --project 'Ledgerly'
+Or opt out:  /ticket-planner resume INIT-1700000000-4242 --create --no-project

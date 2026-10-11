@@ -1,0 +1,2 @@
+ERROR: EpicGen creates Linear entities and this initiative is not authorized to.
+Review the artifacts, then run: /ticket-planner resume INIT-1700000000-4242 --create
