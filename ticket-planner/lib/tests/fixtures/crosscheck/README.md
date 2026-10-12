@@ -106,6 +106,8 @@ re-implements or mocks a checker.
 | `testdata-self-seeded-no-tests-rule` | A self-seeded need while REPOS_ROOT `CLAUDE.md` says implementation does not write tests | [#503](https://github.com/willard-pro/claude-plugins/issues/503) point 4 — `TEST_DATA_UNOWNED`, remedy `MANDATORY` |
 | `cited-artifact-unraised` | discovery.md lists a sample file NOT FOUND; consensus.md never asks | [#504](https://github.com/willard-pro/claude-plugins/issues/504) — `CITED_ARTIFACT_UNRAISED` |
 | `cited-artifact-answered` | Same, with the open question answered `external:<who>` | [#504](https://github.com/willard-pro/claude-plugins/issues/504) — must stay clean |
+| `cited-artifact-source-mismatch` | Operator answered `generate`, spec still says `external:<invented who>` | [#504](https://github.com/willard-pro/claude-plugins/issues/504) AC4 — `CITED_ARTIFACT_SOURCE_MISMATCH` |
+| `cited-artifact-list-variants` | Numbered items, bare names, case-insensitive status, `FOUND: …NOT FOUND…` location, one unparseable item | [#504](https://github.com/willard-pro/claude-plugins/issues/504) — only the unparseable item, as `CITED_ARTIFACT_MALFORMED` |
 | `contract-undefined-warn-only` | A structure that "gains new fields for ..." in prose with no backtick-quoted field names | [#175](https://github.com/willard-pro/claude-plugins/issues/175) — `CONTRACT_UNDEFINED` is deliberately warn-level, not blocking |
 
 ## Adding a real fixture

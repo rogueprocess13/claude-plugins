@@ -27,26 +27,51 @@ file nobody could retrieve without ever asking for it.
 - **Specify** writes a `Source:` field at the end of each Verification Notes line whose test
   data is not `none`. The kind set is closed: `exists:<where>`, `seeded-by:<spec-slug>`,
   `external:<who>`, `generate`. A spec named by `seeded-by:` carries a `## Test Data Provided`
-  section. The full contract is in `ticket-planner/docs/test-data-source.md`. ticket-auto-pipeline's
-  readiness check will read the same grammar from ticket bodies (#505).
-- **Crosscheck** gains `lib/planner-crosscheck-testdata.sh`. `TEST_DATA_UNOWNED` (blocking,
-  cross-file) collects every need across the initiative whose Source is missing, `generate`,
-  unknown, empty, or a `seeded-by:` that does not resolve to a spec with `## Test Data Provided`.
-  It reports one finding naming every affected spec and proposes a test-data-pack enabler spec.
-  When the project has a standing "implementation does not write tests" rule (a REPOS_ROOT
-  `CLAUDE.md` match, or `PLANNER_NO_TESTS_RULE=true`), a spec seeding its own data does not
-  count as an owner, and the remedy is marked mandatory.
+  section. A need that uses a cited artifact Discovery could not retrieve stays
+  `Source: generate` until the operator answers. The full contract is in
+  `ticket-planner/docs/test-data-source.md`. ticket-auto-pipeline's readiness check will read
+  the same grammar from ticket bodies (#505).
+- **Crosscheck** gains `lib/planner-crosscheck-testdata.sh`.
+  - `TEST_DATA_UNOWNED` (blocking, cross-file) collects every need across the initiative whose
+    Source is missing, `generate`, unknown, empty, or a `seeded-by:` that does not resolve to a
+    spec with `## Test Data Provided`. It reports one finding (capped at 25 items) naming every
+    affected spec, and proposes a test-data-pack enabler spec.
+  - Under the project's "implementation does not write tests" rule, a spec seeding its own data
+    does not count as an owner, and the remedy is marked mandatory.
+- **New `--no-tests-rule[=true|false]` flag**, persisted as the `no-tests-rule` config key.
+  `PLANNER_NO_TESTS_RULE` is read once, at argument parsing. Without either, the first
+  `plan`/`resume` detects an *unscoped* rule in `REPOS_ROOT` CLAUDE.md files once, and records
+  where it found it as `META|no-tests-rule-source`. "Do not write tests for generated code" does
+  not count as an unscoped rule.
 - **Discovery** writes a `## Cited Artifacts` section: every external artifact the source cites,
-  FOUND or NOT FOUND after searching attachments, the initiative artifacts folder and
-  REPOS_ROOT.
+  FOUND or NOT FOUND after searching attachments, the initiative artifacts folder and REPOS_ROOT.
 - **Consensus** copies one `CITED_ARTIFACT:` open question per NOT FOUND artifact into
   consensus.md `## Open Questions`, as rendered by `planner_cited_artifacts_questions`.
-  Crosscheck blocks with `CITED_ARTIFACT_UNRAISED` (no question) or `CITED_ARTIFACT_UNRESOLVED`
-  (still `Answer: PENDING`). The stop is the existing `CROSSCHECK_BLOCKED` one; there is no new gate.
+  - Crosscheck blocks on any of these:
+    - `CITED_ARTIFACT_UNRAISED`: no question was raised.
+    - `CITED_ARTIFACT_UNRESOLVED`: the answer is still `PENDING`.
+    - `CITED_ARTIFACT_SOURCE_MISMATCH`: a spec's Source disagrees with the answer.
+    - `CITED_ARTIFACT_MALFORMED`: a Cited Artifacts item cannot be parsed.
+  - It warns with `CITED_ARTIFACTS_SECTION_MISSING` when the section is missing.
+  - The stop is the existing `CROSSCHECK_BLOCKED` one; there is no new gate. Its headless
+    question now lists every artifact the code covers.
 - **TicketGen** carries each Source into `## Test Data Prerequisites` and the Verification Plan's
   Test data needed cell.
+- `planner_state_init` writes `META|contract|start|test-data-source-v1` on every new initiative.
 - The Crosscheck fixture harness now accepts optional `codes` and `message_contains` in
-  `expected.json`. Five new fixtures cover the cases.
+  `expected.json`, and runs the no-tests-rule persistence step. Seven new fixtures cover the
+  cases.
+
+**Upgrading with an initiative in flight.** Initiatives created before 0.17.0 have no
+`META|contract` line. In them:
+
+- A spec whose Verification Notes carry no `Source:` field at all reports its needs as the
+  warn-level `TEST_DATA_UNSOURCED_LEGACY`, not `TEST_DATA_UNOWNED`.
+- A missing `## Cited Artifacts` section is not reported.
+
+Any spec you edit to add a `Source:` is held to the full contract from then on. To bring an old
+initiative fully under the contract, add `Source:` fields and resume. To accept the remaining
+gaps, `resume <ID> --accept TEST_DATA_UNOWNED:"reason"`.
 
 ## 0.63.2 (2026-10-12)
 

@@ -264,6 +264,59 @@ else
   fail "SKILL.md wires the create gate" "missing planner_authorize_create or planner_create_gate_check"
 fi
 
+# ── Test 7: the no-tests rule crosses the boundary (#503) ─────────────────────
+#
+# Persisted once at argument parsing (flag, PLANNER_NO_TESTS_RULE read there, or
+# detection from REPOS_ROOT CLAUDE.md); Specify and Crosscheck run in later
+# processes and must read it from the state log, never from the environment.
+
+echo "--- Test 7: the no-tests rule crosses the boundary ---"
+
+in_new_process 'planner_state_init INIT-NOTESTS "an idea" >/dev/null
+                source "${LIB_DIR}/planner-crosscheck-testdata.sh"
+                planner_testdata_no_tests_rule_persist INIT-NOTESTS true'
+
+got=$(in_new_process 'source "${LIB_DIR}/planner-crosscheck-testdata.sh"
+                      planner_testdata_no_tests_rule INIT-NOTESTS >/dev/null && echo on || echo off')
+if [ "$got" = "on" ]; then
+  pass "--no-tests-rule written in one process is read in the next"
+else
+  fail "no-tests rule crosses the boundary" "got '${got}'"
+fi
+
+mkdir -p "${REPOS_ROOT}/svc-notests"
+echo "Implementation does not write tests." >"${REPOS_ROOT}/svc-notests/CLAUDE.md"
+in_new_process 'planner_state_init INIT-NOTESTS-DETECT "an idea" >/dev/null
+                source "${LIB_DIR}/planner-crosscheck-testdata.sh"
+                planner_testdata_no_tests_rule_persist INIT-NOTESTS-DETECT'
+rm -f "${REPOS_ROOT}/svc-notests/CLAUDE.md"
+got=$(in_new_process 'source "${LIB_DIR}/planner-crosscheck-testdata.sh"
+                      planner_testdata_no_tests_rule INIT-NOTESTS-DETECT || echo off')
+case "$got" in
+*svc-notests/CLAUDE.md*) pass "a detected rule is persisted with its source and survives a CLAUDE.md change" ;;
+*) fail "detected rule persists" "got '${got}'" ;;
+esac
+
+got=$(
+  env -i HOME="$HOME" PATH="$PATH" REPOS_ROOT="$REPOS_ROOT" LIB_DIR="$LIB_DIR" PLANNER_NO_TESTS_RULE=true \
+    bash -c 'source "${LIB_DIR}/planner-state.sh"
+             planner_state_init INIT-NOTESTS-ENV "an idea" >/dev/null
+             source "${LIB_DIR}/planner-crosscheck-testdata.sh"
+             planner_testdata_no_tests_rule INIT-NOTESTS-ENV >/dev/null && echo on || echo off'
+)
+if [ "$got" = "off" ]; then
+  pass "PLANNER_NO_TESTS_RULE in a later phase's environment is ignored"
+else
+  fail "no ambient env read of PLANNER_NO_TESTS_RULE" "got '${got}'"
+fi
+
+hits=$(grep -ln '\${PLANNER_NO_TESTS_RULE' "${LIB_DIR}"/*.sh 2>/dev/null || true)
+if [ -z "$hits" ]; then
+  pass "no library reads PLANNER_NO_TESTS_RULE (SKILL.md reads it once at parsing)"
+else
+  fail "no library reads PLANNER_NO_TESTS_RULE" "$hits"
+fi
+
 echo ""
 echo "=== planner config durability: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]

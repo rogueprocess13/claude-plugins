@@ -133,6 +133,9 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
   fi
 
   planner_state_init "$init_id" "golden fixture: ${fixture_name}" >/dev/null 2>&1
+  # What SKILL.md's argument-persistence step does on every plan/resume: record
+  # the no-tests rule once (#503), here by detection from repo-stub/CLAUDE.md.
+  planner_testdata_no_tests_rule_persist "$init_id" >/dev/null 2>&1
 
   planner_crosscheck_run "$init_id" >/dev/null 2>&1
   rc=$?

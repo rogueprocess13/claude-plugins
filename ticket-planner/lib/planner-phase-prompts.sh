@@ -738,7 +738,7 @@ One short line per Acceptance Criteria line, in the same order:
 
 1. Role: finance user. Test data: 5 seeded invoices with distinct dates. Source: seeded-by:inv-0-test-data-pack.
 2. Role: admin. Test data: none (read-only view).
-3. Role: finance user. Test data: the client's sample import file. Source: external:client finance team.
+3. Role: finance user. Test data: the regional price list. Source: external:pricing team.
 4. Role: admin. Test data: an archived client record. Source: exists:staging seed set (clients.sql).
 \`\`\`
 
@@ -755,9 +755,8 @@ closed set (full contract: docs/test-data-source.md):
   path, a named record).
 - \`seeded-by:<spec-slug>\` — a spec in this initiative produces it. The target spec
   must carry a \`## Test Data Provided\` section listing what it generates/seeds.
-- \`external:<who>\` — someone outside the plan supplies it (a client, another team).
-  Use this for an artifact discovery.md lists under \`## Cited Artifacts\` as NOT
-  FOUND — never \`exists:\` for something nobody could retrieve.
+- \`external:<who>\` — someone outside the plan supplies it (a client, another team),
+  and the source material says who. Never invent the \`<who>\`.
 - \`generate\` — it has to be synthesised and no spec does it yet. Crosscheck blocks
   on every \`generate\` need (TEST_DATA_UNOWNED), so prefer writing the owner now:
   when several specs need generated data, add one enabler spec (e.g.
@@ -765,17 +764,23 @@ closed set (full contract: docs/test-data-source.md):
   the generator and seed scripts, and point every need at it with
   \`seeded-by:<that-slug>\`.
 
+**Cited artifacts discovery.md lists as NOT FOUND** (#504): quote the artifact's
+name in backticks in the Test data text, exactly as discovery.md spells it, and
+write \`Source: generate\` — never \`exists:\` or \`external:\`. Nobody has said yet
+whether the file is coming or must be synthesised; the operator answers that at
+the Crosscheck stop, and Crosscheck checks the spec's Source against the answer.
+
 A spec may name itself in \`seeded-by:\` (its own implementation writes the seed)
 **unless the project has a standing "implementation does not write tests" rule**
-(REPOS_ROOT CLAUDE.md, or \`PLANNER_NO_TESTS_RULE=true\`). Under that rule nothing
-appears as a side effect of implementation: the test-data-pack spec is mandatory.
-Check it now:
+(recorded at argument parsing, from \`--no-tests-rule\` or the REPOS_ROOT CLAUDE.md).
+Under that rule nothing appears as a side effect of implementation: the
+test-data-pack spec is mandatory. Check it now:
 
 \`\`\`bash
 $(_planner_prompt_repos_root_export)
 CLAUDE_PLUGIN_ROOT="${_PLANNER_PROMPT_LIB_ROOT}"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-testdata.sh"
-planner_testdata_no_tests_rule && echo "no-tests rule active: every seeded need goes to a separate test-data-pack spec"
+planner_testdata_no_tests_rule "${initiative_id}" && echo " — no-tests rule active: every seeded need goes to a separate test-data-pack spec"
 \`\`\`
 
 ### Confidence signals (RAW VALUES ONLY — do NOT compute confidence)
@@ -1044,10 +1049,13 @@ Each line ends \`Answer: PENDING\`. Leave it PENDING — you cannot answer for t
 operator. Crosscheck blocks on a missing line (CITED_ARTIFACT_UNRAISED) or a
 PENDING answer (CITED_ARTIFACT_UNRESOLVED) and stops the run there for the
 operator, who records \`Answer: exists:<where>\` (they supplied it),
-\`Answer: external:<who>\` or \`Answer: generate\`. That answer is the test-data
-Source for every spec that uses the artifact (docs/test-data-source.md): make
-sure each such spec's Verification Notes line says \`Source: external:<who>\`
-now, so the operator only has to change it if they answer \`generate\`.
+\`Answer: external:<who>\` or \`Answer: generate\`. That answer becomes the
+test-data Source for every spec that uses the artifact (docs/test-data-source.md),
+and Crosscheck blocks any spec whose Source disagrees with it
+(CITED_ARTIFACT_SOURCE_MISMATCH). Until the operator answers, every such spec's
+Verification Notes line stays \`Source: generate\`, with the artifact's name in
+backticks. Do not fill in an \`external:<who>\` yourself: you would be inventing
+the \`<who>\`.
 
 ## State log
 

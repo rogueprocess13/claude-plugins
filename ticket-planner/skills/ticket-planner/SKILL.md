@@ -72,6 +72,7 @@ process per phase and an `export` does not survive that (#144).
 | `--project <name\|id>` | Linear project for the epic and its tickets |
 | `--no-project` | File the epic and its tickets with no Linear project, deliberately — silences the project gate |
 | `--milestone <name\|id>` | Linear project milestone (needs `--project` when given by name) |
+| `--no-tests-rule[=true\|false]` | Record that the project forbids implementation from writing tests (#503): Crosscheck then does not count a spec that seeds its own test data as an owner, and a test-data pack becomes mandatory. `=false` records the opposite. Without the flag, the first `plan`/`resume` detects it once from `REPOS_ROOT` CLAUDE.md files and records where it found it. Sticky — persisted as the `no-tests-rule` config key. `PLANNER_NO_TESTS_RULE` is the default, read once here |
 | `--refresh-bodies` | **`resume` only.** Re-read every not-ready ticket's description from Linear before Refinement re-evaluates it. One-shot — consumed and cleared by this invocation, never sticky |
 | `--answers <file>` | **`resume` only.** Apply an answers file to the open question round from `planner-stop-describe.sh`, then resume. Each answer becomes the flag it is bound to (`--create`, `--accept`, `--project`/`--no-project`, a DoR waiver). See [Headless use](#headless-use---answers) |
 
@@ -614,6 +615,7 @@ MILESTONE_REF=""
 ACCEPT_FLAGS=()
 REFRESH_BODIES_FLAG=""
 ANSWERS_FILE=""
+NO_TESTS_RULE_FLAG=""
 
 # Env vars are the defaults for the corresponding flags, read once, here.
 UNTIL_PHASE="${PLANNER_UNTIL:-}"
@@ -621,6 +623,7 @@ UNTIL_PHASE="${PLANNER_UNTIL:-}"
 TEAM_REF="${LINEAR_TEAM_ID:-}"
 PROJECT_REF="${LINEAR_PROJECT:-}"
 MILESTONE_REF="${LINEAR_PROJECT_MILESTONE:-}"
+case "${PLANNER_NO_TESTS_RULE:-}" in true | false) NO_TESTS_RULE_FLAG="${PLANNER_NO_TESTS_RULE}" ;; esac
 
 # Positional params are always braced ("${1}", never a bare dollar-digit): the
 # skill loader substitutes a bare dollar-digit token with the invocation's own
@@ -644,11 +647,18 @@ while [ "$#" -gt 0 ]; do
     --milestone) shift; MILESTONE_REF="${1:-}" ;;
     --milestone=*) MILESTONE_REF="${1#*=}" ;;
     --refresh-bodies) REFRESH_BODIES_FLAG=true ;;
+    --no-tests-rule) NO_TESTS_RULE_FLAG=true ;;
+    --no-tests-rule=*) NO_TESTS_RULE_FLAG="${1#*=}" ;;
     --answers) shift; ANSWERS_FILE="${1:-}" ;;
     --answers=*) ANSWERS_FILE="${1#*=}" ;;
   esac
   shift
 done
+
+case "$NO_TESTS_RULE_FLAG" in
+  "" | true | false) ;;
+  *) echo "ERROR: --no-tests-rule takes true or false, got '${NO_TESTS_RULE_FLAG}'" >&2; exit 1 ;;
+esac
 
 # Reject both branch flags together
 if [ "$SHARED_BRANCH_FLAG" = "true" ] && [ "$NO_SHARED_BRANCH_FLAG" = "true" ]; then
@@ -783,6 +793,12 @@ fi
 # immediately after Refinement consumes it, so a later plain `resume` does
 # not keep re-fetching from Linear forever.
 [ "$REFRESH_BODIES_FLAG" = "true" ] && planner_config_set "$INITIATIVE_ID" "refresh-bodies" "true"
+
+# The no-tests rule (#503): the flag (or PLANNER_NO_TESTS_RULE, read above)
+# always wins; otherwise detect it once from REPOS_ROOT CLAUDE.md files and
+# record the result and its source, so later phases read config, not the env.
+source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-testdata.sh"
+planner_testdata_no_tests_rule_persist "$INITIATIVE_ID" "$NO_TESTS_RULE_FLAG"
 
 # --accept CODE:"reason" (#222): recorded via planner_crosscheck_accept_set, not
 # planner_config_set — a set of accepted codes, not a single last-write-wins value.

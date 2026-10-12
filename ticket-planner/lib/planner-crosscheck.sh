@@ -91,12 +91,14 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # #174's BYPASS_PATH_UNADDRESSED, #175's CONTRACT_MISMATCH /
 # CONTRACT_CONSUMERS_UNNOTIFIED, #220's SIGNALS_UNIFORM, #221's
 # DANGLING_BLOCKED_BY, #503's TEST_DATA_UNOWNED and #504's
-# CITED_ARTIFACT_UNRAISED / CITED_ARTIFACT_UNRESOLVED block EpicGen per #176's
-# table.
+# CITED_ARTIFACT_MALFORMED / CITED_ARTIFACT_UNRAISED / CITED_ARTIFACT_UNRESOLVED /
+# CITED_ARTIFACT_SOURCE_MISMATCH block EpicGen per #176's table.
+# TEST_DATA_UNSOURCED_LEGACY (a spec in an initiative that predates the Source
+# contract) and CITED_ARTIFACTS_SECTION_MISSING are warn-level.
 # DISCOVERY_GAP_UNRESOLVED and CONTRACT_UNDEFINED are warn-level: a declared
 # exploration gap or an ambiguous upstream shape is a prompt for human
 # judgment, not by itself proof of a defect.
-PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED"
+PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING"
 
 # Is <code> a warn-level code?
 # Usage: _planner_crosscheck_is_warn_code <code>
@@ -376,7 +378,7 @@ planner_crosscheck_findings_summary() {
 # Codes whose findings are inherently about a set of artifacts rather than one
 # — grouping them under whichever filename happens to appear first in the
 # message would point the operator at an arbitrary member of the set.
-PLANNER_CROSSCHECK_CROSS_FILE_CODES="RESOLUTION_NOT_PROPAGATED CARVE_SCOPE_LOST SIGNALS_UNIFORM TEST_DATA_UNOWNED"
+PLANNER_CROSSCHECK_CROSS_FILE_CODES="RESOLUTION_NOT_PROPAGATED CARVE_SCOPE_LOST SIGNALS_UNIFORM TEST_DATA_UNOWNED TEST_DATA_UNSOURCED_LEGACY"
 
 # One-line remediation hint per finding code. Deliberately canned and code-
 # scoped: it says what shape the fix takes, not what the specific fix is —
@@ -434,6 +436,18 @@ planner_crosscheck_fix_hint() {
     ;;
   CITED_ARTIFACT_UNRESOLVED)
     echo "the operator has not answered where this cited artifact comes from — set its Answer: in consensus.md (exists:<where>, external:<who>, or generate) and make the matching specs' Source agree, or --accept the code"
+    ;;
+  CITED_ARTIFACT_SOURCE_MISMATCH)
+    echo "a spec's Source for this cited artifact disagrees with the operator's answer in consensus.md — set the spec's Source to the answer (generate becomes seeded-by:<pack-slug>)"
+    ;;
+  CITED_ARTIFACT_MALFORMED)
+    echo "a discovery.md ## Cited Artifacts item has no readable FOUND / NOT FOUND status — rewrite it as \`<name>\` — FOUND: <where> or \`<name>\` — NOT FOUND (searched: …)"
+    ;;
+  CITED_ARTIFACTS_SECTION_MISSING)
+    echo "discovery.md has no ## Cited Artifacts section — add one (None. when nothing is cited) so unretrievable artifacts reach the operator"
+    ;;
+  TEST_DATA_UNSOURCED_LEGACY)
+    echo "these specs predate the Source field — add Source: to their Verification Notes when convenient; not blocking for an initiative created before the contract"
     ;;
   *)
     echo "no canned hint for this code — read the finding message"

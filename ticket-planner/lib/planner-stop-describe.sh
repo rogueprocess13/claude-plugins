@@ -115,6 +115,19 @@ _planner_stop_last_phase_line() {
   grep "^[^|]*|${phase}|" "$log" 2>/dev/null | tail -1 | cut -d'|' -f3-
 }
 
+# Every distinct backticked cited-artifact name in the latest Crosscheck
+# attempt's <CODE> findings (#504), comma-separated — so an operator answering
+# headlessly sees every artifact the code stands for, not just the first.
+_planner_stop_cited_names() {
+  local init="$1" code="$2" log start
+  log=$(planner_state_log "$init") || return 1
+  start=$(grep -n '|Crosscheck|check|start|' "$log" | tail -1 | cut -d: -f1)
+  [ -n "$start" ] || return 0
+  tail -n "+$((start + 1))" "$log" | grep "^[^|]*|META|crosscheck|fail|${code} " |
+    cut -d'|' -f5- | grep -o 'cited artifact `[^`]*`' | sed 's/^cited artifact //' |
+    awk '!seen[$0]++' | head -20 | paste -sd, - | sed 's/,/, /g'
+}
+
 # Unaccepted blocking codes from the latest Crosscheck attempt, one
 # "<CODE>\t<count>\t<first message>" line each, sorted by code.
 _planner_stop_crosscheck_codes() {
@@ -241,10 +254,22 @@ planner_stop_describe_json() {
   if [ "$pos" = "Crosscheck" ] &&
     [ "$(grep '|Crosscheck|check|' "$log" | tail -1 | cut -d'|' -f4)" = "fail" ]; then
     local code count msg
+    local cited
     while IFS=$'\t' read -r code count msg; do
       [ -n "$code" ] || continue
-      q=$(_planner_stop_question "accept-${code}" "flag:accept:${code}" \
-        "Crosscheck blocking finding ${code} (${count}x): $(_planner_stop_excerpt "$msg") — Accept it as genuine and expected? Answer with the reason, or __skip__ to fix the artifacts instead.")
+      case "$code" in
+      CITED_ARTIFACT_*)
+        # #504: name every artifact, and say how to answer each one; the
+        # accept binding stays as the blanket override.
+        cited=$(_planner_stop_cited_names "$init" "$code")
+        q=$(_planner_stop_question "accept-${code}" "flag:accept:${code}" \
+          "Crosscheck blocking finding ${code} (${count}x) for cited artifact(s): ${cited:-see state.log} — answer each in consensus.md ## Open Questions (Answer: exists:<where>, external:<who> or generate), set the matching specs' Source to it, and resume. Or accept the code for every artifact as genuine and expected: answer with the reason, or __skip__ to fix the artifacts instead.")
+        ;;
+      *)
+        q=$(_planner_stop_question "accept-${code}" "flag:accept:${code}" \
+          "Crosscheck blocking finding ${code} (${count}x): $(_planner_stop_excerpt "$msg") — Accept it as genuine and expected? Answer with the reason, or __skip__ to fix the artifacts instead.")
+        ;;
+      esac
       questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
     done < <(_planner_stop_crosscheck_codes "$init")
     if [ "$questions" != "[]" ]; then
