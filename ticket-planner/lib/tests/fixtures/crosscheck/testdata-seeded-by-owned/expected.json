@@ -1,0 +1,6 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "notes": "#503: the same two specs as testdata-generate-unowned, with the needs now owned by a third enabler spec (test-data-pack) via Source: seeded-by:test-data-pack; the target has a ## Test Data Provided section. Must stay clean."
+}

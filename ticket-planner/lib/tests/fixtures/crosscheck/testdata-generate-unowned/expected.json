@@ -1,0 +1,8 @@
+{
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["TEST_DATA_UNOWNED"],
+  "message_contains": ["import-upload.md#1 (generate)", "import-validation.md#1 (generate)", "[import-upload, import-validation]", "test-data-pack"],
+  "notes": "#503: two specs whose Verification Notes need data with Source: generate and no spec that owns producing it. Crosscheck aggregates across specs and reports ONE blocking TEST_DATA_UNOWNED naming both specs and proposing a test-data-pack enabler. The exists: and Test data: none lines are owned and must not appear."
+}

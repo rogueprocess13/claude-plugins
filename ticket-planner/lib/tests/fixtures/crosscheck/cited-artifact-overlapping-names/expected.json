@@ -1,0 +1,6 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "notes": "Review case A: artifact `sample` is a substring of artifact `sample file v2`. The need citing `sample file v2` must be checked against that artifact's answer only (generate, owned by the pack), never against `sample`'s external:client. Exact backticked matching; must stay clean."
+}

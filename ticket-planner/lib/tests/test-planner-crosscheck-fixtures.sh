@@ -133,6 +133,9 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
   fi
 
   planner_state_init "$init_id" "golden fixture: ${fixture_name}" >/dev/null 2>&1
+  # What SKILL.md's argument-persistence step does on every plan/resume: record
+  # the no-tests rule once (#503), here by detection from repo-stub/CLAUDE.md.
+  planner_testdata_no_tests_rule_persist "$init_id" >/dev/null 2>&1
 
   planner_crosscheck_run "$init_id" >/dev/null 2>&1
   rc=$?
@@ -161,6 +164,30 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
     pass "${fixture_name}: accepted count matches (${accepted})"
   else
     fail "${fixture_name}: accepted count matches" "expected ${exp_accepted}, got ${accepted}"
+  fi
+
+  # Optional: the exact multiset of blocking codes (sorted), and substrings
+  # every blocking finding message taken together must contain (#503/#504) —
+  # counts alone cannot tell "the right finding" from "a different one".
+  if jq -e 'has("codes")' "$expected_file" >/dev/null 2>&1; then
+    exp_codes=$(jq -r '.codes[]' "$expected_file" | LC_ALL=C sort | tr '\n' ' ')
+    got_codes=$(grep '|META|crosscheck|fail|' "$log_file" | cut -d'|' -f5 | awk '{print $1}' | LC_ALL=C sort | tr '\n' ' ')
+    if [ "$exp_codes" = "$got_codes" ]; then
+      pass "${fixture_name}: blocking codes match (${got_codes% })"
+    else
+      fail "${fixture_name}: blocking codes match" "expected '${exp_codes}', got '${got_codes}'"
+    fi
+  fi
+  if jq -e 'has("message_contains")' "$expected_file" >/dev/null 2>&1; then
+    fail_text=$(grep '|META|crosscheck|fail|' "$log_file")
+    while IFS= read -r needle; do
+      [ -n "$needle" ] || continue
+      if [[ "$fail_text" == *"$needle"* ]]; then
+        pass "${fixture_name}: finding mentions '${needle}'"
+      else
+        fail "${fixture_name}: finding mentions '${needle}'" "not in: ${fail_text}"
+      fi
+    done < <(jq -r '.message_contains[]' "$expected_file")
   fi
 
   # planner_crosscheck_run's own return code is 0 iff no blocking finding —

@@ -230,6 +230,11 @@ planner_state_init() {
   mkdir -p "$(planner_initiative_dir "$initiative_id")/artifacts"
   echo "$idea" >"$(planner_initiative_dir "$initiative_id")/artifacts/idea.txt"
   planner_state_write "$initiative_id" "META" "idea" "start" "$safe_idea"
+
+  # Artifact contract version (#503/#504). Crosscheck holds an initiative that
+  # carries it to the test-data Source and Cited Artifacts contract; one created
+  # before it existed is grandfathered (warn instead of block).
+  planner_state_write "$initiative_id" "META" "contract" "start" "test-data-source-v1"
 }
 
 # ── Durable invocation config ──────────────────────────────────────────────────
@@ -250,7 +255,7 @@ planner_state_init() {
 # point `plan` recorded, so these steps are exempt from duplicate-done suppression.
 
 # Config keys recognised by planner_config_set / planner_config_get.
-PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id linear-project no-project linear-milestone linear-project-id linear-milestone-id branch-override refresh-bodies"
+PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id linear-project no-project linear-milestone linear-project-id linear-milestone-id branch-override refresh-bodies no-tests-rule"
 
 # Is <step> a config key rather than a progress marker?
 # Usage: _planner_is_config_key <step>

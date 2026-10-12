@@ -324,6 +324,35 @@ API contracts, and existing patterns. You are phase ${_pos} of ${_count}.
    - **Prior Art** — similar implementations already in the codebase
    - **Constraints** — things that limit the solution space (schema, config, auth, etc.)
    - **Exploration Depth** — quick-scan/standard/deep per service, with rationale
+   - **Cited Artifacts** — required, see "Cited artifacts" below
+
+## Cited artifacts (#504)
+
+The idea, intent.md, appraisal.md and any source page they came from often
+quote evidence from an external artifact — a client-supplied sample file, a
+template, an export, an attachment, "the X file". Do not treat quoted evidence
+as an established fact until you have the artifact itself. For **every**
+external artifact the source material cites, try to locate it:
+
+- attachments of the source page/document, via whatever connector the source
+  came from;
+- the initiative's artifacts folder (${state_dir}/artifacts/);
+- REPOS_ROOT (search by file name and by obvious variants).
+
+Then write a \`## Cited Artifacts\` section in discovery.md, one bullet per
+artifact, the name in backticks, in exactly one of these two shapes:
+
+\`\`\`
+## Cited Artifacts
+
+- \`client sample import file (43 rows)\` — NOT FOUND (searched: source page attachments, artifacts/, REPOS_ROOT)
+- \`import template v2\` — FOUND: <path or attachment link>
+\`\`\`
+
+Write \`None.\` under the heading when the source cites no external artifact —
+never omit the section. Consensus turns every NOT FOUND line into an operator
+question, and Crosscheck blocks until it is answered; the backticked name is
+the key both of them match on, so keep it identical wherever you repeat it.
 
 ## Pin the repo ref (#217)
 
@@ -393,6 +422,7 @@ On failure, write \`fail\` instead of \`done\`.
 - Prior art must reference actual code in the repository, not hypothetical patterns.
 - If a service's code isn't accessible, record it as a constraint, not an assumption.
 - Never run \`git checkout\`/\`git switch\`/\`git reset\` in a REPOS_ROOT repo — read-only access only.
+- discovery.md must have a \`## Cited Artifacts\` section — FOUND/NOT FOUND per cited artifact, or \`None.\`
 AGENT_PROMPT
 }
 
@@ -618,8 +648,10 @@ ${state_dir}/artifacts/specs/<ticket-slug>.md. Each spec must include:
    - a **sibling spec slug** in this initiative — the spec filename minus \`.md\`, or an unambiguous \`-\`-bounded prefix of one (\`blocked-by:exc-1\` for \`exc-1-something.md\`); or
    - a **cross-initiative prerequisite** — the existing Linear identifier of the blocking ticket, e.g. \`blocked-by:WIL-83\`. Use this whenever work in this initiative cannot start until a ticket from *another* initiative is Done. Do not leave such a prerequisite as prose in the Description only: prose never reaches the ticket manifest's \`blocked_by\` array, so an unrecorded prerequisite is unenforceable.
 4. **## Signals** — a JSON code block with the 5 raw confidence signals (see below)
-5. **## Verification Notes** — per acceptance criterion, which role exercises it and
-   what test data it needs (see below)
+5. **## Verification Notes** — per acceptance criterion, which role exercises it,
+   what test data it needs, and where that data comes from (see below)
+6. **## Test Data Provided** — only on a spec that produces test data other specs
+   (or itself) name with \`Source: seeded-by:<slug>\`: what it generates or seeds
 
 ### Ticket kind (planner-business-framing)
 
@@ -696,21 +728,60 @@ TicketGen builds each ticket's \`## Verification Plan\` table from this section 
 is structured content for TicketGen to read back, the same relationship the
 \`## Signals\` JSON block already has to the confidence function below. It is NOT a
 draft of the final table (no Expected behavior wording, no Verifiable marks) — just
-the two facts TicketGen cannot derive from the AC text alone: who exercises the
-criterion and what data it needs to exist first.
+the facts TicketGen cannot derive from the AC text alone: who exercises the
+criterion, what data it needs to exist first, and where that data comes from.
 
 One short line per Acceptance Criteria line, in the same order:
 
 \`\`\`
 ## Verification Notes
 
-1. Role: finance user. Test data: 5 seeded invoices with distinct dates.
+1. Role: finance user. Test data: 5 seeded invoices with distinct dates. Source: seeded-by:inv-0-test-data-pack.
 2. Role: admin. Test data: none (read-only view).
+3. Role: finance user. Test data: the regional price list. Source: external:pricing team.
+4. Role: admin. Test data: an archived client record. Source: exists:staging seed set (clients.sql).
 \`\`\`
 
 When a criterion needs no special role or test data, still write the line with
 \`Role: any authenticated user. Test data: none.\` rather than omitting it — a missing
 numbered entry reads as "not considered," not "not needed."
+
+**Source (#503) — required whenever Test data is not \`none\`.** "Described" is not
+"available": a ticket that lists data nobody produces fails at verification.
+\`Source:\` is the last field on the line and takes exactly one value from this
+closed set (full contract: docs/test-data-source.md):
+
+- \`exists:<where>\` — it already exists; say where (an environment's seed set, a
+  path, a named record).
+- \`seeded-by:<spec-slug>\` — a spec in this initiative produces it. The target spec
+  must carry a \`## Test Data Provided\` section listing what it generates/seeds.
+- \`external:<who>\` — someone outside the plan supplies it (a client, another team),
+  and the source material says who. Never invent the \`<who>\`.
+- \`generate\` — it has to be synthesised and no spec does it yet. Crosscheck blocks
+  on every \`generate\` need (TEST_DATA_UNOWNED), so prefer writing the owner now:
+  when several specs need generated data, add one enabler spec (e.g.
+  \`<prefix>-test-data-pack\`, Kind enabler) whose \`## Test Data Provided\` lists
+  the generator and seed scripts, and point every need at it with
+  \`seeded-by:<that-slug>\`.
+
+**Cited artifacts discovery.md lists as NOT FOUND** (#504): quote the artifact's
+name in backticks in the Test data text, exactly as discovery.md spells it, and
+write \`Source: generate\` — never \`exists:\` or \`external:\`. Nobody has said yet
+whether the file is coming or must be synthesised; the operator answers that at
+the Crosscheck stop, and Crosscheck checks the spec's Source against the answer.
+
+A spec may name itself in \`seeded-by:\` (its own implementation writes the seed)
+**unless the project has a standing "implementation does not write tests" rule**
+(recorded at argument parsing, from \`--no-tests-rule\` or the REPOS_ROOT CLAUDE.md).
+Under that rule nothing appears as a side effect of implementation: the
+test-data-pack spec is mandatory. Check it now:
+
+\`\`\`bash
+$(_planner_prompt_repos_root_export)
+CLAUDE_PLUGIN_ROOT="${_PLANNER_PROMPT_LIB_ROOT}"
+source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-testdata.sh"
+planner_testdata_no_tests_rule "${initiative_id}" && echo " — no-tests rule active: every seeded need goes to a separate test-data-pack spec"
+\`\`\`
 
 ### Confidence signals (RAW VALUES ONLY — do NOT compute confidence)
 
@@ -817,6 +888,8 @@ On failure, write \`fail\` instead of \`done\`.
 - Every ticket spec must have a \`## Signals\` JSON block — the bash generator needs it.
 - Every ticket spec must have a \`## Verification Notes\` section, one line per Acceptance
   Criteria line — TicketGen's Verification Plan table reads it (planner-ready-by-construction).
+- Every Verification Notes line whose Test data is not \`none\` ends with
+  \`Source: exists:<where> | seeded-by:<spec-slug> | external:<who> | generate\` (#503).
 - Signals must be raw values from Discovery, not fabricated. Do NOT compute Confidence.
 - The description in each spec is the actual Linear ticket body — be precise.
 - Every spec's Signals carries \`Kind\` and \`Serves\`/\`Enables\`; every business spec
@@ -952,7 +1025,37 @@ sweep would misread.
      and what changed (if anything)
    - **Changes from Original Proposal** — summary of what's different
    - **Deferred Items** — things consciously left unresolved, with rationale
+   - **Open Questions** — questions only the operator can answer, including one
+     line per cited artifact Discovery could not retrieve (see below)
    - **Readiness** — ready-for-spec / needs-further-discovery / blocked
+
+## Cited artifacts the operator must answer for (#504)
+
+discovery.md's \`## Cited Artifacts\` section lists every external artifact the
+source material cites (a sample file, a template, an export) and whether
+Discovery could retrieve it. Each NOT FOUND one is a question for the operator,
+asked at this gate: "is it coming, or should it be synthesised?". Bash renders
+the questions — copy its output verbatim into consensus.md's
+\`## Open Questions\` section, do not paraphrase it:
+
+\`\`\`bash
+$(_planner_prompt_repos_root_export)
+CLAUDE_PLUGIN_ROOT="${_PLANNER_PROMPT_LIB_ROOT}"
+source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-testdata.sh"
+planner_cited_artifacts_questions "${initiative_id}"
+\`\`\`
+
+Each line ends \`Answer: PENDING\`. Leave it PENDING — you cannot answer for the
+operator. Crosscheck blocks on a missing line (CITED_ARTIFACT_UNRAISED) or a
+PENDING answer (CITED_ARTIFACT_UNRESOLVED) and stops the run there for the
+operator, who records \`Answer: exists:<where>\` (they supplied it),
+\`Answer: external:<who>\` or \`Answer: generate\`. That answer becomes the
+test-data Source for every spec that uses the artifact (docs/test-data-source.md),
+and Crosscheck blocks any spec whose Source disagrees with it
+(CITED_ARTIFACT_SOURCE_MISMATCH). Until the operator answers, every such spec's
+Verification Notes line stays \`Source: generate\`, with the artifact's name in
+backticks. Do not fill in an \`external:<who>\` yourself: you would be inventing
+the \`<who>\`.
 
 ## State log
 
@@ -979,6 +1082,8 @@ On failure, write \`fail\` instead of \`done\`.
 - The finalized proposal must still satisfy the Planner Context schema — if the
   review found contract compliance issues, those must be resolved here.
 - Deferred items are a conscious choice, not an omission — explain why each is deferred.
+- Every NOT FOUND cited artifact has its \`CITED_ARTIFACT:\` line in \`## Open Questions\`,
+  copied verbatim from \`planner_cited_artifacts_questions\`.
 AGENT_PROMPT
 }
 
@@ -1617,7 +1722,11 @@ authoring guidance: wording, table columns, placeholder shape):
 - \`## Scope\` — a \`| Layer | Service | Area |\` table, non-empty
 - \`## Test Data Prerequisites\` — what must exist before verification can run
   (planner-ready-by-construction: widened from bug-only — every type needs this,
-  matching \`templates/feature.md\`'s own shape)
+  matching \`templates/feature.md\`'s own shape). One bullet per item, each ending
+  with the \`Source: <kind>[:<value>]\` its spec's Verification Notes recorded
+  (#503 — \`exists:<where>\`, \`seeded-by:<spec-slug>\`, \`external:<who>\` or
+  \`generate\`), copied verbatim, never invented; ticket-auto's readiness check
+  reads it (docs/test-data-source.md)
 - \`## Verification Plan\` — see the dedicated section below (planner-ready-by-construction)
 
 **feature / improvement tickets also need:**
@@ -1722,7 +1831,8 @@ Rules:
 2. **Read the spec file's \`## Verification Notes\` section** (written by
    Specify — see its prompt) for each AC's role and test data, and use that
    recorded signal for the Role scope / Test data needed columns rather than
-   inventing one. When a spec has no \`## Verification Notes\` section (an
+   inventing one. Carry the line's \`Source: …\` into the Test data needed cell
+   (e.g. \`5 seeded invoices (Source: seeded-by:inv-0-test-data-pack)\`). When a spec has no \`## Verification Notes\` section (an
    older spec, or a spec reused across \`resume\`), still write a complete
    table from the AC text and ticket context alone — never omit the table or
    fail because the signal is missing.

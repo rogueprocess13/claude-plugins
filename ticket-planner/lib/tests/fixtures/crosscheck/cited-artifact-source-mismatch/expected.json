@@ -1,0 +1,8 @@
+{
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["CITED_ARTIFACT_SOURCE_MISMATCH"],
+  "message_contains": ["import-validation.md#1", "client sample import file", "generate or seeded-by"],
+  "notes": "#504 AC4 (review repro): the operator answered generate, but the spec still says Source: external:client finance team, a party the Consensus agent invented. Crosscheck must block with CITED_ARTIFACT_SOURCE_MISMATCH."
+}

@@ -1,0 +1,8 @@
+{
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["CITED_ARTIFACT_UNREFERENCED"],
+  "message_contains": ["client sample import file (43 rows)"],
+  "notes": "Review case B: the spec paraphrases the NOT FOUND artifact and invents an owner, so SOURCE_MISMATCH cannot see it. CITED_ARTIFACT_UNREFERENCED blocks because no need cites the artifact by its backticked name."
+}

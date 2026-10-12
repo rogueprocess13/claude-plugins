@@ -1,0 +1,8 @@
+{
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["TEST_DATA_UNOWNED"],
+  "message_contains": ["import-upload.md#1 (self-seeded", "MANDATORY"],
+  "notes": "#503 point 4: a spec that seeds its own test data is an owner normally, but REPOS_ROOT/CLAUDE.md carries a standing 'implementation does not write tests' rule, so no ticket produces fixtures as a side effect. Self-seeding does not count and the test-data-pack remedy is reported as mandatory."
+}
