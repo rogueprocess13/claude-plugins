@@ -57,6 +57,7 @@ or neither.
 | `TEST_USER_UNRESOLVED` | Named test user/role does not resolve against the test-user catalog | `DOR_STRICT_CATALOG` |
 | `TEST_DATA_MISSING` | No Test Data section | `DOR_STRICT_TEST_DATA` |
 | `TEST_DATA_UNSEEDED` | Test Data section present but has no concrete detail | `DOR_STRICT_TEST_DATA` |
+| `TEST_DATA_UNSOURCED` | Test data is described, but at least one item does not say where it comes from — see below. **Hard by default on a body that carries the Source contract.** | `DOR_STRICT_TEST_DATA` (legacy body); `DOR_STRICT_TEST_DATA_SOURCE=false` demotes the contract case to advisory |
 | `VPLAN_MISSING` | No Verification Plan table (unless ≥ half of unique AC lines are self-verifying — see below) | `DOR_STRICT_VPLAN` |
 | `VPLAN_ROW_GAP` | Verification Plan table has fewer rows than acceptance criteria | `DOR_STRICT_VPLAN` |
 | `VPLAN_UNVERIFIABLE` | No table row marked verifiable | `DOR_STRICT_VPLAN` |
@@ -64,11 +65,71 @@ or neither.
 | `VERIFICATION_REQUIRED_NOT_SELF_VERIFYING` | No Verification Plan and no AC line carries a concrete expected value/result | `DOR_STRICT_VERIFICATION` |
 
 All five strict flags default `false`, preserving default behaviour on every host.
+`DOR_STRICT_TEST_DATA_SOURCE` is the one switch that defaults `true`; it only affects
+`TEST_DATA_UNSOURCED` on a body that carries the Source contract (see below).
 `DOR_STRICT_VPLAN` (planner-ready-by-construction) promotes all three `VPLAN_*` codes together —
 it does not affect the `satisfied-by-ac` self-verifying escape hatch below, and is independent of
 `DOR_STRICT_VERIFICATION`: a host can enforce the "something self-verifying exists" floor
 immediately while still observing planner-written Verification Plan tables advisory-only until it
 trusts their quality on real tickets.
+
+### `TEST_DATA_UNSOURCED` (issue #505)
+
+`TEST_DATA_MISSING`/`TEST_DATA_UNSEEDED` measure whether the Test Data section exists and says
+something. Neither asks whether a verifier can actually obtain what it describes, so a long,
+concrete description of data that nothing creates used to pass. `TEST_DATA_UNSOURCED` reads the
+`Source: <kind>[:<value>]` field defined in
+[ticket-planner/docs/test-data-source.md](../../ticket-planner/docs/test-data-source.md) — that
+file is the contract; change the grammar there first.
+
+**Items.** Each item is one of:
+
+- a list item (`-`, `*`, `+`, `1.`, `1)`) under `## Test Data Prerequisites` (or any `## Test Data…`
+  heading) — the planner writes `- <what>. Source: <source>`;
+- a data row of a table under that heading — a column headed `Source` is read as the Source;
+- a non-empty `Test data needed` cell of the Verification Plan table — the planner writes
+  `<what> (Source: <source>)`;
+- when the Test Data section has no list or table at all, each prose line (a legacy free-text section).
+
+Fenced code blocks are ignored.
+
+**Reading a Source** follows the contract's reader rules, mirroring Crosscheck's parser
+(`ticket-planner/lib/planner-crosscheck-testdata.sh`): the marker matches case-insensitively,
+`*` is removed and `_` is removed where it wraps a word, the **last** `Source:` on an item wins,
+backticks are ignored, trailing `.,;:!` is stripped, and the kind is lowercased. One deliberate
+difference: the marker must not follow a letter, so `Resource: …` is not a Source.
+
+| Item | Verdict |
+|---|---|
+| `exists:<non-empty>`, `external:<non-empty>`, `seeded-by:<slug>` (`[A-Za-z0-9_-]+`) | sourced |
+| no `Source:`, `generate`, an unknown kind, an empty value, `Source: none` on real data | unsourced |
+| the test data itself is none (`none`, `n/a`, `no test data…`, … — the contract's list) | not applicable |
+
+At ticket level `seeded-by:<slug>` is not resolved against specs (they live with the initiative,
+not the ticket); its presence is enough. Crosscheck already checked the reference at plan time.
+
+**Severity depends on whether the body carries the contract** (at least one `Source:` field in any
+item):
+
+- **Contract body** — every item must be sourced. The code is **hard by default**: the body opted
+  into the grammar, so the planner's Refinement scan (which never sets `DOR_STRICT_*`) and
+  ticket-auto's planned-ticket gate hold it strictly. A host can set
+  `DOR_STRICT_TEST_DATA_SOURCE=false` to observe it advisory-only. A data need the operator
+  deliberately left as `generate` (for example a `--accept`ed `TEST_DATA_UNOWNED`) is cleared per
+  ticket with `dor-check.sh --waive <TID> TEST_DATA_UNSOURCED "<reason>"`.
+- **Legacy body** (no `Source:` anywhere — written before the contract, or by hand) — advisory,
+  promoted to hard only by the existing `DOR_STRICT_TEST_DATA`. No legacy ticket starts failing
+  readiness by default. A legacy item also counts as sourced when it carries a conservative prose
+  marker: `seeded/provided/generated/created/supplied/loaded/imported by <x>`, a path-like token,
+  or a tracker id (not `UTF-8`-style standards). These markers are never consulted on a contract
+  body, so this check cannot disagree with Crosscheck on one.
+
+The code is `inapplicable` when `TEST_DATA_MISSING` or `TEST_DATA_UNSEEDED` already fired, and
+passes when every item says its test data is none. The detail names each unsourced item —
+`tdp#<n>` for a Test Data item, `vplan#<n>` for a Verification Plan row — with its reason, at
+most 10, with `|`, CR and LF removed.
+
+The `test_uat` score dimension gives the test-data component half credit when this code fires.
 
 ### `AC_IMPLEMENTATION_ONLY`
 

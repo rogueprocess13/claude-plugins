@@ -17,6 +17,40 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.64.0 (2026-10-12)
+
+New readiness code `TEST_DATA_UNSOURCED` (#505). `dor-check.sh` only measured whether the Test
+Data section existed and said something, so a long, concrete description of data that nothing
+creates passed readiness. The new code reads the `Source: <kind>[:<value>]` field that
+ticket-planner 0.17.0 writes (contract: `ticket-planner/docs/test-data-source.md`).
+
+- **Items read:** `## Test Data Prerequisites` list items (`- <what>. Source: <source>`), table
+  rows under that heading (a `Source` column counts as the Source), and the Verification Plan's
+  `Test data needed` cells (`<what> (Source: <source>)`). A list-free legacy section is read line
+  by line. Fenced code is ignored.
+- **Parsing matches Crosscheck's reader rules:** case-insensitive marker, `*` and word-wrapping `_`
+  removed, the last `Source:` wins, backticks ignored, trailing `.,;:!` stripped, the same "none"
+  phrasings. One difference: `Resource:` is not a Source marker.
+- **Sourced** = `exists:`/`external:` with a value, or `seeded-by:<slug>`. **Unsourced** = no
+  Source, `generate`, an unknown kind, an empty value, or `Source: none` on real data.
+- **Severity:**
+  - A body that carries the contract (any `Source:` in its test-data items) is held to it:
+    **hard by default**, so the planner's Refinement scan and the planned-ticket gate apply it
+    strictly. `DOR_STRICT_TEST_DATA_SOURCE=false` demotes it to advisory. A deliberate `generate`
+    can be cleared per ticket with `dor-check.sh --waive <TID> TEST_DATA_UNSOURCED "<reason>"`.
+  - A legacy body (no `Source:` anywhere) gets an advisory, promoted only by the existing
+    `DOR_STRICT_TEST_DATA`. Conservative prose markers (`seeded by <x>`, `provided by <x>`, a
+    path, a tracker id) count as a source there. No legacy ticket fails readiness by default.
+  - `inapplicable` when `TEST_DATA_MISSING` or `TEST_DATA_UNSEEDED` already fired.
+- The detail names each unsourced item (`tdp#<n>` / `vplan#<n>` plus a reason, at most 10) with
+  `|`, CR and LF removed.
+- `dor_quality_score`: the `test_uat` dimension gives the test-data component half credit when the
+  code fires. Fixture 01 now reports the advisory (score 95 → 93) and fixture 10 likewise
+  (56 → 54); no fixture's ready/not-ready status changed.
+- New fixtures `20-unsourced-legacy.md` (the issue's reproduction), `21-unsourced-contract.md`,
+  `22-sourced-contract.md`, and classifier/extractor/severity/log-safety tests in
+  `lib/tests/test-dor-check.sh`. Documented in `docs/dor-readiness.md`.
+
 ## ticket-planner 0.18.0 (2026-10-12)
 
 Issue #499 — TicketGen is now deterministic. Its prompt handed the agent example values

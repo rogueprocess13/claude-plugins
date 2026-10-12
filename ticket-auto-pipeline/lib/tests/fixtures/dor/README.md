@@ -13,7 +13,7 @@ all-empty fixtures"), not a frozen contract.
 
 | # | File | Type | Status | Hard (missing) | Advisory | Gaps | Score |
 |---|------|------|--------|-----------------|----------|------|------:|
-| 01 | `01-excellent.md` | feature | ready | — | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 95 |
+| 01 | `01-excellent.md` | feature | ready | — | TEST_DATA_UNSOURCED (legacy body: its test data never says where it comes from) | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 93 |
 | 02 | `02-minimal.md` | feature | ready | — | TEST_DATA_MISSING | requirement_completeness, deep_scope_ambiguity | 77 |
 | 03 | `03-missing-intent.md` | feature | not-ready | INTENT_MISSING | VERIFICATION_REQUIRED_NOT_SELF_VERIFYING, VPLAN_MISSING, TEST_DATA_MISSING | requirement_completeness, deep_scope_ambiguity | 49 |
 | 04 | `04-useless-scope.md` | feature | ready | — | VERIFICATION_REQUIRED_NOT_SELF_VERIFYING, VPLAN_MISSING, TEST_DATA_MISSING | requirement_completeness, contradictory_requirements, deep_scope_ambiguity | 61 |
@@ -22,7 +22,7 @@ all-empty fixtures"), not a frozen contract.
 | 07 | `07-fe-no-test-user.md` | feature | not-ready | TEST_USER_MISSING | TEST_DATA_MISSING | requirement_completeness, contradictory_requirements, deep_scope_ambiguity | 73 |
 | 08 | `08-fe-no-nav-path.md` | feature | not-ready | NAV_PATH_MISSING | TEST_DATA_MISSING | requirement_completeness, contradictory_requirements, deep_scope_ambiguity | 75 |
 | 09 | `09-backend-no-ui.md` | chore | ready | — | TEST_DATA_MISSING | requirement_completeness, contradictory_requirements, deep_scope_ambiguity | 84 |
-| 10 | `10-bug-no-expected-actual.md` | bug | not-ready | INTENT_MISSING, REPRO_NO_EXPECTED_ACTUAL (never REPRO_MISSING — repro steps ARE present) | VERIFICATION_REQUIRED_NOT_SELF_VERIFYING, VPLAN_MISSING | requirement_completeness, deep_scope_ambiguity | 56 |
+| 10 | `10-bug-no-expected-actual.md` | bug | not-ready | INTENT_MISSING, REPRO_NO_EXPECTED_ACTUAL (never REPRO_MISSING — repro steps ARE present) | VERIFICATION_REQUIRED_NOT_SELF_VERIFYING, VPLAN_MISSING, TEST_DATA_UNSOURCED | requirement_completeness, deep_scope_ambiguity | 54 |
 | 11 | `11-contradictory-acs.md` | feature | ready | — | VPLAN_MISSING, TEST_DATA_MISSING | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 69 |
 | 12 | `12-unseeded-test-infra.md` | feature | ready | — | TEST_USER_UNRESOLVED, TEST_DATA_UNSEEDED | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 81 |
 | 13 | `13-impl-only-acs.md` | chore | ready (not-ready under `DOR_STRICT_AC_IMPL=true`) | — | AC_IMPLEMENTATION_ONLY, VERIFICATION_REQUIRED_NOT_SELF_VERIFYING, VPLAN_MISSING, TEST_DATA_MISSING | requirement_completeness, contradictory_requirements, deep_scope_ambiguity | 41 |
@@ -32,6 +32,9 @@ all-empty fixtures"), not a frozen contract.
 | 17 | `17-self-verifying-no-vplan.md` | chore | ready | — | TEST_DATA_MISSING (never VPLAN_MISSING — satisfied by self-verifying AC) | requirement_completeness, contradictory_requirements, deep_scope_ambiguity | 84 |
 | 18 | `18-backend-twin.md` | chore | ready | — | TEST_DATA_MISSING | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 86 (`test_uat` dimension is `null`; score is not lower than an equivalent frontend ticket — see test-dor-check.sh) |
 | 19 | `19-padding.md` | feature | ready | — | TEST_DATA_MISSING | requirement_completeness, deep_scope_ambiguity | 77 (== fixture 02's score — every AC line tripled + ~500 extra words in Background / Motivation change nothing) |
+| 20 | `20-unsourced-legacy.md` | feature | ready (not-ready under `DOR_STRICT_TEST_DATA=true`) | — | TEST_DATA_UNSOURCED | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 83 |
+| 21 | `21-unsourced-contract.md` | feature | not-ready (ready + advisory under `DOR_STRICT_TEST_DATA_SOURCE=false`) | TEST_DATA_UNSOURCED | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 83 |
+| 22 | `22-sourced-contract.md` | feature | ready | — | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 85 |
 
 ## Scenario mapping
 
@@ -54,3 +57,6 @@ all-empty fixtures"), not a frozen contract.
 - **17** — every AC states a concrete expected result (`returns 422`, `returns 201`); no Verification Plan table exists, and none is required.
 - **18** — backend-only twin used to prove denominator fairness: an equivalent frontend ticket (built inline in the test from this fixture, with a Test User/Navigation Path added and no Test Data Prerequisites) scores no higher on account of the sections a backend ticket has no use for.
 - **19** — padding: fixture 02 with every AC line tripled and ~500 extra words appended to Background / Motivation. Proves volume/repetition cannot raise `DOR_SCORE`.
+- **20** — issue #505's reproduction: a concrete Test Data Prerequisites list ("a 1,000-row valid upload file; a client with no configuration") with no source anywhere. A legacy body, so `TEST_DATA_UNSOURCED` is advisory unless `DOR_STRICT_TEST_DATA=true`.
+- **21** — the same ticket written to the Source contract (ticket-planner/docs/test-data-source.md), but with one `generate` item, one item with no `Source:` and a `generate` Verification Plan cell. A body that carries the contract is held to it: `TEST_DATA_UNSOURCED` is hard.
+- **22** — every item sourced (`seeded-by:`, `exists:`, `external:`), across bullet and Verification Plan cell forms, with the tolerated `**Source:**`/`_Source:_`/backtick/trailing-dot variants and a `none` row. Passes even under `DOR_STRICT_TEST_DATA=true`.
