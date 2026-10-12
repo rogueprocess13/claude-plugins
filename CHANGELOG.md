@@ -37,10 +37,13 @@ different bodies.
   produces byte-identical bodies. The Signals JSON is read from the `## Signals` section only, and
   a missing or unparseable block fails the ticket instead of falling back to `{}`. CRLF specs are
   read the same as LF ones.
-- **Specs that downstream parsers would read differently are refused.** A `## Planner Context`
-  heading anywhere in the spec (even inside a code fence), or a `## Acceptance Criteria` heading
-  that is inside a fence or appears more than once, stops composition for that ticket.
-  `planner_validate_ticket` now also requires exactly one `## Planner Context` heading in the body.
+- **Specs that downstream parsers would read differently are refused.** Composition stops for a
+  spec that contains the text `## Planner Context` anywhere (as a heading, `### Planner Context`,
+  inside a code fence or mid-sentence), or that does not have exactly one heading spelled
+  `## Acceptance Criteria`, outside a fence, with at least one item. Variants such as
+  `## acceptance criteria`, `## Acceptance Criteria (MVP)` and `##Acceptance Criteria` count as
+  Acceptance Criteria headings and are refused. `planner_validate_ticket` now also requires the text
+  `## Planner Context` to appear exactly once in the body.
 - **Verification Plan rows are matched to ACs by criterion text, never by position.** A
   hand-amended numbered notes list does not follow AC order. Specify now writes
   `## Verification Notes` as a table whose `Criterion` cell repeats each AC line word for word,

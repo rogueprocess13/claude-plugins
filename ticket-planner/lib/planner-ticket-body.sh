@@ -471,31 +471,46 @@ planner_ticketgen_dep_refs() {
 
 # Refuse a spec whose structure downstream parsers would read differently
 # from this composer (#499 review):
-#   - any `## Planner Context` line, fenced or not: the composer appends the
-#     only legitimate block, and ticket-auto-pipeline's planned-ticket-check.sh
-#     section extractor is not fence-aware, so a fenced copy would be read as
-#     the real one (forged Pre-approved / Confidence);
-#   - a `## Acceptance Criteria` heading inside a fence, or more than one:
-#     dor-check.sh's _dor_ac_lines is not fence-aware and takes the first
-#     heading, while this composer reads the unfenced section — the AC count
-#     and the Verification Plan rows would disagree.
+#   - the substring `## Planner Context` anywhere — fenced, `### Planner
+#     Context`, or mid-sentence. The composer appends the only legitimate
+#     block, and downstream readers (planned-ticket-check.sh's section
+#     extractor, gate-check.sh / planned-feedback-write.sh /
+#     fleet-feedback.sh's unanchored `sed -n '/## Planner Context/,/^## /p'`)
+#     are neither fence- nor anchor-aware, so any copy could be read as the
+#     real one (forged Pre-approved / Confidence);
+#   - anything but exactly one Acceptance Criteria heading spelled exactly
+#     `## Acceptance Criteria`, outside a fence. dor-check.sh's _dor_ac_lines
+#     matches `^##[[:space:]]*Acceptance Criteria` (any suffix) and takes the
+#     first one, fenced or not, while this composer reads the exact,
+#     unfenced, case-insensitive section — any variant lets the AC count and
+#     the Verification Plan rows disagree. Counted case-insensitively, with
+#     any suffix.
 # Usage: _planner_tb_guard <spec_file>   Returns 1 (reason on stderr) on refusal.
 _planner_tb_guard() {
   local spec_file="$1" verdict
   verdict=$(_planner_tb_read "$spec_file" | awk '
     /^(```|~~~)/ { fence = !fence }
-    /^##[[:space:]]*Planner Context/ { pc++ }
-    /^##[[:space:]]*Acceptance Criteria/ { ac++; if (fence) acf++ }
-    END { printf "%d %d %d\n", pc, ac, acf }')
-  local pc ac acf name
-  read -r pc ac acf <<<"$verdict"
+    index($0, "## Planner Context") { pc++ }
+    tolower($0) ~ /^##[[:space:]]*acceptance criteria/ {
+      ac++
+      if (fence) acf++
+      line = $0; sub(/[[:space:]]+$/, "", line)
+      if (line != "## Acceptance Criteria") acv++
+    }
+    END { printf "%d %d %d %d\n", pc, ac, acf, acv }')
+  local pc ac acf acv name
+  read -r pc ac acf acv <<<"$verdict"
   name=$(basename "$spec_file")
   if [ "${pc:-0}" -gt 0 ]; then
-    echo "planner-ticket-body: ${name}: contains a '## Planner Context' heading — the composer writes the only one; remove it from the spec" >&2
+    echo "planner-ticket-body: ${name}: contains '## Planner Context' — the composer writes the only one; remove every occurrence from the spec" >&2
     return 1
   fi
-  if [ "${acf:-0}" -gt 0 ] || [ "${ac:-0}" -gt 1 ]; then
-    echo "planner-ticket-body: ${name}: '## Acceptance Criteria' must appear exactly once, outside any code fence (found ${ac}, ${acf} fenced)" >&2
+  if [ "${ac:-0}" -ne 1 ] || [ "${acf:-0}" -gt 0 ] || [ "${acv:-0}" -gt 0 ]; then
+    echo "planner-ticket-body: ${name}: needs exactly one heading spelled '## Acceptance Criteria', outside any code fence (found ${ac:-0} AC-like heading(s), ${acf:-0} fenced, ${acv:-0} misspelled)" >&2
+    return 1
+  fi
+  if [ -z "$(_planner_tb_ac_items "$spec_file")" ]; then
+    echo "planner-ticket-body: ${name}: '## Acceptance Criteria' has no criteria items" >&2
     return 1
   fi
   return 0

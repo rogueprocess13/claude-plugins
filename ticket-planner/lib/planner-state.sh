@@ -708,7 +708,9 @@ _planner_check_duplicate() {
       # result, not a duplicate of the earlier one.
       local last_status
       last_status=$(grep "^[^|]*|${phase}|${step}|" "$log_file" 2>/dev/null | tail -1 | cut -d'|' -f4)
-      if [ "$last_status" = "fail" ] || [ "$last_status" = "start" ]; then
+      # `step` counts too: a META progress run (start, step…, done) on resume
+      # ends on a step line, and its done is that run's result.
+      if [ "$last_status" = "fail" ] || [ "$last_status" = "start" ] || [ "$last_status" = "step" ]; then
         return 0
       fi
       echo "planner-state: WARNING — duplicate done entry for ${phase}/${step} suppressed" >&2

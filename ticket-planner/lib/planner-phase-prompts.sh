@@ -734,9 +734,10 @@ section of the spec into the ticket except its \`# \` heading, \`## Title\`,
 heading itself is dropped, its content kept), then appends a generated
 \`## Verification Plan\` (from \`## Verification Notes\`), \`## Related Tickets\` (from the
 \`blocked-by:\` tokens) and the \`## Planner Context\` block. Do not write those three
-sections yourself, and never write a \`## Planner Context\` heading anywhere in the
-spec, not even inside a code fence — the spec is refused. \`## Acceptance Criteria\`
-must appear exactly once, outside any code fence. Everything else the ticket needs
+sections yourself, and never write the text \`## Planner Context\` anywhere in the
+spec — not as a heading, not inside a code fence, not in a sentence — or the spec
+is refused. The Acceptance Criteria heading must appear exactly once, spelled
+exactly \`## Acceptance Criteria\`, outside any code fence, with at least one item. Everything else the ticket needs
 must already be in the Description, in its final wording:
 
 - **Required sections (issue #285)** — \`planned-ticket-body-check.sh\` rejects a body

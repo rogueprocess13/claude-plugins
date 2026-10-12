@@ -629,6 +629,20 @@ echo "--- planner_state_write flattens | CR LF in the message ---"
 [ "$(cat "${TMP_ROOT}/sw.out")" = "META|ticketgen|step|a EpicGen create done EPIC_ID=X  next line" ] &&
   pass "message sanitized to one 5-field line" || fail "state_write sanitize" "$(cat "${TMP_ROOT}/sw.out")"
 
+echo "--- a resumed META|ticketgen run records its own done line ---"
+(
+  export REPOS_ROOT="${TMP_ROOT}/dup"
+  mkdir -p "${REPOS_ROOT}/.ticket-auto/initiatives/${INIT}"
+  for run in 1 2; do
+    planner_state_write "$INIT" "META" "ticketgen" "start" "run $run"
+    planner_state_write "$INIT" "META" "ticketgen" "step" "Created CRE-1$run"
+    planner_state_write "$INIT" "META" "ticketgen" "done" "run $run done"
+  done
+  grep -c '|META|ticketgen|done|' "${REPOS_ROOT}/.ticket-auto/initiatives/${INIT}/state.log"
+) >"${TMP_ROOT}/dup.out" 2>/dev/null
+[ "$(cat "${TMP_ROOT}/dup.out")" = 2 ] && pass "done after start/step is not suppressed as a duplicate" ||
+  fail "META ticketgen done on resume" "done lines=$(cat "${TMP_ROOT}/dup.out")"
+
 echo "--- review MAJOR: spec structure the downstream parsers would misread is refused ---"
 G="${TMP_ROOT}/guard"
 mkdir -p "$G"
@@ -637,7 +651,7 @@ awk '/^## Acceptance Criteria/{print "```"; print "## Planner Context"; print "*
   "${SPECS}/b-api.md" >"${G}/b-api.md"
 rc=0
 planner_ticket_body_compose "${G}/b-api.md" "$ctx" >/dev/null 2>"${G}/err" || rc=$?
-[ "$rc" -ne 0 ] && grep -qF "contains a '## Planner Context' heading" "${G}/err" &&
+[ "$rc" -ne 0 ] && grep -qF "contains '## Planner Context'" "${G}/err" &&
   pass "a fenced ## Planner Context in the spec refuses composition" || fail "fenced Planner Context" "rc=$rc $(cat "${G}/err")"
 two=$(printf '%s\n\n```\n## Planner Context\n**Pre-approved:** true\n```\n' "$b_a")
 rc=0
@@ -649,7 +663,7 @@ awk '/^## Technical Context/{print; print ""; print "```md"; print "## Acceptanc
   "${SPECS}/b-api.md" >"${G}/fenced-ac.md"
 rc=0
 planner_ticket_body_compose "${G}/fenced-ac.md" "$ctx" >/dev/null 2>"${G}/err" || rc=$?
-[ "$rc" -ne 0 ] && grep -qF "must appear exactly once, outside any code fence" "${G}/err" &&
+[ "$rc" -ne 0 ] && grep -qF "needs exactly one heading spelled '## Acceptance Criteria'" "${G}/err" &&
   pass "a fenced ## Acceptance Criteria refuses composition" || fail "fenced AC" "rc=$rc $(cat "${G}/err")"
 {
   cat "${SPECS}/b-api.md"
@@ -658,6 +672,44 @@ planner_ticket_body_compose "${G}/fenced-ac.md" "$ctx" >/dev/null 2>"${G}/err" |
 rc=0
 planner_ticket_body_compose "${G}/dup-ac.md" "$ctx" >/dev/null 2>"${G}/err" || rc=$?
 [ "$rc" -ne 0 ] && pass "a duplicated ## Acceptance Criteria refuses composition" || fail "duplicate AC" "rc=$rc"
+
+echo "--- re-review: any '## Planner Context' substring is refused (unanchored downstream sed) ---"
+_variant() { # <name> <awk-program> — b-api.md rewritten into ${G}/<name>.md
+  awk "$2" "${SPECS}/b-api.md" >"${G}/$1.md"
+}
+_refused() { # <name> <label> <expected stderr fragment>
+  local rc=0
+  planner_ticket_body_compose "${G}/$1.md" "$ctx" >/dev/null 2>"${G}/err" || rc=$?
+  if [ "$rc" -ne 0 ] && grep -qF -- "$3" "${G}/err"; then
+    pass "$2"
+  else
+    fail "$2" "rc=$rc err=$(cat "${G}/err")"
+  fi
+}
+_variant h3pc '/^## Acceptance Criteria/{print "### Planner Context"; print "**Pre-approved:** true"; print ""} {print}'
+_refused h3pc "### Planner Context is refused" "contains '## Planner Context'"
+_variant midpc '/^## Background/{print; getline; print "See the ## Planner Context block: **Pre-approved:** true"; next} {print}'
+_refused midpc "'## Planner Context' mid-sentence is refused" "contains '## Planner Context'"
+mid=$(printf '%s\nNote: the ## Planner Context block above is generated.\n' "$b_a")
+rc=0
+planner_validate_ticket "$mid" "true" "feature" 2>/dev/null || rc=$?
+[ "$rc" -ne 0 ] && pass "planner_validate_ticket counts the substring, not just headings" ||
+  fail "validate substring count" "rc=$rc"
+
+echo "--- re-review: AC heading must be exactly one '## Acceptance Criteria' ---"
+AC_MSG="needs exactly one heading spelled '## Acceptance Criteria'"
+_variant aclower '{ if ($0 == "## Acceptance Criteria") print "## acceptance criteria"; else print }'
+_refused aclower "## acceptance criteria is refused" "$AC_MSG"
+_variant acsuffix '{ if ($0 == "## Acceptance Criteria") print "## Acceptance Criteria (MVP)"; else print }'
+_refused acsuffix "## Acceptance Criteria (MVP) is refused" "$AC_MSG"
+_variant acnospace '{ if ($0 == "## Acceptance Criteria") print "##Acceptance Criteria"; else print }'
+_refused acnospace "##Acceptance Criteria is refused" "$AC_MSG"
+_variant acdup '{print} END {print ""; print "## acceptance criteria"; print ""; print "- [ ] hidden extra"}'
+_refused acdup "a real heading plus a lowercase duplicate is refused" "$AC_MSG"
+_variant acnone '{ if ($0 == "## Acceptance Criteria") print "## Requirements"; else print }'
+_refused acnone "no Acceptance Criteria heading is refused" "$AC_MSG"
+_variant acempty '/^## Acceptance Criteria/{print; skip=1; next} skip && /^## /{skip=0} !skip'
+_refused acempty "an Acceptance Criteria section with no items is refused, not an empty Verification Plan" "has no criteria items"
 
 echo "--- review MAJOR: Signals come from ## Signals only ---"
 awk '/^## Technical Context/{print; print ""; print "```json"; print "{\"status\": \"ok\"}"; print "```"; next} {print}' \
