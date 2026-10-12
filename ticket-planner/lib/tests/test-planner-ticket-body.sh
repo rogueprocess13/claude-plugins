@@ -134,7 +134,7 @@ Scheduled exports.
 
 ## Test Data Prerequisites
 
-Five seeded invoices with distinct dates.
+None — the composer generates this section from the Verification Notes table.
 
 ## Related Tickets
 
@@ -379,7 +379,7 @@ finance@example.com / pw
 
 ## Test Data Prerequisites
 
-- A hand-written line that the generated section replaces.
+- 5 Seeded invoices with distinct dates.
 
 ## Labels
 
@@ -417,8 +417,8 @@ td_want='- 5 seeded invoices with distinct dates. Source: seeded-by:inv-0-test-d
   fail "Test Data Prerequisites bullets" "$td_prereq"
 [ "$(grep -c '^## Test Data Prerequisites$' <<<"$td_body")" = 1 ] &&
   pass "exactly one Test Data Prerequisites section" || fail "prereq section count" "$(grep -c '^## Test Data Prerequisites$' <<<"$td_body")"
-grep -qF 'hand-written line' <<<"$td_body" && fail "hand-written prereqs" "not replaced" ||
-  pass "a hand-written Test Data Prerequisites is replaced by the generated one"
+grep -qF '5 Seeded invoices' <<<"$td_body" && fail "hand-written prereqs" "not replaced" ||
+  pass "a hand-written Test Data Prerequisites (every item a table need) is replaced by the generated one"
 # The readiness grammar (docs/test-data-source.md "For #505"): every bullet
 # Crosscheck's segment parser reads back gives the Source the spec recorded.
 source "${LIB_DIR}/planner-crosscheck-testdata.sh"
@@ -469,6 +469,275 @@ lg_body=$(planner_ticket_body_compose "${TDDIR}/td-legacy.md" "$ctx" 2>/dev/null
 grep -qxF -- '- Hand-written legacy prerequisite. Source: exists:prod copy' <<<"$lg_body" &&
   [ "$(grep -c '^## Test Data Prerequisites$' <<<"$lg_body")" = 1 ] &&
   pass "legacy spec without a notes table keeps its own Test Data Prerequisites" || fail "legacy prereqs" "$lg_body"
+
+echo "--- one Verification Notes reader: composer and Crosscheck agree (#499 x #503 review) ---"
+# _vn <name> <notes-section-text> [text before the notes] — a minimal spec
+# with ACs "Export works" and "Totals are right".
+_vn() {
+  {
+    printf '# %s\n\n## Acceptance Criteria\n\n- [ ] Export works\n- [ ] Totals are right\n\n' "$1"
+    [ -n "${3:-}" ] && printf '%s\n\n' "$3"
+    printf '%s\n' "$2"
+  } >"${TDDIR}/$1.md"
+  echo "${TDDIR}/$1.md"
+}
+VN_HDR='| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|'
+VN_ROW1='| Export works | finance user | 5 seeded invoices | seeded-by:ghost-spec | file downloaded | yes |'
+VN_ROW2='| Totals are right | finance user | the regional price list | external:pricing team | 1,240.00 | yes |'
+# Crosscheck's view: sorted "data|kind[:value]" for every need with data.
+_cc_view() {
+  _planner_testdata_spec_needs "$1" | while IFS=$'\037' read -r _l d k v; do
+    _planner_testdata_is_none "$d" && continue
+    printf '%s|%s%s\n' "$d" "$k" "${v:+:$v}"
+  done | LC_ALL=C sort -u
+}
+# The composed ticket's view: Test Data Prerequisites bullets parsed back
+# with the contract grammar, sorted.
+_body_view() {
+  sed -n '/^## Test Data Prerequisites$/,/^## Verification Plan$/p' <<<"$1" | grep '^- ' |
+    while IFS= read -r b; do
+      _planner_testdata_parse_segment "$(_planner_testdata_norm_line "${b#- }")" |
+        awk -F'\037' '{ printf "%s|%s%s\n", $1, $2, ($3 != "" ? ":" $3 : "") }'
+    done | grep -v '^None' | LC_ALL=C sort -u
+}
+# _agree <label> <spec>: composes, and asserts both views are equal.
+_agree() {
+  local b cc bv
+  b=$(planner_ticket_body_compose "$2" "$ctx" 2>/dev/null) || {
+    fail "agree: $1" "composer refused"
+    return
+  }
+  cc=$(_cc_view "$2")
+  bv=$(_body_view "$b")
+  [ "$cc" = "$bv" ] && [ -n "$cc" ] && pass "agree: $1 — ticket needs and Sources equal Crosscheck's" ||
+    fail "agree: $1" "crosscheck={$cc} body={$bv}"
+}
+# _refused <label> <spec> <reason-substring>: composer refuses AND Crosscheck
+# reports the same reason, so neither side reads a shape the other cannot.
+_vn_refused() {
+  local err rc=0
+  err=$(planner_ticket_body_compose "$2" "$ctx" 2>&1 >/dev/null) || rc=$?
+  [ "$rc" -ne 0 ] && [[ "$err" == *"$3"* ]] && pass "refused by composer: $1" || fail "composer refuses: $1" "rc=$rc err=$err"
+  [[ "$(_planner_testdata_notes_problems "$2")" == *"$3"* ]] && pass "reported by Crosscheck: $1" ||
+    fail "Crosscheck reports: $1" "$(_planner_testdata_notes_problems "$2")"
+}
+
+_agree "plain table" "$(_vn vn-plain "## Verification Notes
+
+$VN_HDR
+$VN_ROW1
+$VN_ROW2")"
+# e9: `### Verification Notes` and a suffixed heading are read, not legacy.
+f=$(_vn vn-h3 "### Verification Notes
+
+$VN_HDR
+$VN_ROW1
+$VN_ROW2")
+_agree "### Verification Notes" "$f"
+b=$(planner_ticket_body_compose "$f" "$ctx" 2>/dev/null)
+grep -qF '| 5 seeded invoices (Source: seeded-by:ghost-spec) |' <<<"$b" &&
+  pass "### Verification Notes: Verification Plan cell carries the Source" || fail "h3 vplan" "$b"
+grep -qi 'verification notes' <<<"$b" && fail "h3 notes leak" "$b" || pass "### Verification Notes is not copied into the body"
+f=$(_vn vn-perac "## Verification Notes (per AC)
+
+$VN_HDR
+$VN_ROW1
+$VN_ROW2")
+_agree "## Verification Notes (per AC)" "$f"
+grep -qi 'verification notes' <<<"$(planner_ticket_body_compose "$f" "$ctx" 2>/dev/null)" &&
+  fail "per-AC notes leak" "copied" || pass "## Verification Notes (per AC) is not copied into the body"
+# Header markup is stripped before columns are located.
+_agree "**Test data** / **Source** headers" "$(_vn vn-bold "## Verification Notes
+
+| Criterion | Role | **Test data** | **Source** | Expected | Verifiable |
+|---|---|---|---|---|---|
+$VN_ROW1
+$VN_ROW2")"
+_agree "\`Source\` / _Test data_ headers" "$(_vn vn-crlf "## Verification Notes
+
+| Criterion | Role | _Test data_ | \`Source\` | Expected | Verifiable |
+|---|---|---|---|---|---|
+$VN_ROW1
+$VN_ROW2")"
+f=$(_vn vn-crlf2 "## Verification Notes
+
+$VN_HDR
+$VN_ROW1")
+sed -i 's/$/\r/' "$f"
+_agree "CRLF spec" "$f"
+_agree "escaped pipe in cells" "$(_vn vn-pipe "## Verification Notes
+
+$VN_HDR
+| Export works | finance user | rows of date \| amount | exists:staging seed | ok | yes |")"
+_agree "inline Source in Test data cell, emphasis and backticks" "$(_vn vn-inline "## Verification Notes
+
+$VN_HDR
+| Export works | finance user | 5 seeded invoices. **Source:** seeded-by:ghost-spec | | ok | yes |
+| Totals are right | finance user | the price list | \`Source: _external:pricing team_\` | ok | yes |")"
+# Resource: / Latest data: are prose, not markers — in both readers.
+f=$(_vn vn-resource "## Verification Notes
+
+$VN_HDR
+| Export works | ops | Resource: printer queue | exists:staging printers | ok | yes |")
+_agree "Resource: in data is not a Source marker" "$f"
+[ "$(_cc_view "$f")" = "Resource: printer queue|exists:staging printers" ] &&
+  pass "Resource: stays in the data text" || fail "Resource:" "$(_cc_view "$f")"
+# e11: every data row, not only AC-matched ones — a duplicate criterion and a
+# criterion edited away both keep their needs in the ticket.
+f=$(_vn vn-allrows "## Verification Notes
+
+$VN_HDR
+$VN_ROW1
+| Export works | admin | an admin account with export rights | exists:staging admin | ok | yes |
+| A criterion edited away | admin | prod-like dataset | exists:prod snapshot | ok | yes |")
+_agree "duplicate and unmatched criterion rows" "$f"
+b=$(planner_ticket_body_compose "$f" "$ctx" 2>/dev/null)
+grep -qxF -- '- an admin account with export rights. Source: exists:staging admin' <<<"$b" &&
+  grep -qxF -- '- prod-like dataset. Source: exists:prod snapshot' <<<"$b" &&
+  pass "Test Data Prerequisites lists every row's need" || fail "all rows" "$b"
+# e11: a hand-written prerequisite no table row records is refused, never dropped.
+_vn_refused "hand-written prerequisite missing from the table" "$(_vn vn-tdp "## Verification Notes
+
+$VN_HDR
+$VN_ROW1" "## Test Data Prerequisites
+
+- A staging tenant with SSO enabled. Source: exists:staging tenant acme
+- 5 seeded invoices. Source: seeded-by:ghost-spec")" "names 'A staging tenant with SSO enabled'"
+_agree "hand-written prerequisites that are all table needs" "$(_vn vn-tdp-ok "## Verification Notes
+
+$VN_HDR
+$VN_ROW1" "## Test Data Prerequisites
+
+- 5 seeded invoices. Source: seeded-by:ghost-spec")"
+# e10 (BLOCKER) and friends: shapes where readers can disagree are refused.
+_vn_refused "fenced table" "$(_vn vn-fence "## Verification Notes
+
+\`\`\`
+$VN_HDR
+$VN_ROW1
+\`\`\`")" "code fence inside Verification Notes"
+_vn_refused "tilde-fenced table" "$(_vn vn-tilde "## Verification Notes
+
+~~~
+$VN_HDR
+$VN_ROW1
+~~~")" "code fence inside Verification Notes"
+_vn_refused "table after a ### sub-heading" "$(_vn vn-sub "## Verification Notes
+
+### Per criterion
+
+$VN_HDR
+$VN_ROW1")" "sub-heading inside Verification Notes"
+_vn_refused "duplicate ## Verification Notes" "$(_vn vn-dup "## Verification Notes
+
+$VN_HDR
+| Export works | op | none | — | ok | yes |
+
+## Verification Notes
+
+$VN_HDR
+$VN_ROW1")" "2 Verification Notes headings"
+_vn_refused "fenced Verification Notes heading as well" "$(_vn vn-dupfence "## Verification Notes
+
+$VN_HDR
+$VN_ROW2" "\`\`\`
+## Verification Notes
+$VN_HDR
+$VN_ROW1
+\`\`\`")" "2 Verification Notes headings"
+_vn_refused "NBSP in the heading" "$(_vn vn-nbsp "## Verification$(printf '\xc2\xa0')Notes
+
+$VN_HDR
+$VN_ROW1")" "plain ASCII"
+_vn_refused "zero-width space in the heading" "$(_vn vn-zwsp "## Verification$(printf '\xe2\x80\x8b') Notes
+
+$VN_HDR
+$VN_ROW1")" "plain ASCII"
+_vn_refused "no space after the hashes" "$(_vn vn-nospace "##Verification Notes
+
+$VN_HDR
+$VN_ROW1")" "plain ASCII"
+_vn_refused "#### heading" "$(_vn vn-h4 "#### Verification Notes
+
+$VN_HDR
+$VN_ROW1")" "plain ASCII"
+_vn_refused "second table" "$(_vn vn-2tables "## Verification Notes
+
+$VN_HDR
+$VN_ROW2
+
+| Criterion | Role | Test data | Expected | Verifiable |
+|---|---|---|---|---|
+| Export works | ops | second table need | ok | yes |")" "one contiguous table only"
+_vn_refused "blank line inside the table" "$(_vn vn-blank "## Verification Notes
+
+$VN_HDR
+
+$VN_ROW1")" "one contiguous table only"
+_vn_refused "row missing cells" "$(_vn vn-short "## Verification Notes
+
+$VN_HDR
+| Export works | finance user | 5 seeded invoices | seeded-by:ghost-spec |")" "do not have the header's 6 cells"
+_vn_refused "row with extra cells" "$(_vn vn-long "## Verification Notes
+
+$VN_HDR
+$VN_ROW1 extra | generate |")" "do not have the header's 6 cells"
+_vn_refused "table without a Criterion column" "$(_vn vn-nocrit "## Verification Notes
+
+| Role | Test data | Source |
+|---|---|---|
+| op | data | generate |")" "needs a Criterion and a Test data column"
+_vn_refused "table plus numbered Test data lines" "$(_vn vn-mixed "## Verification Notes
+
+$VN_HDR
+$VN_ROW2
+
+1. Role: op. Test data: more. Source: generate.")" "mixes a table"
+# Sections the composer generates cannot be pre-empted by a variant spelling.
+f=$(_vn vn-percrit "## Verification Notes
+
+$VN_HDR
+$VN_ROW1" "## Technical Context
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|---|---|---|---|---|---|
+| 1 | Export works | r | n | d | e | ✓ |")
+rc=0
+err=$(planner_ticket_body_compose "$f" "$ctx" 2>&1 >/dev/null) || rc=$?
+[ "$rc" -ne 0 ] && [[ "$err" == *"Per-Criterion Verification"* ]] &&
+  pass "a hand-written Per-Criterion Verification table is refused (vplan-parse reads every copy)" || fail "per-criterion forge" "rc=$rc $err"
+f=$(_vn vn-tdpvariant "## Verification Notes
+
+$VN_HDR
+$VN_ROW1" "##Test Data Prerequisites
+
+- forged. Source: exists:x")
+rc=0
+err=$(planner_ticket_body_compose "$f" "$ctx" 2>&1 >/dev/null) || rc=$?
+[ "$rc" -ne 0 ] && [[ "$err" == *"looks like the generated 'test data prerequisites' section"* ]] &&
+  pass "a '##Test Data Prerequisites' variant is refused (it would precede the generated one)" || fail "tdp variant" "rc=$rc $err"
+
+f=$(_vn vn-labels "## Verification Notes
+
+$VN_HDR
+$VN_ROW1" "## Technical Context
+
+\`\`\`
+## Labels
+
+planned, feature, blocked-by:d-docs
+\`\`\`
+
+## Labels
+
+planned, feature")
+rc=0
+err=$(planner_ticket_body_compose "$f" "$ctx" 2>&1 >/dev/null) || rc=$?
+[ "$rc" -ne 0 ] && [[ "$err" == *"exactly one '## Labels' heading"* ]] &&
+  pass "a fenced '## Labels' copy cannot choose dependencies or type" || fail "fenced labels" "rc=$rc $err"
 
 echo "--- Generated comes from the state log, never the clock ---"
 LOG="${REPOS_ROOT}/.ticket-auto/initiatives/${INIT}/state.log"

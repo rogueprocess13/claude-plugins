@@ -490,6 +490,80 @@ out=$(planner_crosscheck_cited_artifacts INIT-table-cited)
 assert_contains "table cited: Source checked against pending answer" "$out" "CITED_ARTIFACT_SOURCE_MISMATCH"
 assert_not_contains "table cited: the need references the artifact" "$out" "CITED_ARTIFACT_UNREFERENCED"
 
+echo "--- e10 BLOCKER: a fenced table or one after a sub-heading cannot hide a need ---"
+XHDR='| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|'
+XROW='| Something observable. | finance user | 5 seeded invoices | seeded-by:ghost-spec | ok | yes |'
+for v in plain fenced subsec; do
+  D=$(new_init "INIT-x-$v")
+  case $v in
+  plain) notes="$XHDR
+$XROW" ;;
+  fenced) notes="\`\`\`
+$XHDR
+$XROW
+\`\`\`" ;;
+  subsec) notes="### Per criterion
+
+$XHDR
+$XROW" ;;
+  esac
+  write_spec "$D" "x-api" "$notes"
+  out=$(planner_crosscheck_testdata "INIT-x-$v")
+  rc=$?
+  [ "$rc" -eq 1 ] && pass "e10 ${v}: blocks" || fail "e10 ${v}: blocks" "rc=$rc out=$out"
+  case $v in
+  plain) assert_contains "e10 plain: ghost seeded-by reported" "$out" "x-api.md#1 (seeded-by:ghost-spec names no sibling spec)" ;;
+  fenced) assert_contains "e10 fenced: structure reported" "$out" "x-api.md#notes (code fence inside Verification Notes)" ;;
+  subsec) assert_contains "e10 subsec: structure reported" "$out" "x-api.md#notes (sub-heading inside Verification Notes)" ;;
+  esac
+done
+
+echo "--- heading variants the shared reader accepts are checked like the plain one ---"
+for v in "### Verification Notes" "## Verification Notes (per AC)" "## **Verification Notes**"; do
+  D=$(new_init "INIT-hv")
+  rm -f "$D"/*.md
+  write_spec "$D" "h-one" "$XHDR
+| Something observable. | op | a file | generate | ok | yes |" "" "$v"
+  out=$(planner_crosscheck_testdata "INIT-hv")
+  assert_contains "heading '$v': need read" "$out" "h-one.md#1 (generate)"
+done
+
+echo "--- structure problems block even in a legacy initiative ---"
+D=$(new_init INIT-x-legacy legacy)
+write_spec "$D" "y-api" "$XHDR
+| Something observable. | op | a file | generate |"
+out=$(planner_crosscheck_testdata INIT-x-legacy)
+rc=$?
+[ "$rc" -eq 1 ] && pass "legacy: ragged row blocks" || fail "legacy: ragged row blocks" "rc=$rc out=$out"
+assert_contains "legacy: ragged row reported" "$out" "y-api.md#notes (1 Verification Notes table row(s) do not have the header's 6 cells"
+
+echo "--- e11: a hand-written prerequisite the table lacks blocks ---"
+D=$(new_init INIT-x-tdp)
+write_spec "$D" "z-api" "$XHDR
+| Something observable. | op | 5 seeded invoices | exists:staging | ok | yes |" "## Test Data Prerequisites
+
+- A staging tenant with SSO enabled. Source: exists:staging tenant acme
+- 5 seeded invoices. Source: exists:staging"
+out=$(planner_crosscheck_testdata INIT-x-tdp)
+assert_contains "e11: unrecorded prerequisite named" "$out" "names 'A staging tenant with SSO enabled', which no Verification Notes row records"
+assert_not_contains "e11: recorded prerequisite accepted" "$out" "names '5 seeded invoices'"
+
+echo "--- a Source value never carries a pipe ---"
+D=$(new_init INIT-x-pipe)
+write_spec "$D" "p-api" "$XHDR
+| Something observable. | op | rows | exists:prod \| staging | ok | yes |"
+out=$(planner_crosscheck_testdata INIT-x-pipe)
+assert_contains "pipe in Source value blocks" "$out" "p-api.md#1 (Source value contains '/')"
+
+echo "--- Resource: / Latest data: are prose, not markers ---"
+D=$(new_init INIT-x-res)
+write_spec "$D" "r-api" "1. Role: op. Test data: Resource: printer queue. Source: exists:staging printers.
+2. Role: op. Latest data: none. Test data: a file. Source: generate."
+needs=$(_planner_testdata_spec_needs "${D}/r-api.md" | cut -d$'\037' -f2,3 | tr '\037' '=' | paste -sd';' -)
+[ "$needs" = "Resource: printer queue=exists;a file=generate" ] &&
+  pass "Resource:/Latest data: stay in the text" || fail "marker boundary" "$needs"
+
 # ── Phase prompts ───────────────────────────────────────────────────────────
 
 echo "--- phase prompts carry the contract ---"

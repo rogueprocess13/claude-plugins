@@ -70,6 +70,10 @@ if ! declare -f planner_entity_get_id >/dev/null 2>&1; then
   # shellcheck source=planner-ticket-validate.sh
   source "${_PLANNER_TICKET_BODY_LIB_DIR}/planner-ticket-validate.sh"
 fi
+if ! declare -f _planner_testdata_cell_need >/dev/null 2>&1; then
+  # shellcheck source=planner-crosscheck-testdata.sh
+  source "${_PLANNER_TICKET_BODY_LIB_DIR}/planner-crosscheck-testdata.sh"
+fi
 if ! declare -f planner_state_log >/dev/null 2>&1; then
   # shellcheck source=planner-state.sh
   source "${_PLANNER_TICKET_BODY_LIB_DIR}/planner-state.sh"
@@ -324,44 +328,52 @@ planner_ticketgen_context_block() {
 
 # ── Verification Plan ────────────────────────────────────────────────────────
 
-# Verification Notes table rows → JSON [{criterion, role, data, source, nav,
-# expected, verifiable}], columns located by header name. [] when there is no table
-# with a Criterion column.
+# Verification Notes table rows → JSON [{criterion, role, nav, expected,
+# verifiable, cell, data, src, none}]. The table is read by Crosscheck's own
+# parser (_planner_testdata_notes_table) and each row's need by Crosscheck's
+# own cell parser (_planner_testdata_cell_need): the Source this composer
+# renders is, by construction, the Source Crosscheck checked. `cell` is
+# whether the Test data cell is non-empty; `src` is the canonical
+# `kind[:value]`. [] when there is no table with a Criterion column.
 _planner_tb_notes_table() {
-  local section="$1"
-  printf '%s\n' "$section" | awk '
-    /^[[:space:]]*\|/ {
-      line = $0
-      gsub(/\\\|/, "\036", line)
-      sub(/^[[:space:]]*\|/, "", line); sub(/\|[[:space:]]*$/, "", line)
-      n = split(line, c, "|")
-      sep = 1
-      for (i = 1; i <= n; i++) { t = c[i]; gsub(/[-: ]/, "", t); if (t != "") { sep = 0; break } }
-      if (sep) next
-      out = ""
-      for (i = 1; i <= n; i++) {
-        t = c[i]; gsub(/\036/, "|", t); gsub(/^[[:space:]]+|[[:space:]]+$/, "", t)
-        out = out (i > 1 ? "\037" : "") t
-      }
-      print out
-    }' | jq -R -s -c '
-      def col($h; $p): [ $h | to_entries[] | select(.value | startswith($p)) | .key ] | first;
-      split("\n") | map(select(length > 0) | split("\u001f")) as $rows
-      | if ($rows | length) == 0 then [] else
-          ($rows[0] | map(ascii_downcase)) as $h
-          | col($h; "criterion") as $ci
-          | if $ci == null then [] else
-              [ $rows[1:][] | {
-                  criterion: .[$ci],
-                  role: (col($h; "role") as $i | if $i == null then null else .[$i] end),
-                  data: (col($h; "test data") as $i | if $i == null then null else .[$i] end),
-                  source: (col($h; "source") as $i | if $i == null then null else .[$i] end),
-                  nav: (col($h; "navigation") as $i | if $i == null then null else .[$i] end),
-                  expected: (col($h; "expected") as $i | if $i == null then null else .[$i] end),
-                  verifiable: (col($h; "verifiable") as $i | if $i == null then null else .[$i] end)
-              } ]
-            end
-        end'
+  local section="$1" rows header ci ri di si ni ei vi row need d kind value
+  rows=$(_planner_testdata_notes_table <<<"$section")
+  [ -n "$rows" ] || {
+    echo "[]"
+    return 0
+  }
+  header=$(head -1 <<<"$rows")
+  ci=$(_planner_testdata_col "$header" "criterion")
+  [ -n "$ci" ] || {
+    echo "[]"
+    return 0
+  }
+  ri=$(_planner_testdata_col "$header" "role")
+  di=$(_planner_testdata_col "$header" "test data")
+  si=$(_planner_testdata_col "$header" "source")
+  ni=$(_planner_testdata_col "$header" "navigation")
+  ei=$(_planner_testdata_col "$header" "expected")
+  vi=$(_planner_testdata_col "$header" "verifiable")
+  while IFS= read -r row; do
+    local -a c=()
+    IFS=$'\037' read -r -a c <<<"$row"
+    d="${di:+${c[di - 1]:-}}"
+    need=$(_planner_testdata_cell_need "$d" "${si:+${c[si - 1]:-}}")
+    IFS=$'\037' read -r d kind value <<<"$need"
+    jq -nc \
+      --arg criterion "${c[ci - 1]:-}" \
+      --arg role "${ri:+${c[ri - 1]:-}}" \
+      --arg nav "${ni:+${c[ni - 1]:-}}" \
+      --arg expected "${ei:+${c[ei - 1]:-}}" \
+      --arg verifiable "${vi:+${c[vi - 1]:-}}" \
+      --arg cell "${di:+${c[di - 1]:-}}" \
+      --arg data "$d" \
+      --arg src "${kind}${value:+:${value}}" \
+      --arg none "$(_planner_testdata_is_none "$d" && echo true || echo false)" \
+      '{criterion: $criterion, role: $role, nav: $nav, expected: $expected,
+        verifiable: $verifiable, cell: (($cell | gsub("\\s"; "") | length) > 0),
+        data: $data, src: $src, none: ($none == "true")}'
+  done < <(tail -n +2 <<<"$rows") | jq -sc .
 }
 
 # Count of legacy numbered notes (`N. Role: … Test data: …`) — they carry no
@@ -370,40 +382,13 @@ _planner_tb_notes_legacy_count() {
   printf '%s\n' "$1" | { grep -cE '^[[:space:]]*[0-9]+[a-z]?[.)][[:space:]]+' || true; }
 }
 
-# The test-data Source contract (#503, docs/test-data-source.md) applied to one
-# notes row: {data, src, none}. The Source comes from the row's Source column
-# (bare `seeded-by:pack` or `Source: seeded-by:pack`), else from a `Source:`
-# inside the Test data cell (the last one wins); backticks and trailing
-# `.,;:!` are dropped, and a `-`/`—`/`–`/`n/a` cell is no Source. `none` mirrors
-# planner-crosscheck-testdata.sh's _planner_testdata_is_none — keep the two in
-# step. Crosscheck parses the same table (_planner_testdata_table_needs).
-_PLANNER_TB_JQ_TESTDATA='
-  def trimws: gsub("^\\s+|\\s+$"; "");
-  def isnone: (. // "") | ascii_downcase | trimws
-    | (capture("^(?<h>[^.;,]*)").h | trimws) as $d
-    | $d == "" or ($d | test("^(none|none[ (].*|n/a|n/a .*|na|-|nothing|nothing .*|not applicable.*|no special data.*|no special test data.*|no test data.*|no data required.*|no data needed.*|no setup.*|no special setup.*)$"));
-  def cleansrc: gsub("[`*]"; "") | trimws | sub("^source\\s*:\\s*"; ""; "i") | trimws
-    | sub("[.,;:!]+$"; "") | trimws
-    | if ascii_downcase | IN("-", "—", "–", "n/a") then "" else . end;
-  def testdata($d; $s):
-    ($d // "" | tostring) as $raw
-    | (($s // "" | tostring) | cleansrc) as $col
-    | (if ($raw | test("source\\s*:"; "i"))
-       then ($raw | capture("^(?<d>.*)source\\s*:(?<s>.*)$"; "i"))
-       else {d: $raw, s: ""} end) as $in
-    | ($in.d | sub("[\\s*]+$"; "") | sub("[.,;]+$"; "") | trimws) as $data
-    | { data: $data,
-        src: (if $col != "" then $col else ($in.s | cleansrc) end),
-        none: ($data | isnone) };
-'
-
 # Verification Notes → AC-ordered rows + mapping warnings, as JSON
 # {rows: [...], warnings: [...], table: <rows in the notes table>}.
 _planner_tb_vplan_json() {
   local spec_file="$1"
   local ac_json notes table_json legacy_count nav
   ac_json=$(_planner_tb_ac_items "$spec_file" | jq -R . | jq -sc .)
-  notes=$(_planner_tb_section "$spec_file" "verification notes")
+  notes=$(_planner_testdata_section "$spec_file" "Verification Notes")
   table_json=$(_planner_tb_notes_table "$notes")
   legacy_count=$(_planner_tb_notes_legacy_count "$notes")
   nav=$(_planner_tb_section "$spec_file" "navigation path" | awk 'NF{print; exit}' |
@@ -414,7 +399,7 @@ _planner_tb_vplan_json() {
     --argjson table "${table_json:-[]}" \
     --argjson legacy "${legacy_count:-0}" \
     --arg nav "$nav" \
-    --arg spec "$(basename "$spec_file")" "${_PLANNER_TB_JQ_TESTDATA}"'
+    --arg spec "$(basename "$spec_file")" '
     def norm: ascii_downcase | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ") | rtrimstr(".");
     def present: . != null and (tostring | gsub("\\s"; "") | length) > 0;
     def nr: "not recorded in spec";
@@ -424,7 +409,7 @@ _planner_tb_vplan_json() {
     | [ range(0; $acs | length) as $i
         | $byText[$acKeys[$i]] as $n
         | ( if ($n.expected | present) then $n.expected else nr end ) as $exp
-        | (if ($n.data | present) then testdata($n.data; $n.source) else null end) as $td
+        | (if $n != null and $n.cell then $n else null end) as $td
         | {
             i: ($i + 1),
             criterion: $acs[$i],
@@ -442,12 +427,15 @@ _planner_tb_vplan_json() {
           } ] as $rows
     | {
         rows: $rows,
+        all: $table,
         table: ($table | length),
         warnings: (
           (if ($table | length) == 0 then
              (if $legacy > 0 or ($acs | length) == 0 then []
               else [ "\($spec): no Verification Notes table — every row marked not recorded" ] end)
            else [ $rows[] | select(.mapped | not) | "\($spec): AC \(.i) has no Verification Notes entry — row marked not recorded" ] end)
+          + [ $table | group_by(.criterion // "" | norm)[] | select(length > 1)
+              | "\($spec): \(length) Verification Notes rows share the criterion \(.[0].criterion // "") — the Verification Plan shows the first; Test Data Prerequisites lists every row" ]
           + [ $table[] | select((.criterion // "" | norm) as $k | $acKeys | index($k) | not)
               | "\($spec): Verification Notes criterion matches no Acceptance Criteria line: \(.criterion // "")" ]
           + (if ($table | length) == 0 and $legacy > 0
@@ -484,7 +472,9 @@ planner_ticketgen_vplan() {
 
 # The `## Test Data Prerequisites` section generated from the Verification
 # Notes table (#503): one `- <what>. Source: <source>` bullet per distinct need
-# whose test data is not none, in AC order (`- <what>` when the row records no
+# whose test data is not none, from EVERY table row in table order — exactly
+# the needs Crosscheck checked, including a row whose criterion matches no AC
+# or repeats another row's (`- <what>` when the row records no
 # Source — the readiness check reads that as unsourced, which it is). When no
 # criterion needs data, a single none bullet. Prints nothing and returns 1 when
 # the spec has no Verification Notes table — the composer then keeps the spec's
@@ -496,7 +486,7 @@ planner_ticketgen_testdata_prereqs() {
   echo "## Test Data Prerequisites"
   echo ""
   jq -r '
-    [ .rows[] | select(.recorded and (.none | not))
+    [ .all[] | select(.cell and (.none | not))
       | if .src != "" then "- \(.data). Source: \(.src)" else "- \(.data)" end ]
     | reduce .[] as $b ([]; if index([$b]) then . else . + [$b] end)
     | if length == 0 then "- None — no acceptance criterion needs test data." else .[] end
@@ -578,6 +568,53 @@ _planner_tb_guard() {
     echo "planner-ticket-body: ${name}: '## Acceptance Criteria' has no criteria items" >&2
     return 1
   fi
+  # Verification Notes must read the same to Crosscheck and to this composer
+  # (#499 x #503): the same refusal list Crosscheck blocks on.
+  local problems
+  problems=$(_planner_testdata_notes_problems "$spec_file")
+  if [ -n "$problems" ]; then
+    echo "planner-ticket-body: ${name}: Verification Notes: $(paste -sd';' <<<"$problems" | sed 's/;/; /g')" >&2
+    return 1
+  fi
+  # Dependencies and type come from the first line starting `## Labels`
+  # (same awk as planner_crosscheck_deps), fenced or not — a second or fenced
+  # copy would let a code sample choose them.
+  local lab
+  lab=$(_planner_testdata_heading_lookalikes "$spec_file" "labels")
+  if [ -n "$lab" ] && { [ "$(grep -c . <<<"$lab")" -gt 1 ] || [ "${lab%%$'\037'*}" = 1 ]; }; then
+    echo "planner-ticket-body: ${name}: needs exactly one '## Labels' heading, outside any code fence" >&2
+    return 1
+  fi
+  # vplan-parse.sh reads every `### Per-Criterion Verification` range in the
+  # body, not only the one under the generated `## Verification Plan` — a copy
+  # anywhere in the spec would be read as the real table (forged ✓ marks).
+  if tr -d '\r' <"$spec_file" | _planner_testdata_fold_ws | grep -qi 'per-criterion verification'; then
+    echo "planner-ticket-body: ${name}: contains 'Per-Criterion Verification' — the composer writes the only one; remove it from the spec" >&2
+    return 1
+  fi
+  # Sections the composer generates: the exact unfenced heading is dropped and
+  # regenerated; any other spelling (`##Verification Plan`, `### Related
+  # Tickets`, NBSP, fenced) would survive into the body ahead of the generated
+  # one, and downstream readers take the first. Test Data Prerequisites is
+  # generated only when the spec has a notes table.
+  local -a owned=("verification plan" "related tickets")
+  [ "$(_planner_tb_notes_table "$(_planner_testdata_section "$spec_file" "Verification Notes")")" != "[]" ] &&
+    owned+=("test data prerequisites")
+  local h looks fenced raw
+  for h in "${owned[@]}"; do
+    looks=$(_planner_testdata_heading_lookalikes "$spec_file" "$h")
+    [ -n "$looks" ] || continue
+    if [ "$(grep -c . <<<"$looks")" -gt 1 ]; then
+      echo "planner-ticket-body: ${name}: more than one '${h}' heading — the composer writes this section" >&2
+      return 1
+    fi
+    IFS=$'\037' read -r fenced raw <<<"$looks"
+    raw="${raw%"${raw##*[![:space:]]}"}"
+    if [ "$fenced" = 1 ] || [ "$(tr '[:upper:]' '[:lower:]' <<<"$raw")" != "## ${h}" ]; then
+      echo "planner-ticket-body: ${name}: '${raw}' looks like the generated '${h}' section — remove it, the composer writes it" >&2
+      return 1
+    fi
+  done
   return 0
 }
 
@@ -617,9 +654,18 @@ planner_ticket_body_compose() {
   else
     prereqs=""
   fi
+  # The Verification Notes section is dropped by the shared reader's rule
+  # (_planner_testdata_section: a `##`/`###` heading starting with it, up to
+  # the next heading), so `### Verification Notes` never leaks into the body.
   body=$(awk -v drop="$drop" '
     {
       isfence = ($0 ~ /^(```|~~~)/)
+      if (!fence && $0 ~ /^#+[[:space:]]/) {
+        vn = tolower($0); sub(/^#+[[:space:]]+/, "", vn); gsub(/[*_]/, "", vn)
+        vskip = ($0 ~ /^###?[[:space:]]/ && index(vn, "verification notes") == 1)
+        if (vskip) next
+      }
+      if (vskip) next
       if (!fence && $0 ~ /^## /) {
         h = tolower($0); sub(/^## +/, "", h); sub(/[[:space:]]+$/, "", h)
         skip = (index(drop, "|" h "|") > 0)

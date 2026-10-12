@@ -36,10 +36,41 @@ The table form looks like this:
 ```
 
 Both TicketGen outputs are generated in bash from the table, so the ticket body carries
-exactly what the spec recorded. A `## Test Data Prerequisites` section hand-written in the
-spec is replaced by the generated one. A spec with no table (an earlier, numbered-line spec)
-keeps its own section, copied as written. When no criterion needs test data, the generated
-section is the single bullet `- None — no acceptance criterion needs test data.`
+exactly what the spec recorded. `## Test Data Prerequisites` lists the need of **every** data
+row (deduplicated, table order) — the same needs Crosscheck checked, including a row whose
+criterion repeats another row's or no longer matches an AC. A `## Test Data Prerequisites`
+section hand-written in the spec is replaced by the generated one, so every item in it must
+be a need some table row records; an item the table lacks is refused (by Crosscheck and by
+TicketGen), never dropped. A spec with no table (an earlier, numbered-line spec) keeps its own
+section, copied as written. When no criterion needs test data, the generated section is the
+single bullet `- None — no acceptance criterion needs test data.`
+
+### One reader, and the shapes it refuses
+
+Crosscheck (`planner-crosscheck-testdata.sh`) and the TicketGen composer
+(`planner-ticket-body.sh`) read Verification Notes with the **same code**:
+`_planner_testdata_section` (the section), `_planner_testdata_notes_table` (the table) and
+`_planner_testdata_cell_need` (one row's need). The composer renders the Source that parser
+returned, in canonical `kind[:value]` form, so the ticket carries exactly what Crosscheck
+checked.
+
+Both also refuse, through `_planner_testdata_notes_problems`, every shape on which two
+Markdown readers could still disagree. Crosscheck reports each as a blocking
+`TEST_DATA_UNOWNED` item `<spec>.md#notes (<reason>)` — in legacy initiatives too — and
+TicketGen refuses the spec:
+
+- more than one heading that reads as Verification Notes, at any level, fenced or not, after
+  folding Unicode whitespace look-alikes (NBSP, zero-width spaces);
+- such a heading the reader would not see: fenced, `#` or `####`, no space after the hashes,
+  or a Unicode space inside;
+- a code fence or a sub-heading inside the section (up to the next heading of the same or a
+  higher level) — a fenced table, or one after a `###`, would otherwise be invisible to one
+  reader;
+- a second table, or a table split by a blank or other line;
+- a table without both a `Criterion` and a `Test data` column, or a row whose cell count
+  differs from the header's (a missing or extra cell shifts the Source column);
+- a table mixed with numbered/bullet `Test data:` lines;
+- a hand-written `## Test Data Prerequisites` item no table row records.
 
 ### Grammar
 
@@ -58,7 +89,8 @@ Writers must follow these rules:
   Write `—` there when the test data is `none`.
 - In the numbered-line form, write the marker as `Source:`, as the **last field** on the
   line. Everything after it, to the end of the line, is the source.
-- A value must not contain `|` (not even escaped as `\|`), a carriage return or a newline. The state log and the ticket's
+- A value must not contain `|` (not even escaped as `\|`), a carriage return or a newline.
+  Crosscheck blocks a Source value containing `|`. The state log and the ticket's
   Verification Plan table are both `|`-delimited.
 - The kind set is **closed**. Any other kind is an error, not an extension point.
 - `Test data: none` needs no Source. `Source: none` is only valid on such a line.
@@ -69,14 +101,15 @@ Readers must be lenient in the same, fixed ways (the Crosscheck parser does all 
 #505 should match):
 
 - The `Test data` and `Source` markers match case-insensitively. `Test Data:`, `Test-data:`,
-  `**Test data:**` and `_Source:_` all count. Markdown `*` is removed from the line, and `_` is
+  `**Test data:**` and `_Source:_` all count. A marker must not follow a letter:
+  `Resource:` and `Latest data:` are prose. Markdown `*` is removed from the line, and `_` is
   removed where it wraps a word.
 - When a pair holds more than one `Source:`, the **last** one wins.
 - Backticks around the source are ignored. Trailing `.`, `,`, `;`, `:` and `!` are stripped. The
   kind is lowercased.
-- The section heading matches by prefix, so `## Verification Notes (per AC)` and
-  `### Verification Notes` both count. The section ends at the next heading. Fenced code blocks
-  are ignored.
+- The section heading matches by prefix (`*`/`_` ignored), so `## Verification Notes (per AC)`
+  and `### Verification Notes` both count. The section ends at the next heading. Fenced code
+  blocks (``` or ~~~) are ignored — and refused inside the section (above).
 - Numbered items (`1.`, `1)`) and bullets (`-`, `*`, `+`) are both need lines. A bullet is
   labelled `b<k>` in findings.
 - Table rows are need lines too. The header row locates the columns by name (lowercased,

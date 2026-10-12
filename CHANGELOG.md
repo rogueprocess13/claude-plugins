@@ -79,6 +79,16 @@ different bodies.
   needs too (`_planner_testdata_table_needs`), so `TEST_DATA_UNOWNED` and the
   `CITED_ARTIFACT_*` checks still fire on table-form specs. `docs/test-data-source.md`
   documents the table form; numbered lines are still parsed.
+- **One Verification Notes reader.** The composer reads the notes with Crosscheck's own
+  section, table and cell parsers, so the Source in the ticket is the Source Crosscheck
+  checked. `##`/`###` headings match by prefix and header markup (`**Source**`) is
+  stripped. Both sides refuse the shapes two readers could still disagree on: a fenced table
+  or one after a sub-heading (which hid a `seeded-by:` need from `TEST_DATA_UNOWNED`), a
+  duplicate or Unicode-spaced heading, a split or second table, ragged rows, a table mixed
+  with list notes. Test Data Prerequisites lists every row's need, and a hand-written item
+  the table lacks is refused, not dropped. `Resource:` is no longer a Source marker. The
+  composer also refuses a hand-written `Per-Criterion Verification` table, a variant
+  spelling of a section it generates, and a fenced or duplicate `## Labels`.
 
 ## ticket-planner 0.17.0 (2026-10-12)
 

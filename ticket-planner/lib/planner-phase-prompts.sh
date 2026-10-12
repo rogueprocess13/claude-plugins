@@ -736,7 +736,8 @@ heading itself is dropped, its content kept), then appends a generated
 \`## Test Data Prerequisites\` and \`## Verification Plan\` (both from
 \`## Verification Notes\`), \`## Related Tickets\` (from the \`blocked-by:\` tokens) and
 the \`## Planner Context\` block. Do not write those four sections yourself (a
-hand-written \`## Test Data Prerequisites\` is replaced by the generated one), and never write the text \`## Planner Context\` anywhere in the
+hand-written \`## Test Data Prerequisites\` is replaced by the generated one, and is
+refused if it names a need the table does not record), and never write the text \`## Planner Context\` anywhere in the
 spec — not as a heading, not inside a code fence, not in a sentence — or the spec
 is refused. The Acceptance Criteria heading must appear exactly once, spelled
 exactly \`## Acceptance Criteria\`, outside any code fence, with at least one item. Everything else the ticket needs
@@ -796,7 +797,9 @@ Acceptance Criteria line, whose \`Criterion\` cell repeats that AC line **verbat
 - **Verifiable** — \`yes\` only when Expected states a concrete, checkable value;
   otherwise \`no\`. Never invent a false concrete value to earn a \`yes\`. At least one
   row should be \`yes\` unless every criterion is genuinely non-checkable.
-- Escape a literal \`|\` inside a cell as \`\\|\`.
+- Escape a literal \`|\` inside a cell as \`\\|\`. Keep it one contiguous table directly
+  under the heading: no code fence, no sub-heading, no second table, every row with the
+  header's cell count — Crosscheck and TicketGen refuse anything else.
 
 **Source (#503) — required whenever Test data is not \`none\`.** "Described" is not
 "available": a ticket that lists data nobody produces fails at verification.

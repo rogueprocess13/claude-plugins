@@ -107,14 +107,16 @@ _planner_testdata_join_items() {
 }
 
 # Print the body of the first `##`/`###` heading starting with <heading>
-# (case-insensitive prefix, so `## Verification Notes (per AC)` counts), up to
-# the next heading, outside fenced code blocks, CR stripped.
+# (case-insensitive prefix, `*`/`_` ignored, so `## Verification Notes (per
+# AC)` counts), up to the next heading of any level, fenced lines (``` or ~~~)
+# skipped, CR stripped. The ONE reader of `## Verification Notes`: Crosscheck
+# and the TicketGen composer (planner-ticket-body.sh) both read it here.
 # Usage: _planner_testdata_section <file> <heading>
 _planner_testdata_section() {
   local file="$1" heading="$2"
   [ -f "$file" ] || return 0
   tr -d '\r' <"$file" | awk -v h="$(_planner_testdata_lower "$heading")" '
-    /^[[:space:]]*```/ { fence = !fence; next }
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
     fence { next }
     /^#+[[:space:]]/ {
       if (on) exit
@@ -223,11 +225,12 @@ _planner_testdata_is_none() {
 }
 
 # Normalize one Verification Notes line: drop markdown emphasis, canonicalize
-# the two markers. Usage: _planner_testdata_norm_line <line>
+# the two markers. A marker must not follow a letter (`Resource:` and
+# `Latest data:` are prose, not markers). Usage: _planner_testdata_norm_line <line>
 _planner_testdata_norm_line() {
   printf '%s' "$1" | tr -d '\r*' |
     sed -E 's/(^|[[:space:]])_+([A-Za-z])/\1\2/g; s/([A-Za-z.:])_+([[:space:]]|$)/\1\2/g' |
-    sed -E 's/[Tt][Ee][Ss][Tt][ -]?[Dd][Aa][Tt][Aa][[:space:]]*:/Test data:/g; s/[Ss][Oo][Uu][Rr][Cc][Ee][[:space:]]*:/Source:/g'
+    sed -E 's/(^|[^A-Za-z])[Tt][Ee][Ss][Tt][ -]?[Dd][Aa][Tt][Aa][[:space:]]*:/\1Test data:/g; s/(^|[^A-Za-z])[Ss][Oo][Uu][Rr][Cc][Ee][[:space:]]*:/\1Source:/g'
 }
 
 # Parse one segment (text after a `Test data:` marker) into
@@ -260,20 +263,56 @@ _planner_testdata_parse_segment() {
   printf '%s\037%s\037%s\n' "$data" "$kind" "$value"
 }
 
-# Verification Notes table rows (#499's Criterion table) as need lines, one
-# per data row: "<k>\x1f<line>", k the 1-based data-row number, line a
-# synthetic "Test data: <cell> Source: <cell>" the segment parser reads like a
-# numbered line. Columns are located by header name (lowercased, `*`/`_`
-# stripped, prefix match): "test data" and the optional "source". A Source cell
-# may be written bare (`seeded-by:pack`) or with its marker (`Source: …`); a
-# Test data cell may also carry the Source inline (`… Source: generate`) — the
-# last Source wins either way. A Source cell of `-`, `—`, `–` or `n/a` is an
-# empty cell. `\|` inside a cell is a literal pipe. A table
-# with no Test data column yields nothing.
-# Usage: _planner_testdata_table_needs <<<"<section>"
-_planner_testdata_table_needs() {
+# ── Verification Notes: one reading shared with the TicketGen composer ─────
+#
+# planner-ticket-body.sh composes the ticket's Verification Plan and Test Data
+# Prerequisites from the same `## Verification Notes` section this file checks
+# for ownership. Both sides MUST read it identically, or a need Crosscheck
+# never saw (or saw differently) reaches the ticket with a Source nobody
+# checked. So both go through the functions below — the section extractor,
+# the table parser and the per-cell need parser — and both refuse the spec
+# shapes on which two Markdown readers could still disagree
+# (_planner_testdata_notes_problems).
+
+# Unicode whitespace look-alikes folded before a heading is compared:
+# NBSP, U+2000-U+200A, U+202F, U+3000 become a space; ZWSP/ZWNJ/ZWJ, U+2060
+# and the BOM are removed. Used only to DETECT a heading variant — the exact
+# spelling is still required.
+_planner_testdata_fold_ws() {
+  LC_ALL=C sed -E 's/\xc2\xa0|\xe2\x80[\x80-\x8a]|\xe2\x80\xaf|\xe3\x80\x80/ /g; s/\xe2\x80[\x8b-\x8d]|\xe2\x81\xa0|\xef\xbb\xbf//g'
+}
+
+# Lines (after CR strip and whitespace folding, `*`/`_` removed, lowercased)
+# that look like a heading for <name>: any number of `#`, optional space,
+# then <name>. Output: "<fenced 0|1>\x1f<raw, unfolded line>" per match, fences being
+# ``` or ~~~ with optional indentation.
+# Usage: _planner_testdata_heading_lookalikes <file> <name-lowercase>
+_planner_testdata_heading_lookalikes() {
+  tr -d '\r' <"$1" | LC_ALL=C awk -v want="$2" '
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    {
+      l = $0
+      gsub(/\302\240|\342\200[\200-\212]|\342\200\257|\343\200\200/, " ", l)
+      gsub(/\342\200[\213-\215]|\342\201\240|\357\273\277/, "", l)
+      l = tolower(l); gsub(/[*_]/, "", l); gsub(/[[:space:]]+/, " ", l)
+      if (l ~ /^ ?#+ ?/) {
+        sub(/^ ?#+ ?/, "", l)
+        if (index(l, want) == 1) printf "%d\037%s\n", fence, $0
+      }
+    }'
+}
+
+# The Verification Notes table as parsed rows: the first output line is the
+# header (cells lowercased, `*`/`_`/backticks stripped, trimmed), each further
+# line one data row (cells trimmed, `\|` restored to a literal `|`), all
+# \x1f-separated. Only the first contiguous `|` block counts (the structure
+# check refuses a second one). Separator rows are skipped.
+# Usage: _planner_testdata_notes_table <<<"<section>"
+_planner_testdata_notes_table() {
   awk '
     /^[[:space:]]*\|/ {
+      if (done) next
+      intable = 1
       line = $0
       gsub(/\\\|/, "\036", line)
       sub(/^[[:space:]]*\|/, "", line); sub(/\|[[:space:]]*$/, "", line)
@@ -281,28 +320,164 @@ _planner_testdata_table_needs() {
       sep = 1
       for (i = 1; i <= n; i++) { t = c[i]; gsub(/[-: ]/, "", t); if (t != "") { sep = 0; break } }
       if (sep) next
-      for (i = 1; i <= n; i++) { gsub(/\036/, "|", c[i]); gsub(/^[[:space:]]+|[[:space:]]+$/, "", c[i]) }
-      if (!hdr) {
-        hdr = 1; di = 0; si = 0
-        for (i = 1; i <= n; i++) {
-          h = tolower(c[i]); gsub(/[*_`]/, "", h); gsub(/^[[:space:]]+/, "", h)
-          if (!di && index(h, "test data") == 1) di = i
-          else if (!si && index(h, "source") == 1) si = i
-        }
-        next
+      out = ""
+      for (i = 1; i <= n; i++) {
+        t = c[i]; gsub(/\036/, "|", t); gsub(/^[[:space:]]+|[[:space:]]+$/, "", t)
+        if (!hdr) { t = tolower(t); gsub(/[*_`]/, "", t); gsub(/^[[:space:]]+|[[:space:]]+$/, "", t) }
+        out = out (i > 1 ? "\037" : "") t
       }
-      if (!di) next
-      k++
-      out = "Test data: " c[di]
-      src = si ? c[si] : ""
-      # An empty-cell placeholder is no Source, not an unknown kind.
-      if (tolower(src) ~ /^(-|—|–|n\/a)$/) src = ""
-      if (src != "") out = out " Source: " src
-      printf "%d\037%s\n", k, out
+      hdr = 1
+      print out
       next
     }
-    { hdr = 0 }
+    { if (intable) done = 1 }
   '
+}
+
+# Column index (1-based) of the first header cell starting with <prefix>, or
+# empty. Usage: _planner_testdata_col <header-line> <prefix>
+_planner_testdata_col() {
+  printf '%s\n' "$1" | awk -F'\037' -v p="$2" '{ for (i = 1; i <= NF; i++) if (index($i, p) == 1) { print i; exit } }'
+}
+
+# One table row's need, parsed exactly like a numbered line's single
+# `Test data: … Source: …` pair: "<data>\x1f<kind>\x1f<value>". A non-empty
+# Source cell is appended last, so it wins over an inline `Source:` in the
+# Test data cell. A `-`/`—`/`–`/`n/a` Source cell is an empty cell. The Test
+# data cell is ONE need — a `Test data:` marker inside it does not split it.
+# Usage: _planner_testdata_cell_need <test-data-cell> <source-cell>
+_planner_testdata_cell_need() {
+  local data="$1" src="$2" line
+  # The cell is the Source: drop backticks/emphasis and a leading marker, so
+  # `Source: x` in the cell reads as x, not as a second pair.
+  src=$(printf '%s' "${src//\`/}" | tr -d '*' | sed -E 's/^[[:space:]_]*[Ss][Oo][Uu][Rr][Cc][Ee][[:space:]_]*:[[:space:]]*//')
+  case "$(_planner_testdata_lower "$(_planner_testdata_trim "$src")")" in
+  - | — | – | n/a) src="" ;;
+  esac
+  line="${data}"
+  [ -n "$(_planner_testdata_trim "$src")" ] && line="${line} Source: ${src}"
+  line=$(_planner_testdata_norm_line "$line")
+  _planner_testdata_parse_segment "$line"
+}
+
+# Verification Notes table rows as needs: "<k>\x1f<data>\x1f<kind>\x1f<value>",
+# k the 1-based data-row number. Needs a Test data column; Source is optional.
+# Usage: _planner_testdata_table_needs <<<"<section>"
+_planner_testdata_table_needs() {
+  local rows header di si k=0 row
+  rows=$(_planner_testdata_notes_table)
+  [ -n "$rows" ] || return 0
+  header=$(head -1 <<<"$rows")
+  di=$(_planner_testdata_col "$header" "test data")
+  si=$(_planner_testdata_col "$header" "source")
+  [ -n "$di" ] || return 0
+  while IFS= read -r row; do
+    k=$((k + 1))
+    local -a cells=()
+    IFS=$'\037' read -r -a cells <<<"$row"
+    printf '%s\037%s\n' "$k" "$(_planner_testdata_cell_need "${cells[di - 1]:-}" "${si:+${cells[si - 1]:-}}")"
+  done < <(tail -n +2 <<<"$rows")
+}
+
+# Structural problems with a spec's Verification Notes on which two Markdown
+# readers could disagree, or on which the ticket would carry a need nobody
+# checked. Every one is refused by both Crosscheck (blocking) and the TicketGen
+# composer. One reason per line; nothing when the spec is fine (including a
+# spec with no Verification Notes at all).
+#   - more than one heading that reads as Verification Notes at any level,
+#     fenced or not, after folding Unicode whitespace look-alikes;
+#   - such a heading that the reader would not see (fenced, `#`/`####`, no
+#     space after the hashes, NBSP/zero-width inside);
+#   - a sub-heading or a code fence inside the section (up to the next
+#     heading of the same or a higher level);
+#   - more than one table, or a table split by a blank/other line;
+#   - a table without both a Criterion and a Test data column, or a row whose
+#     cell count differs from the header's;
+#   - a table plus numbered/bullet Test data lines;
+#   - with a table: a `## Test Data Prerequisites` item no table row records
+#     (the composer replaces that section from the table, so the item would
+#     otherwise vanish unchecked).
+# Usage: _planner_testdata_notes_problems <spec_file>
+_planner_testdata_notes_problems() {
+  local f="$1" looks n raw fenced lexical rows header ncols bad item key
+  [ -f "$f" ] || return 0
+  looks=$(_planner_testdata_heading_lookalikes "$f" "verification notes")
+  [ -n "$looks" ] || return 0
+  n=$(grep -c . <<<"$looks")
+  [ "$n" -gt 1 ] && echo "${n} Verification Notes headings — keep exactly one"
+  while IFS=$'\037' read -r fenced raw; do
+    if [ "$fenced" = 1 ]; then
+      echo "Verification Notes heading inside a code fence"
+    elif ! LC_ALL=C grep -qE '^###? +[A-Za-z*_]' <<<"$raw" ||
+      [[ "$(_planner_testdata_lower "$raw" | sed -E 's/^#+[[:space:]]+//; s/[*_]//g')" != "verification notes"* ]]; then
+      echo "Verification Notes heading must be a '## Verification Notes' or '### Verification Notes' heading in plain ASCII (found '$(_planner_testdata_safe "$raw")')"
+    fi
+  done <<<"$looks"
+  [ "$n" -gt 1 ] && return 0
+
+  # The lexical section: from the heading to the next heading of the same or
+  # a higher level, fences included — what an author sees as "the notes".
+  lexical=$(tr -d '\r' <"$f" | awk '
+    !on && !fence && /^###?[[:space:]]/ {
+      l = tolower($0); sub(/^#+[[:space:]]+/, "", l); gsub(/[*_]/, "", l)
+      if (index(l, "verification notes") == 1) { on = 1; match($0, /^#+/); lvl = RLENGTH; next }
+    }
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; if (on) print; next }
+    on && !fence && /^#+[[:space:]]/ { match($0, /^#+/); if (RLENGTH <= lvl) exit }
+    on { print }')
+  grep -qE '^[[:space:]]*(```|~~~)' <<<"$lexical" && echo "code fence inside Verification Notes"
+  grep -qE '^[[:space:]]*#' <<<"$lexical" && echo "sub-heading inside Verification Notes"
+  grep -qE '^[[:space:]]*\|' <<<"$lexical" || return 0
+
+  awk '/^[[:space:]]*\|/ { if (gap) { bad = 1; exit } in_t = 1; next } in_t { gap = 1 } END { exit !bad }' <<<"$lexical" &&
+    echo "Verification Notes table is split or repeated — one contiguous table only"
+  rows=$(_planner_testdata_notes_table <<<"$lexical")
+  header=$(head -1 <<<"$rows")
+  { [ -n "$(_planner_testdata_col "$header" "criterion")" ] && [ -n "$(_planner_testdata_col "$header" "test data")" ]; } ||
+    echo "Verification Notes table needs a Criterion and a Test data column"
+  ncols=$(awk -F'\037' '{ print NF; exit }' <<<"$header")
+  bad=$(tail -n +2 <<<"$rows" | awk -F'\037' -v n="$ncols" 'NF != n { b++ } END { print b + 0 }')
+  [ "$bad" -gt 0 ] && echo "${bad} Verification Notes table row(s) do not have the header's ${ncols} cells — a missing or extra cell shifts the Source column"
+  _planner_testdata_norm_line "$lexical" | grep -E '^[[:space:]]*([0-9]+[.)]|[-*+])[[:space:]]' | grep -q 'Test data:' &&
+    echo "Verification Notes mixes a table with numbered/bullet Test data lines — use the table only"
+
+  # Hand-written Test Data Prerequisites items must all be table needs.
+  local keys
+  keys=$(_planner_testdata_table_needs <<<"$lexical" | cut -d$'\037' -f2 | while IFS= read -r item; do
+    _planner_testdata_need_key "$item"
+    echo
+  done)
+  while IFS= read -r item; do
+    item=$(sed -E 's/^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+//' <<<"$item")
+    [ -n "$(_planner_testdata_trim "$item")" ] || continue
+    item=$(_planner_testdata_norm_line "$item")
+    item=$(_planner_testdata_parse_segment "$item" | cut -d$'\037' -f1)
+    _planner_testdata_is_none "$item" && continue
+    key=$(_planner_testdata_need_key "$item")
+    grep -qxF -- "$key" <<<"$keys" ||
+      echo "Test Data Prerequisites names '$(_planner_testdata_safe "$item")', which no Verification Notes row records — add it to the table (with its Source) or remove it"
+  done < <(_planner_testdata_exact_section "$f" "## Test Data Prerequisites")
+  return 0
+}
+
+# Comparison key for a need's data text: lowercased, backticks removed,
+# whitespace collapsed, trailing .,;: stripped.
+_planner_testdata_need_key() {
+  local k
+  k=$(printf '%s' "$1" | tr -d '`' | tr '[:upper:]' '[:lower:]' | sed -E 's/[[:space:]]+/ /g')
+  k=$(_planner_testdata_trim "$k")
+  while [[ "$k" =~ [.,\;:]$ ]]; do k="${k%?}"; done
+  printf '%s' "$(_planner_testdata_trim "$k")"
+}
+
+# Body of the exact, unfenced heading line <heading> up to the next heading,
+# fenced lines skipped. Usage: _planner_testdata_exact_section <file> <heading>
+_planner_testdata_exact_section() {
+  tr -d '\r' <"$1" | awk -v h="$2" '
+    /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    /^#+[[:space:]]/ { if (on) exit; t = $0; sub(/[[:space:]]+$/, "", t); if (t == h) on = 1; next }
+    on { print }'
 }
 
 # Every test-data need in one spec, one record per line:
@@ -318,9 +493,6 @@ _planner_testdata_spec_needs() {
     elif [[ "$line" =~ ^[[:space:]]*[-*+][[:space:]] ]]; then
       bullets=$((bullets + 1))
       label="b${bullets}"
-    elif [[ "$line" =~ ^([0-9]+)$'\037'(.*)$ ]]; then
-      label="${BASH_REMATCH[1]}"
-      line="${BASH_REMATCH[2]}"
     else
       continue
     fi
@@ -333,20 +505,20 @@ _planner_testdata_spec_needs() {
       parsed=$(_planner_testdata_parse_segment "$seg")
       printf '%s\037%s\n' "$label" "$parsed"
     done
-  done < <(
-    printf '%s\n' "$section"
-    _planner_testdata_table_needs <<<"$section"
-  )
+  done <<<"$section"
+  _planner_testdata_table_needs <<<"$section"
 }
 
 # Does the spec carry at least one Source field (marks it as written to this
-# contract, even in a legacy initiative)? A `Source:` marker anywhere in the
-# notes, or a non-empty Source cell in the notes table.
+# contract, even in a legacy initiative)? A `Source:` marker on a non-table
+# line of the notes, or a need parsed from the table with a Source.
 _planner_testdata_spec_has_source() {
   local body
   body=$(_planner_testdata_section "$1" "Verification Notes")
-  [[ "$(_planner_testdata_norm_line "$body")" == *"Source:"* ]] && return 0
-  [[ "$(_planner_testdata_table_needs <<<"$body")" == *"Source: "* ]]
+  local prose
+  prose=$(grep -vE '^[[:space:]]*\|' <<<"$body")
+  [[ "$(_planner_testdata_norm_line "$prose")" == *"Source:"* ]] && return 0
+  _planner_testdata_table_needs <<<"$body" | awk -F'\037' '$3 != "" { found = 1 } END { exit !found }'
 }
 
 # Resolve a seeded-by ref to a sibling slug: exact, or the unambiguous
@@ -560,9 +732,19 @@ planner_crosscheck_testdata() {
     strict=$strict_init
     [ "$strict" = true ] || ! _planner_testdata_spec_has_source "$spec_file" || strict=true
 
+    # A Verification Notes shape the composer could read differently blocks
+    # in every initiative: TicketGen refuses it too (_planner_tb_guard).
+    while IFS= read -r reason; do
+      [ -n "$reason" ] || continue
+      items+=("${base}.md#notes (${reason})")
+      affected["$base"]=1
+    done < <(_planner_testdata_notes_problems "$spec_file")
+
     while IFS=$'\037' read -r label data kind value; do
       reason=""
-      if [ -z "$kind" ]; then
+      if [[ "$value" == *"|"* ]]; then
+        reason="Source value contains '|'"
+      elif [ -z "$kind" ]; then
         _planner_testdata_is_none "$data" || reason="missing Source"
       else
         case " ${PLANNER_TESTDATA_SOURCE_KINDS} " in
