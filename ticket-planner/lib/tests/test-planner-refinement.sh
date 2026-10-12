@@ -716,6 +716,64 @@ else
   fail "audit prompt DOES reference dor-result.json" "reference missing"
 fi
 
+# ── #497: a Read/Write-only agent can satisfy the BODY_HASH binding ──────
+# The evaluator has no shell, so it cannot compute a SHA-256. The prompt must
+# hand it the hash as a literal; an agent that copies that literal verbatim
+# must be accepted, and a body edited after the prompt was built must still
+# be rejected.
+
+echo "--- #497: body hash handed to the agent in the prompt ---"
+
+# _planner_refinement_resolve prefers an installed plugin cache over this
+# checkout, so on a dev machine the functions above may come from an older
+# installed ticket-auto-pipeline. Pin the checkout's dor-semantic.sh here so
+# this regression always exercises the code under test.
+# shellcheck source=/dev/null
+source "${LIB_DIR}/../../ticket-auto-pipeline/lib/dor-semantic.sh"
+
+_add_child "PRO-190" "01-excellent"
+planner_refinement_scan "$INIT_ID" >/dev/null
+
+_hash_from_prompt() {
+  echo "$1" | sed -n 's/^\*\*Body hash\*\*: //p' | head -1
+}
+
+p497_scan=$(planner_refinement_prompt "$INIT_ID" "PRO-190" scan)
+p497_audit=$(planner_refinement_prompt "$INIT_ID" "PRO-190" audit)
+h497_scan=$(_hash_from_prompt "$p497_scan")
+h497_audit=$(_hash_from_prompt "$p497_audit")
+h497_real=$(_body_hash "PRO-190")
+
+if [ -n "$h497_real" ] && [ "$h497_scan" = "$h497_real" ] && [ "$h497_audit" = "$h497_real" ]; then
+  pass "scan and audit prompts carry the body hash as a literal"
+else
+  fail "scan and audit prompts carry the body hash as a literal" "scan=$h497_scan audit=$h497_audit want=$h497_real"
+fi
+if ! echo "$p497_scan$p497_audit" | grep -qi "compute this yourself"; then
+  pass "prompts no longer ask the agent to compute the hash"
+else
+  fail "prompts no longer ask the agent to compute the hash" "found the old instruction"
+fi
+
+# Simulated Read/Write-only agent: copies the hash from the prompt verbatim.
+_write_clean_scan "PRO-190" "$h497_scan"
+_write_clean_audit "PRO-190" "$h497_audit"
+if planner_refinement_apply "$INIT_ID" "PRO-190" 2>/dev/null; then
+  pass "result echoing the prompt's body hash is accepted by planner_refinement_apply"
+else
+  fail "result echoing the prompt's body hash is accepted by planner_refinement_apply" "returned nonzero"
+fi
+
+# Body edited after the prompt was built: the same results are now stale.
+echo "- a criterion added after the scan" >>"$(_planner_dir "PRO-190")/body.md"
+stale_rc=0
+stale_err=$(planner_refinement_apply "$INIT_ID" "PRO-190" 2>&1 >/dev/null) || stale_rc=$?
+if [ "$stale_rc" -ne 0 ] && echo "$stale_err" | grep -q "BODY_HASH mismatch"; then
+  pass "body edited after the scan still fails the binding check"
+else
+  fail "body edited after the scan still fails the binding check" "rc=$stale_rc err=$stale_err"
+fi
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 
 echo ""

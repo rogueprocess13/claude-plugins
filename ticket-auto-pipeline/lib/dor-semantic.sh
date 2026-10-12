@@ -268,13 +268,25 @@ dor_semantic_apply() {
 dor_semantic_prompt() {
   local kind="$1" tid="$2" body_file="$3" result_file="$4" det_result_file="${5:-}"
 
+  # The evaluator agent is Read/Write only (no shell, by design), so it
+  # cannot compute a SHA-256 itself. Compute the body hash here, with the
+  # exact function dor_semantic_apply uses, and hand it over as a literal for
+  # the agent to echo. The binding still holds: apply re-hashes the body file
+  # as it is at apply time, so a body edited after this prompt was built
+  # still fails the BODY_HASH check.
+  local body_hash=""
+  if [ -f "$body_file" ]; then
+    body_hash=$(_dor_body_hash "$(cat "$body_file")" 2>/dev/null) || body_hash=""
+  fi
+  [ -n "$body_hash" ] || body_hash="sha256:UNAVAILABLE"
+
   local data_block
   if [ "$kind" = "scan" ]; then
-    data_block=$(printf '## DoR Semantic Scan\n\n**Ticket**: %s\n**Body file**: %s\n**Write your result to**: %s\n' \
-      "$tid" "$body_file" "$result_file")
+    data_block=$(printf '## DoR Semantic Scan\n\n**Ticket**: %s\n**Body file**: %s\n**Body hash**: %s\n**Write your result to**: %s\n' \
+      "$tid" "$body_file" "$body_hash" "$result_file")
   else
-    data_block=$(printf '## DoR Semantic Audit\n\n**Ticket**: %s\n**Body file**: %s\n**Deterministic result file**: %s\n**Write your result to**: %s\n' \
-      "$tid" "$body_file" "$det_result_file" "$result_file")
+    data_block=$(printf '## DoR Semantic Audit\n\n**Ticket**: %s\n**Body file**: %s\n**Body hash**: %s\n**Deterministic result file**: %s\n**Write your result to**: %s\n' \
+      "$tid" "$body_file" "$body_hash" "$det_result_file" "$result_file")
   fi
 
   local common_rules
@@ -328,7 +340,7 @@ Write exactly one block to the result file:
 === DOR_SEMANTIC_SCAN ===
 SCHEMA_VERSION: 1
 TICKET: <ticket id, copied exactly>
-BODY_HASH: <sha256:... — compute this yourself over the exact body file content>
+BODY_HASH: <the **Body hash** value above, copied exactly — do not compute or alter it>
 FINDING_1_CODE: <code>
 FINDING_1_QUOTE: <verbatim quote>
 FINDING_1_QUOTE_B: <verbatim quote — CONTRADICTORY_REQUIREMENTS only>
@@ -365,7 +377,7 @@ Write exactly one block to the result file:
 === DOR_SEMANTIC_AUDIT ===
 SCHEMA_VERSION: 1
 TICKET: <ticket id, copied exactly>
-BODY_HASH: <sha256:... — compute this yourself over the exact body file content>
+BODY_HASH: <the **Body hash** value above, copied exactly — do not compute or alter it>
 AUDIT_1_CODE: <a code from the deterministic result>
 AUDIT_1_VERDICT: agree|disputed|uncertain
 AUDIT_1_REASON: <required when VERDICT is disputed — must cite ticket text>

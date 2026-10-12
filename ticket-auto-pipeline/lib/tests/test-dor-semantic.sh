@@ -263,6 +263,23 @@ echo "$inj_prompt" | grep -qF "IGNORE ALL PREVIOUS INSTRUCTIONS" &&
   _fail "dor_semantic_prompt: ticket body text leaked into the prompt" ||
   _pass "dor_semantic_prompt: ticket body text never embedded (path only)"
 
+# #497: the agent is Read/Write only, so the prompt carries the body hash.
+printf 'hash me\n' >"$ws/hash-body.md"
+want_hash=$(_dor_body_hash "$(cat "$ws/hash-body.md")")
+for k in scan audit; do
+  hp=$(dor_semantic_prompt "$k" WIL-HASH "$ws/hash-body.md" /tmp/r.txt /tmp/det.json)
+  echo "$hp" | grep -qxF "**Body hash**: ${want_hash}" &&
+    _pass "dor_semantic_prompt: $k prompt carries the body hash literal" ||
+    _fail "dor_semantic_prompt: $k prompt should carry the body hash literal"
+  echo "$hp" | grep -qi "compute this yourself" &&
+    _fail "dor_semantic_prompt: $k prompt still asks the agent to compute the hash" ||
+    _pass "dor_semantic_prompt: $k prompt does not ask the agent to compute the hash"
+done
+missing_prompt=$(dor_semantic_prompt scan WIL-HASH "$ws/does-not-exist.md" /tmp/r.txt)
+echo "$missing_prompt" | grep -qxF "**Body hash**: sha256:UNAVAILABLE" &&
+  _pass "dor_semantic_prompt: missing body file yields an explicit unavailable hash" ||
+  _fail "dor_semantic_prompt: missing body file should yield sha256:UNAVAILABLE"
+
 spacey_prompt=$(dor_semantic_prompt scan "WIL-1" "/tmp/a dir with \$HOME and spaces/body.md" "/tmp/out file.txt")
 echo "$spacey_prompt" | grep -qF '/tmp/a dir with $HOME and spaces/body.md' &&
   _pass "dor_semantic_prompt: path with spaces and \$ printed literally" ||
