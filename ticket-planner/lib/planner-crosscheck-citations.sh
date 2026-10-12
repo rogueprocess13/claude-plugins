@@ -59,6 +59,15 @@ PLANNER_CROSSCHECK_CITE_EXTENSIONS=$(
 # precedent search against cached prose instead of the actual codebase.
 PLANNER_CROSSCHECK_EXCLUDE_DIRS=("node_modules" ".venv" ".git" ".ticket-auto" ".claude" "tickets")
 
+# Specific directories excluded from both file resolution and precedent grep,
+# as paths relative to REPOS_ROOT and anchored there — unlike
+# PLANNER_CROSSCHECK_EXCLUDE_DIRS, which prunes a directory *name* anywhere in
+# the tree. Filled per run by the Discovery-pinned repo-ref setup (#217) with
+# each live checkout that a pinned-ref worktree replaces. Anchoring matters:
+# excluding the live `microservices/gateway` by name would also hide every
+# `gateway/` package directory in every other repo (#500).
+PLANNER_CROSSCHECK_EXCLUDE_PATHS=()
+
 # How many lines on either side of a cited line a TargetSymbols symbol name
 # may appear in and still count as resolved (issue #172 suggests N=5).
 PLANNER_CROSSCHECK_SYMBOL_PROXIMITY=5
@@ -116,8 +125,22 @@ _planner_crosscheck_resolve_path() {
   local escaped_rel_path
   escaped_rel_path=$(printf '%s' "$rel_path" | sed 's/\[/\\[/g; s/\]/\\]/g')
 
+  # Anchored exclusions (#500): prune exactly <repos_root>/<path>, nothing else.
+  local -a anchored_prune=()
+  local excl_path
+  for excl_path in "${PLANNER_CROSSCHECK_EXCLUDE_PATHS[@]}"; do
+    [ -n "$excl_path" ] || continue
+    anchored_prune+=(-path "$(_planner_crosscheck_glob_escape "${repos_root%/}/${excl_path}")" -prune -o)
+  done
+
   # shellcheck disable=SC2086
-  find "$repos_root" $prune_expr -prune -o -type f -path "*/${escaped_rel_path}" -print 2>/dev/null | head -1
+  find "$repos_root" $prune_expr -prune -o "${anchored_prune[@]}" \
+    -type f -path "*/${escaped_rel_path}" -print 2>/dev/null | head -1
+}
+
+# Escape find -path/-name glob metacharacters so a literal path matches itself.
+_planner_crosscheck_glob_escape() {
+  printf '%s' "$1" | sed 's/[][*?\\]/\\&/g'
 }
 
 # Search REPOS_ROOT for a whole-word occurrence of an identifier, excluding
@@ -136,8 +159,25 @@ _planner_crosscheck_precedent_search() {
     include_args+=(--include="*.${ext}")
   done
 
-  grep -rlIE "${exclude_args[@]}" "${include_args[@]}" \
-    "\\<${identifier}\\>" "$repos_root" >/dev/null 2>&1
+  # Anchored exclusions (#500) cannot be expressed as --exclude-dir, which
+  # matches a directory name anywhere: filter matches by path prefix instead.
+  local match excl_path excluded
+  while IFS= read -r match; do
+    [ -n "$match" ] || continue
+    excluded=0
+    for excl_path in "${PLANNER_CROSSCHECK_EXCLUDE_PATHS[@]}"; do
+      [ -n "$excl_path" ] || continue
+      case "$match" in
+      "${repos_root%/}/${excl_path}"/*)
+        excluded=1
+        break
+        ;;
+      esac
+    done
+    [ "$excluded" -eq 0 ] && return 0
+  done < <(grep -rlIE "${exclude_args[@]}" "${include_args[@]}" \
+    "\\<${identifier}\\>" "${repos_root%/}" 2>/dev/null)
+  return 1
 }
 
 # Split a `path:line`, `path:line-line2`, or `path:~line` (approximate,
@@ -615,13 +655,12 @@ planner_crosscheck_citations() {
   # #217: resolve against the ref Discovery actually explored, not whatever
   # the live REPOS_ROOT checkout happens to be on right now. A no-op when
   # Discovery recorded no repo-ref, or the live checkout already matches.
-  local -a _pcc_orig_exclude_dirs=("${PLANNER_CROSSCHECK_EXCLUDE_DIRS[@]}")
+  local -a _pcc_orig_exclude_paths=("${PLANNER_CROSSCHECK_EXCLUDE_PATHS[@]}")
   if declare -f planner_crosscheck_repo_ref_setup >/dev/null 2>&1; then
-    local _pcc_overrides _pcc_excl
-    _pcc_overrides=$(planner_crosscheck_repo_ref_setup "$initiative_id" "$repos_root")
-    for _pcc_excl in $_pcc_overrides; do
-      PLANNER_CROSSCHECK_EXCLUDE_DIRS+=("$_pcc_excl")
-    done
+    local _pcc_excl
+    while IFS= read -r _pcc_excl; do
+      [ -n "$_pcc_excl" ] && PLANNER_CROSSCHECK_EXCLUDE_PATHS+=("$_pcc_excl")
+    done < <(planner_crosscheck_repo_ref_setup "$initiative_id" "$repos_root")
   fi
 
   local total=0 passed=0 failed=0
@@ -651,7 +690,7 @@ planner_crosscheck_citations() {
     done
   fi
 
-  PLANNER_CROSSCHECK_EXCLUDE_DIRS=("${_pcc_orig_exclude_dirs[@]}")
+  PLANNER_CROSSCHECK_EXCLUDE_PATHS=("${_pcc_orig_exclude_paths[@]}")
 
   echo "planner-crosscheck-citations: $passed passed, $failed failed out of $total files"
   return $((failed > 0 ? 1 : 0))

@@ -339,15 +339,22 @@ resolve and record its ref — one \`repo-ref\` state-log line per repo, not per
 file:
 
 \`\`\`bash
-root_abs=\$(cd "\${REPOS_ROOT}" && pwd -P)
+root_phys=\$(cd "\${REPOS_ROOT}" && pwd -P)
+root_log=\$(cd "\${REPOS_ROOT}" && pwd -L)
 for repo_dir in <each repo directory you explored>; do
   # Record the repo's path RELATIVE TO REPOS_ROOT (e.g. microservices/foo),
   # not its bare name — nested repos are otherwise unresolvable later (#500).
   repo_top=\$(git -C "\$repo_dir" rev-parse --show-toplevel 2>/dev/null) || continue
-  repo_top=\$(cd "\$repo_top" && pwd -P) || continue
-  case "\$repo_top" in
-    "\$root_abs"/*) repo_name="\${repo_top#"\$root_abs"/}" ;;
-    *) repo_name=\$(basename "\$repo_top") ;;
+  repo_phys=\$(cd "\$repo_top" && pwd -P) || continue
+  repo_log=\$(cd "\$repo_dir" && pwd -L) || continue
+  case "\$repo_phys" in
+    "\$root_phys"/*) repo_name="\${repo_phys#"\$root_phys"/}" ;;
+    *) case "\$repo_log" in
+         # Physical path is outside REPOS_ROOT (a symlinked-in repo): use the
+         # logical path under REPOS_ROOT instead.
+         "\$root_log"/*) repo_name="\${repo_log#"\$root_log"/}" ;;
+         *) repo_name=\$(basename "\$repo_top") ;;
+       esac ;;
   esac
   branch=\$(git -C "\$repo_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)
   sha=\$(git -C "\$repo_dir" rev-parse HEAD 2>/dev/null)

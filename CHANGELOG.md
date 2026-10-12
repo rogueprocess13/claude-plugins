@@ -26,11 +26,20 @@ down (`REPOS_ROOT/microservices/<repo>`) was therefore always `missing` in docto
 silently resolved its citations against the live checkout instead of the pinned ref.
 
 - **New `planner_crosscheck_repo_dir`** (`lib/planner-crosscheck-repo-ref.sh`) resolves a recorded
-  repo to its live checkout: a path relative to `REPOS_ROOT` first, else a search of `REPOS_ROOT`
-  (depth `PLANNER_REPO_SEARCH_DEPTH`, default 3) for exactly one git checkout of that name.
-  Several same-named checkouts resolve to nothing rather than a guess; crosscheck worktrees are
-  never candidates. Doctor and Crosscheck both use it.
+  repo to its live checkout. A relative path is used as-is and never falls back to a search. A
+  bare name is tried at `REPOS_ROOT/<name>`, then searched for under `REPOS_ROOT` (depth
+  `PLANNER_REPO_SEARCH_DEPTH`, default 3, following a symlinked `REPOS_ROOT`). Exactly one git
+  checkout of that name must match. Several matches resolve to nothing rather than a guess.
+  Crosscheck worktrees are never candidates. Doctor and Crosscheck both use it.
+- **New `planner_crosscheck_repo_refs_resolved`** deduplicates refs on the resolved directory, so a
+  legacy bare name and a newer relative path to the same checkout create one worktree, not two.
 - The pinned-ref worktree is now created beside the live repo in its own parent directory.
+- **Crosscheck excludes the replaced live checkout by anchored path, not by directory name.**
+  `planner_crosscheck_repo_ref_setup` returns paths relative to `REPOS_ROOT`, held in the new
+  `PLANNER_CROSSCHECK_EXCLUDE_PATHS`. File resolution prunes exactly that directory, and the
+  precedent grep filters matches by path prefix. Before, excluding the live `microservices/gateway`
+  also hid every `gateway/` package directory in sibling repos, which caused false
+  `CITATION_UNRESOLVED` findings.
 - Discovery now records the repo's path relative to `REPOS_ROOT` (e.g.
   `microservices/debt-collection@main@<sha>`). Bare names from older initiatives still resolve.
 - Doctor reports an unresolvable repo as `missing` with the reason, and shows the resolved path.

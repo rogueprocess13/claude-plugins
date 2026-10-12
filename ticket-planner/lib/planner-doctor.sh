@@ -186,13 +186,13 @@ planner_doctor_run() {
     _row "repo-ref" "warn" "" "REPOS_ROOT" "skipped — REPOS_ROOT unresolved"
   else
     local repo ref sha live_dir live_sha rel_dir excl found="false"
-    while read -r repo ref sha; do
+    # #500: Discovery may record a path relative to REPOS_ROOT
+    # (`microservices/foo`) or, on older initiatives, a bare name that lives
+    # one level down — resolved (and deduplicated on the resolved dir) the
+    # same way Crosscheck does.
+    while IFS=$'\037' read -r live_dir repo ref sha; do
       [ -z "$repo" ] && continue
       found="true"
-      # #500: Discovery may record a path relative to REPOS_ROOT
-      # (`microservices/foo`) or, on older initiatives, a bare name that
-      # lives one level down — resolve both the same way Crosscheck does.
-      live_dir=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "$repo")
       live_sha=""
       rel_dir="$repo"
       if [ -n "$live_dir" ]; then
@@ -208,7 +208,7 @@ planner_doctor_run() {
         _row "repo-ref:${repo}" "missing" "$sha" "REPOS_ROOT/${repo}" "no git checkout named '${repo##*/}' found under REPOS_ROOT (or several — ambiguous)"
         _issues=$((_issues + 1))
       else
-        excl=$(planner_crosscheck_repo_ref_ensure "$REPOS_ROOT" "$repo" "$ref" "$sha")
+        excl=$(planner_crosscheck_repo_ref_ensure "$REPOS_ROOT" "$repo" "$ref" "$sha" "$live_dir")
         if [ -n "$excl" ]; then
           _row "repo-ref:${repo}" "ok" "$sha" "REPOS_ROOT/${rel_dir}-crosscheck-*" "live checkout diverged — isolated worktree ensured"
         else
@@ -216,7 +216,7 @@ planner_doctor_run() {
           _issues=$((_issues + 1))
         fi
       fi
-    done < <(planner_crosscheck_repo_refs "$initiative_id")
+    done < <(planner_crosscheck_repo_refs_resolved "$initiative_id" "$REPOS_ROOT")
     [ "$found" = "false" ] && _row "repo-ref" "info" "" "state.log" "no Discovery repo-ref entries recorded for ${initiative_id}"
   fi
 

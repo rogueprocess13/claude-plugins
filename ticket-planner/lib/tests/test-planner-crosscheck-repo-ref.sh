@@ -108,9 +108,9 @@ fi
 
 OUT=$(planner_crosscheck_repo_ref_ensure "$REPOS_ROOT" "ledgerly" "develop" "$DEVELOP_SHA")
 if [ "$OUT" = "ledgerly" ]; then
-  pass "mismatched live checkout returns the live dir's basename to exclude"
+  pass "mismatched live checkout returns the live dir's REPOS_ROOT-relative path to exclude"
 else
-  fail "mismatched live checkout returns the live dir's basename to exclude" "$OUT"
+  fail "mismatched live checkout returns the live dir's REPOS_ROOT-relative path to exclude" "$OUT"
 fi
 
 WORKTREE_DIR=$(find "$REPOS_ROOT" -maxdepth 1 -type d -name 'ledgerly-crosscheck-develop-*' | head -1)
@@ -243,18 +243,148 @@ fi
 # whose live checkout has moved.
 OUT=$(planner_crosscheck_repo_ref_ensure "$REPOS_ROOT" "debt-collection" "feature" "$NESTED_FEATURE_SHA")
 NESTED_WT=$(find "$NESTED_PARENT" -maxdepth 1 -type d -name 'debt-collection-crosscheck-feature-*' | head -1)
-if [ "$OUT" = "debt-collection" ] && [ -f "${NESTED_WT}/src/Collector.java" ]; then
+if [ "$OUT" = "microservices/debt-collection" ] && [ -f "${NESTED_WT}/src/Collector.java" ]; then
   pass "nested repo with a moved live checkout gets a pinned-ref worktree beside it"
 else
   fail "nested repo gets a pinned-ref worktree beside it" "out='$OUT' wt='$NESTED_WT'"
 fi
 
-# The worktree must not make the bare name ambiguous on a later call.
+# A same-named checkout *inside* a crosscheck worktree directory must not
+# make the bare name ambiguous — the `*-crosscheck-*` prune has to fire.
+mkdir -p "${REPOS_ROOT}/x-crosscheck-y/debt-collection/.git"
 OUT=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "debt-collection")
 if [ "$OUT" = "$NESTED_DIR" ]; then
-  pass "crosscheck worktrees are never resolution candidates"
+  pass "crosscheck worktree directories are never resolution candidates"
 else
-  fail "crosscheck worktrees are never resolution candidates" "$OUT"
+  fail "crosscheck worktree directories are never resolution candidates" "$OUT"
+fi
+rm -rf "${REPOS_ROOT}/x-crosscheck-y"
+
+# Glob metacharacters in a recorded name match literally, not as a pattern.
+OUT=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "debt-*")
+if [ -z "$OUT" ]; then
+  pass "a glob in a recorded name never matches a real repo"
+else
+  fail "a glob in a recorded name never matches a real repo" "$OUT"
+fi
+
+# A stale relative path never falls back to a name search (which would pick
+# another same-named repo).
+mv "${REPOS_ROOT}/commons/util" "${REPOS_ROOT}/commons/util-moved"
+OUT=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "commons/util")
+if [ -z "$OUT" ]; then
+  pass "a stale relative path resolves to nothing, not to a same-named repo elsewhere"
+else
+  fail "a stale relative path resolves to nothing" "$OUT"
+fi
+rm -rf "${REPOS_ROOT}/commons" "${REPOS_ROOT}/legacy"
+
+# A symlinked REPOS_ROOT is followed by the bare-name search.
+ln -s "$REPOS_ROOT" "${TMPDIR}/repos-link"
+OUT=$(planner_crosscheck_repo_dir "${TMPDIR}/repos-link" "debt-collection")
+if [ "$OUT" = "${TMPDIR}/repos-link/microservices/debt-collection" ]; then
+  pass "a bare name resolves under a symlinked REPOS_ROOT"
+else
+  fail "a bare name resolves under a symlinked REPOS_ROOT" "$OUT"
+fi
+
+# ── #500 review: anchored exclusion, dedupe, end-to-end nested citations ────
+
+echo "--- #500: nested citations end to end ---"
+
+# microservices/gateway: live on main, Discovery pinned it at feature.
+GW_DIR="${NESTED_PARENT}/gateway"
+git -C "$NESTED_PARENT" init -q gateway
+git -C "$GW_DIR" config user.email "test@example.com"
+git -C "$GW_DIR" config user.name "Test"
+mkdir -p "${GW_DIR}/src"
+echo "class Router {}" >"${GW_DIR}/src/Router.java"
+git -C "$GW_DIR" add -A
+git -C "$GW_DIR" commit -q -m "main: baseline"
+git -C "$GW_DIR" branch -M main
+git -C "$GW_DIR" checkout -q -b feature
+echo "class RateLimiter {}" >"${GW_DIR}/src/RateLimiter.java"
+git -C "$GW_DIR" add -A
+git -C "$GW_DIR" commit -q -m "feature: rate limiter"
+GW_FEATURE_SHA=$(git -C "$GW_DIR" rev-parse HEAD)
+git -C "$GW_DIR" checkout -q main
+echo "class LiveOnlySymbol {}" >"${GW_DIR}/src/LiveOnly.java"
+git -C "$GW_DIR" add -A
+git -C "$GW_DIR" commit -q -m "main: moved on since Discovery"
+
+# Sibling repo with a package directory that shares the gateway's name.
+BILLING_DIR="${NESTED_PARENT}/billing"
+mkdir -p "${BILLING_DIR}/src/main/java/com/x/gateway"
+git -C "$NESTED_PARENT" init -q billing
+echo "class BillingGatewayClient {}" >"${BILLING_DIR}/src/main/java/com/x/gateway/Client.java"
+
+NINIT="INIT-500-nested"
+planner_state_init "$NINIT" "nested test" >/dev/null 2>&1
+# An older run recorded the bare name, the newer one the relative path —
+# both name the same checkout and must yield exactly one entry/worktree.
+planner_state_write "$NINIT" "META" "discovery" "repo-ref" "gateway@feature@${GW_FEATURE_SHA}"
+planner_state_write "$NINIT" "META" "discovery" "repo-ref" "microservices/gateway@feature@${GW_FEATURE_SHA}"
+
+OUT=$(planner_crosscheck_repo_refs_resolved "$NINIT" "$REPOS_ROOT")
+if [ "$(printf '%s\n' "$OUT" | grep -c .)" -eq 1 ] &&
+  [ "$(printf '%s' "$OUT" | cut -d$'\037' -f2)" = "microservices/gateway" ]; then
+  pass "bare-name and relative-path refs to one checkout dedupe, last write wins"
+else
+  fail "bare-name and relative-path refs dedupe" "$OUT"
+fi
+
+OUT=$(planner_crosscheck_repo_ref_setup "$NINIT" "$REPOS_ROOT")
+WT_COUNT=$(find "$NESTED_PARENT" -maxdepth 1 -type d -name 'gateway-crosscheck-*' | grep -c .)
+if [ "$OUT" = "microservices/gateway" ] && [ "$WT_COUNT" -eq 1 ]; then
+  pass "setup returns the anchored relative path and creates exactly one worktree"
+else
+  fail "setup returns the anchored relative path, one worktree" "out='$OUT' worktrees=$WT_COUNT"
+fi
+
+NART="${REPOS_ROOT}/.ticket-auto/initiatives/${NINIT}/artifacts"
+mkdir -p "$NART"
+cat >"${NART}/proposal.md" <<'EOF'
+## Title
+Nested repo-ref test proposal
+
+## Description
+The client lives at `src/main/java/com/x/gateway/Client.java:1` and the
+limiter at `src/RateLimiter.java:1`. Billing mirrors the existing `BillingGatewayClient`.
+
+## Labels
+planned
+EOF
+
+if planner_crosscheck_citations "$NINIT" >"${TMPDIR}/cc-nested.txt" 2>&1; then
+  pass "sibling repo's same-named package dir is not excluded with the live repo"
+else
+  fail "sibling repo's same-named package dir is not excluded" "$(cat "${TMPDIR}/cc-nested.txt")"
+fi
+
+# The live (moved-on) checkout is still excluded: a symbol that exists only
+# there, not at the pinned ref, must not count as a precedent.
+cat >"${NART}/proposal.md" <<'EOF'
+## Title
+Nested repo-ref test proposal
+
+## Description
+Routing mirrors the existing `LiveOnlySymbol`.
+
+## Labels
+planned
+EOF
+if planner_crosscheck_citations "$NINIT" >"${TMPDIR}/cc-nested2.txt" 2>&1; then
+  fail "live-only symbol is excluded in favour of the pinned ref" "$(cat "${TMPDIR}/cc-nested2.txt")"
+elif grep -q "PRECEDENT_NOT_FOUND.*LiveOnlySymbol" "${TMPDIR}/cc-nested2.txt"; then
+  pass "live-only symbol is excluded in favour of the pinned ref"
+else
+  fail "live-only symbol is excluded in favour of the pinned ref" "$(cat "${TMPDIR}/cc-nested2.txt")"
+fi
+
+if [ "${#PLANNER_CROSSCHECK_EXCLUDE_PATHS[@]}" -eq 0 ]; then
+  pass "anchored exclusions are restored after the run"
+else
+  fail "anchored exclusions are restored after the run" "${PLANNER_CROSSCHECK_EXCLUDE_PATHS[*]}"
 fi
 
 if [ "$(git -C "$NESTED_DIR" rev-parse --abbrev-ref HEAD)" = "main" ]; then

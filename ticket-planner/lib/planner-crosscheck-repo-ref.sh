@@ -43,17 +43,19 @@ fi
 
 # Read back the most recent repo-ref Discovery recorded for each repo.
 # Usage: planner_crosscheck_repo_refs <initiative_id>
-# Output (stdout): one "<repo> <ref> <sha>" line per repo, last-write-wins
-# per repo name. Nothing if Discovery never recorded a repo-ref (older
-# initiatives, or a repo Discovery didn't touch).
+# Output (stdout): one "<repo> <ref> <sha>" line per recorded repo name,
+# last-write-wins per name, in the order each name was last written (so a
+# caller deduplicating further keeps last-write-wins). Nothing if Discovery
+# never recorded a repo-ref (older initiatives, or a repo Discovery didn't
+# touch).
 planner_crosscheck_repo_refs() {
   local initiative_id="$1"
   local log
   log=$(planner_state_log "$initiative_id")
   [ -f "$log" ] || return 0
 
-  declare -A _pcrr_seen=()
-  local line phase step status msg repo rest
+  declare -A _pcrr_seen=() _pcrr_seq=()
+  local phase step status msg repo rest n=0
 
   while IFS='|' read -r _ts phase step status msg; do
     [ "$phase" = "META" ] || continue
@@ -66,31 +68,42 @@ planner_crosscheck_repo_refs() {
     [ -z "$repo" ] && continue
     [ "$rest" = "$msg" ] && continue # no '@' at all — malformed, skip
 
+    n=$((n + 1))
     _pcrr_seen["$repo"]="$rest"
+    _pcrr_seq["$repo"]="$n"
   done <"$log"
 
   local key val ref sha
-  for key in "${!_pcrr_seen[@]}"; do
+  while IFS=' ' read -r _n key; do
+    [ -n "$key" ] || continue
     val="${_pcrr_seen[$key]}"
     ref="${val%%@*}"
     sha="${val#*@}"
     [ "$sha" = "$val" ] && sha="" # no sha half recorded
     echo "${key} ${ref} ${sha}"
-  done
+  done < <(for key in "${!_pcrr_seen[@]}"; do
+    echo "${_pcrr_seq[$key]} ${key}"
+  done | sort -n)
 }
 
 # Resolve the live checkout directory for a repo Discovery recorded (#500).
 # <repo> is either a path relative to <repos_root> (`microservices/foo`, what
 # Discovery records now) or a bare directory name (`foo`, what older
-# initiatives recorded). It is joined to <repos_root> first; if that is not a
-# git checkout, <repos_root> is searched (depth PLANNER_REPO_SEARCH_DEPTH,
-# default 3) for a git checkout with the same directory name. Exactly one
-# match is used; zero or several resolve to nothing — never a guess between
-# two same-named repos. Crosscheck worktrees (`*-crosscheck-*`) and the
+# initiatives recorded).
+#   - A relative path (contains `/`) is used as-is and nothing else: if it is
+#     no longer a git checkout, it resolves to nothing rather than to some
+#     other same-named repo elsewhere.
+#   - A bare name is tried at <repos_root>/<name> first, then <repos_root> is
+#     searched (depth PLANNER_REPO_SEARCH_DEPTH, default 3; a symlinked
+#     <repos_root> is followed) for a git checkout with that name. Exactly
+#     one match is used; zero or several resolve to nothing — never a guess
+#     between two same-named repos.
+# Crosscheck worktrees (`*-crosscheck-*`, and anything under one) and the
 # planner's own directories are never candidates.
 #
 # Usage: planner_crosscheck_repo_dir <repos_root> <repo>
-# Output (stdout): absolute live repo directory, or empty if unresolved.
+# Output (stdout): live repo directory (<repos_root>/<relative path>), or
+# empty if unresolved.
 planner_crosscheck_repo_dir() {
   local repos_root="${1%/}" repo="$2"
   [ -n "$repos_root" ] && [ -n "$repo" ] || return 0
@@ -104,20 +117,53 @@ planner_crosscheck_repo_dir() {
     echo "${repos_root}/${repo}"
     return 0
   fi
+  case "$repo" in
+  */*) return 0 ;; # a stale relative path never falls back to a name search
+  esac
 
-  local base="${repo##*/}" depth="${PLANNER_REPO_SEARCH_DEPTH:-3}"
-  local cand
+  # Escape find -name glob metacharacters so the name matches literally.
+  local pattern
+  pattern=$(printf '%s' "$repo" | sed 's/[][*?\\]/\\&/g')
+
+  local depth="${PLANNER_REPO_SEARCH_DEPTH:-3}" cand
   local -a matches=()
   while IFS= read -r cand; do
     [ -n "$cand" ] || continue
     [ -e "${cand}/.git" ] && matches+=("$cand")
-  done < <(find "$repos_root" -mindepth 1 -maxdepth "$depth" \
+  done < <(find -H "$repos_root" -mindepth 1 -maxdepth "$depth" \
     \( -name .git -o -name .ticket-auto -o -name .claude -o -name node_modules \
     -o -name .venv -o -name '*-crosscheck-*' \) -prune \
-    -o -type d -name "$base" -print 2>/dev/null)
+    -o -type d -name "$pattern" -print 2>/dev/null)
 
   [ "${#matches[@]}" -eq 1 ] && echo "${matches[0]}"
   return 0
+}
+
+# Discovery's repo-refs, resolved to live checkouts and deduplicated on the
+# resolved directory (last write wins), so an initiative whose older run
+# recorded `gateway@…` and newer run `microservices/gateway@…` yields one
+# entry, not two worktrees.
+# Usage: planner_crosscheck_repo_refs_resolved <initiative_id> <repos_root>
+# Output (stdout): one "<live_dir> <repo> <ref> <sha>" line, fields separated
+# by \037 (unit separator — a non-whitespace IFS keeps an empty field), one line
+# per repo; <live_dir> is empty for a repo that does not resolve.
+planner_crosscheck_repo_refs_resolved() {
+  local initiative_id="$1" repos_root="$2"
+  local repo ref sha dir key
+  local -a order=()
+  declare -A _pcrrr_line=()
+
+  while read -r repo ref sha; do
+    [ -z "$repo" ] && continue
+    dir=$(planner_crosscheck_repo_dir "$repos_root" "$repo")
+    key="${dir:-unresolved:${repo}}"
+    [ -n "${_pcrrr_line[$key]+x}" ] || order+=("$key")
+    _pcrrr_line["$key"]=$(printf '%s\037%s\037%s\037%s' "$dir" "$repo" "$ref" "$sha")
+  done < <(planner_crosscheck_repo_refs "$initiative_id")
+
+  for key in "${order[@]}"; do
+    printf '%s\n' "${_pcrrr_line[$key]}"
+  done
 }
 
 # Ensure a tree matching <repo>@<sha> is resolvable under <repos_root>,
@@ -132,15 +178,16 @@ planner_crosscheck_repo_dir() {
 # resolving against the live checkout rather than blocking the run over
 # infrastructure trouble.
 #
-# Usage: planner_crosscheck_repo_ref_ensure <repos_root> <repo> <ref> <sha>
-# Output (stdout): the live repo dir's basename, if it should be excluded
-# from citation resolution in favor of the worktree. Empty otherwise.
+# Usage: planner_crosscheck_repo_ref_ensure <repos_root> <repo> <ref> <sha> [live_dir]
+#   [live_dir] — an already-resolved live checkout (skips the lookup).
+# Output (stdout): the live repo dir's path relative to <repos_root>, if it
+# should be excluded from citation resolution in favor of the worktree.
+# Empty otherwise.
 planner_crosscheck_repo_ref_ensure() {
-  local repos_root="$1" repo="$2" ref="$3" sha="$4"
-  local live_dir
+  local repos_root="${1%/}" repo="$2" ref="$3" sha="$4" live_dir="${5:-}"
 
   [ -n "$sha" ] || return 0
-  live_dir=$(planner_crosscheck_repo_dir "$repos_root" "$repo")
+  [ -n "$live_dir" ] || live_dir=$(planner_crosscheck_repo_dir "$repos_root" "$repo")
   [ -n "$live_dir" ] || return 0
 
   local live_sha
@@ -161,27 +208,26 @@ planner_crosscheck_repo_ref_ensure() {
   fi
   [ -d "$worktree_dir" ] || return 0
 
-  basename "$live_dir"
+  echo "${live_dir#"${repos_root}"/}"
 }
 
 # Apply every repo-ref Discovery recorded for one initiative: for each repo
 # whose live checkout no longer matches, ensure an isolated worktree exists
-# and collect the live dir's basename so the caller can exclude it from
-# resolution.
+# and collect the live dir's path relative to <repos_root> so the caller can
+# exclude exactly that directory (anchored, not by name) from resolution.
 #
 # Usage: planner_crosscheck_repo_ref_setup <initiative_id> <repos_root>
-# Output (stdout): space-separated list of live-repo basenames to exclude
-# from citation resolution (may be empty — the common case, when the live
-# checkout already matches or Discovery recorded no repo-ref).
+# Output (stdout): one relative path per line to exclude from citation
+# resolution (may be empty — the common case, when the live checkout already
+# matches or Discovery recorded no repo-ref).
 planner_crosscheck_repo_ref_setup() {
   local initiative_id="$1" repos_root="$2"
-  local repo ref sha excl exclusions=""
+  local dir repo ref sha excl
 
-  while read -r repo ref sha; do
-    [ -z "$repo" ] && continue
-    excl=$(planner_crosscheck_repo_ref_ensure "$repos_root" "$repo" "$ref" "$sha")
-    [ -n "$excl" ] && exclusions="${exclusions}${exclusions:+ }${excl}"
-  done < <(planner_crosscheck_repo_refs "$initiative_id")
-
-  echo "$exclusions"
+  while IFS=$'\037' read -r dir repo ref sha; do
+    [ -n "$dir" ] || continue
+    excl=$(planner_crosscheck_repo_ref_ensure "$repos_root" "$repo" "$ref" "$sha" "$dir")
+    [ -n "$excl" ] && printf '%s\n' "$excl"
+  done < <(planner_crosscheck_repo_refs_resolved "$initiative_id" "$repos_root")
+  return 0
 }
