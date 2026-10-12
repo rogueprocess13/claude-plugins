@@ -206,6 +206,50 @@ else
 fi
 git -C "$REPO_DIR" checkout -q main
 
+# #500: nested repo (REPOS_ROOT/microservices/<repo>) — bare name recorded
+# by an older Discovery, and the relative path recorded by the current one.
+NESTED_DIR="${REPOS_ROOT}/microservices/debt-collection"
+mkdir -p "${REPOS_ROOT}/microservices"
+git -C "${REPOS_ROOT}/microservices" init -q debt-collection
+git -C "$NESTED_DIR" config user.email "test@example.com"
+git -C "$NESTED_DIR" config user.name "Test"
+echo "one" >"${NESTED_DIR}/a.txt"
+git -C "$NESTED_DIR" add -A
+git -C "$NESTED_DIR" commit -q -m "baseline"
+NESTED_SHA=$(git -C "$NESTED_DIR" rev-parse HEAD)
+INIT_ID3="INIT-doctor-test-3"
+planner_state_init "$INIT_ID3" "doctor test 3" >/dev/null 2>&1
+planner_state_write "$INIT_ID3" "META" "discovery" "repo-ref" "debt-collection@main@${NESTED_SHA}" >/dev/null 2>&1
+OUT=$(planner_doctor_run "$INIT_ID3" 2>/dev/null)
+ROW=$(doctor_row "$OUT" "repo-ref:debt-collection")
+if echo "$ROW" | grep -q "|ok|${NESTED_SHA}|REPOS_ROOT/microservices/debt-collection|"; then
+  pass "a bare-named nested repo resolves under REPOS_ROOT/microservices (#500)"
+else
+  fail "bare-named nested repo resolves (#500)" "$ROW"
+fi
+
+INIT_ID4="INIT-doctor-test-4"
+planner_state_init "$INIT_ID4" "doctor test 4" >/dev/null 2>&1
+planner_state_write "$INIT_ID4" "META" "discovery" "repo-ref" "microservices/debt-collection@main@${NESTED_SHA}" >/dev/null 2>&1
+OUT=$(planner_doctor_run "$INIT_ID4" 2>/dev/null)
+ROW=$(doctor_row "$OUT" "repo-ref:microservices/debt-collection")
+if echo "$ROW" | grep -q "|ok|${NESTED_SHA}|REPOS_ROOT/microservices/debt-collection|"; then
+  pass "a relative-path repo-ref resolves to the nested checkout (#500)"
+else
+  fail "relative-path repo-ref resolves (#500)" "$ROW"
+fi
+
+INIT_ID5="INIT-doctor-test-5"
+planner_state_init "$INIT_ID5" "doctor test 5" >/dev/null 2>&1
+planner_state_write "$INIT_ID5" "META" "discovery" "repo-ref" "no-such-repo@main@${NESTED_SHA}" >/dev/null 2>&1
+OUT=$(planner_doctor_run "$INIT_ID5" 2>/dev/null)
+ROW=$(doctor_row "$OUT" "repo-ref:no-such-repo")
+if echo "$ROW" | grep -q '|missing|' && echo "$ROW" | grep -q "no git checkout named"; then
+  pass "a repo absent from REPOS_ROOT is reported missing with a reason (#500)"
+else
+  fail "absent repo reported missing with a reason (#500)" "$ROW"
+fi
+
 # No initiative id — repo-ref check is informational, not a failure.
 OUT=$(planner_doctor_run 2>/dev/null)
 ROW=$(doctor_row "$OUT" "repo-ref")

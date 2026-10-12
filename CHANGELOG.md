@@ -17,6 +17,33 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.16.2 (2026-10-12)
+
+Fix #500: Discovery-pinned repo refs never resolved for nested repos. Discovery recorded only a
+repo's bare directory name in `META|discovery|repo-ref`, and both `/ticket-planner doctor` and
+Crosscheck's repo-ref setup joined that name straight onto `REPOS_ROOT`. A repo living one level
+down (`REPOS_ROOT/microservices/<repo>`) was therefore always `missing` in doctor, and Crosscheck
+silently resolved its citations against the live checkout instead of the pinned ref.
+
+- **New `planner_crosscheck_repo_dir`** (`lib/planner-crosscheck-repo-ref.sh`) resolves a recorded
+  repo to its live checkout. A relative path is used as-is and never falls back to a search. A
+  bare name is tried at `REPOS_ROOT/<name>`, then searched for under `REPOS_ROOT` (depth
+  `PLANNER_REPO_SEARCH_DEPTH`, default 3, following a symlinked `REPOS_ROOT`). Exactly one git
+  checkout of that name must match. Several matches resolve to nothing rather than a guess.
+  Crosscheck worktrees are never candidates. Doctor and Crosscheck both use it.
+- **New `planner_crosscheck_repo_refs_resolved`** deduplicates refs on the resolved directory, so a
+  legacy bare name and a newer relative path to the same checkout create one worktree, not two.
+- The pinned-ref worktree is now created beside the live repo in its own parent directory.
+- **Crosscheck excludes the replaced live checkout by anchored path, not by directory name.**
+  `planner_crosscheck_repo_ref_setup` returns paths relative to `REPOS_ROOT`, held in the new
+  `PLANNER_CROSSCHECK_EXCLUDE_PATHS`. File resolution prunes exactly that directory, and the
+  precedent grep filters matches by path prefix. Before, excluding the live `microservices/gateway`
+  also hid every `gateway/` package directory in sibling repos, which caused false
+  `CITATION_UNRESOLVED` findings.
+- Discovery now records the repo's path relative to `REPOS_ROOT` (e.g.
+  `microservices/debt-collection@main@<sha>`). Bare names from older initiatives still resolve.
+- Doctor reports an unresolvable repo as `missing` with the reason, and shows the resolved path.
+
 ## ticket-planner 0.16.1 (2026-10-12)
 
 Epic Gen's Branch Directive steps could not be followed verbatim (#498). Step 5c left the
