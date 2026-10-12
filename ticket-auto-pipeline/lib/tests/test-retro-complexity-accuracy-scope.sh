@@ -58,6 +58,18 @@ trap _cleanup_test_tmpdirs EXIT
 _iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 export -f _iso_now
 
+# Hermeticity: retro.sh also discovers ticket-planner state.log files under
+# PLANNER_INITIATIVES_DIR, which defaults to ${REPOS_ROOT:-$HOME/repos}/
+# .ticket-auto/initiatives. On a host with a recent planner run that default
+# holds a real state.log, which inflates logs_scanned/logs_skipped (5 instead
+# of 4) and fails the exact-count assertions below. CI has no such directory,
+# so the leak only shows locally. Point it at a path that never exists — same
+# isolation test-retro-gate-held.sh applies — so every case in this file sees
+# only its own seeded fixtures. Window selection is by file mtime (fixtures are
+# written fresh), so the fixed timestamps inside the log lines never age out.
+PLANNER_INITIATIVES_DIR="$(mktemp -u -d)/no-such-planner-dir"
+export PLANNER_INITIATIVES_DIR
+
 # Builds a workdir with 4 ticket-auto pipeline logs whose declared/actual
 # complexity is known: 2 correct, 1 overestimate, 1 underestimate (a
 # population accuracy of 0.500 — the "real 0.50" from the issue). One log
