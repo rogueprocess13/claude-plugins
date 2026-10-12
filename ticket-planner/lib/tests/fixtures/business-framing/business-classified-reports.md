@@ -58,14 +58,15 @@ Changing how classification itself works. Showing the excluded documents inside 
 
 | # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
 |---|----------|-----------|----------------|-----------------|-------------------|-----------|
-| 1 | Report lists only classified | accountant | Clients > Client detail > Reports | client with 4 classified + 2 unclassified docs | 4 documents listed | ✓ |
-| 2 | Excluded count shown | accountant | Clients > Client detail > Reports | same client | "2 documents not yet classified" | ✓ |
-| 3 | Export matches report | accountant | Clients > Client detail > Reports | same client | CSV has 4 data rows | ✓ |
-| 4 | No message when none excluded | accountant | Clients > Client detail > Reports | client with only classified docs | no excluded-count message | ✓ |
+| 1 | Report lists only classified | accountant | Clients > Client detail > Reports | client with 4 classified + 2 unclassified docs (Source: seeded-by:classified-reports-test-data-pack) | 4 documents listed | ✓ |
+| 2 | Excluded count shown | accountant | Clients > Client detail > Reports | same client (Source: seeded-by:classified-reports-test-data-pack) | "2 documents not yet classified" | ✓ |
+| 3 | Export matches report | accountant | Clients > Client detail > Reports | same client (Source: seeded-by:classified-reports-test-data-pack) | CSV has 4 data rows | ✓ |
+| 4 | No message when none excluded | accountant | Clients > Client detail > Reports | client with only classified docs (Source: seeded-by:classified-reports-test-data-pack) | no excluded-count message | ✓ |
 
 ## Test Data Prerequisites
 
-One client with four classified and two unclassified documents, and a second client whose documents are all classified.
+- One client with four classified and two unclassified documents. Source: seeded-by:classified-reports-test-data-pack
+- A second client whose documents are all classified. Source: seeded-by:classified-reports-test-data-pack
 
 ## Related Tickets
 

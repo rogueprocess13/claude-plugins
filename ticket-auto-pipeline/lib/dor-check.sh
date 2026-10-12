@@ -51,7 +51,8 @@
 # INTENT_MISSING, REPRO_NO_EXPECTED_ACTUAL.
 # Advisory codes (reported, never block): TEST_USER_UNRESOLVED,
 # TEST_DATA_MISSING, TEST_DATA_UNSEEDED, TEST_DATA_UNSOURCED (legacy body;
-# hard by default on a body carrying the Source contract — see the check
+# hard by default on a body carrying the Source contract or a Planner
+# Context block — see the check
 # itself and docs/dor-readiness.md), VPLAN_MISSING, VPLAN_ROW_GAP,
 # VPLAN_UNVERIFIABLE, AC_IMPLEMENTATION_ONLY,
 # VERIFICATION_REQUIRED_NOT_SELF_VERIFYING. DOR_STRICT_CATALOG/
@@ -366,6 +367,10 @@ _DOR_TD_SOURCE_KINDS="exists seeded-by external generate none"
 # Max items named in a TEST_DATA_UNSOURCED detail before summarising.
 _DOR_TD_MAX_ITEMS=10
 
+# What the #499 Verification Plan composer writes in a cell no Verification
+# Notes entry covered.
+_DOR_TD_NOT_RECORDED="not recorded in spec"
+
 # _dor_td_safe <text> — one log-safe line: `|` → `/`, CR/LF → space.
 _dor_td_safe() {
   printf '%s' "$1" | tr '|\r\n' '/  '
@@ -385,7 +390,8 @@ _dor_td_norm() {
     sed -E 's/(^|[^A-Za-z])[Tt][Ee][Ss][Tt][ -]?[Dd][Aa][Tt][Aa][[:space:]]*:/\1Test data:/g; s/(^|[^A-Za-z])[Ss][Oo][Uu][Rr][Cc][Ee][[:space:]]*:/\1Source:/g'
 }
 
-# _dor_td_is_none <data> — the contract's "no test data" phrasings.
+# _dor_td_is_none <data> — the contract's "no test data" phrasings, plus a
+# bare em/en dash (a table cell left as `—`).
 _dor_td_is_none() {
   local d
   d=$(_dor_td_trim "$1")
@@ -395,57 +401,110 @@ _dor_td_is_none() {
   d="${d%%[.;,]*}"
   d=$(_dor_td_trim "$d")
   case "$d" in
-  "" | none | none\ * | none\(* | n/a | n/a\ * | na | - | nothing | nothing\ * | \
+  "" | none | none\ * | none\(* | n/a | n/a\ * | na | - | — | – | nothing | nothing\ * | \
     not\ applicable* | no\ special\ data* | no\ special\ test\ data* | no\ test\ data* | \
     no\ data\ required* | no\ data\ needed* | no\ setup* | no\ special\ setup*) return 0 ;;
   esac
   return 1
 }
 
+# _dor_td_is_not_recorded <data> — the #499 composer's placeholder cell.
+_dor_td_is_not_recorded() {
+  local d
+  d=$(_dor_td_trim "$1")
+  d=$(printf '%s' "$d" | tr '[:upper:]' '[:lower:]')
+  d="${d%.}"
+  [ "$d" = "$_DOR_TD_NOT_RECORDED" ]
+}
+
 # _dor_td_legacy_sourced <data> — conservative provenance markers for a
-# legacy body that carries no `Source:` field anywhere (issue #505's
-# suggested heuristics): "seeded/provided/generated/created/supplied by
-# <x>", a path-like token, or a tracker id. Never consulted for a body that
-# carries the contract — there, only the grammar counts, so this check and
-# the planner's Crosscheck cannot disagree on a contract ticket.
+# legacy body (issue #505's suggested heuristics). Never consulted for a
+# body that carries the contract — there, only the grammar counts, so this
+# check and the planner's Crosscheck cannot disagree on a contract ticket.
+#   - "seeded/provided/generated/created/supplied/loaded/imported by <party>",
+#     the party (after an optional the/a/an) not a placeholder word;
+#   - a path: contains `/` and either a file extension or a leading `./`,
+#     `../` or `/`;
+#   - a tracker id: 2-5 uppercase letters, `-`, a number, minus a list of
+#     standards/product-code prefixes that share the shape.
+_DOR_TD_BY_RE='\b(seeded|provided|generated|created|supplied|loaded|imported) by\s+(?>(?:(?:the|a|an)\s+)?)(?!(?:someone|somebody|anyone|whoever|tbd|tba|todo|business|them|us|tester|testers|qa|user|users|customer|client)\b)[\w`./-]'
+_DOR_TD_PATH_RE='(?:^|[\s(`])(?:\.{1,2}/|/)[\w.-]+|(?:^|[\s(`])[\w.-]+/[\w./-]*\.[A-Za-z][A-Za-z0-9]{0,5}\b'
+_DOR_TD_TRACKER_RE='\b(?!(?:COVID|SKU|UTF|ISO|SHA|RFC|TLS|SSL|HTTP|AES|RSA|MD|CVE|PCI|WCAG|ECMA|IEEE|ANSI|SQL|HTML|CSS|ES|PO|INV|ORD|REF|ID|NO|EUR|USD|GBP|ZAR|GMT|UTC|IPV|SOC)-)[A-Z]{2,5}-[0-9]+\b'
 _dor_td_legacy_sourced() {
   local d="$1"
-  printf '%s' "$d" | grep -qiP '\b(seeded|provided|generated|created|supplied|loaded|imported) by\s+\S' 2>/dev/null && return 0
-  printf '%s' "$d" | grep -qP '`[^`]*/[^`]*`|(^|\s)\.{0,2}/?[\w.-]+/[\w./-]*[\w-]\.[A-Za-z0-9]{1,6}\b' 2>/dev/null && return 0
-  printf '%s' "$d" | grep -qP '\b(?!(?:UTF|ISO|SHA|RFC|TLS|SSL|HTTP|AES|RSA|MD)-)[A-Z][A-Z0-9]{1,9}-[0-9]+\b' 2>/dev/null && return 0
+  printf '%s' "$d" | grep -qiP "$_DOR_TD_BY_RE" 2>/dev/null && return 0
+  printf '%s' "$d" | grep -qP "$_DOR_TD_PATH_RE" 2>/dev/null && return 0
+  printf '%s' "$d" | grep -qP "$_DOR_TD_TRACKER_RE" 2>/dev/null && return 0
+  return 1
+}
+
+# _dor_td_parse <normalised item text> — echoes
+#   <has_source:0|1>\x1f<data>\x1f<kind>\x1f<value>
+# The LAST `Source:` wins. The Verification Plan cell form
+# `<what> (Source: <source>)` drops the closing paren, including when
+# punctuation follows it (`(Source: seeded-by:pack).`). A `seeded-by` value
+# is cut at its first whitespace, as Crosscheck does.
+_dor_td_parse() {
+  local text="$1" data src kind value paren=0 prev
+  if [[ "$text" != *"Source:"* ]]; then
+    printf '0\037%s\037\037\n' "$(_dor_td_trim "$text")"
+    return
+  fi
+  data=$(_dor_td_trim "${text%Source:*}")
+  src="${text##*Source:}"
+  if [[ "$data" == *"(" ]]; then
+    data=$(_dor_td_trim "${data%(}")
+    paren=1
+  fi
+  src="${src//\`/}"
+  src=$(_dor_td_trim "$src")
+  prev=""
+  while [ "$src" != "$prev" ]; do
+    prev="$src"
+    while [[ "$src" =~ [.,\;:!]$ ]]; do src="${src%?}"; done
+    if [ "$paren" = "1" ] && [[ "$src" == *")" ]]; then
+      src="${src%)}"
+      paren=0
+    fi
+    src=$(_dor_td_trim "$src")
+  done
+  if [[ "$src" == *:* ]]; then
+    kind="${src%%:*}"
+    value="${src#*:}"
+  else
+    kind="${src%%[[:space:]]*}"
+    value=""
+  fi
+  kind=$(_dor_td_trim "$kind" | tr '[:upper:]' '[:lower:]')
+  value=$(_dor_td_trim "$value")
+  if [ "$kind" = "seeded-by" ]; then
+    value="${value%%[[:space:]]*}"
+    while [[ "$value" =~ [.,\;:!\)]$ ]]; do value="${value%?}"; done
+  fi
+  printf '1\037%s\037%s\037%s\n' "$data" "$kind" "$value"
+}
+
+# _dor_td_known_kind <kind> — member of the contract's closed set?
+_dor_td_known_kind() {
+  [ -n "$1" ] || return 1
+  case " ${_DOR_TD_SOURCE_KINDS} " in *" $1 "*) return 0 ;; esac
   return 1
 }
 
 # _dor_td_classify <normalised item text> <legacy:true|false>
 # Echoes "<sourced|unsourced|na>\x1f<reason>".
 _dor_td_classify() {
-  local text="$1" legacy="$2" data src kind value
-  if [[ "$text" == *"Source:"* ]]; then
-    data="${text%Source:*}"
-    src="${text##*Source:}"
-    data=$(_dor_td_trim "$data")
-    # Verification Plan cell form: `<what> (Source: <source>)`.
-    if [[ "$data" == *"(" ]]; then
-      data=$(_dor_td_trim "${data%(}")
-      src=$(_dor_td_trim "$src")
-      src="${src%)}"
-    fi
-    src="${src//\`/}"
-    src=$(_dor_td_trim "$src")
-    while [[ "$src" =~ [.,\;:!]$ ]]; do src="${src%?}"; done
-    if [[ "$src" == *:* ]]; then
-      kind="${src%%:*}"
-      value="${src#*:}"
-    else
-      kind="${src%%[[:space:]]*}"
-      value=""
-    fi
-    kind=$(_dor_td_trim "$kind" | tr '[:upper:]' '[:lower:]')
-    value=$(_dor_td_trim "$value")
-    if _dor_td_is_none "$data"; then
-      printf 'na\037test data none\n'
-      return
-    fi
+  local text="$1" legacy="$2" has data kind value
+  IFS=$'\037' read -r has data kind value < <(_dor_td_parse "$text")
+  if _dor_td_is_none "$data"; then
+    printf 'na\037test data none\n'
+    return
+  fi
+  if _dor_td_is_not_recorded "$data" && [ "$has" = "0" ]; then
+    printf 'unsourced\037verification note not recorded\n'
+    return
+  fi
+  if [ "$has" = "1" ]; then
     case "$kind" in
     exists | external)
       if [ -n "$value" ]; then printf 'sourced\037%s\n' "$kind"; else printf 'unsourced\037%s with empty value\n' "$kind"; fi
@@ -456,15 +515,20 @@ _dor_td_classify() {
     generate) printf 'unsourced\037generate\n' ;;
     none) printf 'unsourced\037Source none on non-empty test data\n' ;;
     "") printf 'unsourced\037empty Source\n' ;;
-    *) printf 'unsourced\037unknown kind %s\n' "${kind:0:24}" ;;
+    *)
+      # A legacy body's informal "Source: the staging DB" says where the
+      # data comes from in prose; only a contract body holds it to the
+      # closed kind set.
+      if [ "$legacy" = "true" ]; then
+        printf 'sourced\037informal Source\n'
+      else
+        printf 'unsourced\037unknown kind %s\n' "${kind:0:24}"
+      fi
+      ;;
     esac
     return
   fi
-  if _dor_td_is_none "$text"; then
-    printf 'na\037test data none\n'
-    return
-  fi
-  if [ "$legacy" = "true" ] && _dor_td_legacy_sourced "$text"; then
+  if [ "$legacy" = "true" ] && _dor_td_legacy_sourced "$data"; then
     printf 'sourced\037legacy marker\n'
     return
   fi
@@ -474,23 +538,38 @@ _dor_td_classify() {
 # _dor_td_items <body> — every test-data item the body names, one per line:
 #   <label>\x1f<text>
 # label: tdp#<n> (Test Data Prerequisites item) or vplan#<n> (Verification
-# Plan row). Fenced code blocks are ignored. In the Test Data section, list
-# items (`-`/`*`/`+`/`1.`/`1)`) and table data rows are items; prose lines
-# count only when the section has neither (a legacy free-text section).
-# A table with a `Source` header column has that cell appended as
-# ` Source: <cell>`. Verification Plan rows contribute their `Test data
-# needed` cell (header cell containing "test data"), when non-empty.
+# Plan row). Fenced code blocks are ignored.
+#   - Test Data section: list items (`-`/`*`/`+`/`1.`/`1)`). A more-indented
+#     line — a wrapped continuation or a nested sub-bullet — and an
+#     unindented line directly under an item (no blank line between) are
+#     appended to that item, never counted as items of their own. Table data
+#     rows are items too; prose lines count only when the section has
+#     neither (a legacy free-text section).
+#   - Verification Plan table: the `Test data needed` cell (header cell
+#     containing "test data"), when non-empty.
+#   - In either table, a `Source` header column is appended as
+#     ` Source: <cell>` (last Source wins, so it overrides an inline one).
+# Cells are split on unescaped `|` only: `\|` (how the #499 composer escapes
+# a pipe inside a cell) is swapped for a sentinel first.
 _dor_td_items() {
   printf '%s\n' "$1" | tr -d '\r' | awk '
     function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
-    function cells(line, arr,   n) {
-      line = trim(line); sub(/^\|/, "", line); sub(/\|$/, "", line)
+    function indent(s,   m) { m = s; gsub(/\t/, "    ", m); match(m, /^ */); return RLENGTH }
+    function cells(line, arr,   n, i) {
+      line = trim(line); gsub(/\\\|/, "\001", line)
+      sub(/^\|/, "", line); sub(/\|$/, "", line)
       n = split(line, arr, "|")
+      for (i = 1; i <= n; i++) gsub(/\001/, "|", arr[i])
       return n
+    }
+    function flush() {
+      if (cur != "") { tn++; print "tdp#" tn "\037" cur }
+      cur = ""; open = 0
     }
     /^[ \t]*```/ { fence = !fence; next }
     fence { next }
     /^##[ \t]/ && !/^###/ {
+      flush()
       h = tolower($0); sub(/^##[ \t]+/, "", h); gsub(/[*_]/, "", h)
       sec = ""
       if (index(h, "test data") == 1) sec = "tdp"
@@ -498,9 +577,10 @@ _dor_td_items() {
       intable = 0
       next
     }
-    /^#/ { intable = 0; next }
+    /^#/ { flush(); intable = 0; next }
     sec == "" { next }
     /^[ \t]*\|/ {
+      flush()
       if ($0 ~ /^[ \t]*\|[-:| \t]+\|?[ \t]*$/) next
       n = cells($0, c)
       if (!intable) {
@@ -508,37 +588,49 @@ _dor_td_items() {
         for (i = 1; i <= n; i++) {
           v = tolower(trim(c[i])); gsub(/[*_`]/, "", v)
           if (v == "source") srccol = i
-          if (index(v, "test data") > 0) tdcol = i
+          else if (index(v, "test data") > 0) tdcol = i
         }
         next
       }
+      s = (srccol > 0 && srccol <= n) ? trim(c[srccol]) : ""
       if (sec == "tdp") {
-        t = ""; s = ""
+        t = ""
         for (i = 1; i <= n; i++) {
+          if (i == srccol) continue
           v = trim(c[i])
-          if (i == srccol) { s = v; continue }
           if (v != "") t = t (t == "" ? "" : "; ") v
         }
-        if (s != "") t = t " Source: " s
-        if (t != "") { tn++; print "tdp#" tn "\037" t }
+        if (t != "" && s != "") t = t " Source: " s
+        if (t != "") { listed = 1; tn++; print "tdp#" tn "\037" t }
       } else if (sec == "vp" && tdcol > 0 && tdcol <= n) {
         v = trim(c[tdcol])
+        if (v != "" && s != "") v = v " Source: " s
         if (v != "") { vn++; print "vplan#" vn "\037" v }
       }
       next
     }
     { intable = 0 }
-    sec == "tdp" && /^[ \t]*([-*+]|[0-9]+[.)])[ \t]+/ {
+    sec != "tdp" { next }
+    /^[ \t]*$/ { blank = 1; next }
+    /^[ \t]*([-*+]|[0-9]+[.)])[ \t]+/ {
+      ind = indent($0)
       t = $0; sub(/^[ \t]*([-*+]|[0-9]+[.)])[ \t]+/, "", t); t = trim(t)
-      if (t != "") { tn++; listed = 1; print "tdp#" tn "\037" t }
+      if (open && ind > curind) { if (t != "") cur = cur " " t; blank = 0; next }
+      flush()
+      if (t != "") { cur = t; open = 1; curind = ind; listed = 1 }
+      blank = 0
       next
     }
-    sec == "tdp" {
+    {
       t = trim($0)
-      if (t != "") { pn++; prose[pn] = t }
+      if (open && (indent($0) > curind || !blank)) { cur = cur " " t; blank = 0; next }
+      flush()
+      pn++; prose[pn] = t
+      blank = 0
     }
     END {
-      if (!listed && tn == 0) {
+      flush()
+      if (!listed) {
         for (i = 1; i <= pn; i++) {
           l = tolower(prose[i])
           if (l ~ /^(test data( prerequisites)?:?|prerequisites?:?|n\/?a|none|tbd|todo)$/) continue
@@ -551,13 +643,17 @@ _dor_td_items() {
 
 # _dor_test_data_source_state <body> — evaluates provenance. Sets, in the
 # caller's scope (dynamic scoping, like _dor_score):
-#   td_src_contract  true when any item carries a `Source:` field
+#   td_src_contract  true when the body carries the Source contract: at
+#                    least one item's Source parses to a KNOWN kind, or the
+#                    body has a `## Planner Context` block (a planner
+#                    ticket). An informal "Data source: billing team" or
+#                    "Source: the staging DB" does not make a contract body.
 #   td_src_total     items that name data (sourced + unsourced)
 #   td_src_unsourced unsourced item count
 #   td_src_detail    "<label> (<reason>); ..." for the unsourced items,
 #                    capped at _DOR_TD_MAX_ITEMS, log-safe
 _dor_test_data_source_state() {
-  local body="$1" label text norm verdict reason legacy="true"
+  local body="$1" label text norm verdict reason legacy="true" has data kind value
   local -a labels=() texts=() listed=()
   td_src_contract="false"
   td_src_total=0
@@ -569,9 +665,16 @@ _dor_test_data_source_state() {
     norm=$(_dor_td_norm "$text")
     labels+=("$label")
     texts+=("$norm")
-    [[ "$norm" == *"Source:"* ]] && td_src_contract="true"
+    if [ "$td_src_contract" = "false" ] && [[ "$norm" == *"Source:"* ]]; then
+      IFS=$'\037' read -r has data kind value < <(_dor_td_parse "$norm")
+      _dor_td_known_kind "$kind" && td_src_contract="true"
+    fi
   done < <(_dor_td_items "$body")
 
+  if [ "$td_src_contract" = "false" ] &&
+    printf '%s\n' "$body" | grep -qiE '^##[[:space:]]+Planner Context' 2>/dev/null; then
+    td_src_contract="true"
+  fi
   [ "$td_src_contract" = "true" ] && legacy="false"
 
   local i
@@ -1232,14 +1335,18 @@ check_ticket_ready() {
   # TEST_DATA_UNSOURCED (issue #505) — the section names data, but an item
   # does not say where it comes from (ticket-planner/docs/test-data-source.md).
   # Severity:
-  #   - contract body (at least one `Source:` field anywhere in the test-data
-  #     items): hard by default — the body opted into the grammar, so the
-  #     planner's Refinement scan (which never sets DOR_STRICT_*) holds it
-  #     strictly. DOR_STRICT_TEST_DATA_SOURCE=false demotes it to advisory.
-  #   - legacy body (no `Source:` anywhere): advisory, with conservative
-  #     prose markers counting as a source; promoted to hard only by the
-  #     existing DOR_STRICT_TEST_DATA switch, so no legacy ticket starts
-  #     failing readiness by default.
+  #   - contract body (an item's Source parses to a known kind, or the body
+  #     has a `## Planner Context` block): hard by default. The default must
+  #     not depend on a per-process env var: Refinement caches the verdict
+  #     in the manifest and ticket-auto's gate may recompute it in another
+  #     process, and the two must agree. DOR_STRICT_TEST_DATA_SOURCE=false
+  #     (set on every process of a host) demotes it to advisory.
+  #   - legacy body (neither): advisory, with conservative prose markers and
+  #     informal `Source:` text counting as a source; promoted to hard only
+  #     by the existing DOR_STRICT_TEST_DATA switch.
+  #   A planned ticket created before the Source contract has a Planner
+  #   Context block and no Source fields, so it IS held to the contract and
+  #   fails readiness by default — see docs/dor-readiness.md for remedies.
   # Inapplicable when TEST_DATA_MISSING/TEST_DATA_UNSEEDED already fired.
   local td_src_contract="false" td_src_total=0 td_src_unsourced=0 td_src_detail=""
   local test_data_unsourced="false"

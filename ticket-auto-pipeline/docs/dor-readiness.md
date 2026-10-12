@@ -57,7 +57,7 @@ or neither.
 | `TEST_USER_UNRESOLVED` | Named test user/role does not resolve against the test-user catalog | `DOR_STRICT_CATALOG` |
 | `TEST_DATA_MISSING` | No Test Data section | `DOR_STRICT_TEST_DATA` |
 | `TEST_DATA_UNSEEDED` | Test Data section present but has no concrete detail | `DOR_STRICT_TEST_DATA` |
-| `TEST_DATA_UNSOURCED` | Test data is described, but at least one item does not say where it comes from — see below. **Hard by default on a body that carries the Source contract.** | `DOR_STRICT_TEST_DATA` (legacy body); `DOR_STRICT_TEST_DATA_SOURCE=false` demotes the contract case to advisory |
+| `TEST_DATA_UNSOURCED` | Test data is described, but at least one item does not say where it comes from — see below. **Hard by default on a body that carries the Source contract or a Planner Context block.** | `DOR_STRICT_TEST_DATA` (legacy body); `DOR_STRICT_TEST_DATA_SOURCE=false` demotes the contract case to advisory |
 | `VPLAN_MISSING` | No Verification Plan table (unless ≥ half of unique AC lines are self-verifying — see below) | `DOR_STRICT_VPLAN` |
 | `VPLAN_ROW_GAP` | Verification Plan table has fewer rows than acceptance criteria | `DOR_STRICT_VPLAN` |
 | `VPLAN_UNVERIFIABLE` | No table row marked verifiable | `DOR_STRICT_VPLAN` |
@@ -85,10 +85,16 @@ file is the contract; change the grammar there first.
 **Items.** Each item is one of:
 
 - a list item (`-`, `*`, `+`, `1.`, `1)`) under `## Test Data Prerequisites` (or any `## Test Data…`
-  heading) — the planner writes `- <what>. Source: <source>`;
-- a data row of a table under that heading — a column headed `Source` is read as the Source;
+  heading) — the planner writes `- <what>. Source: <source>`. A more-indented line (a wrapped
+  continuation or a nested sub-bullet), and an unindented line directly under the item with no
+  blank line between, belong to that item; they are never items of their own;
+- a data row of a table under that heading;
 - a non-empty `Test data needed` cell of the Verification Plan table — the planner writes
-  `<what> (Source: <source>)`;
+  `<what> (Source: <source>)`. The #499 composer writes `not recorded in spec` for an AC no
+  Verification Notes entry covers; that item is unsourced with the reason
+  `verification note not recorded`;
+- in either table, a column headed `Source` is read as the item's Source (it overrides an inline
+  one). Cells split on unescaped `|` only — `\|` inside a cell does not shift the columns;
 - when the Test Data section has no list or table at all, each prose line (a legacy free-text section).
 
 Fenced code blocks are ignored.
@@ -96,7 +102,9 @@ Fenced code blocks are ignored.
 **Reading a Source** follows the contract's reader rules, mirroring Crosscheck's parser
 (`ticket-planner/lib/planner-crosscheck-testdata.sh`): the marker matches case-insensitively,
 `*` is removed and `_` is removed where it wraps a word, the **last** `Source:` on an item wins,
-backticks are ignored, trailing `.,;:!` is stripped, and the kind is lowercased. One deliberate
+backticks are ignored, trailing `.,;:!` is stripped (also around the closing paren of the cell
+form, so `(Source: seeded-by:pack).` parses), the kind is lowercased, and a `seeded-by` value is cut
+at its first whitespace, as Crosscheck does. A bare `—`/`–` cell counts as none. One deliberate
 difference: the marker must not follow a letter, so `Resource: …` is not a Source.
 
 | Item | Verdict |
@@ -108,21 +116,39 @@ difference: the marker must not follow a letter, so `Resource: …` is not a Sou
 At ticket level `seeded-by:<slug>` is not resolved against specs (they live with the initiative,
 not the ticket); its presence is enough. Crosscheck already checked the reference at plan time.
 
-**Severity depends on whether the body carries the contract** (at least one `Source:` field in any
-item):
+**Severity depends on whether the body carries the contract** — at least one item's `Source:`
+parses to a known kind (`exists`, `seeded-by`, `external`, `generate`, `none`), or the body has a
+`## Planner Context` block. Informal text such as `Data source: billing team` or
+`Source: the staging DB` does not make a contract body, so it cannot hard-fail `/ticket-create`.
 
-- **Contract body** — every item must be sourced. The code is **hard by default**: the body opted
-  into the grammar, so the planner's Refinement scan (which never sets `DOR_STRICT_*`) and
-  ticket-auto's planned-ticket gate hold it strictly. A host can set
-  `DOR_STRICT_TEST_DATA_SOURCE=false` to observe it advisory-only. A data need the operator
-  deliberately left as `generate` (for example a `--accept`ed `TEST_DATA_UNOWNED`) is cleared per
-  ticket with `dor-check.sh --waive <TID> TEST_DATA_UNSOURCED "<reason>"`.
-- **Legacy body** (no `Source:` anywhere — written before the contract, or by hand) — advisory,
-  promoted to hard only by the existing `DOR_STRICT_TEST_DATA`. No legacy ticket starts failing
-  readiness by default. A legacy item also counts as sourced when it carries a conservative prose
-  marker: `seeded/provided/generated/created/supplied/loaded/imported by <x>`, a path-like token,
-  or a tracker id (not `UTF-8`-style standards). These markers are never consulted on a contract
+- **Contract body** — every item must be sourced. The code is **hard by default**, so the
+  planner's Refinement scan (which never sets `DOR_STRICT_*`) and ticket-auto's planned-ticket gate
+  hold it strictly. A host can set `DOR_STRICT_TEST_DATA_SOURCE=false` to observe it
+  advisory-only. A data need the operator deliberately left as `generate` (for example a
+  `--accept`ed `TEST_DATA_UNOWNED`) is cleared per ticket with
+  `dor-check.sh --waive <TID> TEST_DATA_UNSOURCED "<reason>"`.
+- **Legacy body** (neither) — advisory, promoted to hard only by the existing
+  `DOR_STRICT_TEST_DATA`. A legacy item counts as sourced when it carries informal `Source:` text
+  or a conservative prose marker: `seeded/provided/generated/created/supplied/loaded/imported by
+  <party>` (the party, after an optional the/a/an, not a placeholder such as `someone`, `TBD` or
+  `the business`); a path (contains `/` plus a file extension, or starts with `./`, `../` or `/`);
+  or a tracker id (2-5 uppercase letters and a number, excluding standards and product-code
+  prefixes such as `COVID-19`, `SKU-123`, `UTF-8`). These markers are never consulted on a contract
   body, so this check cannot disagree with Crosscheck on one.
+
+**What fails by default.** Hand-written tickets with no `Source:` fields only get the advisory. But
+a *planned* ticket created before the Source contract (ticket-planner < 0.17.0) carries a Planner
+Context block and no Source fields, so every test-data item it names is unsourced and the ticket is
+**not-ready by default** once this version runs Refinement or the planned-ticket gate on it. Remedy
+per ticket with `--waive`, or per host with `DOR_STRICT_TEST_DATA_SOURCE=false`.
+
+**Why a separate switch, not `DOR_STRICT_TEST_DATA`.** Issue #505 asked for "the same
+advisory/strict switch as the existing test-data codes". This deliberately differs: a readiness
+verdict is computed in one process (Refinement, which caches it in the manifest) and may be
+recomputed in another (ticket-auto's gate, `/ticket-create`). An opt-in env var set in one and not
+the other would give two verdicts for the same body. The contract case is therefore strict by
+default with an opt-out, so the verdict is the same everywhere unless a host opts out everywhere.
+The legacy case keeps the issue's switch.
 
 The code is `inapplicable` when `TEST_DATA_MISSING` or `TEST_DATA_UNSEEDED` already fired, and
 passes when every item says its test data is none. The detail names each unsourced item —

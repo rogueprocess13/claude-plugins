@@ -13,7 +13,7 @@ all-empty fixtures"), not a frozen contract.
 
 | # | File | Type | Status | Hard (missing) | Advisory | Gaps | Score |
 |---|------|------|--------|-----------------|----------|------|------:|
-| 01 | `01-excellent.md` | feature | ready | — | TEST_DATA_UNSOURCED (legacy body: its test data never says where it comes from) | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 93 |
+| 01 | `01-excellent.md` | feature | ready | — | TEST_DATA_UNSOURCED (legacy body: its test data never says where it comes from; the 95 → 93 score drop is intentional) | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 93 |
 | 02 | `02-minimal.md` | feature | ready | — | TEST_DATA_MISSING | requirement_completeness, deep_scope_ambiguity | 77 |
 | 03 | `03-missing-intent.md` | feature | not-ready | INTENT_MISSING | VERIFICATION_REQUIRED_NOT_SELF_VERIFYING, VPLAN_MISSING, TEST_DATA_MISSING | requirement_completeness, deep_scope_ambiguity | 49 |
 | 04 | `04-useless-scope.md` | feature | ready | — | VERIFICATION_REQUIRED_NOT_SELF_VERIFYING, VPLAN_MISSING, TEST_DATA_MISSING | requirement_completeness, contradictory_requirements, deep_scope_ambiguity | 61 |

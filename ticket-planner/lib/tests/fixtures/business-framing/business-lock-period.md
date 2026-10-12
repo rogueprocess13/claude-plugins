@@ -60,15 +60,16 @@ Automatic locking on a schedule. Partial (per-document) locks.
 
 | # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
 |---|----------|-----------|----------------|-----------------|-------------------|-----------|
-| 1 | Lock a completed period | firm admin | Clients > Matters > Period detail | 1 completed period with 3 documents | period shows Locked | ✓ |
-| 2 | Edit blocked when locked | firm admin | Clients > Matters > Period detail | locked period from row 1 | "This period is locked" shown | ✓ |
-| 3 | Lock recorded in history | firm admin | Clients > Matters > Period detail | locked period from row 1 | history row with admin name and time | ✓ |
-| 4 | Unlock a locked period | firm admin | Clients > Matters > Period detail | locked period from row 1 | period shows Open | ✓ |
-| 5 | Role gating | staff accountant | Clients > Matters > Period detail | 1 completed period | Lock period action absent | ✓ |
+| 1 | Lock a completed period | firm admin | Clients > Matters > Period detail | 1 completed period with 3 documents (Source: seeded-by:lock-period-test-data-pack) | period shows Locked | ✓ |
+| 2 | Edit blocked when locked | firm admin | Clients > Matters > Period detail | locked period from row 1 (Source: seeded-by:lock-period-test-data-pack) | "This period is locked" shown | ✓ |
+| 3 | Lock recorded in history | firm admin | Clients > Matters > Period detail | locked period from row 1 (Source: seeded-by:lock-period-test-data-pack) | history row with admin name and time | ✓ |
+| 4 | Unlock a locked period | firm admin | Clients > Matters > Period detail | locked period from row 1 (Source: seeded-by:lock-period-test-data-pack) | period shows Open | ✓ |
+| 5 | Role gating | staff accountant | Clients > Matters > Period detail | 1 completed period (Source: seeded-by:lock-period-test-data-pack) | Lock period action absent | ✓ |
 
 ## Test Data Prerequisites
 
-One client with one completed financial period holding three filed documents, plus a staff accountant user without the firm administrator role.
+- One client with one completed financial period holding three filed documents. Source: seeded-by:lock-period-test-data-pack
+- A staff accountant user without the firm administrator role. Source: exists:QA test-user catalogue
 
 ## Related Tickets
 
