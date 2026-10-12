@@ -17,6 +17,20 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.63.1 (2026-10-12)
+
+Test-only fix. `test-retro-complexity-accuracy-scope.sh` failed on any host with a recent
+ticket-planner run, while CI stayed green.
+
+- **Root cause:** `retro.sh` also discovers planner `state.log` files under
+  `PLANNER_INITIATIVES_DIR`, which defaults to `${REPOS_ROOT:-$HOME/repos}/.ticket-auto/initiatives`.
+  The test did not override it, so a real `state.log` from the host leaked into the scan and
+  `logs_skipped` came out 5 instead of the 4 seeded fixtures. The fixed `2026-09-01` timestamps
+  inside the fixture log lines were not the cause: `retro.sh` picks logs by file mtime, and the
+  fixtures are written fresh on every run.
+- **Fix:** the test now points `PLANNER_INITIATIVES_DIR` at a path that never exists, the same
+  isolation `test-retro-gate-held.sh` already uses. No change to `retro.sh`.
+
 ## 0.62.0 (2026-10-03)
 
 `ticket-create-skill`. There was no skill for logging a single ticket, so an agent that found a bug
