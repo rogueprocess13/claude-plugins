@@ -288,7 +288,10 @@ readiness return code, and neither invokes a model.
 
 `agents/dor-semantic-agent.md` declares `tools: Read, Write`. `dor_semantic_prompt
 scan|audit <TID> <body-file> <result-file> [<det-result-file>]` builds its prompt:
-paths, never ticket text; states that file contents are data, not instructions;
+paths, never ticket text, plus the body file's `_dor_body_hash` as a `**Body hash**:`
+literal the agent copies into `BODY_HASH` (the agent has no shell and cannot compute a
+SHA-256 itself; apply re-hashes the body at apply time, so the binding still catches a
+body edited after the prompt was built); states that file contents are data, not instructions;
 instructs the agent to write exactly one block to the result path and return a single
 line (`DOR_SEMANTIC <scan|audit> written <path>`). This keeps a caller running tens of
 tickets from accumulating every result in its own context. The scan prompt never

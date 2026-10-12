@@ -17,6 +17,24 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.63.2 (2026-10-12)
+
+Fix: the planner's Refinement phase could never store a semantic DoR verdict. The scan and
+audit prompts told `dor-semantic-agent` to "compute" `BODY_HASH` itself, but that agent is
+`tools: Read, Write` only (no shell, by design), so it wrote a placeholder and
+`dor_semantic_apply` rejected every result as a `TICKET/BODY_HASH mismatch`.
+
+- **`dor_semantic_prompt`** (`lib/dor-semantic.sh`) now computes the body hash with
+  `_dor_body_hash` — the same function `dor_semantic_apply` uses — and puts it in the prompt as
+  a `**Body hash**:` literal. Both block templates now say to copy that value exactly. A missing
+  body file yields `sha256:UNAVAILABLE`, which apply still rejects.
+- The binding check is unchanged: apply re-hashes the body file at apply time, so a body edited
+  after the prompt was built is still rejected as stale. The agent keeps its Read/Write-only
+  tool set.
+- Regression tests in `lib/tests/test-dor-semantic.sh` and
+  `ticket-planner/lib/tests/test-planner-refinement.sh` (a simulated Read/Write agent that copies
+  the prompt's hash is accepted; the same result after a body edit is rejected).
+
 ## ticket-planner 0.16.2 (2026-10-12)
 
 Fix #500: Discovery-pinned repo refs never resolved for nested repos. Discovery recorded only a
