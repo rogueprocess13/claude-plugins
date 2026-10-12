@@ -5,9 +5,12 @@
 #   1. TicketGen's and EpicGen's generated prompt text contains the canonical
 #      ticket-body section headings ticket-auto-pipeline's gate-check (Check
 #      2.7c, planned-ticket-body-check.sh) requires per type.
-#   2. TicketGen's and EpicGen's generated prompt text contains an explicit
-#      instruction to run the composed description through the humanizer
-#      skill before any create/save call.
+#   2. EpicGen's generated prompt text contains an explicit instruction to
+#      run the composed description through the humanizer skill before any
+#      create/save call. Since #499 the ticket body is composed in bash and
+#      must be byte-identical across runs, so the humanizer pass for tickets
+#      moved upstream into Specify (whose Description IS the ticket body) and
+#      TicketGen must no longer ask for one.
 #
 # Whether an agent actually follows the prompt is not testable here — this
 # guards that the instruction text itself is present and survives future
@@ -98,37 +101,35 @@ fi
 
 # Normalized (newline-collapsed) copies for phrase checks that may wrap across
 # lines in the rendered prompt text.
-TICKETGEN_FLAT=$(echo "$TICKETGEN_PROMPT" | tr '\n' ' ')
 EPICGEN_FLAT=$(echo "$EPICGEN_PROMPT" | tr '\n' ' ')
 
-echo "--- TicketGen prompt instructs running the body through the humanizer skill ---"
+echo "--- TicketGen does not humanize: the body is composed in bash (#499) ---"
 if grep -qi 'humanizer' <<<"$TICKETGEN_PROMPT"; then
-  pass "TicketGen prompt mentions the humanizer skill"
+  fail "TicketGen prompt asks for no humanizer pass" "a humanizer instruction would make the body non-deterministic"
 else
-  fail "TicketGen prompt mentions the humanizer skill" "not found"
+  pass "TicketGen prompt asks for no humanizer pass"
 fi
-if grep -qF '$description' <<<"$TICKETGEN_FLAT"; then
-  pass "TicketGen humanizer instruction is scoped to \$description"
+if grep -qF 'description=$(planner_ticketgen_body' <<<"$TICKETGEN_PROMPT"; then
+  pass "TicketGen composes \$description with planner_ticketgen_body"
 else
-  fail "TicketGen humanizer instruction is scoped to \$description" "\$description not referenced near the humanizer step"
+  fail "TicketGen composes \$description with planner_ticketgen_body" "call not found"
 fi
 
-echo "--- TicketGen humanizer instruction preserves facts / structure (no invented content) ---"
-if grep -qi 'keep every fact' <<<"$TICKETGEN_FLAT"; then
-  pass "TicketGen humanizer instruction says to keep every fact/claim intact"
+echo "--- Specify carries the humanizer pass, with the same preservation rules ---"
+SPECIFY_PROMPT=$(planner_prompt_specify "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
+SPECIFY_FLAT=$(echo "$SPECIFY_PROMPT" | tr '\n' ' ')
+if grep -qi 'humanizer' <<<"$SPECIFY_PROMPT"; then
+  pass "Specify prompt mentions the humanizer skill"
 else
-  fail "TicketGen humanizer instruction says to keep every fact/claim intact" "not found"
+  fail "Specify prompt mentions the humanizer skill" "not found"
 fi
-if grep -qi 'invent nothing' <<<"$TICKETGEN_FLAT"; then
-  pass "TicketGen humanizer instruction says to invent nothing"
-else
-  fail "TicketGen humanizer instruction says to invent nothing" "not found"
-fi
-if grep -qi 'preserve every' <<<"$TICKETGEN_FLAT"; then
-  pass "TicketGen humanizer instruction says to preserve headings/structure"
-else
-  fail "TicketGen humanizer instruction says to preserve headings/structure" "not found"
-fi
+for phrase in 'keep every fact' 'invent nothing' 'preserve every'; do
+  if grep -qi "$phrase" <<<"$SPECIFY_FLAT"; then
+    pass "Specify humanizer instruction says: ${phrase}"
+  else
+    fail "Specify humanizer instruction says: ${phrase}" "not found"
+  fi
+done
 
 echo "--- EpicGen prompt instructs running the epic description through the humanizer skill ---"
 if grep -qi 'humanizer' <<<"$EPICGEN_PROMPT"; then
@@ -161,22 +162,6 @@ fi
 # `planner_linear_create_issue \` (a line-continuation backslash opening its
 # argument list) — search for that instead.
 
-echo "--- TicketGen: humanizer instruction appears before the real create call ---"
-# grep -m1 (not `| head -1`) — grep itself stops after one match, so it never
-# has a second line to write once a downstream reader has gone away; a
-# here-string avoids the same SIGPIPE race on the echo->grep hop. Piping a
-# multi-match grep into `head -1` under `pipefail` is genuinely racy: grep
-# can get SIGPIPE writing its second match after head has already closed,
-# which pipefail then reports as this whole assignment's exit status —
-# intermittently, depending on write/read scheduling, not on content.
-humanize_line=$(grep -m1 -in 'humanizer' <<<"$TICKETGEN_PROMPT" | cut -d: -f1)
-create_line=$(grep -m1 -nF 'planner_linear_create_issue \' <<<"$TICKETGEN_PROMPT" | cut -d: -f1)
-if [ -n "$humanize_line" ] && [ -n "$create_line" ] && [ "$humanize_line" -lt "$create_line" ]; then
-  pass "humanizer instruction precedes the real create call in TicketGen prompt"
-else
-  fail "humanizer instruction precedes the real create call" "humanize_line=$humanize_line create_line=$create_line"
-fi
-
 echo "--- EpicGen: humanizer instruction appears before the real create call ---"
 humanize_line=$(grep -m1 -in 'humanizer' <<<"$EPICGEN_PROMPT" | cut -d: -f1)
 create_line=$(grep -m1 -nF 'planner_linear_create_issue \' <<<"$EPICGEN_PROMPT" | cut -d: -f1)
@@ -203,7 +188,9 @@ fi
 # validator-unavailable hard stop never fired. Extract the rendered block and
 # execute it against a stub validator to prove the return code survives.
 
-VALIDATE_BLOCK=$(awk '/^description="<full ticket description/ {on=1} on {print} on && /^fi$/ {exit}' <<<"$TICKETGEN_PROMPT")
+# The block sits inside the per-ticket loop (indented two spaces) since #499:
+# from the `rc=0` capture through the `fi` that closes the rc check.
+VALIDATE_BLOCK=$(awk '/^  rc=0$/ {on=1} on {print} on && /^  fi$/ {exit}' <<<"$TICKETGEN_PROMPT")
 
 # Runs the extracted block inside a one-iteration loop (it uses `continue`)
 # with stubbed planner_validate_ticket/planner_state_write. set -e on

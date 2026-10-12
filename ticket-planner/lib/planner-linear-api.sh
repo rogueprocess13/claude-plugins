@@ -556,7 +556,37 @@ planner_linear_build_issue_input() {
     }'
 }
 
+# Resolve an issue identifier (CRE-160) or UUID to the issue's UUID. A UUID is
+# returned unchanged with no API call. An identifier that does not resolve is a
+# hard failure — a child created with no parent would silently fall out of its
+# epic.
+#
+# Usage: planner_linear_resolve_issue_id <identifier|uuid>
+# Output: the issue UUID on stdout. Returns 1 when it cannot be resolved.
+planner_linear_resolve_issue_id() {
+  local ref="$1"
+  if [ -z "$ref" ]; then
+    echo "planner-linear-api: empty issue reference" >&2
+    return 1
+  fi
+  if _planner_is_uuid "$ref"; then
+    echo "$ref"
+    return 0
+  fi
+  local resp id
+  resp=$(planner_linear_get_issue "$ref") || resp=""
+  id=$(echo "$resp" | jq -r '.data.issue.id // empty' 2>/dev/null)
+  if [ -z "$id" ]; then
+    echo "planner-linear-api: cannot resolve issue '$ref' to an id" >&2
+    return 1
+  fi
+  echo "$id"
+}
+
 # Create a Linear issue.
+#
+# `parent_id` accepts an issue identifier or a UUID; an identifier is resolved
+# to the UUID before the mutation (planner_linear_resolve_issue_id).
 #
 # `labels_json` accepts label NAMES (the natural thing for callers to have) and
 # resolves them to UUIDs before the mutation. Passing UUIDs directly also works.
@@ -582,6 +612,13 @@ planner_linear_create_issue() {
   local milestone_id=""
   if [ -n "$milestone_ref" ]; then
     milestone_id=$(planner_linear_resolve_milestone "$project_id" "$milestone_ref") || return 1
+  fi
+
+  # parentId is typed as an issue id; resolve an identifier (CRE-160) to its
+  # UUID here so no caller has to know or guess which form issueCreate takes
+  # (#499).
+  if [ -n "$parent_id" ]; then
+    parent_id=$(planner_linear_resolve_issue_id "$parent_id") || return 1
   fi
 
   local variables
