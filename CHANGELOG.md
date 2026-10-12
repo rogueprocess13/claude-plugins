@@ -37,8 +37,8 @@ ticket-planner 0.17.0 writes (contract: `ticket-planner/docs/test-data-source.md
 - **Sourced** = `exists:`/`external:` with a value, or `seeded-by:<slug>`. **Unsourced** = no
   Source, `generate`, an unknown kind, an empty value, or `Source: none` on real data.
 - **Severity:**
-  - A body that carries the contract (an item's Source parses to a known kind, or the body has a
-    `## Planner Context` block) is held to it: **hard by default**, so the planner's Refinement
+  - A body that carries the contract (an item's Source parses to a known kind) is held to it:
+    **hard by default**, so the planner's Refinement
     scan and the planned-ticket gate apply it strictly. `DOR_STRICT_TEST_DATA_SOURCE=false`
     demotes it to advisory. A deliberate `generate` can be cleared per ticket with
     `dor-check.sh --waive <TID> TEST_DATA_UNSOURCED "<reason>"`.
@@ -46,11 +46,13 @@ ticket-planner 0.17.0 writes (contract: `ticket-planner/docs/test-data-source.md
     Refinement may be recomputed by the gate or `/ticket-create` in another process; an opt-in env
     var set in one but not the other would give two verdicts for one body. Strict-by-default with a
     host-wide opt-out keeps the verdict stable across processes.
-  - **Planned tickets created before ticket-planner 0.17.0** carry a Planner Context block and no
-    Source fields, so they become not-ready by default when they name test data. Waive per ticket
-    or set `DOR_STRICT_TEST_DATA_SOURCE=false`. The three ticket-planner business-framing
-    fixtures (shared with `test-ticket-create.sh`) were exactly such bodies and were migrated to
-    the 0.17.0 shape: Source on every Verification Plan cell and Test Data bullet.
+  - **What fails by default:** only a contract body with an unsourced item — in practice a
+    ticket-planner 0.17.0+ body with a `generate`, an empty/unknown Source, a missing Source on
+    one item, or a `not recorded in spec` cell. A Planner Context block alone does not make a
+    contract body, so planned tickets created before 0.17.0 (in flight now) stay legacy and keep
+    passing; the ticket-planner business-framing fixtures are such bodies and still pass
+    unchanged. New fixture `23-planned-contract-unsourced.md` shows a 0.17.0-shape planned body
+    blocking on one unsourced item.
   - A legacy body (neither) gets an advisory, promoted only by the existing
     `DOR_STRICT_TEST_DATA`. Informal `Source:` text (`Data source: billing team`) and conservative
     prose markers count as a source there: `<verb> by <party>` (not `someone`/`TBD`/`the
@@ -65,7 +67,7 @@ ticket-planner 0.17.0 writes (contract: `ticket-planner/docs/test-data-source.md
   (56 → 54). Both drops are intentional: neither fixture says where its test data comes from. No
   fixture's ready/not-ready status changed.
 - New fixtures `20-unsourced-legacy.md` (the issue's reproduction), `21-unsourced-contract.md`,
-  `22-sourced-contract.md`, and classifier/extractor/severity/log-safety tests in
+  `22-sourced-contract.md`, `23-planned-contract-unsourced.md`, and classifier/extractor/severity/log-safety tests in
   `lib/tests/test-dor-check.sh`. Documented in `docs/dor-readiness.md`.
 
 ## ticket-planner 0.18.0 (2026-10-12)

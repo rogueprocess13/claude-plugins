@@ -51,13 +51,13 @@ N/A — backend-only build and API check.
 | # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
 |---|----------|-----------|----------------|-----------------|-------------------|-----------|
 | 1 | Build passes on Java 17 | n/a | n/a | none | mvn exits 0 | ✓ |
-| 2 | Health endpoint up | n/a | n/a | running service (Source: exists:local docker-compose stack) | HTTP 200 status "UP" | ✓ |
-| 3 | Products API unchanged | n/a | n/a | seeded product catalogue (Source: exists:local database seed set) | HTTP 200, same JSON shape | ✓ |
+| 2 | Health endpoint up | n/a | n/a | running service | HTTP 200 status "UP" | ✓ |
+| 3 | Products API unchanged | n/a | n/a | seeded product catalogue | HTTP 200, same JSON shape | ✓ |
 | 4 | No JHipster dependency | n/a | n/a | none | no jhipster in dependency tree | ✓ |
 
 ## Test Data Prerequisites
 
-- The standard seeded product catalogue. Source: exists:local database seed set
+The standard seeded product catalogue in the local database.
 
 ## Related Tickets
 

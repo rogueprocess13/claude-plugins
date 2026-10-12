@@ -339,6 +339,7 @@ declare -A FIXTURE_TYPE=(
   ["16-edge-cases-missing-core.md"]=feature ["17-self-verifying-no-vplan.md"]=chore
   ["18-backend-twin.md"]=chore ["19-padding.md"]=feature
   ["20-unsourced-legacy.md"]=feature ["21-unsourced-contract.md"]=feature ["22-sourced-contract.md"]=feature
+  ["23-planned-contract-unsourced.md"]=feature
 )
 declare -A FIXTURE_STATUS=(
   ["01-excellent.md"]=ready ["02-minimal.md"]=ready ["03-missing-intent.md"]=not-ready
@@ -349,11 +350,12 @@ declare -A FIXTURE_STATUS=(
   ["16-edge-cases-missing-core.md"]=ready ["17-self-verifying-no-vplan.md"]=ready
   ["18-backend-twin.md"]=ready ["19-padding.md"]=ready
   ["20-unsourced-legacy.md"]=ready ["21-unsourced-contract.md"]=not-ready ["22-sourced-contract.md"]=ready
+  ["23-planned-contract-unsourced.md"]=not-ready
 )
 declare -A FIXTURE_HARD=(
   ["03-missing-intent.md"]=INTENT_MISSING ["05-vague-ac.md"]=AC_VAGUE ["07-fe-no-test-user.md"]=TEST_USER_MISSING
   ["08-fe-no-nav-path.md"]=NAV_PATH_MISSING ["10-bug-no-expected-actual.md"]=REPRO_NO_EXPECTED_ACTUAL
-  ["21-unsourced-contract.md"]=TEST_DATA_UNSOURCED
+  ["21-unsourced-contract.md"]=TEST_DATA_UNSOURCED ["23-planned-contract-unsourced.md"]=TEST_DATA_UNSOURCED
 )
 declare -A FIXTURE_ADVISORY=(
   ["02-minimal.md"]=TEST_DATA_MISSING ["06-backend-no-verification.md"]=VERIFICATION_REQUIRED_NOT_SELF_VERIFYING
@@ -1135,7 +1137,7 @@ _td_case "seeded-by slug then prose" sourced "A file. Source: seeded-by:the pack
 _td_case "cell form with punctuation after the paren" sourced "a file (Source: seeded-by:pack)."
 _td_case "cell form exists, punctuation after the paren" sourced "a client (Source: exists:seed set (clients.sql));"
 
-# 4. Contract detection: a known kind, or a Planner Context block.
+# 4. Contract detection: only a Source of a known kind.
 f=$(_td_body informal '- Five invoices from the nightly billing export. Data source: billing team
 - A client with no configuration')
 rc=0
@@ -1152,13 +1154,26 @@ check_ticket_ready TD-INFORMAL2 --body "$f" --type feature --no-fetch >/dev/null
   _pass "legacy 'Source: the staging DB' counts as an informal source" ||
   _fail "legacy informal Source should pass (rc=$rc checks=$(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
 
+# A Planner Context block alone does NOT make a contract body: a planned
+# ticket from before ticket-planner 0.17.0 (no Source fields) stays legacy.
 f=$(_td_body planner '- A 1,000-row valid upload file')
 printf '\n## Planner Context\n\n**Initiative:** INIT-1\n' >>"$f"
 rc=0
 check_ticket_ready TD-PLANNER --body "$f" --type feature --no-fetch >/dev/null 2>&1 || rc=$?
-[ "$rc" = "1" ] && [ "$(_td_field class)" = "hard" ] && [[ "$(_td_field detail)" == *"(contract)"* ]] &&
-  _pass "a Planner Context block makes a contract body even with no Source field" ||
-  _fail "Planner Context body should be held to the contract (rc=$rc checks=$(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+[ "$rc" = "0" ] && [ "$(_td_field class)" = "advisory" ] && [[ "$(_td_field detail)" == *"(legacy)"* ]] &&
+  _pass "a pre-0.17.0 planned body (Planner Context, no Source) stays legacy and ready" ||
+  _fail "Planner Context alone must not make a contract body (rc=$rc checks=$(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# A 0.17.0-shape planned body (Planner Context + Source fields) is a
+# contract body and blocks on its one unsourced item (fixture 23).
+rc=0
+check_ticket_ready TD-23 --body "$FIXTURES_DIR/23-planned-contract-unsourced.md" --type feature --no-fetch >/dev/null 2>&1 || rc=$?
+td23_detail=$(_td_field detail)
+[ "$rc" = "1" ] && [ "$(_td_field class)" = "hard" ] && [[ "$td23_detail" == *"(contract)"* ]] &&
+  [[ "$td23_detail" == *"vplan#2 (generate)"* ]] && [[ "$td23_detail" == *"tdp#2 (generate)"* ]] &&
+  [[ "$td23_detail" != *"#1 "* ]] &&
+  _pass "fixture 23: a 0.17.0-shape planned body is a contract body and blocks on its unsourced item" ||
+  _fail "fixture 23 should block on TEST_DATA_UNSOURCED (rc=$rc detail=$td23_detail)"
 
 # 5. "not recorded in spec" reason; a Source column in the Verification Plan.
 _td_case "#499 placeholder cell" unsourced "not recorded in spec"

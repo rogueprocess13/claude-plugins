@@ -57,7 +57,7 @@ or neither.
 | `TEST_USER_UNRESOLVED` | Named test user/role does not resolve against the test-user catalog | `DOR_STRICT_CATALOG` |
 | `TEST_DATA_MISSING` | No Test Data section | `DOR_STRICT_TEST_DATA` |
 | `TEST_DATA_UNSEEDED` | Test Data section present but has no concrete detail | `DOR_STRICT_TEST_DATA` |
-| `TEST_DATA_UNSOURCED` | Test data is described, but at least one item does not say where it comes from — see below. **Hard by default on a body that carries the Source contract or a Planner Context block.** | `DOR_STRICT_TEST_DATA` (legacy body); `DOR_STRICT_TEST_DATA_SOURCE=false` demotes the contract case to advisory |
+| `TEST_DATA_UNSOURCED` | Test data is described, but at least one item does not say where it comes from — see below. **Hard by default on a body that carries the Source contract.** | `DOR_STRICT_TEST_DATA` (legacy body); `DOR_STRICT_TEST_DATA_SOURCE=false` demotes the contract case to advisory |
 | `VPLAN_MISSING` | No Verification Plan table (unless ≥ half of unique AC lines are self-verifying — see below) | `DOR_STRICT_VPLAN` |
 | `VPLAN_ROW_GAP` | Verification Plan table has fewer rows than acceptance criteria | `DOR_STRICT_VPLAN` |
 | `VPLAN_UNVERIFIABLE` | No table row marked verifiable | `DOR_STRICT_VPLAN` |
@@ -117,9 +117,10 @@ At ticket level `seeded-by:<slug>` is not resolved against specs (they live with
 not the ticket); its presence is enough. Crosscheck already checked the reference at plan time.
 
 **Severity depends on whether the body carries the contract** — at least one item's `Source:`
-parses to a known kind (`exists`, `seeded-by`, `external`, `generate`, `none`), or the body has a
-`## Planner Context` block. Informal text such as `Data source: billing team` or
-`Source: the staging DB` does not make a contract body, so it cannot hard-fail `/ticket-create`.
+parses to a known kind (`exists`, `seeded-by`, `external`, `generate`, `none`). Informal text such
+as `Data source: billing team` or `Source: the staging DB` does not make a contract body, so it
+cannot hard-fail `/ticket-create`. A `## Planner Context` block does not either: the planner writes
+Source fields from 0.17.0 on, and those are what opt a body in.
 
 - **Contract body** — every item must be sourced. The code is **hard by default**, so the
   planner's Refinement scan (which never sets `DOR_STRICT_*`) and ticket-auto's planned-ticket gate
@@ -136,11 +137,14 @@ parses to a known kind (`exists`, `seeded-by`, `external`, `generate`, `none`), 
   prefixes such as `COVID-19`, `SKU-123`, `UTF-8`). These markers are never consulted on a contract
   body, so this check cannot disagree with Crosscheck on one.
 
-**What fails by default.** Hand-written tickets with no `Source:` fields only get the advisory. But
-a *planned* ticket created before the Source contract (ticket-planner < 0.17.0) carries a Planner
-Context block and no Source fields, so every test-data item it names is unsourced and the ticket is
-**not-ready by default** once this version runs Refinement or the planned-ticket gate on it. Remedy
-per ticket with `--waive`, or per host with `DOR_STRICT_TEST_DATA_SOURCE=false`.
+**What fails by default.** Only a body that uses the contract — at least one Source of a known
+kind — and still has an unsourced item. In practice that is a ticket written by ticket-planner
+0.17.0 or later (or by hand in that shape) with a `generate`, an empty or unknown Source, a missing
+Source on one item, or a `not recorded in spec` Verification Plan cell. Hand-written tickets with no
+Source fields, and planned tickets created before 0.17.0 (a Planner Context block but no Source
+fields — in flight when this shipped), are legacy bodies: they get the advisory and never fail by
+default. Remedy a contract body per ticket with `--waive`, or per host with
+`DOR_STRICT_TEST_DATA_SOURCE=false`.
 
 **Why a separate switch, not `DOR_STRICT_TEST_DATA`.** Issue #505 asked for "the same
 advisory/strict switch as the existing test-data codes". This deliberately differs: a readiness

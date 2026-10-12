@@ -51,8 +51,7 @@
 # INTENT_MISSING, REPRO_NO_EXPECTED_ACTUAL.
 # Advisory codes (reported, never block): TEST_USER_UNRESOLVED,
 # TEST_DATA_MISSING, TEST_DATA_UNSEEDED, TEST_DATA_UNSOURCED (legacy body;
-# hard by default on a body carrying the Source contract or a Planner
-# Context block — see the check
+# hard by default on a body carrying the Source contract — see the check
 # itself and docs/dor-readiness.md), VPLAN_MISSING, VPLAN_ROW_GAP,
 # VPLAN_UNVERIFIABLE, AC_IMPLEMENTATION_ONLY,
 # VERIFICATION_REQUIRED_NOT_SELF_VERIFYING. DOR_STRICT_CATALOG/
@@ -644,10 +643,12 @@ _dor_td_items() {
 # _dor_test_data_source_state <body> — evaluates provenance. Sets, in the
 # caller's scope (dynamic scoping, like _dor_score):
 #   td_src_contract  true when the body carries the Source contract: at
-#                    least one item's Source parses to a KNOWN kind, or the
-#                    body has a `## Planner Context` block (a planner
-#                    ticket). An informal "Data source: billing team" or
-#                    "Source: the staging DB" does not make a contract body.
+#                    least one item's Source parses to a KNOWN kind. An
+#                    informal "Data source: billing team" or "Source: the
+#                    staging DB" does not make a contract body, and neither
+#                    does a `## Planner Context` block on its own — a planned
+#                    ticket written before ticket-planner 0.17.0 has one and
+#                    no Source fields, and must keep passing.
 #   td_src_total     items that name data (sourced + unsourced)
 #   td_src_unsourced unsourced item count
 #   td_src_detail    "<label> (<reason>); ..." for the unsourced items,
@@ -671,10 +672,6 @@ _dor_test_data_source_state() {
     fi
   done < <(_dor_td_items "$body")
 
-  if [ "$td_src_contract" = "false" ] &&
-    printf '%s\n' "$body" | grep -qiE '^##[[:space:]]+Planner Context' 2>/dev/null; then
-    td_src_contract="true"
-  fi
   [ "$td_src_contract" = "true" ] && legacy="false"
 
   local i
@@ -1335,8 +1332,8 @@ check_ticket_ready() {
   # TEST_DATA_UNSOURCED (issue #505) — the section names data, but an item
   # does not say where it comes from (ticket-planner/docs/test-data-source.md).
   # Severity:
-  #   - contract body (an item's Source parses to a known kind, or the body
-  #     has a `## Planner Context` block): hard by default. The default must
+  #   - contract body (an item's Source parses to a known kind): hard by
+  #     default. The default must
   #     not depend on a per-process env var: Refinement caches the verdict
   #     in the manifest and ticket-auto's gate may recompute it in another
   #     process, and the two must agree. DOR_STRICT_TEST_DATA_SOURCE=false
@@ -1344,9 +1341,8 @@ check_ticket_ready() {
   #   - legacy body (neither): advisory, with conservative prose markers and
   #     informal `Source:` text counting as a source; promoted to hard only
   #     by the existing DOR_STRICT_TEST_DATA switch.
-  #   A planned ticket created before the Source contract has a Planner
-  #   Context block and no Source fields, so it IS held to the contract and
-  #   fails readiness by default — see docs/dor-readiness.md for remedies.
+  #   A planned ticket created before the Source contract (Planner Context
+  #   block, no Source fields) is a legacy body: it never fails by default.
   # Inapplicable when TEST_DATA_MISSING/TEST_DATA_UNSEEDED already fired.
   local td_src_contract="false" td_src_total=0 td_src_unsourced=0 td_src_detail=""
   local test_data_unsourced="false"
