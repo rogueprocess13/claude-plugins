@@ -24,8 +24,10 @@ Data section existed and said something, so a long, concrete description of data
 creates passed readiness. The new code reads the `Source: <kind>[:<value>]` field that
 ticket-planner 0.17.0 writes (contract: `ticket-planner/docs/test-data-source.md`).
 
-- **Items read:** `## Test Data Prerequisites` list items (`- <what>. Source: <source>`, with
-  wrapped continuation lines and nested sub-bullets joined to their parent), table rows under that
+- **Items read:** `## Test Data Prerequisites` list items (`- <what>. Source: <source>`; wrapped
+  lines and Source-less sub-bullets join their parent, while a sub-bullet with its own `Source:`
+  is an item of its own so a sibling's Source can never hide a `generate` — a lead-in parent
+  ending in `:` is then dropped, any other unsourced parent still counts), table rows under that
   heading, and the Verification Plan's `Test data needed` cells (`<what> (Source: <source>)`). In
   either table a `Source` column counts as the Source; cells split on unescaped `|` only. A
   list-free legacy section is read line by line. Fenced code is ignored. The #499 composer's
@@ -55,9 +57,10 @@ ticket-planner 0.17.0 writes (contract: `ticket-planner/docs/test-data-source.md
     blocking on one unsourced item.
   - A legacy body (neither) gets an advisory, promoted only by the existing
     `DOR_STRICT_TEST_DATA`. Informal `Source:` text (`Data source: billing team`) and conservative
-    prose markers count as a source there: `<verb> by <party>` (not `someone`/`TBD`/`the
-    business`), a path with an extension or a leading `./`/`/`, or a tracker id (`COVID-19`,
-    `SKU-123`-style prefixes excluded). Hand-written tickets without Source fields never fail by
+    prose markers count as a source there: `<verb> by <party>` (unless the whole party is a
+    placeholder such as `someone`/`TBD`/`the business`), a path (an extension, a leading
+    `./`/`/`, a trailing `/`, or a URI such as `s3://`), or a tracker id (2-10 letters;
+    `COVID-19`, `SKU-123`-style prefixes excluded). Hand-written tickets without Source fields never fail by
     default.
   - `inapplicable` when `TEST_DATA_MISSING` or `TEST_DATA_UNSEEDED` already fired.
 - The detail names each unsourced item (`tdp#<n>` / `vplan#<n>` plus a reason, at most 10) with

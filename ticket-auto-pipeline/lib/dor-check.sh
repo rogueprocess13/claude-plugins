@@ -421,14 +421,17 @@ _dor_td_is_not_recorded() {
 # body that carries the contract — there, only the grammar counts, so this
 # check and the planner's Crosscheck cannot disagree on a contract ticket.
 #   - "seeded/provided/generated/created/supplied/loaded/imported by <party>",
-#     the party (after an optional the/a/an) not a placeholder word;
-#   - a path: contains `/` and either a file extension or a leading `./`,
-#     `../` or `/`;
-#   - a tracker id: 2-5 uppercase letters, `-`, a number, minus a list of
+#     unless the WHOLE party (after an optional the/a/an) is a placeholder
+#     word — "by someone", "by the business" are rejected, "by the business
+#     team" is not;
+#   - a path: contains `/` and either a file extension, a leading `./`,
+#     `../` or `/`, or a trailing `/` (a directory); or a URI (`s3://…`,
+#     `https://…`);
+#   - a tracker id: 2-10 uppercase letters, `-`, a number, minus a list of
 #     standards/product-code prefixes that share the shape.
-_DOR_TD_BY_RE='\b(seeded|provided|generated|created|supplied|loaded|imported) by\s+(?>(?:(?:the|a|an)\s+)?)(?!(?:someone|somebody|anyone|whoever|tbd|tba|todo|business|them|us|tester|testers|qa|user|users|customer|client)\b)[\w`./-]'
-_DOR_TD_PATH_RE='(?:^|[\s(`])(?:\.{1,2}/|/)[\w.-]+|(?:^|[\s(`])[\w.-]+/[\w./-]*\.[A-Za-z][A-Za-z0-9]{0,5}\b'
-_DOR_TD_TRACKER_RE='\b(?!(?:COVID|SKU|UTF|ISO|SHA|RFC|TLS|SSL|HTTP|AES|RSA|MD|CVE|PCI|WCAG|ECMA|IEEE|ANSI|SQL|HTML|CSS|ES|PO|INV|ORD|REF|ID|NO|EUR|USD|GBP|ZAR|GMT|UTC|IPV|SOC)-)[A-Z]{2,5}-[0-9]+\b'
+_DOR_TD_BY_RE='\b(seeded|provided|generated|created|supplied|loaded|imported) by\s+(?>(?:(?:the|a|an)\s+)?)(?!(?:someone|somebody|anyone|whoever|tbd|tba|todo|business|them|us|tester|testers|qa|user|users|customer|client)\s*(?:[.,;:!?)]|$))[\w`./-]'
+_DOR_TD_PATH_RE='(?:^|[\s(`])(?:\.{1,2}/|/)[\w.-]+|(?:^|[\s(`])[\w.-]+/[\w./-]*\.[A-Za-z][A-Za-z0-9]{0,5}\b|(?:^|[\s(`])[\w.-]+/(?:[\w.-]+/)*(?=[\s.,;:)`]|$)|\b[a-z][a-z0-9+.-]*://\S+'
+_DOR_TD_TRACKER_RE='\b(?!(?:COVID|SKU|UTF|ISO|SHA|RFC|TLS|SSL|HTTP|AES|RSA|MD|CVE|PCI|WCAG|ECMA|IEEE|ANSI|SQL|HTML|CSS|ES|PO|INV|ORD|REF|ID|NO|EUR|USD|GBP|ZAR|GMT|UTC|IPV|SOC)-)[A-Z]{2,10}-[0-9]+\b'
 _dor_td_legacy_sourced() {
   local d="$1"
   printf '%s' "$d" | grep -qiP "$_DOR_TD_BY_RE" 2>/dev/null && return 0
@@ -538,12 +541,22 @@ _dor_td_classify() {
 #   <label>\x1f<text>
 # label: tdp#<n> (Test Data Prerequisites item) or vplan#<n> (Verification
 # Plan row). Fenced code blocks are ignored.
-#   - Test Data section: list items (`-`/`*`/`+`/`1.`/`1)`). A more-indented
-#     line — a wrapped continuation or a nested sub-bullet — and an
-#     unindented line directly under an item (no blank line between) are
-#     appended to that item, never counted as items of their own. Table data
-#     rows are items too; prose lines count only when the section has
-#     neither (a legacy free-text section).
+#   - Test Data section: list items (`-`/`*`/`+`/`1.`/`1)`). Table data rows
+#     are items too; prose lines count only when the section has neither (a
+#     legacy free-text section).
+#   - Nesting. A wrapped continuation line, an unindented line directly
+#     under an item (no blank line between), and a nested sub-bullet WITHOUT
+#     its own `Source:` are detail: they are appended to the item they sit
+#     under. A nested sub-bullet WITH its own `Source:` is a test-data item
+#     of its own — joining it would let a sibling's Source hide a
+#     `generate`, because the last Source on a joined line wins. Its parent
+#     stays an item (and is unsourced unless it has its own Source), except
+#     when the parent is only a lead-in — its own text ends in `:` and has
+#     no Source, like `- Upload files:` — which is dropped so that only its
+#     children are counted. An unindented (lazy) continuation line that
+#     carries its own `Source:` is likewise an item of its own, unless it is
+#     a mid-sentence wrap (the item so far does not end in `.!?:;` and the
+#     line starts lower-case), which joins.
 #   - Verification Plan table: the `Test data needed` cell (header cell
 #     containing "test data"), when non-empty.
 #   - In either table, a `Source` header column is appended as
@@ -561,14 +574,15 @@ _dor_td_items() {
       for (i = 1; i <= n; i++) gsub(/\001/, "|", arr[i])
       return n
     }
-    function flush() {
-      if (cur != "") { tn++; print "tdp#" tn "\037" cur }
-      cur = ""; open = 0
-    }
+    function hassrc(s,   l) { l = tolower(s); gsub(/[*_]/, "", l); return l ~ /(^|[^a-z])source[ \t]*:/ }
+    function leadin(s,   l) { l = s; gsub(/[*_`]/, "", l); l = trim(l); return !hassrc(s) && l ~ /:$/ }
+    function additem(t) { ni++; txt[ni] = t; own[ni] = t; kids[ni] = 0; return ni }
+    function append(i, t) { if (t != "") txt[i] = txt[i] " " t }
+    function close_item() { open = 0 }
     /^[ \t]*```/ { fence = !fence; next }
     fence { next }
     /^##[ \t]/ && !/^###/ {
-      flush()
+      close_item()
       h = tolower($0); sub(/^##[ \t]+/, "", h); gsub(/[*_]/, "", h)
       sec = ""
       if (index(h, "test data") == 1) sec = "tdp"
@@ -576,10 +590,10 @@ _dor_td_items() {
       intable = 0
       next
     }
-    /^#/ { flush(); intable = 0; next }
+    /^#/ { close_item(); intable = 0; next }
     sec == "" { next }
     /^[ \t]*\|/ {
-      flush()
+      close_item()
       if ($0 ~ /^[ \t]*\|[-:| \t]+\|?[ \t]*$/) next
       n = cells($0, c)
       if (!intable) {
@@ -600,7 +614,7 @@ _dor_td_items() {
           if (v != "") t = t (t == "" ? "" : "; ") v
         }
         if (t != "" && s != "") t = t " Source: " s
-        if (t != "") { listed = 1; tn++; print "tdp#" tn "\037" t }
+        if (t != "") { listed = 1; additem(t) }
       } else if (sec == "vp" && tdcol > 0 && tdcol <= n) {
         v = trim(c[tdcol])
         if (v != "" && s != "") v = v " Source: " s
@@ -614,21 +628,44 @@ _dor_td_items() {
     /^[ \t]*([-*+]|[0-9]+[.)])[ \t]+/ {
       ind = indent($0)
       t = $0; sub(/^[ \t]*([-*+]|[0-9]+[.)])[ \t]+/, "", t); t = trim(t)
-      if (open && ind > curind) { if (t != "") cur = cur " " t; blank = 0; next }
-      flush()
-      if (t != "") { cur = t; open = 1; curind = ind; listed = 1 }
       blank = 0
+      if (open && ind > curind) {
+        if (t == "") next
+        if (hassrc(t)) {
+          # A sourced sub-bullet is its own item.
+          tgt = additem(t); tgtind = ind; kids[par]++
+        } else if (tgt != par && ind > tgtind) {
+          append(tgt, t)
+        } else {
+          append(par, t); tgt = par; tgtind = curind
+        }
+        next
+      }
+      close_item()
+      if (t != "") { par = additem(t); tgt = par; tgtind = ind; curind = ind; open = 1; listed = 1 }
       next
     }
     {
       t = trim($0)
-      if (open && (indent($0) > curind || !blank)) { cur = cur " " t; blank = 0; next }
-      flush()
+      ind = indent($0)
+      if (open && ind > curind) { append(tgt, t); blank = 0; next }
+      if (open && !blank) {
+        # Unindented (lazy) continuation. A mid-sentence wrap joins; a line
+        # that starts a new sentence and carries its own Source is an item.
+        if (hassrc(t) && !(txt[tgt] !~ /[.!?:;]$/ && t ~ /^[a-z]/)) {
+          par = additem(t); tgt = par; tgtind = ind; curind = ind; blank = 0; next
+        }
+        append(tgt, t); blank = 0; next
+      }
+      close_item()
       pn++; prose[pn] = t
       blank = 0
     }
     END {
-      flush()
+      for (i = 1; i <= ni; i++) {
+        if (kids[i] > 0 && leadin(own[i])) continue
+        tn++; print "tdp#" tn "\037" txt[i]
+      }
       if (!listed) {
         for (i = 1; i <= pn; i++) {
           l = tolower(prose[i])

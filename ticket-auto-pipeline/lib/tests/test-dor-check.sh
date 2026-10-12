@@ -1221,6 +1221,80 @@ _td_case "legacy: and/or is not a path" unsourced "One invoice and/or one credit
 _td_case "legacy: relative path with ./" sourced "Run ./seed-invoices first" true
 _td_case "legacy: absolute path" sourced "The dump at /srv/fixtures/clients" true
 
+# ── Nested sourced children (#505 re-review 2) ───────────────────────────────
+# A sub-bullet carrying its own Source is its own item, so a sibling's Source
+# can never hide a `generate`; only Source-less children are joined.
+
+# S1: a lead-in parent ending in `:` with one generate and one sourced child.
+f=$(_td_body s1 '- Upload files:
+  - a valid file. Source: generate
+  - an invalid file. Source: exists:/fixtures/bad.csv')
+_td_check TD-S1 "$f"
+[ "$(_td_field pass)" = "true" ] && [[ "$(_td_field detail)" == *"tdp#1 (generate)"* ]] &&
+  [[ "$(_td_field detail)" == *"1 of 2 "* ]] &&
+  _pass "S1: a generate child under a lead-in parent is reported (parent dropped, 2 items)" ||
+  _fail "S1: sibling Source must not hide generate (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# S2: an unsourced parent (not a lead-in) with a sourced child stays unsourced.
+f=$(_td_body s2 '- A client with no config
+  - A 1,000-row file. Source: exists:/x.csv')
+_td_check TD-S2 "$f"
+[ "$(_td_field pass)" = "true" ] && [[ "$(_td_field detail)" == *"tdp#1 (no Source)"* ]] &&
+  [[ "$(_td_field detail)" == *"1 of 2 "* ]] &&
+  _pass "S2: an unsourced parent with a sourced child is still unsourced" ||
+  _fail "S2: unsourced parent hidden by child (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# Numbered nesting: a sourced parent with a generate child, and a lead-in
+# numbered parent whose children are all sourced.
+f=$(_td_body s5 '1. Invoices. Source: seeded-by:inv-pack
+   1. five overdue invoices. Source: generate
+2. Clients:
+   1. one client. Source: exists:staging seed set
+   2. one archived client. Source: external:ops team')
+_td_check TD-S5 "$f"
+[ "$(_td_field pass)" = "true" ] && [[ "$(_td_field detail)" == *"1 of 4 "* ]] &&
+  [[ "$(_td_field detail)" == *"tdp#2 (generate)"* ]] &&
+  _pass "numbered nesting: a generate child is its own item; a lead-in numbered parent is dropped" ||
+  _fail "numbered nesting (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# Regression: a Source-less sub-bullet is detail of its parent, not an item.
+f=$(_td_body nested2 '- Five invoices. Source: seeded-by:inv-pack
+  - rows include 3 duplicate ids')
+_td_check TD-NESTED2 "$f"
+[ "$(_td_field pass)" = "false" ] && [[ "$(_td_field detail)" == *"all 1 "* ]] &&
+  _pass "a Source-less sub-bullet (rows include 3 duplicate ids) stays part of its sourced parent" ||
+  _fail "Source-less sub-bullet regression (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# A Source-less grandchild under a sourced child joins that child.
+td_items=$(_dor_td_items '## Test Data Prerequisites
+
+- Upload files:
+  - a valid file. Source: seeded-by:pack
+    - 1,000 rows
+  - an invalid file. Source: generate')
+[ "$(printf '%s\n' "$td_items" | grep -c .)" = "2" ] &&
+  printf '%s' "$td_items" | grep -q $'^tdp#1\037a valid file. Source: seeded-by:pack 1,000 rows$' &&
+  _pass "_dor_td_items: a Source-less grandchild joins the sourced child above it" ||
+  _fail "_dor_td_items grandchild (got: $(printf '%s' "$td_items" | tr '\037' '='))"
+
+# Unindented lazy line: a new sentence with its own Source is an item; a
+# mid-sentence wrap joins.
+f=$(_td_body s4 '- A client with no config
+The upload file. Source: exists:/x.csv')
+_td_check TD-S4 "$f"
+[ "$(_td_field pass)" = "true" ] && [[ "$(_td_field detail)" == *"tdp#1 (no Source)"* ]] &&
+  _pass "an unindented sentence with its own Source does not hide an unsourced item above it" ||
+  _fail "lazy sourced sentence (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# Optional heuristics: whole-party stopword, 2-10 letter tracker ids, URIs
+# and trailing-slash directories.
+_td_case "legacy: 'by the business team' is a real party" sourced "Price list, provided by the business team" true
+_td_case "legacy: 'by the business.' is a placeholder" unsourced "Price list, provided by the business." true
+_td_case "legacy: 6-letter tracker prefix" sourced "The dataset produced by BILLING-123" true
+_td_case "legacy: s3 URI is a path" sourced "Dump at s3://bucket/clients" true
+_td_case "legacy: https URI is a path" sourced "Template at https://example.com/t.xlsx" true
+_td_case "legacy: trailing-slash directory is a path" sourced "Files under fixtures/clients/" true
+
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

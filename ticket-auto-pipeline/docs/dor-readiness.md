@@ -85,9 +85,16 @@ file is the contract; change the grammar there first.
 **Items.** Each item is one of:
 
 - a list item (`-`, `*`, `+`, `1.`, `1)`) under `## Test Data Prerequisites` (or any `## Test Data…`
-  heading) — the planner writes `- <what>. Source: <source>`. A more-indented line (a wrapped
-  continuation or a nested sub-bullet), and an unindented line directly under the item with no
-  blank line between, belong to that item; they are never items of their own;
+  heading) — the planner writes `- <what>. Source: <source>`. Nesting:
+  - a wrapped continuation line, and a nested sub-bullet **without** its own `Source:`, are detail
+    of the item above them and are joined to it;
+  - a nested sub-bullet **with** its own `Source:` is an item of its own. Joining it would let a
+    sibling's Source hide a `generate`, since the last Source on a line wins. Its parent stays an
+    item (unsourced unless it has its own Source), except a lead-in parent — its own text ends in
+    `:` and has no Source, like `- Upload files:` — which is dropped so only its children count;
+  - an unindented line directly under an item (no blank line) joins it when it is a mid-sentence
+    wrap (the item does not end in `.!?:;` and the line starts lower-case); an unindented line
+    that starts a new sentence and carries its own Source is an item of its own;
 - a data row of a table under that heading;
 - a non-empty `Test data needed` cell of the Verification Plan table — the planner writes
   `<what> (Source: <source>)`. The #499 composer writes `not recorded in spec` for an AC no
@@ -132,9 +139,10 @@ Source fields from 0.17.0 on, and those are what opt a body in.
   `DOR_STRICT_TEST_DATA`. A legacy item counts as sourced when it carries informal `Source:` text
   or a conservative prose marker: `seeded/provided/generated/created/supplied/loaded/imported by
   <party>` (the party, after an optional the/a/an, not a placeholder such as `someone`, `TBD` or
-  `the business`); a path (contains `/` plus a file extension, or starts with `./`, `../` or `/`);
-  or a tracker id (2-5 uppercase letters and a number, excluding standards and product-code
-  prefixes such as `COVID-19`, `SKU-123`, `UTF-8`). These markers are never consulted on a contract
+  `the business` — rejected only when that word is the whole party, so `the business team`
+  counts); a path (contains `/` plus a file extension, starts with `./`, `../` or `/`, ends in `/`,
+  or is a URI such as `s3://…`); or a tracker id (2-10 uppercase letters and a number, excluding
+  standards and product-code prefixes such as `COVID-19`, `SKU-123`, `UTF-8`). These markers are never consulted on a contract
   body, so this check cannot disagree with Crosscheck on one.
 
 **What fails by default.** Only a body that uses the contract — at least one Source of a known
