@@ -346,6 +346,32 @@ rc=$?
 [ "$rc" -eq 1 ] && pass "malformed: blocks" || fail "malformed: blocks" "rc=$rc"
 [ "$(printf '%s\n' "$out" | grep -c CITED_ARTIFACT_MALFORMED)" -eq 2 ] && pass "malformed: two findings; None. and none-statements skipped" || fail "malformed: count" "$out"
 
+echo "--- a backticked item is never a none-statement ---"
+new_init INIT-nonebt >/dev/null
+ART3="${REPOS_ROOT}/.ticket-auto/initiatives/INIT-nonebt/artifacts"
+printf '## Cited Artifacts\n\n- No files: `w` NOT FOUND\n- No external files besides `y` which was NOT FOUND\n' >"${ART3}/discovery.md"
+out=$(planner_crosscheck_cited_artifacts INIT-nonebt)
+[ "$(printf '%s\n' "$out" | grep -c CITED_ARTIFACT_MALFORMED)" -eq 2 ] && pass "none-statement: backticked items reported, not skipped" || fail "none-statement: backticked items" "$out"
+
+echo "--- UNREFERENCED: a none need does not reference; names are normalised ---"
+new_init INIT-unref >/dev/null
+ART4="${REPOS_ROOT}/.ticket-auto/initiatives/INIT-unref/artifacts"
+printf '## Cited Artifacts\n\n- `x file` — NOT FOUND (searched: REPOS_ROOT)\n- `client  sample – v2` — NOT FOUND (searched: REPOS_ROOT)\n- `rate card` — NOT FOUND (searched: REPOS_ROOT)\n' >"${ART4}/discovery.md"
+{
+  echo "## Open Questions"
+  echo
+  planner_cited_artifacts_questions INIT-unref
+} >"${ART4}/consensus.md"
+write_spec "${ART4}/specs" "u-one" "1. Role: admin. Test data: none (\`x file\` handled elsewhere).
+2. Role: admin. Test data: the x file. Source: external:someone.
+3. Role: admin. Test data: the \`Client sample - v2\`. Source: generate.
+4. Role: admin. Test data: the \`rate card.\`. Source: generate."
+out=$(planner_crosscheck_cited_artifacts INIT-unref)
+assert_contains "unref: none need does not count as a reference" "$out" 'CITED_ARTIFACT_UNREFERENCED no spec Verification Notes need cites `x file`'
+assert_not_contains "unref: double space and en dash normalised" "$out" 'cites `client  sample – v2`'
+assert_not_contains "unref: trailing dot inside backticks normalised" "$out" 'cites `rate card`'
+assert_not_contains "unref: normalised names still find their answers" "$out" "CITED_ARTIFACT_UNRAISED"
+
 echo "--- missing section: warn on contract initiatives, silent on legacy ---"
 printf '# Discovery\n\n## Code Paths\n\nnone\n' >"${ART2}/discovery.md"
 out=$(planner_crosscheck_cited_artifacts INIT-malformed)

@@ -334,7 +334,7 @@ _planner_cited_entries() {
     case "$up" in none | none.) continue ;; esac
     # "None — no external artifacts cited.", "No artifacts are cited": a
     # statement that there is nothing to list, not an entry.
-    if [[ "$up" =~ ^(none[^a-z]|no[[:space:]]).*(artifact|external|files) ]] &&
+    if [[ "$up" != *'`'* ]] && [[ "$up" =~ ^(none[^a-z]|no[[:space:]]).*(artifact|external|files) ]] &&
       ! [[ "$up" =~ (—|–|[[:space:]]-[[:space:]]).*found ]]; then
       continue
     fi
@@ -409,7 +409,7 @@ _planner_cited_answers() {
     [[ "$line" == *"CITED_ARTIFACT:"* ]] || continue
     line="${line#*CITED_ARTIFACT:}"
     [[ "$line" =~ \`([^\`]+)\` ]] || continue
-    qname=$(_planner_testdata_lower "$(_planner_testdata_trim "${BASH_REMATCH[1]}")")
+    qname=$(_planner_testdata_name_key "${BASH_REMATCH[1]}")
     answer=""
     [[ "$line" == *"Answer:"* ]] && answer="${line##*Answer:}"
     answer=$(_planner_testdata_trim "${answer//\`/}")
@@ -428,6 +428,17 @@ _planner_cited_answers() {
   done <"$consensus"
 }
 
+# Comparison key for a cited-artifact name: lowercased, en/em dashes as "-",
+# whitespace runs collapsed, trimmed, trailing .,;:! stripped. Used on both
+# sides of every name comparison (discovery.md, consensus.md, spec needs).
+_planner_testdata_name_key() {
+  local k
+  k=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/—|–/-/g; s/[[:space:]]+/ /g')
+  k=$(_planner_testdata_trim "$k")
+  while [[ "$k" =~ [.,\;:!]$ ]]; do k="${k%?}"; done
+  printf '%s' "$(_planner_testdata_trim "$k")"
+}
+
 # Does <data> cite the artifact <name>? Only an exact, case-insensitive
 # backticked span counts. Prose is never matched: substring and even
 # word-boundary matching turn "a seeded email template record" into a citation
@@ -436,10 +447,10 @@ _planner_cited_answers() {
 # the backticked reference mandatory, so nothing that matters is lost.
 _planner_testdata_names_artifact() {
   local rest="$1" span name_l
-  name_l=$(_planner_testdata_lower "$(_planner_testdata_trim "$2")")
+  name_l=$(_planner_testdata_name_key "$2")
   [ -n "$name_l" ] || return 1
   while [[ "$rest" =~ \`([^\`]+)\` ]]; do
-    span=$(_planner_testdata_lower "$(_planner_testdata_trim "${BASH_REMATCH[1]}")")
+    span=$(_planner_testdata_name_key "${BASH_REMATCH[1]}")
     [ "$span" = "$name_l" ] && return 0
     rest="${rest#*\`"${BASH_REMATCH[1]}"\`}"
   done
@@ -479,7 +490,7 @@ planner_crosscheck_testdata() {
     < <(_planner_cited_answers "${state_dir}/artifacts/consensus.md")
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    case "${answer_kind[$(_planner_testdata_lower "$name")]:-unresolved}" in
+    case "${answer_kind[$(_planner_testdata_name_key "$name")]:-unresolved}" in
     unresolved) pending+=("$name") ;;
     esac
   done < <(planner_cited_artifacts_missing "$initiative_id")
@@ -606,7 +617,7 @@ planner_crosscheck_cited_artifacts() {
       ;;
     NOT_FOUND)
       missing+=("$name")
-      key=$(_planner_testdata_lower "$name")
+      key=$(_planner_testdata_name_key "$name")
       if [ -z "${answer_kind[$key]+set}" ]; then
         _planner_testdata_emit "planner-crosscheck-testdata: CITED_ARTIFACT_UNRAISED consensus.md has no open question for cited artifact \`${name}\`, which discovery.md lists as NOT FOUND"
         blocking=1
@@ -633,9 +644,11 @@ planner_crosscheck_cited_artifacts() {
       while IFS=$'\037' read -r label data kind value; do
         for name in "${missing[@]}"; do
           _planner_testdata_names_artifact "$data" "$name" || continue
-          key=$(_planner_testdata_lower "$name")
-          referenced["$key"]=1
+          key=$(_planner_testdata_name_key "$name")
+          # Only a real need counts: a Source, and test data that is not none.
           [ -n "$kind" ] || continue
+          _planner_testdata_is_none "$data" && continue
+          referenced["$key"]=1
           ok=true
           case "${answer_kind[$key]:-unresolved}" in
           unresolved)
@@ -664,7 +677,7 @@ planner_crosscheck_cited_artifacts() {
 
     if [ "$nspecs" -gt 0 ] && planner_testdata_contract_initiative "$initiative_id"; then
       for name in "${missing[@]}"; do
-        key=$(_planner_testdata_lower "$name")
+        key=$(_planner_testdata_name_key "$name")
         [ -n "${referenced[$key]:-}" ] && continue
         _planner_testdata_emit "planner-crosscheck-testdata: CITED_ARTIFACT_UNREFERENCED no spec Verification Notes need cites \`${name}\` (NOT FOUND in discovery.md) by its backticked name — quote it exactly in the Test data of every need that uses it, or --accept the code if no spec needs it"
         blocking=1

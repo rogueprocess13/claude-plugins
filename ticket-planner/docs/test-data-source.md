@@ -184,7 +184,10 @@ Consensus agent copies it verbatim:
 
 The operator replaces `PENDING` with one of these. The answer sets what the Source must be in
 every need that **cites** the artifact. A need cites an artifact only through a backticked span
-in its Test data that equals the artifact's name exactly, ignoring case. Prose mentions are
+in its Test data that equals the artifact's name. Both sides are normalised before comparing:
+lowercased, en and em dashes treated as `-`, whitespace runs collapsed, and trailing `.,;:!`
+stripped. Only a real need counts as a citation, meaning one with a Source whose test data is
+not `none`. Prose mentions are
 never matched. With substring or word matching, "a seeded email template record" would cite an
 artifact called `template`, and `sample` would match inside `sample file v2`.
 
