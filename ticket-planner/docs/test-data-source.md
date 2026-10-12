@@ -19,9 +19,27 @@ passed while no spec produced the data, and the gap only showed at verification 
 
 | Location | Written by | Shape |
 |---|---|---|
-| Spec `## Verification Notes`, one numbered line per acceptance criterion | Specify | `<n>. Role: <role>. Test data: <what>. Source: <source>.` |
-| Ticket `## Test Data Prerequisites`, one bullet per item | TicketGen (copied from the spec) | `- <what>. Source: <source>` |
-| Ticket `## Verification Plan` table, `Test data needed` cell | TicketGen | `<what> (Source: <source>)` |
+| Spec `## Verification Notes` table, one row per acceptance criterion (current form, #499) | Specify | `\| <criterion> \| <role> \| <what> \| <source> \| … \|` — a `Source` column right after `Test data` |
+| Spec `## Verification Notes`, one numbered line per acceptance criterion (earlier form, still parsed) | Specify | `<n>. Role: <role>. Test data: <what>. Source: <source>.` |
+| Ticket `## Test Data Prerequisites`, one bullet per item | TicketGen (`planner_ticketgen_testdata_prereqs`, generated from the table) | `- <what>. Source: <source>` |
+| Ticket `## Verification Plan` table, `Test data needed` cell | TicketGen (`planner_ticketgen_vplan`) | `<what> (Source: <source>)` |
+
+The table form looks like this:
+
+```
+## Verification Notes
+
+| Criterion | Role | Test data | Source | Navigation path | Expected | Verifiable |
+|-----------|------|-----------|--------|-----------------|----------|------------|
+| Export downloads a file named invoices-{date}.csv | finance user | 5 seeded invoices with distinct dates | seeded-by:inv-0-test-data-pack | Billing > Invoices | invoices-2026-09-30.csv downloaded | yes |
+| The invoice list looks uncluttered | any authenticated user | none | — | Billing > Invoices | needs human judgement | no |
+```
+
+Both TicketGen outputs are generated in bash from the table, so the ticket body carries
+exactly what the spec recorded. A `## Test Data Prerequisites` section hand-written in the
+spec is replaced by the generated one. A spec with no table (an earlier, numbered-line spec)
+keeps its own section, copied as written. When no criterion needs test data, the generated
+section is the single bullet `- None — no acceptance criterion needs test data.`
 
 ### Grammar
 
@@ -36,13 +54,16 @@ value       := for exists:    <where>   free text, non-empty
 
 Writers must follow these rules:
 
-- Write the marker as `Source:`, as the **last field** on the line. Everything after it, to the
-  end of the line, is the source.
-- A value must not contain `|`, a carriage return or a newline. The state log and the ticket's
+- In the table form, write the source in the row's `Source` cell, bare (`seeded-by:pack`).
+  Write `—` there when the test data is `none`.
+- In the numbered-line form, write the marker as `Source:`, as the **last field** on the
+  line. Everything after it, to the end of the line, is the source.
+- A value must not contain `|` (not even escaped as `\|`), a carriage return or a newline. The state log and the ticket's
   Verification Plan table are both `|`-delimited.
 - The kind set is **closed**. Any other kind is an error, not an extension point.
 - `Test data: none` needs no Source. `Source: none` is only valid on such a line.
-- A line may carry more than one `Test data: … Source: …` pair. Each pair is checked on its own.
+- A numbered line may carry more than one `Test data: … Source: …` pair. Each pair is checked
+  on its own. A table row carries one need.
 
 Readers must be lenient in the same, fixed ways (the Crosscheck parser does all of these;
 #505 should match):
@@ -58,6 +79,13 @@ Readers must be lenient in the same, fixed ways (the Crosscheck parser does all 
   are ignored.
 - Numbered items (`1.`, `1)`) and bullets (`-`, `*`, `+`) are both need lines. A bullet is
   labelled `b<k>` in findings.
+- Table rows are need lines too. The header row locates the columns by name (lowercased,
+  `*`/`_`/backticks removed, prefix match): `Test data` and the optional `Source`. A table
+  with no `Test data` column is ignored. Each data row is one need, labelled by its 1-based
+  row number. The Source cell may be bare (`generate`) or carry the marker
+  (`Source: generate`). A Test data cell may also carry the Source inline
+  (`the price list. Source: external:pricing team`); a non-empty Source cell wins over it.
+  A Source cell of `-`, `—`, `–` or `n/a` is an empty cell. `\|` in a cell is a literal pipe.
 - These "none" phrasings mean no test data, matched case-insensitively at the start of the
   value: `none`, `none (…)`, `n/a`, `na`, `-`, `nothing`, `not applicable`,
   `no special data…`, `no special test data…`, `no test data…`, `no data required`,

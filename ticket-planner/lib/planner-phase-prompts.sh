@@ -649,9 +649,10 @@ ${state_dir}/artifacts/specs/<ticket-slug>.md. Each spec must include:
    - a **cross-initiative prerequisite** — the existing Linear identifier of the blocking ticket, e.g. \`blocked-by:WIL-83\`. Use this whenever work in this initiative cannot start until a ticket from *another* initiative is Done. Do not leave such a prerequisite as prose in the Description only: prose never reaches the ticket manifest's \`blocked_by\` array, so an unrecorded prerequisite is unenforceable.
 4. **## Signals** — a JSON code block with the 5 raw confidence signals (see below)
 5. **## Verification Notes** — a table keyed by each acceptance criterion's verbatim
-   text: role, test data, expected value, verifiable (see below)
+   text: role, test data, where that data comes from (Source), expected value,
+   verifiable (see below)
 6. **## Test Data Provided** — only on a spec that produces test data other specs
-   (or itself) name with \`Source: seeded-by:<slug>\`: what it generates or seeds
+   (or itself) name with Source \`seeded-by:<slug>\`: what it generates or seeds
 
 Write them as \`## Title\`, \`## Description\` (the body sections follow as their own
 \`##\` headings), \`## Labels\`, \`## Signals\`, \`## Verification Notes\` — TicketGen reads
@@ -732,9 +733,10 @@ TicketGen does not rewrite anything: \`planner_ticket_body_compose\` copies ever
 section of the spec into the ticket except its \`# \` heading, \`## Title\`,
 \`## Labels\`, \`## Signals\` and \`## Verification Notes\` (the \`## Description\`
 heading itself is dropped, its content kept), then appends a generated
-\`## Verification Plan\` (from \`## Verification Notes\`), \`## Related Tickets\` (from the
-\`blocked-by:\` tokens) and the \`## Planner Context\` block. Do not write those three
-sections yourself, and never write the text \`## Planner Context\` anywhere in the
+\`## Test Data Prerequisites\` and \`## Verification Plan\` (both from
+\`## Verification Notes\`), \`## Related Tickets\` (from the \`blocked-by:\` tokens) and
+the \`## Planner Context\` block. Do not write those four sections yourself (a
+hand-written \`## Test Data Prerequisites\` is replaced by the generated one), and never write the text \`## Planner Context\` anywhere in the
 spec — not as a heading, not inside a code fence, not in a sentence — or the spec
 is refused. The Acceptance Criteria heading must appear exactly once, spelled
 exactly \`## Acceptance Criteria\`, outside any code fence, with at least one item. Everything else the ticket needs
@@ -744,7 +746,8 @@ must already be in the Description, in its final wording:
   missing any of these, and an empty heading fails like a missing one:
   every type: \`## Acceptance Criteria\` (atomic \`- [ ]\` observable facts, one per
   line), \`## Test User\` (role/email + password), \`## Scope\` (a
-  \`| Layer | Service | Area |\` table), \`## Test Data Prerequisites\`;
+  \`| Layer | Service | Area |\` table) — \`## Test Data Prerequisites\` is required
+  too, and is generated from the Verification Notes table's Test data and Source cells;
   feature / improvement: \`## Navigation Path\` (click-by-click, never a URL);
   bug: \`## Steps to Reproduce\` (numbered). Mirror ticket-auto-pipeline's
   \`templates/{type}.md\` for wording and table shape.
@@ -764,16 +767,20 @@ TicketGen builds each ticket's \`## Verification Plan\` table from this section
 fills in or reorders a row later, so everything the table needs is written here.
 Rows are matched to Acceptance Criteria by the **Criterion text**, never by
 position — a numbered list stops lining up the moment an amendment inserts a
-criterion. Write a table with one row per Acceptance Criteria line, whose
-\`Criterion\` cell repeats that AC line **verbatim** (without the \`- [ ]\` marker):
+criterion. The ticket's \`## Test Data Prerequisites\` is generated from the same
+rows (\`- <what>. Source: <source>\` per need). Write a table with one row per
+Acceptance Criteria line, whose \`Criterion\` cell repeats that AC line **verbatim**
+(without the \`- [ ]\` marker):
 
 \`\`\`
 ## Verification Notes
 
-| Criterion | Role | Test data | Navigation path | Expected | Verifiable |
-|-----------|------|-----------|-----------------|----------|------------|
-| Export downloads a file named invoices-{date}.csv | finance user | 5 seeded invoices with distinct dates | Billing > Invoices | invoices-2026-09-30.csv downloaded | yes |
-| The invoice list looks uncluttered | any authenticated user | none | Billing > Invoices | needs human judgement, no checkable value | no |
+| Criterion | Role | Test data | Source | Navigation path | Expected | Verifiable |
+|-----------|------|-----------|--------|-----------------|----------|------------|
+| Export downloads a file named invoices-{date}.csv | finance user | 5 seeded invoices with distinct dates | seeded-by:inv-0-test-data-pack | Billing > Invoices | invoices-2026-09-30.csv downloaded | yes |
+| The invoice list looks uncluttered | any authenticated user | none | — | Billing > Invoices | needs human judgement, no checkable value | no |
+| Totals use the regional price list | finance user | the regional price list | external:pricing team | Billing > Invoices | total shows 1,240.00 | yes |
+| Archived clients are hidden | admin | an archived client record | exists:staging seed set (clients.sql) | Clients | archived client absent from list | yes |
 \`\`\`
 
 - **Criterion** — the AC line, character for character. When you edit an AC, edit
@@ -782,6 +789,7 @@ criterion. Write a table with one row per Acceptance Criteria line, whose
 - **Role / Test data** — who exercises it and what must exist first. When a criterion
   needs neither, still write \`any authenticated user\` / \`none\` — a missing row reads
   as "not considered", not "not needed".
+- **Source** — where the test data comes from (below); \`—\` when Test data is \`none\`.
 - **Navigation path** — optional; empty falls back to the spec's \`## Navigation Path\`.
 - **Expected** — the concrete, checkable value (a specific string, count, status or
   state). For a judgement-based criterion, say why there is no checkable value.
@@ -792,8 +800,8 @@ criterion. Write a table with one row per Acceptance Criteria line, whose
 
 **Source (#503) — required whenever Test data is not \`none\`.** "Described" is not
 "available": a ticket that lists data nobody produces fails at verification.
-\`Source:\` is the last field on the line and takes exactly one value from this
-closed set (full contract: docs/test-data-source.md):
+The row's \`Source\` cell takes exactly one value from this closed set (full
+contract: docs/test-data-source.md):
 
 - \`exists:<where>\` — it already exists; say where (an environment's seed set, a
   path, a named record).
@@ -810,7 +818,7 @@ closed set (full contract: docs/test-data-source.md):
 
 **Cited artifacts discovery.md lists as NOT FOUND** (#504): quote the artifact's
 name in backticks in the Test data text, exactly as discovery.md spells it, and
-write \`Source: generate\` — never \`exists:\` or \`external:\`. Nobody has said yet
+set its Source to \`generate\` — never \`exists:\` or \`external:\`. Nobody has said yet
 whether the file is coming or must be synthesised; the operator answers that at
 the Crosscheck stop, and Crosscheck checks the spec's Source against the answer.
 
@@ -933,8 +941,8 @@ On failure, write \`fail\` instead of \`done\`.
 - Every ticket spec must have a \`## Verification Notes\` table, one row per Acceptance
   Criteria line with that line verbatim in its Criterion cell — TicketGen's Verification
   Plan table is generated from it (planner-ready-by-construction, #499).
-- Every Verification Notes line whose Test data is not \`none\` ends with
-  \`Source: exists:<where> | seeded-by:<spec-slug> | external:<who> | generate\` (#503).
+- Every Verification Notes row whose Test data is not \`none\` has a Source cell:
+  \`exists:<where> | seeded-by:<spec-slug> | external:<who> | generate\` (#503).
 - Signals must be raw values from Discovery, not fabricated. Do NOT compute Confidence.
 - The description in each spec is the actual Linear ticket body — be precise.
 - Every spec's Signals carries \`Kind\` and \`Serves\`/\`Enables\`; every business spec
@@ -1098,7 +1106,7 @@ operator, who records \`Answer: exists:<where>\` (they supplied it),
 test-data Source for every spec that uses the artifact (docs/test-data-source.md),
 and Crosscheck blocks any spec whose Source disagrees with it
 (CITED_ARTIFACT_SOURCE_MISMATCH). Until the operator answers, every such spec's
-Verification Notes line stays \`Source: generate\`, with the artifact's name in
+Verification Notes row keeps Source \`generate\`, with the artifact's name in
 backticks. Do not fill in an \`external:<who>\` yourself: you would be inventing
 the \`<who>\`.
 
@@ -1740,9 +1748,12 @@ is left to judgement:
 - **Body** — \`planner_ticketgen_body\` → \`planner_ticket_body_compose\`: every section of
   the spec except its \`# \` heading, Title, Labels, Signals and Verification Notes
   (and any hand-written Verification Plan / Related Tickets, which are regenerated), then
-  \`## Verification Plan\` (\`### Per-Criterion Verification\`, one row per Acceptance
-  Criteria line in AC order, matched to the spec's \`## Verification Notes\` by
-  criterion text, never by position), \`## Related Tickets\` (the created ids of this
+  \`## Test Data Prerequisites\` (one \`- <what>. Source: <source>\` bullet per test-data
+  need in the Verification Notes table, #503 — it replaces a hand-written copy; a legacy
+  spec with no table keeps its own), \`## Verification Plan\`
+  (\`### Per-Criterion Verification\`, one row per Acceptance Criteria line in AC
+  order, matched to the spec's \`## Verification Notes\` by criterion text, never by position; the Test data
+  needed cell reads \`<what> (Source: <source>)\`), \`## Related Tickets\` (the created ids of this
   ticket's dependencies), and the \`## Planner Context\` block (confidence and
   Pre-approved derived from the spec's Signals JSON by \`planner_confidence_derive\`).
 - **Parent** — the epic identifier is resolved to its Linear UUID once, before the
@@ -1758,7 +1769,7 @@ only other job is to report its output.
 Check 2.7c runs) against every composed body before creation:
 
 - every type: \`## Acceptance Criteria\`, \`## Test User\`, \`## Scope\`,
-  \`## Test Data Prerequisites\`, \`## Verification Plan\` (generated here);
+  \`## Test Data Prerequisites\`, \`## Verification Plan\` (both generated here);
 - feature / improvement: also \`## Navigation Path\`;
 - bug: also \`## Steps to Reproduce\`.
 

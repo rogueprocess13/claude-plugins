@@ -260,17 +260,67 @@ _planner_testdata_parse_segment() {
   printf '%s\037%s\037%s\n' "$data" "$kind" "$value"
 }
 
+# Verification Notes table rows (#499's Criterion table) as need lines, one
+# per data row: "<k>\x1f<line>", k the 1-based data-row number, line a
+# synthetic "Test data: <cell> Source: <cell>" the segment parser reads like a
+# numbered line. Columns are located by header name (lowercased, `*`/`_`
+# stripped, prefix match): "test data" and the optional "source". A Source cell
+# may be written bare (`seeded-by:pack`) or with its marker (`Source: …`); a
+# Test data cell may also carry the Source inline (`… Source: generate`) — the
+# last Source wins either way. A Source cell of `-`, `—`, `–` or `n/a` is an
+# empty cell. `\|` inside a cell is a literal pipe. A table
+# with no Test data column yields nothing.
+# Usage: _planner_testdata_table_needs <<<"<section>"
+_planner_testdata_table_needs() {
+  awk '
+    /^[[:space:]]*\|/ {
+      line = $0
+      gsub(/\\\|/, "\036", line)
+      sub(/^[[:space:]]*\|/, "", line); sub(/\|[[:space:]]*$/, "", line)
+      n = split(line, c, "|")
+      sep = 1
+      for (i = 1; i <= n; i++) { t = c[i]; gsub(/[-: ]/, "", t); if (t != "") { sep = 0; break } }
+      if (sep) next
+      for (i = 1; i <= n; i++) { gsub(/\036/, "|", c[i]); gsub(/^[[:space:]]+|[[:space:]]+$/, "", c[i]) }
+      if (!hdr) {
+        hdr = 1; di = 0; si = 0
+        for (i = 1; i <= n; i++) {
+          h = tolower(c[i]); gsub(/[*_`]/, "", h); gsub(/^[[:space:]]+/, "", h)
+          if (!di && index(h, "test data") == 1) di = i
+          else if (!si && index(h, "source") == 1) si = i
+        }
+        next
+      }
+      if (!di) next
+      k++
+      out = "Test data: " c[di]
+      src = si ? c[si] : ""
+      # An empty-cell placeholder is no Source, not an unknown kind.
+      if (tolower(src) ~ /^(-|—|–|n\/a)$/) src = ""
+      if (src != "") out = out " Source: " src
+      printf "%d\037%s\n", k, out
+      next
+    }
+    { hdr = 0 }
+  '
+}
+
 # Every test-data need in one spec, one record per line:
 #   <label>\x1f<data>\x1f<kind>\x1f<value>
-# label is the item's number (numbered lists) or b<k> (k-th bullet).
+# label is the item's number (numbered lists), b<k> (k-th bullet), or the
+# 1-based data-row number of a Verification Notes table (#499).
 _planner_testdata_spec_needs() {
-  local spec_file="$1" line label bullets=0 rest seg parsed
+  local spec_file="$1" line label bullets=0 rest seg parsed section
+  section=$(_planner_testdata_section "$spec_file" "Verification Notes")
   while IFS= read -r line; do
     if [[ "$line" =~ ^[[:space:]]*([0-9]+)[.\)][[:space:]] ]]; then
       label="${BASH_REMATCH[1]}"
     elif [[ "$line" =~ ^[[:space:]]*[-*+][[:space:]] ]]; then
       bullets=$((bullets + 1))
       label="b${bullets}"
+    elif [[ "$line" =~ ^([0-9]+)$'\037'(.*)$ ]]; then
+      label="${BASH_REMATCH[1]}"
+      line="${BASH_REMATCH[2]}"
     else
       continue
     fi
@@ -283,16 +333,20 @@ _planner_testdata_spec_needs() {
       parsed=$(_planner_testdata_parse_segment "$seg")
       printf '%s\037%s\n' "$label" "$parsed"
     done
-  done < <(_planner_testdata_section "$spec_file" "Verification Notes")
+  done < <(
+    printf '%s\n' "$section"
+    _planner_testdata_table_needs <<<"$section"
+  )
 }
 
 # Does the spec carry at least one Source field (marks it as written to this
-# contract, even in a legacy initiative)?
+# contract, even in a legacy initiative)? A `Source:` marker anywhere in the
+# notes, or a non-empty Source cell in the notes table.
 _planner_testdata_spec_has_source() {
   local body
   body=$(_planner_testdata_section "$1" "Verification Notes")
-  body=$(_planner_testdata_norm_line "$body")
-  [[ "$body" == *"Source:"* ]]
+  [[ "$(_planner_testdata_norm_line "$body")" == *"Source:"* ]] && return 0
+  [[ "$(_planner_testdata_table_needs <<<"$body")" == *"Source: "* ]]
 }
 
 # Resolve a seeded-by ref to a sibling slug: exact, or the unambiguous

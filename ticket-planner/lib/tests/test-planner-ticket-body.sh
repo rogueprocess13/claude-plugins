@@ -349,6 +349,127 @@ none_body=$(planner_ticket_body_compose "${SPECS}/a-schema.md" "$ctx" 2>/dev/nul
 sed -n '/^## Related Tickets$/,/^## Planner Context$/p' <<<"$none_body" | grep -qxF 'None.' &&
   pass "no dependencies → Related Tickets: None." || fail "None." "$(sed -n '/^## Related Tickets$/,/^## Planner/p' <<<"$none_body")"
 
+echo "--- test-data Source (#503): Verification Plan cell and Test Data Prerequisites ---"
+TDDIR="${TMP_ROOT}/td-specs"
+mkdir -p "$TDDIR"
+cat >"${TDDIR}/td-export.md" <<'SPEC'
+# td-export
+
+## Title
+
+Finance can export invoices
+
+## Description
+
+## Summary
+
+Export invoices.
+
+## Acceptance Criteria
+
+- [ ] Export downloads a file
+- [ ] The list looks uncluttered
+- [ ] Totals use the regional price list
+- [ ] Archived clients are hidden
+- [ ] Unsourced data shows
+
+## Test User
+
+finance@example.com / pw
+
+## Test Data Prerequisites
+
+- A hand-written line that the generated section replaces.
+
+## Labels
+
+`feature`, `planned`
+
+## Verification Notes
+
+| Criterion | Role | Test data | Source | Navigation path | Expected | Verifiable |
+|-----------|------|-----------|--------|-----------------|----------|------------|
+| Export downloads a file | finance user | 5 seeded invoices with distinct dates | seeded-by:inv-0-test-data-pack | Billing > Invoices | invoices.csv downloaded | yes |
+| The list looks uncluttered | any authenticated user | none | — | | needs judgement | no |
+| Totals use the regional price list | finance user | the regional price list. **Source:** external:pricing team. | | | total 1,240.00 | yes |
+| Archived clients are hidden | admin | an archived client record | `Source: exists:staging seed set (clients.sql)` | | absent | yes |
+| Unsourced data shows | admin | 3 draft invoices | | | shown | yes |
+SPEC
+td_body=$(planner_ticket_body_compose "${TDDIR}/td-export.md" "$ctx" 2>/dev/null)
+td_vplan=$(sed -n '/^## Verification Plan$/,/^## Related Tickets$/p' <<<"$td_body")
+grep -qF '| 5 seeded invoices with distinct dates (Source: seeded-by:inv-0-test-data-pack) |' <<<"$td_vplan" &&
+  pass "Verification Plan cell: <what> (Source: <source>) from the Source column" || fail "vplan Source cell (column)" "$td_vplan"
+grep -qF '| the regional price list (Source: external:pricing team) |' <<<"$td_vplan" &&
+  pass "Verification Plan cell: an inline Source in the Test data cell is split out" || fail "vplan Source cell (inline)" "$td_vplan"
+grep -qF '| an archived client record (Source: exists:staging seed set (clients.sql)) |' <<<"$td_vplan" &&
+  pass "Verification Plan cell: a Source cell written with its marker and backticks" || fail "vplan Source cell (marker)" "$td_vplan"
+grep -qF '| n/a | none | needs judgement |' <<<"$td_vplan" &&
+  pass "Verification Plan cell: none data carries no Source" || fail "vplan none cell" "$td_vplan"
+grep -qF '| 3 draft invoices | shown |' <<<"$td_vplan" &&
+  pass "Verification Plan cell: no Source recorded → no Source invented" || fail "vplan unsourced cell" "$td_vplan"
+td_prereq=$(sed -n '/^## Test Data Prerequisites$/,/^## Verification Plan$/p' <<<"$td_body" | sed '1d;$d' | sed '/^$/d')
+td_want='- 5 seeded invoices with distinct dates. Source: seeded-by:inv-0-test-data-pack
+- the regional price list. Source: external:pricing team
+- an archived client record. Source: exists:staging seed set (clients.sql)
+- 3 draft invoices'
+[ "$td_prereq" = "$td_want" ] &&
+  pass "Test Data Prerequisites: one '- <what>. Source: <source>' bullet per need, AC order, none skipped" ||
+  fail "Test Data Prerequisites bullets" "$td_prereq"
+[ "$(grep -c '^## Test Data Prerequisites$' <<<"$td_body")" = 1 ] &&
+  pass "exactly one Test Data Prerequisites section" || fail "prereq section count" "$(grep -c '^## Test Data Prerequisites$' <<<"$td_body")"
+grep -qF 'hand-written line' <<<"$td_body" && fail "hand-written prereqs" "not replaced" ||
+  pass "a hand-written Test Data Prerequisites is replaced by the generated one"
+# The readiness grammar (docs/test-data-source.md "For #505"): every bullet
+# Crosscheck's segment parser reads back gives the Source the spec recorded.
+source "${LIB_DIR}/planner-crosscheck-testdata.sh"
+td_kinds=$(while IFS= read -r b; do
+  _planner_testdata_parse_segment "${b#- }" | cut -d$'\037' -f2
+done <<<"$td_prereq" | paste -sd, -)
+[ "$td_kinds" = "seeded-by,external,exists," ] &&
+  pass "Test Data Prerequisites bullets parse back with the contract's Source grammar" || fail "bullet grammar" "$td_kinds"
+# Same spec, crosscheck view: the table rows are the needs.
+td_needs=$(_planner_testdata_spec_needs "${TDDIR}/td-export.md" | cut -d$'\037' -f1,3 | tr '\037' ':' | paste -sd' ' -)
+[ "$td_needs" = "1:seeded-by 2: 3:external 4:exists 5:" ] &&
+  pass "Crosscheck reads the same table rows the composer renders" || fail "crosscheck table needs" "$td_needs"
+
+cat >"${TDDIR}/td-nodata.md" <<'SPEC'
+# td-nodata
+
+## Acceptance Criteria
+
+- [ ] Read-only view loads
+
+## Verification Notes
+
+| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|
+| Read-only view loads | admin | none | — | page loads | yes |
+SPEC
+nd_body=$(planner_ticket_body_compose "${TDDIR}/td-nodata.md" "$ctx" 2>/dev/null)
+sed -n '/^## Test Data Prerequisites$/,/^## Verification Plan$/p' <<<"$nd_body" |
+  grep -qxF -- '- None — no acceptance criterion needs test data.' &&
+  pass "no criterion needs data → a single none bullet (section never empty)" || fail "none bullet" "$nd_body"
+
+cat >"${TDDIR}/td-legacy.md" <<'SPEC'
+# td-legacy
+
+## Acceptance Criteria
+
+- [ ] Something
+
+## Test Data Prerequisites
+
+- Hand-written legacy prerequisite. Source: exists:prod copy
+
+## Verification Notes
+
+1. Role: admin. Test data: a record. Source: exists:prod copy.
+SPEC
+lg_body=$(planner_ticket_body_compose "${TDDIR}/td-legacy.md" "$ctx" 2>/dev/null)
+grep -qxF -- '- Hand-written legacy prerequisite. Source: exists:prod copy' <<<"$lg_body" &&
+  [ "$(grep -c '^## Test Data Prerequisites$' <<<"$lg_body")" = 1 ] &&
+  pass "legacy spec without a notes table keeps its own Test Data Prerequisites" || fail "legacy prereqs" "$lg_body"
+
 echo "--- Generated comes from the state log, never the clock ---"
 LOG="${REPOS_ROOT}/.ticket-auto/initiatives/${INIT}/state.log"
 {

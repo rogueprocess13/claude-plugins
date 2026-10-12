@@ -69,6 +69,16 @@ different bodies.
   Verification Plan rows marked "not recorded in spec", which can trip the readiness check's
   `VPLAN_UNVERIFIABLE` code. This code is advisory unless `DOR_STRICT_VPLAN` is set. To fix it,
   rewrite the notes as the Criterion table and `resume`.
+- **Reconciled with the test-data Source contract (#503, 0.17.0).** The Criterion table has a
+  `Source` column right after `Test data` (bare `seeded-by:<slug>`, `exists:<where>`,
+  `external:<who>` or `generate`; `—` when the data is none). The composer renders the
+  Verification Plan's Test data needed cell as `<what> (Source: <source>)` and generates
+  `## Test Data Prerequisites` as one `- <what>. Source: <source>` bullet per need
+  (`planner_ticketgen_testdata_prereqs`), replacing a hand-written copy; a spec with no table
+  keeps its own section. Crosscheck's `planner-crosscheck-testdata.sh` now reads table rows as
+  needs too (`_planner_testdata_table_needs`), so `TEST_DATA_UNOWNED` and the
+  `CITED_ARTIFACT_*` checks still fire on table-form specs. `docs/test-data-source.md`
+  documents the table form; numbered lines are still parsed.
 
 ## ticket-planner 0.17.0 (2026-10-12)
 

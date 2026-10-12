@@ -31,6 +31,8 @@
 #   planner_ticketgen_generated_ts <initiative_id>   the Planner Context `Generated` value
 #   planner_ticketgen_context_block <initiative_id> <epic_id> <spec_file>
 #   planner_ticketgen_vplan <spec_file>              the `## Verification Plan` section
+#   planner_ticketgen_testdata_prereqs <spec_file>   the `## Test Data Prerequisites` section
+#                                                    (from the notes table, with Source — #503)
 #   planner_ticketgen_dep_refs <initiative_id> <spec_file>
 #                                                    "<linear-id>\t<title>" per dependency
 #   planner_ticket_body_compose <spec_file> <planner_context_block> [<id>\t<title> ...]
@@ -322,8 +324,8 @@ planner_ticketgen_context_block() {
 
 # ── Verification Plan ────────────────────────────────────────────────────────
 
-# Verification Notes table rows → JSON [{criterion, role, data, nav, expected,
-# verifiable}], columns located by header name. [] when there is no table
+# Verification Notes table rows → JSON [{criterion, role, data, source, nav,
+# expected, verifiable}], columns located by header name. [] when there is no table
 # with a Criterion column.
 _planner_tb_notes_table() {
   local section="$1"
@@ -353,6 +355,7 @@ _planner_tb_notes_table() {
                   criterion: .[$ci],
                   role: (col($h; "role") as $i | if $i == null then null else .[$i] end),
                   data: (col($h; "test data") as $i | if $i == null then null else .[$i] end),
+                  source: (col($h; "source") as $i | if $i == null then null else .[$i] end),
                   nav: (col($h; "navigation") as $i | if $i == null then null else .[$i] end),
                   expected: (col($h; "expected") as $i | if $i == null then null else .[$i] end),
                   verifiable: (col($h; "verifiable") as $i | if $i == null then null else .[$i] end)
@@ -367,12 +370,38 @@ _planner_tb_notes_legacy_count() {
   printf '%s\n' "$1" | { grep -cE '^[[:space:]]*[0-9]+[a-z]?[.)][[:space:]]+' || true; }
 }
 
-# The full `## Verification Plan` section for a spec: one row per Acceptance
-# Criteria line, in AC order. Mapping warnings go to stderr; always exit 0
-# when the spec is readable.
-planner_ticketgen_vplan() {
+# The test-data Source contract (#503, docs/test-data-source.md) applied to one
+# notes row: {data, src, none}. The Source comes from the row's Source column
+# (bare `seeded-by:pack` or `Source: seeded-by:pack`), else from a `Source:`
+# inside the Test data cell (the last one wins); backticks and trailing
+# `.,;:!` are dropped, and a `-`/`—`/`–`/`n/a` cell is no Source. `none` mirrors
+# planner-crosscheck-testdata.sh's _planner_testdata_is_none — keep the two in
+# step. Crosscheck parses the same table (_planner_testdata_table_needs).
+_PLANNER_TB_JQ_TESTDATA='
+  def trimws: gsub("^\\s+|\\s+$"; "");
+  def isnone: (. // "") | ascii_downcase | trimws
+    | (capture("^(?<h>[^.;,]*)").h | trimws) as $d
+    | $d == "" or ($d | test("^(none|none[ (].*|n/a|n/a .*|na|-|nothing|nothing .*|not applicable.*|no special data.*|no special test data.*|no test data.*|no data required.*|no data needed.*|no setup.*|no special setup.*)$"));
+  def cleansrc: gsub("[`*]"; "") | trimws | sub("^source\\s*:\\s*"; ""; "i") | trimws
+    | sub("[.,;:!]+$"; "") | trimws
+    | if ascii_downcase | IN("-", "—", "–", "n/a") then "" else . end;
+  def testdata($d; $s):
+    ($d // "" | tostring) as $raw
+    | (($s // "" | tostring) | cleansrc) as $col
+    | (if ($raw | test("source\\s*:"; "i"))
+       then ($raw | capture("^(?<d>.*)source\\s*:(?<s>.*)$"; "i"))
+       else {d: $raw, s: ""} end) as $in
+    | ($in.d | sub("[\\s*]+$"; "") | sub("[.,;]+$"; "") | trimws) as $data
+    | { data: $data,
+        src: (if $col != "" then $col else ($in.s | cleansrc) end),
+        none: ($data | isnone) };
+'
+
+# Verification Notes → AC-ordered rows + mapping warnings, as JSON
+# {rows: [...], warnings: [...], table: <rows in the notes table>}.
+_planner_tb_vplan_json() {
   local spec_file="$1"
-  local ac_json notes table_json legacy_count nav result
+  local ac_json notes table_json legacy_count nav
   ac_json=$(_planner_tb_ac_items "$spec_file" | jq -R . | jq -sc .)
   notes=$(_planner_tb_section "$spec_file" "verification notes")
   table_json=$(_planner_tb_notes_table "$notes")
@@ -380,15 +409,14 @@ planner_ticketgen_vplan() {
   nav=$(_planner_tb_section "$spec_file" "navigation path" | awk 'NF{print; exit}' |
     tr -d '`' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
 
-  result=$(jq -nc \
+  jq -nc \
     --argjson acs "$ac_json" \
     --argjson table "${table_json:-[]}" \
     --argjson legacy "${legacy_count:-0}" \
     --arg nav "$nav" \
-    --arg spec "$(basename "$spec_file")" '
+    --arg spec "$(basename "$spec_file")" "${_PLANNER_TB_JQ_TESTDATA}"'
     def norm: ascii_downcase | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ") | rtrimstr(".");
     def present: . != null and (tostring | gsub("\\s"; "") | length) > 0;
-    def esc: tostring | gsub("\\|"; "\\|");
     def nr: "not recorded in spec";
     (reduce $table[] as $r ({}; ($r.criterion // "" | norm) as $k
         | if $k == "" or has($k) then . else .[$k] = $r end)) as $byText
@@ -396,12 +424,16 @@ planner_ticketgen_vplan() {
     | [ range(0; $acs | length) as $i
         | $byText[$acKeys[$i]] as $n
         | ( if ($n.expected | present) then $n.expected else nr end ) as $exp
+        | (if ($n.data | present) then testdata($n.data; $n.source) else null end) as $td
         | {
             i: ($i + 1),
             criterion: $acs[$i],
             role: (if ($n.role | present) then $n.role else nr end),
             nav: (if ($n.nav | present) then $n.nav elif ($nav | present) then $nav else "n/a" end),
-            data: (if ($n.data | present) then $n.data else nr end),
+            data: (if $td == null then nr else $td.data end),
+            src: (if $td == null then "" else $td.src end),
+            none: (if $td == null then false else $td.none end),
+            recorded: ($td != null),
             expected: $exp,
             verifiable: (if ($n.expected | present)
                            and (($n.verifiable // "") | norm | IN("yes", "y", "✓", "true", "x"))
@@ -410,6 +442,7 @@ planner_ticketgen_vplan() {
           } ] as $rows
     | {
         rows: $rows,
+        table: ($table | length),
         warnings: (
           (if ($table | length) == 0 then
              (if $legacy > 0 or ($acs | length) == 0 then []
@@ -422,7 +455,16 @@ planner_ticketgen_vplan() {
              else [] end)
         )
       }
-  ') || return 1
+  '
+}
+
+# The full `## Verification Plan` section for a spec: one row per Acceptance
+# Criteria line, in AC order. The Test data needed cell carries the need's
+# Source as `<what> (Source: <source>)` (#503) whenever the data is not none.
+# Mapping warnings go to stderr; always exit 0 when the spec is readable.
+planner_ticketgen_vplan() {
+  local spec_file="$1" result
+  result=$(_planner_tb_vplan_json "$spec_file") || return 1
 
   jq -r '.warnings[] | "planner-ticket-body: WARNING " + .' <<<"$result" >&2
 
@@ -434,7 +476,30 @@ planner_ticketgen_vplan() {
   echo "|---|-----------|------------|-----------------|------------------|-------------------|------------|"
   jq -r '
     def esc: tostring | gsub("\\|"; "\\|");
-    .rows[] | "| \(.i) | \(.criterion | esc) | \(.role | esc) | \(.nav | esc) | \(.data | esc) | \(.expected | esc) | \(.verifiable) |"
+    .rows[]
+    | (if .recorded and (.none | not) and .src != "" then "\(.data) (Source: \(.src))" else .data end) as $cell
+    | "| \(.i) | \(.criterion | esc) | \(.role | esc) | \(.nav | esc) | \($cell | esc) | \(.expected | esc) | \(.verifiable) |"
+  ' <<<"$result"
+}
+
+# The `## Test Data Prerequisites` section generated from the Verification
+# Notes table (#503): one `- <what>. Source: <source>` bullet per distinct need
+# whose test data is not none, in AC order (`- <what>` when the row records no
+# Source — the readiness check reads that as unsourced, which it is). When no
+# criterion needs data, a single none bullet. Prints nothing and returns 1 when
+# the spec has no Verification Notes table — the composer then keeps the spec's
+# own hand-written section (legacy specs).
+planner_ticketgen_testdata_prereqs() {
+  local spec_file="$1" result
+  result=$(_planner_tb_vplan_json "$spec_file" 2>/dev/null) || return 1
+  [ "$(jq -r '.table' <<<"$result")" -gt 0 ] || return 1
+  echo "## Test Data Prerequisites"
+  echo ""
+  jq -r '
+    [ .rows[] | select(.recorded and (.none | not))
+      | if .src != "" then "- \(.data). Source: \(.src)" else "- \(.data)" end ]
+    | reduce .[] as $b ([]; if index([$b]) then . else . + [$b] end)
+    | if length == 0 then "- None — no acceptance criterion needs test data." else .[] end
   ' <<<"$result"
 }
 
@@ -522,6 +587,9 @@ _planner_tb_guard() {
 #   1. The spec minus its `# ` heading and the sections in _PLANNER_TB_DROP
 #      (the `## Description` heading goes; its content stays), blank-line runs
 #      outside code fences squeezed, leading/trailing blank lines trimmed.
+#      When the spec has a Verification Notes table, its own
+#      `## Test Data Prerequisites` is dropped too and replaced by
+#      planner_ticketgen_testdata_prereqs (`- <what>. Source: <source>`, #503).
 #   2. `## Verification Plan` from planner_ticketgen_vplan.
 #   3. `## Related Tickets` — one "- Blocked by <id> — <title>" per dependency
 #      argument, then the spec's own Related Tickets text unless it is a
@@ -539,8 +607,17 @@ planner_ticket_body_compose() {
 
   _planner_tb_guard "$spec_file" || return 1
 
-  local body vplan spec_related related="" entry id title
-  body=$(awk -v drop="$_PLANNER_TB_DROP" '
+  local body vplan prereqs spec_related related="" entry id title drop
+  drop="$_PLANNER_TB_DROP"
+  # Test Data Prerequisites is generated from the Verification Notes table
+  # (#503); a hand-written copy is dropped so the ticket carries one. A spec
+  # with no table (legacy) keeps its own section.
+  if prereqs=$(planner_ticketgen_testdata_prereqs "$spec_file"); then
+    drop="${drop}test data prerequisites|"
+  else
+    prereqs=""
+  fi
+  body=$(awk -v drop="$drop" '
     {
       isfence = ($0 ~ /^(```|~~~)/)
       if (!fence && $0 ~ /^## /) {
@@ -578,6 +655,7 @@ planner_ticket_body_compose() {
   [ -n "$spec_related" ] && related+="${spec_related}"$'\n'
   [ -n "$related" ] || related="None."$'\n'
 
+  [ -n "$prereqs" ] && body="${body}"$'\n\n'"${prereqs}"
   printf '%s\n\n%s\n\n## Related Tickets\n\n%s\n%s\n' \
     "$body" "$vplan" "$related" "$context_block"
 }
