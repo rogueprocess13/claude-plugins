@@ -339,8 +339,16 @@ resolve and record its ref — one \`repo-ref\` state-log line per repo, not per
 file:
 
 \`\`\`bash
+root_abs=\$(cd "\${REPOS_ROOT}" && pwd -P)
 for repo_dir in <each repo directory you explored>; do
-  repo_name=\$(basename "\$repo_dir")
+  # Record the repo's path RELATIVE TO REPOS_ROOT (e.g. microservices/foo),
+  # not its bare name — nested repos are otherwise unresolvable later (#500).
+  repo_top=\$(git -C "\$repo_dir" rev-parse --show-toplevel 2>/dev/null) || continue
+  repo_top=\$(cd "\$repo_top" && pwd -P) || continue
+  case "\$repo_top" in
+    "\$root_abs"/*) repo_name="\${repo_top#"\$root_abs"/}" ;;
+    *) repo_name=\$(basename "\$repo_top") ;;
+  esac
   branch=\$(git -C "\$repo_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)
   sha=\$(git -C "\$repo_dir" rev-parse HEAD 2>/dev/null)
   [ -n "\$sha" ] && planner_state_write "${initiative_id}" "META" "discovery" "repo-ref" "\${repo_name}@\${branch:-HEAD}@\${sha}"

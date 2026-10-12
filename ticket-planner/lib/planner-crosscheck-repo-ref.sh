@@ -15,6 +15,9 @@
 # The fix has two halves:
 #   1. Discovery records the ref it explored to the state log, per repo:
 #        META|discovery|repo-ref|<repo>@<branch-or-ref>@<sha>
+#      <repo> is the repo's path relative to REPOS_ROOT (e.g.
+#      `microservices/debt-collection`). Older initiatives recorded only the
+#      bare directory name; planner_crosscheck_repo_dir resolves both (#500).
 #      (written directly by the Discovery phase prompt — see
 #      planner-phase-prompts.sh — since Discovery is an LLM-reasoning phase,
 #      not this deterministic library.)
@@ -76,10 +79,54 @@ planner_crosscheck_repo_refs() {
   done
 }
 
+# Resolve the live checkout directory for a repo Discovery recorded (#500).
+# <repo> is either a path relative to <repos_root> (`microservices/foo`, what
+# Discovery records now) or a bare directory name (`foo`, what older
+# initiatives recorded). It is joined to <repos_root> first; if that is not a
+# git checkout, <repos_root> is searched (depth PLANNER_REPO_SEARCH_DEPTH,
+# default 3) for a git checkout with the same directory name. Exactly one
+# match is used; zero or several resolve to nothing — never a guess between
+# two same-named repos. Crosscheck worktrees (`*-crosscheck-*`) and the
+# planner's own directories are never candidates.
+#
+# Usage: planner_crosscheck_repo_dir <repos_root> <repo>
+# Output (stdout): absolute live repo directory, or empty if unresolved.
+planner_crosscheck_repo_dir() {
+  local repos_root="${1%/}" repo="$2"
+  [ -n "$repos_root" ] && [ -n "$repo" ] || return 0
+  repo="${repo%/}"
+  repo="${repo#./}"
+  case "/${repo}/" in
+  */../* | //*) return 0 ;; # never escape REPOS_ROOT
+  esac
+
+  if [ -e "${repos_root}/${repo}/.git" ]; then
+    echo "${repos_root}/${repo}"
+    return 0
+  fi
+
+  local base="${repo##*/}" depth="${PLANNER_REPO_SEARCH_DEPTH:-3}"
+  local cand
+  local -a matches=()
+  while IFS= read -r cand; do
+    [ -n "$cand" ] || continue
+    [ -e "${cand}/.git" ] && matches+=("$cand")
+  done < <(find "$repos_root" -mindepth 1 -maxdepth "$depth" \
+    \( -name .git -o -name .ticket-auto -o -name .claude -o -name node_modules \
+    -o -name .venv -o -name '*-crosscheck-*' \) -prune \
+    -o -type d -name "$base" -print 2>/dev/null)
+
+  [ "${#matches[@]}" -eq 1 ] && echo "${matches[0]}"
+  return 0
+}
+
 # Ensure a tree matching <repo>@<sha> is resolvable under <repos_root>,
-# without ever mutating the live checkout at <repos_root>/<repo>. If the live
-# checkout's current HEAD already matches <sha>, does nothing. Otherwise
-# creates (or reuses) an isolated detached worktree alongside the live repo.
+# without ever mutating the live checkout (resolved by
+# planner_crosscheck_repo_dir, so nested layouts like
+# <repos_root>/microservices/<repo> work — #500). If the live checkout's
+# current HEAD already matches <sha>, does nothing. Otherwise creates (or
+# reuses) an isolated detached worktree alongside the live repo, in the same
+# parent directory.
 # Best-effort: any failure (not a git repo, sha unresolvable, worktree
 # creation fails) is silent and non-fatal — Crosscheck falls back to
 # resolving against the live checkout rather than blocking the run over
@@ -90,10 +137,11 @@ planner_crosscheck_repo_refs() {
 # from citation resolution in favor of the worktree. Empty otherwise.
 planner_crosscheck_repo_ref_ensure() {
   local repos_root="$1" repo="$2" ref="$3" sha="$4"
-  local live_dir="${repos_root}/${repo}"
+  local live_dir
 
   [ -n "$sha" ] || return 0
-  [ -d "${live_dir}/.git" ] || return 0
+  live_dir=$(planner_crosscheck_repo_dir "$repos_root" "$repo")
+  [ -n "$live_dir" ] || return 0
 
   local live_sha
   live_sha=$(git -C "$live_dir" rev-parse HEAD 2>/dev/null)
@@ -105,7 +153,7 @@ planner_crosscheck_repo_ref_ensure() {
   local safe_ref short_sha worktree_dir
   safe_ref=$(printf '%s' "$ref" | tr -c 'A-Za-z0-9_.' '-')
   short_sha="${sha:0:12}"
-  worktree_dir="${repos_root}/${repo}-crosscheck-${safe_ref}-${short_sha}"
+  worktree_dir="${live_dir}-crosscheck-${safe_ref}-${short_sha}"
 
   if [ ! -d "$worktree_dir" ]; then
     git -C "$live_dir" worktree add --detach "$worktree_dir" "$sha" \

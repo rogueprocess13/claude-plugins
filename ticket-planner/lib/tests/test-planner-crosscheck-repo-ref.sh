@@ -172,6 +172,97 @@ else
   fail "live checkout still untouched after a full Crosscheck citations run" "$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD)"
 fi
 
+# ── #500: nested repos (REPOS_ROOT/microservices/<repo>) ────────────────────
+
+echo "--- #500: nested repo layout ---"
+
+NESTED_PARENT="${REPOS_ROOT}/microservices"
+NESTED_DIR="${NESTED_PARENT}/debt-collection"
+mkdir -p "$NESTED_PARENT"
+git -C "$NESTED_PARENT" init -q debt-collection
+git -C "$NESTED_DIR" config user.email "test@example.com"
+git -C "$NESTED_DIR" config user.name "Test"
+mkdir -p "${NESTED_DIR}/src"
+echo "class Base {}" >"${NESTED_DIR}/src/Base.java"
+git -C "$NESTED_DIR" add -A
+git -C "$NESTED_DIR" commit -q -m "main: baseline"
+git -C "$NESTED_DIR" branch -M main
+git -C "$NESTED_DIR" checkout -q -b feature
+echo "class Collector {}" >"${NESTED_DIR}/src/Collector.java"
+git -C "$NESTED_DIR" add -A
+git -C "$NESTED_DIR" commit -q -m "feature: add collector"
+NESTED_FEATURE_SHA=$(git -C "$NESTED_DIR" rev-parse HEAD)
+git -C "$NESTED_DIR" checkout -q main
+
+OUT=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "microservices/debt-collection")
+if [ "$OUT" = "$NESTED_DIR" ]; then
+  pass "relative path recorded by Discovery resolves to the nested checkout"
+else
+  fail "relative path resolves to the nested checkout" "$OUT"
+fi
+
+OUT=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "debt-collection")
+if [ "$OUT" = "$NESTED_DIR" ]; then
+  pass "bare name (older initiatives) resolves by unique search under REPOS_ROOT"
+else
+  fail "bare name resolves by unique search under REPOS_ROOT" "$OUT"
+fi
+
+OUT=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "ledgerly")
+if [ "$OUT" = "${REPOS_ROOT}/ledgerly" ]; then
+  pass "root-level repo still resolves directly"
+else
+  fail "root-level repo still resolves directly" "$OUT"
+fi
+
+OUT=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "../ledgerly")
+if [ -z "$OUT" ]; then
+  pass "a path escaping REPOS_ROOT never resolves"
+else
+  fail "a path escaping REPOS_ROOT never resolves" "$OUT"
+fi
+
+# Ambiguity: two same-named checkouts — no guessing.
+mkdir -p "${REPOS_ROOT}/commons" "${REPOS_ROOT}/legacy"
+git -C "${REPOS_ROOT}/commons" init -q util
+git -C "${REPOS_ROOT}/legacy" init -q util
+OUT=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "util")
+if [ -z "$OUT" ]; then
+  pass "an ambiguous bare name resolves to nothing"
+else
+  fail "an ambiguous bare name resolves to nothing" "$OUT"
+fi
+OUT=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "commons/util")
+if [ "$OUT" = "${REPOS_ROOT}/commons/util" ]; then
+  pass "a relative path disambiguates same-named repos"
+else
+  fail "a relative path disambiguates same-named repos" "$OUT"
+fi
+
+# Acceptance: Crosscheck creates the pinned-ref worktree for a nested repo
+# whose live checkout has moved.
+OUT=$(planner_crosscheck_repo_ref_ensure "$REPOS_ROOT" "debt-collection" "feature" "$NESTED_FEATURE_SHA")
+NESTED_WT=$(find "$NESTED_PARENT" -maxdepth 1 -type d -name 'debt-collection-crosscheck-feature-*' | head -1)
+if [ "$OUT" = "debt-collection" ] && [ -f "${NESTED_WT}/src/Collector.java" ]; then
+  pass "nested repo with a moved live checkout gets a pinned-ref worktree beside it"
+else
+  fail "nested repo gets a pinned-ref worktree beside it" "out='$OUT' wt='$NESTED_WT'"
+fi
+
+# The worktree must not make the bare name ambiguous on a later call.
+OUT=$(planner_crosscheck_repo_dir "$REPOS_ROOT" "debt-collection")
+if [ "$OUT" = "$NESTED_DIR" ]; then
+  pass "crosscheck worktrees are never resolution candidates"
+else
+  fail "crosscheck worktrees are never resolution candidates" "$OUT"
+fi
+
+if [ "$(git -C "$NESTED_DIR" rev-parse --abbrev-ref HEAD)" = "main" ]; then
+  pass "nested live checkout is untouched"
+else
+  fail "nested live checkout is untouched" "$(git -C "$NESTED_DIR" rev-parse --abbrev-ref HEAD)"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

@@ -17,6 +17,24 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.16.2 (2026-10-12)
+
+Fix #500: Discovery-pinned repo refs never resolved for nested repos. Discovery recorded only a
+repo's bare directory name in `META|discovery|repo-ref`, and both `/ticket-planner doctor` and
+Crosscheck's repo-ref setup joined that name straight onto `REPOS_ROOT`. A repo living one level
+down (`REPOS_ROOT/microservices/<repo>`) was therefore always `missing` in doctor, and Crosscheck
+silently resolved its citations against the live checkout instead of the pinned ref.
+
+- **New `planner_crosscheck_repo_dir`** (`lib/planner-crosscheck-repo-ref.sh`) resolves a recorded
+  repo to its live checkout: a path relative to `REPOS_ROOT` first, else a search of `REPOS_ROOT`
+  (depth `PLANNER_REPO_SEARCH_DEPTH`, default 3) for exactly one git checkout of that name.
+  Several same-named checkouts resolve to nothing rather than a guess; crosscheck worktrees are
+  never candidates. Doctor and Crosscheck both use it.
+- The pinned-ref worktree is now created beside the live repo in its own parent directory.
+- Discovery now records the repo's path relative to `REPOS_ROOT` (e.g.
+  `microservices/debt-collection@main@<sha>`). Bare names from older initiatives still resolve.
+- Doctor reports an unresolvable repo as `missing` with the reason, and shows the resolved path.
+
 ## ticket-planner 0.16.1 (2026-10-12)
 
 Epic Gen's Branch Directive steps could not be followed verbatim (#498). Step 5c left the
