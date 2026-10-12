@@ -17,6 +17,33 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.16.1 (2026-10-12)
+
+Epic Gen's Branch Directive steps could not be followed verbatim (#498). Step 5c left the
+description write-back as a `# ... Linear API update call ...` placeholder, so the agent had to
+invent the `issueUpdate` mutation. Step 5d called `check_branch_directive_description` without
+sourcing ticket-auto-pipeline's `branch-directive-check.sh`, and swallowed the error with
+`2>/dev/null || true`. The epic manifest was then written with an empty `branch` and
+`merge_policy`, which left fleet dispatch with no branch to use.
+
+- **New `planner_linear_update_issue_description`** in `lib/planner-linear-api.sh`: an
+  `issueUpdate` of the description only, returning 0 only when Linear reports `success: true`.
+  Step 5c calls it and records `branch-directive|fail` and exits on failure.
+- **New `branch_directive_source_checker`** in `lib/branch-directive-gen.sh`: resolves and sources
+  `branch-directive-check.sh` (through `_resolve_branch_directive_checker`) plus its md helpers.
+- **Step 5d now fails loudly.** It sources the checker first and stops the phase, with no manifest
+  written, when the checker is missing, the directive is malformed, the directive was meant to be
+  appended but is absent, or the parse yields an empty branch or merge policy. An epic with no
+  directive requested still gets a manifest with an empty branch, as before.
+- Step 5c's "generator returned empty" path now exits instead of falling through to 5d.
+- **Step 5c checks the live read before writing.** A failed `planner_linear_get_issue`, a null
+  `.data.issue`, or an empty live description now stops the phase. Before, any of them made 5c
+  overwrite the whole epic body with just the directive block.
+- Step 5d requires the checker only when a directive is expected. An epic with no directive gets a
+  branch-less manifest even when the checker is missing.
+- `_resolve_branch_directive_checker` now also looks in the flat `~/.claude/skills/lib/` that the
+  SessionStart hook installs into, matching `_resolve_planned_ticket_check` and `planner-doctor.sh`.
+
 ## 0.63.1 (2026-10-12)
 
 Test-only fix. `test-retro-complexity-accuracy-scope.sh` failed on any host with a recent

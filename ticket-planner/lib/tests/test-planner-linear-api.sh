@@ -562,6 +562,58 @@ fi
 
 echo ""
 
+# ── Test 10: issueUpdate description write-back (#498) ────────────────────────
+
+echo "--- Test 10: planner_linear_update_issue_description ---"
+
+UPDATE_CAPTURE="$(mktemp)"
+planner_linear_graphql() {
+  printf '%s' "$1" >"$UPDATE_CAPTURE"
+  echo '{"data":{"issueUpdate":{"success":true,"issue":{"id":"i1","identifier":"CRE-9"}}}}'
+}
+
+UPDATE_DESC='# Epic
+
+## Branch Directive
+**Branch:** epic/x "quoted" | piped'
+if planner_linear_update_issue_description "CRE-9" "$UPDATE_DESC" >/dev/null 2>&1; then
+  pass "success:true returns 0"
+else
+  fail "success path" "returned non-zero"
+fi
+
+if jq -e --arg d "$UPDATE_DESC" \
+  '(.query | test("issueUpdate")) and .variables.id == "CRE-9" and .variables.input.description == $d and (.variables.input | keys) == ["description"]' \
+  "$UPDATE_CAPTURE" >/dev/null 2>&1; then
+  pass "payload carries the id and the exact description, nothing else"
+else
+  fail "payload shape" "$(cat "$UPDATE_CAPTURE")"
+fi
+
+planner_linear_graphql() { echo '{"data":{"issueUpdate":{"success":false}}}'; }
+if planner_linear_update_issue_description "CRE-9" "x" >/dev/null 2>&1; then
+  fail "success:false" "returned 0"
+else
+  pass "success:false returns non-zero"
+fi
+
+planner_linear_graphql() {
+  echo '{"errors":[{"message":"bad"}]}'
+  return 1
+}
+if planner_linear_update_issue_description "CRE-9" "x" >/dev/null 2>&1; then
+  fail "transport failure" "returned 0"
+else
+  pass "a failed GraphQL call returns non-zero"
+fi
+
+if planner_linear_update_issue_description "" "x" >/dev/null 2>&1; then
+  fail "empty id" "returned 0"
+else
+  pass "an empty issue id is rejected"
+fi
+rm -f "$UPDATE_CAPTURE"
+
 echo ""
 echo "=== planner-linear-api.sh: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]

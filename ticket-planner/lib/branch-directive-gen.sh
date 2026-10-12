@@ -125,12 +125,16 @@ _resolve_branch_directive_checker() {
     return 0
   fi
 
-  # Level 2: Skills lib (legacy installs)
-  checker="${HOME}/.claude/skills/ticket-auto-pipeline/lib/branch-directive-check.sh"
-  if [ -f "$checker" ]; then
-    echo "$checker"
-    return 0
-  fi
+  # Level 2: Skills lib — the SessionStart hook installs libs flat into
+  # ~/.claude/skills/lib/ (same path _resolve_planned_ticket_check and
+  # planner-doctor.sh use); the per-plugin layout is a legacy install.
+  for checker in "${HOME}/.claude/skills/lib/branch-directive-check.sh" \
+    "${HOME}/.claude/skills/ticket-auto-pipeline/lib/branch-directive-check.sh"; do
+    if [ -f "$checker" ]; then
+      echo "$checker"
+      return 0
+    fi
+  done
 
   # Level 3: Relative path (sibling in same repo)
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -217,6 +221,42 @@ branch_directive_source_md_helpers() {
   if ! declare -f _extract_md_section >/dev/null 2>&1 ||
     ! declare -f _extract_field >/dev/null 2>&1; then
     echo "branch-directive-gen: ${checker} sourced but did not define _extract_md_section/_extract_field" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+# Make `check_branch_directive_description` (ticket-auto-pipeline's
+# branch-directive-check.sh) available in the current shell — issue #498.
+# Epic Gen step 5d parses the epic description with it to cache branch /
+# uat_policy / merge_policy in the epic manifest. The prompt used to call it
+# with no source line and `|| true`, so on every run the call failed silently
+# and the manifest was written with an empty branch. Idempotent; also sources
+# the md helpers the checker itself depends on.
+#
+# Usage: branch_directive_source_checker
+# Returns: 0 when check_branch_directive_description is declared, 1 otherwise
+# (with the reason on stderr).
+branch_directive_source_checker() {
+  branch_directive_source_md_helpers || return 1
+
+  if declare -f check_branch_directive_description >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local checker
+  checker=$(_resolve_branch_directive_checker)
+  if [ -z "$checker" ]; then
+    echo "branch-directive-gen: branch-directive-check.sh not found — check_branch_directive_description unavailable (install ticket-auto-pipeline)" >&2
+    return 1
+  fi
+
+  # shellcheck source=/dev/null
+  source "$checker"
+
+  if ! declare -f check_branch_directive_description >/dev/null 2>&1; then
+    echo "branch-directive-gen: ${checker} sourced but did not define check_branch_directive_description" >&2
     return 1
   fi
 
