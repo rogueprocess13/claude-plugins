@@ -275,10 +275,13 @@ before `plan`, before `resume`, or any time something in the pipeline feels off.
 
 Unlike every other phase, Crosscheck is not an agent — `planner_crosscheck_run` (in
 `lib/planner-crosscheck.sh`) is deterministic bash, so the dispatch loop calls it
-directly instead of spawning one (see step 7a below). It wires in two check families:
+directly instead of spawning one (see step 7a below). Its check families include:
 
 - **Citation + precedent linter** ([#172](https://github.com/willard-pro/claude-plugins/issues/172)) — every `path:line` citation and Signals `TargetSymbols` entry must resolve against `REPOS_ROOT`; every "mirrors the existing `X`"-style precedent claim must name a symbol that actually exists in the repo.
 - **Cross-ticket propagation linter** ([#173](https://github.com/willard-pro/claude-plugins/issues/173)) — a Consensus resolution or in-spec forward reference naming 2+ tickets must actually reach all of them; a post-Specify ticket-count change is flagged for manual scope audit.
+- **Test-data provenance + cited artifacts** ([#503](https://github.com/willard-pro/claude-plugins/issues/503)/[#504](https://github.com/willard-pro/claude-plugins/issues/504)) — every Verification Notes test-data need must name an owned `Source:` (`TEST_DATA_UNOWNED`), and every external artifact Discovery could not retrieve must be raised and answered in consensus.md `## Open Questions` (`CITED_ARTIFACT_UNRAISED`/`CITED_ARTIFACT_UNRESOLVED`). Contract: [docs/test-data-source.md](../../docs/test-data-source.md).
+
+(Bypass, contract, Signals and dangling-dependency checks also run — see `lib/planner-crosscheck.sh`.)
 
 The citation + precedent linter also runs once earlier, as a self-lint at the end of
 the Specify phase ([#218](https://github.com/willard-pro/claude-plugins/issues/218)) —

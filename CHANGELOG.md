@@ -17,6 +17,37 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.17.0 (2026-10-12)
+
+Test-data provenance (#503) and cited external artifacts (#504). The planner recorded what
+data each acceptance criterion needs, never where it comes from, so every per-ticket test-data
+check passed while no spec produced the data. Discovery also used quoted evidence from a sample
+file nobody could retrieve without ever asking for it.
+
+- **Specify** writes a `Source:` field at the end of each Verification Notes line whose test
+  data is not `none`. The kind set is closed: `exists:<where>`, `seeded-by:<spec-slug>`,
+  `external:<who>`, `generate`. A spec named by `seeded-by:` carries a `## Test Data Provided`
+  section. The full contract is in `ticket-planner/docs/test-data-source.md`. ticket-auto-pipeline's
+  readiness check will read the same grammar from ticket bodies (#505).
+- **Crosscheck** gains `lib/planner-crosscheck-testdata.sh`. `TEST_DATA_UNOWNED` (blocking,
+  cross-file) collects every need across the initiative whose Source is missing, `generate`,
+  unknown, empty, or a `seeded-by:` that does not resolve to a spec with `## Test Data Provided`.
+  It reports one finding naming every affected spec and proposes a test-data-pack enabler spec.
+  When the project has a standing "implementation does not write tests" rule (a REPOS_ROOT
+  `CLAUDE.md` match, or `PLANNER_NO_TESTS_RULE=true`), a spec seeding its own data does not
+  count as an owner, and the remedy is marked mandatory.
+- **Discovery** writes a `## Cited Artifacts` section: every external artifact the source cites,
+  FOUND or NOT FOUND after searching attachments, the initiative artifacts folder and
+  REPOS_ROOT.
+- **Consensus** copies one `CITED_ARTIFACT:` open question per NOT FOUND artifact into
+  consensus.md `## Open Questions`, as rendered by `planner_cited_artifacts_questions`.
+  Crosscheck blocks with `CITED_ARTIFACT_UNRAISED` (no question) or `CITED_ARTIFACT_UNRESOLVED`
+  (still `Answer: PENDING`). The stop is the existing `CROSSCHECK_BLOCKED` one; there is no new gate.
+- **TicketGen** carries each Source into `## Test Data Prerequisites` and the Verification Plan's
+  Test data needed cell.
+- The Crosscheck fixture harness now accepts optional `codes` and `message_contains` in
+  `expected.json`. Five new fixtures cover the cases.
+
 ## 0.63.2 (2026-10-12)
 
 Fix: the planner's Refinement phase could never store a semantic DoR verdict. The scan and

@@ -14,6 +14,8 @@
 #   - planner-crosscheck-contracts.sh   (#175 — cross-initiative contract shape)
 #   - planner-crosscheck-signals.sh     (#220 — uniform per-ticket Signals blocks)
 #   - planner-crosscheck-deps.sh        (#221 — dangling blocked-by references)
+#   - planner-crosscheck-testdata.sh    (#503/#504 — unowned test data, cited
+#                                        external artifacts never raised/answered)
 #
 # Adding a check later means adding one more call in planner_crosscheck_run
 # and, if it can emit a non-blocking finding, adding its codes to
@@ -76,6 +78,8 @@ _planner_crosscheck_source_if_missing "planner_crosscheck_signals" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-signals.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_deps" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-deps.sh"
+_planner_crosscheck_source_if_missing "planner_crosscheck_testdata" \
+  "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-testdata.sh"
 _planner_crosscheck_source_if_missing "planner_state_write" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-state.sh"
 
@@ -85,8 +89,10 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # CITATION_LINE_OUT_OF_RANGE, CITATION_SYMBOL_MISMATCH, PRECEDENT_NOT_FOUND,
 # RESOLUTION_NOT_PROPAGATED, FORWARD_REF_UNFULFILLED, CARVE_SCOPE_LOST),
 # #174's BYPASS_PATH_UNADDRESSED, #175's CONTRACT_MISMATCH /
-# CONTRACT_CONSUMERS_UNNOTIFIED, #220's SIGNALS_UNIFORM, and #221's
-# DANGLING_BLOCKED_BY block EpicGen per #176's table.
+# CONTRACT_CONSUMERS_UNNOTIFIED, #220's SIGNALS_UNIFORM, #221's
+# DANGLING_BLOCKED_BY, #503's TEST_DATA_UNOWNED and #504's
+# CITED_ARTIFACT_UNRAISED / CITED_ARTIFACT_UNRESOLVED block EpicGen per #176's
+# table.
 # DISCOVERY_GAP_UNRESOLVED and CONTRACT_UNDEFINED are warn-level: a declared
 # exploration gap or an ambiguous upstream shape is a prompt for human
 # judgment, not by itself proof of a defect.
@@ -254,6 +260,16 @@ planner_crosscheck_run() {
   total_warn=$((total_warn + w))
   total_accepted=$((total_accepted + a))
 
+  read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_testdata "$initiative_id")
+  total_blocking=$((total_blocking + b))
+  total_warn=$((total_warn + w))
+  total_accepted=$((total_accepted + a))
+
+  read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_cited_artifacts "$initiative_id")
+  total_blocking=$((total_blocking + b))
+  total_warn=$((total_warn + w))
+  total_accepted=$((total_accepted + a))
+
   if [ "$total_blocking" -gt 0 ]; then
     planner_state_write "$initiative_id" "Crosscheck" "check" "fail" \
       "${total_blocking} blocking finding(s), ${total_warn} warn, ${total_accepted} accepted — see META|crosscheck entries"
@@ -360,7 +376,7 @@ planner_crosscheck_findings_summary() {
 # Codes whose findings are inherently about a set of artifacts rather than one
 # — grouping them under whichever filename happens to appear first in the
 # message would point the operator at an arbitrary member of the set.
-PLANNER_CROSSCHECK_CROSS_FILE_CODES="RESOLUTION_NOT_PROPAGATED CARVE_SCOPE_LOST SIGNALS_UNIFORM"
+PLANNER_CROSSCHECK_CROSS_FILE_CODES="RESOLUTION_NOT_PROPAGATED CARVE_SCOPE_LOST SIGNALS_UNIFORM TEST_DATA_UNOWNED"
 
 # One-line remediation hint per finding code. Deliberately canned and code-
 # scoped: it says what shape the fix takes, not what the specific fix is —
@@ -409,6 +425,15 @@ planner_crosscheck_fix_hint() {
     ;;
   DANGLING_BLOCKED_BY)
     echo "the blocked-by target matches no sibling spec (or is an ambiguous prefix) — use the exact spec slug, or an existing Linear issue ID"
+    ;;
+  TEST_DATA_UNOWNED)
+    echo "these Verification Notes needs have no owning spec — add a test-data-pack enabler spec with a ## Test Data Provided section and point each Source at it (seeded-by:<slug>), or record where the data already exists (exists:) or who supplies it (external:) — see docs/test-data-source.md"
+    ;;
+  CITED_ARTIFACT_UNRAISED)
+    echo "Discovery could not retrieve this cited artifact and Consensus never asked about it — add the line from planner_cited_artifacts_questions to consensus.md ## Open Questions"
+    ;;
+  CITED_ARTIFACT_UNRESOLVED)
+    echo "the operator has not answered where this cited artifact comes from — set its Answer: in consensus.md (exists:<where>, external:<who>, or generate) and make the matching specs' Source agree, or --accept the code"
     ;;
   *)
     echo "no canned hint for this code — read the finding message"

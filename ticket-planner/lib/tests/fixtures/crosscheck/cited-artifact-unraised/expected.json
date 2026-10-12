@@ -1,0 +1,8 @@
+{
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["CITED_ARTIFACT_UNRAISED"],
+  "message_contains": ["client sample import file (43 rows)"],
+  "notes": "#504: Discovery could not retrieve a cited sample file, and Consensus never raised it as an open question. Crosscheck blocks with CITED_ARTIFACT_UNRAISED. The FOUND artifact is not reported."
+}

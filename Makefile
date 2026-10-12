@@ -193,6 +193,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-crosscheck-contracts.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-signals.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-deps.sh
+	bash ticket-planner/lib/tests/test-planner-crosscheck-testdata.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-fixtures.sh
 	bash ticket-planner/lib/tests/test-planner-doctor.sh

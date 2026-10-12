@@ -76,6 +76,11 @@ exercises.
   of today's fixtures pre-seed an accepted code; the field exists so a
   future fixture demonstrating the `--accept` override doesn't need a
   harness change.
+- `codes` — optional. The exact multiset of blocking codes the run must
+  produce (order-insensitive).
+- `message_contains` — optional. Substrings the blocking finding messages,
+  taken together, must contain — counts alone cannot tell the right finding
+  from a different one.
 - `notes` — free text. Say what real false-positive class this is modeled
   on (cite the CHANGELOG entry/issue number if there is one) and why the
   expected counts are what they are.
@@ -96,6 +101,11 @@ re-implements or mocks a checker.
 | `citation-compound-two-line-symbols` | Compound `A()/B():path:line1,line2` citation where each symbol resolves near its own line | [#224](https://github.com/willard-pro/claude-plugins/issues/224) (CHANGELOG `ticket-planner 0.8.13`) — the checker used to pair both symbols against the first line number only, false-flagging `CITATION_SYMBOL_MISMATCH` on the Evidence-Based initiative's `ebc-e` spec |
 | `dangling-blocked-by-external-ref` | `blocked-by:WIL-83` naming an existing Linear issue, not a sibling spec slug | [#227](https://github.com/willard-pro/claude-plugins/issues/227) — `planner_deps_is_external_ref` exempts this shape from `DANGLING_BLOCKED_BY` |
 | `signals-legit-trivial-defaults` | Two trivial specs sharing the same all-zero/false `services_identified`/`symbols_resolved`/`prior_art_found` combination | [#220](https://github.com/willard-pro/claude-plugins/issues/220) (CHANGELOG `ticket-planner`, VS-2 / `INIT-1788079196-3438`) — that combination is documented as the legitimate default for trivial tickets and excluded from the near-identical `SIGNALS_UNIFORM` pass |
+| `testdata-generate-unowned` | Two specs whose Verification Notes need `Source: generate` data, no owner | [#503](https://github.com/willard-pro/claude-plugins/issues/503) — one blocking `TEST_DATA_UNOWNED` naming both specs and proposing a test-data pack |
+| `testdata-seeded-by-owned` | The same needs owned by a third enabler spec via `seeded-by:` | [#503](https://github.com/willard-pro/claude-plugins/issues/503) — must stay clean |
+| `testdata-self-seeded-no-tests-rule` | A self-seeded need while REPOS_ROOT `CLAUDE.md` says implementation does not write tests | [#503](https://github.com/willard-pro/claude-plugins/issues/503) point 4 — `TEST_DATA_UNOWNED`, remedy `MANDATORY` |
+| `cited-artifact-unraised` | discovery.md lists a sample file NOT FOUND; consensus.md never asks | [#504](https://github.com/willard-pro/claude-plugins/issues/504) — `CITED_ARTIFACT_UNRAISED` |
+| `cited-artifact-answered` | Same, with the open question answered `external:<who>` | [#504](https://github.com/willard-pro/claude-plugins/issues/504) — must stay clean |
 | `contract-undefined-warn-only` | A structure that "gains new fields for ..." in prose with no backtick-quoted field names | [#175](https://github.com/willard-pro/claude-plugins/issues/175) — `CONTRACT_UNDEFINED` is deliberately warn-level, not blocking |
 
 ## Adding a real fixture
