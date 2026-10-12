@@ -125,12 +125,16 @@ _resolve_branch_directive_checker() {
     return 0
   fi
 
-  # Level 2: Skills lib (legacy installs)
-  checker="${HOME}/.claude/skills/ticket-auto-pipeline/lib/branch-directive-check.sh"
-  if [ -f "$checker" ]; then
-    echo "$checker"
-    return 0
-  fi
+  # Level 2: Skills lib — the SessionStart hook installs libs flat into
+  # ~/.claude/skills/lib/ (same path _resolve_planned_ticket_check and
+  # planner-doctor.sh use); the per-plugin layout is a legacy install.
+  for checker in "${HOME}/.claude/skills/lib/branch-directive-check.sh" \
+    "${HOME}/.claude/skills/ticket-auto-pipeline/lib/branch-directive-check.sh"; do
+    if [ -f "$checker" ]; then
+      echo "$checker"
+      return 0
+    fi
+  done
 
   # Level 3: Relative path (sibling in same repo)
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -543,7 +543,7 @@ if declare -f planner_prompt_epicgen >/dev/null 2>&1; then
     FAIL=$((FAIL + 1))
   fi
 
-  M6_SRC_LINE=$(echo "$M6_RENDERED" | grep -n 'branch_directive_source_checker ||' | head -1 | cut -d: -f1 || true)
+  M6_SRC_LINE=$(echo "$M6_RENDERED" | grep -n 'if ! branch_directive_source_checker' | head -1 | cut -d: -f1 || true)
   M6_USE_LINE=$(echo "$M6_RENDERED" | grep -n '$(check_branch_directive_description' | head -1 | cut -d: -f1 || true)
   if [ -n "$M6_SRC_LINE" ] && [ -n "$M6_USE_LINE" ] && [ "$M6_SRC_LINE" -lt "$M6_USE_LINE" ]; then
     echo "PASS: checker sourced at line $M6_SRC_LINE before use at line $M6_USE_LINE"
@@ -643,6 +643,83 @@ ${M6_DIRECTIVE}" >/dev/null 2>&1 || M6_RC=$?
       PASS=$((PASS + 1))
     else
       echo "FAIL: skipped directive rc=$M6_RC"
+      FAIL=$((FAIL + 1))
+    fi
+
+    # E: no directive requested and checker unresolvable → still a branch-less
+    # manifest; the checker is only required when a directive is expected.
+    rm -f "$M6_TMP/manifest.args" "$M6_TMP/state.log"
+    M6_RC=0
+    _m6_run "$M6_TMP/root" false "# Epic with no directive" >/dev/null 2>&1 || M6_RC=$?
+    if [ "$M6_RC" -eq 0 ] && [ -f "$M6_TMP/manifest.args" ] && [ -z "$(sed -n 2p "$M6_TMP/manifest.args")" ]; then
+      echo "PASS: skipped directive does not require the checker"
+      PASS=$((PASS + 1))
+    else
+      echo "FAIL: skipped directive with missing checker rc=$M6_RC"
+      FAIL=$((FAIL + 1))
+    fi
+  fi
+
+  # Behavioural, step 5c: a failed or empty live read must never reach the
+  # update helper — otherwise the epic body is overwritten with only the
+  # directive. Runs the rendered 5c fence verbatim with Linear calls stubbed.
+  echo "$M6_RENDERED" | awk '/^### 5c\./{s=1} s&&/^```bash$/{f=1; next} f&&/^```$/{exit} f{print}' >"$M6_TMP/5c.sh"
+
+  # $1 = get_issue mode (fail|null|empty|ok)
+  _m6_run_5c() {
+    (
+      cd "$M6_TMP" || exit 99
+      M6_GET_MODE="$1" M6_DIR="$M6_TMP" M6_LIB="$LIB_DIR" M6_PTC="$M6_PTC" \
+        HOME="$M6_TMP/home" bash -c '
+          source "$M6_LIB/branch-directive-gen.sh"
+          [ -f "$M6_PTC" ] && source "$M6_PTC"
+          planner_manifest_source_helpers() { return 1; }
+          planner_state_write() { echo "STATE $*" >>"$M6_DIR/state5c.log"; }
+          planner_linear_get_issue() {
+            case "$M6_GET_MODE" in
+            fail) echo "{\"errors\":[{\"message\":\"boom\"}]}"; return 1 ;;
+            null) echo "{\"errors\":[{\"message\":\"boom\"}],\"data\":null}" ;;
+            empty) echo "{\"data\":{\"issue\":{\"description\":\"\"}}}" ;;
+            ok) echo "{\"data\":{\"issue\":{\"description\":\"# Epic body\"}}}" ;;
+            esac
+          }
+          planner_linear_update_issue_description() {
+            echo "$2" >"$M6_DIR/updated"
+            echo "{\"data\":{\"issueUpdate\":{\"success\":true}}}"
+          }
+          EMIT_DIRECTIVE=true CREATED_EPIC_ID=CRE-1 OVERRIDE_REASON="" REASON=test
+          source ./5c.sh
+        '
+    )
+  }
+
+  if [ ! -s "$M6_TMP/5c.sh" ] || [ ! -f "$M6_PTC" ]; then
+    echo "SKIP: step 5c fence or planned-ticket-check.sh not available"
+  else
+    for M6_MODE in fail null empty; do
+      rm -f "$M6_TMP/updated" "$M6_TMP/state5c.log"
+      M6_RC=0
+      _m6_run_5c "$M6_MODE" >/dev/null 2>&1 || M6_RC=$?
+      if [ "$M6_RC" -ne 0 ] && [ ! -f "$M6_TMP/updated" ] &&
+        grep -q 'branch-directive fail' "$M6_TMP/state5c.log" 2>/dev/null; then
+        echo "PASS: live read '$M6_MODE' stops 5c before any update (rc=$M6_RC)"
+        PASS=$((PASS + 1))
+      else
+        echo "FAIL: live read '$M6_MODE' rc=$M6_RC updated=$([ -f "$M6_TMP/updated" ] && echo yes || echo no)"
+        FAIL=$((FAIL + 1))
+      fi
+    done
+
+    # Positive control: a good read appends the directive to the existing body.
+    rm -f "$M6_TMP/updated" "$M6_TMP/state5c.log"
+    M6_RC=0
+    _m6_run_5c ok >/dev/null 2>&1 || M6_RC=$?
+    if [ "$M6_RC" -eq 0 ] && grep -q '^# Epic body$' "$M6_TMP/updated" 2>/dev/null &&
+      grep -q '^## Branch Directive$' "$M6_TMP/updated"; then
+      echo "PASS: good live read appends the directive to the existing body"
+      PASS=$((PASS + 1))
+    else
+      echo "FAIL: good live read rc=$M6_RC updated=$(cat "$M6_TMP/updated" 2>/dev/null | head -c 80)"
       FAIL=$((FAIL + 1))
     fi
   fi

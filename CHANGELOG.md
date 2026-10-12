@@ -36,6 +36,13 @@ sourcing ticket-auto-pipeline's `branch-directive-check.sh`, and swallowed the e
   appended but is absent, or the parse yields an empty branch or merge policy. An epic with no
   directive requested still gets a manifest with an empty branch, as before.
 - Step 5c's "generator returned empty" path now exits instead of falling through to 5d.
+- **Step 5c checks the live read before writing.** A failed `planner_linear_get_issue`, a null
+  `.data.issue`, or an empty live description now stops the phase. Before, any of them made 5c
+  overwrite the whole epic body with just the directive block.
+- Step 5d requires the checker only when a directive is expected. An epic with no directive gets a
+  branch-less manifest even when the checker is missing.
+- `_resolve_branch_directive_checker` now also looks in the flat `~/.claude/skills/lib/` that the
+  SessionStart hook installs into, matching `_resolve_planned_ticket_check` and `planner-doctor.sh`.
 
 ## 0.63.1 (2026-10-12)
 

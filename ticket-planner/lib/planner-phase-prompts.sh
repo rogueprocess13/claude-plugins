@@ -1315,7 +1315,19 @@ if [ "\$EMIT_DIRECTIVE" = "true" ]; then
     IDEMPOTENT_BRANCH_NAME=\$(get_epic_manifest_field "\$CREATED_EPIC_ID" branch 2>/dev/null)
     EXISTING_BLOCK="manifest"
   else
-    EPIC_LIVE_DESCRIPTION=\$(planner_linear_get_issue "\$CREATED_EPIC_ID" | jq -r '.data.issue.description // ""')
+    # A failed read must stop the phase: an empty live description would make
+    # the append below overwrite the whole epic body with just the directive.
+    EPIC_ISSUE_JSON=\$(planner_linear_get_issue "\$CREATED_EPIC_ID") || {
+      planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
+        "cannot read live epic description for \${CREATED_EPIC_ID}"
+      exit 1
+    }
+    if ! echo "\$EPIC_ISSUE_JSON" | jq -e '.data.issue != null' >/dev/null 2>&1; then
+      planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
+        "cannot read live epic description for \${CREATED_EPIC_ID}: issue not returned"
+      exit 1
+    fi
+    EPIC_LIVE_DESCRIPTION=\$(echo "\$EPIC_ISSUE_JSON" | jq -r '.data.issue.description // ""')
     EXISTING_BLOCK=\$(_extract_md_section "\$EPIC_LIVE_DESCRIPTION" "Branch Directive")
     [ -n "\$EXISTING_BLOCK" ] && IDEMPOTENT_BRANCH_NAME=\$(echo "\$EXISTING_BLOCK" | _extract_field "Branch")
   fi
@@ -1354,6 +1366,13 @@ if [ "\$EMIT_DIRECTIVE" = "true" ]; then
       # Write it back with issueUpdate (planner-linear-api.sh, sourced in step 3).
       # Use this helper exactly — do not hand-write the mutation. A failed write
       # is a hard stop: step 5d must never cache a directive Linear never got.
+      # An epic is always created with a body, so an empty live description
+      # means the read went wrong — never write over the epic with it.
+      if [ -z "\$EPIC_LIVE_DESCRIPTION" ]; then
+        planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
+          "live epic description for \${CREATED_EPIC_ID} is empty — refusing to overwrite it"
+        exit 1
+      fi
       UPDATE_RESPONSE=\$(planner_linear_update_issue_description "\$CREATED_EPIC_ID" "\$NEW_DESCRIPTION") || {
         UPDATE_ERROR=\$(echo "\$UPDATE_RESPONSE" | jq -c '.errors // .data // empty' 2>/dev/null | tr -d '|\\n' | head -c 300)
         planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
@@ -1412,17 +1431,24 @@ if declare -f write_epic_manifest >/dev/null 2>&1 && [ "\${EXISTING_BLOCK:-}" !=
   # is sourced. Source it explicitly; a missing checker is a hard stop, never an
   # empty manifest (#498).
   source "\${CLAUDE_PLUGIN_ROOT}/lib/branch-directive-gen.sh"
-  branch_directive_source_checker || {
-    planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
-      "branch-directive-check.sh not found — epic manifest not written (install ticket-auto-pipeline)"
-    exit 1
-  }
-
-  # Re-parse whichever description is now current: NEW_DESCRIPTION if step 5c
-  # just appended a directive, otherwise the description already fetched.
-  MANIFEST_SOURCE_DESCRIPTION="\${NEW_DESCRIPTION:-\${EPIC_LIVE_DESCRIPTION:-\$EPIC_DESCRIPTION}}"
+  # When step 5c did not mean to add a directive, a missing checker only means
+  # the manifest gets no branch — which is the right answer for that epic.
   MANIFEST_DIRECTIVE_RC=0
-  MANIFEST_DIRECTIVE_OUTPUT=\$(check_branch_directive_description "\$MANIFEST_SOURCE_DESCRIPTION") || MANIFEST_DIRECTIVE_RC=\$?
+  MANIFEST_DIRECTIVE_OUTPUT=""
+  if ! branch_directive_source_checker; then
+    if [ "\${EMIT_DIRECTIVE:-false}" = "true" ]; then
+      planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
+        "branch-directive-check.sh not found — epic manifest not written (install ticket-auto-pipeline)"
+      exit 1
+    fi
+    echo "WARNING: branch-directive-check.sh not found — no directive requested, writing a branch-less epic manifest" >&2
+    MANIFEST_DIRECTIVE_RC=1
+  else
+    # Re-parse whichever description is now current: NEW_DESCRIPTION if step 5c
+    # just appended a directive, otherwise the description already fetched.
+    MANIFEST_SOURCE_DESCRIPTION="\${NEW_DESCRIPTION:-\${EPIC_LIVE_DESCRIPTION:-\$EPIC_DESCRIPTION}}"
+    MANIFEST_DIRECTIVE_OUTPUT=\$(check_branch_directive_description "\$MANIFEST_SOURCE_DESCRIPTION") || MANIFEST_DIRECTIVE_RC=\$?
+  fi
   MANIFEST_BRANCH=\$(echo "\$MANIFEST_DIRECTIVE_OUTPUT" | sed -n "s/^BRANCH_DIRECTIVE_BRANCH='\\(.*\\)'\$/\\1/p")
   MANIFEST_UAT_POLICY=\$(echo "\$MANIFEST_DIRECTIVE_OUTPUT" | sed -n "s/^BRANCH_DIRECTIVE_UAT_POLICY='\\(.*\\)'\$/\\1/p")
   MANIFEST_MERGE_POLICY=\$(echo "\$MANIFEST_DIRECTIVE_OUTPUT" | sed -n "s/^BRANCH_DIRECTIVE_MERGE_POLICY='\\(.*\\)'\$/\\1/p")
