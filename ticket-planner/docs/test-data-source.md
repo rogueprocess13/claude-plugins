@@ -92,12 +92,23 @@ read the environment.
    which is read once at parse time. The flag always overwrites the stored value.
 2. Otherwise, the first `plan`/`resume` scans `${REPOS_ROOT}/CLAUDE.md` and
    `${REPOS_ROOT}/*/CLAUDE.md` once, and stores `true` or `false`. The scan looks for an
-   **unscoped** rule: a negation, then write/add/create/author, then optional
-   any/unit/automated/integration/e2e, then `tests` (or `test code`/`test files`/
-   `test fixtures`), ending the clause (`.`, `;`, `!` or end of line).
-   - Matches: "Implementation does not write tests.", "Never add unit tests."
+   **unscoped** rule. It is built from these parts, in order:
+   - a negation (`do not`, `don't`, `never`, `must not`, …);
+   - write/add/create/author, optionally followed by `or` write/add/create/modify;
+   - optionally any/unit/automated/integration/e2e;
+   - `tests` (or `test code`/`test files`/`test fixtures`);
+   - the end of the clause: `.`, `;`, `:`, `,`, `!`, the end of the line, or
+     `when implementing`/`when implementation`.
+
+   Examples:
+   - Matches: "Implementation does not write tests.", "Do not write or add tests when
+     implementing tickets.", "Implementation agents must not write tests: QA owns them.",
+     "Never write tests, QA owns them."
    - No match: "Do not write tests for generated code", "Don't write tests that hit the
      network".
+
+   The scan is a convenience heuristic and can miss unusual wording. **`--no-tests-rule` is the
+   reliable route**: pass it on the first `plan` when the project has the rule.
 3. Where the rule came from is written as `META|no-tests-rule-source|info|<flag or file:line: text>`.
    The finding quotes it.
 
@@ -158,7 +169,9 @@ an export, an attachment). It first tries the source's attachments, the initiati
   FOUND.
 - A list item with no name or no status token is reported as `CITED_ARTIFACT_MALFORMED`
   (blocking). It is not skipped.
-- `None.` means nothing is cited.
+- `None.` means nothing is cited. A bullet that starts with `none` or `no ` and talks about
+  artifacts, external items or files (for example "None — no external artifacts are cited.")
+  is also a none-statement and is skipped, unless it carries a FOUND / NOT FOUND status.
 
 ### consensus.md — `## Open Questions`
 
@@ -170,8 +183,10 @@ Consensus agent copies it verbatim:
 ```
 
 The operator replaces `PENDING` with one of these. The answer sets what the Source must be in
-every spec whose Test data names the artifact (its backticked name, or the whole name as a
-case-insensitive substring):
+every need that **cites** the artifact. A need cites an artifact only through a backticked span
+in its Test data that equals the artifact's name exactly, ignoring case. Prose mentions are
+never matched. With substring or word matching, "a seeded email template record" would cite an
+artifact called `template`, and `sample` would match inside `sample file v2`.
 
 | Answer | Meaning | Required spec Source |
 |---|---|---|
@@ -193,8 +208,12 @@ case-insensitive substring):
   consensus.md.
 - `CITED_ARTIFACT_UNRESOLVED` — blocking. The line exists, but the answer is `PENDING`, empty, or
   not one of the shapes above.
-- `CITED_ARTIFACT_SOURCE_MISMATCH` — blocking. A spec's Source for the artifact disagrees with the
-  answer, per the table above.
+- `CITED_ARTIFACT_SOURCE_MISMATCH` — blocking. A need that cites the artifact has a Source that
+  disagrees with the answer, per the table above.
+- `CITED_ARTIFACT_UNREFERENCED` — blocking, only in initiatives that carry the contract marker
+  and have at least one spec. No Verification Notes need in any spec cites a NOT FOUND artifact
+  by its backticked name. A paraphrase ("the client sample file") would otherwise slip past
+  `CITED_ARTIFACT_SOURCE_MISMATCH`. If no spec genuinely needs the artifact, `--accept` the code.
 - `CITED_ARTIFACTS_SECTION_MISSING` — warn. discovery.md has no `## Cited Artifacts` section in an
   initiative that carries the contract marker. Legacy initiatives are not checked.
 

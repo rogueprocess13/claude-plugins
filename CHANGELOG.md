@@ -42,7 +42,8 @@ file nobody could retrieve without ever asking for it.
   `PLANNER_NO_TESTS_RULE` is read once, at argument parsing. Without either, the first
   `plan`/`resume` detects an *unscoped* rule in `REPOS_ROOT` CLAUDE.md files once, and records
   where it found it as `META|no-tests-rule-source`. "Do not write tests for generated code" does
-  not count as an unscoped rule.
+  not count as an unscoped rule. The scan is a heuristic; **`--no-tests-rule` is the reliable
+  route**.
 - **Discovery** writes a `## Cited Artifacts` section: every external artifact the source cites,
   FOUND or NOT FOUND after searching attachments, the initiative artifacts folder and REPOS_ROOT.
 - **Consensus** copies one `CITED_ARTIFACT:` open question per NOT FOUND artifact into
@@ -50,7 +51,10 @@ file nobody could retrieve without ever asking for it.
   - Crosscheck blocks on any of these:
     - `CITED_ARTIFACT_UNRAISED`: no question was raised.
     - `CITED_ARTIFACT_UNRESOLVED`: the answer is still `PENDING`.
-    - `CITED_ARTIFACT_SOURCE_MISMATCH`: a spec's Source disagrees with the answer.
+    - `CITED_ARTIFACT_SOURCE_MISMATCH`: a need that cites the artifact (exact backticked name;
+      prose is never matched) has a Source that disagrees with the answer.
+    - `CITED_ARTIFACT_UNREFERENCED`: no spec need cites a NOT FOUND artifact by its backticked
+      name, so a paraphrase cannot dodge the mismatch check. Contract initiatives only.
     - `CITED_ARTIFACT_MALFORMED`: a Cited Artifacts item cannot be parsed.
   - It warns with `CITED_ARTIFACTS_SECTION_MISSING` when the section is missing.
   - The stop is the existing `CROSSCHECK_BLOCKED` one; there is no new gate. Its headless
@@ -59,7 +63,7 @@ file nobody could retrieve without ever asking for it.
   Test data needed cell.
 - `planner_state_init` writes `META|contract|start|test-data-source-v1` on every new initiative.
 - The Crosscheck fixture harness now accepts optional `codes` and `message_contains` in
-  `expected.json`, and runs the no-tests-rule persistence step. Seven new fixtures cover the
+  `expected.json`, and runs the no-tests-rule persistence step. Ten new fixtures cover the
   cases.
 
 **Upgrading with an initiative in flight.** Initiatives created before 0.17.0 have no

@@ -28,6 +28,8 @@
 #      CITED_ARTIFACT_UNRESOLVED         answer still PENDING/malformed (blocking)
 #      CITED_ARTIFACT_SOURCE_MISMATCH    a spec's Source disagrees with the
 #                                        recorded answer (blocking)
+#      CITED_ARTIFACT_UNREFERENCED       no spec need cites it by backticked
+#                                        name, contract initiatives (blocking)
 #      CITED_ARTIFACTS_SECTION_MISSING   discovery.md has no section, contract
 #                                        initiatives only (warn)
 #    The stop is the existing CROSSCHECK_BLOCKED one — no new gate.
@@ -71,7 +73,7 @@ PLANNER_TESTDATA_MAX_ITEMS=25
 # An unscoped "implementation does not write tests" rule: a negation, a verb,
 # optional qualifiers, then "tests" ending the clause. A rule scoped by what
 # follows ("for generated code", "that hit the network") does not match.
-PLANNER_TESTDATA_NO_TESTS_RE="(do(es)?[[:space:]]+not|don'?t|never|must[[:space:]]+not|should[[:space:]]+not|shall[[:space:]]+not)[[:space:]]+(write|add|create|author)[[:space:]]+(any[[:space:]]+)?((unit|automated|integration|e2e)[[:space:]]+)?(tests|test[[:space:]]+(code|files|fixtures))[[:space:]]*([.;!]|$)"
+PLANNER_TESTDATA_NO_TESTS_RE="(do(es)?[[:space:]]+not|don'?t|never|must[[:space:]]+not|should[[:space:]]+not|shall[[:space:]]+not)[[:space:]]+(write|add|create|author)([[:space:]]+or[[:space:]]+(write|add|create|modify))?[[:space:]]+(any[[:space:]]+)?((unit|automated|integration|e2e)[[:space:]]+)?(tests|test[[:space:]]+(code|files|fixtures))[[:space:]]*([.;:,!]|$|when[[:space:]]+(implementing|implementation))"
 
 _planner_testdata_trim() {
   local s="$1"
@@ -330,6 +332,12 @@ _planner_cited_entries() {
     item=$(_planner_testdata_trim "$item")
     up=$(_planner_testdata_lower "$(printf '%s' "$item" | tr -d '*_')")
     case "$up" in none | none.) continue ;; esac
+    # "None — no external artifacts cited.", "No artifacts are cited": a
+    # statement that there is nothing to list, not an entry.
+    if [[ "$up" =~ ^(none[^a-z]|no[[:space:]]).*(artifact|external|files) ]] &&
+      ! [[ "$up" =~ (—|–|[[:space:]]-[[:space:]]).*found ]]; then
+      continue
+    fi
     name=""
     rest=""
     if [[ "$item" =~ ^[*_]*\`([^\`]+)\`[*_]*(.*)$ ]]; then
@@ -420,13 +428,22 @@ _planner_cited_answers() {
   done <"$consensus"
 }
 
-# Does <data> name the cited artifact <name>? A backticked mention equal to
-# the name, or the whole name as a case-insensitive substring.
+# Does <data> cite the artifact <name>? Only an exact, case-insensitive
+# backticked span counts. Prose is never matched: substring and even
+# word-boundary matching turn "a seeded email template record" into a citation
+# of an artifact called `template`, and a short name into a match inside a
+# longer one (`sample` in `sample file v2`). CITED_ARTIFACT_UNREFERENCED makes
+# the backticked reference mandatory, so nothing that matters is lost.
 _planner_testdata_names_artifact() {
-  local data_l name_l
-  data_l=$(_planner_testdata_lower "$1")
-  name_l=$(_planner_testdata_lower "$2")
-  [ -n "$name_l" ] && [[ "$data_l" == *"$name_l"* ]]
+  local rest="$1" span name_l
+  name_l=$(_planner_testdata_lower "$(_planner_testdata_trim "$2")")
+  [ -n "$name_l" ] || return 1
+  while [[ "$rest" =~ \`([^\`]+)\` ]]; do
+    span=$(_planner_testdata_lower "$(_planner_testdata_trim "${BASH_REMATCH[1]}")")
+    [ "$span" = "$name_l" ] && return 0
+    rest="${rest#*\`"${BASH_REMATCH[1]}"\`}"
+  done
+  return 1
 }
 
 # ── Check 1: unowned test data (#503) ───────────────────────────────────────
@@ -601,19 +618,24 @@ planner_crosscheck_cited_artifacts() {
     esac
   done < <(_planner_cited_entries "$discovery")
 
-  # Every spec need that names a NOT FOUND artifact must carry the Source the
-  # recorded answer implies. Before an answer it stays `generate`.
+  # Every spec need that cites a NOT FOUND artifact (backticked name) must
+  # carry the Source the recorded answer implies; before an answer it stays
+  # `generate`. And, on contract initiatives, every NOT FOUND artifact must be
+  # cited by at least one need — a paraphrase would dodge the check above.
   if [ "${#missing[@]}" -gt 0 ] && [ -d "$specs_dir" ]; then
-    local spec_file base label data kind value want ok
+    local spec_file base label data kind value want ok nspecs=0
+    local -A referenced=()
     for spec_file in "$specs_dir"/*.md; do
       [ -f "$spec_file" ] || continue
       base="$(basename "$spec_file" .md)"
       [ "$base" = "INDEX" ] && continue
+      nspecs=$((nspecs + 1))
       while IFS=$'\037' read -r label data kind value; do
-        [ -n "$kind" ] || continue
         for name in "${missing[@]}"; do
           _planner_testdata_names_artifact "$data" "$name" || continue
           key=$(_planner_testdata_lower "$name")
+          referenced["$key"]=1
+          [ -n "$kind" ] || continue
           ok=true
           case "${answer_kind[$key]:-unresolved}" in
           unresolved)
@@ -639,6 +661,15 @@ planner_crosscheck_cited_artifacts() {
         done
       done < <(_planner_testdata_spec_needs "$spec_file")
     done
+
+    if [ "$nspecs" -gt 0 ] && planner_testdata_contract_initiative "$initiative_id"; then
+      for name in "${missing[@]}"; do
+        key=$(_planner_testdata_lower "$name")
+        [ -n "${referenced[$key]:-}" ] && continue
+        _planner_testdata_emit "planner-crosscheck-testdata: CITED_ARTIFACT_UNREFERENCED no spec Verification Notes need cites \`${name}\` (NOT FOUND in discovery.md) by its backticked name — quote it exactly in the Test data of every need that uses it, or --accept the code if no spec needs it"
+        blocking=1
+      done
+    fi
   fi
 
   [ "$blocking" -eq 0 ]

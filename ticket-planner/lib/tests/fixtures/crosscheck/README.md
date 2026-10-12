@@ -108,6 +108,9 @@ re-implements or mocks a checker.
 | `cited-artifact-answered` | Same, with the open question answered `external:<who>` | [#504](https://github.com/willard-pro/claude-plugins/issues/504) — must stay clean |
 | `cited-artifact-source-mismatch` | Operator answered `generate`, spec still says `external:<invented who>` | [#504](https://github.com/willard-pro/claude-plugins/issues/504) AC4 — `CITED_ARTIFACT_SOURCE_MISMATCH` |
 | `cited-artifact-list-variants` | Numbered items, bare names, case-insensitive status, `FOUND: …NOT FOUND…` location, one unparseable item | [#504](https://github.com/willard-pro/claude-plugins/issues/504) — only the unparseable item, as `CITED_ARTIFACT_MALFORMED` |
+| `cited-artifact-overlapping-names` | Artifacts `sample` and `sample file v2` with different answers | review case A — exact backticked matching; must stay clean |
+| `cited-artifact-prose-not-matched` | Artifact `template`; an unrelated need mentions "email template" in prose | review case A2 — prose is never a citation; must stay clean |
+| `cited-artifact-paraphrased` | Spec paraphrases a NOT FOUND artifact and invents an owner | review case B — `CITED_ARTIFACT_UNREFERENCED` |
 | `contract-undefined-warn-only` | A structure that "gains new fields for ..." in prose with no backtick-quoted field names | [#175](https://github.com/willard-pro/claude-plugins/issues/175) — `CONTRACT_UNDEFINED` is deliberately warn-level, not blocking |
 
 ## Adding a real fixture

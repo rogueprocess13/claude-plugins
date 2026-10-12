@@ -242,7 +242,9 @@ planner_testdata_no_tests_rule_persist INIT-nodetect
 [ "$(planner_config_get INIT-nodetect no-tests-rule)" = "false" ] && pass "detect: no rule records false" || fail "detect: records false" "$(planner_config_get INIT-nodetect no-tests-rule)"
 
 echo "--- detection is narrow: unscoped rules only ---"
-for phrase in "Implementation does not write tests." "Never add tests" "Agents don't write any automated tests." "You must not create test fixtures; QA does."; do
+for phrase in "Implementation does not write tests." "Never add tests" "Agents don't write any automated tests." "You must not create test fixtures; QA does." \
+  "Do not write or add tests when implementing tickets." "Do not write tests when implementing tickets." \
+  "Implementation agents must not write tests: QA owns them." "Never write tests, QA owns them."; do
   echo "$phrase" >"${REPOS_ROOT}/CLAUDE.md"
   planner_testdata_no_tests_rule_scan >/dev/null && pass "rule on: $phrase" || fail "rule on: $phrase" "not detected"
 done
@@ -304,7 +306,7 @@ assert_contains "pending: quotes the answer" "$out" "Answer: PENDING"
 echo "--- source mismatch: pending artifacts stay generate ---"
 SP="${ART}/specs"
 write_spec "$SP" "m-one" "1. Role: admin. Test data: the \`client sample file (43 rows)\`. Source: external:client finance team.
-2. Role: admin. Test data: the legacy mapping sheet. Source: generate."
+2. Role: admin. Test data: the \`legacy mapping sheet\`. Source: generate."
 out=$(planner_crosscheck_cited_artifacts INIT-cited)
 assert_contains "mismatch: invented external while pending" "$out" "CITED_ARTIFACT_SOURCE_MISMATCH m-one.md#1"
 assert_not_contains "mismatch: generate while pending is right" "$out" "m-one.md#2"
@@ -338,11 +340,11 @@ out=$(planner_crosscheck_cited_artifacts INIT-cited)
 echo "--- malformed Cited Artifacts items are findings, not skips ---"
 new_init INIT-malformed >/dev/null
 ART2="${REPOS_ROOT}/.ticket-auto/initiatives/INIT-malformed/artifacts"
-printf '## Cited Artifacts\n\n- `vendor rate card` — lost somewhere\n- just some words\n- None.\n' >"${ART2}/discovery.md"
+printf '## Cited Artifacts\n\n- `vendor rate card` — lost somewhere\n- just some words\n- None.\n- None — no external artifacts are cited.\n- No other files cited.\n' >"${ART2}/discovery.md"
 out=$(planner_crosscheck_cited_artifacts INIT-malformed)
 rc=$?
 [ "$rc" -eq 1 ] && pass "malformed: blocks" || fail "malformed: blocks" "rc=$rc"
-[ "$(printf '%s\n' "$out" | grep -c CITED_ARTIFACT_MALFORMED)" -eq 2 ] && pass "malformed: two findings, None. accepted" || fail "malformed: count" "$out"
+[ "$(printf '%s\n' "$out" | grep -c CITED_ARTIFACT_MALFORMED)" -eq 2 ] && pass "malformed: two findings; None. and none-statements skipped" || fail "malformed: count" "$out"
 
 echo "--- missing section: warn on contract initiatives, silent on legacy ---"
 printf '# Discovery\n\n## Code Paths\n\nnone\n' >"${ART2}/discovery.md"

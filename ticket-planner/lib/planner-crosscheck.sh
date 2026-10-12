@@ -92,7 +92,8 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # CONTRACT_CONSUMERS_UNNOTIFIED, #220's SIGNALS_UNIFORM, #221's
 # DANGLING_BLOCKED_BY, #503's TEST_DATA_UNOWNED and #504's
 # CITED_ARTIFACT_MALFORMED / CITED_ARTIFACT_UNRAISED / CITED_ARTIFACT_UNRESOLVED /
-# CITED_ARTIFACT_SOURCE_MISMATCH block EpicGen per #176's table.
+# CITED_ARTIFACT_SOURCE_MISMATCH / CITED_ARTIFACT_UNREFERENCED block EpicGen per
+# #176's table.
 # TEST_DATA_UNSOURCED_LEGACY (a spec in an initiative that predates the Source
 # contract) and CITED_ARTIFACTS_SECTION_MISSING are warn-level.
 # DISCOVERY_GAP_UNRESOLVED and CONTRACT_UNDEFINED are warn-level: a declared
@@ -439,6 +440,9 @@ planner_crosscheck_fix_hint() {
     ;;
   CITED_ARTIFACT_SOURCE_MISMATCH)
     echo "a spec's Source for this cited artifact disagrees with the operator's answer in consensus.md — set the spec's Source to the answer (generate becomes seeded-by:<pack-slug>)"
+    ;;
+  CITED_ARTIFACT_UNREFERENCED)
+    echo "no spec need cites this NOT FOUND artifact by its exact backticked name — quote it in the Test data of every need that uses it (a paraphrase is not checked), or --accept the code if no spec needs it"
     ;;
   CITED_ARTIFACT_MALFORMED)
     echo "a discovery.md ## Cited Artifacts item has no readable FOUND / NOT FOUND status — rewrite it as \`<name>\` — FOUND: <where> or \`<name>\` — NOT FOUND (searched: …)"
