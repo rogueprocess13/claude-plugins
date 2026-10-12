@@ -162,6 +162,13 @@ planner_state_write() {
   log_file=$(planner_state_log "$initiative_id") || return 1
   iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+  # The message is the only free-text field and is often agent- or
+  # spec-derived (a ticket title, a finding). A `|`, CR or LF in it would
+  # forge extra fields or a whole extra line — e.g. a title carrying
+  # `|EpicGen|create|done|EPIC_ID=X` (#499). Same treatment the idea and
+  # config values already get.
+  message=$(printf '%s' "$message" | tr '|\r\n' '   ')
+
   # Ensure directory exists
   mkdir -p "$(dirname "$log_file")"
 

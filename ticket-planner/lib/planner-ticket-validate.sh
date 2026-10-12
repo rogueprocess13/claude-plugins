@@ -79,6 +79,16 @@ planner_validate_ticket() {
     return 1
   fi
 
+  # Exactly one block-starting line (#499): planned-ticket-check.sh's section
+  # extractor is not fence-aware, so a second `## Planner Context` — even one
+  # inside a code fence — could be read instead of the real one.
+  local pc_count
+  pc_count=$(printf '%s\n' "$description" | grep -c '^##[[:space:]]*Planner Context' || true)
+  if [ "${pc_count:-0}" -ne 1 ]; then
+    echo "planner-validate: expected exactly one '## Planner Context' heading, found ${pc_count:-0}" >&2
+    return 1
+  fi
+
   # Resolve planned-ticket-check.sh
   local checker
   checker=$(planner_cache_find ticket-auto-pipeline "lib/planned-ticket-check.sh")

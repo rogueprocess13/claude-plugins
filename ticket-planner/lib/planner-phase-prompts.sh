@@ -728,12 +728,16 @@ and engineering precision is never traded for readability.
 
 ### The Description is the ticket body, verbatim (issue #499)
 
-TicketGen does not rewrite anything: \`planner_ticket_body_compose\` copies the spec
-from \`## Description\` up to \`## Labels\` into the ticket, then appends a generated
+TicketGen does not rewrite anything: \`planner_ticket_body_compose\` copies every
+section of the spec into the ticket except its \`# \` heading, \`## Title\`,
+\`## Labels\`, \`## Signals\` and \`## Verification Notes\` (the \`## Description\`
+heading itself is dropped, its content kept), then appends a generated
 \`## Verification Plan\` (from \`## Verification Notes\`), \`## Related Tickets\` (from the
 \`blocked-by:\` tokens) and the \`## Planner Context\` block. Do not write those three
-sections yourself. Everything else the ticket needs must already be in the
-Description, in its final wording:
+sections yourself, and never write a \`## Planner Context\` heading anywhere in the
+spec, not even inside a code fence — the spec is refused. \`## Acceptance Criteria\`
+must appear exactly once, outside any code fence. Everything else the ticket needs
+must already be in the Description, in its final wording:
 
 - **Required sections (issue #285)** — \`planned-ticket-body-check.sh\` rejects a body
   missing any of these, and an empty heading fails like a missing one:
@@ -1732,15 +1736,16 @@ is left to judgement:
   Linear identifier for a cross-initiative prerequisite).
 - **Title / type** — \`planner_ticketgen_spec_title\` (the spec's \`## Title\`) and
   \`planner_ticketgen_spec_type\` (the type token on its \`## Labels\` line).
-- **Body** — \`planner_ticketgen_body\` → \`planner_ticket_body_compose\`: the spec's
-  Description up to \`## Labels\` with Labels/Signals/Verification Notes dropped, then
+- **Body** — \`planner_ticketgen_body\` → \`planner_ticket_body_compose\`: every section of
+  the spec except its \`# \` heading, Title, Labels, Signals and Verification Notes
+  (and any hand-written Verification Plan / Related Tickets, which are regenerated), then
   \`## Verification Plan\` (\`### Per-Criterion Verification\`, one row per Acceptance
   Criteria line in AC order, matched to the spec's \`## Verification Notes\` by
   criterion text, never by position), \`## Related Tickets\` (the created ids of this
   ticket's dependencies), and the \`## Planner Context\` block (confidence and
   Pre-approved derived from the spec's Signals JSON by \`planner_confidence_derive\`).
-- **Parent** — \`planner_linear_create_issue\` resolves the epic identifier to its
-  UUID before \`issueCreate\`.
+- **Parent** — the epic identifier is resolved to its Linear UUID once, before the
+  loop; if that fails, no ticket is created and the phase fails.
 
 Run the script below **as a single bash invocation**, exactly as written. Your
 only other job is to report its output.
@@ -1799,6 +1804,14 @@ if [ -z "\$EPIC_ID" ]; then
   exit 1
 fi
 echo "Parent epic: \$EPIC_ID"
+
+# 0a'. Resolve the epic to its Linear UUID once, before any ticket is
+# composed. If it cannot be resolved no child can be parented, so nothing is
+# created and the phase fails rather than skipping every ticket one by one.
+EPIC_UUID=\$(planner_linear_resolve_issue_id "\$EPIC_ID") || {
+  planner_state_write "${initiative_id}" "TicketGen" "parent" "fail" "cannot resolve epic \$EPIC_ID to a Linear id — no tickets created"
+  exit 1
+}
 
 # 0b. The team Epic Gen filed the epic against, interpolated from the state log.
 # Children must land on the same team, so this is read back rather than resolved
@@ -1886,8 +1899,14 @@ for ticket_slug in "\${ORDER[@]}"; do
     echo "Ticket already exists: \${existing_ticket} (idempotent)"
     # planner-refinement-phase: persist the body even on a re-entered skip —
     # Refinement has no other way to see it without a Linear fetch.
-    mkdir -p "${state_dir}/tickets/\${existing_ticket}/planner" 2>/dev/null
-    printf '%s' "\$description" >"${state_dir}/tickets/\${existing_ticket}/planner/body.md"
+    # A body.md already on disk was written when the ticket was created and
+    # matches what Linear holds — keep it, even if this version of the
+    # composer would now produce different text. Only fill a missing one.
+    existing_body="${state_dir}/tickets/\${existing_ticket}/planner/body.md"
+    if [ ! -s "\$existing_body" ]; then
+      mkdir -p "\$(dirname "\$existing_body")" 2>/dev/null
+      printf '%s' "\$description" >"\$existing_body"
+    fi
     CREATED_IDS+=("\$existing_ticket")
     n_skipped=\$((n_skipped + 1))
     continue
@@ -1902,7 +1921,7 @@ for ticket_slug in "\${ORDER[@]}"; do
     "\$TICKET_TITLE" \\
     "\$description" \\
     "\$LABELS" \\
-    "\$EPIC_ID" \\
+    "\$EPIC_UUID" \\
     "${project_ref}" \\
     "${milestone_ref}") || {
     planner_state_write "${initiative_id}" "TicketGen" "create" "fail" "issueCreate failed for \${ticket_slug}"
@@ -1949,7 +1968,12 @@ planner_state_write "${initiative_id}" "META" "ticketgen" "done" "\${n_created} 
 # once every child also has a readiness verdict. TicketGen's own terminal line
 # is this verify|done — the ONLY phase-named success line TicketGen writes.
 created_ids=\$(printf '%s\n' "\${CREATED_IDS[@]}" | jq -R . | jq -sc 'map(select(length > 0))')
-if planner_verify_tickets "${initiative_id}" "\$created_ids"; then
+# verify|done only when EVERY spec in the order produced a ticket (created
+# now or already existing): a skipped ticket would otherwise advance the
+# phase, and resume would never re-enter it to create the rest.
+if [ "\$n_failed" -gt 0 ] || [ \$((n_created + n_skipped)) -ne "\${#ORDER[@]}" ]; then
+  planner_state_write "${initiative_id}" "TicketGen" "verify" "fail" "\${n_failed} of \${#ORDER[@]} tickets not created — fix the reported specs and resume."
+elif planner_verify_tickets "${initiative_id}" "\$created_ids"; then
   planner_state_write "${initiative_id}" "TicketGen" "verify" "done" "\${#CREATED_IDS[@]} tickets verified."
 else
   planner_state_write "${initiative_id}" "TicketGen" "verify" "fail" "Post-creation verification failed — some tickets missing manifests or not found in Linear."

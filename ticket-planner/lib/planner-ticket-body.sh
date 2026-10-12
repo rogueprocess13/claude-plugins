@@ -85,6 +85,13 @@ _PLANNER_TB_DROP="|title|description|labels|signals|verification notes|verificat
 
 # ── Spec reading helpers ─────────────────────────────────────────────────────
 
+# The spec's text with CR stripped — a CRLF spec otherwise yields an empty
+# title and a misleading "no ticket type" error. Every reader below goes
+# through this, never the file directly.
+_planner_tb_read() {
+  tr -d '\r' <"$1" 2>/dev/null
+}
+
 # Content of one `## <heading>` section (heading matched case-insensitively),
 # up to the next `## ` heading. Headings inside fenced code blocks are not
 # section boundaries.
@@ -98,7 +105,7 @@ _planner_tb_section() {
       on = (h == want); next
     }
     on { print }
-  ' "$spec_file" 2>/dev/null
+  ' < <(_planner_tb_read "$spec_file")
 }
 
 # Acceptance Criteria items, original text, one per line, markers stripped.
@@ -115,7 +122,7 @@ _planner_tb_ac_items() {
 # identical extraction to planner_crosscheck_deps.
 _planner_tb_dep_tokens() {
   local spec_file="$1" labels_line
-  labels_line=$(awk '/^## Labels/{f=1;next} f && NF{print; exit}' "$spec_file" 2>/dev/null)
+  labels_line=$(_planner_tb_read "$spec_file" | awk '/^## Labels/{f=1;next} f && NF{print; exit}')
   [ -z "$labels_line" ] && return 0
   echo "$labels_line" | { grep -oE 'blocked-by:`?[A-Za-z0-9_-]+`?' || true; } |
     sed -E 's/blocked-by:`?([A-Za-z0-9_-]+)`?/\1/'
@@ -222,7 +229,7 @@ planner_ticketgen_spec_title() {
   slug=$(basename "$spec_file" .md)
   title=$(_planner_tb_section "$spec_file" "title" | awk 'NF{print; exit}')
   if [ -z "$title" ]; then
-    title=$(awk '/^# /{sub(/^# +/, ""); print; exit}' "$spec_file" 2>/dev/null)
+    title=$(_planner_tb_read "$spec_file" | awk '/^# /{sub(/^# +/, ""); print; exit}')
     [ "$title" = "$slug" ] && title=""
   fi
   [ -z "$title" ] && title="$slug"
@@ -233,7 +240,7 @@ planner_ticketgen_spec_title() {
 # `type:` +) one of PLANNER_TICKET_TYPES. Returns 1 when none is present.
 planner_ticketgen_spec_type() {
   local spec_file="$1" labels_line tok t
-  labels_line=$(awk '/^## Labels/{f=1;next} f && NF{print; exit}' "$spec_file" 2>/dev/null)
+  labels_line=$(_planner_tb_read "$spec_file" | awk '/^## Labels/{f=1;next} f && NF{print; exit}')
   for tok in $(echo "$labels_line" | tr ',`' '  '); do
     t=$(echo "${tok#type:}" | tr '[:upper:]' '[:lower:]')
     case " ${PLANNER_TICKET_TYPES} " in
@@ -247,10 +254,20 @@ planner_ticketgen_spec_type() {
   return 1
 }
 
+# The Signals JSON: the first fenced block inside the `## Signals` section only
+# — a JSON example elsewhere in the spec (Technical Context) must never be
+# read as the signals. Returns 1 when the section, its block, or valid JSON
+# object is missing: a silent `{}` would derive a confident-looking score
+# from nothing.
 planner_ticketgen_signals() {
   local spec_file="$1" sig
-  sig=$(sed -n '/```json/,/```/p' "$spec_file" 2>/dev/null | sed '1d;$d' | jq -c . 2>/dev/null) || sig=""
-  [ -n "$sig" ] || sig="{}"
+  sig=$(_planner_tb_section "$spec_file" "signals" |
+    awk '/^(```|~~~)/ { if (on) exit; on = 1; next } on { print }' |
+    jq -ce 'select(type == "object")' 2>/dev/null) || sig=""
+  if [ -z "$sig" ]; then
+    echo "planner-ticket-body: $(basename "$spec_file"): ## Signals has no parseable JSON object" >&2
+    return 1
+  fi
   echo "$sig"
 }
 
@@ -260,7 +277,7 @@ planner_ticketgen_generated_ts() {
   local initiative_id="$1" log_file ts=""
   log_file=$(planner_state_log "$initiative_id" 2>/dev/null) || log_file=""
   if [ -n "$log_file" ] && [ -f "$log_file" ]; then
-    ts=$(grep -m1 '|EpicGen|.*|done|EPIC_ID=' "$log_file" 2>/dev/null | cut -d'|' -f1)
+    ts=$(grep -m1 -E '^[^|]*\|EpicGen\|[^|]*\|done\|EPIC_ID=[^|]*$' "$log_file" 2>/dev/null | cut -d'|' -f1)
     [ -n "$ts" ] || ts=$(head -1 "$log_file" | cut -d'|' -f1)
   fi
   [ -n "$ts" ] || ts="1970-01-01T00:00:00Z"
@@ -272,7 +289,7 @@ planner_ticketgen_generated_ts() {
 planner_ticketgen_context_block() {
   local initiative_id="$1" epic_id="$2" spec_file="$3"
   local signals confidence threshold pre_approved generated context_json
-  signals=$(planner_ticketgen_signals "$spec_file")
+  signals=$(planner_ticketgen_signals "$spec_file") || return 1
   confidence=$(planner_confidence_derive "$signals")
   threshold="${PLANNER_CONFIDENCE_THRESHOLD:-0.85}"
   pre_approved=$(awk -v c="$confidence" -v t="$threshold" 'BEGIN { print ((c + 0 >= t + 0) ? "true" : "false") }')
@@ -452,6 +469,38 @@ planner_ticketgen_dep_refs() {
 
 # ── Body composer ────────────────────────────────────────────────────────────
 
+# Refuse a spec whose structure downstream parsers would read differently
+# from this composer (#499 review):
+#   - any `## Planner Context` line, fenced or not: the composer appends the
+#     only legitimate block, and ticket-auto-pipeline's planned-ticket-check.sh
+#     section extractor is not fence-aware, so a fenced copy would be read as
+#     the real one (forged Pre-approved / Confidence);
+#   - a `## Acceptance Criteria` heading inside a fence, or more than one:
+#     dor-check.sh's _dor_ac_lines is not fence-aware and takes the first
+#     heading, while this composer reads the unfenced section — the AC count
+#     and the Verification Plan rows would disagree.
+# Usage: _planner_tb_guard <spec_file>   Returns 1 (reason on stderr) on refusal.
+_planner_tb_guard() {
+  local spec_file="$1" verdict
+  verdict=$(_planner_tb_read "$spec_file" | awk '
+    /^(```|~~~)/ { fence = !fence }
+    /^##[[:space:]]*Planner Context/ { pc++ }
+    /^##[[:space:]]*Acceptance Criteria/ { ac++; if (fence) acf++ }
+    END { printf "%d %d %d\n", pc, ac, acf }')
+  local pc ac acf name
+  read -r pc ac acf <<<"$verdict"
+  name=$(basename "$spec_file")
+  if [ "${pc:-0}" -gt 0 ]; then
+    echo "planner-ticket-body: ${name}: contains a '## Planner Context' heading — the composer writes the only one; remove it from the spec" >&2
+    return 1
+  fi
+  if [ "${acf:-0}" -gt 0 ] || [ "${ac:-0}" -gt 1 ]; then
+    echo "planner-ticket-body: ${name}: '## Acceptance Criteria' must appear exactly once, outside any code fence (found ${ac}, ${acf} fenced)" >&2
+    return 1
+  fi
+  return 0
+}
+
 # Compose a ticket body from a spec. Pure: the same arguments always produce
 # the same bytes.
 #
@@ -473,6 +522,8 @@ planner_ticket_body_compose() {
     return 1
   }
 
+  _planner_tb_guard "$spec_file" || return 1
+
   local body vplan spec_related related="" entry id title
   body=$(awk -v drop="$_PLANNER_TB_DROP" '
     {
@@ -489,7 +540,7 @@ planner_ticket_body_compose() {
       if (blank) { print ""; blank = 0 }
       print; started = 1
     }
-  ' "$spec_file")
+  ' < <(_planner_tb_read "$spec_file"))
   vplan=$(planner_ticketgen_vplan "$spec_file") || return 1
 
   spec_related=$(_planner_tb_section "$spec_file" "related tickets" |

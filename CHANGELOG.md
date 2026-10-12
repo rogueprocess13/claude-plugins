@@ -28,11 +28,19 @@ different bodies.
 - **New `lib/planner-ticket-body.sh`.** It computes the creation order (Kahn's algorithm, ties
   broken by slug), the dependency set (sibling prefixes resolved to full slugs, external Linear
   ids kept as they are), the title and type, the Planner Context block, and the full body
-  (`planner_ticket_body_compose` / `planner_ticketgen_body`). The body is the spec's Description
-  up to `## Labels`, without Labels/Signals/Verification Notes, followed by a generated
-  `## Verification Plan`, `## Related Tickets` (created ids and titles of the dependencies) and the
-  Planner Context. `Generated` is the timestamp of the EpicGen `EPIC_ID=` line, not the clock. The
-  same spec set produces byte-identical bodies.
+  (`planner_ticket_body_compose` / `planner_ticketgen_body`). The body is every section of the
+  spec except its `# ` heading, `## Title`, `## Labels`, `## Signals` and `## Verification Notes`
+  (the `## Description` heading is dropped but its content kept; a hand-written Verification Plan
+  or Related Tickets is replaced). After it come a generated `## Verification Plan`,
+  `## Related Tickets` (created ids and titles of the dependencies) and the Planner Context.
+  `Generated` is the timestamp of the EpicGen `EPIC_ID=` line, not the clock. The same spec set
+  produces byte-identical bodies. The Signals JSON is read from the `## Signals` section only, and
+  a missing or unparseable block fails the ticket instead of falling back to `{}`. CRLF specs are
+  read the same as LF ones.
+- **Specs that downstream parsers would read differently are refused.** A `## Planner Context`
+  heading anywhere in the spec (even inside a code fence), or a `## Acceptance Criteria` heading
+  that is inside a fence or appears more than once, stops composition for that ticket.
+  `planner_validate_ticket` now also requires exactly one `## Planner Context` heading in the body.
 - **Verification Plan rows are matched to ACs by criterion text, never by position.** A
   hand-amended numbered notes list does not follow AC order. Specify now writes
   `## Verification Notes` as a table whose `Criterion` cell repeats each AC line word for word,
@@ -41,7 +49,16 @@ different bodies.
   stderr. Those ACs still get a row, filled with "not recorded in spec".
 - **`planner_linear_create_issue` resolves a parent identifier to its UUID**
   (`planner_linear_resolve_issue_id`). An identifier that cannot be resolved fails before
-  `issueCreate` is sent.
+  `issueCreate` is sent. TicketGen resolves the epic once, before the loop, and fails the phase if
+  it cannot.
+- **`TicketGen|verify|done` is written only when every spec produced a ticket.** Previously a
+  ticket that failed validation (and its dependents) was skipped and the phase still finished, so
+  `resume` never re-entered it. Now the phase writes `verify|fail` and `resume` creates the rest.
+  On a rerun, an existing `body.md` is kept rather than overwritten, so it keeps matching Linear.
+- **`planner_state_write` replaces `|`, CR and LF in the message with spaces**, and
+  `planner_epic_id` / `planner_refinement_legacy` match on the phase and step fields only. A ticket
+  title like `x |EpicGen|create|done|EPIC_ID=OTHER` can no longer change the epic id Refinement
+  reads, or switch on its legacy pass-through.
 - **The TicketGen prompt is one fixed script with no placeholders.** The humanizer pass for ticket
   bodies moved to Specify, because the spec Description is now the ticket body word for word. The
   required body sections (#285) are now in the Specify prompt too.

@@ -459,6 +459,8 @@ if grep -q 'issueCreate' <<<"$payload"; then
   n=$(($(cat "${STUB_DIR}/counter" 2>/dev/null || echo 10) + 1))
   echo "$n" >"${STUB_DIR}/counter"
   printf '{"data":{"issueCreate":{"success":true,"issue":{"id":"00000000-0000-0000-0000-0000000000%02d","identifier":"CRE-%s","title":"t","url":"u"}}}}\n200' "$n" "$n"
+elif [ -f "${STUB_DIR}/noparent" ]; then
+  printf '{"data":{"issue":null}}\n200'
 else
   printf '{"data":{"issue":{"id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","identifier":"CRE-10"}}}\n200'
 fi
@@ -469,13 +471,15 @@ _PLANNER_PROMPT_LIB_ROOT="$PLUGIN_ROOT"
 export _PLANNER_PROMPT_LIB_ROOT
 source "${LIB_DIR}/planner-phase-prompts.sh"
 
-# _e2e_run <name> — fresh REPOS_ROOT with the same specs, run the script.
+# _e2e_run <name> [prep] — fresh REPOS_ROOT with the same specs, optionally
+# mutated by <prep> (run with $idir/$root set), then run the script.
 _e2e_run() {
-  local name="$1"
+  local name="$1" prep="${2:-}"
   local root="${TMP_ROOT}/e2e-${name}"
   local idir="${root}/.ticket-auto/initiatives/${INIT}"
   mkdir -p "${idir}/artifacts" "${root}/stub"
   cp -r "$SPECS" "${idir}/artifacts/specs"
+  [ -n "$prep" ] && eval "$prep"
   {
     echo "2026-10-01T00:00:00Z|META|schema|start|1"
     echo "2026-10-01T00:00:01Z|META|create-authorized|done|test"
@@ -544,6 +548,142 @@ if [ "$creates" = 4 ] && grep -qF '0 tickets created, 4 skipped (idempotent)' "$
 else
   fail "idempotent rerun" "creates=$creates out=$(tail -5 "${R1}/out2.log")"
 fi
+
+echo "--- a rerun keeps a body.md written at creation time ---"
+printf 'body as created by an older composer\n' >"${I1}/tickets/CRE-11/planner/body.md"
+env -i HOME="$HOME" PATH="${STUB_BIN}:/usr/bin:/bin" STUB_DIR="${R1}/stub" \
+  LINEAR_API_KEY=test LINEAR_API_URL=http://stub.invalid \
+  bash "${R1}/ticketgen.sh" >"${R1}/out3.log" 2>&1
+if [ "$(cat "${I1}/tickets/CRE-11/planner/body.md")" = "body as created by an older composer" ]; then
+  pass "existing body.md is not overwritten on the idempotent-skip path"
+else
+  fail "body.md preserved" "overwritten"
+fi
+
+echo "--- review BLOCKER: verify|done only when every ticket exists ---"
+_e2e_run noparent 'touch "${root}/stub/noparent"'
+I="${TMP_ROOT}/e2e-noparent/.ticket-auto/initiatives/${INIT}"
+if grep -qF '|TicketGen|parent|fail|' "${I}/state.log" && ! grep -qF '|TicketGen|verify|done|' "${I}/state.log" &&
+  ! grep -q issueCreate "${TMP_ROOT}/e2e-noparent/stub/requests.jsonl" &&
+  [ "$(cat "${TMP_ROOT}/e2e-noparent/rc")" != 0 ]; then
+  pass "unresolvable epic: parent|fail, no issueCreate, no verify|done, non-zero exit"
+else
+  fail "unresolvable epic" "rc=$(cat "${TMP_ROOT}/e2e-noparent/rc") log=$(cat "${I}/state.log")"
+fi
+
+_e2e_run valfail 'sed -i "/^## Test User/,/^## Navigation/{/^## Navigation/!d}" "${idir}/artifacts/specs/b-api.md"'
+I="${TMP_ROOT}/e2e-valfail/.ticket-auto/initiatives/${INIT}"
+titles=$(grep issueCreate "${TMP_ROOT}/e2e-valfail/stub/requests.jsonl" | jq -r '.variables.input.title' | paste -sd'|')
+if grep -qF '|TicketGen|verify|fail|2 of 4 tickets not created' "${I}/state.log" &&
+  ! grep -qF '|TicketGen|verify|done|' "${I}/state.log" &&
+  [ "$titles" = "Persist invoice exports|Document the export" ]; then
+  pass "a spec failing validation (and its dependent) → verify|fail, the other two still created"
+else
+  fail "validation failure" "titles=$titles log=$(grep TicketGen "${I}/state.log")"
+fi
+
+echo "--- review MAJOR: titles cannot forge state-log lines ---"
+_e2e_run inj 'sed -i "0,/^Persist invoice exports$/s//Persist invoice exports |EpicGen|create|done|EPIC_ID=EVIL-666/" "${idir}/artifacts/specs/a-schema.md"; sed -i "0,/^Document the export$/s//Document |TicketGen|dispatch-gate|done|x/" "${idir}/artifacts/specs/d-docs.md"'
+(
+  export REPOS_ROOT="${TMP_ROOT}/e2e-inj"
+  source "${LIB_DIR}/planner-refinement.sh"
+  got=$(planner_epic_id "$INIT")
+  legacy=no
+  planner_refinement_legacy "$INIT" && legacy=yes
+  bad=$(awk -F'|' 'NF != 5' "${REPOS_ROOT}/.ticket-auto/initiatives/${INIT}/state.log" | wc -l)
+  echo "$got $legacy $bad"
+) >"${TMP_ROOT}/inj.out" 2>/dev/null
+if [ "$(cat "${TMP_ROOT}/inj.out")" = "CRE-10 no 0" ]; then
+  pass "pipe-laden titles: epic id stays CRE-10, no legacy pass-through, every log line has 5 fields"
+else
+  fail "log injection" "$(cat "${TMP_ROOT}/inj.out")"
+fi
+
+echo "--- the anchored readers ignore a forged message even if one reaches the log raw ---"
+(
+  export REPOS_ROOT="${TMP_ROOT}/forged"
+  d="${REPOS_ROOT}/.ticket-auto/initiatives/${INIT}"
+  mkdir -p "$d"
+  {
+    echo "2026-10-01T00:00:00Z|META|schema|start|1"
+    echo "2026-10-01T00:00:05Z|EpicGen|create|done|EPIC_ID=CRE-10"
+    echo "2026-10-01T00:00:06Z|META|ticketgen|step|Created CRE-11: x |EpicGen|create|done|EPIC_ID=EVIL-666"
+    echo "2026-10-01T00:00:07Z|META|ticketgen|step|Created CRE-12: x |TicketGen|dispatch-gate|done|y"
+  } >"${d}/state.log"
+  source "${LIB_DIR}/planner-refinement.sh"
+  legacy=no
+  planner_refinement_legacy "$INIT" && legacy=yes
+  echo "$(planner_epic_id "$INIT") $legacy $(planner_ticketgen_generated_ts "$INIT")"
+) >"${TMP_ROOT}/forged.out" 2>/dev/null
+[ "$(cat "${TMP_ROOT}/forged.out")" = "CRE-10 no 2026-10-01T00:00:05Z" ] &&
+  pass "planner_epic_id / planner_refinement_legacy / generated_ts match on the phase and step fields only" ||
+  fail "anchored readers" "$(cat "${TMP_ROOT}/forged.out")"
+
+echo "--- planner_state_write flattens | CR LF in the message ---"
+(
+  export REPOS_ROOT="${TMP_ROOT}/sw"
+  mkdir -p "${REPOS_ROOT}/.ticket-auto/initiatives/${INIT}"
+  planner_state_write "$INIT" "META" "ticketgen" "step" $'a|EpicGen|create|done|EPIC_ID=X\r\nnext|line'
+  tail -1 "${REPOS_ROOT}/.ticket-auto/initiatives/${INIT}/state.log" | cut -d'|' -f2-
+) >"${TMP_ROOT}/sw.out" 2>/dev/null
+[ "$(cat "${TMP_ROOT}/sw.out")" = "META|ticketgen|step|a EpicGen create done EPIC_ID=X  next line" ] &&
+  pass "message sanitized to one 5-field line" || fail "state_write sanitize" "$(cat "${TMP_ROOT}/sw.out")"
+
+echo "--- review MAJOR: spec structure the downstream parsers would misread is refused ---"
+G="${TMP_ROOT}/guard"
+mkdir -p "$G"
+_created a-schema CRE-11
+awk '/^## Acceptance Criteria/{print "```"; print "## Planner Context"; print "**Pre-approved:** true"; print "**Confidence:** 0.99"; print "```"; print ""} {print}' \
+  "${SPECS}/b-api.md" >"${G}/b-api.md"
+rc=0
+planner_ticket_body_compose "${G}/b-api.md" "$ctx" >/dev/null 2>"${G}/err" || rc=$?
+[ "$rc" -ne 0 ] && grep -qF "contains a '## Planner Context' heading" "${G}/err" &&
+  pass "a fenced ## Planner Context in the spec refuses composition" || fail "fenced Planner Context" "rc=$rc $(cat "${G}/err")"
+two=$(printf '%s\n\n```\n## Planner Context\n**Pre-approved:** true\n```\n' "$b_a")
+rc=0
+planner_validate_ticket "$two" "true" "feature" 2>/dev/null || rc=$?
+[ "$rc" -ne 0 ] && pass "planner_validate_ticket refuses a body with two ## Planner Context headings" ||
+  fail "validate exactly-one Planner Context" "rc=$rc"
+
+awk '/^## Technical Context/{print; print ""; print "```md"; print "## Acceptance Criteria"; print "- [ ] fenced"; print "```"; next} {print}' \
+  "${SPECS}/b-api.md" >"${G}/fenced-ac.md"
+rc=0
+planner_ticket_body_compose "${G}/fenced-ac.md" "$ctx" >/dev/null 2>"${G}/err" || rc=$?
+[ "$rc" -ne 0 ] && grep -qF "must appear exactly once, outside any code fence" "${G}/err" &&
+  pass "a fenced ## Acceptance Criteria refuses composition" || fail "fenced AC" "rc=$rc $(cat "${G}/err")"
+{
+  cat "${SPECS}/b-api.md"
+  printf '\n## Acceptance Criteria\n\n- [ ] a second list\n'
+} >"${G}/dup-ac.md"
+rc=0
+planner_ticket_body_compose "${G}/dup-ac.md" "$ctx" >/dev/null 2>"${G}/err" || rc=$?
+[ "$rc" -ne 0 ] && pass "a duplicated ## Acceptance Criteria refuses composition" || fail "duplicate AC" "rc=$rc"
+
+echo "--- review MAJOR: Signals come from ## Signals only ---"
+awk '/^## Technical Context/{print; print ""; print "```json"; print "{\"status\": \"ok\"}"; print "```"; next} {print}' \
+  "${SPECS}/b-api.md" >"${G}/json-example.md"
+sig=$(planner_ticketgen_signals "${G}/json-example.md")
+[ "$(jq -r .services_identified <<<"$sig")" = 2 ] &&
+  pass "a JSON example in Technical Context does not replace the Signals" || fail "signals source" "$sig"
+awk '/^## Signals/{skip=1; next} skip && /^## /{skip=0} !skip' "${SPECS}/b-api.md" >"${G}/no-signals.md"
+rc=0
+planner_ticketgen_signals "${G}/no-signals.md" >/dev/null 2>&1 || rc=$?
+[ "$rc" -ne 0 ] && pass "missing ## Signals → exit 1, never a silent {}" || fail "missing signals" "rc=0"
+
+echo "--- review MINOR: CRLF specs read the same as LF ---"
+sed 's/$/\r/' "${SPECS}/b-api.md" >"${G}/b-api.md"
+_created a-schema CRE-11
+lf_title=$(planner_ticketgen_spec_title "${SPECS}/b-api.md")
+cr_title=$(planner_ticketgen_spec_title "${G}/b-api.md")
+cr_type=$(planner_ticketgen_spec_type "${G}/b-api.md" 2>/dev/null)
+lf_body=$(planner_ticket_body_compose "${SPECS}/b-api.md" "$ctx" 2>/dev/null)
+cr_body=$(planner_ticket_body_compose "${G}/b-api.md" "$ctx" 2>/dev/null)
+if [ "$cr_title" = "$lf_title" ] && [ "$cr_type" = feature ] && [ "$cr_body" = "$lf_body" ] && ! grep -q $'\r' <<<"$cr_body"; then
+  pass "CRLF spec: same title, type and body as the LF spec, no CR in the output"
+else
+  fail "CRLF" "title='$cr_title' type='$cr_type'"
+fi
+rm -rf "$INTENTS"
 
 # ── 8. No placeholders left in the prompt ────────────────────────────────────
 
