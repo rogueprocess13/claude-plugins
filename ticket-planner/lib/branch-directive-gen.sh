@@ -223,6 +223,42 @@ branch_directive_source_md_helpers() {
   return 0
 }
 
+# Make `check_branch_directive_description` (ticket-auto-pipeline's
+# branch-directive-check.sh) available in the current shell — issue #498.
+# Epic Gen step 5d parses the epic description with it to cache branch /
+# uat_policy / merge_policy in the epic manifest. The prompt used to call it
+# with no source line and `|| true`, so on every run the call failed silently
+# and the manifest was written with an empty branch. Idempotent; also sources
+# the md helpers the checker itself depends on.
+#
+# Usage: branch_directive_source_checker
+# Returns: 0 when check_branch_directive_description is declared, 1 otherwise
+# (with the reason on stderr).
+branch_directive_source_checker() {
+  branch_directive_source_md_helpers || return 1
+
+  if declare -f check_branch_directive_description >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local checker
+  checker=$(_resolve_branch_directive_checker)
+  if [ -z "$checker" ]; then
+    echo "branch-directive-gen: branch-directive-check.sh not found — check_branch_directive_description unavailable (install ticket-auto-pipeline)" >&2
+    return 1
+  fi
+
+  # shellcheck source=/dev/null
+  source "$checker"
+
+  if ! declare -f check_branch_directive_description >/dev/null 2>&1; then
+    echo "branch-directive-gen: ${checker} sourced but did not define check_branch_directive_description" >&2
+    return 1
+  fi
+
+  return 0
+}
+
 # Generate a Branch Directive block from JSON input.
 # Usage: branch_directive_generate <directive_json>
 branch_directive_generate() {

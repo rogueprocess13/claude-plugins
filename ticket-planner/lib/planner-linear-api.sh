@@ -16,6 +16,9 @@
 #     internally); project_ref/milestone_ref take a name or UUID and default to
 #     $LINEAR_PROJECT / $LINEAR_PROJECT_MILESTONE. Returns issue JSON on stdout.
 #
+#   planner_linear_update_issue_description <issue_id> <description>
+#     issueUpdate of the description only. Returns 0 only on success:true.
+#
 #   planner_linear_build_issue_input <team_id> <title> <description> [label_ids_json] [parent_id] [project_id] [milestone_id]
 #     Pure payload builder — no network. Unit-testable IssueCreateInput shape.
 #
@@ -603,4 +606,40 @@ planner_linear_get_issue() {
   payload=$(jq -nc --arg query "$query" --arg id "$identifier" '{query: $query, variables: {id: $id}}')
 
   planner_linear_graphql "$payload"
+}
+
+# Replace an issue's description (issue #498). Epic Gen step 5c uses it to write
+# the Branch Directive-appended description back to the epic — the call the
+# phase prompt used to leave as a "... Linear API update call ..." placeholder.
+# Args: <issue_identifier_or_id> <description>
+# Output: the issueUpdate response JSON on stdout.
+# Returns: 0 only when Linear reports success:true; 1 on any failure (transport
+# error, GraphQL error, or success:false), with a reason on stderr.
+planner_linear_update_issue_description() {
+  local identifier="$1" description="$2"
+
+  if [ -z "$identifier" ]; then
+    echo "planner-linear-api: update_issue_description requires an issue id" >&2
+    return 1
+  fi
+
+  local query='mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id identifier } } }'
+  local payload
+  payload=$(jq -nc --arg query "$query" --arg id "$identifier" --arg desc "$description" \
+    '{query: $query, variables: {id: $id, input: {description: $desc}}}')
+
+  local resp
+  resp=$(planner_linear_graphql "$payload") || {
+    echo "planner-linear-api: issueUpdate failed for ${identifier}" >&2
+    echo "$resp"
+    return 1
+  }
+
+  if ! echo "$resp" | jq -e '.data.issueUpdate.success == true' >/dev/null 2>&1; then
+    echo "planner-linear-api: issueUpdate for ${identifier} did not report success" >&2
+    echo "$resp"
+    return 1
+  fi
+
+  echo "$resp"
 }

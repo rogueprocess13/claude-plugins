@@ -1343,6 +1343,7 @@ if [ "\$EMIT_DIRECTIVE" = "true" ]; then
     if [ -z "\$DIRECTIVE_BLOCK" ]; then
       echo "ERROR: branch-directive-gen returned empty — directive not appended" >&2
       planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" "Generator returned empty output"
+      exit 1
     else
       # Append directive to epic description via Linear API
       # (append to the LIVE description fetched above, so nothing another writer
@@ -1350,8 +1351,15 @@ if [ "\$EMIT_DIRECTIVE" = "true" ]; then
       NEW_DESCRIPTION="\${EPIC_LIVE_DESCRIPTION}
 
 \${DIRECTIVE_BLOCK}"
-      # Use the Linear API to update the description
-      # ... Linear API update call ...
+      # Write it back with issueUpdate (planner-linear-api.sh, sourced in step 3).
+      # Use this helper exactly — do not hand-write the mutation. A failed write
+      # is a hard stop: step 5d must never cache a directive Linear never got.
+      UPDATE_RESPONSE=\$(planner_linear_update_issue_description "\$CREATED_EPIC_ID" "\$NEW_DESCRIPTION") || {
+        UPDATE_ERROR=\$(echo "\$UPDATE_RESPONSE" | jq -c '.errors // .data // empty' 2>/dev/null | tr -d '|\\n' | head -c 300)
+        planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
+          "Linear issueUpdate failed for \${CREATED_EPIC_ID}: \${UPDATE_ERROR:-no response}"
+        exit 1
+      }
 
       BRANCH_NAME=\$(echo "\$DIRECTIVE_BLOCK" | grep '^\*\*Branch:\*\*' | sed 's/\*\*Branch:\*\* //')
       if [ -n "\$OVERRIDE_REASON" ]; then
@@ -1399,14 +1407,50 @@ planner_manifest_source_helpers || {
 # actually happened this run (a fresh append, or the live-description
 # fallback branch of 5c).
 if declare -f write_epic_manifest >/dev/null 2>&1 && [ "\${EXISTING_BLOCK:-}" != "manifest" ]; then
+  # check_branch_directive_description lives in ticket-auto-pipeline's
+  # branch-directive-check.sh — NOT in scope just because branch-directive-gen.sh
+  # is sourced. Source it explicitly; a missing checker is a hard stop, never an
+  # empty manifest (#498).
+  source "\${CLAUDE_PLUGIN_ROOT}/lib/branch-directive-gen.sh"
+  branch_directive_source_checker || {
+    planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
+      "branch-directive-check.sh not found — epic manifest not written (install ticket-auto-pipeline)"
+    exit 1
+  }
+
   # Re-parse whichever description is now current: NEW_DESCRIPTION if step 5c
   # just appended a directive, otherwise the description already fetched.
   MANIFEST_SOURCE_DESCRIPTION="\${NEW_DESCRIPTION:-\${EPIC_LIVE_DESCRIPTION:-\$EPIC_DESCRIPTION}}"
-  MANIFEST_DIRECTIVE_OUTPUT=\$(check_branch_directive_description "\$MANIFEST_SOURCE_DESCRIPTION" 2>/dev/null) || true
+  MANIFEST_DIRECTIVE_RC=0
+  MANIFEST_DIRECTIVE_OUTPUT=\$(check_branch_directive_description "\$MANIFEST_SOURCE_DESCRIPTION") || MANIFEST_DIRECTIVE_RC=\$?
   MANIFEST_BRANCH=\$(echo "\$MANIFEST_DIRECTIVE_OUTPUT" | sed -n "s/^BRANCH_DIRECTIVE_BRANCH='\\(.*\\)'\$/\\1/p")
   MANIFEST_UAT_POLICY=\$(echo "\$MANIFEST_DIRECTIVE_OUTPUT" | sed -n "s/^BRANCH_DIRECTIVE_UAT_POLICY='\\(.*\\)'\$/\\1/p")
   MANIFEST_MERGE_POLICY=\$(echo "\$MANIFEST_DIRECTIVE_OUTPUT" | sed -n "s/^BRANCH_DIRECTIVE_MERGE_POLICY='\\(.*\\)'\$/\\1/p")
   [ -n "\$MANIFEST_UAT_POLICY" ] || MANIFEST_UAT_POLICY="per-ticket"
+
+  # Exit 0 = valid directive, 1 = absent, 2 = malformed. An empty branch is
+  # correct only when no directive exists AND step 5c did not mean to add one.
+  case "\$MANIFEST_DIRECTIVE_RC" in
+  0)
+    if [ -z "\$MANIFEST_BRANCH" ] || [ -z "\$MANIFEST_MERGE_POLICY" ]; then
+      planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
+        "directive parsed with empty branch/merge_policy — epic manifest not written"
+      exit 1
+    fi
+    ;;
+  1)
+    if [ "\${EMIT_DIRECTIVE:-false}" = "true" ]; then
+      planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
+        "directive expected but absent from the epic description — epic manifest not written"
+      exit 1
+    fi
+    ;;
+  *)
+    planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "fail" \\
+      "Branch Directive malformed (checker exit \${MANIFEST_DIRECTIVE_RC}) — epic manifest not written"
+    exit 1
+    ;;
+  esac
 
   write_epic_manifest "\$CREATED_EPIC_ID" "\${MANIFEST_BRANCH:-}" "\$MANIFEST_UAT_POLICY" "\${MANIFEST_MERGE_POLICY:-}" '[]' || {
     echo "WARNING: failed to write epic manifest for \$CREATED_EPIC_ID" >&2
@@ -1441,6 +1485,12 @@ independently of the \`create\` step so status and replan can read it.
   \`branch_directive_source_md_helpers\` (from \`branch-directive-gen.sh\`) to source
   them first. Do not call either helper without that line, and do not reimplement
   them inline: the downstream validator parses the block by exactly these rules.
+- Step 5d's \`check_branch_directive_description\` is defined in ticket-auto-pipeline's
+  \`branch-directive-check.sh\`. Call \`branch_directive_source_checker\` first (as the
+  step does) and never append \`|| true\` or \`2>/dev/null\` to the checker call: an
+  epic manifest with an empty \`branch\` leaves fleet dispatch with no branch.
+- Step 5c writes the description with \`planner_linear_update_issue_description\`.
+  Do not hand-write an \`issueUpdate\` mutation.
 - \`_extract_md_section\` takes positional arguments — \`_extract_md_section "\$DESC"
   "Branch Directive"\`. It does not read stdin. \`_extract_field\` is the opposite:
   it reads the block on stdin and takes only the field name.

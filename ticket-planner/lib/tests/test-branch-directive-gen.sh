@@ -525,6 +525,132 @@ else
   echo "SKIP: planner_prompt_epicgen not available"
 fi
 
+# Test M6 (#498): step 5c writes the description back with a real helper call,
+# and step 5d sources the checker before calling it and fails loudly when it is
+# missing or yields an empty branch — never `|| true` into an empty manifest.
+echo "--- M6: Epic Gen 5c writes back, 5d sources the checker and fails loudly ---"
+if declare -f planner_prompt_epicgen >/dev/null 2>&1; then
+  M6_RENDERED=$(planner_prompt_epicgen "INIT-498" "idea" "/tmp/planner-test-sd")
+
+  if echo "$M6_RENDERED" | grep -q 'Linear API update call'; then
+    echo "FAIL: step 5c still carries the update-call placeholder"
+    FAIL=$((FAIL + 1))
+  elif echo "$M6_RENDERED" | grep -q 'planner_linear_update_issue_description "\$CREATED_EPIC_ID" "\$NEW_DESCRIPTION"'; then
+    echo "PASS: step 5c calls planner_linear_update_issue_description"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL: step 5c does not call planner_linear_update_issue_description"
+    FAIL=$((FAIL + 1))
+  fi
+
+  M6_SRC_LINE=$(echo "$M6_RENDERED" | grep -n 'branch_directive_source_checker ||' | head -1 | cut -d: -f1 || true)
+  M6_USE_LINE=$(echo "$M6_RENDERED" | grep -n '$(check_branch_directive_description' | head -1 | cut -d: -f1 || true)
+  if [ -n "$M6_SRC_LINE" ] && [ -n "$M6_USE_LINE" ] && [ "$M6_SRC_LINE" -lt "$M6_USE_LINE" ]; then
+    echo "PASS: checker sourced at line $M6_SRC_LINE before use at line $M6_USE_LINE"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL: checker used at line ${M6_USE_LINE:-none} without a preceding source (${M6_SRC_LINE:-none})"
+    FAIL=$((FAIL + 1))
+  fi
+
+  if echo "$M6_RENDERED" | grep 'check_branch_directive_description "' | grep -qE '\|\| true|2>/dev/null'; then
+    echo "FAIL: checker call still swallows its failure"
+    FAIL=$((FAIL + 1))
+  else
+    echo "PASS: checker call does not swallow its failure"
+    PASS=$((PASS + 1))
+  fi
+
+  # Behavioural: run the rendered step 5d fence verbatim in a fresh shell with
+  # only the manifest/state-log writers stubbed.
+  M6_TMP=$(mktemp -d)
+  echo "$M6_RENDERED" | awk '/^### 5d\./{s=1} s&&/^```bash$/{f=1; next} f&&/^```$/{exit} f{print}' >"$M6_TMP/5d.sh"
+  M6_PLUGIN_ROOT="$(cd "$LIB_DIR/.." && pwd)"
+  M6_PTC="$(cd "$LIB_DIR/../../ticket-auto-pipeline/lib" 2>/dev/null && pwd)/planned-ticket-check.sh"
+  M6_DIRECTIVE=$(branch_directive_generate "$VALID")
+
+  # $1 = plugin root, $2 = EMIT_DIRECTIVE, $3 = description (NEW_DESCRIPTION)
+  _m6_run() {
+    (
+      cd "$M6_TMP" || exit 99
+      CLAUDE_PLUGIN_ROOT="$1" EMIT_DIRECTIVE="$2" NEW_DESCRIPTION="$3" \
+        CREATED_EPIC_ID="CRE-1" M6_OUT="$M6_TMP/manifest.args" M6_PTC="$M6_PTC" \
+        HOME="$M6_TMP/home" bash -c '
+          planner_state_write() { echo "STATE $*" >>"$(dirname "$M6_OUT")/state.log"; }
+          planner_manifest_source_helpers() { return 0; }
+          write_epic_manifest() { printf "%s\n" "$@" >"$M6_OUT"; }
+          [ -f "$M6_PTC" ] && source "$M6_PTC"
+          source ./5d.sh
+        '
+    )
+  }
+
+  if [ ! -s "$M6_TMP/5d.sh" ] || [ ! -f "$M6_PTC" ]; then
+    echo "SKIP: step 5d fence or planned-ticket-check.sh not available"
+  else
+    # A: a freshly appended directive lands in the manifest with branch + merge policy.
+    rm -f "$M6_TMP/manifest.args" "$M6_TMP/state.log"
+    M6_RC=0
+    _m6_run "$M6_PLUGIN_ROOT" true "# Epic
+
+${M6_DIRECTIVE}" >/dev/null 2>&1 || M6_RC=$?
+    M6_BRANCH=$(sed -n 2p "$M6_TMP/manifest.args" 2>/dev/null || true)
+    M6_MERGE=$(sed -n 4p "$M6_TMP/manifest.args" 2>/dev/null || true)
+    M6_EXPECTED=$(echo "$M6_DIRECTIVE" | sed -n 's/^\*\*Branch:\*\* //p')
+    if [ "$M6_RC" -eq 0 ] && [ -n "$M6_BRANCH" ] && [ "$M6_BRANCH" = "$M6_EXPECTED" ] && [ "$M6_MERGE" = "manual" ]; then
+      echo "PASS: manifest written with branch='$M6_BRANCH' merge_policy='$M6_MERGE'"
+      PASS=$((PASS + 1))
+    else
+      echo "FAIL: manifest branch='$M6_BRANCH' merge='$M6_MERGE' rc=$M6_RC (expected '$M6_EXPECTED'/manual/0)"
+      FAIL=$((FAIL + 1))
+    fi
+
+    # B: checker unresolvable → phase fails, no manifest written.
+    mkdir -p "$M6_TMP/root/lib"
+    cp "$LIB_DIR/branch-directive-gen.sh" "$LIB_DIR/planner-plugin-cache.sh" "$M6_TMP/root/lib/"
+    rm -f "$M6_TMP/manifest.args" "$M6_TMP/state.log"
+    M6_RC=0
+    _m6_run "$M6_TMP/root" true "# Epic
+
+${M6_DIRECTIVE}" >/dev/null 2>&1 || M6_RC=$?
+    if [ "$M6_RC" -ne 0 ] && [ ! -f "$M6_TMP/manifest.args" ] &&
+      grep -q 'branch-directive-check.sh not found' "$M6_TMP/state.log" 2>/dev/null; then
+      echo "PASS: missing checker fails the phase (rc=$M6_RC) with no manifest written"
+      PASS=$((PASS + 1))
+    else
+      echo "FAIL: missing checker rc=$M6_RC manifest=$([ -f "$M6_TMP/manifest.args" ] && echo written || echo none)"
+      FAIL=$((FAIL + 1))
+    fi
+
+    # C: directive expected but absent → phase fails, no empty manifest.
+    rm -f "$M6_TMP/manifest.args" "$M6_TMP/state.log"
+    M6_RC=0
+    _m6_run "$M6_PLUGIN_ROOT" true "# Epic with no directive" >/dev/null 2>&1 || M6_RC=$?
+    if [ "$M6_RC" -ne 0 ] && [ ! -f "$M6_TMP/manifest.args" ]; then
+      echo "PASS: expected-but-absent directive fails the phase (rc=$M6_RC)"
+      PASS=$((PASS + 1))
+    else
+      echo "FAIL: expected-but-absent directive rc=$M6_RC, manifest still written"
+      FAIL=$((FAIL + 1))
+    fi
+
+    # D: no directive requested → manifest written with an empty branch (correct).
+    rm -f "$M6_TMP/manifest.args" "$M6_TMP/state.log"
+    M6_RC=0
+    _m6_run "$M6_PLUGIN_ROOT" false "# Epic with no directive" >/dev/null 2>&1 || M6_RC=$?
+    if [ "$M6_RC" -eq 0 ] && [ -f "$M6_TMP/manifest.args" ] && [ -z "$(sed -n 2p "$M6_TMP/manifest.args")" ]; then
+      echo "PASS: skipped directive still writes a branch-less manifest"
+      PASS=$((PASS + 1))
+    else
+      echo "FAIL: skipped directive rc=$M6_RC"
+      FAIL=$((FAIL + 1))
+    fi
+  fi
+  rm -rf "$M6_TMP"
+else
+  echo "SKIP: planner_prompt_epicgen not available"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""
