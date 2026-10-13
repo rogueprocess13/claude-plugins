@@ -338,6 +338,8 @@ declare -A FIXTURE_TYPE=(
   ["13-impl-only-acs.md"]=chore ["14-typo-fix.md"]=feature ["15-impl-guide-no-behavior.md"]=chore
   ["16-edge-cases-missing-core.md"]=feature ["17-self-verifying-no-vplan.md"]=chore
   ["18-backend-twin.md"]=chore ["19-padding.md"]=feature
+  ["20-unsourced-legacy.md"]=feature ["21-unsourced-contract.md"]=feature ["22-sourced-contract.md"]=feature
+  ["23-planned-contract-unsourced.md"]=feature
 )
 declare -A FIXTURE_STATUS=(
   ["01-excellent.md"]=ready ["02-minimal.md"]=ready ["03-missing-intent.md"]=not-ready
@@ -347,15 +349,18 @@ declare -A FIXTURE_STATUS=(
   ["13-impl-only-acs.md"]=ready ["14-typo-fix.md"]=ready ["15-impl-guide-no-behavior.md"]=ready
   ["16-edge-cases-missing-core.md"]=ready ["17-self-verifying-no-vplan.md"]=ready
   ["18-backend-twin.md"]=ready ["19-padding.md"]=ready
+  ["20-unsourced-legacy.md"]=ready ["21-unsourced-contract.md"]=not-ready ["22-sourced-contract.md"]=ready
+  ["23-planned-contract-unsourced.md"]=not-ready
 )
 declare -A FIXTURE_HARD=(
   ["03-missing-intent.md"]=INTENT_MISSING ["05-vague-ac.md"]=AC_VAGUE ["07-fe-no-test-user.md"]=TEST_USER_MISSING
   ["08-fe-no-nav-path.md"]=NAV_PATH_MISSING ["10-bug-no-expected-actual.md"]=REPRO_NO_EXPECTED_ACTUAL
+  ["21-unsourced-contract.md"]=TEST_DATA_UNSOURCED ["23-planned-contract-unsourced.md"]=TEST_DATA_UNSOURCED
 )
 declare -A FIXTURE_ADVISORY=(
   ["02-minimal.md"]=TEST_DATA_MISSING ["06-backend-no-verification.md"]=VERIFICATION_REQUIRED_NOT_SELF_VERIFYING
   ["12-unseeded-test-infra.md"]=TEST_USER_UNRESOLVED ["13-impl-only-acs.md"]=AC_IMPLEMENTATION_ONLY
-  ["15-impl-guide-no-behavior.md"]=AC_IMPLEMENTATION_ONLY
+  ["15-impl-guide-no-behavior.md"]=AC_IMPLEMENTATION_ONLY ["20-unsourced-legacy.md"]=TEST_DATA_UNSOURCED
 )
 declare -A FIXTURE_GAPS=(
   ["04-useless-scope.md"]=deep_scope_ambiguity ["11-contradictory-acs.md"]=contradictory_requirements
@@ -871,6 +876,424 @@ ensure_ticket_readiness "SEM-NEVER-SEEN-1" || true
 [ "$DOR_STATUS" = "unavailable" ] && [ -z "$DOR_SEMANTIC" ] &&
   _pass "ensure_ticket_readiness: unavailable path leaves DOR_SEMANTIC empty" ||
   _fail "ensure_ticket_readiness: unavailable path should leave DOR_SEMANTIC empty (status=$DOR_STATUS semantic='$DOR_SEMANTIC')"
+
+# ══════════════════════════════════════════════════════════════════════════
+# TEST_DATA_UNSOURCED (issue #505) — the Source grammar from
+# ticket-planner/docs/test-data-source.md, read from ticket bodies
+# ══════════════════════════════════════════════════════════════════════════
+
+# _td_verdict <normalised-or-raw item text> [legacy] — the classifier's verdict word.
+_td_verdict() {
+  _dor_td_classify "$(_dor_td_norm "$1")" "${2:-false}" | cut -d$'\037' -f1
+}
+_td_case() {
+  local desc="$1" want="$2" text="$3" legacy="${4:-false}" got
+  got=$(_td_verdict "$text" "$legacy")
+  [ "$got" = "$want" ] && _pass "classify: $desc -> $want" ||
+    _fail "classify: $desc should be $want (got '$got' for '$text')"
+}
+
+_td_case "exists with value" sourced "Five invoices. Source: exists:staging seed set"
+_td_case "external with value" sourced "Price list. Source: external:pricing team"
+_td_case "seeded-by slug" sourced "Five invoices. Source: seeded-by:inv-0-test-data-pack"
+_td_case "seeded-by tracker id" sourced "Five invoices. Source: seeded-by:ABC-123"
+_td_case "bold marker + backticks + trailing dot" sourced 'Client record. **Source:** `exists:clients.sql`.'
+_td_case "underscore-wrapped marker" sourced "Template. _Source:_ external:onboarding team"
+_td_case "lowercase marker" sourced "Template. source: external:ops"
+_td_case "Verification Plan cell form" sourced "a 1,000-row file (Source: seeded-by:upload-pack)"
+_td_case "cell form, exists value with parens" sourced "a client (Source: exists:seed set (clients.sql))"
+_td_case "last Source wins (sourced)" sourced "File. Source: generate. Source: exists:/data/file.csv"
+_td_case "last Source wins (unsourced)" unsourced "File. Source: exists:/data/file.csv Source: generate"
+_td_case "generate" unsourced "A 1,000-row file. Source: generate"
+_td_case "exists with empty value" unsourced "A file. Source: exists:"
+_td_case "external with empty value" unsourced "A file. Source: external:  ."
+_td_case "seeded-by with no slug" unsourced "A file. Source: seeded-by:"
+_td_case "seeded-by with a non-slug token" unsourced "A file. Source: seeded-by:pack/spec"
+_td_case "unknown kind" unsourced "A file. Source: somewhere:else"
+_td_case "Source none on real data" unsourced "Five invoices. Source: none"
+_td_case "empty Source" unsourced "Five invoices. Source:"
+_td_case "no Source (contract)" unsourced "A client with no configuration"
+_td_case "Resource: is not a Source marker" unsourced "API key. Resource: exists:vault"
+_td_case "none data" na "none"
+_td_case "none data with Source none" na "Test data: none. Source: none"
+_td_case "no test data phrasing" na "No special test data needed."
+_td_case "n/a cell" na "n/a"
+_td_case "legacy: seeded by named script" sourced "Five invoices, seeded by scripts/seed-invoices.sh" true
+_td_case "legacy: provided by named party" sourced "The regional price list, provided by the pricing team" true
+_td_case "legacy: path" sourced "The sample file at fixtures/clients/sample.csv" true
+_td_case "legacy: tracker id" sourced "The dataset produced by CRE-101" true
+_td_case "legacy: bare description" unsourced "A 1,000-row valid upload file" true
+_td_case "legacy: UTF-8 is not a tracker id" unsourced "A UTF-8 encoded upload file" true
+_td_case "legacy: adjective 'seeded' alone is not a source" unsourced "At least 5 seeded invoices" true
+_td_case "contract: legacy markers do not count" unsourced "Five invoices, seeded by scripts/seed.sh" false
+
+# Item extraction: list items, prose fallback, Verification Plan cells,
+# fenced code ignored, a Source column in a Test Data table.
+td_items_body='## Test Data Prerequisites
+
+```
+- not an item. Source: generate
+```
+
+- First item. Source: generate
+1. Second item. Source: exists:here
+
+## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Test data needed | Verifiable |
+|---|-----------|------------------|------------|
+| 1 | One | five invoices (Source: external:finance) | ✓ |
+| 2 | Two |  | ✓ |
+'
+td_items=$(_dor_td_items "$td_items_body")
+td_count=$(printf '%s\n' "$td_items" | grep -c . || true)
+[ "$td_count" = "3" ] && printf '%s' "$td_items" | grep -q $'^vplan#1\037five invoices (Source: external:finance)$' &&
+  ! printf '%s' "$td_items" | grep -q "not an item" &&
+  _pass "_dor_td_items: list items + Verification Plan cell, fenced code and blank cells skipped" ||
+  _fail "_dor_td_items should yield 3 items (got: $(printf '%s' "$td_items" | tr '\037' '='))"
+
+td_table_body='## Test Data Prerequisites
+
+| Item | Source |
+|------|--------|
+| Five invoices | seeded-by:inv-pack |
+| A client | generate |
+'
+td_items=$(_dor_td_items "$td_table_body")
+printf '%s' "$td_items" | grep -q $'^tdp#1\037Five invoices Source: seeded-by:inv-pack$' &&
+  printf '%s' "$td_items" | grep -q $'^tdp#2\037A client Source: generate$' &&
+  _pass "_dor_td_items: a Test Data table with a Source column reads that column as the Source" ||
+  _fail "_dor_td_items table form (got: $(printf '%s' "$td_items" | tr '\037' '='))"
+
+td_prose_body='## Test Data Prerequisites
+
+At least 5 seeded invoices across two customers.
+'
+td_items=$(_dor_td_items "$td_prose_body")
+[ "$(printf '%s\n' "$td_items" | grep -c .)" = "1" ] &&
+  _pass "_dor_td_items: a list-free legacy section reads each prose line as an item" ||
+  _fail "_dor_td_items prose fallback (got: $(printf '%s' "$td_items" | tr '\037' '='))"
+
+# Fixture-level severity.
+rc=0
+check_ticket_ready "TD-20" --body "$FIXTURES_DIR/20-unsourced-legacy.md" --type feature --no-fetch || rc=$?
+[ "$rc" = "0" ] && echo "$DOR_ADVISORY" | jq -e 'index("TEST_DATA_UNSOURCED") != null' >/dev/null &&
+  [ "$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_UNSOURCED.class')" = "advisory" ] &&
+  [ "$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_MISSING.pass')" = "false" ] &&
+  [ "$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_UNSEEDED.pass')" = "false" ] &&
+  _pass "fixture 20 (issue #505 repro, legacy): TEST_DATA_UNSOURCED advisory, MISSING/UNSEEDED pass" ||
+  _fail "fixture 20 should be ready with TEST_DATA_UNSOURCED advisory (rc=$rc adv=$DOR_ADVISORY checks=$(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+rc=0
+DOR_STRICT_TEST_DATA=true check_ticket_ready "TD-20-STRICT" --body "$FIXTURES_DIR/20-unsourced-legacy.md" --type feature --no-fetch || rc=$?
+[ "$rc" = "1" ] && echo "$DOR_MISSING" | jq -e 'index("TEST_DATA_UNSOURCED") != null' >/dev/null &&
+  _pass "fixture 20: DOR_STRICT_TEST_DATA=true promotes legacy TEST_DATA_UNSOURCED to hard" ||
+  _fail "fixture 20 under DOR_STRICT_TEST_DATA should be not-ready (rc=$rc missing=$DOR_MISSING)"
+
+rc=0
+check_ticket_ready "TD-21" --body "$FIXTURES_DIR/21-unsourced-contract.md" --type feature --no-fetch || rc=$?
+td21_detail=$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_UNSOURCED.detail')
+[ "$rc" = "1" ] && echo "$DOR_MISSING" | jq -e 'index("TEST_DATA_UNSOURCED") != null' >/dev/null &&
+  [[ "$td21_detail" == *"3 of 5"* ]] && [[ "$td21_detail" == *"tdp#3 (no Source)"* ]] &&
+  [[ "$td21_detail" == *"vplan#1 (generate)"* ]] &&
+  _pass "fixture 21 (contract): unsourced items are hard by default, detail names each" ||
+  _fail "fixture 21 should be not-ready on TEST_DATA_UNSOURCED (rc=$rc missing=$DOR_MISSING detail=$td21_detail)"
+
+rc=0
+DOR_STRICT_TEST_DATA_SOURCE=false check_ticket_ready "TD-21-DEMOTE" --body "$FIXTURES_DIR/21-unsourced-contract.md" --type feature --no-fetch || rc=$?
+[ "$rc" = "0" ] && echo "$DOR_ADVISORY" | jq -e 'index("TEST_DATA_UNSOURCED") != null' >/dev/null &&
+  _pass "fixture 21: DOR_STRICT_TEST_DATA_SOURCE=false demotes the contract case to advisory" ||
+  _fail "fixture 21 with DOR_STRICT_TEST_DATA_SOURCE=false should be ready+advisory (rc=$rc adv=$DOR_ADVISORY missing=$DOR_MISSING)"
+
+rc=0
+DOR_STRICT_TEST_DATA=true check_ticket_ready "TD-22" --body "$FIXTURES_DIR/22-sourced-contract.md" --type feature --no-fetch || rc=$?
+[ "$rc" = "0" ] && [ "$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_UNSOURCED.pass')" = "false" ] &&
+  _pass "fixture 22: every item sourced passes, even under DOR_STRICT_TEST_DATA" ||
+  _fail "fixture 22 should be ready with TEST_DATA_UNSOURCED pass=false (rc=$rc checks=$(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+td22_tu=$(echo "$DOR_DIMENSIONS" | jq -r '.test_uat')
+check_ticket_ready "TD-21-SCORE" --body "$FIXTURES_DIR/21-unsourced-contract.md" --type feature --no-fetch || true
+td21_tu=$(echo "$DOR_DIMENSIONS" | jq -r '.test_uat')
+awk -v a="$td21_tu" -v b="$td22_tu" 'BEGIN { exit !(a < b) }' &&
+  _pass "test_uat dimension gives unsourced test data less credit ($td21_tu < $td22_tu)" ||
+  _fail "test_uat should be lower for unsourced data (got 21=$td21_tu 22=$td22_tu)"
+
+# Inapplicable when MISSING/UNSEEDED already fired.
+check_ticket_ready "TD-12" --body "$FIXTURES_DIR/12-unseeded-test-infra.md" --type feature --no-fetch || true
+[ "$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_UNSOURCED.class')" = "inapplicable" ] &&
+  _pass "TEST_DATA_UNSOURCED is inapplicable when TEST_DATA_UNSEEDED fired" ||
+  _fail "TEST_DATA_UNSOURCED should be inapplicable on fixture 12 (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# All-none items: nothing to source.
+td_none_file="$TMP_ROOT/td-none.md"
+_write_body "$td_none_file" "$(cat "$FIXTURES_DIR/22-sourced-contract.md" | sed '/^## Test Data Prerequisites/,$d')
+## Test Data Prerequisites
+
+- Test data: none. Source: none
+"
+check_ticket_ready "TD-NONE" --body "$td_none_file" --type feature --no-fetch || true
+[ "$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_UNSOURCED.pass')" = "false" ] &&
+  _pass "a body whose only test data is none does not fire TEST_DATA_UNSOURCED" ||
+  _fail "none-only test data should pass (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# Log safety: a hostile kind carrying `|`/CR is sanitised in the detail.
+td_pipe_file="$TMP_ROOT/td-pipe.md"
+_write_body "$td_pipe_file" "$(cat "$FIXTURES_DIR/22-sourced-contract.md" | sed '/^## Test Data Prerequisites/,$d')
+## Test Data Prerequisites
+
+- A file. Source: we|ird$(printf '\r'):x
+"
+check_ticket_ready "TD-PIPE" --body "$td_pipe_file" --type feature --no-fetch || true
+td_pipe_detail=$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_UNSOURCED.detail')
+[[ "$td_pipe_detail" != *"|"* ]] && [[ "$td_pipe_detail" != *$'\r'* ]] && [[ "$td_pipe_detail" != *$'\n'* ]] &&
+  [[ "$td_pipe_detail" == *"unknown kind"* ]] &&
+  _pass "TEST_DATA_UNSOURCED detail is free of | CR LF" ||
+  _fail "TEST_DATA_UNSOURCED detail must be log-safe (got '$td_pipe_detail')"
+
+# Detail is capped.
+td_many_file="$TMP_ROOT/td-many.md"
+{
+  sed '/^## Test Data Prerequisites/,$d' "$FIXTURES_DIR/22-sourced-contract.md"
+  printf '## Test Data Prerequisites\n\n'
+  for i in $(seq 1 14); do printf -- '- Item %s. Source: generate\n' "$i"; done
+} >"$td_many_file"
+check_ticket_ready "TD-MANY" --body "$td_many_file" --type feature --no-fetch || true
+td_many_detail=$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_UNSOURCED.detail')
+[[ "$td_many_detail" == *"and 4 more"* ]] && [[ "$td_many_detail" != *"tdp#11 "* ]] &&
+  _pass "TEST_DATA_UNSOURCED detail lists at most 10 items" ||
+  _fail "TEST_DATA_UNSOURCED detail should cap at 10 (got '$td_many_detail')"
+
+# ── Review fixes (#505 re-review) ──────────────────────────────────────────
+
+# _td_body <name> <test-data-section> [vplan-section] — fixture 22's
+# structural sections with the given Test Data (and optionally Verification
+# Plan) sections substituted; echoes the file path.
+_td_body() {
+  local name="$1" tdp="$2" vplan="${3:-}" f="$TMP_ROOT/td-$1.md"
+  {
+    sed '/^## Verification Plan/,$d' "$FIXTURES_DIR/22-sourced-contract.md"
+    [ -n "$vplan" ] && printf '%s\n\n' "$vplan"
+    printf '## Test Data Prerequisites\n\n%s\n' "$tdp"
+  } >"$f"
+  echo "$f"
+}
+_td_check() {
+  check_ticket_ready "$1" --body "$2" --type feature --no-fetch >/dev/null 2>&1 || true
+}
+_td_field() { echo "$DOR_CHECKS" | jq -r ".TEST_DATA_UNSOURCED.$1"; }
+
+# 1. List continuation lines and nested sub-bullets belong to their parent.
+f=$(_td_body nested '- Five invoices. Source: seeded-by:inv-pack
+  - rows include 3 duplicate ids
+  - one row has a negative amount
+- A client. Source: exists:staging seed set')
+_td_check TD-NESTED "$f"
+[ "$(_td_field pass)" = "false" ] && [[ "$(_td_field detail)" == *"all 2 "* ]] &&
+  _pass "nested sub-bullets under a sourced bullet are part of that item (2 items, all sourced)" ||
+  _fail "nested sub-bullets must not become items (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+f=$(_td_body wrapped '- A client with no configuration, used for the
+  empty-state check. Source: exists:staging seed set
+- Five invoices. Source: seeded-by:inv-pack')
+_td_check TD-WRAPPED "$f"
+[ "$(_td_field pass)" = "false" ] && [[ "$(_td_field detail)" == *"all 2 "* ]] &&
+  _pass "a wrapped bullet whose Source sits on the continuation line is sourced" ||
+  _fail "wrapped bullet continuation must join its item (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+f=$(_td_body lazy '- A client with no configuration,
+used for the empty-state check. Source: exists:staging seed set')
+_td_check TD-LAZY "$f"
+[ "$(_td_field pass)" = "false" ] &&
+  _pass "an unindented line directly under a bullet continues it" ||
+  _fail "lazy continuation must join its item (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+td_items=$(_dor_td_items '## Test Data Prerequisites
+
+- First. Source: generate
+
+Trailing prose after a blank line.
+- Second. Source: exists:x')
+[ "$(printf '%s\n' "$td_items" | grep -c .)" = "2" ] && ! printf '%s' "$td_items" | grep -q "Trailing prose" &&
+  _pass "_dor_td_items: prose after a blank line ends the item and is not an item itself" ||
+  _fail "_dor_td_items blank-line boundary (got: $(printf '%s' "$td_items" | tr '\037' '='))"
+
+# 2. Escaped `\|` inside a cell does not shift the Verification Plan columns.
+td_items=$(_dor_td_items '## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Test data needed | Verifiable |
+|---|-----------|------------|------------------|------------|
+| 1 | Role \| gating | ops \| admin | five invoices (Source: seeded-by:inv-pack) | ✓ |
+')
+[ "$td_items" = $'vplan#1\037five invoices (Source: seeded-by:inv-pack)' ] &&
+  _pass "_dor_td_items: an escaped \\| in a cell keeps the Test data needed column aligned" ||
+  _fail "_dor_td_items escaped pipe shifted columns (got: $(printf '%s' "$td_items" | tr '\037' '='))"
+
+# 3. seeded-by value cut at whitespace; punctuation after the closing paren.
+_td_case "seeded-by value cut at first whitespace" sourced "A file. Source: seeded-by:upload-pack (owns fixtures)"
+_td_case "seeded-by slug then prose" sourced "A file. Source: seeded-by:the pack spec"
+_td_case "cell form with punctuation after the paren" sourced "a file (Source: seeded-by:pack)."
+_td_case "cell form exists, punctuation after the paren" sourced "a client (Source: exists:seed set (clients.sql));"
+
+# 4. Contract detection: only a Source of a known kind.
+f=$(_td_body informal '- Five invoices from the nightly billing export. Data source: billing team
+- A client with no configuration')
+rc=0
+check_ticket_ready TD-INFORMAL --body "$f" --type feature --no-fetch >/dev/null 2>&1 || rc=$?
+[ "$rc" = "0" ] && [ "$(_td_field class)" = "advisory" ] && [[ "$(_td_field detail)" == *"(legacy)"* ]] &&
+  [[ "$(_td_field detail)" == *"1 of 2"* ]] &&
+  _pass "informal 'Data source: billing team' does not make a contract body (advisory, ready)" ||
+  _fail "informal Source must stay legacy (rc=$rc checks=$(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+f=$(_td_body informal2 '- Five invoices. Source: the staging DB')
+rc=0
+check_ticket_ready TD-INFORMAL2 --body "$f" --type feature --no-fetch >/dev/null 2>&1 || rc=$?
+[ "$rc" = "0" ] && [ "$(_td_field pass)" = "false" ] &&
+  _pass "legacy 'Source: the staging DB' counts as an informal source" ||
+  _fail "legacy informal Source should pass (rc=$rc checks=$(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# A Planner Context block alone does NOT make a contract body: a planned
+# ticket from before ticket-planner 0.17.0 (no Source fields) stays legacy.
+f=$(_td_body planner '- A 1,000-row valid upload file')
+printf '\n## Planner Context\n\n**Initiative:** INIT-1\n' >>"$f"
+rc=0
+check_ticket_ready TD-PLANNER --body "$f" --type feature --no-fetch >/dev/null 2>&1 || rc=$?
+[ "$rc" = "0" ] && [ "$(_td_field class)" = "advisory" ] && [[ "$(_td_field detail)" == *"(legacy)"* ]] &&
+  _pass "a pre-0.17.0 planned body (Planner Context, no Source) stays legacy and ready" ||
+  _fail "Planner Context alone must not make a contract body (rc=$rc checks=$(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# A 0.17.0-shape planned body (Planner Context + Source fields) is a
+# contract body and blocks on its one unsourced item (fixture 23).
+rc=0
+check_ticket_ready TD-23 --body "$FIXTURES_DIR/23-planned-contract-unsourced.md" --type feature --no-fetch >/dev/null 2>&1 || rc=$?
+td23_detail=$(_td_field detail)
+[ "$rc" = "1" ] && [ "$(_td_field class)" = "hard" ] && [[ "$td23_detail" == *"(contract)"* ]] &&
+  [[ "$td23_detail" == *"vplan#2 (generate)"* ]] && [[ "$td23_detail" == *"tdp#2 (generate)"* ]] &&
+  [[ "$td23_detail" != *"#1 "* ]] &&
+  _pass "fixture 23: a 0.17.0-shape planned body is a contract body and blocks on its unsourced item" ||
+  _fail "fixture 23 should block on TEST_DATA_UNSOURCED (rc=$rc detail=$td23_detail)"
+
+# 5. "not recorded in spec" reason; a Source column in the Verification Plan.
+_td_case "#499 placeholder cell" unsourced "not recorded in spec"
+[ "$(_dor_td_classify "not recorded in spec" false | cut -d$'\037' -f2)" = "verification note not recorded" ] &&
+  _pass "classify: '$_DOR_TD_NOT_RECORDED' reports 'verification note not recorded'" ||
+  _fail "classify: not-recorded reason (got '$(_dor_td_classify "not recorded in spec" false | tr '\037' '=')')"
+
+td_items=$(_dor_td_items '## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Test data needed | Source | Verifiable |
+|---|-----------|------------------|--------|------------|
+| 1 | One | five invoices | seeded-by:inv-pack | ✓ |
+| 2 | Two | a client | | ✓ |
+')
+printf '%s' "$td_items" | grep -q $'^vplan#1\037five invoices Source: seeded-by:inv-pack$' &&
+  printf '%s' "$td_items" | grep -q $'^vplan#2\037a client$' &&
+  _pass "_dor_td_items: a Verification Plan Source column is read as the Source" ||
+  _fail "_dor_td_items VP Source column (got: $(printf '%s' "$td_items" | tr '\037' '='))"
+
+f=$(_td_body notrec '- Five invoices. Source: seeded-by:inv-pack' '## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|-----------|------------|-----------------|------------------|-------------------|------------|
+| 1 | One | ops | Clients | five invoices (Source: seeded-by:inv-pack) | shown | ✓ |
+| 2 | Two | not recorded in spec | Clients | not recorded in spec | not recorded in spec |  |')
+_td_check TD-NOTREC "$f"
+[[ "$(_td_field detail)" == *"vplan#2 (verification note not recorded)"* ]] &&
+  _pass "a #499 'not recorded in spec' row reports its own reason in the detail" ||
+  _fail "not-recorded row detail (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# 6. Dash none-phrasings and the tightened legacy heuristics.
+_td_case "em dash cell is none" na "—"
+_td_case "en dash cell is none" na "–"
+_td_case "legacy: provided by the business" unsourced "Price list, provided by the business" true
+_td_case "legacy: seeded by someone" unsourced "Five invoices, seeded by someone" true
+_td_case "legacy: supplied by TBD" unsourced "Upload file, supplied by TBD" true
+_td_case "legacy: COVID-19 is not a tracker id" unsourced "Patients with a COVID-19 flag" true
+_td_case "legacy: SKU-123 is not a tracker id" unsourced "A product with SKU-123" true
+_td_case "legacy: long id prefix is not a tracker id" unsourced "Record TRANSACTION-42 exists" true
+_td_case "legacy: and/or is not a path" unsourced "One invoice and/or one credit note" true
+_td_case "legacy: relative path with ./" sourced "Run ./seed-invoices first" true
+_td_case "legacy: absolute path" sourced "The dump at /srv/fixtures/clients" true
+
+# ── Nested sourced children (#505 re-review 2) ───────────────────────────────
+# A sub-bullet carrying its own Source is its own item, so a sibling's Source
+# can never hide a `generate`; only Source-less children are joined.
+
+# S1: a lead-in parent ending in `:` with one generate and one sourced child.
+f=$(_td_body s1 '- Upload files:
+  - a valid file. Source: generate
+  - an invalid file. Source: exists:/fixtures/bad.csv')
+_td_check TD-S1 "$f"
+[ "$(_td_field pass)" = "true" ] && [[ "$(_td_field detail)" == *"tdp#1 (generate)"* ]] &&
+  [[ "$(_td_field detail)" == *"1 of 2 "* ]] &&
+  _pass "S1: a generate child under a lead-in parent is reported (parent dropped, 2 items)" ||
+  _fail "S1: sibling Source must not hide generate (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# S2: an unsourced parent (not a lead-in) with a sourced child stays unsourced.
+f=$(_td_body s2 '- A client with no config
+  - A 1,000-row file. Source: exists:/x.csv')
+_td_check TD-S2 "$f"
+[ "$(_td_field pass)" = "true" ] && [[ "$(_td_field detail)" == *"tdp#1 (no Source)"* ]] &&
+  [[ "$(_td_field detail)" == *"1 of 2 "* ]] &&
+  _pass "S2: an unsourced parent with a sourced child is still unsourced" ||
+  _fail "S2: unsourced parent hidden by child (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# Numbered nesting: a sourced parent with a generate child, and a lead-in
+# numbered parent whose children are all sourced.
+f=$(_td_body s5 '1. Invoices. Source: seeded-by:inv-pack
+   1. five overdue invoices. Source: generate
+2. Clients:
+   1. one client. Source: exists:staging seed set
+   2. one archived client. Source: external:ops team')
+_td_check TD-S5 "$f"
+[ "$(_td_field pass)" = "true" ] && [[ "$(_td_field detail)" == *"1 of 4 "* ]] &&
+  [[ "$(_td_field detail)" == *"tdp#2 (generate)"* ]] &&
+  _pass "numbered nesting: a generate child is its own item; a lead-in numbered parent is dropped" ||
+  _fail "numbered nesting (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# Regression: a Source-less sub-bullet is detail of its parent, not an item.
+f=$(_td_body nested2 '- Five invoices. Source: seeded-by:inv-pack
+  - rows include 3 duplicate ids')
+_td_check TD-NESTED2 "$f"
+[ "$(_td_field pass)" = "false" ] && [[ "$(_td_field detail)" == *"all 1 "* ]] &&
+  _pass "a Source-less sub-bullet (rows include 3 duplicate ids) stays part of its sourced parent" ||
+  _fail "Source-less sub-bullet regression (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# A Source-less grandchild under a sourced child joins that child.
+td_items=$(_dor_td_items '## Test Data Prerequisites
+
+- Upload files:
+  - a valid file. Source: seeded-by:pack
+    - 1,000 rows
+  - an invalid file. Source: generate')
+[ "$(printf '%s\n' "$td_items" | grep -c .)" = "2" ] &&
+  printf '%s' "$td_items" | grep -q $'^tdp#1\037a valid file. Source: seeded-by:pack 1,000 rows$' &&
+  _pass "_dor_td_items: a Source-less grandchild joins the sourced child above it" ||
+  _fail "_dor_td_items grandchild (got: $(printf '%s' "$td_items" | tr '\037' '='))"
+
+# Unindented lazy line: a new sentence with its own Source is an item; a
+# mid-sentence wrap joins.
+f=$(_td_body s4 '- A client with no config
+The upload file. Source: exists:/x.csv')
+_td_check TD-S4 "$f"
+[ "$(_td_field pass)" = "true" ] && [[ "$(_td_field detail)" == *"tdp#1 (no Source)"* ]] &&
+  _pass "an unindented sentence with its own Source does not hide an unsourced item above it" ||
+  _fail "lazy sourced sentence (got $(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+# Optional heuristics: whole-party stopword, 2-10 letter tracker ids, URIs
+# and trailing-slash directories.
+_td_case "legacy: 'by the business team' is a real party" sourced "Price list, provided by the business team" true
+_td_case "legacy: 'by the business.' is a placeholder" unsourced "Price list, provided by the business." true
+_td_case "legacy: 6-letter tracker prefix" sourced "The dataset produced by BILLING-123" true
+_td_case "legacy: s3 URI is a path" sourced "Dump at s3://bucket/clients" true
+_td_case "legacy: https URI is a path" sourced "Template at https://example.com/t.xlsx" true
+_td_case "legacy: trailing-slash directory is a path" sourced "Files under fixtures/clients/" true
 
 echo "---"
 echo "$PASS passed, $FAIL failed"
