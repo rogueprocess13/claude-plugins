@@ -284,11 +284,27 @@ artifact called `template`, and `sample` would match inside `sample file v2`.
 All of these use the existing Crosscheck stop. The run halts at Crosscheck, and
 `planner-stop-describe.sh` reports `CROSSCHECK_BLOCKED` with one question per code. For a
 `CITED_ARTIFACT_*` code the question lists every artifact the code covers. To continue, the
-operator does one of two things:
+operator does one of three things:
 
 - Edits consensus.md (and the matching spec Sources), then resumes.
+- For `CITED_ARTIFACT_UNRESOLVED`, answers each artifact's own headless question (#515). There
+  is one per unanswered artifact, bound `consensus-answer:cited:<n>`, where `n` is the 1-based
+  position of the artifact's `CITED_ARTIFACT:` line in consensus.md (the last line for that
+  name, the one Crosscheck reads). The index stands in for the name, which can contain spaces
+  and parentheses. The answer must be `exists:<where>`, `external:<who>` or `generate`;
+  anything else, or a value with `|`, CR, LF, another control character, a backtick, `*`, a
+  second `Answer:` or trailing punctuation, is rejected with nothing written.
+  `resume --answers` rewrites only that line's `Answer:` field.
 - Accepts the code with `--accept` / `--answers`. This is a blanket override for that code.
 
-A per-artifact headless answer binding (`consensus-answer:<name>`) is not implemented yet.
+**Spec Sources are not rewritten by an answer.** A spec need that cites the artifact and still
+says `Source: generate` after an `exists:`/`external:` answer is reported as
+`CITED_ARTIFACT_SOURCE_MISMATCH` on the re-run. That finding names the spec, the need and the
+Source it needs. The planner relies on this check instead of editing the spec for three
+reasons. Specify writes Sources in two layouts (numbered lines and a table column). One need
+can cite more than one artifact. And a silent bash rewrite of a spec would hide a real
+disagreement between the spec and the answer. An answer of `generate` matches a spec that
+already says `generate`, so it re-runs without a mismatch. `TEST_DATA_UNOWNED` then asks for
+an owning pack, as for any other `generate` need.
 
 All finding messages have `|`, CR and LF removed before they reach the state log.

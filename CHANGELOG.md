@@ -17,6 +17,49 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.64.4 / ticket-planner 0.18.2 (2026-10-13)
+
+Per-artifact headless answers for `CITED_ARTIFACT_UNRESOLVED` ([#515](https://github.com/willard-pro/claude-plugins/issues/515)).
+When Crosscheck blocked because a cited artifact had no answer (#504), the headless question
+named every artifact but offered only `flag:accept:CITED_ARTIFACT_UNRESOLVED`. An operator with
+no terminal could not record the real answer for each artifact. The only option was to accept
+the code for the life of the initiative, and that accept also covered artifacts cited by a later
+regenerate.
+
+- **New binding (ticket-auto-pipeline)**: `human-hold-parse.sh` accepts
+  `consensus-answer:cited:<n>`, where `n` is a 1-based index (1–9999, no leading zero) into
+  consensus.md's `CITED_ARTIFACT:` questions. An index stands in for the artifact name, which
+  can contain spaces and parentheses. The binding is documented in `docs/human-hold-schema.md`
+  § Binding grammar.
+- **One question per artifact (ticket-planner)**: `planner-stop-describe.sh` emits one question
+  for each artifact that `CITED_ARTIFACT_UNRESOLVED` names. The question points at the artifact's
+  effective line, which is the last `CITED_ARTIFACT:` line for that name, the one Crosscheck
+  reads. Its id is `cited-<n>-<8 hex of the name>`, so an answers file written before
+  consensus.md was renumbered is refused as `UNKNOWN_QUESTION_ID` and cannot answer the wrong
+  artifact. The code's `flag:accept` question is still offered after them, unchanged.
+- **The answer is written into consensus.md (ticket-planner)**: `planner-answers.sh` checks the
+  raw value before sanitising. It must be `exists:<where>`, `external:<who>` or `generate` (kind
+  case-insensitive, whitespace trimmed). A value containing `|`, CR, LF, a tab or another control
+  character, a backtick, `*` or a second `Answer:`, or ending in punctuation or `_`, is
+  `INVALID_VALUE`, and nothing is written. `planner_cited_answer_set` then rewrites only that
+  line's `Answer:` field, keeping emphasis and CRLF, and writes the file tmp + mv. It re-parses
+  the new line first and refuses to write if the reader would see a different answer. Each
+  answer is logged as `META|consensus-answer|step|cited:<n> <answer> (round N, by …)`.
+- **Spec Sources are not edited**: after an `exists:`/`external:` answer, a spec need that still
+  says `Source: generate` is `CITED_ARTIFACT_SOURCE_MISMATCH` on the Crosscheck re-run. The
+  finding names the spec, the need and the Source it needs. Rewriting specs in bash would have
+  to handle two Verification Notes layouts and needs that cite several artifacts, and it would
+  hide a real disagreement. Once the specs match, Crosscheck re-runs clean.
+- **One line reader**: `_planner_cited_answer_parse` is now the single reader of a
+  `CITED_ARTIFACT:` line. Crosscheck's answer map, the question numbering and the writer all
+  use it, so they agree on which line is question `n`. Crosscheck behaves as before, with two
+  exceptions. A final consensus.md line with no trailing newline is now read. An answer written
+  with underscore emphasis (`_Answer:_ generate`) now reads as `generate`; before, the space left
+  after the `_` made it unresolved. The writer also keeps consensus.md's file mode.
+
+Tests: new `ticket-planner/lib/tests/test-planner-cited-answers.sh` (66 assertions, registered in
+the Makefile) and two `test-human-hold-parse.sh` cases for the binding grammar.
+
 ## 0.64.3 (2026-10-13)
 
 Also moves **fleet-controller 0.42.5 → 0.42.6**.

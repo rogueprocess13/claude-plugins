@@ -16,6 +16,17 @@
 #   waive:<TICKET>:<CODE>  waive_ticket_readiness_code — the function
 #                          `dor-check.sh --waive` wraps
 #   note                   recorded only
+#   consensus-answer:cited:<n>
+#                          planner_cited_answer_set — rewrites the Answer:
+#                          field of consensus.md's nth CITED_ARTIFACT question
+#                          (#515). The value must be exists:<where>,
+#                          external:<who> or generate; it is checked on the
+#                          raw text, before sanitising, so a `|`, CR or LF is
+#                          refused rather than turned into a space. Specs are
+#                          not touched: a spec need whose Source disagrees
+#                          with the new answer is CITED_ARTIFACT_SOURCE_MISMATCH
+#                          on the Crosscheck re-run, which names the spec and
+#                          the Source it needs.
 #
 # `__skip__` as the value of an accept or waive answer declines it.
 #
@@ -49,6 +60,8 @@ _PLANNER_ANSWERS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 declare -f planner_stop_describe_json >/dev/null 2>&1 ||
   source "${_PLANNER_ANSWERS_DIR}/planner-stop-describe.sh"
+declare -f planner_cited_answer_set >/dev/null 2>&1 ||
+  source "${_PLANNER_ANSWERS_DIR}/planner-crosscheck-testdata.sh"
 
 # Answers-file format version this consumer reads (major).
 PLANNER_ANSWERS_SCHEMA_MAJOR=1
@@ -119,6 +132,10 @@ _planner_answers_check_value() {
     return 1
     ;;
   note) return 0 ;;
+  consensus-answer:cited:*)
+    planner_cited_answer_normalize "$value" >/dev/null
+    return
+    ;;
   esac
   echo "binding '${binding}' is not one the planner applies" >&2
   return 1
@@ -232,10 +249,27 @@ planner_answers_apply() {
       return
     fi
 
+    local why raw_value
+    # A cited-artifact answer is a closed grammar: check the raw text, since
+    # sanitising would turn a CR/LF into a space and hide it.
+    case "$binding" in
+    consensus-answer:cited:*)
+      # Sentinel: $( ) strips trailing newlines, which would let
+      # "exists:/x\n" through.
+      raw_value=$(printf '%s' "$a" | jq -j '.value, "."')
+      raw_value="${raw_value%.}"
+      if ! why=$(planner_cited_answer_normalize "$raw_value" 2>&1 >/dev/null); then
+        _planner_answers_reject 2 INVALID_VALUE "'$(planner_answers_sanitize "$id")': ${why}"
+        return
+      fi
+      ;;
+    esac
     value=$(planner_answers_sanitize "$(printf '%s' "$a" | jq -r '.value')")
     # create is the one closed-vocabulary answer; normalise its case.
     [ "$binding" = "flag:create" ] && value=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-    local why
+    case "$binding" in
+    consensus-answer:cited:*) value=$(planner_cited_answer_normalize "$value" 2>/dev/null) ;;
+    esac
     if ! why=$(_planner_answers_check_value "$binding" "$value" 2>&1); then
       _planner_answers_reject 2 INVALID_VALUE "'${id}': ${why}"
       return
@@ -337,6 +371,16 @@ planner_answers_apply() {
         }
         applied+=("waive:${tid}:${code}")
       fi
+      ;;
+    consensus-answer:cited:*)
+      code="${binding#consensus-answer:cited:}"
+      planner_cited_answer_set "${state_dir}/artifacts/consensus.md" "$code" "$value" || {
+        echo "planner-answers: failed to record the answer to cited-artifact question ${code}" >&2
+        return 1
+      }
+      planner_state_write "$init" "META" "consensus-answer" "step" \
+        "cited:${code} ${value} (round ${round}, by ${bys[$i]})" || return 1
+      applied+=("cited:${code}")
       ;;
     note) ;;
     esac

@@ -536,6 +536,34 @@ test_v2_rejects_bad_binding() {
   return $rc
 }
 
+# #515: a cited-artifact answer binds by 1-based index, never by name.
+test_v2_accepts_consensus_answer_binding() {
+  _setup
+  _v2_block | sed 's/^QUESTION_1_BINDING: .*/QUESTION_1_BINDING: consensus-answer:cited:12/' | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 0 ] && [ "$(_json '.questions[0].binding')" = "consensus-answer:cited:12" ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_rejects_malformed_consensus_answer_binding() {
+  _setup
+  local b rc=0
+  for b in "consensus-answer:cited:0" "consensus-answer:cited:" "consensus-answer:cited:01" \
+    "consensus-answer:cited:12345" "consensus-answer:cited:sample file" "consensus-answer:cited:1:x" \
+    "consensus-answer:other:1" "consensus-answer:1"; do
+    _v2_block | sed "s/^QUESTION_1_BINDING: .*/QUESTION_1_BINDING: ${b}/" | _write_ret ret.txt
+    _parse PLANNER ret.txt
+    if ! { [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"binding grammar"* ]]; }; then
+      echo "    accepted malformed binding: ${b}" >&2
+      rc=1
+    fi
+  done
+  _teardown
+  return $rc
+}
+
 test_v2_rejects_attr_without_question() {
   _setup
   {
