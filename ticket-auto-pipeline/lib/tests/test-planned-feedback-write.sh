@@ -3,7 +3,7 @@
 # where no-match exit codes are expected.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LIB_DIR="/home/mortal/workspace/workbench/willard.pro/git/claude-plugins/ticket-auto-pipeline/lib"
+LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "${LIB_DIR}/planned-feedback-write.sh"
 
