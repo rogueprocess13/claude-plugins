@@ -17,6 +17,37 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.64.3 (2026-10-13)
+
+The create guard's stance on parser differentials and failure paths is now decided and tested
+([#516](https://github.com/willard-pro/claude-plugins/issues/516)). `hooks/ticket-create-guard.sh`
+is a **drift guard, not a security control**: it stops an agent that reaches for a direct Linear
+create out of habit, not anyone set on bypassing it. The hook header and the plugin CLAUDE.md now
+say so.
+
+- **Scanner divergences fixed**: three shapes ran `curl` under bash but read as text to the awk
+  scanner, so a call that also named `issueCreate` was allowed. `$'…'` with an escaped `\'` ended
+  the quote early. A `)` inside `${…}` within `$( )` closed the substitution early. A `#` inside
+  `${…}` after a space started a comment. The scanner now handles ANSI-C quoting and tracks
+  `${…}` depth.
+- **Pinned verdicts**: every candidate shape from the issue has a test with an explicit verdict,
+  and where safe the test also runs the shape through bash with `curl` stubbed, so the verdict is
+  checked against what bash really does: `$"…"`, nested quotes in `${x:-$(…)}`, mid-word `#`, CR
+  and CRLF, `case`/`;;`. Two are accepted false positives that err toward denying: `case`/`esac`
+  count as non-text commands, and single quotes inside a double-quoted `${…}` (which bash fails to
+  parse).
+- **Long commands no longer time out**: `match(/[A-Za-z0-9_]*linear_graphql/)` backtracked
+  quadratically on a long word in mawk: 35s for a 100KB command. The hook timeout is 2s, and a
+  timed-out hook fails open. The match is now `index()`-based (0.25s at 100KB).
+- **Fail closed on raw text when the scanner cannot judge**: when awk is missing or fails, or the
+  command is longer than `TICKET_CREATE_GUARD_MAX_SCAN` characters (default 65536, also GitHub's
+  issue/PR body limit), the guard denies only when the raw text holds `issueCreate` and a sender,
+  or starts a command with `create_issue`. It allows everything else. Missing `jq` and an
+  unparseable payload still fail open, because without a parse the guard cannot tell which tool
+  or command it is looking at.
+- The #501 acceptance cases (`gh issue`/`gh pr create` with a title or body that names the
+  mutation) stay allowed, including a 60KB inline body.
+
 ## 0.64.2 (2026-10-13)
 
 `VPLAN_UNVERIFIABLE` almost never fired ([#514](https://github.com/willard-pro/claude-plugins/issues/514)).
