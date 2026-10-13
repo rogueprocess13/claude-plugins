@@ -70,21 +70,15 @@ fi
 
 echo "--- a row left honestly blank still parses and counts toward the row total ---"
 
-# vplan-parse.sh's VPLAN_VERIFIABLE is a per-LINE grep for [✓Y] (case-
-# insensitive) across the whole extracted section (lib/vplan-parse.sh:76) —
-# not a per-column check. A stray lowercase "y" anywhere in a row's prose
-# (e.g. "any user") would be miscounted as a verifiable mark, so this test
-# deliberately keeps every word in the blank row free of the letter "y" to
-# isolate what it's actually testing: that leaving the Verifiable cell empty
-# doesn't break parsing, not the parser's own column-blindness (out of
-# scope — design.md's own Non-Goal: no change to vplan-parse.sh's contract).
+# vplan-parse.sh reads only the Verifiable column (#514), so the blank row's
+# "any agency user" prose (full of y) must not count as a mark.
 mixed_body='## Verification Plan
 
 ### Per-Criterion Verification
 
 | # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
 |---|-----------|-----------|------------------|-------------------|--------------------|------------|
-| 1 | Screen shows no clutter | all users | n/a | none | requires human judgment |   |
+| 1 | Screen shows no clutter | any agency user | n/a | none | requires human judgment |   |
 | 2 | Export downloads a CSV | finance | Billing > Invoices | none | invoices.csv downloaded | Y |
 '
 if vplan_parse "$mixed_body" && [ "${VPLAN_ROWS:-0}" -eq 2 ] && [ "${VPLAN_VERIFIABLE:-0}" -eq 1 ]; then

@@ -17,6 +17,29 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.64.2 (2026-10-13)
+
+`VPLAN_UNVERIFIABLE` almost never fired ([#514](https://github.com/willard-pro/claude-plugins/issues/514)).
+`vplan_parse` counted verifiable Verification Plan rows with `grep -ciP '[✓Y]'` over the whole
+row. Because of `-i`, any `y` or `Y` anywhere in a row counted — "Agency", "yearly", "any user" —
+so a real legacy body with no ✓ marks at all scored `VPLAN_VERIFIABLE=8`. The same count feeds
+`gate-check.sh` Check 2.6 and the `verification` dimension of the DoR quality score.
+
+- **Verifiable column only**: each table's header row names the column (`Verifiable`, any
+  position, `**`/backtick markup and a trailing `?` tolerated). A data row counts when that one
+  cell, trimmed, markup-stripped and case-folded, is exactly `✓`, `✔`, `Y` or `Yes`. Blank, `✗`,
+  `x`, `n`, `true` and prose do not count. These match what the writers emit:
+  ticket-appraise-exec writes `✓`/`✗`, ticket-planner's `planner_ticketgen_vplan` writes `✓` or a
+  blank cell, and hand-written plans use `Y`/`Yes`.
+- **Cells split on unescaped `|` only**: `\|` inside a cell (how the #499 composer escapes a
+  pipe) no longer shifts the Verifiable column. A row too short to reach the column does not
+  count.
+- **No Verifiable header**: such a table still counts toward `VPLAN_ROWS`, but adds 0 verifiable
+  rows. Guessing from the whole row was the bug, so this fails in the safe direction: advisory
+  `VPLAN_UNVERIFIABLE`, and Check 2.6 falls back to the plan artifact.
+- **Also**: tables inside fenced code blocks are no longer counted, and CRLF bodies no longer miss
+  the `### Per-Criterion Verification` heading.
+
 ## ticket-planner 0.18.1 (2026-10-13)
 
 The Planner Context block could be forged from a spec's Signals JSON. Since TicketGen started

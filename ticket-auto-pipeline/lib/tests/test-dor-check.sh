@@ -610,6 +610,27 @@ check_ticket_ready "STRICT-VPLAN-UNVERIFIABLE-OFF" --body "$unverifiable_file" -
   _pass "zero rows marked: ready but VPLAN_UNVERIFIABLE advisory by default" ||
   _fail "should be ready with VPLAN_UNVERIFIABLE advisory by default (status=$DOR_STATUS advisory=$DOR_ADVISORY)"
 
+# #514: y/Y in other cells ("Agency", "yearly", "Yes") must not count as a
+# Verifiable mark — the old whole-row grep made this table look verifiable.
+y_words_body="${vplan_base_body}
+## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|-----------|-----------|------------------|-------------------|--------------------|------------|
+| 1 | Agency sees yearly export | collection agency | Billing > Yearly | any invoice | Yes button shows |   |
+| 2 | Export reflects filter | any user | Billing > Invoices | yearly invoices | behaves as expected | ✗ |
+"
+y_words_file="$TMP_ROOT/vplan-y-words.md"
+_write_body "$y_words_file" "$y_words_body"
+
+rc=0
+DOR_STRICT_VPLAN=true check_ticket_ready "STRICT-VPLAN-YWORDS" --body "$y_words_file" --type chore --no-fetch || rc=$?
+[ "$rc" = "1" ] && echo "$DOR_MISSING" | jq -e 'index("VPLAN_UNVERIFIABLE") != null' >/dev/null &&
+  _pass "#514: y/Y words outside the Verifiable column still fire VPLAN_UNVERIFIABLE" ||
+  _fail "#514: y-words table should fire VPLAN_UNVERIFIABLE (rc=$rc missing=$DOR_MISSING)"
+
 # The self-verifying-AC escape hatch is unaffected by DOR_STRICT_VPLAN in
 # either state — no Verification Plan table, but a single AC line that
 # matches _DOR_SELFVERIFY_RE ("returns 200").

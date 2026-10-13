@@ -685,7 +685,8 @@ _gate_entry() {
     _plog "$LOG_FILE" "GATE" "vplan-source" "done" "source=$vplan_source rows=$vplan_rows verifiable=$vplan_verifiable"
 
     if [ -n "$vplan_section" ]; then
-      # Check the Verifiable column for ✓ or Y entries. If at least one criterion
+      # Check the Verifiable column for ✓/✔/Y/Yes entries (vplan_parse reads
+      # only that column, #514). If at least one criterion
       # is marked verifiable, the plan has enough info. If none are marked, all 4
       # prereqs are effectively missing (fallback triggers).
       if [ "${vplan_verifiable:-0}" -gt 0 ] 2>/dev/null; then
