@@ -379,8 +379,8 @@ _served_msg=$(verify_served_check_ports "{TICKET-ID}" $_ports) || _served_rc=$?
 _served_msg=$(printf '%s' "$_served_msg" | tr '\n|' ' /')
 _ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 _served_stop() {
-  echo "${_ts}|META|gate-stop|fail|$1 — ${_served_msg}" >> "$LOG_FILE"
-  echo "ticket-verify: $2 — ${_served_msg}" >&2
+  echo "${_ts}|META|gate-stop|fail|${1} — ${_served_msg}" >> "$LOG_FILE"
+  echo "ticket-verify: ${2} — ${_served_msg}" >&2
   verify_lock_release
   exit 1
 }
