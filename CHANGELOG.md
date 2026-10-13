@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.64.3 (2026-10-13)
+## 0.64.5 (2026-10-13)
 
 VERIFY could still test the wrong worktree without saying so ([#419](https://github.com/willard-pro/claude-plugins/issues/419)).
 0.62.25 handed `env-start.sh` the ticket's verify worktree as `VERIFY_REPO_PATH_<REPO>` and
@@ -65,6 +65,88 @@ and logged a quiet `skip`. That is the original silent false pass/fail.
 
 The project's own `env-start.sh` still has to honour `VERIFY_REPO_PATH_<REPO>`. That script lives
 in the consuming workspace, not in this repository.
+
+## 0.64.4 / ticket-planner 0.18.2 (2026-10-13)
+
+Per-artifact headless answers for `CITED_ARTIFACT_UNRESOLVED` ([#515](https://github.com/willard-pro/claude-plugins/issues/515)).
+When Crosscheck blocked because a cited artifact had no answer (#504), the headless question
+named every artifact but offered only `flag:accept:CITED_ARTIFACT_UNRESOLVED`. An operator with
+no terminal could not record the real answer for each artifact. The only option was to accept
+the code for the life of the initiative, and that accept also covered artifacts cited by a later
+regenerate.
+
+- **New binding (ticket-auto-pipeline)**: `human-hold-parse.sh` accepts
+  `consensus-answer:cited:<n>`, where `n` is a 1-based index (1–9999, no leading zero) into
+  consensus.md's `CITED_ARTIFACT:` questions. An index stands in for the artifact name, which
+  can contain spaces and parentheses. The binding is documented in `docs/human-hold-schema.md`
+  § Binding grammar.
+- **One question per artifact (ticket-planner)**: `planner-stop-describe.sh` emits one question
+  for each artifact that `CITED_ARTIFACT_UNRESOLVED` names. The question points at the artifact's
+  effective line, which is the last `CITED_ARTIFACT:` line for that name, the one Crosscheck
+  reads. Its id is `cited-<n>-<8 hex of the name>`, so an answers file written before
+  consensus.md was renumbered is refused as `UNKNOWN_QUESTION_ID` and cannot answer the wrong
+  artifact. The code's `flag:accept` question is still offered after them, unchanged.
+- **The answer is written into consensus.md (ticket-planner)**: `planner-answers.sh` checks the
+  raw value before sanitising. It must be `exists:<where>`, `external:<who>` or `generate` (kind
+  case-insensitive, whitespace trimmed). A value containing `|`, CR, LF, a tab or another control
+  character, a backtick, `*` or a second `Answer:`, or ending in punctuation or `_`, is
+  `INVALID_VALUE`, and nothing is written. `planner_cited_answer_set` then rewrites only that
+  line's `Answer:` field, keeping emphasis and CRLF, and writes the file tmp + mv. It re-parses
+  the new line first and refuses to write if the reader would see a different answer. Each
+  answer is logged as `META|consensus-answer|step|cited:<n> <answer> (round N, by …)`.
+- **Spec Sources are not edited**: after an `exists:`/`external:` answer, a spec need that still
+  says `Source: generate` is `CITED_ARTIFACT_SOURCE_MISMATCH` on the Crosscheck re-run. The
+  finding names the spec, the need and the Source it needs. Rewriting specs in bash would have
+  to handle two Verification Notes layouts and needs that cite several artifacts, and it would
+  hide a real disagreement. Once the specs match, Crosscheck re-runs clean.
+- **One line reader**: `_planner_cited_answer_parse` is now the single reader of a
+  `CITED_ARTIFACT:` line. Crosscheck's answer map, the question numbering and the writer all
+  use it, so they agree on which line is question `n`. Crosscheck behaves as before, with two
+  exceptions. A final consensus.md line with no trailing newline is now read. An answer written
+  with underscore emphasis (`_Answer:_ generate`) now reads as `generate`; before, the space left
+  after the `_` made it unresolved. The writer also keeps consensus.md's file mode.
+
+Tests: new `ticket-planner/lib/tests/test-planner-cited-answers.sh` (66 assertions, registered in
+the Makefile) and two `test-human-hold-parse.sh` cases for the binding grammar.
+
+## 0.64.3 (2026-10-13)
+
+Also moves **fleet-controller 0.42.5 → 0.42.6**.
+
+Three Planner Context consumers read the wrong block, or the wrong field
+([#513](https://github.com/willard-pro/claude-plugins/issues/513)). `gate-check.sh`
+Check 2.7d, `planned-feedback-write.sh` and fleet-controller's `fleet-feedback.sh` each
+found the block with an unanchored sed range, so a `### Planner Context` heading, a fenced
+copy, or the phrase in the middle of a sentence earlier in the body was read in place of the
+real block. Two of them also looked for `- Confidence:` and `- Affected Services:`, while
+`planner_context_generate` writes `**Confidence:**` and `**Affected Services:**` — so the
+feedback JSON's `confidence_predicted` was always 0 (or `null` from fleetd's
+`GET /workers/<tid>`) unless forged text supplied it.
+
+- New `lib/planner-context-extract.sh` is the one extractor. The heading must be a whole
+  `## Planner Context` line outside any ``` or `~~~` fence; the first one wins; the block
+  ends at the next real `##` heading; CR is stripped. Field reads take the first line
+  starting `**Field:**` inside the block, skipping fenced lines.
+- `planned-ticket-check.sh`'s `_extract_md_section`/`_strip_md_section` now delegate to it,
+  so `_extract_planner_context_block`, appraise-fast-path, planner-artifacts and the Branch
+  Directive reader are fence-aware too.
+- All three consumers use it. `confidence_predicted` now equals the generated
+  `**Confidence:**` value; a non-numeric value reads as 0 (`null` in fleet-feedback).
+- **Exploration Depth decision:** kept in Check 2.7d, not dropped and not added to the
+  generator. It is a validated optional Schema-Version 2 field; adding it to
+  `planner_context_generate` would change every generated ticket body. The check is dormant
+  for generator-written blocks and documented as such.
+- fleet-controller bridges the extractor from `~/.claude/skills/lib` (then the monorepo
+  sibling), the same way it already bridges `manifest-read.sh` — no copy.
+- `test-planned-feedback-write.sh` had a hard-coded absolute `LIB_DIR` and was never
+  registered in `make test`; both fixed, alongside the new `test-planner-context-extract.sh`.
+- **Field reads skip hidden lines everywhere**: `_extract_field` (the gate, appraise fast-path
+  and Branch Directive reader) now delegates to `planner_context_field`. Before, it took the first
+  `**Pre-approved:**` line in the block even inside an HTML comment or code fence, so a hidden
+  `**Pre-approved:** true` above the visible `false` made a 0.30-confidence ticket fast-path
+  eligible.
+- **No SIGPIPE on large bodies**: the extractor drains its input after the block instead of
+  exiting, so a 500KB+ body no longer aborts `gate-check.sh` with rc 141 under `pipefail`.
 
 ## 0.64.2 (2026-10-13)
 

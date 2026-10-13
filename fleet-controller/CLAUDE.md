@@ -136,6 +136,7 @@ Fleet controller depends on libraries defined in `ticket-auto-pipeline/`:
 - `linear-api.sh` — GraphQL API client (used by `fleet-dispatch.sh` for Linear queries)
 - `heartbeat.sh` — Heartbeat log helpers (used by `fleet-monitor.sh`, `fleet-dashboard.sh`, `fleet-intervene.sh`)
 - `exit-path.sh` — `derive_failure_class`/`derive_failure_phase` (used by `run-score-export.sh` to score a finished run's failure class and phase)
+- `planner-context-extract.sh` — the anchored, fence-aware Planner Context block reader (used by `fleet-feedback.sh`'s `_fleet_confidence_predicted`, which reads the `**Confidence:**` field the planner actually writes — GitHub #513)
 
 These are sourced via `_source_if_missing` from `~/.claude/skills/lib/` (synced by the ticket-auto-pipeline SessionStart hook). Fleet controller does NOT maintain its own copies — it bridges to the canonical sources.
 

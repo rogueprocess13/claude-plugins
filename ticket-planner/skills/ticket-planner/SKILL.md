@@ -185,6 +185,7 @@ script — cannot read the halt prose. It runs this loop instead:
 |---|---|---|
 | `CREATE_GATE` | `flag:create` | `yes` = `--create`. `no` records the round; the run stops at the gate again |
 | `CROSSCHECK_BLOCKED` | `flag:accept:<CODE>` | the reason = `--accept CODE:"reason"`. `__skip__` declines |
+| `CROSSCHECK_BLOCKED` (`CITED_ARTIFACT_UNRESOLVED`) | `consensus-answer:cited:<n>`, one per unanswered artifact | `exists:<where>`, `external:<who>` or `generate`, written into the `Answer:` field of consensus.md's `n`th `CITED_ARTIFACT:` question. Any other value, or one with `\|`, CR or LF, is `INVALID_VALUE`. Specs are not edited: a spec need whose `Source` disagrees is `CITED_ARTIFACT_SOURCE_MISMATCH` on the re-run. The code's `flag:accept` question is still offered |
 | `PROJECT_GATE` | `flag:project` | a name or id = `--project`. `__none__` = `--no-project` |
 | `REFINEMENT_HALT` | `waive:<TICKET>:<CODE>` | the reason = `dor-check.sh --waive <TICKET> <CODE> "reason"`. `__skip__` declines |
 | `ADR_GATE` | `note` | recorded only — accept the ADR out of band (`adr-store.sh accept` refuses inside an agent session) |

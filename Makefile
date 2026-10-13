@@ -71,6 +71,8 @@ test-lib:
 	bash fleet-controller/lib/tests/test-run-score-export.sh
 	# ticket-planner enrichment tests
 	bash ticket-auto-pipeline/lib/tests/test-planned-ticket-check.sh
+	bash ticket-auto-pipeline/lib/tests/test-planner-context-extract.sh
+	bash ticket-auto-pipeline/lib/tests/test-planned-feedback-write.sh
 	bash ticket-auto-pipeline/lib/tests/test-appraise-fast-path.sh
 	bash ticket-auto-pipeline/lib/tests/test-template-select.sh
 	bash ticket-auto-pipeline/lib/tests/test-planner-artifacts.sh
@@ -204,6 +206,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-stop-describe.sh
 	bash ticket-planner/lib/tests/test-planner-answers.sh
 	bash ticket-planner/lib/tests/test-planner-answers-durability.sh
+	bash ticket-planner/lib/tests/test-planner-cited-answers.sh
 	bash ticket-planner/lib/tests/test-planner-vplan-generation.sh
 	bash ticket-planner/lib/tests/test-planner-ticket-body.sh
 	bash ticket-planner/lib/tests/test-skill-arg-substitution.sh

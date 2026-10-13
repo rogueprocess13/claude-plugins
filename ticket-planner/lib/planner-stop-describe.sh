@@ -21,6 +21,8 @@
 #   CREATE_GATE             the next phase writes to Linear, unauthorized
 #   PROJECT_GATE            Epic Gen stopped on a single matching project
 #   CROSSCHECK_BLOCKED      the last Crosscheck run has unaccepted blocking codes
+#                           (CITED_ARTIFACT_UNRESOLVED also asks one
+#                           consensus-answer:cited:<n> question per artifact)
 #   REFINEMENT_HALT         Refinement halted with waivable not-ready codes
 #   UNTIL_STOP              the run stopped after its --until phase
 #   FAILED_RETRY_EXHAUSTED  the current phase spent its retry budget
@@ -119,13 +121,63 @@ _planner_stop_last_phase_line() {
 # attempt's <CODE> findings (#504), comma-separated — so an operator answering
 # headlessly sees every artifact the code stands for, not just the first.
 _planner_stop_cited_names() {
+  _planner_stop_cited_name_list "$@" | head -20 | sed 's/.*/`&`/' | paste -sd, - | sed 's/,/, /g'
+}
+
+# The same names, one per line, without backticks, in finding order.
+_planner_stop_cited_name_list() {
   local init="$1" code="$2" log start
   log=$(planner_state_log "$init") || return 1
   start=$(grep -n '|Crosscheck|check|start|' "$log" | tail -1 | cut -d: -f1)
   [ -n "$start" ] || return 0
   tail -n "+$((start + 1))" "$log" | grep "^[^|]*|META|crosscheck|fail|${code} " |
-    cut -d'|' -f5- | grep -o 'cited artifact `[^`]*`' | sed 's/^cited artifact //' |
-    awk '!seen[$0]++' | head -20 | paste -sd, - | sed 's/,/, /g'
+    cut -d'|' -f5- | grep -o 'cited artifact `[^`]*`' | sed 's/^cited artifact `//; s/`$//' |
+    awk '!seen[$0]++'
+}
+
+# One headless question per unresolved cited artifact (#515), as JSON
+# question objects on one line each. Each binds `consensus-answer:cited:<n>`,
+# n being the artifact's question in consensus.md — the last CITED_ARTIFACT
+# line for its name, the one Crosscheck reads. The id carries a hash of the
+# name as well as n, so an answers file written before consensus.md was
+# edited (questions renumbered) is refused as UNKNOWN_QUESTION_ID instead of
+# answering the wrong artifact.
+_planner_stop_cited_questions() {
+  local init="$1" consensus key n lkey lname lkind lvalue lraw h
+  declare -f planner_cited_answer_lines >/dev/null 2>&1 ||
+    source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-crosscheck-testdata.sh"
+  consensus="$(planner_initiative_dir "$init")/artifacts/consensus.md" || return 1
+  [ -f "$consensus" ] || return 0
+
+  # Effective (last) line per name key.
+  local -A last_n=() last_name=() last_kind=()
+  while IFS=$'\037' read -r n lkey lname lkind lvalue lraw; do
+    last_n["$lkey"]="$n"
+    last_name["$lkey"]="$lname"
+    last_kind["$lkey"]="$lkind"
+  done < <(planner_cited_answer_lines "$consensus")
+
+  local name seen=" "
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    key=$(_planner_testdata_name_key "$name")
+    [ -n "${last_n[$key]+set}" ] || continue
+    [ "${last_kind[$key]}" = "unresolved" ] || continue
+    n="${last_n[$key]}"
+    case "$seen" in *" $n "*) continue ;; esac
+    seen="${seen}${n} "
+    h=$(printf '%s' "$key" | _planner_stop_sha | cut -c1-8)
+    _planner_stop_question "cited-${n}-${h}" "consensus-answer:cited:${n}" \
+      "Cited artifact \`$(_planner_stop_excerpt "${last_name[$key]}")\` (consensus.md cited-artifact question ${n}) is cited but not retrievable. Answer exists:<where> if it exists (say where), external:<who> if someone outside will supply it, or generate if it should be synthesised. The answer is written into consensus.md; every spec need that cites it must carry the same Source, or Crosscheck reports CITED_ARTIFACT_SOURCE_MISMATCH."
+  done < <(_planner_stop_cited_name_list "$init" CITED_ARTIFACT_UNRESOLVED)
+}
+
+_planner_stop_sha() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 | awk '{print $1}'
+  fi
 }
 
 # Unaccepted blocking codes from the latest Crosscheck attempt, one
@@ -259,6 +311,15 @@ planner_stop_describe_json() {
       [ -n "$code" ] || continue
       case "$code" in
       CITED_ARTIFACT_*)
+        # #515: an unanswered artifact gets its own question, whose answer is
+        # written into consensus.md. Emitted ahead of the code's accept
+        # question, which stays as the blanket override (#504).
+        if [ "$code" = "CITED_ARTIFACT_UNRESOLVED" ]; then
+          while IFS= read -r q; do
+            [ -n "$q" ] || continue
+            questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
+          done < <(_planner_stop_cited_questions "$init")
+        fi
         # #504: name every artifact, and say how to answer each one; the
         # accept binding stays as the blanket override.
         cited=$(_planner_stop_cited_names "$init" "$code")
