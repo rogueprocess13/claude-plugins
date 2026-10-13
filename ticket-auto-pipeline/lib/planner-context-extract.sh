@@ -80,6 +80,9 @@ md_section_extract() {
   shift
   PCX_HEADING="$heading" awk "$_PCX_AWK_FENCE"'
     BEGIN { want = "## " ENVIRON["PCX_HEADING"] }
+    # Drain the input after the block instead of exiting: an early exit
+    # SIGPIPEs a large writer, which a caller under pipefail sees as rc 141.
+    done { next }
     { sub(/\r$/, "") }
     opaque_line($0) { if (found) print; next }
     !found {
@@ -88,7 +91,7 @@ md_section_extract() {
       if (line == want) found = 1
       next
     }
-    /^##([ \t]|$)/ { exit }
+    /^##([ \t]|$)/ { done = 1; next }
     { print }
   ' "$@"
 }
@@ -128,6 +131,7 @@ planner_context_field() {
   shift
   PCX_FIELD="$field" awk "$_PCX_AWK_FENCE"'
     BEGIN { want = "**" ENVIRON["PCX_FIELD"] ":**" }
+    done { next }
     { sub(/\r$/, "") }
     opaque_line($0) { next }
     index($0, want) == 1 {
@@ -135,7 +139,7 @@ planner_context_field() {
       sub(/^[ \t]+/, "", v)
       sub(/[ \t]+$/, "", v)
       print v
-      exit
+      done = 1
     }
   ' "$@"
 }

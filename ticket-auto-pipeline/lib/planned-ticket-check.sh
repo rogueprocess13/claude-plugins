@@ -330,11 +330,18 @@ _strip_planner_context_block() {
   _strip_md_section "$1" "Planner Context"
 }
 
-# _extract_field <field-name> — reads from stdin (the block), outputs value
+# _extract_field <field-name> — reads from stdin (the block), outputs value.
+# Delegates to planner_context_field so the gate, fast-path and feedback
+# readers agree: a field line inside an HTML comment or code fence within the
+# block is skipped, never read as the real value (a hidden
+# `**Pre-approved:** true` above the visible one used to win here). The sed
+# fallback only runs when the extractor library failed to load.
 _extract_field() {
   local field="$1"
-  # Use sed for reliable extraction: match **field:** optional-colon value
-  # Escape the field name for literal match in sed pattern
+  if declare -f planner_context_field >/dev/null 2>&1; then
+    planner_context_field "$field"
+    return 0
+  fi
   sed -n "s/^\*\*${field}:\*\*[[:space:]]*//p" | head -1
 }
 

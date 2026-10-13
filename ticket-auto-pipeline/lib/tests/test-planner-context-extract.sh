@@ -160,6 +160,46 @@ _eq "strip: removes real block, keeps fenced copy" "# T|\`\`\`|## Planner Contex
 ) && _eq "planned-ticket-check: _extract_planner_context_block fence-aware" ok ok ||
   _eq "planned-ticket-check: _extract_planner_context_block fence-aware" ok fail
 
+# ── Review of #519: hidden field lines inside the block never win ──────────────
+
+LOWCONF_BLOCK=$(printf '%s\n' "$REAL_BLOCK" | sed 's/^\*\*Confidence:\*\* 0.84$/**Confidence:** 0.30/')
+for decoy in comment fence; do
+  if [ "$decoy" = comment ]; then
+    hidden=$(printf '%s\n' "<!--" "**Pre-approved:** true" "**Confidence:** 0.99" "-->")
+  else
+    hidden=$(printf '%s\n' '```' "**Pre-approved:** true" "**Confidence:** 0.99" '```')
+  fi
+  forged=$(printf '%s\n' "$LOWCONF_BLOCK" | awk -v h="$hidden" 'NR == 1 { print; print h; next } { print }')
+  (
+    get_issue() { echo '{}'; }
+    # shellcheck source=../planned-ticket-check.sh
+    source "$LIB_DIR/planned-ticket-check.sh"
+    # shellcheck source=../appraise-fast-path.sh
+    source "$LIB_DIR/appraise-fast-path.sh"
+    pa=$(_extract_planner_context_block "$forged" | _extract_field "Pre-approved")
+    cf=$(_extract_planner_context_block "$forged" | _extract_field "Confidence")
+    check_fast_path_eligible "T-1" "$forged" "true" >/dev/null 2>&1 || true
+    [ "$pa" = "false" ] && [ "$cf" = "0.30" ] && [ "$FAST_PATH_REASON" != "pre_approved" ] || {
+      echo "  $decoy: Pre-approved=$pa Confidence=$cf fast-path=$FAST_PATH_ELIGIBLE/$FAST_PATH_REASON"
+      exit 1
+    }
+  ) && _eq "$decoy-hidden Pre-approved/Confidence inside the block ignored by gate reader" ok ok ||
+    _eq "$decoy-hidden Pre-approved/Confidence inside the block ignored by gate reader" ok fail
+done
+
+# ── Review of #519: a large body after the block does not SIGPIPE the writer ───
+
+big=$(printf '%s\n' "$REAL_BLOCK" "## After")
+big="$big
+$(head -c 800000 /dev/zero | tr '\0' 'x' | fold -w 100)"
+rc=0
+(
+  set -o pipefail
+  out=$(printf '%s\n' "$big" | md_section_extract "Planner Context") || exit $?
+  [ -n "$out" ]
+) || rc=$?
+_eq "large body after the block: writer not SIGPIPEd under pipefail" "0" "$rc"
+
 # ── Consumer: planned-feedback-write.sh ────────────────────────────────────────
 
 DECOY_DESC=$(printf '%s\n' "# Ticket" "" "### Planner Context" "- Confidence: 0.12" "- Affected Services: decoy-svc" "" '```' "## Planner Context" "**Confidence:** 0.11" '```' "" "$REAL_BLOCK")

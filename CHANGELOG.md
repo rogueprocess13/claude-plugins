@@ -48,6 +48,13 @@ feedback JSON's `confidence_predicted` was always 0 (or `null` from fleetd's
   sibling), the same way it already bridges `manifest-read.sh` — no copy.
 - `test-planned-feedback-write.sh` had a hard-coded absolute `LIB_DIR` and was never
   registered in `make test`; both fixed, alongside the new `test-planner-context-extract.sh`.
+- **Field reads skip hidden lines everywhere**: `_extract_field` (the gate, appraise fast-path
+  and Branch Directive reader) now delegates to `planner_context_field`. Before, it took the first
+  `**Pre-approved:**` line in the block even inside an HTML comment or code fence, so a hidden
+  `**Pre-approved:** true` above the visible `false` made a 0.30-confidence ticket fast-path
+  eligible.
+- **No SIGPIPE on large bodies**: the extractor drains its input after the block instead of
+  exiting, so a 500KB+ body no longer aborts `gate-check.sh` with rc 141 under `pipefail`.
 
 ## ticket-planner 0.18.1 (2026-10-13)
 
