@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.64.3 / ticket-planner 0.18.2 (2026-10-13)
+## 0.64.4 / ticket-planner 0.18.2 (2026-10-13)
 
 Per-artifact headless answers for `CITED_ARTIFACT_UNRESOLVED` ([#515](https://github.com/willard-pro/claude-plugins/issues/515)).
 When Crosscheck blocked because a cited artifact had no answer (#504), the headless question
@@ -59,6 +59,45 @@ regenerate.
 
 Tests: new `ticket-planner/lib/tests/test-planner-cited-answers.sh` (66 assertions, registered in
 the Makefile) and two `test-human-hold-parse.sh` cases for the binding grammar.
+
+## 0.64.3 (2026-10-13)
+
+Also moves **fleet-controller 0.42.5 → 0.42.6**.
+
+Three Planner Context consumers read the wrong block, or the wrong field
+([#513](https://github.com/willard-pro/claude-plugins/issues/513)). `gate-check.sh`
+Check 2.7d, `planned-feedback-write.sh` and fleet-controller's `fleet-feedback.sh` each
+found the block with an unanchored sed range, so a `### Planner Context` heading, a fenced
+copy, or the phrase in the middle of a sentence earlier in the body was read in place of the
+real block. Two of them also looked for `- Confidence:` and `- Affected Services:`, while
+`planner_context_generate` writes `**Confidence:**` and `**Affected Services:**` — so the
+feedback JSON's `confidence_predicted` was always 0 (or `null` from fleetd's
+`GET /workers/<tid>`) unless forged text supplied it.
+
+- New `lib/planner-context-extract.sh` is the one extractor. The heading must be a whole
+  `## Planner Context` line outside any ``` or `~~~` fence; the first one wins; the block
+  ends at the next real `##` heading; CR is stripped. Field reads take the first line
+  starting `**Field:**` inside the block, skipping fenced lines.
+- `planned-ticket-check.sh`'s `_extract_md_section`/`_strip_md_section` now delegate to it,
+  so `_extract_planner_context_block`, appraise-fast-path, planner-artifacts and the Branch
+  Directive reader are fence-aware too.
+- All three consumers use it. `confidence_predicted` now equals the generated
+  `**Confidence:**` value; a non-numeric value reads as 0 (`null` in fleet-feedback).
+- **Exploration Depth decision:** kept in Check 2.7d, not dropped and not added to the
+  generator. It is a validated optional Schema-Version 2 field; adding it to
+  `planner_context_generate` would change every generated ticket body. The check is dormant
+  for generator-written blocks and documented as such.
+- fleet-controller bridges the extractor from `~/.claude/skills/lib` (then the monorepo
+  sibling), the same way it already bridges `manifest-read.sh` — no copy.
+- `test-planned-feedback-write.sh` had a hard-coded absolute `LIB_DIR` and was never
+  registered in `make test`; both fixed, alongside the new `test-planner-context-extract.sh`.
+- **Field reads skip hidden lines everywhere**: `_extract_field` (the gate, appraise fast-path
+  and Branch Directive reader) now delegates to `planner_context_field`. Before, it took the first
+  `**Pre-approved:**` line in the block even inside an HTML comment or code fence, so a hidden
+  `**Pre-approved:** true` above the visible `false` made a 0.30-confidence ticket fast-path
+  eligible.
+- **No SIGPIPE on large bodies**: the extractor drains its input after the block instead of
+  exiting, so a 500KB+ body no longer aborts `gate-check.sh` with rc 141 under `pipefail`.
 
 ## 0.64.2 (2026-10-13)
 
