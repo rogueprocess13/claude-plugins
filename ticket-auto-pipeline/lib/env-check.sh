@@ -264,6 +264,32 @@ if [ "${_MODE:-full}" = "validate" ]; then
     warn "WIKI_ROOT" "missing — appraise will skip wiki bootstrapping"
   fi
 
+  # Verify worktree serving (#419): ticket-verify hands env-start.sh the
+  # ticket's verify worktree as VERIFY_REPO_PATH_<REPO>, then gate-stops
+  # VERIFY_SERVED_WRONG_WORKTREE when the dev server still runs from another
+  # checkout. Surface an unwired env-start.sh here, before a verify run trips.
+  if [ -f "$PROJECT_DIR/env-start.sh" ]; then
+    if grep -q 'VERIFY_REPO_PATH' "$PROJECT_DIR/env-start.sh" 2>/dev/null; then
+      pass "env-start.sh reads VERIFY_REPO_PATH_* (serves the ticket's verify worktree)"
+    else
+      warn "env-start.sh" "does not read VERIFY_REPO_PATH_* — it will serve the primary checkout and ticket-verify will gate-stop VERIFY_SERVED_WRONG_WORKTREE"
+    fi
+  fi
+
+  # VERIFY_SERVED_PORTS (optional) — extra ports whose listener must also serve
+  # the ticket's code, besides LOCAL_URL's port.
+  if val=$(claude_md_field "$CLAUDE_MD" VERIFY_SERVED_PORTS); then
+    _bad_ports=""
+    for _item in $(printf '%s' "$val" | tr ',' ' '); do
+      [[ "$_item" =~ ^[0-9]+$ || "$_item" =~ ^https?://[^/:]+(:[0-9]+)?(/.*)?$ ]] || _bad_ports="$_bad_ports $_item"
+    done
+    if [ -z "$_bad_ports" ]; then
+      pass "VERIFY_SERVED_PORTS ($val)"
+    else
+      warn "VERIFY_SERVED_PORTS" "unparseable item(s):$_bad_ports — use ports or http(s) URLs, comma or space separated"
+    fi
+  fi
+
   echo ""
   say "check" "token tracker hooks"
 

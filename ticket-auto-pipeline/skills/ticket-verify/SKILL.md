@@ -240,7 +240,8 @@ Cheap, zero-network, zero-LLM TTL sweep of old verify worktrees — runs unlocke
 
 ```bash
 source "$HOME/.claude/skills/lib/verify-worktree.sh"
-verify_worktree_gc
+# Fresh shell: without REPOS_ROOT the sweep would target ./.verify-worktrees.
+verify_env_init "{TICKET-ID}" ./CLAUDE.md && verify_worktree_gc
 ```
 
 `verify_worktree_gc` removes any `REPOS_ROOT/.verify-worktrees/{repo}/{TICKET_ID}` idle past `VERIFY_WORKTREE_TTL_HOURS` (config.sh, default 24h) — mirroring `hooks/tmp-sweep.sh`'s age-based approach, run inline here rather than as a separate hook since it only needs to fire when a verify run actually happens. It self-guards against the single-flight lock from Step 1.6a3 below: if the lock is currently held by *anyone*, it skips the sweep entirely rather than remove anything, since there's no way to tell from here which specific ticket's worktree a live holder might be serving files from — the lock is one global flight, not per-ticket. Worktrees are **not** torn down at the end of a normal run; they're left in place for reuse/debugging and reaped only by this TTL sweep.
@@ -282,6 +283,18 @@ fi
 Only now, with the lock held, resolve/resync *this run's own* worktree per affected repo — a destructive step (`reset --hard`/`clean -fdx` on reuse) that must never race a still-live earlier invocation for the same ticket (see the 1.6 preamble above). Whatever branch happens to be checked out in the shared `REPOS_ROOT` clones at verify time is what `env-start.sh` would otherwise build and run — nothing about the shared clone ties it to *this* ticket's branch:
 
 ```bash
+source "$HOME/.claude/skills/lib/verify-worktree.sh"
+
+# This block is a fresh shell: REPOS_ROOT is resolved here, not inherited.
+# Unresolved, every repo below would be skipped and no worktree created — a
+# silent "worktrees ready" for a run that serves the primary checkout.
+verify_env_init "{TICKET-ID}" ./CLAUDE.md || {
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_WORKTREE_FAILED — REPOS_ROOT unresolved" >> "$LOG_FILE"
+  echo "ticket-verify: REPOS_ROOT could not be resolved — see stderr above." >&2
+  verify_lock_release
+  exit 1
+}
+
 _branch="{the ticket's branch — from notes.md's pre-implementation-checkpoint
   'Worktree:'/branch entry, or branch-resolve.sh's BRANCH_CONTEXT_RESULT for
   this ticket}"
@@ -291,6 +304,7 @@ _branch="{the ticket's branch — from notes.md's pre-implementation-checkpoint
 # "no specific services → everything" fallback).
 _verify_services="{affected services from 1.6a, or every REPOS_ROOT/*/.git repo}"
 
+_wt_count=0
 for _svc in $_verify_services; do
   _repo_path="$REPOS_ROOT/$_svc"
   [ -d "$_repo_path/.git" ] || continue
@@ -300,14 +314,17 @@ for _svc in $_verify_services; do
     verify_lock_release
     exit 1
   }
-  _svc_env=$(echo "$_svc" | tr '[:lower:]-' '[:upper:]_')
-  export "VERIFY_REPO_PATH_${_svc_env}=$_wt"
+  export "$(verify_worktree_env_var "$_svc")=$_wt"
+  _wt_count=$((_wt_count + 1))
 done
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|worktree-setup|done|worktrees ready for ${_branch}" >> "$LOG_FILE"
+if [ "$_wt_count" -eq 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|warn|VERIFY_WORKTREE_NONE — none of '${_verify_services}' is a git repo under ${REPOS_ROOT}; the stack will serve whatever the primary checkouts hold" >> "$LOG_FILE"
+fi
+[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|worktree-setup|done|${_wt_count} worktree(s) ready for ${_branch}" >> "$LOG_FILE"
 ```
 
-Each resolved path is exported as `VERIFY_REPO_PATH_<SERVICE>` (service name upper-cased, `-`→`_` — e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`). That export only lives as long as this block's shell — **Step 1.6b re-derives the same values with `verify_worktree_exports` in the shell that actually runs `env-start.sh`**, so the stack can build and run from the isolated checkout instead of the shared clone. Each verify worktree also gets the primary checkout's gitignored env files (`worker/.env`, `.env.local`, ...) mirrored in, with relative `*_DIR`/`*_PATH`/`*_ROOT` values pinned to the primary checkout — the same `_mirror_gitignored_env_files` implement worktrees use (#408). `env-start.sh` lives in the consuming workspace, not this plugin, so whether it currently reads these is unknown here — check deterministically rather than guessing:
+Each resolved path is exported as `VERIFY_REPO_PATH_<SERVICE>` (`verify_worktree_env_var`: service name upper-cased, every character outside `[A-Z0-9_]` mapped to `_` — e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`). That export only lives as long as this block's shell — **Step 1.6b re-derives the same values with `verify_worktree_exports` in the shell that actually runs `env-start.sh`**, so the stack can build and run from the isolated checkout instead of the shared clone. Each verify worktree also gets the primary checkout's gitignored env files (`worker/.env`, `.env.local`, ...) mirrored in, with relative `*_DIR`/`*_PATH`/`*_ROOT` values pinned to the primary checkout — the same `_mirror_gitignored_env_files` implement worktrees use (#408). `env-start.sh` lives in the consuming workspace, not this plugin, so whether it currently reads these is unknown here — check deterministically rather than guessing:
 
 ```bash
 if ! grep -q "VERIFY_REPO_PATH" "{TICKETS_ROOT}/env-start.sh" 2>/dev/null; then
@@ -319,14 +336,15 @@ This warning alone is not a blocking condition — proceed. Step 1.6b's served-c
 
 ### 1.6b — Run env-start.sh (BE + FE)
 
-Always start all services including the gateway FE. `env-start.sh` skips anything already running. Every invocation runs in **one** bash block together with `verify_worktree_exports`, which re-exports `VERIFY_TICKET_ID` and each `VERIFY_REPO_PATH_<REPO>` from 1.6a4 — a separate block would start `env-start.sh` without them (shell state does not carry over between blocks), and it would serve the primary checkout.
+Always start all services including the gateway FE. `env-start.sh` skips anything already running. Every invocation runs in **one** bash block together with `verify_env_init` and `verify_worktree_exports`, which re-export `REPOS_ROOT`, `VERIFY_TICKET_ID` and each `VERIFY_REPO_PATH_<REPO>` from 1.6a4 — a separate block would start `env-start.sh` without them (shell state does not carry over between blocks), and it would serve the primary checkout. `verify_env_init` comes first because `verify_worktree_exports` derives every path from `REPOS_ROOT`: with it unset, the exports come out empty.
 
-**env-start.sh contract** (implemented in the consuming workspace, not this plugin): when `VERIFY_REPO_PATH_<REPO>` is set, build and serve that repo from that path instead of `REPOS_ROOT/<repo>`, and restart a service that is already running from a different directory rather than skipping it.
+**env-start.sh contract** (implemented in the consuming workspace, not this plugin): when `VERIFY_REPO_PATH_<REPO>` is set, build and serve that repo from that path instead of `REPOS_ROOT/<repo>` (every path the script derives from the repo dir, such as a worker dir or an env file, follows it), and restart a service that is already running from a different directory rather than skipping it. Optionally, `env-status.sh` can show which checkout each port serves with `bash "$HOME/.claude/skills/lib/verify-worktree.sh" served <port>...`.
 
 If no specific affected services were detected in 1.6a (or ticket dir missing):
 
 ```bash
 source "$HOME/.claude/skills/lib/verify-worktree.sh"
+verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
 eval "$(verify_worktree_exports "{TICKET-ID}")"
 bash {TICKETS_ROOT}/env-start.sh
 ```
@@ -335,6 +353,7 @@ If specific affected services were detected and the ticket dir exists, restart o
 
 ```bash
 source "$HOME/.claude/skills/lib/verify-worktree.sh"
+verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
 eval "$(verify_worktree_exports "{TICKET-ID}")"
 bash {TICKETS_ROOT}/env-start.sh --restart {affected-services} gateway-fe
 ```
@@ -346,32 +365,46 @@ source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
 verify_lock_release
 ```
 
-**Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from — a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, resolve the process listening on `LOCAL_URL`'s port and compare its checkout with this ticket's verify worktrees:
+**Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from — a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, resolve the process listening on `LOCAL_URL`'s port — plus every port in the project's optional `VERIFY_SERVED_PORTS` CLAUDE.md field (comma/space separated ports or URLs, e.g. an API server port) — and compare each one's checkout with this ticket's verify worktrees:
 
 ```bash
 source "$HOME/.claude/skills/lib/config.sh" 2>/dev/null || true
 source "$HOME/.claude/skills/lib/verify-worktree.sh"
-_port=$(verify_url_port "{LOCAL_URL}") || _port=""
+source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
+verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
+_ports=$(verify_served_ports "{LOCAL_URL}" "${VERIFY_SERVED_PORTS:-}" 2>/dev/null)
 _served_rc=0
-_served_msg=$(verify_served_worktree_check "{TICKET-ID}" "$_port" 2>&1) || _served_rc=$?
+# shellcheck disable=SC2086
+_served_msg=$(verify_served_check_ports "{TICKET-ID}" $_ports) || _served_rc=$?
+_served_msg=$(printf '%s' "$_served_msg" | tr '\n|' ' /')
 _ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+_served_stop() {
+  echo "${_ts}|META|gate-stop|fail|${1} — ${_served_msg}" >> "$LOG_FILE"
+  echo "ticket-verify: ${2} — ${_served_msg}" >&2
+  verify_lock_release
+  exit 1
+}
 case "$_served_rc" in
 0) echo "${_ts}|VERIFY|served-worktree|done|${_served_msg}" >> "$LOG_FILE" ;;
 1)
-  if [ "${VERIFY_SERVED_WORKTREE_ENFORCE:-true}" = "true" ]; then
-    echo "${_ts}|META|gate-stop|fail|VERIFY_SERVED_WRONG_WORKTREE — ${_served_msg}" >> "$LOG_FILE"
-    echo "ticket-verify: the dev server is not serving this ticket's code — ${_served_msg}. env-start.sh must serve VERIFY_REPO_PATH_<REPO> (see the contract above)." >&2
-    source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
-    verify_lock_release
-    exit 1
-  fi
+  [ "${VERIFY_SERVED_WORKTREE_ENFORCE:-true}" = "true" ] &&
+    _served_stop VERIFY_SERVED_WRONG_WORKTREE "the dev server is not serving this ticket's code. Stop the stale server on that port, or re-run env-start.sh with --restart for that service, so it starts from VERIFY_REPO_PATH_<REPO> (see the contract above)"
   echo "${_ts}|META|gate-warn|warn|VERIFY_SERVED_WRONG_WORKTREE — ${_served_msg} (VERIFY_SERVED_WORKTREE_ENFORCE=false)" >> "$LOG_FILE"
   ;;
-*) echo "${_ts}|VERIFY|served-worktree|skip|${_served_msg}" >> "$LOG_FILE" ;;
+4)
+  [ "${VERIFY_SERVED_WORKTREE_STRICT:-false}" = "true" ] &&
+    _served_stop VERIFY_SERVED_UNVERIFIED "no verify worktree to compare the served checkout with"
+  echo "${_ts}|META|gate-warn|warn|VERIFY_SERVED_UNVERIFIED — ${_served_msg}" >> "$LOG_FILE"
+  ;;
+*)
+  [ "${VERIFY_SERVED_WORKTREE_STRICT:-false}" = "true" ] &&
+    _served_stop VERIFY_SERVED_UNVERIFIED "could not tell which checkout the dev server serves (VERIFY_SERVED_WORKTREE_STRICT=true)"
+  echo "${_ts}|META|gate-warn|warn|VERIFY_SERVED_UNVERIFIED — could not tell which checkout LOCAL_URL's port serves: ${_served_msg}" >> "$LOG_FILE"
+  ;;
 esac
 ```
 
-Exit codes: `0` served from this ticket's verify worktree (or a clean checkout of the same repo at the same commit), `1` served from a checkout of a repo under test on a different commit or with uncommitted changes — gate-stop `VERIFY_SERVED_WRONG_WORKTREE`, `3` cannot tell (no visible listener, container-served port, or the served repo is not one this ticket touches) — logged as `skip`, proceed. An operator can downgrade the gate-stop to a `gate-warn` with `VERIFY_SERVED_WORKTREE_ENFORCE=false`. Run this check for `live-backend` mode too.
+Exit codes of `verify_served_check_ports` (most severe first): `4` no verify worktree exists for this ticket to compare with (almost always `REPOS_ROOT` unresolved, which also means `env-start.sh` got no exports) — loud `gate-warn` `VERIFY_SERVED_UNVERIFIED`, never a quiet skip; `1` some port serves a checkout of a repo under test on a different commit or with uncommitted changes — gate-stop `VERIFY_SERVED_WRONG_WORKTREE`; `0` `LOCAL_URL`'s port serves this ticket's verify worktree (or a clean checkout of the same repo at the same commit) and no port serves another checkout — an extra port that is ok never stands in for an undecided `LOCAL_URL` port; `3` `LOCAL_URL`'s port could not be decided (no visible listener, unreadable cwd, container-served port, cwd outside any git checkout, or the served repo is not one this ticket touches) — a visible `gate-warn` `VERIFY_SERVED_UNVERIFIED`, proceed. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades the wrong-worktree gate-stop to a `gate-warn`; `VERIFY_SERVED_WORKTREE_STRICT=true` turns the `3`/`4` cases into a `VERIFY_SERVED_UNVERIFIED` gate-stop, for hosts where every served port is a local process. Run this check for `live-backend` mode too.
 
 ---
 

@@ -88,14 +88,14 @@ Added by planner-business-framing. Informational only: no ticket-auto consumer p
 
 ## Validation Rules
 
-1. **Block presence**: The ticket description must contain a `## Planner Context` heading followed by `**field:** value` lines.
+1. **Block presence**: The ticket description must contain a `## Planner Context` heading followed by `**field:** value` lines. Every consumer locates the block through `lib/planner-context-extract.sh` ([#513](https://github.com/willard-pro/claude-plugins/issues/513)): the heading must be a whole line (`## Planner Context`, trailing whitespace allowed), outside any ``` or `~~~` fence; the first such heading wins; the block runs to the next real `##` heading. `### Planner Context`, `## Planner Context (copy)`, a fenced copy, or a mid-sentence mention are never read. CR is stripped, so CRLF bodies behave like LF. A field is the first line inside the block that starts with `**Field:**`.
 2. **Required fields**: All 11 fields (Schema-Version + 10 content fields) must be present for all schema versions.
 3. **Confidence**: Float between 0.0 and 1.0 inclusive.
 4. **Strategy**: Must be exactly `Conservative`, `Balanced`, or `Innovative`.
 5. **Pre-approved**: Must be exactly `true` or `false`.
 6. **Generated**: Must parse as ISO 8601 timestamp.
 7. **Schema-Version tolerance**: Future versions (3+) that are higher than known versions produce a stderr warning but exit 0. Schema-Version 2 is the current known maximum.
-8. **Exploration Depth** (V2, optional): If present, must be exactly `quick-scan`, `standard`, or `deep`. Invalid values → exit 1.
+8. **Exploration Depth** (V2, optional): If present, must be exactly `quick-scan`, `standard`, or `deep`. Invalid values → exit 1. `planner_context_generate` does not emit this field (or any other V2 field), so gate-check Check 2.7d's depth-mismatch warning and `planned-feedback-write.sh`'s exploration-accuracy fields stay dormant for planner-generated blocks and fire only when a block carries the field.
 9. **Code Paths Traced** (V2, optional): If present, each entry must match `symbol:file` format (at least one `:`). Invalid entries → exit 1.
 10. **Version 1 backward compatibility**: Schema-Version 1 blocks remain valid. Exploration fields are only validated when Schema-Version ≥ 2.
 

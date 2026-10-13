@@ -19,6 +19,13 @@ if ! declare -f ticket_is_planned >/dev/null 2>&1; then
   [ -f "$_PFW_LIB_DIR/manifest-read.sh" ] && source "$_PFW_LIB_DIR/manifest-read.sh"
 fi
 
+# planner-context-extract.sh is the shared Planner Context block reader
+# (GitHub #513). Guarded the same way.
+if ! declare -f planner_context_field >/dev/null 2>&1; then
+  _PFW_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  [ -f "$_PFW_LIB_DIR/planner-context-extract.sh" ] && source "$_PFW_LIB_DIR/planner-context-extract.sh"
+fi
+
 # ── Main entry point ────────────────────────────────────────────────────────────
 
 planned_feedback_write() {
@@ -90,24 +97,26 @@ planned_feedback_write() {
   # description exactly as today — migrating that parser is not called for
   # anywhere in the plan"). The ticket manifest schema deliberately carries
   # none of them (only type/initiative/blocked_by/dispatch/outcome_label).
-  # This still-live `get_issue`+sed extraction is informational-only
-  # (feedback/drift computation, never a gate), and duplicates
-  # `_extract_field`'s canonical parsing rather than sharing it — a
-  # pre-existing drift risk, not something this migration introduces or
-  # fixes. Tolerated, not silently accepted: flagged here so a future
-  # reader doesn't mistake the duplication for an oversight.
+  # This still-live `get_issue` read is informational-only (feedback/drift
+  # computation, never a gate). The block and its fields are read through
+  # planner-context-extract.sh (GitHub #513) — the same anchored, fence-aware
+  # extractor every other consumer uses, and the field names
+  # planner_context_generate actually writes (`**Confidence:**`,
+  # `**Affected Services:**`), not the older `- Confidence:` bullet shape.
 
-  # Predicted confidence — extracted from Planner Context block in ticket description
-  local confidence_predicted=0
+  # Predicted confidence — the Planner Context block's **Confidence:** value
+  local confidence_predicted=0 description="" pc_block=""
   if declare -f get_issue >/dev/null 2>&1; then
-    local description
     description=$(tracker_read informational "" -- get_issue "$tid" | jq -r '.description // ""' 2>/dev/null || true)
     if [ -n "$description" ]; then
-      # Extract Confidence field from Planner Context block
-      local conf_line
-      conf_line=$(echo "$description" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\s*-\s*Confidence:' | head -1)
-      if [ -n "$conf_line" ]; then
-        confidence_predicted=$(echo "$conf_line" | grep -oP '[\d.]+' | head -1 || echo 0)
+      pc_block=$(printf '%s\n' "$description" | planner_context_extract)
+      local conf_val
+      conf_val=$(printf '%s\n' "$pc_block" | planner_context_field "Confidence")
+      # --argjson below needs a valid JSON number (no leading zeros, so
+      # `00.5` is refused rather than breaking the payload); anything else
+      # stays 0.
+      if [[ "$conf_val" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]]; then
+        confidence_predicted="$conf_val"
       fi
     fi
   fi
@@ -120,8 +129,9 @@ planned_feedback_write() {
 
   local services_touched="[]"
   # Extract from Planner Context block
-  if [ -n "$description" ]; then
-    services_touched=$(echo "$description" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\s*-\s*Affected Services:' | head -1 | sed 's/.*Affected Services:\s*//' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R -s 'split("\n") | map(select(length > 0))' 2>/dev/null || echo "[]")
+  if [ -n "$pc_block" ]; then
+    services_touched=$(printf '%s\n' "$pc_block" | planner_context_field "Affected Services" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | jq -R -s 'split("\n") | map(select(length > 0))' 2>/dev/null || echo "[]")
+    [ -n "$services_touched" ] || services_touched="[]"
   fi
 
   # ── Decision drift ───────────────────────────────────────────────────────────
@@ -133,10 +143,12 @@ planned_feedback_write() {
 
   local exploration_depth_declared="" exploration_depth_actual="" missed_symbols="[]" false_traces="[]" code_paths_traced=""
 
-  # Extract exploration fields from Planner Context block
-  if [ -n "$description" ]; then
-    exploration_depth_declared=$(echo "$description" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\s*\*\*Exploration Depth:\*\*' | head -1 | sed 's/.*\*\*Exploration Depth:\*\*\s*//' || true)
-    code_paths_traced=$(echo "$description" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\s*\*\*Code Paths Traced:\*\*' | head -1 | sed 's/.*\*\*Code Paths Traced:\*\*\s*//' || true)
+  # Extract exploration fields from Planner Context block (optional
+  # Schema-Version 2 fields — planner_context_generate does not emit them, so
+  # this section is dormant for generator-written blocks).
+  if [ -n "$pc_block" ]; then
+    exploration_depth_declared=$(printf '%s\n' "$pc_block" | planner_context_field "Exploration Depth")
+    code_paths_traced=$(printf '%s\n' "$pc_block" | planner_context_field "Code Paths Traced")
   fi
 
   # Compute exploration accuracy when the ticket was planned with exploration data

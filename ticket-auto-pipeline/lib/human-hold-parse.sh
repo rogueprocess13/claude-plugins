@@ -110,10 +110,13 @@ _hh_is_question_attr_key() {
 
 # Binding grammar (docs/human-hold-schema.md § Binding grammar). The binding
 # names the deterministic action an answer feeds; the consumer, never an
-# agent, performs it.
+# agent, performs it. `consensus-answer:cited:<n>` (#515) addresses a cited
+# artifact by its 1-based position in consensus.md's CITED_ARTIFACT list:
+# artifact names carry spaces and parentheses, so a name never appears in a
+# binding.
 _hh_binding_ok() {
   local LC_ALL=C
-  [[ "$1" =~ ^(note|flag:create|flag:project|flag:accept:[A-Z][A-Z0-9_]*|waive:[A-Za-z0-9-]+:[A-Z][A-Z0-9_]*|adr:[A-Za-z0-9-]+|grill:[a-z][a-z0-9_-]*)$ ]]
+  [[ "$1" =~ ^(note|flag:create|flag:project|flag:accept:[A-Z][A-Z0-9_]*|waive:[A-Za-z0-9-]+:[A-Z][A-Z0-9_]*|adr:[A-Za-z0-9-]+|grill:[a-z][a-z0-9_-]*|consensus-answer:cited:[1-9][0-9]{0,3})$ ]]
 }
 
 _hh_question_id_ok() {
