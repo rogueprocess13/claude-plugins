@@ -623,35 +623,196 @@ planner_cited_artifacts_questions() {
   done < <(planner_cited_artifacts_missing "$1")
 }
 
+# Parse one consensus.md line as a CITED_ARTIFACT open question. Prints
+#   <name>\x1f<kind>\x1f<value>\x1f<raw answer>
+# and returns 0, or returns 1 when the line is not such a question. kind ∈
+# exists | external | generate when the answer is well formed, else
+# "unresolved". The ONE reader of the line shape: the Crosscheck answers map,
+# the per-artifact headless questions and the answer writer (#515) all go
+# through it, so they cannot disagree about which line is question <n>.
+_planner_cited_answer_parse() {
+  local line name answer kind value
+  line=$(printf '%s' "$1" | tr -d '\r*')
+  [[ "$line" == *"CITED_ARTIFACT:"* ]] || return 1
+  line="${line#*CITED_ARTIFACT:}"
+  [[ "$line" =~ \`([^\`]+)\` ]] || return 1
+  name="${BASH_REMATCH[1]}"
+  answer=""
+  [[ "$line" == *"Answer:"* ]] && answer="${line##*Answer:}"
+  answer=$(_planner_testdata_trim "${answer//\`/}")
+  answer="${answer#_}"
+  answer="${answer%_}"
+  while [[ "$answer" =~ [.,\;:!]$ ]]; do answer="${answer%?}"; done
+  kind=$(_planner_testdata_lower "${answer%%:*}")
+  value=""
+  [[ "$answer" == *:* ]] && value=$(_planner_testdata_trim "${answer#*:}")
+  case "$kind" in
+  generate) [ "$answer" = "${answer%%:*}" ] || kind="unresolved" ;;
+  external | exists) [ -n "$value" ] || kind="unresolved" ;;
+  *) kind="unresolved" ;;
+  esac
+  printf '%s\037%s\037%s\037%s\n' "$name" "$kind" "$value" "$(_planner_testdata_safe "$answer")"
+}
+
+# Every CITED_ARTIFACT open question in consensus.md, in file order:
+#   <n>\x1f<name key>\x1f<name>\x1f<kind>\x1f<value>\x1f<raw answer>
+# n is the 1-based position the `consensus-answer:cited:<n>` binding names.
+# Usage: planner_cited_answer_lines <consensus.md>
+planner_cited_answer_lines() {
+  local consensus="$1" line parsed n=0 name kind value raw
+  [ -f "$consensus" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    parsed=$(_planner_cited_answer_parse "$line") || continue
+    n=$((n + 1))
+    IFS=$'\037' read -r name kind value raw <<<"$parsed"
+    printf '%s\037%s\037%s\037%s\037%s\037%s\n' "$n" "$(_planner_testdata_name_key "$name")" \
+      "$(_planner_testdata_safe "$name")" "$kind" "$value" "$raw"
+  done <"$consensus"
+}
+
 # Answers recorded in consensus.md, one per line:
 #   <lowercased name>\x1f<kind>\x1f<value>\x1f<raw answer>
-# kind ∈ exists | external | generate when the answer is well formed, else
-# "unresolved". Last line for a name wins.
+# Last line for a name wins.
 _planner_cited_answers() {
-  local consensus="$1" line qname answer kind value
-  [ -f "$consensus" ] || return 0
-  while IFS= read -r line; do
-    line=$(printf '%s' "$line" | tr -d '\r*')
-    [[ "$line" == *"CITED_ARTIFACT:"* ]] || continue
-    line="${line#*CITED_ARTIFACT:}"
-    [[ "$line" =~ \`([^\`]+)\` ]] || continue
-    qname=$(_planner_testdata_name_key "${BASH_REMATCH[1]}")
-    answer=""
-    [[ "$line" == *"Answer:"* ]] && answer="${line##*Answer:}"
-    answer=$(_planner_testdata_trim "${answer//\`/}")
-    answer="${answer#_}"
-    answer="${answer%_}"
-    while [[ "$answer" =~ [.,\;:!]$ ]]; do answer="${answer%?}"; done
-    kind=$(_planner_testdata_lower "${answer%%:*}")
-    value=""
-    [[ "$answer" == *:* ]] && value=$(_planner_testdata_trim "${answer#*:}")
-    case "$kind" in
-    generate) [ "$answer" = "${answer%%:*}" ] || kind="unresolved" ;;
-    external | exists) [ -n "$value" ] || kind="unresolved" ;;
-    *) kind="unresolved" ;;
-    esac
-    printf '%s\037%s\037%s\037%s\n' "$qname" "$kind" "$value" "$(_planner_testdata_safe "$answer")"
-  done <"$consensus"
+  local n key name kind value raw
+  while IFS=$'\037' read -r n key name kind value raw; do
+    printf '%s\037%s\037%s\037%s\n' "$key" "$kind" "$value" "$raw"
+  done < <(planner_cited_answer_lines "$1")
+}
+
+# Validate and normalise a headless answer to a cited-artifact question
+# (#515). The closed set is exists:<where> | external:<who> | generate — the
+# same kinds _planner_cited_answer_parse accepts — and the value must survive
+# that parser unchanged, so anything it would strip or misread is refused
+# rather than silently altered: `|` (the state log and Source grammar
+# separator), CR/LF/tab and every other control character, backticks and `*`
+# (stripped by the parser), a second "Answer:" (the parser reads the last
+# one), and trailing punctuation or `_`. Prints the normalised value (kind
+# lowercased, whitespace trimmed); on rejection prints the reason on stderr
+# and returns 1.
+# Usage: planner_cited_answer_normalize <value>
+PLANNER_CITED_ANSWER_VALUE_MAX=256
+planner_cited_answer_normalize() {
+  local v="$1" lower kind val
+  local LC_ALL=C
+  if [[ "$v" == *"|"* ]]; then
+    echo "a cited-artifact answer must not contain '|'" >&2
+    return 1
+  fi
+  if [[ "$v" =~ [[:cntrl:]] ]]; then
+    echo "a cited-artifact answer is one line: no CR, LF, tab or other control character" >&2
+    return 1
+  fi
+  if [[ "$v" == *'`'* ]] || [[ "$v" == *'*'* ]]; then
+    echo "a cited-artifact answer must not contain backticks or '*'" >&2
+    return 1
+  fi
+  v=$(_planner_testdata_trim "$v")
+  lower=$(_planner_testdata_lower "$v")
+  case "$lower" in
+  generate)
+    printf 'generate'
+    return 0
+    ;;
+  exists:* | external:*)
+    kind="${lower%%:*}"
+    val=$(_planner_testdata_trim "${v#*:}")
+    ;;
+  *)
+    echo "a cited-artifact answer must be exists:<where>, external:<who> or generate" >&2
+    return 1
+    ;;
+  esac
+  if [ -z "$val" ]; then
+    echo "${kind}: needs a value (${kind}:<$([ "$kind" = exists ] && echo where || echo who)>)" >&2
+    return 1
+  fi
+  if [[ "$(_planner_testdata_lower "$val")" == *"answer:"* ]]; then
+    echo "a cited-artifact answer must not contain 'Answer:'" >&2
+    return 1
+  fi
+  if [[ "$val" =~ [.,\;:!_]$ ]]; then
+    echo "a cited-artifact answer must not end with punctuation or '_'" >&2
+    return 1
+  fi
+  if [ "${#val}" -gt "$PLANNER_CITED_ANSWER_VALUE_MAX" ]; then
+    echo "a cited-artifact answer value is at most ${PLANNER_CITED_ANSWER_VALUE_MAX} bytes" >&2
+    return 1
+  fi
+  printf '%s:%s' "$kind" "$val"
+}
+
+# Rewrite the Answer: field of consensus.md's <n>th CITED_ARTIFACT question
+# (#515). The rest of the line, every other line and CRLF endings are kept;
+# a line with no Answer: field gets one appended. The rewritten line is
+# re-parsed before anything is written and must yield exactly the normalised
+# answer, so a value the reader would see differently never lands. Written
+# tmp + mv. Idempotent: the same value again rewrites the line to itself.
+# Exit: 0 written, 1 file missing or write failed, 2 invalid value or index,
+# 3 no question <n>, 4 round-trip mismatch.
+# Usage: planner_cited_answer_set <consensus.md> <n> <value>
+planner_cited_answer_set() {
+  local consensus="$1" want="$2" value
+  if ! [[ "$want" =~ ^[1-9][0-9]*$ ]]; then
+    echo "planner_cited_answer_set: index '${want}' is not a positive integer" >&2
+    return 2
+  fi
+  value=$(planner_cited_answer_normalize "$3") || return 2
+  [ -f "$consensus" ] || {
+    echo "planner_cited_answer_set: ${consensus} not found" >&2
+    return 1
+  }
+
+  local -a lines=()
+  mapfile -t lines <"$consensus"
+  local i n=0 hit=-1
+  for i in "${!lines[@]}"; do
+    _planner_cited_answer_parse "${lines[$i]}" >/dev/null || continue
+    n=$((n + 1))
+    if [ "$n" -eq "$want" ]; then
+      hit=$i
+      break
+    fi
+  done
+  if [ "$hit" -lt 0 ]; then
+    echo "planner_cited_answer_set: consensus.md has no cited-artifact question ${want} (it has ${n})" >&2
+    return 3
+  fi
+
+  local raw cr="" prefix tail emph new
+  raw="${lines[$hit]}"
+  if [[ "$raw" == *$'\r' ]]; then
+    cr=$'\r'
+    raw="${raw%$'\r'}"
+  fi
+  if [[ "$raw" == *"Answer:"* ]]; then
+    prefix="${raw%Answer:*}"
+    tail="${raw##*Answer:}"
+    # Keep a closing emphasis run (`**Answer:** PENDING`).
+    emph="${tail%%[!*_]*}"
+    new="${prefix}Answer:${emph} ${value}"
+  else
+    new="${raw%"${raw##*[![:space:]]}"} Answer: ${value}"
+  fi
+
+  local got gname gkind gvalue graw want_kind want_value=""
+  want_kind="${value%%:*}"
+  [[ "$value" == *:* ]] && want_value="${value#*:}"
+  got=$(_planner_cited_answer_parse "$new") || got=""
+  IFS=$'\037' read -r gname gkind gvalue graw <<<"$got"
+  if [ "$gkind" != "$want_kind" ] || [ "$gvalue" != "$want_value" ]; then
+    echo "planner_cited_answer_set: rewritten line would read back as '${gkind}:${gvalue}', not '${value}'" >&2
+    return 4
+  fi
+
+  lines[hit]="${new}${cr}"
+  local tmp="${consensus}.tmp.$$"
+  printf '%s\n' "${lines[@]}" >"$tmp" && mv -f "$tmp" "$consensus" || {
+    rm -f "$tmp"
+    echo "planner_cited_answer_set: could not write ${consensus}" >&2
+    return 1
+  }
+  return 0
 }
 
 # Comparison key for a cited-artifact name: lowercased, en/em dashes as "-",
