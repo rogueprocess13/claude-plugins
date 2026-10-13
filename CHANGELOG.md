@@ -34,12 +34,21 @@ and logged a quiet `skip`. That is the original silent false pass/fail.
   CLAUDE.md. Steps 1.6a4 and 1.6b call it in every block that creates worktrees, runs
   `env-start.sh`, or checks what is served. If 1.6a4 cannot resolve `REPOS_ROOT`, it gate-stops
   `VERIFY_WORKTREE_FAILED`. If it creates no worktree, it logs a `VERIFY_WORKTREE_NONE` gate-warn.
-- **No worktree to compare is no longer a quiet skip**: `verify_served_worktree_check` returns `4`
-  (was `3`), and Step 1.6b logs a `VERIFY_SERVED_UNVERIFIED` gate-warn.
+- **"Could not tell" is no longer a quiet skip**: no verify worktree to compare
+  (`verify_served_worktree_check` now returns `4`, was `3`), no visible listener, an unreadable
+  cwd, a cwd outside any git checkout (such as a container proxy), or a repo not under test are
+  all logged as a `VERIFY_SERVED_UNVERIFIED` gate-warn instead of a `served-worktree|skip` line.
+  Step 1.6a2 also resolves `REPOS_ROOT` before its GC sweep, so it never sweeps a relative
+  `./.verify-worktrees`.
 - **More than one served port**: a new optional CLAUDE.md field, `VERIFY_SERVED_PORTS` (ports or
   URLs, comma or space separated, env overrides the field), adds ports whose listener must also
   serve the ticket's code, such as an API server. `verify_served_check_ports` folds the per-port
-  results into one verdict (any wrong port gate-stops) and one log-safe summary line.
+  results into one verdict and one log-safe summary line. Any wrong port gate-stops. The check
+  passes only when `LOCAL_URL`'s port itself is ok; an ok extra port never covers an undecided
+  `LOCAL_URL` port.
+- The `VERIFY_SERVED_WRONG_WORKTREE` message tells the operator to stop the stale server or re-run
+  `env-start.sh --restart` for that service.
+- `verify_url_port` uses `|` as its sed delimiter; the pattern itself contains `#`.
 - **`VERIFY_SERVED_WORKTREE_STRICT`** (`config.sh`, default `false`): `true` turns "could not tell"
   (no visible listener, container port, no worktree to compare) into a `VERIFY_SERVED_UNVERIFIED`
   gate-stop, for hosts where every served port is a local process.

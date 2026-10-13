@@ -240,7 +240,8 @@ Cheap, zero-network, zero-LLM TTL sweep of old verify worktrees — runs unlocke
 
 ```bash
 source "$HOME/.claude/skills/lib/verify-worktree.sh"
-verify_worktree_gc
+# Fresh shell: without REPOS_ROOT the sweep would target ./.verify-worktrees.
+verify_env_init "{TICKET-ID}" ./CLAUDE.md && verify_worktree_gc
 ```
 
 `verify_worktree_gc` removes any `REPOS_ROOT/.verify-worktrees/{repo}/{TICKET_ID}` idle past `VERIFY_WORKTREE_TTL_HOURS` (config.sh, default 24h) — mirroring `hooks/tmp-sweep.sh`'s age-based approach, run inline here rather than as a separate hook since it only needs to fire when a verify run actually happens. It self-guards against the single-flight lock from Step 1.6a3 below: if the lock is currently held by *anyone*, it skips the sweep entirely rather than remove anything, since there's no way to tell from here which specific ticket's worktree a live holder might be serving files from — the lock is one global flight, not per-ticket. Worktrees are **not** torn down at the end of a normal run; they're left in place for reuse/debugging and reaped only by this TTL sweep.
@@ -387,7 +388,7 @@ case "$_served_rc" in
 0) echo "${_ts}|VERIFY|served-worktree|done|${_served_msg}" >> "$LOG_FILE" ;;
 1)
   [ "${VERIFY_SERVED_WORKTREE_ENFORCE:-true}" = "true" ] &&
-    _served_stop VERIFY_SERVED_WRONG_WORKTREE "the dev server is not serving this ticket's code. env-start.sh must serve VERIFY_REPO_PATH_<REPO> (see the contract above)"
+    _served_stop VERIFY_SERVED_WRONG_WORKTREE "the dev server is not serving this ticket's code. Stop the stale server on that port, or re-run env-start.sh with --restart for that service, so it starts from VERIFY_REPO_PATH_<REPO> (see the contract above)"
   echo "${_ts}|META|gate-warn|warn|VERIFY_SERVED_WRONG_WORKTREE — ${_served_msg} (VERIFY_SERVED_WORKTREE_ENFORCE=false)" >> "$LOG_FILE"
   ;;
 4)
@@ -398,12 +399,12 @@ case "$_served_rc" in
 *)
   [ "${VERIFY_SERVED_WORKTREE_STRICT:-false}" = "true" ] &&
     _served_stop VERIFY_SERVED_UNVERIFIED "could not tell which checkout the dev server serves (VERIFY_SERVED_WORKTREE_STRICT=true)"
-  echo "${_ts}|VERIFY|served-worktree|skip|${_served_msg}" >> "$LOG_FILE"
+  echo "${_ts}|META|gate-warn|warn|VERIFY_SERVED_UNVERIFIED — could not tell which checkout LOCAL_URL's port serves: ${_served_msg}" >> "$LOG_FILE"
   ;;
 esac
 ```
 
-Exit codes of `verify_served_check_ports` (most severe first): `4` no verify worktree exists for this ticket to compare with (almost always `REPOS_ROOT` unresolved, which also means `env-start.sh` got no exports) — loud `gate-warn` `VERIFY_SERVED_UNVERIFIED`, never a quiet skip; `1` some port serves a checkout of a repo under test on a different commit or with uncommitted changes — gate-stop `VERIFY_SERVED_WRONG_WORKTREE`; `0` at least one port serves this ticket's verify worktree (or a clean checkout of the same repo at the same commit) and none serves another checkout; `3` no port could be decided (no visible listener, container-served port, or the served repo is not one this ticket touches) — logged as `skip`, proceed. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades the wrong-worktree gate-stop to a `gate-warn`; `VERIFY_SERVED_WORKTREE_STRICT=true` turns the `3`/`4` cases into a `VERIFY_SERVED_UNVERIFIED` gate-stop, for hosts where every served port is a local process. Run this check for `live-backend` mode too.
+Exit codes of `verify_served_check_ports` (most severe first): `4` no verify worktree exists for this ticket to compare with (almost always `REPOS_ROOT` unresolved, which also means `env-start.sh` got no exports) — loud `gate-warn` `VERIFY_SERVED_UNVERIFIED`, never a quiet skip; `1` some port serves a checkout of a repo under test on a different commit or with uncommitted changes — gate-stop `VERIFY_SERVED_WRONG_WORKTREE`; `0` `LOCAL_URL`'s port serves this ticket's verify worktree (or a clean checkout of the same repo at the same commit) and no port serves another checkout — an extra port that is ok never stands in for an undecided `LOCAL_URL` port; `3` `LOCAL_URL`'s port could not be decided (no visible listener, unreadable cwd, container-served port, cwd outside any git checkout, or the served repo is not one this ticket touches) — a visible `gate-warn` `VERIFY_SERVED_UNVERIFIED`, proceed. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades the wrong-worktree gate-stop to a `gate-warn`; `VERIFY_SERVED_WORKTREE_STRICT=true` turns the `3`/`4` cases into a `VERIFY_SERVED_UNVERIFIED` gate-stop, for hosts where every served port is a local process. Run this check for `live-backend` mode too.
 
 ---
 

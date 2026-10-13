@@ -75,8 +75,10 @@ For `--env local`, VERIFY must test the ticket's branch, not whatever the primar
 3. **Served-checkout check** (Step 1.6b): for `LOCAL_URL`'s port and each `VERIFY_SERVED_PORTS`
    port, the listening process's cwd (`/proc/<pid>/cwd`, `lsof` fallback) is resolved to a git
    checkout and compared with the worktrees. Another checkout of a repo under test on a different
-   commit, or with uncommitted changes, gate-stops `VERIFY_SERVED_WRONG_WORKTREE`. If the check
-   cannot tell, it is logged. `VERIFY_SERVED_WORKTREE_STRICT=true` makes that a gate-stop too.
+   commit, or with uncommitted changes, gate-stops `VERIFY_SERVED_WRONG_WORKTREE`. The check passes
+   only when `LOCAL_URL`'s own port serves the ticket's code. If it cannot tell, it writes a
+   `VERIFY_SERVED_UNVERIFIED` gate-warn and verify goes on. `VERIFY_SERVED_WORKTREE_STRICT=true`
+   makes that a gate-stop.
 
 **What the project's `env-start.sh` must do** (it lives in the consuming workspace, not in this
 plugin):

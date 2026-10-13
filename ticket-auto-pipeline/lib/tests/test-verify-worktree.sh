@@ -703,7 +703,7 @@ test_env_init_keeps_set_repos_root() {
   (
     cd "$FIXTURE_DIR" || exit 1
     printf 'REPOS_ROOT = /nonexistent/elsewhere\n' >CLAUDE.md
-    verify_env_init "CRE-1" ./CLAUDE.md 2>/dev/null || exit 1
+    verify_env_init "TICKET-1" ./CLAUDE.md 2>/dev/null || exit 1
     [ "$REPOS_ROOT" = "$FIXTURE_DIR/repos" ]
   )
 }
@@ -711,7 +711,7 @@ _run "verify_env_init keeps an already-set REPOS_ROOT" test_env_init_keeps_set_r
 
 test_env_init_reads_ticket_env_file() {
   _setup_fixture
-  local tid="T419ENV$$" env_file
+  local tid="TESTENV$$" env_file
   env_file="/tmp/ticket-auto-${tid}-env.sh"
   printf 'export TICKET_ID="%s"\nexport REPOS_ROOT="%s"\nexport LOCAL_URL="http://x:1"\n' "$tid" "$REPOS_ROOT" >"$env_file"
   local rc=0
@@ -734,7 +734,7 @@ test_env_init_reads_claude_md() {
     unset REPOS_ROOT VERIFY_SERVED_PORTS
     cd "$FIXTURE_DIR" || exit 1
     printf '`REPOS_ROOT` = %s\n`VERIFY_SERVED_PORTS` = 8080, http://localhost:9000\n' "$FIXTURE_DIR/repos" >CLAUDE.md
-    verify_env_init "NO-ENV-FILE-419" ./CLAUDE.md 2>/dev/null || exit 1
+    verify_env_init "NO-ENV-FILE" ./CLAUDE.md 2>/dev/null || exit 1
     [ "$REPOS_ROOT" = "$FIXTURE_DIR/repos" ] || exit 1
     [ "$VERIFY_SERVED_PORTS" = "8080, http://localhost:9000" ] || exit 1
   )
@@ -747,7 +747,7 @@ test_env_init_env_overrides_served_ports_field() {
     cd "$FIXTURE_DIR" || exit 1
     printf 'VERIFY_SERVED_PORTS = 8080\n' >CLAUDE.md
     VERIFY_SERVED_PORTS=7070
-    verify_env_init "CRE-1" ./CLAUDE.md 2>/dev/null || exit 1
+    verify_env_init "TICKET-1" ./CLAUDE.md 2>/dev/null || exit 1
     [ "$VERIFY_SERVED_PORTS" = "7070" ]
   )
 }
@@ -758,11 +758,11 @@ test_env_init_fails_when_unresolvable() {
   (
     unset REPOS_ROOT
     cd "$FIXTURE_DIR" || exit 1
-    ! verify_env_init "NO-ENV-FILE-419" ./no-such-CLAUDE.md 2>/dev/null
+    ! verify_env_init "NO-ENV-FILE" ./no-such-CLAUDE.md 2>/dev/null
   ) || return 1
   (
     REPOS_ROOT="$FIXTURE_DIR/does-not-exist"
-    ! verify_env_init "CRE-1" ./no-such-CLAUDE.md 2>/dev/null
+    ! verify_env_init "TICKET-1" ./no-such-CLAUDE.md 2>/dev/null
   )
 }
 _run "verify_env_init fails when REPOS_ROOT is unset or not a directory" test_env_init_fails_when_unresolvable
@@ -772,13 +772,13 @@ test_exports_after_env_init_in_fresh_shell() {
   # VERIFY_REPO_PATH_* at all, so env-start.sh served the primary checkout.
   _setup_fixture
   local wt_path
-  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  wt_path=$(ensure_verify_worktree "TICKET-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
   (
     unset REPOS_ROOT
     cd "$FIXTURE_DIR" || exit 1
     printf 'REPOS_ROOT=%s\n' "$FIXTURE_DIR/repos" >CLAUDE.md
-    verify_env_init "NO-ENV-FILE-419" ./CLAUDE.md 2>/dev/null || exit 1
-    out=$(verify_worktree_exports "CRE-1")
+    verify_env_init "NO-ENV-FILE" ./CLAUDE.md 2>/dev/null || exit 1
+    out=$(verify_worktree_exports "TICKET-1")
     unset VERIFY_REPO_PATH_MY_SERVICE
     eval "$out"
     [ "${VERIFY_REPO_PATH_MY_SERVICE:-}" = "$wt_path" ]
@@ -823,14 +823,14 @@ _serve2_stop() {
 test_check_ports_any_wrong_wins() {
   _setup_fixture
   local wt_path
-  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  wt_path=$(ensure_verify_worktree "TICKET-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
   _serve_from "$wt_path" || return 1
   _serve2_from "$FIXTURE_REPO" || {
     _serve_stop
     return 1
   }
   local rc=0 out
-  out=$(verify_served_check_ports "CRE-1" "$SERVE_PORT" "$SERVE2_PORT" 2>/dev/null) || rc=$?
+  out=$(verify_served_check_ports "TICKET-1" "$SERVE_PORT" "$SERVE2_PORT" 2>/dev/null) || rc=$?
   _serve_stop
   _serve2_stop
   [ "$rc" = "1" ] || {
@@ -848,36 +848,102 @@ _run "multi-port check: ok on one port + wrong on another -> rc 1, one-line summ
 test_check_ports_ok_plus_undetermined() {
   _setup_fixture
   local wt_path free_port
-  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  wt_path=$(ensure_verify_worktree "TICKET-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
   _serve_from "$wt_path" || return 1
   free_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
   local rc=0
-  verify_served_check_ports "CRE-1" "$SERVE_PORT" "$free_port" >/dev/null 2>&1 || rc=$?
+  verify_served_check_ports "TICKET-1" "$SERVE_PORT" "$free_port" >/dev/null 2>&1 || rc=$?
   _serve_stop
   [ "$rc" = "0" ] || {
     echo "  expected rc 0, got $rc" >&2
     return 1
   }
   rc=0
-  verify_served_check_ports "CRE-1" "$free_port" >/dev/null 2>&1 || rc=$?
+  verify_served_check_ports "TICKET-1" "$free_port" >/dev/null 2>&1 || rc=$?
   [ "$rc" = "3" ] || {
     echo "  expected rc 3 for only undeterminable ports, got $rc" >&2
     return 1
   }
   rc=0
-  verify_served_check_ports "CRE-1" >/dev/null 2>&1 || rc=$?
+  verify_served_check_ports "TICKET-1" >/dev/null 2>&1 || rc=$?
   [ "$rc" = "3" ]
 }
-_run "multi-port check: ok + undetermined -> 0; only undetermined or none -> 3" test_check_ports_ok_plus_undetermined
+_run "multi-port check: primary ok + extra undetermined -> 0; only undetermined or none -> 3" test_check_ports_ok_plus_undetermined
+
+test_check_ports_extra_ok_does_not_cover_primary() {
+  # The primary port (LOCAL_URL's — what the browser hits) undecided while an
+  # extra port is fine must not pass: the extra says nothing about the primary.
+  _setup_fixture
+  local wt_path free_port
+  wt_path=$(ensure_verify_worktree "TICKET-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  _serve_from "$wt_path" || return 1
+  free_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+  local rc=0
+  verify_served_check_ports "TICKET-1" "$free_port" "$SERVE_PORT" >/dev/null 2>&1 || rc=$?
+  _serve_stop
+  [ "$rc" = "3" ] || {
+    echo "  expected rc 3 (primary undetermined, extra ok), got $rc" >&2
+    return 1
+  }
+  return 0
+}
+_run "multi-port check: primary undetermined + extra ok -> 3, never 0" test_check_ports_extra_ok_does_not_cover_primary
+
+test_url_port_fragment_and_query() {
+  [ "$(verify_url_port 'http://localhost:3000#frag')" = "3000" ] || return 1
+  [ "$(verify_url_port 'http://localhost#frag')" = "80" ] || return 1
+  [ "$(verify_url_port 'https://localhost:8443?a=b#c')" = "8443" ] || return 1
+  [ "$(verify_url_port 'http://user@host.test:4000/p')" = "4000" ] || return 1
+  return 0
+}
+_run "verify_url_port handles '#' fragments and queries" test_url_port_fragment_and_query
+
+test_skill_md_gc_resolves_repos_root() {
+  local skill_md="$LIB_DIR/../skills/ticket-verify/SKILL.md"
+  local section
+  section=$(awk '/^### 1\.6a2 /{f=1} /^### 1\.6a2b /{f=0} f' "$skill_md")
+  [ -n "$section" ] || return 1
+  printf '%s\n' "$section" | grep -q '^verify_env_init "{TICKET-ID}" ./CLAUDE.md && verify_worktree_gc' || {
+    echo "  Step 1.6a2 does not resolve REPOS_ROOT before verify_worktree_gc" >&2
+    return 1
+  }
+  # No bare GC call that would run with an unresolved REPOS_ROOT.
+  ! printf '%s\n' "$section" | grep -q '^verify_worktree_gc'
+}
+_run "SKILL.md Step 1.6a2 resolves REPOS_ROOT before the GC sweep" test_skill_md_gc_resolves_repos_root
+
+test_skill_md_undecided_is_a_gate_warn() {
+  # rc 3 used to be a quiet `served-worktree|skip`; it must be a visible warn.
+  local skill_md="$LIB_DIR/../skills/ticket-verify/SKILL.md"
+  local section
+  section=$(awk '/^### 1\.6b /{f=1} /^## Step 1\.7/{f=0} f' "$skill_md")
+  [ -n "$section" ] || return 1
+  if printf '%s' "$section" | grep -q 'served-worktree|skip'; then
+    echo "  Step 1.6b still logs an undecided check as a quiet skip" >&2
+    return 1
+  fi
+  local warns
+  warns=$(printf '%s\n' "$section" | grep -c 'gate-warn|warn|VERIFY_SERVED_UNVERIFIED' || true)
+  [ "$warns" -ge 2 ] || {
+    echo "  expected VERIFY_SERVED_UNVERIFIED gate-warns for rc 3 and rc 4, found $warns" >&2
+    return 1
+  }
+  printf '%s' "$section" | grep -q 'env-start.sh with --restart' || {
+    echo "  wrong-worktree message does not tell the operator how to recover" >&2
+    return 1
+  }
+  return 0
+}
+_run "SKILL.md Step 1.6b writes undecided checks as a VERIFY_SERVED_UNVERIFIED gate-warn" test_skill_md_undecided_is_a_gate_warn
 
 test_served_report_and_cli() {
   _setup_fixture
   local wt_path
-  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  wt_path=$(ensure_verify_worktree "TICKET-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
   _serve_from "$wt_path" || return 1
   local report rc=0
   report=$(bash "$LIB_DIR/verify-worktree.sh" served "http://127.0.0.1:$SERVE_PORT" 2>/dev/null)
-  bash "$LIB_DIR/verify-worktree.sh" check CRE-1 "$SERVE_PORT" </dev/null >/dev/null 2>&1 || rc=$?
+  bash "$LIB_DIR/verify-worktree.sh" check TICKET-1 "$SERVE_PORT" </dev/null >/dev/null 2>&1 || rc=$?
   _serve_stop
   printf '%s' "$report" | grep -q "checkout=$(cd "$wt_path" && pwd -P)" &&
     printf '%s' "$report" | grep -q "branch=feat/CRE-1-fix" || {

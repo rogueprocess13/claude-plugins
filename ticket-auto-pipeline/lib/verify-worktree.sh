@@ -26,10 +26,10 @@
 #   source lib/verify-worktree.sh
 #   verify_worktree_gc                                          # opportunistic TTL sweep
 #   path=$(ensure_verify_worktree "CRE-123" "/path/to/repo" "feat/CRE-123-fix")
-#   verify_env_init "CRE-123" ./CLAUDE.md                       # REPOS_ROOT in a fresh shell
+#   verify_env_init "TICKET-1" ./CLAUDE.md                      # REPOS_ROOT in a fresh shell
 #   eval "$(verify_worktree_exports "CRE-123")"                 # env-start.sh contract
 #   verify_served_worktree_check "CRE-123" "$(verify_url_port "$LOCAL_URL")"
-#   verify_served_check_ports "CRE-123" $(verify_served_ports "$LOCAL_URL" "$VERIFY_SERVED_PORTS")
+#   verify_served_check_ports "TICKET-1" $(verify_served_ports "$LOCAL_URL" "$VERIFY_SERVED_PORTS")
 #   bash verify-worktree.sh served 3000                         # CLI for env-status.sh
 #   release_verify_worktree "CRE-123"
 #   verify_worktree_gc
@@ -251,7 +251,8 @@ verify_worktree_exports() {
 # Prints nothing and returns 1 when it cannot be determined.
 verify_url_port() {
   local url="$1" port
-  port=$(printf '%s' "$url" | sed -nE 's#^[A-Za-z][A-Za-z0-9+.-]*://([^/@]*@)?[^/:?#]+:([0-9]+).*#\2#p')
+  # `|` as the s-command delimiter: the pattern itself uses `#` (in [^/:?#]).
+  port=$(printf '%s' "$url" | sed -nE 's|^[A-Za-z][A-Za-z0-9+.-]*://([^/@]*@)?[^/:?#]+:([0-9]+).*|\2|p')
   if [ -z "$port" ]; then
     case "$url" in
     https://*) port=443 ;;
@@ -470,20 +471,24 @@ verify_served_ports() {
   printf '%s' "${out% }"
 }
 
-# verify_served_check_ports <TICKET_ID> <port>...
+# verify_served_check_ports <TICKET_ID> <primary_port> [<port>...]
 # verify_served_worktree_check over several ports, folded into one verdict and
 # one single-line summary on stdout (safe to drop into a pipeline log MSG):
 #   ":3000 ok <cwd>; :8080 wrong <diagnostic>; :9000 undetermined <diagnostic>"
+# The FIRST port is the primary one (LOCAL_URL's — what the browser checks
+# actually hit); the rest are extras from VERIFY_SERVED_PORTS. An extra port
+# that serves the right code says nothing about the primary one, so it can
+# never stand in for it.
 # Return code, most severe first:
 #   4 — no verify worktrees for this ticket (nothing to compare; see above)
 #   1 — any port serves another checkout of a repo under test
-#   0 — at least one port serves this ticket's code and none serves another's
-#   3 — no port could be determined (or no ports were given)
+#   0 — the primary port serves this ticket's code and no port serves another's
+#   3 — the primary port could not be decided (or no ports were given)
 verify_served_check_ports() {
   local ticket_id="$1"
   shift || true
   local -a parts=()
-  local port msg rc any_ok=0 any_wrong=0
+  local port msg rc primary="${1:-}" primary_ok=0 any_wrong=0
   if [ "$#" -eq 0 ]; then
     echo "no ports to check (LOCAL_URL has no resolvable port and VERIFY_SERVED_PORTS is empty)"
     return 3
@@ -495,7 +500,7 @@ verify_served_check_ports() {
     case "$rc" in
     0)
       parts+=(":$port ok $msg")
-      any_ok=1
+      [ "$port" = "$primary" ] && primary_ok=1
       ;;
     1)
       parts+=(":$port wrong $msg")
@@ -512,7 +517,7 @@ verify_served_check_ports() {
   msg="${parts[*]}"
   printf '%s\n' "${msg//;/; }"
   [ "$any_wrong" -eq 1 ] && return 1
-  [ "$any_ok" -eq 1 ] && return 0
+  [ "$primary_ok" -eq 1 ] && return 0
   return 3
 }
 
