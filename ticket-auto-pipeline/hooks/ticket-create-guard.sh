@@ -42,11 +42,15 @@
 #   - missing jq, or a payload jq cannot parse: fail open (exit 0). Without a
 #     parse the guard cannot tell the tool or the command apart, and a broken
 #     guard must never block unrelated work.
-#   - awk missing or failing, or a command over TICKET_CREATE_GUARD_MAX_SCAN
-#     characters (default 65536; the hook has a 2s timeout): fail closed on
-#     the raw text only — deny when it names
-#     issueCreate and a sender anywhere, or starts a command with create_issue;
-#     allow everything else.
+#   - awk missing or failing, a command over TICKET_CREATE_GUARD_MAX_SCAN
+#     characters (default 65536; the hook has a 2s timeout), or a scan that
+#     ends inside an open quote, $( ) or ${: judged on the raw text only —
+#     deny when it names issueCreate and a sender anywhere, or starts a
+#     command with create_issue; allow everything else. This mode is weaker
+#     than the scanner: it cannot tell prose from code, so a gh issue/pr
+#     body that names both words is denied here (accepted: GitHub caps a body
+#     at 65536 characters anyway), and a create_issue that does not start a
+#     command line or follow ; & | ( ` is missed.
 #   - NUL bytes: bash drops them when the command is read from jq, so the
 #     scanner sees the command with NULs removed.
 #   - hook timeout or crash: Claude Code treats it as a non-blocking error and
@@ -144,8 +148,11 @@ _scan() {
       return 0
     }
     # lgword <text> — the identifier ending in linear_graphql at its first
-    # occurrence, or "". Same result as match(/[A-Za-z0-9_]*linear_graphql/),
-    # which backtracks quadratically on a long word in mawk (#516).
+    # occurrence, or "". Replaces match(/[A-Za-z0-9_]*linear_graphql/), which
+    # backtracks quadratically on a long word in mawk (#516). It finds a hit
+    # exactly when that match does, so the verdict is the same. Only the
+    # label in the deny reason can differ: match takes the longest run, which
+    # may span a second occurrence (xlinear_graphqlylinear_graphql).
     function lgword(tx,   j, k) {
       j = index(tx, "linear_graphql")
       if (!j) return ""
@@ -282,13 +289,19 @@ _scan() {
       all = ""
       for (p = 0; p <= pl; p++) all = all "\n" ptext[p]
       if (nontext && index(all, "issueCreate") > 0) {
+        # First sender found wins: *linear_graphql, then curl, wget, the host.
         hs_word = lgword(all)
-        if (hs_word != "") hs_word = hs_word
-        else if (match(all, /(^|[^A-Za-z0-9_])curl([^A-Za-z0-9_]|$)/)) hs_word = "curl"
-        else if (match(all, /(^|[^A-Za-z0-9_])wget([^A-Za-z0-9_]|$)/)) hs_word = "wget"
-        else if (index(all, "api.linear.app") > 0) hs_word = "api.linear.app"
+        if (hs_word == "") {
+          if (match(all, /(^|[^A-Za-z0-9_])curl([^A-Za-z0-9_]|$)/)) hs_word = "curl"
+          else if (match(all, /(^|[^A-Za-z0-9_])wget([^A-Za-z0-9_]|$)/)) hs_word = "wget"
+          else if (index(all, "api.linear.app") > 0) hs_word = "api.linear.app"
+        }
         if (hs_word != "") print "heredoc " hs_word
       }
+      # Input that ends inside a quote, $( ), backticks or ${ is something
+      # bash refuses to parse, or something the scanner misread. Either way
+      # its pipelines cannot be trusted, so the caller judges the raw text.
+      if (sp > 0 || bd[0] > 0) print "unbalanced"
     }
   '
 }
@@ -299,8 +312,9 @@ _raw_send() {
   printf '%s\n' "$cmd" | grep -oE -m1 '[A-Za-z0-9_]*linear_graphql|api\.linear\.app|(^|[^A-Za-z0-9_])(curl|wget)([^A-Za-z0-9_]|$)' | head -n1 | tr -cd 'A-Za-z0-9_.' || true
 }
 
-# fail_closed <why> — the scanner cannot judge this command (too long, or awk
-# failed or is missing). Judge the raw text instead: deny when it holds the
+# fail_closed <why> — the scanner cannot judge this command (too long, awk
+# failed or is missing, or the input ended unbalanced). Judge the raw text
+# instead: deny when it holds the
 # mutation and a sender anywhere, or starts a command with create_issue;
 # otherwise allow (#516).
 fail_closed() {
@@ -343,6 +357,12 @@ if [[ "$cmd" == *issueCreate* ]]; then
   sender\ *) deny "issueCreate with network sender ${hit#sender } in a non-text pipeline" ;;
   url\ *) deny "issueCreate with api.linear.app in a pipeline run by ${hit#url }" ;;
   esac
+fi
+
+# The scanner allowed it, but ended inside an open quote, substitution or
+# ${: fall back to the raw-text rule rather than trust its pipelines.
+if printf '%s\n' "$findings" | grep -qx 'unbalanced'; then
+  fail_closed "unbalanced quoting"
 fi
 
 exit 0

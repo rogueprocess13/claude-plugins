@@ -42,7 +42,11 @@ say so.
 - **Fail closed on raw text when the scanner cannot judge**: when awk is missing or fails, or the
   command is longer than `TICKET_CREATE_GUARD_MAX_SCAN` characters (default 65536, also GitHub's
   issue/PR body limit), the guard denies only when the raw text holds `issueCreate` and a sender,
-  or starts a command with `create_issue`. It allows everything else. Missing `jq` and an
+  or starts a command with `create_issue`. It allows everything else. A scan that ends inside an
+  open quote, `$( )` or `${` (input bash itself refuses to parse) gets the same raw-text rule. This
+  mode is weaker than the scanner: it cannot tell prose from code, so a `gh issue`/`gh pr create`
+  body naming both words is denied in it (accepted: GitHub rejects a body over 65536 characters
+  anyway). Missing `jq` and an
   unparseable payload still fail open, because without a parse the guard cannot tell which tool
   or command it is looking at.
 - The #501 acceptance cases (`gh issue`/`gh pr create` with a title or body that names the

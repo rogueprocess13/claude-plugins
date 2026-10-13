@@ -564,6 +564,36 @@ test_long_word_scanned_within_timeout() {
 test_long_gh_body_under_cap_allowed() {
   _allowed "$(_bash_payload "gh issue create --title x --body \"$(_pad 60000) issueCreate via curl\"")"
 }
+# Accepted false positive: over the cap the raw-text rule cannot tell a gh
+# body from a send. GitHub rejects a body over 65536 characters anyway.
+test_oversized_gh_pr_body_denied() {
+  local out
+  out=$(_guard "$(_bash_payload "gh pr create --title x --body \"$(_pad 70000) issueCreate via curl\"")")
+  echo "$out" | jq -e '.hookSpecificOutput.permissionDecisionReason | contains("could not judge (over 65536 characters)")' >/dev/null
+}
+
+# An unclosed ${ keeps the scanner's brace depth open to the end of the
+# command. bash refuses to parse every shape below, so none of them sends;
+# the guard must still never read one as text-only when it names a sender.
+test_unclosed_param_then_curl_denied() {
+  _denied_silent "echo \${x; $_S"
+}
+test_unclosed_param_newline_curl_denied() {
+  _denied_silent "$(printf 'echo ${x\n%s' "$_S")"
+}
+# The open ${ keeps $( ) open, so the next " opens a quote that swallows the
+# curl line. The scan ends unbalanced and the raw-text rule denies.
+test_unclosed_param_in_sub_dq_denied() {
+  _denied_silent "$(printf 'echo "$(echo ${x )"\n%s' "$_S")"
+}
+test_unclosed_param_mutation_only_allowed() {
+  _allowed_silent "echo \${x; echo issueCreate notes > notes.md"
+}
+# Accepted false positive: unbalanced input is judged on raw text, which
+# cannot tell this gh title from a send. Not run: gh would be invoked.
+test_unclosed_param_then_gh_prose_denied() {
+  _denied "$(_bash_payload "echo \${x; gh issue create --title 'issueCreate via curl' --body-file b.md")"
+}
 
 for fn in \
   test_ansi_c_escaped_quote_then_curl_denied \
@@ -595,6 +625,12 @@ for fn in \
   test_oversized_mutation_only_allowed \
   test_long_word_scanned_within_timeout \
   test_long_gh_body_under_cap_allowed \
+  test_oversized_gh_pr_body_denied \
+  test_unclosed_param_then_curl_denied \
+  test_unclosed_param_newline_curl_denied \
+  test_unclosed_param_in_sub_dq_denied \
+  test_unclosed_param_mutation_only_allowed \
+  test_unclosed_param_then_gh_prose_denied \
   test_awk_system_curl_denied \
   test_sed_e_curl_denied \
   test_rg_pre_curl_denied \
