@@ -371,11 +371,21 @@ _gate_planned_checks() {
     _plog "$LOG_FILE" "GATE" "planned-check" "done" "body complete for type $ticket_type"
 
     # 2.7d: Exploration depth mismatch detection (soft signal, never blocks)
-    local exploration_depth
-    exploration_depth=$(echo "$planned_desc" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\*\*Exploration Depth:\*\*' | head -1 | sed 's/.*\*\*Exploration Depth:\*\*\s*//' || true)
+    # Read through the shared extractor (planner-context-extract.sh, GitHub
+    # #513): the real anchored, fence-aware block only, first field line
+    # only — a `### Planner Context` or fenced copy above it is ignored.
+    # Exploration Depth is an optional Schema-Version 2 field
+    # (docs/planner-context-schema.md) that planner_context_generate does not
+    # emit, so this check is dormant for planner-generated blocks and fires
+    # only when a block carries the field. Kept rather than dropped: the
+    # field is still validated by planned-ticket-check.sh, and a block that
+    # declares a depth should still get the mismatch warning.
+    local pc_block exploration_depth
+    pc_block=$(_extract_planner_context_block "$planned_desc")
+    exploration_depth=$(printf '%s\n' "$pc_block" | planner_context_field "Exploration Depth")
     if [ -n "$exploration_depth" ] && [ -n "$complexity" ]; then
       local affected_services_str svc_count
-      affected_services_str=$(echo "$planned_desc" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\*\*Affected Services:\*\*' | head -1 | sed 's/.*\*\*Affected Services:\*\*\s*//' || true)
+      affected_services_str=$(printf '%s\n' "$pc_block" | planner_context_field "Affected Services")
       svc_count=$(echo "$affected_services_str" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -cv '^$' || true)
       svc_count=${svc_count:-1}
       [ "$svc_count" -ge 1 ] 2>/dev/null || svc_count=1

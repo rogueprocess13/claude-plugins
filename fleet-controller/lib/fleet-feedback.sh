@@ -16,6 +16,14 @@ if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
   done
 fi
 
+# planner-context-extract.sh is the shared Planner Context block reader
+# (GitHub #513) — bridged from ticket-auto-pipeline the same way, never copied.
+if ! declare -f planner_context_field >/dev/null 2>&1; then
+  for _lp in "$HOME/.claude/skills/lib/planner-context-extract.sh" "$_FEEDBACK_DIR/../../ticket-auto-pipeline/lib/planner-context-extract.sh"; do
+    [ -f "$_lp" ] && source "$_lp" && break
+  done
+fi
+
 # ── Helpers ──────────────────────────────────────────────────────────────────────
 
 # The ticket's initiative, read from its local manifest (tracker-planner-
@@ -389,10 +397,12 @@ fleet_aggregate_feedback() {
 
 # ── _fleet_confidence_predicted ──────────────────────────────────────────────────
 # Read the predicted confidence for a ticket from its Linear description's
-# Planner Context block (`- Confidence:` field). Single canonical parser for
-# this value — fleetd's GET /workers/<tid> shells out here rather than
-# re-implementing the block format in Python, and planned-feedback-write.sh
-# uses the same extraction when it emits META|planner-feedback entries.
+# Planner Context block (`**Confidence:**` field, as planner_context_generate
+# writes it). fleetd's GET /workers/<tid> shells out here rather than
+# re-implementing the block format in Python. The block and field are read
+# through ticket-auto-pipeline's planner-context-extract.sh (GitHub #513) —
+# the same anchored, fence-aware extractor planned-feedback-write.sh uses when
+# it emits META|planner-feedback entries, so the two cannot disagree.
 #
 # Args: tid
 # Stdout: the numeric value, or the literal "null" when unavailable
@@ -409,16 +419,16 @@ _fleet_confidence_predicted() {
     return 0
   fi
 
-  local conf_line
-  conf_line=$(echo "$description" | sed -n '/## Planner Context/,/^## /p' | grep -i '^\s*-\s*Confidence:' | head -1)
-  if [ -z "$conf_line" ]; then
+  if ! declare -f planner_context_field >/dev/null 2>&1; then
     echo "null"
     return 0
   fi
 
   local val
-  val=$(echo "$conf_line" | grep -oP '[\d.]+' | head -1 || true)
-  if [ -z "$val" ]; then
+  val=$(printf '%s\n' "$description" | planner_context_extract | planner_context_field "Confidence")
+  # Only a plain non-negative JSON number (no leading zeros) is a confidence —
+  # the HTTP API embeds this value as a JSON number.
+  if ! [[ "$val" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]]; then
     echo "null"
     return 0
   fi

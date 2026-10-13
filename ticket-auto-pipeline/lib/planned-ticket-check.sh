@@ -27,6 +27,24 @@ if ! declare -f ticket_is_planned >/dev/null 2>&1; then
   [ -f "$_PTC_LIB_DIR/manifest-read.sh" ] && source "$_PTC_LIB_DIR/manifest-read.sh"
 fi
 
+# planner-context-extract.sh is the one fence-aware markdown section reader
+# (GitHub #513); _extract_md_section/_strip_md_section below delegate to it.
+# Same sibling resolution as manifest-read.sh above, then the synced skills lib.
+if ! declare -f md_section_extract >/dev/null 2>&1; then
+  for _ptc_pcx in "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-context-extract.sh" \
+    "$HOME/.claude/skills/lib/planner-context-extract.sh"; do
+    if [ -f "$_ptc_pcx" ]; then
+      # shellcheck source=planner-context-extract.sh
+      source "$_ptc_pcx"
+      break
+    fi
+  done
+  unset _ptc_pcx
+fi
+if ! declare -f md_section_extract >/dev/null 2>&1; then
+  echo "planned-ticket-check: planner-context-extract.sh not found — section extraction unavailable" >&2
+fi
+
 # ── Configuration ───────────────────────────────────────────────────────────
 
 # Low-confidence floor: below it, a block that is not Pre-approved exits 2.
@@ -278,14 +296,11 @@ check_planned_ticket_description() {
 # callers specify the heading text without the leading "## ".
 # Prints the block body (everything between the heading and the next
 # ##-level heading), or nothing if the heading is absent.
+# Delegates to planner-context-extract.sh's md_section_extract (GitHub #513):
+# anchored whole-line heading, fence-aware, first real heading wins, CR
+# stripped. That file is the one place the block-delimiter rules live.
 _extract_md_section() {
-  local description="$1"
-  local heading="$2"
-  echo "$description" | awk -v heading="$heading" '
-    $0 ~ ("^## " heading "[[:space:]]*$") { found=1; next }
-    found && /^## / { exit }
-    found { print }
-  '
+  printf '%s\n' "$1" | md_section_extract "$2"
 }
 
 # _extract_planner_context_block <description>
@@ -300,15 +315,10 @@ _extract_planner_context_block() {
 
 # _strip_md_section <description> <heading>
 # Removes a markdown section (heading line through the next `## ` heading,
-# or end of text) from a markdown description. Inverse of _extract_md_section.
+# or end of text) from a markdown description. Inverse of _extract_md_section,
+# with the same fence-aware heading rules (md_section_strip).
 _strip_md_section() {
-  local description="$1"
-  local heading="$2"
-  echo "$description" | awk -v heading="$heading" '
-    $0 ~ ("^## " heading "[[:space:]]*$") { skip=1; next }
-    skip && /^## / { skip=0 }
-    !skip { print }
-  '
+  printf '%s\n' "$1" | md_section_strip "$2"
 }
 
 # _strip_planner_context_block <description>
