@@ -17,6 +17,55 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.64.5 (2026-10-13)
+
+VERIFY could still test the wrong worktree without saying so ([#419](https://github.com/willard-pro/claude-plugins/issues/419)).
+0.62.25 handed `env-start.sh` the ticket's verify worktree as `VERIFY_REPO_PATH_<REPO>` and
+gate-stopped `VERIFY_SERVED_WRONG_WORKTREE` when the process on `LOCAL_URL`'s port ran from
+another checkout. Both halves read every path from `REPOS_ROOT`, and each SKILL.md bash block is
+a fresh shell that need not have it. With `REPOS_ROOT` unset, Step 1.6a4 created no worktree but
+still logged "worktrees ready", `verify_worktree_exports` printed no `VERIFY_REPO_PATH_*` line, so
+`env-start.sh` served the primary checkout, and the served-checkout check found nothing to compare
+and logged a quiet `skip`. That is the original silent false pass/fail.
+
+- **`verify_env_init <TID> [claude_md]`** (`lib/verify-worktree.sh`): resolves `REPOS_ROOT` in the
+  calling shell. First match wins: the environment, the `REPOS_ROOT` line of the ticket's env file
+  (read, never sourced), then the project CLAUDE.md field. Also fills `VERIFY_SERVED_PORTS` from
+  CLAUDE.md. Steps 1.6a4 and 1.6b call it in every block that creates worktrees, runs
+  `env-start.sh`, or checks what is served. If 1.6a4 cannot resolve `REPOS_ROOT`, it gate-stops
+  `VERIFY_WORKTREE_FAILED`. If it creates no worktree, it logs a `VERIFY_WORKTREE_NONE` gate-warn.
+- **"Could not tell" is no longer a quiet skip**: no verify worktree to compare
+  (`verify_served_worktree_check` now returns `4`, was `3`), no visible listener, an unreadable
+  cwd, a cwd outside any git checkout (such as a container proxy), or a repo not under test are
+  all logged as a `VERIFY_SERVED_UNVERIFIED` gate-warn instead of a `served-worktree|skip` line.
+  Step 1.6a2 also resolves `REPOS_ROOT` before its GC sweep, so it never sweeps a relative
+  `./.verify-worktrees`.
+- **More than one served port**: a new optional CLAUDE.md field, `VERIFY_SERVED_PORTS` (ports or
+  URLs, comma or space separated, env overrides the field), adds ports whose listener must also
+  serve the ticket's code, such as an API server. `verify_served_check_ports` folds the per-port
+  results into one verdict and one log-safe summary line. Any wrong port gate-stops. The check
+  passes only when `LOCAL_URL`'s port itself is ok; an ok extra port never covers an undecided
+  `LOCAL_URL` port.
+- The `VERIFY_SERVED_WRONG_WORKTREE` message tells the operator to stop the stale server or re-run
+  `env-start.sh --restart` for that service.
+- `verify_url_port` uses `|` as its sed delimiter; the pattern itself contains `#`.
+- **`VERIFY_SERVED_WORKTREE_STRICT`** (`config.sh`, default `false`): `true` turns "could not tell"
+  (no visible listener, container port, no worktree to compare) into a `VERIFY_SERVED_UNVERIFIED`
+  gate-stop, for hosts where every served port is a local process.
+- **What is served, for `env-status.sh`**: `bash ~/.claude/skills/lib/verify-worktree.sh served
+  <port|url>...` prints pid, cwd, checkout, branch, short sha and a dirty marker per listener.
+  `... check <TID> <port|url>...` returns the same verdict ticket-verify uses.
+- **`/ticket-env-check`**: validate mode warns when the project's `env-start.sh` does not read
+  `VERIFY_REPO_PATH_*`, and checks that `VERIFY_SERVED_PORTS` parses.
+- Step 1.6a4 names its exports with `verify_worktree_env_var`, the same mapping
+  `verify_worktree_exports` uses (every character outside `[A-Z0-9_]` becomes `_`).
+- Docs: `VERIFY_WORKTREE_FAILED`, `VERIFY_SERVED_WRONG_WORKTREE` and `VERIFY_SERVED_UNVERIFIED`
+  added to the gate-stop table in `pipeline-log-format.md`. `docs/skills/ticket-verify.md` now
+  describes the worktree contract a project's `env-start.sh` must implement.
+
+The project's own `env-start.sh` still has to honour `VERIFY_REPO_PATH_<REPO>`. That script lives
+in the consuming workspace, not in this repository.
+
 ## 0.64.4 / ticket-planner 0.18.2 (2026-10-13)
 
 Per-artifact headless answers for `CITED_ARTIFACT_UNRESOLVED` ([#515](https://github.com/willard-pro/claude-plugins/issues/515)).

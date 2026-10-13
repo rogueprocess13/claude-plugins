@@ -23,6 +23,8 @@ Performs end-to-end browser verification of a ticket fix using Playwright. Loads
 | LINEAR_API_KEY | Environment variable | Yes |
 | LOCAL_URL | CLAUDE.md | Yes (for --env local) |
 | UAT_URL | CLAUDE.md | Yes (for --env uat) |
+| REPOS_ROOT | env, ticket env file, or CLAUDE.md (`verify_env_init`) | Yes (for --env local) |
+| VERIFY_SERVED_PORTS | env or CLAUDE.md — extra ports/URLs that must serve the ticket's code | No |
 | nav-hints.md | TICKETS_ROOT | No |
 | app-knowledge | Skill reference | No |
 
@@ -58,6 +60,37 @@ flowchart TD
     N --> O[Emit REMEDIATION_BRIEF]
     O --> P[Write to plan artifact]
 ```
+
+## Serving the ticket's own code (local env)
+
+For `--env local`, VERIFY must test the ticket's branch, not whatever the primary checkout under
+`REPOS_ROOT` has checked out. Three pieces make that hold (`lib/verify-worktree.sh`):
+
+1. **Isolated worktree** (Step 1.6a4): `ensure_verify_worktree` checks out the ticket's pushed
+   branch at `REPOS_ROOT/.verify-worktrees/<repo>/<TICKET_ID>`, under the single-flight verify lock.
+2. **Hand-off to `env-start.sh`** (Step 1.6b): in the same shell that runs the project's
+   `env-start.sh`, `verify_env_init` resolves `REPOS_ROOT` and `verify_worktree_exports` exports
+   `VERIFY_TICKET_ID` and one `VERIFY_REPO_PATH_<REPO>` per worktree (repo name upper-cased,
+   other characters mapped to `_`).
+3. **Served-checkout check** (Step 1.6b): for `LOCAL_URL`'s port and each `VERIFY_SERVED_PORTS`
+   port, the listening process's cwd (`/proc/<pid>/cwd`, `lsof` fallback) is resolved to a git
+   checkout and compared with the worktrees. Another checkout of a repo under test on a different
+   commit, or with uncommitted changes, gate-stops `VERIFY_SERVED_WRONG_WORKTREE`. The check passes
+   only when `LOCAL_URL`'s own port serves the ticket's code. If it cannot tell, it writes a
+   `VERIFY_SERVED_UNVERIFIED` gate-warn and verify goes on. `VERIFY_SERVED_WORKTREE_STRICT=true`
+   makes that a gate-stop.
+
+**What the project's `env-start.sh` must do** (it lives in the consuming workspace, not in this
+plugin):
+
+- For each repo it serves, use `VERIFY_REPO_PATH_<REPO>` when set, else `REPOS_ROOT/<repo>`. Every
+  path derived from the repo dir (worker dir, env files, build output) must follow it.
+- Restart a service already running from a different directory, instead of skipping it because
+  its port is up.
+- Optionally, show the served checkout in `env-status.sh` with
+  `bash ~/.claude/skills/lib/verify-worktree.sh served <port|url>...`.
+
+`/ticket-env-check` warns when the project's `env-start.sh` does not mention `VERIFY_REPO_PATH`.
 
 ## Related skills
 

@@ -67,6 +67,16 @@ VERIFY_LOCK_MAX_HOLD_SECS="${VERIFY_LOCK_MAX_HOLD_SECS:-3600}"
 # run gate-stops (VERIFY_SERVED_WRONG_WORKTREE) instead of producing a silent
 # false pass/fail. Set to false to downgrade that to a warning.
 VERIFY_SERVED_WORKTREE_ENFORCE="${VERIFY_SERVED_WORKTREE_ENFORCE:-true}"
+# By default a served-checkout check that cannot decide (no visible listener,
+# container-served port, no verify worktree to compare against) is logged and
+# verify proceeds. Set to true to gate-stop (VERIFY_SERVED_UNVERIFIED) instead:
+# for a host where every served port is a local process, "could not tell" is
+# itself a sign the stack is not running this ticket's code.
+VERIFY_SERVED_WORKTREE_STRICT="${VERIFY_SERVED_WORKTREE_STRICT:-false}"
+# Extra ports (or URLs) whose listener must also serve this ticket's code,
+# besides LOCAL_URL's port — comma or space separated. Usually declared as a
+# VERIFY_SERVED_PORTS field in the project CLAUDE.md (verify_env_init reads it);
+# this env var overrides that field. Left unset here on purpose.
 
 # ── Ticket audit ────────────────────────────────────────────────────────────
 
