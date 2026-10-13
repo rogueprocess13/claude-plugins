@@ -254,7 +254,10 @@ planner_answers_apply() {
     # sanitising would turn a CR/LF into a space and hide it.
     case "$binding" in
     consensus-answer:cited:*)
-      raw_value=$(printf '%s' "$a" | jq -r '.value')
+      # Sentinel: $( ) strips trailing newlines, which would let
+      # "exists:/x\n" through.
+      raw_value=$(printf '%s' "$a" | jq -j '.value, "."')
+      raw_value="${raw_value%.}"
       if ! why=$(planner_cited_answer_normalize "$raw_value" 2>&1 >/dev/null); then
         _planner_answers_reject 2 INVALID_VALUE "'$(planner_answers_sanitize "$id")': ${why}"
         return

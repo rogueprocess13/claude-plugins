@@ -642,6 +642,8 @@ _planner_cited_answer_parse() {
   answer=$(_planner_testdata_trim "${answer//\`/}")
   answer="${answer#_}"
   answer="${answer%_}"
+  # `_Answer:_ x` leaves "_ x": trim again after the emphasis goes.
+  answer=$(_planner_testdata_trim "$answer")
   while [[ "$answer" =~ [.,\;:!]$ ]]; do answer="${answer%?}"; done
   kind=$(_planner_testdata_lower "${answer%%:*}")
   value=""
@@ -806,8 +808,10 @@ planner_cited_answer_set() {
   fi
 
   lines[hit]="${new}${cr}"
+  # cp -p first so the tmp file, and therefore consensus.md after the mv,
+  # keeps the original mode; the redirect then truncates it in place.
   local tmp="${consensus}.tmp.$$"
-  printf '%s\n' "${lines[@]}" >"$tmp" && mv -f "$tmp" "$consensus" || {
+  cp -p "$consensus" "$tmp" && printf '%s\n' "${lines[@]}" >"$tmp" && mv -f "$tmp" "$consensus" || {
     rm -f "$tmp"
     echo "planner_cited_answer_set: could not write ${consensus}" >&2
     return 1

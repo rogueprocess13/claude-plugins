@@ -187,7 +187,7 @@ echo "--- invalid values are rejected ---"
 nl=$'\n'
 cr=$'\r'
 tab=$'\t'
-for bad in "external:a|b" "generate${nl}exists:x" "exists:/srv/x${cr}" "external:${tab}ops" "maybe" "exists:" \
+for bad in "external:a|b" "generate${nl}exists:x" "exists:/x${nl}" "generate${nl}${nl}" "exists:/srv/x${cr}" "external:${tab}ops" "maybe" "exists:" \
   "external:   " "generate:now" "exists:/srv/x." "external:ops_" "\`generate\`" "exists:**x**" \
   "exists:x Answer: generate" "pending" "seeded-by:pack" "none" ""; do
   answers "${WORK}/bad.json" 1 "${id2}=${bad}"
@@ -268,6 +268,31 @@ planner_crosscheck_run "$INIT" >/dev/null 2>&1
 f=$(findings)
 check "generate: no cited-artifact finding left (spec Source generate matches)" "$f" \
   bash -c '! grep -q "^fail|CITED_ARTIFACT" <<<"$1"' _ "$f"
+# By design an answered `generate` need is no longer exempt from the
+# test-data ownership check: Crosscheck now asks for an owning pack.
+check "generate: Crosscheck now blocks on TEST_DATA_UNOWNED naming both needs" "$f" \
+  bash -c 'grep -q "^fail|TEST_DATA_UNOWNED 2 test-data need(s) across 1 spec(s) \[import-validation\]" <<<"$1" && [ "$(grep -c "^fail|" <<<"$1")" -eq 1 ]' _ "$f"
+cat >"${ART}/specs/test-data-pack.md" <<'EOF'
+# test-data-pack
+
+## Acceptance Criteria
+
+- [ ] The pack seeds the client sample file and the rate table.
+
+## Test Data Provided
+
+- a synthetic client sample file and rate table, from scripts/seed.sh
+
+## Verification Notes
+
+1. Role: operator. Test data: none. Source: none.
+EOF
+write_spec seeded-by:test-data-pack seeded-by:test-data-pack
+planner_crosscheck_run "$INIT" >/dev/null 2>&1
+rc=$?
+f=$(findings)
+check "generate: clean once a pack owns the needs (seeded-by)" "rc=$rc findings=$f" \
+  bash -c '[ "$1" -eq 0 ] && ! grep -q "^fail|" <<<"$2"' _ "$rc" "$f"
 
 # ── flag:accept still works ────────────────────────────────────────────────
 
@@ -321,6 +346,18 @@ check "unit: invalid value is exit 2" "" test "$?" -eq 2
 cp "$U" "${WORK}/unit.before"
 planner_cited_answer_set "$U" 1 "external:ops" 2>/dev/null
 check "unit: the same value again is idempotent" "" cmp -s "${WORK}/unit.before" "$U"
+chmod 0640 "$U"
+planner_cited_answer_set "$U" 1 "exists:/srv/a" 2>/dev/null
+check "unit: file mode survives the tmp + mv" "$(stat -c %a "$U")" test "$(stat -c %a "$U")" = "640"
+planner_cited_answer_set "$U" 1 "external:ops" 2>/dev/null
+V="${WORK}/under.md"
+printf -- '- CITED_ARTIFACT: `u` — x. _Answer:_ PENDING\n' >"$V"
+planner_cited_answer_set "$V" 1 "external:ops team" 2>/dev/null
+rc=$?
+check "unit: underscore emphasis (_Answer:_) is written and read back" "rc=$rc $(cat "$V")" \
+  test "$rc" -eq 0 -a "$(cat "$V")" = '- CITED_ARTIFACT: `u` — x. _Answer:_ external:ops team'
+check "unit: the reader sees the _Answer:_ value" "$(_planner_cited_answers "$V" | tr '\037' ' ')" \
+  test "$(_planner_cited_answers "$V" | tr '\037' ' ')" = "u external ops team external:ops team"
 parsed=$(_planner_cited_answers "$U" | tr '\037' ' ')
 check "unit: the Crosscheck reader sees both answers" "$parsed" \
   test "$parsed" = "a external ops external:ops

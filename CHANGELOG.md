@@ -52,10 +52,12 @@ regenerate.
   hide a real disagreement. Once the specs match, Crosscheck re-runs clean.
 - **One line reader**: `_planner_cited_answer_parse` is now the single reader of a
   `CITED_ARTIFACT:` line. Crosscheck's answer map, the question numbering and the writer all
-  use it, so they agree on which line is question `n`. Crosscheck behaves as before, except that
-  a final consensus.md line with no trailing newline is now read.
+  use it, so they agree on which line is question `n`. Crosscheck behaves as before, with two
+  exceptions. A final consensus.md line with no trailing newline is now read. An answer written
+  with underscore emphasis (`_Answer:_ generate`) now reads as `generate`; before, the space left
+  after the `_` made it unresolved. The writer also keeps consensus.md's file mode.
 
-Tests: new `ticket-planner/lib/tests/test-planner-cited-answers.sh` (59 assertions, registered in
+Tests: new `ticket-planner/lib/tests/test-planner-cited-answers.sh` (66 assertions, registered in
 the Makefile) and two `test-human-hold-parse.sh` cases for the binding grammar.
 
 ## 0.64.2 (2026-10-13)
