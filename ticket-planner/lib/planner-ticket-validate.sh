@@ -79,6 +79,19 @@ planner_validate_ticket() {
     return 1
   fi
 
+  # Exactly one occurrence of the substring (#499): downstream readers are
+  # neither fence- nor anchor-aware (planned-ticket-check.sh's extractor;
+  # gate-check.sh / planned-feedback-write.sh / fleet-feedback.sh's
+  # `sed -n '/## Planner Context/,/^## /p'`), so a second copy — fenced,
+  # `### Planner Context`, or mid-sentence — could be read instead of the
+  # real block.
+  local pc_count
+  pc_count=$(printf '%s\n' "$description" | grep -oF '## Planner Context' | wc -l)
+  if [ "${pc_count:-0}" -ne 1 ]; then
+    echo "planner-validate: expected '## Planner Context' exactly once, found ${pc_count:-0}" >&2
+    return 1
+  fi
+
   # Resolve planned-ticket-check.sh
   local checker
   checker=$(planner_cache_find ticket-auto-pipeline "lib/planned-ticket-check.sh")

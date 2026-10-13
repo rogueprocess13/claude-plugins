@@ -648,10 +648,15 @@ ${state_dir}/artifacts/specs/<ticket-slug>.md. Each spec must include:
    - a **sibling spec slug** in this initiative — the spec filename minus \`.md\`, or an unambiguous \`-\`-bounded prefix of one (\`blocked-by:exc-1\` for \`exc-1-something.md\`); or
    - a **cross-initiative prerequisite** — the existing Linear identifier of the blocking ticket, e.g. \`blocked-by:WIL-83\`. Use this whenever work in this initiative cannot start until a ticket from *another* initiative is Done. Do not leave such a prerequisite as prose in the Description only: prose never reaches the ticket manifest's \`blocked_by\` array, so an unrecorded prerequisite is unenforceable.
 4. **## Signals** — a JSON code block with the 5 raw confidence signals (see below)
-5. **## Verification Notes** — per acceptance criterion, which role exercises it,
-   what test data it needs, and where that data comes from (see below)
+5. **## Verification Notes** — a table keyed by each acceptance criterion's verbatim
+   text: role, test data, where that data comes from (Source), expected value,
+   verifiable (see below)
 6. **## Test Data Provided** — only on a spec that produces test data other specs
-   (or itself) name with \`Source: seeded-by:<slug>\`: what it generates or seeds
+   (or itself) name with Source \`seeded-by:<slug>\`: what it generates or seeds
+
+Write them as \`## Title\`, \`## Description\` (the body sections follow as their own
+\`##\` headings), \`## Labels\`, \`## Signals\`, \`## Verification Notes\` — TicketGen reads
+each by heading.
 
 ### Ticket kind (planner-business-framing)
 
@@ -722,34 +727,84 @@ matches", "tickets (b)/(c)") anywhere in the body.
 "Business-oriented" does not mean "non-technical": technical work stays technical,
 and engineering precision is never traded for readability.
 
+### The Description is the ticket body, verbatim (issue #499)
+
+TicketGen does not rewrite anything: \`planner_ticket_body_compose\` copies every
+section of the spec into the ticket except its \`# \` heading, \`## Title\`,
+\`## Labels\`, \`## Signals\` and \`## Verification Notes\` (the \`## Description\`
+heading itself is dropped, its content kept), then appends a generated
+\`## Test Data Prerequisites\` and \`## Verification Plan\` (both from
+\`## Verification Notes\`), \`## Related Tickets\` (from the \`blocked-by:\` tokens) and
+the \`## Planner Context\` block. Do not write those four sections yourself (a
+hand-written \`## Test Data Prerequisites\` is replaced by the generated one, and is
+refused if it names a need the table does not record), and never write the text \`## Planner Context\` anywhere in the
+spec — not as a heading, not inside a code fence, not in a sentence — or the spec
+is refused. The Acceptance Criteria heading must appear exactly once, spelled
+exactly \`## Acceptance Criteria\`, outside any code fence, with at least one item. Everything else the ticket needs
+must already be in the Description, in its final wording:
+
+- **Required sections (issue #285)** — \`planned-ticket-body-check.sh\` rejects a body
+  missing any of these, and an empty heading fails like a missing one:
+  every type: \`## Acceptance Criteria\` (atomic \`- [ ]\` observable facts, one per
+  line), \`## Test User\` (role/email + password), \`## Scope\` (a
+  \`| Layer | Service | Area |\` table) — \`## Test Data Prerequisites\` is required
+  too, and is generated from the Verification Notes table's Test data and Source cells;
+  feature / improvement: \`## Navigation Path\` (click-by-click, never a URL);
+  bug: \`## Steps to Reproduce\` (numbered). Mirror ticket-auto-pipeline's
+  \`templates/{type}.md\` for wording and table shape.
+- **Labels line** — carries the ticket type as a bare token (\`feature\`, \`bug\`,
+  \`improvement\`, \`chore\` or \`security\`); TicketGen reads the type from there.
+- **Humanize the prose before handoff** — run the Description's free text through the
+  **humanizer** skill (inflated phrasing, hedging, stock transitions). Keep every fact
+  and claim intact, invent nothing, and preserve every \`##\` heading, table, checklist
+  item, the \`**Serves:**\`/\`**Who:**\`/\`**Need:**\`/\`**Outcome:**\`/\`**Enables:**\` labels
+  and every outcome id exactly as written. This pass happens here, once, so the
+  ticket body is a pure function of the spec.
+
 ### Verification Notes (planner-ready-by-construction)
 
-TicketGen builds each ticket's \`## Verification Plan\` table from this section — it
-is structured content for TicketGen to read back, the same relationship the
-\`## Signals\` JSON block already has to the confidence function below. It is NOT a
-draft of the final table (no Expected behavior wording, no Verifiable marks) — just
-the facts TicketGen cannot derive from the AC text alone: who exercises the
-criterion, what data it needs to exist first, and where that data comes from.
-
-One short line per Acceptance Criteria line, in the same order:
+TicketGen builds each ticket's \`## Verification Plan\` table from this section
+**deterministically, in bash** (\`planner_ticketgen_vplan\` — issue #499): no agent
+fills in or reorders a row later, so everything the table needs is written here.
+Rows are matched to Acceptance Criteria by the **Criterion text**, never by
+position — a numbered list stops lining up the moment an amendment inserts a
+criterion. The ticket's \`## Test Data Prerequisites\` is generated from the same
+rows (\`- <what>. Source: <source>\` per need). Write a table with one row per
+Acceptance Criteria line, whose \`Criterion\` cell repeats that AC line **verbatim**
+(without the \`- [ ]\` marker):
 
 \`\`\`
 ## Verification Notes
 
-1. Role: finance user. Test data: 5 seeded invoices with distinct dates. Source: seeded-by:inv-0-test-data-pack.
-2. Role: admin. Test data: none (read-only view).
-3. Role: finance user. Test data: the regional price list. Source: external:pricing team.
-4. Role: admin. Test data: an archived client record. Source: exists:staging seed set (clients.sql).
+| Criterion | Role | Test data | Source | Navigation path | Expected | Verifiable |
+|-----------|------|-----------|--------|-----------------|----------|------------|
+| Export downloads a file named invoices-{date}.csv | finance user | 5 seeded invoices with distinct dates | seeded-by:inv-0-test-data-pack | Billing > Invoices | invoices-2026-09-30.csv downloaded | yes |
+| The invoice list looks uncluttered | any authenticated user | none | — | Billing > Invoices | needs human judgement, no checkable value | no |
+| Totals use the regional price list | finance user | the regional price list | external:pricing team | Billing > Invoices | total shows 1,240.00 | yes |
+| Archived clients are hidden | admin | an archived client record | exists:staging seed set (clients.sql) | Clients | archived client absent from list | yes |
 \`\`\`
 
-When a criterion needs no special role or test data, still write the line with
-\`Role: any authenticated user. Test data: none.\` rather than omitting it — a missing
-numbered entry reads as "not considered," not "not needed."
+- **Criterion** — the AC line, character for character. When you edit an AC, edit
+  its row here too; a row whose criterion matches no AC line is reported and dropped,
+  and that AC's Verification Plan row says "not recorded in spec".
+- **Role / Test data** — who exercises it and what must exist first. When a criterion
+  needs neither, still write \`any authenticated user\` / \`none\` — a missing row reads
+  as "not considered", not "not needed".
+- **Source** — where the test data comes from (below); \`—\` when Test data is \`none\`.
+- **Navigation path** — optional; empty falls back to the spec's \`## Navigation Path\`.
+- **Expected** — the concrete, checkable value (a specific string, count, status or
+  state). For a judgement-based criterion, say why there is no checkable value.
+- **Verifiable** — \`yes\` only when Expected states a concrete, checkable value;
+  otherwise \`no\`. Never invent a false concrete value to earn a \`yes\`. At least one
+  row should be \`yes\` unless every criterion is genuinely non-checkable.
+- Escape a literal \`|\` inside a cell as \`\\|\`. Keep it one contiguous table directly
+  under the heading: no code fence, no sub-heading, no second table, every row with the
+  header's cell count — Crosscheck and TicketGen refuse anything else.
 
 **Source (#503) — required whenever Test data is not \`none\`.** "Described" is not
 "available": a ticket that lists data nobody produces fails at verification.
-\`Source:\` is the last field on the line and takes exactly one value from this
-closed set (full contract: docs/test-data-source.md):
+The row's \`Source\` cell takes exactly one value from this closed set (full
+contract: docs/test-data-source.md):
 
 - \`exists:<where>\` — it already exists; say where (an environment's seed set, a
   path, a named record).
@@ -766,7 +821,7 @@ closed set (full contract: docs/test-data-source.md):
 
 **Cited artifacts discovery.md lists as NOT FOUND** (#504): quote the artifact's
 name in backticks in the Test data text, exactly as discovery.md spells it, and
-write \`Source: generate\` — never \`exists:\` or \`external:\`. Nobody has said yet
+set its Source to \`generate\` — never \`exists:\` or \`external:\`. Nobody has said yet
 whether the file is coming or must be synthesised; the operator answers that at
 the Crosscheck stop, and Crosscheck checks the spec's Source against the answer.
 
@@ -886,10 +941,11 @@ On failure, write \`fail\` instead of \`done\`.
 
 ## Constraints
 - Every ticket spec must have a \`## Signals\` JSON block — the bash generator needs it.
-- Every ticket spec must have a \`## Verification Notes\` section, one line per Acceptance
-  Criteria line — TicketGen's Verification Plan table reads it (planner-ready-by-construction).
-- Every Verification Notes line whose Test data is not \`none\` ends with
-  \`Source: exists:<where> | seeded-by:<spec-slug> | external:<who> | generate\` (#503).
+- Every ticket spec must have a \`## Verification Notes\` table, one row per Acceptance
+  Criteria line with that line verbatim in its Criterion cell — TicketGen's Verification
+  Plan table is generated from it (planner-ready-by-construction, #499).
+- Every Verification Notes row whose Test data is not \`none\` has a Source cell:
+  \`exists:<where> | seeded-by:<spec-slug> | external:<who> | generate\` (#503).
 - Signals must be raw values from Discovery, not fabricated. Do NOT compute Confidence.
 - The description in each spec is the actual Linear ticket body — be precise.
 - Every spec's Signals carries \`Kind\` and \`Serves\`/\`Enables\`; every business spec
@@ -1053,7 +1109,7 @@ operator, who records \`Answer: exists:<where>\` (they supplied it),
 test-data Source for every spec that uses the artifact (docs/test-data-source.md),
 and Crosscheck blocks any spec whose Source disagrees with it
 (CITED_ARTIFACT_SOURCE_MISMATCH). Until the operator answers, every such spec's
-Verification Notes line stays \`Source: generate\`, with the artifact's name in
+Verification Notes row keeps Source \`generate\`, with the artifact's name in
 backticks. Do not fill in an \`external:<who>\` yourself: you would be inventing
 the \`<who>\`.
 
@@ -1678,191 +1734,54 @@ entity-creation phase that produces what the pipeline consumes.
 - **Idea:** ${safe_idea}
 - **State directory:** ${state_dir}
 
-## Resolve parent epic ID (deterministic — do not guess)
+## Your task (deterministic — issue #499)
 
-Extract the epic ID from the state log where Epic Gen recorded it, via the
-shared helper this phase and Refinement both use (\`planner_epic_id\`, in
-\`lib/planner-refinement.sh\`):
+Every ticket field is computed in bash from the spec files in
+${state_dir}/artifacts/specs/ — you do not compose, edit, humanize or reorder
+any ticket body, title, type, dependency set or Verification Plan row. Two runs
+over the same specs must produce byte-identical bodies, so nothing in this phase
+is left to judgement:
 
-\`\`\`bash
-$(_planner_prompt_repos_root_export)
-source "${_PLANNER_PROMPT_LIB_ROOT}/lib/planner-state.sh"
-source "${_PLANNER_PROMPT_LIB_ROOT}/lib/planner-refinement.sh"
-EPIC_ID=\$(planner_epic_id "${initiative_id}")
-if [ -z "\$EPIC_ID" ]; then
-  echo "ERROR: could not find EPIC_ID in state log — Epic Gen may have failed" >&2
-  planner_state_write "${initiative_id}" "TicketGen" "generate" "fail" "Missing EPIC_ID — cannot create tickets without parent epic"
-  exit 1
-fi
-echo "Parent epic: \$EPIC_ID"
-\`\`\`
+- **Creation order and dependencies** — \`planner_ticketgen_order\` /
+  \`planner_ticketgen_deps_json\` read each spec's \`## Labels\` \`blocked-by:<ref>\`
+  tokens (a sibling slug, an unambiguous \`-\`-bounded prefix of one, or an existing
+  Linear identifier for a cross-initiative prerequisite).
+- **Title / type** — \`planner_ticketgen_spec_title\` (the spec's \`## Title\`) and
+  \`planner_ticketgen_spec_type\` (the type token on its \`## Labels\` line).
+- **Body** — \`planner_ticketgen_body\` → \`planner_ticket_body_compose\`: every section of
+  the spec except its \`# \` heading, Title, Labels, Signals and Verification Notes
+  (and any hand-written Verification Plan / Related Tickets, which are regenerated), then
+  \`## Test Data Prerequisites\` (one \`- <what>. Source: <source>\` bullet per test-data
+  need in the Verification Notes table, #503 — it replaces a hand-written copy; a legacy
+  spec with no table keeps its own), \`## Verification Plan\`
+  (\`### Per-Criterion Verification\`, one row per Acceptance Criteria line in AC
+  order, matched to the spec's \`## Verification Notes\` by criterion text, never by position; the Test data
+  needed cell reads \`<what> (Source: <source>)\`), \`## Related Tickets\` (the created ids of this
+  ticket's dependencies), and the \`## Planner Context\` block (confidence and
+  Pre-approved derived from the spec's Signals JSON by \`planner_confidence_derive\`).
+- **Parent** — the epic identifier is resolved to its Linear UUID once, before the
+  loop; if that fails, no ticket is created and the phase fails.
 
-## Your task
+Run the script below **as a single bash invocation**, exactly as written. Your
+only other job is to report its output.
 
-1. Read the spec index (${state_dir}/artifacts/specs/INDEX.md), each ticket spec
-   in ${state_dir}/artifacts/specs/, and the proposal (${state_dir}/artifacts/proposal.md).
-2. For each ticket in dependency order (use topological sort — tickets with no
-   dependencies first), create a Linear ticket as a child of \${EPIC_ID}.
+## Body section contract (issue #285) — what validation checks
 
-## Body section contract (issue #285) — MANDATORY
+\`planner_validate_ticket\` runs ticket-auto-pipeline's
+\`planned-ticket-body-check.sh\` (\`check_planned_body\`, the same check gate-check.sh
+Check 2.7c runs) against every composed body before creation:
 
-ticket-auto-pipeline's gate-check (\`lib/gate-check.sh\` Check 2.7c, via
-\`lib/planned-ticket-body-check.sh\`'s \`check_planned_body\`) rejects any
-planned-labeled ticket whose body is missing required \`##\` sections for its
-type — several phases, and possibly hours, after this phase runs. Compose
-every ticket body against that same contract from the start, mirroring the
-canonical headings in ticket-auto-pipeline's \`templates/{type}.md\` files
-(read the file matching this ticket's type — \$TYPE_LABEL, derived from the
-spec the same way it is derived for the Labels list further below — for full
-authoring guidance: wording, table columns, placeholder shape):
+- every type: \`## Acceptance Criteria\`, \`## Test User\`, \`## Scope\`,
+  \`## Test Data Prerequisites\`, \`## Verification Plan\` (both generated here);
+- feature / improvement: also \`## Navigation Path\`;
+- bug: also \`## Steps to Reproduce\`.
 
-**Every ticket, regardless of type:**
-- \`## Acceptance Criteria\` — atomic \`- [ ]\` observable facts, one per line, no "and"
-- \`## Test User\` — role/email + password, non-empty
-- \`## Scope\` — a \`| Layer | Service | Area |\` table, non-empty
-- \`## Test Data Prerequisites\` — what must exist before verification can run
-  (planner-ready-by-construction: widened from bug-only — every type needs this,
-  matching \`templates/feature.md\`'s own shape). One bullet per item, each ending
-  with the \`Source: <kind>[:<value>]\` its spec's Verification Notes recorded
-  (#503 — \`exists:<where>\`, \`seeded-by:<spec-slug>\`, \`external:<who>\` or
-  \`generate\`), copied verbatim, never invented; ticket-auto's readiness check
-  reads it (docs/test-data-source.md)
-- \`## Verification Plan\` — see the dedicated section below (planner-ready-by-construction)
+A heading present but empty fails like a missing one. These sections come from
+the spec, so a ticket that fails validation is a spec defect: the script skips
+it and reports it — never patch the body by hand to get it through. The fix is
+to correct the spec and \`resume\`.
 
-**feature / improvement tickets also need:**
-- \`## Navigation Path\` — click-by-click (\`Menu > Submenu > Page\`), never a URL
-
-**bug tickets also need:**
-- \`## Steps to Reproduce\` — numbered steps
-
-A heading present but left empty fails the gate-check exactly like a missing
-heading — never emit a heading with no content under it. The pre-creation
-validation below checks this mechanically, so a ticket missing a section is
-caught here, not by ticket-auto's gate three phases later.
-
-## Body layout and ticket kind (planner-business-framing) — MANDATORY
-
-Each spec's \`## Signals\` JSON carries \`Kind\` (\`business\` | \`enabler\`),
-\`Serves\` and \`Enables\` (outcome ids from proposal.md's \`## Business Outcomes\`).
-Render every body in this order — the new sections are additive; every heading
-the contract above requires keeps its exact name:
-
-1. \`## Summary\` — what this ticket does, in plain language.
-2. \`## Outcome\` (Kind = business) **or** \`## Enables\` (Kind = enabler) — see below.
-3. The type template's own why/outcome headings, unchanged — \`## Background / Motivation\`
-   + \`## Proposed Behaviour\` (feature), \`## Background / Motivation\` + \`## Proposed Changes\`
-   (chore), \`## Expected Behaviour\` + \`## Actual Behaviour\` (bug), and so on per
-   \`templates/{type}.md\`. The readiness check (\`dor-check.sh\` \`INTENT_MISSING\`) matches
-   these by exact heading name — \`## Outcome\` and \`## Technical Context\` do not
-   satisfy it. Keep them in plain, behaviour-level language.
-4. \`## Technical Context\` — files, routes, tables, columns, symbols, line references
-   and repository evidence. Everything the implementer needs stays in the ticket —
-   it moves here rather than opening the body.
-5. \`## Acceptance Criteria\` and the remaining sections required above.
-
-**BUSINESS TICKET REPRESENTATION** (Kind = business). This ticket delivers a
-capability experienced by a user or business actor. The first part of the ticket
-explains the outcome before the implementation:
-
-\`\`\`
-## Outcome
-
-**Serves:** O1
-
-**Who:** <the actor affected by the change>
-
-**Need:** <what the actor needs to accomplish, or the problem they experience>
-
-**Outcome:** <the observable result that exists after this ticket is completed>
-\`\`\`
-
-Do not put implementation details in these fields — they belong in Technical
-Context. Do not invent actors or business value: the Business Outcome referenced
-by \`Signals.Serves\` is the source of truth, rendered short, not copied in full.
-Acceptance Criteria remain the executable contract and stay specific and
-verifiable.
-
-**ENABLER TICKET REPRESENTATION** (Kind = enabler). This ticket is technical
-work. Do not force it into a user-story format — no "As a developer…" narrative,
-and no manufactured user actor to make it look business-oriented. Technical
-terminology is appropriate. Explain: (1) what technical capability or change is
-delivered (Summary); (2) which business outcome it enables, when known, and (3)
-why the work is required (\`## Enables\`); (4) how the result is verified
-(Acceptance Criteria + Verification Plan).
-
-\`\`\`
-## Enables
-
-**Enables:** O1 — <short outcome reference>
-
-<why this technical work is required>
-\`\`\`
-
-When \`Signals.Enables\` is empty, write the technical reason in place of the
-outcome reference (e.g. "**Enables:** platform support — Spring Boot 2.x is out of
-support").
-
-Write for the ticket's reader, not about the planning process: no planner phase
-names or process narration ("this Specify pass", "post-Consensus", "verified: zero
-matches", "tickets (b)/(c)").
-
-## Verification Plan table (planner-ready-by-construction) — MANDATORY
-
-ticket-auto-pipeline's deterministic readiness check
-(\`lib/dor-check.sh\`/\`lib/vplan-parse.sh\`) already scores every ticket's
-\`## Verification Plan\` table; today nothing generates one, so every planned
-ticket reports \`VPLAN_MISSING\` advisory. Write the table in this **exact**
-shape — the parser matches the subsection heading literally:
-
-\`\`\`
-## Verification Plan
-
-### Per-Criterion Verification
-
-| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
-|---|-----------|-----------|------------------|-------------------|--------------------|------------|
-| 1 | Export downloads a file named invoices-{date}.csv | finance | Billing > Invoices | 5 seeded invoices | invoices-2026-09-30.csv downloaded | ✓ |
-\`\`\`
-
-Rules:
-1. **Enumerate every \`## Acceptance Criteria\` line first**, then write exactly
-   one table row per line, in the same order — never fewer rows than AC lines
-   (\`VPLAN_ROW_GAP\` fires when the table has fewer rows than AC lines).
-2. **Read the spec file's \`## Verification Notes\` section** (written by
-   Specify — see its prompt) for each AC's role and test data, and use that
-   recorded signal for the Role scope / Test data needed columns rather than
-   inventing one. Carry the line's \`Source: …\` into the Test data needed cell
-   (e.g. \`5 seeded invoices (Source: seeded-by:inv-0-test-data-pack)\`). When a spec has no \`## Verification Notes\` section (an
-   older spec, or a spec reused across \`resume\`), still write a complete
-   table from the AC text and ticket context alone — never omit the table or
-   fail because the signal is missing.
-3. **Mark Verifiable (\`✓\`) only when earned.** Mark a row \`✓\` only when its
-   Expected behavior cell states a concrete, checkable value (a specific
-   string, count, status, or state). Leave it blank — with the cell
-   explaining why — when the criterion is inherently judgment-based (visual
-   polish, "feels right"); never invent a false concrete value just to mark
-   a row. At least one row on the ticket should be \`✓\` unless every single
-   criterion is genuinely non-checkable (\`VPLAN_UNVERIFIABLE\` fires when
-   zero rows are marked).
-
-## Humanize the composed body (issue #285) — MANDATORY
-
-Once a ticket's \$description (the \`## Planner Context\` block plus every
-section above) is fully composed, and before it is passed to
-\`planner_validate_ticket\` or \`planner_linear_create_issue\`, run it through
-the **humanizer** skill to strip AI-sounding prose (inflated-importance
-phrasing, hedging, stock transitions — see that skill's own pattern catalog)
-from the free-text portions. Per the humanizer's own rules: keep every fact
-and claim intact, invent nothing, and preserve every \`##\` heading, table, and
-checklist item exactly as written, and leave the \`## Planner Context\` block's
-field values untouched — the humanizer rewrites prose inside sections, never
-heading text, table/checklist syntax, or Planner Context field values.
-Also keep the \`**Serves:**\`/\`**Who:**\`/\`**Need:**\`/\`**Outcome:**\`/\`**Enables:**\`
-labels and every outcome id (\`O1\`, \`O2\`…) exactly as written (planner-business-framing).
-
-## Pre-creation validation (MANDATORY)
-
-Before creating ANY ticket, run the validators:
+## The script
 
 \`\`\`bash
 # Plugin root resolved by the dispatcher — do not recompute it here.
@@ -1875,11 +1794,13 @@ export CLAUDE_PLUGIN_ROOT
 $(_planner_prompt_repos_root_export)
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-router.sh"
+source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-refinement.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-deps-check.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-context-gen.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-ticket-validate.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-linear-api.sh"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/branch-directive-gen.sh"
+source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-ticket-body.sh"
 
 # 0. Create gate — re-verified here from the state log, not assumed from the
 # dispatcher. This phase creates every ticket in the initiative; an unauthorized
@@ -1888,6 +1809,24 @@ if ! planner_create_gate_check "${initiative_id}" "TicketGen"; then
   planner_state_write "${initiative_id}" "TicketGen" "create-gate" "fail" "not authorized — resume with --create"
   exit 5
 fi
+
+# 0a. Parent epic, from the state log line Epic Gen recorded (planner_epic_id,
+# shared with Refinement).
+EPIC_ID=\$(planner_epic_id "${initiative_id}")
+if [ -z "\$EPIC_ID" ]; then
+  echo "ERROR: could not find EPIC_ID in state log — Epic Gen may have failed" >&2
+  planner_state_write "${initiative_id}" "TicketGen" "generate" "fail" "Missing EPIC_ID — cannot create tickets without parent epic"
+  exit 1
+fi
+echo "Parent epic: \$EPIC_ID"
+
+# 0a'. Resolve the epic to its Linear UUID once, before any ticket is
+# composed. If it cannot be resolved no child can be parented, so nothing is
+# created and the phase fails rather than skipping every ticket one by one.
+EPIC_UUID=\$(planner_linear_resolve_issue_id "\$EPIC_ID") || {
+  planner_state_write "${initiative_id}" "TicketGen" "parent" "fail" "cannot resolve epic \$EPIC_ID to a Linear id — no tickets created"
+  exit 1
+}
 
 # 0b. The team Epic Gen filed the epic against, interpolated from the state log.
 # Children must land on the same team, so this is read back rather than resolved
@@ -1900,183 +1839,157 @@ if [ -z "\$TEAM_ID" ]; then
   }
 fi
 
-# 1. Validate dependency graph is acyclic
-deps_json='{"TICKET-A":["TICKET-B"],"TICKET-B":[]}'  # from specs
+SPECS_DIR=\$(planner_ticketgen_specs_dir "${initiative_id}") || exit 5
+
+# 1. Dependency graph from the specs' Labels lines — acyclic, or ZERO tickets.
+deps_json=\$(planner_ticketgen_deps_json "\$SPECS_DIR")
 if ! planner_deps_check_acyclic "\$deps_json"; then
   planner_state_write "${initiative_id}" "TicketGen" "validate" "fail" "Cyclic dependencies — no tickets created"
   exit 1
 fi
 
-# 2. Validate all blocked-by targets exist in the ticket set. Targets that are
-# existing Linear identifiers (cross-initiative prerequisites, e.g. WIL-83) are
-# exempt from this check — they already name a real ticket outside this set.
-ticket_ids='["TICKET-A","TICKET-B"]'  # from specs
+# 2. Every sibling blocked-by target is a spec in this set. Existing Linear
+# identifiers (cross-initiative prerequisites, e.g. WIL-83) are exempt — they
+# already name a real ticket outside this set.
+ticket_ids=\$(planner_ticketgen_ids_json "\$SPECS_DIR")
 if ! planner_deps_validate_targets "\$deps_json" "\$ticket_ids"; then
   planner_state_write "${initiative_id}" "TicketGen" "validate" "fail" "Dangling dependencies — no tickets created"
   exit 1
 fi
 
-# 3. For each ticket spec, compute confidence FROM BASH (NOT from LLM):
-# Extract the Signals JSON block from the spec file
-signals_json=\$(sed -n '/\`\`\`json/,/\`\`\`/p' "\${spec_file}" | sed '1d;\$d' | jq -c)
-
-# Compute confidence deterministically
-confidence=\$(planner_confidence_derive "\$signals_json")
-
-# Determine pre-approved from threshold
-pre_approved="false"
-PLANNER_THRESHOLD="\${PLANNER_CONFIDENCE_THRESHOLD:-0.85}"
-if [ "\$(echo "\$confidence >= \$PLANNER_THRESHOLD" | bc -l 2>/dev/null || echo 0)" = "1" ]; then
-  pre_approved="true"
+# 3. Creation order: dependencies first, ties broken by slug.
+mapfile -t ORDER < <(planner_ticketgen_order "\$SPECS_DIR")
+if [ "\${#ORDER[@]}" -eq 0 ]; then
+  planner_state_write "${initiative_id}" "TicketGen" "validate" "fail" "No creation order — no specs or cyclic dependencies"
+  exit 1
 fi
 
-# Build full context JSON with computed values
-context_json=\$(jq -nc \\
-    --argjson signals "\$signals_json" \\
-    --arg confidence "\$confidence" \\
-    --arg pre_approved "\$pre_approved" \\
-    --arg initiative "${initiative_id}" \\
-    --arg epic "\$EPIC_ID" \\
-    --arg generated "\$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \\
-    '{
-    "Schema-Version": 1,
-    "Initiative": \$initiative,
-    "Epic": \$epic,
-    "Confidence": (\$confidence | tonumber),
-    "Strategy": (\$signals.Strategy // "Balanced"),
-    "Decision": (\$signals.Decision // ""),
-    "Affected Services": (\$signals.AffectedServices // ""),
-    "Target Symbols": (\$signals.TargetSymbols // ""),
-    "Pre-approved": (\$pre_approved == "true"),
-    "Generated": \$generated,
-    "Regenerate": false,
-    "Kind": (\$signals.Kind // ""),
-    "Serves": ((\$signals.Serves // []) | if type == "array" then join(",") else tostring end),
-    "Enables": ((\$signals.Enables // []) | if type == "array" then join(",") else tostring end)
-  }')
+planner_state_write "${initiative_id}" "META" "ticketgen" "start" "Generating \${#ORDER[@]} planned tickets"
+CREATED_IDS=()
+n_created=0
+n_skipped=0
+n_failed=0
 
-# Generate Planner Context block
-planner_context=\$(planner_context_generate "\$context_json")
-
-# 4. Validate each generated ticket description — Planner Context block
-#    structure (planned-ticket-check.sh) AND, via \$TYPE_LABEL, required body
-#    sections for this ticket's type (planned-ticket-body-check.sh — issue
-#    #285). description here is the humanized text from the step above: the
-#    Planner Context block plus every section from "Body section contract"
-#    above, filled in and non-empty.
-description="<full ticket description with Planner Context block and required section headings, humanized>"
-# Capture the return code WITHOUT negation: inside \`if ! cmd; then\`, \$? is
-# the inverted status (always 0), so the exit-3 hard stop would never fire.
-rc=0
-planner_validate_ticket "\$description" "true" "\$TYPE_LABEL" || rc=\$?
-if [ "\$rc" -ne 0 ]; then
-  if [ "\$rc" -eq 3 ]; then
-    echo "FATAL: planned-ticket-check.sh or planned-ticket-body-check.sh not available — cannot create any tickets"
-    planner_state_write "${initiative_id}" "TicketGen" "validate" "fail" "Validator unavailable (exit 3) — hard stop"
-    exit 3
-  fi
-  echo "Ticket validation failed — not creating"
-  continue  # Skip this ticket, report it
-fi
-\`\`\`
-
-## Per-ticket creation (idempotent)
-
-\`\`\`bash
-ENTITY_KEY="ticket-\${ticket_slug}"
-
-# Step 1: Record intent
-planner_record_intent "${initiative_id}" "TicketGen" "ticket" "\$ENTITY_KEY"
-
-# Step 2: Check if already created
-if planner_entity_exists "${initiative_id}" "\$ENTITY_KEY"; then
-  existing_ticket="\$(planner_entity_get_id "${initiative_id}" "\$ENTITY_KEY")"
-  echo "Ticket already exists: \${existing_ticket} (idempotent)"
-  # planner-refinement-phase: persist the body even on a re-entered skip —
-  # \$description was already composed for this ticket above, and Refinement
-  # has no other way to see it without a Linear fetch.
-  if [ -n "\$description" ]; then
-    mkdir -p "${state_dir}/tickets/\${existing_ticket}/planner" 2>/dev/null
-    printf '%s' "\$description" >"${state_dir}/tickets/\${existing_ticket}/planner/body.md"
-  fi
-  continue
-fi
-
-# Step 3: Create the ticket via Linear API (with retry wrapper), with an
-# empty label set (tracker-planner-and-fallback-cutover, 4.1). Type,
-# initiative linkage, and blocked-by are all local manifest facts now (step
-# 5 below writes them) — nothing downstream reads a live label for any of
-# them any more. \`Pre-approved\` similarly lives only in the Planner Context
-# block's own field, never a label.
-LABELS='[]'
-#
-# \${TICKET_DEPS} holds one entry per \`blocked-by:<ref>\` token on the spec's
-# \`## Labels\` line, each already resolved to a real Linear identifier:
-#   - a sibling-slug ref resolves to the ID of the ticket THIS run created for
-#     that slug (guaranteed to exist — tickets are created in dependency order);
-#   - a ref that is already a Linear identifier (TEAM-123) is a cross-initiative
-#     prerequisite and is used verbatim — there is no sibling to map it to.
-# \${TICKET_DEPS} itself still feeds the ticket manifest's blocked_by field
-# directly (step 5 below) — no label round-trip needed to get it there.
-
-TICKET_RESPONSE=\$(planner_linear_create_issue \\
-  "\$TEAM_ID" \\
-  "\$TICKET_TITLE" \\
-  "\$description" \\
-  "\$LABELS" \\
-  "\$EPIC_ID" \\
-  "${project_ref}" \\
-  "${milestone_ref}") || {
-  planner_state_write "${initiative_id}" "TicketGen" "create" "fail" "issueCreate failed for \${ticket_slug}"
-  continue
-}
-CREATED_TICKET_ID=\$(echo "\$TICKET_RESPONSE" | jq -r '.data.issueCreate.issue.identifier // empty')
-
-# Step 4: Mark created
-planner_entity_mark_created "${initiative_id}" "\$ENTITY_KEY" "\$CREATED_TICKET_ID"
-
-# Step 4b: Persist the body to the artifact plane (planner-refinement-phase)
-# — Refinement evaluates this file, never a live Linear fetch, on every run
-# whose body is unchanged since. A write failure here does not block
-# creation; Refinement's own scan fetches a missing body.md once, read-only.
-mkdir -p "${state_dir}/tickets/\${CREATED_TICKET_ID}/planner" 2>/dev/null
-printf '%s' "\$description" >"${state_dir}/tickets/\${CREATED_TICKET_ID}/planner/body.md" || {
-  echo "WARNING: failed to write body.md for \$CREATED_TICKET_ID" >&2
-}
-
-# Step 5: Write the ticket manifest (tracker-local-facts-read-migration,
-# tracker-planner-and-fallback-cutover 4.1) — the ONLY source for type/
-# initiative/blocked_by/dispatch now; every migrated call site
-# (gate-check.sh, fleet-dispatch.sh, fleet-detect.sh, ...) reads this and
-# nothing else. A failure here is a real gap, not a redundant write on top
-# of a label — but it still doesn't block ticket creation (the ticket
-# already exists in Linear by this point; failing the whole run over a
-# manifest write would leave a created-but-unrecorded ticket behind, worse
-# than a ticket the fleet doesn't yet know to dispatch).
-planner_manifest_source_helpers || true
-if declare -f write_ticket_manifest >/dev/null 2>&1; then
-  BLOCKED_BY_JSON=\$(printf '%s\n' \${TICKET_DEPS} | jq -R -s 'split("\n") | map(select(length > 0))')
-  write_ticket_manifest "\$CREATED_TICKET_ID" "${initiative_id}" "\$TYPE_LABEL" "\$BLOCKED_BY_JSON" || {
-    echo "WARNING: failed to write ticket manifest for \$CREATED_TICKET_ID" >&2
+for ticket_slug in "\${ORDER[@]}"; do
+  spec_file="\${SPECS_DIR}/\${ticket_slug}.md"
+  ENTITY_KEY="ticket-\${ticket_slug}"
+  TICKET_TITLE=\$(planner_ticketgen_spec_title "\$spec_file")
+  TYPE_LABEL=\$(planner_ticketgen_spec_type "\$spec_file") || {
+    echo "Ticket \${ticket_slug}: no ticket type on its Labels line — not creating"
+    n_failed=\$((n_failed + 1))
+    continue
   }
-  add_epic_manifest_child "\$EPIC_ID" "\$CREATED_TICKET_ID" || true
-fi
-\`\`\`
 
-## Post-creation verification
+  # 4. The full description, composed deterministically from the spec. Fails
+  # when a sibling dependency has no created ticket (it failed earlier in this
+  # run) — the dependent is then skipped, never created without its blocker.
+  description=\$(planner_ticketgen_body "${initiative_id}" "\$EPIC_ID" "\$ticket_slug") || {
+    echo "Ticket \${ticket_slug}: body could not be composed — not creating"
+    n_failed=\$((n_failed + 1))
+    continue
+  }
+  TICKET_DEPS=\$(planner_ticketgen_dep_refs "${initiative_id}" "\$spec_file" | cut -f1)
 
-After all tickets are created, verify them:
+  # 5. Validate: Planner Context block structure (planned-ticket-check.sh) and
+  # required body sections for \$TYPE_LABEL (planned-ticket-body-check.sh, #285).
+  # Capture the return code WITHOUT negation: inside \`if ! cmd; then\`, \$? is
+  # the inverted status (always 0), so the exit-3 hard stop would never fire.
+  rc=0
+  planner_validate_ticket "\$description" "true" "\$TYPE_LABEL" || rc=\$?
+  if [ "\$rc" -ne 0 ]; then
+    if [ "\$rc" -eq 3 ]; then
+      echo "FATAL: planned-ticket-check.sh or planned-ticket-body-check.sh not available — cannot create any tickets"
+      planner_state_write "${initiative_id}" "TicketGen" "validate" "fail" "Validator unavailable (exit 3) — hard stop"
+      exit 3
+    fi
+    echo "Ticket validation failed — not creating \${ticket_slug}"
+    n_failed=\$((n_failed + 1))
+    continue
+  fi
 
-\`\`\`bash
-created_ids='["PRO-101","PRO-102"]'  # collect actual created ticket IDs
-if planner_verify_tickets "${initiative_id}" "\$created_ids"; then
-  # All tickets verified. This phase no longer stamps the epic manifest's
-  # dispatch flag or writes a dispatch-gate line (planner-refinement-phase)
-  # — that stamp now belongs to the Refinement phase's gate
-  # (\`planner_refinement_gate\`), once every child also has a readiness
-  # verdict. TicketGen's own terminal line is this \`verify|done\` — the
-  # ONLY phase-named success line TicketGen writes.
-  planner_state_write "${initiative_id}" "TicketGen" "verify" "done" "N tickets verified."
+  # 6. Idempotency: record intent, then skip a ticket that already exists.
+  planner_record_intent "${initiative_id}" "TicketGen" "ticket" "\$ENTITY_KEY"
+  if planner_entity_exists "${initiative_id}" "\$ENTITY_KEY"; then
+    existing_ticket="\$(planner_entity_get_id "${initiative_id}" "\$ENTITY_KEY")"
+    echo "Ticket already exists: \${existing_ticket} (idempotent)"
+    # planner-refinement-phase: persist the body even on a re-entered skip —
+    # Refinement has no other way to see it without a Linear fetch.
+    # A body.md already on disk was written when the ticket was created and
+    # matches what Linear holds — keep it, even if this version of the
+    # composer would now produce different text. Only fill a missing one.
+    existing_body="${state_dir}/tickets/\${existing_ticket}/planner/body.md"
+    if [ ! -s "\$existing_body" ]; then
+      mkdir -p "\$(dirname "\$existing_body")" 2>/dev/null
+      printf '%s' "\$description" >"\$existing_body"
+    fi
+    CREATED_IDS+=("\$existing_ticket")
+    n_skipped=\$((n_skipped + 1))
+    continue
+  fi
+
+  # 7. Create, with an empty label set (tracker-planner-and-fallback-cutover,
+  # 4.1). Type, initiative linkage and blocked-by are local manifest facts
+  # (step 9); Pre-approved lives only in the Planner Context block.
+  LABELS='[]'
+  TICKET_RESPONSE=\$(planner_linear_create_issue \\
+    "\$TEAM_ID" \\
+    "\$TICKET_TITLE" \\
+    "\$description" \\
+    "\$LABELS" \\
+    "\$EPIC_UUID" \\
+    "${project_ref}" \\
+    "${milestone_ref}") || {
+    planner_state_write "${initiative_id}" "TicketGen" "create" "fail" "issueCreate failed for \${ticket_slug}"
+    n_failed=\$((n_failed + 1))
+    continue
+  }
+  CREATED_TICKET_ID=\$(echo "\$TICKET_RESPONSE" | jq -r '.data.issueCreate.issue.identifier // empty')
+  if [ -z "\$CREATED_TICKET_ID" ]; then
+    planner_state_write "${initiative_id}" "TicketGen" "create" "fail" "issueCreate returned no identifier for \${ticket_slug}"
+    n_failed=\$((n_failed + 1))
+    continue
+  fi
+  planner_entity_mark_created "${initiative_id}" "\$ENTITY_KEY" "\$CREATED_TICKET_ID"
+
+  # 8. Persist the body to the artifact plane (planner-refinement-phase) —
+  # Refinement evaluates this file, never a live Linear fetch. A write failure
+  # does not block creation; Refinement's scan fetches a missing body.md once.
+  mkdir -p "${state_dir}/tickets/\${CREATED_TICKET_ID}/planner" 2>/dev/null
+  printf '%s' "\$description" >"${state_dir}/tickets/\${CREATED_TICKET_ID}/planner/body.md" || {
+    echo "WARNING: failed to write body.md for \$CREATED_TICKET_ID" >&2
+  }
+
+  # 9. Ticket manifest (tracker-local-facts-read-migration) — the ONLY source
+  # for type/initiative/blocked_by/dispatch. A failure here is reported but
+  # does not fail the run: the ticket already exists in Linear.
+  planner_manifest_source_helpers || true
+  if declare -f write_ticket_manifest >/dev/null 2>&1; then
+    BLOCKED_BY_JSON=\$(printf '%s\n' \${TICKET_DEPS} | jq -R -s 'split("\n") | map(select(length > 0))')
+    write_ticket_manifest "\$CREATED_TICKET_ID" "${initiative_id}" "\$TYPE_LABEL" "\$BLOCKED_BY_JSON" || {
+      echo "WARNING: failed to write ticket manifest for \$CREATED_TICKET_ID" >&2
+    }
+    add_epic_manifest_child "\$EPIC_ID" "\$CREATED_TICKET_ID" || true
+  fi
+
+  planner_state_write "${initiative_id}" "META" "ticketgen" "step" "Created \${CREATED_TICKET_ID}: \${TICKET_TITLE}"
+  CREATED_IDS+=("\$CREATED_TICKET_ID")
+  n_created=\$((n_created + 1))
+done
+
+planner_state_write "${initiative_id}" "META" "ticketgen" "done" "\${n_created} tickets created, \${n_skipped} skipped (idempotent), \${n_failed} failed"
+
+# 10. Post-creation verification. This phase no longer stamps the epic
+# manifest's dispatch flag (planner-refinement-phase) — Refinement's gate does,
+# once every child also has a readiness verdict. TicketGen's own terminal line
+# is this verify|done — the ONLY phase-named success line TicketGen writes.
+created_ids=\$(printf '%s\n' "\${CREATED_IDS[@]}" | jq -R . | jq -sc 'map(select(length > 0))')
+# verify|done only when EVERY spec in the order produced a ticket (created
+# now or already existing): a skipped ticket would otherwise advance the
+# phase, and resume would never re-enter it to create the rest.
+if [ "\$n_failed" -gt 0 ] || [ \$((n_created + n_skipped)) -ne "\${#ORDER[@]}" ]; then
+  planner_state_write "${initiative_id}" "TicketGen" "verify" "fail" "\${n_failed} of \${#ORDER[@]} tickets not created — fix the reported specs and resume."
+elif planner_verify_tickets "${initiative_id}" "\$created_ids"; then
+  planner_state_write "${initiative_id}" "TicketGen" "verify" "done" "\${#CREATED_IDS[@]} tickets verified."
 else
   planner_state_write "${initiative_id}" "TicketGen" "verify" "fail" "Post-creation verification failed — some tickets missing manifests or not found in Linear."
 fi
@@ -2084,33 +1997,25 @@ fi
 
 ## State log
 
-Per-ticket generation progress is \`META\` — never a \`TicketGen|...\` phase-named
-line. Position derivation (\`planner_position_derive\`) stops at the first
-\`done\`/\`skip\` it meets walking the log backwards; a phase-named
-\`generate|done\` here would let it stop before the post-creation \`verify\`
-step even runs, exactly the bug planner-refinement-phase fixes. The ONLY
-phase-named line this phase ever writes is \`TicketGen|verify|done\` (success)
-or \`TicketGen|verify|fail\` (failure), from the "Post-creation verification"
-section above:
-
-\`\`\`bash
-planner_state_write "${initiative_id}" "META" "ticketgen" "start" "Generating N planned tickets"
-# ... for each ticket ...
-planner_state_write "${initiative_id}" "META" "ticketgen" "step" "Created TICK-1: <title>"
-# ...
-planner_state_write "${initiative_id}" "META" "ticketgen" "done" "N tickets created, M skipped (idempotent), K failed validation"
-\`\`\`
+Per-ticket generation progress is \`META|ticketgen\` — never a \`TicketGen|...\`
+phase-named line. Position derivation (\`planner_position_derive\`) stops at the
+first \`done\`/\`skip\` it meets walking the log backwards; a phase-named
+\`generate|done\` would let it stop before the post-creation \`verify\` step even
+runs (planner-refinement-phase). The ONLY phase-named line this phase writes on
+success is \`TicketGen|verify|done\`; every failure writes a \`TicketGen|...|fail\`
+line, as in the script.
 
 ## Constraints
-- NEVER create a ticket that fails validation. Report it and skip it.
-- Tickets must be created in dependency order — create no-dependency tickets first,
-  then tickets whose blockers already exist.
-- Confidence must vary across tickets — derive it from each ticket's signals.
+- NEVER create a ticket that fails validation, and never edit a composed body
+  to make it pass. Report the spec and skip it.
+- Tickets are created in \`planner_ticketgen_order\` order — no-dependency tickets
+  first, then tickets whose blockers already exist.
 - A cyclic dependency set produces ZERO tickets. Report the cycle and exit.
-- Every ticket's \`## Verification Plan\` table must have at least one row per
-  Acceptance Criteria line and at least one row marked \`✓\` unless every
-  criterion is genuinely non-checkable (planner-ready-by-construction).
+- Every ticket's \`## Verification Plan\` has one row per Acceptance Criteria line;
+  rows the spec's Verification Notes do not cover say "not recorded in spec" and
+  are reported as warnings — report them, do not fill them in.
 - Idempotency is mandatory — check existence before every Linear API call.
+- Report every WARNING and every skipped ticket the script prints.
 AGENT_PROMPT
 }
 

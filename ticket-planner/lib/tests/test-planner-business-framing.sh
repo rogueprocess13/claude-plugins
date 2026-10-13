@@ -257,7 +257,7 @@ base_signals='{"services_identified":2,"symbols_resolved":5,"prior_art_found":tr
 ext_signals=$(jq -c '. + {"Kind":"business","Serves":["O1"],"Enables":[]}' <<<"$base_signals")
 _signals_spec "$base_signals" >"${TMP_ROOT}/base-spec.md"
 _signals_spec "$ext_signals" >"${TMP_ROOT}/ext-spec.md"
-# Same extraction pipeline TicketGen's prompt uses.
+# Same extraction pipeline planner_ticketgen_signals (planner-ticket-body.sh) uses.
 base_extracted=$(sed -n '/```json/,/```/p' "${TMP_ROOT}/base-spec.md" | sed '1d;$d' | jq -c)
 ext_extracted=$(sed -n '/```json/,/```/p' "${TMP_ROOT}/ext-spec.md" | sed '1d;$d' | jq -c)
 c_base=$(planner_confidence_derive "$base_extracted")
@@ -304,67 +304,59 @@ else
   fail "EpicGen humanizer covers title" "humanizer line=$h create line=$c"
 fi
 
-# ── 5. TicketGen prompt ─────────────────────────────────────────────────────
+# ── 5. TicketGen: the body is composed in bash (#499) ───────────────────────
+#
+# TicketGen no longer carries the business-framing authoring rules: the spec's
+# Description is copied into the ticket verbatim by planner_ticket_body_compose,
+# so the rules live in Specify (checked above and here), and the Planner
+# Context pass-through is a lib function rather than a jq block in the prompt.
 
+source "${LIB_DIR}/planner-ticket-body.sh"
 TICKETGEN_PROMPT=$(planner_prompt_ticketgen "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
 
-echo "--- TicketGen prompt carries both representations ---"
-_prompt_has "TicketGen" "$TICKETGEN_PROMPT" \
-  'BUSINESS TICKET REPRESENTATION' \
-  'ENABLER TICKET REPRESENTATION' \
-  '**Serves:** O1' '**Enables:** O1' \
-  'no "As a developer…" narrative' \
-  'Acceptance Criteria remain the executable contract' \
-  'labels and every outcome id'
-
-echo "--- TicketGen layout: Summary < Outcome < template headings < Technical Context < AC ---"
-s=$(grep -n -m1 '^1\. `## Summary`' <<<"$TICKETGEN_PROMPT" | cut -d: -f1)
-o=$(grep -n -m1 '^2\. `## Outcome`' <<<"$TICKETGEN_PROMPT" | cut -d: -f1)
-b=$(grep -n -m1 '^3\. The type template' <<<"$TICKETGEN_PROMPT" | cut -d: -f1)
-t=$(grep -n -m1 '^4\. `## Technical Context`' <<<"$TICKETGEN_PROMPT" | cut -d: -f1)
-a=$(grep -n -m1 '^5\. `## Acceptance Criteria`' <<<"$TICKETGEN_PROMPT" | cut -d: -f1)
+echo "--- Specify layout: Summary < Outcome < template headings < Technical Context < AC ---"
+s=$(grep -n -m1 '^1\. `## Summary`' <<<"$SPECIFY_PROMPT" | cut -d: -f1)
+o=$(grep -n -m1 '^2\. `## Outcome`' <<<"$SPECIFY_PROMPT" | cut -d: -f1)
+b=$(grep -n -m1 '^3\. The type template' <<<"$SPECIFY_PROMPT" | cut -d: -f1)
+t=$(grep -n -m1 '^4\. `## Technical Context`' <<<"$SPECIFY_PROMPT" | cut -d: -f1)
+a=$(grep -n -m1 '^5\. `## Acceptance Criteria`' <<<"$SPECIFY_PROMPT" | cut -d: -f1)
 if [ -n "$s" ] && [ -n "$o" ] && [ -n "$b" ] && [ -n "$t" ] && [ -n "$a" ] &&
   [ "$s" -lt "$o" ] && [ "$o" -lt "$b" ] && [ "$b" -lt "$t" ] && [ "$t" -lt "$a" ]; then
-  pass "layout order in the contract text"
+  pass "layout order in the Specify contract text"
 else
-  fail "TicketGen layout order" "lines s=$s o=$o b=$b t=$t a=$a"
+  fail "Specify layout order" "lines s=$s o=$o b=$b t=$t a=$a"
 fi
 
-echo "--- TicketGen still requires every existing contract heading ---"
+echo "--- Specify now carries the full body-section contract ---"
+_prompt_has "Specify" "$SPECIFY_PROMPT" \
+  '## Acceptance Criteria' '## Test User' '## Scope' '## Test Data Prerequisites' \
+  '## Navigation Path' '## Steps to Reproduce' 'planned-ticket-body-check.sh'
+
+echo "--- TicketGen still names every contract heading it validates ---"
 _prompt_has "TicketGen" "$TICKETGEN_PROMPT" \
   '## Acceptance Criteria' '## Test User' '## Scope' '## Test Data Prerequisites' \
   '## Navigation Path' '## Steps to Reproduce' '## Verification Plan' '### Per-Criterion Verification' \
   '## Planner Context'
 
-echo "--- TicketGen's rendered context_json passes Kind/Serves/Enables into the Planner Context ---"
-# Run the prompt's own jq expression (as the agent would) against real Signals,
-# then feed the result to planner_context_generate.
-ctx_cmd=$(awk '/^context_json=\$\(jq -nc/{f=1} f{print} f&&/^  }'"'"'\)$/{exit}' <<<"$TICKETGEN_PROMPT")
-if [ -z "$ctx_cmd" ]; then
-  fail "extract context_json block from TicketGen prompt" "block not found"
+echo "--- planner_ticketgen_context_block passes Kind/Serves/Enables into the Planner Context ---"
+_ctx_spec() {
+  printf '## Signals\n\n```json\n%s\n```\n' "$1" >"${TMP_ROOT}/ctx-spec.md"
+}
+_ctx_spec '{"services_identified":1,"Strategy":"Balanced","Decision":"d","AffectedServices":"web","TargetSymbols":"a:b.ts:1","Kind":"business","Serves":["O1","O2"],"Enables":[]}'
+block=$(planner_ticketgen_context_block "INIT-TEST" "EPIC-1" "${TMP_ROOT}/ctx-spec.md")
+if grep -qxF '**Kind:** business' <<<"$block" && grep -qxF '**Serves:** O1,O2' <<<"$block" &&
+  ! grep -qF '**Enables:**' <<<"$block"; then
+  pass "business Signals → Kind/Serves lines in the generated block"
 else
-  signals_json='{"Strategy":"Balanced","Decision":"d","AffectedServices":"web","TargetSymbols":"a:b.ts:1","Kind":"business","Serves":["O1","O2"],"Enables":[]}'
-  confidence="0.9"
-  pre_approved="true"
-  EPIC_ID="EPIC-1"
-  context_json=""
-  eval "$ctx_cmd"
-  block=$(planner_context_generate "$context_json")
-  if grep -qxF '**Kind:** business' <<<"$block" && grep -qxF '**Serves:** O1,O2' <<<"$block" &&
-    ! grep -qF '**Enables:**' <<<"$block"; then
-    pass "business Signals → Kind/Serves lines in the generated block"
-  else
-    fail "context_json pass-through (business)" "context=$context_json block=$block"
-  fi
+  fail "context block pass-through (business)" "block=$block"
+fi
 
-  signals_json='{"Strategy":"Balanced","Decision":"d","AffectedServices":"web","TargetSymbols":"a:b.ts:1"}'
-  eval "$ctx_cmd"
-  block=$(planner_context_generate "$context_json")
-  if [ "$(grep -c '^\*\*' <<<"$block")" = "11" ]; then
-    pass "legacy Signals without Kind → classic 11-field block"
-  else
-    fail "context_json pass-through (legacy)" "block=$block"
-  fi
+_ctx_spec '{"services_identified":1,"Strategy":"Balanced","Decision":"d","AffectedServices":"web","TargetSymbols":"a:b.ts:1"}'
+block=$(planner_ticketgen_context_block "INIT-TEST" "EPIC-1" "${TMP_ROOT}/ctx-spec.md")
+if [ "$(grep -c '^\*\*' <<<"$block")" = "11" ]; then
+  pass "legacy Signals without Kind → classic 11-field block"
+else
+  fail "context block pass-through (legacy)" "block=$block"
 fi
 
 # ── Summary ─────────────────────────────────────────────────────────────────

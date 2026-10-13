@@ -1,0 +1,8 @@
+{
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["TEST_DATA_UNOWNED"],
+  "message_contains": ["import-upload.md#1 (generate)", "import-validation.md#1 (generate)", "[import-upload, import-validation]", "test-data-pack"],
+  "notes": "#499 + #503: testdata-generate-unowned with Verification Notes in the Criterion-table form (a Source column after Test data). The table rows must be parsed as needs — otherwise Crosscheck sees none and TEST_DATA_UNOWNED goes silent. The exists: row and the none row (— placeholder Source cell) are owned and must not appear."
+}

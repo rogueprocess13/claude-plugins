@@ -170,7 +170,7 @@ planner_epic_id() {
   [ -f "$log_file" ] || return 1
 
   local epic_id
-  epic_id=$(grep '|EpicGen|.*|done|EPIC_ID=' "$log_file" 2>/dev/null | tail -1 | sed 's/.*EPIC_ID=//')
+  epic_id=$(grep -E '^[^|]*\|EpicGen\|[^|]*\|done\|EPIC_ID=[^|]*$' "$log_file" 2>/dev/null | tail -1 | sed 's/^[^|]*|[^|]*|[^|]*|[^|]*|EPIC_ID=//')
   [ -n "$epic_id" ] || return 1
   echo "$epic_id"
 }
@@ -185,7 +185,7 @@ planner_refinement_legacy() {
   local log_file
   log_file=$(planner_state_log "$initiative_id" 2>/dev/null) || return 1
   [ -f "$log_file" ] || return 1
-  grep -q '|TicketGen|dispatch-gate|done|' "$log_file" 2>/dev/null
+  grep -qE '^[^|]*\|TicketGen\|dispatch-gate\|done\|' "$log_file" 2>/dev/null
 }
 
 # ── Deterministic scan (design.md Decision 5) ────────────────────────────

@@ -157,10 +157,13 @@ echo "--- Test 8: TicketGen confidence block is emitted, not executed ---"
 
 tg=$(planner_prompt_ticketgen "INIT-TEST" "an idea" "${TMPDIR}/state")
 
+# Since #499 the confidence/context/body work lives in planner-ticket-body.sh;
+# what must survive to the agent are the command substitutions that call it.
 for needle in \
-  'confidence=$(planner_confidence_derive' \
-  'planner_context=$(planner_context_generate' \
-  'signals_json=$(sed -n'; do
+  'deps_json=$(planner_ticketgen_deps_json' \
+  'mapfile -t ORDER < <(planner_ticketgen_order' \
+  'description=$(planner_ticketgen_body' \
+  'TYPE_LABEL=$(planner_ticketgen_spec_type'; do
   if grep -qF "$needle" <<<"$tg"; then
     pass "emits: ${needle}"
   else

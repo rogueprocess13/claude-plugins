@@ -420,18 +420,163 @@ assert_contains "describe: first artifact named" "$qtext" '`alpha file`'
 assert_contains "describe: second artifact named" "$qtext" '`beta file`'
 assert_contains "describe: says how to answer" "$qtext" "Answer: exists:<where>, external:<who> or generate"
 
+# ── Verification Notes table form (#499 Criterion table) ───────────────────
+
+echo "--- table form: unowned generate still raises TEST_DATA_UNOWNED ---"
+D=$(new_init INIT-table)
+write_spec "$D" "t-upload" "| Criterion | Role | Test data | Source | Expected | Verifiable |
+|-----------|------|-----------|--------|----------|------------|
+| Something observable. | operator | a 1,000-row import file | generate | row count 1000 | yes |
+| A rejected file shows the error. | operator | none | — | error shown | yes |
+| Prices use the regional list. | finance user | the regional price list | \`external:pricing team\` | total 10 | yes |"
+write_spec "$D" "t-validate" "| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|
+| Something observable. | operator | a 60MB import file | Source: generate. | rejected | yes |
+| Other. | admin | an archived client \\| state Archived | exists:staging clients.sql | hidden | yes |
+| Third. | admin | 5 invoices | | shown | yes |
+| Fourth. | admin | a record. **Source:** seeded-by:nowhere | | shown | yes |"
+out=$(planner_crosscheck_testdata INIT-table)
+rc=$?
+[ "$rc" -eq 1 ] && pass "table: returns 1" || fail "table: returns 1" "rc=$rc out=$out"
+assert_contains "table: one finding" "$out" "TEST_DATA_UNOWNED 4 test-data need(s) across 2 spec(s) [t-upload, t-validate]"
+assert_contains "table: generate in column" "$out" "t-upload.md#1 (generate)"
+assert_contains "table: Source: marker in cell" "$out" "t-validate.md#1 (generate)"
+assert_contains "table: empty Source cell is missing" "$out" "t-validate.md#3 (missing Source)"
+assert_contains "table: inline Source in Test data cell" "$out" "t-validate.md#4 (seeded-by:nowhere names no sibling spec)"
+assert_not_contains "table: none row with placeholder cell is clean" "$out" "t-upload.md#2"
+assert_not_contains "table: backticked external owned" "$out" "t-upload.md#3"
+assert_not_contains "table: escaped pipe stays in one cell" "$out" "t-validate.md#2"
+assert_not_contains "table: header and separator are not needs" "$out" "#0"
+
+echo "--- table form: owned by a pack is clean ---"
+D=$(new_init INIT-table-owned)
+write_spec "$D" "u-upload" "| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|
+| Something observable. | operator | a 1,000-row import file | seeded-by:u-pack | row count | yes |"
+write_spec "$D" "u-pack" "| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|
+| Something observable. | any authenticated user | none | — | ok | yes |" "## Test Data Provided
+
+- Generator script for import files."
+out=$(planner_crosscheck_testdata INIT-table-owned)
+rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && pass "table owned: clean" || fail "table owned: clean" "rc=$rc out=$out"
+
+echo "--- table form: legacy initiative — a Source column marks the spec as on-contract ---"
+D=$(new_init INIT-table-legacy legacy)
+write_spec "$D" "v-sourced" "| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|
+| Something observable. | operator | a file | generate | ok | yes |"
+write_spec "$D" "v-unsourced" "| Criterion | Role | Test data | Expected | Verifiable |
+|---|---|---|---|---|
+| Something observable. | operator | a file | ok | yes |"
+out=$(planner_crosscheck_testdata INIT-table-legacy)
+rc=$?
+[ "$rc" -eq 1 ] && pass "table legacy: Source-bearing spec blocks" || fail "table legacy: blocks" "rc=$rc out=$out"
+assert_contains "table legacy: blocking names sourced spec" "$out" "TEST_DATA_UNOWNED 1 test-data need(s) across 1 spec(s) [v-sourced]"
+assert_contains "table legacy: unsourced spec warns" "$out" "TEST_DATA_UNSOURCED_LEGACY 1 test-data need(s) across 1 legacy spec(s) [v-unsourced]"
+
+echo "--- table form: cited artifact needs are matched by backticked name ---"
+D=$(new_init INIT-table-cited)
+cat >"${D}/../discovery.md" <<'DISC'
+## Cited Artifacts
+
+- `client sample file` — NOT FOUND (searched: artifacts/, REPOS_ROOT)
+DISC
+write_spec "$D" "w-import" "| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|
+| Something observable. | operator | the \`client sample file\` | exists:share/sample.csv | ok | yes |"
+out=$(planner_crosscheck_cited_artifacts INIT-table-cited)
+assert_contains "table cited: Source checked against pending answer" "$out" "CITED_ARTIFACT_SOURCE_MISMATCH"
+assert_not_contains "table cited: the need references the artifact" "$out" "CITED_ARTIFACT_UNREFERENCED"
+
+echo "--- e10 BLOCKER: a fenced table or one after a sub-heading cannot hide a need ---"
+XHDR='| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|'
+XROW='| Something observable. | finance user | 5 seeded invoices | seeded-by:ghost-spec | ok | yes |'
+for v in plain fenced subsec; do
+  D=$(new_init "INIT-x-$v")
+  case $v in
+  plain) notes="$XHDR
+$XROW" ;;
+  fenced) notes="\`\`\`
+$XHDR
+$XROW
+\`\`\`" ;;
+  subsec) notes="### Per criterion
+
+$XHDR
+$XROW" ;;
+  esac
+  write_spec "$D" "x-api" "$notes"
+  out=$(planner_crosscheck_testdata "INIT-x-$v")
+  rc=$?
+  [ "$rc" -eq 1 ] && pass "e10 ${v}: blocks" || fail "e10 ${v}: blocks" "rc=$rc out=$out"
+  case $v in
+  plain) assert_contains "e10 plain: ghost seeded-by reported" "$out" "x-api.md#1 (seeded-by:ghost-spec names no sibling spec)" ;;
+  fenced) assert_contains "e10 fenced: structure reported" "$out" "x-api.md#notes (code fence inside Verification Notes)" ;;
+  subsec) assert_contains "e10 subsec: structure reported" "$out" "x-api.md#notes (sub-heading inside Verification Notes)" ;;
+  esac
+done
+
+echo "--- heading variants the shared reader accepts are checked like the plain one ---"
+for v in "### Verification Notes" "## Verification Notes (per AC)" "## **Verification Notes**"; do
+  D=$(new_init "INIT-hv")
+  rm -f "$D"/*.md
+  write_spec "$D" "h-one" "$XHDR
+| Something observable. | op | a file | generate | ok | yes |" "" "$v"
+  out=$(planner_crosscheck_testdata "INIT-hv")
+  assert_contains "heading '$v': need read" "$out" "h-one.md#1 (generate)"
+done
+
+echo "--- structure problems block even in a legacy initiative ---"
+D=$(new_init INIT-x-legacy legacy)
+write_spec "$D" "y-api" "$XHDR
+| Something observable. | op | a file | generate |"
+out=$(planner_crosscheck_testdata INIT-x-legacy)
+rc=$?
+[ "$rc" -eq 1 ] && pass "legacy: ragged row blocks" || fail "legacy: ragged row blocks" "rc=$rc out=$out"
+assert_contains "legacy: ragged row reported" "$out" "y-api.md#notes (1 Verification Notes table row(s) do not have the header's 6 cells"
+
+echo "--- e11: a hand-written prerequisite the table lacks blocks ---"
+D=$(new_init INIT-x-tdp)
+write_spec "$D" "z-api" "$XHDR
+| Something observable. | op | 5 seeded invoices | exists:staging | ok | yes |" "## Test Data Prerequisites
+
+- A staging tenant with SSO enabled. Source: exists:staging tenant acme
+- 5 seeded invoices. Source: exists:staging"
+out=$(planner_crosscheck_testdata INIT-x-tdp)
+assert_contains "e11: unrecorded prerequisite named" "$out" "names 'A staging tenant with SSO enabled', which no Verification Notes row records"
+assert_not_contains "e11: recorded prerequisite accepted" "$out" "names '5 seeded invoices'"
+
+echo "--- a Source value never carries a pipe ---"
+D=$(new_init INIT-x-pipe)
+write_spec "$D" "p-api" "$XHDR
+| Something observable. | op | rows | exists:prod \| staging | ok | yes |"
+out=$(planner_crosscheck_testdata INIT-x-pipe)
+assert_contains "pipe in Source value blocks" "$out" "p-api.md#1 (Source value contains '/')"
+
+echo "--- Resource: / Latest data: are prose, not markers ---"
+D=$(new_init INIT-x-res)
+write_spec "$D" "r-api" "1. Role: op. Test data: Resource: printer queue. Source: exists:staging printers.
+2. Role: op. Latest data: none. Test data: a file. Source: generate."
+needs=$(_planner_testdata_spec_needs "${D}/r-api.md" | cut -d$'\037' -f2,3 | tr '\037' '=' | paste -sd';' -)
+[ "$needs" = "Resource: printer queue=exists;a file=generate" ] &&
+  pass "Resource:/Latest data: stay in the text" || fail "marker boundary" "$needs"
+
 # ── Phase prompts ───────────────────────────────────────────────────────────
 
 echo "--- phase prompts carry the contract ---"
 source "${LIB_DIR}/planner-phase-prompts.sh"
 SD="${TMPDIR}/state"
 p_spec=$(planner_prompt_specify "INIT-1" "an idea" "$SD")
-assert_contains "Specify: Source field" "$p_spec" "Source: seeded-by:"
-assert_contains "Specify: closed enum" "$p_spec" "Source: exists:<where> | seeded-by:<spec-slug> | external:<who> | generate"
+assert_contains "Specify: Source column" "$p_spec" "| Criterion | Role | Test data | Source |"
+assert_contains "Specify: Source example" "$p_spec" "| seeded-by:inv-0-test-data-pack |"
+assert_contains "Specify: closed enum" "$p_spec" "exists:<where> | seeded-by:<spec-slug> | external:<who> | generate"
 assert_contains "Specify: Test Data Provided" "$p_spec" "## Test Data Provided"
 assert_contains "Specify: rule read from config" "$p_spec" 'planner_testdata_no_tests_rule "INIT-1"'
 assert_not_contains "Specify: no env read" "$p_spec" "PLANNER_NO_TESTS_RULE"
-assert_contains "Specify: NOT FOUND artifacts stay generate" "$p_spec" "write \`Source: generate\` — never \`exists:\` or \`external:\`"
+assert_contains "Specify: NOT FOUND artifacts stay generate" "$p_spec" "set its Source to \`generate\` — never \`exists:\` or \`external:\`"
 assert_contains "Specify: contract doc" "$p_spec" "docs/test-data-source.md"
 
 p_disc=$(planner_prompt_discovery "INIT-1" "an idea" "$SD")
@@ -442,11 +587,12 @@ assert_contains "Discovery: FOUND shape" "$p_disc" "— FOUND:"
 p_cons=$(planner_prompt_consensus "INIT-1" "an idea" "$SD")
 assert_contains "Consensus: Open Questions section" "$p_cons" "**Open Questions**"
 assert_contains "Consensus: question assembly in bash" "$p_cons" "planner_cited_artifacts_questions \"INIT-1\""
-assert_contains "Consensus: specs stay generate until answered" "$p_cons" "stays \`Source: generate\`"
+assert_contains "Consensus: specs stay generate until answered" "$p_cons" "keeps Source \`generate\`"
 assert_not_contains "Consensus: no pre-fill instruction" "$p_cons" "says \`Source: external:<who>\`"
 
 p_tg=$(planner_prompt_ticketgen "INIT-1" "an idea" "$SD" 2>/dev/null)
-assert_contains "TicketGen: Test Data Prerequisites carry Source" "$p_tg" "Source: <kind>[:<value>]"
+assert_contains "TicketGen: Test Data Prerequisites carry Source" "$p_tg" "\`- <what>. Source: <source>\`"
+assert_contains "TicketGen: Verification Plan cell carries Source" "$p_tg" "\`<what> (Source: <source>)\`"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

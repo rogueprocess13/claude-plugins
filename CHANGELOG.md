@@ -17,6 +17,79 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.18.0 (2026-10-12)
+
+Issue #499 — TicketGen is now deterministic. Its prompt handed the agent example values
+(`deps_json`, `ticket_ids`, `description`) and left it to work out the dependency set from each
+spec's `## Labels` tokens, compose the body, match `## Verification Notes` to Acceptance Criteria,
+and pass the epic identifier as `parentId`. Each of those let two runs over the same specs produce
+different bodies.
+
+- **New `lib/planner-ticket-body.sh`.** It computes the creation order (Kahn's algorithm, ties
+  broken by slug), the dependency set (sibling prefixes resolved to full slugs, external Linear
+  ids kept as they are), the title and type, the Planner Context block, and the full body
+  (`planner_ticket_body_compose` / `planner_ticketgen_body`). The body is every section of the
+  spec except its `# ` heading, `## Title`, `## Labels`, `## Signals` and `## Verification Notes`
+  (the `## Description` heading is dropped but its content kept; a hand-written Verification Plan
+  or Related Tickets is replaced). After it come a generated `## Verification Plan`,
+  `## Related Tickets` (created ids and titles of the dependencies) and the Planner Context.
+  `Generated` is the timestamp of the EpicGen `EPIC_ID=` line, not the clock. The same spec set
+  produces byte-identical bodies. The Signals JSON is read from the `## Signals` section only, and
+  a missing or unparseable block fails the ticket instead of falling back to `{}`. CRLF specs are
+  read the same as LF ones.
+- **Specs that downstream parsers would read differently are refused.** Composition stops for a
+  spec that contains the text `## Planner Context` anywhere (as a heading, `### Planner Context`,
+  inside a code fence or mid-sentence), or that does not have exactly one heading spelled
+  `## Acceptance Criteria`, outside a fence, with at least one item. Variants such as
+  `## acceptance criteria`, `## Acceptance Criteria (MVP)` and `##Acceptance Criteria` count as
+  Acceptance Criteria headings and are refused. `planner_validate_ticket` now also requires the text
+  `## Planner Context` to appear exactly once in the body.
+- **Verification Plan rows are matched to ACs by criterion text, never by position.** A
+  hand-amended numbered notes list does not follow AC order. Specify now writes
+  `## Verification Notes` as a table whose `Criterion` cell repeats each AC line word for word,
+  with Role, Test data, optional Navigation path, Expected and Verifiable columns. The script
+  reports an AC with no matching row, a row that matches no AC, and legacy numbered notes on
+  stderr. Those ACs still get a row, filled with "not recorded in spec".
+- **`planner_linear_create_issue` resolves a parent identifier to its UUID**
+  (`planner_linear_resolve_issue_id`). An identifier that cannot be resolved fails before
+  `issueCreate` is sent. TicketGen resolves the epic once, before the loop, and fails the phase if
+  it cannot.
+- **`TicketGen|verify|done` is written only when every spec produced a ticket.** Previously a
+  ticket that failed validation (and its dependents) was skipped and the phase still finished, so
+  `resume` never re-entered it. Now the phase writes `verify|fail` and `resume` creates the rest.
+  On a rerun, an existing `body.md` is kept rather than overwritten, so it keeps matching Linear.
+- **`planner_state_write` replaces `|`, CR and LF in the message with spaces**, and
+  `planner_epic_id` / `planner_refinement_legacy` match on the phase and step fields only. A ticket
+  title like `x |EpicGen|create|done|EPIC_ID=OTHER` can no longer change the epic id Refinement
+  reads, or switch on its legacy pass-through.
+- **The TicketGen prompt is one fixed script with no placeholders.** The humanizer pass for ticket
+  bodies moved to Specify, because the spec Description is now the ticket body word for word. The
+  required body sections (#285) are now in the Specify prompt too.
+- **Behaviour change:** specs whose Verification Notes are still in the old numbered form get
+  Verification Plan rows marked "not recorded in spec", which can trip the readiness check's
+  `VPLAN_UNVERIFIABLE` code. This code is advisory unless `DOR_STRICT_VPLAN` is set. To fix it,
+  rewrite the notes as the Criterion table and `resume`.
+- **Reconciled with the test-data Source contract (#503, 0.17.0).** The Criterion table has a
+  `Source` column right after `Test data` (bare `seeded-by:<slug>`, `exists:<where>`,
+  `external:<who>` or `generate`; `—` when the data is none). The composer renders the
+  Verification Plan's Test data needed cell as `<what> (Source: <source>)` and generates
+  `## Test Data Prerequisites` as one `- <what>. Source: <source>` bullet per need
+  (`planner_ticketgen_testdata_prereqs`), replacing a hand-written copy; a spec with no table
+  keeps its own section. Crosscheck's `planner-crosscheck-testdata.sh` now reads table rows as
+  needs too (`_planner_testdata_table_needs`), so `TEST_DATA_UNOWNED` and the
+  `CITED_ARTIFACT_*` checks still fire on table-form specs. `docs/test-data-source.md`
+  documents the table form; numbered lines are still parsed.
+- **One Verification Notes reader.** The composer reads the notes with Crosscheck's own
+  section, table and cell parsers, so the Source in the ticket is the Source Crosscheck
+  checked. `##`/`###` headings match by prefix and header markup (`**Source**`) is
+  stripped. Both sides refuse the shapes two readers could still disagree on: a fenced table
+  or one after a sub-heading (which hid a `seeded-by:` need from `TEST_DATA_UNOWNED`), a
+  duplicate or Unicode-spaced heading, a split or second table, ragged rows, a table mixed
+  with list notes. Test Data Prerequisites lists every row's need, and a hand-written item
+  the table lacks is refused, not dropped. `Resource:` is no longer a Source marker. The
+  composer also refuses a hand-written `Per-Criterion Verification` table, a variant
+  spelling of a section it generates, and a fenced or duplicate `## Labels`.
+
 ## ticket-planner 0.17.0 (2026-10-12)
 
 Test-data provenance (#503) and cited external artifacts (#504). The planner recorded what
