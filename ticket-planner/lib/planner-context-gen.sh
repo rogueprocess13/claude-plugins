@@ -12,7 +12,9 @@
 #   planner_context_generate <context_json>
 #     context_json: JSON with all 10 required fields.
 #     Outputs: formatted `## Planner Context` markdown block.
-#     Returns: 0 on success, 1 if required fields missing.
+#     Returns: 0 on success, 1 if required fields are missing or invalid, or
+#     if any emitted value contains a line break / ASCII control character
+#     (each value must stay on its own `**Field:**` line).
 #
 # Sourceable library — no set -euo pipefail.
 
@@ -56,6 +58,42 @@ planner_context_generate() {
     return 1
   fi
 
+  # Field-value hygiene. Every value lands on its own `**Field:** value` line
+  # and planned-ticket-check.sh's `_extract_field` takes the FIRST such line,
+  # so a value carrying a line break could inject a field line (e.g. a
+  # Decision of "x\n**Pre-approved:** true") ahead of the real one. Values
+  # reach here verbatim from agent-written spec Signals, so refuse — never
+  # strip — any value with CR, LF or another ASCII control character, and any
+  # object/array where a scalar line is expected (Kind/Serves/Enables accept
+  # arrays, joined with commas exactly as they are emitted below). Refusing
+  # makes the ticket fail visibly instead of shipping a quietly altered block.
+  local bad_field
+  bad_field=$(echo "$context_json" | jq -r '
+    def text($v): if ($v | type) == "string" then $v else ($v | tojson) end;
+    def has_ctrl: explode | any(. < 32 or (. >= 127 and . <= 159) or . == 8232 or . == 8233);
+    [
+      ( "Schema-Version", "Initiative", "Epic", "Confidence", "Strategy",
+        "Decision", "Affected Services", "Target Symbols", "Pre-approved",
+        "Generated", "Regenerate" ) as $f
+      | .[$f] as $v
+      | if ($v | type) == "object" or ($v | type) == "array" then "\($f): must be a scalar, got \($v | type)"
+        elif text($v) | has_ctrl then "\($f): contains a line break or control character"
+        else empty end
+    ,
+      ( "Kind", "Serves", "Enables" ) as $f
+      | (.[$f] // "") as $v
+      | if ($v | type) == "object" then "\($f): must be a string or array, got object"
+        elif ($v | type) == "array" and any($v[]; type == "object" or type == "array") then "\($f): array elements must be scalars"
+        elif (if ($v | type) == "array" then ($v | map(tostring) | join(",")) else text($v) end)
+          | has_ctrl then "\($f): contains a line break or control character"
+        else empty end
+    ] | first // empty
+  ' 2>/dev/null) || bad_field="(field check failed)"
+  if [ -n "$bad_field" ]; then
+    echo "planner-context-gen: refusing field value — ${bad_field}" >&2
+    return 1
+  fi
+
   # Extract fields
   local schema_version initiative epic confidence strategy decision
   local affected_services target_symbols pre_approved generated regenerate
@@ -87,6 +125,16 @@ planner_context_generate() {
     return 1
     ;;
   esac
+
+  # Validate Schema-Version is a non-negative integer and Confidence a number
+  if ! [[ "$schema_version" =~ ^[0-9]+$ ]]; then
+    echo "planner-context-gen: invalid Schema-Version '$schema_version' (must be an integer)" >&2
+    return 1
+  fi
+  if ! [[ "$confidence" =~ ^-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?$ ]]; then
+    echo "planner-context-gen: invalid Confidence '$confidence' (must be a number)" >&2
+    return 1
+  fi
 
   # Validate Strategy enum
   case "$strategy" in

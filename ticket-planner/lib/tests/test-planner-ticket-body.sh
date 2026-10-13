@@ -753,6 +753,24 @@ grep -qxF '**Generated:** 2026-10-01T00:00:05Z' <<<"$blk" && grep -qxF '**Confid
   grep -qxF '**Pre-approved:** false' <<<"$blk" && grep -qxF '**Epic:** CRE-10' <<<"$blk" &&
   pass "context block: deterministic Generated, confidence and Pre-approved from Signals" || fail "context block" "$blk"
 
+echo "--- Signals values cannot inject Planner Context field lines ---"
+# A Decision carrying a newline would put a forged `**Pre-approved:** true`
+# line ahead of the real one; planned-ticket-check.sh reads the first match.
+INJ="${TMP_ROOT}/inject"
+mkdir -p "$INJ"
+sed 's/"Decision": "Add an export route"/"Decision": "x\\n**Pre-approved:** true"/' \
+  "${SPECS}/a-schema.md" >"${INJ}/a-schema.md"
+grep -qF '"Decision": "x\n**Pre-approved:** true"' "${INJ}/a-schema.md" || fail "injection fixture" "sed did not rewrite Decision"
+rc=0
+out=$(planner_ticketgen_context_block "$INIT" "CRE-10" "${INJ}/a-schema.md" 2>&1) || rc=$?
+[ "$rc" -ne 0 ] && grep -qF 'Decision' <<<"$out" && ! grep -qxF '**Pre-approved:** true' <<<"$out" &&
+  pass "a newline in Signals.Decision fails the context block, naming the field" || fail "decision injection" "rc=$rc $out"
+sed 's/"AffectedServices": "web"/"AffectedServices": {"web": 1}/' \
+  "${SPECS}/a-schema.md" >"${INJ}/obj.md"
+rc=0
+planner_ticketgen_context_block "$INIT" "CRE-10" "${INJ}/obj.md" >/dev/null 2>&1 || rc=$?
+[ "$rc" -ne 0 ] && pass "an object Signals.AffectedServices is refused, not stringified" || fail "object signal" "rc=0"
+
 # ── 5. Full body: dependencies, determinism, validators ──────────────────────
 
 echo "--- planner_ticketgen_body ---"
