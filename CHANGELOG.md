@@ -17,6 +17,48 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.64.1 (2026-10-13)
+
+`ticket-create-guard` false positives ([#501](https://github.com/willard-pro/claude-plugins/issues/501)).
+The guard's network check matched `issueCreate` and a sender name (`curl`, `wget`, `linear_graphql`,
+`api.linear.app`) anywhere in the whole Bash command string, heredoc bodies and quoted arguments
+included. A command that wrote prose about the Linear API to a file and then ran `gh issue create`
+was denied, and every side effect of the denied call was lost.
+
+- **Shell-aware sender detection**: a small awk scanner (quotes, `$( )`, `$(( ))`, backticks,
+  comments, heredocs) splits the command into pipelines and finds their command words. A pipeline
+  made only of text commands (`echo`, `cat`, `jq`, ...; never `awk`, `sed`, `rg`, `sort` or
+  `less`, which can run other commands) never counts as a sender, so writing prose
+  about the API to a file, or filing a GitHub issue or commit about it, is allowed. `gh` and `git`
+  count as text only for a safe subcommand set (gh `issue`/`pr` create, edit, comment, view, list,
+  plus `pr diff|checks` and `repo view`; git `commit`, `log`, `diff`, `status`, `show`, `add`,
+  `push`, `fetch`, `branch`, `checkout`, `switch`, `rev-parse`, `remote -v`) with no `-c`,
+  `--config`, `--exec`, `-x`, `--upload-pack` or `--receive-pack` flag and no `GIT_*` env prefix. Any other gh/git
+  stage (aliases, `rebase --exec`, `gh extension exec`, `gh api`, ...) is non-text.
+  Any other pipeline is a sender when its text — heredoc bodies it reads included — names
+  `curl`/`wget`/`*linear_graphql` or `api.linear.app`. Comments are dropped. The `create_issue`
+  check uses the same scanner, so a heredoc line starting with `create_issue` is no longer denied,
+  and `X=1 create_issue`, `! create_issue` and `xargs create_issue` now are.
+- **Unchanged purpose**: `curl … -d '{"query":"mutation { issueCreate … }"}' https://api.linear.app/graphql`,
+  `planner_linear_graphql 'mutation { issueCreate … }'`, a mutation fed to a sender through a
+  heredoc or a variable, an interpreter fed a heredoc (`sh <<EOF`, `cat <<EOF | sh`, `python3 - <<EOF`),
+  a sender after a `gh`/`git` stage (`gh … | curl`), wrapped senders (`timeout`, `nice`, `sudo -E`,
+  `xargs -0`) and `create_issue` inside `$( )` are all still denied. A call whose text (heredoc bodies
+  and quoted strings, not comments) holds the mutation and a sender also denies when any pipeline
+  in it is non-text, so a script written to a file by a heredoc, `printf` or `echo` and then
+  `source`d or run with `bash`/`sh`/`.` in the same call is still caught.
+- **git rule**: a call with any `git` stage (safe or not) whose raw text contains the mutation and
+  a sender is denied. git runs filters, textconv and pagers from config any earlier stage may have
+  written (`printf`/`echo`/heredoc into `.git/config` or `.gitattributes`). `gh` is exempt.
+- **Known false positives** (deny reason names the match, so they are easy to split): a non-text
+  pipeline that merely mentions a sender word in a call that also mentions the mutation, a heredoc
+  doc that mentions both alongside an unrelated non-text command, and any git call (e.g.
+  `git commit -m`, `git commit -F - <<EOF`) whose text names the mutation plus a sender — use
+  `git commit -F <file>` with the file written by a separate call.
+- **Diagnosable denials**: the deny reason now names the pattern that matched.
+- **Docs**: `TICKET_CREATE_GUARD=off` must be set in the Claude Code session environment; a prefix
+  inside the command never reaches the hook.
+
 ## 0.64.0 (2026-10-12)
 
 New readiness code `TEST_DATA_UNSOURCED` (#505). `dor-check.sh` only measured whether the Test
