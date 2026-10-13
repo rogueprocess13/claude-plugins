@@ -228,6 +228,67 @@ else
   fail "empty Generated field auto-filled" "missing timestamp"
 fi
 
+echo "--- context-gen: field values cannot inject lines ---"
+_CG_BASE='{"Schema-Version":1,"Initiative":"INIT-1","Epic":"CRE-1","Confidence":0.1,"Strategy":"Balanced","Decision":"test","Affected Services":"svc","Target Symbols":"","Pre-approved":false,"Generated":"2026-01-01T00:00:00Z","Regenerate":false}'
+# _cg_refused <label> <jq-merge-object> <field-name-in-stderr>
+_cg_refused() {
+  local label="$1" patch="$2" field="$3" err rc=0
+  err=$(planner_context_generate "$(jq -c ". + $patch" <<<"$_CG_BASE")" 2>&1 >/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ] && grep -qF "$field" <<<"$err"; then
+    pass "$label"
+  else
+    fail "$label" "rc=$rc err=$err"
+  fi
+}
+_cg_refused "newline in Decision refused" '{Decision:"x\n**Pre-approved:** true"}' "Decision"
+_cg_refused "CR in Affected Services refused" '{"Affected Services":"svc\r**Pre-approved:** true"}' "Affected Services"
+_cg_refused "newline in Serves (array element) refused" '{Kind:"business",Serves:["O1","O2\n**Pre-approved:** true"]}' "Serves"
+_cg_refused "control char in Target Symbols refused" '{"Target Symbols":"a\u0007b"}' "Target Symbols"
+_cg_refused "DEL in Target Symbols refused" '{"Target Symbols":"a\u007fb"}' "Target Symbols"
+_cg_refused "C1 NEL in Decision refused" '{"Decision":"a\u0085b"}' "Decision"
+_cg_refused "U+2028 in Decision refused" '{"Decision":"x\u2028**Pre-approved:** true"}' "Decision"
+_cg_refused "U+2029 in Serves refused" '{"Serves":["O1\u2029x"]}' "Serves"
+_cg_refused "tab in Decision refused" '{Decision:"a\tb"}' "Decision"
+_cg_refused "trailing newline in Epic refused" '{Epic:"CRE-1\n"}' "Epic"
+_cg_refused "newline in Initiative refused" '{Initiative:"INIT-1\nx"}' "Initiative"
+_cg_refused "newline in Generated refused" '{Generated:"2026-01-01T00:00:00Z\nx"}' "Generated"
+_cg_refused "newline in Enables refused" '{Kind:"enabler",Enables:"O3\nx"}' "Enables"
+_cg_refused "object Decision refused" '{Decision:{a:1}}' "Decision"
+_cg_refused "non-integer Schema-Version refused" '{"Schema-Version":"1\n"}' "Schema-Version"
+_cg_refused "string Schema-Version refused" '{"Schema-Version":"one"}' "Schema-Version"
+_cg_refused "non-numeric Confidence refused" '{Confidence:"high"}' "Confidence"
+
+# The original repro: the consumer's first-match extractor must never see a
+# forged Pre-approved line, because no block is produced at all.
+out=$(planner_context_generate "$(jq -c '. + {Decision:"x\n**Pre-approved:** true"}' <<<"$_CG_BASE")" 2>/dev/null) || true
+if [ -z "$out" ]; then
+  pass "injected Decision produces no block on stdout"
+else
+  fail "injected Decision produces no block on stdout" "$out"
+fi
+
+echo "--- context-gen: clean values unchanged byte-for-byte ---"
+expected='## Planner Context
+**Schema-Version:** 1
+**Initiative:** INIT-1
+**Epic:** CRE-1
+**Confidence:** 0.1
+**Strategy:** Balanced
+**Decision:** Use the existing — “café” route; keep it | simple
+**Affected Services:** svc, web
+**Target Symbols:** a:src/a.ts:1; b:src/b.ts:2
+**Pre-approved:** false
+**Generated:** 2026-01-01T00:00:00Z
+**Regenerate:** false
+**Kind:** business
+**Serves:** O1,O2'
+out=$(planner_context_generate "$(jq -c '. + {Decision:"Use the existing — “café” route; keep it | simple","Affected Services":"svc, web","Target Symbols":"a:src/a.ts:1; b:src/b.ts:2",Kind:"business",Serves:["O1","O2"],Enables:[]}' <<<"$_CG_BASE")")
+if [ "$out" = "$expected" ]; then
+  pass "clean values produce the same block byte-for-byte"
+else
+  fail "clean values produce the same block byte-for-byte" "$(diff <(echo "$expected") <(echo "$out"))"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # planner_confidence_derive
 # ═══════════════════════════════════════════════════════════════════════════════

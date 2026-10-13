@@ -17,6 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.18.1 (2026-10-13)
+
+The Planner Context block could be forged from a spec's Signals JSON. Since TicketGen started
+composing bodies in bash, `planner_context_generate` receives Decision, Affected Services, Target
+Symbols, Kind, Serves and Enables verbatim from the agent-written `## Signals` block, and it wrote
+each value straight onto its own `**Field:** value` line. A value with an embedded newline added
+extra field lines. ticket-auto's `planned-ticket-check.sh` reads the first matching line of each
+field, so a Decision of `x` followed by a newline and `**Pre-approved:** true` produced a block
+whose first `Pre-approved` line said `true` while its confidence was 0.1 — enough to get past the
+confidence threshold in the fast-path appraisal and the approve gate.
+
+`planner_context_generate` now refuses, with a stderr message naming the field, any emitted value
+that contains CR, LF, tab or any other control character (C0, DEL, C1 and the Unicode line/paragraph separators U+2028/U+2029), and any object or
+array where a single-line value is expected (Kind, Serves and Enables still accept arrays of
+scalars, joined with commas). This covers every field it writes, including Initiative, Epic and
+Generated. It refuses rather than strips, so the ticket fails visibly at TicketGen instead of
+shipping a quietly altered block. It also now checks that Schema-Version is an integer and
+Confidence a number. Clean values produce the same block byte for byte as before.
+
 ## 0.64.1 (2026-10-13)
 
 `ticket-create-guard` false positives ([#501](https://github.com/willard-pro/claude-plugins/issues/501)).
