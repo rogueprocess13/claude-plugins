@@ -56,6 +56,31 @@ feedback JSON's `confidence_predicted` was always 0 (or `null` from fleetd's
 - **No SIGPIPE on large bodies**: the extractor drains its input after the block instead of
   exiting, so a 500KB+ body no longer aborts `gate-check.sh` with rc 141 under `pipefail`.
 
+## 0.64.2 (2026-10-13)
+
+`VPLAN_UNVERIFIABLE` almost never fired ([#514](https://github.com/willard-pro/claude-plugins/issues/514)).
+`vplan_parse` counted verifiable Verification Plan rows with `grep -ciP '[✓Y]'` over the whole
+row. Because of `-i`, any `y` or `Y` anywhere in a row counted — "Agency", "yearly", "any user" —
+so a real legacy body with no ✓ marks at all scored `VPLAN_VERIFIABLE=8`. The same count feeds
+`gate-check.sh` Check 2.6 and the `verification` dimension of the DoR quality score.
+
+- **Verifiable column only**: each table's header row names the column (`Verifiable`, any
+  position, `**`/backtick markup and a trailing `?` tolerated). A data row counts when that one
+  cell, trimmed, markup-stripped and case-folded, is exactly `✓`, `✔`, `✅`, `Y` or `Yes` (no-break spaces trimmed too). Blank, `✗`,
+  `x`, `n`, `true` and prose do not count. These match what the writers emit:
+  ticket-appraise-exec writes `✓`/`✗`, ticket-planner's `planner_ticketgen_vplan` writes `✓` or a
+  blank cell, and hand-written plans use `Y`/`Yes`.
+- **Cells split on unescaped `|` only**: `\|` inside a cell (how the #499 composer escapes a
+  pipe) no longer shifts the Verifiable column. A row too short to reach the column does not
+  count. When Verifiable is the last header column, a row with extra cells (an unescaped `|` in
+  an earlier cell, such as a menu path `Settings | Users`) reads its last cell.
+- **No Verifiable header**: such a table still counts toward `VPLAN_ROWS`, but adds 0 verifiable
+  rows. Guessing from the whole row was the bug, so this fails in the safe direction: advisory
+  `VPLAN_UNVERIFIABLE`, and Check 2.6 falls back to the plan artifact.
+- **Also**: tables inside fenced code blocks are no longer counted, and CRLF bodies no longer miss
+  the `### Per-Criterion Verification` heading. `vplan_parse ""` no longer reads stdin: only a
+  call with no argument does, so `gate-check.sh` passing an empty `notes.md` cannot block.
+
 ## ticket-planner 0.18.1 (2026-10-13)
 
 The Planner Context block could be forged from a spec's Signals JSON. Since TicketGen started

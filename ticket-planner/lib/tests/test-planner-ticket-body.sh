@@ -295,10 +295,10 @@ if grep -qF 'matches no Acceptance Criteria line: A criterion that was edited aw
 else
   fail "stray note warning" "$(cat "${TMP_ROOT}/vp.err")"
 fi
-if vplan_parse "$vplan" && [ "$VPLAN_ROWS" -eq 3 ]; then
-  pass "vplan_parse accepts the generated section (3 rows)"
+if vplan_parse "$vplan" && [ "$VPLAN_ROWS" -eq 3 ] && [ "$VPLAN_VERIFIABLE" -eq 2 ]; then
+  pass "vplan_parse accepts the generated section (3 rows, 2 verifiable — escaped pipes in row 3 keep ✓ in its column)"
 else
-  fail "vplan_parse" "rows=${VPLAN_ROWS:-unset}"
+  fail "vplan_parse" "rows=${VPLAN_ROWS:-unset} verifiable=${VPLAN_VERIFIABLE:-unset}"
 fi
 
 echo "--- legacy numbered notes are reported, not mapped by position ---"

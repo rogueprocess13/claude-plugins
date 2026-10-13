@@ -22,9 +22,9 @@ _fail() {
 # ── VPLAN_VERIFIABLE parity fixtures ────────────────────────────────────────
 # Lifted verbatim from lib/tests/test-gate-check.sh's Check 2.6 scaffolds
 # (_scaffold_verify_plan_full / _scaffold_verify_plan_empty /
-# _scaffold_verify_plan_no_table) — VPLAN_VERIFIABLE is a genuine extraction
-# of Check 2.6's pre-existing `grep -ciP '[✓Y]'`, so these fixtures pin
-# true parity (design.md Decision 5).
+# _scaffold_verify_plan_no_table). VPLAN_VERIFIABLE began as an extraction of
+# Check 2.6's whole-row `grep -ciP '[✓Y]'`; since #514 it reads only the
+# Verifiable column, and these well-formed fixtures still give the same counts.
 
 full_table='## Verification Plan
 **Date:** 2026-06-24
@@ -164,6 +164,137 @@ vplan_parse <<<"$full_table" || rc=$?
 rc=0
 vplan_parse "" || rc=$?
 [ "$rc" = "1" ] && _pass "empty input: exit 1" || _fail "empty input should be exit 1 (got $rc)"
+
+# ── Verifiable column only (#514) ──────────────────────────────────────────
+# The old whole-row `grep -ciP '[✓Y]'` counted any y/Y anywhere in a row.
+
+# _vp <text> -> "rows verifiable" (exit status ignored)
+_vp() {
+  vplan_parse "$1" || true
+  echo "$VPLAN_ROWS $VPLAN_VERIFIABLE"
+}
+
+_hdr='## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|----------|-----------|----------------|-----------------|-------------------|-----------|'
+
+all_unverifiable="$_hdr
+| 1 | Agency sees yearly summary | role: collection-agency | Reports > Yearly | any company | Summary displayed |  |
+| 2 | Yes button works | any user | /survey | Yearly survey | Survey says Yes | ✗ |
+| 3 | Policy copy is friendly | everyone | n/a | none | Tone feels right | n |
+"
+[ "$(_vp "$all_unverifiable")" = "3 0" ] &&
+  _pass "#514: y/Y/Yes in other cells never count; all-unverifiable table is 0" ||
+  _fail "#514: all-unverifiable should be '3 0' (got '$(_vp "$all_unverifiable")')"
+
+marks="$_hdr
+| 1 | a | b | c | none | d | ✓ |
+| 2 | a | b | c | none | d | Y |
+| 3 | a | b | c | none | d | Yes |
+| 4 | a | b | c | none | d |  yes  |
+| 5 | a | b | c | none | d | **✓** |
+| 6 | a | b | c | none | d | ✔ |
+| 7 | a | b | c | none | d | ✔️ |
+| 8 | a | b | c | none | d | \`Y\` |
+| 9 | a | b | c | none | d | x |
+| 10 | a | b | c | none | d | Yes, mostly |
+| 11 | a | b | c | none | d | ✗ |
+| 12 | a | b | c | none | d | true |
+"
+[ "$(_vp "$marks")" = "12 8" ] &&
+  _pass "#514: ✓/✔/Y/Yes (trimmed, case-folded, markup-stripped) count; x/✗/true/prose do not" ||
+  _fail "#514: marks table should be '12 8' (got '$(_vp "$marks")')"
+
+reordered='## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Verifiable | Criterion | Expected behavior |
+|:-:|:----------:|:----------|------------------:|
+| 1 | Y | Agency report | yearly total |
+| 2 |   | Daily report | Yes shown |
+'
+[ "$(_vp "$reordered")" = "2 1" ] &&
+  _pass "#514: Verifiable column found by header name in any position, alignment colons ok" ||
+  _fail "#514: reordered should be '2 1' (got '$(_vp "$reordered")')"
+
+escaped="$_hdr
+| 1 | x \\| y | b | c | none | Y |  |
+| 2 | ok | b | c | none | d | ✓ |
+"
+[ "$(_vp "$escaped")" = "2 1" ] &&
+  _pass "#514: escaped \\| inside a cell does not shift the Verifiable column" ||
+  _fail "#514: escaped-pipe table should be '2 1' (got '$(_vp "$escaped")')"
+
+short_row="$_hdr
+| 1 | truncated row | Y
+| 2 | a | b | c | none | d | ✓ | extra | Y |
+"
+[ "$(_vp "$short_row")" = "2 1" ] &&
+  _pass "#514: a row too short to reach Verifiable does not count; extra cells are ignored" ||
+  _fail "#514: short/extra-cell table should be '2 1' (got '$(_vp "$short_row")')"
+
+no_column='## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Expected behavior |
+|---|-----------|-------------------|
+| 1 | Yearly export | Y |
+| 2 | Agency view | ✓ |
+'
+rc=0
+vplan_parse "$no_column" || rc=$?
+[ "$rc" = "0" ] && [ "$VPLAN_ROWS" = "2" ] && [ "$VPLAN_VERIFIABLE" = "0" ] &&
+  _pass "#514: no Verifiable header — rows still counted, verifiable is 0 (safe direction)" ||
+  _fail "#514: no-column table should be rc 0 / 2 rows / 0 verifiable (got rc=$rc $VPLAN_ROWS $VPLAN_VERIFIABLE)"
+
+fenced="$_hdr
+| 1 | real row | b | c | none | d |  |
+
+\`\`\`
+| # | Criterion | Verifiable |
+|---|-----------|------------|
+| 1 | example | ✓ |
+\`\`\`
+"
+[ "$(_vp "$fenced")" = "1 0" ] &&
+  _pass "#514: a table inside a fenced code block is not counted" ||
+  _fail "#514: fenced table should be '1 0' (got '$(_vp "$fenced")')"
+
+crlf=$(printf '%s\r\n' '## Verification Plan' '' '### Per-Criterion Verification' '' \
+  '| # | Criterion | Verifiable |' '|---|---|---|' '| 1 | a | Y |')
+[ "$(_vp "$crlf")" = "1 1" ] &&
+  _pass "#514: CRLF line endings do not hide a trailing Verifiable mark" ||
+  _fail "#514: CRLF table should be '1 1' (got '$(_vp "$crlf")')"
+
+pipecell="$_hdr
+| 1 | open menu | admin | Settings | Users | none | list shown | ✓ |
+| 2 | other | admin | Home | none | shown | ✗ |
+"
+[ "$(_vp "$pipecell")" = "2 1" ] &&
+  _pass "#514 review: unescaped | in an earlier cell still reads the last-column mark" ||
+  _fail "#514 review: pipe-in-cell table should be '2 1' (got '$(_vp "$pipecell")')"
+
+marks="$_hdr
+| 1 | a | r | n | d | e | ✅ |
+| 2 | b | r | n | d | e | "$' '"✓"$' '" |
+| 3 | c | r | n | d | e | ✓ (manual) |
+"
+[ "$(_vp "$marks")" = "3 2" ] &&
+  _pass "#514 review: ✅ and no-break-space-padded ✓ count, '✓ (manual)' does not" ||
+  _fail "#514 review: marks table should be '3 2' (got '$(_vp "$marks")')"
+
+out=$(printf 'stdin text' | {
+  vplan_parse "" || true
+  cat
+})
+[ "$out" = "stdin text" ] &&
+  _pass "#514 review: an empty argument does not read stdin" ||
+  _fail "#514 review: empty argument consumed stdin (got '$out')"
 
 echo "---"
 echo "$PASS passed, $FAIL failed"
