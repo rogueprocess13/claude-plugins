@@ -401,7 +401,236 @@ test_printf_prose_then_gh_issue_create_allowed() {
   _allowed "$(_bash_payload "printf 'calls curl on api.linear.app with issueCreate' > /tmp/b.md && gh issue create --title x --body-file /tmp/b.md")"
 }
 
+# --- #516: parser differentials against bash, and the failure paths ---
+#
+# Each shape below has an explicit verdict. Where the shape is safe to run,
+# the test also runs it through bash with curl stubbed (in a temp dir), so the
+# verdict is checked against what bash really does, not only against the
+# scanner. "Accepted false positive" marks a shape the guard denies although
+# bash would not send: the scanner errs toward denying there on purpose.
+
+_S="curl -s $_U -d issueCreate"
+
+# _bash_runs_curl <cmd> — 0 when bash, with curl stubbed, really runs curl.
+_bash_runs_curl() {
+  local stub rc=1
+  stub=$(mktemp -d)
+  printf '#!/bin/sh\ntouch "%s/ran"\n' "$stub" >"$stub/curl"
+  chmod +x "$stub/curl"
+  (cd "$stub" && PATH="$stub:$PATH" timeout 5 bash -c "$1" >/dev/null 2>&1 </dev/null) || true
+  [ -e "$stub/ran" ] && rc=0
+  rm -rf "$stub"
+  return "$rc"
+}
+_denied_sends() { _denied "$(_bash_payload "$1")" && _bash_runs_curl "$1"; }
+_allowed_silent() { _allowed "$(_bash_payload "$1")" && ! _bash_runs_curl "$1"; }
+_denied_silent() { _denied "$(_bash_payload "$1")" && ! _bash_runs_curl "$1"; }
+
+# ANSI-C quoting: \' does not end $'...' (was allowed before #516).
+test_ansi_c_escaped_quote_then_curl_denied() {
+  _denied_sends "echo \$'it\\'s'; $_S"
+}
+test_ansi_c_escape_then_curl_denied() {
+  _denied_sends "echo \$'a\\tb'; $_S"
+}
+test_ansi_c_prose_to_file_allowed() {
+  _allowed_silent "echo \$'issueCreate goes out via curl to api.linear.app\\n' > notes.md"
+}
+test_ansi_c_escaped_quote_prose_allowed() {
+  _allowed_silent "echo \$'curl \\' issueCreate'"
+}
+# $"..." (locale quoting) reads like double quotes.
+test_locale_dq_then_curl_denied() {
+  _denied_sends "echo \$\"x\"; $_S"
+}
+# ${...}: a ")" inside it does not end $( ) (was allowed before #516).
+test_param_paren_in_substitution_denied() {
+  _denied_sends "echo \"\$(echo \${x:-)} ; $_S)\""
+}
+# ${...}: a "#" inside it is not a comment (was allowed before #516).
+test_param_hash_then_curl_denied() {
+  _denied_sends "echo \${x:- #}; $_S"
+}
+test_param_nested_dq_substitution_denied() {
+  _denied_sends "echo \"\${x:-\"\$($_S)\"}\""
+}
+test_param_default_prose_allowed() {
+  _allowed_silent "echo \"\${x:-issueCreate via curl}\" > notes.md"
+}
+# Accepted false positive: bash reads the quotes inside ${...} and fails to
+# parse; the scanner does not, and denies.
+test_param_sq_in_dq_denied() {
+  _denied_silent "echo \"\${x:-'}'\"; $_S"
+}
+# A "#" inside a word is not a comment; one starting a word is.
+test_midword_hash_then_curl_denied() {
+  _denied_sends "echo a#b; $_S"
+}
+test_word_start_hash_comment_allowed() {
+  _allowed_silent "echo a #; $_S"
+}
+# CR is an ordinary word character for bash and for the scanner.
+test_crlf_lines_curl_denied() {
+  _denied_sends "$(printf 'echo x\r\n%s\r\n' "$_S")"
+}
+test_cr_in_word_then_curl_denied() {
+  _denied_sends "$(printf 'echo x\r; %s' "$_S")"
+}
+# case/esac: the pattern ")" and ";;" split commands; case itself is non-text.
+test_case_arm_curl_denied() {
+  _denied_sends "case a in a) $_S;; esac"
+}
+test_case_in_substitution_curl_denied() {
+  _denied_sends "echo \"\$(case a in a) $_S;; esac)\""
+}
+# Accepted false positive: case/esac count as non-text commands.
+test_case_prose_denied() {
+  _denied_silent "case \$x in a) echo 'issueCreate via curl';; esac"
+}
+
+# Fail open: no jq, so the guard cannot read the payload at all.
+test_missing_jq_fails_open() {
+  local d out p rc=0
+  d=$(mktemp -d)
+  p=$(_bash_payload "$_S")
+  # Here-string, not a pipe: the hook exits before reading stdin.
+  out=$(TICKET_CREATE_GUARD=on PATH="$d" "$BASH" "$GUARD" <<<"$p") || rc=1
+  rm -rf "$d"
+  [ "$rc" -eq 0 ] && [ -z "$out" ]
+}
+# Fail open: a payload jq cannot parse, even one naming the mutation and curl.
+test_malformed_json_with_mutation_fails_open() {
+  _allowed '{"tool_name":"Bash","tool_input":{"command":"curl https://api.linear.app/graphql -d issueCreate"'
+}
+# NUL: bash drops it when reading jq output, so the scanner sees "curl".
+test_json_nul_escape_denied() {
+  _denied '{"tool_name":"Bash","tool_input":{"command":"cu\u0000rl -s https://api.linear.app/graphql -d issueCreate"}}' 2>/dev/null
+}
+
+# _guard_broken_awk <payload> — the hook with an awk that always fails.
+_guard_broken_awk() {
+  local d out
+  d=$(mktemp -d)
+  printf '#!/bin/sh\nexit 2\n' >"$d/awk"
+  chmod +x "$d/awk"
+  out=$(printf '%s' "$1" | TICKET_CREATE_GUARD=on PATH="$d:$PATH" bash "$GUARD")
+  rm -rf "$d"
+  printf '%s' "$out"
+}
+_broken_awk_denied() {
+  _guard_broken_awk "$(_bash_payload "$1")" | jq -e '.hookSpecificOutput.permissionDecision == "deny"
+    and (.hookSpecificOutput.permissionDecisionReason | contains("could not judge (scanner error)"))' >/dev/null 2>&1
+}
+_broken_awk_allowed() { [ -z "$(_guard_broken_awk "$(_bash_payload "$1")")" ]; }
+
+# Fail closed on raw text when the scanner fails.
+test_awk_failure_mutation_and_sender_denied() {
+  _broken_awk_denied "$_S"
+}
+test_awk_failure_mutation_only_allowed() {
+  _broken_awk_allowed 'echo "issueCreate returns an identifier" > notes.md'
+}
+test_awk_failure_create_issue_command_denied() {
+  _broken_awk_denied 'source lib/linear-api.sh; create_issue t x y'
+}
+test_awk_failure_grep_create_issue_allowed() {
+  _broken_awk_allowed 'grep -n create_issue lib/linear-api.sh'
+}
+# Accepted false positive, in the failure mode only: the raw-text rule cannot
+# tell a gh body from a send.
+test_awk_failure_gh_prose_denied() {
+  _broken_awk_denied 'gh issue create --title "issueCreate via curl" --body-file b.md'
+}
+
+# Over the scan cap (65536): judged on raw text.
+_pad() { printf '%0*d' "$1" 0; }
+test_oversized_mutation_and_sender_denied() {
+  local out
+  out=$(_guard "$(_bash_payload "echo $(_pad 70000) > /tmp/x; $_S")")
+  echo "$out" | jq -e '.hookSpecificOutput.permissionDecisionReason | contains("could not judge (over 65536 characters)")' >/dev/null
+}
+test_oversized_mutation_only_allowed() {
+  _allowed "$(_bash_payload "echo $(_pad 70000) issueCreate > notes.md")"
+}
+# Under the cap, a long command is scanned, and well inside the 2s hook
+# timeout. The long word once made a regex backtrack for 35s at 100KB.
+test_long_word_scanned_within_timeout() {
+  local t0 t1
+  t0=$(date +%s%N)
+  _denied "$(_bash_payload "echo $(_pad 60000); $_S")" || return 1
+  t1=$(date +%s%N)
+  [ $(((t1 - t0) / 1000000)) -lt 2000 ]
+}
+test_long_gh_body_under_cap_allowed() {
+  _allowed "$(_bash_payload "gh issue create --title x --body \"$(_pad 60000) issueCreate via curl\"")"
+}
+# Accepted false positive: over the cap the raw-text rule cannot tell a gh
+# body from a send. GitHub rejects a body over 65536 characters anyway.
+test_oversized_gh_pr_body_denied() {
+  local out
+  out=$(_guard "$(_bash_payload "gh pr create --title x --body \"$(_pad 70000) issueCreate via curl\"")")
+  echo "$out" | jq -e '.hookSpecificOutput.permissionDecisionReason | contains("could not judge (over 65536 characters)")' >/dev/null
+}
+
+# An unclosed ${ keeps the scanner's brace depth open to the end of the
+# command. bash refuses to parse every shape below, so none of them sends;
+# the guard must still never read one as text-only when it names a sender.
+test_unclosed_param_then_curl_denied() {
+  _denied_silent "echo \${x; $_S"
+}
+test_unclosed_param_newline_curl_denied() {
+  _denied_silent "$(printf 'echo ${x\n%s' "$_S")"
+}
+# The open ${ keeps $( ) open, so the next " opens a quote that swallows the
+# curl line. The scan ends unbalanced and the raw-text rule denies.
+test_unclosed_param_in_sub_dq_denied() {
+  _denied_silent "$(printf 'echo "$(echo ${x )"\n%s' "$_S")"
+}
+test_unclosed_param_mutation_only_allowed() {
+  _allowed_silent "echo \${x; echo issueCreate notes > notes.md"
+}
+# Accepted false positive: unbalanced input is judged on raw text, which
+# cannot tell this gh title from a send. Not run: gh would be invoked.
+test_unclosed_param_then_gh_prose_denied() {
+  _denied "$(_bash_payload "echo \${x; gh issue create --title 'issueCreate via curl' --body-file b.md")"
+}
+
 for fn in \
+  test_ansi_c_escaped_quote_then_curl_denied \
+  test_ansi_c_escape_then_curl_denied \
+  test_ansi_c_prose_to_file_allowed \
+  test_ansi_c_escaped_quote_prose_allowed \
+  test_locale_dq_then_curl_denied \
+  test_param_paren_in_substitution_denied \
+  test_param_hash_then_curl_denied \
+  test_param_nested_dq_substitution_denied \
+  test_param_default_prose_allowed \
+  test_param_sq_in_dq_denied \
+  test_midword_hash_then_curl_denied \
+  test_word_start_hash_comment_allowed \
+  test_crlf_lines_curl_denied \
+  test_cr_in_word_then_curl_denied \
+  test_case_arm_curl_denied \
+  test_case_in_substitution_curl_denied \
+  test_case_prose_denied \
+  test_missing_jq_fails_open \
+  test_malformed_json_with_mutation_fails_open \
+  test_json_nul_escape_denied \
+  test_awk_failure_mutation_and_sender_denied \
+  test_awk_failure_mutation_only_allowed \
+  test_awk_failure_create_issue_command_denied \
+  test_awk_failure_grep_create_issue_allowed \
+  test_awk_failure_gh_prose_denied \
+  test_oversized_mutation_and_sender_denied \
+  test_oversized_mutation_only_allowed \
+  test_long_word_scanned_within_timeout \
+  test_long_gh_body_under_cap_allowed \
+  test_oversized_gh_pr_body_denied \
+  test_unclosed_param_then_curl_denied \
+  test_unclosed_param_newline_curl_denied \
+  test_unclosed_param_in_sub_dq_denied \
+  test_unclosed_param_mutation_only_allowed \
+  test_unclosed_param_then_gh_prose_denied \
   test_awk_system_curl_denied \
   test_sed_e_curl_denied \
   test_rg_pre_curl_denied \

@@ -27,11 +27,36 @@
 # pipeline in it is non-text, which covers writing a script to a file and
 # then running or sourcing it.
 #
-# Fails open: missing jq or a payload that does not parse exits 0 silently —
-# a broken guard must never block unrelated work. Matching is deliberately
-# narrow so reading, grepping or writing prose about create_issue/issueCreate
-# is never denied. This guards against drift off the standard path; it is not
-# a defence against a determined bypass.
+# Threat model (#516): this is a drift guard, not a security control. It stops
+# an agent that reaches for a direct create out of habit and points it at
+# /ticket-create. It does not stop an agent or person set on bypassing it: the
+# scanner is a hand-written approximation of bash and will differ from it
+# somewhere, and anything that hides the words (base64, a variable built from
+# pieces, a script written by an earlier call) is out of scope. Divergences
+# that let a plain-looking command slip through are fixed when the fix is
+# small ($'...' with \', and ")" or "#" inside ${...} are handled); the rest
+# err toward denying (case/esac counts as non-text, CR is part of a word) and
+# are pinned in the tests.
+#
+# Failure paths:
+#   - missing jq, or a payload jq cannot parse: fail open (exit 0). Without a
+#     parse the guard cannot tell the tool or the command apart, and a broken
+#     guard must never block unrelated work.
+#   - awk missing or failing, a command over TICKET_CREATE_GUARD_MAX_SCAN
+#     characters (default 65536; the hook has a 2s timeout), or a scan that
+#     ends inside an open quote, $( ) or ${: judged on the raw text only —
+#     deny when it names issueCreate and a sender anywhere, or starts a
+#     command with create_issue; allow everything else. This mode is weaker
+#     than the scanner: it cannot tell prose from code, so a gh issue/pr
+#     body that names both words is denied here (accepted: GitHub caps a body
+#     at 65536 characters anyway), and a create_issue that does not start a
+#     command line or follow ; & | ( ` is missed.
+#   - NUL bytes: bash drops them when the command is read from jq, so the
+#     scanner sees the command with NULs removed.
+#   - hook timeout or crash: Claude Code treats it as a non-blocking error and
+#     the command runs.
+# Matching is deliberately narrow so reading, grepping or writing prose about
+# create_issue/issueCreate is never denied.
 
 [ "${TICKET_CREATE_GUARD:-on}" = "off" ] && exit 0
 command -v jq >/dev/null 2>&1 || exit 0
@@ -98,7 +123,7 @@ _scan() {
     }
     function newpipe() { endword(); pl++; words[pl] = ""; first[pl] = ""; ptext[pl] = ""; cs = 1; stg = 0; gitenv = 0 }
     function cmdstart() { endword(); cs = 1; stg = 0; gitenv = 0 }
-    function push(s) { endword(); saved[sp] = cs; savedstg[sp] = stg; st[++sp] = s; cs = 1; stg = 0 }
+    function push(s) { endword(); saved[sp] = cs; savedstg[sp] = stg; st[++sp] = s; bd[sp] = 0; cs = 1; stg = 0 }
     function pop() { endword(); if (sp > 0) { sp--; cs = saved[sp]; stg = savedstg[sp] } }
     # gh_git_safe <stage> — 1 when a gh/git stage is a known read/record
     # subcommand with no config, exec, upload-pack or receive-pack flag and no
@@ -122,6 +147,18 @@ _scan() {
       if (f1 == "repo") return (f2 == "view")
       return 0
     }
+    # lgword <text> — the identifier ending in linear_graphql at its first
+    # occurrence, or "". Replaces match(/[A-Za-z0-9_]*linear_graphql/), which
+    # backtracks quadratically on a long word in mawk (#516). It finds a hit
+    # exactly when that match does, so the verdict is the same. Only the
+    # label in the deny reason can differ: match takes the longest run, which
+    # may span a second occurrence (xlinear_graphqlylinear_graphql).
+    function lgword(tx,   j, k) {
+      j = index(tx, "linear_graphql")
+      if (!j) return ""
+      for (k = j; k > 1 && substr(tx, k - 1, 1) ~ /^[A-Za-z0-9_]$/; k--) {}
+      return substr(tx, k, j - k + 14)
+    }
     function addch(c) {
       ptext[pl] = ptext[pl] c
       if (c ~ /^[ \t\n]$/ && unquoted()) { endword(); return }
@@ -137,6 +174,13 @@ _scan() {
           c = substr(s, i, 1); c2 = substr(s, i, 2)
           t = top()
           if (t == "sq") { if (c == "\047") sp--; else addch(c); continue }
+          # $'...' (ANSI-C quoting): like single quotes, but a backslash
+          # escapes the next character, so \047 does not end it (#516).
+          if (t == "ansi") {
+            if (c == "\\") { addch(substr(s, i + 1, 1)); i++; continue }
+            if (c == "\047") { sp--; continue }
+            addch(c); continue
+          }
           # $(( ... )) arithmetic: text only, never a heredoc or a command.
           if (t == "ar") {
             if (c == "(") ad[sp]++
@@ -156,11 +200,17 @@ _scan() {
           }
           # unquoted: top, sub or bq
           if (c == "\\") { if (i < n) addch(substr(s, i + 1, 1)); else cont = 1; i++; continue }
+          if (c2 == "$\047") { st[++sp] = "ansi"; collecting = 1; i++; continue }
           if (c == "\047") { st[++sp] = "sq"; collecting = 1; continue }
           if (c == "\"") { st[++sp] = "dq"; collecting = 1; continue }
-          if (c == "#" && !collecting) break
+          # ${ ... }: bash reads to the matching brace, so a ")" or "#" inside
+          # it neither ends a $( ) nor starts a comment (#516).
+          if (c2 == "${") { bd[sp]++; addch("${"); i++; continue }
+          if (c == "}" && bd[sp] > 0) { bd[sp]--; addch(c); continue }
+          if (c == "#" && !collecting && !bd[sp]) break
           if (c2 == "$(") { push("sub"); i++; continue }
           if (c == "`") { if (t == "bq") pop(); else push("bq"); continue }
+          if (c == ")" && bd[sp] > 0) { addch(c); continue }
           if (c == ")") { if (t == "sub") pop(); else cmdstart(); continue }
           if (c == "(") { cmdstart(); continue }
           if (c2 == ">&" || c2 == "&>") { addch(c2); i++; continue }
@@ -188,7 +238,7 @@ _scan() {
           addch(c)
         }
         # End of physical line.
-        if (top() == "sq" || top() == "dq") { addch("\n"); continue }
+        if (top() == "sq" || top() == "dq" || top() == "ansi") { addch("\n"); continue }
         if (cont) continue
         # Consume pending heredoc bodies. They are never parsed for command
         # words, but their text belongs to the pipeline that reads them, so an
@@ -222,7 +272,8 @@ _scan() {
         if (textonly) continue
         if (nw > 0) nontext = 1
         tx = ptext[p]
-        if (match(tx, /[A-Za-z0-9_]*linear_graphql/)) { print "sender " substr(tx, RSTART, RLENGTH); continue }
+        lg = lgword(tx)
+        if (lg != "") { print "sender " lg; continue }
         if (match(tx, /(^|[^A-Za-z0-9_])curl([^A-Za-z0-9_]|$)/)) { print "sender curl"; continue }
         if (match(tx, /(^|[^A-Za-z0-9_])wget([^A-Za-z0-9_]|$)/)) { print "sender wget"; continue }
         if (index(tx, "api.linear.app") > 0) print "url " first[p]
@@ -238,18 +289,55 @@ _scan() {
       all = ""
       for (p = 0; p <= pl; p++) all = all "\n" ptext[p]
       if (nontext && index(all, "issueCreate") > 0) {
-        hs_word = ""
-        if (match(all, /[A-Za-z0-9_]*linear_graphql/)) hs_word = substr(all, RSTART, RLENGTH)
-        else if (match(all, /(^|[^A-Za-z0-9_])curl([^A-Za-z0-9_]|$)/)) hs_word = "curl"
-        else if (match(all, /(^|[^A-Za-z0-9_])wget([^A-Za-z0-9_]|$)/)) hs_word = "wget"
-        else if (index(all, "api.linear.app") > 0) hs_word = "api.linear.app"
+        # First sender found wins: *linear_graphql, then curl, wget, the host.
+        hs_word = lgword(all)
+        if (hs_word == "") {
+          if (match(all, /(^|[^A-Za-z0-9_])curl([^A-Za-z0-9_]|$)/)) hs_word = "curl"
+          else if (match(all, /(^|[^A-Za-z0-9_])wget([^A-Za-z0-9_]|$)/)) hs_word = "wget"
+          else if (index(all, "api.linear.app") > 0) hs_word = "api.linear.app"
+        }
         if (hs_word != "") print "heredoc " hs_word
       }
+      # Input that ends inside a quote, $( ), backticks or ${ is something
+      # bash refuses to parse, or something the scanner misread. Either way
+      # its pipelines cannot be trusted, so the caller judges the raw text.
+      if (sp > 0 || bd[0] > 0) print "unbalanced"
     }
   '
 }
 
-findings=$(printf '%s\n' "$cmd" | _scan 2>/dev/null) || exit 0
+# _raw_send — prints the first sender word (curl, wget, *linear_graphql,
+# api.linear.app) anywhere in the raw command text, or nothing.
+_raw_send() {
+  printf '%s\n' "$cmd" | grep -oE -m1 '[A-Za-z0-9_]*linear_graphql|api\.linear\.app|(^|[^A-Za-z0-9_])(curl|wget)([^A-Za-z0-9_]|$)' | head -n1 | tr -cd 'A-Za-z0-9_.' || true
+}
+
+# fail_closed <why> — the scanner cannot judge this command (too long, awk
+# failed or is missing, or the input ended unbalanced). Judge the raw text
+# instead: deny when it holds the
+# mutation and a sender anywhere, or starts a command with create_issue;
+# otherwise allow (#516).
+fail_closed() {
+  local s
+  if [[ "$cmd" == *issueCreate* ]]; then
+    s=$(_raw_send)
+    [ -n "$s" ] && deny "issueCreate and $s in a command the scanner could not judge ($1)"
+  fi
+  if printf '%s\n' "$cmd" | grep -qE '(^|[;&|(`][[:space:]]*|^[[:space:]]+)create_issue([[:space:];)`]|$)'; then
+    deny "create_issue at the start of a command the scanner could not judge ($1)"
+  fi
+  exit 0
+}
+
+# The hook has a 2s timeout (plugin.json) and a timed-out hook fails open.
+# The scanner builds strings one character at a time, which grows
+# quadratically on one very long word, so a command past the cap is judged on
+# its raw text instead. 64K is also GitHub's issue/PR body limit, so the #501
+# gh shapes stay scanned.
+max_scan=${TICKET_CREATE_GUARD_MAX_SCAN:-65536}
+[ "${#cmd}" -gt "$max_scan" ] && fail_closed "over $max_scan characters"
+
+findings=$(printf '%s\n' "$cmd" | _scan 2>/dev/null) || fail_closed "scanner error"
 
 if printf '%s\n' "$findings" | grep -qx 'create_issue'; then
   deny "create_issue called as a command"
@@ -260,7 +348,7 @@ if [[ "$cmd" == *issueCreate* ]]; then
   # config an earlier stage may have written (printf/echo/heredoc into
   # .git/config or .gitattributes). gh is exempt.
   if printf '%s\n' "$findings" | grep -qx 'gitstage'; then
-    gsend=$(printf '%s\n' "$cmd" | grep -oE -m1 '[A-Za-z0-9_]*linear_graphql|api\.linear\.app|(^|[^A-Za-z0-9_])(curl|wget)([^A-Za-z0-9_]|$)' | head -n1 | tr -cd 'A-Za-z0-9_.' || true)
+    gsend=$(_raw_send)
     [ -n "$gsend" ] && deny "issueCreate and $gsend in a call with a git stage"
   fi
   hit=$(printf '%s\n' "$findings" | grep -m1 -E '^(sender|url|heredoc) ' || true)
@@ -269,6 +357,12 @@ if [[ "$cmd" == *issueCreate* ]]; then
   sender\ *) deny "issueCreate with network sender ${hit#sender } in a non-text pipeline" ;;
   url\ *) deny "issueCreate with api.linear.app in a pipeline run by ${hit#url }" ;;
   esac
+fi
+
+# The scanner allowed it, but ended inside an open quote, substitution or
+# ${: fall back to the raw-text rule rather than trust its pipelines.
+if printf '%s\n' "$findings" | grep -qx 'unbalanced'; then
+  fail_closed "unbalanced quoting"
 fi
 
 exit 0
