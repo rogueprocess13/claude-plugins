@@ -271,6 +271,31 @@ crlf=$(printf '%s\r\n' '## Verification Plan' '' '### Per-Criterion Verification
   _pass "#514: CRLF line endings do not hide a trailing Verifiable mark" ||
   _fail "#514: CRLF table should be '1 1' (got '$(_vp "$crlf")')"
 
+pipecell="$_hdr
+| 1 | open menu | admin | Settings | Users | none | list shown | ✓ |
+| 2 | other | admin | Home | none | shown | ✗ |
+"
+[ "$(_vp "$pipecell")" = "2 1" ] &&
+  _pass "#514 review: unescaped | in an earlier cell still reads the last-column mark" ||
+  _fail "#514 review: pipe-in-cell table should be '2 1' (got '$(_vp "$pipecell")')"
+
+marks="$_hdr
+| 1 | a | r | n | d | e | ✅ |
+| 2 | b | r | n | d | e | "$' '"✓"$' '" |
+| 3 | c | r | n | d | e | ✓ (manual) |
+"
+[ "$(_vp "$marks")" = "3 2" ] &&
+  _pass "#514 review: ✅ and no-break-space-padded ✓ count, '✓ (manual)' does not" ||
+  _fail "#514 review: marks table should be '3 2' (got '$(_vp "$marks")')"
+
+out=$(printf 'stdin text' | {
+  vplan_parse "" || true
+  cat
+})
+[ "$out" = "stdin text" ] &&
+  _pass "#514 review: an empty argument does not read stdin" ||
+  _fail "#514 review: empty argument consumed stdin (got '$out')"
+
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

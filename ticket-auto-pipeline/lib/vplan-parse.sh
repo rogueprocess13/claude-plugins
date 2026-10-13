@@ -61,14 +61,16 @@
 # whose text, with `*`/`_`/backtick markup stripped and lower-cased, starts
 # with "verifiable"; columns may come in any order. Only that cell of each
 # data row is read. It counts when, trimmed, markup-stripped and case-folded,
-# it is exactly `✓`, `✔` (with or without the emoji variation selector), `y`
-# or `yes`. Anything else — blank, `✗`, `x`, `n`, `partial`, prose — does
+# it is exactly `✓`, `✔` (with or without the emoji variation selector), `✅`,
+# `y` or `yes` (no-break spaces trimmed too). Anything else — blank, `✗`, `x`, `n`, `partial`, prose — does
 # not count. What the writers emit: ticket-appraise-exec writes `✓`/`✗`;
 # ticket-planner's planner_ticketgen_vplan writes `✓` or a blank cell;
 # hand-written plans use `Y`/`Yes`. Cells are split on unescaped `|` only:
 # `\|` (how the #499 composer escapes a pipe inside a cell) is swapped for a
 # sentinel first, as dor-check.sh's _dor_td_items does. A row too short to
-# reach the Verifiable column does not count.
+# reach the Verifiable column does not count. When Verifiable is the last
+# header column and a row has extra cells (an unescaped `|` in an earlier
+# cell, e.g. a menu path `Settings | Users`), its last cell is read.
 #
 # No Verifiable column: a table whose header has no Verifiable cell adds 0
 # to VPLAN_VERIFIABLE (its rows still count toward VPLAN_ROWS). There is no
@@ -86,7 +88,10 @@
 # Exit 1 — no usable table: empty input, no `## Verification Plan` heading,
 #          or no `### Per-Criterion Verification` subsection under it.
 vplan_parse() {
-  local text="${1:-$(cat)}"
+  # Read stdin only when called with no argument: an empty argument (e.g.
+  # gate-check passing a missing notes.md) must not block on or consume stdin.
+  local text
+  if [ $# -gt 0 ]; then text=$1; else text=$(cat); fi
 
   VPLAN_ROWS=0
   VPLAN_VERIFIABLE=0
@@ -104,7 +109,12 @@ vplan_parse() {
   # LC_ALL=C: compare the ✓/✔ marks byte-for-byte, and keep tolower ASCII-only.
   local counts
   counts=$(printf '%s\n' "$vplan_section" | LC_ALL=C awk '
-    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    function trim(s) {
+      # Spaces, tabs and UTF-8 no-break spaces (\302\240) on either side.
+      while (sub(/^([ \t]|\302\240)/, "", s)) {}
+      while (sub(/([ \t]|\302\240)$/, "", s)) {}
+      return s
+    }
     function norm(s) { gsub(/[*_`]/, "", s); return tolower(trim(s)) }
     function cells(line, arr,   n, i) {
       line = trim(line); gsub(/\\\|/, "\001", line)
@@ -115,7 +125,7 @@ vplan_parse() {
     }
     function yes(v) {
       v = norm(v)
-      return v == "y" || v == "yes" || v == "\342\234\223" || v == "\342\234\224" || v == "\342\234\224\357\270\217"
+      return v == "y" || v == "yes" || v == "\342\234\223" || v == "\342\234\224" || v == "\342\234\224\357\270\217" || v == "\342\234\205"
     }
     /^[ \t]*```/ { fence = !fence; intable = 0; next }
     fence { next }
@@ -124,12 +134,16 @@ vplan_parse() {
     {
       n = cells($0, c)
       if (!intable) {
-        intable = 1; vcol = 0
+        intable = 1; vcol = 0; hn = n
         for (i = 1; i <= n; i++) if (index(norm(c[i]), "verifiable") == 1) { vcol = i; break }
       }
       if ($0 ~ /^[ \t]*\|[ \t]*#[ \t]*\|/) next
       rows++
-      if (vcol && vcol <= n && yes(c[vcol])) ver++
+      # An unescaped | in an earlier cell adds cells. When Verifiable is the
+      # last header column, the mark is still the last cell of the row.
+      vc = vcol
+      if (vcol && vcol == hn && n > hn) vc = n
+      if (vc && vc <= n && yes(c[vc])) ver++
     }
     END { printf "%d %d\n", rows, ver }
   ' 2>/dev/null) || counts="0 0"
