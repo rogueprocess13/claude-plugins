@@ -17,13 +17,15 @@
 #
 # A small shell-aware scanner (quotes, $( ), $(( )), backticks, comments,
 # heredocs) splits the command into pipelines and finds their command words.
-# A pipeline made only of text commands (echo, cat, jq, gh, git, ...) never
+# A pipeline made only of text commands (echo, cat, jq, gh, git, ...; never
+# awk, sed, rg, sort or less, which can run commands) never
 # counts as a sender, so writing prose about the API to a file, or filing a
 # GitHub issue about it, is allowed (#501). Comments are dropped. A heredoc
 # belongs to the pipeline that reads it, so `sh <<EOF` or `cat <<EOF | sh`
-# is checked like any other code. A heredoc that holds the mutation and a
-# sender also denies when any other pipeline in the call is non-text, which
-# covers writing a script to a file and then running or sourcing it.
+# is checked like any other code. A call whose text (heredocs and quoted
+# strings included) holds the mutation and a sender also denies when any
+# pipeline in it is non-text, which covers writing a script to a file and
+# then running or sourcing it.
 #
 # Fails open: missing jq or a payload that does not parse exits 0 silently —
 # a broken guard must never block unrelated work. Matching is deliberately
@@ -67,8 +69,9 @@ cmd=$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null)
 #   create_issue        create_issue run as a command
 #   sender <word>       curl/wget/*linear_graphql named in a non-text pipeline
 #   url <first-word>    api.linear.app named in a non-text pipeline
-#   heredoc <word>      some heredoc body holds issueCreate and a sender, and
-#                       the command has a non-text pipeline somewhere
+#   heredoc <word>      the command text (heredocs and quoted strings
+#                       included) holds issueCreate and a sender, and the
+#                       command has a non-text pipeline somewhere
 # A non-text pipeline is one with at least one command word outside the
 # text-only list (echo, cat, jq, gh, git, ...), or with no command word.
 _scan() {
@@ -196,7 +199,6 @@ _scan() {
             if (hs[h]) sub(/^\t+/, "", b)
             if (b == hd[h]) break
             ptext[hp[h]] = ptext[hp[h]] "\n" b
-            hbody = hbody "\n" b
           }
         }
         nh = 0
@@ -210,7 +212,7 @@ _scan() {
         textonly = (nw > 0) && !unsafe[p]
         for (k = 1; k <= nw; k++) {
           if (ws[k] == "create_issue") print "create_issue"
-          if (ws[k] !~ /^(echo|printf|cat|tee|grep|rg|sed|awk|jq|head|tail|less|more|wc|sort|uniq|tr|cut|true|false|:|test|\[|gh|git)$/) textonly = 0
+          if (ws[k] !~ /^(echo|printf|cat|tee|grep|jq|head|tail|wc|uniq|tr|cut|true|false|:|test|\[|gh|git)$/) textonly = 0
         }
         # A pipeline made only of text commands (gh and git included) cannot
         # send anything, whatever its arguments or heredocs say. Any other
@@ -225,20 +227,22 @@ _scan() {
         if (match(tx, /(^|[^A-Za-z0-9_])wget([^A-Za-z0-9_]|$)/)) { print "sender wget"; continue }
         if (index(tx, "api.linear.app") > 0) print "url " first[p]
       }
-      # A heredoc written to a file can be run later in the same call
-      # (source, bash, ., sh, python3 ...). Without tracking files: a heredoc
-      # body holding the mutation and a sender, plus any non-text pipeline
-      # anywhere in the command, is treated as a send.
+      # Text written to a file (heredoc or quoted string) can be run later in
+      # the same call (source, bash, ., sh, python3 ...). Without tracking
+      # files: any non-text pipeline in a call whose text names the mutation
+      # and a sender anywhere is treated as a send.
       # Any git stage, safe or not, is reported so the caller can apply the
       # whole-command git rule (git runs configured filters, textconv and
       # pagers that any earlier stage may have written).
       for (k = 1; k <= ns; k++) if (scmd[k] == "git") { print "gitstage"; break }
-      if (nontext && index(hbody, "issueCreate") > 0) {
+      all = ""
+      for (p = 0; p <= pl; p++) all = all "\n" ptext[p]
+      if (nontext && index(all, "issueCreate") > 0) {
         hs_word = ""
-        if (match(hbody, /[A-Za-z0-9_]*linear_graphql/)) hs_word = substr(hbody, RSTART, RLENGTH)
-        else if (match(hbody, /(^|[^A-Za-z0-9_])curl([^A-Za-z0-9_]|$)/)) hs_word = "curl"
-        else if (match(hbody, /(^|[^A-Za-z0-9_])wget([^A-Za-z0-9_]|$)/)) hs_word = "wget"
-        else if (index(hbody, "api.linear.app") > 0) hs_word = "api.linear.app"
+        if (match(all, /[A-Za-z0-9_]*linear_graphql/)) hs_word = substr(all, RSTART, RLENGTH)
+        else if (match(all, /(^|[^A-Za-z0-9_])curl([^A-Za-z0-9_]|$)/)) hs_word = "curl"
+        else if (match(all, /(^|[^A-Za-z0-9_])wget([^A-Za-z0-9_]|$)/)) hs_word = "wget"
+        else if (index(all, "api.linear.app") > 0) hs_word = "api.linear.app"
         if (hs_word != "") print "heredoc " hs_word
       }
     }
@@ -261,7 +265,7 @@ if [[ "$cmd" == *issueCreate* ]]; then
   fi
   hit=$(printf '%s\n' "$findings" | grep -m1 -E '^(sender|url|heredoc) ' || true)
   case "$hit" in
-  heredoc\ *) deny "issueCreate and ${hit#heredoc } in a heredoc, with a non-text command in the same call" ;;
+  heredoc\ *) deny "issueCreate and ${hit#heredoc } in the call text, with a non-text command in the same call" ;;
   sender\ *) deny "issueCreate with network sender ${hit#sender } in a non-text pipeline" ;;
   url\ *) deny "issueCreate with api.linear.app in a pipeline run by ${hit#url }" ;;
   esac

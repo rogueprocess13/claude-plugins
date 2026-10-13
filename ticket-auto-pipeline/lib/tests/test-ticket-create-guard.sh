@@ -376,7 +376,39 @@ test_git_config_pager_tee_then_log_denied() {
 }
 
 FILTER="${1:-}"
+# Security review of #508: commands that can run other commands are not text.
+test_awk_system_curl_denied() {
+  _denied "$(_bash_payload "awk 'BEGIN{system(\"curl -s $_U -d issueCreate\")}'")"
+}
+test_sed_e_curl_denied() {
+  _denied "$(_bash_payload "echo x | sed 's/x/curl -s $_U -d issueCreate/e'")"
+}
+test_rg_pre_curl_denied() {
+  _denied "$(_bash_payload "rg --pre 'curl -s $_U -d issueCreate' x .")"
+}
+test_sort_compress_program_denied() {
+  _denied "$(_bash_payload "sort --compress-program=curl -o /tmp/x $_U issueCreate")"
+}
+# Control regression: a script written with printf/echo, then run, in one call.
+test_printf_script_then_bash_denied() {
+  _denied "$(_bash_payload "printf '%s\\n' 'curl -s $_U -d issueCreate' > /tmp/x.sh; bash /tmp/x.sh")"
+}
+test_echo_script_then_source_denied() {
+  _denied "$(_bash_payload "echo \"curl -s $_U -d issueCreate\" > /tmp/x.sh && source /tmp/x.sh")"
+}
+# The #501 shape stays allowed: prose written by text commands, then gh.
+test_printf_prose_then_gh_issue_create_allowed() {
+  _allowed "$(_bash_payload "printf 'calls curl on api.linear.app with issueCreate' > /tmp/b.md && gh issue create --title x --body-file /tmp/b.md")"
+}
+
 for fn in \
+  test_awk_system_curl_denied \
+  test_sed_e_curl_denied \
+  test_rg_pre_curl_denied \
+  test_sort_compress_program_denied \
+  test_printf_script_then_bash_denied \
+  test_echo_script_then_source_denied \
+  test_printf_prose_then_gh_issue_create_allowed \
   test_mcp_create_denied \
   test_mcp_create_issue_tool_denied \
   test_mcp_update_allowed \

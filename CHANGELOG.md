@@ -27,7 +27,8 @@ was denied, and every side effect of the denied call was lost.
 
 - **Shell-aware sender detection**: a small awk scanner (quotes, `$( )`, `$(( ))`, backticks,
   comments, heredocs) splits the command into pipelines and finds their command words. A pipeline
-  made only of text commands (`echo`, `cat`, `jq`, ...) never counts as a sender, so writing prose
+  made only of text commands (`echo`, `cat`, `jq`, ...; never `awk`, `sed`, `rg`, `sort` or
+  `less`, which can run other commands) never counts as a sender, so writing prose
   about the API to a file, or filing a GitHub issue or commit about it, is allowed. `gh` and `git`
   count as text only for a safe subcommand set (gh `issue`/`pr` create, edit, comment, view, list,
   plus `pr diff|checks` and `repo view`; git `commit`, `log`, `diff`, `status`, `show`, `add`,
@@ -42,9 +43,10 @@ was denied, and every side effect of the denied call was lost.
   `planner_linear_graphql 'mutation { issueCreate … }'`, a mutation fed to a sender through a
   heredoc or a variable, an interpreter fed a heredoc (`sh <<EOF`, `cat <<EOF | sh`, `python3 - <<EOF`),
   a sender after a `gh`/`git` stage (`gh … | curl`), wrapped senders (`timeout`, `nice`, `sudo -E`,
-  `xargs -0`) and `create_issue` inside `$( )` are all still denied. A heredoc whose body holds the
-  mutation and a sender also denies when any pipeline in the call is non-text, so a script written
-  to a file and then `source`d or run with `bash`/`sh`/`.` in the same call is still caught.
+  `xargs -0`) and `create_issue` inside `$( )` are all still denied. A call whose text (heredoc bodies
+  and quoted strings, not comments) holds the mutation and a sender also denies when any pipeline
+  in it is non-text, so a script written to a file by a heredoc, `printf` or `echo` and then
+  `source`d or run with `bash`/`sh`/`.` in the same call is still caught.
 - **git rule**: a call with any `git` stage (safe or not) whose raw text contains the mutation and
   a sender is denied. git runs filters, textconv and pagers from config any earlier stage may have
   written (`printf`/`echo`/heredoc into `.git/config` or `.gitattributes`). `gh` is exempt.
