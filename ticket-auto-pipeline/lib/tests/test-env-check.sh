@@ -283,6 +283,57 @@ test_claude_md_field_grammar() {
 
 # ── argument parsing edge cases ───────────────────────────────────────────────
 
+_validate_output() {
+  LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
+    bash "$LIB_DIR/env-check.sh" --mode=validate "$1" 2>&1 || true
+}
+
+test_validate_warns_unwired_env_start() {
+  local tmpdir output
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  printf '#!/usr/bin/env bash\nAPP_DIR="$REPOS_ROOT/app"\n' >"$tmpdir/env-start.sh"
+  output=$(_validate_output "$tmpdir")
+  rm -rf "$tmpdir"
+  echo "$output" | grep 'env-start.sh' | grep -q 'warn.*VERIFY_SERVED_WRONG_WORKTREE'
+}
+
+test_validate_passes_wired_env_start() {
+  local tmpdir output
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  printf '#!/usr/bin/env bash\nAPP_DIR="${VERIFY_REPO_PATH_APP:-$REPOS_ROOT/app}"\n' >"$tmpdir/env-start.sh"
+  output=$(_validate_output "$tmpdir")
+  rm -rf "$tmpdir"
+  echo "$output" | grep -q 'ok.*env-start.sh reads VERIFY_REPO_PATH_'
+}
+
+test_validate_no_env_start_is_silent() {
+  local tmpdir output
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  output=$(_validate_output "$tmpdir")
+  rm -rf "$tmpdir"
+  ! echo "$output" | grep -q 'env-start.sh'
+}
+
+test_validate_verify_served_ports() {
+  local tmpdir output
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  echo 'VERIFY_SERVED_PORTS = 8080, http://localhost:9000' >>"$tmpdir/CLAUDE.md"
+  output=$(_validate_output "$tmpdir")
+  echo "$output" | grep -q 'ok.*VERIFY_SERVED_PORTS (8080, http://localhost:9000)' || {
+    rm -rf "$tmpdir"
+    return 1
+  }
+  _mk_project_dir "$tmpdir"
+  echo 'VERIFY_SERVED_PORTS = 8080 nope' >>"$tmpdir/CLAUDE.md"
+  output=$(_validate_output "$tmpdir")
+  rm -rf "$tmpdir"
+  echo "$output" | grep 'VERIFY_SERVED_PORTS' | grep -q 'warn.*nope'
+}
+
 test_unknown_mode_exits_1() {
   local exit_code=0
   bash "$LIB_DIR/env-check.sh" --mode=garbage >/dev/null 2>&1 || exit_code=$?
@@ -324,6 +375,10 @@ for fn in \
   test_validate_passes_backticked_project \
   test_full_mode_reads_backticked_fields \
   test_claude_md_field_grammar \
+  test_validate_warns_unwired_env_start \
+  test_validate_passes_wired_env_start \
+  test_validate_no_env_start_is_silent \
+  test_validate_verify_served_ports \
   test_unknown_mode_exits_1 \
   test_summary_file_flag_writes_to_path; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue

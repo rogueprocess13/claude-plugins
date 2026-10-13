@@ -619,17 +619,280 @@ test_skill_md_env_start_gets_worktree_contract() {
     echo "  Step 1.6b does not eval verify_worktree_exports before env-start.sh" >&2
     return 1
   }
-  printf '%s' "$section" | grep -q 'verify_served_worktree_check "{TICKET-ID}"' || {
-    echo "  Step 1.6b does not run verify_served_worktree_check" >&2
+  printf '%s' "$section" | grep -q 'verify_served_check_ports "{TICKET-ID}"' || {
+    echo "  Step 1.6b does not run verify_served_check_ports" >&2
     return 1
   }
   printf '%s' "$section" | grep -q 'VERIFY_SERVED_WRONG_WORKTREE' || {
     echo "  Step 1.6b does not gate-stop on a wrong served checkout" >&2
     return 1
   }
+  # Every block that derives worktree paths must resolve REPOS_ROOT itself:
+  # each env-start.sh block and the served-checkout block.
+  local blocks inits
+  blocks=$(printf '%s\n' "$section" | grep -c '^```bash' || true)
+  inits=$(printf '%s\n' "$section" | grep -c '^verify_env_init "{TICKET-ID}"' || true)
+  [ "$inits" -ge 3 ] || {
+    echo "  Step 1.6b: verify_env_init appears $inits time(s) across $blocks blocks, expected >= 3" >&2
+    return 1
+  }
+  # Every env-start.sh call is preceded, in its block, by verify_env_init and
+  # the exports eval — in that order.
+  local bad
+  bad=$(printf '%s\n' "$section" | awk '
+    /^```bash/ { inb=1; init=0; ev=0; next }
+    /^```/     { inb=0; next }
+    inb && /^verify_env_init / { init=1 }
+    inb && /verify_worktree_exports/ { if (!init) print "exports before init"; ev=1 }
+    inb && /^bash .*env-start\.sh/ { if (!init || !ev) print "env-start without init+exports: " $0 }
+  ')
+  [ -z "$bad" ] || {
+    echo "  Step 1.6b: $bad" >&2
+    return 1
+  }
   return 0
 }
 _run "SKILL.md Step 1.6b passes the worktree contract and checks the served checkout" test_skill_md_env_start_gets_worktree_contract
+
+test_skill_md_worktree_setup_resolves_repos_root() {
+  # Step 1.6a4 used to rely on an inherited REPOS_ROOT; unset, every repo was
+  # skipped and the step still logged "worktrees ready".
+  local skill_md="$LIB_DIR/../skills/ticket-verify/SKILL.md"
+  local section
+  section=$(awk '/^### 1\.6a4 /{f=1} /^### 1\.6b /{f=0} f' "$skill_md")
+  [ -n "$section" ] || return 1
+  local init_line ensure_line
+  init_line=$(printf '%s\n' "$section" | grep -n '^verify_env_init "{TICKET-ID}"' | head -1 | cut -d: -f1)
+  ensure_line=$(printf '%s\n' "$section" | grep -n 'ensure_verify_worktree "{TICKET-ID}"' | head -1 | cut -d: -f1)
+  [ -n "$init_line" ] && [ -n "$ensure_line" ] && [ "$init_line" -lt "$ensure_line" ] || {
+    echo "  Step 1.6a4 does not call verify_env_init before ensure_verify_worktree" >&2
+    return 1
+  }
+  printf '%s' "$section" | grep -q 'VERIFY_WORKTREE_NONE' || {
+    echo "  Step 1.6a4 does not warn when no worktree was created" >&2
+    return 1
+  }
+  printf '%s' "$section" | grep -q 'verify_worktree_env_var' || {
+    echo "  Step 1.6a4 names the export without verify_worktree_env_var" >&2
+    return 1
+  }
+  return 0
+}
+_run "SKILL.md Step 1.6a4 resolves REPOS_ROOT before creating worktrees" test_skill_md_worktree_setup_resolves_repos_root
+
+echo ""
+echo "=== REPOS_ROOT resolution, multi-port check, served report (#419) ==="
+echo ""
+
+test_served_no_verify_worktrees_is_rc4() {
+  _setup_fixture
+  _serve_from "$FIXTURE_REPO" || return 1
+  local rc
+  rc=$(_served_rc)
+  _serve_stop
+  [ "$rc" = "4" ] || {
+    echo "  expected rc 4 (no verify worktrees to compare), got $rc" >&2
+    return 1
+  }
+  return 0
+}
+_run "no verify worktree for the ticket -> rc 4, not a quiet rc 3" test_served_no_verify_worktrees_is_rc4
+
+test_env_init_keeps_set_repos_root() {
+  _setup_fixture
+  (
+    cd "$FIXTURE_DIR" || exit 1
+    printf 'REPOS_ROOT = /nonexistent/elsewhere\n' >CLAUDE.md
+    verify_env_init "CRE-1" ./CLAUDE.md 2>/dev/null || exit 1
+    [ "$REPOS_ROOT" = "$FIXTURE_DIR/repos" ]
+  )
+}
+_run "verify_env_init keeps an already-set REPOS_ROOT" test_env_init_keeps_set_repos_root
+
+test_env_init_reads_ticket_env_file() {
+  _setup_fixture
+  local tid="T419ENV$$" env_file
+  env_file="/tmp/ticket-auto-${tid}-env.sh"
+  printf 'export TICKET_ID="%s"\nexport REPOS_ROOT="%s"\nexport LOCAL_URL="http://x:1"\n' "$tid" "$REPOS_ROOT" >"$env_file"
+  local rc=0
+  (
+    unset REPOS_ROOT LOCAL_URL
+    cd "$FIXTURE_DIR" || exit 1
+    verify_env_init "$tid" ./no-such-CLAUDE.md 2>/dev/null || exit 1
+    [ "$REPOS_ROOT" = "$FIXTURE_DIR/repos" ] || exit 1
+    # Read, never sourced: nothing else from the env file leaks in.
+    [ -z "${LOCAL_URL:-}" ] || exit 1
+  ) || rc=$?
+  rm -f "$env_file"
+  [ "$rc" -eq 0 ]
+}
+_run "verify_env_init reads REPOS_ROOT from the ticket env file without sourcing it" test_env_init_reads_ticket_env_file
+
+test_env_init_reads_claude_md() {
+  _setup_fixture
+  (
+    unset REPOS_ROOT VERIFY_SERVED_PORTS
+    cd "$FIXTURE_DIR" || exit 1
+    printf '`REPOS_ROOT` = %s\n`VERIFY_SERVED_PORTS` = 8080, http://localhost:9000\n' "$FIXTURE_DIR/repos" >CLAUDE.md
+    verify_env_init "NO-ENV-FILE-419" ./CLAUDE.md 2>/dev/null || exit 1
+    [ "$REPOS_ROOT" = "$FIXTURE_DIR/repos" ] || exit 1
+    [ "$VERIFY_SERVED_PORTS" = "8080, http://localhost:9000" ] || exit 1
+  )
+}
+_run "verify_env_init falls back to CLAUDE.md for REPOS_ROOT and VERIFY_SERVED_PORTS" test_env_init_reads_claude_md
+
+test_env_init_env_overrides_served_ports_field() {
+  _setup_fixture
+  (
+    cd "$FIXTURE_DIR" || exit 1
+    printf 'VERIFY_SERVED_PORTS = 8080\n' >CLAUDE.md
+    VERIFY_SERVED_PORTS=7070
+    verify_env_init "CRE-1" ./CLAUDE.md 2>/dev/null || exit 1
+    [ "$VERIFY_SERVED_PORTS" = "7070" ]
+  )
+}
+_run "VERIFY_SERVED_PORTS in the environment overrides the CLAUDE.md field" test_env_init_env_overrides_served_ports_field
+
+test_env_init_fails_when_unresolvable() {
+  _setup_fixture
+  (
+    unset REPOS_ROOT
+    cd "$FIXTURE_DIR" || exit 1
+    ! verify_env_init "NO-ENV-FILE-419" ./no-such-CLAUDE.md 2>/dev/null
+  ) || return 1
+  (
+    REPOS_ROOT="$FIXTURE_DIR/does-not-exist"
+    ! verify_env_init "CRE-1" ./no-such-CLAUDE.md 2>/dev/null
+  )
+}
+_run "verify_env_init fails when REPOS_ROOT is unset or not a directory" test_env_init_fails_when_unresolvable
+
+test_exports_after_env_init_in_fresh_shell() {
+  # The bug class: a fresh shell with no REPOS_ROOT produced exports with no
+  # VERIFY_REPO_PATH_* at all, so env-start.sh served the primary checkout.
+  _setup_fixture
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  (
+    unset REPOS_ROOT
+    cd "$FIXTURE_DIR" || exit 1
+    printf 'REPOS_ROOT=%s\n' "$FIXTURE_DIR/repos" >CLAUDE.md
+    verify_env_init "NO-ENV-FILE-419" ./CLAUDE.md 2>/dev/null || exit 1
+    out=$(verify_worktree_exports "CRE-1")
+    unset VERIFY_REPO_PATH_MY_SERVICE
+    eval "$out"
+    [ "${VERIFY_REPO_PATH_MY_SERVICE:-}" = "$wt_path" ]
+  )
+}
+_run "verify_env_init + verify_worktree_exports in a fresh shell name the worktree" test_exports_after_env_init_in_fresh_shell
+
+test_served_ports_parsing() {
+  local out
+  out=$(verify_served_ports "http://localhost:3000" "8080, http://127.0.0.1:9000/x 3000" 2>/dev/null)
+  [ "$out" = "3000 8080 9000" ] || {
+    echo "  got '$out'" >&2
+    return 1
+  }
+  out=$(verify_served_ports "http://localhost:3000" "" 2>/dev/null)
+  [ "$out" = "3000" ] || return 1
+  out=$(verify_served_ports "bogus" "4000" 2>/dev/null)
+  [ "$out" = "4000" ] || return 1
+  verify_served_ports "bogus" 2>&1 >/dev/null | grep -q "unparseable" || return 1
+  return 0
+}
+_run "verify_served_ports normalises, dedupes and drops bad items" test_served_ports_parsing
+
+# Second listener, independent of SERVE_PID/SERVE_PORT.
+_serve2_from() {
+  local dir="$1" i
+  SERVE2_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+  (cd "$dir" && exec python3 -m http.server "$SERVE2_PORT" --bind 127.0.0.1 >/dev/null 2>&1) &
+  SERVE2_PID=$!
+  for i in $(seq 1 50); do
+    [ -n "$(_verify_listening_pids "$SERVE2_PORT")" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+_serve2_stop() {
+  [ -n "${SERVE2_PID:-}" ] && kill "$SERVE2_PID" 2>/dev/null
+  wait "$SERVE2_PID" 2>/dev/null || true
+  SERVE2_PID=""
+}
+
+test_check_ports_any_wrong_wins() {
+  _setup_fixture
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  _serve_from "$wt_path" || return 1
+  _serve2_from "$FIXTURE_REPO" || {
+    _serve_stop
+    return 1
+  }
+  local rc=0 out
+  out=$(verify_served_check_ports "CRE-1" "$SERVE_PORT" "$SERVE2_PORT" 2>/dev/null) || rc=$?
+  _serve_stop
+  _serve2_stop
+  [ "$rc" = "1" ] || {
+    echo "  expected rc 1 (one port serves the primary checkout), got $rc: $out" >&2
+    return 1
+  }
+  [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ] || {
+    echo "  summary is not one line: $out" >&2
+    return 1
+  }
+  printf '%s' "$out" | grep -q ":$SERVE_PORT ok" && printf '%s' "$out" | grep -q ":$SERVE2_PORT wrong"
+}
+_run "multi-port check: ok on one port + wrong on another -> rc 1, one-line summary" test_check_ports_any_wrong_wins
+
+test_check_ports_ok_plus_undetermined() {
+  _setup_fixture
+  local wt_path free_port
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  _serve_from "$wt_path" || return 1
+  free_port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+  local rc=0
+  verify_served_check_ports "CRE-1" "$SERVE_PORT" "$free_port" >/dev/null 2>&1 || rc=$?
+  _serve_stop
+  [ "$rc" = "0" ] || {
+    echo "  expected rc 0, got $rc" >&2
+    return 1
+  }
+  rc=0
+  verify_served_check_ports "CRE-1" "$free_port" >/dev/null 2>&1 || rc=$?
+  [ "$rc" = "3" ] || {
+    echo "  expected rc 3 for only undeterminable ports, got $rc" >&2
+    return 1
+  }
+  rc=0
+  verify_served_check_ports "CRE-1" >/dev/null 2>&1 || rc=$?
+  [ "$rc" = "3" ]
+}
+_run "multi-port check: ok + undetermined -> 0; only undetermined or none -> 3" test_check_ports_ok_plus_undetermined
+
+test_served_report_and_cli() {
+  _setup_fixture
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix") || return 1
+  _serve_from "$wt_path" || return 1
+  local report rc=0
+  report=$(bash "$LIB_DIR/verify-worktree.sh" served "http://127.0.0.1:$SERVE_PORT" 2>/dev/null)
+  bash "$LIB_DIR/verify-worktree.sh" check CRE-1 "$SERVE_PORT" </dev/null >/dev/null 2>&1 || rc=$?
+  _serve_stop
+  printf '%s' "$report" | grep -q "checkout=$(cd "$wt_path" && pwd -P)" &&
+    printf '%s' "$report" | grep -q "branch=feat/CRE-1-fix" || {
+    echo "  report missing checkout/branch: $report" >&2
+    return 1
+  }
+  [ "$rc" = "0" ] || {
+    echo "  CLI check expected rc 0, got $rc" >&2
+    return 1
+  }
+  local usage_rc=0
+  bash "$LIB_DIR/verify-worktree.sh" bogus </dev/null >/dev/null 2>&1 || usage_rc=$?
+  [ "$usage_rc" = "2" ]
+}
+_run "served report + CLI (served/check/usage) for a project's env-status.sh" test_served_report_and_cli
 
 echo ""
 echo "=== SKILL.md step ordering ==="

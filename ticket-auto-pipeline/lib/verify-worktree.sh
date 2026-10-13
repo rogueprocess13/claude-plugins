@@ -26,8 +26,11 @@
 #   source lib/verify-worktree.sh
 #   verify_worktree_gc                                          # opportunistic TTL sweep
 #   path=$(ensure_verify_worktree "CRE-123" "/path/to/repo" "feat/CRE-123-fix")
+#   verify_env_init "CRE-123" ./CLAUDE.md                       # REPOS_ROOT in a fresh shell
 #   eval "$(verify_worktree_exports "CRE-123")"                 # env-start.sh contract
 #   verify_served_worktree_check "CRE-123" "$(verify_url_port "$LOCAL_URL")"
+#   verify_served_check_ports "CRE-123" $(verify_served_ports "$LOCAL_URL" "$VERIFY_SERVED_PORTS")
+#   bash verify-worktree.sh served 3000                         # CLI for env-status.sh
 #   release_verify_worktree "CRE-123"
 #   verify_worktree_gc
 
@@ -308,9 +311,15 @@ _verify_git_common_dir() {
 #   rc 1 — served from another checkout of a repo under test that is on a
 #          different commit or has tracked changes: the run would verify the
 #          wrong code (diagnostic on stderr)
-#   rc 3 — undeterminable or not applicable: no verify worktrees, no visible
-#          listener, unreadable cwd, cwd outside any git checkout (e.g. a
-#          container port), or the served repo is not one this ticket touches
+#   rc 3 — undeterminable or not applicable: no visible listener, unreadable
+#          cwd, cwd outside any git checkout (e.g. a container port), or the
+#          served repo is not one this ticket touches
+#   rc 4 — nothing to compare against: no verify worktree exists for this
+#          ticket under $REPOS_ROOT/.verify-worktrees. After Step 1.6a4 this
+#          almost always means REPOS_ROOT is unset or wrong in the calling
+#          shell, which also means env-start.sh got no VERIFY_REPO_PATH_*
+#          exports. Kept apart from rc 3 so the caller can say so loudly
+#          instead of logging a quiet skip.
 verify_served_worktree_check() {
   local ticket_id="$1" port="$2"
   if [ -z "$ticket_id" ] || [ -z "$port" ]; then
@@ -328,8 +337,8 @@ verify_served_worktree_check() {
     exp_sha+=("$(git -C "$wt" rev-parse HEAD 2>/dev/null || true)")
   done
   if [ "${#exp_top[@]}" -eq 0 ]; then
-    echo "verify-worktree: no verify worktrees for $ticket_id — nothing to compare :$port against" >&2
-    return 3
+    echo "verify-worktree: no verify worktrees for $ticket_id under $root — nothing to compare :$port against (is REPOS_ROOT set in this shell?)" >&2
+    return 4
   fi
 
   local pids
@@ -371,6 +380,176 @@ verify_served_worktree_check() {
   fi
   echo "verify-worktree: :$port is not served from a checkout of any repo under test for $ticket_id" >&2
   return 3
+}
+
+# verify_env_init <TICKET_ID> [claude_md]
+# Every function in this file derives worktree paths from REPOS_ROOT, and every
+# SKILL.md bash block is a fresh shell, so REPOS_ROOT is not guaranteed to be
+# set there. When it is unset, verify_worktree_exports prints no
+# VERIFY_REPO_PATH_* line (env-start.sh serves the primary checkout) and
+# verify_served_worktree_check finds nothing to compare against — the exact
+# silent wrong-worktree run the check exists to catch. Resolves, first match
+# wins: an already-set REPOS_ROOT; the REPOS_ROOT line of the ticket's env file
+# (/tmp/ticket-auto-<TID>-env.sh, written by spawn_write_env — read, never
+# sourced, so nothing else in it leaks into the caller); the project CLAUDE.md's
+# REPOS_ROOT field. Also fills VERIFY_SERVED_PORTS from the CLAUDE.md field
+# when the environment does not set it. Exports both.
+# rc 0 when REPOS_ROOT resolves to an existing directory, 1 otherwise.
+verify_env_init() {
+  local ticket_id="$1" claude_md="${2:-./CLAUDE.md}" val=""
+
+  if [ -z "${REPOS_ROOT:-}" ] && [ -n "$ticket_id" ]; then
+    local env_file="/tmp/ticket-auto-${ticket_id}-env.sh"
+    if [ -f "$env_file" ]; then
+      val=$(sed -n 's/^export REPOS_ROOT="\(.*\)"$/\1/p' "$env_file" 2>/dev/null | head -1)
+      case "$val" in
+      '' | REPOS_ROOT_PLACEHOLDER) val="" ;;
+      esac
+      [ -n "$val" ] && REPOS_ROOT="$val"
+    fi
+  fi
+
+  if ! declare -f claude_md_field >/dev/null 2>&1; then
+    local _lib_dir
+    _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+    # shellcheck disable=SC1091
+    [ -n "$_lib_dir" ] && [ -f "$_lib_dir/claude-md-field.sh" ] && source "$_lib_dir/claude-md-field.sh"
+  fi
+
+  if [ -z "${REPOS_ROOT:-}" ] && declare -f claude_md_field >/dev/null 2>&1; then
+    val=$(claude_md_field "$claude_md" REPOS_ROOT 2>/dev/null) || val=""
+    case "$val" in
+    "~"/*) val="$HOME/${val#"~/"}" ;;
+    esac
+    [ -n "$val" ] && REPOS_ROOT="$val"
+  fi
+
+  if [ -z "${VERIFY_SERVED_PORTS:-}" ] && declare -f claude_md_field >/dev/null 2>&1; then
+    val=$(claude_md_field "$claude_md" VERIFY_SERVED_PORTS 2>/dev/null) || val=""
+    [ -n "$val" ] && VERIFY_SERVED_PORTS="$val"
+  fi
+  export VERIFY_SERVED_PORTS="${VERIFY_SERVED_PORTS:-}"
+
+  if [ -z "${REPOS_ROOT:-}" ] || [ ! -d "$REPOS_ROOT" ]; then
+    echo "verify-worktree: REPOS_ROOT unresolved ('${REPOS_ROOT:-}') — set it in the environment, the ticket env file, or $claude_md" >&2
+    return 1
+  fi
+  export REPOS_ROOT
+  return 0
+}
+
+# verify_served_ports <spec>...
+# Normalises port specs to a deduplicated, space-separated port list. Each
+# argument may hold several items separated by commas or whitespace; an item is
+# a bare port (3000) or an http(s) URL (http://localhost:3000, whose port is
+# taken via verify_url_port). Unparseable items are reported on stderr and
+# dropped. Typical call: verify_served_ports "$LOCAL_URL" "$VERIFY_SERVED_PORTS"
+# — LOCAL_URL's port plus any extra project-declared ports (an API server, a
+# separately served worker health port) that must also run this ticket's code.
+verify_served_ports() {
+  local arg item port out=" "
+  for arg in "$@"; do
+    for item in $(printf '%s' "$arg" | tr ',' ' '); do
+      case "$item" in
+      *[!0-9]*) port=$(verify_url_port "$item") || port="" ;;
+      *) port="$item" ;;
+      esac
+      case "$port" in
+      '' | *[!0-9]*)
+        echo "verify-worktree: ignoring unparseable served-port item '$item'" >&2
+        continue
+        ;;
+      esac
+      case "$out" in
+      *" $port "*) ;;
+      *) out="$out$port " ;;
+      esac
+    done
+  done
+  out="${out# }"
+  printf '%s' "${out% }"
+}
+
+# verify_served_check_ports <TICKET_ID> <port>...
+# verify_served_worktree_check over several ports, folded into one verdict and
+# one single-line summary on stdout (safe to drop into a pipeline log MSG):
+#   ":3000 ok <cwd>; :8080 wrong <diagnostic>; :9000 undetermined <diagnostic>"
+# Return code, most severe first:
+#   4 — no verify worktrees for this ticket (nothing to compare; see above)
+#   1 — any port serves another checkout of a repo under test
+#   0 — at least one port serves this ticket's code and none serves another's
+#   3 — no port could be determined (or no ports were given)
+verify_served_check_ports() {
+  local ticket_id="$1"
+  shift || true
+  local -a parts=()
+  local port msg rc any_ok=0 any_wrong=0
+  if [ "$#" -eq 0 ]; then
+    echo "no ports to check (LOCAL_URL has no resolvable port and VERIFY_SERVED_PORTS is empty)"
+    return 3
+  fi
+  for port in "$@"; do
+    rc=0
+    msg=$(verify_served_worktree_check "$ticket_id" "$port" 2>&1) || rc=$?
+    msg=$(printf '%s' "$msg" | sed 's/^verify-worktree: //' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+    case "$rc" in
+    0)
+      parts+=(":$port ok $msg")
+      any_ok=1
+      ;;
+    1)
+      parts+=(":$port wrong $msg")
+      any_wrong=1
+      ;;
+    4)
+      echo "$msg"
+      return 4
+      ;;
+    *) parts+=(":$port undetermined $msg") ;;
+    esac
+  done
+  local IFS=';'
+  msg="${parts[*]}"
+  printf '%s\n' "${msg//;/; }"
+  [ "$any_wrong" -eq 1 ] && return 1
+  [ "$any_ok" -eq 1 ] && return 0
+  return 3
+}
+
+# verify_served_report <port|url>...
+# Human-readable "what is actually being served" report — one line per
+# listening pid: port, pid, cwd, checkout root, branch, short sha and a dirty
+# marker. Meant for a project's env-status.sh (which otherwise reports only
+# up/down) via the CLI below: `bash verify-worktree.sh served 3000 8080`.
+# Always returns 0; a port with no visible listener says so.
+verify_served_report() {
+  local port pid cwd top branch sha dirty
+  for port in $(verify_served_ports "$@"); do
+    local pids
+    pids=$(_verify_listening_pids "$port")
+    if [ -z "$pids" ]; then
+      echo ":$port no listening process visible"
+      continue
+    fi
+    for pid in $pids; do
+      cwd=$(_verify_pid_cwd "$pid")
+      if [ -z "$cwd" ]; then
+        echo ":$port pid=$pid cwd=unreadable"
+        continue
+      fi
+      top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || top=""
+      if [ -z "$top" ]; then
+        echo ":$port pid=$pid cwd=$cwd checkout=none"
+        continue
+      fi
+      branch=$(git -C "$top" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+      sha=$(git -C "$top" rev-parse --short=12 HEAD 2>/dev/null || echo "?")
+      dirty=""
+      [ -n "$(git -C "$top" status --porcelain --untracked-files=no 2>/dev/null)" ] && dirty=" dirty"
+      echo ":$port pid=$pid cwd=$cwd checkout=$top branch=$branch sha=$sha$dirty"
+    done
+  done
+  return 0
 }
 
 # release_verify_worktree <TICKET_ID>
@@ -451,3 +630,35 @@ verify_worktree_gc() {
   [ "$removed" -gt 0 ] && echo "verify-worktree: swept $removed stale worktree(s) older than ${ttl_hours}h" >&2
   return 0
 }
+
+# ── CLI ─────────────────────────────────────────────────────────────────────
+# Lets a project's own scripts (env-status.sh, env-start.sh) ask the same
+# question ticket-verify asks, without re-implementing the pid -> cwd ->
+# checkout resolution:
+#   bash verify-worktree.sh served <port|url>...            # report, always rc 0
+#   bash verify-worktree.sh check <TICKET_ID> <port|url>... # rc as verify_served_check_ports
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1:-}" in
+  served)
+    shift
+    verify_served_report "$@"
+    ;;
+  check)
+    shift
+    _vw_tid="${1:-}"
+    shift || true
+    if [ -z "$_vw_tid" ]; then
+      echo "usage: verify-worktree.sh check <TICKET_ID> <port|url>..." >&2
+      exit 2
+    fi
+    verify_env_init "$_vw_tid" || true
+    # shellcheck disable=SC2046
+    verify_served_check_ports "$_vw_tid" $(verify_served_ports "$@")
+    exit $?
+    ;;
+  *)
+    echo "usage: verify-worktree.sh served <port|url>... | check <TICKET_ID> <port|url>..." >&2
+    exit 2
+    ;;
+  esac
+fi
