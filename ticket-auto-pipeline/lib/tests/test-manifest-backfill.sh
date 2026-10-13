@@ -23,7 +23,8 @@ _new_workspace() {
   tmpdir=$(mktemp -d)
   mkdir -p "$tmpdir/lib" "$tmpdir/repos" "$tmpdir/logs"
   cp "$LIB_DIR/manifest-write.sh" "$LIB_DIR/manifest-read.sh" \
-    "$LIB_DIR/planned-ticket-check.sh" "$LIB_DIR/branch-directive-check.sh" \
+    "$LIB_DIR/planned-ticket-check.sh" "$LIB_DIR/planner-context-extract.sh" \
+    "$LIB_DIR/branch-directive-check.sh" \
     "$LIB_DIR/epic-branch.sh" "$tmpdir/lib/"
   cat >"$tmpdir/lib/linear-api.sh" <<'STUBEOF'
 get_issue() {

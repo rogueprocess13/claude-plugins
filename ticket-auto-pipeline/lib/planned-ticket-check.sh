@@ -300,7 +300,18 @@ check_planned_ticket_description() {
 # anchored whole-line heading, fence-aware, first real heading wins, CR
 # stripped. That file is the one place the block-delimiter rules live.
 _extract_md_section() {
-  printf '%s\n' "$1" | md_section_extract "$2"
+  if declare -f md_section_extract >/dev/null 2>&1; then
+    printf '%s\n' "$1" | md_section_extract "$2"
+    return 0
+  fi
+  # Extractor missing (half-installed lib): fall back to the pre-#513 anchored
+  # reader rather than printing nothing, which callers read as "no section"
+  # (branch-directive-gen would then append a second directive).
+  printf '%s\n' "$1" | awk -v heading="$2" '
+    $0 ~ ("^## " heading "[[:space:]]*$") { found=1; next }
+    found && /^## / { found=0; done=1 }
+    found && !done { print }
+  '
 }
 
 # _extract_planner_context_block <description>
@@ -318,7 +329,16 @@ _extract_planner_context_block() {
 # or end of text) from a markdown description. Inverse of _extract_md_section,
 # with the same fence-aware heading rules (md_section_strip).
 _strip_md_section() {
-  printf '%s\n' "$1" | md_section_strip "$2"
+  if declare -f md_section_strip >/dev/null 2>&1; then
+    printf '%s\n' "$1" | md_section_strip "$2"
+    return 0
+  fi
+  # Pre-#513 reader; see _extract_md_section.
+  printf '%s\n' "$1" | awk -v heading="$2" '
+    $0 ~ ("^## " heading "[[:space:]]*$") { skip=1; next }
+    skip && /^## / { skip=0 }
+    !skip { print }
+  '
 }
 
 # _strip_planner_context_block <description>

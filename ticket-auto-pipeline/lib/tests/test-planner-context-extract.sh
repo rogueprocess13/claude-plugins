@@ -200,6 +200,26 @@ rc=0
 ) || rc=$?
 _eq "large body after the block: writer not SIGPIPEd under pipefail" "0" "$rc"
 
+# ── Review of #519: half-installed lib falls back to the anchored reader ───────
+
+(
+  iso=$(mktemp -d)
+  trap 'rm -rf "$iso"' EXIT
+  cp "$LIB_DIR/planned-ticket-check.sh" "$iso/"
+  unset -f md_section_extract md_section_strip planner_context_field 2>/dev/null
+  get_issue() { echo '{}'; }
+  # shellcheck source=../planned-ticket-check.sh
+  HOME="$iso" source "$iso/planned-ticket-check.sh" 2>/dev/null
+  desc=$(printf '%s\n' "# Epic" "## Branch Directive" "**Branch:** epic/x" "## Other" "y")
+  got=$(_extract_md_section "$desc" "Branch Directive")
+  left=$(_strip_md_section "$desc" "Branch Directive" | paste -sd'|' -)
+  [ "$got" = "**Branch:** epic/x" ] && [ "$left" = "# Epic|## Other|y" ] || {
+    echo "  fallback extract='$got' strip='$left'"
+    exit 1
+  }
+) && _eq "extractor missing: _extract_md_section/_strip_md_section fall back, not empty" ok ok ||
+  _eq "extractor missing: _extract_md_section/_strip_md_section fall back, not empty" ok fail
+
 # ── Consumer: planned-feedback-write.sh ────────────────────────────────────────
 
 DECOY_DESC=$(printf '%s\n' "# Ticket" "" "### Planner Context" "- Confidence: 0.12" "- Affected Services: decoy-svc" "" '```' "## Planner Context" "**Confidence:** 0.11" '```' "" "$REAL_BLOCK")
