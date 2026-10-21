@@ -135,7 +135,7 @@ Both new hooks deliberately avoid two payload assumptions the observed `SessionS
 | `ticket-audit-exec.sh` | Deterministic operations for ticket-audit-exec skill. `resolve_file`, `parse_checklist` (JSON output), `write_ahead_mark`, `mark_item_done`, `mark_item_failed`, `advance_phase`, `archive_checklist`, `has_pending_items`, `get_item_state`. |
 | `skill-preamble.md` | Shared preamble referenced by all pipeline skill SKILL.md files. Defines parameters and common guard patterns. |
 | `skill-preamble-auto.md` | Thin router variant of skill-preamble. Used by agents spawned from the thin router. Excludes guard, project context detection, step dispatch, and task tracker sections (handled by the router). |
-| `persona-select.sh` | Deterministic base+specializer persona selector. Emits `PERSONA_BASE`, `PERSONA_SPECIALIZER`, `PERSONA_AUTO_INCLUDE` from repo markers, CLAUDE.md Layer column, phase, and keyword triggers. For `PHASE=prescan`, emits `PERSONA_SET` (multi-persona list for fan-out). Follows gate-check.sh philosophy — zero LLM involvement. |
+| `persona-select.sh` | Deterministic base+specializer persona selector. Emits `PERSONA_BASE`, `PERSONA_SPECIALIZER`, `PERSONA_AUTO_INCLUDE`, `PERSONA_TESTDATA`, `PERSONA_TESTDATA_SPECIALIZERS` from repo markers, CLAUDE.md Layer column, phase, and keyword triggers. For `PHASE=prescan`, emits `PERSONA_SET` (multi-persona list for fan-out). Follows gate-check.sh philosophy — zero LLM involvement. |
 | `prescan-check.sh` | Deterministic freshness gate for `.ticket-auto/` prescan docs. Evaluates marker existence, schema version, integrity, SHA ancestry, source changes, and decay thresholds. Emits `PRESCAN_STATUS`, `PRESCAN_REASON`, `CHANGED_FILES`, `STALENESS_SCORE`, `DIRTY`. Exit 0 fresh, 1 stale/decayed, 2 missing. |
 | `prescan-docs.sh` | Deterministic graph-to-markdown distiller. Reads gitnexus JSON (clusters, routes, processes) and assembles `.ticket-auto/docs/` tree via jq. Zero LLM tokens. Produces `services/*.md`, `routes.md`, `processes.md`, `INDEX.md`. Idempotent output for identical input. |
 | `prescan-route.sh` | Deterministic INDEX.md keyword→file router. Parses Lookup by Topic/Service tables, matches ticket text against keywords via case-insensitive substring. Emits matched file paths. Replaces LLM keyword-matching in appraise Step 3a. Also supports `--mode repos` for deterministic repo enumeration under REPOS_ROOT. Zero variance between runs. |
@@ -191,8 +191,10 @@ The `personas/` directory provides in-house role guidance as plain markdown refe
 
 **Auto-include**: Security persona automatically activates on auth/payment/credential/PII keywords — no extra skill logic needed; the helper emits `PERSONA_AUTO_INCLUDE` when triggers fire.
 
-**Base roles (8)**: architect, backend-developer, frontend-developer, qa-engineer, analyzer, product-owner, security, technical-writer.
-**Specializers (11)**: backend/{python,node,java}, frontend/{angular,react,vue}, qa/{playwright-web,api-testing}, architect/{microservices,monolith}.
+**Test-data persona**: `test-data-engineer` is emitted as `PERSONA_TESTDATA` (plus up to 3 channel paths in `PERSONA_TESTDATA_SPECIALIZERS`). A strong signal — the ticket text has `## Test Data Provided`, a `Seed command:` line or the planner synth marker — also swaps `PERSONA_BASE` on the implement phase; a weak keyword hit (seed/test/sample/mock data, fixtures, …) only adds it. Channel order: explicit `Seed channel:` line → keywords → repo probes. See `personas/README.md`.
+
+**Base roles (9)**: architect, backend-developer, frontend-developer, qa-engineer, analyzer, product-owner, security, technical-writer, test-data-engineer.
+**Specializers (19)**: backend/{python,python-refactor,node,node-refactor,java,java-migration,java-refactor}, frontend/{angular,react,vue}, qa/{playwright-web,api-testing}, architect/{microservices,monolith}, testdata/{sql,api,ui-forms,files,factories}.
 
 ## State machine
 

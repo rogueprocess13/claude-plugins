@@ -86,7 +86,7 @@ build-output log in Step 4). If not found, fall back to `resolve_ticket_dir` in
 ## Step 2 — Extract requirements
 
 Activate the analyzer persona:
-Run `lib/persona-select.sh --repo <repo> --phase review` and read the persona file at `$PERSONA_BASE`. Inject its content as role context for this step.
+Run `lib/persona-select.sh --repo <repo> --phase review` and read the persona file at `$PERSONA_BASE`. Inject its content as role context for this step. If `$PERSONA_TESTDATA` is non-empty, read it too and check the diff's seeds and fixtures for idempotency, namespaced keys, referential integrity and production personal data.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|extract-requirements|start|Extracting requirements" >> "$LOG_FILE"
 

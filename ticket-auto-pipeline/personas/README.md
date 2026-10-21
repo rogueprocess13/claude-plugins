@@ -5,7 +5,7 @@ Self-contained role guidance for ticket-auto-pipeline skills. Plain markdown ref
 ## How it works
 
 1. A pipeline skill calls `lib/persona-select.sh --repo <path> [--layer FE|BE|infra] [--phase appraise|implement|review|audit]`
-2. The helper emits `PERSONA_BASE`, `PERSONA_SPECIALIZER`, and `PERSONA_AUTO_INCLUDE` as `KEY=value` lines
+2. The helper emits `PERSONA_BASE`, `PERSONA_SPECIALIZER`, `PERSONA_AUTO_INCLUDE`, `PERSONA_TESTDATA` and `PERSONA_TESTDATA_SPECIALIZERS` as `KEY=value` lines
 3. The skill reads the persona files at those paths and injects their content as role context
 
 ## Selection logic
@@ -14,6 +14,7 @@ Self-contained role guidance for ticket-auto-pipeline skills. Plain markdown ref
 
 | Variable | Base persona |
 |----------|-------------|
+| Test-data ticket (strong signal, see below) (implement) | `test-data-engineer` |
 | Layer = FE (implement) | `frontend-developer` |
 | Layer = BE / infra (implement) | `backend-developer` |
 | phase = appraise | `analyzer` |
@@ -43,13 +44,29 @@ Self-contained role guidance for ticket-auto-pipeline skills. Plain markdown ref
 
 When ticket title/description contains: auth, authentication, login, password, credential, token, payment, billing, PII, personal data, encryption, vulnerability → auto-include `security`.
 
+### Test-data persona
+
+`test-data-engineer` covers tickets whose deliverable is test data (seed scripts, fixtures, import files, data loaded through an API or a form). It is emitted as `PERSONA_TESTDATA`, separately from the single-valued `PERSONA_AUTO_INCLUDE`.
+
+| Signal | Effect |
+|--------|--------|
+| **Strong** — ticket text has a `## Test Data Provided` heading, a `Seed command:` line, or `<!-- planner:testdata-synth v1 -->` | `PERSONA_TESTDATA` set; on `--phase implement` `PERSONA_BASE` also becomes `test-data-engineer`, whatever the layer |
+| **Weak** — seed data, test data, fixture(s), sample data, demo data, mock data, synthetic data, generate data, data load, bulk import | `PERSONA_TESTDATA` set; `PERSONA_BASE` unchanged (added alongside the layer persona, like `security`) |
+| Neither | both keys empty |
+
+`PERSONA_TESTDATA_SPECIALIZERS` lists up to 3 `specializers/testdata/<channel>.md` paths, colon-separated, chosen in this order:
+
+1. An explicit `Seed channel: <list>` line (the planner writes one on every test-data ticket).
+2. Keyword families in the ticket text — `sql` (SQL, insert, upsert, seed script, migration), `api` (endpoint, POST/PUT request, curl, REST API, GraphQL, via the API), `ui-forms` (form, screen, through/via the UI or app), `files` (CSV, XLSX, JSON fixture, upload, import file), `factories` (factory, builder, faker).
+3. Repo probes — `sql` for a `db/migration` directory, `*.sql` files or Flyway/Liquibase; `api` for an OpenAPI/Swagger file; `factories` for factory_boy, factory_bot, Fishery, @faker-js/faker or Instancio; `ui-forms` only when `UAT_URL` is set and nothing else matched.
+
 ## Composition rule
 
 Read `base/<role>.md`, then read the matching `specializers/<group>/<stack>.md`. The specializer **refines, never contradicts** the base. No match → specializer empty; base persona alone is sufficient.
 
 ## File inventory
 
-### Base roles (8)
+### Base roles (9)
 
 | File | Role | What it covers | Used by |
 |------|------|----------------|---------|
@@ -60,9 +77,10 @@ Read `base/<role>.md`, then read the matching `specializers/<group>/<stack>.md`.
 | `base/analyzer.md` | Root cause specialist and systematic investigator | Complexity assessment, risk surface mapping, dependency analysis, appraisal quality, PR review depth, pattern recognition | appraise, pr-review, critique |
 | `base/product-owner.md` | Product requirement specialist | Business value assessment, requirement clarity, duplicate detection, merge opportunities, goal alignment, scope assessment | audit, appraise |
 | `base/security.md` | Threat modeler and vulnerability specialist | Threat surface analysis, input validation, authn/authz checks, data handling, secrets management, dependency audit. Auto-includes on auth/payment/credential/PII keywords. | implement, pr-review, audit (auto-include) |
+| `base/test-data-engineer.md` | Test data specialist | Given-clause data derivation, idempotent namespaced seeds, builders over shared fixtures, referential integrity, synthetic or masked data only, reset + README key map, needs-info on unknown sources | implement (base on test-data tickets), appraise, pr-review (added on test-data signals) |
 | `base/technical-writer.md` | Documentation and technical writing specialist | Changelog quality, API documentation, README updates, commit message conventions, retro documentation, wiki maintenance | document, retro, wiki-maintenance |
 
-### Specializers (14)
+### Specializers (19)
 
 | Group | Stack | Extends | What it adds | Triggers |
 |-------|-------|---------|--------------|----------|
@@ -79,6 +97,11 @@ Read `base/<role>.md`, then read the matching `specializers/<group>/<stack>.md`.
 | `qa` | `playwright-web.md` | qa-engineer | Page Object Model, accessibility snapshots, user-flow-first verification, getByRole/getByLabel selectors, waitFor assertions, multi-viewport testing | UAT_URL present (web flow) |
 | `qa` | `api-testing.md` | qa-engineer | Contract testing (OpenAPI/JSON Schema), status code assertions, auth token handling (valid/expired/malformed), idempotency verification, error message leakage detection | No UAT_URL (API-only) |
 | `architect` | `microservices.md` | architect | Bounded contexts, event-driven communication, API Gateway, Saga pattern, distributed tracing (OpenTelemetry), independent deployability | Multi-service directory structure |
+| `testdata` | `sql.md` | test-data-engineer | Upserts (`ON CONFLICT`/`MERGE`), FK-ordered inserts, deterministic ids, Flyway/Liquibase seed locations kept out of production, reset by key prefix | `Seed channel: sql`, SQL keywords, migrations dir / `*.sql` / Flyway / Liquibase |
+| `testdata` | `api.md` | test-data-engineer | Seeding through the app's own API, GET-before-POST / PUT-by-key idempotency, contract-shaped payloads, async side effects, env-var credentials | `Seed channel: api`, endpoint keywords, OpenAPI/Swagger file |
+| `testdata` | `ui-forms.md` | test-data-engineer | Playwright form-fill as last resort, role/label selectors, wait for persistence, re-run safety, no captcha/MFA workarounds | `Seed channel: ui-forms`, form/UI keywords, UAT_URL fallback |
+| `testdata` | `files.md` | test-data-engineer | CSV/XLSX/JSON golden files, header contract, edge-case rows (BOM, encoding, delimiters), generated large files, idempotent import | `Seed channel: files`, CSV/XLSX/upload/import keywords |
+| `testdata` | `factories.md` | test-data-engineer | factory_boy / factory_bot / Fishery+faker / Java builders / Instancio, fixed faker seed, builders over Object Mother, test-scope wiring | `Seed channel: factories`, factory/builder/faker keywords, factory library in the repo |
 | `architect` | `monolith.md` | architect | Modular monolith patterns, layered architecture, feature-based packaging, module boundary enforcement (ArchUnit/dep-cruiser), extraction-ready design | Single-service structure |
 
 ## Versioning
