@@ -15,7 +15,13 @@
 #   - planner-crosscheck-signals.sh     (#220 — uniform per-ticket Signals blocks)
 #   - planner-crosscheck-deps.sh        (#221 — dangling blocked-by references)
 #   - planner-crosscheck-testdata.sh    (#503/#504 — unowned test data, cited
-#                                        external artifacts never raised/answered)
+#                                        external artifacts never raised/answered;
+#                                        planner-test-data-derivation tripwires)
+#
+# Before every family, the test-data synthesis sub-step
+# (planner-testdata-synth.sh, planner-test-data-derivation) writes the TD
+# specs, artifacts/testdata-synth.json and the INDEX.md block, so every
+# family validates the synthesized state. See planner_crosscheck_run.
 #
 # Adding a check later means adding one more call in planner_crosscheck_run
 # and, if it can emit a non-blocking finding, adding its codes to
@@ -80,6 +86,8 @@ _planner_crosscheck_source_if_missing "planner_crosscheck_deps" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-deps.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_testdata" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-testdata.sh"
+_planner_crosscheck_source_if_missing "planner_testdata_synthesize" \
+  "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-testdata-synth.sh"
 _planner_crosscheck_source_if_missing "planner_state_write" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-state.sh"
 
@@ -90,7 +98,7 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # RESOLUTION_NOT_PROPAGATED, FORWARD_REF_UNFULFILLED, CARVE_SCOPE_LOST),
 # #174's BYPASS_PATH_UNADDRESSED, #175's CONTRACT_MISMATCH /
 # CONTRACT_CONSUMERS_UNNOTIFIED, #220's SIGNALS_UNIFORM, #221's
-# DANGLING_BLOCKED_BY, #503's TEST_DATA_UNOWNED and #504's
+# DANGLING_BLOCKED_BY (and DEPENDENCY_CYCLE, planner-test-data-derivation), #503's TEST_DATA_UNOWNED and #504's
 # CITED_ARTIFACT_MALFORMED / CITED_ARTIFACT_UNRAISED / CITED_ARTIFACT_UNRESOLVED /
 # CITED_ARTIFACT_SOURCE_MISMATCH / CITED_ARTIFACT_UNREFERENCED block EpicGen per
 # #176's table.
@@ -99,7 +107,12 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # DISCOVERY_GAP_UNRESOLVED and CONTRACT_UNDEFINED are warn-level: a declared
 # exploration gap or an ambiguous upstream shape is a prompt for human
 # judgment, not by itself proof of a defect.
-PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING"
+# planner-test-data-derivation: TEST_DATA_INVENTORY_MISSING (no epic-wide
+# inventory), TEST_DATA_IMPLIED_WEAK (weak-tier implied data, or a strong
+# match in a legacy initiative) and VERIFICATION_NOTES_MISSING_LEGACY are
+# warn-level; VERIFICATION_NOTES_MISSING and TEST_DATA_IMPLIED block, as does
+# TEST_DATA_SYNTH_FAILED (the synthesis sub-step could not write its specs).
+PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY"
 
 # Is <code> a warn-level code?
 # Usage: _planner_crosscheck_is_warn_code <code>
@@ -228,10 +241,51 @@ planner_crosscheck_run() {
 
   # A state write that cannot resolve the initiative's log (REPOS_ROOT unset,
   # #459) must stop the phase, not run every check against nothing.
-  if ! planner_state_write "$initiative_id" "Crosscheck" "check" "start" "running citation + propagation + bypass + contracts + signals + deps checks"; then
+  if ! planner_state_write "$initiative_id" "Crosscheck" "check" "start" "running testdata-synth + citation + propagation + bypass + contracts + signals + deps + testdata checks"; then
     echo "planner-crosscheck: cannot write the state log — aborting Crosscheck" >&2
     return 1
   fi
+
+  # Test-data synthesis (planner-test-data-derivation) runs first, before
+  # every check family, so the families validate the synthesized state.
+  # Ordering decision: it sits AFTER the `Crosscheck|check|start` marker, not
+  # before it. Every reader that scopes "the latest Crosscheck attempt"
+  # (planner_crosscheck_findings_summary / _report, stop-describe's code and
+  # question scans) starts at that marker, so a TEST_DATA_SYNTH_FAILED
+  # finding must land after it to be seen. The sub-step's own lines are
+  # `Crosscheck|testdata-synth|start` / `|done` — never `fail`, which
+  # planner_phase_fail_count would count as a second Crosscheck failure in
+  # the same attempt; a failure leaves the start line unclosed and records
+  # the finding. planner_position_derive skips `testdata-synth` lines, so a
+  # crash after `testdata-synth|done` resumes Crosscheck instead of reading
+  # that done line as the phase's.
+  local synth_out synth_err synth_rc tds needs line
+  synth_err=$(mktemp) || synth_err=/dev/null
+  planner_state_write "$initiative_id" "Crosscheck" "testdata-synth" "start" "synthesizing test-data specs for unowned needs"
+  synth_rc=0
+  synth_out=$(planner_testdata_synthesize "$initiative_id" 2>"$synth_err") || synth_rc=$?
+  if [ "$synth_rc" -eq 0 ]; then
+    tds=$(grep -c . <<<"$synth_out")
+    needs=$(awk -F'\037' '{ s += $3 } END { print s + 0 }' <<<"$synth_out")
+    planner_state_write "$initiative_id" "Crosscheck" "testdata-synth" "done" "${tds} TD spec(s), ${needs} need(s)"
+  else
+    b=0 w=0 a=0
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      line="${line#planner-testdata-synth: }"
+      line="${line#TD_SLUG_COLLISION }"
+      _planner_crosscheck_emit_finding "$initiative_id" "planner-testdata-synth: TEST_DATA_SYNTH_FAILED ${line}"
+      case $? in 0) b=$((b + 1)) ;; 1) w=$((w + 1)) ;; 3) a=$((a + 1)) ;; esac
+    done <"$synth_err"
+    if [ $((b + w + a)) -eq 0 ]; then
+      _planner_crosscheck_emit_finding "$initiative_id" "planner-testdata-synth: TEST_DATA_SYNTH_FAILED synthesis exited ${synth_rc} with no message — see artifacts/testdata-synth.json and specs/"
+      case $? in 0) b=1 ;; 3) a=1 ;; esac
+    fi
+    total_blocking=$((total_blocking + b))
+    total_warn=$((total_warn + w))
+    total_accepted=$((total_accepted + a))
+  fi
+  [ "$synth_err" = /dev/null ] || rm -f "$synth_err"
 
   read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_citations "$initiative_id")
   total_blocking=$((total_blocking + b))
@@ -269,6 +323,11 @@ planner_crosscheck_run() {
   total_accepted=$((total_accepted + a))
 
   read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_cited_artifacts "$initiative_id")
+  total_blocking=$((total_blocking + b))
+  total_warn=$((total_warn + w))
+  total_accepted=$((total_accepted + a))
+
+  read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_testdata_tripwires "$initiative_id")
   total_blocking=$((total_blocking + b))
   total_warn=$((total_warn + w))
   total_accepted=$((total_accepted + a))
@@ -429,8 +488,14 @@ planner_crosscheck_fix_hint() {
   DANGLING_BLOCKED_BY)
     echo "the blocked-by target matches no sibling spec (or is an ambiguous prefix) — use the exact spec slug, or an existing Linear issue ID"
     ;;
+  DEPENDENCY_CYCLE)
+    echo "these specs block each other in a cycle (## Labels blocked-by plus the test-data synthesis edges in artifacts/testdata-synth.json), so TicketGen can create none of them — remove one blocked-by from a Labels line; a TD spec never blocks on its own consumer"
+    ;;
   TEST_DATA_UNOWNED)
-    echo "these Verification Notes needs have no owning spec — add a test-data-pack enabler spec with a ## Test Data Provided section and point each Source at it (seeded-by:<slug>), or record where the data already exists (exists:) or who supplies it (external:) — see docs/test-data-source.md"
+    echo "these Verification Notes needs have no owner and Crosscheck's test-data synthesis could not take them — give each a valid Source: generate (synthesis then writes and owns the TD spec; do not hand-write a test-data pack), exists:<where>, external:<who>, or seeded-by:<slug> naming a spec with ## Test Data Provided — see docs/test-data-source.md"
+    ;;
+  TEST_DATA_SYNTH_FAILED)
+    echo "test-data synthesis could not write its TD specs — usually a hand-written spec already holds a TD slug (<slug>-test-data or <prefix>-test-data-pack): rename or remove it, or point the needs it covers at it with Source seeded-by:<slug>, then resume"
     ;;
   CITED_ARTIFACT_UNRAISED)
     echo "Discovery could not retrieve this cited artifact and Consensus never asked about it — add the line from planner_cited_artifacts_questions to consensus.md ## Open Questions"
@@ -439,7 +504,7 @@ planner_crosscheck_fix_hint() {
     echo "the operator has not answered where this cited artifact comes from — set its Answer: in consensus.md (exists:<where>, external:<who>, or generate) and make the matching specs' Source agree, or --accept the code"
     ;;
   CITED_ARTIFACT_SOURCE_MISMATCH)
-    echo "a spec's Source for this cited artifact disagrees with the operator's answer in consensus.md — set the spec's Source to the answer (generate becomes seeded-by:<pack-slug>)"
+    echo "a spec's Source for this cited artifact disagrees with the operator's answer in consensus.md — set the spec's Source to the answer (an answer of generate keeps Source: generate; Crosscheck's test-data synthesis then writes the TD spec that seeds it)"
     ;;
   CITED_ARTIFACT_UNREFERENCED)
     echo "no spec need cites this NOT FOUND artifact by its exact backticked name — quote it in the Test data of every need that uses it (a paraphrase is not checked), or --accept the code if no spec needs it"
@@ -452,6 +517,21 @@ planner_crosscheck_fix_hint() {
     ;;
   TEST_DATA_UNSOURCED_LEGACY)
     echo "these specs predate the Source field — add Source: to their Verification Notes when convenient; not blocking for an initiative created before the contract"
+    ;;
+  TEST_DATA_INVENTORY_MISSING)
+    echo "discovery.md has no ## Test Data Inventory — add the table (Entity / States/variants / Roles / Volume / Source / Load via / Privacy), or None. when no test needs data to exist first"
+    ;;
+  VERIFICATION_NOTES_MISSING)
+    echo "this spec has acceptance criteria but no Verification Notes rows — add the table, one row per criterion, Test data derived from its Given/When (none only when nothing must exist first)"
+    ;;
+  VERIFICATION_NOTES_MISSING_LEGACY)
+    echo "this spec has no Verification Notes rows — add the table when convenient; not blocking for an initiative created before the contract"
+    ;;
+  TEST_DATA_IMPLIED)
+    echo "every Verification Notes row says none but a criterion implies data — derive the need with a Source, or answer the spec's TESTDATA_CONFIRM line in consensus.md (none, generate: <what>, exists:<where>, external:<who>)"
+    ;;
+  TEST_DATA_IMPLIED_WEAK)
+    echo "a criterion may imply test data (weak match) while every row says none — check it; answer TESTDATA_CONFIRM: none in consensus.md to silence it"
     ;;
   *)
     echo "no canned hint for this code — read the finding message"

@@ -17,6 +17,52 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.66.0 / ticket-planner 0.19.0 (2026-10-22)
+
+Planner-cut tickets now arrive with test data that is derived, owned and loaded
+(`planner-test-data-derivation`). #503–#505 caught test data that was described but unsourced;
+this closes the three gaps that still got through — specs with no Verification Notes, all-`none`
+rows whose criteria clearly need data, and nothing ever producing or loading the data. Contract:
+`ticket-planner/docs/test-data-source.md` §3.
+
+**ticket-planner 0.19.0**
+- **Inventory + derivation**: Discovery writes an epic-wide `## Test Data Inventory` (entity,
+  states, roles, volume, Source, Load via, privacy). Specify derives each Verification Notes row
+  from the criterion's Given/When and writes `Source: generate` instead of hand-writing a
+  test-data pack.
+- **New Crosscheck codes**: `VERIFICATION_NOTES_MISSING` (blocking; `_LEGACY` warn),
+  `TEST_DATA_IMPLIED` (blocking) / `TEST_DATA_IMPLIED_WEAK` (warn) — a two-tier heuristic with a
+  unit denylist so "15 minutes" or "5 attempts" never count — `TEST_DATA_INVENTORY_MISSING` (warn),
+  `TEST_DATA_SYNTH_FAILED` and `DEPENDENCY_CYCLE` (blocking).
+- **`TESTDATA_CONFIRM` answers**: one hash-keyed line per spec in consensus.md (`none`,
+  `generate: <desc>`, `exists:<where>`, `external:<who>`); a rewritten criterion re-asks. Headless:
+  `planner-stop-describe.sh` asks `consensus-answer:testdata:<slug>` questions, and
+  `planner-answers.sh` writes the line (stale hash → `STALE_QUESTION`).
+- **Synthesis** (`lib/planner-testdata-synth.sh`, new Crosscheck sub-step `testdata-synth`): a
+  deterministic, idempotent recompute that turns unowned needs into synth-marked chore specs
+  (`<prefix>-test-data-pack` for shared needs, `<slug>-test-data` otherwise) with `make` seed,
+  verify and reset targets and a `Seed channel:`, plus a sidecar `artifacts/testdata-synth.json`
+  of Source overrides and `blocked_by` edges. Consumer specs are never edited; dispatched TD specs
+  are never rewritten.
+- **TicketGen** unions sidecar edges into dependencies, renders overrides as
+  `seeded-by:<td-slug>`, always writes `## Test Data Prerequisites`, and creates TD tickets at
+  Linear priority High. **EpicGen** stamps `**UAT Policy:** epic` on a shared-branch epic with TD
+  specs unless the new `uat-policy` config key (`PLANNER_UAT_POLICY`) says otherwise.
+- **Refinement** runs its DoR scan with `DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true`.
+
+**ticket-auto-pipeline 0.66.0**
+- **Seed-apply in VERIFY** (`lib/seed-apply.sh`, `ticket-verify` Step 1.6c): before UAT, runs the
+  `Seed command:` then `Verify command:` of every merged test-data blocker, read from its local
+  planner body only. Both must be `make <target>` / `make -C <relpath> <target>` and run as an
+  argv list with no shell. A failure gate-stops `VERIFY_SEED_FAILED`.
+- **BREAKING (gates)**: on a contract body, `dor-check.sh`'s `TEST_DATA_MISSING` and
+  `TEST_DATA_UNSEEDED` are hard by default (chore/security exempt; `DOR_STRICT_TEST_DATA=false`
+  demotes). `planned-ticket-body-check.sh` requires a non-empty `## Test Data…` section on planned
+  feature and improvement bodies. Legacy bodies are unaffected.
+- `test-data-engineer` persona v2: Seed/Verify commands must be `make` targets.
+- `gate-check.sh`'s ticket-mode test seam is now opt-in (`GATE_CHECK_TEST_MODE=1` →
+  `GATE_CHECK_TEST_TICKET_MODE`), inert in production.
+
 ## 0.65.0 (2026-10-21)
 
 New persona for tickets whose deliverable is test data: **`test-data-engineer`**. Until now a

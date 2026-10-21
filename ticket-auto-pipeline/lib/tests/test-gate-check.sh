@@ -2628,6 +2628,9 @@ _full_planned_body='## Acceptance Criteria
 
 ## Navigation Path
 `Settings > Handovers > Save`
+
+## Test Data Prerequisites
+None — no acceptance criterion needs test data.
 '
 
 test_check27e_not_ready_planned_ticket_gate_stops_naming_codes() {

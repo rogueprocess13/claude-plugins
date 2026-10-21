@@ -793,6 +793,14 @@ _gate_entry() {
         _ticket_mode="infra-only"
       fi
     fi
+    # TEST SEAM (read by tests only, never by the pipeline): when the caller sets
+    # GATE_CHECK_TEST_MODE=1, expose the classification after _gate_entry returns
+    # as GATE_CHECK_TEST_TICKET_MODE (e.g. a planner-synthesized test-data chore
+    # must classify build-only, planner-test-data-derivation 6.6). Unset in
+    # production, so nothing is exported and no gate decision depends on it.
+    if [ "${GATE_CHECK_TEST_MODE:-0}" = "1" ]; then
+      GATE_CHECK_TEST_TICKET_MODE="$_ticket_mode"
+    fi
 
     missing_count=0
     case "$_ticket_mode" in

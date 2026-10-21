@@ -47,7 +47,7 @@ fresh() {
   mkdir -p "$REPOS_ROOT"
   halt_fixture_init "$2" "$INIT" >/dev/null
   case "$2" in
-  crosscheck | project-gate | refinement)
+  crosscheck | crosscheck-testdata | project-gate | refinement)
     halt_fixture_run "$2" "$INIT" "${WORK}/run"
     ;;
   esac
@@ -346,6 +346,77 @@ if [ "$(planner_answers_sanitize "$long" | wc -c)" -eq 4096 ] &&
   pass "sanitise: capped at 4096 bytes, control characters stripped"
 else
   fail "sanitise: capped at 4096 bytes, control characters stripped" "len=$(planner_answers_sanitize "$long" | wc -c)"
+fi
+
+# ── test-data confirmations (planner-test-data-derivation) ─────────────────
+
+echo "--- test-data confirmations ---"
+
+td_consensus() { cat "$(planner_initiative_dir "$INIT")/artifacts/consensus.md"; }
+H_AUDIT=$(planner_testdata_confirm_hash audit-log "The audit page lists 3 audit entries")
+H_INV=$(planner_testdata_confirm_hash invoice-list "The list shows 5 overdue invoices")
+
+fresh td-none crosscheck-testdata
+answers "${WORK}/td.json" 1 "testdata-audit-log-${H_AUDIT}" "None"
+apply "${WORK}/td.json"
+lines=$(td_consensus | grep -c 'TESTDATA_CONFIRM')
+if [ "$RC" -eq 0 ] && [ "$lines" -eq 1 ] &&
+  td_consensus | grep -qxF -- "- TESTDATA_CONFIRM: \`audit-log\` [${H_AUDIT}] — Answer: none" &&
+  log_has "|META|consensus-answer|step|testdata:audit-log \[${H_AUDIT}\] none (round 1, by U123)" &&
+  [ "$(printf '%s' "$OUT" | grep '^APPLIED=')" = "APPLIED=testdata:audit-log" ]; then
+  pass "testdata: none writes one TESTDATA_CONFIRM line with the question's hash"
+else
+  fail "testdata: none writes one TESTDATA_CONFIRM line with the question's hash" "rc=$RC out=$OUT err=$ERR consensus=$(td_consensus)"
+fi
+
+# The Crosscheck re-run no longer raises TEST_DATA_IMPLIED for the answered spec.
+rerun=$(planner_crosscheck_testdata_tripwires "$INIT")
+case "$rerun" in
+*"TEST_DATA_IMPLIED audit-log.md"*) fail "testdata: re-run is clean for the answered spec" "$rerun" ;;
+*"TEST_DATA_IMPLIED invoice-list.md"*) pass "testdata: re-run is clean for the answered spec (the other still blocks)" ;;
+*) fail "testdata: re-run is clean for the answered spec" "invoice-list finding missing: $rerun" ;;
+esac
+
+fresh td-gen crosscheck-testdata
+answers "${WORK}/td.json" 1 "testdata-invoice-list-${H_INV}" "generate: five overdue|invoices"
+apply "${WORK}/td.json"
+if [ "$RC" -eq 0 ] &&
+  td_consensus | grep -qxF -- "- TESTDATA_CONFIRM: \`invoice-list\` [${H_INV}] — Answer: generate: five overdueinvoices"; then
+  pass "testdata: generate: <desc> is written with | stripped"
+else
+  fail "testdata: generate: <desc> is written with | stripped" "rc=$RC err=$ERR consensus=$(td_consensus)"
+fi
+
+for bad in "generate:" "generate:   " "generate" "" "   " $'generate:\n' "maybe"; do
+  fresh td-bad crosscheck-testdata
+  before=$(snapshot)
+  cons_before=$(td_consensus)
+  answers "${WORK}/td.json" 1 "testdata-audit-log-${H_AUDIT}" "$bad"
+  apply "${WORK}/td.json"
+  if [ "$RC" -eq 2 ] && [[ "$ERR" == INVALID_VALUE:* ]] && [ "$(snapshot)" = "$before" ] &&
+    [ "$(td_consensus)" = "$cons_before" ]; then
+    pass "testdata: '$(printf '%q' "$bad")' is INVALID_VALUE and nothing is written"
+  else
+    fail "testdata: '$(printf '%q' "$bad")' is INVALID_VALUE and nothing is written" "rc=$RC err=$ERR"
+  fi
+done
+
+# A criterion rewritten after the question: the old id is refused, not applied.
+fresh td-stale crosscheck-testdata
+sed -i 's/lists 3 audit entries/lists 4 audit entries/' "$(planner_initiative_dir "$INIT")/artifacts/specs/audit-log.md"
+before=$(snapshot)
+answers "${WORK}/td.json" 1 "testdata-audit-log-${H_AUDIT}" "none"
+apply "${WORK}/td.json"
+if [ "$RC" -eq 2 ] && [[ "$ERR" == UNKNOWN_QUESTION_ID:* ]] && [ "$(snapshot)" = "$before" ] &&
+  ! td_consensus | grep -q TESTDATA_CONFIRM; then
+  pass "testdata: an answer to a rewritten criterion is refused and nothing is written"
+else
+  fail "testdata: an answer to a rewritten criterion is refused and nothing is written" "rc=$RC err=$ERR"
+fi
+if why=$(_planner_answers_testdata_current "$INIT" consensus-answer:testdata:audit-log "testdata-audit-log-${H_AUDIT}" 2>&1); then
+  fail "testdata: intake re-derives the hash from the spec" "stale hash accepted"
+else
+  pass "testdata: intake re-derives the hash from the spec (stale hash → STALE_QUESTION)"
 fi
 
 echo ""

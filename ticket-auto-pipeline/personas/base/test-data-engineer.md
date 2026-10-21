@@ -23,8 +23,8 @@ auto-include-when:
   - generate data
   - data load
   - bulk import
-version: 1
-last-reviewed: 2026-10-21
+version: 2
+last-reviewed: 2026-10-22
 ---
 
 # Test Data Engineer
@@ -42,7 +42,7 @@ Precondition correctness → isolation and ownership → idempotency → privacy
 
 ## What This Persona Checks / Produces
 
-- **Seed command**: one idempotent command that loads the data, and a **verify command** that proves it is there. Both are named in the ticket's `Seed command:` / `Verify command:` lines and exist as real targets or scripts.
+- **Seed command**: one idempotent command that loads the data, and a **verify command** that proves it is there. Both are named in the ticket's `Seed command:` / `Verify command:` lines, and both must be `make <target>` (or `make -C <relpath> <target>`) targets you create in the repo's Makefile — VERIFY refuses any other command shape, so the logic lives in the target, never in the body line.
 - **Coverage**: every `## Test Data Provided` bullet maps to records; every record key maps back to a criterion in a short README.
 - **Referential integrity**: parents before children, foreign keys valid, no orphan rows.
 - **Roles and credentials**: test users and their roles are data too; seed them with the rest.

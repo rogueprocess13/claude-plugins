@@ -58,6 +58,7 @@ Each phase has one primary step. Agents may write additional `start`/`done` pair
 
 ### Crosscheck
 `check` — run the citation ([#172](https://github.com/willard-pro/claude-plugins/issues/172)) and cross-ticket propagation ([#173](https://github.com/willard-pro/claude-plugins/issues/173)) linters; `fail` means at least one blocking finding, not an agent crash (see `META|crosscheck` below)
+`testdata-synth` — test-data synthesis (planner-test-data-derivation), written after `check|start` and before any check family: `start`, then `done` with `{N} TD spec(s), {M} need(s)`. On failure there is no `fail` line (it would count as a phase failure); the `start` stays unclosed and each problem is a blocking `META|crosscheck|fail|TEST_DATA_SYNTH_FAILED …` finding. `planner_position_derive` ignores these lines
 
 ### EpicGen
 `create` — create Linear epic with idempotency guard
@@ -93,7 +94,7 @@ Not an agent phase — driven by the dispatch loop as bash (`lib/planner-refinem
 | `ticketgen` | TicketGen's per-ticket generation progress (planner-refinement-phase) — `start`/`step`/`done`, e.g. "Generating N planned tickets" / "Created TICK-1: \<title\>" / "N tickets created, M skipped, K failed validation". Never a phase-named line — see TicketGen's own `verify` step above for why |
 | `refinement` | Refinement's per-ticket progress and the legacy-skip marker (planner-refinement-phase). `skip\|legacy` when the initiative predates this change; otherwise informational progress as each ticket's deterministic/semantic pass completes. Written by `lib/planner-refinement.sh` |
 | `human-hold` | One answered question round (planner-headless-questions). `start` then `done`, both `round={N} sha={sha256 of the answers file}`, written by `planner_answers_apply` (`lib/planner-answers.sh`) for `resume <ID> --answers <file>`: `start` before the bindings are applied, `done` after — always the last line the intake writes. The count of `done` lines is how `planner-stop-describe.sh` numbers the next round (`ROUND` = count + 1), and the `done` line is the replay key: the same file again is a no-op, a different file for the same round is refused. The `start` line also lets a later round's `done` past duplicate-done suppression |
-| `consensus-answer` | One headless answer to a cited-artifact question ([#515](https://github.com/willard-pro/claude-plugins/issues/515)). `step`, `cited:{n} {answer} (round {N}, by {who})`, written by `planner_answers_apply` after `planner_cited_answer_set` rewrites the `Answer:` field of consensus.md's `n`th `CITED_ARTIFACT:` question, between that round's `human-hold` `start` and `done`. Audit only; Crosscheck reads the answer from consensus.md |
+| `consensus-answer` | One headless answer to a cited-artifact question ([#515](https://github.com/willard-pro/claude-plugins/issues/515)). `step`, `cited:{n} {answer} (round {N}, by {who})`, written by `planner_answers_apply` after `planner_cited_answer_set` rewrites the `Answer:` field of consensus.md's `n`th `CITED_ARTIFACT:` question, between that round's `human-hold` `start` and `done`. Audit only; Crosscheck reads the answer from consensus.md. Also `testdata:{slug} [{hash8}] {answer} (round {N}, by {who})` for a `TEST_DATA_IMPLIED` answer, written after `planner_testdata_answer_set` writes the `TESTDATA_CONFIRM` line |
 | `refinement-gate` | `fail` = at least one child is not ready (`{n} of {m} not ready`), or the epic id could not be resolved from the state log (`no EpicGen EPIC_ID found in state log`) — this is the halt signal `planner_refinement_report` explains in full when the dispatch loop prints it. Never `done` — a clean pass writes the phase-named `Refinement\|gate\|done` line instead (see Refinement above) |
 
 ### Invocation config
@@ -112,6 +113,7 @@ time. These are written with status `done` by `planner_config_set` and read back
 | `no-project` | `true` when `--no-project` was passed — a deliberate opt-out from any Linear project, which silences Epic Gen's project gate |
 | `linear-project-id` / `linear-milestone-id` | The UUIDs Epic Gen resolved them to, reused verbatim by Ticket Gen |
 | `branch-override` | `shared` or `no-shared`, from the branch flags |
+| `uat-policy` | The Branch Directive UAT policy, per-ticket or epic, from `PLANNER_UAT_POLICY` (planner-test-data-derivation). Unset: Epic Gen derives the epic policy for a shared-branch epic with synthesized test-data specs |
 | `refresh-bodies` | `true` when `--refresh-bodies` was passed (planner-refinement-phase) — a one-shot action, not a sticky setting: the dispatch loop clears it back to `none` immediately after Refinement consumes it, so a later plain `resume` does not keep re-fetching from Linear |
 
 Config exists as log entries rather than shell variables because the dispatch loop

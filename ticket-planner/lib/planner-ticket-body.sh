@@ -20,7 +20,9 @@
 #                                                    blocked-by refs, sibling refs resolved
 #                                                    to full slugs (exact, then unambiguous
 #                                                    `-`-bounded prefix — the same rule
-#                                                    planner_crosscheck_deps enforces)
+#                                                    planner_crosscheck_deps enforces),
+#                                                    then the test-data synthesis edges
+#                                                    from ../testdata-synth.json
 #   planner_ticketgen_deps_json <specs_dir>          {slug: [refs]} for every spec
 #   planner_ticketgen_ids_json <specs_dir>           ["slug", ...]
 #   planner_ticketgen_order <specs_dir>              creation order: Kahn's algorithm over
@@ -73,6 +75,10 @@ fi
 if ! declare -f _planner_testdata_cell_need >/dev/null 2>&1; then
   # shellcheck source=planner-crosscheck-testdata.sh
   source "${_PLANNER_TICKET_BODY_LIB_DIR}/planner-crosscheck-testdata.sh"
+fi
+if ! declare -f _planner_tds_edges_of >/dev/null 2>&1; then
+  # shellcheck source=planner-testdata-synth.sh
+  source "${_PLANNER_TICKET_BODY_LIB_DIR}/planner-testdata-synth.sh"
 fi
 if ! declare -f planner_state_log >/dev/null 2>&1; then
   # shellcheck source=planner-state.sh
@@ -134,6 +140,12 @@ _planner_tb_dep_tokens() {
     sed -E 's/blocked-by:`?([A-Za-z0-9_-]+)`?/\1/'
 }
 
+# The test-data synthesis sidecar governing <specs_dir>
+# (artifacts/specs → artifacts/testdata-synth.json).
+_planner_tb_sidecar() {
+  printf '%s' "$(dirname "$1")/testdata-synth.json"
+}
+
 # ── Initiative-level helpers ─────────────────────────────────────────────────
 
 planner_ticketgen_specs_dir() {
@@ -159,7 +171,12 @@ planner_ticketgen_slugs() {
 # unambiguous `-`-bounded prefix). An existing Linear identifier (#227) is
 # kept verbatim. Anything else is kept verbatim too, so
 # planner_deps_validate_targets reports it as dangling instead of it
-# vanishing.
+# vanishing. Then the spec's test-data synthesis edges (sidecar
+# `edges[].blocked_by` for this consumer, sorted; planner-test-data-derivation
+# 4.8) not already listed — the consumer spec never names its TD spec, so the
+# sidecar is the only place that edge lives. Every reader of the dependency
+# set (deps_json, order, dep_refs, Crosscheck's cycle check) goes through
+# here.
 planner_ticketgen_spec_deps() {
   local spec_file="$1" specs_dir="$2"
   local -a slugs matches
@@ -184,6 +201,14 @@ planner_ticketgen_spec_deps() {
     seen[$resolved]=1
     echo "$resolved"
   done < <(_planner_tb_dep_tokens "$spec_file")
+  local slug c b
+  slug=$(basename "$spec_file" .md)
+  while IFS=$'\037' read -r c b; do
+    [ "$c" = "$slug" ] && [ -n "$b" ] || continue
+    [ -n "${seen[$b]:-}" ] && continue
+    seen[$b]=1
+    echo "$b"
+  done < <(_planner_tds_edges_of "$(_planner_tb_sidecar "$specs_dir")" "$specs_dir")
 }
 
 planner_ticketgen_deps_json() {
@@ -275,6 +300,26 @@ planner_ticketgen_signals() {
     return 1
   fi
   echo "$sig"
+}
+
+# The Linear priority (integer) TicketGen passes for one spec
+# (planner-test-data-derivation, task 5.2). Only a synth-marked test-data (TD)
+# spec gets one: every consumer it blocks waits on it, so it is filed High. Its
+# Signals `Priority` names the level (Urgent 1, High 2, Medium/Normal 3,
+# Low 4); a missing or unknown value on a TD spec falls back to High. Any
+# other spec prints nothing — the team default applies, exactly as before.
+# Usage: planner_ticketgen_priority <spec_file>
+planner_ticketgen_priority() {
+  local spec_file="$1" level
+  [ -f "$spec_file" ] && [ -n "${PLANNER_TESTDATA_SYNTH_MARKER:-}" ] || return 0
+  grep -qF -- "$PLANNER_TESTDATA_SYNTH_MARKER" "$spec_file" 2>/dev/null || return 0
+  level=$(planner_ticketgen_signals "$spec_file" 2>/dev/null | jq -r '.Priority // "" | ascii_downcase' 2>/dev/null) || level=""
+  case "$level" in
+  urgent) echo 1 ;;
+  medium | normal) echo 3 ;;
+  low) echo 4 ;;
+  *) echo 2 ;;
+  esac
 }
 
 # Timestamp of the EpicGen line that recorded EPIC_ID (first one — the epic
@@ -376,6 +421,29 @@ _planner_tb_notes_table() {
   done < <(tail -n +2 <<<"$rows") | jq -sc .
 }
 
+# Apply the test-data synthesis Source overrides (sidecar `overrides`,
+# planner-test-data-derivation 4.8) to notes-table rows: a `generate` row of
+# this consumer whose criterion + data match an override reads Source
+# `seeded-by:<td-slug>` — the TD spec Crosscheck synthesized owns it. Matched
+# on consumer + criterion + data exactly, as the Crosscheck row walker does.
+# The spec file itself is never changed.
+# Usage: _planner_tb_apply_overrides <spec_file> <table_json>
+_planner_tb_apply_overrides() {
+  local spec_file="$1" table="$2" specs_dir ov
+  specs_dir=$(dirname "$spec_file")
+  ov=$(_planner_tds_overrides_of "$(_planner_tb_sidecar "$specs_dir")" "$specs_dir" |
+    jq -Rsc --arg c "$(basename "$spec_file" .md)" '
+      split("\n") | map(select(length > 0) | split("\u001f") | select(.[0] == $c)
+        | {key: (.[1] + "\u001f" + .[2]), value: .[3]}) | from_entries')
+  [ -n "$ov" ] && [ "$ov" != "{}" ] || {
+    printf '%s\n' "$table"
+    return 0
+  }
+  jq -c --argjson ov "$ov" '
+    map(if .src == "generate" and ($ov[(.criterion + "\u001f" + .data)] // null) != null
+        then .src = $ov[(.criterion + "\u001f" + .data)] else . end)' <<<"$table"
+}
+
 # Count of legacy numbered notes (`N. Role: … Test data: …`) — they carry no
 # criterion text, so they are reported, never mapped by position.
 _planner_tb_notes_legacy_count() {
@@ -390,6 +458,7 @@ _planner_tb_vplan_json() {
   ac_json=$(_planner_tb_ac_items "$spec_file" | jq -R . | jq -sc .)
   notes=$(_planner_testdata_section "$spec_file" "Verification Notes")
   table_json=$(_planner_tb_notes_table "$notes")
+  table_json=$(_planner_tb_apply_overrides "$spec_file" "${table_json:-[]}")
   legacy_count=$(_planner_tb_notes_legacy_count "$notes")
   nav=$(_planner_tb_section "$spec_file" "navigation path" | awk 'NF{print; exit}' |
     tr -d '`' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
@@ -476,13 +545,35 @@ planner_ticketgen_vplan() {
 # the needs Crosscheck checked, including a row whose criterion matches no AC
 # or repeats another row's (`- <what>` when the row records no
 # Source — the readiness check reads that as unsourced, which it is). When no
-# criterion needs data, a single none bullet. Prints nothing and returns 1 when
-# the spec has no Verification Notes table — the composer then keeps the spec's
-# own hand-written section (legacy specs).
+# criterion needs data, a single none bullet. Sidecar Source overrides apply
+# (`Source: seeded-by:<td-slug>`).
+# A spec with no Verification Notes table:
+#   - keeps its own hand-written, non-blank `## Test Data Prerequisites`
+#     (legacy specs) — prints nothing and returns 1;
+#   - otherwise the section is still written (planned-ticket-body-check.sh
+#     requires it on feature/improvement/bug bodies; design Decision 11):
+#     one bullet per non-none need the legacy numbered/bullet notes record,
+#     else the none bullet.
 planner_ticketgen_testdata_prereqs() {
   local spec_file="$1" result
   result=$(_planner_tb_vplan_json "$spec_file" 2>/dev/null) || return 1
-  [ "$(jq -r '.table' <<<"$result")" -gt 0 ] || return 1
+  if [ "$(jq -r '.table' <<<"$result")" -eq 0 ]; then
+    _planner_tb_section "$spec_file" "test data prerequisites" | grep -q '[^[:space:]]' && return 1
+    echo "## Test Data Prerequisites"
+    echo ""
+    local label data kind value bullets=""
+    while IFS=$'\037' read -r label data kind value; do
+      [ -n "$data" ] || continue
+      _planner_testdata_is_none "$data" && continue
+      bullets+="- ${data}${kind:+. Source: ${kind}${value:+:${value}}}"$'\n'
+    done < <(_planner_testdata_spec_needs "$spec_file")
+    if [ -n "$bullets" ]; then
+      printf '%s' "$bullets" | awk '!seen[$0]++'
+    else
+      echo "- None — no acceptance criterion needs test data."
+    fi
+    return 0
+  fi
   echo "## Test Data Prerequisites"
   echo ""
   jq -r '
@@ -596,10 +687,13 @@ _planner_tb_guard() {
   # regenerated; any other spelling (`##Verification Plan`, `### Related
   # Tickets`, NBSP, fenced) would survive into the body ahead of the generated
   # one, and downstream readers take the first. Test Data Prerequisites is
-  # generated only when the spec has a notes table.
+  # generated too, unless a table-less (legacy) spec keeps its own non-blank
+  # section (planner_ticketgen_testdata_prereqs).
   local -a owned=("verification plan" "related tickets")
-  [ "$(_planner_tb_notes_table "$(_planner_testdata_section "$spec_file" "Verification Notes")")" != "[]" ] &&
+  if [ "$(_planner_tb_notes_table "$(_planner_testdata_section "$spec_file" "Verification Notes")")" != "[]" ] ||
+    ! _planner_tb_section "$spec_file" "test data prerequisites" | grep -q '[^[:space:]]'; then
     owned+=("test data prerequisites")
+  fi
   local h looks fenced raw
   for h in "${owned[@]}"; do
     looks=$(_planner_testdata_heading_lookalikes "$spec_file" "$h")
@@ -624,9 +718,10 @@ _planner_tb_guard() {
 #   1. The spec minus its `# ` heading and the sections in _PLANNER_TB_DROP
 #      (the `## Description` heading goes; its content stays), blank-line runs
 #      outside code fences squeezed, leading/trailing blank lines trimmed.
-#      When the spec has a Verification Notes table, its own
-#      `## Test Data Prerequisites` is dropped too and replaced by
-#      planner_ticketgen_testdata_prereqs (`- <what>. Source: <source>`, #503).
+#      `## Test Data Prerequisites` comes from planner_ticketgen_testdata_prereqs
+#      (`- <what>. Source: <source>`, #503; sidecar overrides applied); the
+#      spec's own copy is dropped — except a legacy table-less spec's own
+#      non-blank section, which is kept verbatim.
 #   2. `## Verification Plan` from planner_ticketgen_vplan.
 #   3. `## Related Tickets` — one "- Blocked by <id> — <title>" per dependency
 #      argument, then the spec's own Related Tickets text unless it is a
@@ -648,7 +743,8 @@ planner_ticket_body_compose() {
   drop="$_PLANNER_TB_DROP"
   # Test Data Prerequisites is generated from the Verification Notes table
   # (#503); a hand-written copy is dropped so the ticket carries one. A spec
-  # with no table (legacy) keeps its own section.
+  # with no table keeps its own non-blank section (legacy); without one the
+  # section is still generated (none bullet), so every body carries it.
   if prereqs=$(planner_ticketgen_testdata_prereqs "$spec_file"); then
     drop="${drop}test data prerequisites|"
   else

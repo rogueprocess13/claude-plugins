@@ -1,0 +1,11 @@
+{
+  "blocking": 2,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["DEPENDENCY_CYCLE", "DEPENDENCY_CYCLE"],
+  "message_contains": ["DEPENDENCY_CYCLE audit-log.md is on a blocked-by cycle among: audit-log, audit-log-test-data", "DEPENDENCY_CYCLE audit-log-test-data.md", "testdata-synth.json"],
+  "sidecar_jq": [
+    ".edges == [{\"blocked_by\":\"audit-log-test-data\",\"consumer\":\"audit-log\"}]"
+  ],
+  "notes": "planner-test-data-derivation 4.9: the consumer audit-log never names its TD spec in Labels — its edge to audit-log-test-data lives only in the synthesis sidecar. The dispatched (frozen) TD spec's Labels were hand-edited to blocked-by:audit-log, so the cycle exists only in the union of Labels and sidecar edges. planner_crosscheck_deps reads that union through planner_ticketgen_deps_json (the reader TicketGen orders by) after synthesis, and blocks with DEPENDENCY_CYCLE on each spec of the cycle instead of TicketGen refusing to create any ticket after EpicGen."
+}

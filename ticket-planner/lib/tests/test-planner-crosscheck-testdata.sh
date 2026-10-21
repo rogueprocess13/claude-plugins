@@ -119,7 +119,7 @@ assert_contains "unowned: empty exists" "$out" "b-one.md#4 (exists with no value
 assert_contains "unowned: dangling seeded-by" "$out" "b-one.md#5 (seeded-by:nowhere names no sibling spec)"
 assert_contains "unowned: target lacks Test Data Provided" "$out" "b-one.md#6 (seeded-by:b-two resolves to b-two.md, which has no ## Test Data Provided section)"
 assert_contains "unowned: none for real data" "$out" "b-one.md#7 (Source: none for real test data)"
-assert_contains "unowned: proposes the pack" "$out" "test-data-pack"
+assert_contains "unowned: remedy routes generate through synthesis (4.7)" "$out" "test-data synthesis then writes the TD spec that owns it; do not hand-write a test-data pack"
 assert_not_contains "unowned: not mandatory without the rule" "$out" "MANDATORY"
 
 echo "--- parser leniency: last Source wins, markdown, case, punctuation, bullets, heading variants ---"
@@ -571,7 +571,11 @@ source "${LIB_DIR}/planner-phase-prompts.sh"
 SD="${TMPDIR}/state"
 p_spec=$(planner_prompt_specify "INIT-1" "an idea" "$SD")
 assert_contains "Specify: Source column" "$p_spec" "| Criterion | Role | Test data | Source |"
-assert_contains "Specify: Source example" "$p_spec" "| seeded-by:inv-0-test-data-pack |"
+assert_contains "Specify: Source example" "$p_spec" "| generate | Billing > Invoices |"
+assert_not_contains "Specify: no hand-written pack spec" "$p_spec" "-test-data-pack"
+assert_contains "Specify: per-criterion Given/When derivation" "$p_spec" "Derive Test data per criterion, from its Given and When."
+assert_contains "Specify: unowned need is Source: generate" "$p_spec" "An unowned need is \`Source: generate\`"
+assert_contains "Specify: no-tests rule remedy is generate" "$p_spec" "self-seeding is forbidden: write \`Source: generate\`"
 assert_contains "Specify: closed enum" "$p_spec" "exists:<where> | seeded-by:<spec-slug> | external:<who> | generate"
 assert_contains "Specify: Test Data Provided" "$p_spec" "## Test Data Provided"
 assert_contains "Specify: rule read from config" "$p_spec" 'planner_testdata_no_tests_rule "INIT-1"'
@@ -583,6 +587,10 @@ p_disc=$(planner_prompt_discovery "INIT-1" "an idea" "$SD")
 assert_contains "Discovery: Cited Artifacts section required" "$p_disc" "discovery.md must have a \`## Cited Artifacts\` section"
 assert_contains "Discovery: NOT FOUND shape" "$p_disc" "— NOT FOUND (searched:"
 assert_contains "Discovery: FOUND shape" "$p_disc" "— FOUND:"
+assert_contains "Discovery: Test Data Inventory columns" "$p_disc" "| Entity | States/variants | Roles | Volume | Source | Load via | Privacy |"
+assert_contains "Discovery: Test Data Inventory required" "$p_disc" "discovery.md must have a \`## Test Data Inventory\` table"
+assert_contains "Discovery: Load via enum" "$p_disc" "\`sql\`, \`api\`, \`ui-forms\`, \`files\`, \`factories\`"
+assert_contains "Discovery: no prod PII" "$p_disc" "never production PII"
 
 p_cons=$(planner_prompt_consensus "INIT-1" "an idea" "$SD")
 assert_contains "Consensus: Open Questions section" "$p_cons" "**Open Questions**"

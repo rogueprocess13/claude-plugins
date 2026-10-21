@@ -1,6 +1,6 @@
 {
   "blocking": 0,
-  "warn": 0,
+  "warn": 1,
   "accepted": 0,
-  "notes": "#504: the NOT FOUND cited artifact was raised as a Consensus open question and the operator answered it (Answer: external:<who>). Must stay clean."
+  "notes": "#504: the NOT FOUND cited artifact was raised as a Consensus open question and the operator answered it (Answer: external:<who>). Must stay clean. +1 warn (planner-test-data-derivation): TEST_DATA_INVENTORY_MISSING — this discovery.md predates the Test Data Inventory section."
 }

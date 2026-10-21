@@ -461,6 +461,10 @@ _planner_crosscheck_scan_target_symbols() {
   local signals_json target_symbols entry
   local symbol token symbol_line
 
+  # A synthesized test-data spec names the Make targets it will create
+  # (`seed-<slug>:Makefile`) — nothing to resolve until the TD ticket lands.
+  grep -qF -- "${PLANNER_TESTDATA_SYNTH_MARKER:-<!-- planner:testdata-synth v1 -->}" "$spec_file" 2>/dev/null && return 0
+
   signals_json=$(sed -n '/```json/,/```/p' "$spec_file" | sed '1d;$d' 2>/dev/null)
   [ -z "$signals_json" ] && return 0
 

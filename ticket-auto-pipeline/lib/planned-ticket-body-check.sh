@@ -32,11 +32,23 @@ fi
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 # Required sections per type:
-#   all:       Acceptance Criteria, Scope
-#   bug:       + Steps to Reproduce, Test Data Prerequisites
-#   feature:   + Navigation Path
-#   improvement: + Navigation Path
-#   security:  universal only (no type-specific extras beyond bug/feature context)
+#   all:         Acceptance Criteria, Scope
+#   bug:         + Steps to Reproduce, Test Data Prerequisites (loose match)
+#   feature:     + Navigation Path, Test Data Prerequisites (heading)
+#   improvement: + Navigation Path, Test Data Prerequisites (heading)
+#   security:    universal only
+#   chore:       universal only
+#
+# Test Data Prerequisites (planner-test-data-derivation): required on every
+# type except chore and security. The planner composer always writes it —
+# "None — no acceptance criterion needs test data." when nothing needs data —
+# so its absence on a planned feature/improvement body means the body was
+# not composed from a Verification Notes table at all. feature/improvement
+# need a real `## Test Data…` heading with non-blank content
+# (_has_heading_test_data): the loose _has_section_test_data match would be
+# satisfied by the Verification Plan's own `Test data needed` column header,
+# which every composed body carries. bug keeps its original loose match so
+# no in-flight bug body changes verdict.
 #
 # Test User and Navigation Path are additionally skipped whenever the body's
 # own Scope table declares no FE layer — see _scope_is_backend_only. A
@@ -147,6 +159,9 @@ check_planned_body() {
   feature | improvement)
     if [ "$backend_only" != "1" ] && ! _has_section_nav_path "$body_content"; then
       missing+=("Navigation Path")
+    fi
+    if ! _has_heading_test_data "$body_content"; then
+      missing+=("Test Data Prerequisites")
     fi
     ;;
   security | chore)
@@ -296,6 +311,26 @@ _has_section_repro_steps() {
     return 0
   fi
   return 1
+}
+
+# _has_heading_test_data <body> — true when the body has a `## Test Data…`
+# heading (case-insensitive, `###` excluded) with at least one non-blank
+# line before the next `##` heading. Fenced code blocks are skipped, so an
+# example heading inside a fence never counts. `## Test Data Provided` (what
+# a test-data chore supplies) does not count. Same section boundary as
+# dor-check.sh's _dor_test_data_content.
+_has_heading_test_data() {
+  printf '%s\n' "$1" | tr -d '\r' | awk '
+    /^[ \t]*(```|~~~)/ { fence = !fence; next }
+    fence { next }
+    /^##[ \t]/ && !/^###/ {
+      h = tolower($0); sub(/^##[ \t]+/, "", h)
+      insec = (index(h, "test data") == 1 && index(h, "test data provided") != 1)
+      next
+    }
+    insec && $0 ~ /[^ \t]/ { found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  '
 }
 
 # _has_section_test_data <body> — true if body has test data prerequisites

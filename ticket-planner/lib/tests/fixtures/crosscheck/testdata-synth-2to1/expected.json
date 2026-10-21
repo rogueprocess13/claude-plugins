@@ -1,0 +1,15 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "files_present": ["specs/invoice-list-test-data.md"],
+  "files_absent": ["specs/invoice-test-data-pack.md"],
+  "sidecar_jq": [
+    "[.td_specs[] | {slug, kind}] == [{\"slug\":\"invoice-list-test-data\",\"kind\":\"single\"}]",
+    ".edges == [{\"blocked_by\":\"invoice-list-test-data\",\"consumer\":\"invoice-list\"}]"
+  ],
+  "file_contains": {
+    "specs/INDEX.md": ["`invoice-list-test-data`"]
+  },
+  "notes": "planner-test-data-derivation 4.5: the reverse move — a stale pack (no ticket intent) while only invoice-list still needs `invoice`; the pack is deleted and invoice-list-test-data is written. invoice-export (all rows none) gets no edge."
+}

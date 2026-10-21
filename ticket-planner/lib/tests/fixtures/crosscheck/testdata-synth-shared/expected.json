@@ -1,0 +1,17 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "files_present": ["specs/invoice-test-data-pack.md"],
+  "files_absent": ["specs/invoice-list-test-data.md", "specs/invoice-export-test-data.md"],
+  "file_contains": {
+    "specs/invoice-test-data-pack.md": ["`td-fixture-testdata-synth-shared-1` — 3 paid `invoice` records — for `invoice-export`", "`td-fixture-testdata-synth-shared-2` — 5 paid `invoice` records — for `invoice-list`"]
+  },
+  "sidecar_jq": [
+    "[.td_specs[] | {slug, kind, consumers}] == [{\"slug\":\"invoice-test-data-pack\",\"kind\":\"pack\",\"consumers\":[\"invoice-export\",\"invoice-list\"]}]",
+    "[.edges[] | .consumer + \">\" + .blocked_by] == [\"invoice-export>invoice-test-data-pack\",\"invoice-list>invoice-test-data-pack\"]",
+    "[.overrides[].source] | unique == [\"seeded-by:invoice-test-data-pack\"]"
+  ],
+  "log_contains": ["|Crosscheck|testdata-synth|done|1 TD spec(s), 2 need(s)"],
+  "notes": "planner-test-data-derivation 4.3/4.6: two consumers need `invoice` records (the same key) — one <prefix>-test-data-pack serves both, with both blocked-by edges and overrides in the sidecar. No single TD spec."
+}

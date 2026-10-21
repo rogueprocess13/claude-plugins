@@ -39,6 +39,15 @@
 # on: an artifact silently wrong about a load-bearing planner contract, not a
 # matter for human judgment.
 #
+# DEPENDENCY_CYCLE (planner-test-data-derivation 4.9, blocking): the same
+# family also checks the full dependency graph TicketGen will order — read
+# through planner_ticketgen_deps_json, i.e. the specs on disk AFTER
+# Crosscheck's test-data synthesis sub-step (TD specs included) plus the
+# synthesis edges in artifacts/testdata-synth.json — is acyclic. A consumer
+# never names its TD spec in Labels, so a TD <-> consumer cycle exists only
+# in the union, and TicketGen would refuse it (zero tickets) after EpicGen
+# already ran. One finding per spec on a cycle.
+#
 # Usage:
 #   planner_crosscheck_deps <initiative_id>
 #     Returns: 0 if clean, 1 if any finding was reported.
@@ -51,6 +60,12 @@ if ! declare -f _planner_crosscheck_known_slugs >/dev/null 2>&1; then
   # shellcheck source=planner-crosscheck-propagation.sh
   [ -f "${_PLANNER_CROSSCHECK_DEPS_LIB_DIR}/planner-crosscheck-propagation.sh" ] &&
     source "${_PLANNER_CROSSCHECK_DEPS_LIB_DIR}/planner-crosscheck-propagation.sh"
+fi
+
+if ! declare -f planner_ticketgen_deps_json >/dev/null 2>&1; then
+  # shellcheck source=planner-ticket-body.sh
+  [ -f "${_PLANNER_CROSSCHECK_DEPS_LIB_DIR}/planner-ticket-body.sh" ] &&
+    source "${_PLANNER_CROSSCHECK_DEPS_LIB_DIR}/planner-ticket-body.sh"
 fi
 
 if ! declare -f planner_deps_is_external_ref >/dev/null 2>&1; then
@@ -144,8 +159,40 @@ planner_crosscheck_deps() {
     done
   done
 
+  # The full graph TicketGen orders: Labels edges + synthesis sidecar edges,
+  # through the one shared reader (planner_ticketgen_spec_deps).
+  local deps_json cyc members
+  if declare -f planner_ticketgen_deps_json >/dev/null 2>&1; then
+    deps_json=$(planner_ticketgen_deps_json "$specs_dir" 2>/dev/null)
+    if [ -n "$deps_json" ] && ! planner_deps_check_acyclic "$deps_json" 2>/dev/null; then
+      cyc=$(_planner_crosscheck_deps_cycle_nodes "$deps_json")
+      members=$(paste -sd, - <<<"$cyc" | sed 's/,/, /g')
+      while IFS= read -r s; do
+        [ -n "$s" ] || continue
+        out_lines+=("planner-crosscheck-deps: DEPENDENCY_CYCLE ${s}.md is on a blocked-by cycle among: ${members} — counting ## Labels blocked-by and the test-data synthesis edges in artifacts/testdata-synth.json; TicketGen can order none of them")
+      done <<<"$cyc"
+    fi
+  fi
+
   [ "${#out_lines[@]}" -eq 0 ] && return 0
 
   printf '%s\n' "${out_lines[@]}" | sort
   return 1
+}
+
+# Slugs on (or between) cycles of a {slug: [deps]} graph, sorted: prune nodes
+# with no remaining sibling dependency, then nodes no remaining node depends
+# on, until neither applies.
+# Usage: _planner_crosscheck_deps_cycle_nodes <deps_json>
+_planner_crosscheck_deps_cycle_nodes() {
+  jq -r '
+    (keys) as $ids
+    | map_values(map(select(. as $d | $ids | index($d))) | unique) as $g
+    | {left: $ids, changed: true}
+    | until(.changed | not;
+        .left as $l
+        | [ $l[] | select(($g[.] | any(. as $d | $l | index($d))) and
+                          (. as $n | $l | any(. as $m | $g[$m] | index($n)))) ] as $keep
+        | {left: $keep, changed: (($keep | length) != ($l | length))})
+    | .left[]' <<<"$1" 2>/dev/null | LC_ALL=C sort
 }

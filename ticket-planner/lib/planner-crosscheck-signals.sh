@@ -112,6 +112,10 @@ planner_crosscheck_signals() {
     [ -f "$spec_file" ] || continue
     base="$(basename "$spec_file")"
     [ "$base" = "INDEX.md" ] && continue
+    # A test-data spec Crosscheck's synthesis wrote carries template signals
+    # by design (planner-testdata-synth.sh) — identical across TD specs, and
+    # never evidence of copy-paste exploration.
+    grep -qF -- "${PLANNER_TESTDATA_SYNTH_MARKER:-<!-- planner:testdata-synth v1 -->}" "$spec_file" 2>/dev/null && continue
 
     json=$(_planner_crosscheck_signals_extract "$spec_file") || continue
     [ -z "$json" ] && continue

@@ -1,0 +1,18 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "files_present": ["specs/audit-log-test-data.md", "testdata-synth.json", "specs/INDEX.md"],
+  "file_contains": {
+    "specs/audit-log-test-data.md": ["<!-- planner:testdata-synth v1 -->", "Seed command: make seed-audit-log-test-data", "for `audit-log`: The audit log lists the recorded event."],
+    "specs/INDEX.md": ["- `audit-log-test-data` — synthesized test data (single) for `audit-log`"]
+  },
+  "sidecar_jq": [
+    ".version == 1",
+    ".td_specs == [{\"consumers\":[\"audit-log\"],\"dispatched\":false,\"keys\":[\"audit-event\"],\"kind\":\"single\",\"slug\":\"audit-log-test-data\"}]",
+    ".edges == [{\"blocked_by\":\"audit-log-test-data\",\"consumer\":\"audit-log\"}]",
+    ".overrides | length == 1 and .[0].source == \"seeded-by:audit-log-test-data\" and .[0].criterion == \"The audit log lists the recorded event.\""
+  ],
+  "log_contains": ["|Crosscheck|testdata-synth|start|", "|Crosscheck|testdata-synth|done|1 TD spec(s), 1 need(s)"],
+  "notes": "planner-test-data-derivation 4.5-4.7: one consumer needs an `audit-event` record with Source generate. Synthesis writes audit-log-test-data (single), the sidecar edge + override and the INDEX.md block; the override owns the need, so TEST_DATA_UNOWNED stays silent and the consumer spec is untouched."
+}

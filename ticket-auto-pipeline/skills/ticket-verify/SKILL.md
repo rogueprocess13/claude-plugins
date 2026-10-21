@@ -204,7 +204,7 @@ cat > {ticket-dir}/verify-session.md << 'TRACE'
 **Verdict:** {PASS|FAIL}
 
 ## Step trace
-- [x] Step 1.6: Env readiness — {env start status}
+- [x] Step 1.6: Env readiness — {env start status}; seed-apply {done N|skip}
 - [x] Step 1.7: Verify pre-flight — user:{test_user} nav:{nav_target}
 - [x] Step 2: Build verification plan — {N} criteria
 - [x] Step 3: Establish browser session — {logged in|already authenticated}
@@ -276,7 +276,7 @@ fi
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|verify-lock|done|acquired" >> "$LOG_FILE"
 ```
 
-`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at the two earlier points that can exit before Step 5 — Step 1.6b's `env-start.sh` failure, and Step 1.7a's "no test user found" SKIP exit. `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
+`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at every earlier point that can exit before Step 5 — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, and Step 1.7a's "no test user found" SKIP exit. `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
 
 ### 1.6a4 — Resolve isolated worktrees for affected repos
 
@@ -405,6 +405,35 @@ esac
 ```
 
 Exit codes of `verify_served_check_ports` (most severe first): `4` no verify worktree exists for this ticket to compare with (almost always `REPOS_ROOT` unresolved, which also means `env-start.sh` got no exports) — loud `gate-warn` `VERIFY_SERVED_UNVERIFIED`, never a quiet skip; `1` some port serves a checkout of a repo under test on a different commit or with uncommitted changes — gate-stop `VERIFY_SERVED_WRONG_WORKTREE`; `0` `LOCAL_URL`'s port serves this ticket's verify worktree (or a clean checkout of the same repo at the same commit) and no port serves another checkout — an extra port that is ok never stands in for an undecided `LOCAL_URL` port; `3` `LOCAL_URL`'s port could not be decided (no visible listener, unreadable cwd, container-served port, cwd outside any git checkout, or the served repo is not one this ticket touches) — a visible `gate-warn` `VERIFY_SERVED_UNVERIFIED`, proceed. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades the wrong-worktree gate-stop to a `gate-warn`; `VERIFY_SERVED_WORKTREE_STRICT=true` turns the `3`/`4` cases into a `VERIFY_SERVED_UNVERIFIED` gate-stop, for hosts where every served port is a local process. Run this check for `live-backend` mode too.
+
+### 1.6c — Apply seeds from merged test-data blockers
+
+The stack is up and serving this ticket's code; before any acceptance testing, load the data this ticket's test-data (TD) blockers provide (planner-test-data-derivation). `lib/seed-apply.sh` reads the ticket's manifest `blocked_by`, and for every blocker whose local planner `body.md` has a `Seed command:` line **and** whose PR is `merged` (`ticket_pipeline_merge_state`), runs that command and then its `Verify command:` in this ticket's verify worktree. The body is read from the local planner workspace only, never from the tracker. Each command must be exactly `make <target>` or `make -C <relpath> <target>` (lower-case target, relative path with no `..`); it is run as an argv list (`make [-C dir] -- target`), never through a shell, and any other value is rejected without running. It logs `VERIFY|seed-apply|start`, then `done|<n> seeds applied`, `skip|no test-data blockers with a Seed command`, `fail|<blocker> <seed|verify> command exited <rc>`, or `fail|<blocker> rejected <Seed|Verify> command: not 'make <target>'`. Run it for `browser` and `live-backend` modes (Step 1.6 is already skipped for `build-only`, `--env=uat` and `--no-env-start`).
+
+```bash
+source "$HOME/.claude/skills/lib/verify-worktree.sh"
+source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
+source "$HOME/.claude/skills/lib/events.sh" 2>/dev/null || true
+source "$HOME/.claude/skills/lib/seed-apply.sh"
+verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
+# The seed runs in this ticket's verify worktree: the first (sorted) one
+# 1.6a4 created, else REPOS_ROOT itself when no worktree exists.
+_seed_wt=$(ls -d "${REPOS_ROOT}"/.verify-worktrees/*/"{TICKET-ID}" 2>/dev/null | sort | head -1)
+[ -n "$_seed_wt" ] || _seed_wt="$REPOS_ROOT"
+_seed_rc=0
+seed_apply "{TICKET-ID}" "$_seed_wt" || _seed_rc=$?
+if [ "$_seed_rc" -ne 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_SEED_FAILED — ${SEED_APPLY_MSG}" >> "$LOG_FILE"
+  if declare -f emit_event >/dev/null 2>&1; then
+    emit_event "{TICKET-ID}" gate-held "$(jq -nc --arg r "VERIFY_SEED_FAILED — ${SEED_APPLY_MSG}" '{reason: $r}')" 2>/dev/null || true
+  fi
+  echo "ticket-verify: test data could not be loaded — ${SEED_APPLY_MSG}" >&2
+  verify_lock_release
+  exit 1
+fi
+```
+
+On a non-zero exit (`1` a seed or verify command failed or was rejected, `2` the manifest could not be read or the worktree is missing), **stop here**: the block writes the `VERIFY_SEED_FAILED` gate-stop — the same `META|gate-stop|fail|<CODE>` hold the other Step 1.6 checks use, so `pipeline-finalize.sh` records `held: gate` — emits the outbox `gate-held` fact with the reason, as `gate-check.sh` does for its holds, and releases the verify lock. Do not run acceptance testing against missing data, and do not write a verify FAIL or a `REMEDIATION_BRIEF`: the fix belongs in the TD ticket's seed target (or the environment), not in this ticket's code. Only `merged` blockers count — a `no-pr` blocker has no seed target on the base branch, and one that is still `open` has not been reviewed; both are named in the `done`/`skip` message as `not merged: <tid>=<state>`. `skip` is normal for a ticket with no TD blockers; continue.
 
 ---
 

@@ -131,19 +131,18 @@ Readers must be lenient in the same, fixed ways (the Crosscheck parser does all 
 | `exists:<where>` | `<where>` is non-empty | Data already exists (an environment's seed set, a path, a named record). Not verified on disk. |
 | `seeded-by:<slug>` | `<slug>` resolves to a sibling spec (exact slug, or the unambiguous `-`-bounded prefix of exactly one — the same rule as `blocked-by:`) **and** that spec has a non-empty `## Test Data Provided` section; or `<slug>` is an existing tracker identifier (`ABC-123`), a cross-initiative pack | A spec naming itself is **self-seeded**: owned, except under the no-tests rule (below). |
 | `external:<who>` | `<who>` is non-empty | Someone outside the plan supplies it, and the source material says who. |
-| `generate` | never | Has to be synthesised, and no spec does it. |
+| `generate` | when Crosscheck's synthesis owns it (§3.4) | Has to be synthesised. Synthesis writes a TD spec for it and records an override `seeded-by:<td-slug>` in the sidecar; it stays unowned only when synthesis cannot take it (a cited artifact still waiting on its answer). |
 | missing | never (unless Test data is none) | |
 
-The remedy for unowned data is a **test-data-pack** enabler spec (`Kind: enabler`) whose
-`## Test Data Provided` section lists the generator and seed scripts it delivers. Each
-affected need changes to `Source: seeded-by:<pack-slug>`, which is its verification
-prerequisite.
+Specify never hand-writes a test-data-pack spec. An unowned need is written as
+`Source: generate`, and Crosscheck's synthesis sub-step (§3.4) writes the test-data (TD) spec
+that owns it.
 
 ### The no-tests rule
 
 Some projects have a standing rule that implementation does not write tests. Then no fixture
 appears as a side effect of implementation, so self-seeding does not count as ownership and
-the test-data-pack spec is mandatory.
+a synthesized TD spec (or an `exists:`/`external:` Source) is mandatory.
 
 The rule is decided once, at argument parsing, and persisted as the `no-tests-rule` config key
 (`META|no-tests-rule|done|true|false`). Phases read it back with `planner_config_get` and never
@@ -188,7 +187,8 @@ creates from ticket-planner 0.17.0 on.
 
 - `TEST_DATA_UNOWNED` — blocking, cross-file. One finding per initiative. It lists every unowned
   need as `<spec>.md#<label> (<reason>)` (at most 25, then `… and N more`), the affected spec
-  slugs in `[…]`, and the test-data-pack remedy. Under the no-tests rule the remedy is prefixed
+  slugs in `[…]`, and the remedy (a valid Source — `generate` lets synthesis own it; never a
+  hand-written pack). Under the no-tests rule the remedy is prefixed
   `MANDATORY`. A `generate` need that names a cited artifact the operator has not answered yet
   is left to `CITED_ARTIFACT_UNRESOLVED`. Override with
   `resume <ID> --accept TEST_DATA_UNOWNED:"reason"` only when the data genuinely is handled
@@ -257,7 +257,7 @@ artifact called `template`, and `sample` would match inside `sample file v2`.
 | `PENDING` (unanswered) | — | `generate` |
 | `exists:<where>` | They supplied it; it is now at `<where>` | `exists:<where>` (same value, case-insensitive) |
 | `external:<who>` | `<who>` will supply it | `external:<who>` (same value, case-insensitive) |
-| `generate` | Synthesise it | `generate` or `seeded-by:<pack-slug>` (a `generate` Source then blocks as TEST_DATA_UNOWNED until a pack owns it) |
+| `generate` | Synthesise it | `generate` or `seeded-by:<pack-slug>` (a `generate` Source is then owned by synthesis, §3.4) |
 
 - Question lines are matched to discovery.md by name, case-insensitively, anywhere in
   consensus.md.
@@ -304,7 +304,133 @@ Source it needs. The planner relies on this check instead of editing the spec fo
 reasons. Specify writes Sources in two layouts (numbered lines and a table column). One need
 can cite more than one artifact. And a silent bash rewrite of a spec would hide a real
 disagreement between the spec and the answer. An answer of `generate` matches a spec that
-already says `generate`, so it re-runs without a mismatch. `TEST_DATA_UNOWNED` then asks for
-an owning pack, as for any other `generate` need.
+already says `generate`, so it re-runs without a mismatch. Synthesis then owns it, as for any other
+`generate` need.
 
 All finding messages have `|`, CR and LF removed before they reach the state log.
+
+## 3. Test-data derivation and synthesis (planner-test-data-derivation)
+
+Sections 1–2 catch data that is described but unsourced. This section covers data nobody
+described, and data nobody produces.
+
+### 3.1 discovery.md — `## Test Data Inventory`
+
+Discovery writes one epic-wide table of everything the acceptance tests need to exist beforehand:
+
+```
+| Entity | States/variants | Roles | Volume | Source | Load via | Privacy |
+|--------|-----------------|-------|--------|--------|----------|---------|
+| invoice | draft, overdue, paid | finance user | 5 per state | exists:staging seed set | sql | synthetic |
+```
+
+- `Entity` is one short lowercase singular noun. It is the shared vocabulary: Specify names it
+  in backticks, and Crosscheck matches criteria against it (`planner_testdata_inventory_entities`).
+- `Source` uses the closed kinds of §1. `Load via` is one of `sql`, `api`, `ui-forms`, `files`,
+  `factories`. `Privacy` is `synthetic` or `masked` — never production personal data.
+- `TEST_DATA_INVENTORY_MISSING` (warn) — the section is absent in a contract initiative. Silent
+  when discovery.md itself is absent, and for legacy initiatives.
+
+Specify derives each Verification Notes row from the criterion's Given/precondition and When
+inputs, names inventory entities in backticks, writes `none` only when nothing must exist
+beforehand, and writes `Source: generate` for data no one produces yet.
+
+### 3.2 Tripwires
+
+- `VERIFICATION_NOTES_MISSING` — blocking. A spec with ≥1 `## Acceptance Criteria` item has no
+  Verification Notes table rows. Enabler and synth-marked specs are exempt. Legacy initiatives
+  get the warn variant `VERIFICATION_NOTES_MISSING_LEGACY`.
+- `TEST_DATA_IMPLIED` / `TEST_DATA_IMPLIED_WEAK` — every row of a spec says `none`, yet a
+  criterion implies data. One finding per spec, on the first strong criterion (else the first weak):
+  - **strong** (blocks): an inventory or backticked entity; existing/seeded/pre-existing state;
+    "given a/an/the … with"; "when there are"; a count followed by an entity noun; list, filter,
+    search or export over an entity.
+  - **weak** (warns): a count followed by a non-entity noun, or a state word
+    (`PLANNER_TESTDATA_STATE_WORDS`: overdue, archived, pending, …) with no entity.
+  - **never**: a count followed by a unit on `PLANNER_TESTDATA_UNIT_DENYLIST` (minutes, seconds,
+    ms, hours, days, attempts, requests, retries, times, bytes/kb/mb/gb, characters, px, percent,
+    `%`), or a 1xx–5xx count next to http/status/returns. "exists" before
+    behaviour/code/tests/api is not data.
+  - In legacy initiatives a strong match is reported as `TEST_DATA_IMPLIED_WEAK`.
+
+  Message shape: `<slug>.md [<hash8>] match="<phrase>" (<tier>: <reason>) — …`.
+
+### 3.3 consensus.md — `TESTDATA_CONFIRM`
+
+An implied-data question is answered with one persisted line (any `##` section; appended under
+`## Test Data Confirmations` when none exists):
+
+```
+- TESTDATA_CONFIRM: `<slug>` [<hash8>] — Answer: <value>
+```
+
+- `hash8` = first 8 hex of sha256(`<slug>` LF `<trigger criterion, trimmed, CR stripped>`)
+  (`planner_testdata_confirm_hash`). A rewritten trigger criterion changes the hash, so the old
+  answer is ignored and the question is asked again.
+- `value` is `none`, `generate: <description>`, `exists:<where>` or `external:<who>`
+  (`planner_testdata_answer_normalize`: strips `|`, CR, LF, backticks; rejects empty, bare
+  `generate` or an empty description; capped at 256 chars).
+- Any well-formed answer with the current hash suppresses `TEST_DATA_IMPLIED`. `generate:`
+  becomes a synthesis need; `exists:`/`external:` becomes the Source of the trigger
+  criterion's row (`planner_testdata_spec_effective_needs`); `none` changes nothing else.
+- Headless: `planner-stop-describe.sh` asks one question per blocking `TEST_DATA_IMPLIED` spec,
+  id `testdata-<slug>-<hash8>`, binding `consensus-answer:testdata:<slug>`, default
+  `generate: <match phrase>`. `planner-answers.sh` re-derives the hash at intake (a mismatch is
+  `STALE_QUESTION`, exit 2) and writes the line with `planner_testdata_answer_set`.
+
+### 3.4 Synthesis — the `testdata-synth` sub-step
+
+`planner_testdata_synthesize` (`lib/planner-testdata-synth.sh`) runs at the start of every
+Crosscheck, bracketed `Crosscheck|testdata-synth|start` / `done|<N> TD spec(s), <M> need(s)`,
+before every check family. It is a full, idempotent recompute in bash:
+
+- **Needs**: `generate` rows (not waiting on an unanswered cited artifact) plus `generate:`
+  answers. `exists:`/`external:`/`seeded-by:` rows are never synthesized.
+- **Grouping**: key = the inventory entity the data names, else its normalised text. A key two
+  or more consumers share → one `<prefix>-test-data-pack`; a key one consumer uses →
+  `<consumer>-test-data`. Record keys are `td-<init>-<n>`, stable across runs.
+- **Recompute**: marked TD specs with no ticket manifest (`.intents/ticket-<slug>.json`) are
+  deleted and regenerated; a dispatched TD spec is never rewritten and keeps the needs its
+  `## Test Data Provided` lists. An unmarked file at a TD slug fails the run as
+  `TEST_DATA_SYNTH_FAILED <slug>.md already exists…` (blocking); families still run.
+- **Sidecar** `artifacts/testdata-synth.json`:
+  `{version, td_specs[{slug,kind,keys,consumers,dispatched}], overrides[{consumer,criterion,data,record,source}], edges[{consumer,blocked_by}]}`.
+  Consumer specs are never edited. The testdata walker and TicketGen's composer apply the
+  overrides (`generate` → `seeded-by:<td-slug>`); `planner_ticketgen_spec_deps` unions the edges
+  with Labels refs. `DEPENDENCY_CYCLE` (blocking) checks the combined graph. TD specs are listed
+  in `INDEX.md`.
+
+**TD spec template** (marker `<!-- planner:testdata-synth v1 -->`): Labels `planned, INIT-<id>,
+chore`; Signals Kind `enabler`, `Priority: High` (TicketGen sends Linear priority 2), Strategy
+`Conservative`, confidence signals that derive `Pre-approved: true`; a `## Seed Commands` section:
+
+```
+Seed command: make seed-<slug>
+Verify command: make verify-seed-<slug>
+Seed channel: <sql|api|factories|files|ui-forms, from the needs' Load via; default factories>
+```
+
+plus `## Test Data Provided` (one bullet per need: record key, data, consumer criterion), ACs for
+an idempotent seed (exit 0 twice), a passing verify, referential integrity, synthetic/masked data,
+`make reset-seed-<slug>` and a README key map, and Verification Notes rows all `none`. Seed and
+Verify commands **must** be `make <target>` (or `make -C <relpath> <target>`) — the only shape
+seed-apply runs. The test-data-engineer persona implements the ticket through the seed channel.
+
+**Epic UAT**: when the sidecar lists a TD spec and the epic uses a shared branch, EpicGen stamps
+`**UAT Policy:** epic` unless the `uat-policy` config key (`PLANNER_UAT_POLICY`, `per-ticket|epic`,
+persisted at parse time) says otherwise.
+
+### 3.5 ticket-auto — seed-apply and enforcement
+
+- **VERIFY Step 1.6c** (`ticket-auto-pipeline/lib/seed-apply.sh`): before acceptance testing,
+  for each *merged* `blocked_by` parent whose local planner `body.md` carries `Seed command:`,
+  run the seed then verify `make` target in the verify worktree (no shell, no tracker read).
+  Logs `VERIFY|seed-apply|start|done|skip|fail`; a failure writes
+  `META|gate-stop|fail|VERIFY_SEED_FAILED — <msg>` and holds the ticket.
+- **dor-check**: on a contract body (a known-kind Source anywhere), `TEST_DATA_MISSING` and
+  `TEST_DATA_UNSEEDED` are hard; chore and security are exempt; `DOR_STRICT_TEST_DATA=false`
+  demotes them, and legacy bodies stay advisory unless it is `true`. The planner's Refinement
+  scan runs with `DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true`.
+- **body-check**: planned feature and improvement bodies need a non-empty `## Test Data…`
+  section (not `Provided`). TicketGen always writes it — `- None — no acceptance criterion needs
+  test data.` when nothing does.

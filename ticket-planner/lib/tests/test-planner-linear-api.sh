@@ -125,6 +125,35 @@ for pair in "parentId:parent-1" "projectId:proj-1" "projectMilestoneId:ms-1"; do
   fi
 done
 
+# ── Test 5b: priority (planner-test-data-derivation 5.2) ───────────────────────
+#
+# TicketGen files a synthesized test-data ticket High (Linear priority 2). The
+# field is an integer in IssueCreateInput, omitted when empty, refused when out
+# of range.
+
+echo "--- Test 5b: priority is plumbed as an integer ---"
+
+got=$(planner_linear_build_issue_input "$TEAM_UUID" "T" "D" '[]' "" "" "" 2 | jq -c '.input.priority')
+if [ "$got" = "2" ]; then
+  pass "priority 2 lands as the integer 2"
+else
+  fail "priority 2 lands as an integer" "got '$got'"
+fi
+
+if [ "$(echo "$minimal" | jq '.input | has("priority")')" = "false" ]; then
+  pass "priority absent when not supplied"
+else
+  fail "priority absent when not supplied" "present"
+fi
+
+rc=0
+planner_linear_build_issue_input "$TEAM_UUID" "T" "D" '[]' "" "" "" "High" >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 1 ]; then
+  pass "a non-integer priority is refused (rc 1)"
+else
+  fail "a non-integer priority is refused" "rc=$rc"
+fi
+
 # ── Test 6: label name → UUID resolution ───────────────────────────────────────
 
 echo "--- Test 6: label resolution ---"

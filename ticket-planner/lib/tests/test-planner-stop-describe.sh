@@ -224,6 +224,61 @@ else
   fail "FAILED_RETRY_EXHAUSTED: a phase past PLANNER_MAX_PHASE_RETRIES" "$(planner_stop_describe "$INIT")"
 fi
 
+# ── test-data questions (planner-test-data-derivation) ─────────────────────
+
+echo "--- test-data questions ---"
+
+fresh_root shape-td
+halt_fixture_init crosscheck-testdata "$INIT" >/dev/null
+halt_fixture_run crosscheck-testdata "$INIT" "${WORK}/run"
+TD_ART="$(planner_initiative_dir "$INIT")/artifacts"
+h_audit=$(planner_testdata_confirm_hash audit-log "The audit page lists 3 audit entries")
+h_inv=$(planner_testdata_confirm_hash invoice-list "The list shows 5 overdue invoices")
+m=$(planner_stop_describe_json "$INIT")
+got=$(echo "$m" | jq -r '[.questions[] | .id + "=" + .binding] | join(" ")')
+want="testdata-audit-log-${h_audit}=consensus-answer:testdata:audit-log testdata-invoice-list-${h_inv}=consensus-answer:testdata:invoice-list accept-TEST_DATA_IMPLIED=flag:accept:TEST_DATA_IMPLIED"
+if [ "$got" = "$want" ]; then
+  pass "TEST_DATA_IMPLIED: one testdata question per spec, ahead of the accept question"
+else
+  fail "TEST_DATA_IMPLIED: one testdata question per spec, ahead of the accept question" "$got"
+fi
+if [ "$(echo "$m" | jq -r '.questions[0] | (.options | join("|")) + " / " + .default')" = "none|generate: 3 audit entries|exists|external / generate: 3 audit entries" ]; then
+  pass "TEST_DATA_IMPLIED: options none|generate: <phrase>|exists|external, default generate: <matched phrase>"
+else
+  fail "TEST_DATA_IMPLIED: options none|generate: <phrase>|exists|external, default generate: <matched phrase>" "$(echo "$m" | jq -c '.questions[0]')"
+fi
+if [ "$(planner_stop_describe_json "$INIT" | jq -r '[.questions[].id] | join(" ")')" = "$(echo "$m" | jq -r '[.questions[].id] | join(" ")')" ]; then
+  pass "TEST_DATA_IMPLIED: ids are stable across re-describes"
+else
+  fail "TEST_DATA_IMPLIED: ids are stable across re-describes" "ids changed with no artifact change"
+fi
+
+# An answer under the current hash resolves the spec: its question goes.
+planner_testdata_answer_set "${TD_ART}/consensus.md" audit-log "$h_audit" none >/dev/null
+got=$(planner_stop_describe_json "$INIT" | jq -r '[.questions[].id] | join(" ")')
+if [ "$got" = "testdata-invoice-list-${h_inv} accept-TEST_DATA_IMPLIED" ]; then
+  pass "TEST_DATA_IMPLIED: a spec answered under its current hash is not asked again"
+else
+  fail "TEST_DATA_IMPLIED: a spec answered under its current hash is not asked again" "$got"
+fi
+
+# Rewriting the criterion re-asks under a new id (and voids the old answer).
+sed -i 's/lists 3 audit entries/lists 4 audit entries/' "${TD_ART}/specs/audit-log.md"
+h_new=$(planner_testdata_confirm_hash audit-log "The audit page lists 4 audit entries")
+got=$(planner_stop_describe_json "$INIT" | jq -r '[.questions[].id] | join(" ")')
+if [ "$h_new" != "$h_audit" ] && [ "$got" = "testdata-audit-log-${h_new} testdata-invoice-list-${h_inv} accept-TEST_DATA_IMPLIED" ]; then
+  pass "TEST_DATA_IMPLIED: a rewritten criterion is re-asked under its new hash"
+else
+  fail "TEST_DATA_IMPLIED: a rewritten criterion is re-asked under its new hash" "$got"
+fi
+
+planner_crosscheck_accept_set "$INIT" "TEST_DATA_IMPLIED" "data is seeded out of band"
+if [ "$(reason_of "$INIT")" = "RUNNING" ]; then
+  pass "TEST_DATA_IMPLIED: an accepted code asks no testdata questions"
+else
+  fail "TEST_DATA_IMPLIED: an accepted code asks no testdata questions" "$(planner_stop_describe_json "$INIT")"
+fi
+
 # ── round numbering ────────────────────────────────────────────────────────
 
 echo "--- rounds ---"

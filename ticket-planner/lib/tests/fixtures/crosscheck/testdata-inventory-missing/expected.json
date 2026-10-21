@@ -1,0 +1,6 @@
+{
+  "blocking": 0,
+  "warn": 1,
+  "accepted": 0,
+  "notes": "planner-test-data-derivation 1.3: contract initiative whose discovery.md has Cited Artifacts but no ## Test Data Inventory — one warn-level TEST_DATA_INVENTORY_MISSING, never blocking. The only spec sources its data (exists:), so nothing else fires."
+}

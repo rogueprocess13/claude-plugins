@@ -96,7 +96,9 @@ COMPLETE_FEATURE_BODY='## Acceptance Criteria
 | FE    | gateway | handover-list |
 | BE    | handover | export-service |
 ## Navigation Path
-`Handover > List > Export CSV`'
+`Handover > List > Export CSV`
+## Test Data Prerequisites
+None — no acceptance criterion needs test data.'
 
 FEATURE_MISSING_NAV='## Acceptance Criteria
 - [ ] Feature works as expected
@@ -192,7 +194,9 @@ IMPROVEMENT_BODY='## Acceptance Criteria
 | ----- | ------- | ---- |
 | FE    | gateway | handover-list |
 ## Navigation Path
-`Handover > List > Apply Filter`'
+`Handover > List > Apply Filter`
+## Test Data Prerequisites
+None — no acceptance criterion needs test data.'
 _run_check "complete improvement body passes" 0 "" \
   "TEST-9" "improvement" "$IMPROVEMENT_BODY" "true"
 
@@ -215,7 +219,9 @@ BACKEND_ONLY_FEATURE_BODY='## Acceptance Criteria
 ## Scope
 | Layer | Service | Area |
 | ----- | ------- | ---- |
-| BE    | ledgerly-worker | pdfsplit |'
+| BE    | ledgerly-worker | pdfsplit |
+## Test Data Prerequisites
+None — no acceptance criterion needs test data.'
 _run_check "backend-only feature body skips Test User/Nav Path" 0 "" \
   "TEST-11" "feature" "$BACKEND_ONLY_FEATURE_BODY" "true"
 
@@ -264,6 +270,56 @@ test_manifest_only_plane_resolution() {
   [ "$rc" = "0" ]
 }
 _run "manifest only — plane body resolves with no live planned label" test_manifest_only_plane_resolution
+
+# 15. planner-test-data-derivation (task 6.4): Test Data Prerequisites is
+# required on every type except chore and security. A feature/improvement
+# needs a real `## Test Data…` heading — the Verification Plan's own
+# `Test data needed` column header must not satisfy it.
+FEATURE_NO_TDP='## Acceptance Criteria
+- [ ] Clicking Export downloads a CSV with 5 rows
+## Test User
+`admin@example.com` — password `admin`
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| FE    | gateway | handover-list |
+## Navigation Path
+`Handover > List > Export CSV`
+## Verification Plan
+### Per-Criterion Verification
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|---|---|---|---|---|---|
+| 1 | Export | admin | Handover > List | five handovers (Source: seeded-by:handover-test-data) | CSV has 5 rows | ✓ |'
+_run_check "feature without Test Data Prerequisites fails" 1 "Test Data Prerequisites" \
+  "TEST-15" "feature" "$FEATURE_NO_TDP" "true"
+_run_check "improvement without Test Data Prerequisites fails" 1 "Test Data Prerequisites" \
+  "TEST-15b" "improvement" "$FEATURE_NO_TDP" "true"
+_run_check "chore without Test Data Prerequisites passes" 0 "" \
+  "TEST-15c" "chore" "$FEATURE_NO_TDP" "true"
+_run_check "security without Test Data Prerequisites passes" 0 "" \
+  "TEST-15d" "security" "$FEATURE_NO_TDP" "true"
+
+# 16. An empty Test Data heading does not count; neither does one inside a
+# fenced code block.
+FEATURE_EMPTY_TDP="$FEATURE_NO_TDP
+## Test Data Prerequisites
+
+## Notes
+nothing"
+_run_check "feature with an empty Test Data heading fails" 1 "Test Data Prerequisites" \
+  "TEST-16" "feature" "$FEATURE_EMPTY_TDP" "true"
+FEATURE_FENCED_TDP="$FEATURE_NO_TDP
+\`\`\`
+## Test Data Prerequisites
+- example only
+\`\`\`"
+_run_check "feature with a fenced Test Data heading fails" 1 "Test Data Prerequisites" \
+  "TEST-16b" "feature" "$FEATURE_FENCED_TDP" "true"
+FEATURE_NONE_TDP="$FEATURE_NO_TDP
+## Test Data Prerequisites
+None — no acceptance criterion needs test data."
+_run_check "feature with the composer's None line passes" 0 "" \
+  "TEST-16c" "feature" "$FEATURE_NONE_TDP" "true"
 
 # Cleanup
 rm -rf "$REPOS_ROOT/.ticket-auto"

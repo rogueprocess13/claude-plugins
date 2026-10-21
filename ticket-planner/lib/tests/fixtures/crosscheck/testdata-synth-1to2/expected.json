@@ -1,0 +1,11 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "files_present": ["specs/invoice-test-data-pack.md"],
+  "files_absent": ["specs/invoice-list-test-data.md"],
+  "sidecar_jq": [
+    "[.td_specs[].slug] == [\"invoice-test-data-pack\"]"
+  ],
+  "notes": "planner-test-data-derivation 4.5, spec scenario 'Grouping change leaves no orphan': a stale synth-marked invoice-list-test-data (from a run when only invoice-list needed `invoice`) has no ticket intent; now two consumers share the key, so the recompute deletes the single and writes the pack."
+}

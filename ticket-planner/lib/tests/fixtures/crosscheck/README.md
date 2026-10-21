@@ -42,6 +42,9 @@ fixtures/crosscheck/<fixture-name>/
   discovery.md       # optional — copied to artifacts/discovery.md
   consensus.md        # optional — copied to artifacts/consensus.md
   specs/*.md          # optional — copied to artifacts/specs/
+  intents/*.json       # optional — copied to the initiative's .intents/
+                        # (TicketGen's ticket-<slug>.json records): a TD spec
+                        # whose slug has one counts as dispatched
   repo-stub/           # optional — copied verbatim into REPOS_ROOT, so
                         # citation/precedent checks that need a real file
                         # (e.g. `worker/main.py:12`) resolve against it
@@ -81,6 +84,15 @@ exercises.
 - `message_contains` — optional. Substrings the blocking finding messages,
   taken together, must contain — counts alone cannot tell the right finding
   from a different one.
+- `files_present` / `files_absent` — optional. Paths relative to the
+  initiative's `artifacts/` that must / must not exist after the run (test-data
+  synthesis: TD specs, `testdata-synth.json`, `specs/INDEX.md`).
+- `file_contains` — optional. `{ "<artifacts-relative path>": ["substring", …] }`.
+- `sidecar_jq` — optional. jq expressions that must be true against
+  `artifacts/testdata-synth.json`.
+- `log_contains` — optional. Substrings the state log must contain.
+- `idempotent` — optional, `true`: run `planner_crosscheck_run` a second time
+  and assert no file under `artifacts/` changed (content, size or mtime).
 - `notes` — free text. Say what real false-positive class this is modeled
   on (cite the CHANGELOG entry/issue number if there is one) and why the
   expected counts are what they are.
@@ -92,7 +104,9 @@ cross-contaminate each other's contract findings) and counts
 `META|crosscheck|{fail,warn,accepted}` lines straight from the state log the
 real `planner_crosscheck_run` wrote — the same log
 `planner_crosscheck_findings_summary` reads for `status` mode. It never
-re-implements or mocks a checker.
+re-implements or mocks a checker. For every fixture it also asserts that each
+spec file without the synthesis marker is byte-identical after the run —
+Crosscheck never edits a consumer spec.
 
 ## Today's fixtures
 
@@ -101,8 +115,8 @@ re-implements or mocks a checker.
 | `citation-compound-two-line-symbols` | Compound `A()/B():path:line1,line2` citation where each symbol resolves near its own line | [#224](https://github.com/willard-pro/claude-plugins/issues/224) (CHANGELOG `ticket-planner 0.8.13`) — the checker used to pair both symbols against the first line number only, false-flagging `CITATION_SYMBOL_MISMATCH` on the Evidence-Based initiative's `ebc-e` spec |
 | `dangling-blocked-by-external-ref` | `blocked-by:WIL-83` naming an existing Linear issue, not a sibling spec slug | [#227](https://github.com/willard-pro/claude-plugins/issues/227) — `planner_deps_is_external_ref` exempts this shape from `DANGLING_BLOCKED_BY` |
 | `signals-legit-trivial-defaults` | Two trivial specs sharing the same all-zero/false `services_identified`/`symbols_resolved`/`prior_art_found` combination | [#220](https://github.com/willard-pro/claude-plugins/issues/220) (CHANGELOG `ticket-planner`, VS-2 / `INIT-1788079196-3438`) — that combination is documented as the legitimate default for trivial tickets and excluded from the near-identical `SIGNALS_UNIFORM` pass |
-| `testdata-generate-unowned` | Two specs whose Verification Notes need `Source: generate` data, no owner | [#503](https://github.com/willard-pro/claude-plugins/issues/503) — one blocking `TEST_DATA_UNOWNED` naming both specs and proposing a test-data pack |
-| `testdata-generate-unowned-table` | The same two specs with Verification Notes as the #499 Criterion table (a `Source` column) | [#499](https://github.com/willard-pro/claude-plugins/issues/499) + [#503](https://github.com/willard-pro/claude-plugins/issues/503) — table rows are needs; the same one blocking `TEST_DATA_UNOWNED` |
+| `testdata-generate-unowned` | Two specs whose Verification Notes need `Source: generate` data, no owner | [#503](https://github.com/willard-pro/claude-plugins/issues/503) — was one blocking `TEST_DATA_UNOWNED`; since planner-test-data-derivation 4.7 Crosscheck synthesizes one `<consumer>-test-data` spec per need (different keys) and stays clean |
+| `testdata-generate-unowned-table` | The same two specs with Verification Notes as the #499 Criterion table (a `Source` column) | [#499](https://github.com/willard-pro/claude-plugins/issues/499) + [#503](https://github.com/willard-pro/claude-plugins/issues/503) — table rows are needs; synthesized and clean, as above |
 | `testdata-seeded-by-owned` | The same needs owned by a third enabler spec via `seeded-by:` | [#503](https://github.com/willard-pro/claude-plugins/issues/503) — must stay clean |
 | `testdata-self-seeded-no-tests-rule` | A self-seeded need while REPOS_ROOT `CLAUDE.md` says implementation does not write tests | [#503](https://github.com/willard-pro/claude-plugins/issues/503) point 4 — `TEST_DATA_UNOWNED`, remedy `MANDATORY` |
 | `cited-artifact-unraised` | discovery.md lists a sample file NOT FOUND; consensus.md never asks | [#504](https://github.com/willard-pro/claude-plugins/issues/504) — `CITED_ARTIFACT_UNRAISED` |
@@ -112,6 +126,23 @@ re-implements or mocks a checker.
 | `cited-artifact-overlapping-names` | Artifacts `sample` and `sample file v2` with different answers | review case A — exact backticked matching; must stay clean |
 | `cited-artifact-prose-not-matched` | Artifact `template`; an unrelated need mentions "email template" in prose | review case A2 — prose is never a citation; must stay clean |
 | `cited-artifact-paraphrased` | Spec paraphrases a NOT FOUND artifact and invents an owner | review case B — `CITED_ARTIFACT_UNREFERENCED` |
+| `testdata-notes-missing` | A feature spec with acceptance criteria and no Verification Notes, beside an enabler spec and a synth-marked spec without them | planner-test-data-derivation 2.1 — one blocking `VERIFICATION_NOTES_MISSING`; enabler and synth-marked specs exempt |
+| `testdata-inventory-missing` | Contract initiative whose discovery.md has no `## Test Data Inventory` | planner-test-data-derivation 1.3 — warn-only `TEST_DATA_INVENTORY_MISSING` |
+| `testdata-implied-strong` | All rows `none`; "Given 5 overdue \`invoice\` records" | planner-test-data-derivation 2.3 — blocking `TEST_DATA_IMPLIED` with `[hash8]` and `match="…"` |
+| `testdata-implied-weak-warn` | All rows `none`; "shows 3 badges", no badge entity | planner-test-data-derivation 2.3 — warn-only `TEST_DATA_IMPLIED_WEAK` |
+| `testdata-threshold-clean` | All rows `none`; "expires after 15 minutes", "lock after 5 attempts" | design Decision 3 unit denylist — must stay clean |
+| `testdata-implied-confirmed-none` | The strong case answered `TESTDATA_CONFIRM … none` with the matching hash | planner-test-data-derivation 2.4 — suppressed, clean |
+| `testdata-confirm-hash-stale` | The same answer with a hash that no longer matches the criterion | planner-test-data-derivation 2.4 — answer void, `TEST_DATA_IMPLIED` again |
+| `testdata-external-no-synth` | The strong case answered `external:billing team` | planner-test-data-derivation 2.5 — effective Source in memory, clean; synthesis must not create a test-data spec or a sidecar |
+| `testdata-synth-single` | One consumer needs an `audit-event` record, `Source: generate` | planner-test-data-derivation 4.5-4.7 — `audit-log-test-data` written, sidecar edge + override, INDEX.md block; clean |
+| `testdata-synth-shared` | Two consumers need `invoice` records | 4.3/4.6 — one `<prefix>-test-data-pack` serving both; clean |
+| `testdata-synth-1to2` | The shared case plus a stale synth-marked single from an earlier run, no ticket intent | spec scenario "Grouping change leaves no orphan" — single deleted, pack written |
+| `testdata-synth-2to1` | Only one consumer still needs `invoice`; a stale pack, no ticket intent | 4.5 — pack deleted, single written |
+| `testdata-synth-idempotent` | The shared case run twice | spec scenario "Idempotent" — the second run changes no artifact file (content or mtime) |
+| `testdata-synth-slug-collision` | A hand-written, unmarked `audit-log-test-data.md` holds the TD slug | spec scenario "Slug collision" — blocking `TEST_DATA_SYNTH_FAILED` naming the file, nothing written; the need is still `TEST_DATA_UNOWNED` |
+| `testdata-synth-dispatched-keep` | A synth-marked TD spec with `intents/ticket-<slug>.json` | 4.5 — kept byte-for-byte, the need whose key it owns re-attached to it |
+| `testdata-synth-cited-generate` | A NOT FOUND cited artifact answered `generate`, need cites it with `Source: generate` | 4.7 — the cited-artifact remedy routes through synthesis; clean |
+| `testdata-synth-cycle-guard` | A dispatched TD spec whose Labels say `blocked-by:audit-log`; `audit-log` needs the key it owns | 4.9 — the TD↔consumer cycle exists only in Labels ∪ sidecar edges; blocking `DEPENDENCY_CYCLE` on both specs |
 | `contract-undefined-warn-only` | A structure that "gains new fields for ..." in prose with no backtick-quoted field names | [#175](https://github.com/willard-pro/claude-plugins/issues/175) — `CONTRACT_UNDEFINED` is deliberately warn-level, not blocking |
 
 ## Adding a real fixture

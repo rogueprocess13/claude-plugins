@@ -55,8 +55,8 @@ or neither.
 | Code | Fires when | Strict flag (promotes to hard) |
 |---|---|---|
 | `TEST_USER_UNRESOLVED` | Named test user/role does not resolve against the test-user catalog | `DOR_STRICT_CATALOG` |
-| `TEST_DATA_MISSING` | No Test Data section | `DOR_STRICT_TEST_DATA` |
-| `TEST_DATA_UNSEEDED` | Test Data section present but has no concrete detail | `DOR_STRICT_TEST_DATA` |
+| `TEST_DATA_MISSING` | No Test Data section. **Hard by default on a body that carries the Source contract** (except `chore`/`security`) — see below. | `DOR_STRICT_TEST_DATA` (legacy body); an explicit `DOR_STRICT_TEST_DATA=false` demotes the contract case to advisory |
+| `TEST_DATA_UNSEEDED` | Test Data section present but has no concrete detail. **Hard by default on a contract body** (except `chore`/`security`). | as `TEST_DATA_MISSING` |
 | `TEST_DATA_UNSOURCED` | Test data is described, but at least one item does not say where it comes from — see below. **Hard by default on a body that carries the Source contract.** | `DOR_STRICT_TEST_DATA` (legacy body); `DOR_STRICT_TEST_DATA_SOURCE=false` demotes the contract case to advisory |
 | `VPLAN_MISSING` | No Verification Plan table (unless ≥ half of unique AC lines are self-verifying — see below) | `DOR_STRICT_VPLAN` |
 | `VPLAN_ROW_GAP` | Verification Plan table has fewer rows than acceptance criteria | `DOR_STRICT_VPLAN` |
@@ -64,7 +64,9 @@ or neither.
 | `AC_IMPLEMENTATION_ONLY` | Every unique AC line describes implementation activity with no observable outcome | `DOR_STRICT_AC_IMPL` |
 | `VERIFICATION_REQUIRED_NOT_SELF_VERIFYING` | No Verification Plan and no AC line carries a concrete expected value/result | `DOR_STRICT_VERIFICATION` |
 
-All five strict flags default `false`, preserving default behaviour on every host.
+All five strict flags default `false`, preserving default behaviour on every host, with one
+exception: on a body that carries the Source contract, an unset `DOR_STRICT_TEST_DATA` counts as
+`true` for `TEST_DATA_MISSING`/`TEST_DATA_UNSEEDED` (see below).
 `DOR_STRICT_TEST_DATA_SOURCE` is the one switch that defaults `true`; it only affects
 `TEST_DATA_UNSOURCED` on a body that carries the Source contract (see below).
 `DOR_STRICT_VPLAN` (planner-ready-by-construction) promotes all three `VPLAN_*` codes together —
@@ -72,6 +74,28 @@ it does not affect the `satisfied-by-ac` self-verifying escape hatch below, and 
 `DOR_STRICT_VERIFICATION`: a host can enforce the "something self-verifying exists" floor
 immediately while still observing planner-written Verification Plan tables advisory-only until it
 trusts their quality on real tickets.
+
+### `TEST_DATA_MISSING` / `TEST_DATA_UNSEEDED` on a contract body (planner-test-data-derivation)
+
+A body carries the Source contract when at least one item — a Test Data Prerequisites item **or**
+a Verification Plan `Test data needed` cell — has a `Source:` of a known kind (the same detection
+as `TEST_DATA_UNSOURCED` below). Because the Verification Plan cell counts, a contract body with
+no `## Test Data Prerequisites` section at all is still recognised as one.
+
+| Body | `DOR_STRICT_TEST_DATA` unset | `=true` | `=false` |
+|---|---|---|---|
+| contract, type not `chore`/`security` | **hard** | hard | advisory |
+| contract, `chore` or `security` | advisory | hard | advisory |
+| legacy (no known Source anywhere) | advisory | hard | advisory |
+
+The default lives in code, for the same reason as `TEST_DATA_UNSOURCED`'s: the planner's
+Refinement caches the verdict and ticket-auto's gate may recompute it in another process, so both
+must agree without a shared env var. `chore` and `security` are exempt from the contract default
+because `planned-ticket-body-check.sh` does not require their Test Data Prerequisites section
+either; a synthesized test-data chore (which provides data rather than consuming it) must never
+fail readiness on its own missing section. The planner's composer always writes the section on
+planned tickets, using `None — no acceptance criterion needs test data.` when nothing needs data;
+that line is concrete, so it passes both codes.
 
 ### `TEST_DATA_UNSOURCED` (issue #505)
 
@@ -130,8 +154,8 @@ cannot hard-fail `/ticket-create`. A `## Planner Context` block does not either:
 Source fields from 0.17.0 on, and those are what opt a body in.
 
 - **Contract body** — every item must be sourced. The code is **hard by default**, so the
-  planner's Refinement scan (which never sets `DOR_STRICT_*`) and ticket-auto's planned-ticket gate
-  hold it strictly. A host can set `DOR_STRICT_TEST_DATA_SOURCE=false` to observe it
+  planner's Refinement scan and ticket-auto's planned-ticket gate hold it strictly without either
+  having to set a flag. A host can set `DOR_STRICT_TEST_DATA_SOURCE=false` to observe it
   advisory-only. A data need the operator deliberately left as `generate` (for example a
   `--accept`ed `TEST_DATA_UNOWNED`) is cleared per ticket with
   `dor-check.sh --waive <TID> TEST_DATA_UNSOURCED "<reason>"`.

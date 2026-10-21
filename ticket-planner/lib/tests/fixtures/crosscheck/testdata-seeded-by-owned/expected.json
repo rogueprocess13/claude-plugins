@@ -1,6 +1,6 @@
 {
   "blocking": 0,
-  "warn": 0,
+  "warn": 1,
   "accepted": 0,
-  "notes": "#503: the same two specs as testdata-generate-unowned, with the needs now owned by a third enabler spec (test-data-pack) via Source: seeded-by:test-data-pack; the target has a ## Test Data Provided section. Must stay clean."
+  "notes": "#503: the same two specs as testdata-generate-unowned, with the needs now owned by a third enabler spec (test-data-pack) via Source: seeded-by:test-data-pack; the target has a ## Test Data Provided section. Must stay clean. +1 warn (planner-test-data-derivation): TEST_DATA_IMPLIED_WEAK on the pack spec, whose only row says none while \"A rejected file shows the validation error\" names a record state (weak tier: state word, no entity)."
 }

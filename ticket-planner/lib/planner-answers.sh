@@ -27,6 +27,19 @@
 #                          with the new answer is CITED_ARTIFACT_SOURCE_MISMATCH
 #                          on the Crosscheck re-run, which names the spec and
 #                          the Source it needs.
+#   consensus-answer:testdata:<slug>
+#                          planner_testdata_answer_set — writes or replaces
+#                          the spec's TESTDATA_CONFIRM line in consensus.md
+#                          (planner-test-data-derivation), keyed by the hash8
+#                          the question id ends in (testdata-<slug>-<hash8>).
+#                          The value must be none, generate: <description>,
+#                          exists:<where> or external:<who>; empty values and
+#                          an empty description are refused on the raw text,
+#                          and `|`, CR and LF are stripped from free text.
+#                          The hash is re-derived from the spec at intake: a
+#                          criterion rewritten since the question is refused
+#                          as STALE_QUESTION (the describer re-asks it under
+#                          a new id), never confirmed silently.
 #
 # `__skip__` as the value of an accept or waive answer declines it.
 #
@@ -49,7 +62,7 @@
 #   0  applied, or this exact file was already applied (no-op)
 #   1  could not run (bad usage, no state log, jq missing, write failure)
 #   2  rejected: malformed file, UNSUPPORTED_SCHEMA_VERSION, UNKNOWN_QUESTION_ID,
-#      ROLE_NOT_PERMITTED, INVALID_VALUE — nothing written
+#      ROLE_NOT_PERMITTED, INVALID_VALUE, STALE_QUESTION — nothing written
 #   3  ROUND_ALREADY_ANSWERED — a different file already answered this round
 #   4  STALE_ROUND — the file's round is not the open round (or none is open)
 #
@@ -136,9 +149,32 @@ _planner_answers_check_value() {
     planner_cited_answer_normalize "$value" >/dev/null
     return
     ;;
+  consensus-answer:testdata:*)
+    planner_testdata_answer_normalize "$value" >/dev/null
+    return
+    ;;
   esac
   echo "binding '${binding}' is not one the planner applies" >&2
   return 1
+}
+
+# _planner_answers_testdata_current <INIT> <binding> <question_id>
+# Is the hash8 the question id ends in still the hash of the spec's current
+# trigger criterion? Returns 1 with the reason on stderr when the spec is gone,
+# no longer implies data, or its criterion was rewritten since the question.
+_planner_answers_testdata_current() {
+  local init="$1" slug="${2#consensus-answer:testdata:}" qhash="${3##*-}" spec trig tier reason phrase hash crit
+  spec="$(planner_initiative_dir "$init")/artifacts/specs/${slug}.md"
+  if [ ! -f "$spec" ]; then
+    echo "spec ${slug}.md no longer exists" >&2
+    return 1
+  fi
+  trig=$(_planner_testdata_spec_trigger "$spec" "$(_planner_testdata_entity_names "$init")")
+  IFS=$'\037' read -r tier reason phrase hash crit <<<"$trig"
+  if [ -z "$hash" ] || [ "$hash" != "$qhash" ]; then
+    echo "the criterion this question asked about has changed (now [${hash:-none}]) — re-describe and answer the new question" >&2
+    return 1
+  fi
 }
 
 # planner_answers_apply <INIT_ID> <answers_file>
@@ -263,12 +299,27 @@ planner_answers_apply() {
         return
       fi
       ;;
+    consensus-answer:testdata:*)
+      # Raw text first: sanitising turns CR/LF into spaces, which could make
+      # an otherwise empty `generate:` look like it has a description.
+      raw_value=$(printf '%s' "$a" | jq -j '.value, "."')
+      raw_value="${raw_value%.}"
+      if ! why=$(planner_testdata_answer_normalize "$raw_value" 2>&1 >/dev/null); then
+        _planner_answers_reject 2 INVALID_VALUE "'$(planner_answers_sanitize "$id")': ${why}"
+        return
+      fi
+      if ! why=$(_planner_answers_testdata_current "$init" "$binding" "$id" 2>&1); then
+        _planner_answers_reject 2 STALE_QUESTION "'$(planner_answers_sanitize "$id")': ${why}"
+        return
+      fi
+      ;;
     esac
     value=$(planner_answers_sanitize "$(printf '%s' "$a" | jq -r '.value')")
     # create is the one closed-vocabulary answer; normalise its case.
     [ "$binding" = "flag:create" ] && value=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
     case "$binding" in
     consensus-answer:cited:*) value=$(planner_cited_answer_normalize "$value" 2>/dev/null) ;;
+    consensus-answer:testdata:*) value=$(planner_testdata_answer_normalize "$value" 2>/dev/null) ;;
     esac
     if ! why=$(_planner_answers_check_value "$binding" "$value" 2>&1); then
       _planner_answers_reject 2 INVALID_VALUE "'${id}': ${why}"
@@ -381,6 +432,16 @@ planner_answers_apply() {
       planner_state_write "$init" "META" "consensus-answer" "step" \
         "cited:${code} ${value} (round ${round}, by ${bys[$i]})" || return 1
       applied+=("cited:${code}")
+      ;;
+    consensus-answer:testdata:*)
+      code="${binding#consensus-answer:testdata:}"
+      planner_testdata_answer_set "${state_dir}/artifacts/consensus.md" "$code" "${ids[$i]##*-}" "$value" || {
+        echo "planner-answers: failed to record the test-data answer for spec ${code}" >&2
+        return 1
+      }
+      planner_state_write "$init" "META" "consensus-answer" "step" \
+        "testdata:${code} [${ids[$i]##*-}] ${value} (round ${round}, by ${bys[$i]})" || return 1
+      applied+=("testdata:${code}")
       ;;
     note) ;;
     esac

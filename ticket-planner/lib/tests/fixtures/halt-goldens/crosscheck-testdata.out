@@ -1,0 +1,19 @@
+Crosscheck found blocking findings — fix the cited artifacts and resume.
+
+Crosscheck findings — INIT-1700000000-4242 (most recent attempt)
+
+audit-log.md
+  TEST_DATA_IMPLIED — 1 blocking
+    fix: every Verification Notes row says none but a criterion implies data — derive the need with a Source, or answer the spec's TESTDATA_CONFIRM line in consensus.md (none, generate: <what>, exists:<where>, external:<who>)
+    audit-log.md [16dda18b] match="3 audit entries" (strong: count+entity) — every Verification Notes row says Test data none, but this criterion implies data m...
+
+invoice-list.md
+  TEST_DATA_IMPLIED — 1 blocking
+    fix: every Verification Notes row says none but a criterion implies data — derive the need with a Source, or answer the spec's TESTDATA_CONFIRM line in consensus.md (none, generate: <what>, exists:<where>, external:<who>)
+    invoice-list.md [3caadd79] match="5 overdue invoices" (strong: count+entity) — every Verification Notes row says Test data none, but this criterion implies ...
+
+TOTAL: 2 blocking, 0 warn, 0 accepted across 2 artifact group(s), 1 code(s)
+
+Raw log:    grep 'META|crosscheck|fail' <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/state.log
+Artifacts:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/
+Resume:     /ticket-planner resume INIT-1700000000-4242

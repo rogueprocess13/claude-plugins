@@ -1,0 +1,8 @@
+{
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["VERIFICATION_NOTES_MISSING"],
+  "message_contains": ["invoice-export.md has 1 acceptance criteria and no ## Verification Notes table rows"],
+  "notes": "planner-test-data-derivation 2.1: a feature spec with acceptance criteria and no Verification Notes blocks. The Kind enabler spec and the synth-marked spec (<!-- planner:testdata-synth v1 -->) are exempt, so exactly one finding."
+}

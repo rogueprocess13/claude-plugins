@@ -24,7 +24,7 @@ _HALT_FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _HALT_LIB_DIR="${_HALT_FIXTURES_DIR}/.."
 
 # Every halt the stop describer must recognise, with the reason it must name.
-HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT until:UNTIL_STOP"
+HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT until:UNTIL_STOP"
 
 # _halt_done <init> <phase...> — mark phases done, in order.
 _halt_done() {
@@ -49,6 +49,13 @@ halt_fixture_init() {
     _halt_done "$init" Appraisal Discovery Architecture Specify Review Consensus
     # Crosscheck's own findings are written by halt_fixture_run's stub of
     # planner_crosscheck_run, exactly as the real run records them.
+    ;;
+  crosscheck-testdata)
+    # planner-test-data-derivation: two specs whose every Verification Notes
+    # row says Test data none while a criterion implies data. Added after the
+    # describer's testdata questions; the other goldens predate it.
+    _halt_done "$init" Appraisal Discovery Architecture Specify Review Consensus
+    _halt_testdata_artifacts "$init"
     ;;
   adr-gate)
     _halt_done "$init" Appraisal Discovery
@@ -92,21 +99,75 @@ APPRAISAL
   esac
 }
 
-# One ready child, one not-ready child (missing intent + vague ACs).
+# _halt_testdata_spec <slug> <criterion> — a spec with one all-`none` row.
+_halt_testdata_spec() {
+  cat <<SPEC
+# $1
+
+## Description
+
+Fixture spec for the implied-test-data question.
+
+## Acceptance Criteria
+
+- [ ] $2
+
+## Verification Notes
+
+| Criterion | Role | Test data | Source | Expected | Verifiable |
+|-----------|------|-----------|--------|----------|------------|
+| $2 | finance user | none | — | as stated | yes |
+SPEC
+}
+
+# Discovery inventory, an empty consensus.md and two implying specs.
+_halt_testdata_artifacts() {
+  local art
+  art="$(planner_initiative_dir "$1")/artifacts"
+  mkdir -p "${art}/specs"
+  cat >"${art}/discovery.md" <<'DISCOVERY'
+# Discovery
+
+## Cited Artifacts
+
+None.
+
+## Test Data Inventory
+
+| Entity | States/variants | Roles | Volume | Source | Load via | Privacy |
+|--------|-----------------|-------|--------|--------|----------|---------|
+| invoice | draft, overdue | finance user | 5 | generate | sql | synthetic |
+| audit entry | any | admin | 3 | generate | sql | synthetic |
+DISCOVERY
+  printf '# Consensus\n\n## Open Questions\n\nNone.\n' >"${art}/consensus.md"
+  _halt_testdata_spec audit-log "The audit page lists 3 audit entries" >"${art}/specs/audit-log.md"
+  _halt_testdata_spec invoice-list "The list shows 5 overdue invoices" >"${art}/specs/invoice-list.md"
+}
+
+# One ready child, one not-ready child (missing intent only). Refinement
+# scans with DOR_STRICT_TEST_DATA/DOR_STRICT_VPLAN on (planner-test-data-
+# derivation 6.5), so both bodies are dor fixture 22 (sourced test data and a
+# Verification Plan, as TicketGen writes them); PRO-102 has its why/outcome
+# sections (Background / Motivation, Proposed Behaviour) cut out.
 _halt_refinement_manifests() {
   local init="$1" dor_fixtures pair tid fixture pdir
   dor_fixtures="${_HALT_LIB_DIR}/../../ticket-auto-pipeline/lib/tests/fixtures/dor"
   source "${_HALT_LIB_DIR}/planner-refinement.sh"
   _planner_refinement_source_deps || return 1
   write_epic_manifest "PRO-100" "" "per-ticket" "" '[]' >/dev/null
-  for pair in "PRO-101:01-excellent" "PRO-102:03-missing-intent"; do
+  for pair in "PRO-101:ready" "PRO-102:no-intent"; do
     tid="${pair%%:*}"
     fixture="${pair#*:}"
     write_ticket_manifest "$tid" "$init" "feature" '[]' >/dev/null
     add_epic_manifest_child "PRO-100" "$tid" >/dev/null
     pdir="${REPOS_ROOT}/.ticket-auto/initiatives/${init}/tickets/${tid}/planner"
     mkdir -p "$pdir"
-    cp "${dor_fixtures}/${fixture}.md" "${pdir}/body.md"
+    if [ "$fixture" = ready ]; then
+      cp "${dor_fixtures}/22-sourced-contract.md" "${pdir}/body.md"
+    else
+      awk '/^## /{skip=($0=="## Background / Motivation" || $0=="## Proposed Behaviour")} !skip' \
+        "${dor_fixtures}/22-sourced-contract.md" >"${pdir}/body.md"
+    fi
   done
 }
 
@@ -150,20 +211,33 @@ halt_fixture_run() {
         exit 0
       fi
       ;;
-    crosscheck)
+    crosscheck | crosscheck-testdata)
       # SKILL.md step 1a. planner_crosscheck_run is stubbed after sourcing:
       # the check families need real artifacts and a repo, and the halt's
       # output depends only on what the run recorded.
       source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck.sh"
-      planner_crosscheck_run() {
-        local init="$1"
-        planner_state_write "$init" "Crosscheck" "check" "start" "running citation + propagation + bypass + contracts + signals + deps checks"
-        _planner_crosscheck_emit_finding "$init" "planner-crosscheck-propagation: CARVE_SCOPE_LOST ticket count changed 4 -> 3 after Specify; audit scope by hand"
-        _planner_crosscheck_emit_finding "$init" "planner-crosscheck-citations: CITATION_UNRESOLVED specs/export-csv.md: src/billing/export.py:42 does not resolve"
-        _planner_crosscheck_emit_finding "$init" "planner-crosscheck-contracts: CONTRACT_UNDEFINED specs/export-csv.md: ExportRow gains fields with no names"
-        planner_state_write "$init" "Crosscheck" "check" "fail" "2 blocking finding(s), 1 warn, 0 accepted — see META|crosscheck entries"
-        return 1
-      }
+      if [ "$name" = "crosscheck-testdata" ]; then
+        planner_crosscheck_run() {
+          # Only the test-data tripwires run for real — over the fixture specs.
+          local init="$1" line
+          planner_state_write "$init" "Crosscheck" "check" "start" "running citation + propagation + bypass + contracts + signals + deps checks"
+          while IFS= read -r line; do
+            [ -n "$line" ] && _planner_crosscheck_emit_finding "$init" "$line"
+          done < <(planner_crosscheck_testdata_tripwires "$init")
+          planner_state_write "$init" "Crosscheck" "check" "fail" "2 blocking finding(s), 0 warn, 0 accepted — see META|crosscheck entries"
+          return 1
+        }
+      else
+        planner_crosscheck_run() {
+          local init="$1"
+          planner_state_write "$init" "Crosscheck" "check" "start" "running citation + propagation + bypass + contracts + signals + deps checks"
+          _planner_crosscheck_emit_finding "$init" "planner-crosscheck-propagation: CARVE_SCOPE_LOST ticket count changed 4 -> 3 after Specify; audit scope by hand"
+          _planner_crosscheck_emit_finding "$init" "planner-crosscheck-citations: CITATION_UNRESOLVED specs/export-csv.md: src/billing/export.py:42 does not resolve"
+          _planner_crosscheck_emit_finding "$init" "planner-crosscheck-contracts: CONTRACT_UNDEFINED specs/export-csv.md: ExportRow gains fields with no names"
+          planner_state_write "$init" "Crosscheck" "check" "fail" "2 blocking finding(s), 1 warn, 0 accepted — see META|crosscheck entries"
+          return 1
+        }
+      fi
       if ! planner_crosscheck_run "$INITIATIVE_ID"; then
         echo "Crosscheck found blocking findings — fix the cited artifacts and resume."
         echo ""

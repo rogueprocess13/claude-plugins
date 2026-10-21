@@ -1,5 +1,10 @@
 # Personas Changelog
 
+## 2026-10-22 — Test data engineer v2
+
+### Changed
+- `base/test-data-engineer.md` (v2) — `Seed command:` / `Verify command:` must be `make <target>` (or `make -C <relpath> <target>`) targets the ticket creates; VERIFY's seed-apply refuses any other command shape (planner-test-data-derivation)
+
 ## 2026-10-21 — Test data engineer
 
 ### Added

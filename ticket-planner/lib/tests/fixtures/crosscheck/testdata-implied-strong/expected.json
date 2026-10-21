@@ -1,0 +1,8 @@
+{
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["TEST_DATA_IMPLIED"],
+  "message_contains": ["invoice-dashboard.md [a4834925]", "match=\"5 overdue invoice records\"", "(strong: count+entity)"],
+  "notes": "planner-test-data-derivation 2.3: every row says none, yet \"Given 5 overdue `invoice` records\" names a count of an inventory entity — strong tier, blocking. The message carries the slug, the criterion hash8 and the matched phrase stop-describe parses."
+}

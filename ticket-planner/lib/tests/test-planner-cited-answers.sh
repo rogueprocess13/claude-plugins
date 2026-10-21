@@ -268,10 +268,13 @@ planner_crosscheck_run "$INIT" >/dev/null 2>&1
 f=$(findings)
 check "generate: no cited-artifact finding left (spec Source generate matches)" "$f" \
   bash -c '! grep -q "^fail|CITED_ARTIFACT" <<<"$1"' _ "$f"
-# By design an answered `generate` need is no longer exempt from the
-# test-data ownership check: Crosscheck now asks for an owning pack.
-check "generate: Crosscheck now blocks on TEST_DATA_UNOWNED naming both needs" "$f" \
-  bash -c 'grep -q "^fail|TEST_DATA_UNOWNED 2 test-data need(s) across 1 spec(s) \[import-validation\]" <<<"$1" && [ "$(grep -c "^fail|" <<<"$1")" -eq 1 ]' _ "$f"
+# An answered `generate` need is no longer exempt from the test-data
+# ownership check — and since planner-test-data-derivation 4.7 Crosscheck's
+# synthesis sub-step owns it: one TD spec, both needs, no blocking finding.
+check "generate: synthesis owns both needs — no blocking finding" "$f" \
+  bash -c '! grep -q "^fail|" <<<"$1"' _ "$f"
+check "generate: the TD spec seeds both cited artifacts" "" \
+  test "$(jq -r '[.overrides[] | select(.source == "seeded-by:import-validation-test-data")] | length' "${ART}/testdata-synth.json")" = 2
 cat >"${ART}/specs/test-data-pack.md" <<'EOF'
 # test-data-pack
 
