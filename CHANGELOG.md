@@ -17,6 +17,44 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.21.0 (2026-10-22)
+
+A headless client can now ask a question back about the plan instead of answering the
+open question (`planner-artifact-qa`). Only ticket-planner moves; ticket-auto-pipeline is
+unchanged.
+
+### Added
+- **`lib/planner-artifact-qa.sh <INIT_ID> --question-file <f|-> [--qa-id <id>] [--about <QID>]`**:
+  answers a question from a read-only snapshot of the initiative's artifacts and prints one
+  JSON object (`status` `answered` or `not_in_plan`, `answer`, `sources`, `about_open`,
+  `phase_running`, `snapshot_unstable`, `round`). It is the only planner code that spawns
+  `claude`, and it does so as its own subprocess, so the sandbox does not depend on the
+  caller's permission mode.
+- **Four sandbox layers**: a throwaway read-only snapshot (single-link regular files only; no
+  symlinks, dot-paths, `answers/`, `_qa/` or agent instruction files such as `CLAUDE.md`,
+  `CLAUDE.local.md` or `agents*.md` in any letter case; 512 KiB per file, 4 MiB total; rebuilt
+  once on a torn copy); a restricted argv (`dontAsk`, `--restricted`, `Read,Grep,Glob` only,
+  no MCP, cwd = snapshot, question on stdin in a nonce delimiter, `env -i` allowlist,
+  `timeout -k`, `--max-budget-usd 0.50`); a check of the session's `init` message; and a
+  fingerprint re-check afterwards. Layers 3 and 4 fail with rc 5 and are never retried.
+- **Grounding and cleaning**: an answer with no source in the snapshot becomes the fixed
+  `That is not in the plan yet.`; the answer loses the snapshot path, tool-error lines and
+  Slack control sequences, is redacted with the `_hh_redact` rules (copied verbatim, guarded
+  by a drift test) plus `sk-ant-`, `github_pat_`, `glpat-` and unknown email addresses, and is
+  capped at 1500 characters.
+- **Exit codes** (its own table, not `planner-answers.sh`'s): 0 answered, 1 could not run,
+  2 input rejected, 3 `NO_ARTIFACTS`, 4 `QA_MODEL_FAILED` (retry once with the same
+  `--qa-id`, except `budget`), 5 `QA_UNSAFE_RUNTIME`/`QA_INTEGRITY`.
+- **Audit**: one `ISO|QA|ask|<status>|qa_id=<id> rc=<n>` line in `<init>/qa.log` (no
+  question or answer text) and a 0600 record `<init>/qa/<qa_id>.json` with cost and
+  permission-denial counts. Nothing is written to `artifacts/` or `state.log`, and the open
+  answers round is never touched.
+- `lib/tests/test-planner-artifact-qa.sh` (116 checks, registered in `make test-planner`)
+  with a stub CLI and fixtures captured from Claude Code 2.1.307.
+
+### Requires
+- `claude` 2.1.307 or newer, and GNU `timeout` (or `gtimeout`).
+
 ## 0.67.0 / ticket-planner 0.19.1 (2026-10-22)
 
 The Definition-of-Ready check now agrees with the ticket templates it enforces, and

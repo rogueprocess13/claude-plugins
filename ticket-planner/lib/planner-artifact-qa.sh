@@ -17,7 +17,8 @@
 # model:
 #   1. a snapshot: single-link regular files from artifacts/ copied into a
 #      throwaway directory (no symlinks, hardlinks, dot-paths, answers/, _qa/,
-#      CLAUDE.md or AGENTS.md; 512 KiB per file, 4 MiB total), re-stat'd and
+#      no claude*.md / agents*.md in any letter case, e.g. CLAUDE.local.md;
+#      512 KiB per file, 4 MiB total), re-stat'd and
 #      rebuilt once if a file changed during the copy, then made read-only;
 #   2. the argv and environment: `-p --permission-mode dontAsk --restricted
 #      --tools Read,Grep,Glob` and friends, never a bypass flag, cwd = the
@@ -129,7 +130,7 @@ _planner_qa_build_once() {
   local filemax="${PLANNER_QA_FILE_MAX_BYTES:-524288}"
   local snapmax="${PLANNER_QA_SNAPSHOT_MAX_BYTES:-4194304}"
   local ctimeout="${PLANNER_QA_COPY_TIMEOUT_SEC:-10}"
-  local tbin rel src dst st size links base total=0 capped=0 unstable=0 crc
+  local tbin rel src dst st size links base lbase total=0 capped=0 unstable=0 crc
   tbin=$(_planner_qa_timeout_bin) || return 5
 
   if [ -e "$snap" ]; then
@@ -158,8 +159,12 @@ _planner_qa_build_once() {
       QA_EXCLUDED_COUNT=$((QA_EXCLUDED_COUNT + 1))
       continue
     fi
-    case "$base" in
-    CLAUDE.md | AGENTS.md)
+    # Agent instruction files are matched case-insensitively and by prefix
+    # (CLAUDE.md, CLAUDE.local.md, claude.md, Agents.MD, ...): an allowlist of
+    # the two canonical names would let any variant through.
+    lbase=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
+    case "$lbase" in
+    claude*.md | agents*.md)
       printf 'agent-file\t%s\n' "$rel" >>"$excluded"
       QA_EXCLUDED_COUNT=$((QA_EXCLUDED_COUNT + 1))
       continue

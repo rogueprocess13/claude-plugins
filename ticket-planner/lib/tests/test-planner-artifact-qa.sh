@@ -289,6 +289,10 @@ echo "nope" >"${A}/_qa/planted.txt"
 echo "hidden" >"${A}/.hidden.md"
 echo "agent rules" >"${A}/CLAUDE.md"
 echo "agent rules" >"${A}/specs/AGENTS.md"
+echo "agent rules" >"${A}/CLAUDE.local.md"
+mkdir -p "${A}/notes"
+echo "agent rules" >"${A}/notes/claude.md"
+echo "agent rules" >"${A}/notes/Agents.MD"
 head -c 600000 /dev/zero | tr '\0' 'b' >"${A}/big.md"
 
 SNAPDIR="${WORK}/snapA"
@@ -304,6 +308,9 @@ check "source _qa/ excluded" "$([ ! -e "${SNAPDIR}/_qa/planted.txt" ] && echo 0 
 check "dot-file excluded" "$([ ! -e "${SNAPDIR}/.hidden.md" ] && echo 0 || echo 1)"
 check "CLAUDE.md and AGENTS.md excluded" "$([ ! -e "${SNAPDIR}/CLAUDE.md" ] && [ ! -e "${SNAPDIR}/specs/AGENTS.md" ] && echo 0 || echo 1)"
 check "agent files listed with reason agent-file" "$(grep -qP '^agent-file\tCLAUDE\.md$' "${SNAPDIR}/_qa/excluded.txt" && echo 0 || echo 1)"
+for af in CLAUDE.local.md notes/claude.md notes/Agents.MD; do
+  check "agent-file variant ${af} excluded and listed" "$([ ! -e "${SNAPDIR}/${af}" ] && grep -qxF "$(printf 'agent-file\t%s' "$af")" "${SNAPDIR}/_qa/excluded.txt" && echo 0 || echo 1)"
+done
 check "oversize file listed with reason oversize" "$(grep -qP '^oversize\tbig\.md$' "${SNAPDIR}/_qa/excluded.txt" && [ ! -e "${SNAPDIR}/big.md" ] && echo 0 || echo 1)"
 check "regular artifacts copied" "$([ -f "${SNAPDIR}/proposal.md" ] && [ -f "${SNAPDIR}/specs/csv-export.md" ] && echo 0 || echo 1)"
 check "_qa/pending.json equals planner_stop_describe_json" "$([ "$(cat "${SNAPDIR}/_qa/pending.json" 2>/dev/null)" = "$(planner_stop_describe_json "$INIT")" ] && echo 0 || echo 1)"
