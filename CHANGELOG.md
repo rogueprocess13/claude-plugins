@@ -17,6 +17,20 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.69.3 (2026-10-22)
+
+Releasing a file lock no longer silences the caller's stderr.
+
+### Fixed
+
+- `_manifest_readiness_unlock` (`lib/manifest-write.sh`), `_adr_unlock` (`lib/adr-store.sh`) and
+  `board_cursor_unlock` (`lib/board-cursor.sh`) closed their lock fd with
+  `exec N>&- 2>/dev/null`. A bare `exec` applies its redirections to the current shell, so after
+  the first unlock every later stderr write in that shell went to `/dev/null` — warnings from a
+  second readiness write, for one, vanished. Each now runs `{ exec N>&-; } 2>/dev/null`, which
+  scopes the redirect to the close. Regression checks added to `test-adr-store.sh` and
+  `test-board-cursor.sh`.
+
 ## 0.69.2 (2026-10-22)
 
 Branch resolution now finds the epic manifest of a planner-created epic
