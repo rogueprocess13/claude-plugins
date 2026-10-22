@@ -83,7 +83,7 @@ notices when a ticket's Linear description no longer matches the body it evaluat
   `Demoted (does not block):` list, a `Converge (no rescan):` hint, and a closing
   `## Demoted findings on ready tickets` section. The old `Semantic finding [sev] …` lines are
   gone. Waive commands and waive questions are no longer offered for `BODY_*` codes or demoted codes.
-- **fleet-controller 0.42.7**: the not-ready dispatch summary and the readiness notification drop
+- **fleet-controller 0.42.10**: the not-ready dispatch summary and the readiness notification drop
   the `waive:` hint for a disputed code that is in `ready.demoted`. Report text only; dispatch
   decisions are unchanged.
 
