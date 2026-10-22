@@ -1171,8 +1171,11 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
 
 **Openspec changes: one branch each. Review each plan with 3 Sonnet reviewers before implementing.**
 
-- [ ] 4. `planner-refinement-convergence` (ticket-planner + ticket-auto-pipeline). Biggest cost in
-      the report. Open design questions:
+- [x] 4. `planner-refinement-convergence` (ticket-planner + ticket-auto-pipeline). **Implemented
+      2026-10-22, PR #544** (all 9 groups; ticket-auto-pipeline 0.70.0, ticket-planner 0.24.0,
+      fleet-controller 0.42.7). Audit demotion ships dark (`PLANNER_REFINEMENT_AUDIT_DEMOTE`).
+      Live check pending: one real initiative through Refinement on the tickets host. Biggest cost
+      in the report. Open design questions (all resolved in design.md):
       - a round limit (`PLANNER_REFINEMENT_MAX_ROUNDS`), and what happens to the findings left over
         (advisory appraisal input rather than a DoR hold);
       - which categories stay blocking: test data, contradictions, missing decisions;
