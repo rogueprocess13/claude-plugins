@@ -79,6 +79,9 @@ User invokes /ticket-planner plan "idea"
             per-ticket deterministic DoR check + dor-semantic-agent scan/audit
             spawns, then planner_refinement_gate stamps the epic and decides
             halt vs. proceed (steps 3-5 skipped)
+        2c. At Review, planner_specify_gate scans proposal.md for an open
+            NEEDS_HUMAN_DECISION marker and halts (exit 0, no agent spawned,
+            no phase line) until it is answered, deferred or edited away
         3. planner_prompt_for_phase → agent prompt, config read back off disk
         4. Spawn isolated agent with prompt
         5. Agent writes state log entries via planner_state_write

@@ -18,6 +18,10 @@
 #   RUNNING                 a phase holds the live phase lock
 #   COMPLETED               planner_position_derive returns empty
 #   ADR_GATE                Architecture parked on a blocking ADR verdict
+#   SPECIFY_DECISION        position Review with an open NEEDS_HUMAN_DECISION
+#                           in proposal.md ## Business Outcomes — one
+#                           specify-answer:O<n> input question per decision,
+#                           audience either (planner-specify-waiting-on-human)
 #   CREATE_GATE             the next phase writes to Linear, unauthorized
 #   PROJECT_GATE            Epic Gen stopped on a single matching project
 #   CROSSCHECK_BLOCKED      the last Crosscheck run has unaccepted blocking codes
@@ -51,12 +55,16 @@ declare -f planner_stop_phase >/dev/null 2>&1 ||
   source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-router.sh"
 declare -f planner_adr_gate_blocked >/dev/null 2>&1 ||
   source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-adr-gate.sh"
+declare -f planner_specify_decisions_open >/dev/null 2>&1 ||
+  source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-specify-decisions.sh"
 
 # The reason values this script emits as a block (the rest are terminal lines).
-PLANNER_STOP_BLOCK_REASONS="CREATE_GATE CROSSCHECK_BLOCKED ADR_GATE PROJECT_GATE REFINEMENT_HALT UNTIL_STOP"
+PLANNER_STOP_BLOCK_REASONS="CREATE_GATE CROSSCHECK_BLOCKED ADR_GATE SPECIFY_DECISION PROJECT_GATE REFINEMENT_HALT UNTIL_STOP"
 
 # Longest finding/message excerpt quoted inside a question.
 _PLANNER_STOP_EXCERPT_MAX=200
+# Longest Specify business question quoted inside a question (design D4).
+_PLANNER_STOP_DECISION_MAX=600
 
 # planner_stop_round <INIT>
 # One more than the number of answered rounds. The same log always yields the
@@ -69,12 +77,13 @@ planner_stop_round() {
   echo $((${count:-0} + 1))
 }
 
-# Single-line, length-capped excerpt for question text.
+# _planner_stop_excerpt <text> [max]
+# Single-line, length-capped excerpt for question text (max defaults to 200).
 _planner_stop_excerpt() {
-  local text
+  local text max="${2:-$_PLANNER_STOP_EXCERPT_MAX}"
   text=$(printf '%s' "$1" | tr '\n\r\t' '   ' | tr -s ' ')
-  if [ "${#text}" -gt "$_PLANNER_STOP_EXCERPT_MAX" ]; then
-    text="${text:0:$_PLANNER_STOP_EXCERPT_MAX}…"
+  if [ "${#text}" -gt "$max" ]; then
+    text="${text:0:$max}…"
   fi
   printf '%s' "$text"
 }
@@ -88,12 +97,15 @@ _planner_stop_question() {
      + (if $default == "" then {} else {default: $default} end)'
 }
 
-# _planner_stop_model <reason> <blocks> <round> <questions_json>
+# _planner_stop_model <reason> <blocks> <round> <questions_json> [kind] [audience]
+# kind defaults to approval and audience to operator — every stop but
+# SPECIFY_DECISION, whose output must not move a byte.
 _planner_stop_model() {
   jq -nc --arg reason "$1" --arg blocks "$2" --argjson round "$3" \
-    --argjson questions "$4" \
-    '{reason: $reason, terminal: false, phase: "PLANNER", kind: "approval",
-      audience: "operator", round: $round, blocks: $blocks,
+    --argjson questions "$4" --arg kind "${5:-approval}" \
+    --arg audience "${6:-operator}" \
+    '{reason: $reason, terminal: false, phase: "PLANNER", kind: $kind,
+      audience: $audience, round: $round, blocks: $blocks,
       questions: $questions}'
 }
 
@@ -322,6 +334,30 @@ planner_stop_describe_json() {
         "resolved" "")
       questions=$(jq -nc --argjson q "$q" '[$q]')
       _planner_stop_model ADR_GATE "artifacts/architecture.md" "$round" "$questions"
+      return 0
+    fi
+  fi
+
+  # ── Specify decisions ──────────────────────────────────────────────────
+  # Read-only: the scan of proposal.md, never planner_specify_gate (which
+  # writes the tripwire line). Checked before the create gate and --until,
+  # so a run stopped by --until Specify surfaces the decision in the same
+  # run. No OPTIONS and no DEFAULT: a default would be a business outcome
+  # the planner made up.
+  if [ "$pos" = "Review" ]; then
+    local open oid h8 lno dq
+    if ! open=$(planner_specify_decisions_open "$init"); then
+      echo "planner-stop-describe: cannot scan proposal.md for '${init}'" >&2
+      return 1
+    fi
+    if [ -n "$open" ]; then
+      while IFS=$'\t' read -r oid h8 lno dq; do
+        [ -n "$oid" ] || continue
+        q=$(_planner_stop_question "decision-${oid}-${h8}" "specify-answer:${oid}" \
+          "Specify could not source business outcome ${oid} and needs a decision: $(_planner_stop_excerpt "$dq" "$_PLANNER_STOP_DECISION_MAX"). Answer in one line (at most 500 characters); it is written into proposal.md as a verbatim human decision. Answer __defer__ to leave it open and carry the question into the epic unresolved.")
+        questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
+      done <<<"$open"
+      _planner_stop_model SPECIFY_DECISION "artifacts/proposal.md" "$round" "$questions" input either
       return 0
     fi
   fi

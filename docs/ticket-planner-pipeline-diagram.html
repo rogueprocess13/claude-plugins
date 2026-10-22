@@ -272,6 +272,10 @@
       <div class="phase-name">Review</div>
       <div class="phase-role">Critique proposal — find gaps, risks, feasibility issues</div>
       <div class="phase-section">
+        <div class="phase-section-title">Gate</div>
+        <div class="item">Deterministic bash — halts before Review on an open NEEDS_HUMAN_DECISION</div>
+      </div>
+      <div class="phase-section">
         <div class="phase-section-title">Dimensions</div>
         <div class="item">Completeness</div>
         <div class="item">Feasibility</div>
@@ -481,19 +485,20 @@ const DETAILS = {
       ["Agent role", "Synthesizes all upstream analysis into a proposal AND produces per-ticket spec files in a single pass"],
       ["Output", "proposal.md (summary, scope, technical approach, work breakdown, affected services, target symbols, risk register, strategy), per-ticket spec files with Signals JSON blocks, spec INDEX.md"],
       ["Input", "appraisal.md + discovery.md + architecture.md"],
-      ["Gate", "None — always advances to Review"],
+      ["Gate", "None inside the phase — an open NEEDS_HUMAN_DECISION is gated before Review is dispatched (see Review)"],
       ["Constraint", "Every ticket spec must have a ## Signals JSON block with 5 raw values. Do NOT compute Confidence — that's deterministic bash. Signals: services_identified, symbols_resolved, prior_art_found, complexity, exploration_depth."],
       ["Merge note", "This phase combines the original Proposal phase (synthesize proposal) and OpenSpec phase (write spec files). Single pass avoids context loss between phases."],
     ]
   },
   review: {
     title: "Review — Phase 5 of 10",
-    meta: "prompt: planner_prompt_review  ·  artifact: review.md  ·  gate: none (hold planned but unimplemented)",
+    meta: "prompt: planner_prompt_review  ·  artifact: review.md  ·  gate: Specify decision gate (bash, before dispatch)",
     rows: [
       ["Agent role", "Skeptical critique of the proposal — finds gaps, risks, and infeasibilities before committing to build"],
       ["Output", "Review findings with severities (blocker/major/minor/nit), missing-from-proposal items, dependency review, ticket shape review, verdict (ready/needs-revision/blocked)"],
       ["Input", "proposal.md + upstream artifacts (appraisal, discovery, architecture)"],
-      ["Gate", "PLANNER_REVIEW_HOLD (planned, unimplemented) — would pause for human input"],
+      ["Gate", "Specify decision gate — deterministic bash (planner_specify_gate), run before Review is dispatched. Halts before Review on an open NEEDS_HUMAN_DECISION in proposal.md's Business Outcomes; the run resumes once each decision is answered, deferred (__defer__) or edited away. No agent runs, and no phase line is written."],
+      ["Hold", "PLANNER_REVIEW_HOLD (planned, unimplemented) — would pause for human input"],
       ["Constraint", "Be adversarial — find problems, don't validate. Every finding must cite a specific part of the proposal. Don't suggest solutions (that's Consensus's job)."],
     ]
   },

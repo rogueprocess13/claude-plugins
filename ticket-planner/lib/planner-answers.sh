@@ -40,18 +40,52 @@
 #                          criterion rewritten since the question is refused
 #                          as STALE_QUESTION (the describer re-asks it under
 #                          a new id), never confirmed silently.
+#   specify-answer:O<n>    planner_specify_substitute (planner-specify-
+#                          decisions.sh) — replaces outcome O<n>'s
+#                          NEEDS_HUMAN_DECISION line in proposal.md with
+#                          `**Outcome:** Human decision (verbatim, round N,
+#                          <role>): "<answer>"`, or, for `__defer__`,
+#                          `**Outcome:** Deferred decision: <question>`
+#                          (planner-specify-waiting-on-human). The value is
+#                          trimmed; it is `__defer__` or non-blank text of at
+#                          most 500 characters (a longer one is INVALID_VALUE,
+#                          never cut). The id's hash8 must still be the
+#                          decision's current hash, so an edited or already
+#                          answered decision is UNKNOWN_QUESTION_ID. Logged as
+#                          META|specify-answer|step|O<n> [<hash8>]
+#                          answered|deferred (round N, by <who>, <role>) — the
+#                          answer text is deliberately NOT copied into
+#                          state.log (it lives in proposal.md and round-N.json).
 #
 # `__skip__` as the value of an accept or waive answer declines it.
 #
+# The whole intake runs under a per-initiative lock: `flock -x` on
+# <state.log>.answers-lock, or, where flock is missing, a `mkdir` lock on
+# <state.log>.answers-lock.d with a bounded wait (PLANNER_ANSWERS_LOCK_WAIT_SECS,
+# default 30) and then exit 1 INTAKE_BUSY. A lock directory left by a killed
+# intake is not reaped: remove it by hand. The lock serialises the idempotency
+# read with the writes, so of two different files for one round exactly one
+# applies and the other gets ROUND_ALREADY_ANSWERED. planner_state_write locks
+# a different file (<state.log>.lock), so the two never deadlock.
+#
 # Order of writes, so a crash at any point is safe to replay:
-#   1. artifacts/answers/round-N.json   (tmp + mv)
+#   1. artifacts/answers/round-N.json   (tmp + mv; for specify-answer the
+#      rewritten proposal.md is built in a temp file before this)
 #   2. META|human-hold|start|round=N sha=<sha256>
-#   3. the flag/waiver writes
+#   3. the flag/waiver writes (and the META|specify-answer lines)
+#   3b. specify-answer only: proposal.md's sha256 is checked again (a hand
+#      edit since validation is refused as UNKNOWN_QUESTION_ID, the edit is
+#      kept, the round is left at start without done), then the temp file
+#      is moved into place
 #   4. META|human-hold|done|round=N sha=<sha256>   — always last
 # The `done` line is the idempotency key: the same file again is a no-op, a
 # different file for an answered round is refused. (The `start` line is also
 # what lets a later round's `done` through planner_state_write's
-# duplicate-done suppression.)
+# duplicate-done suppression.) A Specify round that crashed after 3b and
+# before 4 has no open decision left to describe; replaying the same file
+# finds its start line, its META|specify-answer lines and its rendered lines
+# in proposal.md, appends the missing `done`, and reports
+# ANSWERS_ALREADY_APPLIED.
 #
 # Answer text is untrusted (docs/human-hold-schema.md § Answer text is
 # untrusted data): capped at 4096 bytes, stripped of control characters and
@@ -60,7 +94,8 @@
 #
 # Exit codes:
 #   0  applied, or this exact file was already applied (no-op)
-#   1  could not run (bad usage, no state log, jq missing, write failure)
+#   1  could not run (bad usage, no state log, jq missing, write failure,
+#      INTAKE_BUSY — the mkdir lock stayed held past the bounded wait)
 #   2  rejected: malformed file, UNSUPPORTED_SCHEMA_VERSION, UNKNOWN_QUESTION_ID,
 #      ROLE_NOT_PERMITTED, INVALID_VALUE, STALE_QUESTION — nothing written
 #   3  ROUND_ALREADY_ANSWERED — a different file already answered this round
@@ -75,11 +110,15 @@ declare -f planner_stop_describe_json >/dev/null 2>&1 ||
   source "${_PLANNER_ANSWERS_DIR}/planner-stop-describe.sh"
 declare -f planner_cited_answer_set >/dev/null 2>&1 ||
   source "${_PLANNER_ANSWERS_DIR}/planner-crosscheck-testdata.sh"
+declare -f planner_specify_substitute >/dev/null 2>&1 ||
+  source "${_PLANNER_ANSWERS_DIR}/planner-specify-decisions.sh"
 
 # Answers-file format version this consumer reads (major).
 PLANNER_ANSWERS_SCHEMA_MAJOR=1
 PLANNER_ANSWERS_VALUE_MAX_BYTES=4096
 PLANNER_ANSWERS_REASON_MAX_CHARS=500
+# Seconds the mkdir-lock fallback waits before INTAKE_BUSY.
+: "${PLANNER_ANSWERS_LOCK_WAIT_SECS:=30}"
 
 _planner_answers_reject() {
   local rc="$1" code="$2" detail="$3"
@@ -102,6 +141,21 @@ planner_answers_sanitize() {
     v=$(printf '%s' "$v" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null) || true
   fi
   printf '%s' "$v"
+}
+
+# _planner_answers_trim <value> — strip surrounding whitespace.
+_planner_answers_trim() {
+  local v="$1"
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  printf '%s' "$v"
+}
+
+# _planner_answers_chars <value> — length in characters, not bytes, without
+# depending on a UTF-8 locale being installed: UTF-8 continuation bytes
+# (0x80-0xBF) are not counted.
+_planner_answers_chars() {
+  printf '%s' "$1" | LC_ALL=C tr -d '\200-\277' | LC_ALL=C wc -c | tr -d ' '
 }
 
 _planner_answers_sha() {
@@ -145,6 +199,19 @@ _planner_answers_check_value() {
     return 1
     ;;
   note) return 0 ;;
+  specify-answer:O*)
+    value=$(_planner_answers_trim "$value")
+    [ "$value" = "__defer__" ] && return 0
+    if [ -z "${value//[[:space:]]/}" ]; then
+      echo "a business decision is required (or __defer__ to leave it open)" >&2
+      return 1
+    fi
+    if [ "$(_planner_answers_chars "$value")" -gt "$PLANNER_ANSWERS_REASON_MAX_CHARS" ]; then
+      echo "a business decision is at most ${PLANNER_ANSWERS_REASON_MAX_CHARS} characters, on one line (split it, or shorten it)" >&2
+      return 1
+    fi
+    return 0
+    ;;
   consensus-answer:cited:*)
     planner_cited_answer_normalize "$value" >/dev/null
     return
@@ -178,7 +245,89 @@ _planner_answers_testdata_current() {
 }
 
 # planner_answers_apply <INIT_ID> <answers_file>
+# Takes the per-initiative intake lock, then runs the intake. Anything that
+# stops the lock path from being resolved (bad usage, bad id, no state log)
+# is left to the intake itself, which reports it with the usual message.
 planner_answers_apply() {
+  local init="$1" file="$2" log lock rc=0 fd waited
+  if [ -z "$init" ] || [ -z "$file" ] ||
+    ! planner_validate_initiative_id "$init" >/dev/null 2>&1 ||
+    ! log=$(planner_state_log "$init" 2>/dev/null) || [ ! -f "$log" ]; then
+    _planner_answers_apply_locked "$init" "$file"
+    return
+  fi
+  lock="${log}.answers-lock"
+
+  if command -v flock >/dev/null 2>&1; then
+    exec {fd}>>"$lock" || {
+      echo "planner-answers: cannot open the intake lock ${lock}" >&2
+      return 1
+    }
+    flock -x "$fd" || {
+      exec {fd}>&-
+      echo "planner-answers: cannot take the intake lock ${lock}" >&2
+      return 1
+    }
+    _planner_answers_apply_locked "$init" "$file" || rc=$?
+    exec {fd}>&-
+    return "$rc"
+  fi
+
+  # No flock: a mkdir lock with a bounded wait.
+  waited=0
+  until mkdir "${lock}.d" 2>/dev/null; do
+    if [ "$waited" -ge "$PLANNER_ANSWERS_LOCK_WAIT_SECS" ]; then
+      echo "INTAKE_BUSY: another intake holds ${lock}.d (waited ${waited}s); if none is running, remove that directory and retry" >&2
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  _planner_answers_apply_locked "$init" "$file" || rc=$?
+  rmdir "${lock}.d" 2>/dev/null || true
+  return "$rc"
+}
+
+# _planner_answers_specify_recover <INIT> <round> <sha> <file> <round_file> <proposal>
+# A Specify round that crashed after proposal.md was replaced and before its
+# `done` line: the start line for this file's sha is there, every answer has
+# its META|specify-answer line, and every rendered line is in proposal.md.
+# Returns 0 when all of that holds (the caller writes `done`), 1 otherwise.
+_planner_answers_specify_recover() {
+  local init="$1" round="$2" sha="$3" file="$4" round_file="$5" proposal="$6"
+  local log n i rec id binding oid h8 value role question rendered
+  log=$(planner_state_log "$init") || return 1
+  grep -q "^[^|]*|META|human-hold|start|round=${round} sha=${sha}\$" "$log" 2>/dev/null || return 1
+  [ -f "$round_file" ] && [ -f "$proposal" ] || return 1
+  [ "$(jq -r '.sha256 // ""' "$round_file" 2>/dev/null)" = "$sha" ] || return 1
+  n=$(jq '.answers | length' "$round_file" 2>/dev/null) || return 1
+  [ "${n:-0}" -gt 0 ] || return 1
+  for ((i = 0; i < n; i++)); do
+    rec=$(jq -c ".answers[$i]" "$round_file")
+    id=$(printf '%s' "$rec" | jq -r '.id')
+    binding=$(printf '%s' "$rec" | jq -r '.binding')
+    case "$binding" in specify-answer:O*) ;; *) return 1 ;; esac
+    oid="${binding#specify-answer:}"
+    [[ "$id" =~ ^decision-${oid}-([0-9a-f]{8})$ ]] || return 1
+    h8="${BASH_REMATCH[1]}"
+    grep -qF "|META|specify-answer|step|${oid} [${h8}] " "$log" || return 1
+    grep -F "|META|specify-answer|step|${oid} [${h8}] " "$log" | grep -qF "(round ${round}, " || return 1
+    value=$(printf '%s' "$rec" | jq -r '.value')
+    role=$(printf '%s' "$rec" | jq -r '.role')
+    question=$(printf '%s' "$rec" | jq -r '.question // ""')
+    if [ "$value" = "__defer__" ]; then
+      rendered=$(planner_specify_render_defer "$question")
+    else
+      rendered=$(planner_specify_render_answer "$value" "$round" "$role") || return 1
+    fi
+    grep -qxF -- "$rendered" "$proposal" || return 1
+  done
+  return 0
+}
+
+# _planner_answers_apply_locked <INIT_ID> <answers_file> — the intake proper.
+# Called only by planner_answers_apply, under the intake lock.
+_planner_answers_apply_locked() {
   local init="$1" file="$2"
 
   if [ -z "$init" ] || [ -z "$file" ]; then
@@ -229,6 +378,14 @@ planner_answers_apply() {
     return
   fi
 
+  # ── a Specify round half-applied by a crash (start, no done) ───────────
+  if _planner_answers_specify_recover "$init" "$round" "$sha" "$file" \
+    "${state_dir}/artifacts/answers/round-${round}.json" "${state_dir}/artifacts/proposal.md"; then
+    planner_state_write "$init" "META" "human-hold" "done" "round=${round} sha=${sha}" || return 1
+    echo "ANSWERS_ALREADY_APPLIED round=${round}"
+    return 0
+  fi
+
   # ── round ──────────────────────────────────────────────────────────────
   local model open_round
   model=$(planner_stop_describe_json "$init") || return 1
@@ -255,8 +412,8 @@ planner_answers_apply() {
     return
   fi
 
-  local -a ids=() bindings=() values=() bys=() roles=() tss=()
-  local a id binding value by role ts
+  local -a ids=() bindings=() values=() bys=() roles=() tss=() questions=() lnos=()
+  local a id binding value by role ts sd_scan="" sd_q sd_lno
   for ((i = 0; i < n; i++)); do
     a=$(jq -c ".answers[$i]" "$file")
     if ! printf '%s' "$a" | jq -e 'type == "object"
@@ -317,6 +474,7 @@ planner_answers_apply() {
     value=$(planner_answers_sanitize "$(printf '%s' "$a" | jq -r '.value')")
     # create is the one closed-vocabulary answer; normalise its case.
     [ "$binding" = "flag:create" ] && value=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+    case "$binding" in specify-answer:O*) value=$(_planner_answers_trim "$value") ;; esac
     case "$binding" in
     consensus-answer:cited:*) value=$(planner_cited_answer_normalize "$value" 2>/dev/null) ;;
     consensus-answer:testdata:*) value=$(planner_testdata_answer_normalize "$value" 2>/dev/null) ;;
@@ -325,6 +483,28 @@ planner_answers_apply() {
       _planner_answers_reject 2 INVALID_VALUE "'${id}': ${why}"
       return
     fi
+    # A Specify decision: the id's hash8 must be the decision's current
+    # hash in a fresh scan — the line it names is the one substituted.
+    sd_q=""
+    sd_lno=""
+    case "$binding" in
+    specify-answer:O*)
+      if [ -z "$sd_scan" ]; then
+        sd_scan=$(planner_specify_decisions_open "$init") || {
+          echo "planner-answers: cannot scan proposal.md" >&2
+          return 1
+        }
+      fi
+      # shellcheck disable=SC2016  # awk program, not shell
+      IFS=$'\t' read -r _ _ sd_lno sd_q < <(printf '%s\n' "$sd_scan" |
+        _PA_OID="${binding#specify-answer:}" _PA_ID="$id" awk -F'\t' '
+          $1 == ENVIRON["_PA_OID"] && ENVIRON["_PA_ID"] == "decision-" $1 "-" $2 { print; exit }')
+      if [ -z "$sd_lno" ]; then
+        _planner_answers_reject 2 UNKNOWN_QUESTION_ID "'$(planner_answers_sanitize "$id")' is not an open decision in proposal.md — describe again"
+        return
+      fi
+      ;;
+    esac
     by=$(planner_answers_sanitize "$(printf '%s' "$a" | jq -r '.answered_by')")
     by="${by:0:128}"
     ts=$(planner_answers_sanitize "$(printf '%s' "$a" | jq -r '.ts')")
@@ -336,6 +516,8 @@ planner_answers_apply() {
     bys+=("$by")
     roles+=("$role")
     tss+=("$ts")
+    questions+=("$sd_q")
+    lnos+=("$sd_lno")
   done
 
   # Waivers need ticket-auto-pipeline's manifest writer; resolve it before
@@ -351,17 +533,56 @@ planner_answers_apply() {
     esac
   done
 
+  # ── 0. Specify decisions: build the rewritten proposal first ──────────
+  # One line for one line, so line numbers do not shift between answers.
+  local proposal="${state_dir}/artifacts/proposal.md" prop_sha="" prop_tmp="" rendered src rc_sub
+  for i in "${!ids[@]}"; do
+    case "${bindings[$i]}" in specify-answer:O*) ;; *) continue ;; esac
+    if [ -z "$prop_tmp" ]; then
+      prop_sha=$(_planner_answers_sha "$proposal") || return 1
+      prop_tmp="${proposal}.tmp.$$"
+      src="$proposal"
+    else
+      src="${prop_tmp}.in"
+      mv -f "$prop_tmp" "$src" || return 1
+    fi
+    if [ "${values[$i]}" = "__defer__" ]; then
+      rendered=$(planner_specify_render_defer "${questions[$i]}")
+    else
+      rendered=$(planner_specify_render_answer "${values[$i]}" "$round" "${roles[$i]}")
+    fi || {
+      rm -f "$prop_tmp" "${prop_tmp}.in"
+      return 1
+    }
+    rc_sub=0
+    planner_specify_substitute "$src" "$prop_tmp" "${lnos[$i]}" "$rendered" || rc_sub=$?
+    rm -f "${prop_tmp}.in"
+    if [ "$rc_sub" -ne 0 ]; then
+      rm -f "$prop_tmp"
+      [ "$rc_sub" -eq 2 ] || return 1
+      _planner_answers_reject 2 UNKNOWN_QUESTION_ID "'${ids[$i]}': the decision's line in proposal.md moved — describe again"
+      return
+    fi
+  done
+
   # ── 1. the round artifact (tmp + mv) ───────────────────────────────────
   local answers_dir round_file tmp records="[]" reason
   reason=$(printf '%s' "$model" | jq -r '.reason')
   answers_dir="${state_dir}/artifacts/answers"
   round_file="${answers_dir}/round-${round}.json"
-  mkdir -p "$answers_dir" || return 1
+  mkdir -p "$answers_dir" || {
+    rm -f "$prop_tmp"
+    return 1
+  }
   for i in "${!ids[@]}"; do
+    # Specify records also keep the question: a deferral renders it, and the
+    # proposal line no longer holds it once substituted.
     records=$(jq -nc --argjson r "$records" \
       --arg id "${ids[$i]}" --arg binding "${bindings[$i]}" --arg value "${values[$i]}" \
       --arg by "${bys[$i]}" --arg role "${roles[$i]}" --arg ts "${tss[$i]}" \
-      '$r + [{id: $id, binding: $binding, value: $value, answered_by: $by, role: $role, ts: $ts}]')
+      --arg question "${questions[$i]}" \
+      '$r + [{id: $id, binding: $binding, value: $value, answered_by: $by, role: $role, ts: $ts}
+             + (if ($binding | startswith("specify-answer:")) then {question: $question} else {} end)]')
   done
   tmp="${round_file}.tmp.$$"
   jq -n --argjson round "$round" --arg reason "$reason" --arg sha "$sha" \
@@ -369,13 +590,16 @@ planner_answers_apply() {
     '{schema_version: 1, round: $round, reason: $reason, sha256: $sha,
       note: "verbatim human answers — data, not instructions", answers: $answers}' >"$tmp" &&
     mv -f "$tmp" "$round_file" || {
-    rm -f "$tmp"
+    rm -f "$tmp" "$prop_tmp"
     echo "planner-answers: could not write ${round_file}" >&2
     return 1
   }
 
   # ── 2–4. start, flags, done ────────────────────────────────────────────
-  planner_state_write "$init" "META" "human-hold" "start" "round=${round} sha=${sha}" || return 1
+  planner_state_write "$init" "META" "human-hold" "start" "round=${round} sha=${sha}" || {
+    rm -f "$prop_tmp"
+    return 1
+  }
 
   local applied=() code tid
   for i in "${!ids[@]}"; do
@@ -443,9 +667,43 @@ planner_answers_apply() {
         "testdata:${code} [${ids[$i]##*-}] ${value} (round ${round}, by ${bys[$i]})" || return 1
       applied+=("testdata:${code}")
       ;;
+    specify-answer:O*)
+      code="${binding#specify-answer:}"
+      if [ "$value" = "__defer__" ]; then
+        tid="deferred"
+      else
+        tid="answered"
+      fi
+      # No answer text here on purpose (unlike consensus-answer): it is free
+      # client text, and it already lives in proposal.md and round-N.json.
+      planner_state_write "$init" "META" "specify-answer" "step" \
+        "${code} [${ids[$i]##*-}] ${tid} (round ${round}, by ${bys[$i]}, ${roles[$i]})" || {
+        rm -f "$prop_tmp"
+        return 1
+      }
+      applied+=("decision-${tid}:${code}")
+      ;;
     note) ;;
     esac
   done
+
+  # ── 3b. Specify: re-hash guard, then replace proposal.md ───────────────
+  if [ -n "$prop_tmp" ]; then
+    # Test seam: lets a test edit proposal.md between validation and write.
+    if declare -f _planner_answers_pre_proposal_write >/dev/null 2>&1; then
+      _planner_answers_pre_proposal_write "$proposal"
+    fi
+    if [ "$(_planner_answers_sha "$proposal")" != "$prop_sha" ]; then
+      rm -f "$prop_tmp"
+      _planner_answers_reject 2 UNKNOWN_QUESTION_ID "proposal.md changed while this round was being applied — describe again"
+      return
+    fi
+    mv -f "$prop_tmp" "$proposal" || {
+      rm -f "$prop_tmp"
+      echo "planner-answers: could not write ${proposal}" >&2
+      return 1
+    }
+  fi
 
   planner_state_write "$init" "META" "human-hold" "done" "round=${round} sha=${sha}" || return 1
 

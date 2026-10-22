@@ -55,6 +55,47 @@ unchanged.
 ### Requires
 - `claude` 2.1.307 or newer, and GNU `timeout` (or `gtimeout`).
 
+## 0.68.0 / ticket-planner 0.20.0 (2026-10-22)
+
+A planning run now stops and asks when Specify could not source a business outcome
+(`planner-specify-waiting-on-human`). Before, the `NEEDS_HUMAN_DECISION` marker sat in
+proposal.md, the run went straight on to Review, and no one was ever asked. These versions
+follow PR #528 (0.67.0 / ticket-planner 0.19.1); whichever of the two merges second rebases
+its version lines.
+
+### Added
+- **Decision gate before Review** (ticket-planner): `lib/planner-specify-decisions.sh`.
+  SKILL.md step 1c runs `planner_specify_gate` when the loop is about to dispatch Review, and
+  halts (exit 0, no agent spawned, no phase line) while proposal.md has an open
+  `**Outcome:** NEEDS_HUMAN_DECISION — <question>` under a `### O<n>` heading. The scan is
+  line-anchored and fence-aware. A token it does not ask about is recorded once as a
+  `META|specify-gate|warn` line. `status` shows `Review — waiting on N business decision(s)`.
+- **`SPECIFY_DECISION` stop reason**: `planner-stop-describe.sh` asks one free-text question
+  per open decision (`KIND input`, `AUDIENCE either`, id `decision-O<n>-<hash8>`, no options,
+  no default). ticket-auto-pipeline's `human-hold-parse.sh` accepts the reason in v2 blocks.
+- **`specify-answer:O<n>` binding**: `resume --answers` replaces the marker line with
+  `**Outcome:** Human decision (verbatim, round N, <role>): "<answer>"` (one line, at most
+  500 characters, comments, fences and the marker token neutralised). The first answer wins; an
+  answer to a closed or edited decision is `UNKNOWN_QUESTION_ID`. The answer text is never
+  written to state.log (`META|specify-answer` records only id, hash, round and who).
+- **`__defer__` sentinel**: writes `**Outcome:** Deferred decision: <question>`. Documented
+  beside `__skip__`/`__none__` in `docs/human-hold-schema.md`.
+- **Intake lock**: every `--answers` intake now runs under a per-initiative lock
+  (`flock` on `<state.log>.answers-lock`, else a bounded `mkdir` lock and exit 1 `INTAKE_BUSY`).
+
+### Changed
+- A run with an open `NEEDS_HUMAN_DECISION` now halts before Review instead of flowing through.
+  `__defer__` restores the old outcome: Epic Gen carries the question into the epic unresolved
+  (its prompt now names both `NEEDS_HUMAN_DECISION` and `Deferred decision:`). The Specify prompt
+  is unchanged.
+- Headless callers (dexter) must bump their pins and accept `SPECIFY_DECISION`,
+  `AUDIENCE either` and `specify-answer:O<n>`; see the change's design notes on serialised answers,
+  partial rounds and never auto-answering.
+
+### Fixed
+- `test-human-hold-parse.sh`: a failing case no longer aborts the whole file silently under
+  `set -e`.
+
 ## 0.67.0 / ticket-planner 0.19.1 (2026-10-22)
 
 The Definition-of-Ready check now agrees with the ticket templates it enforces, and

@@ -46,7 +46,7 @@ _HH_REASONS="AC_CONFLICT SCOPE_UNDEFINED ARCH_COMMITMENT CREDENTIALS_MISSING EXT
 # ticket pipeline — ticket-planner's stop describer and grill-me's question
 # rounds. A version-1 block naming one of these is still rejected.
 _HH_PHASES_V2="PLANNER GRILL"
-_HH_REASONS_V2="CREATE_GATE CROSSCHECK_BLOCKED ADR_GATE PROJECT_GATE REFINEMENT_HALT UNTIL_STOP READINESS_GAPS ROUND_CAP"
+_HH_REASONS_V2="CREATE_GATE CROSSCHECK_BLOCKED ADR_GATE PROJECT_GATE REFINEMENT_HALT UNTIL_STOP READINESS_GAPS ROUND_CAP SPECIFY_DECISION"
 _HH_KINDS="approval input"
 _HH_AUDIENCES="client operator either"
 
@@ -114,10 +114,14 @@ _hh_is_question_attr_key() {
 # artifact by its 1-based position in consensus.md's CITED_ARTIFACT list:
 # artifact names carry spaces and parentheses, so a name never appears in a
 # binding. `consensus-answer:testdata:<slug>` addresses a spec's implied-data
-# confirmation (TESTDATA_CONFIRM) by its spec slug.
+# confirmation (TESTDATA_CONFIRM) by its spec slug. `specify-answer:O<n>`
+# (planner-specify-waiting-on-human) addresses a Specify business decision
+# by its outcome id, `O1`..`O999` with no leading zero — the same pattern the
+# planner's decision scan accepts for a `### O<n>` heading, so the scan can
+# never emit a binding this parser rejects. Question text never appears in it.
 _hh_binding_ok() {
   local LC_ALL=C
-  [[ "$1" =~ ^(note|flag:create|flag:project|flag:accept:[A-Z][A-Z0-9_]*|waive:[A-Za-z0-9-]+:[A-Z][A-Z0-9_]*|adr:[A-Za-z0-9-]+|grill:[a-z][a-z0-9_-]*|consensus-answer:cited:[1-9][0-9]{0,3}|consensus-answer:testdata:[A-Za-z0-9][A-Za-z0-9_-]{0,127})$ ]]
+  [[ "$1" =~ ^(note|flag:create|flag:project|flag:accept:[A-Z][A-Z0-9_]*|waive:[A-Za-z0-9-]+:[A-Z][A-Z0-9_]*|adr:[A-Za-z0-9-]+|grill:[a-z][a-z0-9_-]*|consensus-answer:cited:[1-9][0-9]{0,3}|consensus-answer:testdata:[A-Za-z0-9][A-Za-z0-9_-]{0,127}|specify-answer:O[1-9][0-9]{0,2})$ ]]
 }
 
 _hh_question_id_ok() {

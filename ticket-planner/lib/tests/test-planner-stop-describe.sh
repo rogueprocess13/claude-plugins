@@ -33,6 +33,9 @@ source "${LIB_DIR}/planner-state.sh"
 source "${LIB_DIR}/planner-router.sh"
 source "${LIB_DIR}/planner-stop-describe.sh"
 source "${SCRIPT_DIR}/halt-fixtures.sh"
+# The describer sources it too; sourced here so the Specify-decision cases
+# can read the scan directly (and fail, not abort, if it is missing).
+[ -f "${LIB_DIR}/planner-specify-decisions.sh" ] && source "${LIB_DIR}/planner-specify-decisions.sh"
 
 PASS=0
 FAIL=0
@@ -90,12 +93,16 @@ for pair in $HALT_FIXTURE_REASONS; do
     fail "${name}: describer names ${expected}" "got '${got}'"
   fi
 
+  # Every planner stop is an operator decision, except a Specify business
+  # decision: the client's question, which the operator may answer for them.
+  want_audience=operator
+  [ "$expected" != "SPECIFY_DECISION" ] || want_audience=either
   planner_stop_describe "$INIT" >"${WORK}/${name}.hold"
   parsed=$(bash "$HOLD_PARSER" --phase PLANNER --return-file "${WORK}/${name}.hold" 2>&1)
   if [ "$(printf '%s' "$parsed" | jq -r '.parse_status' 2>/dev/null)" = "ok" ] &&
     [ "$(printf '%s' "$parsed" | jq -r '.schema_version')" = "2" ] &&
     [ "$(printf '%s' "$parsed" | jq -r '.reason')" = "$expected" ] &&
-    [ "$(printf '%s' "$parsed" | jq -r '.audience')" = "operator" ]; then
+    [ "$(printf '%s' "$parsed" | jq -r '.audience')" = "$want_audience" ]; then
     pass "${name}: block parses as a valid v2 human-hold"
   else
     fail "${name}: block parses as a valid v2 human-hold" "$parsed"
@@ -299,6 +306,163 @@ if planner_stop_describe "$INIT" | grep -qx 'QUESTION_1_ID: create'; then
   pass "question ids do not change between rounds"
 else
   fail "question ids do not change between rounds" "$(planner_stop_describe "$INIT")"
+fi
+
+# ── Specify decisions (planner-specify-waiting-on-human) ───────────────────
+
+echo "--- Specify decisions ---"
+
+# specify_fixture <name> — Specify done, position Review, proposal.md from
+# stdin. Feed it a here-string, never a pipe: a pipe runs it in a subshell
+# and the REPOS_ROOT that fresh_root exports would not reach this shell.
+specify_fixture() {
+  fresh_root "$1"
+  planner_state_init "$INIT" "idea" >/dev/null
+  _halt_done "$INIT" Appraisal Discovery Architecture Specify
+  cat >"$(planner_initiative_dir "$INIT")/artifacts/proposal.md"
+}
+
+# answer_line <oid> — replace that outcome's marker line with an answer, as
+# intake does (one line for one line).
+answer_line() {
+  local p
+  p="$(planner_initiative_dir "$INIT")/artifacts/proposal.md"
+  sed -i "/^### $1\$/,/^### /s/^\*\*Outcome:\*\* NEEDS_HUMAN_DECISION.*/**Outcome:** Human decision (verbatim, round 1, client): \"answered\"/" "$p"
+}
+
+SD_PROPOSAL='# Proposal
+
+## Business Outcomes
+
+### O1
+**Who:** Not specified
+**Need:** Not specified
+**Outcome:** NEEDS_HUMAN_DECISION — which role consumes the classified documents?
+
+### O2
+**Outcome:** Finance users export invoices without asking support.
+
+### O3
+**Outcome:** NEEDS_HUMAN_DECISION: how often is the export run?
+
+## Risks
+
+None.'
+
+if ! declare -f planner_specify_decisions_open >/dev/null 2>&1; then
+  fail "SPECIFY_DECISION: tests" "planner_specify_decisions_open missing (planner-specify-decisions.sh not sourced)"
+else
+  specify_fixture sd-two <<<"$SD_PROPOSAL"
+  m=$(planner_stop_describe_json "$INIT")
+  scan=$(planner_specify_decisions_open "$INIT")
+  h1=$(printf '%s\n' "$scan" | awk -F'\t' '$1 == "O1" { print $2 }')
+  h3=$(printf '%s\n' "$scan" | awk -F'\t' '$1 == "O3" { print $2 }')
+  got=$(echo "$m" | jq -r '.reason + " " + .kind + " " + .audience + " " + .blocks + " " + ([.questions[] | .id + "=" + .binding] | join(" "))')
+  want="SPECIFY_DECISION input either artifacts/proposal.md decision-O1-${h1}=specify-answer:O1 decision-O3-${h3}=specify-answer:O3"
+  if [ -n "$h1" ] && [ -n "$h3" ] && [ "$got" = "$want" ]; then
+    pass "SPECIFY_DECISION: one input question per open decision, in file order, audience either"
+  else
+    fail "SPECIFY_DECISION: one input question per open decision, in file order, audience either" "$got"
+  fi
+
+  if echo "$m" | jq -e '[.questions[] | has("options") or has("default")] | any | not' >/dev/null 2>&1 &&
+    echo "$m" | jq -e '.questions[0].text | contains("which role consumes the classified documents?") and contains("__defer__") and contains("500 characters")' >/dev/null 2>&1; then
+    pass "SPECIFY_DECISION: no OPTIONS, no DEFAULT; the text quotes the question and names __defer__"
+  else
+    fail "SPECIFY_DECISION: no OPTIONS, no DEFAULT; the text quotes the question and names __defer__" "$(echo "$m" | jq -c '.questions')"
+  fi
+
+  planner_stop_describe "$INIT" >"${WORK}/sd.hold"
+  parsed=$(bash "$HOLD_PARSER" --phase PLANNER --return-file "${WORK}/sd.hold" 2>&1)
+  if [ "$(printf '%s' "$parsed" | jq -r '.parse_status' 2>/dev/null)" = "ok" ] &&
+    [ "$(printf '%s' "$parsed" | jq -r '.reason + " " + .kind + " " + .audience')" = "SPECIFY_DECISION input either" ] &&
+    [ "$(printf '%s' "$parsed" | jq -r '[.questions[].binding] | join(" ")')" = "specify-answer:O1 specify-answer:O3" ] &&
+    ! grep -q '_OPTIONS:\|_DEFAULT:' "${WORK}/sd.hold"; then
+    pass "SPECIFY_DECISION: block parses as a valid v2 human-hold"
+  else
+    fail "SPECIFY_DECISION: block parses as a valid v2 human-hold" "$parsed"
+  fi
+
+  if cmp -s "${WORK}/sd.hold" <(planner_stop_describe "$INIT"); then
+    pass "SPECIFY_DECISION: re-describing is byte-identical"
+  else
+    fail "SPECIFY_DECISION: re-describing is byte-identical" "output changed with no change"
+  fi
+
+  if ! grep -q 'specify-gate' "$(planner_state_log "$INIT")"; then
+    pass "SPECIFY_DECISION: describing writes nothing to the state log"
+  else
+    fail "SPECIFY_DECISION: describing writes nothing to the state log" "found a specify-gate line"
+  fi
+
+  # A 700-character question is cut at 600, not the default 200.
+  long=$(printf 'a%.0s' $(seq 1 700))
+  specify_fixture sd-long <<<"$(printf '# Proposal\n\n## Business Outcomes\n\n### O1\n**Outcome:** NEEDS_HUMAN_DECISION — %s\n' "$long")"
+  if planner_stop_describe_json "$INIT" | jq -e --arg a600 "${long:0:600}" --arg a601 "${long:0:601}" \
+    '.questions[0].text | contains($a600 + "…") and (contains($a601) | not)' >/dev/null 2>&1; then
+    pass "SPECIFY_DECISION: a 700-character question is cut at 600"
+  else
+    fail "SPECIFY_DECISION: a 700-character question is cut at 600" "$(planner_stop_describe_json "$INIT" | jq -r '.questions[0].text | length')"
+  fi
+
+  # --until Specify: the decision first, the until stop once it is answered.
+  specify_fixture sd-until <<<"$(printf '%s\n' "$SD_PROPOSAL" | sed '/^### O3$/,$d')"
+  planner_stop_after_set "$INIT" "Specify"
+  first=$(reason_of "$INIT")
+  answer_line O1
+  second=$(reason_of "$INIT")
+  if [ "$first" = "SPECIFY_DECISION" ] && [ "$second" = "UNTIL_STOP" ]; then
+    pass "SPECIFY_DECISION: with --until Specify, the decision comes first, then UNTIL_STOP"
+  else
+    fail "SPECIFY_DECISION: with --until Specify, the decision comes first, then UNTIL_STOP" "first=${first} second=${second}"
+  fi
+
+  # Partly answered: only O3 is asked; all answered: RUNNING.
+  specify_fixture sd-answered <<<"$SD_PROPOSAL"
+  answer_line O1
+  got=$(planner_stop_describe_json "$INIT" | jq -r '[.questions[].binding] | join(" ")')
+  answer_line O3
+  if [ "$got" = "specify-answer:O3" ] && [ "$(planner_stop_describe "$INIT")" = "REASON=RUNNING" ]; then
+    pass "SPECIFY_DECISION: an answered decision is not asked; all answered → REASON=RUNNING"
+  else
+    fail "SPECIFY_DECISION: an answered decision is not asked; all answered → REASON=RUNNING" "partial=${got} all=$(planner_stop_describe "$INIT")"
+  fi
+
+  # Only at Review: the same proposal at Consensus asks nothing.
+  specify_fixture sd-later <<<"$SD_PROPOSAL"
+  _halt_done "$INIT" Review
+  if [ "$(reason_of "$INIT")" = "RUNNING" ]; then
+    pass "SPECIFY_DECISION: asked only at position Review"
+  else
+    fail "SPECIFY_DECISION: asked only at position Review" "$(reason_of "$INIT")"
+  fi
+fi
+
+# CREATE_GATE output, captured before SPECIFY_DECISION was added (L5): the
+# new optional kind/audience arguments must not move a byte.
+fresh_root create-bytes
+halt_fixture_init create-gate-stop "$INIT" >/dev/null
+cat >"${WORK}/create-before.hold" <<HOLD
+=== HUMAN_HOLD ===
+SCHEMA_VERSION: 2
+PHASE: PLANNER
+REASON: CREATE_GATE
+BLOCKS: artifacts/specs/
+ROUND: 1
+KIND: approval
+AUDIENCE: operator
+QUESTION_1: Planning for ${INIT} reached the create gate: Crosscheck passed and nothing is in Linear yet. Create the epic and its tickets in Linear?
+QUESTION_1_ID: create
+QUESTION_1_OPTIONS: yes|no
+QUESTION_1_DEFAULT: no
+QUESTION_1_BINDING: flag:create
+=== END HUMAN_HOLD ===
+HOLD
+if cmp -s "${WORK}/create-before.hold" <(planner_stop_describe "$INIT") &&
+  [ "$(planner_stop_describe_json "$INIT")" = '{"reason":"CREATE_GATE","terminal":false,"phase":"PLANNER","kind":"approval","audience":"operator","round":1,"blocks":"artifacts/specs/","questions":[{"id":"create","text":"Planning for '"$INIT"' reached the create gate: Crosscheck passed and nothing is in Linear yet. Create the epic and its tickets in Linear?","binding":"flag:create","options":["yes","no"],"default":"no"}]}' ]; then
+  pass "CREATE_GATE: block and model byte-identical to the pre-change capture"
+else
+  fail "CREATE_GATE: block and model byte-identical to the pre-change capture" "$(planner_stop_describe "$INIT" | diff "${WORK}/create-before.hold" - | head -5)"
 fi
 
 # ── CLI ────────────────────────────────────────────────────────────────────
