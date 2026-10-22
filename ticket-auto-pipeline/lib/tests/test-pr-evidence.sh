@@ -99,14 +99,67 @@ test_record_rejects_non_pr_url() {
 }
 
 # ── pr_evidence_backfill ────────────────────────────────────────────────────
+#
+# Backfill never trusts a URL or number in free text on its own: gh must
+# confirm the PR's head is this ticket's branch, in a repo that is one of the
+# ticket's own worktree remotes. Anything it cannot verify is a warn line.
+
+# _mk_worktrees <tid> <slug>... — git worktree dirs with GitHub origins.
+_mk_worktrees() {
+  local tid="$1" slug
+  shift
+  for slug in "$@"; do
+    local d="$_ws/repos/.ticket-auto/worktrees/$tid/${slug#*/}"
+    mkdir -p "$d"
+    git -C "$d" init -q
+    git -C "$d" remote add origin "git@github.com:${slug}.git"
+  done
+}
+
+# _gh_stub — answers `gh pr view <url>|<n> --repo <slug> ...` from
+# $_ws/prs.tsv ("<slug> <num> <head>" per line); unknown PR → exit 1.
+_gh_stub() {
+  : >"$_ws/prs.tsv"
+  cat >"$_ws/bin/gh" <<EOF
+#!/usr/bin/env bash
+db="$_ws/prs.tsv"
+EOF
+  cat >>"$_ws/bin/gh" <<'EOF'
+[ "$1" = pr ] && [ "$2" = view ] || exit 1
+target="$3"
+shift 3
+repo=""
+while [ $# -gt 0 ]; do
+  [ "$1" = "--repo" ] && repo="$2"
+  shift
+done
+case "$target" in
+https://github.com/*)
+  repo=$(echo "$target" | sed -E 's#https://github.com/([^/]+/[^/]+)/pull/[0-9]+#\1#')
+  num="${target##*/}"
+  ;;
+*) num="$target" ;;
+esac
+line=$(awk -v r="$repo" -v n="$num" '$1 == r && $2 == n' "$db" | head -1)
+[ -n "$line" ] || exit 1
+head=$(echo "$line" | awk '{print $3}')
+printf '{"url":"https://github.com/%s/pull/%s","headRefName":"%s","state":"OPEN","mergedAt":null,"mergeCommit":null,"baseRefName":"epic/x"}\n' "$repo" "$num" "$head"
+EOF
+  chmod +x "$_ws/bin/gh"
+}
+
+_backfill() {
+  REPOS_ROOT="$_ws/repos" PATH="$_ws/bin:$PATH" pr_evidence_backfill "$@" >/dev/null
+}
 
 # The exact shape from the issue: an improvised VERIFY line carries the URL,
 # PR-REVIEW carries the bare number, no pr-created line anywhere.
 _issue_log() {
-  cat >"$1" <<'EOF'
+  local tid="${2:-CRE-5}"
+  cat >"$1" <<EOF
 2026-01-01T00:00:00Z|META|schema|info|1
-2026-01-01T00:00:01Z|META|run-id|info|{"run_id":"CRE-5-a","gen":null,"trigger":"manual","pid":1}
-2026-01-01T00:00:02Z|META|branch-context|info|base=epic/x;integration=epic/x;source=epic-directive;ticket=feat/CRE-5-thing
+2026-01-01T00:00:01Z|META|run-id|info|{"run_id":"${tid}-a","gen":null,"trigger":"manual","pid":1}
+2026-01-01T00:00:02Z|META|branch-context|info|base=epic/x;integration=epic/x;source=epic-directive;ticket=feat/${tid}-thing
 2026-01-01T00:00:03Z|VERIFY|pr-open|done|https://github.com/acme/repo/pull/73 (base epic/x); implement-complete not re-fired (--from-auto)
 2026-01-01T00:00:04Z|VERIFY|verify|done|PASS 3/3; PR #73
 2026-01-01T00:00:05Z|PR-REVIEW|checkout-pr|done|73
@@ -114,16 +167,20 @@ _issue_log() {
 EOF
 }
 
-test_backfill_from_improvised_verify_url() {
+test_backfill_from_verified_verify_url() {
   _setup
   source "$LIB_DIR/pr-evidence.sh"
   local log="$_ws/logs/CRE-5-pipeline.log"
   _issue_log "$log"
-  pr_evidence_backfill "$log" CRE-5 >/dev/null
+  _mk_worktrees CRE-5 acme/repo
+  _gh_stub
+  echo "acme/repo 73 feat/CRE-5-thing" >>"$_ws/prs.tsv"
+  _backfill "$log" CRE-5
   local json
   json=$(grep '|META|pr-created|info|' "$log" | tail -1 | cut -d'|' -f5-)
   _teardown
-  [ "$(jq -r .pr <<<"$json")" = "73" ] && [ "$(jq -r .repo <<<"$json")" = "acme/repo" ]
+  [ "$(jq -r .pr <<<"$json")" = "73" ] && [ "$(jq -r .repo <<<"$json")" = "acme/repo" ] &&
+    [ "$(jq -r .backfill <<<"$json")" = "true" ]
 }
 
 test_backfill_is_idempotent() {
@@ -131,26 +188,124 @@ test_backfill_is_idempotent() {
   source "$LIB_DIR/pr-evidence.sh"
   local log="$_ws/logs/CRE-5-pipeline.log"
   _issue_log "$log"
-  pr_evidence_backfill "$log" CRE-5 >/dev/null
-  pr_evidence_backfill "$log" CRE-5 >/dev/null
+  _mk_worktrees CRE-5 acme/repo
+  _gh_stub
+  echo "acme/repo 73 feat/CRE-5-thing" >>"$_ws/prs.tsv"
+  _backfill "$log" CRE-5
+  _backfill "$log" CRE-5
   local n
   n=$(_created_lines "$log")
   _teardown
   [ "$n" = "1" ]
 }
 
+# Security review: an agent links a related/upstream PR on a VERIFY line.
+# That PR is not this ticket's — it must never become the ticket's PR.
+test_backfill_ignores_unrelated_pr_url() {
+  _setup
+  source "$LIB_DIR/pr-evidence.sh"
+  local log="$_ws/logs/CRE-11-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|META|schema|info|1
+2026-01-01T00:00:02Z|META|branch-context|info|base=epic/x;integration=epic/x;source=epic-directive;ticket=feat/CRE-11-thing
+2026-01-01T00:00:03Z|VERIFY|verify|done|PASS; see upstream fix https://github.com/other/upstream/pull/500
+EOF
+  _mk_worktrees CRE-11 acme/repo
+  _gh_stub
+  echo "other/upstream 500 main-fix" >>"$_ws/prs.tsv"
+  _backfill "$log" CRE-11
+  local n warn
+  n=$(_created_lines "$log")
+  warn=$(grep -c '|META|pr-evidence|warn|' "$log" || true)
+  _teardown
+  [ "$n" = "0" ] && [ "$warn" -ge 1 ]
+}
+
+# Same repo, but the PR's head is another branch: still not this ticket's PR.
+test_backfill_rejects_url_with_other_head_branch() {
+  _setup
+  source "$LIB_DIR/pr-evidence.sh"
+  local log="$_ws/logs/CRE-12-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|META|schema|info|1
+2026-01-01T00:00:02Z|META|branch-context|info|base=epic/x;integration=epic/x;source=epic-directive;ticket=feat/CRE-12-thing
+2026-01-01T00:00:03Z|VERIFY|verify|done|PASS; sibling PR https://github.com/acme/repo/pull/41
+EOF
+  _mk_worktrees CRE-12 acme/repo
+  _gh_stub
+  echo "acme/repo 41 feat/CRE-99-sibling" >>"$_ws/prs.tsv"
+  _backfill "$log" CRE-12
+  local n warn
+  n=$(_created_lines "$log")
+  warn=$(grep -c '|META|pr-evidence|warn|' "$log" || true)
+  _teardown
+  [ "$n" = "0" ] && [ "$warn" -ge 1 ]
+}
+
+# Unverifiable (no REPOS_ROOT / gh) → warn, never a marker.
+test_backfill_unverifiable_writes_warn_only() {
+  _setup
+  source "$LIB_DIR/pr-evidence.sh"
+  local log="$_ws/logs/CRE-13-pipeline.log"
+  _issue_log "$log" CRE-13
+  PATH="$_ws/bin:$PATH" pr_evidence_backfill "$log" CRE-13 >/dev/null
+  local n warn
+  n=$(_created_lines "$log")
+  warn=$(grep -c '|META|pr-evidence|warn|' "$log" || true)
+  _teardown
+  [ "$n" = "0" ] && [ "$warn" = "1" ]
+}
+
 test_backfill_noop_when_marker_present() {
   _setup
   source "$LIB_DIR/pr-evidence.sh"
   local log="$_ws/logs/CRE-6-pipeline.log"
-  _issue_log "$log"
+  _issue_log "$log" CRE-6
   echo '2026-01-01T00:00:07Z|META|pr-created|info|{"pr":73,"url":"https://github.com/acme/repo/pull/73","repo":"acme/repo"}' >>"$log"
+  _mk_worktrees CRE-6 acme/repo
+  _gh_stub
+  echo "acme/repo 73 feat/CRE-6-thing" >>"$_ws/prs.tsv"
   local before after
   before=$(wc -l <"$log")
-  pr_evidence_backfill "$log" CRE-6 >/dev/null
+  _backfill "$log" CRE-6
   after=$(wc -l <"$log")
   _teardown
   [ "$before" = "$after" ]
+}
+
+# Any real marker in this run's window blocks backfill — even for a
+# different PR the log mentions.
+test_backfill_never_adds_beside_real_marker() {
+  _setup
+  source "$LIB_DIR/pr-evidence.sh"
+  local log="$_ws/logs/CRE-14-pipeline.log"
+  _issue_log "$log" CRE-14
+  echo '2026-01-01T00:00:07Z|META|pr-created|info|{"pr":80,"url":"https://github.com/acme/repo/pull/80","repo":"acme/repo"}' >>"$log"
+  _mk_worktrees CRE-14 acme/repo
+  _gh_stub
+  echo "acme/repo 73 feat/CRE-14-thing" >>"$_ws/prs.tsv"
+  _backfill "$log" CRE-14
+  local n
+  n=$(_created_lines "$log")
+  _teardown
+  [ "$n" = "1" ]
+}
+
+# A real marker wins in ticket_pipeline_pr_ref even when a backfill record is
+# later in the log (e.g. an earlier run's real record, a later run's backfill).
+test_pr_ref_prefers_real_marker_over_backfill() {
+  _setup
+  source "$LIB_DIR/manifest-read.sh"
+  local log="$_ws/logs/CRE-15-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|META|schema|info|1
+2026-01-01T00:00:01Z|META|pr-created|info|{"pr":7,"url":"https://github.com/acme/repo/pull/7","repo":"acme/repo"}
+2026-01-01T00:00:02Z|META|pr-created|info|{"pr":9,"url":"https://github.com/acme/other/pull/9","repo":"acme/other","backfill":true}
+EOF
+  local ref
+  ref=$(ticket_pipeline_pr_ref "$log")
+  _teardown
+  [ "$(cut -f2 <<<"$ref")" = "7" ] && [ "$(cut -f3 <<<"$ref")" = "acme/repo" ]
 }
 
 # No URL anywhere (e.g. "gateway PR #103 opened"): resolve the bare
@@ -166,32 +321,16 @@ test_backfill_resolves_bare_number_via_worktree_remote() {
 2026-01-01T00:00:03Z|VERIFY|verify|done|PASS 2/2, gateway PR #103 opened
 2026-01-01T00:00:05Z|PR-REVIEW|checkout-pr|done|103
 EOF
-  local repos="$_ws/repos" wt
-  for wt in gateway other; do
-    mkdir -p "$repos/.ticket-auto/worktrees/CRE-7/$wt"
-    git -C "$repos/.ticket-auto/worktrees/CRE-7/$wt" init -q
-    git -C "$repos/.ticket-auto/worktrees/CRE-7/$wt" remote add origin "git@github.com:acme/$wt.git"
-  done
-  cat >"$_ws/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-# gh pr view <n> --repo <slug> --json url,headRefName
-repo=""
-while [ $# -gt 0 ]; do
-  [ "$1" = "--repo" ] && repo="$2"
-  shift
-done
-case "$repo" in
-acme/gateway) echo '{"url":"https://github.com/acme/gateway/pull/103","headRefName":"feat/CRE-7-thing"}' ;;
-acme/other) echo '{"url":"https://github.com/acme/other/pull/103","headRefName":"feat/unrelated"}' ;;
-*) exit 1 ;;
-esac
-EOF
-  chmod +x "$_ws/bin/gh"
-  REPOS_ROOT="$repos" PATH="$_ws/bin:$PATH" pr_evidence_backfill "$log" CRE-7 >/dev/null
-  local json
+  _mk_worktrees CRE-7 acme/gateway acme/other
+  _gh_stub
+  echo "acme/gateway 103 feat/CRE-7-thing" >>"$_ws/prs.tsv"
+  echo "acme/other 103 feat/unrelated" >>"$_ws/prs.tsv"
+  _backfill "$log" CRE-7
+  local json n
   json=$(grep '|META|pr-created|info|' "$log" | tail -1 | cut -d'|' -f5-)
+  n=$(_created_lines "$log")
   _teardown
-  [ "$(jq -r .repo <<<"$json")" = "acme/gateway" ] && [ "$(jq -r .pr <<<"$json")" = "103" ]
+  [ "$n" = "1" ] && [ "$(jq -r .repo <<<"$json")" = "acme/gateway" ] && [ "$(jq -r .pr <<<"$json")" = "103" ]
 }
 
 # ── merge-state end to end (the dependent-release path) ─────────────────────
@@ -206,30 +345,34 @@ test_backfilled_marker_does_not_hide_earlier_merge_record() {
   local log="$_ws/logs/CRE-8-pipeline.log"
   cat >"$log" <<'EOF'
 2026-01-01T00:00:00Z|META|schema|info|1
+2026-01-01T00:00:02Z|META|branch-context|info|base=epic/x;integration=epic/x;source=epic-directive;ticket=feat/CRE-8-thing
 2026-01-01T00:00:03Z|VERIFY|pr-open|done|https://github.com/acme/repo/pull/9
 2026-01-01T00:00:05Z|PR-REVIEW|checkout-pr|done|9
 2026-01-01T00:00:06Z|PR-REVIEW|merge-decision|done|merged
 EOF
-  pr_evidence_backfill "$log" CRE-8 >/dev/null
+  _mk_worktrees CRE-8 acme/repo
+  _gh_stub
+  echo "acme/repo 9 feat/CRE-8-thing" >>"$_ws/prs.tsv"
+  _backfill "$log" CRE-8
   echo "2026-01-01T00:00:09Z|META|outcome|info|completed: STEP_6" >>"$log"
-  local state
+  local state n
+  n=$(_created_lines "$log")
   state=$(ticket_pipeline_merge_state CRE-8 "$_ws/logs") || true
   _teardown
-  [ "$state" = "merged" ]
+  [ "$n" = "1" ] && [ "$state" = "merged" ]
 }
 
 # The issue's full path: finalize must leave a run event whose pr carries the
 # repo, so merge-poll polls it instead of writing unknown-repo.
 test_finalize_run_event_carries_repo_for_verify_opened_pr() {
   _setup
-  cat >"$_ws/bin/gh" <<'EOF'
-#!/usr/bin/env bash
-echo '{"state":"OPEN","mergedAt":null,"mergeCommit":null,"baseRefName":"epic/x"}'
-EOF
-  chmod +x "$_ws/bin/gh"
+  _mk_worktrees CRE-5 acme/repo
+  _gh_stub
+  echo "acme/repo 73 feat/CRE-5-thing" >>"$_ws/prs.tsv"
   local log="$_ws/logs/CRE-5-pipeline.log"
   _issue_log "$log"
-  PATH="$_ws/bin:$PATH" HOME="$_ws/home" bash "$LIB_DIR/pipeline-finalize.sh" CRE-5 0 "$log" >/dev/null 2>&1 || true
+  REPOS_ROOT="$_ws/repos" PATH="$_ws/bin:$PATH" HOME="$_ws/home" \
+    bash "$LIB_DIR/pipeline-finalize.sh" CRE-5 0 "$log" >/dev/null 2>&1 || true
   local run_repo merge_state last
   run_repo=$(grep '"kind":"run"' "$_ws/logs/runs.jsonl" | tail -1 | jq -r '.pr.repo // empty')
   merge_state=$(grep '"kind":"merge"' "$_ws/logs/runs.jsonl" | tail -1 | jq -r '.state // empty')
@@ -258,9 +401,14 @@ for fn in \
   test_record_new_emits_pr_opened_once \
   test_record_existing_pr_does_not_emit \
   test_record_rejects_non_pr_url \
-  test_backfill_from_improvised_verify_url \
+  test_backfill_from_verified_verify_url \
   test_backfill_is_idempotent \
+  test_backfill_ignores_unrelated_pr_url \
+  test_backfill_rejects_url_with_other_head_branch \
+  test_backfill_unverifiable_writes_warn_only \
   test_backfill_noop_when_marker_present \
+  test_backfill_never_adds_beside_real_marker \
+  test_pr_ref_prefers_real_marker_over_backfill \
   test_backfill_resolves_bare_number_via_worktree_remote \
   test_backfilled_marker_does_not_hide_earlier_merge_record \
   test_finalize_run_event_carries_repo_for_verify_opened_pr \

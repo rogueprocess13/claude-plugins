@@ -32,11 +32,15 @@ them and blocked-by dependents are released after a human merges the PR (#525).
   <URL> [--epic]` writes `pr-created` once per PR per run and, with `--new`, emits the `pr-opened`
   outbox event (idempotency-keyed on the PR). ticket-verify Step 6 and `epic_branch_open_pr` both
   call it; the `pr-opened` vocabulary entry names it as the emitter.
-- **Backfill before the outcome**: `pipeline-finalize.sh` runs `pr_evidence_backfill` just before
-  `META|outcome`. It records any PR the log names without a marker: a GitHub PR URL on a VERIFY or
-  PR-REVIEW line, or a bare `checkout-pr` number that `gh pr view` confirms on one of the ticket's
-  own worktree remotes with the ticket branch as head. Backfilled records carry `"backfill":true`
-  and emit no event.
+- **Verified backfill before the outcome**: `pipeline-finalize.sh` runs `pr_evidence_backfill`
+  just before `META|outcome`, only when the run has no `pr-created` record at all. Candidates are
+  GitHub PR URLs on VERIFY or PR-REVIEW lines and bare `checkout-pr` numbers. Each is recorded
+  only when its repo is one of the ticket's worktree remotes and `gh pr view` reports the ticket
+  branch as its head. Agents link related or upstream PRs in free text on those lines, and a wrong
+  PR's merge would release dependents early, so anything unverifiable (gh fails, `REPOS_ROOT`
+  unset, worktrees gone, other head branch) gets a `META|pr-evidence|warn|` line instead.
+  Backfilled records carry `"backfill":true`, emit no event, and lose to any real record in
+  `ticket_pipeline_pr_ref` and `run-summary.sh`.
 - **`ticket_pipeline_pr_ref`** now reports the earliest line naming the PR, so a backfilled marker
   written after `merge-decision|done|merged` does not hide that merge record.
 

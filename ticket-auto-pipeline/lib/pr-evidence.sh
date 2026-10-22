@@ -12,16 +12,19 @@
 #
 # pr_evidence_backfill <LOG_FILE> <TID>
 #   Deterministic safety net, run by pipeline-finalize.sh before
-#   `META|outcome`. Writes a `pr-created` record for every PR the log names
-#   without one:
-#     1. a GitHub PR URL on any VERIFY or PR-REVIEW line (an agent that
-#        paraphrased the capture step still tends to log the URL);
-#     2. a bare number on the latest `PR-REVIEW|checkout-pr|done|` line,
-#        resolved against the remotes of the ticket's own worktrees
-#        (`$REPOS_ROOT/.ticket-auto/worktrees/{TID}/*`) and accepted only
-#        when `gh pr view` reports the ticket's own branch as the PR's head.
-#   Backfilled records carry `"backfill":true` and emit no outbox event:
-#   the PR was opened earlier, this only records it. Always returns 0.
+#   `META|outcome`. Does nothing when the current run's window already holds
+#   any `pr-created` record. Otherwise it collects candidate PRs the log names
+#   — GitHub PR URLs on VERIFY / PR-REVIEW lines, and the bare numbers on the
+#   latest `PR-REVIEW|checkout-pr|done|` line — and records one ONLY when it
+#   can verify it: the repo is the origin of one of the ticket's worktrees
+#   (`$REPOS_ROOT/.ticket-auto/worktrees/{TID}/*`), `gh pr view` succeeds,
+#   and the PR's headRefName is the ticket branch from `META|branch-context`.
+#   Agents write free text on those lines (links to related or upstream PRs);
+#   an unverified URL marked as this ticket's PR would let merge-poll see the
+#   wrong PR merged and release blocked-by dependents early. A candidate it
+#   cannot verify gets a `META|pr-evidence|warn|` line instead, never a
+#   marker. Records carry `"backfill":true` and emit no outbox event; any
+#   reader prefers a non-backfill record when one exists. Always returns 0.
 #
 # Why this file exists: ticket-verify opened PRs through a bash block in its
 # SKILL.md. The agent ran its own version of that block, logged
@@ -66,6 +69,7 @@ _pe_recorded() {
     awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}' |
     jq -e -R --arg n "$num" --arg r "$repo" -s '
       [split("\n")[] | fromjson? | objects
+        | select(.backfill != true)
         | select(((.pr // "") | tostring) == $n)
         | select($r == "" or .repo == $r)] | length > 0' >/dev/null 2>&1
 }
@@ -119,17 +123,6 @@ record_pr_created() {
   return 0
 }
 
-# _pe_backfill_one <log> <num> <repo> <url>
-_pe_backfill_one() {
-  local log="$1" num="$2" repo="$3" url="$4"
-  _pe_recorded "$(cat "$log" 2>/dev/null)" "$num" "$repo" && return 0
-  local json
-  json=$(jq -nc --argjson pr "$num" --arg url "$url" --arg repo "$repo" \
-    '{pr: $pr, url: $url, repo: $repo, backfill: true}') || return 0
-  _pe_append "$log" "$json"
-  echo "pr-created (backfill): ${repo}#${num}"
-}
-
 # _pe_origin_slug <git dir> → owner/repo of its origin remote (GitHub only).
 _pe_origin_slug() {
   local remote
@@ -139,48 +132,104 @@ _pe_origin_slug() {
     sed -E 's#\.git$##' | grep -E '^[^/]+/[^/]+$'
 }
 
+_pe_warn() {
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|pr-evidence|warn|$2" >>"$1"
+}
+
+# _pe_verify <target> <branch> → prints the PR url when gh confirms the PR's
+# head is <branch>. <target> is a PR URL, or "<num> --repo <slug>".
+_pe_verify() {
+  local branch="$1" resp head url
+  shift
+  resp=$(timeout 20 gh pr view "$@" --json headRefName,url 2>/dev/null) || return 1
+  head=$(jq -r '.headRefName // empty' <<<"$resp" 2>/dev/null) || return 1
+  url=$(jq -r '.url // empty' <<<"$resp" 2>/dev/null) || return 1
+  [ -n "$head" ] && [ "$head" = "$branch" ] && [ -n "$url" ] || return 1
+  printf '%s\n' "$url"
+}
+
 pr_evidence_backfill() {
   local log="${1:-}" tid="${2:-}"
   [ -f "$log" ] && [ -n "$tid" ] || return 0
 
-  # 1. PR URLs on VERIFY / PR-REVIEW lines.
-  local u parsed
-  while IFS= read -r u; do
-    [ -n "$u" ] || continue
-    parsed=$(_pe_parse_url "$u") || continue
-    _pe_backfill_one "$log" "$(cut -f1 <<<"$parsed")" "$(cut -f2 <<<"$parsed")" "$(cut -f3 <<<"$parsed")"
-  done < <(grep -E '^[^|]*\|(VERIFY|PR-REVIEW)\|' "$log" 2>/dev/null | grep -oE "$_PE_URL_RE" | awk '!seen[$0]++')
+  # 1. Never beside an existing record of this run (real or backfilled).
+  _pe_window "$log" | grep -q '|META|pr-created|info|' && return 0
 
-  # 2. Bare checkout-pr numbers still unrecorded → ticket worktree remotes.
-  local checkout nums unresolved="" n
+  # 2. Candidates.
+  local urls checkout nums
+  urls=$(grep -E '^[^|]*\|(VERIFY|PR-REVIEW)\|' "$log" 2>/dev/null | grep -oE "$_PE_URL_RE" | awk '!seen[$0]++') || urls=""
   checkout=$(grep '|PR-REVIEW|checkout-pr|done|' "$log" 2>/dev/null | tail -1 |
     awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}') || checkout=""
   nums=$(grep -oE '[0-9]+' <<<"$checkout" | awk '!seen[$0]++') || nums=""
-  for n in $nums; do
-    _pe_recorded "$(cat "$log")" "$n" "" || unresolved="$unresolved $n"
-  done
-  [ -n "${unresolved// /}" ] || return 0
-  [ -n "${REPOS_ROOT:-}" ] && command -v gh >/dev/null 2>&1 || return 0
+  [ -n "$urls$nums" ] || return 0
 
-  local branch
+  # 3. Verification context — missing any part means nothing is verifiable.
+  local branch slugs="" wt slug
   branch=$(grep '|META|branch-context|info|' "$log" 2>/dev/null | tail -1 |
     awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}' |
     tr ';' '\n' | sed -n 's/^ticket=//p' | head -1) || branch=""
-  [ -n "$branch" ] || return 0
-
-  local wt slug resp head url
-  for n in $unresolved; do
+  if [ -n "${REPOS_ROOT:-}" ]; then
     for wt in "$REPOS_ROOT/.ticket-auto/worktrees/$tid"/*/; do
       [ -d "$wt" ] || continue
       slug=$(_pe_origin_slug "$wt") || continue
-      resp=$(timeout 20 gh pr view "$n" --repo "$slug" --json url,headRefName 2>/dev/null) || continue
-      head=$(jq -r '.headRefName // empty' <<<"$resp" 2>/dev/null) || head=""
-      url=$(jq -r '.url // empty' <<<"$resp" 2>/dev/null) || url=""
-      [ "$head" = "$branch" ] && [ -n "$url" ] || continue
-      _pe_backfill_one "$log" "$n" "$slug" "$url"
-      break
+      slugs="$slugs $slug"
     done
+  fi
+  local reason=""
+  if [ -z "$branch" ]; then
+    reason="no ticket branch in META|branch-context"
+  elif [ -z "${REPOS_ROOT:-}" ]; then
+    reason="REPOS_ROOT unset"
+  elif [ -z "${slugs// /}" ]; then
+    reason="no ticket worktrees with a GitHub origin"
+  elif ! command -v gh >/dev/null 2>&1; then
+    reason="gh not available"
+  fi
+  if [ -n "$reason" ]; then
+    _pe_warn "$log" "backfill unverifiable (${reason}); PR(s) named in log not recorded: $(echo $urls $nums)"
+    return 0
+  fi
+
+  # 4. Verify each candidate; record only confirmed PRs.
+  local recorded=" " rejected="" u parsed num repo url
+  while IFS= read -r u; do
+    [ -n "$u" ] || continue
+    parsed=$(_pe_parse_url "$u") || continue
+    num=$(cut -f1 <<<"$parsed")
+    repo=$(cut -f2 <<<"$parsed")
+    case " $slugs " in
+    *" $repo "*) ;;
+    *)
+      rejected="$rejected $u(repo-not-a-ticket-worktree)"
+      continue
+      ;;
+    esac
+    if url=$(_pe_verify "$branch" "$u"); then
+      _pe_append "$log" "$(jq -nc --argjson pr "$num" --arg url "$url" --arg repo "$repo" \
+        '{pr: $pr, url: $url, repo: $repo, backfill: true}')"
+      recorded="$recorded${repo}#${num} "
+    else
+      rejected="$rejected $u(head-not-ticket-branch-or-gh-failed)"
+    fi
+  done <<<"$urls"
+
+  local n found
+  for n in $nums; do
+    case "$recorded" in *"#${n} "*) continue ;; esac
+    found=""
+    for slug in $slugs; do
+      if url=$(_pe_verify "$branch" "$n" --repo "$slug"); then
+        _pe_append "$log" "$(jq -nc --argjson pr "$n" --arg url "$url" --arg repo "$slug" \
+          '{pr: $pr, url: $url, repo: $repo, backfill: true}')"
+        recorded="$recorded${slug}#${n} "
+        found=1
+        break
+      fi
+    done
+    [ -n "$found" ] || rejected="$rejected #${n}(unverified)"
   done
+
+  [ -z "$rejected" ] || _pe_warn "$log" "backfill skipped unverified PR(s):${rejected}"
   return 0
 }
 

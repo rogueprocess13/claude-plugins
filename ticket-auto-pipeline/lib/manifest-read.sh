@@ -207,7 +207,11 @@ ticket_pipeline_pr_ref() {
   [ -f "$log_file" ] || return 0
 
   local created_line checkout_line
-  created_line=$(grep -n '|META|pr-created|info|' "$log_file" 2>/dev/null | tail -1) || created_line=""
+  # A real record always beats a backfilled one (`"backfill":true`, written
+  # by lib/pr-evidence.sh's verified finalize-time backfill, GitHub #525).
+  created_line=$(grep -n '|META|pr-created|info|' "$log_file" 2>/dev/null | grep -v '"backfill":true' | tail -1) || created_line=""
+  [ -n "$created_line" ] ||
+    created_line=$(grep -n '|META|pr-created|info|' "$log_file" 2>/dev/null | tail -1) || created_line=""
   checkout_line=$(grep -n '|PR-REVIEW|checkout-pr|done|' "$log_file" 2>/dev/null | tail -1) || checkout_line=""
 
   local c_ln="" c_pr="" c_repo="" k_ln="" k_pr="" c_json=""

@@ -137,7 +137,9 @@ run_summary_json() {
 
   # ── pr — prefer META|pr-created over PR-REVIEW|checkout-pr ─────────────────
   local pr_json
-  pr_json=$(grep '|META|pr-created|info|' <<<"$window" 2>/dev/null | tail -1 | _rs_field5) || true
+  # A real record beats a backfilled one (lib/pr-evidence.sh, GitHub #525).
+  pr_json=$(grep '|META|pr-created|info|' <<<"$window" 2>/dev/null | grep -v '"backfill":true' | tail -1 | _rs_field5) || true
+  [ -n "$pr_json" ] || pr_json=$(grep '|META|pr-created|info|' <<<"$window" 2>/dev/null | tail -1 | _rs_field5) || true
   if [ -z "$pr_json" ] || ! echo "$pr_json" | jq -e . >/dev/null 2>&1; then
     local checkout_pr_num
     checkout_pr_num=$(grep '|PR-REVIEW|checkout-pr|done|' <<<"$window" 2>/dev/null | tail -1 | _rs_field5) || true
