@@ -130,6 +130,7 @@ BODY_HASH: sha256:ab12...
 AUDIT_1_CODE: AC_VAGUE
 AUDIT_1_VERDICT: disputed
 AUDIT_1_REASON: "handles errors gracefully" is qualified by AC-4's explicit retry table
+AUDIT_1_QUOTE: - [ ] A failed save retries 3 times, then shows the error toast
 MISSED_1_CODE: UNSTATED_DEPENDENCY
 MISSED_1_REASON: ticket assumes a feature flag exists with no reference to who owns it
 SCORE_PLAUSIBLE: yes
@@ -139,7 +140,9 @@ SCORE_REASON: 62 matches a ticket with AC present but no verification plan
 
 `AUDIT_n_*` is a numbered group: `CODE` (a deterministic hard or advisory code),
 `VERDICT` (`agree|disputed|uncertain`), `REASON` (mandatory when `VERDICT` is
-`disputed`, and must cite ticket text). **Every hard code in the deterministic result's
+`disputed`, and must cite ticket text), and an optional `QUOTE` — on a `disputed` entry
+only, a single line copied verbatim from the section the code checks (parsed as
+`quote`; absent when not given). **Every hard code in the deterministic result's
 `missing` list must have an `AUDIT_n` entry** — an unaudited hard code rejects the
 block. Audit entries for advisory codes are optional; one omitted advisory line never
 rejects the block. `MISSED_n_*` (`CODE`, `REASON`) names a semantic code the model
@@ -147,9 +150,9 @@ believes the deterministic pass and its own scan should have caught but didn't;
 optional, any count. `SCORE_PLAUSIBLE` (`yes|no`) and `SCORE_REASON` judge the
 diagnostic `dor_quality_score`.
 
-A `disputed` verdict is recorded in `ready.semantic.audit` with its reason and **never**
-removes, waives, or demotes the deterministic code — see "A disputed deterministic code
-stays blocking" below.
+A `disputed` verdict is recorded in `ready.semantic.audit` with its reason and, by
+default, **never** removes, waives, or demotes the deterministic code — see "A disputed
+deterministic code stays blocking" below. The opt-in exception is audit demotion.
 
 ## Key syntax
 
@@ -246,7 +249,8 @@ rescans edited tickets.
   "first_audit": {"body_hash": "sha256:…", "evaluator": "dor-semantic-v3", "audit": []},
   "policy": {"structural": ["NEEDS_HUMAN_DECISION", "…"], "overridden": false,
              "drift_demote": false, "max_rounds": null, "round_reset_share": 0.5,
-             "inert": ["Related Tickets"]}
+             "inert": ["Related Tickets"],
+             "audit_demotable": ["VPLAN_ROW_GAP", "…"], "audit_demotable_overridden": false}
 }
 ```
 
@@ -358,10 +362,51 @@ allowed extras keys; only `set_ticket_semantic` ever writes it.
 
 ## A disputed deterministic code stays blocking
 
-`disputed` is recorded in `ready.semantic.audit` with its reason. It never removes,
-waives, or demotes the deterministic code — it is a **waiver candidate**: consumers
-print the reason and the exact `dor-check.sh --waive <TID> <CODE> "<reason>"` command.
-Only a human waives.
+`disputed` is recorded in `ready.semantic.audit` with its reason. By default it never
+removes, waives, or demotes the deterministic code — it is a **waiver candidate**:
+consumers print the reason and the exact `dor-check.sh --waive <TID> <CODE> "<reason>"`
+command. Only a human waives. `BODY_DRIFT` and `BODY_UNVERIFIED` can never be waived:
+`waive_ticket_readiness_code` refuses them (exit 3) and points at
+`/ticket-planner resume <INIT> --refresh-bodies`.
+
+### Audit demotion (shipped dark)
+
+`dor_audit_demote <TID> <body-file>` (planner-refinement-convergence D5) is the one
+exception, and nothing calls it unless the planner runs with
+`PLANNER_REFINEMENT_AUDIT_DEMOTE=true`. It reads only `ready.lineage.first_audit`, and
+only when that audit and `ready.body_hash` are both for the body file's current hash —
+a retried audit on the same body cannot re-roll a dispute. An entry qualifies when:
+
+1. its verdict is `disputed`;
+2. its code is not never-demote (`DOR_AUDIT_NEVER_DEMOTE`, a fixed constant: the
+   presence codes, the `TEST_DATA_*`/`TEST_USER_*` family, `CATALOG_ABSENT`,
+   `VERIFICATION_REQUIRED_NOT_SELF_VERIFYING`, `FLAG_NEEDS_INFO`, `BODY_UNAVAILABLE`,
+   `BODY_DRIFT`, `BODY_UNVERIFIED`, and every `SEMANTIC_*` code — checked first) and is in
+   `DOR_AUDIT_DEMOTABLE_CODES` (default `VPLAN_ROW_GAP VPLAN_UNVERIFIABLE AC_VAGUE
+   AC_IMPLEMENTATION_ONLY NAV_PATH_MISSING`; an override warns at apply time and is
+   snapshotted as `lineage.policy.audit_demotable`/`audit_demotable_overridden`);
+3. the code is in `ready.missing` and not waived;
+4. its `quote` occurs in one of the code's own sections (`DOR_AUDIT_CODE_SECTIONS`:
+   `VPLAN_*` → Verification Plan or Acceptance Criteria, `AC_*` → Acceptance Criteria,
+   `NAV_PATH_MISSING` → Navigation Path), after the same normalisation as a finding's
+   quote. A quote anywhere else, or none, does not qualify.
+
+With 1 to `DOR_AUDIT_DEMOTE_MAX` (default 2) qualifying codes, all are demoted and
+printed one per line; more demotes none and exits 4. The writer is
+`set_ticket_demotions <TID> <json>`, the only writer of `ready.demoted`:
+
+```json
+"demoted": {"VPLAN_ROW_GAP": {"by": "dor-semantic-audit", "reason": "…",
+            "quote": "- [ ] Criteria 2 and 3 are verified together in row 2",
+            "body_hash": "sha256:…", "evaluator": "dor-semantic-v3"}}
+```
+
+It moves the code from `missing` to `advisory` and recomputes `status`. It refuses an
+entry whose `body_hash` is not `ready.body_hash`, and any `SEMANTIC_*` or `BODY_*` code.
+`set_ticket_readiness` keeps an entry only while its `body_hash` equals the fresh one,
+re-applying it to the recomputed `missing`/`advisory`; an edited body (or a rewrite
+with no body hash) drops it, so the code blocks again. A non-empty `ready.demoted` also
+blocks the inert-section rebase.
 
 ## Reads and consumers
 
@@ -391,6 +436,7 @@ references the deterministic result file or any deterministic code.
 - Run anywhere on its own — the planner's Refinement phase (`planner-refinement-phase`)
   is the only caller.
 - Multi-sample majority voting.
-- Remove or waive a deterministic code.
+- Remove or waive a deterministic code (audit demotion, above, is opt-in and never a
+  waiver).
 - Change `ticket-critique` or evaluate ad-hoc tickets.
 - Rewrite ticket bodies.

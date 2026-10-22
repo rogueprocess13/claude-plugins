@@ -594,6 +594,13 @@ _manifest_readiness_unlock() {
 # that a rebase moves its `body_hash`/`section_hashes`/`units` onto the new
 # body. A rebase never changes `lineage.round`. Only set_ticket_lineage
 # writes it.
+#
+# `ready.demoted` (planner-refinement-convergence D5, written only by
+# set_ticket_demotions) is kept entry by entry while the entry's `body_hash`
+# equals extras.body_hash, and each kept code is re-applied: removed from the
+# fresh `missing` and appended to `advisory` (when the check still reports
+# it). An entry for any other hash — or every entry, on a call with no
+# body_hash — is dropped, so an edited body blocks on the code again.
 set_ticket_readiness() {
   local tid="$1" status="$2" missing="${3:-[]}" advisory="${4:-[]}" extras="${5:-}"
   case "$status" in
@@ -706,13 +713,22 @@ set_ticket_readiness() {
           ($old_lineage + {body_hash: $new_hash, section_hashes: $new_sec}
            + (if ($extras.unit_hashes // null) != null then {units: $extras.unit_hashes} else {} end))
         else $old_lineage end) as $lineage
-     | ($missing + $sem.extra_missing | unique) as $full_missing
+     # Audit demotions (D5) are bound to the body hash: an entry is kept
+     # only while its body_hash equals the fresh one (a call with no fresh
+     # hash keeps none), and each kept code is moved from missing to
+     # advisory again. With no demotions this is the identity.
+     | (($old_ready.demoted // {}) | with_entries(select($new_hash != null and .value.body_hash == $new_hash))) as $demoted
+     | ($demoted | keys) as $dem_codes
+     | ($missing + $sem.extra_missing | unique) as $all_missing
+     | ($all_missing - $dem_codes) as $full_missing
+     | ($advisory + [$all_missing[] | select(. as $c | ($dem_codes | index($c)) != null and ($advisory | index($c)) == null)]) as $full_advisory
      | .ready = ({
          status: (if ($full_missing - ($waived | keys)) == [] then "ready" else "not-ready" end),
-         checked_at: $checked_at, missing: $full_missing, advisory: $advisory, waived: $waived
+         checked_at: $checked_at, missing: $full_missing, advisory: $full_advisory, waived: $waived
        } + $extras
        + (if $sem.semantic != null then {semantic: $sem.semantic} else {} end)
-       + (if $lineage != null then {lineage: $lineage} else {} end))' \
+       + (if $lineage != null then {lineage: $lineage} else {} end)
+       + (if ($dem_codes | length) > 0 then {demoted: $demoted} else {} end))' \
     "$manifest_path") || {
     _manifest_readiness_unlock
     return 1
@@ -739,6 +755,15 @@ waive_ticket_readiness_code() {
     echo "manifest-write: by must be non-empty" >&2
     return 3
   }
+  # BODY_DRIFT and BODY_UNVERIFIED are not waivable (planner-refinement-
+  # convergence D6): they say the body itself is in doubt, and the fix is
+  # `/ticket-planner resume <INIT> --refresh-bodies`, never a waiver.
+  case "$code" in
+  BODY_DRIFT | BODY_UNVERIFIED)
+    echo "manifest-write: $code cannot be waived — refresh the body instead (/ticket-planner resume <INIT> --refresh-bodies)" >&2
+    return 3
+    ;;
+  esac
 
   local manifest_path
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
@@ -861,6 +886,76 @@ set_ticket_lineage() {
 
   local content write_rc
   content=$(jq -c --argjson lineage "$lineage_json" '.ready.lineage = $lineage' "$manifest_path") || {
+    _manifest_readiness_unlock
+    return 1
+  }
+  _manifest_atomic_write "$manifest_path" "$content"
+  write_rc=$?
+  _manifest_readiness_unlock
+  return "$write_rc"
+}
+
+# set_ticket_demotions <TID> <demotions_json>
+# The only writer of `ready.demoted` (planner-refinement-convergence D5).
+# <demotions_json> is an object `{CODE: {by, reason, quote, body_hash,
+# evaluator}}`; `by` and `body_hash` are required strings. Under the
+# readiness lock it merges the entries into `ready.demoted`, moves each code
+# from `missing` to `advisory` (appended once, only when it was in
+# `missing`) and recomputes `status` against the existing waivers. Exit 3,
+# nothing written, when the argument is malformed, when there is no `ready`
+# object, when an entry's `body_hash` is not the verdict's own
+# `ready.body_hash` (a demotion binds to the body it was judged on), or when
+# a code is `SEMANTIC_*` (set_ticket_semantic re-derives those) or `BODY_*`
+# (never demotable). Exit 1 when no manifest exists. dor-semantic.sh's
+# dor_audit_demote is the caller; the set_ticket_readiness rewrite keeps an
+# entry only while the body hash is unchanged.
+set_ticket_demotions() {
+  local tid="$1" demotions_json="$2"
+
+  if ! echo "$demotions_json" | jq -e 'type == "object" and length > 0
+      and all(.[]; type == "object"
+        and ((.by // "") | type == "string" and length > 0)
+        and ((.body_hash // "") | type == "string" and length > 0))' >/dev/null 2>&1; then
+    echo "manifest-write: demotions_json must be a non-empty object of {by, reason, quote, body_hash, evaluator} entries, got '$demotions_json'" >&2
+    return 3
+  fi
+  local _bad
+  _bad=$(echo "$demotions_json" | jq -r '[keys[] | select(startswith("SEMANTIC_") or startswith("BODY_"))] | join(",")')
+  if [ -n "$_bad" ]; then
+    echo "manifest-write: code(s) '$_bad' can never be demoted" >&2
+    return 3
+  fi
+
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+
+  if ! jq -e '(.ready // null) != null' "$manifest_path" >/dev/null 2>&1; then
+    _manifest_readiness_unlock
+    echo "manifest-write: ticket $tid has no ready object — set_ticket_readiness must run first" >&2
+    return 3
+  fi
+  if ! jq -e --argjson d "$demotions_json" \
+    '(.ready.body_hash // null) as $h | $h != null and all($d[]; .body_hash == $h)' \
+    "$manifest_path" >/dev/null 2>&1; then
+    _manifest_readiness_unlock
+    echo "manifest-write: ticket $tid demotion body_hash does not match ready.body_hash" >&2
+    return 3
+  fi
+
+  local content write_rc
+  content=$(jq -c --argjson d "$demotions_json" \
+    '($d | keys) as $codes
+     | (.ready.missing // []) as $m
+     | .ready.demoted = ((.ready.demoted // {}) + $d)
+     | .ready.advisory = ((.ready.advisory // [])
+         + [$codes[] | select(. as $c | ($m | index($c)) != null)]
+         | reduce .[] as $c ([]; if index($c) == null then . + [$c] else . end))
+     | .ready.missing = ($m - $codes)
+     | .ready.status = (if ((.ready.missing - (.ready.waived // {} | keys)) == []) then "ready" else "not-ready" end)' \
+    "$manifest_path") || {
     _manifest_readiness_unlock
     return 1
   }

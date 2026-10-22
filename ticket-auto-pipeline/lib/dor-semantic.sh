@@ -43,6 +43,13 @@
 #     Migrates a stored dor-semantic-v2 verdict on the unchanged body to the
 #     current evaluator in place (round 1, every finding new). Exit 0
 #     migrated, 2 nothing to migrate, 1 error.
+#
+#   dor_audit_demote <TID> <body-file>
+#     Shipped dark (planner-refinement-convergence D5): demotes up to
+#     DOR_AUDIT_DEMOTE_MAX deterministic codes that ready.lineage.first_audit
+#     disputed with a quote from the code's own section, via
+#     set_ticket_demotions. Prints each demoted code. Exit 0, 4 over the cap
+#     (nothing demoted), 1 error, 3 write refused.
 
 _DOR_SEMANTIC_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -113,6 +120,35 @@ DOR_SEMANTIC_EVALUATOR="dor-semantic-v3"
 # means this default. An override warns on stderr at apply time and is
 # snapshotted into ready.lineage.policy.
 DOR_SEMANTIC_STRUCTURAL_CODES_DEFAULT="NEEDS_HUMAN_DECISION CONTRADICTORY_REQUIREMENTS UNSTATED_DEPENDENCY INTENT_AC_MISMATCH"
+
+# Audit-dispute demotion (planner-refinement-convergence D5), shipped dark:
+# nothing here runs unless a caller invokes dor_audit_demote, which the
+# planner does only under PLANNER_REFINEMENT_AUDIT_DEMOTE=true.
+#
+# The heuristic deterministic codes an audit dispute may demote. A host
+# overrides the effective list with DOR_AUDIT_DEMOTABLE_CODES (space-
+# separated); an empty or unset value means this default. An override warns
+# on stderr at apply time and is snapshotted into ready.lineage.policy.
+DOR_AUDIT_DEMOTABLE_CODES_DEFAULT="VPLAN_ROW_GAP VPLAN_UNVERIFIABLE AC_VAGUE AC_IMPLEMENTATION_ONLY NAV_PATH_MISSING"
+
+# Never demoted, whatever DOR_AUDIT_DEMOTABLE_CODES says — checked before the
+# allow-list. Presence codes, the test-data family, the flag and body codes,
+# plus every SEMANTIC_* code (by prefix, in _dor_audit_never_demote). A fixed
+# constant, deliberately not overridable.
+DOR_AUDIT_NEVER_DEMOTE="AC_MISSING INTENT_MISSING SCOPE_MISSING REPRO_MISSING REPRO_NO_EXPECTED_ACTUAL VPLAN_MISSING TEST_DATA_MISSING TEST_DATA_UNSOURCED TEST_DATA_UNSEEDED TEST_USER_MISSING TEST_USER_UNRESOLVED CATALOG_ABSENT VERIFICATION_REQUIRED_NOT_SELF_VERIFYING FLAG_NEEDS_INFO BODY_UNAVAILABLE BODY_DRIFT BODY_UNVERIFIED"
+
+# Code -> the `##` headings (`|`-separated, case-insensitive prefixes) the
+# deterministic check reads for it. A dispute's quote must occur in one of
+# them: VPLAN_* reads the Verification Plan table against the AC count,
+# AC_* reads the Acceptance Criteria (_dor_ac_lines), NAV_PATH_MISSING the
+# Navigation Path heading (_has_section_nav_path).
+declare -gA DOR_AUDIT_CODE_SECTIONS=(
+  [VPLAN_ROW_GAP]="Verification Plan|Acceptance Criteria"
+  [VPLAN_UNVERIFIABLE]="Verification Plan|Acceptance Criteria"
+  [AC_VAGUE]="Acceptance Criteria"
+  [AC_IMPLEMENTATION_ONLY]="Acceptance Criteria"
+  [NAV_PATH_MISSING]="Navigation Path"
+)
 
 _dor_semantic_in_list() {
   case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac
@@ -255,9 +291,24 @@ _dor_semantic_structural_codes() {
   printf '%s\n' $codes
 }
 
+# _dor_audit_demotable_codes — the effective audit-demotable list
+# (DOR_AUDIT_DEMOTABLE_CODES, or the default when unset/empty), one per line.
+_dor_audit_demotable_codes() {
+  local codes="${DOR_AUDIT_DEMOTABLE_CODES:-$DOR_AUDIT_DEMOTABLE_CODES_DEFAULT}"
+  # shellcheck disable=SC2086
+  printf '%s\n' $codes
+}
+
+# _dor_audit_never_demote <code> — true when <code> is in
+# DOR_AUDIT_NEVER_DEMOTE or is any SEMANTIC_* code.
+_dor_audit_never_demote() {
+  case "$1" in SEMANTIC_*) return 0 ;; esac
+  _dor_semantic_in_list "$1" "$DOR_AUDIT_NEVER_DEMOTE"
+}
+
 # _dor_semantic_policy — prints the policy snapshot stored in
-# ready.lineage.policy, and warns on stderr when the structural list differs
-# from the default (D2).
+# ready.lineage.policy, and warns on stderr when the structural list (D2) or
+# the audit-demotable list (D5) differs from its default.
 _dor_semantic_policy() {
   local eff def overridden="false" max share drift="false"
   eff=$(_dor_semantic_structural_codes | sort -u | tr '\n' ' ')
@@ -272,10 +323,21 @@ _dor_semantic_policy() {
   share="${DOR_SEMANTIC_ROUND_RESET_SHARE:-0.5}"
   [[ "$share" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]] || share="0.5"
   [ "${DOR_SEMANTIC_DRIFT_DEMOTE:-false}" = "true" ] && drift="true"
+  local aeff adef aover="false" alist
+  aeff=$(_dor_audit_demotable_codes | sort -u | tr '\n' ' ')
+  # shellcheck disable=SC2086
+  adef=$(printf '%s\n' $DOR_AUDIT_DEMOTABLE_CODES_DEFAULT | sort -u | tr '\n' ' ')
+  if [ "$aeff" != "$adef" ]; then
+    aover="true"
+    echo "dor-semantic: policy override: DOR_AUDIT_DEMOTABLE_CODES='$(_dor_audit_demotable_codes | tr '\n' ' ' | sed 's/ $//')' (default '${DOR_AUDIT_DEMOTABLE_CODES_DEFAULT}')" >&2
+  fi
+  alist=$(_dor_audit_demotable_codes | jq -R . | jq -sc .)
   _dor_semantic_structural_codes | jq -R . | jq -sc \
     --argjson overridden "$overridden" --arg max "$max" --argjson share "$share" \
     --argjson drift "$drift" --arg inert "${DOR_SEMANTIC_INERT_SECTIONS-Related Tickets}" \
+    --argjson alist "$alist" --argjson aover "$aover" \
     '{structural: ., overridden: $overridden, drift_demote: $drift,
+      audit_demotable: $alist, audit_demotable_overridden: $aover,
       max_rounds: (if $max == "" then null else ($max | tonumber) end),
       round_reset_share: $share,
       inert: ($inert | split("|") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")))}'
@@ -599,6 +661,121 @@ dor_semantic_migrate_v2() {
   return 0
 }
 
+# _dor_audit_quote_in_sections <body> <code> <quote> — true when the
+# match-normalised quote occurs in a unit (dor-check.sh _dor_section_records
+# units mode: one per AC item, one per other section, heading text excluded)
+# under one of DOR_AUDIT_CODE_SECTIONS[<code>]'s headings. A heading matches
+# case-insensitively by prefix, with a `#n` repeat suffix and a trailing `:`
+# ignored. An empty quote, or a code with no mapped sections, never matches.
+_dor_audit_quote_in_sections() {
+  local body="$1" code="$2" quote="$3" nq secs i head hl s
+  nq=$(_dor_semantic_match_norm "$quote")
+  [ -n "$nq" ] || return 1
+  secs="${DOR_AUDIT_CODE_SECTIONS[$code]:-}"
+  [ -n "$secs" ] || return 1
+  local -a heads
+  IFS='|' read -r -a heads <<<"$secs"
+  _dor_unit_index "$body"
+  for i in "${!_DOR_UI_KEYS[@]}"; do
+    [[ "${_DOR_UI_TEXTS[$i]}" == *"$nq"* ]] || continue
+    head="${_DOR_UI_KEYS[$i]%%/ac:*}"
+    if [[ "$head" =~ ^(.*)#[0-9]+$ ]]; then head="${BASH_REMATCH[1]}"; fi
+    head="${head%:}"
+    hl=$(printf '%s' "$head" | tr '[:upper:]' '[:lower:]')
+    for s in "${heads[@]}"; do
+      s=$(printf '%s' "$s" | tr '[:upper:]' '[:lower:]')
+      [ -n "$s" ] || continue
+      if [[ "$hl" == "$s"* ]]; then return 0; fi
+    done
+  done
+  return 1
+}
+
+# dor_audit_demote <TID> <body-file>
+# planner-refinement-convergence D5, shipped dark — the planner calls it only
+# under PLANNER_REFINEMENT_AUDIT_DEMOTE=true. Demotes deterministic codes the
+# stored audit disputed with evidence, through set_ticket_demotions.
+#
+# Only ready.lineage.first_audit counts, and only when its body_hash is the
+# body file's hash and ready.body_hash is that hash too: a retried or re-run
+# audit on the same body can never re-roll a dispute into a demotion. (The
+# audit JSON the caller just applied is deliberately not an argument.) An
+# entry qualifies when all of these hold:
+#   1. its verdict is `disputed`;
+#   2. its code is not never-demote (DOR_AUDIT_NEVER_DEMOTE or SEMANTIC_*,
+#      checked first) and is in the effective DOR_AUDIT_DEMOTABLE_CODES;
+#   3. the code is in ready.missing and not a key of ready.waived;
+#   4. its `quote` (AUDIT_n_QUOTE) occurs in one of the code's own sections
+#      (DOR_AUDIT_CODE_SECTIONS, _dor_audit_quote_in_sections).
+# A code disputed twice counts once. With 1..DOR_AUDIT_DEMOTE_MAX (default 2;
+# anything but a positive integer means 2) qualifying codes, all are demoted
+# — `{by: "dor-semantic-audit", reason, quote, body_hash, evaluator}` — and
+# each is printed on its own stdout line. More than the cap demotes none:
+# a blanket dispute is not evidence. Exit 0 (including nothing to demote),
+# 4 over the cap (qualifying codes named on stderr), 1 no body file, no
+# manifest or no ready verdict, 3 propagated from set_ticket_demotions.
+dor_audit_demote() {
+  local tid="$1" body_file="$2"
+  [ -f "$body_file" ] || {
+    echo "dor-semantic: body file not found: $body_file" >&2
+    return 1
+  }
+  local ready
+  ready=$(get_ticket_manifest_field "$tid" ready 2>/dev/null) || return 1
+  if [ -z "$ready" ] || [ "$ready" = "null" ]; then
+    echo "dor-semantic: ticket $tid has no ready verdict" >&2
+    return 1
+  fi
+
+  local body hash
+  body=$(cat "$body_file")
+  hash=$(_dor_body_hash "$body")
+  if ! echo "$ready" | jq -e --arg h "$hash" \
+    '.body_hash == $h and ((.lineage.first_audit.body_hash // null) == $h)' >/dev/null 2>&1; then
+    echo "dor-semantic: no first audit for $tid's current body — nothing to demote" >&2
+    return 0
+  fi
+
+  local max="${DOR_AUDIT_DEMOTE_MAX:-2}"
+  [[ "$max" =~ ^[1-9][0-9]*$ ]] || max=2
+  local demotable
+  demotable=$(_dor_audit_demotable_codes | tr '\n' ' ')
+
+  local evaluator n i code quote reason codes=() quotes=() reasons=()
+  evaluator=$(echo "$ready" | jq -r '.lineage.first_audit.evaluator // ""')
+  n=$(echo "$ready" | jq '[.lineage.first_audit.audit[]? | select(.verdict == "disputed")] | length' 2>/dev/null) || n=0
+  for ((i = 0; i < n; i++)); do
+    code=$(echo "$ready" | jq -r "[.lineage.first_audit.audit[] | select(.verdict == \"disputed\")][$i].code // \"\"")
+    quote=$(echo "$ready" | jq -r "[.lineage.first_audit.audit[] | select(.verdict == \"disputed\")][$i].quote // \"\"")
+    reason=$(echo "$ready" | jq -r "[.lineage.first_audit.audit[] | select(.verdict == \"disputed\")][$i].reason // \"\"")
+    [ -n "$code" ] || continue
+    if _dor_audit_never_demote "$code"; then continue; fi
+    _dor_semantic_in_list "$code" "$demotable" || continue
+    _dor_semantic_in_list "$code" "${codes[*]:-}" && continue
+    echo "$ready" | jq -e --arg c "$code" \
+      '((.missing // []) | index($c) != null) and (((.waived // {}) | has($c)) | not)' >/dev/null 2>&1 || continue
+    _dor_audit_quote_in_sections "$body" "$code" "$quote" || continue
+    codes+=("$code")
+    quotes+=("$quote")
+    reasons+=("${reason:-audit dispute}")
+  done
+
+  [ "${#codes[@]}" -gt 0 ] || return 0
+  if [ "${#codes[@]}" -gt "$max" ]; then
+    echo "dor-semantic: audit demotion refused for $tid: ${#codes[@]} qualifying disputes (${codes[*]}) exceed DOR_AUDIT_DEMOTE_MAX=${max}" >&2
+    return 4
+  fi
+
+  local demotions="{}"
+  for i in "${!codes[@]}"; do
+    demotions=$(echo "$demotions" | jq -c --arg c "${codes[$i]}" --arg q "${quotes[$i]}" \
+      --arg r "${reasons[$i]}" --arg h "$hash" --arg e "$evaluator" \
+      '. + {($c): {by: "dor-semantic-audit", reason: $r, quote: $q, body_hash: $h, evaluator: $e}}') || return 1
+  done
+  set_ticket_demotions "$tid" "$demotions" || return $?
+  printf '%s\n' "${codes[@]}"
+}
+
 # dor_semantic_prompt scan|audit <TID> <body-file> <result-file> [<det-result-file>]
 # Builds the agent prompt (design.md Decision 5) — printf %s for the data
 # section, single-quoted heredocs for the instructions (the phase-inspector.
@@ -748,6 +925,7 @@ BODY_HASH: <the **Body hash** value above, copied exactly — do not compute or 
 AUDIT_1_CODE: <a code from the deterministic result>
 AUDIT_1_VERDICT: agree|disputed|uncertain
 AUDIT_1_REASON: <required when VERDICT is disputed — must cite ticket text>
+AUDIT_1_QUOTE: <disputed only — the ticket text that shows the code is wrong, copied verbatim (single line) from the section the code is about>
 MISSED_1_CODE: <a semantic code you believe should have fired but didn't>
 MISSED_1_REASON: <one line>
 SCORE_PLAUSIBLE: yes|no
@@ -756,6 +934,13 @@ SCORE_REASON: <one line, judging the deterministic dor_quality_score if present>
 
 Number AUDIT_n and MISSED_n entries independently, each starting at 1. Omit
 MISSED_n entirely when you have nothing to add.
+
+AUDIT_n_QUOTE is optional and belongs only on a disputed entry. Copy it
+verbatim from the section the code checks: the Acceptance Criteria for an
+AC_* code, the Verification Plan or the Acceptance Criteria for a VPLAN_*
+code, the Navigation Path for NAV_PATH_MISSING. A quote from any other
+section, or one not found in the body, does not support the dispute. Omit
+AUDIT_n_QUOTE when no single line of the ticket shows the code is wrong.
 
 Then return exactly one line: DOR_SEMANTIC audit written <result-file path>
 DORAUDIT
