@@ -290,7 +290,7 @@ halt_fixture_run() {
           [ -n "$_tid" ] && NEEDS_PASS+=("$_tid")
         done < <(planner_refinement_scan "$INITIATIVE_ID")
         if planner_refinement_gate "$INITIATIVE_ID"; then
-          :
+          planner_refinement_advisory_summary "$INITIATIVE_ID"
         else
           echo "Refinement halted — one or more tickets are not ready."
           echo ""

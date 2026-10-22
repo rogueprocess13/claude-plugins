@@ -341,6 +341,8 @@ declare -A FIXTURE_TYPE=(
   ["20-unsourced-legacy.md"]=feature ["21-unsourced-contract.md"]=feature ["22-sourced-contract.md"]=feature
   ["23-planned-contract-unsourced.md"]=feature
   ["24-contract-no-test-data.md"]=feature ["25-td-chore.md"]=chore
+  ["26-contract-implied-miss.md"]=feature ["27-planned-all-none-miss.md"]=feature
+  ["28-threshold-only-none.md"]=feature
 )
 declare -A FIXTURE_STATUS=(
   ["01-excellent.md"]=ready ["02-minimal.md"]=ready ["03-missing-intent.md"]=not-ready
@@ -353,6 +355,8 @@ declare -A FIXTURE_STATUS=(
   ["20-unsourced-legacy.md"]=ready ["21-unsourced-contract.md"]=not-ready ["22-sourced-contract.md"]=ready
   ["23-planned-contract-unsourced.md"]=not-ready
   ["24-contract-no-test-data.md"]=not-ready ["25-td-chore.md"]=ready
+  ["26-contract-implied-miss.md"]=ready ["27-planned-all-none-miss.md"]=ready
+  ["28-threshold-only-none.md"]=ready
 )
 declare -A FIXTURE_HARD=(
   ["03-missing-intent.md"]=INTENT_MISSING ["05-vague-ac.md"]=AC_VAGUE ["07-fe-no-test-user.md"]=TEST_USER_MISSING
@@ -1389,6 +1393,39 @@ check_ticket_ready "TDD-25-NOTDP" --body "$tdd_chore_notdp" --type chore --no-fe
 [ "$rc" = "0" ] && ! echo "$DOR_MISSING" | jq -e 'index("TEST_DATA_MISSING") != null' >/dev/null &&
   _pass "test-data chore with no Test Data Prerequisites section is still ready" ||
   _fail "test-data chore without the section should be ready (rc=$rc missing=$DOR_MISSING)"
+
+# ── Scenario: the heuristic-miss fixtures the deterministic check cannot see
+# (dor-semantic-test-data-gap). Each is ready even under the strict flags
+# Refinement passes, which is why the semantic TEST_DATA_GAP backstop exists.
+# Fixture 26 carries a Source (a contract body); fixture 27, the composer's
+# all-none shape, carries none and is therefore a legacy body.
+for td_fx in 26-contract-implied-miss 27-planned-all-none-miss 28-threshold-only-none; do
+  rc=0
+  DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true \
+    check_ticket_ready "TDG-$td_fx" --body "$FIXTURES_DIR/$td_fx.md" --type feature --no-fetch || rc=$?
+  [ "$rc" = "0" ] && [ "$DOR_MISSING" = "[]" ] &&
+    _pass "fixture $td_fx: ready under DOR_STRICT_TEST_DATA/DOR_STRICT_VPLAN" ||
+    _fail "fixture $td_fx should be ready under the strict flags (rc=$rc missing=$DOR_MISSING)"
+done
+
+td_src_contract="" td_src_total=0 td_src_unsourced=0 td_src_detail=""
+_dor_test_data_source_state "$(cat "$FIXTURES_DIR/27-planned-all-none-miss.md")" || true
+[ "$td_src_contract" = "false" ] &&
+  _pass "fixture 27: the all-none planner body is a legacy body (no Source contract)" ||
+  _fail "fixture 27 should be legacy (td_src_contract=$td_src_contract)"
+check_ticket_ready "TDG-27-codes" --body "$FIXTURES_DIR/27-planned-all-none-miss.md" --type feature --no-fetch || true
+if echo "$DOR_MISSING" | jq -e 'index("TEST_DATA_UNSOURCED") == null' >/dev/null &&
+  echo "$DOR_ADVISORY" | jq -e 'index("TEST_DATA_UNSOURCED") == null' >/dev/null; then
+  _pass "fixture 27: no TEST_DATA_UNSOURCED, hard or advisory"
+else
+  _fail "fixture 27 should carry no TEST_DATA_UNSOURCED (missing=$DOR_MISSING advisory=$DOR_ADVISORY)"
+fi
+
+td_src_contract="" td_src_total=0 td_src_unsourced=0 td_src_detail=""
+_dor_test_data_source_state "$(cat "$FIXTURES_DIR/26-contract-implied-miss.md")" || true
+[ "$td_src_contract" = "true" ] &&
+  _pass "fixture 26: one sourced item makes it a contract body" ||
+  _fail "fixture 26 should be a contract body (td_src_contract=$td_src_contract)"
 
 # ── Scenario: every shipped template satisfies INTENT (dor-template-intent-
 # and-nav-path) ───────────────────────────────────────────────────────────

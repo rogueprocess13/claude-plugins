@@ -2133,7 +2133,9 @@ terminal phase (${_pos} of ${_count}). No further transitions are permitted afte
    - **Warnings** — anything the operator should know (e.g., tickets that
      failed validation and were skipped; any \`META|crosscheck|accepted\` entry
      in the state log — report the code and the operator's reason, same as an
-     automated Crosscheck pass or fail)
+     automated Crosscheck pass or fail; every \`META|refinement-testdata|warn\`
+     entry — the ticket, the quoted criterion and the missing data. These are
+     advisory and never blocked the run)
 3. Record the terminal state log entry.
 
 ## State log
