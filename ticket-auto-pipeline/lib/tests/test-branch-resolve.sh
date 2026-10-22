@@ -970,6 +970,87 @@ test_manifest_resolve_uat_policy_zero_fetch() {
 }
 _run "resolve_uat_policy: zero-fetch when both ticket and epic manifests exist" test_manifest_resolve_uat_policy_zero_fetch
 
+# ── Planner layout (GitHub #524) ────────────────────────────────────────────
+# ticket-planner's EpicGen writes the epic manifest under the epic's
+# IDENTIFIER (initiatives/<EPIC>/epic/manifest.json) and lists each child in
+# its children[]; TicketGen files children under initiatives/INIT-<n>/, and
+# get_issue's .parent.id is the tracker UUID. None of those three ids is the
+# epic manifest's directory name except the identifier, so every lookup that
+# keyed on .parent.id or the ticket's `initiative` field missed.
+
+_PL_UUID="0b49b633-0000-4000-8000-000000000001"
+
+_pl_seed() {
+  local root="$1"
+  REPOS_ROOT="$root" write_ticket_manifest "CRE-501" "INIT-1700000000-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$root" write_epic_manifest "CRE-500" "epic/planner-layout" "epic" "manual" '["CRE-501"]' >/dev/null
+}
+
+test_planner_layout_parent_identifier() {
+  local tmp
+  tmp=$(mktemp -d)
+  _pl_seed "$tmp"
+  local parent="{\"id\":\"$_PL_UUID\",\"identifier\":\"CRE-500\",\"description\":\"## Branch Directive\"}"
+  local output
+  output=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-501" \
+    --title "Planner child" --parent-json "$parent" 2>/dev/null)
+  rm -rf "$tmp"
+  eval "$(echo "$output" | _parse_result)"
+  [ "$BRANCH_SOURCE" = "epic-directive" ] || {
+    echo "  expected epic-directive, got $BRANCH_SOURCE" >&2
+    return 1
+  }
+  [ "$BASE_BRANCH" = "epic/planner-layout" ] && [ "$MERGE_POLICY" = "manual" ] &&
+    [ "$UAT_POLICY" = "epic" ] && [ "$EPIC_ID" = "CRE-500" ]
+}
+_run "resolve_branch_context: planner epic found via parent identifier, not UUID (#524)" test_planner_layout_parent_identifier
+
+test_planner_layout_uuid_only_children_scan() {
+  local tmp
+  tmp=$(mktemp -d)
+  _pl_seed "$tmp"
+  local output
+  output=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-501" \
+    --title "Planner child" --parent-json "{\"id\":\"$_PL_UUID\",\"description\":\"\"}" 2>/dev/null)
+  rm -rf "$tmp"
+  eval "$(echo "$output" | _parse_result)"
+  [ "$BRANCH_SOURCE" = "epic-directive" ] && [ "$MERGE_POLICY" = "manual" ] && [ "$EPIC_ID" = "CRE-500" ]
+}
+_run "resolve_branch_context: UUID-only parent resolves via epic children[] (#524)" test_planner_layout_uuid_only_children_scan
+
+test_planner_layout_merge_policy_standalone() {
+  local tmp
+  tmp=$(mktemp -d)
+  _pl_seed "$tmp"
+  get_issue() { return 1; }
+  local merge uat
+  merge=$(REPOS_ROOT="$tmp" resolve_merge_policy "CRE-501" 2>/dev/null)
+  uat=$(REPOS_ROOT="$tmp" resolve_uat_policy "CRE-501" 2>/dev/null)
+  rm -rf "$tmp"
+  [ "$merge" = "manual" ] || {
+    echo "  expected merge policy manual, got '$merge'" >&2
+    return 1
+  }
+  [ "$uat" = "epic" ] || {
+    echo "  expected uat policy epic, got '$uat'" >&2
+    return 1
+  }
+}
+_run "resolve_merge_policy/resolve_uat_policy: INIT-<n> child maps to its epic (#524)" test_planner_layout_merge_policy_standalone
+
+test_planner_layout_warns_on_unresolved_directive() {
+  local tmp err
+  tmp=$(mktemp -d)
+  err=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-777" --title "Orphan" \
+    --parent-json "{\"id\":\"$_PL_UUID\",\"identifier\":\"CRE-776\",\"description\":\"## Branch Directive\\n**Branch:** epic/x\"}" 2>&1 >/dev/null)
+  rm -rf "$tmp"
+  echo "$err" | grep -q "WARN" || {
+    echo "  expected a WARN on stderr, got '$err'" >&2
+    return 1
+  }
+}
+_run "resolve_branch_context: WARN when parent has a directive but no epic manifest (#524)" test_planner_layout_warns_on_unresolved_directive
+
 echo ""
 echo "=== Results: $((PASS + FAIL)) tests, $PASS passed, $FAIL failed ==="
 

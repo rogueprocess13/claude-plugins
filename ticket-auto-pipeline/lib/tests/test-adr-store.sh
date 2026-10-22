@@ -26,6 +26,14 @@ _run() {
   fi
 }
 
+# _adr_unlock must not redirect the caller shell's own stderr: a bare
+# `exec 9>&- 2>/dev/null` sends every later stderr write to /dev/null.
+test_unlock_keeps_caller_stderr() {
+  local err
+  err=$(bash -c 'source "$1"; _adr_unlock; echo stderr-alive >&2' _ "$STORE" 2>&1 >/dev/null)
+  [ "$err" = "stderr-alive" ]
+}
+
 _ws=""
 _wiki=""
 _setup() {
@@ -253,7 +261,8 @@ for t in test_first_adr_numbering test_gap_tolerant_numbering test_exists_true \
   test_exists_false test_exists_after_title_change test_index_regeneration \
   test_index_reflects_status_change test_concurrent_write_race \
   test_accept_refused_in_agent_context test_invalid_transition_rejected \
-  test_auto_supersede_on_accept test_query_by_component; do
+  test_auto_supersede_on_accept test_query_by_component \
+  test_unlock_keeps_caller_stderr; do
   if [ -n "$FILTER" ] && [[ "$t" != *"$FILTER"* ]]; then continue; fi
   _run "$t" "$t"
 done

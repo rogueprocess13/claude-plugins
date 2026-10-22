@@ -91,6 +91,7 @@ resolve_branch_context() {
 
   local title="$inline_title"
   local parent_id=""
+  local parent_identifier=""
   local parent_description=""
   # Kept even if parent_id is cleared by a --branch override below — UAT/merge
   # policy is a property of the epic and must resolve regardless of which
@@ -113,15 +114,26 @@ resolve_branch_context() {
 
     title=$(echo "$issue_json" | jq -r '.title // ""')
     parent_id=$(echo "$issue_json" | jq -r '.parent.id // ""')
+    parent_identifier=$(echo "$issue_json" | jq -r '.parent.identifier // ""')
     parent_description=$(echo "$issue_json" | jq -r '.parent.description // ""')
   else
     # Extract parent info from inline JSON
     if [ -n "$inline_parent_json" ]; then
       parent_id=$(echo "$inline_parent_json" | jq -r '.id // ""')
+      parent_identifier=$(echo "$inline_parent_json" | jq -r '.identifier // ""')
       parent_description=$(echo "$inline_parent_json" | jq -r '.description // ""')
     fi
   fi
-  epic_ref="$parent_id"
+  # GitHub #524: the epic manifest lives under the epic's IDENTIFIER, while
+  # .parent.id is the tracker UUID and a planner child's `initiative` is
+  # INIT-<n> — neither names the manifest directory. resolve_ticket_epic
+  # tries the identifier, then the UUID, then the ticket's initiative, then
+  # the epic whose children[] lists this ticket. Only consulted for a ticket
+  # with a tracker parent, so a parentless ticket keeps resolving to default.
+  if [ -n "$parent_id$parent_identifier" ] && declare -f resolve_ticket_epic >/dev/null 2>&1; then
+    epic_ref=$(resolve_ticket_epic "$ticket_id" "$parent_identifier" "$parent_id" 2>/dev/null) || epic_ref=""
+  fi
+  [ -n "$parent_id" ] || parent_id="$parent_identifier"
 
   # ── Generate ticket branch name ───────────────────────────────────────────
   local ticket_branch
@@ -163,6 +175,11 @@ resolve_branch_context() {
       base_branch="$_EBD_BRANCH"
       integration_branch="$_EBD_BRANCH"
       branch_source="epic-directive"
+    elif [ -z "$epic_ref" ] && printf '%s' "$parent_description" | grep -q '## Branch Directive'; then
+      # #524: a parent that carries a directive but has no resolvable epic
+      # manifest used to fall to default silently, branching children off
+      # the base and dropping the epic's Merge Policy.
+      echo "branch-resolve: WARN parent ${parent_identifier:-$parent_id} has a Branch Directive but no epic manifest was found for $ticket_id — falling back to default (run manifest-backfill.sh)" >&2
     fi
   fi
 
@@ -195,7 +212,7 @@ BRANCH_CONTEXT_RESULT
   TICKET_BRANCH:        ${ticket_branch}
   BASE_BRANCH:          ${base_branch}
   INTEGRATION_BRANCH:   ${integration_branch:-}
-  EPIC_ID:              ${parent_id:-}
+  EPIC_ID:              ${parent_id:+${epic_ref:-${parent_identifier:-$parent_id}}}
   BRANCH_SOURCE:        ${branch_source}
   UAT_POLICY:           ${uat_policy}
   MERGE_POLICY:         ${merge_policy}
@@ -220,9 +237,13 @@ resolve_uat_policy() {
   # fetch fallback. A ticket with no manifest (or no initiative field) has
   # no resolvable parent here and reports the 'per-ticket' default, same as
   # a ticket whose epic has no directive.
+  # #524: the `initiative` field is INIT-<n> for a planner child, which has
+  # no epic/ of its own — resolve_ticket_epic maps it to the epic whose
+  # children[] lists the ticket (and still accepts an initiative that is
+  # itself an epic).
   local parent_id=""
-  if declare -f get_ticket_manifest_field >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
-    parent_id=$(get_ticket_manifest_field "$ticket_id" initiative 2>/dev/null)
+  if declare -f resolve_ticket_epic >/dev/null 2>&1; then
+    parent_id=$(resolve_ticket_epic "$ticket_id" 2>/dev/null) || parent_id=""
   fi
 
   _epic_branch_directive "$parent_id" >/dev/null 2>&1 || true
@@ -243,9 +264,13 @@ resolve_merge_policy() {
   local ticket_id="$1"
 
   # Zero-fetch path — see resolve_uat_policy above.
+  # #524: the `initiative` field is INIT-<n> for a planner child, which has
+  # no epic/ of its own — resolve_ticket_epic maps it to the epic whose
+  # children[] lists the ticket (and still accepts an initiative that is
+  # itself an epic).
   local parent_id=""
-  if declare -f get_ticket_manifest_field >/dev/null 2>&1 && ticket_manifest_exists "$ticket_id" 2>/dev/null; then
-    parent_id=$(get_ticket_manifest_field "$ticket_id" initiative 2>/dev/null)
+  if declare -f resolve_ticket_epic >/dev/null 2>&1; then
+    parent_id=$(resolve_ticket_epic "$ticket_id" 2>/dev/null) || parent_id=""
   fi
 
   _epic_branch_directive "$parent_id" >/dev/null 2>&1 || true
