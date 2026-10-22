@@ -2749,6 +2749,53 @@ test_check27e_fires_on_needs_info_flag_alone() {
   }
 }
 
+# dor-template-intent-and-nav-path: a planned feature whose only nav evidence
+# is the Verification Plan's "Navigation path" column header now gate-stops
+# at the entry gate (2.7c). The header is not a click path.
+_header_only_nav_planned_body='## Acceptance Criteria
+- [ ] Save button works
+
+## Test User
+`admin` — password `admin`
+
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| FE    | gateway | page |
+
+## Test Data Prerequisites
+None — no acceptance criterion needs test data.
+
+## Verification Plan
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|---|---|---|---|---|---|
+| 1 | Save button works | admin |  | none | saved | ✓ |
+'
+
+test_check27c_header_only_nav_gate_stops_planned_body_incomplete() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _fake_issue=$(jq -n --arg desc "$_header_only_nav_planned_body" '{id:"CRE-47",identifier:"CRE-47",title:"Test",description:$desc,labels:{nodes:[]}}')
+
+  local repos_root
+  repos_root=$(mktemp -d)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "CRE-47" "INIT-1" "feature" '[]' >/dev/null
+  REPOS_ROOT="$repos_root" set_ticket_readiness "CRE-47" "ready" '[]' '[]' >/dev/null
+
+  local rc=0
+  REPOS_ROOT="$repos_root" _gate_entry >/dev/null 2>&1 || rc=$?
+
+  local gate_stop
+  gate_stop=$(grep '|META|gate-stop|fail|PLANNED_BODY_INCOMPLETE' "$LOG_FILE" 2>/dev/null || true)
+
+  rm -rf "$repos_root"
+  _teardown
+  [ "$rc" -eq 2 ] && echo "$gate_stop" | grep -q "Navigation Path" || {
+    echo "expected PLANNED_BODY_INCOMPLETE naming Navigation Path with exit 2 — rc=$rc got: $gate_stop"
+    return 1
+  }
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # --mode planned: pre-APPRAISE fail-fast (issue #410)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2975,6 +3022,7 @@ for fn in \
   test_check27e_ready_planned_ticket_passes \
   test_check27e_never_fires_for_adhoc_even_with_not_ready_cache \
   test_check27e_fires_on_needs_info_flag_alone \
+  test_check27c_header_only_nav_gate_stops_planned_body_incomplete \
   test_planned_mode_incomplete_body_gate_stops_before_appraise \
   test_planned_mode_not_ready_gate_stops_before_appraise \
   test_planned_mode_complete_body_passes \

@@ -283,15 +283,60 @@ _scope_is_backend_only() {
   esac
 }
 
-# _has_section_nav_path <body> — true if body has a navigation path
+# _has_section_nav_path <body> — true (exit 0) only when the body carries
+# real evidence of a click path. Accepted evidence, any one of:
+#   1. A `## Navigation Path` (or `###`, optional trailing colon) heading
+#      followed, before the next `#` heading, by at least one line that is
+#      not a placeholder. Placeholder lines: blank, bare TBD/TODO/N/A/none,
+#      a lone `{...}` token, or a lone dash/bullet/rule (`-`, `---`, `*`,
+#      `_`, en/em dash), optionally followed by one of those bare markers
+#      (`- TBD`).
+#   2. A `**Navigation Path:**` (or `**Navigation Path**:`) label followed by
+#      text on the same line.
+#   3. A backticked click path: `A > B` (optionally `A > B > C`).
+#   4. A pipe-table row whose `Navigation path` column cell contains ` > `.
+#      The column index comes from the header row and is forgotten on every
+#      line that does not start with `|`, so a later unrelated table's
+#      same-numbered column never counts.
+# The bare phrase "navigation path" does NOT count anywhere — in particular
+# the planner Verification Plan's `Navigation path` column header alone is
+# not a path. All patterns are fixed literals; no caller text reaches awk
+# or grep as a regex.
 _has_section_nav_path() {
-  local body="$1"
-  # Navigation Path heading OR explicit click-path notation
-  if echo "$body" | grep -qiP '(navigation path|##\s*Navigation Path|\*\*Navigation Path:?\*\*)' 2>/dev/null; then
+  local body="$1" content
+  # Rule 1 — heading with non-placeholder content.
+  content=$(echo "$body" | awk '
+    { line = tolower($0) }
+    line ~ /^###?[[:space:]]*navigation path:?[[:space:]]*$/ { f=1; next }
+    f && /^#/ { f=0 }
+    f { print }
+  ' | grep -vP '^\s*((-|\*|_|–|—)+\s*)?(\{[^}]*\}|TBD|TODO|N/?A|none)?\s*$' 2>/dev/null || true)
+  if [ -n "$content" ]; then
     return 0
   fi
-  # Menu > Submenu > Page pattern
+  # Rule 2 — inline bold label with text after it.
+  if echo "$body" | grep -qiP '\*\*Navigation Path:?\*\*:?\s*\S' 2>/dev/null; then
+    return 0
+  fi
+  # Rule 3 — backticked Menu > Submenu > Page click path.
   if echo "$body" | grep -qiP '`[^`]+ > [^`]+( > [^`]+)*`' 2>/dev/null; then
+    return 0
+  fi
+  # Rule 4 — a `Navigation path` table column whose data cell holds A > B.
+  if echo "$body" | awk -F'|' '
+    !/^[[:space:]]*\|/ { col = 0; next }
+    {
+      hdr = 0
+      for (i = 1; i <= NF; i++) {
+        c = tolower($i)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", c)
+        if (c == "navigation path") { col = i; hdr = 1 }
+      }
+      if (hdr) next
+    }
+    col && index($col, " > ") { ok = 1; exit }
+    END { exit !ok }
+  '; then
     return 0
   fi
   return 1

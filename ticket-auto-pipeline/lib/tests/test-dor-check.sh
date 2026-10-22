@@ -1390,6 +1390,102 @@ check_ticket_ready "TDD-25-NOTDP" --body "$tdd_chore_notdp" --type chore --no-fe
   _pass "test-data chore with no Test Data Prerequisites section is still ready" ||
   _fail "test-data chore without the section should be ready (rc=$rc missing=$DOR_MISSING)"
 
+# ── Scenario: every shipped template satisfies INTENT (dor-template-intent-
+# and-nav-path) ───────────────────────────────────────────────────────────
+# A template used verbatim fails INTENT by design ({...} tokens are
+# placeholders), so each token is replaced with distinct filler — one shared
+# string would trip the Summary-Jaccard restatement rule. Only INTENT is
+# asserted: other codes (e.g. NAV_PATH_MISSING on bug/security, whose
+# backticked path is replaced by filler) fail on filler text by design.
+TEMPLATES_DIR="$LIB_DIR/../templates"
+_render_template() {
+  awk 'f { while (match($0, /\{[^}]*\}/)) { n++; $0 = substr($0, 1, RSTART - 1) "filler" n " alpha" n " beta" n " gamma" n substr($0, RSTART + RLENGTH) } print } /^---$/ { f = 1 }' "$1"
+}
+_intent_ok() {
+  local id="$1" file="$2" type="$3"
+  check_ticket_ready "$id" --body "$file" --type "$type" --no-fetch >/dev/null 2>&1 || true
+  ! echo "$DOR_MISSING" | jq -e 'index("INTENT_MISSING") != null' >/dev/null
+}
+for tpl_type in feature improvement chore security bug; do
+  tpl_file="$TMP_ROOT/tpl-$tpl_type.md"
+  _render_template "$TEMPLATES_DIR/$tpl_type.md" >"$tpl_file"
+  _intent_ok "TPL-$tpl_type" "$tpl_file" "$tpl_type" &&
+    _pass "template $tpl_type filled under its own headings passes INTENT" ||
+    _fail "template $tpl_type should pass INTENT (missing=$DOR_MISSING)"
+done
+
+# US spelling of the improvement outcome heading is accepted too.
+tpl_us="$TMP_ROOT/tpl-improvement-us.md"
+_render_template "$TEMPLATES_DIR/improvement.md" | sed 's/^## Desired Behaviour$/## Desired Behavior/' >"$tpl_us"
+grep -q '^## Desired Behavior$' "$tpl_us" && _intent_ok "TPL-improvement-us" "$tpl_us" improvement &&
+  _pass "improvement with US-spelled '## Desired Behavior' passes INTENT" ||
+  _fail "US-spelled Desired Behavior should pass INTENT (missing=$DOR_MISSING)"
+
+# A non-bug body with only a Summary still fails INTENT.
+tpl_summary_only="$TMP_ROOT/tpl-summary-only.md"
+_write_body "$tpl_summary_only" '## Summary
+Implement password reset.
+'
+! _intent_ok "TPL-SUMMARY-ONLY" "$tpl_summary_only" feature &&
+  _pass "summary-only body still fails INTENT" ||
+  _fail "summary-only body should fail INTENT (missing=$DOR_MISSING)"
+
+# ── Scenario: Verification Plan column header is not a navigation path ──
+
+nav_base='## Summary
+Lock a completed period so its documents cannot change.
+
+## Background / Motivation
+Firm admins edit periods after sign-off, which breaks the audit trail they hand to regulators.
+
+## Proposed Behaviour
+An admin can lock a completed period; while locked, its documents are read-only for every role.
+
+## Acceptance Criteria
+- [ ] Locking a completed period shows the period as Locked
+
+## Test User
+`admin` — password `admin`
+
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| FE    | gateway | period-detail |
+'
+nav_vplan_empty='
+## Verification Plan
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|---|---|---|---|---|---|
+| 1 | Lock a completed period | firm admin |  | 1 completed period | period shows Locked | ✓ |
+'
+nav_vplan_filled='
+## Verification Plan
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|---|---|---|---|---|---|
+| 1 | Lock a completed period | firm admin | Clients > Matters > Period detail | 1 completed period | period shows Locked | ✓ |
+'
+nav_file="$TMP_ROOT/nav-header-only.md"
+_write_body "$nav_file" "$nav_base$nav_vplan_empty"
+check_ticket_ready "NAV-HDR" --body "$nav_file" --type feature --no-fetch >/dev/null 2>&1 || true
+echo "$DOR_MISSING" | jq -e 'index("NAV_PATH_MISSING") != null' >/dev/null &&
+  _pass "FE body whose only nav evidence is the Verification Plan column header → NAV_PATH_MISSING" ||
+  _fail "column header alone should fire NAV_PATH_MISSING (got $DOR_MISSING)"
+
+_write_body "$nav_file" "$nav_base
+## Navigation Path
+Clients > Matters > Period detail
+$nav_vplan_empty"
+check_ticket_ready "NAV-HEAD" --body "$nav_file" --type feature --no-fetch >/dev/null 2>&1 || true
+echo "$DOR_MISSING" | jq -e 'index("NAV_PATH_MISSING") == null' >/dev/null &&
+  _pass "FE body with a real ## Navigation Path section passes NAV_PATH_MISSING" ||
+  _fail "a real Navigation Path section should pass (got $DOR_MISSING)"
+
+_write_body "$nav_file" "$nav_base$nav_vplan_filled"
+check_ticket_ready "NAV-CELL" --body "$nav_file" --type feature --no-fetch >/dev/null 2>&1 || true
+echo "$DOR_MISSING" | jq -e 'index("NAV_PATH_MISSING") == null' >/dev/null &&
+  _pass "FE body with the path only in a Verification Plan cell passes NAV_PATH_MISSING" ||
+  _fail "a filled Verification Plan cell should pass (got $DOR_MISSING)"
+
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

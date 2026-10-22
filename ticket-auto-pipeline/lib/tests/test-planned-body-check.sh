@@ -321,6 +321,52 @@ None — no acceptance criterion needs test data."
 _run_check "feature with the composer's None line passes" 0 "" \
   "TEST-16c" "feature" "$FEATURE_NONE_TDP" "true"
 
+# 17. Navigation path evidence must be an actual click path
+# (dor-template-intent-and-nav-path). The bare phrase — including the
+# Verification Plan's "Navigation path" column header — never counts.
+_nav_yes() { _has_section_nav_path "$1"; }
+_nav_no() { ! _has_section_nav_path "$1"; }
+NAV_VPLAN_EMPTY='## Verification Plan
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|---|---|---|---|---|---|
+| 1 | Export | admin |  | none | CSV has 5 rows | ✓ |'
+NAV_VPLAN_NA='## Verification Plan
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|---|---|---|---|---|---|
+| 1 | Export | admin | n/a | none | CSV has 5 rows | ✓ |
+
+## Other table
+| a | b | c | d |
+|---|---|---|---|
+| 1 | 2 | 3 | x > y |'
+_run "nav: column header only is not a path" _nav_no "$NAV_VPLAN_EMPTY"
+_run "nav: prose mention is not a path" _nav_no 'The navigation path is TBD for now.'
+_run "nav: heading with only TBD is not a path" _nav_no $'## Navigation Path\n\nTBD\n\n## Notes\nnone'
+_run "nav: heading with only - is not a path" _nav_no $'## Navigation Path\n-\n## Notes\nx'
+_run "nav: heading with only --- is not a path" _nav_no $'## Navigation Path\n---\n## Notes\nx'
+_run "nav: heading with only '- TBD' is not a path" _nav_no $'## Navigation Path\n- TBD\n## Notes\nx'
+_run "nav: n/a cells plus another table's same column is not a path" _nav_no "$NAV_VPLAN_NA"
+_run "nav: real heading content is a path" _nav_yes $'## Navigation Path\nClients > Matters > Period detail'
+_run "nav: ### heading with content is a path" _nav_yes $'### Navigation Path\nClients > Matters'
+_run "nav: ## heading with trailing colon is a path" _nav_yes $'## Navigation Path:\nClients > Matters'
+_run "nav: bold label with text is a path" _nav_yes '**Navigation Path:** Clients > Matters'
+_run "nav: backticked click path is a path" _nav_yes 'Navigate via `Clients > Matters`'
+_run "nav: filled Verification Plan cell is a path" _nav_yes "${NAV_VPLAN_EMPTY/|  |/| Clients > Matters > Period detail |}"
+
+FEATURE_HEADER_ONLY_NAV='## Acceptance Criteria
+- [ ] Clicking Export downloads a CSV with 5 rows
+## Test User
+`admin@example.com` — password `admin`
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| FE    | gateway | handover-list |
+## Test Data Prerequisites
+- five handovers (Source: seeded-by:handover-test-data)
+'"$NAV_VPLAN_EMPTY"
+_run_check "feature with only the Navigation path column header fails" 1 "Navigation Path" \
+  "TEST-17" "feature" "$FEATURE_HEADER_ONLY_NAV" "true"
+
 # Cleanup
 rm -rf "$REPOS_ROOT/.ticket-auto"
 

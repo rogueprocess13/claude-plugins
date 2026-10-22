@@ -1092,7 +1092,7 @@ agents on 2026-10-11.
 
 ---
 
-## Step 11 — Test-data derivation + test-data-engineer persona — proposed 2026-10-21, not started
+## Step 11 — Test-data derivation + test-data-engineer persona — DONE 2026-10-22 (#526, #527 merged; archived). Live checks (group 9) deferred to next feature
 
 Goal: planner-cut tickets never reach a worker without test data. The planner inventories test
 data for the whole epic (Discovery), derives what each acceptance criterion needs (Specify), and
@@ -1106,12 +1106,12 @@ effects. Decided with the user: hybrid grouping (a need shared by 2 or more spec
 epic pack, a need one spec has goes into its own sibling ticket), and implied data is asked,
 defaulting to generate when headless.
 
-- [ ] 1. `test-data-engineer-persona` (ticket-auto-pipeline) — ships first. It adds:
+- [x] 1. (merged PR #526) `test-data-engineer-persona` (ticket-auto-pipeline) — ships first. It adds:
       - a base persona plus `testdata/{sql,api,ui-forms,files,factories}` specializers;
       - in `persona-select.sh`, a strong signal (the ticket is a TD ticket) that swaps the base
         persona, a weak keyword signal that adds the persona, and multi-channel selection;
       - additive `PERSONA_TESTDATA*` keys.
-- [ ] 2. `planner-test-data-derivation` (ticket-planner + ticket-auto-pipeline). It adds:
+- [x] 2. (merged PR #527) `planner-test-data-derivation` (ticket-planner + ticket-auto-pipeline). It adds:
       - a Test Data Inventory in Discovery, and per-criterion derivation in Specify;
       - `VERIFICATION_NOTES_MISSING` and a two-tier `TEST_DATA_IMPLIED`;
       - a `TESTDATA_CONFIRM` answer line in consensus.md, keyed by slug and hash;

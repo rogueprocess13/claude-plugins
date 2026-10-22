@@ -20,7 +20,7 @@ Each field maps to a specific pipeline phase:
 | ----- | ------- |
 | **Acceptance Criteria** (atomic checkboxes) | `ticket-verify` — each item becomes one browser assertion |
 | **Test User** | `ticket-verify` pre-flight — avoids fallback guessing |
-| **Navigation Path** (click-by-click) | `ticket-verify` — Angular loses session on direct URL navigation |
+| **Navigation Path** (click-by-click) | `ticket-verify` — Angular loses session on direct URL navigation. The readiness check needs a real click path here; the heading alone, a `TBD`, or a Verification Plan column header does not count |
 | **Scope table** | `ticket-appraise` — fires multi-service / cross-layer complexity axes |
 | **Steps to Reproduce** | `ticket-verify` — used verbatim during reproduction runs |
 | **Test Data Prerequisites** | `ticket-verify` pre-flight — gates whether the run can start |

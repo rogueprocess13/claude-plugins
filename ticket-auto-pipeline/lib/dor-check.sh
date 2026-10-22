@@ -192,8 +192,8 @@ _dor_section_content() {
   local body="$1" set_name="$2"
   local -a aliases=()
   case "$set_name" in
-  why) aliases=("Background / Motivation" "Motivation" "Problem" "Why" "Context") ;;
-  outcome) aliases=("Proposed Behaviour" "Proposed Changes" "Desired Outcome" "Goal") ;;
+  why) aliases=("Background / Motivation" "Motivation" "Problem" "Why" "Context" "Impact") ;;
+  outcome) aliases=("Proposed Behaviour" "Proposed Changes" "Desired Outcome" "Goal" "Desired Behaviour" "Desired Behavior") ;;
   expected) aliases=("Expected Behaviour") ;;
   actual) aliases=("Actual Behaviour") ;;
   summary) aliases=("Summary") ;;

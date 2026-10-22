@@ -80,8 +80,9 @@ _run_create() {
 _manifest() { echo "$T/repos/.ticket-auto/initiatives/_adhoc/tickets/$1/planner/manifest.json"; }
 
 # Feature body (FE scope) with its Navigation Path section removed. The
-# Verification Plan goes too: _has_section_nav_path also accepts its
-# "Navigation path" column header as evidence of a path.
+# Verification Plan goes too: its Navigation path cells hold a real click
+# path (Clients > Matters > Period detail), which _has_section_nav_path
+# accepts. The column header alone would not count.
 _feature_no_nav() {
   awk '/^## (Navigation Path|Verification Plan)/{skip=1; next} /^## /{skip=0} !skip' "$FIXTURES/business-lock-period.md"
 }

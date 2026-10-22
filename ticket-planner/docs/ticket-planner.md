@@ -203,7 +203,8 @@ ticket body is rendered in this order:
 2. `## Outcome` (Kind = business: `**Serves:**`, `**Who:**`, `**Need:**`, `**Outcome:**`)
    or `## Enables` (Kind = enabler: the outcome id it enables, or the technical reason).
 3. The type template's own why/outcome headings — `## Background / Motivation`,
-   `## Proposed Behaviour` / `## Proposed Changes`, `## Expected Behaviour` / `## Actual Behaviour`.
+   `## Motivation`, `## Impact`, `## Proposed Behaviour` / `## Proposed Changes` /
+   `## Desired Behaviour`, `## Expected Behaviour` / `## Actual Behaviour`.
 4. `## Technical Context` — files, routes, tables, symbols, line references, repository evidence.
 5. `## Acceptance Criteria` and the rest of the contract above.
 
