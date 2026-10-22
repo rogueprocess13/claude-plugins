@@ -428,6 +428,27 @@ EOF
   ' >/dev/null
 }
 
+test_json_reconcile_cycles_counts_each_cycle_once() {
+  # Agent line + router echo per cycle, split by a META line (defeats
+  # spawn_agent_post's last-line dup guard) — same rule as detect-resume.sh.
+  _setup
+  local log="$_ws/RS-8-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-09-01T00:00:00Z|META|schema|info|1
+2026-09-01T00:00:01Z|META|run-id|info|{"run_id":"RS-8-a","gen":null,"trigger":"manual","pid":1}
+2026-09-01T00:00:02Z|GATE|reconcile|done|cycle#1|held: open
+2026-09-01T00:00:03Z|META|tokens|info|GATE:1/2/3/4
+2026-09-01T00:00:04Z|GATE|reconcile|done|cycle#1 held: open
+2026-09-01T00:00:05Z|GATE|reconcile|done|cycle#2|held: still
+2026-09-01T00:00:06Z|META|tokens|info|GATE:1/2/3/4
+2026-09-01T00:00:07Z|GATE|reconcile|done|cycle#2 held: still
+EOF
+  local json
+  json=$(run_summary_json "RS-8" "$log" 0)
+  _teardown
+  echo "$json" | jq -e '.reconcile_cycles == 2' >/dev/null
+}
+
 # ── readiness_stops (readiness-as-evidence, dor-readiness-gate-foundation §9) ──
 
 test_json_readiness_stops_counts_gate_stop_codes_and_plan_missing_line() {
@@ -563,6 +584,7 @@ for fn in \
   test_json_does_not_inherit_pr_from_completed_earlier_run \
   test_json_token_split_summed_across_phases \
   test_json_empty_window_is_valid_json_with_zero_counters \
+  test_json_reconcile_cycles_counts_each_cycle_once \
   test_json_readiness_stops_counts_gate_stop_codes_and_plan_missing_line \
   test_json_readiness_stops_zero_on_a_run_with_no_readiness_evidence \
   test_json_detect_resume_not_sourced \
