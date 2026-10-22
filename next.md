@@ -1130,7 +1130,7 @@ defaulting to generate when headless.
       **Breaking (gates):** contract-shaped feature and improvement bodies without test data
       now fail readiness.
 - [ ] 3. Live verification, folded into Step 8's consolidated pass (tasks 9.1–9.4 of change 2).
-- [ ] 4. Follow-ups: a semantic DoR backstop for heuristic misses, and a grill-me test-data
+- [x] 4. Follow-ups: a semantic DoR backstop for heuristic misses, and a grill-me test-data
       dimension.
       - **dor-semantic half — implemented (advisory)** as `dor-semantic-test-data-gap` on
         `feat/dor-semantic-test-data-gap` (ticket-auto-pipeline 0.69.0, ticket-planner 0.22.0):
