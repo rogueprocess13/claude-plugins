@@ -30,7 +30,20 @@ Three things here are decisions rather than mechanics:
   lines in the pipeline log — and the pipeline log is what `detect-resume.sh`,
   the detectors and the OTel exporter all read. So the check runs against a
   scratch log, and its lines are appended to the real one only when the answer
-  changed: released, or gate-stopped.
+  changed: released, or gate-stopped. The scratch log starts as a copy of the
+  real one (#529): the gate reads the ticket's own artifact, autonomy and
+  complexity lines from the log it is handed, and an empty scratch made it
+  default every artifact to `simple-fix` and gate-stop every held complex
+  ticket on COMPLEXITY_ARTIFACT_MISMATCH. Only the lines the probe added
+  beyond that copy are returned.
+
+* **A gate-stop is recorded once per hold.** A `GATE_STOP` leaves the row
+  held — the ticket is waiting on a human either way — so without a guard
+  every later pass re-probed and re-appended the same gate-stop pair (#529:
+  ~350 times for one ticket). The supervisor's gate-stop marker names the
+  hold's `hold_id` (`gate_stop_marker_msg`), and `reconcile_hold` skips the
+  probe entirely while a marker for this hold, written at or after its
+  `held_at`, is in the log.
 
 * **A gate that could not run is not a gate that held.** `UNAVAILABLE` is a
   fourth result alongside `release`/`hold`/`gate-stop`, returned for a probe
@@ -141,12 +154,16 @@ def is_due(last_run_epoch, now=None, interval=None):
     return (now - last_run_epoch) >= interval
 
 
-def run_entry_gate(tid, hb_log_file='', lib_dir=None, timeout=120):
+def run_entry_gate(tid, hb_log_file='', lib_dir=None, timeout=120,
+                   log_file=''):
     """Run `gate-check.sh --mode entry` against a scratch log.
 
-    Returns `(exit_code, log_lines)` — the lines the gate wanted to write. The
-    caller decides whether they reach the real pipeline log; see the module
-    docstring on why a no-change poll must stay silent.
+    The scratch log is seeded with a copy of `log_file` (the ticket's real
+    pipeline log) so the gate evaluates the same facts the in-session gate
+    would (#529). Returns `(exit_code, log_lines)` — only the lines the gate
+    added beyond that copy. The caller decides whether they reach the real
+    pipeline log; see the module docstring on why a no-change poll must stay
+    silent.
 
     An exit code that is not one of the gate's three documented values is
     reported as-is rather than coerced: a gate that could not run at all is a
@@ -160,7 +177,15 @@ def run_entry_gate(tid, hb_log_file='', lib_dir=None, timeout=120):
 
     with tempfile.TemporaryDirectory(prefix='fleetd-gate-') as tmp:
         scratch = Path(tmp) / f'{tid}-gate-probe.log'
-        scratch.write_text('')
+        seed = ''
+        if log_file:
+            try:
+                seed = Path(log_file).read_text()
+            except OSError:
+                seed = ''
+        if seed and not seed.endswith('\n'):
+            seed += '\n'
+        scratch.write_text(seed)
         try:
             proc = subprocess.run(
                 ['bash', str(script), tid, str(scratch), str(hb_log_file),
@@ -170,8 +195,42 @@ def run_entry_gate(tid, hb_log_file='', lib_dir=None, timeout=120):
             code = proc.returncode
         except subprocess.TimeoutExpired:
             return None, []
-        lines = [ln for ln in scratch.read_text().splitlines() if ln.strip()]
+        added = scratch.read_text()[len(seed):]
+        lines = [ln for ln in added.splitlines() if ln.strip()]
     return code, lines
+
+
+def gate_stop_marker_msg(code, hold_id):
+    """The MSG field of the supervisor's `META|gate-stop|fail|` line for a
+    reconcile gate-stop. `CODE — hold <hold_id>`: the code stays the prefix
+    (`exit-path.sh` classifies `gate-stop:<CODE>*`), and the hold_id lets
+    `_gate_stop_recorded_for_hold` make the stop one-shot per hold (#529).
+    """
+    msg = f'{code} — hold {hold_id}' if hold_id else str(code)
+    return msg.replace('|', '/')
+
+
+def _gate_stop_recorded_for_hold(log_file, hold_id, held_at):
+    """Whether the real log already carries this hold's reconcile gate-stop
+    marker, written at or after the row's `held_at`. The `held_at` scope
+    matters because gate-hold intake mints `hold_id` with attempt 0, so the
+    same id can name a later hold on the same generation.
+    """
+    if not log_file or not hold_id:
+        return False
+    needle = f' — hold {hold_id}'
+    try:
+        with open(log_file, 'r') as fh:
+            for ln in fh:
+                parts = ln.rstrip('\n').split('|')
+                if (len(parts) >= 5 and parts[1] == 'META'
+                        and parts[2] == 'gate-stop' and parts[3] == 'fail'
+                        and parts[4].endswith(needle)
+                        and (not held_at or parts[0] >= held_at)):
+                    return True
+    except OSError:
+        return False
+    return False
 
 
 def reconcile_hold(table, tid, ticket_row, log_file, hb_log_file='',
@@ -199,6 +258,14 @@ def reconcile_hold(table, tid, ticket_row, log_file, hb_log_file='',
     position = (ticket_row or {}).get('position') or ''
     held_at = (ticket_row or {}).get('held_at') or ''
     fenced_generation = (ticket_row or {}).get('fenced_generation')
+
+    # One-shot gate-stop (#529): this hold already gate-stopped and is
+    # waiting on a human. Neither probe again nor write again.
+    if _gate_stop_recorded_for_hold(log_file, hold_id, held_at):
+        return GateHoldDecision(
+            HOLD, tid, cycle, None, '', position,
+            'gate-stop already recorded for this hold; awaiting a human',
+            hold_id, hold_generation)
 
     predicate = _RELEASE_PREDICATES.get(kind)
     if predicate is None:
@@ -246,7 +313,8 @@ def _reconcile_gate_hold(table, tid, cycle, position, hold_id,
                                 hold_id, hold_generation)
 
     probe = entry_gate or run_entry_gate
-    exit_code, lines = probe(tid, hb_log_file=hb_log_file, lib_dir=lib_dir)
+    exit_code, lines = probe(tid, hb_log_file=hb_log_file, lib_dir=lib_dir,
+                             log_file=log_file)
 
     if exit_code == GATE_ENTRY_PASS:
         _append(log_file, lines)
