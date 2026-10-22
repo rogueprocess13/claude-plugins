@@ -17,6 +17,24 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.42.7 (2026-10-22)
+
+fleetd's hold-reconcile pass no longer gate-stops every held complex ticket, and a reconcile
+gate-stop is recorded once per hold instead of on every pass (#529).
+
+### Fixed
+- **Empty scratch log in the reconcile probe**: `run_entry_gate` ran `gate-check.sh --mode entry`
+  against an empty scratch log. The gate reads the artifact type from the log it is given, found no
+  `EXEC|create-artifact|done|` line, defaulted to `simple-fix`, and gate-stopped every held openspec
+  ticket on `COMPLEXITY_ARTIFACT_MISMATCH`. The scratch log is now a copy of the ticket's real
+  pipeline log, and only the lines the probe adds are returned. A no-change poll still writes
+  nothing to the real log.
+- **Unbounded gate-stop loop**: a `GATE_STOP` left the hold row in place, so the next pass probed
+  again and appended the same gate-stop pair again — about 350 times for one ticket. The
+  supervisor's marker is now `<CODE> — hold <hold_id>`, and `reconcile_hold` skips the probe while a
+  marker for the current hold (written at or after its `held_at`) is in the log. The code stays the
+  message prefix, so `exit-path.sh` classifies it as before.
+
 ## grill-me 0.3.0 / ticket-planner 0.23.0 (2026-10-22)
 
 grill-me now asks where test data comes from, and the planner's Discovery phase reads the answer
