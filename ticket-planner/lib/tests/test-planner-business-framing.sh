@@ -359,6 +359,25 @@ else
   fail "context block pass-through (legacy)" "block=$block"
 fi
 
+# ── Specify decisions (planner-specify-waiting-on-human) ────────────────────
+
+echo "--- EpicGen carries an open or deferred business decision as is ---"
+_prompt_has "EpicGen" "$EPICGEN_PROMPT" \
+  'NEEDS_HUMAN_DECISION' \
+  'Deferred decision:'
+
+# The Specify prompt must not move a byte (design D7: only Epic Gen changes).
+# Pinned as the sha256 of the prompt captured before the change, with the
+# scratch REPOS_ROOT normalised. If a later change edits the Specify prompt on
+# purpose, re-capture: printf '%s' "${SPECIFY_PROMPT//$TMP_ROOT/<REPOS_ROOT>}" | sha256sum
+SPECIFY_PROMPT_SHA="0bce1bf2bf79211988ded7d716e8d53d6c129ec0a90c8afd9e914e9f8f176f2f"
+got_sha=$(printf '%s' "${SPECIFY_PROMPT//$TMP_ROOT/<REPOS_ROOT>}" | sha256sum | cut -d' ' -f1)
+if [ "$got_sha" = "$SPECIFY_PROMPT_SHA" ]; then
+  pass "Specify prompt is byte-identical to the pre-change capture"
+else
+  fail "Specify prompt is byte-identical to the pre-change capture" "sha ${got_sha} (re-capture only for a deliberate Specify prompt change)"
+fi
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 
 echo ""
