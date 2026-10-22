@@ -121,7 +121,7 @@ _hh_is_question_attr_key() {
 # never emit a binding this parser rejects. Question text never appears in it.
 _hh_binding_ok() {
   local LC_ALL=C
-  [[ "$1" =~ ^(note|flag:create|flag:project|flag:accept:[A-Z][A-Z0-9_]*|waive:[A-Za-z0-9-]+:[A-Z][A-Z0-9_]*|adr:[A-Za-z0-9-]+|grill:[a-z][a-z0-9_-]*|consensus-answer:cited:[1-9][0-9]{0,3}|consensus-answer:testdata:[A-Za-z0-9][A-Za-z0-9_-]{0,127}|specify-answer:O[1-9][0-9]{0,2})$ ]]
+  [[ "$1" =~ ^(note|flag:create|flag:refresh-bodies|flag:project|flag:accept:[A-Z][A-Z0-9_]*|waive:[A-Za-z0-9-]+:[A-Z][A-Z0-9_]*|adr:[A-Za-z0-9-]+|grill:[a-z][a-z0-9_-]*|consensus-answer:cited:[1-9][0-9]{0,3}|consensus-answer:testdata:[A-Za-z0-9][A-Za-z0-9_-]{0,127}|specify-answer:O[1-9][0-9]{0,2})$ ]]
 }
 
 _hh_question_id_ok() {

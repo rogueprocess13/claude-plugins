@@ -29,7 +29,13 @@
 #     DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true, scoped to the call),
 #     caching each
 #     verdict on the ticket manifest and writing planner/dor-result.json.
-#     Migrates an unchanged dor-semantic-v2 verdict in place
+#     Unless PLANNER_REFINEMENT_DRIFT_CHECK=false, first reads each child's
+#     Linear description and classifies it against the baseline
+#     (body-baseline.sh): adopt rewrites body.md, rebaseline writes the
+#     baseline, conflict/local-ahead add BODY_DRIFT and
+#     PLANNER_REFINEMENT_DRIFT_MAX_FAILS (default 3) consecutive failed reads
+#     add BODY_UNVERIFIED — both to the cached missing only, never to
+#     dor-result.json. Migrates an unchanged dor-semantic-v2 verdict in place
 #     (dor_semantic_migrate_v2) before deciding. Prints one ticket id per
 #     line for every ticket that needs a semantic pass (design.md Decision
 #     6's staleness rule). --only restricts it to the named children
@@ -108,8 +114,16 @@
 #     nothing when there are none.
 #
 #   planner_refinement_refresh_bodies <INIT>
-#     Overwrites body.md of every not-ready child from Linear (read-only).
-#     Prints each rewritten ticket id, one per line.
+#     Takes Linear's text (body.md + baseline) for every child whose
+#     body-drift class is not clean, ready and waived ones included; waivers
+#     are kept. Read-only towards Linear. Prints each child the next scan
+#     must re-evaluate, one per line.
+#
+#   planner_ticketgen_record_baseline <INIT> <TID> create|skip
+#     TicketGen's body baseline (design D6): after a create, reads the
+#     description back once and writes the baseline; on an idempotent skip,
+#     writes it only when none exists and Linear's text equals body.md.
+#     Always exit 0 — a failed read-back never fails TicketGen.
 
 _PLANNER_REFINEMENT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -242,6 +256,119 @@ planner_refinement_legacy() {
   grep -qE '^[^|]*\|TicketGen\|dispatch-gate\|done\|' "$log_file" 2>/dev/null
 }
 
+# ── Body drift (planner-refinement-convergence D6) ───────────────────────
+#
+# Per-ticket files beside body.md in planner/:
+#   linear-baseline.sha  body-baseline.sh's baseline (Linear's own text)
+#   linear-read-fails    consecutive failed Linear reads (absent = 0)
+#   body-drift           the class (conflict | local-ahead) behind a
+#                        BODY_DRIFT — read by the halt report; kept across a
+#                        failed read so the code is not dropped blind
+
+# Sources ticket-auto-pipeline's body-baseline.sh through the same
+# three-level resolver as the other deps — the one hash and classifier, no
+# copy here. Exit 1 (with a reason on stderr) when it cannot be found.
+_planner_refinement_source_baseline() {
+  declare -f body_baseline_classify >/dev/null 2>&1 && return 0
+  local f
+  f=$(_planner_refinement_resolve "body-baseline.sh") || {
+    echo "planner-refinement: body-baseline.sh not found (install ticket-auto-pipeline) — body drift not checked" >&2
+    return 1
+  }
+  # shellcheck source=/dev/null
+  source "$f"
+  declare -f body_baseline_classify >/dev/null 2>&1
+}
+
+# _planner_refinement_linear_desc <TID>
+# Prints the ticket's Linear description. Exit 1 on any failed read: no
+# reader, a transport/GraphQL failure, no issue, or an empty description
+# (a planned ticket's description is never legitimately empty).
+_planner_refinement_linear_desc() {
+  declare -f planner_linear_get_issue >/dev/null 2>&1 || return 1
+  local resp
+  resp=$(planner_linear_get_issue "$1" 2>/dev/null) || return 1
+  echo "$resp" | jq -e '(.data.issue.description // "") | type == "string" and length > 0' >/dev/null 2>&1 || return 1
+  echo "$resp" | jq -r '.data.issue.description'
+}
+
+# _planner_refinement_max_fails — PLANNER_REFINEMENT_DRIFT_MAX_FAILS, a
+# positive integer, default 3.
+_planner_refinement_max_fails() {
+  local n="${PLANNER_REFINEMENT_DRIFT_MAX_FAILS:-3}"
+  [[ "$n" =~ ^[1-9][0-9]*$ ]] || n=3
+  echo "$n"
+}
+
+# _planner_refinement_drift_classify <INIT> <TID> <pdir> <read_rc> <desc>
+# Acts on one child's Linear read and prints the BODY_* codes to add to the
+# cached `missing`, as a JSON array:
+#   read failed    counter + 1; BODY_UNVERIFIED at the limit; a recorded
+#                  BODY_DRIFT (body-drift marker) is kept
+#   adopt          body.md and baseline ← Linear, META|refinement|step line
+#   rebaseline     baseline only
+#   conflict,
+#   local-ahead    BODY_DRIFT (marker written)
+#   clean          nothing
+# Any successful read resets the counter.
+_planner_refinement_drift_classify() {
+  local initiative_id="$1" tid="$2" pdir="$3" read_rc="$4" desc="$5"
+  local fails_file="${pdir}/linear-read-fails" marker="${pdir}/body-drift"
+  local -a codes=()
+
+  if [ "$read_rc" -ne 0 ]; then
+    local n max
+    n=$(cat "$fails_file" 2>/dev/null) || n=0
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    n=$((n + 1))
+    max=$(_planner_refinement_max_fails)
+    printf '%s\n' "$n" >"$fails_file" 2>/dev/null
+    if [ "$n" -ge "$max" ]; then
+      codes+=("BODY_UNVERIFIED")
+      planner_state_write "$initiative_id" "META" "refinement" "warn" "${tid}: Linear read failed (${n}/${max}) — BODY_UNVERIFIED"
+    else
+      planner_state_write "$initiative_id" "META" "refinement" "warn" "${tid}: Linear read failed (${n}/${max}) — body drift not checked"
+    fi
+    [ -f "$marker" ] && codes+=("BODY_DRIFT")
+  else
+    rm -f "$fails_file" 2>/dev/null
+    local cls="" rc=0
+    cls=$(body_baseline_classify "$pdir" "$desc") || rc=$?
+    case "$cls" in
+    adopt)
+      local old8 new8
+      old8=$(body_baseline_read "$pdir" 2>/dev/null | cut -c1-8)
+      new8=$(body_baseline_hash "$desc" 2>/dev/null | cut -c1-8)
+      printf '%s' "$desc" >"${pdir}/body.md"
+      body_baseline_write "$pdir" "$desc" 2>/dev/null
+      rm -f "$marker" 2>/dev/null
+      planner_state_write "$initiative_id" "META" "refinement" "step" "${tid} body adopted from Linear [${old8}→${new8}]"
+      ;;
+    rebaseline)
+      body_baseline_write "$pdir" "$desc" 2>/dev/null
+      rm -f "$marker" 2>/dev/null
+      ;;
+    conflict | local-ahead)
+      printf '%s\n' "$cls" >"$marker" 2>/dev/null
+      codes+=("BODY_DRIFT")
+      ;;
+    clean)
+      rm -f "$marker" 2>/dev/null
+      ;;
+    *)
+      # No body.md (rc 2) or no hash tool (rc 1): nothing to compare.
+      [ "$rc" -ne 0 ] && [ -f "$marker" ] && codes+=("BODY_DRIFT")
+      ;;
+    esac
+  fi
+
+  if [ "${#codes[@]}" -eq 0 ]; then
+    echo '[]'
+  else
+    printf '%s\n' "${codes[@]}" | jq -R . | jq -sc 'unique'
+  fi
+}
+
 # ── Deterministic scan (design.md Decision 5) ────────────────────────────
 
 # planner_refinement_scan <INIT>
@@ -277,18 +404,35 @@ planner_refinement_scan() {
     local body_file="${pdir}/body.md"
     mkdir -p "$pdir" 2>/dev/null
 
+    # Body drift (planner-refinement-convergence D6): one Linear read per
+    # child per run, unless switched off or no reader/baseline lib exists.
+    local drift_on="false" desc="" desc_rc=1
+    if [ "${PLANNER_REFINEMENT_DRIFT_CHECK:-true}" != "false" ] &&
+      declare -f planner_linear_get_issue >/dev/null 2>&1 &&
+      _planner_refinement_source_baseline; then
+      drift_on="true"
+      desc=$(_planner_refinement_linear_desc "$tid") && desc_rc=0 || desc_rc=1
+    fi
+
     if [ ! -s "$body_file" ]; then
-      local desc=""
-      if declare -f planner_linear_get_issue >/dev/null 2>&1; then
+      if [ "$drift_on" != "true" ] && declare -f planner_linear_get_issue >/dev/null 2>&1; then
         desc=$(planner_linear_get_issue "$tid" 2>/dev/null | jq -r '.data.issue.description // ""' 2>/dev/null)
+        [ -n "$desc" ] && desc_rc=0
       fi
-      if [ -n "$desc" ]; then
+      if [ "$desc_rc" -eq 0 ] && [ -n "$desc" ]; then
         printf '%s' "$desc" >"$body_file"
       else
+        [ "$drift_on" = "true" ] && _planner_refinement_drift_classify "$initiative_id" "$tid" "$pdir" "1" "" >/dev/null
         set_ticket_readiness "$tid" "not-ready" '["BODY_UNAVAILABLE"]' '[]' >/dev/null 2>&1
         planner_state_write "$initiative_id" "META" "refinement" "fail" "${tid}: no local body.md and could not fetch description from Linear"
         continue
       fi
+    fi
+
+    local body_codes='[]'
+    if [ "$drift_on" = "true" ]; then
+      body_codes=$(_planner_refinement_drift_classify "$initiative_id" "$tid" "$pdir" "$desc_rc" "$desc")
+      [ -n "$body_codes" ] || body_codes='[]'
     fi
 
     # Refinement scans strictly (planner-test-data-derivation, design
@@ -308,6 +452,16 @@ planner_refinement_scan() {
       # recompute (ensure_ticket_readiness) re-applies it instead of the
       # host's defaults; the section/unit hashes drive section-scoped
       # staleness (planner-refinement-convergence D4/D9).
+      # dor-result.json is the deterministic check's own output, written
+      # before the BODY_* codes are appended: the audit never judges them
+      # (design D6).
+      jq -nc --argjson missing "${DOR_MISSING:-[]}" --argjson advisory "${DOR_ADVISORY:-[]}" \
+        --arg status "$DOR_STATUS" \
+        '{missing: $missing, advisory: $advisory, status: $status}' >"${pdir}/dor-result.json" 2>/dev/null
+      local cached_missing cached_status="$DOR_STATUS"
+      cached_missing=$(jq -nc --argjson m "${DOR_MISSING:-[]}" --argjson b "$body_codes" '$m + $b | unique' 2>/dev/null) ||
+        cached_missing="${DOR_MISSING:-[]}"
+      [ "$body_codes" = "[]" ] || cached_status="not-ready"
       local extras legacy_extras write_rc=0
       extras=$(jq -nc --argjson score "${DOR_SCORE:-null}" --argjson dims "${DOR_DIMENSIONS:-null}" \
         --argjson gaps "${DOR_GAPS:-null}" --arg hash "$hash" \
@@ -316,16 +470,13 @@ planner_refinement_scan() {
          + (if $hash != "" then {body_hash: $hash} else {} end)
          + (if $sec != null then {section_hashes: $sec} else {} end)
          + (if $units != null then {unit_hashes: $units} else {} end)' 2>/dev/null)
-      set_ticket_readiness "$tid" "$DOR_STATUS" "${DOR_MISSING:-[]}" "${DOR_ADVISORY:-[]}" "$extras" >/dev/null 2>&1 || write_rc=$?
+      set_ticket_readiness "$tid" "$cached_status" "$cached_missing" "${DOR_ADVISORY:-[]}" "$extras" >/dev/null 2>&1 || write_rc=$?
       if [ "$write_rc" -eq 3 ]; then
         # An older resolved manifest-write.sh rejects the new extras keys —
         # fall back to the four it knows rather than leave no verdict.
         legacy_extras=$(echo "$extras" | jq -c '{score, dimensions, gaps} + (if has("body_hash") then {body_hash} else {} end)' 2>/dev/null)
-        set_ticket_readiness "$tid" "$DOR_STATUS" "${DOR_MISSING:-[]}" "${DOR_ADVISORY:-[]}" "$legacy_extras" >/dev/null 2>&1
+        set_ticket_readiness "$tid" "$cached_status" "$cached_missing" "${DOR_ADVISORY:-[]}" "$legacy_extras" >/dev/null 2>&1
       fi
-      jq -nc --argjson missing "${DOR_MISSING:-[]}" --argjson advisory "${DOR_ADVISORY:-[]}" \
-        --arg status "$DOR_STATUS" \
-        '{missing: $missing, advisory: $advisory, status: $status}' >"${pdir}/dor-result.json" 2>/dev/null
       ;;
     *)
       set_ticket_readiness "$tid" "not-ready" '["BODY_UNAVAILABLE"]' '[]' >/dev/null 2>&1
@@ -955,6 +1106,30 @@ planner_refinement_report() {
       echo "Deterministic codes: ${hard_codes[*]}"
     fi
 
+    # BODY_DRIFT / BODY_UNVERIFIED are never waivable (design D6): the way
+    # out is the refresh, so that is the only release offered.
+    local pdir_r="${REPOS_ROOT:-}/.ticket-auto/initiatives/${initiative_id}/tickets/${tid}/planner"
+    case " $(echo "$missing" | tr '\n' ' ') " in
+    *" BODY_DRIFT "*)
+      local drift_cls
+      drift_cls=$(head -1 "${pdir_r}/body-drift" 2>/dev/null) || drift_cls=""
+      [ -n "$drift_cls" ] || drift_cls="conflict"
+      if [ "$drift_cls" = "local-ahead" ]; then
+        echo "${tid} body drift (local-ahead): body.md was edited but the Linear description was not — ticket-auto would build text Refinement never evaluated."
+        echo "  Copy the local edit into Linear first if it should stay, then take Linear's text: /ticket-planner resume ${initiative_id} --refresh-bodies (not waivable)"
+      else
+        echo "${tid} body drift (conflict): the Linear description and body.md both changed since the last baseline."
+        echo "  Take Linear's text: /ticket-planner resume ${initiative_id} --refresh-bodies (not waivable)"
+      fi
+      ;;
+    esac
+    case " $(echo "$missing" | tr '\n' ' ') " in
+    *" BODY_UNVERIFIED "*)
+      echo "${tid} body unverified: the Linear description could not be read on $(cat "${pdir_r}/linear-read-fails" 2>/dev/null || echo "$(_planner_refinement_max_fails)") consecutive runs, so body drift was not checked."
+      echo "  Once Linear is reachable, resume re-checks it, or take Linear's text: /ticket-planner resume ${initiative_id} --refresh-bodies (not waivable)"
+      ;;
+    esac
+
     # Findings grouped by lineage and demotion (planner-refinement-
     # convergence D3/D10). Rendered in jq: one line per finding, the
     # demoted ones (plus ready.demoted audit demotions) collected under
@@ -1032,7 +1207,11 @@ planner_refinement_report() {
 
   if [ "$any_not_ready" -eq 1 ]; then
     echo ""
-    echo "An edit made in Linear is only evaluated after /ticket-planner resume ${initiative_id} --refresh-bodies."
+    if [ "${PLANNER_REFINEMENT_DRIFT_CHECK:-true}" = "false" ]; then
+      echo "An edit made in Linear is only evaluated after /ticket-planner resume ${initiative_id} --refresh-bodies."
+    else
+      echo "A Linear edit is adopted on the next resume when body.md is unchanged; to take Linear's text over a local edit: /ticket-planner resume ${initiative_id} --refresh-bodies."
+    fi
   fi
 
   # Advisory findings never put a child in the not-ready loop above, so a
@@ -1059,8 +1238,15 @@ planner_refinement_report() {
 # ── Refresh (design.md Decision 9) ────────────────────────────────────────
 
 # planner_refinement_refresh_bodies <INIT>
-# Overwrites body.md of every not-ready child from its current Linear
-# description. Read-only — never writes to Linear.
+# "Take Linear for every child" (planner-refinement-convergence D6): checks
+# every child, ready and waived ones included, and for each one whose class
+# is not `clean` writes body.md (unless it already equals Linear's text) and
+# the baseline from its current Linear description. A `clean` child is not
+# touched. Waivers are never touched — the manifest is not written here.
+# Prints, one per line, each child the next scan must re-evaluate: every
+# non-clean child, plus a clean one still carrying BODY_DRIFT or
+# BODY_UNVERIFIED (step 1b uses this as the affected set after Completed).
+# A child whose Linear read fails is skipped. Read-only towards Linear.
 planner_refinement_refresh_bodies() {
   local initiative_id="$1"
   _planner_refinement_source_deps || return 1
@@ -1072,25 +1258,94 @@ planner_refinement_refresh_bodies() {
   children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
   [ -n "$children" ] || children='[]'
 
-  local repos_root="${REPOS_ROOT:-}"
-  local tid
+  local repos_root="${REPOS_ROOT:-}" have_baseline="false" tid
+  _planner_refinement_source_baseline && have_baseline="true"
 
   for tid in $(echo "$children" | jq -r '.[]' 2>/dev/null); do
-    local status
-    status=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r '.status // "unavailable"' 2>/dev/null)
-    [ "$status" = "ready" ] && continue
-
-    if ! declare -f planner_linear_get_issue >/dev/null 2>&1; then
-      continue
-    fi
-
     local desc
-    desc=$(planner_linear_get_issue "$tid" 2>/dev/null | jq -r '.data.issue.description // ""' 2>/dev/null)
-    [ -n "$desc" ] || continue
+    desc=$(_planner_refinement_linear_desc "$tid") || continue
 
     local pdir="${repos_root}/.ticket-auto/initiatives/${initiative_id}/tickets/${tid}/planner"
     mkdir -p "$pdir" 2>/dev/null
-    printf '%s' "$desc" >"${pdir}/body.md"
+
+    if [ "$have_baseline" != "true" ]; then
+      # No baseline lib: fall back to a plain text comparison.
+      if [ "$(cat "${pdir}/body.md" 2>/dev/null)" != "$desc" ]; then
+        printf '%s' "$desc" >"${pdir}/body.md"
+        echo "$tid"
+      fi
+      continue
+    fi
+
+    rm -f "${pdir}/linear-read-fails" 2>/dev/null
+    local cls="" held="false"
+    cls=$(body_baseline_classify "$pdir" "$desc" 2>/dev/null) || cls="missing"
+    if get_ticket_manifest_field "$tid" ready 2>/dev/null |
+      jq -e '(.missing // []) | any(. == "BODY_DRIFT" or . == "BODY_UNVERIFIED")' >/dev/null 2>&1; then
+      held="true"
+    fi
+
+    case "$cls" in
+    clean)
+      [ "$held" = "true" ] && echo "$tid"
+      continue
+      ;;
+    rebaseline) ;;
+    *) printf '%s' "$desc" >"${pdir}/body.md" ;;
+    esac
+    body_baseline_write "$pdir" "$desc" 2>/dev/null
+    rm -f "${pdir}/body-drift" 2>/dev/null
     echo "$tid"
   done
+}
+
+# ── TicketGen baseline (planner-refinement-convergence D6) ────────────────
+
+# planner_ticketgen_record_baseline <INIT> <TID> create|skip
+# Called by the TicketGen script after it persisted planner/body.md.
+#   create  read the description back once; write the baseline from it. When
+#           Linear stored a different rendering than the composed body,
+#           body.md takes Linear's text (it is what ticket-auto will read,
+#           and the baseline describes it), with a META|ticketgen|warn line.
+#   skip    write the baseline only when none exists and the normalised
+#           Linear text equals body.md; otherwise leave it to Refinement,
+#           which classifies the ticket.
+# A failed read-back (or a missing body-baseline.sh) writes nothing and
+# prints a warning on stderr. Always exit 0.
+planner_ticketgen_record_baseline() {
+  local initiative_id="$1" tid="$2" mode="${3:-create}"
+  local pdir
+  pdir="$(planner_initiative_dir "$initiative_id" 2>/dev/null)/tickets/${tid}/planner"
+  [ -f "${pdir}/body.md" ] || return 0
+  _planner_refinement_source_baseline 2>/dev/null || {
+    echo "WARNING: body-baseline.sh not found — no body baseline for ${tid}" >&2
+    return 0
+  }
+
+  local desc
+  desc=$(_planner_refinement_linear_desc "$tid") || {
+    echo "WARNING: could not read back ${tid}'s description — no body baseline; Refinement classifies it" >&2
+    return 0
+  }
+
+  local l m
+  l=$(body_baseline_hash "$desc" 2>/dev/null) || return 0
+  m=$(body_baseline_hash "$(cat "${pdir}/body.md" 2>/dev/null)" 2>/dev/null) || return 0
+
+  case "$mode" in
+  skip)
+    body_baseline_read "$pdir" >/dev/null 2>&1 && return 0
+    [ "$l" = "$m" ] || return 0
+    body_baseline_write "$pdir" "$desc" 2>/dev/null || true
+    ;;
+  *)
+    if [ "$l" != "$m" ]; then
+      printf '%s' "$desc" >"${pdir}/body.md" 2>/dev/null || return 0
+      planner_state_write "$initiative_id" "META" "ticketgen" "warn" \
+        "${tid} Linear stored a different rendering of the description — body.md now holds Linear's text [${m:0:8}→${l:0:8}]" 2>/dev/null || true
+    fi
+    body_baseline_write "$pdir" "$desc" 2>/dev/null || true
+    ;;
+  esac
+  return 0
 }

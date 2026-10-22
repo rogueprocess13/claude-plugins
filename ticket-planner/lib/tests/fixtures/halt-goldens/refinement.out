@@ -4,7 +4,7 @@ Refinement halted — one or more tickets are not ready.
 ## PRO-102
 Deterministic codes: INTENT_MISSING
 
-An edit made in Linear is only evaluated after /ticket-planner resume INIT-1700000000-4242 --refresh-bodies.
+A Linear edit is adopted on the next resume when body.md is unchanged; to take Linear's text over a local edit: /ticket-planner resume INIT-1700000000-4242 --refresh-bodies.
 
 Artifacts:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/
 Resume:     /ticket-planner resume INIT-1700000000-4242

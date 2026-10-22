@@ -29,7 +29,9 @@
 #                           consensus-answer:cited:<n> question per artifact;
 #                           TEST_DATA_IMPLIED one consensus-answer:testdata:<slug>
 #                           question per spec)
-#   REFINEMENT_HALT         Refinement halted with waivable not-ready codes
+#   REFINEMENT_HALT         Refinement halted with waivable not-ready codes,
+#                           or on BODY_DRIFT/BODY_UNVERIFIED (one
+#                           flag:refresh-bodies question, never a waive)
 #   UNTIL_STOP              the run stopped after its --until phase
 #   FAILED_RETRY_EXHAUSTED  the current phase spent its retry budget
 #   RUNNING                 none of the above — a plain resume makes progress
@@ -271,6 +273,9 @@ _planner_stop_crosscheck_codes() {
 # Waivable not-ready codes per Refinement child, "<TID>\t<CODE>" each, in
 # epic-children order then code order. SEMANTIC_UNAVAILABLE/UNVERIFIED/STALE
 # are excluded: resume retries those by itself, a waiver is not the answer.
+# BODY_DRIFT/BODY_UNVERIFIED are excluded too — never waivable, they get the
+# refresh question instead (_planner_stop_refinement_body_tids) — and so is
+# any code in `ready.demoted` (an audit demotion no longer blocks).
 _planner_stop_refinement_codes() {
   local init="$1"
   declare -f _planner_refinement_source_deps >/dev/null 2>&1 ||
@@ -288,10 +293,38 @@ _planner_stop_refinement_codes() {
     echo "$ready_json" | jq -r --arg tid "$tid" '
       select(.status != "ready")
       | (.waived // {} | keys) as $w
+      | (.demoted // {} | keys) as $d
       | (.missing // [])[]
       | select(. as $c | ($w | index($c)) | not)
+      | select(. as $c | ($d | index($c)) | not)
       | select(. != "SEMANTIC_UNAVAILABLE" and . != "SEMANTIC_UNVERIFIED" and . != "SEMANTIC_STALE")
+      | select(. != "BODY_DRIFT" and . != "BODY_UNVERIFIED")
       | "\($tid)\t\(.)"' 2>/dev/null | LC_ALL=C sort -u
+  done
+}
+
+# Not-ready Refinement children held on BODY_DRIFT or BODY_UNVERIFIED
+# (planner-refinement-convergence D6), "<TID>\t<CODE[,CODE]>" each, in
+# epic-children order.
+_planner_stop_refinement_body_tids() {
+  local init="$1"
+  declare -f _planner_refinement_source_deps >/dev/null 2>&1 ||
+    source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-refinement.sh"
+  _planner_refinement_source_deps >/dev/null 2>&1 || return 1
+
+  local epic_id children tid ready_json
+  epic_id=$(planner_epic_id "$init") || return 1
+  children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+  [ -n "$children" ] || children='[]'
+
+  for tid in $(echo "$children" | jq -r '.[]' 2>/dev/null); do
+    ready_json=$(get_ticket_manifest_field "$tid" ready 2>/dev/null)
+    [ -n "$ready_json" ] && [ "$ready_json" != "null" ] || continue
+    echo "$ready_json" | jq -r --arg tid "$tid" '
+      select(.status != "ready")
+      | [(.missing // [])[] | select(. == "BODY_DRIFT" or . == "BODY_UNVERIFIED")] | unique
+      | select(length > 0)
+      | "\($tid)\t\(join(","))"' 2>/dev/null
   done
 }
 
@@ -443,6 +476,17 @@ planner_stop_describe_json() {
     # substitution, and planner_epic_id is needed in this shell too.
     declare -f planner_epic_id >/dev/null 2>&1 ||
       source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-refinement.sh"
+    # Body drift is answered by taking Linear's text, never by a waiver
+    # (planner-refinement-convergence D6): one question for the epic, bound
+    # to the one-shot --refresh-bodies flag.
+    local body_list
+    body_list=$(_planner_stop_refinement_body_tids "$init" | awk -F'\t' '{printf "%s%s (%s)", (NR > 1 ? ", " : ""), $1, $2}')
+    if [ -n "$body_list" ]; then
+      q=$(_planner_stop_question "refresh-bodies" "flag:refresh-bodies" \
+        "Refinement cannot trust these bodies: $(_planner_stop_excerpt "$body_list"). BODY_DRIFT means the Linear description and the body Refinement evaluated disagree; BODY_UNVERIFIED means Linear could not be read. Neither can be waived. Take Linear's text for every drifted ticket (resume --refresh-bodies)? For a local-ahead ticket, copy the local edit into Linear first." \
+        "yes|no" "no")
+      questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
+    fi
     while IFS=$'\t' read -r tid code; do
       [ -n "$tid" ] || continue
       q=$(_planner_stop_question "waive-${tid}-${code}" "waive:${tid}:${code}" \

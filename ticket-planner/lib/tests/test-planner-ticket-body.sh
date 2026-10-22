@@ -915,6 +915,14 @@ if [ "$(cat "${R1}/rc")" = 0 ] && grep -qF '|TicketGen|verify|done|4 tickets ver
 else
   fail "e2e run" "rc=$(cat "${R1}/rc") out=$(tail -20 "${R1}/out.log") log=$(cat "${I1}/state.log")"
 fi
+# The stub's issue lookups carry no description, so every read-back fails:
+# TicketGen still succeeds and records no body baseline (design D6).
+if [ "$(grep -c 'GetIssue' "${R1}/stub/requests.jsonl")" -ge 4 ] &&
+  ! ls "${I1}"/tickets/*/planner/linear-baseline.sha >/dev/null 2>&1; then
+  pass "a failed description read-back after create writes no baseline and never fails the run"
+else
+  fail "failed read-back" "baselines=$(ls "${I1}"/tickets/*/planner/linear-baseline.sha 2>&1)"
+fi
 titles=$(grep issueCreate "${R1}/stub/requests.jsonl" | jq -r '.variables.input.title' | paste -sd'|')
 if [ "$titles" = "Persist invoice exports|Finance can export invoices|Finance sees export progress|Document the export" ]; then
   pass "tickets created in dependency order with spec titles"

@@ -1,0 +1,12 @@
+Refinement halted — one or more tickets are not ready.
+
+
+## PRO-102
+Deterministic codes: INTENT_MISSING
+Demoted (does not block):
+  - NAV_PATH_MISSING (audit dispute): the Scope table names the upload page
+
+A Linear edit is adopted on the next resume when body.md is unchanged; to take Linear's text over a local edit: /ticket-planner resume INIT-1700000000-4242 --refresh-bodies.
+
+Artifacts:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/
+Resume:     /ticket-planner resume INIT-1700000000-4242

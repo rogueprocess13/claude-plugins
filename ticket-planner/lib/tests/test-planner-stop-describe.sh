@@ -175,6 +175,39 @@ else
   fail "REFINEMENT_HALT: one waiver question per (not-ready ticket, code); ready tickets excluded" "$m"
 fi
 
+fresh_root shape-body-drift
+halt_fixture_init refinement-body-drift "$INIT" >/dev/null
+halt_fixture_run refinement-body-drift "$INIT" "${WORK}/run"
+m=$(planner_stop_describe_json "$INIT")
+if [ "$(echo "$m" | jq -r '[.questions[].binding] | join(" ")')" = "flag:refresh-bodies waive:PRO-102:INTENT_MISSING" ] &&
+  [ "$(echo "$m" | jq -r '.questions[0].id + " " + (.questions[0].options | join("|")) + " " + .questions[0].default')" = "refresh-bodies yes|no no" ] &&
+  echo "$m" | jq -r '.questions[0].text' | grep -qF "PRO-101" &&
+  ! echo "$m" | jq -r '[.questions[].binding] | join(" ")' | grep -q "BODY_"; then
+  pass "REFINEMENT_HALT: BODY_DRIFT offers the refresh-bodies binding, never a waive"
+else
+  fail "REFINEMENT_HALT: BODY_DRIFT offers the refresh-bodies binding, never a waive" "$m"
+fi
+source "${LIB_DIR}/planner-answers.sh"
+_ans="${WORK}/answers-refresh.json"
+jq -n --argjson r "$(echo "$m" | jq '.round')" '{schema_version: 1, round: $r, answers: [
+  {id: "refresh-bodies", value: "yes", answered_by: "op", role: "operator", ts: "2026-10-22T00:00:00Z"}]}' >"$_ans"
+if planner_answers_apply "$INIT" "$_ans" >/dev/null 2>&1 &&
+  [ "$(planner_config_get "$INIT" "refresh-bodies")" = "true" ]; then
+  pass "answers: refresh-bodies yes persists the one-shot refresh-bodies config"
+else
+  fail "answers: refresh-bodies yes persists the one-shot refresh-bodies config" "config=$(planner_config_get "$INIT" "refresh-bodies")"
+fi
+
+fresh_root shape-demoted
+halt_fixture_init refinement-demoted "$INIT" >/dev/null
+halt_fixture_run refinement-demoted "$INIT" "${WORK}/run"
+m=$(planner_stop_describe_json "$INIT")
+if [ "$(echo "$m" | jq -r '[.questions[].binding] | join(" ")')" = "waive:PRO-102:INTENT_MISSING" ]; then
+  pass "REFINEMENT_HALT: an audit-demoted code is not offered as a waiver"
+else
+  fail "REFINEMENT_HALT: an audit-demoted code is not offered as a waiver" "$m"
+fi
+
 fresh_root shape-adr
 halt_fixture_init adr-gate "$INIT" >/dev/null
 m=$(planner_stop_describe_json "$INIT")

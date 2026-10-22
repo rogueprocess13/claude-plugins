@@ -537,6 +537,17 @@ test_v2_rejects_bad_binding() {
   return $rc
 }
 
+# planner-refinement-convergence D6: a BODY_DRIFT halt binds the refresh.
+test_v2_accepts_refresh_bodies_binding() {
+  _setup
+  _v2_block | sed 's/^QUESTION_1_BINDING: .*/QUESTION_1_BINDING: flag:refresh-bodies/' | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 0 ] && [ "$(_json '.questions[0].binding')" = "flag:refresh-bodies" ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
 # #515: a cited-artifact answer binds by 1-based index, never by name.
 test_v2_accepts_consensus_answer_binding() {
   _setup
