@@ -1123,8 +1123,12 @@ defaulting to generate when headless.
       **Breaking (gates):** contract-shaped feature and improvement bodies without test data
       now fail readiness.
 - [ ] 3. Live verification, folded into Step 8's consolidated pass (tasks 9.1–9.4 of change 2).
-- [ ] 4. Follow-ups, not specced: a semantic DoR backstop for heuristic misses, and a grill-me
-      test-data dimension.
+- [ ] 4. Follow-ups:
+      - [ ] a semantic DoR backstop for heuristic misses (`dor-semantic-test-data-gap`).
+      - [x] a grill-me test-data dimension (`grill-test-data-dimension`, branch
+        `feat/grill-test-data-dimension`, grill-me 0.3.0 / ticket-planner 0.23.0): profile
+        `product-idea` 1.1.0 gains `test_data`, and Discovery points at the sealed intent's
+        `## Test Data`. Optional live check (task 7.1) not run.
 
 ---
 

@@ -16,7 +16,7 @@ Or from a file:
 
 ## What it does
 
-1. **Assesses** your idea against 10 quality dimensions (objective, users, success criteria, scope, acceptance criteria, constraints, dependencies, risks, edge cases, assumptions)
+1. **Assesses** your idea against 11 quality dimensions (objective, users, success criteria, scope, acceptance criteria, constraints, dependencies, risks, edge cases, test data, assumptions). The test-data dimension asks where realistic data for testing comes from; an idea that needs none says so with the exact evidence `_No prepared data needed_`
 2. **Scores** readiness deterministically from 0–100 (bash, not an LLM guessing at arithmetic)
 3. **Asks** ranked clarification questions for the highest-impact gaps — each question tells you *why* the information is required
 4. **Produces** a sealed Validated Business Intent document with a SHA-256 content hash

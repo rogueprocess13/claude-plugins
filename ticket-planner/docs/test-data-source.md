@@ -331,6 +331,16 @@ Discovery writes one epic-wide table of everything the acceptance tests need to 
 - `TEST_DATA_INVENTORY_MISSING` (warn) — the section is absent in a contract initiative. Silent
   when discovery.md itself is absent, and for legacy initiatives.
 
+**Sealed intent as input.** When the initiative has a sealed grill-me intent
+(`artifacts/intent.md`, grill-me 0.3.0+) with a `## Test Data` section, the Discovery prompt
+adds one paragraph pointing at it (`_planner_intent_has_test_data`). Only the path is
+interpolated, never the section text. The agent maps a named supplier to `external:<party>`,
+a named seed, fixture or export to `exists:<where>` (or a `## Cited Artifacts` NOT FOUND line),
+and synthetic data to `generate`. Only the first `## Test Data` heading counts. A section that
+is empty or holds only `_None identified_` or `_No prepared data needed_` adds no paragraph, so
+the prompt is byte-identical to one with no intent. The intent never pre-answers a
+`TESTDATA_CONFIRM` line (§3.3): an intent answer carries no per-spec criterion hash.
+
 Specify derives each Verification Notes row from the criterion's Given/precondition and When
 inputs, names inventory entities in backticks, writes `none` only when nothing must exist
 beforehand, and writes `Source: generate` for data no one produces yet.
