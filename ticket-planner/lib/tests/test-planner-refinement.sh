@@ -8,6 +8,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/.."
 FIXTURES_DIR="${LIB_DIR}/../../ticket-auto-pipeline/lib/tests/fixtures/dor"
 
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# _planner_refinement_resolve prefers an installed plugin cache and
+# ~/.claude/skills/lib over this checkout. An empty HOME makes both miss, so
+# every dependency resolves to the sibling ticket-auto-pipeline/lib under test
+# — as it does in CI, where no plugin is installed.
+export HOME="${TMPDIR}/home"
+mkdir -p "$HOME"
+
 source "${LIB_DIR}/planner-state.sh"
 source "${LIB_DIR}/planner-refinement.sh"
 
@@ -16,8 +26,6 @@ source "${LIB_DIR}/planner-refinement.sh"
 # add_epic_manifest_child/check_ticket_ready/_dor_body_hash directly.
 _planner_refinement_source_deps
 
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
 export REPOS_ROOT="${TMPDIR}/repos"
 mkdir -p "$REPOS_ROOT"
 
@@ -989,13 +997,6 @@ fi
 # be rejected.
 
 echo "--- #497: body hash handed to the agent in the prompt ---"
-
-# _planner_refinement_resolve prefers an installed plugin cache over this
-# checkout, so on a dev machine the functions above may come from an older
-# installed ticket-auto-pipeline. Pin the checkout's dor-semantic.sh here so
-# this regression always exercises the code under test.
-# shellcheck source=/dev/null
-source "${LIB_DIR}/../../ticket-auto-pipeline/lib/dor-semantic.sh"
 
 _add_child "PRO-190" "22-sourced-contract"
 planner_refinement_scan "$INIT_ID" >/dev/null
