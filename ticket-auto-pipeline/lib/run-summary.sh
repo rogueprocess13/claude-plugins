@@ -64,7 +64,9 @@ run_summary_json() {
   verify_attempts=$(grep -cE '^[^|]*\|VERIFY\|verify\|fail\|' <<<"$window" 2>/dev/null || true)
   review_iterations=$(grep -c '|PR-REVIEW|pr-review|done|WARN' <<<"$window" 2>/dev/null || true)
   fix_rounds=$(grep -c '|PR-REVIEW|pr-reconcile|done|cycle#' <<<"$window" 2>/dev/null || true)
-  reconcile_cycles=$(grep -c '|GATE|reconcile|done|cycle#' <<<"$window" 2>/dev/null || true)
+  # Distinct cycle numbers — the router echoes cycle#N in a second done line.
+  reconcile_cycles=$(grep -o '^[^|]*|GATE|reconcile|done|cycle#[0-9]*' <<<"$window" 2>/dev/null |
+    sed 's/.*cycle#//' | sort -u | wc -l | tr -d ' ' || true)
   verify_attempts=${verify_attempts:-0}
   review_iterations=${review_iterations:-0}
   fix_rounds=${fix_rounds:-0}

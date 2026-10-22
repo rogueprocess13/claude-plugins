@@ -59,7 +59,10 @@ hb-wrap.sh gate "reconcile" "start" "gate-reconcile agent starting" "{\"complexi
 Initialize the cycle counter and fetch Linear comments:
 
 ```bash
-RECONCILE_N=$(grep -c '^[^|]*|GATE|reconcile|done|cycle#' "$LOG_FILE" 2>/dev/null || true)
+# Distinct cycle numbers, not lines — the router echoes `cycle#N` in its own
+# done line, so a line count double-counts (same rule as detect-resume.sh).
+RECONCILE_N=$(grep -o '^[^|]*|GATE|reconcile|done|cycle#[0-9]*' "$LOG_FILE" 2>/dev/null |
+  sed 's/.*cycle#//' | sort -u | wc -l | tr -d ' ' || true)
 RECONCILE_N=${RECONCILE_N:-0}
 RECONCILE_N=$((RECONCILE_N + 1))
 
