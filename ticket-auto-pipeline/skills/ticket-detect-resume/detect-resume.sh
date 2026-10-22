@@ -262,7 +262,12 @@ else
   elif {
     _adv_ln=$(grep -n '^[^|]*|META|gate-stop|fail|ADVERSARIAL_BLOCKED' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d: -f1 || true)
     [ -n "$_adv_ln" ]
-  } && ! tail -n "+$((_adv_ln + 1))" "$LOG_FILE" 2>/dev/null | grep -q '^[^|]*|EXEC|adversarial-review|done|'; then
+  } && ! tail -n "+$((_adv_ln + 1))" "$LOG_FILE" 2>/dev/null | grep -qE '^[^|]*\|EXEC\|adversarial-review\|done\|(PASS|WARNINGS)'; then
+    # Only a passing re-review (PASS/WARNINGS) resolves the block. Since
+    # GitHub #203, Step 3.6 writes `adversarial-review|done|BLOCKED`
+    # *before* its gate-stop, so a run that died between those two lines
+    # leaves a `done|BLOCKED` after the previous round's gate-stop — that
+    # must not read as "a fix landed".
     # An ADVERSARIAL_BLOCKED gate-stop halted EXEC and nothing since has
     # re-run adversarial-review to confirm a fix actually landed. Without
     # this branch, resume falls through to the EXEC|create-artifact|done|

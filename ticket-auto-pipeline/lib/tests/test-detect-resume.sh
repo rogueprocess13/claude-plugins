@@ -282,6 +282,45 @@ test_adversarial_blocked_twice_still_resumes_at_create_artifact() {
   }
 }
 
+# A re-review ran and blocked again, but the run died between the new
+# `done|BLOCKED` line and its gate-stop (Step 3.6 writes `done` first since
+# GitHub #203). A `done|BLOCKED` is not a fix — must still route back.
+test_adversarial_blocked_done_blocked_without_gate_stop_still_unresolved() {
+  local out
+  out=$(_detect_resume_with_log "TEST-20" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=complex" \
+    "2026-07-05T10:00:02Z|EXEC|create-artifact|done|openspec" \
+    "2026-07-05T10:00:03Z|EXEC|adversarial-review|done|BLOCKED" \
+    "2026-07-05T10:00:04Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — round 1 — TEST-20 adversarial review found blocking issues" \
+    "2026-07-06T09:01:00Z|EXEC|regression-guard|done|clear" \
+    "2026-07-06T09:02:00Z|EXEC|adversarial-review|done|BLOCKED")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_2" ] || {
+    echo "RESUME_STEP: $(_field "$out" RESUME_STEP)" >&2
+    return 1
+  }
+  [ "$(_field "$out" EXEC_FROM)" = "create-artifact" ] || {
+    echo "EXEC_FROM: $(_field "$out" EXEC_FROM)" >&2
+    return 1
+  }
+}
+
+# New ordering (done before gate-stop) followed by a passing re-review.
+test_adversarial_blocked_new_ordering_resolved_by_warnings() {
+  local out
+  out=$(_detect_resume_with_log "TEST-21" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=complex" \
+    "2026-07-05T10:00:02Z|EXEC|create-artifact|done|openspec" \
+    "2026-07-05T10:00:03Z|EXEC|adversarial-review|done|BLOCKED" \
+    "2026-07-05T10:00:04Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — round 1 — TEST-21 adversarial review found blocking issues" \
+    "2026-07-06T09:02:00Z|EXEC|adversarial-review|done|WARNINGS")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_2_5" ] || {
+    echo "RESUME_STEP: $(_field "$out" RESUME_STEP)" >&2
+    return 1
+  }
+}
+
 # Like _detect_resume_with_log but echoes the resulting pipeline log rather
 # than the result block, so tests can assert on the lines the script writes
 # (zombie detection reports itself in the log, not in DETECT_RESUME_RESULT).
@@ -1049,6 +1088,8 @@ for fn in \
   test_adversarial_blocked_unresolved_resumes_at_create_artifact \
   test_adversarial_blocked_resolved_by_rereview_falls_through_normally \
   test_adversarial_blocked_twice_still_resumes_at_create_artifact \
+  test_adversarial_blocked_done_blocked_without_gate_stop_still_unresolved \
+  test_adversarial_blocked_new_ordering_resolved_by_warnings \
   test_zombie_detection_triggers_on_old_waiting \
   test_zombie_fires_when_no_other_worker_alive \
   test_zombie_suppressed_by_live_phase_worker \

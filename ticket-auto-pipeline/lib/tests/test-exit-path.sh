@@ -522,6 +522,22 @@ test_review_failure_matches_a_code_with_trailing_detail_text() {
   return $ok
 }
 
+test_review_failure_matches_adversarial_blocked_with_round_detail() {
+  # GitHub #203: Step 3.6 now writes the round number into the detail, and
+  # the `done|BLOCKED` line precedes the gate-stop. Prefix match must hold.
+  local log
+  log=$(_tmp_log)
+  {
+    echo '2026-01-01T00:01:00Z|EXEC|adversarial-review|done|BLOCKED'
+    echo '2026-01-01T00:01:01Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — round 3 — X-1 adversarial review found blocking issues'
+  } >"$log"
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "review_failure" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
 test_classification_is_repeatable() {
   local log
   log=$(_tmp_log)
@@ -607,6 +623,7 @@ _run "clean run classifies none/none" test_clean_run_classifies_none_with_none_p
 _run "a resolved RETURN_INCOMPLETE warning does not override a completed run" test_a_resolved_return_incomplete_warning_does_not_override_a_completed_run
 _run "an unresolved RETURN_INCOMPLETE warning still classifies orchestration_failure" test_an_unresolved_return_incomplete_warning_still_classifies_orchestration_failure
 _run "review_failure matches a code with trailing detail text" test_review_failure_matches_a_code_with_trailing_detail_text
+_run "review_failure matches ADVERSARIAL_BLOCKED with round detail" test_review_failure_matches_adversarial_blocked_with_round_detail
 _run "classification is repeatable" test_classification_is_repeatable
 _run "no model is invoked" test_no_model_is_invoked
 _run "phase: reports last failing verifier's phase" test_phase_reports_last_failing_verifier_phase
