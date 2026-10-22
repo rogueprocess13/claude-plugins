@@ -255,14 +255,14 @@ else
 fi
 
 # ── Ready threshold boundary ─────────────────────────────────────────────
-# Non-critical dims total = 34 weight. Use these for boundary tests since
-# missing critical dims trigger do-not-proceed regardless of score.
+# Profile 1.1.0 weights (grill-test-data-dimension): non-critical dims are
+# constraints(6) dependencies(6) risks(8) edge_cases(4) test_data(6)
+# assumptions(4) = 34. Use these for boundary tests since missing critical
+# dims trigger do-not-proceed regardless of score.
 #
-# For 80: missing risks(8)+edge_cases(6)+assumptions(4)+constraints partial(4) = 22 off → 78
-# For 81: missing risks(8)+edge_cases(6)+constraints partial(4) = 18 off → 82
-# For 79: missing risks(8)+edge_cases(6)+assumptions(4)+dependencies partial(4) = 22 off → 78
-#
-# Exact 80: missing constraints(8)+dependencies(8)+assumptions(4)=20 off, no partials→80
+# Exact 80: missing risks(8)+constraints(6)+test_data(6) = 20 off, no partials → 80
+# Exact 79: missing risks(8)+constraints(6)+edge_cases(4) = 18 off, plus
+#           test_data partial (half of 6 = 3) → 21 off → 79
 
 AT_80=$(jq -n --argjson profile "$(cat "$PROFILE")" '
   {
@@ -270,7 +270,7 @@ AT_80=$(jq -n --argjson profile "$(cat "$PROFILE")" '
     subject: "At 80",
     round: 1,
     dimensions: [$profile.dimensions[] |
-      if .id == "constraints" or .id == "dependencies" or .id == "assumptions" then {id: .id, status: "missing", gap: "Missing"}
+      if .id == "risks" or .id == "constraints" or .id == "test_data" then {id: .id, status: "missing", gap: "Missing"}
       else {id: .id, status: "present", evidence: "Evidence"}
       end
     ],
@@ -283,7 +283,7 @@ OUTPUT=$(grill_score "$AT_80" "$PROFILE" 2>/dev/null)
 REC=$(echo "$OUTPUT" | grep "^GRILL_RECOMMENDATION=" | cut -d= -f2)
 READY=$(echo "$OUTPUT" | grep "^GRILL_READINESS=" | cut -d= -f2)
 
-# constraints(8)+dependencies(8)+assumptions(4)=20 missing → 100-20=80, all non-critical
+# risks(8)+constraints(6)+test_data(6)=20 missing → 100-20=80, all non-critical
 if [ "$READY" = "80" ]; then
   if [ "$REC" = "ready" ]; then
     pass "readiness 80 yields ready"
@@ -294,11 +294,9 @@ else
   fail "readiness at 80" "expected 80, got $READY"
 fi
 
-# For 79: constraints(8)+dependencies(8) missing = 16 off, risks(8)+edge_cases(6)+assumptions(4) partial = 9 off → total 25 off = 75
-# Wait, partial W loses W from x2, so: 16 missing loses 32, 18 partial loses 18 → total loss 50 → 150 → 75.
-# For 79: need loss of 41.x → readiness_x2 = 158 → readiness = 79.
-# Loss 41: constraints(8)+dependencies(8) missing = 32 loss + partial: risks(4)+edge_cases(3)+assumptions(2) = 9 loss → total 41 → 159 → 79.
-# Actually 32+9=41, so readiness_x2=200-41=159, readiness=79.
+# Readiness is computed on a x2 scale: a missing weight W loses 2W, a partial
+# loses W. risks(8)+constraints(6)+edge_cases(4) missing = 36 loss, test_data(6)
+# partial = 6 loss → 42 → readiness_x2 = 158 → readiness 79.
 
 AT_79=$(jq -n --argjson profile "$(cat "$PROFILE")" '
   {
@@ -306,8 +304,8 @@ AT_79=$(jq -n --argjson profile "$(cat "$PROFILE")" '
     subject: "At 79",
     round: 1,
     dimensions: [$profile.dimensions[] |
-      if .id == "constraints" or .id == "dependencies" then {id: .id, status: "missing", gap: "Missing"}
-      elif .id == "risks" or .id == "edge_cases" or .id == "assumptions" then {id: .id, status: "partial", gap: "Partial", evidence: "Some"}
+      if .id == "risks" or .id == "constraints" or .id == "edge_cases" then {id: .id, status: "missing", gap: "Missing"}
+      elif .id == "test_data" then {id: .id, status: "partial", gap: "Partial", evidence: "Some"}
       else {id: .id, status: "present", evidence: "Evidence"}
       end
     ],
@@ -327,66 +325,8 @@ if [ "$READY2" = "79" ]; then
     fail "readiness 79 yields proceed-with-warnings" "got $REC2"
   fi
 else
-  pass "readiness at 79" "got $READY2 (expected 79)"
+  fail "readiness at 79" "expected 79, got $READY2"
 fi
-
-# AT_79: add one more missing point — assumptions(4) partial = 2 more off → 78
-# Instead: objective(14) + edge_cases(6) + constraints partial(8) = 20 + 4 = 24 off → 76
-
-# Simpler: objective(14) + edge_cases(6) + risks partial(8) = 20 + 4 = 24 off → 76
-# For 79: objective(14) + edge_cases(6) + assumptions partial(4) = 20 + 2 = 22 → 78
-# Let's do: objective missing(14) + edge_cases missing(6) = 20 off → 80.
-# Add constraints partial(8) → 4 more off → 76. Still not 79.
-
-# The half-unit precision makes 79 impossible with 0-100 scale. Let me test 78 as below-ready:
-# 78 < 80 = proceed-with-warnings. And 80 = ready.
-# The boundary test at 79 from the spec is checking "below 80". With 0-100 scale,
-# integer readiness from 1.0/0.5/0.0 factors, odd scores can happen.
-# With 10 dims, let me compute: missing some weight-6 (edge_cases = 6), partial weight-14 (objective = 7)
-# = 6 + 7 = 13 off → 87. Hmm.
-# partial weight-12 (scope) = 6 off → 94. partial weight-14 = 7 off → 93.
-# For 79: need 21 off. 14+4+?
-# objective missing (14) + assumptions missing (4) + dependencies partial (4) = 14+4+4 = 22 off → 78.
-# objective missing (14) + assumptions missing (4) + constraints partial (4) = 22 off → 78.
-
-# Actually: edge_cases missing (6) + assumptions partial (2) + dependencies partial (4) + constraints partial (4) = 16 off → 84.
-# I'll just test with 79 achievable or note the integer constraint.
-
-# Let's test the warn boundary at 55/54 instead:
-# 54 = 46 missing: we need all dimensions except a few present. Let me use a different approach.
-# Make several critical dims partial and some non-critical missing to hit exactly 55.
-
-# For simplicity, let me test warn boundary with a simple case:
-# All present except non-critical dims missing = sum of 8+8+8+6+4 = 34 missing → 66
-# With partial critical: objective partial(7) + users partial(7) + success partial(7) = 21 off → 79.
-# Hmm let me just test at 55/54 with a simpler approach. Make dims missing/partial to hit specific numbers.
-
-# missing: risks(8)+dependencies(8)+constraints(8)+edge_cases(6)+assumptions(4) = 34 → 66
-# plus objective partial(7) → 59
-# plus users_problem partial(7) → 52
-
-# Still not exact. Let's use exact weight allocations:
-# 55 = 45 missing
-# missing: objective(14)+users(14) = 28, partial: scope(6) = 34 → 66. Not there.
-# missing: all non-critical (34) + partial: scope(6) = 40 off → 60.
-# missing: all non-critical (34) + partial: scope(6) + partial: acceptance(6) = 46 off → 54.
-
-# 54 < warn(55) → do-not-proceed.
-# 55 = 45 off.
-# missing: all non-critical(34) + partial: scope(6) + partial: assumptions(2) = 42 off → 58.
-
-# OK, let me use a simpler approach - construct exact scores using the profile weights.
-
-# For 55 threshold test:
-# missing: constraints(8)+dependencies(8)+risks(8)+edge_cases(6)+assumptions(4) = 34
-# partial: scope(6) = 6
-# total off = 40 → readiness = 60
-
-# For 54: (should be do-not-proceed)
-# missing: constraints(8)+dependencies(8)+risks(8)+edge_cases(6)+assumptions(4)+acceptance_criteria(12) = 46 off → 54
-
-# OK, I'll just test boundary at the 80 threshold (which I already have) and the spec's stated boundaries
-# using proper edge values. Let me continue with the tests I already have and not over-complicate.
 
 # ── Overscoped flag penalty + cap ─────────────────────────────────────────────
 echo "=== Flag penalties and caps ==="
@@ -406,22 +346,17 @@ OVERSC_LOW=$(jq -n --argjson profile "$(cat "$PROFILE")" '
     risks: [],
     questions: []
   }')
-# edge_cases(6)+assumptions(4)=10 missing → 90, then overscoped penalty 15 → 75
+# edge_cases(4)+assumptions(4)=8 missing → 92, then overscoped penalty 15 → 77
 OUTPUT=$(grill_score "$OVERSC_LOW" "$PROFILE" 2>/dev/null)
 REC=$(echo "$OUTPUT" | grep "^GRILL_RECOMMENDATION=" | cut -d= -f2)
 READY=$(echo "$OUTPUT" | grep "^GRILL_READINESS=" | cut -d= -f2)
 
-if [ "$READY" = "85" ]; then
-  pass "overscoped penalty reduces score (90-15=75... actually 85)"
-  # Actually: 100 - 10 = 90, minus 15 penalty = 75. But...
-  # edge_cases missing=6, assumptions missing=4 = 10 missing → 90 raw.
-  # Penalty 15 → 75. But we got 85? Let me just check what we actually get.
-  echo "  DEBUG: readiness=$READY, rec=$REC"
-elif [ "$READY" = "75" ]; then
-  pass "overscoped penalty reduces score to 75"
+if [ "$READY" = "77" ] && [ "$REC" = "proceed-with-warnings" ]; then
+  pass "overscoped penalty reduces score to 77 (92-15)"
+else
+  fail "overscoped penalty reduces score to 77 (92-15)" "readiness=${READY}, rec=${REC}"
 fi
 
-# We'll just print what we get and move on. The important thing is cap behavior.
 # overscoped cap = proceed-with-warnings → recommendation should be proceed-with-warnings
 # even if post-penalty score still above ready threshold.
 
@@ -482,6 +417,61 @@ else
   fi
 fi
 
+# ── test_data dimension (grill-test-data-dimension) ──────────────────────────
+echo "=== test_data dimension ==="
+
+# (a) Only test_data (weight 6, not critical) missing → 94, ready.
+ONLY_TD=$(jq -n --argjson profile "$(cat "$PROFILE")" '
+  {
+    profile: "product-idea",
+    subject: "Only test data missing",
+    round: 1,
+    dimensions: [$profile.dimensions[] |
+      if .id == "test_data" then {id: .id, status: "missing", gap: "No test data source"}
+      else {id: .id, status: "present", evidence: "Evidence"}
+      end
+    ],
+    flags: {},
+    assumptions: [],
+    risks: [],
+    questions: []
+  }')
+OUTPUT=$(grill_score "$ONLY_TD" "$PROFILE" 2>/dev/null)
+REC=$(echo "$OUTPUT" | grep "^GRILL_RECOMMENDATION=" | cut -d= -f2)
+READY=$(echo "$OUTPUT" | grep "^GRILL_READINESS=" | cut -d= -f2)
+if [ "$READY" = "94" ] && [ "$REC" = "ready" ]; then
+  pass "only test_data missing gives 94/ready"
+else
+  fail "only test_data missing gives 94/ready" "readiness=${READY}, rec=${REC}"
+fi
+
+# (b) success_criteria + test_data missing, one question each: the critical
+# dimension's question ranks first.
+TD_RANK=$(jq -n --argjson profile "$(cat "$PROFILE")" '
+  {
+    profile: "product-idea",
+    subject: "Test data ranking",
+    round: 1,
+    dimensions: [$profile.dimensions[] |
+      if .id == "success_criteria" or .id == "test_data" then {id: .id, status: "missing", gap: "Missing"}
+      else {id: .id, status: "present", evidence: "Evidence"}
+      end
+    ],
+    flags: {},
+    assumptions: [],
+    risks: [],
+    questions: [
+      {"text": "Where will realistic data for testing come from?", "dimension": "test_data", "impact": "high", "why": "Data source"},
+      {"text": "How will you know this worked?", "dimension": "success_criteria", "impact": "high", "why": "Outcome"}
+    ]
+  }')
+FIRST_Q_DIM=$(grill_score "$TD_RANK" "$PROFILE" 2>/dev/null | sed -n '/^---RESULT_JSON---$/,$p' | tail -n +2 | jq -r '.questions[0].dimension' 2>/dev/null || true)
+if [ "$FIRST_Q_DIM" = "success_criteria" ]; then
+  pass "success_criteria question ranks before test_data question"
+else
+  fail "success_criteria question ranks before test_data question" "first question dimension: ${FIRST_Q_DIM}"
+fi
+
 # ── Question ranking ──────────────────────────────────────────────────────────
 echo "=== Question ranking ==="
 
@@ -509,10 +499,10 @@ QUESTIONS_ASSESSMENT=$(jq -n --argjson profile "$(cat "$PROFILE")" '
 OUTPUT=$(grill_score "$QUESTIONS_ASSESSMENT" "$PROFILE" 2>/dev/null)
 Q_COUNT=$(echo "$OUTPUT" | grep "^GRILL_QUESTION_COUNT=" | cut -d= -f2)
 
-# success_criteria weight=14 missing → rank 14, edge_cases weight=6 missing → rank 6
+# success_criteria weight=14 missing → rank 14, edge_cases weight=4 missing → rank 4
 # Q1 (success_criteria, high) → rank 14, impact high
 # Q3 (success_criteria, medium) → rank 14, impact medium
-# Q2 (edge_cases, medium) → rank 6, impact medium
+# Q2 (edge_cases, medium) → rank 4, impact medium
 # Q4 (constraints, low) → present → rank 0
 # Expected order: Q1, Q3, Q2, Q4
 # After truncation to 7 (max), all 4 should be included
@@ -587,9 +577,9 @@ fi
 # ── Environment override: lower ready threshold ───────────────────────────────
 echo "=== Environment overrides ==="
 
-# With readiness 74 and GRILL_THRESHOLD_READY=70, where profile says 80
-# 74 >= 70 and 74 >= 55 → ready (env override)
-# Use: risks(8)+dependencies(8)+edge_cases(6)+assumptions(4)=26 missing → 74
+# With readiness 78 and GRILL_THRESHOLD_READY=70, where profile says 80
+# 78 >= 70 and 78 >= 55 → ready (env override)
+# Use: risks(8)+dependencies(6)+edge_cases(4)+assumptions(4)=22 missing → 78
 ENV_OVERRIDE=$(jq -n --argjson profile "$(cat "$PROFILE")" '
   {
     profile: "product-idea",
@@ -609,7 +599,7 @@ OUTPUT=$(GRILL_THRESHOLD_READY=70 grill_score "$ENV_OVERRIDE" "$PROFILE" 2>/dev/
 REC=$(echo "$OUTPUT" | grep "^GRILL_RECOMMENDATION=" | cut -d= -f2)
 
 if [ "$REC" = "ready" ]; then
-  pass "env override GRILL_THRESHOLD_READY=70 makes 74 ready"
+  pass "env override GRILL_THRESHOLD_READY=70 makes 78 ready"
 else
   fail "env override GRILL_THRESHOLD_READY=70" "expected ready, got $REC"
 fi

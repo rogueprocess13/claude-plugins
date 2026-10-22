@@ -253,6 +253,38 @@ $(_dim_body edge_cases "_None identified_")
 MD
   )
 
+  # Extra profile dimensions (grill-test-data-dimension): every result
+  # dimension outside the ten v1 ids renders generically as `## <label>` plus
+  # its body, in result (profile) order, between Edge Cases and Assumptions.
+  # The label is a heading only, never evaluated: CR/LF are removed and any
+  # leading `#`/space stripped, so a profile label cannot forge a heading.
+  # Empty for a v1 result — the assembly below then adds nothing at all.
+  local extra_sections="" extra_id extra_label extra_section
+  # jq emits id and label on alternate lines (the label's CR/LF already gone,
+  # so each is exactly one line).
+  while IFS= read -r extra_id && IFS= read -r extra_label; do
+    [ -n "$extra_id" ] || continue
+    extra_label=$(printf '%s' "$extra_label" | tr -d '\r\n' | sed 's/^[#[:space:]]*//')
+    extra_section=$(
+      cat <<MD
+## ${extra_label}
+
+$(_dim_body "$extra_id" "_None identified_")
+
+MD
+    )
+    if [ -n "$extra_sections" ]; then
+      extra_sections="${extra_sections}
+${extra_section}"
+    else
+      extra_sections="${extra_section}"
+    fi
+  done < <(echo "$result" | jq -r '
+    ["objective","users_problem","success_criteria","scope","acceptance_criteria",
+     "constraints","dependencies","risks","edge_cases","assumptions"] as $v1
+    | .dimensions[] | select(.dimension as $d | $v1 | index($d) | not)
+    | (.dimension | gsub("[\r\n]"; "")), ((.label // .dimension) | gsub("[\r\n]"; ""))')
+
   # Resolved Questions table
   local resolved_table
   resolved_table=$(_render_resolved_questions "$assessment" "$round")
@@ -276,7 +308,14 @@ ${ac_section}
 ${constraints_section}
 ${dependencies_section}
 ${risks_section}
-${edge_section}
+${edge_section}"
+  # Only inside the if: an unconditional "\n${extra_sections}" would add an
+  # empty line to every v1 document and break its byte-identity.
+  if [ -n "$extra_sections" ]; then
+    doc="${doc}
+${extra_sections}"
+  fi
+  doc="${doc}
 ${assumptions_section}
 ${resolved_table}
 ${gaps_table}

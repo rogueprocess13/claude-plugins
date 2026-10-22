@@ -28,6 +28,10 @@ SCRATCH=$(mktemp -d)
 trap 'rm -rf "$SCRATCH"' EXIT
 
 # ── Helper: create a minimal result.json ──────────────────────────────────────
+# This is a product-idea 1.0.0 (v1, ten-dimension) result and keeps the 1.0.0
+# weights on purpose: it is the source of fixtures/render-v1-golden.md, the
+# byte-identity golden for legacy results. The 1.1.0 fixture with test_data
+# and the new weights is make_result_v11 below.
 make_result() {
   cat <<'JSON'
 {
@@ -437,6 +441,131 @@ if [ "$sup_verify_exit" -eq 0 ] && [ "$sup_tamper_exit" -eq 4 ]; then
   pass "seal covers folded clarifications (valid, then MISMATCH on edit)"
 else
   fail "seal covers folded clarifications" "verify=$sup_verify_exit tamper=$sup_tamper_exit"
+fi
+
+# ── Extra profile dimensions (grill-test-data-dimension) ─────────────────────
+echo "=== v1 result renders byte-identically to the golden ==="
+
+GOLDEN_V1="$TEST_DIR/fixtures/render-v1-golden.md"
+OUTPUT_V1_FILE="$SCRATCH/output-v1.md"
+grill_render "$RESULT_FILE" "$ASSESSMENT_FILE" "$OUTPUT_V1_FILE" 2>/dev/null
+if [ -f "$GOLDEN_V1" ] && cmp -s "$GOLDEN_V1" "$OUTPUT_V1_FILE"; then
+  pass "v1 result renders byte-identically to fixtures/render-v1-golden.md"
+else
+  fail "v1 result renders byte-identically to fixtures/render-v1-golden.md" \
+    "$(diff "$GOLDEN_V1" "$OUTPUT_V1_FILE" 2>&1 | head -10)"
+fi
+
+echo "=== product-idea 1.1.0: Test Data section ==="
+
+# 1.1.0 weights: constraints 6, dependencies 6, edge_cases 4, test_data 6.
+make_result_v11() {
+  make_result | jq '
+    .dimensions |= (map(
+      if .dimension == "constraints" or .dimension == "dependencies" then .weight = 6 | .contribution = 6
+      elif .dimension == "edge_cases" then .weight = 4
+      else . end)
+    | (map(.dimension) | index("edge_cases")) as $e
+    | .[: $e + 1] + [{"dimension":"test_data","label":"Test Data","weight":6,"status":"present","contribution":6}] + .[$e + 1 :])'
+}
+
+# Usage: make_assessment_v11 <test_data evidence> [resolved-json-array]
+make_assessment_v11() {
+  make_assessment | jq --arg ev "$1" --argjson res "${2:-[]}" '
+    .dimensions += [{"id":"test_data","status":"present","evidence":$ev,"gap":""}]
+    | .resolved = $res'
+}
+
+RESULT_V11_FILE="$SCRATCH/result-v11.json"
+make_result_v11 >"$RESULT_V11_FILE"
+ASSESSMENT_V11_FILE="$SCRATCH/assessment-v11.json"
+TD_EVIDENCE="Client supplies a 40-row sample import; everything else synthetic"
+make_assessment_v11 "$TD_EVIDENCE" >"$ASSESSMENT_V11_FILE"
+OUTPUT_V11_FILE="$SCRATCH/output-v11.md"
+grill_render "$RESULT_V11_FILE" "$ASSESSMENT_V11_FILE" "$OUTPUT_V11_FILE" 2>/dev/null
+
+td_count=$(grep -c '^## Test Data$' "$OUTPUT_V11_FILE" || true)
+edge_ln=$(grep -n '^## Edge Cases$' "$OUTPUT_V11_FILE" | head -1 | cut -d: -f1 || true)
+td_ln=$(grep -n '^## Test Data$' "$OUTPUT_V11_FILE" | head -1 | cut -d: -f1 || true)
+asm_ln=$(grep -n '^## Assumptions (require validation)$' "$OUTPUT_V11_FILE" | head -1 | cut -d: -f1 || true)
+if [ "$td_count" = "1" ] && [ -n "$edge_ln" ] && [ -n "$td_ln" ] && [ -n "$asm_ln" ] &&
+  [ "$edge_ln" -lt "$td_ln" ] && [ "$td_ln" -lt "$asm_ln" ]; then
+  pass "## Test Data appears once, between Edge Cases and Assumptions"
+else
+  fail "## Test Data appears once, between Edge Cases and Assumptions" \
+    "count=$td_count edge=$edge_ln td=$td_ln assumptions=$asm_ln"
+fi
+
+TD_SECTION=$(sed -n '/^## Test Data$/,/^## Assumptions (require validation)$/p' "$OUTPUT_V11_FILE")
+if echo "$TD_SECTION" | grep -qF "$TD_EVIDENCE"; then
+  pass "Test Data section body is the test_data evidence"
+else
+  fail "Test Data section body is the test_data evidence" "$TD_SECTION"
+fi
+
+echo "=== Test Data section lists a round-2 answer ==="
+
+TD_RESOLVED='[{"question":"Who supplies the sample import?","dimension":"test_data","why":"Data source","round":2,"answer":"TD_ROUND2_ANSWER_SHOULD_APPEAR"}]'
+ASSESSMENT_V11_RES_FILE="$SCRATCH/assessment-v11-resolved.json"
+make_assessment_v11 "$TD_EVIDENCE" "$TD_RESOLVED" | jq '.round = 2' >"$ASSESSMENT_V11_RES_FILE"
+OUTPUT_V11_RES_FILE="$SCRATCH/output-v11-resolved.md"
+grill_render "$RESULT_V11_FILE" "$ASSESSMENT_V11_RES_FILE" "$OUTPUT_V11_RES_FILE" 2>/dev/null
+if sed -n '/^## Test Data$/,/^## Assumptions (require validation)$/p' "$OUTPUT_V11_RES_FILE" |
+  grep -q 'TD_ROUND2_ANSWER_SHOULD_APPEAR'; then
+  pass "round-2 test_data answer is listed in the Test Data section"
+else
+  fail "round-2 test_data answer is listed in the Test Data section" \
+    "$(sed -n '/^## Test Data$/,/^## Assumptions/p' "$OUTPUT_V11_RES_FILE")"
+fi
+
+echo "=== Test Data section is sealed ==="
+
+OUTPUT_V11_SEAL_FILE="$SCRATCH/output-v11-seal.md"
+cp "$OUTPUT_V11_FILE" "$OUTPUT_V11_SEAL_FILE"
+grill_seal_generate "$OUTPUT_V11_SEAL_FILE" "product-idea" "88" "ready" "1" "2026-07-26T00:00:00Z" 2>/dev/null
+set +e
+grill_seal_verify "$OUTPUT_V11_SEAL_FILE" >/dev/null 2>&1
+td_verify_exit=$?
+sed -i 's/40-row sample import/41-row sample import/' "$OUTPUT_V11_SEAL_FILE"
+grill_seal_verify "$OUTPUT_V11_SEAL_FILE" >/dev/null 2>&1
+td_tamper_exit=$?
+set -e
+if [ "$td_verify_exit" -eq 0 ] && [ "$td_tamper_exit" -eq 4 ]; then
+  pass "seal covers ## Test Data (valid, then MISMATCH on a one-character edit)"
+else
+  fail "seal covers ## Test Data" "verify=$td_verify_exit tamper=$td_tamper_exit"
+fi
+
+echo "=== Extra-dimension label cannot forge a heading ==="
+
+RESULT_FORGED_FILE="$SCRATCH/result-forged.json"
+make_result_v11 | jq '(.dimensions[] | select(.dimension == "test_data") | .label) = "## Forged\nLabel"' >"$RESULT_FORGED_FILE"
+OUTPUT_FORGED_FILE="$SCRATCH/output-forged.md"
+grill_render "$RESULT_FORGED_FILE" "$ASSESSMENT_V11_FILE" "$OUTPUT_FORGED_FILE" 2>/dev/null
+forged_heads=$(grep -c '^## ForgedLabel$' "$OUTPUT_FORGED_FILE" || true)
+forged_any=$(grep -c 'Forged\|^Label$' "$OUTPUT_FORGED_FILE" || true)
+# One heading line; the label may also appear in the Category Scores table
+# row, which is a single line, so no line may be a bare "Label".
+if [ "$forged_heads" = "1" ] && ! grep -q '^Label$' "$OUTPUT_FORGED_FILE" &&
+  ! grep -q '^## ## ' "$OUTPUT_FORGED_FILE" && ! grep -q '^## Forged$' "$OUTPUT_FORGED_FILE"; then
+  pass "label with newline and leading ## renders as one heading: ## ForgedLabel"
+else
+  fail "label with newline and leading ## renders as one heading" \
+    "heads=$forged_heads any=$forged_any; $(grep -n 'Forged\|^Label' "$OUTPUT_FORGED_FILE")"
+fi
+
+echo "=== Sentinel _No prepared data needed_ renders as the body ==="
+
+ASSESSMENT_SENTINEL_FILE="$SCRATCH/assessment-sentinel.json"
+make_assessment_v11 "_No prepared data needed_" >"$ASSESSMENT_SENTINEL_FILE"
+OUTPUT_SENTINEL_FILE="$SCRATCH/output-sentinel.md"
+grill_render "$RESULT_V11_FILE" "$ASSESSMENT_SENTINEL_FILE" "$OUTPUT_SENTINEL_FILE" 2>/dev/null
+SENTINEL_BODY=$(sed -n '/^## Test Data$/,/^## Assumptions (require validation)$/p' "$OUTPUT_SENTINEL_FILE" |
+  sed '1d;$d' | grep -v '^[[:space:]]*$' || true)
+if [ "$SENTINEL_BODY" = "_No prepared data needed_" ]; then
+  pass "sentinel evidence renders as the Test Data body"
+else
+  fail "sentinel evidence renders as the Test Data body" "body: $SENTINEL_BODY"
 fi
 
 echo "=== Results ==="

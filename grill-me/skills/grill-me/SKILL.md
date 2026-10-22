@@ -304,12 +304,17 @@ The rendered document follows a fixed section order (see `intent-document` capab
 ## Dependencies
 ## Risks
 ## Edge Cases
+## Test Data            (and any other profile dimension outside the ten above)
 ## Assumptions (require validation)
 ## Resolved Questions (table)
 ## Open Gaps (table)
 ## Category Scores (table)
 ## Intent Seal
 ```
+
+A profile dimension that is not one of the ten fixed ones above (in `product-idea` 1.1.0,
+`test_data`) renders generically as `## <label>` with its evidence and clarified answers, in
+profile order, after Edge Cases. A result with no such dimension renders no extra block at all.
 
 The `## Intent Seal` block terminates the document. `**Content-Hash:**` is always the last non-empty line.
 

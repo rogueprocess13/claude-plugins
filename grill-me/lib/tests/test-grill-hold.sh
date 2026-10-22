@@ -51,6 +51,7 @@ make_assessment() {
     {"id":"dependencies","status":"present","evidence":"Reporting service","gap":""},
     {"id":"risks","status":"present","evidence":"Large exports time out","gap":""},
     {"id":"edge_cases","status":"present","evidence":"Empty month","gap":""},
+    {"id":"test_data","status":"present","evidence":"Synthetic invoices generated for the test","gap":""},
     {"id":"assumptions","status":"present","evidence":"Finance has dashboard access","gap":""}
   ],
   "flags": {},
