@@ -37,6 +37,14 @@ Maintainer-facing overview of the ticket-planner plugin. Read this before adding
 |-----------|------|------|
 | Linear API client | `lib/planner-linear-api.sh` | GraphQL API with retry (3 attempts, exponential backoff), issue creation and retrieval |
 
+### Headless Q&A
+
+| Component | File | Role |
+|-----------|------|------|
+| Artifact Q&A | `lib/planner-artifact-qa.sh` | Answers a client's question back about the plan, read-only. The only planner code that spawns `claude`: its own `claude -p` subprocess, so the sandbox is set by this process and not inherited from a bypass-mode caller |
+
+The sandbox has four layers, so no single CLI flag is load-bearing: a read-only snapshot of `artifacts/` (no links, dot-paths, `answers/` or agent files, size-capped); a restricted argv (`dontAsk`, `--restricted`, `Read,Grep,Glob` only, no MCP, cwd = snapshot, `env -i` allowlist, timeout and budget); a check of the session's `init` message; and a fingerprint re-check after the session. Any failure in layers 3–4 is rc 5 and is never retried. Ungrounded answers are downgraded to a fixed "not in the plan yet" sentence. The script writes only `qa.log` and `qa/<id>.json`, never `artifacts/`, `state.log` or the open question round.
+
 ### Re-planning
 
 | Component | File | Role |
@@ -71,6 +79,9 @@ User invokes /ticket-planner plan "idea"
             per-ticket deterministic DoR check + dor-semantic-agent scan/audit
             spawns, then planner_refinement_gate stamps the epic and decides
             halt vs. proceed (steps 3-5 skipped)
+        2c. At Review, planner_specify_gate scans proposal.md for an open
+            NEEDS_HUMAN_DECISION marker and halts (exit 0, no agent spawned,
+            no phase line) until it is answered, deferred or edited away
         3. planner_prompt_for_phase → agent prompt, config read back off disk
         4. Spawn isolated agent with prompt
         5. Agent writes state log entries via planner_state_write

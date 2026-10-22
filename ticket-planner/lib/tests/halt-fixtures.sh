@@ -24,7 +24,7 @@ _HALT_FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _HALT_LIB_DIR="${_HALT_FIXTURES_DIR}/.."
 
 # Every halt the stop describer must recognise, with the reason it must name.
-HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT until:UNTIL_STOP"
+HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION"
 
 # _halt_done <init> <phase...> — mark phases done, in order.
 _halt_done() {
@@ -91,6 +91,31 @@ APPRAISAL
   until)
     _halt_done "$init" Appraisal Discovery Architecture Specify Review
     planner_stop_after_set "$init" "Review"
+    ;;
+  specify-decision)
+    # planner-specify-waiting-on-human: Specify done with one open business
+    # decision (O1) beside a sourced outcome (O2). Added after the other
+    # goldens; they predate it.
+    _halt_done "$init" Appraisal Discovery Architecture Specify
+    cat >"$(planner_initiative_dir "$init")/artifacts/proposal.md" <<'PROPOSAL'
+# Proposal
+
+## Business Outcomes
+
+### O1
+**Who:** Not specified
+**Need:** Not specified
+**Outcome:** NEEDS_HUMAN_DECISION — which role signs off the exported invoices?
+
+### O2
+**Who:** Finance user
+**Need:** Export invoices for the month-end close
+**Outcome:** Finance users export invoices without asking support.
+
+## Out of Scope
+
+None.
+PROPOSAL
     ;;
   *)
     echo "halt-fixtures: unknown fixture '${name}'" >&2
@@ -316,6 +341,26 @@ halt_fixture_run() {
           echo "To create:  /ticket-planner resume ${INITIATIVE_ID} --create"
         fi
         exit 0
+      fi
+      ;;
+    specify-decision)
+      # SKILL.md step 1c, when the loop is about to dispatch Review.
+      PHASE="Review"
+      source "${CLAUDE_PLUGIN_ROOT}/lib/planner-specify-decisions.sh"
+      if [ "$PHASE" = "Review" ]; then
+        _sd_rc=0
+        planner_specify_gate "$INITIATIVE_ID" || _sd_rc=$?
+        case "$_sd_rc" in
+        0) ;;
+        3)
+          planner_specify_halt_report "$INITIATIVE_ID" "$STATE_DIR"
+          exit 0
+          ;;
+        *)
+          echo "ERROR: Specify decision gate could not read proposal.md" >&2
+          exit 1
+          ;;
+        esac
       fi
       ;;
     esac

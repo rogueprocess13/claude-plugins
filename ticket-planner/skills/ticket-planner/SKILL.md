@@ -172,7 +172,8 @@ script — cannot read the halt prose. It runs this loop instead:
 
 1. **Describe.** `bash lib/planner-stop-describe.sh <INIT_ID>` prints why the run
    stopped, as a human-hold Schema-Version 2 block (`REASON`, `ROUND`, and one
-   question per decision, each with an id, options and a binding). A run with
+   question per decision, each with an id, a binding and, for a closed choice,
+   options). A run with
    nothing to ask prints one line: `REASON=COMPLETED`, `REASON=RUNNING` (just
    resume) or `REASON=FAILED_RETRY_EXHAUSTED`.
 2. **Answer.** The caller collects answers and writes them to a JSON file: the
@@ -191,6 +192,7 @@ script — cannot read the halt prose. It runs this loop instead:
 | `REFINEMENT_HALT` | `waive:<TICKET>:<CODE>` | the reason = `dor-check.sh --waive <TICKET> <CODE> "reason"`. `__skip__` declines |
 | `ADR_GATE` | `note` | recorded only — accept the ADR out of band (`adr-store.sh accept` refuses inside an agent session) |
 | `UNTIL_STOP` | `note` | recorded only — resuming is what continues past the `--until` phase |
+| `SPECIFY_DECISION` | `specify-answer:O<n>`, one per open decision, id `decision-O<n>-<hash8>`; `KIND input`, `AUDIENCE either`, no options or default | one line of at most 500 characters, written into proposal.md as `**Outcome:** Human decision (verbatim, round N, <role>): "<answer>"`. `__defer__` writes `**Outcome:** Deferred decision: <question>` and keeps the old outcome: the epic carries the question unresolved. Either a client or an operator may answer |
 
 `lib/planner-answers.sh` checks the file before it writes anything: the round must be
 the open one (exit 4, `STALE_ROUND`), every id must belong to it and an operator
@@ -202,8 +204,46 @@ different file for an answered round exits 3 (`ROUND_ALREADY_ANSWERED`). Answer 
 is untrusted: capped at 4 KB, stripped of control characters and code fences, stored
 with its attribution, and never evaluated.
 
+A `SPECIFY_DECISION` answer has stricter rules. It must be one line of at most 500
+characters after trimming; a longer value is `INVALID_VALUE` (exit 2), never cut. The
+first answer wins: an answer to a decision that was already answered, or whose
+question was edited in proposal.md, is `UNKNOWN_QUESTION_ID` (exit 2) — describe again
+and ask the new question. A round may answer only some decisions; the next describe
+opens round N+1 with the rest. Every intake runs under a per-initiative lock
+(`<state.log>.answers-lock`), so two concurrent files for one round give one exit 0
+and one exit 3. The answer text is written into proposal.md and `round-N.json`, never
+into state.log.
+
 The halts themselves do not change — same prose, same exit codes. The describer reads
-the state log the halts already write.
+the state log the halts already write. The one halt added with the describer in mind
+is step 1c's open-decision halt: its describer check reads proposal.md, read-only,
+at position `Review`, so after `--until Specify` the decision is described before
+`UNTIL_STOP`.
+
+#### When the client asks back
+
+A reply can be a question instead of an answer ("why do you need this?"). The caller
+decides which it is with an explicit affordance (a button, a command, a `?` prefix),
+never by asking a model. A question goes to the read-only Q&A script:
+
+```bash
+REPOS_ROOT=… bash lib/planner-artifact-qa.sh <INIT_ID> --question-file <file|-> \
+  [--qa-id <id>] [--about <QUESTION_ID>]
+```
+
+It answers from a read-only snapshot of the initiative's artifacts in its own sandboxed
+`claude -p` session and prints one JSON object: `status` (`answered` or
+`not_in_plan`), `answer`, `sources`, `about_open`, `phase_running`, `round`. An answer
+with no source in the plan comes back as `That is not in the plan yet.` Its exit codes
+are its own — do not reuse the `planner-answers.sh` table: 0 post the answer, 1 could
+not run, 2 input rejected, 3 `NO_ARTIFACTS`, 4 `QA_MODEL_FAILED` (retry once with the
+same `--qa-id`, unless stderr says `QA_MODEL_FAILED: budget`), 5 sandbox unsafe or
+violated (never retry).
+
+A question back is never an answer. The script does not touch `state.log`,
+`artifacts/` or the answers round: the open round stays open and its question stays
+pending. When `phase_running` is true a phase is running and the plan may still change;
+say so next to the answer.
 
 ### Status (`status`)
 
@@ -936,7 +976,14 @@ When mode is `status`:
    also run `planner_refinement_report "$INITIATIVE_ID"` and print its
    output verbatim below the per-ticket summary — same relationship as
    Crosscheck's own summary-then-report pair above.
-6. Report: current phase, initiative metadata, last 10 log entries, artifact listing.
+6. **Open business decisions** (planner-specify-waiting-on-human). When the current
+   phase is `Review`, source `planner-specify-decisions.sh` and run
+   `planner_specify_decisions_open "$INITIATIVE_ID"` (read-only — never the gate,
+   which can write a warn line). Each output line is `O<n>\t<hash8>\t<line>\t<question>`.
+   With one or more lines, report the phase as
+   `Review — waiting on N business decision(s): O1, O3` (the ids in file order)
+   instead of plain `Review`.
+7. Report: current phase, initiative metadata, last 10 log entries, artifact listing.
 
 ### 6. Replan mode
 
@@ -1097,6 +1144,42 @@ For each phase to run:
     Refinement halt is a content decision (a ticket is not ready), not a transient
     agent failure, so it never consumes `PLANNER_MAX_PHASE_RETRIES`. On a legacy-skip
     or a clean gate pass, continue to step 6 (skip 2–5).
+
+1c. **Open business decisions halt the loop before Review** (planner-specify-waiting-on-human).
+    Specify writes `**Outcome:** NEEDS_HUMAN_DECISION — <question>` in proposal.md's
+    `## Business Outcomes` when no source states an outcome. If `$PHASE` is `Review`,
+    run the decision gate before generating the Review prompt:
+
+    ```bash
+    source "${CLAUDE_PLUGIN_ROOT}/lib/planner-specify-decisions.sh"
+    if [ "$PHASE" = "Review" ]; then
+      _sd_rc=0
+      planner_specify_gate "$INITIATIVE_ID" || _sd_rc=$?
+      case "$_sd_rc" in
+      0) ;;
+      3)
+        planner_specify_halt_report "$INITIATIVE_ID" "$STATE_DIR"
+        exit 0
+        ;;
+      *)
+        echo "ERROR: Specify decision gate could not read proposal.md" >&2
+        exit 1
+        ;;
+      esac
+    fi
+    ```
+
+    Report the `planner_specify_halt_report` output verbatim. Exit 0 is a normal stop,
+    not a failure: do not spawn Review, and do not fall through to step 5's retry budget.
+    The gate holds no state and writes no phase line. It runs again on every dispatch
+    at `Review` — right after Specify's `done`, on every `resume`, and after
+    `--answers` — so a crash between Specify and this step is safe. A person releases a
+    decision by answering it (`--answers`, binding `specify-answer:O<n>`), by answering
+    `__defer__` (the question goes into the epic unresolved, as before this gate
+    existed), or by editing the Outcome line in proposal.md by hand. Its only write is
+    a `META|specify-gate|warn` line, once per proposal version, naming any
+    `NEEDS_HUMAN_DECISION` text that is not a well-formed marker and so was not asked.
+    On rc 0, continue to step 2.
 
 2. **Get the prompt** for the current phase:
    ```bash

@@ -309,7 +309,7 @@ still rejected.
 | Field | Added values |
 |---|---|
 | `PHASE` | `PLANNER`, `GRILL` |
-| `REASON` | `CREATE_GATE`, `CROSSCHECK_BLOCKED`, `ADR_GATE`, `PROJECT_GATE`, `REFINEMENT_HALT`, `UNTIL_STOP` (planner); `READINESS_GAPS`, `ROUND_CAP` (grill-me) |
+| `REASON` | `CREATE_GATE`, `CROSSCHECK_BLOCKED`, `ADR_GATE`, `PROJECT_GATE`, `REFINEMENT_HALT`, `UNTIL_STOP`, `SPECIFY_DECISION` (planner); `READINESS_GAPS`, `ROUND_CAP` (grill-me) |
 
 ### Binding grammar
 
@@ -326,10 +326,30 @@ answer. An agent never reads an answer and decides what to do with it.
 | `waive:<TICKET>:<CODE>` | the reason, or `__skip__` | Planner: the DoR waiver `dor-check.sh --waive` records (`waive_ticket_readiness_code`). |
 | `adr:<ADR_ID>` | `accept` or `reject` | Reserved. No consumer binds it yet: `adr-store.sh accept` refuses to run inside an agent session, so the planner asks an ADR question as `note`. |
 | `grill:<dimension>` | free text | grill-me: folds the answer into `resolved[]` for that dimension. |
+| `specify-answer:O<n>` | one line of free text, at most 500 characters, or `__defer__` | Planner: replaces business outcome `O<n>`'s `**Outcome:** NEEDS_HUMAN_DECISION` line in `proposal.md` with `**Outcome:** Human decision (verbatim, round <N>, <role>): "<answer>"`, or with `**Outcome:** Deferred decision: <question>` for `__defer__`. `<n>` is 1–999 with no leading zero. A longer value is rejected, never cut. Used for `SPECIFY_DECISION` (`KIND: input`, `AUDIENCE: either`), one question per open decision (id `decision-O<n>-<hash8>`); an answer to a decision that is already answered, or whose question was edited, is refused as `UNKNOWN_QUESTION_ID`. |
 | `note` | free text | Recorded only. |
 
 The parser checks the shape of a binding. Whether the consumer recognises it is the
 consumer's check.
+
+### Sentinel values
+
+Some bindings take a sentinel instead of an ordinary answer. The consumer compares the
+answer value with the sentinel by **exact match**, after it has sanitised the value. For
+`__defer__` the consumer also trims surrounding whitespace first, so ` __defer__ ` defers.
+A value that only contains the sentinel, such as `__defer__ later`, is an ordinary answer.
+
+| Sentinel | Bindings | Meaning |
+|---|---|---|
+| `__skip__` | `flag:accept:<CODE>`, `waive:<TICKET>:<CODE>` | Do not accept or waive. |
+| `__none__` | `flag:project` | No project (`--no-project`). |
+| `__defer__` | `specify-answer:O<n>` | Leave the business decision open. The planner records it as a deferred decision, carries the question into the epic unresolved, and never asks it again. |
+
+A sentinel is offered in the question text only, never in `QUESTION_n_OPTIONS`: these
+questions take free text, and listing a sentinel as an option would turn them into a
+closed choice. `__defer__` may come from either audience. A `SPECIFY_DECISION` question is
+`AUDIENCE: either`, so a client may answer or defer it, and the operator may answer for
+the client. Deferring only keeps the behaviour from before the decision gate existed.
 
 ### Canonical JSON (version 2)
 

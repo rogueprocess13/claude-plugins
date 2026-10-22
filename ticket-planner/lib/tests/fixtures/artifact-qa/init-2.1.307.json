@@ -1,0 +1,1 @@
+{"type":"system","subtype":"init","tools":["Glob","Grep","Read","StructuredOutput"],"mcp_servers":[],"permissionMode":"dontAsk","cwd":"__SNAP__","claude_code_version":"2.1.307"}

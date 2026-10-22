@@ -13,10 +13,11 @@ FAIL=0
 _run() {
   local name="$1"
   shift
-  set +e
-  "$@"
-  local rc=$?
-  set -e
+  # `|| rc=$?` rather than a bare call: _parse re-enables `set -e`, so a test
+  # that returns non-zero from a bare call would abort the whole file instead
+  # of printing its FAIL line.
+  local rc=0
+  "$@" || rc=$?
   if [ $rc -eq 0 ]; then
     echo "PASS: $name"
     ((PASS++)) || true
@@ -647,6 +648,86 @@ test_v2_options_and_default_are_redacted() {
     [ "$(_json '.questions[0].options | join(",")')" = "token=***REDACTED***,ghp_***REDACTED***" ] &&
     [ "$(_json '.questions[0].default')" = "token=***REDACTED***" ] &&
     ! grep -q 'abc123secret\|abcdefghijklmnop' "$_ws/pipeline.log"
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+# ── Specify decision (planner-specify-waiting-on-human) ─────────────────────
+
+_specify_block() {
+  cat <<'EOF'
+=== HUMAN_HOLD ===
+SCHEMA_VERSION: 2
+PHASE: PLANNER
+REASON: SPECIFY_DECISION
+BLOCKS: artifacts/proposal.md
+ROUND: 1
+KIND: input
+AUDIENCE: either
+QUESTION_1: Specify could not source business outcome O1 and needs a decision: which role consumes the classified documents?
+QUESTION_1_ID: decision-O1-0123abcd
+QUESTION_1_BINDING: specify-answer:O1
+=== END HUMAN_HOLD ===
+EOF
+}
+
+test_v2_specify_decision_block_parses() {
+  _setup
+  _specify_block | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 0 ] &&
+    [ "$(_json .parse_status)" = "ok" ] &&
+    [ "$(_json .reason)" = "SPECIFY_DECISION" ] &&
+    [ "$(_json .kind)" = "input" ] &&
+    [ "$(_json .audience)" = "either" ] &&
+    [ "$(_json '.questions[0].id')" = "decision-O1-0123abcd" ] &&
+    [ "$(_json '.questions[0].binding')" = "specify-answer:O1" ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_accepts_specify_answer_binding_range() {
+  _setup
+  local b rc=0
+  for b in "specify-answer:O1" "specify-answer:O12" "specify-answer:O999"; do
+    _specify_block | sed "s/^QUESTION_1_BINDING: .*/QUESTION_1_BINDING: ${b}/" | _write_ret ret.txt
+    _parse PLANNER ret.txt
+    if ! { [ "$_RC" -eq 0 ] && [ "$(_json '.questions[0].binding')" = "$b" ]; }; then
+      echo "    rejected valid binding: ${b}" >&2
+      rc=1
+    fi
+  done
+  _teardown
+  return $rc
+}
+
+test_v2_rejects_malformed_specify_answer_binding() {
+  _setup
+  local b rc=0
+  for b in "specify-answer:O0" "specify-answer:O01" "specify-answer:O1000" \
+    "specify-answer:who consumes it" "specify-answer:" "specify-answer:1" "specify-answer:o1"; do
+    _specify_block | sed "s/^QUESTION_1_BINDING: .*/QUESTION_1_BINDING: ${b}/" | _write_ret ret.txt
+    _parse PLANNER ret.txt
+    if ! { [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"binding grammar"* ]]; }; then
+      echo "    accepted malformed binding: ${b}" >&2
+      rc=1
+    fi
+  done
+  _teardown
+  return $rc
+}
+
+# A v1 block may not name the v2-only SPECIFY_DECISION reason, even with a
+# v1 phase — the rejection must be on the reason, not the phase.
+test_v1_block_rejects_specify_decision_reason() {
+  _setup
+  printf '%s\n' '=== HUMAN_HOLD ===' 'SCHEMA_VERSION: 1' 'PHASE: APPRAISE' \
+    'REASON: SPECIFY_DECISION' 'BLOCKS: notes.md' 'QUESTION_1: which role?' \
+    '=== END HUMAN_HOLD ===' | _write_ret ret.txt
+  _parse APPRAISE ret.txt
+  [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"REASON 'SPECIFY_DECISION' is not in the enum"* ]]
   local rc=$?
   _teardown
   return $rc

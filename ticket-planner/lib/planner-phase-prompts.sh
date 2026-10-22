@@ -1274,8 +1274,8 @@ is correct — do not dress it up as a user capability.
 
 Technical architecture stays in the epic body. Use the Business Outcomes from
 proposal.md as the business framing and do not invent outcomes, actors, value or
-metrics. If an outcome reads \`NEEDS_HUMAN_DECISION\`, carry it into the epic as
-is — do not resolve it yourself.
+metrics. If an outcome reads \`NEEDS_HUMAN_DECISION\` or \`Deferred decision:\`,
+carry it into the epic as an open question, as is — do not resolve it yourself.
 
 ## Epic body layout
 

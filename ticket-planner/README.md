@@ -99,6 +99,7 @@ not reach the phase that needs it.
 
 1. The planner initializes a state directory under `$REPOS_ROOT/.ticket-auto/initiatives/{ID}/`
 2. Each of the 11 phases runs: Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → EpicGen → TicketGen → Refinement → Completed — every one an isolated Claude agent except Crosscheck and Refinement, both deterministic bash (Refinement additionally spawns a `dor-semantic-agent` scan+audit per ticket that needs one)
+   - A run halts before Review when Specify could not source a business outcome and wrote `NEEDS_HUMAN_DECISION`. Answer it (`resume --answers`, or edit the Outcome line in proposal.md), or answer `__defer__` to carry the question into the epic unresolved, then resume
 3. `plan` stops after Crosscheck. EpicGen is the first Linear write, and it runs only once `resume --create` has authorized it — the authorization is recorded in the state log, so it survives a crash and a plain `resume` afterwards still proceeds
 4. TicketGen creates planned Linear tickets with `## Planner Context` blocks and validated acyclic dependencies, and persists each ticket's body to `planner/body.md`
 5. Refinement runs a deterministic Definition-of-Ready check plus a semantic evaluator pass per ticket, then stamps the epic manifest `dispatch=true` once every child has a verdict — fleet-controller auto-dispatches ready children when `FLEET_AUTO_DISPATCH=true`; a not-ready child stays held until its blocking codes are resolved or waived
@@ -113,6 +114,10 @@ If the run is interrupted (crash, timeout, manual stop):
 ```
 
 The router re-derives position from the state log and continues from where it left off. Every phase is idempotent — safe to re-enter.
+
+### Headless use
+
+A caller with no terminal answers a stopped run's questions with `resume <INIT_ID> --answers <file>`, and answers a person's question back about the plan with the read-only, sandboxed `lib/planner-artifact-qa.sh`. See [SKILL.md § Headless use](skills/ticket-planner/SKILL.md#headless-use---answers).
 
 ## Documentation
 

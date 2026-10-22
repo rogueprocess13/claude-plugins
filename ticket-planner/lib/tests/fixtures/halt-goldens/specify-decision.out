@@ -1,0 +1,7 @@
+Specify is waiting on 1 business decision(s) — the proposal could not source them.
+
+  O1  which role signs off the exported invoices?
+
+Answer:     bash lib/planner-stop-describe.sh INIT-1700000000-4242, then /ticket-planner resume INIT-1700000000-4242 --answers <file>
+            (or edit the Outcome line in proposal.md by hand, then /ticket-planner resume INIT-1700000000-4242)
+Proposal:   <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/proposal.md
