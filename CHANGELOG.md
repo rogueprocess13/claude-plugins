@@ -17,6 +17,40 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## grill-me 0.3.0 / ticket-planner 0.23.0 (2026-10-22)
+
+grill-me now asks where test data comes from, and the planner's Discovery phase reads the answer
+(`grill-test-data-dimension`). ticket-auto-pipeline is unchanged.
+
+### Added
+- **grill-me `test_data` dimension**: profile `product-idea` 1.1.0 gains a non-critical "Test
+  Data" dimension (weight 6) after Edge Cases. Its probes ask whether verification needs data to
+  exist beforehand, where realistic data comes from (seed set, named supplier, or synthetic),
+  whether any of it is production or personal data, and who keeps it current. An idea that needs
+  no prepared data uses the exact evidence `_No prepared data needed_`. To keep weights even,
+  constraints and dependencies go from 8 to 6 and edge_cases from 6 to 4. Critical weights and
+  thresholds are unchanged.
+- **Generic sections in the sealed intent**: `grill-render.sh` renders any profile dimension
+  outside the ten v1 ids as a `## <label>` section between Edge Cases and Assumptions (label
+  CR/LF and leading `#` stripped). A v1 result renders byte-identically (golden test). The seal is
+  unchanged; the new section is inside the hashed bytes.
+- **Discovery reads the intent's `## Test Data`**: when `artifacts/intent.md` has a `## Test Data`
+  section with real content (first heading only; `_None identified_` and `_No prepared data
+  needed_` count as empty), the Discovery prompt adds one paragraph that points at it and maps a
+  named supplier to `external:`, a named seed or export to `exists:`, and synthetic data to
+  `generate`. Only the path is interpolated. With no such section the prompt is byte-identical
+  (golden test). New test `test-planner-intent-testdata.sh`.
+
+### Upgrade notes
+- **Headless grill-me runs that span the upgrade**: a round-1 `assessment.json` written before
+  the upgrade has no `test_data`. The next fold/score treats it as missing (readiness −6, with a
+  warning), may ask one `grill:test_data` question, and may turn a `NEXT=seal` into `emit`. This
+  is expected; there is no shim.
+- **dexter**: no code change. Re-pin grill-me and ticket-planner together. A headless round may
+  ask one extra `grill:test_data` question, so Slack question count and cost can rise by one per
+  run.
+- Intents sealed before 0.3.0 still verify, and Discovery renders exactly as before for them.
+
 ## 0.69.0 / ticket-planner 0.22.0 (2026-10-22)
 
 The semantic Definition-of-Ready evaluator gains an **advisory** test-data backstop

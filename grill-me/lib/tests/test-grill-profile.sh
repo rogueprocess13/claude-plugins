@@ -46,6 +46,64 @@ else
   fail "shipped profile passes validator" "expected exit 0, got $? — $(grill_profile_validate "$PROFILE_JSON" 2>&1 || true)"
 fi
 
+# ── Shipped profile: test_data dimension (grill-test-data-dimension) ─────────
+echo "=== Shipped profile test_data dimension ==="
+
+if [ "$(echo "$PROFILE_JSON" | jq -r '.version')" = "1.1.0" ]; then
+  pass "shipped profile version is 1.1.0"
+else
+  fail "shipped profile version is 1.1.0" "got $(echo "$PROFILE_JSON" | jq -r '.version')"
+fi
+
+if [ "$(echo "$PROFILE_JSON" | jq '.dimensions | length')" -eq 11 ]; then
+  pass "shipped profile has 11 dimensions"
+else
+  fail "shipped profile has 11 dimensions" "got $(echo "$PROFILE_JSON" | jq '.dimensions | length')"
+fi
+
+TD_DIM=$(echo "$PROFILE_JSON" | jq -c '.dimensions[] | select(.id == "test_data")')
+if [ -n "$TD_DIM" ] && [ "$(echo "$TD_DIM" | jq -r '.weight')" = "6" ] &&
+  [ "$(echo "$TD_DIM" | jq -r '.critical')" = "false" ] &&
+  [ "$(echo "$TD_DIM" | jq -r '.label')" = "Test Data" ]; then
+  pass "test_data: label Test Data, weight 6, not critical"
+else
+  fail "test_data: label Test Data, weight 6, not critical" "got: ${TD_DIM:-<absent>}"
+fi
+
+TD_AFTER=$(echo "$PROFILE_JSON" | jq -r '[.dimensions[].id] | (index("edge_cases")) as $e | .[$e + 1] // ""')
+if [ "$TD_AFTER" = "test_data" ]; then
+  pass "test_data sits immediately after edge_cases"
+else
+  fail "test_data sits immediately after edge_cases" "next after edge_cases: ${TD_AFTER:-<none>}"
+fi
+
+if echo "$TD_DIM" | jq -e '.probes | any(contains("realistic data for testing"))' >/dev/null 2>&1; then
+  pass "test_data probe asks about realistic data for testing"
+else
+  fail "test_data probe asks about realistic data for testing" "no matching probe"
+fi
+
+if echo "$TD_DIM" | jq -e '.probes | any(contains("_No prepared data needed_"))' >/dev/null 2>&1; then
+  pass "test_data probe carries the _No prepared data needed_ sentinel"
+else
+  fail "test_data probe carries the _No prepared data needed_ sentinel" "no matching probe"
+fi
+
+CRIT_SET=$(echo "$PROFILE_JSON" | jq -r '[.dimensions[] | select(.critical) | .id] | sort | join(",")')
+if [ "$CRIT_SET" = "acceptance_criteria,objective,scope,success_criteria,users_problem" ]; then
+  pass "critical set unchanged"
+else
+  fail "critical set unchanged" "got $CRIT_SET"
+fi
+
+WEIGHTS=$(echo "$PROFILE_JSON" | jq -r '[.dimensions[] | "\(.id)=\(.weight)"] | join(",")')
+EXPECTED_WEIGHTS="objective=14,users_problem=14,success_criteria=14,scope=12,acceptance_criteria=12,constraints=6,dependencies=6,risks=8,edge_cases=4,test_data=6,assumptions=4"
+if [ "$WEIGHTS" = "$EXPECTED_WEIGHTS" ]; then
+  pass "every weight matches design Decision 2 (in profile order)"
+else
+  fail "every weight matches design Decision 2 (in profile order)" "got $WEIGHTS"
+fi
+
 # ── Weight sums ───────────────────────────────────────────────────────────────
 echo "=== Weight sum validation ==="
 

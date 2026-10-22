@@ -281,6 +281,38 @@ AGENT_PROMPT
 
 # ── Discovery ────────────────────────────────────────────────────────────────
 
+# Does the sealed intent carry a real `## Test Data` section?
+# (grill-test-data-dimension)
+#
+# Usage: _planner_intent_has_test_data <state_dir>
+# Returns: 0 when ${state_dir}/artifacts/intent.md exists and its FIRST
+#   `## Test Data` section (up to the next `## ` heading) holds a non-blank
+#   line other than the placeholders `_None identified_` (renderer default)
+#   and `_No prepared data needed_` (grill-me's no-data sentinel); 1 otherwise.
+# Any later `## Test Data` heading is ignored, so evidence text elsewhere that
+# contains such a line cannot add a spoofed section. CR is stripped (CRLF
+# files). Never prints; safe under set -e when called as a condition.
+_planner_intent_has_test_data() {
+  local intent="${1:-}/artifacts/intent.md"
+  if [ ! -f "$intent" ]; then
+    return 1
+  fi
+  awk '
+    { sub(/\r$/, "") }
+    !seen && /^## Test Data[[:space:]]*$/ { seen = 1; inside = 1; next }
+    inside && /^## / { exit }
+    inside {
+      line = $0
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+      if (line != "" && line != "_None identified_" && line != "_No prepared data needed_") {
+        found = 1
+        exit
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$intent"
+}
+
 planner_prompt_discovery() {
   local initiative_id="$1" idea="$2" state_dir="$3"
 
@@ -293,6 +325,32 @@ planner_prompt_discovery() {
   local _pos _count
   _pos=$(planner_phase_position Discovery)
   _count=$(planner_phase_count)
+
+  # The sealed intent's own statement of where test data comes from. Bash
+  # decides presence; only the path is interpolated, never the intent text.
+  # Empty when absent, and then the prompt is byte-identical to before. The
+  # block carries its own two leading newlines and is appended to the end of
+  # the "beforehand — never omit the section." line below. The text pieces
+  # are single-quoted: their backticks are literal and need no escaping.
+  local _intent_td_block=""
+  if _planner_intent_has_test_data "$state_dir"; then
+    local _td_head _td_body
+    # shellcheck disable=SC2016 # backticks are literal prompt text
+    _td_head='**From the sealed intent.** `'
+    # shellcheck disable=SC2016 # backticks are literal prompt text
+    _td_body='/artifacts/intent.md` has a `## Test Data`
+section — the operator'\''s own statement of where test data comes from. Read it
+before you fill the inventory. A party it names as supplying data becomes
+`external:<that party>`, copied as written (quoting the sealed intent is not
+inventing a `<who>`). A seed, fixture or export it names becomes
+`exists:<where>` once you have located it, or a `## Cited Artifacts` NOT FOUND
+line when you cannot. "Synthetic" or "we will generate" becomes `generate`. If
+the section says no prepared data is needed, write `None.`. Production or
+personal data it mentions is never a Source — record it under Constraints,
+synthetic or masked only. Where the codebase contradicts the intent, keep the
+intent'\''s source and record the contradiction under Constraints.'
+    _intent_td_block=$(printf '\n\n%s%s%s' "$_td_head" "$state_dir" "$_td_body")
+  fi
 
   cat <<AGENT_PROMPT
 You are the **Discovery** phase agent for the ticket-planner. Your job is to
@@ -382,7 +440,7 @@ factories and migrations while you explore — they decide Source and Load via.
   source: do not list a production dump, a live customer record or real PII.
 
 Write \`None.\` under the heading when no acceptance test needs data to exist
-beforehand — never omit the section.
+beforehand — never omit the section.${_intent_td_block}
 
 ## Pin the repo ref (#217)
 

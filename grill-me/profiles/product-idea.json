@@ -1,7 +1,7 @@
 {
   "id": "product-idea",
   "label": "Product Idea Readiness",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "thresholds": {
     "ready": 80,
     "warn": 55
@@ -71,7 +71,7 @@
     {
       "id": "constraints",
       "label": "Constraints",
-      "weight": 8,
+      "weight": 6,
       "critical": false,
       "probes": [
         "Are there technology, platform, or regulatory constraints?",
@@ -82,7 +82,7 @@
     {
       "id": "dependencies",
       "label": "Dependencies",
-      "weight": 8,
+      "weight": 6,
       "critical": false,
       "probes": [
         "What other systems, teams, or services does this depend on?",
@@ -105,13 +105,25 @@
     {
       "id": "edge_cases",
       "label": "Edge Cases",
-      "weight": 6,
+      "weight": 4,
       "critical": false,
       "probes": [
         "What happens with empty data?",
         "What happens at scale extremes?",
         "What happens when a dependency is unavailable?",
         "What are the concurrency and race-condition scenarios?"
+      ]
+    },
+    {
+      "id": "test_data",
+      "label": "Test Data",
+      "weight": 6,
+      "critical": false,
+      "probes": [
+        "Does verifying this need any data to exist beforehand — records in a given state, users in a role, files or uploads? If it needs none, mark this dimension present with the evidence exactly `_No prepared data needed_`.",
+        "Where will realistic data for testing come from — an existing seed or fixture set (where?), a named party who supplies it (who?), or synthetic data generated for the purpose?",
+        "Is any of it production or personal data that must be synthetic or masked instead?",
+        "Who keeps that data current in the test environment?"
       ]
     },
     {

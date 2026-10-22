@@ -200,6 +200,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-crosscheck-testdata.sh
 	bash ticket-planner/lib/tests/test-planner-testdata-implied.sh
 	bash ticket-planner/lib/tests/test-planner-testdata-synth.sh
+	bash ticket-planner/lib/tests/test-planner-intent-testdata.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-fixtures.sh
 	bash ticket-planner/lib/tests/test-planner-doctor.sh

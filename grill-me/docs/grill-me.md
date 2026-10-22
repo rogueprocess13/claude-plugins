@@ -12,7 +12,9 @@ Profiles are JSON files in `profiles/`. Each profile declares:
 - **Flags** — qualitative flags with a numeric penalty and an optional tier `cap`
 - **Probes** — per-dimension evaluation criteria given to the model
 
-v1 ships exactly one profile, `product-idea`, with 10 dimensions. Adding a consumer (e.g., `code-review`, `incident-analysis`) requires only a new profile file — no engine changes.
+grill-me ships exactly one profile, `product-idea` (1.1.0), with 11 dimensions. Version 1.1.0 added `test_data` (weight 6, not critical): where realistic data for testing comes from — an existing seed or fixture set, a named supplier, or synthetic data. An idea that needs no prepared data marks it present with the exact evidence `_No prepared data needed_`. To keep every weight even, constraints and dependencies went from 8 to 6 and edge_cases from 6 to 4.
+
+Adding a consumer (e.g., `code-review`, `incident-analysis`) requires only a new profile file — no engine changes. The renderer has fixed sections for the ten original dimensions; any other profile dimension renders as a generic `## <label>` section between Edge Cases and Assumptions, in profile order. The label has CR/LF and leading `#`/spaces removed. A result with only the ten original dimensions renders byte-identically to before.
 
 ## Agent → bash contract
 
@@ -88,7 +90,7 @@ The gate runs before `planner_state_init`. A hard stop leaves no initiative dire
 
 ## Worked examples
 
-### Example 1: Well-defined idea (~88%, ready)
+### Example 1: Well-defined idea (~84%, ready)
 
 **Input:**
 > Add real-time cursor presence to the document editor. Enterprise users need to see each other's cursors within 500ms when co-editing. Success criteria: two users open the same doc, cursors visible within 500ms, state consistent across clients. Must use existing WebSocket infrastructure. In scope: cursor presence, document locking. Out of scope: video chat, voice chat, offline sync.
@@ -103,9 +105,10 @@ The gate runs before `planner_state_init`. A hard stop leaves no initiative dire
 - dependencies: present (WebSocket v2 dependency)
 - risks: partial (latency risk implied but not enumerated)
 - edge_cases: missing (no concurrency or empty-state discussion)
+- test_data: present (two seeded test accounts in the staging tenant)
 - assumptions: partial (WebSocket capacity assumption unstated)
 
-**Score:** ~88% (critical dims solid, non-critical gaps minor)
+**Score:** ~84% (critical dims solid, non-critical gaps minor)
 **Recommendation:** `ready`
 **Questions:** 0 (ready on first round)
 
@@ -124,6 +127,7 @@ The gate runs before `planner_state_init`. A hard stop leaves no initiative dire
 - dependencies: missing
 - risks: missing
 - edge_cases: missing
+- test_data: missing
 - assumptions: partial (assumes "enterprise" is a well-defined category)
 
 **Score:** ~22% (four critical dimensions missing)
@@ -156,7 +160,7 @@ The gate runs before `planner_state_init`. A hard stop leaves no initiative dire
 
 **Score:** ~62%
 **Recommendation:** `proceed-with-warnings`
-**Remaining gaps:** edge_cases, risks, constraints
+**Remaining gaps:** edge_cases, test_data, risks, constraints
 
 → Sealed with `proceed-with-warnings`, planner proceeds with warning surfaced.
 
