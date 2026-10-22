@@ -512,6 +512,8 @@ If found in notes.md, use it as the basis for verification criteria in Step 2. I
 
 **If `VERIFY_MODE=live-backend`, skip 2a–2c and the build-only variant below and use the live-backend variant instead (after it).**
 
+**Every variant applies Step 2d (carry-over checks) to its plan before printing it**, even the two that skip 2a–2c.
+
 ### 2 (build-only variant)
 
 **Derive the module list and build commands.** Read the plan artifact's Completion Checklist / task list and `notes.md` for the affected repos/modules (e.g. from a "pre-implementation checkpoint" or worktree list). For each affected module, determine the appropriate build command from the project's `CLAUDE.md` `BE_TEST_CMD` and standard Maven/Gradle conventions:
@@ -664,6 +666,23 @@ Construct and print the **Verification Plan**:
 ```
 
 **Each pass criterion maps 1:1 to an expanded acceptance criterion. Never collapse multiple requirements into one criterion line.**
+
+### 2d — Carry-over checks (all verification modes)
+
+If `{ticket-dir}/notes.md` has a `### Test candidates` sub-section under `## Refinement Carry-over` (written by ticket-appraise from the planner's Refinement phase), add one extra check per candidate line, labelled `carry-over`, to whichever plan variant you wrote (browser, build-only or live-backend):
+
+```bash
+awk '/^## Refinement Carry-over/{on=1; next} on && /^## /{exit} on && /^### Test candidates/{tc=1; next} tc && /^### /{exit} tc && /^- /' "{ticket-dir}/notes.md"
+```
+
+Append them to the plan under their own heading, **after** Pass criteria and never as `- [ ]` checkboxes:
+
+```
+### Carry-over checks (do not affect the verdict)
+1. carry-over — {behaviour named in the candidate} (candidate {key})
+```
+
+Exercise each one in Step 4b / 4c / 4c-live the same way as a criterion, and record its result. A carry-over check is **not** an acceptance criterion: Refinement judged it a gap, nobody accepted it. A failed carry-over check is reported in the verify report (Step 6 or 7b) and in the REMEDIATION_BRIEF (7c), but it **never changes the verdict** — it is not counted in `criteria_met`/`criteria_total`, not written as a checkbox in `verify-session.md`, and Step 5 ignores it. No `### Test candidates` sub-section → skip this step.
 
 If `--from-auto` is NOT set:
   Pause here and ask the user: **"Does this plan look right? (yes / adjust: ...)"**
@@ -887,7 +906,7 @@ verify_lock_release
 
 ### Pass
 
-All pass criteria are met → proceed to Step 6.
+All pass criteria are met → proceed to Step 6. Carry-over checks (Step 2d) are not pass criteria: a failed one never routes here to Step 7.
 
 ### Fail
 
@@ -911,11 +930,18 @@ Print to the user:
 |---|---|
 | {criterion} | ✅ Pass |
 
+### Carry-over checks (do not affect the verdict)
+| Check | Result |
+|---|---|
+| carry-over — {behaviour} | ✅ Pass / ❌ Fail — {what was observed} |
+
 ### Evidence
 - Step {N}: {brief description of what was observed confirming the fix}
 
 **Recommendation:** Ready to merge / promote.
 ```
+
+Omit the Carry-over checks table when Step 2d added none. A failed carry-over check stays a pass verdict; also append it to notes.md (below) as `- **Carry-over failed:** {behaviour} (candidate {key}) — {observed}` so a follow-up can pick it up.
 
 Append to `{ticket-dir}/notes.md`:
 ```markdown
@@ -1172,6 +1198,11 @@ Print to the user:
 | {passing criterion} | ✅ Pass |
 | {failing criterion} | ❌ FAIL |
 
+### Carry-over checks (do not affect the verdict)
+| Check | Result |
+|---|---|
+| carry-over — {behaviour} | ✅ Pass / ❌ Fail — {what was observed} |
+
 ### What happened
 **Expected:** {expected behaviour from pass criterion}
 **Observed:** {what was actually seen — quote element labels and states verbatim}
@@ -1249,6 +1280,10 @@ CONTEXT_FILES:
 - {ticket-dir}/context.md  (or "not found locally")
 - {ticket-dir}/notes.md    (or "not found locally")
 - {openspec change tasks.md path, or "none"}
+
+CARRY_OVER_CHECKS:
+{one line per Step 2d carry-over check: "carry-over — {behaviour} (candidate {key}): pass|FAIL — {observed}",
+or "none". Informational only — a failed carry-over check did not cause this failure.}
 
 SUGGESTED_FIX:
 {2–4 sentence hypothesis about what is likely still broken in the code. Reference

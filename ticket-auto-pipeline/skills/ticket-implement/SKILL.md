@@ -362,6 +362,21 @@ When complete, return ONLY this JSON (no other text):
 - **If neither is defined:** Skip all tests. Do not invent or install a test framework. Note "no test command configured" in the session log and move on.
 - **DB migrations:** If the change includes a migration, write a test that verifies the new schema (column exists, index exists, constraint works).
 
+### Refinement test candidates
+
+If `{ticket-dir}/notes.md` has a `### Test candidates` sub-section under `## Refinement Carry-over` (written by ticket-appraise from the planner's Refinement phase — one line per `MISSING_CORE_AC` gap, with the quote and the behaviour the gap names), list them:
+
+```bash
+awk '/^## Refinement Carry-over/{on=1; next} on && /^## /{exit} on && /^### Test candidates/{tc=1; next} tc && /^### /{exit} tc && /^- /' "{ticket-dir}/notes.md"
+```
+
+**Every candidate must end as a test or a recorded reason** — never silently dropped:
+
+- **Add a test** covering the named behaviour, alongside the tests above, when the behaviour is in this ticket's scope and a test command is configured.
+- **Otherwise record why not**: append one line per candidate to notes.md under `## Session Log`, naming it by its `(candidate <key>)` suffix — e.g. `- Test candidate f-0123456789ab not tested: out of scope for this change (belongs to the export service)` or `… not tested: no test command configured`.
+
+A candidate is a gap Refinement found, not an accepted acceptance criterion: do not widen the implementation to satisfy one, and do not treat an untestable one as a blocker. `ticket-verify` re-checks each candidate as a non-failing `carry-over` check. No `### Test candidates` sub-section → skip this.
+
 ### Run tests
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|run-tests|start|Running tests" >> "$LOG_FILE"

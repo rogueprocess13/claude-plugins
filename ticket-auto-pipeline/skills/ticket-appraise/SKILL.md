@@ -95,6 +95,8 @@ If `FAST_PATH_ELIGIBLE=true`:
    - `## Prior Art` — skipped (planner-provided context)
    - `## Initial Investigation` — populated from Affected Services + Target Symbols + Decision
 
+   Then run **Step 2.1** (Refinement carry-over and body drift) on the notes.md just written. `generate_fast_path_notes` overwrites notes.md, so Step 2.1 must run after it, never before.
+
 2. **Write heartbeat:**
 
    ```bash
@@ -213,6 +215,35 @@ ticket-setup writes a minimal notes.md stub. Replace it with the full appraisal 
 - **`[agent-resolvable]`** — a factual lookup with a determinate answer in the codebase (e.g. "does anything read X?", "does this file exist?"). Step 3.5 below resolves these inline before the ticket ever reaches Linear — they must never be tagged and left open.
 
 An untagged bullet is a defect in whichever step wrote it — fix it there, don't let it reach Step 3.5.
+
+Then run **Step 2.1** on the expanded notes.md.
+
+---
+
+## Step 2.1 — Refinement carry-over and body drift (planned tickets)
+
+Runs on both paths, and is safe to repeat: after `generate_fast_path_notes` (Step 1.3c) and after the Step 2 template is written. Both functions are deterministic bash, read only the local manifest and planner directory, and are no-ops for an ad-hoc ticket. Run exactly this block — do not edit the sections they write by hand:
+
+```bash
+source "$HOME/.claude/skills/lib/linear-api.sh" 2>/dev/null || true
+source "$HOME/.claude/skills/lib/refinement-carryover.sh"
+NOTES_FILE="{ticket-dir}/notes.md"
+# Carry Refinement's non-blocking leftovers into ## Refinement Carry-over.
+refinement_carryover_append "$NOTES_FILE" "{TICKET-ID}" || echo "refinement carry-over: append failed (non-fatal)"
+# Hold a ready planned ticket whose Linear text drifted from the body Refinement evaluated.
+BODY_DRIFT_CLASS=$(refinement_carryover_drift_check "{TICKET-ID}" "$NOTES_FILE") || BODY_DRIFT_CLASS="skip:error"
+echo "BODY_DRIFT_CLASS=$BODY_DRIFT_CLASS"
+```
+
+**Carry-over** (`refinement_carryover_append`) writes `## Refinement Carry-over` from `ready.semantic` and `ready.demoted`, replacing any earlier copy, and writes nothing when there is nothing to carry:
+
+- `[agent-resolvable]` items — verified advisory `EDGE_CASE_GAP`, `AC_NOT_TESTABLE`, `TEST_DATA_GAP` findings and audit demotions. Treat each as an investigation prompt during blast radius (Step 2.8) and investigation (Step 3). They live in the carry-over section, not in Open Questions, so Step 3.5 does not have to close them, and **they never add `needs-info` or hold the ticket by themselves**.
+- `[needs-human]` items — verified advisory `SCOPE_AMBIGUOUS`. The function also mirrors each one into `## Open Questions` (suffix `(carry-over <key>)`), so the existing Open Questions rule holds the ticket at the gate and `ticket-gate-reconcile` releases it on an answer.
+- `### Test candidates` — one per verified advisory `MISSING_CORE_AC`. Leave them for `ticket-implement` (adds a test or records why not) and `ticket-verify` (non-failing `carry-over` check).
+
+Unverified findings are never carried.
+
+**Body drift** (`refinement_carryover_drift_check`) prints the class from `body_baseline_classify` (`lib/body-baseline.sh`) or `skip:<reason>`. Only a planned ticket whose cached `ready.status` is `ready` is checked. On `adopt`, `conflict` or `local-ahead` it has already added a `[needs-human]` Open Question naming `/ticket-planner resume <INIT> --refresh-bodies` and logged `META|body-drift|info|<class>` — nothing else to do; the gate holds through the Open Questions rule. `clean`, `rebaseline` and every `skip:*` value need no action. Never write the planner's `body.md` yourself: the planner owns it.
 
 ---
 
