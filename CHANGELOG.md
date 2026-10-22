@@ -17,6 +17,28 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.69.1 / fleet-controller 0.42.7 (2026-10-22)
+
+Four gate-reconcile and pipeline-log fixes.
+
+### Fixed
+- **Gate-reconcile cycle counter double-counted.** Each cycle is logged twice (the agent's own
+  `done|cycle#N|held: ...` line and the router's `spawn_agent_post` echo), and the post's last-line
+  dup guard misses the echo whenever a META line lands in between, so two cycles could count as
+  four and trip `RECONCILE_EXHAUSTED` early. `RECONCILE_CYCLE` now counts distinct cycle numbers —
+  identically in `detect-resume.sh`, fleetd's `resolve_loop_counters`, the skill's `RECONCILE_N`
+  and `run-summary.sh`'s `reconcile_cycles`.
+- **Gate-reconcile amended the wrong plan.** `ticket-gate-reconcile` looked for the openspec change
+  under `$TICKET_DIR` and took the first directory listed. It now resolves this ticket's own change
+  under the tickets-repo root `openspec/changes/` by whole ticket id, and logs
+  `GATE|reconcile|fail` and stops when there is none.
+- **Gate-reconcile start heartbeat never written.** It used status `start`, which `heartbeat.sh`
+  rejects; it now uses `info`. A structural test checks every literal `hb-wrap.sh` call in skills
+  and agents against the status enum.
+- **`_plog` dropped any entry whose MSG contained `|`.** It now replaces `|`, CR and LF with a
+  space and always writes one 5-field line, so the entry is no longer lost where stderr is
+  discarded.
+
 ## grill-me 0.3.0 / ticket-planner 0.23.0 (2026-10-22)
 
 grill-me now asks where test data comes from, and the planner's Discovery phase reads the answer
