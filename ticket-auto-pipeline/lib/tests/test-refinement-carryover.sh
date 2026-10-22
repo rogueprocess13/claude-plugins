@@ -202,7 +202,22 @@ _has "drift question names --refresh-bodies with the initiative" "$oq" '- [needs
 _has "drift logged" "$(cat "$LOG_FILE")" "|META|body-drift|info|adopt"
 _eq "body.md never written" "$(cat "$(dirname "$(get_ticket_manifest_path PRO-10)")/body.md")" "$BODY"
 refinement_carryover_drift_check PRO-10 "$N6" $'## Summary\nVersion B' >/dev/null
-_eq "drift question added once" "$(_count "$(cat "$N6")" '(carry-over body-drift)')" "1"
+_eq "drift question added once" "$(_count "$(cat "$N6")" '(carry-over body-drift:')" "1"
+# The key names the drifted text: a question answered for one Linear edit must
+# not swallow the next one (fail-open), while the same text stays answered.
+sed -i 's/^- \(\[needs-human\] Linear description differs.*\)$/- ~~\1~~/' "$N6"
+refinement_carryover_drift_check PRO-10 "$N6" $'## Summary\nVersion B' >/dev/null
+_eq "answered drift question for the same text not re-added" "$(_count "$(cat "$N6")" '(carry-over body-drift:')" "1"
+refinement_carryover_drift_check PRO-10 "$N6" $'## Summary\nVersion D' >/dev/null
+_eq "a new Linear edit after an answered drift question adds a new one" "$(_count "$(cat "$N6")" '(carry-over body-drift:')" "2"
+_eq "the new drift question is open" "$(grep -c '^- \[needs-human\] Linear description differs' "$N6")" "1"
+# A key quoted mid-line in some other bullet does not count as already asked.
+N6b="$TMP_ROOT/notes-6b.md"
+_notes "$N6b"
+key=$(sed -n 's/.*\((carry-over body-drift:[^)]*)\)~~$/\1/p' "$N6" | head -1)
+sed -i "/^## Open Questions/a - [agent-resolvable] Earlier note mentioned ${key} in passing." "$N6b"
+refinement_carryover_drift_check PRO-10 "$N6b" $'## Summary\nVersion B' >/dev/null
+_eq "a key mentioned mid-line is not a dedup match" "$(grep -c '^- \[needs-human\] Linear description differs' "$N6b")" "1"
 
 _drift_seed PRO-11 ready "$BODY" $'## Summary\nOld'
 N7="$TMP_ROOT/notes-7.md"

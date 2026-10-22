@@ -198,8 +198,9 @@ _rco_open_questions_add() {
 }
 
 # _rco_mirror_questions <notes-file> <lines> — adds each "- [needs-human] …
-# (carry-over <key>)" line to Open Questions unless that key already appears
-# in Open Questions (open or struck through).
+# (carry-over <key>)" line to Open Questions unless an Open Questions bullet
+# already ends with that key (open, or struck through with a trailing `~~`).
+# A key quoted mid-line in some other bullet is not a match.
 _rco_mirror_questions() {
   local notes="$1" lines="$2" line key addfile
   [ -n "$lines" ] || return 0
@@ -212,7 +213,13 @@ _rco_mirror_questions() {
     # pattern operator.
     key=$(printf '%s\n' "$line" | sed -n 's/.*\((carry-over [^)]*)\)[[:space:]]*$/\1/p') || key=""
     [ -n "$key" ] || continue
-    if ! printf '%s\n' "$oq" | grep -qF -- "$key"; then
+    if ! printf '%s\n' "$oq" | awk -v k="$key" '
+      /^[[:space:]]*- / {
+        sub(/[[:space:]]+$/, ""); sub(/~~$/, "")
+        n = length($0); m = length(k)
+        if (n >= m && substr($0, n - m + 1) == k) { found = 1; exit }
+      }
+      END { exit !found }'; then
       printf '%s\n' "$line" >>"$addfile"
     fi
   done <<<"$lines"
@@ -304,10 +311,15 @@ refinement_carryover_drift_check() {
 
   case "$class" in
   adopt | conflict | local-ahead)
-    local init=""
+    local init="" lhash=""
     init=$(_manifest_initiative_for_ticket "$tid" 2>/dev/null) || init="<INIT>"
+    # The key names the drifted Linear text: once a person answers the
+    # question for one edit, a later edit must raise a new one, not match the
+    # struck-through old key and pass the gate.
+    lhash=$(body_baseline_hash "$desc" 2>/dev/null) || lhash=""
+    lhash="${lhash:0:12}"
     [ -f "$notes" ] || : >"$notes"
-    _rco_mirror_questions "$notes" "- [needs-human] Linear description differs from the body Refinement evaluated (${class}) — run \`/ticket-planner resume ${init} --refresh-bodies\` or confirm the Linear text. (carry-over body-drift)" || true
+    _rco_mirror_questions "$notes" "- [needs-human] Linear description differs from the body Refinement evaluated (${class}) — run \`/ticket-planner resume ${init} --refresh-bodies\` or confirm the Linear text. (carry-over body-drift:${lhash:-unknown})" || true
     if [ -n "${LOG_FILE:-}" ]; then
       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|body-drift|info|${class}" >>"$LOG_FILE" 2>/dev/null || true
     fi
