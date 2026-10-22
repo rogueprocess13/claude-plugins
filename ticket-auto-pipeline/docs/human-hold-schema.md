@@ -191,6 +191,11 @@ state store". Converting a valid, unreleased record into an authoritative
 the first notification are fleetd's job (`fleet-controller/fleetd/gate_hold.py`), not
 this parser's.
 
+Creating the row also applies the `needs-info` flag (`flow.sh <TID> needs-info`). Releasing
+it — a qualifying answer found by the `human` release predicate — clears that flag again
+(`flow.sh <TID> needs-info-resolved`, only when the flag is set), so an answered ticket is
+not left reporting `FLAG_NEEDS_INFO` and gate-stopping `TICKET_NOT_READY` on resume.
+
 ## Exit Codes
 
 | Code | Meaning |

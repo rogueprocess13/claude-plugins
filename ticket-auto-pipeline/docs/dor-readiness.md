@@ -23,7 +23,7 @@ and [`readiness-quality-score` spec](../../openspec/changes/dor-quality-score/sp
 | `AC_MISSING` | No Acceptance Criteria section/checkboxes | Always |
 | `AC_VAGUE` | Any AC line matches a vague-language pattern (original `audit_ac_testability` set, or the widened DoR-only set below) | Always |
 | `REPRO_MISSING` | No reproduction steps | `type: bug` only |
-| `FLAG_NEEDS_INFO` | Manifest `flags` contains `needs-info` (live, never cached) | Always |
+| `FLAG_NEEDS_INFO` | Manifest `flags` contains `needs-info` (live — re-derived on every cache hit, see Body-hash caching) | Always |
 | `INTENT_MISSING` | Body states neither a *why* nor a *desired outcome* with substantive content | Always |
 | `REPRO_NO_EXPECTED_ACTUAL` | `Expected Behaviour`/`Actual Behaviour` missing or placeholder | `type: bug` only, independent of `REPRO_MISSING` |
 
@@ -305,6 +305,26 @@ a Linear read). If a local body resolves, the cache carries a `body_hash`, and t
 differ, it recomputes and recaches (waivers are preserved — see `set_ticket_readiness` below).
 Otherwise (no local body, or a legacy cache with no `body_hash`) it trusts the cached verdict as-is
 — a legacy cache is deliberately never retroactively invalidated by a newer, stricter hard code.
+
+**`FLAG_NEEDS_INFO` is the one exception to trusting the cache.** It mirrors the manifest's live
+`flags`, not the body, so a body-hash match says nothing about it. A verdict computed while the
+flag was set cached `FLAG_NEEDS_INFO` in `missing`; once `needs-info-resolved` cleared the flag
+(a released human hold, `/ticket-approve`), an unchanged-body cache hit kept reporting it and the
+ticket stayed not-ready until a full re-appraisal rewrote the verdict. On every cache hit
+`_dor_reconcile_cached_needs_info` now re-derives that one code from the live flag and, when it
+differs from the cache, writes the corrected verdict back through `set_ticket_readiness` — so
+`status` is recomputed against preserved waivers, a semantic verdict whose `body_hash` still
+matches is carried forward, and a raw `ticket_is_ready` read agrees afterwards. No other code is
+touched.
+
+**What clears the flag.** `needs-info` is added by `ticket-critique` and by fleetd when it creates a
+human hold (`post_human_hold_comment`). It is cleared only by the `needs-info-resolved` trigger,
+which has two callers: `/ticket-approve` (`approve.sh`) and fleetd's hold-reconcile pass when a
+`human` hold is released by a qualifying answer (`gate_hold.clear_needs_info_on_release`, called
+from `Supervisor._hold_reconcile_pass` after the store release succeeds). An answer typed in
+Linear with no hold to release — e.g. a reply to a `ticket-critique` comment — still needs
+`/ticket-approve`; the manifest flag is authoritative and the tracker only receives its
+projection.
 
 ## Manifest `ready` object
 

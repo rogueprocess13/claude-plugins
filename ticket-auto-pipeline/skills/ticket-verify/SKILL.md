@@ -1015,26 +1015,21 @@ Verification passed on localhost — the implementation is confirmed working. No
      )")
      _pr_newly_created=true
    fi
-   # Capture pr-created evidence (Commercial Evidence MVP, Branch B) — covers
-   # both the new-PR and existing-PR paths above, once per PR.
-   if [ -n "$_pr_url" ] && [ -n "{LOG_FILE}" ]; then
-     _pr_num=$(echo "$_pr_url" | grep -oE '[0-9]+$')
-     _pr_repo=$(echo "$_pr_url" | sed -E 's#https://github\.com/([^/]+/[^/]+)/pull/[0-9]+.*#\1#')
-     _pr_created_json=$(jq -nc --argjson pr "${_pr_num:-null}" --arg url "$_pr_url" --arg repo "$_pr_repo" \
-       '{pr: $pr, url: $url, repo: (if $repo == "" then null else $repo end)}')
-     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|pr-created|info|${_pr_created_json}" >> {LOG_FILE}
-   fi
-   # Dual-write (tracker-event-vocabulary-and-emitter): pr-opened{pr}, only
-   # for a genuinely new PR — reusing an already-open PR on a verify retry
-   # is not a new fact.
-   if $_pr_newly_created && [ -n "${_pr_num:-}" ]; then
-     source "$HOME/.claude/skills/lib/events.sh" 2>/dev/null || true
-     if declare -f emit_event >/dev/null 2>&1; then
-       emit_event "{TICKET_ID}" pr-opened "$(jq -nc --argjson pr "$_pr_num" '{pr: $pr}')" 2>/dev/null || true
-     fi
+   # Record the PR — REQUIRED, run this exactly as written (GitHub #525).
+   # lib/pr-evidence.sh is the one writer of META|pr-created (and of the
+   # pr-opened outbox event for a genuinely new PR). Without that line the
+   # run has no PR repo, merge-poll never polls the PR, and every ticket
+   # blocked by this one stays held after the PR merges. Do not write your
+   # own "pr-open" log line instead.
+   source "$HOME/.claude/skills/lib/pr-evidence.sh" 2>/dev/null || true
+   if $_pr_newly_created; then
+     record_pr_created --new "{LOG_FILE}" "{TICKET_ID}" "$_pr_url"
+   else
+     record_pr_created "{LOG_FILE}" "{TICKET_ID}" "$_pr_url"
    fi
    ```
-3. Capture the PR URL(s).
+3. Capture the PR URL(s). Run the block above once per affected repo — each PR needs its own
+   `record_pr_created` call (a `META|pr-created` line per PR).
 4. **If `--from-auto` is present: skip this item entirely** and go to item 5. ticket-auto's
    router owns `implement-complete` in that mode — it fires it itself right after IMPLEMENT
    (STEP_4's post-spawn `flow_trigger`, and again after every re-implement in the verify-retry

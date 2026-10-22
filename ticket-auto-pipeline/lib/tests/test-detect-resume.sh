@@ -282,6 +282,45 @@ test_adversarial_blocked_twice_still_resumes_at_create_artifact() {
   }
 }
 
+# A re-review ran and blocked again, but the run died between the new
+# `done|BLOCKED` line and its gate-stop (Step 3.6 writes `done` first since
+# GitHub #203). A `done|BLOCKED` is not a fix — must still route back.
+test_adversarial_blocked_done_blocked_without_gate_stop_still_unresolved() {
+  local out
+  out=$(_detect_resume_with_log "TEST-20" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=complex" \
+    "2026-07-05T10:00:02Z|EXEC|create-artifact|done|openspec" \
+    "2026-07-05T10:00:03Z|EXEC|adversarial-review|done|BLOCKED" \
+    "2026-07-05T10:00:04Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — round 1 — TEST-20 adversarial review found blocking issues" \
+    "2026-07-06T09:01:00Z|EXEC|regression-guard|done|clear" \
+    "2026-07-06T09:02:00Z|EXEC|adversarial-review|done|BLOCKED")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_2" ] || {
+    echo "RESUME_STEP: $(_field "$out" RESUME_STEP)" >&2
+    return 1
+  }
+  [ "$(_field "$out" EXEC_FROM)" = "create-artifact" ] || {
+    echo "EXEC_FROM: $(_field "$out" EXEC_FROM)" >&2
+    return 1
+  }
+}
+
+# New ordering (done before gate-stop) followed by a passing re-review.
+test_adversarial_blocked_new_ordering_resolved_by_warnings() {
+  local out
+  out=$(_detect_resume_with_log "TEST-21" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=complex" \
+    "2026-07-05T10:00:02Z|EXEC|create-artifact|done|openspec" \
+    "2026-07-05T10:00:03Z|EXEC|adversarial-review|done|BLOCKED" \
+    "2026-07-05T10:00:04Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — round 1 — TEST-21 adversarial review found blocking issues" \
+    "2026-07-06T09:02:00Z|EXEC|adversarial-review|done|WARNINGS")
+  [ "$(_field "$out" RESUME_STEP)" = "STEP_2_5" ] || {
+    echo "RESUME_STEP: $(_field "$out" RESUME_STEP)" >&2
+    return 1
+  }
+}
+
 # Like _detect_resume_with_log but echoes the resulting pipeline log rather
 # than the result block, so tests can assert on the lines the script writes
 # (zombie detection reports itself in the log, not in DETECT_RESUME_RESULT).
@@ -709,6 +748,37 @@ test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4() {
   [ "$resume_step" = "STEP_4" ]
 }
 
+# ── RECONCILE_CYCLE counts each cycle once ─────────────────────────────────
+
+test_reconcile_cycle_counts_each_cycle_once_despite_router_echo() {
+  # The gate-reconcile agent writes `done|cycle#N|held: ...` and the router's
+  # spawn_agent_post then writes a second `done` line whose MSG echoes
+  # `cycle#N`; intervening META lines defeat spawn_agent_post's last-line dup
+  # guard. Two real cycles must count as 2, not 4.
+  local out
+  out=$(_detect_resume_with_log "RC-1" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
+    "2026-07-05T10:00:02Z|GATE|gate|fail|held" \
+    "2026-07-05T10:00:03Z|GATE|reconcile|done|cycle#1|held: open question" \
+    "2026-07-05T10:00:04Z|META|tokens|info|GATE:1/2/3/4" \
+    "2026-07-05T10:00:05Z|GATE|reconcile|done|cycle#1 held: open question" \
+    "2026-07-05T10:00:06Z|GATE|reconcile|done|cycle#2|held: still open" \
+    "2026-07-05T10:00:07Z|META|tokens|info|GATE:1/2/3/4" \
+    "2026-07-05T10:00:08Z|GATE|reconcile|done|cycle#2 held: still open")
+  [ "$(_field "$out" RECONCILE_CYCLE)" = "2" ]
+}
+
+test_reconcile_cycle_counts_distinct_cycles() {
+  local out
+  out=$(_detect_resume_with_log "RC-2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|GATE|reconcile|done|cycle#1|held: a" \
+    "2026-07-05T10:00:02Z|GATE|reconcile|done|cycle#2|held: b" \
+    "2026-07-05T10:00:03Z|GATE|reconcile|done|cycle#3|held: c")
+  [ "$(_field "$out" RECONCILE_CYCLE)" = "3" ]
+}
+
 # ── Terminal "done" state (#168) ────────────────────────────────────────────
 
 test_resume_pr_warn_routes_to_step_4_6() {
@@ -1049,6 +1119,8 @@ for fn in \
   test_adversarial_blocked_unresolved_resumes_at_create_artifact \
   test_adversarial_blocked_resolved_by_rereview_falls_through_normally \
   test_adversarial_blocked_twice_still_resumes_at_create_artifact \
+  test_adversarial_blocked_done_blocked_without_gate_stop_still_unresolved \
+  test_adversarial_blocked_new_ordering_resolved_by_warnings \
   test_zombie_detection_triggers_on_old_waiting \
   test_zombie_fires_when_no_other_worker_alive \
   test_zombie_suppressed_by_live_phase_worker \
@@ -1066,6 +1138,8 @@ for fn in \
   test_gate_gate_done_still_advances_past_gate_held \
   test_gate_reconcile_held_routes_to_gate_held_not_step_4 \
   test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4 \
+  test_reconcile_cycle_counts_each_cycle_once_despite_router_echo \
+  test_reconcile_cycle_counts_distinct_cycles \
   test_prescan_zombie_does_not_force_step5_on_fresh_ticket \
   test_maintenance_document_zombie_still_routes_to_step5 \
   test_pr_review_zombie_resumes_at_step_4_6 \

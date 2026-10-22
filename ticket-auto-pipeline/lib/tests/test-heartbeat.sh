@@ -594,9 +594,12 @@ test_pinger_start_removes_stale_stop_file() {
   [ "$count" -ge 2 ]
 }
 
-# ── _plog pipe rejection tests ─────────────────────────────────────────────────
+# ── _plog MSG sanitisation tests ───────────────────────────────────────────────
 
-test__plog_rejects_pipe_in_msg() {
+# A `|` in MSG used to drop the whole entry (rc 1, stderr only) — silent
+# wherever stderr is discarded. It is now sanitised to a space, as
+# planner_state_write does, keeping exactly one 5-field line per call.
+test__plog_sanitises_pipe_in_msg() {
   local tmpfile
   tmpfile=$(mktemp)
   local exit_code=0
@@ -604,8 +607,30 @@ test__plog_rejects_pipe_in_msg() {
     source "$LIB_DIR/heartbeat.sh"
     _plog "$tmpfile" "TEST" "step1" "done" "msg|with|pipe"
   ) 2>/dev/null || exit_code=$?
+  local lines line
+  lines=$(wc -l <"$tmpfile" | tr -d ' ')
+  line=$(cat "$tmpfile")
   rm -f "$tmpfile"
-  [ "$exit_code" -ne 0 ]
+  [ "$exit_code" -eq 0 ] && [ "$lines" -eq 1 ] &&
+    [ "$(echo "$line" | awk -F'|' '{print NF}')" -eq 5 ] &&
+    [[ "$line" == *"|TEST|step1|done|msg with pipe" ]]
+}
+
+test__plog_sanitises_newlines_in_msg() {
+  local tmpfile
+  tmpfile=$(mktemp)
+  local exit_code=0
+  (
+    source "$LIB_DIR/heartbeat.sh"
+    _plog "$tmpfile" "TEST" "step1" "done" $'line one\nline two\r|x'
+  ) 2>/dev/null || exit_code=$?
+  local lines line
+  lines=$(wc -l <"$tmpfile" | tr -d ' ')
+  line=$(cat "$tmpfile")
+  rm -f "$tmpfile"
+  [ "$exit_code" -eq 0 ] && [ "$lines" -eq 1 ] &&
+    [ "$(echo "$line" | awk -F'|' '{print NF}')" -eq 5 ] &&
+    [[ "$line" == *"|done|line one line two  x" ]]
 }
 
 test__plog_accepts_clean_msg() {
@@ -675,7 +700,8 @@ for fn in \
   test_hb_write_hb_category_diagnostic \
   test_hb_validate_line_rejects_hb_category \
   test_hb_write_bash_source_warns_outside_caller \
-  test__plog_rejects_pipe_in_msg \
+  test__plog_sanitises_pipe_in_msg \
+  test__plog_sanitises_newlines_in_msg \
   test__plog_accepts_clean_msg \
   test__plog_accepts_empty_msg; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue

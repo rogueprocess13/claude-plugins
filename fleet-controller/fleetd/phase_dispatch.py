@@ -1784,16 +1784,36 @@ _LOOP_COUNTER_PATTERNS = {
 def resolve_loop_counters(log_lines):
     """The four loop-cap counters `evaluate_loop` reads, derived from the log.
 
-    Ports `detect-resume.sh`'s four `grep -c '^[^|]*|...'` patterns exactly —
-    RECONCILE_CYCLE, VERIFY_ATTEMPTS, ITERATION, PR_FEEDBACK_CYCLE — so a
+    Ports `detect-resume.sh`'s four counters exactly — VERIFY_ATTEMPTS,
+    ITERATION, PR_FEEDBACK_CYCLE as `grep -c '^[^|]*|...'` line counts and
+    RECONCILE_CYCLE as a count of distinct cycle numbers — so a
     Python reimplementation cannot silently diverge from the bash one. `''`
     (no matching lines) resolves to `0`, matching `detect-resume.sh`'s own
     `${VAR:-0}` fallback after an empty grep.
     """
-    return {
+    counters = {
         name: sum(1 for line in log_lines if _retro_anchored(line, literal))
         for name, literal in _LOOP_COUNTER_PATTERNS.items()
     }
+    counters['RECONCILE_CYCLE'] = _distinct_reconcile_cycles(log_lines)
+    return counters
+
+
+_RECONCILE_CYCLE_RE = re.compile(r'^[^|]*\|GATE\|reconcile\|done\|cycle#(\d*)')
+
+
+def _distinct_reconcile_cycles(log_lines):
+    """RECONCILE_CYCLE counts distinct cycle numbers, not lines.
+
+    Each gate-reconcile cycle is logged twice — the agent's own
+    `done|cycle#N|held: ...` line and the router's `spawn_agent_post` line
+    whose MSG echoes `cycle#N` — and the post's last-line dup guard misses
+    the echo whenever a META line lands in between. Mirrors
+    `detect-resume.sh`'s `grep -o … | sort -u | wc -l` exactly (a numberless
+    `cycle#` contributes one empty key there too).
+    """
+    return len({m.group(1) for m in map(_RECONCILE_CYCLE_RE.match, log_lines)
+                if m})
 
 
 # ── Bash-only step dispatch (task 10.1.9, design.md D22) ────────────────────

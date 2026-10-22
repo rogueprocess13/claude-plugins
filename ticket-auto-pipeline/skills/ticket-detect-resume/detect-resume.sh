@@ -262,7 +262,12 @@ else
   elif {
     _adv_ln=$(grep -n '^[^|]*|META|gate-stop|fail|ADVERSARIAL_BLOCKED' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d: -f1 || true)
     [ -n "$_adv_ln" ]
-  } && ! tail -n "+$((_adv_ln + 1))" "$LOG_FILE" 2>/dev/null | grep -q '^[^|]*|EXEC|adversarial-review|done|'; then
+  } && ! tail -n "+$((_adv_ln + 1))" "$LOG_FILE" 2>/dev/null | grep -qE '^[^|]*\|EXEC\|adversarial-review\|done\|(PASS|WARNINGS)'; then
+    # Only a passing re-review (PASS/WARNINGS) resolves the block. Since
+    # GitHub #203, Step 3.6 writes `adversarial-review|done|BLOCKED`
+    # *before* its gate-stop, so a run that died between those two lines
+    # leaves a `done|BLOCKED` after the previous round's gate-stop — that
+    # must not read as "a fix landed".
     # An ADVERSARIAL_BLOCKED gate-stop halted EXEC and nothing since has
     # re-run adversarial-review to confirm a fix actually landed. Without
     # this branch, resume falls through to the EXEC|create-artifact|done|
@@ -595,7 +600,13 @@ fi
 
 # ── Reconcile cycle extraction ──────────────────────────────────────────────
 
-RECONCILE_CYCLE=$(grep -c '^[^|]*|GATE|reconcile|done|cycle#' "$LOG_FILE" 2>/dev/null || true)
+# Counts DISTINCT cycle numbers, not lines: each cycle is logged twice — the
+# gate-reconcile agent's own `done|cycle#N|held: ...` and the router's
+# spawn_agent_post line whose MSG echoes `cycle#N` — and spawn_agent_post's
+# last-line dup guard misses the echo whenever a META line lands in between.
+# fleetd/phase_dispatch.py's resolve_loop_counters applies the same rule.
+RECONCILE_CYCLE=$(grep -o '^[^|]*|GATE|reconcile|done|cycle#[0-9]*' "$LOG_FILE" 2>/dev/null |
+  sed 's/.*cycle#//' | sort -u | wc -l | tr -d ' ' || true)
 RECONCILE_CYCLE=${RECONCILE_CYCLE:-0}
 
 # ── Browser-state correction ────────────────────────────────────────────────
@@ -729,7 +740,7 @@ fi
 #                       later IMPLEMENT done (crash-resume must re-implement before
 #                       re-verifying); "pass" if PASS; empty otherwise
 #   ITERATION         — count of PR review WARN-verdict (⚠️) entries in pipeline log
-#   RECONCILE_CYCLE   — count of gate reconcile done entries
+#   RECONCILE_CYCLE   — count of distinct gate reconcile cycle#N numbers
 #   PR_FEEDBACK_CYCLE — count of pr-reconcile done entries
 
 cat <<EOF

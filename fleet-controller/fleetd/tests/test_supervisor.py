@@ -533,7 +533,7 @@ class PhaseDispatchHoldTest(unittest.TestCase):
         log_file.write_text('2026-09-06T10:00:00Z|META|schema|info|2\n')
         decision = gate_hold_mod.reconcile_hold(
             table, 'CRE-9', row, str(log_file),
-            entry_gate=lambda tid, hb_log_file='', lib_dir=None: (0, []))
+            entry_gate=lambda tid, hb_log_file='', lib_dir=None, log_file='': (0, []))
         self.assertEqual(decision.action, gate_hold_mod.RELEASE)
         rowcount = sup_mod._store_release_hold(str(self.state_dir), 'CRE-9', hold_id)
         self.assertEqual(rowcount, 1)
@@ -1405,7 +1405,7 @@ class PhaseDispatchRegressionPassTest(unittest.TestCase):
         table = phase_mod.DispatchTable.load()
         decision = gate_hold_mod.reconcile_hold(
             table, tid, row, str(log_file),
-            entry_gate=lambda tid, hb_log_file='', lib_dir=None: (0, []))
+            entry_gate=lambda tid, hb_log_file='', lib_dir=None, log_file='': (0, []))
         self.assertEqual(decision.action, gate_hold_mod.RELEASE)
         rowcount = sup_mod._store_release_hold(str(self.state_dir), tid, hold_id)
         self.assertEqual(rowcount, 1)
@@ -2589,7 +2589,7 @@ class HoldReconcilePassTest(unittest.TestCase):
 
         import fleetd.gate_hold as gate_hold_mod
 
-        def _probe(tid, hb_log_file='', lib_dir=None):
+        def _probe(tid, hb_log_file='', lib_dir=None, log_file=''):
             probe_calls.append(tid)
             return gate_hold_mod.GATE_ENTRY_HELD, []
 
@@ -2603,6 +2603,42 @@ class HoldReconcilePassTest(unittest.TestCase):
             gate_hold_mod.run_entry_gate = real_run_entry_gate
             sup.release_lock()
         self.assertEqual(probe_calls, ['TST-R1', 'TST-R1'])
+
+    def test_gate_stop_is_recorded_once_per_hold(self):
+        """Regression (#529): a GATE_STOP left the row held and the next
+        pass re-probed and re-appended the same gate-stop pair, forever.
+        The second pass must neither probe nor write."""
+        from fleetd import store
+        import fleetd.gate_hold as gate_hold_mod
+
+        with store.open_store(self.workspace) as st:
+            st.set_hold('TST-R3', 'gate', 'hold:TST-R3:g0:a0', 'complex')
+        log_file = self.workspace / 'TST-R3-pipeline.log'
+        log_file.write_text('2026-09-03T09:00:00Z|META|schema|info|1\n')
+
+        sup = self._supervisor()
+        probe_calls = []
+
+        def _probe(tid, hb_log_file='', lib_dir=None, log_file=''):
+            probe_calls.append(tid)
+            return gate_hold_mod.GATE_ENTRY_STOP, [
+                '2026-09-03T10:00:00Z|META|gate-stop|fail|EXEC_NO_ARTIFACT']
+
+        real_run_entry_gate = gate_hold_mod.run_entry_gate
+        gate_hold_mod.run_entry_gate = _probe
+        sup.acquire_lock()
+        try:
+            sup._hold_reconcile_pass()
+            sup._hold_reconcile_pass()
+            sup._hold_reconcile_pass()
+        finally:
+            gate_hold_mod.run_entry_gate = real_run_entry_gate
+            sup.release_lock()
+        text = log_file.read_text()
+        self.assertEqual(probe_calls, ['TST-R3'])
+        self.assertEqual(text.count('EXEC_NO_ARTIFACT'), 1)
+        self.assertEqual(text.count('GATE_HOLD_RECONCILE_FAILED'), 1)
+        self.assertIn('hold:TST-R3:g0:a0', text)
 
     def test_reconcile_does_not_pass_fleet_lib_dir(self):
         """Regression (#383): reconcile_hold needs ticket-auto-pipeline/lib
@@ -2662,6 +2698,45 @@ class HoldReconcilePassTest(unittest.TestCase):
             sup.release_lock()
         self.assertEqual(ticket['held'], 0)
         self.assertEqual(ticket['hold_id'], '')
+
+    def _release_with_clear_recorder(self, tid, kind):
+        """Drive one reconcile pass whose decision is RELEASE, with
+        clear_needs_info_on_release replaced by a recorder."""
+        from fleetd import store
+        import fleetd.gate_hold as gate_hold_mod
+
+        hold_id = f'hold:{tid}:g0:a1'
+        with store.open_store(self.workspace) as st:
+            st.set_hold(tid, kind, hold_id, 'q')
+        sup = self._supervisor()
+        cleared = []
+        real_reconcile = gate_hold_mod.reconcile_hold
+        real_clear = gate_hold_mod.clear_needs_info_on_release
+        gate_hold_mod.reconcile_hold = (
+            lambda table, t, row, log_file, **k: gate_hold_mod.GateHoldDecision(
+                gate_hold_mod.RELEASE, t, 1, None, '', '', 'answered',
+                row.get('hold_id'), 0))
+        gate_hold_mod.clear_needs_info_on_release = (
+            lambda t, **k: cleared.append(t) or 'cleared')
+        sup.acquire_lock()
+        try:
+            sup._hold_reconcile_pass()
+        finally:
+            gate_hold_mod.reconcile_hold = real_reconcile
+            gate_hold_mod.clear_needs_info_on_release = real_clear
+            sup.release_lock()
+        return cleared
+
+    def test_released_human_hold_clears_needs_info(self):
+        """The hold's creation applied `needs-info` (post_human_hold_comment);
+        its release must clear it, or the answered ticket stays
+        FLAG_NEEDS_INFO/not-ready and gate-stops TICKET_NOT_READY on resume."""
+        self.assertEqual(
+            self._release_with_clear_recorder('TST-72', 'human'), ['TST-72'])
+
+    def test_released_gate_hold_does_not_touch_needs_info(self):
+        self.assertEqual(
+            self._release_with_clear_recorder('TST-73', 'gate'), [])
 
 
 class HumanHoldIntakePassTest(unittest.TestCase):
