@@ -17,6 +17,41 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.69.8 (2026-10-22)
+
+The adversarial review in `ticket-appraise-exec` Step 3.6 now knows which round it is on
+([#203](https://github.com/willard-pro/claude-plugins/issues/203)). Before this, every re-run sent
+the reviewer the same prompt, and a BLOCKED verdict always meant "add detail and re-run". A plan
+whose approach was wrong could block round after round with no point at which anyone asked about
+the approach.
+
+### Added
+
+- `lib/adversarial-rounds.sh`: `adversarial_round_count <LOG_FILE>` prints the number of
+  consecutive `META|gate-stop|fail|ADVERSARIAL_BLOCKED…` lines since the last PASS/WARNINGS
+  review. It matches the code by prefix, so trailing detail text is fine. `META|recovery` lines,
+  including the operator's `manual-recovery … plan revised` note, do not reset the count, because
+  they appear between every pair of rounds. A missing log prints 0. It always returns 0, so it is
+  safe under `set -euo pipefail`. Tests: `lib/tests/test-adversarial-rounds.sh`.
+- Step 3.6 computes the round before it spawns the reviewer. From round 3 on (two or more prior
+  blocks) it appends an **Approach review** to the prompt. The reviewer must answer three
+  questions: is the plan fighting a documented framework limitation, which earlier-round
+  constraints are soft, and is there a smaller-surface alternative. It ends with
+  `**Approach:** KEEP` or `**Approach:** RECONSIDER — <alternative>`.
+
+### Fixed
+
+- Step 3.6 wrote the `ADVERSARIAL_BLOCKED` gate-stop and stopped before it wrote
+  `EXEC|adversarial-review|done|BLOCKED`, so a blocked round never logged `done` and never wrote its
+  verifier result. The `done` line and `write_verifier_result` now come first, for every verdict.
+- `write_verifier_result … attempt=1` was hardcoded. It is now the round number.
+- The gate-stop detail now carries the round (`ADVERSARIAL_BLOCKED — round N — …`). The code is
+  still the first word, so `exit-path.sh` and `detect-resume.sh` prefix matching is unchanged.
+- `detect-resume.sh` treated any `adversarial-review|done|` line after the last
+  `ADVERSARIAL_BLOCKED` as "resolved". With the new ordering, a run that dies between `done|BLOCKED`
+  and its gate-stop would have resumed past the review. Only `done|PASS` or `done|WARNINGS` now
+  resolves the block.
+
 ## 0.69.7 (2026-10-22)
 
 `flow.sh` no longer aborts on its warn-only ILLEGAL_TRANSITION heartbeat ([#530](https://github.com/willard-pro/claude-plugins/issues/530)).

@@ -958,7 +958,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 | `APPROVAL_REVOKED` | `approved` label was removed before implement phase started (Phase 2) |
 | `REMEDIATION_BRIEF_TRUNCATED` | REMEDIATION_BRIEF from verify exceeded length limit (Phase 2) |
 | `PR_REVIEW_VERDICT_UNPARSEABLE` | PR review returned no parseable ✅/⚠️/❌ verdict line (Phase 2) |
-| `ADVERSARIAL_BLOCKED` | Adversarial review found blocking issues in the implementation plan (Phase 2) |
+| `ADVERSARIAL_BLOCKED` | Adversarial review found blocking issues in the implementation plan (Phase 2). Detail is `ADVERSARIAL_BLOCKED — round N — …`; the `EXEC\|adversarial-review\|done\|BLOCKED` line is written just before it. From round 3 on the reviewer also does an approach review (`lib/adversarial-rounds.sh`, #203) |
 | `REPRO_NOT_CONFIRMED` | Reproduce skill determined bug does not manifest on UAT (Step 1.5) |
 | `REPRO_BLOCKED` | Reproduce skill blocked — insufficient detail in ticket (Step 1.5) |
 | `PR_FEEDBACK_EXHAUSTED` | `PR_FEEDBACK_CYCLE` reached 3 — reconciliation cycle capped, needs human review (Step 5.5) |

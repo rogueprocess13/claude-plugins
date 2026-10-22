@@ -345,7 +345,17 @@ Map: clear → PASS, CONFLICT → WARN, ADJACENT → WARN, SUPERSEDES → PASS.
 
 **Only run this step if `{COMPLEXITY}` = complex.** If simple, skip to Step 4.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|adversarial-review|start|Spawning adversarial agent" >> "$LOG_FILE"
+**Round awareness (GitHub #203).** Before spawning, count how many consecutive prior rounds of this review came back BLOCKED for this ticket. The count is deterministic bash — never estimate it yourself:
+
+```bash
+source ~/.claude/skills/lib/adversarial-rounds.sh
+ADV_PRIOR_BLOCKS=$(adversarial_round_count "${LOG_FILE:-}")
+ADV_ROUND=$((ADV_PRIOR_BLOCKS + 1))
+echo "ADV_PRIOR_BLOCKS=${ADV_PRIOR_BLOCKS} ADV_ROUND=${ADV_ROUND}"
+[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|adversarial-review|start|Spawning adversarial agent (round ${ADV_ROUND})" >> "$LOG_FILE"
+```
+
+`ADV_PRIOR_BLOCKS` counts `META|gate-stop|fail|ADVERSARIAL_BLOCKED` lines since the last PASS/WARNINGS verdict; recovery notes between rounds do not reset it (see `lib/adversarial-rounds.sh`). Shell variables do not survive between Bash calls, so note the two printed values and substitute them wherever `{ADV_PRIOR_BLOCKS}` and `{ADV_ROUND}` appear below.
 
 Spawn a `general-purpose` agent with an adversarial framing. Its sole job is to find what's wrong, missing, or under-specified in the implementation plan — not to confirm it's correct.
 
@@ -423,24 +433,55 @@ Use WARNINGS if findings are gaps worth noting but not correctness-critical.
 Use PASS if the plan is solid across all angles.
 ```
 
+**Approach review (only when `{ADV_PRIOR_BLOCKS}` ≥ 2).** When this is round 3 or later, append the block below to the end of the prompt above, with `{N}` replaced by `{ADV_PRIOR_BLOCKS}` and `{ADV_ROUND}` by its value. Do not append it on rounds 1 and 2. Repeated blocks usually mean the approach is wrong, not that the plan lacks detail — another pass over the same design does not converge.
+
+```
+### 8. Approach review (round {ADV_ROUND} — this plan has been BLOCKED {N} times in a row)
+
+Read every earlier `## Adversarial Review` section in notes.md first. Then, before adding new detail findings, answer these three questions:
+
+- Is the plan fighting a documented framework or library limitation (something the framework deliberately does not support, or that its maintainers have declined to support)? Cite the source if you find one.
+- Which constraints did earlier rounds treat as fixed (where the code must live, which service owns it, which stack it runs on, which library it uses)? Which of them are actually soft?
+- Is there a materially different approach with a smaller surface — another service, module, or library that already provides most of the missing mechanism — that would make the earlier rounds' findings go away instead of patching them one by one?
+
+Report this in the output under a `### Approach review` heading, placed after `### Missing steps`. End it with exactly one of:
+- `**Approach:** KEEP` — the approach is sound; the remaining findings are fixable within it.
+- `**Approach:** RECONSIDER — {one-sentence alternative}` — the remaining findings come from the approach itself; name the smaller-surface alternative.
+
+If you choose RECONSIDER, the verdict is still BLOCKED. Put the alternative first in the Summary line, so the person revising the plan sees it before the detail findings.
+```
+
 **When the agent returns:**
 
 Append its output verbatim to notes.md under the `## Adversarial Review` heading. Do not reinterpret or summarise.
 
 **Then keep going — do not stop here.** After appending the review to notes.md, immediately evaluate the verdict below and proceed. This step is not the last step of the skill: Steps 3.7, 3.8, 4, 5, and 6 still have to run in this same session before the ticket is actually assigned, commented on, and moved to Approve.
 
-**Gate on BLOCKED:**
-
-If the agent's verdict is BLOCKED:
+**Record the verdict — every verdict, BLOCKED included, before any gate-stop.** Write the `done` line and the verifier result first, so a BLOCKED round is visible in the log as a completed review and not only as a gate-stop:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|ADVERSARIAL_BLOCKED — {ISSUE-ID} adversarial review found blocking issues" >> "$LOG_FILE"
+[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|adversarial-review|done|{PASS|WARNINGS|BLOCKED}" >> "$LOG_FILE"
+```
+
+### Post adversarial-review: Record verifier result (Phase 0 RLVR)
+```bash
+source ~/.claude/skills/lib/verifier-result.sh
+write_verifier_result verifier=adversarial_review verdict=<PASS|WARN|BLOCK> criteria_met=<N> criteria_total=<M> attempt={ADV_ROUND} phase=EXEC
+```
+Map: PASS → PASS, WARNINGS → WARN, BLOCKED → BLOCK. `attempt` is `{ADV_ROUND}` from the round-awareness block above — not a fixed `1`.
+
+**Gate on BLOCKED:**
+
+If the agent's verdict is BLOCKED, write the gate-stop **after** the `done` line above. Keep `ADVERSARIAL_BLOCKED` as the first word of the detail: `exit-path.sh`, `detect-resume.sh` and `adversarial-rounds.sh` all match it by prefix.
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|ADVERSARIAL_BLOCKED — round {ADV_ROUND} — {ISSUE-ID} adversarial review found blocking issues" >> "$LOG_FILE"
 ```
 
 Stop with non-zero exit so `ticket-auto` halts the pipeline. Tell the user:
 
 ```
-⛔  ADVERSARIAL REVIEW — BLOCKED
+⛔  ADVERSARIAL REVIEW — BLOCKED (round {ADV_ROUND})
 
 The adversarial review for {TICKET-ID} found blocking issues.
 See ## Adversarial Review in notes.md for details.
@@ -448,15 +489,9 @@ See ## Adversarial Review in notes.md for details.
 Fix the plan, then re-run /ticket-appraise-exec {TICKET-ID} --from-step create-artifact.
 ```
 
+If `{ADV_ROUND}` ≥ 2, add this line to the message: `This plan has now been blocked {ADV_ROUND} times in a row. Before another detail pass, check whether the approach itself is the problem (see ### Approach review from round 3 on).` If the review contains `**Approach:** RECONSIDER`, quote its alternative in the message too.
+
 If WARNINGS or PASS, proceed to Step 3.7 — do NOT skip ahead to Step 4; Steps 3.7 and 3.8 both apply in this same complex-ticket branch and still have to run first.
-
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|adversarial-review|done|{PASS|WARNINGS|BLOCKED}" >> "$LOG_FILE"
-
-### Post adversarial-review: Record verifier result (Phase 0 RLVR)
-```bash
-source ~/.claude/skills/lib/verifier-result.sh
-write_verifier_result verifier=adversarial_review verdict=<PASS|WARN|BLOCK> criteria_met=<N> criteria_total=<M> attempt=1 phase=EXEC
-```
 
 ---
 
