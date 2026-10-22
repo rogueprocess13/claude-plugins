@@ -86,6 +86,7 @@ test-lib:
 	# dor-semantic-evaluator
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic.sh
+	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-testdata.sh
 	# tracker-approval-by-script
 	bash ticket-auto-pipeline/lib/tests/test-ticket-approve.sh
 	# ticket-create-skill

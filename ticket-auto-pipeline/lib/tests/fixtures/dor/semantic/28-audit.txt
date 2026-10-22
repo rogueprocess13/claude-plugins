@@ -1,0 +1,7 @@
+=== DOR_SEMANTIC_AUDIT ===
+SCHEMA_VERSION: 1
+TICKET: @TICKET@
+BODY_HASH: @BODY_HASH@
+SCORE_PLAUSIBLE: yes
+SCORE_REASON: the deterministic result matches the body
+=== END DOR_SEMANTIC_AUDIT ===

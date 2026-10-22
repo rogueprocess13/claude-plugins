@@ -184,9 +184,9 @@ dor_semantic_apply "APPLY-7" "$ws/body.md" "$scan" "$audit" >/dev/null
 
 # ── evaluator stamped ───────────────────────────────────────────────────────
 
-[ "$(get_ticket_manifest_field APPLY-7 ready | jq -r '.semantic.evaluator')" = "dor-semantic-v1" ] &&
+[ "$(get_ticket_manifest_field APPLY-7 ready | jq -r '.semantic.evaluator')" = "dor-semantic-v2" ] &&
   _pass "dor_semantic_apply: evaluator stamped" ||
-  _fail "dor_semantic_apply: evaluator should be dor-semantic-v1"
+  _fail "dor_semantic_apply: evaluator should be dor-semantic-v2"
 
 # ── canned-result case over real fixtures (task 5.3) ────────────────────────
 

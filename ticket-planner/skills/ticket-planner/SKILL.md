@@ -1118,7 +1118,10 @@ For each phase to run:
       fi
 
       if planner_refinement_gate "$INITIATIVE_ID"; then
-        : # every child ready — fall through to step 6, like Crosscheck's success path
+        # every child ready — fall through to step 6, like Crosscheck's success path.
+        # Advisory TEST_DATA_GAP findings never block, so show them here or nobody
+        # sees them before Completed (dor-semantic-test-data-gap).
+        planner_refinement_advisory_summary "$INITIATIVE_ID"
       else
         echo "Refinement halted — one or more tickets are not ready."
         echo ""

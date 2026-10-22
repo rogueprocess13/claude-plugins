@@ -34,6 +34,7 @@ restate the field set or the grammar.
 | `CONTRADICTORY_REQUIREMENTS` | `acceptance_criteria` |
 | `SCOPE_AMBIGUOUS` | `scope` |
 | `EDGE_CASE_GAP` | `edge_cases` |
+| `TEST_DATA_GAP` | `test_uat` — **advisory only** (see below) |
 | `UNSTATED_DEPENDENCY` | `dependencies` |
 | `AC_NOT_TESTABLE` | `verification` |
 
@@ -42,6 +43,15 @@ deterministic and semantic evaluators share one definition of readiness. An unkn
 code rejects the block. The prompt fixes a precedence order (the table order above) and
 requires one code per underlying issue — a rerun must not rename the same issue under a
 different code.
+
+`TEST_DATA_GAP` (dor-semantic-test-data-gap) fires when an acceptance criterion needs
+records, users, files or state to exist before it can be verified, and the Test Data
+Prerequisites section neither lists that data nor names its source. It is the semantic
+backstop for the planner's keyword test-data heuristic, which misses criteria that imply
+data without naming it. A threshold, a timeout, an attempt count or an HTTP status is not
+data. `UNSTATED_DEPENDENCY` no longer covers "prior state": a flag, a service or another
+ticket is a dependency, test data is `TEST_DATA_GAP`. `DETAIL` is **required** for this code
+(what data, in what state, how many) — an empty `DETAIL` rejects the whole block.
 
 Three further codes are **bash-owned** — never emitted by the model, always blocking,
 unaffected by `DOR_SEMANTIC_ADVISORY_CODES`:
@@ -54,9 +64,15 @@ unaffected by `DOR_SEMANTIC_ADVISORY_CODES`:
 
 ## Severity is decided by bash
 
-A semantic result never carries a severity field. Every finding is `blocking` unless
-its code is listed in the space-separated env var `DOR_SEMANTIC_ADVISORY_CODES` (default
-empty), read the same way as the `DOR_STRICT_*` flags — in which case it is `advisory`.
+A semantic result never carries a severity field. `_dor_semantic_severity` decides, in
+this order: a bash-owned code is `blocking`; a code in the fixed in-code constant
+`DOR_SEMANTIC_ADVISORY_ONLY_CODES` (currently `TEST_DATA_GAP`) is `advisory` — no env var,
+strict flag or ticket type can make it blocking, and promotion is a code change that
+removes it from the constant; otherwise a finding is `blocking` unless its code is listed
+in the space-separated env var `DOR_SEMANTIC_ADVISORY_CODES` (default empty), read the same
+way as the `DOR_STRICT_*` flags — in which case it is `advisory`. An advisory-only finding
+still goes through the quote check: a non-verbatim quote stores `verified: false` and adds
+`SEMANTIC_UNVERIFIED`, as for every code.
 A blocking finding adds `SEMANTIC_<DIMENSION_UPPER>` (e.g. `SEMANTIC_REQUIREMENT_COMPLETENESS`)
 to `ready.missing`, de-duplicated by dimension, not by code — a waiver survives a rerun
 that names a sibling code for the same gap. Advisory findings are stored in
@@ -165,10 +181,13 @@ dropping the finding.
 
 `dor_semantic_apply` rejects (exit 1, nothing written) a result whose `TICKET` differs
 from the ticket id it was called with, or whose `BODY_HASH` differs from
-`_dor_body_hash` of the body file it is given. `DOR_SEMANTIC_EVALUATOR="dor-semantic-v1"`
+`_dor_body_hash` of the body file it is given. `DOR_SEMANTIC_EVALUATOR="dor-semantic-v2"`
 is stamped into `ready.semantic.evaluator` on every stored result; it changes whenever
 the prompt, code vocabulary, or block schema changes, so a caller can decide whether a
-cached verdict is current by comparing body hash and evaluator string.
+cached verdict is current by comparing body hash and evaluator string. `v2`
+(dor-semantic-test-data-gap) added `TEST_DATA_GAP` to the prompt and code vocabulary; the
+block schema is unchanged (`SCHEMA_VERSION: 1`, four gaps), so every `v1` block still
+parses. The planner's Refinement phase re-runs a cached `v1` verdict once.
 
 ## `--det-result` file shape
 
@@ -214,7 +233,7 @@ writer of a ticket manifest's `ready` object, alongside `set_ticket_readiness` a
 "ready": {
   "...": "...",
   "semantic": {
-    "evaluator": "dor-semantic-v1",
+    "evaluator": "dor-semantic-v2",
     "checked_at": "2026-10-01T00:00:00Z",
     "body_hash": "sha256:ab12...",
     "findings": [

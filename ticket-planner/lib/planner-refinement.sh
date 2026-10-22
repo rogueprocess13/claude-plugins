@@ -38,7 +38,10 @@
 #
 #   planner_refinement_apply <INIT> <TID>
 #     Parses both result files via dor-semantic-parse.sh and applies them via
-#     dor_semantic_apply. Non-zero when either result is invalid.
+#     dor_semantic_apply. Non-zero when either result is invalid. After a
+#     successful apply, writes one META|refinement-testdata|warn line per
+#     verified advisory TEST_DATA_GAP finding, once per ticket per body hash;
+#     that write never changes the exit code.
 #
 #   planner_refinement_unavailable <INIT> <TID>
 #     Records SEMANTIC_UNAVAILABLE for a ticket whose two evaluator attempts
@@ -54,7 +57,13 @@
 #   planner_refinement_report <INIT>
 #     Prints the halt report: per not-ready ticket, its deterministic codes,
 #     semantic findings, missed/disputed codes with the exact waive command,
-#     and the --refresh-bodies note (design.md Decision 8).
+#     and the --refresh-bodies note (design.md Decision 8), then an
+#     "## Advisory test-data findings" section when any child carries one.
+#
+#   planner_refinement_advisory_summary <INIT>
+#     Prints one "Advisory (does not block) <TID> TEST_DATA_GAP: ..." line per
+#     verified advisory TEST_DATA_GAP finding on any child, ready or not;
+#     nothing when there are none (dor-semantic-test-data-gap).
 #
 #   planner_refinement_refresh_bodies <INIT>
 #     Overwrites body.md of every not-ready child from Linear (read-only).
@@ -329,7 +338,101 @@ planner_refinement_apply() {
     return 1
   fi
 
-  dor_semantic_apply "$tid" "$body_file" "$scan_json" "$audit_json"
+  local apply_rc=0
+  dor_semantic_apply "$tid" "$body_file" "$scan_json" "$audit_json" || apply_rc=$?
+  if [ "$apply_rc" -eq 0 ]; then
+    _planner_refinement_note_testdata "$initiative_id" "$tid" || true
+  fi
+  return "$apply_rc"
+}
+
+# _planner_refinement_testdata_findings <TID>
+# Prints one compact JSON object per stored finding that is a verified,
+# advisory TEST_DATA_GAP (dor-semantic-test-data-gap). Nothing when the
+# ticket has no manifest, no semantic verdict or no such finding. Exit 0.
+_planner_refinement_testdata_findings() {
+  local tid="$1" ready_json
+  ready_json=$(get_ticket_manifest_field "$tid" ready 2>/dev/null) || ready_json=""
+  [ -n "$ready_json" ] || return 0
+  echo "$ready_json" | jq -c '
+    (.semantic.findings // [])[]
+    | select(.code == "TEST_DATA_GAP" and .severity == "advisory" and .verified == true)
+  ' 2>/dev/null || true
+  return 0
+}
+
+# _planner_refinement_note_testdata <INIT> <TID>
+# Records each verified advisory TEST_DATA_GAP finding on the ticket as
+#   META|refinement-testdata|warn|<TID> TEST_DATA_GAP: "<quote>" — <detail> [<hash8>]
+# where <hash8> is the first 8 hex characters of the stored semantic
+# body_hash. Deduped per ticket per body hash: when the log already holds a
+# refinement-testdata warn line for this ticket and hash8, nothing is written,
+# so a resume does not repeat it and an edited body records anew. The check
+# runs once, before any write, so a ticket with two findings records both.
+# planner_state_write strips |/CR/LF from the message, so the dedupe matches
+# on the ticket id and the bracketed hash only. Never fails the caller —
+# advisory visibility must not change Refinement's own outcome.
+_planner_refinement_note_testdata() {
+  local initiative_id="$1" tid="$2"
+  local findings
+  findings=$(_planner_refinement_testdata_findings "$tid") || findings=""
+  [ -n "$findings" ] || return 0
+
+  local body_hash hash8
+  body_hash=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r '.semantic.body_hash // ""' 2>/dev/null) || body_hash=""
+  hash8="${body_hash#sha256:}"
+  hash8="${hash8:0:8}"
+
+  local log_file
+  log_file=$(planner_state_log "$initiative_id" 2>/dev/null) || log_file=""
+  if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+    if grep -F '|META|refinement-testdata|warn|' "$log_file" 2>/dev/null |
+      grep -F "${tid} TEST_DATA_GAP" 2>/dev/null |
+      grep -qF "[${hash8}]" 2>/dev/null; then
+      return 0
+    fi
+  fi
+
+  local finding quote detail
+  while IFS= read -r finding; do
+    [ -n "$finding" ] || continue
+    quote=$(echo "$finding" | jq -r '.quote // ""' 2>/dev/null) || quote=""
+    detail=$(echo "$finding" | jq -r '.detail // ""' 2>/dev/null) || detail=""
+    planner_state_write "$initiative_id" "META" "refinement-testdata" "warn" \
+      "${tid} TEST_DATA_GAP: \"${quote}\" — ${detail} [${hash8}]" 2>/dev/null || true
+  done <<<"$findings"
+  return 0
+}
+
+# planner_refinement_advisory_summary <INIT>
+# Prints one line per verified advisory TEST_DATA_GAP finding currently stored
+# on any child of the initiative's epic, ready or not:
+#   Advisory (does not block) <TID> TEST_DATA_GAP: "<quote>" — <detail>
+# Reads the manifests (current verdicts), not the state log. Prints nothing
+# when there are none or the epic cannot be resolved. Always exit 0.
+planner_refinement_advisory_summary() {
+  local initiative_id="$1"
+  _planner_refinement_source_deps 2>/dev/null || return 0
+
+  local epic_id
+  epic_id=$(planner_epic_id "$initiative_id" 2>/dev/null) || return 0
+
+  local children
+  children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null) || children=""
+  [ -n "$children" ] || children='[]'
+
+  local tid findings finding quote detail
+  for tid in $(echo "$children" | jq -r '.[]' 2>/dev/null); do
+    findings=$(_planner_refinement_testdata_findings "$tid") || findings=""
+    [ -n "$findings" ] || continue
+    while IFS= read -r finding; do
+      [ -n "$finding" ] || continue
+      quote=$(echo "$finding" | jq -r '.quote // ""' 2>/dev/null) || quote=""
+      detail=$(echo "$finding" | jq -r '.detail // ""' 2>/dev/null) || detail=""
+      echo "Advisory (does not block) ${tid} TEST_DATA_GAP: \"${quote}\" — ${detail}"
+    done <<<"$findings"
+  done
+  return 0
 }
 
 # planner_refinement_unavailable <INIT> <TID>
@@ -501,6 +604,17 @@ planner_refinement_report() {
   if [ "$any_not_ready" -eq 1 ]; then
     echo ""
     echo "An edit made in Linear is only evaluated after /ticket-planner resume ${initiative_id} --refresh-bodies."
+  fi
+
+  # Advisory findings never put a child in the not-ready loop above, so a
+  # ready child's TEST_DATA_GAP would otherwise go unreported
+  # (dor-semantic-test-data-gap).
+  local advisory_summary
+  advisory_summary=$(planner_refinement_advisory_summary "$initiative_id") || advisory_summary=""
+  if [ -n "$advisory_summary" ]; then
+    echo ""
+    echo "## Advisory test-data findings"
+    echo "$advisory_summary"
   fi
 }
 

@@ -327,7 +327,7 @@ the written object — a fresh verdict never carries a previous verdict's stale 
 vocabulary: `intent`, `scope`, `acceptance_criteria`, `verification`, `context`, `test_uat`,
 `dependencies`, `constraints`, `edge_cases`, `completion`, `requirement_completeness`.
 
-**Implemented (dor-semantic-evaluator).** The semantic evaluator is `dor-semantic-v1`
+**Implemented (dor-semantic-evaluator).** The semantic evaluator is `dor-semantic-v2`
 (`lib/dor-semantic.sh`, `lib/dor-semantic-parse.sh`, `agents/dor-semantic-agent.md`) — full contract
 in [docs/dor-semantic-schema.md](dor-semantic-schema.md). In outline: an agent is spawned twice per
 ticket, scan (body only) then audit (body plus the deterministic result), each writing one result
@@ -341,7 +341,7 @@ applies — no consumer or waiver mechanism needed to change:
 "ready": {
   "...": "...",
   "semantic": {
-    "evaluator": "dor-semantic-v1",
+    "evaluator": "dor-semantic-v2",
     "checked_at": "2026-10-01T00:00:00Z",
     "body_hash": "sha256:ab12...",
     "findings": [
@@ -365,6 +365,15 @@ every return path. **The only caller today is the planner's Refinement phase**
 (`planner-refinement-phase`) — no ticket carries a `SEMANTIC_*` code until that phase runs the
 evaluator on it; `ticket-critique`'s overlapping checks (AC testability, scope, edge cases) are
 unchanged and uncoordinated with this pass, a noted follow-up.
+
+**Advisory test-data backstop (dor-semantic-test-data-gap).** `TEST_DATA_GAP` (dimension
+`test_uat`) catches an acceptance criterion that needs data to exist before it can be verified
+when the Test Data Prerequisites section neither lists that data nor names its source — the case
+the planner's keyword heuristic misses, including an all-`none` planner body that this deterministic
+check treats as legacy. It is **advisory only**, fixed in code by `DOR_SEMANTIC_ADVISORY_ONLY_CODES`:
+it never joins `ready.missing` and never blocks dispatch. Refinement surfaces it instead, as a
+`META|refinement-testdata|warn` line and an `Advisory (does not block)` summary. Promotion to
+blocking waits on a live golden sweep (`lib/tests/fixtures/dor/README.md`, Semantic expectation).
 
 ## What stays outside deterministic evaluation
 

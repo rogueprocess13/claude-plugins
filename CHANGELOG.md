@@ -17,6 +17,44 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.69.0 / ticket-planner 0.22.0 (2026-10-22)
+
+The semantic Definition-of-Ready evaluator gains an **advisory** test-data backstop
+(`dor-semantic-test-data-gap`). It catches acceptance criteria that need data to exist before they
+can be verified when the planner's keyword heuristic missed them.
+
+### Added
+- **`TEST_DATA_GAP` semantic code** (dimension `test_uat`): fires when a criterion needs records,
+  users, files or state, and the Test Data Prerequisites section neither lists that data nor names
+  its source. `DETAIL` must name the data; an empty `DETAIL` rejects the block. Thresholds,
+  timeouts, attempt counts and HTTP statuses are not data. `UNSTATED_DEPENDENCY` no longer covers
+  "prior state", so one issue gets one code.
+- **Advisory only, fixed in code**: the new constant `DOR_SEMANTIC_ADVISORY_ONLY_CODES="TEST_DATA_GAP"`
+  makes it advisory whatever `DOR_SEMANTIC_ADVISORY_CODES`, the strict flags or the ticket type say.
+  It never joins `ready.missing` and never blocks dispatch. A non-verbatim quote still raises
+  `SEMANTIC_UNVERIFIED`, as for every code.
+- **Refinement reporting** (ticket-planner 0.22.0): `META|refinement-testdata|warn` lines (once per
+  ticket per body hash), `planner_refinement_advisory_summary`, an `## Advisory test-data findings`
+  section at the end of the halt report, the summary on the gate-pass branch, and the lines under
+  Completed's Warnings.
+- Golden fixtures 26–28 (two heuristic misses and a threshold-only negative control), canned
+  scan/audit blocks, `lib/tests/test-dor-semantic-testdata.sh`, and a Semantic expectation list in
+  the fixtures README for the manual live sweep.
+
+### Changed
+- **Evaluator `dor-semantic-v2`**: the block schema is unchanged (`SCHEMA_VERSION: 1`, four gaps),
+  so every v1 block still parses. Refinement re-runs a cached v1 verdict once; initiatives past
+  Refinement are not re-run. Waivers survive the re-run.
+
+### Upgrade notes
+- **Version coupling**: ship ticket-auto-pipeline 0.69.0 first or together with ticket-planner
+  0.22.0. A new planner against an older ticket-auto lib finds no `TEST_DATA_GAP` findings and
+  writes nothing. An older planner against the new lib stores advisory findings it never reports.
+  An older parser that sees `TEST_DATA_GAP` rejects the block (one retry, then
+  `SEMANTIC_UNAVAILABLE`), which only happens on a partial install.
+- **Not yet blocking**: promotion to blocking, and suppression for a `TESTDATA_CONFIRM: none`
+  answer, wait on a live golden sweep against the README's Semantic expectation list.
+
 ## ticket-planner 0.21.0 (2026-10-22)
 
 A headless client can now ask a question back about the plan instead of answering the
