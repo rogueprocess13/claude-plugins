@@ -295,14 +295,20 @@ _dor_ac_is_edge_case() {
 }
 
 # _dor_ac_count <body> — approximate acceptance-criteria row count, used only
-# to size VPLAN_ROW_GAP's comparison. Checkbox items first (the documented
+# to size VPLAN_ROW_GAP's comparison. Counts only inside the `## Acceptance
+# Criteria` section (up to the next level-1/2 heading; `###` subsections stay
+# in), so other checkbox lists — e.g. an Environment `- [X] Local` / `- [ ]
+# UAT` checklist — never inflate it (#535). Falls back to the whole body only
+# when that section is absent or empty. Checkbox items first (the documented
 # `- [ ]` shape), falling back to any bullet/numbered/AC-prefixed line.
 _dor_ac_count() {
-  local body="$1" n
-  n=$(echo "$body" | grep -cP '^\s*- \[[ xX]\]\s' 2>/dev/null || true)
+  local body="$1" section n
+  section=$(echo "$body" | awk '/^##[[:space:]]*Acceptance Criteria/ {found=1; next} found && /^#/ && !/^###/ {exit} found {print}')
+  [ -n "$(echo "$section" | tr -d '[:space:]')" ] || section="$body"
+  n=$(echo "$section" | grep -cP '^\s*- \[[ xX]\]\s' 2>/dev/null || true)
   n="${n//[^0-9]/}"
   if [ -z "$n" ] || [ "$n" -eq 0 ] 2>/dev/null; then
-    n=$(echo "$body" | grep -cE '^\s*[-*]\s|^\s*[0-9]+[.)]\s|^\s*AC[:]' 2>/dev/null || true)
+    n=$(echo "$section" | grep -cE '^\s*[-*]\s|^\s*[0-9]+[.)]\s|^\s*AC[:]' 2>/dev/null || true)
     n="${n//[^0-9]/}"
   fi
   [ -n "$n" ] || n=0

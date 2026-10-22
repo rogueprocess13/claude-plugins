@@ -17,6 +17,20 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.69.1 (2026-10-22)
+
+`VPLAN_ROW_GAP` no longer counts checkboxes that sit outside the Acceptance Criteria section
+([#535](https://github.com/willard-pro/claude-plugins/issues/535)).
+
+### Fixed
+- **`_dor_ac_count` scoped to `## Acceptance Criteria`** (`lib/dor-check.sh`): it counted every
+  `- [ ]` / `- [x]` line in the whole body, so an `## Environment` checklist (`- [X] Local`,
+  `- [ ] UAT`) added to the criteria count and raised a false `VPLAN_ROW_GAP` on a Verification
+  Plan with one row per criterion. Under `DOR_STRICT_VPLAN=true` that was a hard not-ready. The
+  count now covers only the section, up to the next `#`/`##` heading (`###` subsections stay in).
+  The whole-body count is the fallback only when the section is absent or empty. The Verifiable
+  column parser from [#514](https://github.com/willard-pro/claude-plugins/issues/514) is unchanged.
+
 ## grill-me 0.3.0 / ticket-planner 0.23.0 (2026-10-22)
 
 grill-me now asks where test data comes from, and the planner's Discovery phase reads the answer
