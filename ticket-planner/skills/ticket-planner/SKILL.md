@@ -660,6 +660,9 @@ NO_PROJECT_FLAG=""
 MILESTONE_REF=""
 ACCEPT_FLAGS=()
 REFRESH_BODIES_FLAG=""
+CONVERGE_FLAG=""
+CONVERGE_ONLY=""
+CONVERGE_BY=""
 ANSWERS_FILE=""
 NO_TESTS_RULE_FLAG=""
 
@@ -694,6 +697,11 @@ while [ "$#" -gt 0 ]; do
     --milestone) shift; MILESTONE_REF="${1:-}" ;;
     --milestone=*) MILESTONE_REF="${1#*=}" ;;
     --refresh-bodies) REFRESH_BODIES_FLAG=true ;;
+    --converge) CONVERGE_FLAG=true ;;
+    --only) shift; CONVERGE_ONLY="${1:-}" ;;
+    --only=*) CONVERGE_ONLY="${1#*=}" ;;
+    --by) shift; CONVERGE_BY="${1:-}" ;;
+    --by=*) CONVERGE_BY="${1#*=}" ;;
     --no-tests-rule) NO_TESTS_RULE_FLAG=true ;;
     --no-tests-rule=*) NO_TESTS_RULE_FLAG="${1#*=}" ;;
     --answers) shift; ANSWERS_FILE="${1:-}" ;;
@@ -750,6 +758,19 @@ if [ "$REFRESH_BODIES_FLAG" = "true" ] && [ "$MODE" = "plan" ]; then
   echo "       /ticket-planner resume <INIT_ID> --refresh-bodies" >&2
   exit 1
 fi
+
+# --converge --only <TIDs> [--by <name>] (planner-refinement-convergence D10):
+# a resume-only, one-shot operator action. --only is mandatory (there is no
+# epic-wide converge), and a bad combination is rejected here, before
+# anything is persisted.
+if [ "$CONVERGE_FLAG" = "true" ] && [ "$MODE" = "plan" ]; then
+  echo "ERROR: --converge is not valid for 'plan'. It releases tickets Refinement already held:" >&2
+  echo "       /ticket-planner resume <INIT_ID> --converge --only <TID[,TID...]> [--by <name>]" >&2
+  exit 1
+fi
+source "${CLAUDE_PLUGIN_ROOT}/lib/planner-refinement.sh"
+planner_refinement_converge_args_validate "$CONVERGE_FLAG" "$CONVERGE_ONLY" "$CONVERGE_BY" || exit 1
+[ "$CONVERGE_FLAG" = "true" ] && [ -z "$CONVERGE_BY" ] && CONVERGE_BY="${USER:-operator}"
 
 # --answers answers the questions a stopped run is asking (planner-headless-
 # questions), so like --create it only means something on 'resume'.
@@ -852,6 +873,10 @@ fi
 # not keep re-fetching from Linear forever.
 [ "$REFRESH_BODIES_FLAG" = "true" ] && planner_config_set "$INITIATIVE_ID" "refresh-bodies" "true"
 
+# --converge (planner-refinement-convergence D10): one-shot too, stored as
+# "<TID,TID...> <operator>" and consumed (then cleared) by step 1b.
+[ "$CONVERGE_FLAG" = "true" ] && planner_config_set "$INITIATIVE_ID" "converge" "${CONVERGE_ONLY} ${CONVERGE_BY}"
+
 # The no-tests rule (#503): the flag (or PLANNER_NO_TESTS_RULE, read above)
 # always wins; otherwise detect it once from REPOS_ROOT CLAUDE.md files and
 # record the result and its source, so later phases read config, not the env.
@@ -941,9 +966,26 @@ When mode is `resume`:
 1. Extract the initiative ID from the second argument.
 2. **Persist the invocation config** — run step 2b before anything is dispatched. `--create` must be on disk before Epic Gen becomes reachable, so that a crash in between cannot lose it.
 3. Call `planner_resume "$INITIATIVE_ID"` — it outputs `PLANNER_NEXT_PHASE`, `PLANNER_INITIATIVE`, `PLANNER_LAST_LOG`.
-4. If `PLANNER_COMPLETE=true` is output, run the step-8 completion verification
-   before reporting completion — an initiative whose Completed phase never ran also
-   reports `PLANNER_COMPLETE=true` here once its log has a terminal entry.
+4. If `PLANNER_COMPLETE=true` is output, first check for a Refinement re-run on the
+   finished initiative (planner-refinement-convergence D6/D10). `--refresh-bodies` and
+   `--converge` are accepted after Completed so a ticket ticket-auto held on drift, or
+   one an operator converges, has a release path:
+
+   ```bash
+   source "${CLAUDE_PLUGIN_ROOT}/lib/planner-refinement.sh"
+   REFINEMENT_AFTER_COMPLETED=""
+   if planner_refinement_after_completed_pending "$INITIATIVE_ID"; then
+     REFINEMENT_AFTER_COMPLETED=true
+     PHASE="Refinement"
+   fi
+   ```
+
+   When `REFINEMENT_AFTER_COMPLETED=true`, run step 7's item 1b once with that
+   `PHASE` (it re-evaluates the affected children only and writes `META` lines only,
+   so `planner_position_derive` still returns the empty string), then continue to
+   step 8. Otherwise run the step-8 completion verification before reporting
+   completion — an initiative whose Completed phase never ran also reports
+   `PLANNER_COMPLETE=true` here once its log has a terminal entry.
 5. Run the dispatch loop starting from the returned phase. When that phase is
    `Completed`, it is the terminal phase and still has to run — see step 7.
 
@@ -1080,15 +1122,31 @@ For each phase to run:
       planner_state_write "$INITIATIVE_ID" "Refinement" "gate" "skip" "legacy initiative — Refinement not evaluated"
     else
       # --refresh-bodies is one-shot: consumed and cleared here, never sticky.
+      # It prints the ids of the children whose body.md it rewrote.
+      _REFRESHED=""
       if [ "$(planner_config_get "$INITIATIVE_ID" "refresh-bodies")" = "true" ]; then
-        planner_refinement_refresh_bodies "$INITIATIVE_ID"
+        _REFRESHED=$(planner_refinement_refresh_bodies "$INITIATIVE_ID" | paste -sd, -)
         planner_config_set "$INITIATIVE_ID" "refresh-bodies" "none"
       fi
 
+      # On a Completed initiative (step 4) only the refreshed children are
+      # re-scanned; with nothing refreshed, nothing is (a converge-only run).
       NEEDS_PASS=()
-      while IFS= read -r _tid; do
-        [ -n "$_tid" ] && NEEDS_PASS+=("$_tid")
-      done < <(planner_refinement_scan "$INITIATIVE_ID")
+      if [ "${REFINEMENT_AFTER_COMPLETED:-}" != "true" ]; then
+        while IFS= read -r _tid; do
+          [ -n "$_tid" ] && NEEDS_PASS+=("$_tid")
+        done < <(planner_refinement_scan "$INITIATIVE_ID")
+      elif [ -n "$_REFRESHED" ]; then
+        while IFS= read -r _tid; do
+          [ -n "$_tid" ] && NEEDS_PASS+=("$_tid")
+        done < <(planner_refinement_scan "$INITIATIVE_ID" --only "$_REFRESHED")
+      fi
+
+      # --converge is one-shot too (design D10): it spawns nothing, refuses a
+      # named ticket whose verdict is missing or stale (that ticket is named in
+      # the output and, when it is in NEEDS_PASS, scanned below as usual), and
+      # leaves structural findings blocking. Print its output verbatim.
+      planner_refinement_converge_consume "$INITIATIVE_ID"
 
       if [ "${PLANNER_REFINEMENT_SEMANTIC:-true}" != "false" ] && [ "${#NEEDS_PASS[@]}" -gt 0 ]; then
         _batch_size="${PLANNER_REFINEMENT_PARALLEL:-4}"
@@ -1117,10 +1175,16 @@ For each phase to run:
         done
       fi
 
-      if planner_refinement_gate "$INITIATIVE_ID"; then
+      if [ "${REFINEMENT_AFTER_COMPLETED:-}" = "true" ]; then
+        # Completed initiative: no gate, no phase line, no re-stamp — one META
+        # line, the report for any child still held, then step 8.
+        planner_refinement_after_completed_finish "$INITIATIVE_ID"
+        planner_refinement_report "$INITIATIVE_ID"
+      elif planner_refinement_gate "$INITIATIVE_ID"; then
         # every child ready — fall through to step 6, like Crosscheck's success path.
-        # Advisory TEST_DATA_GAP findings never block, so show them here or nobody
-        # sees them before Completed (dor-semantic-test-data-gap).
+        # Advisory findings never block — TEST_DATA_GAP ones, and findings
+        # demoted by the round limit, drift, converge or an audit dispute — so
+        # show them here or nobody sees them before Completed.
         planner_refinement_advisory_summary "$INITIATIVE_ID"
       else
         echo "Refinement halted — one or more tickets are not ready."
