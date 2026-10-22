@@ -339,6 +339,80 @@ test_gate_reconcile_has_context_loading() {
   }
 }
 
+# The openspec plan artifact lives at the tickets-repo root (cwd — where
+# ticket-appraise-exec writes it), never under TICKET_DIR, and must be THIS
+# ticket's change — not whichever dir `ls | head -1` lists first. Executes the
+# skill's real resolution block against fixture trees.
+_gate_reconcile_artifact_code() {
+  sed -n '/^Resolve the plan artifact/,/^## Step 2/p' "$SKILLS_DIR/ticket-gate-reconcile/SKILL.md" |
+    sed -n '/^```bash$/,/^```$/p' | sed '1d;$d'
+}
+
+_gate_reconcile_resolve() {
+  # $1 = cwd, $2 = ARTIFACT_TYPE, $3 = ticket id; echoes ARTIFACT_PATH
+  local code
+  code=$(_gate_reconcile_artifact_code)
+  [ -n "$code" ] || return 3
+  code=${code//\{TICKET-ID\}/$3}
+  (
+    cd "$1" || exit 3
+    LOG_FILE="$1/logs/pipeline.log"
+    TICKET_DIR="$1/TEST-7--ticket-dir"
+    ARTIFACT_TYPE="$2"
+    eval "$code"
+    echo "$ARTIFACT_PATH"
+  )
+}
+
+test_gate_reconcile_artifact_resolves_own_change_at_repo_root() {
+  local tmp out rc=0
+  tmp=$(mktemp -d)
+  mkdir -p "$tmp/logs" "$tmp/TEST-7--ticket-dir/openspec/changes/aaa-wrong" \
+    "$tmp/openspec/changes/aaa-other-change" "$tmp/openspec/changes/test-77-not-me" \
+    "$tmp/openspec/changes/test-7-fix-thing"
+  touch "$tmp/openspec/changes/test-7-fix-thing/tasks.md" \
+    "$tmp/openspec/changes/aaa-other-change/tasks.md" \
+    "$tmp/openspec/changes/test-77-not-me/tasks.md"
+  out=$(_gate_reconcile_resolve "$tmp" openspec TEST-7) || rc=1
+  [ "$out" = "openspec/changes/test-7-fix-thing/tasks.md" ] || {
+    echo "resolved '$out' (want openspec/changes/test-7-fix-thing/tasks.md)"
+    rc=1
+  }
+  rm -rf "$tmp"
+  return $rc
+}
+
+test_gate_reconcile_artifact_missing_change_fails_loudly() {
+  local tmp rc=0
+  tmp=$(mktemp -d)
+  mkdir -p "$tmp/logs" "$tmp/openspec/changes/aaa-other-change"
+  touch "$tmp/openspec/changes/aaa-other-change/tasks.md"
+  if _gate_reconcile_resolve "$tmp" openspec TEST-7 >/dev/null 2>&1; then
+    echo "resolution succeeded with no change for the ticket"
+    rc=1
+  fi
+  grep -q '|GATE|reconcile|fail|.*TEST-7' "$tmp/logs/pipeline.log" 2>/dev/null || {
+    echo "no GATE|reconcile|fail line logged"
+    rc=1
+  }
+  rm -rf "$tmp"
+  return $rc
+}
+
+test_gate_reconcile_artifact_simple_fix_unchanged() {
+  local tmp out rc=0
+  tmp=$(mktemp -d)
+  mkdir -p "$tmp/logs" "$tmp/TEST-7--ticket-dir"
+  touch "$tmp/TEST-7--ticket-dir/simple-fix.md"
+  out=$(_gate_reconcile_resolve "$tmp" simple-fix TEST-7) || rc=1
+  [ "$out" = "$tmp/TEST-7--ticket-dir/simple-fix.md" ] || {
+    echo "resolved '$out'"
+    rc=1
+  }
+  rm -rf "$tmp"
+  return $rc
+}
+
 # ── Increment B — silent-skip & false-done fixes (R3, R9, R2) ─────────────────
 
 test_router_implement_complete_has_plugin_cache_fallback() {
