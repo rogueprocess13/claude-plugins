@@ -195,7 +195,7 @@ _mr_field5() {
 # ticket_pipeline_pr_ref <LOG_FILE>
 # Prints "<lineno>\t<pr_num>\t<repo>" for the most recent PR this ticket's
 # pipeline log names, or nothing when the log names no PR at all. The latest
-# `META|pr-created` (ticket-verify / epic-branch.sh, JSON {pr,url,repo}) wins;
+# `META|pr-created` (lib/pr-evidence.sh, JSON {pr,url,repo}) wins;
 # `PR-REVIEW|checkout-pr|done|<n>` (ticket-pr-review) is the fallback when no
 # pr-created line exists — the same precedence run-summary.sh uses for the
 # `run` event's `pr`, so this names the PR merge-poll.sh actually polls.
@@ -225,6 +225,19 @@ ticket_pipeline_pr_ref() {
   fi
 
   if [ -n "$c_ln" ]; then
+    # The reference line is the EARLIEST line naming this PR (a pr-created
+    # record or a checkout-pr line with the same number), not the latest
+    # record: pipeline-finalize.sh backfills pr-created just before the
+    # outcome (GitHub #525), after any merge-decision line of the same run,
+    # and the merge-record check below only looks after this line.
+    local first_ln
+    first_ln=$(awk -F'|' -v n="$c_pr" '
+      { s=$5; for(i=6;i<=NF;i++) s=s"|"$i }
+      $2 == "META" && $3 == "pr-created" && s ~ ("\"pr\":" n "[,}]") { print NR; exit }
+      $2 == "PR-REVIEW" && $3 == "checkout-pr" && $4 == "done" {
+        if (match(s, /[0-9]+/) && substr(s, RSTART, RLENGTH) == n) { print NR; exit }
+      }' "$log_file" 2>/dev/null) || first_ln=""
+    [ -n "$first_ln" ] && [ "$first_ln" -lt "$c_ln" ] && c_ln="$first_ln"
     printf '%s\t%s\t%s\n' "$c_ln" "$c_pr" "$c_repo"
   elif [ -n "$k_ln" ]; then
     printf '%s\t%s\t\n' "$k_ln" "$k_pr"

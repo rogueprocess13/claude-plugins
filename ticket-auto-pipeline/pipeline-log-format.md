@@ -477,13 +477,18 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|cache-tokens|info|VERIFY:8/2" >> "$LOG
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|complexity|info|simple" >> "$LOG_FILE"
 ```
 
-`pr-created` is written once per PR by `skills/ticket-verify/SKILL.md` (both
-the new-PR and existing-PR code paths converge on one capture site) and by
-`lib/epic-branch.sh` for epic integration PRs (`"epic":true`, only when
-`$LOG_FILE` is set). Fields: `pr` (integer), `url` (string), `repo`
-(`OWNER/REPO` or `null` if unparseable). It is preferred over the older
-`PR-REVIEW|checkout-pr|done|<N>` line (number only, no URL/repo) wherever
-both exist in a run's window.
+`pr-created` has one writer, `lib/pr-evidence.sh`'s `record_pr_created`, called by
+`skills/ticket-verify/SKILL.md` (both the new-PR and existing-PR code paths, once per PR
+per run) and by `lib/epic-branch.sh` for epic integration PRs (`"epic":true`, only when
+`$LOG_FILE` is set). Fields: `pr` (integer), `url` (string), `repo` (`OWNER/REPO`), plus
+`"backfill":true` on a record written by `pr_evidence_backfill`. `pipeline-finalize.sh`
+runs that backfill just before `META|outcome`, for any PR the log names without a record:
+a GitHub PR URL on a VERIFY or PR-REVIEW line, or a bare `checkout-pr` number confirmed by
+`gh pr view` on one of the ticket's worktree remotes with the ticket branch as head
+(GitHub #525 — an agent that paraphrased the capture step left only an improvised
+`VERIFY|pr-open|done|<url>` line, so merge-poll had no repo and recorded `unknown-repo`).
+`pr-created` is preferred over the older `PR-REVIEW|checkout-pr|done|<N>` line (number
+only, no URL/repo) wherever both exist in a run's window.
 
 `cache-tokens` is written by `hooks/token-tracker.sh` alongside (never
 instead of) the existing `META|tokens` line, as `${PHASE}:${CACHE_READ}/${CACHE_CREATE}`.

@@ -17,6 +17,34 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.69.1 (2026-10-22)
+
+PRs opened by the VERIFY phase now always leave a `META|pr-created` record, so merge-poll can poll
+them and blocked-by dependents are released after a human merges the PR (#525).
+
+### Fixed
+- **VERIFY-opened PRs had no repo**: ticket-verify's PR capture was a bash block in its SKILL.md.
+  The agent ran its own version of it, logged `VERIFY|pr-open|done|<url>` and never wrote
+  `META|pr-created`. The run event then carried `pr.repo: null`, merge-poll wrote `unknown-repo`
+  once and never polled again, and `ticket_pipeline_merge_state` stayed `unknown` after the merge.
+  Operators had to append `META|manual-merge` by hand to release dependents.
+- **One writer for the marker**: new `lib/pr-evidence.sh`. `record_pr_created [--new] <LOG> <TID>
+  <URL> [--epic]` writes `pr-created` once per PR per run and, with `--new`, emits the `pr-opened`
+  outbox event (idempotency-keyed on the PR). ticket-verify Step 6 and `epic_branch_open_pr` both
+  call it; the `pr-opened` vocabulary entry names it as the emitter.
+- **Backfill before the outcome**: `pipeline-finalize.sh` runs `pr_evidence_backfill` just before
+  `META|outcome`. It records any PR the log names without a marker: a GitHub PR URL on a VERIFY or
+  PR-REVIEW line, or a bare `checkout-pr` number that `gh pr view` confirms on one of the ticket's
+  own worktree remotes with the ticket branch as head. Backfilled records carry `"backfill":true`
+  and emit no event.
+- **`ticket_pipeline_pr_ref`** now reports the earliest line naming the PR, so a backfilled marker
+  written after `merge-decision|done|merged` does not hide that merge record.
+
+### Upgrade notes
+- Runs that already finished with `unknown-repo` are not re-polled. Release their dependents with
+  `META|manual-merge` as before.
+- Not in this release: a fleet WARN when merge-poll writes `unknown-repo` for a blocker.
+
 ## grill-me 0.3.0 / ticket-planner 0.23.0 (2026-10-22)
 
 grill-me now asks where test data comes from, and the planner's Discovery phase reads the answer
