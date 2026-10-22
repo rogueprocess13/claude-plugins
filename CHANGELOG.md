@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.69.1 / fleet-controller 0.42.7 (2026-10-22)
+## 0.69.4 / fleet-controller 0.42.8 (2026-10-22)
 
 A `needs-info` flag no longer outlives the answer to the questions that set it. Before this, an
 answered ticket kept reporting `FLAG_NEEDS_INFO` and stayed not-ready until a full re-appraisal.
