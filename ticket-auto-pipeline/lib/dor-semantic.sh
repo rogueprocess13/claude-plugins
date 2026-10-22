@@ -28,7 +28,21 @@
 #
 #   dor_semantic_apply <TID> <body-file> <scan-json> <audit-json>
 #     Validates and stores a result via set_ticket_semantic (design.md
-#     Decision 6/10/11). See task 5.2.
+#     Decision 6/10/11), then the finding lineage via set_ticket_lineage
+#     (planner-refinement-convergence D1/D3).
+#
+#   _dor_unit_of <body> <quote>
+#     Prints every unit (dor-check.sh _dor_section_records units mode) whose
+#     text contains the normalised quote, one per line, in body order — the
+#     first line is the anchor. Nothing when no unit contains it.
+#
+#   _dor_semantic_finding_id <code> <anchor-unit> <quote>
+#     Prints f-<12 hex of sha256(code \n anchor \n normalised quote)>.
+#
+#   dor_semantic_migrate_v2 <TID> <body-file>
+#     Migrates a stored dor-semantic-v2 verdict on the unchanged body to the
+#     current evaluator in place (round 1, every finding new). Exit 0
+#     migrated, 2 nothing to migrate, 1 error.
 
 _DOR_SEMANTIC_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -88,8 +102,17 @@ DOR_SEMANTIC_ADVISORY_ONLY_CODES="TEST_DATA_GAP"
 DOR_SEMANTIC_GAPS="GAP_REQUIREMENT_COMPLETENESS GAP_CONTRADICTORY_REQUIREMENTS GAP_DEEP_SCOPE_AMBIGUITY GAP_EDGE_CASE_SUFFICIENCY"
 
 # design.md Decision 11 — changes whenever the prompt, code vocabulary, or
-# block schema changes.
-DOR_SEMANTIC_EVALUATOR="dor-semantic-v2"
+# block schema changes. v3 (planner-refinement-convergence): finding identity
+# and lineage, the scoped-rescan hint; an unchanged v2 verdict is migrated in
+# place by dor_semantic_migrate_v2 rather than rescanned.
+DOR_SEMANTIC_EVALUATOR="dor-semantic-v3"
+
+# Structural codes (planner-refinement-convergence D2): never demoted by the
+# round limit, drift or converge. A host overrides the effective list with
+# DOR_SEMANTIC_STRUCTURAL_CODES (space-separated); an empty or unset value
+# means this default. An override warns on stderr at apply time and is
+# snapshotted into ready.lineage.policy.
+DOR_SEMANTIC_STRUCTURAL_CODES_DEFAULT="NEEDS_HUMAN_DECISION CONTRADICTORY_REQUIREMENTS UNSTATED_DEPENDENCY INTENT_AC_MISMATCH"
 
 _dor_semantic_in_list() {
   case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac
@@ -151,6 +174,254 @@ _dor_semantic_normalise() {
       -e 's/[*_`]//g' |
     tr '\n\t\r' '   ' |
     sed -E 's/  +/ /g; s/^ +//; s/ +$//'
+}
+
+# ── Finding identity and lineage (planner-refinement-convergence D1–D3) ────
+
+# _dor_semantic_match_norm <text> — the anchor/identity normalisation:
+# _dor_semantic_normalise, lowercased, with a leading checkbox or number
+# marker stripped (AC unit text is already _dor_ac_lines-normalised, which
+# drops both).
+_dor_semantic_match_norm() {
+  _dor_semantic_normalise "$1" | tr '[:upper:]' '[:lower:]' |
+    sed -E 's/^\[[ xX]\] *//; s/^[0-9]+[.)] +//'
+}
+
+# _dor_unit_index <body> — caches the body's units (and, as a fallback, its
+# sections with the heading included) with match-normalised text, so
+# anchoring N findings costs one split, not N.
+_dor_unit_index() {
+  local body="$1"
+  if [ "${_DOR_UI_SET:-}" = "1" ] && [ "${_DOR_UI_BODY}" = "$body" ]; then
+    return 0
+  fi
+  _DOR_UI_KEYS=()
+  _DOR_UI_TEXTS=()
+  _DOR_UI_SKEYS=()
+  _DOR_UI_STEXTS=()
+  local key text
+  while IFS=$'\037' read -r -d '' key text; do
+    _DOR_UI_KEYS+=("$key")
+    _DOR_UI_TEXTS+=("$(_dor_semantic_match_norm "$text")")
+  done < <(_dor_section_records "$body" units)
+  while IFS=$'\037' read -r -d '' key text; do
+    _DOR_UI_SKEYS+=("$key")
+    _DOR_UI_STEXTS+=("$(_dor_semantic_match_norm "${key}"$'\n'"${text}")")
+  done < <(_dor_section_records "$body" sections)
+  _DOR_UI_BODY="$body"
+  _DOR_UI_SET=1
+}
+
+# _dor_unit_of <body> <quote> — see the header. Searches units first; a
+# quote no unit contains (one spanning a heading, or two items) falls back to
+# the sections, heading text included.
+_dor_unit_of() {
+  local body="$1" quote="$2" nq i found=0
+  nq=$(_dor_semantic_match_norm "$quote")
+  [ -n "$nq" ] || return 0
+  _dor_unit_index "$body"
+  for i in "${!_DOR_UI_KEYS[@]}"; do
+    if [[ "${_DOR_UI_TEXTS[$i]}" == *"$nq"* ]]; then
+      printf '%s\n' "${_DOR_UI_KEYS[$i]}"
+      found=1
+    fi
+  done
+  [ "$found" = "1" ] && return 0
+  for i in "${!_DOR_UI_SKEYS[@]}"; do
+    if [[ "${_DOR_UI_STEXTS[$i]}" == *"$nq"* ]]; then
+      printf '%s\n' "${_DOR_UI_SKEYS[$i]}"
+    fi
+  done
+  return 0
+}
+
+# _dor_semantic_finding_id <code> <anchor-unit> <quote>
+_dor_semantic_finding_id() {
+  local code="$1" anchor="$2" quote="$3" nq sum
+  nq=$(_dor_semantic_match_norm "$quote")
+  if command -v sha256sum >/dev/null 2>&1; then
+    sum=$(printf '%s\n%s\n%s' "$code" "$anchor" "$nq" | sha256sum | cut -c1-12)
+  else
+    sum=$(printf '%s\n%s\n%s' "$code" "$anchor" "$nq" | shasum -a 256 | cut -c1-12)
+  fi
+  printf 'f-%s\n' "$sum"
+}
+
+# _dor_semantic_structural_codes — the effective structural list
+# (DOR_SEMANTIC_STRUCTURAL_CODES, or the default when unset/empty).
+_dor_semantic_structural_codes() {
+  local codes="${DOR_SEMANTIC_STRUCTURAL_CODES:-$DOR_SEMANTIC_STRUCTURAL_CODES_DEFAULT}"
+  # shellcheck disable=SC2086
+  printf '%s\n' $codes
+}
+
+# _dor_semantic_policy — prints the policy snapshot stored in
+# ready.lineage.policy, and warns on stderr when the structural list differs
+# from the default (D2).
+_dor_semantic_policy() {
+  local eff def overridden="false" max share drift="false"
+  eff=$(_dor_semantic_structural_codes | sort -u | tr '\n' ' ')
+  # shellcheck disable=SC2086
+  def=$(printf '%s\n' $DOR_SEMANTIC_STRUCTURAL_CODES_DEFAULT | sort -u | tr '\n' ' ')
+  if [ "$eff" != "$def" ]; then
+    overridden="true"
+    echo "dor-semantic: policy override: DOR_SEMANTIC_STRUCTURAL_CODES='$(_dor_semantic_structural_codes | tr '\n' ' ' | sed 's/ $//')' (default '${DOR_SEMANTIC_STRUCTURAL_CODES_DEFAULT}')" >&2
+  fi
+  max="${DOR_SEMANTIC_MAX_ROUNDS:-}"
+  [[ "$max" =~ ^[1-9][0-9]*$ ]] || max=""
+  share="${DOR_SEMANTIC_ROUND_RESET_SHARE:-0.5}"
+  [[ "$share" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]] || share="0.5"
+  [ "${DOR_SEMANTIC_DRIFT_DEMOTE:-false}" = "true" ] && drift="true"
+  _dor_semantic_structural_codes | jq -R . | jq -sc \
+    --argjson overridden "$overridden" --arg max "$max" --argjson share "$share" \
+    --argjson drift "$drift" --arg inert "${DOR_SEMANTIC_INERT_SECTIONS-Related Tickets}" \
+    '{structural: ., overridden: $overridden, drift_demote: $drift,
+      max_rounds: (if $max == "" then null else ($max | tonumber) end),
+      round_reset_share: $share,
+      inert: ($inert | split("|") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != "")))}'
+}
+
+# _dor_semantic_lineage <TID> <body> <body-hash> <findings-json> <audit-json-array> [<migrated-from>]
+# Prints {findings, lineage}: <findings-json> (dor_semantic_apply's verified
+# findings, base severity) annotated with id/unit/units/lineage/first_round
+# and any demotion, plus the new ready.lineage object. Reads the prior
+# ready.lineage from the manifest; <migrated-from> forces a fresh lineage
+# (round 1) and is stamped on it.
+#
+# Round (D1): 1 with no prior lineage, a different evaluator, or a reset
+# (>= DOR_SEMANTIC_ROUND_RESET_SHARE of the prior non-inert sections added,
+# removed or changed); unchanged on the same body hash (a retry, or a body
+# rebased by an inert-only edit); otherwise +1. A reset is judged as a new
+# ticket: no carried/drift labels against the old lineage.
+#
+# Labels (D3): an id present in the prior lineage is `carried` (first_round
+# copied; on the same body hash its prior label is kept). A new verified id
+# is `drift` when the round is >= 2, it has units, every one of them is
+# unchanged since the prior lineage, and none of them holds a finding that
+# persisted from the prior lineage; otherwise `new`. Unverified findings are
+# always `new`, unanchored, and kept out of lineage.findings.
+#
+# Demotion: a blocking finding whose code is not structural becomes
+# advisory with demoted "drift" (drift and DOR_SEMANTIC_DRIFT_DEMOTE=true) or
+# else "round-limit" (round > DOR_SEMANTIC_MAX_ROUNDS, a positive integer).
+_dor_semantic_lineage() {
+  local tid="$1" body="$2" hash="$3" findings="$4" audit="${5:-[]}" migrated_from="${6:-}"
+
+  local sec units prior policy
+  sec=$(_dor_section_hashes "$body") || return 1
+  units=$(_dor_unit_hashes "$body") || return 1
+  prior="null"
+  if [ -z "$migrated_from" ]; then
+    prior=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -c '.lineage // null' 2>/dev/null) || prior="null"
+    [ -n "$prior" ] || prior="null"
+  fi
+  policy=$(_dor_semantic_policy) || return 1
+
+  # Anchors and ids, computed in bash (the unit search), merged by index.
+  local n i ann=() code quote quote_b verified ulist anchor id
+  n=$(echo "$findings" | jq 'length' 2>/dev/null) || n=0
+  for ((i = 0; i < n; i++)); do
+    code=$(echo "$findings" | jq -r ".[$i].code")
+    quote=$(echo "$findings" | jq -r ".[$i].quote // \"\"")
+    quote_b=$(echo "$findings" | jq -r ".[$i].quote_b // empty")
+    verified=$(echo "$findings" | jq -r ".[$i].verified")
+    ulist=""
+    if [ "$verified" = "true" ]; then
+      ulist=$(_dor_unit_of "$body" "$quote")
+      if [ -n "$quote_b" ]; then
+        ulist=$(printf '%s\n%s\n' "$ulist" "$(_dor_unit_of "$body" "$quote_b")")
+      fi
+    fi
+    anchor=$(printf '%s\n' "$ulist" | grep -m1 . || true)
+    id=$(_dor_semantic_finding_id "$code" "$anchor" "$quote")
+    ann+=("$(printf '%s\n' "$ulist" | grep . | awk '!seen[$0]++' | jq -R . |
+      jq -sc --arg id "$id" --arg anchor "$anchor" \
+        '{id: $id, unit: (if $anchor == "" then null else $anchor end), units: .}')")
+  done
+  local ann_json="[]"
+  if [ "${#ann[@]}" -gt 0 ]; then
+    ann_json=$(printf '%s\n' "${ann[@]}" | jq -sc .)
+  fi
+
+  local first_audit_new
+  first_audit_new=$(jq -nc --arg h "$hash" --arg e "$DOR_SEMANTIC_EVALUATOR" --argjson a "$audit" \
+    --arg m "$migrated_from" \
+    '{body_hash: $h, evaluator: $e, audit: $a} + (if $m != "" then {migrated_from: $m} else {} end)')
+
+  jq -nc \
+    --argjson findings "$findings" --argjson ann "$ann_json" --argjson prior "$prior" \
+    --argjson sec "$sec" --argjson units "$units" --arg hash "$hash" \
+    --arg evaluator "$DOR_SEMANTIC_EVALUATOR" --argjson policy "$policy" \
+    --argjson first_audit_new "$first_audit_new" --arg migrated_from "$migrated_from" \
+    '($policy.inert) as $inert
+     | ($policy.structural) as $structural
+     | ($policy.max_rounds // 0) as $max
+     | ($prior | if . == null then null elif (.evaluator // "") != $evaluator then null else . end) as $p
+     | (($p.body_hash // null) == $hash) as $same_hash
+     | (if $p == null then {round: 1, reset: false}
+        elif $same_hash then {round: ($p.round // 1), reset: false}
+        else
+          ($p.section_hashes // null) as $os
+          | (if ($os | type) == "object" then
+               ([$os | keys[] | select((sub("#[0-9]+$"; "")) as $h | ($inert | index($h)) == null)] | length) as $nprior
+               | ([(($os | keys) + ($sec | keys) | unique)[]
+                   | select((sub("#[0-9]+$"; "")) as $h | ($inert | index($h)) == null)
+                   | select($os[.] != $sec[.])] | length) as $nchg
+               | ($nprior > 0 and ($nchg / $nprior) >= $policy.round_reset_share)
+             else false end) as $reset
+          | if $reset then {round: 1, reset: true} else {round: (($p.round // 0) + 1), reset: false} end
+        end) as $r
+     | (if $r.reset then null else $p end) as $pl
+     | ($pl.units // {}) as $pu
+     | ($pl.section_hashes // {}) as $ps
+     | (reduce (($pl.findings // [])[]) as $f ({}; .[$f.id] = $f)) as $prior_by_id
+     | def unchanged($k):
+         ((($pu[$k] // null) != null) and ($pu[$k] == ($units[$k] // null)))
+         or ((($pu[$k] // null) == null) and (($units[$k] // null) == null)
+             and (($ps[$k] // null) != null) and ($ps[$k] == ($sec[$k] // null)));
+     # Pass 1: merge anchors, label carried.
+       [range(0; $findings | length) as $i
+        | $findings[$i] + $ann[$i]
+        | if .verified != true then . + {lineage: "new", first_round: $r.round, unit: null, units: []}
+          elif $prior_by_id[.id] != null then
+            . + {lineage: (if $same_hash then ($prior_by_id[.id].lineage // "carried") else "carried" end),
+                 first_round: ($prior_by_id[.id].first_round // $r.round), persisted: true}
+          else . end] as $pass1
+     | ([$pass1[] | select(.persisted == true) | .units[]] | unique) as $open_units
+     # Pass 2: drift or new for the rest.
+     | [$pass1[]
+        | if .lineage != null then .
+          elif ($r.round >= 2) and ($pl != null) and ((.units | length) > 0)
+               and (.units | all(unchanged(.)))
+               and ([.units[] | . as $u | select(($open_units | index($u)) != null)] | length == 0) then
+            . + {lineage: "drift", first_round: $r.round}
+          else . + {lineage: "new", first_round: $r.round} end
+        | del(.persisted)
+        | .code as $code
+        | if .severity == "blocking" and (($structural | index($code)) == null) then
+            if .lineage == "drift" and $policy.drift_demote then . + {severity: "advisory", demoted: "drift"}
+            elif $max > 0 and $r.round > $max then . + {severity: "advisory", demoted: "round-limit"}
+            else . end
+          else . end] as $out
+     | ([$out[] | select(.verified == true) | .id]) as $ids
+     | ([($pl.findings // [])[] | .id | select(. as $x | ($ids | index($x)) == null)] | unique) as $resolved
+     | {findings: $out,
+        lineage: ({
+          round: $r.round, reset: $r.reset, evaluator: $evaluator, body_hash: $hash,
+          section_hashes: $sec, units: $units,
+          findings: [$out[] | select(.verified == true)
+                     | {id, code, unit, units, first_round, lineage}],
+          resolved: $resolved,
+          counts: {
+            new: ([$out[] | select(.verified == true and .lineage == "new")] | length),
+            carried: ([$out[] | select(.lineage == "carried")] | length),
+            drift: ([$out[] | select(.lineage == "drift")] | length),
+            resolved: ($resolved | length),
+            unverified: ([$out[] | select(.verified != true)] | length)},
+          first_audit: (if (($prior.first_audit.body_hash // null) == $hash) and ($migrated_from == "")
+                        then $prior.first_audit else $first_audit_new end),
+          policy: $policy}
+          + (if $migrated_from != "" then {migrated_from: $migrated_from} else {} end))}'
 }
 
 # dor_semantic_apply <TID> <body-file> <scan-json> <audit-json>
@@ -250,6 +521,16 @@ dor_semantic_apply() {
     unverified_gaps=$(printf '%s\n' "${ug_list[@]}" | jq -R . | jq -sc . 2>/dev/null) || unverified_gaps="[]"
   fi
 
+  # Identity, lineage, rounds and demotion (planner-refinement-convergence).
+  local built lineage_json
+  built=$(_dor_semantic_lineage "$tid" "$body" "$real_hash" "$findings_json" \
+    "$(echo "$audit_json" | jq -c '.audit // []')") || {
+    echo "dor-semantic: failed to compute finding lineage" >&2
+    return 1
+  }
+  findings_json=$(echo "$built" | jq -c '.findings')
+  lineage_json=$(echo "$built" | jq -c '.lineage')
+
   local semantic_json
   semantic_json=$(jq -nc \
     --arg evaluator "$DOR_SEMANTIC_EVALUATOR" \
@@ -270,7 +551,52 @@ dor_semantic_apply() {
     return 1
   }
 
-  set_ticket_semantic "$tid" "$semantic_json"
+  set_ticket_semantic "$tid" "$semantic_json" || return $?
+  set_ticket_lineage "$tid" "$lineage_json"
+}
+
+# dor_semantic_migrate_v2 <TID> <body-file>
+# planner-refinement-convergence D8. When the stored ready.semantic is a
+# dor-semantic-v2 verdict on the body's current hash (not stale, not
+# unavailable), rewrites it as a current-evaluator verdict in place: every
+# finding gains id/unit/units, lineage `new`, first_round 1, and the verdict
+# is stamped `migrated_from: "dor-semantic-v2"`; ready.lineage starts fresh
+# at round 1 with the stored audit as its first_audit (it carries no
+# AUDIT_n_QUOTE, so it can never support an audit demotion). No agent runs.
+# Exit 0 migrated, 2 nothing to migrate (no verdict, another evaluator, a
+# changed or stale body), 1 error (no body file, no manifest, write failed).
+dor_semantic_migrate_v2() {
+  local tid="$1" body_file="$2"
+  [ -f "$body_file" ] || {
+    echo "dor-semantic: body file not found: $body_file" >&2
+    return 1
+  }
+  local ready
+  ready=$(get_ticket_manifest_field "$tid" ready 2>/dev/null) || return 1
+  [ -n "$ready" ] && [ "$ready" != "null" ] || return 2
+
+  local body hash
+  body=$(cat "$body_file")
+  hash=$(_dor_body_hash "$body")
+  echo "$ready" | jq -e --arg h "$hash" '
+    (.semantic // null) != null
+    and .semantic.evaluator == "dor-semantic-v2"
+    and .semantic.body_hash == $h
+    and ((.semantic.stale // false) | not)
+    and ((.semantic.unavailable // false) | not)
+    and (((.missing // []) | index("SEMANTIC_STALE")) == null)' >/dev/null 2>&1 || return 2
+
+  local findings audit built semantic_json lineage_json
+  findings=$(echo "$ready" | jq -c '.semantic.findings // []')
+  audit=$(echo "$ready" | jq -c '.semantic.audit // []')
+  built=$(_dor_semantic_lineage "$tid" "$body" "$hash" "$findings" "$audit" "dor-semantic-v2") || return 1
+  semantic_json=$(echo "$ready" | jq -c --argjson f "$(echo "$built" | jq -c '.findings')" \
+    --arg e "$DOR_SEMANTIC_EVALUATOR" \
+    '.semantic + {evaluator: $e, migrated_from: "dor-semantic-v2", findings: $f}') || return 1
+  lineage_json=$(echo "$built" | jq -c '.lineage')
+  set_ticket_semantic "$tid" "$semantic_json" || return 1
+  set_ticket_lineage "$tid" "$lineage_json" || return 1
+  return 0
 }
 
 # dor_semantic_prompt scan|audit <TID> <body-file> <result-file> [<det-result-file>]
@@ -280,7 +606,22 @@ dor_semantic_apply() {
 # scan branch never references <det-result-file> or any deterministic code —
 # the scan is blind by construction (design.md Decision 4).
 dor_semantic_prompt() {
-  local kind="$1" tid="$2" body_file="$3" result_file="$4" det_result_file="${5:-}"
+  # --changed-sections <h1|h2…> (planner-refinement-convergence D4) may
+  # appear anywhere after the kind; the rest are positional.
+  local changed_sections="" _pos=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --changed-sections)
+      changed_sections="${2:-}"
+      shift 2 || shift
+      ;;
+    *)
+      _pos+=("$1")
+      shift
+      ;;
+    esac
+  done
+  local kind="${_pos[0]:-}" tid="${_pos[1]:-}" body_file="${_pos[2]:-}" result_file="${_pos[3]:-}" det_result_file="${_pos[4]:-}"
 
   # The evaluator agent is Read/Write only (no shell, by design), so it
   # cannot compute a SHA-256 itself. Compute the body hash here, with the
@@ -298,6 +639,11 @@ dor_semantic_prompt() {
   if [ "$kind" = "scan" ]; then
     data_block=$(printf '## DoR Semantic Scan\n\n**Ticket**: %s\n**Body file**: %s\n**Body hash**: %s\n**Write your result to**: %s\n' \
       "$tid" "$body_file" "$body_hash" "$result_file")
+    if [ -n "$changed_sections" ]; then
+      local _cs_lines
+      _cs_lines=$(printf '%s\n' "$changed_sections" | tr '|' '\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | grep . | sed 's/^/- /')
+      data_block=$(printf '%s\n**Changed sections** (this is a rescan after an edit):\n%s\n' "$data_block" "$_cs_lines")
+    fi
   else
     data_block=$(printf '## DoR Semantic Audit\n\n**Ticket**: %s\n**Body file**: %s\n**Body hash**: %s\n**Deterministic result file**: %s\n**Write your result to**: %s\n' \
       "$tid" "$body_file" "$body_hash" "$det_result_file" "$result_file")
@@ -416,5 +762,23 @@ DORAUDIT
     ) || kind_rules=""
   fi
 
-  printf '%s%s%s\n' "$data_block" "$common_rules" "$kind_rules"
+  local scope_rules=""
+  if [ "$kind" = "scan" ] && [ -n "$changed_sections" ]; then
+    scope_rules=$(
+      cat <<'DORCHANGED'
+
+## Scoped rescan
+
+The sections listed under **Changed sections** were edited since this
+ticket was last evaluated. Read the whole body, but raise findings only
+about those sections, or about a conflict between one of them and the rest
+of the body. When a finding involves a changed section, quote the changed
+section first: its text goes in QUOTE (for CONTRADICTORY_REQUIREMENTS, the
+other text goes in QUOTE_B). The four GAP_* verdicts still cover the whole
+ticket.
+DORCHANGED
+    ) || scope_rules=""
+  fi
+
+  printf '%s%s%s%s\n' "$data_block" "$common_rules" "$scope_rules" "$kind_rules"
 }

@@ -327,7 +327,7 @@ the written object — a fresh verdict never carries a previous verdict's stale 
 vocabulary: `intent`, `scope`, `acceptance_criteria`, `verification`, `context`, `test_uat`,
 `dependencies`, `constraints`, `edge_cases`, `completion`, `requirement_completeness`.
 
-**Implemented (dor-semantic-evaluator).** The semantic evaluator is `dor-semantic-v2`
+**Implemented (dor-semantic-evaluator).** The semantic evaluator is `dor-semantic-v3`
 (`lib/dor-semantic.sh`, `lib/dor-semantic-parse.sh`, `agents/dor-semantic-agent.md`) — full contract
 in [docs/dor-semantic-schema.md](dor-semantic-schema.md). In outline: an agent is spawned twice per
 ticket, scan (body only) then audit (body plus the deterministic result), each writing one result
@@ -341,7 +341,7 @@ applies — no consumer or waiver mechanism needed to change:
 "ready": {
   "...": "...",
   "semantic": {
-    "evaluator": "dor-semantic-v2",
+    "evaluator": "dor-semantic-v3",
     "checked_at": "2026-10-01T00:00:00Z",
     "body_hash": "sha256:ab12...",
     "findings": [

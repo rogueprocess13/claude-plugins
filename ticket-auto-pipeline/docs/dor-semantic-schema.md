@@ -181,13 +181,83 @@ dropping the finding.
 
 `dor_semantic_apply` rejects (exit 1, nothing written) a result whose `TICKET` differs
 from the ticket id it was called with, or whose `BODY_HASH` differs from
-`_dor_body_hash` of the body file it is given. `DOR_SEMANTIC_EVALUATOR="dor-semantic-v2"`
+`_dor_body_hash` of the body file it is given. `DOR_SEMANTIC_EVALUATOR="dor-semantic-v3"`
 is stamped into `ready.semantic.evaluator` on every stored result; it changes whenever
 the prompt, code vocabulary, or block schema changes, so a caller can decide whether a
 cached verdict is current by comparing body hash and evaluator string. `v2`
 (dor-semantic-test-data-gap) added `TEST_DATA_GAP` to the prompt and code vocabulary; the
 block schema is unchanged (`SCHEMA_VERSION: 1`, four gaps), so every `v1` block still
 parses. The planner's Refinement phase re-runs a cached `v1` verdict once.
+
+`v3` (planner-refinement-convergence) adds finding identity and lineage, per-ticket
+rounds, and the scoped-rescan hint; the block schema is again unchanged. A stored `v2`
+verdict whose `body_hash` equals the current body is **migrated in place** by
+`dor_semantic_migrate_v2 <TID> <body-file>` — no agent runs: bash computes each
+finding's units and id, labels every finding `new`, starts `ready.lineage` at round 1,
+and stamps `migrated_from: "dor-semantic-v2"` on both. Exit 0 migrated, 2 nothing to
+migrate (no verdict, another evaluator, a changed, stale or unavailable verdict), 1
+error. A `v2` verdict on a changed body is rescanned as usual, so the bump only
+rescans edited tickets.
+
+## Finding identity, lineage and rounds (`v3`)
+
+`dor_semantic_apply` annotates every finding and writes `ready.lineage` through
+`set_ticket_lineage` (which `set_ticket_semantic` never touches and
+`set_ticket_readiness` copies forward):
+
+- **Units.** `dor-check.sh`'s `_dor_section_records … units`: one unit per `##`
+  section, except that each Acceptance Criteria item is its own unit
+  (`<heading>/ac:<sha8>`). `_dor_unit_of <body> <quote>` prints every unit whose
+  text contains the quote (normalised as for the verbatim check, lowercased, a
+  leading checkbox/number marker dropped), in body order; the first is the
+  finding's `unit` (anchor), all are its `units`. `QUOTE_B`'s units are appended
+  to `units`. An unverified finding has no unit.
+- **Identity.** `id = f-<12 hex of sha256(code \n anchor \n normalised quote)>`
+  (`_dor_semantic_finding_id`).
+- **Round.** 1 with no lineage, another evaluator, or a reset (at least
+  `DOR_SEMANTIC_ROUND_RESET_SHARE`, default `0.5`, of the prior non-inert sections
+  added, removed or changed — `reset: true`); unchanged on the same body hash (a
+  retry, or a body rebased by an inert-only edit); otherwise +1.
+- **Lineage label.** `carried` when the id was in the prior lineage (its
+  `first_round` copied); `drift` when the id is new, the round is 2 or more, every
+  unit is unchanged since the prior lineage, and none of them holds a finding that
+  persisted from it; `new` otherwise, and always for an unverified finding. After
+  a reset nothing is carried. `lineage.resolved` lists the prior ids now absent.
+- **Demotion.** A blocking finding whose code is not in
+  `DOR_SEMANTIC_STRUCTURAL_CODES` (default `NEEDS_HUMAN_DECISION
+  CONTRADICTORY_REQUIREMENTS UNSTATED_DEPENDENCY INTENT_AC_MISMATCH`) is stored
+  `severity: "advisory"` with `demoted: "drift"` when it is drift and
+  `DOR_SEMANTIC_DRIFT_DEMOTE=true` (library default `false`), else
+  `demoted: "round-limit"` when `DOR_SEMANTIC_MAX_ROUNDS` is a positive integer
+  and the round exceeds it (unset: no round-limit demotion). An overridden
+  structural list warns on stderr (`dor-semantic: policy override: …`).
+
+```json
+"lineage": {
+  "round": 2, "reset": false, "evaluator": "dor-semantic-v3",
+  "body_hash": "sha256:…", "section_hashes": {"Summary": "sha256:…"},
+  "units": {"Acceptance Criteria/ac:1a2b3c4d": "sha256:…"},
+  "findings": [{"id": "f-0123456789ab", "code": "EDGE_CASE_GAP",
+                "unit": "Acceptance Criteria/ac:1a2b3c4d",
+                "units": ["Acceptance Criteria/ac:1a2b3c4d"],
+                "first_round": 1, "lineage": "carried"}],
+  "resolved": [],
+  "counts": {"new": 0, "carried": 1, "drift": 0, "resolved": 0, "unverified": 0},
+  "first_audit": {"body_hash": "sha256:…", "evaluator": "dor-semantic-v3", "audit": []},
+  "policy": {"structural": ["NEEDS_HUMAN_DECISION", "…"], "overridden": false,
+             "drift_demote": false, "max_rounds": null, "round_reset_share": 0.5,
+             "inert": ["Related Tickets"]}
+}
+```
+
+`lineage.findings` holds verified findings only. `first_audit` is the first audit
+applied for a body hash; a later audit on the same hash leaves it unchanged.
+`counts.unverified` counts findings with `verified: false`.
+
+**Scoped rescan.** `dor_semantic_prompt scan … --changed-sections "<h1|h2…>"` lists
+the changed sections under `**Changed sections**` and asks for findings about them, or
+about their conflicts with the rest, quoting the changed section first. The scan stays
+blind to the deterministic result.
 
 ## `--det-result` file shape
 
@@ -233,7 +303,7 @@ writer of a ticket manifest's `ready` object, alongside `set_ticket_readiness` a
 "ready": {
   "...": "...",
   "semantic": {
-    "evaluator": "dor-semantic-v2",
+    "evaluator": "dor-semantic-v3",
     "checked_at": "2026-10-01T00:00:00Z",
     "body_hash": "sha256:ab12...",
     "findings": [
