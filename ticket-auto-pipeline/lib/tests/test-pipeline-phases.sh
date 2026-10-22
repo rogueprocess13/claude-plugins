@@ -413,6 +413,36 @@ test_gate_reconcile_artifact_simple_fix_unchanged() {
   return $rc
 }
 
+# hb_write rejects any status outside heartbeat.sh's _HB_STATUSES enum and
+# writes nothing, so a skill calling `hb-wrap.sh gate X start ...` silently
+# loses the entry. Scan every literal hb-wrap.sh call in skills/agents (the
+# `heartbeat` category ignores its status slot, so it is exempt).
+test_hb_wrap_callers_use_valid_statuses() {
+  local valid
+  valid=$(sed -n 's/^_HB_STATUSES="\(.*\)"$/\1/p' "$LIB_DIR/heartbeat.sh")
+  [ -n "$valid" ] || {
+    echo "could not read _HB_STATUSES from heartbeat.sh"
+    return 1
+  }
+  local bad=""
+  local hit file cat status
+  while IFS= read -r hit; do
+    file=${hit%%:*}
+    cat=$(echo "$hit" | sed -E 's/.*hb-wrap\.sh +"?([a-z]+)"? .*/\1/')
+    status=$(echo "$hit" | sed -E 's/.*hb-wrap\.sh +"?[a-z]+"? +"?[^" ]+"? +"?([a-z]+)"?.*/\1/')
+    [ "$cat" = "heartbeat" ] && continue
+    case " $valid " in
+    *" $status "*) ;;
+    *) bad="$bad $file:$cat:$status" ;;
+    esac
+  done < <(grep -rhoE --with-filename 'hb-wrap\.sh +"?[a-z]+"? +"?[^" ]+"? +"?[a-z]+"?' \
+    "$SKILLS_DIR" "$LIB_DIR/../agents" 2>/dev/null)
+  [ -z "$bad" ] || {
+    echo "hb-wrap.sh called with invalid status:$bad (valid: $valid)"
+    return 1
+  }
+}
+
 # ── Increment B — silent-skip & false-done fixes (R3, R9, R2) ─────────────────
 
 test_router_implement_complete_has_plugin_cache_fallback() {

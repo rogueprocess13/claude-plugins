@@ -77,7 +77,7 @@ fi
 
 ```bash
 hb_init
-hb-wrap.sh gate "reconcile" "start" "gate-reconcile agent starting" "{\"complexity\":\"$COMPLEXITY\"}"
+hb-wrap.sh gate "reconcile" "info" "gate-reconcile agent starting" "{\"complexity\":\"$COMPLEXITY\"}"
 ```
 
 ## Step 2 — Resolve gate cycle and fetch comments
