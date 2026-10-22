@@ -73,8 +73,9 @@ process per phase and an `export` does not survive that (#144).
 | `--no-project` | File the epic and its tickets with no Linear project, deliberately — silences the project gate |
 | `--milestone <name\|id>` | Linear project milestone (needs `--project` when given by name) |
 | `--no-tests-rule[=true\|false]` | Record that the project forbids implementation from writing tests (#503): Crosscheck then does not count a spec that seeds its own test data as an owner, so a synthesized test-data spec (or an `exists:`/`external:` Source) becomes mandatory. `=false` records the opposite. Without the flag, the first `plan`/`resume` detects it once from `REPOS_ROOT` CLAUDE.md files and records where it found it. Sticky — persisted as the `no-tests-rule` config key. `PLANNER_NO_TESTS_RULE` is the default, read once here |
-| `--refresh-bodies` | **`resume` only.** Re-read every not-ready ticket's description from Linear before Refinement re-evaluates it. One-shot — consumed and cleared by this invocation, never sticky |
-| `--answers <file>` | **`resume` only.** Apply an answers file to the open question round from `planner-stop-describe.sh`, then resume. Each answer becomes the flag it is bound to (`--create`, `--accept`, `--project`/`--no-project`, a DoR waiver). See [Headless use](#headless-use---answers) |
+| `--refresh-bodies` | **`resume` only.** Re-read every child's description from Linear — ready and waived tickets included — before Refinement re-evaluates. Only a ticket whose Linear text no longer matches its baseline is rewritten: `body.md` takes Linear's text, the baseline is re-recorded, and the ticket is re-scanned. A clean ticket is left alone, and waivers are kept. This is the release for `BODY_DRIFT` (a local edit and a Linear edit conflict) and `BODY_UNVERIFIED` (repeated failed reads), neither of which can be waived. A plain Linear edit over an unchanged `body.md` does not need it — every resume adopts that on its own. Also accepted on a Completed initiative. One-shot — consumed and cleared by this invocation, never sticky |
+| `--converge --only <TID[,TID...]> [--by <name>]` | **`resume` only.** Release the named tickets from their stored semantic verdict without a rescan: every blocking, verified, non-structural semantic finding becomes advisory with `demoted: converge` and the operator's name. Structural codes, unverified findings, deterministic codes and the bash-owned `SEMANTIC_*` codes keep blocking. A ticket with no verdict, or a stale, unavailable, edited-since or older-evaluator one, is refused and logged as `META\|refinement-converge\|skip`. `--only` is mandatory (there is no epic-wide converge); `--only`/`--by` without `--converge` are rejected; `--by` defaults to `$USER` (`operator` when unset). Spawns no agent. Also accepted on a Completed initiative. One-shot — persisted as the `converge` config key and cleared once Refinement consumes it |
+| `--answers <file>` | **`resume` only.** Apply an answers file to the open question round from `planner-stop-describe.sh`, then resume. Each answer becomes the flag it is bound to (`--create`, `--accept`, `--project`/`--no-project`, `--refresh-bodies`, a DoR waiver). See [Headless use](#headless-use---answers) |
 
 The branch flags are optional. Supplying both together is an error. When neither is supplied,
 the binary heuristic decides (≥ 3 tickets **and** dependency chain depth ≥ 2).
@@ -189,7 +190,8 @@ script — cannot read the halt prose. It runs this loop instead:
 | `CROSSCHECK_BLOCKED` (`CITED_ARTIFACT_UNRESOLVED`) | `consensus-answer:cited:<n>`, one per unanswered artifact | `exists:<where>`, `external:<who>` or `generate`, written into the `Answer:` field of consensus.md's `n`th `CITED_ARTIFACT:` question. Any other value, or one with `\|`, CR or LF, is `INVALID_VALUE`. Specs are not edited: a spec need whose `Source` disagrees is `CITED_ARTIFACT_SOURCE_MISMATCH` on the re-run. The code's `flag:accept` question is still offered |
 | `CROSSCHECK_BLOCKED` (`TEST_DATA_IMPLIED`) | `consensus-answer:testdata:<slug>`, one per blocking spec, id `testdata-<slug>-<hash8>` | `none`, `generate: <desc>` (default `generate: <match phrase>`), `exists:<where>` or `external:<who>`, written as consensus.md's ``TESTDATA_CONFIRM: `<slug>` [<hash8>] — Answer: <value>`` line. `hash8` is re-derived from the spec's current trigger criterion at intake; a mismatch is `STALE_QUESTION` (exit 2, nothing written). The code's `flag:accept` question is still offered |
 | `PROJECT_GATE` | `flag:project` | a name or id = `--project`. `__none__` = `--no-project` |
-| `REFINEMENT_HALT` | `waive:<TICKET>:<CODE>` | the reason = `dor-check.sh --waive <TICKET> <CODE> "reason"`. `__skip__` declines |
+| `REFINEMENT_HALT` (`BODY_DRIFT` / `BODY_UNVERIFIED`) | `flag:refresh-bodies`, id `refresh-bodies`, asked first; options `yes\|no`, default `no` | `yes` = `--refresh-bodies` on the resume. `no` records the round; the held tickets stay held. Its text lists each held `<TID> (<codes>)`. These codes get no `waive:` question — they cannot be waived |
+| `REFINEMENT_HALT` | `waive:<TICKET>:<CODE>` | the reason = `dor-check.sh --waive <TICKET> <CODE> "reason"`. `__skip__` declines. Not offered for `BODY_*` codes or for a code in `ready.demoted` (an audit dispute already took it off the blocking list) |
 | `ADR_GATE` | `note` | recorded only — accept the ADR out of band (`adr-store.sh accept` refuses inside an agent session) |
 | `UNTIL_STOP` | `note` | recorded only — resuming is what continues past the `--until` phase |
 | `SPECIFY_DECISION` | `specify-answer:O<n>`, one per open decision, id `decision-O<n>-<hash8>`; `KIND input`, `AUDIENCE either`, no options or default | one line of at most 500 characters, written into proposal.md as `**Outcome:** Human decision (verbatim, round N, <role>): "<answer>"`. `__defer__` writes `**Outcome:** Deferred decision: <question>` and keeps the old outcome: the epic carries the question unresolved. Either a client or an operator may answer |
@@ -417,15 +419,103 @@ Refinement halts (no `Refinement|gate|done`, no retry-budget consumption —
 same "content decision, not a transient failure" treatment as a Crosscheck
 halt) and the run does not advance to Completed.
 
-A halt prints a report per not-ready ticket — its deterministic codes,
-semantic findings with their quotes, codes the evaluator believes the
-deterministic check missed, and every deterministic code the evaluator
-disputes with its reason plus the exact `dor-check.sh --waive` command that
-releases it. `/ticket-planner resume <INIT_ID>` re-enters Refinement and
-reuses every cached verdict whose body and evaluator version are unchanged
-— only a ticket whose `body.md` changed, or whose evaluator version is
-stale, is re-evaluated. An edit made in Linear is invisible until
-`/ticket-planner resume <INIT_ID> --refresh-bodies` re-reads it.
+A halt prints a report per not-ready ticket: its deterministic codes, its
+round, each semantic finding with its quote and label (`Blocking (new)`,
+`Blocking (carried since round <k>)`, `Structural drift (blocks)`,
+`Unverified finding`, `Advisory finding`), a `Demoted (does not block):` list,
+codes the evaluator believes the deterministic check missed, and every
+deterministic code the evaluator disputes with its reason plus the exact
+`dor-check.sh --waive` command that releases it. A ticket with a blocking,
+non-structural, verified finding also gets a `Converge (no rescan):` hint.
+After the report, `## Demoted findings on ready tickets` lists what was
+demoted on tickets that did pass. `/ticket-planner resume <INIT_ID>`
+re-enters Refinement and reuses every cached verdict whose body and evaluator
+version are unchanged — only a ticket whose `body.md` changed, or whose
+evaluator version is stale, is re-evaluated.
+
+**Rounds and convergence** (planner-refinement-convergence). Each new body a
+ticket is scanned on is one round, counted per ticket in `ready.lineage`.
+Every finding has an id (code + anchor section or acceptance-criteria item +
+normalised quote) and is labelled `new`, `carried` or `drift`:
+
+- **Round limit.** From round `PLANNER_REFINEMENT_MAX_ROUNDS + 1` (default 2,
+  so from round 3) a non-structural semantic finding is stored as advisory
+  with `demoted: round-limit`. The limit bounds blocking, not scanning.
+- **Drift.** From round 2, a new id on an unchanged unit that holds no open
+  carried finding is evaluator drift, and is demoted (`demoted: drift`).
+- **Structural codes** — `NEEDS_HUMAN_DECISION`,
+  `CONTRADICTORY_REQUIREMENTS`, `UNSTATED_DEPENDENCY`, `INTENT_AC_MISMATCH`
+  (`DOR_SEMANTIC_STRUCTURAL_CODES` overrides the list) — are never demoted by
+  the round limit, drift or converge. A structural code on an unchanged
+  section prints as `Structural drift (blocks)`. The deterministic codes
+  (test data included) and the bash-owned `SEMANTIC_*` codes are not touched
+  either.
+- **Reset.** A rewrite that changes 50% or more of the non-inert sections
+  (`DOR_SEMANTIC_ROUND_RESET_SHARE`) restarts the ticket at round 1.
+- **Scoped rescan.** An edit confined to the inert sections (default only
+  `Related Tickets`, `DOR_SEMANTIC_INERT_SECTIONS`) with no finding anchored
+  there rebases the verdict instead of staling it, and does not count as a
+  round. Any other stale verdict is rescanned with the changed sections named
+  in the prompt.
+- Each round writes one `META|refinement-round|done` trend line per ticket and
+  body hash (`round=`, `new=`, `carried=`, `drift=`, `resolved=`,
+  `unverified=`, `reset=`).
+- The evaluator is now `dor-semantic-v3`. An unchanged v2 verdict is migrated
+  in place at the start of the scan, so only tickets edited since are
+  rescanned.
+
+Demoted and other advisory findings are not lost: ticket-auto appraisal
+writes them into the ticket's notes as a `## Refinement Carry-over` section
+(`SCOPE_AMBIGUOUS` as a `[needs-human]` Open Question, `MISSING_CORE_AC` as a
+`### Test candidates` entry ticket-implement tests and ticket-verify checks,
+the rest `[agent-resolvable]`).
+
+**Converge.** `/ticket-planner resume <INIT_ID> --converge --only <TID[,…]>
+[--by <name>]` demotes the named tickets' remaining blocking, verified,
+non-structural findings on the stored verdict (`demoted: converge`, stamped
+with the operator) without a rescan, and logs
+`META|refinement-converge|done|<TID> demoted=<n> by=<op>`. A ticket whose
+verdict is missing, stale, unavailable, for an edited body or from another
+evaluator is refused (`META|refinement-converge|skip`) and scanned as usual;
+re-run converge after it. Converge runs after the deterministic scan and
+before the semantic passes.
+
+**Audit demotion (off by default).** Under `PLANNER_REFINEMENT_AUDIT_DEMOTE=true`,
+an audit that disputes an allow-listed heuristic code (`VPLAN_ROW_GAP`,
+`VPLAN_UNVERIFIABLE`, `AC_VAGUE`, `AC_IMPLEMENTATION_ONLY`,
+`NAV_PATH_MISSING`) and quotes the code's own section verbatim moves that code
+from `missing` to `advisory`, recorded in `ready.demoted` and bound to the body
+hash. Only the first audit for a body hash counts, and more than
+`DOR_AUDIT_DEMOTE_MAX` (default 2) qualifying codes on one ticket is refused as
+a blanket dispute. Each demotion logs `META|refinement-dispute|done`; a refusal
+or failure logs `META|refinement-dispute|warn`. A demoted code gets no waive
+command in the report, and fleet-controller drops it from its `disputed` hints.
+
+**Body drift.** Ticket Gen records a baseline hash of Linear's own rendering of
+each description (`planner/linear-baseline.sha`; when Linear stores a
+different rendering, `body.md` takes Linear's text and a
+`META|ticketgen|warn` line says so). Unless `PLANNER_REFINEMENT_DRIFT_CHECK=false`,
+every Refinement scan reads each child from Linear once and compares:
+
+- Linear changed, `body.md` did not → **adopted**: `body.md` takes the Linear
+  text, the baseline moves, `META|refinement|step|<TID> body adopted from Linear
+  [<old8>→<new8>]` is logged, and it counts as a new body.
+- `body.md` and Linear were both edited differently, or there is no baseline and
+  they differ (`conflict`), or only `body.md` was edited (`local-ahead`) →
+  blocking `BODY_DRIFT`. Both edited the same way → the baseline is re-recorded.
+- The read failed → `META|refinement|warn|<TID>: Linear read failed (n/max) …`;
+  after `PLANNER_REFINEMENT_DRIFT_MAX_FAILS` (default 3) in a row, blocking
+  `BODY_UNVERIFIED`. A recorded `BODY_DRIFT` survives a failed read.
+
+`BODY_DRIFT` and `BODY_UNVERIFIED` cannot be waived. The release is
+`/ticket-planner resume <INIT_ID> --refresh-bodies` (copy a local edit into
+Linear first if you want to keep it), which the halt also offers as a headless
+`flag:refresh-bodies` question. The same check runs in ticket-auto appraisal:
+a ready ticket whose Linear text drifted gets a `[needs-human]` Open Question
+and a `META|body-drift|info` line. `--refresh-bodies` and `--converge` also
+work on a Completed initiative: the resume re-runs Refinement on the refreshed
+and named children only, writes `META|refinement-after-completed|done`, and
+writes no phase line.
 
 An initiative planned before this change shipped (its log already carries
 the retired `TicketGen|dispatch-gate|done` line) skips Refinement entirely
@@ -548,9 +638,14 @@ The router never reasons about content; phases never mutate state directly (they
 | `PLANNER_UAT_POLICY` | *(unset)* | `per-ticket` or `epic` (anything else is refused). Read once at parsing time and persisted as the `uat-policy` config key; Epic Gen reads the key, never the variable. Unset: `epic` for a shared-branch epic with synthesized test-data specs, else the directive default |
 | `PLANNER_REFINEMENT_SEMANTIC` | true | When `false`, Refinement runs only the deterministic DoR check — no `dor-semantic-agent` spawns, and the epic gate never waits on a semantic verdict |
 | `PLANNER_REFINEMENT_PARALLEL` | 4 | Max concurrent per-ticket semantic-pass batches in Refinement |
+| `PLANNER_REFINEMENT_MAX_ROUNDS` | 2 | Rounds in which a non-structural semantic finding may block. From round MAX+1 such findings are stored as advisory (`demoted: round-limit`). Passed to `dor_semantic_apply` as `DOR_SEMANTIC_MAX_ROUNDS` |
+| `PLANNER_REFINEMENT_AUDIT_DEMOTE` | false | When `true`, an audit dispute that quotes the code's own section demotes an allow-listed heuristic code to advisory (`ready.demoted`). Off by default |
+| `PLANNER_REFINEMENT_DRIFT_CHECK` | true | When `false`, Refinement does not read Linear to compare each child against its baseline: no adopt, no `BODY_DRIFT`, no `BODY_UNVERIFIED` |
+| `PLANNER_REFINEMENT_DRIFT_MAX_FAILS` | 3 | Consecutive failed Linear reads of one child before Refinement adds the blocking `BODY_UNVERIFIED` |
 
-Every variable in this table is read **once, in the shell that parses arguments**, and
-its effect is persisted to the state log there and then. None of them is read again
+Every variable in this table except the `PLANNER_REFINEMENT_*` ones is read **once, in the shell that parses arguments**, and
+its effect is persisted to the state log there and then. The `PLANNER_REFINEMENT_*` variables are read by
+`lib/planner-refinement.sh` each time Refinement runs, so they must be set in the environment of the run that reaches Refinement. None of them is read again
 mid-run: the dispatch loop runs a fresh process per phase, so a variable exported during
 parsing is gone by the next iteration. Setting one of them *after* a run has started has
 no effect — re-invoke with the corresponding flag instead.

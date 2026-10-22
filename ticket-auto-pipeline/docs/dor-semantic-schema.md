@@ -234,6 +234,10 @@ rescans edited tickets.
   `demoted: "round-limit"` when `DOR_SEMANTIC_MAX_ROUNDS` is a positive integer
   and the round exceeds it (unset: no round-limit demotion). An overridden
   structural list warns on stderr (`dor-semantic: policy override: …`).
+  `resume --converge` (planner side) writes a third value, `demoted: "converge"`, with
+  `converged_by: <operator>`, on the stored verdict without a rescan; it does not touch
+  `ready.lineage`. Structural, unverified and bash-owned `SEMANTIC_*` findings are never
+  demoted by any of the three.
 
 ```json
 "lineage": {
@@ -357,7 +361,36 @@ carries `semantic`:
 
 `status` is then recomputed as always. A body edited after the semantic verdict was
 recorded can therefore never pass dispatch or the entry gate on the deterministic check
-alone — it must be re-evaluated. `semantic` remains outside `set_ticket_readiness`'s
+alone — it must be re-evaluated.
+
+**Section-scoped staleness (planner-refinement-convergence D4).** `check_ticket_ready`
+also sets `DOR_SECTION_HASHES` (one `sha256:` hash per `##` section) and
+`DOR_UNIT_HASHES` (the same, with each Acceptance Criteria item as its own
+`<heading>/ac:<sha8>` unit), reset to empty beside `DOR_BODY_HASH` on every call. They
+are stored as `ready.section_hashes` and `ready.unit_hashes`. When the body hash changed,
+the verdict is fresh and both section maps are present, `set_ticket_readiness` compares
+them:
+
+- every changed heading is in `DOR_SEMANTIC_INERT_SECTIONS` (`|`-separated, default
+  `Related Tickets`; set it empty to disable), no finding is anchored in a changed
+  heading (a verified finding with no `unit`/`units` counts as anchored everywhere), and
+  `ready.demoted` is empty → the verdict is **rebased**, not staled: it keeps its
+  `SEMANTIC_*` codes, `semantic.body_hash` moves to the new hash,
+  `semantic.rebased_from` records the old one, and `ready.lineage` moves its hashes to
+  the new body without changing `round`;
+- otherwise → stale as above, plus `semantic.changed_sections` (the changed headings,
+  `#n` repeat suffixes stripped, sorted; unioned with an earlier list when the verdict
+  was already stale). The planner passes it to the next scan as `--changed-sections`.
+
+A body hash that changed with no section changed (whitespace) rebases too. With no
+section hashes on either side, the old rule applies.
+
+**Check profile.** `ready.check_profile` records the strictness the deterministic
+verdict was computed under. `planner-strict` (what the planner's Refinement scan writes)
+means `DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true`; absent or any other value means
+the host's own `DOR_STRICT_*` defaults. `ensure_ticket_readiness` recomputes under the
+stored profile and writes it back, so a dispatch-time recompute of a planner ticket is
+not more lenient than Refinement was. `semantic` remains outside `set_ticket_readiness`'s
 allowed extras keys; only `set_ticket_semantic` ever writes it.
 
 ## A disputed deterministic code stays blocking
@@ -408,6 +441,26 @@ re-applying it to the recomputed `missing`/`advisory`; an edited body (or a rewr
 with no body hash) drops it, so the code blocks again. A non-empty `ready.demoted` also
 blocks the inert-section rebase.
 
+## Environment variables
+
+Read at call time by `lib/dor-semantic.sh` (and `manifest-write.sh` for the inert list).
+The planner sets the round and drift ones as call prefixes; see `ticket-planner` SKILL.md
+§ Configuration for the `PLANNER_REFINEMENT_*` variables that drive them.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `DOR_SEMANTIC_ADVISORY_CODES` | *(empty)* | Space-separated semantic codes a host makes advisory (see Severity) |
+| `DOR_SEMANTIC_STRUCTURAL_CODES` | `DOR_SEMANTIC_STRUCTURAL_CODES_DEFAULT`: `NEEDS_HUMAN_DECISION CONTRADICTORY_REQUIREMENTS UNSTATED_DEPENDENCY INTENT_AC_MISMATCH` | Codes never demoted by the round limit, drift or converge. Empty means the default. An override warns on stderr and is snapshotted as `lineage.policy.structural`/`overridden` |
+| `DOR_SEMANTIC_MAX_ROUNDS` | *(unset — no round limit)* | Positive integer; from round MAX+1 non-structural findings are `demoted: "round-limit"`. Anything else counts as unset. The planner passes `PLANNER_REFINEMENT_MAX_ROUNDS` (default 2) |
+| `DOR_SEMANTIC_DRIFT_DEMOTE` | `false` | `true` demotes drift findings (`demoted: "drift"`). The planner always passes `true` |
+| `DOR_SEMANTIC_ROUND_RESET_SHARE` | `0.5` | Share (0–1) of prior non-inert sections that must change to reset the round to 1. Invalid values count as `0.5` |
+| `DOR_SEMANTIC_INERT_SECTIONS` | `Related Tickets` | `\|`-separated headings whose edits rebase the verdict instead of staling it. Empty disables rebasing |
+| `DOR_AUDIT_DEMOTABLE_CODES` | `DOR_AUDIT_DEMOTABLE_CODES_DEFAULT`: `VPLAN_ROW_GAP VPLAN_UNVERIFIABLE AC_VAGUE AC_IMPLEMENTATION_ONLY NAV_PATH_MISSING` | Deterministic codes `dor_audit_demote` may demote. Empty means the default. Never-demote codes are refused whatever this says. An override warns at apply time and is snapshotted as `lineage.policy.audit_demotable`/`audit_demotable_overridden` |
+| `DOR_AUDIT_DEMOTE_MAX` | `2` | More qualifying codes than this on one ticket is a blanket dispute: nothing is demoted, exit 4. Empty or invalid means 2 |
+
+Fixed constants, not overridable: `DOR_SEMANTIC_EVALUATOR` (`dor-semantic-v3`),
+`DOR_AUDIT_NEVER_DEMOTE`, `DOR_AUDIT_CODE_SECTIONS`.
+
 ## Reads and consumers
 
 `ensure_ticket_readiness` (`lib/dor-check.sh`) exports `DOR_SEMANTIC` — the cached
@@ -416,7 +469,7 @@ Check 2.7e needs no change: `SEMANTIC_*` codes arrive through `DOR_MISSING` exac
 any other hard code. `fleet-dispatch.sh`'s not-ready summary line and
 `fleet-notify.sh`'s readiness message append semantic codes and disputed deterministic
 codes with their reasons; neither branches on `ready.semantic` beyond the existing
-readiness return code, and neither invokes a model.
+readiness return code, and neither invokes a model. Both drop a disputed code that is in `ready.demoted` from their waive hints: it no longer blocks, so there is nothing to waive.
 
 ## Evaluator agent contract
 
