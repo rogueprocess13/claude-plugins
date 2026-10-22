@@ -903,7 +903,7 @@ test_router_run_identity_stamp_reference() {
 test_ticket_verify_captures_pr_created() {
   local skill_md="$SKILLS_DIR/ticket-verify/SKILL.md"
   [ -f "$skill_md" ] || return 1
-  grep -q 'META|pr-created|info|' "$skill_md" || {
+  grep -q 'record_pr_created' "$skill_md" || {
     echo "ticket-verify SKILL.md does not capture META|pr-created"
     return 1
   }
@@ -916,7 +916,7 @@ test_ticket_verify_pr_created_covers_both_branches() {
   local skill_md="$SKILLS_DIR/ticket-verify/SKILL.md"
   [ -f "$skill_md" ] || return 1
   local block
-  block=$(sed -n '/existing_pr=\$(cd/,/META|pr-created/p' "$skill_md")
+  block=$(sed -n '/existing_pr=\$(cd/,/record_pr_created --new/p' "$skill_md")
   echo "$block" | grep -q '_pr_url="\$existing_pr"' || {
     echo "existing-PR branch does not set _pr_url for pr-created capture"
     return 1

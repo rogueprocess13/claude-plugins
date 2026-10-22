@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.69.1 / fleet-controller 0.42.7 (2026-10-22)
+## 0.69.6 / fleet-controller 0.42.9 (2026-10-22)
 
 Four gate-reconcile and pipeline-log fixes.
 
@@ -38,6 +38,130 @@ Four gate-reconcile and pipeline-log fixes.
 - **`_plog` dropped any entry whose MSG contained `|`.** It now replaces `|`, CR and LF with a
   space and always writes one 5-field line, so the entry is no longer lost where stderr is
   discarded.
+
+## 0.69.5 (2026-10-22)
+
+PRs opened by the VERIFY phase now always leave a `META|pr-created` record, so merge-poll can poll
+them and blocked-by dependents are released after a human merges the PR (#525).
+
+### Fixed
+- **VERIFY-opened PRs had no repo**: ticket-verify's PR capture was a bash block in its SKILL.md.
+  The agent ran its own version of it, logged `VERIFY|pr-open|done|<url>` and never wrote
+  `META|pr-created`. The run event then carried `pr.repo: null`, merge-poll wrote `unknown-repo`
+  once and never polled again, and `ticket_pipeline_merge_state` stayed `unknown` after the merge.
+  Operators had to append `META|manual-merge` by hand to release dependents.
+- **One writer for the marker**: new `lib/pr-evidence.sh`. `record_pr_created [--new] <LOG> <TID>
+  <URL> [--epic]` writes `pr-created` once per PR per run and, with `--new`, emits the `pr-opened`
+  outbox event (idempotency-keyed on the PR). ticket-verify Step 6 and `epic_branch_open_pr` both
+  call it; the `pr-opened` vocabulary entry names it as the emitter.
+- **Verified backfill before the outcome**: `pipeline-finalize.sh` runs `pr_evidence_backfill`
+  just before `META|outcome`, only when the run has no `pr-created` record at all. Candidates are
+  GitHub PR URLs on VERIFY or PR-REVIEW lines and bare `checkout-pr` numbers. Each is recorded
+  only when its repo is one of the ticket's worktree remotes and `gh pr view` reports the ticket
+  branch as its head. Agents link related or upstream PRs in free text on those lines, and a wrong
+  PR's merge would release dependents early, so anything unverifiable (gh fails, `REPOS_ROOT`
+  unset, worktrees gone, other head branch) gets a `META|pr-evidence|warn|` line instead.
+  Backfilled records carry `"backfill":true`, emit no event, and lose to any real record in
+  `ticket_pipeline_pr_ref` and `run-summary.sh`.
+- **`ticket_pipeline_pr_ref`** now reports the earliest line naming the PR, so a backfilled marker
+  written after `merge-decision|done|merged` does not hide that merge record.
+
+### Upgrade notes
+- Runs that already finished with `unknown-repo` are not re-polled. Release their dependents with
+  `META|manual-merge` as before.
+- Not in this release: a fleet WARN when merge-poll writes `unknown-repo` for a blocker.
+
+## 0.69.4 / fleet-controller 0.42.8 (2026-10-22)
+
+A `needs-info` flag no longer outlives the answer to the questions that set it. Before this, an
+answered ticket kept reporting `FLAG_NEEDS_INFO` and stayed not-ready until a full re-appraisal.
+
+### Fixed
+- **Stale `FLAG_NEEDS_INFO` in a cached readiness verdict**: `check_ticket_ready` records
+  `FLAG_NEEDS_INFO` in `ready.missing` from the live manifest flag, but `ensure_ticket_readiness`
+  only invalidated its cache on a body edit. After `needs-info-resolved` cleared the flag, an
+  unchanged-body cache hit still returned not-ready with `FLAG_NEEDS_INFO`, and Check 2.7e
+  gate-stopped `TICKET_NOT_READY` even after `/ticket-approve`. Every cache hit now re-derives that
+  one code from the live flag and writes the corrected verdict back through `set_ticket_readiness`
+  (waivers and a still-matching semantic verdict are preserved).
+- **Released human hold now clears `needs-info`** (fleet-controller 0.42.7): fleetd applied
+  `needs-info` when it created a human hold but nothing cleared it when the human answered. After
+  a `human` hold is released, `_hold_reconcile_pass` calls the new
+  `gate_hold.clear_needs_info_on_release`, which runs the existing `needs-info-resolved` trigger
+  only when the manifest carries the flag. No new trigger or event; `gate` holds are unaffected.
+
+## fleet-controller 0.42.7 (2026-10-22)
+
+fleetd's hold-reconcile pass no longer gate-stops every held complex ticket, and a reconcile
+gate-stop is recorded once per hold instead of on every pass (#529).
+
+### Fixed
+- **Empty scratch log in the reconcile probe**: `run_entry_gate` ran `gate-check.sh --mode entry`
+  against an empty scratch log. The gate reads the artifact type from the log it is given, found no
+  `EXEC|create-artifact|done|` line, defaulted to `simple-fix`, and gate-stopped every held openspec
+  ticket on `COMPLEXITY_ARTIFACT_MISMATCH`. The scratch log is now a copy of the ticket's real
+  pipeline log, and only the lines the probe adds are returned. A no-change poll still writes
+  nothing to the real log.
+- **Unbounded gate-stop loop**: a `GATE_STOP` left the hold row in place, so the next pass probed
+  again and appended the same gate-stop pair again — about 350 times for one ticket. The
+  supervisor's marker is now `<CODE> — hold <hold_id>`, and `reconcile_hold` skips the probe while a
+  marker for the current hold (written at or after its `held_at`) is in the log. The code stays the
+  message prefix, so `exit-path.sh` classifies it as before.
+
+## 0.69.3 (2026-10-22)
+
+Releasing a file lock no longer silences the caller's stderr.
+
+### Fixed
+
+- `_manifest_readiness_unlock` (`lib/manifest-write.sh`), `_adr_unlock` (`lib/adr-store.sh`) and
+  `board_cursor_unlock` (`lib/board-cursor.sh`) closed their lock fd with
+  `exec N>&- 2>/dev/null`. A bare `exec` applies its redirections to the current shell, so after
+  the first unlock every later stderr write in that shell went to `/dev/null` — warnings from a
+  second readiness write, for one, vanished. Each now runs `{ exec N>&-; } 2>/dev/null`, which
+  scopes the redirect to the close. Regression checks added to `test-adr-store.sh` and
+  `test-board-cursor.sh`.
+
+## 0.69.2 (2026-10-22)
+
+Branch resolution now finds the epic manifest of a planner-created epic
+([#524](https://github.com/willard-pro/claude-plugins/issues/524)). Before this, every child of such
+an epic branched off the directive's base, its PR targeted that base, and its Merge Policy came out
+empty, so PR review could merge straight past a `manual` policy. The only trace was
+`source=default` in `META|branch-context`.
+
+### Fixed
+- **Epic lookup id**: EpicGen writes the epic manifest under the epic's identifier
+  (`initiatives/<EPIC>/epic/manifest.json`). `resolve_branch_context` looked it up by the parent's
+  tracker UUID, and `resolve_uat_policy`/`resolve_merge_policy` by the ticket manifest's
+  `initiative` (`INIT-<n>`, which has no `epic/` directory). All three now go through the new
+  `resolve_ticket_epic <TID> [candidate...]` in `manifest-read.sh`. It tries each candidate (the
+  parent identifier, then the UUID), then the ticket's `initiative` when that is itself an epic,
+  then the epic whose `children[]` lists the ticket. A hit through a symlink resolves to the real
+  epic directory name, so the operator workaround symlinks still work and can now be removed.
+  fleet-controller already keys epics by directory name and needed no change.
+- **`EPIC_ID` in `BRANCH_CONTEXT_RESULT`** is now the resolved epic id (or the parent identifier)
+  instead of the tracker UUID.
+
+### Added
+- **WARN on an unresolved directive**: when the parent's description carries a `## Branch
+  Directive` but no epic manifest resolves, `resolve_branch_context` prints a `WARN` on stderr
+  naming the parent and pointing at `manifest-backfill.sh`. Resolution still falls back to the
+  default, as before.
+
+## 0.69.1 (2026-10-22)
+
+`VPLAN_ROW_GAP` no longer counts checkboxes that sit outside the Acceptance Criteria section
+([#535](https://github.com/willard-pro/claude-plugins/issues/535)).
+
+### Fixed
+- **`_dor_ac_count` scoped to `## Acceptance Criteria`** (`lib/dor-check.sh`): it counted every
+  `- [ ]` / `- [x]` line in the whole body, so an `## Environment` checklist (`- [X] Local`,
+  `- [ ] UAT`) added to the criteria count and raised a false `VPLAN_ROW_GAP` on a Verification
+  Plan with one row per criterion. Under `DOR_STRICT_VPLAN=true` that was a hard not-ready. The
+  count now covers only the section, up to the next `#`/`##` heading (`###` subsections stay in).
+  The whole-body count is the fallback only when the section is absent or empty. The Verifiable
+  column parser from [#514](https://github.com/willard-pro/claude-plugins/issues/514) is unchanged.
 
 ## grill-me 0.3.0 / ticket-planner 0.23.0 (2026-10-22)
 

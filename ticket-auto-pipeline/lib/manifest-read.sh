@@ -161,6 +161,79 @@ epic_manifest_exists() {
   [ -f "$repos_root/.ticket-auto/initiatives/$epic/epic/manifest.json" ]
 }
 
+# _manifest_canonical_epic <repos_root> <EPIC>
+# Prints the real directory name behind initiatives/<EPIC>/epic — <EPIC>
+# itself unless an operator symlink (#524 workaround) points elsewhere
+# under initiatives/. Falls back to <EPIC> when it cannot be resolved.
+_manifest_canonical_epic() {
+  local repos_root="$1" epic="$2" base real
+  base=$(cd "$repos_root/.ticket-auto/initiatives" 2>/dev/null && pwd -P) || base=""
+  real=$(cd "$repos_root/.ticket-auto/initiatives/$epic/epic" 2>/dev/null && pwd -P) || real=""
+  real="${real%/epic}"
+  if [ -n "$base" ] && [ "${real%/*}" = "$base" ] && [[ "${real##*/}" =~ $_MANIFEST_ID_RE ]]; then
+    echo "${real##*/}"
+  else
+    echo "$epic"
+  fi
+}
+
+# resolve_ticket_epic <TID> [candidate...]
+# Prints the epic id (the directory name under initiatives/ that holds
+# epic/manifest.json) a ticket belongs to. GitHub #524: no single id a
+# caller holds is reliably that directory name — the tracker's parent UUID
+# never is, and a planner child's `initiative` (INIT-<n>) has no epic/ of
+# its own because EpicGen writes the epic manifest under the epic's
+# identifier. Resolution order, first hit wins:
+#   1. each non-empty <candidate> (e.g. parent identifier, parent UUID) that
+#      has an epic manifest;
+#   2. the ticket manifest's `initiative`, when it is itself an epic;
+#   3. the epic whose manifest lists <TID> in children[] — the relation
+#      TicketGen's add_epic_manifest_child records. Real directories are
+#      scanned (find does not follow symlinks), so operator workaround
+#      symlinks never shadow the real epic id.
+# Exit 0 → id printed; 1 → no epic found; 3 → REPOS_ROOT unset / bad TID.
+resolve_ticket_epic() {
+  local tid="$1"
+  shift
+  local repos_root
+  repos_root=$(_manifest_repos_root) || return 3
+  [[ "$tid" =~ $_MANIFEST_ID_RE ]] || return 3
+
+  local cand
+  for cand in "$@"; do
+    [ -n "$cand" ] || continue
+    if epic_manifest_exists "$cand" 2>/dev/null; then
+      _manifest_canonical_epic "$repos_root" "$cand"
+      return 0
+    fi
+  done
+
+  local init
+  init=$(get_ticket_manifest_field "$tid" initiative 2>/dev/null) || init=""
+  case "$init" in "" | null | _adhoc) ;; *)
+    if epic_manifest_exists "$init" 2>/dev/null; then
+      _manifest_canonical_epic "$repos_root" "$init"
+      return 0
+    fi
+    ;;
+  esac
+
+  local base="$repos_root/.ticket-auto/initiatives" m epic
+  [ -d "$base" ] || return 1
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    epic="${m#"$base"/}"
+    epic="${epic%%/*}"
+    case "$epic" in _*) continue ;; esac
+    [[ "$epic" =~ $_MANIFEST_ID_RE ]] || continue
+    if jq -e --arg t "$tid" '(.children // []) | index($t) != null' "$m" >/dev/null 2>&1; then
+      echo "$epic"
+      return 0
+    fi
+  done < <(find "$base" -mindepth 3 -maxdepth 3 -type f -path '*/epic/manifest.json' 2>/dev/null | sort)
+  return 1
+}
+
 # get_ticket_manifest_path <TID> — prints the ticket manifest path whether
 # or not it exists yet (for writers). Exit 1 if no initiative index entry.
 get_ticket_manifest_path() {
@@ -195,7 +268,7 @@ _mr_field5() {
 # ticket_pipeline_pr_ref <LOG_FILE>
 # Prints "<lineno>\t<pr_num>\t<repo>" for the most recent PR this ticket's
 # pipeline log names, or nothing when the log names no PR at all. The latest
-# `META|pr-created` (ticket-verify / epic-branch.sh, JSON {pr,url,repo}) wins;
+# `META|pr-created` (lib/pr-evidence.sh, JSON {pr,url,repo}) wins;
 # `PR-REVIEW|checkout-pr|done|<n>` (ticket-pr-review) is the fallback when no
 # pr-created line exists — the same precedence run-summary.sh uses for the
 # `run` event's `pr`, so this names the PR merge-poll.sh actually polls.
@@ -207,7 +280,11 @@ ticket_pipeline_pr_ref() {
   [ -f "$log_file" ] || return 0
 
   local created_line checkout_line
-  created_line=$(grep -n '|META|pr-created|info|' "$log_file" 2>/dev/null | tail -1) || created_line=""
+  # A real record always beats a backfilled one (`"backfill":true`, written
+  # by lib/pr-evidence.sh's verified finalize-time backfill, GitHub #525).
+  created_line=$(grep -n '|META|pr-created|info|' "$log_file" 2>/dev/null | grep -v '"backfill":true' | tail -1) || created_line=""
+  [ -n "$created_line" ] ||
+    created_line=$(grep -n '|META|pr-created|info|' "$log_file" 2>/dev/null | tail -1) || created_line=""
   checkout_line=$(grep -n '|PR-REVIEW|checkout-pr|done|' "$log_file" 2>/dev/null | tail -1) || checkout_line=""
 
   local c_ln="" c_pr="" c_repo="" k_ln="" k_pr="" c_json=""
@@ -225,6 +302,19 @@ ticket_pipeline_pr_ref() {
   fi
 
   if [ -n "$c_ln" ]; then
+    # The reference line is the EARLIEST line naming this PR (a pr-created
+    # record or a checkout-pr line with the same number), not the latest
+    # record: pipeline-finalize.sh backfills pr-created just before the
+    # outcome (GitHub #525), after any merge-decision line of the same run,
+    # and the merge-record check below only looks after this line.
+    local first_ln
+    first_ln=$(awk -F'|' -v n="$c_pr" '
+      { s=$5; for(i=6;i<=NF;i++) s=s"|"$i }
+      $2 == "META" && $3 == "pr-created" && s ~ ("\"pr\":" n "[,}]") { print NR; exit }
+      $2 == "PR-REVIEW" && $3 == "checkout-pr" && $4 == "done" {
+        if (match(s, /[0-9]+/) && substr(s, RSTART, RLENGTH) == n) { print NR; exit }
+      }' "$log_file" 2>/dev/null) || first_ln=""
+    [ -n "$first_ln" ] && [ "$first_ln" -lt "$c_ln" ] && c_ln="$first_ln"
     printf '%s\t%s\t%s\n' "$c_ln" "$c_pr" "$c_repo"
   elif [ -n "$k_ln" ]; then
     printf '%s\t%s\t\n' "$k_ln" "$k_pr"

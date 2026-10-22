@@ -259,6 +259,15 @@ fi
 # an earlier call.
 _last_line=$(tail -1 "$LOG_FILE" 2>/dev/null || true)
 if ! echo "$_last_line" | grep -q '|META|outcome|info|'; then
+  # GitHub #525: a PR the log names without a `META|pr-created` record (an
+  # agent paraphrased ticket-verify's capture step) gets one now, before the
+  # outcome line — run-summary.sh needs its repo, or merge-poll records
+  # `unknown-repo` and blocked-by dependents are held after the merge.
+  if [ -f "$_PF_LIB_DIR/pr-evidence.sh" ]; then
+    (
+      source "$_PF_LIB_DIR/pr-evidence.sh" && pr_evidence_backfill "$LOG_FILE" "$TICKET_ID"
+    ) >/dev/null 2>&1 || true
+  fi
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|outcome|info|${_outcome_summary}" >>"$LOG_FILE"
 fi
 

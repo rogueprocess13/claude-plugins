@@ -638,6 +638,46 @@ DOR_STRICT_VPLAN=true check_ticket_ready "STRICT-VPLAN-YWORDS" --body "$y_words_
   _pass "#514: y/Y words outside the Verifiable column still fire VPLAN_UNVERIFIABLE" ||
   _fail "#514: y-words table should fire VPLAN_UNVERIFIABLE (rc=$rc missing=$DOR_MISSING)"
 
+# #535: checkboxes outside ## Acceptance Criteria (an Environment checklist)
+# must not inflate the AC count that sizes VPLAN_ROW_GAP. Two AC lines, two
+# table rows, plus two Environment checkboxes: no gap.
+env_checkbox_body="${vplan_base_body}
+## Environment
+- [X] Local (developer machine)
+- [ ] UAT (shared test environment)
+
+## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|-----------|-----------|------------------|-------------------|--------------------|------------|
+| 1 | Export button appears | finance | Billing > Invoices | none | button is present | Y |
+| 2 | Export reflects filter | finance | Billing > Invoices | filtered invoices | file matches filter | Y |
+"
+env_checkbox_file="$TMP_ROOT/vplan-env-checkboxes.md"
+_write_body "$env_checkbox_file" "$env_checkbox_body"
+
+rc=0
+DOR_STRICT_VPLAN=true check_ticket_ready "STRICT-VPLAN-ENVCB" --body "$env_checkbox_file" --type chore --no-fetch || rc=$?
+echo "$DOR_MISSING" | jq -e 'index("VPLAN_ROW_GAP") == null' >/dev/null &&
+  echo "${DOR_ADVISORY:-[]}" | jq -e 'index("VPLAN_ROW_GAP") == null' >/dev/null &&
+  _pass "#535: Environment checkboxes do not count toward VPLAN_ROW_GAP" ||
+  _fail "#535: Environment checkboxes inflated the AC count (rc=$rc missing=$DOR_MISSING advisory=$DOR_ADVISORY)"
+
+# Fallback preserved: no Acceptance Criteria heading, whole-body checkboxes
+# still count (3 checkboxes vs 1 row -> gap).
+[ "$(_dor_ac_count $'## Notes\n- [ ] a\n- [ ] b\n- [x] c')" = "3" ] &&
+  _pass "#535: no AC heading falls back to whole-body checkbox count" ||
+  _fail "#535: fallback count wrong (got $(_dor_ac_count $'## Notes\n- [ ] a\n- [ ] b\n- [x] c'))"
+[ "$(_dor_ac_count "$env_checkbox_body")" = "2" ] &&
+  _pass "#535: _dor_ac_count scopes to the Acceptance Criteria section" ||
+  _fail "#535: _dor_ac_count expected 2, got $(_dor_ac_count "$env_checkbox_body")"
+ac_sub_body=$'## Acceptance Criteria\n### Happy path\n- [ ] a\n### Edge cases\n- [ ] b\n## Environment\n- [x] Local'
+[ "$(_dor_ac_count "$ac_sub_body")" = "2" ] &&
+  _pass "#535: ### subsections stay inside the Acceptance Criteria count" ||
+  _fail "#535: ### subsections expected 2, got $(_dor_ac_count "$ac_sub_body")"
+
 # The self-verifying-AC escape hatch is unaffected by DOR_STRICT_VPLAN in
 # either state — no Verification Plan table, but a single AC line that
 # matches _DOR_SELFVERIFY_RE ("returns 200").
@@ -1522,6 +1562,53 @@ check_ticket_ready "NAV-CELL" --body "$nav_file" --type feature --no-fetch >/dev
 echo "$DOR_MISSING" | jq -e 'index("NAV_PATH_MISSING") == null' >/dev/null &&
   _pass "FE body with the path only in a Verification Plan cell passes NAV_PATH_MISSING" ||
   _fail "a filled Verification Plan cell should pass (got $DOR_MISSING)"
+
+# ── Stale FLAG_NEEDS_INFO in a cached verdict ─────────────────────────────
+# A verdict computed while the manifest carried `needs-info` caches
+# FLAG_NEEDS_INFO in `missing`. Once the flag clears (needs-info-resolved,
+# e.g. /ticket-approve or a released human hold), an unchanged-body cache
+# hit must not keep reporting FLAG_NEEDS_INFO — the flag is a live fact,
+# never a cached one (design.md Decision 3). Before the fix, only a body
+# edit or a full re-appraisal refreshed the cache.
+write_ticket_manifest "STALEFLAG-1" "INIT-1" "feature" '[]'
+stale_planner_dir="$TMP_ROOT/.ticket-auto/initiatives/INIT-1/tickets/STALEFLAG-1/planner"
+mkdir -p "$stale_planner_dir"
+_write_body "$stale_planner_dir/body.md" "$full_body"
+resolve_planner_dir() { echo "$stale_planner_dir"; }
+stale_manifest=$(get_ticket_manifest_path "STALEFLAG-1")
+_set_flags() {
+  local tmpj
+  tmpj=$(jq -c --argjson f "$2" '.flags = $f' "$1")
+  echo "$tmpj" >"$1"
+}
+
+_set_flags "$stale_manifest" '["needs-info"]'
+rc=0
+ensure_ticket_readiness "STALEFLAG-1" || rc=$?
+[ "$rc" = "1" ] && echo "$DOR_MISSING" | jq -e 'index("FLAG_NEEDS_INFO") != null' >/dev/null &&
+  _pass "ensure_ticket_readiness: needs-info flag set -> FLAG_NEEDS_INFO cached, not-ready" ||
+  _fail "expected not-ready with FLAG_NEEDS_INFO while flag set (rc=$rc missing=$DOR_MISSING)"
+
+_set_flags "$stale_manifest" '[]'
+rc=0
+ensure_ticket_readiness "STALEFLAG-1" || rc=$?
+[ "$rc" = "0" ] && [ "$DOR_STATUS" = "ready" ] &&
+  echo "$DOR_MISSING" | jq -e 'index("FLAG_NEEDS_INFO") == null' >/dev/null &&
+  _pass "ensure_ticket_readiness: cleared needs-info flag drops stale cached FLAG_NEEDS_INFO" ||
+  _fail "cleared flag must not leave a cached FLAG_NEEDS_INFO (rc=$rc status=$DOR_STATUS missing=$DOR_MISSING)"
+
+[ "$(get_ticket_manifest_field "STALEFLAG-1" ready | jq -r '.status')" = "ready" ] &&
+  get_ticket_manifest_field "STALEFLAG-1" ready | jq -e '(.missing | index("FLAG_NEEDS_INFO")) == null and (.body_hash // "") != ""' >/dev/null &&
+  _pass "ensure_ticket_readiness: healed verdict is written back (ticket_is_ready agrees, body_hash kept)" ||
+  _fail "healed verdict should be persisted (got $(get_ticket_manifest_field "STALEFLAG-1" ready))"
+
+# The reverse: a flag set after a ready verdict was cached surfaces too.
+_set_flags "$stale_manifest" '["needs-info"]'
+rc=0
+ensure_ticket_readiness "STALEFLAG-1" || rc=$?
+[ "$rc" = "1" ] && echo "$DOR_MISSING" | jq -e 'index("FLAG_NEEDS_INFO") != null' >/dev/null &&
+  _pass "ensure_ticket_readiness: flag set after a cached ready verdict reports FLAG_NEEDS_INFO" ||
+  _fail "a newly set flag should surface on a cache hit (rc=$rc missing=$DOR_MISSING)"
 
 echo "---"
 echo "$PASS passed, $FAIL failed"
