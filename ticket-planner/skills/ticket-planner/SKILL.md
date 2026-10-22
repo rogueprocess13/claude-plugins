@@ -220,6 +220,31 @@ is step 1c's open-decision halt: its describer check reads proposal.md, read-onl
 at position `Review`, so after `--until Specify` the decision is described before
 `UNTIL_STOP`.
 
+#### When the client asks back
+
+A reply can be a question instead of an answer ("why do you need this?"). The caller
+decides which it is with an explicit affordance (a button, a command, a `?` prefix),
+never by asking a model. A question goes to the read-only Q&A script:
+
+```bash
+REPOS_ROOT=… bash lib/planner-artifact-qa.sh <INIT_ID> --question-file <file|-> \
+  [--qa-id <id>] [--about <QUESTION_ID>]
+```
+
+It answers from a read-only snapshot of the initiative's artifacts in its own sandboxed
+`claude -p` session and prints one JSON object: `status` (`answered` or
+`not_in_plan`), `answer`, `sources`, `about_open`, `phase_running`, `round`. An answer
+with no source in the plan comes back as `That is not in the plan yet.` Its exit codes
+are its own — do not reuse the `planner-answers.sh` table: 0 post the answer, 1 could
+not run, 2 input rejected, 3 `NO_ARTIFACTS`, 4 `QA_MODEL_FAILED` (retry once with the
+same `--qa-id`, unless stderr says `QA_MODEL_FAILED: budget`), 5 sandbox unsafe or
+violated (never retry).
+
+A question back is never an answer. The script does not touch `state.log`,
+`artifacts/` or the answers round: the open round stays open and its question stays
+pending. When `phase_running` is true a phase is running and the plan may still change;
+say so next to the answer.
+
 ### Status (`status`)
 
 Show the current phase, initiative metadata, and the last few state log entries.

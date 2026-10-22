@@ -37,6 +37,14 @@ Maintainer-facing overview of the ticket-planner plugin. Read this before adding
 |-----------|------|------|
 | Linear API client | `lib/planner-linear-api.sh` | GraphQL API with retry (3 attempts, exponential backoff), issue creation and retrieval |
 
+### Headless Q&A
+
+| Component | File | Role |
+|-----------|------|------|
+| Artifact Q&A | `lib/planner-artifact-qa.sh` | Answers a client's question back about the plan, read-only. The only planner code that spawns `claude`: its own `claude -p` subprocess, so the sandbox is set by this process and not inherited from a bypass-mode caller |
+
+The sandbox has four layers, so no single CLI flag is load-bearing: a read-only snapshot of `artifacts/` (no links, dot-paths, `answers/` or agent files, size-capped); a restricted argv (`dontAsk`, `--restricted`, `Read,Grep,Glob` only, no MCP, cwd = snapshot, `env -i` allowlist, timeout and budget); a check of the session's `init` message; and a fingerprint re-check after the session. Any failure in layers 3–4 is rc 5 and is never retried. Ungrounded answers are downgraded to a fixed "not in the plan yet" sentence. The script writes only `qa.log` and `qa/<id>.json`, never `artifacts/`, `state.log` or the open question round.
+
 ### Re-planning
 
 | Component | File | Role |

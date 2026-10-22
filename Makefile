@@ -211,6 +211,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-answers.sh
 	bash ticket-planner/lib/tests/test-planner-answers-durability.sh
 	bash ticket-planner/lib/tests/test-planner-cited-answers.sh
+	bash ticket-planner/lib/tests/test-planner-artifact-qa.sh
 	bash ticket-planner/lib/tests/test-planner-vplan-generation.sh
 	bash ticket-planner/lib/tests/test-planner-ticket-body.sh
 	bash ticket-planner/lib/tests/test-skill-arg-substitution.sh

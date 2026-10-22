@@ -115,6 +115,10 @@ If the run is interrupted (crash, timeout, manual stop):
 
 The router re-derives position from the state log and continues from where it left off. Every phase is idempotent — safe to re-enter.
 
+### Headless use
+
+A caller with no terminal answers a stopped run's questions with `resume <INIT_ID> --answers <file>`, and answers a person's question back about the plan with the read-only, sandboxed `lib/planner-artifact-qa.sh`. See [SKILL.md § Headless use](skills/ticket-planner/SKILL.md#headless-use---answers).
+
 ## Documentation
 
 | Document | Audience | Content |

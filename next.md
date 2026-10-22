@@ -1091,9 +1091,11 @@ agents on 2026-10-11.
       `specify-answer:O<n>`). dexter must change before using it — see that change's design.md
       § What dexter must change (pins, `AUDIENCE either`, serialised answers, partial rounds, no
       auto-answer, single line of at most 500 characters).
-- [ ] 4. Follow-up, not yet specced: two-way chat. When the client asks a question back, a
-      read-only Q&A session answers it, running without bypass and using only the initiative's
-      `artifacts/`.
+- [x] 4. Two-way chat. When the client asks a question back, a read-only Q&A session answers
+      it, running without bypass and using only the initiative's `artifacts/`. Done 2026-10-22
+      as `planner-artifact-qa` (ticket-planner 0.21.0, branch `feat/planner-artifact-qa`):
+      `lib/planner-artifact-qa.sh` spawns its own sandboxed `claude -p` over a read-only
+      snapshot. The dexter side (call it, route its exit codes) is part of item 2.
 
 ---
 
