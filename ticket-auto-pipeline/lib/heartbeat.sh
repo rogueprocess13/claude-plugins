@@ -39,14 +39,17 @@ _plog() {
   local file="$1"
   [ -z "$file" ] && return 0
 
-  # Reject pipe characters in MSG (field 5) — would corrupt pipe-delimited format
-  if [[ "${5:-}" == *"|"* ]]; then
-    echo "_plog: MSG field contains pipe character — entry skipped" >&2
-    return 1
-  fi
+  # Sanitise MSG (field 5): `|` would forge extra fields and CR/LF a whole
+  # extra line. Replace each with a space (planner_state_write's rule) rather
+  # than dropping the entry — a dropped line was silent wherever the caller
+  # discarded stderr. Always exactly one 5-field line per call.
+  local msg="${5:-}"
+  msg=${msg//|/ }
+  msg=${msg//$'\r'/ }
+  msg=${msg//$'\n'/ }
 
   _ensure_dir_for "$file"
-  echo "$(_iso_now)|${2:-}|${3:-}|${4:-}|${5:-}" >>"$file"
+  echo "$(_iso_now)|${2:-}|${3:-}|${4:-}|${msg}" >>"$file"
 }
 
 # Write a heartbeat log entry.
