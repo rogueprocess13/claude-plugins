@@ -444,3 +444,13 @@ persisted at parse time) says otherwise.
 - **body-check**: planned feature and improvement bodies need a non-empty `## Test Data…`
   section (not `Provided`). TicketGen always writes it — `- None — no acceptance criterion needs
   test data.` when nothing does.
+- **Semantic backstop (advisory)** (dor-semantic-test-data-gap): the §3.2 heuristic only sees
+  criteria whose wording names data. A criterion that implies data without naming it ("Duplicating
+  a handover from the list creates a draft copy with the same line items") slips through, and an
+  all-`none` body carries no `Source:`, so dor-check treats it as legacy and stays quiet too. The
+  Refinement phase's semantic evaluator (`dor-semantic-v2`) catches that case with
+  `TEST_DATA_GAP`: the finding quotes the criterion and names the missing data. It is advisory
+  only — fixed in code, never blocking — and Refinement reports it as a
+  `META|refinement-testdata|warn` line and an `Advisory (does not block)` summary line. A
+  `TESTDATA_CONFIRM: none` answer does not suppress it yet; that, and promotion to blocking, wait on
+  a live golden sweep.

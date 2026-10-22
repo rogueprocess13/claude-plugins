@@ -38,6 +38,9 @@ all-empty fixtures"), not a frozen contract.
 | 23 | `23-planned-contract-unsourced.md` | feature | not-ready | TEST_DATA_UNSOURCED | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 83 |
 | 24 | `24-contract-no-test-data.md` | feature | not-ready (ready + advisory under an explicit `DOR_STRICT_TEST_DATA=false`, or as `chore`/`security`) | TEST_DATA_MISSING | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 81 |
 | 25 | `25-td-chore.md` | chore | ready | — | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity | 81 |
+| 26 | `26-contract-implied-miss.md` | feature | ready (also under `DOR_STRICT_TEST_DATA=true`) | — | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 85 |
+| 27 | `27-planned-all-none-miss.md` | feature | ready (also under `DOR_STRICT_TEST_DATA=true`; legacy body, never TEST_DATA_UNSOURCED) | — | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 85 |
+| 28 | `28-threshold-only-none.md` | feature | ready (also under `DOR_STRICT_TEST_DATA=true`) | — | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity | 83 |
 
 ## Scenario mapping
 
@@ -66,3 +69,19 @@ all-empty fixtures"), not a frozen contract.
 - **23** — a ticket-planner 0.17.0-shape planned body: a `## Planner Context` block plus Source fields, with one need left `generate` (both its bullet and its Verification Plan cell). The Source fields, not the Planner Context block, make it a contract body, so it is not-ready on `TEST_DATA_UNSOURCED`. A planned body from before 0.17.0 (Planner Context, no Source fields) stays legacy and ready; the ticket-planner business-framing fixtures prove that.
 - **24** — fixture 22 with its `## Test Data Prerequisites` section removed. The Verification Plan's `Test data needed` cells still carry known-kind Sources, so the body is a contract body, and `TEST_DATA_MISSING` is hard by default (planner-test-data-derivation). A legacy body without the section (fixture 02) stays advisory.
 - **25** — a synthesized test-data chore in the planner's TD template shape: `## Test Data Provided` items, `Seed command:`/`Verify command:`/`Seed channel:` lines, a backend-only Scope, `none` Verification Plan rows and the composer's `None — …` Test Data Prerequisites line. `## Test Data Provided` is what the chore supplies, not what it needs, so it is never read as the Test Data section; the chore is ready with no hard codes.
+- **26** — a contract-shaped planned body with one sourced test-data item, plus one acceptance criterion ("Duplicating a handover from the list creates a draft copy with the same line items") whose data — an existing handover with line items — is never listed. The deterministic check passes it; only the semantic `TEST_DATA_GAP` catches the miss (dor-semantic-test-data-gap).
+- **27** — the same miss in the planner's all-`none` shape: the composer bullet `- None — no acceptance criterion needs test data.` and no `Source:` anywhere. dor-check treats it as a legacy body, so no deterministic code fires; the semantic backstop is the only signal.
+- **28** — negative control: criteria built on a threshold, a timeout and an attempt count ("the session expires after 15 minutes", "lock after 5 attempts") with a `none` Test Data line. None of these is data, so `TEST_DATA_GAP` must not fire.
+
+## Semantic expectation (live golden sweep)
+
+`make test` never calls a model: `lib/tests/test-dor-semantic-testdata.sh` applies the canned blocks under `semantic/` (`<nn>-scan.txt`, `<nn>-audit.txt`, with `@TICKET@`/`@BODY_HASH@` placeholders). The manual live sweep runs the real `dor-semantic-agent` scan on these bodies and checks it against this list. It must be recorded before `TEST_DATA_GAP` is promoted from advisory to blocking.
+
+| Fixture | `TEST_DATA_GAP` |
+|---|---|
+| 26 | expected — quoting the duplicate-handover criterion |
+| 27 | expected — quoting the duplicate-handover criterion |
+| 01 | absent (an earlier sweep saw this fixture over-fire; watch it) |
+| 22 | absent — every item is sourced |
+| 25 | absent — a test-data chore supplies data, it does not need it |
+| 28 | absent — thresholds, timeouts and counts are not data |

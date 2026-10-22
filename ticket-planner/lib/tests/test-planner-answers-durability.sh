@@ -138,6 +138,41 @@ else
   fail "the re-run Crosscheck treats the answered code as accepted" "emit rc=$got"
 fi
 
+# ── Specify decision (planner-specify-waiting-on-human) ────────────────────
+
+echo "--- specify decision: describe → answers → gate clears in a new process ---"
+
+INIT3="INIT-1700000000-9999"
+in_new_process "planner_state_init ${INIT3} idea >/dev/null
+  _halt_done ${INIT3} Appraisal Discovery Architecture Specify
+  printf '%s\n' '# Proposal' '' '## Business Outcomes' '' '### O1' \
+    '**Outcome:** NEEDS_HUMAN_DECISION — which role consumes the classified documents?' \
+    >\"\$(planner_initiative_dir ${INIT3})/artifacts/proposal.md\"" >/dev/null 2>&1
+in_new_process "bash \${LIB_DIR}/planner-stop-describe.sh ${INIT3}" >"${WORK}/sd.hold"
+if grep -qx 'REASON: SPECIFY_DECISION' "${WORK}/sd.hold"; then
+  pass "specify: the describer reports SPECIFY_DECISION in a fresh process"
+else
+  fail "specify: the describer reports SPECIFY_DECISION in a fresh process" "$(cat "${WORK}/sd.hold")"
+fi
+
+sd_id=$(bash "$HOLD_PARSER" --phase PLANNER --return-file "${WORK}/sd.hold" | jq -r '.questions[0].id')
+answers_from_hold "${WORK}/sd.hold" "$sd_id" "Tax accountants preparing returns" "${WORK}/sd.json"
+in_new_process "bash -c 'bash \${LIB_DIR}/planner-answers.sh ${INIT3} ${WORK}/sd.json'" >"${WORK}/sd-apply.out" 2>&1
+rc=$?
+
+got=$(in_new_process "source \${LIB_DIR}/planner-specify-decisions.sh
+  rc=0; planner_specify_gate ${INIT3} || rc=\$?
+  echo \"gate=\$rc\"
+  bash \${LIB_DIR}/planner-stop-describe.sh ${INIT3}")
+if [ "$rc" -eq 0 ] && [ "$got" = "gate=0
+REASON=RUNNING" ] &&
+  grep -qxF '**Outcome:** Human decision (verbatim, round 1, operator): "Tax accountants preparing returns"' \
+    "${REPOS_ROOT}/.ticket-auto/initiatives/${INIT3}/artifacts/proposal.md"; then
+  pass "specify: after the answers are applied, a new process sees the gate clear and the answer in proposal.md"
+else
+  fail "specify: after the answers are applied, a new process sees the gate clear and the answer in proposal.md" "rc=$rc got=$got $(cat "${WORK}/sd-apply.out")"
+fi
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]

@@ -1,0 +1,16 @@
+=== DOR_SEMANTIC_SCAN ===
+SCHEMA_VERSION: 1
+TICKET: @TICKET@
+BODY_HASH: @BODY_HASH@
+FINDING_1_CODE: TEST_DATA_GAP
+FINDING_1_QUOTE: Duplicating a handover from the list creates a draft copy with the same line items
+FINDING_1_DETAIL: one handover with at least two line items on the supervisor's site; Test Data Prerequisites lists only 25 handovers and says nothing about their line items
+GAP_REQUIREMENT_COMPLETENESS: clear
+GAP_REQUIREMENT_COMPLETENESS_REASON: every described behavior has a criterion
+GAP_CONTRADICTORY_REQUIREMENTS: clear
+GAP_CONTRADICTORY_REQUIREMENTS_REASON: no criteria disagree
+GAP_DEEP_SCOPE_AMBIGUITY: clear
+GAP_DEEP_SCOPE_AMBIGUITY_REASON: scope names the services and areas
+GAP_EDGE_CASE_SUFFICIENCY: clear
+GAP_EDGE_CASE_SUFFICIENCY_REASON: role gating is covered
+=== END DOR_SEMANTIC_SCAN ===

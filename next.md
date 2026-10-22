@@ -1083,12 +1083,19 @@ agents on 2026-10-11.
         server, and exactly one resume per round. It sends reminders but never resumes on its
         own, re-posts open questions after a restart, and runs a scrubber on client-channel
         posts that fails closed.
-- [ ] 3. Follow-up, not yet specced: Specify stops on `NEEDS_HUMAN_DECISION`. Today an answer can
-      never reach Specify, because `planner_position_derive` moves forward past `done`. This
-      needs a `waiting` marker in the planner's state machine and its own change.
-- [ ] 4. Follow-up, not yet specced: two-way chat. When the client asks a question back, a
-      read-only Q&A session answers it, running without bypass and using only the initiative's
-      `artifacts/`.
+- [x] 3. Specify stops on `NEEDS_HUMAN_DECISION` — openspec change
+      `planner-specify-waiting-on-human`, implemented on feat/planner-specify-decision-gate
+      (ticket-planner 0.20.0, ticket-auto-pipeline 0.68.0, following PR #528). No `waiting`
+      marker after all: a bash gate halts before Review on an open decision, and an answer or
+      `__defer__` replaces the marker line in proposal.md (new reason `SPECIFY_DECISION`, binding
+      `specify-answer:O<n>`). dexter must change before using it — see that change's design.md
+      § What dexter must change (pins, `AUDIENCE either`, serialised answers, partial rounds, no
+      auto-answer, single line of at most 500 characters).
+- [x] 4. Two-way chat. When the client asks a question back, a read-only Q&A session answers
+      it, running without bypass and using only the initiative's `artifacts/`. Done 2026-10-22
+      as `planner-artifact-qa` (ticket-planner 0.21.0, branch `feat/planner-artifact-qa`):
+      `lib/planner-artifact-qa.sh` spawns its own sandboxed `claude -p` over a read-only
+      snapshot. The dexter side (call it, route its exit codes) is part of item 2.
 
 ---
 
@@ -1123,8 +1130,14 @@ defaulting to generate when headless.
       **Breaking (gates):** contract-shaped feature and improvement bodies without test data
       now fail readiness.
 - [ ] 3. Live verification, folded into Step 8's consolidated pass (tasks 9.1–9.4 of change 2).
-- [ ] 4. Follow-ups:
-      - [ ] a semantic DoR backstop for heuristic misses (`dor-semantic-test-data-gap`).
+- [ ] 4. Follow-ups: a semantic DoR backstop for heuristic misses, and a grill-me test-data
+      dimension.
+      - **dor-semantic half — implemented (advisory)** as `dor-semantic-test-data-gap` on
+        `feat/dor-semantic-test-data-gap` (ticket-auto-pipeline 0.69.0, ticket-planner 0.22.0):
+        `TEST_DATA_GAP` semantic code, advisory only (fixed in code), evaluator `dor-semantic-v2`,
+        Refinement warn lines and an advisory summary. **Promotion to blocking is pending** the live
+        golden sweep (task 4.3: fixtures 01, 22, 25–28 against the fixtures README's Semantic
+        expectation list); `TESTDATA_CONFIRM: none` suppression ships with that promotion.
       - [x] a grill-me test-data dimension (`grill-test-data-dimension`, branch
         `feat/grill-test-data-dimension`, grill-me 0.3.0 / ticket-planner 0.23.0): profile
         `product-idea` 1.1.0 gains `test_data`, and Discovery points at the sealed intent's

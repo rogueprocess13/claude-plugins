@@ -82,7 +82,7 @@ Crosscheck → EpicGen → TicketGen → Refinement → Completed
 | 2 | **Discovery** | Explores affected repos, traces code paths, gathers context on symbols and APIs; writes the epic-wide `## Test Data Inventory` (entity, states, roles, volume, Source, Load via, privacy — [test-data-source.md §3.1](test-data-source.md)) | Code paths, symbol references, API contracts, test-data inventory | — |
 | 3 | **Architecture** | Determines technical approach, evaluates alternatives | Architecture decision record | — |
 | 4 | **Specify** | Synthesizes proposal + writes per-ticket spec files with signals and a `## Verification Notes` table keyed by each AC's verbatim text (role, test data, test-data `Source` — [#503](https://github.com/willard-pro/claude-plugins/issues/503), expected value, verifiable — planner-ready-by-construction, [#499](https://github.com/willard-pro/claude-plugins/issues/499)) in a single pass; each row's test data is derived from the criterion's Given/When, naming inventory entities, and unowned data is written `Source: generate` (never a hand-written test-data pack); the Description is humanized here, since TicketGen copies it verbatim | `proposal.md`, spec files in `artifacts/specs/` | — |
-| 5 | **Review** | Critiques the proposal for gaps, risks, and feasibility | Review findings | — |
+| 5 | **Review** | Critiques the proposal for gaps, risks, and feasibility | Review findings | Before dispatch, the Specify decision gate halts on an open `NEEDS_HUMAN_DECISION` (deterministic bash — see [Open business decisions](#open-business-decisions-stop-the-run-before-review)) |
 | 6 | **Consensus** | Resolves review findings into a settled, actionable plan | Finalized proposal | — |
 | 7 | **Crosscheck** | *(not an agent — bash)* Runs the citation ([#172](https://github.com/willard-pro/claude-plugins/issues/172)) and cross-ticket propagation ([#173](https://github.com/willard-pro/claude-plugins/issues/173)) linters against the settled artifacts and the live repo, plus the test-data checks. Its first sub-step, `testdata-synth`, synthesizes test-data (TD) specs and `artifacts/testdata-synth.json` for unowned needs before any check family runs ([test-data-source.md §3](test-data-source.md)) | `META|crosscheck` findings in state.log; TD specs + sidecar | Blocking finding halts the dispatch loop before the create gate is even checked ([#178](https://github.com/willard-pro/claude-plugins/issues/178)) |
 | 8 | **EpicGen** | Creates the initiative epic in Linear with no labels; writes the epic manifest. A shared-branch epic with synthesized TD specs gets `**UAT Policy:** epic` unless the `uat-policy` config key (`PLANNER_UAT_POLICY`) is set | Linear epic, epic manifest (`branch`/`uat_policy`/`merge_policy`/`children`) | Idempotency: records intent before creation, checks existence by initiative ID |
@@ -226,6 +226,40 @@ phase codes); TicketGen renders the per-ticket `## Outcome` or `## Enables`.
 Business titles are actor/capability or outcome statements with no code
 identifiers; enabler titles may be technical. The proposal's `# ` H1 stays a short
 initiative name because the epic branch slug is derived from it.
+
+#### Open business decisions stop the run before Review
+
+A `NEEDS_HUMAN_DECISION` marker is a question for a person, and the run now waits
+for it (planner-specify-waiting-on-human). The marker line is
+`**Outcome:** NEEDS_HUMAN_DECISION — <question>` under a `### O<n>` heading of
+`## Business Outcomes`. When the dispatch loop is about to dispatch Review, the
+decision gate (`planner_specify_gate`, `lib/planner-specify-decisions.sh`) scans
+proposal.md. With an open decision it prints the questions and stops with `exit 0`,
+like the create gate. No agent runs, and the state log gets no phase line.
+
+A person releases a decision in one of three ways:
+
+- **Answer.** Headless: `bash lib/planner-stop-describe.sh <INIT_ID>` reports
+  `REASON: SPECIFY_DECISION`, one question per open decision, binding
+  `specify-answer:O<n>`, `AUDIENCE: either` (the client's question; the operator
+  may answer for them). Answer in one line of at most 500 characters, then
+  `/ticket-planner resume <INIT_ID> --answers <file>`. The marker line becomes
+  `**Outcome:** Human decision (verbatim, round N, <role>): "<answer>"`.
+- **Defer.** Answer `__defer__`. The line becomes
+  `**Outcome:** Deferred decision: <question>`, and Epic Gen carries the question
+  into the epic unresolved — exactly the outcome a run had before this gate existed.
+- **Edit.** Change the Outcome line in proposal.md by hand, then
+  `/ticket-planner resume <INIT_ID>`. An answers file sent for the old question then
+  gets `UNKNOWN_QUESTION_ID`; describe again.
+
+The first answer wins: a decision that is no longer open refuses a later answer with
+`UNKNOWN_QUESTION_ID`. The answer text is written to proposal.md and
+`artifacts/answers/round-N.json`, never to state.log, and from proposal.md it reaches
+the Review, Consensus and Epic Gen agents and the Linear epic.
+
+**Trade-off.** Only the Outcome line changes. Who and Need stay as Specify wrote them,
+often "Not specified". Review and Consensus see the decision and may refine them. This
+avoids re-running Specify.
 
 ### 3. Local manifest facts (tracker-planner-and-fallback-cutover)
 

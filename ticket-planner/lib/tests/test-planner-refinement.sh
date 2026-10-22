@@ -730,6 +730,205 @@ else
   fail "planner_refinement_report: lists VPLAN_MISSING for the child" "got: $strict_report"
 fi
 
+# ── dor-semantic-test-data-gap: advisory TEST_DATA_GAP findings ───────────
+# Canned scan blocks (ticket-auto-pipeline fixtures/dor/semantic/) stand in
+# for the dor-semantic-agent. A verified TEST_DATA_GAP is advisory: it never
+# blocks, but Refinement records it once per ticket per body hash and reports
+# it, ready child or not.
+
+echo "--- advisory TEST_DATA_GAP findings ---"
+
+SEMANTIC_FIXTURES_DIR="${FIXTURES_DIR}/semantic"
+
+# _tdg_pdir <INIT> <TID>
+_tdg_pdir() {
+  echo "${REPOS_ROOT}/.ticket-auto/initiatives/${1}/tickets/${2}/planner"
+}
+
+# _tdg_setup <INIT> <EPIC>
+_tdg_setup() {
+  planner_state_init "$1" "test-data gap idea"
+  planner_state_write "$1" "EpicGen" "create" "done" "EPIC_ID=${2}"
+  planner_state_write "$1" "TicketGen" "verify" "done" "ok"
+  write_epic_manifest "$2" "" "per-ticket" "" '[]' >/dev/null
+}
+
+# _tdg_child <INIT> <EPIC> <TID> <fixture-basename>
+_tdg_child() {
+  local pdir
+  write_ticket_manifest "$3" "$1" "feature" '[]' >/dev/null
+  add_epic_manifest_child "$2" "$3" >/dev/null
+  pdir=$(_tdg_pdir "$1" "$3")
+  mkdir -p "$pdir"
+  cp "${FIXTURES_DIR}/${4}.md" "${pdir}/body.md"
+}
+
+# _tdg_canned <INIT> <TID> <scan-file> <audit-file> — render the canned blocks
+# against the child's current body hash.
+_tdg_canned() {
+  local pdir hash
+  pdir=$(_tdg_pdir "$1" "$2")
+  hash=$(_dor_body_hash "$(cat "${pdir}/body.md")")
+  sed -e "s|@TICKET@|${2}|" -e "s|@BODY_HASH@|${hash}|" "$3" >"${pdir}/semantic-scan-result.txt"
+  sed -e "s|@TICKET@|${2}|" -e "s|@BODY_HASH@|${hash}|" "$4" >"${pdir}/semantic-audit-result.txt"
+}
+
+# _tdg_warns <INIT> [TID] — count of refinement-testdata warn lines.
+_tdg_warns() {
+  local log
+  log=$(planner_state_log "$1")
+  if [ -n "${2:-}" ]; then
+    grep -F '|META|refinement-testdata|warn|' "$log" 2>/dev/null | grep -cF "${2} TEST_DATA_GAP" || true
+  else
+    grep -cF '|META|refinement-testdata|warn|' "$log" 2>/dev/null || true
+  fi
+}
+
+TDG_INIT="INIT-1700000005-5555"
+TDG_EPIC="PRO-700"
+TDG_QUOTE="Duplicating a handover from the list creates a draft copy with the same line items"
+_tdg_setup "$TDG_INIT" "$TDG_EPIC"
+_tdg_child "$TDG_INIT" "$TDG_EPIC" "PRO-701" "27-planned-all-none-miss"
+_tdg_child "$TDG_INIT" "$TDG_EPIC" "PRO-702" "22-sourced-contract"
+planner_refinement_scan "$TDG_INIT" >/dev/null
+_tdg_canned "$TDG_INIT" "PRO-701" "${SEMANTIC_FIXTURES_DIR}/27-scan.txt" "${SEMANTIC_FIXTURES_DIR}/27-audit.txt"
+_tdg_canned "$TDG_INIT" "PRO-702" "${SEMANTIC_FIXTURES_DIR}/28-scan.txt" "${SEMANTIC_FIXTURES_DIR}/28-audit.txt"
+
+# (a) ready, gate passes, exactly one warn line naming the tid and the quote
+rc701=0
+planner_refinement_apply "$TDG_INIT" "PRO-701" || rc701=$?
+planner_refinement_apply "$TDG_INIT" "PRO-702" >/dev/null 2>&1 || true
+tdg_log=$(planner_state_log "$TDG_INIT")
+if [ "$rc701" = "0" ] &&
+  get_ticket_manifest_field "PRO-701" ready 2>/dev/null | jq -e '.status == "ready"' >/dev/null; then
+  pass "TEST_DATA_GAP: the all-none child with an advisory finding is ready"
+else
+  fail "TEST_DATA_GAP: the all-none child with an advisory finding is ready" \
+    "rc=$rc701 ready=$(get_ticket_manifest_field "PRO-701" ready 2>/dev/null)"
+fi
+if planner_refinement_gate "$TDG_INIT"; then
+  pass "TEST_DATA_GAP: the gate passes with an advisory finding"
+else
+  fail "TEST_DATA_GAP: the gate passes with an advisory finding" "returned nonzero"
+fi
+warn_line=$(grep -F '|META|refinement-testdata|warn|' "$tdg_log" 2>/dev/null || true)
+if [ "$(_tdg_warns "$TDG_INIT")" = "1" ] && echo "$warn_line" | grep -qF "PRO-701 TEST_DATA_GAP" &&
+  echo "$warn_line" | grep -qF "$TDG_QUOTE"; then
+  pass "TEST_DATA_GAP: exactly one warn line naming the tid and the quote"
+else
+  fail "TEST_DATA_GAP: exactly one warn line naming the tid and the quote" "lines: $warn_line"
+fi
+
+# (b) apply again on the unchanged body: still one line
+planner_refinement_apply "$TDG_INIT" "PRO-701" >/dev/null 2>&1 || true
+if [ "$(_tdg_warns "$TDG_INIT" "PRO-701")" = "1" ]; then
+  pass "TEST_DATA_GAP: re-apply on an unchanged body writes no second warn line"
+else
+  fail "TEST_DATA_GAP: re-apply on an unchanged body writes no second warn line" "count=$(_tdg_warns "$TDG_INIT" "PRO-701")"
+fi
+
+# (c) an edited body records again, with the new hash8
+pdir701=$(_tdg_pdir "$TDG_INIT" "PRO-701")
+printf '\nEdited after review.\n' >>"${pdir701}/body.md"
+_tdg_canned "$TDG_INIT" "PRO-701" "${SEMANTIC_FIXTURES_DIR}/27-scan.txt" "${SEMANTIC_FIXTURES_DIR}/27-audit.txt"
+planner_refinement_apply "$TDG_INIT" "PRO-701" >/dev/null 2>&1 || true
+new_hash8=$(_dor_body_hash "$(cat "${pdir701}/body.md")" | sed 's/^sha256://' | cut -c1-8)
+if [ "$(_tdg_warns "$TDG_INIT" "PRO-701")" = "2" ] &&
+  grep -F '|META|refinement-testdata|warn|' "$tdg_log" | tail -1 | grep -qF "[${new_hash8}]"; then
+  pass "TEST_DATA_GAP: an edited body writes a second warn line with the new hash8"
+else
+  fail "TEST_DATA_GAP: an edited body writes a second warn line with the new hash8" \
+    "count=$(_tdg_warns "$TDG_INIT" "PRO-701") hash8=$new_hash8"
+fi
+
+# (d) the summary: one line for the finding, nothing for an initiative without
+summary=$(planner_refinement_advisory_summary "$TDG_INIT" 2>/dev/null) || summary=""
+if [ "$(echo "$summary" | grep -c 'Advisory (does not block)')" = "1" ] &&
+  echo "$summary" | grep -qF "PRO-701 TEST_DATA_GAP: \"${TDG_QUOTE}\""; then
+  pass "planner_refinement_advisory_summary: one Advisory line for the ready child"
+else
+  fail "planner_refinement_advisory_summary: one Advisory line for the ready child" "got: $summary"
+fi
+summary_none=$(planner_refinement_advisory_summary "$INIT_ID" 2>/dev/null) || summary_none="(rc!=0)"
+if [ -z "$summary_none" ]; then
+  pass "planner_refinement_advisory_summary: prints nothing for an initiative with no finding"
+else
+  fail "planner_refinement_advisory_summary: prints nothing for an initiative with no finding" "got: $summary_none"
+fi
+report_none=$(planner_refinement_report "$INIT_ID")
+if ! echo "$report_none" | grep -q "Advisory test-data findings"; then
+  pass "planner_refinement_report: no advisory heading when there is no finding"
+else
+  fail "planner_refinement_report: no advisory heading when there is no finding" "got: $report_none"
+fi
+
+# (e) a halt: another child not ready on a deterministic code
+_tdg_child "$TDG_INIT" "$TDG_EPIC" "PRO-703" "14-typo-fix"
+planner_refinement_scan "$TDG_INIT" >/dev/null
+if ! planner_refinement_gate "$TDG_INIT"; then
+  pass "TEST_DATA_GAP halt setup: the strict VPLAN_MISSING child halts the gate"
+else
+  fail "TEST_DATA_GAP halt setup: the strict VPLAN_MISSING child halts the gate" "returned 0"
+fi
+tdg_report=$(planner_refinement_report "$TDG_INIT")
+advisory_section=$(echo "$tdg_report" | sed -n '/^## Advisory test-data findings/,$p')
+if echo "$tdg_report" | grep -q "^## PRO-703" && [ -n "$advisory_section" ] &&
+  echo "$advisory_section" | grep -qF "PRO-701 TEST_DATA_GAP"; then
+  pass "planner_refinement_report: halt report carries an advisory section naming the ready child"
+else
+  fail "planner_refinement_report: halt report carries an advisory section naming the ready child" "got: $tdg_report"
+fi
+
+# (f) a non-verbatim quote: no warn line, not ready on SEMANTIC_UNVERIFIED
+TDG2_INIT="INIT-1700000006-6666"
+TDG2_EPIC="PRO-710"
+_tdg_setup "$TDG2_INIT" "$TDG2_EPIC"
+_tdg_child "$TDG2_INIT" "$TDG2_EPIC" "PRO-711" "27-planned-all-none-miss"
+_tdg_child "$TDG2_INIT" "$TDG2_EPIC" "PRO-712" "28-threshold-only-none"
+planner_refinement_scan "$TDG2_INIT" >/dev/null
+sed 's|creates a draft copy with the same line items|creates a draft copy with the identical line items|' \
+  "${SEMANTIC_FIXTURES_DIR}/27-scan.txt" >"${TMPDIR}/tdg-unverified-scan.txt"
+_tdg_canned "$TDG2_INIT" "PRO-711" "${TMPDIR}/tdg-unverified-scan.txt" "${SEMANTIC_FIXTURES_DIR}/27-audit.txt"
+planner_refinement_apply "$TDG2_INIT" "PRO-711" >/dev/null 2>&1 || true
+if [ "$(_tdg_warns "$TDG2_INIT")" = "0" ] &&
+  get_ticket_manifest_field "PRO-711" ready 2>/dev/null |
+  jq -e '.status == "not-ready" and ((.missing // []) | index("SEMANTIC_UNVERIFIED") != null)' >/dev/null; then
+  pass "TEST_DATA_GAP: a non-verbatim quote writes no warn line and blocks on SEMANTIC_UNVERIFIED"
+else
+  fail "TEST_DATA_GAP: a non-verbatim quote writes no warn line and blocks on SEMANTIC_UNVERIFIED" \
+    "warns=$(_tdg_warns "$TDG2_INIT") ready=$(get_ticket_manifest_field "PRO-711" ready 2>/dev/null)"
+fi
+
+# (g) a cached dor-semantic-v1 verdict re-runs once, then converges
+_tdg_canned "$TDG2_INIT" "PRO-712" "${SEMANTIC_FIXTURES_DIR}/28-scan.txt" "${SEMANTIC_FIXTURES_DIR}/28-audit.txt"
+DOR_SEMANTIC_EVALUATOR="dor-semantic-v1" planner_refinement_apply "$TDG2_INIT" "PRO-712" >/dev/null 2>&1 || true
+needs_v1=$(planner_refinement_scan "$TDG2_INIT")
+planner_refinement_apply "$TDG2_INIT" "PRO-712" >/dev/null 2>&1 || true
+needs_v2=$(planner_refinement_scan "$TDG2_INIT")
+if echo "$needs_v1" | grep -qx "PRO-712" && ! echo "$needs_v2" | grep -qx "PRO-712"; then
+  pass "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges"
+else
+  fail "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges" "v1 scan: $needs_v1 / v2 scan: $needs_v2"
+fi
+
+# (h) the warn write failing does not change planner_refinement_apply's rc
+_tdg_child "$TDG2_INIT" "$TDG2_EPIC" "PRO-713" "26-contract-implied-miss"
+planner_refinement_scan "$TDG2_INIT" >/dev/null
+_tdg_canned "$TDG2_INIT" "PRO-713" "${SEMANTIC_FIXTURES_DIR}/26-scan.txt" "${SEMANTIC_FIXTURES_DIR}/26-audit.txt"
+_saved_state_write=$(declare -f planner_state_write)
+# Stubbed through eval: a literal redefinition here makes shellcheck treat
+# every earlier call as a call to a function "only defined later" (SC2218).
+eval 'planner_state_write() { return 1; }'
+rc713=0
+planner_refinement_apply "$TDG2_INIT" "PRO-713" >/dev/null 2>&1 || rc713=$?
+eval "$_saved_state_write"
+if [ "$rc713" = "0" ] && [ "$(_tdg_warns "$TDG2_INIT" "PRO-713")" = "0" ]; then
+  pass "TEST_DATA_GAP: a failing warn write leaves planner_refinement_apply's rc at 0"
+else
+  fail "TEST_DATA_GAP: a failing warn write leaves planner_refinement_apply's rc at 0" \
+    "rc=$rc713 warns=$(_tdg_warns "$TDG2_INIT" "PRO-713")"
+fi
+
 # ── 7.12: sourcing leaves the caller's SCRIPT_DIR and errexit unchanged ───
 
 echo "--- SCRIPT_DIR / errexit non-leak ---"

@@ -15,9 +15,10 @@
 #   _dor_semantic_severity <code>
 #     Prints "blocking" or "advisory". The three bash-owned codes
 #     (SEMANTIC_UNAVAILABLE, SEMANTIC_UNVERIFIED, SEMANTIC_STALE) are always
-#     blocking. Every DOR_SEMANTIC_CODES member is blocking unless listed in
-#     the space-separated env var DOR_SEMANTIC_ADVISORY_CODES (default
-#     empty).
+#     blocking. A code in the fixed DOR_SEMANTIC_ADVISORY_ONLY_CODES list
+#     (TEST_DATA_GAP) is always advisory, whatever the environment says.
+#     Every other DOR_SEMANTIC_CODES member is blocking unless listed in the
+#     space-separated env var DOR_SEMANTIC_ADVISORY_CODES (default empty).
 #
 #   _dor_semantic_dim_code <dimension>
 #     Prints SEMANTIC_<DIMENSION_UPPER> for a dimension key.
@@ -51,6 +52,7 @@ declare -gA DOR_SEMANTIC_CODES=(
   [CONTRADICTORY_REQUIREMENTS]="acceptance_criteria"
   [SCOPE_AMBIGUOUS]="scope"
   [EDGE_CASE_GAP]="edge_cases"
+  [TEST_DATA_GAP]="test_uat"
   [UNSTATED_DEPENDENCY]="dependencies"
   [AC_NOT_TESTABLE]="verification"
 )
@@ -65,6 +67,7 @@ DOR_SEMANTIC_CODE_ORDER=(
   CONTRADICTORY_REQUIREMENTS
   SCOPE_AMBIGUOUS
   EDGE_CASE_GAP
+  TEST_DATA_GAP
   UNSTATED_DEPENDENCY
   AC_NOT_TESTABLE
 )
@@ -73,13 +76,20 @@ DOR_SEMANTIC_CODE_ORDER=(
 # always blocking, unaffected by DOR_SEMANTIC_ADVISORY_CODES.
 DOR_SEMANTIC_BASH_CODES="SEMANTIC_UNAVAILABLE SEMANTIC_UNVERIFIED SEMANTIC_STALE"
 
+# Codes that are advisory whatever the caller sets (dor-semantic-test-data-
+# gap, design.md Decision 4). A fixed constant, deliberately NOT a default for
+# DOR_SEMANTIC_ADVISORY_CODES: a caller that sets that env var would silently
+# drop the default and make the code blocking. Promoting a code to blocking is
+# a one-line change — remove it from this list.
+DOR_SEMANTIC_ADVISORY_ONLY_CODES="TEST_DATA_GAP"
+
 # The four mandatory scan gap verdicts and the dimension/code each is a
 # backstop for (docs/dor-semantic-schema.md § Scan block).
 DOR_SEMANTIC_GAPS="GAP_REQUIREMENT_COMPLETENESS GAP_CONTRADICTORY_REQUIREMENTS GAP_DEEP_SCOPE_AMBIGUITY GAP_EDGE_CASE_SUFFICIENCY"
 
 # design.md Decision 11 — changes whenever the prompt, code vocabulary, or
 # block schema changes.
-DOR_SEMANTIC_EVALUATOR="dor-semantic-v1"
+DOR_SEMANTIC_EVALUATOR="dor-semantic-v2"
 
 _dor_semantic_in_list() {
   case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac
@@ -91,6 +101,10 @@ _dor_semantic_severity() {
   local code="$1"
   if _dor_semantic_in_list "$code" "$DOR_SEMANTIC_BASH_CODES"; then
     echo "blocking"
+    return 0
+  fi
+  if _dor_semantic_in_list "$code" "$DOR_SEMANTIC_ADVISORY_ONLY_CODES"; then
+    echo "advisory"
     return 0
   fi
   if _dor_semantic_in_list "$code" "${DOR_SEMANTIC_ADVISORY_CODES:-}"; then
@@ -315,14 +329,21 @@ applies to an issue, never more than one code per underlying issue:
    second quote, QUOTE_B)
 5. SCOPE_AMBIGUOUS — the scope is present but not concretely bounded
 6. EDGE_CASE_GAP — a specific, plausible edge case is unaddressed
-7. UNSTATED_DEPENDENCY — the ticket assumes something (a flag, a service,
-   prior state) it never names
-8. AC_NOT_TESTABLE — an acceptance criterion cannot be verified as written
+7. TEST_DATA_GAP — an acceptance criterion needs records, users, files or
+   state to exist before it can be verified, and the Test Data Prerequisites
+   section neither lists that data nor names its source. Quote the
+   criterion. DETAIL names the data (what, in what state, how many). A
+   threshold, a timeout, an attempt count or an HTTP status is not data. A
+   ticket whose Test Data Prerequisites already covers the need is clear.
+8. UNSTATED_DEPENDENCY — the ticket assumes something (a flag, a service,
+   another ticket — not test data; use TEST_DATA_GAP) it never names
+9. AC_NOT_TESTABLE — an acceptance criterion cannot be verified as written
 
-Proportionality: EDGE_CASE_GAP, UNSTATED_DEPENDENCY, and NEEDS_HUMAN_DECISION
-fire ONLY when you can name a specific, plausible failure or decision in
-DETAIL — never as a generic "there could be edge cases" hedge. A small,
-non-branching change has no edge cases by design.
+Proportionality: EDGE_CASE_GAP, TEST_DATA_GAP, UNSTATED_DEPENDENCY, and
+NEEDS_HUMAN_DECISION fire ONLY when you can name a specific, plausible
+failure, missing data or decision in DETAIL — never as a generic "there
+could be edge cases" hedge. A small, non-branching change has no edge cases
+by design.
 
 Every QUOTE must be text copied verbatim from the body file (single line).
 For a finding about something ABSENT, quote the sentence that implies the
@@ -344,7 +365,7 @@ BODY_HASH: <the **Body hash** value above, copied exactly — do not compute or 
 FINDING_1_CODE: <code>
 FINDING_1_QUOTE: <verbatim quote>
 FINDING_1_QUOTE_B: <verbatim quote — CONTRADICTORY_REQUIREMENTS only>
-FINDING_1_DETAIL: <specific, plausible failure/decision — required for EDGE_CASE_GAP, UNSTATED_DEPENDENCY, NEEDS_HUMAN_DECISION>
+FINDING_1_DETAIL: <specific, plausible failure/decision — required for EDGE_CASE_GAP, TEST_DATA_GAP, UNSTATED_DEPENDENCY, NEEDS_HUMAN_DECISION>
 GAP_REQUIREMENT_COMPLETENESS: clear|finding|not-applicable
 GAP_REQUIREMENT_COMPLETENESS_REASON: <one line>
 GAP_CONTRADICTORY_REQUIREMENTS: clear|finding|not-applicable

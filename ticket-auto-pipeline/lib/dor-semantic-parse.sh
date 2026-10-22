@@ -43,7 +43,7 @@ _DSP_AUDIT_CLOSE="=== END DOR_SEMANTIC_AUDIT ==="
 # Kept in sync with dor-semantic.sh's DOR_SEMANTIC_CODES, but self-contained
 # — a caller that only needs the parser is not forced to pull in
 # dor-check.sh/manifest-write.sh's heavier dependency chain.
-_DSP_KNOWN_CODES="MISSING_CORE_AC NEEDS_HUMAN_DECISION INTENT_AC_MISMATCH CONTRADICTORY_REQUIREMENTS SCOPE_AMBIGUOUS EDGE_CASE_GAP UNSTATED_DEPENDENCY AC_NOT_TESTABLE"
+_DSP_KNOWN_CODES="MISSING_CORE_AC NEEDS_HUMAN_DECISION INTENT_AC_MISMATCH CONTRADICTORY_REQUIREMENTS SCOPE_AMBIGUOUS EDGE_CASE_GAP TEST_DATA_GAP UNSTATED_DEPENDENCY AC_NOT_TESTABLE"
 
 _DSP_GAP_NAMES="REQUIREMENT_COMPLETENESS CONTRADICTORY_REQUIREMENTS DEEP_SCOPE_AMBIGUITY EDGE_CASE_SUFFICIENCY"
 _DSP_GAP_VERDICTS="clear finding not-applicable"
@@ -56,6 +56,7 @@ _dsp_code_dimension() {
   CONTRADICTORY_REQUIREMENTS) echo "acceptance_criteria" ;;
   SCOPE_AMBIGUOUS) echo "scope" ;;
   EDGE_CASE_GAP) echo "edge_cases" ;;
+  TEST_DATA_GAP) echo "test_uat" ;;
   UNSTATED_DEPENDENCY) echo "dependencies" ;;
   AC_NOT_TESTABLE) echo "verification" ;;
   esac
@@ -337,6 +338,14 @@ parse_dor_semantic() {
       if [ "$code" = "CONTRADICTORY_REQUIREMENTS" ] && [ -z "$quote_b" ]; then
         status="invalid"
         err="FINDING_${idx} (CONTRADICTORY_REQUIREMENTS) missing QUOTE_B"
+        break
+      fi
+      # dor-semantic-test-data-gap: a TEST_DATA_GAP that cannot name the
+      # missing data is the generic hedge the prompt's proportionality rule
+      # forbids — reject the block rather than store an unactionable finding.
+      if [ "$code" = "TEST_DATA_GAP" ] && [ -z "$detail" ]; then
+        status="invalid"
+        err="FINDING_${idx} (TEST_DATA_GAP) missing DETAIL"
         break
       fi
 

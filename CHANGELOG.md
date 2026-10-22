@@ -51,6 +51,123 @@ grill-me now asks where test data comes from, and the planner's Discovery phase 
   run.
 - Intents sealed before 0.3.0 still verify, and Discovery renders exactly as before for them.
 
+## 0.69.0 / ticket-planner 0.22.0 (2026-10-22)
+
+The semantic Definition-of-Ready evaluator gains an **advisory** test-data backstop
+(`dor-semantic-test-data-gap`). It catches acceptance criteria that need data to exist before they
+can be verified when the planner's keyword heuristic missed them.
+
+### Added
+- **`TEST_DATA_GAP` semantic code** (dimension `test_uat`): fires when a criterion needs records,
+  users, files or state, and the Test Data Prerequisites section neither lists that data nor names
+  its source. `DETAIL` must name the data; an empty `DETAIL` rejects the block. Thresholds,
+  timeouts, attempt counts and HTTP statuses are not data. `UNSTATED_DEPENDENCY` no longer covers
+  "prior state", so one issue gets one code.
+- **Advisory only, fixed in code**: the new constant `DOR_SEMANTIC_ADVISORY_ONLY_CODES="TEST_DATA_GAP"`
+  makes it advisory whatever `DOR_SEMANTIC_ADVISORY_CODES`, the strict flags or the ticket type say.
+  It never joins `ready.missing` and never blocks dispatch. A non-verbatim quote still raises
+  `SEMANTIC_UNVERIFIED`, as for every code.
+- **Refinement reporting** (ticket-planner 0.22.0): `META|refinement-testdata|warn` lines (once per
+  ticket per body hash), `planner_refinement_advisory_summary`, an `## Advisory test-data findings`
+  section at the end of the halt report, the summary on the gate-pass branch, and the lines under
+  Completed's Warnings.
+- Golden fixtures 26–28 (two heuristic misses and a threshold-only negative control), canned
+  scan/audit blocks, `lib/tests/test-dor-semantic-testdata.sh`, and a Semantic expectation list in
+  the fixtures README for the manual live sweep.
+
+### Changed
+- **Evaluator `dor-semantic-v2`**: the block schema is unchanged (`SCHEMA_VERSION: 1`, four gaps),
+  so every v1 block still parses. Refinement re-runs a cached v1 verdict once; initiatives past
+  Refinement are not re-run. Waivers survive the re-run.
+
+### Upgrade notes
+- **Version coupling**: ship ticket-auto-pipeline 0.69.0 first or together with ticket-planner
+  0.22.0. A new planner against an older ticket-auto lib finds no `TEST_DATA_GAP` findings and
+  writes nothing. An older planner against the new lib stores advisory findings it never reports.
+  An older parser that sees `TEST_DATA_GAP` rejects the block (one retry, then
+  `SEMANTIC_UNAVAILABLE`), which only happens on a partial install.
+- **Not yet blocking**: promotion to blocking, and suppression for a `TESTDATA_CONFIRM: none`
+  answer, wait on a live golden sweep against the README's Semantic expectation list.
+
+## ticket-planner 0.21.0 (2026-10-22)
+
+A headless client can now ask a question back about the plan instead of answering the
+open question (`planner-artifact-qa`). Only ticket-planner moves; ticket-auto-pipeline is
+unchanged.
+
+### Added
+- **`lib/planner-artifact-qa.sh <INIT_ID> --question-file <f|-> [--qa-id <id>] [--about <QID>]`**:
+  answers a question from a read-only snapshot of the initiative's artifacts and prints one
+  JSON object (`status` `answered` or `not_in_plan`, `answer`, `sources`, `about_open`,
+  `phase_running`, `snapshot_unstable`, `round`). It is the only planner code that spawns
+  `claude`, and it does so as its own subprocess, so the sandbox does not depend on the
+  caller's permission mode.
+- **Four sandbox layers**: a throwaway read-only snapshot (single-link regular files only; no
+  symlinks, dot-paths, `answers/`, `_qa/` or agent instruction files such as `CLAUDE.md`,
+  `CLAUDE.local.md` or `agents*.md` in any letter case; 512 KiB per file, 4 MiB total; rebuilt
+  once on a torn copy); a restricted argv (`dontAsk`, `--restricted`, `Read,Grep,Glob` only,
+  no MCP, cwd = snapshot, question on stdin in a nonce delimiter, `env -i` allowlist,
+  `timeout -k`, `--max-budget-usd 0.50`); a check of the session's `init` message; and a
+  fingerprint re-check afterwards. Layers 3 and 4 fail with rc 5 and are never retried.
+- **Grounding and cleaning**: an answer with no source in the snapshot becomes the fixed
+  `That is not in the plan yet.`; the answer loses the snapshot path, tool-error lines and
+  Slack control sequences, is redacted with the `_hh_redact` rules (copied verbatim, guarded
+  by a drift test) plus `sk-ant-`, `github_pat_`, `glpat-` and unknown email addresses, and is
+  capped at 1500 characters.
+- **Exit codes** (its own table, not `planner-answers.sh`'s): 0 answered, 1 could not run,
+  2 input rejected, 3 `NO_ARTIFACTS`, 4 `QA_MODEL_FAILED` (retry once with the same
+  `--qa-id`, except `budget`), 5 `QA_UNSAFE_RUNTIME`/`QA_INTEGRITY`.
+- **Audit**: one `ISO|QA|ask|<status>|qa_id=<id> rc=<n>` line in `<init>/qa.log` (no
+  question or answer text) and a 0600 record `<init>/qa/<qa_id>.json` with cost and
+  permission-denial counts. Nothing is written to `artifacts/` or `state.log`, and the open
+  answers round is never touched.
+- `lib/tests/test-planner-artifact-qa.sh` (116 checks, registered in `make test-planner`)
+  with a stub CLI and fixtures captured from Claude Code 2.1.307.
+
+### Requires
+- `claude` 2.1.307 or newer, and GNU `timeout` (or `gtimeout`).
+
+## 0.68.0 / ticket-planner 0.20.0 (2026-10-22)
+
+A planning run now stops and asks when Specify could not source a business outcome
+(`planner-specify-waiting-on-human`). Before, the `NEEDS_HUMAN_DECISION` marker sat in
+proposal.md, the run went straight on to Review, and no one was ever asked. These versions
+follow PR #528 (0.67.0 / ticket-planner 0.19.1); whichever of the two merges second rebases
+its version lines.
+
+### Added
+- **Decision gate before Review** (ticket-planner): `lib/planner-specify-decisions.sh`.
+  SKILL.md step 1c runs `planner_specify_gate` when the loop is about to dispatch Review, and
+  halts (exit 0, no agent spawned, no phase line) while proposal.md has an open
+  `**Outcome:** NEEDS_HUMAN_DECISION — <question>` under a `### O<n>` heading. The scan is
+  line-anchored and fence-aware. A token it does not ask about is recorded once as a
+  `META|specify-gate|warn` line. `status` shows `Review — waiting on N business decision(s)`.
+- **`SPECIFY_DECISION` stop reason**: `planner-stop-describe.sh` asks one free-text question
+  per open decision (`KIND input`, `AUDIENCE either`, id `decision-O<n>-<hash8>`, no options,
+  no default). ticket-auto-pipeline's `human-hold-parse.sh` accepts the reason in v2 blocks.
+- **`specify-answer:O<n>` binding**: `resume --answers` replaces the marker line with
+  `**Outcome:** Human decision (verbatim, round N, <role>): "<answer>"` (one line, at most
+  500 characters, comments, fences and the marker token neutralised). The first answer wins; an
+  answer to a closed or edited decision is `UNKNOWN_QUESTION_ID`. The answer text is never
+  written to state.log (`META|specify-answer` records only id, hash, round and who).
+- **`__defer__` sentinel**: writes `**Outcome:** Deferred decision: <question>`. Documented
+  beside `__skip__`/`__none__` in `docs/human-hold-schema.md`.
+- **Intake lock**: every `--answers` intake now runs under a per-initiative lock
+  (`flock` on `<state.log>.answers-lock`, else a bounded `mkdir` lock and exit 1 `INTAKE_BUSY`).
+
+### Changed
+- A run with an open `NEEDS_HUMAN_DECISION` now halts before Review instead of flowing through.
+  `__defer__` restores the old outcome: Epic Gen carries the question into the epic unresolved
+  (its prompt now names both `NEEDS_HUMAN_DECISION` and `Deferred decision:`). The Specify prompt
+  is unchanged.
+- Headless callers (dexter) must bump their pins and accept `SPECIFY_DECISION`,
+  `AUDIENCE either` and `specify-answer:O<n>`; see the change's design notes on serialised answers,
+  partial rounds and never auto-answering.
+
+### Fixed
+- `test-human-hold-parse.sh`: a failing case no longer aborts the whole file silently under
+  `set -e`.
+
 ## 0.67.0 / ticket-planner 0.19.1 (2026-10-22)
 
 The Definition-of-Ready check now agrees with the ticket templates it enforces, and

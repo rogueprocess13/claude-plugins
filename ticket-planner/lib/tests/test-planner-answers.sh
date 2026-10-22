@@ -419,6 +419,307 @@ else
   pass "testdata: intake re-derives the hash from the spec (stale hash → STALE_QUESTION)"
 fi
 
+# ── Specify decisions (planner-specify-waiting-on-human) ───────────────────
+
+echo "--- specify decisions ---"
+
+SD_PROPOSAL='# Proposal
+
+## Business Outcomes
+
+### O1
+**Who:** Not specified
+**Need:** Not specified
+**Outcome:** NEEDS_HUMAN_DECISION — which role consumes the classified documents?
+
+### O2
+**Outcome:** Finance users export invoices without asking support.
+
+### O3
+**Outcome:** NEEDS_HUMAN_DECISION: how often is the export run?
+
+## Risks
+
+None.'
+SD_Q1="which role consumes the classified documents?"
+
+# sd_fresh <name> — Specify done, position Review, O1 and O3 open.
+sd_fresh() {
+  export REPOS_ROOT="${WORK}/repos-$1"
+  rm -rf "$REPOS_ROOT"
+  mkdir -p "$REPOS_ROOT"
+  planner_state_init "$INIT" "idea" >/dev/null
+  _halt_done "$INIT" Appraisal Discovery Architecture Specify
+  printf '%s\n' "$SD_PROPOSAL" >"$(sd_proposal)"
+}
+sd_proposal() { echo "$(planner_initiative_dir "$INIT")/artifacts/proposal.md"; }
+# sd_hash <oid> — the open decision's hash8, from the scan.
+sd_hash() { planner_specify_decisions_open "$INIT" | awk -F'\t' -v o="$1" '$1 == o { print $2 }'; }
+# sd_line <oid> — the Outcome line under ### <oid>.
+sd_line() { awk -v o="### $1" '$0 == o { on = 1; next } /^#/ { on = 0 } on && /^\*\*Outcome:\*\*/ { print; exit }' "$(sd_proposal)"; }
+# sd_answers <file> <round> <id> <value> <role> [<id> <value> <role>]...
+sd_answers() {
+  local file="$1" round="$2" list="[]"
+  shift 2
+  while [ "$#" -ge 3 ]; do
+    list=$(jq -nc --argjson l "$list" --arg id "$1" --arg value "$2" --arg role "$3" --arg ts "$TS" \
+      '$l + [{id: $id, value: $value, answered_by: "U123", role: $role, ts: $ts}]')
+    shift 3
+  done
+  jq -n --argjson round "$round" --argjson a "$list" '{schema_version: 1, round: $round, answers: $a}' >"$file"
+}
+sd_snapshot() {
+  {
+    snapshot
+    sha256sum <"$(sd_proposal)"
+  } | sha256sum
+}
+sd_log() { cat "$(planner_state_log "$INIT")"; }
+sd_gate_rc() {
+  local rc=0
+  planner_specify_gate "$INIT" || rc=$?
+  echo "$rc"
+}
+
+if ! declare -f planner_specify_decisions_open >/dev/null 2>&1 ||
+  ! declare -f planner_specify_render_answer >/dev/null 2>&1; then
+  fail "specify decisions: tests" "planner-specify-decisions.sh is not sourced by planner-answers.sh"
+else
+  # A client answer to O1 only: substituted, logged without its text, round 1
+  # closes, round 2 asks only O3.
+  sd_fresh sd-client
+  H1=$(sd_hash O1)
+  H3=$(sd_hash O3)
+  sd_answers "${WORK}/sd.json" 1 "decision-O1-${H1}" "Tax accountants preparing returns" client
+  apply "${WORK}/sd.json"
+  if [ "$RC" -eq 0 ] &&
+    [ "$(sd_line O1)" = '**Outcome:** Human decision (verbatim, round 1, client): "Tax accountants preparing returns"' ] &&
+    log_has "|META|specify-answer|step|O1 \[${H1}\] answered (round 1, by U123, client)" &&
+    [ "$(grep -c 'Tax accountants' "$(planner_state_log "$INIT")")" = "0" ] &&
+    log_has '|META|human-hold|done|round=1 '; then
+    pass "specify: a client answer is substituted and logged without its text"
+  else
+    fail "specify: a client answer is substituted and logged without its text" "rc=$RC err=$ERR line=$(sd_line O1)"
+  fi
+  rf="$(planner_initiative_dir "$INIT")/artifacts/answers/round-1.json"
+  if [ "$(jq -r '.answers[0] | .question + "|" + .value + "|" + .binding' "$rf" 2>/dev/null)" = "${SD_Q1}|Tax accountants preparing returns|specify-answer:O1" ]; then
+    pass "specify: round-1.json holds the question and the value"
+  else
+    fail "specify: round-1.json holds the question and the value" "$(cat "$rf" 2>/dev/null)"
+  fi
+  if tail -1 "$(planner_state_log "$INIT")" | grep -q '|META|human-hold|done|round=1 '; then
+    pass "specify: META|human-hold|done is the last line"
+  else
+    fail "specify: META|human-hold|done is the last line" "$(tail -1 "$(planner_state_log "$INIT")")"
+  fi
+  m=$(planner_stop_describe_json "$INIT")
+  if [ "$(echo "$m" | jq -r '.reason + " " + (.round|tostring) + " " + ([.questions[].id] | join(" "))')" = "SPECIFY_DECISION 2 decision-O3-${H3}" ]; then
+    pass "specify: partial answers close round 1; round 2 asks only O3"
+  else
+    fail "specify: partial answers close round 1; round 2 asks only O3" "$m"
+  fi
+
+  # Replaying the same file is a no-op.
+  log_before=$(sd_log)
+  prop_before=$(cat "$(sd_proposal)")
+  apply "${WORK}/sd.json"
+  if [ "$RC" -eq 0 ] && [[ "$OUT" == *ANSWERS_ALREADY_APPLIED* ]] &&
+    [ "$(sd_log)" = "$log_before" ] && [ "$(cat "$(sd_proposal)")" = "$prop_before" ]; then
+    pass "specify: replaying the same file is ANSWERS_ALREADY_APPLIED, nothing changes"
+  else
+    fail "specify: replaying the same file is ANSWERS_ALREADY_APPLIED, nothing changes" "rc=$RC out=$OUT"
+  fi
+
+  # First answer wins.
+  sd_answers "${WORK}/sd-b.json" 1 "decision-O1-${H1}" "Somebody else" operator
+  before=$(sd_snapshot)
+  apply "${WORK}/sd-b.json"
+  if [ "$RC" -eq 3 ] && [[ "$ERR" == *ROUND_ALREADY_ANSWERED* ]] && [ "$(sd_snapshot)" = "$before" ]; then
+    pass "specify: a different file for answered round 1 → exit 3"
+  else
+    fail "specify: a different file for answered round 1 → exit 3" "rc=$RC err=$ERR"
+  fi
+  sd_answers "${WORK}/sd-c.json" 2 "decision-O1-${H1}" "Somebody else" operator
+  apply "${WORK}/sd-c.json"
+  if [ "$RC" -eq 2 ] && [[ "$ERR" == UNKNOWN_QUESTION_ID:* ]] && [ "$(sd_snapshot)" = "$before" ] &&
+    [[ "$(sd_line O1)" == *'"Tax accountants preparing returns"' ]]; then
+    pass "specify: an answer to O1 in round 2 → UNKNOWN_QUESTION_ID; O1 keeps the first answer"
+  else
+    fail "specify: an answer to O1 in round 2 → UNKNOWN_QUESTION_ID; O1 keeps the first answer" "rc=$RC err=$ERR"
+  fi
+
+  # __defer__ (padded, from a client) on O1, an answer on O3.
+  sd_fresh sd-defer
+  sd_answers "${WORK}/sd.json" 1 "decision-O1-$(sd_hash O1)" "  __defer__  " client "decision-O3-$(sd_hash O3)" "Weekly" client
+  apply "${WORK}/sd.json"
+  if [ "$RC" -eq 0 ] && [ "$(sd_line O1)" = "**Outcome:** Deferred decision: ${SD_Q1}" ] &&
+    log_has "|META|specify-answer|step|O1 \[[0-9a-f]*\] deferred (round 1, by U123, client)" &&
+    [ "$(sd_gate_rc)" = "0" ] && [ "$(planner_stop_describe "$INIT")" = "REASON=RUNNING" ]; then
+    pass "specify: a client __defer__ writes the Deferred decision line; the gate clears; nothing is re-asked"
+  else
+    fail "specify: a client __defer__ writes the Deferred decision line; the gate clears; nothing is re-asked" "rc=$RC err=$ERR line=$(sd_line O1)"
+  fi
+  if [ "$(jq -r '.answers[0].value' "$(planner_initiative_dir "$INIT")/artifacts/answers/round-1.json")" = "__defer__" ]; then
+    pass "specify: the deferral is stored trimmed"
+  else
+    fail "specify: the deferral is stored trimmed" "$(jq -c '.answers[0]' "$(planner_initiative_dir "$INIT")/artifacts/answers/round-1.json")"
+  fi
+
+  # Rejections: blank, 501 characters. Nothing written either time.
+  sd_fresh sd-reject
+  for bad in "   " "$(printf 'b%.0s' $(seq 1 501))"; do
+    sd_answers "${WORK}/sd.json" 1 "decision-O1-$(sd_hash O1)" "$bad" operator
+    before=$(sd_snapshot)
+    apply "${WORK}/sd.json"
+    if [ "$RC" -eq 2 ] && [[ "$ERR" == INVALID_VALUE:* ]] && [ "$(sd_snapshot)" = "$before" ]; then
+      pass "specify: a ${#bad}-character value is INVALID_VALUE, nothing written"
+    else
+      fail "specify: a ${#bad}-character value is INVALID_VALUE, nothing written" "rc=$RC err=$ERR"
+    fi
+  done
+  sd_answers "${WORK}/sd.json" 1 "decision-O1-$(sd_hash O1)" "$(printf 'é%.0s' $(seq 1 500))" operator
+  apply "${WORK}/sd.json"
+  if [ "$RC" -eq 0 ]; then
+    pass "specify: 500 characters (multi-byte) is accepted — the cap counts characters"
+  else
+    fail "specify: 500 characters (multi-byte) is accepted — the cap counts characters" "rc=$RC err=$ERR"
+  fi
+
+  # Multi-line flattened.
+  sd_fresh sd-multiline
+  sd_answers "${WORK}/sd.json" 1 "decision-O1-$(sd_hash O1)" "$(printf 'line one\nline two')" operator
+  apply "${WORK}/sd.json"
+  if [ "$RC" -eq 0 ] && [ "$(sd_line O1)" = '**Outcome:** Human decision (verbatim, round 1, operator): "line one line two"' ] &&
+    [ "$(wc -l <"$(sd_proposal)")" = "$(printf '%s\n' "$SD_PROPOSAL" | wc -l)" ]; then
+    pass "specify: a multi-line value is flattened to one line"
+  else
+    fail "specify: a multi-line value is flattened to one line" "rc=$RC line=$(sd_line O1)"
+  fi
+
+  # Injection: literal, no file, no fence, no comment, no new marker.
+  sd_fresh sd-inject
+  pwned="${WORK}/sd-pwned"
+  evil="\$(touch ${pwned}) \`touch ${pwned}\` <!-- hide --> ~~~ \`\`\` NEEDS_HUMAN_DECISION \"quoted\""
+  sd_answers "${WORK}/sd.json" 1 "decision-O1-$(sd_hash O1)" "$evil" client
+  apply "${WORK}/sd.json"
+  l1=$(sd_line O1)
+  if [ "$RC" -eq 0 ] && [ ! -e "$pwned" ] &&
+    [[ "$l1" == *"\$(touch ${pwned})"* ]] && [[ "$l1" != *'<!--'* ]] && [[ "$l1" != *'~~~'* ]] &&
+    [[ "$l1" != *'```'* ]] && [[ "$l1" != *NEEDS_HUMAN_DECISION* ]] &&
+    [ "$(planner_specify_decisions_open "$INIT" | cut -f1 | paste -sd' ')" = "O3" ] &&
+    [ -z "$(planner_specify_decisions_stray "$INIT")" ]; then
+    pass "specify: injection text lands literal and inert (no file, fence, comment or marker)"
+  else
+    fail "specify: injection text lands literal and inert (no file, fence, comment or marker)" "rc=$RC line=${l1}"
+  fi
+
+  # Edited proposal: the old id no longer resolves.
+  sd_fresh sd-edited
+  sd_answers "${WORK}/sd.json" 1 "decision-O1-$(sd_hash O1)" "Accountants" operator
+  sed -i 's/which role consumes the classified documents?/which team reads the classified documents?/' "$(sd_proposal)"
+  before=$(sd_snapshot)
+  apply "${WORK}/sd.json"
+  if [ "$RC" -eq 2 ] && [[ "$ERR" == UNKNOWN_QUESTION_ID:* ]] && [ "$(sd_snapshot)" = "$before" ]; then
+    pass "specify: an edited question → UNKNOWN_QUESTION_ID, nothing written"
+  else
+    fail "specify: an edited question → UNKNOWN_QUESTION_ID, nothing written" "rc=$RC err=$ERR"
+  fi
+
+  # ── race and guards ──
+  sd_fresh sd-race
+  H1=$(sd_hash O1)
+  sd_answers "${WORK}/race-a.json" 1 "decision-O1-${H1}" "Alpha answer" operator
+  sd_answers "${WORK}/race-b.json" 1 "decision-O1-${H1}" "Beta answer" operator
+  bash "$ANSWERS" "$INIT" "${WORK}/race-a.json" >/dev/null 2>&1 &
+  p1=$!
+  bash "$ANSWERS" "$INIT" "${WORK}/race-b.json" >/dev/null 2>&1 &
+  p2=$!
+  r1=0
+  wait "$p1" || r1=$?
+  r2=0
+  wait "$p2" || r2=$?
+  codes=$(printf '%s\n%s\n' "$r1" "$r2" | sort | paste -sd' ')
+  if [ "$codes" = "0 3" ] && [ "$(grep -c 'Human decision' "$(sd_proposal)")" = "1" ] &&
+    [ "$(grep -c '|META|human-hold|start|round=1 ' "$(planner_state_log "$INIT")")" = "1" ] &&
+    [ "$(grep -c '|META|human-hold|done|round=1 ' "$(planner_state_log "$INIT")")" = "1" ]; then
+    pass "specify: two concurrent intakes → one 0, one 3, one answer, one start/done pair"
+  else
+    fail "specify: two concurrent intakes → one 0, one 3, one answer, one start/done pair" "codes=${codes} answers=$(grep -c 'Human decision' "$(sd_proposal)")"
+  fi
+
+  # Re-hash guard: a hand edit between validation and the proposal write.
+  sd_fresh sd-rehash
+  sd_answers "${WORK}/sd.json" 1 "decision-O1-$(sd_hash O1)" "Accountants" operator
+  out=$(LIB_DIR="$LIB_DIR" INIT="$INIT" F="${WORK}/sd.json" bash -c '
+    source "${LIB_DIR}/planner-answers.sh"
+    _planner_answers_pre_proposal_write() { sed -i "s/^None\.\$/None (edited by hand)./" "$1"; }
+    planner_answers_apply "$INIT" "$F"' 2>&1)
+  rc=$?
+  if [ "$rc" -eq 2 ] && [[ "$out" == *UNKNOWN_QUESTION_ID* ]] &&
+    grep -q '^None (edited by hand)\.$' "$(sd_proposal)" &&
+    grep -q '^\*\*Outcome:\*\* NEEDS_HUMAN_DECISION — which role' "$(sd_proposal)" &&
+    log_has '|META|human-hold|start|round=1 ' && ! log_has '|META|human-hold|done|round=1 ' &&
+    ! ls "$(dirname "$(sd_proposal)")" | grep -q '\.tmp'; then
+    pass "specify: a hand edit racing intake → UNKNOWN_QUESTION_ID; the edit is kept; start without done"
+  else
+    fail "specify: a hand edit racing intake → UNKNOWN_QUESTION_ID; the edit is kept; start without done" "rc=$rc out=$out"
+  fi
+
+  # Crash after the proposal mv, before done: the replay completes the round.
+  sd_fresh sd-crash
+  sd_answers "${WORK}/sd.json" 1 "decision-O1-$(sd_hash O1)" "Accountants" operator "decision-O3-$(sd_hash O3)" "__defer__" operator
+  apply "${WORK}/sd.json"
+  sed -i '$d' "$(planner_state_log "$INIT")" # drop the done line
+  prop_before=$(sha256sum <"$(sd_proposal)")
+  apply "${WORK}/sd.json"
+  if [ "$RC" -eq 0 ] && [[ "$OUT" == *ANSWERS_ALREADY_APPLIED* ]] &&
+    [ "$(grep -c '|META|human-hold|done|round=1 ' "$(planner_state_log "$INIT")")" = "1" ] &&
+    [ "$(sha256sum <"$(sd_proposal)")" = "$prop_before" ]; then
+    pass "specify: replay after a crash between the proposal write and done appends done once"
+  else
+    fail "specify: replay after a crash between the proposal write and done appends done once" "rc=$RC out=$OUT err=$ERR"
+  fi
+  apply "${WORK}/sd.json"
+  if [ "$RC" -eq 0 ] && [ "$(grep -c '|META|human-hold|done|round=1 ' "$(planner_state_log "$INIT")")" = "1" ]; then
+    pass "specify: a second replay is a plain no-op"
+  else
+    fail "specify: a second replay is a plain no-op" "rc=$RC"
+  fi
+
+  # mkdir-lock fallback: no flock on PATH, a stale lock dir → INTAKE_BUSY.
+  sd_fresh sd-mkdir
+  noflock="${WORK}/noflock-bin"
+  mkdir -p "$noflock"
+  IFS=: read -ra _path_dirs <<<"$PATH"
+  for _d in "${_path_dirs[@]}"; do
+    for _f in "$_d"/*; do
+      _b="${_f##*/}"
+      [ "$_b" = "flock" ] && continue
+      [ -e "${noflock}/${_b}" ] || ln -s "$_f" "${noflock}/${_b}" 2>/dev/null || true
+    done
+  done
+  BASH_BIN=$(command -v bash)
+  sd_answers "${WORK}/sd.json" 1 "decision-O1-$(sd_hash O1)" "Accountants" operator
+  mkdir "$(planner_state_log "$INIT").answers-lock.d"
+  before=$(sd_snapshot)
+  out=$(PATH="$noflock" PLANNER_ANSWERS_LOCK_WAIT_SECS=1 "$BASH_BIN" "$ANSWERS" "$INIT" "${WORK}/sd.json" 2>&1)
+  rc=$?
+  if ! PATH="$noflock" command -v flock >/dev/null 2>&1 &&
+    [ "$rc" -eq 1 ] && [[ "$out" == *INTAKE_BUSY* ]] && [ "$(sd_snapshot)" = "$before" ]; then
+    pass "specify: without flock, a held mkdir lock gives INTAKE_BUSY (exit 1), nothing written"
+  else
+    fail "specify: without flock, a held mkdir lock gives INTAKE_BUSY (exit 1), nothing written" "rc=$rc out=$out"
+  fi
+  rmdir "$(planner_state_log "$INIT").answers-lock.d"
+  out=$(PATH="$noflock" "$BASH_BIN" "$ANSWERS" "$INIT" "${WORK}/sd.json" 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ] && [ ! -e "$(planner_state_log "$INIT").answers-lock.d" ]; then
+    pass "specify: the mkdir lock is taken and released when free"
+  else
+    fail "specify: the mkdir lock is taken and released when free" "rc=$rc out=$out"
+  fi
+fi
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]
