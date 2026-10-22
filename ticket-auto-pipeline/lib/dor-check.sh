@@ -295,14 +295,20 @@ _dor_ac_is_edge_case() {
 }
 
 # _dor_ac_count <body> — approximate acceptance-criteria row count, used only
-# to size VPLAN_ROW_GAP's comparison. Checkbox items first (the documented
+# to size VPLAN_ROW_GAP's comparison. Counts only inside the `## Acceptance
+# Criteria` section (up to the next level-1/2 heading; `###` subsections stay
+# in), so other checkbox lists — e.g. an Environment `- [X] Local` / `- [ ]
+# UAT` checklist — never inflate it (#535). Falls back to the whole body only
+# when that section is absent or empty. Checkbox items first (the documented
 # `- [ ]` shape), falling back to any bullet/numbered/AC-prefixed line.
 _dor_ac_count() {
-  local body="$1" n
-  n=$(echo "$body" | grep -cP '^\s*- \[[ xX]\]\s' 2>/dev/null || true)
+  local body="$1" section n
+  section=$(echo "$body" | awk '/^##[[:space:]]*Acceptance Criteria/ {found=1; next} found && /^#/ && !/^###/ {exit} found {print}')
+  [ -n "$(echo "$section" | tr -d '[:space:]')" ] || section="$body"
+  n=$(echo "$section" | grep -cP '^\s*- \[[ xX]\]\s' 2>/dev/null || true)
   n="${n//[^0-9]/}"
   if [ -z "$n" ] || [ "$n" -eq 0 ] 2>/dev/null; then
-    n=$(echo "$body" | grep -cE '^\s*[-*]\s|^\s*[0-9]+[.)]\s|^\s*AC[:]' 2>/dev/null || true)
+    n=$(echo "$section" | grep -cE '^\s*[-*]\s|^\s*[0-9]+[.)]\s|^\s*AC[:]' 2>/dev/null || true)
     n="${n//[^0-9]/}"
   fi
   [ -n "$n" ] || n=0
@@ -1460,6 +1466,59 @@ check_ticket_ready() {
   return 1
 }
 
+# _dor_reconcile_cached_needs_info <TID> <ready_json>
+# check_ticket_ready records FLAG_NEEDS_INFO in `missing` from the manifest's
+# live `flags` at scan time, but a cached verdict is otherwise invalidated
+# only by a body edit — so once `needs-info-resolved` cleared the flag (a
+# released human hold, /ticket-approve), an unchanged-body cache hit kept
+# reporting FLAG_NEEDS_INFO and the ticket stayed not-ready until a full
+# re-appraisal rewrote the verdict. This re-derives just that one code from
+# the live flag and, when it differs from the cache, writes the corrected
+# verdict back through set_ticket_readiness (which recomputes `status`
+# against the preserved waivers and keeps a semantic verdict whose
+# body_hash still matches). Prints the (possibly rewritten) ready object;
+# on any failure prints the input unchanged.
+_dor_reconcile_cached_needs_info() {
+  local tid="$1" ready_json="$2"
+  local live="false"
+  if declare -f ticket_dispatch_blocked_by_flags >/dev/null 2>&1 &&
+    ticket_dispatch_blocked_by_flags "$tid" 2>/dev/null; then
+    live="true"
+  fi
+  local cached
+  cached=$(echo "$ready_json" | jq -r '((.missing // []) | index("FLAG_NEEDS_INFO")) != null' 2>/dev/null) || cached=""
+  if [ -z "$cached" ] || [ "$cached" = "$live" ] || ! declare -f set_ticket_readiness >/dev/null 2>&1; then
+    echo "$ready_json"
+    return 0
+  fi
+
+  # SEMANTIC_* codes are dropped from the passed list: set_ticket_readiness
+  # re-derives them itself from the old `missing` (carried forward on a
+  # matching body_hash, collapsed to SEMANTIC_STALE otherwise).
+  local new_missing advisory extras status
+  new_missing=$(echo "$ready_json" | jq -c --argjson live "$live" \
+    '[(.missing // [])[] | select(. != "FLAG_NEEDS_INFO" and (startswith("SEMANTIC_") | not))]
+     + (if $live then ["FLAG_NEEDS_INFO"] else [] end)' 2>/dev/null) || new_missing=""
+  advisory=$(echo "$ready_json" | jq -c '.advisory // []' 2>/dev/null) || advisory=""
+  extras=$(echo "$ready_json" | jq -c '{score, dimensions, gaps, body_hash} | with_entries(select(.value != null))' 2>/dev/null) || extras=""
+  if [ -z "$new_missing" ] || [ -z "$advisory" ] || [ -z "$extras" ]; then
+    echo "$ready_json"
+    return 0
+  fi
+  status="ready"
+  [ "$new_missing" = "[]" ] || status="not-ready"
+
+  local rewritten=""
+  if set_ticket_readiness "$tid" "$status" "$new_missing" "$advisory" "$extras" >/dev/null 2>&1; then
+    rewritten=$(get_ticket_manifest_field "$tid" ready 2>/dev/null) || rewritten=""
+  fi
+  if [ -n "$rewritten" ]; then
+    echo "$rewritten"
+  else
+    echo "$ready_json"
+  fi
+}
+
 # ensure_ticket_readiness <TID> [--body <file>] [--type <type>]
 # The self-healing resolution path (design.md Decision 3). Trusts and
 # returns a cached `ready` object when it is still fresh; computes and
@@ -1559,7 +1618,10 @@ ensure_ticket_readiness() {
     fi
 
     # No local body, hash matches, or legacy cache with no hash — trust the
-    # cached verdict as-is.
+    # cached verdict, except for FLAG_NEEDS_INFO, which mirrors a live
+    # manifest flag rather than the body (design.md Decision 3) and so is
+    # never trusted from cache — re-derive it before reporting.
+    ready_json=$(_dor_reconcile_cached_needs_info "$tid" "$ready_json")
     DOR_STATUS=$(echo "$ready_json" | jq -r '.status // "unavailable"' 2>/dev/null) || DOR_STATUS="unavailable"
     DOR_MISSING=$(echo "$ready_json" | jq -c '.missing // []' 2>/dev/null) || DOR_MISSING="[]"
     DOR_ADVISORY=$(echo "$ready_json" | jq -c '.advisory // []' 2>/dev/null) || DOR_ADVISORY="[]"

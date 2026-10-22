@@ -5084,10 +5084,30 @@ class Supervisor:
                     _append_pipeline_log_line(
                         self._state_dir, tid, 'META', 'human-hold-released',
                         'info', decision.hold_id)
+                    # The hold's creation applied `needs-info`
+                    # (post_human_hold_comment); the answer is the
+                    # deterministic event that clears it. Without this the
+                    # flag outlived the answer and the resume gate-stopped
+                    # TICKET_NOT_READY (FLAG_NEEDS_INFO). Fail-soft — the
+                    # release itself already happened.
+                    try:
+                        ni = _gate_hold_mod.clear_needs_info_on_release(tid)
+                    except Exception as exc:  # noqa: BLE001 - never sink the pass
+                        ni = f'failed: {exc}'
+                    if ni not in ('cleared', 'absent'):
+                        print(f"fleetd[{os.getpid()}]: hold reconcile: "
+                              f"needs-info clear for {tid} after release: "
+                              f"{ni}", file=sys.stderr)
             elif decision.action == _gate_hold_mod.GATE_STOP:
+                # The marker names the hold so the next pass sees the stop
+                # was already recorded and neither re-probes nor re-appends
+                # (#529 — this used to repeat every pass, forever).
                 _append_pipeline_log_line(
                     self._state_dir, tid, 'META', 'gate-stop', 'fail',
-                    decision.gate_stop_code or 'GATE_HOLD_RECONCILE_FAILED')
+                    _gate_hold_mod.gate_stop_marker_msg(
+                        decision.gate_stop_code
+                        or 'GATE_HOLD_RECONCILE_FAILED',
+                        decision.hold_id))
             # HOLD / UNAVAILABLE: the row is deliberately left untouched.
 
     def _human_hold_intake_pass(self):

@@ -161,6 +161,79 @@ epic_manifest_exists() {
   [ -f "$repos_root/.ticket-auto/initiatives/$epic/epic/manifest.json" ]
 }
 
+# _manifest_canonical_epic <repos_root> <EPIC>
+# Prints the real directory name behind initiatives/<EPIC>/epic — <EPIC>
+# itself unless an operator symlink (#524 workaround) points elsewhere
+# under initiatives/. Falls back to <EPIC> when it cannot be resolved.
+_manifest_canonical_epic() {
+  local repos_root="$1" epic="$2" base real
+  base=$(cd "$repos_root/.ticket-auto/initiatives" 2>/dev/null && pwd -P) || base=""
+  real=$(cd "$repos_root/.ticket-auto/initiatives/$epic/epic" 2>/dev/null && pwd -P) || real=""
+  real="${real%/epic}"
+  if [ -n "$base" ] && [ "${real%/*}" = "$base" ] && [[ "${real##*/}" =~ $_MANIFEST_ID_RE ]]; then
+    echo "${real##*/}"
+  else
+    echo "$epic"
+  fi
+}
+
+# resolve_ticket_epic <TID> [candidate...]
+# Prints the epic id (the directory name under initiatives/ that holds
+# epic/manifest.json) a ticket belongs to. GitHub #524: no single id a
+# caller holds is reliably that directory name — the tracker's parent UUID
+# never is, and a planner child's `initiative` (INIT-<n>) has no epic/ of
+# its own because EpicGen writes the epic manifest under the epic's
+# identifier. Resolution order, first hit wins:
+#   1. each non-empty <candidate> (e.g. parent identifier, parent UUID) that
+#      has an epic manifest;
+#   2. the ticket manifest's `initiative`, when it is itself an epic;
+#   3. the epic whose manifest lists <TID> in children[] — the relation
+#      TicketGen's add_epic_manifest_child records. Real directories are
+#      scanned (find does not follow symlinks), so operator workaround
+#      symlinks never shadow the real epic id.
+# Exit 0 → id printed; 1 → no epic found; 3 → REPOS_ROOT unset / bad TID.
+resolve_ticket_epic() {
+  local tid="$1"
+  shift
+  local repos_root
+  repos_root=$(_manifest_repos_root) || return 3
+  [[ "$tid" =~ $_MANIFEST_ID_RE ]] || return 3
+
+  local cand
+  for cand in "$@"; do
+    [ -n "$cand" ] || continue
+    if epic_manifest_exists "$cand" 2>/dev/null; then
+      _manifest_canonical_epic "$repos_root" "$cand"
+      return 0
+    fi
+  done
+
+  local init
+  init=$(get_ticket_manifest_field "$tid" initiative 2>/dev/null) || init=""
+  case "$init" in "" | null | _adhoc) ;; *)
+    if epic_manifest_exists "$init" 2>/dev/null; then
+      _manifest_canonical_epic "$repos_root" "$init"
+      return 0
+    fi
+    ;;
+  esac
+
+  local base="$repos_root/.ticket-auto/initiatives" m epic
+  [ -d "$base" ] || return 1
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    epic="${m#"$base"/}"
+    epic="${epic%%/*}"
+    case "$epic" in _*) continue ;; esac
+    [[ "$epic" =~ $_MANIFEST_ID_RE ]] || continue
+    if jq -e --arg t "$tid" '(.children // []) | index($t) != null' "$m" >/dev/null 2>&1; then
+      echo "$epic"
+      return 0
+    fi
+  done < <(find "$base" -mindepth 3 -maxdepth 3 -type f -path '*/epic/manifest.json' 2>/dev/null | sort)
+  return 1
+}
+
 # get_ticket_manifest_path <TID> — prints the ticket manifest path whether
 # or not it exists yet (for writers). Exit 1 if no initiative index entry.
 get_ticket_manifest_path() {

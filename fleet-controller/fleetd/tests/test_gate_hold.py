@@ -48,7 +48,7 @@ GATE_HELD_MARKER = '2026-09-03T09:30:00Z|META|gate-held|info|held'
 
 def _gate(exit_code, lines):
     """A stand-in entry gate returning a fixed answer."""
-    def probe(tid, hb_log_file='', lib_dir=None):
+    def probe(tid, hb_log_file='', lib_dir=None, log_file=''):
         return exit_code, list(lines)
     return probe
 
@@ -229,7 +229,7 @@ class TestGateStop(GateHoldTestBase):
         """An exhausted ticket must not cost a Linear round trip."""
         calls = []
 
-        def probe(tid, hb_log_file='', lib_dir=None):
+        def probe(tid, hb_log_file='', lib_dir=None, log_file=''):
             calls.append(tid)
             return gate_hold.GATE_ENTRY_PASS, [PASS_LINE]
 
@@ -280,7 +280,7 @@ class TestUnregisteredHoldKind(GateHoldTestBase):
     def test_unregistered_kind_yields_unavailable(self):
         calls = []
 
-        def probe(tid, hb_log_file='', lib_dir=None):
+        def probe(tid, hb_log_file='', lib_dir=None, log_file=''):
             calls.append(tid)
             return gate_hold.GATE_ENTRY_PASS, [PASS_LINE]
 
@@ -674,6 +674,73 @@ class TestPostHumanHoldComment(unittest.TestCase):
         self.assertFalse(labeled)
 
 
+class TestClearNeedsInfoOnRelease(unittest.TestCase):
+    """clear_needs_info_on_release — the answered-hold half of the
+    `needs-info` lifecycle. post_human_hold_comment applies the flag when a
+    hold is created; before this, nothing deterministic cleared it when the
+    human answered, so the ticket stayed FLAG_NEEDS_INFO/not-ready until a
+    /ticket-approve or a full re-appraisal. Runs the real flow.sh against a
+    throwaway REPOS_ROOT."""
+
+    TID = 'TST-71'
+
+    def setUp(self):
+        import json as _json
+        self._json = _json
+        self.tmp = Path(tempfile.mkdtemp())
+        self.repos = self.tmp / 'repos'
+        self.logs = self.tmp / 'logs'
+        self.logs.mkdir(parents=True)
+        index = self.repos / '.ticket-auto' / 'initiatives' / '_index'
+        index.mkdir(parents=True)
+        (index / f'{self.TID}.initiative').write_text('INIT-1\n')
+        self.manifest = (self.repos / '.ticket-auto' / 'initiatives' / 'INIT-1'
+                         / 'tickets' / self.TID / 'planner' / 'manifest.json')
+        self.manifest.parent.mkdir(parents=True)
+        self.lib_dir = REPO_ROOT / 'ticket-auto-pipeline' / 'lib'
+        self.env = {
+            **os.environ,
+            'REPOS_ROOT': str(self.repos),
+            'FLEET_FENCE_ENFORCE': 'false',
+            'FLEET_PIPELINE_LOG_DIR': str(self.logs),
+            'LOG_FILE': str(self.logs / f'{self.TID}-pipeline.log'),
+            'TICKET_FLOW_LOCK_DIR': str(self.logs),
+            'CLAUDE_SKILLS_LIB': str(self.lib_dir),
+        }
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _seed(self, flags):
+        self.manifest.write_text(self._json.dumps({
+            'type': 'feature', 'initiative': 'INIT-1', 'blocked_by': [],
+            'dispatch': False, 'flags': flags}))
+
+    def _manifest(self):
+        return self._json.loads(self.manifest.read_text())
+
+    def test_answered_hold_clears_a_set_needs_info_flag(self):
+        self._seed(['needs-info'])
+        result = gate_hold.clear_needs_info_on_release(
+            self.TID, lib_dir=self.lib_dir, env=self.env)
+        self.assertEqual(result, 'cleared')
+        self.assertEqual(self._manifest().get('flags'), [])
+
+    def test_no_flag_is_a_no_op_that_never_runs_flow(self):
+        self._seed([])
+        result = gate_hold.clear_needs_info_on_release(
+            self.TID, lib_dir=self.lib_dir, env=self.env)
+        self.assertEqual(result, 'absent')
+        # flow.sh advances `rev` on every invocation; a no-op must not.
+        self.assertNotIn('rev', self._manifest())
+
+    def test_missing_lib_is_failsoft(self):
+        result = gate_hold.clear_needs_info_on_release(
+            self.TID, lib_dir=self.tmp / 'nowhere', env=self.env)
+        self.assertEqual(result, 'unavailable')
+
+
 class TestHoldIdThreading(GateHoldTestBase):
     """hold_id/hold_generation are carried from the row into every decision
     so the caller can release with store.release_hold's CAS guard."""
@@ -699,6 +766,115 @@ class TestHoldIdThreading(GateHoldTestBase):
             str(self.log))
         self.assertEqual(d.hold_id, 'hold:CRE-9:g1:a1')
         self.assertEqual(d.hold_generation, 1)
+
+
+# A stand-in gate-check.sh that decides only from the log it is handed, the
+# way the real gate's _get_artifact_type does: an openspec artifact line in
+# the log means the complex ticket is coherent and merely held; no artifact
+# line means the gate defaults to simple-fix and gate-stops on a mismatch.
+_FAKE_GATE_SH = r"""#!/usr/bin/env bash
+LOG="$2"
+if grep -q '|EXEC|create-artifact|done|openspec' "$LOG"; then
+  echo "2026-09-03T10:00:00Z|GATE|gate|fail|held: complex ticket" >> "$LOG"
+  exit 1
+fi
+echo "2026-09-03T10:00:00Z|META|gate-stop|fail|COMPLEXITY_ARTIFACT_MISMATCH — complexity=complex artifact=simple-fix" >> "$LOG"
+exit 2
+"""
+
+
+class TestProbeSeesTheRealLog(GateHoldTestBase):
+    """Regression (#529): the reconcile probe ran gate-check.sh against an
+    EMPTY scratch log, so `_get_artifact_type` never saw the ticket's
+    `EXEC|create-artifact|done|openspec` line, defaulted to simple-fix, and
+    every held complex ticket gate-stopped COMPLEXITY_ARTIFACT_MISMATCH on
+    every pass. The probe must evaluate the same facts the in-session gate
+    would — the real log's — while still writing nothing on a no-change
+    poll."""
+
+    def setUp(self):
+        super().setUp()
+        self.lib = Path(self.tmp) / 'lib'
+        self.lib.mkdir()
+        (self.lib / 'gate-check.sh').write_text(_FAKE_GATE_SH)
+        with open(self.log, 'a') as fh:
+            fh.write('2026-09-03T09:10:00Z|META|artifact|info|'
+                     'plan:openspec/changes/some-change\n'
+                     '2026-09-03T09:10:00Z|EXEC|create-artifact|done|openspec\n'
+                     + GATE_HELD_MARKER + '\n')
+
+    def test_held_complex_openspec_ticket_stays_held(self):
+        before = self._log_lines()
+        d = gate_hold.reconcile_hold(
+            self.table, 'CRE-9', {'hold_kind': 'gate'}, str(self.log),
+            lib_dir=str(self.lib))
+        self.assertEqual(d.action, gate_hold.HOLD, d.detail)
+        self.assertEqual(self._log_lines(), before)
+
+    def test_probe_returns_only_the_lines_it_added(self):
+        code, lines = gate_hold.run_entry_gate(
+            'CRE-9', lib_dir=str(self.lib), log_file=str(self.log))
+        self.assertEqual(code, gate_hold.GATE_ENTRY_HELD)
+        self.assertEqual(
+            lines, ['2026-09-03T10:00:00Z|GATE|gate|fail|held: complex ticket'])
+
+    def test_probe_never_writes_to_the_real_log(self):
+        before = self.log.read_text()
+        gate_hold.run_entry_gate(
+            'CRE-9', lib_dir=str(self.lib), log_file=str(self.log))
+        self.assertEqual(self.log.read_text(), before)
+
+
+class TestGateStopIsOneShot(GateHoldTestBase):
+    """Regression (#529): a GATE_STOP left the row held, so the next pass
+    re-probed and re-appended the same gate-stop pair — ~350 times for one
+    ticket. Once a gate-stop has been recorded for this hold, later passes
+    must neither probe nor write again."""
+
+    HOLD_ID = 'hold:CRE-9:g1:a0'
+    HELD_AT = '2026-09-03T09:30:00Z'
+
+    def _row(self):
+        return {'hold_kind': 'gate', 'hold_id': self.HOLD_ID,
+                'held_at': self.HELD_AT}
+
+    def test_recorded_gate_stop_suppresses_the_next_probe(self):
+        with open(self.log, 'a') as fh:
+            fh.write('2026-09-03T09:40:00Z|META|gate-stop|fail|' +
+                     gate_hold.gate_stop_marker_msg(
+                         'GATE_HOLD_RECONCILE_FAILED', self.HOLD_ID) + '\n')
+        before = self._log_lines()
+        calls = []
+
+        def probe(tid, hb_log_file='', lib_dir=None, log_file=''):
+            calls.append(tid)
+            return gate_hold.GATE_ENTRY_STOP, [STOP_LINE]
+
+        d = gate_hold.reconcile_hold(self.table, 'CRE-9', self._row(),
+                                     str(self.log), entry_gate=probe)
+        self.assertEqual(calls, [])
+        self.assertNotEqual(d.action, gate_hold.GATE_STOP)
+        self.assertEqual(self._log_lines(), before)
+
+    def test_a_gate_stop_from_an_earlier_hold_does_not_suppress(self):
+        """Same hold_id minted again later (attempt 0 is reused) gets a fresh
+        held_at — a stop that predates it belongs to the earlier hold."""
+        with open(self.log, 'a') as fh:
+            fh.write('2026-09-03T09:00:00Z|META|gate-stop|fail|' +
+                     gate_hold.gate_stop_marker_msg(
+                         'GATE_HOLD_RECONCILE_FAILED', self.HOLD_ID) + '\n')
+        d = gate_hold.reconcile_hold(
+            self.table, 'CRE-9', self._row(), str(self.log),
+            entry_gate=_gate(gate_hold.GATE_ENTRY_HELD, [HELD_LINE]))
+        self.assertEqual(d.action, gate_hold.HOLD)
+        self.assertEqual(d.detail, 'still held')
+
+    def test_marker_keeps_the_code_as_its_prefix(self):
+        """exit-path.sh classifies `gate-stop:<CODE>*` by prefix."""
+        msg = gate_hold.gate_stop_marker_msg('RECONCILE_EXHAUSTED', self.HOLD_ID)
+        self.assertTrue(msg.startswith('RECONCILE_EXHAUSTED'))
+        self.assertIn(self.HOLD_ID, msg)
+        self.assertNotIn('|', msg)
 
 
 class TestNeverReapprove(GateHoldTestBase):
