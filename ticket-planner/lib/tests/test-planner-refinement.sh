@@ -171,8 +171,13 @@ _setup_epic
 
 echo "--- all ready ---"
 
-_add_child "PRO-101" "01-excellent"
-_add_child "PRO-102" "02-minimal"
+# Refinement scans strictly (DOR_STRICT_TEST_DATA/DOR_STRICT_VPLAN, planner-
+# test-data-derivation 6.5), so a "ready" child needs a body that carries a
+# sourced Test Data section and a Verification Plan, as TicketGen now writes.
+# Fixture 22 (every test-data item sourced) is ready under both flags; both
+# children use it (the ticket id, not the body, keys every assertion below).
+_add_child "PRO-101" "22-sourced-contract"
+_add_child "PRO-102" "22-sourced-contract"
 
 needs=$(planner_refinement_scan "$INIT_ID")
 if [ "$(echo "$needs" | grep -c .)" = "2" ]; then
@@ -663,6 +668,68 @@ else
 fi
 unset PLANNER_REFINEMENT_SEMANTIC
 
+# ── 6.5 (planner-test-data-derivation): Refinement scans strictly ─────────
+# A child with no Verification Plan and fewer than half of its criteria
+# self-verifying: ticket-auto's default treats VPLAN_MISSING as advisory, but
+# Refinement passes DOR_STRICT_VPLAN=true (and DOR_STRICT_TEST_DATA=true), so
+# the code is hard, the run halts and the report names it.
+
+echo "--- strict scan: VPLAN_MISSING halts Refinement ---"
+
+STRICT_INIT="INIT-1700000004-4444"
+STRICT_EPIC="PRO-600"
+planner_state_init "$STRICT_INIT" "strict refinement idea"
+planner_state_write "$STRICT_INIT" "EpicGen" "create" "done" "EPIC_ID=${STRICT_EPIC}"
+planner_state_write "$STRICT_INIT" "TicketGen" "verify" "done" "ok"
+write_epic_manifest "$STRICT_EPIC" "" "per-ticket" "" '[]' >/dev/null
+write_ticket_manifest "PRO-601" "$STRICT_INIT" "feature" '[]' >/dev/null
+add_epic_manifest_child "$STRICT_EPIC" "PRO-601" >/dev/null
+strict_pdir="${REPOS_ROOT}/.ticket-auto/initiatives/${STRICT_INIT}/tickets/PRO-601/planner"
+mkdir -p "$strict_pdir"
+cp "${FIXTURES_DIR}/14-typo-fix.md" "${strict_pdir}/body.md"
+
+(
+  unset DOR_STRICT_TEST_DATA DOR_STRICT_VPLAN
+  check_ticket_ready "PRO-601" --body "${strict_pdir}/body.md" --type feature --no-fetch >/dev/null 2>&1
+  echo "$DOR_MISSING|$DOR_ADVISORY"
+) >"${TMPDIR}/strict-control.txt"
+if grep -q '^[^|]*|.*"VPLAN_MISSING"' "${TMPDIR}/strict-control.txt" &&
+  ! grep -q '^[^|]*VPLAN_MISSING[^|]*|' "${TMPDIR}/strict-control.txt"; then
+  pass "control: without the strict flags VPLAN_MISSING is only advisory"
+else
+  fail "control: without the strict flags VPLAN_MISSING is only advisory" "$(cat "${TMPDIR}/strict-control.txt")"
+fi
+
+unset DOR_STRICT_TEST_DATA
+DOR_STRICT_VPLAN="caller-value"
+PLANNER_REFINEMENT_SEMANTIC=false
+planner_refinement_scan "$STRICT_INIT" >/dev/null
+if [ "${DOR_STRICT_VPLAN}" = "caller-value" ] && [ -z "${DOR_STRICT_TEST_DATA+set}" ]; then
+  pass "planner_refinement_scan: the strict flags do not leak into the caller's environment"
+else
+  fail "planner_refinement_scan: the strict flags do not leak" \
+    "DOR_STRICT_VPLAN=${DOR_STRICT_VPLAN-<unset>} DOR_STRICT_TEST_DATA=${DOR_STRICT_TEST_DATA-<unset>}"
+fi
+unset DOR_STRICT_VPLAN
+
+if get_ticket_manifest_field "PRO-601" ready 2>/dev/null | jq -e '.status == "not-ready" and (.missing | index("VPLAN_MISSING"))' >/dev/null; then
+  pass "planner_refinement_scan: VPLAN_MISSING recorded as a hard code"
+else
+  fail "planner_refinement_scan: VPLAN_MISSING recorded as a hard code" "$(get_ticket_manifest_field "PRO-601" ready 2>/dev/null)"
+fi
+if ! planner_refinement_gate "$STRICT_INIT"; then
+  pass "planner_refinement_gate: strict VPLAN_MISSING halts Refinement"
+else
+  fail "planner_refinement_gate: strict VPLAN_MISSING halts Refinement" "returned 0"
+fi
+unset PLANNER_REFINEMENT_SEMANTIC
+strict_report=$(planner_refinement_report "$STRICT_INIT")
+if echo "$strict_report" | grep -q "## PRO-601" && echo "$strict_report" | grep -q "VPLAN_MISSING"; then
+  pass "planner_refinement_report: lists VPLAN_MISSING for the child"
+else
+  fail "planner_refinement_report: lists VPLAN_MISSING for the child" "got: $strict_report"
+fi
+
 # ── 7.12: sourcing leaves the caller's SCRIPT_DIR and errexit unchanged ───
 
 echo "--- SCRIPT_DIR / errexit non-leak ---"
@@ -731,7 +798,7 @@ echo "--- #497: body hash handed to the agent in the prompt ---"
 # shellcheck source=/dev/null
 source "${LIB_DIR}/../../ticket-auto-pipeline/lib/dor-semantic.sh"
 
-_add_child "PRO-190" "01-excellent"
+_add_child "PRO-190" "22-sourced-contract"
 planner_refinement_scan "$INIT_ID" >/dev/null
 
 _hash_from_prompt() {

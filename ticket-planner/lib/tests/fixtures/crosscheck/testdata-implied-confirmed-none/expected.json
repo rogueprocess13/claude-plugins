@@ -1,0 +1,6 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "notes": "planner-test-data-derivation 2.3/2.4: the strong match from testdata-implied-strong, answered in consensus.md with TESTDATA_CONFIRM [a4834925] none — the hash matches the unchanged criterion, so the finding is suppressed."
+}

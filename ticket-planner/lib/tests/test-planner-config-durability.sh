@@ -235,7 +235,7 @@ echo "--- Test 6: no mid-run environment reads ---"
 
 leaks=""
 for var in PLANNER_UNTIL PLANNER_REVIEW_HOLD PLANNER_CONSENSUS_HOLD \
-  PLANNER_SHARED_BRANCH PLANNER_NO_SHARED_BRANCH LINEAR_PROJECT LINEAR_PROJECT_MILESTONE; do
+  PLANNER_SHARED_BRANCH PLANNER_NO_SHARED_BRANCH LINEAR_PROJECT LINEAR_PROJECT_MILESTONE PLANNER_UAT_POLICY; do
   hits=$(grep -ln "\${${var}[:-]" "${LIB_DIR}/planner-router.sh" "${LIB_DIR}/planner-phase-prompts.sh" 2>/dev/null || true)
   [ -n "$hits" ] && leaks="${leaks}${var} in ${hits}; "
 done
@@ -315,6 +315,69 @@ if [ -z "$hits" ]; then
   pass "no library reads PLANNER_NO_TESTS_RULE (SKILL.md reads it once at parsing)"
 else
   fail "no library reads PLANNER_NO_TESTS_RULE" "$hits"
+fi
+
+# ── Test 8: the UAT policy crosses the boundary (planner-test-data-derivation 5.1) ──
+#
+# PLANNER_UAT_POLICY is read once at argument parsing and persisted as the
+# `uat-policy` config key. EpicGen's prompt, generated in a later process, must
+# interpolate it from disk — and, with no explicit value, stamp `epic` when
+# Crosscheck's synthesis wrote test-data specs (testdata-synth.json).
+
+echo "--- Test 8: the UAT policy crosses the boundary ---"
+
+_uat_arg() { grep -m1 -o -- '--arg uat "[^"]*"' <<<"$1" || echo absent; }
+
+in_new_process 'planner_state_init INIT-UAT "an idea" >/dev/null
+                planner_config_set INIT-UAT uat-policy per-ticket'
+prompt=$(in_new_process 'planner_prompt_epicgen INIT-UAT "an idea" /tmp/state' </dev/null)
+got=$(_uat_arg "$prompt")
+if [ "$got" = '--arg uat "per-ticket"' ]; then
+  pass "an explicit uat-policy written in one process reaches EpicGen in the next"
+else
+  fail "explicit uat-policy reaches EpicGen" "got ${got}"
+fi
+
+# Explicit wins over synthesized TD specs.
+mkdir -p "${REPOS_ROOT}/.ticket-auto/initiatives/INIT-UAT/artifacts"
+echo '{"version":1,"td_specs":[{"slug":"a-test-data","kind":"single"}],"overrides":[],"edges":[]}' \
+  >"${REPOS_ROOT}/.ticket-auto/initiatives/INIT-UAT/artifacts/testdata-synth.json"
+got=$(_uat_arg "$(in_new_process 'planner_prompt_epicgen INIT-UAT "an idea" /tmp/state' </dev/null)")
+if [ "$got" = '--arg uat "per-ticket"' ]; then
+  pass "an explicit uat-policy is kept when TD specs exist"
+else
+  fail "explicit uat-policy wins" "got ${got}"
+fi
+
+in_new_process 'planner_state_init INIT-UAT-TD "an idea" >/dev/null'
+mkdir -p "${REPOS_ROOT}/.ticket-auto/initiatives/INIT-UAT-TD/artifacts"
+cp "${REPOS_ROOT}/.ticket-auto/initiatives/INIT-UAT/artifacts/testdata-synth.json" \
+  "${REPOS_ROOT}/.ticket-auto/initiatives/INIT-UAT-TD/artifacts/testdata-synth.json"
+got=$(
+  env -i HOME="$HOME" PATH="$PATH" REPOS_ROOT="$REPOS_ROOT" LIB_DIR="$LIB_DIR" PLANNER_UAT_POLICY=per-ticket \
+    bash -c 'source "${LIB_DIR}/planner-state.sh"; source "${LIB_DIR}/planner-router.sh"
+             source "${LIB_DIR}/planner-phase-prompts.sh"
+             planner_prompt_epicgen INIT-UAT-TD "an idea" /tmp/state' </dev/null
+)
+got=$(_uat_arg "$got")
+if [ "$got" = '--arg uat "epic"' ]; then
+  pass "TD specs + no persisted policy → epic (an ambient PLANNER_UAT_POLICY is ignored)"
+else
+  fail "auto epic UAT" "got ${got}"
+fi
+
+in_new_process 'planner_state_init INIT-UAT-NONE "an idea" >/dev/null'
+got=$(_uat_arg "$(in_new_process 'planner_prompt_epicgen INIT-UAT-NONE "an idea" /tmp/state' </dev/null)")
+if [ "$got" = '--arg uat ""' ]; then
+  pass "no TD specs and no explicit policy → field omitted (per-ticket)"
+else
+  fail "no TD specs leaves uat empty" "got ${got}"
+fi
+
+if grep -q 'planner_config_set "\$INITIATIVE_ID" "uat-policy"' "$skill_md"; then
+  pass "SKILL.md persists PLANNER_UAT_POLICY as the uat-policy config key"
+else
+  fail "SKILL.md persists uat-policy" "no planner_config_set ... uat-policy line"
 fi
 
 echo ""

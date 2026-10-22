@@ -1,0 +1,6 @@
+{
+  "blocking": 0,
+  "warn": 1,
+  "accepted": 0,
+  "notes": "planner-test-data-derivation 2.3: \"shows 3 badges\" with no badge entity in the inventory is a count followed by a non-unit noun — weak tier, TEST_DATA_IMPLIED_WEAK, warn only."
+}

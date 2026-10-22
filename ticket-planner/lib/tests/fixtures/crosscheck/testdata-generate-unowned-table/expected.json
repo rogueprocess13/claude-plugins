@@ -1,8 +1,15 @@
 {
-  "blocking": 1,
+  "blocking": 0,
   "warn": 0,
   "accepted": 0,
-  "codes": ["TEST_DATA_UNOWNED"],
-  "message_contains": ["import-upload.md#1 (generate)", "import-validation.md#1 (generate)", "[import-upload, import-validation]", "test-data-pack"],
-  "notes": "#499 + #503: testdata-generate-unowned with Verification Notes in the Criterion-table form (a Source column after Test data). The table rows must be parsed as needs — otherwise Crosscheck sees none and TEST_DATA_UNOWNED goes silent. The exists: row and the none row (— placeholder Source cell) are owned and must not appear."
+  "files_present": [
+    "specs/import-upload-test-data.md",
+    "specs/import-validation-test-data.md",
+    "testdata-synth.json"
+  ],
+  "sidecar_jq": [
+    "[.td_specs[].slug] == [\"import-upload-test-data\",\"import-validation-test-data\"]",
+    "[.overrides[] | .consumer + \">\" + .source] == [\"import-upload>seeded-by:import-upload-test-data\",\"import-validation>seeded-by:import-validation-test-data\"]"
+  ],
+  "notes": "#503 + planner-test-data-derivation 4.7 (expectation changed): two specs whose Verification Notes (#499 Criterion-table form) need Source: generate data nothing owns. Before synthesis this was one blocking TEST_DATA_UNOWNED proposing a hand-written test-data pack; now Crosscheck's synthesis sub-step owns both needs — their data differ (no shared key), so one <consumer>-test-data spec each — and the run is clean. The exists: and none rows are owned and get no override."
 }

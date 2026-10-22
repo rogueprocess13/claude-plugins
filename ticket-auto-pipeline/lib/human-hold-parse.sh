@@ -113,10 +113,11 @@ _hh_is_question_attr_key() {
 # agent, performs it. `consensus-answer:cited:<n>` (#515) addresses a cited
 # artifact by its 1-based position in consensus.md's CITED_ARTIFACT list:
 # artifact names carry spaces and parentheses, so a name never appears in a
-# binding.
+# binding. `consensus-answer:testdata:<slug>` addresses a spec's implied-data
+# confirmation (TESTDATA_CONFIRM) by its spec slug.
 _hh_binding_ok() {
   local LC_ALL=C
-  [[ "$1" =~ ^(note|flag:create|flag:project|flag:accept:[A-Z][A-Z0-9_]*|waive:[A-Za-z0-9-]+:[A-Z][A-Z0-9_]*|adr:[A-Za-z0-9-]+|grill:[a-z][a-z0-9_-]*|consensus-answer:cited:[1-9][0-9]{0,3})$ ]]
+  [[ "$1" =~ ^(note|flag:create|flag:project|flag:accept:[A-Z][A-Z0-9_]*|waive:[A-Za-z0-9-]+:[A-Z][A-Z0-9_]*|adr:[A-Za-z0-9-]+|grill:[a-z][a-z0-9_-]*|consensus-answer:cited:[1-9][0-9]{0,3}|consensus-answer:testdata:[A-Za-z0-9][A-Za-z0-9_-]{0,127})$ ]]
 }
 
 _hh_question_id_ok() {

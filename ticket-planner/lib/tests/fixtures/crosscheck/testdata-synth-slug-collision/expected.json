@@ -1,0 +1,13 @@
+{
+  "blocking": 2,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["TEST_DATA_SYNTH_FAILED", "TEST_DATA_UNOWNED"],
+  "message_contains": ["TEST_DATA_SYNTH_FAILED audit-log-test-data.md already exists without the synthesis marker", "audit-log.md#1 (generate)"],
+  "files_absent": ["testdata-synth.json", "specs/INDEX.md"],
+  "file_contains": {
+    "specs/audit-log-test-data.md": ["A hand-written spec that happens to use the TD slug."]
+  },
+  "log_contains": ["|Crosscheck|testdata-synth|start|"],
+  "notes": "planner-test-data-derivation spec scenario 'Slug collision': an unmarked spec already holds audit-log-test-data. Synthesis fails before writing anything (no sidecar, no INDEX.md, the hand-written spec untouched) and Crosscheck blocks with TEST_DATA_SYNTH_FAILED naming the file; the need it could not own is still reported as TEST_DATA_UNOWNED."
+}

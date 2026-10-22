@@ -72,7 +72,7 @@ process per phase and an `export` does not survive that (#144).
 | `--project <name\|id>` | Linear project for the epic and its tickets |
 | `--no-project` | File the epic and its tickets with no Linear project, deliberately — silences the project gate |
 | `--milestone <name\|id>` | Linear project milestone (needs `--project` when given by name) |
-| `--no-tests-rule[=true\|false]` | Record that the project forbids implementation from writing tests (#503): Crosscheck then does not count a spec that seeds its own test data as an owner, and a test-data pack becomes mandatory. `=false` records the opposite. Without the flag, the first `plan`/`resume` detects it once from `REPOS_ROOT` CLAUDE.md files and records where it found it. Sticky — persisted as the `no-tests-rule` config key. `PLANNER_NO_TESTS_RULE` is the default, read once here |
+| `--no-tests-rule[=true\|false]` | Record that the project forbids implementation from writing tests (#503): Crosscheck then does not count a spec that seeds its own test data as an owner, so a synthesized test-data spec (or an `exists:`/`external:` Source) becomes mandatory. `=false` records the opposite. Without the flag, the first `plan`/`resume` detects it once from `REPOS_ROOT` CLAUDE.md files and records where it found it. Sticky — persisted as the `no-tests-rule` config key. `PLANNER_NO_TESTS_RULE` is the default, read once here |
 | `--refresh-bodies` | **`resume` only.** Re-read every not-ready ticket's description from Linear before Refinement re-evaluates it. One-shot — consumed and cleared by this invocation, never sticky |
 | `--answers <file>` | **`resume` only.** Apply an answers file to the open question round from `planner-stop-describe.sh`, then resume. Each answer becomes the flag it is bound to (`--create`, `--accept`, `--project`/`--no-project`, a DoR waiver). See [Headless use](#headless-use---answers) |
 
@@ -186,6 +186,7 @@ script — cannot read the halt prose. It runs this loop instead:
 | `CREATE_GATE` | `flag:create` | `yes` = `--create`. `no` records the round; the run stops at the gate again |
 | `CROSSCHECK_BLOCKED` | `flag:accept:<CODE>` | the reason = `--accept CODE:"reason"`. `__skip__` declines |
 | `CROSSCHECK_BLOCKED` (`CITED_ARTIFACT_UNRESOLVED`) | `consensus-answer:cited:<n>`, one per unanswered artifact | `exists:<where>`, `external:<who>` or `generate`, written into the `Answer:` field of consensus.md's `n`th `CITED_ARTIFACT:` question. Any other value, or one with `\|`, CR or LF, is `INVALID_VALUE`. Specs are not edited: a spec need whose `Source` disagrees is `CITED_ARTIFACT_SOURCE_MISMATCH` on the re-run. The code's `flag:accept` question is still offered |
+| `CROSSCHECK_BLOCKED` (`TEST_DATA_IMPLIED`) | `consensus-answer:testdata:<slug>`, one per blocking spec, id `testdata-<slug>-<hash8>` | `none`, `generate: <desc>` (default `generate: <match phrase>`), `exists:<where>` or `external:<who>`, written as consensus.md's ``TESTDATA_CONFIRM: `<slug>` [<hash8>] — Answer: <value>`` line. `hash8` is re-derived from the spec's current trigger criterion at intake; a mismatch is `STALE_QUESTION` (exit 2, nothing written). The code's `flag:accept` question is still offered |
 | `PROJECT_GATE` | `flag:project` | a name or id = `--project`. `__none__` = `--no-project` |
 | `REFINEMENT_HALT` | `waive:<TICKET>:<CODE>` | the reason = `dor-check.sh --waive <TICKET> <CODE> "reason"`. `__skip__` declines |
 | `ADR_GATE` | `note` | recorded only — accept the ADR out of band (`adr-store.sh accept` refuses inside an agent session) |
@@ -267,9 +268,9 @@ before `plan`, before `resume`, or any time something in the pipeline feels off.
 | 4 | Specify | Synthesizes proposal + writes per-ticket specs with signals, self-lints citations | `proposal.md`, spec files |
 | 5 | Review | Critiques the proposal and specs (internal by default) | Review findings |
 | 6 | Consensus | Resolves review findings into a settled plan | Finalized proposal |
-| 7 | Crosscheck | Deterministic bash — citation + cross-ticket propagation checks against the artifacts and the live repo | `META|crosscheck` events; gates Epic Gen on a blocking finding |
-| 8 | Epic Gen | Creates the initiative epic in Linear — **first Linear write, gated on `--create`** | Linear epic |
-| 9 | Ticket Gen | Creates planned child tickets, persists each body to `planner/body.md`, computes confidence | Linear tickets, per-ticket `body.md` |
+| 7 | Crosscheck | Deterministic bash — test-data synthesis (`testdata-synth` sub-step), then citation + cross-ticket propagation + test-data checks against the artifacts and the live repo | `META|crosscheck` events; gates Epic Gen on a blocking finding |
+| 8 | Epic Gen | Creates the initiative epic in Linear — **first Linear write, gated on `--create`**. Stamps `**UAT Policy:** epic` on a shared-branch epic with synthesized test-data specs unless `PLANNER_UAT_POLICY` says otherwise | Linear epic |
+| 9 | Ticket Gen | Creates planned child tickets (test-data tickets first, at Linear priority High; consumers `blocked_by` them via the sidecar), persists each body to `planner/body.md`, computes confidence | Linear tickets, per-ticket `body.md` |
 | 10 | Refinement | Deterministic bash — per-ticket DoR check plus `dor-semantic-agent` scan+audit; stamps the epic `dispatch=true` once every child has a verdict | Per-ticket readiness verdicts; epic manifest `dispatch=true` |
 | 11 | Completed | Terminal phase — summarizes the run; auto-dispatched right after Refinement's gate passes (or legacy-skips), no operator action | `COMPLETED.md`, terminal state log entry |
 
@@ -282,6 +283,7 @@ directly instead of spawning one (see step 7a below). Its check families include
 - **Citation + precedent linter** ([#172](https://github.com/willard-pro/claude-plugins/issues/172)) — every `path:line` citation and Signals `TargetSymbols` entry must resolve against `REPOS_ROOT`; every "mirrors the existing `X`"-style precedent claim must name a symbol that actually exists in the repo.
 - **Cross-ticket propagation linter** ([#173](https://github.com/willard-pro/claude-plugins/issues/173)) — a Consensus resolution or in-spec forward reference naming 2+ tickets must actually reach all of them; a post-Specify ticket-count change is flagged for manual scope audit.
 - **Test-data provenance + cited artifacts** ([#503](https://github.com/willard-pro/claude-plugins/issues/503)/[#504](https://github.com/willard-pro/claude-plugins/issues/504)) — every Verification Notes test-data need (a row of the Criterion table, `Source` column) must name an owned Source (`TEST_DATA_UNOWNED`), and every external artifact Discovery could not retrieve must be raised and answered in consensus.md `## Open Questions` (`CITED_ARTIFACT_UNRAISED`/`CITED_ARTIFACT_UNRESOLVED`). Contract: [docs/test-data-source.md](../../docs/test-data-source.md).
+- **Test-data derivation** (planner-test-data-derivation, contract §3) — first, the `testdata-synth` sub-step (`Crosscheck|testdata-synth|start`/`done|<N> TD spec(s), <M> need(s)`, before every family) turns `generate` needs and `generate:` answers into synth-marked test-data specs (`<prefix>-test-data-pack` / `<slug>-test-data`, type chore, Seed/Verify `make` targets, Seed channel) plus `artifacts/testdata-synth.json` (Source overrides + `blocked_by` edges; consumer specs untouched). Then: `VERIFICATION_NOTES_MISSING` (blocking — a spec with ACs and no notes rows), `TEST_DATA_IMPLIED` (blocking — rows all `none` but a criterion clearly implies data; answerable via `TESTDATA_CONFIRM`) / `TEST_DATA_IMPLIED_WEAK` (warn), `TEST_DATA_INVENTORY_MISSING` (warn — discovery.md lacks `## Test Data Inventory`), `TEST_DATA_SYNTH_FAILED` (blocking — an unmarked file holds a TD slug) and `DEPENDENCY_CYCLE` (blocking — cycle in the blocked-by graph including sidecar edges).
 
 (Bypass, contract, Signals and dangling-dependency checks also run — see `lib/planner-crosscheck.sh`.)
 
@@ -306,8 +308,7 @@ finding is genuine but expected rather than a defect (a documented rescope, say)
 to fixing the artifact — see [Accepting a genuine Crosscheck finding](#accepting-a-genuine-crosscheck-finding---accept).
 
 `#174` (bypass sweep for guarded fields) and `#175` (cross-initiative contract check)
-are separate, not-yet-implemented check families — Crosscheck runs only the two above
-today.
+now run as their own check families (see the parenthetical above).
 
 #### Resolving against the ref Discovery explored, not whatever REPOS_ROOT is now ([#217](https://github.com/willard-pro/claude-plugins/issues/217))
 
@@ -356,7 +357,10 @@ For each child of the epic:
 
 1. **Deterministic** — `check_ticket_ready` (ticket-auto-pipeline's
    `dor-check.sh`) against the ticket's local `planner/body.md` (written by
-   Ticket Gen; fetched once from Linear, read-only, if somehow missing).
+   Ticket Gen; fetched once from Linear, read-only, if somehow missing), run
+   strict: `DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true` as a call prefix,
+   so missing/unseeded test data and Verification Plan gaps are hard here even
+   where the host keeps them advisory (planner-test-data-derivation).
 2. **Semantic** — unless `PLANNER_REFINEMENT_SEMANTIC=false`, two
    `ticket-auto-pipeline:dor-semantic-agent` spawns: a **scan** of the body
    that never sees the deterministic result, then an **audit** of that
@@ -501,6 +505,7 @@ The router never reasons about content; phases never mutate state directly (they
 | `LINEAR_PROJECT` | *(unset)* | Default project name or id for created epics/tickets, read once at parsing time as the fallback for `--project`. Unset ⇒ no project field is sent, and Epic Gen's project gate reports the omission (or stops on a single plausible candidate) unless `--no-project` was passed |
 | `LINEAR_PROJECT_MILESTONE` | *(unset)* | Default project milestone name or id, the fallback for `--milestone`. Requires a project when given by name |
 | `FLEET_AUTO_DISPATCH` | false | Must be true for automatic fleet-controller dispatch |
+| `PLANNER_UAT_POLICY` | *(unset)* | `per-ticket` or `epic` (anything else is refused). Read once at parsing time and persisted as the `uat-policy` config key; Epic Gen reads the key, never the variable. Unset: `epic` for a shared-branch epic with synthesized test-data specs, else the directive default |
 | `PLANNER_REFINEMENT_SEMANTIC` | true | When `false`, Refinement runs only the deterministic DoR check — no `dor-semantic-agent` spawns, and the epic gate never waits on a semantic verdict |
 | `PLANNER_REFINEMENT_PARALLEL` | 4 | Max concurrent per-ticket semantic-pass batches in Refinement |
 
@@ -625,6 +630,7 @@ TEAM_REF="${LINEAR_TEAM_ID:-}"
 PROJECT_REF="${LINEAR_PROJECT:-}"
 MILESTONE_REF="${LINEAR_PROJECT_MILESTONE:-}"
 case "${PLANNER_NO_TESTS_RULE:-}" in true | false) NO_TESTS_RULE_FLAG="${PLANNER_NO_TESTS_RULE}" ;; esac
+UAT_POLICY_REF="${PLANNER_UAT_POLICY:-}"
 
 # Positional params are always braced ("${1}", never a bare dollar-digit): the
 # skill loader substitutes a bare dollar-digit token with the invocation's own
@@ -659,6 +665,11 @@ done
 case "$NO_TESTS_RULE_FLAG" in
   "" | true | false) ;;
   *) echo "ERROR: --no-tests-rule takes true or false, got '${NO_TESTS_RULE_FLAG}'" >&2; exit 1 ;;
+esac
+
+case "$UAT_POLICY_REF" in
+  "" | per-ticket | epic) ;;
+  *) echo "ERROR: PLANNER_UAT_POLICY takes per-ticket or epic, got '${UAT_POLICY_REF}'" >&2; exit 1 ;;
 esac
 
 # Reject both branch flags together
@@ -788,6 +799,12 @@ if [ "$SHARED_BRANCH_FLAG" = "true" ]; then
 elif [ "$NO_SHARED_BRANCH_FLAG" = "true" ]; then
   planner_config_set "$INITIATIVE_ID" "branch-override" "no-shared"
 fi
+
+# PLANNER_UAT_POLICY (read once above) is the operator's explicit UAT policy.
+# Epic Gen reads it back as the `uat-policy` config key; with no explicit value
+# it stamps `epic` on a shared-branch epic whose Crosscheck synthesized
+# test-data specs (planner-test-data-derivation), else leaves the field out.
+[ -n "$UAT_POLICY_REF" ] && planner_config_set "$INITIATIVE_ID" "uat-policy" "$UAT_POLICY_REF"
 
 # --refresh-bodies (planner-refinement-phase): a one-shot action for this
 # invocation only, not a sticky setting — step 1b clears it back to "none"

@@ -82,6 +82,7 @@ test-lib:
 	# dor-readiness-gate-foundation
 	bash ticket-auto-pipeline/lib/tests/test-vplan-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-check.sh
+	bash ticket-auto-pipeline/lib/tests/test-seed-apply.sh
 	# dor-semantic-evaluator
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic.sh
@@ -196,6 +197,8 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-crosscheck-signals.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-deps.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-testdata.sh
+	bash ticket-planner/lib/tests/test-planner-testdata-implied.sh
+	bash ticket-planner/lib/tests/test-planner-testdata-synth.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-fixtures.sh
 	bash ticket-planner/lib/tests/test-planner-doctor.sh

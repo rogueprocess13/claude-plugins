@@ -1,8 +1,12 @@
 {
   "blocking": 1,
-  "warn": 0,
+  "warn": 1,
   "accepted": 0,
-  "codes": ["CITED_ARTIFACT_MALFORMED"],
-  "message_contains": ["vendor rate card"],
-  "notes": "#504 parsing: numbered items, a bare name with an en dash, case-insensitive status, emphasis around the name and answer all parse. 'FOUND: docs/NOT FOUND list.xlsx' is FOUND (status token, not substring). The item with no FOUND/NOT FOUND status is reported as CITED_ARTIFACT_MALFORMED instead of being skipped."
+  "codes": [
+    "CITED_ARTIFACT_MALFORMED"
+  ],
+  "message_contains": [
+    "vendor rate card"
+  ],
+  "notes": "#504 parsing: numbered items, a bare name with an en dash, case-insensitive status, emphasis around the name and answer all parse. 'FOUND: docs/NOT FOUND list.xlsx' is FOUND (status token, not substring). The item with no FOUND/NOT FOUND status is reported as CITED_ARTIFACT_MALFORMED instead of being skipped. +1 warn (planner-test-data-derivation): TEST_DATA_INVENTORY_MISSING — this discovery.md predates the Test Data Inventory section."
 }

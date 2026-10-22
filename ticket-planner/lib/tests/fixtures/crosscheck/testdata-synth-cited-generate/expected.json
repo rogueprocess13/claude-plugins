@@ -1,0 +1,14 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "files_present": ["specs/import-preview-test-data.md"],
+  "file_contains": {
+    "specs/import-preview-test-data.md": ["the `client sample import file` — for `import-preview`"]
+  },
+  "sidecar_jq": [
+    ".td_specs[0].keys == [\"import file\"]",
+    ".overrides[0].source == \"seeded-by:import-preview-test-data\""
+  ],
+  "notes": "planner-test-data-derivation 4.7: the operator answered a NOT FOUND cited artifact `generate` and the spec need cites it with Source: generate. The cited-artifact remedy routes through synthesis — the need becomes a synth need (keyed by the inventory entity its text names, `import file`), a TD spec owns it, and neither CITED_ARTIFACT_SOURCE_MISMATCH nor TEST_DATA_UNOWNED fires."
+}

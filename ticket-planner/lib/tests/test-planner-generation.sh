@@ -362,7 +362,9 @@ COMPLETE_FEATURE_DESC="${_PC_HEADER}
 | ----- | ------- | ---- |
 | FE    | gateway | list |
 ## Navigation Path
-\`Menu > List > Export\`"
+\`Menu > List > Export\`
+## Test Data Prerequisites
+At least one record on the list."
 
 INCOMPLETE_FEATURE_DESC="${_PC_HEADER}
 ## Acceptance Criteria

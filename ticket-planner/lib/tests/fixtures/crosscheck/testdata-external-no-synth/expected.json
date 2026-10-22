@@ -1,0 +1,10 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "notes": "planner-test-data-derivation 2.5: answered external:billing team with a matching hash — the answer becomes the spec effective Source (in memory), the implied finding is resolved and nothing is unowned. Synthesis (group 4) must not create a test-data spec for it.",
+  "files_absent": [
+    "testdata-synth.json",
+    "specs/invoice-dashboard-test-data.md"
+  ]
+}

@@ -273,6 +273,10 @@ planner_crosscheck_forward_references() {
     local base
     base="$(basename "$spec_file" .md)"
     [ "$base" = "INDEX" ] && continue
+    # A TD spec Crosscheck's test-data synthesis wrote quotes its consumers'
+    # criteria verbatim ("for `x`: … and see the row count"); those are back
+    # references to the consumer, not promises (planner-test-data-derivation).
+    grep -qF -- "${PLANNER_TESTDATA_SYNTH_MARKER:-<!-- planner:testdata-synth v1 -->}" "$spec_file" 2>/dev/null && continue
 
     local line_num line
     while IFS=: read -r line_num line; do
@@ -331,6 +335,9 @@ planner_crosscheck_carve_scope() {
       [ -f "$f" ] || continue
       base="$(basename "$f" .md)"
       [ "$base" = "INDEX" ] && continue
+      # A TD spec Crosscheck's test-data synthesis wrote is not one Specify
+      # declared (planner-test-data-derivation).
+      grep -qF -- "${PLANNER_TESTDATA_SYNTH_MARKER:-<!-- planner:testdata-synth v1 -->}" "$f" 2>/dev/null && continue
       actual_n=$((actual_n + 1))
     done
   fi

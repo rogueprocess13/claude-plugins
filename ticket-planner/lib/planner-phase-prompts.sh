@@ -325,6 +325,7 @@ API contracts, and existing patterns. You are phase ${_pos} of ${_count}.
    - **Constraints** — things that limit the solution space (schema, config, auth, etc.)
    - **Exploration Depth** — quick-scan/standard/deep per service, with rationale
    - **Cited Artifacts** — required, see "Cited artifacts" below
+   - **Test Data Inventory** — required, see "Test Data Inventory" below
 
 ## Cited artifacts (#504)
 
@@ -353,6 +354,35 @@ Write \`None.\` under the heading when the source cites no external artifact —
 never omit the section. Consensus turns every NOT FOUND line into an operator
 question, and Crosscheck blocks until it is answered; the backticked name is
 the key both of them match on, so keep it identical wherever you repeat it.
+
+## Test Data Inventory (planner-test-data-derivation)
+
+Every entity the initiative's acceptance tests will need to exist beforehand —
+records in a state, users in a role, files, uploads — goes in one epic-wide
+table. Specify names these entities (in backticks) when it derives each
+criterion's test data, and Crosscheck matches criteria against them, so the
+entity name is the shared vocabulary: one short lowercase singular noun per row
+(\`invoice\`, \`client\`, \`import file\`). Look for existing seeds, fixtures,
+factories and migrations while you explore — they decide Source and Load via.
+
+\`\`\`
+## Test Data Inventory
+
+| Entity | States/variants | Roles | Volume | Source | Load via | Privacy |
+|--------|-----------------|-------|--------|--------|----------|---------|
+| invoice | draft, overdue, paid | finance user | 5 per state | exists:staging seed set (invoices.sql) | sql | synthetic |
+| client | active, archived | admin | 3 | generate | api | synthetic |
+\`\`\`
+
+- **Source** — the closed set from docs/test-data-source.md: \`exists:<where>\`,
+  \`seeded-by:<spec-slug>\`, \`external:<who>\` or \`generate\`. Never invent a \`<who>\`.
+- **Load via** — exactly one of \`sql\`, \`api\`, \`ui-forms\`, \`files\`, \`factories\`:
+  how a seed would put the data into the environment.
+- **Privacy** — \`synthetic\` or \`masked\`. Production personal data is never a
+  source: do not list a production dump, a live customer record or real PII.
+
+Write \`None.\` under the heading when no acceptance test needs data to exist
+beforehand — never omit the section.
 
 ## Pin the repo ref (#217)
 
@@ -423,6 +453,7 @@ On failure, write \`fail\` instead of \`done\`.
 - If a service's code isn't accessible, record it as a constraint, not an assumption.
 - Never run \`git checkout\`/\`git switch\`/\`git reset\` in a REPOS_ROOT repo — read-only access only.
 - discovery.md must have a \`## Cited Artifacts\` section — FOUND/NOT FOUND per cited artifact, or \`None.\`
+- discovery.md must have a \`## Test Data Inventory\` table (\`Entity | States/variants | Roles | Volume | Source | Load via | Privacy\`), or \`None.\` — synthetic or masked data only, never production PII.
 AGENT_PROMPT
 }
 
@@ -778,7 +809,7 @@ Acceptance Criteria line, whose \`Criterion\` cell repeats that AC line **verbat
 
 | Criterion | Role | Test data | Source | Navigation path | Expected | Verifiable |
 |-----------|------|-----------|--------|-----------------|----------|------------|
-| Export downloads a file named invoices-{date}.csv | finance user | 5 seeded invoices with distinct dates | seeded-by:inv-0-test-data-pack | Billing > Invoices | invoices-2026-09-30.csv downloaded | yes |
+| Export downloads a file named invoices-{date}.csv | finance user | 5 \`invoice\` records in state paid, with distinct dates | generate | Billing > Invoices | invoices-2026-09-30.csv downloaded | yes |
 | The invoice list looks uncluttered | any authenticated user | none | — | Billing > Invoices | needs human judgement, no checkable value | no |
 | Totals use the regional price list | finance user | the regional price list | external:pricing team | Billing > Invoices | total shows 1,240.00 | yes |
 | Archived clients are hidden | admin | an archived client record | exists:staging seed set (clients.sql) | Clients | archived client absent from list | yes |
@@ -790,6 +821,15 @@ Acceptance Criteria line, whose \`Criterion\` cell repeats that AC line **verbat
 - **Role / Test data** — who exercises it and what must exist first. When a criterion
   needs neither, still write \`any authenticated user\` / \`none\` — a missing row reads
   as "not considered", not "not needed".
+- **Derive Test data per criterion, from its Given and When.** Read the criterion's
+  Given (or precondition) clause for what must already exist, and its When clause for
+  the inputs the action consumes. Name each one as an entity from discovery.md's
+  \`## Test Data Inventory\`, in backticks, with its state and count
+  ("5 \`invoice\` records in state overdue", "1 \`client\` in state archived"). Write
+  \`none\` only when no data has to exist before the criterion is exercised — a
+  criterion that lists, filters, searches, exports or counts records always needs
+  them. Crosscheck flags a spec whose rows are all \`none\` while a criterion still
+  implies data (TEST_DATA_IMPLIED).
 - **Source** — where the test data comes from (below); \`—\` when Test data is \`none\`.
 - **Navigation path** — optional; empty falls back to the spec's \`## Navigation Path\`.
 - **Expected** — the concrete, checkable value (a specific string, count, status or
@@ -812,12 +852,10 @@ contract: docs/test-data-source.md):
   must carry a \`## Test Data Provided\` section listing what it generates/seeds.
 - \`external:<who>\` — someone outside the plan supplies it (a client, another team),
   and the source material says who. Never invent the \`<who>\`.
-- \`generate\` — it has to be synthesised and no spec does it yet. Crosscheck blocks
-  on every \`generate\` need (TEST_DATA_UNOWNED), so prefer writing the owner now:
-  when several specs need generated data, add one enabler spec (e.g.
-  \`<prefix>-test-data-pack\`, Kind enabler) whose \`## Test Data Provided\` lists
-  the generator and seed scripts, and point every need at it with
-  \`seeded-by:<that-slug>\`.
+- \`generate\` — it has to be synthesised and nothing produces it yet. Write
+  \`Source: generate\` and stop there: Crosscheck's test-data synthesis groups every
+  unowned need, writes the test-data spec that seeds it and links the consumers.
+  Do not write a test-data spec of your own for these needs.
 
 **Cited artifacts discovery.md lists as NOT FOUND** (#504): quote the artifact's
 name in backticks in the Test data text, exactly as discovery.md spells it, and
@@ -828,14 +866,15 @@ the Crosscheck stop, and Crosscheck checks the spec's Source against the answer.
 A spec may name itself in \`seeded-by:\` (its own implementation writes the seed)
 **unless the project has a standing "implementation does not write tests" rule**
 (recorded at argument parsing, from \`--no-tests-rule\` or the REPOS_ROOT CLAUDE.md).
-Under that rule nothing appears as a side effect of implementation: the
-test-data-pack spec is mandatory. Check it now:
+Under that rule nothing appears as a side effect of implementation, so
+self-seeding is forbidden: write \`Source: generate\` for that need instead, and
+Crosscheck's synthesis creates the spec that seeds it. Check it now:
 
 \`\`\`bash
 $(_planner_prompt_repos_root_export)
 CLAUDE_PLUGIN_ROOT="${_PLANNER_PROMPT_LIB_ROOT}"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-testdata.sh"
-planner_testdata_no_tests_rule "${initiative_id}" && echo " — no-tests rule active: every seeded need goes to a separate test-data-pack spec"
+planner_testdata_no_tests_rule "${initiative_id}" && echo " — no-tests rule active: never self-seed; write Source: generate for those needs"
 \`\`\`
 
 ### Confidence signals (RAW VALUES ONLY — do NOT compute confidence)
@@ -946,6 +985,10 @@ On failure, write \`fail\` instead of \`done\`.
   Plan table is generated from it (planner-ready-by-construction, #499).
 - Every Verification Notes row whose Test data is not \`none\` has a Source cell:
   \`exists:<where> | seeded-by:<spec-slug> | external:<who> | generate\` (#503).
+- Each row's Test data is derived from its criterion's Given/When clauses and names
+  \`## Test Data Inventory\` entities in backticks; \`none\` only when no data must
+  exist beforehand. An unowned need is \`Source: generate\` — never hand-write a
+  test-data spec for it.
 - Signals must be raw values from Discovery, not fabricated. Do NOT compute Confidence.
 - The description in each spec is the actual Linear ticket body — be precise.
 - Every spec's Signals carries \`Kind\` and \`Serves\`/\`Enables\`; every business spec
@@ -1167,6 +1210,30 @@ planner_prompt_epicgen() {
   project_ref=$(_planner_prompt_config "$initiative_id" "linear-project")
   milestone_ref=$(_planner_prompt_config "$initiative_id" "linear-milestone")
   branch_override=$(_planner_prompt_config "$initiative_id" "branch-override")
+
+  # UAT policy (planner-test-data-derivation, task 5.1): the operator's explicit
+  # choice is the `uat-policy` config key, persisted once at argument parsing
+  # from PLANNER_UAT_POLICY — never read from this shell's environment. With no
+  # explicit choice, an initiative whose synthesis wrote test-data (TD) specs
+  # gets `epic`: under per-ticket UAT on a shared branch a TD PR parked in UAT
+  # deadlocks its consumers. Decided here, in bash; the value is only used on
+  # the directive branch of step 5c (a shared branch), hence `true`.
+  local uat_explicit uat_policy
+  uat_explicit=$(_planner_prompt_config "$initiative_id" "uat-policy")
+  _source_if_missing "planner_testdata_synth_uat_policy" \
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-testdata-synth.sh"
+  if declare -f planner_testdata_synth_uat_policy >/dev/null 2>&1; then
+    uat_policy=$(planner_testdata_synth_uat_policy "$initiative_id" true "$uat_explicit" 2>/dev/null) ||
+      uat_policy="$uat_explicit"
+  else
+    uat_policy="$uat_explicit"
+  fi
+  # Interpolated into the agent's bash as a literal: only the enum (or empty)
+  # passes; anything else becomes a value branch_directive_generate rejects.
+  case "$uat_policy" in
+  "" | per-ticket | epic) ;;
+  *) uat_policy="invalid" ;;
+  esac
 
   cat <<AGENT_PROMPT
 You are the **Epic Generation** phase agent for the ticket-planner. Your job is
@@ -1522,7 +1589,7 @@ if [ "\$EMIT_DIRECTIVE" = "true" ]; then
       --arg base "\${PLANNER_BASE_BRANCH:-develop}" \
       --arg merge "\${PLANNER_MERGE_POLICY:-manual}" \
       --arg sync "\${PLANNER_SYNC_POLICY:-rebase-on-base-change}" \
-      --arg uat "\${PLANNER_UAT_POLICY:-}" \
+      --arg uat "${uat_policy}" \
       '{initiative_id: \$iid, title_slug: \$slug, base_branch: \$base, merge_policy: \$merge, sync_policy: \$sync}
        + (if \$uat == "" then {} else {uat_policy: \$uat} end)')
 
@@ -1672,7 +1739,7 @@ independently of the \`create\` step so status and replan can read it.
 | \`PLANNER_BASE_BRANCH\` | \`develop\` | Base branch for the directive |
 | \`PLANNER_MERGE_POLICY\` | \`manual\` | Merge policy enum |
 | \`PLANNER_SYNC_POLICY\` | \`rebase-on-base-change\` | Sync policy enum |
-| \`PLANNER_UAT_POLICY\` | *(unset)* | UAT policy enum (\`per-ticket\`\|\`epic\`). Unset omits the field entirely, and the validator resolves \`per-ticket\`. Set \`epic\` for an initiative whose children are only observable once the whole epic integrates — their PR-review pass then routes to \`Done\` instead of \`UAT\`, keeping the \`blocked-by\` chain moving. |
+| \`PLANNER_UAT_POLICY\` | *(unset)* | UAT policy enum (\`per-ticket\`\|\`epic\`). Read once at argument parsing and persisted as the \`uat-policy\` config key; the value step 5c uses is already interpolated above (\`--arg uat\`) — do not read the variable here. Unset omits the field entirely, and the validator resolves \`per-ticket\` — except that an initiative with synthesized test-data specs (\`artifacts/testdata-synth.json\`) gets \`epic\`, so a TD ticket parked in UAT cannot deadlock its consumers on the shared branch. Set \`epic\` for an initiative whose children are only observable once the whole epic integrates — their PR-review pass then routes to \`Done\` instead of \`UAT\`, keeping the \`blocked-by\` chain moving. |
 
 ## Constraints
 - The idempotency check is mandatory — do not skip it.
@@ -1745,9 +1812,13 @@ is left to judgement:
 - **Creation order and dependencies** — \`planner_ticketgen_order\` /
   \`planner_ticketgen_deps_json\` read each spec's \`## Labels\` \`blocked-by:<ref>\`
   tokens (a sibling slug, an unambiguous \`-\`-bounded prefix of one, or an existing
-  Linear identifier for a cross-initiative prerequisite).
+  Linear identifier for a cross-initiative prerequisite), plus the test-data
+  synthesis edges in \`artifacts/testdata-synth.json\` (consumer blocked by its TD spec).
 - **Title / type** — \`planner_ticketgen_spec_title\` (the spec's \`## Title\`) and
   \`planner_ticketgen_spec_type\` (the type token on its \`## Labels\` line).
+- **Priority** — \`planner_ticketgen_priority\`: a synthesized test-data spec (it carries
+  the \`planner:testdata-synth\` marker) is filed High, from its Signals \`Priority\`;
+  every other spec passes no priority.
 - **Body** — \`planner_ticketgen_body\` → \`planner_ticket_body_compose\`: every section of
   the spec except its \`# \` heading, Title, Labels, Signals and Verification Notes
   (and any hand-written Verification Plan / Related Tickets, which are regenerated), then
@@ -1930,7 +2001,11 @@ for ticket_slug in "\${ORDER[@]}"; do
   # 7. Create, with an empty label set (tracker-planner-and-fallback-cutover,
   # 4.1). Type, initiative linkage and blocked-by are local manifest facts
   # (step 9); Pre-approved lives only in the Planner Context block.
+  # A synthesized test-data spec is filed High (planner_ticketgen_priority:
+  # Linear priority 2) — its consumers all wait on it. Every other spec gets
+  # an empty priority, so the team default applies as before.
   LABELS='[]'
+  TICKET_PRIORITY=\$(planner_ticketgen_priority "\$spec_file")
   TICKET_RESPONSE=\$(planner_linear_create_issue \\
     "\$TEAM_ID" \\
     "\$TICKET_TITLE" \\
@@ -1938,7 +2013,8 @@ for ticket_slug in "\${ORDER[@]}"; do
     "\$LABELS" \\
     "\$EPIC_UUID" \\
     "${project_ref}" \\
-    "${milestone_ref}") || {
+    "${milestone_ref}" \\
+    "\$TICKET_PRIORITY") || {
     planner_state_write "${initiative_id}" "TicketGen" "create" "fail" "issueCreate failed for \${ticket_slug}"
     n_failed=\$((n_failed + 1))
     continue

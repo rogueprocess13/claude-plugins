@@ -50,14 +50,20 @@
 # TEST_USER_MISSING, AC_MISSING, AC_VAGUE, REPRO_MISSING, FLAG_NEEDS_INFO,
 # INTENT_MISSING, REPRO_NO_EXPECTED_ACTUAL.
 # Advisory codes (reported, never block): TEST_USER_UNRESOLVED,
-# TEST_DATA_MISSING, TEST_DATA_UNSEEDED, TEST_DATA_UNSOURCED (legacy body;
-# hard by default on a body carrying the Source contract — see the check
-# itself and docs/dor-readiness.md), VPLAN_MISSING, VPLAN_ROW_GAP,
+# TEST_DATA_MISSING, TEST_DATA_UNSEEDED, TEST_DATA_UNSOURCED (all three
+# advisory on a legacy body; hard by default on a body carrying the Source
+# contract — TEST_DATA_MISSING/TEST_DATA_UNSEEDED except on chore/security,
+# demoted by an explicit DOR_STRICT_TEST_DATA=false; TEST_DATA_UNSOURCED
+# demoted by DOR_STRICT_TEST_DATA_SOURCE=false — see the checks themselves
+# and docs/dor-readiness.md), VPLAN_MISSING, VPLAN_ROW_GAP,
 # VPLAN_UNVERIFIABLE, AC_IMPLEMENTATION_ONLY,
 # VERIFICATION_REQUIRED_NOT_SELF_VERIFYING. DOR_STRICT_CATALOG/
 # DOR_STRICT_TEST_DATA/DOR_STRICT_AC_IMPL/DOR_STRICT_VERIFICATION/
 # DOR_STRICT_VPLAN (all default false) promote the catalog/test-data/
-# impl-only/verification/verification-plan advisory codes to hard.
+# impl-only/verification/verification-plan advisory codes to hard. The one
+# exception is the contract case of TEST_DATA_MISSING/TEST_DATA_UNSEEDED
+# (planner-test-data-derivation): there an unset DOR_STRICT_TEST_DATA means
+# true, and only an explicit `false` demotes it.
 # DOR_STRICT_VPLAN (planner-ready-by-construction) promotes VPLAN_MISSING,
 # VPLAN_ROW_GAP and VPLAN_UNVERIFIABLE together — it does not affect the
 # self-verifying-AC escape hatch (VPLAN_MISSING's "satisfied-by-ac" class,
@@ -165,8 +171,15 @@ _dor_test_user_content() {
   echo "$1" | awk '/^##[[:space:]]*Test User/ {found=1; next} found && /^##/ {exit} found {print}'
 }
 
+# `## Test Data Provided` is excluded (planner-test-data-derivation): it is
+# what a synthesized test-data chore SUPPLIES to its consumers, not data the
+# ticket itself needs, so it is never read as this ticket's Test Data
+# section — by this extractor or by _dor_td_items.
 _dor_test_data_content() {
-  echo "$1" | awk '/^##[[:space:]]*Test Data/ {found=1; next} found && /^##/ {exit} found {print}'
+  echo "$1" | awk '
+    found && /^##/ {exit}
+    /^##[[:space:]]*[Tt][Ee][Ss][Tt] [Dd][Aa][Tt][Aa]/ && tolower($0) !~ /^##[[:space:]]*test data provided/ {found=1; next}
+    found {print}'
 }
 
 # _dor_section_content <body> <alias-set-name> — one shared extractor for
@@ -585,7 +598,7 @@ _dor_td_items() {
       close_item()
       h = tolower($0); sub(/^##[ \t]+/, "", h); gsub(/[*_]/, "", h)
       sec = ""
-      if (index(h, "test data") == 1) sec = "tdp"
+      if (index(h, "test data") == 1 && index(h, "test data provided") != 1) sec = "tdp"
       else if (index(h, "verification plan") == 1) sec = "vp"
       intable = 0
       next
@@ -1336,8 +1349,29 @@ check_ticket_ready() {
   fi
 
   # TEST_DATA_MISSING / TEST_DATA_UNSEEDED
+  # Severity (planner-test-data-derivation, design.md Decision 11):
+  #   - contract body (an item's Source — in Test Data Prerequisites or a
+  #     Verification Plan `Test data needed` cell — parses to a known kind):
+  #     hard by default. Like TEST_DATA_UNSOURCED below, the default lives
+  #     here in code, not in a per-process env var, because Refinement
+  #     caches the verdict and ticket-auto's gate may recompute it in another
+  #     process. An explicit DOR_STRICT_TEST_DATA=false demotes it to
+  #     advisory. `chore` and `security` bodies are exempt from the contract
+  #     default (planned-ticket-body-check.sh does not require their Test
+  #     Data Prerequisites section either) — a synthesized test-data chore
+  #     must never fail readiness on its own missing section.
+  #   - legacy body: advisory unless DOR_STRICT_TEST_DATA=true (unchanged).
+  # The contract is detected from the whole body here — when the Test Data
+  # section is absent, a Verification Plan cell's Source still marks it.
+  local td_src_contract="false" td_src_total=0 td_src_unsourced=0 td_src_detail=""
+  _dor_test_data_source_state "$body"
+
   local test_data_class="advisory"
-  [ "$strict_test_data" = "true" ] && test_data_class="hard"
+  if [ "$td_src_contract" = "true" ] && [ "$type" != "chore" ] && [ "$type" != "security" ]; then
+    [ "${DOR_STRICT_TEST_DATA:-true}" = "true" ] && test_data_class="hard"
+  else
+    [ "$strict_test_data" = "true" ] && test_data_class="hard"
+  fi
 
   local test_data_state
   test_data_state=$(_dor_test_data_state "$body")
@@ -1345,7 +1379,7 @@ check_ticket_ready() {
   missing)
     _dor_record "TEST_DATA_MISSING" "true" "$test_data_class" "no Test Data section found"
     _dor_record "TEST_DATA_UNSEEDED" "null" "inapplicable" "TEST_DATA_MISSING already covers this"
-    if [ "$strict_test_data" = "true" ]; then
+    if [ "$test_data_class" = "hard" ]; then
       missing+=("TEST_DATA_MISSING")
     else
       advisory+=("TEST_DATA_MISSING")
@@ -1354,7 +1388,7 @@ check_ticket_ready() {
   unseeded)
     _dor_record "TEST_DATA_MISSING" "false" "$test_data_class" "Test Data section present"
     _dor_record "TEST_DATA_UNSEEDED" "true" "$test_data_class" "Test Data section has no concrete detail"
-    if [ "$strict_test_data" = "true" ]; then
+    if [ "$test_data_class" = "hard" ]; then
       missing+=("TEST_DATA_UNSEEDED")
     else
       advisory+=("TEST_DATA_UNSEEDED")
@@ -1381,10 +1415,9 @@ check_ticket_ready() {
   #   A planned ticket created before the Source contract (Planner Context
   #   block, no Source fields) is a legacy body: it never fails by default.
   # Inapplicable when TEST_DATA_MISSING/TEST_DATA_UNSEEDED already fired.
-  local td_src_contract="false" td_src_total=0 td_src_unsourced=0 td_src_detail=""
+  # The provenance state was computed above, before TEST_DATA_MISSING.
   local test_data_unsourced="false"
   if [ "$test_data_state" = "ok" ]; then
-    _dor_test_data_source_state "$body"
     local td_src_class="advisory" td_src_kind="legacy"
     if [ "$td_src_contract" = "true" ]; then
       td_src_kind="contract"

@@ -125,6 +125,14 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
     find "${fixture_dir}specs" -maxdepth 1 -name '*.md' -exec cp {} "${state_dir}/artifacts/specs/" \;
   fi
 
+  # intents/ — TicketGen idempotency records (`ticket-<slug>.json`), copied to
+  # the initiative's .intents/: a TD spec whose slug has one counts as
+  # dispatched, so test-data synthesis keeps it (planner-test-data-derivation).
+  if [ -d "${fixture_dir}intents" ]; then
+    mkdir -p "${state_dir}/.intents"
+    cp "${fixture_dir}intents/"*.json "${state_dir}/.intents/" 2>/dev/null
+  fi
+
   # repo-stub/ mirrors the shape of a REPOS_ROOT checkout — copied in
   # verbatim so citation/precedent checks resolve against real files
   # instead of a mocked lookup table.
@@ -188,6 +196,70 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
         fail "${fixture_name}: finding mentions '${needle}'" "not in: ${fail_text}"
       fi
     done < <(jq -r '.message_contains[]' "$expected_file")
+  fi
+
+  # Consumer specs are never written by Crosscheck (test-data synthesis keeps
+  # its edits in TD specs, the sidecar and INDEX.md): every fixture spec
+  # without the synthesis marker must be byte-identical after the run.
+  if [ -d "${fixture_dir}specs" ]; then
+    changed_specs=""
+    for src_spec in "${fixture_dir}specs/"*.md; do
+      [ -f "$src_spec" ] || continue
+      grep -qF -- "$PLANNER_TESTDATA_SYNTH_MARKER" "$src_spec" && continue
+      cmp -s "$src_spec" "${state_dir}/artifacts/specs/$(basename "$src_spec")" ||
+        changed_specs="${changed_specs} $(basename "$src_spec")"
+    done
+    if [ -z "$changed_specs" ]; then
+      pass "${fixture_name}: consumer specs byte-identical"
+    else
+      fail "${fixture_name}: consumer specs byte-identical" "changed:${changed_specs}"
+    fi
+  fi
+
+  # Optional synthesis assertions (planner-test-data-derivation). Paths are
+  # relative to the initiative's artifacts/ directory.
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    if [ -e "${state_dir}/artifacts/${rel}" ]; then pass "${fixture_name}: ${rel} present"; else fail "${fixture_name}: ${rel} present" "missing"; fi
+  done < <(jq -r '.files_present[]?' "$expected_file")
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    if [ ! -e "${state_dir}/artifacts/${rel}" ]; then pass "${fixture_name}: ${rel} absent"; else fail "${fixture_name}: ${rel} absent" "exists"; fi
+  done < <(jq -r '.files_absent[]?' "$expected_file")
+  while IFS=$'\t' read -r rel needle; do
+    [ -n "$rel" ] || continue
+    if grep -qF -- "$needle" "${state_dir}/artifacts/${rel}" 2>/dev/null; then
+      pass "${fixture_name}: ${rel} contains '${needle}'"
+    else
+      fail "${fixture_name}: ${rel} contains '${needle}'" "not found"
+    fi
+  done < <(jq -r '(.file_contains // {}) | to_entries[] | .key as $k | .value[] | [$k, .] | @tsv' "$expected_file")
+  while IFS= read -r expr; do
+    [ -n "$expr" ] || continue
+    if jq -e "$expr" "${state_dir}/artifacts/testdata-synth.json" >/dev/null 2>&1; then
+      pass "${fixture_name}: sidecar ${expr}"
+    else
+      fail "${fixture_name}: sidecar ${expr}" "false or no sidecar"
+    fi
+  done < <(jq -r '.sidecar_jq[]?' "$expected_file")
+  while IFS= read -r needle; do
+    [ -n "$needle" ] || continue
+    if grep -qF -- "$needle" "$log_file"; then pass "${fixture_name}: state.log has '${needle}'"; else fail "${fixture_name}: state.log has '${needle}'" "not found"; fi
+  done < <(jq -r '.log_contains[]?' "$expected_file")
+
+  # idempotent: a second planner_crosscheck_run with no input change must
+  # change no artifact file — content, size or mtime.
+  if [ "$(jq -r '.idempotent // false' "$expected_file")" = true ]; then
+    snap() { (cd "${state_dir}/artifacts" && find . -type f -printf '%P %s %T@\n' | LC_ALL=C sort && find . -type f -exec sha256sum {} + | LC_ALL=C sort -k2); }
+    before=$(snap)
+    sleep 0.05
+    planner_crosscheck_run "$init_id" >/dev/null 2>&1
+    after=$(snap)
+    if [ "$before" = "$after" ]; then
+      pass "${fixture_name}: second run changes no artifact file"
+    else
+      fail "${fixture_name}: second run changes no artifact file" "$(diff <(echo "$before") <(echo "$after") | head -5 | tr '\n' ' ')"
+    fi
   fi
 
   # planner_crosscheck_run's own return code is 0 iff no blocking finding —

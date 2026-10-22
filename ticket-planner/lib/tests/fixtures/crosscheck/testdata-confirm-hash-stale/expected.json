@@ -1,0 +1,8 @@
+{
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["TEST_DATA_IMPLIED"],
+  "message_contains": ["invoice-dashboard.md [a4834925]"],
+  "notes": "planner-test-data-derivation 2.4: a TESTDATA_CONFIRM none whose hash (0badc0de) no longer matches the criterion text is void — the question is raised again."
+}

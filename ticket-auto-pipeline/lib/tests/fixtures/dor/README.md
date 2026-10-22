@@ -36,6 +36,8 @@ all-empty fixtures"), not a frozen contract.
 | 21 | `21-unsourced-contract.md` | feature | not-ready (ready + advisory under `DOR_STRICT_TEST_DATA_SOURCE=false`) | TEST_DATA_UNSOURCED | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 83 |
 | 22 | `22-sourced-contract.md` | feature | ready | — | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 85 |
 | 23 | `23-planned-contract-unsourced.md` | feature | not-ready | TEST_DATA_UNSOURCED | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 83 |
+| 24 | `24-contract-no-test-data.md` | feature | not-ready (ready + advisory under an explicit `DOR_STRICT_TEST_DATA=false`, or as `chore`/`security`) | TEST_DATA_MISSING | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity, edge_case_sufficiency | 81 |
+| 25 | `25-td-chore.md` | chore | ready | — | — | requirement_completeness, contradictory_requirements, deep_scope_ambiguity | 81 |
 
 ## Scenario mapping
 
@@ -62,3 +64,5 @@ all-empty fixtures"), not a frozen contract.
 - **21** — the same ticket written to the Source contract (ticket-planner/docs/test-data-source.md), but with one `generate` item, one item with no `Source:` and a `generate` Verification Plan cell. A body that carries the contract is held to it: `TEST_DATA_UNSOURCED` is hard.
 - **22** — every item sourced (`seeded-by:`, `exists:`, `external:`), across bullet and Verification Plan cell forms, with the tolerated `**Source:**`/`_Source:_`/backtick/trailing-dot variants and a `none` row. Passes even under `DOR_STRICT_TEST_DATA=true`.
 - **23** — a ticket-planner 0.17.0-shape planned body: a `## Planner Context` block plus Source fields, with one need left `generate` (both its bullet and its Verification Plan cell). The Source fields, not the Planner Context block, make it a contract body, so it is not-ready on `TEST_DATA_UNSOURCED`. A planned body from before 0.17.0 (Planner Context, no Source fields) stays legacy and ready; the ticket-planner business-framing fixtures prove that.
+- **24** — fixture 22 with its `## Test Data Prerequisites` section removed. The Verification Plan's `Test data needed` cells still carry known-kind Sources, so the body is a contract body, and `TEST_DATA_MISSING` is hard by default (planner-test-data-derivation). A legacy body without the section (fixture 02) stays advisory.
+- **25** — a synthesized test-data chore in the planner's TD template shape: `## Test Data Provided` items, `Seed command:`/`Verify command:`/`Seed channel:` lines, a backend-only Scope, `none` Verification Plan rows and the composer's `None — …` Test Data Prerequisites line. `## Test Data Provided` is what the chore supplies, not what it needs, so it is never read as the Test Data section; the chore is ready with no hard codes.

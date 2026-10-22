@@ -1,0 +1,8 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "idempotent": true,
+  "files_present": ["specs/invoice-test-data-pack.md", "testdata-synth.json", "specs/INDEX.md"],
+  "notes": "planner-test-data-derivation spec scenario 'Idempotent': a second planner_crosscheck_run with no spec or answer change changes no artifact file — TD spec, sidecar and INDEX.md keep their bytes and mtimes (files are written only when their bytes differ)."
+}

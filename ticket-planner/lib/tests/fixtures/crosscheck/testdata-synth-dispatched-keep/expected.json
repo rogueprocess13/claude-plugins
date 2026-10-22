@@ -1,0 +1,21 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "file_contains": {
+    "specs/audit-log-test-data.md": [
+      "Frozen TD spec whose ticket already exists."
+    ],
+    "specs/INDEX.md": [
+      "`audit-log-test-data` — synthesized test data (single) for `audit-log` — ticket exists"
+    ]
+  },
+  "files_absent": [
+    "specs/audit-log-test-data-2.md"
+  ],
+  "sidecar_jq": [
+    ".td_specs == [{\"consumers\":[\"audit-log\"],\"dispatched\":true,\"keys\":[\"audit-event\"],\"kind\":\"single\",\"slug\":\"audit-log-test-data\"}]",
+    ".overrides[0].source == \"seeded-by:audit-log-test-data\""
+  ],
+  "notes": "planner-test-data-derivation 4.5: a synth-marked TD spec with a TicketGen intent file (.intents/ticket-audit-log-test-data.json) is dispatched — the recompute keeps its slug and file byte-for-byte and re-attaches the need whose key (`audit-event`) it already owns. The frozen file lists that need under Test Data Provided; a need it does not list would get a fresh TD spec instead (gap fix, see test-planner-testdata-synth.sh)."
+}

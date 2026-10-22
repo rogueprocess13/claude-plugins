@@ -340,6 +340,7 @@ declare -A FIXTURE_TYPE=(
   ["18-backend-twin.md"]=chore ["19-padding.md"]=feature
   ["20-unsourced-legacy.md"]=feature ["21-unsourced-contract.md"]=feature ["22-sourced-contract.md"]=feature
   ["23-planned-contract-unsourced.md"]=feature
+  ["24-contract-no-test-data.md"]=feature ["25-td-chore.md"]=chore
 )
 declare -A FIXTURE_STATUS=(
   ["01-excellent.md"]=ready ["02-minimal.md"]=ready ["03-missing-intent.md"]=not-ready
@@ -351,11 +352,13 @@ declare -A FIXTURE_STATUS=(
   ["18-backend-twin.md"]=ready ["19-padding.md"]=ready
   ["20-unsourced-legacy.md"]=ready ["21-unsourced-contract.md"]=not-ready ["22-sourced-contract.md"]=ready
   ["23-planned-contract-unsourced.md"]=not-ready
+  ["24-contract-no-test-data.md"]=not-ready ["25-td-chore.md"]=ready
 )
 declare -A FIXTURE_HARD=(
   ["03-missing-intent.md"]=INTENT_MISSING ["05-vague-ac.md"]=AC_VAGUE ["07-fe-no-test-user.md"]=TEST_USER_MISSING
   ["08-fe-no-nav-path.md"]=NAV_PATH_MISSING ["10-bug-no-expected-actual.md"]=REPRO_NO_EXPECTED_ACTUAL
   ["21-unsourced-contract.md"]=TEST_DATA_UNSOURCED ["23-planned-contract-unsourced.md"]=TEST_DATA_UNSOURCED
+  ["24-contract-no-test-data.md"]=TEST_DATA_MISSING
 )
 declare -A FIXTURE_ADVISORY=(
   ["02-minimal.md"]=TEST_DATA_MISSING ["06-backend-no-verification.md"]=VERIFICATION_REQUIRED_NOT_SELF_VERIFYING
@@ -1315,6 +1318,77 @@ _td_case "legacy: 6-letter tracker prefix" sourced "The dataset produced by BILL
 _td_case "legacy: s3 URI is a path" sourced "Dump at s3://bucket/clients" true
 _td_case "legacy: https URI is a path" sourced "Template at https://example.com/t.xlsx" true
 _td_case "legacy: trailing-slash directory is a path" sourced "Files under fixtures/clients/" true
+
+# ══════════════════════════════════════════════════════════════════════════
+# planner-test-data-derivation (task 6.3): TEST_DATA_MISSING/UNSEEDED are
+# hard by default on a contract body (except chore/security); an explicit
+# DOR_STRICT_TEST_DATA=false demotes; legacy bodies stay advisory.
+# Re-baseline note: no existing fixture needed re-baselining — the only
+# contract-shaped fixtures (21, 22, 23) all carry a concrete Test Data
+# section, so neither code fires on them.
+# ══════════════════════════════════════════════════════════════════════════
+
+rc=0
+check_ticket_ready "TDD-24" --body "$FIXTURES_DIR/24-contract-no-test-data.md" --type feature --no-fetch || rc=$?
+[ "$rc" = "1" ] && echo "$DOR_MISSING" | jq -e 'index("TEST_DATA_MISSING") != null' >/dev/null &&
+  [ "$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_MISSING.class')" = "hard" ] &&
+  _pass "contract feature without Test Data (contract only in the Verification Plan) → TEST_DATA_MISSING hard" ||
+  _fail "fixture 24 should be not-ready on hard TEST_DATA_MISSING (rc=$rc missing=$DOR_MISSING)"
+
+rc=0
+DOR_STRICT_TEST_DATA=false check_ticket_ready "TDD-24-OFF" --body "$FIXTURES_DIR/24-contract-no-test-data.md" --type feature --no-fetch || rc=$?
+[ "$rc" = "0" ] && echo "$DOR_ADVISORY" | jq -e 'index("TEST_DATA_MISSING") != null' >/dev/null &&
+  _pass "explicit DOR_STRICT_TEST_DATA=false demotes the contract TEST_DATA_MISSING to advisory" ||
+  _fail "fixture 24 with DOR_STRICT_TEST_DATA=false should be ready+advisory (rc=$rc adv=$DOR_ADVISORY missing=$DOR_MISSING)"
+
+rc=0
+DOR_STRICT_TEST_DATA=true check_ticket_ready "TDD-24-ON" --body "$FIXTURES_DIR/24-contract-no-test-data.md" --type feature --no-fetch || rc=$?
+[ "$rc" = "1" ] && echo "$DOR_MISSING" | jq -e 'index("TEST_DATA_MISSING") != null' >/dev/null &&
+  _pass "DOR_STRICT_TEST_DATA=true keeps the contract TEST_DATA_MISSING hard" ||
+  _fail "fixture 24 with DOR_STRICT_TEST_DATA=true should be not-ready (rc=$rc missing=$DOR_MISSING)"
+
+for td_type in chore security; do
+  rc=0
+  check_ticket_ready "TDD-24-$td_type" --body "$FIXTURES_DIR/24-contract-no-test-data.md" --type "$td_type" --no-fetch || rc=$?
+  echo "$DOR_ADVISORY" | jq -e 'index("TEST_DATA_MISSING") != null' >/dev/null &&
+    ! echo "$DOR_MISSING" | jq -e 'index("TEST_DATA_MISSING") != null' >/dev/null &&
+    _pass "contract $td_type without Test Data → TEST_DATA_MISSING stays advisory" ||
+    _fail "contract $td_type should keep TEST_DATA_MISSING advisory (missing=$DOR_MISSING adv=$DOR_ADVISORY)"
+done
+
+rc=0
+check_ticket_ready "TDD-02" --body "$FIXTURES_DIR/02-minimal.md" --type feature --no-fetch || rc=$?
+[ "$rc" = "0" ] && echo "$DOR_ADVISORY" | jq -e 'index("TEST_DATA_MISSING") != null' >/dev/null &&
+  [ "$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_MISSING.class')" = "advisory" ] &&
+  _pass "legacy feature without Test Data stays advisory by default" ||
+  _fail "legacy fixture 02 should keep TEST_DATA_MISSING advisory (rc=$rc adv=$DOR_ADVISORY missing=$DOR_MISSING)"
+
+tdd_unseeded_file="$TMP_ROOT/tdd-contract-unseeded.md"
+_write_body "$tdd_unseeded_file" "$(cat "$FIXTURES_DIR/24-contract-no-test-data.md")
+## Test Data Prerequisites
+
+TBD
+"
+rc=0
+check_ticket_ready "TDD-UNSEEDED" --body "$tdd_unseeded_file" --type feature --no-fetch || rc=$?
+[ "$rc" = "1" ] && echo "$DOR_MISSING" | jq -e 'index("TEST_DATA_UNSEEDED") != null' >/dev/null &&
+  _pass "contract feature with a placeholder-only Test Data section → TEST_DATA_UNSEEDED hard" ||
+  _fail "contract unseeded body should be not-ready on TEST_DATA_UNSEEDED (rc=$rc missing=$DOR_MISSING)"
+
+rc=0
+check_ticket_ready "TDD-25" --body "$FIXTURES_DIR/25-td-chore.md" --type chore --no-fetch || rc=$?
+[ "$rc" = "0" ] && [ "$DOR_MISSING" = "[]" ] &&
+  [ "$(echo "$DOR_CHECKS" | jq -r '.TEST_DATA_UNSOURCED.pass')" = "false" ] &&
+  _pass "synthesized test-data chore passes; its Test Data Provided items are not read as needs" ||
+  _fail "fixture 25 should be ready with no hard codes (rc=$rc missing=$DOR_MISSING checks=$(echo "$DOR_CHECKS" | jq -c .TEST_DATA_UNSOURCED))"
+
+tdd_chore_notdp="$TMP_ROOT/tdd-chore-no-tdp.md"
+_write_body "$tdd_chore_notdp" "$(sed '/^## Test Data Prerequisites/,$d' "$FIXTURES_DIR/25-td-chore.md")"
+rc=0
+check_ticket_ready "TDD-25-NOTDP" --body "$tdd_chore_notdp" --type chore --no-fetch || rc=$?
+[ "$rc" = "0" ] && ! echo "$DOR_MISSING" | jq -e 'index("TEST_DATA_MISSING") != null' >/dev/null &&
+  _pass "test-data chore with no Test Data Prerequisites section is still ready" ||
+  _fail "test-data chore without the section should be ready (rc=$rc missing=$DOR_MISSING)"
 
 echo "---"
 echo "$PASS passed, $FAIL failed"

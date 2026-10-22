@@ -1,0 +1,6 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "notes": "planner-test-data-derivation design Decision 3: \"expires after 15 minutes\" and \"lock after 5 attempts\" are thresholds — denylisted units match neither tier. Must stay clean."
+}

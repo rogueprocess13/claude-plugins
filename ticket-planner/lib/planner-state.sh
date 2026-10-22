@@ -262,7 +262,7 @@ planner_state_init() {
 # point `plan` recorded, so these steps are exempt from duplicate-done suppression.
 
 # Config keys recognised by planner_config_set / planner_config_get.
-PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id linear-project no-project linear-milestone linear-project-id linear-milestone-id branch-override refresh-bodies no-tests-rule"
+PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id linear-project no-project linear-milestone linear-project-id linear-milestone-id branch-override refresh-bodies no-tests-rule uat-policy"
 
 # Is <step> a config key rather than a progress marker?
 # Usage: _planner_is_config_key <step>
@@ -427,6 +427,12 @@ planner_position_derive() {
   while IFS='|' read -r _iso phase _step status _msg; do
     # Skip META lines
     [ "$phase" = "META" ] && continue
+    # Crosscheck's test-data synthesis sub-step (planner-crosscheck.sh) logs
+    # `Crosscheck|testdata-synth|start|done` inside the phase's own
+    # check|start … check|done/fail bracket. Its done line is not the
+    # phase's: reading it as one would advance past a Crosscheck that
+    # crashed in a later check family.
+    [ "$_step" = "testdata-synth" ] && continue
 
     # A failed phase has not completed — treat it like an incomplete start
     # so that the router re-runs it rather than advancing past it.

@@ -525,13 +525,25 @@ planner_linear_resolve_milestone() {
 # teamId defect. Optional fields are omitted entirely when empty rather than sent
 # as null, so a workspace that does not use projects sees an unchanged payload.
 #
-# Args: <team_id> <title> <description> [label_ids_json] [parent_id] [project_id] [project_milestone_id]
+# `priority` is Linear's integer scale (0 none, 1 urgent, 2 high, 3 medium,
+# 4 low); empty omits the field, so the team default applies. Anything else is
+# refused (rc 1) rather than sent and rejected by the API mid-run.
+#
+# Args: <team_id> <title> <description> [label_ids_json] [parent_id] [project_id] [project_milestone_id] [priority]
 # Output: {"input": {...}} on stdout.
 planner_linear_build_issue_input() {
   local team_id="$1" title="$2" description="$3"
   local label_ids_json="${4:-[]}" parent_id="${5:-}" project_id="${6:-}" milestone_id="${7:-}"
+  local priority="${8:-}"
 
   [ -z "$label_ids_json" ] && label_ids_json="[]"
+  case "$priority" in
+  "" | [0-4]) ;;
+  *)
+    echo "planner-linear-api: priority must be 0-4, got '${priority}'" >&2
+    return 1
+    ;;
+  esac
 
   jq -nc \
     --arg teamId "$team_id" \
@@ -541,6 +553,7 @@ planner_linear_build_issue_input() {
     --arg parentId "$parent_id" \
     --arg projectId "$project_id" \
     --arg projectMilestoneId "$milestone_id" \
+    --arg priority "$priority" \
     '{
       input: (
         {
@@ -552,6 +565,7 @@ planner_linear_build_issue_input() {
         + (if $parentId == "" then {} else {parentId: $parentId} end)
         + (if $projectId == "" then {} else {projectId: $projectId} end)
         + (if $projectMilestoneId == "" then {} else {projectMilestoneId: $projectMilestoneId} end)
+        + (if $priority == "" then {} else {priority: ($priority | tonumber)} end)
       )
     }'
 }
@@ -593,13 +607,16 @@ planner_linear_resolve_issue_id() {
 # `project_ref` / `milestone_ref` accept a name or a UUID; both are optional and
 # omitted from the input when empty.
 #
-# Args: <team_id> <title> <description> [labels_json] [parent_id] [project_ref] [milestone_ref]
+# `priority` (optional, 0-4) is passed through to planner_linear_build_issue_input.
+#
+# Args: <team_id> <title> <description> [labels_json] [parent_id] [project_ref] [milestone_ref] [priority]
 # Output: created issue JSON on stdout.
 planner_linear_create_issue() {
   local team_id="$1" title="$2" description="$3"
   local labels_json="${4:-[]}" parent_id="${5:-}"
   local project_ref="${6:-${LINEAR_PROJECT:-}}"
   local milestone_ref="${7:-${LINEAR_PROJECT_MILESTONE:-}}"
+  local priority="${8:-}"
 
   local label_ids
   label_ids=$(planner_linear_resolve_label_ids "$team_id" "$labels_json") || return 1
@@ -623,7 +640,7 @@ planner_linear_create_issue() {
 
   local variables
   variables=$(planner_linear_build_issue_input \
-    "$team_id" "$title" "$description" "$label_ids" "$parent_id" "$project_id" "$milestone_id")
+    "$team_id" "$title" "$description" "$label_ids" "$parent_id" "$project_id" "$milestone_id" "$priority") || return 1
 
   local query='mutation CreateIssue($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier title url } } }'
   local payload

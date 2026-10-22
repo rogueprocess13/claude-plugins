@@ -22,7 +22,9 @@
 #   PROJECT_GATE            Epic Gen stopped on a single matching project
 #   CROSSCHECK_BLOCKED      the last Crosscheck run has unaccepted blocking codes
 #                           (CITED_ARTIFACT_UNRESOLVED also asks one
-#                           consensus-answer:cited:<n> question per artifact)
+#                           consensus-answer:cited:<n> question per artifact;
+#                           TEST_DATA_IMPLIED one consensus-answer:testdata:<slug>
+#                           question per spec)
 #   REFINEMENT_HALT         Refinement halted with waivable not-ready codes
 #   UNTIL_STOP              the run stopped after its --until phase
 #   FAILED_RETRY_EXHAUSTED  the current phase spent its retry budget
@@ -170,6 +172,57 @@ _planner_stop_cited_questions() {
     _planner_stop_question "cited-${n}-${h}" "consensus-answer:cited:${n}" \
       "Cited artifact \`$(_planner_stop_excerpt "${last_name[$key]}")\` (consensus.md cited-artifact question ${n}) is cited but not retrievable. Answer exists:<where> if it exists (say where), external:<who> if someone outside will supply it, or generate if it should be synthesised. The answer is written into consensus.md; every spec need that cites it must carry the same Source, or Crosscheck reports CITED_ARTIFACT_SOURCE_MISMATCH."
   done < <(_planner_stop_cited_name_list "$init" CITED_ARTIFACT_UNRESOLVED)
+}
+
+# Slugs named by the latest Crosscheck attempt's TEST_DATA_IMPLIED findings,
+# one per line, in finding order. The finding message starts
+# `<slug>.md [<hash8>] match="…"`.
+_planner_stop_testdata_slugs() {
+  local init="$1" log start
+  log=$(planner_state_log "$init") || return 1
+  start=$(grep -n '|Crosscheck|check|start|' "$log" | tail -1 | cut -d: -f1)
+  [ -n "$start" ] || return 0
+  tail -n "+$((start + 1))" "$log" | grep '^[^|]*|META|crosscheck|fail|TEST_DATA_IMPLIED ' |
+    cut -d'|' -f5- | sed -n 's/^TEST_DATA_IMPLIED \([A-Za-z0-9_-]*\)\.md \[[0-9a-f]\{8\}\] .*/\1/p' |
+    awk '!seen[$0]++'
+}
+
+# One test-data question per spec with a TEST_DATA_IMPLIED finding in the
+# latest Crosscheck attempt (planner-test-data-derivation), as JSON question
+# objects on one line each. Bound to `consensus-answer:testdata:<slug>`; the id
+# carries the hash of the spec's CURRENT trigger criterion, not the finding's,
+# so a criterion rewritten since Crosscheck re-asks under a new id and an
+# answers file written against the old one is refused (UNKNOWN_QUESTION_ID)
+# instead of confirming text nobody read. A spec whose trigger is gone, no
+# longer strong, or already answered under its current hash gets no question.
+# Headless default: `generate: <matched noun phrase>`.
+_planner_stop_testdata_questions() {
+  local init="$1" state_dir ents slug spec trig tier reason phrase hash crit
+  declare -f _planner_testdata_spec_trigger >/dev/null 2>&1 ||
+    source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-crosscheck-testdata.sh"
+  state_dir=$(planner_initiative_dir "$init") || return 1
+  ents=$(_planner_testdata_entity_names "$init")
+
+  local -A resolved=()
+  local r_slug r_hash r_rest
+  while IFS=$'\037' read -r r_slug r_hash r_rest; do
+    [ -n "$r_slug" ] && resolved["$r_slug"]="$r_hash"
+  done < <(planner_testdata_confirm_resolved "$init" "$ents")
+
+  while IFS= read -r slug; do
+    [ -n "$slug" ] || continue
+    spec="${state_dir}/artifacts/specs/${slug}.md"
+    [ -f "$spec" ] || continue
+    trig=$(_planner_testdata_spec_trigger "$spec" "$ents")
+    [ -n "$trig" ] || continue
+    IFS=$'\037' read -r tier reason phrase hash crit <<<"$trig"
+    [ "$tier" = "strong" ] || continue
+    [ "${resolved[$slug]:-}" = "$hash" ] && continue
+    phrase=$(printf '%s' "$phrase" | tr -d '|\r\n`"')
+    _planner_stop_question "testdata-${slug}-${hash}" "consensus-answer:testdata:${slug}" \
+      "Spec \`${slug}\` says Test data none on every Verification Notes row, but its criterion \"$(_planner_stop_excerpt "$(printf '%s' "$crit" | tr -d '"')")\" implies data must exist first (matched \"${phrase}\"). Answer none if nothing must exist, generate: <what> to have the planner synthesise it, exists:<where> if it already exists, or external:<who> if someone outside will supply it. The answer is written into consensus.md as a TESTDATA_CONFIRM line for this criterion; rewriting the criterion voids it." \
+      "none|generate: ${phrase}|exists|external" "generate: ${phrase}"
+  done < <(_planner_stop_testdata_slugs "$init")
 }
 
 _planner_stop_sha() {
@@ -327,6 +380,14 @@ planner_stop_describe_json() {
           "Crosscheck blocking finding ${code} (${count}x) for cited artifact(s): ${cited:-see state.log} — answer each in consensus.md ## Open Questions (Answer: exists:<where>, external:<who> or generate), set the matching specs' Source to it, and resume. Or accept the code for every artifact as genuine and expected: answer with the reason, or __skip__ to fix the artifacts instead.")
         ;;
       *)
+        # planner-test-data-derivation: one TESTDATA_CONFIRM question per
+        # spec, ahead of the code's blanket accept question.
+        if [ "$code" = "TEST_DATA_IMPLIED" ]; then
+          while IFS= read -r q; do
+            [ -n "$q" ] || continue
+            questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
+          done < <(_planner_stop_testdata_questions "$init")
+        fi
         q=$(_planner_stop_question "accept-${code}" "flag:accept:${code}" \
           "Crosscheck blocking finding ${code} (${count}x): $(_planner_stop_excerpt "$msg") — Accept it as genuine and expected? Answer with the reason, or __skip__ to fix the artifacts instead.")
         ;;

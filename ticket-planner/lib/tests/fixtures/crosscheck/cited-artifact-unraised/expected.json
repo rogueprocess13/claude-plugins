@@ -1,8 +1,12 @@
 {
   "blocking": 1,
-  "warn": 0,
+  "warn": 1,
   "accepted": 0,
-  "codes": ["CITED_ARTIFACT_UNRAISED"],
-  "message_contains": ["client sample import file (43 rows)"],
-  "notes": "#504: Discovery could not retrieve a cited sample file, and Consensus never raised it as an open question. Crosscheck blocks with CITED_ARTIFACT_UNRAISED. The FOUND artifact is not reported."
+  "codes": [
+    "CITED_ARTIFACT_UNRAISED"
+  ],
+  "message_contains": [
+    "client sample import file (43 rows)"
+  ],
+  "notes": "#504: Discovery could not retrieve a cited sample file, and Consensus never raised it as an open question. Crosscheck blocks with CITED_ARTIFACT_UNRAISED. The FOUND artifact is not reported. +1 warn (planner-test-data-derivation): TEST_DATA_INVENTORY_MISSING — this discovery.md predates the Test Data Inventory section."
 }

@@ -1164,6 +1164,134 @@ else
   fail "script block" "missing or invalid"
 fi
 
+# ── 9. Test-data synthesis sidecar + always-present Test Data Prerequisites ─
+# planner-test-data-derivation 4.8/4.9 and design Decision 11.
+
+echo "--- Test Data Prerequisites is always written (table-less spec, no section) ---"
+INIT_TD="INIT-499td"
+TD_SPECS="${REPOS_ROOT}/.ticket-auto/initiatives/${INIT_TD}/artifacts/specs"
+mkdir -p "$TD_SPECS"
+_td_spec() { # <slug> <labels> <acs> <notes> — _spec into TD_SPECS, its hand-written TDP removed
+  local keep="$SPECS"
+  SPECS="$TD_SPECS"
+  _spec "$1" "Audit $1" "$2" "$3" "$4"
+  SPECS="$keep"
+  awk '/^## Test Data Prerequisites$/ { skip = 1; next } skip && /^## / { skip = 0 } !skip' \
+    "${TD_SPECS}/$1.md" >"${TD_SPECS}/$1.tmp" && mv "${TD_SPECS}/$1.tmp" "${TD_SPECS}/$1.md"
+}
+_td_spec bare "planned, ${INIT_TD}, feature" "- [ ] The audit page loads" ""
+bare_body=$(planner_ticket_body_compose "${TD_SPECS}/bare.md" "$ctx" 2>/dev/null)
+[ "$(sed -n '/^## Test Data Prerequisites$/,/^## Verification Plan$/p' <<<"$bare_body" | sed '1d;$d' | sed '/^$/d')" = \
+  "- None — no acceptance criterion needs test data." ] &&
+  pass "no notes table, no section → the none line is written" || fail "bare TDP" "$bare_body"
+check_planned_body "T-1" feature "$bare_body" true >/dev/null 2>&1
+[ "$BODY_CHECK_EXIT_CODE" -eq 0 ] && pass "…so a table-less feature body passes planned-ticket-body-check" ||
+  fail "bare body check" "missing: ${BODY_CHECK_MISSING}"
+_td_spec numbered "planned, ${INIT_TD}, feature" "- [ ] The audit page loads" '## Verification Notes
+
+1. Role: admin. Test data: two archived audit events. Source: exists:staging seed.
+2. Role: admin. Test data: none.'
+nb_body=$(planner_ticket_body_compose "${TD_SPECS}/numbered.md" "$ctx" 2>/dev/null)
+[ "$(sed -n '/^## Test Data Prerequisites$/,/^## Verification Plan$/p' <<<"$nb_body" | grep '^- ')" = \
+  "- two archived audit events. Source: exists:staging seed" ] &&
+  pass "legacy numbered notes with data → their needs, never a false none line" || fail "numbered TDP" "$nb_body"
+rm -f "${TD_SPECS}/bare.md" "${TD_SPECS}/numbered.md"
+
+echo "--- sidecar edge + Source override (4.8) ---"
+TD_NOTES='## Verification Notes
+
+| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|
+| The audit log lists the recorded event | finance user | one `audit-event` record | generate | event listed | yes |
+| The page title reads Audit | finance user | none | — | title shown | yes |'
+_td_spec audit-log "planned, ${INIT_TD}, feature" "- [ ] The audit log lists the recorded event
+- [ ] The page title reads Audit" "$TD_NOTES"
+_td_spec audit-export "planned, ${INIT_TD}, feature, blocked-by:audit-log" "- [ ] The page title reads Audit" '## Verification Notes
+
+| Criterion | Role | Test data | Source | Expected | Verifiable |
+|---|---|---|---|---|---|
+| The page title reads Audit | finance user | none | — | title shown | yes |'
+printf '2026-10-01T00:00:00Z|META|schema|start|1\n' >"${TD_SPECS}/../../state.log"
+consumer_sum=$(sha256sum "${TD_SPECS}/audit-log.md")
+planner_testdata_synthesize "$INIT_TD" >/dev/null 2>&1
+[ -f "${TD_SPECS}/audit-log-test-data.md" ] && pass "synthesis wrote the TD spec" || fail "synth" "no audit-log-test-data.md"
+[ "$(planner_ticketgen_spec_deps "${TD_SPECS}/audit-log.md" "$TD_SPECS")" = "audit-log-test-data" ] &&
+  pass "spec_deps: the sidecar edge is a dependency (the consumer's Labels never name it)" ||
+  fail "sidecar dep" "$(planner_ticketgen_spec_deps "${TD_SPECS}/audit-log.md" "$TD_SPECS")"
+td_deps=$(planner_ticketgen_deps_json "$TD_SPECS")
+[ "$(jq -cS . <<<"$td_deps")" = '{"audit-export":["audit-log"],"audit-log":["audit-log-test-data"],"audit-log-test-data":[]}' ] &&
+  pass "deps_json carries Labels and sidecar edges" || fail "td deps_json" "$td_deps"
+[ "$(planner_ticketgen_order "$TD_SPECS" | paste -sd' ')" = "audit-log-test-data audit-log audit-export" ] &&
+  pass "creation order puts the TD spec before its consumer" || fail "td order" "$(planner_ticketgen_order "$TD_SPECS" | paste -sd' ')"
+sed -i 's/^planned, INIT-499td, feature$/planned, INIT-499td, feature, blocked-by:audit-log-test-data/' "${TD_SPECS}/audit-log.md"
+[ "$(planner_ticketgen_spec_deps "${TD_SPECS}/audit-log.md" "$TD_SPECS")" = "audit-log-test-data" ] &&
+  pass "a Labels edge equal to a sidecar edge is listed once" ||
+  fail "dedup" "$(planner_ticketgen_spec_deps "${TD_SPECS}/audit-log.md" "$TD_SPECS")"
+sed -i 's/, blocked-by:audit-log-test-data$//' "${TD_SPECS}/audit-log.md"
+[ "$(sha256sum "${TD_SPECS}/audit-log.md")" = "$consumer_sum" ] || fail "fixture restore" "audit-log.md changed"
+al_body=$(planner_ticket_body_compose "${TD_SPECS}/audit-log.md" "$ctx" 2>/dev/null)
+[ "$(sed -n '/^## Test Data Prerequisites$/,/^## Verification Plan$/p' <<<"$al_body" | grep '^- ')" = \
+  '- one `audit-event` record. Source: seeded-by:audit-log-test-data' ] &&
+  pass "Test Data Prerequisites shows Source: seeded-by:<td-slug>" || fail "TDP override" "$al_body"
+grep -qF '| one `audit-event` record (Source: seeded-by:audit-log-test-data) |' <<<"$al_body" &&
+  pass "Verification Plan cell shows Source: seeded-by:<td-slug>" || fail "VP override" "$al_body"
+grep -qF 'Source: generate' <<<"$al_body" && fail "no generate left" "$al_body" || pass "no Source: generate left in the body"
+check_planned_body "T-2" feature "$al_body" true >/dev/null 2>&1
+[ "$BODY_CHECK_EXIT_CODE" -eq 0 ] && pass "…and the consumer body passes planned-ticket-body-check" ||
+  fail "al body check" "missing: ${BODY_CHECK_MISSING}"
+[ "$(sha256sum "${TD_SPECS}/audit-log.md")" = "$consumer_sum" ] && pass "consumer spec file untouched" || fail "consumer touched" ""
+mv "${TD_SPECS}/audit-log-test-data.md" "${TMP_ROOT}/td.md"
+[ -z "$(planner_ticketgen_spec_deps "${TD_SPECS}/audit-log.md" "$TD_SPECS")" ] &&
+  pass "a stale sidecar edge (TD spec gone) is not a dependency" || fail "stale edge" "$(planner_ticketgen_spec_deps "${TD_SPECS}/audit-log.md" "$TD_SPECS")"
+grep -qF 'Source: generate' <<<"$(planner_ticket_body_compose "${TD_SPECS}/audit-log.md" "$ctx" 2>/dev/null)" &&
+  pass "…nor a Source override" || fail "stale override" "override applied without its TD spec"
+mv "${TMP_ROOT}/td.md" "${TD_SPECS}/audit-log-test-data.md"
+
+echo "--- one edge union: TicketGen deps == Crosscheck deps (design Risk mitigation) ---"
+source "${LIB_DIR}/planner-crosscheck-deps.sh"
+# Expected union, built independently: Crosscheck's own Labels token reader
+# (resolved to full slugs) + the sidecar edge reader.
+union_expected=$(
+  {
+    for f in "${TD_SPECS}"/*.md; do
+      b=$(basename "$f" .md)
+      [ "$b" = INDEX ] && continue
+      _planner_crosscheck_deps_tokens "$f" | while read -r t; do
+        if [ -f "${TD_SPECS}/${t}.md" ]; then
+          echo "$b>$t"
+        else
+          m=$(find "$TD_SPECS" -maxdepth 1 -name "${t}-*.md" -printf '%f\n')
+          [ "$(grep -c . <<<"$m")" = 1 ] && echo "$b>${m%.md}"
+        fi
+      done
+    done
+    planner_testdata_synth_edges "$INIT_TD" | tr '\037' '>'
+  } | LC_ALL=C sort -u | paste -sd' '
+)
+union_ticketgen=$(jq -r 'to_entries[] | .key as $k | .value[] | "\($k)>\(.)"' <<<"$(planner_ticketgen_deps_json "$TD_SPECS")" | LC_ALL=C sort -u | paste -sd' ')
+[ -n "$union_expected" ] && [ "$union_ticketgen" = "$union_expected" ] &&
+  pass "TicketGen's graph is exactly Labels ∪ sidecar edges (${union_ticketgen})" ||
+  fail "edge union" "ticketgen='${union_ticketgen}' expected='${union_expected}'"
+cc_rc=0
+planner_crosscheck_deps "$INIT_TD" >/dev/null 2>&1 || cc_rc=$?
+tg_rc=0
+planner_ticketgen_order "$TD_SPECS" >/dev/null 2>&1 || tg_rc=$?
+[ "$cc_rc" = 0 ] && [ "$tg_rc" = 0 ] && pass "acyclic union: Crosscheck deps clean, TicketGen orders it" ||
+  fail "acyclic agree" "crosscheck=$cc_rc ticketgen=$tg_rc"
+# A TD <-> consumer cycle that exists only through the sidecar edge.
+sed -i 's/^planned, INIT-499td, chore$/planned, INIT-499td, chore, blocked-by:audit-log/' "${TD_SPECS}/audit-log-test-data.md"
+grep -q 'chore, blocked-by:audit-log$' "${TD_SPECS}/audit-log-test-data.md" || fail "cycle setup" "TD Labels line not found"
+cc_out=$(planner_crosscheck_deps "$INIT_TD" 2>/dev/null)
+cc_rc=$?
+tg_rc=0
+planner_ticketgen_order "$TD_SPECS" >/dev/null 2>&1 || tg_rc=$?
+[ "$cc_rc" != 0 ] && [ "$tg_rc" != 0 ] && grep -qF 'DEPENDENCY_CYCLE audit-log.md' <<<"$cc_out" &&
+  grep -qF 'DEPENDENCY_CYCLE audit-log-test-data.md' <<<"$cc_out" &&
+  pass "TD <-> consumer cycle via the sidecar: Crosscheck blocks DEPENDENCY_CYCLE, TicketGen refuses to order" ||
+  fail "cycle agree" "crosscheck=$cc_rc ticketgen=$tg_rc out=$cc_out"
+grep -qF 'audit-export.md' <<<"$cc_out" && fail "cycle members" "downstream audit-export reported: $cc_out" ||
+  pass "only specs on the cycle are reported (not a spec merely downstream of it)"
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]

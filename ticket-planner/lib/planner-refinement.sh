@@ -25,7 +25,9 @@
 #     change shipped).
 #
 #   planner_refinement_scan <INIT>
-#     Runs the deterministic check for every child of the epic, caching each
+#     Runs the deterministic check for every child of the epic (strict:
+#     DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true, scoped to the call),
+#     caching each
 #     verdict on the ticket manifest and writing planner/dor-result.json.
 #     Prints one ticket id per line for every ticket that needs a semantic
 #     pass (design.md Decision 6's staleness rule). Exit 1 when the epic id
@@ -231,8 +233,15 @@ planner_refinement_scan() {
       fi
     fi
 
+    # Refinement scans strictly (planner-test-data-derivation, design
+    # Decision 11): the test-data and Verification Plan codes are hard here,
+    # so a planned ticket the planner itself produced halts on them instead
+    # of reaching ticket-auto with an advisory. The prefix scopes both flags
+    # to this one call — bash restores the caller's values (or unsets them)
+    # when the function returns, so nothing leaks into the planner's env.
     local check_rc=0
-    check_ticket_ready "$tid" --body "$body_file" --type "$type" --no-fetch >/dev/null 2>&1 || check_rc=$?
+    DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true \
+      check_ticket_ready "$tid" --body "$body_file" --type "$type" --no-fetch >/dev/null 2>&1 || check_rc=$?
     local hash="${DOR_BODY_HASH:-}"
 
     case "${DOR_STATUS:-unavailable}" in
