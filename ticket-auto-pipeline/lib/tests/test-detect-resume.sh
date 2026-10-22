@@ -748,6 +748,37 @@ test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4() {
   [ "$resume_step" = "STEP_4" ]
 }
 
+# ── RECONCILE_CYCLE counts each cycle once ─────────────────────────────────
+
+test_reconcile_cycle_counts_each_cycle_once_despite_router_echo() {
+  # The gate-reconcile agent writes `done|cycle#N|held: ...` and the router's
+  # spawn_agent_post then writes a second `done` line whose MSG echoes
+  # `cycle#N`; intervening META lines defeat spawn_agent_post's last-line dup
+  # guard. Two real cycles must count as 2, not 4.
+  local out
+  out=$(_detect_resume_with_log "RC-1" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
+    "2026-07-05T10:00:02Z|GATE|gate|fail|held" \
+    "2026-07-05T10:00:03Z|GATE|reconcile|done|cycle#1|held: open question" \
+    "2026-07-05T10:00:04Z|META|tokens|info|GATE:1/2/3/4" \
+    "2026-07-05T10:00:05Z|GATE|reconcile|done|cycle#1 held: open question" \
+    "2026-07-05T10:00:06Z|GATE|reconcile|done|cycle#2|held: still open" \
+    "2026-07-05T10:00:07Z|META|tokens|info|GATE:1/2/3/4" \
+    "2026-07-05T10:00:08Z|GATE|reconcile|done|cycle#2 held: still open")
+  [ "$(_field "$out" RECONCILE_CYCLE)" = "2" ]
+}
+
+test_reconcile_cycle_counts_distinct_cycles() {
+  local out
+  out=$(_detect_resume_with_log "RC-2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|GATE|reconcile|done|cycle#1|held: a" \
+    "2026-07-05T10:00:02Z|GATE|reconcile|done|cycle#2|held: b" \
+    "2026-07-05T10:00:03Z|GATE|reconcile|done|cycle#3|held: c")
+  [ "$(_field "$out" RECONCILE_CYCLE)" = "3" ]
+}
+
 # ── Terminal "done" state (#168) ────────────────────────────────────────────
 
 test_resume_pr_warn_routes_to_step_4_6() {
@@ -1107,6 +1138,8 @@ for fn in \
   test_gate_gate_done_still_advances_past_gate_held \
   test_gate_reconcile_held_routes_to_gate_held_not_step_4 \
   test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4 \
+  test_reconcile_cycle_counts_each_cycle_once_despite_router_echo \
+  test_reconcile_cycle_counts_distinct_cycles \
   test_prescan_zombie_does_not_force_step5_on_fresh_ticket \
   test_maintenance_document_zombie_still_routes_to_step5 \
   test_pr_review_zombie_resumes_at_step_4_6 \

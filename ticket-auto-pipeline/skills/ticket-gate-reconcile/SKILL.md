@@ -42,16 +42,42 @@ NOTES_PATH="$TICKET_DIR/notes.md"
 if [ -f "$NOTES_PATH" ]; then
   COMPLEXITY=$(get_complexity "$TICKET_DIR" 2>/dev/null || echo "$COMPLEXITY")
 fi
+```
 
-# Read the plan artifact for amendment context
+Resolve the plan artifact. An openspec change lives at the tickets-repo root
+(the current directory — the same `openspec/changes/` that
+`ticket-appraise-exec` writes to), never under `$TICKET_DIR`, and it must be
+**this** ticket's change, matched by ticket id. If it cannot be found, the
+block logs a `GATE|reconcile|fail` line and exits non-zero — stop there and
+report the error; never amend some other change's `tasks.md`:
+
+```bash
 if echo "$ARTIFACT_TYPE" | grep -q 'openspec'; then
-  ARTIFACT_PATH="$TICKET_DIR/openspec/changes/$(ls "$TICKET_DIR/openspec/changes/" 2>/dev/null | head -1)/tasks.md"
+  _tid_lower=$(echo "{TICKET-ID}" | tr '[:upper:]' '[:lower:]')
+  _change_dir=""
+  for _d in openspec/changes/*/; do
+    [ -d "$_d" ] || continue
+    _name=$(basename "$_d" | tr '[:upper:]' '[:lower:]')
+    # Whole-id match: TEST-7 must not pick up test-77-...
+    if [[ "$_name" =~ (^|[^a-z0-9])${_tid_lower}([^0-9]|$) ]]; then
+      _change_dir="${_d%/}"
+      break
+    fi
+  done
+  ARTIFACT_PATH="${_change_dir}/tasks.md"
+  if [ -z "$_change_dir" ] || [ ! -f "$ARTIFACT_PATH" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|GATE|reconcile|fail|openspec tasks.md for {TICKET-ID} not found under $PWD/openspec/changes/" >>"$LOG_FILE"
+    echo "ticket-gate-reconcile: no openspec change for {TICKET-ID} under $PWD/openspec/changes/ — cannot amend the plan" >&2
+    exit 1
+  fi
 else
   ARTIFACT_PATH="$TICKET_DIR/simple-fix.md"
 fi
+```
 
+```bash
 hb_init
-hb-wrap.sh gate "reconcile" "start" "gate-reconcile agent starting" "{\"complexity\":\"$COMPLEXITY\"}"
+hb-wrap.sh gate "reconcile" "info" "gate-reconcile agent starting" "{\"complexity\":\"$COMPLEXITY\"}"
 ```
 
 ## Step 2 — Resolve gate cycle and fetch comments
@@ -59,7 +85,10 @@ hb-wrap.sh gate "reconcile" "start" "gate-reconcile agent starting" "{\"complexi
 Initialize the cycle counter and fetch Linear comments:
 
 ```bash
-RECONCILE_N=$(grep -c '^[^|]*|GATE|reconcile|done|cycle#' "$LOG_FILE" 2>/dev/null || true)
+# Distinct cycle numbers, not lines — the router echoes `cycle#N` in its own
+# done line, so a line count double-counts (same rule as detect-resume.sh).
+RECONCILE_N=$(grep -o '^[^|]*|GATE|reconcile|done|cycle#[0-9]*' "$LOG_FILE" 2>/dev/null |
+  sed 's/.*cycle#//' | sort -u | wc -l | tr -d ' ' || true)
 RECONCILE_N=${RECONCILE_N:-0}
 RECONCILE_N=$((RECONCILE_N + 1))
 

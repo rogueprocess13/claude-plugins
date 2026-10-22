@@ -15,7 +15,7 @@
 #   epic_branch_children_done "CRE-100"
 #   epic_branch_open_pr "CRE-100" "/path/to/repo"
 
-# events.sh backs the pr-opened dual-write in epic_branch_open_pr below
+# events.sh backs the pr-opened dual-write (via pr-evidence.sh) in epic_branch_open_pr below
 # (tracker-event-vocabulary-and-emitter). Guarded — not every caller of this
 # file has already sourced it, and this library does not enforce its own
 # dependency sourcing (see header).
@@ -603,20 +603,17 @@ EOF
   EPIC_BRANCH_PR_STATE="open"
   echo "epic-branch: opened integration PR from '$branch' to '$base' for epic $epic_id"
 
-  # Commercial Evidence MVP (Branch B): pr-created capture for epic
-  # integration PRs, only when the caller has a pipeline log open — epic
-  # branch sync can run outside any single ticket's pipeline run.
+  # pr-created capture for epic integration PRs, only when the caller has a
+  # pipeline log open — epic branch sync can run outside any single ticket's
+  # pipeline run. lib/pr-evidence.sh is the one writer of the marker and the
+  # pr-opened event (GitHub #525).
   if [ -n "${LOG_FILE:-}" ] && [ -n "$_pr_url" ]; then
-    local _pr_num _pr_created_json
-    _pr_num=$(echo "$_pr_url" | grep -oE '[0-9]+$')
-    _pr_created_json=$(jq -nc --argjson pr "${_pr_num:-null}" --arg url "$_pr_url" --arg repo "$repo_slug" \
-      '{pr: $pr, url: $url, repo: $repo, epic: true}' 2>/dev/null) || true
-    if [ -n "$_pr_created_json" ]; then
-      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|pr-created|info|${_pr_created_json}" >>"$LOG_FILE"
+    if ! declare -f record_pr_created >/dev/null 2>&1; then
+      _EB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      [ -f "$_EB_LIB_DIR/pr-evidence.sh" ] && source "$_EB_LIB_DIR/pr-evidence.sh"
     fi
-    # Dual-write (tracker-event-vocabulary-and-emitter): pr-opened{pr}.
-    if [ -n "${_pr_num:-}" ] && declare -f emit_event >/dev/null 2>&1; then
-      emit_event "$epic_id" pr-opened "$(jq -nc --argjson pr "$_pr_num" '{pr: $pr}')" 2>/dev/null || true
+    if declare -f record_pr_created >/dev/null 2>&1; then
+      record_pr_created --new --epic "$LOG_FILE" "$epic_id" "$_pr_url" >/dev/null 2>&1 || true
     fi
   fi
 

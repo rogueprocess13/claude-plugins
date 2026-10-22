@@ -1563,6 +1563,53 @@ echo "$DOR_MISSING" | jq -e 'index("NAV_PATH_MISSING") == null' >/dev/null &&
   _pass "FE body with the path only in a Verification Plan cell passes NAV_PATH_MISSING" ||
   _fail "a filled Verification Plan cell should pass (got $DOR_MISSING)"
 
+# ── Stale FLAG_NEEDS_INFO in a cached verdict ─────────────────────────────
+# A verdict computed while the manifest carried `needs-info` caches
+# FLAG_NEEDS_INFO in `missing`. Once the flag clears (needs-info-resolved,
+# e.g. /ticket-approve or a released human hold), an unchanged-body cache
+# hit must not keep reporting FLAG_NEEDS_INFO — the flag is a live fact,
+# never a cached one (design.md Decision 3). Before the fix, only a body
+# edit or a full re-appraisal refreshed the cache.
+write_ticket_manifest "STALEFLAG-1" "INIT-1" "feature" '[]'
+stale_planner_dir="$TMP_ROOT/.ticket-auto/initiatives/INIT-1/tickets/STALEFLAG-1/planner"
+mkdir -p "$stale_planner_dir"
+_write_body "$stale_planner_dir/body.md" "$full_body"
+resolve_planner_dir() { echo "$stale_planner_dir"; }
+stale_manifest=$(get_ticket_manifest_path "STALEFLAG-1")
+_set_flags() {
+  local tmpj
+  tmpj=$(jq -c --argjson f "$2" '.flags = $f' "$1")
+  echo "$tmpj" >"$1"
+}
+
+_set_flags "$stale_manifest" '["needs-info"]'
+rc=0
+ensure_ticket_readiness "STALEFLAG-1" || rc=$?
+[ "$rc" = "1" ] && echo "$DOR_MISSING" | jq -e 'index("FLAG_NEEDS_INFO") != null' >/dev/null &&
+  _pass "ensure_ticket_readiness: needs-info flag set -> FLAG_NEEDS_INFO cached, not-ready" ||
+  _fail "expected not-ready with FLAG_NEEDS_INFO while flag set (rc=$rc missing=$DOR_MISSING)"
+
+_set_flags "$stale_manifest" '[]'
+rc=0
+ensure_ticket_readiness "STALEFLAG-1" || rc=$?
+[ "$rc" = "0" ] && [ "$DOR_STATUS" = "ready" ] &&
+  echo "$DOR_MISSING" | jq -e 'index("FLAG_NEEDS_INFO") == null' >/dev/null &&
+  _pass "ensure_ticket_readiness: cleared needs-info flag drops stale cached FLAG_NEEDS_INFO" ||
+  _fail "cleared flag must not leave a cached FLAG_NEEDS_INFO (rc=$rc status=$DOR_STATUS missing=$DOR_MISSING)"
+
+[ "$(get_ticket_manifest_field "STALEFLAG-1" ready | jq -r '.status')" = "ready" ] &&
+  get_ticket_manifest_field "STALEFLAG-1" ready | jq -e '(.missing | index("FLAG_NEEDS_INFO")) == null and (.body_hash // "") != ""' >/dev/null &&
+  _pass "ensure_ticket_readiness: healed verdict is written back (ticket_is_ready agrees, body_hash kept)" ||
+  _fail "healed verdict should be persisted (got $(get_ticket_manifest_field "STALEFLAG-1" ready))"
+
+# The reverse: a flag set after a ready verdict was cached surfaces too.
+_set_flags "$stale_manifest" '["needs-info"]'
+rc=0
+ensure_ticket_readiness "STALEFLAG-1" || rc=$?
+[ "$rc" = "1" ] && echo "$DOR_MISSING" | jq -e 'index("FLAG_NEEDS_INFO") != null' >/dev/null &&
+  _pass "ensure_ticket_readiness: flag set after a cached ready verdict reports FLAG_NEEDS_INFO" ||
+  _fail "a newly set flag should surface on a cache hit (rc=$rc missing=$DOR_MISSING)"
+
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.69.4 (2026-10-22)
+## 0.69.8 (2026-10-22)
 
 The adversarial review in `ticket-appraise-exec` Step 3.6 now knows which round it is on
 ([#203](https://github.com/willard-pro/claude-plugins/issues/203)). Before this, every re-run sent
@@ -51,6 +51,120 @@ the approach.
   `ADVERSARIAL_BLOCKED` as "resolved". With the new ordering, a run that dies between `done|BLOCKED`
   and its gate-stop would have resumed past the review. Only `done|PASS` or `done|WARNINGS` now
   resolves the block.
+
+## 0.69.7 (2026-10-22)
+
+`flow.sh` no longer aborts on its warn-only ILLEGAL_TRANSITION heartbeat ([#530](https://github.com/willard-pro/claude-plugins/issues/530)).
+
+### Fixed
+
+- A trigger whose `from` is an array (`appraise-start`: `["Backlog","Todo"]`) fired on a ticket
+  whose manifest stage did not match, such as a brand-new ticket with no manifest, made
+  `flow.sh` exit 1 whenever `HB_LOG_FILE` was set. The ILLEGAL_TRANSITION check interpolated the
+  pretty-printed multi-line array into a JSON string, `hb_write` rejected the invalid DETAIL with
+  rc 1, and `set -e` ended the script before the transition ran. The router's STEP_1 claim
+  failed, so every new ticket stopped before APPRAISE. The array is now joined to `Backlog,Todo`
+  for both the pipeline-log line and the heartbeat.
+- Every heartbeat DETAIL in `flow.sh` is now built by jq (`_hb_detail`) instead of string
+  interpolation, and every `hb_gate` call goes through `_hb_gate`, which ignores a rejected
+  entry. A heartbeat is advisory and can no longer change `flow.sh`'s outcome. Before, a
+  rejected heartbeat on the precondition, fence-guard or verdict-gate path turned the intended
+  exit 8/9/10/11 into exit 1. The fence-guard DETAIL interpolated `fenced_gen`/`caller_gen` as
+  bare JSON numbers, so an empty value made it invalid.
+- `hb_write` is unchanged: it still returns 1 on a malformed or nested DETAIL. Its tests and
+  `pipeline-heartbeat-format.md` define that contract, so callers that must not fail are
+  responsible for guarding the call.
+
+## 0.69.6 / fleet-controller 0.42.9 (2026-10-22)
+
+Four gate-reconcile and pipeline-log fixes.
+
+### Fixed
+- **Gate-reconcile cycle counter double-counted.** Each cycle is logged twice (the agent's own
+  `done|cycle#N|held: ...` line and the router's `spawn_agent_post` echo), and the post's last-line
+  dup guard misses the echo whenever a META line lands in between, so two cycles could count as
+  four and trip `RECONCILE_EXHAUSTED` early. `RECONCILE_CYCLE` now counts distinct cycle numbers —
+  identically in `detect-resume.sh`, fleetd's `resolve_loop_counters`, the skill's `RECONCILE_N`
+  and `run-summary.sh`'s `reconcile_cycles`.
+- **Gate-reconcile amended the wrong plan.** `ticket-gate-reconcile` looked for the openspec change
+  under `$TICKET_DIR` and took the first directory listed. It now resolves this ticket's own change
+  under the tickets-repo root `openspec/changes/` by whole ticket id, and logs
+  `GATE|reconcile|fail` and stops when there is none.
+- **Gate-reconcile start heartbeat never written.** It used status `start`, which `heartbeat.sh`
+  rejects; it now uses `info`. A structural test checks every literal `hb-wrap.sh` call in skills
+  and agents against the status enum.
+- **`_plog` dropped any entry whose MSG contained `|`.** It now replaces `|`, CR and LF with a
+  space and always writes one 5-field line, so the entry is no longer lost where stderr is
+  discarded.
+
+## 0.69.5 (2026-10-22)
+
+PRs opened by the VERIFY phase now always leave a `META|pr-created` record, so merge-poll can poll
+them and blocked-by dependents are released after a human merges the PR (#525).
+
+### Fixed
+- **VERIFY-opened PRs had no repo**: ticket-verify's PR capture was a bash block in its SKILL.md.
+  The agent ran its own version of it, logged `VERIFY|pr-open|done|<url>` and never wrote
+  `META|pr-created`. The run event then carried `pr.repo: null`, merge-poll wrote `unknown-repo`
+  once and never polled again, and `ticket_pipeline_merge_state` stayed `unknown` after the merge.
+  Operators had to append `META|manual-merge` by hand to release dependents.
+- **One writer for the marker**: new `lib/pr-evidence.sh`. `record_pr_created [--new] <LOG> <TID>
+  <URL> [--epic]` writes `pr-created` once per PR per run and, with `--new`, emits the `pr-opened`
+  outbox event (idempotency-keyed on the PR). ticket-verify Step 6 and `epic_branch_open_pr` both
+  call it; the `pr-opened` vocabulary entry names it as the emitter.
+- **Verified backfill before the outcome**: `pipeline-finalize.sh` runs `pr_evidence_backfill`
+  just before `META|outcome`, only when the run has no `pr-created` record at all. Candidates are
+  GitHub PR URLs on VERIFY or PR-REVIEW lines and bare `checkout-pr` numbers. Each is recorded
+  only when its repo is one of the ticket's worktree remotes and `gh pr view` reports the ticket
+  branch as its head. Agents link related or upstream PRs in free text on those lines, and a wrong
+  PR's merge would release dependents early, so anything unverifiable (gh fails, `REPOS_ROOT`
+  unset, worktrees gone, other head branch) gets a `META|pr-evidence|warn|` line instead.
+  Backfilled records carry `"backfill":true`, emit no event, and lose to any real record in
+  `ticket_pipeline_pr_ref` and `run-summary.sh`.
+- **`ticket_pipeline_pr_ref`** now reports the earliest line naming the PR, so a backfilled marker
+  written after `merge-decision|done|merged` does not hide that merge record.
+
+### Upgrade notes
+- Runs that already finished with `unknown-repo` are not re-polled. Release their dependents with
+  `META|manual-merge` as before.
+- Not in this release: a fleet WARN when merge-poll writes `unknown-repo` for a blocker.
+
+## 0.69.4 / fleet-controller 0.42.8 (2026-10-22)
+
+A `needs-info` flag no longer outlives the answer to the questions that set it. Before this, an
+answered ticket kept reporting `FLAG_NEEDS_INFO` and stayed not-ready until a full re-appraisal.
+
+### Fixed
+- **Stale `FLAG_NEEDS_INFO` in a cached readiness verdict**: `check_ticket_ready` records
+  `FLAG_NEEDS_INFO` in `ready.missing` from the live manifest flag, but `ensure_ticket_readiness`
+  only invalidated its cache on a body edit. After `needs-info-resolved` cleared the flag, an
+  unchanged-body cache hit still returned not-ready with `FLAG_NEEDS_INFO`, and Check 2.7e
+  gate-stopped `TICKET_NOT_READY` even after `/ticket-approve`. Every cache hit now re-derives that
+  one code from the live flag and writes the corrected verdict back through `set_ticket_readiness`
+  (waivers and a still-matching semantic verdict are preserved).
+- **Released human hold now clears `needs-info`** (fleet-controller 0.42.7): fleetd applied
+  `needs-info` when it created a human hold but nothing cleared it when the human answered. After
+  a `human` hold is released, `_hold_reconcile_pass` calls the new
+  `gate_hold.clear_needs_info_on_release`, which runs the existing `needs-info-resolved` trigger
+  only when the manifest carries the flag. No new trigger or event; `gate` holds are unaffected.
+
+## fleet-controller 0.42.7 (2026-10-22)
+
+fleetd's hold-reconcile pass no longer gate-stops every held complex ticket, and a reconcile
+gate-stop is recorded once per hold instead of on every pass (#529).
+
+### Fixed
+- **Empty scratch log in the reconcile probe**: `run_entry_gate` ran `gate-check.sh --mode entry`
+  against an empty scratch log. The gate reads the artifact type from the log it is given, found no
+  `EXEC|create-artifact|done|` line, defaulted to `simple-fix`, and gate-stopped every held openspec
+  ticket on `COMPLEXITY_ARTIFACT_MISMATCH`. The scratch log is now a copy of the ticket's real
+  pipeline log, and only the lines the probe adds are returned. A no-change poll still writes
+  nothing to the real log.
+- **Unbounded gate-stop loop**: a `GATE_STOP` left the hold row in place, so the next pass probed
+  again and appended the same gate-stop pair again — about 350 times for one ticket. The
+  supervisor's marker is now `<CODE> — hold <hold_id>`, and `reconcile_hold` skips the probe while a
+  marker for the current hold (written at or after its `held_at`) is in the log. The code stays the
+  message prefix, so `exit-path.sh` classifies it as before.
 
 ## 0.69.3 (2026-10-22)
 

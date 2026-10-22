@@ -23,6 +23,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-run-identity.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-summary.sh
 	bash ticket-auto-pipeline/lib/tests/test-merge-poll.sh
+	bash ticket-auto-pipeline/lib/tests/test-pr-evidence.sh
 	bash ticket-auto-pipeline/lib/tests/test-pipeline-finalize.sh
 	bash ticket-auto-pipeline/lib/tests/test-spawn-helper.sh
 	bash ticket-auto-pipeline/lib/tests/test-worker-hooks.sh

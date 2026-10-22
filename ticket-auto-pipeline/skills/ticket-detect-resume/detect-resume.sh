@@ -600,7 +600,13 @@ fi
 
 # ── Reconcile cycle extraction ──────────────────────────────────────────────
 
-RECONCILE_CYCLE=$(grep -c '^[^|]*|GATE|reconcile|done|cycle#' "$LOG_FILE" 2>/dev/null || true)
+# Counts DISTINCT cycle numbers, not lines: each cycle is logged twice — the
+# gate-reconcile agent's own `done|cycle#N|held: ...` and the router's
+# spawn_agent_post line whose MSG echoes `cycle#N` — and spawn_agent_post's
+# last-line dup guard misses the echo whenever a META line lands in between.
+# fleetd/phase_dispatch.py's resolve_loop_counters applies the same rule.
+RECONCILE_CYCLE=$(grep -o '^[^|]*|GATE|reconcile|done|cycle#[0-9]*' "$LOG_FILE" 2>/dev/null |
+  sed 's/.*cycle#//' | sort -u | wc -l | tr -d ' ' || true)
 RECONCILE_CYCLE=${RECONCILE_CYCLE:-0}
 
 # ── Browser-state correction ────────────────────────────────────────────────
@@ -734,7 +740,7 @@ fi
 #                       later IMPLEMENT done (crash-resume must re-implement before
 #                       re-verifying); "pass" if PASS; empty otherwise
 #   ITERATION         — count of PR review WARN-verdict (⚠️) entries in pipeline log
-#   RECONCILE_CYCLE   — count of gate reconcile done entries
+#   RECONCILE_CYCLE   — count of distinct gate reconcile cycle#N numbers
 #   PR_FEEDBACK_CYCLE — count of pr-reconcile done entries
 
 cat <<EOF
