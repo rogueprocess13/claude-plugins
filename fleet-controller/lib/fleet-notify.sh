@@ -463,6 +463,8 @@ score: ${_fnr_score}"
     # dor-semantic-evaluator task 7.3: SEMANTIC_* codes and disputed
     # deterministic codes, report-only exactly like score/gaps above — this
     # notifier never branches on them, it just reads the cached manifest.
+    # planner-refinement-convergence 5.1: a disputed code the audit demoted
+    # (a key of ready.demoted) no longer blocks, so it gets no waive hint.
     local _fnr_semantic_codes
     _fnr_semantic_codes=$(echo "$_fnr_ready" | jq -r '[(.missing // [])[] | select(startswith("SEMANTIC_"))] | join(",")' 2>/dev/null) || _fnr_semantic_codes=""
     if [ -n "$_fnr_semantic_codes" ]; then
@@ -472,7 +474,9 @@ semantic: ${_fnr_semantic_codes}"
     local _fnr_disputed
     _fnr_disputed=$(echo "$_fnr_ready" | jq -r \
       --arg tid "$tid" \
-      '[(.semantic.audit // [])[] | select(.verdict == "disputed")
+      '((.demoted // {}) | if type == "object" then keys else [] end) as $demoted
+       | [(.semantic.audit // [])[] | select(.verdict == "disputed")
+        | select(.code as $c | ($demoted | index($c)) == null)
         | "\(.code) (\(.reason)) — waive: dor-check.sh --waive \($tid) \(.code) \"\(.reason)\""]
        | join("; ")' 2>/dev/null) || _fnr_disputed=""
     if [ -n "$_fnr_disputed" ]; then
