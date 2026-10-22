@@ -222,7 +222,7 @@ An untagged bullet is a defect in whichever step wrote it — fix it there, don'
 
 Activate the analyzer persona before scoring:
 
-Run `lib/persona-select.sh --repo <repo> --phase appraise` and read the persona file at `$PERSONA_BASE`. Inject its content as role context for this step.
+Run `lib/persona-select.sh --repo <repo> --phase appraise` and read the persona file at `$PERSONA_BASE`. Inject its content as role context for this step. If `$PERSONA_TESTDATA` is non-empty, read it too: the ticket creates or depends on test data, so score where that data comes from and how it is loaded.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|complexity-sweep|start|Scoring complexity axes" >> "$LOG_FILE"
 

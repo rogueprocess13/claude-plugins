@@ -393,6 +393,198 @@ check_paths "python-refactor" "$output"
 output=$(TICKET_TITLE="Refactor Express routes" "$SELECTOR" --repo "$TMPDIR/node-project" --layer BE --phase implement)
 check_paths "node-refactor" "$output"
 
+# ── Test-data persona ──────────────────────────────────────────────────────────
+
+echo ""
+echo "── Test-data persona ──"
+
+# Count the colon-separated entries of a key's value.
+td_count() {
+  local output="$1" key="$2" actual
+  actual=$(echo "$output" | grep "^${key}=" | cut -d'=' -f2-)
+  if [ -z "$actual" ]; then
+    echo 0
+  else
+    awk -F: '{print NF}' <<<"$actual"
+  fi
+}
+
+assert_count() {
+  local desc="$1" output="$2" key="$3" expected="$4" actual
+  actual=$(td_count "$output" "$key")
+  if [ "$actual" -eq "$expected" ]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc — expected $expected entries in $key, got $actual" >&2
+  fi
+}
+
+assert_not_contains() {
+  local desc="$1" output="$2" key="$3" unexpected="$4" actual
+  actual=$(echo "$output" | grep "^${key}=" | cut -d'=' -f2-)
+  if echo "$actual" | grep -q "$unexpected"; then
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc — did not expect '$unexpected' in ${key}=${actual}" >&2
+  else
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  fi
+}
+
+mkdir -p "$TMPDIR/sql-project/src/main/resources/db/migration"
+mkdir -p "$TMPDIR/api-project/docs"
+touch "$TMPDIR/api-project/docs/openapi.yaml"
+mkdir -p "$TMPDIR/factory-project"
+printf '[project]\ndependencies = ["factory_boy"]\n' >"$TMPDIR/factory-project/pyproject.toml"
+
+# Strong signal → base swap on implement, whatever the layer
+td_file="$TMPDIR/td-strong.md"
+printf '## Test Data Provided\n- invoice records\n\nSeed command: make seed-invoices\n' >"$td_file"
+output=$(TICKET_TEXT_FILE="$td_file" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "strong signal + BE implement → test-data-engineer base" "$output" "PERSONA_BASE" "base/test-data-engineer"
+assert_contains "strong signal → PERSONA_TESTDATA set" "$output" "PERSONA_TESTDATA" "base/test-data-engineer"
+output=$(TICKET_TEXT_FILE="$td_file" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer FE --phase implement)
+assert_contains "strong signal + FE implement → test-data-engineer base" "$output" "PERSONA_BASE" "base/test-data-engineer"
+
+# Each strong marker on its own
+output=$(TICKET_DESCRIPTION="Seed command: make seed" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "Seed command line alone → strong" "$output" "PERSONA_BASE" "base/test-data-engineer"
+output=$(TICKET_DESCRIPTION="<!-- planner:testdata-synth v1 -->" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "synth marker alone → strong" "$output" "PERSONA_BASE" "base/test-data-engineer"
+
+# Strong signal outside implement keeps the phase base
+output=$(TICKET_TEXT_FILE="$td_file" "$SELECTOR" --repo "$TMPDIR/unknown-project" --phase appraise)
+assert_contains "strong signal + appraise → analyzer base" "$output" "PERSONA_BASE" "analyzer"
+assert_contains "strong signal + appraise → PERSONA_TESTDATA set" "$output" "PERSONA_TESTDATA" "base/test-data-engineer"
+output=$(TICKET_TEXT_FILE="$td_file" "$SELECTOR" --repo "$TMPDIR/unknown-project" --phase review)
+assert_contains "strong signal + review → analyzer base" "$output" "PERSONA_BASE" "analyzer"
+
+# Weak signal adds, never swaps
+output=$(TICKET_TITLE="Add the export button; update fixtures for the report" "$SELECTOR" --repo "$TMPDIR/react-project" --layer FE --phase implement)
+assert_contains "weak keyword + FE implement → frontend-developer base kept" "$output" "PERSONA_BASE" "frontend-developer"
+assert_contains "weak keyword → PERSONA_TESTDATA set" "$output" "PERSONA_TESTDATA" "base/test-data-engineer"
+assert_contains "weak keyword → stack specializer kept" "$output" "PERSONA_SPECIALIZER" "frontend/react"
+for phrase in "seed data" "sample data" "demo data" "mock data" "synthetic data" "generate the data" "data load" "bulk import" "test data"; do
+  output=$(TICKET_TITLE="Ticket about $phrase" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+  assert_contains "weak phrase '$phrase' → PERSONA_TESTDATA set" "$output" "PERSONA_TESTDATA" "base/test-data-engineer"
+done
+
+# Channels: explicit line wins over keywords and probes
+output=$(TICKET_DESCRIPTION="Seed command: make seed
+Seed channel: api
+insert the rows with SQL" "$SELECTOR" --repo "$TMPDIR/sql-project" --layer BE --phase implement)
+assert_contains "explicit Seed channel: api → api specializer" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/api.md"
+assert_count "explicit channel → exactly one specializer" "$output" "PERSONA_TESTDATA_SPECIALIZERS" 1
+
+output=$(TICKET_DESCRIPTION="Seed command: make seed
+Seed channel: sql, files" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "explicit list → sql" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/sql.md"
+assert_contains "explicit list → files" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/files.md"
+assert_count "explicit list of two → two specializers" "$output" "PERSONA_TESTDATA_SPECIALIZERS" 2
+
+# Channels: keyword families, several at once
+output=$(TICKET_TITLE="Load test data: insert rows via SQL and upload the CSV import file" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "keywords → sql" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/sql.md"
+assert_contains "keywords → files" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/files.md"
+output=$(TICKET_TITLE="Seed data through the REST API endpoints" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "keywords → api" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/api.md"
+output=$(TICKET_TITLE="Test data entered through the UI form" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "keywords → ui-forms" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/ui-forms.md"
+output=$(TICKET_TITLE="Sample data built with a factory and faker" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "keywords → factories" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/factories.md"
+output=$(TICKET_TITLE="Seed data for the rest of the team; post it to the wiki" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_not_contains "'rest of' / 'post it' do not select api" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/api.md"
+
+# Channels: cap at three
+output=$(TICKET_TITLE="Test data via SQL, a REST API endpoint, the UI form, a CSV upload and a factory" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_count "five channel families → capped at three" "$output" "PERSONA_TESTDATA_SPECIALIZERS" 3
+
+# Channels: repo probes
+output=$(TICKET_TITLE="Provide test data" "$SELECTOR" --repo "$TMPDIR/sql-project" --layer BE --phase implement)
+assert_contains "migrations dir → sql" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/sql.md"
+output=$(TICKET_TITLE="Provide test data" "$SELECTOR" --repo "$TMPDIR/api-project" --layer BE --phase implement)
+assert_contains "openapi.yaml → api" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/api.md"
+output=$(TICKET_TITLE="Provide test data" "$SELECTOR" --repo "$TMPDIR/factory-project" --layer BE --phase implement)
+assert_contains "factory_boy dependency → factories" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/factories.md"
+output=$(TICKET_TITLE="Provide test data" UAT_URL="http://localhost:4200" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_contains "nothing matched + UAT_URL → ui-forms" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "testdata/ui-forms.md"
+output=$(TICKET_TITLE="Provide test data" UAT_URL="" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_empty "nothing matched, no UAT_URL → no channel" "$output" "PERSONA_TESTDATA_SPECIALIZERS"
+output=$(TICKET_TITLE="Provide test data" UAT_URL="http://localhost:4200" "$SELECTOR" --repo "$TMPDIR/sql-project" --layer BE --phase implement)
+assert_not_contains "UAT_URL does not add ui-forms when a probe matched" "$output" "PERSONA_TESTDATA_SPECIALIZERS" "ui-forms"
+
+# No signal → both keys empty, legacy keys unchanged
+output=$(TICKET_TITLE="Fix API timeout on the report endpoint" "$SELECTOR" --repo "$TMPDIR/java-project" --layer BE --phase implement)
+assert_empty "no signal → PERSONA_TESTDATA empty" "$output" "PERSONA_TESTDATA"
+assert_empty "no signal → PERSONA_TESTDATA_SPECIALIZERS empty" "$output" "PERSONA_TESTDATA_SPECIALIZERS"
+assert_contains "no signal → base unchanged" "$output" "PERSONA_BASE" "backend-developer"
+assert_contains "no signal → specializer unchanged" "$output" "PERSONA_SPECIALIZER" "backend/java"
+output=$("$SELECTOR" --repo "$TMPDIR/python-project" --phase prescan)
+assert_empty "prescan → PERSONA_TESTDATA empty" "$output" "PERSONA_TESTDATA"
+
+# Every emitted test-data path exists
+output=$(TICKET_DESCRIPTION="Seed command: make seed
+Seed channel: sql, api, ui-forms" "$SELECTOR" --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+td_paths=$(echo "$output" | grep "^PERSONA_TESTDATA_SPECIALIZERS=" | cut -d'=' -f2- | tr ':' '\n')
+while IFS= read -r p; do
+  if [ -f "$p" ]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: test-data specializer path exists: ${p##*/}"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: test-data specializer path not found: $p" >&2
+  fi
+done <<<"$td_paths"
+
+# ── Test-data persona files: frontmatter lint ──────────────────────────────────
+
+echo ""
+echo "── Test-data persona frontmatter ──"
+
+PERSONAS_ROOT="$SCRIPT_DIR/../personas"
+
+frontmatter() { awk 'NR==1 && /^---$/ {f=1; next} f && /^---$/ {exit} f {print}' "$1"; }
+
+check_fields() {
+  local file="$1"
+  shift
+  local fm field
+  fm=$(frontmatter "$file")
+  for field in "$@"; do
+    if grep -q "^${field}:" <<<"$fm"; then
+      PASS=$((PASS + 1))
+      echo "  PASS: ${file#"$PERSONAS_ROOT"/} has $field"
+    else
+      FAIL=$((FAIL + 1))
+      echo "  FAIL: ${file#"$PERSONAS_ROOT"/} missing frontmatter field $field" >&2
+    fi
+  done
+}
+
+base_file="$PERSONAS_ROOT/base/test-data-engineer.md"
+check_fields "$base_file" name role priority-hierarchy used-by auto-include-when version last-reviewed
+if frontmatter "$base_file" | grep -q '^role: test-data-engineer$'; then
+  PASS=$((PASS + 1))
+  echo "  PASS: base role is test-data-engineer"
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: base role is not test-data-engineer" >&2
+fi
+
+for ch in sql api ui-forms files factories; do
+  f="$PERSONAS_ROOT/specializers/testdata/${ch}.md"
+  check_fields "$f" name extends detect version last-reviewed
+  if frontmatter "$f" | grep -q '^extends: test-data-engineer$'; then
+    PASS=$((PASS + 1))
+    echo "  PASS: testdata/${ch}.md extends test-data-engineer"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: testdata/${ch}.md does not extend test-data-engineer" >&2
+  fi
+done
+
 # ── Results ────────────────────────────────────────────────────────────────────
 
 echo ""

@@ -17,6 +17,33 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.65.0 (2026-10-21)
+
+New persona for tickets whose deliverable is test data: **`test-data-engineer`**. Until now a
+seed-script or fixture ticket was implemented under the generic backend persona, which says nothing
+about idempotent seeds, namespaced record keys, referential integrity or the ban on production
+personal data. This lands ahead of `planner-test-data-derivation`, which will generate such tickets.
+
+- **Persona files**: `personas/base/test-data-engineer.md`, plus one specializer per data channel
+  under `personas/specializers/testdata/`: `sql`, `api`, `ui-forms`, `files` (CSV/XLSX/JSON
+  fixtures and imports) and `factories` (in-code builders).
+- **Selection** (`lib/persona-select.sh`, deterministic, no LLM):
+  - A **strong** signal — the ticket text has a `## Test Data Provided` heading, a
+    `Seed command:` line or the planner synth marker — makes `test-data-engineer` the
+    `PERSONA_BASE` on the implement phase, whatever the layer.
+  - A **weak** signal — seed/test/sample/demo/mock/synthetic data, fixtures, generate data, data
+    load, bulk import — adds the persona next to the layer persona, the way `security` is added.
+  - Channels come from an explicit `Seed channel:` line, then keywords, then repo probes
+    (migrations/Flyway/Liquibase, OpenAPI file, factory library; `ui-forms` only as a `UAT_URL`
+    fallback). Up to three apply at once.
+- **New output keys**, additive: `PERSONA_TESTDATA` and `PERSONA_TESTDATA_SPECIALIZERS`
+  (colon-separated). A ticket with no test-data signal gets both empty and every existing key is
+  unchanged.
+- **Consumers**: ticket-implement reads the persona and its channel files (and does not split per
+  layer on a test-data ticket); ticket-appraise and ticket-pr-review read it when set.
+- `persona-select.sh` now builds its keyword haystack in one `_ticket_haystack` helper instead of
+  three copies.
+
 ## 0.64.6 (2026-10-13)
 
 The create guard's stance on parser differentials and failure paths is now decided and tested

@@ -1092,6 +1092,42 @@ agents on 2026-10-11.
 
 ---
 
+## Step 11 — Test-data derivation + test-data-engineer persona — proposed 2026-10-21, not started
+
+Goal: planner-cut tickets never reach a worker without test data. The planner inventories test
+data for the whole epic (Discovery), derives what each acceptance criterion needs (Specify), and
+turns every need nobody owns into a test-data ticket that blocks its consumer and whose seed VERIFY
+actually loads. A new persona implements those tickets. Gaps it closes: a spec with no
+Verification Notes, all-`none` rows when the AC implies data, and Refinement and dor-check treating
+both as advisory. Source plan: `~/.claude/plans/lets-add-some-intelligence-merry-flurry.md`, plus
+a web scan (no published autonomous pipeline plans test data). Three Sonnet reviewers checked it
+on 2026-10-21: one on the heuristic and questions, one on synthesis determinism, one on downstream
+effects. Decided with the user: hybrid grouping (a need shared by 2 or more specs goes into one
+epic pack, a need one spec has goes into its own sibling ticket), and implied data is asked,
+defaulting to generate when headless.
+
+- [ ] 1. `test-data-engineer-persona` (ticket-auto-pipeline) — ships first. It adds:
+      - a base persona plus `testdata/{sql,api,ui-forms,files,factories}` specializers;
+      - in `persona-select.sh`, a strong signal (the ticket is a TD ticket) that swaps the base
+        persona, a weak keyword signal that adds the persona, and multi-channel selection;
+      - additive `PERSONA_TESTDATA*` keys.
+- [ ] 2. `planner-test-data-derivation` (ticket-planner + ticket-auto-pipeline). It adds:
+      - a Test Data Inventory in Discovery, and per-criterion derivation in Specify;
+      - `VERIFICATION_NOTES_MISSING` and a two-tier `TEST_DATA_IMPLIED`;
+      - a `TESTDATA_CONFIRM` answer line in consensus.md, keyed by slug and hash;
+      - a `testdata-synth` sub-step, with edges in a sidecar so consumer specs are never edited;
+      - an epic UAT stamp from EpicGen;
+      - `VERIFY|seed-apply`;
+      - strict test-data and Verification Plan checks on contract bodies only.
+
+      **Breaking (gates):** contract-shaped feature and improvement bodies without test data
+      now fail readiness.
+- [ ] 3. Live verification, folded into Step 8's consolidated pass (tasks 9.1–9.4 of change 2).
+- [ ] 4. Follow-ups, not specced: a semantic DoR backstop for heuristic misses, and a grill-me
+      test-data dimension.
+
+---
+
 ## Ordering rationale
 
 1. **Active harm first.** Step 0's first two items mean held tickets are invisible to every

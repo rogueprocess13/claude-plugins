@@ -28,6 +28,8 @@ Emits persona file paths as KEY=value lines:
   PERSONA_BASE=personas/base/<role>.md
   PERSONA_SPECIALIZER=personas/specializers/<group>/<stack>.md   (empty if none matches)
   PERSONA_AUTO_INCLUDE=personas/base/security.md                (empty if no trigger)
+  PERSONA_TESTDATA=personas/base/test-data-engineer.md          (empty if no test-data signal)
+  PERSONA_TESTDATA_SPECIALIZERS=<colon-separated testdata/<channel>.md paths, max 3>
   PERSONA_SET=<newline-separated paths>                          (prescan phase only)
 
 Options:
@@ -131,6 +133,12 @@ select_base() {
     return
     ;;
   implement)
+    # A test-data ticket's whole deliverable is data — the layer persona is
+    # the wrong lens for it, so the role swaps regardless of layer.
+    if has_testdata_strong; then
+      echo "test-data-engineer"
+      return
+    fi
     case "${LAYER:-}" in
     FE)
       echo "frontend-developer"
@@ -172,15 +180,23 @@ select_base() {
 probe_file() { [ -f "$REPO/$1" ] && return 0 || return 1; }
 probe_dep() { [ -f "$REPO/package.json" ] && grep -q "\"$1\"" "$REPO/package.json" 2>/dev/null && return 0 || return 1; }
 
-# Detect migration/upgrade intent from ticket text (explicit user signal).
-# The user must state they are upgrading/migrating — this is NOT heuristic version detection.
-has_migration_keywords() {
+# Assemble the ticket text the keyword detectors scan: TICKET_TITLE,
+# TICKET_DESCRIPTION and the contents of TICKET_TEXT_FILE, space-joined.
+_ticket_haystack() {
   local haystack=""
   if [ -n "${TICKET_TITLE:-}" ]; then haystack="$haystack $TICKET_TITLE"; fi
   if [ -n "${TICKET_DESCRIPTION:-}" ]; then haystack="$haystack $TICKET_DESCRIPTION"; fi
   if [ -n "${TICKET_TEXT_FILE:-}" ] && [ -f "$TICKET_TEXT_FILE" ]; then
     haystack="$haystack $(cat "$TICKET_TEXT_FILE" 2>/dev/null || true)"
   fi
+  printf '%s' "$haystack"
+}
+
+# Detect migration/upgrade intent from ticket text (explicit user signal).
+# The user must state they are upgrading/migrating — this is NOT heuristic version detection.
+has_migration_keywords() {
+  local haystack
+  haystack=$(_ticket_haystack)
   if [ -z "$haystack" ]; then return 1; fi
   echo "$haystack" | grep -qiE '\b(upgrade|migration|migrate|bump.*version|version.*bump|java\s*[0-9]+\s*→|java\s*[0-9]+\s*->|java\s*[0-9]+\s*to)\b' && return 0 || return 1
 }
@@ -188,12 +204,8 @@ has_migration_keywords() {
 # Detect refactor/restructuring intent from ticket text (explicit user signal).
 # The user must state they are refactoring with NO business logic changes.
 has_refactor_keywords() {
-  local haystack=""
-  if [ -n "${TICKET_TITLE:-}" ]; then haystack="$haystack $TICKET_TITLE"; fi
-  if [ -n "${TICKET_DESCRIPTION:-}" ]; then haystack="$haystack $TICKET_DESCRIPTION"; fi
-  if [ -n "${TICKET_TEXT_FILE:-}" ] && [ -f "$TICKET_TEXT_FILE" ]; then
-    haystack="$haystack $(cat "$TICKET_TEXT_FILE" 2>/dev/null || true)"
-  fi
+  local haystack
+  haystack=$(_ticket_haystack)
   if [ -z "$haystack" ]; then return 1; fi
   echo "$haystack" | grep -qiE '\b(refactor|refactoring|restructur\w*|clean\s*up|improve\s+structure|code\s+quality|technical\s+debt|pay\s+down\s+debt)\b' && return 0 || return 1
 }
@@ -312,18 +324,8 @@ select_specializer() {
 select_auto_include() {
   # Check if security keywords appear in ticket context.
   # We probe: TICKET_TITLE, TICKET_DESCRIPTION env vars, or a temp file.
-  local haystack=""
-
-  if [ -n "${TICKET_TITLE:-}" ]; then
-    haystack="$haystack $TICKET_TITLE"
-  fi
-  if [ -n "${TICKET_DESCRIPTION:-}" ]; then
-    haystack="$haystack $TICKET_DESCRIPTION"
-  fi
-  # Also check a temp file if TICKET_TEXT_FILE is set
-  if [ -n "${TICKET_TEXT_FILE:-}" ] && [ -f "$TICKET_TEXT_FILE" ]; then
-    haystack="$haystack $(cat "$TICKET_TEXT_FILE" 2>/dev/null || true)"
-  fi
+  local haystack
+  haystack=$(_ticket_haystack)
 
   if [ -z "$haystack" ]; then
     echo ""
@@ -337,6 +339,87 @@ select_auto_include() {
   fi
 
   echo ""
+}
+
+# ── Test-data persona detection ────────────────────────────────────────────────
+
+# Strong signal: the ticket's deliverable IS test data. Any of the markers a
+# synthesized test-data ticket carries (ticket-planner planner-test-data-
+# derivation): a `## Test Data Provided` heading, a `Seed command:` line, or
+# the synth marker comment.
+has_testdata_strong() {
+  local haystack
+  haystack=$(_ticket_haystack)
+  if [ -z "$haystack" ]; then return 1; fi
+  grep -qE '(^|[[:space:]])##[[:space:]]+Test Data Provided[[:space:]]*$|(^|[[:space:]*])Seed command:|<!-- planner:testdata-synth v1 -->' <<<"$haystack" && return 0 || return 1
+}
+
+# Weak signal: an ordinary ticket that also touches test data. Phrase-based on
+# purpose — a bare "data" would fire on almost every ticket.
+has_testdata_weak() {
+  local haystack
+  haystack=$(_ticket_haystack)
+  if [ -z "$haystack" ]; then return 1; fi
+  grep -qiE '\b(seed(ed)?[[:space:]]+data|test[[:space:]]+data|fixtures?|sample[[:space:]]+data|demo[[:space:]]+data|mock[[:space:]]+data|synthetic[[:space:]]+data|generate([[:space:]]+the)?[[:space:]]+data|data[[:space:]]+load|bulk[[:space:]]+import)\b' <<<"$haystack" && return 0 || return 1
+}
+
+# Channel specializers for a test-data ticket, at most 3, colon-separated.
+# Precedence: an explicit `Seed channel: <list>` line → body keyword families
+# → repo probes. ui-forms is only a probe fallback when UAT_URL is set and
+# nothing else matched — it is the slowest, flakiest channel.
+select_testdata_channels() {
+  local haystack channels=()
+  haystack=$(_ticket_haystack)
+
+  local explicit
+  explicit=$(printf '%s\n' "$haystack" | grep -oiE 'Seed channel:[[:space:]]*[a-z, -]+' | head -1 | sed -E 's/^[Ss]eed [Cc]hannel:[[:space:]]*//' || true)
+  if [ -n "$explicit" ]; then
+    local c
+    for c in $(printf '%s' "$explicit" | tr 'A-Z,' 'a-z '); do
+      case "$c" in sql | api | ui-forms | files | factories) channels+=("$c") ;; esac
+    done
+  fi
+
+  if [ "${#channels[@]}" -eq 0 ] && [ -n "$haystack" ]; then
+    local lc
+    lc=$(printf '%s' "$haystack" | tr '[:upper:]' '[:lower:]')
+    grep -qE '\b(sql|insert|upsert|seed script|migration)s?\b' <<<"$lc" && channels+=("sql")
+    grep -qE '\b(endpoints?|(post|put) requests?|http (post|put)|curl|rest api|graphql|(via|through) the api|api calls?)\b' <<<"$lc" && channels+=("api")
+    grep -qE '\b(forms?|screens?|through the (ui|app)|via the (ui|app))\b' <<<"$lc" && channels+=("ui-forms")
+    grep -qE '\b(csv|xlsx|json fixtures?|upload|import files?)\b' <<<"$lc" && channels+=("files")
+    grep -qE '\b(factory|factories|builders?|faker)\b' <<<"$lc" && channels+=("factories")
+  fi
+
+  if [ "${#channels[@]}" -eq 0 ]; then
+    if [ -n "$(find "$REPO" -maxdepth 6 -type d -path '*db/migration*' -print -quit 2>/dev/null)" ] ||
+      [ -n "$(find "$REPO" -maxdepth 6 -name '*.sql' -not -path '*/node_modules/*' -print -quit 2>/dev/null)" ] ||
+      grep -qsiE 'flyway|liquibase' "$REPO/pom.xml" "$REPO/build.gradle" "$REPO/build.gradle.kts" 2>/dev/null; then
+      channels+=("sql")
+    fi
+    if [ -n "$(find "$REPO" -maxdepth 4 \( -iname 'openapi.json' -o -iname 'openapi.yaml' -o -iname 'openapi.yml' -o -iname 'swagger.json' -o -iname 'swagger.yaml' \) -not -path '*/node_modules/*' -print -quit 2>/dev/null)" ]; then
+      channels+=("api")
+    fi
+    if grep -qsiE 'factory[_-]boy|factory_bot|fishery|@faker-js/faker|instancio' \
+      "$REPO/pyproject.toml" "$REPO/requirements.txt" "$REPO/package.json" "$REPO/Gemfile" "$REPO/pom.xml" "$REPO/build.gradle" 2>/dev/null; then
+      channels+=("factories")
+    fi
+    if [ "${#channels[@]}" -eq 0 ] && [ -n "${UAT_URL:-}" ]; then
+      channels+=("ui-forms")
+    fi
+  fi
+
+  # Dedupe in order, keep files that exist, cap at 3.
+  local out="" seen=" " n=0 ch path
+  for ch in "${channels[@]}"; do
+    case "$seen" in *" $ch "*) continue ;; esac
+    seen="$seen$ch "
+    path=$(_persona_path "specializers/testdata/${ch}.md")
+    [ -n "$path" ] || continue
+    out="${out:+$out:}$path"
+    n=$((n + 1))
+    [ "$n" -ge 3 ] && break
+  done
+  printf '%s' "$out"
 }
 
 # ── Prescan persona set ────────────────────────────────────────────────────────
@@ -431,6 +514,8 @@ main() {
     echo "PERSONA_BASE="
     echo "PERSONA_SPECIALIZER="
     echo "PERSONA_AUTO_INCLUDE="
+    echo "PERSONA_TESTDATA="
+    echo "PERSONA_TESTDATA_SPECIALIZERS="
     return
   fi
 
@@ -455,10 +540,23 @@ main() {
     auto_path=$(_persona_path "$auto_include")
   fi
 
+  # Test-data persona: a strong signal (the ticket IS test data) or a weak
+  # keyword hit both set PERSONA_TESTDATA; only a strong signal on the
+  # implement phase also swapped PERSONA_BASE (select_base above).
+  local testdata_path="" testdata_specializers=""
+  if has_testdata_strong || has_testdata_weak; then
+    testdata_path=$(_persona_path "base/test-data-engineer.md")
+    if [ -n "$testdata_path" ]; then
+      testdata_specializers=$(select_testdata_channels)
+    fi
+  fi
+
   # Emit results as KEY=value — the stable contract for consuming skills
   echo "PERSONA_BASE=$base_path"
   echo "PERSONA_SPECIALIZER=${specializer_path:-}"
   echo "PERSONA_AUTO_INCLUDE=${auto_path:-}"
+  echo "PERSONA_TESTDATA=${testdata_path}"
+  echo "PERSONA_TESTDATA_SPECIALIZERS=${testdata_specializers}"
 }
 
 main

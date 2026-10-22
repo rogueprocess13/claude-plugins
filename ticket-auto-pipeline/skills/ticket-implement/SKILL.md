@@ -160,8 +160,9 @@ find . -name "simple-fix.md" -path "*{TICKET-ID}*"
 
 **Activate persona** based on the `Layer` column in CLAUDE.md for each affected repo. For `FE+BE` monorepos, use the layer boundary table to classify by actual files touched:
 
-Run `lib/persona-select.sh --repo <repo> --layer <FE|BE> --phase implement` and read the persona files at `$PERSONA_BASE` and `$PERSONA_SPECIALIZER`. If `$PERSONA_AUTO_INCLUDE` is non-empty, read that too.
+Run `lib/persona-select.sh --repo <repo> --layer <FE|BE> --phase implement` and read the persona files at `$PERSONA_BASE` and `$PERSONA_SPECIALIZER`. If `$PERSONA_AUTO_INCLUDE` is non-empty, read that too. If `$PERSONA_TESTDATA` is non-empty, read it and every path in `$PERSONA_TESTDATA_SPECIALIZERS` (colon-separated) — they say how to build idempotent, namespaced, synthetic test data for the channels the ticket uses.
 - Mixed → run once per layer; switch at the FE/BE boundary. Note the boundary in `notes.md`.
+- Test-data ticket (`$PERSONA_BASE` is `test-data-engineer.md`) → the whole deliverable is data, so do not split per layer. Make the ticket's `Seed command:` and `Verify command:` real (create the targets or scripts they name, or correct the lines to match what you built) and run the seed command twice to prove it is idempotent.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|detect-path|done|{simple-fix|openspec}" >> "$LOG_FILE"
 

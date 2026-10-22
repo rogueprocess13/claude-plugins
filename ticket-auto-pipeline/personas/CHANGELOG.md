@@ -1,5 +1,17 @@
 # Personas Changelog
 
+## 2026-10-21 — Test data engineer
+
+### Added
+- `base/test-data-engineer.md` (v1) — role for tickets whose deliverable is test data
+- `specializers/testdata/sql.md` (v1)
+- `specializers/testdata/api.md` (v1)
+- `specializers/testdata/ui-forms.md` (v1)
+- `specializers/testdata/files.md` (v1)
+- `specializers/testdata/factories.md` (v1)
+
+Selected by `lib/persona-select.sh` (strong/weak test-data signal, channel precedence) and emitted as `PERSONA_TESTDATA` / `PERSONA_TESTDATA_SPECIALIZERS`.
+
 ## 2026-06-26 — Initial versioning
 
 ### Added
