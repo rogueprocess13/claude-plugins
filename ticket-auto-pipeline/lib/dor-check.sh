@@ -23,8 +23,10 @@
 #     ready/not-ready decision), DOR_DIMENSIONS (JSON object: dimension key
 #     -> earned points or null when inapplicable), DOR_GAPS (JSON array of
 #     semantic coverage gap names), DOR_BODY_HASH (sha256:<hex> of the
-#     resolved body, or empty). Exit 0 ready, 1 not-ready, 2 unavailable (no
-#     body could be resolved).
+#     resolved body, or empty), DOR_SECTION_HASHES / DOR_UNIT_HASHES
+#     (JSON objects from _dor_section_hashes / _dor_unit_hashes, or empty —
+#     planner-refinement-convergence D4). Exit 0 ready, 1 not-ready, 2
+#     unavailable (no body could be resolved).
 #
 #   ensure_ticket_readiness <TID> [--body <file>] [--type <type>]
 #     The single resolution path every consumer of readiness should use
@@ -826,6 +828,162 @@ _dor_body_hash() {
   fi
 }
 
+# ── Section and unit identity (planner-refinement-convergence D3/D4) ──────
+
+# _dor_section_records <body> <mode:sections|units> — emits one
+# NUL-terminated record per section (or unit): "<key>\x1f<normalised text>".
+#
+#   - Split on `##` headings (exactly two #s — `###` folds into its parent).
+#     Lines inside a ``` or ~~~ fence are never headings.
+#   - Text before the first heading is keyed `_preamble` (omitted when blank).
+#   - A repeated heading is keyed `<heading>#2`, `#3`, ...
+#   - Normalisation: CR stripped, trailing whitespace stripped per line,
+#     leading and trailing blank lines dropped — so a stray blank line never
+#     reads as an edit.
+#
+# In `units` mode, a section whose heading matches the Acceptance Criteria
+# heading the same way `_dor_ac_lines` matches it (`^##[[:space:]]*
+# Acceptance Criteria`) is split further: every list or checkbox item
+# (`_dor_ac_lines`'s item pattern) is its own unit keyed
+# `<heading>/ac:<sha8 of the normalised item>`, the normalisation being
+# `_dor_ac_lines`'s (marker stripped, lowercased, whitespace collapsed). The
+# section's non-item text, when not blank, stays a unit under `<heading>`.
+# A repeated identical item yields one unit.
+_dor_section_records() {
+  local body="$1" mode="${2:-sections}"
+  printf '%s\n' "$body" | tr -d '\r' | awk -v mode="$mode" '
+    function rtrim(s) { sub(/[ \t]+$/, "", s); return s }
+    function flush(   txt, n, i, s, e, out, key) {
+      if (!started) return
+      n = split(buf, L, "\n")
+      # buf always ends in "\n", so L[n] is empty — drop it.
+      if (n > 0 && L[n] == "") n--
+      s = 1; e = n
+      while (s <= e && L[s] ~ /^[ \t]*$/) s++
+      while (e >= s && L[e] ~ /^[ \t]*$/) e--
+      out = ""
+      for (i = s; i <= e; i++) out = out (i > s ? "\n" : "") L[i]
+      key = cur
+      if (key == "_preamble" && out == "") { buf = ""; return }
+      printf "%s\037%s\036", key, out
+      buf = ""
+    }
+    BEGIN { cur = "_preamble"; started = 1; buf = ""; fence = 0 }
+    {
+      line = rtrim($0)
+      if (line ~ /^ ? ? ?(```|~~~)/) { fence = !fence }
+      if (!fence && line ~ /^##([^#]|$)/) {
+        flush()
+        h = line
+        sub(/^##[ \t]*/, "", h)
+        h = rtrim(h)
+        seen[h]++
+        cur = (seen[h] > 1) ? h "#" seen[h] : h
+        next
+      }
+      buf = buf line "\n"
+    }
+    END { flush() }
+  ' | tr '\036' '\000' | if [ "$mode" = "units" ]; then
+    local key text item_re norm_re line norm sha
+    item_re='^[[:space:]]*(-[[:space:]]*\[[ xX]\]|-|\*|[0-9]+[.)])[[:space:]]+[^[:space:]]'
+    norm_re='^[[:space:]]*(-[[:space:]]*\[[ xX]\]|-|\*|[0-9]+[.)])[[:space:]]*'
+    while IFS=$'\037' read -r -d '' key text; do
+      if [[ "$key" == "Acceptance Criteria"* ]] &&
+        printf '%s\n' "$text" | grep -qE "$item_re"; then
+        local rest="" seen_items=" "
+        while IFS= read -r line; do
+          if [[ "$line" =~ $item_re ]]; then
+            norm=$(printf '%s\n' "$line" | sed -E "s/${norm_re}//" | tr '[:upper:]' '[:lower:]' |
+              sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+            [ -n "$norm" ] || continue
+            sha=$(printf '%s' "$norm" | sha256sum | cut -c1-8)
+            case "$seen_items" in *" $sha "*) continue ;; esac
+            seen_items="${seen_items}${sha} "
+            printf '%s/ac:%s\037%s\000' "$key" "$sha" "$norm"
+          else
+            rest="${rest}${line}"$'\n'
+          fi
+        done <<<"$text"
+        if [ -n "$(printf '%s' "$rest" | tr -d '[:space:]')" ]; then
+          printf '%s\037%s\000' "$key" "${rest%$'\n'}"
+        fi
+      else
+        printf '%s\037%s\000' "$key" "$text"
+      fi
+    done
+  else
+    cat
+  fi
+}
+
+# _dor_records_to_hashes — reads _dor_section_records output on stdin and
+# echoes a compact JSON object: key -> "sha256:<hex>" of the record's text
+# (same format as _dor_body_hash). Empty object for empty input.
+_dor_records_to_hashes() {
+  local key text hash
+  local -a pairs=()
+  while IFS=$'\037' read -r -d '' key text; do
+    hash=$(_dor_body_hash "$text")
+    [ -n "$hash" ] || return 1
+    pairs+=("$key" "$hash")
+  done
+  if [ "${#pairs[@]}" -eq 0 ]; then
+    echo "{}"
+    return 0
+  fi
+  printf '%s\n' "${pairs[@]}" | jq -R . | jq -cs '[range(0; length; 2) as $i | {(.[$i]): .[$i + 1]}] | add // {}'
+}
+
+# _dor_section_hashes <body> — JSON object: section key -> "sha256:<hex>".
+# Keys per _dor_section_records (`_preamble`, `<heading>`, `<heading>#2`).
+_dor_section_hashes() {
+  _dor_section_records "$1" sections | _dor_records_to_hashes
+}
+
+# _dor_unit_hashes <body> — JSON object: unit key -> "sha256:<hex>". Equals
+# the section map, except each Acceptance Criteria item is its own unit
+# (`<heading>/ac:<sha8>`), the section key keeping only non-item text.
+_dor_unit_hashes() {
+  _dor_section_records "$1" units | _dor_records_to_hashes
+}
+
+# Check profiles (planner-refinement-convergence D9): the strictness a
+# verdict was computed under, recorded as ready.check_profile so
+# ensure_ticket_readiness re-applies it when it recomputes on a body change.
+# `planner-strict` = DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true — the
+# prefix planner_refinement_scan uses. Any other value (or none) means the
+# host's own DOR_STRICT_* defaults.
+_dor_check_ticket_ready_profiled() {
+  local profile="$1"
+  shift
+  case "$profile" in
+  planner-strict)
+    DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true check_ticket_ready "$@"
+    ;;
+  *)
+    check_ticket_ready "$@"
+    ;;
+  esac
+}
+
+# _dor_readiness_extras [<check_profile>] — the extras object every
+# set_ticket_readiness call in this file writes, built from the globals
+# check_ticket_ready just set: score/dimensions/gaps, plus body_hash,
+# section_hashes and unit_hashes when computed, plus check_profile when given.
+_dor_readiness_extras() {
+  local profile="${1:-}"
+  jq -nc --argjson score "${DOR_SCORE:-null}" --argjson dims "${DOR_DIMENSIONS:-null}" \
+    --argjson gaps "${DOR_GAPS:-null}" --arg hash "${DOR_BODY_HASH:-}" \
+    --argjson sec "${DOR_SECTION_HASHES:-null}" --argjson units "${DOR_UNIT_HASHES:-null}" \
+    --arg profile "$profile" \
+    '{score: $score, dimensions: $dims, gaps: $gaps}
+     + (if $hash != "" then {body_hash: $hash} else {} end)
+     + (if $sec != null then {section_hashes: $sec} else {} end)
+     + (if $units != null then {unit_hashes: $units} else {} end)
+     + (if $profile != "" then {check_profile: $profile} else {} end)'
+}
+
 # _dor_score — pure function over check_ticket_ready's own already-computed
 # local variables (design.md Decision 4). Bash's dynamic scoping makes the
 # caller's `local`s visible here without threading two dozen parameters
@@ -1052,6 +1210,8 @@ check_ticket_ready() {
   DOR_DIMENSIONS="{}"
   DOR_GAPS="[]"
   DOR_BODY_HASH=""
+  DOR_SECTION_HASHES=""
+  DOR_UNIT_HASHES=""
 
   local type body
   type=$(_dor_resolve_type "$tid" "$type_override")
@@ -1063,6 +1223,10 @@ check_ticket_ready() {
   fi
 
   DOR_BODY_HASH=$(_dor_body_hash "$body")
+  # Section/unit identity (planner-refinement-convergence D4) — empty on any
+  # failure, which set_ticket_readiness reads as "no hashes" (old stale rule).
+  DOR_SECTION_HASHES=$(_dor_section_hashes "$body" 2>/dev/null) || DOR_SECTION_HASHES=""
+  DOR_UNIT_HASHES=$(_dor_unit_hashes "$body" 2>/dev/null) || DOR_UNIT_HASHES=""
 
   local missing=() advisory=()
   local strict_catalog="${DOR_STRICT_CATALOG:-false}"
@@ -1537,15 +1701,20 @@ ensure_ticket_readiness() {
       local extra_args=(--body "$local_body_path" --no-fetch)
       [ -n "$type_override" ] && extra_args+=(--type "$type_override")
 
+      # Recompute under the strictness the cached verdict was computed with
+      # (planner-refinement-convergence D9) — never the host's defaults
+      # alone, or a planner-strict verdict would be silently replaced by a
+      # laxer one at dispatch. The profile is carried into the new verdict.
+      local check_profile
+      check_profile=$(echo "$ready_json" | jq -r '.check_profile // ""' 2>/dev/null) || check_profile=""
+
       local check_rc=0
-      check_ticket_ready "$tid" "${extra_args[@]}" || check_rc=$?
+      _dor_check_ticket_ready_profiled "$check_profile" "$tid" "${extra_args[@]}" || check_rc=$?
 
       case "$DOR_STATUS" in
       ready | not-ready)
         local extras
-        extras=$(jq -nc --argjson score "${DOR_SCORE:-null}" --argjson dims "${DOR_DIMENSIONS:-null}" \
-          --argjson gaps "${DOR_GAPS:-null}" --arg hash "${DOR_BODY_HASH:-}" \
-          '{score: $score, dimensions: $dims, gaps: $gaps} + (if $hash != "" then {body_hash: $hash} else {} end)')
+        extras=$(_dor_readiness_extras "$check_profile")
         set_ticket_readiness "$tid" "$DOR_STATUS" "$DOR_MISSING" "$DOR_ADVISORY" "$extras" >/dev/null 2>&1 || true
         # set_ticket_readiness recomputes `status` against the manifest's
         # preserved `ready.waived` — a status this function's own caller
@@ -1592,9 +1761,7 @@ ensure_ticket_readiness() {
   case "$DOR_STATUS" in
   ready | not-ready)
     local extras
-    extras=$(jq -nc --argjson score "${DOR_SCORE:-null}" --argjson dims "${DOR_DIMENSIONS:-null}" \
-      --argjson gaps "${DOR_GAPS:-null}" --arg hash "${DOR_BODY_HASH:-}" \
-      '{score: $score, dimensions: $dims, gaps: $gaps} + (if $hash != "" then {body_hash: $hash} else {} end)')
+    extras=$(_dor_readiness_extras)
     set_ticket_readiness "$tid" "$DOR_STATUS" "$DOR_MISSING" "$DOR_ADVISORY" "$extras" >/dev/null 2>&1 || true
     # A manifest that already carried a semantic verdict (e.g. rc==2/3
     # malformed-manifest fallback above) keeps or stales it per

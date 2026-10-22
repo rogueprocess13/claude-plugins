@@ -194,6 +194,18 @@ else
   fail "planner_refinement_scan: both fresh tickets need a semantic pass" "got: $needs"
 fi
 
+# planner-refinement-convergence D4/D9: the scan records its strict profile
+# and the section/unit hashes, so a dispatch recompute stays strict and an
+# edit can be scoped to the sections it touched.
+if get_ticket_manifest_field "PRO-101" ready 2>/dev/null |
+  jq -e '.check_profile == "planner-strict" and (.section_hashes | type) == "object"
+         and (.section_hashes | has("Acceptance Criteria")) and (.unit_hashes | type) == "object"' >/dev/null; then
+  pass "planner_refinement_scan: records check_profile planner-strict and section/unit hashes"
+else
+  fail "planner_refinement_scan: records check_profile planner-strict and section/unit hashes" \
+    "got: $(get_ticket_manifest_field "PRO-101" ready 2>/dev/null | jq -c '{check_profile, s: (.section_hashes | keys?)}')"
+fi
+
 for tid in PRO-101 PRO-102; do
   h=$(_body_hash "$tid")
   _write_clean_scan "$tid" "$h"

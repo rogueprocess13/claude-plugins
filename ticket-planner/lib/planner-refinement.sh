@@ -255,11 +255,25 @@ planner_refinement_scan() {
 
     case "${DOR_STATUS:-unavailable}" in
     ready | not-ready)
-      local extras
+      # check_profile records the strict prefix above, so a dispatch-time
+      # recompute (ensure_ticket_readiness) re-applies it instead of the
+      # host's defaults; the section/unit hashes drive section-scoped
+      # staleness (planner-refinement-convergence D4/D9).
+      local extras legacy_extras write_rc=0
       extras=$(jq -nc --argjson score "${DOR_SCORE:-null}" --argjson dims "${DOR_DIMENSIONS:-null}" \
         --argjson gaps "${DOR_GAPS:-null}" --arg hash "$hash" \
-        '{score: $score, dimensions: $dims, gaps: $gaps} + (if $hash != "" then {body_hash: $hash} else {} end)' 2>/dev/null)
-      set_ticket_readiness "$tid" "$DOR_STATUS" "${DOR_MISSING:-[]}" "${DOR_ADVISORY:-[]}" "$extras" >/dev/null 2>&1
+        --argjson sec "${DOR_SECTION_HASHES:-null}" --argjson units "${DOR_UNIT_HASHES:-null}" \
+        '{score: $score, dimensions: $dims, gaps: $gaps, check_profile: "planner-strict"}
+         + (if $hash != "" then {body_hash: $hash} else {} end)
+         + (if $sec != null then {section_hashes: $sec} else {} end)
+         + (if $units != null then {unit_hashes: $units} else {} end)' 2>/dev/null)
+      set_ticket_readiness "$tid" "$DOR_STATUS" "${DOR_MISSING:-[]}" "${DOR_ADVISORY:-[]}" "$extras" >/dev/null 2>&1 || write_rc=$?
+      if [ "$write_rc" -eq 3 ]; then
+        # An older resolved manifest-write.sh rejects the new extras keys —
+        # fall back to the four it knows rather than leave no verdict.
+        legacy_extras=$(echo "$extras" | jq -c '{score, dimensions, gaps} + (if has("body_hash") then {body_hash} else {} end)' 2>/dev/null)
+        set_ticket_readiness "$tid" "$DOR_STATUS" "${DOR_MISSING:-[]}" "${DOR_ADVISORY:-[]}" "$legacy_extras" >/dev/null 2>&1
+      fi
       jq -nc --argjson missing "${DOR_MISSING:-[]}" --argjson advisory "${DOR_ADVISORY:-[]}" \
         --arg status "$DOR_STATUS" \
         '{missing: $missing, advisory: $advisory, status: $status}' >"${pdir}/dor-result.json" 2>/dev/null

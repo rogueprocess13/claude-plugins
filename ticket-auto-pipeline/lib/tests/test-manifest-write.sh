@@ -512,6 +512,66 @@ set_ticket_readiness "STALE-1" "ready" '[]' '[]' '{"semantic": {}}' 2>/dev/null 
 [ "$rc" = "3" ] && _pass "set_ticket_readiness: semantic in extras still rejected" ||
   _fail "set_ticket_readiness: semantic extras key should exit 3 (got $rc)"
 
+# ── planner-refinement-convergence: new extras keys and ready.lineage ───────
+
+write_ticket_manifest "LIN-1" "INIT-1" "feature" '[]'
+set_ticket_readiness "LIN-1" "ready" '[]' '[]' \
+  '{"body_hash":"sha256:aa","section_hashes":{"Summary":"sha256:01"},"unit_hashes":{"Summary":"sha256:01"},"check_profile":"planner-strict"}'
+lin_json=$(get_ticket_manifest_field "LIN-1" ready)
+echo "$lin_json" | jq -e '.section_hashes.Summary == "sha256:01" and .unit_hashes.Summary == "sha256:01"
+    and .check_profile == "planner-strict"' >/dev/null &&
+  _pass "set_ticket_readiness: section_hashes/unit_hashes/check_profile extras accepted" ||
+  _fail "set_ticket_readiness: new extras keys should be recorded (got $lin_json)"
+
+rc=0
+set_ticket_readiness "LIN-1" "ready" '[]' '[]' '{"section_hashes":{},"lineage":{}}' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_readiness: an unknown extras key (lineage) is still rejected" ||
+  _fail "set_ticket_readiness: lineage in extras should exit 3 (got $rc)"
+rc=0
+set_ticket_readiness "LIN-1" "ready" '[]' '[]' '{"section_hashes":"nope"}' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_readiness: a non-object section_hashes is rejected" ||
+  _fail "set_ticket_readiness: section_hashes must be an object (got $rc)"
+rc=0
+set_ticket_readiness "LIN-1" "ready" '[]' '[]' '{"check_profile":1}' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_readiness: a non-string check_profile is rejected" ||
+  _fail "set_ticket_readiness: check_profile must be a string (got $rc)"
+
+write_ticket_manifest "LIN-NOREADY" "INIT-1" "feature" '[]'
+rc=0
+set_ticket_lineage "LIN-NOREADY" '{"round":1}' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_lineage: exits 3 with no ready object" ||
+  _fail "set_ticket_lineage: should exit 3 with no ready object (got $rc)"
+rc=0
+set_ticket_lineage "LIN-1" '[1]' 2>/dev/null || rc=$?
+[ "$rc" = "3" ] && _pass "set_ticket_lineage: rejects a non-object" ||
+  _fail "set_ticket_lineage: should reject a non-object (got $rc)"
+
+before_status=$(get_ticket_manifest_field "LIN-1" ready | jq -c '{status, missing}')
+set_ticket_lineage "LIN-1" '{"round":3,"evaluator":"dor-semantic-v3","body_hash":"sha256:aa","findings":[]}'
+[ "$(get_ticket_manifest_field "LIN-1" ready | jq -r '.lineage.round')" = "3" ] &&
+  [ "$(get_ticket_manifest_field "LIN-1" ready | jq -c '{status, missing}')" = "$before_status" ] &&
+  _pass "set_ticket_lineage: writes ready.lineage and leaves status/missing alone" ||
+  _fail "set_ticket_lineage: wrong write (got $(get_ticket_manifest_field "LIN-1" ready | jq -c .))"
+
+set_ticket_semantic "LIN-1" '{"evaluator":"dor-semantic-v3","body_hash":"sha256:aa","unavailable":true,"findings":[]}'
+[ "$(get_ticket_manifest_field "LIN-1" ready | jq -r '.lineage.round')" = "3" ] &&
+  _pass "set_ticket_semantic: a fresh (unavailable) verdict never touches ready.lineage" ||
+  _fail "set_ticket_semantic: lineage should survive (got $(get_ticket_manifest_field "LIN-1" ready | jq -c .lineage))"
+
+set_ticket_readiness "LIN-1" "not-ready" '["AC_VAGUE"]' '[]' '{"body_hash":"sha256:aa"}'
+[ "$(get_ticket_manifest_field "LIN-1" ready | jq -r '.lineage.round')" = "3" ] &&
+  _pass "set_ticket_readiness: ready.lineage survives a same-hash rewrite" ||
+  _fail "set_ticket_readiness: lineage should be copied forward (got $(get_ticket_manifest_field "LIN-1" ready | jq -c .))"
+set_ticket_readiness "LIN-1" "not-ready" '["AC_VAGUE"]' '[]' '{"body_hash":"sha256:bb"}'
+lin_after=$(get_ticket_manifest_field "LIN-1" ready)
+echo "$lin_after" | jq -e '.lineage.round == 3 and .lineage.body_hash == "sha256:aa" and (.missing | index("SEMANTIC_STALE"))' >/dev/null &&
+  _pass "set_ticket_readiness: a hash change stales the verdict but copies lineage verbatim" ||
+  _fail "set_ticket_readiness: lineage should be untouched on stale (got $lin_after)"
+set_ticket_readiness "LIN-1" "ready" '[]' '[]'
+[ "$(get_ticket_manifest_field "LIN-1" ready | jq -r '.lineage.round')" = "3" ] &&
+  _pass "set_ticket_readiness: ready.lineage survives a 4-arg rewrite" ||
+  _fail "set_ticket_readiness: lineage should survive a 4-arg rewrite"
+
 # ── atomic write leaves no .tmp artifacts ────────────────────────────────────
 
 leftover=$(find "$REPOS_ROOT/.ticket-auto" -name '*.tmp.*' 2>/dev/null | wc -l | tr -d ' ')
