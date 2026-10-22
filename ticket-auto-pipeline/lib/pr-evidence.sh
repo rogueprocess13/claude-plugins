@@ -18,7 +18,8 @@
 #   latest `PR-REVIEW|checkout-pr|done|` line — and records one ONLY when it
 #   can verify it: the repo is the origin of one of the ticket's worktrees
 #   (`$REPOS_ROOT/.ticket-auto/worktrees/{TID}/*`), `gh pr view` succeeds,
-#   and the PR's headRefName is the ticket branch from `META|branch-context`.
+#   the PR is not cross-repository (not from a fork), and its headRefName is
+#   the ticket branch from `META|branch-context`.
 #   Agents write free text on those lines (links to related or upstream PRs);
 #   an unverified URL marked as this ticket's PR would let merge-poll see the
 #   wrong PR merged and release blocked-by dependents early. A candidate it
@@ -136,14 +137,19 @@ _pe_warn() {
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|pr-evidence|warn|$2" >>"$1"
 }
 
-# _pe_verify <target> <branch> → prints the PR url when gh confirms the PR's
-# head is <branch>. <target> is a PR URL, or "<num> --repo <slug>".
+# _pe_verify <branch> <target...> → prints the PR url when gh confirms the
+# PR's head is <branch> in the base repo itself. <target> is a PR URL, or
+# "<num> --repo <slug>". A fork can name its branch exactly like the ticket
+# branch, so a cross-repository PR is never accepted — isCrossRepository must
+# be literally false (a missing field fails closed).
 _pe_verify() {
-  local branch="$1" resp head url
+  local branch="$1" resp head url cross
   shift
-  resp=$(timeout 20 gh pr view "$@" --json headRefName,url 2>/dev/null) || return 1
+  resp=$(timeout 20 gh pr view "$@" --json headRefName,url,isCrossRepository 2>/dev/null) || return 1
   head=$(jq -r '.headRefName // empty' <<<"$resp" 2>/dev/null) || return 1
   url=$(jq -r '.url // empty' <<<"$resp" 2>/dev/null) || return 1
+  cross=$(jq -r 'if .isCrossRepository == false then "false" else "true" end' <<<"$resp" 2>/dev/null) || return 1
+  [ "$cross" = "false" ] || return 1
   [ -n "$head" ] && [ "$head" = "$branch" ] && [ -n "$url" ] || return 1
   printf '%s\n' "$url"
 }
@@ -209,7 +215,7 @@ pr_evidence_backfill() {
         '{pr: $pr, url: $url, repo: $repo, backfill: true}')"
       recorded="$recorded${repo}#${num} "
     else
-      rejected="$rejected $u(head-not-ticket-branch-or-gh-failed)"
+      rejected="$rejected $u(fork-or-head-not-ticket-branch-or-gh-failed)"
     fi
   done <<<"$urls"
 

@@ -117,7 +117,7 @@ _mk_worktrees() {
 }
 
 # _gh_stub — answers `gh pr view <url>|<n> --repo <slug> ...` from
-# $_ws/prs.tsv ("<slug> <num> <head>" per line); unknown PR → exit 1.
+# $_ws/prs.tsv ("<slug> <num> <head> [isCrossRepository]" per line); unknown PR → exit 1.
 _gh_stub() {
   : >"$_ws/prs.tsv"
   cat >"$_ws/bin/gh" <<EOF
@@ -143,7 +143,8 @@ esac
 line=$(awk -v r="$repo" -v n="$num" '$1 == r && $2 == n' "$db" | head -1)
 [ -n "$line" ] || exit 1
 head=$(echo "$line" | awk '{print $3}')
-printf '{"url":"https://github.com/%s/pull/%s","headRefName":"%s","state":"OPEN","mergedAt":null,"mergeCommit":null,"baseRefName":"epic/x"}\n' "$repo" "$num" "$head"
+cross=$(echo "$line" | awk '{print ($4 == "" ? "false" : $4)}')
+printf '{"url":"https://github.com/%s/pull/%s","headRefName":"%s","isCrossRepository":%s,"state":"OPEN","mergedAt":null,"mergeCommit":null,"baseRefName":"epic/x"}\n' "$repo" "$num" "$head" "$cross"
 EOF
   chmod +x "$_ws/bin/gh"
 }
@@ -235,6 +236,29 @@ EOF
   _gh_stub
   echo "acme/repo 41 feat/CRE-99-sibling" >>"$_ws/prs.tsv"
   _backfill "$log" CRE-12
+  local n warn
+  n=$(_created_lines "$log")
+  warn=$(grep -c '|META|pr-evidence|warn|' "$log" || true)
+  _teardown
+  [ "$n" = "0" ] && [ "$warn" -ge 1 ]
+}
+
+# Follow-up security review: a fork can name its branch exactly like the
+# ticket branch. A cross-repository PR is never this ticket's PR.
+test_backfill_rejects_fork_pr_with_matching_head() {
+  _setup
+  source "$LIB_DIR/pr-evidence.sh"
+  local log="$_ws/logs/CRE-16-pipeline.log"
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|META|schema|info|1
+2026-01-01T00:00:02Z|META|branch-context|info|base=epic/x;integration=epic/x;source=epic-directive;ticket=feat/CRE-16-thing
+2026-01-01T00:00:03Z|VERIFY|pr-open|done|https://github.com/acme/repo/pull/66
+2026-01-01T00:00:05Z|PR-REVIEW|checkout-pr|done|66
+EOF
+  _mk_worktrees CRE-16 acme/repo
+  _gh_stub
+  echo "acme/repo 66 feat/CRE-16-thing true" >>"$_ws/prs.tsv"
+  _backfill "$log" CRE-16
   local n warn
   n=$(_created_lines "$log")
   warn=$(grep -c '|META|pr-evidence|warn|' "$log" || true)
@@ -405,6 +429,7 @@ for fn in \
   test_backfill_is_idempotent \
   test_backfill_ignores_unrelated_pr_url \
   test_backfill_rejects_url_with_other_head_branch \
+  test_backfill_rejects_fork_pr_with_matching_head \
   test_backfill_unverifiable_writes_warn_only \
   test_backfill_noop_when_marker_present \
   test_backfill_never_adds_beside_real_marker \
