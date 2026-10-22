@@ -638,6 +638,46 @@ DOR_STRICT_VPLAN=true check_ticket_ready "STRICT-VPLAN-YWORDS" --body "$y_words_
   _pass "#514: y/Y words outside the Verifiable column still fire VPLAN_UNVERIFIABLE" ||
   _fail "#514: y-words table should fire VPLAN_UNVERIFIABLE (rc=$rc missing=$DOR_MISSING)"
 
+# #535: checkboxes outside ## Acceptance Criteria (an Environment checklist)
+# must not inflate the AC count that sizes VPLAN_ROW_GAP. Two AC lines, two
+# table rows, plus two Environment checkboxes: no gap.
+env_checkbox_body="${vplan_base_body}
+## Environment
+- [X] Local (developer machine)
+- [ ] UAT (shared test environment)
+
+## Verification Plan
+
+### Per-Criterion Verification
+
+| # | Criterion | Role scope | Navigation path | Test data needed | Expected behavior | Verifiable |
+|---|-----------|-----------|------------------|-------------------|--------------------|------------|
+| 1 | Export button appears | finance | Billing > Invoices | none | button is present | Y |
+| 2 | Export reflects filter | finance | Billing > Invoices | filtered invoices | file matches filter | Y |
+"
+env_checkbox_file="$TMP_ROOT/vplan-env-checkboxes.md"
+_write_body "$env_checkbox_file" "$env_checkbox_body"
+
+rc=0
+DOR_STRICT_VPLAN=true check_ticket_ready "STRICT-VPLAN-ENVCB" --body "$env_checkbox_file" --type chore --no-fetch || rc=$?
+echo "$DOR_MISSING" | jq -e 'index("VPLAN_ROW_GAP") == null' >/dev/null &&
+  echo "${DOR_ADVISORY:-[]}" | jq -e 'index("VPLAN_ROW_GAP") == null' >/dev/null &&
+  _pass "#535: Environment checkboxes do not count toward VPLAN_ROW_GAP" ||
+  _fail "#535: Environment checkboxes inflated the AC count (rc=$rc missing=$DOR_MISSING advisory=$DOR_ADVISORY)"
+
+# Fallback preserved: no Acceptance Criteria heading, whole-body checkboxes
+# still count (3 checkboxes vs 1 row -> gap).
+[ "$(_dor_ac_count $'## Notes\n- [ ] a\n- [ ] b\n- [x] c')" = "3" ] &&
+  _pass "#535: no AC heading falls back to whole-body checkbox count" ||
+  _fail "#535: fallback count wrong (got $(_dor_ac_count $'## Notes\n- [ ] a\n- [ ] b\n- [x] c'))"
+[ "$(_dor_ac_count "$env_checkbox_body")" = "2" ] &&
+  _pass "#535: _dor_ac_count scopes to the Acceptance Criteria section" ||
+  _fail "#535: _dor_ac_count expected 2, got $(_dor_ac_count "$env_checkbox_body")"
+ac_sub_body=$'## Acceptance Criteria\n### Happy path\n- [ ] a\n### Edge cases\n- [ ] b\n## Environment\n- [x] Local'
+[ "$(_dor_ac_count "$ac_sub_body")" = "2" ] &&
+  _pass "#535: ### subsections stay inside the Acceptance Criteria count" ||
+  _fail "#535: ### subsections expected 2, got $(_dor_ac_count "$ac_sub_body")"
+
 # The self-verifying-AC escape hatch is unaffected by DOR_STRICT_VPLAN in
 # either state — no Verification Plan table, but a single AC line that
 # matches _DOR_SELFVERIFY_RE ("returns 200").

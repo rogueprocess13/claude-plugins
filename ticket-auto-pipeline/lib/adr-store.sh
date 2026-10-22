@@ -165,7 +165,9 @@ _adr_lock() {
 }
 
 _adr_unlock() {
-  exec 9>&- 2>/dev/null || true
+  # The group scopes 2>/dev/null to the close. A bare `exec 9>&- 2>/dev/null`
+  # would also redirect the caller shell's own stderr to /dev/null for good.
+  { exec 9>&-; } 2>/dev/null || true
 }
 
 # ── existence check (task 2.3) ──────────────────────────────────────────────

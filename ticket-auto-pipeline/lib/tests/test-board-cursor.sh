@@ -179,6 +179,15 @@ _run "1.8 unwritten cursor attempts is 0" test_unwritten_cursor_attempts_is_zero
 _run "1.9 note_failure increments attempts, leaves seq" test_note_failure_increments_attempts_leaves_seq
 _run "1.10 advance resets attempts" test_advance_resets_attempts
 
+# board_cursor_unlock must not redirect the caller shell's own stderr: a bare
+# `exec 8>&- 2>/dev/null` sends every later stderr write to /dev/null.
+test_unlock_keeps_caller_stderr() {
+  local err
+  err=$(bash -c 'source "$1"; board_cursor_unlock; echo stderr-alive >&2' _ "$BC" 2>&1 >/dev/null)
+  [ "$err" = "stderr-alive" ]
+}
+_run "1.11 unlock keeps the caller's stderr" test_unlock_keeps_caller_stderr
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
