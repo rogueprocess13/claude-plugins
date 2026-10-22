@@ -631,6 +631,57 @@ def post_human_hold_comment(tid, hold_id, blocks, questions, lib_dir=None,
     return comment_posted, label_applied
 
 
+def clear_needs_info_on_release(tid, lib_dir=None, timeout=30, env=None):
+    """Clear the `needs-info` flag a released human hold left behind.
+
+    `post_human_hold_comment` applies `needs-info` through `flow.sh` when a
+    hold is created; this is the release-side mirror, through the existing
+    `needs-info-resolved` trigger (workflow.json) — no new vocabulary. The
+    manifest's `flags` are authoritative since tracker-flow-projection-
+    cutover, so a human answering in Linear never clears the flag by itself;
+    without this the answered ticket kept reporting FLAG_NEEDS_INFO, and the
+    release's own resume gate-stopped at Check 2.7e (`TICKET_NOT_READY`).
+
+    Same guard as `/ticket-approve`: `flow.sh` only runs when the manifest
+    actually carries the flag (`ticket_dispatch_blocked_by_flags`), since
+    every `flow.sh` invocation advances `rev` and emits an event.
+
+    Fail-soft: the hold is already released by the time this runs. Returns
+    'cleared', 'absent' (no flag, nothing run), 'failed' (`flow.sh` exited
+    non-zero or timed out), or 'unavailable' (lib or flow.sh not found).
+    """
+    lib = Path(lib_dir) if lib_dir else phase_dispatch.ticket_auto_lib_dir()
+    manifest_read = lib / 'manifest-read.sh'
+    flow = None
+    for cand in ((lib / '..' / 'skills' / 'ticket-flow' / 'flow.sh'),
+                 Path.home() / '.claude' / 'skills' / 'ticket-flow' / 'flow.sh'):
+        if cand.is_file():
+            flow = cand.resolve()
+            break
+    if not manifest_read.is_file() or flow is None:
+        return 'unavailable'
+    script = ('source "$MANIFEST_READ" || exit 90; '
+              'ticket_dispatch_blocked_by_flags "$TID" 2>/dev/null || exit 91; '
+              'bash "$FLOW" "$TID" needs-info-resolved')
+    try:
+        proc = subprocess.run(
+            ['bash', '-c', script],
+            env={**(env if env is not None else os.environ),
+                 'MANIFEST_READ': str(manifest_read), 'FLOW': str(flow),
+                 'TID': tid},
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return 'failed'
+    if proc.returncode == 0:
+        return 'cleared'
+    if proc.returncode == 91:
+        return 'absent'
+    if proc.returncode == 90:
+        return 'unavailable'
+    return 'failed'
+
+
 _RELEASE_PREDICATES = {
     'gate': _reconcile_gate_hold,
     'human': _reconcile_human_hold,

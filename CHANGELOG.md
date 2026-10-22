@@ -17,6 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.69.1 / fleet-controller 0.42.7 (2026-10-22)
+
+A `needs-info` flag no longer outlives the answer to the questions that set it. Before this, an
+answered ticket kept reporting `FLAG_NEEDS_INFO` and stayed not-ready until a full re-appraisal.
+
+### Fixed
+- **Stale `FLAG_NEEDS_INFO` in a cached readiness verdict**: `check_ticket_ready` records
+  `FLAG_NEEDS_INFO` in `ready.missing` from the live manifest flag, but `ensure_ticket_readiness`
+  only invalidated its cache on a body edit. After `needs-info-resolved` cleared the flag, an
+  unchanged-body cache hit still returned not-ready with `FLAG_NEEDS_INFO`, and Check 2.7e
+  gate-stopped `TICKET_NOT_READY` even after `/ticket-approve`. Every cache hit now re-derives that
+  one code from the live flag and writes the corrected verdict back through `set_ticket_readiness`
+  (waivers and a still-matching semantic verdict are preserved).
+- **Released human hold now clears `needs-info`** (fleet-controller 0.42.7): fleetd applied
+  `needs-info` when it created a human hold but nothing cleared it when the human answered. After
+  a `human` hold is released, `_hold_reconcile_pass` calls the new
+  `gate_hold.clear_needs_info_on_release`, which runs the existing `needs-info-resolved` trigger
+  only when the manifest carries the flag. No new trigger or event; `gate` holds are unaffected.
+
 ## grill-me 0.3.0 / ticket-planner 0.23.0 (2026-10-22)
 
 grill-me now asks where test data comes from, and the planner's Discovery phase reads the answer
