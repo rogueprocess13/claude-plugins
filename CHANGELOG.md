@@ -17,6 +17,33 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.69.1 (2026-10-22)
+
+Branch resolution now finds the epic manifest of a planner-created epic
+([#524](https://github.com/willard-pro/claude-plugins/issues/524)). Before this, every child of such
+an epic branched off the directive's base, its PR targeted that base, and its Merge Policy came out
+empty, so PR review could merge straight past a `manual` policy. The only trace was
+`source=default` in `META|branch-context`.
+
+### Fixed
+- **Epic lookup id**: EpicGen writes the epic manifest under the epic's identifier
+  (`initiatives/<EPIC>/epic/manifest.json`). `resolve_branch_context` looked it up by the parent's
+  tracker UUID, and `resolve_uat_policy`/`resolve_merge_policy` by the ticket manifest's
+  `initiative` (`INIT-<n>`, which has no `epic/` directory). All three now go through the new
+  `resolve_ticket_epic <TID> [candidate...]` in `manifest-read.sh`. It tries each candidate (the
+  parent identifier, then the UUID), then the ticket's `initiative` when that is itself an epic,
+  then the epic whose `children[]` lists the ticket. A hit through a symlink resolves to the real
+  epic directory name, so the operator workaround symlinks still work and can now be removed.
+  fleet-controller already keys epics by directory name and needed no change.
+- **`EPIC_ID` in `BRANCH_CONTEXT_RESULT`** is now the resolved epic id (or the parent identifier)
+  instead of the tracker UUID.
+
+### Added
+- **WARN on an unresolved directive**: when the parent's description carries a `## Branch
+  Directive` but no epic manifest resolves, `resolve_branch_context` prints a `WARN` on stderr
+  naming the parent and pointing at `manifest-backfill.sh`. Resolution still falls back to the
+  default, as before.
+
 ## grill-me 0.3.0 / ticket-planner 0.23.0 (2026-10-22)
 
 grill-me now asks where test data comes from, and the planner's Discovery phase reads the answer
