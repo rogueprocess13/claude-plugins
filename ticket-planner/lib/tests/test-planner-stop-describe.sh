@@ -93,12 +93,16 @@ for pair in $HALT_FIXTURE_REASONS; do
     fail "${name}: describer names ${expected}" "got '${got}'"
   fi
 
+  # Every planner stop is an operator decision, except a Specify business
+  # decision: the client's question, which the operator may answer for them.
+  want_audience=operator
+  [ "$expected" != "SPECIFY_DECISION" ] || want_audience=either
   planner_stop_describe "$INIT" >"${WORK}/${name}.hold"
   parsed=$(bash "$HOLD_PARSER" --phase PLANNER --return-file "${WORK}/${name}.hold" 2>&1)
   if [ "$(printf '%s' "$parsed" | jq -r '.parse_status' 2>/dev/null)" = "ok" ] &&
     [ "$(printf '%s' "$parsed" | jq -r '.schema_version')" = "2" ] &&
     [ "$(printf '%s' "$parsed" | jq -r '.reason')" = "$expected" ] &&
-    [ "$(printf '%s' "$parsed" | jq -r '.audience')" = "operator" ]; then
+    [ "$(printf '%s' "$parsed" | jq -r '.audience')" = "$want_audience" ]; then
     pass "${name}: block parses as a valid v2 human-hold"
   else
     fail "${name}: block parses as a valid v2 human-hold" "$parsed"
