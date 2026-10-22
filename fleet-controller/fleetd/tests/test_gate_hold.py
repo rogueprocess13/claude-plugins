@@ -674,6 +674,73 @@ class TestPostHumanHoldComment(unittest.TestCase):
         self.assertFalse(labeled)
 
 
+class TestClearNeedsInfoOnRelease(unittest.TestCase):
+    """clear_needs_info_on_release — the answered-hold half of the
+    `needs-info` lifecycle. post_human_hold_comment applies the flag when a
+    hold is created; before this, nothing deterministic cleared it when the
+    human answered, so the ticket stayed FLAG_NEEDS_INFO/not-ready until a
+    /ticket-approve or a full re-appraisal. Runs the real flow.sh against a
+    throwaway REPOS_ROOT."""
+
+    TID = 'TST-71'
+
+    def setUp(self):
+        import json as _json
+        self._json = _json
+        self.tmp = Path(tempfile.mkdtemp())
+        self.repos = self.tmp / 'repos'
+        self.logs = self.tmp / 'logs'
+        self.logs.mkdir(parents=True)
+        index = self.repos / '.ticket-auto' / 'initiatives' / '_index'
+        index.mkdir(parents=True)
+        (index / f'{self.TID}.initiative').write_text('INIT-1\n')
+        self.manifest = (self.repos / '.ticket-auto' / 'initiatives' / 'INIT-1'
+                         / 'tickets' / self.TID / 'planner' / 'manifest.json')
+        self.manifest.parent.mkdir(parents=True)
+        self.lib_dir = REPO_ROOT / 'ticket-auto-pipeline' / 'lib'
+        self.env = {
+            **os.environ,
+            'REPOS_ROOT': str(self.repos),
+            'FLEET_FENCE_ENFORCE': 'false',
+            'FLEET_PIPELINE_LOG_DIR': str(self.logs),
+            'LOG_FILE': str(self.logs / f'{self.TID}-pipeline.log'),
+            'TICKET_FLOW_LOCK_DIR': str(self.logs),
+            'CLAUDE_SKILLS_LIB': str(self.lib_dir),
+        }
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _seed(self, flags):
+        self.manifest.write_text(self._json.dumps({
+            'type': 'feature', 'initiative': 'INIT-1', 'blocked_by': [],
+            'dispatch': False, 'flags': flags}))
+
+    def _manifest(self):
+        return self._json.loads(self.manifest.read_text())
+
+    def test_answered_hold_clears_a_set_needs_info_flag(self):
+        self._seed(['needs-info'])
+        result = gate_hold.clear_needs_info_on_release(
+            self.TID, lib_dir=self.lib_dir, env=self.env)
+        self.assertEqual(result, 'cleared')
+        self.assertEqual(self._manifest().get('flags'), [])
+
+    def test_no_flag_is_a_no_op_that_never_runs_flow(self):
+        self._seed([])
+        result = gate_hold.clear_needs_info_on_release(
+            self.TID, lib_dir=self.lib_dir, env=self.env)
+        self.assertEqual(result, 'absent')
+        # flow.sh advances `rev` on every invocation; a no-op must not.
+        self.assertNotIn('rev', self._manifest())
+
+    def test_missing_lib_is_failsoft(self):
+        result = gate_hold.clear_needs_info_on_release(
+            self.TID, lib_dir=self.tmp / 'nowhere', env=self.env)
+        self.assertEqual(result, 'unavailable')
+
+
 class TestHoldIdThreading(GateHoldTestBase):
     """hold_id/hold_generation are carried from the row into every decision
     so the caller can release with store.release_hold's CAS guard."""

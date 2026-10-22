@@ -2699,6 +2699,45 @@ class HoldReconcilePassTest(unittest.TestCase):
         self.assertEqual(ticket['held'], 0)
         self.assertEqual(ticket['hold_id'], '')
 
+    def _release_with_clear_recorder(self, tid, kind):
+        """Drive one reconcile pass whose decision is RELEASE, with
+        clear_needs_info_on_release replaced by a recorder."""
+        from fleetd import store
+        import fleetd.gate_hold as gate_hold_mod
+
+        hold_id = f'hold:{tid}:g0:a1'
+        with store.open_store(self.workspace) as st:
+            st.set_hold(tid, kind, hold_id, 'q')
+        sup = self._supervisor()
+        cleared = []
+        real_reconcile = gate_hold_mod.reconcile_hold
+        real_clear = gate_hold_mod.clear_needs_info_on_release
+        gate_hold_mod.reconcile_hold = (
+            lambda table, t, row, log_file, **k: gate_hold_mod.GateHoldDecision(
+                gate_hold_mod.RELEASE, t, 1, None, '', '', 'answered',
+                row.get('hold_id'), 0))
+        gate_hold_mod.clear_needs_info_on_release = (
+            lambda t, **k: cleared.append(t) or 'cleared')
+        sup.acquire_lock()
+        try:
+            sup._hold_reconcile_pass()
+        finally:
+            gate_hold_mod.reconcile_hold = real_reconcile
+            gate_hold_mod.clear_needs_info_on_release = real_clear
+            sup.release_lock()
+        return cleared
+
+    def test_released_human_hold_clears_needs_info(self):
+        """The hold's creation applied `needs-info` (post_human_hold_comment);
+        its release must clear it, or the answered ticket stays
+        FLAG_NEEDS_INFO/not-ready and gate-stops TICKET_NOT_READY on resume."""
+        self.assertEqual(
+            self._release_with_clear_recorder('TST-72', 'human'), ['TST-72'])
+
+    def test_released_gate_hold_does_not_touch_needs_info(self):
+        self.assertEqual(
+            self._release_with_clear_recorder('TST-73', 'gate'), [])
+
 
 class HumanHoldIntakePassTest(unittest.TestCase):
     """The CREATE half of the human-hold lifecycle (#305).
