@@ -290,6 +290,52 @@ _ms_runs '{"kind":"merge","tid":"T-10","pr":42,"repo":"acme/repo","state":"merge
 _ms_expect "a non-completed outcome stays blocked even with a merged PR" T-10 not-complete 1
 _ms_expect "no pipeline log at all -> blocked" T-NOLOG not-complete 1
 
+# ── resolve_ticket_epic (GitHub #524) ────────────────────────────────────
+_rte_reset() {
+  rm -rf "$REPOS_ROOT/.ticket-auto"
+  local base="$REPOS_ROOT/.ticket-auto/initiatives"
+  mkdir -p "$base/_index" "$base/INIT-9/tickets/KID-1/planner" "$base/EPIC-9/epic"
+  echo "INIT-9" >"$base/_index/KID-1.initiative"
+  echo '{"type":"feature","initiative":"INIT-9","blocked_by":[],"dispatch":false}' \
+    >"$base/INIT-9/tickets/KID-1/planner/manifest.json"
+  echo '{"branch":"epic/nine","uat_policy":"per-ticket","merge_policy":"manual","children":["KID-1"]}' \
+    >"$base/EPIC-9/epic/manifest.json"
+}
+_rte_reset
+
+actual=$(resolve_ticket_epic KID-1 "EPIC-9")
+[ "$actual" = "EPIC-9" ] && _pass "resolve_ticket_epic: candidate with an epic manifest wins" ||
+  _fail "resolve_ticket_epic: candidate (got '$actual')"
+
+actual=$(resolve_ticket_epic KID-1 "0b49b633-0000-4000-8000-000000000001")
+[ "$actual" = "EPIC-9" ] && _pass "resolve_ticket_epic: unknown UUID candidate falls through to children[] scan" ||
+  _fail "resolve_ticket_epic: children scan (got '$actual')"
+
+actual=$(resolve_ticket_epic KID-1)
+[ "$actual" = "EPIC-9" ] && _pass "resolve_ticket_epic: INIT-<n> child with no candidate maps to its epic" ||
+  _fail "resolve_ticket_epic: no-candidate scan (got '$actual')"
+
+# Operator workaround symlinks must not shadow the real epic directory.
+ln -s EPIC-9 "$REPOS_ROOT/.ticket-auto/initiatives/0b49b633-0000-4000-8000-000000000001"
+ln -s ../EPIC-9/epic "$REPOS_ROOT/.ticket-auto/initiatives/INIT-9/epic"
+actual=$(resolve_ticket_epic KID-1)
+[ "$actual" = "EPIC-9" ] && _pass "resolve_ticket_epic: workaround symlinks do not shadow the real epic id" ||
+  _fail "resolve_ticket_epic: symlink shadowing (got '$actual')"
+_rte_reset
+
+rc=0
+actual=$(resolve_ticket_epic NOBODY-1) || rc=$?
+[ "$rc" = "1" ] && [ -z "$actual" ] && _pass "resolve_ticket_epic: ticket in no epic is exit 1, empty" ||
+  _fail "resolve_ticket_epic: no epic (rc=$rc, got '$actual')"
+
+# Legacy/test layout where the initiative IS the epic keeps working.
+mkdir -p "$REPOS_ROOT/.ticket-auto/initiatives/INIT-9/epic"
+echo '{"branch":"epic/legacy","children":[]}' >"$REPOS_ROOT/.ticket-auto/initiatives/INIT-9/epic/manifest.json"
+actual=$(resolve_ticket_epic KID-1 "")
+[ "$actual" = "INIT-9" ] && _pass "resolve_ticket_epic: initiative that is itself an epic still resolves" ||
+  _fail "resolve_ticket_epic: legacy initiative-as-epic (got '$actual')"
+_reset
+
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
