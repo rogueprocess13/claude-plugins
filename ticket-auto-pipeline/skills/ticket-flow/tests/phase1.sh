@@ -1042,6 +1042,38 @@ test_flow_adhoc_ticket_gets_manifest_via_flow() {
   [ "$rc" -eq 0 ] && [ "$init" = "_adhoc" ] && [ "$approved" = "true" ] && [ "$stage" = "Ready" ]
 }
 
+# ── ILLEGAL_TRANSITION warn must not abort flow.sh (GitHub #530) ────────────
+# appraise-start declares an ARRAY `from` (["Backlog","Todo"]). On a fresh
+# ticket (no manifest, CURRENT_STAGE="") the warn-only from-check fires; it
+# used to interpolate the pretty-printed array into a JSON string, hb_write
+# rejected the invalid DETAIL with rc 1, and `set -e` killed flow.sh before
+# the transition ran — but only when HB_LOG_FILE was set.
+test_flow_illegal_transition_warn_array_from_is_non_fatal() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/repos"
+  local hb="$tmpdir/logs/WIL-99-heartbeat.log"
+
+  local rc=0
+  HB_LOG_FILE="$hb" _flow_run "$tmpdir" WIL-99 appraise-start --data complexity=simple \
+    >/dev/null 2>&1 || rc=$?
+
+  local warn_line detail_ok=1 expected
+  warn_line=$(grep '|gate|flow-warn|warn|ILLEGAL_TRANSITION|' "$hb" 2>/dev/null | tail -1)
+  if [ -n "$warn_line" ]; then
+    expected=$(printf '%s' "$warn_line" | cut -d'|' -f6- | jq -r '.expected_from' 2>/dev/null)
+    [ "$expected" = "Backlog,Todo" ] && detail_ok=0
+  fi
+  local stage
+  stage=$(jq -r '.stage // empty' \
+    "$tmpdir/repos/.ticket-auto/initiatives/_adhoc/tickets/WIL-99/planner/manifest.json" 2>/dev/null)
+  rm -rf "$tmpdir"
+  if [ "$rc" -ne 0 ] || [ "$detail_ok" -ne 0 ] || [ "$stage" != "Todo" ]; then
+    echo "rc=$rc detail_ok=$detail_ok stage=$stage warn_line=$warn_line" >&2
+    return 1
+  fi
+}
+
 # ── needs-info round-trip (human-hold-protocol task 7.4) ───────────────────
 # human-hold-protocol reuses `needs-info` unchanged as the human-signal
 # flag for a hold — set adds it to the manifest's flags, resolved removes
@@ -1349,6 +1381,7 @@ for fn in \
   test_uat_fail_never_observes_approved_true \
   test_flow_uat_pass_writes_stage \
   test_flow_adhoc_ticket_gets_manifest_via_flow \
+  test_flow_illegal_transition_warn_array_from_is_non_fatal \
   test_needs_info_set_adds_the_flag \
   test_needs_info_resolved_removes_the_flag \
   test_needs_info_does_not_change_stage \

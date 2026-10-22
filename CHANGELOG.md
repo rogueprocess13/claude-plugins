@@ -17,6 +17,29 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.69.4 (2026-10-22)
+
+`flow.sh` no longer aborts on its warn-only ILLEGAL_TRANSITION heartbeat ([#530](https://github.com/willard-pro/claude-plugins/issues/530)).
+
+### Fixed
+
+- A trigger whose `from` is an array (`appraise-start`: `["Backlog","Todo"]`) fired on a ticket
+  whose manifest stage did not match, such as a brand-new ticket with no manifest, made
+  `flow.sh` exit 1 whenever `HB_LOG_FILE` was set. The ILLEGAL_TRANSITION check interpolated the
+  pretty-printed multi-line array into a JSON string, `hb_write` rejected the invalid DETAIL with
+  rc 1, and `set -e` ended the script before the transition ran. The router's STEP_1 claim
+  failed, so every new ticket stopped before APPRAISE. The array is now joined to `Backlog,Todo`
+  for both the pipeline-log line and the heartbeat.
+- Every heartbeat DETAIL in `flow.sh` is now built by jq (`_hb_detail`) instead of string
+  interpolation, and every `hb_gate` call goes through `_hb_gate`, which ignores a rejected
+  entry. A heartbeat is advisory and can no longer change `flow.sh`'s outcome. Before, a
+  rejected heartbeat on the precondition, fence-guard or verdict-gate path turned the intended
+  exit 8/9/10/11 into exit 1. The fence-guard DETAIL interpolated `fenced_gen`/`caller_gen` as
+  bare JSON numbers, so an empty value made it invalid.
+- `hb_write` is unchanged: it still returns 1 on a malformed or nested DETAIL. Its tests and
+  `pipeline-heartbeat-format.md` define that contract, so callers that must not fail are
+  responsible for guarding the call.
+
 ## 0.69.3 (2026-10-22)
 
 Releasing a file lock no longer silences the caller's stderr.
