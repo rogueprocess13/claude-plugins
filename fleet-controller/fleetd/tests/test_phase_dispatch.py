@@ -1899,6 +1899,21 @@ class TestResolveLoopCounters(unittest.TestCase):
         ]
         self.assertEqual(resolve_loop_counters(lines)['RECONCILE_CYCLE'], 2)
 
+    def test_reconcile_cycle_counts_each_cycle_once_despite_router_echo(self):
+        # Agent line + router spawn_agent_post echo per cycle, split by META
+        # lines that defeat the last-line dup guard. Mirrors
+        # test-detect-resume.sh's case of the same name — the two counters
+        # must agree.
+        lines = [
+            '2026-09-06T10:00:03Z|GATE|reconcile|done|cycle#1|held: open',
+            '2026-09-06T10:00:04Z|META|tokens|info|GATE:1/2/3/4',
+            '2026-09-06T10:00:05Z|GATE|reconcile|done|cycle#1 held: open',
+            '2026-09-06T10:00:06Z|GATE|reconcile|done|cycle#2|held: still',
+            '2026-09-06T10:00:07Z|META|tokens|info|GATE:1/2/3/4',
+            '2026-09-06T10:00:08Z|GATE|reconcile|done|cycle#2 held: still',
+        ]
+        self.assertEqual(resolve_loop_counters(lines)['RECONCILE_CYCLE'], 2)
+
     def test_verify_attempts_counts_verify_fail_lines(self):
         lines = [
             '2026-09-06T10:00:00Z|VERIFY|verify|fail|timeout',
