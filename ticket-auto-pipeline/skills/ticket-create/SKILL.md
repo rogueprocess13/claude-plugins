@@ -35,7 +35,8 @@ Read the template for the type: `~/.claude/skills/ticket-create/templates/<type>
 2. `## Outcome` (business) with `**Who:**`, `**Need:**`, `**Outcome:**` — no implementation detail in these fields. **Or** `## Enables` (enabler) — what the technical work makes possible, or the technical reason for it.
 3. The why/outcome sections the readiness check reads (`INTENT_MISSING` otherwise):
    - bug: `## Expected Behaviour` and `## Actual Behaviour`.
-   - every other type: one **why** heading — `## Background / Motivation`, `## Motivation`, `## Problem`, `## Why` or `## Context` — and one **outcome** heading — `## Proposed Behaviour`, `## Proposed Changes`, `## Desired Outcome` or `## Goal`. The `improvement` template's `## Desired Behaviour` and the `security` template's sections do not count on their own: add a `## Proposed Changes` section (and a `## Background / Motivation` for security).
+   - every other type: one **why** heading — `## Background / Motivation`, `## Motivation`, `## Problem`, `## Why`, `## Context` or `## Impact` — and one **outcome** heading — `## Proposed Behaviour`, `## Proposed Changes`, `## Desired Outcome`, `## Goal` or `## Desired Behaviour`.
+   - each template already carries its own pair, so keep it: feature `## Background / Motivation` + `## Proposed Behaviour`; improvement `## Motivation` + `## Desired Behaviour`; chore `## Background / Motivation` + `## Proposed Changes`; security `## Impact` + `## Proposed Changes`.
 4. `## Technical Context` — files, symbols, routes, the approach. Implementation detail lives here and nowhere above.
 5. The template's remaining sections: `## Acceptance Criteria` (`- [ ]` items, observable and testable), `## Scope` table, `## Test User` and `## Navigation Path` (UI work only), `## Steps to Reproduce` and `## Test Data Prerequisites` (bugs), `## Related Tickets`.
 

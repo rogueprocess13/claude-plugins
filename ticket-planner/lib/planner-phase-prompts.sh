@@ -726,6 +726,8 @@ an enabler as a user story.
 3. The type template's own why/outcome headings, unchanged — e.g.
    \`## Background / Motivation\` + \`## Proposed Behaviour\` (feature),
    \`## Background / Motivation\` + \`## Proposed Changes\` (chore),
+   \`## Motivation\` + \`## Desired Behaviour\` (improvement),
+   \`## Impact\` + \`## Proposed Changes\` (security),
    \`## Expected Behaviour\` + \`## Actual Behaviour\` (bug). The readiness check
    requires them by exact name; keep them in plain, behaviour-level language.
 4. \`## Technical Context\` — files, routes, tables, columns, symbols, line

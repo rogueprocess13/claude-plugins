@@ -40,6 +40,10 @@ Example: "An authenticated user with role X can call endpoint Y with a forged ID
 
 {What an attacker can achieve — data accessed, actions performed, systems affected.}
 
+## Proposed Changes
+
+{The control or fix to put in place — behaviour-level, no exploit detail.}
+
 ## Acceptance Criteria
 
 - [ ] {Observable security control — e.g. "Calling GET /api/handovers/{id} with a handover belonging to a different org returns 403"}

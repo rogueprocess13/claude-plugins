@@ -18,7 +18,7 @@ and [`readiness-quality-score` spec](../../openspec/changes/dor-quality-score/sp
 | Code | Fires when | Applicability |
 |---|---|---|
 | `SCOPE_MISSING` | No `## Scope` table with a `Layer` column | Always |
-| `NAV_PATH_MISSING` | No Navigation Path section | Non-backend-only tickets |
+| `NAV_PATH_MISSING` | No actual click path: a `## Navigation Path` heading with real (non-placeholder) content, a `**Navigation Path:**` label with text, a backticked `` `A > B` `` path, or a Verification Plan `Navigation path` cell holding `A > B`. The bare phrase "navigation path" — including the Verification Plan column header — does not count | Non-backend-only tickets |
 | `TEST_USER_MISSING` | No Test User section | Non-backend-only tickets |
 | `AC_MISSING` | No Acceptance Criteria section/checkboxes | Always |
 | `AC_VAGUE` | Any AC line matches a vague-language pattern (original `audit_ac_testability` set, or the widened DoR-only set below) | Always |
@@ -35,9 +35,15 @@ the manifest). No score, dimension value, or gap ever affects `DOR_STATUS`.
 The body must state **both**:
 
 - a **why**: `## Background / Motivation` (or an alias heading — `Motivation`, `Problem`, `Why`,
-  `Context`); for a bug, `## Actual Behaviour` counts as the why.
+  `Context`, `Impact`); for a bug, `## Actual Behaviour` counts as the why.
 - an **outcome**: `## Proposed Behaviour` / `Proposed Changes` (or an alias — `Desired Outcome`,
-  `Goal`); for a bug, `## Expected Behaviour` counts as the outcome.
+  `Goal`, `Desired Behaviour`, `Desired Behavior`); for a bug, `## Expected Behaviour` counts as
+  the outcome.
+
+Every shipped template carries a passing pair under its own headings: feature `Background /
+Motivation` + `Proposed Behaviour`, improvement `Motivation` + `Desired Behaviour`, chore
+`Background / Motivation` + `Proposed Changes`, security `Impact` + `Proposed Changes`, bug
+`Actual Behaviour` + `Expected Behaviour`.
 
 Each section's content must survive placeholder stripping (blank, `TBD`, `TODO`, `N/A`, `none`, an
 unfilled `{...}` template token) and must not be a near-restatement of the `## Summary` line (token

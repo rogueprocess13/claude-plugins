@@ -17,6 +17,34 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.67.0 / ticket-planner 0.19.1 (2026-10-22)
+
+The Definition-of-Ready check now agrees with the ticket templates it enforces, and
+`NAV_PATH_MISSING` only passes on a real click path (`dor-template-intent-and-nav-path`).
+
+### Fixed
+- **Template INTENT failures**: a body filled in from `templates/improvement.md` or
+  `templates/security.md` under the template's own headings failed `INTENT_MISSING`. The outcome
+  aliases gain `Desired Behaviour` (and the US spelling `Desired Behavior`), the why aliases gain
+  `Impact`, and the security template gains a `## Proposed Changes` section. The ticket-create
+  skill's workaround (add an extra `## Proposed Changes`) is removed, and the planner prompt now
+  lists the improvement and security heading pairs (ticket-planner 0.19.1).
+- **Column-header nav-path false positive**: `_has_section_nav_path` accepted the bare words
+  "navigation path" anywhere, so the planner Verification Plan's `Navigation path` column header
+  alone satisfied the check on every planner body. It now accepts only a `## Navigation Path`
+  (or `###`, optional colon) heading with non-placeholder content, a `**Navigation Path:**` label
+  with text, a backticked `` `A > B` `` path, or a Verification Plan `Navigation path` cell that
+  holds `A > B`.
+
+### Changed
+- **Entry gate stops header-only planned tickets**: the ticket-auto entry gate
+  (`PLANNED_BODY_INCOMPLETE`, check 2.7c) now also stops in-flight planned feature/improvement
+  tickets whose only nav evidence was the Verification Plan column header.
+- Frontend-scoped bodies with no real click path now fail `NAV_PATH_MISSING` in the readiness
+  check and the `Navigation Path` entry of the structural body check (planner Refinement and
+  ticket-create). The nav flag also feeds the quality score's context dimension, so such bodies
+  lose up to 0.6 of its points; `DOR_STATUS` is affected only through `NAV_PATH_MISSING`.
+
 ## 0.66.0 / ticket-planner 0.19.0 (2026-10-22)
 
 Planner-cut tickets now arrive with test data that is derived, owned and loaded
