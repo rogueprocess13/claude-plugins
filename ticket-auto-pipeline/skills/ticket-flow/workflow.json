@@ -368,7 +368,7 @@
       "description": "A human-hold request was answered and the pipeline resumed."
     },
     "pr-opened": {
-      "emitted_by": "ticket-implement / ticket-pr-review",
+      "emitted_by": "lib/pr-evidence.sh record_pr_created --new (ticket-verify / epic-branch.sh)",
       "payload": { "pr": "number" },
       "description": "A pull request was created for the ticket."
     },

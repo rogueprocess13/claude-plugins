@@ -17,6 +17,38 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.69.5 (2026-10-22)
+
+PRs opened by the VERIFY phase now always leave a `META|pr-created` record, so merge-poll can poll
+them and blocked-by dependents are released after a human merges the PR (#525).
+
+### Fixed
+- **VERIFY-opened PRs had no repo**: ticket-verify's PR capture was a bash block in its SKILL.md.
+  The agent ran its own version of it, logged `VERIFY|pr-open|done|<url>` and never wrote
+  `META|pr-created`. The run event then carried `pr.repo: null`, merge-poll wrote `unknown-repo`
+  once and never polled again, and `ticket_pipeline_merge_state` stayed `unknown` after the merge.
+  Operators had to append `META|manual-merge` by hand to release dependents.
+- **One writer for the marker**: new `lib/pr-evidence.sh`. `record_pr_created [--new] <LOG> <TID>
+  <URL> [--epic]` writes `pr-created` once per PR per run and, with `--new`, emits the `pr-opened`
+  outbox event (idempotency-keyed on the PR). ticket-verify Step 6 and `epic_branch_open_pr` both
+  call it; the `pr-opened` vocabulary entry names it as the emitter.
+- **Verified backfill before the outcome**: `pipeline-finalize.sh` runs `pr_evidence_backfill`
+  just before `META|outcome`, only when the run has no `pr-created` record at all. Candidates are
+  GitHub PR URLs on VERIFY or PR-REVIEW lines and bare `checkout-pr` numbers. Each is recorded
+  only when its repo is one of the ticket's worktree remotes and `gh pr view` reports the ticket
+  branch as its head. Agents link related or upstream PRs in free text on those lines, and a wrong
+  PR's merge would release dependents early, so anything unverifiable (gh fails, `REPOS_ROOT`
+  unset, worktrees gone, other head branch) gets a `META|pr-evidence|warn|` line instead.
+  Backfilled records carry `"backfill":true`, emit no event, and lose to any real record in
+  `ticket_pipeline_pr_ref` and `run-summary.sh`.
+- **`ticket_pipeline_pr_ref`** now reports the earliest line naming the PR, so a backfilled marker
+  written after `merge-decision|done|merged` does not hide that merge record.
+
+### Upgrade notes
+- Runs that already finished with `unknown-repo` are not re-polled. Release their dependents with
+  `META|manual-merge` as before.
+- Not in this release: a fleet WARN when merge-poll writes `unknown-repo` for a blocker.
+
 ## 0.69.4 / fleet-controller 0.42.8 (2026-10-22)
 
 A `needs-info` flag no longer outlives the answer to the questions that set it. Before this, an
