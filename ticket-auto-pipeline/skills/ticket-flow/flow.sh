@@ -129,6 +129,26 @@ _log() {
   _plog "$LOG_FILE" "$_ph" "$_st" "$_status" "$_msg"
 }
 
+# ── Heartbeat helpers (GitHub #530) ─────────────────────────────────────────
+# hb_write rejects a malformed or nested DETAIL with rc 1. Every heartbeat in
+# this script is advisory, so a rejected entry must never change flow.sh's
+# outcome: under `set -e` a bare hb_gate failure would abort the transition
+# (the warn-only ILLEGAL_TRANSITION case) or turn a deliberate exit 8/9/10/11
+# into exit 1. _hb_gate swallows the failure; hb_write already reported it
+# on stderr.
+_hb_gate() {
+  hb_gate "$@" || true
+}
+
+# _hb_detail key value [key value ...] -> compact flat JSON object with string
+# values, built by jq so quotes, newlines and control characters in a value
+# can never produce invalid JSON.
+_hb_detail() {
+  jq -nc '$ARGS.positional as $a
+    | reduce range(0; $a | length; 2) as $i ({}; . + {($a[$i]): ($a[$i + 1] // "")})' \
+    --args "$@" 2>/dev/null || echo '{}'
+}
+
 _emit_schema_header() {
   [ -n "${LOG_FILE:-}" ] || return 0
   if [ ! -s "$LOG_FILE" ]; then
@@ -186,7 +206,7 @@ fi
 
 _emit_schema_header
 _log "META|trigger-def|info|${TRIGGER}:$(echo "$def" | jq -c '.')"
-hb_gate "trigger-dispatch" "fired" "trigger ${TRIGGER} dispatched" '{"trigger":"'"$TRIGGER"'"}'
+_hb_gate "trigger-dispatch" "fired" "trigger ${TRIGGER} dispatched" "$(_hb_detail trigger "$TRIGGER")"
 
 # ── Derive state machine variables from trigger def ─────────────────────────
 
@@ -266,8 +286,12 @@ if [ -n "$EXPECTED_FROM" ] && [ "$EXPECTED_FROM" != "null" ]; then
     fi
   fi
   if ! $_from_match; then
-    _log "META|flow-warn|info|ILLEGAL_TRANSITION — ${TICKET_ID} attempted ${TRIGGER} from ${CURRENT_STAGE:-<none>}, expected from ${EXPECTED_FROM}"
-    hb_gate "flow-warn" "warn" "ILLEGAL_TRANSITION" "{\"ticket\":\"${TICKET_ID}\",\"trigger\":\"${TRIGGER}\",\"actual\":\"${CURRENT_STAGE}\",\"expected_from\":\"${EXPECTED_FROM}\"}"
+    # .from may be an array, which `jq -r` pretty-prints over several lines —
+    # flatten it to "A,B" for both the log line and the flat heartbeat DETAIL.
+    _expected_from_flat=$(echo "$def" | jq -r '.from | if type == "array" then join(",") else tostring end')
+    _log "META|flow-warn|info|ILLEGAL_TRANSITION — ${TICKET_ID} attempted ${TRIGGER} from ${CURRENT_STAGE:-<none>}, expected from ${_expected_from_flat}"
+    _hb_gate "flow-warn" "warn" "ILLEGAL_TRANSITION" \
+      "$(_hb_detail ticket "$TICKET_ID" trigger "$TRIGGER" actual "$CURRENT_STAGE" expected_from "$_expected_from_flat")"
   fi
 fi
 
@@ -285,7 +309,7 @@ _precondition_reject() {
   else
     echo "flow.sh: precondition failed for '${_subject}' on ${TICKET_ID}" >&2
     _log "META|precondition|fail|${_subject} rejected on ${TICKET_ID}"
-    hb_gate "precondition" "fail" "${_subject} precondition rejected" "{\"ticket\":\"$TICKET_ID\",\"subject\":\"${_subject}\"}"
+    _hb_gate "precondition" "fail" "${_subject} precondition rejected" "$(_hb_detail ticket "$TICKET_ID" subject "$_subject")"
   fi
   exit 8
 }
@@ -307,13 +331,14 @@ case "$_fence_rc" in
 9)
   echo "flow.sh: fence guard — missing generation token for fenced ticket ${TICKET_ID} (fenced at generation ${FENCE_CHECK_FENCED_GEN})" >&2
   _log "META|fence-guard|fail|missing generation token for fenced ticket ${TICKET_ID}"
-  hb_gate "fence-guard" "fail" "missing generation token" "{\"ticket\":\"${TICKET_ID}\",\"fenced_gen\":${FENCE_CHECK_FENCED_GEN}}"
+  _hb_gate "fence-guard" "fail" "missing generation token" "$(_hb_detail ticket "$TICKET_ID" fenced_gen "$FENCE_CHECK_FENCED_GEN")"
   exit 9
   ;;
 10)
   echo "flow.sh: fence guard — generation ${CALLER_GENERATION} is superseded by fenced generation ${FENCE_CHECK_FENCED_GEN} for ${TICKET_ID}" >&2
   _log "META|fence-guard|fail|generation ${CALLER_GENERATION} <= fenced ${FENCE_CHECK_FENCED_GEN}"
-  hb_gate "fence-guard" "fail" "superseded generation" "{\"ticket\":\"${TICKET_ID}\",\"caller_gen\":${CALLER_GENERATION},\"fenced_gen\":${FENCE_CHECK_FENCED_GEN}}"
+  _hb_gate "fence-guard" "fail" "superseded generation" \
+    "$(_hb_detail ticket "$TICKET_ID" caller_gen "$CALLER_GENERATION" fenced_gen "$FENCE_CHECK_FENCED_GEN")"
   exit 10
   ;;
 esac
@@ -327,11 +352,11 @@ if [ "$_verdict_gate" = "true" ] && declare -f verifier_latest_verdict >/dev/nul
     if [ -n "$OVERRIDE_REASON" ]; then
       _override_reason_safe="${OVERRIDE_REASON//|/ }"
       _log "META|verdict-override|info|trigger=${TRIGGER} reason=${_override_reason_safe} superseded=${_failing_summary}"
-      hb_gate "verdict-override" "ok" "verdict gate overridden" "{\"ticket\":\"$TICKET_ID\",\"trigger\":\"$TRIGGER\"}"
+      _hb_gate "verdict-override" "ok" "verdict gate overridden" "$(_hb_detail ticket "$TICKET_ID" trigger "$TRIGGER")"
     else
       echo "flow.sh: refusing '${TRIGGER}' for ${TICKET_ID} — trailing FAIL/BLOCK verifier-result(s): ${_failing_summary}. Pass --override <reason> to force past this." >&2
       _log "META|verdict-gate|fail|trigger=${TRIGGER} blocked by ${_failing_summary}"
-      hb_gate "verdict-gate" "fail" "trailing FAIL/BLOCK verifier-result blocks trigger" "{\"ticket\":\"$TICKET_ID\",\"trigger\":\"$TRIGGER\"}"
+      _hb_gate "verdict-gate" "fail" "trailing FAIL/BLOCK verifier-result blocks trigger" "$(_hb_detail ticket "$TICKET_ID" trigger "$TRIGGER")"
       exit 11
     fi
   fi
