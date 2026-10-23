@@ -20,16 +20,14 @@ This skill runs standalone (not inside a pipeline phase). No pipeline log writes
 
 ## Step 1 — Resolve target personas
 
-If `persona=all`, enumerate all persona files:
+Enumerate targets with the script — it resolves the files and applies the staleness skip deterministically:
 
 ```bash
-find personas/base -name "*.md" -not -name "README.md" personas/specializers -name "*.md"
+bash lib/persona-refresh.sh list all          # persona=all
+bash lib/persona-refresh.sh list backend/python   # a specific name (specializers/<name>.md, else base/<name>.md; exit 1 if unknown)
 ```
 
-If a specific name like `backend/python`, resolve to:
-- `personas/specializers/backend/python.md` (or `personas/base/<name>.md`)
-
-**Skip persona if** `last-reviewed` is within 30 days (unless `persona` was explicitly named — always refresh explicit targets). Show: "Skipping <name> — last reviewed <date> (< N days ago). Use explicit persona name to force refresh."
+Each output line is TSV: `<path>  <last-reviewed|->  <refresh|skip>`. Under `all`, a persona whose `last-reviewed` is within 30 days is `skip` (`--stale-days N` overrides); an explicitly named persona is always `refresh`. Process only `refresh` rows. For each `skip` row show: "Skipping <name> — last reviewed <date> (< 30 days ago). Use explicit persona name to force refresh."
 
 ---
 
