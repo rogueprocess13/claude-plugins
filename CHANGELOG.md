@@ -17,6 +17,26 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.71.6 / fleet-controller 0.43.4 (2026-10-23)
+
+Router, merge and PR fixes (codebase review 2026-10-23, DET-RV-3/4/16, DET-IP-4/5/9).
+
+Also fleet-controller 0.43.4.
+
+### Fixed
+- **Auto-merge**: new `lib/auto-merge.sh` checks `merge_blocked_reason` (Merge Policy) first and
+  does not merge when the PR head cannot be read. fleetd `run_auto_merge` skips when an epic Merge
+  Policy is set.
+- Verify retry decisions (`lib/verify-retry-decide.sh`) use only the latest verify result, so
+  "attempt 1 FAIL, attempt 2 PASS" no longer re-implements.
+- Verify checkpoints (`lib/verify-checkpoint.sh`) are scoped to the current attempt; detect-resume
+  emits `VERIFY_CHECKPOINT` instead of the unhandled `VERIFY_FROM=checkpoint`. fleetd mirrors it.
+- `lib/implement-diff-check.sh` writes `IMPLEMENT|commit-push|skip` when no worktree changed, so
+  pr-review's no-diff exemption can fire.
+- `lib/conflict-marker-scan.sh` blocks only on real `<<<<<<<` / `=======` / `>>>>>>>` sequences; a
+  markdown `=======` underline no longer blocks a merge.
+- pr-iterate's `gh pr` calls pass `--repo` (`lib/pr-repo-resolve.sh`).
+
 ## 0.71.0 (2026-10-23)
 
 Complexity classifier calibration (`complexity-classifier-calibration`). The retro metric that
