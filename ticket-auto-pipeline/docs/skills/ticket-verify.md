@@ -19,7 +19,7 @@ Performs end-to-end browser verification of a ticket fix using Playwright. Loads
 | Ticket ID | CLI argument | Yes |
 | --env | CLI (local or uat, default: local) | No |
 | --user | CLI (login email override) | No |
-| --password | CLI (password override, default: admin on UAT) | No |
+| --password | CLI (password override; otherwise `UAT_TEST_PASSWORD` env or CLAUDE.md field — no built-in default) | No |
 | LINEAR_API_KEY | Environment variable | Yes |
 | LOCAL_URL | CLAUDE.md | Yes (for --env local) |
 | UAT_URL | CLAUDE.md | Yes (for --env uat) |

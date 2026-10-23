@@ -491,10 +491,10 @@ _RUNNERS = {
     # between-phase executor — routing it here would give fleetd two places
     # that fork phase workers.
     #
-    # `preflight` checks that MCP tools (`browser_navigate`, `get_issue`) are
-    # reachable. Reachability is a property of the *agent's* session, not of
-    # fleetd's process: fleetd answering it would answer a different question
-    # and the answer would be worth nothing. The table's own `on_failure`
+    # `preflight` (verify-preflight.sh) checks only that a `playwright` MCP
+    # server is configured. Reachability is a property of the *agent's*
+    # session, not of fleetd's process: fleetd answering it would answer a
+    # different question and the answer would be worth nothing. The table's own `on_failure`
     # already says "log and proceed — the failure still counts as an attempt",
     # so it stays inside the phase.
     'inspector': _unsupported_runner('inspector'),
