@@ -17,6 +17,20 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.71.4 (2026-10-23)
+
+One plan-artifact resolver (codebase review 2026-10-23, DET-IP-2, DET-AP-4, DET-IP-13).
+
+### Fixed
+- Five separate plan/change-dir lookups matched ticket IDs by substring, so `TEST-7` could pick up
+  `test-77-*`. `lib/ticket-dir.sh` now owns one resolver (with a `plan` / `change-dir` CLI) that
+  matches only the exact ID or `<id>-` prefix; every script and skill caller uses it.
+- gate-reconcile read `$NOTES_PATH` before setting it, so an openspec ticket with no EXEC line
+  resolved to `simple-fix.md`.
+
+### Changed
+- Two change directories for one ticket now stop the pipeline (`ambiguous`) instead of one being
+  picked silently.
 ## 0.71.3 (2026-10-23)
 
 `lib/flow-run.sh` (codebase review 2026-10-23, DET-IP-1 / DET-RV-20).

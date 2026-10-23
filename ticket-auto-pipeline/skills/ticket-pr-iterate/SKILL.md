@@ -135,15 +135,18 @@ Store these as `{GAPS}` — a list of objects with: `number`, `requirement`, `st
 Check which plan artifact exists:
 
 ```bash
-find {ticket-dir} -name "simple-fix.md"
-ls openspec/changes/ | grep -i "{ticket-id-lowercase}"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root . --ticket-dir "{ticket-dir}"
 ```
 
-- **simple-fix.md found** → set `{ARTIFACT}` = `simple-fix.md`. Count existing `## PR Review #` sections:
+This is the one plan-artifact resolver (whole-ID match, so `TEST-7` never picks up `TEST-77`'s
+change). It prints `PLAN_MODE=`, `PLAN_PATH=` and, for openspec, `CHANGE_DIR=`.
+
+- **`PLAN_MODE=simple-fix`** → set `{ARTIFACT}` = `PLAN_PATH` (`simple-fix.md`). Count existing `## PR Review #` sections:
   ```bash
   grep -c "^## PR Review #" {ticket-dir}/simple-fix.md
   ```
-- **openspec change found** → set `{ARTIFACT}` = `tasks.md` at the openspec path. Count existing `## PR Review #` sections in it.
+- **`PLAN_MODE=openspec`** → set `{ARTIFACT}` = `PLAN_PATH` (the change's `tasks.md`). Count existing `## PR Review #` sections in it.
+- **Exit 2** (several change dirs match) or **exit 12** (no plan artifact) → stop and report it.
 
 Set `{N}` = count + 1. If this is the first iteration, `{N}` = 1.
 

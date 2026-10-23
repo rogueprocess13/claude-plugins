@@ -23,25 +23,18 @@ source ~/.claude/skills/lib/linear-api.sh
 source ~/.claude/skills/lib/ticket-dir.sh
 source ~/.claude/skills/lib/notes-parse.sh
 
-# Extract ARTIFACT_TYPE from EXEC create-artifact line (canonical token), with
-# notes.md fallback matching the COMPLEXITY resolution pattern below.
-ARTIFACT_TYPE=$(grep '^[^|]*|EXEC|create-artifact|done|' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d'|' -f5- || true)
-if [ -z "$ARTIFACT_TYPE" ]; then
-  # Fallback: read artifact type from notes.md (same source as COMPLEXITY)
-  if [ -f "$NOTES_PATH" ]; then
-    ARTIFACT_TYPE=$(grep -i 'artifact.type' "$NOTES_PATH" 2>/dev/null | tail -1 | cut -d: -f2- | sed 's/^[[:space:]]*//' || true)
-  fi
-  ARTIFACT_TYPE="${ARTIFACT_TYPE:-simple-fix}"
-fi
-
-# Resolve ticket directory
+# Resolve ticket directory and notes.md FIRST — the ARTIFACT_TYPE fallback
+# below reads notes.md, so NOTES_PATH must be set before it.
 TICKET_DIR=$(resolve_ticket_dir "{TICKET-ID}" "." 2>/dev/null || echo ".")
-
-# Read notes.md for open questions context
 NOTES_PATH="$TICKET_DIR/notes.md"
 if [ -f "$NOTES_PATH" ]; then
   COMPLEXITY=$(get_complexity "$TICKET_DIR" 2>/dev/null || echo "$COMPLEXITY")
 fi
+
+# ARTIFACT_TYPE: the EXEC create-artifact line (canonical token), else
+# notes.md's "Artifact type:" line, else simple-fix.
+ARTIFACT_TYPE=$(resolve_artifact_type "$LOG_FILE" "$NOTES_PATH")
+ARTIFACT_TYPE="${ARTIFACT_TYPE:-simple-fix}"
 ```
 
 Resolve the plan artifact. An openspec change lives at the tickets-repo root
@@ -52,26 +45,21 @@ block logs a `GATE|reconcile|fail` line and exits non-zero — stop there and
 report the error; never amend some other change's `tasks.md`:
 
 ```bash
-if echo "$ARTIFACT_TYPE" | grep -q 'openspec'; then
-  _tid_lower=$(echo "{TICKET-ID}" | tr '[:upper:]' '[:lower:]')
-  _change_dir=""
-  for _d in openspec/changes/*/; do
-    [ -d "$_d" ] || continue
-    _name=$(basename "$_d" | tr '[:upper:]' '[:lower:]')
-    # Whole-id match: TEST-7 must not pick up test-77-...
-    if [[ "$_name" =~ (^|[^a-z0-9])${_tid_lower}([^0-9]|$) ]]; then
-      _change_dir="${_d%/}"
-      break
-    fi
-  done
-  ARTIFACT_PATH="${_change_dir}/tasks.md"
-  if [ -z "$_change_dir" ] || [ ! -f "$ARTIFACT_PATH" ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|GATE|reconcile|fail|openspec tasks.md for {TICKET-ID} not found under $PWD/openspec/changes/" >>"$LOG_FILE"
-    echo "ticket-gate-reconcile: no openspec change for {TICKET-ID} under $PWD/openspec/changes/ — cannot amend the plan" >&2
+# The one plan-artifact resolver (lib/ticket-dir.sh): whole-id match, so
+# TEST-7 never picks up test-77-...; exit 2 when two change dirs match.
+PLAN_PATH=""
+_plan_rc=0
+_plan_out=$(resolve_plan_artifact "{TICKET-ID}" --root . --ticket-dir "$TICKET_DIR" --type "$ARTIFACT_TYPE") || _plan_rc=$?
+[ "$_plan_rc" -eq 0 ] && eval "$_plan_out"
+if [ "$ARTIFACT_TYPE" = "openspec" ]; then
+  ARTIFACT_PATH="$PLAN_PATH"
+  if [ "$_plan_rc" -ne 0 ] || [ ! -f "$ARTIFACT_PATH" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|GATE|reconcile|fail|openspec tasks.md for {TICKET-ID} not found under $PWD/openspec/changes/ (resolver rc=$_plan_rc)" >>"$LOG_FILE"
+    echo "ticket-gate-reconcile: no unique openspec change for {TICKET-ID} under $PWD/openspec/changes/ — cannot amend the plan" >&2
     exit 1
   fi
 else
-  ARTIFACT_PATH="$TICKET_DIR/simple-fix.md"
+  ARTIFACT_PATH="${PLAN_PATH:-$TICKET_DIR/simple-fix.md}"
 fi
 ```
 

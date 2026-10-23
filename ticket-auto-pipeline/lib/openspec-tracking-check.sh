@@ -47,6 +47,13 @@ if [ -f "$_OTC_LIB_DIR/heartbeat.sh" ]; then
 elif [ -f "$_OTC_SCRIPT_DIR/heartbeat.sh" ]; then
   source "$_OTC_SCRIPT_DIR/heartbeat.sh"
 fi
+# The one change-dir resolver (whole-ID match, review finding DET-IP-2).
+# Prefer the copy beside this script so both come from the same version.
+if [ -f "$_OTC_SCRIPT_DIR/ticket-dir.sh" ]; then
+  source "$_OTC_SCRIPT_DIR/ticket-dir.sh"
+elif [ -f "$_OTC_LIB_DIR/ticket-dir.sh" ]; then
+  source "$_OTC_LIB_DIR/ticket-dir.sh"
+fi
 
 usage() {
   cat >&2 <<'EOF'
@@ -69,11 +76,13 @@ commit <change-dir> <TICKET-ID>
 
 assert <TICKET-ID> [--expect] [--root <path>]
   Locates the openspec change dir for TICKET-ID under <path>/openspec/changes/
-  (default --root: current directory; case-insensitive match on the
-  directory name, same convention as ticket-dir.sh) and reports its tracking
-  status: tracked, partial (some files untracked, or a tracked file has an
-  uncommitted modification — unstaged or staged), untracked, gitignored, or
-  missing. Without a match: status `not-applicable` (exit 0) unless --expect
+  (default --root: current directory; case-insensitive whole-ID match on the
+  directory name via ticket-dir.sh's resolve_change_dir — the name is the id
+  or starts with "<id>-", so TEST-7 never matches test-77-*) and reports its
+  tracking status: tracked, partial (some files untracked, or a tracked file
+  has an uncommitted modification — unstaged or staged), untracked,
+  gitignored, or missing. Two or more matching dirs: status `ambiguous`
+  (exit 1, dirs listed on stderr). Without a match: status `not-applicable` (exit 0) unless --expect
   is given, in which case a missing or empty change dir is status `missing`
   (exit 1) — pass --expect when the ticket's notes.md declares
   COMPLEXITY=complex, so a deleted-on-disk change dir is caught, not
@@ -199,10 +208,11 @@ _cmd_commit() {
 
 # ── assert ────────────────────────────────────────────────────────────────
 
+# Prints this ticket's change dir relative to CWD ("openspec/changes/<name>/")
+# via ticket-dir.sh's resolve_change_dir — whole-ID match, so TEST-7 never
+# picks up test-77-*. Exit 0 found, 12 none, 2 several (listed on stderr).
 _find_change_dir() {
-  local ticket_id="$1" ticket_lower
-  ticket_lower=$(echo "$ticket_id" | tr '[:upper:]' '[:lower:]')
-  ls -d openspec/changes/*/ 2>/dev/null | grep -i "$ticket_lower" | head -1 || true
+  resolve_change_dir "$1" "."
 }
 
 _cmd_assert() {
@@ -243,8 +253,18 @@ _cmd_assert() {
   # "openspec/changes/*/" and the dir _find_change_dir/_dir_status resolve
   # are relative to it) — a caller's ambient CWD is never trusted, only
   # $root. Default "." preserves old behavior (CWD is the tickets repo).
-  local change_dir status
-  change_dir=$(cd "$root" && _find_change_dir "$ticket_id")
+  local change_dir status find_rc=0
+  change_dir=$(cd "$root" && _find_change_dir "$ticket_id" 2>/dev/null) || find_rc=$?
+
+  if [ "$find_rc" -eq 2 ]; then
+    echo "OPENSPEC_TRACK_STATUS=ambiguous"
+    echo "TICKET_ID=$ticket_id"
+    (cd "$root" && _find_change_dir "$ticket_id" >/dev/null) || true
+    hb_gate "openspec-tracking" "warn" "several openspec change dirs match ticket" \
+      "{\"ticket\":\"$ticket_id\"}" 2>/dev/null || true
+    return 1
+  fi
+  [ "$find_rc" -eq 0 ] || change_dir=""
 
   if [ -z "$change_dir" ]; then
     if [ "$expect" = "--expect" ]; then

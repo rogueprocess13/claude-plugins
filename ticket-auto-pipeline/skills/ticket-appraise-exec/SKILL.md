@@ -36,9 +36,10 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 
 ## Step 1 — Load ticket workspace
 
-Find the local directory:
+Find the local directory (whole-ID match on `{TICKET-ID}--slug`, so `WIL-4` never finds
+`WIL-42--...`; exit 2 lists several matches, exit 12 none):
 ```bash
-find . -type d -name "{TICKET-ID}*"
+bash ~/.claude/skills/lib/ticket-dir.sh ticket-dir "{TICKET-ID}" .
 ```
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|load-workspace|start|Loading ticket workspace" >> "$LOG_FILE"
@@ -235,12 +236,17 @@ Check artifact presence **by testing the file path directly** — do not rely on
 ```bash
 # simple-fix path — must exist as a real file
 if [ -f "{TICKET_DIR}/simple-fix.md" ]; then SIMPLE_FIX="{TICKET_DIR}/simple-fix.md"; else SIMPLE_FIX=""; fi
-# openspec path
-CHANGE_DIR=$(ls -d openspec/changes/*/ 2>/dev/null | grep -i "{ticket-id-lowercase}" | head -1)
+# openspec path — the one change-dir resolver (lib/ticket-dir.sh): whole-ID
+# match, so WIL-4 never picks up wil-42-*. Exit 2 = several dirs match this
+# ticket (listed on stderr) — treat it as a mismatch, never pick one.
+CHANGE_DIR_RC=0
+CHANGE_DIR=$(bash ~/.claude/skills/lib/ticket-dir.sh change-dir "{TICKET-ID}" .) || CHANGE_DIR_RC=$?
+[ "$CHANGE_DIR_RC" -eq 0 ] || CHANGE_DIR=""
 OPENSPEC_TASKS="${CHANGE_DIR}tasks.md"
 ```
 
 Assert coherence:
+- If `CHANGE_DIR_RC` = 2 → gate fires: `COMPLEXITY_ARTIFACT_MISMATCH — several openspec change dirs match {TICKET-ID}`
 - If `COMPLEXITY` is empty → gate fires: `COMPLEXITY_ARTIFACT_MISMATCH — notes.md missing **Score:** under ## Complexity`
 - If `COMPLEXITY` = `simple` AND `SIMPLE_FIX` is empty → gate fires: `COMPLEXITY_ARTIFACT_MISMATCH — declared simple but no simple-fix.md found`
 - If `COMPLEXITY` = `complex` AND (`CHANGE_DIR` is empty OR `OPENSPEC_TASKS` does not exist) → gate fires: `COMPLEXITY_ARTIFACT_MISMATCH — declared complex but no openspec tasks.md found`
