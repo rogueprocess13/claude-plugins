@@ -1128,20 +1128,28 @@ spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done MSG="Phase inspector complete
 
 Then evaluate the verify verdict for retry/advance:
 
+`lib/verify-retry-decide.sh` makes this decision from the log as it is now — never from
+`{VERIFY_ATTEMPTS}`, which was read before this attempt ran. It judges only the latest
+`VERIFY|verify` terminal line (an earlier attempt's FAIL never re-triggers re-implement
+after a later PASS), recounts the attempts, and reads the cap (2) from STEP_4_5 in
+`dispatch-table.json`:
+
 ```bash
-# If VERIFY fail AND VERIFY_ATTEMPTS < 2 (hard cap) → loop to re-implement
-# Hard cap reduced from 3 to 2 — verify agent instability means retry #3
-# rarely succeeds and just wastes tokens on crash-loops.
-if grep -q '^[^|]*|VERIFY|verify|fail|' "{LOG_FILE}"; then
-  if [ "{VERIFY_ATTEMPTS}" -ge 2 ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_EXHAUSTED" >> "{LOG_FILE}"
-    bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
-    exit 1
-  fi
-  # Re-implement with --from-auto, then outcome-check, then loop back to verify
-fi
-# If VERIFY PASS → proceed to STEP_4_6
+eval "$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verify-retry-decide.sh" "{LOG_FILE}")"
+case "$VERIFY_DECISION" in
+advance) echo "VERIFY PASS → STEP_4_6" ;;
+retry) echo "VERIFY FAIL (attempt $VERIFY_ATTEMPTS of $VERIFY_CAP) → re-implement" ;;
+exhausted)
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_EXHAUSTED" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
+  exit 1
+  ;;
+esac
 ```
+
+- `advance` → proceed to STEP_4_6.
+- `retry` → re-implement with `--from-auto`, then outcome-check, then loop back to verify.
+- `exhausted` → stopped above.
 
 ### STEP_4_6 — PR Review (with iteration sub-loop)
 
