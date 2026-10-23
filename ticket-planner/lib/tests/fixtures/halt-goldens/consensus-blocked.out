@@ -1,0 +1,11 @@
+Consensus marked this plan Readiness: blocked — the run stops before Crosscheck.
+
+Consensus could not resolve a blocking review finding. Its own explanation:
+  blocked — R1 needs a tenant-scoping decision from the data owner before specs can be cut.
+
+Fix the plan (proposal.md / specs), then change consensus.md's Readiness to
+ready-for-spec, or re-run Consensus. Nothing was created in Linear.
+
+Artifacts:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/
+Consensus:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/consensus.md
+Resume:     /ticket-planner resume INIT-1700000000-4242
