@@ -17,6 +17,27 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.71.8 / ticket-planner 0.24.2 / knowledge-curator 0.2.14 (2026-10-23)
+
+Live bugs found by the determinism scans (codebase review 2026-10-23).
+
+Also ticket-planner 0.24.2 and knowledge-curator 0.2.14.
+
+### Fixed
+- ticket-appraise wiki routing used `${#REPOS[@]}` on a string (always 1), and
+  `prescan-route.sh --mode repos` listed `REPOS_ROOT` itself instead of the repos. Routing is now
+  decided by `lib/wiki-route.sh`, counting only repos the ticket names.
+- ticket-critique: a BLOCKED result with no BLOCKER finding now gets the needs-info comment
+  (`lib/critique-status.sh`).
+- `audit-drift-check.sh` compared Linear's internal id with the identifier and a date with full
+  timestamps, so every ticket looked changed.
+- The prescan `system.md` rebuild no longer wipes the contract-map rows it preserves.
+- ticket-persona-refresh's malformed `find` command.
+- ticket-planner: an explicit Consensus `Readiness: blocked` now halts before Crosscheck
+  (`CONSENSUS_BLOCKED`).
+- knowledge-curator: kc-sweep picks up plan files on its first run; kc-import takes the title from
+  the `#` heading.
+
 ## 0.71.0 (2026-10-23)
 
 Complexity classifier calibration (`complexity-classifier-calibration`). The retro metric that
