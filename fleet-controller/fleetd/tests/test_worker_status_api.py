@@ -676,10 +676,13 @@ class TestHttpRoutes(unittest.TestCase):
             return resp.status, None
 
     def _post(self, path, payload=None):
+        from fleetd.supervisor import CONTROL_TOKEN_HEADER, control_token_path
+        token = control_token_path(self.state).read_text().strip()
         conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=5)
         body = json.dumps(payload or {}).encode('utf-8')
         conn.request('POST', path, body=body,
-                     headers={'Content-Type': 'application/json'})
+                     headers={'Content-Type': 'application/json',
+                              CONTROL_TOKEN_HEADER: token})
         resp = conn.getresponse()
         data = resp.read()
         conn.close()
