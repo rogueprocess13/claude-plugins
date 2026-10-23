@@ -46,6 +46,25 @@ When `--from-auto` is present, VERIFY is a loop-bearing phase: additionally foll
 | `browser-session` | **falls back to `build-plan`** | browser state lost on crash |
 | `navigate` | **falls back to `build-plan`** | browser state lost on crash |
 | `execute-steps` | **falls back to `build-plan`** | browser state lost on crash |
+| `checkpoint` | treated as `execute-steps` (so `build-plan` in browser mode) | `detect-resume.sh` no longer emits it; accepted only from an older router |
+
+**Checkpoint resume (deterministic).** Which criteria already passed is never inferred
+from memory or prose. At the start of the criterion loop (Step 4b / 4c / 4c-live), run:
+
+```bash
+VERIFY_CHECKPOINT=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verify-checkpoint.sh" "$LOG_FILE" 2>/dev/null) || VERIFY_CHECKPOINT=""
+```
+
+It prints the highest `N` with a `VERIFY|checkpoint|done|criterion-N-pass` line in the
+**current attempt only** — lines after the last `VERIFY|verify|done|`/`fail|` terminal. An
+earlier attempt's checkpoints never count: that attempt ended, the code was re-implemented,
+and every criterion must be re-checked. The router also receives the same value as
+`VERIFY_CHECKPOINT` from `detect-resume.sh`.
+
+- Build-only and live-backend mode: if `VERIFY_CHECKPOINT` is a number `N`, record criteria
+  1..N as PASS (`resumed from checkpoint`) and start at criterion `N+1`. If it is empty,
+  start at criterion 1.
+- Browser mode: ignore `VERIFY_CHECKPOINT` and verify every criterion.
 
 ---
 
@@ -808,12 +827,17 @@ Capture after each step:
 - The current URL
 - Any new console errors: `mcp__playwright__browser_console_messages`
 
-**Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry to the pipeline log. On crash restart, the router reads the last checkpoint and the verify agent resumes from the NEXT criterion instead of restarting from criterion 1:
+**Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry to the pipeline log:
 
 ```bash
 # After criterion N passes, write checkpoint:
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|checkpoint|done|criterion-{N}-pass" >> "$LOG_FILE"
 ```
+
+**Checkpoint resume** — see [Step dispatch](#step-dispatch). In browser mode (this step)
+every criterion is re-verified on a resume, because the browser state is gone; the
+checkpoint lines only skip criteria in build-only (Step 4c) and live-backend (Step 4c-live)
+mode.
 
 At any point, if the observed result contradicts a pass criterion, mark that criterion **FAIL** and record:
 - The step number

@@ -259,7 +259,7 @@
         "extra_flags": "--from-auto --mode extract",
         "next_phase": "VERIFY",
         "description": "Run Playwright UAT verification",
-        "instructions": "Follow the skill exactly. Use per-criterion checkpointing: after each criterion passes, write VERIFY|checkpoint|done|criterion-{N}-pass to LOG_FILE. If the agent crashes, resume from the last checkpoint — do not restart from criterion 1. PHASE_RESULT_ATTEMPT=$(({VERIFY_ATTEMPTS} + 1)) — emit this verbatim as the ATTEMPT field of your phase result block.",
+        "instructions": "Follow the skill exactly. Use per-criterion checkpointing: after each criterion passes, write VERIFY|checkpoint|done|criterion-{N}-pass to LOG_FILE. On a resume, take the criteria already passed in THIS attempt from lib/verify-checkpoint.sh (see the skill's Checkpoint resume rule) — never from an earlier attempt. PHASE_RESULT_ATTEMPT=$(({VERIFY_ATTEMPTS} + 1)) — emit this verbatim as the ATTEMPT field of your phase result block.",
         "attempt_expr": "VERIFY_ATTEMPTS + 1",
         "loop_bearing": true,
         "verdict_tokens": [

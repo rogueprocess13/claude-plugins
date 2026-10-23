@@ -63,6 +63,7 @@ from fleetd.phase_dispatch import (  # noqa: E402
     adopt_position_via_detect_resume,
     detect_resume_script_path,
     last_verify_checkpoint,
+    last_verify_criterion,
     parse_detect_resume_block,
     resolve_dispatch_position,
     next_step,
@@ -1151,10 +1152,28 @@ class TestVerifyCheckpointResume(unittest.TestCase):
             '2026-01-01T00:00:02Z|VERIFY|checkpoint|done|criterion-1-pass',
             '2026-01-01T00:00:03Z|VERIFY|checkpoint|done|criterion-2-pass',
         ]
-        # Matches detect-resume.sh's own (slightly surprising) behaviour: the
-        # literal step name of the last `|done|` entry, unmodified — verified
-        # against the real script in TestVerifyCheckpointParity below.
-        self.assertEqual(last_verify_checkpoint(lines), 'checkpoint')
+        # DET-RV-16: `checkpoint` is not a ticket-verify --from-step value.
+        # It resumes as execute-steps, which the browser correction maps to
+        # build-plan; the criterion number travels separately.
+        self.assertEqual(last_verify_checkpoint(lines), 'build-plan')
+        self.assertEqual(last_verify_criterion(lines), '2')
+
+    def test_checkpoints_are_scoped_to_the_current_attempt(self):
+        # Attempt 1 passed criterion 1 and then FAILed. Attempt 2 runs
+        # against re-implemented code and must not inherit attempt 1's
+        # checkpoint or sub-steps.
+        lines = [
+            '2026-01-01T00:00:01Z|VERIFY|build-plan|done|ok',
+            '2026-01-01T00:00:02Z|VERIFY|checkpoint|done|criterion-1-pass',
+            '2026-01-01T00:00:03Z|VERIFY|report|done|ok',
+            '2026-01-01T00:00:04Z|VERIFY|verify|fail|FAIL',
+            '2026-01-01T00:00:05Z|IMPLEMENT|implement|done|re',
+        ]
+        self.assertEqual(last_verify_checkpoint(lines), '')
+        self.assertEqual(last_verify_criterion(lines), '')
+        lines.append(
+            '2026-01-01T00:00:06Z|VERIFY|checkpoint|done|criterion-3-pass')
+        self.assertEqual(last_verify_criterion(lines), '3')
 
     def test_browser_state_cannot_be_resumed_so_falls_back_to_build_plan(self):
         for substep in ('browser-session', 'navigate', 'execute-steps'):
@@ -1174,7 +1193,10 @@ class TestVerifyCheckpointResume(unittest.TestCase):
             '2026-01-01T00:00:02Z|VERIFY|phase-inspector-verify|done|ok',
             '2026-01-01T00:00:03Z|VERIFY|verify|done|PASS',
         ]
-        self.assertEqual(last_verify_checkpoint(lines), 'checkpoint')
+        # The verify terminal ends the attempt, so nothing before it resumes.
+        self.assertEqual(last_verify_checkpoint(lines), '')
+        lines = lines[:2]
+        self.assertEqual(last_verify_checkpoint(lines), 'build-plan')
 
     def test_a_different_phases_done_line_is_ignored(self):
         lines = ['2026-01-01T00:00:01Z|IMPLEMENT|implement|done|ok']
@@ -1211,7 +1233,7 @@ class TestVerifyCheckpointParity(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         fields = parse_detect_resume_block(proc.stdout)
-        return fields.get('VERIFY_FROM', '')
+        return fields.get('VERIFY_FROM', ''), fields.get('VERIFY_CHECKPOINT', '')
 
     def test_parity_across_fixtures(self):
         fixtures = [
@@ -1229,12 +1251,26 @@ class TestVerifyCheckpointParity(unittest.TestCase):
             ('CRE-P4', [
                 '2026-01-01T00:00:01Z|VERIFY|browser-session|done|ok',
             ]),
+            ('CRE-P5', [
+                '2026-01-01T00:00:01Z|VERIFY|checkpoint|done|criterion-1-pass',
+                '2026-01-01T00:00:02Z|VERIFY|verify|fail|FAIL',
+                '2026-01-01T00:00:03Z|IMPLEMENT|implement|done|re',
+                '2026-01-01T00:00:04Z|VERIFY|build-plan|done|ok',
+                '2026-01-01T00:00:05Z|VERIFY|checkpoint|done|criterion-2-pass',
+            ]),
+            ('CRE-P6', [
+                '2026-01-01T00:00:01Z|VERIFY|checkpoint|done|criterion-1-pass',
+                '2026-01-01T00:00:02Z|VERIFY|verify|done|PASS',
+            ]),
         ]
         for tid, lines in fixtures:
             with self.subTest(tid=tid):
-                real = self._real_verify_from(tid, lines)
-                mine = last_verify_checkpoint(lines)
-                self.assertEqual(mine, real, f'{tid}: {lines}')
+                real_from, real_cp = self._real_verify_from(tid, lines)
+                self.assertEqual(last_verify_checkpoint(lines), real_from,
+                                 f'{tid}: {lines}')
+                self.assertEqual(last_verify_criterion(lines), real_cp,
+                                 f'{tid}: {lines}')
+                self.assertNotEqual(real_from, 'checkpoint')
 
 
 class TestDriftPreventionCoverage(unittest.TestCase):
