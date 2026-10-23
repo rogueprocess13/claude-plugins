@@ -1041,14 +1041,11 @@ Verification passed on localhost — the implementation is confirmed working. No
    **Standalone runs only (no `--from-auto`):** delegate to the flow executor. `implement-complete`
    carries no `verdict_gate` (it only opens code review — it is not a Done/UAT-reaching trigger),
    so no exit-11 branch applies here:
-   ```
-   /ticket-flow {TICKET-ID} implement-complete
+   ```bash
+   bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} implement-complete
    _rc=$?
-   if [ "$_rc" -ne 0 ]; then
-     hb-wrap.sh retry "flow-sh" "fail" "flow.sh implement-complete failed (exit ${_rc})" \
-       "{\"trigger\":\"implement-complete\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: implement-complete" >> {LOG_FILE}
-   fi
+   # flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+   # implement-complete carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
    ```
    This moves state → `Review` and clears the manifest `approved` fact.
 
@@ -1081,8 +1078,8 @@ No PR creation. Delegate the state transition — this trigger carries `verdict_
 site in this skill that can come back `exit 11` (gate-blocked) rather than a generic
 non-zero failure:
 
-```
-/ticket-flow {TICKET-ID} uat-pass
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-pass
 _rc=$?
 if [ "$_rc" -eq 11 ]; then
   # Gate-blocked: this run's own verdict (just written above) was PASS, but flow.sh
@@ -1092,14 +1089,10 @@ if [ "$_rc" -eq 11 ]; then
   # since either would look identical to a real Done in the log/Linear (the inverted form
   # of the bug this gate exists to fix). A human must review and either fix the other
   # verifier's failure or re-run `/ticket-flow {TICKET-ID} uat-pass --override <reason>`.
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERDICT_GATE_BLOCKED — uat-pass refused, see flow.sh stderr" >> {LOG_FILE}
-  hb-wrap.sh gate "verdict-gate" "fail" "uat-pass blocked by trailing FAIL/BLOCK verifier-result" \
-    "{\"trigger\":\"uat-pass\",\"ticket\":\"{TICKET-ID}\"}"
-elif [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-pass failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-pass\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-pass" >> {LOG_FILE}
+  # flow-run.sh has already written META|gate-stop|fail|VERDICT_GATE_BLOCKED + heartbeat.
+  echo "uat-pass gate-blocked for {TICKET-ID}"
 fi
+# Any other non-zero exit is already logged by flow-run.sh (META|flow-error).
 ```
 
 This moves state → `Done` and removes `claimed` + `reviewed` — only when `_rc` is `0`.
@@ -1423,14 +1416,11 @@ Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` i
 
 If `--env uat`:
 
-```
-/ticket-flow {TICKET-ID} uat-fail
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-fail
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-fail failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-fail\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-fail" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# uat-fail carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 This moves state → `Ready`, adds `rejected`, removes `reviewed`. A human must run `/ticket-approve {TICKET-ID}` before the next implementation cycle can start.

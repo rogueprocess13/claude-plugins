@@ -408,14 +408,11 @@ then re-run `/ticket-appraise {TICKET-ID}`.
 
 2. Add `needs-info` label:
 
-```
-/ticket-flow {TICKET-ID} needs-info
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} needs-info
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh needs-info failed (exit ${_rc})" \
-    "{\"trigger\":\"needs-info\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: needs-info" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# needs-info carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 3. Tell the user:

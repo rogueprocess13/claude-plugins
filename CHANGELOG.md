@@ -17,6 +17,17 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.71.3 (2026-10-23)
+
+`lib/flow-run.sh` (codebase review 2026-10-23, DET-IP-1 / DET-RV-20).
+
+### Fixed
+- Skills ran `/ticket-flow …; _rc=$?` inside bash blocks. `/ticket-flow` is a slash command, so
+  `$?` meant nothing and the verdict-gate (exit 11) branches could never fire. All 12 sites, plus 3
+  inline copies of the flow.sh lookup, now call `lib/flow-run.sh`, which finds flow.sh through
+  `tap_cache_find`, records failures and returns flow.sh's own exit code (documented: 9/10 fence,
+  11 verdict gate, 127 not found).
+- ticket-verify's agent is told to use the wrapper through Bash; it has no Skill tool.
 ## 0.71.2 / fleet-controller 0.43.2 (2026-10-23)
 
 `flow.sh` fence, outbox and flag fixes (codebase review 2026-10-23, ARCH-1/2/10, QA-1/2/4/5/6/7, BE-1/2/5).

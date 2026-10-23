@@ -229,14 +229,11 @@ Append to `{ticket-dir}/notes.md` session log:
 
 Delegate to the flow executor:
 
-```
-/ticket-flow {TICKET-ID} pr-iterate --provenance policy
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} pr-iterate --provenance policy
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh pr-iterate failed (exit ${_rc})" \
-    "{\"trigger\":\"pr-iterate\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: pr-iterate" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# pr-iterate carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 This sets state → `Ready`, adds `approved`, and clears `reviewed`/`rejected`. All other labels (`simple`/`complex`, `Smooth`/`Rough`/`Hard`) are preserved.

@@ -800,14 +800,11 @@ If notes.md's Open Questions section has no `[needs-human]`-tagged bullet (empty
 
 Delegate to the flow executor:
 
-```
-/ticket-flow {TICKET-ID} appraise-complete
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} appraise-complete
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh appraise-complete failed (exit ${_rc})" \
-    "{\"trigger\":\"appraise-complete\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: appraise-complete" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# appraise-complete carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 This sets state → `Approve`, keeping all existing labels.
