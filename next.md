@@ -74,9 +74,9 @@ implemented on `feat/planner-headless-questions` (ticket-auto-pipeline 0.63.0, t
 (ticket-auto-pipeline 0.71.0). The specs were amended first for seven weeks of drift (#367, #413,
 tracker decoupling). Retro now emits `complexity_calibration` (false-simple rate from the simple
 row only); appraise scores weighted axes with a new Reversibility axis; fast path escalates on it.
-Live finding: 6/9 simple tickets on one workspace went Rough/Hard (0.667), all from one Java/Spring
-Boot upgrade project, and the new axes would not have caught them — follow-up tuning candidate,
-see the change's tasks.md 9.5.
+PR #548. Baseline: 6/9 simple tickets on one workspace went Rough/Hard (0.667), all from the
+now-finished Java 25 upgrade project, so there is no tuning follow-up. The new model will be
+validated on new feature tickets in a later retro window.
 
 ---
 
