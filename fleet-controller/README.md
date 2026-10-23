@@ -52,7 +52,7 @@ Detection runs and interventions are **logged but not executed**. Watch a few cy
 
 **4. Go live** once the dry-run output looks right — unset `FLEET_DRY_RUN`.
 
-> **`FLEET_DRY_RUN` is conservative by default** (`false` = interventions execute). Automatic restarts are **enabled by default** — resume-on-failure is the feature, not an opt-in — and are always capped at `FLEET_MAX_RESTARTS` (default 2). For kill-only operation, set `FLEET_AUTO_RESTART=false`.
+> **`FLEET_DRY_RUN` is conservative by default** (`false` = interventions execute). Crash/orphan restarts are **enabled by default**; detection-driven KILL+RESTART needs `FLEET_AUTO_RESTART=true` set explicitly (unset, it degrades to KILL). Both are capped at `FLEET_MAX_RESTARTS` (default 2). For kill-only operation, set `FLEET_AUTO_RESTART=false`.
 
 ## Modes
 
@@ -63,6 +63,13 @@ Detection runs and interventions are **logged but not executed**. Watch a few cy
 | `/fleet-controller intervene <TICKET_ID>` | Manually kill or restart one pipeline. |
 | `/fleet-controller dispatch <INITIATIVE_ID>` | Queue an initiative's planned tickets for execution. |
 | `/fleet-controller feedback` | Aggregate execution results back to the planner. |
+
+Two companion skills:
+
+| Command | What it does |
+|---------|-------------|
+| `/fleet-controller:fleet-env-check` | Validates the env vars, CLAUDE.md fields and CLI tools fleetd needs. Read-only. |
+| `/fleet-controller:fleet-features` | Lists every opt-in feature flag in the marketplace, whether it is on in this workspace and where the value comes from (env, `fleet-start.sh`, `settings.local.json`, or default), and recommends what to enable, prerequisites first. Read-only. |
 
 ### status
 
@@ -227,6 +234,8 @@ curl -s -X POST http://127.0.0.1:21001/stop \
 
 All settings live in `lib/fleet-config.sh` using `${VAR:-default}` — override via environment. Safe defaults; nothing is required.
 
+**Feature flags.** Every boolean on/off flag across the plugins is catalogued in [`features.json`](features.json). Run `/fleet-controller:fleet-features` (or `bash lib/fleet-features.sh --workspace <tickets-dir>`) to see which are on and what you are missing. **Adding a new opt-in flag requires a catalog entry** — `lib/tests/test-fleet-features.sh` fails CI on an uncatalogued flag or a catalog default that disagrees with the code.
+
 **Detection thresholds**
 
 | Variable | Default | Meaning |
@@ -244,7 +253,7 @@ All settings live in `lib/fleet-config.sh` using `${VAR:-default}` — override 
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `FLEET_DRY_RUN` | false | `true` = log interventions, don't execute |
-| `FLEET_AUTO_RESTART` | true | Automatic restarts enabled by default; set to `false` to opt out |
+| `FLEET_AUTO_RESTART` | split | Unset: crash/orphan reconciliation restarts (`fleet_can_restart` reads unset as `true`), but detection degrades KILL+RESTART to KILL (reads unset as `false`). Set `true` for both; `false` for kill-only |
 | `FLEET_MAX_RESTARTS` | 2 | Restart attempts before giving up |
 | `FLEET_MAX_CONCURRENT` | 3 | Concurrent pipeline cap for dispatch |
 | `FLEET_KILL_GRACE_SECS` | 10 | Cooperative-shutdown wait before SIGTERM |

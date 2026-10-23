@@ -1,0 +1,517 @@
+{
+  "schema_version": 1,
+  "description": "Catalog of every boolean opt-in/opt-out feature flag across the marketplace. Read by lib/fleet-features.sh (value resolution) and enforced by lib/tests/test-fleet-features.sh (drift gate: every boolean `${NAME:-false|0|off|true|on}` / os.environ.get boolean in plugin source must be catalogued here or in the test's ignore list, and every `default` must match the code). Field reference: fleet-controller/CLAUDE.md, section 'Feature catalog'.",
+  "flags": [
+    {
+      "name": "FLEETD_SPAWN_ENABLED",
+      "plugin": "fleet-controller",
+      "default": "0",
+      "on_value": "1",
+      "category": "feature",
+      "summary": "fleetd actually spawns ticket workers; without it fleetd only detects and serves its health API.",
+      "requires": [
+        { "step": "fleet-env-check passes (the worker spawn command CLAUDE_CMD or CLAUDE_BIN resolves); run /fleet-controller:fleet-env-check" }
+      ],
+      "recommend": "on",
+      "why": "This is the switch that makes fleetd do work. Without it, dispatch and restarts only queue entries that nothing consumes.",
+      "docs": "fleet-controller/CLAUDE.md#fleetd-supervisor-daemon"
+    },
+    {
+      "name": "FLEET_AUTO_RESTART",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "Detection escalates a stalled or crashed pipeline all the way to KILL+RESTART instead of stopping at KILL.",
+      "requires": [
+        { "flag": "FLEETD_SPAWN_ENABLED" }
+      ],
+      "recommend": "on",
+      "why": "Unset, the detector and dashboard cap severity at KILL, so a stalled run is killed and left dead. Crash/orphan reconciliation (fleet_can_restart) already restarts by default, which is why the docs call this default-on; the detection escalation path does not. Setting it true makes both paths agree. Restarts stay capped at FLEET_MAX_RESTARTS.",
+      "docs": "fleet-controller/lib/fleet-detect.sh",
+      "default_exceptions": [
+        { "file": "fleet-controller/lib/fleet-intervene.sh", "default": "true", "why": "fleet_can_restart (used by orphan reconciliation and fleet_restart_pipeline) treats unset as enabled" }
+      ]
+    },
+    {
+      "name": "FLEET_AUTO_DISPATCH",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "fleetd sweeps for planner epics stamped dispatch=true and enqueues their ready children automatically.",
+      "requires": [
+        { "flag": "FLEETD_SPAWN_ENABLED" }
+      ],
+      "recommend": "situational",
+      "why": "Turn on once you trust planner output to start work unattended. Off, every epic waits for an explicit /fleet-controller dispatch or POST /dispatch. The approval gate still stops complex tickets either way.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "FLEET_AUTO_RESUME_STALLED",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "Approved children of a dispatched epic that have no live worker and no queue entry get a resume entry enqueued automatically.",
+      "requires": [
+        { "flag": "FLEETD_SPAWN_ENABLED" }
+      ],
+      "recommend": "situational",
+      "why": "Closes the gap where a ticket fixed or re-approved outside the pipeline sits idle forever and blocks its blocked_by chain. Off, the finding is only reported. Pairs naturally with FLEET_AUTO_DISPATCH.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "FLEET_EPIC_AUTO_PR",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "When every child of a shared-branch epic is Done, fleet-controller opens the epic integration PR per repo (never merges it).",
+      "requires": [
+        { "env": "GITHUB_PERSONAL_ACCESS_TOKEN", "or_env": "GH_TOKEN" },
+        { "step": "gh CLI installed and authenticated on the fleetd host" }
+      ],
+      "recommend": "situational",
+      "why": "Only matters if your planner emits Branch Directives (shared epic branches). Then it removes a manual step; the PR still needs a human merge.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "FLEET_BOARD_PUSHER_ENABLE",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "fleetd periodically drains every ticket's event outbox to the board driver, so the Linear column/labels catch up even when no flow.sh exit drained it.",
+      "requires": [
+        { "step": "FIRST run ticket-auto-pipeline/skills/ticket-flow/board-cursor-fastforward.sh (dry-run, then real) or the board replays every ticket's full history" }
+      ],
+      "recommend": "on",
+      "why": "The board is otherwise only projected at flow.sh exits, so a dead-lettered or missed drain never heals. Safe once cursors are fast-forwarded; dangerous before.",
+      "docs": "fleet-controller/README.md#migrating-to-board-projection-tracker-flow-projection-cutover"
+    },
+    {
+      "name": "FLEET_POSTMORTEM_ON_KILL",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "Runs the pipeline post-mortem analysis on pipelines the fleet killed, not only on pipelines that finished on their own.",
+      "requires": [
+        { "flag": "POSTMORTEM_ENABLED" }
+      ],
+      "recommend": "situational",
+      "why": "Gives killed runs the same failure-signature analysis as finished ones. Off by default because a mass kill would run many analyses at once (network, gh rate limits).",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "FLEET_OTEL_ENABLE",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "fleetd runs an OpenTelemetry exporter that turns pipeline and agent-activity logs into GenAI spans sent to an OTLP collector.",
+      "requires": [
+        { "step": "FLEET_OTEL_ENDPOINT points at a reachable OTLP collector (default http://localhost:4318)" },
+        { "step": "pip install -r fleet-controller/fleetd/requirements-otel.txt on the fleetd host" }
+      ],
+      "recommend": "situational",
+      "why": "Worth it if you run a collector (Langfuse, Jaeger, ...). Strictly downstream: an unreachable collector costs traces and nothing else.",
+      "docs": "fleet-controller/lib/fleet-config.sh"
+    },
+    {
+      "name": "FLEET_TRACE_PROPAGATE_ENABLE",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "Exports a derived TRACEPARENT into each worker so the agent runtime's own spans nest under fleetd's phase span.",
+      "requires": [
+        { "flag": "FLEET_OTEL_ENABLE" }
+      ],
+      "recommend": "situational",
+      "why": "A refinement on top of OTel export: nicer trace trees, nothing more. Only useful once FLEET_OTEL_ENABLE is on and traces are being read.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "FLEET_SCORE_EXPORT_ENABLE",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "fleetd's periodic sweeper posts per-run and per-ticket outcome scores from runs.jsonl to Langfuse.",
+      "requires": [
+        { "env": "LANGFUSE_HOST" },
+        { "env": "LANGFUSE_PUBLIC_KEY" },
+        { "env": "LANGFUSE_SECRET_KEY" }
+      ],
+      "recommend": "situational",
+      "why": "Turn on if you use Langfuse to compare runs. Any missing credential makes it a silent no-op, so check the requirements column.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "FLEET_OBSERVER_ENABLE",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "Phase-level workers stream stream-json output and a supervised observer sidecar turns it into deterministic findings.",
+      "requires": [
+        { "flag": "FLEET_PHASE_DISPATCH_ENABLE", "note": "the observer only sees phase-level workers, never ticket-level ones" }
+      ],
+      "recommend": "situational",
+      "why": "Non-authoritative diagnostics (long tool calls, odd agent behaviour). Has no effect unless phase-level dispatch is on.",
+      "docs": "fleet-controller/lib/fleet-config.sh"
+    },
+    {
+      "name": "FLEET_PHASE_DISPATCH_ENABLE",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "fleetd spawns each phase as its own short-lived worker and sequences phases itself, instead of one long-lived /ticket-auto worker per ticket.",
+      "requires": [
+        { "flag": "FLEETD_SPAWN_ENABLED" }
+      ],
+      "recommend": "situational",
+      "why": "Fully implemented but its rollout is not switched on: trial it on one fleetd instance and compare outcomes before relying on it.",
+      "docs": "fleet-controller/CLAUDE.md#phase-level-dispatch-two-invocation-modes"
+    },
+    {
+      "name": "FLEET_STORE_ENABLE",
+      "plugin": "fleet-controller",
+      "default": "true",
+      "on_value": "true",
+      "category": "safety",
+      "summary": "fleetd keeps its SQLite state store (workers, queue, holds) and detectors read it instead of re-parsing logs.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on. false is the pre-store fallback: detectors re-read log files and holds lose their durable row.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "FLEET_FENCE_ENFORCE",
+      "plugin": "fleet-controller",
+      "default": "true",
+      "on_value": "true",
+      "category": "safety",
+      "summary": "flow.sh refuses transitions from a superseded worker generation, so a zombie worker cannot corrupt ticket state.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on. Turning it off is a rollback switch only.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "FLEET_KILL_VERIFY",
+      "plugin": "fleet-controller",
+      "default": "true",
+      "on_value": "true",
+      "category": "safety",
+      "summary": "Kills escalate through SIGINT/SIGTERM/SIGKILL with a liveness re-check after each rung, instead of only writing a stop file.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on. false is the legacy stop-file-only kill, which can leave a worker running.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "FLEET_EPIC_BRANCH_SYNC",
+      "plugin": "fleet-controller",
+      "default": "true",
+      "on_value": "true",
+      "category": "safety",
+      "summary": "Each dispatch cycle merges base-branch changes into shared epic branches so they do not rot.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on if you use shared epic branches; it is a no-op otherwise.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "FLEET_STARTUP_ENV_CHECK",
+      "plugin": "fleet-controller",
+      "default": "true",
+      "on_value": "true",
+      "category": "safety",
+      "summary": "fleetd refuses to start when fleet-env-check.sh reports a problem (bad CLAUDE_CMD, missing LINEAR_API_KEY, ...).",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on. false exists for fleetd's own subprocess tests.",
+      "docs": "fleet-controller/CLAUDE.md#fleetd-supervisor-daemon"
+    },
+    {
+      "name": "FLEET_WORKER_ISOLATE_SETTINGS",
+      "plugin": "fleet-controller",
+      "default": "true",
+      "on_value": "true",
+      "category": "safety",
+      "summary": "Workers start with project/local settings only, so user-scope plugins (claude-mem, output styles, caveman) cannot seed them with misleading context.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on. This fixed workers stopping to ask a nonexistent human after reading stale memory context.",
+      "docs": "fleet-controller/CLAUDE.md#fleetd-supervisor-daemon"
+    },
+    {
+      "name": "FLEET_DRY_RUN",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "debug-escape-hatch",
+      "summary": "Interventions, dispatches and epic-branch pushes are logged but not executed.",
+      "requires": [],
+      "recommend": "off",
+      "why": "For watching a new install's decisions before going live. Leaving it on means the fleet never acts.",
+      "docs": "fleet-controller/README.md#quickstart"
+    },
+    {
+      "name": "FLEET_ENV_CHECK_LIVE_PROBE",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "debug-escape-hatch",
+      "summary": "fleet-env-check spawns one real worker turn to prove permission_denials is empty.",
+      "requires": [],
+      "recommend": "off",
+      "why": "A one-off diagnostic when workers are being denied tools; it costs a real worker turn every time the check runs.",
+      "docs": "fleet-controller/CLAUDE.md#shared-libraries-lib"
+    },
+    {
+      "name": "POSTMORTEM_ENABLED",
+      "plugin": "ticket-auto-pipeline",
+      "default": "true",
+      "on_value": "true",
+      "category": "safety",
+      "summary": "Every pipeline finalize runs the post-mortem failure-signature analysis.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on; it feeds retro and issue filing and is fail-soft.",
+      "docs": "ticket-auto-pipeline/lib/pipeline-postmortem.sh"
+    },
+    {
+      "name": "POSTMORTEM_FILE_ISSUES",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "Post-mortem files a GitHub issue for each new recurring failure signature (rate-limited by POSTMORTEM_ISSUES_PER_HOUR).",
+      "requires": [
+        { "flag": "POSTMORTEM_ENABLED" },
+        { "step": "gh CLI authenticated with write access to GITHUB_ISSUE_REPO (default: the plugin repo itself, which is public)" }
+      ],
+      "recommend": "situational",
+      "why": "Useful if you maintain the plugins and want failures to arrive as issues. The default target repo is public, so only enable where that is acceptable.",
+      "docs": "ticket-auto-pipeline/lib/pipeline-postmortem.sh"
+    },
+    {
+      "name": "EPIC_BRANCH_PUSH_VERIFY",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "intentional-off",
+      "summary": "The repo's pre-push hook runs on the epic-branch creation push.",
+      "requires": [],
+      "recommend": "off",
+      "why": "That push is identical to origin/<base>, so the hook has nothing to check and would run against whatever the shared clone has checked out.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
+    },
+    {
+      "name": "SPAWN_DIAGNOSTICS",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "debug-escape-hatch",
+      "summary": "spawn-helper.sh installs an ERR trap that logs a META|spawn-crash line with the failing function and line.",
+      "requires": [],
+      "recommend": "off",
+      "why": "Turn on only while chasing a spawn-helper crash.",
+      "docs": "ticket-auto-pipeline/lib/spawn-helper.sh"
+    },
+    {
+      "name": "VERIFY_SERVED_WORKTREE_ENFORCE",
+      "plugin": "ticket-auto-pipeline",
+      "default": "true",
+      "on_value": "true",
+      "category": "safety",
+      "summary": "ticket-verify gate-stops when the app on LOCAL_URL is serving a different checkout of a repo under test.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on; false downgrades a provably wrong verify (testing someone else's code) to a warning.",
+      "docs": "ticket-auto-pipeline/lib/config.sh"
+    },
+    {
+      "name": "VERIFY_SERVED_WORKTREE_STRICT",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "ticket-verify also gate-stops when it cannot tell which checkout is being served (no visible listener, container port).",
+      "requires": [
+        { "flag": "VERIFY_SERVED_WORKTREE_ENFORCE" }
+      ],
+      "recommend": "situational",
+      "why": "Right for hosts where every served port is a local process. On container-served stacks it would hold every verify.",
+      "docs": "ticket-auto-pipeline/docs/skills/ticket-verify.md"
+    },
+    {
+      "name": "TICKET_CREATE_GUARD",
+      "plugin": "ticket-auto-pipeline",
+      "default": "on",
+      "on_value": "on",
+      "category": "safety",
+      "summary": "A PreToolUse hook denies direct Linear issue creation and points agents at /ticket-create.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on. off is the opt-out for a session that must create issues another way.",
+      "docs": "ticket-auto-pipeline/CLAUDE.md"
+    },
+    {
+      "name": "DOR_STRICT_VPLAN",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "Missing, short or unverifiable Verification Plan tables (VPLAN_*) make a ticket not-ready instead of advisory.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "More hand-written tickets get held until someone adds a plan. Planner Refinement already runs strict regardless of this flag, so this only affects tickets checked outside the planner.",
+      "docs": "ticket-auto-pipeline/docs/dor-readiness.md"
+    },
+    {
+      "name": "DOR_STRICT_VERIFICATION",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "A ticket with no Verification Plan and no AC carrying a concrete expected result is not-ready.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "A weaker floor than DOR_STRICT_VPLAN: holds only tickets with nothing self-verifying at all.",
+      "docs": "ticket-auto-pipeline/docs/dor-readiness.md"
+    },
+    {
+      "name": "DOR_STRICT_AC_IMPL",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "A ticket whose every acceptance criterion describes implementation work, with no observable outcome, is not-ready.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "Catches 'refactor X' style ACs that cannot be verified; holds those tickets until rewritten.",
+      "docs": "ticket-auto-pipeline/docs/dor-readiness.md"
+    },
+    {
+      "name": "DOR_STRICT_CATALOG",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "A named test user or role that does not resolve against the test-user catalog makes the ticket not-ready.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "Only useful once your test-user catalog is complete; otherwise it holds tickets for catalog gaps.",
+      "docs": "ticket-auto-pipeline/docs/dor-readiness.md"
+    },
+    {
+      "name": "DOR_STRICT_TEST_DATA",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "Missing or unsourced test data is a hard not-ready code on legacy-format ticket bodies.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "Bodies carrying the Source contract are already hard by default; this extends it to older free-form bodies, holding more of them.",
+      "docs": "ticket-auto-pipeline/docs/dor-readiness.md",
+      "default_exceptions": [
+        { "file": "ticket-auto-pipeline/lib/dor-check.sh", "default": "true", "why": "on a body carrying the Source contract an unset flag counts as true (TEST_DATA_MISSING hard by default)" }
+      ]
+    },
+    {
+      "name": "DOR_STRICT_TEST_DATA_SOURCE",
+      "plugin": "ticket-auto-pipeline",
+      "default": "true",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "On Source-contract bodies, a test-data item that does not say where it comes from is a hard not-ready code.",
+      "requires": [],
+      "recommend": "on",
+      "why": "The one DoR switch that defaults on. false lets you observe unsourced items as advisory while migrating.",
+      "docs": "ticket-auto-pipeline/docs/dor-readiness.md"
+    },
+    {
+      "name": "DOR_SEMANTIC_DRIFT_DEMOTE",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "intentional-off",
+      "summary": "Semantic DoR drift findings are demoted to advisory.",
+      "requires": [],
+      "recommend": "off",
+      "why": "The planner always passes true on its own call; the library default stays false for every other caller. Nothing to set on a host.",
+      "docs": "ticket-auto-pipeline/docs/dor-semantic-schema.md"
+    },
+    {
+      "name": "PLANNER_REFINEMENT_AUDIT_DEMOTE",
+      "plugin": "ticket-planner",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "In Refinement, a semantic audit dispute that quotes the ticket's own section demotes an allow-listed heuristic DoR code to advisory.",
+      "requires": [
+        { "flag": "PLANNER_REFINEMENT_SEMANTIC" }
+      ],
+      "recommend": "situational",
+      "why": "Fewer false-positive holds from heuristic codes, at the cost of trusting the audit agent's quote. Try it if planner tickets keep getting held for codes a human would wave through.",
+      "docs": "ticket-planner/docs/ticket-planner.md"
+    },
+    {
+      "name": "PLANNER_REQUIRE_INTENT",
+      "plugin": "ticket-planner",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "ticket-planner refuses raw idea strings and only accepts a sealed /grill-me intent file.",
+      "requires": [
+        { "step": "grill-me plugin installed" }
+      ],
+      "recommend": "situational",
+      "why": "Turn on if every plan should start from a grilled, sealed intent. Set it in interactive settings, where planning runs.",
+      "docs": "ticket-planner/skills/ticket-planner/SKILL.md"
+    },
+    {
+      "name": "PLANNER_REVIEW_HOLD",
+      "plugin": "ticket-planner",
+      "default": "false",
+      "on_value": "true",
+      "category": "intentional-off",
+      "summary": "Every planner run stops after the Review phase.",
+      "requires": [],
+      "recommend": "off",
+      "why": "Legacy spelling of --until Review; pass that flag per run instead of making every run stop.",
+      "docs": "ticket-planner/docs/ticket-planner.md"
+    },
+    {
+      "name": "PLANNER_REFINEMENT_SEMANTIC",
+      "plugin": "ticket-planner",
+      "default": "true",
+      "on_value": "true",
+      "category": "safety",
+      "summary": "Refinement runs the two semantic DoR agent passes per ticket on top of the deterministic check.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on; false gates on the deterministic verdict alone and saves two agent spawns per ticket.",
+      "docs": "ticket-planner/docs/ticket-planner.md"
+    },
+    {
+      "name": "PLANNER_REFINEMENT_DRIFT_CHECK",
+      "plugin": "ticket-planner",
+      "default": "true",
+      "on_value": "true",
+      "category": "safety",
+      "summary": "Refinement compares each child's Linear description against its TicketGen baseline and flags edits.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on; false skips one Linear read per child and stops noticing hand edits.",
+      "docs": "ticket-planner/docs/ticket-planner.md"
+    }
+  ]
+}
