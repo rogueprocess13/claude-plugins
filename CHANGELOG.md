@@ -17,6 +17,24 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.71.2 / fleet-controller 0.43.2 (2026-10-23)
+
+`flow.sh` fence, outbox and flag fixes (codebase review 2026-10-23, ARCH-1/2/10, QA-1/2/4/5/6/7, BE-1/2/5).
+
+### Fixed
+- **Fence generation**: `flow.sh` now defaults its generation from `FLEET_GENERATION` and passes it
+  on to `emit_event`. Before, no caller passed `--generation`, so with `FLEET_FENCE_ENFORCE=true`
+  every transition on a ticket fleetd had ever killed exited 9 and the manifest froze. Malformed
+  generation values and fence files are now refused.
+- **Lost events**: `pending_event` is cleared only after a successful emit. A failed replay exits
+  12 and leaves the manifest unchanged, instead of reporting `success:true` with no outbox line.
+- `--dry-run` writes nothing. Unknown flags and flags missing a value are rejected instead of
+  running a real transition. fleetd now passes trigger data with `--data`.
+- One torn outbox line no longer resets `seq` to 1 or disables idempotency dedup.
+
+### Changed
+- A caller with no generation and no `FLEET_WORKER_PID` (a human command, or fleetd itself) is not
+  fenced.
 ## 0.71.1 / fleet-controller 0.43.1 (2026-10-23)
 
 Every test file now runs in CI (codebase review 2026-10-23, QA-3 / QA-11).
