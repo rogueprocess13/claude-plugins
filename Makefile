@@ -69,6 +69,7 @@ test-lib:
 	bash fleet-controller/lib/tests/test-fleet-monitor-dispatch.sh
 	bash fleet-controller/lib/tests/test-plugin-structure.sh
 	bash fleet-controller/lib/tests/test-fleet-env-check.sh
+	bash fleet-controller/lib/tests/test-fleet-features.sh
 	bash fleet-controller/lib/tests/test-fleet-notify.sh
 	bash fleet-controller/lib/tests/test-run-score-export.sh
 	# ticket-planner enrichment tests

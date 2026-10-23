@@ -17,6 +17,37 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.43.0 (2026-10-23)
+
+Features keep shipping behind default-off flags, and nothing listed them in one place. A new
+skill, `/fleet-controller:fleet-features`, shows every flag, whether it is on in a workspace and
+where that value comes from, and recommends what to turn on, prerequisites first.
+
+### Added
+- **Feature catalog** `fleet-controller/features.json`: 39 boolean flags across fleet-controller,
+  ticket-auto-pipeline and ticket-planner. Each entry has the code's default, the value that means
+  on, a category (`feature`, `safety`, `strictness`, `debug-escape-hatch`, `intentional-off`),
+  a one-line summary, prerequisites, a recommendation and the doc to read.
+- **`lib/fleet-features.sh [--workspace DIR] [--json] [--no-env]`**: resolves each flag's effective
+  value and source. The order is process env, then `export` lines in `fleet-start.sh` (parsed as
+  text, never run), then `.env` in `.claude/settings.local.json`, then the catalog default. It
+  marks unmet prerequisites and never prints a value whose name contains KEY, TOKEN, SECRET, PASS
+  or HEADERS.
+- **`/fleet-controller:fleet-features` skill**: groups the script's JSON into already on,
+  recommended, situational, strictness knobs and leave-alone, then lists the exact lines to add
+  to `fleet-start.sh` (fleetd) or `settings.local.json` (interactive sessions). Read-only.
+- **Drift gate** `lib/tests/test-fleet-features.sh`: scans plugin source for shell
+  `${NAME:-false|0|off|true|on}` and Python `os.environ.get(...)` boolean defaults. It fails on
+  a flag that is not in the catalog or the test's commented ignore list, on a catalog default that
+  disagrees with the code, and on a catalog entry the code no longer has. **A new opt-in flag now
+  needs a catalog entry.**
+
+### Fixed
+- **`FLEET_AUTO_RESTART` docs**: the README and CLAUDE.md said it defaults to `true`. Only
+  `fleet_can_restart` (orphan reconciliation) reads unset as `true`. `fleet-detect.sh` and
+  `fleet-dashboard.sh` read unset as `false` and degrade KILL+RESTART to KILL. The docs now
+  describe the split. The code is unchanged.
+
 ## 0.70.0 / ticket-planner 0.24.0 / fleet-controller 0.42.10 (2026-10-22)
 
 Planner Refinement now converges instead of re-rolling the same ticket forever
