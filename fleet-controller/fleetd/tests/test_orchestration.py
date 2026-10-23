@@ -378,6 +378,37 @@ class TestBashAndFlowItems(unittest.TestCase):
         self.assertFalse(result.blocking)
         self.assertEqual(result.status, orchestration.FAILED)
 
+    def test_trigger_data_reaches_flow_sh_as_data_flags(self):
+        # Review QA-5: data used to be appended as a bare `key=value`
+        # positional, which flow.sh ignored, so the trigger silently ran with
+        # its defaults (complexity=simple, outcome=Smooth). flow.sh only reads
+        # trigger data from `--data key=value`.
+        import subprocess as sp
+        real = sp.run
+        seen = {}
+
+        def fake(args, **kw):
+            seen['args'] = list(args)
+            return sp.CompletedProcess(args, 0, '', '')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            flow_dir = Path(tmp) / 'skills' / 'ticket-flow'
+            flow_dir.mkdir(parents=True)
+            (flow_dir / 'flow.sh').write_text('#!/usr/bin/env bash\nexit 0\n')
+            lib = Path(tmp) / 'lib'
+            lib.mkdir()
+            sp.run = fake
+            try:
+                result = orchestration.run_flow_trigger(
+                    {'kind': 'flow_trigger', 'trigger': 'implement-outcome',
+                     'data': {'outcome': 'Hard'}},
+                    {'tid': 'CRE-5'}, lib_dir=lib)
+            finally:
+                sp.run = real
+        self.assertEqual(result.status, orchestration.OK)
+        self.assertEqual(seen['args'][-4:],
+                         ['CRE-5', 'implement-outcome', '--data', 'outcome=Hard'])
+
 
 class TestFinalizeTerminal(unittest.TestCase):
     """`orchestration.finalize_terminal` — task 10.1.5, design.md D22.
