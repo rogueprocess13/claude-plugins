@@ -142,21 +142,17 @@ if [ "$_rc" -ne 0 ]; then
 fi
 ```
 
-**flow.sh failure pattern:** After every `flow.sh` invocation, capture non-zero exits:
+**flow.sh failure pattern:** Fire every trigger through `lib/flow-run.sh` — never the
+`/ticket-flow` slash command inside a bash block (it is not a shell command, so `$?` would
+be meaningless), and never an inline copy of the flow.sh path resolver. The wrapper resolves
+flow.sh (`tap_cache_find`), runs it, writes the failure record itself (`META|flow-error` +
+`retry` heartbeat; for exit 11 `META|gate-stop|fail|VERDICT_GATE_BLOCKED` + `verdict-gate`
+heartbeat) and exits with flow.sh's own code — see the exit-code contract in its header:
 ```bash
-_flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$_flow_sh" ] || _flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
-[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
-bash "$_flow_sh" "{TICKET-ID}" "{trigger}" 2>&1
+bash ~/.claude/skills/lib/flow-run.sh --log-file "$LOG_FILE" {TICKET-ID} {trigger} [--data k=v]
 _rc=$?
-if [ $_rc -ne 0 ]; then
-  ~/.claude/skills/lib/hb-wrap.sh retry "flow-sh" "fail" "flow.sh {trigger} failed (exit ${_rc})" \
-    "{\"trigger\":\"{trigger}\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-fi
+# 0 ok · 11 verdict gate blocked (uat-pass / pr-review-pass-*: do NOT report PASS/Done)
+# 8 precondition · 9/10 fence · 42 lock busy · 127 flow.sh not found · other = flow.sh error
 ```
 
 **API telemetry pattern:** For read operations where elapsed time matters, wrap with `~/.claude/skills/lib/hb-wrap.sh api`:
@@ -321,31 +317,31 @@ yourself, the gate already self-parsed its own result once for the log:
 
 - **`NOT_ARCHITECTURAL`** — continue. Nothing further to do. If the ticket currently
   carries `needs-adr` (a prior run parked or stopped on this same matter and a human has
-  since acted), clear it: `/ticket-flow {TICKET-ID} needs-adr-resolved`.
+  since acted), clear it: `bash ~/.claude/skills/lib/flow-run.sh --log-file "$LOG_FILE" {TICKET-ID} needs-adr-resolved`.
 - **`GOVERNED`** — continue, bound by the stated constraint. No hold. Same clearing step
   as `NOT_ARCHITECTURAL` above if the ticket still carries `needs-adr` from an earlier
   run — this is the re-run case where the governing ADR has since been accepted.
 - **`CREATED_PROPOSED`** or **`SUPERSEDE_REQUIRED`** — the gate already wrote a `proposed`
   ADR. Emit the `=== HUMAN_HOLD ===` block from § 7 above with `REASON: ARCH_COMMITMENT`
   and `BLOCKS` naming the new ADR's file path and its `## Decision` section. Also apply
-  the label: `/ticket-flow {TICKET-ID} needs-adr`. Do not proceed toward implementation
+  the label: `bash ~/.claude/skills/lib/flow-run.sh --log-file "$LOG_FILE" {TICKET-ID} needs-adr`. Do not proceed toward implementation
   or merge on the strength of this decision until the ADR is accepted.
 - **`CONFLICT`** — your proposed approach contradicts an Accepted decision. Emit the
-  structural gate-stop `ADR_CONFLICT` and apply the same label: `/ticket-flow {TICKET-ID}
-  needs-adr`. This is not a park; the approach itself needs rethinking, not ratification —
+  structural gate-stop `ADR_CONFLICT` and apply the same label (the same
+  `flow-run.sh … needs-adr` call). This is not a park; the approach itself needs rethinking, not ratification —
   but the label is still how a human triaging the queue finds it.
 
 Either labeling call follows the same pattern `/ticket-critique` already uses for
-`needs-info` — a direct `/ticket-flow {TICKET-ID} <trigger>` invocation, non-fatal on
-failure (log a `META|flow-error` line and continue; a missing label must never prevent
-the hold/gate-stop itself from taking effect):
+`needs-info` — a direct `lib/flow-run.sh` invocation (a Bash call, not the `/ticket-flow`
+slash command: phase agents have no Skill tool), non-fatal on failure (`flow-run.sh` logs the
+`META|flow-error` line itself; continue — a missing label must never prevent the
+hold/gate-stop itself from taking effect):
 
 ```bash
-/ticket-flow {TICKET-ID} needs-adr
+bash ~/.claude/skills/lib/flow-run.sh --log-file "$LOG_FILE" {TICKET-ID} needs-adr
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: needs-adr" >> "$LOG_FILE"
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# needs-adr carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 The gate never emits a hold, a gate-stop, or a tracker mutation itself — those are always

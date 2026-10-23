@@ -240,21 +240,17 @@ if [ $? -ne 0 ]; then
 fi
 ```
 
-**flow.sh failure pattern:** After every `flow.sh` invocation, capture non-zero exits:
+**flow.sh failure pattern:** Fire every trigger through `lib/flow-run.sh` — never the
+`/ticket-flow` slash command inside a bash block (it is not a shell command, so `$?` would
+be meaningless), and never an inline copy of the flow.sh path resolver. The wrapper resolves
+flow.sh (`tap_cache_find`), runs it, writes the failure record itself (`META|flow-error` +
+`retry` heartbeat; for exit 11 `META|gate-stop|fail|VERDICT_GATE_BLOCKED` + `verdict-gate`
+heartbeat) and exits with flow.sh's own code — see the exit-code contract in its header:
 ```bash
-_flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$_flow_sh" ] || _flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
-[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
-bash "$_flow_sh" "{TICKET-ID}" "{trigger}" 2>&1
+bash ~/.claude/skills/lib/flow-run.sh --log-file "$LOG_FILE" {TICKET-ID} {trigger} [--data k=v]
 _rc=$?
-if [ $_rc -ne 0 ]; then
-  hb_retry "flow-sh" "fail" "flow.sh {trigger} failed (exit ${_rc})" \
-    "{\"trigger\":\"{trigger}\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-fi
+# 0 ok · 11 verdict gate blocked (uat-pass / pr-review-pass-*: do NOT report PASS/Done)
+# 8 precondition · 9/10 fence · 42 lock busy · 127 flow.sh not found · other = flow.sh error
 ```
 
 **API telemetry pattern:** For read operations where elapsed time matters, wrap with `hb_api`:

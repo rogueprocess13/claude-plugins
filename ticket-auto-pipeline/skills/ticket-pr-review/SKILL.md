@@ -317,14 +317,11 @@ Delegate to the flow executor:
 
 - **Verdict ⚠️** (gaps found):
   ```bash
-  /ticket-flow {TICKET-ID} pr-review-fail
+  bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} pr-review-fail
   _rc=$?
   _gate_blocked=false  # pr-review-fail carries no verdict_gate — exit 11 cannot happen here
-  if [ "$_rc" -ne 0 ]; then
-    hb-wrap.sh retry "flow-sh" "fail" "flow.sh pr-review-fail failed (exit ${_rc})" \
-      "{\"trigger\":\"pr-review-fail\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: pr-review-fail" >> {LOG_FILE}
-  fi
+  # flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+  # A failure here is non-fatal — continue.
   ```
 - **Verdict ✅** → the transition is chosen by `uat_decide_trigger`, not here:
   ```bash
@@ -362,7 +359,7 @@ Delegate to the flow executor:
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-decision|info|trigger=${trigger}; merge pending: ${_merge_reason}" >> {LOG_FILE}
   fi
 
-  /ticket-flow {TICKET-ID} "$trigger"
+  bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} "$trigger"
   _rc=$?
   _gate_blocked=false
   if [ "$_rc" -eq 11 ]; then
@@ -371,15 +368,11 @@ Delegate to the flow executor:
     # flow.sh refused the transition because a trailing FAIL/BLOCK for a
     # DIFFERENT verifier/phase is still the latest on record with nothing
     # superseding it. Do not report this as a normal merge — see Step 6b/7/8.
+    # flow-run.sh has already written META|gate-stop|fail|VERDICT_GATE_BLOCKED
+    # and the verdict-gate heartbeat.
     _gate_blocked=true
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERDICT_GATE_BLOCKED — ${trigger} refused, see flow.sh stderr" >> {LOG_FILE}
-    hb-wrap.sh gate "verdict-gate" "fail" "${trigger} blocked by trailing FAIL/BLOCK verifier-result" \
-      "{\"trigger\":\"${trigger}\",\"ticket\":\"{TICKET-ID}\"}"
-  elif [ "$_rc" -ne 0 ]; then
-    hb-wrap.sh retry "flow-sh" "fail" "flow.sh ${trigger} failed (exit ${_rc})" \
-      "{\"trigger\":\"${trigger}\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: ${trigger}" >> {LOG_FILE}
   fi
+  # Any other non-zero exit is already logged by flow-run.sh (META|flow-error).
   ```
 
 Under `UAT Policy: epic` the trigger is `pr-review-pass-done`, so the child closes on
