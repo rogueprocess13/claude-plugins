@@ -70,26 +70,84 @@ _socat_stub() {
 
 # ── test_validate_linear_config_dry_run ──────────────────────────────────────
 
+# Stub linear-api.sh for validate-linear-config.sh, which sources
+# "$CLAUDE_SKILLS_LIB/linear-api.sh". One team, TEST_TEAM_ID; get_team returns
+# every state/label workflow.json expects, minus the label named in
+# $STUB_DROP_LABEL — so a test can make validation pass or fail offline.
+_write_validate_stub_lib() {
+  local dir="$1"
+  mkdir -p "$dir"
+  cat >"$dir/linear-api.sh" <<'STUB'
+check_api_key() { :; }
+_plog() { :; }
+_iso_now() { echo "2026-01-01T00:00:00Z"; }
+linear_graphql() { echo '{"data":{"teams":{"nodes":[{"id":"TEST_TEAM_ID","name":"Test"}]}}}'; }
+get_team() {
+  jq -c --arg drop "${STUB_DROP_LABEL:-}" '{
+    states: ([(.triggers | to_entries[] | .value | (.from, .to) | select(. != null)
+               | if type == "array" then .[] else . end), (.well_known_states[]? // empty)]
+             | unique | map({id: ("s-" + .), name: .})),
+    labels: ([(.triggers | to_entries[] | .value | (.adds[]?, .removes[]?) | select(. != null)),
+              (.well_known_labels[]? // empty)]
+             | unique | map(select(. != $drop)) | map({id: ("l-" + .), name: .}))
+  }' "$SM"
+}
+STUB
+}
+
+# The first label workflow.json expects — dropped from the stub team to force
+# a validation miss.
+_validate_some_label() {
+  jq -r '[(.triggers[] | (.adds[]?, .removes[]?)), (.well_known_labels[]? // empty)] | first // empty' \
+    "$SCRIPT_DIR/../workflow.json"
+}
+
 test_validate_linear_config_dry_run() {
   local tmpdir
   tmpdir=$(mktemp -d)
   local sentinel_dir="$tmpdir/state/ticket-flow"
+  local sentinel="$sentinel_dir/validated-TEST_TEAM_ID"
   local sm="$SCRIPT_DIR/../workflow.json"
-  [ -f "$sm" ] || {
-    echo "workflow.json missing" >&2
-    return 1
-  }
+  _write_validate_stub_lib "$tmpdir/lib"
 
-  SENTINEL_DIR="$sentinel_dir" bash "$VALIDATE_SH" --dry-run --team TEST_TEAM_ID 2>/dev/null || true
-  # sentinel should exist after first run
-  ls "$sentinel_dir"/validated-* 2>/dev/null | grep -q validated
+  # First run: every item present → validates and caches a sentinel keyed to
+  # the current workflow.json hash.
+  local rc1=0 rc2=0 out
+  CLAUDE_SKILLS_LIB="$tmpdir/lib" SENTINEL_DIR="$sentinel_dir" \
+    bash "$VALIDATE_SH" --dry-run TEST_TEAM_ID >/dev/null 2>&1 || rc1=$?
+  local cached=no
+  grep -qx "sm_hash=$(sha256sum "$sm" | cut -d' ' -f1)" "$sentinel" 2>/dev/null && cached=yes
 
-  # second run should skip (sentinel-valid in log / no re-validation output)
-  local out
-  out=$(SENTINEL_DIR="$sentinel_dir" bash "$VALIDATE_SH" --dry-run --team TEST_TEAM_ID 2>&1 || true)
-  echo "$out" | grep -q "sentinel-valid"
+  # Second run: short-circuits on the sentinel. Drop a label from the stub so
+  # a real re-validation would print NOT FOUND — proving it was skipped.
+  out=$(STUB_DROP_LABEL="$(_validate_some_label)" CLAUDE_SKILLS_LIB="$tmpdir/lib" \
+  SENTINEL_DIR="$sentinel_dir" bash "$VALIDATE_SH" --dry-run TEST_TEAM_ID 2>&1) || rc2=$?
 
+  local ok=1
+  [ "$rc1" -eq 0 ] && [ "$cached" = yes ] && [ "$rc2" -eq 0 ] &&
+    echo "$out" | grep -q "sentinel-valid" && ! echo "$out" | grep -q "NOT FOUND" && ok=0
+  [ "$ok" -eq 0 ] || echo "rc=$rc1/$rc2 cached=$cached out=$out" >&2
   rm -rf "$tmpdir"
+  return "$ok"
+}
+
+# A --dry-run with a missing item exits 0 but must NOT cache a sentinel —
+# otherwise every later preflight would skip validation of a broken team.
+test_validate_linear_config_missing_item_writes_no_sentinel() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local sentinel_dir="$tmpdir/state/ticket-flow"
+  _write_validate_stub_lib "$tmpdir/lib"
+  local label rc=0 out
+  label=$(_validate_some_label)
+  out=$(STUB_DROP_LABEL="$label" CLAUDE_SKILLS_LIB="$tmpdir/lib" SENTINEL_DIR="$sentinel_dir" \
+    bash "$VALIDATE_SH" --dry-run TEST_TEAM_ID 2>&1) || rc=$?
+  local ok=1
+  [ -n "$label" ] && [ "$rc" -eq 0 ] && [ ! -e "$sentinel_dir/validated-TEST_TEAM_ID" ] &&
+    echo "$out" | grep -q "NOT FOUND" && echo "$out" | grep -q -- "--dry-run: exiting 0" && ok=0
+  [ "$ok" -eq 0 ] || echo "rc=$rc label=$label out=$out" >&2
+  rm -rf "$tmpdir"
+  return "$ok"
 }
 
 # ── test_preflight_aborts_on_unset_key ───────────────────────────────────────
@@ -98,11 +156,23 @@ test_preflight_aborts_on_unset_key() {
   local tmpdir
   tmpdir=$(mktemp -d)
   local log="$tmpdir/test.log"
+  local sentinel_dir="$tmpdir/state"
+  local lib
+  lib=$(cd "${CLAUDE_SKILLS_LIB:-$PLUGIN_DIR/lib}" && pwd)
 
-  unset LINEAR_API_KEY
-  bash "$VALIDATE_SH" 2>/dev/null && return 1 # should fail when key missing
-  [ ! -f "$log" ]                             # no log file should be created
+  # Run from an empty dir so check_api_key's .env walk-up finds nothing, with
+  # LOG_FILE/SENTINEL_DIR pointed at paths the script would write only if it
+  # got past preflight. env -u keeps the unset local to the child.
+  local rc=0 err
+  err=$(cd "$tmpdir" && env -u LINEAR_API_KEY CLAUDE_SKILLS_LIB="$lib" LOG_FILE="$log" \
+    SENTINEL_DIR="$sentinel_dir" bash "$VALIDATE_SH" --force TEST_TEAM_ID 2>&1 >/dev/null) || rc=$?
+
+  local ok=1
+  [ "$rc" -eq 4 ] && echo "$err" | grep -q "LINEAR_API_KEY not set" &&
+    [ ! -e "$log" ] && [ ! -e "$sentinel_dir" ] && ok=0
+  [ "$ok" -eq 0 ] || echo "rc=$rc err=$err" >&2
   rm -rf "$tmpdir"
+  return "$ok"
 }
 
 # ── test_flow_concurrent_lock ─────────────────────────────────────────────────
@@ -1347,6 +1417,7 @@ FILTER="${1:-}"
 
 for fn in \
   test_validate_linear_config_dry_run \
+  test_validate_linear_config_missing_item_writes_no_sentinel \
   test_preflight_aborts_on_unset_key \
   test_flow_concurrent_lock \
   test_flow_dispatcher_unknown_trigger \

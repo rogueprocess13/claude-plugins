@@ -17,6 +17,21 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.71.1 / fleet-controller 0.43.1 (2026-10-23)
+
+Every test file now runs in CI (codebase review 2026-10-23, QA-3 / QA-11).
+
+### Fixed
+- Six test files (176 cases, including the only coverage of `observer.py`) were never listed in the
+  Makefile, so CI never ran them. They are now registered under `test-lib` / `test-fleetd`.
+- Five tests passed whatever the code did. Each now asserts, and was shown to fail against a
+  deliberately broken implementation. The dry-run test no longer calls the real Linear API.
+
+### Added
+- `scripts/check-test-registration.sh` and the `check-test-registration` make target: fail when a
+  test file on disk is not referenced by the Makefile, or the Makefile lists a missing file. Runs
+  before `make test` and as its own CI step.
+
 ## 0.71.0 (2026-10-23)
 
 Complexity classifier calibration (`complexity-classifier-calibration`). The retro metric that
