@@ -39,6 +39,9 @@ jobs:
       - name: Generated-section drift check
         run: make check-generated
 
+      - name: Test-registration drift check
+        run: make check-test-registration
+
       - name: Observability backend stays out of skills/agents (langfuse-evidence-layer)
         run: |
           if grep -ril langfuse ticket-auto-pipeline/skills ticket-auto-pipeline/agents ticket-planner grill-me knowledge-curator; then

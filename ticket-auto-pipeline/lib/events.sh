@@ -196,16 +196,34 @@ emit_event() {
     return 1
   fi
 
+  # ── Torn-line tolerance (review ARCH-10) ────────────────────────────────
+  # A partial last line (disk full, a kill mid-printf) must not poison the
+  # file. Every read below parses line by line with `fromjson?`, so one bad
+  # line is skipped instead of failing the whole read: the old whole-file
+  # `jq -e` exited non-zero at the parse error and read as "idem not seen",
+  # and `tail -n 1 | jq` read a torn tail as seq 0, restarting seq at 1 —
+  # below every board cursor, so both drains skipped those events for good.
+  # A file that does not end in a newline gets one first, so the new record
+  # is never glued onto the torn fragment.
+  if [ -s "$_outbox_file" ] && [ -n "$(tail -c 1 "$_outbox_file" 2>/dev/null)" ]; then
+    printf '\n' >>"$_outbox_file" 2>/dev/null || true
+  fi
+
   # ── Idempotency dedup (must run under the same lock as the append) ─────
   if [ -n "$_idem" ] && [ -f "$_outbox_file" ] &&
-    jq -e --arg idem "$_idem" 'select(.idem == $idem) | true' "$_outbox_file" \
+    jq -Rne --arg idem "$_idem" \
+      'any(inputs | fromjson? | objects; .idem == $idem)' "$_outbox_file" \
       >/dev/null 2>&1; then
     exec 7>&-
     return 0
   fi
 
-  local _last_seq _next_seq
-  _last_seq=$(tail -n 1 "$_outbox_file" 2>/dev/null | jq -r '.seq // 0' 2>/dev/null) || _last_seq=0
+  # Next seq = max(seq) over every parseable line, + 1 — not the last line's.
+  local _last_seq=0 _next_seq
+  if [ -f "$_outbox_file" ]; then
+    _last_seq=$(jq -Rn '[inputs | fromjson? | objects | .seq | numbers] | max // 0' \
+      "$_outbox_file" 2>/dev/null) || _last_seq=0
+  fi
   [[ "$_last_seq" =~ ^[0-9]+$ ]] || _last_seq=0
   _next_seq=$((_last_seq + 1))
 

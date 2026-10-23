@@ -923,14 +923,11 @@ When called via `/ticket-auto`, the ticket was already claimed (Backlog → Todo
 
 Delegate to the flow executor (safe to re-call — `flow.sh` skips if nothing changed):
 
-```
-/ticket-flow {TICKET-ID} appraise-start --data complexity={simple|complex}
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} appraise-start --data complexity={simple|complex}
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh appraise-start failed (exit ${_rc})" \
-    "{\"trigger\":\"appraise-start\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: appraise-start" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# appraise-start carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 This sets state → `Todo`, assignee → `me`, and adds `claimed` + the complexity label. If the ticket was already claimed by the router, only the complexity label is corrected (if different from the default `simple`).

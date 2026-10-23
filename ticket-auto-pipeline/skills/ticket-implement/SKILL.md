@@ -442,18 +442,16 @@ Rate from `{DIFFICULTY_SUMMARY}` (openspec) or in-context history (simple-fix). 
 
 **Update Linear:**
 
-```
-/ticket-flow {TICKET-ID} implement-outcome --data outcome={Smooth|Rough|Hard}
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} implement-outcome --data outcome={Smooth|Rough|Hard}
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh implement-outcome failed (exit ${_rc})" \
-    "{\"trigger\":\"implement-outcome\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: implement-outcome" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# implement-outcome carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 # flow.sh's implement-outcome trigger itself writes the dedicated
 # IMPLEMENT|implement-outcome|info| entry that outcome-label-check.sh reads —
 # so the Linear label and the pipeline log can never drift apart. No manual
 # log write needed here.
+```
 
 ### Post-implement: Record verifier result (Phase 0 RLVR)
 
@@ -463,7 +461,6 @@ source ~/.claude/skills/lib/verifier-result.sh
 write_verifier_result verifier=implement_tests verdict=<PASS|FAIL> outcome=<Smooth|Rough|Hard> corrections=<N> phase=IMPLEMENT
 ```
 Map test results: all pass → PASS, any fail → FAIL. Pass outcome and corrections count.
-```
 
 This adds the outcome label while preserving all existing labels including `simple`/`complex`. The pairing of predicted complexity and actual outcome is preserved for training and history.
 

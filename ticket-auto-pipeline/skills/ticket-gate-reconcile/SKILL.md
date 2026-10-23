@@ -174,14 +174,10 @@ Use the Linear access strategy to post the comment (bash `save_comment` when `LI
 Call `re-claim` to clear the approval fact (and remove the `pre-approved` label):
 
 ```bash
-_flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$_flow_sh" ] || _flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
-[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
-bash "$_flow_sh" "{TICKET-ID}" "re-claim"
+bash ~/.claude/skills/lib/flow-run.sh --log-file "$PWD/logs/{TICKET-ID}-pipeline.log" {TICKET-ID} re-claim
+_rc=$?
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# re-claim carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 Write the held log entry:

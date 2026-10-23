@@ -30,13 +30,28 @@ _FENCE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # check_generation_fence <TICKET_ID> <CALLER_GENERATION> <FLEET_STATE_DIR>
 #
 # Sets on return:
-#   FENCE_CHECK_STATUS      one of: disabled | unfenced | current | missing-generation | superseded
+#   FENCE_CHECK_STATUS      one of: disabled | unfenced | current | non-participant
+#                           | missing-generation | superseded | malformed
 #   FENCE_CHECK_FENCED_GEN  the fenced_generation value found in the marker (0 if none)
 #
 # Return codes:
-#   0  allowed  (FENCE_CHECK_STATUS: disabled, unfenced, or current)
-#   9  missing generation token on a fenced ticket
-#   10 caller generation superseded by the fenced generation
+#   0  allowed  (FENCE_CHECK_STATUS: disabled, unfenced, current, or
+#      non-participant)
+#   9  missing generation token on a fenced ticket, from a fleetd worker
+#   10 caller generation superseded by the fenced generation, or either
+#      value is not a non-negative integer (malformed — refuse, never allow)
+#
+# Who is fenced. The fence exists to stop a superseded fleetd worker from
+# writing after fleetd killed it. Every fleetd worker carries both
+# FLEET_WORKER_PID and FLEET_GENERATION (fleetd/supervisor.py spawn_worker),
+# and every process it starts inherits them. A caller with no generation
+# token AND no FLEET_WORKER_PID was never a fleetd generation — a human
+# running /ticket-approve, or fleetd itself running a hold-release trigger —
+# so it cannot be a superseded one, and is allowed as "non-participant".
+# Refusing it (the old behaviour) locked every such caller out of a ticket
+# for good once it had been killed even once, since the fence marker is a
+# monotonic watermark that is never cleared (review ARCH-1). A worker that
+# has FLEET_WORKER_PID but lost its token is still refused with 9.
 check_generation_fence() {
   local ticket_id="$1"
   local caller_generation="$2"
@@ -91,17 +106,32 @@ check_generation_fence() {
   fi
 
   local _fenced_gen
-  _fenced_gen=$(jq -r '.fenced_generation // 0' "$_fence_file" 2>/dev/null || echo "0")
+  # A marker that does not parse is "malformed", not generation 0: reading
+  # it as 0 let every caller through (review QA-6).
+  _fenced_gen=$(jq -r '.fenced_generation // 0' "$_fence_file" 2>/dev/null) || _fenced_gen="malformed"
   FENCE_CHECK_FENCED_GEN="$_fenced_gen"
 
-  # Missing generation token on a fenced ticket → refuse
+  # Missing generation token on a fenced ticket. A non-participant (no
+  # FLEET_WORKER_PID either) is allowed — see the header comment.
   if [ -z "$caller_generation" ]; then
+    if [ -z "${FLEET_WORKER_PID:-}" ]; then
+      FENCE_CHECK_STATUS="non-participant"
+      return 0
+    fi
     FENCE_CHECK_STATUS="missing-generation"
     return 9
   fi
 
+  # Both values must be plain non-negative integers. Anything else used to
+  # make the `-le` test error out, which read as "not superseded" and
+  # allowed the write. Refuse instead.
+  if ! [[ "$caller_generation" =~ ^[0-9]+$ ]] || ! [[ "$_fenced_gen" =~ ^[0-9]+$ ]]; then
+    FENCE_CHECK_STATUS="malformed"
+    return 10
+  fi
+
   # caller_gen <= fenced_gen → superseded, refuse
-  if [ "$caller_generation" -le "$_fenced_gen" ] 2>/dev/null; then
+  if [ "$((10#$caller_generation))" -le "$((10#$_fenced_gen))" ]; then
     FENCE_CHECK_STATUS="superseded"
     return 10
   fi
@@ -112,8 +142,10 @@ check_generation_fence() {
 }
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
-  check_generation_fence "$@"
-  rc=$?
+  # `|| rc=$?`, not a bare call: under set -e a refusal (9/10) used to exit
+  # here before the status lines below were printed (review QA-6).
+  rc=0
+  check_generation_fence "$@" || rc=$?
   echo "FENCE_CHECK_STATUS=${FENCE_CHECK_STATUS}"
   echo "FENCE_CHECK_FENCED_GEN=${FENCE_CHECK_FENCED_GEN}"
   exit "$rc"

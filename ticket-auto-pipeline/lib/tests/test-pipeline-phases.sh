@@ -945,7 +945,7 @@ test_ticket_verify_local_closeout_skips_implement_complete_under_from_auto() {
   # Item 4 of the local close-out: from its "4." line up to item 5.
   item=$(sed -n '/^### If `--env local`: Open PR and close out/,/^### If `--env uat`/p' "$skill_md" |
     sed -n '/^4\. /,/^5\. /p')
-  echo "$item" | grep -q '/ticket-flow {TICKET-ID} implement-complete' || {
+  echo "$item" | grep -q 'flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} implement-complete' || {
     echo "local close-out item 4 no longer fires implement-complete (test anchor drifted)"
     return 1
   }
@@ -1218,7 +1218,7 @@ test_ticket_pr_review_step6a_merge_pending_before_transition() {
   local reason_ln trigger_ln flow_ln
   reason_ln=$(echo "$block" | grep -n 'merge_blocked_reason "{TICKET-ID}"' | head -1 | cut -d: -f1)
   trigger_ln=$(echo "$block" | grep -n 'uat_decide_trigger --policy "$policy" ${_merge_pending_flag}' | head -1 | cut -d: -f1)
-  flow_ln=$(echo "$block" | grep -n '/ticket-flow {TICKET-ID} "$trigger"' | head -1 | cut -d: -f1)
+  flow_ln=$(echo "$block" | grep -n 'flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} "$trigger"' | head -1 | cut -d: -f1)
   [ -n "$reason_ln" ] && [ -n "$trigger_ln" ] && [ -n "$flow_ln" ] || {
     echo "Step 6a missing merge_blocked_reason / --merge-pending / trigger call"
     return 1
