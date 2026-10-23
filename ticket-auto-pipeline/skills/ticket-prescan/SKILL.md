@@ -304,8 +304,8 @@ After all repos in this scan pass complete, rebuild the cross-repo contract map 
 # FE → BE Contract Map and Shared Types rows are carried over verbatim.
 eval "$(bash "$HOME/.claude/skills/lib/prescan-system-index.sh" --repos-root "$REPOS_ROOT")"
 
-_plog "PRESCAN" "system-index" "done" "system.md rebuilt from ${SYSTEM_INDEX_REPOS:-0} repos"
-hb-wrap.sh decision "system-index" "fired" "system.md rebuilt" "{\"repo_count\":\"${SYSTEM_INDEX_REPOS:-0}\"}"
+_plog "PRESCAN" "system-index" "done" "system.md rebuilt from $SYSTEM_INDEX_REPOS repos"
+hb-wrap.sh decision "system-index" "fired" "system.md rebuilt" "{\"repo_count\":\"$SYSTEM_INDEX_REPOS\"}"
 ```
 
 The contract map table is populated by the prescan agent when it detects cross-repo API calls during fan-out. Never rewrite `system.md` with a heredoc: `prescan-system-index.sh` preserves existing contract-map and shared-types rows (and any other `##` section) across rebuilds, so the agent only appends new rows.
