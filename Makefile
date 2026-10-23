@@ -7,10 +7,12 @@ test: check-generated test-lib test-fleetd test-planner test-flow test-kc test-g
 check-generated:
 	@echo "=== generated-section drift check ==="
 	python3 ticket-auto-pipeline/skills/ticket-flow/gen-dispatch-table.py --check
+	python3 ticket-auto-pipeline/skills/ticket-flow/check-diagram-drift.py
 
 test-lib:
 	@echo "=== lib unit tests ==="
 	bash ticket-auto-pipeline/lib/tests/test-dispatch-table.sh
+	bash ticket-auto-pipeline/lib/tests/test-diagram-drift.sh
 	bash ticket-auto-pipeline/lib/tests/test-linear-api.sh
 	bash ticket-auto-pipeline/lib/tests/test-env-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-notes-parse.sh
