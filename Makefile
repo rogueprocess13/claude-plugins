@@ -122,7 +122,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-retro-fallback-status.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-claude-log-marker.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-gate-held.sh
-	bash ticket-auto-pipeline/lib/tests/test-retro-complexity-accuracy-scope.sh
+	bash ticket-auto-pipeline/lib/tests/test-retro-complexity-calibration.sh
 	# ticket-audit tests
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-split-detection.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-drift.sh

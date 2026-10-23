@@ -45,12 +45,14 @@ Parse the JSON output into the following variables:
 - `{GATE_STOP_TOTAL}` — total gate-stop events
 - `{GATE_WARN_TOTAL}` — total gate-warn events (e.g. `RETURN_INCOMPLETE` in Phase 1 warn-only mode); tracked separately since these never halt the pipeline — used to measure false-positive rate before a warn-only gate flips to enforce
 - `{COMPLEXITY_PREDICTIONS}` — array of `{ticket, declared, actual, actual_source}`
-- `{COMPLEXITY_ACCURACY}` — float 0–1, or `null` when suppressed (see below). Computed over **every** ticket-auto log in the window that has both a declared and an actual complexity — deliberately independent of the failure-dedup cursor ([#367](https://github.com/willard-pro/claude-plugins/issues/367): RETRO_CURSOR_METRIC_SKEW). A prior bug computed this over whatever the cursor happened to leave un-skipped (e.g. 1–2 logs), which could read as a misleadingly confident `1.000` against a true population accuracy of `0.50`.
-- `{COMPLEXITY_ACCURACY_N}` — sample size the accuracy figure was computed over. Always report this alongside `{COMPLEXITY_ACCURACY}` — an accuracy figure with no `n` is not trustworthy on its own.
-- `{COMPLEXITY_ACCURACY_MIN_N}` — the floor (default `3`, override via `COMPLEXITY_ACCURACY_MIN_N` env var) below which `{COMPLEXITY_ACCURACY}` is suppressed (`null`) rather than shown.
-- `{COMPLEXITY_ACCURACY_SUPPRESSED}` — `true` when `{COMPLEXITY_ACCURACY_N} < {COMPLEXITY_ACCURACY_MIN_N}` and the figure was suppressed.
-- `{COMPLEXITY_OVER_COUNT}`, `{COMPLEXITY_UNDER_COUNT}` — counts of mismatches by direction: `complexity_over_count` is `declared=complex` but `actual=Smooth` (needlessly routed through the heavier path); `complexity_under_count` is `declared=simple` but `actual=Rough`/`Hard`. Report both alongside the accuracy figure — a purely one-directional error pattern (e.g. all overestimates) is a distinct, actionable finding the aggregate ratio alone hides.
-- `{LOGS_SCANNED}`, `{LOGS_SKIPPED}`, `{LOGS_WITH_FAILURES}` — counts. `LOGS_SCANNED` counts only newly-scanned logs (not cursor-skipped). `LOGS_SKIPPED` counts logs that were skipped because their mtime matched the cursor. This cursor dedup applies to the failure histogram only — it does not gate `{COMPLEXITY_ACCURACY}` (see above).
+- `{COMPLEXITY_CALIBRATION}` — the `complexity_calibration` object (complexity-classifier-calibration; replaced `complexity_accuracy` and its companion fields). Computed over **every** ticket-auto log in the window — deliberately independent of the failure-dedup cursor ([#367](https://github.com/willard-pro/claude-plugins/issues/367): RETRO_CURSOR_METRIC_SKEW). Fields:
+  - `matrix` — `{simple: {Smooth, Rough, Hard}, complex: {Smooth, Rough, Hard}}` counts.
+  - `false_simple_rate` — `(simple×Rough + simple×Hard) / simple row`, a value to **minimise**. Read from the `declared=simple` row only. `null` when `suppressed`.
+  - `simple_row_n`, `min_n`, `suppressed` — the simple row's size, the floor (default `3`, override via `COMPLEXITY_CALIBRATION_MIN_N`), and whether the rate was withheld for being below it. Always report `simple_row_n` alongside the rate.
+  - `false_simple_tickets` — `[{ticket, outcome}]` for every `declared=simple` ticket that went `Rough`/`Hard`. The actionable list: each one skipped the human gate and the delegated investigation.
+  - `unscoreable` — `{missing_declared, missing_outcome}`: logs missing one half of the pair, counted rather than dropped so a shrinking denominator stays visible.
+  - `confounded_rows` / `confounded_reason` — `["declared=complex"]` and why. A `complex` classification changes the treatment (delegated investigation, openspec plan, human gate), so `complex`+`Smooth` may be the treatment working. **Never compute an overall accuracy from the matrix, and never report `complex`+`Smooth` as a misprediction.**
+- `{LOGS_SCANNED}`, `{LOGS_SKIPPED}`, `{LOGS_WITH_FAILURES}` — counts. `LOGS_SCANNED` counts only newly-scanned logs (not cursor-skipped). `LOGS_SKIPPED` counts logs that were skipped because their mtime matched the cursor. This cursor dedup applies to the failure histogram only — it does not gate `{COMPLEXITY_CALIBRATION}` (see above).
 - `{LOGS_BY_SOURCE}` — object `{"ticket-auto": {scanned, skipped, with_failures}, "planner": {scanned, skipped, with_failures}}`. `ticket-auto` scans `./logs/*-pipeline.log`; `planner` scans `${REPOS_ROOT}/.ticket-auto/initiatives/*/state.log` ([#177](https://github.com/willard-pro/claude-plugins/issues/177)). Both sources feed the same `{FAILURE_HISTOGRAM}` — this field is purely for reporting where each count came from. `planner` counts are `0` when `REPOS_ROOT` is unset or no initiatives exist; nothing else about ticket-auto scanning changes in that case.
 - `{ERROR_DIAGNOSTICS}` — object with `total_errors`, `errors_by_ticket`, `error_category_histogram` (from heartbeat structured error events)
 
@@ -58,7 +60,7 @@ Parse the JSON output into the following variables:
 
 ## Step 1.6 — Complexity calibration corrections
 
-`{COMPLEXITY_PREDICTIONS}` (above) gives the aggregate accuracy number but not *why* a
+`{COMPLEXITY_CALIBRATION}` (above) names the false-simples but not *why* a
 prediction missed. `ticket-implement` Step 4c already writes the qualitative gap for every
 mismatch as a `source=appraise` (complexity sweep) or `source=exec` (plan artifact) CORRECTIONS
 block in the ticket's own notes.md — this is scoring feedback for `ticket-appraise`, not
@@ -68,8 +70,10 @@ deliberately skips `source=appraise` entries and routes them here instead).
 Runs regardless of whether `{FAILURE_HISTOGRAM}` is empty — a complexity mismatch is not a
 gate-stop failure, so a "clean window" on failures can still have calibration signal to report.
 
-For each entry in `{COMPLEXITY_PREDICTIONS}` where `declared` and `actual` disagree (the same
-mismatch condition `ticket-implement` uses: `simple`+`Rough`/`Hard`, or `complex`+`Smooth`):
+For each entry in `{COMPLEXITY_CALIBRATION}.false_simple_tickets`, and — as informational
+context only — each `{COMPLEXITY_PREDICTIONS}` entry with `declared=complex` and `actual=Smooth`
+(`ticket-implement` Step 4c still writes CORRECTIONS for that cell; it is confounded, so its notes
+are shown but never used to argue for loosening the classifier):
 
 ```bash
 source "$HOME/.claude/skills/lib/ticket-dir.sh"
@@ -87,7 +91,7 @@ fi
 
 A ticket directory that can't be resolved (workspace already cleaned up, or retro is being run
 from a directory other than the tickets root) is skipped silently for that ticket — this
-section is best-effort enrichment layered on top of the log-derived accuracy table, never a
+section is best-effort enrichment layered on top of the log-derived calibration table, never a
 blocker on the rest of the retro run.
 
 Collect every hit into `{CALIBRATION_NOTES}` — a list of `{ticket, source, fact, corrected}` —
@@ -210,7 +214,7 @@ The template identifies which skill file(s) to inspect. Read the relevant sectio
 | `PR_REVIEW_VERDICT_UNPARSEABLE` | `ticket-pr-review/SKILL.md` |
 | `RETURN_INCOMPLETE` | `ticket-auto/SKILL.md` (STEP_4), `lib/return-completeness-check.sh` |
 
-For the `complexity-drift` meta-code (accuracy < 0.5): inspect `ticket-appraise/SKILL.md`.
+For the `complexity-drift` meta-code (`{COMPLEXITY_CALIBRATION}.false_simple_tickets` non-empty and `suppressed` is `false`): inspect `ticket-appraise/SKILL.md` Step 2.5 and `lib/appraise-fast-path.sh` — see `templates/complexity-drift.md`. Never raise it from `complex`+`Smooth` counts.
 
 **Planner Crosscheck findings** (`{FAILURE_HISTOGRAM}` entries surfaced from a `ticket-planner`-sourced log, [#177](https://github.com/willard-pro/claude-plugins/issues/177)): these are findings about the planner's own artifacts, so the implicated file is always in the **`ticket-planner`** plugin — never a `ticket-auto-pipeline` skill file, even though this SKILL.md lives in `ticket-auto-pipeline`.
 
@@ -279,37 +283,39 @@ Sources scanned: ticket-auto {LOGS_BY_SOURCE.ticket-auto.scanned} log(s), planne
 
 Omit the "Sources scanned" line when `{LOGS_BY_SOURCE}.planner.scanned` is `0` and `.skipped` is also `0` — i.e. no planner logs were ever in play for this run, so the source breakdown adds nothing.
 
-### Section: Complexity Prediction Accuracy
+### Section: Complexity Calibration
 
-Table of predicted vs. actual complexity with per-ticket rows and aggregate accuracy. Always
-show `n` alongside the accuracy — never report a bare ratio:
-
-```markdown
-## Complexity Prediction Accuracy
-
-| Ticket | Declared | Actual | Source |
-|--------|----------|--------|--------|
-| CRE-47 | simple | Smooth | log |
-| CRE-48 | complex | Hard | log |
-
-**Accuracy:** 0.750 (3/4 correct, n=4)
-**Direction:** 1 overestimated, 0 underestimated
-```
-
-When `{COMPLEXITY_ACCURACY_SUPPRESSED}` is `true` (sample size below `{COMPLEXITY_ACCURACY_MIN_N}`),
-replace the `**Accuracy:**` line with a suppression note instead of showing a ratio computed
-over too few predictions to be meaningful:
+The declared × outcome matrix, the false-simple rate from the `declared=simple` row only, and the
+named false-simples. Always show `n` alongside the rate — never a bare ratio:
 
 ```markdown
-**Accuracy:** suppressed — only {COMPLEXITY_ACCURACY_N} prediction(s) this window (floor: {COMPLEXITY_ACCURACY_MIN_N})
+## Complexity Calibration
+
+| Declared \ Outcome | Smooth | Rough | Hard |
+|--------------------|--------|-------|------|
+| simple             | 6      | 1     | 1    |
+| complex ⚠ confounded | 3    | 1     | 0    |
+
+**False-simple rate:** 0.250 (2 of 8 simple tickets went Rough/Hard; lower is better)
+**False-simples:** CRE-47 (Hard), CRE-52 (Rough)
+**Unscoreable:** 1 missing declared, 0 missing outcome
+
+The complex row is shown for completeness only: a complex classification changes the
+treatment, so its outcomes are not scored.
 ```
 
-Omit the `**Direction:**` line only when both `{COMPLEXITY_OVER_COUNT}` and `{COMPLEXITY_UNDER_COUNT}`
-are `0`.
+When `suppressed` is `true`, replace the rate line with:
+
+```markdown
+**False-simple rate:** suppressed — only {simple_row_n} simple ticket(s) this window (floor: {min_n})
+```
+
+Keep the **False-simples** line even when suppressed — the named tickets are evidence regardless
+of sample size. Omit it, and the **Unscoreable** line, when their values are empty / both `0`.
 
 ### Section: Complexity Calibration Notes (if {CALIBRATION_NOTES} non-empty)
 
-The qualitative counterpart to the accuracy table above — what specifically each mismatch
+The qualitative counterpart to the calibration table above — what specifically each mismatch
 missed, sourced from Step 1.6:
 
 ```markdown
@@ -326,7 +332,7 @@ missed, sourced from Step 1.6:
 ```
 
 Omit this section entirely when `{CALIBRATION_NOTES}` is empty — a mismatch existing in the
-accuracy table with no resolvable notes.md (ticket dir cleaned up, or no CORRECTIONS block
+calibration table with no resolvable notes.md (ticket dir cleaned up, or no CORRECTIONS block
 written) is not itself an error worth reporting here.
 
 ### Section: Claude Log Failures (if scan ran)
@@ -513,13 +519,13 @@ If set, run the summary body through the `simple-english` skill (embedded mode, 
 |------|-------|
 ...
 
-### Complexity Accuracy: {COMPLEXITY_ACCURACY} (n={COMPLEXITY_ACCURACY_N})
+### False-simple rate: {false_simple_rate} (n={simple_row_n}) — {count} false-simple(s)
 
 Full proposal: `~/.claude/state/ticket-retro/proposals/{YYYY-MM-DD}-retro.md`
 ```
 
-When `{COMPLEXITY_ACCURACY_SUPPRESSED}` is `true`, render that line as
-`### Complexity Accuracy: suppressed (n={COMPLEXITY_ACCURACY_N}, floor={COMPLEXITY_ACCURACY_MIN_N})` instead.
+When `{COMPLEXITY_CALIBRATION}.suppressed` is `true`, render that line as
+`### False-simple rate: suppressed (n={simple_row_n}, floor={min_n}) — {count} false-simple(s)` instead.
 
 If `RETRO_LINEAR_ISSUE` is unset, log the warning and skip — the proposal is still written.
 
@@ -665,7 +671,7 @@ Report to the user:
 **Logs with failures:** {LOGS_WITH_FAILURES}
 **Gate-stop events:** {GATE_STOP_TOTAL}
 **Gate-warn events:** {GATE_WARN_TOTAL}
-**Complexity accuracy:** {COMPLEXITY_ACCURACY} (n={COMPLEXITY_ACCURACY_N})
+**False-simple rate:** {false_simple_rate | suppressed} (n={simple_row_n}, lower is better)
 
 **Proposal written:** ~/.claude/state/ticket-retro/proposals/{YYYY-MM-DD}-retro.md
 {Diff count} diff proposals generated.

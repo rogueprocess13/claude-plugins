@@ -44,6 +44,7 @@ unset_fast_path_vars() {
   unset FAST_PATH_CONFIDENCE FAST_PATH_STRATEGY FAST_PATH_DECISION
   unset FAST_PATH_AFFECTED_SERVICES FAST_PATH_TARGET_SYMBOLS
   unset FAST_PATH_PRE_APPROVED FAST_PATH_GENERATED FAST_PATH_REGENERATE
+  unset FAST_PATH_DESCRIPTION
 }
 
 # fast_path_action <eligible> <reason>
@@ -132,6 +133,10 @@ check_fast_path_eligible() {
 
   # Extract Planner Context block
   _extract_planner_block "$description"
+  # Kept for generate_fast_path_notes' reversibility scan
+  # (complexity-classifier-calibration) — the description is the only
+  # fact source left once tracker labels stopped carrying facts.
+  FAST_PATH_DESCRIPTION="$description"
 
   # Determine eligibility based on Pre-approved + Confidence
   local pre_approved confidence
@@ -176,6 +181,36 @@ map_strategy_to_complexity() {
   esac
 }
 
+# detect_reversibility_trigger <text>
+# Deterministic first layer of the fast-path Reversibility axis
+# (complexity-classifier-calibration). Scans free text for enumerated
+# irreversible-change triggers, case-insensitive, whole-word.
+# Emits "<category>: <matched text>" for the first match and returns 0;
+# emits nothing and returns 1 when no trigger matches.
+# Deliberately over-inclusive: a false escalation costs one human gate, a
+# false-simple skips the gate and the delegated investigation both.
+detect_reversibility_trigger() {
+  local text="$1"
+  local category pattern match
+  local -a triggers=(
+    'schema-migration|\b(alter|create|drop) table\b|\b(add|drop|rename) column\b|\b(schema|database|db|data) migrations?\b|\bliquibase\b|\bflyway\b'
+    'destructive-data|\btruncate\b|\bdelete from\b|\bbackfill(s|ed|ing)?\b|\bhard[- ]delete\b|\bpurge\b'
+    'payment-path|\bpayments?\b|\bbilling\b|\brefunds?\b|\bpayouts?\b'
+    'auth-rule|\b(un)?authori[sz](e|ed|ation)\b|\bauthenticat(e|ion)\b|\bpermissions?\b|\brbac\b|@preauthorize\b|\baccess control\b'
+    'breaking-api|\bbreaking (api )?changes?\b|\bremov(e|es|ed|ing) (the |an |a )?endpoints?\b'
+    'no-revert|\birreversible\b|\bcannot be (reverted|rolled back)\b|\bno (rollback|revert) path\b|\bcoordinated (multi-service )?deploy'
+  )
+  for pattern in "${triggers[@]}"; do
+    category="${pattern%%|*}"
+    match=$(printf '%s\n' "$text" | grep -oiE -m1 "${pattern#*|}" | head -1 || true)
+    if [ -n "$match" ]; then
+      printf '%s: %s\n' "$category" "$match"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # generate_fast_path_notes <ticket-dir> <issue-id>
 # Writes the fast-path appraisal content to notes.md.
 # Reads FAST_PATH_* variables set by check_fast_path_eligible.
@@ -191,6 +226,20 @@ generate_fast_path_notes() {
   local notes="$ticket_dir/notes.md"
   local complexity
   complexity=$(map_strategy_to_complexity "${FAST_PATH_STRATEGY:-Balanced}")
+
+  # Reversibility escalation — escalation-only, never lowers a
+  # Strategy-derived complex (complexity-classifier-calibration).
+  local reversibility weighted_line axes_line escalation_reason=""
+  reversibility=$(detect_reversibility_trigger "${FAST_PATH_DESCRIPTION:-}" || true)
+  if [ -n "$reversibility" ]; then
+    complexity="complex"
+    weighted_line="3 (threshold 3)"
+    axes_line="reversibility:3 (fast-path keyword — ${reversibility})"
+    escalation_reason=" Escalated to complex: Reversibility fired (${reversibility})."
+  else
+    weighted_line="n/a (fast-path — Strategy-derived)"
+    axes_line="none (fast-path — planner-provided; reversibility keyword scan: no match)"
+  fi
 
   # Build target symbols bullet list
   local target_symbols_bullets
@@ -209,10 +258,11 @@ generate_fast_path_notes() {
     printf '**Current status:** (fast-path — planned ticket)\n\n'
     printf '## Complexity\n'
     printf '**Score:** %s\n' "$complexity"
-    printf '**Axes fired:** none (fast-path — planner-provided)\n'
-    printf '**Reason:** Strategy=%s, Confidence=%s. Planner declared this as `%s` with Pre-approved=%s.\n\n' \
+    printf '**Weighted score:** %s\n' "$weighted_line"
+    printf '**Axes fired:** %s\n' "$axes_line"
+    printf '**Reason:** Strategy=%s, Confidence=%s. Planner declared this as `%s` with Pre-approved=%s.%s\n\n' \
       "${FAST_PATH_STRATEGY:-unknown}" "${FAST_PATH_CONFIDENCE:-unknown}" \
-      "${FAST_PATH_STRATEGY:-unknown}" "${FAST_PATH_PRE_APPROVED:-false}"
+      "${FAST_PATH_STRATEGY:-unknown}" "${FAST_PATH_PRE_APPROVED:-false}" "$escalation_reason"
     printf '## Prior Art\n'
     printf 'No prior art search performed (fast-path — planner-provided context).\n'
     printf '**Planner Decision:** %s\n\n' "${FAST_PATH_DECISION:-none}"
@@ -241,7 +291,8 @@ generate_fast_path_notes() {
     printf '## Session Log\n\n'
     printf '### %s\n' "$today"
     printf -- '- Fast-path appraisal from Planner Context (reason: %s).\n' "${FAST_PATH_REASON:-unknown}"
-    printf -- '- Complexity: %s (from Strategy=%s).\n' "$complexity" "${FAST_PATH_STRATEGY:-unknown}"
+    printf -- '- Complexity: %s (from Strategy=%s; reversibility: %s).\n' "$complexity" \
+      "${FAST_PATH_STRATEGY:-unknown}" "${reversibility:-no match}"
     printf -- '- Skipped: complexity sweep, prior-art search, codebase investigation.\n'
     printf -- '- Still required: readiness critique, blast radius analysis.\n'
   } >"$notes"

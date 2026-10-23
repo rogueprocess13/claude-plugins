@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # retro.sh — pipeline log aggregator for /ticket-retro
 # Reads pipeline logs in a time window, extracts |META| failure events,
-# builds failure histograms and complexity prediction accuracy data,
+# builds failure histograms and complexity calibration data,
 # and emits structured JSON to stdout.
 #
 # Usage:
@@ -236,17 +236,25 @@ declare -A LOGS_WITH_FAILURES_BY_SOURCE=(["ticket-auto"]=0 [planner]=0)
 PREDICTIONS_JSON="["
 PRED_FIRST=1
 
-CORRECT_COUNT=0
-TOTAL_PAIRS=0
-OVER_COUNT=0
-UNDER_COUNT=0
+# Complexity calibration (complexity-classifier-calibration): declared x
+# actual confusion matrix. Only the declared=simple row yields a rate — a
+# complex classification changes the treatment (delegated investigation,
+# openspec plan, human gate), so a complex ticket's outcome is confounded.
+declare -A CAL_MATRIX=(
+  [simple_Smooth]=0 [simple_Rough]=0 [simple_Hard]=0
+  [complex_Smooth]=0 [complex_Rough]=0 [complex_Hard]=0
+)
+UNSCOREABLE_MISSING_DECLARED=0
+UNSCOREABLE_MISSING_OUTCOME=0
+FALSE_SIMPLE_JSON="["
+FALSE_SIMPLE_FIRST=1
 
-# Minimum sample size for a reportable complexity_accuracy figure (#367:
-# RETRO_CURSOR_METRIC_SKEW). Below this floor the metric is too noisy to be
-# meaningful (e.g. 1/1 = 1.000) and is suppressed (null) rather than shown.
+# Minimum declared=simple sample for a reportable false_simple_rate — the
+# small-sample floor #367 (RETRO_CURSOR_METRIC_SKEW) gave complexity_accuracy,
+# carried over: below it a 0/2 reads as a misleadingly perfect 0.000.
 # Overridable for tests; production default is deliberately small since a
 # 7d window can legitimately have few tickets.
-COMPLEXITY_ACCURACY_MIN_N="${COMPLEXITY_ACCURACY_MIN_N:-3}"
+COMPLEXITY_CALIBRATION_MIN_N="${COMPLEXITY_CALIBRATION_MIN_N:-3}"
 
 # ── Process each log ─────────────────────────────────────────────────────
 
@@ -274,7 +282,7 @@ for _i in "${!LOG_FILES[@]}"; do
   # ── Dedup scope vs. metrics scope (#367: RETRO_CURSOR_METRIC_SKEW) ──
   # The cursor exists to stop *re-reporting failures* that were already
   # surfaced in a prior retro run — it must not also gate the *metrics*
-  # population (complexity accuracy). A cursor-skipped log still contributes
+  # population (complexity calibration). A cursor-skipped log still contributes
   # its declared/actual complexity pair below; only the failure-histogram
   # scan (and, transitively, heartbeat dedup via SCANNED_MTIMES) stays gated
   # on the cursor, exactly as before.
@@ -309,7 +317,12 @@ for _i in "${!LOG_FILES[@]}"; do
       notes_path=$(echo "$notes_line" | cut -d'|' -f5 | sed 's/^notes://')
       [ -n "$notes_path" ] && [ -f "$notes_path" ] && ticket_dir=$(dirname "$notes_path")
     fi
-    [ -z "$ticket_dir" ] && ticket_dir=$(find . -type d -name "${ticket_id}*" -print -quit 2>/dev/null || true)
+    # Anchored on the {ID}--slug convention — a bare "${ticket_id}*" let CRE-1
+    # resolve to CRE-12--slug (another ticket's complexity) and CRE-18 to its
+    # .ticket-auto/worktrees/CRE-18 checkout. Not depth-bounded: workspaces
+    # nest ticket dirs (e.g. handovers/attorney/CRE-40--slug).
+    [ -z "$ticket_dir" ] && ticket_dir=$(find . \( -name .git -o -name .ticket-auto -o -name node_modules \) -prune -o \
+      -type d -name "${ticket_id}--*" -print -quit 2>/dev/null || true)
   fi
 
   # ── Scan for failures ─────────────────────────────────────────────────
@@ -410,7 +423,7 @@ for _i in "${!LOG_FILES[@]}"; do
     LOGS_WITH_FAILURES_BY_SOURCE["$log_source"]=$((${LOGS_WITH_FAILURES_BY_SOURCE[$log_source]:-0} + 1))
   fi
 
-  # Complexity-prediction accuracy (declared vs. actual) is ticket-auto-
+  # Complexity calibration (declared vs. actual) is ticket-auto-
   # specific — planner initiatives have no notes.md complexity score or
   # Smooth/Rough/Hard outcome label. Its analogous quality signal is the
   # Crosscheck finding rate, already reported via crosscheck_*_total (#177).
@@ -442,26 +455,26 @@ for _i in "${!LOG_FILES[@]}"; do
   [ "$PRED_FIRST" -eq 1 ] && PRED_FIRST=0 || PREDICTIONS_JSON+=", "
   PREDICTIONS_JSON+="{\"ticket\":\"$ticket_id\",\"declared\":\"$declared\",\"actual\":\"$actual\",\"actual_source\":\"$actual_source\"}"
 
-  # Track accuracy, plus over/under-estimation directionality (#367 secondary
-  # finding: complexity error can be one-directional — e.g. all overestimates
-  # — which the aggregate accuracy figure alone hides).
-  if [ "$declared" != "null" ] && [ "$actual" != "null" ]; then
-    TOTAL_PAIRS=$((TOTAL_PAIRS + 1))
-    _d_lower=$(echo "$declared" | tr '[:upper:]' '[:lower:]')
-    if { [ "$_d_lower" = "simple" ] && [ "$actual" = "Smooth" ]; } ||
-      { [ "$_d_lower" = "complex" ] && { [ "$actual" = "Rough" ] || [ "$actual" = "Hard" ]; }; }; then
-      CORRECT_COUNT=$((CORRECT_COUNT + 1))
-    elif [ "$_d_lower" = "complex" ] && [ "$actual" = "Smooth" ]; then
-      # Declared more complex than it turned out to be.
-      OVER_COUNT=$((OVER_COUNT + 1))
-    elif [ "$_d_lower" = "simple" ] && { [ "$actual" = "Rough" ] || [ "$actual" = "Hard" ]; }; then
-      # Declared less complex than it turned out to be.
-      UNDER_COUNT=$((UNDER_COUNT + 1))
+  # Calibration matrix. An incomplete pair is counted, not dropped, so a
+  # shrinking denominator stays visible: missing_declared is an appraise-side
+  # gap, missing_outcome an implement-side one. A log missing both counts in
+  # both. A value outside the matrix vocabulary counts as missing.
+  _d_lower=$(echo "$declared" | tr '[:upper:]' '[:lower:]')
+  case "$_d_lower" in simple | complex) ;; *) _d_lower="" ;; esac
+  case "$actual" in Smooth | Rough | Hard) _a_cell="$actual" ;; *) _a_cell="" ;; esac
+  [ -z "$_d_lower" ] && UNSCOREABLE_MISSING_DECLARED=$((UNSCOREABLE_MISSING_DECLARED + 1))
+  [ -z "$_a_cell" ] && UNSCOREABLE_MISSING_OUTCOME=$((UNSCOREABLE_MISSING_OUTCOME + 1))
+  if [ -n "$_d_lower" ] && [ -n "$_a_cell" ]; then
+    CAL_MATRIX["${_d_lower}_${_a_cell}"]=$((${CAL_MATRIX["${_d_lower}_${_a_cell}"]} + 1))
+    if [ "$_d_lower" = "simple" ] && [ "$_a_cell" != "Smooth" ]; then
+      [ "$FALSE_SIMPLE_FIRST" -eq 1 ] && FALSE_SIMPLE_FIRST=0 || FALSE_SIMPLE_JSON+=", "
+      FALSE_SIMPLE_JSON+="{\"ticket\":\"$ticket_id\",\"outcome\":\"$_a_cell\"}"
     fi
   fi
 done
 
 PREDICTIONS_JSON+="]"
+FALSE_SIMPLE_JSON+="]"
 
 # ── Heartbeat log parsing ──────────────────────────────────────────────────
 
@@ -628,18 +641,49 @@ done </tmp/retro-hist-sorted.$$.txt
 HISTOGRAM_JSON+="}"
 rm -f /tmp/retro-hist-sorted.$$.txt
 
-# ── Compute complexity accuracy ──────────────────────────────────────────
-# Computed over TOTAL_PAIRS — the full window population of ticket-auto logs
-# with both a declared and an actual complexity, independent of cursor state
-# (#367: RETRO_CURSOR_METRIC_SKEW). Suppressed (null) below COMPLEXITY_-
-# ACCURACY_MIN_N: a 1/1 or 2/2 sample reads as a misleadingly confident 1.000.
+# ── Compute complexity calibration ───────────────────────────────────────
+# Computed over the full window population of ticket-auto logs, independent
+# of cursor state (#367: RETRO_CURSOR_METRIC_SKEW). false_simple_rate reads
+# the declared=simple row only, and is suppressed (null) below
+# COMPLEXITY_CALIBRATION_MIN_N — null, never 0: zero errors out of too few
+# tickets is not a score.
 
-ACCURACY_JSON="null"
-ACCURACY_SUPPRESSED=true
-if [ "$TOTAL_PAIRS" -ge "$COMPLEXITY_ACCURACY_MIN_N" ]; then
-  ACCURACY_JSON=$(awk "BEGIN { printf \"%.3f\", $CORRECT_COUNT / $TOTAL_PAIRS }")
-  ACCURACY_SUPPRESSED=false
+SIMPLE_ROW_N=$((CAL_MATRIX[simple_Smooth] + CAL_MATRIX[simple_Rough] + CAL_MATRIX[simple_Hard]))
+FALSE_SIMPLE_RATE_JSON="null"
+CALIBRATION_SUPPRESSED=true
+if [ "$SIMPLE_ROW_N" -gt 0 ] && [ "$SIMPLE_ROW_N" -ge "$COMPLEXITY_CALIBRATION_MIN_N" ]; then
+  FALSE_SIMPLE_RATE_JSON=$(awk "BEGIN { printf \"%.3f\", (${CAL_MATRIX[simple_Rough]} + ${CAL_MATRIX[simple_Hard]}) / $SIMPLE_ROW_N }")
+  CALIBRATION_SUPPRESSED=false
 fi
+
+CALIBRATION_JSON=$(jq -n \
+  --argjson ss "${CAL_MATRIX[simple_Smooth]}" \
+  --argjson sr "${CAL_MATRIX[simple_Rough]}" \
+  --argjson sh "${CAL_MATRIX[simple_Hard]}" \
+  --argjson cs "${CAL_MATRIX[complex_Smooth]}" \
+  --argjson cr "${CAL_MATRIX[complex_Rough]}" \
+  --argjson ch "${CAL_MATRIX[complex_Hard]}" \
+  --argjson rate "$FALSE_SIMPLE_RATE_JSON" \
+  --argjson simple_row_n "$SIMPLE_ROW_N" \
+  --argjson min_n "$COMPLEXITY_CALIBRATION_MIN_N" \
+  --argjson suppressed "$CALIBRATION_SUPPRESSED" \
+  --arg false_simple_str "$FALSE_SIMPLE_JSON" \
+  --argjson missing_declared "$UNSCOREABLE_MISSING_DECLARED" \
+  --argjson missing_outcome "$UNSCOREABLE_MISSING_OUTCOME" \
+  '{
+    matrix: {
+      simple: {Smooth: $ss, Rough: $sr, Hard: $sh},
+      complex: {Smooth: $cs, Rough: $cr, Hard: $ch}
+    },
+    false_simple_rate: $rate,
+    simple_row_n: $simple_row_n,
+    min_n: $min_n,
+    suppressed: $suppressed,
+    false_simple_tickets: ($false_simple_str | fromjson),
+    unscoreable: {missing_declared: $missing_declared, missing_outcome: $missing_outcome},
+    confounded_rows: ["declared=complex"],
+    confounded_reason: "A complex classification changes the treatment applied (delegated investigation, openspec plan, human gate), so a complex ticket outcome cannot be scored as an untreated observation. Excluded from every rate."
+  }')
 
 # ── Build per-source counts (#177 AC1) ────────────────────────────────────
 
@@ -667,12 +711,7 @@ jq -n \
   --argjson gate_warn_total "$GATE_WARN_TOTAL" \
   --argjson crosscheck_blocking_total "$CROSSCHECK_BLOCKING_TOTAL" \
   --argjson crosscheck_warn_total "$CROSSCHECK_WARN_TOTAL" \
-  --argjson complexity_accuracy "$ACCURACY_JSON" \
-  --argjson complexity_accuracy_n "$TOTAL_PAIRS" \
-  --argjson complexity_accuracy_min_n "$COMPLEXITY_ACCURACY_MIN_N" \
-  --argjson complexity_accuracy_suppressed "$ACCURACY_SUPPRESSED" \
-  --argjson complexity_over_count "$OVER_COUNT" \
-  --argjson complexity_under_count "$UNDER_COUNT" \
+  --argjson complexity_calibration "$CALIBRATION_JSON" \
   --arg histogram_str "$HISTOGRAM_JSON" \
   --arg predictions_str "$PREDICTIONS_JSON" \
   --argjson hb_logs_scanned "$HB_LOGS_SCANNED" \
@@ -695,12 +734,7 @@ jq -n \
     crosscheck_blocking_total: $crosscheck_blocking_total,
     crosscheck_warn_total: $crosscheck_warn_total,
     complexity_predictions: ($predictions_str | fromjson),
-    complexity_accuracy: $complexity_accuracy,
-    complexity_accuracy_n: $complexity_accuracy_n,
-    complexity_accuracy_min_n: $complexity_accuracy_min_n,
-    complexity_accuracy_suppressed: $complexity_accuracy_suppressed,
-    complexity_over_count: $complexity_over_count,
-    complexity_under_count: $complexity_under_count,
+    complexity_calibration: $complexity_calibration,
     heartbeat: {
       logs_scanned: $hb_logs_scanned,
       logs_with_data: $hb_logs_with_data,

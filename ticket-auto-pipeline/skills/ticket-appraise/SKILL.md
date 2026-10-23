@@ -91,7 +91,7 @@ If `FAST_PATH_ELIGIBLE=true`:
    ```
 
    This writes the full notes.md with:
-   - `## Complexity` — derived from Strategy field (Conservative → simple, Balanced/Innovative → complex)
+   - `## Complexity` — derived from Strategy field (Conservative → simple, Balanced/Innovative → complex), then escalated to `complex` when `detect_reversibility_trigger` finds a Reversibility keyword in the description (schema DDL, migration tooling, destructive data change, payment/billing, auth, breaking API, no-revert). Escalation-only — it never lowers a Strategy-derived `complex`. The result, fired or not, is recorded in `**Axes fired:**`.
    - `## Prior Art` — skipped (planner-provided context)
    - `## Initial Investigation` — populated from Affected Services + Target Symbols + Decision
 
@@ -115,9 +115,11 @@ If `FAST_PATH_ELIGIBLE=true`:
 
 4. **Skip to Step 2.7 (Readiness critique).** The following steps are COVERED by fast-path:
    - Step 2 (Expand notes.md) — fast-path already wrote it
-   - Step 2.5 (Complexity sweep) — derived from Strategy
+   - Step 2.5 (Complexity sweep) — derived from Strategy, plus the Reversibility check below
    - Step 2.6 (Prior-art search) — planner-provided context
    - Step 3 (Codebase investigation) — Target Symbols provide starting points
+
+   **Reversibility judgement (escalation-only).** The keyword scan is the deterministic floor, not the whole axis. If `## Complexity` still reads `**Score:** simple`, read the description and Planner Context against the full Step 2.5 **Reversibility** trigger list. If any trigger applies that the scan missed (e.g. "make the `email` field required on the public API" — a breaking contract change with no keyword), rewrite the section: `**Score:** complex (escalated from simple — reversibility: {trigger})`, `**Weighted score:** 3 (threshold 3)`, `**Axes fired:** reversibility:3 (judged — {trigger})`. Never lower a `complex` score, and never touch a score the scan already escalated.
 
    **Still required** (run these normally):
    - Step 2.7 (Readiness critique) — validates ticket completeness regardless of planner metadata
@@ -249,7 +251,7 @@ Unverified findings are never carried.
 
 ## Step 2.5 — Complexity sweep
 
-> **Fast-path:** Skip this step if fast-path is active. Complexity is derived from the Planner Context Strategy field: Conservative → simple, Balanced/Innovative → complex. The `## Complexity` section in notes.md was already written.
+> **Fast-path:** Skip this step if fast-path is active. Complexity is derived from the Planner Context Strategy field (Conservative → simple, Balanced/Innovative → complex), then escalated by the Reversibility axis — see Step 1.3c. The `## Complexity` section in notes.md was already written.
 
 Activate the analyzer persona before scoring:
 
@@ -257,30 +259,39 @@ Run `lib/persona-select.sh --repo <repo> --phase appraise` and read the persona 
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|complexity-sweep|start|Scoring complexity axes" >> "$LOG_FILE"
 
-Score the ticket on the three axes below using only what ticket-setup already returned (title, description, labels, comments, epic). No codebase reads yet. Classification as `complex` requires 2 or more axes to fire — a single axis alone (e.g., `cross-layer` only) classifies as `simple`.
+Score the ticket on the axes below using only what ticket-setup already returned (title, description, labels, comments, epic). No codebase reads yet. Each axis that fires adds its **weight**; a total of **3 or more** classifies `complex`, below 3 classifies `simple`. Weak axes weigh 2 (one alone stays `simple`, any two escalate); strong axes weigh 3 (each escalates on its own).
 
-| Axis                | Fires when                                                                                                                                             |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Multi-service**   | Description mentions more than one service, or the affected area is ambiguous (e.g. "payment flow", "attorney assignment", "reporting")                |
-| **Cross-layer**     | Fix clearly requires both frontend AND backend changes, OR touches high-risk areas: DB migrations, Feign clients, payments, PDF generation, async jobs, framework-version migrations (Spring Boot / Java upgrade) that touch `@Configuration`, security, or bean-wiring classes |
-| **Prior rejection** | Comments contain a previous appraisal that was marked `rejected`, or the ticket description says "tried X, didn't work"                                |
+| Axis                | Weight | Fires when                                                                                                                                             |
+| ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Multi-service**   | 2      | Description mentions more than one service, or the affected area is ambiguous (e.g. "payment flow", "attorney assignment", "reporting")                |
+| **Cross-layer**     | 2 (3 with the framework-migration marker) | Fix clearly requires both frontend AND backend changes, OR touches Feign clients, PDF generation, async jobs, or framework-version migrations (Spring Boot / Java upgrade) that touch `@Configuration`, security, or bean-wiring classes |
+| **Reversibility**   | 3      | Any of: a database schema migration; a destructive or irreversible change to persisted data (backfills, deletions); a change on the payment or billing execution path; a breaking change to a public or externally-consumed API contract (removed endpoint or field, changed response shape); a change to authentication or authorization rules; any change with no revert path, or one needing a coordinated multi-service deploy to revert |
+| **Prior rejection** | 3      | Comments contain a previous appraisal that was marked `rejected`, or the ticket description says "tried X, didn't work"                                |
+| **Blast radius**    | 3      | Scored later, in Step 2.8 — fires exactly when `get_blast_radius_override` reports `BLAST_OVERRIDE=complex`. Not judged here.                          |
 
-**Framework-migration marker.** When `cross-layer` fires on the framework-version-migration trigger, record it in `## Axes fired` as `cross-layer (framework-migration)` rather than plain `cross-layer`. Step 2.8 reads that marker — this bug class is an *absence* (a missing or misordered `@Configuration` annotation), so there is no graph edge for blast radius to count and a LOW result must not be read as a clean bill of health.
+**Reversibility is size-independent.** A three-line `DROP COLUMN` fires it; a 600-line refactor confined to one service with no migration, payment path, public contract change, or auth change does not. When in doubt about a listed trigger, fire it — a false escalation costs one human gate, a false `simple` skips the gate and the delegated investigation both.
 
-**If fewer than 2 axes fire → proceed to Step 2.6, then Step 3 (inline).**
+**No double-counting.** Migrations and payment-path changes are Reversibility triggers only. A ticket whose only signal is a schema migration fires Reversibility (3) and SHALL NOT also fire Cross-layer on that basis — its score is 3, not 5.
 
-**If 2 or more axes fire → proceed to Step 2.6, then Step 3-Agent (delegated) instead.**
+**Framework-migration marker.** When `cross-layer` fires on the framework-version-migration trigger, record it as `cross-layer (framework-migration):3` rather than `cross-layer:2`. This bug class is an *absence* (a missing or misordered `@Configuration` annotation), so there is no graph edge for blast radius to count and a LOW blast-radius result must not be read as a clean bill of health — the weight of 3 is what escalates it, regardless of what Step 2.8 finds.
 
-Record the decision in notes.md under a `## Complexity` heading:
+**If the weighted score is below 3 → proceed to Step 2.6, then Step 3 (inline).**
+
+**If the weighted score is 3 or more → proceed to Step 2.6, then Step 3-Agent (delegated) instead.**
+
+Record the decision in notes.md under a `## Complexity` heading — four fields, in this order:
 
 ```markdown
 ## Complexity
 **Score:** {simple | complex}
-**Axes fired:** {list fired axes, or "none"}
-**Reason:** {one sentence}
+**Weighted score:** {N} (threshold 3)
+**Axes fired:** {comma-separated axis:weight list, e.g. "multi-service:2, reversibility:3" — or "none"}
+**Reason:** {one sentence; name the Reversibility trigger when it fired}
 ```
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|complexity-sweep|done|{simple|complex}, axes: {list}" >> "$LOG_FILE"
+`**Score:**` stays exactly `simple` or `complex` — it is the line every downstream parser reads. The other three lines are the audit trail: a false `simple` found later by `/ticket-retro` (`false_simple_tickets`) is traced back to the axis that failed to fire through them.
+
+[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|complexity-sweep|done|{simple|complex}, score: {N}/3, axes: {axis:weight list}" >> "$LOG_FILE"
 
 ---
 
@@ -430,10 +441,12 @@ If the symbol is ambiguous (multiple candidates), pick the highest-relevance res
 eval "$(bash -c "source ~/.claude/skills/lib/notes-parse.sh; get_blast_radius_override '{ticket-dir}'")"
 ```
 
-`BLAST_OVERRIDE=complex` fires when any target reports HIGH or CRITICAL risk, OR any target **whose Edit is not `additive`** has 3+ d=1 callers, OR 2+ distinct execution flows are affected. If `BLAST_OVERRIDE=complex` and the current classification (from Step 2.5 or fast-path Strategy mapping) is `simple`, override to `complex` and update the `## Complexity` section in notes.md with `BLAST_REASON`. **Fast-path interaction:** If fast-path set complexity to `simple` (from Conservative strategy), blast radius still runs and can override to `complex`. The override reads from notes.md and applies regardless of how complexity was originally set.
+`BLAST_OVERRIDE=complex` fires when any target reports HIGH or CRITICAL risk, OR any target **whose Edit is not `additive`** has 3+ d=1 callers, OR 2+ distinct execution flows are affected. `BLAST_OVERRIDE=complex` **is** the Step 2.5 **Blast radius** axis (weight 3) firing — the bash thresholds define it; do not re-judge them. When it fires, add `blast-radius:3` to `**Axes fired:**`, add 3 to `**Weighted score:**`, and recompute `**Score:**` against the threshold (any score with blast radius fired is ≥ 3, so `complex`). Append `BLAST_REASON` to `**Reason:**`. **Fast-path interaction:** If fast-path set complexity to `simple` (from Conservative strategy), blast radius still runs and can escalate to `complex`. It reads from notes.md and applies regardless of how complexity was originally set; on a fast-path `**Weighted score:** n/a` line, write `3 (threshold 3)`.
 
 ```markdown
-**Score:** complex (overridden from simple — blast radius: {BLAST_REASON})
+**Score:** complex (escalated from simple — blast radius: {BLAST_REASON})
+**Weighted score:** {N+3} (threshold 3)
+**Axes fired:** {existing list}, blast-radius:3
 ```
 
 **Additive-change exemption (caller-count trigger only):** a purely additive edit cannot change any existing caller's behaviour, so its caller count is not evidence of risk — and counts from the `impact-data` local-grep fallback are file counts, not call-graph edges, so they are an upper bound to begin with. This trigger alone used to override additive tickets to `complex`, and every such ticket landed `Smooth`. If `BLAST_ADDITIVE_SKIP` is non-empty, record it in `## Complexity`:
@@ -444,7 +457,7 @@ eval "$(bash -c "source ~/.claude/skills/lib/notes-parse.sh; get_blast_radius_ov
 
 The HIGH/CRITICAL-risk and 2+-flows triggers still apply to additive targets.
 
-**Framework-migration override:** If the `## Complexity` section records the `cross-layer (framework-migration)` marker from Step 2.5, override `simple` → `complex` regardless of the risk level and caller counts reported above. The `impact()` thresholds are edge counts, and this class of defect has no edge — a LOW score is absence of evidence, not evidence of absence. Such tickets take the Step 3-Agent (delegated) path so the bean-wiring surface is planned adversarially rather than inline.
+**Framework-migration:** no separate override any more. The `cross-layer (framework-migration):3` entry from Step 2.5 already scored `complex` on its own, so a LOW blast-radius result here changes nothing — the `impact()` thresholds are edge counts, and this class of defect has no edge. Such tickets take the Step 3-Agent (delegated) path so the bean-wiring surface is planned adversarially rather than inline.
 
 **Non-blocking fallback:** If the `mcp__gitnexus__impact` tool is unavailable or returns an error, log a warning and proceed:
 
@@ -452,7 +465,7 @@ The HIGH/CRITICAL-risk and 2+-flows triggers still apply to additive targets.
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|blast-radius|warn|GitNexus unavailable — falling back to manual tracing" >> "$LOG_FILE"
 ```
 
-Do NOT block the pipeline on GitNexus availability. The complexity classification from Step 2.5 stands if blast radius data is unavailable.
+Do NOT block the pipeline on GitNexus availability. If blast radius data is unavailable, the Blast radius axis does not fire and the complexity classification from Step 2.5 stands.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|blast-radius|done|Risk: {highest-risk}, d=1: {max-d1-callers}" >> "$LOG_FILE"
 
@@ -955,8 +968,8 @@ Tell the user:
 ```
 ## {TICKET-ID} — investigation complete
 
-**Complexity:** {simple | complex}
-**Axes fired:** {list or "none"}
+**Complexity:** {simple | complex} (weighted score {N}, threshold 3)
+**Axes fired:** {axis:weight list or "none"}
 
 **Key findings:**
 {2-4 bullets from Initial Investigation}

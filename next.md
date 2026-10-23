@@ -69,6 +69,15 @@ repo. The claude-plugins change ships first. Later the same day `planner-headles
 implemented on `feat/planner-headless-questions` (ticket-auto-pipeline 0.63.0, ticket-planner
 0.16.0, grill-me 0.2.0); the dexter change has not started and needs those pins.
 
+**Updated 2026-10-23:** `complexity-classifier-calibration` (the backlog item left active in the
+2026-09-30 housekeeping) implemented on `feat/complexity-classifier-calibration`
+(ticket-auto-pipeline 0.71.0). The specs were amended first for seven weeks of drift (#367, #413,
+tracker decoupling). Retro now emits `complexity_calibration` (false-simple rate from the simple
+row only); appraise scores weighted axes with a new Reversibility axis; fast path escalates on it.
+PR #548. Baseline: 6/9 simple tickets on one workspace went Rough/Hard (0.667), all from the
+now-finished Java 25 upgrade project, so there is no tuning follow-up. The new model will be
+validated on new feature tickets in a later retro window.
+
 ---
 
 ## Step 0 — Extract standalone bug fixes
