@@ -140,6 +140,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-prescan-sweep.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-route.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-system-index.sh
+	bash ticket-auto-pipeline/lib/tests/test-wiki-route.sh
 	bash ticket-auto-pipeline/lib/tests/test-index-schema-contract.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-docs.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-wire-claude-md.sh

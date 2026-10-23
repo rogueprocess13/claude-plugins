@@ -28,7 +28,9 @@ Options:
   --ticket-text <str>   Combined ticket text (title + labels + desc)
   --repos-root <path>   REPOS_ROOT path (for repo enumeration mode)
   --mode <mode>         Route mode: "index" (default, match INDEX.md) or
-                        "repos" (enumerate repos under REPOS_ROOT)
+                        "repos" (enumerate repos under REPOS_ROOT; with any
+                        ticket text given, only repos whose directory name
+                        appears in it as a whole word)
 
 Output:
   PRESCAN_ROUTE_FILES   newline-separated list of matched doc file paths
@@ -146,17 +148,39 @@ _route_index() {
 
 # ── Repo enumeration ──────────────────────────────────────────────────────────
 
+# With ticket text (any of --ticket-title/--ticket-labels/--ticket-desc/
+# --ticket-text), only repos whose directory name appears in that text as a
+# whole word (case-insensitive; hyphens and dots are word boundaries, so
+# "web-app" matches "the web-app form" but "api" does not match "rapid") are
+# listed. Without ticket text every repo under REPOS_ROOT is listed, as
+# before — the freshness sweep in appraise Step 3a.0 wants all of them, while
+# the multi-repo routing signal (wiki-route.sh) wants only the ticket's own.
 _route_repos() {
-  local repos_root="$1"
+  local repos_root="$1" haystack="${2:-}"
   if [ ! -d "$repos_root" ]; then
     echo "ERROR: REPOS_ROOT not found: $repos_root" >&2
     return 2
   fi
 
+  # find prints the .git path itself (%p) and dirname yields the repo. The
+  # previous `-printf '%h'` already printed the repo, so dirname collapsed
+  # every entry to REPOS_ROOT (one copy per repo) — the count was right but
+  # every listed "repo" was REPOS_ROOT itself.
   local repos=()
   while IFS= read -r -d '' gitdir; do
     repos+=("$(dirname "$gitdir")")
-  done < <(find "$repos_root" -maxdepth 3 -name ".git" -printf '%h\0' 2>/dev/null || true)
+  done < <(find "$repos_root" -maxdepth 3 -name ".git" -printf '%p\0' 2>/dev/null | LC_ALL=C sort -z || true)
+
+  if [ -n "${haystack// /}" ] && [ ${#repos[@]} -gt 0 ]; then
+    local kept=() r name
+    for r in "${repos[@]}"; do
+      name=$(basename "$r" | tr '[:upper:]' '[:lower:]')
+      if printf '%s\n' "$haystack" | grep -qwF -- "$name"; then
+        kept+=("$r")
+      fi
+    done
+    repos=("${kept[@]}")
+  fi
 
   if [ ${#repos[@]} -eq 0 ]; then
     echo "PRESCAN_ROUTE_COUNT=0"
@@ -233,7 +257,9 @@ main() {
       echo "ERROR: --repos-root is required for mode=repos" >&2
       usage
     }
-    _route_repos "$ARG_REPOS_ROOT"
+    local repo_haystack
+    repo_haystack=$(_build_haystack)
+    _route_repos "$ARG_REPOS_ROOT" "$repo_haystack"
     return $?
     ;;
   *)
