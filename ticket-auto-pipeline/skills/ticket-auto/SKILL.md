@@ -1239,40 +1239,32 @@ NEXT_PHASE=PR-REVIEW
 
 ### Auto-merge logic
 
-After PR review ✅, check auto-merge eligibility. Both `auto` and `semi-auto` modes merge
-(only `manual` never does); the outcome is read from the `META|outcome-label|info|` line
-written by `outcome-label-check.sh` — the confirmed outcome, manifest-recorded rather than
-a tracker label — not from the IMPLEMENT terminal line, which never carries the
-Smooth/Rough/Hard value:
+After PR review ✅, run `lib/auto-merge.sh`. The whole decision is in that script — do not
+re-derive any part of it here. It applies, in order:
 
-**Resolve the PR number before the guard, not after.** The integration-PR
-guard reads `$_pr_num`, so it has to be assigned first. It used to be assigned
-*below* the guard, inside the eligibility block — which meant the guard ran
-`gh pr view ""`, got an empty head ref, never matched `INTEGRATION_BRANCH`, and
-guarded nothing. An integration PR could be auto-merged by the very code
-written to stop it.
+1. `merge_blocked_reason` (`lib/branch-resolve.sh`) — the same merge-authorization rule
+   `ticket-pr-review` Step 6b uses. Any epic `MERGE_POLICY` (`manual`,
+   `on-all-children-done`) or an `AUTONOMY` other than `auto`/`semi-auto` means a human
+   merges. Logged as `META|pr-auto-merge|skip|MERGE_AUTHORIZATION: …`.
+2. `COMPLEXITY` = `simple`.
+3. The latest `META|outcome-label|info|` reads `Smooth` (never the IMPLEMENT terminal line,
+   which does not carry Smooth/Rough/Hard).
+4. A PR number is recorded (`PR-REVIEW|checkout-pr|done|<n>`). It is resolved before the
+   integration guard.
+5. With `INTEGRATION_BRANCH` set, the PR head ref must be readable and must differ from it.
+   An integration PR logs `INTEGRATION_PR_GUARD`. An unreadable head ref (a `gh pr view`
+   failure) logs `PR_HEAD_UNREADABLE` and does **not** merge — fail closed.
+6. `gh pr merge <n> --squash --auto`, scoped with `--repo` from `META|pr-created` when present.
+
+`AUTONOMY`, `MERGE_POLICY` and `INTEGRATION_BRANCH` come from the agent env file
+(`/tmp/ticket-auto-{TICKET_ID}-env.sh`); `COMPLEXITY` comes from `DETECT_RESUME_RESULT`.
+Exit 0 merged, 3 skipped, 4 `gh pr merge` failed. All three continue to STEP_5 — an
+unmerged PR is a human's to look at, never a reason to fail a finished ticket. fleetd's
+`orchestration.run_auto_merge` applies the same rules.
 
 ```bash
-_pr_num=$(grep '^[^|]*|PR-REVIEW|checkout-pr|done|' "{LOG_FILE}" | tail -1 | cut -d'|' -f5-)
-
-# Auto-merge guard: integration PRs must never be auto-merged.
-# This is the second guard (the first is in epic_branch_open_pr itself).
-# An integration PR is one whose HEAD is the epic branch; a ticket PR merely
-# targets it as its base.
-if [ -n "$_pr_num" ] && [ -n "{INTEGRATION_BRANCH}" ]; then
-  _pr_head=$(gh pr view "$_pr_num" --json headRefName --jq '.headRefName' 2>/dev/null || true)
-  if [ "$_pr_head" = "{INTEGRATION_BRANCH}" ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|pr-auto-merge|skip|INTEGRATION_PR_GUARD: $_pr_num is integration PR, not auto-merging" >> "{LOG_FILE}"
-    _pr_num=""
-  fi
-fi
-
-if { [ "{AUTONOMY}" = "auto" ] || [ "{AUTONOMY}" = "semi-auto" ]; } && [ "{COMPLEXITY}" = "simple" ]; then
-  OUTCOME=$(grep '^[^|]*|META|outcome-label|info|' "{LOG_FILE}" | tail -1 | cut -d'|' -f5-)
-  if [ "$OUTCOME" = "Smooth" ] && [ -n "$_pr_num" ]; then
-    gh pr merge "$_pr_num" --squash --auto || true
-  fi
-fi
+bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/auto-merge.sh" \
+  --complexity "{COMPLEXITY}" "{TICKET_ID}" "{LOG_FILE}" || true
 ```
 
 ### STEP_5 — Document + Wiki Maintenance

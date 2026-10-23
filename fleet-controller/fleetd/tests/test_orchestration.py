@@ -215,6 +215,23 @@ class TestAutoMerge(unittest.TestCase):
         self.assertEqual(result.status, orchestration.SKIPPED)
         self.assertEqual(self.calls, [])
 
+    def test_an_epic_merge_policy_never_merges(self):
+        # DET-RV-4: merge_blocked_reason's rule — any epic Merge Policy means
+        # a human merges. run_auto_merge used to ignore it entirely.
+        for policy in ('manual', 'on-all-children-done'):
+            self.calls = []
+            result = orchestration.run_auto_merge(
+                {'kind': 'auto_merge'}, self._ctx(merge_policy=policy))
+            self.assertEqual(result.status, orchestration.SKIPPED, policy)
+            self.assertNotIn(['pr', 'merge', '412', '--squash', '--auto'],
+                             self.calls)
+        self.assertIn('MERGE_AUTHORIZATION', self.log.read_text())
+
+    def test_an_empty_merge_policy_still_merges(self):
+        result = orchestration.run_auto_merge({'kind': 'auto_merge'},
+                                              self._ctx(merge_policy=''))
+        self.assertEqual(result.status, orchestration.OK)
+
     def test_a_complex_ticket_never_merges(self):
         result = orchestration.run_auto_merge({'kind': 'auto_merge'},
                                               self._ctx(complexity='complex'))
