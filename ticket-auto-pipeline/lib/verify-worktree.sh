@@ -402,7 +402,10 @@ verify_env_init() {
   if [ -z "${REPOS_ROOT:-}" ] && [ -n "$ticket_id" ]; then
     local env_file="/tmp/ticket-auto-${ticket_id}-env.sh"
     if [ -f "$env_file" ]; then
-      val=$(sed -n 's/^export REPOS_ROOT="\(.*\)"$/\1/p' "$env_file" 2>/dev/null | head -1)
+      # spawn_write_env backslash-escapes \ " $ ` inside the quotes; undo
+      # exactly that so the value matches what `source` would give.
+      val=$(sed -n 's/^export REPOS_ROOT="\(.*\)"$/\1/p' "$env_file" 2>/dev/null | head -1 |
+        sed 's/\\\([\\"$`]\)/\1/g')
       case "$val" in
       '' | REPOS_ROOT_PLACEHOLDER) val="" ;;
       esac

@@ -20,6 +20,7 @@ test-lib:
 	@echo "=== lib unit tests ==="
 	bash ticket-auto-pipeline/lib/tests/test-dispatch-table.sh
 	bash ticket-auto-pipeline/lib/tests/test-linear-api.sh
+	bash ticket-auto-pipeline/lib/tests/test-linear-api-transport.sh
 	bash ticket-auto-pipeline/lib/tests/test-env-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-notes-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-rounds.sh
@@ -206,6 +207,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-lib-root.sh
 	bash ticket-planner/lib/tests/test-planner-lib-sync.sh
 	bash ticket-planner/lib/tests/test-planner-linear-api.sh
+	bash ticket-planner/lib/tests/test-planner-linear-transport.sh
 	bash ticket-planner/lib/tests/test-planner-stop-conditions.sh
 	bash ticket-planner/lib/tests/test-planner-project-gate.sh
 	bash ticket-planner/lib/tests/test-planner-config-durability.sh

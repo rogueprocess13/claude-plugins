@@ -728,6 +728,30 @@ test_env_init_reads_ticket_env_file() {
 }
 _run "verify_env_init reads REPOS_ROOT from the ticket env file without sourcing it" test_env_init_reads_ticket_env_file
 
+# spawn_write_env escapes \ " $ ` inside the quotes (BE-4); the reader must
+# undo it so a REPOS_ROOT with such characters resolves to the real directory.
+test_env_init_unescapes_spawn_write_env_value() {
+  _setup_fixture
+  local tid="TESTENVQ$$" env_file odd rc=0
+  odd="$FIXTURE_DIR/re\$po\"s"
+  mkdir -p "$odd"
+  env_file="/tmp/ticket-auto-${tid}-env.sh"
+  (
+    unset LINEAR_API_KEY
+    source "$LIB_DIR/spawn-helper.sh"
+    spawn_write_env TICKET_ID="$tid" REPOS_ROOT="$odd" ISSUE_PREFIX=T BE_SERVICES=s >/dev/null 2>&1
+  ) || rc=$?
+  (
+    unset REPOS_ROOT
+    cd "$FIXTURE_DIR" || exit 1
+    verify_env_init "$tid" ./no-such-CLAUDE.md 2>/dev/null || exit 1
+    [ "$REPOS_ROOT" = "$odd" ]
+  ) || rc=$?
+  rm -f "$env_file"
+  [ "$rc" -eq 0 ]
+}
+_run "verify_env_init unescapes a spawn_write_env-quoted REPOS_ROOT" test_env_init_unescapes_spawn_write_env_value
+
 test_env_init_reads_claude_md() {
   _setup_fixture
   (

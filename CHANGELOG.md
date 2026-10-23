@@ -17,6 +17,27 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.71.5 / fleet-controller 0.43.3 / ticket-planner 0.24.1 (2026-10-23)
+
+Linear client hardening (codebase review 2026-10-23, BE-3/4/8/9/10/11).
+
+Also ticket-planner 0.24.1 and fleet-controller 0.43.3.
+
+### Fixed
+- `get_comments` / `get_issue_history` (and `tracker_read`) reported a Linear outage as `[]` with
+  exit 0. They now exit non-zero; `ticket-setup` aborts on it, as it already did for `get_issue`.
+- All curl calls have connect and total timeouts.
+- The API key is no longer passed as a curl argument, so it does not appear in the process list.
+- Create mutations are no longer retried after an ambiguous failure (timeout, reset, 5xx, empty
+  body), which could duplicate issues and comments. They retry only when never sent or rate-limited.
+- Rate-limit detection now matches Linear's real signals (HTTP 429 / `RATELIMITED`).
+- `spawn_write_env` escapes `\ " $` and backticks, so values with `&` or quotes survive and `$(...)`
+  is not executed when the env file is sourced. Non-sourcing readers undo the escaping.
+
+The planner's Linear client got the same changes.
+
+### Changed
+- `get_comments` / `get_issue_history` callers must handle a non-zero exit on outage.
 ## 0.71.4 (2026-10-23)
 
 One plan-artifact resolver (codebase review 2026-10-23, DET-IP-2, DET-AP-4, DET-IP-13).

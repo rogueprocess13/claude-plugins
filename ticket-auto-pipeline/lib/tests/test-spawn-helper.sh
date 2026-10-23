@@ -239,21 +239,66 @@ test_write_env_rejects_unknown_param() {
 }
 
 test_write_env_handles_special_chars_in_values() {
-  # Values with commas, semicolons, and dollar signs should be preserved exactly
+  # Values with commas, semicolons, and dollar signs survive `source` exactly.
+  # (This used to grep the file for an unescaped `$dollar` — which is the
+  # BE-4 bug itself: inside "..." it expands on source.)
   source "$LIB_DIR/spawn-helper.sh"
   spawn_write_env TICKET_ID=TEST-42 REPOS_ROOT=/tmp/test ISSUE_PREFIX=TEST BE_SERVICES="svc1,svc2;svc3 \$dollar" >/dev/null 2>&1
-  local f=/tmp/ticket-auto-TEST-42-env.sh
-  grep -q 'export BE_SERVICES="svc1,svc2;svc3 \$dollar"' "$f"
+  local f=/tmp/ticket-auto-TEST-42-env.sh got
+  got=$(bash -c 'source "$1"; printf %s "$BE_SERVICES"' _ "$f")
+  [ "$got" = 'svc1,svc2;svc3 $dollar' ]
 }
 
 test_write_env_no_shell_expansion_in_heredoc() {
-  # Variables like $HOME or $(whoami) in values must NOT be expanded
+  # Variables like $HOME or $(whoami) in values must NOT be expanded when the
+  # file is sourced — the literal text comes back.
   source "$LIB_DIR/spawn-helper.sh"
   spawn_write_env TICKET_ID=TEST-42 REPOS_ROOT='$(echo pwned)' ISSUE_PREFIX=TEST BE_SERVICES='$HOME' >/dev/null 2>&1
-  local f=/tmp/ticket-auto-TEST-42-env.sh
-  # The literal strings should appear, not their expanded values
-  grep -q 'export REPOS_ROOT="$(echo pwned)"' "$f" &&
-    grep -q 'export BE_SERVICES="$HOME"' "$f"
+  local f=/tmp/ticket-auto-TEST-42-env.sh got
+  got=$(bash -c 'source "$1"; printf "%s|%s" "$REPOS_ROOT" "$BE_SERVICES"' _ "$f")
+  [ "$got" = '$(echo pwned)|$HOME' ]
+}
+
+# BE-4: every hostile value must round-trip through `source` byte-for-byte,
+# and nothing in it may execute.
+test_write_env_roundtrip_hostile_values() {
+  local d marker f got
+  d=$(_mktemp_test_dir)
+  marker="$d/pwned"
+  source "$LIB_DIR/spawn-helper.sh"
+  local v_url='https://uat.example/app?a=1&b=2'
+  local v_cmd='mvn test -Dfoo="bar baz" -Dq='"'"'x'"'"''
+  local v_inj='$(touch '"$marker"') `touch '"$marker"'` ${HOME}'
+  local v_nl=$'line1\nline2 & "q"'
+  local v_bs='C:\path\to | pipe \'
+  LINEAR_API_KEY='k"$(touch '"$marker"')' spawn_write_env TICKET_ID=TEST-RT \
+    REPOS_ROOT="$v_bs" ISSUE_PREFIX=TEST BE_SERVICES="$v_nl" \
+    UAT_URL="$v_url" LOCAL_URL="$v_url" BE_TEST_CMD="$v_cmd" \
+    FE_TEST_CMD="$v_inj" >/dev/null 2>&1 || return 1
+  f=/tmp/ticket-auto-TEST-RT-env.sh
+  got=$(bash -c 'source "$1" || exit 9
+    printf "%s\0" "$UAT_URL" "$LOCAL_URL" "$BE_TEST_CMD" "$FE_TEST_CMD" \
+      "$BE_SERVICES" "$REPOS_ROOT" "$LINEAR_API_KEY"' _ "$f" | od -An -c)
+  local want
+  want=$(printf '%s\0' "$v_url" "$v_url" "$v_cmd" "$v_inj" "$v_nl" "$v_bs" \
+    'k"$(touch '"$marker"')' | od -An -c)
+  [ "$got" = "$want" ] && [ ! -e "$marker" ]
+}
+
+# BE-9: the file holds LINEAR_API_KEY — it must be 0600, and a path planted
+# at the predictable name (a symlink) must be replaced, never written through.
+test_write_env_private_and_not_written_through_symlink() {
+  local d f mode
+  d=$(_mktemp_test_dir)
+  f=/tmp/ticket-auto-TEST-SYM-env.sh
+  rm -f "$f"
+  echo original >"$d/target"
+  ln -s "$d/target" "$f"
+  source "$LIB_DIR/spawn-helper.sh"
+  LINEAR_API_KEY=k spawn_write_env TICKET_ID=TEST-SYM REPOS_ROOT=/r \
+    ISSUE_PREFIX=T BE_SERVICES=s >/dev/null 2>&1 || return 1
+  mode=$(stat -c %a "$f")
+  [ ! -L "$f" ] && [ "$mode" = "600" ] && [ "$(cat "$d/target")" = "original" ]
 }
 
 # ── spawn_agent_pre tests ──────────────────────────────────────────────────────
@@ -2226,6 +2271,8 @@ for fn in \
   test_write_env_rejects_unknown_param \
   test_write_env_handles_special_chars_in_values \
   test_write_env_no_shell_expansion_in_heredoc \
+  test_write_env_roundtrip_hostile_values \
+  test_write_env_private_and_not_written_through_symlink \
   test_pre_rejects_missing_phase \
   test_pre_rejects_missing_ticket_id \
   test_pre_prints_agent_prompt_line \
