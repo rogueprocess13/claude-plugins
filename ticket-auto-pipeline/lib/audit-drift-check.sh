@@ -30,25 +30,37 @@ audit_drift_check() {
   CHANGED_IDS=""
   NEW_IDS=""
 
-  # For each ticket in current, check if newer or new
+  # Key on the human identifier (WIL-78), not Linear's internal UUID `.id`.
+  # The snapshot comes from the report's `## Ticket Inventory` table, whose
+  # ID column holds the identifier; the current Linear response carries both
+  # `.id` (UUID) and `.identifier`. `(.identifier // .id)` keys both sides the
+  # same way and stays compatible with callers that pre-normalized `.id`.
   local current_ids
-  current_ids=$(jq -r '.[].id' "$current_file" 2>/dev/null || echo "")
+  current_ids=$(jq -r '.[] | (.identifier // .id) // empty' "$current_file" 2>/dev/null || echo "")
 
   for cid in $current_ids; do
     # Get current updatedAt
     local curr_updated
-    curr_updated=$(jq -r --arg id "$cid" '.[] | select(.id == $id) | .updatedAt' "$current_file" 2>/dev/null || echo "")
+    curr_updated=$(jq -r --arg id "$cid" 'first(.[] | select((.identifier // .id) == $id) | .updatedAt) // empty' "$current_file" 2>/dev/null || echo "")
 
     # Check if this ID exists in snapshot
     local snap_updated
-    snap_updated=$(jq -r --arg id "$cid" '.[] | select(.id == $id) | .updatedAt' "$snapshot_file" 2>/dev/null || echo "")
+    snap_updated=$(jq -r --arg id "$cid" 'first(.[] | select((.identifier // .id) == $id) | .updatedAt) // empty' "$snapshot_file" 2>/dev/null || echo "")
 
     if [ -z "$snap_updated" ]; then
       # Not in snapshot → new ticket
       NEW_IDS="$NEW_IDS $cid"
     elif [ -n "$curr_updated" ] && [ "$curr_updated" != "$snap_updated" ]; then
+      # Legacy inventories store a date only (2026-05-01). Any full ISO
+      # timestamp sorts lexicographically after a bare date, so comparing
+      # them directly flagged every ticket touched on the snapshot day as
+      # CHANGED. When the snapshot is date-only, compare at date precision.
+      local curr_cmp="$curr_updated"
+      if [[ "$snap_updated" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        curr_cmp="${curr_updated:0:10}"
+      fi
       # Compare ISO timestamps lexicographically (works for ISO 8601)
-      if [[ "$curr_updated" > "$snap_updated" ]]; then
+      if [[ "$curr_cmp" > "$snap_updated" ]]; then
         CHANGED_IDS="$CHANGED_IDS $cid"
       fi
     fi
