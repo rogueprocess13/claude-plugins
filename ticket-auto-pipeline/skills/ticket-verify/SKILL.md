@@ -152,17 +152,18 @@ If not found, continue — the Linear description alone is sufficient.
 ### 1d — Load openspec change (if present)
 
 ```bash
-ls "$TICKETS_ROOT/openspec/changes/" | grep -i "{ticket-id-lowercase}"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$TICKETS_ROOT" --type openspec
 ```
 
-If found, read `tasks.md` to understand what was implemented and any "Manually verify" tasks — these become your verification checklist.
+This is the one plan-artifact resolver (whole-ID match, so `TEST-7` never picks up `TEST-77`'s
+change). If it exits 0, read `tasks.md` at `PLAN_PATH` to understand what was implemented and any "Manually verify" tasks — these become your verification checklist.
 
 ### 1e — Detect verification mode (browser vs. build-only vs. live-backend)
 
 Some tickets have no UI or API surface to exercise — e.g. a root parent-POM introduction, a dependency-version bump, a build-plugin config change. These are verified by running the project's build tooling and checking exit codes/output, not by driving a browser. Others need a **running backend checked via API/health-check, with no UI in the loop** — e.g. service-to-service calls, Eureka registration, circuit-breaker behaviour under simulated failure. A build command can't verify these (nothing to compile), and driving a browser is wrong too (no login, no page in the AC) — treating them as either bucket produces a silent false-pass (the real check never runs) or a stall (browser mode tries to resolve a test user that doesn't exist for an infra ticket). Classify the ticket using the same signal-based approach as `gate-check.sh`'s Check 2.6, so the two phases agree on ticket shape, with an added live-backend trigger evaluated ahead of the build-only test — a ticket can mention a build tool (`mvn`, `pom.xml`) in passing while its actual AC is a live runtime check, and live-backend must win that case:
 
 ```bash
-_plan_file=$(find "$TICKETS_ROOT" -name "simple-fix.md" -path "*{TICKET-ID}*" 2>/dev/null | head -1)
+_plan_file=$(bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$TICKETS_ROOT" --type simple-fix 2>/dev/null | sed -n 's/^PLAN_PATH=//p')
 [ -z "$_plan_file" ] && _plan_file="{ticket-dir}/notes.md"
 _signal_text="$(cat "$_plan_file" {ticket-dir}/context.md 2>/dev/null)"$'\n'"${description:-}"
 
@@ -1323,16 +1324,11 @@ Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` i
 **Detect plan artifact** (same detection as `ticket-implement` Step 2):
 
 ```bash
-find . -name "simple-fix.md" -path "*{TICKET-ID}*"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root .
 ```
 
-- Found → `PLAN = {output-path}`, mode = `simple-fix`
-- Not found:
-  ```bash
-  ls openspec/changes/ | grep -i "{ticket-id-lowercase}"
-  ```
-  If found → `PLAN = openspec/changes/{change-name}/tasks.md`, mode = `openspec`
-- Neither found → skip write. Report: "No plan artifact found for REMEDIATION_BRIEF — brief emitted to chat and notes.md only."
+- Exit 0 → `PLAN = PLAN_PATH`, mode = `PLAN_MODE` (`simple-fix` or `openspec`)
+- Exit 2 (several change dirs match this ticket) or exit 12 (none) → skip write. Report: "No plan artifact found for REMEDIATION_BRIEF — brief emitted to chat and notes.md only."
 
 **Count existing sections and write atomically:**
 

@@ -148,15 +148,16 @@ Log the step start:
 
 From `notes.md` and `context.md`, identify affected repos. Cross-reference with the CLAUDE.md codebase table for full paths.
 
-**Implementation path:**
+**Implementation path** — use the one plan-artifact resolver (whole-ID match: `TEST-7` never
+picks up `TEST-77`'s files). Run it from the tickets repo (CWD here):
 ```bash
-find . -name "simple-fix.md" -path "*{TICKET-ID}*"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root . --log-file "$LOG_FILE"
 ```
-- Found → mode **simple-fix**. Read the file now.
-- Not found → mode **openspec**. Locate the change:
-  ```bash
-  ls openspec/changes/ | grep -i "{ticket-id-lowercase}"
-  ```
+It prints `PLAN_MODE=`, `PLAN_PATH=` and, for openspec, `CHANGE_DIR=`.
+- Exit 0, `PLAN_MODE=simple-fix` → mode **simple-fix**. Read `PLAN_PATH` now.
+- Exit 0, `PLAN_MODE=openspec` → mode **openspec**. The change is `CHANGE_DIR`; read its `tasks.md` (`PLAN_PATH`).
+- Exit 2 → more than one change dir matches this ticket (listed on stderr). Stop and report it — never pick one.
+- Exit 12 → no plan artifact. Stop and report it.
 
 **Activate persona** based on the `Layer` column in CLAUDE.md for each affected repo. For `FE+BE` monorepos, use the layer boundary table to classify by actual files touched:
 
@@ -650,9 +651,9 @@ into the code worktree and never `cd`s back. Use `$IMPLEMENT_TICKETS_ROOT` (capt
 ```bash
 EXPECT_FLAG=""
 # Mode was already determined in Step 2 ("detect-path"): simple-fix.md found → simple-fix,
-# else → openspec. Re-derive the same way rather than trusting carried state — searched against
+# else → openspec. Re-derive the same way rather than trusting carried state — resolved against
 # $IMPLEMENT_TICKETS_ROOT explicitly, not "." (CWD is the code worktree by this point).
-[ -z "$(find "$IMPLEMENT_TICKETS_ROOT" -name "simple-fix.md" -path "*{TICKET-ID}*" 2>/dev/null)" ] && EXPECT_FLAG="--expect"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$IMPLEMENT_TICKETS_ROOT" --type simple-fix >/dev/null 2>&1 || EXPECT_FLAG="--expect"
 bash ~/.claude/skills/lib/openspec-tracking-check.sh assert "{TICKET-ID}" $EXPECT_FLAG --root "$IMPLEMENT_TICKETS_ROOT"
 ASSERT_RC=$?
 ```

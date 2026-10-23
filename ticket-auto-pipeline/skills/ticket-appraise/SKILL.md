@@ -1008,10 +1008,10 @@ If ticket-setup reported workspace already exists in Step 1:
 6. **Re-evaluate complexity** — run Step 2.5 (complexity sweep) again, considering the new comments as additional input. If the score changes, update the `## Complexity` section in notes.md and note the change in the session log.
 7. **Check artifact staleness:**
    ```bash
-   find {ticket-dir} -name "simple-fix.md"
-   ls openspec/changes/ | grep -i "{ticket-id-lowercase}"
+   bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root . --ticket-dir "{ticket-dir}"
    ```
-   If either exists, the plan may be stale. Append to notes.md session log:
+   (The one plan-artifact resolver — whole-ID match, so `TEST-7` never sees `TEST-77`'s change.)
+   If it exits 0 (or 2 — several change dirs match), an artifact exists and the plan may be stale. Append to notes.md session log:
    ```
    - ⚠️ Artifacts exist (simple-fix.md / openspec change). New comments may require plan updates.
    ```

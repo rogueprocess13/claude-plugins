@@ -356,6 +356,9 @@ _gate_reconcile_resolve() {
   code=${code//\{TICKET-ID\}/$3}
   (
     cd "$1" || exit 3
+    # Step 1's load block sources ticket-dir.sh before this block runs; the
+    # resolution block calls its resolve_plan_artifact.
+    source "$LIB_DIR/ticket-dir.sh"
     LOG_FILE="$1/logs/pipeline.log"
     TICKET_DIR="$1/TEST-7--ticket-dir"
     ARTIFACT_TYPE="$2"

@@ -16,6 +16,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-notes-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-rounds.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-dir.sh
+	bash ticket-auto-pipeline/lib/tests/test-plan-artifact-callers.sh
 	bash ticket-auto-pipeline/lib/tests/test-heartbeat.sh
 	bash ticket-auto-pipeline/lib/tests/test-capture-transcript.sh
 	bash ticket-auto-pipeline/lib/tests/test-reconcile-comments.sh
