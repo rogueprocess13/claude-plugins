@@ -27,7 +27,7 @@
   }
   header {
     border-bottom: 1px solid var(--line);
-    padding: 2rem 2.5rem 1.5rem;
+    padding: 2rem clamp(16px, 5vw, 2.5rem) 1.5rem;
   }
   header h1 {
     font-size: 1.15rem;
@@ -43,7 +43,7 @@
   main {
     max-width: 760px;
     margin: 3rem auto;
-    padding: 0 2.5rem;
+    padding: 0 clamp(16px, 5vw, 2.5rem);
   }
   h2 {
     font-size: .72rem;
@@ -54,7 +54,7 @@
   }
   .card-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
     gap: 1rem;
   }
   .card {
@@ -104,7 +104,7 @@
   footer {
     border-top: 1px solid var(--line);
     margin-top: 4rem;
-    padding: 1.5rem 2.5rem;
+    padding: 1.5rem clamp(16px, 5vw, 2.5rem);
     font-size: .72rem;
     color: var(--fg-dim);
     text-align: center;
@@ -124,7 +124,7 @@
     <a class="card" href="ticket-auto-pipeline-diagram.html">
       <span class="card-label">visualization</span>
       <span class="card-title">Pipeline State Diagram</span>
-      <span class="card-desc">Interactive state machine with phase drill-down. Shows autonomous transitions, human gates, and gate-stop conditions across 7 Linear states.</span>
+      <span class="card-desc">Interactive state machine with phase drill-down. Shows autonomous transitions, human gates, and gate-stop conditions across 7 workflow states, plus the epic acceptance lane and every side transition.</span>
       <span class="tag">interactive</span>
     </a>
   </div>
@@ -133,7 +133,7 @@
   <div class="card-grid">
     <a class="card" href="ticket-planner-pipeline-diagram.html">
       <span class="card-label">visualization</span>
-      <span class="card-title">9-Phase Planning Pipeline</span>
+      <span class="card-title">11-Phase Planning Pipeline</span>
       <span class="card-desc">Linear phase flow from business idea to planned tickets. Shows each phase's agent role, artifacts, gates, and the determinism boundary.</span>
       <span class="tag">interactive</span>
     </a>
