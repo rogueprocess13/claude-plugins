@@ -641,26 +641,27 @@ test_detect_resume_outputs_verify_last() {
   }
 }
 
+# The router's auto-merge decision lives in lib/auto-merge.sh (DET-RV-4); its
+# behaviour is pinned by test-auto-merge.sh. These two keep the source-level
+# guards they always were, pointed at where the logic now lives.
 test_router_auto_merge_covers_auto_and_semi_auto() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  local block
-  block=$(sed -n '/### Auto-merge logic/,/^```$/p' "$skill_md")
-  echo "$block" | grep -q '{AUTONOMY}" = "auto"' || {
-    echo "auto-merge no longer covers AUTONOMY=auto"
+  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md" src="$LIB_DIR/auto-merge.sh"
+  [ -f "$skill_md" ] && [ -f "$src" ] || return 1
+  sed -n '/### Auto-merge logic/,/^### STEP_5/p' "$skill_md" | grep -q 'auto-merge.sh' || {
+    echo "router auto-merge does not delegate to lib/auto-merge.sh"
     return 1
   }
-  echo "$block" | grep -q '{AUTONOMY}" = "semi-auto"' || {
-    echo "auto-merge no longer covers AUTONOMY=semi-auto"
+  grep -qE '^ *auto \| semi-auto\)' "$src" || {
+    echo "auto-merge.sh no longer covers AUTONOMY=auto and semi-auto"
     return 1
   }
 }
 
 test_router_auto_merge_reads_outcome_label_not_implement_line() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
+  local src="$LIB_DIR/auto-merge.sh"
+  [ -f "$src" ] || return 1
   local block
-  block=$(sed -n '/### Auto-merge logic/,/^```$/p' "$skill_md")
+  block=$(cat "$src")
   echo "$block" | grep -q 'META|outcome-label|info|' || {
     echo "auto-merge does not read the authoritative outcome-label META line"
     return 1
