@@ -193,10 +193,20 @@ test_spawn_queue_multiple_entries() {
 
 # ── Interactive mode tests ─────────────────────────────────────────────────────
 
-test_interactive_mode_emits_action_line() {
-  local output
-  output=$(export CLAUDE_CODE_SESSION_ID=abc123 && source "$LIB_DIR/fleet-monitor.sh" && _spawn_restart "TEST-42" "auto-restart" 1 2>/dev/null)
-  echo "$output" | grep -q "ACTION:spawn-restart tid=TEST-42"
+# PO-2: an interactive session used to get only an ACTION:spawn-restart line
+# that nothing acted on, so the restart was lost. The restart must reach the
+# spawn queue (for fleetd) in every mode.
+test_interactive_mode_restart_is_queued() {
+  local tmpdir output
+  tmpdir=$(mktemp -d)
+  local queue_file="${tmpdir}/fleet-test-restart-spawn-queue.jsonl"
+  output=$(export CLAUDE_CODE_SESSION_ID=abc123 FLEET_INSTANCE_ID=test-restart FLEET_STATE_DIR="$tmpdir" &&
+    source "$LIB_DIR/fleet-monitor.sh" && _spawn_restart "TEST-42" "auto-restart" 1 "$tmpdir" 2>/dev/null)
+  local ok=0
+  echo "$output" | grep -q "PENDING:spawn tid=TEST-42" || ok=1
+  grep -q '"tid":"TEST-42"' "$queue_file" 2>/dev/null || ok=1
+  rm -rf "$tmpdir"
+  return "$ok"
 }
 
 # ── Namespaced stop file path test ─────────────────────────────────────────────
@@ -441,7 +451,7 @@ for fn in \
   test_spawn_queue_writes_valid_json \
   test_spawn_queue_has_required_fields \
   test_spawn_queue_multiple_entries \
-  test_interactive_mode_emits_action_line \
+  test_interactive_mode_restart_is_queued \
   test_namespaced_stop_file_uses_instance_id \
   test_monitor_loop_exits_on_namespaced_stop_file \
   test_monitor_loop_ignores_legacy_stop_file \

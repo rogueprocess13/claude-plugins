@@ -6,9 +6,12 @@
 # Executable: when run directly (bash lib/fleet-monitor.sh <workspace>),
 #   invokes fleet_monitor_loop with the first argument as workspace path.
 #
-# Dual spawn modes:
-#   - Interactive: CLAUDE_CODE_SESSION_ID set → emits ACTION:spawn-restart to stdout
-#   - Cron: CLAUDE_CODE_SESSION_ID absent → writes to spawn queue JSONL
+# The monitor never starts workers. Only fleetd with FLEETD_SPAWN_ENABLED=1
+# spawns. A restart decision is written to the spawn queue, and queued
+# entries are left in place for fleetd: the monitor only reports them
+# (PENDING:spawn lines) and drops stale entries whose pipeline already
+# finished. It used to remove entries, write a PID=0 owner record and print
+# ACTION:spawn-* lines that nothing acted on, so queued work vanished.
 #
 # NOTE: Does NOT set -euo pipefail — this is a sourceable library.
 # Callers are responsible for shell flags.
@@ -95,8 +98,10 @@ _spawn_queue_write() {
   echo "$entry" >>"$queue_file"
 }
 
-# Emit a restart spawn action. In interactive mode (CLAUDE_CODE_SESSION_ID is set),
-# emits ACTION:spawn-restart to stdout. In cron mode, writes to spawn queue JSONL.
+# Request a restart: always written to the spawn queue, which fleetd
+# (FLEETD_SPAWN_ENABLED=1) drains. The monitor itself never spawns. An
+# interactive session used to get only an ACTION:spawn-restart stdout line
+# that nothing acted on, so the restart was lost.
 # Args: tid reason [restarts] [workspace]
 _spawn_restart() {
   local tid="$1"
@@ -104,24 +109,22 @@ _spawn_restart() {
   local restarts="${3:-0}"
   local workspace="${4:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
 
-  if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
-    # Interactive mode — Claude Code parses these ACTION: lines
-    echo "ACTION:spawn-restart tid=${tid}"
-  else
-    # Cron mode — write to spawn queue for external consumer
-    _spawn_queue_write "$tid" "$reason" "$restarts" "$workspace"
-  fi
+  _spawn_queue_write "$tid" "$reason" "$restarts" "$workspace"
+  echo "PENDING:spawn tid=${tid} reason=${reason} (queued for fleetd; monitor does not start workers)"
 }
 
 # ── Spawn queue consumption ─────────────────────────────────────────────────────
 
-# Consume entries from the spawn queue, respecting FLEET_MAX_CONCURRENT.
-# Reads the queue file line-by-line, spawns pipelines for eligible entries,
-# and marks consumed entries by rewriting the queue without them.
-# The entire read+rewrite is serialized under flock to prevent the race where
-# fleet-dispatch.sh appends an entry between consume-read and consume-rewrite
-# (which would destroy the newly appended entry).
-# In cron mode, emits ACTION:spawn lines to stdout for the skill layer.
+# Inspect the spawn queue on the monitor's behalf. The monitor cannot spawn
+# workers, so it must not consume entries (PO-2): every live entry stays in
+# the queue for fleetd, no run-registry owner record is written, and one
+# `PENDING:spawn tid=...` line per entry is printed to stdout so an undrained
+# queue is visible. The only entries removed are stale ones whose pipeline
+# log is already terminal (`done`) — the same drop fleetd's consume applies,
+# harmless because such an entry can never legitimately spawn.
+# The read+rewrite is serialized under flock to prevent the race where
+# fleet-dispatch.sh appends an entry between read and rewrite (which would
+# destroy the newly appended entry). The name is kept for its callers.
 # Usage: _spawn_queue_consume <workspace> <active_count>
 _spawn_queue_consume() {
   local workspace="$1"
@@ -151,7 +154,7 @@ _spawn_queue_consume() {
       exit 0
     fi
 
-    local consumed=0
+    local consumed=0 pending=0
     local remaining_entries=""
 
     while IFS= read -r line; do
@@ -195,35 +198,12 @@ _spawn_queue_consume() {
         fi
       fi
 
-      if [ "$consumed" -lt "$slots_available" ]; then
-        reason=$(echo "$line" | jq -r '.reason // "dispatched"' 2>/dev/null)
-        restarts=$(echo "$line" | jq -r '.restarts // 0' 2>/dev/null)
-        generation=$(echo "$line" | jq -r '.generation // 1' 2>/dev/null)
-
-        fl_write "INFO" "queue" "Consuming spawn queue entry: ${tid} (${reason})"
-
-        # Write run registry: record that we own this ticket at this generation.
-        # PID=0 sentinel means "spawned, PID not yet captured by ticket-auto spawn."
-        if declare -f registry_write >/dev/null 2>&1; then
-          registry_write "$tid" "0" "$generation" "$reason" "$state_dir"
-        fi
-
-        if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
-          echo "ACTION:spawn-auto tid=${tid} reason=${reason} generation=${generation}"
-        else
-          # Cron mode: write consumed marker as ACTION line
-          echo "ACTION:spawn-auto tid=${tid} reason=${reason} restarts=${restarts} generation=${generation}"
-        fi
-
-        # Emit heartbeat for the spawn
-        hb_fleet_action "queue-dispatch" "info" "Spawning from queue: ${tid}" \
-          "{\"tid\":\"$tid\",\"reason\":\"$reason\",\"generation\":$generation}"
-
-        consumed=$((consumed + 1))
-      else
-        # Keep unconsumed entries
-        remaining_entries="${remaining_entries}${line}"$'\n'
-      fi
+      # Live entry: leave it for fleetd. No registry write, no removal.
+      reason=$(echo "$line" | jq -r '.reason // "dispatched"' 2>/dev/null)
+      generation=$(echo "$line" | jq -r '.generation // 1' 2>/dev/null)
+      pending=$((pending + 1))
+      echo "PENDING:spawn tid=${tid} reason=${reason} generation=${generation} (not started: monitor does not start workers; run fleetd with FLEETD_SPAWN_ENABLED=1)"
+      remaining_entries="${remaining_entries}${line}"$'\n'
     done <"$queue_file"
 
     # Rewrite queue with remaining (unconsumed) entries — atomic rename.
@@ -238,7 +218,10 @@ _spawn_queue_consume() {
       fi
     fi
 
-    [ "$consumed" -gt 0 ] && fl_write "INFO" "queue" "Consumed ${consumed} queue entries, ${slots_available} slots used"
+    [ "$consumed" -gt 0 ] && fl_write "INFO" "queue" "Dropped ${consumed} stale queue entries"
+    if [ "$pending" -gt 0 ]; then
+      fl_write "WARN" "queue" "${pending} spawn queue entries waiting (${slots_available} slots free); monitor does not start workers, run fleetd with FLEETD_SPAWN_ENABLED=1 (fleet-monitor-pending|count=${pending})"
+    fi
   ) 9>"$lock_file"
 
   return 0
@@ -287,7 +270,7 @@ fleet_monitor_cycle() {
           # Scan for fresh restart-intent markers
           if command grep -q "META|fleet-restart-marker|info|restart-intent" "${workspace}/${tid}-pipeline.log" 2>/dev/null; then
             fl_write "INFO" "monitor" "Spawning restart for ${tid}"
-            _spawn_restart "$tid" "auto-restart" 0 "$workspace"
+            _spawn_restart "$tid" "auto-restart" 0 "$workspace" >&2
           fi
         fi
       else
@@ -318,7 +301,9 @@ fleet_monitor_cycle() {
   # display count is unchanged: it reports logs, not slots.
   local active_count
   active_count=$(_active_pipeline_count "$workspace" 2>/dev/null || echo "0")
-  _spawn_queue_consume "$workspace" "${active_count:-0}" 2>/dev/null || true
+  # PENDING:spawn lines go to stderr so stdout stays the detection JSON;
+  # fleet_monitor_loop forwards them to the operator.
+  _spawn_queue_consume "$workspace" "${active_count:-0}" >&2 2>/dev/null || true
 
   # Return the detection data for fleet-summary gating in the loop
   echo "$data"
@@ -339,6 +324,7 @@ fleet_monitor_loop() {
 
   fl_write "INFO" "monitor" "Starting monitor loop (instance=${instance_id}, interval=${poll_interval}s, stop_file=${stop_file})"
   hb_fleet_scan "cycle-start" "ok" "Monitor loop started" "{\"instance\":\"$instance_id\"}"
+  echo "fleet monitor: detection and intervention only. It does not start workers; queued tickets run only under fleetd with FLEETD_SPAWN_ENABLED=1." >&2
 
   # Initialize fleet summary state-transition gating
   local prev_summary=""
@@ -355,7 +341,9 @@ fleet_monitor_loop() {
 
     # Run one cycle
     local cycle_data
-    cycle_data=$(fleet_monitor_cycle "$workspace" 2>/dev/null || true)
+    # stderr is discarded except the PENDING:spawn lines, which tell the
+    # operator that queued work is waiting for fleetd.
+    cycle_data=$(fleet_monitor_cycle "$workspace" 2> >(command grep --line-buffered '^PENDING:' >&2) || true)
 
     # Extract current summary for state-transition gating
     local current_summary

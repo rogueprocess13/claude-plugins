@@ -23,7 +23,7 @@ Parent orchestrator above ticket-planner and ticket-auto. Dispatches planned tic
 
 ### Monitor (`monitor`)
 
-Runs detection in a continuous loop via `fleet_monitor_loop`, rendering the dashboard each cycle and executing interventions at KILL and KILL+RESTART severities. Also consumes the spawn queue for planned-ticket dispatch.
+Runs detection in a continuous loop via `fleet_monitor_loop`, rendering the dashboard each cycle and executing interventions at KILL and KILL+RESTART severities. **Monitor does not start workers.** Queued tickets (from `dispatch`, or a KILL+RESTART decision) run only under fleetd with `FLEETD_SPAWN_ENABLED=1`. Tell the operator this when they start `monitor` and the queue is not empty.
 
 ```
 /fleet-controller monitor
@@ -32,12 +32,12 @@ Runs detection in a continuous loop via `fleet_monitor_loop`, rendering the dash
 - Polls every `FLEET_POLL_INTERVAL` seconds (default 30)
 - Checks for stop file `${state_dir}/fleet-{instance}-controller-stop` at the start of each cycle
 - Respects `FLEET_DRY_RUN=true` — detection runs but interventions are logged, not executed
-- Consumes spawn queue entries when active pipeline count < `FLEET_MAX_CONCURRENT`
+- Leaves spawn queue entries in place for fleetd and prints one `PENDING:spawn tid=...` line per waiting entry (it removes only stale entries whose pipeline already finished). `PENDING:spawn` lines need no action from you except telling the operator to start fleetd
 - Exits cleanly when stop file is detected
 
 ### Status (`status`)
 
-One-shot health check — renders the dashboard to terminal and writes a report to `logs/reports/fleet-dashboard.md`.
+One-shot health check — renders the dashboard to terminal and writes a report to `logs/reports/fleet-dashboard.md`. Gate-stopped, exhausted and dead-lettered tickets appear in a separate **Needs Attention** section (from `fleet_detect_all`'s `attention` array) with their reason and next step; always relay that section to the operator when it is present.
 
 ```
 /fleet-controller status
@@ -212,8 +212,8 @@ fleetd replaces cron-based fleet invocation. It runs detection cycles on a confi
 | Cron-based | fleetd-based |
 |-----------|-------------|
 | `cron` invokes `fleet_monitor_loop` | fleetd runs continuously |
-| `ACTION:spawn-auto` stdout lines (unconsumed) | fleetd forks `claude` directly |
-| PID=0 sentinel in registry | Real PIDs |
+| Monitor reports `PENDING:spawn` lines and leaves the queue alone | fleetd forks `claude` directly |
+| No owner record until fleetd spawns | Real PIDs |
 | Kill escalation unreachable (no PID to signal) | Full escalation with process-group signalling |
 | No health endpoint | `GET /health` returns live workers, queue depth, cycle status |
 

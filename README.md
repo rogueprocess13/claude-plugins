@@ -27,7 +27,7 @@ Four installable plugins. Install only what you need — they work standalone an
 | "I have a Linear ticket. Implement it for me." | `ticket-auto-pipeline` | `/ticket-auto CRE-47` |
 | "I have an idea. Break it into tickets for me." | `ticket-planner` + `ticket-auto-pipeline` | `/ticket-planner plan "..."` |
 | "I have an idea — but is it ready to plan?" | `grill-me` | `/grill-me "..."` |
-| "Run many tickets at once, unattended, and recover from failures." | all three above | `/fleet-controller monitor` |
+| "Run many tickets at once, unattended, and recover from failures." | all three above | `fleetd` with `FLEETD_SPAWN_ENABLED=1` |
 | "Remember decisions and lessons across my projects." | `knowledge-curator` | Nothing — it's hook-driven |
 
 **Most people start with `ticket-auto-pipeline` alone**, run a few tickets by hand, and add the planner and fleet controller once they trust it.
@@ -204,8 +204,9 @@ Then execute them:
 
 ```
 /fleet-controller dispatch INIT-42   # queue the planned tickets
-/fleet-controller monitor            # run + supervise them
 ```
+
+Queued tickets run only under fleetd with spawning on (`FLEETD_SPAWN_ENABLED=1 python -m fleet-controller.fleetd --state-dir <workspace>/logs`, see the [fleet-controller README](fleet-controller/README.md#fleetd--the-supervisor-daemon)). `/fleet-controller monitor` detects and intervenes, but it does not start workers.
 
 Details: [ticket-planner README](ticket-planner/README.md) · [fleet-controller README](fleet-controller/README.md).
 
