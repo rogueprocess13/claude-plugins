@@ -1518,6 +1518,32 @@ class TestPhaseContract(unittest.TestCase):
         self.assertEqual(env['REPOS_ROOT'], '/x/y')
         self.assertEqual(env['BE_TEST_CMD'], 'pytest -x')
 
+    def test_parse_env_file_matches_spawn_write_env_escaping(self):
+        """spawn_write_env backslash-escapes \\ " $ ` (BE-4); the parser must
+        return the same value `source` would, not the escaped text."""
+        lib = (Path(__file__).resolve().parents[3] / 'ticket-auto-pipeline'
+               / 'lib' / 'spawn-helper.sh')
+        tid = f'TEST-PEF{os.getpid()}'
+        value = 'mvn -Dq="a b" $(x) `y` C:\\p & z'
+        env_path = Path(f'/tmp/ticket-auto-{tid}-env.sh')
+        try:
+            subprocess.run(
+                ['bash', '-c', 'source "$1"; spawn_write_env TICKET_ID="$2" '
+                 'REPOS_ROOT=/r ISSUE_PREFIX=T BE_SERVICES=s BE_TEST_CMD="$3"',
+                 '_', str(lib), tid, value],
+                check=True, capture_output=True, text=True,
+                env={k: v for k, v in os.environ.items()
+                     if k != 'LINEAR_API_KEY'})
+            env = phase_dispatch._parse_env_file(str(env_path))
+            self.assertEqual(env['BE_TEST_CMD'], value)
+            sourced = subprocess.run(
+                ['bash', '-c', 'source "$1"; printf %s "$BE_TEST_CMD"', '_',
+                 str(env_path)], check=True, capture_output=True,
+                text=True).stdout
+            self.assertEqual(sourced, value)
+        finally:
+            env_path.unlink(missing_ok=True)
+
     def test_parse_env_file_missing_file_returns_empty_dict(self):
         self.assertEqual(phase_dispatch._parse_env_file('/nonexistent'), {})
 

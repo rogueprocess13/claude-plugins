@@ -142,6 +142,78 @@ check_api_key() {
   fi
 }
 
+# ── Transport policy (timeouts, credentials, rate limits, retries) ──────────
+#
+# Timeouts: every request carries `--connect-timeout ${LINEAR_CONNECT_TIMEOUT:-10}`
+# and `--max-time ${LINEAR_MAX_TIME:-30}` (seconds). A black-holed connection
+# would otherwise hang the caller indefinitely — flow.sh's outbox drain runs
+# under its flock, so one stalled call used to wedge every later transition on
+# the ticket. A timeout is curl exit 28, which the classifier below treats as
+# transient (for idempotent requests — see the retry policy).
+#
+# Credentials: the Authorization header is handed to curl on stdin
+# (`-H @-` fed by a here-string), never as an argv element, so the API key
+# does not appear in /proc/<pid>/cmdline for other local users to read.
+#
+# Rate limits: Linear signals a rate limit with HTTP 429 and/or a GraphQL error
+# whose `extensions.code` is "RATELIMITED" (which can arrive on a non-429
+# status, e.g. 400). Both are transient. The message text is matched too, as
+# a fallback, with `rate[ ._-]?limit` ("Rate limit exceeded", "ratelimited",
+# "rate-limit") — the old `rate[.]limit` only matched a literal dot and so
+# never matched a real Linear error.
+#
+# Retry policy for non-idempotent mutations: a *Create mutation (issue,
+# comment and label creates, …) is not safe to resend blindly — a timeout,
+# a connection reset, or a 5xx can all arrive after the server has already
+# committed the write, and resending creates a duplicate. For such a request
+# linear_graphql only retries failures that prove the request was never
+# processed: curl could not resolve/connect/handshake (exit 5, 6, 7, 35) or
+# Linear rejected it as rate-limited. Every other transient failure is
+# reported (exit 10) without a retry, so a duplicate is never manufactured;
+# the caller re-running its step is a deliberate, visible decision instead.
+# Detection is automatic (a query beginning `mutation` that calls a field
+# ending in `Create(`); set LINEAR_NON_IDEMPOTENT=1 to force the policy for
+# any other request. Reads and update mutations (an update sets desired
+# state, so a replay is harmless) keep the normal retry behaviour.
+
+# True (0) when a response is a Linear rate-limit rejection.
+# Args: <http_status_code> <response_body>
+_linear_is_rate_limited() {
+  local http_code="$1"
+  local body="$2"
+  [ "$http_code" = "429" ] && return 0
+  [ -n "$body" ] || return 1
+  if echo "$body" | jq -e '[.errors[]?.extensions.code? // empty] | any(. == "RATELIMITED")' >/dev/null 2>&1; then
+    return 0
+  fi
+  if echo "$body" | jq -e '.errors' >/dev/null 2>&1; then
+    echo "$body" | jq -r '.errors[]?.message // ""' 2>/dev/null | grep -qiE 'rate[ ._-]?limit'
+    return $?
+  fi
+  return 1
+}
+
+# True (0) when a curl exit code proves the request never reached the server:
+# 5 couldn't resolve proxy, 6 couldn't resolve host, 7 couldn't connect,
+# 35 TLS handshake failed. Anything else (28 timeout, 52 empty reply,
+# 56 recv failure, …) may have been processed.
+_linear_curl_not_sent() {
+  case "$1" in
+  5 | 6 | 7 | 35) return 0 ;;
+  esac
+  return 1
+}
+
+# True (0) when a payload must not be blindly retried (see retry policy above).
+_linear_payload_non_idempotent() {
+  local payload="$1"
+  [ "${LINEAR_NON_IDEMPOTENT:-}" = "1" ] && return 0
+  local q
+  q=$(echo "$payload" | jq -r '.query // ""' 2>/dev/null) || return 1
+  [[ "$q" =~ ^[[:space:]]*mutation ]] || return 1
+  [[ "$q" =~ [A-Za-z]Create[[:space:]]*\( ]]
+}
+
 # Classify a curl result as "transient" (retry) or "permanent" (hard-fail).
 # Args: <curl_exit_code> <http_status_code> <response_body>
 _retry_classify() {
@@ -155,8 +227,10 @@ _retry_classify() {
     return
   fi
 
-  # HTTP 429 Too Many Requests — rate limiting is transient by definition
-  if [ "$http_code" = "429" ]; then
+  # Rate limiting is transient by definition: HTTP 429, or a GraphQL error
+  # carrying extensions.code RATELIMITED (on any status), or a rate-limit
+  # message. Checked before the generic GraphQL-error rule below.
+  if _linear_is_rate_limited "$http_code" "$body"; then
     echo "transient"
     return
   fi
@@ -169,15 +243,10 @@ _retry_classify() {
 
   # ── GraphQL error detection (run BEFORE transient keyword scan) ─────────────
   # HTTP 200 with {"errors":[...]} is a terminal GraphQL error — NOT transient.
-  # Only rate-limit GraphQL errors qualify for retry. All other GraphQL-level
-  # errors (validation, auth, field-not-found, etc.) are permanent failures.
+  # Rate-limit GraphQL errors were already classified above. All other
+  # GraphQL-level errors (validation, auth, field-not-found, etc.) are
+  # permanent failures.
   if echo "$body" | jq -e '.errors' >/dev/null 2>&1; then
-    # Check if the errors are specifically about rate limiting
-    if echo "$body" | jq -r '.errors[].message // ""' 2>/dev/null | grep -qiE '429|rate[.]limit'; then
-      echo "transient"
-      return
-    fi
-    # All other GraphQL errors are terminal — no retry
     echo "permanent"
     return
   fi
@@ -194,17 +263,28 @@ _retry_classify() {
   fi
 
   # HTTP-level transient messages in the body (non-GraphQL-error responses).
-  # Rate-limit info embedded in a 200 response body, timeout/temporary keywords.
-  # Use rate[.]limit to avoid the unescaped dot matching any character.
+  # Rate-limit info embedded in a non-JSON body, timeout/temporary keywords.
   # NOTE: '429' deliberately excluded — UUID substrings trigger false positives on
   # successful responses (e.g. dd816776-4ce4-429c-ad38). HTTP 429 is caught by the
-  # status-code check above; GraphQL rate-limit errors are caught by the .errors block.
-  if echo "$body" | grep -qiE 'rate[.]limit|timeout|temporar'; then
+  # status-code check above; GraphQL rate-limit errors by _linear_is_rate_limited.
+  if echo "$body" | grep -qiE 'rate[ ._-]?limit|timeout|temporar'; then
     echo "transient"
     return
   fi
 
   echo "permanent"
+}
+
+# One HTTP attempt. Prints "<body>\n<http_code>" (curl -w) and returns curl's
+# exit code. The Authorization header travels on stdin, never argv.
+_linear_curl() {
+  local payload="$1"
+  curl -s -w '\n%{http_code}' -X POST "$LINEAR_API_URL" \
+    --connect-timeout "${LINEAR_CONNECT_TIMEOUT:-10}" \
+    --max-time "${LINEAR_MAX_TIME:-30}" \
+    -H @- \
+    -d "$payload" <<<"Authorization: ${LINEAR_API_KEY}
+Content-Type: application/json"
 }
 
 # Low-level GraphQL call. Args: query_json_string
@@ -217,6 +297,8 @@ linear_graphql() {
   read -ra delays <<<"${LINEAR_RETRY_DELAYS:-1 2 4}"
   local max_retries="${LINEAR_MAX_RETRIES:-3}"
   local resp http_code curl_exit
+  local non_idempotent=false
+  _linear_payload_non_idempotent "$payload" && non_idempotent=true
 
   while true; do
     http_code=""
@@ -225,10 +307,7 @@ linear_graphql() {
     local api_start
     api_start=$(date +%s%3N 2>/dev/null || echo 0)
 
-    resp=$(curl -s -w '\n%{http_code}' -X POST "$LINEAR_API_URL" \
-      -H "Authorization: ${LINEAR_API_KEY}" \
-      -H "Content-Type: application/json" \
-      -d "$payload" 2>/dev/null) || curl_exit=$?
+    resp=$(_linear_curl "$payload" 2>/dev/null) || curl_exit=$?
 
     local api_elapsed
     if [ "$api_start" -ne 0 ]; then
@@ -255,6 +334,15 @@ linear_graphql() {
       hb_api "linear-request" "ok" "GraphQL call succeeded" "{\"elapsed_ms\":\"$api_elapsed\",\"http_code\":\"$http_code\"}"
     elif [ "$curl_exit" -ne 0 ] || { [ "$class" = "transient" ] && [ "$attempt" -ge "$max_retries" ]; }; then
       hb_api "linear-request" "fail" "GraphQL call failed" "{\"elapsed_ms\":\"$api_elapsed\",\"http_code\":\"${http_code:-curl-err}\"}"
+    fi
+
+    # Non-idempotent create: retry only when the request provably never took
+    # effect (see "Retry policy for non-idempotent mutations" above).
+    if [ "$class" = "transient" ] && $non_idempotent &&
+      ! _linear_curl_not_sent "$curl_exit" &&
+      ! { [ "$curl_exit" -eq 0 ] && _linear_is_rate_limited "$http_code" "$resp"; }; then
+      echo "linear_graphql: ambiguous failure on a non-idempotent mutation (curl exit $curl_exit, http=${http_code:-curl-err}) — not retried, the write may already have been applied" >&2
+      error_exit 10 "linear_api: non-idempotent mutation failed ambiguously; not retried to avoid a duplicate"
     fi
 
     if [ "$class" = "transient" ] && [ "$attempt" -lt "$max_retries" ]; then
@@ -286,6 +374,10 @@ linear_graphql() {
     # read-after-write consistency gap — retry if attempts remain.
     # Only retry when _retry_classify didn't already identify a terminal
     # GraphQL error (checked above — this path only reached for non-error bodies).
+    if [ -z "$resp" ] && $non_idempotent; then
+      echo "linear_graphql: empty response body on a non-idempotent mutation — not retried, the write may already have been applied" >&2
+      error_exit 10 "linear_api: empty response to non-idempotent mutation"
+    fi
     if [ -z "$resp" ] && [ "$attempt" -lt "$max_retries" ]; then
       echo "linear_graphql: empty response body (attempt $((attempt + 1))/$max_retries), retrying" >&2
       ((attempt++)) || true
@@ -354,7 +446,7 @@ get_issue() {
     variables: {id: $id}
   }')
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
   # Type guard: verify .data.issue exists before querying
   if ! _jq_guard "$resp" ".data.issue" "object"; then
     echo "get_issue: unexpected response shape — .data.issue missing or not an object (HTTP status embedded above via linear_graphql, if available)" >&2
@@ -393,6 +485,14 @@ require_issue_payload() {
 }
 
 # Fetch comments for an issue. Returns JSON array on stdout.
+#
+# Fails loudly (BE-3): a transport/API failure returns non-zero with nothing
+# on stdout — never a fabricated `[]`. An outage and "no comments yet" are
+# different answers: a caller that reads `[]` as "nobody replied" (fleetd's
+# human-hold probe, reached through tracker_read or directly) must be able
+# to tell them apart. `[]` is printed only when Linear answered with the
+# issue present and no comment nodes. An issue that resolved to null (not
+# found / no access) is also a failure.
 get_comments() {
   local issue_id="$1"
   local query
@@ -401,10 +501,14 @@ get_comments() {
     variables: {id: $id}
   }')
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
   # Type guard: verify .data.issue.comments.nodes exists as array
   if ! _jq_guard "$resp" ".data.issue.comments.nodes" "array"; then
-    # Graceful: may be empty (no comments) — return empty array
+    if ! _jq_guard "$resp" ".data.issue" "object"; then
+      echo "get_comments: unexpected response shape — .data.issue missing or not an object" >&2
+      return 1
+    fi
+    # Issue present, nodes null — a real (empty) answer.
     echo "[]"
     return 0
   fi
@@ -425,11 +529,17 @@ get_issue_history() {
     variables: {id: $id}
   }')
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
   # Type guard: verify .data.issue.history.nodes exists as array
   if ! _jq_guard "$resp" ".data.issue.history.nodes" "array"; then
-    # Graceful: may be empty (no history), or the field may not exist on this
-    # Linear plan/API version — return empty array either way.
+    # Same contract as get_comments (BE-3): a missing issue is a failure,
+    # a present issue with no history nodes is a real empty answer. (A
+    # history field unknown to the API is a GraphQL error, which
+    # linear_graphql already fails on.)
+    if ! _jq_guard "$resp" ".data.issue" "object"; then
+      echo "get_issue_history: unexpected response shape — .data.issue missing or not an object" >&2
+      return 1
+    fi
     echo "[]"
     return 0
   fi
@@ -494,7 +604,7 @@ get_team() {
       }')
     fi
 
-    resp=$(linear_graphql "$query")
+    resp=$(linear_graphql "$query") || return $?
 
     # Type guard: verify .data.team exists before querying sub-fields.
     # A guard failure on ANY page — including a later one — is a hard
@@ -576,7 +686,7 @@ get_epics_by_label() {
     variables: {label: $label}
   }')
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
 
   # Type guard: verify .data.issues.nodes exists as an array before
   # unwrapping. A malformed payload returns non-zero with a stderr
@@ -701,7 +811,7 @@ update_issue() {
     variables: {id: $id, input: $input}
   }')
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
   echo "$resp" | jq '.data.issueUpdate'
 }
 
@@ -771,7 +881,7 @@ create_issue() {
     variables: {input: $input}
   }')
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
 
   # Type guard: verify .data.issueCreate.issue exists before querying.
   # A success:false response comes back with issue: null, so this guard
@@ -862,7 +972,7 @@ get_me() {
   local query
   query='{"query": "query { viewer { id name } }"}'
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
   echo "$resp" | jq '.data.viewer'
 }
 
@@ -878,7 +988,7 @@ get_project_milestones() {
     variables: {pid: $pid}
   }')
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
   echo "$resp" | jq '.data.project.milestones.nodes'
 }
 
@@ -894,7 +1004,7 @@ get_milestone_issues() {
     variables: {mid: $mid}
   }')
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
   echo "$resp" | jq '{meta: {name: .data.milestone.name, description: .data.milestone.description}, issues: (.data.milestone.issues.nodes // [])}'
 }
 
@@ -909,7 +1019,7 @@ get_parent_with_children() {
     variables: {pid: $pid}
   }')
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
   echo "$resp" | jq '{parent: {id: .data.issue.id, identifier: .data.issue.identifier, title: .data.issue.title, description: .data.issue.description}, children: (.data.issue.children.nodes // [])}'
 }
 
@@ -957,6 +1067,6 @@ save_comment() {
     variables: {input: {issueId: $issueId, body: $body}}
   }')
   local resp
-  resp=$(linear_graphql "$query")
+  resp=$(linear_graphql "$query") || return $?
   echo "$resp" | jq '.data.commentCreate.comment'
 }

@@ -54,10 +54,13 @@ SM="$SCRIPT_DIR/workflow.json"
 usage() {
   echo "Usage: $0 <TICKET-ID> <TRIGGER> [--generation N] [--state-dir DIR] [--data key=value ...] [--dry-run] [--override REASON] [--provenance human|policy]" >&2
   echo "" >&2
-  echo "  --generation N   Caller's generation token (required when fence is active)" >&2
+  echo "  --generation N   Caller's generation token (default: \$FLEET_GENERATION, which fleetd sets for every worker)" >&2
   echo "  --state-dir DIR   Fleet state directory for fence marker lookup" >&2
   echo "  --override REASON   Force a verdict-gated trigger past a trailing FAIL/BLOCK verifier-result" >&2
   echo "  --provenance human|policy   Who approved (human-approve/pr-iterate only; default human)" >&2
+  echo "" >&2
+  echo "Exit codes: 0 ok, 1 usage, 3 unknown trigger, 8 precondition, 9/10 generation fence," >&2
+  echo "  11 verdict gate, 12 an earlier pending event could not be emitted, 42 ticket in flight" >&2
   echo "" >&2
   echo "Valid triggers (from workflow.json):" >&2
   jq -r '.triggers | keys[]' "$SM" 2>/dev/null | sed 's/^/  /' >&2
@@ -92,38 +95,85 @@ FLEET_STATE_DIR="${FLEET_STATE_DIR:-}"
 OVERRIDE_REASON=""
 PROVENANCE="human"
 declare -A DATA=()
+# A flag that takes a value must have one. Without this check `--data` as the
+# last argument crashed on an empty array subscript, and the other value
+# flags tripped set -e on the final shift (review QA-5).
+_need_value() {
+  if [ "$2" -lt 2 ]; then
+    echo "flow.sh: $1 requires a value" >&2
+    usage
+  fi
+}
 while [ $# -gt 0 ]; do
   case "$1" in
   --dry-run) DRY_RUN=true ;;
   --generation)
+    _need_value "$1" $#
     CALLER_GENERATION="$2"
     shift
     ;;
   --state-dir)
+    _need_value "$1" $#
     FLEET_STATE_DIR="$2"
     shift
     ;;
   --override)
+    _need_value "$1" $#
     OVERRIDE_REASON="$2"
     shift
     ;;
   --provenance)
+    _need_value "$1" $#
     PROVENANCE="$2"
     shift
     ;;
   --data)
+    _need_value "$1" $#
     key="${2%%=*}"
     val="${2#*=}"
+    if [ -z "$key" ] || [ "$key" = "$2" ]; then
+      echo "flow.sh: --data expects key=value, got '$2'" >&2
+      usage
+    fi
     DATA["$key"]="$val"
     shift
+    ;;
+  *)
+    # Unknown arguments used to be ignored, so a typo such as `--dryrun`
+    # silently ran a real transition (review QA-5).
+    echo "flow.sh: unknown argument: $1" >&2
+    usage
     ;;
   esac
   shift
 done
 
+# ── Generation token: one source for both fence checks ──────────────────────
+# fleetd exports FLEET_GENERATION into every worker it spawns
+# (fleetd/supervisor.py spawn_worker), and no caller passes --generation. So
+# the flag defaults to the environment; without this every transition after a
+# fleet kill exited 9, because the fence marker is never cleared (review
+# ARCH-1). The resolved value is exported back as FLEET_GENERATION so
+# emit_event (lib/events.sh), which runs its own fence check from that
+# variable, judges the same token flow.sh did. Before, `--generation` alone
+# passed flow.sh's fence while emit_event refused and the event was lost.
+CALLER_GENERATION="${CALLER_GENERATION:-${FLEET_GENERATION:-}}"
+if [ -n "$CALLER_GENERATION" ]; then
+  if ! [[ "$CALLER_GENERATION" =~ ^[0-9]+$ ]]; then
+    echo "flow.sh: invalid generation token '${CALLER_GENERATION}' — must be a non-negative integer" >&2
+    exit 1
+  fi
+  export FLEET_GENERATION="$CALLER_GENERATION"
+fi
+
 # ── Pipeline log helper ─────────────────────────────────────────────────────
 
+# --dry-run is side-effect free (review QA-4): no log lines, no heartbeat,
+# no manifest bootstrap, no pending-event replay. Every writer below checks
+# DRY_RUN itself, so a refusal path (exit 8/9/10/11) still reports on
+# stderr in a dry run but leaves nothing on disk.
 _log() {
+  ! $DRY_RUN || return 0
   [ -n "${LOG_FILE:-}" ] || return 0
   IFS='|' read -r _ph _st _status _msg <<<"$1"
   _plog "$LOG_FILE" "$_ph" "$_st" "$_status" "$_msg"
@@ -137,6 +187,7 @@ _log() {
 # into exit 1. _hb_gate swallows the failure; hb_write already reported it
 # on stderr.
 _hb_gate() {
+  ! $DRY_RUN || return 0
   hb_gate "$@" || true
 }
 
@@ -150,6 +201,7 @@ _hb_detail() {
 }
 
 _emit_schema_header() {
+  ! $DRY_RUN || return 0
   [ -n "${LOG_FILE:-}" ] || return 0
   if [ ! -s "$LOG_FILE" ]; then
     _log "META|schema|info|1"
@@ -163,6 +215,7 @@ _emit_schema_header() {
 # corrupt flow.sh's own exit code beyond the manifest write's own failure
 # path below.
 _ensure_manifest() {
+  ! $DRY_RUN || return 0
   declare -f ensure_ticket_manifest >/dev/null 2>&1 || return 0
   $IS_EPIC && return 0
   ensure_ticket_manifest "$TICKET_ID" 2>/dev/null || true
@@ -366,18 +419,46 @@ fi
 _ensure_manifest
 
 # ── Emit-and-clear any pending_event found on entry ─────────────────────────
-# A pending_event present at this point means a prior invocation crashed
-# between writing the transition and the emission returning (or between the
-# emission returning and clearing the marker — the idem key makes that
-# re-emission a no-op). Its idem key is derived from CURRENT_REV, the exact
-# revision it was written alongside.
+# A pending_event present at this point means a prior invocation either
+# crashed between writing the transition and the emission returning (or
+# between the emission returning and clearing the marker — the idem key
+# makes that re-emission a no-op), or ran emit_event and it failed (see
+# "Write the transition" below). Its idem key is derived from CURRENT_REV,
+# the exact revision it was written alongside.
+#
+# The marker is cleared only once the event is in the outbox. If the replay
+# fails, flow.sh refuses this invocation with exit 12 and changes nothing:
+# applying the new transition would overwrite pending_event with this
+# trigger's event and lose the old one for good (review ARCH-2). The one
+# exception is exit 3 (event not in workflow.json's vocabulary any more),
+# which no retry can fix — that is logged as EMIT_DROPPED and cleared, so a
+# vocabulary edit cannot wedge a ticket.
 _PENDING_JSON=$(_manifest_get pending_event) || true
-if [ -n "$_PENDING_JSON" ] && [ "$_PENDING_JSON" != "null" ]; then
+if ! $DRY_RUN && [ -n "$_PENDING_JSON" ] && [ "$_PENDING_JSON" != "null" ]; then
   _pending_event=$(echo "$_PENDING_JSON" | jq -r '.event // empty' 2>/dev/null)
   _pending_data=$(echo "$_PENDING_JSON" | jq -c '.data // {}' 2>/dev/null)
-  if [ -n "$_pending_event" ] && declare -f emit_event >/dev/null 2>&1; then
-    emit_event --idem "${TICKET_ID}:${CURRENT_REV}" "$TICKET_ID" "$_pending_event" "$_pending_data" 2>/dev/null || true
+  _replay_rc=0
+  if [ -n "$_pending_event" ]; then
+    if declare -f emit_event >/dev/null 2>&1; then
+      emit_event --idem "${TICKET_ID}:${CURRENT_REV}" "$TICKET_ID" "$_pending_event" "$_pending_data" || _replay_rc=$?
+    else
+      _replay_rc=127
+    fi
   fi
+  case "$_replay_rc" in
+  0) ;;
+  3)
+    _log "META|flow-warn|warn|EMIT_DROPPED event=${_pending_event} rev=${CURRENT_REV} rc=3 (not in vocabulary)"
+    _hb_gate "flow-warn" "warn" "EMIT_DROPPED" "$(_hb_detail ticket "$TICKET_ID" event "$_pending_event" rc 3)"
+    ;;
+  *)
+    echo "flow.sh: pending event '${_pending_event}' (rev ${CURRENT_REV}) for ${TICKET_ID} could not be emitted (rc ${_replay_rc}); refusing '${TRIGGER}' so it is not overwritten — retry" >&2
+    _log "META|flow-warn|warn|EMIT_FAILED replay event=${_pending_event} rev=${CURRENT_REV} rc=${_replay_rc}; ${TRIGGER} refused"
+    _hb_gate "flow-warn" "warn" "EMIT_FAILED" \
+      "$(_hb_detail ticket "$TICKET_ID" event "$_pending_event" rc "$_replay_rc" refused "$TRIGGER")"
+    exit 12
+    ;;
+  esac
   _manifest_clear_pending 2>/dev/null || true
 fi
 
@@ -461,10 +542,29 @@ fi
 _ensure_manifest
 _write_approval_manifest
 
-if [ -n "$_EVENT_NAME" ] && declare -f emit_event >/dev/null 2>&1; then
-  emit_event --idem "$IDEM_KEY" "$TICKET_ID" "$_EVENT_NAME" "$_EVENT_DATA" 2>/dev/null || true
+# pending_event is cleared only when emit_event succeeded (review ARCH-2).
+# On failure the transition itself stands — the manifest write above is
+# done, and exiting non-zero would make callers that retry on failure apply
+# the trigger a second time — so flow.sh still exits 0, but it reports
+# event_emitted:false, logs EMIT_FAILED, and leaves pending_event in place.
+# The next flow.sh invocation for this ticket replays it under the same
+# idem key ({tid}:{rev}) before doing anything else (see above).
+_EMIT_RC=0
+if [ -n "$_EVENT_NAME" ]; then
+  if declare -f emit_event >/dev/null 2>&1; then
+    emit_event --idem "$IDEM_KEY" "$TICKET_ID" "$_EVENT_NAME" "$_EVENT_DATA" || _EMIT_RC=$?
+  else
+    _EMIT_RC=127
+  fi
 fi
-_manifest_clear_pending 2>/dev/null || true
+if [ "$_EMIT_RC" -eq 0 ]; then
+  _manifest_clear_pending 2>/dev/null || true
+else
+  echo "flow.sh: event '${_EVENT_NAME}' for ${TICKET_ID} rev ${NEXT_REV} was not emitted (rc ${_EMIT_RC}); kept as pending_event for replay" >&2
+  _log "META|flow-warn|warn|EMIT_FAILED event=${_EVENT_NAME} rev=${NEXT_REV} rc=${_EMIT_RC}; kept as pending_event"
+  _hb_gate "flow-warn" "warn" "EMIT_FAILED" \
+    "$(_hb_detail ticket "$TICKET_ID" event "$_EVENT_NAME" rev "$NEXT_REV" rc "$_EMIT_RC")"
+fi
 
 # ── Drain this ticket's outbox before exiting ───────────────────────────────
 # Unconditional and best-effort (flow-local-transitions spec: "A drain
@@ -478,4 +578,5 @@ jq -n \
   --arg stage "$NEW_STAGE" \
   --argjson flags "$NEW_FLAGS_JSON" \
   --argjson rev "$NEXT_REV" \
-  '{trigger: $trigger, stage: $stage, flags: $flags, rev: $rev, success: true}'
+  --argjson emitted "$([ "$_EMIT_RC" -eq 0 ] && echo true || echo false)" \
+  '{trigger: $trigger, stage: $stage, flags: $flags, rev: $rev, success: true, event_emitted: $emitted}'

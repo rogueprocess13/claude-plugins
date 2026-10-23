@@ -153,8 +153,10 @@ def run_flow_trigger(item, ctx, lib_dir=None, timeout=180):
                           None)
 
     args = ['bash', str(flow), ctx['tid'], trigger]
+    # flow.sh reads trigger data only from `--data key=value`; a bare
+    # `key=value` positional used to be ignored, and is now a usage error.
     for key, value in (item.get('data') or {}).items():
-        args.append(f'{key}={value}')
+        args.extend(['--data', f'{key}={value}'])
     try:
         proc = subprocess.run(args, capture_output=True, text=True,
                               timeout=timeout, env={**os.environ})

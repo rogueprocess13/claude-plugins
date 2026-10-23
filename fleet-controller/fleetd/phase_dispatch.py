@@ -1117,6 +1117,7 @@ def _parse_agent_frontmatter_tools(path):
 
 
 _ENV_EXPORT_RE = re.compile(r'^export\s+(\w+)="(.*)"\s*$', re.MULTILINE)
+_ENV_UNESCAPE_RE = re.compile(r'\\([\\"$`])')
 
 
 def _parse_env_file(env_file):
@@ -1124,8 +1125,11 @@ def _parse_env_file(env_file):
 
     Returns {} on any read failure — the caller's job is to disable
     (never guess) whatever depended on a value this couldn't find, not to
-    raise. Values are the literal quoted text; `spawn_write_env` writes
-    plain strings without embedded double quotes in every field it defines.
+    raise. `spawn_write_env` escapes `\\`, `"`, `$` and a backtick with a
+    backslash inside the double quotes (so `source` reads the value back
+    verbatim); this undoes exactly that escaping, giving the same value
+    `source` would. A value containing a newline spans lines and is not
+    matched — no field spawn_write_env writes is multi-line in practice.
     """
     if not env_file:
         return {}
@@ -1133,7 +1137,8 @@ def _parse_env_file(env_file):
         text = Path(env_file).read_text()
     except (OSError, TypeError):
         return {}
-    return dict(_ENV_EXPORT_RE.findall(text))
+    return {name: _ENV_UNESCAPE_RE.sub(r'\1', value)
+            for name, value in _ENV_EXPORT_RE.findall(text)}
 
 
 def _resolve_ticket_dir(tid, repos_root):

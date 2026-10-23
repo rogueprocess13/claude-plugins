@@ -1,21 +1,31 @@
 SCRIPTS := $(shell find . -name "*.sh" -not -path "./.git/*")
 
-.PHONY: test test-lib test-fleetd test-flow test-kc lint fmt-check fmt test-grill test-planner-intent-gate check-generated
+.PHONY: test test-lib test-fleetd test-flow test-kc lint fmt-check fmt test-grill test-planner-intent-gate check-generated check-test-registration
 
-test: check-generated test-lib test-fleetd test-planner test-flow test-kc test-grill test-planner-intent-gate
+test: check-generated check-test-registration test-lib test-fleetd test-planner test-flow test-kc test-grill test-planner-intent-gate
 
 check-generated:
 	@echo "=== generated-section drift check ==="
 	python3 ticket-auto-pipeline/skills/ticket-flow/gen-dispatch-table.py --check
 
+# Every test-*.sh / test_*.py / tests/phase*.sh on disk must appear in this
+# Makefile (and every one listed must exist) — new test files are not
+# auto-discovered, so an unregistered one would silently never run in CI.
+check-test-registration:
+	@echo "=== test-registration drift check ==="
+	bash scripts/tests/test-check-test-registration.sh
+	bash scripts/check-test-registration.sh
+
 test-lib:
 	@echo "=== lib unit tests ==="
 	bash ticket-auto-pipeline/lib/tests/test-dispatch-table.sh
 	bash ticket-auto-pipeline/lib/tests/test-linear-api.sh
+	bash ticket-auto-pipeline/lib/tests/test-linear-api-transport.sh
 	bash ticket-auto-pipeline/lib/tests/test-env-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-notes-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-rounds.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-dir.sh
+	bash ticket-auto-pipeline/lib/tests/test-plan-artifact-callers.sh
 	bash ticket-auto-pipeline/lib/tests/test-heartbeat.sh
 	bash ticket-auto-pipeline/lib/tests/test-capture-transcript.sh
 	bash ticket-auto-pipeline/lib/tests/test-reconcile-comments.sh
@@ -57,6 +67,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-board-drivers.sh
 	bash ticket-auto-pipeline/lib/tests/test-outbox-drain.sh
 	bash ticket-auto-pipeline/lib/tests/test-board-pusher-integration.sh
+	bash ticket-auto-pipeline/lib/tests/test-board-cursor-fastforward.sh
 	# fleet-controller tests
 	bash fleet-controller/lib/tests/test-fleet-detect.sh
 	bash fleet-controller/lib/tests/test-fleet-detect-new.sh
@@ -66,6 +77,7 @@ test-lib:
 	bash fleet-controller/lib/tests/test-fleet-store-parity.sh
 	bash fleet-controller/lib/tests/test-detect-epic-branch-ready.sh
 	bash fleet-controller/lib/tests/test-fleet-intervene.sh
+	bash fleet-controller/lib/tests/test-fleet-registry.sh
 	bash fleet-controller/lib/tests/test-fleet-dashboard.sh
 	bash fleet-controller/lib/tests/test-fleet-dispatch.sh
 	bash fleet-controller/lib/tests/test-fleet-reconcile.sh
@@ -155,6 +167,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-human-hold-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-corrections.sh
 	bash ticket-auto-pipeline/lib/tests/test-guidance-store.sh
+	# planner→fleet→ticket-auto→feedback handoff chain (mocked Linear)
+	bash ticket-auto-pipeline/lib/tests/test-handoff-e2e.sh
 	# retro GitHub issues tests
 	bash ticket-auto-pipeline/lib/tests/test-github-issues.sh
 	# shared-branch programme tests (Phases 1-3)
@@ -170,6 +184,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-agent-tools.sh
 	# version-aware plugin-cache lookup (#468)
 	bash ticket-auto-pipeline/lib/tests/test-plugin-cache.sh
+	bash ticket-auto-pipeline/lib/tests/test-flow-run.sh
 	bash fleet-controller/lib/tests/test-fleet-plugin-cache.sh
 
 test-fleetd:
@@ -184,6 +199,9 @@ test-fleetd:
 	python3 -m pytest fleet-controller/fleetd/tests/test_pusher.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_otel.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_main.py -v
+	python3 -m pytest fleet-controller/fleetd/tests/test_observer.py -v
+	python3 -m pytest fleet-controller/fleetd/tests/test_worker_status_api.py -v
+	python3 -m pytest fleet-controller/fleetd/tests/test_worker_telemetry_env.py -v
 	python3 -m pytest ticket-auto-pipeline/skills/ticket-auto/tests/test_dashboard_fleet.py -v
 
 test-planner:
@@ -194,6 +212,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-lib-root.sh
 	bash ticket-planner/lib/tests/test-planner-lib-sync.sh
 	bash ticket-planner/lib/tests/test-planner-linear-api.sh
+	bash ticket-planner/lib/tests/test-planner-linear-transport.sh
 	bash ticket-planner/lib/tests/test-planner-stop-conditions.sh
 	bash ticket-planner/lib/tests/test-planner-project-gate.sh
 	bash ticket-planner/lib/tests/test-planner-config-durability.sh
