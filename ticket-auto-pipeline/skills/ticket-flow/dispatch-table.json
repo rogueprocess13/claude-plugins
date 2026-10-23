@@ -259,7 +259,7 @@
         "extra_flags": "--from-auto --mode extract",
         "next_phase": "VERIFY",
         "description": "Run Playwright UAT verification",
-        "instructions": "Follow the skill exactly. Use per-criterion checkpointing: after each criterion passes, write VERIFY|checkpoint|done|criterion-{N}-pass to LOG_FILE. If the agent crashes, resume from the last checkpoint — do not restart from criterion 1. PHASE_RESULT_ATTEMPT=$(({VERIFY_ATTEMPTS} + 1)) — emit this verbatim as the ATTEMPT field of your phase result block.",
+        "instructions": "Follow the skill exactly. Use per-criterion checkpointing: after each criterion passes, write VERIFY|checkpoint|done|criterion-{N}-pass to LOG_FILE. On a resume, take the criteria already passed in THIS attempt from lib/verify-checkpoint.sh (see the skill's Checkpoint resume rule) — never from an earlier attempt. PHASE_RESULT_ATTEMPT=$(({VERIFY_ATTEMPTS} + 1)) — emit this verbatim as the ATTEMPT field of your phase result block.",
         "attempt_expr": "VERIFY_ATTEMPTS + 1",
         "loop_bearing": true,
         "verdict_tokens": [
@@ -374,12 +374,13 @@
           "kind": "auto_merge",
           "conditions": [
             "AUTONOMY is auto or semi-auto (manual never merges)",
+            "MERGE_POLICY is empty (any epic Merge Policy requires a human merge — merge_blocked_reason)",
             "COMPLEXITY = simple",
             "META|outcome-label|info| reads Smooth",
-            "the PR head is not INTEGRATION_BRANCH"
+            "the PR head is readable and is not INTEGRATION_BRANCH (an unreadable head ref never merges)"
           ],
-          "command": "gh pr merge <pr> --squash --auto",
-          "description": "Runs after an OK verdict. The outcome is read from the META|outcome-label|info| line — the confirmed outcome (manifest-recorded, not a tracker label) — never from the IMPLEMENT terminal line, which does not carry Smooth/Rough/Hard."
+          "command": "lib/auto-merge.sh --complexity <COMPLEXITY> <TID> <LOG_FILE> (gh pr merge <pr> --squash --auto)",
+          "description": "Runs after an OK verdict. The decision lives in lib/auto-merge.sh (router) and orchestration.run_auto_merge (fleetd), which mirror each other. The outcome is read from the META|outcome-label|info| line — the confirmed outcome (manifest-recorded, not a tracker label) — never from the IMPLEMENT terminal line, which does not carry Smooth/Rough/Hard."
         }
       ],
       "description": "PR review with router-managed iteration."

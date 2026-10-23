@@ -148,15 +148,16 @@ Log the step start:
 
 From `notes.md` and `context.md`, identify affected repos. Cross-reference with the CLAUDE.md codebase table for full paths.
 
-**Implementation path:**
+**Implementation path** — use the one plan-artifact resolver (whole-ID match: `TEST-7` never
+picks up `TEST-77`'s files). Run it from the tickets repo (CWD here):
 ```bash
-find . -name "simple-fix.md" -path "*{TICKET-ID}*"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root . --log-file "$LOG_FILE"
 ```
-- Found → mode **simple-fix**. Read the file now.
-- Not found → mode **openspec**. Locate the change:
-  ```bash
-  ls openspec/changes/ | grep -i "{ticket-id-lowercase}"
-  ```
+It prints `PLAN_MODE=`, `PLAN_PATH=` and, for openspec, `CHANGE_DIR=`.
+- Exit 0, `PLAN_MODE=simple-fix` → mode **simple-fix**. Read `PLAN_PATH` now.
+- Exit 0, `PLAN_MODE=openspec` → mode **openspec**. The change is `CHANGE_DIR`; read its `tasks.md` (`PLAN_PATH`).
+- Exit 2 → more than one change dir matches this ticket (listed on stderr). Stop and report it — never pick one.
+- Exit 12 → no plan artifact. Stop and report it.
 
 **Activate persona** based on the `Layer` column in CLAUDE.md for each affected repo. For `FE+BE` monorepos, use the layer boundary table to classify by actual files touched:
 
@@ -441,18 +442,16 @@ Rate from `{DIFFICULTY_SUMMARY}` (openspec) or in-context history (simple-fix). 
 
 **Update Linear:**
 
-```
-/ticket-flow {TICKET-ID} implement-outcome --data outcome={Smooth|Rough|Hard}
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} implement-outcome --data outcome={Smooth|Rough|Hard}
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh implement-outcome failed (exit ${_rc})" \
-    "{\"trigger\":\"implement-outcome\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: implement-outcome" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# implement-outcome carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 # flow.sh's implement-outcome trigger itself writes the dedicated
 # IMPLEMENT|implement-outcome|info| entry that outcome-label-check.sh reads —
 # so the Linear label and the pipeline log can never drift apart. No manual
 # log write needed here.
+```
 
 ### Post-implement: Record verifier result (Phase 0 RLVR)
 
@@ -462,7 +461,6 @@ source ~/.claude/skills/lib/verifier-result.sh
 write_verifier_result verifier=implement_tests verdict=<PASS|FAIL> outcome=<Smooth|Rough|Hard> corrections=<N> phase=IMPLEMENT
 ```
 Map test results: all pass → PASS, any fail → FAIL. Pass outcome and corrections count.
-```
 
 This adds the outcome label while preserving all existing labels including `simple`/`complex`. The pairing of predicted complexity and actual outcome is preserved for training and history.
 
@@ -582,6 +580,29 @@ append_correction "{ticket-dir}/notes.md" \
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|commit-push|start|Committing and pushing" >> "$LOG_FILE"
 
+**No-diff check first.** Pass every affected repo's worktree. When none of them has a
+source change (no uncommitted or untracked non-ignored file, and no commit ahead of the
+base), the script writes `IMPLEMENT|commit-push|skip|…` and exits 4 — the line
+`ticket-pr-review` keys its no-diff exemption on (a verification-only ticket has no PR):
+
+```bash
+source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/implement-diff-check.sh" \
+  --base-ref "origin/${BASE_BRANCH:-develop}" --log-file "$LOG_FILE" \
+  "$WORKTREE_PATH" # one argument per affected repo's worktree
+_idc_rc=$?
+```
+
+- `_idc_rc=4` → nothing to commit or push. Skip the rest of Step 5 (no commit, no push, no
+  `commit-push|done` line) and append to `notes.md`: `### {today's date} — no source diff`
+  `- Verification-only: nothing committed`. Continue to Step 5.5.
+- `_idc_rc=0` → commit and push as below.
+- `_idc_rc=2` → a worktree path is wrong. Resolve it again (Step 4) and re-run the check;
+  never skip the commit on rc 2.
+
+An unresolvable base ref counts as a diff, so the skip line is only written on positive
+evidence that there is nothing to ship.
+
 For each affected repo:
 1. Run `/commit-commands:commit` from the worktree (`cd "$WORKTREE_PATH"` first).
 2. **Pre-push safety check — GitNexus `detect_changes`:** The worktree is a full git checkout — `detect_changes` operates on the branch, not the filesystem path.
@@ -650,9 +671,9 @@ into the code worktree and never `cd`s back. Use `$IMPLEMENT_TICKETS_ROOT` (capt
 ```bash
 EXPECT_FLAG=""
 # Mode was already determined in Step 2 ("detect-path"): simple-fix.md found → simple-fix,
-# else → openspec. Re-derive the same way rather than trusting carried state — searched against
+# else → openspec. Re-derive the same way rather than trusting carried state — resolved against
 # $IMPLEMENT_TICKETS_ROOT explicitly, not "." (CWD is the code worktree by this point).
-[ -z "$(find "$IMPLEMENT_TICKETS_ROOT" -name "simple-fix.md" -path "*{TICKET-ID}*" 2>/dev/null)" ] && EXPECT_FLAG="--expect"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$IMPLEMENT_TICKETS_ROOT" --type simple-fix >/dev/null 2>&1 || EXPECT_FLAG="--expect"
 bash ~/.claude/skills/lib/openspec-tracking-check.sh assert "{TICKET-ID}" $EXPECT_FLAG --root "$IMPLEMENT_TICKETS_ROOT"
 ASSERT_RC=$?
 ```

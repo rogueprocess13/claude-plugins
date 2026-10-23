@@ -35,6 +35,103 @@ Also fleet-controller 0.43.5.
 
 ### Breaking
 - UAT verify requires `UAT_TEST_PASSWORD` (env or CLAUDE.md field) on each host.
+## 0.71.6 / fleet-controller 0.43.4 (2026-10-23)
+
+Router, merge and PR fixes (codebase review 2026-10-23, DET-RV-3/4/16, DET-IP-4/5/9).
+
+Also fleet-controller 0.43.4.
+
+### Fixed
+- **Auto-merge**: new `lib/auto-merge.sh` checks `merge_blocked_reason` (Merge Policy) first and
+  does not merge when the PR head cannot be read. fleetd `run_auto_merge` skips when an epic Merge
+  Policy is set.
+- Verify retry decisions (`lib/verify-retry-decide.sh`) use only the latest verify result, so
+  "attempt 1 FAIL, attempt 2 PASS" no longer re-implements.
+- Verify checkpoints (`lib/verify-checkpoint.sh`) are scoped to the current attempt; detect-resume
+  emits `VERIFY_CHECKPOINT` instead of the unhandled `VERIFY_FROM=checkpoint`. fleetd mirrors it.
+- `lib/implement-diff-check.sh` writes `IMPLEMENT|commit-push|skip` when no worktree changed, so
+  pr-review's no-diff exemption can fire.
+- `lib/conflict-marker-scan.sh` blocks only on real `<<<<<<<` / `=======` / `>>>>>>>` sequences; a
+  markdown `=======` underline no longer blocks a merge.
+- pr-iterate's `gh pr` calls pass `--repo` (`lib/pr-repo-resolve.sh`).
+## 0.71.5 / fleet-controller 0.43.3 / ticket-planner 0.24.1 (2026-10-23)
+
+Linear client hardening (codebase review 2026-10-23, BE-3/4/8/9/10/11).
+
+Also ticket-planner 0.24.1 and fleet-controller 0.43.3.
+
+### Fixed
+- `get_comments` / `get_issue_history` (and `tracker_read`) reported a Linear outage as `[]` with
+  exit 0. They now exit non-zero; `ticket-setup` aborts on it, as it already did for `get_issue`.
+- All curl calls have connect and total timeouts.
+- The API key is no longer passed as a curl argument, so it does not appear in the process list.
+- Create mutations are no longer retried after an ambiguous failure (timeout, reset, 5xx, empty
+  body), which could duplicate issues and comments. They retry only when never sent or rate-limited.
+- Rate-limit detection now matches Linear's real signals (HTTP 429 / `RATELIMITED`).
+- `spawn_write_env` escapes `\ " $` and backticks, so values with `&` or quotes survive and `$(...)`
+  is not executed when the env file is sourced. Non-sourcing readers undo the escaping.
+
+The planner's Linear client got the same changes.
+
+### Changed
+- `get_comments` / `get_issue_history` callers must handle a non-zero exit on outage.
+## 0.71.4 (2026-10-23)
+
+One plan-artifact resolver (codebase review 2026-10-23, DET-IP-2, DET-AP-4, DET-IP-13).
+
+### Fixed
+- Five separate plan/change-dir lookups matched ticket IDs by substring, so `TEST-7` could pick up
+  `test-77-*`. `lib/ticket-dir.sh` now owns one resolver (with a `plan` / `change-dir` CLI) that
+  matches only the exact ID or `<id>-` prefix; every script and skill caller uses it.
+- gate-reconcile read `$NOTES_PATH` before setting it, so an openspec ticket with no EXEC line
+  resolved to `simple-fix.md`.
+
+### Changed
+- Two change directories for one ticket now stop the pipeline (`ambiguous`) instead of one being
+  picked silently.
+## 0.71.3 (2026-10-23)
+
+`lib/flow-run.sh` (codebase review 2026-10-23, DET-IP-1 / DET-RV-20).
+
+### Fixed
+- Skills ran `/ticket-flow …; _rc=$?` inside bash blocks. `/ticket-flow` is a slash command, so
+  `$?` meant nothing and the verdict-gate (exit 11) branches could never fire. All 12 sites, plus 3
+  inline copies of the flow.sh lookup, now call `lib/flow-run.sh`, which finds flow.sh through
+  `tap_cache_find`, records failures and returns flow.sh's own exit code (documented: 9/10 fence,
+  11 verdict gate, 127 not found).
+- ticket-verify's agent is told to use the wrapper through Bash; it has no Skill tool.
+## 0.71.2 / fleet-controller 0.43.2 (2026-10-23)
+
+`flow.sh` fence, outbox and flag fixes (codebase review 2026-10-23, ARCH-1/2/10, QA-1/2/4/5/6/7, BE-1/2/5).
+
+### Fixed
+- **Fence generation**: `flow.sh` now defaults its generation from `FLEET_GENERATION` and passes it
+  on to `emit_event`. Before, no caller passed `--generation`, so with `FLEET_FENCE_ENFORCE=true`
+  every transition on a ticket fleetd had ever killed exited 9 and the manifest froze. Malformed
+  generation values and fence files are now refused.
+- **Lost events**: `pending_event` is cleared only after a successful emit. A failed replay exits
+  12 and leaves the manifest unchanged, instead of reporting `success:true` with no outbox line.
+- `--dry-run` writes nothing. Unknown flags and flags missing a value are rejected instead of
+  running a real transition. fleetd now passes trigger data with `--data`.
+- One torn outbox line no longer resets `seq` to 1 or disables idempotency dedup.
+
+### Changed
+- A caller with no generation and no `FLEET_WORKER_PID` (a human command, or fleetd itself) is not
+  fenced.
+## 0.71.1 / fleet-controller 0.43.1 (2026-10-23)
+
+Every test file now runs in CI (codebase review 2026-10-23, QA-3 / QA-11).
+
+### Fixed
+- Six test files (176 cases, including the only coverage of `observer.py`) were never listed in the
+  Makefile, so CI never ran them. They are now registered under `test-lib` / `test-fleetd`.
+- Five tests passed whatever the code did. Each now asserts, and was shown to fail against a
+  deliberately broken implementation. The dry-run test no longer calls the real Linear API.
+
+### Added
+- `scripts/check-test-registration.sh` and the `check-test-registration` make target: fail when a
+  test file on disk is not referenced by the Makefile, or the Makefile lists a missing file. Runs
+  before `make test` and as its own CI step.
 
 ## 0.71.0 (2026-10-23)
 

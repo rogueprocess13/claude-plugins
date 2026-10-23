@@ -48,6 +48,25 @@ When `--from-auto` is present, VERIFY is a loop-bearing phase: additionally foll
 | `browser-session` | **falls back to `build-plan`** | browser state lost on crash |
 | `navigate` | **falls back to `build-plan`** | browser state lost on crash |
 | `execute-steps` | **falls back to `build-plan`** | browser state lost on crash |
+| `checkpoint` | treated as `execute-steps` (so `build-plan` in browser mode) | `detect-resume.sh` no longer emits it; accepted only from an older router |
+
+**Checkpoint resume (deterministic).** Which criteria already passed is never inferred
+from memory or prose. At the start of the criterion loop (Step 4b / 4c / 4c-live), run:
+
+```bash
+VERIFY_CHECKPOINT=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verify-checkpoint.sh" "$LOG_FILE" 2>/dev/null) || VERIFY_CHECKPOINT=""
+```
+
+It prints the highest `N` with a `VERIFY|checkpoint|done|criterion-N-pass` line in the
+**current attempt only** — lines after the last `VERIFY|verify|done|`/`fail|` terminal. An
+earlier attempt's checkpoints never count: that attempt ended, the code was re-implemented,
+and every criterion must be re-checked. The router also receives the same value as
+`VERIFY_CHECKPOINT` from `detect-resume.sh`.
+
+- Build-only and live-backend mode: if `VERIFY_CHECKPOINT` is a number `N`, record criteria
+  1..N as PASS (`resumed from checkpoint`) and start at criterion `N+1`. If it is empty,
+  start at criterion 1.
+- Browser mode: ignore `VERIFY_CHECKPOINT` and verify every criterion.
 
 ---
 
@@ -160,17 +179,18 @@ If not found, continue — the Linear description alone is sufficient.
 ### 1d — Load openspec change (if present)
 
 ```bash
-ls "$TICKETS_ROOT/openspec/changes/" | grep -i "{ticket-id-lowercase}"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$TICKETS_ROOT" --type openspec
 ```
 
-If found, read `tasks.md` to understand what was implemented and any "Manually verify" tasks — these become your verification checklist.
+This is the one plan-artifact resolver (whole-ID match, so `TEST-7` never picks up `TEST-77`'s
+change). If it exits 0, read `tasks.md` at `PLAN_PATH` to understand what was implemented and any "Manually verify" tasks — these become your verification checklist.
 
 ### 1e — Detect verification mode (browser vs. build-only vs. live-backend)
 
 Some tickets have no UI or API surface to exercise — e.g. a root parent-POM introduction, a dependency-version bump, a build-plugin config change. These are verified by running the project's build tooling and checking exit codes/output, not by driving a browser. Others need a **running backend checked via API/health-check, with no UI in the loop** — e.g. service-to-service calls, Eureka registration, circuit-breaker behaviour under simulated failure. A build command can't verify these (nothing to compile), and driving a browser is wrong too (no login, no page in the AC) — treating them as either bucket produces a silent false-pass (the real check never runs) or a stall (browser mode tries to resolve a test user that doesn't exist for an infra ticket). Classify the ticket using the same signal-based approach as `gate-check.sh`'s Check 2.6, so the two phases agree on ticket shape, with an added live-backend trigger evaluated ahead of the build-only test — a ticket can mention a build tool (`mvn`, `pom.xml`) in passing while its actual AC is a live runtime check, and live-backend must win that case:
 
 ```bash
-_plan_file=$(find "$TICKETS_ROOT" -name "simple-fix.md" -path "*{TICKET-ID}*" 2>/dev/null | head -1)
+_plan_file=$(bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$TICKETS_ROOT" --type simple-fix 2>/dev/null | sed -n 's/^PLAN_PATH=//p')
 [ -z "$_plan_file" ] && _plan_file="{ticket-dir}/notes.md"
 _signal_text="$(cat "$_plan_file" {ticket-dir}/context.md 2>/dev/null)"$'\n'"${description:-}"
 
@@ -823,6 +843,7 @@ Capture after each step:
 - The current URL
 - Any new console errors: `mcp__playwright__browser_console_messages`
 
+**Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry to the pipeline log:
 **Screenshot evidence.** The accessibility tree hides layout, overlap, styling and contrast, so every criterion also gets a picture. At each criterion's assertion point — PASS or FAIL — and on any unexpected broken state, call `mcp__playwright__browser_take_screenshot` with `filename` set to `verify-{TICKET-ID}-c{N}-{pass|fail}.png` (N = criterion number). Then make sure the file lands in the ticket workspace — Playwright MCP saves into its own output directory, so copy it from the path the tool reports:
 ```bash
 mkdir -p "{ticket-dir}/artifacts" && cp "<path reported by browser_take_screenshot>" "{ticket-dir}/artifacts/"
@@ -835,6 +856,11 @@ Record each file under `### Evidence` in the report (Steps 6/7) and in the REMED
 # After criterion N passes, write checkpoint:
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|checkpoint|done|criterion-{N}-pass" >> "$LOG_FILE"
 ```
+
+**Checkpoint resume** — see [Step dispatch](#step-dispatch). In browser mode (this step)
+every criterion is re-verified on a resume, because the browser state is gone; the
+checkpoint lines only skip criteria in build-only (Step 4c) and live-backend (Step 4c-live)
+mode.
 
 At any point, if the observed result contradicts a pass criterion, mark that criterion **FAIL** and record:
 - The step number
@@ -1063,14 +1089,11 @@ Verification passed on localhost — the implementation is confirmed working. No
    **Standalone runs only (no `--from-auto`):** delegate to the flow executor. `implement-complete`
    carries no `verdict_gate` (it only opens code review — it is not a Done/UAT-reaching trigger),
    so no exit-11 branch applies here:
-   ```
-   /ticket-flow {TICKET-ID} implement-complete
+   ```bash
+   bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} implement-complete
    _rc=$?
-   if [ "$_rc" -ne 0 ]; then
-     hb-wrap.sh retry "flow-sh" "fail" "flow.sh implement-complete failed (exit ${_rc})" \
-       "{\"trigger\":\"implement-complete\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: implement-complete" >> {LOG_FILE}
-   fi
+   # flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+   # implement-complete carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
    ```
    This moves state → `Review` and clears the manifest `approved` fact.
 
@@ -1103,8 +1126,8 @@ No PR creation. Delegate the state transition — this trigger carries `verdict_
 site in this skill that can come back `exit 11` (gate-blocked) rather than a generic
 non-zero failure:
 
-```
-/ticket-flow {TICKET-ID} uat-pass
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-pass
 _rc=$?
 if [ "$_rc" -eq 11 ]; then
   # Gate-blocked: this run's own verdict (just written above) was PASS, but flow.sh
@@ -1114,14 +1137,10 @@ if [ "$_rc" -eq 11 ]; then
   # since either would look identical to a real Done in the log/Linear (the inverted form
   # of the bug this gate exists to fix). A human must review and either fix the other
   # verifier's failure or re-run `/ticket-flow {TICKET-ID} uat-pass --override <reason>`.
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERDICT_GATE_BLOCKED — uat-pass refused, see flow.sh stderr" >> {LOG_FILE}
-  hb-wrap.sh gate "verdict-gate" "fail" "uat-pass blocked by trailing FAIL/BLOCK verifier-result" \
-    "{\"trigger\":\"uat-pass\",\"ticket\":\"{TICKET-ID}\"}"
-elif [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-pass failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-pass\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-pass" >> {LOG_FILE}
+  # flow-run.sh has already written META|gate-stop|fail|VERDICT_GATE_BLOCKED + heartbeat.
+  echo "uat-pass gate-blocked for {TICKET-ID}"
 fi
+# Any other non-zero exit is already logged by flow-run.sh (META|flow-error).
 ```
 
 This moves state → `Done` and removes `claimed` + `reviewed` — only when `_rc` is `0`.
@@ -1349,16 +1368,11 @@ Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` i
 **Detect plan artifact** (same detection as `ticket-implement` Step 2):
 
 ```bash
-find . -name "simple-fix.md" -path "*{TICKET-ID}*"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root .
 ```
 
-- Found → `PLAN = {output-path}`, mode = `simple-fix`
-- Not found:
-  ```bash
-  ls openspec/changes/ | grep -i "{ticket-id-lowercase}"
-  ```
-  If found → `PLAN = openspec/changes/{change-name}/tasks.md`, mode = `openspec`
-- Neither found → skip write. Report: "No plan artifact found for REMEDIATION_BRIEF — brief emitted to chat and notes.md only."
+- Exit 0 → `PLAN = PLAN_PATH`, mode = `PLAN_MODE` (`simple-fix` or `openspec`)
+- Exit 2 (several change dirs match this ticket) or exit 12 (none) → skip write. Report: "No plan artifact found for REMEDIATION_BRIEF — brief emitted to chat and notes.md only."
 
 **Count existing sections and write atomically:**
 
@@ -1449,14 +1463,11 @@ Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` i
 
 If `--env uat`:
 
-```
-/ticket-flow {TICKET-ID} uat-fail
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-fail
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-fail failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-fail\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-fail" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# uat-fail carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 This moves state → `Ready`, adds `rejected`, removes `reviewed`. A human must run `/ticket-approve {TICKET-ID}` before the next implementation cycle can start.

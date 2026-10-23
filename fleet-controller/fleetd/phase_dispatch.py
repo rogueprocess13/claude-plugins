@@ -1117,6 +1117,7 @@ def _parse_agent_frontmatter_tools(path):
 
 
 _ENV_EXPORT_RE = re.compile(r'^export\s+(\w+)="(.*)"\s*$', re.MULTILINE)
+_ENV_UNESCAPE_RE = re.compile(r'\\([\\"$`])')
 
 
 def _parse_env_file(env_file):
@@ -1124,8 +1125,11 @@ def _parse_env_file(env_file):
 
     Returns {} on any read failure — the caller's job is to disable
     (never guess) whatever depended on a value this couldn't find, not to
-    raise. Values are the literal quoted text; `spawn_write_env` writes
-    plain strings without embedded double quotes in every field it defines.
+    raise. `spawn_write_env` escapes `\\`, `"`, `$` and a backtick with a
+    backslash inside the double quotes (so `source` reads the value back
+    verbatim); this undoes exactly that escaping, giving the same value
+    `source` would. A value containing a newline spans lines and is not
+    matched — no field spawn_write_env writes is multi-line in practice.
     """
     if not env_file:
         return {}
@@ -1133,7 +1137,8 @@ def _parse_env_file(env_file):
         text = Path(env_file).read_text()
     except (OSError, TypeError):
         return {}
-    return dict(_ENV_EXPORT_RE.findall(text))
+    return {name: _ENV_UNESCAPE_RE.sub(r'\1', value)
+            for name, value in _ENV_EXPORT_RE.findall(text)}
 
 
 def _resolve_ticket_dir(tid, repos_root):
@@ -1654,19 +1659,61 @@ def last_verify_checkpoint(log_lines):
 
     Returns `''` when no resumable sub-step has completed, matching the
     bash script's empty-string default.
+
+    Attempt-scoped (review finding DET-RV-16), like the bash script: only
+    lines after the last `VERIFY|verify|done|`/`fail|` terminal count — an
+    attempt that reached a terminal is over, and the next one must re-check
+    every criterion against re-implemented code. `checkpoint` is never
+    returned: a per-criterion checkpoint is written inside execute-steps, so
+    it resumes as execute-steps (then the browser correction → build-plan).
+    The criterion number itself is `last_verify_criterion`.
     """
     last_step = ''
-    for line in log_lines:
-        fields = line.split('|', 4)
-        if len(fields) < 5 or fields[1] != 'VERIFY' or fields[3] != 'done':
+    for fields in _current_verify_attempt(log_lines):
+        if fields[3] != 'done':
             continue
         step = fields[2]
         if step == 'verify' or step.startswith('phase-inspector-'):
             continue
         last_step = step
+    if last_step == 'checkpoint':
+        last_step = 'execute-steps'
     if last_step in _VERIFY_UNRESUMABLE_SUBSTEPS:
         return 'build-plan'
     return last_step
+
+
+_VERIFY_CRITERION_RE = re.compile(r'^criterion-(\d+)-pass')
+
+
+def last_verify_criterion(log_lines):
+    """detect-resume.sh's `VERIFY_CHECKPOINT`: the highest criterion N with a
+    `VERIFY|checkpoint|done|criterion-N-pass` line in the current verify
+    attempt (same scoping as `last_verify_checkpoint`), or `''`.
+    """
+    best = None
+    for fields in _current_verify_attempt(log_lines):
+        if fields[2] != 'checkpoint' or fields[3] != 'done':
+            continue
+        m = _VERIFY_CRITERION_RE.match(fields[4])
+        if m:
+            n = int(m.group(1))
+            best = n if best is None or n > best else best
+    return '' if best is None else str(best)
+
+
+def _current_verify_attempt(log_lines):
+    """Split VERIFY lines after the last `VERIFY|verify|done|fail` terminal."""
+    rows = []
+    for line in log_lines:
+        fields = line.rstrip('\n').split('|', 4)
+        if len(fields) < 5 or fields[1] != 'VERIFY':
+            continue
+        if fields[2] == 'verify' and fields[3] in ('done', 'fail'):
+            rows = []
+            continue
+        rows.append(fields)
+    return rows
 
 
 # ── Ticket type resolution (task 10.1.2, design.md D22) ─────────────────────
