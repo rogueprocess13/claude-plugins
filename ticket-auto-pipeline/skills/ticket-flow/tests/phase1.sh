@@ -1341,6 +1341,262 @@ test_flow_verdict_gate_fails_open_without_verifier_result_lib() {
   [ "$rc" -eq 0 ] && [ "$stage" = "Done" ]
 }
 
+# ── generation fence, end to end (review ARCH-1 / QA-1 / QA-12) ─────────────
+# _flow_run hard-codes FLEET_FENCE_ENFORCE=false, so nothing exercised the
+# fence through flow.sh. These run with enforcement ON and a real fence
+# marker. Generation and worker identity come from the environment, exactly
+# as fleetd hands them to a worker (FLEET_GENERATION, FLEET_WORKER_PID).
+
+_flow_run_fenced() {
+  # _flow_run_fenced <tmpdir> <tid> <trigger> [extra flow.sh args...]
+  local tmpdir="$1" tid="$2" trigger="$3"
+  shift 3
+  FLEET_FENCE_ENFORCE=true FLEET_STATE_DIR="$tmpdir/state" FLEET_BOARD_DRIVERS=none \
+    CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" LOG_FILE="$tmpdir/logs/${tid}-pipeline.log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    FLEET_PIPELINE_LOG_DIR="$tmpdir/logs" \
+    "$FLOW_SH" "$tid" "$trigger" "$@"
+}
+
+_flow_fence_setup() {
+  # _flow_fence_setup <tmpdir> <tid> <fenced_generation>
+  local tmpdir="$1" tid="$2" gen="$3"
+  mkdir -p "$tmpdir/logs" "$tmpdir/state"
+  _flow_seed_manifest "$tmpdir/repos" "$tid"
+  jq -n --argjson g "$gen" '{fenced_generation: $g}' >"$tmpdir/state/${tid}-fence"
+}
+
+# fleetd's respawned worker: FLEET_GENERATION above the fence, no
+# --generation flag (no caller passes one). Used to exit 9 on every trigger.
+test_flow_fence_env_generation_above_fence_allowed() {
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  _flow_fence_setup "$tmpdir" WIL-99 2
+  FLEET_GENERATION=5 FLEET_WORKER_PID=$$ \
+    _flow_run_fenced "$tmpdir" WIL-99 appraise-start >/dev/null 2>&1 || rc=$?
+  local outbox="$tmpdir/logs/WIL-99-outbox.jsonl" gen
+  gen=$(jq -r 'select(.event == "appraise-started") | .gen' "$outbox" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$gen" = "5" ]
+}
+
+test_flow_fence_env_generation_superseded_refused() {
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  _flow_fence_setup "$tmpdir" WIL-99 2
+  local manifest
+  manifest=$(_flow_manifest_path "$tmpdir/repos" WIL-99)
+  FLEET_GENERATION=2 FLEET_WORKER_PID=$$ \
+    _flow_run_fenced "$tmpdir" WIL-99 appraise-start >/dev/null 2>&1 || rc=$?
+  local rev outbox_exists=false
+  rev=$(jq -r '.rev // "absent"' "$manifest")
+  [ -e "$tmpdir/logs/WIL-99-outbox.jsonl" ] && outbox_exists=true
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 10 ] && [ "$rev" = "absent" ] && ! $outbox_exists
+}
+
+test_flow_fence_worker_without_generation_refused() {
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  _flow_fence_setup "$tmpdir" WIL-99 2
+  (
+    unset FLEET_GENERATION
+    FLEET_WORKER_PID=$$ _flow_run_fenced "$tmpdir" WIL-99 appraise-start >/dev/null 2>&1
+  ) || rc=$?
+  local outbox_exists=false
+  [ -e "$tmpdir/logs/WIL-99-outbox.jsonl" ] && outbox_exists=true
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 9 ] && ! $outbox_exists
+}
+
+# --generation passes flow.sh's own fence; emit_event used to read only
+# FLEET_GENERATION (unset here), refuse with 9, and the event was lost while
+# flow.sh reported success. One generation source for both checks now.
+test_flow_fence_flag_generation_reaches_emit() {
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  _flow_fence_setup "$tmpdir" WIL-99 2
+  (
+    unset FLEET_GENERATION
+    FLEET_WORKER_PID=$$ _flow_run_fenced "$tmpdir" WIL-99 appraise-start --generation 5 >/dev/null 2>&1
+  ) || rc=$?
+  local gen
+  gen=$(jq -r 'select(.event == "appraise-started") | .gen' "$tmpdir/logs/WIL-99-outbox.jsonl" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$gen" = "5" ]
+}
+
+# A human at a terminal (/ticket-approve) or fleetd's own hold release: no
+# generation and no FLEET_WORKER_PID. Not a fleetd generation, so not fenced.
+test_flow_fence_non_participant_allowed() {
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  _flow_fence_setup "$tmpdir" WIL-99 2
+  (
+    unset FLEET_GENERATION FLEET_WORKER_PID
+    _flow_run_fenced "$tmpdir" WIL-99 human-approve >/dev/null 2>&1
+  ) || rc=$?
+  local count
+  count=$(grep -c '"event"' "$tmpdir/logs/WIL-99-outbox.jsonl" 2>/dev/null || echo 0)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$count" -eq 1 ]
+}
+
+# A malformed generation token is refused before anything is written, fenced
+# or not (it used to pass flow.sh's fence and then break emit_event's
+# --argjson, losing the event).
+test_flow_malformed_generation_refused() {
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/state"
+  FLEET_GENERATION=abc FLEET_WORKER_PID=$$ \
+    _flow_run_fenced "$tmpdir" WIL-99 appraise-start >/dev/null 2>&1 || rc=$?
+  local wrote=false
+  [ -d "$tmpdir/repos" ] && wrote=true
+  rm -rf "$tmpdir"
+  [ "$rc" -ne 0 ] && ! $wrote
+}
+
+# ── emit failure must not lose the event (review ARCH-2 / QA-2 / BE-2) ──────
+
+_flow_hold_outbox_lock() {
+  # _flow_hold_outbox_lock <logs_dir> <tid> — holds emit_event's outbox lock
+  # in a background `sleep` (exec'd, so killing $! releases the lock). Echoes
+  # the holder pid once the lock is actually held.
+  local lock="$1/.${2}-outbox.lock"
+  (
+    exec 8>"$lock"
+    flock 8
+    exec sleep 30
+  ) </dev/null >/dev/null 2>&1 &
+  local pid=$!
+  local i
+  for i in $(seq 1 50); do
+    flock -n "$lock" true 2>/dev/null || break
+    sleep 0.1
+  done
+  echo "$pid"
+}
+
+test_flow_emit_failure_keeps_pending_event() {
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  _flow_seed_manifest "$tmpdir/repos" WIL-99
+  local manifest holder out
+  manifest=$(_flow_manifest_path "$tmpdir/repos" WIL-99)
+  holder=$(_flow_hold_outbox_lock "$tmpdir/logs" WIL-99)
+  out=$(EVENTS_LOCK_TIMEOUT_SECS=1 _flow_run "$tmpdir" WIL-99 appraise-start 2>/dev/null) || rc=$?
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+
+  local pending rev warned=1 emitted
+  pending=$(jq -r '.pending_event.event // "absent"' "$manifest")
+  rev=$(jq -r '.rev' "$manifest")
+  grep -q '|META|flow-warn|warn|EMIT_FAILED' "$tmpdir/logs/WIL-99-pipeline.log" 2>/dev/null && warned=0
+  emitted=$(printf '%s' "$out" | jq -r '.event_emitted' 2>/dev/null)
+
+  # The next invocation replays it under its original idem key.
+  local rc2=0
+  _flow_run "$tmpdir" WIL-99 appraise-complete >/dev/null 2>&1 || rc2=$?
+  local idems pending2
+  idems=$(jq -r '.idem' "$tmpdir/logs/WIL-99-outbox.jsonl" 2>/dev/null | tr '\n' ',')
+  pending2=$(jq -r '.pending_event // "absent"' "$manifest")
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$pending" = "appraise-started" ] && [ "$rev" = "1" ] &&
+    [ "$warned" -eq 0 ] && [ "$emitted" = "false" ] && [ "$rc2" -eq 0 ] &&
+    [ "$idems" = "WIL-99:1,WIL-99:2," ] && [ "$pending2" = "absent" ]
+}
+
+# A pending_event whose replay fails must not be overwritten by a new
+# transition: flow.sh refuses (exit 12) and leaves the manifest untouched.
+test_flow_pending_replay_failure_refuses_transition() {
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  _flow_seed_manifest "$tmpdir/repos" WIL-99
+  local manifest holder
+  manifest=$(_flow_manifest_path "$tmpdir/repos" WIL-99)
+  _flow_set_manifest_field "$manifest" \
+    '.rev = 3 | .pending_event = {"event":"appraise-started","data":{"complexity":"simple"}}'
+  holder=$(_flow_hold_outbox_lock "$tmpdir/logs" WIL-99)
+  EVENTS_LOCK_TIMEOUT_SECS=1 _flow_run "$tmpdir" WIL-99 appraise-complete >/dev/null 2>&1 || rc=$?
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  local rev stage pending outbox_lines
+  rev=$(jq -r '.rev' "$manifest")
+  stage=$(jq -r '.stage' "$manifest")
+  pending=$(jq -r '.pending_event.event // "absent"' "$manifest")
+  outbox_lines=$({ wc -l <"$tmpdir/logs/WIL-99-outbox.jsonl"; } 2>/dev/null || echo 0)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 12 ] && [ "$rev" = "3" ] && [ "$stage" = "Todo" ] &&
+    [ "$pending" = "appraise-started" ] && [ "$outbox_lines" -eq 0 ]
+}
+
+# ── argument parsing and --dry-run (review QA-4 / QA-5) ──────────────────────
+
+# --dry-run on a ticket with no manifest and an empty log dir must write
+# nothing but flow.sh's own lock file.
+test_flow_dry_run_writes_nothing() {
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  _flow_run "$tmpdir" WIL-98 appraise-start --dry-run >/dev/null 2>&1 || rc=$?
+  local files
+  files=$(cd "$tmpdir" && find . -type f ! -name '.ticket-flow-WIL-98.lock' | sort | tr '\n' ' ')
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ -z "$files" ]
+}
+
+# --dry-run must not replay (emit) or clear a pending_event either.
+test_flow_dry_run_leaves_pending_event() {
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  _flow_seed_manifest "$tmpdir/repos" WIL-99
+  local manifest
+  manifest=$(_flow_manifest_path "$tmpdir/repos" WIL-99)
+  _flow_set_manifest_field "$manifest" \
+    '.rev = 3 | .pending_event = {"event":"appraise-started","data":{"complexity":"simple"}}'
+  _flow_run "$tmpdir" WIL-99 appraise-complete --dry-run >/dev/null 2>&1 || rc=$?
+  local pending outbox_exists=false
+  pending=$(jq -r '.pending_event.event // "absent"' "$manifest")
+  [ -e "$tmpdir/logs/WIL-99-outbox.jsonl" ] && outbox_exists=true
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$pending" = "appraise-started" ] && ! $outbox_exists
+}
+
+# A typo'd flag used to be ignored, so `--dryrun` ran a real transition.
+test_flow_unknown_flag_rejected() {
+  local tmpdir rc=0 err
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  err=$(_flow_run "$tmpdir" WIL-98 appraise-start --dryrun 2>&1 >/dev/null) || rc=$?
+  local wrote=false
+  [ -d "$tmpdir/repos" ] && wrote=true
+  rm -rf "$tmpdir"
+  [ "$rc" -ne 0 ] && ! $wrote && printf '%s' "$err" | grep -q 'unknown argument: --dryrun'
+}
+
+# A value-taking flag with no value used to crash (bad array subscript) or
+# trip set -e on the final shift. Now it is a usage error that writes nothing.
+test_flow_flag_missing_value_rejected() {
+  local tmpdir ok=0 flag rc err
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  for flag in --data --generation --override --provenance --state-dir; do
+    rc=0
+    err=$(_flow_run "$tmpdir" WIL-98 appraise-start "$flag" 2>&1 >/dev/null) || rc=$?
+    if [ "$rc" -eq 0 ] || ! printf '%s' "$err" | grep -q -- "$flag requires a value"; then
+      echo "  $flag -> rc=$rc" >&2
+      ok=1
+    fi
+  done
+  [ -d "$tmpdir/repos" ] && ok=1
+  rm -rf "$tmpdir"
+  return $ok
+}
+
 # ── dispatch ─────────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -1395,6 +1651,18 @@ for fn in \
   test_flow_verdict_gate_no_verifier_result_passes \
   test_flow_verdict_gate_skipped_when_not_declared \
   test_flow_verdict_gate_fails_open_without_verifier_result_lib \
+  test_flow_fence_env_generation_above_fence_allowed \
+  test_flow_fence_env_generation_superseded_refused \
+  test_flow_fence_worker_without_generation_refused \
+  test_flow_fence_flag_generation_reaches_emit \
+  test_flow_fence_non_participant_allowed \
+  test_flow_malformed_generation_refused \
+  test_flow_emit_failure_keeps_pending_event \
+  test_flow_pending_replay_failure_refuses_transition \
+  test_flow_dry_run_writes_nothing \
+  test_flow_dry_run_leaves_pending_event \
+  test_flow_unknown_flag_rejected \
+  test_flow_flag_missing_value_rejected \
   test_ticket_dir_disambiguation \
   test_gen_mermaid_roundtrip; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
