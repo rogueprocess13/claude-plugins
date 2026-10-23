@@ -1145,6 +1145,78 @@ defaulting to generate when headless.
 
 ---
 
+## Step 12 — Planner output that dispatches first time — proposed 2026-10-22, not started
+
+Source: a planner feedback report from a 13-ticket epic on a client project (2026-10-22). The
+planner finished cleanly, but 0 of 13 tickets could enqueue. Two weeks of manual work followed:
+6 Refinement rounds, 59+ description rewrites and a late test-data ticket. Root cause: the planner
+checked that tickets were well-formed. It did not check that they matched the code, the test data
+or each other. That initiative ran before #510/#511/#527, so most of the test-data part is already
+fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an openspec change each.
+
+- [ ] 0. Live check: run one new initiative end to end. Crosscheck must write the test-data
+      ticket and its `blocked-by` edges itself (#510, #511, #527). Fold into Step 11 item 3.
+
+**Bugs: one branch and one PR per issue, no openspec.** The issue body is the plan.
+
+- [ ] 1. #535 — VPLAN_ROW_GAP counts Environment checkboxes as ACs (ticket-auto-pipeline,
+      `dor-check.sh`).
+- [ ] 2. File and fix: `FLAG_NEEDS_INFO` stays set after the questions are answered
+      (`dor-check.sh:1302`, `gate-check.sh:425`).
+- [ ] 3. Dispatch path: #524 (epic manifest lookup), #525 (no `META|pr-created` from VERIFY),
+      #529 (hold-reconcile on an empty scratch log). File and fix `/ticket-flow needs-info` failing
+      on claimed tickets. Check the four unverified items in the report (reconcile double-count,
+      openspec path, heartbeat `start`, dropped `|` lines) against `main`, then file only those
+      that reproduce.
+
+**Openspec changes: one branch each. Review each plan with 3 Sonnet reviewers before implementing.**
+
+- [x] 4. `planner-refinement-convergence` (ticket-planner + ticket-auto-pipeline). **Implemented
+      2026-10-22, PR #544** (all 9 groups; ticket-auto-pipeline 0.70.0, ticket-planner 0.24.0,
+      fleet-controller 0.42.7). Audit demotion ships dark (`PLANNER_REFINEMENT_AUDIT_DEMOTE`).
+      Live check pending: one real initiative through Refinement on the tickets host. Biggest cost
+      in the report. Open design questions (all resolved in design.md):
+      - a round limit (`PLANNER_REFINEMENT_MAX_ROUNDS`), and what happens to the findings left over
+        (advisory appraisal input rather than a DoR hold);
+      - which categories stay blocking: test data, contradictions, missing decisions;
+      - keep findings across rounds and label each one new or carried over. A new finding on
+        unchanged text means the evaluator drifted;
+      - section-scoped staleness instead of a whole-body hash for `SEMANTIC_STALE`;
+      - an audit `disputed` verdict lowers the deterministic code's severity instead of only
+        printing a waive command;
+      - fold in body drift: `BODY_DRIFT` when the Linear description differs from `body.md`, and
+        `--refresh-bodies` covers every ticket, not only not-ready ones. Same file
+        (`planner-refinement.sh`), so not a separate branch.
+- [ ] 5. `planner-specify-parameters` (ticket-planner). Extends `planner-specify-waiting-on-human`;
+      start after that branch merges. Open design questions:
+      - a `## Parameters` table in Specify (name, config key, default, value or
+        `NEEDS_HUMAN_DECISION`), asked as one batch through the existing Specify gate;
+      - which parameter kinds must be asked: durations, limits, pool sizes, rounding rules,
+        transaction boundaries, failure behaviour;
+      - a Crosscheck check against literal values in ACs and seeds that are not declared keys.
+- [ ] 6. `planner-crosscheck-ownership` (ticket-planner). Open design questions:
+      - how writes are extracted from spec text (deterministic grammar vs a declared
+        `## Writes` / `## Reads` section);
+      - findings: two writers or no writer is blocking; a reader of another spec's write gets a
+        `blocked-by` edge (reuse the sidecar from `planner-testdata-synth.sh`); a side effect
+        fired from two triggers needs an idempotency AC;
+      - numbers in ACs (counts, day offsets) checked against the seed data they reference.
+- [ ] 7. `planner-ac-code-precondition` (ticket-planner). Hardest to make deterministic; do last.
+      Open design questions:
+      - which checks are bash (nullability from entity/Liquibase, enum or band limits) and which
+        are agent judgement (context across thread pools or transactions);
+      - where it runs (end of Specify vs a Crosscheck sub-check) and the finding code
+        (`AC_PRECONDITION_UNREACHABLE`);
+      - false-positive budget: the report already notes 33 accepted Crosscheck false positives.
+
+**Order and conflicts.** Items 1–3 first: small, and they block the next epic today. Then 4.
+Items 5, 6 and 7 all edit the Specify prompt in `planner-phase-prompts.sh` and re-pin its sha
+test, so run them one after another in that order. Item 4 touches `planner-refinement.sh` and
+`dor-semantic.sh` only, so it can run in parallel with 5–7. Each branch bumps its plugin version;
+expect version-bump rebases on the second PR of any pair.
+
+---
+
 ## Ordering rationale
 
 1. **Active harm first.** Step 0's first two items mean held tickets are invisible to every
@@ -1176,6 +1248,8 @@ defaulting to generate when headless.
    half is additive and touches no file that Steps 1–5 edit, apart from the human-hold parser it
    shares with Step 3. If Step 3 resumes first, land its parser changes before Step 10 item 1.
    The operator decides the final slot.
+9. **Step 12 items 1–3 are active harm by rule 1.** They block dispatch of a real epic today.
+   Items 4–7 reduce planner rework and come after them. The operator decides the final slot.
 
 ### Parallel track
 

@@ -712,10 +712,19 @@ _fleet_dispatch_initiative_locked() {
         [ -n "$_mc_semantic_codes" ] && _mc_summary_extra="${_mc_summary_extra} semantic=${_mc_semantic_codes}"
       fi
       if [ -n "$_mc_semantic" ] && [ "$_mc_semantic" != "null" ]; then
-        local _mc_disputed
+        # planner-refinement-convergence 5.1: a code the audit demoted (a key
+        # of ready.demoted) no longer blocks, so it gets no waive hint.
+        # ensure_ticket_readiness has already rewritten the manifest by now,
+        # so the cached ready.demoted is the current one.
+        local _mc_disputed _mc_demoted
+        _mc_demoted=$(get_ticket_manifest_field "$child_id" ready 2>/dev/null |
+          jq -c '(.demoted // {}) | if type == "object" then keys else [] end' 2>/dev/null) || _mc_demoted=""
+        [ -n "$_mc_demoted" ] || _mc_demoted='[]'
         _mc_disputed=$(echo "$_mc_semantic" | jq -r \
           --arg tid "$child_id" \
+          --argjson demoted "$_mc_demoted" \
           '[(.audit // [])[] | select(.verdict == "disputed")
+            | select(.code as $c | ($demoted | index($c)) == null)
             | "\(.code) (\(.reason)) — waive: dor-check.sh --waive \($tid) \(.code) \"\(.reason)\""]
            | join("; ")' 2>/dev/null)
         [ -n "$_mc_disputed" ] && _mc_summary_extra="${_mc_summary_extra} disputed=[${_mc_disputed}]"

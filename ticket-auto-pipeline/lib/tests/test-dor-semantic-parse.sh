@@ -484,6 +484,53 @@ EOF
   [ "$ok" = "1" ]
 }
 
+# ── planner-refinement-convergence D5: AUDIT_n_QUOTE ──────────────────────
+
+test_audit_quote_parsed() {
+  _setup
+  cat >"$_ws/audit.txt" <<'EOF'
+=== DOR_SEMANTIC_AUDIT ===
+SCHEMA_VERSION: 1
+TICKET: WIL-123
+BODY_HASH: sha256:abc123
+AUDIT_1_CODE: VPLAN_ROW_GAP
+AUDIT_1_VERDICT: disputed
+AUDIT_1_REASON: one row covers two criteria
+AUDIT_1_QUOTE: - [ ] UAT
+AUDIT_2_CODE: AC_VAGUE
+AUDIT_2_VERDICT: agree
+AUDIT_2_REASON: matches the vague-term pattern
+SCORE_PLAUSIBLE: yes
+SCORE_REASON: r
+=== END DOR_SEMANTIC_AUDIT ===
+EOF
+  _parse audit "$_ws/audit.txt"
+  local ok=1
+  [ "$_RC" -eq 0 ] || ok=0
+  echo "$_OUT" | jq -e '.audit[0].quote == "- [ ] UAT"' >/dev/null 2>&1 || ok=0
+  # No AUDIT_2_QUOTE: that entry carries no quote key at all.
+  echo "$_OUT" | jq -e '.audit[1] | has("quote") | not' >/dev/null 2>&1 || ok=0
+  _teardown
+  [ "$ok" = "1" ]
+}
+
+test_audit_quote_fixture_pair() {
+  _setup
+  local fx="$TEST_DIR/fixtures/dor/semantic"
+  sed -e 's|@TICKET@|WIL-29|' -e 's|@BODY_HASH@|sha256:abc|' "$fx/29-audit.txt" >"$_ws/audit.txt"
+  sed -e 's|@TICKET@|WIL-29|' -e 's|@BODY_HASH@|sha256:abc|' "$fx/29-scan.txt" >"$_ws/scan.txt"
+  local ok=1
+  _parse audit "$_ws/audit.txt"
+  [ "$_RC" -eq 0 ] || ok=0
+  echo "$_OUT" | jq -e '.audit[0] | .code == "VPLAN_ROW_GAP" and .verdict == "disputed"
+    and .quote == "- [ ] Criteria 2 and 3 are verified together in Verification Plan row 2"' >/dev/null 2>&1 || ok=0
+  _parse scan "$_ws/scan.txt"
+  [ "$_RC" -eq 0 ] || ok=0
+  echo "$_OUT" | jq -e '.findings == []' >/dev/null 2>&1 || ok=0
+  _teardown
+  [ "$ok" = "1" ]
+}
+
 # ── 3.3: sourcing / drift guards ─────────────────────────────────────────
 
 test_sourcing_does_not_enable_errexit() {
@@ -540,7 +587,8 @@ for t in test_canonical_scan_valid test_canonical_audit_valid \
   test_contradiction_without_quote_b_rejected test_hard_code_not_audited_rejected \
   test_advisory_code_not_audited_accepted test_disputed_without_reason_rejected \
   test_secret_shaped_value_redacted test_sourcing_does_not_enable_errexit \
-  test_schema_doc_enums_match_parser; do
+  test_schema_doc_enums_match_parser test_audit_quote_parsed \
+  test_audit_quote_fixture_pair; do
   if [ -n "$FILTER" ] && [[ "$t" != *"$FILTER"* ]]; then continue; fi
   _run "$t" "$t"
 done

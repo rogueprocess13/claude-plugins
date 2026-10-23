@@ -24,28 +24,70 @@
 #     TicketGen|dispatch-gate|done line (initiative planned before this
 #     change shipped).
 #
-#   planner_refinement_scan <INIT>
+#   planner_refinement_scan <INIT> [--only <TID[,TID...]>]
 #     Runs the deterministic check for every child of the epic (strict:
 #     DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true, scoped to the call),
 #     caching each
 #     verdict on the ticket manifest and writing planner/dor-result.json.
-#     Prints one ticket id per line for every ticket that needs a semantic
-#     pass (design.md Decision 6's staleness rule). Exit 1 when the epic id
-#     cannot be resolved.
+#     Unless PLANNER_REFINEMENT_DRIFT_CHECK=false, first reads each child's
+#     Linear description and classifies it against the baseline
+#     (body-baseline.sh): adopt rewrites body.md, rebaseline writes the
+#     baseline, conflict/local-ahead add BODY_DRIFT and
+#     PLANNER_REFINEMENT_DRIFT_MAX_FAILS (default 3) consecutive failed reads
+#     add BODY_UNVERIFIED — both to the cached missing only, never to
+#     dor-result.json. Migrates an unchanged dor-semantic-v2 verdict in place
+#     (dor_semantic_migrate_v2) before deciding. Prints one ticket id per
+#     line for every ticket that needs a semantic pass (design.md Decision
+#     6's staleness rule). --only restricts it to the named children
+#     (Refinement after Completed). Exit 1 when the epic id cannot be
+#     resolved.
 #
 #   planner_refinement_prompt <INIT> <TID> scan|audit
-#     Prints the dor-semantic-agent prompt for one ticket/stage.
+#     Prints the dor-semantic-agent prompt for one ticket/stage. A scan of a
+#     stale verdict that recorded its changed sections passes them as
+#     --changed-sections (planner-refinement-convergence D4).
 #
 #   planner_refinement_apply <INIT> <TID>
 #     Parses both result files via dor-semantic-parse.sh and applies them via
-#     dor_semantic_apply. Non-zero when either result is invalid. After a
-#     successful apply, writes one META|refinement-testdata|warn line per
-#     verified advisory TEST_DATA_GAP finding, once per ticket per body hash;
-#     that write never changes the exit code.
+#     dor_semantic_apply, with DOR_SEMANTIC_MAX_ROUNDS
+#     (${PLANNER_REFINEMENT_MAX_ROUNDS:-2}), DOR_SEMANTIC_DRIFT_DEMOTE=true and
+#     DOR_SEMANTIC_ROUND_RESET_SHARE as call prefixes. Non-zero when either
+#     result is invalid. After a successful apply it writes, each once per
+#     ticket per body hash: the META|refinement-round|done trend line, a
+#     META|refinement|warn|policy override line when the stored policy was
+#     overridden, one META|refinement-testdata|warn line per verified
+#     advisory TEST_DATA_GAP finding and, only when
+#     PLANNER_REFINEMENT_AUDIT_DEMOTE=true, the META|refinement-dispute lines
+#     of dor_audit_demote. None of those writes changes the exit code.
 #
 #   planner_refinement_unavailable <INIT> <TID>
 #     Records SEMANTIC_UNAVAILABLE for a ticket whose two evaluator attempts
-#     both failed.
+#     both failed. ready.lineage (the round history) is left untouched.
+#
+#   planner_refinement_converge <INIT> <TID[,TID...]> [<by>]
+#     Operator converge (design D10). Spawns nothing. For each named child
+#     with a current, non-stale semantic verdict, makes every blocking
+#     non-structural finding advisory (demoted "converge", converged_by
+#     <by>) and logs META|refinement-converge|done|<TID> demoted=<n> by=<by>.
+#     A child with no, a stale or an outdated verdict is refused, left
+#     unchanged and named on stdout. Exit 0; 1 when the epic is unresolved.
+#
+#   planner_refinement_converge_args_validate <converge-flag> <only> <by>
+#     SKILL.md step 2a: --converge needs --only; --only/--by need --converge;
+#     --only must be a comma-separated ticket-id list. Exit 1 with a message.
+#
+#   planner_refinement_converge_consume <INIT>
+#     Runs the persisted one-shot `converge` config key, then clears it.
+#     Nothing when the key is unset.
+#
+#   planner_refinement_after_completed_pending <INIT>
+#     Exit 0 when the initiative is finished (planner_position_derive empty),
+#     not legacy, and refresh-bodies or converge is set — Refinement re-runs for the
+#     affected children only (design D6/D10).
+#
+#   planner_refinement_after_completed_finish <INIT>
+#     Writes the META|refinement-after-completed|done line that closes such
+#     a run (never a phase line, so the position is unchanged).
 #
 #   planner_refinement_gate <INIT>
 #     Stamps the epic manifest dispatch=true once every child has a verdict
@@ -55,18 +97,33 @@
 #     design.md Decision 7).
 #
 #   planner_refinement_report <INIT>
-#     Prints the halt report: per not-ready ticket, its deterministic codes,
-#     semantic findings, missed/disputed codes with the exact waive command,
-#     and the --refresh-bodies note (design.md Decision 8), then an
-#     "## Advisory test-data findings" section when any child carries one.
+#     Prints the halt report: per not-ready ticket, its round, deterministic
+#     codes, semantic findings (blocking new / carried, structural drift,
+#     unverified, advisory), a "Demoted (does not block)" list with each
+#     reason (round-limit, drift, converge, audit dispute), missed/disputed
+#     codes with the exact waive command, and the --refresh-bodies note
+#     (design.md Decision 8), then an "## Advisory test-data findings"
+#     section when any child carries one and a "## Demoted findings on ready
+#     tickets" section when a ready child carries a demotion.
 #
 #   planner_refinement_advisory_summary <INIT>
 #     Prints one "Advisory (does not block) <TID> TEST_DATA_GAP: ..." line per
-#     verified advisory TEST_DATA_GAP finding on any child, ready or not;
-#     nothing when there are none (dor-semantic-test-data-gap).
+#     verified advisory TEST_DATA_GAP finding on any child, ready or not
+#     (dor-semantic-test-data-gap), then one "Advisory (does not block) <TID>
+#     <CODE> (demoted: <reason>)..." line per demotion on a ready child;
+#     nothing when there are none.
 #
 #   planner_refinement_refresh_bodies <INIT>
-#     Overwrites body.md of every not-ready child from Linear (read-only).
+#     Takes Linear's text (body.md + baseline) for every child whose
+#     body-drift class is not clean, ready and waived ones included; waivers
+#     are kept. Read-only towards Linear. Prints each child the next scan
+#     must re-evaluate, one per line.
+#
+#   planner_ticketgen_record_baseline <INIT> <TID> create|skip
+#     TicketGen's body baseline (design D6): after a create, reads the
+#     description back once and writes the baseline; on an idempotent skip,
+#     writes it only when none exists and Linear's text equals body.md.
+#     Always exit 0 — a failed read-back never fails TicketGen.
 
 _PLANNER_REFINEMENT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -199,13 +256,129 @@ planner_refinement_legacy() {
   grep -qE '^[^|]*\|TicketGen\|dispatch-gate\|done\|' "$log_file" 2>/dev/null
 }
 
+# ── Body drift (planner-refinement-convergence D6) ───────────────────────
+#
+# Per-ticket files beside body.md in planner/:
+#   linear-baseline.sha  body-baseline.sh's baseline (Linear's own text)
+#   linear-read-fails    consecutive failed Linear reads (absent = 0)
+#   body-drift           the class (conflict | local-ahead) behind a
+#                        BODY_DRIFT — read by the halt report; kept across a
+#                        failed read so the code is not dropped blind
+
+# Sources ticket-auto-pipeline's body-baseline.sh through the same
+# three-level resolver as the other deps — the one hash and classifier, no
+# copy here. Exit 1 (with a reason on stderr) when it cannot be found.
+_planner_refinement_source_baseline() {
+  declare -f body_baseline_classify >/dev/null 2>&1 && return 0
+  local f
+  f=$(_planner_refinement_resolve "body-baseline.sh") || {
+    echo "planner-refinement: body-baseline.sh not found (install ticket-auto-pipeline) — body drift not checked" >&2
+    return 1
+  }
+  # shellcheck source=/dev/null
+  source "$f"
+  declare -f body_baseline_classify >/dev/null 2>&1
+}
+
+# _planner_refinement_linear_desc <TID>
+# Prints the ticket's Linear description. Exit 1 on any failed read: no
+# reader, a transport/GraphQL failure, no issue, or an empty description
+# (a planned ticket's description is never legitimately empty).
+_planner_refinement_linear_desc() {
+  declare -f planner_linear_get_issue >/dev/null 2>&1 || return 1
+  local resp
+  resp=$(planner_linear_get_issue "$1" 2>/dev/null) || return 1
+  echo "$resp" | jq -e '(.data.issue.description // "") | type == "string" and length > 0' >/dev/null 2>&1 || return 1
+  echo "$resp" | jq -r '.data.issue.description'
+}
+
+# _planner_refinement_max_fails — PLANNER_REFINEMENT_DRIFT_MAX_FAILS, a
+# positive integer, default 3.
+_planner_refinement_max_fails() {
+  local n="${PLANNER_REFINEMENT_DRIFT_MAX_FAILS:-3}"
+  [[ "$n" =~ ^[1-9][0-9]*$ ]] || n=3
+  echo "$n"
+}
+
+# _planner_refinement_drift_classify <INIT> <TID> <pdir> <read_rc> <desc>
+# Acts on one child's Linear read and prints the BODY_* codes to add to the
+# cached `missing`, as a JSON array:
+#   read failed    counter + 1; BODY_UNVERIFIED at the limit; a recorded
+#                  BODY_DRIFT (body-drift marker) is kept
+#   adopt          body.md and baseline ← Linear, META|refinement|step line
+#   rebaseline     baseline only
+#   conflict,
+#   local-ahead    BODY_DRIFT (marker written)
+#   clean          nothing
+# Any successful read resets the counter.
+_planner_refinement_drift_classify() {
+  local initiative_id="$1" tid="$2" pdir="$3" read_rc="$4" desc="$5"
+  local fails_file="${pdir}/linear-read-fails" marker="${pdir}/body-drift"
+  local -a codes=()
+
+  if [ "$read_rc" -ne 0 ]; then
+    local n max
+    n=$(cat "$fails_file" 2>/dev/null) || n=0
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    n=$((n + 1))
+    max=$(_planner_refinement_max_fails)
+    printf '%s\n' "$n" >"$fails_file" 2>/dev/null
+    if [ "$n" -ge "$max" ]; then
+      codes+=("BODY_UNVERIFIED")
+      planner_state_write "$initiative_id" "META" "refinement" "warn" "${tid}: Linear read failed (${n}/${max}) — BODY_UNVERIFIED"
+    else
+      planner_state_write "$initiative_id" "META" "refinement" "warn" "${tid}: Linear read failed (${n}/${max}) — body drift not checked"
+    fi
+    [ -f "$marker" ] && codes+=("BODY_DRIFT")
+  else
+    rm -f "$fails_file" 2>/dev/null
+    local cls="" rc=0
+    cls=$(body_baseline_classify "$pdir" "$desc") || rc=$?
+    case "$cls" in
+    adopt)
+      local old8 new8
+      old8=$(body_baseline_read "$pdir" 2>/dev/null | cut -c1-8)
+      new8=$(body_baseline_hash "$desc" 2>/dev/null | cut -c1-8)
+      printf '%s' "$desc" >"${pdir}/body.md"
+      body_baseline_write "$pdir" "$desc" 2>/dev/null
+      rm -f "$marker" 2>/dev/null
+      planner_state_write "$initiative_id" "META" "refinement" "step" "${tid} body adopted from Linear [${old8}→${new8}]"
+      ;;
+    rebaseline)
+      body_baseline_write "$pdir" "$desc" 2>/dev/null
+      rm -f "$marker" 2>/dev/null
+      ;;
+    conflict | local-ahead)
+      printf '%s\n' "$cls" >"$marker" 2>/dev/null
+      codes+=("BODY_DRIFT")
+      ;;
+    clean)
+      rm -f "$marker" 2>/dev/null
+      ;;
+    *)
+      # No body.md (rc 2) or no hash tool (rc 1): nothing to compare.
+      [ "$rc" -ne 0 ] && [ -f "$marker" ] && codes+=("BODY_DRIFT")
+      ;;
+    esac
+  fi
+
+  if [ "${#codes[@]}" -eq 0 ]; then
+    echo '[]'
+  else
+    printf '%s\n' "${codes[@]}" | jq -R . | jq -sc 'unique'
+  fi
+}
+
 # ── Deterministic scan (design.md Decision 5) ────────────────────────────
 
 # planner_refinement_scan <INIT>
 # Runs the deterministic check against every child's local body.md, caching
 # the verdict and printing the tickets that need a semantic pass.
 planner_refinement_scan() {
-  local initiative_id="$1"
+  local initiative_id="$1" only=""
+  if [ "${2:-}" = "--only" ]; then
+    only="${3:-}"
+  fi
   _planner_refinement_source_deps || return 1
 
   local epic_id
@@ -220,6 +393,9 @@ planner_refinement_scan() {
   local tid
 
   for tid in $(echo "$children" | jq -r '.[]' 2>/dev/null); do
+    if [ -n "$only" ]; then
+      case ",${only}," in *",${tid},"*) ;; *) continue ;; esac
+    fi
     local type
     type=$(get_ticket_manifest_field "$tid" type 2>/dev/null)
     [ -n "$type" ] || type="feature"
@@ -228,18 +404,35 @@ planner_refinement_scan() {
     local body_file="${pdir}/body.md"
     mkdir -p "$pdir" 2>/dev/null
 
+    # Body drift (planner-refinement-convergence D6): one Linear read per
+    # child per run, unless switched off or no reader/baseline lib exists.
+    local drift_on="false" desc="" desc_rc=1
+    if [ "${PLANNER_REFINEMENT_DRIFT_CHECK:-true}" != "false" ] &&
+      declare -f planner_linear_get_issue >/dev/null 2>&1 &&
+      _planner_refinement_source_baseline; then
+      drift_on="true"
+      desc=$(_planner_refinement_linear_desc "$tid") && desc_rc=0 || desc_rc=1
+    fi
+
     if [ ! -s "$body_file" ]; then
-      local desc=""
-      if declare -f planner_linear_get_issue >/dev/null 2>&1; then
+      if [ "$drift_on" != "true" ] && declare -f planner_linear_get_issue >/dev/null 2>&1; then
         desc=$(planner_linear_get_issue "$tid" 2>/dev/null | jq -r '.data.issue.description // ""' 2>/dev/null)
+        [ -n "$desc" ] && desc_rc=0
       fi
-      if [ -n "$desc" ]; then
+      if [ "$desc_rc" -eq 0 ] && [ -n "$desc" ]; then
         printf '%s' "$desc" >"$body_file"
       else
+        [ "$drift_on" = "true" ] && _planner_refinement_drift_classify "$initiative_id" "$tid" "$pdir" "1" "" >/dev/null
         set_ticket_readiness "$tid" "not-ready" '["BODY_UNAVAILABLE"]' '[]' >/dev/null 2>&1
         planner_state_write "$initiative_id" "META" "refinement" "fail" "${tid}: no local body.md and could not fetch description from Linear"
         continue
       fi
+    fi
+
+    local body_codes='[]'
+    if [ "$drift_on" = "true" ]; then
+      body_codes=$(_planner_refinement_drift_classify "$initiative_id" "$tid" "$pdir" "$desc_rc" "$desc")
+      [ -n "$body_codes" ] || body_codes='[]'
     fi
 
     # Refinement scans strictly (planner-test-data-derivation, design
@@ -255,14 +448,35 @@ planner_refinement_scan() {
 
     case "${DOR_STATUS:-unavailable}" in
     ready | not-ready)
-      local extras
-      extras=$(jq -nc --argjson score "${DOR_SCORE:-null}" --argjson dims "${DOR_DIMENSIONS:-null}" \
-        --argjson gaps "${DOR_GAPS:-null}" --arg hash "$hash" \
-        '{score: $score, dimensions: $dims, gaps: $gaps} + (if $hash != "" then {body_hash: $hash} else {} end)' 2>/dev/null)
-      set_ticket_readiness "$tid" "$DOR_STATUS" "${DOR_MISSING:-[]}" "${DOR_ADVISORY:-[]}" "$extras" >/dev/null 2>&1
+      # check_profile records the strict prefix above, so a dispatch-time
+      # recompute (ensure_ticket_readiness) re-applies it instead of the
+      # host's defaults; the section/unit hashes drive section-scoped
+      # staleness (planner-refinement-convergence D4/D9).
+      # dor-result.json is the deterministic check's own output, written
+      # before the BODY_* codes are appended: the audit never judges them
+      # (design D6).
       jq -nc --argjson missing "${DOR_MISSING:-[]}" --argjson advisory "${DOR_ADVISORY:-[]}" \
         --arg status "$DOR_STATUS" \
         '{missing: $missing, advisory: $advisory, status: $status}' >"${pdir}/dor-result.json" 2>/dev/null
+      local cached_missing cached_status="$DOR_STATUS"
+      cached_missing=$(jq -nc --argjson m "${DOR_MISSING:-[]}" --argjson b "$body_codes" '$m + $b | unique' 2>/dev/null) ||
+        cached_missing="${DOR_MISSING:-[]}"
+      [ "$body_codes" = "[]" ] || cached_status="not-ready"
+      local extras legacy_extras write_rc=0
+      extras=$(jq -nc --argjson score "${DOR_SCORE:-null}" --argjson dims "${DOR_DIMENSIONS:-null}" \
+        --argjson gaps "${DOR_GAPS:-null}" --arg hash "$hash" \
+        --argjson sec "${DOR_SECTION_HASHES:-null}" --argjson units "${DOR_UNIT_HASHES:-null}" \
+        '{score: $score, dimensions: $dims, gaps: $gaps, check_profile: "planner-strict"}
+         + (if $hash != "" then {body_hash: $hash} else {} end)
+         + (if $sec != null then {section_hashes: $sec} else {} end)
+         + (if $units != null then {unit_hashes: $units} else {} end)' 2>/dev/null)
+      set_ticket_readiness "$tid" "$cached_status" "$cached_missing" "${DOR_ADVISORY:-[]}" "$extras" >/dev/null 2>&1 || write_rc=$?
+      if [ "$write_rc" -eq 3 ]; then
+        # An older resolved manifest-write.sh rejects the new extras keys —
+        # fall back to the four it knows rather than leave no verdict.
+        legacy_extras=$(echo "$extras" | jq -c '{score, dimensions, gaps} + (if has("body_hash") then {body_hash} else {} end)' 2>/dev/null)
+        set_ticket_readiness "$tid" "$cached_status" "$cached_missing" "${DOR_ADVISORY:-[]}" "$legacy_extras" >/dev/null 2>&1
+      fi
       ;;
     *)
       set_ticket_readiness "$tid" "not-ready" '["BODY_UNAVAILABLE"]' '[]' >/dev/null 2>&1
@@ -270,6 +484,14 @@ planner_refinement_scan() {
       continue
       ;;
     esac
+
+    # An unchanged dor-semantic-v2 verdict is migrated in place (design D8)
+    # rather than listed — the evaluator comparison below would otherwise
+    # send every v2 ticket of the epic back to the agent. rc 2 (nothing to
+    # migrate) is the common case.
+    if declare -f dor_semantic_migrate_v2 >/dev/null 2>&1; then
+      dor_semantic_migrate_v2 "$tid" "$body_file" >/dev/null 2>&1 || true
+    fi
 
     local ready_after needs="false" sem_hash sem_eval
     ready_after=$(get_ticket_manifest_field "$tid" ready 2>/dev/null)
@@ -285,7 +507,9 @@ planner_refinement_scan() {
       needs="true"
     fi
 
-    [ "$needs" = "true" ] && needs_pass+=("$tid")
+    if [ "$needs" = "true" ]; then
+      needs_pass+=("$tid")
+    fi
   done
 
   local t
@@ -303,7 +527,16 @@ planner_refinement_prompt() {
   local body_file="${pdir}/body.md"
 
   if [ "$kind" = "scan" ]; then
-    dor_semantic_prompt scan "$tid" "$body_file" "${pdir}/semantic-scan-result.txt"
+    # A stale verdict that recorded which sections changed gets a scoped
+    # rescan (planner-refinement-convergence D4).
+    local changed=""
+    changed=$(get_ticket_manifest_field "$tid" ready 2>/dev/null |
+      jq -r '(.semantic.changed_sections // []) | join("|")' 2>/dev/null) || changed=""
+    if [ -n "$changed" ]; then
+      dor_semantic_prompt scan --changed-sections "$changed" "$tid" "$body_file" "${pdir}/semantic-scan-result.txt"
+    else
+      dor_semantic_prompt scan "$tid" "$body_file" "${pdir}/semantic-scan-result.txt"
+    fi
   else
     dor_semantic_prompt audit "$tid" "$body_file" "${pdir}/semantic-audit-result.txt" "${pdir}/dor-result.json"
   fi
@@ -338,12 +571,121 @@ planner_refinement_apply() {
     return 1
   fi
 
+  # Convergence policy (planner-refinement-convergence D1/D3), scoped to
+  # this one call: bash restores the caller's values (or unsets them) when
+  # dor_semantic_apply returns, so nothing leaks into the planner's env.
   local apply_rc=0
-  dor_semantic_apply "$tid" "$body_file" "$scan_json" "$audit_json" || apply_rc=$?
+  DOR_SEMANTIC_MAX_ROUNDS="${PLANNER_REFINEMENT_MAX_ROUNDS:-2}" \
+    DOR_SEMANTIC_DRIFT_DEMOTE=true \
+    DOR_SEMANTIC_ROUND_RESET_SHARE="${DOR_SEMANTIC_ROUND_RESET_SHARE:-0.5}" \
+    dor_semantic_apply "$tid" "$body_file" "$scan_json" "$audit_json" || apply_rc=$?
   if [ "$apply_rc" -eq 0 ]; then
+    if [ "${PLANNER_REFINEMENT_AUDIT_DEMOTE:-false}" = "true" ]; then
+      _planner_refinement_audit_demote "$initiative_id" "$tid" "$body_file" || true
+    fi
+    _planner_refinement_note_round "$initiative_id" "$tid" || true
     _planner_refinement_note_testdata "$initiative_id" "$tid" || true
   fi
   return "$apply_rc"
+}
+
+# _planner_refinement_hash8 <TID> — first 8 hex of ready.lineage.body_hash
+# (falling back to ready.semantic.body_hash). Empty when neither exists.
+_planner_refinement_hash8() {
+  local h
+  h=$(get_ticket_manifest_field "$1" ready 2>/dev/null |
+    jq -r '.lineage.body_hash // .semantic.body_hash // ""' 2>/dev/null) || h=""
+  h="${h#sha256:}"
+  echo "${h:0:8}"
+}
+
+# _planner_refinement_logged <INIT> <log-prefix> <TID> <hash8> [<needle>]
+# Exit 0 when the state log already holds a line starting with
+# <log-prefix> (e.g. "|META|refinement-round|done|") for <TID> and
+# [<hash8>] (and containing <needle>, when given) — the dedupe every
+# once-per-ticket-per-body line uses.
+_planner_refinement_logged() {
+  local initiative_id="$1" prefix="$2" tid="$3" hash8="$4" needle="${5:-}"
+  local log_file
+  log_file=$(planner_state_log "$initiative_id" 2>/dev/null) || return 1
+  [ -f "$log_file" ] || return 1
+  grep -F "$prefix" "$log_file" 2>/dev/null |
+    grep -F "${prefix}${tid} " 2>/dev/null |
+    grep -F "${needle}" 2>/dev/null |
+    grep -qF "[${hash8}]" 2>/dev/null
+}
+
+# _planner_refinement_note_round <INIT> <TID>
+# Writes, once per ticket per body hash (design D3):
+#   META|refinement-round|done|<TID> round=<n> new=<a> carried=<b> drift=<c> resolved=<d> unverified=<u> reset=<0|1> [<hash8>]
+# from ready.lineage, plus a META|refinement|warn|policy override line when
+# the stored policy snapshot records an overridden structural or
+# audit-demotable list (D2/D5). Never fails the caller.
+_planner_refinement_note_round() {
+  local initiative_id="$1" tid="$2"
+  local ready_json
+  ready_json=$(get_ticket_manifest_field "$tid" ready 2>/dev/null) || ready_json=""
+  echo "$ready_json" | jq -e '.lineage.round != null' >/dev/null 2>&1 || return 0
+
+  local hash8 trend
+  hash8=$(_planner_refinement_hash8 "$tid")
+  trend=$(echo "$ready_json" | jq -r '.lineage
+    | "round=\(.round) new=\(.counts.new // 0) carried=\(.counts.carried // 0) drift=\(.counts.drift // 0) resolved=\(.counts.resolved // 0) unverified=\(.counts.unverified // 0) reset=\(if .reset == true or .reset == 1 then 1 else 0 end)"' 2>/dev/null) || trend=""
+  if [ -n "$trend" ] &&
+    ! _planner_refinement_logged "$initiative_id" "|META|refinement-round|done|" "$tid" "$hash8"; then
+    planner_state_write "$initiative_id" "META" "refinement-round" "done" "${tid} ${trend} [${hash8}]" 2>/dev/null || true
+  fi
+
+  local override
+  override=$(echo "$ready_json" | jq -r '.lineage.policy // {}
+    | [ (if .overridden == true then "structural=" + ((.structural // []) | join(",")) else empty end),
+        (if .audit_demotable_overridden == true then "audit_demotable=" + ((.audit_demotable // []) | join(",")) else empty end) ]
+    | join(" ")' 2>/dev/null) || override=""
+  if [ -n "$override" ] &&
+    ! _planner_refinement_logged "$initiative_id" "|META|refinement|warn|policy override " "$tid" "$hash8"; then
+    # The prefix check above needs "<prefix><TID> " — keep the TID first.
+    planner_state_write "$initiative_id" "META" "refinement" "warn" \
+      "policy override ${tid} ${override} [${hash8}]" 2>/dev/null || true
+  fi
+  return 0
+}
+
+# _planner_refinement_audit_demote <INIT> <TID> <body-file>
+# Shipped dark (design D5): only called under
+# PLANNER_REFINEMENT_AUDIT_DEMOTE=true. Runs dor_audit_demote and logs
+#   META|refinement-dispute|done|<TID> <CODE> demoted by audit dispute [<hash8>]
+# per demoted code (once per ticket, code and body hash), or one
+#   META|refinement-dispute|warn|<TID> ... [<hash8>]
+# when the blanket-dispute cap refused it (rc 4) or the call failed. Never
+# fails the caller.
+_planner_refinement_audit_demote() {
+  local initiative_id="$1" tid="$2" body_file="$3"
+  declare -f dor_audit_demote >/dev/null 2>&1 || return 0
+
+  local out rc=0 hash8 code
+  out=$(dor_audit_demote "$tid" "$body_file" 2>/dev/null) || rc=$?
+  hash8=$(_planner_refinement_hash8 "$tid")
+
+  case "$rc" in
+  0)
+    while IFS= read -r code; do
+      [ -n "$code" ] || continue
+      _planner_refinement_logged "$initiative_id" "|META|refinement-dispute|done|" "$tid" "$hash8" " ${code} " && continue
+      planner_state_write "$initiative_id" "META" "refinement-dispute" "done" \
+        "${tid} ${code} demoted by audit dispute [${hash8}]" 2>/dev/null || true
+    done <<<"$out"
+    ;;
+  4)
+    _planner_refinement_logged "$initiative_id" "|META|refinement-dispute|warn|" "$tid" "$hash8" && return 0
+    planner_state_write "$initiative_id" "META" "refinement-dispute" "warn" \
+      "${tid} blanket dispute refused — more than ${DOR_AUDIT_DEMOTE_MAX:-2} codes qualified, nothing demoted [${hash8}]" 2>/dev/null || true
+    ;;
+  *)
+    planner_state_write "$initiative_id" "META" "refinement-dispute" "warn" \
+      "${tid} audit demotion failed rc=${rc} [${hash8}]" 2>/dev/null || true
+    ;;
+  esac
+  return 0
 }
 
 # _planner_refinement_testdata_findings <TID>
@@ -408,21 +750,40 @@ _planner_refinement_note_testdata() {
 # Prints one line per verified advisory TEST_DATA_GAP finding currently stored
 # on any child of the initiative's epic, ready or not:
 #   Advisory (does not block) <TID> TEST_DATA_GAP: "<quote>" — <detail>
+# then one line per demotion on a ready child (planner-refinement-
+# convergence): a demoted semantic finding
+#   Advisory (does not block) <TID> <CODE> (demoted: <reason>[, by <op>]): "<quote>" — <detail>
+# or an audit-demoted deterministic code
+#   Advisory (does not block) <TID> <CODE> (demoted: audit dispute): <reason>
 # Reads the manifests (current verdicts), not the state log. Prints nothing
 # when there are none or the epic cannot be resolved. Always exit 0.
 planner_refinement_advisory_summary() {
   local initiative_id="$1"
+  _planner_refinement_testdata_summary "$initiative_id"
+  _planner_refinement_demoted_summary "$initiative_id"
+  return 0
+}
+
+# _planner_refinement_children <INIT> — the epic's children, one per line.
+# Nothing (exit 0) when the deps or the epic cannot be resolved.
+_planner_refinement_children() {
+  local initiative_id="$1"
   _planner_refinement_source_deps 2>/dev/null || return 0
-
-  local epic_id
+  local epic_id children
   epic_id=$(planner_epic_id "$initiative_id" 2>/dev/null) || return 0
-
-  local children
   children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null) || children=""
   [ -n "$children" ] || children='[]'
+  echo "$children" | jq -r '.[]' 2>/dev/null || true
+  return 0
+}
 
+# _planner_refinement_testdata_summary <INIT> — the TEST_DATA_GAP lines of
+# planner_refinement_advisory_summary (byte-identical to before
+# planner-refinement-convergence).
+_planner_refinement_testdata_summary() {
+  local initiative_id="$1"
   local tid findings finding quote detail
-  for tid in $(echo "$children" | jq -r '.[]' 2>/dev/null); do
+  for tid in $(_planner_refinement_children "$initiative_id"); do
     findings=$(_planner_refinement_testdata_findings "$tid") || findings=""
     [ -n "$findings" ] || continue
     while IFS= read -r finding; do
@@ -435,7 +796,27 @@ planner_refinement_advisory_summary() {
   return 0
 }
 
+# _planner_refinement_demoted_summary <INIT> — the demotion lines of
+# planner_refinement_advisory_summary, ready children only.
+_planner_refinement_demoted_summary() {
+  local initiative_id="$1"
+  local tid
+  for tid in $(_planner_refinement_children "$initiative_id"); do
+    get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r --arg t "$tid" '
+      select(.status == "ready")
+      | ((.semantic.findings // [])[] | select((.demoted // null) != null)
+          | "Advisory (does not block) \($t) \(.code) (demoted: \(.demoted)"
+            + (if (.converged_by // "") != "" then ", by \(.converged_by)" else "" end)
+            + "): \"\(.quote)\"" + (if (.detail // "") != "" then " — \(.detail)" else "" end)),
+        ((.demoted // {}) | to_entries[]
+          | "Advisory (does not block) \($t) \(.key) (demoted: audit dispute): \(.value.reason // "")")' 2>/dev/null || true
+  done
+  return 0
+}
+
 # planner_refinement_unavailable <INIT> <TID>
+# A fresh {unavailable:true} verdict through set_ticket_semantic, which never
+# touches ready.lineage — the ticket keeps its round history (design D9).
 planner_refinement_unavailable() {
   local initiative_id="$1" tid="$2"
   _planner_refinement_source_deps || return 1
@@ -446,6 +827,169 @@ planner_refinement_unavailable() {
     '{evaluator: $evaluator, checked_at: $checked_at, unavailable: true,
       findings: [], gaps: {}, audit: [], missed: []}')
   set_ticket_semantic "$tid" "$sem_json"
+}
+
+# ── Operator converge (planner-refinement-convergence D10) ───────────────
+
+# planner_refinement_converge_args_validate <converge-flag> <only> <by>
+# The argument rules for `resume --converge --only <TIDs> [--by <name>]`,
+# checked once in SKILL.md step 2a before anything is persisted.
+planner_refinement_converge_args_validate() {
+  local converge="$1" only="$2" by="$3"
+  if [ "$converge" = "true" ] && [ -z "$only" ]; then
+    echo "ERROR: --converge requires --only <TID[,TID...]> — there is no epic-wide converge" >&2
+    return 1
+  fi
+  if [ "$converge" != "true" ] && { [ -n "$only" ] || [ -n "$by" ]; }; then
+    echo "ERROR: --only and --by are only valid with --converge" >&2
+    return 1
+  fi
+  if [ -n "$only" ] && [[ ! "$only" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+(,[A-Za-z][A-Za-z0-9]*-[0-9]+)*$ ]]; then
+    echo "ERROR: --only takes a comma-separated list of ticket ids (e.g. PRO-12,PRO-13), got '${only}'" >&2
+    return 1
+  fi
+  return 0
+}
+
+# planner_refinement_converge <INIT> <TID[,TID...]> [<by>]
+# Rewrites the stored verdict of each named child, without any scan: every
+# blocking finding whose code is not structural (the effective
+# DOR_SEMANTIC_STRUCTURAL_CODES list) becomes advisory with demoted
+# "converge" and converged_by <by>. Unverified findings, structural findings,
+# deterministic codes and the bash-owned SEMANTIC_* codes are untouched, so
+# they keep blocking. A child with no verdict, an unavailable or stale one,
+# one for a different body (body.md edited since) or a different evaluator
+# is refused: nothing is written for it, it is named on stdout as needing a
+# scan, and a META|refinement-converge|skip line records why.
+planner_refinement_converge() {
+  local initiative_id="$1" tids="$2" by="${3:-}"
+  [ -n "$by" ] || by="${USER:-operator}"
+  _planner_refinement_source_deps || return 1
+
+  local epic_id
+  epic_id=$(planner_epic_id "$initiative_id") || {
+    echo "planner-refinement: no EpicGen EPIC_ID found for ${initiative_id} — converge cannot resolve children" >&2
+    return 1
+  }
+  local children
+  children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+  [ -n "$children" ] || children='[]'
+
+  local structural
+  structural=$(_dor_semantic_structural_codes | jq -R . | jq -sc 'map(select(. != ""))')
+
+  local -a list=()
+  IFS=',' read -ra list <<<"$tids"
+  local tid
+  for tid in "${list[@]}"; do
+    tid="${tid//[[:space:]]/}"
+    [ -n "$tid" ] || continue
+
+    local reason=""
+    if ! echo "$children" | jq -e --arg t "$tid" 'index($t) != null' >/dev/null 2>&1; then
+      reason="not a child of epic ${epic_id}"
+    fi
+
+    local ready_json="" body_file cur_hash=""
+    body_file="${REPOS_ROOT:-}/.ticket-auto/initiatives/${initiative_id}/tickets/${tid}/planner/body.md"
+    if [ -z "$reason" ]; then
+      ready_json=$(get_ticket_manifest_field "$tid" ready 2>/dev/null) || ready_json=""
+      [ -f "$body_file" ] && cur_hash=$(_dor_body_hash "$(cat "$body_file")" 2>/dev/null)
+      reason=$(echo "$ready_json" | jq -r --arg h "$cur_hash" --arg e "${DOR_SEMANTIC_EVALUATOR:-}" '
+        if (.semantic // null) == null then "no semantic verdict — it needs a scan first"
+        elif .semantic.unavailable == true then "the semantic verdict is unavailable — it needs a scan first"
+        elif (.semantic.stale // false) or (((.missing // []) | index("SEMANTIC_STALE")) != null)
+          then "the semantic verdict is stale — it needs a scan first"
+        elif .semantic.body_hash != $h then "body.md changed since the verdict — it needs a scan first"
+        elif .semantic.evaluator != $e then "the verdict is from another evaluator — it needs a scan first"
+        else "" end' 2>/dev/null) || reason="no readiness verdict — it needs a scan first"
+      [ -n "$ready_json" ] && [ "$ready_json" != "null" ] || reason="no readiness verdict — it needs a scan first"
+    fi
+
+    if [ -n "$reason" ]; then
+      echo "refused ${tid}: ${reason}"
+      planner_state_write "$initiative_id" "META" "refinement-converge" "skip" "${tid} refused — ${reason}" 2>/dev/null || true
+      continue
+    fi
+
+    local new_sem n
+    new_sem=$(echo "$ready_json" | jq -c --argjson s "$structural" --arg by "$by" '
+      .semantic
+      | .findings = [(.findings // [])[]
+          | if .severity == "blocking" and .verified != false and ((.code as $c | $s | index($c)) == null)
+            then . + {severity: "advisory", demoted: "converge", converged_by: $by}
+            else . end]') || {
+      echo "refused ${tid}: could not rewrite the verdict"
+      continue
+    }
+    n=$(echo "$ready_json" | jq --argjson s "$structural" '
+      [(.semantic.findings // [])[]
+        | select(.severity == "blocking" and .verified != false and ((.code as $c | $s | index($c)) == null))]
+      | length')
+    if ! set_ticket_semantic "$tid" "$new_sem" >/dev/null 2>&1; then
+      echo "refused ${tid}: the manifest write failed"
+      continue
+    fi
+    planner_state_write "$initiative_id" "META" "refinement-converge" "done" "${tid} demoted=${n} by=${by}" 2>/dev/null || true
+    echo "converged ${tid} demoted=${n} by=${by}"
+  done
+  return 0
+}
+
+# planner_refinement_converge_consume <INIT>
+# Runs the one-shot `converge` config key ("<TID,TID...> <operator>",
+# written by SKILL.md step 2b) and clears it, like refresh-bodies.
+planner_refinement_converge_consume() {
+  local initiative_id="$1" value tids by=""
+  value=$(planner_config_get "$initiative_id" "converge" 2>/dev/null) || value=""
+  [ -n "$value" ] || return 0
+  tids="${value%% *}"
+  if [ "$value" != "$tids" ]; then
+    by="${value#* }"
+  fi
+  planner_refinement_converge "$initiative_id" "$tids" "$by"
+  planner_config_set "$initiative_id" "converge" "none"
+  return 0
+}
+
+# ── Refinement after Completed (design D6/D10) ───────────────────────────
+
+# planner_refinement_after_completed_pending <INIT>
+planner_refinement_after_completed_pending() {
+  local initiative_id="$1"
+  [ -f "$(planner_state_log "$initiative_id" 2>/dev/null)" ] || return 1
+  [ -z "$(planner_position_derive "$initiative_id" 2>/dev/null)" ] || return 1
+  # A legacy initiative has no body.md or verdicts, and step 1b's legacy
+  # branch writes phase lines — never re-run it after Completed.
+  if planner_refinement_legacy "$initiative_id"; then
+    return 1
+  fi
+  if [ "$(planner_config_get "$initiative_id" "refresh-bodies" 2>/dev/null)" = "true" ]; then
+    return 0
+  fi
+  planner_config_is_set "$initiative_id" "converge" 2>/dev/null
+}
+
+# planner_refinement_after_completed_finish <INIT>
+# Closes a Refinement re-run on a finished initiative with one META line —
+# no Refinement|gate line, no epic re-stamp, so planner_position_derive
+# still returns the empty string. Prints the same summary.
+planner_refinement_after_completed_finish() {
+  local initiative_id="$1"
+  _planner_refinement_source_deps || return 1
+  local epic_id children total=0 not_ready=0 tid status
+  epic_id=$(planner_epic_id "$initiative_id") || return 1
+  children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
+  [ -n "$children" ] || children='[]'
+  for tid in $(echo "$children" | jq -r '.[]' 2>/dev/null); do
+    total=$((total + 1))
+    status=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r '.status // "unavailable"' 2>/dev/null)
+    [ "$status" = "ready" ] || not_ready=$((not_ready + 1))
+  done
+  local msg="${not_ready} of ${total} not ready after re-running Refinement on a Completed initiative"
+  planner_state_write "$initiative_id" "META" "refinement-after-completed" "done" "$msg" 2>/dev/null || true
+  echo "$msg"
+  return 0
 }
 
 # ── Gate + halt report (design.md Decisions 2, 7, 8) ─────────────────────
@@ -530,6 +1074,18 @@ planner_refinement_report() {
     echo ""
     echo "## ${tid}"
 
+    # Round (planner-refinement-convergence D1) — only once a lineage exists.
+    local round_line
+    round_line=$(echo "$ready_json" | jq -r '
+      .lineage // null | select(. != null and .round != null)
+      | "Round: \(.round)"
+        + (if .reset == true or .reset == 1 then " (reset after a rewrite)" else "" end)
+        + (if (.policy.max_rounds // null) != null
+           then " — non-structural findings stop blocking after round \(.policy.max_rounds)" else "" end)' 2>/dev/null) || round_line=""
+    if [ -n "$round_line" ]; then
+      echo "$round_line"
+    fi
+
     local waived_keys missing
     waived_keys=$(echo "$ready_json" | jq -r '.waived // {} | keys | join(" ")' 2>/dev/null)
     missing=$(echo "$ready_json" | jq -r '.missing // [] | .[]' 2>/dev/null)
@@ -550,22 +1106,65 @@ planner_refinement_report() {
       echo "Deterministic codes: ${hard_codes[*]}"
     fi
 
-    local findings_json n i
-    findings_json=$(echo "$ready_json" | jq -c '.semantic.findings // []' 2>/dev/null)
-    n=$(echo "$findings_json" | jq 'length' 2>/dev/null) || n=0
-    for ((i = 0; i < n; i++)); do
-      local fcode fquote fdetail fsev
-      fcode=$(echo "$findings_json" | jq -r ".[$i].code")
-      fquote=$(echo "$findings_json" | jq -r ".[$i].quote")
-      fdetail=$(echo "$findings_json" | jq -r ".[$i].detail // \"\"")
-      fsev=$(echo "$findings_json" | jq -r ".[$i].severity")
-      if [ -n "$fdetail" ]; then
-        echo "Semantic finding [${fsev}] ${fcode}: \"${fquote}\" — ${fdetail}"
+    # BODY_DRIFT / BODY_UNVERIFIED are never waivable (design D6): the way
+    # out is the refresh, so that is the only release offered.
+    local pdir_r="${REPOS_ROOT:-}/.ticket-auto/initiatives/${initiative_id}/tickets/${tid}/planner"
+    case " $(echo "$missing" | tr '\n' ' ') " in
+    *" BODY_DRIFT "*)
+      local drift_cls
+      drift_cls=$(head -1 "${pdir_r}/body-drift" 2>/dev/null) || drift_cls=""
+      [ -n "$drift_cls" ] || drift_cls="conflict"
+      if [ "$drift_cls" = "local-ahead" ]; then
+        echo "${tid} body drift (local-ahead): body.md was edited but the Linear description was not — ticket-auto would build text Refinement never evaluated."
+        echo "  Copy the local edit into Linear first if it should stay, then take Linear's text: /ticket-planner resume ${initiative_id} --refresh-bodies (not waivable)"
       else
-        echo "Semantic finding [${fsev}] ${fcode}: \"${fquote}\""
+        echo "${tid} body drift (conflict): the Linear description and body.md both changed since the last baseline."
+        echo "  Take Linear's text: /ticket-planner resume ${initiative_id} --refresh-bodies (not waivable)"
       fi
-    done
+      ;;
+    esac
+    case " $(echo "$missing" | tr '\n' ' ') " in
+    *" BODY_UNVERIFIED "*)
+      echo "${tid} body unverified: the Linear description could not be read on $(cat "${pdir_r}/linear-read-fails" 2>/dev/null || echo "$(_planner_refinement_max_fails)") consecutive runs, so body drift was not checked."
+      echo "  Once Linear is reachable, resume re-checks it, or take Linear's text: /ticket-planner resume ${initiative_id} --refresh-bodies (not waivable)"
+      ;;
+    esac
 
+    # Findings grouped by lineage and demotion (planner-refinement-
+    # convergence D3/D10). Rendered in jq: one line per finding, the
+    # demoted ones (plus ready.demoted audit demotions) collected under
+    # "Demoted (does not block):".
+    local finding_lines demoted_lines
+    finding_lines=$(echo "$ready_json" | jq -r '
+      def text: "\(.code): \"\(.quote)\"" + (if (.detail // "") != "" then " — \(.detail)" else "" end);
+      (.semantic.findings // [])[] | select((.demoted // null) == null)
+      | if .verified == false then "Unverified finding \(text)"
+        elif .severity == "blocking" then
+          (if .lineage == "drift" then "Structural drift (blocks) \(text)"
+           elif .lineage == "carried" then "Blocking (carried since round \(.first_round // "?")) \(text)"
+           else "Blocking (new) \(text)" end)
+        else "Advisory finding \(text)" end' 2>/dev/null) || finding_lines=""
+    demoted_lines=$(echo "$ready_json" | jq -r '
+      def text: "\"\(.quote)\"" + (if (.detail // "") != "" then " — \(.detail)" else "" end);
+      ((.semantic.findings // [])[] | select((.demoted // null) != null)
+        | "  - \(.code) (\(.demoted)" + (if (.converged_by // "") != "" then ", by \(.converged_by)" else "" end) + "): \(text)"),
+      ((.demoted // {}) | to_entries[] | "  - \(.key) (audit dispute): \(.value.reason // "")")' 2>/dev/null) || demoted_lines=""
+    if [ -n "$finding_lines" ]; then
+      echo "$finding_lines"
+    fi
+    if [ -n "$demoted_lines" ]; then
+      echo "Demoted (does not block):"
+      echo "$demoted_lines"
+    fi
+    local structural_json
+    structural_json=$(_dor_semantic_structural_codes | jq -R . | jq -sc 'map(select(. != ""))' 2>/dev/null) || structural_json='[]'
+    if echo "$ready_json" | jq -e --argjson s "$structural_json" '[(.semantic.findings // [])[]
+        | select(.severity == "blocking" and .verified != false and ((.code as $c | $s | index($c)) == null))]
+        | length > 0' >/dev/null 2>&1; then
+      echo "Converge (no rescan): /ticket-planner resume ${initiative_id} --converge --only ${tid} — structural findings keep blocking"
+    fi
+
+    local n i
     local missed_json
     missed_json=$(echo "$ready_json" | jq -c '.semantic.missed // []' 2>/dev/null)
     n=$(echo "$missed_json" | jq 'length' 2>/dev/null) || n=0
@@ -578,12 +1177,17 @@ planner_refinement_report() {
 
     local audit_json
     audit_json=$(echo "$ready_json" | jq -c '.semantic.audit // []' 2>/dev/null)
+    local demoted_keys
+    demoted_keys=$(echo "$ready_json" | jq -r '.demoted // {} | keys | join(" ")' 2>/dev/null) || demoted_keys=""
     n=$(echo "$audit_json" | jq 'length' 2>/dev/null) || n=0
     for ((i = 0; i < n; i++)); do
       local acode averdict areason
       acode=$(echo "$audit_json" | jq -r ".[$i].code")
       averdict=$(echo "$audit_json" | jq -r ".[$i].verdict")
       [ "$averdict" = "disputed" ] || continue
+      # An audit-demoted code no longer blocks — it is listed under Demoted,
+      # never offered as something to waive (design D5).
+      case " $demoted_keys " in *" $acode "*) continue ;; esac
       areason=$(echo "$audit_json" | jq -r ".[$i].reason // \"\"")
       echo "Disputed: ${acode} — ${areason}"
       echo "  Release: dor-check.sh --waive ${tid} ${acode} \"${areason}\""
@@ -603,26 +1207,46 @@ planner_refinement_report() {
 
   if [ "$any_not_ready" -eq 1 ]; then
     echo ""
-    echo "An edit made in Linear is only evaluated after /ticket-planner resume ${initiative_id} --refresh-bodies."
+    if [ "${PLANNER_REFINEMENT_DRIFT_CHECK:-true}" = "false" ]; then
+      echo "An edit made in Linear is only evaluated after /ticket-planner resume ${initiative_id} --refresh-bodies."
+    else
+      echo "A Linear edit is adopted on the next resume when body.md is unchanged; to take Linear's text over a local edit: /ticket-planner resume ${initiative_id} --refresh-bodies."
+    fi
   fi
 
   # Advisory findings never put a child in the not-ready loop above, so a
   # ready child's TEST_DATA_GAP would otherwise go unreported
   # (dor-semantic-test-data-gap).
   local advisory_summary
-  advisory_summary=$(planner_refinement_advisory_summary "$initiative_id") || advisory_summary=""
+  advisory_summary=$(_planner_refinement_testdata_summary "$initiative_id") || advisory_summary=""
   if [ -n "$advisory_summary" ]; then
     echo ""
     echo "## Advisory test-data findings"
     echo "$advisory_summary"
+  fi
+
+  # Demotions on ready children (not-ready ones list theirs above).
+  local demoted_summary
+  demoted_summary=$(_planner_refinement_demoted_summary "$initiative_id") || demoted_summary=""
+  if [ -n "$demoted_summary" ]; then
+    echo ""
+    echo "## Demoted findings on ready tickets"
+    echo "$demoted_summary"
   fi
 }
 
 # ── Refresh (design.md Decision 9) ────────────────────────────────────────
 
 # planner_refinement_refresh_bodies <INIT>
-# Overwrites body.md of every not-ready child from its current Linear
-# description. Read-only — never writes to Linear.
+# "Take Linear for every child" (planner-refinement-convergence D6): checks
+# every child, ready and waived ones included, and for each one whose class
+# is not `clean` writes body.md (unless it already equals Linear's text) and
+# the baseline from its current Linear description. A `clean` child is not
+# touched. Waivers are never touched — the manifest is not written here.
+# Prints, one per line, each child the next scan must re-evaluate: every
+# non-clean child, plus a clean one still carrying BODY_DRIFT or
+# BODY_UNVERIFIED (step 1b uses this as the affected set after Completed).
+# A child whose Linear read fails is skipped. Read-only towards Linear.
 planner_refinement_refresh_bodies() {
   local initiative_id="$1"
   _planner_refinement_source_deps || return 1
@@ -634,24 +1258,94 @@ planner_refinement_refresh_bodies() {
   children=$(get_epic_manifest_field "$epic_id" children 2>/dev/null)
   [ -n "$children" ] || children='[]'
 
-  local repos_root="${REPOS_ROOT:-}"
-  local tid
+  local repos_root="${REPOS_ROOT:-}" have_baseline="false" tid
+  _planner_refinement_source_baseline && have_baseline="true"
 
   for tid in $(echo "$children" | jq -r '.[]' 2>/dev/null); do
-    local status
-    status=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r '.status // "unavailable"' 2>/dev/null)
-    [ "$status" = "ready" ] && continue
-
-    if ! declare -f planner_linear_get_issue >/dev/null 2>&1; then
-      continue
-    fi
-
     local desc
-    desc=$(planner_linear_get_issue "$tid" 2>/dev/null | jq -r '.data.issue.description // ""' 2>/dev/null)
-    [ -n "$desc" ] || continue
+    desc=$(_planner_refinement_linear_desc "$tid") || continue
 
     local pdir="${repos_root}/.ticket-auto/initiatives/${initiative_id}/tickets/${tid}/planner"
     mkdir -p "$pdir" 2>/dev/null
-    printf '%s' "$desc" >"${pdir}/body.md"
+
+    if [ "$have_baseline" != "true" ]; then
+      # No baseline lib: fall back to a plain text comparison.
+      if [ "$(cat "${pdir}/body.md" 2>/dev/null)" != "$desc" ]; then
+        printf '%s' "$desc" >"${pdir}/body.md"
+        echo "$tid"
+      fi
+      continue
+    fi
+
+    rm -f "${pdir}/linear-read-fails" 2>/dev/null
+    local cls="" held="false"
+    cls=$(body_baseline_classify "$pdir" "$desc" 2>/dev/null) || cls="missing"
+    if get_ticket_manifest_field "$tid" ready 2>/dev/null |
+      jq -e '(.missing // []) | any(. == "BODY_DRIFT" or . == "BODY_UNVERIFIED")' >/dev/null 2>&1; then
+      held="true"
+    fi
+
+    case "$cls" in
+    clean)
+      [ "$held" = "true" ] && echo "$tid"
+      continue
+      ;;
+    rebaseline) ;;
+    *) printf '%s' "$desc" >"${pdir}/body.md" ;;
+    esac
+    body_baseline_write "$pdir" "$desc" 2>/dev/null
+    rm -f "${pdir}/body-drift" 2>/dev/null
+    echo "$tid"
   done
+}
+
+# ── TicketGen baseline (planner-refinement-convergence D6) ────────────────
+
+# planner_ticketgen_record_baseline <INIT> <TID> create|skip
+# Called by the TicketGen script after it persisted planner/body.md.
+#   create  read the description back once; write the baseline from it. When
+#           Linear stored a different rendering than the composed body,
+#           body.md takes Linear's text (it is what ticket-auto will read,
+#           and the baseline describes it), with a META|ticketgen|warn line.
+#   skip    write the baseline only when none exists and the normalised
+#           Linear text equals body.md; otherwise leave it to Refinement,
+#           which classifies the ticket.
+# A failed read-back (or a missing body-baseline.sh) writes nothing and
+# prints a warning on stderr. Always exit 0.
+planner_ticketgen_record_baseline() {
+  local initiative_id="$1" tid="$2" mode="${3:-create}"
+  local pdir
+  pdir="$(planner_initiative_dir "$initiative_id" 2>/dev/null)/tickets/${tid}/planner"
+  [ -f "${pdir}/body.md" ] || return 0
+  _planner_refinement_source_baseline 2>/dev/null || {
+    echo "WARNING: body-baseline.sh not found — no body baseline for ${tid}" >&2
+    return 0
+  }
+
+  local desc
+  desc=$(_planner_refinement_linear_desc "$tid") || {
+    echo "WARNING: could not read back ${tid}'s description — no body baseline; Refinement classifies it" >&2
+    return 0
+  }
+
+  local l m
+  l=$(body_baseline_hash "$desc" 2>/dev/null) || return 0
+  m=$(body_baseline_hash "$(cat "${pdir}/body.md" 2>/dev/null)" 2>/dev/null) || return 0
+
+  case "$mode" in
+  skip)
+    body_baseline_read "$pdir" >/dev/null 2>&1 && return 0
+    [ "$l" = "$m" ] || return 0
+    body_baseline_write "$pdir" "$desc" 2>/dev/null || true
+    ;;
+  *)
+    if [ "$l" != "$m" ]; then
+      printf '%s' "$desc" >"${pdir}/body.md" 2>/dev/null || return 0
+      planner_state_write "$initiative_id" "META" "ticketgen" "warn" \
+        "${tid} Linear stored a different rendering of the description — body.md now holds Linear's text [${m:0:8}→${l:0:8}]" 2>/dev/null || true
+    fi
+    body_baseline_write "$pdir" "$desc" 2>/dev/null || true
+    ;;
+  esac
+  return 0
 }

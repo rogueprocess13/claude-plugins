@@ -2705,6 +2705,93 @@ test_dispatch_semantic_scope_child_refused_and_reported() {
 }
 _run "dispatch_semantic_scope_child_refused_and_reported" test_dispatch_semantic_scope_child_refused_and_reported
 
+# planner-refinement-convergence task 5.2: a disputed code that the audit
+# demoted (a key of ready.demoted) gets no waive hint — it no longer blocks,
+# so there is nothing to waive — while an undemoted dispute keeps its hint.
+test_dispatch_demoted_dispute_has_no_waive_hint() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-demoted REPOS_ROOT='$repos_root'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
+    _seed_epic '$repos_root' INIT-42 true CRE-702
+    _seed_child '$repos_root' CRE-702 INIT-42 false '' not-ready
+    manifest_path=\$(get_ticket_manifest_path CRE-702)
+    tmp=\$(jq -c '.ready.missing = [\"NAV_PATH_MISSING\"]
+      | .ready.advisory = [\"AC_VAGUE\"]
+      | .ready.demoted = {AC_VAGUE:{by:\"dor-semantic-audit\", reason:\"AC-4 already qualifies this\",
+          quote:\"q\", body_hash:\"sha256:x\", evaluator:\"dor-semantic-v1\"}}
+      | .ready.semantic = {evaluator:\"dor-semantic-v1\",
+          audit:[{code:\"AC_VAGUE\", verdict:\"disputed\", reason:\"AC-4 already qualifies this\"},
+                 {code:\"NAV_PATH_MISSING\", verdict:\"disputed\", reason:\"nav is in the intro\"}]}' \"\$manifest_path\")
+    echo \"\$tmp\" >\"\$manifest_path\"
+    _mock_epic_no_directive
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q 'not-ready CRE-702' || {
+    echo "expected CRE-702 to be reported not-ready; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q 'waive CRE-702 AC_VAGUE' && {
+    echo "a demoted code must not get a waive hint; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q 'disputed=\[NAV_PATH_MISSING (nav is in the intro) — waive: dor-check.sh --waive CRE-702 NAV_PATH_MISSING' || {
+    echo "expected the undemoted NAV_PATH_MISSING dispute to keep its waive hint; output: $output" >&2
+    return 1
+  }
+  return 0
+}
+_run "dispatch_demoted_dispute_has_no_waive_hint" test_dispatch_demoted_dispute_has_no_waive_hint
+
+# planner-refinement-convergence task 5.2: a child whose only hard code was
+# demoted by the audit (set_ticket_demotions moves it to advisory and
+# recomputes status) is ready and is enqueued — dispatch reads status /
+# missing only, never ready.demoted.
+test_dispatch_child_with_only_demoted_code_is_enqueued() {
+  local ws repos_root
+  ws=$(_setup_workspace)
+  repos_root=$(mktemp -d)
+
+  local output
+  output=$(bash -c "
+    FLEET_DRY_RUN=true FLEET_INSTANCE_ID=test-demoted-only REPOS_ROOT='$repos_root'
+    source '$LIB_DIR/fleet-dispatch.sh'
+    $(declare -f _seed_epic _seed_readiness _seed_child _mock_epic_no_directive)
+    _seed_epic '$repos_root' INIT-42 true CRE-703
+    _seed_child '$repos_root' CRE-703 INIT-42 false '' none
+    _seed_readiness '$repos_root' CRE-703 not-ready '[\"AC_VAGUE\"]'
+    manifest_path=\$(get_ticket_manifest_path CRE-703)
+    tmp=\$(jq -c '.ready.body_hash = \"sha256:x\"' \"\$manifest_path\")
+    echo \"\$tmp\" >\"\$manifest_path\"
+    set_ticket_demotions CRE-703 '{\"AC_VAGUE\":{\"by\":\"dor-semantic-audit\",\"reason\":\"r\",\"quote\":\"q\",\"body_hash\":\"sha256:x\",\"evaluator\":\"dor-semantic-v1\"}}' || echo 'DEMOTE-FAILED'
+    _mock_epic_no_directive
+    fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
+  " 2>/dev/null || true)
+  rm -rf "$repos_root"
+
+  echo "$output" | grep -q 'DEMOTE-FAILED' && {
+    echo "set_ticket_demotions fixture write failed; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q 'not-ready CRE-703' && {
+    echo "CRE-703's only hard code was demoted, it must not be not-ready; output: $output" >&2
+    return 1
+  }
+  echo "$output" | grep -q '\[DRY-RUN\] would enqueue:.*CRE-703' || {
+    echo "expected CRE-703 to be enqueued; output: $output" >&2
+    return 1
+  }
+  return 0
+}
+_run "dispatch_child_with_only_demoted_code_is_enqueued" test_dispatch_child_with_only_demoted_code_is_enqueued
+
 test_dispatch_decision_identical_with_and_without_score() {
   local ws1 ws2 repos_root1 repos_root2 out_with out_without
   ws1=$(_setup_workspace)

@@ -902,6 +902,29 @@ channel and `human-hold` are siblings, not a replacement for one another. A `CON
 verdict is followed by `META|gate-stop|fail|ADR_CONFLICT` (see Gate-stop codes below)
 instead of a hold.
 
+### Body-drift entries (planner-refinement-convergence)
+
+```
+2026-10-22T10:00:00Z|META|body-drift|info|conflict
+```
+
+Written by `refinement_carryover_drift_check` (`lib/refinement-carryover.sh`), which
+ticket-appraise Step 2.1 runs on every appraisal, when `LOG_FILE` is set. It applies only
+to a planned ticket whose cached readiness is `ready` and whose `planner/body.md`
+exists. It hashes the Linear description and compares it against the baseline the planner
+recorded (`planner/linear-baseline.sha`, `lib/body-baseline.sh`). `MSG` is the drift
+class: `adopt` (Linear changed, `body.md` did not), `conflict` (both changed, differently)
+or `local-ahead` (`body.md` changed, Linear did not). `clean` and `rebaseline` write
+nothing. Neither does a skip (`not-planned`, `not-ready`, `no-body`, `read-failed`).
+
+The line is **info only and never blocks**. The hold comes from the Open Question the same
+call adds to notes.md:
+`- [needs-human] Linear description differs from the body Refinement evaluated (<class>) — run `/ticket-planner resume <INIT> --refresh-bodies` or confirm the Linear text. (carry-over body-drift:<hash12>)`.
+`<hash12>` is the first 12 hex characters of `body_baseline_hash` of the Linear text. One
+answered (struck-through) question therefore stays answered for that text, and a later
+edit raises a new question. Gate-reconcile holds on it like any other `[needs-human]` item.
+ticket-auto never writes the baseline or `body.md`; the planner owns both.
+
 ### Semantic DoR entries (dor-semantic-evaluator)
 
 Unlike `adr-gate-parse.sh`/`human-hold-parse.sh` above, `lib/dor-semantic-parse.sh`'s

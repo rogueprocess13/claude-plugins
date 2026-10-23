@@ -194,6 +194,18 @@ else
   fail "planner_refinement_scan: both fresh tickets need a semantic pass" "got: $needs"
 fi
 
+# planner-refinement-convergence D4/D9: the scan records its strict profile
+# and the section/unit hashes, so a dispatch recompute stays strict and an
+# edit can be scoped to the sections it touched.
+if get_ticket_manifest_field "PRO-101" ready 2>/dev/null |
+  jq -e '.check_profile == "planner-strict" and (.section_hashes | type) == "object"
+         and (.section_hashes | has("Acceptance Criteria")) and (.unit_hashes | type) == "object"' >/dev/null; then
+  pass "planner_refinement_scan: records check_profile planner-strict and section/unit hashes"
+else
+  fail "planner_refinement_scan: records check_profile planner-strict and section/unit hashes" \
+    "got: $(get_ticket_manifest_field "PRO-101" ready 2>/dev/null | jq -c '{check_profile, s: (.section_hashes | keys?)}')"
+fi
+
 for tid in PRO-101 PRO-102; do
   h=$(_body_hash "$tid")
   _write_clean_scan "$tid" "$h"
@@ -407,10 +419,18 @@ else
 fi
 
 report=$(planner_refinement_report "$MIXED_INIT")
-if echo "$report" | grep -q "## PRO-403" && echo "$report" | grep -qi "Semantic finding.*MISSING_CORE_AC"; then
+# planner-refinement-convergence D3: blocking findings are labelled by
+# lineage ("Blocking (new)" on a first verdict), and a ticket held by a
+# non-structural one is offered the no-rescan converge.
+if echo "$report" | grep -q "## PRO-403" && echo "$report" | grep -qF "Blocking (new) MISSING_CORE_AC"; then
   pass "planner_refinement_report: lists the not-ready ticket with its semantic finding"
 else
   fail "planner_refinement_report: lists the not-ready ticket with its semantic finding" "got: $report"
+fi
+if echo "$report" | grep -qF -- "--converge --only PRO-403"; then
+  pass "planner_refinement_report: offers converge for a non-structural blocking finding"
+else
+  fail "planner_refinement_report: offers converge for a non-structural blocking finding" "got: $report"
 fi
 if echo "$report" | grep -q "refresh-bodies"; then
   pass "planner_refinement_report: closes with the --refresh-bodies note"
@@ -907,16 +927,19 @@ else
     "warns=$(_tdg_warns "$TDG2_INIT") ready=$(get_ticket_manifest_field "PRO-711" ready 2>/dev/null)"
 fi
 
-# (g) a cached dor-semantic-v1 verdict re-runs once, then converges
+# (g) a cached dor-semantic-v1 verdict re-runs once, then converges. Only
+# v2 verdicts are migrated in place (dor_semantic_migrate_v2, design D8 —
+# see test-planner-refinement-convergence.sh); a v1 one is rescanned.
 _tdg_canned "$TDG2_INIT" "PRO-712" "${SEMANTIC_FIXTURES_DIR}/28-scan.txt" "${SEMANTIC_FIXTURES_DIR}/28-audit.txt"
 DOR_SEMANTIC_EVALUATOR="dor-semantic-v1" planner_refinement_apply "$TDG2_INIT" "PRO-712" >/dev/null 2>&1 || true
 needs_v1=$(planner_refinement_scan "$TDG2_INIT")
 planner_refinement_apply "$TDG2_INIT" "PRO-712" >/dev/null 2>&1 || true
-needs_v2=$(planner_refinement_scan "$TDG2_INIT")
-if echo "$needs_v1" | grep -qx "PRO-712" && ! echo "$needs_v2" | grep -qx "PRO-712"; then
-  pass "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges"
+needs_v3=$(planner_refinement_scan "$TDG2_INIT")
+if echo "$needs_v1" | grep -qx "PRO-712" && ! echo "$needs_v3" | grep -qx "PRO-712" &&
+  get_ticket_manifest_field "PRO-712" ready 2>/dev/null | jq -e '.semantic.evaluator == "dor-semantic-v3"' >/dev/null; then
+  pass "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges on v3"
 else
-  fail "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges" "v1 scan: $needs_v1 / v2 scan: $needs_v2"
+  fail "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges on v3" "v1 scan: $needs_v1 / v3 scan: $needs_v3"
 fi
 
 # (h) the warn write failing does not change planner_refinement_apply's rc

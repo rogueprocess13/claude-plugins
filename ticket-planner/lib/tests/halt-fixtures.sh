@@ -24,7 +24,7 @@ _HALT_FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _HALT_LIB_DIR="${_HALT_FIXTURES_DIR}/.."
 
 # Every halt the stop describer must recognise, with the reason it must name.
-HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION"
+HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT refinement-body-drift:REFINEMENT_HALT refinement-demoted:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION"
 
 # _halt_done <init> <phase...> — mark phases done, in order.
 _halt_done() {
@@ -78,7 +78,7 @@ halt_fixture_init() {
 feature
 APPRAISAL
     ;;
-  refinement)
+  refinement | refinement-body-drift | refinement-demoted)
     _halt_done "$init" Appraisal Discovery Architecture Specify Review Consensus Crosscheck
     planner_authorize_create "$init" "operator passed --create"
     planner_stop_after_set "$init" ""
@@ -87,6 +87,10 @@ APPRAISAL
     planner_state_write "$init" "TicketGen" "verify" "start" "fixture"
     planner_state_write "$init" "TicketGen" "verify" "done" "2 tickets verified."
     _halt_refinement_manifests "$init"
+    # planner-refinement-convergence D6/D5 halts, added after the other
+    # goldens; they predate them.
+    [ "$name" = refinement-body-drift ] && _halt_refinement_body_drift "$init"
+    [ "$name" = refinement-demoted ] && _halt_refinement_demoted "$init"
     ;;
   until)
     _halt_done "$init" Appraisal Discovery Architecture Specify Review
@@ -196,6 +200,39 @@ _halt_refinement_manifests() {
   done
 }
 
+# Body drift (planner-refinement-convergence D6): PRO-101's Linear text and
+# body.md both changed since the baseline (a conflict); PRO-102 is clean
+# against Linear and still misses its intent. halt_fixture_run stubs
+# planner_linear_get_issue over ${REPOS_ROOT}/linear/<TID>.md.
+_halt_refinement_body_drift() {
+  local init="$1" tid pdir
+  _planner_refinement_source_baseline || return 1
+  mkdir -p "${REPOS_ROOT}/linear"
+  for tid in PRO-101 PRO-102; do
+    pdir="${REPOS_ROOT}/.ticket-auto/initiatives/${init}/tickets/${tid}/planner"
+    cp "${pdir}/body.md" "${REPOS_ROOT}/linear/${tid}.md"
+    body_baseline_write "$pdir" "$(cat "${pdir}/body.md")"
+  done
+  pdir="${REPOS_ROOT}/.ticket-auto/initiatives/${init}/tickets/PRO-101/planner"
+  sed -i 's/^Validate bulk client uploads before import\.$/Validate bulk client uploads before any import./' "${REPOS_ROOT}/linear/PRO-101.md"
+  sed -i 's/^Validate bulk client uploads before import\.$/Validate client uploads before import./' "${pdir}/body.md"
+}
+
+# An audit-demoted code (planner-refinement-convergence D5): PRO-102 also
+# lacks its Navigation Path, and the audit's dispute of NAV_PATH_MISSING was
+# demoted for this body hash, so only INTENT_MISSING still blocks.
+_halt_refinement_demoted() {
+  local init="$1" pdir hash
+  pdir="${REPOS_ROOT}/.ticket-auto/initiatives/${init}/tickets/PRO-102/planner"
+  awk '/^## /{skip=($0=="## Navigation Path")} !skip' "${pdir}/body.md" >"${pdir}/body.md.tmp" &&
+    mv "${pdir}/body.md.tmp" "${pdir}/body.md"
+  planner_refinement_scan "$init" >/dev/null
+  hash=$(get_ticket_manifest_field "PRO-102" ready | jq -r '.body_hash')
+  set_ticket_demotions "PRO-102" "$(jq -nc --arg h "$hash" '{NAV_PATH_MISSING: {by: "dor-semantic-audit",
+    reason: "the Scope table names the upload page", quote: "Clients > Upload", body_hash: $h,
+    evaluator: "dor-semantic-v3"}}')" >/dev/null
+}
+
 # halt_fixture_run <name> <init_id> <out_dir>
 # Runs the halt's SKILL.md block in a subshell and writes out_dir/<name>.out,
 # .err and .rc, with the scratch REPOS_ROOT replaced by <REPOS_ROOT>.
@@ -302,10 +339,17 @@ halt_fixture_run() {
         exit 5
       fi
       ;;
-    refinement)
+    refinement | refinement-body-drift | refinement-demoted)
       # SKILL.md step 1b, deterministic-only (no semantic agent spawns).
       PLANNER_REFINEMENT_SEMANTIC=false
       source "${CLAUDE_PLUGIN_ROOT}/lib/planner-refinement.sh"
+      if [ "$name" = refinement-body-drift ]; then
+        # Stands in for planner-linear-api.sh's reader (SKILL.md sources it).
+        planner_linear_get_issue() {
+          [ -f "${REPOS_ROOT}/linear/${1}.md" ] || return 1
+          jq -nc --rawfile d "${REPOS_ROOT}/linear/${1}.md" '{data: {issue: {description: $d}}}'
+        }
+      fi
       if planner_refinement_legacy "$INITIATIVE_ID"; then
         planner_state_write "$INITIATIVE_ID" "META" "refinement" "skip" "legacy — TicketGen|dispatch-gate|done already recorded"
         planner_state_write "$INITIATIVE_ID" "Refinement" "gate" "skip" "legacy initiative — Refinement not evaluated"
@@ -314,6 +358,7 @@ halt_fixture_run() {
         while IFS= read -r _tid; do
           [ -n "$_tid" ] && NEEDS_PASS+=("$_tid")
         done < <(planner_refinement_scan "$INITIATIVE_ID")
+        planner_refinement_converge_consume "$INITIATIVE_ID"
         if planner_refinement_gate "$INITIATIVE_ID"; then
           planner_refinement_advisory_summary "$INITIATIVE_ID"
         else

@@ -17,6 +17,97 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.70.0 / ticket-planner 0.24.0 / fleet-controller 0.42.10 (2026-10-22)
+
+Planner Refinement now converges instead of re-rolling the same ticket forever
+(`planner-refinement-convergence`). Semantic findings get an identity and a per-ticket round
+count, so a repeat scan can tell a carried finding from evaluator drift. Non-structural findings
+stop blocking after a round limit and travel to ticket-auto appraisal instead. Refinement also
+notices when a ticket's Linear description no longer matches the body it evaluated.
+
+### Added
+- **Rounds and the round limit**: each new body a ticket is scanned on is one round, stored in a
+  new `ready.lineage` key (`set_ticket_lineage`; `set_ticket_semantic` never touches it). Every
+  finding has an id (code + anchor section or acceptance-criteria item + normalised quote) and a
+  `new`/`carried`/`drift` label. From round `PLANNER_REFINEMENT_MAX_ROUNDS` + 1 (default 2) a
+  non-structural finding is stored as advisory with `demoted: "round-limit"`. A rewrite of 50% or
+  more of the sections restarts at round 1. Each round writes a
+  `META|refinement-round|done|<TID> round=… new=… carried=… drift=… resolved=… unverified=… reset=…`
+  trend line.
+- **Drift demotion**: from round 2, a new finding on an unchanged unit that holds no open carried
+  finding is evaluator drift and is demoted (`demoted: "drift"`). The structural codes
+  (`NEEDS_HUMAN_DECISION`, `CONTRADICTORY_REQUIREMENTS`, `UNSTATED_DEPENDENCY`,
+  `INTENT_AC_MISMATCH`; `DOR_SEMANTIC_STRUCTURAL_CODES`) always block, and so do the deterministic
+  test-data codes and the bash-owned `SEMANTIC_*` codes. An overridden list logs
+  `META|refinement|warn|policy override`.
+- **Section-scoped staleness**: section and unit hashes are stored on the verdict
+  (`ready.section_hashes`, `ready.unit_hashes`). An edit only to `Related Tickets`
+  (`DOR_SEMANTIC_INERT_SECTIONS`) rebases the verdict instead of staling it. Any other edit records
+  `semantic.changed_sections`, and the next scan is told which sections changed.
+- **`resume --converge --only <TIDs> [--by <name>]`**: releases the named tickets from their stored
+  verdict without a rescan. Every blocking, verified, non-structural finding becomes advisory with
+  `demoted: "converge"` and the operator's name. Stale or edited verdicts are refused. One-shot
+  (`converge` config key); logs `META|refinement-converge|done|skip`.
+- **Audit demotion, shipped dark**: under `PLANNER_REFINEMENT_AUDIT_DEMOTE=true` (default `false`),
+  an audit that disputes an allow-listed heuristic code (`VPLAN_ROW_GAP`, `VPLAN_UNVERIFIABLE`,
+  `AC_VAGUE`, `AC_IMPLEMENTATION_ONLY`, `NAV_PATH_MISSING`) and quotes the code's own section
+  (new `AUDIT_n_QUOTE` key) moves it to advisory, recorded in `ready.demoted` and bound to the body
+  hash. Only the first audit per body hash counts; more than `DOR_AUDIT_DEMOTE_MAX` (default 2)
+  qualifying codes is refused as a blanket dispute. `META|refinement-dispute` lines record both.
+- **Body baseline and drift halt**: the new shared `lib/body-baseline.sh` hashes Linear's own
+  rendering. TicketGen records the baseline (`planner/linear-baseline.sha`), and `body.md` takes
+  Linear's text when Linear stored a different rendering. Each Refinement scan reads every child
+  from Linear once (`PLANNER_REFINEMENT_DRIFT_CHECK`): a Linear-only edit is adopted
+  (`META|refinement|step|<TID> body adopted from Linear`). A conflicting or local-only edit adds
+  the blocking `BODY_DRIFT`; `PLANNER_REFINEMENT_DRIFT_MAX_FAILS` (default 3) failed reads in a row
+  add `BODY_UNVERIFIED`. Neither can be waived. `--refresh-bodies` now checks every child (ready
+  and waived included), rewrites only drifted ones, keeps waivers, and works on a Completed
+  initiative. The halt offers it as a headless `flag:refresh-bodies` question (new binding in
+  `human-hold-parse.sh`).
+- **Refinement carry-over in appraisal**: `lib/refinement-carryover.sh`, called from
+  ticket-appraise Step 2.1, writes advisory and demoted findings into notes.md as
+  `## Refinement Carry-over`. `SCOPE_AMBIGUOUS` is a `[needs-human]` Open Question; `MISSING_CORE_AC`
+  is a `### Test candidates` entry that ticket-implement tests (or gives a reason for) and
+  ticket-verify reports as a non-failing carry-over check. Everything else is `[agent-resolvable]`
+  and never holds. The same step checks a ready planned ticket for body drift: it logs
+  `META|body-drift|info|<class>` and adds a `[needs-human]` question keyed
+  `(carry-over body-drift:<hash12>)`, so an answered question stays answered for that text and a
+  later edit raises a new one.
+- **Check profile**: `ready.check_profile` (`planner-strict`) records the strictness the verdict
+  was computed under, and `ensure_ticket_readiness` recomputes under it at dispatch.
+
+### Changed
+- **Evaluator `dor-semantic-v3`**: the block schema is unchanged. Rounds start at 1 on the bump.
+- **Refinement halt report**: per-ticket `Round:` line, labelled findings (`Blocking (new)`,
+  `Blocking (carried since round <k>)`, `Structural drift (blocks)`, …), a
+  `Demoted (does not block):` list, a `Converge (no rescan):` hint, and a closing
+  `## Demoted findings on ready tickets` section. The old `Semantic finding [sev] …` lines are
+  gone. Waive commands and waive questions are no longer offered for `BODY_*` codes or demoted codes.
+- **fleet-controller 0.42.10**: the not-ready dispatch summary and the readiness notification drop
+  the `waive:` hint for a disputed code that is in `ready.demoted`. Report text only; dispatch
+  decisions are unchanged.
+
+### Fixed
+- **`manifest-write.sh` swallowed the caller's stderr**: `_manifest_readiness_unlock` ran
+  `exec 200>&- 2>/dev/null`, which redirected the calling shell's stderr to `/dev/null` for good
+  after the first readiness write. Later warnings in the same shell disappeared. It now runs
+  `{ exec 200>&-; } 2>/dev/null`.
+- **Repeated per-ticket `done` lines were dropped**: new `PLANNER_REPEATABLE_META_STEPS`
+  exempts the per-ticket `META` record steps from the planner's duplicate-`done` suppression.
+
+### Upgrade notes
+- **v3 migrates unchanged v2 verdicts in place**: at the start of the scan,
+  `dor_semantic_migrate_v2` re-labels a stored v2 verdict whose body is unchanged (no agent runs,
+  round 1, `migrated_from: "dor-semantic-v2"`). Only tickets edited since are rescanned, so the
+  bump does not stall an epic.
+- **First drift check**: an initiative created before this release has no baseline. Its first
+  Refinement run records one when Linear matches `body.md`, and raises `BODY_DRIFT` when they
+  differ. Release it with `/ticket-planner resume <INIT> --refresh-bodies`.
+- **Version coupling**: ship ticket-auto-pipeline 0.70.0 first or together with ticket-planner
+  0.24.0. The planner resolves `body-baseline.sh`, `dor_semantic_migrate_v2` and the lineage
+  and demotion writers from ticket-auto-pipeline. Against an older ticket-auto lib the drift check
+  and the v2 migration are skipped, and no rounds or demotions are recorded.
+
 ## 0.69.8 (2026-10-22)
 
 The adversarial review in `ticket-appraise-exec` Step 3.6 now knows which round it is on

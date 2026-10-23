@@ -89,6 +89,11 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-testdata.sh
+	bash ticket-auto-pipeline/lib/tests/test-dor-section-staleness.sh
+	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-lineage.sh
+	bash ticket-auto-pipeline/lib/tests/test-dor-audit-demotion.sh
+	bash ticket-auto-pipeline/lib/tests/test-body-baseline.sh
+	bash ticket-auto-pipeline/lib/tests/test-refinement-carryover.sh
 	# tracker-approval-by-script
 	bash ticket-auto-pipeline/lib/tests/test-ticket-approve.sh
 	# ticket-create-skill
@@ -210,6 +215,8 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-business-framing.sh
 	bash ticket-planner/lib/tests/test-planner-adr-gate.sh
 	bash ticket-planner/lib/tests/test-planner-refinement.sh
+	bash ticket-planner/lib/tests/test-planner-refinement-convergence.sh
+	bash ticket-planner/lib/tests/test-planner-body-drift.sh
 	bash ticket-planner/lib/tests/test-planner-stop-describe.sh
 	bash ticket-planner/lib/tests/test-planner-specify-decisions.sh
 	bash ticket-planner/lib/tests/test-planner-answers.sh

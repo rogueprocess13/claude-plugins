@@ -262,7 +262,11 @@ planner_state_init() {
 # point `plan` recorded, so these steps are exempt from duplicate-done suppression.
 
 # Config keys recognised by planner_config_set / planner_config_get.
-PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id linear-project no-project linear-milestone linear-project-id linear-milestone-id branch-override refresh-bodies no-tests-rule uat-policy"
+PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id linear-project no-project linear-milestone linear-project-id linear-milestone-id branch-override refresh-bodies no-tests-rule uat-policy converge"
+
+# META steps whose `done` lines are per-ticket records, not progress markers:
+# exempt from duplicate-done suppression (their writers dedupe them).
+PLANNER_REPEATABLE_META_STEPS="refinement-round refinement-converge refinement-dispute refinement-after-completed"
 
 # Is <step> a config key rather than a progress marker?
 # Usage: _planner_is_config_key <step>
@@ -706,6 +710,12 @@ _planner_check_duplicate() {
     # re-write, and suppressing it would leave the stale value in force.
     if [ "$phase" = "META" ] && _planner_is_config_key "$step"; then
       return 0
+    fi
+    # Per-ticket record lines (planner-refinement-convergence): one `done`
+    # per ticket per round/action, deduped by their writers in
+    # planner-refinement.sh — never a phase progress marker.
+    if [ "$phase" = "META" ]; then
+      case " ${PLANNER_REPEATABLE_META_STEPS} " in *" ${step} "*) return 0 ;; esac
     fi
 
     # Check if a 'done' entry already exists for this phase+step

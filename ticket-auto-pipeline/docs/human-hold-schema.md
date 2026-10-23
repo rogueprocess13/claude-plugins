@@ -324,6 +324,7 @@ answer. An agent never reads an answer and decides what to do with it.
 | Binding | Answer value | Effect (in the consumer) |
 |---|---|---|
 | `flag:create` | `yes` or `no` | Planner: `yes` is `resume --create`. `no` records the round and changes nothing. |
+| `flag:refresh-bodies` | `yes` or `no` | Planner: `yes` is `resume --refresh-bodies` (take Linear's text for every child whose body drifted). `no` records the round and changes nothing. Used for `REFINEMENT_HALT` when a child carries `BODY_DRIFT` or `BODY_UNVERIFIED`, which are never waivable. |
 | `flag:accept:<CODE>` | the reason, or `__skip__` | Planner: `resume --accept <CODE>:"<reason>"`. |
 | `flag:project` | a project name or id, or `__none__` | Planner: `resume --project <value>`, or `--no-project` for `__none__`. |
 | `consensus-answer:cited:<n>` | `exists:<where>`, `external:<who>` or `generate` | Planner: rewrites the `Answer:` field of the `n`th `CITED_ARTIFACT:` line in `consensus.md` (1-based, file order, 1–9999). The value must be in that closed set; a value with `\|`, a backtick, CR, LF or another control character is rejected. Used for `CITED_ARTIFACT_UNRESOLVED`, one question per artifact. The index stands in for the artifact name, which can contain spaces and parentheses. |

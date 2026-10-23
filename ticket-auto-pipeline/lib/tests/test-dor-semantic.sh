@@ -184,9 +184,9 @@ dor_semantic_apply "APPLY-7" "$ws/body.md" "$scan" "$audit" >/dev/null
 
 # ── evaluator stamped ───────────────────────────────────────────────────────
 
-[ "$(get_ticket_manifest_field APPLY-7 ready | jq -r '.semantic.evaluator')" = "dor-semantic-v2" ] &&
+[ "$(get_ticket_manifest_field APPLY-7 ready | jq -r '.semantic.evaluator')" = "dor-semantic-v3" ] &&
   _pass "dor_semantic_apply: evaluator stamped" ||
-  _fail "dor_semantic_apply: evaluator should be dor-semantic-v2"
+  _fail "dor_semantic_apply: evaluator should be dor-semantic-v3"
 
 # ── canned-result case over real fixtures (task 5.3) ────────────────────────
 
@@ -253,6 +253,14 @@ audit_prompt=$(dor_semantic_prompt audit WIL-999 /tmp/body-WIL-999.md /tmp/resul
 echo "$audit_prompt" | grep -q "/tmp/det-WIL-999.json" &&
   _pass "dor_semantic_prompt: audit references the det-result file" ||
   _fail "dor_semantic_prompt: audit should reference the det-result path"
+# planner-refinement-convergence D5: a dispute carries a verbatim quote from
+# the code's own section; the scan never asks for one.
+echo "$audit_prompt" | grep -q "^AUDIT_1_QUOTE: " &&
+  _pass "dor_semantic_prompt: audit asks for AUDIT_1_QUOTE" ||
+  _fail "dor_semantic_prompt: audit should ask for AUDIT_1_QUOTE"
+echo "$scan_prompt" | grep -q "AUDIT_1_QUOTE" &&
+  _fail "dor_semantic_prompt: scan should not ask for AUDIT_1_QUOTE" ||
+  _pass "dor_semantic_prompt: scan does not ask for AUDIT_1_QUOTE"
 
 cat >"$ws/inject-body.md" <<'EOF'
 ## Acceptance Criteria

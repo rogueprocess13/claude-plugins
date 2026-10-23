@@ -689,6 +689,31 @@ test_readiness_message_includes_semantic_and_disputed_when_cached() {
     grep -q 'waive: dor-check.sh --waive TST-61 AC_VAGUE' "$capture"
 }
 
+# planner-refinement-convergence task 5.2: a disputed code that the audit
+# demoted (a key of ready.demoted) gets no waive hint; an undemoted dispute
+# keeps its hint.
+test_readiness_message_drops_waive_hint_for_demoted_code() {
+  local state_dir bindir capture repos_root
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  capture="$state_dir/.capture"
+  repos_root=$(_mktemp_test_dir)
+  REPOS_ROOT="$repos_root" write_ticket_manifest "TST-62" "INIT-1" "feature" '[]'
+  REPOS_ROOT="$repos_root" set_ticket_readiness "TST-62" "not-ready" '["AC_VAGUE", "NAV_PATH_MISSING"]' '[]' \
+    '{"body_hash": "sha256:x"}'
+  local sem
+  sem=$(jq -nc '{evaluator:"dor-semantic-v1",
+    audit:[{code:"AC_VAGUE", verdict:"disputed", reason:"AC-4 already qualifies this"},
+           {code:"NAV_PATH_MISSING", verdict:"disputed", reason:"nav is in the intro"}]}')
+  REPOS_ROOT="$repos_root" set_ticket_semantic "TST-62" "$sem"
+  REPOS_ROOT="$repos_root" set_ticket_demotions "TST-62" \
+    '{"AC_VAGUE":{"by":"dor-semantic-audit","reason":"AC-4 already qualifies this","quote":"q","body_hash":"sha256:x","evaluator":"dor-semantic-v1"}}' || return 1
+  REPOS_ROOT="$repos_root" SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
+    PATH="$bindir:$PATH" fleet_notify_readiness "TST-62" "$state_dir" "stale" >/dev/null 2>&1
+  ! grep -q 'waive TST-62 AC_VAGUE' "$capture" &&
+    grep -q 'waive: dor-check.sh --waive TST-62 NAV_PATH_MISSING' "$capture"
+}
+
 test_readiness_message_has_no_score_when_uncached() {
   local state_dir bindir capture
   state_dir=$(_mktemp_test_dir)
@@ -750,6 +775,7 @@ for fn in \
   test_readiness_blocking_sibling_sends_notification \
   test_readiness_message_includes_score_and_gaps_when_cached \
   test_readiness_message_includes_semantic_and_disputed_when_cached \
+  test_readiness_message_drops_waive_hint_for_demoted_code \
   test_readiness_message_has_no_score_when_uncached \
   test_readiness_unknown_reason_rejected; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue

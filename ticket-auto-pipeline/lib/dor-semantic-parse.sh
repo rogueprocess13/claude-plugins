@@ -414,12 +414,18 @@ parse_dor_semantic() {
     [ "${#_aidx_seen[@]}" -gt 0 ] && mapfile -t _aindices < <(printf '%s\n' "${!_aidx_seen[@]}" | sort -n)
     [ "${#_midx_seen[@]}" -gt 0 ] && mapfile -t _mindices < <(printf '%s\n' "${!_midx_seen[@]}" | sort -n)
 
-    local jq_args=() filter="[" first=1 idx code verdict reason
+    local jq_args=() filter="[" first=1 idx code verdict reason quote
     local audited_codes=""
     for idx in "${_aindices[@]}"; do
       code="${fields[AUDIT_${idx}_CODE]:-}"
       verdict="${fields[AUDIT_${idx}_VERDICT]:-}"
       reason="${fields[AUDIT_${idx}_REASON]:-}"
+      # AUDIT_n_QUOTE (planner-refinement-convergence D5) is optional on any
+      # entry and passed through as `quote`; an absent or empty one adds no
+      # key. dor_audit_demote is the only reader, and only for disputes. Like
+      # a scan QUOTE it is kept verbatim (not redacted): it must verify
+      # against the body.
+      quote="${fields[AUDIT_${idx}_QUOTE]:-}"
 
       if [ -z "$code" ]; then
         status="invalid"
@@ -439,10 +445,11 @@ parse_dor_semantic() {
 
       audited_codes="$audited_codes $code"
       reason=$(_dsp_redact "$reason")
-      jq_args+=(--arg "code${idx}" "$code" --arg "verdict${idx}" "$verdict" --arg "reason${idx}" "$reason")
+      jq_args+=(--arg "code${idx}" "$code" --arg "verdict${idx}" "$verdict" --arg "reason${idx}" "$reason"
+        --arg "quote${idx}" "$quote")
       [ "$first" -eq 1 ] || filter="$filter,"
       first=0
-      filter="$filter{code:\$code${idx},verdict:\$verdict${idx},reason:\$reason${idx}}"
+      filter="$filter({code:\$code${idx},verdict:\$verdict${idx},reason:\$reason${idx}}+(if \$quote${idx}==\"\" then {} else {quote:\$quote${idx}} end))"
     done
     filter="$filter]"
     if [ "$status" = "ok" ]; then

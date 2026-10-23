@@ -10,6 +10,9 @@
 #
 #   flag:create            yes → planner_authorize_create (+ clear stop-after,
 #                          exactly as --create does); no → nothing
+#   flag:refresh-bodies    yes → planner_config_set refresh-bodies true (the
+#                          one-shot --refresh-bodies flag, planner-refinement-
+#                          convergence D6); no → nothing
 #   flag:accept:<CODE>     planner_crosscheck_accept_set <CODE> <reason>
 #   flag:project           planner_config_set linear-project <value>, or
 #                          no-project=true for __none__
@@ -171,11 +174,11 @@ _planner_answers_sha() {
 _planner_answers_check_value() {
   local binding="$1" value="$2" LC_ALL=C
   case "$binding" in
-  flag:create)
+  flag:create | flag:refresh-bodies)
     case "$value" in
     yes | no) return 0 ;;
     esac
-    echo "answer to a create question must be 'yes' or 'no'" >&2
+    echo "answer to a ${binding#flag:} question must be 'yes' or 'no'" >&2
     return 1
     ;;
   flag:accept:* | waive:*)
@@ -472,8 +475,8 @@ _planner_answers_apply_locked() {
       ;;
     esac
     value=$(planner_answers_sanitize "$(printf '%s' "$a" | jq -r '.value')")
-    # create is the one closed-vocabulary answer; normalise its case.
-    [ "$binding" = "flag:create" ] && value=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+    # create and refresh-bodies are closed-vocabulary answers; normalise their case.
+    case "$binding" in flag:create | flag:refresh-bodies) value=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | tr -d ' ') ;; esac
     case "$binding" in specify-answer:O*) value=$(_planner_answers_trim "$value") ;; esac
     case "$binding" in
     consensus-answer:cited:*) value=$(planner_cited_answer_normalize "$value" 2>/dev/null) ;;
@@ -615,6 +618,14 @@ _planner_answers_apply_locked() {
         applied+=("create")
       else
         applied+=("create-declined")
+      fi
+      ;;
+    flag:refresh-bodies)
+      if [ "$value" = "yes" ]; then
+        planner_config_set "$init" "refresh-bodies" "true" || return 1
+        applied+=("refresh-bodies")
+      else
+        applied+=("refresh-bodies-declined")
       fi
       ;;
     flag:accept:*)

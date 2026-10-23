@@ -219,10 +219,10 @@ fi
 # ── (i) evaluator string ────────────────────────────────────────────────────
 
 ev=$(_ready "TD-C27" | jq -r '.semantic.evaluator')
-[ "$ev" = "dor-semantic-v2" ] && _pass "(i) stored evaluator is dor-semantic-v2" ||
-  _fail "(i) stored evaluator should be dor-semantic-v2 (got $ev)"
+[ "$ev" = "dor-semantic-v3" ] && _pass "(i) stored evaluator is dor-semantic-v3" ||
+  _fail "(i) stored evaluator should be dor-semantic-v3 (got $ev)"
 
-# ── (j) a waive survives the v1 → v2 re-run ─────────────────────────────────
+# ── (j) a waive survives the v1 → current-evaluator re-run ─────────────────
 
 awk '
   /^FINDING_1_CODE:/ { print "FINDING_1_CODE: EDGE_CASE_GAP"; next }
@@ -244,12 +244,12 @@ dor_semantic_apply "TD-J" "$body27" "$j_scan" "$j_audit" >/dev/null 2>&1 || true
 j2=$(_ready "TD-J")
 if [ "$(echo "$j1" | jq -r '.semantic.evaluator')" = "dor-semantic-v1" ] &&
   [ "$(echo "$j1" | jq -r '(.missing // []) | index("SEMANTIC_EDGE_CASES") != null')" = "true" ] &&
-  [ "$(echo "$j2" | jq -r '.semantic.evaluator')" = "dor-semantic-v2" ] &&
+  [ "$(echo "$j2" | jq -r '.semantic.evaluator')" = "dor-semantic-v3" ] &&
   [ "$(echo "$j2" | jq -r '.waived | has("SEMANTIC_EDGE_CASES")')" = "true" ] &&
   [ "$(echo "$j2" | jq -r '.status')" = "ready" ]; then
-  _pass "(j) waived SEMANTIC_EDGE_CASES survives the v2 re-run, ticket ready"
+  _pass "(j) waived SEMANTIC_EDGE_CASES survives the v3 re-run, ticket ready"
 else
-  _fail "(j) waive should survive the v2 re-run (v1=$j1 v2=$j2)"
+  _fail "(j) waive should survive the v3 re-run (v1=$j1 v2=$j2)"
 fi
 
 echo ""

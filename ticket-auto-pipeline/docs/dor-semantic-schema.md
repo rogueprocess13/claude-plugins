@@ -130,6 +130,7 @@ BODY_HASH: sha256:ab12...
 AUDIT_1_CODE: AC_VAGUE
 AUDIT_1_VERDICT: disputed
 AUDIT_1_REASON: "handles errors gracefully" is qualified by AC-4's explicit retry table
+AUDIT_1_QUOTE: - [ ] A failed save retries 3 times, then shows the error toast
 MISSED_1_CODE: UNSTATED_DEPENDENCY
 MISSED_1_REASON: ticket assumes a feature flag exists with no reference to who owns it
 SCORE_PLAUSIBLE: yes
@@ -139,7 +140,9 @@ SCORE_REASON: 62 matches a ticket with AC present but no verification plan
 
 `AUDIT_n_*` is a numbered group: `CODE` (a deterministic hard or advisory code),
 `VERDICT` (`agree|disputed|uncertain`), `REASON` (mandatory when `VERDICT` is
-`disputed`, and must cite ticket text). **Every hard code in the deterministic result's
+`disputed`, and must cite ticket text), and an optional `QUOTE` — on a `disputed` entry
+only, a single line copied verbatim from the section the code checks (parsed as
+`quote`; absent when not given). **Every hard code in the deterministic result's
 `missing` list must have an `AUDIT_n` entry** — an unaudited hard code rejects the
 block. Audit entries for advisory codes are optional; one omitted advisory line never
 rejects the block. `MISSED_n_*` (`CODE`, `REASON`) names a semantic code the model
@@ -147,9 +150,9 @@ believes the deterministic pass and its own scan should have caught but didn't;
 optional, any count. `SCORE_PLAUSIBLE` (`yes|no`) and `SCORE_REASON` judge the
 diagnostic `dor_quality_score`.
 
-A `disputed` verdict is recorded in `ready.semantic.audit` with its reason and **never**
-removes, waives, or demotes the deterministic code — see "A disputed deterministic code
-stays blocking" below.
+A `disputed` verdict is recorded in `ready.semantic.audit` with its reason and, by
+default, **never** removes, waives, or demotes the deterministic code — see "A disputed
+deterministic code stays blocking" below. The opt-in exception is audit demotion.
 
 ## Key syntax
 
@@ -181,13 +184,88 @@ dropping the finding.
 
 `dor_semantic_apply` rejects (exit 1, nothing written) a result whose `TICKET` differs
 from the ticket id it was called with, or whose `BODY_HASH` differs from
-`_dor_body_hash` of the body file it is given. `DOR_SEMANTIC_EVALUATOR="dor-semantic-v2"`
+`_dor_body_hash` of the body file it is given. `DOR_SEMANTIC_EVALUATOR="dor-semantic-v3"`
 is stamped into `ready.semantic.evaluator` on every stored result; it changes whenever
 the prompt, code vocabulary, or block schema changes, so a caller can decide whether a
 cached verdict is current by comparing body hash and evaluator string. `v2`
 (dor-semantic-test-data-gap) added `TEST_DATA_GAP` to the prompt and code vocabulary; the
 block schema is unchanged (`SCHEMA_VERSION: 1`, four gaps), so every `v1` block still
 parses. The planner's Refinement phase re-runs a cached `v1` verdict once.
+
+`v3` (planner-refinement-convergence) adds finding identity and lineage, per-ticket
+rounds, and the scoped-rescan hint; the block schema is again unchanged. A stored `v2`
+verdict whose `body_hash` equals the current body is **migrated in place** by
+`dor_semantic_migrate_v2 <TID> <body-file>` — no agent runs: bash computes each
+finding's units and id, labels every finding `new`, starts `ready.lineage` at round 1,
+and stamps `migrated_from: "dor-semantic-v2"` on both. Exit 0 migrated, 2 nothing to
+migrate (no verdict, another evaluator, a changed, stale or unavailable verdict), 1
+error. A `v2` verdict on a changed body is rescanned as usual, so the bump only
+rescans edited tickets.
+
+## Finding identity, lineage and rounds (`v3`)
+
+`dor_semantic_apply` annotates every finding and writes `ready.lineage` through
+`set_ticket_lineage` (which `set_ticket_semantic` never touches and
+`set_ticket_readiness` copies forward):
+
+- **Units.** `dor-check.sh`'s `_dor_section_records … units`: one unit per `##`
+  section, except that each Acceptance Criteria item is its own unit
+  (`<heading>/ac:<sha8>`). `_dor_unit_of <body> <quote>` prints every unit whose
+  text contains the quote (normalised as for the verbatim check, lowercased, a
+  leading checkbox/number marker dropped), in body order; the first is the
+  finding's `unit` (anchor), all are its `units`. `QUOTE_B`'s units are appended
+  to `units`. An unverified finding has no unit.
+- **Identity.** `id = f-<12 hex of sha256(code \n anchor \n normalised quote)>`
+  (`_dor_semantic_finding_id`).
+- **Round.** 1 with no lineage, another evaluator, or a reset (at least
+  `DOR_SEMANTIC_ROUND_RESET_SHARE`, default `0.5`, of the prior non-inert sections
+  added, removed or changed — `reset: true`); unchanged on the same body hash (a
+  retry, or a body rebased by an inert-only edit); otherwise +1.
+- **Lineage label.** `carried` when the id was in the prior lineage (its
+  `first_round` copied); `drift` when the id is new, the round is 2 or more, every
+  unit is unchanged since the prior lineage, and none of them holds a finding that
+  persisted from it; `new` otherwise, and always for an unverified finding. After
+  a reset nothing is carried. `lineage.resolved` lists the prior ids now absent.
+- **Demotion.** A blocking finding whose code is not in
+  `DOR_SEMANTIC_STRUCTURAL_CODES` (default `NEEDS_HUMAN_DECISION
+  CONTRADICTORY_REQUIREMENTS UNSTATED_DEPENDENCY INTENT_AC_MISMATCH`) is stored
+  `severity: "advisory"` with `demoted: "drift"` when it is drift and
+  `DOR_SEMANTIC_DRIFT_DEMOTE=true` (library default `false`), else
+  `demoted: "round-limit"` when `DOR_SEMANTIC_MAX_ROUNDS` is a positive integer
+  and the round exceeds it (unset: no round-limit demotion). An overridden
+  structural list warns on stderr (`dor-semantic: policy override: …`).
+  `resume --converge` (planner side) writes a third value, `demoted: "converge"`, with
+  `converged_by: <operator>`, on the stored verdict without a rescan; it does not touch
+  `ready.lineage`. Structural, unverified and bash-owned `SEMANTIC_*` findings are never
+  demoted by any of the three.
+
+```json
+"lineage": {
+  "round": 2, "reset": false, "evaluator": "dor-semantic-v3",
+  "body_hash": "sha256:…", "section_hashes": {"Summary": "sha256:…"},
+  "units": {"Acceptance Criteria/ac:1a2b3c4d": "sha256:…"},
+  "findings": [{"id": "f-0123456789ab", "code": "EDGE_CASE_GAP",
+                "unit": "Acceptance Criteria/ac:1a2b3c4d",
+                "units": ["Acceptance Criteria/ac:1a2b3c4d"],
+                "first_round": 1, "lineage": "carried"}],
+  "resolved": [],
+  "counts": {"new": 0, "carried": 1, "drift": 0, "resolved": 0, "unverified": 0},
+  "first_audit": {"body_hash": "sha256:…", "evaluator": "dor-semantic-v3", "audit": []},
+  "policy": {"structural": ["NEEDS_HUMAN_DECISION", "…"], "overridden": false,
+             "drift_demote": false, "max_rounds": null, "round_reset_share": 0.5,
+             "inert": ["Related Tickets"],
+             "audit_demotable": ["VPLAN_ROW_GAP", "…"], "audit_demotable_overridden": false}
+}
+```
+
+`lineage.findings` holds verified findings only. `first_audit` is the first audit
+applied for a body hash; a later audit on the same hash leaves it unchanged.
+`counts.unverified` counts findings with `verified: false`.
+
+**Scoped rescan.** `dor_semantic_prompt scan … --changed-sections "<h1|h2…>"` lists
+the changed sections under `**Changed sections**` and asks for findings about them, or
+about their conflicts with the rest, quoting the changed section first. The scan stays
+blind to the deterministic result.
 
 ## `--det-result` file shape
 
@@ -233,7 +311,7 @@ writer of a ticket manifest's `ready` object, alongside `set_ticket_readiness` a
 "ready": {
   "...": "...",
   "semantic": {
-    "evaluator": "dor-semantic-v2",
+    "evaluator": "dor-semantic-v3",
     "checked_at": "2026-10-01T00:00:00Z",
     "body_hash": "sha256:ab12...",
     "findings": [
@@ -283,15 +361,105 @@ carries `semantic`:
 
 `status` is then recomputed as always. A body edited after the semantic verdict was
 recorded can therefore never pass dispatch or the entry gate on the deterministic check
-alone — it must be re-evaluated. `semantic` remains outside `set_ticket_readiness`'s
+alone — it must be re-evaluated.
+
+**Section-scoped staleness (planner-refinement-convergence D4).** `check_ticket_ready`
+also sets `DOR_SECTION_HASHES` (one `sha256:` hash per `##` section) and
+`DOR_UNIT_HASHES` (the same, with each Acceptance Criteria item as its own
+`<heading>/ac:<sha8>` unit), reset to empty beside `DOR_BODY_HASH` on every call. They
+are stored as `ready.section_hashes` and `ready.unit_hashes`. When the body hash changed,
+the verdict is fresh and both section maps are present, `set_ticket_readiness` compares
+them:
+
+- every changed heading is in `DOR_SEMANTIC_INERT_SECTIONS` (`|`-separated, default
+  `Related Tickets`; set it empty to disable), no finding is anchored in a changed
+  heading (a verified finding with no `unit`/`units` counts as anchored everywhere), and
+  `ready.demoted` is empty → the verdict is **rebased**, not staled: it keeps its
+  `SEMANTIC_*` codes, `semantic.body_hash` moves to the new hash,
+  `semantic.rebased_from` records the old one, and `ready.lineage` moves its hashes to
+  the new body without changing `round`;
+- otherwise → stale as above, plus `semantic.changed_sections` (the changed headings,
+  `#n` repeat suffixes stripped, sorted; unioned with an earlier list when the verdict
+  was already stale). The planner passes it to the next scan as `--changed-sections`.
+
+A body hash that changed with no section changed (whitespace) rebases too. With no
+section hashes on either side, the old rule applies.
+
+**Check profile.** `ready.check_profile` records the strictness the deterministic
+verdict was computed under. `planner-strict` (what the planner's Refinement scan writes)
+means `DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true`; absent or any other value means
+the host's own `DOR_STRICT_*` defaults. `ensure_ticket_readiness` recomputes under the
+stored profile and writes it back, so a dispatch-time recompute of a planner ticket is
+not more lenient than Refinement was. `semantic` remains outside `set_ticket_readiness`'s
 allowed extras keys; only `set_ticket_semantic` ever writes it.
 
 ## A disputed deterministic code stays blocking
 
-`disputed` is recorded in `ready.semantic.audit` with its reason. It never removes,
-waives, or demotes the deterministic code — it is a **waiver candidate**: consumers
-print the reason and the exact `dor-check.sh --waive <TID> <CODE> "<reason>"` command.
-Only a human waives.
+`disputed` is recorded in `ready.semantic.audit` with its reason. By default it never
+removes, waives, or demotes the deterministic code — it is a **waiver candidate**:
+consumers print the reason and the exact `dor-check.sh --waive <TID> <CODE> "<reason>"`
+command. Only a human waives. `BODY_DRIFT` and `BODY_UNVERIFIED` can never be waived:
+`waive_ticket_readiness_code` refuses them (exit 3) and points at
+`/ticket-planner resume <INIT> --refresh-bodies`.
+
+### Audit demotion (shipped dark)
+
+`dor_audit_demote <TID> <body-file>` (planner-refinement-convergence D5) is the one
+exception, and nothing calls it unless the planner runs with
+`PLANNER_REFINEMENT_AUDIT_DEMOTE=true`. It reads only `ready.lineage.first_audit`, and
+only when that audit and `ready.body_hash` are both for the body file's current hash —
+a retried audit on the same body cannot re-roll a dispute. An entry qualifies when:
+
+1. its verdict is `disputed`;
+2. its code is not never-demote (`DOR_AUDIT_NEVER_DEMOTE`, a fixed constant: the
+   presence codes, the `TEST_DATA_*`/`TEST_USER_*` family, `CATALOG_ABSENT`,
+   `VERIFICATION_REQUIRED_NOT_SELF_VERIFYING`, `FLAG_NEEDS_INFO`, `BODY_UNAVAILABLE`,
+   `BODY_DRIFT`, `BODY_UNVERIFIED`, and every `SEMANTIC_*` code — checked first) and is in
+   `DOR_AUDIT_DEMOTABLE_CODES` (default `VPLAN_ROW_GAP VPLAN_UNVERIFIABLE AC_VAGUE
+   AC_IMPLEMENTATION_ONLY NAV_PATH_MISSING`; an override warns at apply time and is
+   snapshotted as `lineage.policy.audit_demotable`/`audit_demotable_overridden`);
+3. the code is in `ready.missing` and not waived;
+4. its `quote` occurs in one of the code's own sections (`DOR_AUDIT_CODE_SECTIONS`:
+   `VPLAN_*` → Verification Plan or Acceptance Criteria, `AC_*` → Acceptance Criteria,
+   `NAV_PATH_MISSING` → Navigation Path), after the same normalisation as a finding's
+   quote. A quote anywhere else, or none, does not qualify.
+
+With 1 to `DOR_AUDIT_DEMOTE_MAX` (default 2) qualifying codes, all are demoted and
+printed one per line; more demotes none and exits 4. The writer is
+`set_ticket_demotions <TID> <json>`, the only writer of `ready.demoted`:
+
+```json
+"demoted": {"VPLAN_ROW_GAP": {"by": "dor-semantic-audit", "reason": "…",
+            "quote": "- [ ] Criteria 2 and 3 are verified together in row 2",
+            "body_hash": "sha256:…", "evaluator": "dor-semantic-v3"}}
+```
+
+It moves the code from `missing` to `advisory` and recomputes `status`. It refuses an
+entry whose `body_hash` is not `ready.body_hash`, and any `SEMANTIC_*` or `BODY_*` code.
+`set_ticket_readiness` keeps an entry only while its `body_hash` equals the fresh one,
+re-applying it to the recomputed `missing`/`advisory`; an edited body (or a rewrite
+with no body hash) drops it, so the code blocks again. A non-empty `ready.demoted` also
+blocks the inert-section rebase.
+
+## Environment variables
+
+Read at call time by `lib/dor-semantic.sh` (and `manifest-write.sh` for the inert list).
+The planner sets the round and drift ones as call prefixes; see `ticket-planner` SKILL.md
+§ Configuration for the `PLANNER_REFINEMENT_*` variables that drive them.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `DOR_SEMANTIC_ADVISORY_CODES` | *(empty)* | Space-separated semantic codes a host makes advisory (see Severity) |
+| `DOR_SEMANTIC_STRUCTURAL_CODES` | `DOR_SEMANTIC_STRUCTURAL_CODES_DEFAULT`: `NEEDS_HUMAN_DECISION CONTRADICTORY_REQUIREMENTS UNSTATED_DEPENDENCY INTENT_AC_MISMATCH` | Codes never demoted by the round limit, drift or converge. Empty means the default. An override warns on stderr and is snapshotted as `lineage.policy.structural`/`overridden` |
+| `DOR_SEMANTIC_MAX_ROUNDS` | *(unset — no round limit)* | Positive integer; from round MAX+1 non-structural findings are `demoted: "round-limit"`. Anything else counts as unset. The planner passes `PLANNER_REFINEMENT_MAX_ROUNDS` (default 2) |
+| `DOR_SEMANTIC_DRIFT_DEMOTE` | `false` | `true` demotes drift findings (`demoted: "drift"`). The planner always passes `true` |
+| `DOR_SEMANTIC_ROUND_RESET_SHARE` | `0.5` | Share (0–1) of prior non-inert sections that must change to reset the round to 1. Invalid values count as `0.5` |
+| `DOR_SEMANTIC_INERT_SECTIONS` | `Related Tickets` | `\|`-separated headings whose edits rebase the verdict instead of staling it. Empty disables rebasing |
+| `DOR_AUDIT_DEMOTABLE_CODES` | `DOR_AUDIT_DEMOTABLE_CODES_DEFAULT`: `VPLAN_ROW_GAP VPLAN_UNVERIFIABLE AC_VAGUE AC_IMPLEMENTATION_ONLY NAV_PATH_MISSING` | Deterministic codes `dor_audit_demote` may demote. Empty means the default. Never-demote codes are refused whatever this says. An override warns at apply time and is snapshotted as `lineage.policy.audit_demotable`/`audit_demotable_overridden` |
+| `DOR_AUDIT_DEMOTE_MAX` | `2` | More qualifying codes than this on one ticket is a blanket dispute: nothing is demoted, exit 4. Empty or invalid means 2 |
+
+Fixed constants, not overridable: `DOR_SEMANTIC_EVALUATOR` (`dor-semantic-v3`),
+`DOR_AUDIT_NEVER_DEMOTE`, `DOR_AUDIT_CODE_SECTIONS`.
 
 ## Reads and consumers
 
@@ -301,7 +469,7 @@ Check 2.7e needs no change: `SEMANTIC_*` codes arrive through `DOR_MISSING` exac
 any other hard code. `fleet-dispatch.sh`'s not-ready summary line and
 `fleet-notify.sh`'s readiness message append semantic codes and disputed deterministic
 codes with their reasons; neither branches on `ready.semantic` beyond the existing
-readiness return code, and neither invokes a model.
+readiness return code, and neither invokes a model. Both drop a disputed code that is in `ready.demoted` from their waive hints: it no longer blocks, so there is nothing to waive.
 
 ## Evaluator agent contract
 
@@ -321,6 +489,7 @@ references the deterministic result file or any deterministic code.
 - Run anywhere on its own — the planner's Refinement phase (`planner-refinement-phase`)
   is the only caller.
 - Multi-sample majority voting.
-- Remove or waive a deterministic code.
+- Remove or waive a deterministic code (audit demotion, above, is opt-in and never a
+  waiver).
 - Change `ticket-critique` or evaluate ad-hoc tickets.
 - Rewrite ticket bodies.

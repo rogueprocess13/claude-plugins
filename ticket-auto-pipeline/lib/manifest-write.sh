@@ -556,8 +556,11 @@ _manifest_readiness_unlock() {
 #
 # `extras_json` (dor-quality-score design.md Decision 8) is optional and, when
 # given, MUST be a JSON object whose keys are limited to `score`, `dimensions`,
-# `gaps`, `body_hash` — any other key is rejected with exit 3 and the manifest
-# is left untouched. Extras omitted from the call are absent from the written
+# `gaps`, `body_hash`, `section_hashes`, `unit_hashes` (objects — dor-check.sh's
+# _dor_section_hashes/_dor_unit_hashes) and `check_profile` (a string, e.g.
+# `planner-strict` — planner-refinement-convergence D9) — any other key, or a
+# wrongly typed one, is rejected with exit 3 and the manifest is left
+# untouched. Extras omitted from the call are absent from the written
 # `ready` object, so a fresh verdict never carries a previous verdict's score
 # or hash. A 4-arg call (no extras) writes exactly the pre-existing fields,
 # unchanged.
@@ -570,6 +573,34 @@ _manifest_readiness_unlock() {
 # `semantic.stale: true` and replacing every prior `SEMANTIC_*` code with the
 # single code `SEMANTIC_STALE`. `semantic` is never an allowed extras key —
 # only `set_ticket_semantic` writes it fresh.
+#
+# Section-scoped staleness (planner-refinement-convergence D4) refines the
+# "any other case" branch. When the hash changed, the verdict is fresh (not
+# already stale, computed on the previously checked body) and both the stored
+# `ready.section_hashes` and extras.section_hashes are present, the changed
+# headings are computed (`#n` repeat suffixes stripped). The verdict is
+# REBASED — kept with its `SEMANTIC_*` codes, `semantic.body_hash` moved to
+# the new hash, `semantic.rebased_from` set to the old one — when every
+# changed heading is in DOR_SEMANTIC_INERT_SECTIONS (`|`-separated, default
+# `Related Tickets`), no finding is anchored in a changed heading (a verified
+# finding with no `unit`/`units` counts as anchored everywhere), and
+# `ready.demoted` is empty. Otherwise it goes stale as before and records
+# `semantic.changed_sections` (merged with an earlier list when it was
+# already stale; dropped when an already-stale verdict had none — a full
+# rescan stays a full rescan). Without hashes on either side the old rule
+# applies unchanged.
+#
+# `ready.lineage` is never written here: it is copied forward verbatim, except
+# that a rebase moves its `body_hash`/`section_hashes`/`units` onto the new
+# body. A rebase never changes `lineage.round`. Only set_ticket_lineage
+# writes it.
+#
+# `ready.demoted` (planner-refinement-convergence D5, written only by
+# set_ticket_demotions) is kept entry by entry while the entry's `body_hash`
+# equals extras.body_hash, and each kept code is re-applied: removed from the
+# fresh `missing` and appended to `advisory` (when the check still reports
+# it). An entry for any other hash — or every entry, on a call with no
+# body_hash — is dropped, so an edited body blocks on the code again.
 set_ticket_readiness() {
   local tid="$1" status="$2" missing="${3:-[]}" advisory="${4:-[]}" extras="${5:-}"
   case "$status" in
@@ -593,9 +624,15 @@ set_ticket_readiness() {
       return 3
     fi
     local _bad_keys
-    _bad_keys=$(echo "$extras" | jq -r '[keys[] | select(. as $k | ["score","dimensions","gaps","body_hash"] | index($k) == null)] | join(",")' 2>/dev/null)
+    _bad_keys=$(echo "$extras" | jq -r '[keys[] | select(. as $k | ["score","dimensions","gaps","body_hash","section_hashes","unit_hashes","check_profile"] | index($k) == null)] | join(",")' 2>/dev/null)
     if [ -n "$_bad_keys" ]; then
-      echo "manifest-write: extras contains unknown key(s) '$_bad_keys' (allowed: score, dimensions, gaps, body_hash)" >&2
+      echo "manifest-write: extras contains unknown key(s) '$_bad_keys' (allowed: score, dimensions, gaps, body_hash, section_hashes, unit_hashes, check_profile)" >&2
+      return 3
+    fi
+    if ! echo "$extras" | jq -e '((.section_hashes // {}) | type == "object")
+        and ((.unit_hashes // {}) | type == "object")
+        and ((.check_profile // "") | type == "string")' >/dev/null 2>&1; then
+      echo "manifest-write: extras section_hashes/unit_hashes must be objects and check_profile a string" >&2
       return 3
     fi
   else
@@ -616,24 +653,82 @@ set_ticket_readiness() {
   content=$(jq -c \
     --argjson missing "$missing" --argjson advisory "$advisory" --argjson waived "$waived" \
     --argjson extras "$extras" \
+    --arg inert "${DOR_SEMANTIC_INERT_SECTIONS-Related Tickets}" \
     --arg checked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '(.ready) as $old_ready
      | ($old_ready.semantic // null) as $old_semantic
+     | ($old_ready.lineage // null) as $old_lineage
      | ($old_ready.missing // []) as $old_missing
      | ($extras.body_hash // null) as $new_hash
+     | ($old_ready.section_hashes // null) as $old_sec
+     | ($extras.section_hashes // null) as $new_sec
+     | ($inert | split("|") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $inert_list
+     # Section-scoped staleness (planner-refinement-convergence D4). The
+     # stored section_hashes describe the semantic verdict body only while
+     # that verdict is fresh and was computed on the last checked body.
+     | (if ($old_sec | type) == "object" and ($new_sec | type) == "object" then
+          [(($old_sec | keys) + ($new_sec | keys) | unique)[]
+           | select($old_sec[.] != $new_sec[.])]
+        else null end) as $changed
+     | ($changed // [] | map(sub("#[0-9]+$"; "")) | unique) as $changed_heads
+     # A finding anchored in a changed heading blocks the rebase. A verified
+     # finding with no recorded anchor (a verdict predating units) might be
+     # anchored anywhere, so it blocks too.
+     | ([($old_semantic.findings // [])[], ($old_lineage.findings // [])[]
+         | select(.verified != false)
+         | if ((.unit // null) == null) and (((.units // []) | length) == 0) then "*"
+           else ((.unit // empty), (.units // [])[]) end
+         | if . == "*" then . else (sub("/ac:.*$"; "") | sub("#[0-9]+$"; "")) end]
+        | unique) as $anchor_heads
      | (if $old_semantic == null then
-          {semantic: null, extra_missing: []}
+          {semantic: null, extra_missing: [], rebased: false}
         elif ($new_hash != null) and ($new_hash == ($old_semantic.body_hash // null)) then
-          {semantic: $old_semantic, extra_missing: [$old_missing[] | select(startswith("SEMANTIC_"))]}
+          {semantic: $old_semantic, extra_missing: [$old_missing[] | select(startswith("SEMANTIC_"))], rebased: false}
+        elif ($new_hash != null) and ($changed != null)
+             and (($old_semantic.stale // false) | not)
+             and (($old_ready.body_hash // null) == ($old_semantic.body_hash // null))
+             and ($changed_heads | all(. as $h | $inert_list | index($h) != null))
+             and ([$changed_heads[] | . as $h | select(($anchor_heads | index($h) != null) or ($anchor_heads | index("*") != null))] | length == 0)
+             and ((($old_ready.demoted // {}) | length) == 0) then
+          {semantic: ($old_semantic + {body_hash: $new_hash, rebased_from: $old_semantic.body_hash}),
+           extra_missing: [$old_missing[] | select(startswith("SEMANTIC_"))], rebased: true}
+        elif $changed != null then
+          # Scoped rescan hint. An already-stale verdict accumulates its
+          # earlier changed_sections (they changed relative to the verdict
+          # body too); one stale without a list keeps a full rescan.
+          (if ($old_semantic.stale // false) then
+             (if $old_semantic | has("changed_sections") then ($old_semantic.changed_sections + $changed_heads | unique) else null end)
+           else $changed_heads end) as $cs
+          | {semantic: (($old_semantic | del(.changed_sections)) + {stale: true}
+                        + (if $cs != null then {changed_sections: $cs} else {} end)),
+             extra_missing: ["SEMANTIC_STALE"], rebased: false}
         else
-          {semantic: ($old_semantic + {stale: true}), extra_missing: ["SEMANTIC_STALE"]}
+          {semantic: (($old_semantic | del(.changed_sections)) + {stale: true}), extra_missing: ["SEMANTIC_STALE"], rebased: false}
         end) as $sem
-     | ($missing + $sem.extra_missing | unique) as $full_missing
+     # ready.lineage is written only by set_ticket_lineage; it is copied
+     # forward on every rewrite. A rebase moves its hashes onto the new body
+     # and never touches its round.
+     | (if $old_lineage == null then null
+        elif $sem.rebased then
+          ($old_lineage + {body_hash: $new_hash, section_hashes: $new_sec}
+           + (if ($extras.unit_hashes // null) != null then {units: $extras.unit_hashes} else {} end))
+        else $old_lineage end) as $lineage
+     # Audit demotions (D5) are bound to the body hash: an entry is kept
+     # only while its body_hash equals the fresh one (a call with no fresh
+     # hash keeps none), and each kept code is moved from missing to
+     # advisory again. With no demotions this is the identity.
+     | (($old_ready.demoted // {}) | with_entries(select($new_hash != null and .value.body_hash == $new_hash))) as $demoted
+     | ($demoted | keys) as $dem_codes
+     | ($missing + $sem.extra_missing | unique) as $all_missing
+     | ($all_missing - $dem_codes) as $full_missing
+     | ($advisory + [$all_missing[] | select(. as $c | ($dem_codes | index($c)) != null and ($advisory | index($c)) == null)]) as $full_advisory
      | .ready = ({
          status: (if ($full_missing - ($waived | keys)) == [] then "ready" else "not-ready" end),
-         checked_at: $checked_at, missing: $full_missing, advisory: $advisory, waived: $waived
+         checked_at: $checked_at, missing: $full_missing, advisory: $full_advisory, waived: $waived
        } + $extras
-       + (if $sem.semantic != null then {semantic: $sem.semantic} else {} end))' \
+       + (if $sem.semantic != null then {semantic: $sem.semantic} else {} end)
+       + (if $lineage != null then {lineage: $lineage} else {} end)
+       + (if ($dem_codes | length) > 0 then {demoted: $demoted} else {} end))' \
     "$manifest_path") || {
     _manifest_readiness_unlock
     return 1
@@ -660,6 +755,15 @@ waive_ticket_readiness_code() {
     echo "manifest-write: by must be non-empty" >&2
     return 3
   }
+  # BODY_DRIFT and BODY_UNVERIFIED are not waivable (planner-refinement-
+  # convergence D6): they say the body itself is in doubt, and the fix is
+  # `/ticket-planner resume <INIT> --refresh-bodies`, never a waiver.
+  case "$code" in
+  BODY_DRIFT | BODY_UNVERIFIED)
+    echo "manifest-write: $code cannot be waived — refresh the body instead (/ticket-planner resume <INIT> --refresh-bodies)" >&2
+    return 3
+    ;;
+  esac
 
   local manifest_path
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
@@ -701,9 +805,9 @@ waive_ticket_readiness_code() {
 #      ready.status from the new missing minus the keys of the *existing*
 #      waived map.
 #
-# checked_at, advisory, waived, score, dimensions, gaps, and body_hash are
-# never touched — checked_at stays because fleet-controller's D-18 detector
-# reads it as the not-ready-since clock.
+# checked_at, advisory, waived, score, dimensions, gaps, body_hash and
+# lineage are never touched — checked_at stays because fleet-controller's
+# D-18 detector reads it as the not-ready-since clock.
 set_ticket_semantic() {
   local tid="$1" semantic_json="$2"
 
@@ -738,6 +842,118 @@ set_ticket_semantic() {
      | .ready.missing = (((.ready.missing // []) | map(select(startswith("SEMANTIC_") | not)))
                           + $new_semantic_codes | unique)
      | .ready.semantic = $semantic
+     | .ready.status = (if ((.ready.missing - (.ready.waived // {} | keys)) == []) then "ready" else "not-ready" end)' \
+    "$manifest_path") || {
+    _manifest_readiness_unlock
+    return 1
+  }
+  _manifest_atomic_write "$manifest_path" "$content"
+  write_rc=$?
+  _manifest_readiness_unlock
+  return "$write_rc"
+}
+
+# set_ticket_lineage <TID> <lineage_json>
+# The writer of `ready.lineage` (planner-refinement-convergence D9) — the
+# per-ticket round counter and finding history Refinement converges on:
+# `{round, evaluator, body_hash, section_hashes, units, findings, resolved,
+# first_audit, policy}`. Called only by dor-semantic.sh (dor_semantic_apply,
+# dor_semantic_migrate_v2). Requires an existing `ready` object (exit 3,
+# nothing written, when absent — same as set_ticket_semantic). Replaces
+# `ready.lineage` wholesale under the readiness lock and touches nothing else:
+# not `missing`, not `status`, not `semantic`. set_ticket_semantic never
+# touches lineage and set_ticket_readiness copies it forward, so a fresh
+# `unavailable` verdict (planner_refinement_unavailable) keeps the rounds.
+set_ticket_lineage() {
+  local tid="$1" lineage_json="$2"
+
+  if ! echo "$lineage_json" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    echo "manifest-write: lineage_json must be a JSON object, got '$lineage_json'" >&2
+    return 3
+  fi
+
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+
+  if ! jq -e '(.ready // null) != null' "$manifest_path" >/dev/null 2>&1; then
+    _manifest_readiness_unlock
+    echo "manifest-write: ticket $tid has no ready object — set_ticket_readiness must run first" >&2
+    return 3
+  fi
+
+  local content write_rc
+  content=$(jq -c --argjson lineage "$lineage_json" '.ready.lineage = $lineage' "$manifest_path") || {
+    _manifest_readiness_unlock
+    return 1
+  }
+  _manifest_atomic_write "$manifest_path" "$content"
+  write_rc=$?
+  _manifest_readiness_unlock
+  return "$write_rc"
+}
+
+# set_ticket_demotions <TID> <demotions_json>
+# The only writer of `ready.demoted` (planner-refinement-convergence D5).
+# <demotions_json> is an object `{CODE: {by, reason, quote, body_hash,
+# evaluator}}`; `by` and `body_hash` are required strings. Under the
+# readiness lock it merges the entries into `ready.demoted`, moves each code
+# from `missing` to `advisory` (appended once, only when it was in
+# `missing`) and recomputes `status` against the existing waivers. Exit 3,
+# nothing written, when the argument is malformed, when there is no `ready`
+# object, when an entry's `body_hash` is not the verdict's own
+# `ready.body_hash` (a demotion binds to the body it was judged on), or when
+# a code is `SEMANTIC_*` (set_ticket_semantic re-derives those) or `BODY_*`
+# (never demotable). Exit 1 when no manifest exists. dor-semantic.sh's
+# dor_audit_demote is the caller; the set_ticket_readiness rewrite keeps an
+# entry only while the body hash is unchanged.
+set_ticket_demotions() {
+  local tid="$1" demotions_json="$2"
+
+  if ! echo "$demotions_json" | jq -e 'type == "object" and length > 0
+      and all(.[]; type == "object"
+        and ((.by // "") | type == "string" and length > 0)
+        and ((.body_hash // "") | type == "string" and length > 0))' >/dev/null 2>&1; then
+    echo "manifest-write: demotions_json must be a non-empty object of {by, reason, quote, body_hash, evaluator} entries, got '$demotions_json'" >&2
+    return 3
+  fi
+  local _bad
+  _bad=$(echo "$demotions_json" | jq -r '[keys[] | select(startswith("SEMANTIC_") or startswith("BODY_"))] | join(",")')
+  if [ -n "$_bad" ]; then
+    echo "manifest-write: code(s) '$_bad' can never be demoted" >&2
+    return 3
+  fi
+
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || return 1
+
+  _manifest_readiness_lock "${manifest_path}.lock" || return 1
+
+  if ! jq -e '(.ready // null) != null' "$manifest_path" >/dev/null 2>&1; then
+    _manifest_readiness_unlock
+    echo "manifest-write: ticket $tid has no ready object — set_ticket_readiness must run first" >&2
+    return 3
+  fi
+  if ! jq -e --argjson d "$demotions_json" \
+    '(.ready.body_hash // null) as $h | $h != null and all($d[]; .body_hash == $h)' \
+    "$manifest_path" >/dev/null 2>&1; then
+    _manifest_readiness_unlock
+    echo "manifest-write: ticket $tid demotion body_hash does not match ready.body_hash" >&2
+    return 3
+  fi
+
+  local content write_rc
+  content=$(jq -c --argjson d "$demotions_json" \
+    '($d | keys) as $codes
+     | (.ready.missing // []) as $m
+     | .ready.demoted = ((.ready.demoted // {}) + $d)
+     | .ready.advisory = ((.ready.advisory // [])
+         + [$codes[] | select(. as $c | ($m | index($c)) != null)]
+         | reduce .[] as $c ([]; if index($c) == null then . + [$c] else . end))
+     | .ready.missing = ($m - $codes)
      | .ready.status = (if ((.ready.missing - (.ready.waived // {} | keys)) == []) then "ready" else "not-ready" end)' \
     "$manifest_path") || {
     _manifest_readiness_unlock

@@ -2053,6 +2053,10 @@ for ticket_slug in "\${ORDER[@]}"; do
       mkdir -p "\$(dirname "\$existing_body")" 2>/dev/null
       printf '%s' "\$description" >"\$existing_body"
     fi
+    # Body baseline (planner-refinement-convergence D6): only when none
+    # exists and Linear's text equals body.md — otherwise Refinement
+    # classifies the ticket. Never fails the phase.
+    planner_ticketgen_record_baseline "${initiative_id}" "\$existing_ticket" skip || true
     CREATED_IDS+=("\$existing_ticket")
     n_skipped=\$((n_skipped + 1))
     continue
@@ -2094,6 +2098,10 @@ for ticket_slug in "\${ORDER[@]}"; do
   printf '%s' "\$description" >"${state_dir}/tickets/\${CREATED_TICKET_ID}/planner/body.md" || {
     echo "WARNING: failed to write body.md for \$CREATED_TICKET_ID" >&2
   }
+  # 8a. Body baseline (planner-refinement-convergence D6): read the
+  # description back once and record Linear's own text as the baseline
+  # Refinement's drift check compares against. A failed read-back only warns.
+  planner_ticketgen_record_baseline "${initiative_id}" "\$CREATED_TICKET_ID" create || true
 
   # 9. Ticket manifest (tracker-local-facts-read-migration) — the ONLY source
   # for type/initiative/blocked_by/dispatch. A failure here is reported but

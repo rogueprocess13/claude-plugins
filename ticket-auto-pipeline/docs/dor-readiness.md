@@ -30,6 +30,13 @@ and [`readiness-quality-score` spec](../../openspec/changes/dor-quality-score/sp
 `DOR_STATUS` is `not-ready` iff at least one hard code fails and is not waived (`ready.waived` in
 the manifest). No score, dimension value, or gap ever affects `DOR_STATUS`.
 
+A hard code can also leave `missing` through an **audit demotion** (`ready.demoted`, written only by
+`set_ticket_demotions`): it then sits in `advisory` for as long as the body hash is unchanged, and
+blocks again after any edit. Demotion is shipped dark — only the planner calls it, and only under
+`PLANNER_REFINEMENT_AUDIT_DEMOTE=true`; see "Audit demotion" in
+[dor-semantic-schema.md](dor-semantic-schema.md). `BODY_DRIFT` and `BODY_UNVERIFIED` can be neither
+demoted nor waived.
+
 ### `INTENT_MISSING`
 
 The body must state **both**:
@@ -347,7 +354,7 @@ the written object — a fresh verdict never carries a previous verdict's stale 
 vocabulary: `intent`, `scope`, `acceptance_criteria`, `verification`, `context`, `test_uat`,
 `dependencies`, `constraints`, `edge_cases`, `completion`, `requirement_completeness`.
 
-**Implemented (dor-semantic-evaluator).** The semantic evaluator is `dor-semantic-v2`
+**Implemented (dor-semantic-evaluator).** The semantic evaluator is `dor-semantic-v3`
 (`lib/dor-semantic.sh`, `lib/dor-semantic-parse.sh`, `agents/dor-semantic-agent.md`) — full contract
 in [docs/dor-semantic-schema.md](dor-semantic-schema.md). In outline: an agent is spawned twice per
 ticket, scan (body only) then audit (body plus the deterministic result), each writing one result
@@ -361,7 +368,7 @@ applies — no consumer or waiver mechanism needed to change:
 "ready": {
   "...": "...",
   "semantic": {
-    "evaluator": "dor-semantic-v2",
+    "evaluator": "dor-semantic-v3",
     "checked_at": "2026-10-01T00:00:00Z",
     "body_hash": "sha256:ab12...",
     "findings": [
