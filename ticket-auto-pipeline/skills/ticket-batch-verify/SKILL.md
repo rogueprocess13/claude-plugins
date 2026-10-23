@@ -126,22 +126,18 @@ is not this skill's own primary write path, and this skill does **not** call
 `write_verifier_result` itself: doing so here, after the fact and with no attempt-tracking of
 its own, would risk writing a second, less-precise record over the inner agent's real one.
 
-Call `/ticket-flow {TICKET-ID} uat-pass` to move to Done:
+Fire `uat-pass` through `lib/flow-run.sh` to move to Done:
 ```bash
-/ticket-flow {TICKET-ID} uat-pass
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-pass
 _rc=$?
 if [ "$_rc" -eq 11 ]; then
   # Gate-blocked (VERDICT_FAIL_NOT_ENFORCED guard, issue #368): a trailing FAIL/BLOCK for a
   # DIFFERENT verifier/phase on this ticket is still the latest on record. This is not a
   # verify failure — do not report it as one in Step 4. Mark it BLOCKED, not PASSED.
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERDICT_GATE_BLOCKED — uat-pass refused, see flow.sh stderr" >> {LOG_FILE}
-  hb-wrap.sh gate "verdict-gate" "fail" "uat-pass blocked by trailing FAIL/BLOCK verifier-result" \
-    "{\"trigger\":\"uat-pass\",\"ticket\":\"{TICKET-ID}\"}"
-elif [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-pass failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-pass\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-pass" >> {LOG_FILE}
+  # flow-run.sh has already written META|gate-stop|fail|VERDICT_GATE_BLOCKED + heartbeat.
+  echo "uat-pass gate-blocked for {TICKET-ID}"
 fi
+# Any other non-zero exit is already logged by flow-run.sh (META|flow-error).
 ```
 Record `_rc` alongside the ticket's row for Step 4 — `11` reports as `⏸️ BLOCKED`, not `✅ PASS`.
 
@@ -171,15 +167,12 @@ Post the agent's findings to Linear as a comment on the ticket. Use the agent's 
 **Next step:** Run `/ticket-verify --env uat {TICKET-ID}` interactively to diagnose.
 ```
 
-Then call `/ticket-flow {TICKET-ID} uat-fail` to move back to Ready:
+Then fire `uat-fail` through `lib/flow-run.sh` to move back to Ready:
 ```bash
-/ticket-flow {TICKET-ID} uat-fail
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-fail
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-fail failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-fail\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-fail" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# uat-fail carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 ---

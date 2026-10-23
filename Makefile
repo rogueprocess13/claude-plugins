@@ -165,6 +165,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-agent-tools.sh
 	# version-aware plugin-cache lookup (#468)
 	bash ticket-auto-pipeline/lib/tests/test-plugin-cache.sh
+	bash ticket-auto-pipeline/lib/tests/test-flow-run.sh
 	bash fleet-controller/lib/tests/test-fleet-plugin-cache.sh
 
 test-fleetd:
