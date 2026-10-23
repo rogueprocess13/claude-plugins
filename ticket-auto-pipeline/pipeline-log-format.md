@@ -978,7 +978,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 | `EXEC_NO_ARTIFACT` | Exec phase produced no artifact file (Phase 2) |
 | `COMPLEXITY_ARTIFACT_MISMATCH` | Complexity label and artifact type disagree (Phase 2) |
 | `LINEAR_FETCH_FAILED` | The entry gate's `get_issue` call failed or returned an unparseable payload. Reached only after exhausting `GATE_FETCH_MAX_ATTEMPTS` (default 3) consecutive holds (`tracker-read-failure-policy`, see "Gate fetch-attempt entries" above) — the first attempts hold instead of gate-stopping. Reapprove-gate context (`_gate_reapprove`) is the one exception: it still gate-stops on the first failure, never conflated with `APPROVAL_REVOKED` |
-| `APPROVAL_REVOKED` | `approved` label was removed before implement phase started (Phase 2) |
+| `APPROVAL_REVOKED` | The local manifest records no approval at re-approve time — approval was never granted, or was cleared by `re-claim` / `/ticket-reject` (tracker-approval-by-script; the Linear `approved` label is no longer read) |
 | `REMEDIATION_BRIEF_TRUNCATED` | REMEDIATION_BRIEF from verify exceeded length limit (Phase 2) |
 | `PR_REVIEW_VERDICT_UNPARSEABLE` | PR review returned no parseable ✅/⚠️/❌ verdict line (Phase 2) |
 | `ADVERSARIAL_BLOCKED` | Adversarial review found blocking issues in the implementation plan (Phase 2). Detail is `ADVERSARIAL_BLOCKED — round N — …`; the `EXEC\|adversarial-review\|done\|BLOCKED` line is written just before it. From round 3 on the reviewer also does an approach review (`lib/adversarial-rounds.sh`, #203) |

@@ -138,6 +138,8 @@ UAT_URL: https://staging.example.com
 
 `REPOS_ROOT` is where your source repos live. `UAT_URL` is the deployed environment the verify phase tests against.
 
+Also export `REPOS_ROOT` as an environment variable (for example in the `env` block of `~/.claude/settings.local.json`, next to `LINEAR_API_KEY`). `/ticket-auto` reads it from `CLAUDE.md` and exports it for its own phases, but the standalone `/ticket-approve` and `/ticket-reject` commands — and every other entry into the local manifest layer (`lib/manifest-read.sh`) — read only the environment. Without it they exit with "could not make … manifest-addressable", even though `/ticket-env-check` reports `REPOS_ROOT` as OK.
+
 ### 5. Validate before your first run
 
 From inside Claude Code:
@@ -177,7 +179,14 @@ Optional — the pipeline works without it, just slower and less informed.
 /ticket-auto CRE-47
 ```
 
-**What happens:** the pipeline moves your ticket `Backlog → Todo`, investigates the codebase, scores complexity, and writes a plan artifact. It then **stops and waits for you** — by default nothing is implemented until you add the `approved` label in Linear. Re-run the same command to continue.
+**What happens:** the pipeline moves your ticket `Backlog → Todo`, investigates the codebase, scores complexity, and writes a plan artifact. It then **stops and waits for you** — by default nothing is implemented until you approve it. Answer any Open Questions in the Linear comment, then run `/ticket-approve CRE-47` and re-run `/ticket-auto CRE-47` to continue. Approval is a fact in the ticket's local manifest, not a Linear label: adding an `approved` label (or dragging the card) in Linear does nothing, because the Linear column and labels are display-only.
+
+| Your decision | Command | Effect |
+|---|---|---|
+| Approve the plan | `/ticket-approve CRE-47` | Records approval in the local manifest and moves the ticket `Approve → Ready`. Re-run `/ticket-auto CRE-47` to implement. |
+| Reject the plan | `/ticket-reject CRE-47` | Clears any approval and moves the ticket `Approve → Todo` for re-appraisal. |
+
+Both commands need `REPOS_ROOT` set as an **environment variable** in the Claude Code session (see step 4 of Getting started) — they read and write the local manifest under `$REPOS_ROOT/.ticket-auto/`.
 
 **4. To reduce gating** once you trust it:
 
@@ -198,7 +207,15 @@ Complex tickets **always** wait for a human. Full detail: [autonomy modes](ticke
 /ticket-planner plan "Add real-time collaboration to the document editor"
 ```
 
-The planner runs 11 phases (Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → EpicGen → TicketGen → Refinement → Completed) and produces a Linear epic plus dependency-ordered tickets, each carrying a `Planner Context` block that lets the pipeline skip re-investigation. Refinement runs a deterministic Definition-of-Ready check plus a semantic evaluator pass per ticket before the epic is released to fleet dispatch.
+The planner runs 11 phases (Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → EpicGen → TicketGen → Refinement → Completed) and — once you authorize creation with `resume --create` (below) — produces a Linear epic plus dependency-ordered tickets, each carrying a `Planner Context` block that lets the pipeline skip re-investigation. Refinement runs a deterministic Definition-of-Ready check plus a semantic evaluator pass per ticket before the epic is released to fleet dispatch.
+
+`plan` stops after Crosscheck so you can read the plan before anything is written to Linear. Nothing exists in Linear yet at this point — no epic, no tickets, no manifest. Review the plan, then authorize creation:
+
+```
+/ticket-planner resume INIT-42 --create   # EpicGen → TicketGen → Refinement: writes the epic + tickets
+```
+
+Only after `resume --create` finishes (Refinement marks the epic dispatch-ready) is there anything to dispatch. Dispatching earlier finds no epic and queues nothing.
 
 Then execute them:
 
