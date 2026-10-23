@@ -258,6 +258,7 @@ test-kc:
 	bash knowledge-curator/test/test-kc-rank-log.sh
 	bash knowledge-curator/test/test-kc-resurface.sh
 	bash knowledge-curator/test/test-kc-prompt-match.sh
+	bash knowledge-curator/test/test-kc-ingest.sh
 
 lint:
 	shellcheck -S error $(SCRIPTS)
