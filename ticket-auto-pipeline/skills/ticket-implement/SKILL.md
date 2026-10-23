@@ -580,6 +580,29 @@ append_correction "{ticket-dir}/notes.md" \
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|commit-push|start|Committing and pushing" >> "$LOG_FILE"
 
+**No-diff check first.** Pass every affected repo's worktree. When none of them has a
+source change (no uncommitted or untracked non-ignored file, and no commit ahead of the
+base), the script writes `IMPLEMENT|commit-push|skip|…` and exits 4 — the line
+`ticket-pr-review` keys its no-diff exemption on (a verification-only ticket has no PR):
+
+```bash
+source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/implement-diff-check.sh" \
+  --base-ref "origin/${BASE_BRANCH:-develop}" --log-file "$LOG_FILE" \
+  "$WORKTREE_PATH" # one argument per affected repo's worktree
+_idc_rc=$?
+```
+
+- `_idc_rc=4` → nothing to commit or push. Skip the rest of Step 5 (no commit, no push, no
+  `commit-push|done` line) and append to `notes.md`: `### {today's date} — no source diff`
+  `- Verification-only: nothing committed`. Continue to Step 5.5.
+- `_idc_rc=0` → commit and push as below.
+- `_idc_rc=2` → a worktree path is wrong. Resolve it again (Step 4) and re-run the check;
+  never skip the commit on rc 2.
+
+An unresolvable base ref counts as a diff, so the skip line is only written on positive
+evidence that there is nothing to ship.
+
 For each affected repo:
 1. Run `/commit-commands:commit` from the worktree (`cd "$WORKTREE_PATH"` first).
 2. **Pre-push safety check — GitNexus `detect_changes`:** The worktree is a full git checkout — `detect_changes` operates on the branch, not the filesystem path.

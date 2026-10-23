@@ -514,11 +514,23 @@ Post the same message as a PR comment.
 
 **If the array is empty, or every check's bucket is `pass`/`skipping`:**
 
-Scan the diff captured in Step 4 for conflict markers before merging:
+Scan the diff captured in Step 4 for conflict markers before merging. The script reports
+only a real conflict block — added `<<<<<<< `, `=======` and `>>>>>>> ` lines, in that
+order, in one file — so a markdown setext heading underline (`=======`) or an ASCII rule
+never blocks a merge:
 
 ```bash
-git -C "$WORKTREE_PATH" diff origin/{baseRefName}...origin/{headRefName} | grep -n "^[+].*\(<<<<<<<\|=======\|>>>>>>>\)"
+_cms_out=$(set -o pipefail; git -C "$WORKTREE_PATH" diff origin/{baseRefName}...origin/{headRefName} |
+  bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/conflict-marker-scan.sh")
+_cms_rc=$?
+echo "CONFLICT_SCAN_RC=$_cms_rc"
+echo "$_cms_out"
 ```
+
+`_cms_rc=0` → no conflict markers. `_cms_rc=1` → conflict markers found (`_cms_out` lists
+`<path>:<opening marker>` per block). `_cms_rc=2` (or any other code) → the scan could not
+run, or `git diff` failed (the subshell runs with `pipefail`); treat it as found — do NOT
+merge.
 
 If any conflict markers are found, do NOT merge. Report to the user:
 
@@ -526,7 +538,7 @@ If any conflict markers are found, do NOT merge. Report to the user:
 ⛔ PR #{number} contains conflict markers — merge blocked.
 
 Lines with conflict markers:
-{grep output}
+{_cms_out}
 
 Resolve the conflicts on the branch and re-run `/ticket-pr-review {TICKET-ID}`.
 ```

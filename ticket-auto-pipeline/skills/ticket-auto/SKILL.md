@@ -474,7 +474,7 @@ DETECT_OUTPUT=$(bash "$DETECT_SH" "{TICKET_ID}")
 ```
 
 Parse the `DETECT_RESUME_RESULT` block and set all routing variables:
-`{RESUME_STEP}`, `{APPRAISE_FROM}`, `{REPRODUCE_FROM}`, `{EXEC_FROM}`, `{IMPLEMENT_FROM}`, `{MAINTENANCE_FROM}`, `{DOCUMENT_FROM}`, `{VERIFY_FROM}`, `{PR_REVIEW_FROM}`, `{PR_ITERATE_FROM}`, `{TICKET_DIR}`, `{COMPLEXITY}`, `{AUTONOMY}`, `{ARTIFACT_TYPE}`, `{BRANCH}`, `{BASE_BRANCH}`, `{INTEGRATION_BRANCH}`, `{BRANCH_SOURCE}`, `{MERGE_POLICY}`, `{TICKET_TITLE}`, `{VERIFY_ATTEMPTS}`, `{VERIFY_LAST}`, `{ITERATION}`, `{RECONCILE_CYCLE}`, `{PR_FEEDBACK_CYCLE}`.
+`{RESUME_STEP}`, `{APPRAISE_FROM}`, `{REPRODUCE_FROM}`, `{EXEC_FROM}`, `{IMPLEMENT_FROM}`, `{MAINTENANCE_FROM}`, `{DOCUMENT_FROM}`, `{VERIFY_FROM}`, `{VERIFY_CHECKPOINT}`, `{PR_REVIEW_FROM}`, `{PR_ITERATE_FROM}`, `{TICKET_DIR}`, `{COMPLEXITY}`, `{AUTONOMY}`, `{ARTIFACT_TYPE}`, `{BRANCH}`, `{BASE_BRANCH}`, `{INTEGRATION_BRANCH}`, `{BRANCH_SOURCE}`, `{MERGE_POLICY}`, `{TICKET_TITLE}`, `{VERIFY_ATTEMPTS}`, `{VERIFY_LAST}`, `{ITERATION}`, `{RECONCILE_CYCLE}`, `{PR_FEEDBACK_CYCLE}`.
 
 **If `RESUME_STEP = SCHEMA_MISMATCH`:**
 Report the schema mismatch with log vs expected version numbers. Stop here.
@@ -1050,7 +1050,7 @@ fi
 STEP=verify PHASE=VERIFY SKILL=/ticket-verify FROM_STEP={VERIFY_FROM}
 EXTRA_FLAGS="--from-auto --mode extract"
 DESCRIPTION="Run Playwright UAT verification"
-INSTRUCTIONS="Follow the skill exactly. Use per-criterion checkpointing: after each criterion passes, write VERIFY|checkpoint|done|criterion-{N}-pass to LOG_FILE. If the agent crashes, resume from the last checkpoint — do not restart from criterion 1. PHASE_RESULT_ATTEMPT=$(({VERIFY_ATTEMPTS} + 1)) — emit this verbatim as the ATTEMPT field of your phase result block."
+INSTRUCTIONS="Follow the skill exactly. Use per-criterion checkpointing: after each criterion passes, write VERIFY|checkpoint|done|criterion-{N}-pass to LOG_FILE. On a resume, take the criteria already passed in THIS attempt from lib/verify-checkpoint.sh (see the skill's Checkpoint resume rule) — never from an earlier attempt. PHASE_RESULT_ATTEMPT=$(({VERIFY_ATTEMPTS} + 1)) — emit this verbatim as the ATTEMPT field of your phase result block."
 NEXT_PHASE=VERIFY
 ```
 
@@ -1128,20 +1128,28 @@ spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done MSG="Phase inspector complete
 
 Then evaluate the verify verdict for retry/advance:
 
+`lib/verify-retry-decide.sh` makes this decision from the log as it is now — never from
+`{VERIFY_ATTEMPTS}`, which was read before this attempt ran. It judges only the latest
+`VERIFY|verify` terminal line (an earlier attempt's FAIL never re-triggers re-implement
+after a later PASS), recounts the attempts, and reads the cap (2) from STEP_4_5 in
+`dispatch-table.json`:
+
 ```bash
-# If VERIFY fail AND VERIFY_ATTEMPTS < 2 (hard cap) → loop to re-implement
-# Hard cap reduced from 3 to 2 — verify agent instability means retry #3
-# rarely succeeds and just wastes tokens on crash-loops.
-if grep -q '^[^|]*|VERIFY|verify|fail|' "{LOG_FILE}"; then
-  if [ "{VERIFY_ATTEMPTS}" -ge 2 ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_EXHAUSTED" >> "{LOG_FILE}"
-    bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
-    exit 1
-  fi
-  # Re-implement with --from-auto, then outcome-check, then loop back to verify
-fi
-# If VERIFY PASS → proceed to STEP_4_6
+eval "$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verify-retry-decide.sh" "{LOG_FILE}")"
+case "$VERIFY_DECISION" in
+advance) echo "VERIFY PASS → STEP_4_6" ;;
+retry) echo "VERIFY FAIL (attempt $VERIFY_ATTEMPTS of $VERIFY_CAP) → re-implement" ;;
+exhausted)
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_EXHAUSTED" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
+  exit 1
+  ;;
+esac
 ```
+
+- `advance` → proceed to STEP_4_6.
+- `retry` → re-implement with `--from-auto`, then outcome-check, then loop back to verify.
+- `exhausted` → stopped above.
 
 ### STEP_4_6 — PR Review (with iteration sub-loop)
 
@@ -1239,40 +1247,32 @@ NEXT_PHASE=PR-REVIEW
 
 ### Auto-merge logic
 
-After PR review ✅, check auto-merge eligibility. Both `auto` and `semi-auto` modes merge
-(only `manual` never does); the outcome is read from the `META|outcome-label|info|` line
-written by `outcome-label-check.sh` — the confirmed outcome, manifest-recorded rather than
-a tracker label — not from the IMPLEMENT terminal line, which never carries the
-Smooth/Rough/Hard value:
+After PR review ✅, run `lib/auto-merge.sh`. The whole decision is in that script — do not
+re-derive any part of it here. It applies, in order:
 
-**Resolve the PR number before the guard, not after.** The integration-PR
-guard reads `$_pr_num`, so it has to be assigned first. It used to be assigned
-*below* the guard, inside the eligibility block — which meant the guard ran
-`gh pr view ""`, got an empty head ref, never matched `INTEGRATION_BRANCH`, and
-guarded nothing. An integration PR could be auto-merged by the very code
-written to stop it.
+1. `merge_blocked_reason` (`lib/branch-resolve.sh`) — the same merge-authorization rule
+   `ticket-pr-review` Step 6b uses. Any epic `MERGE_POLICY` (`manual`,
+   `on-all-children-done`) or an `AUTONOMY` other than `auto`/`semi-auto` means a human
+   merges. Logged as `META|pr-auto-merge|skip|MERGE_AUTHORIZATION: …`.
+2. `COMPLEXITY` = `simple`.
+3. The latest `META|outcome-label|info|` reads `Smooth` (never the IMPLEMENT terminal line,
+   which does not carry Smooth/Rough/Hard).
+4. A PR number is recorded (`PR-REVIEW|checkout-pr|done|<n>`). It is resolved before the
+   integration guard.
+5. With `INTEGRATION_BRANCH` set, the PR head ref must be readable and must differ from it.
+   An integration PR logs `INTEGRATION_PR_GUARD`. An unreadable head ref (a `gh pr view`
+   failure) logs `PR_HEAD_UNREADABLE` and does **not** merge — fail closed.
+6. `gh pr merge <n> --squash --auto`, scoped with `--repo` from `META|pr-created` when present.
+
+`AUTONOMY`, `MERGE_POLICY` and `INTEGRATION_BRANCH` come from the agent env file
+(`/tmp/ticket-auto-{TICKET_ID}-env.sh`); `COMPLEXITY` comes from `DETECT_RESUME_RESULT`.
+Exit 0 merged, 3 skipped, 4 `gh pr merge` failed. All three continue to STEP_5 — an
+unmerged PR is a human's to look at, never a reason to fail a finished ticket. fleetd's
+`orchestration.run_auto_merge` applies the same rules.
 
 ```bash
-_pr_num=$(grep '^[^|]*|PR-REVIEW|checkout-pr|done|' "{LOG_FILE}" | tail -1 | cut -d'|' -f5-)
-
-# Auto-merge guard: integration PRs must never be auto-merged.
-# This is the second guard (the first is in epic_branch_open_pr itself).
-# An integration PR is one whose HEAD is the epic branch; a ticket PR merely
-# targets it as its base.
-if [ -n "$_pr_num" ] && [ -n "{INTEGRATION_BRANCH}" ]; then
-  _pr_head=$(gh pr view "$_pr_num" --json headRefName --jq '.headRefName' 2>/dev/null || true)
-  if [ "$_pr_head" = "{INTEGRATION_BRANCH}" ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|pr-auto-merge|skip|INTEGRATION_PR_GUARD: $_pr_num is integration PR, not auto-merging" >> "{LOG_FILE}"
-    _pr_num=""
-  fi
-fi
-
-if { [ "{AUTONOMY}" = "auto" ] || [ "{AUTONOMY}" = "semi-auto" ]; } && [ "{COMPLEXITY}" = "simple" ]; then
-  OUTCOME=$(grep '^[^|]*|META|outcome-label|info|' "{LOG_FILE}" | tail -1 | cut -d'|' -f5-)
-  if [ "$OUTCOME" = "Smooth" ] && [ -n "$_pr_num" ]; then
-    gh pr merge "$_pr_num" --squash --auto || true
-  fi
-fi
+bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/auto-merge.sh" \
+  --complexity "{COMPLEXITY}" "{TICKET_ID}" "{LOG_FILE}" || true
 ```
 
 ### STEP_5 — Document + Wiki Maintenance

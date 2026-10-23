@@ -33,6 +33,11 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-run-identity.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-summary.sh
 	bash ticket-auto-pipeline/lib/tests/test-merge-poll.sh
+	bash ticket-auto-pipeline/lib/tests/test-auto-merge.sh
+	bash ticket-auto-pipeline/lib/tests/test-verify-retry-decide.sh
+	bash ticket-auto-pipeline/lib/tests/test-implement-diff-check.sh
+	bash ticket-auto-pipeline/lib/tests/test-conflict-marker-scan.sh
+	bash ticket-auto-pipeline/lib/tests/test-pr-repo-resolve.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-evidence.sh
 	bash ticket-auto-pipeline/lib/tests/test-pipeline-finalize.sh
 	bash ticket-auto-pipeline/lib/tests/test-spawn-helper.sh
