@@ -352,7 +352,10 @@ test_generate_fast_path_notes() {
     echo "  missing title"
     return 1
   }
-  grep -q "^\*\*Score:\*\* simple" "$tmpdir/notes.md" || {
+  # The shared fixture is payment-themed, so Reversibility escalates its
+  # Conservative strategy (complexity-classifier-calibration). The neutral
+  # Conservative → simple case is test_fast_path_conservative_no_trigger_stays_simple.
+  grep -q "^\*\*Score:\*\* complex" "$tmpdir/notes.md" || {
     rm -rf "$tmpdir"
     echo "  missing complexity"
     return 1
@@ -409,6 +412,121 @@ test_generate_fast_path_notes_regenerate_warning() {
 
   rm -rf "$tmpdir"
   return 0
+}
+
+# ── Reversibility escalation tests (complexity-classifier-calibration) ─────
+
+# _build_neutral_description <strategy> [body]
+# A planned ticket whose block and body carry no Reversibility trigger.
+_build_neutral_description() {
+  local strategy="$1"
+  local body="${2:-Fix the column alignment in the monthly report export.}"
+  cat <<DESC
+${body}
+
+## Planner Context
+**Schema-Version:** 1
+**Initiative:** INIT-42
+**Epic:** CRE-100
+**Confidence:** 0.92
+**Strategy:** ${strategy}
+**Decision:** Adjust the export column widths
+**Affected Services:** reporting
+**Target Symbols:** ReportExporter.render:src/export.ts:12
+**Pre-approved:** true
+**Generated:** 2026-07-07T18:00:00Z
+**Regenerate:** false
+DESC
+}
+
+# _fast_path_notes_for <description> — prints the generated notes.md
+_fast_path_notes_for() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  check_fast_path_eligible "TEST-1" "$1" "true" 2>/dev/null || true
+  [ "$FAST_PATH_ELIGIBLE" = "true" ] || {
+    rm -rf "$tmpdir"
+    return 1
+  }
+  generate_fast_path_notes "$tmpdir" "CRE-300"
+  cat "$tmpdir/notes.md"
+  rm -rf "$tmpdir"
+}
+
+test_fast_path_conservative_migration_escalates() {
+  local notes
+  notes=$(_fast_path_notes_for "$(_build_neutral_description "Conservative" \
+    "Add a nullable archived_at column: ALTER TABLE report ADD COLUMN archived_at.")") || return 1
+  echo "$notes" | grep -q '^\*\*Score:\*\* complex$' &&
+    echo "$notes" | grep -q '^\*\*Weighted score:\*\* 3 (threshold 3)$' &&
+    echo "$notes" | grep -q '^\*\*Axes fired:\*\* reversibility:3 (fast-path keyword — schema-migration: ' &&
+    echo "$notes" | grep -q 'Escalated to complex: Reversibility fired'
+}
+
+test_fast_path_conservative_no_trigger_stays_simple() {
+  local notes
+  notes=$(_fast_path_notes_for "$(_build_neutral_description "Conservative")") || return 1
+  echo "$notes" | grep -q '^\*\*Score:\*\* simple$' &&
+    echo "$notes" | grep -q '^\*\*Weighted score:\*\* n/a (fast-path' &&
+    echo "$notes" | grep -q 'reversibility keyword scan: no match'
+}
+
+test_fast_path_innovative_no_trigger_stays_complex() {
+  local notes
+  notes=$(_fast_path_notes_for "$(_build_neutral_description "Innovative")") || return 1
+  echo "$notes" | grep -q '^\*\*Score:\*\* complex$' &&
+    echo "$notes" | grep -q 'reversibility keyword scan: no match'
+}
+
+test_fast_path_unknown_strategy_stays_complex() {
+  # An unknown Strategy fails block validation upstream, so set it after
+  # eligibility to exercise generate_fast_path_notes' own default.
+  local tmpdir rc=0
+  tmpdir=$(mktemp -d)
+  check_fast_path_eligible "TEST-1" "$(_build_neutral_description "Conservative")" "true" 2>/dev/null || true
+  FAST_PATH_STRATEGY="Experimental"
+  generate_fast_path_notes "$tmpdir" "CRE-301"
+  grep -q '^\*\*Score:\*\* complex$' "$tmpdir/notes.md" || rc=1
+  rm -rf "$tmpdir"
+  return "$rc"
+}
+
+test_fast_path_payment_fixture_escalates() {
+  local notes
+  notes=$(_fast_path_notes_for "$(_build_ticket_description "0.92" "true" "Conservative" "false")") || return 1
+  echo "$notes" | grep -q '^\*\*Axes fired:\*\* reversibility:3 (fast-path keyword — payment-path: '
+}
+
+test_reversibility_trigger_positives() {
+  local text
+  for text in "DROP TABLE legacy" "rename column foo" "schema migration for users" \
+    "add a Flyway script" "TRUNCATE audit_log" "backfill the totals" \
+    "refund flow" "billing cycle" "authorization rule for admins" \
+    "fix unauthorized error" "add @PreAuthorize to the controller" \
+    "breaking API change" "remove the endpoint" "cannot be rolled back"; do
+    detect_reversibility_trigger "$text" >/dev/null || {
+      echo "  no fire: $text"
+      return 1
+    }
+  done
+}
+
+test_reversibility_trigger_negatives() {
+  local text
+  for text in "refactor the reporting module into pure functions" \
+    "update the authorship footer" "prepayment estimate copy" \
+    "migrate the button styles" "rollback-safe CSS tweak" ""; do
+    if detect_reversibility_trigger "$text" >/dev/null; then
+      echo "  fired: $text"
+      return 1
+    fi
+  done
+}
+
+test_fast_path_description_does_not_leak() {
+  check_fast_path_eligible "TEST-1" "$(_build_neutral_description "Conservative" "ALTER TABLE x")" "true" 2>/dev/null || true
+  unset_fast_path_vars
+  [ -z "${FAST_PATH_DESCRIPTION:-}" ]
 }
 
 # ── Edge case tests ────────────────────────────────────────────────────────
@@ -492,6 +610,17 @@ echo ""
 echo "=== Notes generation tests ==="
 _run "generate fast-path notes.md" test_generate_fast_path_notes
 _run "regenerate warning in notes" test_generate_fast_path_notes_regenerate_warning
+
+echo ""
+echo "=== Reversibility escalation tests ==="
+_run "Conservative + migration → complex" test_fast_path_conservative_migration_escalates
+_run "Conservative, no trigger → simple" test_fast_path_conservative_no_trigger_stays_simple
+_run "Innovative, no trigger → complex (no de-escalation)" test_fast_path_innovative_no_trigger_stays_complex
+_run "unknown strategy → complex" test_fast_path_unknown_strategy_stays_complex
+_run "payment fixture → reversibility fires" test_fast_path_payment_fixture_escalates
+_run "trigger keywords fire" test_reversibility_trigger_positives
+_run "non-trigger text does not fire" test_reversibility_trigger_negatives
+_run "FAST_PATH_DESCRIPTION cleared by unset" test_fast_path_description_does_not_leak
 
 echo ""
 echo "=== Edge case tests ==="

@@ -17,6 +17,61 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.71.0 (2026-10-23)
+
+Complexity classifier calibration (`complexity-classifier-calibration`). The retro metric that
+was meant to tune the appraisal classifier rewarded the wrong direction, and the classifier
+itself let a small irreversible change through without a human. This fixes the measurement
+first, then the model.
+
+### Breaking — retro JSON
+- **Removed** `complexity_accuracy`, `complexity_accuracy_n`, `complexity_accuracy_min_n`,
+  `complexity_accuracy_suppressed`, `complexity_over_count`, `complexity_under_count`, and the
+  `COMPLEXITY_ACCURACY_MIN_N` override. `complexity_accuracy` scored `complex` + `Smooth` as a
+  miss, but a `complex` classification *causes* the delegated investigation, openspec plan and
+  human gate that plausibly made it Smooth. Raising the number meant classifying more tickets
+  `simple` — the expensive error direction.
+- **Added** `complexity_calibration`: the declared × outcome `matrix`; `false_simple_rate`
+  computed from the `declared=simple` row only (**polarity inverted** — minimise it, where
+  `complexity_accuracy` was maximised); `simple_row_n` / `min_n` / `suppressed` (the #367
+  small-sample floor, now `COMPLEXITY_CALIBRATION_MIN_N`, default 3); `false_simple_tickets`;
+  `unscoreable` counts for incomplete pairs; and `confounded_rows` / `confounded_reason` marking
+  the complex row as excluded from every rate. `complexity_predictions` is unchanged. Migration:
+  `complexity_over_count` → `matrix.complex.Smooth`; `complexity_under_count` →
+  `false_simple_tickets | length`.
+
+### Changed
+- **`ticket-appraise` Step 2.5 is a weighted score.** Multi-service and Cross-layer weigh 2;
+  Reversibility, Prior rejection, Cross-layer with the framework-migration marker, and Blast
+  radius (`BLAST_OVERRIDE=complex`, #413 additive exemption included) weigh 3; threshold 3. A
+  strict superset of the old "2 or more axes" rule — nothing that escalated before de-escalates.
+  The framework-migration and blast-radius overrides are folded into the table. New escalations:
+  Reversibility alone and Prior rejection alone.
+- **New Reversibility axis**: schema migrations, destructive data changes, payment/billing paths,
+  breaking public API changes, auth/authz rule changes, no-revert changes. Migrations and payments
+  moved out of Cross-layer (no double count).
+- **`## Complexity` records the arithmetic**: new `**Weighted score:** N (threshold 3)` line and
+  `axis:weight` entries in `**Axes fired:**`. `**Score:**` is still exactly `simple`|`complex`, so
+  `get_complexity`, `gate-check.sh` and the tracker contract are unchanged.
+- **Fast path evaluates Reversibility** (escalation-only). `lib/appraise-fast-path.sh` gains
+  `detect_reversibility_trigger`, a deterministic keyword scan over the description and Planner
+  Context run inside `generate_fast_path_notes`; the appraise agent then judges the full trigger
+  list. A `Conservative` planned ticket carrying a migration no longer auto-approves.
+- `/ticket-retro` reports and `templates/complexity-drift.md` read `complexity_calibration`; the
+  `complexity-drift` meta-code fires on unsuppressed false-simples, never on `complex` + `Smooth`.
+
+### Fixed
+- `retro.sh` resolved a ticket's directory with `find . -name "${ID}*"`, so `CRE-1` could read
+  `CRE-12--…/notes.md` and record another ticket's declared complexity. It now matches
+  `{ID}--*` at depth ≤ 2, like `resolve_ticket_dir`.
+
+### Tests
+- `lib/tests/test-retro-complexity-accuracy-scope.sh` → `test-retro-complexity-calibration.sh`
+  (12 cases: #367 window scope kept, matrix cells, spec worked example 0.250, null on no
+  scoreable pair, unscoreable counts, false-simple list, floor + override, removed fields).
+- `lib/tests/test-appraise-fast-path.sh`: 8 Reversibility cases (escalation, no de-escalation,
+  unknown strategy, keyword positives/negatives, no stale description leak).
+
 ## fleet-controller 0.43.0 (2026-10-23)
 
 Features keep shipping behind default-off flags, and nothing listed them in one place. A new
