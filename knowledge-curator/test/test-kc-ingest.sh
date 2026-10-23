@@ -125,6 +125,13 @@ else
   pass "kc-sweep Step 3 uses kc-ingest.sh new-plans"
 fi
 
+IM="$PLUGIN_DIR/skills/kc-import/SKILL.md"
+if grep -q 'grep "^## " | head -1' "$IM" || ! grep -q 'kc-ingest.sh" title' "$IM"; then
+  fail "kc-import takes the openspec title from kc-ingest.sh title"
+else
+  pass "kc-import takes the openspec title from kc-ingest.sh title"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
