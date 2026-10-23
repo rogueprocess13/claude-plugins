@@ -80,9 +80,22 @@ Read `context.md` and `notes.md` from the ticket directory.
 
 ### Step 2a — Find the PR
 
+**Scope every `gh` call with `--repo`.** cwd is the `tickets` workspace, a git repo with
+no code PRs, so a bare `gh pr list` resolves against it and returns `[]` whether or not the
+PR exists (issue #366, `PR_REVIEW_REPO_UNSCOPED`). `lib/pr-repo-resolve.sh` derives the
+code repo deterministically: the `META|pr-created` record, then the ticket's worktree
+`origin`, then the `Worktree:` checkpoint in `notes.md`:
+
 ```bash
-gh pr list --search "{TICKET-ID} in:head" --json number,headRefName,url
+source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+GH_REPO=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/pr-repo-resolve.sh" \
+  "{TICKET-ID}" --log-file "$LOG_FILE" --ticket-dir "{ticket-dir}")
+echo "GH_REPO=$GH_REPO"
+[ -n "$GH_REPO" ] && gh pr list --repo "$GH_REPO" --search "{TICKET-ID} in:head" --json number,headRefName,url
 ```
+
+If `$GH_REPO` is empty (exit 1 unresolvable, 3 worktrees in several repos), there is no PR
+to look up — go to the session-file fallback below.
 
 If a PR is found → capture `{PR_NUMBER}` and `{PR_URL}`, then go to Step 2b.
 
@@ -99,7 +112,9 @@ find {ticket-dir} -name "pr-review-session.md"
 ### Step 2b — Fetch the PR review comment
 
 ```bash
-_review_body=$(gh pr view {PR_NUMBER} --json comments --jq '.comments[] | select(.body | startswith("## Ticket alignment review")) | .body')
+GH_REPO=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/pr-repo-resolve.sh" \
+  "{TICKET-ID}" --log-file "$LOG_FILE" --ticket-dir "{ticket-dir}")
+_review_body=$(gh pr view {PR_NUMBER} --repo "$GH_REPO" --json comments --jq '.comments[] | select(.body | startswith("## Ticket alignment review")) | .body')
 _rc=$?
 echo "$_review_body"
 if [ $_rc -ne 0 ] || [ -z "$_review_body" ]; then
