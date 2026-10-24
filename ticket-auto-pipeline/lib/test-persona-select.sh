@@ -642,16 +642,20 @@ printf '{"name": "jh"}\n' >"$TMPDIR/mixed-project/package.json"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 NEW() { CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" "$SELECTOR" "$@"; }
 
-# 1.1 Golden: the pre-change selector from HEAD. Every pre-existing key must be
+# 1.1 Golden: the selector as it was before the debugger overlay (pinned main
+# commit, not HEAD — once the overlay is committed HEAD is the new selector and
+# the comparison would be tautological). Every pre-existing key must be
 # byte-identical for every existing input — the detect_stack refactor must not
-# move PERSONA_SPECIALIZER.
+# move PERSONA_SPECIALIZER. A shallow clone (CI's default checkout) lacks the
+# pinned commit, so the matrix is skipped there and runs in full checkouts.
+GOLDEN_REV=4a2383682ea9884a39364968f658485957354914
 OLD_SELECTOR="$TMPDIR/old-select.sh"
-if git -C "$SCRIPT_DIR" show HEAD:ticket-auto-pipeline/lib/persona-select.sh >"$OLD_SELECTOR" 2>/dev/null && [ -s "$OLD_SELECTOR" ]; then
+if git -C "$SCRIPT_DIR" show "$GOLDEN_REV:ticket-auto-pipeline/lib/persona-select.sh" >"$OLD_SELECTOR" 2>/dev/null && [ -s "$OLD_SELECTOR" ]; then
   chmod +x "$OLD_SELECTOR"
   OLD() { CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$OLD_SELECTOR" "$@"; }
   HAVE_GOLDEN=true
 else
-  echo "  NOTE: git HEAD selector unavailable — golden comparisons skipped"
+  echo "  NOTE: pre-overlay selector ($GOLDEN_REV) not in this clone — golden comparisons skipped"
   HAVE_GOLDEN=false
 fi
 
@@ -692,6 +696,19 @@ if [ "$HAVE_GOLDEN" = true ]; then
   assert_eq "golden: BE_TEST_RUNNER pyenv unchanged" "$old_out" "$new_out"
   echo "  (golden matrix compared)"
 fi
+
+# Always-on (no git needed): the overlay flags never move a legacy key — the
+# same selector with and without --type/--remediation agrees on all five.
+for fx in java-project python-project node-project angular-project mixed-project unknown-project; do
+  for layer in BE FE; do
+    plain=$(legacy_keys "$(NEW --repo "$TMPDIR/$fx" --layer "$layer" --phase implement)")
+    for flags in "--type bug" "--type feature" "--remediation"; do
+      # shellcheck disable=SC2086 # word-split flags on purpose
+      flagged=$(legacy_keys "$(NEW --repo "$TMPDIR/$fx" --layer "$layer" --phase implement $flags)")
+      assert_eq "overlay flags ($flags) leave legacy keys unchanged on $fx/$layer" "$plain" "$flagged"
+    done
+  done
+done
 
 DEBUGGER_PATH="$PLUGIN_ROOT/personas/base/debugger.md"
 DBG_DIR="$PLUGIN_ROOT/personas/specializers/debug"
