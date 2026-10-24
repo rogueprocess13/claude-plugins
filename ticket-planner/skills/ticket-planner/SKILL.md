@@ -189,6 +189,7 @@ script — cannot read the halt prose. It runs this loop instead:
 | `CROSSCHECK_BLOCKED` | `flag:accept:<CODE>` | the reason = `--accept CODE:"reason"`. `__skip__` declines |
 | `CROSSCHECK_BLOCKED` (`CITED_ARTIFACT_UNRESOLVED`) | `consensus-answer:cited:<n>`, one per unanswered artifact | `exists:<where>`, `external:<who>` or `generate`, written into the `Answer:` field of consensus.md's `n`th `CITED_ARTIFACT:` question. Any other value, or one with `\|`, CR or LF, is `INVALID_VALUE`. Specs are not edited: a spec need whose `Source` disagrees is `CITED_ARTIFACT_SOURCE_MISMATCH` on the re-run. The code's `flag:accept` question is still offered |
 | `CROSSCHECK_BLOCKED` (`TEST_DATA_IMPLIED`) | `consensus-answer:testdata:<slug>`, one per blocking spec, id `testdata-<slug>-<hash8>` | `none`, `generate: <desc>` (default `generate: <match phrase>`), `exists:<where>` or `external:<who>`, written as consensus.md's ``TESTDATA_CONFIRM: `<slug>` [<hash8>] — Answer: <value>`` line. `hash8` is re-derived from the spec's current trigger criterion at intake; a mismatch is `STALE_QUESTION` (exit 2, nothing written). The code's `flag:accept` question is still offered |
+| `CONSENSUS_BLOCKED` | `note` | recorded only — fix the plan and change consensus.md's Readiness from `blocked` (or re-run Consensus); the gate re-reads consensus.md on resume |
 | `PROJECT_GATE` | `flag:project` | a name or id = `--project`. `__none__` = `--no-project` |
 | `REFINEMENT_HALT` (`BODY_DRIFT` / `BODY_UNVERIFIED`) | `flag:refresh-bodies`, id `refresh-bodies`, asked first; options `yes\|no`, default `no` | `yes` = `--refresh-bodies` on the resume. `no` records the round; the held tickets stay held. Its text lists each held `<TID> (<codes>)`. These codes get no `waive:` question — they cannot be waived |
 | `REFINEMENT_HALT` | `waive:<TICKET>:<CODE>` | the reason = `dor-check.sh --waive <TICKET> <CODE> "reason"`. `__skip__` declines. Not offered for `BODY_*` codes or for a code in `ready.demoted` (an audit dispute already took it off the blocking list) |
@@ -1167,6 +1168,30 @@ For each phase to run:
    This is a normal terminal outcome of a `plan` run, not a failure — report it as
    completion of the planning stage. Do not ask the user whether to proceed; `resume
    --create` is the continuation, and it is theirs to invoke after reading the specs.
+
+1a0. **A blocked Consensus halts the loop before Crosscheck** (DET-PL-11). Consensus
+    writes `Readiness: blocked` in consensus.md when it cannot resolve a blocking review
+    finding. If `$PHASE` is `Crosscheck`, run the readiness gate before the check:
+
+    ```bash
+    source "${CLAUDE_PLUGIN_ROOT}/lib/planner-consensus-gate.sh"
+    if [ "$PHASE" = "Crosscheck" ]; then
+      _cg_rc=0
+      planner_consensus_gate "$INITIATIVE_ID" || _cg_rc=$?
+      if [ "$_cg_rc" -eq 3 ]; then
+        planner_consensus_halt_report "$INITIATIVE_ID" "$STATE_DIR"
+        exit 0
+      fi
+    fi
+    ```
+
+    Report the `planner_consensus_halt_report` output verbatim. Exit 0 is a normal stop,
+    not a failure: do not run Crosscheck, and do not fall through to step 5's retry
+    budget. Only an explicit `blocked` halts; `ready-for-spec`, `needs-further-discovery`
+    and a missing or unparseable Readiness field proceed as before. The gate holds no
+    state and writes nothing — it is re-read on every dispatch at `Crosscheck`, so it
+    releases once a person fixes the plan and changes consensus.md's Readiness (or the
+    plan is re-run through Consensus). On rc 0, continue to step 1a.
 
 1a. **Crosscheck is not an agent phase.** If `$PHASE` is `Crosscheck`, run the check
     directly and skip steps 2–5 entirely — there is no prompt for it in

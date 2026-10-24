@@ -16,9 +16,14 @@ MAX_VERIFY_ATTEMPTS="${MAX_VERIFY_ATTEMPTS:-3}"
 MAX_BATCH_TICKETS="${MAX_BATCH_TICKETS:-10}"
 MAX_PR_ITERATIONS="${MAX_PR_ITERATIONS:-3}"
 
-# ── Default credentials ───────────────────────────────────────────────────────
+# ── Test credentials ──────────────────────────────────────────────────────────
+# Password ticket-verify uses for UAT logins when --password is not passed.
+# No built-in default: a shipped default password is one app's credential
+# leaking into every project. Set it in the session env (e.g. the `env`
+# block of .claude/settings.local.json) or as a `UAT_TEST_PASSWORD` field in
+# the project CLAUDE.md. Never log or echo it.
 
-UAT_TEST_PASSWORD="${UAT_TEST_PASSWORD:-admin}"
+UAT_TEST_PASSWORD="${UAT_TEST_PASSWORD:-}"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 

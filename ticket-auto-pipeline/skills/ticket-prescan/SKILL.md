@@ -300,43 +300,15 @@ If claude-mem MCP is genuinely unavailable, this is a degraded (not fatal) path 
 After all repos in this scan pass complete, rebuild the cross-repo contract map at `REPOS_ROOT/.ticket-auto/system.md`. This enables appraise Step 3a.4 to resolve FE→BE API contracts for multi-repo tickets.
 
 ```bash
-# Collect all per-repo INDEX.md files
-INDEX_FILES=$(find "$REPOS_ROOT/.ticket-auto" -maxdepth 3 -name "INDEX.md" -path "*/docs/INDEX.md" 2>/dev/null || true)
+# Regenerates only the Generated line and the Indexed Repos table; the
+# FE → BE Contract Map and Shared Types rows are carried over verbatim.
+eval "$(bash "$HOME/.claude/skills/lib/prescan-system-index.sh" --repos-root "$REPOS_ROOT")"
 
-# Build system.md
-cat > "$REPOS_ROOT/.ticket-auto/system.md" <<SYSEOF
-# Cross-Repo System Map
-
-Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-## Indexed Repos
-
-$(for idx in $INDEX_FILES; do
-  repo_slug=$(basename "$(dirname "$(dirname "$idx")")")
-  echo "| $repo_slug | $idx |"
-done)
-
-## FE → BE Contract Map
-
-<!-- Populated by automated contract detection during multi-repo scans.
-     Maps frontend API calls to backend endpoint handlers across repos. -->
-
-| Frontend (Repo) | API Call | Backend Endpoint (Repo) | Handler |
-|-----------------|----------|------------------------|---------|
-
-## Shared Types
-
-<!-- Cross-repo type definitions and DTOs. -->
-
-| Type | Defined In (Repo) | Consumed By (Repos) |
-|------|-------------------|---------------------|
-SYSEOF
-
-_plog "PRESCAN" "system-index" "done" "system.md rebuilt from $(echo "$INDEX_FILES" | wc -l) repos"
-hb-wrap.sh decision "system-index" "fired" "system.md rebuilt" "{\"repo_count\":\"$(echo "$INDEX_FILES" | wc -l)\"}"
+_plog "PRESCAN" "system-index" "done" "system.md rebuilt from $SYSTEM_INDEX_REPOS repos"
+hb-wrap.sh decision "system-index" "fired" "system.md rebuilt" "{\"repo_count\":\"$SYSTEM_INDEX_REPOS\"}"
 ```
 
-The contract map table is populated by the prescan agent when it detects cross-repo API calls during fan-out. On incremental scans, only new contracts are added — existing rows are preserved.
+The contract map table is populated by the prescan agent when it detects cross-repo API calls during fan-out. Never rewrite `system.md` with a heredoc: `prescan-system-index.sh` preserves existing contract-map and shared-types rows (and any other `##` section) across rebuilds, so the agent only appends new rows.
 
 ---
 

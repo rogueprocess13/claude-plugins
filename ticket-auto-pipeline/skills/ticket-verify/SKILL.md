@@ -7,7 +7,7 @@ description: Verifies a Linear ticket fix by loading its requirements, then navi
 
 You have been given a ticket ID as the argument (e.g. `CRE-39`), with optional flags:
 - `--user <email>` — login email override. If omitted, derived from the ticket description.
-- `--password <password>` — login password override. If omitted, uses `admin` on UAT (the standard test password). On local, the login gate is typically bypassed.
+- `--password <password>` — login password override. If omitted, resolved from the `UAT_TEST_PASSWORD` environment variable, else the `UAT_TEST_PASSWORD` field in `./CLAUDE.md` (see Step 1b5). There is no built-in default password. On local, the login gate is typically bypassed.
 - `--env local|uat` — which environment to test against (default: `local`)
 - `--from-auto` — called by ticket-auto or batch. Suppresses all user prompts.
   Missing credentials or nav failures produce a diagnostic FAIL instead
@@ -21,7 +21,9 @@ Parse the arguments before proceeding.
 - `local` → Read `LOCAL_URL` from `./CLAUDE.md`. If absent, abort: "No LOCAL_URL configured for this project."
 - `uat` → Read `UAT_URL` from `./CLAUDE.md`. If absent, abort: "No UAT_URL configured for this project."
 
-**Credential derivation (UAT only):** If `--user` is not explicitly provided, extract it from the ticket description after Step 1b. If `--password` is not provided, use `admin` on UAT. On local, credentials are typically not needed.
+**Credential derivation (UAT only):** If `--user` is not explicitly provided, extract it from the ticket description after Step 1b. If `--password` is not provided, resolve it from configuration (Step 1b5) — never assume a default. On local, credentials are typically not needed.
+
+**Secrets rule:** a password is only ever typed into the login field. Never write it into a Linear comment, PR body, pipeline/heartbeat log line, verification plan, report, REMEDIATION_BRIEF, notes.md or any other file, and never `echo` it in a bash block.
 
 ## Pipeline Preamble
 
@@ -46,6 +48,25 @@ When `--from-auto` is present, VERIFY is a loop-bearing phase: additionally foll
 | `browser-session` | **falls back to `build-plan`** | browser state lost on crash |
 | `navigate` | **falls back to `build-plan`** | browser state lost on crash |
 | `execute-steps` | **falls back to `build-plan`** | browser state lost on crash |
+| `checkpoint` | treated as `execute-steps` (so `build-plan` in browser mode) | `detect-resume.sh` no longer emits it; accepted only from an older router |
+
+**Checkpoint resume (deterministic).** Which criteria already passed is never inferred
+from memory or prose. At the start of the criterion loop (Step 4b / 4c / 4c-live), run:
+
+```bash
+VERIFY_CHECKPOINT=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verify-checkpoint.sh" "$LOG_FILE" 2>/dev/null) || VERIFY_CHECKPOINT=""
+```
+
+It prints the highest `N` with a `VERIFY|checkpoint|done|criterion-N-pass` line in the
+**current attempt only** — lines after the last `VERIFY|verify|done|`/`fail|` terminal. An
+earlier attempt's checkpoints never count: that attempt ended, the code was re-implemented,
+and every criterion must be re-checked. The router also receives the same value as
+`VERIFY_CHECKPOINT` from `detect-resume.sh`.
+
+- Build-only and live-backend mode: if `VERIFY_CHECKPOINT` is a number `N`, record criteria
+  1..N as PASS (`resumed from checkpoint`) and start at criterion `N+1`. If it is empty,
+  start at criterion 1.
+- Browser mode: ignore `VERIFY_CHECKPOINT` and verify every criterion.
 
 ---
 
@@ -59,15 +80,15 @@ Read both knowledge sources before fetching the ticket:
 cat "$HOME/.claude/skills/app-knowledge/SKILL.md"
 ```
 
-Then load the project nav hints:
+Then load the project nav hints (read the file directly — this agent has no Skill tool, and Step 2a reads the same file):
 
-```
-/nav-hints list
+```bash
+cat "{TICKETS_ROOT}/nav-hints.md" 2>/dev/null || echo "(no nav-hints.md yet)"
 ```
 
 `app-knowledge/SKILL.md` contains business rules, role-based UI behaviour, state mappings, and navigation patterns confirmed across sessions. Use it to interpret what you see in Playwright snapshots and to derive correct navigation without guessing.
 
-`/nav-hints` returns area → click-path mappings learned during previous ticket verification and reproduction sessions. **Never use direct URLs for in-app navigation** — always click through the UI because Angular loses session state on full page reload.
+`nav-hints.md` holds area → click-path mappings learned during previous ticket verification and reproduction sessions. **Never use direct URLs for in-app navigation** — always click through the UI because Angular loses session state on full page reload.
 
 ### 1b — Fetch from Linear
 
@@ -124,7 +145,13 @@ Skip this step if `--env local` is set.
 If `--user` was provided, use it. If `--password` was provided, use it. Otherwise:
 
 1. Scan the ticket `description` for an email address matching typical test users (e.g. `user@example.com`). The ticket description often contains a `**User:**` field or an inline mention like "Log in as X (email)".
-2. If found → `derived_user = email`, `derived_password = "admin"`.
+2. If found → `derived_user = email`. Resolve `derived_password` (only when `--password` was not passed) from configuration — env first, then the project CLAUDE.md field — without printing it:
+   ```bash
+   source "$HOME/.claude/skills/lib/claude-md-field.sh"
+   _uat_pw="${UAT_TEST_PASSWORD:-$(claude_md_field ./CLAUDE.md UAT_TEST_PASSWORD 2>/dev/null || true)}"
+   [ -n "$_uat_pw" ] && echo "UAT test password: configured" || echo "UAT test password: NOT configured"
+   ```
+   If it is not configured and `--password` was not passed: with `--from-auto`, abort with a FAIL verdict (skip to Step 7 with WHAT_FAILED = "No UAT test password configured — set UAT_TEST_PASSWORD or pass --password"); otherwise ask the user for `--password`. Do not post this to Linear — it is a host configuration gap, not a ticket gap.
 3. If an email is found but `--user` was also passed → `--user` takes precedence.
 4. If an email is found but `--password` was also passed → `--password` takes precedence.
 5. If no email found in the description:
@@ -152,17 +179,18 @@ If not found, continue — the Linear description alone is sufficient.
 ### 1d — Load openspec change (if present)
 
 ```bash
-ls "$TICKETS_ROOT/openspec/changes/" | grep -i "{ticket-id-lowercase}"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$TICKETS_ROOT" --type openspec
 ```
 
-If found, read `tasks.md` to understand what was implemented and any "Manually verify" tasks — these become your verification checklist.
+This is the one plan-artifact resolver (whole-ID match, so `TEST-7` never picks up `TEST-77`'s
+change). If it exits 0, read `tasks.md` at `PLAN_PATH` to understand what was implemented and any "Manually verify" tasks — these become your verification checklist.
 
 ### 1e — Detect verification mode (browser vs. build-only vs. live-backend)
 
 Some tickets have no UI or API surface to exercise — e.g. a root parent-POM introduction, a dependency-version bump, a build-plugin config change. These are verified by running the project's build tooling and checking exit codes/output, not by driving a browser. Others need a **running backend checked via API/health-check, with no UI in the loop** — e.g. service-to-service calls, Eureka registration, circuit-breaker behaviour under simulated failure. A build command can't verify these (nothing to compile), and driving a browser is wrong too (no login, no page in the AC) — treating them as either bucket produces a silent false-pass (the real check never runs) or a stall (browser mode tries to resolve a test user that doesn't exist for an infra ticket). Classify the ticket using the same signal-based approach as `gate-check.sh`'s Check 2.6, so the two phases agree on ticket shape, with an added live-backend trigger evaluated ahead of the build-only test — a ticket can mention a build tool (`mvn`, `pom.xml`) in passing while its actual AC is a live runtime check, and live-backend must win that case:
 
 ```bash
-_plan_file=$(find "$TICKETS_ROOT" -name "simple-fix.md" -path "*{TICKET-ID}*" 2>/dev/null | head -1)
+_plan_file=$(bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$TICKETS_ROOT" --type simple-fix 2>/dev/null | sed -n 's/^PLAN_PATH=//p')
 [ -z "$_plan_file" ] && _plan_file="{ticket-dir}/notes.md"
 _signal_text="$(cat "$_plan_file" {ticket-dir}/context.md 2>/dev/null)"$'\n'"${description:-}"
 
@@ -713,19 +741,18 @@ Take a snapshot. If the nav already shows an authenticated user name, skip 3b.
 
 Use the credentials from Step 1b5 (derived or explicit).
 
-Open the login dialog:
-- Click **Account** in the nav to expand the dropdown
-- Click **Sign in**
+Reach the login form using this project's own login path — never a hard-coded one:
+1. If `nav-hints.md` has a `## Login` entry, follow its click-by-click steps.
+2. Otherwise use the login path described in app-knowledge.
+3. Otherwise read the snapshot and click the control that opens sign-in (a link or button labelled e.g. "Sign in" / "Log in", possibly inside an account or user menu). After a successful login, save the path you used as a `## Login` entry in `nav-hints.md` (Step 4a format) so the next run does not have to search.
 
-Fill the login form with `{derived_user}` and `{derived_password}`.
-
-Click **Sign in**. Take a snapshot. Confirm the nav shows the authenticated user name.
+Fill the login form with `{derived_user}` and the resolved password, and submit it (click the submit button, or `mcp__playwright__browser_press_key` `Enter` in the password field). Then wait for the page to settle (see **Wait for settle** in Step 4) and take a snapshot. Confirm the nav shows the authenticated user (name, avatar or account menu — whatever app-knowledge names as the logged-in marker).
 
 If login fails:
 
-- **On UAT** (password is always `admin`): post a comment to the Linear ticket:
+- **On UAT**: take a screenshot (`verify-login-fail.png`, see **Screenshot evidence** in Step 4b) and post a comment to the Linear ticket. The comment names the user only — never the password or where it came from:
   ```
-  ⚠️ Login failed for {derived_user} with default password "admin". The account may use a different password or be locked. Please verify credentials and re-run with --user and --password flags.
+  ⚠️ Login failed for {derived_user} on UAT. The configured test password may be wrong for this account, or the account may be locked. Please verify the test credentials and re-run with --user and --password flags.
   ```
   Then abort with a FAIL verdict (skip to Step 7 with WHAT_FAILED = "Login failed for {derived_user}").
 - **On local**: report and stop as above (local env may have different requirements).
@@ -747,10 +774,17 @@ Maintain a counter `nav_attempts = 0`. Each time you try a click path and it doe
 **For each attempt (up to 3):**
 
 1. Execute the click-by-click steps from the nav-hints entry (or the inferred path from Step 2a). **Never use `page.goto()` for in-app navigation** — Angular loses session state on full reload.
-2. Take a snapshot.
+2. Wait for settle (below), then take a snapshot.
 3. Evaluate the snapshot:
    - **Success** — the page shows content related to the ticket's feature area (relevant headings, buttons, forms, or list items mentioned in the ticket). Proceed to Step 4b.
    - **Wrong page** — the page looks unrelated, shows a 404, redirects to `/accessdenied`, or the expected component is absent. Increment `nav_attempts`. Try the next candidate path.
+
+**Wait for settle.** The app is an async SPA: a click returns before the XHRs it triggers finish, so a snapshot taken immediately can show a loading spinner or the previous view. After every click that navigates, opens a dialog or submits a form, call `mcp__playwright__browser_wait_for` before the snapshot:
+- with `text` set to a heading, label or value the plan expects on the next view (preferred), or
+- with `textGone` set to a loading indicator you saw ("Loading…", spinner label), or
+- as a last resort, a short fixed `time` (1–2 s).
+
+Bound every wait (no more than ~15 s). A wait that times out is evidence, not a crash: take the snapshot anyway and judge the page from it — a still-loading page counts as a **Wrong page** attempt, not a FAIL.
 
 **Candidate click paths to try in order (if the first fails):**
 1. The exact click path from the matched nav-hints entry.
@@ -799,14 +833,22 @@ Tell the user: `"Saved navigation hint for '{feature area}' to nav-hints.md for 
 
 With the browser now on the correct page, work through each remaining step in the Verification Plan sequentially. For **every step**:
 
-1. Perform the Playwright action (navigate, click, fill, select, etc.)
-2. Take a snapshot with `mcp__playwright__browser_snapshot`
-3. Record the **observed result** — what you see in the snapshot
+1. Perform the Playwright action with the matching tool: click (`mcp__playwright__browser_click`), type into a field (`mcp__playwright__browser_type`), choose a native `<select>` option (`mcp__playwright__browser_select_option`), press a key such as Enter, Escape or Tab (`mcp__playwright__browser_press_key`), hover to open a hover menu (`mcp__playwright__browser_hover`), accept or dismiss a native `confirm()`/`alert()` (`mcp__playwright__browser_handle_dialog`), upload a file (`mcp__playwright__browser_file_upload`), go back (`mcp__playwright__browser_navigate_back`), or change the viewport for a responsive criterion (`mcp__playwright__browser_resize`). Do not substitute `mcp__playwright__browser_evaluate` DOM edits for a user action — they bypass the framework's change detection and can produce a false PASS. Use `browser_evaluate` only to read state.
+2. Wait for settle (Step 4) whenever the action triggers navigation, a dialog, a save or any async load.
+3. Take a snapshot with `mcp__playwright__browser_snapshot`
+4. Record the **observed result** — what you see in the snapshot
 
 Capture after each step:
 - The snapshot YAML (accessibility tree)
 - The current URL
 - Any new console errors: `mcp__playwright__browser_console_messages`
+
+**Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry to the pipeline log:
+**Screenshot evidence.** The accessibility tree hides layout, overlap, styling and contrast, so every criterion also gets a picture. At each criterion's assertion point — PASS or FAIL — and on any unexpected broken state, call `mcp__playwright__browser_take_screenshot` with `filename` set to `verify-{TICKET-ID}-c{N}-{pass|fail}.png` (N = criterion number). Then make sure the file lands in the ticket workspace — Playwright MCP saves into its own output directory, so copy it from the path the tool reports:
+```bash
+mkdir -p "{ticket-dir}/artifacts" && cp "<path reported by browser_take_screenshot>" "{ticket-dir}/artifacts/"
+```
+Record each file under `### Evidence` in the report (Steps 6/7) and in the REMEDIATION_BRIEF for a FAIL. Never screenshot a page while a password field is visibly filled in.
 
 **Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry to the pipeline log. On crash restart, the router reads the last checkpoint and the verify agent resumes from the NEXT criterion instead of restarting from criterion 1:
 
@@ -814,6 +856,11 @@ Capture after each step:
 # After criterion N passes, write checkpoint:
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|checkpoint|done|criterion-{N}-pass" >> "$LOG_FILE"
 ```
+
+**Checkpoint resume** — see [Step dispatch](#step-dispatch). In browser mode (this step)
+every criterion is re-verified on a resume, because the browser state is gone; the
+checkpoint lines only skip criteria in build-only (Step 4c) and live-backend (Step 4c-live)
+mode.
 
 At any point, if the observed result contradicts a pass criterion, mark that criterion **FAIL** and record:
 - The step number
@@ -937,6 +984,7 @@ Print to the user:
 
 ### Evidence
 - Step {N}: {brief description of what was observed confirming the fix}
+- Screenshots: {ticket-dir}/artifacts/verify-{TICKET-ID}-c{N}-pass.png, … (browser mode; none in build-only/live-backend mode)
 
 **Recommendation:** Ready to merge / promote.
 ```
@@ -1041,14 +1089,11 @@ Verification passed on localhost — the implementation is confirmed working. No
    **Standalone runs only (no `--from-auto`):** delegate to the flow executor. `implement-complete`
    carries no `verdict_gate` (it only opens code review — it is not a Done/UAT-reaching trigger),
    so no exit-11 branch applies here:
-   ```
-   /ticket-flow {TICKET-ID} implement-complete
+   ```bash
+   bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} implement-complete
    _rc=$?
-   if [ "$_rc" -ne 0 ]; then
-     hb-wrap.sh retry "flow-sh" "fail" "flow.sh implement-complete failed (exit ${_rc})" \
-       "{\"trigger\":\"implement-complete\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: implement-complete" >> {LOG_FILE}
-   fi
+   # flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+   # implement-complete carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
    ```
    This moves state → `Review` and clears the manifest `approved` fact.
 
@@ -1081,8 +1126,8 @@ No PR creation. Delegate the state transition — this trigger carries `verdict_
 site in this skill that can come back `exit 11` (gate-blocked) rather than a generic
 non-zero failure:
 
-```
-/ticket-flow {TICKET-ID} uat-pass
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-pass
 _rc=$?
 if [ "$_rc" -eq 11 ]; then
   # Gate-blocked: this run's own verdict (just written above) was PASS, but flow.sh
@@ -1092,14 +1137,10 @@ if [ "$_rc" -eq 11 ]; then
   # since either would look identical to a real Done in the log/Linear (the inverted form
   # of the bug this gate exists to fix). A human must review and either fix the other
   # verifier's failure or re-run `/ticket-flow {TICKET-ID} uat-pass --override <reason>`.
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERDICT_GATE_BLOCKED — uat-pass refused, see flow.sh stderr" >> {LOG_FILE}
-  hb-wrap.sh gate "verdict-gate" "fail" "uat-pass blocked by trailing FAIL/BLOCK verifier-result" \
-    "{\"trigger\":\"uat-pass\",\"ticket\":\"{TICKET-ID}\"}"
-elif [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-pass failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-pass\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-pass" >> {LOG_FILE}
+  # flow-run.sh has already written META|gate-stop|fail|VERDICT_GATE_BLOCKED + heartbeat.
+  echo "uat-pass gate-blocked for {TICKET-ID}"
 fi
+# Any other non-zero exit is already logged by flow-run.sh (META|flow-error).
 ```
 
 This moves state → `Done` and removes `claimed` + `reviewed` — only when `_rc` is `0`.
@@ -1204,6 +1245,7 @@ Print to the user:
 
 ### Diagnostics
 **URL at failure:** {url}
+**Screenshot at failure:** {ticket-dir}/artifacts/verify-{TICKET-ID}-c{N}-fail.png (browser mode)
 **Console errors:**
 {list, or "none"}
 
@@ -1271,6 +1313,9 @@ focused on the component under test}
 
 CURRENT_URL: {url}
 
+SCREENSHOTS:
+{ticket-dir}/artifacts/verify-{TICKET-ID}-c{N}-fail.png (and any other verify-*.png from this run, or "none" in build-only/live-backend mode)
+
 CONTEXT_FILES:
 - {ticket-dir}/context.md  (or "not found locally")
 - {ticket-dir}/notes.md    (or "not found locally")
@@ -1323,16 +1368,11 @@ Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` i
 **Detect plan artifact** (same detection as `ticket-implement` Step 2):
 
 ```bash
-find . -name "simple-fix.md" -path "*{TICKET-ID}*"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root .
 ```
 
-- Found → `PLAN = {output-path}`, mode = `simple-fix`
-- Not found:
-  ```bash
-  ls openspec/changes/ | grep -i "{ticket-id-lowercase}"
-  ```
-  If found → `PLAN = openspec/changes/{change-name}/tasks.md`, mode = `openspec`
-- Neither found → skip write. Report: "No plan artifact found for REMEDIATION_BRIEF — brief emitted to chat and notes.md only."
+- Exit 0 → `PLAN = PLAN_PATH`, mode = `PLAN_MODE` (`simple-fix` or `openspec`)
+- Exit 2 (several change dirs match this ticket) or exit 12 (none) → skip write. Report: "No plan artifact found for REMEDIATION_BRIEF — brief emitted to chat and notes.md only."
 
 **Count existing sections and write atomically:**
 
@@ -1423,14 +1463,11 @@ Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` i
 
 If `--env uat`:
 
-```
-/ticket-flow {TICKET-ID} uat-fail
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-fail
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-fail failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-fail\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-fail" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# uat-fail carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 This moves state → `Ready`, adds `rejected`, removes `reviewed`. A human must run `/ticket-approve {TICKET-ID}` before the next implementation cycle can start.

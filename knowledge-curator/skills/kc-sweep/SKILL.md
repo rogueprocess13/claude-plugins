@@ -71,13 +71,16 @@ relates: []
 
 ## Step 3 — Review new plan files
 
-Check `~/.claude/plans/` for files created since the last sweep:
+List the plan files to consider — modified since the last sweep's marker, or within the last
+24 hours on a first sweep (no marker yet), minus any already imported as `source: plan:<slug>`:
 
 ```bash
-find ~/.claude/plans/ -name "*.md" -newer knowledge/.kc-sweep-marker 2>/dev/null
+bash "${CLAUDE_PLUGIN_ROOT}/lib/kc-ingest.sh" new-plans --plans-dir ~/.claude/plans --knowledge-dir knowledge
 ```
 
-For each new plan file, check if already imported (by `source: plan:<slug>`). If not, create an item (same template as `kc-import` Step 3).
+Do not use `find -newer knowledge/.kc-sweep-marker` directly: with no marker it errors and finds
+nothing, so a first sweep would never import a plan. For each listed file, create an item (same
+template as `kc-import` Step 3; title from `kc-ingest.sh title <file>`).
 
 ## Step 4 — Administration pass
 

@@ -7,7 +7,7 @@ description: Parallel UAT verification for multiple Linear tickets. Spawns one a
 
 You have been given one or more ticket IDs as the argument. Execute all tickets in parallel — each ticket gets its own agent that runs the full verify sequence on UAT. Report a summary when all are done.
 
-**Credentials:** Each agent auto-derives the test user from its ticket description (ticket-verify Step 1b5). UAT password is always `admin`. No `--user`/`--password` flags needed. If a ticket lacks a user email in its description, the agent posts a comment asking for one and reports FAIL.
+**Credentials:** Each agent auto-derives the test user from its ticket description (ticket-verify Step 1b5). The UAT password comes from `UAT_TEST_PASSWORD` (env or project CLAUDE.md field) — never a built-in default, and never echoed. No `--user`/`--password` flags needed. If a ticket lacks a user email in its description, the agent posts a comment asking for one and reports FAIL.
 
 ## Guard — Verify working directory
 
@@ -81,7 +81,7 @@ Verify ticket {TICKET-ID} on UAT. Run:
 Follow the ticket-verify skill exactly. --from-auto means:
 - No user prompts — never ask questions
 - Auto-derive the test user email from the ticket description (Step 1b5)
-- UAT password is always "admin"
+- UAT password is resolved from `UAT_TEST_PASSWORD` (env or project CLAUDE.md field); never include it in the prompt text
 - If no user email in the ticket, post a comment asking for one and report FAIL
 - If login fails, post a comment and report FAIL
 - If a step requires input you don't have, report it in WHAT_FAILED
@@ -126,22 +126,18 @@ is not this skill's own primary write path, and this skill does **not** call
 `write_verifier_result` itself: doing so here, after the fact and with no attempt-tracking of
 its own, would risk writing a second, less-precise record over the inner agent's real one.
 
-Call `/ticket-flow {TICKET-ID} uat-pass` to move to Done:
+Fire `uat-pass` through `lib/flow-run.sh` to move to Done:
 ```bash
-/ticket-flow {TICKET-ID} uat-pass
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-pass
 _rc=$?
 if [ "$_rc" -eq 11 ]; then
   # Gate-blocked (VERDICT_FAIL_NOT_ENFORCED guard, issue #368): a trailing FAIL/BLOCK for a
   # DIFFERENT verifier/phase on this ticket is still the latest on record. This is not a
   # verify failure — do not report it as one in Step 4. Mark it BLOCKED, not PASSED.
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERDICT_GATE_BLOCKED — uat-pass refused, see flow.sh stderr" >> {LOG_FILE}
-  hb-wrap.sh gate "verdict-gate" "fail" "uat-pass blocked by trailing FAIL/BLOCK verifier-result" \
-    "{\"trigger\":\"uat-pass\",\"ticket\":\"{TICKET-ID}\"}"
-elif [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-pass failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-pass\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-pass" >> {LOG_FILE}
+  # flow-run.sh has already written META|gate-stop|fail|VERDICT_GATE_BLOCKED + heartbeat.
+  echo "uat-pass gate-blocked for {TICKET-ID}"
 fi
+# Any other non-zero exit is already logged by flow-run.sh (META|flow-error).
 ```
 Record `_rc` alongside the ticket's row for Step 4 — `11` reports as `⏸️ BLOCKED`, not `✅ PASS`.
 
@@ -171,15 +167,12 @@ Post the agent's findings to Linear as a comment on the ticket. Use the agent's 
 **Next step:** Run `/ticket-verify --env uat {TICKET-ID}` interactively to diagnose.
 ```
 
-Then call `/ticket-flow {TICKET-ID} uat-fail` to move back to Ready:
+Then fire `uat-fail` through `lib/flow-run.sh` to move back to Ready:
 ```bash
-/ticket-flow {TICKET-ID} uat-fail
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-fail
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh uat-fail failed (exit ${_rc})" \
-    "{\"trigger\":\"uat-fail\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: uat-fail" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# uat-fail carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 ---
@@ -211,7 +204,7 @@ FAIL/BLOCK verifier-result for a different check is still on record for this tic
 
 ## Notes
 
-- **Credentials are auto-derived** — each agent extracts the test user email from the ticket description. Password is `admin`. If a ticket lacks a user email, the agent posts a comment and fails gracefully.
+- **Credentials are auto-derived** — each agent extracts the test user email from the ticket description. The password comes from `UAT_TEST_PASSWORD`. If a ticket lacks a user email, the agent posts a comment and fails gracefully.
 - **Cap at 10 tickets** — beyond that, split into multiple batch runs.
 - **Each agent gets its own browser tab** — Playwright agents operate independently.
 - **UAT only** — batch verify doesn't support localhost. Local verification needs a running dev server and is inherently one-at-a-time.

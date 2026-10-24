@@ -80,9 +80,22 @@ Read `context.md` and `notes.md` from the ticket directory.
 
 ### Step 2a — Find the PR
 
+**Scope every `gh` call with `--repo`.** cwd is the `tickets` workspace, a git repo with
+no code PRs, so a bare `gh pr list` resolves against it and returns `[]` whether or not the
+PR exists (issue #366, `PR_REVIEW_REPO_UNSCOPED`). `lib/pr-repo-resolve.sh` derives the
+code repo deterministically: the `META|pr-created` record, then the ticket's worktree
+`origin`, then the `Worktree:` checkpoint in `notes.md`:
+
 ```bash
-gh pr list --search "{TICKET-ID} in:head" --json number,headRefName,url
+source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+GH_REPO=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/pr-repo-resolve.sh" \
+  "{TICKET-ID}" --log-file "$LOG_FILE" --ticket-dir "{ticket-dir}")
+echo "GH_REPO=$GH_REPO"
+[ -n "$GH_REPO" ] && gh pr list --repo "$GH_REPO" --search "{TICKET-ID} in:head" --json number,headRefName,url
 ```
+
+If `$GH_REPO` is empty (exit 1 unresolvable, 3 worktrees in several repos), there is no PR
+to look up — go to the session-file fallback below.
 
 If a PR is found → capture `{PR_NUMBER}` and `{PR_URL}`, then go to Step 2b.
 
@@ -99,7 +112,9 @@ find {ticket-dir} -name "pr-review-session.md"
 ### Step 2b — Fetch the PR review comment
 
 ```bash
-_review_body=$(gh pr view {PR_NUMBER} --json comments --jq '.comments[] | select(.body | startswith("## Ticket alignment review")) | .body')
+GH_REPO=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/pr-repo-resolve.sh" \
+  "{TICKET-ID}" --log-file "$LOG_FILE" --ticket-dir "{ticket-dir}")
+_review_body=$(gh pr view {PR_NUMBER} --repo "$GH_REPO" --json comments --jq '.comments[] | select(.body | startswith("## Ticket alignment review")) | .body')
 _rc=$?
 echo "$_review_body"
 if [ $_rc -ne 0 ] || [ -z "$_review_body" ]; then
@@ -135,15 +150,18 @@ Store these as `{GAPS}` — a list of objects with: `number`, `requirement`, `st
 Check which plan artifact exists:
 
 ```bash
-find {ticket-dir} -name "simple-fix.md"
-ls openspec/changes/ | grep -i "{ticket-id-lowercase}"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root . --ticket-dir "{ticket-dir}"
 ```
 
-- **simple-fix.md found** → set `{ARTIFACT}` = `simple-fix.md`. Count existing `## PR Review #` sections:
+This is the one plan-artifact resolver (whole-ID match, so `TEST-7` never picks up `TEST-77`'s
+change). It prints `PLAN_MODE=`, `PLAN_PATH=` and, for openspec, `CHANGE_DIR=`.
+
+- **`PLAN_MODE=simple-fix`** → set `{ARTIFACT}` = `PLAN_PATH` (`simple-fix.md`). Count existing `## PR Review #` sections:
   ```bash
   grep -c "^## PR Review #" {ticket-dir}/simple-fix.md
   ```
-- **openspec change found** → set `{ARTIFACT}` = `tasks.md` at the openspec path. Count existing `## PR Review #` sections in it.
+- **`PLAN_MODE=openspec`** → set `{ARTIFACT}` = `PLAN_PATH` (the change's `tasks.md`). Count existing `## PR Review #` sections in it.
+- **Exit 2** (several change dirs match) or **exit 12** (no plan artifact) → stop and report it.
 
 Set `{N}` = count + 1. If this is the first iteration, `{N}` = 1.
 
@@ -229,14 +247,11 @@ Append to `{ticket-dir}/notes.md` session log:
 
 Delegate to the flow executor:
 
-```
-/ticket-flow {TICKET-ID} pr-iterate --provenance policy
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} pr-iterate --provenance policy
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh pr-iterate failed (exit ${_rc})" \
-    "{\"trigger\":\"pr-iterate\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: pr-iterate" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# pr-iterate carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 This sets state → `Ready`, adds `approved`, and clears `reviewed`/`rejected`. All other labels (`simple`/`complex`, `Smooth`/`Rough`/`Hard`) are preserved.

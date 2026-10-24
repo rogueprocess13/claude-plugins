@@ -237,6 +237,27 @@ EOF
   return $rc
 }
 
+# DET-IP-2: TEST-7 must not count another ticket's test-77 boxes.
+test_whole_id_tasks_not_matched_by_longer_id() {
+  _setup
+  _write_tasks "TEST-77" "- [ ] 1.1 belongs to TEST-77"
+  _run_check "TEST-7"
+  [ "$RCC_EXIT" -eq 2 ] && [ -z "$TASKS_FILE" ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_whole_id_simple_fix_not_matched_by_longer_id() {
+  _setup
+  _write_simple_fix "TEST-77" "$(printf '## Completion Checklist\n- [ ] belongs to TEST-77\n')"
+  _run_check "TEST-7"
+  [ "$RCC_EXIT" -eq 2 ] && [ -z "$TASKS_FILE" ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
 # ── Runner ─────────────────────────────────────────────────────────────────────
 
 echo "=== return-completeness-check.sh unit tests ==="
@@ -251,6 +272,8 @@ _run "UNCHECKED_ITEMS lists unchecked line content" test_unchecked_items_lists_c
 _run "simple-fix all checked → exit 0" test_simple_fix_all_checked_exits_0
 _run "simple-fix unchecked box → exit 1" test_simple_fix_unchecked_box_exits_1
 _run "simple-fix missing checklist section → exit 2" test_simple_fix_missing_checklist_exits_2
+_run "TEST-7 ignores test-77 tasks.md (whole-ID)" test_whole_id_tasks_not_matched_by_longer_id
+_run "TEST-7 ignores test-77 simple-fix.md (whole-ID)" test_whole_id_simple_fix_not_matched_by_longer_id
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
