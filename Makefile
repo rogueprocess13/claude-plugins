@@ -209,6 +209,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-plugin-cache.sh
 	bash ticket-auto-pipeline/lib/tests/test-flow-run.sh
 	bash ticket-auto-pipeline/lib/tests/test-plog.sh
+	bash ticket-auto-pipeline/lib/tests/test-skill-ref.sh
 	bash fleet-controller/lib/tests/test-fleet-plugin-cache.sh
 
 test-fleetd:
