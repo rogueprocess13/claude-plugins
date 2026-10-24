@@ -1,6 +1,6 @@
 ---
 name: ticket-critique
-description: Validates a Linear ticket's requirements for completeness before implementation begins. Checks for multi-role credential gaps, untestable acceptance criteria, missing test data, and scope ambiguity. Posts a Linear comment and adds `needs-info` label if blockers are found. Called automatically by ticket-appraise Step 2.7. Supports --from-appraise (workspace guaranteed), --from-audit (fetches from Linear API, includes Source: marker).
+description: Validates a Linear ticket's requirements for completeness before implementation begins. Checks for multi-role credential gaps, untestable acceptance criteria, missing test data, and scope ambiguity. Posts a Linear comment and adds `needs-info` label if blockers are found. Called automatically by ticket-appraise Step 2.7. Supports --from-appraise (workspace guaranteed), --from-audit (fetches from Linear API, includes Source: marker), --no-post (read-only: verdict to --result-file).
 ---
 
 # Ticket Critique
@@ -15,6 +15,17 @@ Follow the pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with pa
 
 ## Input
 
+### If `--no-post` is in the arguments (read-only)
+
+Requires `--result-file <path>` (missing → print usage, stop). Load the ticket with the `--from-audit` steps below; on a failed or unreadable fetch run `bash ~/.claude/skills/lib/critique-status.sh --unavailable --ticket {TICKET-ID} --result-file {RESULT_FILE}` and stop. Run the Checklist unchanged, then write the result instead of "Determine status" and **stop** — no verifier result, no notes.md, no "Act on results" (no comment, `flow-run.sh` or event):
+
+```bash
+bash ~/.claude/skills/lib/critique-status.sh --score {SCORE} --blockers {BLOCKER_COUNT} --warnings {WARNING_COUNT} \
+  --ticket {TICKET-ID} --result-file {RESULT_FILE} --findings-file - <<'FINDINGS'
+[BLOCKER] {text — one finding per line, verbatim; never as an argument}
+FINDINGS
+```
+
 ### If `--from-audit` is in the arguments
 
 No workspace is guaranteed — fetch everything from the Linear API directly.
@@ -26,12 +37,8 @@ No workspace is guaranteed — fetch everything from the Linear API directly.
    source "$SCRIPT_DIR/config.sh"
    ```
 
-2. Fetch the ticket from Linear. A failed or malformed fetch must be a hard
-   stop, not silently-blank fields — this mode has no shared preamble
-   (`HAS_LINEAR_ACCESS=false` above) to fall back on, and a blank
-   TITLE/DESCRIPTION/LABELS/STATE would otherwise feed straight into the
-   `needs-info` label decision below as if the ticket genuinely had no
-   content (issue #362):
+2. Fetch the ticket. A failed or malformed fetch is a hard stop — never score
+   blank fields as an empty ticket (issue #362):
    ```bash
    ISSUE_JSON=$(get_issue "{TICKET_ID}") || {
      echo "ticket-critique: get_issue failed for {TICKET_ID} — stopping" >&2
@@ -46,8 +53,6 @@ No workspace is guaranteed — fetch everything from the Linear API directly.
    LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[]?.name] | join(", ")')
    STATE=$(echo "$ISSUE_JSON" | jq -r '.state.name')
    ```
-   On either failure, report it and stop — do not proceed to the checklist
-   or post a `needs-info` label based on an unverified empty ticket.
 
 3. Fetch comments for additional context:
    ```bash
@@ -55,19 +60,12 @@ No workspace is guaranteed — fetch everything from the Linear API directly.
    COMMENT_BODIES=$(echo "$COMMENTS_JSON" | jq -r '.[]?.body // ""' | head -5)
    ```
 
-4. Build analysis context from API data (no workspace files needed):
-   - **Title**: `$TITLE`
-   - **Description**: `$DESCRIPTION`
-   - **Labels**: `$LABELS`
-   - **State**: `$STATE`
-   - **Recent comments**: `$COMMENT_BODIES`
-   - **Acceptance criteria**: extracted from description (look for numbered lists, "AC:", "Acceptance Criteria:" sections)
+4. Analyse `$TITLE`, `$DESCRIPTION`, `$LABELS`, `$STATE`, `$COMMENT_BODIES`, and the
+   acceptance criteria in the description (numbered lists, "AC:", "Acceptance Criteria:").
 
 5. Read CLAUDE.md for known test users/environments (same as standard path):
    ```bash
-   if [ -f "CLAUDE.md" ]; then
-     cat CLAUDE.md | grep -A5 "test users\|UAT_URL\|LOCAL_URL" || true
-   fi
+   grep -A5 "test users\|UAT_URL\|LOCAL_URL" CLAUDE.md 2>/dev/null || true
    ```
 
 Proceed to Checklist — same checks apply regardless of input source.
@@ -322,15 +320,8 @@ A BLOCKER always takes precedence over cumulative escalation. If any BLOCKER exi
 
 ## Determine status
 
-Combine individual BLOCKER findings, content quality score, and cumulative WARNING escalation:
-
-1. **Any BLOCKER finding → BLOCKED** (individual BLOCKERs always override)
-2. **Score < 40 → BLOCKED** (structurally incomplete)
-3. **WARNING count >= 3 (no BLOCKERs) → BLOCKED** (cumulative escalation)
-4. **Score 40-69 → WARNINGS** (gaps present but not fatal)
-5. **Score >= 70 → CLEAR** (well-specified ticket)
-
-A ticket can have WARNINGs and still be CLEAR if the score is >= 70 and WARNING count < 3.
+Rules, first match wins: any BLOCKER, score < 40, or WARNING count >= 3 → **BLOCKED**; score 40-69
+→ **WARNINGS**; score >= 70 → **CLEAR** (WARNINGs allowed while fewer than 3).
 
 Do not apply these rules by hand — run the script, which applies them in this order and also
 gives the action and verifier mapping (`--blockers`/`--warnings` are the totals across all checks,

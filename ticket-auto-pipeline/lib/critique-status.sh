@@ -17,6 +17,17 @@
 #   CRITIQUE_CRITERIA_MET=<score/10>        (write_verifier_result criteria_met)
 # Exit: 0 ok, 2 usage / non-integer input.
 #
+# Read-only mode (ticket-critique --no-post, dispatch-rehearsal-preflight):
+#   ... --ticket ID --result-file F [--findings-file PATH|-]
+#       also writes the === CRITIQUE_RESULT === block to F (tmp + mv). One
+#       finding per line of PATH (- = stdin). Finding text is derived from
+#       untrusted ticket content, so it never travels as an argv string the
+#       caller's shell would expand: the skill feeds it through a quoted
+#       heredoc. CR is stripped and blank lines are skipped, so a finding can
+#       never start its own block line (STATUS:, === markers).
+#   --unavailable --ticket ID --result-file F
+#       fetch failed: writes STATUS: UNAVAILABLE / SCORE: - and nothing else.
+#
 # Rules (ticket-critique "Determine status", first match wins):
 #   1. blockers >= 1          → BLOCKED (blocker)
 #   2. score < 40             → BLOCKED (low-score)
@@ -25,12 +36,21 @@
 #   5. score >= 70            → CLEAR
 set -euo pipefail
 
-score="" blockers="" warnings=""
+score="" blockers="" warnings="" ticket="" result_file="" unavailable=0 findings_file=""
+findings=()
 while [ $# -gt 0 ]; do
   case "$1" in
   --score) score="${2:-}" ;;
   --blockers) blockers="${2:-}" ;;
   --warnings) warnings="${2:-}" ;;
+  --ticket) ticket="${2:-}" ;;
+  --result-file) result_file="${2:-}" ;;
+  --findings-file) findings_file="${2:-}" ;;
+  --unavailable)
+    unavailable=1
+    shift
+    continue
+    ;;
   *)
     echo "critique-status: unknown argument: $1" >&2
     exit 2
@@ -41,6 +61,53 @@ while [ $# -gt 0 ]; do
     exit 2
   }
 done
+
+if [ -n "$result_file" ] && [ -z "$ticket" ]; then
+  echo "critique-status: --result-file requires --ticket" >&2
+  exit 2
+fi
+
+if [ -n "$findings_file" ]; then
+  if [ "$findings_file" != "-" ] && [ ! -r "$findings_file" ]; then
+    echo "critique-status: findings file not readable: $findings_file" >&2
+    exit 2
+  fi
+  while IFS= read -r f || [ -n "$f" ]; do
+    f="${f//$'\r'/}"
+    [ -n "${f//[[:space:]]/}" ] && findings+=("$f")
+  done < <(if [ "$findings_file" = "-" ]; then cat; else cat -- "$findings_file"; fi)
+fi
+
+# write_result <status> <score> <blockers> <warnings> <reason>
+write_result() {
+  [ -n "$result_file" ] || return 0
+  mkdir -p "$(dirname "$result_file")"
+  {
+    echo "=== CRITIQUE_RESULT ==="
+    echo "TICKET: $ticket"
+    echo "STATUS: $1"
+    echo "SCORE: $2"
+    echo "BLOCKERS: $3"
+    echo "WARNINGS: $4"
+    echo "BLOCK_REASON: $5"
+    local i=1 f
+    for f in ${findings[@]+"${findings[@]}"}; do
+      echo "FINDING_$i: $f"
+      i=$((i + 1))
+    done
+    echo "=== END CRITIQUE_RESULT ==="
+  } >"$result_file.tmp" && mv "$result_file.tmp" "$result_file"
+}
+
+if [ "$unavailable" -eq 1 ]; then
+  if [ -z "$result_file" ]; then
+    echo "critique-status: --unavailable requires --ticket and --result-file" >&2
+    exit 2
+  fi
+  write_result UNAVAILABLE - - - none
+  echo "CRITIQUE_STATUS=UNAVAILABLE"
+  exit 0
+fi
 
 for v in "$score" "$blockers" "$warnings"; do
   if ! [[ "$v" =~ ^[0-9]+$ ]]; then
@@ -70,6 +137,8 @@ BLOCKED) action=needs-info verdict=BLOCK ;;
 WARNINGS) action=warn verdict=WARN ;;
 *) action=clear verdict=PASS ;;
 esac
+
+write_result "$status" "$score" "$blockers" "$warnings" "$reason"
 
 echo "CRITIQUE_STATUS=$status"
 echo "CRITIQUE_BLOCK_REASON=$reason"
