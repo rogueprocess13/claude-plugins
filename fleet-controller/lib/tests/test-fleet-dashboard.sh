@@ -208,8 +208,10 @@ test_write_report_creates_file() {
   fleet_write_report_from_data "$data" "$tmpdir" 2>/dev/null
   local rc=$?
   local report_file="$tmpdir/reports/fleet-dashboard.md"
-  [ "$rc" -eq 0 ] && [ -f "$report_file" ] && grep -q "No active pipelines" "$report_file"
+  local ok=1
+  [ "$rc" -eq 0 ] && [ -f "$report_file" ] && grep -q "No active pipelines" "$report_file" && ok=0
   rm -rf "$tmpdir"
+  return "$ok"
 }
 
 test_write_report_includes_alerts_section() {
@@ -218,8 +220,10 @@ test_write_report_includes_alerts_section() {
   local data='{"summary":{"total":1,"healthy":0,"warn":0,"kill":1,"restart":0},"pipelines":[{"tid":"WIL-5","phase":"VERIFY","hb_age_secs":900,"severity":2,"anomalies":"stall,zombie"}]}'
   fleet_write_report_from_data "$data" "$tmpdir" 2>/dev/null
   local report_file="$tmpdir/reports/fleet-dashboard.md"
-  grep -q "## Alerts" "$report_file" && grep -q "WIL-5" "$report_file" && grep -q "stall,zombie" "$report_file"
+  local ok=1
+  grep -q "## Alerts" "$report_file" && grep -q "WIL-5" "$report_file" && grep -q "stall,zombie" "$report_file" && ok=0
   rm -rf "$tmpdir"
+  return "$ok"
 }
 
 test_write_report_skips_alerts_when_all_healthy() {
@@ -228,9 +232,12 @@ test_write_report_skips_alerts_when_all_healthy() {
   local data='{"summary":{"total":1,"healthy":1,"warn":0,"kill":0,"restart":0},"pipelines":[{"tid":"WIL-1","phase":"IMPLEMENT","hb_age_secs":30,"severity":0,"anomalies":"none"}]}'
   fleet_write_report_from_data "$data" "$tmpdir" 2>/dev/null
   local report_file="$tmpdir/reports/fleet-dashboard.md"
-  # Should NOT have alerts section when all healthy
-  ! grep -q "## Alerts" "$report_file"
+  # Should NOT have alerts section when all healthy — but the report itself
+  # must exist, or a missing file would satisfy the negative grep.
+  local ok=1
+  [ -f "$report_file" ] && grep -q "WIL-1" "$report_file" && ! grep -q "## Alerts" "$report_file" && ok=0
   rm -rf "$tmpdir"
+  return "$ok"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

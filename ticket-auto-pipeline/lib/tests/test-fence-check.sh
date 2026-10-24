@@ -58,7 +58,9 @@ test_missing_generation_on_fenced_ticket() {
   _setup
   _write_fence "T-1" 3
   set +e
-  check_generation_fence "T-1" "" "$_ws/state"
+  # A fleetd worker (FLEET_WORKER_PID set) with no generation token is
+  # refused: it is a fenced participant that lost its token.
+  FLEET_WORKER_PID=$$ check_generation_fence "T-1" "" "$_ws/state"
   local rc=$?
   set -e
   _teardown
@@ -106,6 +108,75 @@ test_different_tickets_independent() {
   [ "$rc" -eq 0 ] && [ "$FENCE_CHECK_STATUS" = "unfenced" ]
 }
 
+# ── non-participant: no generation AND not a fleetd worker ─────────────────
+# A human at a terminal (/ticket-approve) or fleetd itself (gate_hold.py's
+# needs-info-resolved) carries neither FLEET_WORKER_PID nor FLEET_GENERATION.
+# It was never a fleetd generation, so it cannot be a superseded one
+# (review ARCH-1). Before the fix it was refused with 9 forever, because the
+# fence marker is never cleared.
+test_non_participant_allowed_on_fenced_ticket() {
+  _setup
+  _write_fence "T-1" 3
+  local rc=0 st
+  (
+    unset FLEET_WORKER_PID
+    check_generation_fence "T-1" "" "$_ws/state" || exit $?
+    [ "$FENCE_CHECK_STATUS" = "non-participant" ]
+  ) || rc=$?
+  _teardown
+  [ "$rc" -eq 0 ]
+}
+
+# ── malformed values must refuse, never fail open (review QA-6) ────────────
+test_non_numeric_caller_generation_refused() {
+  _setup
+  _write_fence "T-1" 5
+  local ok=0 g rc
+  for g in abc -1x 7.5 " 9"; do
+    rc=0
+    check_generation_fence "T-1" "$g" "$_ws/state" || rc=$?
+    if [ "$rc" -ne 10 ] || [ "$FENCE_CHECK_STATUS" != "malformed" ]; then
+      echo "  caller generation '$g' -> rc=$rc status=$FENCE_CHECK_STATUS" >&2
+      ok=1
+    fi
+  done
+  _teardown
+  return $ok
+}
+
+test_non_integer_fenced_value_refused() {
+  _setup
+  mkdir -p "$_ws/state"
+  echo '{"fenced_generation":5.5}' >"$_ws/state/T-1-fence"
+  local rc=0
+  check_generation_fence "T-1" "2" "$_ws/state" || rc=$?
+  local st="$FENCE_CHECK_STATUS"
+  _teardown
+  [ "$rc" -eq 10 ] && [ "$st" = "malformed" ]
+}
+
+test_corrupt_fence_file_refused() {
+  _setup
+  mkdir -p "$_ws/state"
+  printf '{"fenced_generation":' >"$_ws/state/T-1-fence"
+  local rc=0
+  check_generation_fence "T-1" "2" "$_ws/state" || rc=$?
+  local st="$FENCE_CHECK_STATUS"
+  _teardown
+  [ "$rc" -eq 10 ] && [ "$st" = "malformed" ]
+}
+
+# The CLI must print its verdict even when it refuses (it used to exit
+# under set -e before echoing anything).
+test_cli_prints_status_on_refusal() {
+  _setup
+  _write_fence "T-1" 5
+  local out rc=0
+  out=$(FLEET_FENCE_ENFORCE=true bash "$FC" "T-1" "2" "$_ws/state" 2>/dev/null) || rc=$?
+  _teardown
+  [ "$rc" -eq 10 ] && printf '%s\n' "$out" | grep -qx 'FENCE_CHECK_STATUS=superseded'
+}
+
 # ── sourcing fence-check.sh must not mutate the caller's shell flags ───────
 # fence-check.sh is sourced unconditionally at file scope by lib/events.sh,
 # which is itself sourced by epic-branch.sh/fleet-intervene.sh — the same
@@ -132,6 +203,11 @@ _run "generation == fenced -> superseded (10)" test_superseded_generation_reject
 _run "generation < fenced -> superseded (10)" test_older_generation_rejected
 _run "generation > fenced -> allowed" test_current_generation_allowed
 _run "different ticket ids do not share fence state" test_different_tickets_independent
+_run "non-participant (no worker pid, no generation) allowed" test_non_participant_allowed_on_fenced_ticket
+_run "non-numeric caller generation -> refused (10)" test_non_numeric_caller_generation_refused
+_run "non-integer fenced value -> refused (10)" test_non_integer_fenced_value_refused
+_run "corrupt fence file -> refused (10)" test_corrupt_fence_file_refused
+_run "CLI prints status on refusal" test_cli_prints_status_on_refusal
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="

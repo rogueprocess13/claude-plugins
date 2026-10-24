@@ -356,6 +356,9 @@ _gate_reconcile_resolve() {
   code=${code//\{TICKET-ID\}/$3}
   (
     cd "$1" || exit 3
+    # Step 1's load block sources ticket-dir.sh before this block runs; the
+    # resolution block calls its resolve_plan_artifact.
+    source "$LIB_DIR/ticket-dir.sh"
     LOG_FILE="$1/logs/pipeline.log"
     TICKET_DIR="$1/TEST-7--ticket-dir"
     ARTIFACT_TYPE="$2"
@@ -641,26 +644,27 @@ test_detect_resume_outputs_verify_last() {
   }
 }
 
+# The router's auto-merge decision lives in lib/auto-merge.sh (DET-RV-4); its
+# behaviour is pinned by test-auto-merge.sh. These two keep the source-level
+# guards they always were, pointed at where the logic now lives.
 test_router_auto_merge_covers_auto_and_semi_auto() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  local block
-  block=$(sed -n '/### Auto-merge logic/,/^```$/p' "$skill_md")
-  echo "$block" | grep -q '{AUTONOMY}" = "auto"' || {
-    echo "auto-merge no longer covers AUTONOMY=auto"
+  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md" src="$LIB_DIR/auto-merge.sh"
+  [ -f "$skill_md" ] && [ -f "$src" ] || return 1
+  sed -n '/### Auto-merge logic/,/^### STEP_5/p' "$skill_md" | grep -q 'auto-merge.sh' || {
+    echo "router auto-merge does not delegate to lib/auto-merge.sh"
     return 1
   }
-  echo "$block" | grep -q '{AUTONOMY}" = "semi-auto"' || {
-    echo "auto-merge no longer covers AUTONOMY=semi-auto"
+  grep -qE '^ *auto \| semi-auto\)' "$src" || {
+    echo "auto-merge.sh no longer covers AUTONOMY=auto and semi-auto"
     return 1
   }
 }
 
 test_router_auto_merge_reads_outcome_label_not_implement_line() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
+  local src="$LIB_DIR/auto-merge.sh"
+  [ -f "$src" ] || return 1
   local block
-  block=$(sed -n '/### Auto-merge logic/,/^```$/p' "$skill_md")
+  block=$(cat "$src")
   echo "$block" | grep -q 'META|outcome-label|info|' || {
     echo "auto-merge does not read the authoritative outcome-label META line"
     return 1
@@ -942,7 +946,7 @@ test_ticket_verify_local_closeout_skips_implement_complete_under_from_auto() {
   # Item 4 of the local close-out: from its "4." line up to item 5.
   item=$(sed -n '/^### If `--env local`: Open PR and close out/,/^### If `--env uat`/p' "$skill_md" |
     sed -n '/^4\. /,/^5\. /p')
-  echo "$item" | grep -q '/ticket-flow {TICKET-ID} implement-complete' || {
+  echo "$item" | grep -q 'flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} implement-complete' || {
     echo "local close-out item 4 no longer fires implement-complete (test anchor drifted)"
     return 1
   }
@@ -1215,7 +1219,7 @@ test_ticket_pr_review_step6a_merge_pending_before_transition() {
   local reason_ln trigger_ln flow_ln
   reason_ln=$(echo "$block" | grep -n 'merge_blocked_reason "{TICKET-ID}"' | head -1 | cut -d: -f1)
   trigger_ln=$(echo "$block" | grep -n 'uat_decide_trigger --policy "$policy" ${_merge_pending_flag}' | head -1 | cut -d: -f1)
-  flow_ln=$(echo "$block" | grep -n '/ticket-flow {TICKET-ID} "$trigger"' | head -1 | cut -d: -f1)
+  flow_ln=$(echo "$block" | grep -n 'flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} "$trigger"' | head -1 | cut -d: -f1)
   [ -n "$reason_ln" ] && [ -n "$trigger_ln" ] && [ -n "$flow_ln" ] || {
     echo "Step 6a missing merge_blocked_reason / --merge-pending / trigger call"
     return 1

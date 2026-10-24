@@ -22,15 +22,32 @@ Where `--data` supplies trigger-specific values (e.g. `complexity=simple`, `outc
 This skill is a thin wrapper around `flow.sh`. All state machine logic and the local manifest write are handled deterministically by the script — `flow.sh` performs no tracker I/O (tracker-flow-projection-cutover). It reads and writes only `workflow.json` and the ticket's local manifest, then emits one outbox event and drains it. `$LINEAR_API_KEY` is not required to invoke this skill; it is required only for the board projection to actually reach Linear (the driver `flow.sh` dispatches to at exit, via `outbox-drain.sh`), and its absence never fails or delays a transition.
 
 ```bash
-_flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$_flow_sh" ] || _flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
-[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
-bash "$_flow_sh" "<TICKET-ID>" "<TRIGGER>" [--data key=value] [--dry-run]
+bash ~/.claude/skills/lib/flow-run.sh --log-file "${LOG_FILE:-}" "<TICKET-ID>" "<TRIGGER>" [--data key=value] [--dry-run] [--override REASON]
 ```
+
+`lib/flow-run.sh` is the one shell entry point for a trigger. It resolves `flow.sh`
+(`~/.claude/skills/ticket-flow/flow.sh`, then `tap_cache_find` — installed version, then
+newest cached version by version order, #468), runs it, records a failure in the pipeline
+log and heartbeat, and exits with `flow.sh`'s own code. **Skills and phase agents call the
+wrapper with Bash, never this slash command inside a bash block** — `/ticket-flow` is not a
+shell command, so a following `_rc=$?` would read nothing, and the phase agents
+(appraise, implement, verify, pr-review) have no Skill tool.
+
+### Exit codes
+
+| Code | Meaning | Recorded by `flow-run.sh` |
+|------|---------|---------------------------|
+| `0` | Transition applied (or a warn-only no-op such as `ILLEGAL_TRANSITION`) | nothing |
+| `1` | Usage / invalid ticket id / unreadable `workflow.json` / other `flow.sh` error | `META\|flow-error\|fail\|exit 1: <trigger>` |
+| `3` | Unknown trigger | `META\|flow-error` |
+| `8` | Precondition rejected (`must_be_epic` / `must_not_be_epic`) | `META\|flow-error` |
+| `9` / `10` | Generation fence: missing token / superseded generation | `META\|flow-error` |
+| `11` | **Verdict gate blocked** — a `verdict_gate` trigger (`uat-pass`, `pr-review-pass-done`, `pr-review-pass-uat`) refused because a trailing FAIL/BLOCK verifier-result is on record. Not transient: do not retry and do not report PASS/Done. | `META\|gate-stop\|fail\|VERDICT_GATE_BLOCKED — <trigger> refused, see flow.sh stderr` |
+| `42` | Another `flow.sh` run for this ticket holds the lock | `META\|flow-error` |
+| `127` | `flow.sh` could not be resolved — nothing ran | `META\|flow-error\|fail\|flow.sh not found: <trigger>` |
+
+Every call site that fires a verdict-gated trigger branches on `11` explicitly;
+`lib/tests/test-flow-run.sh` fails the build if one does not.
 
 ## Reference: State Machine
 

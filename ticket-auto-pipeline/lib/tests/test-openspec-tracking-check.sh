@@ -342,6 +342,44 @@ test_audit_no_changes_is_clean() {
   [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_SUMMARY|total=0|issues=0'
 }
 
+# DET-IP-2: TEST-7 must not resolve to another ticket's test-77-* change dir.
+test_assert_whole_id_does_not_match_longer_id() {
+  _setup
+  mkdir -p "$_ws/openspec/changes/test-77-other-ticket"
+  echo "- [ ] x" >"$_ws/openspec/changes/test-77-other-ticket/tasks.md"
+  local out rc=0
+  out=$(cd "$_ws" && bash "$CHECK" assert TEST-7) || rc=$?
+  _teardown
+  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=not-applicable' &&
+    ! echo "$out" | grep -q 'test-77'
+}
+
+test_assert_whole_id_picks_own_dir_beside_longer_id() {
+  _setup
+  mkdir -p "$_ws/openspec/changes/test-77-other-ticket" "$_ws/openspec/changes/test-7-mine"
+  echo "- [ ] x" >"$_ws/openspec/changes/test-77-other-ticket/tasks.md"
+  echo "- [ ] y" >"$_ws/openspec/changes/test-7-mine/tasks.md"
+  local out rc=0
+  out=$(cd "$_ws" && bash "$CHECK" assert TEST-7) || rc=$?
+  _teardown
+  echo "$out" | grep -q '^CHANGE_DIR=openspec/changes/test-7-mine/$'
+}
+
+test_assert_two_change_dirs_is_ambiguous() {
+  _setup
+  mkdir -p "$_ws/openspec/changes/wil-30-a" "$_ws/openspec/changes/wil-30-b"
+  echo x >"$_ws/openspec/changes/wil-30-a/tasks.md"
+  echo x >"$_ws/openspec/changes/wil-30-b/tasks.md"
+  local out err rc=0
+  err=$(mktemp)
+  out=$(cd "$_ws" && bash "$CHECK" assert WIL-30 2>"$err") || rc=$?
+  local both=0
+  grep -q 'wil-30-a' "$err" && grep -q 'wil-30-b' "$err" && both=1
+  rm -f "$err"
+  _teardown
+  [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=ambiguous' && [ "$both" -eq 1 ]
+}
+
 test_usage_exits_2_with_no_args() {
   local rc=0
   bash "$CHECK" >/dev/null 2>&1 || rc=$?
@@ -366,7 +404,9 @@ for t in test_commit_force_adds_gitignored_dir test_commit_is_idempotent_noop_on
   test_commit_accepts_absolute_change_dir_from_assert_root \
   test_assert_is_case_insensitive_on_ticket_id \
   test_audit_reports_all_clean test_audit_detects_existing_untracked_changes \
-  test_audit_with_explicit_root test_audit_no_changes_is_clean test_usage_exits_2_with_no_args; do
+  test_audit_with_explicit_root test_audit_no_changes_is_clean test_usage_exits_2_with_no_args \
+  test_assert_whole_id_does_not_match_longer_id test_assert_whole_id_picks_own_dir_beside_longer_id \
+  test_assert_two_change_dirs_is_ambiguous; do
   if "$t"; then
     _pass "$t"
   else

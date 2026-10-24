@@ -181,11 +181,11 @@ check_fns 0.9.4 "follows installPath"
 
 echo "--- Test 3: inline bootstrap blocks ---"
 
-BLOCK_FILES="ticket-auto-pipeline/lib/skill-preamble.md
-ticket-auto-pipeline/lib/skill-preamble-auto.md
-ticket-auto-pipeline/skills/ticket-auto/SKILL.md
+# skill-preamble.md, skill-preamble-auto.md and ticket-gate-reconcile/SKILL.md no
+# longer carry a flow.sh resolver: they fire triggers through lib/flow-run.sh,
+# which uses tap_cache_find (guarded by lib/tests/test-flow-run.sh).
+BLOCK_FILES="ticket-auto-pipeline/skills/ticket-auto/SKILL.md
 ticket-auto-pipeline/skills/ticket-flow/SKILL.md
-ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md
 ticket-auto-pipeline/skills/ticket-env-check/SKILL.md
 fleet-controller/skills/fleet-env-check/SKILL.md"
 
@@ -234,15 +234,14 @@ write_installed 9.9.9
 run_blocks 0.62.7 "falls back from a stale installPath"
 echo "  ($((total_blocks / 3)) blocks)"
 
-# ticket-flow/SKILL.md's main block, delimited by its own first and last lines
-# rather than by the pattern above — catches a block that regressed back to
-# a text sort (which the pattern-based extraction would simply not find).
-flow_block=$(awk '/^_flow_sh="\$\{HOME\}\/\.claude\/skills\/ticket-flow\/flow\.sh"$/ {on = 1} on && /^bash "\$_flow_sh"/ {exit} on {print}' \
-  "${PLUGIN_ROOT}/skills/ticket-flow/SKILL.md")
-rm -f "$INSTALLED"
-got=$(HOME="$FX_HOME" BLOCK="$flow_block" bash -c 'eval "$BLOCK"; echo "$_flow_sh"')
-expect "3: ticket-flow SKILL.md flow.sh block picks 0.62.7" \
-  "${CACHE}/ticket-auto-pipeline/0.62.7/skills/ticket-flow/flow.sh" "$got"
+# ticket-flow/SKILL.md's main execution block used to carry its own flow.sh
+# resolver; it now delegates to lib/flow-run.sh (tap_cache_find). Make sure it
+# did not regress back to an inline copy.
+if grep -q '^bash "\$_flow_sh"' "${PLUGIN_ROOT}/skills/ticket-flow/SKILL.md"; then
+  fail "3: ticket-flow SKILL.md runs flow.sh through lib/flow-run.sh" "inline resolver is back"
+else
+  pass "3: ticket-flow SKILL.md runs flow.sh through lib/flow-run.sh"
+fi
 
 # ── Test 4: no lexical plugin-cache lookup remains ──────────────────────────────
 

@@ -235,7 +235,44 @@ test_sourcing_does_not_leak_shell_flags() {
   "
 }
 
+# ── torn outbox line (review ARCH-10 / QA-7 / BE-5) ─────────────────────────
+# A partial last line (disk full, kill mid-write) used to: glue the next
+# record onto it (no newline), restart seq at 1 (tail hit invalid JSON), and
+# disable idem dedup (jq over the whole file exits non-zero at the parse
+# error). The drains skip seq <= cursor, so every later event was lost.
+_torn_outbox() {
+  local f
+  f=$(_outbox "$1")
+  printf '%s\n' \
+    '{"seq":4,"tid":"'"$1"'","ts":"2026-01-01T00:00:00Z","gen":0,"event":"gate-held","data":{},"from_hint":null,"idem":"k1"}' \
+    '{"seq":5,"tid":"'"$1"'","ts":"2026-01-01T00:00:00Z","gen":0,"event":"gate-held","data":{},"from_hint":null,"idem":null}' >"$f"
+  printf '%s' '{"seq":6,"tid":"'"$1"'","ev' >>"$f"
+}
+
+test_torn_line_next_seq_is_max_plus_one() {
+  _setup
+  _torn_outbox T-9
+  emit_event "T-9" gate-released '{"provenance":"human"}' >/dev/null 2>&1
+  local rc=$? last
+  # The new record must be on its own line and parse.
+  last=$(tail -n 1 "$(_outbox T-9)" | jq -r '"\(.seq) \(.event)"' 2>/dev/null)
+  _teardown
+  [ "$rc" -eq 0 ] && [ "$last" = "6 gate-released" ]
+}
+
+test_torn_line_idem_still_dedups() {
+  _setup
+  _torn_outbox T-9
+  emit_event --idem k1 "T-9" gate-held '{}' >/dev/null 2>&1
+  local rc=$? count
+  count=$(grep -c '"idem":"k1"' "$(_outbox T-9)")
+  _teardown
+  [ "$rc" -eq 0 ] && [ "$count" -eq 1 ]
+}
+
 _run "sourcing events.sh does not leak -e/pipefail" test_sourcing_does_not_leak_shell_flags
+_run "torn last line: next record gets max(seq)+1 on its own line" test_torn_line_next_seq_is_max_plus_one
+_run "torn last line: idem dedup still works" test_torn_line_idem_still_dedups
 _run "3.6 sequential emission -> consecutive seq" test_sequential_seq_consecutive
 _run "3.7 concurrent same-ticket -> no gap/collision" test_concurrent_same_ticket_no_collision
 _run "3.8 concurrent different tickets -> independent" test_concurrent_different_tickets_independent
