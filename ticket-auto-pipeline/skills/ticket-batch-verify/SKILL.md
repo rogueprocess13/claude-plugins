@@ -7,7 +7,7 @@ description: Parallel UAT verification for multiple Linear tickets. Spawns one a
 
 You have been given one or more ticket IDs as the argument. Execute all tickets in parallel — each ticket gets its own agent that runs the full verify sequence on UAT. Report a summary when all are done.
 
-**Credentials:** Each agent auto-derives the test user from its ticket description (ticket-verify Step 1b5). UAT password is always `admin`. No `--user`/`--password` flags needed. If a ticket lacks a user email in its description, the agent posts a comment asking for one and reports FAIL.
+**Credentials:** Each agent auto-derives the test user from its ticket description (ticket-verify Step 1b5). The UAT password comes from `UAT_TEST_PASSWORD` (env or project CLAUDE.md field) — never a built-in default, and never echoed. No `--user`/`--password` flags needed. If a ticket lacks a user email in its description, the agent posts a comment asking for one and reports FAIL.
 
 ## Guard — Verify working directory
 
@@ -81,7 +81,7 @@ Verify ticket {TICKET-ID} on UAT. Run:
 Follow the ticket-verify skill exactly. --from-auto means:
 - No user prompts — never ask questions
 - Auto-derive the test user email from the ticket description (Step 1b5)
-- UAT password is always "admin"
+- UAT password is resolved from `UAT_TEST_PASSWORD` (env or project CLAUDE.md field); never include it in the prompt text
 - If no user email in the ticket, post a comment asking for one and report FAIL
 - If login fails, post a comment and report FAIL
 - If a step requires input you don't have, report it in WHAT_FAILED
@@ -204,7 +204,7 @@ FAIL/BLOCK verifier-result for a different check is still on record for this tic
 
 ## Notes
 
-- **Credentials are auto-derived** — each agent extracts the test user email from the ticket description. Password is `admin`. If a ticket lacks a user email, the agent posts a comment and fails gracefully.
+- **Credentials are auto-derived** — each agent extracts the test user email from the ticket description. The password comes from `UAT_TEST_PASSWORD`. If a ticket lacks a user email, the agent posts a comment and fails gracefully.
 - **Cap at 10 tickets** — beyond that, split into multiple batch runs.
 - **Each agent gets its own browser tab** — Playwright agents operate independently.
 - **UAT only** — batch verify doesn't support localhost. Local verification needs a running dev server and is inherently one-at-a-time.

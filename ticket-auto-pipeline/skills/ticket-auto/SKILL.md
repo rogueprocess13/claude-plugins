@@ -1018,16 +1018,15 @@ stops with VERIFY_EXHAUSTED.
 **Before dispatching**, run a pre-spawn health check and export CLAUDE_LOG_FILE:
 
 ```bash
-# Pre-spawn MCP health check — confirm Playwright and Linear MCP are reachable
-# before spawning an agent that will inevitably fail without them.
-_verify_mcp_ok=true
-mcp__playwright__browser_navigate 2>/dev/null || _verify_mcp_ok=false
-mcp__linear-server__get_issue 2>/dev/null || _verify_mcp_ok=false
-if ! $_verify_mcp_ok; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|preflight|fail|VERIFY_PREFLIGHT_FAILED — MCP tools unreachable" >> "{LOG_FILE}"
-  # Count as an attempt and proceed — if both attempts fail due to MCP,
-  # VERIFY_EXHAUSTED will fire with a clear diagnostic.
-fi
+# Pre-spawn Playwright MCP config check. MCP tools are not shell commands, so
+# bash cannot probe their reachability; this checks the one thing bash can
+# answer — that an MCP server named `playwright` (the source of the verify
+# agent's mcp__playwright__* tools) is configured. Logs exactly one
+# META|preflight line (done / fail VERIFY_PREFLIGHT_FAILED / skip) and always
+# exits 0. Advisory: proceed either way — a real outage still surfaces as a
+# counted verify attempt. Linear is not checked: verify reaches it through
+# linear-api.sh, which the preamble already validated.
+bash ~/.claude/skills/lib/verify-preflight.sh "{LOG_FILE}" "$(pwd)" || true
 
 # Export CLAUDE_LOG_FILE for crash diagnostics — survives agent crashes
 export CLAUDE_LOG_FILE="/tmp/ticket-auto-{TICKET-ID}-verify-$(date +%s).log"

@@ -4,7 +4,7 @@
 
 ## What it does
 
-Runs UAT verification for multiple tickets in parallel. Resolves ticket IDs (up to 10), spawns one agent per ticket with `--env uat --from-auto` flags, and collects pass/fail results. Each agent auto-derives the test user from the ticket description and uses `admin` as the UAT password. On pass, automatically calls `uat-pass` to move the ticket to Done. On fail, posts findings to Linear and calls `uat-fail` to move back to Ready. UAT only -- no localhost support.
+Runs UAT verification for multiple tickets in parallel. Resolves ticket IDs (up to 10), spawns one agent per ticket with `--env uat --from-auto` flags, and collects pass/fail results. Each agent auto-derives the test user from the ticket description and resolves the UAT password from `UAT_TEST_PASSWORD` (env or project CLAUDE.md field). On pass, automatically calls `uat-pass` to move the ticket to Done. On fail, posts findings to Linear and calls `uat-fail` to move back to Ready. UAT only -- no localhost support.
 
 ## Trigger
 

@@ -271,12 +271,12 @@
       "pre_dispatch": [
         {
           "kind": "preflight",
+          "script": "verify-preflight.sh",
           "checks": [
-            "mcp__playwright__browser_navigate",
-            "mcp__linear-server__get_issue"
+            "playwright MCP server configured"
           ],
-          "on_failure": "log META|preflight|fail|VERIFY_PREFLIGHT_FAILED and proceed — the failure still counts as an attempt",
-          "description": "Confirm Playwright and Linear MCP are reachable before spawning an agent that would inevitably fail without them."
+          "on_failure": "verify-preflight.sh logs META|preflight|fail|VERIFY_PREFLIGHT_FAILED; proceed — the failure still counts as an attempt",
+          "description": "Deterministic config check that an MCP server named playwright (source of the verify agent's mcp__playwright__* tools) is configured. MCP reachability cannot be probed from bash; the agent's own session tests it."
         },
         {
           "kind": "env",

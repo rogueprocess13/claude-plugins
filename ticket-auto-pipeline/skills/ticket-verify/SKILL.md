@@ -7,7 +7,7 @@ description: Verifies a Linear ticket fix by loading its requirements, then navi
 
 You have been given a ticket ID as the argument (e.g. `CRE-39`), with optional flags:
 - `--user <email>` — login email override. If omitted, derived from the ticket description.
-- `--password <password>` — login password override. If omitted, uses `admin` on UAT (the standard test password). On local, the login gate is typically bypassed.
+- `--password <password>` — login password override. If omitted, resolved from the `UAT_TEST_PASSWORD` environment variable, else the `UAT_TEST_PASSWORD` field in `./CLAUDE.md` (see Step 1b5). There is no built-in default password. On local, the login gate is typically bypassed.
 - `--env local|uat` — which environment to test against (default: `local`)
 - `--from-auto` — called by ticket-auto or batch. Suppresses all user prompts.
   Missing credentials or nav failures produce a diagnostic FAIL instead
@@ -21,7 +21,9 @@ Parse the arguments before proceeding.
 - `local` → Read `LOCAL_URL` from `./CLAUDE.md`. If absent, abort: "No LOCAL_URL configured for this project."
 - `uat` → Read `UAT_URL` from `./CLAUDE.md`. If absent, abort: "No UAT_URL configured for this project."
 
-**Credential derivation (UAT only):** If `--user` is not explicitly provided, extract it from the ticket description after Step 1b. If `--password` is not provided, use `admin` on UAT. On local, credentials are typically not needed.
+**Credential derivation (UAT only):** If `--user` is not explicitly provided, extract it from the ticket description after Step 1b. If `--password` is not provided, resolve it from configuration (Step 1b5) — never assume a default. On local, credentials are typically not needed.
+
+**Secrets rule:** a password is only ever typed into the login field. Never write it into a Linear comment, PR body, pipeline/heartbeat log line, verification plan, report, REMEDIATION_BRIEF, notes.md or any other file, and never `echo` it in a bash block.
 
 ## Pipeline Preamble
 
@@ -78,15 +80,15 @@ Read both knowledge sources before fetching the ticket:
 cat "$HOME/.claude/skills/app-knowledge/SKILL.md"
 ```
 
-Then load the project nav hints:
+Then load the project nav hints (read the file directly — this agent has no Skill tool, and Step 2a reads the same file):
 
-```
-/nav-hints list
+```bash
+cat "{TICKETS_ROOT}/nav-hints.md" 2>/dev/null || echo "(no nav-hints.md yet)"
 ```
 
 `app-knowledge/SKILL.md` contains business rules, role-based UI behaviour, state mappings, and navigation patterns confirmed across sessions. Use it to interpret what you see in Playwright snapshots and to derive correct navigation without guessing.
 
-`/nav-hints` returns area → click-path mappings learned during previous ticket verification and reproduction sessions. **Never use direct URLs for in-app navigation** — always click through the UI because Angular loses session state on full page reload.
+`nav-hints.md` holds area → click-path mappings learned during previous ticket verification and reproduction sessions. **Never use direct URLs for in-app navigation** — always click through the UI because Angular loses session state on full page reload.
 
 ### 1b — Fetch from Linear
 
@@ -143,7 +145,13 @@ Skip this step if `--env local` is set.
 If `--user` was provided, use it. If `--password` was provided, use it. Otherwise:
 
 1. Scan the ticket `description` for an email address matching typical test users (e.g. `user@example.com`). The ticket description often contains a `**User:**` field or an inline mention like "Log in as X (email)".
-2. If found → `derived_user = email`, `derived_password = "admin"`.
+2. If found → `derived_user = email`. Resolve `derived_password` (only when `--password` was not passed) from configuration — env first, then the project CLAUDE.md field — without printing it:
+   ```bash
+   source "$HOME/.claude/skills/lib/claude-md-field.sh"
+   _uat_pw="${UAT_TEST_PASSWORD:-$(claude_md_field ./CLAUDE.md UAT_TEST_PASSWORD 2>/dev/null || true)}"
+   [ -n "$_uat_pw" ] && echo "UAT test password: configured" || echo "UAT test password: NOT configured"
+   ```
+   If it is not configured and `--password` was not passed: with `--from-auto`, abort with a FAIL verdict (skip to Step 7 with WHAT_FAILED = "No UAT test password configured — set UAT_TEST_PASSWORD or pass --password"); otherwise ask the user for `--password`. Do not post this to Linear — it is a host configuration gap, not a ticket gap.
 3. If an email is found but `--user` was also passed → `--user` takes precedence.
 4. If an email is found but `--password` was also passed → `--password` takes precedence.
 5. If no email found in the description:
@@ -733,19 +741,18 @@ Take a snapshot. If the nav already shows an authenticated user name, skip 3b.
 
 Use the credentials from Step 1b5 (derived or explicit).
 
-Open the login dialog:
-- Click **Account** in the nav to expand the dropdown
-- Click **Sign in**
+Reach the login form using this project's own login path — never a hard-coded one:
+1. If `nav-hints.md` has a `## Login` entry, follow its click-by-click steps.
+2. Otherwise use the login path described in app-knowledge.
+3. Otherwise read the snapshot and click the control that opens sign-in (a link or button labelled e.g. "Sign in" / "Log in", possibly inside an account or user menu). After a successful login, save the path you used as a `## Login` entry in `nav-hints.md` (Step 4a format) so the next run does not have to search.
 
-Fill the login form with `{derived_user}` and `{derived_password}`.
-
-Click **Sign in**. Take a snapshot. Confirm the nav shows the authenticated user name.
+Fill the login form with `{derived_user}` and the resolved password, and submit it (click the submit button, or `mcp__playwright__browser_press_key` `Enter` in the password field). Then wait for the page to settle (see **Wait for settle** in Step 4) and take a snapshot. Confirm the nav shows the authenticated user (name, avatar or account menu — whatever app-knowledge names as the logged-in marker).
 
 If login fails:
 
-- **On UAT** (password is always `admin`): post a comment to the Linear ticket:
+- **On UAT**: take a screenshot (`verify-login-fail.png`, see **Screenshot evidence** in Step 4b) and post a comment to the Linear ticket. The comment names the user only — never the password or where it came from:
   ```
-  ⚠️ Login failed for {derived_user} with default password "admin". The account may use a different password or be locked. Please verify credentials and re-run with --user and --password flags.
+  ⚠️ Login failed for {derived_user} on UAT. The configured test password may be wrong for this account, or the account may be locked. Please verify the test credentials and re-run with --user and --password flags.
   ```
   Then abort with a FAIL verdict (skip to Step 7 with WHAT_FAILED = "Login failed for {derived_user}").
 - **On local**: report and stop as above (local env may have different requirements).
@@ -767,10 +774,17 @@ Maintain a counter `nav_attempts = 0`. Each time you try a click path and it doe
 **For each attempt (up to 3):**
 
 1. Execute the click-by-click steps from the nav-hints entry (or the inferred path from Step 2a). **Never use `page.goto()` for in-app navigation** — Angular loses session state on full reload.
-2. Take a snapshot.
+2. Wait for settle (below), then take a snapshot.
 3. Evaluate the snapshot:
    - **Success** — the page shows content related to the ticket's feature area (relevant headings, buttons, forms, or list items mentioned in the ticket). Proceed to Step 4b.
    - **Wrong page** — the page looks unrelated, shows a 404, redirects to `/accessdenied`, or the expected component is absent. Increment `nav_attempts`. Try the next candidate path.
+
+**Wait for settle.** The app is an async SPA: a click returns before the XHRs it triggers finish, so a snapshot taken immediately can show a loading spinner or the previous view. After every click that navigates, opens a dialog or submits a form, call `mcp__playwright__browser_wait_for` before the snapshot:
+- with `text` set to a heading, label or value the plan expects on the next view (preferred), or
+- with `textGone` set to a loading indicator you saw ("Loading…", spinner label), or
+- as a last resort, a short fixed `time` (1–2 s).
+
+Bound every wait (no more than ~15 s). A wait that times out is evidence, not a crash: take the snapshot anyway and judge the page from it — a still-loading page counts as a **Wrong page** attempt, not a FAIL.
 
 **Candidate click paths to try in order (if the first fails):**
 1. The exact click path from the matched nav-hints entry.
@@ -819,9 +833,10 @@ Tell the user: `"Saved navigation hint for '{feature area}' to nav-hints.md for 
 
 With the browser now on the correct page, work through each remaining step in the Verification Plan sequentially. For **every step**:
 
-1. Perform the Playwright action (navigate, click, fill, select, etc.)
-2. Take a snapshot with `mcp__playwright__browser_snapshot`
-3. Record the **observed result** — what you see in the snapshot
+1. Perform the Playwright action with the matching tool: click (`mcp__playwright__browser_click`), type into a field (`mcp__playwright__browser_type`), choose a native `<select>` option (`mcp__playwright__browser_select_option`), press a key such as Enter, Escape or Tab (`mcp__playwright__browser_press_key`), hover to open a hover menu (`mcp__playwright__browser_hover`), accept or dismiss a native `confirm()`/`alert()` (`mcp__playwright__browser_handle_dialog`), upload a file (`mcp__playwright__browser_file_upload`), go back (`mcp__playwright__browser_navigate_back`), or change the viewport for a responsive criterion (`mcp__playwright__browser_resize`). Do not substitute `mcp__playwright__browser_evaluate` DOM edits for a user action — they bypass the framework's change detection and can produce a false PASS. Use `browser_evaluate` only to read state.
+2. Wait for settle (Step 4) whenever the action triggers navigation, a dialog, a save or any async load.
+3. Take a snapshot with `mcp__playwright__browser_snapshot`
+4. Record the **observed result** — what you see in the snapshot
 
 Capture after each step:
 - The snapshot YAML (accessibility tree)
@@ -829,6 +844,13 @@ Capture after each step:
 - Any new console errors: `mcp__playwright__browser_console_messages`
 
 **Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry to the pipeline log:
+**Screenshot evidence.** The accessibility tree hides layout, overlap, styling and contrast, so every criterion also gets a picture. At each criterion's assertion point — PASS or FAIL — and on any unexpected broken state, call `mcp__playwright__browser_take_screenshot` with `filename` set to `verify-{TICKET-ID}-c{N}-{pass|fail}.png` (N = criterion number). Then make sure the file lands in the ticket workspace — Playwright MCP saves into its own output directory, so copy it from the path the tool reports:
+```bash
+mkdir -p "{ticket-dir}/artifacts" && cp "<path reported by browser_take_screenshot>" "{ticket-dir}/artifacts/"
+```
+Record each file under `### Evidence` in the report (Steps 6/7) and in the REMEDIATION_BRIEF for a FAIL. Never screenshot a page while a password field is visibly filled in.
+
+**Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry to the pipeline log. On crash restart, the router reads the last checkpoint and the verify agent resumes from the NEXT criterion instead of restarting from criterion 1:
 
 ```bash
 # After criterion N passes, write checkpoint:
@@ -962,6 +984,7 @@ Print to the user:
 
 ### Evidence
 - Step {N}: {brief description of what was observed confirming the fix}
+- Screenshots: {ticket-dir}/artifacts/verify-{TICKET-ID}-c{N}-pass.png, … (browser mode; none in build-only/live-backend mode)
 
 **Recommendation:** Ready to merge / promote.
 ```
@@ -1222,6 +1245,7 @@ Print to the user:
 
 ### Diagnostics
 **URL at failure:** {url}
+**Screenshot at failure:** {ticket-dir}/artifacts/verify-{TICKET-ID}-c{N}-fail.png (browser mode)
 **Console errors:**
 {list, or "none"}
 
@@ -1288,6 +1312,9 @@ SNAPSHOT_EXCERPT:
 focused on the component under test}
 
 CURRENT_URL: {url}
+
+SCREENSHOTS:
+{ticket-dir}/artifacts/verify-{TICKET-ID}-c{N}-fail.png (and any other verify-*.png from this run, or "none" in build-only/live-backend mode)
 
 CONTEXT_FILES:
 - {ticket-dir}/context.md  (or "not found locally")

@@ -17,6 +17,24 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.71.7 / fleet-controller 0.43.5 (2026-10-23)
+
+Verify agent fixes (codebase review 2026-10-23, PO-8, FE-14..17).
+
+Also fleet-controller 0.43.5.
+
+### Fixed
+- The verify pre-flight ran MCP tool names as shell commands and logged a false "MCP unreachable"
+  every run. `lib/verify-preflight.sh` checks that a `playwright` MCP server is configured and
+  logs one honest line.
+- ticket-verify-agent now has the Playwright tools its skill uses (select, key press, dialog, hover,
+  resize, …) and reads `nav-hints.md` directly. It waits for the page to settle before each
+  snapshot and saves a screenshot per criterion.
+- Hard-coded login steps and a default password are removed from verify, batch-verify, reproduce
+  and `lib/config.sh`. The password comes from `UAT_TEST_PASSWORD` and is never echoed or posted.
+
+### Breaking
+- UAT verify requires `UAT_TEST_PASSWORD` (env or CLAUDE.md field) on each host.
 ## 0.71.6 / fleet-controller 0.43.4 (2026-10-23)
 
 Router, merge and PR fixes (codebase review 2026-10-23, DET-RV-3/4/16, DET-IP-4/5/9).
