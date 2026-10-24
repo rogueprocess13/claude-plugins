@@ -866,6 +866,100 @@ output=$(NEW --repo "$TMPDIR/java-project" --layer BE --phase implement --type b
 order=$(grep -oE '^PERSONA_[A-Z_]+' <<<"$output" | tr '\n' ' ' || true)
 assert_eq "key order: debug keys emitted last" "PERSONA_BASE PERSONA_SPECIALIZER PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_TESTDATA_SPECIALIZERS PERSONA_DEBUG PERSONA_DEBUG_SPECIALIZER " "$order"
 
+# 1.7 --ticket-dir (skill-glue-collapse, persona-select-ticket-dir spec):
+# derives --type and the ticket-text file from the ticket workspace.
+echo ""
+echo "── --ticket-dir ──"
+TD="$TMPDIR/td-root"
+mkdir -p "$TD/.ticket-auto/initiatives/_index"
+td_ticket() { # <tid> <manifest-json|-> <labels-line|-> [extra context.md text]
+  local tid="$1" dir="$TD/tickets/${1}--some-slug"
+  mkdir -p "$dir"
+  if [ "$2" != "-" ]; then
+    mkdir -p "$TD/.ticket-auto/initiatives/INIT-7/tickets/$tid/planner"
+    echo "INIT-7" >"$TD/.ticket-auto/initiatives/_index/$tid.initiative"
+    echo "$2" >"$TD/.ticket-auto/initiatives/INIT-7/tickets/$tid/planner/manifest.json"
+  fi
+  {
+    echo "# $tid"
+    [ "$3" = "-" ] || echo "$3"
+    [ -z "${4:-}" ] || printf '%s\n' "$4"
+  } >"$dir/context.md"
+  echo "$dir"
+}
+TDNEW() { REPOS_ROOT="$TD" NEW --repo "$TMPDIR/java-project" --layer BE "$@" 2>&1; }
+
+d=$(td_ticket TD-1 '{"type":"bug"}' '**Labels:** backend')
+output=$(TDNEW --phase implement --ticket-dir "$d")
+assert_eq "manifest type bug → PERSONA_DEBUG set" "$DEBUGGER_PATH" "$(kv "$output" PERSONA_DEBUG)"
+assert_eq "manifest type bug → PERSONA_TYPE=bug" "bug" "$(kv "$output" PERSONA_TYPE)"
+
+d=$(td_ticket TD-2 - '**Labels:** Bug, backend')
+output=$(TDNEW --phase implement --ticket-dir "$d")
+assert_eq "no manifest + Labels 'Bug, backend' → PERSONA_TYPE=bug" "bug" "$(kv "$output" PERSONA_TYPE)"
+assert_eq "labels bug → PERSONA_DEBUG set" "$DEBUGGER_PATH" "$(kv "$output" PERSONA_DEBUG)"
+
+d=$(td_ticket TD-3 '{"type":null}' '**Labels:** debugging, bugfix')
+output=$(TDNEW --phase implement --ticket-dir "$d")
+assert_eq "labels 'debugging, bugfix' are not a whole bug label → PERSONA_TYPE empty" "" "$(kv "$output" PERSONA_TYPE)"
+assert_eq "no bug label → PERSONA_DEBUG empty" "" "$(kv "$output" PERSONA_DEBUG)"
+
+d=$(td_ticket TD-4 '{"type":"hotfix"}' '**Labels:** backend')
+set +e
+output=$(TDNEW --phase implement --ticket-dir "$d")
+rc=$?
+set -e
+assert_exit_code "unknown manifest type hotfix → exit 0" 0 "$rc"
+assert_eq "unknown manifest type dropped → PERSONA_TYPE empty" "" "$(kv "$output" PERSONA_TYPE)"
+
+d=$(td_ticket TD-5 '{"type":"hotfix"}' '**Labels:** Bug')
+output=$(TDNEW --phase implement --ticket-dir "$d")
+assert_eq "unknown manifest type falls through to the labels → bug" "bug" "$(kv "$output" PERSONA_TYPE)"
+
+d=$(td_ticket TD-6 '{"type":"feature"}' '**Labels:** Bug')
+output=$(TDNEW --phase implement --ticket-dir "$d")
+assert_eq "known manifest type wins over the labels" "feature" "$(kv "$output" PERSONA_TYPE)"
+assert_eq "manifest feature → PERSONA_DEBUG empty" "" "$(kv "$output" PERSONA_DEBUG)"
+
+d=$(td_ticket TD-1 '{"type":"bug"}' '**Labels:** Bug')
+output=$(TDNEW --phase implement --type feature --ticket-dir "$d")
+assert_eq "explicit --type feature wins over manifest bug → PERSONA_DEBUG empty" "" "$(kv "$output" PERSONA_DEBUG)"
+assert_eq "explicit --type → PERSONA_TYPE=feature" "feature" "$(kv "$output" PERSONA_TYPE)"
+
+# TICKET_ID from the env beats the directory name.
+d=$(td_ticket TD-8 '{"type":"feature"}' '-')
+output=$(TICKET_ID=TD-1 TDNEW --phase implement --ticket-dir "$d")
+assert_eq "TICKET_ID env names the manifest (TD-1 bug)" "bug" "$(kv "$output" PERSONA_TYPE)"
+
+d=$(td_ticket TD-9 - '-' '## Test Data Provided')
+output=$(TDNEW --phase implement --ticket-dir "$d")
+assert_in "context.md '## Test Data Provided' → test-data-engineer base" "$output" "PERSONA_BASE" "base/test-data-engineer"
+
+# An explicit TICKET_TEXT_FILE still wins over context.md.
+sec2="$TMPDIR/td-explicit.md"
+printf '# Ticket\n\nThe password reset flow sends a stale link.\n' >"$sec2"
+output=$(TICKET_TEXT_FILE="$sec2" TDNEW --phase implement --ticket-dir "$d")
+assert_in "explicit TICKET_TEXT_FILE wins → security auto-include" "$output" "PERSONA_AUTO_INCLUDE" "base/security.md"
+assert_eq "explicit TICKET_TEXT_FILE wins → no test-data base swap" "" "$(kv "$output" PERSONA_BASE | grep test-data-engineer || true)"
+
+for missing in "$TMPDIR/td-nope" "$TMPDIR/td-empty"; do
+  mkdir -p "$TMPDIR/td-empty"
+  set +e
+  output=$(TDNEW --phase implement --ticket-dir "$missing")
+  rc=$?
+  set -e
+  assert_exit_code "--ticket-dir $(basename "$missing") (no context.md) → exit 0" 0 "$rc"
+  assert_eq "--ticket-dir $(basename "$missing") → PERSONA_TYPE empty" "" "$(kv "$output" PERSONA_TYPE)"
+  assert_eq "--ticket-dir $(basename "$missing") → PERSONA_TYPE key emitted" "1" "$(grep -c '^PERSONA_TYPE=' <<<"$output" || true)"
+done
+
+# Without --ticket-dir the output is unchanged: no PERSONA_TYPE key.
+output=$(NEW --repo "$TMPDIR/java-project" --layer BE --phase implement --type bug 2>&1)
+assert_eq "no --ticket-dir → no PERSONA_TYPE key" "0" "$(grep -c '^PERSONA_TYPE=' <<<"$output" || true)"
+output=$(TDNEW --phase implement --type bug --ticket-dir "$d")
+order=$(grep -oE '^PERSONA_[A-Z_]+' <<<"$output" | tr '\n' ' ' || true)
+assert_eq "key order with --ticket-dir: PERSONA_TYPE last" "PERSONA_BASE PERSONA_SPECIALIZER PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_TESTDATA_SPECIALIZERS PERSONA_DEBUG PERSONA_DEBUG_SPECIALIZER PERSONA_TYPE " "$order"
+
 # ── Debugger persona files: lint, size, tokens, bundle ─────────────────────────
 
 echo ""
