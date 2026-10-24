@@ -2242,9 +2242,14 @@ test_hb_wrap_is_executable() {
   [ -x "$SCRIPT_DIR/../hb-wrap.sh" ]
 }
 
+# The pipeline-start heartbeat moved from ticket-auto/SKILL.md (hb-wrap.sh,
+# whose 3rd arg is the message) into lib/ticket-preamble.sh (skill-glue-collapse).
+# hb_heartbeat takes EVENT MSG — the message must be the second argument, not a
+# status token. Behaviour (written once on re-entry) is test-ticket-preamble.sh
+# test_reentry_appends_no_duplicate_meta_lines.
 test_skill_pipeline_start_heartbeat_passes_status_arg() {
-  local skill="$SCRIPT_DIR/../../skills/ticket-auto/SKILL.md"
-  grep -q 'hb-wrap.sh heartbeat "pipeline-start" "ok" ' "$skill"
+  local pre="$SCRIPT_DIR/../ticket-preamble.sh"
+  grep -A1 'hb_heartbeat "pipeline-start"' "$pre" | grep -q '"pipeline starting — autonomy='
 }
 
 FILTER="${1:-}"

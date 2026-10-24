@@ -186,10 +186,10 @@ echo "--- Test 3: inline bootstrap blocks ---"
 # which uses tap_cache_find (guarded by lib/tests/test-flow-run.sh).
 # ticket-flow, ticket-env-check (tap_cache_find) and fleet-features
 # (fleet_cache_find) source the synced resolver instead of a pasted block, so
-# they are not listed. Only files that still carry a block belong here — a
-# listed file with none fails.
-BLOCK_FILES="ticket-auto-pipeline/skills/ticket-auto/SKILL.md
-fleet-controller/skills/fleet-env-check/SKILL.md"
+# they are not listed. ticket-auto lost its last block (Step 0.4 _validate_sh)
+# to lib/ticket-preamble.sh (_tp_validate_script, Test 2). Only files that
+# still carry a block belong here — a listed file with none fails.
+BLOCK_FILES="fleet-controller/skills/fleet-env-check/SKILL.md"
 
 # extract_blocks <file> — prints each block, NUL-separated.
 extract_blocks() {

@@ -28,268 +28,78 @@ The `get_issue` function returns the issue object already unwrapped from `.data.
 
 ---
 
-## Step 0.1 — Resolve autonomy flag
+## Step 0.1 — Ticket preamble (autonomy, preflight, branch context, env file, pipeline log, run identity)
 
-Resolve `{AUTONOMY}` from the argument string using three-tier precedence: CLI arg → `$TICKET_AUTONOMY` env var → `manual` default.
-
-```bash
-if echo "{TICKET_ARG}" | grep -qw '\-\-semi-auto'; then
-  AUTONOMY="semi-auto"
-elif echo "{TICKET_ARG}" | grep -qw '\-\-auto'; then
-  AUTONOMY="auto"
-elif echo "{TICKET_ARG}" | grep -qw '\-\-manual'; then
-  AUTONOMY="manual"
-elif [ -n "$TICKET_AUTONOMY" ]; then
-  case "$TICKET_AUTONOMY" in
-    manual|auto|semi-auto) AUTONOMY="$TICKET_AUTONOMY" ;;
-    *) echo "WARN: unrecognised TICKET_AUTONOMY value '$TICKET_AUTONOMY', defaulting to manual"
-       AUTONOMY="manual" ;;
-  esac
-else
-  AUTONOMY="manual"
-fi
-
-# Resolve --from-planned flag: set when fleetd/fleet-controller dispatches
-# a planner-generated ticket. Used by the feedback writer to emit
-# META|planner-feedback entries to the pipeline log.
-if echo "{TICKET_ARG}" | grep -qw '\-\-from-planned'; then
-  FROM_PLANNED="true"
-else
-  FROM_PLANNED="false"
-fi
-
-# Resolve --branch <name> for explicit branch targeting.
-# Precedence: --branch flag → parent epic directive → config default.
-# Validated by branch-resolve.sh's _validate_branch_name (same charset as directive).
-BRANCH_FLAG=""
-if echo "{TICKET_ARG}" | grep -q '\-\-branch'; then
-  BRANCH_FLAG=$(echo "{TICKET_ARG}" | sed -n 's/.*--branch \([^ ]*\).*/\1/p')
-fi
-
-# Strip flags from arg to get the bare ticket ID
-TICKET_ID=$(echo "{TICKET_ARG}" | sed 's/--semi-auto//;s/--auto//;s/--manual//;s/--from-planned//;s/--branch [^ ]*//' | tr -s ' ' | xargs)
-```
-
-Set `{AUTONOMY}` and `{TICKET_ID}` — used throughout the pipeline.
-
-### Initialize heartbeat log early
-
-The heartbeat log must exist before preflight (Step 0.4) so failures leave a trace. The pipeline log stays at Step 0.6 (dashboard needs it).
+One call to `lib/ticket-preamble.sh` does everything the router needs before the first
+dispatch, in this order: heartbeat log, Linear preflight (sentinel-cached team-config check,
+then `get_me`), pipeline log with its `META|schema` line, run identity (`NEW_RUN=true` opens
+a new run, since one router process is one run), branch context (`--branch` flag → parent
+epic directive → config default; a decision already in the log as `META|branch-context` is
+rehydrated, never re-resolved), project context from `CLAUDE.md` plus the env file
+`/tmp/ticket-auto-{TICKET_ID}-env.sh` that every sub-agent sources, then the `META|autonomy` /
+`META|mode-change` and `META|from-planned` markers. fleetd's phase dispatch calls the same
+script, so the two paths cannot drift. `TICKET_ARG` is the raw argument string:
+`--semi-auto` > `--auto` > `--manual`, else `$TICKET_AUTONOMY`, else `manual`;
+`--from-planned`; `--branch <name>`; the one remaining token is the ticket id.
 
 ```bash
-mkdir -p ./logs
-HB_LOG_FILE="$PWD/logs/{TICKET-ID}-heartbeat.log"
 export PATH="$HOME/.claude/skills/lib:$PATH"  # makes bare hb-wrap.sh calls resolve (script is executable)
 source ~/.claude/skills/lib/capture-transcript.sh
-export HB_LOG_FILE="$HB_LOG_FILE"
-hb_init
-# Idempotency guards: skip if already written (prevents duplication on resume)
-if ! grep -q '|heartbeat|pipeline-start|' "$HB_LOG_FILE" 2>/dev/null; then
-  hb-wrap.sh heartbeat "pipeline-start" "ok" "pipeline starting — autonomy={AUTONOMY}, from-planned={FROM_PLANNED}, ticket={TICKET-ID}"
-fi
-if ! grep -q '|decision|autonomy-resolution|' "$HB_LOG_FILE" 2>/dev/null; then
-  hb-wrap.sh decision "autonomy-resolution" "fired" "autonomy set to {AUTONOMY}" '{"mode":"{AUTONOMY}"}'
-fi
-```
-
----
-
-## Step 0.4 — Preflight: Linear config + API key check
-
-Before creating any log file, validate that the Linear team is correctly configured.
-
-```bash
-SENTINEL_DIR="$HOME/.claude/state/ticket-flow"
-SM="$HOME/.claude/skills/ticket-flow/workflow.json"
-SM_HASH=$(sha256sum "$SM" | cut -d' ' -f1)
-
-# Resolve team ID from env or first available team
-TEAM_ID="${LINEAR_TEAM_ID:-}"
-if [ -z "$TEAM_ID" ]; then
-  teams=$(LINEAR_API_KEY="$LINEAR_API_KEY" bash -c \
-    "source ~/.claude/skills/lib/linear-api.sh; linear_graphql '{\"query\":\"query{teams{nodes{id name}}}\"}'" 2>/dev/null || true)
-  team_count=$(echo "$teams" | jq '.data.teams.nodes | length' 2>/dev/null || true)
-  if [ -z "$team_count" ] || ! [[ "$team_count" =~ ^[0-9]+$ ]]; then
-    echo "Preflight failed: Linear teams query failed — check LINEAR_API_KEY and network connectivity"; exit 1
-  fi
-  [ "$team_count" -eq 1 ] || { echo "Multiple Linear teams — set LINEAR_TEAM_ID"; exit 1; }
-  TEAM_ID=$(echo "$teams" | jq -r '.data.teams.nodes[0].id')
-fi
-
-SENTINEL="$SENTINEL_DIR/validated-${TEAM_ID}"
-```
-
-**Warm hit** — sentinel exists and hash matches: skip validation.
-```bash
-if [ -f "$SENTINEL" ] && grep -q "^sm_hash=${SM_HASH}$" "$SENTINEL" 2>/dev/null; then
-  echo "Preflight: sentinel valid — skipping Linear config check"
-  hb-wrap.sh gate "preflight" "ok" "sentinel valid, skipping config check"
-else
-  # Cold run — run full validation
-  _validate_sh="${HOME}/.claude/skills/ticket-flow/validate-linear-config.sh"
-  # Not synced: the installed version recorded in installed_plugins.json, then the
-  # newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-  [ -f "$_validate_sh" ] || _validate_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-    "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/validate-linear-config.sh"
-  [ -f "$_validate_sh" ] || _validate_sh=$(find "${HOME}/.claude/plugins/cache" \
-    -path "*/ticket-auto-pipeline/*/skills/ticket-flow/validate-linear-config.sh" 2>/dev/null | sort -V | tail -1)
-  bash "$_validate_sh" "$TEAM_ID" || {
-    echo "Preflight failed: Linear config validation error. Fix the team config and retry." >&2
-    hb-wrap.sh gate "preflight" "fail" "Linear config validation failed" "{\"team_id\":\"$TEAM_ID\"}"
-    exit 1
-  }
-  hb-wrap.sh gate "preflight" "ok" "Linear config validated" "{\"team_id\":\"$TEAM_ID\"}"
-fi
-```
-
-**API key check** — always verify connectivity:
-```bash
-me=$(bash -c "source ~/.claude/skills/lib/linear-api.sh; get_me" 2>&1) || {
-  echo "Preflight failed: Linear API key unset or rejected (exit 4). Set LINEAR_API_KEY." >&2
-  hb-wrap.sh gate "preflight" "fail" "Linear API key rejected" "{\"exit_code\":\"4\"}"
-  exit 4
-}
-echo "Linear: API key (direct GraphQL) — authenticated as $(echo "$me" | jq -r '.name // "unknown"')"
-hb-wrap.sh source "linear-auth" "ok" "authenticated as $(echo "$me" | jq -r '.name // "unknown"')"
-```
-
----
-
-## Step 0.5 — Branch resolution + project context
-
-### 0.5a — Resolve branch context
-
-Resolve branch decisions deterministically via `branch-resolve.sh`. This MUST run before
-Step 0.6 (pipeline log init) so the `META|branch-context` entry lands before the first
-agent spawn — crash at any later point recovers the decision.
-
-The precedence chain is: `--branch` CLI flag → parent epic directive → config default.
-
-```bash
-source ~/.claude/skills/lib/branch-resolve.sh
-
-# Build resolve command — include --branch only if set in Step 0.1
-BRANCH_ARGS="{TICKET_ID}"
-[ -n "{BRANCH_FLAG}" ] && BRANCH_ARGS="$BRANCH_ARGS --branch {BRANCH_FLAG}"
-
-BRANCH_OUTPUT=$(resolve_branch_context $BRANCH_ARGS 2>&1) || {
-  _rc=$?
-  if echo "$BRANCH_OUTPUT" | grep -q "BRANCH_DIRECTIVE_INVALID"; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|BRANCH_DIRECTIVE_INVALID" >> {LOG_FILE}
-    hb_gate "branch-context" "fail" "BRANCH_DIRECTIVE_INVALID" "{\"ticket\":\"{TICKET_ID}\"}"
-    exit 1
-  fi
-  # Non-zero for other reasons (API error, etc.) — also stop
-  echo "$BRANCH_OUTPUT" >&2
-  exit 2
-}
-
-# Parse BRANCH_CONTEXT_RESULT block
-TICKET_BRANCH=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*TICKET_BRANCH:[[:space:]]*//p')
-BASE_BRANCH=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*BASE_BRANCH:[[:space:]]*//p')
-INTEGRATION_BRANCH=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*INTEGRATION_BRANCH:[[:space:]]*//p')
-BRANCH_SOURCE=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*BRANCH_SOURCE:[[:space:]]*//p')
-UAT_POLICY=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*UAT_POLICY:[[:space:]]*//p')
-MERGE_POLICY=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*MERGE_POLICY:[[:space:]]*//p')
-```
-
-### 0.5b — Write branch-context to pipeline log
-
-Write immediately after resolution, before any agent spawn. The semicolon grammar
-(`base=<>;integration=<>;source=<>;ticket=<>;uat-policy=<>;merge-policy=<>`) is parsed by
-`detect-resume.sh` on crash-resume. Each field is appended in the order it was added so logs
-written before that field existed still parse — every older prefix form remains valid.
-
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|branch-context|info|base=${BASE_BRANCH};integration=${INTEGRATION_BRANCH};source=${BRANCH_SOURCE};ticket=${TICKET_BRANCH};uat-policy=${UAT_POLICY};merge-policy=${MERGE_POLICY}" >> {LOG_FILE}
-hb_gate "branch-context" "ok" "branch decision recorded" \
-  "{\"base\":\"${BASE_BRANCH}\",\"integration\":\"${INTEGRATION_BRANCH}\",\"source\":\"${BRANCH_SOURCE}\",\"ticket\":\"${TICKET_BRANCH}\",\"uat_policy\":\"${UAT_POLICY}\",\"merge_policy\":\"${MERGE_POLICY}\"}"
-```
-
-### 0.5c — Detect project context
-
-Read `CLAUDE.md` and extract ALL available project-context fields: `{REPOS_ROOT}`, `{ISSUE_PREFIX}`, `{BE_SERVICES}`, `{WIKI_ROOT}`, `{BE_TEST_CMD}`, `{BE_TEST_RUNNER}`, `{FE_TEST_CMD}`, `{LOCAL_URL}`, `{UAT_URL}`, `{SLACK_CHANNEL}`.
-
-After extraction, write the env file that sub-agents source for project context:
-
-```bash
-source ~/.claude/skills/lib/spawn-helper.sh
 source ~/.claude/skills/lib/phase-inspector.sh
-spawn_write_env \
-  TICKET_ID="{TICKET_ID}" \
-  REPOS_ROOT="{REPOS_ROOT}" \
-  ISSUE_PREFIX="{ISSUE_PREFIX}" \
-  BE_SERVICES="{BE_SERVICES}" \
-  WIKI_ROOT="{WIKI_ROOT}" \
-  BE_TEST_CMD="{BE_TEST_CMD}" \
-  BE_TEST_RUNNER="{BE_TEST_RUNNER}" \
-  FE_TEST_CMD="{FE_TEST_CMD}" \
-  LOCAL_URL="{LOCAL_URL}" \
-  UAT_URL="{UAT_URL}" \
-  SLACK_CHANNEL="{SLACK_CHANNEL}" \
-  FROM_PLANNED="{FROM_PLANNED}" \
-  BASE_BRANCH="${BASE_BRANCH}" \
-  INTEGRATION_BRANCH="${INTEGRATION_BRANCH}" \
-  TICKET_BRANCH="${TICKET_BRANCH}" \
-  UAT_POLICY="${UAT_POLICY}" \
-  AUTONOMY="{AUTONOMY}" \
-  MERGE_POLICY="${MERGE_POLICY}"
-```
-
-This MUST run before Step 0.6 (pipeline log init) and before Step 1 (first agent spawn). The env file is needed by every `spawn_agent_pre` call — sub-agents source it via `source /tmp/ticket-auto-{TICKET_ID}-env.sh`. `AUTONOMY` and `MERGE_POLICY` are what `ticket-pr-review` Step 6b reads to decide whether it may merge a passing PR directly or must leave it for a human — see [Auto-merge logic](#auto-merge-logic) below, which applies the same `AUTONOMY` rule at the router level.
-
----
-
-## Step 0.6 — Initialize pipeline log
-
-Initialize the pipeline log (heartbeat log already initialized after Step 0.1):
-
-```bash
-mkdir -p ./logs
-LOG_FILE="$PWD/logs/{TICKET-ID}-pipeline.log"
-CLAUDE_LOG_FILE="$PWD/logs/{TICKET-ID}-claude.log"
-touch "$LOG_FILE"
-cl_init
-YELLOW=$(tput setaf 3); BOLD=$(tput bold); RESET=$(tput sgr0)
-echo "${BOLD}${YELLOW}Dashboard ready. In a second terminal run either:${RESET}"
-echo "${BOLD}${YELLOW}  python3 ~/.claude/skills/ticket-auto/dashboard.py $LOG_FILE${RESET}"
-echo "${BOLD}${YELLOW}  python3 ~/.claude/skills/ticket-auto/dashboard.py --fleet $PWD/logs${RESET}"
-```
-
-**The router no longer spawns a tmux dashboard pane.** It used to split a new pane
-on every run when `$TMUX` was set. With fleetd running many pipelines concurrently that
-produced a pane per ticket, each showing one ticket, and the resume path needed a
-`pgrep` guard to stop panes stacking on every resume. The dashboard is now something the
-operator opens once — `--fleet` covers the whole workspace in one pane and picks up new
-pipelines on its next refresh, so nothing needs to be spawned per run. Printing the two
-commands costs nothing and works identically inside and outside tmux.
-
-Stamp run identity with `--new`: unlike fleetd's phase-level preamble, which re-enters
-`run_identity_stamp` once per phase and must rehydrate the same open run, a `/ticket-auto`
-invocation is one long-lived process spanning every phase, so each router process really is
-a new run.
-```bash
-bash ~/.claude/skills/lib/run-identity.sh stamp "{TICKET-ID}" "$LOG_FILE" --new
-```
-
-Log the resolved autonomy mode immediately after log init. Guard the write so a
-resume doesn't silently re-append (or silently switch modes mid-pipeline after gate
-decisions were already made under the old mode) — an explicit `mode-change` event is
-logged instead when the flag differs from what's recorded (R12):
-```bash
-_recorded_autonomy=$(grep '^[^|]*|META|autonomy|info|' {LOG_FILE} 2>/dev/null | tail -1 | cut -d'|' -f5-)
-if [ -z "$_recorded_autonomy" ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|autonomy|info|{AUTONOMY}" >> {LOG_FILE}
-elif [ "$_recorded_autonomy" != "{AUTONOMY}" ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|mode-change|warn|{AUTONOMY} (was $_recorded_autonomy)" >> {LOG_FILE}
+_pre_rc=0
+_pre_out=$(bash ~/.claude/skills/lib/ticket-preamble.sh TICKET_ARG="{TICKET_ARG}" NEW_RUN=true ANNOUNCE_START=true) || _pre_rc=$?
+echo "$_pre_out"
+_pre() { echo "$_pre_out" | sed -n "s/^  $1: //p"; }
+if [ "$_pre_rc" -eq 0 ]; then
+  HB_LOG_FILE="$(_pre HB_LOG_FILE)"; export HB_LOG_FILE
+  # capture-transcript.sh turns on `set -eo pipefail`: every line here must survive it.
+  _who=$(grep '|source|linear-auth|ok|' "$HB_LOG_FILE" 2>/dev/null | tail -1 | cut -d'|' -f5) || true
+  [ -z "$_who" ] || echo "Linear: API key (direct GraphQL) — $_who"
+  YELLOW=$(tput setaf 3 2>/dev/null) || true; BOLD=$(tput bold 2>/dev/null) || true; RESET=$(tput sgr0 2>/dev/null) || true
+  echo "${BOLD}${YELLOW}Dashboard ready. In a second terminal run either:${RESET}"
+  echo "${BOLD}${YELLOW}  $(_pre DASHBOARD_CMD_LOG)${RESET}"
+  echo "${BOLD}${YELLOW}  $(_pre DASHBOARD_CMD_FLEET)${RESET}"
 fi
-# Log from-planned provenance — idempotent (written once, never changed).
-# fleet-feedback.sh reads this to determine whether to expect META|planner-feedback entries.
-if ! grep -q '^[^|]*|META|from-planned|' {LOG_FILE} 2>/dev/null; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|from-planned|info|{FROM_PLANNED}" >> {LOG_FILE}
-fi
-hb-wrap.sh gate "phase-transition" "ok" "START → APPRAISE"
+# Exit codes — see the table below. Same Bash call: _pre_rc does not survive into another.
+case "$_pre_rc" in
+0) ;;
+2 | 3 | 6)
+  _tid=$(bash -c 'source ~/.claude/skills/lib/ticket-preamble.sh && ticket_preamble_parse_arg "$1"' _ "{TICKET_ARG}" | sed -n 's/^TICKET_ID=//p')
+  bash ~/.claude/skills/lib/pipeline-finalize.sh "$_tid" "$_pre_rc" "$PWD/logs/${_tid}-pipeline.log" || true
+  exit "$_pre_rc"
+  ;;
+*) exit "$_pre_rc" ;;
+esac
 ```
+
+From the `TICKET_PREAMBLE_RESULT` block set `{TICKET_ID}` (`{TICKET-ID}` is the same value),
+`{ENV_FILE}`, `{LOG_FILE}`, `{HB_LOG_FILE}`, `{CLAUDE_LOG_FILE}`, `{AUTONOMY}`,
+`{FROM_PLANNED}`, `{BASE_BRANCH}`, `{INTEGRATION_BRANCH}`, `{TICKET_BRANCH}`,
+`{BRANCH_SOURCE}`, `{UAT_POLICY}`, `{MERGE_POLICY}` and `{REPOS_ROOT}` — used throughout the
+pipeline. Every other project-context field (`ISSUE_PREFIX`, `BE_SERVICES`, `WIKI_ROOT`,
+`BE_TEST_CMD`, `BE_TEST_RUNNER`, `FE_TEST_CMD`, `LOCAL_URL`, `UAT_URL`, `SLACK_CHANNEL`) is
+in `{ENV_FILE}`: a later bash block that needs one runs `source {ENV_FILE}` first. `AUTONOMY`
+and `MERGE_POLICY` in that file are what `ticket-pr-review` Step 6b reads to decide whether it
+may merge a passing PR directly — see [Auto-merge logic](#auto-merge-logic) below.
+
+**The router does not spawn a dashboard pane.** It prints the two `dashboard.py` commands
+(`DASHBOARD_CMD_LOG`, and `DASHBOARD_CMD_FLEET`, the `--fleet` view of the whole workspace)
+for the operator to open once; nothing is spawned per run.
+
+**Exit codes.** On any non-zero `_pre_rc`, report the preamble's stderr and stop — no fallback,
+no dispatch. 2, 3 and 6 happen after the pipeline log exists, so the block finalizes it first
+(Step 0.65); 1, 4 and 5 happen before it exists:
+
+| `_pre_rc` | Meaning | Router action |
+|---|---|---|
+| 0 | ok | continue to Step 0.65 / Step 0.7 |
+| 1 | usage — bad or unknown token in the argument string, `--branch` without a name, no ticket id; nothing written | report, stop |
+| 2 | `BRANCH_DIRECTIVE_INVALID` — the parent epic's Branch Directive is malformed; `META\|gate-stop\|fail\|BRANCH_DIRECTIVE_INVALID` is already in the log | finalize, stop |
+| 3 | branch resolution failed (API error, malformed result) — not a gate-stop | finalize, stop |
+| 4 | Linear config invalid (team states/labels do not match `workflow.json`, validator missing, or several teams visible without `LINEAR_TEAM_ID`) | report, stop |
+| 5 | Linear auth failed (teams query failed, or `LINEAR_API_KEY` unset/rejected by `get_me`) | report, stop |
+| 6 | env file write failed — never spawn without it | finalize, stop |
+
 
 ### Step 0.65 — Exit finalizer (RLVR Phase 3)
 
@@ -412,24 +222,25 @@ Report that the ticket is still held and requires `/ticket-approve {TICKET_ID}`.
 bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META recovery info "Resuming from {RESUME_STEP}"
 ```
 
-**Before the recovery log entry, rehydrate the branch env vars from `detect-resume.sh` output** — on a crash-recovery the router does not re-run `resolve_branch_context`. The branch decisions were written to `META|branch-context` at Step 0.5b and are now in the `DETECT_RESUME_RESULT` block as `BASE_BRANCH`, `INTEGRATION_BRANCH`, `BRANCH_SOURCE`,
+**Before the recovery log entry, rehydrate the branch env vars from `detect-resume.sh` output** — on a crash-recovery the router does not re-run `resolve_branch_context`. The branch decisions were written to `META|branch-context` by the Step 0.1 preamble and are now in the `DETECT_RESUME_RESULT` block as `BASE_BRANCH`, `INTEGRATION_BRANCH`, `BRANCH_SOURCE`,
 `UAT_POLICY`, `MERGE_POLICY`. Write them back to the env file so sub-agents see branch vars even on resume — `AUTONOMY` is rehydrated too, from the same `DETECT_RESUME_RESULT` block (it comes from `META|autonomy|info|`, not branch-context, but needs the same resume-time re-export or a resumed pipeline's `ticket-pr-review` spawn would merge unconditionally):
 
 ```bash
 if [ -n "{BASE_BRANCH}" ] || [ -n "{TICKET_BRANCH}" ]; then
+  source "{ENV_FILE}"  # project context the Step 0.1 preamble wrote
   source ~/.claude/skills/lib/spawn-helper.sh
   spawn_write_env \
     TICKET_ID="{TICKET_ID}" \
-    REPOS_ROOT="{REPOS_ROOT}" \
-    ISSUE_PREFIX="{ISSUE_PREFIX}" \
-    BE_SERVICES="{BE_SERVICES}" \
-    WIKI_ROOT="{WIKI_ROOT}" \
-    BE_TEST_CMD="{BE_TEST_CMD}" \
-    BE_TEST_RUNNER="{BE_TEST_RUNNER}" \
-    FE_TEST_CMD="{FE_TEST_CMD}" \
-    LOCAL_URL="{LOCAL_URL}" \
-    UAT_URL="{UAT_URL}" \
-    SLACK_CHANNEL="{SLACK_CHANNEL}" \
+    REPOS_ROOT="$REPOS_ROOT" \
+    ISSUE_PREFIX="$ISSUE_PREFIX" \
+    BE_SERVICES="$BE_SERVICES" \
+    WIKI_ROOT="$WIKI_ROOT" \
+    BE_TEST_CMD="$BE_TEST_CMD" \
+    BE_TEST_RUNNER="$BE_TEST_RUNNER" \
+    FE_TEST_CMD="$FE_TEST_CMD" \
+    LOCAL_URL="$LOCAL_URL" \
+    UAT_URL="$UAT_URL" \
+    SLACK_CHANNEL="$SLACK_CHANNEL" \
     FROM_PLANNED="{FROM_PLANNED}" \
     BASE_BRANCH="{BASE_BRANCH}" \
     INTEGRATION_BRANCH="{INTEGRATION_BRANCH}" \
@@ -497,8 +308,8 @@ fi
 
 ### Run freshness gate
 
-For each repo under `REPOS_ROOT`. Pass `--branch "${BASE_BRANCH}"` (resolved at Step 0.5a,
-well before this gate runs) so the freshness check diffs against the ticket's actual target
+For each repo under `REPOS_ROOT`. Pass `--branch "${BASE_BRANCH}"` (resolved by the Step 0.1
+preamble, well before this gate runs) so the freshness check diffs against the ticket's actual target
 branch instead of literal `HEAD` — repos in this project's local-dev convention run as one
 shared checkout, so `HEAD` is whichever branch happens to be checked out at the moment the
 MAINTENANCE step runs, not necessarily this ticket's target (e.g. a long-lived epic branch
