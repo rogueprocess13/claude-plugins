@@ -1,6 +1,6 @@
 ---
 name: kc-query
-description: Query the knowledge store. Bare "/kc" shows the ranked outstanding stack (p1 first, then by staleness). "/kc dormant" shows items not updated recently. "/kc <query>" searches by topic, tag, or title across the knowledge store and claude-mem. "/kc --all-projects" aggregates across sibling repos. "/kc stats" reports whether the ranking matches what you actually work on. Use for "what do we know about X", "show me the knowledge stack", "what should I work on next", and any knowledge-related query.
+description: Query the knowledge store. Bare "/kc" shows the ranked outstanding stack (p1 first, then by staleness). "/kc dormant" shows items not updated recently. "/kc {query}" searches by topic, tag, or title across the knowledge store and claude-mem. "/kc --all-projects" aggregates across sibling repos. "/kc stats" reports whether the ranking matches what you actually work on. Use for "what do we know about X", "show me the knowledge stack", "what should I work on next", and any knowledge-related query.
 ---
 
 # Knowledge Query (/kc)

@@ -165,7 +165,8 @@ Omit this section if there are none.}
 {Insert the blast radius table from notes.md verbatim.}
 
 {If any target has d=1 callers listed:}
-**⚠️  High-risk targets:** {list targets with HIGH/CRITICAL risk or 3+ d=1 callers}. These break if the change is wrong — verify each one is intentionally modified or confirmed unaffected.```
+**⚠️  High-risk targets:** {list targets with HIGH/CRITICAL risk or 3+ d=1 callers}. These break if the change is wrong — verify each one is intentionally modified or confirmed unaffected.
+```
 
 ---
 
@@ -369,6 +370,7 @@ Spawn a `general-purpose` agent with an adversarial framing. Its sole job is to 
 
 **Prompt the agent with:**
 
+<!-- size-gate: template -->
 ```
 You are an adversarial reviewer. Your job is to find holes in an implementation plan for a ticket. Be skeptical. Assume nothing. If the plan is solid, say so — but dig hard first.
 

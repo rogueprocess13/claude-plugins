@@ -1,6 +1,6 @@
 ---
 name: ticket-reproduce
-description: Derives a concrete browser reproduction plan from a Linear ticket, writes it to reproduce.md in the ticket directory, then navigates UAT step-by-step using playwright-cli to confirm the bug. Use when the user says "/ticket-reproduce <ID>", "reproduce ticket <ID>", or "verify bug <ID>". Accepts optional --from-auto and --from-step flags.
+description: Derives a concrete browser reproduction plan from a Linear ticket, writes it to reproduce.md in the ticket directory, then navigates UAT step-by-step using playwright-cli to confirm the bug. Use when the user says "/ticket-reproduce {ID}", "reproduce ticket {ID}", or "verify bug {ID}". Accepts optional --from-auto and --from-step flags.
 ---
 
 # Ticket Reproduce

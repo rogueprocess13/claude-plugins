@@ -1,8 +1,8 @@
 SCRIPTS := $(shell find . -name "*.sh" -not -path "./.git/*")
 
-.PHONY: test test-lib test-fleetd test-flow test-kc lint fmt-check fmt test-grill test-planner-intent-gate check-generated check-test-registration
+.PHONY: test test-lib test-fleetd test-flow test-kc lint fmt-check fmt test-grill test-planner-intent-gate check-generated check-test-registration check-skill-size skill-baseline
 
-test: check-generated check-test-registration test-lib test-fleetd test-planner test-flow test-kc test-grill test-planner-intent-gate
+test: check-generated check-test-registration check-skill-size test-lib test-fleetd test-planner test-flow test-kc test-grill test-planner-intent-gate
 
 check-generated:
 	@echo "=== generated-section drift check ==="
@@ -16,6 +16,18 @@ check-test-registration:
 	@echo "=== test-registration drift check ==="
 	bash scripts/tests/test-check-test-registration.sh
 	bash scripts/check-test-registration.sh
+
+# Prompt material (skills, agents, skill preambles, personas) may only shrink:
+# the gate fails on growth over scripts/skill-size-baseline.tsv, on a new skill
+# over 500 body lines / 20,000 bytes, and on its structural rules. Every skill
+# PR ends with `make skill-baseline`, which lowers entries and never raises one.
+check-skill-size:
+	@echo "=== skill-size drift check ==="
+	bash scripts/tests/test-check-skill-size.sh
+	bash scripts/check-skill-size.sh
+
+skill-baseline:
+	bash scripts/check-skill-size.sh --regenerate
 
 test-lib:
 	@echo "=== lib unit tests ==="

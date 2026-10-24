@@ -11,6 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The skill-size gate reads the baseline at origin/main to catch
+          # hand-raised entries; a shallow checkout has no such ref.
+          fetch-depth: 0
 
       - name: Install deps
         run: |
@@ -41,6 +45,11 @@ jobs:
 
       - name: Test-registration drift check
         run: make check-test-registration
+
+      - name: Skill size gate
+        env:
+          SKILL_SIZE_BASE: origin/main
+        run: make check-skill-size
 
       - name: Observability backend stays out of skills/agents (langfuse-evidence-layer)
         run: |

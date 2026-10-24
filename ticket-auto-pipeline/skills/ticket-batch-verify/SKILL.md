@@ -1,6 +1,6 @@
 ---
 name: ticket-batch-verify
-description: Parallel UAT verification for multiple Linear tickets. Spawns one agent per ticket — each navigates UAT, confirms the fix against acceptance criteria, and reports PASS/FAIL. Use when the user says "/ticket-batch-verify <ID1>, <ID2>, ..." or "batch verify these: <list>". Also supports Linear queries: "/ticket-batch-verify --from project:<name> state:UAT".
+description: Parallel UAT verification for multiple Linear tickets. Spawns one agent per ticket — each navigates UAT, confirms the fix against acceptance criteria, and reports PASS/FAIL. Use when the user says "/ticket-batch-verify {ID1}, {ID2}, ..." or "batch verify these: {list}". Also supports Linear queries: "/ticket-batch-verify --from project:{name} state:UAT".
 ---
 
 # Ticket Batch Verify

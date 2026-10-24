@@ -17,6 +17,35 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.72.1 (2026-10-24)
+
+Skill size gate (`skill-size-gate`, change 1 of the skill-size reduction programme). Prompt
+material can no longer grow unnoticed. Also moves `ticket-planner` to 0.24.3 and
+`knowledge-curator` to 0.2.15 (frontmatter and marker edits only).
+
+### Added
+- **`make check-skill-size`** (`scripts/check-skill-size.sh`, self-test
+  `scripts/tests/test-check-skill-size.sh`). It is a dependency of `make test` and has its own CI step.
+  Skills, agents, the skill preambles and personas are ratcheted against
+  `scripts/skill-size-baseline.tsv`, and their bytes and body lines may only shrink. A raised entry
+  needs a `# allow-growth: <reason>` line and is checked against `origin/main`. A new skill must fit
+  in 500 body lines and 20,000 bytes. The 11 skills above that today are annotated exceptions that
+  may never grow. The gate also checks: frontmatter limits and a per-kind key allowlist; fences over
+  60 lines unless marked `<!-- size-gate: template -->`; generated blocks (left out of the ratchet,
+  capped at 6 KB); `references/`/`templates/` link rules; and per-manifest context totals from
+  `prompt_manifests` (`scripts/skill-context-baseline.tsv`).
+- **`make skill-baseline`** regenerates both baselines. It only ever lowers entries. Every skill PR
+  ends with it. `.gitattributes` gives both baselines the `union` merge driver.
+
+### Fixed
+- **`ticket-appraise-exec` template fence never closed.** The closing fence of the Step 3-Simple
+  `simple-fix.md` template sat at the end of a prose line, so the fence stayed open and every later
+  code block in the file was paired wrong. It is now on its own line.
+- **`ticket-overseer` had no frontmatter**, so Claude Code had no name or description to route on.
+  Both are added now.
+- **Skill and agent descriptions carried `<ID>`-style tags**, which Anthropic's skill validation
+  rejects. 16 skill descriptions and one agent description now use `{ID}` placeholders.
+
 ## 0.72.0 (2026-10-24)
 
 Debugger persona overlay (`debugger-persona-overlay`). Bug tickets and the verify rework get a

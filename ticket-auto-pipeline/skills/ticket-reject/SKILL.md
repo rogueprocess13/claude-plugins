@@ -1,6 +1,6 @@
 ---
 name: ticket-reject
-description: Rejects a Linear ticket's plan and clears any approval fact in its local manifest. The sole actuator for human rejection — removing the `approved` label directly in the tracker UI has no effect. Use when the user says "/ticket-reject <ID>", "reject ticket <ID>", or "reject <ID>".
+description: Rejects a Linear ticket's plan and clears any approval fact in its local manifest. The sole actuator for human rejection — removing the `approved` label directly in the tracker UI has no effect. Use when the user says "/ticket-reject {ID}", "reject ticket {ID}", or "reject {ID}".
 ---
 
 # Ticket Reject

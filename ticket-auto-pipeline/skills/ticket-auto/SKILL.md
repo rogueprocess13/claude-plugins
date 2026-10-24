@@ -1,6 +1,6 @@
 ---
 name: ticket-auto
-description: Fully autonomous ticket pipeline — appraise, exec, implement, PR review, merge. Thin stateless router that dispatches to per-phase agents. No inline LLM reasoning between phases. Requires zero user input beyond the ticket ID. Stops only for complex tickets at the approve gate. Supports `--branch <name>` for explicit branch targeting (precedence: flag → parent epic directive → default). Use when the user says "/ticket-auto <ID>", "auto <ID>", "process ticket <ID>", or "run ticket <ID> end to end".
+description: Fully autonomous ticket pipeline — appraise, exec, implement, PR review, merge. Thin stateless router that dispatches to per-phase agents. No inline LLM reasoning between phases. Requires zero user input beyond the ticket ID. Stops only for complex tickets at the approve gate. Supports `--branch {name}` for explicit branch targeting (precedence: flag → parent epic directive → default). Use when the user says "/ticket-auto {ID}", "auto {ID}", "process ticket {ID}", or "run ticket {ID} end to end".
 ---
 
 # Ticket Auto — Thin Dispatch Router

@@ -1,0 +1,99 @@
+fleet-controller/skills/fleet-controller/SKILL.md	16923	250
+fleet-controller/skills/fleet-env-check/SKILL.md	5338	90
+fleet-controller/skills/fleet-features/SKILL.md	6590	72
+grill-me/skills/grill-me/SKILL.md	17072	333
+knowledge-curator/skills/kc-capture/SKILL.md	5493	122
+knowledge-curator/skills/kc-import/SKILL.md	5100	142
+knowledge-curator/skills/kc-query/SKILL.md	5131	90
+knowledge-curator/skills/kc-sweep/SKILL.md	4722	120
+ticket-auto-pipeline/agents/dor-semantic-agent.md	1444	8
+ticket-auto-pipeline/agents/guidance-extractor-agent.md	1128	2
+ticket-auto-pipeline/agents/ticket-appraise-agent.md	659	2
+ticket-auto-pipeline/agents/ticket-gate-reconcile-agent.md	818	2
+ticket-auto-pipeline/agents/ticket-implement-agent.md	694	2
+ticket-auto-pipeline/agents/ticket-maintenance-agent.md	2673	28
+ticket-auto-pipeline/agents/ticket-pr-review-agent.md	887	2
+ticket-auto-pipeline/agents/ticket-prescan-agent.md	987	2
+ticket-auto-pipeline/agents/ticket-verify-agent.md	2848	10
+ticket-auto-pipeline/lib/skill-preamble-auto.md	17704	350
+ticket-auto-pipeline/lib/skill-preamble.md	11458	269
+ticket-auto-pipeline/personas/CHANGELOG.md	2963	64
+ticket-auto-pipeline/personas/README.md	17010	171
+ticket-auto-pipeline/personas/base/analyzer.md	1890	32
+ticket-auto-pipeline/personas/base/architect.md	2022	31
+ticket-auto-pipeline/personas/base/backend-developer.md	1869	32
+ticket-auto-pipeline/personas/base/debugger.md	1925	32
+ticket-auto-pipeline/personas/base/frontend-developer.md	1866	32
+ticket-auto-pipeline/personas/base/product-owner.md	1821	31
+ticket-auto-pipeline/personas/base/qa-engineer.md	1828	32
+ticket-auto-pipeline/personas/base/security.md	2320	31
+ticket-auto-pipeline/personas/base/technical-writer.md	1799	31
+ticket-auto-pipeline/personas/base/test-data-engineer.md	3282	32
+ticket-auto-pipeline/personas/specializers/architect/microservices.md	1944	23
+ticket-auto-pipeline/personas/specializers/architect/monolith.md	1989	23
+ticket-auto-pipeline/personas/specializers/backend/java-migration.md	3820	38
+ticket-auto-pipeline/personas/specializers/backend/java-refactor.md	3780	45
+ticket-auto-pipeline/personas/specializers/backend/java.md	1956	29
+ticket-auto-pipeline/personas/specializers/backend/node-refactor.md	3359	45
+ticket-auto-pipeline/personas/specializers/backend/node.md	1648	29
+ticket-auto-pipeline/personas/specializers/backend/python-refactor.md	3333	45
+ticket-auto-pipeline/personas/specializers/backend/python.md	1828	31
+ticket-auto-pipeline/personas/specializers/debug/browser.md	776	7
+ticket-auto-pipeline/personas/specializers/debug/jvm.md	833	7
+ticket-auto-pipeline/personas/specializers/debug/node.md	715	7
+ticket-auto-pipeline/personas/specializers/debug/python.md	806	7
+ticket-auto-pipeline/personas/specializers/frontend/angular.md	1950	29
+ticket-auto-pipeline/personas/specializers/frontend/react.md	1999	29
+ticket-auto-pipeline/personas/specializers/frontend/vue.md	1849	29
+ticket-auto-pipeline/personas/specializers/qa/api-testing.md	2142	29
+ticket-auto-pipeline/personas/specializers/qa/playwright-web.md	1861	29
+ticket-auto-pipeline/personas/specializers/testdata/api.md	1966	27
+ticket-auto-pipeline/personas/specializers/testdata/factories.md	2090	22
+ticket-auto-pipeline/personas/specializers/testdata/files.md	2060	22
+ticket-auto-pipeline/personas/specializers/testdata/sql.md	1965	22
+ticket-auto-pipeline/personas/specializers/testdata/ui-forms.md	1819	22
+ticket-auto-pipeline/skills/adr-gate/SKILL.md	11955	170
+ticket-auto-pipeline/skills/app-knowledge/SKILL.md	5197	100
+ticket-auto-pipeline/skills/guidance-extractor/SKILL.md	15783	251
+ticket-auto-pipeline/skills/nav-hints/SKILL.md	3993	93
+ticket-auto-pipeline/skills/skill-docs/SKILL.md	5337	194
+# exception: pending reduction, skill-size programme changes 3-5
+ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	47121	849
+# exception: pending reduction, skill-size programme changes 3-5
+ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	71823	1074
+ticket-auto-pipeline/skills/ticket-approve/SKILL.md	2190	27
+ticket-auto-pipeline/skills/ticket-audit-exec/SKILL.md	11515	330
+ticket-auto-pipeline/skills/ticket-audit/SKILL.md	17166	364
+# exception: router floor ~22-26 KB (spawn bracketing, Agent-tool instruction, dispatch table, verdict rules)
+ticket-auto-pipeline/skills/ticket-auto/SKILL.md	72501	1405
+ticket-auto-pipeline/skills/ticket-batch-appraise/SKILL.md	4841	135
+ticket-auto-pipeline/skills/ticket-batch-verify/SKILL.md	9399	207
+ticket-auto-pipeline/skills/ticket-create/SKILL.md	6818	71
+# exception: pending reduction, skill-size programme changes 3-5
+ticket-auto-pipeline/skills/ticket-critique/SKILL.md	20816	478
+ticket-auto-pipeline/skills/ticket-detect-resume/SKILL.md	1296	20
+ticket-auto-pipeline/skills/ticket-document/SKILL.md	9788	217
+ticket-auto-pipeline/skills/ticket-env-check/SKILL.md	5036	88
+ticket-auto-pipeline/skills/ticket-fleet-controller/SKILL.md	1600	28
+ticket-auto-pipeline/skills/ticket-flow/SKILL.md	14035	224
+ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	9834	214
+# exception: pending reduction, skill-size programme changes 3-5
+ticket-auto-pipeline/skills/ticket-implement/SKILL.md	47763	754
+ticket-auto-pipeline/skills/ticket-overseer/SKILL.md	3767	81
+ticket-auto-pipeline/skills/ticket-persona-refresh/SKILL.md	8897	218
+ticket-auto-pipeline/skills/ticket-pr-iterate/SKILL.md	12459	279
+# exception: pending reduction, skill-size programme changes 3-5
+ticket-auto-pipeline/skills/ticket-pr-review/SKILL.md	35696	640
+# exception: pending reduction, skill-size programme changes 3-5
+ticket-auto-pipeline/skills/ticket-prescan/SKILL.md	24183	471
+ticket-auto-pipeline/skills/ticket-reject/SKILL.md	1555	27
+ticket-auto-pipeline/skills/ticket-reproduce/SKILL.md	14519	376
+# exception: pending reduction, skill-size programme changes 3-5
+ticket-auto-pipeline/skills/ticket-retro/SKILL.md	29965	683
+ticket-auto-pipeline/skills/ticket-setup/SKILL.md	6657	121
+# exception: floor ~45-60 KB (REMEDIATION_BRIEF contract, browser flow)
+ticket-auto-pipeline/skills/ticket-verify/SKILL.md	93372	1498
+# exception: pending reduction, skill-size programme changes 3-5
+ticket-auto-pipeline/skills/wiki-maintenance/SKILL.md	33545	542
+# exception: pending reduction, skill-size programme changes 3-5
+ticket-planner/skills/ticket-planner/SKILL.md	96354	1534
