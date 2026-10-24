@@ -9,7 +9,7 @@ priority-hierarchy:
 used-by:
   - ticket-appraise
   - ticket-pr-review
-  - ticket-critique
+  - ticket-prescan (fan-out lens)
 auto-include-when: []
 version: 1
 last-reviewed: 2026-06-26

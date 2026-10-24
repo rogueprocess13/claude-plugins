@@ -4,6 +4,12 @@
 # graceful fallback, and error handling.
 set -euo pipefail
 
+# The selector falls back to the ticket's local manifest `type` when TICKET_ID
+# and REPOS_ROOT are both set. Unset them so a pipeline worker's environment
+# cannot change the result of any case below; the manifest cases set them
+# explicitly per invocation.
+unset TICKET_ID REPOS_ROOT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELECTOR="$SCRIPT_DIR/persona-select.sh"
 PASS=0
@@ -583,6 +589,392 @@ for ch in sql api ui-forms files factories; do
     FAIL=$((FAIL + 1))
     echo "  FAIL: testdata/${ch}.md does not extend test-data-engineer" >&2
   fi
+done
+
+# ── Debugger overlay (debugger-persona-overlay) ────────────────────────────────
+
+echo ""
+echo "── Debugger overlay ──"
+
+kv() { echo "$1" | grep "^$2=" | cut -d'=' -f2- || true; }
+
+assert_eq() {
+  local desc="$1" expected="$2" actual="$3"
+  if [ "$expected" = "$actual" ]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc — expected '$expected', got '$actual'" >&2
+  fi
+}
+
+# Like assert_contains, but tolerant of a missing key (output may be an error
+# message while the overlay is unimplemented — never abort the run).
+assert_in() {
+  local desc="$1" output="$2" key="$3" expected="$4" actual
+  actual=$(kv "$output" "$key")
+  if grep -q -- "$expected" <<<"$actual"; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc — expected '$expected' in ${key}=${actual}" >&2
+  fi
+}
+
+LEGACY_KEYS="PERSONA_BASE PERSONA_SPECIALIZER PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_TESTDATA_SPECIALIZERS"
+
+legacy_keys() {
+  local out="$1" k
+  for k in $LEGACY_KEYS; do
+    echo "$k=$(kv "$out" "$k")"
+  done
+}
+
+# Mixed repo (JHipster shape): Java backend + Angular frontend in one tree.
+mkdir -p "$TMPDIR/mixed-project"
+touch "$TMPDIR/mixed-project/pom.xml" "$TMPDIR/mixed-project/angular.json"
+printf '{"name": "jh"}\n' >"$TMPDIR/mixed-project/package.json"
+
+# Both selectors resolve personas through the same CLAUDE_PLUGIN_ROOT string so
+# their emitted paths are byte-comparable.
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+NEW() { CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" "$SELECTOR" "$@"; }
+
+# 1.1 Golden: the pre-change selector from HEAD. Every pre-existing key must be
+# byte-identical for every existing input — the detect_stack refactor must not
+# move PERSONA_SPECIALIZER.
+OLD_SELECTOR="$TMPDIR/old-select.sh"
+if git -C "$SCRIPT_DIR" show HEAD:ticket-auto-pipeline/lib/persona-select.sh >"$OLD_SELECTOR" 2>/dev/null && [ -s "$OLD_SELECTOR" ]; then
+  chmod +x "$OLD_SELECTOR"
+  OLD() { CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$OLD_SELECTOR" "$@"; }
+  HAVE_GOLDEN=true
+else
+  echo "  NOTE: git HEAD selector unavailable — golden comparisons skipped"
+  HAVE_GOLDEN=false
+fi
+
+golden_java=""
+if [ "$HAVE_GOLDEN" = true ]; then
+  golden_java=$(legacy_keys "$(OLD --repo "$TMPDIR/java-project" --layer BE --phase implement)")
+
+  # Every existing fixture × layer × phase: new selector without the new flags
+  # emits exactly what the old one did for the five legacy keys.
+  for fx in python-project java-project node-project angular-project react-project vue-project unknown-project microservices-project mixed-project; do
+    for layer in "" BE FE infra; do
+      for phase in "" implement appraise review audit; do
+        args=(--repo "$TMPDIR/$fx")
+        [ -n "$layer" ] && args+=(--layer "$layer")
+        [ -n "$phase" ] && args+=(--phase "$phase")
+        old_out=$(legacy_keys "$(OLD "${args[@]}")")
+        new_out=$(legacy_keys "$(NEW "${args[@]}")")
+        if [ "$old_out" != "$new_out" ]; then
+          FAIL=$((FAIL + 1))
+          echo "  FAIL: golden drift for $fx layer='$layer' phase='$phase'" >&2
+          diff <(echo "$old_out") <(echo "$new_out") >&2 || true
+        else
+          PASS=$((PASS + 1))
+        fi
+      done
+    done
+  done
+  # Keyword-refined specializers stay identical too.
+  for title in "Upgrade Java from 8 to 25" "Refactor order service" "Fix login redirect loop"; do
+    for fx in java-project python-project node-project; do
+      old_out=$(legacy_keys "$(TICKET_TITLE="$title" OLD --repo "$TMPDIR/$fx" --layer BE --phase implement)")
+      new_out=$(legacy_keys "$(TICKET_TITLE="$title" NEW --repo "$TMPDIR/$fx" --layer BE --phase implement)")
+      assert_eq "golden: '$title' on $fx unchanged" "$old_out" "$new_out"
+    done
+  done
+  old_out=$(legacy_keys "$(BE_TEST_RUNNER="pyenv exec pytest" OLD --repo "$TMPDIR/unknown-project" --layer BE --phase implement)")
+  new_out=$(legacy_keys "$(BE_TEST_RUNNER="pyenv exec pytest" NEW --repo "$TMPDIR/unknown-project" --layer BE --phase implement)")
+  assert_eq "golden: BE_TEST_RUNNER pyenv unchanged" "$old_out" "$new_out"
+  echo "  (golden matrix compared)"
+fi
+
+DEBUGGER_PATH="$PLUGIN_ROOT/personas/base/debugger.md"
+DBG_DIR="$PLUGIN_ROOT/personas/specializers/debug"
+
+# 1.2 Java backend bug: overlay set, legacy keys untouched.
+output=$(NEW --repo "$TMPDIR/java-project" --layer BE --phase implement --type bug 2>&1 || true)
+assert_eq "java + --type bug → PERSONA_DEBUG = debugger" "$DEBUGGER_PATH" "$(kv "$output" PERSONA_DEBUG)"
+assert_eq "java + --type bug → PERSONA_DEBUG_SPECIALIZER = debug/jvm.md" "$DBG_DIR/jvm.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+if [ "$HAVE_GOLDEN" = true ]; then
+  assert_eq "java + --type bug → five legacy keys equal golden" "$golden_java" "$(legacy_keys "$output")"
+fi
+
+# 1.3 Type handling.
+output=$(NEW --repo "$TMPDIR/java-project" --layer BE --phase implement --type feature 2>&1 || true)
+assert_eq "--type feature → PERSONA_DEBUG empty" "" "$(kv "$output" PERSONA_DEBUG)"
+assert_eq "--type feature → PERSONA_DEBUG_SPECIALIZER empty" "" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+if grep -q '^PERSONA_DEBUG=' <<<"$output"; then
+  PASS=$((PASS + 1))
+  echo "  PASS: --type feature → PERSONA_DEBUG key still emitted"
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: --type feature → PERSONA_DEBUG key missing from output" >&2
+fi
+if [ "$HAVE_GOLDEN" = true ]; then
+  assert_eq "--type feature → five legacy keys equal golden" "$golden_java" "$(legacy_keys "$output")"
+fi
+
+set +e
+hotfix_err=$(NEW --repo "$TMPDIR/java-project" --layer BE --phase implement --type hotfix 2>&1 >/dev/null)
+rc=$?
+set -e
+assert_exit_code "--type hotfix → exit 1" 1 "$rc"
+if grep -q 'bug' <<<"$hotfix_err" && grep -q 'feature' <<<"$hotfix_err" && grep -q 'chore' <<<"$hotfix_err"; then
+  PASS=$((PASS + 1))
+  echo "  PASS: --type hotfix error lists known types"
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: --type hotfix error does not list known types — got: $hotfix_err" >&2
+fi
+
+set +e
+output=$(NEW --repo "$TMPDIR/java-project" --layer BE --phase implement --type "" 2>&1)
+rc=$?
+set -e
+assert_exit_code "--type \"\" → exit 0 (treated as absent)" 0 "$rc"
+assert_eq "--type \"\" → PERSONA_DEBUG empty" "" "$(kv "$output" PERSONA_DEBUG)"
+
+output=$(NEW --repo "$TMPDIR/java-project" --layer BE --phase implement --type feature --remediation 2>&1 || true)
+assert_eq "--type feature --remediation → PERSONA_DEBUG set" "$DEBUGGER_PATH" "$(kv "$output" PERSONA_DEBUG)"
+assert_eq "--type feature --remediation → debug/jvm.md" "$DBG_DIR/jvm.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+
+output=$(NEW --repo "$TMPDIR/java-project" --layer BE --phase implement --remediation 2>&1 || true)
+assert_eq "--remediation alone → PERSONA_DEBUG set" "$DEBUGGER_PATH" "$(kv "$output" PERSONA_DEBUG)"
+
+# 1.4 Stack → debug specializer.
+output=$(NEW --repo "$TMPDIR/angular-project" --layer FE --phase implement --type bug 2>&1 || true)
+assert_eq "angular + FE bug → debug/browser.md" "$DBG_DIR/browser.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+
+output=$(NEW --repo "$TMPDIR/mixed-project" --layer FE --phase implement --type bug 2>&1 || true)
+assert_in "mixed repo + FE → angular specializer" "$output" "PERSONA_SPECIALIZER" "frontend/angular.md"
+assert_eq "mixed repo + FE bug → debug/browser.md (layer decides)" "$DBG_DIR/browser.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+
+output=$(NEW --repo "$TMPDIR/mixed-project" --layer BE --phase implement --type bug 2>&1 || true)
+assert_eq "mixed repo + BE bug → debug/jvm.md (layer decides)" "$DBG_DIR/jvm.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+
+output=$(BE_TEST_RUNNER="pyenv exec pytest" NEW --repo "$TMPDIR/unknown-project" --layer BE --phase implement --type bug 2>&1 || true)
+assert_eq "no markers + BE_TEST_RUNNER pyenv → debug/python.md" "$DBG_DIR/python.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+
+output=$(NEW --repo "$TMPDIR/python-project" --layer BE --phase implement --type bug 2>&1 || true)
+assert_eq "pyproject.toml + BE bug → debug/python.md" "$DBG_DIR/python.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+
+output=$(NEW --repo "$TMPDIR/node-project" --layer BE --phase implement --type bug 2>&1 || true)
+assert_eq "node (no FE deps) + BE bug → debug/node.md" "$DBG_DIR/node.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+
+output=$(NEW --repo "$TMPDIR/react-project" --phase implement --type bug 2>&1 || true)
+assert_eq "react + no layer → tries BE then FE → debug/browser.md" "$DBG_DIR/browser.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+
+output=$(NEW --repo "$TMPDIR/java-project" --phase implement --type bug 2>&1 || true)
+assert_eq "java + no layer → debug/jvm.md" "$DBG_DIR/jvm.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+
+for layer in BE ""; do
+  largs=()
+  [ -n "$layer" ] && largs=(--layer "$layer")
+  set +e
+  output=$(NEW --repo "$TMPDIR/unknown-project" "${largs[@]}" --phase implement --type bug 2>&1)
+  rc=$?
+  set -e
+  assert_exit_code "empty repo layer='$layer' bug → exit 0" 0 "$rc"
+  assert_eq "empty repo layer='$layer' bug → PERSONA_DEBUG set" "$DEBUGGER_PATH" "$(kv "$output" PERSONA_DEBUG)"
+  assert_eq "empty repo layer='$layer' bug → PERSONA_DEBUG_SPECIALIZER empty" "" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+done
+
+# 1.5 Manifest fallback (lib/manifest-read.sh layout).
+MF="$TMPDIR/mf-root"
+mkdir -p "$MF/.ticket-auto/initiatives/_index" "$MF/.ticket-auto/initiatives/INIT-1/tickets/T-1/planner" \
+  "$MF/.ticket-auto/initiatives/INIT-1/tickets/T-2/planner"
+echo "INIT-1" >"$MF/.ticket-auto/initiatives/_index/T-1.initiative"
+echo "INIT-1" >"$MF/.ticket-auto/initiatives/_index/T-2.initiative"
+echo '{"type":"bug"}' >"$MF/.ticket-auto/initiatives/INIT-1/tickets/T-1/planner/manifest.json"
+echo '{"type":null}' >"$MF/.ticket-auto/initiatives/INIT-1/tickets/T-2/planner/manifest.json"
+
+output=$(TICKET_ID=T-1 REPOS_ROOT="$MF" NEW --repo "$TMPDIR/java-project" --layer BE --phase implement 2>&1 || true)
+assert_eq "manifest type=bug, no --type → PERSONA_DEBUG set" "$DEBUGGER_PATH" "$(kv "$output" PERSONA_DEBUG)"
+assert_eq "manifest type=bug → debug/jvm.md" "$DBG_DIR/jvm.md" "$(kv "$output" PERSONA_DEBUG_SPECIALIZER)"
+
+output=$(TICKET_ID=T-1 REPOS_ROOT="$MF" NEW --repo "$TMPDIR/java-project" --layer BE --phase implement --type feature 2>&1 || true)
+assert_eq "manifest bug + --type feature → explicit wins, PERSONA_DEBUG empty" "" "$(kv "$output" PERSONA_DEBUG)"
+
+set +e
+output=$(TICKET_ID=T-9 REPOS_ROOT="$MF" NEW --repo "$TMPDIR/java-project" --layer BE --phase implement 2>&1)
+rc=$?
+set -e
+assert_exit_code "no index entry → exit 0" 0 "$rc"
+assert_eq "no index entry → PERSONA_DEBUG empty" "" "$(kv "$output" PERSONA_DEBUG)"
+assert_eq "no index entry → PERSONA_DEBUG key emitted" "1" "$(grep -c '^PERSONA_DEBUG=' <<<"$output" || true)"
+
+set +e
+output=$(TICKET_ID=T-2 REPOS_ROOT="$MF" NEW --repo "$TMPDIR/java-project" --layer BE --phase implement 2>&1)
+rc=$?
+set -e
+assert_exit_code "manifest type=null → exit 0" 0 "$rc"
+assert_eq "manifest type=null → PERSONA_DEBUG empty" "" "$(kv "$output" PERSONA_DEBUG)"
+assert_eq "manifest type=null → PERSONA_DEBUG key emitted" "1" "$(grep -c '^PERSONA_DEBUG=' <<<"$output" || true)"
+
+set +e
+output=$(TICKET_ID="" REPOS_ROOT="$MF" NEW --repo "$TMPDIR/java-project" --layer BE --phase implement 2>&1)
+rc=$?
+set -e
+assert_exit_code "empty TICKET_ID → exit 0" 0 "$rc"
+assert_eq "empty TICKET_ID → PERSONA_DEBUG empty" "" "$(kv "$output" PERSONA_DEBUG)"
+
+# 1.6 Output contract.
+output=$(NEW --repo "$TMPDIR/python-project" --phase prescan --type bug 2>&1 || true)
+for k in PERSONA_DEBUG PERSONA_DEBUG_SPECIALIZER; do
+  if grep -qx "${k}=" <<<"$output"; then
+    PASS=$((PASS + 1))
+    echo "  PASS: prescan emits empty $k"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: prescan does not emit empty $k" >&2
+  fi
+done
+assert_in "prescan still emits PERSONA_SET" "$output" "PERSONA_SET" "architect"
+
+# Contract pin (expected green before this change): TICKET_TEXT_FILE is the
+# ticket-text input every skill now passes (context.md) — it must reach the
+# keyword detectors.
+sec_file="$TMPDIR/ctx-security.md"
+printf '# Ticket\n\nThe password reset flow sends a stale link.\n' >"$sec_file"
+output=$(TICKET_TEXT_FILE="$sec_file" NEW --repo "$TMPDIR/unknown-project" --layer BE --phase implement)
+assert_in "TICKET_TEXT_FILE 'password reset flow' → security auto-include (contract pin)" "$output" "PERSONA_AUTO_INCLUDE" "base/security.md"
+
+# Key order: the two new keys follow PERSONA_TESTDATA_SPECIALIZERS.
+output=$(NEW --repo "$TMPDIR/java-project" --layer BE --phase implement --type bug 2>&1 || true)
+order=$(grep -oE '^PERSONA_[A-Z_]+' <<<"$output" | tr '\n' ' ' || true)
+assert_eq "key order: debug keys emitted last" "PERSONA_BASE PERSONA_SPECIALIZER PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_TESTDATA_SPECIALIZERS PERSONA_DEBUG PERSONA_DEBUG_SPECIALIZER " "$order"
+
+# ── Debugger persona files: lint, size, tokens, bundle ─────────────────────────
+
+echo ""
+echo "── Debugger persona files ──"
+
+file_size() { if [ -f "$1" ]; then wc -c <"$1" | tr -d ' '; else echo 999999; fi; }
+
+assert_le() {
+  local desc="$1" actual="$2" limit="$3"
+  if [ "$actual" -le "$limit" ]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc ($actual ≤ $limit)"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc ($actual > $limit)" >&2
+  fi
+}
+
+dbg_file="$PERSONAS_ROOT/base/debugger.md"
+if [ -f "$dbg_file" ]; then
+  check_fields "$dbg_file" name role priority-hierarchy used-by auto-include-when version last-reviewed
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: base/debugger.md missing" >&2
+fi
+if [ -f "$dbg_file" ] && frontmatter "$dbg_file" | grep -q '^role: debugger$'; then
+  PASS=$((PASS + 1))
+  echo "  PASS: base role is debugger"
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: base/debugger.md role is not debugger" >&2
+fi
+assert_le "base/debugger.md size" "$(file_size "$dbg_file")" 2560
+for tok in VERIFY_EXHAUSTED HUMAN_HOLD third "## Priority Hierarchy" "## Core Principles" "## Composition Note"; do
+  if [ -f "$dbg_file" ] && grep -qF -- "$tok" "$dbg_file"; then
+    PASS=$((PASS + 1))
+    echo "  PASS: debugger.md contains '$tok'"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: debugger.md missing '$tok'" >&2
+  fi
+done
+if [ -f "$dbg_file" ] && grep -q '## Preferred Tools' "$dbg_file"; then
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: debugger.md carries a Preferred Tools section (delta-only rule)" >&2
+else
+  PASS=$((PASS + 1))
+  echo "  PASS: debugger.md has no Preferred Tools section"
+fi
+
+for st in jvm python node browser; do
+  f="$PERSONAS_ROOT/specializers/debug/${st}.md"
+  if [ ! -f "$f" ]; then
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: specializers/debug/${st}.md missing" >&2
+    continue
+  fi
+  check_fields "$f" name extends detect version last-reviewed
+  if frontmatter "$f" | grep -q '^extends: debugger$'; then
+    PASS=$((PASS + 1))
+    echo "  PASS: debug/${st}.md extends debugger"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: debug/${st}.md does not extend debugger" >&2
+  fi
+  detect_n=$(frontmatter "$f" | awk '/^detect:/ {d=1; next} d && /^[[:space:]]+- / {n++; next} d && /^[^[:space:]]/ {d=0} END {print n+0}')
+  if [ "$detect_n" -gt 0 ]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: debug/${st}.md detect list non-empty"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: debug/${st}.md detect list empty" >&2
+  fi
+  bullets=$(awk 'NR==1 && /^---$/ {f=1; next} f && /^---$/ {f=0; b=1; next} b && /^- / {n++} END {print n+0}' "$f")
+  assert_le "debug/${st}.md technique bullets" "$bullets" 4
+  assert_le "debug/${st}.md size" "$(file_size "$f")" 2048
+done
+
+# Worst-case implement bundle: stack base + stack specializer + security +
+# test-data (weak signal adds it beside the base) + debugger + debug spec.
+# NOTE: the change's spec states 10240 B, but the four pre-existing files
+# alone already total ~9.4 KB (test-data-engineer.md is 3.2 KB), so no
+# debugger content fits under it. The budget below is the tightest one the
+# required content fits; see openspec handoff.md (Slice A).
+BUNDLE_BUDGET=12288
+bundle=0
+for rel in base/backend-developer.md specializers/backend/java.md base/security.md base/test-data-engineer.md base/debugger.md specializers/debug/jvm.md; do
+  bundle=$((bundle + $(file_size "$PERSONAS_ROOT/$rel")))
+done
+assert_le "worst-case implement persona bundle" "$bundle" "$BUNDLE_BUDGET"
+
+# ── 6-gram shingle check: no restated text ─────────────────────────────────────
+
+# Print the body (frontmatter stripped) as lowercase words, one 6-gram per line.
+shingles() {
+  awk 'NR==1 && /^---$/ {f=1; next} f && /^---$/ {f=0; next} !f {print}' "$1" |
+    tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_\n' ' ' | tr ' ' '\n' | grep -v '^$' |
+    awk '{w[NR]=$0} END {for (i=1; i+5<=NR; i++) print w[i]" "w[i+1]" "w[i+2]" "w[i+3]" "w[i+4]" "w[i+5]}' | sort -u
+}
+
+assert_no_shared_shingles() {
+  local desc="$1" target="$2"
+  shift 2
+  if [ ! -f "$target" ]; then
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc — file missing" >&2
+    return
+  fi
+  local ref_sh shared
+  ref_sh=$(for r in "$@"; do shingles "$r"; done | sort -u)
+  shared=$(comm -12 <(shingles "$target") <(echo "$ref_sh"))
+  if [ -z "$shared" ]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc — shared 6-grams:" >&2
+    echo "$shared" | head -5 | sed 's/^/      /' >&2
+  fi
+}
+
+assert_no_shared_shingles "debugger.md shares no 6-gram with analyzer/backend-developer/qa-engineer" \
+  "$dbg_file" "$PERSONAS_ROOT/base/analyzer.md" "$PERSONAS_ROOT/base/backend-developer.md" "$PERSONAS_ROOT/base/qa-engineer.md"
+for st in jvm python node browser; do
+  assert_no_shared_shingles "debug/${st}.md shares no 6-gram with backend/* or frontend/*" \
+    "$PERSONAS_ROOT/specializers/debug/${st}.md" "$PERSONAS_ROOT"/specializers/backend/*.md "$PERSONAS_ROOT"/specializers/frontend/*.md
 done
 
 # ── Results ────────────────────────────────────────────────────────────────────

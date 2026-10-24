@@ -165,7 +165,10 @@ For a first-time scan or decay-prompted re-dive, spawn multiple agents in parall
 
 1. **Resolve persona set** — required before any agent spawn, and log it so the run is auditable:
    ```bash
-   eval $(bash "$HOME/.claude/skills/lib/persona-select.sh" \
+   # TICKET_TEXT_FILE is deliberately empty: prescan docs are durable repo-level knowledge
+   # shared by every ticket, so no single ticket's wording may pick a migration/refactor
+   # specializer for them.
+   eval $(TICKET_TEXT_FILE="" bash "$HOME/.claude/skills/lib/persona-select.sh" \
      --repo "$repo" --phase prescan ${WITH_QA:+--with-qa})
    # PERSONA_SET contains newline-separated persona paths
    _plog "PRESCAN" "persona-select" "done" "$slug: $PERSONA_SET"

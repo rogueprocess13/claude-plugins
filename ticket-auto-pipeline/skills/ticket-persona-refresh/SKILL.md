@@ -217,5 +217,6 @@ Summary of what was done:
 
 - **Idempotency**: Running this skill twice in quick succession should report "still current" on the second run (all findings already applied).
 - **Scope**: This skill only refreshes persona CONTENT. It does not modify `persona-select.sh` selection logic. If a new specializer is needed (e.g., `backend/kotlin`), that's a separate task.
+- **`debug/` group**: `specializers/debug/*.md` are evidence procedures (which command or artifact to collect on that runtime), not stack idioms. Refresh only the commands and flags; do not add framework pitfalls or failure causes there — those belong in `backend/*` / `frontend/*`.
 - **Version bumps**: Always integer increment. `persona-refresh.sh bump` handles this deterministically.
 - **No pipeline integration**: This skill is for maintainers only. It writes no pipeline logs and triggers no state transitions.
