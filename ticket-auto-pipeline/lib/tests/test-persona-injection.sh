@@ -211,24 +211,26 @@ test_no_persona_skills_do_not_reference_persona_debug() {
 test_implement_step2_passes_type_and_logs_meta_line() {
   local sec
   sec=$(_section "$SKILLS_DIR/ticket-implement/SKILL.md" '^## Step 2 — ' '^## Step 2\.5')
-  echo "$sec" | grep -q -- '--type' || {
-    echo "  Step 2 does not pass --type"
+  # Type derivation (manifest type, else bug label) lives in persona-select.sh
+  # --ticket-dir, covered by lib/test-persona-select.sh section 1.7.
+  echo "$sec" | grep -q -- '--ticket-dir "{ticket-dir}"' || {
+    echo "  Step 2 does not pass --ticket-dir"
     return 1
   }
-  echo "$sec" | grep -q 'get_ticket_manifest_field "{TICKET-ID}" type' || {
-    echo "  Step 2 does not derive the type from the manifest"
+  echo "$sec" | grep -q 'for _k in PERSONA_TYPE ' || {
+    echo "  Step 2 does not print PERSONA_TYPE (Part B reuses it)"
     return 1
   }
   echo "$sec" | grep -q 'PERSONA_DEBUG_SPECIALIZER' || {
     echo "  Step 2 does not read PERSONA_DEBUG_SPECIALIZER"
     return 1
   }
-  echo "$sec" | grep -qF '|META|persona-select|info|base=' || {
+  echo "$sec" | grep -qF 'plog.sh META persona-select info "base=' || {
     echo "  Step 2 does not write META|persona-select|info|base=…"
     return 1
   }
   # Never an IMPLEMENT|persona-select line — detect-resume would turn it into IMPLEMENT_FROM.
-  if echo "$sec" | grep -qF '|IMPLEMENT|persona-select|'; then
+  if echo "$sec" | grep -qE '\|IMPLEMENT\|persona-select\||plog\.sh IMPLEMENT persona-select'; then
     echo "  Step 2 writes an IMPLEMENT|persona-select line"
     return 1
   fi

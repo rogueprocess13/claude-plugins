@@ -82,7 +82,7 @@ TRACE
 
 ## Step 1 — Approval guard + load workspace
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|check-approval|start|Checking authorization" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT check-approval start "Checking authorization"
 
 **Determine authorization** (tracker-approval-by-script: approval is a local manifest fact, not a Linear label — no tracker fetch for this check):
 
@@ -135,7 +135,7 @@ Append a session checkpoint:
 - Authorization: {approved | rejected (UAT rework)}. Repos and branch to be confirmed in Step 2.
 ```
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|check-approval|done|Authorized" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT check-approval done "Authorized"
 
 ---
 
@@ -143,7 +143,7 @@ Append a session checkpoint:
 
 Log the step start:
 ```bash
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|detect-path|start|Identifying implementation path" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT detect-path start "Identifying implementation path"
 ```
 
 From `notes.md` and `context.md`, identify affected repos. Cross-reference with the CLAUDE.md codebase table for full paths.
@@ -161,29 +161,16 @@ It prints `PLAN_MODE=`, `PLAN_PATH=` and, for openspec, `CHANGE_DIR=`.
 
 **Activate persona** based on the `Layer` column in CLAUDE.md for each affected repo. For `FE+BE` monorepos, use the layer boundary table to classify by actual files touched:
 
-Run the selector in one bash block per layer (`{ticket-dir}` is the directory found in Step 1). It derives the ticket type, feeds the selector the ticket text, and logs which personas were injected:
+Run the selector in one bash block per layer (`{ticket-dir}` is the directory found in Step 1). `--ticket-dir` derives the ticket type (manifest `type`, else `bug` from context.md's Labels line, else none — the `--type` it would pass) and feeds the selector the ticket text; the block then logs which personas were injected:
 ```bash
-# Ticket type: manifest `type`, else `bug` when context.md's Labels line has `bug`, else none.
-# An unknown manifest type is dropped, not passed — the selector exits 1 on it.
-source ~/.claude/skills/lib/manifest-read.sh 2>/dev/null || true
-_ps_type=""
-if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
-  _ps_type=$(get_ticket_manifest_field "{TICKET-ID}" type 2>/dev/null || true)
-fi
-case "$_ps_type" in bug | feature | improvement | security | chore | refactor) ;; *) _ps_type="" ;; esac
-if [ -z "$_ps_type" ] && grep -m1 '^\*\*Labels:\*\*' "{ticket-dir}/context.md" 2>/dev/null |
-  sed 's/^\*\*Labels:\*\*//' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qix bug; then
-  _ps_type=bug
-fi
-echo "PERSONA_TYPE=${_ps_type}"
-eval "$(TICKET_TEXT_FILE="{ticket-dir}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --layer <FE|BE> --phase implement ${_ps_type:+--type "$_ps_type"})"
-for _k in PERSONA_BASE PERSONA_SPECIALIZER PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_TESTDATA_SPECIALIZERS PERSONA_DEBUG PERSONA_DEBUG_SPECIALIZER; do echo "$_k=${!_k:-}"; done
+eval "$(TICKET_ID="{TICKET-ID}" TICKET_TEXT_FILE="{ticket-dir}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --layer <FE|BE> --phase implement --ticket-dir "{ticket-dir}")"
+for _k in PERSONA_TYPE PERSONA_BASE PERSONA_SPECIALIZER PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_TESTDATA_SPECIALIZERS PERSONA_DEBUG PERSONA_DEBUG_SPECIALIZER; do echo "$_k=${!_k:-}"; done
 # META pseudo-phase on purpose: an IMPLEMENT|persona-select line would become detect-resume's IMPLEMENT_FROM.
 _ps_spec="${PERSONA_SPECIALIZER#*/specializers/}"
 _ps_debug="none"
 [ -n "${PERSONA_DEBUG:-}" ] && _ps_debug="debugger"
 [ -n "${PERSONA_DEBUG_SPECIALIZER:-}" ] && _ps_debug="${PERSONA_DEBUG_SPECIALIZER#*/specializers/}"
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|persona-select|info|base=$(basename "$PERSONA_BASE" .md);spec=${_ps_spec:-none};debug=${_ps_debug}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META persona-select info "base=$(basename "$PERSONA_BASE" .md);spec=${_ps_spec:-none};debug=${_ps_debug}"
 ```
 Read the persona files at `$PERSONA_BASE` and `$PERSONA_SPECIALIZER`. If `$PERSONA_AUTO_INCLUDE` is non-empty, read that too. If `$PERSONA_TESTDATA` is non-empty, read it and every path in `$PERSONA_TESTDATA_SPECIALIZERS` (colon-separated) — they say how to build idempotent, namespaced, synthetic test data for the channels the ticket uses. If `$PERSONA_DEBUG` is non-empty (a bug ticket), read it and `$PERSONA_DEBUG_SPECIALIZER` when set — a debugging procedure layered on top of the stack persona, not a replacement for it: reproduce, trace back to the original trigger, state one hypothesis with evidence, write the failing test first, make one change. Keep the `PERSONA_TYPE` value printed above — Step 2.5 Part B reuses it.
 
@@ -191,7 +178,7 @@ The selector now receives the ticket text, so its keyword triggers fire on real 
 - Mixed → run once per layer; switch at the FE/BE boundary. Note the boundary in `notes.md`.
 - Test-data ticket (`$PERSONA_BASE` is `test-data-engineer.md`) → the whole deliverable is data, so do not split per layer. Make the ticket's `Seed command:` and `Verify command:` real (create the targets or scripts they name, or correct the lines to match what you built) and run the seed command twice to prove it is idempotent.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|detect-path|done|{simple-fix|openspec}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT detect-path done "{simple-fix|openspec}"
 
 ---
 
@@ -212,7 +199,7 @@ SECTION_TAIL=$(awk "NR>$LAST_SECTION_LINE && /^## / {exit} NF" "$PLAN" | tail -1
 ```
 If `SECTION_TAIL` ≠ `<!-- /REMEDIATION_BRIEF -->`:
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|REMEDIATION_BRIEF_TRUNCATED — marker missing in: $PLAN" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META gate-stop fail "REMEDIATION_BRIEF_TRUNCATED — marker missing in: $PLAN"
 ```
 Stop. Report: `{TICKET-ID} pipeline halted: REMEDIATION_BRIEF closing marker missing in ${PLAN}. The verify step may have been interrupted mid-write. Re-run ticket-verify to regenerate the brief.`
 
@@ -307,7 +294,7 @@ The SUGGESTED_FIX is the verifier's hypothesis about the root cause — a starti
 
 ## Step 3 — Checkout and branch (worktree)
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|checkout-branch|start|Creating worktree" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT checkout-branch start "Creating worktree"
 
 Branch variables are injected by the router via the env file (`$TICKET_BRANCH`, `$BASE_BRANCH`,
 `$INTEGRATION_BRANCH`, `$WORKTREE_ROOT`). Source it and the worktree library before checkout:
@@ -333,13 +320,13 @@ Append to `notes.md`:
 - Repos: {list} | Branch: {TICKET_BRANCH} | Worktree: {WORKTREE_PATH} | Mode: {simple-fix | openspec: <name>}
 ```
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|checkout-branch|done|{TICKET_BRANCH}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT checkout-branch done "{TICKET_BRANCH}"
 
 ---
 
 ## Step 4 — Implement
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|implement|start|Implementing changes" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT implement start "Implementing changes"
 
 **Prefer smart_search for code navigation during editing — for both modes.** Use `smart_search` to locate symbols by name, `smart_outline` to get structural views, then `smart_unfold` or `Read` to load only confirmed targets. Fall back to Serena if smart_search returns nothing: symbol search or go_to_definition to locate the target, find_references to check downstream impact. Read only what these tools pinpoint — never scan whole files.
 
@@ -392,7 +379,7 @@ When complete, return ONLY this JSON (no other text):
 
 **Save the returned JSON as `{DIFFICULTY_SUMMARY}` — Step 4c uses it.**
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|implement|done|{N} files changed" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT implement done "{N} files changed"
 
 ---
 
@@ -424,7 +411,7 @@ A candidate is a gap Refinement found, not an accepted acceptance criterion: do 
 
 ### Run tests
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|run-tests|start|Running tests" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT run-tests start "Running tests"
 
 ```bash
 # BE repos (only if BE_TEST_CMD is defined)
@@ -439,11 +426,11 @@ cd {WORKTREE_PATH} && {FE_TEST_CMD}
 
 If tests fail → fix the code or the tests, re-run. Do not proceed until all tests pass. Skip a test command only if its corresponding variable is not defined in CLAUDE.md.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|run-tests|done|Tests pass" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT run-tests done "Tests pass"
 
 ### Code review
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|code-review|start|Reviewing changes" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review start "Reviewing changes"
 
 Spawn a `general-purpose` agent for each repo with changes. Pass it:
 - The worktree path and branch name
@@ -459,8 +446,8 @@ This is a bounded fix-and-re-review loop, **capped at 3 cycles** — the same ca
 - If medium+ findings exist and `cycle < 3`: fix each one, re-run unit tests, re-spawn the agent with the updated file list as the next cycle.
 - If medium+ findings still exist at `cycle == 3`: gate-stop and stop — do not commit:
   ```bash
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|code-review|fail|cycle#3 CODE_REVIEW_EXHAUSTED" >> "$LOG_FILE"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|CODE_REVIEW_EXHAUSTED" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review fail "cycle#3 CODE_REVIEW_EXHAUSTED"
+  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "CODE_REVIEW_EXHAUSTED"
   ```
   This ticket needs human review.
 
@@ -468,7 +455,7 @@ Do not proceed to commit until the review is clean or the loop gate-stops.
 
 **Residual low-severity findings** at a clean exit: append them to notes.md under a `## Code Review — Deferred Findings` heading (create it if absent), one line per finding — `- {file}:{line} — {finding summary}`. These are informational only and never block.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|code-review|done|cycle#{N} clean" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review done "cycle#{N} clean"
 
 ---
 
@@ -600,7 +587,7 @@ append_correction "{ticket-dir}/notes.md" \
   "$_correction_fact" \
   "$_correction_source" \
   "$_correction_detail" \
-|| echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|corrections-error|warn|append_correction failed" >> "$LOG_FILE"
+|| bash ~/.claude/skills/lib/plog.sh META corrections-error warn "append_correction failed"
 ```
 
 ```bash
@@ -609,7 +596,7 @@ append_correction "{ticket-dir}/notes.md" \
   "Wiki flow file {filename} missing or stale for {specific detail}" \
   "wiki" \
   "Wiki gap found: {What the wiki missed}" \
-|| echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|corrections-error|warn|append_correction wiki failed" >> "$LOG_FILE"
+|| bash ~/.claude/skills/lib/plog.sh META corrections-error warn "append_correction wiki failed"
 ```
 
 **Rules:**
@@ -622,7 +609,7 @@ append_correction "{ticket-dir}/notes.md" \
 
 ## Step 5 — Commit and push
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|commit-push|start|Committing and pushing" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT commit-push start "Committing and pushing"
 
 **No-diff check first.** Pass every affected repo's worktree. When none of them has a
 source change (no uncommitted or untracked non-ignored file, and no commit ahead of the
@@ -697,7 +684,7 @@ Branch: `{branch-name}` pushed to {repo}.
 
 No PR created yet. No Linear state change. The calling pipeline (`ticket-auto` or user) handles verification and PR creation.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|commit-push|done|Pushed {branch-name}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh IMPLEMENT commit-push done "Pushed {branch-name}"
 
 ---
 
@@ -727,7 +714,7 @@ ASSERT_RC=$?
   `missing` entirely. **Warn loudly — never gate-stop.** The implementation itself is unaffected;
   losing the design rationale is a documentation-durability problem, not a correctness one.
   ```bash
-  [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|info|OPENSPEC_ARTIFACT_UNTRACKED — plan artifact for {TICKET-ID} is not durably tracked in the tickets repo" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META gate-warn info "OPENSPEC_ARTIFACT_UNTRACKED — plan artifact for {TICKET-ID} is not durably tracked in the tickets repo"
   ```
   Append to `notes.md`:
   ```markdown
