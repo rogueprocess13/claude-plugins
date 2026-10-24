@@ -86,6 +86,8 @@ _planner_crosscheck_source_if_missing "planner_crosscheck_deps" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-deps.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_testdata" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-testdata.sh"
+_planner_crosscheck_source_if_missing "planner_crosscheck_ac_coverage" \
+  "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ac-coverage.sh"
 _planner_crosscheck_source_if_missing "planner_testdata_synthesize" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-testdata-synth.sh"
 _planner_crosscheck_source_if_missing "planner_state_write" \
@@ -101,7 +103,7 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # DANGLING_BLOCKED_BY (and DEPENDENCY_CYCLE, planner-test-data-derivation), #503's TEST_DATA_UNOWNED and #504's
 # CITED_ARTIFACT_MALFORMED / CITED_ARTIFACT_UNRAISED / CITED_ARTIFACT_UNRESOLVED /
 # CITED_ARTIFACT_SOURCE_MISMATCH / CITED_ARTIFACT_UNREFERENCED block EpicGen per
-# #176's table.
+# #176's table, as does AC_STATUS_UNCOVERED (planner-ac-coverage-and-epic-uat).
 # TEST_DATA_UNSOURCED_LEGACY (a spec in an initiative that predates the Source
 # contract) and CITED_ARTIFACTS_SECTION_MISSING are warn-level.
 # DISCOVERY_GAP_UNRESOLVED and CONTRACT_UNDEFINED are warn-level: a declared
@@ -332,6 +334,11 @@ planner_crosscheck_run() {
   total_warn=$((total_warn + w))
   total_accepted=$((total_accepted + a))
 
+  read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_ac_coverage "$initiative_id")
+  total_blocking=$((total_blocking + b))
+  total_warn=$((total_warn + w))
+  total_accepted=$((total_accepted + a))
+
   if [ "$total_blocking" -gt 0 ]; then
     planner_state_write "$initiative_id" "Crosscheck" "check" "fail" \
       "${total_blocking} blocking finding(s), ${total_warn} warn, ${total_accepted} accepted — see META|crosscheck entries"
@@ -463,6 +470,9 @@ planner_crosscheck_fix_hint() {
     ;;
   FORWARD_REF_UNFULFILLED)
     echo "the referenced spec never delivers the promised terms — add them there, or drop the forward reference"
+    ;;
+  AC_STATUS_UNCOVERED)
+    echo "the spec states this status code as a response but no acceptance criterion checks it — add an AC (and its Verification Notes row) for that response; never delete the behaviour sentence to clear this"
     ;;
   CARVE_SCOPE_LOST)
     echo "the spec-file count no longer matches the ticket count Specify declared — record the rescope in consensus.md, or restore the missing spec"

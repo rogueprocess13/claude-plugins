@@ -1,0 +1,8 @@
+{
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["AC_STATUS_UNCOVERED"],
+  "message_contains": ["api-error-handler.md status 500", "Any other unexpected error returns 500"],
+  "notes": "planner-ac-coverage-and-epic-uat: shaped like the dispatch-rehearsal iter-01 store/seed spec — the 400 path has an AC, the 500 fallback the same bullet states does not. Exactly one blocking AC_STATUS_UNCOVERED for 500; 400 is covered."
+}

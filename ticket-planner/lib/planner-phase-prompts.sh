@@ -852,6 +852,29 @@ must already be in the Description, in its final wording:
   and every outcome id exactly as written. This pass happens here, once, so the
   ticket body is a pure function of the spec.
 
+### One acceptance criterion per stated outcome
+
+Every observable outcome the behaviour section (\`## Proposed Behaviour\`,
+\`## Proposed Changes\`, \`## Desired Behaviour\` or \`## Expected Behaviour\`) or
+\`## Technical Context\` states gets its own Acceptance Criteria line and its own
+Verification Notes row. Each of these is a separate outcome:
+
+- each response status code, and each error body;
+- each conditional branch — every \`if\`, \`otherwise\`, \`when\` or \`unless\` clause,
+  including the rejected, expired, missing and fallback cases;
+- each ordering or tie-break rule;
+- each field or element a list, page or response is said to show.
+
+Facts nobody can observe from outside — file layout, library choice, internal
+structure — need no criterion. Before handoff, walk every behaviour sentence and
+name the criterion that checks it; where none does, add the criterion and its
+Verification Notes row. Do this in your head or in scratch notes, never in the
+spec. Close a gap only by adding a criterion: never delete, soften or move a
+behaviour sentence to make the walk pass. Refinement's semantic check halts a
+ticket whose stated behaviour has no criterion (\`MISSING_CORE_AC\`), after the
+ticket already exists in Linear; Crosscheck blocks earlier on a stated response
+code no criterion names (\`AC_STATUS_UNCOVERED\`).
+
 ### Verification Notes (planner-ready-by-construction)
 
 TicketGen builds each ticket's \`## Verification Plan\` table from this section
@@ -1181,12 +1204,26 @@ sweep would misread.
    \`Serves\`/\`Enables\` if you add or remove one (planner-business-framing).
 4. Write a consensus digest to ${state_dir}/artifacts/consensus.md:
    - **Findings Addressed** — each review finding, its disposition (accepted/rejected/deferred),
-     and what changed (if anything)
+     and what changed (if anything), naming the acceptance criterion you added or
+     changed for it (see below)
    - **Changes from Original Proposal** — summary of what's different
    - **Deferred Items** — things consciously left unresolved, with rationale
    - **Open Questions** — questions only the operator can answer, including one
      line per cited artifact Discovery could not retrieve (see below)
    - **Readiness** — ready-for-spec / needs-further-discovery / blocked
+
+## A prose edit carries its acceptance criterion
+
+When you accept a finding by adding or changing behaviour text in a spec (its
+behaviour section or \`## Technical Context\`), the same edit adds or updates the
+matching \`## Acceptance Criteria\` line and its \`## Verification Notes\` row. A
+new error path, fallback, rejected or expired case, tie-break rule or listed
+field is an outcome, and an outcome with no criterion halts the ticket at
+Refinement — after it already exists in Linear. Then walk every behaviour
+sentence of each spec you edited and name the criterion that checks it; add the
+missing ones. Never delete, soften or move a behaviour sentence to make the walk
+pass: if a sentence is wrong, change it for that reason and say so in
+**Findings Addressed**.
 
 ## Cited artifacts the operator must answer for (#504)
 
@@ -1243,6 +1280,8 @@ On failure, write \`fail\` instead of \`done\`.
 - Deferred items are a conscious choice, not an omission — explain why each is deferred.
 - Every NOT FOUND cited artifact has its \`CITED_ARTIFACT:\` line in \`## Open Questions\`,
   copied verbatim from \`planner_cited_artifacts_questions\`.
+- Every behaviour sentence you added or changed has an acceptance criterion and a
+  Verification Notes row that checks it.
 AGENT_PROMPT
 }
 
@@ -1271,22 +1310,28 @@ planner_prompt_epicgen() {
   milestone_ref=$(_planner_prompt_config "$initiative_id" "linear-milestone")
   branch_override=$(_planner_prompt_config "$initiative_id" "branch-override")
 
-  # UAT policy (planner-test-data-derivation, task 5.1): the operator's explicit
-  # choice is the `uat-policy` config key, persisted once at argument parsing
-  # from PLANNER_UAT_POLICY — never read from this shell's environment. With no
-  # explicit choice, an initiative whose synthesis wrote test-data (TD) specs
-  # gets `epic`: under per-ticket UAT on a shared branch a TD PR parked in UAT
-  # deadlocks its consumers. Decided here, in bash; the value is only used on
-  # the directive branch of step 5c (a shared branch), hence `true`.
-  local uat_explicit uat_policy
+  # UAT policy (planner-test-data-derivation 5.1, planner-ac-coverage-and-epic-uat):
+  # the operator's explicit choice is the `uat-policy` config key, persisted
+  # once at argument parsing from PLANNER_UAT_POLICY — never read from this
+  # shell's environment. With no explicit choice, a shared branch gets `epic`
+  # when synthesis wrote test-data (TD) specs or when any spec is blocked by a
+  # sibling: under per-ticket UAT a child parked in UAT never reaches Done, and
+  # every ticket it blocks deadlocks. Decided here, in bash; the value is only
+  # used on the directive branch of step 5c (a shared branch), hence `true`.
+  local uat_explicit uat_policy uat_reason uat_resolved _lib_dir
+  _lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   uat_explicit=$(_planner_prompt_config "$initiative_id" "uat-policy")
-  _source_if_missing "planner_testdata_synth_uat_policy" \
-    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-testdata-synth.sh"
-  if declare -f planner_testdata_synth_uat_policy >/dev/null 2>&1; then
-    uat_policy=$(planner_testdata_synth_uat_policy "$initiative_id" true "$uat_explicit" 2>/dev/null) ||
-      uat_policy="$uat_explicit"
+  _source_if_missing "planner_testdata_synth_uat_policy" "${_lib_dir}/planner-testdata-synth.sh"
+  _source_if_missing "planner_uat_policy_resolve" "${_lib_dir}/planner-deps-check.sh"
+  _source_if_missing "planner_ticketgen_deps_json" "${_lib_dir}/planner-ticket-body.sh"
+  if declare -f planner_uat_policy_resolve >/dev/null 2>&1 &&
+    uat_resolved=$(planner_uat_policy_resolve "$initiative_id" true "$uat_explicit" 2>/dev/null) &&
+    [ -n "$uat_resolved" ]; then
+    uat_policy="${uat_resolved%%$'\t'*}"
+    uat_reason="${uat_resolved#*$'\t'}"
   else
     uat_policy="$uat_explicit"
+    uat_reason="error"
   fi
   # Interpolated into the agent's bash as a literal: only the enum (or empty)
   # passes; anything else becomes a value branch_directive_generate rejects.
@@ -1684,6 +1729,8 @@ if [ "\$EMIT_DIRECTIVE" = "true" ]; then
       }
 
       BRANCH_NAME=\$(echo "\$DIRECTIVE_BLOCK" | grep '^\*\*Branch:\*\*' | sed 's/\*\*Branch:\*\* //')
+      planner_state_write "${initiative_id}" "META" "uat-policy-decision" "done" \
+        "policy=${uat_policy:-default} reason=${uat_reason}"
       if [ -n "\$OVERRIDE_REASON" ]; then
         planner_state_write "${initiative_id}" "EpicGen" "branch-directive" "done" \
           "BRANCH=\${BRANCH_NAME} REASON=\${OVERRIDE_REASON}"
@@ -1799,7 +1846,7 @@ independently of the \`create\` step so status and replan can read it.
 | \`PLANNER_BASE_BRANCH\` | \`develop\` | Base branch for the directive |
 | \`PLANNER_MERGE_POLICY\` | \`manual\` | Merge policy enum |
 | \`PLANNER_SYNC_POLICY\` | \`rebase-on-base-change\` | Sync policy enum |
-| \`PLANNER_UAT_POLICY\` | *(unset)* | UAT policy enum (\`per-ticket\`\|\`epic\`). Read once at argument parsing and persisted as the \`uat-policy\` config key; the value step 5c uses is already interpolated above (\`--arg uat\`) — do not read the variable here. Unset omits the field entirely, and the validator resolves \`per-ticket\` — except that an initiative with synthesized test-data specs (\`artifacts/testdata-synth.json\`) gets \`epic\`, so a TD ticket parked in UAT cannot deadlock its consumers on the shared branch. Set \`epic\` for an initiative whose children are only observable once the whole epic integrates — their PR-review pass then routes to \`Done\` instead of \`UAT\`, keeping the \`blocked-by\` chain moving. |
+| \`PLANNER_UAT_POLICY\` | *(unset)* | UAT policy enum (\`per-ticket\`\|\`epic\`). Read once at argument parsing and persisted as the \`uat-policy\` config key; the value step 5c uses is already interpolated above (\`--arg uat\`) — do not read the variable here. Unset omits the field entirely, and the validator resolves \`per-ticket\` — except that a shared branch gets \`epic\` when the initiative has synthesized test-data specs (\`artifacts/testdata-synth.json\`) or any spec is blocked by a sibling, so a child parked in UAT cannot deadlock the tickets it blocks. The decision and its reason are recorded as \`META\|uat-policy-decision\`. Set \`epic\` for an initiative whose children are only observable once the whole epic integrates — their PR-review pass then routes to \`Done\` instead of \`UAT\`, keeping the \`blocked-by\` chain moving. |
 
 ## Constraints
 - The idempotency check is mandatory — do not skip it.

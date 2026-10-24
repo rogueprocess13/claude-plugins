@@ -374,6 +374,26 @@ else
   fail "no TD specs leaves uat empty" "got ${got}"
 fi
 
+# A sibling chain with no TD spec (rehearsal iter-01 shape) → epic, and the
+# decision record carries the generator's values, not agent-side references.
+in_new_process 'planner_state_init INIT-UAT-CHAIN "an idea" >/dev/null'
+_chain_dir="${REPOS_ROOT}/.ticket-auto/initiatives/INIT-UAT-CHAIN/artifacts/specs"
+mkdir -p "$_chain_dir"
+printf '# a\n\n## Labels\n\nchore\n' >"${_chain_dir}/a-store.md"
+printf '# b\n\n## Labels\n\nfeature, blocked-by:a-store\n' >"${_chain_dir}/b-auth.md"
+prompt=$(in_new_process 'planner_prompt_epicgen INIT-UAT-CHAIN "an idea" /tmp/state' </dev/null)
+got=$(_uat_arg "$prompt")
+if [ "$got" = '--arg uat "epic"' ]; then
+  pass "a sibling chain with no TD spec → epic"
+else
+  fail "chain gives epic UAT" "got ${got}"
+fi
+if grep -qF '"policy=epic reason=chain"' <<<"$prompt"; then
+  pass "uat-policy-decision record is interpolated by the generator"
+else
+  fail "uat-policy-decision literal" "$(grep -m1 -A1 'uat-policy-decision' <<<"$prompt" || echo absent)"
+fi
+
 if grep -q 'planner_config_set "\$INITIATIVE_ID" "uat-policy"' "$skill_md"; then
   pass "SKILL.md persists PLANNER_UAT_POLICY as the uat-policy config key"
 else

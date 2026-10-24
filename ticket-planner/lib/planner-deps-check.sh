@@ -339,3 +339,59 @@ planner_branch_directive_recommend() {
   fi
   return 0
 }
+
+# ── UAT policy for the Branch Directive ───────────────────────────────────────
+
+_PLANNER_DEPS_CHECK_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The `uat_policy` Epic Gen hands the Branch Directive generator
+# (planner-ac-coverage-and-epic-uat, F8). Under per-ticket UAT on a shared
+# epic branch, a child parked in UAT never reaches Done, and `blocked-by`
+# resolves only on Done — so any sibling edge deadlocks the chain after its
+# first ticket. Epic UAT routes the children Review → Done instead.
+#
+#   <explicit> non-empty (the operator's `uat-policy` config) → <explicit>  explicit
+#   <shared> != true                                         → (empty)     not-shared
+#   artifacts/testdata-synth.json lists ≥1 TD spec           → epic        td-spec
+#   ≥1 blocked_by edge between two specs of the initiative   → epic        chain
+#   otherwise                                                → (empty)     none
+#
+# An empty policy leaves the field out, and the validator resolves per-ticket.
+# Edges come from planner_ticketgen_deps_json (the graph TicketGen orders,
+# sidecar edges included); it keeps external ids and unresolved tokens
+# verbatim, so only targets that are keys of the same graph count. The
+# explicit check runs before anything reads REPOS_ROOT.
+#
+# Pure over the state directory: nothing is written.
+# Usage: planner_uat_policy_resolve <initiative_id> <shared:true|false> [explicit]
+# Output: "<policy>\t<reason>" on one line. Returns 0.
+planner_uat_policy_resolve() {
+  local init="$1" shared="$2" explicit="${3:-}" td specs_dir deps
+  if [ -n "$explicit" ]; then
+    printf '%s\texplicit\n' "$explicit"
+    return 0
+  fi
+  if [ "$shared" != "true" ]; then
+    printf '\tnot-shared\n'
+    return 0
+  fi
+  if ! declare -f planner_ticketgen_deps_json >/dev/null 2>&1; then
+    # shellcheck source=planner-ticket-body.sh
+    source "${_PLANNER_DEPS_CHECK_LIB_DIR}/planner-ticket-body.sh"
+  fi
+  td=$(planner_testdata_synth_uat_policy "$init" true "" 2>/dev/null) || td=""
+  if [ "$td" = "epic" ]; then
+    printf 'epic\ttd-spec\n'
+    return 0
+  fi
+  specs_dir=$(planner_ticketgen_specs_dir "$init" 2>/dev/null) || specs_dir=""
+  deps='{}'
+  [ -n "$specs_dir" ] && [ -d "$specs_dir" ] &&
+    { deps=$(planner_ticketgen_deps_json "$specs_dir" 2>/dev/null) || deps='{}'; }
+  if jq -e 'keys as $k | any(.[][]?; IN($k[]))' <<<"$deps" >/dev/null 2>&1; then
+    printf 'epic\tchain\n'
+  else
+    printf '\tnone\n'
+  fi
+  return 0
+}

@@ -1,0 +1,6 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "notes": "planner-ac-coverage-and-epic-uat: numbers that are not responses — port 3000, cost 10, cap 100, `returns at most 100 entries` (a quantity after the verb), a `Pass-123` password, a frontend `on 401` handler and a fenced 503 — none count; the stated 401 response is covered. Must stay clean."
+}
