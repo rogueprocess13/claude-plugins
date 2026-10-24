@@ -21,7 +21,8 @@ not implement is a loud `unsupported` result rather than a silent skip.
 
 **What is deliberately not here.** Task 4.11 listed five `flow.sh` triggers;
 only two are the router's. `implement-complete` is fired by the router
-(`SKILL.md:897-910`) and `appraise-start` before the first spawn. The other
+(`SKILL.md` STEP_4, via `flow-run.sh`) and `appraise-start` before the first
+spawn. The other
 three — `human-approve`, `pr-review-pass-done`/`-uat`, `uat-pass` — are fired
 by the phase skill that earns them (`gate-check.sh`, `ticket-pr-review`,
 `ticket-verify`), as is `ensure_worktree` (`ticket-implement`). Those travel

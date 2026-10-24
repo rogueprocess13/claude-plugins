@@ -316,7 +316,7 @@ test_preamble_starts_a_new_run_after_an_outcome() {
 
 # ── Manual-router mode (skill-glue-collapse) ──────────────────────────────────
 #
-# ticket-auto SKILL.md Steps 0.1–0.6 call the preamble with TICKET_ARG,
+# ticket-auto SKILL.md Step 0.1 calls the preamble with TICKET_ARG,
 # NEW_RUN and ANNOUNCE_START. Every test here also guards the other direction:
 # without those parameters nothing about the fleetd path may change.
 

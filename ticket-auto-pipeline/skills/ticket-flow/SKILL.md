@@ -208,7 +208,7 @@ to the trigger it documents.
 ~/.claude/state/ticket-flow/validated-{TEAM_ID}
 ```
 
-The sentinel contains `schema_version`, `sm_hash` (SHA256 of `workflow.json`), and `validated_at`. `ticket-auto` Step 0.4 reads this file — if it exists and the hash matches the current `workflow.json`, validation is skipped (warm hit). Any edit to `workflow.json` automatically invalidates the sentinel.
+The sentinel contains `schema_version`, `sm_hash` (SHA256 of `workflow.json`), and `validated_at`. `ticket-preamble.sh` reads this file — if it exists and the hash matches the current `workflow.json`, validation is skipped (warm hit). Any edit to `workflow.json` automatically invalidates the sentinel.
 
 To force re-validation:
 ```bash

@@ -201,7 +201,7 @@ and § Final disposition for how this list changed after removal execution surfa
   `verify-lock.sh`, "agent's claimed verdict" in `inspect-verifiers.sh`/`phase_dispatch.py`,
   knowledge-curator's unrelated `kc-item.sh` claim/complete/release lifecycle). Zero readers of the
   Linear label itself, confirming the design doc's premise exactly.
-- **Human-consumer search:** appears only in `ticket-flow/SKILL.md:55`'s legend
+- **Human-consumer search:** appears only in `ticket-flow/SKILL.md`'s legend
   ("Actively being worked (set at appraisal start, cleared at Done)") — purely descriptive, and
   fully redundant with information already visible via the ticket's Linear *state* (`Todo`) and
   *assignee* field. No instruction to act on it found anywhere.
@@ -218,7 +218,7 @@ and § Final disposition for how this list changed after removal execution surfa
   reads complexity the same way — from `notes.md` text, not the label. Grepped all five plugins for
   a decision branch on the literal `simple`/`complex` label value: none found (both words are also
   common English, so most hits were unrelated code/prose, correctly excluded).
-- **Human-consumer search:** `ticket-flow/SKILL.md:59-60` legend entries ("Predicted
+- **Human-consumer search:** `ticket-flow/SKILL.md` legend entries ("Predicted
   simple/complex (set by appraise)") are purely descriptive and duplicate information the operator
   dashboard (`ticket-overseer`) already surfaces from `notes.md` — the actually-consulted source.
   No instruction to act on the *label* found; the same redundancy argument that confirmed `claimed`
@@ -236,7 +236,7 @@ and § Final disposition for how this list changed after removal execution surfa
   tests/state-machine.json — every hit is unrelated (ADR status enum in `adr-check.sh`, Slack
   transport-failure strings in `fleet-notify.sh`, planner consensus-log prose, knowledge-curator
   test names).
-- **Human-consumer search:** `ticket-flow/SKILL.md:57` — "PR review found gaps OR UAT verification
+- **Human-consumer search:** `ticket-flow/SKILL.md` — "PR review found gaps OR UAT verification
   failed — ticket needs rework." Unlike `claimed`, this is **not** redundant with visible ticket
   state: a ticket bounced back to `Ready` (via `uat-fail`) or sitting in `Review` after
   `pr-review-fail` (no state change) looks identical, on state alone, to a ticket that has never
@@ -255,7 +255,7 @@ and § Final disposition for how this list changed after removal execution surfa
   `uat-fail`.
 - **Decision readers:** none found (same grep sweep as `rejected`; the few whole-word hits — persona
   `last-reviewed` field, `wiki-check.sh`'s `human-reviewed` frontmatter enum value — are unrelated).
-- **Human-consumer search:** `ticket-flow/SKILL.md:58` gives unusually detailed operator guidance:
+- **Human-consumer search:** `ticket-flow/SKILL.md` gives unusually detailed operator guidance:
   "PR review passed. Under `per-ticket` UAT policy this means 'awaiting QA'... **Under `UAT Policy:
   epic` it does not mean that** — the child goes straight to `Done` and retains the label... Do not
   key an 'in flight' heuristic on it." This is a documented anti-pattern warning, which is stronger
@@ -314,7 +314,7 @@ and § Final disposition for how this list changed after removal execution surfa
   zero automated writers, meaning it can only ever appear on a ticket via manual application in the
   Linear UI.
 - **Decision readers:** none found.
-- **Human-consumer search:** `ticket-flow/SKILL.md:67` — "Bug could not be reproduced." Specific,
+- **Human-consumer search:** `ticket-flow/SKILL.md` — "Bug could not be reproduced." Specific,
   non-generic meaning. Given it has zero code writers, if it is used at all it is used exclusively
   by a human manually tagging a ticket for other humans — which is the purest form of human-signal,
   but there is no positive evidence (comment, doc instruction, or usage record) that anyone actually
@@ -542,10 +542,10 @@ an imperative instruction. Verdict unchanged (`human-signal`) but no longer "wea
 treat as confirmed on the strength of this citation.
 
 **`reviewed` — human-signal, confirmed (evidence upgraded).** Same result: no decision read
-(repeat grep clean), and `ticket-pr-review/SKILL.md:377` confirms the label is applied only as a
+(repeat grep clean), and `ticket-pr-review/SKILL.md` Step 6a confirms the label is applied only as a
 write action ("This adds `reviewed` or `rejected`... only when `_rc` is `0`") — never read back
 by that skill or any other to branch on. The existing citation
-(`ticket-flow/SKILL.md:58`'s explicit anti-pattern warning: "Under `UAT Policy: epic` [`reviewed`]
+(`ticket-flow/SKILL.md`'s explicit anti-pattern warning: "Under `UAT Policy: epic` [`reviewed`]
 does not mean [awaiting QA]... Do not key an 'in flight' heuristic on it") is a genuine documented
 warning aimed at whoever builds future tooling, which is stronger than an incidental mention.
 Verdict unchanged (`human-signal`), evidence upgraded from "weaker" to confirmed.
@@ -555,7 +555,7 @@ evidence found.** Confirmed again: zero writers anywhere in the repository (incl
 `ticket-reproduce/SKILL.md`, whose name suggests it would apply this label — it only posts a
 comment via `save_comment`, never touches the label). No decision read. No dashboard or overseer
 report renders it. The only citation is the one-line legend definition
-(`ticket-flow/SKILL.md:67`, "Bug could not be reproduced") — the harder search (git history,
+(`ticket-flow/SKILL.md`, "Bug could not be reproduced") — the harder search (git history,
 broader skill-prose reads, dashboard/report code) found nothing beyond that same line. This
 differs from `rejected`/`reviewed` in kind: those two have an automated writer and a documented
 reason a human needs the distinction; `repro-failed` has no automated writer at all, meaning its

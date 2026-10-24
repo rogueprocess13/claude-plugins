@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Once-per-ticket preamble — everything ticket-auto Steps 0.1–0.6 establish
-# before the first phase agent runs, as one deterministic entrypoint.
+# Once-per-ticket preamble — everything ticket-auto establishes before the
+# first phase agent runs (its Step 0.1 is one call to this file; fleetd calls
+# it once per phase), as one deterministic entrypoint.
 #
 # Why this exists (design.md D17, task 4.10). fleetd dispatches *individual
 # phases*. Every phase skill assumes an operating environment it never builds
@@ -222,10 +223,11 @@ _tp_branch_field() {
 # ── The preamble itself ───────────────────────────────────────────────────────
 
 # Parse the router's raw argument string (`/ticket-auto CRE-12 --auto
-# --branch epic/x`) into the four values SKILL.md Step 0.1 used to derive in
-# prose. Prints `KEY=value` lines for TICKET_ID, AUTONOMY, FROM_PLANNED and
-# BRANCH_FLAG; AUTONOMY is empty when no autonomy flag is present, so the
-# caller's env → manual fallback still applies.
+# --branch epic/x`) into the four values ticket-auto's SKILL.md used to derive
+# in prose (skill-glue-collapse moved the parsing here). Prints `KEY=value`
+# lines for TICKET_ID, AUTONOMY, FROM_PLANNED and BRANCH_FLAG; AUTONOMY is
+# empty when no autonomy flag is present, so the caller's env → manual
+# fallback still applies.
 #
 # Autonomy precedence is --semi-auto, then --auto, then --manual, whatever the
 # order they appear in — the order the router's grep cascade checked them.
@@ -347,7 +349,7 @@ ticket_preamble_run() {
     return $TP_USAGE
   }
 
-  # Same three-tier precedence as SKILL.md Step 0.1 — caller → env → manual.
+  # Three-tier precedence (the old router prose's) — caller → env → manual.
   # An unrecognised TICKET_AUTONOMY falls back rather than failing, because
   # `manual` is the safe reading of an ambiguous autonomy setting.
   if [ -z "$AUTONOMY" ]; then
@@ -402,9 +404,9 @@ ticket_preamble_run() {
     _plog "$LOG_FILE" "META" "schema" "info" "1"
   fi
 
-  # 0.55 — run identity. No --new here: the router's own Step 0.6 is what
-  # opens a new run once per process; this call site is the fleetd re-entry
-  # path, invoked once per phase, so it must only rehydrate the open run
+  # 0.55 — run identity. No --new by default: the manual router (NEW_RUN=true,
+  # below) is what opens a new run once per process; this call site is the
+  # fleetd re-entry path, invoked once per phase, so it must only rehydrate the open run
   # (run_identity_stamp's own guard makes every call but the first a no-op).
   # NEW_RUN=true is that router, and the one caller allowed to open a run.
   source "$_TP_LIB_DIR/run-identity.sh"

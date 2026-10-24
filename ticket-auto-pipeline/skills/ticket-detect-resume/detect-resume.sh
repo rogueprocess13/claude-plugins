@@ -662,7 +662,7 @@ ITERATION=0
 PR_FEEDBACK_CYCLE=0
 
 # Branch-context recovery is independent of RESUME_STEP — it's written at
-# Step 0.5 before the first agent spawn and must be recoverable from any
+# the preamble (ticket-preamble.sh) before the first agent spawn and must be recoverable from any
 # resume state, including STEP_1 and GATE_STILL_HELD.
 if [ -s "$LOG_FILE" ]; then
   _branch_ctx=$(grep '^[^|]*|META|branch-context|info|' "$LOG_FILE" 2>/dev/null |
@@ -677,7 +677,7 @@ if [ -s "$LOG_FILE" ]; then
 fi
 
 # Autonomy is likewise independent of RESUME_STEP: the router writes
-# META|autonomy at Step 0.1, before the first dispatch, so a fresh STEP_1 run
+# META|autonomy in its preamble, before the first dispatch, so a fresh STEP_1 run
 # already has it on the log and must report it rather than defaulting to manual.
 if [ -s "$LOG_FILE" ]; then
   AUTONOMY=$(grep '^[^|]*|META|autonomy|info|' "$LOG_FILE" 2>/dev/null | tail -1 | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", (i>5?"|":""), $i; print ""}' || true)
@@ -758,7 +758,7 @@ fi
 #   AUTONOMY          — auto|semi-auto|manual (from pipeline log META|autonomy, defaults to manual)
 #   ARTIFACT_TYPE     — simple-fix|openspec (from EXEC phase completion line)
 #   BRANCH            — git branch name (from IMPLEMENT checkout)
-#   BASE_BRANCH       — base branch resolved at Step 0.5 (from META|branch-context)
+#   BASE_BRANCH       — base branch resolved by the preamble (from META|branch-context)
 #   INTEGRATION_BRANCH — integration branch if epic-scoped (from META|branch-context; empty if none)
 #   BRANCH_SOURCE     — flag|epic-directive|default (from META|branch-context; empty on legacy logs)
 #   UAT_POLICY        — per-ticket|epic (from META|branch-context; 'per-ticket' on legacy logs

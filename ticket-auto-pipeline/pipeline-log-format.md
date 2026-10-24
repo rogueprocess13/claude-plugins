@@ -154,7 +154,7 @@ the ticket-quality verdict, not the pipeline-run verdict.
 
 ### Branch context entry
 
-Written once by `resolve_branch_context` at pipeline start (Step 0.5), before the first agent
+Written once by `resolve_branch_context` at pipeline start (preamble), before the first agent
 spawn. Records the branch decisions for this run so crash-resume can recover them without
 re-resolving.
 
@@ -202,7 +202,7 @@ branch yet (GitHub #412). That case also writes one extra line naming the trigge
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-decision|info|trigger=pr-review-pass-uat; merge pending: epic Branch Directive Merge Policy: manual requires human merge" >> "$LOG_FILE"
 ```
 
-`mode-change` is written to Step 0.6's `META|autonomy` guard instead of a silent re-append
+`mode-change` is written to the preamble's `META|autonomy` guard, not a silent re-append,
 when a resume's `--mode` flag differs from the autonomy already recorded for this run —
 gate decisions upstream were made under the old mode, so the switch must be visible, not
 last-wins:
@@ -1000,7 +1000,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|<CODE>" >> "$LOG_FILE"
 | `REPRO_BLOCKED` | Reproduce skill blocked — insufficient detail in ticket (Step 1.5) |
 | `PR_FEEDBACK_EXHAUSTED` | `PR_FEEDBACK_CYCLE` reached 3 — reconciliation cycle capped, needs human review (Step 5.5) |
 | `PR_REVIEW_EXHAUSTED` | `ITERATION` reached 3 — the pr-review → pr-iterate → re-implement → verify cycle is capped, needs human review (Step 4.6) |
-| `BRANCH_DIRECTIVE_INVALID` | Parent epic has a malformed `## Branch Directive` block — gate-stop, no fallback (Step 0.5) |
+| `BRANCH_DIRECTIVE_INVALID` | Parent epic has a malformed `## Branch Directive` block — gate-stop, no fallback (preamble) |
 | `CODE_REVIEW_EXHAUSTED` | Code-review fix-and-re-review loop reached 3 cycles with medium+ severity findings still open (Step 4b) |
 | `RECONCILE_EXHAUSTED` | `RECONCILE_CYCLE` reached 3 — gate hold → re-approve → re-hold cycle capped, needs human review (Step 3.5) |
 | `HUMAN_HOLD_EXHAUSTED` | A human-hold request would push `hold_attempts` past `FLEET_HOLD_MAX_ATTEMPTS` (default 3) — the ask → partial-answer → re-ask cycle is capped, needs human review. Written by fleetd, not the router (`human-hold-protocol`, mirrors `RECONCILE_EXHAUSTED`'s shape) |

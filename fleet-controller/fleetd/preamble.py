@@ -2,8 +2,9 @@
 
 Every phase skill assumes an operating environment it never builds itself: an
 env file to source, a pipeline log carrying a schema line, a resolved branch
-decision, a validated Linear team. On the manual path the router's Steps
-0.1–0.6 establish all of it before the first agent runs. fleetd dispatches
+decision, a validated Linear team. On the manual path the router's Step
+0.1 (the same `ticket-preamble.sh`, with `NEW_RUN=true`) establishes all of
+it before the first agent runs. fleetd dispatches
 individual phases, so on the automated path nothing did.
 
 This module is deliberately thin. The work is in

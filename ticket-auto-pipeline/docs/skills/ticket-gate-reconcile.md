@@ -19,7 +19,7 @@ When a complex ticket was held at the gate and a human later approves it with `/
 | Input | Source | Required |
 |-------|--------|----------|
 | Ticket ID | From router spawn instruction | Yes |
-| /tmp/ticket-auto-{ID}-env.sh | Written by router Step 0.5 | Yes |
+| /tmp/ticket-auto-{ID}-env.sh | Written by `ticket-preamble.sh` (router Step 0.1) | Yes |
 | Pipeline log | ./logs/{ID}-pipeline.log | Yes |
 | Heartbeat log | ./logs/{ID}-heartbeat.log | Yes |
 | notes.md | {ticket-dir}/notes.md | Yes |

@@ -908,7 +908,8 @@ def capture_phase_return(tid, phase, text, attempt=None, lib_dir=None,
 #   genuinely cannot move, and the instruction is preserved verbatim.
 #
 # Flags stay where they already are: the phase skills parse their arguments
-# out of `$ARGUMENTS` as natural language today (`SKILL.md:954,1042`), so
+# out of `$ARGUMENTS` as natural language today (each phase SKILL.md's own
+# argument parsing), so
 # promoting `--from-step` or `--mode extract` to a real CLI flag would require
 # changing every skill's argument handling for no behavioural gain, and would
 # leave the manual `/ticket-verify` path parsing a different grammar than the
