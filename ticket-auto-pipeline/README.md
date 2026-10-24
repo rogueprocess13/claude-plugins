@@ -47,6 +47,8 @@ LOCAL_URL: http://localhost:5173
 UAT_URL: https://staging.example.com
 ```
 
+`REPOS_ROOT` must **also** be set as an environment variable (e.g. in the `env` block of `~/.claude/settings.local.json`). `/ticket-auto` reads it from `CLAUDE.md` and exports it for its phases, but the standalone `/ticket-approve` / `/ticket-reject` commands and the local manifest layer (`lib/manifest-read.sh`) read only the environment and fail with "could not make … manifest-addressable" when it is missing — `/ticket-env-check` does not catch this.
+
 **4. Validate the full setup** from within Claude Code:
 
 ```
@@ -111,7 +113,7 @@ Optional:
 | `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_OPUS_MODEL` etc. | Model overrides |
 | `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` | Commit authorship |
 | `UAT_URL` | UAT environment URL for verification |
-| `REPOS_ROOT` | Workspace root (default: `~/repos`) |
+| `REPOS_ROOT` | Workspace root. Also declared in `CLAUDE.md` (below), but **must be exported in the environment too** for `/ticket-approve`, `/ticket-reject` and anything else that reads the local manifest layer (`lib/manifest-read.sh` reads only the environment — no `CLAUDE.md` fallback, no default). `/ticket-auto` exports it for its own phases. |
 | `TICKET_AUTONOMY` | Default autonomy mode — `manual` (default), `auto`, or `semi-auto` |
 
 Fleet controller configuration (all optional, safe defaults):
@@ -180,6 +182,18 @@ Restart Claude Code after adding MCP servers.
 | `/ticket-pr-review <id>` | PR code review pass |
 | `/ticket-pr-iterate <id>` | Iteration on PR feedback |
 | `/ticket-prescan [path]` | Build durable agent-knowledge docs for a repo |
+
+### Human Decisions
+
+Approval and rejection are facts in the ticket's local manifest (tracker-approval-by-script). Adding or removing an `approved` label in Linear, or moving the card, has no effect — the Linear column and labels are a display-only projection.
+
+| Command | What it does |
+|---------|-------------|
+| `/ticket-approve <id>` | Approve a ticket held at the gate: fires `human-approve` (`Approve → Ready`), records `approved: true` / `approval_provenance: human` in the manifest, clears a `needs-info` flag. Re-run `/ticket-auto <id>` afterwards. |
+| `/ticket-reject <id>` | Reject the plan: fires `human-reject` (`Approve → Todo`) and clears the approval fact, so the ticket is re-appraised. |
+| Answer Open Questions | Reply in the ticket's Linear comment thread before approving; the gate-reconcile agent folds the answers into the plan on the next run. |
+
+Both commands need `REPOS_ROOT` in the environment (see [Required Environment](#required-environment)).
 
 ### Flow Control
 
@@ -335,6 +349,7 @@ Each gate-stop emits a `|META|gate-stop|fail|<CODE>` line into the pipeline log.
 - **`LINEAR_API_KEY` missing**: Add to `~/.claude/settings.local.json` under `env`. Generate from Linear → Settings → API.
 - **`GITHUB_PERSONAL_ACCESS_TOKEN` missing**: Add to same `env` block. Generate from GitHub → Settings → Developer settings → Personal access tokens. Needs `repo` and `pull_requests` scopes.
 - **CLAUDE.md fields missing**: Add `REPOS_ROOT`, `LOCAL_URL`, `UAT_URL` to your project's `CLAUDE.md`. These are project-specific, not global.
+- **`/ticket-approve` fails with "could not make … manifest-addressable" (exit 3)**: `REPOS_ROOT` is in `CLAUDE.md` but not in the environment. Export it (e.g. the `env` block of `~/.claude/settings.local.json`) and start a new session.
 
 ### State machine drift
 

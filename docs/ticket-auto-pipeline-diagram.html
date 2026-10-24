@@ -206,6 +206,14 @@
   .node.terminal rect { stroke: var(--ok); }
   .node.terminal:hover rect { stroke: var(--ok); }
   .node.start rect { stroke: var(--info); }
+  .node.epic rect { stroke-dasharray: 5 3; }
+  .lane-label {
+    fill: var(--fg-mute);
+    font-size: 10px;
+    font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
 
   /* Edges */
   .edge path.line {
@@ -737,12 +745,12 @@
   <section class="view active" id="view-pipeline">
     <div class="heading">
       <h2>End-to-end ticket flow</h2>
-      <span class="sub">Linear states · pipeline phases · transition triggers</span>
+      <span class="sub">workflow states · pipeline phases · every workflow.json trigger</span>
     </div>
     <div class="helptext">Click any <span class="mono" style="color:var(--auto)">phase chip</span> below the flow to drill into its steps, gates and stop codes. Hover an edge for trigger details.</div>
 
     <div class="diagram-wrap">
-      <svg class="diagram" id="diagram" viewBox="0 0 1960 640" preserveAspectRatio="xMinYMid meet">
+      <svg class="diagram" id="diagram" viewBox="0 0 1960 730" preserveAspectRatio="xMinYMid meet">
         <defs>
           <marker id="arrow-auto" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 Z" fill="var(--auto)"></path>
@@ -764,12 +772,9 @@
     <div class="side-effects">
       <div>
         <h4>side transitions</h4>
-        <div class="sub">any state ↔ any state</div>
+        <div class="sub">no state change · flags / facts only</div>
       </div>
-      <ul>
-        <li><code>needs-info</code><span class="ann">— pauses workflow, adds <span class="mono" style="color:var(--info)">needs-info</span> label until clarification arrives</span></li>
-        <li><code>needs-info-resolved</code><span class="ann">— removes <span class="mono" style="color:var(--info)">needs-info</span> label, resumes from current state</span></li>
-      </ul>
+      <ul id="side-list"></ul>
     </div>
   </section>
 
@@ -813,17 +818,267 @@
 <footer class="foot">
   <span>ticket-auto · v1</span>
   <span>·</span>
-  <span>states: 7</span>
+  <span id="foot-states">states</span>
   <span>·</span>
-  <span>phases: 8</span>
+  <span id="foot-phases">phases</span>
   <span>·</span>
-  <span>transitions: 10 + 2 side</span>
+  <span id="foot-triggers">triggers</span>
 </footer>
+
+<!-- Canonical trigger list for this page. Kept identical to
+     ticket-auto-pipeline/skills/ticket-flow/workflow.json by check-diagram-drift.py (make check-generated). -->
+<script type="application/json" id="workflow-triggers">
+{
+  "_note": "Copy of skills/ticket-flow/workflow.json triggers. from/to/adds/removes/event must match workflow.json exactly: ticket-auto-pipeline/skills/ticket-flow/check-diagram-drift.py (run by make check-generated) fails the build on any difference. `diagram` is drawing metadata only. The page draws every edge and every side transition from this block.",
+  "states": ["Backlog", "Todo", "Approve", "Ready", "Review", "UAT", "Done"],
+  "side_states": {
+    "Blocked": "well-known state that no trigger names: blocked-by dependency enforcement moves a ticket in and out (vocabulary events blocked / unblocked, projected to nothing)"
+  },
+  "triggers": {
+    "appraise-start": {
+      "from": ["Backlog", "Todo"],
+      "to": "Todo",
+      "adds": [],
+      "removes": [],
+      "event": "appraise-started",
+      "diagram": {
+        "kind": "auto",
+        "phase": "APPRAISE",
+        "note": "STEP_1 claims the ticket before the APPRAISE spawn (from Todo it is an idempotent re-run). Board projection also sets assignee: me."
+      }
+    },
+    "appraise-complete": {
+      "from": "Todo",
+      "to": "Approve",
+      "adds": [],
+      "removes": [],
+      "event": "appraise-completed",
+      "diagram": {
+        "kind": "auto",
+        "phase": "EXEC",
+        "note": "End of EXEC: the plan artifact exists and the ticket waits at the gate."
+      }
+    },
+    "human-approve": {
+      "from": "Approve",
+      "to": "Ready",
+      "adds": [],
+      "removes": ["rejected"],
+      "event": "human-approved",
+      "diagram": {
+        "kind": "human",
+        "phase": "GATE",
+        "note": "/ticket-approve (provenance human), or gate-check.sh auto-approving a simple ticket in auto/semi-auto mode (provenance policy). Writes manifest approved / approval_provenance, not a tracker label."
+      }
+    },
+    "human-reject": {
+      "from": "Approve",
+      "to": "Todo",
+      "adds": [],
+      "removes": ["pre-approved"],
+      "event": "human-rejected",
+      "diagram": {
+        "kind": "reject",
+        "phase": "GATE",
+        "loopY": 330,
+        "note": "/ticket-reject clears the manifest approval fact and sends the ticket back to Todo for re-appraisal."
+      }
+    },
+    "implement-outcome": {
+      "from": null,
+      "to": null,
+      "adds": [],
+      "removes": [],
+      "event": "implement-outcome-recorded",
+      "diagram": {
+        "side": "records the Smooth / Rough / Hard outcome in the manifest and pipeline log; projects nothing to the board"
+      }
+    },
+    "implement-complete": {
+      "from": "Ready",
+      "to": "Review",
+      "adds": [],
+      "removes": [],
+      "event": "implement-completed",
+      "diagram": {
+        "kind": "auto",
+        "phase": "IMPLEMENT",
+        "note": "Fired by the router right after IMPLEMENT. VERIFY (localhost) then runs while the ticket sits in Review, before PR-REVIEW. Clears manifest approved."
+      }
+    },
+    "pr-review-pass-done": {
+      "from": "Review",
+      "to": "Done",
+      "adds": ["reviewed"],
+      "removes": ["rejected"],
+      "event": "pr-review-passed",
+      "diagram": {
+        "kind": "auto",
+        "phase": "PR-REVIEW",
+        "note": "Chosen by uat_decide_trigger: UAT Policy epic, or per-ticket with no UAT target and no pending human merge."
+      }
+    },
+    "pr-review-pass-uat": {
+      "from": "Review",
+      "to": "UAT",
+      "adds": ["reviewed"],
+      "removes": ["rejected"],
+      "event": "pr-review-passed",
+      "diagram": {
+        "kind": "auto",
+        "phase": "PR-REVIEW",
+        "note": "Chosen by uat_decide_trigger: per-ticket policy with a UAT target, or the PR is left for a human merge (--merge-pending)."
+      }
+    },
+    "pr-review-fail": {
+      "from": null,
+      "to": null,
+      "adds": ["rejected"],
+      "removes": ["reviewed"],
+      "event": "pr-review-failed",
+      "diagram": {
+        "side": "PR-REVIEW warn/fail verdict; no state change, pr-iterate follows"
+      }
+    },
+    "pr-iterate": {
+      "from": "Review",
+      "to": "Ready",
+      "adds": [],
+      "removes": ["reviewed", "rejected"],
+      "event": "pr-iteration-requested",
+      "diagram": {
+        "kind": "loopback",
+        "phase": "PR-REVIEW",
+        "loopY": 430,
+        "note": "After a warn verdict: re-implement, VERIFY, then PR-REVIEW again (max 3 ITERATION cycles, then PR_REVIEW_EXHAUSTED)."
+      }
+    },
+    "uat-pass": {
+      "from": "UAT",
+      "to": "Done",
+      "adds": [],
+      "removes": ["reviewed"],
+      "event": "uat-passed",
+      "diagram": {
+        "kind": "human",
+        "phase": "VERIFY",
+        "note": "Not fired by the autonomous run: /ticket-verify --env uat, /ticket-batch-verify, or a human after merging a parked PR. Refused under UAT Policy epic."
+      }
+    },
+    "uat-fail": {
+      "from": "UAT",
+      "to": "Ready",
+      "adds": ["rejected"],
+      "removes": ["reviewed"],
+      "event": "uat-failed",
+      "diagram": {
+        "kind": "reject",
+        "phase": "VERIFY",
+        "loopY": 510,
+        "note": "A failed /ticket-verify --env uat run sends the ticket back to Ready for fixes."
+      }
+    },
+    "needs-info": {
+      "from": null,
+      "to": null,
+      "adds": ["needs-info"],
+      "removes": [],
+      "event": "needs-info-requested",
+      "diagram": {
+        "side": "pauses work until clarification arrives (ticket-critique, reproduce BLOCKED, readiness gate)"
+      }
+    },
+    "needs-info-resolved": {
+      "from": null,
+      "to": null,
+      "adds": [],
+      "removes": ["needs-info"],
+      "event": "needs-info-resolved",
+      "diagram": {
+        "side": "clarification received (also cleared by /ticket-approve); resumes from the current state"
+      }
+    },
+    "needs-adr": {
+      "from": null,
+      "to": null,
+      "adds": ["needs-adr"],
+      "removes": [],
+      "event": "needs-adr-requested",
+      "diagram": {
+        "side": "the ADR gate parked the ticket (CREATED_PROPOSED / SUPERSEDE_REQUIRED / CONFLICT)"
+      }
+    },
+    "needs-adr-resolved": {
+      "from": null,
+      "to": null,
+      "adds": [],
+      "removes": ["needs-adr"],
+      "event": "needs-adr-resolved",
+      "diagram": {
+        "side": "the governing ADR was accepted; resumes from the current state"
+      }
+    },
+    "re-claim": {
+      "from": null,
+      "to": null,
+      "adds": [],
+      "removes": ["pre-approved"],
+      "event": "re-claimed",
+      "diagram": {
+        "side": "gate-reconcile re-hold: clears the manifest approval fact and restarts the gate hold cycle"
+      }
+    },
+    "epic-integration-open": {
+      "from": "Backlog",
+      "to": "Review",
+      "adds": [],
+      "removes": [],
+      "event": "epic-integration-opened",
+      "diagram": {
+        "kind": "auto",
+        "row": "epic",
+        "note": "Epic issue only. Fired by fleet-controller's epic-readiness detector once an integration PR is open."
+      }
+    },
+    "epic-uat-start": {
+      "from": "Review",
+      "to": "UAT",
+      "adds": [],
+      "removes": [],
+      "event": "epic-uat-started",
+      "diagram": {
+        "kind": "human",
+        "row": "epic",
+        "note": "Epic issue only. An operator signals the integration branch is merged and deployed."
+      }
+    },
+    "epic-uat-pass": {
+      "from": "UAT",
+      "to": "Done",
+      "adds": [],
+      "removes": [],
+      "event": "epic-uat-passed",
+      "diagram": {
+        "kind": "human",
+        "row": "epic",
+        "note": "Epic issue only. Epic-level UAT accepted. There is deliberately no epic-rejection trigger."
+      }
+    }
+  }
+}
+</script>
 
 <script>
 // =========================================================================
 //  DATA  — the entire pipeline as a structured object
 // =========================================================================
+const WF = JSON.parse(document.getElementById("workflow-triggers").textContent);
+
+// Node id for a workflow state label; the epic issue's lane gets its own nodes.
+function stateNodeId(label, row) {
+  return (row === "epic" ? "epic-" : "") + label.toLowerCase();
+}
+
 const DATA = {
   states: [
     { id: "backlog",  label: "Backlog",  kind: "start" },
@@ -833,15 +1088,20 @@ const DATA = {
     { id: "review",   label: "Review" },
     { id: "uat",      label: "UAT" },
     { id: "done",     label: "Done",     kind: "terminal" },
+    // Epic acceptance lane (UAT Policy: epic) — acts on the epic issue itself, never on a child.
+    { id: "epic-backlog", label: "Backlog", kind: "epic start", col: "backlog", row: "epic" },
+    { id: "epic-review",  label: "Review",  kind: "epic",       col: "review",  row: "epic" },
+    { id: "epic-uat",     label: "UAT",     kind: "epic",       col: "uat",     row: "epic" },
+    { id: "epic-done",    label: "Done",    kind: "epic terminal", col: "done", row: "epic" },
   ],
 
-  // 7 nodes laid out across the canvas; columns are spaced
   layout: {
     width: 1800,
-    height: 640,
+    height: 730,
     nodeWidth: 120,
     nodeHeight: 64,
     rowY: 170,
+    epicRowY: 650,
     cols: {
       backlog: 110,
       todo:    405,
@@ -851,32 +1111,38 @@ const DATA = {
       uat:     1585,
       done:    1880,
     },
-    // Each loopback transition gets an explicit vertical lane below the phase chips,
-    // so loopback labels never collide with chips or with each other.
-    loopbackLanes: {
-      t4:  330,  // approve → todo  (human-reject)
-      t8:  430,  // review  → ready (pr-iterate) — deep enough to clear VERIFY chip (y=318-362) at all x
-      t10: 510,  // uat     → ready (uat-fail)    — deeper still to separate from t8
-    },
   },
 
-  transitions: [
-    // Label adds/removes below are the board PROJECTION (tracker-flow-projection-cutover) —
-    // the four labels workflow.json's board_drivers.linear ever touches: needs-info, needs-adr,
-    // rejected, reviewed. Approval (approved) is a local manifest fact, not a tracker label
-    // (tracker-approval-by-script); complexity (Simple/Complex) and outcome (Smooth/Rough/Hard)
-    // are never written to the tracker at all.
-    { id: "t1", from: "backlog", to: "todo",    trigger: "appraise-start",      kind: "auto",   phase: "APPRAISE",   note: "board projection also sets assignee: me" },
-    { id: "t2", from: "todo",    to: "approve", trigger: "appraise-complete",   kind: "auto",   phase: "EXEC" },
-    { id: "t3", from: "approve", to: "ready",   trigger: "human-approve",       kind: "human",  phase: "GATE", remove: ["rejected"], note: "manifest approved/approval_provenance set" },
-    { id: "t4", from: "approve", to: "todo",    trigger: "human-reject",        kind: "reject", phase: "GATE", note: "human rejects — loops back to Todo" },
-    { id: "t5", from: "ready",   to: "review",  trigger: "implement-complete",  kind: "auto",   phase: "IMPLEMENT", note: "manifest approved cleared" },
-    { id: "t6", from: "review",  to: "done",    trigger: "pr-review-pass-done", kind: "auto",   phase: "PR-REVIEW", add: ["reviewed"], remove: ["rejected"] },
-    { id: "t7", from: "review",  to: "uat",     trigger: "pr-review-pass-uat",  kind: "auto",   phase: "PR-REVIEW", add: ["reviewed"], remove: ["rejected"] },
-    { id: "t8", from: "review",  to: "ready",   trigger: "pr-iterate",          kind: "loopback", phase: "PR-REVIEW", remove: ["reviewed", "rejected"] },
-    { id: "t9", from: "uat",     to: "done",    trigger: "uat-pass",            kind: "auto",   phase: "VERIFY", remove: ["reviewed"] },
-    { id: "t10", from: "uat",    to: "ready",   trigger: "uat-fail",            kind: "loopback", phase: "VERIFY", add: ["rejected"], remove: ["reviewed"] },
-  ],
+  // Built from the workflow-triggers block: every state-changing trigger is an edge.
+  // Label adds/removes are the board projection's flags; approval, complexity and
+  // outcome are local manifest facts and are never tracker labels.
+  transitions: Object.entries(WF.triggers)
+    .filter(([, t]) => t.to !== null)
+    .map(([name, t]) => {
+      const d = t.diagram || {};
+      const fromLabels = Array.isArray(t.from) ? t.from : [t.from];
+      return {
+        id: name,
+        trigger: name,
+        row: d.row || "ticket",
+        from: stateNodeId(fromLabels[0], d.row),
+        to: stateNodeId(t.to, d.row),
+        fromLabels,
+        toLabel: t.to,
+        kind: d.kind,
+        phase: d.phase || null,
+        loopY: d.loopY,
+        add: t.adds.length ? t.adds : null,
+        remove: t.removes.length ? t.removes : null,
+        event: t.event,
+        note: d.note,
+      };
+    }),
+
+  // Triggers that change no state, plus side states no trigger names (Blocked).
+  sideTransitions: Object.entries(WF.triggers)
+    .filter(([, t]) => t.to === null)
+    .map(([name, t]) => ({ trigger: name, add: t.adds, remove: t.removes, desc: t.diagram.side })),
 
   // Phase chips that sit between states (referenced by transition.phase)
   // Each chip is positioned between fromCol and toCol along the main flow
@@ -897,12 +1163,12 @@ const DATA = {
       agentType: "ticket-appraise-agent",
       description: "Reads the ticket, sets up a sandboxed workspace, sizes the work, gathers prior art and codebase context, then hands off an artifact summarising the plan and complexity.",
       labelsActive: [
-        { name: "claimed",    note: "added on start" },
-        { name: "{complexity}", note: "set on completion" },
+        { name: "manifest: stage", note: "Todo, set by appraise-start (claim)" },
+        { name: "notes.md: complexity", note: "simple or complex — never a tracker label" },
       ],
       steps: [
         { name: "setup-workspace",         desc: "Clones the repo into an isolated worktree and prepares the agent shell." },
-        { name: "complexity-sweep",        desc: "Skims the ticket and assigns a complexity score: simple, medium or complex." },
+        { name: "complexity-sweep",        desc: "Skims the ticket and assigns a complexity bucket: simple or complex." },
         { name: "prior-art",               desc: "Searches the ticket tracker and PR history for related work and earlier attempts." },
         { name: "codebase-investigation",  desc: "Greps the repo for relevant modules, builds a dependency map of likely-touched files." },
         { name: "handoff",                 desc: "Writes the appraisal artifact and transitions the ticket to Todo." },
@@ -913,11 +1179,11 @@ const DATA = {
 
     "REPRODUCE": {
       transition: null,
-      agentType: "ticket-reproduce-agent",
+      agentType: "ticket-appraise-agent",
       description: "Bug tickets only. Launches a browser on UAT, navigates step-by-step through the reproduction plan, and confirms whether the bug manifests. Blocks the pipeline if the bug cannot be reproduced or the ticket lacks sufficient detail.",
       labelsActive: [
-        { name: "bug",      note: "entry condition — phase skipped if absent" },
-        { name: "needs-info", note: "added on BLOCKED result" },
+        { name: "manifest: type = bug", note: "entry condition — phase skipped otherwise" },
+        { name: "needs-info", note: "board flag, added on BLOCKED result" },
       ],
       steps: [
         { name: "setup",    desc: "Runs ticket-setup to prepare the workspace and loads app knowledge and credentials." },
@@ -939,11 +1205,10 @@ const DATA = {
 
     "EXEC": {
       transition: ["Todo", "Approve"],
-      agentType: "ticket-appraise-exec-agent",
+      agentType: "ticket-appraise-agent",
       description: "Loads the saved appraisal workspace, produces the canonical execution artifact, derives a verification plan (complex tickets), checks verification readiness, posts back to Linear, and hands off to the gate.",
       labelsActive: [
-        { name: "claimed",      note: "present from APPRAISE" },
-        { name: "{complexity}", note: "required, drives gate behaviour" },
+        { name: "notes.md: complexity", note: "required, drives gate behaviour" },
       ],
       steps: [
         { name: "load-workspace",        desc: "Re-attaches to the APPRAISE workspace so context carries forward without re-fetching." },
@@ -972,23 +1237,23 @@ const DATA = {
       agentType: "bash: gate-check.sh",
       description: "Multi-layer decision point. Bash gates check content quality score, structural completeness (zero AC, missing repro steps), and verification readiness before complexity routing. Tickets can hold or gate-stop at any layer regardless of complexity.",
       labelsActive: [
-        { name: "claimed",      note: "present" },
-        { name: "approved",     note: "added on pass" },
-        { name: "{complexity}", note: "drives auto vs hold" },
+        { name: "manifest: approved", note: "set on pass by human-approve — a local fact, not a label" },
+        { name: "manifest: approval_provenance", note: "human (/ticket-approve) or policy (auto-approve)" },
+        { name: "notes.md: complexity", note: "drives auto vs hold" },
       ],
       steps: [
         { name: "gate-check",         desc: "Bash-only gate (gate-check.sh --mode entry). Five layered checks: (2.5) content quality score from critique — BLOCKED status or score <40 holds; (2.5a) ZERO_AC gate-stop if ticket has no ACs; (2.5b) BUG_NO_REPRO gate-stop if bug ticket lacks repro steps; (2.6) verification readiness — holds if 2+ of 4 prerequisites missing in plan artifact. No LLM involved." },
-        { name: "complexity-routing", desc: "Tickets that clear all content checks: simple + auto|semi-auto → auto-approve immediately. complex OR manual mode → hold in Approve, wait for human approved label. Autonomy resolved once at startup." },
-        { name: "gate-reconcile",     desc: "When a held ticket is re-approved, a gate-reconcile agent (STEP_3_5) fetches Linear comments, evaluates open questions, and either passes clean or re-holds with an amendment cycle." },
+        { name: "complexity-routing", desc: "Tickets that clear all content checks: simple + auto|semi-auto → auto-approve immediately. complex OR manual mode → hold in Approve until a person runs /ticket-approve (or /ticket-reject). Autonomy resolved once at startup." },
+        { name: "gate-reconcile",     desc: "When a held ticket is approved with /ticket-approve, a gate-reconcile agent (STEP_3_5) fetches Linear comments, evaluates open questions, and either passes clean or re-holds with an amendment cycle." },
       ],
       gateText: {
         title: "Multi-layer content gate",
-        body: "Checks run in order before complexity routing: <code>CRITIQUE_BLOCKED</code> or score &lt;40 holds the ticket; <code>ZERO_AC</code> and <code>BUG_NO_REPRO</code> are hard stops; verification readiness (2+ prerequisites missing) holds. Only tickets that clear all structural checks proceed to complexity routing — <code>simple</code> auto-approves, <code>complex</code> waits for human <code>approved</code> label."
+        body: "Checks run in order before complexity routing: <code>CRITIQUE_BLOCKED</code> or score &lt;40 holds the ticket; <code>ZERO_AC</code> and <code>BUG_NO_REPRO</code> are hard stops; verification readiness (2+ prerequisites missing) holds. Only tickets that clear all structural checks proceed to complexity routing — <code>simple</code> auto-approves in auto mode, <code>complex</code> waits for a person to run <code>/ticket-approve</code>. Approval is a local manifest fact: an <code>approved</code> label added in Linear does nothing."
       },
       outcomes: [
-        { verdict: "auto",  label: "simple",        desc: "Cleared all content gates + auto mode. Adds approved label, transitions Approve → Ready." },
-        { verdict: "pass",  label: "human-approve", desc: "Reviewer adds approved label. Transitions Approve → Ready." },
-        { verdict: "fail",  label: "human-reject",  desc: "Reviewer rejects. Loops back to Todo for re-appraisal." },
+        { verdict: "auto",  label: "simple",        desc: "Cleared all content gates + auto/semi-auto mode. gate-check.sh fires human-approve with provenance policy: manifest approved, Approve → Ready." },
+        { verdict: "pass",  label: "human-approve", desc: "A person runs /ticket-approve: manifest approved (provenance human), Approve → Ready." },
+        { verdict: "fail",  label: "human-reject",  desc: "A person runs /ticket-reject: approval cleared, loops back to Todo for re-appraisal." },
       ],
       stopCodes: [
         { code: "CRITIQUE_SCORE_MISSING",     desc: "Critique section exists in notes.md but no **Score:** line found — structural failure, cannot evaluate content quality." },
@@ -996,27 +1261,26 @@ const DATA = {
         { code: "CRITIQUE_SCORE_IMPLAUSIBLE", desc: "Score is inconsistent with BLOCKER count (e.g., score 80 with 2 BLOCKERs, max plausible 50) — indicates LLM scoring error." },
         { code: "ZERO_AC",                   desc: "Ticket has zero acceptance criteria — nothing verifiable exists, implementation has no success condition." },
         { code: "BUG_NO_REPRO",              desc: "Bug ticket has no reproduction steps — verifier cannot confirm the defect exists before implementation." },
-        { code: "APPROVAL_REVOKED",          desc: "The approved label was removed while the gate was watching — re-enters hold state." },
+        { code: "APPROVAL_REVOKED",          desc: "The manifest records no approval at re-approve time (never granted, or cleared by re-claim or /ticket-reject). Fix: run /ticket-approve." },
       ],
     },
 
     "IMPLEMENT": {
       transition: ["Ready", "Review"],
       agentType: "ticket-implement-agent",
-      description: "Writes the code. Verifies the approval still holds, branches, implements against the execution artifact, runs the test suite, performs a self-review, then commits and pushes a PR.",
+      description: "Writes the code. Verifies the approval still holds, branches, implements against the execution artifact, runs the test suite, performs a self-review, then commits and pushes. The router then fires implement-complete (Ready → Review) and runs VERIFY.",
       labelsActive: [
-        { name: "approved",     note: "required entry condition" },
-        { name: "claimed",      note: "present" },
-        { name: "{complexity}", note: "present" },
+        { name: "manifest: approved", note: "required entry condition; cleared by implement-complete" },
+        { name: "manifest: outcome", note: "Smooth / Rough / Hard, recorded by implement-outcome" },
       ],
       steps: [
-        { name: "check-approval",  desc: "Re-confirms the approved label is still on the ticket before doing any work." },
+        { name: "check-approval",  desc: "Re-confirms the manifest still records approval before doing any work." },
         { name: "detect-path",     desc: "Determines the target paths from the execution artifact's file plan." },
         { name: "checkout-branch", desc: "Creates the feature branch from the configured base." },
         { name: "implement",       desc: "Executes the agent loop to write code against the artifact's spec." },
         { name: "run-tests",       desc: "Runs the project test suite locally; iterates on failures up to the retry budget." },
         { name: "code-review",     desc: "Self-review pass — formatter, lint, smell checks, diff sanity." },
-        { name: "commit-push",     desc: "Commits, pushes the branch, opens a draft PR and posts the link back to the ticket." },
+        { name: "commit-push",     desc: "Commits and pushes the branch. The PR is opened by VERIFY once local verification passes." },
       ],
       gateText: null,
       stopCodes: [],
@@ -1025,11 +1289,10 @@ const DATA = {
     "PR-REVIEW": {
       transition: ["Review", "Done / UAT / Ready"],
       agentType: "ticket-pr-review-agent",
-      description: "Reads the opened PR, extracts requirements from the ticket, validates the diff against them and posts findings. The verdict decides whether the work merges, escalates to UAT, or loops back for iteration.",
+      description: "Runs after VERIFY has passed on localhost and opened the PR. Extracts requirements from the ticket, validates the diff against them and posts findings. A pass goes to Done or UAT as uat_decide_trigger decides; a warn loops back for iteration.",
       labelsActive: [
-        { name: "claimed",  note: "present" },
-        { name: "reviewed", note: "added on pass" },
-        { name: "rejected", note: "added on fail" },
+        { name: "reviewed", note: "board flag, added on pass" },
+        { name: "rejected", note: "board flag, added by pr-review-fail" },
       ],
       steps: [
         { name: "fetch-ticket",        desc: "Pulls the full ticket including all comments and the execution artifact." },
@@ -1040,9 +1303,9 @@ const DATA = {
         { name: "merge-decision",      desc: "Computes overall verdict (pass / warn / fail) and chooses the next transition." },
       ],
       outcomes: [
-        { verdict: "pass", label: "✅ pass — done",     desc: "Diff fully satisfies requirements. Transitions Review → Done." },
-        { verdict: "warn", label: "⚠ pass — uat",      desc: "Diff looks right but warrants live verification. Transitions Review → UAT." },
-        { verdict: "fail", label: "❌ fail — iterate", desc: "One or more requirements unmet. Adds rejected, loops Review → Ready. (max 3 iterations — ITERATION counter in pipeline log)" },
+        { verdict: "pass", label: "✅ pass → Done",  desc: "uat_decide_trigger picks pr-review-pass-done: UAT Policy epic, or per-ticket with no UAT target and a merge this run may perform. Review → Done." },
+        { verdict: "pass", label: "✅ pass → UAT",   desc: "uat_decide_trigger picks pr-review-pass-uat: per-ticket policy with a UAT target, or the PR is left for a human merge (manual autonomy / epic Merge Policy). Review → UAT; a person later fires uat-pass." },
+        { verdict: "fail", label: "⚠ warn → iterate", desc: "Requirements unmet. pr-review-fail adds rejected (no state change), then pr-iterate loops Review → Ready → IMPLEMENT → VERIFY → PR-REVIEW. Max 3 ITERATION cycles, then PR_REVIEW_EXHAUSTED." },
       ],
       stopCodes: [
         { code: "PR_REVIEW_VERDICT_UNPARSEABLE", desc: "Reviewer output did not match the expected verdict schema — halts for human inspection." },
@@ -1050,39 +1313,41 @@ const DATA = {
     },
 
     "VERIFY": {
-      transition: ["UAT", "Done / Ready"],
+      transition: null,
       agentType: "ticket-verify-agent",
-      description: "Live user-acceptance verification. A pre-flight step resolves the test user, navigation target, and expected behavior before browser launch — aborting if any are missing. Then walks through requirements as a user would, evaluates outcomes against the spec, and reports back to Linear.",
+      description: "Runs in the autonomous pipeline right after IMPLEMENT (ticket already in Review) and before PR-REVIEW, against localhost in an isolated verify worktree. A pre-flight step resolves the test user, navigation target, and expected behavior — aborting if any are missing. On pass it opens the PR; on fail the router re-runs IMPLEMENT. The UAT exits (uat-pass / uat-fail) are fired only by a separate /ticket-verify --env uat or /ticket-batch-verify run, or by a person after a human merge.",
       labelsActive: [
-        { name: "claimed",  note: "present" },
-        { name: "reviewed", note: "present from PR-REVIEW" },
-        { name: "rejected", note: "added on fail" },
+        { name: "manifest: stage", note: "Review during the autonomous localhost run" },
+        { name: "rejected", note: "board flag, added by uat-fail (UAT run only)" },
       ],
       steps: [
-        { name: "load-requirements", desc: "Reads the checklist extracted by PR-REVIEW so verification mirrors the same spec." },
+        { name: "load-requirements", desc: "Reads the acceptance criteria and verification plan from the ticket workspace (notes.md and the plan artifact)." },
         { name: "pre-flight",        desc: "Resolves test user (5-level chain: --user flag → notes.md Verification Readiness → context.md → Linear ticket → test-users.json catalog), nav target, and expected behavior. Aborts with FAIL if no test user found — no admin default fallback." },
-        { name: "launch-browser",    desc: "Spins up a headed browser session against the staged deploy." },
+        { name: "launch-browser",    desc: "Drives the app with Playwright against LOCAL_URL (localhost), served from the ticket's verify worktree; --env uat targets UAT_URL instead." },
         { name: "execute-steps",     desc: "Walks the user-flow scripts derived from the requirements." },
         { name: "evaluate",          desc: "Compares observed UI / API responses against expected outcomes." },
-        { name: "report",            desc: "Posts a verification report to the ticket and chooses pass or fail transition." },
+        { name: "report",            desc: "Posts a verification report. On pass it opens the PR (META|pr-created); on fail it writes a REMEDIATION_BRIEF for the re-implement." },
       ],
       outcomes: [
-        { verdict: "pass", label: "uat-pass", desc: "All checks green. Transitions UAT → Done; removes claimed and reviewed." },
-        { verdict: "fail", label: "uat-fail", desc: "One or more checks failed, or pre-flight found no test user. Adds rejected, loops UAT → Ready for fixes. (max 3 attempts — VERIFY_ATTEMPTS counter in pipeline log)" },
+        { verdict: "pass", label: "local pass", desc: "All checks green on localhost. Opens the PR; the router moves on to PR-REVIEW. No state change." },
+        { verdict: "fail", label: "local fail", desc: "A check failed, or pre-flight found no test user. The router re-runs IMPLEMENT with the REMEDIATION_BRIEF, then VERIFY again. Max 2 attempts (VERIFY_ATTEMPTS), then VERIFY_EXHAUSTED." },
+        { verdict: "pass", label: "uat-pass",   desc: "Separate --env uat run (or a person after a human merge): UAT → Done, removes reviewed. Refused under UAT Policy epic." },
+        { verdict: "fail", label: "uat-fail",   desc: "Separate --env uat run: adds rejected, removes reviewed, UAT → Ready for fixes." },
       ],
       stopCodes: [
         { code: "REMEDIATION_BRIEF_TRUNCATED", desc: "The remediation brief written back to the ticket was cut off — risk that fixes miss context." },
+        { code: "VERIFY_EXHAUSTED", desc: "Local verification still failing after 2 attempts (1 initial + 1 retry)." },
       ],
     },
 
     "MAINTENANCE": {
       transition: null,
-      agentType: "document + wiki agents",
-      description: "Post-implementation documentation and wiki maintenance. Two agents run sequentially after the ticket reaches Done: ticket-document-agent generates ai-context.md; wiki-maintenance-agent processes wiki errata. Non-blocking — failures are warn-continue.",
+      agentType: "ticket-maintenance-agent",
+      description: "Post-implementation documentation and wiki maintenance. Two ticket-maintenance-agent spawns run sequentially after PR-REVIEW: ticket-document generates ai-context.md; wiki-maintenance processes wiki errata. Non-blocking — failures are warn-continue.",
       labelsActive: [],
       steps: [
-        { name: "document",    desc: "ticket-document-agent writes ai-context.md capturing implementation decisions, touched files, and test coverage notes." },
-        { name: "maintenance", desc: "wiki-maintenance-agent processes wiki errata flagged during implementation (missing pages, stale service docs)." },
+        { name: "document",    desc: "ticket-document writes ai-context.md capturing implementation decisions, touched files, and test coverage notes." },
+        { name: "maintenance", desc: "wiki-maintenance processes wiki errata flagged during implementation (missing pages, stale service docs)." },
       ],
       gateText: null,
       stopCodes: [],
@@ -1091,7 +1356,36 @@ const DATA = {
 };
 
 // Phase order, used by the sub-nav in detail view
-const PHASE_ORDER = ["APPRAISE", "REPRODUCE", "EXEC", "GATE", "IMPLEMENT", "PR-REVIEW", "VERIFY", "MAINTENANCE"];
+const PHASE_ORDER = ["APPRAISE", "REPRODUCE", "EXEC", "GATE", "IMPLEMENT", "VERIFY", "PR-REVIEW", "MAINTENANCE"];
+
+function renderSideList() {
+  const ul = document.getElementById("side-list");
+  ul.innerHTML = "";
+  const chip = (txt, color) => `<span class="mono" style="color:${color}">${txt}</span>`;
+  DATA.sideTransitions.forEach(t => {
+    const li = document.createElement("li");
+    const flags = [
+      ...t.add.map(f => chip("+" + f, "var(--info)")),
+      ...t.remove.map(f => chip("−" + f, "var(--fg-mute)")),
+    ].join(" ");
+    li.innerHTML = `<code>${t.trigger}</code><span class="ann">${flags ? " " + flags : ""} — ${t.desc}</span>`;
+    ul.appendChild(li);
+  });
+  Object.entries(WF.side_states || {}).forEach(([name, desc]) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<code>${name}</code><span class="ann"> (state) — ${desc}</span>`;
+    ul.appendChild(li);
+  });
+}
+
+function renderFooter() {
+  const ticketStates = DATA.states.filter(st => st.row !== "epic").length;
+  const sideStates = Object.keys(WF.side_states || {}).length;
+  document.getElementById("foot-states").textContent = `states: ${ticketStates} + ${sideStates} side`;
+  document.getElementById("foot-phases").textContent = `phases: ${PHASE_ORDER.length}`;
+  document.getElementById("foot-triggers").textContent =
+    `triggers: ${Object.keys(WF.triggers).length} (${DATA.transitions.length} edges + ${DATA.sideTransitions.length} side)`;
+}
 
 // Steps toggle state
 let stepsVisible = false;
@@ -1106,9 +1400,12 @@ function svgEl(tag, attrs = {}) {
   return el;
 }
 
+const STATE_BY_ID = Object.fromEntries(DATA.states.map(s => [s.id, s]));
+
 function nodeRect(stateId) {
-  const x = DATA.layout.cols[stateId];
-  const y = DATA.layout.rowY;
+  const st = STATE_BY_ID[stateId];
+  const x = DATA.layout.cols[st.col || st.id];
+  const y = st.row === "epic" ? DATA.layout.epicRowY : DATA.layout.rowY;
   const w = DATA.layout.nodeWidth;
   const h = DATA.layout.nodeHeight;
   return { x: x - w/2, y: y - h/2, cx: x, cy: y, w, h, left: x - w/2, right: x + w/2, top: y - h/2, bottom: y + h/2 };
@@ -1122,7 +1419,7 @@ function renderNodes() {
     const node = svgEl("g", { class: `node ${s.kind || ""} clickable`, "data-state": s.id });
     const rect = svgEl("rect", { x: r.x, y: r.y, width: r.w, height: r.h, rx: 10, ry: 10 });
     const sub  = svgEl("text", { x: r.cx, y: r.y + 16, class: "sublabel" });
-    sub.textContent = String(i + 1).padStart(2, "0") + " · state";
+    sub.textContent = s.row === "epic" ? "epic · state" : String(i + 1).padStart(2, "0") + " · state";
     const label = svgEl("text", { x: r.cx, y: r.cy + 6, class: "label" });
     label.textContent = s.label;
     node.appendChild(rect); node.appendChild(sub); node.appendChild(label);
@@ -1140,24 +1437,39 @@ function renderNodes() {
         }
       });
       node.addEventListener("click", () => navigateToPhase(outPhaseChip.phase));
-    } else if (s.id === "done") {
-      // Done has no outgoing phase
+    } else {
+      // Done and the epic lane have no outgoing pipeline phase
       node.classList.remove("clickable");
       node.style.cursor = "default";
     }
     g.appendChild(node);
   });
+
+  // Lane captions
+  const ticketLane = svgEl("text", { x: 50, y: DATA.layout.rowY - 50, class: "lane-label" });
+  ticketLane.textContent = "ticket lifecycle";
+  g.appendChild(ticketLane);
+  const epicLane = svgEl("text", { x: 50, y: DATA.layout.epicRowY - 50, class: "lane-label" });
+  epicLane.textContent = "epic issue · UAT Policy: epic — children close Review → Done; acceptance happens here";
+  g.appendChild(epicLane);
 }
 
 const STATE_IDX = Object.fromEntries(DATA.states.map((s, i) => [s.id, i]));
 
-function curveBetween(transitionId, fromId, toId, kind) {
-  const a = nodeRect(fromId);
-  const b = nodeRect(toId);
-  const fromIdx = STATE_IDX[fromId];
-  const toIdx   = STATE_IDX[toId];
+function curveBetween(t) {
+  const a = nodeRect(t.from);
+  const b = nodeRect(t.to);
+  const fromIdx = STATE_IDX[t.from];
+  const toIdx   = STATE_IDX[t.to];
   const dir = b.cx > a.cx ? 1 : -1;
   const stateGap = Math.abs(toIdx - fromIdx);
+
+  // Epic lane: only four nodes, so every edge is a straight run along its row.
+  if (t.row === "epic") {
+    const x1 = a.right, y1 = a.cy;
+    const x2 = b.left,  y2 = b.cy;
+    return { d: `M ${x1} ${y1} L ${x2} ${y2}`, mid: { x: (x1 + x2) / 2, y: y1 } };
+  }
 
   // Forward, adjacent: straight horizontal between right edge of A and left edge of B
   if (dir === 1 && stateGap === 1) {
@@ -1177,7 +1489,7 @@ function curveBetween(transitionId, fromId, toId, kind) {
 
   // Loopback (right-to-left). Each loopback has an explicit lane so labels never collide.
   if (dir === -1) {
-    const laneY = DATA.layout.loopbackLanes[transitionId] || (a.bottom + 200);
+    const laneY = t.loopY || (a.bottom + 200);
     const x1 = a.cx - 25, y1 = a.bottom;
     const x2 = b.cx + 25, y2 = b.bottom;
     // Push control points slightly past the lane so the curve actually reaches it.
@@ -1200,7 +1512,7 @@ function renderEdges() {
   });
 
   ordered.forEach(t => {
-    const c = curveBetween(t.id, t.from, t.to, t.kind);
+    const c = curveBetween(t);
     const cls = `edge ${t.kind}`;
     const eg = svgEl("g", { class: cls, "data-trigger": t.trigger });
 
@@ -1302,7 +1614,9 @@ function showTooltip(t, e) {
     <span class="ttip-trigger">${t.trigger}</span>
     ${(t.kind === "human" || t.kind === "reject") ? `<span class="ttip-tag">human</span>` : ``}
   </div>`;
-  html += `<div class="ttip-row"><span class="k">from → to</span><span class="v mono">${t.from} → ${t.to}</span></div>`;
+  html += `<div class="ttip-row"><span class="k">from → to</span><span class="v mono">${t.fromLabels.join(" | ")} → ${t.toLabel}</span></div>`;
+  if (t.row === "epic") html += `<div class="ttip-row"><span class="k">acts on</span><span class="v mono">the epic issue</span></div>`;
+  if (t.event)  html += `<div class="ttip-row"><span class="k">event</span><span class="v mono">${t.event}</span></div>`;
   if (t.phase) html += `<div class="ttip-row"><span class="k">phase</span><span class="v mono" style="color:var(--auto)">${t.phase}</span></div>`;
   if (t.add)    html += `<div class="ttip-row"><span class="k">adds</span><span class="v add mono">+ ${t.add.join(", ")}</span></div>`;
   if (t.remove) html += `<div class="ttip-row"><span class="k">removes</span><span class="v rem mono">− ${t.remove.join(", ")}</span></div>`;
@@ -1415,7 +1729,7 @@ function renderPhaseDetail(phaseName) {
   if (d.labelsActive && d.labelsActive.length) {
     const card = document.createElement("div");
     card.className = "card";
-    card.innerHTML = `<h4>Labels active</h4>`;
+    card.innerHTML = `<h4>Board flags &amp; manifest facts</h4>`;
     d.labelsActive.forEach(l => {
       const row = document.createElement("div");
       row.className = "label-row";
@@ -1544,6 +1858,8 @@ window.addEventListener("hashchange", () => {
 renderEdges();
 renderPhaseChips();
 renderNodes();
+renderSideList();
+renderFooter();
 
 if (location.hash) {
   const h = location.hash.replace("#", "");

@@ -17,6 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.71.9 / fleet-controller 0.43.6 (2026-10-23)
+
+Docs and state diagram match the code (codebase review 2026-10-23, PO-1/3/4/16, FE-1..6).
+
+Also fleet-controller 0.43.6.
+
+### Fixed
+- Docs said to approve by adding an `approved` label in Linear; approval is `/ticket-approve`.
+  `/ticket-approve` and `/ticket-reject` are in the README command tables.
+- Path B now includes `/ticket-planner resume --create`; `REPOS_ROOT` is documented as a required
+  env var for the manifest layer.
+- `docs/ticket-auto-pipeline-diagram.html` showed 10 of 20 triggers, put VERIFY after PR-REVIEW and
+  had the wrong UAT rule. It is now drawn from an embedded trigger list.
+- Landing page says 11 phases and no longer scrolls sideways on phones; planner diagram no longer
+  calls live settings unimplemented.
+
+### Added
+- `skills/ticket-flow/check-diagram-drift.py`, run by `make check-generated`: fails when the
+  diagram's trigger list differs from `workflow.json`.
 ## 0.71.8 / ticket-planner 0.24.2 / knowledge-curator 0.2.14 (2026-10-23)
 
 Live bugs found by the determinism scans (codebase review 2026-10-23).

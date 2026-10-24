@@ -2,11 +2,11 @@
 
 > Post-gate-hold comment reconciliation agent. Spawned when a held ticket is re-approved. Fetches Linear comments, evaluates open questions, incorporates user guidance into the plan artifact, and either passes clean or re-holds with an amendment cycle. Extracted from ticket-auto Step 3.5.
 
-**Private helper** — not intended for direct invocation. Called internally by [`/ticket-auto`](ticket-auto.md) at STEP_3_5 when a held ticket receives the approved label.
+**Private helper** — not intended for direct invocation. Called internally by [`/ticket-auto`](ticket-auto.md) at STEP_3_5 when a held ticket is approved with `/ticket-approve`.
 
 ## What it does
 
-When a complex ticket was held at the gate and a human later adds the `approved` label, this agent reconciles any new Linear comments against the plan artifact. It checks two hold conditions: unanswered open questions from notes.md, and unprocessed user comments from the hold window. If either triggers, it amends the plan with an `## Amendment #N` section and re-holds the ticket. If both are clear, it writes a clean pass log entry and the router proceeds to implementation.
+When a complex ticket was held at the gate and a human later approves it with `/ticket-approve` (a local manifest fact — the Linear `approved` label is not read), this agent reconciles any new Linear comments against the plan artifact. It checks two hold conditions: unanswered open questions from notes.md, and unprocessed user comments from the hold window. If either triggers, it amends the plan with an `## Amendment #N` section and re-holds the ticket. If both are clear, it writes a clean pass log entry and the router proceeds to implementation.
 
 ## Trigger
 
@@ -49,7 +49,7 @@ flowchart TD
     F -->|No| PASS[Step 8: Clean pass]
     HOLD --> G[Step 6: Amend plan artifact]
     G --> H[Post amendment comment]
-    H --> I[Re-claim: remove approved label]
+    H --> I[Re-claim: clear manifest approval]
     I --> J[Write held log entry]
     J --> K[Report to user]
     PASS --> L[Write clean log entry]

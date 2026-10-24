@@ -7,6 +7,7 @@ test: check-generated check-test-registration test-lib test-fleetd test-planner 
 check-generated:
 	@echo "=== generated-section drift check ==="
 	python3 ticket-auto-pipeline/skills/ticket-flow/gen-dispatch-table.py --check
+	python3 ticket-auto-pipeline/skills/ticket-flow/check-diagram-drift.py
 
 # Every test-*.sh / test_*.py / tests/phase*.sh on disk must appear in this
 # Makefile (and every one listed must exist) — new test files are not
@@ -19,6 +20,7 @@ check-test-registration:
 test-lib:
 	@echo "=== lib unit tests ==="
 	bash ticket-auto-pipeline/lib/tests/test-dispatch-table.sh
+	bash ticket-auto-pipeline/lib/tests/test-diagram-drift.sh
 	bash ticket-auto-pipeline/lib/tests/test-linear-api.sh
 	bash ticket-auto-pipeline/lib/tests/test-linear-api-transport.sh
 	bash ticket-auto-pipeline/lib/tests/test-env-check.sh
