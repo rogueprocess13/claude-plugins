@@ -42,6 +42,7 @@ Each consuming repo gets a `knowledge/` directory at its root:
 | `kc-item.sh` | Deterministic item mutation: `claim`, `complete`, `release`, `add`, `edit`, `status`. `flock`-serialized. Sole agent mutation path. |
 | `kc-render.sh` | Deterministic ASCII stack renderer for `/kc` bare mode. Reads item files directly (not INDEX.md) so it can show `why` and full relation type. Hybrid rank score: priority + age decay − blocked penalty. Read-only, no mutation. |
 | `kc-rank-log.sh` | Ranking telemetry. Source for `kc_rank_log` (append), run for `stats`. Records what each render promoted vs what got claimed, so the rank weights can be retuned from evidence. Append-only, fail-open, `KC_RANK_LOG=0` to disable. |
+| `kc-ingest.sh` | Read-only ingester helpers. `new-plans [--plans-dir D] [--knowledge-dir K] [--marker F] [--since-hours N]` lists plan files modified after the sweep marker, or within the last N hours (default 24) when there is no marker yet, minus those already imported as `source: plan:<slug>` (kc-sweep Step 3). `title <file> [fallback]` prints the first fence-free `# ` heading, else the first `## `, else the fallback/slug (kc-import). |
 | `kc-resurface.sh` | SessionStart hook: inject top-N items as context when `knowledge/` exists. |
 | `kc-prompt-match.sh` | UserPromptSubmit hook: grep prompt against INDEX.md tags/titles, inject matches. |
 

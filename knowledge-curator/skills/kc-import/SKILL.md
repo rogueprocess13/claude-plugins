@@ -34,8 +34,9 @@ for change_dir in openspec/changes/*/; do
   # Check for existing item
   existing=$(grep -l "source: openspec:${name}" knowledge/KC-*.md 2>/dev/null | head -1)
 
-  # Get title from proposal.md
-  title=$(head -5 "${change_dir}proposal.md" | grep "^## " | head -1 | sed 's/^## //')
+  # Get title from proposal.md: its first `# ` heading (fence-aware), else its
+  # first `## `, else the change name
+  title=$(bash "${CLAUDE_PLUGIN_ROOT}/lib/kc-ingest.sh" title "${change_dir}proposal.md" "$name")
 
   # Get completion from tasks.md
   # `|| true`, not `|| echo 0`: grep -c already prints "0" on zero matches
@@ -82,7 +83,7 @@ relates: []
 
 For each `.md` file in `~/.claude/plans/`:
 
-1. Extract title from first `# ` heading
+1. Extract title from first `# ` heading (`kc-ingest.sh title "$plan_file"` — falls back to the first `## `, then the slug)
 2. Check for existing item with `source: plan:<slug>`
 3. Derive project from referenced paths/content
 4. Create or update

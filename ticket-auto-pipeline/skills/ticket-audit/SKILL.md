@@ -122,7 +122,9 @@ Store goal context for embedding in the report file.
 - Fetch current tickets from Linear (same as fresh run)
 - Run `audit-drift-check.sh`:
   ```bash
-  # Prepare snapshot JSON and current JSON temp files, then call
+  # Prepare snapshot JSON ([{"id":"<identifier e.g. WIL-78>","updatedAt":"<Last Updated cell>"}])
+  # and current JSON (the Linear array as-is — the check keys on .identifier,
+  # falling back to .id; a legacy date-only Last Updated compares at date precision), then call
   source lib/audit-drift-check.sh
   audit_drift_check snapshot.json current.json
   ```
@@ -333,7 +335,7 @@ Phase: needs-info
 ## Ticket Inventory (snapshot at audit time)
 | ID | Title | State | Assignee | Last Updated |
 |---|---|---|---|---|
-| WIL-78 | Attorney assignment UI | Todo | — | 2026-05-01 |
+| WIL-78 | Attorney assignment UI | Todo | — | 2026-05-01T14:22:05.000Z |
 
 ## Needs Info (run 1 — delegate to ticket-critique)
 - [ ] WIL-123 — needs-info: missing repro steps

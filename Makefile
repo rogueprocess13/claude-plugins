@@ -125,6 +125,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-state-machine-labels.sh
 	bash ticket-auto-pipeline/lib/tests/test-config.sh
 	bash ticket-auto-pipeline/lib/test-persona-select.sh
+	bash ticket-auto-pipeline/lib/tests/test-persona-refresh.sh
+	bash ticket-auto-pipeline/lib/tests/test-critique-status.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \
 	bash ticket-auto-pipeline/lib/tests/test-gate-check.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \
@@ -155,6 +157,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-prescan-verify.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-sweep.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-route.sh
+	bash ticket-auto-pipeline/lib/tests/test-prescan-system-index.sh
+	bash ticket-auto-pipeline/lib/tests/test-wiki-route.sh
 	bash ticket-auto-pipeline/lib/tests/test-index-schema-contract.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-docs.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-wire-claude-md.sh
@@ -245,6 +249,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-body-drift.sh
 	bash ticket-planner/lib/tests/test-planner-stop-describe.sh
 	bash ticket-planner/lib/tests/test-planner-specify-decisions.sh
+	bash ticket-planner/lib/tests/test-planner-consensus-gate.sh
 	bash ticket-planner/lib/tests/test-planner-answers.sh
 	bash ticket-planner/lib/tests/test-planner-answers-durability.sh
 	bash ticket-planner/lib/tests/test-planner-cited-answers.sh
@@ -278,6 +283,7 @@ test-kc:
 	bash knowledge-curator/test/test-kc-rank-log.sh
 	bash knowledge-curator/test/test-kc-resurface.sh
 	bash knowledge-curator/test/test-kc-prompt-match.sh
+	bash knowledge-curator/test/test-kc-ingest.sh
 
 lint:
 	shellcheck -S error $(SCRIPTS)
