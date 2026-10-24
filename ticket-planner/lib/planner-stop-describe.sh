@@ -22,6 +22,9 @@
 #                           in proposal.md ## Business Outcomes — one
 #                           specify-answer:O<n> input question per decision,
 #                           audience either (planner-specify-waiting-on-human)
+#   CONSENSUS_BLOCKED       position Crosscheck with consensus.md Readiness:
+#                           blocked (one `note` question; the release is an
+#                           edit of consensus.md or a Consensus re-run)
 #   CREATE_GATE             the next phase writes to Linear, unauthorized
 #   PROJECT_GATE            Epic Gen stopped on a single matching project
 #   CROSSCHECK_BLOCKED      the last Crosscheck run has unaccepted blocking codes
@@ -59,9 +62,11 @@ declare -f planner_adr_gate_blocked >/dev/null 2>&1 ||
   source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-adr-gate.sh"
 declare -f planner_specify_decisions_open >/dev/null 2>&1 ||
   source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-specify-decisions.sh"
+declare -f planner_consensus_gate >/dev/null 2>&1 ||
+  source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-consensus-gate.sh"
 
 # The reason values this script emits as a block (the rest are terminal lines).
-PLANNER_STOP_BLOCK_REASONS="CREATE_GATE CROSSCHECK_BLOCKED ADR_GATE SPECIFY_DECISION PROJECT_GATE REFINEMENT_HALT UNTIL_STOP"
+PLANNER_STOP_BLOCK_REASONS="CREATE_GATE CROSSCHECK_BLOCKED CONSENSUS_BLOCKED ADR_GATE SPECIFY_DECISION PROJECT_GATE REFINEMENT_HALT UNTIL_STOP"
 
 # Longest finding/message excerpt quoted inside a question.
 _PLANNER_STOP_EXCERPT_MAX=200
@@ -391,6 +396,23 @@ planner_stop_describe_json() {
         questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
       done <<<"$open"
       _planner_stop_model SPECIFY_DECISION "artifacts/proposal.md" "$round" "$questions" input either
+      return 0
+    fi
+  fi
+
+  # ── consensus readiness ────────────────────────────────────────────────
+  # Read-only, like the halt itself (planner-consensus-gate.sh): bound as
+  # `note` — the answer records that the plan was fixed; the gate releases
+  # only when consensus.md's Readiness is no longer `blocked`.
+  if [ "$pos" = "Crosscheck" ]; then
+    local cg_rc=0
+    planner_consensus_gate "$init" || cg_rc=$?
+    if [ "$cg_rc" -eq 3 ]; then
+      q=$(_planner_stop_question "consensus-blocked" "note" \
+        "Consensus marked the plan Readiness: blocked — it could not resolve a blocking review finding. Fix the plan, change consensus.md's Readiness to ready-for-spec (or re-run Consensus), then answer 'resolved' to run Crosscheck." \
+        "resolved" "")
+      questions=$(jq -nc --argjson q "$q" '[$q]')
+      _planner_stop_model CONSENSUS_BLOCKED "artifacts/consensus.md" "$round" "$questions"
       return 0
     fi
   fi

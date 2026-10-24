@@ -434,19 +434,19 @@
   <span class="leg-item"><span class="leg-swatch agent"></span> LLM agent phase</span>
   <span class="leg-item"><span class="leg-swatch gate"></span> Bash-gated phase</span>
   <span class="leg-item"><span class="leg-swatch terminal"></span> Terminal phase</span>
-  <span class="leg-item"><span class="leg-swatch planned"></span> Planned (unimplemented)</span>
 </footer>
 <footer class="notes">
   <strong>Phase merge:</strong> The original 12-phase design separated Proposal, OpenSpec, StoryGen, and Execution as standalone phases.
   These were merged into Specify (Proposal + OpenSpec) and TicketGen (StoryGen + Execution labelling) — same capabilities, fewer context boundaries. Crosscheck (phase 7) was added later as new deterministic validation, not a merge.<br>
-  <strong>Determinism boundary:</strong> Phases 1–6, 10 are LLM agents. Phase 7 (Crosscheck) is deterministic bash with no agent at all. Phase 8 has bash idempotency guards. Phase 9 is bash-gated (DAG, confidence, validation, verification all deterministic).
-  <strong>Planned:</strong> PLANNER_REVIEW_HOLD and PLANNER_MAX_PHASE_RETRIES are specified but not yet wired into the router dispatch loop. PLANNER_CONSENSUS_HOLD was removed — stopping before the first Linear write (now at Crosscheck) is the default and needs no variable.
+  <strong>Determinism boundary:</strong> Phases 1–6, 8, 9 and 11 are LLM agents. Phase 7 (Crosscheck) and Phase 10 (Refinement) are deterministic bash; Refinement only spawns a dor-semantic-agent scan + audit per ticket that needs one, and every decision is bash. Phase 8 has bash idempotency guards. Phase 9 is bash-gated (body, DAG, confidence, validation, verification all deterministic).
+<br>
+  <strong>Holds and retries:</strong> <code>PLANNER_REVIEW_HOLD=true</code> stops the run after Review (persisted once as <code>--until Review</code>). <code>PLANNER_MAX_PHASE_RETRIES</code> (default 2) caps retries per phase in the router. PLANNER_CONSENSUS_HOLD was removed — stopping before the first Linear write (after Crosscheck) is the default; <code>resume --create</code> crosses it.
 </footer>
 
 <script>
 const DETAILS = {
   appraisal: {
-    title: "Appraisal — Phase 1 of 10",
+    title: "Appraisal — Phase 1 of 11",
     meta: "prompt: planner_prompt_appraisal  ·  artifact: appraisal.md  ·  gate: none",
     rows: [
       ["Agent role", "Interprets the business idea, establishes initiative scope, identifies affected repositories"],
@@ -457,7 +457,7 @@ const DETAILS = {
     ]
   },
   discovery: {
-    title: "Discovery — Phase 2 of 10",
+    title: "Discovery — Phase 2 of 11",
     meta: "prompt: planner_prompt_discovery  ·  artifact: discovery.md  ·  gate: none",
     rows: [
       ["Agent role", "Explores affected repositories, traces code paths, gathers concrete context on symbols and APIs"],
@@ -468,7 +468,7 @@ const DETAILS = {
     ]
   },
   architecture: {
-    title: "Architecture — Phase 3 of 10",
+    title: "Architecture — Phase 3 of 11",
     meta: "prompt: planner_prompt_architecture  ·  artifact: architecture.md  ·  gate: none",
     rows: [
       ["Agent role", "Determines technical approach, evaluates 2-3 alternatives, selects recommended path"],
@@ -479,7 +479,7 @@ const DETAILS = {
     ]
   },
   specify: {
-    title: "Specify — Phase 4 of 10 (merged Proposal + OpenSpec)",
+    title: "Specify — Phase 4 of 11 (merged Proposal + OpenSpec)",
     meta: "prompt: planner_prompt_specify  ·  artifacts: proposal.md, specs/*.md, specs/INDEX.md  ·  gate: none",
     rows: [
       ["Agent role", "Synthesizes all upstream analysis into a proposal AND produces per-ticket spec files in a single pass"],
@@ -491,25 +491,25 @@ const DETAILS = {
     ]
   },
   review: {
-    title: "Review — Phase 5 of 10",
+    title: "Review — Phase 5 of 11",
     meta: "prompt: planner_prompt_review  ·  artifact: review.md  ·  gate: Specify decision gate (bash, before dispatch)",
     rows: [
       ["Agent role", "Skeptical critique of the proposal — finds gaps, risks, and infeasibilities before committing to build"],
       ["Output", "Review findings with severities (blocker/major/minor/nit), missing-from-proposal items, dependency review, ticket shape review, verdict (ready/needs-revision/blocked)"],
       ["Input", "proposal.md + upstream artifacts (appraisal, discovery, architecture)"],
       ["Gate", "Specify decision gate — deterministic bash (planner_specify_gate), run before Review is dispatched. Halts before Review on an open NEEDS_HUMAN_DECISION in proposal.md's Business Outcomes; the run resumes once each decision is answered, deferred (__defer__) or edited away. No agent runs, and no phase line is written."],
-      ["Hold", "PLANNER_REVIEW_HOLD (planned, unimplemented) — would pause for human input"],
+      ["Hold", "PLANNER_REVIEW_HOLD=true stops the run after Review — read once at argument parsing and persisted as --until Review; resume continues"],
       ["Constraint", "Be adversarial — find problems, don't validate. Every finding must cite a specific part of the proposal. Don't suggest solutions (that's Consensus's job)."],
     ]
   },
   consensus: {
-    title: "Consensus — Phase 6 of 10",
-    meta: "prompt: planner_prompt_consensus  ·  artifacts: proposal.md (overwritten), consensus.md  ·  gate: none (hold planned but unimplemented)",
+    title: "Consensus — Phase 6 of 11",
+    meta: "prompt: planner_prompt_consensus  ·  artifacts: proposal.md (overwritten), consensus.md  ·  gate: none",
     rows: [
       ["Agent role", "Resolves review findings into a settled, actionable plan — doesn't re-litigate, addresses specific findings"],
       ["Output", "Finalized proposal (overwrites proposal.md), consensus digest (findings disposition: accepted/rejected/deferred, changes from original, deferred items with rationale, readiness assessment)"],
       ["Input", "proposal.md + review.md"],
-      ["Gate", "PLANNER_CONSENSUS_HOLD (planned, unimplemented) — would pause for human input"],
+      ["Gate", "None. PLANNER_CONSENSUS_HOLD was removed: the run already stops before the first Linear write (after Crosscheck) by default"],
       ["Constraint", "If a blocker finding cannot be resolved, mark readiness as blocked — don't force through a broken plan. Deferred items are a conscious choice, not an omission."],
     ]
   },
@@ -560,6 +560,8 @@ const DETAILS = {
       ["Gate", "Epic is stamped once every child has a deterministic-and-semantic verdict, whether ready or not — fleet dispatch then refuses each not-ready child individually. The planner itself is stricter: any not-ready child halts Refinement and the run does not advance to Completed."],
       ["Halt report", "Per not-ready ticket: deterministic codes, semantic findings with quotes, codes the evaluator thinks were missed, every disputed deterministic code with the exact dor-check.sh --waive command."],
       ["Resume", "NOT the phase-retry budget — same treatment as a Crosscheck halt. resume re-enters Refinement and reuses every cached verdict whose body hash and evaluator version are unchanged; resume --refresh-bodies re-reads not-ready tickets from Linear first."],
+      ["Rounds", "Each new body a ticket is scanned on is one round (ready.lineage). From round PLANNER_REFINEMENT_MAX_ROUNDS + 1 (default 2, so round 3) a non-structural semantic finding is stored as advisory (demoted: round-limit); from round 2 a new finding on an unchanged unit is evaluator drift and is demoted too. Structural codes always block."],
+      ["Converge", "resume <INIT> --converge --only <TID[,…]> [--by <name>] demotes the named tickets' remaining blocking, verified, non-structural findings on the stored verdict without a rescan (demoted: converge) — the escape hatch for a stuck Refinement."],
       ["Legacy", "An initiative whose log already carries the retired TicketGen|dispatch-gate|done line skips Refinement entirely and advances straight to Completed."],
     ]
   },

@@ -22,6 +22,14 @@ if [ -f "$_RCC_LIB_DIR/verifier-result.sh" ]; then
 elif [ -f "$_RCC_SCRIPT_DIR/verifier-result.sh" ]; then
   source "$_RCC_SCRIPT_DIR/verifier-result.sh"
 fi
+# Whole-ID name matching (ticket_id_matches_name) — the same rule every
+# plan-artifact lookup uses (review finding DET-IP-2). Sibling copy first so
+# both files come from the same version.
+if [ -f "$_RCC_SCRIPT_DIR/ticket-dir.sh" ]; then
+  source "$_RCC_SCRIPT_DIR/ticket-dir.sh"
+elif [ -f "$_RCC_LIB_DIR/ticket-dir.sh" ]; then
+  source "$_RCC_LIB_DIR/ticket-dir.sh"
+fi
 
 usage() {
   cat >&2 <<'EOF'
@@ -61,20 +69,16 @@ EOF
 # router-side (bash-only, no per-repo cwd).
 _find_tasks_file() {
   local ticket_id="$1" repos_root="$2"
-  local ticket_lower repo change_dir
-  ticket_lower=$(echo "$ticket_id" | tr '[:upper:]' '[:lower:]')
+  local repo change_dir
 
   while IFS= read -r -d '' repo; do
     for change_dir in "$repo"/openspec/changes/*/; do
       [ -d "$change_dir" ] || continue
-      case "$(basename "$change_dir" | tr '[:upper:]' '[:lower:]')" in
-      *"$ticket_lower"*)
-        if [ -f "${change_dir}tasks.md" ]; then
-          echo "${change_dir}tasks.md"
-          return 0
-        fi
-        ;;
-      esac
+      if ticket_id_matches_name "$ticket_id" "$(basename "$change_dir")" &&
+        [ -f "${change_dir}tasks.md" ]; then
+        echo "${change_dir}tasks.md"
+        return 0
+      fi
     done
   done < <(find "$repos_root" -maxdepth 3 -name ".git" -printf '%h\0' 2>/dev/null || true)
 
@@ -85,18 +89,11 @@ _find_tasks_file() {
 # matching TICKET-ID. Workspace dirs follow the pattern {TICKET-ID}--{slug}.
 _find_simple_fix_file() {
   local ticket_id="$1" repos_root="$2"
-  local ticket_lower
-  ticket_lower=$(echo "$ticket_id" | tr '[:upper:]' '[:lower:]')
-
   while IFS= read -r -d '' sf; do
-    local parent_dir
-    parent_dir=$(basename "$(dirname "$sf")" | tr '[:upper:]' '[:lower:]')
-    case "$parent_dir" in
-    *"$ticket_lower"*)
+    if ticket_id_matches_name "$ticket_id" "$(basename "$(dirname "$sf")")"; then
       echo "$sf"
       return 0
-      ;;
-    esac
+    fi
   done < <(find "$repos_root" -maxdepth 4 -name "simple-fix.md" -print0 2>/dev/null || true)
 
   return 1

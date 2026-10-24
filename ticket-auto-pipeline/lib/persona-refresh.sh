@@ -24,6 +24,9 @@ usage() {
 Usage: persona-refresh.sh <command> [args]
 
 Commands:
+  persona-refresh.sh list [all|<name>] [--stale-days N]
+    Enumerate refresh targets as TSV <path> <last-reviewed> <refresh|skip>.
+
   persona-refresh.sh bump <file>
     Bump version integer + update last-reviewed to today in a persona file.
 
@@ -86,6 +89,71 @@ cmd_bump() {
   sed -i "s/^last-reviewed: .*/last-reviewed: $today/" "$file"
 
   echo "Bumped $file: v$current → v$new (reviewed $today)"
+}
+
+# ── list ──────────────────────────────────────────────────────────────────────
+# Enumerate refresh targets (the skill's Step 1). Replaces an inline
+# `find personas/base ... personas/specializers ...` that find rejected as a
+# malformed expression, so `persona=all` enumerated nothing.
+#
+# Output: one TSV line per persona file: <path>\t<last-reviewed|->\t<action>
+#   action = refresh | skip. Under `all`, a file whose last-reviewed is fewer
+#   than --stale-days (default 30) days old is `skip`; a missing or
+#   unparseable last-reviewed is `refresh`. An explicitly named persona is
+#   always `refresh`. Exit 1 for an unknown name.
+# PERSONA_REFRESH_TODAY (YYYY-MM-DD) overrides today, for tests.
+
+cmd_list() {
+  local target="all" stale_days=30
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --stale-days)
+      [ $# -ge 2 ] || die "--stale-days requires a value"
+      stale_days="$2"
+      shift 2
+      ;;
+    *)
+      target="$1"
+      shift
+      ;;
+    esac
+  done
+  [[ "$stale_days" =~ ^[0-9]+$ ]] || die "invalid --stale-days: $stale_days"
+
+  if [ "$target" != "all" ]; then
+    local f=""
+    case "$target" in
+    *..* | /*) die "invalid persona name: $target" ;;
+    esac
+    if [ -f "$PERSONAS_DIR/specializers/$target.md" ]; then
+      f="$PERSONAS_DIR/specializers/$target.md"
+    elif [ -f "$PERSONAS_DIR/base/$target.md" ]; then
+      f="$PERSONAS_DIR/base/$target.md"
+    else
+      die "unknown persona: $target"
+    fi
+    local lr
+    lr=$(sed -n 's/^last-reviewed: *//p' "$f" | head -1)
+    printf '%s\t%s\trefresh\n' "$f" "${lr:--}"
+    return 0
+  fi
+
+  local today_epoch
+  today_epoch=$(date -u -d "${PERSONA_REFRESH_TODAY:-$(date -u +%Y-%m-%d)}" +%s)
+
+  local f lr lr_epoch age action
+  while IFS= read -r f; do
+    lr=$(sed -n 's/^last-reviewed: *//p' "$f" | head -1)
+    action=refresh
+    if [ -n "$lr" ] && lr_epoch=$(date -u -d "$lr" +%s 2>/dev/null); then
+      age=$(((today_epoch - lr_epoch) / 86400))
+      if [ "$age" -lt "$stale_days" ]; then
+        action=skip
+      fi
+    fi
+    printf '%s\t%s\t%s\n' "$f" "${lr:--}" "$action"
+  done < <(find "$PERSONAS_DIR/base" "$PERSONAS_DIR/specializers" -type f -name '*.md' \
+    -not -name 'README.md' -not -name 'CHANGELOG.md' 2>/dev/null | LC_ALL=C sort)
 }
 
 # ── changelog ──────────────────────────────────────────────────────────────────
@@ -216,6 +284,9 @@ CMD="${1:-}"
 shift || true
 
 case "$CMD" in
+list)
+  cmd_list "$@"
+  ;;
 bump)
   [ $# -ge 1 ] || die "bump requires <file>"
   cmd_bump "$1"

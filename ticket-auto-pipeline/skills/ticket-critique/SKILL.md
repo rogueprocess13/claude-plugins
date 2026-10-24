@@ -306,7 +306,7 @@ Score = min(table score, ceiling). When the ceiling lowers the score, record it 
 
 ## Cumulative WARNING Escalation
 
-After all checks complete, count all `[WARNING]` findings across all checks (0-5).
+After all checks complete, count all `[WARNING]` findings across all checks (0-6, including Check 6 feature clarity).
 
 **If WARNING count >= 3 AND no individual `[BLOCKER]` findings exist:**
 - The overall status escalates from WARNINGS to BLOCKED
@@ -332,14 +332,26 @@ Combine individual BLOCKER findings, content quality score, and cumulative WARNI
 
 A ticket can have WARNINGs and still be CLEAR if the score is >= 70 and WARNING count < 3.
 
+Do not apply these rules by hand — run the script, which applies them in this order and also
+gives the action and verifier mapping (`--blockers`/`--warnings` are the totals across all checks,
+`--score` the final score after the BLOCKER ceiling):
+
+```bash
+eval "$(bash ~/.claude/skills/lib/critique-status.sh --score {SCORE} --blockers {BLOCKER_COUNT} --warnings {WARNING_COUNT})"
+# → CRITIQUE_STATUS, CRITIQUE_BLOCK_REASON (blocker|low-score|cumulative-warnings|none),
+#   CRITIQUE_ACTION (needs-info|warn|clear), CRITIQUE_VERDICT, CRITIQUE_CRITERIA_MET
+```
+
+Write `$CRITIQUE_STATUS` as the `**Status:**` and route "Act on results" on `$CRITIQUE_ACTION`.
+
 ### Post-critique: Record verifier result (Phase 0 RLVR)
 
 After the critique verdict is written, record the result:
 ```bash
 source ~/.claude/skills/lib/verifier-result.sh
-write_verifier_result verifier=critique verdict=<PASS|WARN|BLOCK> criteria_met=<N> criteria_total=10 attempt=1 phase=APPRAISE
+write_verifier_result verifier=critique verdict="$CRITIQUE_VERDICT" criteria_met="$CRITIQUE_CRITERIA_MET" criteria_total=10 attempt=1 phase=APPRAISE
 ```
-Map: CLEAR → PASS, WARNINGS → WARN, BLOCKED → BLOCK. Score = criteria_met/10.
+(`critique-status.sh` maps CLEAR → PASS, WARNINGS → WARN, BLOCKED → BLOCK; criteria_met = score/10.)
 
 ## Write results to notes.md
 
@@ -359,8 +371,10 @@ Append a `## Readiness Critique` section:
 ### Findings
 {For each finding, one bullet with [BLOCKER] or [WARNING] prefix}
 
-### Missing information (blockers only)
-{Bulleted list of what needs to be provided before this ticket can proceed}
+### Missing information (BLOCKED only)
+{Bulleted list of what needs to be provided before this ticket can proceed. For a BLOCKER, the
+missing item. For `low-score` or `cumulative-warnings` with no BLOCKER, the gaps behind the
+deductions / the contributing WARNINGs — a BLOCKED ticket always has at least one item here.}
 
 ### Cumulative escalation
 {If cumulative WARNING escalation triggered: reason and contributing WARNINGs. Otherwise omit.}
@@ -372,7 +386,16 @@ If no findings: write `**Status:** CLEAR`, `**Score:** 100`, `**WARNING count:**
 
 ## Act on results
 
-### If any BLOCKERs found
+### If `CRITIQUE_ACTION=needs-info` (status BLOCKED — any reason)
+
+This branch covers every BLOCKED critique: a BLOCKER finding, a score below 40, **and** cumulative
+WARNING escalation. An escalated ticket with zero BLOCKER findings still gets the comment and the
+`needs-info` label — otherwise the entry gate holds it (`CRITIQUE_BLOCKED`) with nothing on the
+ticket telling a human what to add. Wherever the templates below say "BLOCKER items", use the
+`### Missing information` list from notes.md (which, for an escalated ticket, holds the
+contributing gaps), and add one line naming the reason when `CRITIQUE_BLOCK_REASON` is
+`low-score` (`Content quality score {N}/100 is below 40.`) or `cumulative-warnings`
+(`{N} warnings together leave this ticket untestable.`).
 
 1. Post a Linear comment via the Linear MCP comment tool. The comment body depends on invocation source:
 
@@ -408,14 +431,11 @@ then re-run `/ticket-appraise {TICKET-ID}`.
 
 2. Add `needs-info` label:
 
-```
-/ticket-flow {TICKET-ID} needs-info
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} needs-info
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh needs-info failed (exit ${_rc})" \
-    "{\"trigger\":\"needs-info\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: needs-info" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# needs-info carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 3. Tell the user:
@@ -423,6 +443,7 @@ fi
 ```
 🚫 {TICKET-ID} — BLOCKED (score: {N}/100, {M} BLOCKER(s), {K} WARNING(s))
 
+{reason line when CRITIQUE_BLOCK_REASON is low-score or cumulative-warnings}
 {list of BLOCKER items, one per line}
 {WARNING items, one per line}
 
@@ -434,7 +455,7 @@ Resolve the blockers in the Linear ticket, then re-run /ticket-appraise {TICKET-
 
 ---
 
-### If WARNINGs only (no BLOCKERs, score >= 40, <3 WARNINGs)
+### If `CRITIQUE_ACTION=warn` (status WARNINGS: no BLOCKERs, score 40-69, fewer than 3 WARNINGs)
 
 Tell the user:
 
@@ -450,7 +471,7 @@ Continue — do not stop the pipeline.
 
 ---
 
-### If CLEAR
+### If `CRITIQUE_ACTION=clear` (status CLEAR)
 
 Tell the user:
 

@@ -24,7 +24,7 @@ _HALT_FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _HALT_LIB_DIR="${_HALT_FIXTURES_DIR}/.."
 
 # Every halt the stop describer must recognise, with the reason it must name.
-HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT refinement-body-drift:REFINEMENT_HALT refinement-demoted:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION"
+HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT refinement-body-drift:REFINEMENT_HALT refinement-demoted:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION consensus-blocked:CONSENSUS_BLOCKED"
 
 # _halt_done <init> <phase...> — mark phases done, in order.
 _halt_done() {
@@ -120,6 +120,20 @@ APPRAISAL
 
 None.
 PROPOSAL
+    ;;
+  consensus-blocked)
+    # DET-PL-11: Consensus finished but marked the plan Readiness: blocked.
+    # Added after the other goldens; they predate it.
+    _halt_done "$init" Appraisal Discovery Architecture Specify Review Consensus
+    cat >"$(planner_initiative_dir "$init")/artifacts/consensus.md" <<'CONSENSUS'
+# Consensus
+
+## Findings Addressed
+- R1 (blocker): export bypasses tenant scoping — rejected, no safe design found yet.
+
+## Readiness
+blocked — R1 needs a tenant-scoping decision from the data owner before specs can be cut.
+CONSENSUS
     ;;
   *)
     echo "halt-fixtures: unknown fixture '${name}'" >&2
@@ -406,6 +420,19 @@ halt_fixture_run() {
           exit 1
           ;;
         esac
+      fi
+      ;;
+    consensus-blocked)
+      # SKILL.md step 1a0, when the loop is about to run Crosscheck.
+      PHASE="Crosscheck"
+      source "${CLAUDE_PLUGIN_ROOT}/lib/planner-consensus-gate.sh"
+      if [ "$PHASE" = "Crosscheck" ]; then
+        _cg_rc=0
+        planner_consensus_gate "$INITIATIVE_ID" || _cg_rc=$?
+        if [ "$_cg_rc" -eq 3 ]; then
+          planner_consensus_halt_report "$INITIATIVE_ID" "$STATE_DIR"
+          exit 0
+        fi
       fi
       ;;
     esac

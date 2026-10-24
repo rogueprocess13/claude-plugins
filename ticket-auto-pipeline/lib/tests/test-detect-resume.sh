@@ -1099,6 +1099,69 @@ test_autonomy_defaults_to_manual_without_log_entry() {
   [ "$(_field "$out" AUTONOMY)" = "manual" ]
 }
 
+# ── VERIFY checkpoint resume, attempt-scoped (DET-RV-16) ────────────────────
+
+test_verify_checkpoint_current_attempt() {
+  local out
+  # No open |waiting| bracket here: an old open bracket is zombie-synthesized
+  # into a VERIFY|verify|fail terminal, which ends the attempt (see below).
+  out=$(_detect_resume_with_log "TEST-VC1" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:02Z|VERIFY|build-plan|done|ok" \
+    "2026-07-05T10:00:03Z|VERIFY|checkpoint|done|criterion-1-pass" \
+    "2026-07-05T10:00:04Z|VERIFY|checkpoint|done|criterion-2-pass")
+  [ "$(_field "$out" VERIFY_CHECKPOINT)" = "2" ] &&
+    [ "$(_field "$out" VERIFY_FROM)" = "build-plan" ]
+}
+
+test_verify_from_is_never_checkpoint() {
+  local out
+  out=$(_detect_resume_with_log "TEST-VC2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|VERIFY|checkpoint|done|criterion-1-pass")
+  [ "$(_field "$out" VERIFY_FROM)" = "build-plan" ]
+}
+
+test_verify_checkpoint_previous_attempt_ignored() {
+  # Attempt 1 passed criterion 1 then FAILed; after re-implement, attempt 2
+  # has not checkpointed anything. It must not inherit criterion-1-pass, and
+  # must not resume from attempt 1's sub-steps either.
+  local out
+  out=$(_detect_resume_with_log "TEST-VC3" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:02Z|VERIFY|build-plan|done|ok" \
+    "2026-07-05T10:00:03Z|VERIFY|checkpoint|done|criterion-1-pass" \
+    "2026-07-05T10:00:04Z|VERIFY|report|done|ok" \
+    "2026-07-05T10:00:05Z|VERIFY|verify|fail|FAIL criterion 2" \
+    "2026-07-05T10:00:06Z|IMPLEMENT|implement|waiting|Agent launched" \
+    "2026-07-05T10:00:07Z|IMPLEMENT|implement|done|re-implemented" \
+    "2026-07-05T10:00:08Z|VERIFY|verify|waiting|Agent launched")
+  [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ] &&
+    [ -z "$(_field "$out" VERIFY_FROM)" ]
+}
+
+test_verify_checkpoint_zombie_bracket_ends_attempt() {
+  # A crashed attempt's stale bracket becomes a synthesized verify|fail (an
+  # attempt; VERIFY_LAST=fail routes to re-implement), so its checkpoints
+  # must not carry into the re-verify that follows.
+  local out
+  out=$(_detect_resume_with_log "TEST-VC5" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:03Z|VERIFY|checkpoint|done|criterion-1-pass")
+  [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ] &&
+    [ "$(_field "$out" VERIFY_LAST)" = "fail" ]
+}
+
+test_verify_checkpoint_empty_without_checkpoints() {
+  local out
+  out=$(_detect_resume_with_log "TEST-VC4" \
+    "2026-07-05T10:00:00Z|META|schema|info|1")
+  echo "$out" | grep -q '^  VERIFY_CHECKPOINT:' &&
+    [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ]
+}
+
 for fn in \
   test_verify_attempts_preflight_fail_does_not_overcount \
   test_verify_attempts_two_terminal_failures_count_two \
@@ -1163,7 +1226,12 @@ for fn in \
   test_resume_step_done_despite_trailing_fleet_restart_line \
   test_resume_step_done_despite_multiple_trailing_bookkeeping_lines \
   test_resume_step_done_despite_trailing_manual_merge_and_pr_merged \
-  test_resume_step_not_done_when_genuine_step_follows_outcome; do
+  test_resume_step_not_done_when_genuine_step_follows_outcome \
+  test_verify_checkpoint_current_attempt \
+  test_verify_from_is_never_checkpoint \
+  test_verify_checkpoint_previous_attempt_ignored \
+  test_verify_checkpoint_zombie_bracket_ends_attempt \
+  test_verify_checkpoint_empty_without_checkpoints; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

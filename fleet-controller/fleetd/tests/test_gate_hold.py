@@ -557,6 +557,96 @@ class TestProbeHumanAnswer(unittest.TestCase):
         self.assertEqual(action, gate_hold.UNAVAILABLE)
 
 
+_CURL_SHIM = r'''#!/usr/bin/env bash
+d="$SHIM_DIR"
+n=$(($(cat "$d/count" 2>/dev/null || echo 0) + 1))
+echo "$n" >"$d/count"
+cat >/dev/null
+plan="$d/plan.$n"
+[ -f "$plan" ] || plan="$d/plan.default"
+rc=$(sed -n 1p "$plan")
+code=$(sed -n 2p "$plan")
+body=$(sed -n '3,$p' "$plan")
+if [ "$rc" -ne 0 ]; then
+  printf '\n000'
+  exit "$rc"
+fi
+printf '%s\n%s' "$body" "$code"
+'''
+
+
+class TestProbeHumanAnswerRealClient(unittest.TestCase):
+    """`probe_human_answer` against the real `linear-api.sh`, with only `curl`
+    replaced (a PATH shim). The stubbed-subprocess tests above pin the
+    decision table; these pin the contract between it and the bash client —
+    BE-3: an unreadable comment list must reach the probe as a non-zero
+    exit (UNAVAILABLE), never as `[]` (NOT_ANSWERED)."""
+
+    ME = '{"data":{"viewer":{"id":"bot-1","name":"Fleet Bot"}}}'
+
+    def setUp(self):
+        self.lib_dir = Path(os.environ.get(
+            'GATE_HOLD_TEST_TICKET_AUTO_LIB',
+            str(REPO_ROOT / 'ticket-auto-pipeline' / 'lib')))
+        self.tmp = tempfile.TemporaryDirectory()
+        self.shim = Path(self.tmp.name)
+        (self.shim / 'bin').mkdir()
+        curl = self.shim / 'bin' / 'curl'
+        curl.write_text(_CURL_SHIM)
+        curl.chmod(0o755)
+        self._saved_env = dict(os.environ)
+        os.environ.update({
+            'SHIM_DIR': str(self.shim),
+            'PATH': f"{self.shim / 'bin'}:{os.environ.get('PATH', '')}",
+            'LINEAR_API_KEY': 'lin_api_test',
+            'LINEAR_API_URL': 'http://127.0.0.1:9/graphql',
+            'LINEAR_RETRY_DELAYS': '0',
+            'LINEAR_MAX_RETRIES': '0',
+        })
+        os.environ.pop('LOG_FILE', None)
+        os.environ.pop('HB_LOG_FILE', None)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._saved_env)
+        self.tmp.cleanup()
+
+    def _plan(self, n, curl_rc, http_code, body=''):
+        (self.shim / f'plan.{n}').write_text(f'{curl_rc}\n{http_code}\n{body}\n')
+
+    def _probe(self):
+        return gate_hold.probe_human_answer(
+            'CRE-9', HOLD_ID, '2026-09-06T09:00:00Z', lib_dir=self.lib_dir)
+
+    def test_comment_read_outage_is_unavailable(self):
+        self._plan(1, 0, 200, self.ME)
+        self._plan('default', 7, 0)
+        action, detail = self._probe()
+        self.assertEqual(action, gate_hold.UNAVAILABLE, detail)
+
+    def test_unresolvable_issue_is_unavailable_not_not_answered(self):
+        """`{"data":{"issue":null}}` used to come back as `[]`, exit 0 —
+        indistinguishable from "nobody has replied yet"."""
+        self._plan(1, 0, 200, self.ME)
+        self._plan('default', 0, 200, '{"data":{"issue":null}}')
+        action, detail = self._probe()
+        self.assertEqual(action, gate_hold.UNAVAILABLE, detail)
+
+    def test_comment_read_rate_limited_is_unavailable(self):
+        self._plan(1, 0, 200, self.ME)
+        self._plan('default', 0, 400, '{"errors":[{"message":"Rate limit '
+                   'exceeded","extensions":{"code":"RATELIMITED"}}]}')
+        action, detail = self._probe()
+        self.assertEqual(action, gate_hold.UNAVAILABLE, detail)
+
+    def test_genuinely_empty_comment_list_is_not_answered(self):
+        self._plan(1, 0, 200, self.ME)
+        self._plan('default', 0, 200,
+                   '{"data":{"issue":{"comments":{"nodes":[]}}}}')
+        action, detail = self._probe()
+        self.assertEqual(action, gate_hold.NOT_ANSWERED, detail)
+
+
 class _Proc:
     def __init__(self, returncode, stdout, stderr):
         self.returncode = returncode

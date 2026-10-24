@@ -215,6 +215,23 @@ class TestAutoMerge(unittest.TestCase):
         self.assertEqual(result.status, orchestration.SKIPPED)
         self.assertEqual(self.calls, [])
 
+    def test_an_epic_merge_policy_never_merges(self):
+        # DET-RV-4: merge_blocked_reason's rule — any epic Merge Policy means
+        # a human merges. run_auto_merge used to ignore it entirely.
+        for policy in ('manual', 'on-all-children-done'):
+            self.calls = []
+            result = orchestration.run_auto_merge(
+                {'kind': 'auto_merge'}, self._ctx(merge_policy=policy))
+            self.assertEqual(result.status, orchestration.SKIPPED, policy)
+            self.assertNotIn(['pr', 'merge', '412', '--squash', '--auto'],
+                             self.calls)
+        self.assertIn('MERGE_AUTHORIZATION', self.log.read_text())
+
+    def test_an_empty_merge_policy_still_merges(self):
+        result = orchestration.run_auto_merge({'kind': 'auto_merge'},
+                                              self._ctx(merge_policy=''))
+        self.assertEqual(result.status, orchestration.OK)
+
     def test_a_complex_ticket_never_merges(self):
         result = orchestration.run_auto_merge({'kind': 'auto_merge'},
                                               self._ctx(complexity='complex'))
@@ -377,6 +394,37 @@ class TestBashAndFlowItems(unittest.TestCase):
                 sp.run = real
         self.assertFalse(result.blocking)
         self.assertEqual(result.status, orchestration.FAILED)
+
+    def test_trigger_data_reaches_flow_sh_as_data_flags(self):
+        # Review QA-5: data used to be appended as a bare `key=value`
+        # positional, which flow.sh ignored, so the trigger silently ran with
+        # its defaults (complexity=simple, outcome=Smooth). flow.sh only reads
+        # trigger data from `--data key=value`.
+        import subprocess as sp
+        real = sp.run
+        seen = {}
+
+        def fake(args, **kw):
+            seen['args'] = list(args)
+            return sp.CompletedProcess(args, 0, '', '')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            flow_dir = Path(tmp) / 'skills' / 'ticket-flow'
+            flow_dir.mkdir(parents=True)
+            (flow_dir / 'flow.sh').write_text('#!/usr/bin/env bash\nexit 0\n')
+            lib = Path(tmp) / 'lib'
+            lib.mkdir()
+            sp.run = fake
+            try:
+                result = orchestration.run_flow_trigger(
+                    {'kind': 'flow_trigger', 'trigger': 'implement-outcome',
+                     'data': {'outcome': 'Hard'}},
+                    {'tid': 'CRE-5'}, lib_dir=lib)
+            finally:
+                sp.run = real
+        self.assertEqual(result.status, orchestration.OK)
+        self.assertEqual(seen['args'][-4:],
+                         ['CRE-5', 'implement-outcome', '--data', 'outcome=Hard'])
 
 
 class TestFinalizeTerminal(unittest.TestCase):

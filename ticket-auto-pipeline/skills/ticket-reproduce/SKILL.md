@@ -118,7 +118,7 @@ Apply these navigation rules:
 - Action icons per handover row (left to right, confirmed CRE-45): Book (Documents), Comments, Receipt (Payments), Toolbox dropdown (Correspondents, Fees, Defendant, Reference)
 - Attorney users: do NOT use Book/Documents icon (1st icon, returns `/accessdenied` from detail view); use the correct icon for the feature
 - Nav bar org name confirms successful login
-- If nav bar doesn't show Handovers/Administration after login, the intermittent nav bug struck — navigate to root URL (`/`) to restore, then log in again
+- If the nav bar is missing the menu items app-knowledge says this user's role should see after login, navigate to the root URL (`/`) to restore the session, then log in again
 
 For the **assertion step** (the final "observe" step), be explicit about:
 - What value is currently shown (the bug)
@@ -211,7 +211,7 @@ Write the plan to `{ticket-dir}/reproduce.md`:
 
 | # | Action | Detail | Assert |
 |---|--------|--------|--------|
-| 1 | Log in | Navigate to {UAT_URL}, fill username = {email}, password = admin, click Sign In | Nav bar shows org name confirming authenticated session |
+| 1 | Log in | Navigate to {UAT_URL}, fill username = {email} and the password from credentials.md (never written into this plan), submit the login form | Nav bar shows the authenticated-session marker from app-knowledge |
 | 2 | ... | ... | — |
 | N | Observe bug | Navigate to {page}, find {field} | **BUG:** Shows "{actual value}" — Expected: "{expected value}" |
 
@@ -252,7 +252,7 @@ Show the user the reproduction plan in a concise summary:
 ```
 ## Reproduction Plan — {TICKET-ID}
 
-**User:** {email} / admin
+**User:** {email}
 **Environment:** UAT
 
 **Steps:**
@@ -287,9 +287,9 @@ playwright-cli click [sign in button ref]
 playwright-cli snapshot
 ```
 
-Confirm login success: nav bar must show the org name. If login fails or nav bar is incomplete (missing Handovers / Administration), note it and attempt a second navigation to trigger the enriched JWT flow:
+Confirm login success: the nav bar must show the authenticated-session marker app-knowledge describes for this app. If login fails or the nav bar is incomplete, note it and reload the app root once — the root URL is the one direct navigation the session rules allow, because it re-runs the app's own auth bootstrap — then reach the feature area by clicking through the UI:
 ```bash
-playwright-cli goto {UAT_URL}/handover
+playwright-cli goto {UAT_URL}/
 playwright-cli snapshot
 ```
 

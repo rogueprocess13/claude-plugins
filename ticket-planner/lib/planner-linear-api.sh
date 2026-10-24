@@ -48,6 +48,64 @@
 
 LINEAR_API_URL="${LINEAR_API_URL:-https://api.linear.app/graphql}"
 
+# ── Transport policy ──────────────────────────────────────────────────────────
+#
+# Same policy as ticket-auto-pipeline's lib/linear-api.sh (see its "Transport
+# policy" block for the full rationale):
+#   - timeouts: --connect-timeout ${LINEAR_CONNECT_TIMEOUT:-10},
+#     --max-time ${LINEAR_MAX_TIME:-30}; a timeout is curl exit 28 (transient).
+#   - the Authorization header goes to curl on stdin (-H @-), never argv.
+#   - rate limits: HTTP 429, a GraphQL error with extensions.code RATELIMITED
+#     (on any status), or a message matching rate[ ._-]?limit — all transient.
+#   - a *Create mutation (issueCreate, issueLabelCreate, …) is only retried
+#     when the request provably never took effect (curl exit 5/6/7/35, or a
+#     rate-limit rejection). Any other transient failure returns 1 without a
+#     retry, because a resend after a timeout/reset/5xx can duplicate a write
+#     the server already committed. LINEAR_NON_IDEMPOTENT=1 forces this policy.
+
+# True (0) when a response is a Linear rate-limit rejection.
+_planner_is_rate_limited() {
+  local http_code="$1" body="$2"
+  [ "$http_code" = "429" ] && return 0
+  [ -n "$body" ] || return 1
+  if echo "$body" | jq -e '[.errors[]?.extensions.code? // empty] | any(. == "RATELIMITED")' >/dev/null 2>&1; then
+    return 0
+  fi
+  if echo "$body" | jq -e '.errors' >/dev/null 2>&1; then
+    echo "$body" | jq -r '.errors[]?.message // ""' 2>/dev/null | grep -qiE 'rate[ ._-]?limit'
+    return $?
+  fi
+  return 1
+}
+
+# True (0) when a curl exit code proves the request never reached the server.
+_planner_curl_not_sent() {
+  case "$1" in
+  5 | 6 | 7 | 35) return 0 ;;
+  esac
+  return 1
+}
+
+# True (0) when a payload is a non-idempotent create mutation.
+_planner_payload_non_idempotent() {
+  [ "${LINEAR_NON_IDEMPOTENT:-}" = "1" ] && return 0
+  local q
+  q=$(echo "$1" | jq -r '.query // ""' 2>/dev/null) || return 1
+  [[ "$q" =~ ^[[:space:]]*mutation ]] || return 1
+  [[ "$q" =~ [A-Za-z]Create[[:space:]]*\( ]]
+}
+
+# One HTTP attempt; Authorization on stdin, never argv.
+_planner_linear_curl() {
+  curl -s -w "\n%{http_code}" \
+    -X POST "$LINEAR_API_URL" \
+    --connect-timeout "${LINEAR_CONNECT_TIMEOUT:-10}" \
+    --max-time "${LINEAR_MAX_TIME:-30}" \
+    -H @- \
+    -d "$1" <<<"Authorization: ${LINEAR_API_KEY}
+Content-Type: application/json"
+}
+
 # ── Retry classification ──────────────────────────────────────────────────────
 
 # Classify a curl result as "transient" (retry) or "permanent" (hard-fail).
@@ -61,8 +119,9 @@ _planner_retry_classify() {
     return
   fi
 
-  # HTTP 429 Too Many Requests — rate limiting is transient
-  if [ "$http_code" = "429" ]; then
+  # Rate limiting is transient: HTTP 429, extensions.code RATELIMITED on any
+  # status, or a rate-limit message.
+  if _planner_is_rate_limited "$http_code" "$body"; then
     echo "transient"
     return
   fi
@@ -73,12 +132,8 @@ _planner_retry_classify() {
     return
   fi
 
-  # GraphQL errors — only rate-limit is transient
+  # GraphQL errors — rate-limit ones were classified above; the rest are terminal
   if echo "$body" | jq -e '.errors' >/dev/null 2>&1; then
-    if echo "$body" | jq -r '.errors[].message // ""' 2>/dev/null | grep -qiE '429|rate[.]limit'; then
-      echo "transient"
-      return
-    fi
     echo "permanent"
     return
   fi
@@ -94,7 +149,7 @@ _planner_retry_classify() {
   fi
 
   # Body contains transient keywords (rate limit, timeout, temporary)
-  if echo "$body" | grep -qiE 'rate[.]limit|timeout|temporar'; then
+  if echo "$body" | grep -qiE 'rate[ ._-]?limit|timeout|temporar'; then
     echo "transient"
     return
   fi
@@ -121,16 +176,14 @@ planner_linear_graphql() {
   local delays
   read -ra delays <<<"${LINEAR_RETRY_DELAYS:-1 2 4}"
   local resp http_code curl_exit classification
+  local non_idempotent=false
+  _planner_payload_non_idempotent "$payload" && non_idempotent=true
 
   while true; do
     http_code=""
     curl_exit=0
 
-    resp=$(curl -s -w "\n%{http_code}" \
-      -X POST "$LINEAR_API_URL" \
-      -H "Authorization: ${LINEAR_API_KEY}" \
-      -H "Content-Type: application/json" \
-      -d "$payload" 2>/dev/null) || curl_exit=$?
+    resp=$(_planner_linear_curl "$payload" 2>/dev/null) || curl_exit=$?
 
     http_code=$(echo "$resp" | tail -1)
     resp=$(echo "$resp" | sed '$d')
@@ -159,6 +212,15 @@ planner_linear_graphql() {
         return 0
       fi
       echo "planner-linear-api: permanent failure (HTTP $http_code, curl exit $curl_exit)" >&2
+      echo "$resp"
+      return 1
+    fi
+
+    # Transient on a non-idempotent create: only retry when the request
+    # provably never took effect (see "Transport policy" above).
+    if $non_idempotent && ! _planner_curl_not_sent "$curl_exit" &&
+      ! { [ "$curl_exit" -eq 0 ] && _planner_is_rate_limited "$http_code" "$resp"; }; then
+      echo "planner-linear-api: ambiguous failure on a non-idempotent mutation (HTTP $http_code, curl exit $curl_exit) — not retried, the write may already have been applied" >&2
       echo "$resp"
       return 1
     fi

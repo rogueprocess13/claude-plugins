@@ -153,8 +153,10 @@ def run_flow_trigger(item, ctx, lib_dir=None, timeout=180):
                           None)
 
     args = ['bash', str(flow), ctx['tid'], trigger]
+    # flow.sh reads trigger data only from `--data key=value`; a bare
+    # `key=value` positional used to be ignored, and is now a usage error.
     for key, value in (item.get('data') or {}).items():
-        args.append(f'{key}={value}')
+        args.extend(['--data', f'{key}={value}'])
     try:
         proc = subprocess.run(args, capture_output=True, text=True,
                               timeout=timeout, env={**os.environ})
@@ -190,9 +192,17 @@ def _last_log_msg(log_file, needle):
 def run_auto_merge(item, ctx, lib_dir=None, timeout=120):
     """Merge a passing PR, when every declared condition holds.
 
-    Four conditions, all from the table: autonomy is `auto` or `semi-auto`
-    (`manual` never merges), complexity is simple, the confirmed outcome label
-    is `Smooth`, and the PR is not an epic integration PR.
+    Five conditions, all from the table: autonomy is `auto` or `semi-auto`
+    (`manual` never merges), the epic declares no Merge Policy, complexity is
+    simple, the confirmed outcome label is `Smooth`, and the PR is not an epic
+    integration PR.
+
+    Mirrors `ticket-auto-pipeline/lib/auto-merge.sh` (the router's copy of
+    this decision) rule for rule. The Merge Policy rule is
+    `merge_blocked_reason`'s (lib/branch-resolve.sh): ANY non-empty
+    `MERGE_POLICY` (`manual`, `on-all-children-done`) means a human merges.
+    Both copies used to ignore it (review finding DET-RV-4).
+    `ctx['merge_policy']` is the preamble's `MERGE_POLICY` field.
 
     Two orderings are load-bearing and both were wrong somewhere before:
 
@@ -214,10 +224,17 @@ def run_auto_merge(item, ctx, lib_dir=None, timeout=120):
     autonomy = (ctx.get('autonomy') or '').strip()
     complexity = (ctx.get('complexity') or '').strip()
     integration = (ctx.get('integration_branch') or '').strip()
+    merge_policy = (ctx.get('merge_policy') or '').strip()
 
     if autonomy not in AUTO_MERGE_MODES:
         return StepResult('auto_merge', SKIPPED,
                           f'autonomy={autonomy or "unset"}', False, None)
+    if merge_policy:
+        reason = (f'epic Branch Directive Merge Policy: {merge_policy} '
+                  f'requires human merge')
+        _append(log_file, f'|META|pr-auto-merge|skip|MERGE_AUTHORIZATION: '
+                          f'{reason}')
+        return StepResult('auto_merge', SKIPPED, reason, False, None)
     if complexity != 'simple':
         return StepResult('auto_merge', SKIPPED,
                           f'complexity={complexity or "unset"}', False, None)
@@ -491,10 +508,10 @@ _RUNNERS = {
     # between-phase executor — routing it here would give fleetd two places
     # that fork phase workers.
     #
-    # `preflight` checks that MCP tools (`browser_navigate`, `get_issue`) are
-    # reachable. Reachability is a property of the *agent's* session, not of
-    # fleetd's process: fleetd answering it would answer a different question
-    # and the answer would be worth nothing. The table's own `on_failure`
+    # `preflight` (verify-preflight.sh) checks only that a `playwright` MCP
+    # server is configured. Reachability is a property of the *agent's*
+    # session, not of fleetd's process: fleetd answering it would answer a
+    # different question and the answer would be worth nothing. The table's own `on_failure`
     # already says "log and proceed — the failure still counts as an attempt",
     # so it stays inside the phase.
     'inspector': _unsupported_runner('inspector'),

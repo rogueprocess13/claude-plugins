@@ -19,6 +19,15 @@ if [ -f "$LIB_DIR/manifest-read.sh" ]; then
 elif [ -f "$SCRIPT_DIR/../../lib/manifest-read.sh" ]; then
   source "$SCRIPT_DIR/../../lib/manifest-read.sh"
 fi
+# verify-checkpoint.sh — attempt-scoped VERIFY_FROM / VERIFY_CHECKPOINT
+# (DET-RV-16). Same two-location lookup as manifest-read.sh above, but the
+# fallback is resolved from BASH_SOURCE: a sourced lib may reassign
+# SCRIPT_DIR, and a LIB_DIR synced before this file existed lacks it.
+if [ -f "$LIB_DIR/verify-checkpoint.sh" ]; then
+  source "$LIB_DIR/verify-checkpoint.sh"
+elif [ -f "$(dirname "${BASH_SOURCE[0]}")/../../lib/verify-checkpoint.sh" ]; then
+  source "$(dirname "${BASH_SOURCE[0]}")/../../lib/verify-checkpoint.sh"
+fi
 
 CURRENT_SCHEMA_VERSION=1
 
@@ -538,6 +547,7 @@ IMPLEMENT_FROM=""
 MAINTENANCE_FROM=""
 DOCUMENT_FROM=""
 VERIFY_FROM=""
+VERIFY_CHECKPOINT=""
 PR_REVIEW_FROM=""
 PR_ITERATE_FROM=""
 
@@ -583,10 +593,22 @@ if [ -s "$LOG_FILE" ]; then
   DOCUMENT_FROM=$(grep '^[^|]*|MAINTENANCE|document|done|' "$LOG_FILE" 2>/dev/null |
     tail -1 | awk -F'|' '{print $3}' || true)
 
-  VERIFY_FROM=$(grep '^[^|]*|VERIFY|[^|]*|done|' "$LOG_FILE" 2>/dev/null |
+  # VERIFY_FROM and VERIFY_CHECKPOINT are scoped to the CURRENT verify attempt
+  # (review finding DET-RV-16): only lines after the last `VERIFY|verify|done|`
+  # or `VERIFY|verify|fail|` terminal count. An attempt that reached a terminal
+  # is over — the next attempt runs against re-implemented code and must
+  # re-check every criterion, never skip one an earlier attempt passed. A
+  # crashed attempt has no terminal, so its own progress is kept. The scoping
+  # lives in lib/verify-checkpoint.sh, which ticket-verify also calls; fleetd
+  # mirrors it in last_verify_checkpoint / last_verify_criterion.
+  VERIFY_FROM=$(verify_attempt_lines "$LOG_FILE" |
+    grep '^[^|]*|VERIFY|[^|]*|done|' |
     grep -v '|VERIFY|verify|done|' |
     grep -v '|VERIFY|phase-inspector-' |
     tail -1 | awk -F'|' '{print $3}' || true)
+  # Highest criterion passed in this attempt — the per-criterion checkpoint
+  # ticket-verify writes as `VERIFY|checkpoint|done|criterion-{N}-pass`.
+  VERIFY_CHECKPOINT=$(verify_checkpoint_criterion "$LOG_FILE")
 
   PR_REVIEW_FROM=$(grep '^[^|]*|PR-REVIEW|[^|]*|done|' "$LOG_FILE" 2>/dev/null |
     grep -v '|PR-REVIEW|pr-review|done|' |
@@ -611,6 +633,13 @@ RECONCILE_CYCLE=${RECONCILE_CYCLE:-0}
 
 # ── Browser-state correction ────────────────────────────────────────────────
 
+# `checkpoint` is not a ticket-verify --from-step value: a per-criterion
+# checkpoint is written inside execute-steps, so it resumes as execute-steps
+# (then the browser correction below). The criterion number travels
+# separately as VERIFY_CHECKPOINT.
+if [ "$VERIFY_FROM" = "checkpoint" ]; then
+  VERIFY_FROM="execute-steps"
+fi
 case "$VERIFY_FROM" in
 browser-session | navigate | execute-steps) VERIFY_FROM="build-plan" ;;
 esac
@@ -717,7 +746,11 @@ fi
 #   IMPLEMENT_FROM    — sub-step within IMPLEMENT phase (or empty)
 #   MAINTENANCE_FROM  — sub-step within MAINTENANCE phase (or empty)
 #   DOCUMENT_FROM     — sub-step within document phase (or empty)
-#   VERIFY_FROM       — sub-step within VERIFY phase (or empty)
+#   VERIFY_FROM       — sub-step within the CURRENT VERIFY attempt (or empty); never
+#                       `checkpoint` (mapped to execute-steps → build-plan)
+#   VERIFY_CHECKPOINT — highest criterion N with `VERIFY|checkpoint|done|criterion-N-pass`
+#                       in the current attempt (or empty) — ticket-verify skips criteria
+#                       1..N in build-only/live-backend mode; browser mode re-verifies all
 #   PR_REVIEW_FROM    — sub-step within PR-REVIEW phase (or empty)
 #   PR_ITERATE_FROM   — sub-step within PR-ITERATE phase (or empty)
 #   TICKET_DIR        — workspace directory for the ticket (or empty)
@@ -753,6 +786,7 @@ DETECT_RESUME_RESULT
   MAINTENANCE_FROM:   ${MAINTENANCE_FROM:-}
   DOCUMENT_FROM:      ${DOCUMENT_FROM:-}
   VERIFY_FROM:        ${VERIFY_FROM:-}
+  VERIFY_CHECKPOINT:  ${VERIFY_CHECKPOINT:-}
   PR_REVIEW_FROM:     ${PR_REVIEW_FROM:-}
   PR_ITERATE_FROM:    ${PR_ITERATE_FROM:-}
   TICKET_DIR:         ${TICKET_DIR:-}

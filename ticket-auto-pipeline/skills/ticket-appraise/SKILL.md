@@ -521,9 +521,10 @@ For each repo in the list, derive the slug and check freshness:
    - `PRESCAN_STATUS=stale` or `decayed` → load prescan docs but treat ALL entries as **unconfirmed** — re-verify every file:line reference against live source before trusting. Demote unverifiable entries to open questions.
    - `PRESCAN_STATUS=missing` → skip prescan entirely for that repo, fall through to the wiki (3a.3).
 
-Count `${#REPOS[@]}` — this is the ticket's affected-repo count, needed by 3a.0b below. It
-counts every repo under `REPOS_ROOT` that `prescan-route.sh` considers plausibly in scope for
-this ticket (title/description/labels match), not just repos with a fresh prescan.
+This list is every repo under `REPOS_ROOT` (it is the freshness sweep's input, not the
+ticket's scope). The ticket's affected-repo count for 3a.0b is computed separately by
+`wiki-route.sh`, which filters the list to repos the ticket actually names — never count this
+list.
 
 ---
 
@@ -544,22 +545,33 @@ for Tiers 1-2 to come up empty first. Prescan is per-repo and cannot answer a cr
 question no matter how fresh it is, so there is nothing to lose by loading the wiki's own index
 alongside prescan's.
 
-Determine two routing signals:
+Then compute the routing decision deterministically — no LLM judgment, and no counting by eye:
 
-1. **Multi-repo scope** — is `${#REPOS[@]}` from 3a.0 more than 1, or does the ticket's
-   `Affected Services` field (Planner Context, if present) name more than one service?
-2. **Index topic match** — does any keyword in the wiki index's **Lookup by Topic** section
-   (read just now) match the ticket's title, description, or labels? Use the same
-   case-insensitive substring matching `prescan-route.sh` uses for prescan's own INDEX.md — this
-   is a routing decision, not a judgment call, so don't hand-wave it.
+```bash
+eval "$(bash "$HOME/.claude/skills/lib/wiki-route.sh" \
+  --wiki-root "$WIKI_ROOT" --repos-root "$REPOS_ROOT" \
+  --ticket-title "{TICKET_TITLE}" --ticket-labels "{TICKET_LABELS}" --ticket-desc "{TICKET_DESC}" \
+  --affected-services "{AFFECTED_SERVICES}")"   # Planner Context field; "" when absent
+```
 
-If either signal fires, set `WIKI_ROUTE=true`: 3a.3 loads wiki files as a **primary** source,
-run in addition to Tiers 1-2 rather than only as their fallback. If neither fires, `WIKI_ROUTE=false`
-and the wiki index stays loaded only as the fallback path already described in 3a.3 — a
-single-repo ticket with no topic match has no reason to pull in cross-repo context.
+It evaluates two signals:
 
-Record the decision in notes.md under Initial Investigation:
-`**Wiki routing:** {multi-repo (N repos) | topic match: {topic} | not routed — per-repo ticket}`
+1. **Multi-repo scope** — more than one repo under `REPOS_ROOT` is named (whole word,
+   case-insensitive) in the ticket's title, labels or description (`prescan-route.sh --mode repos`
+   with the ticket text), or the Planner Context `Affected Services` field lists more than one
+   service. A workspace that merely *contains* several repos does not count.
+2. **Index topic match** — `prescan-route.sh --mode index` against `{WIKI_ROOT}/index.md`'s
+   Lookup by Topic/Service tables (the same case-insensitive substring matching prescan uses).
+
+It emits `WIKI_ROUTE=true|false`, `WIKI_ROUTE_REASON`, `WIKI_ROUTE_REPO_COUNT`,
+`WIKI_ROUTE_TOPIC_FILES` and `WIKI_ROUTE_LINE`. If `WIKI_ROUTE=true`, 3a.3 loads wiki files as a
+**primary** source, run in addition to Tiers 1-2 rather than only as their fallback (start from
+`WIKI_ROUTE_TOPIC_FILES` when the reason is `topic`). If `WIKI_ROUTE=false`, the wiki index stays
+loaded only as the fallback path already described in 3a.3 — a single-repo ticket with no topic
+match has no reason to pull in cross-repo context.
+
+Record the decision in notes.md under Initial Investigation by writing `$WIKI_ROUTE_LINE`
+verbatim (`**Wiki routing:** {multi-repo (N repos) | topic match: {files} | not routed — per-repo ticket}`).
 
 **ADR gate:** If investigation so far has already surfaced a decision candidate that looks
 architectural (a cross-cutting constraint the ticket would establish, not a routine
@@ -923,14 +935,11 @@ When called via `/ticket-auto`, the ticket was already claimed (Backlog → Todo
 
 Delegate to the flow executor (safe to re-call — `flow.sh` skips if nothing changed):
 
-```
-/ticket-flow {TICKET-ID} appraise-start --data complexity={simple|complex}
+```bash
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} appraise-start --data complexity={simple|complex}
 _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh appraise-start failed (exit ${_rc})" \
-    "{\"trigger\":\"appraise-start\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: appraise-start" >> {LOG_FILE}
-fi
+# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
+# appraise-start carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
 ```
 
 This sets state → `Todo`, assignee → `me`, and adds `claimed` + the complexity label. If the ticket was already claimed by the router, only the complexity label is corrected (if different from the default `simple`).
@@ -1008,10 +1017,10 @@ If ticket-setup reported workspace already exists in Step 1:
 6. **Re-evaluate complexity** — run Step 2.5 (complexity sweep) again, considering the new comments as additional input. If the score changes, update the `## Complexity` section in notes.md and note the change in the session log.
 7. **Check artifact staleness:**
    ```bash
-   find {ticket-dir} -name "simple-fix.md"
-   ls openspec/changes/ | grep -i "{ticket-id-lowercase}"
+   bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root . --ticket-dir "{ticket-dir}"
    ```
-   If either exists, the plan may be stale. Append to notes.md session log:
+   (The one plan-artifact resolver — whole-ID match, so `TEST-7` never sees `TEST-77`'s change.)
+   If it exits 0 (or 2 — several change dirs match), an artifact exists and the plan may be stale. Append to notes.md session log:
    ```
    - ⚠️ Artifacts exist (simple-fix.md / openspec change). New comments may require plan updates.
    ```
