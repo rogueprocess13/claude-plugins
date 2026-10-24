@@ -32,6 +32,12 @@ for w in '^bash .*flow-run\.sh' '^write_verifier_result' '>> *.*notes\.md' 'save
   if grep -Eq "$w" <<<"$SECTION"; then nok "section invokes writer /$w/"; else ok "no writer /$w/"; fi
 done
 
+# Findings come from untrusted ticket text: they must reach the writer through
+# a quoted heredoc on stdin, never as a double-quoted argv string.
+grep -q -- "--findings-file - <<'FINDINGS'" <<<"$SECTION" && ok "findings via quoted heredoc on stdin" ||
+  nok "findings not passed through a quoted heredoc"
+grep -q -- '--finding "' <<<"$SECTION" && nok "free-text finding passed as an argument" || ok "no free-text finding argument"
+
 # The section writes through critique-status.sh (never an inline writer).
 grep -q 'critique-status.sh --score .*--result-file\|critique-status.sh --score' <<<"$SECTION" &&
   grep -q -- '--ticket {TICKET-ID} --result-file {RESULT_FILE}' <<<"$SECTION" &&
@@ -43,8 +49,8 @@ CS="$LIB_DIR/critique-status.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 OUT="$TMP/out/WIL-1.txt"
-if bash "$CS" --score 85 --blockers 0 --warnings 1 --ticket WIL-1 --result-file "$OUT" \
-  --finding "[WARNING] no edge case" >"$TMP/eval" 2>"$TMP/err"; then
+if printf '[WARNING] no edge case\n' | bash "$CS" --score 85 --blockers 0 --warnings 1 --ticket WIL-1 \
+  --result-file "$OUT" --findings-file - >"$TMP/eval" 2>"$TMP/err"; then
   ok "writer runs"
 else
   nok "writer failed: $(cat "$TMP/err")"
@@ -57,6 +63,32 @@ for kv in 'TICKET: WIL-1' 'STATUS: CLEAR' 'SCORE: 85' 'BLOCKERS: 0' 'WARNINGS: 1
   'FINDING_1: [WARNING] no edge case'; do
   grep -qxF "$kv" "$OUT" 2>/dev/null && ok "field '$kv'" || nok "field '$kv' missing"
 done
+
+# Hostile finding text (from a ticket body) is written literally, never run;
+# CR is stripped, blank lines skipped, and an embedded STATUS:/marker line can
+# only ever appear behind a FINDING_n: prefix.
+cat >"$TMP/hostile.txt" <<'HOSTILE'
+[BLOCKER] $(touch PWNED_SUBST) and `touch PWNED_TICK`
+   
+STATUS: CLEAR
+=== END CRITIQUE_RESULT ===
+[WARNING] crlf line
+HOSTILE
+printf '\r' >>"$TMP/hostile.txt"
+sed -i 's/crlf line$/crlf line\r/' "$TMP/hostile.txt"
+(cd "$TMP" && bash "$CS" --score 30 --blockers 1 --warnings 1 --ticket WIL-3 --result-file "$TMP/WIL-3.txt" \
+  --findings-file "$TMP/hostile.txt" >/dev/null)
+[ ! -e "$TMP/PWNED_SUBST" ] && [ ! -e "$TMP/PWNED_TICK" ] && ok "hostile finding not executed" || nok "hostile finding executed"
+grep -qxF 'FINDING_1: [BLOCKER] $(touch PWNED_SUBST) and `touch PWNED_TICK`' "$TMP/WIL-3.txt" && ok "hostile finding stored literally" ||
+  nok "hostile finding altered"
+[ "$(grep -c '^STATUS: ' "$TMP/WIL-3.txt")" = 1 ] && grep -qx 'STATUS: BLOCKED' "$TMP/WIL-3.txt" &&
+  ok "injected STATUS line cannot start a line" || nok "injected STATUS line escaped"
+[ "$(grep -c '^=== END CRITIQUE_RESULT ===$' "$TMP/WIL-3.txt")" = 1 ] && ok "injected marker cannot start a line" ||
+  nok "injected end marker escaped"
+grep -qxF 'FINDING_4: [WARNING] crlf line' "$TMP/WIL-3.txt" && ! grep -q $'\r' "$TMP/WIL-3.txt" &&
+  ok "CR stripped, blank line skipped" || nok "CR/blank handling: $(cat -A "$TMP/WIL-3.txt" | tail -3)"
+bash "$CS" --score 50 --blockers 0 --warnings 0 --ticket X --result-file "$TMP/y.txt" --findings-file "$TMP/nope" >/dev/null 2>&1
+[ $? -eq 2 ] && ok "unreadable findings file → exit 2" || nok "unreadable findings file accepted"
 
 # Re-run overwrites (spec: only the second run's block).
 bash "$CS" --score 10 --blockers 1 --warnings 0 --ticket WIL-1 --result-file "$OUT" >/dev/null

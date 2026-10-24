@@ -18,8 +18,13 @@
 # Exit: 0 ok, 2 usage / non-integer input.
 #
 # Read-only mode (ticket-critique --no-post, dispatch-rehearsal-preflight):
-#   ... --ticket ID --result-file F [--finding "[BLOCKER] text"]...
-#       also writes the === CRITIQUE_RESULT === block to F (tmp + mv).
+#   ... --ticket ID --result-file F [--findings-file PATH|-]
+#       also writes the === CRITIQUE_RESULT === block to F (tmp + mv). One
+#       finding per line of PATH (- = stdin). Finding text is derived from
+#       untrusted ticket content, so it never travels as an argv string the
+#       caller's shell would expand: the skill feeds it through a quoted
+#       heredoc. CR is stripped and blank lines are skipped, so a finding can
+#       never start its own block line (STATUS:, === markers).
 #   --unavailable --ticket ID --result-file F
 #       fetch failed: writes STATUS: UNAVAILABLE / SCORE: - and nothing else.
 #
@@ -31,7 +36,7 @@
 #   5. score >= 70            → CLEAR
 set -euo pipefail
 
-score="" blockers="" warnings="" ticket="" result_file="" unavailable=0
+score="" blockers="" warnings="" ticket="" result_file="" unavailable=0 findings_file=""
 findings=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,7 +45,7 @@ while [ $# -gt 0 ]; do
   --warnings) warnings="${2:-}" ;;
   --ticket) ticket="${2:-}" ;;
   --result-file) result_file="${2:-}" ;;
-  --finding) findings+=("${2:-}") ;;
+  --findings-file) findings_file="${2:-}" ;;
   --unavailable)
     unavailable=1
     shift
@@ -60,6 +65,17 @@ done
 if [ -n "$result_file" ] && [ -z "$ticket" ]; then
   echo "critique-status: --result-file requires --ticket" >&2
   exit 2
+fi
+
+if [ -n "$findings_file" ]; then
+  if [ "$findings_file" != "-" ] && [ ! -r "$findings_file" ]; then
+    echo "critique-status: findings file not readable: $findings_file" >&2
+    exit 2
+  fi
+  while IFS= read -r f || [ -n "$f" ]; do
+    f="${f//$'\r'/}"
+    [ -n "${f//[[:space:]]/}" ] && findings+=("$f")
+  done < <(if [ "$findings_file" = "-" ]; then cat; else cat -- "$findings_file"; fi)
 fi
 
 # write_result <status> <score> <blockers> <warnings> <reason>

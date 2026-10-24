@@ -21,7 +21,9 @@ Requires `--result-file <path>` (missing → print usage, stop). Load the ticket
 
 ```bash
 bash ~/.claude/skills/lib/critique-status.sh --score {SCORE} --blockers {BLOCKER_COUNT} --warnings {WARNING_COUNT} \
-  --ticket {TICKET-ID} --result-file {RESULT_FILE} --finding "[BLOCKER] {text}" --finding "[WARNING] {text}"
+  --ticket {TICKET-ID} --result-file {RESULT_FILE} --findings-file - <<'FINDINGS'
+[BLOCKER] {text — one finding per line, verbatim; never as an argument}
+FINDINGS
 ```
 
 ### If `--from-audit` is in the arguments

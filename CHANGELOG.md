@@ -27,7 +27,10 @@ Numbered past 0.73.0, which the open `skill-glue-collapse` PR uses.
 - **`/ticket-critique {ID} --no-post --result-file {path}`**: a read-only critique. It runs the full
   checklist and writes a `=== CRITIQUE_RESULT ===` block to the file. It posts no comment, adds no
   `needs-info`, and writes no verifier result, notes.md entry or event. The block writer is
-  `critique-status.sh --ticket/--result-file/--finding` (`--unavailable` covers a failed fetch).
+  `critique-status.sh --ticket/--result-file/--findings-file` (`--unavailable` covers a failed fetch).
+  Findings come from untrusted ticket text, so the skill passes them through a quoted heredoc on
+  stdin (`--findings-file -`), never as an argument the shell would expand. CR is stripped and
+  each line becomes exactly one `FINDING_n`, so a finding cannot forge a `STATUS:` or marker line.
 - **`scripts/e2e-preflight.sh <INIT>`** (repo-level, not shipped in a plugin). For every child it
   runs the planned body check, `gate-check.sh --mode planned`, strict DoR and the critique
   result. It also checks the epic's `dispatch` flag, runs fleet dry-run, and checks every
