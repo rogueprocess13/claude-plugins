@@ -235,7 +235,8 @@ echo "--- Test 6: no mid-run environment reads ---"
 
 leaks=""
 for var in PLANNER_UNTIL PLANNER_REVIEW_HOLD PLANNER_CONSENSUS_HOLD \
-  PLANNER_SHARED_BRANCH PLANNER_NO_SHARED_BRANCH LINEAR_PROJECT LINEAR_PROJECT_MILESTONE PLANNER_UAT_POLICY; do
+  PLANNER_SHARED_BRANCH PLANNER_NO_SHARED_BRANCH LINEAR_PROJECT LINEAR_PROJECT_MILESTONE PLANNER_UAT_POLICY \
+  PLANNER_BASE_BRANCH PLANNER_MERGE_POLICY PLANNER_SYNC_POLICY; do
   hits=$(grep -ln "\${${var}[:-]" "${LIB_DIR}/planner-router.sh" "${LIB_DIR}/planner-phase-prompts.sh" 2>/dev/null || true)
   [ -n "$hits" ] && leaks="${leaks}${var} in ${hits}; "
 done
@@ -398,6 +399,89 @@ if grep -q 'planner_config_set "\$INITIATIVE_ID" "uat-policy"' "$skill_md"; then
   pass "SKILL.md persists PLANNER_UAT_POLICY as the uat-policy config key"
 else
   fail "SKILL.md persists uat-policy" "no planner_config_set ... uat-policy line"
+fi
+
+# ── Test 9: base branch, merge and sync policy cross the boundary ─────────────
+#
+# planner-base-branch-config (rehearsal F13). Iter 01's directive said `main`
+# only because the agent exported PLANNER_BASE_BRANCH itself; now the value is
+# a config key or a detection, interpolated by the generator as a literal.
+
+echo "--- Test 9: base branch crosses the boundary ---"
+
+_dir_arg() { grep -m1 -o -- "--arg $2 \"[^\"]*\"" <<<"$1" || echo absent; }
+
+# One pinned repo with only `main` (dexter-sandbox shape), under --shared-branch.
+git init -q -b main "${REPOS_ROOT}/sandbox-main"
+git -C "${REPOS_ROOT}/sandbox-main" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+in_new_process 'planner_state_init INIT-BASE "an idea" >/dev/null
+                planner_config_set INIT-BASE branch-override shared >/dev/null
+                planner_state_write INIT-BASE META discovery repo-ref "sandbox-main@main@0000000" >/dev/null'
+prompt=$(in_new_process 'planner_prompt_epicgen INIT-BASE "an idea" /tmp/state' </dev/null)
+got=$(_dir_arg "$prompt" base)
+if [ "$got" = '--arg base "main"' ]; then
+  pass "a main-only pinned repo gives base main with no env var set"
+else
+  fail "detected base reaches EpicGen" "got ${got}"
+fi
+if grep -qF '|META|base-branch-source|done|detected:sandbox-main=main' \
+  "${REPOS_ROOT}/.ticket-auto/initiatives/INIT-BASE/state.log"; then
+  pass "detection is recorded as META|base-branch-source"
+else
+  fail "base-branch-source line" "absent"
+fi
+got=$(_dir_arg "$prompt" merge)/$(_dir_arg "$prompt" sync)
+if [ "$got" = '--arg merge "manual"/--arg sync "rebase-on-base-change"' ]; then
+  pass "merge and sync default to literals"
+else
+  fail "merge/sync defaults" "got ${got}"
+fi
+
+# Explicit --base-branch plus merge/sync env, persisted by the parsing shell
+# (planner_directive_config_persist) and read by a later one.
+in_new_process 'planner_state_init INIT-BASE-EXP "an idea" >/dev/null
+                planner_config_set INIT-BASE-EXP branch-override shared >/dev/null
+                planner_state_write INIT-BASE-EXP META discovery repo-ref "sandbox-main@main@0000000" >/dev/null
+                source "${LIB_DIR}/planner-crosscheck-repo-ref.sh"
+                PLANNER_MERGE_POLICY=on-all-children-done PLANNER_SYNC_POLICY=none \
+                  planner_directive_config_persist INIT-BASE-EXP main >/dev/null'
+prompt=$(in_new_process 'planner_prompt_epicgen INIT-BASE-EXP "an idea" /tmp/state' </dev/null)
+got=$(_dir_arg "$prompt" base)/$(_dir_arg "$prompt" merge)/$(_dir_arg "$prompt" sync)
+if [ "$got" = '--arg base "main"/--arg merge "on-all-children-done"/--arg sync "none"' ]; then
+  pass "explicit base, merge and sync (none) reach EpicGen as literals"
+else
+  fail "explicit directive config" "got ${got}"
+fi
+
+# An explicit base the pinned repo lacks: the prompt fails before any agent runs.
+in_new_process 'planner_state_init INIT-BASE-BAD "an idea" >/dev/null
+                planner_config_set INIT-BASE-BAD branch-override shared >/dev/null
+                planner_config_set INIT-BASE-BAD base-branch release >/dev/null
+                planner_state_write INIT-BASE-BAD META discovery repo-ref "sandbox-main@main@0000000" >/dev/null'
+if out=$(in_new_process 'planner_prompt_for_phase EpicGen INIT-BASE-BAD "an idea" /tmp/state' </dev/null 2>&1); then
+  fail "missing explicit base stops EpicGen" "prompt rendered (rc 0)"
+elif grep -qF 'BASE_BRANCH_UNRESOLVED' <<<"$out"; then
+  pass "missing explicit base fails prompt rendering with BASE_BRANCH_UNRESOLVED"
+else
+  fail "missing explicit base message" "$out"
+fi
+
+# Not shared: the base is irrelevant, so a bad base must not block the epic.
+in_new_process 'planner_state_init INIT-BASE-NS "an idea" >/dev/null
+                planner_config_set INIT-BASE-NS branch-override no-shared >/dev/null
+                planner_config_set INIT-BASE-NS base-branch release >/dev/null
+                planner_state_write INIT-BASE-NS META discovery repo-ref "sandbox-main@main@0000000" >/dev/null'
+if in_new_process 'planner_prompt_epicgen INIT-BASE-NS "an idea" /tmp/state' </dev/null >/dev/null 2>&1; then
+  pass "a no-shared epic never runs the base resolver"
+else
+  fail "no-shared epic renders" "prompt failed"
+fi
+
+if grep -q 'planner_directive_config_persist "\$INITIATIVE_ID"' "$skill_md" &&
+  grep -q -- '--base-branch) shift; BASE_BRANCH_REF=' "$skill_md"; then
+  pass "SKILL.md parses --base-branch and persists the directive config"
+else
+  fail "SKILL.md base-branch wiring" "flag or persist call missing"
 fi
 
 echo ""

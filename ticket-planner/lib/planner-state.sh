@@ -262,7 +262,7 @@ planner_state_init() {
 # point `plan` recorded, so these steps are exempt from duplicate-done suppression.
 
 # Config keys recognised by planner_config_set / planner_config_get.
-PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id linear-project no-project linear-milestone linear-project-id linear-milestone-id branch-override refresh-bodies no-tests-rule uat-policy converge"
+PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id linear-project no-project linear-milestone linear-project-id linear-milestone-id branch-override refresh-bodies no-tests-rule uat-policy base-branch merge-policy sync-policy converge"
 
 # META steps whose `done` lines are per-ticket records, not progress markers:
 # exempt from duplicate-done suppression (their writers dedupe them).

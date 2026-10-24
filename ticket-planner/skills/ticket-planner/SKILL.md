@@ -636,7 +636,8 @@ The router never reasons about content; phases never mutate state directly (they
 | `LINEAR_PROJECT` | *(unset)* | Default project name or id for created epics/tickets, read once at parsing time as the fallback for `--project`. Unset ⇒ no project field is sent, and Epic Gen's project gate reports the omission (or stops on a single plausible candidate) unless `--no-project` was passed |
 | `LINEAR_PROJECT_MILESTONE` | *(unset)* | Default project milestone name or id, the fallback for `--milestone`. Requires a project when given by name |
 | `FLEET_AUTO_DISPATCH` | false | Must be true for automatic fleet-controller dispatch |
-| `PLANNER_UAT_POLICY` | *(unset)* | `per-ticket` or `epic` (anything else is refused). Read once at parsing time and persisted as the `uat-policy` config key; Epic Gen reads the key, never the variable. Unset: `epic` for a shared-branch epic with synthesized test-data specs, else the directive default |
+| `PLANNER_UAT_POLICY` | *(unset)* | `per-ticket` or `epic` (anything else is refused). Read once at parsing time and persisted as the `uat-policy` config key; Epic Gen reads the key, never the variable. Unset: `epic` for a shared-branch epic with synthesized test-data specs or a sibling `blocked-by` chain, else the directive default |
+| `PLANNER_BASE_BRANCH`, `PLANNER_MERGE_POLICY`, `PLANNER_SYNC_POLICY` | detected, `manual`, `rebase-on-base-change` | Directive config keys, read once at parsing (`--base-branch` wins). See docs/ticket-planner.md |
 | `PLANNER_REFINEMENT_SEMANTIC` | true | When `false`, Refinement runs only the deterministic DoR check — no `dor-semantic-agent` spawns, and the epic gate never waits on a semantic verdict |
 | `PLANNER_REFINEMENT_PARALLEL` | 4 | Max concurrent per-ticket semantic-pass batches in Refinement |
 | `PLANNER_REFINEMENT_MAX_ROUNDS` | 2 | Rounds in which a non-structural semantic finding may block. From round MAX+1 such findings are stored as advisory (`demoted: round-limit`). Passed to `dor_semantic_apply` as `DOR_SEMANTIC_MAX_ROUNDS` |
@@ -771,6 +772,7 @@ PROJECT_REF="${LINEAR_PROJECT:-}"
 MILESTONE_REF="${LINEAR_PROJECT_MILESTONE:-}"
 case "${PLANNER_NO_TESTS_RULE:-}" in true | false) NO_TESTS_RULE_FLAG="${PLANNER_NO_TESTS_RULE}" ;; esac
 UAT_POLICY_REF="${PLANNER_UAT_POLICY:-}"
+BASE_BRANCH_REF="${PLANNER_BASE_BRANCH:-}"
 
 # Positional params are always braced ("${1}", never a bare dollar-digit): the
 # skill loader substitutes a bare dollar-digit token with the invocation's own
@@ -803,6 +805,8 @@ while [ "$#" -gt 0 ]; do
     --no-tests-rule=*) NO_TESTS_RULE_FLAG="${1#*=}" ;;
     --answers) shift; ANSWERS_FILE="${1:-}" ;;
     --answers=*) ANSWERS_FILE="${1#*=}" ;;
+    --base-branch) shift; BASE_BRANCH_REF="${1:-}" ;;
+    --base-branch=*) BASE_BRANCH_REF="${1#*=}" ;;
   esac
   shift
 done
@@ -816,6 +820,8 @@ case "$UAT_POLICY_REF" in
   "" | per-ticket | epic) ;;
   *) echo "ERROR: PLANNER_UAT_POLICY takes per-ticket or epic, got '${UAT_POLICY_REF}'" >&2; exit 1 ;;
 esac
+source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-repo-ref.sh"
+planner_directive_config_check "$BASE_BRANCH_REF" || exit 1
 
 # Reject both branch flags together
 if [ "$SHARED_BRANCH_FLAG" = "true" ] && [ "$NO_SHARED_BRANCH_FLAG" = "true" ]; then
@@ -959,25 +965,18 @@ elif [ "$NO_SHARED_BRANCH_FLAG" = "true" ]; then
   planner_config_set "$INITIATIVE_ID" "branch-override" "no-shared"
 fi
 
-# PLANNER_UAT_POLICY (read once above) is the operator's explicit UAT policy.
-# Epic Gen reads it back as the `uat-policy` config key; with no explicit value
-# it stamps `epic` on a shared-branch epic whose Crosscheck synthesized
-# test-data specs (planner-test-data-derivation), else leaves the field out.
+# Branch Directive config (UAT, base, merge, sync): Epic Gen reads the keys back.
 [ -n "$UAT_POLICY_REF" ] && planner_config_set "$INITIATIVE_ID" "uat-policy" "$UAT_POLICY_REF"
+planner_directive_config_persist "$INITIATIVE_ID" "$BASE_BRANCH_REF"
 
-# --refresh-bodies (planner-refinement-phase): a one-shot action for this
-# invocation only, not a sticky setting — step 1b clears it back to "none"
-# immediately after Refinement consumes it, so a later plain `resume` does
-# not keep re-fetching from Linear forever.
+# --refresh-bodies: one-shot, not sticky — step 1b clears it after Refinement uses it.
 [ "$REFRESH_BODIES_FLAG" = "true" ] && planner_config_set "$INITIATIVE_ID" "refresh-bodies" "true"
 
 # --converge (planner-refinement-convergence D10): one-shot too, stored as
 # "<TID,TID...> <operator>" and consumed (then cleared) by step 1b.
 [ "$CONVERGE_FLAG" = "true" ] && planner_config_set "$INITIATIVE_ID" "converge" "${CONVERGE_ONLY} ${CONVERGE_BY}"
 
-# The no-tests rule (#503): the flag (or PLANNER_NO_TESTS_RULE, read above)
-# always wins; otherwise detect it once from REPOS_ROOT CLAUDE.md files and
-# record the result and its source, so later phases read config, not the env.
+# No-tests rule (#503): the flag wins, else detected once from REPOS_ROOT CLAUDE.md files.
 source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-testdata.sh"
 planner_testdata_no_tests_rule_persist "$INITIATIVE_ID" "$NO_TESTS_RULE_FLAG"
 
@@ -1370,13 +1369,12 @@ For each phase to run:
 
 2. **Get the prompt** for the current phase:
    ```bash
-   prompt=$(planner_prompt_for_phase "$PHASE" "$INITIATIVE_ID" "$IDEA" "$STATE_DIR")
+   prompt=$(planner_prompt_for_phase "$PHASE" "$INITIATIVE_ID" "$IDEA" "$STATE_DIR") ||
+     { echo "HALT: $PHASE prompt failed (message above) — fix it and resume" >&2; exit 1; }
    ```
 
-   The prompt is built fresh in this process and carries the invocation config —
-   project, milestone, branch override — interpolated as literals, read from the state
-   log by `planner_prompt_for_phase`. Do not try to pass configuration to the agent
-   through the environment; the agent does not inherit this shell.
+   The prompt carries the invocation config as literals read from the state log. Never
+   pass configuration through the environment; the agent does not inherit this shell.
 
 3. **Spawn the agent** using the Agent tool with:
    - `description`: "Run planner phase: $PHASE for $INITIATIVE_ID"

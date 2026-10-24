@@ -17,6 +17,31 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.26.0 (2026-10-24)
+
+Branch Directive base branch from config or the repo, never the agent's environment
+(`planner-base-branch-config`, next.md Step 16, finding F13). Epic Gen used to build the
+directive from `${PLANNER_BASE_BRANCH:-develop}` expanded in the agent's shell, where nothing
+sets it, so every directive said `develop`. In iter 01 the target repo had only `main`, and
+the directive was right only because the agent exported the variable itself.
+
+### Added
+- **`--base-branch <name>`** (fallback `PLANNER_BASE_BRANCH`), persisted as the `base-branch`
+  config key. `PLANNER_MERGE_POLICY` and `PLANNER_SYNC_POLICY` become the `merge-policy` and
+  `sync-policy` keys, validated against the directive enums at argument parsing.
+- **Base detection** (`planner_base_branch_resolve`, `lib/planner-crosscheck-repo-ref.sh`).
+  With no explicit base, each Discovery-pinned repo resolves `develop` → `origin/HEAD` →
+  `main` → `master`. Repos that have `develop` see no change. One shared answer is persisted
+  with `META|base-branch-source|done|detected:<repo>=<branch>`.
+
+### Changed
+- **Epic Gen interpolates base, merge and sync policy as literals.** The resolver runs only
+  when the directive will be emitted. Repos that disagree (`BASE_BRANCH_AMBIGUOUS`), or a repo
+  with no candidate or missing the explicit base (`BASE_BRANCH_UNRESOLVED`), make prompt
+  rendering fail. SKILL.md step 2 now halts on a failed prompt render, before any Linear write.
+- Sync policy `none` is stored as `no-sync`, because `planner_config_get` reads `none` as the
+  clear marker.
+
 ## ticket-planner 0.25.0 (2026-10-24)
 
 Planner fixes from dispatch rehearsal iter 01 (`planner-ac-coverage-and-epic-uat`, next.md
