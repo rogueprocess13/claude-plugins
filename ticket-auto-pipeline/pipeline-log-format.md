@@ -334,6 +334,20 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|model|info|{\"phase\":\"IMPLEMENT\",\"
 
 The model value resolves from the `ANTHROPIC_MODEL` environment variable, falling back to `unknown` when unset or empty (G4: the "router context" branch documented earlier was never implemented). Downstream consumers SHALL treat `unknown` as a first-class identity, never an error. The same model value is also appended as `MODEL=<value>` to the spawn-meta file.
 
+### Persona injection entries (debugger-persona-overlay)
+
+Written by `ticket-implement` Step 2 after each `persona-select.sh` run (once per layer on a mixed ticket). Records which personas the implementer was given, so "was the debugger overlay active on this run?" is a grep, not a guess:
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|persona-select|info|base=backend-developer;spec=backend/java.md;debug=debug/jvm.md" >> "$LOG_FILE"
+```
+
+- `base` — the base role (`PERSONA_BASE` file name without `.md`).
+- `spec` — `PERSONA_SPECIALIZER` relative to `personas/specializers/`, or `none`.
+- `debug` — `PERSONA_DEBUG_SPECIALIZER` relative to `personas/specializers/` when set; `debugger` when the overlay is on but no stack was detected; `none` when the overlay is off.
+
+It is a `META` line on purpose: `detect-resume.sh` derives `IMPLEMENT_FROM` from the last `IMPLEMENT|<step>|done|` line, so an `IMPLEMENT|persona-select|done|` line would resume implement at a step its dispatch table does not know. `lib/tests/test-persona-injection.sh` pins that the line leaves `RESUME_STEP` and `IMPLEMENT_FROM` unchanged.
+
 ### Run identity entries (Branch A, Commercial Evidence MVP)
 
 Written by `lib/run-identity.sh`, the single writer for these three META keys — both

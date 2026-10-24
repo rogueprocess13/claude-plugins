@@ -129,6 +129,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-config.sh
 	bash ticket-auto-pipeline/lib/test-persona-select.sh
 	bash ticket-auto-pipeline/lib/tests/test-persona-refresh.sh
+	bash ticket-auto-pipeline/lib/tests/test-persona-injection.sh
 	bash ticket-auto-pipeline/lib/tests/test-critique-status.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \
 	bash ticket-auto-pipeline/lib/tests/test-gate-check.sh

@@ -161,7 +161,33 @@ It prints `PLAN_MODE=`, `PLAN_PATH=` and, for openspec, `CHANGE_DIR=`.
 
 **Activate persona** based on the `Layer` column in CLAUDE.md for each affected repo. For `FE+BE` monorepos, use the layer boundary table to classify by actual files touched:
 
-Run `lib/persona-select.sh --repo <repo> --layer <FE|BE> --phase implement` and read the persona files at `$PERSONA_BASE` and `$PERSONA_SPECIALIZER`. If `$PERSONA_AUTO_INCLUDE` is non-empty, read that too. If `$PERSONA_TESTDATA` is non-empty, read it and every path in `$PERSONA_TESTDATA_SPECIALIZERS` (colon-separated) — they say how to build idempotent, namespaced, synthetic test data for the channels the ticket uses.
+Run the selector in one bash block per layer (`{ticket-dir}` is the directory found in Step 1). It derives the ticket type, feeds the selector the ticket text, and logs which personas were injected:
+```bash
+# Ticket type: manifest `type`, else `bug` when context.md's Labels line has `bug`, else none.
+# An unknown manifest type is dropped, not passed — the selector exits 1 on it.
+source ~/.claude/skills/lib/manifest-read.sh 2>/dev/null || true
+_ps_type=""
+if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+  _ps_type=$(get_ticket_manifest_field "{TICKET-ID}" type 2>/dev/null || true)
+fi
+case "$_ps_type" in bug | feature | improvement | security | chore | refactor) ;; *) _ps_type="" ;; esac
+if [ -z "$_ps_type" ] && grep -m1 '^\*\*Labels:\*\*' "{ticket-dir}/context.md" 2>/dev/null |
+  sed 's/^\*\*Labels:\*\*//' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qix bug; then
+  _ps_type=bug
+fi
+echo "PERSONA_TYPE=${_ps_type}"
+eval "$(TICKET_TEXT_FILE="{ticket-dir}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --layer <FE|BE> --phase implement ${_ps_type:+--type "$_ps_type"})"
+for _k in PERSONA_BASE PERSONA_SPECIALIZER PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_TESTDATA_SPECIALIZERS PERSONA_DEBUG PERSONA_DEBUG_SPECIALIZER; do echo "$_k=${!_k:-}"; done
+# META pseudo-phase on purpose: an IMPLEMENT|persona-select line would become detect-resume's IMPLEMENT_FROM.
+_ps_spec="${PERSONA_SPECIALIZER#*/specializers/}"
+_ps_debug="none"
+[ -n "${PERSONA_DEBUG:-}" ] && _ps_debug="debugger"
+[ -n "${PERSONA_DEBUG_SPECIALIZER:-}" ] && _ps_debug="${PERSONA_DEBUG_SPECIALIZER#*/specializers/}"
+[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|persona-select|info|base=$(basename "$PERSONA_BASE" .md);spec=${_ps_spec:-none};debug=${_ps_debug}" >> "$LOG_FILE"
+```
+Read the persona files at `$PERSONA_BASE` and `$PERSONA_SPECIALIZER`. If `$PERSONA_AUTO_INCLUDE` is non-empty, read that too. If `$PERSONA_TESTDATA` is non-empty, read it and every path in `$PERSONA_TESTDATA_SPECIALIZERS` (colon-separated) — they say how to build idempotent, namespaced, synthetic test data for the channels the ticket uses. If `$PERSONA_DEBUG` is non-empty (a bug ticket), read it and `$PERSONA_DEBUG_SPECIALIZER` when set — a debugging procedure layered on top of the stack persona, not a replacement for it: reproduce, trace back to the original trigger, state one hypothesis with evidence, write the failing test first, make one change. Keep the `PERSONA_TYPE` value printed above — Step 2.5 Part B reuses it.
+
+The selector now receives the ticket text, so its keyword triggers fire on real tickets: security auto-include, migration/refactor specializers, and the test-data strong signal (a `## Test Data Provided` ticket swaps `$PERSONA_BASE` to `test-data-engineer.md`). A hand-filed Linear bug with neither a manifest `type` nor a `bug` label gets no debugger overlay.
 - Mixed → run once per layer; switch at the FE/BE boundary. Note the boundary in `notes.md`.
 - Test-data ticket (`$PERSONA_BASE` is `test-data-engineer.md`) → the whole deliverable is data, so do not split per layer. Make the ticket's `Seed command:` and `Verify command:` real (create the targets or scripts they name, or correct the lines to match what you built) and run the seed command twice to prove it is idempotent.
 
@@ -223,6 +249,20 @@ When implementing, the `## Verification #N` section is treated the same as `## P
 
 After appending the Gaps table, read the `## Verification #{N+1}` section from the plan artifact. If additional REMEDIATION_BRIEF fields are present (written by `ticket-verify` Step 7c5), extract them into the implementation context.
 
+**Debugger overlay for the rework.** A verify FAIL is a defect whatever the ticket type, so re-run the selector with `--remediation` (same prefix, repo and layer as Step 2; add `--type {PERSONA_TYPE}` only if Step 2 printed a non-empty one) and keep only the two debug keys — Step 2's base, specializer and other overlays stay as they were:
+```bash
+eval "$(TICKET_TEXT_FILE="{ticket-dir}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --layer <FE|BE> --phase implement --remediation | grep '^PERSONA_DEBUG')"
+echo "PERSONA_DEBUG=${PERSONA_DEBUG:-}"; echo "PERSONA_DEBUG_SPECIALIZER=${PERSONA_DEBUG_SPECIALIZER:-}"
+```
+Read `$PERSONA_DEBUG` and, when set, `$PERSONA_DEBUG_SPECIALIZER`. The `## PR Review #N` rework path never passes `--remediation`: a PR-review gap is a review finding, not a runtime failure.
+
+**Rework rule — this is the last rework before `VERIFY_EXHAUSTED`.** The router caps verify at 2 attempts, so this rework runs once; a failed attempt 2 ends the pipeline. It applies in gaps-only mode too:
+1. Treat the Suggested Fix (or, in gaps-only mode, your own reading of the gaps) as a **hypothesis**, not an instruction.
+2. Confirm it with evidence: reproduce the failing criterion, then trace from the console error or failed step back to the source line that causes it. Write down "X because Y" with the file:line that shows it.
+3. Write a failing test that reproduces the verify failure **before** editing any code.
+4. Make one change. Run the failing test, then the full suite.
+5. If the evidence disproves the hypothesis, or the failing test cannot be made to pass with one change, do not stack a second patch. Append to `notes.md` a `### {today's date} — rework hold: why attempt 1 failed` entry (what attempt 1 assumed, what the evidence showed, what is still unknown), then emit the `=== HUMAN_HOLD ===` block from the preamble § 7 with `REASON: SCOPE_UNDEFINED`, `BLOCKS: {plan path}#Verification #{N+1}`, and a question stating the disproved hypothesis and the decision you need.
+
 Parse these headings from the `## Verification #{N+1}` section:
 
 | Heading in plan | Source |
@@ -254,10 +294,14 @@ Parse these headings from the `## Verification #{N+1}` section:
 
 **Context files:** {CONTEXT_FILES}
 
-Use the Suggested Fix as the starting point for rework. Cross-reference with the original plan and any PR Review gaps.
+This is the last rework before VERIFY_EXHAUSTED. The Suggested Fix is a hypothesis: confirm it
+with evidence, write a failing test that reproduces the verify failure before editing, make one
+change. If the hypothesis is disproved or the test cannot pass, record why attempt 1 failed and
+emit === HUMAN_HOLD === instead of a second patch. Cross-reference with the original plan and any
+PR Review gaps.
 ```
 
-The SUGGESTED_FIX provides the implementer with the verifier's hypothesis about the root cause, allowing targeted rework without re-investigating from scratch. The `## Verification #N` gaps must still be resolved alongside any `## PR Review #N` gaps. These are treated identically — each must be addressed before the implementation round is complete.
+The SUGGESTED_FIX is the verifier's hypothesis about the root cause — a starting point for the investigation in the rework rule above, not a fix to apply unchecked. The `## Verification #N` gaps must still be resolved alongside any `## PR Review #N` gaps. These are treated identically — each must be addressed before the implementation round is complete.
 
 ---
 

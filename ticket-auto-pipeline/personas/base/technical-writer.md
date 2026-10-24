@@ -8,9 +8,7 @@ priority-hierarchy:
   - Brevity
   - Technical elegance
 used-by:
-  - ticket-document
-  - ticket-retro
-  - wiki-maintenance
+  - ticket-prescan (fan-out lens)
 auto-include-when: []
 version: 1
 last-reviewed: 2026-06-26

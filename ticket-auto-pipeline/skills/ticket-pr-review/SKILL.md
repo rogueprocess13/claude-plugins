@@ -86,7 +86,27 @@ build-output log in Step 4). If not found, fall back to `resolve_ticket_dir` in
 ## Step 2 — Extract requirements
 
 Activate the analyzer persona:
-Run `lib/persona-select.sh --repo <repo> --phase review` and read the persona file at `$PERSONA_BASE`. Inject its content as role context for this step. If `$PERSONA_TESTDATA` is non-empty, read it too and check the diff's seeds and fixtures for idempotency, namespaced keys, referential integrity and production personal data.
+```bash
+# Ticket type: manifest `type`, else `bug` when context.md's Labels line has `bug`, else none.
+# An unknown manifest type is dropped, not passed — the selector exits 1 on it.
+source ~/.claude/skills/lib/manifest-read.sh 2>/dev/null || true
+_ps_type=""
+if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+  _ps_type=$(get_ticket_manifest_field "{TICKET-ID}" type 2>/dev/null || true)
+fi
+case "$_ps_type" in bug | feature | improvement | security | chore | refactor) ;; *) _ps_type="" ;; esac
+if [ -z "$_ps_type" ] && grep -m1 '^\*\*Labels:\*\*' "{ticket-dir}/context.md" 2>/dev/null |
+  sed 's/^\*\*Labels:\*\*//' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qix bug; then
+  _ps_type=bug
+fi
+eval "$(TICKET_TEXT_FILE="{ticket-dir}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --phase review ${_ps_type:+--type "$_ps_type"})"
+for _k in PERSONA_BASE PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_DEBUG; do echo "$_k=${!_k:-}"; done
+```
+Read the persona file at `$PERSONA_BASE`. Inject its content as role context for this step. If `$PERSONA_AUTO_INCLUDE` is non-empty, read it too. If `$PERSONA_TESTDATA` is non-empty, read it too and check the diff's seeds and fixtures for idempotency, namespaced keys, referential integrity and production personal data.
+
+If `$PERSONA_DEBUG` is non-empty (a bug ticket), append two requirements to the checklist below, each verified against the diff in Step 5 like any other:
+- **Fix at the root cause** — the change addresses the root cause stated in `notes.md` (`### Root cause hypothesis`, or the implementer's recorded cause), not only the symptom site where the failure showed up.
+- **Regression test** — a regression test exists in the diff that fails without the fix and passes with it.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|extract-requirements|start|Extracting requirements" >> "$LOG_FILE"
 

@@ -195,7 +195,7 @@ ticket-setup writes a minimal notes.md stub. Replace it with the full appraisal 
 
 ## Initial Investigation
 
-{After completing Step 3, summarise your code findings here — relevant files, components, services, suspected root cause or implementation area.}
+{After completing Step 3, summarise your code findings here — relevant files, components, services, suspected root cause or implementation area. When Step 2.5 printed a non-empty `PERSONA_DEBUG`, Step 3f adds a `### Root cause hypothesis` subsection here.}
 
 ## Open Questions
 
@@ -255,7 +255,23 @@ Unverified findings are never carried.
 
 Activate the analyzer persona before scoring:
 
-Run `lib/persona-select.sh --repo <repo> --phase appraise` and read the persona file at `$PERSONA_BASE`. Inject its content as role context for this step. If `$PERSONA_TESTDATA` is non-empty, read it too: the ticket creates or depends on test data, so score where that data comes from and how it is loaded.
+```bash
+# Ticket type: manifest `type`, else `bug` when the ticket's labels include `bug`, else none.
+# An unknown manifest type is dropped, not passed — the selector exits 1 on it.
+source ~/.claude/skills/lib/manifest-read.sh 2>/dev/null || true
+_ps_type=""
+if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
+  _ps_type=$(get_ticket_manifest_field "{TICKET-ID}" type 2>/dev/null || true)
+fi
+case "$_ps_type" in bug | feature | improvement | security | chore | refactor) ;; *) _ps_type="" ;; esac
+if [ -z "$_ps_type" ] && grep -m1 '^\*\*Labels:\*\*' "{TICKET-DIR}/context.md" 2>/dev/null |
+  sed 's/^\*\*Labels:\*\*//' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qix bug; then
+  _ps_type=bug
+fi
+eval "$(TICKET_TEXT_FILE="{TICKET-DIR}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --phase appraise ${_ps_type:+--type "$_ps_type"})"
+for _k in PERSONA_BASE PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_DEBUG; do echo "$_k=${!_k:-}"; done
+```
+Read the persona file at `$PERSONA_BASE`. Inject its content as role context for this step. If `$PERSONA_TESTDATA` is non-empty, read it too: the ticket creates or depends on test data, so score where that data comes from and how it is loaded. Keep the printed `PERSONA_DEBUG` value for Step 3 / Step 3-Agent — **do not read that file here**: the analyzer persona already covers the evidence lens, and the only thing the debugger overlay changes at appraisal is the `### Root cause hypothesis` subsection Step 3 writes.
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|complexity-sweep|start|Scoring complexity axes" >> "$LOG_FILE"
 
@@ -786,6 +802,20 @@ For each bullet point, ask: **"Have I read the actual code that confirms this?"*
 
 Remove or demote anything that is assumption rather than confirmed evidence.
 
+### 3f — Root cause hypothesis (bug tickets only)
+
+Only when Step 2.5 printed a non-empty `PERSONA_DEBUG`. Do not read the debugger persona file. After the validation pass, append this subsection at the end of `## Initial Investigation` (a `###` heading, so every reader that stops at the next `## ` still sees it as part of the section):
+
+```markdown
+### Root cause hypothesis
+- **Hypothesis:** {X} because {Y}
+- **Evidence:** {file:line you read that supports it}
+- **Disproof check:** {a positive, checkable finding — e.g. "finding a caller of X in Y that passes a non-null value would disprove it"}
+- **Confidence:** {high | medium | low}
+```
+
+Phrase the disproof check as something that *would be found*, never as an absence ("X does not exist", "nothing calls Y") — Step 3.5 demotes negative existentials to `[needs-human]` and would strip the hypothesis. Use the words "would disprove". One hypothesis only; if the evidence supports none, write `- **Hypothesis:** none — {what is still unknown}` and add the gap to `## Open Questions`.
+
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|codebase-investigation|done|{N} files traced" >> "$LOG_FILE"
 
 ---
@@ -846,6 +876,7 @@ Answer each question below with specific file paths and line numbers. If you can
 - Copy its findings verbatim into the **Initial Investigation** section of notes.md
 - Append a `**Source:** Explore agent (isolated run)` note
 - Do NOT re-interpret or summarise — use the raw evidence as-is
+- If Step 2.5 printed a non-empty `PERSONA_DEBUG`, then write the `### Root cause hypothesis` subsection exactly as Step 3f describes, citing only file:line evidence the agent returned
 
 [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|codebase-investigation|done|{N} files traced" >> "$LOG_FILE"
 

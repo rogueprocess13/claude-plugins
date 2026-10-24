@@ -1,5 +1,19 @@
 # Personas Changelog
 
+## 2026-10-24 — Debugger overlay
+
+### Added
+- `base/debugger.md` (v1) — root-cause debugging overlay: reproduction, one falsifiable hypothesis, failing test first, one change at a time, last-rework rule before `VERIFY_EXHAUSTED`, stop after the third failed fix
+- `specializers/debug/jvm.md` (v1)
+- `specializers/debug/python.md` (v1)
+- `specializers/debug/node.md` (v1)
+- `specializers/debug/browser.md` (v1)
+
+Selected by `lib/persona-select.sh` on `--type bug`, `--remediation` (any type) or a planner manifest `type` of `bug`, and emitted as `PERSONA_DEBUG` / `PERSONA_DEBUG_SPECIALIZER`. The `debug/*` files are evidence procedures layered on the stack persona, not stack idioms (debugger-persona-overlay).
+
+### Changed
+- `base/analyzer.md`, `base/qa-engineer.md`, `base/technical-writer.md` — `used-by` frontmatter corrected. It listed skills that have never loaded a persona (ticket-critique; ticket-verify; ticket-document, ticket-retro, wiki-maintenance). Replaced with `ticket-prescan (fan-out lens)`, which is where these roles are actually loaded. Content, `version` and `last-reviewed` unchanged. `lib/tests/test-persona-injection.sh` now cross-checks `used-by` against real selector calls.
+
 ## 2026-10-22 — Test data engineer v2
 
 ### Changed

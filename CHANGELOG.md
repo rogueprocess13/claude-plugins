@@ -17,6 +17,43 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.72.0 (2026-10-24)
+
+Debugger persona overlay (`debugger-persona-overlay`). Bug tickets and the verify rework get a
+root-cause debugging persona, and the persona keyword triggers finally receive ticket text.
+
+### Fixed
+- **Persona keyword triggers now receive input.** `persona-select.sh` reads the ticket text from
+  `TICKET_TEXT_FILE`, but no skill ever set it, so the security auto-include, the test-data
+  signals and the migration/refactor specializers never fired in production. ticket-appraise,
+  ticket-implement and ticket-pr-review now pass the ticket's `context.md`; ticket-audit writes
+  the text it holds to a tmp file for both selector calls; ticket-prescan passes an empty value on
+  purpose (its docs are shared by every ticket). Expect `security`, `test-data-engineer` (a strong
+  test-data signal also swaps the implement base persona) and `backend/*-migration` /
+  `*-refactor` to start appearing on tickets that match.
+- ticket-pr-review now reads `PERSONA_AUTO_INCLUDE`.
+- `used-by` frontmatter on `analyzer`, `qa-engineer` and `technical-writer` listed skills that never
+  load a persona; corrected to `ticket-prescan (fan-out lens)`.
+
+### Added
+- `personas/base/debugger.md` and `personas/specializers/debug/{jvm,python,node,browser}.md`.
+  The debug files are evidence procedures layered on the stack persona.
+- `persona-select.sh --type <bug|feature|improvement|security|chore|refactor>` (unknown value exits
+  1) and `--remediation`; new keys `PERSONA_DEBUG` / `PERSONA_DEBUG_SPECIALIZER`. The overlay fires
+  on `bug`, on `--remediation` for any type, or on a planner manifest `type` of `bug` when no
+  `--type` is given. Hand-filed bugs with no manifest type and no `bug` label get no overlay.
+- ticket-implement: the verify rework (Part B) is the last one before `VERIFY_EXHAUSTED`. It treats
+  the Suggested Fix as a hypothesis, writes a failing test first and makes one change, or emits
+  `HUMAN_HOLD` instead of a second patch. Step 2 logs `META|persona-select|info|…`.
+- ticket-appraise writes a `### Root cause hypothesis` (with what would disprove it) on bug
+  tickets; ticket-pr-review checks that a bug fix targets the root cause and adds a regression test.
+- `lib/tests/test-persona-injection.sh`: every selector call has the `TICKET_TEXT_FILE` prefix,
+  `used-by` matches real calls, and the overlay wiring stays in place.
+
+### Changed
+- Persona bundle budget is 12288 bytes (worst-case implement bundle, enforced by
+  `lib/test-persona-select.sh`). The four files that already existed total about 9.4 KB.
+
 ## fleet-controller 0.43.7 (2026-10-23)
 
 Fleet-controller fixes (codebase review 2026-10-23, PO-2, PO-5, BE-13).

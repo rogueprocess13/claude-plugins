@@ -4,9 +4,19 @@ Self-contained role guidance for ticket-auto-pipeline skills. Plain markdown ref
 
 ## How it works
 
-1. A pipeline skill calls `lib/persona-select.sh --repo <path> [--layer FE|BE|infra] [--phase appraise|implement|review|audit]`
-2. The helper emits `PERSONA_BASE`, `PERSONA_SPECIALIZER`, `PERSONA_AUTO_INCLUDE`, `PERSONA_TESTDATA` and `PERSONA_TESTDATA_SPECIALIZERS` as `KEY=value` lines
+1. A pipeline skill calls `TICKET_TEXT_FILE=<file> lib/persona-select.sh --repo <path> [--layer FE|BE|infra] [--phase appraise|implement|review|audit|prescan] [--type bug|feature|improvement|security|chore|refactor] [--remediation]`
+2. The helper emits `PERSONA_BASE`, `PERSONA_SPECIALIZER`, `PERSONA_AUTO_INCLUDE`, `PERSONA_TESTDATA`, `PERSONA_TESTDATA_SPECIALIZERS`, `PERSONA_DEBUG` and `PERSONA_DEBUG_SPECIALIZER` as `KEY=value` lines, in that order. Every key is always printed; an empty value means "none".
 3. The skill reads the persona files at those paths and injects their content as role context
+
+### Ticket text input (`TICKET_TEXT_FILE`)
+
+The keyword triggers below (security auto-include, test-data signals, migration/refactor specializers) read the ticket text from the file named by `TICKET_TEXT_FILE`. Before `debugger-persona-overlay` no skill set this variable, so those triggers never fired in production. Every skill invocation now sets it:
+
+| Skill | `TICKET_TEXT_FILE` |
+|-------|--------------------|
+| ticket-appraise, ticket-implement, ticket-pr-review | the ticket's `context.md` |
+| ticket-audit (both selector calls) | a tmp file holding the ticket text the skill already has |
+| ticket-prescan | `""` on purpose: prescan docs are shared by every ticket, so one ticket's wording must not choose the specializer |
 
 ## Selection logic
 
@@ -40,6 +50,37 @@ Self-contained role guidance for ticket-auto-pipeline skills. Plain markdown ref
 | Multi-service repo structure | `architect/microservices` |
 | Single-service repo structure | `architect/monolith` |
 
+### Debugger overlay
+
+`debugger` is an overlay, not a base. It is emitted as `PERSONA_DEBUG` (plus `PERSONA_DEBUG_SPECIALIZER`) next to the normal base and specializer. `PERSONA_BASE` and the other keys do not change.
+
+| Input | Overlay |
+|-------|---------|
+| `--remediation` | on, **for any type** (the verify rework path in ticket-implement passes it) |
+| `--type bug` | on |
+| `--type <other known type>` | off (an explicit type wins over the manifest) |
+| `--type ""` | treated as absent |
+| `--type <unknown>` | exit 1, message lists the known types |
+| No `--type`, `TICKET_ID` and `REPOS_ROOT` set, planner manifest `type` = `bug` | on (manifest fallback via `lib/manifest-read.sh`) |
+| No `--type`, no manifest or manifest `type` is not `bug` | off |
+| `--phase prescan` | both keys always empty |
+
+The known types mirror `KNOWN_TYPES` in `lib/template-select.sh`. The skills derive `--type` from the manifest `type` (dropping any value outside that list, so a new planner type cannot make the selector exit 1), else `bug` when the ticket's labels contain `bug`. Keep the skills' list in sync with `template-select.sh`. A hand-filed bug with neither a manifest type nor a `bug` label gets no overlay.
+
+`PERSONA_DEBUG_SPECIALIZER` picks a `debug/*` file from the same stack detection as the specializer (`detect_stack`; an empty layer tries BE, then FE):
+
+| Stack signal | Debug specializer |
+|--------------|-------------------|
+| Python markers, or `pyenv`/`pipenv` in BE_TEST_RUNNER (BE/infra) | `debug/python` |
+| `pom.xml` / `build.gradle` (BE/infra) | `debug/jvm` |
+| `package.json` without FE framework markers (BE/infra) | `debug/node` |
+| `angular.json`, or `react`/`vue` in `package.json` (FE) | `debug/browser` |
+| None | empty (debugger alone) |
+
+The `debug/*` files are **evidence procedures** (which command or artifact to collect on that runtime), layered on top of the stack persona. They do not repeat stack idioms or list failure causes; those stay in `backend/*` and `frontend/*`.
+
+Skills that read the overlay: ticket-implement (Step 2, and the Part B verify rework, which re-runs the selector with `--remediation`), ticket-pr-review (adds root-cause and regression-test requirements). ticket-appraise does not read the file; when the overlay is set it writes a `### Root cause hypothesis` subsection instead. ticket-implement logs `META|persona-select|info|base=…;spec=…;debug=…`.
+
 ### Auto-include (keyword triggers)
 
 When ticket title/description contains: auth, authentication, login, password, credential, token, payment, billing, PII, personal data, encryption, vulnerability → auto-include `security`.
@@ -62,25 +103,28 @@ When ticket title/description contains: auth, authentication, login, password, c
 
 ## Composition rule
 
-Read `base/<role>.md`, then read the matching `specializers/<group>/<stack>.md`. The specializer **refines, never contradicts** the base. No match → specializer empty; base persona alone is sufficient.
+Read `base/<role>.md`, then read the matching `specializers/<group>/<stack>.md`. The specializer **refines, never contradicts** the base. No match → specializer empty; base persona alone is sufficient. When set, the debugger overlay and its `debug/*` file are read after the stack persona.
+
+**Size budget**: the worst-case implement bundle (backend-developer + backend/java + security + test-data-engineer + debugger + debug/jvm) must stay at or under 12288 bytes (12 KB). `lib/test-persona-select.sh` enforces this, plus ≤ 2560 B for `debugger.md` and ≤ 2048 B for each `debug/*` file.
 
 ## File inventory
 
-### Base roles (9)
+### Base roles (10)
 
 | File | Role | What it covers | Used by |
 |------|------|----------------|---------|
 | `base/architect.md` | Systems architecture specialist | System-wide impact analysis, coupling assessment, pattern consistency, scalability planning, architecture decision records | appraise, implement, pr-review |
 | `base/backend-developer.md` | API and server-side specialist | API contract design, data integrity, error handling, performance optimization, idempotency, observability | implement (BE), audit |
 | `base/frontend-developer.md` | UI/UX and accessibility specialist | Component architecture, UX consistency, responsive design, accessibility (WCAG 2.1 AA), bundle impact, cross-browser compatibility | implement (FE), audit |
-| `base/qa-engineer.md` | Quality advocate and testing specialist | Coverage analysis, reproduction steps, regression risk, test quality, accessibility validation, performance regression detection | verify, implement, pr-review |
-| `base/analyzer.md` | Root cause specialist and systematic investigator | Complexity assessment, risk surface mapping, dependency analysis, appraisal quality, PR review depth, pattern recognition | appraise, pr-review, critique |
+| `base/qa-engineer.md` | Quality advocate and testing specialist | Coverage analysis, reproduction steps, regression risk, test quality, accessibility validation, performance regression detection | implement, pr-review, prescan (fan-out lens, `--with-qa`) |
+| `base/analyzer.md` | Root cause specialist and systematic investigator | Complexity assessment, risk surface mapping, dependency analysis, appraisal quality, PR review depth, pattern recognition | appraise, pr-review, prescan (fan-out lens) |
 | `base/product-owner.md` | Product requirement specialist | Business value assessment, requirement clarity, duplicate detection, merge opportunities, goal alignment, scope assessment | audit, appraise |
 | `base/security.md` | Threat modeler and vulnerability specialist | Threat surface analysis, input validation, authn/authz checks, data handling, secrets management, dependency audit. Auto-includes on auth/payment/credential/PII keywords. | implement, pr-review, audit (auto-include) |
 | `base/test-data-engineer.md` | Test data specialist | Given-clause data derivation, idempotent namespaced seeds, builders over shared fixtures, referential integrity, synthetic or masked data only, reset + README key map, needs-info on unknown sources | implement (base on test-data tickets), appraise, pr-review (added on test-data signals) |
-| `base/technical-writer.md` | Documentation and technical writing specialist | Changelog quality, API documentation, README updates, commit message conventions, retro documentation, wiki maintenance | document, retro, wiki-maintenance |
+| `base/debugger.md` | Root-cause debugging overlay | Reproduction first, one falsifiable hypothesis ("X because Y" plus what would disprove it), failing test before the fix, one change at a time; last-rework rule (evidence or `HUMAN_HOLD` before `VERIFY_EXHAUSTED`); stop after the third failed fix | implement (bug tickets, verify rework), pr-review (bug tickets) — overlay, see above |
+| `base/technical-writer.md` | Documentation and technical writing specialist | Changelog quality, API documentation, README updates, commit message conventions, retro documentation, wiki maintenance | prescan (fan-out lens) |
 
-### Specializers (19)
+### Specializers (23)
 
 | Group | Stack | Extends | What it adds | Triggers |
 |-------|-------|---------|--------------|----------|
@@ -102,6 +146,10 @@ Read `base/<role>.md`, then read the matching `specializers/<group>/<stack>.md`.
 | `testdata` | `ui-forms.md` | test-data-engineer | Playwright form-fill as last resort, role/label selectors, wait for persistence, re-run safety, no captcha/MFA workarounds | `Seed channel: ui-forms`, form/UI keywords, UAT_URL fallback |
 | `testdata` | `files.md` | test-data-engineer | CSV/XLSX/JSON golden files, header contract, edge-case rows (BOM, encoding, delimiters), generated large files, idempotent import | `Seed channel: files`, CSV/XLSX/upload/import keywords |
 | `testdata` | `factories.md` | test-data-engineer | factory_boy / factory_bot / Fishery+faker / Java builders / Instancio, fixed faker seed, builders over Object Mother, test-scope wiring | `Seed channel: factories`, factory/builder/faker keywords, factory library in the repo |
+| `debug` | `jvm.md` | debugger | `Caused by:` chain bottom-up, `jstack`/`jcmd Thread.print` and `GC.heap_info` snapshots, boundary logging with the correlation id, local-only `jdwp` attach | JVM stack + debugger overlay |
+| `debug` | `python.md` | debugger | Tracebacks bottom-up, `breakpoint()`, boundary `logging`, `asyncio` debug mode | Python stack + debugger overlay |
+| `debug` | `node.md` | debugger | `--inspect`/`--inspect-brk`, `--trace-uncaught`, source maps, event-loop lag check | Node backend + debugger overlay |
+| `debug` | `browser.md` | debugger | Playwright snapshot, `browser_console_messages`, network capture, Angular `ng.getComponent`/zone trace, RxJS subscription count | FE stack + debugger overlay |
 | `architect` | `monolith.md` | architect | Modular monolith patterns, layered architecture, feature-based packaging, module boundary enforcement (ArchUnit/dep-cruiser), extraction-ready design | Single-service structure |
 
 ## Versioning

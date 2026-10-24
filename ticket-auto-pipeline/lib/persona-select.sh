@@ -22,7 +22,8 @@ fi
 
 usage() {
   cat >&2 <<'EOF'
-Usage: persona-select.sh --repo <path> [--layer FE|BE|infra] [--phase appraise|implement|review|audit|prescan] [--with-qa]
+Usage: persona-select.sh --repo <path> [--layer FE|BE|infra] [--phase appraise|implement|review|audit|prescan]
+                         [--type bug|feature|improvement|security|chore|refactor] [--remediation] [--with-qa]
 
 Emits persona file paths as KEY=value lines:
   PERSONA_BASE=personas/base/<role>.md
@@ -30,13 +31,22 @@ Emits persona file paths as KEY=value lines:
   PERSONA_AUTO_INCLUDE=personas/base/security.md                (empty if no trigger)
   PERSONA_TESTDATA=personas/base/test-data-engineer.md          (empty if no test-data signal)
   PERSONA_TESTDATA_SPECIALIZERS=<colon-separated testdata/<channel>.md paths, max 3>
+  PERSONA_DEBUG=personas/base/debugger.md                      (empty unless bug type or --remediation)
+  PERSONA_DEBUG_SPECIALIZER=personas/specializers/debug/<stack>.md (empty if no stack matches)
   PERSONA_SET=<newline-separated paths>                          (prescan phase only)
 
 Options:
   --repo <path>      Path to the affected repository (required)
   --layer <value>    Layer classification: FE, BE, infra (optional)
   --phase <value>    Pipeline phase: appraise, implement, review, audit, prescan (optional)
+  --type <value>     Ticket type (validated by template-select.sh). `bug` sets the
+                     debugger overlay. Empty means absent; when absent and both
+                     TICKET_ID and REPOS_ROOT are set, the local manifest `type` is used.
+  --remediation      Verify-fail rework: sets the debugger overlay for any type
   --with-qa          Include qa-engineer in prescan persona set (prescan phase only)
+
+Ticket text for the keyword detectors comes from TICKET_TITLE, TICKET_DESCRIPTION
+and the file named by TICKET_TEXT_FILE (skills pass the ticket's context.md).
 EOF
   exit 1
 }
@@ -47,6 +57,8 @@ REPO=""
 LAYER=""
 PHASE=""
 WITH_QA="false"
+TYPE=""
+REMEDIATION="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -61,6 +73,14 @@ while [[ $# -gt 0 ]]; do
   --phase)
     PHASE="${2:-}"
     shift 2
+    ;;
+  --type)
+    TYPE="${2:-}"
+    shift 2
+    ;;
+  --remediation)
+    REMEDIATION="true"
+    shift
     ;;
   --with-qa)
     WITH_QA="true"
@@ -103,6 +123,17 @@ if [ -n "$PHASE" ]; then
     exit 1
     ;;
   esac
+fi
+
+# Validate --type if provided. template-select.sh is sourced only here, after
+# the flag loop: it runs a file-scope `--self-test` check on "$1", which is
+# empty by now. resolve_template returns 3 on an unknown type — tested inside
+# `if` so errexit cannot fire on it.
+# shellcheck source=template-select.sh
+source "$SCRIPT_DIR/template-select.sh"
+if [ -n "$TYPE" ] && ! resolve_template "$TYPE" >/dev/null; then
+  echo "ERROR: Invalid --type value '$TYPE'. Must be one of: ${KNOWN_TYPES[*]}." >&2
+  exit 1
 fi
 
 # ── Helper: resolve persona path relative to plugin root ───────────────────────
@@ -210,84 +241,103 @@ has_refactor_keywords() {
   echo "$haystack" | grep -qiE '\b(refactor|refactoring|restructur\w*|clean\s*up|improve\s+structure|code\s+quality|technical\s+debt|pay\s+down\s+debt)\b' && return 0 || return 1
 }
 
+# detect_stack <layer> — the one layer-gated stack detector, shared by the
+# stack specializer and the debug specializer. The layer is an argument (not
+# the LAYER global) because select_prescan_set swaps LAYER per role.
+#   BE|infra → python | jvm | node | ""   (python files → BE_TEST_RUNNER → java → node)
+#   FE       → browser | ""               (angular.json → react → vue)
+# Always echoes and returns 0: a non-zero return inside $(...) would kill the
+# caller under set -e.
+detect_stack() {
+  local layer="${1:-}"
+  case "$layer" in
+  BE | infra)
+    if probe_file "pyproject.toml" || probe_file "requirements.txt" || probe_file "poetry.lock"; then
+      echo "python"
+      return 0
+    fi
+    if [ -n "${BE_TEST_RUNNER:-}" ] && echo "$BE_TEST_RUNNER" | grep -qiE "pyenv|pipenv|poetry"; then
+      echo "python"
+      return 0
+    fi
+    if probe_file "pom.xml" || probe_file "build.gradle" || probe_file "build.gradle.kts" || probe_file "settings.gradle"; then
+      echo "jvm"
+      return 0
+    fi
+    if probe_file "package.json"; then
+      if ! probe_dep "angular" && ! probe_dep "react" && ! probe_dep "vue" && ! probe_file "angular.json"; then
+        echo "node"
+        return 0
+      fi
+    fi
+    ;;
+  FE)
+    if probe_file "angular.json"; then
+      echo "browser"
+      return 0
+    fi
+    if probe_file "package.json"; then
+      if grep -qE '"react"|"react-dom"|"vue"' "$REPO/package.json" 2>/dev/null; then
+        echo "browser"
+        return 0
+      fi
+    fi
+    ;;
+  esac
+  echo ""
+  return 0
+}
+
 select_specializer() {
   local layer="${LAYER:-}"
   local phase="${PHASE:-}"
+  local stack
+  stack=$(detect_stack "$layer")
 
-  # Backend stack signals
-  if [ "$layer" = "BE" ] || [ "$layer" = "infra" ]; then
-    # Python detection
-    if probe_file "pyproject.toml" || probe_file "requirements.txt" || probe_file "poetry.lock"; then
-      if has_refactor_keywords; then
-        echo "specializers/backend/python-refactor.md"
-        return
-      fi
-      echo "specializers/backend/python.md"
+  # Backend stack: keyword refinement (migration > refactor > standard).
+  case "$stack" in
+  python)
+    if has_refactor_keywords; then
+      echo "specializers/backend/python-refactor.md"
       return
     fi
-    # Check BE_TEST_RUNNER for pyenv/pipenv signals
-    if [ -n "${BE_TEST_RUNNER:-}" ]; then
-      if echo "$BE_TEST_RUNNER" | grep -qiE "pyenv|pipenv|poetry"; then
-        if has_refactor_keywords; then
-          echo "specializers/backend/python-refactor.md"
-          return
-        fi
-        echo "specializers/backend/python.md"
-        return
-      fi
-    fi
-
-    # Java detection — migration > refactor > standard priority
-    if probe_file "pom.xml" || probe_file "build.gradle" || probe_file "build.gradle.kts" || probe_file "settings.gradle"; then
-      if has_migration_keywords; then
-        echo "specializers/backend/java-migration.md"
-        return
-      fi
-      if has_refactor_keywords; then
-        echo "specializers/backend/java-refactor.md"
-        return
-      fi
-      echo "specializers/backend/java.md"
+    echo "specializers/backend/python.md"
+    return
+    ;;
+  jvm)
+    if has_migration_keywords; then
+      echo "specializers/backend/java-migration.md"
       return
     fi
-
-    # Node.js detection (package.json without FE framework markers)
-    if probe_file "package.json"; then
-      if ! probe_dep "angular" && ! probe_dep "react" && ! probe_dep "vue" && ! probe_file "angular.json"; then
-        if has_refactor_keywords; then
-          echo "specializers/backend/node-refactor.md"
-          return
-        fi
-        echo "specializers/backend/node.md"
-        return
-      fi
+    if has_refactor_keywords; then
+      echo "specializers/backend/java-refactor.md"
+      return
     fi
-  fi
-
-  # Frontend stack signals
-  if [ "$layer" = "FE" ]; then
-    # Angular detection (strongest signal — dedicated config file)
+    echo "specializers/backend/java.md"
+    return
+    ;;
+  node)
+    if has_refactor_keywords; then
+      echo "specializers/backend/node-refactor.md"
+      return
+    fi
+    echo "specializers/backend/node.md"
+    return
+    ;;
+  browser)
+    # Frontend framework: angular.json is the strongest signal, then react, vue.
     if probe_file "angular.json"; then
       echo "specializers/frontend/angular.md"
       return
     fi
-
-    # React detection
-    if probe_file "package.json"; then
-      if grep -qE '"react"|"react-dom"' "$REPO/package.json" 2>/dev/null; then
-        echo "specializers/frontend/react.md"
-        return
-      fi
+    if grep -qE '"react"|"react-dom"' "$REPO/package.json" 2>/dev/null; then
+      echo "specializers/frontend/react.md"
+      return
     fi
-
-    # Vue detection
-    if probe_file "package.json"; then
-      if grep -q '"vue"' "$REPO/package.json" 2>/dev/null; then
-        echo "specializers/frontend/vue.md"
-        return
-      fi
-    fi
-  fi
+    echo "specializers/frontend/vue.md"
+    return
+    ;;
+  esac
 
   # Architect specializers — only when explicit multi-service signals detected
   if [ "$layer" = "infra" ] || { [ "$layer" = "BE" ] && [ "$phase" = "implement" ]; }; then
@@ -422,6 +472,45 @@ select_testdata_channels() {
   printf '%s' "$out"
 }
 
+# ── Debugger overlay ───────────────────────────────────────────────────────────
+
+# True when the overlay applies: --remediation (any type), an explicit
+# --type bug, or — only when --type is absent — the ticket's local manifest
+# type is exactly `bug`. An explicit non-bug --type wins over the manifest.
+debug_overlay_wanted() {
+  if [ "$REMEDIATION" = "true" ]; then return 0; fi
+  if [ -n "$TYPE" ]; then
+    [ "$TYPE" = "bug" ] && return 0 || return 1
+  fi
+  if [ -z "${TICKET_ID:-}" ] || [ -z "${REPOS_ROOT:-}" ]; then return 1; fi
+  if [ ! -f "$SCRIPT_DIR/manifest-read.sh" ]; then return 1; fi
+  # shellcheck source=manifest-read.sh
+  source "$SCRIPT_DIR/manifest-read.sh"
+  local t
+  # `|| true` inside the substitution: a missing index/manifest returns 1/3,
+  # which would otherwise kill the selector under set -e. A JSON null prints
+  # "null", so compare against `bug` only.
+  t=$(get_ticket_manifest_field "${TICKET_ID:-}" type 2>/dev/null || true)
+  [ "$t" = "bug" ] && return 0 || return 1
+}
+
+# Debug specializer for the detected stack. An empty layer tries BE then FE.
+select_debug_specializer() {
+  local stack=""
+  if [ -n "${LAYER:-}" ]; then
+    stack=$(detect_stack "$LAYER")
+  else
+    stack=$(detect_stack BE)
+    if [ -z "$stack" ]; then stack=$(detect_stack FE); fi
+  fi
+  if [ -n "$stack" ]; then
+    echo "specializers/debug/${stack}.md"
+  else
+    echo ""
+  fi
+  return 0
+}
+
 # ── Prescan persona set ────────────────────────────────────────────────────────
 
 # For prescan, we fan out multiple agents in parallel — each with a different
@@ -516,6 +605,8 @@ main() {
     echo "PERSONA_AUTO_INCLUDE="
     echo "PERSONA_TESTDATA="
     echo "PERSONA_TESTDATA_SPECIALIZERS="
+    echo "PERSONA_DEBUG="
+    echo "PERSONA_DEBUG_SPECIALIZER="
     return
   fi
 
@@ -551,12 +642,27 @@ main() {
     fi
   fi
 
+  # Debugger overlay: additive, never swaps PERSONA_BASE. Only paths whose
+  # file exists are emitted.
+  local debug_path="" debug_spec_path="" debug_spec
+  if debug_overlay_wanted; then
+    debug_path=$(_persona_path "base/debugger.md")
+    if [ -n "$debug_path" ]; then
+      debug_spec=$(select_debug_specializer)
+      if [ -n "$debug_spec" ]; then
+        debug_spec_path=$(_persona_path "$debug_spec")
+      fi
+    fi
+  fi
+
   # Emit results as KEY=value — the stable contract for consuming skills
   echo "PERSONA_BASE=$base_path"
   echo "PERSONA_SPECIALIZER=${specializer_path:-}"
   echo "PERSONA_AUTO_INCLUDE=${auto_path:-}"
   echo "PERSONA_TESTDATA=${testdata_path}"
   echo "PERSONA_TESTDATA_SPECIALIZERS=${testdata_specializers}"
+  echo "PERSONA_DEBUG=${debug_path}"
+  echo "PERSONA_DEBUG_SPECIALIZER=${debug_spec_path}"
 }
 
 main
