@@ -942,12 +942,12 @@ test_skill_md_undecided_is_a_gate_warn() {
   local section
   section=$(awk '/^### 1\.6b /{f=1} /^## Step 1\.7/{f=0} f' "$skill_md")
   [ -n "$section" ] || return 1
-  if printf '%s' "$section" | grep -q 'served-worktree|skip'; then
+  if printf '%s' "$section" | grep -qE 'served-worktree\|skip|VERIFY served-worktree skip'; then
     echo "  Step 1.6b still logs an undecided check as a quiet skip" >&2
     return 1
   fi
   local warns
-  warns=$(printf '%s\n' "$section" | grep -c 'gate-warn|warn|VERIFY_SERVED_UNVERIFIED' || true)
+  warns=$(printf '%s\n' "$section" | grep -c 'plog.sh META gate-warn warn "VERIFY_SERVED_UNVERIFIED' || true)
   [ "$warns" -ge 2 ] || {
     echo "  expected VERIFY_SERVED_UNVERIFIED gate-warns for rc 3 and rc 4, found $warns" >&2
     return 1

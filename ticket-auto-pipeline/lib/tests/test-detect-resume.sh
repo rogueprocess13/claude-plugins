@@ -732,6 +732,20 @@ test_gate_reconcile_held_routes_to_gate_held_not_step_4() {
   [ "$resume_step" != "STEP_4" ]
 }
 
+test_gate_reconcile_held_five_field_form_routes_to_gate_held() {
+  # Since skill-glue-collapse the skill writes the held marker through
+  # plog.sh, which turns the '|' after cycle#N into a space:
+  # GATE|reconcile|done|cycle#N held: reason (five fields). Same routing.
+  local out
+  out=$(_detect_resume_with_log "GH-195-3" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|APPRAISE|appraise|done|complexity=simple" \
+    "2026-07-05T10:00:02Z|GATE|gate|fail|held" \
+    "2026-07-05T10:00:03Z|GATE|reconcile|done|cycle#0 held: needs more detail")
+  [ "$(_field "$out" RESUME_STEP)" != "STEP_4" ] &&
+    [ "$(_field "$out" RECONCILE_CYCLE)" = "1" ]
+}
+
 test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4() {
   # A clean reconcile that follows an earlier held cycle in the same log must
   # still win and advance to STEP_4 — the held-vs-clean split must not
@@ -1200,6 +1214,7 @@ for fn in \
   test_gate_held_no_manifest_logs_distinct_reason \
   test_gate_gate_done_still_advances_past_gate_held \
   test_gate_reconcile_held_routes_to_gate_held_not_step_4 \
+  test_gate_reconcile_held_five_field_form_routes_to_gate_held \
   test_gate_reconcile_clean_after_prior_held_cycle_still_routes_to_step_4 \
   test_reconcile_cycle_counts_each_cycle_once_despite_router_echo \
   test_reconcile_cycle_counts_distinct_cycles \

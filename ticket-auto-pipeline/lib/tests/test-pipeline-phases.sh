@@ -354,12 +354,16 @@ _gate_reconcile_resolve() {
   code=$(_gate_reconcile_artifact_code)
   [ -n "$code" ] || return 3
   code=${code//\{TICKET-ID\}/$3}
+  # The block logs through the synced ~/.claude/skills/lib/plog.sh; point it
+  # at this checkout's lib (CI has no synced copy).
+  code=${code//\~\/.claude\/skills\/lib\//$LIB_DIR/}
   (
     cd "$1" || exit 3
     # Step 1's load block sources ticket-dir.sh before this block runs; the
-    # resolution block calls its resolve_plan_artifact.
+    # resolution block calls its resolve_plan_artifact. Step 1 also exports
+    # LOG_FILE, which plog.sh reads from the environment.
     source "$LIB_DIR/ticket-dir.sh"
-    LOG_FILE="$1/logs/pipeline.log"
+    export LOG_FILE="$1/logs/pipeline.log"
     TICKET_DIR="$1/TEST-7--ticket-dir"
     ARTIFACT_TYPE="$2"
     eval "$code"

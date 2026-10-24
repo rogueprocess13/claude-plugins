@@ -111,7 +111,7 @@ For `agent-prompt` and `network-flake` classifications, do NOT call `append_corr
 After classification, write a summary line:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|guidance-extractor|info|{\"phase\":\"<PHASE>\",\"patterns_total\":<N>,\"classified\":<N>,\"stored\":<N>,\"skipped\":<N>,\"skipped_reasons\":[\"<reason>\"]}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META guidance-extractor info "{\"phase\":\"<PHASE>\",\"patterns_total\":<N>,\"classified\":<N>,\"stored\":<N>,\"skipped\":<N>,\"skipped_reasons\":[\"<reason>\"]}"
 ```
 
 - `patterns_total`: total patterns in the inspector verdict
@@ -209,7 +209,7 @@ _pi_json=$(cat <<'PHASE_INSPECTOR_VERDICT_EOF'
 PHASE_INSPECTOR_VERDICT_EOF
 )
 if _pi_line=$(printf '%s' "$_pi_json" | jq -c . 2>/dev/null) && [ -n "$_pi_line" ]; then
-  printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_pi_line" >>"$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META phase-inspector info "$_pi_line"
 else
   echo "[phase-inspector] WARN: verdict JSON invalid or jq unavailable, nothing written" >&2
 fi

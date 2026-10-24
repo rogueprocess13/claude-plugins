@@ -287,7 +287,7 @@ test_appraise_step3_writes_root_cause_hypothesis() {
 test_pr_review_step2_adds_bug_checks() {
   local sec tok missing=""
   sec=$(_section "$SKILLS_DIR/ticket-pr-review/SKILL.md" '^## Step 2 — ' '^## Step 3 — ')
-  for tok in 'PERSONA_DEBUG' 'root cause' 'regression test' '--type'; do
+  for tok in 'PERSONA_DEBUG' 'root cause' 'regression test' '--ticket-dir "{ticket-dir}"'; do
     echo "$sec" | grep -qF -- "$tok" || missing="$missing [$tok]"
   done
   [ -z "$missing" ] || {

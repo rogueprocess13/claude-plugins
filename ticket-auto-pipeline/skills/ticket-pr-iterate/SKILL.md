@@ -62,7 +62,7 @@ TRACE
 
 ## Step 1 — Load ticket workspace
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|plan-iterate-start|start|Parsing review findings, iteration #{prev+1}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW plan-iterate-start start "Parsing review findings, iteration #{prev+1}"
 
 ```bash
 find . -type d -name "{TICKET-ID}*"
@@ -72,7 +72,7 @@ If not found → stop and tell the user to run `/ticket-appraise {TICKET-ID}` fi
 
 Read `context.md` and `notes.md` from the ticket directory.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|iterate-load|done|Workspace loaded" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-load done "Workspace loaded"
 
 ---
 
@@ -141,7 +141,7 @@ From the comment body, extract:
 
 Store these as `{GAPS}` — a list of objects with: `number`, `requirement`, `status`, `suggested_fix` (if available).
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|iterate-findings|done|{N} gaps parsed" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-findings done "{N} gaps parsed"
 
 ---
 
@@ -219,12 +219,12 @@ Use `N` as the task group prefix (e.g., iteration 1 tasks are `1.1`, `1.2`, `1.3
 ```bash
 _section_count=$(grep -c "^## PR Review #${N}" "{ARTIFACT_PATH}" 2>/dev/null || true)
 if [ "${_section_count:-0}" -lt 1 ]; then
-  [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|iterate-plan|fail|PR Review #${N} section missing after write — {ARTIFACT_PATH}" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-plan fail "PR Review #${N} section missing after write — {ARTIFACT_PATH}"
   # Stop — a truncated write would cause ticket-implement to silently skip all gaps
 fi
 ```
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|iterate-plan|done|{ARTIFACT} updated, iteration #{N}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-plan done "{ARTIFACT} updated, iteration #{N}"
 
 ---
 
@@ -239,7 +239,7 @@ Append to `{ticket-dir}/notes.md` session log:
 - Linear → Ready, `approved` label added
 ```
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|iterate-notes|done|notes.md updated" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-notes done "notes.md updated"
 
 ---
 
@@ -256,13 +256,13 @@ _rc=$?
 
 This sets state → `Ready`, adds `approved`, and clears `reviewed`/`rejected`. All other labels (`simple`/`complex`, `Smooth`/`Rough`/`Hard`) are preserved.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|iterate-linear|done|Ready + approved" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-linear done "Ready + approved"
 
 ---
 
 ## Step 7 — Report
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|plan-iterate-done|done|Iteration #{N} ready" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW plan-iterate-done done "Iteration #{N} ready"
 
 ```
 ## {TICKET-ID} — PR review iteration #{N} ready

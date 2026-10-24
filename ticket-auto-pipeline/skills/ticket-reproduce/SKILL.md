@@ -40,7 +40,7 @@ Run `basename "$(pwd)"`. If the result is NOT `tickets`, abort immediately and t
 When `--from-auto` is set, write the start log entry before proceeding:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|REPRODUCE|reproduce|start|" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh REPRODUCE reproduce start
 ```
 
 ---
@@ -60,7 +60,7 @@ Run `/ticket-setup {TICKET-ID}` and wait for it to complete.
 
 ### Sub-step log (--from-auto)
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|REPRODUCE|setup|done|" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh REPRODUCE setup done
 ```
 
 ---
@@ -166,7 +166,7 @@ Before writing the plan, assess whether the ticket provides enough detail to act
    ```
 
 3. When `--from-auto`:
-   - Write `echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|REPRODUCE|reproduce|done|BLOCKED" >> "$LOG_FILE"`
+   - Write `bash ~/.claude/skills/lib/plog.sh REPRODUCE reproduce done "BLOCKED"`
    - Fire `hb-wrap.sh heartbeat "reproduce-result" "BLOCKED" "insufficient detail" '{"gaps":["..."]}'`
    - Output `REPRODUCE_RESULT=BLOCKED` and stop. Do NOT prompt the user.
 
@@ -236,7 +236,7 @@ Write the plan to `{ticket-dir}/reproduce.md`:
 
 ### Sub-step log (--from-auto)
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|REPRODUCE|plan|done|" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh REPRODUCE plan done
 ```
 
 ---
@@ -312,7 +312,7 @@ Read the snapshot carefully. Compare the actual value shown against the expected
 
 ### Sub-step log (--from-auto)
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|REPRODUCE|execute|done|" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh REPRODUCE execute done
 ```
 
 ---
@@ -344,7 +344,7 @@ Move the screenshot to `{ticket-dir}/attachments/` if captured.
 When `--from-auto`, write pipeline log and heartbeat before the report:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|REPRODUCE|reproduce|done|{REPRODUCED|NOT_REPRODUCED|BLOCKED}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh REPRODUCE reproduce done "{REPRODUCED|NOT_REPRODUCED|BLOCKED}"
 hb-wrap.sh heartbeat "reproduce-result" "{result}" "reproduction complete" '{"result":"{REPRODUCED|NOT_REPRODUCED|BLOCKED}","assertion_field":"{field}","screenshot":"{path}"}'
 ```
 

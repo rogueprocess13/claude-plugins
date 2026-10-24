@@ -15,8 +15,8 @@ Source the project environment file and extract ticket metadata:
 source /tmp/ticket-auto-{TICKET-ID}-env.sh
 
 # Read pipeline log for gate state
-LOG_FILE="$PWD/logs/{TICKET-ID}-pipeline.log"
-HB_LOG_FILE="$PWD/logs/{TICKET-ID}-heartbeat.log"
+export LOG_FILE="$PWD/logs/{TICKET-ID}-pipeline.log"
+export HB_LOG_FILE="$PWD/logs/{TICKET-ID}-heartbeat.log"
 
 ~/.claude/skills/lib/hb-wrap.sh
 source ~/.claude/skills/lib/linear-api.sh
@@ -54,7 +54,7 @@ _plan_out=$(resolve_plan_artifact "{TICKET-ID}" --root . --ticket-dir "$TICKET_D
 if [ "$ARTIFACT_TYPE" = "openspec" ]; then
   ARTIFACT_PATH="$PLAN_PATH"
   if [ "$_plan_rc" -ne 0 ] || [ ! -f "$ARTIFACT_PATH" ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|GATE|reconcile|fail|openspec tasks.md for {TICKET-ID} not found under $PWD/openspec/changes/ (resolver rc=$_plan_rc)" >>"$LOG_FILE"
+    bash ~/.claude/skills/lib/plog.sh GATE reconcile fail "openspec tasks.md for {TICKET-ID} not found under $PWD/openspec/changes/ (resolver rc=$_plan_rc)"
     echo "ticket-gate-reconcile: no unique openspec change for {TICKET-ID} under $PWD/openspec/changes/ — cannot amend the plan" >&2
     exit 1
   fi
@@ -183,7 +183,7 @@ _rc=$?
 Write the held log entry:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|GATE|reconcile|done|cycle#${RECONCILE_N}|held: ${HOLD_REASON}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh GATE reconcile done "cycle#${RECONCILE_N} held: ${HOLD_REASON}"
 hb-wrap.sh decision "reconcile-result" "fired" "held: ${HOLD_REASON}" "{\"cycle\":\"${RECONCILE_N}\",\"reason\":\"${HOLD_REASON}\"}"
 ```
 
@@ -209,7 +209,7 @@ Review the amendment comment in Linear, then run `/ticket-approve {TICKET-ID}` a
 No hold conditions active. All open questions are answered and no unprocessed user comments exist. Write the clean log entry:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|GATE|reconcile|done|clean" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh GATE reconcile done "clean"
 hb-wrap.sh decision "reconcile-result" "fired" "clean pass — no unprocessed comments or unanswered questions" "{\"cycle\":\"${RECONCILE_N}\"}"
 hb-wrap.sh gate "reconcile" "ok" "clean pass — proceeding to implement"
 hb-wrap.sh gate "phase-transition" "ok" "GATE → IMPLEMENT"
