@@ -27,11 +27,10 @@ Find the installed script the same way `/fleet-env-check` does (installed versio
 ```bash
 rm -f /tmp/fleet-features-output.json
 FEATURES_SH=""
-FEATURES_SH="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/fleet-controller\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/lib/fleet-features.sh"
-[ -f "$FEATURES_SH" ] || FEATURES_SH=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/fleet-controller/*/lib/fleet-features.sh" 2>/dev/null | sort -V | tail -1)
-[ -f "$FEATURES_SH" ] || FEATURES_SH=""
+if [ -f ~/.claude/skills/lib/fleet-plugin-cache.sh ]; then
+  source ~/.claude/skills/lib/fleet-plugin-cache.sh
+  FEATURES_SH=$(fleet_cache_find fleet-controller lib/fleet-features.sh)
+fi
 if [ -z "$FEATURES_SH" ] && [ -f "$CLAUDE_PLUGIN_ROOT/lib/fleet-features.sh" ]; then
   FEATURES_SH="$CLAUDE_PLUGIN_ROOT/lib/fleet-features.sh"
 fi
