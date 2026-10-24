@@ -1,6 +1,6 @@
 ---
 name: ticket-pr-review
-description: Reviews a pull request by extracting requirements from its Linear ticket, validating the changed code against those requirements, and posting findings to the PR. Use when the user says "/ticket-pr-review <TICKET-ID>", "review PR for <TICKET-ID>", or "verify <TICKET-ID> against ticket".
+description: Reviews a pull request by extracting requirements from its Linear ticket, validating the changed code against those requirements, and posting findings to the PR. Use when the user says "/ticket-pr-review {TICKET-ID}", "review PR for {TICKET-ID}", or "verify {TICKET-ID} against ticket".
 ---
 
 # Ticket PR Review

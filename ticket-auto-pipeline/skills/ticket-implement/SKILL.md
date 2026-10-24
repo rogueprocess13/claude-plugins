@@ -1,6 +1,6 @@
 ---
 name: ticket-implement
-description: Full implementation workflow for a Linear ticket that has been approved. Loads the ticket workspace, moves to Ready, sets up branches on affected repos, runs the implementation (simple-fix or openspec), commits, and pushes. PR creation and close-out are gated by /ticket-verify. Use when the user says "/ticket-implement <ID>", "implement ticket <ID>", "start implementing <ID>", or "work on <ID>" after appraisal/approval is done.
+description: Full implementation workflow for a Linear ticket that has been approved. Loads the ticket workspace, moves to Ready, sets up branches on affected repos, runs the implementation (simple-fix or openspec), commits, and pushes. PR creation and close-out are gated by /ticket-verify. Use when the user says "/ticket-implement {ID}", "implement ticket {ID}", "start implementing {ID}", or "work on {ID}" after appraisal/approval is done.
 ---
 
 # Ticket Implement

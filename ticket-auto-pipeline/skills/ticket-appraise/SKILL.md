@@ -1,6 +1,6 @@
 ---
 name: ticket-appraise
-description: Investigation planner for a Linear ticket. Fetches the issue, creates the local directory structure, runs a complexity sweep, searches prior art, and traces the full codebase call chain. Supports fast-path for planned tickets (planned label + Planner Context block) — skips complexity sweep, prior art, and codebase investigation when planner metadata is available. Writes findings to notes.md. Use when the user says "appraise ticket <ID>", "/ticket-appraise <ID>", or "take on ticket <ID>". After this completes, run /ticket-appraise-exec to create artifacts and update Linear.
+description: Investigation planner for a Linear ticket. Fetches the issue, creates the local directory structure, runs a complexity sweep, searches prior art, and traces the full codebase call chain. Supports fast-path for planned tickets (planned label + Planner Context block) — skips complexity sweep, prior art, and codebase investigation when planner metadata is available. Writes findings to notes.md. Use when the user says "appraise ticket {ID}", "/ticket-appraise {ID}", or "take on ticket {ID}". After this completes, run /ticket-appraise-exec to create artifacts and update Linear.
 ---
 
 # Ticket Appraise — Planner

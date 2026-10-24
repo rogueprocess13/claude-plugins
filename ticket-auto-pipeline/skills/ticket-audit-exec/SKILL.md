@@ -1,6 +1,6 @@
 ---
 name: ticket-audit-exec
-description: Two-phase apply agent for ticket-audit recommendation checklists. Run 1 delegates needs-info items to ticket-critique; run 2 posts structural comments on affected tickets. Use /ticket-audit first. Flags: --file <path>, --dry-run.
+description: Two-phase apply agent for ticket-audit recommendation checklists. Run 1 delegates needs-info items to ticket-critique; run 2 posts structural comments on affected tickets. Use /ticket-audit first. Flags: --file {path}, --dry-run.
 ---
 
 # Ticket Audit Exec

@@ -66,6 +66,17 @@ Skills are Claude Code `.md` files with YAML frontmatter. Claude Code runs them 
 **Support skills**: `ticket-critique`, `ticket-detect-resume`, `ticket-document`, `ticket-overseer`, `ticket-batch-appraise`, `ticket-batch-verify`, `ticket-reproduce`, `ticket-gate-reconcile`, `ticket-prescan`, `wiki-maintenance`, `nav-hints`, `app-knowledge`, `adr-gate`, `ticket-create` (the one sanctioned single-ticket creation path; `hooks/ticket-create-guard.sh` denies direct Linear creates).
 - `ticket-fleet-controller` — DEPRECATED forwarder → `/fleet-controller:fleet-controller` (extracted to top-level `fleet-controller/` plugin)
 
+## Skill size budget
+
+A SKILL.md body is loaded into context on every invocation, and after auto-compaction Claude Code re-attaches only its first 5,000 tokens. `scripts/check-skill-size.sh` (`make check-skill-size`, a dependency of `make test` and its own CI step) keeps prompt material from growing:
+
+- **Ratchet.** Every `*/skills/*/SKILL.md`, `*/agents/*.md`, `*/lib/skill-preamble*.md` and `*/personas/**/*.md` has an entry in `scripts/skill-size-baseline.tsv` (`path<TAB>max_bytes<TAB>max_body_lines`) and may only shrink. Raising an entry needs a `# allow-growth: <reason>` line directly above it; the gate checks the file against `origin/main` (`SKILL_SIZE_BASE`), so a hand edit cannot slip through. `scripts/skill-context-baseline.tsv` ratchets the per-manifest totals of `dispatch-table.json`'s `prompt_manifests` as well, so text moved into an always-loaded sibling still shows.
+- **Last step of any skill PR: `make skill-baseline`.** It lowers entries to the new sizes, adds new in-ceiling files, drops removed ones, and never raises anything. Leftover headroom is reported as `SLACK:`.
+- **Ceiling for new skills.** A SKILL.md with no baseline entry must fit in 500 body lines and 20,000 bytes. The 11 skills above that today are annotated `# exception: <reason>` entries, listed in every gate run under `EXCEPTIONS:`, and they may never grow.
+- **Frontmatter.** Required on every skill and agent. `name` is ≤ 64 chars of `[a-z0-9-]`. `description` is ≤ 1024 chars with no `<…>` tags (write placeholders as `{ID}`). Allowed keys: `name, description, allowed-tools, category, tags` for skills and `name, description, tools` for agents.
+- **Fences.** A fenced block over 60 lines fails unless the line directly above it is `<!-- size-gate: template -->`. Over 25 lines warns. Lines between `<!-- GENERATED:<id> START/END -->` markers are left out of the ratchet and capped at 6 KB.
+- **`references/` and `templates/`.** Files under `skills/<name>/references/` or `templates/` must be mentioned from that SKILL.md by their literal `references/<file>.md` path. They stay one level deep (a reference never links another one), need a `## Contents` heading over 100 lines, and carry no bare `$1`/`$ARGUMENTS`.
+
 ## Plan/file name matching — no guessing
 
 When a skill or command references a file by name (e.g., `openspec-propose` pointing at `go-over-what-this-agile-reef.md`), and the exact filename does not exist on disk or in `.claude/plans/`, **abort and ask the user for the correct name**. Do not fuzzy-match to the closest plan and run with it — the wrong plan can produce an entirely wrong change. Only proceed when the file is found verbatim or the user clarifies.

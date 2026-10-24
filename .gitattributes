@@ -1,0 +1,5 @@
+# Parallel PRs lower different lines of the size baselines; union merge avoids
+# conflicts, and the gate re-validates after merge (a stale higher value only
+# shows as SLACK).
+scripts/skill-size-baseline.tsv merge=union
+scripts/skill-context-baseline.tsv merge=union

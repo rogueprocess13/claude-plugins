@@ -197,6 +197,7 @@ The state machine JSON structure:
 - **End-to-end**: Run `/ticket-auto <id> --manual` for full pipeline with human gates
 - **State machine**: `validate-linear-config.sh` checks config alignment; test each trigger with `/ticket-flow <id> <trigger>`
 - **Log integrity**: After any log-format change, verify `ticket-detect-resume` and `ticket-retro` can parse the new format
+- **Drift gates**: `make test` starts with three. `check-generated` checks that the dispatch-table block and the state diagram match their JSON sources. `check-test-registration` checks that every test file is run by the Makefile. `check-skill-size` (`scripts/check-skill-size.sh`) checks that skills, agents, the skill preambles and personas only shrink against `scripts/skill-size-baseline.tsv`, that a new skill fits 500 lines / 20 KB, and that the frontmatter, fence and `references/` rules hold. End any PR that touches a skill with `make skill-baseline` — see the root CLAUDE.md § Skill size budget
 
 ## Debugging tips
 

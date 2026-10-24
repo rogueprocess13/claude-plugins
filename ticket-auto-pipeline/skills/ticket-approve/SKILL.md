@@ -1,6 +1,6 @@
 ---
 name: ticket-approve
-description: Approves a Linear ticket held at the entry gate. The sole actuator for human approval — adding the `approved` label directly in the tracker UI does not approve a ticket. Use when the user says "/ticket-approve <ID>", "approve ticket <ID>", or "approve <ID>".
+description: Approves a Linear ticket held at the entry gate. The sole actuator for human approval — adding the `approved` label directly in the tracker UI does not approve a ticket. Use when the user says "/ticket-approve {ID}", "approve ticket {ID}", or "approve {ID}".
 ---
 
 # Ticket Approve

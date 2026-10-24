@@ -1,6 +1,6 @@
 ---
 name: ticket-pr-iterate
-description: Incorporates PR review findings back into the implementation plan. Reads the ticket-pr-review comment (or pr-review-session.md), parses gap items, appends a versioned PR Review #N section to the plan artifact, and resets Linear state so ticket-implement can pick up the changes. Use when the user says "/ticket-pr-iterate <ID>", "iterate on PR feedback for <ID>", or "fix review gaps for <ID>".
+description: Incorporates PR review findings back into the implementation plan. Reads the ticket-pr-review comment (or pr-review-session.md), parses gap items, appends a versioned PR Review #N section to the plan artifact, and resets Linear state so ticket-implement can pick up the changes. Use when the user says "/ticket-pr-iterate {ID}", "iterate on PR feedback for {ID}", or "fix review gaps for {ID}".
 ---
 
 # Ticket PR Iterate

@@ -745,6 +745,7 @@ Exporting is what broke `--dry-run` (#144): the dispatch loop below spans one Ba
 call per phase with an Agent tool call between, so each iteration is a fresh process and
 an `export` from this step is simply not there when a later phase looks for it.
 
+<!-- size-gate: template -->
 ```bash
 SHARED_BRANCH_FLAG=""
 NO_SHARED_BRANCH_FLAG=""
@@ -925,6 +926,7 @@ anything is dispatched. Nothing may be dispatched before it: the persisted confi
 later phase reads, and `--create` must be durable *before* Epic Gen can be reached, so
 that a crash in between does not lose the authorization.
 
+<!-- size-gate: template -->
 ```bash
 # --answers first (planner-headless-questions): it is validated against the
 # round the run is stopped on *now*, before any other flag of this invocation
@@ -1230,6 +1232,7 @@ For each phase to run:
     is `Refinement`, run it directly and skip steps 2–5 — like Crosscheck, it has no
     prompt in `planner_prompt_for_phase`:
 
+    <!-- size-gate: template -->
     ```bash
     source "${CLAUDE_PLUGIN_ROOT}/lib/planner-refinement.sh"
     source "${CLAUDE_PLUGIN_ROOT}/lib/planner-linear-api.sh"

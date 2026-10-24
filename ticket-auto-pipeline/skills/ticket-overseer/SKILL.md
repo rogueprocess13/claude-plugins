@@ -1,3 +1,8 @@
+---
+name: ticket-overseer
+description: Produces bot standup and status reports for the ticket-auto pipeline by reading pipeline logs and session traces. Use when the user says "/ticket-overseer standup" for a retrospective daily standup or "/ticket-overseer status" for in-flight progress with stall detection.
+---
+
 # Ticket Overseer — Bot Standup & Status Reports
 
 Observability layer for the ticket-auto pipeline. Reads pipeline logs and session traces to produce two report types: daily standup (retrospective) and periodic status (in-flight progress).

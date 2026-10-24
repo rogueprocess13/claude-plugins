@@ -1,6 +1,6 @@
 ---
 name: ticket-audit
-description: Proactive cross-ticket audit within a milestone or parent/epic. Detects duplicates, overlaps, empty tickets, goal misalignment, stale tickets, split candidates, and wiki misalignment. Produces a recommendation checklist consumed by ticket-audit-exec. Never mutates Linear. Modes: --milestone <id>, --parent <id>. Flags: --force, --summary, --include-completed.
+description: Proactive cross-ticket audit within a milestone or parent/epic. Detects duplicates, overlaps, empty tickets, goal misalignment, stale tickets, split candidates, and wiki misalignment. Produces a recommendation checklist consumed by ticket-audit-exec. Never mutates Linear. Modes: --milestone {id}, --parent {id}. Flags: --force, --summary, --include-completed.
 ---
 
 # Ticket Audit

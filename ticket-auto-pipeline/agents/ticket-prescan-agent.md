@@ -1,6 +1,6 @@
 ---
 name: ticket-prescan-agent
-description: Repository prescan agent for building durable agent-knowledge docs. Spawned per-persona during first-time fan-out or targeted re-scan. Writes only its assigned doc file under REPOS_ROOT/.ticket-auto/<repo-slug>/docs/.
+description: Repository prescan agent for building durable agent-knowledge docs. Spawned per-persona during first-time fan-out or targeted re-scan. Writes only its assigned doc file under REPOS_ROOT/.ticket-auto/{repo-slug}/docs/.
 tools: Bash, Read, Write, Grep, Glob, mcp__gitnexus__list_repos, mcp__gitnexus__context, mcp__gitnexus__query, mcp__gitnexus__detect_changes, mcp__gitnexus__route_map, mcp__gitnexus__tool_map, mcp__gitnexus__smart_search, mcp__gitnexus__smart_outline, mcp__gitnexus__smart_unfold
 ---
 

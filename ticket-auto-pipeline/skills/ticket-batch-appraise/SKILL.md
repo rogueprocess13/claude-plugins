@@ -1,6 +1,6 @@
 ---
 name: ticket-batch-appraise
-description: Parallel appraisal + artifact creation for multiple Linear tickets. Spawns one agent per ticket — each runs appraise then exec. Use when the user says "/ticket-batch-appraise <ID1>, <ID2>, ..." or "batch appraise these: <list>". Also supports Linear queries: "/ticket-batch-appraise --from project:<name> state:Backlog".
+description: Parallel appraisal + artifact creation for multiple Linear tickets. Spawns one agent per ticket — each runs appraise then exec. Use when the user says "/ticket-batch-appraise {ID1}, {ID2}, ..." or "batch appraise these: {list}". Also supports Linear queries: "/ticket-batch-appraise --from project:{name} state:Backlog".
 ---
 
 # Ticket Batch Appraise + Exec

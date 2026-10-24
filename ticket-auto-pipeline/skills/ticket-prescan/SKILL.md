@@ -1,6 +1,6 @@
 ---
 name: ticket-prescan
-description: Pre-scan a repository to build durable agent-knowledge artifacts under REPOS_ROOT/.ticket-auto/. Runs freshness gate, gitnexus indexing, multi-persona fan-out or incremental refresh, and corpus building. Produces per-repo docs (services, routes, processes, security surfaces, INDEX.md) consumed by ticket-appraise Step 3a. Use when the user says "/ticket-prescan", "/ticket-prescan <repo-path>", "/ticket-prescan --force", or "prescan the repos".
+description: Pre-scan a repository to build durable agent-knowledge artifacts under REPOS_ROOT/.ticket-auto/. Runs freshness gate, gitnexus indexing, multi-persona fan-out or incremental refresh, and corpus building. Produces per-repo docs (services, routes, processes, security surfaces, INDEX.md) consumed by ticket-appraise Step 3a. Use when the user says "/ticket-prescan", "/ticket-prescan {repo-path}", "/ticket-prescan --force", or "prescan the repos".
 ---
 
 # Ticket Prescan — Agent Knowledge Builder
