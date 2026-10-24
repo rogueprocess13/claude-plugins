@@ -264,8 +264,8 @@ test_implement_rework_section_has_debugger_rules() {
 test_appraise_step3_writes_root_cause_hypothesis() {
   local md="$SKILLS_DIR/ticket-appraise/SKILL.md" s25 s3 s3a
   s25=$(_section "$md" '^## Step 2\.5' '^## Step 2\.6')
-  echo "$s25" | grep -q -- '--type' || {
-    echo "  Step 2.5 does not pass --type"
+  echo "$s25" | grep -q -- '--ticket-dir "{TICKET-DIR}"' || {
+    echo "  Step 2.5 does not pass --ticket-dir (which derives --type)"
     return 1
   }
   s3=$(_section "$md" '^## Step 3 — ' '^## Step 3-Agent')
