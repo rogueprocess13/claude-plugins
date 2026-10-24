@@ -17,6 +17,30 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.74.0 (2026-10-24)
+
+Dispatch rehearsal preflight (`dispatch-rehearsal-preflight`, next.md Step 16). One command
+answers "would this planned initiative dispatch with no blockers?" without writing to the tracker.
+Numbered past 0.73.0, which the open `skill-glue-collapse` PR uses.
+
+### Added
+- **`/ticket-critique {ID} --no-post --result-file {path}`**: a read-only critique. It runs the full
+  checklist and writes a `=== CRITIQUE_RESULT ===` block to the file. It posts no comment, adds no
+  `needs-info`, and writes no verifier result, notes.md entry or event. The block writer is
+  `critique-status.sh --ticket/--result-file/--finding` (`--unavailable` covers a failed fetch).
+- **`scripts/e2e-preflight.sh <INIT>`** (repo-level, not shipped in a plugin). For every child it
+  runs the planned body check, `gate-check.sh --mode planned`, strict DoR and the critique
+  result. It also checks the epic's `dispatch` flag, runs fleet dry-run, and checks every
+  `blocked by` line against a manifest `blocked_by` edge inside the initiative. Output:
+  `preflight.tsv`, `dispatch-dry-run.txt` and a `PREFLIGHT <INIT> PASS|PARTIAL|FAIL` line.
+  A planned-gate exit 0 counts only with a `planned-precheck|done` log line, so
+  "not planned" and "fetch failed" no longer read as passes.
+
+### Changed
+- `ticket-critique/SKILL.md` shrank 130 bytes / 11 lines despite the new mode: the status rules
+  `critique-status.sh` already computes are folded to one line, and the `--from-audit`
+  fetch prose is tightened.
+
 ## 0.72.1 (2026-10-24)
 
 Skill size gate (`skill-size-gate`, change 1 of the skill-size reduction programme). Prompt

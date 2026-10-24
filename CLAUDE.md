@@ -115,6 +115,17 @@ Pipe-delimited: `ISO|PHASE|STEP|STATUS|MSG`. Statuses: `start`, `done`, `fail`, 
 - **Post-trigger assertions (retired)**: `flow.sh` no longer mutates the tracker, so there is nothing left to assert against it. Exit code 7 (`STATE_ASSERTION_FAILED`) is retired along with the assertion it reported; every consumer that branched on it has been updated. The board projection is instead observable best-effort, through `META|board-projection|fail` on a permanent driver failure and a `META|board-dead-letter` marker plus operator notification after repeated transient ones (`FLEET_BOARD_MAX_ATTEMPTS`, default 5) — the pipeline's own correctness no longer depends on the tracker agreeing.
 - **Idempotency**: `flow.sh` computes the desired `(stage, flags)` from the manifest's current values plus a trigger's `adds`/`removes` (filtered to the four labels a board driver may ever project) and writes the transition — `stage`, `flags`, `rev`, `pending_event` — unconditionally on every invocation, even when the computed values equal the current ones. "No manifest state change" describes the `(stage, flags)` *values* staying the same, not that no write occurs: `rev` always advances by one and the trigger's event always emits with a fresh idempotency key, which is what keeps a structurally nil-effect trigger (e.g. `implement-outcome`, `re-claim` — always `to: null`, no label delta) from being silently dropped from the fact stream the way the old Linear-idempotent-skip path used to drop it.
 
+## Dispatch rehearsal preflight
+
+`scripts/e2e-preflight.sh <INIT> [--out DIR] [--critique-dir DIR] [--skip-critique]` answers "would this planned initiative dispatch with no blockers?" without any tracker write. It is the check the dispatch-rehearsal loop (next.md Step 16) runs after each planner `--create`. For each child it runs the planned body check, `gate-check.sh --mode planned`, strict DoR (Refinement's `DOR_STRICT_TEST_DATA`/`DOR_STRICT_VPLAN`) and reads a `/ticket-critique {TID} --no-post --result-file <dir>/{TID}.txt` result. For the epic it checks `dispatch=true` (read only), runs fleet dry-run, and checks every `blocked by` line against a sibling `blocked_by` edge. Rules:
+
+- A planned-gate exit 0 passes only with a `planned-precheck|done` log line. Exit 0 also means "not planned" and "fetch failed".
+- Logs are never named `*-pipeline.log`, which fleet detectors would read as live pipelines.
+- Every check runs this checkout's `ticket-auto-pipeline/lib`, never the synced `~/.claude/skills/lib`.
+- Side effects are those of fleet dry-run itself: the `ready` cache and `git fetch`.
+
+Exit 0 PASS/PARTIAL, 1 FAIL, 2 usage. Test: `scripts/tests/test-e2e-preflight.sh`.
+
 ## Commit conventions
 
 - Standard git commit messages — no Co-Authored-By trailers. The harness default `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` is blocked by the auto mode Content Integrity classifier. Omit it.
