@@ -49,7 +49,7 @@ source ~/.claude/skills/lib/phase-inspector.sh
 _pre_rc=0
 _pre_out=$(bash ~/.claude/skills/lib/ticket-preamble.sh TICKET_ARG="{TICKET_ARG}" NEW_RUN=true ANNOUNCE_START=true) || _pre_rc=$?
 echo "$_pre_out"
-_pre() { echo "$_pre_out" | sed -n "s/^  $1: //p"; }
+_pre() { echo "$_pre_out" | sed -n "s/^  ${1}: //p"; }
 if [ "$_pre_rc" -eq 0 ]; then
   HB_LOG_FILE="$(_pre HB_LOG_FILE)"; export HB_LOG_FILE
   # capture-transcript.sh turns on `set -eo pipefail`: every line here must survive it.
@@ -60,11 +60,11 @@ if [ "$_pre_rc" -eq 0 ]; then
   echo "${BOLD}${YELLOW}  $(_pre DASHBOARD_CMD_LOG)${RESET}"
   echo "${BOLD}${YELLOW}  $(_pre DASHBOARD_CMD_FLEET)${RESET}"
 fi
-# Exit codes — see the table below. Same Bash call: _pre_rc does not survive into another.
+# Exit codes: table below. Same Bash call: _pre_rc does not survive into another.
 case "$_pre_rc" in
 0) ;;
 2 | 3 | 6)
-  _tid=$(bash -c 'source ~/.claude/skills/lib/ticket-preamble.sh && ticket_preamble_parse_arg "$1"' _ "{TICKET_ARG}" | sed -n 's/^TICKET_ID=//p')
+  _tid=$(bash -c 'source ~/.claude/skills/lib/ticket-preamble.sh && ticket_preamble_parse_arg "${1}"' _ "{TICKET_ARG}" | sed -n 's/^TICKET_ID=//p')
   bash ~/.claude/skills/lib/pipeline-finalize.sh "$_tid" "$_pre_rc" "$PWD/logs/${_tid}-pipeline.log" || true
   exit "$_pre_rc"
   ;;
