@@ -456,15 +456,11 @@ Before proceeding to the next dispatch, verify:
 Resolve the `detect-resume.sh` path dynamically and invoke directly as bash — no Claude agent spawn. This replaces the old pattern of calling the `ticket-detect-resume` skill:
 
 ```bash
-# Resolve detect-resume.sh path dynamically
+# Resolve detect-resume.sh: synced copy, else the installed (else newest cached) version (#468)
+source ~/.claude/skills/lib/plugin-cache.sh
 DETECT_SH="$HOME/.claude/skills/ticket-detect-resume/detect-resume.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$DETECT_SH" ] || DETECT_SH="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-detect-resume/detect-resume.sh"
-[ -f "$DETECT_SH" ] || DETECT_SH=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-detect-resume/detect-resume.sh" 2>/dev/null | sort -V | tail -1)
-[ -z "$DETECT_SH" ] && { echo "detect-resume.sh not found"; exit 1; }
+[ -f "$DETECT_SH" ] || DETECT_SH=$(tap_cache_find ticket-auto-pipeline skills/ticket-detect-resume/detect-resume.sh)
+if [ -z "$DETECT_SH" ]; then echo "detect-resume.sh not found"; exit 1; fi
 ```
 
 For every dispatch decision, re-run `detect-resume.sh` to get fresh state:
@@ -484,7 +480,7 @@ Report that the ticket is still held and requires `/ticket-approve {TICKET_ID}`.
 
 **If recovering (`RESUME_STEP ≠ STEP_1`):**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|recovery|info|Resuming from {RESUME_STEP}" >> {LOG_FILE}
+bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META recovery info "Resuming from {RESUME_STEP}"
 ```
 
 **Before the recovery log entry, rehydrate the branch env vars from `detect-resume.sh` output** — on a crash-recovery the router does not re-run `resolve_branch_context`. The branch decisions were written to `META|branch-context` at Step 0.5b and are now in the `DETECT_RESUME_RESULT` block as `BASE_BRANCH`, `INTEGRATION_BRANCH`, `BRANCH_SOURCE`,
@@ -534,7 +530,7 @@ per-repo freshness-check cost on every resume:
 ```bash
 case "{RESUME_STEP}" in
 STEP_4 | STEP_4_5 | STEP_4_6 | STEP_5 | STEP_5_5 | STEP_6 | done)
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|resuming at {RESUME_STEP} — prescan skipped" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "resuming at {RESUME_STEP} — prescan skipped"
   ;;
 *)
   # Not a late resume — run the freshness gate below.
@@ -566,7 +562,7 @@ done < <(find "$REPOS_ROOT" -maxdepth 3 -name ".git" -type d -printf '%h\0' 2>/d
 
 # If no repos found, skip prescan entirely (nothing to scan)
 if [ ${#REPOS[@]} -eq 0 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|no repos found under REPOS_ROOT" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "no repos found under REPOS_ROOT"
 fi
 ```
 
@@ -606,11 +602,11 @@ stale)
   : # fall through to "Acquire lock and spawn" below
   ;;
 decayed | missing)
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|$slug ${PRESCAN_STATUS} — full fan-out needs an interactive /ticket-prescan $repo (headless prescan agent has no Agent tool)" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "$slug ${PRESCAN_STATUS} — full fan-out needs an interactive /ticket-prescan $repo (headless prescan agent has no Agent tool)"
   continue
   ;;
 *)
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|$slug unknown prescan status '${PRESCAN_STATUS}' — not spawning" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "$slug unknown prescan status '${PRESCAN_STATUS}' — not spawning"
   continue
   ;;
 esac
@@ -626,7 +622,7 @@ mkdir -p "$(dirname "$LOCK_FILE")"
 exec {lock_fd}>"$LOCK_FILE"
 if flock -n "$lock_fd"; then
   # Lock acquired — proceed with prescan spawn
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|waiting|$slug prescan triggered ($PRESCAN_STATUS)" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan waiting "$slug prescan triggered ($PRESCAN_STATUS)"
 
   # Spawn using standard bracketed pattern
   # spawn_agent_pre accepts only its documented params (PHASE, STEP, LOG_FILE,
@@ -658,17 +654,17 @@ AGENT_RETURN_EOF
   if grep -q "$slug: scanned" /tmp/ticket-auto-{TICKET-ID}-agent-return.txt; then
     spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done \
       MSG="$slug prescan complete: $PRESCAN_STATUS → fresh" NEXT_PHASE=APPRAISE
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|done|$slug prescan complete" >> {LOG_FILE}
+    bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan done "$slug prescan complete"
   else
     FAIL_ACTION=warn-continue spawn_agent_post TICKET_ID={TICKET-ID} RESULT=fail \
       MSG="$slug prescan failed (non-blocking)"
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|fail|$slug prescan failed" >> {LOG_FILE}
+    bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan fail "$slug prescan failed"
   fi
 
   flock -u "$lock_fd"
 else
   # Lock contended — skip, proceed to appraise
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|$slug locked by another process" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "$slug locked by another process"
 fi
 ```
 
@@ -749,24 +745,14 @@ fi
 **Then, before the agent spawn, claim the ticket immediately** so Linear reflects that work has started. Complexity defaults to `simple` — the appraise agent corrects it in Step 4 when the real score is known. `flow.sh` is idempotent: re-calling with the same params is a no-op.
 
 ```bash
-_flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$_flow_sh" ] || _flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
-[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
-
-bash "$_flow_sh" "{TICKET-ID}" "appraise-start" --data complexity=simple 2>&1
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" "{TICKET-ID}" appraise-start --data complexity=simple 2>&1
 _rc=$?
 if [ $_rc -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh appraise-start failed (exit ${_rc})" \
-    "{\"trigger\":\"appraise-start\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: appraise-start" >> {LOG_FILE}
+  # flow-run.sh already wrote META|flow-error (or the exit-11 gate-stop) and the retry heartbeat.
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
   exit 1
 fi
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|ticket-claimed|info|{TICKET-ID} claimed → Todo" >> {LOG_FILE}
+bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META ticket-claimed info "{TICKET-ID} claimed → Todo"
 hb-wrap.sh gate "ticket-claimed" "ok" "ticket claimed — Todo + claimed label + assigned"
 ```
 
@@ -810,7 +796,7 @@ if [ $_gate_rc -eq 0 ]; then
 elif [ $_gate_rc -eq 1 ]; then
   # Held — fleet controller will detect, stop here
   echo "Gate held for {TICKET_ID}. Check the appraisal comment in Linear for any Open Questions and answer them in a comment first — then run /ticket-approve {TICKET_ID}. Approving before answering will just trigger another gate-reconcile hold on next resume."
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-held|info|held" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-held info "held"
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 0 "{LOG_FILE}" || true
   exit 0
 else
@@ -830,7 +816,7 @@ hold → re-approve → re-hold cycle could repeat without bound:
 
 ```bash
 if [ "{RECONCILE_CYCLE}" -ge 3 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|RECONCILE_EXHAUSTED" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-stop fail "RECONCILE_EXHAUSTED"
   echo "Gate reconciliation exhausted after 3 cycles for {TICKET_ID}. Needs human review."
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
   exit 1
@@ -909,7 +895,7 @@ eval "$_rcc_out" 2>/dev/null || true
 if [ "${RETURN_COMPLETENESS_STATUS:-complete}" != "complete" ]; then
   # Warn-only (Phase 1): log via gate-warn, never gate-stop. Does NOT
   # flip done->fail — the pipeline continues as if the phase were done.
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|info|RETURN_INCOMPLETE — ${REASON:-unknown} (unchecked=${UNCHECKED_COUNT:-?}/${TOTAL_COUNT:-?}, artifact=${ARTIFACT_TYPE:-?})" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-warn info "RETURN_INCOMPLETE — ${REASON:-unknown} (unchecked=${UNCHECKED_COUNT:-?}/${TOTAL_COUNT:-?}, artifact=${ARTIFACT_TYPE:-?})"
 fi
 
 # On success:
@@ -934,12 +920,10 @@ bash "$_outcome_sh" "{TICKET_ID}" "{LOG_FILE}"
 Then emit planner feedback for planned tickets (no-op for unplanned):
 ```bash
 _feedback_sh="${HOME}/.claude/skills/lib/planned-feedback-write.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$_feedback_sh" ] || _feedback_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/lib/planned-feedback-write.sh"
-[ -f "$_feedback_sh" ] || _feedback_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/lib/planned-feedback-write.sh" 2>/dev/null | sort -V | tail -1)
+if [ ! -f "$_feedback_sh" ]; then
+  source ~/.claude/skills/lib/plugin-cache.sh
+  _feedback_sh=$(tap_cache_find ticket-auto-pipeline lib/planned-feedback-write.sh)
+fi
 if [ -f "$_feedback_sh" ]; then
   source "$_feedback_sh"
   planned_feedback_write "{TICKET_ID}" "{LOG_FILE}" || true
@@ -986,27 +970,9 @@ spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done MSG="Phase inspector complete
 
 Then transition from Ready → Review via implement-complete:
 ```bash
-flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$flow_sh" ] || flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
-[ -f "$flow_sh" ] || flow_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
-if [ -z "$flow_sh" ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh not found for implement-complete" \
-    "{\"trigger\":\"implement-complete\",\"ticket\":\"{TICKET_ID}\",\"error_type\":\"resolution_failure\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|implement-complete: flow.sh not found" >> "{LOG_FILE}"
-else
-  bash "$flow_sh" "{TICKET_ID}" "implement-complete" 2>&1
-  _rc=$?
-  if [ $_rc -ne 0 ]; then
-    _error_type=$( [ $_rc -eq 7 ] && echo "state_assertion" || echo "flow_error" )
-    hb-wrap.sh retry "flow-sh" "fail" "flow.sh implement-complete failed (exit ${_rc})" \
-      "{\"trigger\":\"implement-complete\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET_ID}\",\"error_type\":\"${_error_type}\"}"
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: implement-complete" >> "{LOG_FILE}"
-  fi
-fi
+# Non-zero (incl. 127 = flow.sh not found): flow-run.sh writes META|flow-error and the
+# retry heartbeat itself; the router continues and detect-resume decides the next step.
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" "{TICKET_ID}" implement-complete 2>&1
 ```
 
 ### STEP_4_5 — Verify (with retry sub-loop)
@@ -1139,7 +1105,7 @@ case "$VERIFY_DECISION" in
 advance) echo "VERIFY PASS → STEP_4_6" ;;
 retry) echo "VERIFY FAIL (attempt $VERIFY_ATTEMPTS of $VERIFY_CAP) → re-implement" ;;
 exhausted)
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_EXHAUSTED" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-stop fail "VERIFY_EXHAUSTED"
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
   exit 1
   ;;
@@ -1301,7 +1267,7 @@ its own (`ticket-document` writes its own `MAINTENANCE|document|done|` line and
 line, a resumed run loops STEP_5 indefinitely:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|maintenance|done|clean" >> "{LOG_FILE}"
+bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE maintenance done "clean"
 ```
 
 ### STEP_5_5 — PR Comment Reconciliation
@@ -1312,7 +1278,7 @@ leaving repeated new comments could cycle the pipeline indefinitely:
 
 ```bash
 if [ "{PR_FEEDBACK_CYCLE}" -ge 3 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|PR_FEEDBACK_EXHAUSTED" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-stop fail "PR_FEEDBACK_EXHAUSTED"
   echo "PR feedback reconciliation exhausted after 3 cycles for {TICKET_ID}. Needs human review."
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
   exit 1
@@ -1363,7 +1329,7 @@ fi
 # something is drifting and needs attention.
 if grep -q '|fallback|' "{HB_LOG_FILE}" 2>/dev/null; then
   NEEDS_RETRO=true
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|drift|warn|drift detected — heartbeat fallback events present" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META drift warn "drift detected — heartbeat fallback events present"
 fi
 # Condition 4: VERIFY_EXHAUSTED — verify phase exhausted all retries.
 # Condition 1 covers this via gate-stop, but gate-stop lines can be written
@@ -1388,7 +1354,7 @@ If `NEEDS_RETRO=true`, spawn `ticket-retro` agent. Then release the worktree (no
 if [ -n "${WORKTREE_ROOT:-}" ] && [ -f "$HOME/.claude/skills/lib/worktree.sh" ]; then
   source "$HOME/.claude/skills/lib/worktree.sh"
   release_worktree "{TICKET_ID}" || \
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|worktree-release|warn|release_worktree failed for {TICKET_ID}" >> "{LOG_FILE}"
+    bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META worktree-release warn "release_worktree failed for {TICKET_ID}"
 fi
 
 # META|outcome is written by pipeline-finalize.sh (Step 0.65) — called at
@@ -1400,7 +1366,7 @@ fi
 
 ```bash
 echo "Unknown RESUME_STEP: {RESUME_STEP}" >&2
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|router-error|fail|Unknown RESUME_STEP: {RESUME_STEP}" >> "{LOG_FILE}"
+bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META router-error fail "Unknown RESUME_STEP: {RESUME_STEP}"
 bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
 exit 1
 ```

@@ -452,17 +452,21 @@ test_hb_wrap_callers_use_valid_statuses() {
 
 # ── Increment B — silent-skip & false-done fixes (R3, R9, R2) ─────────────────
 
+# skill-glue-collapse: the pasted resolver became a flow-run.sh call. flow-run.sh
+# owns the plugin-cache fallback (tap_cache_find) and the failure record
+# (META|flow-error + retry heartbeat, incl. 127 for flow.sh not found) — both
+# pinned by test-flow-run.sh. Here: the block delegates and adds no swallow.
 test_router_implement_complete_has_plugin_cache_fallback() {
   local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/Then transition from Ready/,/^```$/p' "$skill_md")
-  echo "$block" | grep -q 'claude/plugins/cache' || {
-    echo "implement-complete flow.sh resolution missing plugin-cache fallback"
+  echo "$block" | grep -q 'flow-run\.sh --log-file "{LOG_FILE}" "{TICKET_ID}" implement-complete' || {
+    echo "implement-complete is not fired through lib/flow-run.sh"
     return 1
   }
-  echo "$block" | grep -qE 'hb_retry|hb-wrap\.sh' || {
-    echo "implement-complete flow.sh resolution no longer swallows failure with hb_retry/hb-wrap.sh"
+  echo "$block" | grep -q 'installPath' && {
+    echo "implement-complete still carries an inline flow.sh resolver"
     return 1
   }
   echo "$block" | grep -q '|| true' && {
@@ -779,6 +783,9 @@ test_router_prescan_spawns_only_for_stale() {
   log="$tmp/pipeline.log"
   : >"$log"
   code=${code//\{LOG_FILE\}/$log}
+  # The block logs through the synced ~/.claude/skills/lib/plog.sh; point it at
+  # the checkout's lib (CI and dev hosts may have no synced copy).
+  code=${code//\~\/.claude\/skills\/lib\//$LIB_DIR/}
   local reached
   reached=$(
     slug=repo-x
