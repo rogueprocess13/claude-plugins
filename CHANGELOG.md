@@ -17,6 +17,21 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.43.7 (2026-10-23)
+
+Fleet-controller fixes (codebase review 2026-10-23, PO-2, PO-5, BE-13).
+
+### Fixed
+- `/fleet-controller monitor` removed spawn-queue entries and wrote PID-0 owner records, but spawned
+  nothing. It now leaves the queue to fleetd and prints `PENDING:spawn` lines saying fleetd with
+  `FLEETD_SPAWN_ENABLED=1` is required.
+- Gate-stopped, exhausted and dead-lettered tickets were missing from status. `fleet_detect_all`
+  has an `attention` array, shown as "Needs Attention" with a reason and next step.
+
+### Security / Breaking
+- fleetd POST `/dispatch` and `/stop` reject any `Origin` header (403), require `X-Fleetd-Token`
+  from a 0600 token file in the state dir (401) and `Content-Type: application/json` (415). Any
+  external caller must send the token.
 ## 0.71.9 / fleet-controller 0.43.6 (2026-10-23)
 
 Docs and state diagram match the code (codebase review 2026-10-23, PO-1/3/4/16, FE-1..6).

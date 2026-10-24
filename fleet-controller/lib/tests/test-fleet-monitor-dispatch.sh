@@ -93,11 +93,29 @@ test_queue_consume_entry() {
     source '$LIB_DIR/fleet-monitor.sh' 2>/dev/null
     _spawn_queue_consume '$ws' 0 2>&1
   " 2>/dev/null || true)
-  # Should emit ACTION:spawn-auto
-  echo "$output" | grep -q "ACTION:spawn-auto" && return 0 || {
-    echo "output missing ACTION:spawn-auto: $output"
+  # PO-2: the monitor cannot spawn, so it must report the entry as pending
+  # and leave it for fleetd: no removal, no PID=0 owner record.
+  echo "$output" | grep -q "PENDING:spawn tid=CRE-101" || {
+    echo "output missing PENDING:spawn line: $output" >&2
     return 1
   }
+  echo "$output" | grep -q "FLEETD_SPAWN_ENABLED=1" || {
+    echo "pending line does not say fleetd is required: $output" >&2
+    return 1
+  }
+  if echo "$output" | grep -q "ACTION:spawn"; then
+    echo "monitor still prints an ACTION:spawn line nothing acts on: $output" >&2
+    return 1
+  fi
+  grep -q '"tid":"CRE-101"' "$queue_file" 2>/dev/null || {
+    echo "queue entry was consumed by a monitor that cannot spawn it" >&2
+    return 1
+  }
+  [ ! -f "$ws/CRE-101-run.json" ] || {
+    echo "monitor wrote an owner record it will never honour" >&2
+    return 1
+  }
+  return 0
 }
 
 test_queue_consume_malformed_skipped() {
@@ -145,11 +163,10 @@ test_queue_write_creates_entry() {
   }
 }
 
-# Consume slot math in fleet_monitor_cycle must use the live-only pipeline
-# count (shared _active_pipeline_count), not the detection summary's
-# no-outcome log count — a dead log must free a slot, so fleetd's consume
-# and the monitor agree on capacity.
-test_monitor_cycle_consume_uses_live_only_count() {
+# PO-2: a full monitor cycle leaves a queued entry for fleetd, reports it
+# as pending, and keeps its stdout pure detection JSON (the pending line goes
+# to stderr, which fleet_monitor_loop forwards to the operator).
+test_monitor_cycle_leaves_queue_for_fleetd() {
   local ws queue_file
   ws=$(_setup_workspace)
   queue_file=$(_setup_queue "$ws" "test-liveonly")
@@ -171,14 +188,27 @@ test_monitor_cycle_consume_uses_live_only_count() {
     fleet_monitor_cycle '$ws' 2>&1
   " 2>/dev/null || true)
 
-  # summary.total=2 would have zero slots under the old count; live-only
-  # count = 0 → the single slot is free and the entry is consumed.
-  echo "$output" | grep -q "ACTION:spawn-auto tid=CRE-101" || {
-    echo "expected spawn action for CRE-101; output: $output" >&2
+  echo "$output" | grep -q "PENDING:spawn tid=CRE-101" || {
+    echo "expected pending line for CRE-101; output: $output" >&2
     return 1
   }
-  [ ! -f "$queue_file" ] || [ ! -s "$queue_file" ] || {
-    echo "queue entry not consumed — dead log still jams monitor slots" >&2
+  grep -q '"tid":"CRE-101"' "$queue_file" 2>/dev/null || {
+    echo "monitor cycle consumed a queue entry it cannot spawn" >&2
+    return 1
+  }
+  local stdout_only
+  stdout_only=$(bash -c "
+    FLEET_STATE_DIR='$ws' FLEET_INSTANCE_ID=test-liveonly FLEET_MAX_CONCURRENT=1
+    FLEET_LOG_FILE=/dev/null
+    source '$LIB_DIR/fleet-monitor.sh' 2>/dev/null
+    fleet_detect_all() { echo '{\"pipelines\":[],\"fleet_wide\":[],\"summary\":{\"total\":2,\"healthy\":0,\"warn\":0,\"kill\":0,\"restart\":0}}'; }
+    fleet_render_dashboard_from_data() { return 0; }
+    fleet_write_report_from_data() { return 0; }
+    worktree_gc() { return 0; }
+    fleet_monitor_cycle '$ws' 2>/dev/null
+  " 2>/dev/null || true)
+  echo "$stdout_only" | jq -e '.summary' >/dev/null 2>&1 || {
+    echo "cycle stdout is not pure detection JSON: $stdout_only" >&2
     return 1
   }
   return 0
@@ -208,7 +238,7 @@ test_queue_consume_drops_terminal_entry() {
     _spawn_queue_consume '$ws' 0 2>&1
   " 2>/dev/null || true)
 
-  if echo "$output" | grep -q "ACTION:spawn-auto tid=CRE-TERM"; then
+  if echo "$output" | grep -q "PENDING:spawn tid=CRE-TERM"; then
     echo "terminal entry was spawned; output: $output" >&2
     return 1
   fi
@@ -249,8 +279,13 @@ test_queue_consume_override_terminal_bypasses_drop() {
     _spawn_queue_consume '$ws' 0 2>&1
   " 2>/dev/null || true)
 
-  echo "$output" | grep -q "ACTION:spawn-auto tid=CRE-OVR" || {
-    echo "override_terminal entry was not spawned; output: $output" >&2
+  # Not dropped as terminal: it stays queued for fleetd and is reported.
+  echo "$output" | grep -q "PENDING:spawn tid=CRE-OVR" || {
+    echo "override_terminal entry was not kept pending; output: $output" >&2
+    return 1
+  }
+  grep -q '"tid":"CRE-OVR"' "$queue_file" 2>/dev/null || {
+    echo "override_terminal entry was removed from the queue" >&2
     return 1
   }
   grep -q "fleet-requeue-override|tid=CRE-OVR" "$ws/monitor.log" 2>/dev/null || {
@@ -284,7 +319,7 @@ test_queue_consume_dead_letter_dropped_without_override() {
     _spawn_queue_consume '$ws' 0 2>&1
   " 2>/dev/null || true)
 
-  if echo "$output" | grep -q "ACTION:spawn-auto tid=CRE-NOV"; then
+  if echo "$output" | grep -q "PENDING:spawn tid=CRE-NOV"; then
     echo "dead-lettered entry without override_terminal was spawned; output: $output" >&2
     return 1
   fi
@@ -327,7 +362,7 @@ _run "queue_consume_at_capacity" test_queue_consume_at_capacity
 _run "queue_consume_entry" test_queue_consume_entry
 _run "queue_consume_malformed_skipped" test_queue_consume_malformed_skipped
 _run "queue_write_creates_entry" test_queue_write_creates_entry
-_run "monitor_cycle_consume_uses_live_only_count" test_monitor_cycle_consume_uses_live_only_count
+_run "monitor_cycle_leaves_queue_for_fleetd" test_monitor_cycle_leaves_queue_for_fleetd
 _run "queue_consume_drops_terminal_entry" test_queue_consume_drops_terminal_entry
 _run "queue_consume_override_terminal_bypasses_drop" test_queue_consume_override_terminal_bypasses_drop
 _run "queue_consume_dead_letter_dropped_without_override" test_queue_consume_dead_letter_dropped_without_override

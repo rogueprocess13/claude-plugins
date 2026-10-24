@@ -76,6 +76,7 @@ test-lib:
 	bash fleet-controller/lib/tests/test-fleet-detect-activity.sh
 	bash fleet-controller/lib/tests/test-fleet-detect-signals.sh
 	bash fleet-controller/lib/tests/test-fleet-detect-outbox-staleness.sh
+	bash fleet-controller/lib/tests/test-fleet-detect-attention.sh
 	bash fleet-controller/lib/tests/test-fleet-store-parity.sh
 	bash fleet-controller/lib/tests/test-detect-epic-branch-ready.sh
 	bash fleet-controller/lib/tests/test-fleet-intervene.sh
@@ -209,6 +210,7 @@ test-fleetd:
 	python3 -m pytest fleet-controller/fleetd/tests/test_observer.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_worker_status_api.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_worker_telemetry_env.py -v
+	python3 -m pytest fleet-controller/fleetd/tests/test_http_control_auth.py -v
 	python3 -m pytest ticket-auto-pipeline/skills/ticket-auto/tests/test_dashboard_fleet.py -v
 
 test-planner:

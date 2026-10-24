@@ -258,6 +258,34 @@ fleet_render_dashboard_from_data() {
       [ -n "$dfindings" ] && echo "  ${icon} ${dname}: ${dfindings}" || echo "  ${icon} ${dname}: clear"
     done
   fi
+
+  # PO-5: stopped and dead-lettered pipelines are excluded from the health
+  # table (no detector runs on them) but are waiting on a person.
+  local att_count
+  att_count=$(echo "$data" | jq -r '(.attention // []) | length' 2>/dev/null || echo "0")
+  if [ "${att_count:-0}" -gt 0 ]; then
+    echo ""
+    echo "--- Needs Attention (${att_count} stopped or dead-lettered) ---"
+    echo "$data" | jq -r '.attention | sort_by(.tid) | .[] | [.tid, .kind, .reason, (.age_secs | tostring), .hint] | join("\u001f")' 2>/dev/null |
+      while IFS=$'\x1f' read -r atid akind areason aage ahint; do
+        echo "  ${atid}  ${akind}: ${areason}  ($(_fleet_dashboard_age "$aage") ago) — ${ahint}"
+      done
+  fi
+}
+
+# _fleet_dashboard_age <secs> — compact human age: 45s, 12m, 3h4m, 2d5h.
+_fleet_dashboard_age() {
+  local s="${1:-0}"
+  [[ "$s" =~ ^[0-9]+$ ]] || s=0
+  if [ "$s" -ge 86400 ]; then
+    echo "$((s / 86400))d$(((s % 86400) / 3600))h"
+  elif [ "$s" -ge 3600 ]; then
+    echo "$((s / 3600))h$(((s % 3600) / 60))m"
+  elif [ "$s" -ge 60 ]; then
+    echo "$((s / 60))m"
+  else
+    echo "${s}s"
+  fi
 }
 
 # ── fleet_write_report_from_data ─────────────────────────────────────────────────
@@ -329,6 +357,23 @@ fleet_write_report_from_data() {
         IFS='|' read -r icon label <<<"$(_severity_info "${dsev:-0}")"
         echo "| ${dname} | ${icon} ${label} (${dsev}) | ${dfindings:-clear} |"
       done
+      echo ""
+    fi
+
+    # PO-5: stopped / dead-lettered pipelines, visible with their reason.
+    local att_count
+    att_count=$(echo "$data" | jq -r '(.attention // []) | length' 2>/dev/null || echo "0")
+    if [ "${att_count:-0}" -gt 0 ]; then
+      echo "## Needs Attention"
+      echo ""
+      echo "Stopped or dead-lettered pipelines. No detector watches these; each is waiting on a person."
+      echo ""
+      echo "| Ticket | Kind | Reason | Since | Next step |"
+      echo "|--------|------|--------|-------|-----------|"
+      echo "$data" | jq -r '.attention | sort_by(.tid) | .[] | [.tid, .kind, (.reason | gsub("\\|"; "\\\\|")), .since, .hint] | join("\u001f")' 2>/dev/null |
+        while IFS=$'\x1f' read -r atid akind areason asince ahint; do
+          echo "| ${atid} | ${akind} | ${areason} | ${asince} | ${ahint} |"
+        done
       echo ""
     fi
 

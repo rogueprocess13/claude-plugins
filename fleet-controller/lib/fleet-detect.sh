@@ -252,6 +252,52 @@ _pipeline_genuinely_terminal() {
   esac
 }
 
+# PO-5: a genuinely terminal pipeline that did NOT complete — gate-stopped,
+# exhausted, exited non-zero, fleet-killed, or dead-lettered — needs a
+# person, yet fleet_detect_all skips it like a finished one. This emits one
+# compact JSON object describing it (kind, reason, age, next step) so the
+# dashboard and report can list it under "Needs attention". Emits nothing
+# for a completed pipeline, a held one, or one still running.
+# Usage: _pipeline_attention_entry <tid> [workspace]
+_pipeline_attention_entry() {
+  local tid="$1"
+  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local last
+  last=$(_pipeline_last_effective_line "$tid" "$workspace")
+  [ -z "$last" ] && return 0
+  local ts step msg kind reason hint
+  ts=$(echo "$last" | awk -F'|' '{print $1}')
+  step=$(echo "$last" | awk -F'|' '{print $3}')
+  msg=$(echo "$last" | awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i<NF?"|":"")}')
+  if [ "$step" = "dead-letter" ]; then
+    kind="dead-letter"
+    reason="${msg#reason=}"
+    hint="inspect the log, then requeue with fleet_requeue_dead_letter ${tid}"
+  elif [ "$step" = "outcome" ]; then
+    case "$msg" in
+    "stopped: "*)
+      kind="stopped"
+      reason="${msg#stopped: }"
+      hint="fix the cause, then re-run /ticket-auto ${tid} or /fleet-controller dispatch <epic>"
+      ;;
+    *) return 0 ;;
+    esac
+  else
+    return 0
+  fi
+  local age_secs=0 last_epoch
+  last_epoch=$(date -d "$ts" +%s 2>/dev/null || echo "")
+  [ -n "$last_epoch" ] && age_secs=$(($(date -u +%s) - last_epoch))
+  jq -nc \
+    --arg tid "$tid" \
+    --arg kind "$kind" \
+    --arg reason "${reason:-unknown}" \
+    --arg since "$ts" \
+    --argjson age_secs "$age_secs" \
+    --arg hint "$hint" \
+    '{tid: $tid, kind: $kind, reason: $reason, since: $since, age_secs: $age_secs, hint: $hint}'
+}
+
 # True when the ticket's last outcome is a hold — waiting on a human, not
 # terminal, but not "active" in the ordinary sense either: the router has
 # already exited cleanly, so the 10 process-liveness detectors (stalls,
@@ -2023,12 +2069,14 @@ fleet_detect_all() {
     jq -nc \
       --argjson fleet_wide "[$ws_entry]" \
       --argjson warn "$ws_sev" \
-      '{pipelines: [], fleet_wide: $fleet_wide, summary: {total: 0, healthy: 0, warn: $warn, kill: 0, restart: 0}}'
+      '{pipelines: [], fleet_wide: $fleet_wide, summary: {total: 0, healthy: 0, warn: $warn, kill: 0, restart: 0}, attention: []}'
     return
   fi
 
   local results="["
   local first=true
+  local attention="["
+  local att_first=true
   local total=0 healthy=0 warn=0 kill=0 restart=0
 
   # Find all unique ticket IDs from pipeline logs (exclude completed ones)
@@ -2058,6 +2106,15 @@ fleet_detect_all() {
     # "held: gate" the same as "completed:" and exempted every held ticket
     # from all 11 detectors; one sat unanswered for 160h with no alert.
     if _pipeline_genuinely_terminal "$tid" "$workspace"; then
+      # PO-5: no detector runs on it, but a stopped or dead-lettered
+      # pipeline must stay visible — it is waiting on a person.
+      local att_entry
+      att_entry=$(_pipeline_attention_entry "$tid" "$workspace" 2>/dev/null || true)
+      if [ -n "$att_entry" ]; then
+        [ "$att_first" = "false" ] && attention="$attention,"
+        att_first=false
+        attention="$attention$att_entry"
+      fi
       continue
     fi
 
@@ -2273,9 +2330,14 @@ fleet_detect_all() {
     --argjson restart "$restart" \
     '{total: $total, healthy: $healthy, warn: $warn, kill: $kill, restart: $restart}')
 
+  attention="$attention]"
+
+  # `attention` (PO-5) is additive: stopped/dead-lettered pipelines, which
+  # are excluded from `pipelines` and from every summary count.
   jq -nc \
     --argjson pipelines "$results" \
     --argjson fleet_wide "$fleet_wide" \
     --argjson summary "$summary" \
-    '{pipelines: $pipelines, fleet_wide: $fleet_wide, summary: $summary}'
+    --argjson attention "$attention" \
+    '{pipelines: $pipelines, fleet_wide: $fleet_wide, summary: $summary, attention: $attention}'
 }

@@ -255,12 +255,9 @@ while stop-file absent:
     sleep FLEET_POLL_INTERVAL
 ```
 
-### Dual Spawn Modes
+### The monitor does not spawn
 
-| Mode | Detection | Behavior |
-|------|-----------|----------|
-| Interactive (`CLAUDE_CODE_SESSION_ID` set) | Claude Code session | Emits `ACTION:spawn-restart`/`ACTION:spawn-auto` to stdout |
-| Cron (`CLAUDE_CODE_SESSION_ID` absent) | Headless | Writes to spawn queue JSONL for external consumer |
+Only fleetd with `FLEETD_SPAWN_ENABLED=1` starts workers. The monitor writes every restart decision to the spawn queue, in every mode. `_spawn_queue_consume` leaves live queue entries in place for fleetd: it writes no run-registry owner record and prints one `PENDING:spawn tid=...` line per entry (to stderr inside a cycle; `fleet_monitor_loop` forwards those lines to the operator). It removes only stale entries whose pipeline log is already terminal, the same drop fleetd's consume applies. Earlier versions removed entries, wrote a PID=0 owner record and printed `ACTION:spawn-*` lines that nothing acted on, so queued tickets disappeared without running.
 
 ### State-Transition Gating
 

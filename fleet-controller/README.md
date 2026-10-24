@@ -59,7 +59,7 @@ Detection runs and interventions are **logged but not executed**. Watch a few cy
 | Command | What it does |
 |---------|-------------|
 | `/fleet-controller status` | One-shot health dashboard + markdown report. Read-only. |
-| `/fleet-controller monitor` | Continuous detection loop with automated intervention. |
+| `/fleet-controller monitor` | Continuous detection loop with automated intervention. Does not start workers: queued tickets run only under fleetd with `FLEETD_SPAWN_ENABLED=1`. |
 | `/fleet-controller intervene <TICKET_ID>` | Manually kill or restart one pipeline. |
 | `/fleet-controller dispatch <INITIATIVE_ID>` | Queue an initiative's planned tickets for execution. |
 | `/fleet-controller feedback` | Aggregate execution results back to the planner. |
@@ -75,9 +75,13 @@ Two companion skills:
 
 Renders a health table (ticket, phase, stall time, severity, anomalies) to the terminal and writes `logs/reports/fleet-dashboard.md`. Start here when something looks wrong.
 
+Tickets that stopped without finishing are not in the health table, because no detector watches them. They are listed in a separate **Needs Attention** section with the reason and a next step: a gate-stop (for example `EXEC_NO_ARTIFACT`), an exhausted retry loop (`VERIFY_EXHAUSTED`, `PR_FEEDBACK_EXHAUSTED`), a non-zero exit, or a dead-letter (for example the restart cap was reached).
+
 ### monitor
 
-Polls every `FLEET_POLL_INTERVAL` seconds (default 30). Each cycle: run all 12 detectors, render the dashboard, execute interventions at KILL and above, and consume the spawn queue while active pipelines are under `FLEET_MAX_CONCURRENT`.
+Polls every `FLEET_POLL_INTERVAL` seconds (default 30). Each cycle: run all detectors, render the dashboard, and execute interventions at KILL and above.
+
+`monitor` does **not** start workers. It leaves spawn-queue entries in place for fleetd (`FLEETD_SPAWN_ENABLED=1`) and prints one `PENDING:spawn tid=...` line per waiting entry, so a queue nobody is draining is visible. It drops only stale entries whose pipeline already finished. A KILL+RESTART also goes to the queue, so the restart happens when fleetd picks it up.
 
 Stop it by creating the stop file it checks each cycle:
 
@@ -104,7 +108,7 @@ touch "${FLEET_STATE_DIR}/fleet-default-controller-stop"
 
 Requires the epic manifest's `dispatch` field to be `true` (the planner stamps this one-way once all child tickets are created and verified — no Linear label involved). Finds child tickets listed in the epic manifest that aren't yet dispatched, skips any still blocked per its own manifest `blocked_by` field, and writes to the spawn queue. **Idempotent** — re-running won't double-queue.
 
-Dispatch only *queues* work; `monitor` (or `fleetd`) executes it.
+Dispatch only *queues* work. **Only fleetd started with `FLEETD_SPAWN_ENABLED=1` executes it.** `monitor` does not start workers: it leaves queued entries in the queue for fleetd and prints a `PENDING:spawn` line for each one so you can see they are waiting.
 
 ### feedback
 
@@ -164,7 +168,7 @@ Health API: `GET http://127.0.0.1:21001/health` → live workers, queue depth, c
 
 | Cron-based | fleetd |
 |-----------|--------|
-| PID=0 sentinel in registry | Real PIDs — fleetd forked the process |
+| Monitor cannot start workers | Real PIDs — fleetd forked the process |
 | Kill escalation unreachable (no PID to signal) | Full escalation with process-group signalling |
 | Spawn instructions printed, unconsumed | Forks `claude` directly |
 | No health endpoint | `GET /health` |
@@ -173,7 +177,13 @@ Single-instance enforced via `fcntl.flock` on a pidfile. On restart it verifies 
 
 ## HTTP API
 
-fleetd serves an on-demand control/query surface on `http://127.0.0.1:21001` (loopback-bound — same trust boundary as `/health`; no auth). Seven endpoints:
+fleetd serves an on-demand control/query surface on `http://127.0.0.1:21001` (loopback-bound). The five GET endpoints are read-only and need no credentials. The two POST endpoints change fleet state, so fleetd guards them against a web page in your browser calling them (cross-site request forgery):
+
+- **Token.** Send the `X-Fleetd-Token` header. fleetd creates the token at startup in `{state_dir}/fleetd-{FLEET_INSTANCE_ID}-http.token` (mode `0600`, so only your user can read it) and keeps it across restarts. A missing or wrong token gets `401`. If fleetd could not write the file, POST returns `503`.
+- **No `Origin` header.** Browsers always send one on a POST; curl and scripts do not. A request with `Origin` gets `403`.
+- **`Content-Type: application/json`** is required (`415` otherwise). A browser cannot send that type cross-site without a preflight, which fleetd never answers.
+
+Seven endpoints:
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -209,12 +219,14 @@ curl -s http://127.0.0.1:21001/epics
 **POST /dispatch** — body `{"epic_id": "...", "dry_run": false, "resume": false}`. Runs the same `fleet_dispatch_initiative` the `/fleet-controller dispatch` skill and the auto-sweep call — label validation, `blocked-by` resolution, and queue idempotency are identical regardless of trigger path. On success it immediately consumes the resulting queue entries (up to `FLEET_MAX_CONCURRENT`) instead of waiting for the next poll cycle, and returns `{"queued": [...], "resumed": [...], "blocked": [...], "spawned": [...], "message": "...", "gate_stop": "..."}` — `resumed` carries tids re-enqueued by the campaign-resume reconcile (Step 1.75), `blocked` carries tids skipped by `blocked-by` dependencies, `queued` the newly enqueued ones, `spawned` those actually forked this call. `gate_stop` names the marker that halted dispatch (`""` when none): dispatch gate-stops are rc-0 by design, so without it a real failure is indistinguishable from a clean empty no-op — when it is non-empty, `message` carries that marker's full line rather than the usual summary. `dry_run: true` reports what would be queued without touching the queue. `resume: true` clears the epic's stop-file before scanning — dispatch is the single start/resume/un-stop entry point. A stopped epic without `resume` returns `200` with `queued: []` and a message naming the stop-file.
 
 ```bash
+TOKEN=$(cat "${FLEET_STATE_DIR:-./logs}/fleetd-${FLEET_INSTANCE_ID:-default}-http.token")
+
 curl -s -X POST http://127.0.0.1:21001/dispatch \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json' -H "X-Fleetd-Token: $TOKEN" \
   -d '{"epic_id": "INIT-42"}'
 
 curl -s -X POST http://127.0.0.1:21001/dispatch \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json' -H "X-Fleetd-Token: $TOKEN" \
   -d '{"epic_id": "INIT-42", "resume": true}'
 ```
 
@@ -222,7 +234,7 @@ curl -s -X POST http://127.0.0.1:21001/dispatch \
 
 ```bash
 curl -s -X POST http://127.0.0.1:21001/stop \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json' -H "X-Fleetd-Token: $TOKEN" \
   -d '{"epic_id": "INIT-42", "reason": "operator decision"}'
 ```
 

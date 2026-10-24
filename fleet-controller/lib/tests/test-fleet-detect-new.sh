@@ -353,7 +353,8 @@ test_schema_top_level_keys() {
   data=$(fleet_detect_all "$ws" 2>/dev/null)
   local keys
   keys=$(echo "$data" | jq -r 'keys | sort | join(",")' 2>/dev/null)
-  local expected="fleet_wide,pipelines,summary"
+  # `attention` (PO-5) lists stopped/dead-lettered pipelines.
+  local expected="attention,fleet_wide,pipelines,summary"
   [ "$keys" = "$expected" ] || {
     echo "expected '$expected', got '$keys'"
     return 1

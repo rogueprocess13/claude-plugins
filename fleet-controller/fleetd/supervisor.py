@@ -11,10 +11,12 @@ endpoint. It does not spawn or kill workers yet — that lands in groups 6-7.
 """
 
 import fcntl
+import hmac
 import http.server
 import json
 import os
 import re
+import secrets
 import shlex
 import signal
 import subprocess
@@ -615,6 +617,48 @@ def _read_confidence_predicted(tid, fleet_lib_dir):
 
 # ── Health HTTP server ─────────────────────────────────────────────────────
 
+# Header carrying the control token on POST requests (BE-13).
+CONTROL_TOKEN_HEADER = 'X-Fleetd-Token'
+
+
+def control_token_path(state_dir, instance_id=None):
+    """Path of the 0600 file holding the POST control token.
+
+    Lives in the fleet state dir next to the spawn queue, namespaced by
+    instance id the same way: `{state_dir}/fleetd-{instance}-http.token`.
+    """
+    return Path(state_dir) / (
+        f'fleetd-{instance_id or FLEET_INSTANCE_ID}-http.token')
+
+
+def ensure_control_token(state_dir, instance_id=None):
+    """Return the control token, creating its 0600 file when absent.
+
+    An existing token is kept across restarts so a local caller holding it
+    (a dashboard, a script) does not break on every fleetd restart; its
+    mode is forced back to 0600. Returns None when the file cannot be
+    created or read — the POST routes then fail closed (503).
+    """
+    path = control_token_path(state_dir, instance_id)
+    try:
+        if path.exists():
+            os.chmod(path, 0o600)
+            token = path.read_text().strip()
+            if token:
+                return token
+        token = secrets.token_urlsafe(32)
+        tmp = path.with_name(path.name + f'.tmp.{os.getpid()}')
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as fh:
+            fh.write(token + '\n')
+        os.replace(tmp, path)
+        return token
+    except OSError as exc:
+        print(f"fleetd: cannot create control token at {path}: {exc}",
+              file=sys.stderr)
+        return None
+
+
 class HealthHandler(http.server.BaseHTTPRequestHandler):
     """HTTP request handler for fleetd's control/query surface.
 
@@ -628,11 +672,26 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
 
     All other paths → 404. The handler stays a thin delegator — business
     logic lives in the Supervisor, which the server attaches at start.
+
+    The POST routes change fleet state, so they are guarded against
+    cross-site requests from a browser (BE-13): a request carrying an
+    `Origin` header is rejected (403 — curl and scripts never send one,
+    browsers always do on POST), the body must be `application/json` (a
+    non-simple content type, so a cross-origin browser request needs a
+    preflight fleetd never answers), and the `X-Fleetd-Token` header must
+    match the token in `{state_dir}/fleetd-{instance}-http.token` (0600,
+    readable only by the operator's user) — 401 otherwise. GET routes stay
+    open: they are read-only.
     """
 
     # Set by the Supervisor / HealthServer before serving.
     supervisor_state = None
     supervisor = None
+    control_token = None
+
+    # A client that sends a large Content-Length and stalls must not block
+    # the single-threaded server forever.
+    timeout = 10
 
     def log_message(self, format, *args):
         """Suppress default stderr logging — fleetd health is polled frequently."""
@@ -661,12 +720,48 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        if self.path not in ('/dispatch', '/stop'):
+            self.send_error(404)
+            return
+        if not self._authorize_post():
+            return
         if self.path == '/dispatch':
             self._handle_dispatch()
-        elif self.path == '/stop':
-            self._handle_stop()
         else:
-            self.send_error(404)
+            self._handle_stop()
+
+    def _authorize_post(self):
+        """CSRF/auth gate for state-changing routes. Sends the error itself."""
+        status, error = self._post_rejection()
+        if status is None:
+            return True
+        # Drain a small body before answering so the client reads the error
+        # instead of a connection reset; a large one is not worth reading.
+        try:
+            length = int(self.headers.get('Content-Length', '0') or '0')
+        except ValueError:
+            length = 0
+        if 0 < length <= 65536:
+            self.rfile.read(length)
+        self.close_connection = True
+        self._send_json(status, {'error': error})
+        return False
+
+    def _post_rejection(self):
+        """Return (status, error) for a rejected POST, or (None, None)."""
+        if self.headers.get('Origin') is not None:
+            return 403, 'cross-origin requests are not allowed'
+        expected = type(self).control_token
+        if not expected:
+            return 503, 'control token unavailable'
+        supplied = self.headers.get(CONTROL_TOKEN_HEADER) or ''
+        if not hmac.compare_digest(supplied.encode('utf-8'),
+                                   expected.encode('utf-8')):
+            return 401, f'missing or invalid {CONTROL_TOKEN_HEADER} header'
+        ctype = (self.headers.get('Content-Type') or '').split(';', 1)[0]
+        if ctype.strip().lower() != 'application/json':
+            return 415, 'Content-Type must be application/json'
+        return None, None
 
     # ── helpers ────────────────────────────────────────────────────────────
 
@@ -815,6 +910,8 @@ class HealthServer:
         """
         HealthHandler.supervisor_state = supervisor._health_state
         HealthHandler.supervisor = supervisor
+        HealthHandler.control_token = ensure_control_token(
+            supervisor._state_dir)
         self._httpd = http.server.HTTPServer(
             (self._bind, self._port),
             HealthHandler,
