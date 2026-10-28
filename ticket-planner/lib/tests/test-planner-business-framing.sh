@@ -247,6 +247,24 @@ fi
 echo "--- Consensus preserves Business Outcomes ---"
 _prompt_has "Consensus" "$CONSENSUS_PROMPT" 'Carry the `## Business Outcomes` section over intact'
 
+echo "--- Specify and Consensus require one AC per stated outcome (planner-ac-coverage-and-epic-uat) ---"
+_prompt_has "Specify" "$SPECIFY_PROMPT" \
+  '### One acceptance criterion per stated outcome' \
+  'each response status code, and each error body' \
+  'including the rejected, expired, missing and fallback cases' \
+  'each ordering or tie-break rule' \
+  'each field or element a list, page or response is said to show' \
+  'walk every behaviour sentence' \
+  'never in the' \
+  'never delete, soften or move a' \
+  '`AC_STATUS_UNCOVERED`'
+_prompt_has "Consensus" "$CONSENSUS_PROMPT" \
+  '## A prose edit carries its acceptance criterion' \
+  'the same edit adds or updates the' \
+  'naming the acceptance criterion you added or' \
+  'Never delete, soften or move a behaviour sentence' \
+  'Every behaviour sentence you added or changed has an acceptance criterion'
+
 # ── 3b. Signals extraction + confidence tolerate Kind/Serves/Enables ────────
 
 echo "--- Signals with Kind/Serves/Enables keep the same confidence ---"
@@ -366,11 +384,12 @@ _prompt_has "EpicGen" "$EPICGEN_PROMPT" \
   'NEEDS_HUMAN_DECISION' \
   'Deferred decision:'
 
-# The Specify prompt must not move a byte (design D7: only Epic Gen changes).
+# The Specify prompt must not move a byte by accident. Last deliberate
+# re-capture: planner-ac-coverage-and-epic-uat (one AC per stated outcome).
 # Pinned as the sha256 of the prompt captured before the change, with the
 # scratch REPOS_ROOT normalised. If a later change edits the Specify prompt on
 # purpose, re-capture: printf '%s' "${SPECIFY_PROMPT//$TMP_ROOT/<REPOS_ROOT>}" | sha256sum
-SPECIFY_PROMPT_SHA="0bce1bf2bf79211988ded7d716e8d53d6c129ec0a90c8afd9e914e9f8f176f2f"
+SPECIFY_PROMPT_SHA="c4dda22f03ca9bb7dcfe1d91cd8bc2527c5da70a75647954b857957ed7ee14aa"
 got_sha=$(printf '%s' "${SPECIFY_PROMPT//$TMP_ROOT/<REPOS_ROOT>}" | sha256sum | cut -d' ' -f1)
 if [ "$got_sha" = "$SPECIFY_PROMPT_SHA" ]; then
   pass "Specify prompt is byte-identical to the pre-change capture"

@@ -17,6 +17,28 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.25.0 (2026-10-24)
+
+Planner fixes from dispatch rehearsal iter 01 (`planner-ac-coverage-and-epic-uat`, next.md
+Step 16, findings F16 and F8). Iter 01 halted 6 of 6 tickets at Refinement on behaviour with
+no acceptance criterion, and its strict blocked-by chain would have deadlocked in UAT.
+
+### Added
+- **Specify and Consensus: one acceptance criterion per stated outcome.** Each status code,
+  error body, conditional branch, tie-break rule and listed field in the behaviour section or
+  Technical Context gets its own AC and Verification Notes row. A Consensus edit that adds or
+  changes behaviour text adds its AC in the same edit, and `Findings Addressed` names it.
+  Both prompts forbid closing a gap by deleting or softening the sentence.
+- **Crosscheck `AC_STATUS_UNCOVERED` (blocking).** A response status code the spec states
+  ("returns 500 `{...}`") that no AC line names. Narrow on purpose: ports, limits, passwords,
+  `on 401` handlers and fenced code never count. Condition coverage stays with Refinement.
+
+### Changed
+- **Epic UAT by default for a chained shared branch.** `planner_uat_policy_resolve` gives
+  `epic` when any spec is blocked by a sibling (as well as when TD specs exist), so a child
+  parked in `UAT` cannot deadlock the tickets it blocks. An explicit `PLANNER_UAT_POLICY`
+  still wins. Epic Gen records the decision as `META|uat-policy-decision`.
+
 ## 0.74.0 (2026-10-24)
 
 Dispatch rehearsal preflight (`dispatch-rehearsal-preflight`, next.md Step 16). One command
