@@ -231,3 +231,182 @@ planner_crosscheck_repo_ref_setup() {
   done < <(planner_crosscheck_repo_refs_resolved "$initiative_id" "$repos_root")
   return 0
 }
+
+# ── Base branch (planner-base-branch-config, rehearsal F13) ──────────────────
+
+# A base-branch name safe to interpolate into a prompt as a literal and into
+# a Branch Directive: git ref characters only, no leading '-', no '..'.
+# Usage: planner_base_branch_name_valid <name>
+planner_base_branch_name_valid() {
+  local name="$1"
+  [ -n "$name" ] || return 1
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || return 1
+  case "$name" in *..* | */ | *.lock) return 1 ;; esac
+  return 0
+}
+
+# Does <branch> exist in <dir>, locally or on origin?
+_planner_base_branch_exists() {
+  local dir="$1" branch="$2"
+  git -C "$dir" show-ref --verify --quiet "refs/heads/${branch}" 2>/dev/null ||
+    git -C "$dir" show-ref --verify --quiet "refs/remotes/origin/${branch}" 2>/dev/null
+}
+
+# One repo's base: develop, then origin/HEAD's target, then main, then master.
+# Usage: _planner_base_branch_detect <dir>
+# Output: the branch, or empty.
+_planner_base_branch_detect() {
+  local dir="$1" head
+  if _planner_base_branch_exists "$dir" develop; then
+    echo develop
+    return 0
+  fi
+  head=$(git -C "$dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+  head="${head#origin/}"
+  if [ -n "$head" ] && [ "$head" != HEAD ] && planner_base_branch_name_valid "$head"; then
+    echo "$head"
+    return 0
+  fi
+  local b
+  for b in main master; do
+    if _planner_base_branch_exists "$dir" "$b"; then
+      echo "$b"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# Resolve the Branch Directive's base branch for an initiative.
+#
+# An explicit `base-branch` config key (--base-branch / PLANNER_BASE_BRANCH,
+# persisted at argument parsing) must exist in every repo Discovery pinned.
+# Without one, each pinned repo is detected (_planner_base_branch_detect); one
+# shared answer is persisted as `base-branch` with a
+# META|base-branch-source|done|detected:<repo>=<branch>,... line, so a retry
+# reuses it. No repo-ref lines at all: `develop`, the historical default.
+#
+# Failures write META|base-branch-source|fail|<CODE> <detail> and print the
+# same line to stderr:
+#   BASE_BRANCH_AMBIGUOUS   pinned repos resolve to different branches
+#   BASE_BRANCH_UNRESOLVED  a pinned repo resolves to nothing, has no live
+#                           checkout, or lacks the explicit base
+#   BASE_BRANCH_INVALID     the explicit base is not a usable branch name
+#
+# Usage: planner_base_branch_resolve <initiative_id>
+# Output (stdout): the branch. rc 0 on success, 1 on failure.
+planner_base_branch_resolve() {
+  local initiative_id="$1"
+  local explicit repos_root="${REPOS_ROOT:-}"
+  explicit=$(planner_config_get "$initiative_id" "base-branch" 2>/dev/null)
+
+  local dir repo _ref _sha branch
+  local -a pairs=() missing=() found=()
+  declare -A _pbbr_seen=()
+
+  if [ -n "$explicit" ] && ! planner_base_branch_name_valid "$explicit"; then
+    _planner_base_branch_fail "$initiative_id" BASE_BRANCH_INVALID \
+      "base-branch '${explicit}' is not a valid branch name — rerun with --base-branch <name>"
+    return 1
+  fi
+
+  if [ -n "$repos_root" ]; then
+    while IFS=$'\037' read -r dir repo _ref _sha; do
+      [ -n "$repo" ] || continue
+      if [ -z "$dir" ]; then
+        missing+=("${repo}=no-checkout")
+        continue
+      fi
+      if [ -n "$explicit" ]; then
+        _planner_base_branch_exists "$dir" "$explicit" || missing+=("${repo}=no-${explicit}")
+        continue
+      fi
+      branch=$(_planner_base_branch_detect "$dir")
+      if [ -z "$branch" ]; then
+        missing+=("${repo}=none")
+        continue
+      fi
+      pairs+=("${repo}=${branch}")
+      if [ -z "${_pbbr_seen[$branch]+x}" ]; then
+        _pbbr_seen["$branch"]=1
+        found+=("$branch")
+      fi
+    done < <(planner_crosscheck_repo_refs_resolved "$initiative_id" "$repos_root")
+  fi
+
+  local IFS=,
+  if [ "${#missing[@]}" -gt 0 ]; then
+    _planner_base_branch_fail "$initiative_id" BASE_BRANCH_UNRESOLVED \
+      "no base branch for ${missing[*]}${pairs:+ (others: ${pairs[*]})} — rerun with --base-branch <name>"
+    return 1
+  fi
+  if [ "${#found[@]}" -gt 1 ]; then
+    _planner_base_branch_fail "$initiative_id" BASE_BRANCH_AMBIGUOUS \
+      "pinned repos disagree on the base branch (${pairs[*]}) — rerun with --base-branch <name>"
+    return 1
+  fi
+  unset IFS
+
+  if [ -n "$explicit" ]; then
+    echo "$explicit"
+    return 0
+  fi
+  if [ "${#found[@]}" -eq 0 ]; then
+    planner_state_write "$initiative_id" "META" "base-branch-source" "done" "default" >/dev/null 2>&1 || true
+    echo develop
+    return 0
+  fi
+  local IFS=,
+  planner_config_set "$initiative_id" "base-branch" "${found[0]}" >/dev/null 2>&1 || true
+  planner_state_write "$initiative_id" "META" "base-branch-source" "done" \
+    "detected:${pairs[*]}" >/dev/null 2>&1 || true
+  echo "${found[0]}"
+}
+
+_planner_base_branch_fail() {
+  local initiative_id="$1" code="$2" detail="$3"
+  echo "${code}: ${detail}" >&2
+  planner_state_write "$initiative_id" "META" "base-branch-source" "fail" "${code} ${detail}" >/dev/null 2>&1 || true
+}
+
+# Argument-parsing half (SKILL.md). Both run in the shell that parsed the
+# flags and are the only readers of PLANNER_MERGE_POLICY / PLANNER_SYNC_POLICY:
+# later phases read the config keys, never the environment.
+#
+# Usage: planner_directive_config_check <base_branch_ref>
+# rc 1 (message on stderr) on an invalid base name or merge/sync enum.
+planner_directive_config_check() {
+  local base="$1"
+  if [ -n "$base" ] && ! planner_base_branch_name_valid "$base"; then
+    echo "ERROR: --base-branch '${base}' is not a valid branch name" >&2
+    return 1
+  fi
+  case "${PLANNER_MERGE_POLICY:-}" in
+  "" | manual | on-all-children-done) ;;
+  *)
+    echo "ERROR: PLANNER_MERGE_POLICY takes manual or on-all-children-done, got '${PLANNER_MERGE_POLICY}'" >&2
+    return 1
+    ;;
+  esac
+  case "${PLANNER_SYNC_POLICY:-}" in
+  "" | rebase-on-base-change | none) ;;
+  *)
+    echo "ERROR: PLANNER_SYNC_POLICY takes rebase-on-base-change or none, got '${PLANNER_SYNC_POLICY}'" >&2
+    return 1
+    ;;
+  esac
+}
+
+# Usage: planner_directive_config_persist <initiative_id> <base_branch_ref>
+# Persists each non-empty value as its config key. Call after the check.
+# Sync policy `none` is stored as `no-sync`: planner_config_get reads `none`
+# as the clear marker, so it would come back empty and silently become the
+# default. Epic Gen maps it back (planner_prompt_epicgen).
+planner_directive_config_persist() {
+  local initiative_id="$1" base="$2" sync="${PLANNER_SYNC_POLICY:-}"
+  [ "$sync" = "none" ] && sync="no-sync"
+  [ -n "$base" ] && planner_config_set "$initiative_id" "base-branch" "$base"
+  [ -n "${PLANNER_MERGE_POLICY:-}" ] && planner_config_set "$initiative_id" "merge-policy" "$PLANNER_MERGE_POLICY"
+  [ -n "$sync" ] && planner_config_set "$initiative_id" "sync-policy" "$sync"
+  return 0
+}

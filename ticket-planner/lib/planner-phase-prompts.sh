@@ -1340,6 +1340,37 @@ planner_prompt_epicgen() {
   *) uat_policy="invalid" ;;
   esac
 
+  # Base branch, merge and sync policy (planner-base-branch-config): config
+  # keys persisted at argument parsing, interpolated below as literals — never
+  # read from this shell's environment, which the dispatch loop does not carry.
+  # The base matters only when a directive is emitted, so the resolver runs
+  # only when the 5a/5b decision (same inputs, same bash) comes out shared; a
+  # failure returns non-zero before the agent, and so any Linear write, runs.
+  local base_branch="develop" merge_policy sync_policy emit_shared=false
+  merge_policy=$(_planner_prompt_config "$initiative_id" "merge-policy")
+  sync_policy=$(_planner_prompt_config "$initiative_id" "sync-policy")
+  case "$merge_policy" in manual | on-all-children-done) ;; *) merge_policy="manual" ;; esac
+  case "$sync_policy" in
+  rebase-on-base-change) ;;
+  no-sync) sync_policy="none" ;; # stored so; `none` is the config clear marker
+  *) sync_policy="rebase-on-base-change" ;;
+  esac
+  case "$branch_override" in
+  shared) emit_shared=true ;;
+  no-shared) ;;
+  *)
+    _source_if_missing "planner_branch_directive_recommend" "${_lib_dir}/planner-deps-check.sh"
+    if declare -f planner_branch_directive_recommend >/dev/null 2>&1 &&
+      [ "$(planner_branch_directive_recommend "$initiative_id" 2>/dev/null | jq -r '.recommend' 2>/dev/null)" = "true" ]; then
+      emit_shared=true
+    fi
+    ;;
+  esac
+  if [ "$emit_shared" = "true" ]; then
+    _source_if_missing "planner_base_branch_resolve" "${_lib_dir}/planner-crosscheck-repo-ref.sh"
+    base_branch=$(planner_base_branch_resolve "$initiative_id") || return 1
+  fi
+
   cat <<AGENT_PROMPT
 You are the **Epic Generation** phase agent for the ticket-planner. Your job is
 to create the Linear epic that represents this initiative. You are phase ${_pos} of ${_count}.
@@ -1691,9 +1722,9 @@ if [ "\$EMIT_DIRECTIVE" = "true" ]; then
     DIRECTIVE_JSON=\$(jq -n \
       --arg iid "${initiative_id}" \
       --arg slug "\$TITLE_SLUG" \
-      --arg base "\${PLANNER_BASE_BRANCH:-develop}" \
-      --arg merge "\${PLANNER_MERGE_POLICY:-manual}" \
-      --arg sync "\${PLANNER_SYNC_POLICY:-rebase-on-base-change}" \
+      --arg base "${base_branch}" \
+      --arg merge "${merge_policy}" \
+      --arg sync "${sync_policy}" \
       --arg uat "${uat_policy}" \
       '{initiative_id: \$iid, title_slug: \$slug, base_branch: \$base, merge_policy: \$merge, sync_policy: \$sync}
        + (if \$uat == "" then {} else {uat_policy: \$uat} end)')
@@ -1843,9 +1874,9 @@ independently of the \`create\` step so status and replan can read it.
 
 | Variable | Default | Description |
 |---|---|---|
-| \`PLANNER_BASE_BRANCH\` | \`develop\` | Base branch for the directive |
-| \`PLANNER_MERGE_POLICY\` | \`manual\` | Merge policy enum |
-| \`PLANNER_SYNC_POLICY\` | \`rebase-on-base-change\` | Sync policy enum |
+| \`base-branch\` | detected | Config key (\`--base-branch\`, else \`PLANNER_BASE_BRANCH\` at argument parsing, else detected per pinned repo: \`develop\`, \`origin/HEAD\`, \`main\`, \`master\`). Already interpolated above (\`--arg base\`) — do not read any variable for it |
+| \`merge-policy\` | \`manual\` | Config key, merge policy enum; interpolated above (\`--arg merge\`) |
+| \`sync-policy\` | \`rebase-on-base-change\` | Config key, sync policy enum; interpolated above (\`--arg sync\`) |
 | \`PLANNER_UAT_POLICY\` | *(unset)* | UAT policy enum (\`per-ticket\`\|\`epic\`). Read once at argument parsing and persisted as the \`uat-policy\` config key; the value step 5c uses is already interpolated above (\`--arg uat\`) — do not read the variable here. Unset omits the field entirely, and the validator resolves \`per-ticket\` — except that a shared branch gets \`epic\` when the initiative has synthesized test-data specs (\`artifacts/testdata-synth.json\`) or any spec is blocked by a sibling, so a child parked in UAT cannot deadlock the tickets it blocks. The decision and its reason are recorded as \`META\|uat-policy-decision\`. Set \`epic\` for an initiative whose children are only observable once the whole epic integrates — their PR-review pass then routes to \`Done\` instead of \`UAT\`, keeping the \`blocked-by\` chain moving. |
 
 ## Constraints

@@ -400,6 +400,20 @@ planner-ac-coverage-and-epic-uat). Under per-ticket UAT a child parked in `UAT` 
 `Done`, and every ticket it blocks would deadlock. External prerequisites do not count. The
 decision is recorded as `META|uat-policy-decision|done|policy=<p> reason=<explicit|td-spec|chain|none|error>`.
 
+**Base branch, merge and sync policy** (planner-base-branch-config) are config keys too:
+`--base-branch <name>` (fallback `PLANNER_BASE_BRANCH`), `PLANNER_MERGE_POLICY`
+(`manual`\|`on-all-children-done`) and `PLANNER_SYNC_POLICY` (`rebase-on-base-change`\|`none`)
+are read once at argument parsing and persisted as `base-branch`/`merge-policy`/`sync-policy`.
+Invalid values are refused there. Epic Gen interpolates them as literals and reads no
+environment variable. When the directive will be emitted and no base is set,
+`planner_base_branch_resolve` detects it for each repo Discovery pinned: `develop` (local or
+`origin/develop`), then the `origin/HEAD` target, then `main`, then `master`. One shared answer is
+persisted and recorded as `META|base-branch-source|done|detected:<repo>=<branch>,...`. With no
+pinned repos the base is `develop` (`...|done|default`). Repos that disagree
+(`BASE_BRANCH_AMBIGUOUS`), a repo with no candidate or no checkout, or an explicit base a repo
+lacks (`BASE_BRANCH_UNRESOLVED`) make prompt rendering fail, so Epic Gen stops before any
+Linear write. The message names each repo's result; the fix is `resume <ID> --base-branch <name>`.
+
 ### Design Decisions
 
 - **The decision is bash, not agent judgement.** "Do these tickets belong on one branch?" is a question about dependency graph shape, not content. Reproducibility matters — merge topology must not depend on sampling variance.
