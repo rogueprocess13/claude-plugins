@@ -356,6 +356,9 @@ _run "push failure reports the hook's own reason" test_push_failure_reports_hook
 # actually carries commits. The creation step is intercepted so the epic ref
 # lands on a real commit beyond origin/main — ensure_epic_branch must detect
 # that the zero-commit invariant does not hold and let the hook run.
+# The git() override below is deliberate and scoped to this function; calls
+# before it are meant to hit the real binary (SC2218, shellcheck >= 0.10).
+# shellcheck disable=SC2218
 test_non_zero_commit_push_still_verified() {
   _setup_fixture
   _install_failing_pre_push_hook "$FIXTURE_REPO"
