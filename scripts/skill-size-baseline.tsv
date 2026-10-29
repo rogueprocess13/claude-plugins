@@ -1,7 +1,7 @@
 fleet-controller/skills/fleet-controller/SKILL.md	16923	250
 fleet-controller/skills/fleet-env-check/SKILL.md	5338	90
 fleet-controller/skills/fleet-features/SKILL.md	6354	71
-grill-me/skills/grill-me/SKILL.md	17072	333
+grill-me/skills/grill-me/SKILL.md	16957	330
 knowledge-curator/skills/kc-capture/SKILL.md	5493	122
 knowledge-curator/skills/kc-import/SKILL.md	5100	142
 knowledge-curator/skills/kc-query/SKILL.md	5131	90
@@ -96,4 +96,4 @@ ticket-auto-pipeline/skills/ticket-verify/SKILL.md	92588	1495
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/wiki-maintenance/SKILL.md	33272	542
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-planner/skills/ticket-planner/SKILL.md	96346	1532
+ticket-planner/skills/ticket-planner/SKILL.md	96327	1531

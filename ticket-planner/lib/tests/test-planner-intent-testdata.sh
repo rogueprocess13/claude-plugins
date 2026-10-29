@@ -193,6 +193,71 @@ for pair in "a:0" "b:1" "c:1" "d:1" "e:1" "f:1" "g:1" "crlf:1" "trail:0"; do
   fi
 done
 
+# ── (i)-(k) Original Brief paragraph (grill-me-verbatim-brief) ────────────────
+echo "=== (i) intent with an Original Brief and a captured idea.txt ==="
+BRIEF_MARK="Original brief."
+BRIEF_MD='## Original Brief
+
+_The input exactly as assessed._
+
+> # Conduit-lite
+>
+> POST /api/users {"user":{...}} -> 422 {"errors":{"email":["is invalid"]}}
+'
+SEAL_MD='
+## Intent Seal
+
+**Grill-Version:** 0.1.0
+'
+SD_I=$(new_state i "${HEAD_MD}${TAIL_MD}${BRIEF_MD}${SEAL_MD}")
+printf '# Conduit-lite\n\nPOST /api/users ...\n' >"$SD_I/artifacts/idea.txt"
+OUT_I=$(render "$SD_I")
+if [[ "$OUT_I" == *"$BRIEF_MARK"* ]] && [[ "$OUT_I" == *"/__STATE_DIR__/artifacts/idea.txt"* ]]; then
+  pass "brief paragraph present, pointing at artifacts/idea.txt"
+else
+  fail "brief paragraph present" "no '$BRIEF_MARK' with the idea.txt path"
+fi
+if [[ "$OUT_I" != *'"is invalid"'* ]]; then
+  pass "brief text is not pasted into the prompt (path only)"
+else
+  fail "brief text is not pasted into the prompt" "brief text leaked"
+fi
+if [[ "$OUT_I" == *"- **State directory:** /__STATE_DIR__
+
+**Original brief.**"* ]]; then
+  pass "paragraph follows the State directory line"
+else
+  fail "paragraph follows the State directory line" "placement changed"
+fi
+
+echo "=== (j) brief section present but idea.txt not captured ==="
+SD_J=$(new_state j "${HEAD_MD}${TAIL_MD}${BRIEF_MD}${SEAL_MD}")
+render "$SD_J" >"$SCRATCH/out-j.txt"
+if ! grep -qF "$BRIEF_MARK" "$SCRATCH/out-j.txt"; then
+  pass "no idea.txt: no brief paragraph"
+else
+  fail "no idea.txt: no brief paragraph" "paragraph rendered"
+fi
+
+echo "=== (k) older intent (no Original Brief) with idea.txt: byte-identical ==="
+SD_K=$(new_state k "${HEAD_MD}${TAIL_MD}")
+echo "Let finance export invoices." >"$SD_K/artifacts/idea.txt"
+render "$SD_K" >"$SCRATCH/out-k.txt"
+if cmp -s "$GOLDEN" "$SCRATCH/out-k.txt"; then
+  pass "older intent: prompt byte-identical to the golden"
+else
+  fail "older intent: prompt byte-identical to the golden" "$(diff "$GOLDEN" "$SCRATCH/out-k.txt" | head -10)"
+fi
+
+SD_L=$(new_state l "${HEAD_MD}${TAIL_MD}${SEAL_MD}${BRIEF_MD}")
+echo "x" >"$SD_L/artifacts/idea.txt"
+render "$SD_L" >"$SCRATCH/out-l.txt"
+if ! grep -qF "$BRIEF_MARK" "$SCRATCH/out-l.txt"; then
+  pass "a brief section after the seal does not switch the paragraph on"
+else
+  fail "a brief section after the seal does not switch the paragraph on" "paragraph rendered"
+fi
+
 echo "=== Results ==="
 TOTAL=$((PASS + FAIL))
 echo "$PASS/$TOTAL passed"

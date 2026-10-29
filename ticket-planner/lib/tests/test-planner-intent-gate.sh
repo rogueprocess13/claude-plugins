@@ -376,6 +376,109 @@ else
   fail "planner_intent_record refuses empty fields" "got: ${EMPTY_PROBE}"
 fi
 
+# ── Original Brief (grill-me-verbatim-brief) ─────────────────────────────────
+echo "=== Sealed Original Brief reaches idea.txt verbatim ==="
+
+# Uses this checkout's grill-me (render, seal, verbatim) so the round-trip
+# tests the renderer the planner ships alongside, not a cached copy.
+GRILL_LIB="$LIB_DIR/../../grill-me/lib"
+if [ -f "$GRILL_LIB/grill-render.sh" ] && [ -n "$GRILL_SEAL" ]; then
+  BRIEF_RAW="$SCRATCH/brief-raw.md"
+  cat >"$BRIEF_RAW" <<'B'
+# Conduit-lite
+
+| slug | title |
+|------|-------|
+| how-to-train | How to train your dragon |
+
+POST /api/users {"user":{...}} -> 422 {"errors":{"email":["is invalid"]}}
+## Intent Seal
+B
+  BRIEF_SEALED="$SCRATCH/brief-intent.md"
+  cat >"$SCRATCH/brief-result.json" <<'JSON'
+{"profile":"product-idea","subject":"T","round":1,"readiness":90,"recommendation":"ready",
+ "critical_missing":"","flags":"","question_count":0,"scored_at":"2026-10-29T00:00:00Z",
+ "dimensions":[{"dimension":"objective","label":"Objective","weight":100,"status":"present","contribution":100}],
+ "questions":[]}
+JSON
+  echo '{"dimensions":[{"id":"objective","status":"present","evidence":"Ship it."}],"resolved":[]}' \
+    >"$SCRATCH/brief-assessment.json"
+  # shellcheck disable=SC2016 # expanded by the inner shell
+  timeout 30 bash -c '
+    set -euo pipefail
+    source "$1/grill-input.sh"; source "$1/grill-render.sh"; source "$1/grill-seal.sh"
+    grill_brief_verbatim "$(cat "$2")" >"$3/brief-verbatim.md"
+    grill_render "$3/brief-result.json" "$3/brief-assessment.json" "$4" "$3/brief-verbatim.md"
+    grill_seal_generate "$4" product-idea 90 ready 1 2026-10-29T00:00:00Z
+  ' _ "$GRILL_LIB" "$BRIEF_RAW" "$SCRATCH" "$BRIEF_SEALED" </dev/null >/dev/null 2>&1 || true
+
+  gate_rc=0
+  (planner_intent_gate "$BRIEF_SEALED" >/dev/null 2>&1) || gate_rc=$?
+  if [ "$gate_rc" -eq 0 ]; then
+    pass "an intent carrying an Original Brief passes the gate"
+  else
+    fail "an intent carrying an Original Brief passes the gate" "rc=$gate_rc"
+  fi
+
+  got_brief=$(planner_intent_brief "$BRIEF_SEALED" || true)
+  if [ "$got_brief" = "$(cat "$BRIEF_RAW")" ]; then
+    pass "planner_intent_brief recovers the brief byte for byte (incl. a '## Intent Seal' line)"
+  else
+    fail "planner_intent_brief round-trip" "$(diff <(echo "$got_brief") "$BRIEF_RAW" | head -5)"
+  fi
+
+  SD_BRIEF="$SCRATCH/state-brief"
+  mkdir -p "$SD_BRIEF/artifacts"
+  echo "Ship it." >"$SD_BRIEF/artifacts/idea.txt"
+  cap_out=$(planner_intent_capture_brief "$BRIEF_SEALED" "$SD_BRIEF")
+  if [ "$cap_out" = "PLANNER_INTENT_BRIEF=captured" ] && cmp -s "$SD_BRIEF/artifacts/idea.txt" "$BRIEF_RAW"; then
+    pass "capture replaces idea.txt with the full brief"
+  else
+    fail "capture replaces idea.txt" "out=$cap_out"
+  fi
+
+  TAMPERED_BRIEF="$SCRATCH/brief-intent-tampered.md"
+  sed 's/your dragon/your wyvern/' "$BRIEF_SEALED" >"$TAMPERED_BRIEF"
+  t_rc=0
+  (planner_intent_gate "$TAMPERED_BRIEF" >/dev/null 2>&1) || t_rc=$?
+  if [ "$t_rc" -eq 1 ]; then
+    pass "editing the sealed brief is a seal mismatch (gate exit 1)"
+  else
+    fail "editing the sealed brief is a seal mismatch" "rc=$t_rc"
+  fi
+
+  # Same document with the brief section moved after the seal: outside the
+  # hashed bytes, so it must not be read.
+  APPENDED="$SCRATCH/brief-appended.md"
+  brief_line=$(grep -n '^## Original Brief$' "$BRIEF_SEALED" | cut -d: -f1)
+  head -n "$((brief_line - 1))" "$BRIEF_SEALED" >"$APPENDED"
+  sed -n '/^## Intent Seal$/,$p' "$BRIEF_SEALED" | head -1 >>"$APPENDED"
+  printf '\n## Original Brief\n\n> smuggled\n' >>"$APPENDED"
+  if ! planner_intent_brief "$APPENDED" >/dev/null 2>&1; then
+    pass "an Original Brief placed after the seal is ignored"
+  else
+    fail "an Original Brief after the seal is ignored" "$(planner_intent_brief "$APPENDED")"
+  fi
+else
+  echo "  SKIP grill-me lib or grill-seal.sh not found"
+fi
+
+echo "=== Older intent without an Original Brief (backwards compatible) ==="
+
+OLD_DOC=$(make_sealed_doc 85 ready)
+old_rc=0
+planner_intent_brief "$OLD_DOC" >/dev/null 2>&1 || old_rc=$?
+SD_OLD="$SCRATCH/state-old"
+mkdir -p "$SD_OLD/artifacts"
+echo "Original objective." >"$SD_OLD/artifacts/idea.txt"
+old_cap=$(planner_intent_capture_brief "$OLD_DOC" "$SD_OLD")
+if [ "$old_rc" -eq 1 ] && [ "$old_cap" = "PLANNER_INTENT_BRIEF=absent" ] &&
+  [ "$(cat "$SD_OLD/artifacts/idea.txt")" = "Original objective." ]; then
+  pass "no section: brief exits 1, capture prints absent and leaves idea.txt alone"
+else
+  fail "older intent unchanged" "rc=$old_rc cap=$old_cap"
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo "=== Results ==="
 TOTAL=$((PASS + FAIL))

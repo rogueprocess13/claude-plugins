@@ -7,20 +7,31 @@
 # per the intent-document capability spec.
 #
 # Exports:
-#   grill_render  <result-json-file> <assessment-json-file> [output-path]
+#   grill_render  <result-json-file> <assessment-json-file> [output-path] [brief-file]
 #     Renders the validated business intent document. If output-path is
-#     provided, writes to that file; otherwise writes to stdout.
+#     provided (non-empty), writes to that file; otherwise writes to stdout.
+#     If brief-file is a non-empty file, the document ends with an
+#     `## Original Brief` section holding it verbatim, every line prefixed
+#     with `> ` (an empty line becomes `>`), so no brief line can start a
+#     heading or forge the seal (grill-me-verbatim-brief). Without it the
+#     output is byte-identical to the renderer before that change.
 # ───────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
 # ── grill_render ──────────────────────────────────────────────────────────────
-# Usage: grill_render <result-json-file> <assessment-json-file> [output-path]
+# Usage: grill_render <result-json-file> <assessment-json-file> [output-path] [brief-file]
 # ──────────────────────────────────────────────────────────────────────────────
 grill_render() {
   local result_file="$1"
   local assessment_file="$2"
   local output_path="${3:-}"
+  local brief_file="${4:-}"
+
+  if [ -n "$brief_file" ] && [ ! -f "$brief_file" ]; then
+    echo "grill-render: brief file not found: ${brief_file}" >&2
+    return 2
+  fi
 
   local result assessment
   result=$(cat "$result_file")
@@ -321,6 +332,21 @@ ${resolved_table}
 ${gaps_table}
 ${scores_table}"
 
+  # Original Brief (grill-me-verbatim-brief): the input exactly as sealed.
+  # Last body section, so the planner can take the last `## Original Brief`
+  # heading before the seal without an evidence string being able to spoof it.
+  if [ -n "$brief_file" ] && [ -s "$brief_file" ]; then
+    local brief_quoted
+    brief_quoted=$(sed 's/^/> /; s/^> $/>/' "$brief_file")
+    doc="${doc}
+## Original Brief
+
+_The input exactly as assessed, each line prefixed with \`> \`. The sections above summarise it and stay authoritative for scope and intent; this is the source for literal detail they leave out (names, fields, request and response shapes, tables). Where a clarified answer conflicts with it, the answer wins._
+
+${brief_quoted}
+"
+  fi
+
   # Strip trailing whitespace from each line
   doc=$(echo "$doc" | sed 's/[[:space:]]*$//')
 
@@ -535,8 +561,8 @@ MD
 # If executed directly
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   if [ $# -lt 2 ]; then
-    echo "Usage: grill-render.sh <result.json> <assessment.json> [output-path]" >&2
+    echo "Usage: grill-render.sh <result.json> <assessment.json> [output-path] [brief-file]" >&2
     exit 1
   fi
-  grill_render "$1" "$2" "${3:-}"
+  grill_render "$1" "$2" "${3:-}" "${4:-}"
 fi

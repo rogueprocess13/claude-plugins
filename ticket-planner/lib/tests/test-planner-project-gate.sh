@@ -204,6 +204,59 @@ else
   fail "unrelated mention does not stop" "the gate stopped the run"
 fi
 
+# ── Test 5b: a sealed verbatim brief is not match text ─────────────────────────
+#
+# grill-me-verbatim-brief: plan mode replaces idea.txt with the whole brief when
+# the intent carried one. The gate must keep matching the Objective (the state
+# log's idea line), so a project named in passing in the brief does not stop
+# the run. A raw-idea run (no intent) still matches idea.txt.
+
+echo "--- Test 5b: sealed brief excluded from match text ---"
+
+seed "INIT-BRIEF" "billing-service"
+sd_brief=$(planner_initiative_dir INIT-BRIEF)
+printf '# Billing\n\nWe looked at Ledgerly once, years ago.\n' >"${sd_brief}/artifacts/idea.txt"
+cat >"${sd_brief}/artifacts/intent.md" <<'INTENT'
+# Validated Business Intent
+
+## Objective
+
+a billing idea
+
+## Original Brief
+
+_The input exactly as assessed._
+
+> # Billing
+>
+> We looked at Ledgerly once, years ago.
+
+## Intent Seal
+
+**Content-Hash:** sha256:0000000000000000000000000000000000000000000000000000000000000000
+INTENT
+
+text=$(planner_project_match_text INIT-BRIEF)
+if echo "$text" | grep -q "a billing idea" && ! echo "$text" | grep -q "Ledgerly"; then
+  pass "with a sealed brief the match text uses the Objective, not idea.txt"
+else
+  fail "sealed brief excluded from match text" "$text"
+fi
+
+if planner_project_gate_check "INIT-BRIEF" "$TEAM_ID" 2>/dev/null; then
+  pass "a project named only in the sealed brief does not stop the run"
+else
+  fail "brief mention does not stop" "the gate stopped the run"
+fi
+
+seed "INIT-RAW" "billing-service"
+printf 'Build it on Ledgerly\n' >"$(planner_initiative_dir INIT-RAW)/artifacts/idea.txt"
+if planner_project_match_text INIT-RAW | grep -q "Ledgerly"; then
+  pass "raw-idea run (no intent) still matches idea.txt"
+else
+  fail "raw-idea run still matches idea.txt" "$(planner_project_match_text INIT-RAW)"
+fi
+
 # ── Test 6: an unlistable project set never blocks creation ────────────────────
 #
 # The gate is a safety net, not a dependency. A failed listing degrades to the

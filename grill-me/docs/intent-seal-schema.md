@@ -4,7 +4,7 @@ The `## Intent Seal` block is a cryptographic integrity marker terminating every
 
 ## Format
 
-The seal block is appended as the final section of the rendered document:
+The seal block is appended as the final section of the rendered document. Since grill-me 0.4.0 the section just before it is `## Original Brief` (the input, each line prefixed `> `), so the brief is inside the hashed region like every other section:
 
 ```markdown
 ## Intent Seal

@@ -64,6 +64,49 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## grill-me 0.4.0 / ticket-planner 0.26.4 (2026-10-29)
+
+Dispatch rehearsal findings F1, F6 and F19 (`grill-me-verbatim-brief`): the sealed intent lost
+the brief's literal detail. Its sections are rendered from the assessor's `evidence`, which
+paraphrased away seed article titles, field sets, request wrappers and error keys, and input over
+2000 characters was cut with only a stderr note. In iter 02 the brief was 4103 B and the planner's
+`idea.txt` 690 B, and Discovery listed "the brief" as a NOT FOUND cited artifact.
+
+### Added
+- **grill-me `## Original Brief`**: the sealed intent now ends (before `## Intent Seal`) with the
+  input exactly as assessed, every line prefixed `> ` (an empty line is `>`), so no brief line can
+  open a heading or forge the seal. It is inside the hashed bytes: editing it is a seal mismatch.
+  New `grill_brief_verbatim` (`lib/grill-input.sh`) keeps the line structure the sanitizer
+  collapses; the skill writes it to `${work_dir}/brief.md` and passes it to `grill_render` as a new
+  optional fourth argument. With no brief file the render is byte-identical (golden test).
+- **ticket-planner `planner_intent_brief` / `planner_intent_capture_brief`**
+  (`lib/planner-intent-gate.sh`): recover the brief byte for byte (last `## Original Brief` heading
+  before the first `## Intent Seal`; anything after the seal is ignored). Plan-mode step 7 writes it
+  to `artifacts/idea.txt`. The Discovery prompt adds one bash-gated paragraph pointing at that file
+  as the source for literal detail (path only, never the text). New test file
+  `grill-me/lib/tests/test-grill-input.sh`.
+
+### Changed
+- **`GRILL_INPUT_MAX_LENGTH` defaults to 16000 and is a hard limit**: longer input exits 2 with a
+  message naming the variable. Nothing is truncated any more.
+- **One invisible-character filter for the screen and the brief** (`_grill_strip_invisible`):
+  `grill_sanitize_input` now strips control, zero-width and bidi characters before the injection
+  screen, and `grill_brief_verbatim` screens its own output (exit 1, nothing written). A phrase
+  split by a control character (`ign\x01ore previous instructions`) used to pass the screen and
+  reach the sealed brief whole. CR/VT/FF inside a line are now removed rather than turned into a
+  space in the sanitized text.
+- **Epic Gen's project gate ignores the sealed brief**: when intent.md carries `## Original
+  Brief`, `planner_project_match_text` matches the state log's Objective line instead of
+  `idea.txt`, so a project named in passing in the brief cannot stop the run. Raw-idea runs are
+  unchanged.
+
+### Upgrade notes
+- Intents sealed before grill-me 0.4.0 have no `## Original Brief`. They still verify, the planner
+  keeps the Objective in `idea.txt` as before, and the Discovery prompt is byte-identical for them.
+- The `META|idea` state-log line is still the Objective; only `idea.txt` changes.
+- Live runs need the updated plugins (marketplace update, then a Claude Code restart) so the
+  grill-me skill text and both libraries are the new ones.
+
 ## ticket-planner 0.26.3 (2026-10-29)
 
 Dispatch rehearsal iter 02, finding F23 (planner side): 31 `CITATION_UNRESOLVED` findings, every
