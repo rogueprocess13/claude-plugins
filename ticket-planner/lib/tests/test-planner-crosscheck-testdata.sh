@@ -591,6 +591,12 @@ assert_contains "Discovery: Test Data Inventory columns" "$p_disc" "| Entity | S
 assert_contains "Discovery: Test Data Inventory required" "$p_disc" "discovery.md must have a \`## Test Data Inventory\` table"
 assert_contains "Discovery: Load via enum" "$p_disc" "\`sql\`, \`api\`, \`ui-forms\`, \`files\`, \`factories\`"
 assert_contains "Discovery: no prod PII" "$p_disc" "never production PII"
+# Rehearsal F24 (= F12): a public reference contract and the source material
+# itself are not cited artifacts, so neither becomes a CITED_ARTIFACT question.
+assert_contains "Discovery: reference contract goes to API Contracts" "$p_disc" "Reference: <name> (<URL>) — governs <what>; not"
+assert_contains "Discovery: specs never defer to the reference" "$p_disc" "none of them may defer to the reference"
+assert_contains "Discovery: the brief is a gap, not an artifact" "$p_disc" "The source material itself (\"the brief\", \"the intent\", \"the idea\")"
+assert_contains "Discovery: client spec files stay cited artifacts" "$p_disc" "A client's own spec file, export or sample stays a"
 
 p_cons=$(planner_prompt_consensus "INIT-1" "an idea" "$SD")
 assert_contains "Consensus: Open Questions section" "$p_cons" "**Open Questions**"

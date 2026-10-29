@@ -408,6 +408,21 @@ artifact, the name in backticks, in exactly one of these two shapes:
 - \`import template v2\` — FOUND: <path or attachment link>
 \`\`\`
 
+A cited artifact is a file or data set the work or its verification consumes.
+Two things are **not** cited artifacts, so never list them here:
+
+- A published reference contract or standard (an OpenAPI spec, an RFC, a
+  vendor's public docs) that the source names by URL or repository. Put it in
+  **API Contracts** as \`Reference: <name> (<URL>) — governs <what>; not
+  retrieved\`. Specs still spell out every field name and status code they rely
+  on; none of them may defer to the reference.
+- The source material itself ("the brief", "the intent", "the idea"). If it
+  points at detail it does not contain, that is a gap in the input: record it
+  under **Constraints** and **Exploration Depth**, not as an artifact.
+
+Only these two are excluded. A client's own spec file, export or sample stays a
+cited artifact even when it is an OpenAPI document.
+
 Write \`None.\` under the heading when the source cites no external artifact —
 never omit the section. Consensus turns every NOT FOUND line into an operator
 question, and Crosscheck blocks until it is answered; the backticked name is

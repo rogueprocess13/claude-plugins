@@ -147,6 +147,92 @@ else
   fail "deferred finding is excluded from propagation check" "$(cat /tmp/pp-out-4.txt)"
 fi
 
+echo "--- per-ticket shares: each spec holding only its own share passes (rehearsal F25) ---"
+SPECS5="${TMPDIR}/specs5"
+mkdir -p "$SPECS5"
+cat >"${SPECS5}/store.md" <<'EOF'
+## Description
+Every user gets a random UUID `id` when created.
+EOF
+cat >"${SPECS5}/auth.md" <<'EOF'
+## Description
+`requireAuth` looks the user up by `id` and compares `username`; otherwise 401 `token`.
+EOF
+cat >"${SPECS5}/editor.md" <<'EOF'
+## Description
+On a 401 `token`, clear `localStorage` and open `/login`. Lands on `/article/first` on a fresh store.
+EOF
+cat >"${SPECS5}/home.md" <<'EOF'
+## Description
+On a fresh server start the home page lists Welcome above Dragon.
+
+## Signals
+```json
+{ "complexity": "moderate" }
+```
+EOF
+CONSENSUS5="${TMPDIR}/consensus5.md"
+cat >"$CONSENSUS5" <<'EOF'
+**M1 — User ids. Accepted.**
+- store: every user record gets a random UUID `id`.
+- auth: `requireAuth` finds the user by `id` and checks `username`; otherwise 401 `token`.
+- Frontend handling is placed in editor: a 401 `token` clears `localStorage` and opens `/login`. auth keeps page-load checks out of scope.
+
+**M2 — Fresh state. Accepted.**
+- Checked by home's "On a fresh server start the home page lists Welcome above Dragon" and editor's landing on `/article/first`.
+
+**m7 — Signals. Accepted in part.** home keeps `complexity: moderate`; store and auth are unchanged.
+EOF
+if OUT=$(planner_crosscheck_consensus_propagation "$CONSENSUS5" "$SPECS5" 2>&1); then
+  pass "per-ticket shares, possessive split and Signals JSON value all pass"
+else
+  fail "per-ticket shares, possessive split and Signals JSON value all pass" "$OUT"
+fi
+
+echo "--- per-ticket shares: a spec missing its own share still fires ---"
+cat >"${SPECS5}/store.md" <<'EOF'
+## Description
+Users get sequential numbers.
+EOF
+OUT=$(planner_crosscheck_consensus_propagation "$CONSENSUS5" "$SPECS5" 2>&1)
+RC=$?
+if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "missing-it=\[store\]" && ! echo "$OUT" | grep -q "missing-it=\[[^]]*auth"; then
+  pass "store without its UUID share is RESOLUTION_NOT_PROPAGATED, auth is not"
+else
+  fail "store without its UUID share is RESOLUTION_NOT_PROPAGATED, auth is not" "$OUT"
+fi
+
+echo "--- a shared list (a, b and c) gives every member the text after it ---"
+SPECS6="${TMPDIR}/specs6"
+mkdir -p "$SPECS6"
+printf '## Description\nRun `npm install` in `backend/`.\n' >"${SPECS6}/a.md"
+printf '## Description\nRun `npm install` in `backend/`.\n' >"${SPECS6}/b.md"
+printf '## Description\nNothing about setup.\n' >"${SPECS6}/c.md"
+CONSENSUS6="${TMPDIR}/consensus6.md"
+cat >"$CONSENSUS6" <<'EOF'
+**M2 — Setup. Accepted.**
+- Copied into a, b and c: run `npm install` in `backend/` before every attempt.
+EOF
+OUT=$(planner_crosscheck_consensus_propagation "$CONSENSUS6" "$SPECS6" 2>&1)
+if echo "$OUT" | grep -q "has-it=\[a b\] missing-it=\[c\]"; then
+  pass "list member without the shared text fires"
+else
+  fail "list member without the shared text fires" "$OUT"
+fi
+
+echo "--- slugs named only in a header still get the unslugged bullet's terms ---"
+CONSENSUS7="${TMPDIR}/consensus7.md"
+cat >"$CONSENSUS7" <<'EOF'
+**F3 — Accepted.** Applies to vs-3 and vs-4.
+- Both paths set `status` on the response.
+EOF
+OUT=$(planner_crosscheck_consensus_propagation "$CONSENSUS7" "$SPECS2" 2>&1)
+if echo "$OUT" | grep -q "has-it=\[vs-3\] missing-it=\[vs-4\]"; then
+  pass "header-only slugs fall back to the block's slug-less text"
+else
+  fail "header-only slugs fall back to the block's slug-less text" "$OUT"
+fi
+
 # ═══════════════════════════════════════════════════════════════════════════
 # planner_crosscheck_forward_references
 # ═══════════════════════════════════════════════════════════════════════════
