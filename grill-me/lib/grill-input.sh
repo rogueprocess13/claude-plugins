@@ -10,6 +10,17 @@
 #   grill_sanitize_input  <raw-input>
 #     Returns sanitized input on stdout, exits 0.
 #     Returns 1 if input contains a blocked injection pattern.
+#     Returns 2 if input is longer than GRILL_INPUT_MAX_LENGTH (default 16000).
+#     Nothing is ever truncated (grill-me-verbatim-brief): a brief that does
+#     not fit is refused, loudly, so the sealed intent cannot silently lose its
+#     tail.
+#
+#   grill_brief_verbatim  <raw-input>
+#     Returns the input with its line structure intact, for the sealed
+#     `## Original Brief` section: CR, zero-width, bidi and other control
+#     characters (except tab and newline) removed, trailing whitespace stripped
+#     from each line, leading and trailing blank lines dropped. Run it only on
+#     input grill_sanitize_input has accepted.
 # ───────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -26,11 +37,13 @@ grill_sanitize_input() {
     return 0
   fi
 
-  # Check input length limit
-  local max_length="${GRILL_INPUT_MAX_LENGTH:-2000}"
+  # Check input length limit. Refuse rather than truncate: a truncated brief
+  # loses its tail (test-data tables, acceptance sections) with nothing in the
+  # sealed intent to say so.
+  local max_length="${GRILL_INPUT_MAX_LENGTH:-16000}"
   if [ "${#raw}" -gt "$max_length" ]; then
-    echo "grill-input: input length ${#raw} exceeds max ${max_length} — truncating" >&2
-    raw="${raw:0:$max_length}"
+    echo "grill-input: input length ${#raw} exceeds GRILL_INPUT_MAX_LENGTH=${max_length} — refusing (nothing is truncated). Shorten the brief or raise GRILL_INPUT_MAX_LENGTH." >&2
+    return 2
   fi
 
   # Normalize whitespace — collapse multiple spaces, trim leading/trailing
@@ -83,6 +96,34 @@ grill_sanitize_input() {
 
   echo "$normalized"
   return 0
+}
+
+# ── grill_brief_verbatim ──────────────────────────────────────────────────────
+# Usage: grill_brief_verbatim <raw_input>
+# Returns: the brief with newlines preserved (see header), exit 0.
+# ──────────────────────────────────────────────────────────────────────────────
+grill_brief_verbatim() {
+  local raw="$1"
+  printf '%s\n' "$raw" |
+    tr -d '\000-\010\013\014\015\016-\037\177' |
+    sed '
+      s/\xE2\x80\x8B//g
+      s/\xE2\x80\x8C//g
+      s/\xE2\x80\x8D//g
+      s/\xEF\xBB\xBF//g
+      s/\xE2\x80\x8E//g
+      s/\xE2\x80\x8F//g
+      s/\xE2\x80\xAA//g
+      s/\xE2\x80\xAB//g
+      s/\xE2\x80\xAC//g
+      s/\xE2\x80\xAD//g
+      s/\xE2\x80\xAE//g
+      s/[[:space:]]*$//
+    ' |
+    awk '
+      NF || started { started = 1; lines[++n] = $0; if (NF) last = n }
+      END { for (i = 1; i <= last; i++) print lines[i] }
+    '
 }
 
 # If executed directly

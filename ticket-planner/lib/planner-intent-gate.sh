@@ -12,6 +12,11 @@
 #   planner_intent_gate  <path>  → exit 0 (proceed) | non-zero (hard stop)
 #   planner_intent_record <initiative_id> → writes META|intent|done, refuses
 #                                           empty fields
+#   planner_intent_brief <path>  → the sealed `## Original Brief`, verbatim
+#                                  (grill-me 0.4.0+); exit 1 when absent
+#   planner_intent_capture_brief <path> <state_dir>
+#                                → writes the brief to artifacts/idea.txt;
+#                                  prints PLANNER_INTENT_BRIEF=captured|absent
 #
 # Exit codes:
 #   0 — gate passed, proceed
@@ -243,6 +248,64 @@ planner_intent_record() {
 
   planner_state_write "$initiative_id" META intent done \
     "${readiness},${recommendation},${hash}"
+}
+
+# ── planner_intent_brief ──────────────────────────────────────────────────────
+# Usage: planner_intent_brief <path-to-intent-file>
+#
+# Prints the brief grill-me sealed in the intent's `## Original Brief` section
+# (grill-me-verbatim-brief), with the `> ` / `>` line prefix removed, so the
+# output is the brief byte for byte. Only lines before the first
+# `## Intent Seal` heading count — anything after the seal is outside the
+# hashed bytes. grill-me renders the section last, so the LAST such heading is
+# taken: an evidence string earlier in the body cannot stand in for it. The
+# section ends at the next `## ` heading; only `>`-prefixed lines belong to it.
+#
+# Returns 0 with the brief on stdout, 1 (nothing printed) when the intent has
+# no such section (sealed before grill-me 0.4.0) or the file is unreadable.
+# Run it only on a file planner_intent_gate has passed.
+# ──────────────────────────────────────────────────────────────────────────────
+planner_intent_brief() {
+  local intent_path="${1:-}"
+  [ -r "$intent_path" ] || return 1
+  awk '
+    /^## Intent Seal$/ { exit }
+    /^## Original Brief$/ { n = 0; inside = 1; found = 1; next }
+    inside && /^## / { inside = 0 }
+    inside && /^>( |$)/ { line[++n] = substr($0, ($0 == ">") ? 2 : 3) }
+    END {
+      if (!found || n == 0) exit 1
+      for (i = 1; i <= n; i++) print line[i]
+    }
+  ' "$intent_path"
+}
+
+# ── planner_intent_capture_brief ──────────────────────────────────────────────
+# Usage: planner_intent_capture_brief <path-to-intent-file> <state_dir>
+#
+# When the sealed intent carries an `## Original Brief`, writes it verbatim to
+# ${state_dir}/artifacts/idea.txt — the brief is the initiative's original
+# idea, and Discovery reads it from there for the literal detail (field sets,
+# request/response shapes, seed rows) the intent sections summarise. An older
+# intent leaves idea.txt as planner_state_init wrote it.
+#
+# Prints PLANNER_INTENT_BRIEF=captured or PLANNER_INTENT_BRIEF=absent and
+# returns 0 either way; returns 1 only when idea.txt cannot be written.
+# ──────────────────────────────────────────────────────────────────────────────
+planner_intent_capture_brief() {
+  local intent_path="${1:-}" state_dir="${2:-}"
+  local brief
+  if [ -z "$state_dir" ]; then
+    echo "planner-intent-gate: planner_intent_capture_brief requires <intent> <state_dir>." >&2
+    return 1
+  fi
+  if ! brief=$(planner_intent_brief "$intent_path"); then
+    echo "PLANNER_INTENT_BRIEF=absent"
+    return 0
+  fi
+  mkdir -p "${state_dir}/artifacts" || return 1
+  printf '%s\n' "$brief" >"${state_dir}/artifacts/idea.txt" || return 1
+  echo "PLANNER_INTENT_BRIEF=captured"
 }
 
 # ── planner_intent_gate_check_require ─────────────────────────────────────────

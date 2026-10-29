@@ -16,6 +16,8 @@ grill-me ships exactly one profile, `product-idea` (1.1.0), with 11 dimensions. 
 
 Adding a consumer (e.g., `code-review`, `incident-analysis`) requires only a new profile file — no engine changes. The renderer has fixed sections for the ten original dimensions; any other profile dimension renders as a generic `## <label>` section between Edge Cases and Assumptions, in profile order. The label has CR/LF and leading `#`/spaces removed. A result with only the ten original dimensions renders byte-identically to before.
 
+The document ends (before the seal) with `## Original Brief`: the input exactly as assessed, every line prefixed `> `. The sections above summarise it and stay authoritative for scope and intent; the brief is the sealed source for literal detail they leave out. A clarified answer overrides it. Input longer than `GRILL_INPUT_MAX_LENGTH` (default 16000) is refused, never truncated.
+
 ## Agent → bash contract
 
 The determinism boundary is the core repo convention: bash orchestrates and decides; agents reason.

@@ -288,6 +288,7 @@ test-planner-intent-gate:
 
 test-grill:
 	@echo "=== grill-me unit tests ==="
+	bash grill-me/lib/tests/test-grill-input.sh
 	bash grill-me/lib/tests/test-grill-profile.sh
 	bash grill-me/lib/tests/test-grill-score.sh
 	bash grill-me/lib/tests/test-grill-seal.sh

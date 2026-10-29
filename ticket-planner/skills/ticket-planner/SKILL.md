@@ -1036,9 +1036,8 @@ When mode is `plan`:
    - Derive `IDEA` from the intent document's `## Objective` section: extract
      every line between the `## Objective` heading and the next `## ` heading,
      drop blank lines and the `_None specified_` placeholder, join with spaces,
-     and truncate to `PLANNER_IDEA_MAX_LENGTH`. The full untruncated document is
-     still available to phase agents via `artifacts/intent.md` — this value is
-     only the durable, human-readable idea recorded in the state log.
+     and truncate to `PLANNER_IDEA_MAX_LENGTH`. Phase agents read the whole
+     document (`artifacts/intent.md`); this is only the state log's idea line.
      ```
      IDEA=$(awk '/^## Objective$/{f=1;next}/^## /{f=0}f' "$path" \
        | sed '/^[[:space:]]*$/d' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
@@ -1053,7 +1052,7 @@ When mode is `plan`:
 4. Generate an initiative ID: `INIT-$(date +%s)-$(shuf -i 1000-9999 -n 1)` to avoid collision.
 5. Initialize state: `planner_state_init "$INITIATIVE_ID" "$IDEA"`
 6. **Persist the invocation config** — run step 2b now that `$INITIATIVE_ID` exists.
-7. **If an intent file was accepted:** Copy the verified file byte-identically to `${state_dir}/artifacts/intent.md` and write the provenance entry with `planner_intent_record "$INITIATIVE_ID"`, which writes `META|intent|done|${PLANNER_INTENT_READINESS},${PLANNER_INTENT_RECOMMENDATION},${PLANNER_INTENT_HASH}`. Never hand-write this line: `planner_intent_record` fails loudly (non-zero, nothing written) if any of the three values is empty — on failure, stop and re-run the gate rather than logging `,,`.
+7. **If an intent file was accepted:** Copy the verified file byte-identically to `${state_dir}/artifacts/intent.md`, then run `planner_intent_capture_brief "$path" "$state_dir"`: a grill-me 0.4.0+ intent's `## Original Brief` replaces `artifacts/idea.txt` verbatim (Discovery reads it); an older intent prints `absent` and changes nothing. Write provenance with `planner_intent_record "$INITIATIVE_ID"` (`META|intent|done|<readiness>,<recommendation>,<hash>`), never by hand: it fails loudly, writing nothing, if a value is empty — then stop and re-run the gate.
 8. Run the dispatch loop (see below). It ends after Crosscheck — `plan` creates nothing in Linear.
 
 ### 4. Resume mode

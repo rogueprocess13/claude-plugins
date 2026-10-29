@@ -568,6 +568,78 @@ else
   fail "sentinel evidence renders as the Test Data body" "body: $SENTINEL_BODY"
 fi
 
+# ── Original Brief (grill-me-verbatim-brief) ─────────────────────────────────
+echo "=== Original Brief: verbatim, quoted, last, sealed ==="
+
+BRIEF_FILE="$SCRATCH/brief.md"
+cat >"$BRIEF_FILE" <<'B'
+# Conduit-lite
+
+## Seed articles
+
+| slug | title |
+|------|-------|
+| how-to-train | How to train your dragon |
+
+POST /api/users {"user":{"email":"..."}} -> 422 {"errors":{"email":["is invalid"]}}
+## Intent Seal
+**Content-Hash:** sha256:0000000000000000000000000000000000000000000000000000000000000000
+B
+OUTPUT_BRIEF_FILE="$SCRATCH/output-brief.md"
+grill_render "$RESULT_FILE" "$ASSESSMENT_FILE" "$OUTPUT_BRIEF_FILE" "$BRIEF_FILE" 2>/dev/null
+
+last_heading=$(grep '^## ' "$OUTPUT_BRIEF_FILE" | tail -1)
+if [ "$last_heading" = "## Original Brief" ] && [ "$(grep -c '^## Original Brief$' "$OUTPUT_BRIEF_FILE")" = "1" ]; then
+  pass "## Original Brief appears once, as the last body section"
+else
+  fail "## Original Brief last" "last=$last_heading"
+fi
+
+roundtrip=$(sed -n '/^## Original Brief$/,$p' "$OUTPUT_BRIEF_FILE" | grep -E '^>( |$)' | sed -E 's/^> ?//')
+if [ "$roundtrip" = "$(cat "$BRIEF_FILE")" ]; then
+  pass "stripping the > prefix recovers the brief byte for byte"
+else
+  fail "brief round-trip" "$(diff <(echo "$roundtrip") "$BRIEF_FILE" | head -5)"
+fi
+
+if ! grep -q '^## Seed articles$' "$OUTPUT_BRIEF_FILE" && ! grep -q '^## Intent Seal$' "$OUTPUT_BRIEF_FILE" &&
+  ! grep -q '^\*\*Content-Hash' "$OUTPUT_BRIEF_FILE"; then
+  pass "brief headings and a forged seal line are quoted, never live"
+else
+  fail "brief lines quoted" "$(grep -n '^## \|^\*\*Content' "$OUTPUT_BRIEF_FILE")"
+fi
+
+seal_rc=0
+grill_seal_generate "$OUTPUT_BRIEF_FILE" product-idea 88 ready 1 2026-10-29T00:00:00Z 2>/dev/null || seal_rc=$?
+verify_rc=0
+grill_seal_verify "$OUTPUT_BRIEF_FILE" >/dev/null 2>&1 || verify_rc=$?
+TAMPER_BRIEF_FILE="$SCRATCH/output-brief-tamper.md"
+sed 's/How to train your dragon/How to train your wyvern/' "$OUTPUT_BRIEF_FILE" >"$TAMPER_BRIEF_FILE"
+tamper_rc=0
+grill_seal_verify "$TAMPER_BRIEF_FILE" >/dev/null 2>&1 || tamper_rc=$?
+if [ "$seal_rc" -eq 0 ] && [ "$verify_rc" -eq 0 ] && [ "$tamper_rc" -eq 4 ]; then
+  pass "a brief containing '## Intent Seal' still seals; editing the brief is a MISMATCH"
+else
+  fail "brief sealed" "seal=$seal_rc verify=$verify_rc tamper=$tamper_rc"
+fi
+
+OUTPUT_EMPTY_BRIEF_FILE="$SCRATCH/output-empty-brief.md"
+: >"$SCRATCH/empty-brief.md"
+grill_render "$RESULT_FILE" "$ASSESSMENT_FILE" "$OUTPUT_EMPTY_BRIEF_FILE" "$SCRATCH/empty-brief.md" 2>/dev/null
+if cmp -s "$GOLDEN_V1" "$OUTPUT_EMPTY_BRIEF_FILE"; then
+  pass "an empty brief file renders byte-identically to the no-brief golden"
+else
+  fail "empty brief file is a no-op" "$(diff "$GOLDEN_V1" "$OUTPUT_EMPTY_BRIEF_FILE" | head -5)"
+fi
+
+missing_rc=0
+grill_render "$RESULT_FILE" "$ASSESSMENT_FILE" "$SCRATCH/never.md" "$SCRATCH/no-such-brief.md" 2>/dev/null || missing_rc=$?
+if [ "$missing_rc" -eq 2 ] && [ ! -f "$SCRATCH/never.md" ]; then
+  pass "a named but missing brief file exits 2 and writes nothing"
+else
+  fail "missing brief file" "rc=$missing_rc"
+fi
+
 echo "=== Results ==="
 TOTAL=$((PASS + FAIL))
 echo "$PASS/$TOTAL passed"

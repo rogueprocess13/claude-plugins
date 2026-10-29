@@ -108,6 +108,10 @@ See [docs/grill-me.md](docs/grill-me.md) for the full architecture, determinism 
 
 ## Version
 
+0.4.0 — the sealed intent carries the input verbatim as `## Original Brief` (inside the seal); input over `GRILL_INPUT_MAX_LENGTH` (now 16000) is refused instead of truncated.
+
+0.3.0 — `test_data` dimension (profile `product-idea` 1.1.0).
+
 0.2.0 — headless question rounds (`--emit-questions` / `--answers`); a work directory is now required in every mode.
 
 0.1.0 — initial release with `product-idea` profile.

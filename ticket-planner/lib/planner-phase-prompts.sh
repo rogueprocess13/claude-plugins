@@ -313,6 +313,27 @@ _planner_intent_has_test_data() {
   ' "$intent"
 }
 
+# Does the sealed intent carry grill-me's `## Original Brief`, and has plan
+# mode captured it as artifacts/idea.txt? (grill-me-verbatim-brief)
+#
+# Usage: _planner_intent_has_brief <state_dir>
+# Returns: 0 when ${state_dir}/artifacts/intent.md has, before its first
+#   `## Intent Seal` heading, an `## Original Brief` heading followed by at
+#   least one `>`-prefixed line, AND ${state_dir}/artifacts/idea.txt is
+#   non-empty; 1 otherwise. Same section rule as planner_intent_brief
+#   (planner-intent-gate.sh). Never prints; safe under set -e as a condition.
+_planner_intent_has_brief() {
+  local sd="${1:-}"
+  [ -f "${sd}/artifacts/intent.md" ] && [ -s "${sd}/artifacts/idea.txt" ] || return 1
+  awk '
+    /^## Intent Seal$/ { exit }
+    /^## Original Brief$/ { inside = 1; next }
+    inside && /^## / { inside = 0 }
+    inside && /^>( |$)/ { found = 1 }
+    END { exit(found ? 0 : 1) }
+  ' "${sd}/artifacts/intent.md"
+}
+
 planner_prompt_discovery() {
   local initiative_id="$1" idea="$2" state_dir="$3"
 
@@ -352,6 +373,27 @@ intent'\''s source and record the contradiction under Constraints.'
     _intent_td_block=$(printf '\n\n%s%s%s' "$_td_head" "$state_dir" "$_td_body")
   fi
 
+  # The verbatim brief sealed in the intent (grill-me-verbatim-brief). Bash
+  # decides presence; only the path is interpolated, never the brief. Empty
+  # when absent, and then the prompt is byte-identical to before. Appended to
+  # the end of the "State directory" line below with its own leading newlines.
+  local _brief_block=""
+  if _planner_intent_has_brief "$state_dir"; then
+    local _br_head _br_body
+    # shellcheck disable=SC2016 # backticks are literal prompt text
+    _br_head='**Original brief.** `'
+    # shellcheck disable=SC2016 # backticks are literal prompt text
+    _br_body='/artifacts/idea.txt` is the brief exactly as the
+operator wrote it, sealed inside intent.md as its `## Original Brief` section.
+Read all of it before you explore. It is the source for literal detail the
+intent sections only summarise (entity names, seed rows, field sets, request
+wrappers, request and response shapes, status codes, error keys): copy that
+detail from it into API Contracts and the Test Data Inventory instead of
+paraphrasing it. It is the source material, never a cited artifact. Where a
+clarified answer in intent.md conflicts with it, the answer wins.'
+    _brief_block=$(printf '\n\n%s%s%s' "$_br_head" "$state_dir" "$_br_body")
+  fi
+
   cat <<AGENT_PROMPT
 You are the **Discovery** phase agent for the ticket-planner. Your job is to
 explore affected repositories and gather concrete context: code paths, symbols,
@@ -360,7 +402,7 @@ API contracts, and existing patterns. You are phase ${_pos} of ${_count}.
 ## Initiative
 - **ID:** ${initiative_id}
 - **Idea:** ${safe_idea}
-- **State directory:** ${state_dir}
+- **State directory:** ${state_dir}${_brief_block}
 
 ## Your task
 

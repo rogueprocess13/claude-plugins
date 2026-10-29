@@ -47,7 +47,7 @@ Pre-work readiness gate. Assesses an input against profile-driven quality dimens
 | `GRILL_THRESHOLD_READY` | profile value | Override ready threshold |
 | `GRILL_THRESHOLD_WARN` | profile value | Override warn threshold |
 | `GRILL_MAX_QUESTIONS` | profile value | Override max questions per round |
-| `GRILL_INPUT_MAX_LENGTH` | 2000 | Max input length before truncation |
+| `GRILL_INPUT_MAX_LENGTH` | 16000 | Max input length. Longer input is refused, never truncated |
 | `GRILL_WORK_DIR` | *(unset)* | Work directory for this run. Unset ⇒ `${REPOS_ROOT}/.grill/<id>`. **One of `GRILL_WORK_DIR` or `REPOS_ROOT` is required in every mode** |
 
 ## Procedure
@@ -93,13 +93,11 @@ IF `--profile` names a profile that does NOT exist in `${CLAUDE_PLUGIN_ROOT}/pro
 Load the profile via `grill_profile_load` and validate it via `grill_profile_validate`.
 Any validation failure is a hard stop — report the error and exit non-zero.
 
-`★ Insight ─────────────────────────────────────`
-Profile validation is a hard stop, not a fallback, because a malformed profile produces silently-wrong scores. A profile that sums to 99 instead of 100, or has inverted thresholds, produces readiness values and recommendations that don't mean what the consumer expects. Detecting this at load time rather than mid-evaluation prevents the gate from issuing a `ready` verdict for an input assessed against a broken yardstick.
-`─────────────────────────────────────────────────`
-
 ### Step 2: Sanitize input
 
-Pass the input through `grill_sanitize_input`. If it returns non-zero (injection pattern blocked), report the blocked pattern and exit non-zero.
+Pass the input through `grill_sanitize_input`. Exit 1 (injection pattern blocked) or 2 (longer than `GRILL_INPUT_MAX_LENGTH`; nothing is truncated): report its message and exit non-zero.
+
+Then keep the brief verbatim for the seal: `grill_brief_verbatim "$INPUT" >"${work_dir}/brief.md"` (line structure kept, unlike the sanitized text). Headless `--answers` rounds reuse this file.
 
 ### Step 3: Assess
 
@@ -205,7 +203,7 @@ If the loop exits with `do-not-proceed`:
 
 ### Step 6: Render
 
-Run `grill_render "${work_dir}/result.json" "${work_dir}/assessment.json" "${OUTPUT_PATH}"`.
+Run `grill_render "${work_dir}/result.json" "${work_dir}/assessment.json" "${OUTPUT_PATH}" "${work_dir}/brief.md"`. The fourth argument adds the `## Original Brief` section.
 
 ### Step 7: Seal
 
@@ -280,8 +278,6 @@ With `--non-interactive`:
 - Step 5 (grill loop) is SKIPPED entirely — no questions are asked.
 - Steps 6–8 execute identically, producing a sealed document with whatever recommendation came from the first scoring round.
 
-This is the agent-to-agent mode. A fleet-controller or cron caller can gate on `GRILL_RECOMMENDATION` without a human present.
-
 ## Determinism boundary
 
 - **Bash (deterministic):** Input sanitization, profile validation, assessment JSON structural validation, readiness computation, recommendation resolution, question ranking, document rendering, seal generation and verification.
@@ -309,6 +305,7 @@ The rendered document follows a fixed section order (see `intent-document` capab
 ## Resolved Questions (table)
 ## Open Gaps (table)
 ## Category Scores (table)
+## Original Brief       (the input verbatim, every line prefixed `> `)
 ## Intent Seal
 ```
 
@@ -333,7 +330,7 @@ rejected, never as current intent. All of it sits inside the hashed region.
    - `do-not-proceed` → refuse the file
    - `proceed-with-warnings` → proceed, surface the warning
    - `ready` → proceed
-3. Treat the document body as authoritative — never re-derive scope/objective/criteria from the raw idea.
+3. Treat the document body as authoritative for scope and intent — never re-derive scope/objective/criteria from the raw idea. `## Original Brief` (grill-me 0.4.0+) is the sealed source for literal detail the sections summarise (names, fields, shapes, tables); a clarified answer overrides it. Strip the leading `> ` (or a lone `>`) from each line to recover the brief. Older intents have no such section.
 
 ## Known sharp edges
 
