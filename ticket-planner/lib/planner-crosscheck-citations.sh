@@ -68,6 +68,12 @@ PLANNER_CROSSCHECK_EXCLUDE_DIRS=("node_modules" ".venv" ".git" ".ticket-auto" ".
 # `gateway/` package directory in every other repo (#500).
 PLANNER_CROSSCHECK_EXCLUDE_PATHS=()
 
+# Discovery's pinned repo-refs for the current run (rehearsal F23), as
+# planner_crosscheck_repo_refs_resolved lines. Filled by
+# planner_crosscheck_citations; read to map a repo-prefixed citation onto the
+# pinned-ref worktree and to explain an unresolved citation.
+PLANNER_CROSSCHECK_PINNED_REFS=""
+
 # How many lines on either side of a cited line a TargetSymbols symbol name
 # may appear in and still count as resolved (issue #172 suggests N=5).
 PLANNER_CROSSCHECK_SYMBOL_PROXIMITY=5
@@ -133,9 +139,45 @@ _planner_crosscheck_resolve_path() {
     anchored_prune+=(-path "$(_planner_crosscheck_glob_escape "${repos_root%/}/${excl_path}")" -prune -o)
   done
 
+  local found
   # shellcheck disable=SC2086
-  find "$repos_root" $prune_expr -prune -o "${anchored_prune[@]}" \
-    -type f -path "*/${escaped_rel_path}" -print 2>/dev/null | head -1
+  found=$(find "$repos_root" $prune_expr -prune -o "${anchored_prune[@]}" \
+    -type f -path "*/${escaped_rel_path}" -print 2>/dev/null | head -1)
+  if [ -n "$found" ]; then
+    echo "$found"
+    return 0
+  fi
+  _planner_crosscheck_resolve_in_worktree "$repos_root" "$rel_path"
+}
+
+# A citation prefixed with its repo (`sandbox/backend/x.js`) cannot match the
+# pinned-ref worktree by glob: the worktree directory is named
+# `sandbox-crosscheck-<ref>-<sha>`, and the live `sandbox` is excluded. Map the
+# repo prefix (REPOS_ROOT-relative path or bare directory name) onto the
+# worktree instead (rehearsal F23 — Discovery pinning a remote ref always
+# takes this path, since the live checkout is never on it).
+_planner_crosscheck_resolve_in_worktree() {
+  local repos_root="${1%/}" rel_path="$2"
+  [ -n "$PLANNER_CROSSCHECK_PINNED_REFS" ] || return 0
+  declare -f planner_crosscheck_repo_ref_worktree_dir >/dev/null 2>&1 || return 0
+  local dir repo ref sha wt rel name rest
+  while IFS=$'\037' read -r dir repo ref sha; do
+    [ -n "$dir" ] && [ -n "$sha" ] || continue
+    wt=$(planner_crosscheck_repo_ref_worktree_dir "$dir" "$ref" "$sha")
+    [ -d "$wt" ] || continue
+    rel="${dir#"${repos_root}"/}"
+    name="${dir##*/}"
+    rest=""
+    case "$rel_path" in
+    "${rel}"/*) rest="${rel_path#"${rel}"/}" ;;
+    "${name}"/*) rest="${rel_path#"${name}"/}" ;;
+    esac
+    if [ -n "$rest" ] && [ -f "${wt}/${rest}" ]; then
+      echo "${wt}/${rest}"
+      return 0
+    fi
+  done <<<"$PLANNER_CROSSCHECK_PINNED_REFS"
+  return 0
 }
 
 # Escape find -path/-name glob metacharacters so a literal path matches itself.
@@ -341,7 +383,16 @@ _planner_crosscheck_check_citation() {
   resolved=$(_planner_crosscheck_resolve_path "$repos_root" "$path_part")
   if [ -z "$resolved" ]; then
     [ "$marked_new" -eq 1 ] && return 0
-    echo "planner-crosscheck-citations: CITATION_UNRESOLVED ${spec_file}:${spec_line} → ${token} (no file under REPOS_ROOT matches '${path_part}')"
+    # Rehearsal F23: the file may exist on a ref Discovery read but did not pin.
+    local other_ref=""
+    if [ -n "$PLANNER_CROSSCHECK_PINNED_REFS" ] && declare -f planner_crosscheck_other_ref_hint >/dev/null 2>&1; then
+      other_ref=$(planner_crosscheck_other_ref_hint "$repos_root" "$path_part" "$PLANNER_CROSSCHECK_PINNED_REFS")
+    fi
+    if [ -n "$other_ref" ]; then
+      echo "planner-crosscheck-citations: CITATION_UNRESOLVED ${spec_file}:${spec_line} → ${token} (${other_ref} — cite only the ref Discovery pinned, or re-run Discovery pinned on the ref it reads)"
+    else
+      echo "planner-crosscheck-citations: CITATION_UNRESOLVED ${spec_file}:${spec_line} → ${token} (no file under REPOS_ROOT matches '${path_part}')"
+    fi
     return 1
   fi
 
@@ -666,6 +717,10 @@ planner_crosscheck_citations() {
       [ -n "$_pcc_excl" ] && PLANNER_CROSSCHECK_EXCLUDE_PATHS+=("$_pcc_excl")
     done < <(planner_crosscheck_repo_ref_setup "$initiative_id" "$repos_root")
   fi
+  local _pcc_orig_pinned="$PLANNER_CROSSCHECK_PINNED_REFS"
+  if declare -f planner_crosscheck_repo_refs_resolved >/dev/null 2>&1; then
+    PLANNER_CROSSCHECK_PINNED_REFS=$(planner_crosscheck_repo_refs_resolved "$initiative_id" "$repos_root")
+  fi
 
   local total=0 passed=0 failed=0
   local target_file
@@ -695,6 +750,7 @@ planner_crosscheck_citations() {
   fi
 
   PLANNER_CROSSCHECK_EXCLUDE_PATHS=("${_pcc_orig_exclude_paths[@]}")
+  PLANNER_CROSSCHECK_PINNED_REFS="$_pcc_orig_pinned"
 
   echo "planner-crosscheck-citations: $passed passed, $failed failed out of $total files"
   return $((failed > 0 ? 1 : 0))

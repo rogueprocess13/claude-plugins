@@ -468,12 +468,23 @@ identical, and burns remediation time chasing a non-bug.
 
 For **every** repo you explore, immediately after you first \`cd\`/read into it,
 resolve and record its ref — one \`repo-ref\` state-log line per repo, not per
-file:
+file.
+
+**Pin the ref you actually read, not whatever is checked out.** Crosscheck
+resolves every \`path:line\` citation against the pinned commit only. If you
+read a repo's code with \`git show <ref>:<path>\` (e.g. \`origin/main\`), set
+\`read_ref\` to that ref for the repo; leave it \`HEAD\` when you read the working
+tree. One ref per repo: cite code only from the pinned ref. Code that exists
+only on a different, diverged ref is not citable — describe it in prose with its
+ref, without a \`path:line\`, and record the split as a constraint in
+discovery.md. Before pinning, check the ref has the files you will cite:
+\`git -C <repo_dir> cat-file -e <ref>:<path>\`.
 
 \`\`\`bash
 root_phys=\$(cd "\${REPOS_ROOT}" && pwd -P)
 root_log=\$(cd "\${REPOS_ROOT}" && pwd -L)
 for repo_dir in <each repo directory you explored>; do
+  read_ref=HEAD # or the ref you read this repo's code from, e.g. origin/main
   # Record the repo's path RELATIVE TO REPOS_ROOT (e.g. microservices/foo),
   # not its bare name — nested repos are otherwise unresolvable later (#500).
   repo_top=\$(git -C "\$repo_dir" rev-parse --show-toplevel 2>/dev/null) || continue
@@ -488,8 +499,9 @@ for repo_dir in <each repo directory you explored>; do
          *) repo_name=\$(basename "\$repo_top") ;;
        esac ;;
   esac
-  branch=\$(git -C "\$repo_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)
-  sha=\$(git -C "\$repo_dir" rev-parse HEAD 2>/dev/null)
+  branch="\$read_ref"
+  [ "\$read_ref" = HEAD ] && branch=\$(git -C "\$repo_dir" rev-parse --abbrev-ref HEAD 2>/dev/null)
+  sha=\$(git -C "\$repo_dir" rev-parse --verify --quiet "\${read_ref}^{commit}" 2>/dev/null)
   [ -n "\$sha" ] && planner_state_write "${initiative_id}" "META" "discovery" "repo-ref" "\${repo_name}@\${branch:-HEAD}@\${sha}"
 done
 \`\`\`
@@ -525,6 +537,7 @@ On failure, write \`fail\` instead of \`done\`.
 - Prior art must reference actual code in the repository, not hypothetical patterns.
 - If a service's code isn't accessible, record it as a constraint, not an assumption.
 - Never run \`git checkout\`/\`git switch\`/\`git reset\` in a REPOS_ROOT repo — read-only access only.
+- Every \`path:line\` you cite must exist at the commit you pinned for that repo — never cite code read from a different ref.
 - discovery.md must have a \`## Cited Artifacts\` section — FOUND/NOT FOUND per cited artifact, or \`None.\`
 - discovery.md must have a \`## Test Data Inventory\` table (\`Entity | States/variants | Roles | Volume | Source | Load via | Privacy\`), or \`None.\` — synthetic or masked data only, never production PII.
 AGENT_PROMPT
@@ -1056,6 +1069,12 @@ not a phase retry. If a finding is still open after 3 passes (e.g. the
 underlying symbol genuinely does not exist yet), leave it and note it in the
 proposal's Risk Register rather than fabricating a citation to satisfy the
 linter; Crosscheck will catch it as a final gate regardless.
+
+Citations resolve only at the commit Discovery pinned for each repo (its
+\`META|discovery|repo-ref\` line), never at another branch you can \`git show\`.
+A \`CITATION_UNRESOLVED\` that says the file "exists on <ref> but not on pinned
+..." is not fixed by editing the path: drop the \`path:line\`, describe that code
+in prose with its ref, and record the ref split in the Risk Register.
 
 ## State log
 

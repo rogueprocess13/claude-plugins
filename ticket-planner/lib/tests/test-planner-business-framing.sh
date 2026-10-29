@@ -385,11 +385,11 @@ _prompt_has "EpicGen" "$EPICGEN_PROMPT" \
   'Deferred decision:'
 
 # The Specify prompt must not move a byte by accident. Last deliberate
-# re-capture: planner-ac-coverage-and-epic-uat (one AC per stated outcome).
+# re-capture: rehearsal F23 (cite only at the ref Discovery pinned).
 # Pinned as the sha256 of the prompt captured before the change, with the
 # scratch REPOS_ROOT normalised. If a later change edits the Specify prompt on
 # purpose, re-capture: printf '%s' "${SPECIFY_PROMPT//$TMP_ROOT/<REPOS_ROOT>}" | sha256sum
-SPECIFY_PROMPT_SHA="c4dda22f03ca9bb7dcfe1d91cd8bc2527c5da70a75647954b857957ed7ee14aa"
+SPECIFY_PROMPT_SHA="105a1993de118e4ec1abd783ec4d325fb257e6e8d531e4cf9ac8dbd4246910a8"
 got_sha=$(printf '%s' "${SPECIFY_PROMPT//$TMP_ROOT/<REPOS_ROOT>}" | sha256sum | cut -d' ' -f1)
 if [ "$got_sha" = "$SPECIFY_PROMPT_SHA" ]; then
   pass "Specify prompt is byte-identical to the pre-change capture"

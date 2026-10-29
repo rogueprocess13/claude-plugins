@@ -454,7 +454,7 @@ PLANNER_CROSSCHECK_CROSS_FILE_CODES="RESOLUTION_NOT_PROPAGATED CARVE_SCOPE_LOST 
 planner_crosscheck_fix_hint() {
   case "$1" in
   CITATION_UNRESOLVED)
-    echo "path does not resolve under REPOS_ROOT — check for an annotation on the path side of \`Name:path\` (move it to the Name side), a stale path, or a file that needs a \`(new)\` marker"
+    echo "path does not resolve under REPOS_ROOT — check for an annotation on the path side of \`Name:path\` (move it to the Name side), a stale path, or a file that needs a \`(new)\` marker; a file that exists only on a ref Discovery did not pin (the message names the ref) means re-pin Discovery on the ref it read"
     ;;
   CITATION_LINE_OUT_OF_RANGE)
     echo "the file resolved but the cited line is past its end — re-read the file and cite a real line, or drop the line number"

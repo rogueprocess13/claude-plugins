@@ -393,6 +393,106 @@ else
   fail "nested live checkout is untouched" "$(git -C "$NESTED_DIR" rev-parse --abbrev-ref HEAD)"
 fi
 
+# ── Rehearsal F23: code read from a ref Discovery did not pin ───────────────
+# Mirrors iter-02: the live checkout is main@<empty baseline>; the backend
+# exists only on origin/main. Discovery read origin/main via `git show` but
+# pinned main, so every citation failed with a bare "no file matches".
+
+echo "--- F23: unresolved citation names the ref that holds the file ---"
+
+F23_DIR="${REPOS_ROOT}/sandbox"
+git -C "$REPOS_ROOT" init -q sandbox
+git -C "$F23_DIR" config user.email "test@example.com"
+git -C "$F23_DIR" config user.name "Test"
+echo "# sandbox" >"${F23_DIR}/README.md"
+git -C "$F23_DIR" add -A
+git -C "$F23_DIR" commit -q -m "baseline"
+git -C "$F23_DIR" branch -M main
+F23_BASE_SHA=$(git -C "$F23_DIR" rev-parse HEAD)
+git -C "$F23_DIR" checkout -q -b tmp-backend
+mkdir -p "${F23_DIR}/backend"
+printf 'const app = 1;\nmodule.exports = app;\n' >"${F23_DIR}/backend/server.js"
+git -C "$F23_DIR" add -A
+git -C "$F23_DIR" commit -q -m "backend"
+F23_REMOTE_SHA=$(git -C "$F23_DIR" rev-parse HEAD)
+git -C "$F23_DIR" checkout -q main
+git -C "$F23_DIR" update-ref refs/remotes/origin/main "$F23_REMOTE_SHA"
+git -C "$F23_DIR" branch -q -D tmp-backend
+
+F23_PINNED=$(printf '%s\037%s\037%s\037%s' "$F23_DIR" "sandbox" "main" "$F23_BASE_SHA")
+
+OUT=$(planner_crosscheck_other_ref_hint "$REPOS_ROOT" "sandbox/backend/server.js" "$F23_PINNED")
+if [ "$OUT" = "backend/server.js exists on origin/main but not on pinned sandbox@main@${F23_BASE_SHA:0:7}" ]; then
+  pass "hint names the other ref for a repo-prefixed path"
+else
+  fail "hint names the other ref for a repo-prefixed path" "$OUT"
+fi
+
+OUT=$(planner_crosscheck_other_ref_hint "$REPOS_ROOT" "backend/server.js" "$F23_PINNED")
+case "$OUT" in
+"backend/server.js exists on origin/main but not on pinned "*) pass "hint works for a repo-relative path" ;;
+*) fail "hint works for a repo-relative path" "$OUT" ;;
+esac
+
+OUT=$(planner_crosscheck_other_ref_hint "$REPOS_ROOT" "backend/nope.js" "$F23_PINNED")
+if [ -z "$OUT" ]; then
+  pass "no hint when no ref holds the file"
+else
+  fail "no hint when no ref holds the file" "$OUT"
+fi
+
+OUT=$(planner_crosscheck_other_ref_hint "$REPOS_ROOT" "README.md" "$F23_PINNED")
+if [ -z "$OUT" ]; then
+  pass "no hint when the pinned commit already holds the file"
+else
+  fail "no hint when the pinned commit already holds the file" "$OUT"
+fi
+
+F23_INIT="INIT-F23-test"
+planner_state_init "$F23_INIT" "test idea" >/dev/null 2>&1
+planner_state_write "$F23_INIT" "META" "discovery" "repo-ref" "sandbox@main@${F23_BASE_SHA}"
+F23_ART="${REPOS_ROOT}/.ticket-auto/initiatives/${F23_INIT}/artifacts"
+mkdir -p "$F23_ART"
+cat >"${F23_ART}/proposal.md" <<'EOF'
+## Title
+F23 proposal
+
+## Description
+The app is exported from `sandbox/backend/server.js:2`.
+
+## Labels
+planned
+EOF
+
+if planner_crosscheck_citations "$F23_INIT" >"${TMPDIR}/cc-f23.txt" 2>&1; then
+  fail "citation into an unpinned ref fails" "$(cat "${TMPDIR}/cc-f23.txt")"
+elif grep -q "CITATION_UNRESOLVED .*exists on origin/main but not on pinned sandbox@main@${F23_BASE_SHA:0:7}" "${TMPDIR}/cc-f23.txt"; then
+  pass "CITATION_UNRESOLVED names the ref Discovery read but did not pin"
+else
+  fail "CITATION_UNRESOLVED names the ref Discovery read but did not pin" "$(cat "${TMPDIR}/cc-f23.txt")"
+fi
+
+if [ -z "$PLANNER_CROSSCHECK_PINNED_REFS" ]; then
+  pass "pinned refs are restored after the run"
+else
+  fail "pinned refs are restored after the run" "$PLANNER_CROSSCHECK_PINNED_REFS"
+fi
+
+# Discovery now pins the ref it read (read_ref=origin/main): the same citation
+# resolves through the pinned-ref worktree.
+planner_state_write "$F23_INIT" "META" "discovery" "repo-ref" "sandbox@origin/main@${F23_REMOTE_SHA}"
+if planner_crosscheck_citations "$F23_INIT" >"${TMPDIR}/cc-f23b.txt" 2>&1; then
+  pass "pinning the remote ref Discovery read makes the citation resolve"
+else
+  fail "pinning the remote ref Discovery read makes the citation resolve" "$(cat "${TMPDIR}/cc-f23b.txt")"
+fi
+
+if [ "$(git -C "$F23_DIR" rev-parse --abbrev-ref HEAD)" = "main" ]; then
+  pass "F23 live checkout is untouched"
+else
+  fail "F23 live checkout is untouched" "$(git -C "$F23_DIR" rev-parse --abbrev-ref HEAD)"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
