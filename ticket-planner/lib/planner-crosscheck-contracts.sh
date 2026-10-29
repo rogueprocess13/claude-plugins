@@ -215,7 +215,11 @@ _planner_crosscheck_contracts_array_has() {
 # ── Cross-initiative discovery ──────────────────────────────────────────────
 
 # List sibling initiative IDs (directories under <initiatives_root> that
-# have an artifacts/specs directory), excluding <self_id>.
+# have an artifacts/specs directory), excluding <self_id> and any initiative
+# marked abandoned (planner_initiative_abandon). An abandoned initiative's
+# tickets were cancelled, so its specs are no longer a contract anyone reads;
+# counting them made a re-plan of the same idea fail CONTRACT_MISMATCH
+# against its own cancelled predecessor (dispatch rehearsal F22).
 # Usage: _planner_crosscheck_contracts_sibling_ids <initiatives_root> <self_id>
 _planner_crosscheck_contracts_sibling_ids() {
   local initiatives_root="$1" self_id="$2"
@@ -226,6 +230,7 @@ _planner_crosscheck_contracts_sibling_ids() {
     base="$(basename "$d")"
     [ "$base" = "$self_id" ] && continue
     [ -d "${d}artifacts/specs" ] || continue
+    grep -q '^[^|]*|META|initiative-abandoned|done|' "${d}state.log" 2>/dev/null && continue
     echo "$base"
   done
 }
@@ -323,7 +328,8 @@ _planner_crosscheck_contracts_any_block_deferential() {
 PLANNER_CROSSCHECK_CONTRACTS_COMMODITY_FILE_THRESHOLD=4
 
 # Count distinct spec files (INDEX.md excluded), across every initiative
-# under <initiatives_root>, that backtick-mention <structure>.
+# under <initiatives_root>, that backtick-mention <structure>. Abandoned
+# initiatives are left out, as in _planner_crosscheck_contracts_sibling_ids.
 # Usage: _planner_crosscheck_contracts_structure_spread <initiatives_root> <structure>
 _planner_crosscheck_contracts_structure_spread() {
   local initiatives_root="$1" structure="$2"
@@ -331,6 +337,7 @@ _planner_crosscheck_contracts_structure_spread() {
   local -a hits=()
   for init_dir in "$initiatives_root"/*/; do
     [ -d "${init_dir}artifacts/specs" ] || continue
+    grep -q '^[^|]*|META|initiative-abandoned|done|' "${init_dir}state.log" 2>/dev/null && continue
     while IFS= read -r f; do
       [ -n "$f" ] && hits+=("$f")
     done < <(_planner_crosscheck_contracts_files_with_structure "${init_dir}artifacts/specs" "$structure")

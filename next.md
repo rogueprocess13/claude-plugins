@@ -1226,6 +1226,226 @@ expect version-bump rebases on the second PR of any pair.
 
 ---
 
+## Step 13 — Ten-agent codebase review fixes — tranche 1 DONE 2026-10-24 (PRs #549–#558 merged); tranche 2 open
+
+Source: `review-2026-10-23/README.md`. Five persona reviews (architect, QA, PO, backend, frontend)
+and five determinism scans found 98 issues (4 P0, 22 P1) and 114 determinism candidates.
+Detail and file:line evidence are in `review-2026-10-23/01..10-*.md`. Each work package (WP) below
+runs on its own branch in a worktree. Each fix gets a test that fails before the fix and passes
+after, where a test is possible. Per-WP handoff notes go in `review-2026-10-23/fixes/WP-N.md`.
+
+**Tranche 1: bugs (parallel, one branch per WP).**
+
+- [x] WP-1 `fix/review-flow-core` (PR #550 merged): fence generation from `FLEET_GENERATION` (ARCH-1/QA-1/BE-1),
+      `emit_event` failure keeps `pending_event` (ARCH-2/QA-2/BE-2), `--dry-run` side effects and
+      unknown-flag handling, malformed generation, fleetd `--data`, torn outbox line resets `seq`
+      (ARCH-10/BE-5).
+- [x] WP-2 `fix/review-flow-run-wrapper` (PR #551 merged): `lib/flow-run.sh` replaces `/ticket-flow …; _rc=$?`
+      in bash blocks (DET-IP-1, DET-RV-20).
+- [x] WP-3 `fix/review-plan-resolver` (PR #552 merged): one whole-ID plan-artifact resolver (DET-IP-2, DET-AP-4),
+      gate-reconcile `$NOTES_PATH` fallback (DET-IP-13).
+- [x] WP-4 `fix/review-test-registration` (PR #549 merged): register the 6 orphan test files and add a Makefile
+      drift gate (QA-3); fix tests that always pass.
+- [x] WP-5 `fix/review-docs-diagram` (PR #557 merged): approval wording and `/ticket-approve` in the README tables
+      (PO-1, PO-16), Path B `resume --create` (PO-3), `REPOS_ROOT` env (PO-4), diagram synced to
+      `workflow.json` plus a CI check (FE-1/2/3/5), landing page phase count.
+- [x] WP-6 `fix/review-linear-client` (PR #553 merged): outage reported as `[]` (BE-3), curl timeouts (BE-8), API key
+      in `ps` (BE-9), blind create retries (BE-10), rate-limit regex (BE-11), `spawn_write_env`
+      escaping (BE-4).
+- [x] WP-7 `fix/review-router-merge` (PR #554 merged): auto-merge respects `MERGE_POLICY` and fails closed (DET-RV-4),
+      retry check scoped to the latest attempt (DET-RV-3), `VERIFY_FROM=checkpoint` (DET-RV-16),
+      `IMPLEMENT|commit-push|skip` (DET-IP-9), conflict-marker false positive (DET-IP-5),
+      pr-iterate `--repo` (DET-IP-4).
+- [x] WP-8 `fix/review-fleet-controller` (PR #558 merged): `monitor` takes work off the queue and spawns nothing
+      (PO-2), gate-stopped and dead-lettered tickets missing from status (PO-5), fleetd POST auth
+      (BE-13).
+- [x] WP-9 `fix/review-misc-live-bugs` (PR #556 merged): wiki routing `${#REPOS[@]}` (DET-AP-8), critique BLOCKED
+      without needs-info (DET-AP-1), audit drift ID/date mismatch (DET-SU-3), prescan contract-map
+      wipe (DET-SU-15), persona-refresh `find` (DET-SU-20), Consensus `Readiness: blocked` unread,
+      kc-sweep first run, kc-import title.
+- [x] WP-10 `fix/review-verify-agent` (PR #555 merged): verify pre-flight runs MCP tools as bash (PO-8), missing
+      Playwright and Skill tools (FE-14), hard-coded credentials posted to Linear (FE-15–17).
+
+**Status 2026-10-24:** all 10 PRs merged in order #549→#558 via an automated merge-rebase chain (per-row markdown-table conflict resolver; version-bump/CHANGELOG resolver). Worktrees and branches cleaned. **Deploy actions still open:** set `UAT_TEST_PASSWORD` on each host (#555); update any external fleetd POST caller (dexter dashboard) to send `X-Fleetd-Token` (#558); run `ticket-dir.sh change-dir` once over the live tickets repo to confirm no ticket has two plan folders (#552); `get_comments` now exits non-zero on a Linear outage (#553). Follow-ups from handoffs in `review-2026-10-23/fixes/`: fixed-`/tmp` test path collisions (preamble, spawn-helper, seed-apply, dor-semantic-parse), stale label wording inside skill prompts, ticket templates still saying password `admin`, `ticket-prescan` MCP-in-bash, `qa/*` specializers have no caller. Earlier status: all 10 WPs committed on local branches with fail-before/pass-after tests; handoffs in `review-2026-10-23/fixes/`. PRs #549–#558 opened 2026-10-23 after a clean serial `make test` per branch. Merge order: #549, #550, #551, then the rest; each later PR needs a CHANGELOG/version rebase. Earlier note: fix the fixed-`/tmp`-path collisions in `test-ticket-preamble.sh`, `test-spawn-helper.sh` and seed-apply (they fail only under parallel `make test`), then run one clean full `make test` per branch after rebasing.
+
+**Tranche 2: needs design (openspec first).** Lock and state-root split (ARCH-3/4/5), `flow.sh`
+network calls while holding the lock (ARCH-8), migration replay (ARCH-9), fleetd autonomy setting
+(PO-9), and the determinism backlog (review README "top high-value, small-effort items").
+
+**Merging.** WPs do not bump versions; bump each plugin once per PR at PR time. WP-2 and WP-7
+both edit skill markdown, and WP-1 and WP-2 touch the flow call path, so merge WP-1 first, then
+WP-2, then rebase the rest. Expect routine Makefile `test-lib` conflicts.
+
+---
+
+## Step 14 — Debugger persona overlay — PR #560 merged 2026-10-24 (21abba2, 0.72.0); live check open
+
+Openspec change `debugger-persona-overlay` (proposal, design, 2 specs, 36 tasks; validated).
+Adds `personas/base/debugger.md` + `specializers/debug/{jvm,python,node,browser}.md` as an
+additive overlay (new selector keys `PERSONA_DEBUG`/`PERSONA_DEBUG_SPECIALIZER`), fired by
+manifest `type=bug` or a verify-fail rework cycle (`--remediation`). Injected in implement
+(Step 2 + Part B rework: hypothesis-to-confirm, failing test first, attempt-3 stop rule),
+pr-review (root-cause + regression-test checks) and appraise (`### Root cause hypothesis`).
+Also fixes a verified pre-existing bug: no skill ever sets `TICKET_TEXT_FILE` for
+`persona-select.sh`, so every keyword trigger (security, test-data weak signal,
+migration/refactor specializers) has been dead in production. Ships a `used-by` ↔ call-site
+guard test. Research sources: obra/superpowers `systematic-debugging`, wshobson/agents
+debugging-strategies, brunoborges/jdb-agentic-debugger.
+
+- [x] 1. Three-reviewer pass done 2026-10-24 (persona-redundancy, selector/errexit, wiring+value). Two blockers fixed in the specs: the verify cap is 2 so an "attempt 3" rule could never fire (now: the one rework is the last chance → confirm or `HUMAN_HOLD`); the injection log line must be `META|persona-select|info|`, not an `IMPLEMENT|…|done|` step (would perturb `IMPLEMENT_FROM`). Also: `detect_stack <layer>` (layer decides for JHipster-style repos), `--type` derived from manifest else `bug` label (hand-filed bugs have no manifest type), appraise writes the hypothesis template without loading the persona, 6-gram shingle + bundle-size tests, metric = `VERIFY_EXHAUSTED` rate among bug tickets.
+- [x] 2. Implemented on `feat/debugger-persona-overlay` → PR #560 merged (21abba2, 0.72.0). 33/35 tasks; full `make test` green. Deviations: bundle budget 12 KB (existing 4 files already 9.4 KB); prescan passes `TICKET_TEXT_FILE=""` (shared docs); audit:247 is a real second call, prefixed; stale `used-by` on analyzer/qa-engineer/technical-writer corrected. Follow-up issue #559 (`qa/*` specializers never selected).
+- [ ] 3. Live check: one real bug ticket on the tickets host; confirm hypothesis block + log line.
+- [ ] 4. After ~20 bug runs per arm: compare `VERIFY_EXHAUSTED` share in `runs.jsonl` grouped
+      by implement skill fingerprint; promote to a `retro.sh` metric only if a signal shows.
+      **Baseline 2026-10-24:** 76 tickets on both hosts, 0 `VERIFY_EXHAUSTED`, and every row has
+      `type=null` — `run-identity.sh` reads only the manifest type (no `bug`-label fallback), so the
+      bug-only metric has no data yet. Fix that first or this comparison never populates.
+
+**Order:** Step 13 tranche 1 merged first; PR #560 is on top of main `4a23836`.
+
+---
+
+## Step 15 — Skill size reduction programme — six openspec changes proposed + validated 2026-10-24, not started
+
+42 `SKILL.md` files total 825 KB; the four largest (ticket-planner 96 KB, ticket-verify 93 KB,
+ticket-auto 75 KB, ticket-appraise 72 KB) are 41%. Anthropic's authoring guidance is a body under
+500 lines / ~5k tokens (~20 KB), and Claude Code keeps only the first 5,000 tokens of a skill after
+auto-compaction, so the big skills lose most of their body on long fleetd phases. Nothing in CI
+measures skill size. Reviewed plan (13 inspection agents, 1 web-research agent, 3 reviewers):
+`~/.claude/plans/skills-shouldn-t-ggrow-too-rustling-charm.md`. Realistic end state ~825 KB →
+~330-370 KB of SKILL.md, ~90 KB moved to on-demand `references/`, ~60 KB of bash into ~25 tested
+lib scripts. ticket-auto (~22-26 KB floor) and ticket-verify (~45-60 KB) cannot reach 20 KB and stay
+as annotated exceptions; the effective-context ratchet over `prompt_manifests` is the real end-state
+metric.
+
+Chained openspec changes (each its own PR(s), version bump, `make skill-baseline` last; chain
+`ticket-auto-pipeline` PRs, do not parallelise — they all bump the same version):
+
+- [x] 1. `skill-size-gate` (6 specs, 38 tasks) — MERGED PR #561 (ecc12f5, 0.72.1) 2026-10-24; archive pending — `scripts/check-skill-size.sh` + committed TSV
+      ratchet baseline (may only shrink; raises checked against `origin/main`, need
+      `# allow-growth:`), 500-line/20 KB ceiling for new skills, frontmatter allowlist, fence >60
+      lines fails unless `<!-- size-gate: template -->`, generated blocks excluded + 6 KB cap,
+      `references/` link rules, per-manifest context ratchet. Day-one fixes: overseer frontmatter,
+      5 fence markers. **Ship first.**
+- [ ] 2. `skill-glue-collapse` (5 specs, 40 tasks) — `lib/plog.sh` CLI over existing `_plog`
+      (~140 inline log echoes, bare-`&&` guards in 8 skills), `lib/skill-ref.sh`, plugin-cache
+      resolver dedupe (6 pastes in ticket-auto), ticket-auto Steps 0.1-0.6 → `ticket-preamble.sh`
+      with new `TICKET_ARG=`/`ANNOUNCE_START`/`NEW_RUN` manual modes, `persona-select.sh
+      --ticket-dir` (3 pastes, not 5). Confirm-first tasks: #362 rule (already enforced by
+      `gate-check.sh require_issue_payload`), fleetd tolerance of new preamble fields. Live check.
+- [ ] 3. `skill-prose-dedupe` (3 specs, 133 tasks, 7 sub-PRs 3a-3g) — deletion/compression only.
+      Preconditions inside: move detection-logic/evidence strings into `phase-inspector.sh`
+      injection before cutting guidance-extractor; app-knowledge → skeleton (CRE ticket IDs also in
+      nav-hints, reproduce, batch-verify; `install.sh` SUPPORT_SKILLS entry); delete
+      `ticket-fleet-controller`; fleet-controller drops the six duplicated sections.
+- [ ] 4. `skill-progressive-disclosure` (5 specs, 120 tasks) — `references/` convention, appraise
+      split (condition is `FAST_PATH_ELIGIBLE=false`, not the planned label; 2.1/2.7/2.8/3.5 stay
+      inline), verify mode refs (`build_only`/`live_backend` ids stay in SKILL.md), then
+      appraise-exec, implement, critique, setup, retro, wiki, document, grill-me, reproduce, kc.
+      Target Symbols → Specify prompt **waits for Step 12 items 5-7**. critique/setup register under
+      the appraise/reproduce manifests; grill-me/kc/planner have no manifest.
+- [ ] 5. `skill-deterministic-extraction` (24 specs, 151 tasks, 6 PR groups) — planner
+      (`planner-invocation.sh`, `planner_dispatch_gate` composes across 4 planner libs),
+      pr-review (`pr-merge-gate.sh` mock-`gh`), router (`router-step.sh`, `prescan-run.sh`),
+      verify (`verify-mode.sh` carved from inline gate-check 2.6; staged `verify-env-up.sh`),
+      appraise/exec/implement, long tail. Live checks after router and verify groups.
+- [ ] 6. `fleetd-shared-router-steps` (3 specs, 20 tasks) — fleetd calls `router-step.sh` behind
+      `FLEET_ROUTER_STEP_SHELL` (catalog entry required). Only `needs_retro` and the post-spawn
+      judgement (`classify_phase`, `apply_verifier_overrides`, `missing_phase_result`) are true
+      ports; inspector is `_unsupported_runner` today and prescan has no fleetd code, so those are
+      net-new wiring. Parity test first; new tests in `test_router_step*.py`, not
+      `test_supervisor.py`.
+
+**Order:** 1 → 2 → 3 → 4 → 5 → 6. Change 1 alone stops the bleeding and is independent of
+everything else in this queue; 2-6 each depend on the previous. Orthogonal to Steps 3 and 10;
+Step 12 items 5-7 gate one task in change 4.
+
+---
+
+## Step 16 — Dispatch rehearsal loop (Conduit-lite) — started 2026-10-24
+
+Goal: one real idea goes grill-me → ticket-planner → `--create` → fleet dry-run with **zero
+blockers**, by running the chain, saving results, fixing each blocker at its source and re-running.
+This is the live check of Step 12 item 0, and it will likely re-hit Step 12 items 1-3. Plan
+(reviewed by 3 Sonnet reviewers: feasibility, loop integrity, cost):
+`~/.claude/plans/so-what-i-want-parallel-dream.md`.
+
+- [x] 1. `dispatch-rehearsal-preflight` — **PR #563 merged** (b5a9987, 2026-10-24, 0.74.0; live
+      check 4.4 PASSED on WIL-119: `--no-post` left Linear and the outbox untouched). Was: openspec change (ticket-auto-pipeline): ticket-critique
+      `--no-post` (verdict to a local file, no comment, label or flow.sh) + `scripts/e2e-preflight.sh`
+      (body-check + `gate-check --mode planned` with a vacuous-pass guard + strict DoR + epic
+      `dispatch=true` assert + dry-run + mechanical blocked-by-sibling check).
+- [x] 2. Runbook `docs/runbooks/dispatch-rehearsal.md` (shipped in PR #563): setup, freeze rules (hash-frozen brief,
+      gate changes keep DoR fixtures 20-28 failing, negative control, clean counter resets on any
+      fix), blocker classes A-D, exit criteria. Reusable per idea; not openspec.
+- [ ] 3. Loop on Conduit-lite (RealWorld subset: auth + articles; tags at first clean) in
+      dexter-sandbox, WIL / "Dexter Sandbox", `rehearsal` label. Exit: two clean fresh full runs
+      after the last code change. Cap 4 full runs. Holdout: comments + favorites slice, run once.
+      Fixes: class C/D as commit + test; class B or grill-me profile changes get their own openspec.
+      - **Iter 01 (2026-10-24): FAIL**, full run 1 of 4. Work root
+        `/home/mortal/workspace/workbench/e2e-conduit`. Grill-me sealed `ready` (54 → 100, 2 rounds).
+        Planner `INIT-1792863226-5186` → epic WIL-118, children WIL-119..124 (strict chain).
+        Crosscheck halted once (F12, answered headless). Strict deterministic DoR 6/6 pass.
+        **Refinement halted 6/6** on semantic findings (F16). Preflight `FAIL rows=33 failed=12`:
+        gate-planned `TICKET_NOT_READY` ×6 (real, not vacuous), dry-run `not_ready 6`.
+        17 findings in `e2e-conduit/rehearsal/findings.md`. Fix order proposed:
+        - [x] F16 + F8 → openspec `planner-ac-coverage-and-epic-uat` — **PR #564 merged**
+              (11d3237, ticket-planner 0.25.0). Was: proposed + validated, 3-reviewer pass folded in. F16: Specify/Consensus prompt rule "one AC +
+              Verification Notes row per stated outcome, never delete a sentence to comply",
+              Crosscheck `AC_STATUS_UNCOVERED`. F8: `planner_uat_policy_resolve` — any sibling
+              `blocked_by` edge on a shared branch → `epic` UAT.
+        - [x] F13 → openspec `planner-base-branch-config` — **PR #565 merged** (32d9ddb, 0.26.0). Was (proposed 2026-10-24):
+              `--base-branch` / `base-branch` config key, detection develop → origin/HEAD → main →
+              master over Discovery's pinned repos; merge/sync policy also off the agent env.
+              Implement after the change above (both edit `planner_prompt_epicgen`).
+        - [ ] F1 + F6 (A, grill-me): 2000-char silent input truncation; sealed intent loses brief
+              detail (seed titles). Raise/refuse loudly; carry the brief verbatim in the seal.
+        - [ ] F10, F12, F14, F4 (B, minor): untyped Consensus questions invisible to headless;
+              Discovery lists public reference specs as Cited Artifacts; duplicate VN rows; IDEA
+              extraction includes clarified answers.
+        - [ ] Runbook (D): F7 (don't edit tracked CLAUDE.md in the clone), F11 (update marketplace
+              plugins to checkout version + restart before iter), export the Linear key.
+        - Iter-01 Linear issues WIL-118..124 **cancelled 2026-10-25**.
+        - [ ] Draft readiness → openspec `planner-draft-readiness` (proposed + validated 2026-10-25,
+              user approved building it): before the first Linear write, compose each spec's ticket
+              body and run strict deterministic DoR + the semantic scan/audit on it; halt
+              `DRAFT_NOT_READY` (override `--accept DRAFT_NOT_READY:"…"`, bound to the draft hashes).
+              Removes the create → Refinement halt → cancel loop. 3-reviewer pass folded in
+              2026-10-25: two entry points (after Crosscheck, before the EpicGen create gate), shared
+              evaluator split out of `dor_semantic_apply`/`set_ticket_semantic`, own accept line (not
+              Crosscheck's), re-Crosscheck after spec edits, no opt-out. **Build after iter 02** (so iter
+              02 measures the F16 prompt rules alone); iter 03 is its live check.
+      - **Iter 02 (2026-10-29): FAIL**, full run 2 of 4. Grill-me sealed `ready` (100). Planner
+        `INIT-1793284709-5497` reached Consensus (14/15 findings accepted, ready-for-spec), then
+        **Crosscheck BLOCKED, 43 findings**:
+        - [x] F22 (B): `CONTRACT_MISMATCH` ×5 against iter 01's cancelled initiative. Fixed on
+              `fix/planner-abandoned-initiative-contracts` (ticket-planner 0.26.1):
+              `planner_initiative_abandon` + sibling skip in the contract check; both rehearsal
+              initiatives marked abandoned; contract check now rc 0.
+        - [ ] F23 (D+B): `CITATION_UNRESOLVED` ×31, sandbox left with code on diverged remote
+              branches. Runbook reset step added; **sandbox reset pending a human**. Planner side:
+              Discovery should pin the ref it actually reads.
+        - [ ] F24 (B, = F12): `CITED_ARTIFACT_UNRESOLVED`/`UNREFERENCED` ×4 (public `openapi.yml`, "the brief").
+        - [ ] F25 (B): `RESOLUTION_NOT_PROPAGATED` ×3, Consensus resolutions not carried to every spec.
+- [ ] 4. Follow-up, start once item 3 converges (it supplies the baseline): **chain consistency
+      check**. Bash steps (dor/gate/body checks, dispatch) are already repeatable and unit-tested;
+      grill-me, the planner and critique are LLM steps, so "similar results" means invariants, not
+      equality.
+      - Frozen golden ideas: Conduit-lite plus the holdout, brief hashed, answers from the brief only.
+        A saved `--answers` file can't be replayed, because grill question ids are generated per run.
+      - Structural fingerprint per run, never prose: ticket count, blocked-by graph shape, AC count per
+        ticket, sections present, test-data Source kinds, the test-data/seed ticket and its edges, grill
+        verdict and score, preflight verdict, critique status per ticket.
+      - Tolerance bands, for example: ticket count within ±2 of the baseline, graph acyclic, the seed
+        blocker edge kept, preflight PASS every time, grill score ≥ 80. Run each idea N=3 times and
+        judge the spread, not a single run.
+      - Attribute drift with the skill prompt fingerprints (`skill-prompt-fingerprint`, Step 2).
+      - Cost: never per-PR CI. Run it manually or nightly, plus automatically on PRs that touch the
+        grill profile, planner phase prompts or gate libs. Mocked Linear for the fingerprint; real
+        Linear only for the final dispatch check.
+
+---
+
 ## Ordering rationale
 
 1. **Active harm first.** Step 0's first two items mean held tickets are invisible to every
@@ -1259,6 +1479,10 @@ expect version-bump rebases on the second PR of any pair.
    The operator decides the final slot.
 9. **Step 12 items 1–3 are active harm by rule 1.** They block dispatch of a real epic today.
    Items 4–7 reduce planner rework and come after them. The operator decides the final slot.
+10b. **Step 14 is new capability by rule 8**, queued behind Step 13's merges because it edits the same three skill files. Its dead-haystack fix is active harm, but it rides along rather than splitting out.
+10. **Step 13 tranche 1 is active harm by rule 1.** Several items are confirmed silent failures
+   (frozen manifests after a fleet kill, events lost for good, wrong plan picked by substring). It
+   was started by explicit instruction on 2026-10-23, ahead of Step 12 items 1–3.
 
 ### Parallel track
 
