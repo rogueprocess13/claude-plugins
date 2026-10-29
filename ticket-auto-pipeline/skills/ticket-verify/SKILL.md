@@ -127,10 +127,8 @@ if [ "$policy" = "epic" ]; then
   echo "The epic branch is not deployed to the UAT environment until the epic's integration PRs" >&2
   echo "are merged, so a UAT result for one child cannot be valid. Acceptance for this ticket" >&2
   echo "happens at the epic level. Use --env local to verify the code change itself." >&2
-  if [ -n "$LOG_FILE" ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-policy|info|${policy}" >> "$LOG_FILE"
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|uat-policy-guard|skip|refused --env uat under epic policy" >> "$LOG_FILE"
-  fi
+  bash ~/.claude/skills/lib/plog.sh META uat-policy info "${policy}"
+  bash ~/.claude/skills/lib/plog.sh VERIFY uat-policy-guard skip "refused --env uat under epic policy"
   exit 0
 fi
 ```
@@ -215,7 +213,7 @@ fi
 
 Record `VERIFY_MODE` for the rest of this skill. `browser` is the default and behaves exactly as documented below (Steps 1.6, 1.7a/1.7b, 3, 4, 4b all apply unchanged). `build-only` skips every browser-specific step — see the "build-only" callouts inline in Steps 1.6, 1.7, 2, 3–4b, 6, and 7. `live-backend` runs Step 1.6 (env-start.sh — a real system genuinely needs to be up) but skips 1.7a/1.7b/3/4/4b same as build-only, since there is no login and no page to reach — see the "live-backend" callouts alongside the "build-only" ones in the same steps.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|load-context|done|Context loaded, mode=${VERIFY_MODE}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY load-context done "Context loaded, mode=${VERIFY_MODE}"
 
 ---
 
@@ -297,11 +295,11 @@ The local dev stack hardcodes ports (gateway:8080, bom:8081, credit-report:8082,
 source "$HOME/.claude/skills/lib/verify-lock.sh"
 
 if ! verify_lock_acquire "{TICKET-ID}"; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|verify-lock|fail|timed out waiting for the app-stack lock" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh VERIFY verify-lock fail "timed out waiting for the app-stack lock"
   echo "ticket-verify: could not acquire the single-flight verify lock — see the diagnostic above for who currently holds it. Retry later." >&2
   exit 1
 fi
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|verify-lock|done|acquired" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY verify-lock done "acquired"
 ```
 
 `verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at every earlier point that can exit before Step 5 — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, and Step 1.7a's "no test user found" SKIP exit. `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
@@ -317,7 +315,7 @@ source "$HOME/.claude/skills/lib/verify-worktree.sh"
 # Unresolved, every repo below would be skipped and no worktree created — a
 # silent "worktrees ready" for a run that serves the primary checkout.
 verify_env_init "{TICKET-ID}" ./CLAUDE.md || {
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_WORKTREE_FAILED — REPOS_ROOT unresolved" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_WORKTREE_FAILED — REPOS_ROOT unresolved"
   echo "ticket-verify: REPOS_ROOT could not be resolved — see stderr above." >&2
   verify_lock_release
   exit 1
@@ -337,7 +335,7 @@ for _svc in $_verify_services; do
   _repo_path="$REPOS_ROOT/$_svc"
   [ -d "$_repo_path/.git" ] || continue
   _wt=$(ensure_verify_worktree "{TICKET-ID}" "$_repo_path" "$_branch") || {
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_WORKTREE_FAILED — $_svc @ $_branch" >> "$LOG_FILE"
+    bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_WORKTREE_FAILED — $_svc @ $_branch"
     echo "ticket-verify: could not prepare an isolated worktree for $_svc on branch $_branch — see stderr above." >&2
     verify_lock_release
     exit 1
@@ -347,16 +345,16 @@ for _svc in $_verify_services; do
 done
 
 if [ "$_wt_count" -eq 0 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|warn|VERIFY_WORKTREE_NONE — none of '${_verify_services}' is a git repo under ${REPOS_ROOT}; the stack will serve whatever the primary checkouts hold" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_WORKTREE_NONE — none of '${_verify_services}' is a git repo under ${REPOS_ROOT}; the stack will serve whatever the primary checkouts hold"
 fi
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|worktree-setup|done|${_wt_count} worktree(s) ready for ${_branch}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY worktree-setup done "${_wt_count} worktree(s) ready for ${_branch}"
 ```
 
 Each resolved path is exported as `VERIFY_REPO_PATH_<SERVICE>` (`verify_worktree_env_var`: service name upper-cased, every character outside `[A-Z0-9_]` mapped to `_` — e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`). That export only lives as long as this block's shell — **Step 1.6b re-derives the same values with `verify_worktree_exports` in the shell that actually runs `env-start.sh`**, so the stack can build and run from the isolated checkout instead of the shared clone. Each verify worktree also gets the primary checkout's gitignored env files (`worker/.env`, `.env.local`, ...) mirrored in, with relative `*_DIR`/`*_PATH`/`*_ROOT` values pinned to the primary checkout — the same `_mirror_gitignored_env_files` implement worktrees use (#408). `env-start.sh` lives in the consuming workspace, not this plugin, so whether it currently reads these is unknown here — check deterministically rather than guessing:
 
 ```bash
 if ! grep -q "VERIFY_REPO_PATH" "{TICKETS_ROOT}/env-start.sh" 2>/dev/null; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|verify-worktree-unwired|warn|env-start.sh does not read VERIFY_REPO_PATH_* — branch isolation is partial (worktree checkout is correct; the running app stack may still build from the shared clone) until env-start.sh is updated to consume it" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META verify-worktree-unwired warn "env-start.sh does not read VERIFY_REPO_PATH_* — branch isolation is partial (worktree checkout is correct; the running app stack may still build from the shared clone) until env-start.sh is updated to consume it"
 fi
 ```
 
@@ -405,29 +403,28 @@ _served_rc=0
 # shellcheck disable=SC2086
 _served_msg=$(verify_served_check_ports "{TICKET-ID}" $_ports) || _served_rc=$?
 _served_msg=$(printf '%s' "$_served_msg" | tr '\n|' ' /')
-_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 _served_stop() {
-  echo "${_ts}|META|gate-stop|fail|${1} — ${_served_msg}" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "${1} — ${_served_msg}"
   echo "ticket-verify: ${2} — ${_served_msg}" >&2
   verify_lock_release
   exit 1
 }
 case "$_served_rc" in
-0) echo "${_ts}|VERIFY|served-worktree|done|${_served_msg}" >> "$LOG_FILE" ;;
+0) bash ~/.claude/skills/lib/plog.sh VERIFY served-worktree done "${_served_msg}" ;;
 1)
   [ "${VERIFY_SERVED_WORKTREE_ENFORCE:-true}" = "true" ] &&
     _served_stop VERIFY_SERVED_WRONG_WORKTREE "the dev server is not serving this ticket's code. Stop the stale server on that port, or re-run env-start.sh with --restart for that service, so it starts from VERIFY_REPO_PATH_<REPO> (see the contract above)"
-  echo "${_ts}|META|gate-warn|warn|VERIFY_SERVED_WRONG_WORKTREE — ${_served_msg} (VERIFY_SERVED_WORKTREE_ENFORCE=false)" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_SERVED_WRONG_WORKTREE — ${_served_msg} (VERIFY_SERVED_WORKTREE_ENFORCE=false)"
   ;;
 4)
   [ "${VERIFY_SERVED_WORKTREE_STRICT:-false}" = "true" ] &&
     _served_stop VERIFY_SERVED_UNVERIFIED "no verify worktree to compare the served checkout with"
-  echo "${_ts}|META|gate-warn|warn|VERIFY_SERVED_UNVERIFIED — ${_served_msg}" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_SERVED_UNVERIFIED — ${_served_msg}"
   ;;
 *)
   [ "${VERIFY_SERVED_WORKTREE_STRICT:-false}" = "true" ] &&
     _served_stop VERIFY_SERVED_UNVERIFIED "could not tell which checkout the dev server serves (VERIFY_SERVED_WORKTREE_STRICT=true)"
-  echo "${_ts}|META|gate-warn|warn|VERIFY_SERVED_UNVERIFIED — could not tell which checkout LOCAL_URL's port serves: ${_served_msg}" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_SERVED_UNVERIFIED — could not tell which checkout LOCAL_URL's port serves: ${_served_msg}"
   ;;
 esac
 ```
@@ -451,7 +448,7 @@ _seed_wt=$(ls -d "${REPOS_ROOT}"/.verify-worktrees/*/"{TICKET-ID}" 2>/dev/null |
 _seed_rc=0
 seed_apply "{TICKET-ID}" "$_seed_wt" || _seed_rc=$?
 if [ "$_seed_rc" -ne 0 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_SEED_FAILED — ${SEED_APPLY_MSG}" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_SEED_FAILED — ${SEED_APPLY_MSG}"
   if declare -f emit_event >/dev/null 2>&1; then
     emit_event "{TICKET-ID}" gate-held "$(jq -nc --arg r "VERIFY_SEED_FAILED — ${SEED_APPLY_MSG}" '{reason: $r}')" 2>/dev/null || true
   fi
@@ -469,7 +466,7 @@ On a non-zero exit (`1` a seed or verify command failed or was rejected, `2` the
 
 Before building the verification plan, resolve the test user, navigation target, and expected behavior. This ensures the verify agent has everything needed before launching the browser.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|pre-flight|start|Resolving verification prerequisites" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY pre-flight start "Resolving verification prerequisites"
 
 **If `VERIFY_MODE=build-only` or `VERIFY_MODE=live-backend`**: skip 1.7a (test user) and 1.7b (navigation target) entirely — there is no login and no page to reach. Go directly to 1.7c.
 
@@ -491,7 +488,7 @@ Use this priority chain (stop at first match):
   ```
   Write to log:
   ```bash
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|pre-flight|fail|No test user found" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh VERIFY pre-flight fail "No test user found"
   ```
   This is a SKIP exit that does not route through Step 5/6/7 — if Step 1.6a3 acquired the verify lock (browser/live-backend modes), release it explicitly before exiting:
   ```bash
@@ -517,7 +514,7 @@ Use this priority chain (stop at first match):
 
 - **If `--from-auto`**: log a warning but continue. The verifier has a 3-attempt nav budget and can often discover the page from context.
   ```bash
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|pre-flight|warning|No navigation target found, will use 3-attempt nav budget" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh VERIFY pre-flight warning "No navigation target found, will use 3-attempt nav budget"
   ```
 - **If interactive**: note the gap in the verification plan but continue (the user can guide navigation in Step 4).
 
@@ -530,7 +527,7 @@ Check if the plan artifact already has expected behavior (from the `## Verificat
 
 If found in notes.md, use it as the basis for verification criteria in Step 2. If not, extract from the Linear ticket description as normal.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|pre-flight|done|User:{test_user} Nav:{nav_target}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY pre-flight done "User:{test_user} Nav:{nav_target}"
 
 ---
 
@@ -580,7 +577,7 @@ Construct and print the **Verification Plan**:
 
 If `--from-auto` is NOT set: pause and ask "Does this plan look right? (yes / adjust: ...)". If `--from-auto` IS set: print the plan and proceed directly to Step 4c (skip Steps 3, 4, 4b entirely — there is no browser session to establish).
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|build-plan|done|{N} criteria (build-only)" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY build-plan done "{N} criteria (build-only)"
 
 Proceed to **Step 4c** below, skipping Steps 3, 4, and 4b.
 
@@ -625,7 +622,7 @@ Construct and print the **Verification Plan**:
 
 If `--from-auto` is NOT set: pause and ask "Does this plan look right? (yes / adjust: ...)". If `--from-auto` IS set: print the plan and proceed directly to Step 4c-live (skip Steps 3, 4, 4b entirely — there is no browser session to establish).
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|build-plan|done|{N} criteria (live-backend)" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY build-plan done "{N} criteria (live-backend)"
 
 Proceed to **Step 4c-live** below, skipping Steps 3, 4, and 4b.
 
@@ -719,7 +716,7 @@ If `--from-auto` is NOT set:
 If `--from-auto` IS set:
   Print the plan and proceed directly to Step 3 (no user prompt).
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|build-plan|done|{N} criteria" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY build-plan done "{N} criteria"
 
 ---
 
@@ -757,7 +754,7 @@ If login fails:
   Then abort with a FAIL verdict (skip to Step 7 with WHAT_FAILED = "Login failed for {derived_user}").
 - **On local**: report and stop as above (local env may have different requirements).
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|browser-session|done|Logged in as {--user}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY browser-session done "Logged in as {--user}"
 
 ---
 
@@ -823,7 +820,7 @@ Append to `{TICKETS_ROOT}/nav-hints.md` (create the file if it doesn't exist):
 
 Tell the user: `"Saved navigation hint for '{feature area}' to nav-hints.md for future tickets."`
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|navigate|done|Reached {feature area}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY navigate done "Reached {feature area}"
 
 ---
 
@@ -854,7 +851,7 @@ Record each file under `### Evidence` in the report (Steps 6/7) and in the REMED
 
 ```bash
 # After criterion N passes, write checkpoint:
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|checkpoint|done|criterion-{N}-pass" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY checkpoint done "criterion-{N}-pass"
 ```
 
 **Checkpoint resume** — see [Step dispatch](#step-dispatch). In browser mode (this step)
@@ -869,7 +866,7 @@ At any point, if the observed result contradicts a pass criterion, mark that cri
 
 Continue executing remaining steps unless the page is in a broken state (crash, blank page, unexpected auth redirect).
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|execute-steps|done|{N} steps executed" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY execute-steps done "{N} steps executed"
 
 ---
 
@@ -890,7 +887,7 @@ Run each build command from the Step 2 (build-only variant) plan sequentially, i
 **Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry exactly as in Step 4b, so a crash resumes from the next criterion:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|checkpoint|done|criterion-{N}-pass" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY checkpoint done "criterion-{N}-pass"
 ```
 
 At any point, if a command exits non-zero or the expected output/state is absent, mark that criterion **FAIL** and record:
@@ -900,7 +897,7 @@ At any point, if a command exits non-zero or the expected output/state is absent
 
 Continue executing remaining commands unless the failure makes downstream commands meaningless (e.g. `mvn -N install` failing means every dependent module's `mvn clean compile` will fail for the same reason — note this and skip re-running them individually rather than spamming identical failures).
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|execute-steps|done|{N} build commands executed" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY execute-steps done "{N} build commands executed"
 
 Proceed to Step 5.
 
@@ -924,7 +921,7 @@ The environment is already up (Step 1.6b ran `env-start.sh` for `live-backend` m
 **Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry exactly as in Step 4b, so a crash resumes from the next criterion:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|checkpoint|done|criterion-{N}-pass" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY checkpoint done "criterion-{N}-pass"
 ```
 
 At any point, if a check's exit code/HTTP status is unexpected or the expected state is absent, mark that criterion **FAIL** and record:
@@ -936,7 +933,7 @@ Continue executing remaining checks unless the failure makes downstream checks m
 
 **Leave the environment as found:** if a fault-injection step stopped a dependency, restore it (`env-start.sh`) before finishing this step, even on FAIL — a left-down dependency would cause spurious failures in the next verification run.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|execute-steps|done|{N} live checks executed" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh VERIFY execute-steps done "{N} live checks executed"
 
 Proceed to Step 5.
 
@@ -1415,7 +1412,7 @@ SECTION
 
 # Atomic rename — partial writes never visible at the destination
 mv "$PLAN_TMP" "$PLAN" || {
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|REMEDIATION_BRIEF_TRUNCATED — rename failed: $PLAN" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "REMEDIATION_BRIEF_TRUNCATED — rename failed: $PLAN"
   cl_write RETRO hint info "REMEDIATION_BRIEF atomic rename failed — plan path: $PLAN, TMP: $PLAN_TMP. Check filesystem permissions and cross-device rename restrictions"
   rm -f "$PLAN_TMP"
   exit 1

@@ -4459,7 +4459,7 @@ class Supervisor:
         (task 10.1.8, design.md D22).
 
         Establishes the ticket's operating environment (`preamble.run_preamble`
-        — the phase-dispatch equivalent of SKILL.md's Steps 0.1-0.6), resolves
+        — the phase-dispatch equivalent of SKILL.md's Step 0.1), resolves
         where it should dispatch (`resolve_dispatch_position`), derives the
         loop-cap counters `evaluate_loop` will read (`resolve_loop_counters`)
         and spawns the first phase. Deliberately narrow: every later step

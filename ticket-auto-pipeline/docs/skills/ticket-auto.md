@@ -4,11 +4,11 @@
 
 ## What it does
 
-The orchestrator that drives the entire ticket lifecycle from Backlog to Done. It is a thin stateless router: reads pipeline log state via detect-resume.sh (direct bash invocation, not a Claude agent), dispatches named agent types for each phase, runs deterministic bash gates for approval and coherence checks, and manages retry loops for verification (up to 3 attempts) and PR iteration (up to 3 cycles). Every conditional between dispatches is a deterministic bash comparison -- zero inline LLM reasoning. All state lives in the pipeline log; the router re-reads it before every dispatch decision.
+The orchestrator that drives the entire ticket lifecycle from Backlog to Done. It is a thin stateless router: opens the run with one call to `lib/ticket-preamble.sh` (argument parsing, Linear preflight, pipeline log and run identity, branch resolution, autonomy, env file), reads pipeline log state via detect-resume.sh (direct bash invocation, not a Claude agent), dispatches named agent types for each phase, runs deterministic bash gates for approval and coherence checks, and manages retry loops for verification (up to 3 attempts) and PR iteration (up to 3 cycles). Every conditional between dispatches is a deterministic bash comparison -- zero inline LLM reasoning. All state lives in the pipeline log; the router re-reads it before every dispatch decision.
 
 ## Trigger
 
-**Slash command:** `/ticket-auto <ID> [--auto|--semi-auto|--manual]`
+**Slash command:** `/ticket-auto <ID> [--auto|--semi-auto|--manual] [--from-planned] [--branch <name>]`
 
 **Natural language:** auto <ID>, process ticket <ID>, run ticket <ID> end to end
 
@@ -37,8 +37,9 @@ The orchestrator that drives the entire ticket lifecycle from Backlog to Done. I
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Preflight
-    Preflight --> StateDetection
+    [*] --> Preamble : ticket-preamble.sh
+    Preamble --> [*] : preflight fail / gate-stop
+    Preamble --> StateDetection
     StateDetection --> STEP_1_Appraise
     STEP_1_Appraise --> STEP_2_Exec
     STEP_2_Exec --> STEP_2_5_GateCheck

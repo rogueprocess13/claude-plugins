@@ -208,17 +208,14 @@ to the trigger it documents.
 ~/.claude/state/ticket-flow/validated-{TEAM_ID}
 ```
 
-The sentinel contains `schema_version`, `sm_hash` (SHA256 of `workflow.json`), and `validated_at`. `ticket-auto` Step 0.4 reads this file — if it exists and the hash matches the current `workflow.json`, validation is skipped (warm hit). Any edit to `workflow.json` automatically invalidates the sentinel.
+The sentinel contains `schema_version`, `sm_hash` (SHA256 of `workflow.json`), and `validated_at`. `ticket-preamble.sh` reads this file — if it exists and the hash matches the current `workflow.json`, validation is skipped (warm hit). Any edit to `workflow.json` automatically invalidates the sentinel.
 
 To force re-validation:
 ```bash
+source ~/.claude/skills/lib/plugin-cache.sh
 _validate_sh="${HOME}/.claude/skills/ticket-flow/validate-linear-config.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$_validate_sh" ] || _validate_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/validate-linear-config.sh"
-[ -f "$_validate_sh" ] || _validate_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/validate-linear-config.sh" 2>/dev/null | sort -V | tail -1)
+# Not synced: the installed (else newest cached) version, by version order (#468).
+[ -f "$_validate_sh" ] || _validate_sh=$(tap_cache_find ticket-auto-pipeline skills/ticket-flow/validate-linear-config.sh)
 bash "$_validate_sh" --force
 ```
 

@@ -20,78 +20,7 @@ for the Function mapping table, the standard operation rows, and the
 comment-formatting rule. Single source (tracker-client-consolidation design
 D5) — do not restate it here.
 
-The `get_issue` function returns the issue object already unwrapped from `.data.issue` — use `jq` to extract fields directly (e.g., `.id`, `.title`, `.labels`). The `get_comments` function returns a JSON array of comment nodes.
-
-### API error capture convention
-
-After every Linear API call (`get_issue`, `get_comments`, `save_comment`, `get_me`), capture failures in the heartbeat log using `hb_retry`. This is mandatory — never silently discard API errors.
-
-**get_issue failure pattern:** `get_issue` returns the issue object already unwrapped from `.data.issue` — never re-check `.data.issue` on its output, only its own fields. A failed or malformed fetch must be a hard stop for the step, never substituted with a placeholder and evaluated further — an unreadable issue is not the same thing as "an issue with zero labels" (issue #362). Validate with the shared `require_issue_payload` helper (sourced alongside `get_issue` from `linear-api.sh`) rather than a one-off `jq -e '.id'` check, and do both the fetch and the validation inside the same `source`d shell:
-```bash
-_rc=0
-_raw=$(bash -c "
-  source ~/.claude/skills/lib/linear-api.sh
-  json=\$(get_issue '{TICKET-ID}') || exit 1
-  require_issue_payload \"\$json\" || exit 1
-  echo \"\$json\"
-" 2>&1) || _rc=$?
-if [ "$_rc" -ne 0 ]; then
-  hb-wrap.sh retry "get-issue" "fail" "get_issue failed or returned an unreadable payload (exit ${_rc})" \
-    "{\"command\":\"get_issue\",\"ticket\":\"{TICKET-ID}\",\"exit_code\":\"${_rc}\"}"
-  # Hard stop this step — never proceed with gate/label/state logic against
-  # unvalidated data. Report the failure and end the turn; do not guess.
-fi
-```
-
-**get_comments failure pattern:**
-```bash
-_raw=$(bash -c "source ~/.claude/skills/lib/linear-api.sh; get_comments '{TICKET-ID}'" 2>&1)
-_rc=$?
-if [ $_rc -ne 0 ]; then
-  hb-wrap.sh retry "get-comments" "fail" "get_comments failed (exit ${_rc})" \
-    "{\"command\":\"get_comments\",\"ticket\":\"{TICKET-ID}\",\"exit_code\":\"${_rc}\"}"
-fi
-```
-
-**jq extraction failure pattern:** When `jq` fails to extract a field from a Linear API response, capture it before stopping. Only check jq's own exit status here — the payload itself was already validated by `require_issue_payload` above, so a `null` *field value* at this point is a legitimate Linear value (e.g. an unset `dueDate` or `assignee`), not a failure sentinel:
-```bash
-_field=$(echo "$_raw" | jq -r '.fieldName' 2>&1)
-if [ $? -ne 0 ]; then
-  hb-wrap.sh retry "jq-parse" "fail" "jq extraction failed for fieldName" \
-    "{\"error_type\":\"jq_parse\",\"command\":\"get_issue\",\"field\":\"fieldName\"}"
-fi
-```
-
-**flow.sh failure pattern:** After every `flow.sh` invocation, capture non-zero exits:
-```bash
-_flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$_flow_sh" ] || _flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
-[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
-bash "$_flow_sh" "{TICKET-ID}" "{trigger}" 2>&1
-_rc=$?
-if [ $_rc -ne 0 ]; then
-  _error_type=$( [ $_rc -eq 7 ] && echo "state_assertion" || echo "flow_error" )
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh {trigger} failed (exit ${_rc})" \
-    "{\"trigger\":\"{trigger}\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\",\"error_type\":\"${_error_type}\"}"
-fi
-```
-
-**API telemetry pattern:** For read operations where elapsed time matters, wrap with `hb_api`:
-```bash
-_t0=$(date +%s)
-_raw=$(bash -c "source ~/.claude/skills/lib/linear-api.sh; get_issue '{TICKET-ID}'" 2>&1)
-_rc=$?
-_elapsed=$(( $(date +%s) - _t0 ))
-hb-wrap.sh api "get-issue" "$( [ $_rc -eq 0 ] && echo ok || echo fail )" \
-  "get_issue {TICKET-ID} (${_elapsed}s)" \
-  "{\"command\":\"get_issue\",\"ticket\":\"{TICKET-ID}\",\"elapsed_s\":\"${_elapsed}\",\"exit_code\":\"${_rc}\"}"
-```
-
-Apply the API telemetry pattern to `get_issue` and `get_comments` calls at each step.
+The `get_issue` function returns the issue object already unwrapped from `.data.issue` — use `jq` to extract fields directly (e.g., `.id`, `.title`, `.labels`). The `get_comments` function returns a JSON array of comment nodes. API error capture (incl. the #362 `require_issue_payload` hard stop) is [skill-preamble.md § 9](../../lib/skill-preamble.md#9-api-error-capture).
 
 ---
 
@@ -99,268 +28,78 @@ Apply the API telemetry pattern to `get_issue` and `get_comments` calls at each 
 
 ---
 
-## Step 0.1 — Resolve autonomy flag
+## Step 0.1 — Ticket preamble (autonomy, preflight, branch context, env file, pipeline log, run identity)
 
-Resolve `{AUTONOMY}` from the argument string using three-tier precedence: CLI arg → `$TICKET_AUTONOMY` env var → `manual` default.
-
-```bash
-if echo "{TICKET_ARG}" | grep -qw '\-\-semi-auto'; then
-  AUTONOMY="semi-auto"
-elif echo "{TICKET_ARG}" | grep -qw '\-\-auto'; then
-  AUTONOMY="auto"
-elif echo "{TICKET_ARG}" | grep -qw '\-\-manual'; then
-  AUTONOMY="manual"
-elif [ -n "$TICKET_AUTONOMY" ]; then
-  case "$TICKET_AUTONOMY" in
-    manual|auto|semi-auto) AUTONOMY="$TICKET_AUTONOMY" ;;
-    *) echo "WARN: unrecognised TICKET_AUTONOMY value '$TICKET_AUTONOMY', defaulting to manual"
-       AUTONOMY="manual" ;;
-  esac
-else
-  AUTONOMY="manual"
-fi
-
-# Resolve --from-planned flag: set when fleetd/fleet-controller dispatches
-# a planner-generated ticket. Used by the feedback writer to emit
-# META|planner-feedback entries to the pipeline log.
-if echo "{TICKET_ARG}" | grep -qw '\-\-from-planned'; then
-  FROM_PLANNED="true"
-else
-  FROM_PLANNED="false"
-fi
-
-# Resolve --branch <name> for explicit branch targeting.
-# Precedence: --branch flag → parent epic directive → config default.
-# Validated by branch-resolve.sh's _validate_branch_name (same charset as directive).
-BRANCH_FLAG=""
-if echo "{TICKET_ARG}" | grep -q '\-\-branch'; then
-  BRANCH_FLAG=$(echo "{TICKET_ARG}" | sed -n 's/.*--branch \([^ ]*\).*/\1/p')
-fi
-
-# Strip flags from arg to get the bare ticket ID
-TICKET_ID=$(echo "{TICKET_ARG}" | sed 's/--semi-auto//;s/--auto//;s/--manual//;s/--from-planned//;s/--branch [^ ]*//' | tr -s ' ' | xargs)
-```
-
-Set `{AUTONOMY}` and `{TICKET_ID}` — used throughout the pipeline.
-
-### Initialize heartbeat log early
-
-The heartbeat log must exist before preflight (Step 0.4) so failures leave a trace. The pipeline log stays at Step 0.6 (dashboard needs it).
+One call to `lib/ticket-preamble.sh` does everything the router needs before the first
+dispatch, in this order: heartbeat log, Linear preflight (sentinel-cached team-config check,
+then `get_me`), pipeline log with its `META|schema` line, run identity (`NEW_RUN=true` opens
+a new run, since one router process is one run), branch context (`--branch` flag → parent
+epic directive → config default; a decision already in the log as `META|branch-context` is
+rehydrated, never re-resolved), project context from `CLAUDE.md` plus the env file
+`/tmp/ticket-auto-{TICKET_ID}-env.sh` that every sub-agent sources, then the `META|autonomy` /
+`META|mode-change` and `META|from-planned` markers. fleetd's phase dispatch calls the same
+script, so the two paths cannot drift. `TICKET_ARG` is the raw argument string:
+`--semi-auto` > `--auto` > `--manual`, else `$TICKET_AUTONOMY`, else `manual`;
+`--from-planned`; `--branch <name>`; the one remaining token is the ticket id.
 
 ```bash
-mkdir -p ./logs
-HB_LOG_FILE="$PWD/logs/{TICKET-ID}-heartbeat.log"
 export PATH="$HOME/.claude/skills/lib:$PATH"  # makes bare hb-wrap.sh calls resolve (script is executable)
 source ~/.claude/skills/lib/capture-transcript.sh
-export HB_LOG_FILE="$HB_LOG_FILE"
-hb_init
-# Idempotency guards: skip if already written (prevents duplication on resume)
-if ! grep -q '|heartbeat|pipeline-start|' "$HB_LOG_FILE" 2>/dev/null; then
-  hb-wrap.sh heartbeat "pipeline-start" "ok" "pipeline starting — autonomy={AUTONOMY}, from-planned={FROM_PLANNED}, ticket={TICKET-ID}"
-fi
-if ! grep -q '|decision|autonomy-resolution|' "$HB_LOG_FILE" 2>/dev/null; then
-  hb-wrap.sh decision "autonomy-resolution" "fired" "autonomy set to {AUTONOMY}" '{"mode":"{AUTONOMY}"}'
-fi
-```
-
----
-
-## Step 0.4 — Preflight: Linear config + API key check
-
-Before creating any log file, validate that the Linear team is correctly configured.
-
-```bash
-SENTINEL_DIR="$HOME/.claude/state/ticket-flow"
-SM="$HOME/.claude/skills/ticket-flow/workflow.json"
-SM_HASH=$(sha256sum "$SM" | cut -d' ' -f1)
-
-# Resolve team ID from env or first available team
-TEAM_ID="${LINEAR_TEAM_ID:-}"
-if [ -z "$TEAM_ID" ]; then
-  teams=$(LINEAR_API_KEY="$LINEAR_API_KEY" bash -c \
-    "source ~/.claude/skills/lib/linear-api.sh; linear_graphql '{\"query\":\"query{teams{nodes{id name}}}\"}'" 2>/dev/null || true)
-  team_count=$(echo "$teams" | jq '.data.teams.nodes | length' 2>/dev/null || true)
-  if [ -z "$team_count" ] || ! [[ "$team_count" =~ ^[0-9]+$ ]]; then
-    echo "Preflight failed: Linear teams query failed — check LINEAR_API_KEY and network connectivity"; exit 1
-  fi
-  [ "$team_count" -eq 1 ] || { echo "Multiple Linear teams — set LINEAR_TEAM_ID"; exit 1; }
-  TEAM_ID=$(echo "$teams" | jq -r '.data.teams.nodes[0].id')
-fi
-
-SENTINEL="$SENTINEL_DIR/validated-${TEAM_ID}"
-```
-
-**Warm hit** — sentinel exists and hash matches: skip validation.
-```bash
-if [ -f "$SENTINEL" ] && grep -q "^sm_hash=${SM_HASH}$" "$SENTINEL" 2>/dev/null; then
-  echo "Preflight: sentinel valid — skipping Linear config check"
-  hb-wrap.sh gate "preflight" "ok" "sentinel valid, skipping config check"
-else
-  # Cold run — run full validation
-  _validate_sh="${HOME}/.claude/skills/ticket-flow/validate-linear-config.sh"
-  # Not synced: the installed version recorded in installed_plugins.json, then the
-  # newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-  [ -f "$_validate_sh" ] || _validate_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-    "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/validate-linear-config.sh"
-  [ -f "$_validate_sh" ] || _validate_sh=$(find "${HOME}/.claude/plugins/cache" \
-    -path "*/ticket-auto-pipeline/*/skills/ticket-flow/validate-linear-config.sh" 2>/dev/null | sort -V | tail -1)
-  bash "$_validate_sh" "$TEAM_ID" || {
-    echo "Preflight failed: Linear config validation error. Fix the team config and retry." >&2
-    hb-wrap.sh gate "preflight" "fail" "Linear config validation failed" "{\"team_id\":\"$TEAM_ID\"}"
-    exit 1
-  }
-  hb-wrap.sh gate "preflight" "ok" "Linear config validated" "{\"team_id\":\"$TEAM_ID\"}"
-fi
-```
-
-**API key check** — always verify connectivity:
-```bash
-me=$(bash -c "source ~/.claude/skills/lib/linear-api.sh; get_me" 2>&1) || {
-  echo "Preflight failed: Linear API key unset or rejected (exit 4). Set LINEAR_API_KEY." >&2
-  hb-wrap.sh gate "preflight" "fail" "Linear API key rejected" "{\"exit_code\":\"4\"}"
-  exit 4
-}
-echo "Linear: API key (direct GraphQL) — authenticated as $(echo "$me" | jq -r '.name // "unknown"')"
-hb-wrap.sh source "linear-auth" "ok" "authenticated as $(echo "$me" | jq -r '.name // "unknown"')"
-```
-
----
-
-## Step 0.5 — Branch resolution + project context
-
-### 0.5a — Resolve branch context
-
-Resolve branch decisions deterministically via `branch-resolve.sh`. This MUST run before
-Step 0.6 (pipeline log init) so the `META|branch-context` entry lands before the first
-agent spawn — crash at any later point recovers the decision.
-
-The precedence chain is: `--branch` CLI flag → parent epic directive → config default.
-
-```bash
-source ~/.claude/skills/lib/branch-resolve.sh
-
-# Build resolve command — include --branch only if set in Step 0.1
-BRANCH_ARGS="{TICKET_ID}"
-[ -n "{BRANCH_FLAG}" ] && BRANCH_ARGS="$BRANCH_ARGS --branch {BRANCH_FLAG}"
-
-BRANCH_OUTPUT=$(resolve_branch_context $BRANCH_ARGS 2>&1) || {
-  _rc=$?
-  if echo "$BRANCH_OUTPUT" | grep -q "BRANCH_DIRECTIVE_INVALID"; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|BRANCH_DIRECTIVE_INVALID" >> {LOG_FILE}
-    hb_gate "branch-context" "fail" "BRANCH_DIRECTIVE_INVALID" "{\"ticket\":\"{TICKET_ID}\"}"
-    exit 1
-  fi
-  # Non-zero for other reasons (API error, etc.) — also stop
-  echo "$BRANCH_OUTPUT" >&2
-  exit 2
-}
-
-# Parse BRANCH_CONTEXT_RESULT block
-TICKET_BRANCH=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*TICKET_BRANCH:[[:space:]]*//p')
-BASE_BRANCH=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*BASE_BRANCH:[[:space:]]*//p')
-INTEGRATION_BRANCH=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*INTEGRATION_BRANCH:[[:space:]]*//p')
-BRANCH_SOURCE=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*BRANCH_SOURCE:[[:space:]]*//p')
-UAT_POLICY=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*UAT_POLICY:[[:space:]]*//p')
-MERGE_POLICY=$(echo "$BRANCH_OUTPUT" | sed -n 's/^[[:space:]]*MERGE_POLICY:[[:space:]]*//p')
-```
-
-### 0.5b — Write branch-context to pipeline log
-
-Write immediately after resolution, before any agent spawn. The semicolon grammar
-(`base=<>;integration=<>;source=<>;ticket=<>;uat-policy=<>;merge-policy=<>`) is parsed by
-`detect-resume.sh` on crash-resume. Each field is appended in the order it was added so logs
-written before that field existed still parse — every older prefix form remains valid.
-
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|branch-context|info|base=${BASE_BRANCH};integration=${INTEGRATION_BRANCH};source=${BRANCH_SOURCE};ticket=${TICKET_BRANCH};uat-policy=${UAT_POLICY};merge-policy=${MERGE_POLICY}" >> {LOG_FILE}
-hb_gate "branch-context" "ok" "branch decision recorded" \
-  "{\"base\":\"${BASE_BRANCH}\",\"integration\":\"${INTEGRATION_BRANCH}\",\"source\":\"${BRANCH_SOURCE}\",\"ticket\":\"${TICKET_BRANCH}\",\"uat_policy\":\"${UAT_POLICY}\",\"merge_policy\":\"${MERGE_POLICY}\"}"
-```
-
-### 0.5c — Detect project context
-
-Read `CLAUDE.md` and extract ALL available project-context fields: `{REPOS_ROOT}`, `{ISSUE_PREFIX}`, `{BE_SERVICES}`, `{WIKI_ROOT}`, `{BE_TEST_CMD}`, `{BE_TEST_RUNNER}`, `{FE_TEST_CMD}`, `{LOCAL_URL}`, `{UAT_URL}`, `{SLACK_CHANNEL}`.
-
-After extraction, write the env file that sub-agents source for project context:
-
-```bash
-source ~/.claude/skills/lib/spawn-helper.sh
 source ~/.claude/skills/lib/phase-inspector.sh
-spawn_write_env \
-  TICKET_ID="{TICKET_ID}" \
-  REPOS_ROOT="{REPOS_ROOT}" \
-  ISSUE_PREFIX="{ISSUE_PREFIX}" \
-  BE_SERVICES="{BE_SERVICES}" \
-  WIKI_ROOT="{WIKI_ROOT}" \
-  BE_TEST_CMD="{BE_TEST_CMD}" \
-  BE_TEST_RUNNER="{BE_TEST_RUNNER}" \
-  FE_TEST_CMD="{FE_TEST_CMD}" \
-  LOCAL_URL="{LOCAL_URL}" \
-  UAT_URL="{UAT_URL}" \
-  SLACK_CHANNEL="{SLACK_CHANNEL}" \
-  FROM_PLANNED="{FROM_PLANNED}" \
-  BASE_BRANCH="${BASE_BRANCH}" \
-  INTEGRATION_BRANCH="${INTEGRATION_BRANCH}" \
-  TICKET_BRANCH="${TICKET_BRANCH}" \
-  UAT_POLICY="${UAT_POLICY}" \
-  AUTONOMY="{AUTONOMY}" \
-  MERGE_POLICY="${MERGE_POLICY}"
-```
-
-This MUST run before Step 0.6 (pipeline log init) and before Step 1 (first agent spawn). The env file is needed by every `spawn_agent_pre` call — sub-agents source it via `source /tmp/ticket-auto-{TICKET_ID}-env.sh`. `AUTONOMY` and `MERGE_POLICY` are what `ticket-pr-review` Step 6b reads to decide whether it may merge a passing PR directly or must leave it for a human — see [Auto-merge logic](#auto-merge-logic) below, which applies the same `AUTONOMY` rule at the router level.
-
----
-
-## Step 0.6 — Initialize pipeline log
-
-Initialize the pipeline log (heartbeat log already initialized after Step 0.1):
-
-```bash
-mkdir -p ./logs
-LOG_FILE="$PWD/logs/{TICKET-ID}-pipeline.log"
-CLAUDE_LOG_FILE="$PWD/logs/{TICKET-ID}-claude.log"
-touch "$LOG_FILE"
-cl_init
-YELLOW=$(tput setaf 3); BOLD=$(tput bold); RESET=$(tput sgr0)
-echo "${BOLD}${YELLOW}Dashboard ready. In a second terminal run either:${RESET}"
-echo "${BOLD}${YELLOW}  python3 ~/.claude/skills/ticket-auto/dashboard.py $LOG_FILE${RESET}"
-echo "${BOLD}${YELLOW}  python3 ~/.claude/skills/ticket-auto/dashboard.py --fleet $PWD/logs${RESET}"
-```
-
-**The router no longer spawns a tmux dashboard pane.** It used to split a new pane
-on every run when `$TMUX` was set. With fleetd running many pipelines concurrently that
-produced a pane per ticket, each showing one ticket, and the resume path needed a
-`pgrep` guard to stop panes stacking on every resume. The dashboard is now something the
-operator opens once — `--fleet` covers the whole workspace in one pane and picks up new
-pipelines on its next refresh, so nothing needs to be spawned per run. Printing the two
-commands costs nothing and works identically inside and outside tmux.
-
-Stamp run identity with `--new`: unlike fleetd's phase-level preamble, which re-enters
-`run_identity_stamp` once per phase and must rehydrate the same open run, a `/ticket-auto`
-invocation is one long-lived process spanning every phase, so each router process really is
-a new run.
-```bash
-bash ~/.claude/skills/lib/run-identity.sh stamp "{TICKET-ID}" "$LOG_FILE" --new
-```
-
-Log the resolved autonomy mode immediately after log init. Guard the write so a
-resume doesn't silently re-append (or silently switch modes mid-pipeline after gate
-decisions were already made under the old mode) — an explicit `mode-change` event is
-logged instead when the flag differs from what's recorded (R12):
-```bash
-_recorded_autonomy=$(grep '^[^|]*|META|autonomy|info|' {LOG_FILE} 2>/dev/null | tail -1 | cut -d'|' -f5-)
-if [ -z "$_recorded_autonomy" ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|autonomy|info|{AUTONOMY}" >> {LOG_FILE}
-elif [ "$_recorded_autonomy" != "{AUTONOMY}" ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|mode-change|warn|{AUTONOMY} (was $_recorded_autonomy)" >> {LOG_FILE}
+_pre_rc=0
+_pre_out=$(bash ~/.claude/skills/lib/ticket-preamble.sh TICKET_ARG="{TICKET_ARG}" NEW_RUN=true ANNOUNCE_START=true) || _pre_rc=$?
+echo "$_pre_out"
+_pre() { echo "$_pre_out" | sed -n "s/^  ${1}: //p"; }
+if [ "$_pre_rc" -eq 0 ]; then
+  HB_LOG_FILE="$(_pre HB_LOG_FILE)"; export HB_LOG_FILE
+  # capture-transcript.sh turns on `set -eo pipefail`: every line here must survive it.
+  _who=$(grep '|source|linear-auth|ok|' "$HB_LOG_FILE" 2>/dev/null | tail -1 | cut -d'|' -f5) || true
+  [ -z "$_who" ] || echo "Linear: API key (direct GraphQL) — $_who"
+  YELLOW=$(tput setaf 3 2>/dev/null) || true; BOLD=$(tput bold 2>/dev/null) || true; RESET=$(tput sgr0 2>/dev/null) || true
+  echo "${BOLD}${YELLOW}Dashboard ready. In a second terminal run either:${RESET}"
+  echo "${BOLD}${YELLOW}  $(_pre DASHBOARD_CMD_LOG)${RESET}"
+  echo "${BOLD}${YELLOW}  $(_pre DASHBOARD_CMD_FLEET)${RESET}"
 fi
-# Log from-planned provenance — idempotent (written once, never changed).
-# fleet-feedback.sh reads this to determine whether to expect META|planner-feedback entries.
-if ! grep -q '^[^|]*|META|from-planned|' {LOG_FILE} 2>/dev/null; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|from-planned|info|{FROM_PLANNED}" >> {LOG_FILE}
-fi
-hb-wrap.sh gate "phase-transition" "ok" "START → APPRAISE"
+# Exit codes: table below. Same Bash call: _pre_rc does not survive into another.
+case "$_pre_rc" in
+0) ;;
+2 | 3 | 6)
+  _tid=$(bash -c 'source ~/.claude/skills/lib/ticket-preamble.sh && ticket_preamble_parse_arg "${1}"' _ "{TICKET_ARG}" | sed -n 's/^TICKET_ID=//p')
+  bash ~/.claude/skills/lib/pipeline-finalize.sh "$_tid" "$_pre_rc" "$PWD/logs/${_tid}-pipeline.log" || true
+  exit "$_pre_rc"
+  ;;
+*) exit "$_pre_rc" ;;
+esac
 ```
+
+From the `TICKET_PREAMBLE_RESULT` block set `{TICKET_ID}` (`{TICKET-ID}` is the same value),
+`{ENV_FILE}`, `{LOG_FILE}`, `{HB_LOG_FILE}`, `{CLAUDE_LOG_FILE}`, `{AUTONOMY}`,
+`{FROM_PLANNED}`, `{BASE_BRANCH}`, `{INTEGRATION_BRANCH}`, `{TICKET_BRANCH}`,
+`{BRANCH_SOURCE}`, `{UAT_POLICY}`, `{MERGE_POLICY}` and `{REPOS_ROOT}` — used throughout the
+pipeline. Every other project-context field (`ISSUE_PREFIX`, `BE_SERVICES`, `WIKI_ROOT`,
+`BE_TEST_CMD`, `BE_TEST_RUNNER`, `FE_TEST_CMD`, `LOCAL_URL`, `UAT_URL`, `SLACK_CHANNEL`) is
+in `{ENV_FILE}`: a later bash block that needs one runs `source {ENV_FILE}` first. `AUTONOMY`
+and `MERGE_POLICY` in that file are what `ticket-pr-review` Step 6b reads to decide whether it
+may merge a passing PR directly — see [Auto-merge logic](#auto-merge-logic) below.
+
+**The router does not spawn a dashboard pane.** It prints the two `dashboard.py` commands
+(`DASHBOARD_CMD_LOG`, and `DASHBOARD_CMD_FLEET`, the `--fleet` view of the whole workspace)
+for the operator to open once; nothing is spawned per run.
+
+**Exit codes.** On any non-zero `_pre_rc`, report the preamble's stderr and stop — no fallback,
+no dispatch. 2, 3 and 6 happen after the pipeline log exists, so the block finalizes it first
+(Step 0.65); 1, 4 and 5 happen before it exists:
+
+| `_pre_rc` | Meaning | Router action |
+|---|---|---|
+| 0 | ok | continue to Step 0.65 / Step 0.7 |
+| 1 | usage — bad or unknown token in the argument string, `--branch` without a name, no ticket id; nothing written | report, stop |
+| 2 | `BRANCH_DIRECTIVE_INVALID` — the parent epic's Branch Directive is malformed; `META\|gate-stop\|fail\|BRANCH_DIRECTIVE_INVALID` is already in the log | finalize, stop |
+| 3 | branch resolution failed (API error, malformed result) — not a gate-stop | finalize, stop |
+| 4 | Linear config invalid (team states/labels do not match `workflow.json`, validator missing, or several teams visible without `LINEAR_TEAM_ID`) | report, stop |
+| 5 | Linear auth failed (teams query failed, or `LINEAR_API_KEY` unset/rejected by `get_me`) | report, stop |
+| 6 | env file write failed — never spawn without it | finalize, stop |
+
 
 ### Step 0.65 — Exit finalizer (RLVR Phase 3)
 
@@ -456,15 +195,11 @@ Before proceeding to the next dispatch, verify:
 Resolve the `detect-resume.sh` path dynamically and invoke directly as bash — no Claude agent spawn. This replaces the old pattern of calling the `ticket-detect-resume` skill:
 
 ```bash
-# Resolve detect-resume.sh path dynamically
+# Resolve detect-resume.sh: synced copy, else the installed (else newest cached) version (#468)
+source ~/.claude/skills/lib/plugin-cache.sh
 DETECT_SH="$HOME/.claude/skills/ticket-detect-resume/detect-resume.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$DETECT_SH" ] || DETECT_SH="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-detect-resume/detect-resume.sh"
-[ -f "$DETECT_SH" ] || DETECT_SH=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-detect-resume/detect-resume.sh" 2>/dev/null | sort -V | tail -1)
-[ -z "$DETECT_SH" ] && { echo "detect-resume.sh not found"; exit 1; }
+[ -f "$DETECT_SH" ] || DETECT_SH=$(tap_cache_find ticket-auto-pipeline skills/ticket-detect-resume/detect-resume.sh)
+if [ -z "$DETECT_SH" ]; then echo "detect-resume.sh not found"; exit 1; fi
 ```
 
 For every dispatch decision, re-run `detect-resume.sh` to get fresh state:
@@ -484,27 +219,28 @@ Report that the ticket is still held and requires `/ticket-approve {TICKET_ID}`.
 
 **If recovering (`RESUME_STEP ≠ STEP_1`):**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|recovery|info|Resuming from {RESUME_STEP}" >> {LOG_FILE}
+bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META recovery info "Resuming from {RESUME_STEP}"
 ```
 
-**Before the recovery log entry, rehydrate the branch env vars from `detect-resume.sh` output** — on a crash-recovery the router does not re-run `resolve_branch_context`. The branch decisions were written to `META|branch-context` at Step 0.5b and are now in the `DETECT_RESUME_RESULT` block as `BASE_BRANCH`, `INTEGRATION_BRANCH`, `BRANCH_SOURCE`,
+**Before the recovery log entry, rehydrate the branch env vars from `detect-resume.sh` output** — on a crash-recovery the router does not re-run `resolve_branch_context`. The branch decisions were written to `META|branch-context` by the Step 0.1 preamble and are now in the `DETECT_RESUME_RESULT` block as `BASE_BRANCH`, `INTEGRATION_BRANCH`, `BRANCH_SOURCE`,
 `UAT_POLICY`, `MERGE_POLICY`. Write them back to the env file so sub-agents see branch vars even on resume — `AUTONOMY` is rehydrated too, from the same `DETECT_RESUME_RESULT` block (it comes from `META|autonomy|info|`, not branch-context, but needs the same resume-time re-export or a resumed pipeline's `ticket-pr-review` spawn would merge unconditionally):
 
 ```bash
 if [ -n "{BASE_BRANCH}" ] || [ -n "{TICKET_BRANCH}" ]; then
+  source "{ENV_FILE}"  # project context the Step 0.1 preamble wrote
   source ~/.claude/skills/lib/spawn-helper.sh
   spawn_write_env \
     TICKET_ID="{TICKET_ID}" \
-    REPOS_ROOT="{REPOS_ROOT}" \
-    ISSUE_PREFIX="{ISSUE_PREFIX}" \
-    BE_SERVICES="{BE_SERVICES}" \
-    WIKI_ROOT="{WIKI_ROOT}" \
-    BE_TEST_CMD="{BE_TEST_CMD}" \
-    BE_TEST_RUNNER="{BE_TEST_RUNNER}" \
-    FE_TEST_CMD="{FE_TEST_CMD}" \
-    LOCAL_URL="{LOCAL_URL}" \
-    UAT_URL="{UAT_URL}" \
-    SLACK_CHANNEL="{SLACK_CHANNEL}" \
+    REPOS_ROOT="$REPOS_ROOT" \
+    ISSUE_PREFIX="$ISSUE_PREFIX" \
+    BE_SERVICES="$BE_SERVICES" \
+    WIKI_ROOT="$WIKI_ROOT" \
+    BE_TEST_CMD="$BE_TEST_CMD" \
+    BE_TEST_RUNNER="$BE_TEST_RUNNER" \
+    FE_TEST_CMD="$FE_TEST_CMD" \
+    LOCAL_URL="$LOCAL_URL" \
+    UAT_URL="$UAT_URL" \
+    SLACK_CHANNEL="$SLACK_CHANNEL" \
     FROM_PLANNED="{FROM_PLANNED}" \
     BASE_BRANCH="{BASE_BRANCH}" \
     INTEGRATION_BRANCH="{INTEGRATION_BRANCH}" \
@@ -534,7 +270,7 @@ per-repo freshness-check cost on every resume:
 ```bash
 case "{RESUME_STEP}" in
 STEP_4 | STEP_4_5 | STEP_4_6 | STEP_5 | STEP_5_5 | STEP_6 | done)
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|resuming at {RESUME_STEP} — prescan skipped" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "resuming at {RESUME_STEP} — prescan skipped"
   ;;
 *)
   # Not a late resume — run the freshness gate below.
@@ -566,14 +302,14 @@ done < <(find "$REPOS_ROOT" -maxdepth 3 -name ".git" -type d -printf '%h\0' 2>/d
 
 # If no repos found, skip prescan entirely (nothing to scan)
 if [ ${#REPOS[@]} -eq 0 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|no repos found under REPOS_ROOT" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "no repos found under REPOS_ROOT"
 fi
 ```
 
 ### Run freshness gate
 
-For each repo under `REPOS_ROOT`. Pass `--branch "${BASE_BRANCH}"` (resolved at Step 0.5a,
-well before this gate runs) so the freshness check diffs against the ticket's actual target
+For each repo under `REPOS_ROOT`. Pass `--branch "${BASE_BRANCH}"` (resolved by the Step 0.1
+preamble, well before this gate runs) so the freshness check diffs against the ticket's actual target
 branch instead of literal `HEAD` — repos in this project's local-dev convention run as one
 shared checkout, so `HEAD` is whichever branch happens to be checked out at the moment the
 MAINTENANCE step runs, not necessarily this ticket's target (e.g. a long-lived epic branch
@@ -606,11 +342,11 @@ stale)
   : # fall through to "Acquire lock and spawn" below
   ;;
 decayed | missing)
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|$slug ${PRESCAN_STATUS} — full fan-out needs an interactive /ticket-prescan $repo (headless prescan agent has no Agent tool)" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "$slug ${PRESCAN_STATUS} — full fan-out needs an interactive /ticket-prescan $repo (headless prescan agent has no Agent tool)"
   continue
   ;;
 *)
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|$slug unknown prescan status '${PRESCAN_STATUS}' — not spawning" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "$slug unknown prescan status '${PRESCAN_STATUS}' — not spawning"
   continue
   ;;
 esac
@@ -626,7 +362,7 @@ mkdir -p "$(dirname "$LOCK_FILE")"
 exec {lock_fd}>"$LOCK_FILE"
 if flock -n "$lock_fd"; then
   # Lock acquired — proceed with prescan spawn
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|waiting|$slug prescan triggered ($PRESCAN_STATUS)" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan waiting "$slug prescan triggered ($PRESCAN_STATUS)"
 
   # Spawn using standard bracketed pattern
   # spawn_agent_pre accepts only its documented params (PHASE, STEP, LOG_FILE,
@@ -658,17 +394,17 @@ AGENT_RETURN_EOF
   if grep -q "$slug: scanned" /tmp/ticket-auto-{TICKET-ID}-agent-return.txt; then
     spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done \
       MSG="$slug prescan complete: $PRESCAN_STATUS → fresh" NEXT_PHASE=APPRAISE
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|done|$slug prescan complete" >> {LOG_FILE}
+    bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan done "$slug prescan complete"
   else
     FAIL_ACTION=warn-continue spawn_agent_post TICKET_ID={TICKET-ID} RESULT=fail \
       MSG="$slug prescan failed (non-blocking)"
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|fail|$slug prescan failed" >> {LOG_FILE}
+    bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan fail "$slug prescan failed"
   fi
 
   flock -u "$lock_fd"
 else
   # Lock contended — skip, proceed to appraise
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|prescan|skip|$slug locked by another process" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "$slug locked by another process"
 fi
 ```
 
@@ -749,24 +485,14 @@ fi
 **Then, before the agent spawn, claim the ticket immediately** so Linear reflects that work has started. Complexity defaults to `simple` — the appraise agent corrects it in Step 4 when the real score is known. `flow.sh` is idempotent: re-calling with the same params is a no-op.
 
 ```bash
-_flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$_flow_sh" ] || _flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
-[ -f "$_flow_sh" ] || _flow_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
-
-bash "$_flow_sh" "{TICKET-ID}" "appraise-start" --data complexity=simple 2>&1
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" "{TICKET-ID}" appraise-start --data complexity=simple 2>&1
 _rc=$?
 if [ $_rc -ne 0 ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh appraise-start failed (exit ${_rc})" \
-    "{\"trigger\":\"appraise-start\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET-ID}\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: appraise-start" >> {LOG_FILE}
+  # flow-run.sh already wrote META|flow-error (or the exit-11 gate-stop) and the retry heartbeat.
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
   exit 1
 fi
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|ticket-claimed|info|{TICKET-ID} claimed → Todo" >> {LOG_FILE}
+bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META ticket-claimed info "{TICKET-ID} claimed → Todo"
 hb-wrap.sh gate "ticket-claimed" "ok" "ticket claimed — Todo + claimed label + assigned"
 ```
 
@@ -810,7 +536,7 @@ if [ $_gate_rc -eq 0 ]; then
 elif [ $_gate_rc -eq 1 ]; then
   # Held — fleet controller will detect, stop here
   echo "Gate held for {TICKET_ID}. Check the appraisal comment in Linear for any Open Questions and answer them in a comment first — then run /ticket-approve {TICKET_ID}. Approving before answering will just trigger another gate-reconcile hold on next resume."
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-held|info|held" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-held info "held"
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 0 "{LOG_FILE}" || true
   exit 0
 else
@@ -830,7 +556,7 @@ hold → re-approve → re-hold cycle could repeat without bound:
 
 ```bash
 if [ "{RECONCILE_CYCLE}" -ge 3 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|RECONCILE_EXHAUSTED" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-stop fail "RECONCILE_EXHAUSTED"
   echo "Gate reconciliation exhausted after 3 cycles for {TICKET_ID}. Needs human review."
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
   exit 1
@@ -909,7 +635,7 @@ eval "$_rcc_out" 2>/dev/null || true
 if [ "${RETURN_COMPLETENESS_STATUS:-complete}" != "complete" ]; then
   # Warn-only (Phase 1): log via gate-warn, never gate-stop. Does NOT
   # flip done->fail — the pipeline continues as if the phase were done.
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|info|RETURN_INCOMPLETE — ${REASON:-unknown} (unchecked=${UNCHECKED_COUNT:-?}/${TOTAL_COUNT:-?}, artifact=${ARTIFACT_TYPE:-?})" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-warn info "RETURN_INCOMPLETE — ${REASON:-unknown} (unchecked=${UNCHECKED_COUNT:-?}/${TOTAL_COUNT:-?}, artifact=${ARTIFACT_TYPE:-?})"
 fi
 
 # On success:
@@ -934,12 +660,10 @@ bash "$_outcome_sh" "{TICKET_ID}" "{LOG_FILE}"
 Then emit planner feedback for planned tickets (no-op for unplanned):
 ```bash
 _feedback_sh="${HOME}/.claude/skills/lib/planned-feedback-write.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$_feedback_sh" ] || _feedback_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/lib/planned-feedback-write.sh"
-[ -f "$_feedback_sh" ] || _feedback_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/lib/planned-feedback-write.sh" 2>/dev/null | sort -V | tail -1)
+if [ ! -f "$_feedback_sh" ]; then
+  source ~/.claude/skills/lib/plugin-cache.sh
+  _feedback_sh=$(tap_cache_find ticket-auto-pipeline lib/planned-feedback-write.sh)
+fi
 if [ -f "$_feedback_sh" ]; then
   source "$_feedback_sh"
   planned_feedback_write "{TICKET_ID}" "{LOG_FILE}" || true
@@ -986,27 +710,9 @@ spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done MSG="Phase inspector complete
 
 Then transition from Ready → Review via implement-complete:
 ```bash
-flow_sh="${HOME}/.claude/skills/ticket-flow/flow.sh"
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$flow_sh" ] || flow_sh="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/ticket-auto-pipeline\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/skills/ticket-flow/flow.sh"
-[ -f "$flow_sh" ] || flow_sh=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/ticket-auto-pipeline/*/skills/ticket-flow/flow.sh" 2>/dev/null | sort -V | tail -1)
-if [ -z "$flow_sh" ]; then
-  hb-wrap.sh retry "flow-sh" "fail" "flow.sh not found for implement-complete" \
-    "{\"trigger\":\"implement-complete\",\"ticket\":\"{TICKET_ID}\",\"error_type\":\"resolution_failure\"}"
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|implement-complete: flow.sh not found" >> "{LOG_FILE}"
-else
-  bash "$flow_sh" "{TICKET_ID}" "implement-complete" 2>&1
-  _rc=$?
-  if [ $_rc -ne 0 ]; then
-    _error_type=$( [ $_rc -eq 7 ] && echo "state_assertion" || echo "flow_error" )
-    hb-wrap.sh retry "flow-sh" "fail" "flow.sh implement-complete failed (exit ${_rc})" \
-      "{\"trigger\":\"implement-complete\",\"exit_code\":\"${_rc}\",\"ticket\":\"{TICKET_ID}\",\"error_type\":\"${_error_type}\"}"
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|flow-error|fail|exit ${_rc}: implement-complete" >> "{LOG_FILE}"
-  fi
-fi
+# Non-zero (incl. 127 = flow.sh not found): flow-run.sh writes META|flow-error and the
+# retry heartbeat itself; the router continues and detect-resume decides the next step.
+bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" "{TICKET_ID}" implement-complete 2>&1
 ```
 
 ### STEP_4_5 — Verify (with retry sub-loop)
@@ -1139,7 +845,7 @@ case "$VERIFY_DECISION" in
 advance) echo "VERIFY PASS → STEP_4_6" ;;
 retry) echo "VERIFY FAIL (attempt $VERIFY_ATTEMPTS of $VERIFY_CAP) → re-implement" ;;
 exhausted)
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_EXHAUSTED" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-stop fail "VERIFY_EXHAUSTED"
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
   exit 1
   ;;
@@ -1301,7 +1007,7 @@ its own (`ticket-document` writes its own `MAINTENANCE|document|done|` line and
 line, a resumed run loops STEP_5 indefinitely:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|maintenance|done|clean" >> "{LOG_FILE}"
+bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE maintenance done "clean"
 ```
 
 ### STEP_5_5 — PR Comment Reconciliation
@@ -1312,7 +1018,7 @@ leaving repeated new comments could cycle the pipeline indefinitely:
 
 ```bash
 if [ "{PR_FEEDBACK_CYCLE}" -ge 3 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|PR_FEEDBACK_EXHAUSTED" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-stop fail "PR_FEEDBACK_EXHAUSTED"
   echo "PR feedback reconciliation exhausted after 3 cycles for {TICKET_ID}. Needs human review."
   bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
   exit 1
@@ -1363,7 +1069,7 @@ fi
 # something is drifting and needs attention.
 if grep -q '|fallback|' "{HB_LOG_FILE}" 2>/dev/null; then
   NEEDS_RETRO=true
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|drift|warn|drift detected — heartbeat fallback events present" >> "{LOG_FILE}"
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META drift warn "drift detected — heartbeat fallback events present"
 fi
 # Condition 4: VERIFY_EXHAUSTED — verify phase exhausted all retries.
 # Condition 1 covers this via gate-stop, but gate-stop lines can be written
@@ -1388,7 +1094,7 @@ If `NEEDS_RETRO=true`, spawn `ticket-retro` agent. Then release the worktree (no
 if [ -n "${WORKTREE_ROOT:-}" ] && [ -f "$HOME/.claude/skills/lib/worktree.sh" ]; then
   source "$HOME/.claude/skills/lib/worktree.sh"
   release_worktree "{TICKET_ID}" || \
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|worktree-release|warn|release_worktree failed for {TICKET_ID}" >> "{LOG_FILE}"
+    bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META worktree-release warn "release_worktree failed for {TICKET_ID}"
 fi
 
 # META|outcome is written by pipeline-finalize.sh (Step 0.65) — called at
@@ -1400,7 +1106,7 @@ fi
 
 ```bash
 echo "Unknown RESUME_STEP: {RESUME_STEP}" >&2
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|router-error|fail|Unknown RESUME_STEP: {RESUME_STEP}" >> "{LOG_FILE}"
+bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META router-error fail "Unknown RESUME_STEP: {RESUME_STEP}"
 bash ~/.claude/skills/lib/pipeline-finalize.sh "{TICKET_ID}" 1 "{LOG_FILE}" || true
 exit 1
 ```

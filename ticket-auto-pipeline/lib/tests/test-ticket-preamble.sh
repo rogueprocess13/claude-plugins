@@ -314,6 +314,253 @@ test_preamble_starts_a_new_run_after_an_outcome() {
   return $ok
 }
 
+# ── Manual-router mode (skill-glue-collapse) ──────────────────────────────────
+#
+# ticket-auto SKILL.md Step 0.1 calls the preamble with TICKET_ARG,
+# NEW_RUN and ANNOUNCE_START. Every test here also guards the other direction:
+# without those parameters nothing about the fleetd path may change.
+
+# Like _preamble, but the ticket id comes only from the caller's arguments.
+_preamble_raw() {
+  (cd "$_SANDBOX" && bash "$_SANDBOX/lib/ticket-preamble.sh" \
+    PROJECT_DIR="$_SANDBOX" SKIP_PREFLIGHT=true "$@")
+}
+
+test_new_run_opens_a_run_where_the_default_rehydrates() {
+  _sandbox_new
+  _preamble TEST-PRE-11 >/dev/null
+  _preamble TEST-PRE-11 >/dev/null
+  local log="$_SANDBOX/logs/TEST-PRE-11-pipeline.log"
+  local after_default after_new
+  after_default=$(grep -c '|META|run-id|info|' "$log")
+  _preamble TEST-PRE-11 NEW_RUN=true >/dev/null
+  after_new=$(grep -c '|META|run-id|info|' "$log")
+
+  [ "$after_default" -eq 1 ] && [ "$after_new" -eq 2 ]
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_new_run_after_an_outcome_opens_a_new_run() {
+  _sandbox_new
+  _preamble TEST-PRE-12 NEW_RUN=true >/dev/null
+  local log="$_SANDBOX/logs/TEST-PRE-12-pipeline.log"
+  echo '2026-01-01T00:00:00Z|META|outcome|info|{"status":"done"}' >>"$log"
+  _preamble TEST-PRE-12 NEW_RUN=true >/dev/null
+  [ "$(grep -c '|META|run-id|info|' "$log")" -eq 2 ] &&
+    tail -n +"$(grep -n '|META|outcome|' "$log" | cut -d: -f1)" "$log" |
+    grep -q '|META|run-id|info|'
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_ticket_arg_strips_every_flag() {
+  _sandbox_new
+  local out
+  out=$(_preamble_raw "TICKET_ARG=TEST-PRE-13 --auto --from-planned --branch epic/x")
+  [ "$(_field "$out" TICKET_ID)" = "TEST-PRE-13" ] &&
+    [ "$(_field "$out" AUTONOMY)" = "auto" ] &&
+    [ "$(_field "$out" FROM_PLANNED)" = "true" ] &&
+    grep -qx 'TEST-PRE-13 --branch epic/x' "$BRANCH_RESOLVE_CALLS" &&
+    [ -f "$_SANDBOX/logs/TEST-PRE-13-pipeline.log" ]
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+# The router's grep cascade checked --semi-auto first, then --auto, then
+# --manual, so that is the precedence whatever order the flags arrive in.
+test_ticket_arg_autonomy_precedence() {
+  _sandbox_new
+  local a b c
+  a=$(_preamble_raw "TICKET_ARG=--auto TEST-PRE-14 --semi-auto")
+  b=$(_preamble_raw "TICKET_ARG=--manual TEST-PRE-15 --auto")
+  c=$(_preamble_raw "TICKET_ARG=TEST-PRE-16 --manual")
+  [ "$(_field "$a" AUTONOMY)" = "semi-auto" ] &&
+    [ "$(_field "$b" AUTONOMY)" = "auto" ] &&
+    [ "$(_field "$c" AUTONOMY)" = "manual" ] &&
+    [ "$(_field "$c" FROM_PLANNED)" = "false" ] &&
+    ! grep -q -- '--branch' "$BRANCH_RESOLVE_CALLS"
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_ticket_arg_env_fallback_for_autonomy() {
+  _sandbox_new
+  local out unset_out
+  out=$(TICKET_AUTONOMY=semi-auto _preamble_raw "TICKET_ARG=TEST-PRE-17")
+  unset_out=$(env -u TICKET_AUTONOMY bash -c \
+    "cd '$_SANDBOX' && bash '$_SANDBOX/lib/ticket-preamble.sh' PROJECT_DIR='$_SANDBOX' SKIP_PREFLIGHT=true TICKET_ARG=TEST-PRE-18")
+  [ "$(_field "$out" AUTONOMY)" = "semi-auto" ] &&
+    [ "$(_field "$unset_out" AUTONOMY)" = "manual" ]
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_explicit_args_win_over_ticket_arg() {
+  _sandbox_new
+  local out
+  out=$(_preamble_raw "TICKET_ARG=TEST-PRE-19 --auto --from-planned --branch epic/x" \
+    TICKET_ID=TEST-PRE-20 AUTONOMY=manual FROM_PLANNED=false BRANCH_FLAG=feat/y)
+  [ "$(_field "$out" TICKET_ID)" = "TEST-PRE-20" ] &&
+    [ "$(_field "$out" AUTONOMY)" = "manual" ] &&
+    [ "$(_field "$out" FROM_PLANNED)" = "false" ] &&
+    grep -qx 'TEST-PRE-20 --branch feat/y' "$BRANCH_RESOLVE_CALLS"
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+# A stray token would become part of every path derived from the id, so it is
+# a usage error rather than a ticket called "CRE-1 --typo".
+test_ticket_arg_usage_errors() {
+  _sandbox_new
+  local rc1=0 rc2=0 rc3=0
+  _preamble_raw "TICKET_ARG=TEST-PRE-21 --typo" >/dev/null 2>&1 || rc1=$?
+  _preamble_raw "TICKET_ARG=TEST-PRE-21 --branch" >/dev/null 2>&1 || rc2=$?
+  _preamble_raw "TICKET_ARG=--auto" >/dev/null 2>&1 || rc3=$?
+  [ "$rc1" -eq 1 ] && [ "$rc2" -eq 1 ] && [ "$rc3" -eq 1 ] &&
+    [ ! -e "$_SANDBOX/logs/TEST-PRE-21-pipeline.log" ]
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_announce_start_is_written_once() {
+  _sandbox_new
+  _preamble TEST-PRE-22 >/dev/null
+  local hb="$_SANDBOX/logs/TEST-PRE-22-heartbeat.log"
+  local before
+  before=$(grep -c '|gate|phase-transition|ok|START → APPRAISE' "$hb" || true)
+  _preamble TEST-PRE-22 ANNOUNCE_START=true NEW_RUN=true >/dev/null
+  _preamble TEST-PRE-22 ANNOUNCE_START=true NEW_RUN=true >/dev/null
+  [ "$before" -eq 0 ] &&
+    [ "$(grep -c '|gate|phase-transition|ok|START → APPRAISE' "$hb")" -eq 1 ]
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_dashboard_fields_only_in_new_run_mode() {
+  _sandbox_new
+  local plain manual
+  plain=$(_preamble TEST-PRE-23)
+  manual=$(_preamble TEST-PRE-23 NEW_RUN=true)
+  local log="$_SANDBOX/logs/TEST-PRE-23-pipeline.log"
+  ! echo "$plain" | grep -q 'DASHBOARD_CMD' &&
+    [ "$(echo "$plain" | grep -c '^  [A-Z_]*:')" -eq 15 ] &&
+    [ "$(_field "$manual" DASHBOARD_CMD_LOG)" = "python3 ~/.claude/skills/ticket-auto/dashboard.py $log" ] &&
+    [ "$(_field "$manual" DASHBOARD_CMD_FLEET)" = "python3 ~/.claude/skills/ticket-auto/dashboard.py --fleet $_SANDBOX/logs" ] &&
+    [ "$(echo "$manual" | tail -1 | sed 's/:.*//')" = "  DASHBOARD_CMD_FLEET" ]
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_manual_mode_schema_line_precedes_branch_context() {
+  _sandbox_new
+  _preamble_raw "TICKET_ARG=TEST-PRE-24 --auto" NEW_RUN=true ANNOUNCE_START=true >/dev/null
+  local log="$_SANDBOX/logs/TEST-PRE-24-pipeline.log"
+  local schema_n branch_n
+  schema_n=$(grep -n '|META|schema|info|1$' "$log" | head -1 | cut -d: -f1)
+  branch_n=$(grep -n '|META|branch-context|info|' "$log" | head -1 | cut -d: -f1)
+  [ "$schema_n" = "1" ] && [ -n "$branch_n" ] && [ "$branch_n" -gt 1 ] &&
+    [ "$(grep -c '|META|run-id|info|' "$log")" -eq 1 ]
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+# detect-resume.sh must route a log the manual preamble wrote exactly as it
+# routes the log the old prose Steps 0.1–0.6 wrote (no schema line, branch
+# context first). The only intended difference is the schema line itself,
+# which spares the legacy log its v0-grace migration.
+test_detect_resume_routes_a_manual_preamble_log_like_a_legacy_one() {
+  _sandbox_new
+  _preamble_raw "TICKET_ARG=TEST-PRE-25 --auto" NEW_RUN=true ANNOUNCE_START=true >/dev/null
+  local legacy_dir
+  legacy_dir="$(mktemp -d)"
+  mkdir -p "$legacy_dir/logs"
+  grep -v '|META|schema|' "$_SANDBOX/logs/TEST-PRE-25-pipeline.log" \
+    >"$legacy_dir/logs/TEST-PRE-25-pipeline.log"
+
+  local detect="$LIB_DIR/../skills/ticket-detect-resume/detect-resume.sh"
+  local a b
+  a=$(cd "$_SANDBOX" && CLAUDE_SKILLS_LIB="$LIB_DIR" env -u LINEAR_API_KEY \
+    bash "$detect" TEST-PRE-25 2>/dev/null | grep -v 'LOG_FILE')
+  b=$(cd "$legacy_dir" && CLAUDE_SKILLS_LIB="$LIB_DIR" env -u LINEAR_API_KEY \
+    bash "$detect" TEST-PRE-25 2>/dev/null | grep -v 'LOG_FILE')
+  local migrated
+  migrated=$(grep -c '|META|migration|info|v0-grace-applied' \
+    "$legacy_dir/logs/TEST-PRE-25-pipeline.log" || true)
+
+  [ -n "$a" ] && [ "$a" = "$b" ] &&
+    echo "$a" | grep -q 'RESUME_STEP: *STEP_1$' &&
+    echo "$a" | grep -q 'AUTONOMY: *auto$' &&
+    [ "$migrated" -eq 1 ] &&
+    ! grep -q '|META|migration|' "$_SANDBOX/logs/TEST-PRE-25-pipeline.log"
+  local ok=$?
+  rm -rf "$legacy_dir"
+  _sandbox_rm
+  return $ok
+}
+
+# ── Preflight (assertions formerly pinned on ticket-auto SKILL.md Step 0.4) ───
+
+# A sandbox whose linear-api.sh answers the teams query with $TEAMS_RESPONSE,
+# and whose workflow.json exists, so preflight reaches the team-count guard.
+_preflight_sandbox() {
+  _sandbox_new
+  mkdir -p "$_SANDBOX/skills/ticket-flow"
+  echo '{}' >"$_SANDBOX/skills/ticket-flow/workflow.json"
+  cat >"$_SANDBOX/lib/linear-api.sh" <<'STUB'
+linear_graphql() { printf '%s' "${TEAMS_RESPONSE:-}"; }
+get_me() { echo '{"name":"stub"}'; }
+STUB
+}
+
+_preflight() {
+  (cd "$_SANDBOX" && env -u LINEAR_TEAM_ID HOME="$_SANDBOX" \
+    TICKET_FLOW_STATE_DIR="$_SANDBOX/state" \
+    bash -c "source '$_SANDBOX/lib/ticket-preamble.sh'; ticket_preamble_preflight")
+}
+
+# The team count must be numeric before it is compared: a failed query used to
+# reach `[ "" -eq 1 ]` and report "multiple teams", sending the operator to
+# set LINEAR_TEAM_ID when the real fault was the key or the network.
+test_preflight_teams_query_failure_has_its_own_message() {
+  _preflight_sandbox
+  local err rc=0
+  err=$(TEAMS_RESPONSE='not json' _preflight 2>&1 >/dev/null) || rc=$?
+  [ "$rc" -eq 5 ] &&
+    echo "$err" | grep -q 'Linear teams query failed' &&
+    ! echo "$err" | grep -q 'set LINEAR_TEAM_ID'
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_preflight_multiple_teams_asks_for_linear_team_id() {
+  _preflight_sandbox
+  local err rc=0
+  err=$(TEAMS_RESPONSE='{"data":{"teams":{"nodes":[{"id":"a"},{"id":"b"}]}}}' \
+    _preflight 2>&1 >/dev/null) || rc=$?
+  [ "$rc" -eq 4 ] &&
+    echo "$err" | grep -q '2 Linear teams visible — set LINEAR_TEAM_ID' &&
+    ! echo "$err" | grep -q 'query failed'
+  local ok=$?
+  _sandbox_rm
+  return $ok
+}
+
+test_preflight_numeric_guard_is_in_the_script() {
+  grep -q '\[\[ "\$team_count" =~ \^\[0-9\]+\$ \]\]' "$PREAMBLE_SH"
+}
+
 _run "writes env file, log and branch context" test_writes_env_file_log_and_branch_context
 _run "schema line precedes a branch gate-stop" test_schema_line_precedes_a_branch_gate_stop
 _run "non-directive branch failure is not a gate-stop" test_non_directive_branch_failure_is_not_a_gate_stop
@@ -328,6 +575,20 @@ _run "unknown parameter fails with the usage code" test_unknown_parameter_fails_
 _run "unrecognised autonomy falls back to manual" test_unrecognised_autonomy_falls_back_to_manual
 _run "two preamble calls in one run write one run-id line" test_two_preamble_calls_in_one_run_write_one_run_id_line
 _run "preamble starts a new run after an outcome" test_preamble_starts_a_new_run_after_an_outcome
+_run "NEW_RUN opens a run where the default rehydrates" test_new_run_opens_a_run_where_the_default_rehydrates
+_run "NEW_RUN after an outcome opens a new run" test_new_run_after_an_outcome_opens_a_new_run
+_run "TICKET_ARG strips every flag" test_ticket_arg_strips_every_flag
+_run "TICKET_ARG autonomy precedence" test_ticket_arg_autonomy_precedence
+_run "TICKET_ARG env fallback for autonomy" test_ticket_arg_env_fallback_for_autonomy
+_run "explicit args win over TICKET_ARG" test_explicit_args_win_over_ticket_arg
+_run "TICKET_ARG usage errors" test_ticket_arg_usage_errors
+_run "ANNOUNCE_START is written once" test_announce_start_is_written_once
+_run "dashboard fields only in NEW_RUN mode" test_dashboard_fields_only_in_new_run_mode
+_run "manual mode: schema line precedes branch context" test_manual_mode_schema_line_precedes_branch_context
+_run "detect-resume routes a manual preamble log like a legacy one" test_detect_resume_routes_a_manual_preamble_log_like_a_legacy_one
+_run "preflight: teams query failure has its own message" test_preflight_teams_query_failure_has_its_own_message
+_run "preflight: multiple teams asks for LINEAR_TEAM_ID" test_preflight_multiple_teams_asks_for_linear_team_id
+_run "preflight: numeric team-count guard is in the script" test_preflight_numeric_guard_is_in_the_script
 
 echo ""
 echo "ticket-preamble: $PASS passed, $FAIL failed"

@@ -17,6 +17,53 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.75.0 (2026-10-28)
+
+Skill glue collapse (`skill-glue-collapse`, change 2 of the skill-size reduction programme).
+Mechanical bash pasted into skill prose now calls the tested libraries that already do the same
+job. Also moves `fleet-controller` to 0.44.0 (its `fleet-features` skill changed). Prompt material
+shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went from 72,501 to
+58,250 bytes. Skill fingerprints change for every edited skill. This is intended.
+
+### Added
+- **`lib/plog.sh`**: `plog.sh [--log-file PATH] PHASE STEP STATUS [MSG]`, a CLI over `_plog`.
+  It writes the same log grammar, it is safe under `set -e`, it does nothing when `LOG_FILE` is
+  empty, and it turns a `|` or newline in MSG into a space. A usage error exits 2.
+- **`lib/skill-ref.sh <skill> <file>`** finds a skill's reference file in the plugin cache. No
+  skill calls it yet. Change 4 of the programme will use it.
+- **`persona-select.sh --ticket-dir <dir>`** derives `--type` itself (manifest `type`, else `bug`
+  from the `**Labels:**` line of `context.md`) and defaults `TICKET_TEXT_FILE` to the ticket's
+  `context.md`. It emits `PERSONA_TYPE` only when the flag is passed.
+- **`ticket-preamble.sh` manual-router mode**: `TICKET_ARG=`, `NEW_RUN=true` (opens a new run and
+  adds `DASHBOARD_CMD_LOG`/`DASHBOARD_CMD_FLEET` to the result block) and `ANNOUNCE_START=true`.
+  Without these parameters the fleetd path is byte-identical.
+
+### Changed
+- **About 180 inline `echo … >> "$LOG_FILE"` lines in 12 skills now call `plog.sh`.** The 115
+  unsafe bare `[ -n "$LOG_FILE" ] && echo` guards are gone with them.
+- **`ticket-auto` Steps 0.1–0.6 are one `ticket-preamble.sh` call** (the new Step 0.1). Behaviour
+  changes on the manual `/ticket-auto` path:
+  - The log now starts with `META|schema|info|1`. Then come run-id, version and ticket-meta, then
+    branch-context, autonomy and from-planned. `detect-resume.sh` routes both orders the same way.
+  - Preflight runs before the pipeline log exists. A rejected Linear key exits 5 (it was 4). The
+    multi-team message is now "N Linear teams visible — set LINEAR_TEAM_ID".
+  - `BRANCH_DIRECTIVE_INVALID` exits 2 (it was 1) and the run is finalized. A branch-resolution
+    failure exits 3 (it was 2) and is finalized. A failed env-file write (exit 6) is new.
+  - A stray token in the arguments is a usage error. Before, it was glued into the ticket ID.
+  - The `START → APPRAISE` heartbeat is written once per heartbeat log, not once per invocation.
+  - On a re-run, the branch decision already in the log is reused instead of resolved again.
+- **Plugin-cache resolver blocks** in `ticket-auto`, `ticket-flow`, `ticket-env-check` and
+  `fleet-features` now use `tap_cache_find` / `fleet_cache_find`. `ticket-auto`'s inline
+  `flow.sh` calls now go through `flow-run.sh`. Two blocks stay on purpose: `fleet-env-check`
+  (the last-resort diagnostic) and the `ticket-planner` lib-root bootstrap.
+- **The persona type derivation** pasted into appraise, implement and pr-review is now one
+  `--ticket-dir` argument.
+- **The "API error capture convention" section is removed from `ticket-auto`.** The #362 hard-stop
+  rule is enforced in `gate-check.sh`, and `skill-preamble.md` § 9 still carries it for the other
+  skills.
+- `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
+  consumer matches it, and a new detect-resume test pins it.
+
 ## ticket-planner 0.26.0 (2026-10-24)
 
 Branch Directive base branch from config or the repo, never the agent's environment

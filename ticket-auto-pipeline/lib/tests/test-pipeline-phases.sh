@@ -247,29 +247,12 @@ test_router_zero_inline_llm_invariant() {
   }
 }
 
-test_router_team_resolution_query_failure_message() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  local preflight
-  preflight=$(sed -n '/Step 0.4 — Preflight/,/^## /p' "$skill_md" 2>/dev/null)
-  echo "$preflight" | grep -qE '\^\[0-9\]\+\$' || {
-    echo "team_count numeric-format guard not found (query-failure detection)"
-    return 1
-  }
-  echo "$preflight" | grep -qi 'teams query failed' || {
-    echo "distinct query-failure message not found"
-    return 1
-  }
-}
-
-test_router_team_resolution_multi_team_message_unchanged() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  grep -q 'Multiple Linear teams — set LINEAR_TEAM_ID' "$skill_md" || {
-    echo "genuine multi-team message missing or changed"
-    return 1
-  }
-}
+# test_router_team_resolution_query_failure_message and
+# test_router_team_resolution_multi_team_message_unchanged pinned Step 0.4's
+# preflight prose, which moved into lib/ticket-preamble.sh (skill-glue-collapse).
+# Covered by test-ticket-preamble.sh: test_preflight_teams_query_failure_has_its_own_message,
+# test_preflight_numeric_guard_is_in_the_script and
+# test_preflight_multiple_teams_asks_for_linear_team_id.
 
 # ── Gate-check.sh tests ────────────────────────────────────────────────────────
 
@@ -354,12 +337,16 @@ _gate_reconcile_resolve() {
   code=$(_gate_reconcile_artifact_code)
   [ -n "$code" ] || return 3
   code=${code//\{TICKET-ID\}/$3}
+  # The block logs through the synced ~/.claude/skills/lib/plog.sh; point it
+  # at this checkout's lib (CI has no synced copy).
+  code=${code//\~\/.claude\/skills\/lib\//$LIB_DIR/}
   (
     cd "$1" || exit 3
     # Step 1's load block sources ticket-dir.sh before this block runs; the
-    # resolution block calls its resolve_plan_artifact.
+    # resolution block calls its resolve_plan_artifact. Step 1 also exports
+    # LOG_FILE, which plog.sh reads from the environment.
     source "$LIB_DIR/ticket-dir.sh"
-    LOG_FILE="$1/logs/pipeline.log"
+    export LOG_FILE="$1/logs/pipeline.log"
     TICKET_DIR="$1/TEST-7--ticket-dir"
     ARTIFACT_TYPE="$2"
     eval "$code"
@@ -448,17 +435,21 @@ test_hb_wrap_callers_use_valid_statuses() {
 
 # ── Increment B — silent-skip & false-done fixes (R3, R9, R2) ─────────────────
 
+# skill-glue-collapse: the pasted resolver became a flow-run.sh call. flow-run.sh
+# owns the plugin-cache fallback (tap_cache_find) and the failure record
+# (META|flow-error + retry heartbeat, incl. 127 for flow.sh not found) — both
+# pinned by test-flow-run.sh. Here: the block delegates and adds no swallow.
 test_router_implement_complete_has_plugin_cache_fallback() {
   local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/Then transition from Ready/,/^```$/p' "$skill_md")
-  echo "$block" | grep -q 'claude/plugins/cache' || {
-    echo "implement-complete flow.sh resolution missing plugin-cache fallback"
+  echo "$block" | grep -q 'flow-run\.sh --log-file "{LOG_FILE}" "{TICKET_ID}" implement-complete' || {
+    echo "implement-complete is not fired through lib/flow-run.sh"
     return 1
   }
-  echo "$block" | grep -qE 'hb_retry|hb-wrap\.sh' || {
-    echo "implement-complete flow.sh resolution no longer swallows failure with hb_retry/hb-wrap.sh"
+  echo "$block" | grep -q 'installPath' && {
+    echo "implement-complete still carries an inline flow.sh resolver"
     return 1
   }
   echo "$block" | grep -q '|| true' && {
@@ -775,6 +766,9 @@ test_router_prescan_spawns_only_for_stale() {
   log="$tmp/pipeline.log"
   : >"$log"
   code=${code//\{LOG_FILE\}/$log}
+  # The block logs through the synced ~/.claude/skills/lib/plog.sh; point it at
+  # the checkout's lib (CI and dev hosts may have no synced copy).
+  code=${code//\~\/.claude\/skills\/lib\//$LIB_DIR/}
   local reached
   reached=$(
     slug=repo-x
@@ -805,20 +799,10 @@ test_router_prescan_spawns_only_for_stale() {
   return $rc
 }
 
-test_router_autonomy_write_is_guarded() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  local block
-  block=$(sed -n '/Log the resolved autonomy mode/,/hb-wrap.sh gate "phase-transition"/p' "$skill_md")
-  echo "$block" | grep -q '_recorded_autonomy' || {
-    echo "autonomy write is not guarded by a recorded-value check"
-    return 1
-  }
-  echo "$block" | grep -q 'mode-change' || {
-    echo "autonomy write does not log an explicit mode-change event"
-    return 1
-  }
-}
+# test_router_autonomy_write_is_guarded pinned Step 0.6's inline META|autonomy
+# write; the guarded write (mode-change instead of a re-append) now lives in
+# lib/ticket-preamble.sh and is covered by test-ticket-preamble.sh's
+# test_autonomy_change_is_logged_not_overwritten.
 
 # Replaces test_router_dashboard_pane_not_duplicated. The router no longer
 # spawns a dashboard pane at all (fleetd-phase-supervisor task 7.4), so the
@@ -837,7 +821,9 @@ test_router_does_not_spawn_a_dashboard_pane() {
     return 1
   }
   # It must still tell the operator how to open one, including the fleet view.
-  grep -q 'dashboard.py --fleet' "$skill_md" || {
+  # The command text comes from the preamble's DASHBOARD_CMD_FLEET field
+  # (value pinned by test-ticket-preamble.sh test_dashboard_fields_only_in_new_run_mode).
+  grep -q 'DASHBOARD_CMD_FLEET' "$skill_md" || {
     echo "router does not surface the --fleet dashboard command"
     return 1
   }
@@ -889,17 +875,38 @@ test_router_gate_held_message_mentions_open_questions() {
   }
 }
 
-test_router_run_identity_stamp_reference() {
+# Steps 0.1–0.6 are one ticket-preamble.sh call (spec: router-preamble-manual-mode,
+# "Skill contains one preamble invocation"). NEW_RUN=true is what makes the
+# preamble stamp run identity with --new (replaces
+# test_router_run_identity_stamp_reference; the --new behaviour itself is
+# test-ticket-preamble.sh test_new_run_opens_a_run_where_the_default_rehydrates).
+test_router_step0_is_one_preamble_call_with_new_run() {
   local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
   [ -f "$skill_md" ] || return 1
-  grep -q 'run-identity\.sh stamp' "$skill_md" || {
-    echo "run-identity.sh stamp not referenced"
+  local calls
+  calls=$(grep -c 'bash ~/.claude/skills/lib/ticket-preamble.sh ' "$skill_md")
+  [ "$calls" -eq 1 ] || {
+    echo "expected exactly one ticket-preamble.sh invocation, found $calls"
     return 1
   }
-  grep -q -- '--new' "$skill_md" || {
-    echo "router does not pass --new to run-identity.sh stamp"
+  grep 'bash ~/.claude/skills/lib/ticket-preamble.sh ' "$skill_md" |
+    grep -q 'TICKET_ARG="{TICKET_ARG}" NEW_RUN=true ANNOUNCE_START=true' || {
+    echo "preamble call does not pass TICKET_ARG, NEW_RUN=true and ANNOUNCE_START=true"
     return 1
   }
+  # The steps it replaces must not come back as inline bash.
+  if grep -qE 'run-identity\.sh stamp|resolve_branch_context \$|validate-linear-config\.sh" "\$TEAM_ID"|\|META\|autonomy\|info\|\{AUTONOMY\}' "$skill_md"; then
+    echo "SKILL.md restates a step the preamble owns"
+    return 1
+  fi
+  # Every preamble exit code is handled.
+  local code
+  for code in 2 3 4 5 6; do
+    grep -qE "^\| $code \|" "$skill_md" || {
+      echo "exit code $code not documented"
+      return 1
+    }
+  done
 }
 
 # ── Commercial Evidence MVP (Branch B): pr-created capture ──────────────────

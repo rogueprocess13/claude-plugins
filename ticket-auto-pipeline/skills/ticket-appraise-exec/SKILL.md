@@ -42,7 +42,7 @@ Find the local directory (whole-ID match on `{TICKET-ID}--slug`, so `WIL-4` neve
 bash ~/.claude/skills/lib/ticket-dir.sh ticket-dir "{TICKET-ID}" .
 ```
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|load-workspace|start|Loading ticket workspace" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC load-workspace start "Loading ticket workspace"
 
 If not found → tell the user to run `/ticket-appraise {TICKET-ID}` first. Stop here.
 
@@ -59,7 +59,7 @@ Extract from notes.md:
 - `{INVESTIGATION_BULLETS}` — 2-4 key bullets from Initial Investigation
 - `{BLAST_RADIUS}` — if `## Blast Radius` section exists, extract the table rows (target, risk, d=1/d=2 callers, affected flows); otherwise `none`
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|load-workspace|done|Loaded {COMPLEXITY}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC load-workspace done "Loaded {COMPLEXITY}"
 
 ---
 
@@ -115,7 +115,7 @@ carries no such candidate.
 
 ## Step 3 — Create change artifacts
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|create-artifact|start|Creating artifact" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC create-artifact start "Creating artifact"
 
 Branch on `{COMPLEXITY}` extracted from notes.md:
 
@@ -212,14 +212,14 @@ Insert this task after the main implementation tasks and before any commit/push 
 ```bash
 # simple path
 [ ! -f "{TICKET_DIR}/simple-fix.md" ] && {
-  [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|EXEC_NO_ARTIFACT — Write tool returned error or file missing after write" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "EXEC_NO_ARTIFACT — Write tool returned error or file missing after write"
   echo "ERROR: simple-fix.md was not written to disk. Check for hook blocks (PreToolUse errors) and retry." >&2
   exit 1
 }
 ```
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|artifact|info|plan:{artifact_path}" >> "$LOG_FILE"
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|create-artifact|done|{simple-fix|openspec}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META artifact info "plan:{artifact_path}"
+bash ~/.claude/skills/lib/plog.sh EXEC create-artifact done "{simple-fix|openspec}"
 cl_write RETRO hint info "artifact path derived from TICKET_DIR={TICKET_DIR} — verify path resolution works when WORKSPACE_ROOT differs from default"
 
 ---
@@ -255,7 +255,7 @@ Assert coherence:
 
 On any mismatch:
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|COMPLEXITY_ARTIFACT_MISMATCH — declared={COMPLEXITY} artifact={artifact-found}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META gate-stop fail "COMPLEXITY_ARTIFACT_MISMATCH — declared={COMPLEXITY} artifact={artifact-found}"
 ```
 Stop with non-zero exit so `ticket-auto` halts the pipeline.
 
@@ -267,7 +267,7 @@ is already resolved and verified to contain `tasks.md` by the checks above.
 ```bash
 bash ~/.claude/skills/lib/openspec-tracking-check.sh commit "$CHANGE_DIR" "{TICKET-ID}"
 COMMIT_RC=$?
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|$([ "$COMMIT_RC" -eq 0 ] && echo info || echo warn)|OPENSPEC_ARTIFACT_COMMIT — rc=$COMMIT_RC dir=$CHANGE_DIR" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META gate-warn "$([ "$COMMIT_RC" -eq 0 ] && echo info || echo warn)" "OPENSPEC_ARTIFACT_COMMIT — rc=$COMMIT_RC dir=$CHANGE_DIR"
 ```
 
 A non-zero `COMMIT_RC` (not inside a git repo, or the dir vanished between the checks above and
@@ -284,7 +284,7 @@ On simple tickets, or once the commit step above completes, proceed silently to 
 
 ## Step 3.5 — Regression Guard
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|regression-guard|start|Checking plan against prior art" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC regression-guard start "Checking plan against prior art"
 
 Read the `## Prior Art` section of notes.md. If it says "No relevant prior art found." and there are no `[local-ticket]` entries → skip this step entirely, proceed to Step 4.
 
@@ -337,7 +337,7 @@ Acknowledge in notes.md before implementing.
 
 If no overlap: write nothing — proceed silently.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|regression-guard|done|{CONFLICT|ADJACENT|SUPERSEDES|clear}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC regression-guard done "{CONFLICT|ADJACENT|SUPERSEDES|clear}"
 
 ### Post regression-guard: Record verifier result (Phase 0 RLVR)
 ```bash
@@ -359,7 +359,7 @@ source ~/.claude/skills/lib/adversarial-rounds.sh
 ADV_PRIOR_BLOCKS=$(adversarial_round_count "${LOG_FILE:-}")
 ADV_ROUND=$((ADV_PRIOR_BLOCKS + 1))
 echo "ADV_PRIOR_BLOCKS=${ADV_PRIOR_BLOCKS} ADV_ROUND=${ADV_ROUND}"
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|adversarial-review|start|Spawning adversarial agent (round ${ADV_ROUND})" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC adversarial-review start "Spawning adversarial agent (round ${ADV_ROUND})"
 ```
 
 `ADV_PRIOR_BLOCKS` counts `META|gate-stop|fail|ADVERSARIAL_BLOCKED` lines since the last PASS/WARNINGS verdict; recovery notes between rounds do not reset it (see `lib/adversarial-rounds.sh`). Shell variables do not survive between Bash calls, so note the two printed values and substitute them wherever `{ADV_PRIOR_BLOCKS}` and `{ADV_ROUND}` appear below.
@@ -468,7 +468,7 @@ Append its output verbatim to notes.md under the `## Adversarial Review` heading
 **Record the verdict — every verdict, BLOCKED included, before any gate-stop.** Write the `done` line and the verifier result first, so a BLOCKED round is visible in the log as a completed review and not only as a gate-stop:
 
 ```bash
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|adversarial-review|done|{PASS|WARNINGS|BLOCKED}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC adversarial-review done "{PASS|WARNINGS|BLOCKED}"
 ```
 
 ### Post adversarial-review: Record verifier result (Phase 0 RLVR)
@@ -483,7 +483,7 @@ Map: PASS → PASS, WARNINGS → WARN, BLOCKED → BLOCK. `attempt` is `{ADV_ROU
 If the agent's verdict is BLOCKED, write the gate-stop **after** the `done` line above. Keep `ADVERSARIAL_BLOCKED` as the first word of the detail: `exit-path.sh`, `detect-resume.sh` and `adversarial-rounds.sh` all match it by prefix.
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|ADVERSARIAL_BLOCKED — round {ADV_ROUND} — {ISSUE-ID} adversarial review found blocking issues" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META gate-stop fail "ADVERSARIAL_BLOCKED — round {ADV_ROUND} — {ISSUE-ID} adversarial review found blocking issues"
 ```
 
 Stop with non-zero exit so `ticket-auto` halts the pipeline. Tell the user:
@@ -505,7 +505,7 @@ If WARNINGS or PASS, proceed to Step 3.7 — do NOT skip ahead to Step 4; Steps 
 
 ## Step 3.7 — Derive Verification Plan
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|verify-plan-derived|start|Deriving verification plan" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC verify-plan-derived start "Deriving verification plan"
 
 **Only run this step if `{COMPLEXITY}` = complex.** If simple, skip to Step 3.8.
 
@@ -591,7 +591,7 @@ If any single criterion cannot be fully derived, halt the pipeline. The followin
 
 **In `--from-auto` mode:** Push-back halts the pipeline immediately:
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|{GATE-STOP-CODE} — {reason}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META gate-stop fail "{GATE-STOP-CODE} — {reason}"
 ```
 Stop with non-zero exit so `ticket-auto` halts.
 
@@ -657,7 +657,7 @@ After writing the verification plan, append role scope findings to `app-knowledg
 
 **Non-blocking:** Wiki write failure is non-blocking. If `app-knowledge/SKILL.md` cannot be written (permissions, disk full), log a warning and continue:
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|verify-plan-derived|skip|Wiki write failed: {reason} — continuing" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC verify-plan-derived skip "Wiki write failed: {reason} — continuing"
 ```
 
 ### Heartbeat
@@ -667,7 +667,7 @@ After derivation completes:
 - **Partial with override (interactive only):** `hb-wrap.sh gate "verify-plan-derived" "ok" "OVERRIDE" '{"criteria":"{N}","verifiable":"{M}","override":"true"}'`
 - **Push-back (any criterion unverifiable, auto mode):** `hb-wrap.sh gate "verify-plan-derived" "fail" "INSUFFICIENT_INFO" '{"criteria":"{N}","verifiable":"{M}"}'`
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|verify-plan-derived|done|{CLEAR|INSUFFICIENT_INFO}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC verify-plan-derived done "{CLEAR|INSUFFICIENT_INFO}"
 
 Proceed to Step 3.8.
 
@@ -675,7 +675,7 @@ Proceed to Step 3.8.
 
 ## Step 3.8 — Verification-Readiness Gate
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|verify-readiness|start|Checking plan for verification prerequisites" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC verify-readiness start "Checking plan for verification prerequisites"
 
 Check the plan artifact for 4 prerequisites required to verify the ticket:
 
@@ -730,7 +730,7 @@ hb-wrap.sh gate "verify-readiness" "ok" "{CLEAR|WARNINGS}" "{\"missing\":\"{N}\"
 
 If `--from-auto` is in the arguments:
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-stop|fail|VERIFY_READINESS_INCOMPLETE — plan missing {N} verification prerequisites: {list}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_READINESS_INCOMPLETE — plan missing {N} verification prerequisites: {list}"
 ```
 Stop with non-zero exit.
 
@@ -765,7 +765,7 @@ Append a `## Verification Readiness` section to notes.md:
 
 If the section already exists from a prior re-run, replace it.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|verify-readiness|done|{CLEAR|WARNINGS|INCOMPLETE}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC verify-readiness done "{CLEAR|WARNINGS|INCOMPLETE}"
 
 ---
 
@@ -779,7 +779,7 @@ If no `## Re-appraisal` section exists (first run), or `**Changes detected:** ye
 
 ## Step 5 — Post a Linear comment
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|post-linear|start|Posting appraisal comment" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC post-linear start "Posting appraisal comment"
 
 Post a comment via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP `save_comment` fallback otherwise) summarising the appraisal:
 
@@ -800,7 +800,7 @@ Post a comment via the Linear access strategy (bash `save_comment` when `LINEAR_
 
 If notes.md's Open Questions section has no `[needs-human]`-tagged bullet (empty, "None", or only `[agent-resolvable]` bullets already resolved), omit the warning line — post the Open Questions block as-is.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|post-linear|done|Comment posted" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC post-linear done "Comment posted"
 
 ---
 
@@ -821,7 +821,7 @@ This sets state → `Approve`, keeping all existing labels.
 
 ## Step 7 — Report to the user
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|handoff|start|Writing final report" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC handoff start "Writing final report"
 
 ```
 ## {TICKET-ID} appraisal complete
@@ -850,4 +850,4 @@ Linear updated — assigned to you, status → Approve + `claimed` (awaiting app
 Run `/ticket-implement {TICKET-ID}` once `/ticket-approve {TICKET-ID}` has been run.
 ```
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|handoff|done|Reported to user" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh EXEC handoff done "Reported to user"

@@ -44,7 +44,7 @@ eval $(get_corrections "{ticket-dir}/notes.md" 2>/dev/null) || CORRECTION_COUNT=
 ```
 
 ```bash
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|document|start|Reading notes.md for context" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh MAINTENANCE document start "Reading notes.md for context"
 ```
 
 ---
@@ -105,7 +105,7 @@ Inspect the diff output. Classify the change as **trivial** or **non-trivial**:
 **Classification audit log entry** — write to the pipeline log regardless of classification:
 
 ```bash
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|document|info|significance={trivial|non-trivial} reason={one-sentence summary of what the diff contains}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh MAINTENANCE document info "significance={trivial|non-trivial} reason={one-sentence summary of what the diff contains}"
 ```
 
 ---
@@ -206,7 +206,7 @@ error={reason}
 ```
 
 ```bash
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|document|done|ai-context.md written ({N} patterns, {N} decisions)" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh MAINTENANCE document done "ai-context.md written ({N} patterns, {N} decisions)"
 ```
 
 **G1 — RLVR Phase 0**: After writing the document log entry, record a verifier-result for the quality check:

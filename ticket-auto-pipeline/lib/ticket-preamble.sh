@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Once-per-ticket preamble — everything ticket-auto Steps 0.1–0.6 establish
-# before the first phase agent runs, as one deterministic entrypoint.
+# Once-per-ticket preamble — everything ticket-auto establishes before the
+# first phase agent runs (its Step 0.1 is one call to this file; fleetd calls
+# it once per phase), as one deterministic entrypoint.
 #
 # Why this exists (design.md D17, task 4.10). fleetd dispatches *individual
 # phases*. Every phase skill assumes an operating environment it never builds
@@ -221,10 +222,81 @@ _tp_branch_field() {
 
 # ── The preamble itself ───────────────────────────────────────────────────────
 
+# Parse the router's raw argument string (`/ticket-auto CRE-12 --auto
+# --branch epic/x`) into the four values ticket-auto's SKILL.md used to derive
+# in prose (skill-glue-collapse moved the parsing here). Prints `KEY=value`
+# lines for TICKET_ID, AUTONOMY, FROM_PLANNED and BRANCH_FLAG; AUTONOMY is
+# empty when no autonomy flag is present, so the caller's env → manual
+# fallback still applies.
+#
+# Autonomy precedence is --semi-auto, then --auto, then --manual, whatever the
+# order they appear in — the order the router's grep cascade checked them.
+# What is left once the flags are removed is the ticket id; anything other
+# than one token is a usage error, because a stray token would otherwise
+# become part of every path derived from the id.
+#
+# Usage: ticket_preamble_parse_arg "<raw argument string>"
+ticket_preamble_parse_arg() {
+  local raw="$1" tok autonomy="" semi="" auto="" manual="" planned="false"
+  local branch="" want_branch="" id="" extra=""
+  local -a toks=()
+  read -r -a toks <<<"$raw" || true
+  for tok in "${toks[@]}"; do
+    if [ -n "$want_branch" ]; then
+      branch="$tok"
+      want_branch=""
+      continue
+    fi
+    case "$tok" in
+    --semi-auto) semi="true" ;;
+    --auto) auto="true" ;;
+    --manual) manual="true" ;;
+    --from-planned) planned="true" ;;
+    --branch) want_branch="true" ;;
+    *)
+      if [ -z "$id" ]; then
+        id="$tok"
+      else
+        extra="$extra $tok"
+      fi
+      ;;
+    esac
+  done
+  if [ -n "$want_branch" ]; then
+    echo "ticket_preamble_run: --branch needs a branch name" >&2
+    return $TP_USAGE
+  fi
+  if [ -n "$extra" ]; then
+    echo "ticket_preamble_run: unrecognised token(s) in TICKET_ARG:${extra}" >&2
+    return $TP_USAGE
+  fi
+  if [ -n "$semi" ]; then
+    autonomy="semi-auto"
+  elif [ -n "$auto" ]; then
+    autonomy="auto"
+  elif [ -n "$manual" ]; then
+    autonomy="manual"
+  fi
+  printf 'TICKET_ID=%s\nAUTONOMY=%s\nFROM_PLANNED=%s\nBRANCH_FLAG=%s\n' \
+    "$id" "$autonomy" "$planned" "$branch"
+}
+
 # Usage:
 #   ticket_preamble_run TICKET_ID=CRE-123 \
 #     [AUTONOMY=auto] [FROM_PLANNED=true] [BRANCH_FLAG=epic/x] \
 #     [PROJECT_DIR=/path] [LOGS_DIR=/path/logs] [SKIP_PREFLIGHT=true]
+#
+# Manual-router mode (ticket-auto SKILL.md Step 0), all optional:
+#   TICKET_ARG="CRE-123 --auto --branch epic/x"  parse the raw router argument
+#       string; an explicit TICKET_ID=/AUTONOMY=/FROM_PLANNED=/BRANCH_FLAG=
+#       wins over the parsed value.
+#   NEW_RUN=true         open a new run identity (run_identity_stamp --new) and
+#       append DASHBOARD_CMD_LOG / DASHBOARD_CMD_FLEET to the result block. A
+#       /ticket-auto invocation is one process spanning every phase, so each
+#       one is a new run; fleetd never passes this (see the 0.55 comment).
+#   ANNOUNCE_START=true  record the `START → APPRAISE` phase-transition gate
+#       heartbeat, at most once per heartbeat log.
+# With none of them the fleetd path is byte-identical to before they existed.
 #
 # Emits a TICKET_PREAMBLE_RESULT block on stdout. Every value fleetd needs for
 # build_phase_spawn is in it, so the caller parses one block rather than
@@ -232,6 +304,7 @@ _tp_branch_field() {
 ticket_preamble_run() {
   local TICKET_ID="" AUTONOMY="" FROM_PLANNED="" BRANCH_FLAG=""
   local PROJECT_DIR="$PWD" LOGS_DIR="" SKIP_PREFLIGHT=""
+  local TICKET_ARG="" NEW_RUN="" ANNOUNCE_START="" _have_arg=""
 
   local arg
   for arg in "$@"; do
@@ -243,6 +316,12 @@ ticket_preamble_run() {
     PROJECT_DIR=*) PROJECT_DIR="${arg#PROJECT_DIR=}" ;;
     LOGS_DIR=*) LOGS_DIR="${arg#LOGS_DIR=}" ;;
     SKIP_PREFLIGHT=*) SKIP_PREFLIGHT="${arg#SKIP_PREFLIGHT=}" ;;
+    TICKET_ARG=*)
+      TICKET_ARG="${arg#TICKET_ARG=}"
+      _have_arg="true"
+      ;;
+    NEW_RUN=*) NEW_RUN="${arg#NEW_RUN=}" ;;
+    ANNOUNCE_START=*) ANNOUNCE_START="${arg#ANNOUNCE_START=}" ;;
     *)
       echo "ticket_preamble_run: unknown parameter '$arg'" >&2
       return $TP_USAGE
@@ -250,12 +329,27 @@ ticket_preamble_run() {
     esac
   done
 
+  # TICKET_ARG fills only what no explicit key=value argument already set.
+  if [ -n "$_have_arg" ]; then
+    local _parsed _pl _pv
+    _parsed="$(ticket_preamble_parse_arg "$TICKET_ARG")" || return $TP_USAGE
+    while IFS= read -r _pl; do
+      _pv="${_pl#*=}"
+      case "$_pl" in
+      TICKET_ID=*) [ -n "$TICKET_ID" ] || TICKET_ID="$_pv" ;;
+      AUTONOMY=*) [ -n "$AUTONOMY" ] || AUTONOMY="$_pv" ;;
+      FROM_PLANNED=*) [ -n "$FROM_PLANNED" ] || FROM_PLANNED="$_pv" ;;
+      BRANCH_FLAG=*) [ -n "$BRANCH_FLAG" ] || BRANCH_FLAG="$_pv" ;;
+      esac
+    done <<<"$_parsed"
+  fi
+
   [ -n "$TICKET_ID" ] || {
     echo "ticket_preamble_run: TICKET_ID is required" >&2
     return $TP_USAGE
   }
 
-  # Same three-tier precedence as SKILL.md Step 0.1 — caller → env → manual.
+  # Three-tier precedence (the old router prose's) — caller → env → manual.
   # An unrecognised TICKET_AUTONOMY falls back rather than failing, because
   # `manual` is the safe reading of an ambiguous autonomy setting.
   if [ -z "$AUTONOMY" ]; then
@@ -310,12 +404,17 @@ ticket_preamble_run() {
     _plog "$LOG_FILE" "META" "schema" "info" "1"
   fi
 
-  # 0.55 — run identity. No --new here: the router's own Step 0.6 is what
-  # opens a new run once per process; this call site is the fleetd re-entry
-  # path, invoked once per phase, so it must only rehydrate the open run
+  # 0.55 — run identity. No --new by default: the manual router (NEW_RUN=true,
+  # below) is what opens a new run once per process; this call site is the
+  # fleetd re-entry path, invoked once per phase, so it must only rehydrate the open run
   # (run_identity_stamp's own guard makes every call but the first a no-op).
+  # NEW_RUN=true is that router, and the one caller allowed to open a run.
   source "$_TP_LIB_DIR/run-identity.sh"
-  run_identity_stamp "$TICKET_ID" "$LOG_FILE" || true
+  if [ "$NEW_RUN" = "true" ]; then
+    run_identity_stamp "$TICKET_ID" "$LOG_FILE" --new || true
+  else
+    run_identity_stamp "$TICKET_ID" "$LOG_FILE" || true
+  fi
   if [ "$SKIP_PREFLIGHT" != "true" ]; then
     run_identity_ticket_meta "$TICKET_ID" "$LOG_FILE" || true
   fi
@@ -420,6 +519,11 @@ ticket_preamble_run() {
     _plog "$LOG_FILE" "META" "from-planned" "info" "$FROM_PLANNED"
   fi
 
+  if [ "$ANNOUNCE_START" = "true" ] &&
+    ! grep -q '|gate|phase-transition|ok|START → APPRAISE' "$HB_LOG_FILE" 2>/dev/null; then
+    hb_gate "phase-transition" "ok" "START → APPRAISE" 2>/dev/null || true
+  fi
+
   cat <<EOF
 TICKET_PREAMBLE_RESULT:
   TICKET_ID: $TICKET_ID
@@ -438,6 +542,12 @@ TICKET_PREAMBLE_RESULT:
   MERGE_POLICY: $MERGE_POLICY
   REPOS_ROOT: ${_ctx[REPOS_ROOT]}
 EOF
+  # Appended after the fleetd fields, never interleaved: fleetd's parser
+  # ignores fields it does not know, and fleetd never passes NEW_RUN anyway.
+  if [ "$NEW_RUN" = "true" ]; then
+    printf '  DASHBOARD_CMD_LOG: python3 ~/.claude/skills/ticket-auto/dashboard.py %s\n' "$LOG_FILE"
+    printf '  DASHBOARD_CMD_FLEET: python3 ~/.claude/skills/ticket-auto/dashboard.py --fleet %s\n' "$LOGS_DIR"
+  fi
 }
 
 # Direct invocation: `bash ticket-preamble.sh TICKET_ID=CRE-123 …`.

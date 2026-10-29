@@ -24,8 +24,8 @@ Beyond the ~40 bash call sites below, many `skills/*/SKILL.md` files instruct an
 `get_issue`/`get_comments`/`save_comment` via prose ("Linear access strategy") rather than through a
 bash script calling a shared helper. These are agent-mediated: the agent reads the ticket for its own
 judgment (appraisal, implementation, PR review), not a deterministic bash branch. They already carry
-explicit fail-closed instructions in prose — `skills/ticket-auto/SKILL.md:29`: *"A failed or malformed
-fetch must be a hard stop for the step, never substituted with a placeholder and evaluated further"* —
+explicit fail-closed instructions in prose — `lib/skill-preamble.md` § 9 ("get_issue failure pattern"): *"A failed or malformed fetch must be
+treated as a hard stop for the step, never substituted with a placeholder and evaluated further"* —
 and `skills/ticket-critique/SKILL.md:36-41` does the same inline. There is no shared-helper mechanism
 for prose to call, so section 3's helper does not apply to them, and they are not enumerated
 individually here — the design's own "~40 call sites" figure matches the bash-only count below,
@@ -119,7 +119,7 @@ resolve_merge_policy() {
 On failure this echoes **nothing** and returns 1. Its only two callers capture stdout only:
 
 ```bash
-# ticket-pr-review/SKILL.md:411, ticket-verify path is analogous for UAT policy
+# ticket-pr-review/SKILL.md Step 6b, ticket-verify path is analogous for UAT policy
 merge_policy=$(resolve_merge_policy "{TICKET-ID}" 2>/dev/null)
 ...
 elif [ -n "$merge_policy" ]; then
@@ -135,7 +135,7 @@ both as "no restriction" — a PR under an epic whose directive actually declare
 `Merge Policy: manual` could auto-merge if the tracker read fails at exactly this check. **Narrow
 blast radius**: this fallback only executes when `ticket-pr-review` is invoked standalone with
 neither `$AUTONOMY` nor `$MERGE_POLICY` pre-set in the environment (the comment at
-`SKILL.md:403-406` says so explicitly) — in the normal autonomous pipeline, `MERGE_POLICY` is
+`ticket-pr-review/SKILL.md` Step 6b says so explicitly) — in the normal autonomous pipeline, `MERGE_POLICY` is
 already resolved once during `ticket-preamble.sh` and exported into the agent's env file, so this
 particular read is never reached. Still a genuine decision-read disagreement per the letter of the
 spec ("SHALL NOT proceed on a substituted, empty ... value"), and in scope for section 6 if the

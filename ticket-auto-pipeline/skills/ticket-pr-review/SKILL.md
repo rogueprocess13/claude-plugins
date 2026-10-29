@@ -58,7 +58,7 @@ TRACE
 
 ## Step 1 — Fetch the Linear ticket
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|fetch-ticket|start|Fetching ticket" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW fetch-ticket start "Fetching ticket"
 
 Call the Linear access strategy to fetch the ticket (bash `get_issue` when `LINEAR_API_KEY` is set, MCP `get_issue` fallback otherwise).
 
@@ -66,7 +66,7 @@ Capture:
 - `title`, `description` (requirements source)
 - `labels`, `status`, `url`
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|fetch-ticket|done|Fetched" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW fetch-ticket done "Fetched"
 
 **Resolve the ticket workspace directory** — the same directory every other pipeline
 phase (`ticket-appraise`, `ticket-implement`, `ticket-verify`) already created and
@@ -87,19 +87,9 @@ build-output log in Step 4). If not found, fall back to `resolve_ticket_dir` in
 
 Activate the analyzer persona:
 ```bash
-# Ticket type: manifest `type`, else `bug` when context.md's Labels line has `bug`, else none.
-# An unknown manifest type is dropped, not passed — the selector exits 1 on it.
-source ~/.claude/skills/lib/manifest-read.sh 2>/dev/null || true
-_ps_type=""
-if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
-  _ps_type=$(get_ticket_manifest_field "{TICKET-ID}" type 2>/dev/null || true)
-fi
-case "$_ps_type" in bug | feature | improvement | security | chore | refactor) ;; *) _ps_type="" ;; esac
-if [ -z "$_ps_type" ] && grep -m1 '^\*\*Labels:\*\*' "{ticket-dir}/context.md" 2>/dev/null |
-  sed 's/^\*\*Labels:\*\*//' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qix bug; then
-  _ps_type=bug
-fi
-eval "$(TICKET_TEXT_FILE="{ticket-dir}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --phase review ${_ps_type:+--type "$_ps_type"})"
+# --ticket-dir derives the type (manifest `type`, else `bug` from context.md's Labels line, else none)
+# and passes it as the selector's --type; it also feeds the selector the ticket text.
+eval "$(TICKET_ID="{TICKET-ID}" TICKET_TEXT_FILE="{ticket-dir}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --phase review --ticket-dir "{ticket-dir}")"
 for _k in PERSONA_BASE PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_DEBUG; do echo "$_k=${!_k:-}"; done
 ```
 Read the persona file at `$PERSONA_BASE`. Inject its content as role context for this step. If `$PERSONA_AUTO_INCLUDE` is non-empty, read it too. If `$PERSONA_TESTDATA` is non-empty, read it too and check the diff's seeds and fixtures for idempotency, namespaced keys, referential integrity and production personal data.
@@ -108,19 +98,19 @@ If `$PERSONA_DEBUG` is non-empty (a bug ticket), append two requirements to the 
 - **Fix at the root cause** — the change addresses the root cause stated in `notes.md` (`### Root cause hypothesis`, or the implementer's recorded cause), not only the symptom site where the failure showed up.
 - **Regression test** — a regression test exists in the diff that fails without the fix and passes with it.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|extract-requirements|start|Extracting requirements" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW extract-requirements start "Extracting requirements"
 
 Parse the ticket description into a numbered requirements checklist. Each item must be a concrete, verifiable statement — not a paraphrase of intent. If acceptance criteria are explicitly listed, use those verbatim. If not, derive them from the description.
 
 Record the checklist — it drives the validation in Step 5.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|extract-requirements|done|{N} requirements" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW extract-requirements done "{N} requirements"
 
 ---
 
 ## Step 3 — Find the PR and branch
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|find-pr|start|Finding PR" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW find-pr start "Finding PR"
 
 **Resolve the code repo before searching.** The shared preamble guard forces cwd to the
 `tickets` workspace — itself a git repo with no code PRs — so a bare `gh pr list` always
@@ -157,7 +147,7 @@ review:
 
 ```bash
 if [ -n "$LOG_FILE" ] && grep -q '|IMPLEMENT|commit-push|skip|' "$LOG_FILE" && [ "$(echo "$PR_LIST" | jq 'length')" = "0" ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|pr-review|done|N/A — no PR (verification-only ticket, no source diff produced by IMPLEMENT)" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh PR-REVIEW pr-review done "N/A — no PR (verification-only ticket, no source diff produced by IMPLEMENT)"
   exit 0
 fi
 ```
@@ -168,9 +158,9 @@ Otherwise, if no PR is found → stop and tell the user:
 Capture: `number`, `headRefName`, `baseRefName`, `url` (from `$PR_LIST`).
 Extract `owner` and `repo` from the PR URL (`https://github.com/{owner}/{repo}/pull/{number}`) for REST API calls in subsequent steps — this should match `$GH_REPO` resolved above; the PR URL remains the source of truth since a ticket can in principle touch more than one repo.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|find-pr|done|PR #{number}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW find-pr done "PR #{number}"
 # Write PR number to pipeline log for detect-resume.sh (primary lookup, not fallback)
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|checkout-pr|done|{number}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW checkout-pr done "{number}"
 
 ---
 
@@ -192,7 +182,7 @@ This produces the full set of changes introduced by the branch relative to its b
 
 ## Step 4.5 — Structural impact analysis (GitNexus)
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|gitnexus-impact|start|Running detect_changes" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW gitnexus-impact start "Running detect_changes"
 
 **Pre-flight: GitNexus reachability + branch verification (#359).** Reachability alone is not enough — `list_repos` can return healthy while the indexed clone sits on a branch completely unrelated to this PR, which silently produces a confidently-wrong diff (`detect_changes --scope compare` diffs whatever the indexed clone happens to have checked out). Verify both:
 
@@ -220,15 +210,15 @@ Only once both checks pass: call `mcp__gitnexus__detect_changes` with `scope: "c
 - Note that changed files have no indexed execution flows (shell scripts, config, docs — expected for some repos), or that the index could not be verified/trusted for this branch
 - Log a warning and proceed — never block on GitNexus availability
 
-**If GitNexus's structural diff is unreliable for this repo** (branch verification failed, or the result failed the subset sanity check above) and you fall back to running the project's own test command directly as manual verification: redirect that command's stdout/stderr to `{ticket-dir}/pr-review-build-{repo-slug}.log`, never to `$LOG_FILE`. `$LOG_FILE` only ever gets one structured summary line (pass/fail, test counts), e.g. `[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|manual-verify|done|{repo}: {pass|fail}, {N} tests" >> "$LOG_FILE"`. Every consumer of the pipeline log (`detect-resume.sh`, `gate-check.sh`) parses strict `ISO|PHASE|STEP|STATUS|MSG` rows — raw build console output breaks that contract even though current parsers happen to skip unmatched lines.
+**If GitNexus's structural diff is unreliable for this repo** (branch verification failed, or the result failed the subset sanity check above) and you fall back to running the project's own test command directly as manual verification: redirect that command's stdout/stderr to `{ticket-dir}/pr-review-build-{repo-slug}.log`, never to `$LOG_FILE`. `$LOG_FILE` only ever gets one structured summary line (pass/fail, test counts), e.g. `bash ~/.claude/skills/lib/plog.sh PR-REVIEW manual-verify done "{repo}: {pass|fail}, {N} tests"`. Every consumer of the pipeline log (`detect-resume.sh`, `gate-check.sh`) parses strict `ISO|PHASE|STEP|STATUS|MSG` rows — raw build console output breaks that contract even though current parsers happen to skip unmatched lines.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|gitnexus-impact|done|{N} affected flows, risk: {highest-risk}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW gitnexus-impact done "{N} affected flows, risk: {highest-risk}"
 
 ---
 
 ## Step 5 — Validate requirements against diff
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|validate-diff|start|Validating against requirements" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW validate-diff start "Validating against requirements"
 
 For each requirement from Step 2, evaluate whether the diff contains code that directly addresses it:
 
@@ -242,7 +232,7 @@ Build a requirements coverage table:
 |---|---|---|
 | 1 | {requirement} | ✅ / ⚠️ / ❌ |
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|validate-diff|done|Coverage: {pass}/{total}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW validate-diff done "Coverage: {pass}/{total}"
 
 ---
 
@@ -295,7 +285,7 @@ write_verifier_result verifier=pr_review verdict=<PASS|WARN|BLOCK> criteria_met=
 
 ## Step 6 — Post findings to PR + update Linear
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|post-findings|start|Posting review findings" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW post-findings start "Posting review findings"
 
 Format the findings as a GitHub comment and post:
 
@@ -374,9 +364,9 @@ Delegate to the flow executor:
 
   # Record the decision so any Done reached without an individual UAT step is
   # explainable from the log alone.
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-policy|info|${policy}" >> {LOG_FILE}
+  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META uat-policy info "${policy}"
   if [ -n "$_merge_pending_flag" ]; then
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|uat-decision|info|trigger=${trigger}; merge pending: ${_merge_reason}" >> {LOG_FILE}
+    bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META uat-decision info "trigger=${trigger}; merge pending: ${_merge_reason}"
   fi
 
   bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} "$trigger"
@@ -407,11 +397,11 @@ This adds `reviewed` or `rejected`, keeping all other labels — only when `_rc`
 `_gate_blocked` (set only on the ✅ branch; always `false` on the ⚠️ branch, since
 `pr-review-fail` carries no `verdict_gate`) carries forward into Steps 6b/7/8 below.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|post-findings|done|Verdict: {✅|⚠️}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW post-findings done "Verdict: {✅|⚠️}"
 
 ### Step 6b — Merge PR if all requirements addressed
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|start|Merge decision" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision start "Merge decision"
 
 If the verdict has ⚠️ or ❌, skip this step entirely. Likewise, if Step 5.5's ADR gate check
 returned `CONFLICT`, `CREATED_PROPOSED`, or `SUPERSEDE_REQUIRED`, skip this step — treat that
@@ -450,7 +440,7 @@ gh pr merge {number} --repo {owner}/{repo} --squash
 
 Post the same message as a PR comment.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|done|skipped: $_merge_blocked_reason" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "skipped: $_merge_blocked_reason"
 
 **If `_merge_blocked_reason` is empty**, check that all GitHub build checks have passed before merging.
 
@@ -500,7 +490,7 @@ manually once you've confirmed checks are green.
 
 Post the same message as a PR comment.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|done|blocked: checks command failed" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "blocked: checks command failed"
 
 **Otherwise, parse the JSON array.** An empty array (`[]`) means the PR has no configured
 checks — that is legitimately not a failure, proceed to the merge (this branch is a belt-and-
@@ -530,7 +520,7 @@ Fix the failing checks and re-run `/ticket-pr-review {TICKET-ID}` or merge manua
 
 Post the same message as a PR comment.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|done|blocked: failing checks" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "blocked: failing checks"
 
 **If the array is empty, or every check's bucket is `pass`/`skipping`:**
 
@@ -565,7 +555,7 @@ Resolve the conflicts on the branch and re-run `/ticket-pr-review {TICKET-ID}`.
 
 Post the same message as a PR comment.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|done|blocked: conflict markers" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "blocked: conflict markers"
 
 **If no conflict markers found:**
 
@@ -574,14 +564,14 @@ gh api "repos/{owner}/{repo}/pulls/{number}/merge" -X PUT -f merge_method=squash
   echo "ERROR: REST API merge failed for PR #{number}" >&2
   hb-wrap.sh retry "pr-merge" "fail" "REST API merge failed for PR #{number}" \
     "{\"pr_number\":\"{number}\",\"owner\":\"{owner}\",\"repo\":\"{repo}\"}"
-  [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|fail|gh api merge failed for PR #{number}" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision fail "gh api merge failed for PR #{number}"
 }
 ```
 **Why REST API:** `gh pr merge` uses GraphQL which has eventual consistency — a newly created PR may not be immediately queryable. The REST `/pulls/{number}/merge` endpoint is immediately consistent and avoids the "Could not resolve to a PullRequest" error.
 
 If the merge fails (conflicts, branch protection, etc.), report it to the user — do not force-merge.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|PR-REVIEW|merge-decision|done|{merged|skipped|gate-blocked}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "{merged|skipped|gate-blocked}"
 
 ---
 

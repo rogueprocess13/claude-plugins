@@ -39,7 +39,7 @@ Also: if `--from-step` is set, **suppress Resume Mode** in Step 1 — the worksp
 
 ## Step 1 — Set up local workspace
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|setup-workspace|start|Creating ticket workspace" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE setup-workspace start "Creating ticket workspace"
 
 Run `/ticket-setup {TICKET-ID}` and wait for it to complete.
 
@@ -48,13 +48,13 @@ Run `/ticket-setup {TICKET-ID}` and wait for it to complete.
 
 The ticket-setup output provides: directory path, title, user, status, priority, labels, epic, environment. Use these values throughout the remaining steps — do not re-fetch from Linear.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|setup-workspace|done|Workspace ready" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE setup-workspace done "Workspace ready"
 
 ---
 
 ## Step 1.3 — Fast-Path Check (planned tickets)
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|fast-path|start|Checking planned ticket eligibility" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE fast-path start "Checking planned ticket eligibility"
 
 **Before the task tracker and any LLM investigation**, check whether this ticket qualifies for accelerated appraisal via Planner Context metadata.
 
@@ -107,10 +107,10 @@ If `FAST_PATH_ELIGIBLE=true`:
 3. **Write pipeline log:**
 
    ```bash
-   [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|fast-path|done|Eligible — ${FAST_PATH_REASON}, Strategy=${FAST_PATH_STRATEGY}, Confidence=${FAST_PATH_CONFIDENCE}" >> "$LOG_FILE"
+   bash ~/.claude/skills/lib/plog.sh APPRAISE fast-path done "Eligible — ${FAST_PATH_REASON}, Strategy=${FAST_PATH_STRATEGY}, Confidence=${FAST_PATH_CONFIDENCE}"
    # G3: write from-planned marker so downstream consumers (Phase 1 inspector,
    # trajectory) can confidence-weight verifier results from planned tickets
-   [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|from-planned|info|true" >> "$LOG_FILE"
+   bash ~/.claude/skills/lib/plog.sh META from-planned info "true"
    ```
 
 4. **Skip to Step 2.7 (Readiness critique).** The following steps are COVERED by fast-path:
@@ -144,7 +144,7 @@ If `FAST_PATH_ELIGIBLE=false`:
 ```bash
 [ -n "$HB_LOG_FILE" ] && hb-wrap.sh decision "fast-path" "fired" "skipped" \
   '{"eligible":"false","reason":"'"$FAST_PATH_REASON"'"}'
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|fast-path|skip|Not eligible — ${FAST_PATH_REASON}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE fast-path skip "Not eligible — ${FAST_PATH_REASON}"
 ```
 
 Continue to Step 1.5 normally.
@@ -256,24 +256,14 @@ Unverified findings are never carried.
 Activate the analyzer persona before scoring:
 
 ```bash
-# Ticket type: manifest `type`, else `bug` when the ticket's labels include `bug`, else none.
-# An unknown manifest type is dropped, not passed — the selector exits 1 on it.
-source ~/.claude/skills/lib/manifest-read.sh 2>/dev/null || true
-_ps_type=""
-if declare -f get_ticket_manifest_field >/dev/null 2>&1; then
-  _ps_type=$(get_ticket_manifest_field "{TICKET-ID}" type 2>/dev/null || true)
-fi
-case "$_ps_type" in bug | feature | improvement | security | chore | refactor) ;; *) _ps_type="" ;; esac
-if [ -z "$_ps_type" ] && grep -m1 '^\*\*Labels:\*\*' "{TICKET-DIR}/context.md" 2>/dev/null |
-  sed 's/^\*\*Labels:\*\*//' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qix bug; then
-  _ps_type=bug
-fi
-eval "$(TICKET_TEXT_FILE="{TICKET-DIR}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --phase appraise ${_ps_type:+--type "$_ps_type"})"
+# --ticket-dir derives the type (manifest `type`, else `bug` from context.md's Labels line, else none)
+# and passes it as the selector's --type; it also feeds the selector the ticket text.
+eval "$(TICKET_ID="{TICKET-ID}" TICKET_TEXT_FILE="{TICKET-DIR}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --phase appraise --ticket-dir "{TICKET-DIR}")"
 for _k in PERSONA_BASE PERSONA_AUTO_INCLUDE PERSONA_TESTDATA PERSONA_DEBUG; do echo "$_k=${!_k:-}"; done
 ```
 Read the persona file at `$PERSONA_BASE`. Inject its content as role context for this step. If `$PERSONA_TESTDATA` is non-empty, read it too: the ticket creates or depends on test data, so score where that data comes from and how it is loaded. Keep the printed `PERSONA_DEBUG` value for Step 3 / Step 3-Agent — **do not read that file here**: the analyzer persona already covers the evidence lens, and the only thing the debugger overlay changes at appraisal is the `### Root cause hypothesis` subsection Step 3 writes.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|complexity-sweep|start|Scoring complexity axes" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE complexity-sweep start "Scoring complexity axes"
 
 Score the ticket on the axes below using only what ticket-setup already returned (title, description, labels, comments, epic). No codebase reads yet. Each axis that fires adds its **weight**; a total of **3 or more** classifies `complex`, below 3 classifies `simple`. Weak axes weigh 2 (one alone stays `simple`, any two escalate); strong axes weigh 3 (each escalates on its own).
 
@@ -307,7 +297,7 @@ Record the decision in notes.md under a `## Complexity` heading — four fields,
 
 `**Score:**` stays exactly `simple` or `complex` — it is the line every downstream parser reads. The other three lines are the audit trail: a false `simple` found later by `/ticket-retro` (`false_simple_tickets`) is traced back to the axis that failed to fire through them.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|complexity-sweep|done|{simple|complex}, score: {N}/3, axes: {axis:weight list}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE complexity-sweep done "{simple|complex}, score: {N}/3, axes: {axis:weight list}"
 
 ---
 
@@ -315,7 +305,7 @@ Record the decision in notes.md under a `## Complexity` heading — four fields,
 
 > **Fast-path:** Skip this step if fast-path is active. Prior art context is provided by the Planner Context block (Decision, Affected Services, and Target Symbols fields). The `## Prior Art` section in notes.md was already written.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|prior-art|start|Searching claude-mem" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE prior-art start "Searching claude-mem"
 
 Run the `/claude-mem:mem-search` skill with 2–3 keywords derived from the ticket title and description (e.g. component name, feature area, error message fragment). Keep the query tight — one focused search, not multiple.
 
@@ -401,7 +391,7 @@ Append ai-context.md hits to the same `## Prior Art` section, tagged `[ai-contex
 
 If no ai-context.md hits score ≥40%, do not add a new entry — the section already reflects the claude-mem and local-ticket results.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|prior-art|done|{N} hits" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE prior-art done "{N} hits"
 
 Proceed to Step 2.7.
 
@@ -409,7 +399,7 @@ Proceed to Step 2.7.
 
 ## Step 2.7 — Readiness critique
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|critique|start|Validating ticket completeness" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE critique start "Validating ticket completeness"
 
 Run:
 
@@ -420,13 +410,13 @@ Run:
 - If the skill reports **BLOCKED** → the ticket is missing required information. Stop here — do not proceed to Step 3. The skill has already posted a comment to Linear and added `needs-info`.
 - If the skill reports **WARNINGS** or **CLEAR** → proceed to Step 3 or Step 3-Agent per the complexity decision from Step 2.5.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|critique|done|{BLOCKED|WARNINGS|CLEAR}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE critique done "{BLOCKED|WARNINGS|CLEAR}"
 
 ---
 
 ## Step 2.8 — Blast Radius Analysis (GitNexus)
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|blast-radius|start|Running impact analysis" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE blast-radius start "Running impact analysis"
 
 Derive target symbols from the ticket title, description, and labels. Extract at minimum: the primary component/module name, any mentioned API endpoints, and any class or file names referenced in the ticket. Use these as targets for `impact()`.
 
@@ -478,12 +468,12 @@ The HIGH/CRITICAL-risk and 2+-flows triggers still apply to additive targets.
 **Non-blocking fallback:** If the `mcp__gitnexus__impact` tool is unavailable or returns an error, log a warning and proceed:
 
 ```bash
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|blast-radius|warn|GitNexus unavailable — falling back to manual tracing" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE blast-radius warn "GitNexus unavailable — falling back to manual tracing"
 ```
 
 Do NOT block the pipeline on GitNexus availability. If blast radius data is unavailable, the Blast radius axis does not fire and the complexity classification from Step 2.5 stands.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|blast-radius|done|Risk: {highest-risk}, d=1: {max-d1-callers}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE blast-radius done "Risk: {highest-risk}, d=1: {max-d1-callers}"
 
 ---
 
@@ -491,7 +481,7 @@ Do NOT block the pipeline on GitNexus availability. If blast radius data is unav
 
 > **Fast-path:** Skip this step if fast-path is active. The Planner Context provides Target Symbols as investigation starting points. The `## Initial Investigation` section in notes.md was already populated. A lightweight pass is still recommended: use `smart_search` or `smart_outline` to confirm each target symbol exists at its listed path, and note any discrepancies in `## Open Questions`. But do NOT run the full multi-tier investigation (3a–3e).
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|codebase-investigation|start|Tracing call chain" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE codebase-investigation start "Tracing call chain"
 
 Based on the ticket's description and labels, identify which service(s) are involved. Use the codebase map from CLAUDE.md to find the right repository under `{REPOS_ROOT}` (resolved in Step 0.5).
 
@@ -816,13 +806,13 @@ Only when Step 2.5 printed a non-empty `PERSONA_DEBUG`. Do not read the debugger
 
 Phrase the disproof check as something that *would be found*, never as an absence ("X does not exist", "nothing calls Y") — Step 3.5 demotes negative existentials to `[needs-human]` and would strip the hypothesis. Use the words "would disprove". One hypothesis only; if the evidence supports none, write `- **Hypothesis:** none — {what is still unknown}` and add the gap to `## Open Questions`.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|codebase-investigation|done|{N} files traced" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE codebase-investigation done "{N} files traced"
 
 ---
 
 ## Step 3-Agent — Investigate the codebase (delegated path — complex tickets)
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|codebase-investigation|start|Delegating to Explore agent" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE codebase-investigation start "Delegating to Explore agent"
 
 ### 3-Agent-a — Load prescan knowledge and wiki context
 
@@ -878,7 +868,7 @@ Answer each question below with specific file paths and line numbers. If you can
 - Do NOT re-interpret or summarise — use the raw evidence as-is
 - If Step 2.5 printed a non-empty `PERSONA_DEBUG`, then write the `### Root cause hypothesis` subsection exactly as Step 3f describes, citing only file:line evidence the agent returned
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|codebase-investigation|done|{N} files traced" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE codebase-investigation done "{N} files traced"
 
 ---
 
@@ -886,7 +876,7 @@ Answer each question below with specific file paths and line numbers. If you can
 
 Runs after both Step 3 and Step 3-Agent — codebase investigation always produces this step's input regardless of which path ran. Nothing here reasons about the ticket itself; it only checks whether things already written in notes.md are actually true.
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|claim-verify|start|Verifying negative-existential claims" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE claim-verify start "Verifying negative-existential claims"
 
 ### 3.5a — Enforce Open Questions tagging
 
@@ -932,7 +922,7 @@ Evidence: {output, or file:line and matching text}
 For each claim verdict, write one log entry:
 
 ```bash
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|claim-verify|info|Claim ${N}: ${VERDICT} — ${claim_text}" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META claim-verify info "Claim ${N}: ${VERDICT} — ${claim_text}"
 ```
 
 Then act on it:
@@ -953,10 +943,10 @@ Before continuing to Step 4, re-scan `## Open Questions`:
 If any REFUTED negative existential required a correction, re-run 3.5c against just the corrected text to confirm the fix holds before moving on.
 
 ```bash
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-result|{pass|fail}|claim-verify: {N} confirmed, {M} refuted, {K} unverifiable" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh META gate-result "{pass|fail}" "claim-verify: {N} confirmed, {M} refuted, {K} unverifiable"
 ```
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|claim-verify|done|{N} confirmed, {M} refuted, {K} unverifiable" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE claim-verify done "{N} confirmed, {M} refuted, {K} unverifiable"
 
 ---
 
@@ -979,7 +969,7 @@ This sets state → `Todo`, assignee → `me`, and adds `claimed` + the complexi
 
 ## Step 5 — Hand off to executor
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|handoff|start|Writing final report" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE handoff start "Writing final report"
 
 **Pre-handoff completeness gate** — before reporting, verify `notes.md` is ready for the executor:
 
@@ -989,14 +979,14 @@ NOTES_FILE="{ticket-dir}/notes.md"
 # Check ## Complexity section with a populated Score line
 _score=$(grep -A5 "^## Complexity" "$NOTES_FILE" 2>/dev/null | grep "^\*\*Score:\*\*" | grep -oi "simple\|complex" | head -1)
 if [ -z "$_score" ]; then
-  [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|handoff|fail|notes.md missing ## Complexity with Score" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh APPRAISE handoff fail "notes.md missing ## Complexity with Score"
   # Stop — tell the user the complexity sweep is incomplete
 fi
 
 # Check ## Initial Investigation section has content beyond the template stub
 _inv_lines=$(awk '/^## Initial Investigation/{found=1; next} found && /^## /{exit} found{print}' "$NOTES_FILE" | grep -vc "^\s*$")
 if [ "${_inv_lines:-0}" -lt 2 ]; then
-  [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|handoff|fail|notes.md ## Initial Investigation is empty or stub" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh APPRAISE handoff fail "notes.md ## Initial Investigation is empty or stub"
   # Stop — tell the user to complete Step 3 before running ticket-appraise-exec
 fi
 ```
@@ -1024,7 +1014,7 @@ notes.md is fully populated. Review it, then run:
 This will create the change artifacts and update Linear.
 ```
 
-[ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|APPRAISE|handoff|done|Reported to user" >> "$LOG_FILE"
+bash ~/.claude/skills/lib/plog.sh APPRAISE handoff done "Reported to user"
 
 ---
 

@@ -429,7 +429,7 @@ deterministic bash check that makes that impossible regardless of how the empty 
 _wlock="$HOME/.claude/skills/lib/wiki-lock.sh"
 if [ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git" ]; then
   echo "WARNING: WIKI_ROOT not configured or not a git repo — skipping wiki commit" >&2
-  [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|skip|WIKI_ROOT not configured or not a git repo" >> "$LOG_FILE"
+  bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-commit skip "WIKI_ROOT not configured or not a git repo"
 else
   # adr-governance-gate: run before staging — adr-check.sh's immutability check
   # diffs the working-tree body against the last COMMITTED revision, so it must
@@ -439,13 +439,13 @@ else
   if [ "$_adr_check_rc" -ne 0 ] && echo "$_adr_check_out" | grep -q 'ACCEPTED_ADR_MODIFIED'; then
     echo "ERROR: adr-check.sh found a modification to an Accepted ADR — refusing to commit WIKI_ROOT." >&2
     echo "Accepted ADRs are immutable in meaning (docs/adr-schema.md). Revert the edit and draft a superseding ADR instead." >&2
-    [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|fail|ACCEPTED_ADR_MODIFIED — commit refused" >> "$LOG_FILE"
+    bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-commit fail "ACCEPTED_ADR_MODIFIED — commit refused"
     bash "$_wlock" release --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}" >/dev/null
     exit 1
   elif [ "$_adr_check_rc" -ne 0 ]; then
     # Other adr-check.sh violations (schema, hedging, etc.) are logged but do not
     # block the commit — same non-fatal posture as Step 3's wiki-check.sh lint.
-    [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|adr-check|warn|violations found — see command output" >> "$LOG_FILE"
+    bash ~/.claude/skills/lib/plog.sh MAINTENANCE adr-check warn "violations found — see command output"
   fi
 
   # Scoped commit, never `git add -A`: wiki-lock.sh stages and commits only the
@@ -460,9 +460,9 @@ else
     6) echo "Nothing of this run's to commit in WIKI_ROOT — skipping commit." ;;
     5)
       echo "WARNING: WIKI_ROOT lock no longer held by {TICKET-ID} — commit refused" >&2
-      [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|fail|WIKI_ROOT lock not held — commit refused" >> "$LOG_FILE"
+      bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-commit fail "WIKI_ROOT lock not held — commit refused"
       ;;
-    *) [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-commit|fail|git commit failed (rc $_wcommit_rc)" >> "$LOG_FILE" ;;
+    *) bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-commit fail "git commit failed (rc $_wcommit_rc)" ;;
   esac
 fi
 if [ -n "$WIKI_ROOT" ] && [ -d "$WIKI_ROOT" ]; then
@@ -501,9 +501,9 @@ if [ -n "$WIKI_ROOT" ] && [ -d "$WIKI_ROOT" ]; then
   _wiki_verify_rc=$?
   _wiki_verify_count=$(echo "$_wiki_verify_out" | grep -oE 'violations=[0-9]+' | tail -1 | cut -d= -f2)
   if [ "$_wiki_verify_rc" -eq 2 ]; then
-    [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-verify|fail|setup error — see command output" >> "$LOG_FILE"
+    bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-verify fail "setup error — see command output"
   elif [ "$_wiki_verify_rc" -ne 0 ]; then
-    [ -n "$LOG_FILE" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|MAINTENANCE|wiki-verify|warn|${_wiki_verify_count:-?} violations found — see command output" >> "$LOG_FILE"
+    bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-verify warn "${_wiki_verify_count:-?} violations found — see command output"
   fi
 fi
 ```

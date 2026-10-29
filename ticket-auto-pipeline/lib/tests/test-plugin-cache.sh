@@ -184,10 +184,12 @@ echo "--- Test 3: inline bootstrap blocks ---"
 # skill-preamble.md, skill-preamble-auto.md and ticket-gate-reconcile/SKILL.md no
 # longer carry a flow.sh resolver: they fire triggers through lib/flow-run.sh,
 # which uses tap_cache_find (guarded by lib/tests/test-flow-run.sh).
-BLOCK_FILES="ticket-auto-pipeline/skills/ticket-auto/SKILL.md
-ticket-auto-pipeline/skills/ticket-flow/SKILL.md
-ticket-auto-pipeline/skills/ticket-env-check/SKILL.md
-fleet-controller/skills/fleet-env-check/SKILL.md"
+# ticket-flow, ticket-env-check (tap_cache_find) and fleet-features
+# (fleet_cache_find) source the synced resolver instead of a pasted block, so
+# they are not listed. ticket-auto lost its last block (Step 0.4 _validate_sh)
+# to lib/ticket-preamble.sh (_tp_validate_script, Test 2). Only files that
+# still carry a block belong here — a listed file with none fails.
+BLOCK_FILES="fleet-controller/skills/fleet-env-check/SKILL.md"
 
 # extract_blocks <file> — prints each block, NUL-separated.
 extract_blocks() {

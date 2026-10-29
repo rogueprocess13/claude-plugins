@@ -211,24 +211,26 @@ test_no_persona_skills_do_not_reference_persona_debug() {
 test_implement_step2_passes_type_and_logs_meta_line() {
   local sec
   sec=$(_section "$SKILLS_DIR/ticket-implement/SKILL.md" '^## Step 2 — ' '^## Step 2\.5')
-  echo "$sec" | grep -q -- '--type' || {
-    echo "  Step 2 does not pass --type"
+  # Type derivation (manifest type, else bug label) lives in persona-select.sh
+  # --ticket-dir, covered by lib/test-persona-select.sh section 1.7.
+  echo "$sec" | grep -q -- '--ticket-dir "{ticket-dir}"' || {
+    echo "  Step 2 does not pass --ticket-dir"
     return 1
   }
-  echo "$sec" | grep -q 'get_ticket_manifest_field "{TICKET-ID}" type' || {
-    echo "  Step 2 does not derive the type from the manifest"
+  echo "$sec" | grep -q 'for _k in PERSONA_TYPE ' || {
+    echo "  Step 2 does not print PERSONA_TYPE (Part B reuses it)"
     return 1
   }
   echo "$sec" | grep -q 'PERSONA_DEBUG_SPECIALIZER' || {
     echo "  Step 2 does not read PERSONA_DEBUG_SPECIALIZER"
     return 1
   }
-  echo "$sec" | grep -qF '|META|persona-select|info|base=' || {
+  echo "$sec" | grep -qF 'plog.sh META persona-select info "base=' || {
     echo "  Step 2 does not write META|persona-select|info|base=…"
     return 1
   }
   # Never an IMPLEMENT|persona-select line — detect-resume would turn it into IMPLEMENT_FROM.
-  if echo "$sec" | grep -qF '|IMPLEMENT|persona-select|'; then
+  if echo "$sec" | grep -qE '\|IMPLEMENT\|persona-select\||plog\.sh IMPLEMENT persona-select'; then
     echo "  Step 2 writes an IMPLEMENT|persona-select line"
     return 1
   fi
@@ -262,8 +264,8 @@ test_implement_rework_section_has_debugger_rules() {
 test_appraise_step3_writes_root_cause_hypothesis() {
   local md="$SKILLS_DIR/ticket-appraise/SKILL.md" s25 s3 s3a
   s25=$(_section "$md" '^## Step 2\.5' '^## Step 2\.6')
-  echo "$s25" | grep -q -- '--type' || {
-    echo "  Step 2.5 does not pass --type"
+  echo "$s25" | grep -q -- '--ticket-dir "{TICKET-DIR}"' || {
+    echo "  Step 2.5 does not pass --ticket-dir (which derives --type)"
     return 1
   }
   s3=$(_section "$md" '^## Step 3 — ' '^## Step 3-Agent')
@@ -285,7 +287,7 @@ test_appraise_step3_writes_root_cause_hypothesis() {
 test_pr_review_step2_adds_bug_checks() {
   local sec tok missing=""
   sec=$(_section "$SKILLS_DIR/ticket-pr-review/SKILL.md" '^## Step 2 — ' '^## Step 3 — ')
-  for tok in 'PERSONA_DEBUG' 'root cause' 'regression test' '--type'; do
+  for tok in 'PERSONA_DEBUG' 'root cause' 'regression test' '--ticket-dir "{ticket-dir}"'; do
     echo "$sec" | grep -qF -- "$tok" || missing="$missing [$tok]"
   done
   [ -z "$missing" ] || {

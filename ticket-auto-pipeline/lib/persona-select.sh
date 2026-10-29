@@ -24,6 +24,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: persona-select.sh --repo <path> [--layer FE|BE|infra] [--phase appraise|implement|review|audit|prescan]
                          [--type bug|feature|improvement|security|chore|refactor] [--remediation] [--with-qa]
+                         [--ticket-dir <dir>]
 
 Emits persona file paths as KEY=value lines:
   PERSONA_BASE=personas/base/<role>.md
@@ -34,6 +35,7 @@ Emits persona file paths as KEY=value lines:
   PERSONA_DEBUG=personas/base/debugger.md                      (empty unless bug type or --remediation)
   PERSONA_DEBUG_SPECIALIZER=personas/specializers/debug/<stack>.md (empty if no stack matches)
   PERSONA_SET=<newline-separated paths>                          (prescan phase only)
+  PERSONA_TYPE=<type>                                            (--ticket-dir only; empty if none)
 
 Options:
   --repo <path>      Path to the affected repository (required)
@@ -44,6 +46,13 @@ Options:
                      TICKET_ID and REPOS_ROOT are set, the local manifest `type` is used.
   --remediation      Verify-fail rework: sets the debugger overlay for any type
   --with-qa          Include qa-engineer in prescan persona set (prescan phase only)
+  --ticket-dir <dir> The ticket workspace ({ID}--slug). Uses <dir>/context.md as the
+                     ticket text when TICKET_TEXT_FILE is unset or empty, and, when
+                     --type is absent, derives the type: the manifest `type` if it is
+                     a known type (TICKET_ID from the env, else the dir name before
+                     `--`; needs REPOS_ROOT), else `bug` when context.md's
+                     `**Labels:**` line has a `bug` label, else none. An unknown
+                     manifest type is dropped. Emits PERSONA_TYPE.
 
 Ticket text for the keyword detectors comes from TICKET_TITLE, TICKET_DESCRIPTION
 and the file named by TICKET_TEXT_FILE (skills pass the ticket's context.md).
@@ -59,6 +68,8 @@ PHASE=""
 WITH_QA="false"
 TYPE=""
 REMEDIATION="false"
+TICKET_DIR=""
+TICKET_DIR_SET="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -85,6 +96,11 @@ while [[ $# -gt 0 ]]; do
   --with-qa)
     WITH_QA="true"
     shift
+    ;;
+  --ticket-dir)
+    TICKET_DIR="${2:-}"
+    TICKET_DIR_SET="true"
+    shift 2
     ;;
   --help | -h)
     usage
@@ -134,6 +150,60 @@ source "$SCRIPT_DIR/template-select.sh"
 if [ -n "$TYPE" ] && ! resolve_template "$TYPE" >/dev/null; then
   echo "ERROR: Invalid --type value '$TYPE'. Must be one of: ${KNOWN_TYPES[*]}." >&2
   exit 1
+fi
+
+# ── --ticket-dir: ticket text and type derivation ─────────────────────────────
+
+# The type list the skills used to filter on before passing --type; keep it in
+# step with template-select.sh's KNOWN_TYPES (refactor is an alias there).
+_PS_DERIVABLE_TYPES=" bug feature improvement security chore refactor "
+
+# Manifest `type` for the ticket, or empty. TICKET_ID from the env, else the
+# workspace name before `--` ({ID}--slug, ticket-dir.sh's convention).
+_ps_manifest_type() {
+  local tid="${TICKET_ID:-}" t=""
+  if [ -z "$tid" ]; then
+    tid=$(basename "$TICKET_DIR")
+    tid="${tid%%--*}"
+  fi
+  if [ -z "$tid" ] || [ -z "${REPOS_ROOT:-}" ] || [ ! -f "$SCRIPT_DIR/manifest-read.sh" ]; then
+    return 0
+  fi
+  # shellcheck source=manifest-read.sh
+  source "$SCRIPT_DIR/manifest-read.sh"
+  # `|| true`: a missing index/manifest returns 1/3, fatal under set -e.
+  t=$(TICKET_ID="$tid" get_ticket_manifest_field "$tid" type 2>/dev/null || true)
+  echo "$t"
+}
+
+# `bug` when context.md's first `**Labels:**` line carries a whole `bug`
+# label (comma-separated, case-insensitive), else nothing.
+_ps_labels_type() {
+  local ctx="$TICKET_DIR/context.md"
+  [ -f "$ctx" ] || return 0
+  if grep -m1 '^\*\*Labels:\*\*' "$ctx" 2>/dev/null |
+    sed 's/^\*\*Labels:\*\*//' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qix bug; then
+    echo bug
+  fi
+  return 0
+}
+
+if [ "$TICKET_DIR_SET" = "true" ] && [ -n "$TICKET_DIR" ] && [ -d "$TICKET_DIR" ]; then
+  if [ -z "${TICKET_TEXT_FILE:-}" ] && [ -f "$TICKET_DIR/context.md" ]; then
+    TICKET_TEXT_FILE="$TICKET_DIR/context.md"
+  fi
+  if [ -z "$TYPE" ] && [ -f "$TICKET_DIR/context.md" ]; then
+    _ps_t=$(_ps_manifest_type)
+    # Unknown (or empty / JSON null) manifest type: dropped, not an error.
+    case "$_PS_DERIVABLE_TYPES" in
+    *" ${_ps_t} "*) ;;
+    *) _ps_t="" ;;
+    esac
+    if [ -z "$_ps_t" ]; then
+      _ps_t=$(_ps_labels_type)
+    fi
+    TYPE="$_ps_t"
+  fi
 fi
 
 # ── Helper: resolve persona path relative to plugin root ───────────────────────
@@ -607,6 +677,9 @@ main() {
     echo "PERSONA_TESTDATA_SPECIALIZERS="
     echo "PERSONA_DEBUG="
     echo "PERSONA_DEBUG_SPECIALIZER="
+    if [ "$TICKET_DIR_SET" = "true" ]; then
+      echo "PERSONA_TYPE=${TYPE}"
+    fi
     return
   fi
 
@@ -663,6 +736,9 @@ main() {
   echo "PERSONA_TESTDATA_SPECIALIZERS=${testdata_specializers}"
   echo "PERSONA_DEBUG=${debug_path}"
   echo "PERSONA_DEBUG_SPECIALIZER=${debug_spec_path}"
+  if [ "$TICKET_DIR_SET" = "true" ]; then
+    echo "PERSONA_TYPE=${TYPE}"
+  fi
 }
 
 main
