@@ -64,6 +64,31 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## ticket-planner 0.26.3 (2026-10-29)
+
+Dispatch rehearsal iter 02, finding F23 (planner side): 31 `CITATION_UNRESOLVED` findings, every
+one into a file that existed only on `origin/main` or `origin/develop`. Discovery read code with
+`git show origin/<branch>:<path>` but pinned the live checkout's `main`, which had no code.
+
+### Fixed
+- **Discovery pins the ref it reads** (`planner_prompt_discovery`). The repo-ref loop takes a
+  `read_ref` per repo (default `HEAD`; e.g. `origin/main` when code was read with `git show`) and
+  records that ref and its commit. The prompt now says to cite code only from the pinned ref; code
+  that exists only on a diverged ref is described in prose, without a `path:line`. Specify's
+  self-lint section says the same.
+- **Repo-prefixed citations resolve in the pinned-ref worktree**
+  (`lib/planner-crosscheck-citations.sh`). A citation written `sandbox/backend/server.js` could not
+  match the worktree, which is named `sandbox-crosscheck-<ref>-<sha>`, while the live `sandbox` was
+  excluded. The repo prefix (relative path or directory name) now maps onto the worktree. Pinning
+  a remote ref always needs this, because the live checkout is never on it.
+
+### Changed
+- **`CITATION_UNRESOLVED` names the ref that holds the file**. When the pinned commit lacks a cited
+  file but another local or remote ref of that repo has it, the finding reads `<path> exists on
+  <ref> but not on pinned <repo>@<ref>@<sha7>` instead of "no file under REPOS_ROOT matches". New
+  read-only helpers `planner_crosscheck_other_ref_hint` and
+  `planner_crosscheck_repo_ref_worktree_dir` (`lib/planner-crosscheck-repo-ref.sh`).
+
 ## ticket-planner 0.26.2 (2026-10-29)
 
 Dispatch rehearsal iter 02, findings F24 and F25: two Crosscheck stops that were not defects in the

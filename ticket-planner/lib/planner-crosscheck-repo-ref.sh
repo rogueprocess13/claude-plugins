@@ -166,6 +166,15 @@ planner_crosscheck_repo_refs_resolved() {
   done
 }
 
+# Where the isolated worktree for <live_dir> pinned at <ref>@<sha> lives: a
+# sibling of the live checkout, so it stays under REPOS_ROOT.
+# Usage: planner_crosscheck_repo_ref_worktree_dir <live_dir> <ref> <sha>
+planner_crosscheck_repo_ref_worktree_dir() {
+  local live_dir="$1" ref="$2" sha="$3" safe_ref
+  safe_ref=$(printf '%s' "$ref" | tr -c 'A-Za-z0-9_.' '-')
+  echo "${live_dir}-crosscheck-${safe_ref}-${sha:0:12}"
+}
+
 # Ensure a tree matching <repo>@<sha> is resolvable under <repos_root>,
 # without ever mutating the live checkout (resolved by
 # planner_crosscheck_repo_dir, so nested layouts like
@@ -197,10 +206,8 @@ planner_crosscheck_repo_ref_ensure() {
 
   # git worktree add resolves the sha itself — no need to fetch/verify it
   # exists first, the exit code already tells us.
-  local safe_ref short_sha worktree_dir
-  safe_ref=$(printf '%s' "$ref" | tr -c 'A-Za-z0-9_.' '-')
-  short_sha="${sha:0:12}"
-  worktree_dir="${live_dir}-crosscheck-${safe_ref}-${short_sha}"
+  local worktree_dir
+  worktree_dir=$(planner_crosscheck_repo_ref_worktree_dir "$live_dir" "$ref" "$sha")
 
   if [ ! -d "$worktree_dir" ]; then
     git -C "$live_dir" worktree add --detach "$worktree_dir" "$sha" \
@@ -229,6 +236,51 @@ planner_crosscheck_repo_ref_setup() {
     excl=$(planner_crosscheck_repo_ref_ensure "$repos_root" "$repo" "$ref" "$sha" "$dir")
     [ -n "$excl" ] && printf '%s\n' "$excl"
   done < <(planner_crosscheck_repo_refs_resolved "$initiative_id" "$repos_root")
+  return 0
+}
+
+# ── Other-ref diagnosis (rehearsal F23) ─────────────────────────────────────
+
+# An unresolved citation whose file exists on some *other* ref of a pinned
+# repo is not a hallucination: Discovery read code from one ref (typically via
+# `git show origin/<branch>:<path>`) and pinned another. Name the refs that do
+# hold the file so the finding says what to fix — re-pin Discovery on the ref
+# it read, or stop citing code from a ref that was not pinned.
+#
+# <pinned> lines are planner_crosscheck_repo_refs_resolved output
+# ("<live_dir>\037<repo>\037<ref>\037<sha>"). <path> may carry the repo's
+# REPOS_ROOT-relative path as a prefix (`dexter-sandbox/backend/x.js`) or not.
+# Read-only: git cat-file / for-each-ref only, never a checkout or fetch.
+#
+# Usage: planner_crosscheck_other_ref_hint <repos_root> <path> <pinned_lines>
+# Output (stdout): "<path-in-repo> exists on <ref>[,<ref>…] but not on pinned
+# <repo>@<ref>@<sha7>" for the first pinned repo with a hit, or nothing.
+planner_crosscheck_other_ref_hint() {
+  local repos_root="${1%/}" path="$2" pinned="$3"
+  path="${path#"${path%%[!/]*}"}"
+  [ -n "$path" ] && [ -n "$pinned" ] || return 0
+
+  local dir repo ref sha rel rpath r
+  local -a hits
+  while IFS=$'\037' read -r dir repo ref sha; do
+    [ -n "$dir" ] && [ -n "$sha" ] || continue
+    rel="${dir#"${repos_root}"/}"
+    rpath="$path"
+    case "$path" in "${rel}"/*) rpath="${path#"${rel}"/}" ;; esac
+    git -C "$dir" cat-file -e "${sha}:${rpath}" 2>/dev/null && continue
+    hits=()
+    while IFS= read -r r; do
+      [ -n "$r" ] || continue
+      case "$r" in */HEAD) continue ;; esac
+      git -C "$dir" cat-file -e "${r}:${rpath}" 2>/dev/null && hits+=("$r")
+      [ "${#hits[@]}" -ge 3 ] && break
+    done < <(git -C "$dir" for-each-ref --format='%(refname:short)' refs/heads refs/remotes 2>/dev/null)
+    if [ "${#hits[@]}" -gt 0 ]; then
+      local IFS=,
+      echo "${rpath} exists on ${hits[*]} but not on pinned ${repo}@${ref}@${sha:0:7}"
+      return 0
+    fi
+  done <<<"$pinned"
   return 0
 }
 

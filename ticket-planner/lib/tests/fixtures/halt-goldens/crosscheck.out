@@ -4,7 +4,7 @@ Crosscheck findings — INIT-1700000000-4242 (most recent attempt)
 
 specs/export-csv.md
   CITATION_UNRESOLVED — 1 blocking
-    fix: path does not resolve under REPOS_ROOT — check for an annotation on the path side of `Name:path` (move it to the Name side), a stale path, or a file that needs a `(new)` marker
+    fix: path does not resolve under REPOS_ROOT — check for an annotation on the path side of `Name:path` (move it to the Name side), a stale path, or a file that needs a `(new)` marker; a file that exists only on a ref Discovery did not pin (the message names the ref) means re-pin Discovery on the ref it read
     specs/export-csv.md: src/billing/export.py:42 does not resolve
   CONTRACT_UNDEFINED — 1 warn
     fix: new fields are declared without canonical names — name the structure's fields explicitly in the spec
