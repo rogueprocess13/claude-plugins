@@ -89,6 +89,16 @@ paraphrased away seed article titles, field sets, request wrappers and error key
 ### Changed
 - **`GRILL_INPUT_MAX_LENGTH` defaults to 16000 and is a hard limit**: longer input exits 2 with a
   message naming the variable. Nothing is truncated any more.
+- **One invisible-character filter for the screen and the brief** (`_grill_strip_invisible`):
+  `grill_sanitize_input` now strips control, zero-width and bidi characters before the injection
+  screen, and `grill_brief_verbatim` screens its own output (exit 1, nothing written). A phrase
+  split by a control character (`ign\x01ore previous instructions`) used to pass the screen and
+  reach the sealed brief whole. CR/VT/FF inside a line are now removed rather than turned into a
+  space in the sanitized text.
+- **Epic Gen's project gate ignores the sealed brief**: when intent.md carries `## Original
+  Brief`, `planner_project_match_text` matches the state log's Objective line instead of
+  `idea.txt`, so a project named in passing in the brief cannot stop the run. Raw-idea runs are
+  unchanged.
 
 ### Upgrade notes
 - Intents sealed before grill-me 0.4.0 have no `## Original Brief`. They still verify, the planner

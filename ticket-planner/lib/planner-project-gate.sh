@@ -26,10 +26,14 @@ fi
 if ! declare -f planner_linear_list_team_projects >/dev/null 2>&1; then
   source "${_PLANNER_PROJECT_GATE_LIB_DIR}/planner-linear-api.sh"
 fi
+if ! declare -f planner_intent_brief >/dev/null 2>&1; then
+  source "${_PLANNER_PROJECT_GATE_LIB_DIR}/planner-intent-gate.sh"
+fi
 
 # Build the text a project name is matched against.
 #
-# Deliberately narrow: the initiative idea plus the Affected Services of the
+# Deliberately narrow: the initiative idea (the Objective, not idea.txt, when
+# a sealed intent's verbatim brief replaced idea.txt) plus the Affected Services of the
 # appraisal and the proposal. Matching against whole artifacts would turn any
 # passing mention of a project name into a stop.
 #
@@ -41,7 +45,18 @@ planner_project_match_text() {
 
   state_dir=$(planner_initiative_dir "$initiative_id") || return 1
 
-  cat "${state_dir}/artifacts/idea.txt" 2>/dev/null
+  # When the sealed intent carried a verbatim brief (grill-me 0.4.0+),
+  # plan mode replaced idea.txt with the whole multi-KB brief. Matching that
+  # would make a stop out of a project named in passing, so use the state
+  # log's idea line instead — the intent's Objective, the pre-brief source.
+  # Raw-idea runs and older intents still read idea.txt.
+  if [ -f "${state_dir}/artifacts/intent.md" ] &&
+    planner_intent_brief "${state_dir}/artifacts/intent.md" >/dev/null 2>&1; then
+    planner_state_read "$initiative_id" 2>/dev/null |
+      grep '^[^|]*|META|idea|' | tail -1 | cut -d'|' -f5-
+  else
+    cat "${state_dir}/artifacts/idea.txt" 2>/dev/null
+  fi
 
   for artifact in appraisal.md proposal.md; do
     [ -f "${state_dir}/artifacts/${artifact}" ] || continue
