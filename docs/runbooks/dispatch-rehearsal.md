@@ -15,7 +15,7 @@ Take one idea through grill-me → ticket-planner → `--create` → fleet dry-r
 - [ ] **Work root.** Pick a dedicated work root and export it:
   - `export WORK=<dir> REPOS_ROOT=<dir>`, where both are the same directory.
   - Only the target repo clone may live under it, because fleet dry-run enumerates every git repo under `REPOS_ROOT` and runs `git fetch` in each.
-- [ ] **Target repo.** The clone needs an `origin` remote, because the epic branch step fetches it. Its `CLAUDE.md` carries `REPOS_ROOT`, `LOCAL_URL`/`UAT_URL` and the test users.
+- [ ] **Target repo.** The clone needs an `origin` remote, because the epic branch step fetches it. Record the clean starting commit in `rehearsal/base.sha`; section 6 resets to it before every full run. Its `CLAUDE.md` carries `REPOS_ROOT`, `LOCAL_URL`/`UAT_URL` and the test users.
 - [ ] **Environment checks.** Run `/fleet-controller:fleet-env-check` and `/ticket-auto-pipeline:ticket-env-check`. Fix every problem before iteration 1, so environment issues never count as findings.
 - [ ] **Rehearsal folder.** Create `$WORK/rehearsal/`, then:
   - Write the brief to `idea.md`.
@@ -85,5 +85,8 @@ Then run the holdout idea once. A class B or C failure there means the fixes ove
 ## 6. Cleanup
 
 - Before each new full run, list the previous run's issues by the rehearsal label and cancel them, but only after a human confirms the list.
+- Then mark the previous run's initiative abandoned, so the next run's cross-initiative contract check does not compare against it (iter 02 halted on 5 `CONTRACT_MISMATCH` findings against its own cancelled predecessor):
+  `REPOS_ROOT=$WORK bash -c 'source ticket-planner/lib/planner-state.sh; planner_initiative_abandon <INIT> "rehearsal iter NN issues cancelled"'`
+- Reset the target repo to its clean starting state before the next full run: `origin`'s default branch at the setup commit, no other branches left by earlier pipeline runs, and the local checkout matching it. Code left on diverged remote branches makes Discovery cite files that are not on the ref it pins, and Crosscheck then reports them all as `CITATION_UNRESOLVED` (iter 02: 31 findings). A reset rewrites the remote, so a human runs it.
 - Keep every `iter-NN/` folder so iterations can be diffed (`diff -r`).
 - Record the outcome in next.md Step 16. The PR body gets one table row per run: findings by class, preflight failures, brief size and gate fixture results.

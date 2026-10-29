@@ -323,6 +323,29 @@ planner_config_get() {
   echo "$value"
 }
 
+# Mark an initiative abandoned: its Linear issues were cancelled and its specs
+# no longer describe anything that will be built. Cross-initiative checks
+# (planner-crosscheck-contracts.sh) then stop treating its specs as a live
+# contract. Append-only and one-way, like every other state log entry.
+# Usage: planner_initiative_abandon <initiative_id> <reason>
+# Returns: 1 when the reason is empty or the initiative has no state log.
+planner_initiative_abandon() {
+  local initiative_id="$1" reason="$2"
+  local log_file
+
+  if [ -z "$reason" ]; then
+    echo "planner-state: planner_initiative_abandon needs a reason" >&2
+    return 1
+  fi
+  log_file=$(planner_state_log "$initiative_id") || return 1
+  if [ ! -f "$log_file" ]; then
+    echo "planner-state: no state log for ${initiative_id}" >&2
+    return 1
+  fi
+  planner_state_write "$initiative_id" "META" "initiative-abandoned" "done" \
+    "$(printf '%s' "$reason" | tr '|' ' ' | tr -d '\n\r')"
+}
+
 # Is a config key set to a non-empty value?
 # Usage: planner_config_is_set <initiative_id> <key>
 # Returns: 0 when set, 1 when unset or cleared.

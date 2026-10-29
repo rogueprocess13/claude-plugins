@@ -64,6 +64,22 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## ticket-planner 0.26.1 (2026-10-29)
+
+Dispatch rehearsal iter 02, finding F22: Crosscheck's cross-initiative contract check compared a
+re-plan of the same idea against its own cancelled predecessor and halted on 5 `CONTRACT_MISMATCH`
+findings.
+
+### Added
+- **`planner_initiative_abandon <id> <reason>`** (`lib/planner-state.sh`) writes
+  `META|initiative-abandoned|done|<reason>`. One-way.
+
+### Changed
+- **`planner-crosscheck-contracts.sh`** skips sibling initiatives carrying that marker, for both
+  `CONTRACT_MISMATCH` and `CONTRACT_CONSUMERS_UNNOTIFIED`.
+- **Runbook** (`docs/runbooks/dispatch-rehearsal.md`): cleanup now marks the previous initiative
+  abandoned, and a human resets the target repo to its recorded clean commit before each full run.
+
 ## ticket-planner 0.26.0 (2026-10-24)
 
 Branch Directive base branch from config or the repo, never the agent's environment

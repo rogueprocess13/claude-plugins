@@ -183,6 +183,45 @@ case "$out" in
 *) fail "disjoint shape: quotes both files" "got: $out" ;;
 esac
 
+echo "--- an abandoned sibling initiative is not a live contract (rehearsal F22) ---"
+# Same disjoint fixture as M1, but the sibling was abandoned (its tickets were
+# cancelled). planner_initiative_abandon writes the marker this reads.
+cp -r "${TMPDIR}/m1" "${TMPDIR}/m1a"
+REPOS_M1A="${TMPDIR}/m1a/repos"
+SIB_M1A_DIR="${REPOS_M1A}/.ticket-auto/initiatives/INIT-SIB"
+printf '%s\n' "2026-10-29T00:00:00Z|META|schema|start|1" >"${SIB_M1A_DIR}/state.log"
+(
+  # shellcheck disable=SC1091
+  source "${LIB_DIR}/planner-state.sh"
+  REPOS_ROOT="$REPOS_M1A" planner_initiative_abandon "INIT-SIB" "rehearsal issues cancelled"
+) >/dev/null 2>&1
+if grep -q '|META|initiative-abandoned|done|rehearsal issues cancelled$' "${SIB_M1A_DIR}/state.log"; then
+  pass "abandon: writes META|initiative-abandoned|done with the reason"
+else
+  fail "abandon: writes META|initiative-abandoned|done with the reason" "$(cat "${SIB_M1A_DIR}/state.log")"
+fi
+if out=$(planner_crosscheck_contract_mismatch "INIT-SELF" "${REPOS_M1A}/.ticket-auto/initiatives/INIT-SELF/artifacts/specs" "$REPOS_M1A"); then
+  pass "abandoned sibling: returns 0"
+else
+  fail "abandoned sibling: returns 0" "got: $out"
+fi
+# A sibling with a state log but no marker still counts.
+printf '%s\n' "2026-10-29T00:00:00Z|META|schema|start|1" >"${INITS_M1}/INIT-SIB/state.log"
+if planner_crosscheck_contract_mismatch "INIT-SELF" "$SELF_M1" "$REPOS_M1" >/dev/null 2>&1; then
+  fail "live sibling with a state log: still returns 1" "returned 0"
+else
+  pass "live sibling with a state log: still returns 1"
+fi
+if (
+  # shellcheck disable=SC1091
+  source "${LIB_DIR}/planner-state.sh"
+  REPOS_ROOT="$REPOS_M1A" planner_initiative_abandon "INIT-SIB" ""
+) >/dev/null 2>&1; then
+  fail "abandon: empty reason is refused" "returned 0"
+else
+  pass "abandon: empty reason is refused"
+fi
+
 echo "--- overlapping shape terms across initiatives does not fire ---"
 REPOS_M2="${TMPDIR}/m2/repos"
 INITS_M2="${REPOS_M2}/.ticket-auto/initiatives"
