@@ -109,14 +109,18 @@ _planner_crosscheck_prop_terms() {
 }
 
 # Count how many of the given terms appear (literal, case-insensitive) in a
-# file.
+# file. A term also counts when it appears once the file's double quotes are
+# removed, so prose `complexity: moderate` matches the Signals JSON line
+# "complexity": "moderate" (rehearsal F25).
 # Usage: _planner_crosscheck_prop_presence_count <file> <term1> [<term2> ...]
 _planner_crosscheck_prop_presence_count() {
   local file="$1"
   shift
-  local term count=0
+  local term count=0 unquoted
+  unquoted=$(tr -d '"' <"$file" 2>/dev/null)
   for term in "$@"; do
-    if grep -qiF "$term" "$file" 2>/dev/null; then
+    if grep -qiF -- "$term" "$file" 2>/dev/null ||
+      grep -qiF -- "$term" <<<"$unquoted"; then
       count=$((count + 1))
     fi
   done
@@ -180,8 +184,86 @@ _planner_crosscheck_accepted_blocks() {
     "$consensus_file" 2>/dev/null
 }
 
+# Attribute a block's text to the ticket slugs it names. A Consensus block
+# often hands each ticket a different piece of the resolution ("- auth-api:
+# requireAuth checks ...", "- backend-foundation: every user gets a UUID
+# `id`"), so pooling the whole block's terms and asking every named spec to
+# hold a majority of them reported specs that had their own piece (dispatch
+# rehearsal F25: 3 false RESOLUTION_NOT_PROPAGATED findings).
+#
+# Units are list items (a "-", "*", "+" or "N." line plus its continuation
+# lines); text before the first item is one more unit. Within a unit, a slug
+# mention or a run of mentions joined only by commas/"and"/"or" ("a, b and c")
+# forms a group. The text after a group, up to the next group, belongs to
+# every slug in it; the unit's lead (text before its first group) also goes to
+# the first group, so "Both paths set `status`. Applies to a and b." still
+# reaches both. A unit that names no slug ("Applies to a and b." above a
+# bullet holding the resolution) is printed as a block-wide "free" line, the
+# last fallback for a slug whose own share carries no terms. Mentions are
+# matched literally on token boundaries, with surrounding backticks removed
+# with them.
+# Usage: printf '%s\n' "$block" | _planner_crosscheck_prop_segments <slug1> [<slug2> ...]
+# Output: "<slug>\tseg\t<text>", "<slug>\tlead\t<unit lead>" and
+# "\tfree\t<unit text>" lines.
+_planner_crosscheck_prop_segments() {
+  PROP_SLUGS="$*" awk '
+    function isword(c) { return c ~ /[A-Za-z0-9_-]/ }
+    function emit(u,   ns, sl, i, s, off, p, a, b, n, st, en, nm, j, k, t, g, gs, ge, gm, gap, lead, seg, ms, mm, endp) {
+      if (u == "") return
+      ns = split(ENVIRON["PROP_SLUGS"], sl, " ")
+      n = 0
+      for (i = 1; i <= ns; i++) {
+        s = sl[i]
+        off = 0
+        while ((p = index(substr(u, off + 1), s)) > 0) {
+          a = off + p
+          b = a + length(s) - 1
+          off = b
+          if (a > 1 && isword(substr(u, a - 1, 1))) continue
+          if (b < length(u) && isword(substr(u, b + 1, 1))) continue
+          if (a > 1 && b < length(u) && substr(u, a - 1, 1) == "`" && substr(u, b + 1, 1) == "`") { a--; b++ }
+          n++; st[n] = a; en[n] = b; nm[n] = s
+        }
+      }
+      if (n == 0) { print "\tfree\t" u; return }
+      for (j = 2; j <= n; j++) {
+        for (k = j; k > 1 && st[k - 1] > st[k]; k--) {
+          t = st[k]; st[k] = st[k - 1]; st[k - 1] = t
+          t = en[k]; en[k] = en[k - 1]; en[k - 1] = t
+          t = nm[k]; nm[k] = nm[k - 1]; nm[k - 1] = t
+        }
+      }
+      g = 0
+      for (j = 1; j <= n; j++) {
+        if (g > 0 && st[j] <= ge[g]) continue
+        if (g > 0) {
+          gap = substr(u, ge[g] + 1, st[j] - ge[g] - 1)
+          if (gap ~ /^[ \t,]*((and|or)[ \t]+)?$/) { gm[g] = gm[g] " " nm[j]; ge[g] = en[j]; continue }
+        }
+        g++; gs[g] = st[j]; ge[g] = en[j]; gm[g] = nm[j]
+      }
+      lead = substr(u, 1, gs[1] - 1)
+      for (i = 1; i <= g; i++) {
+        endp = (i < g) ? gs[i + 1] : length(u) + 1
+        seg = substr(u, ge[i] + 1, endp - ge[i] - 1)
+        if (i == 1) seg = lead " " seg
+        ms = split(gm[i], mm, " ")
+        for (k = 1; k <= ms; k++) {
+          print mm[k] "\tseg\t" seg
+          print mm[k] "\tlead\t" lead
+        }
+      }
+    }
+    { gsub(/\t/, " ") }
+    /^[ \t]*([-*+]|[0-9]+\.)[ \t]/ { emit(cur); cur = $0; next }
+    { cur = (cur == "") ? $0 : cur " " $0 }
+    END { emit(cur) }
+  '
+}
+
 # Check every accepted consensus finding that names 2+ known tickets for
-# asymmetric propagation into those tickets' specs.
+# asymmetric propagation into those tickets' specs. Each named spec is checked
+# against the terms of its own share of the block (_planner_crosscheck_prop_segments).
 # Usage: planner_crosscheck_consensus_propagation <consensus_file> <specs_dir>
 # Returns: 0 if clean, 1 if any finding was reported.
 planner_crosscheck_consensus_propagation() {
@@ -202,35 +284,57 @@ planner_crosscheck_consensus_propagation() {
     mapfile -t named_slugs < <(_planner_crosscheck_slugs_in_text "$block" "${known_slugs[@]}")
     [ "${#named_slugs[@]}" -ge 2 ] || continue
 
-    local stripped
-    stripped=$(_planner_crosscheck_strip_slugs "$block" "${named_slugs[@]}")
+    local -A seg_text=() lead_text=()
+    local free_text="" s_line s_slug s_kind s_text
+    while IFS= read -r s_line; do
+      s_slug="${s_line%%$'\t'*}"
+      s_line="${s_line#*$'\t'}"
+      s_kind="${s_line%%$'\t'*}"
+      s_text="${s_line#*$'\t'}"
+      case "$s_kind" in
+      seg) seg_text[$s_slug]+=" ${s_text}" ;;
+      lead) lead_text[$s_slug]+=" ${s_text}" ;;
+      free) free_text+=" ${s_text}" ;;
+      esac
+    done < <(printf '%s\n' "$block" | _planner_crosscheck_prop_segments "${named_slugs[@]}")
 
-    local -a terms
-    mapfile -t terms < <(_planner_crosscheck_prop_terms "$stripped")
-    [ "${#terms[@]}" -eq 0 ] && continue
+    # Backtick priority holds block-wide: when the block quotes identifiers,
+    # a share made only of prose ("store and auth are unchanged") carries no
+    # checkable claim and is skipped rather than matched word by word.
+    local backticked_only=0
+    case "$block" in *'`'*'`'*) backticked_only=1 ;; esac
 
-    local threshold
-    threshold=$(_planner_crosscheck_prop_threshold "${#terms[@]}")
-
-    local -a present absent
+    local -a present absent missing_terms terms
     present=()
     absent=()
-    local slug spec_file count
+    missing_terms=()
+    local slug spec_file count threshold share
     for slug in "${named_slugs[@]}"; do
       spec_file="${specs_dir}/${slug}.md"
       [ -f "$spec_file" ] || continue
+      terms=()
+      for share in "${seg_text[$slug]:-}" "${lead_text[$slug]:-}" "$free_text"; do
+        if [ "$backticked_only" -eq 1 ]; then
+          case "$share" in *'`'*'`'*) ;; *) continue ;; esac
+        fi
+        mapfile -t terms < <(_planner_crosscheck_prop_terms "$share")
+        [ "${#terms[@]}" -gt 0 ] && break
+      done
+      [ "${#terms[@]}" -eq 0 ] && continue
+      threshold=$(_planner_crosscheck_prop_threshold "${#terms[@]}")
       count=$(_planner_crosscheck_prop_presence_count "$spec_file" "${terms[@]}")
       if [ "$count" -ge "$threshold" ]; then
         present+=("$slug")
       else
         absent+=("$slug")
+        missing_terms+=("${terms[@]}")
       fi
     done
 
     if [ "${#present[@]}" -gt 0 ] && [ "${#absent[@]}" -gt 0 ]; then
       local snippet
       snippet=$(echo "$block" | tr '\n' ' ' | cut -c1-140)
-      echo "planner-crosscheck-propagation: RESOLUTION_NOT_PROPAGATED has-it=[${present[*]}] missing-it=[${absent[*]}] terms=[${terms[*]}] — \"${snippet}...\""
+      echo "planner-crosscheck-propagation: RESOLUTION_NOT_PROPAGATED has-it=[${present[*]}] missing-it=[${absent[*]}] terms=[${missing_terms[*]}] — \"${snippet}...\""
       failures=$((failures + 1))
     fi
   done < <(_planner_crosscheck_accepted_blocks "$consensus_file")

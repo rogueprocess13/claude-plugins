@@ -64,6 +64,28 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## ticket-planner 0.26.2 (2026-10-29)
+
+Dispatch rehearsal iter 02, findings F24 and F25: two Crosscheck stops that were not defects in the
+plan.
+
+### Fixed
+- **`RESOLUTION_NOT_PROPAGATED` judges each spec on its own share of a Consensus block**
+  (`lib/planner-crosscheck-propagation.sh`, F25). The check used to pool every backticked term in a
+  block and require a majority in every spec the block named, so a block that gave each ticket a
+  different piece ("- auth-api: …", "- backend-foundation: …") reported the specs that held their
+  own piece. All 3 iter-02 findings were of this kind. Text after a slug, or after a run like
+  "a, b and c", now belongs to those slugs; a unit's lead goes to its first slug. A share made only
+  of prose is skipped when the block quotes identifiers. A term also matches a spec with its double
+  quotes removed, so `complexity: moderate` matches the Signals JSON line.
+
+### Changed
+- **Discovery's Cited Artifacts exclude public reference contracts and the source material itself**
+  (`planner_prompt_discovery`, F24 = F12). A spec named by URL (e.g. RealWorld `openapi.yml`) goes
+  in API Contracts as `Reference: … not retrieved`, and specs spell out every field they rely on.
+  "The brief" pointing at detail it lacks is recorded as a gap in Constraints. Neither becomes a
+  `CITED_ARTIFACT` operator question any more. The brief's missing detail itself is grill-me F6.
+
 ## ticket-planner 0.26.1 (2026-10-29)
 
 Dispatch rehearsal iter 02, finding F22: Crosscheck's cross-initiative contract check compared a
