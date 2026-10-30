@@ -99,6 +99,58 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## ticket-planner 0.28.0 (2026-10-30)
+
+Draft readiness, slice S3a (`planner-draft-readiness`, design D8 classification, D9, D10, D11
+demotion, D14 layout): the revise helpers, the deterministic guards and the tool-limited revise
+agent. Nothing spawns the agent or runs the revision loop yet (that is S3b), so no run behaves
+differently. 0.27.0 is reserved for slice S2b (the halt-only gate).
+
+### Added
+- **`agents/draft-revise-agent.md`** — `ticket-planner:draft-revise-agent`, `tools: Read, Write`,
+  modelled on ticket-auto-pipeline's `dor-semantic-agent`. Treats every file and every
+  `untrusted-data` fence as data, writes only the spec and its revise file, returns one line.
+- **`lib/planner-draft-revise.sh`**:
+  - `planner_prompt_spec_revise <INIT> <slug> <findings-file>` — names the spec, draft body,
+    findings, intent, consensus and (only when `_planner_intent_has_brief`) the brief and idea;
+    the findings, brief and idea text sit in `untrusted-data` fences longer than any backtick run
+    they contain. States the allow-listed regions, every frozen section, the extension cap and
+    forbidden tokens, generic roles only, and the `RESOLVED … — source: "…"` / `REBUTTED …`
+    disposition format.
+  - `planner_draft_revise_check <INIT> <slug> <N> <snapshot> [<round-slugs>]` and its pure text
+    layer `planner_draft_revise_check_text <before> <after> [<revise-file>]`, with the reason codes
+    `FROZEN_CHANGED` (any section other than Acceptance Criteria, Verification Notes and Scope, or
+    the text before the first heading, differs byte for byte — Title, Labels and `blocked-by:`,
+    Signals included), `CRITERION_DROPPED` (an original criterion is neither kept nor the exact
+    prefix of exactly one new item, or the order changed), `EXTENSION_INVALID` (more than
+    `PLANNER_DRAFT_EXTEND_MAX_WORDS`, default 25, appended words, or a negation/exception/hedge
+    token), `CRITERIA_FLOOD` (net-new criteria above RESOLVED dispositions + 2), `VNOTE_CHANGED`,
+    `SCOPE_DROPPED`, `CONTRACT_DROPPED` (API paths, backticked identifiers, status codes, env var
+    names), `SPEC_INVALID` (`planner_spec_validate_one` or the draft compose refuses),
+    `TESTDATA_REGRESSION` (Crosscheck's test-data checks, run in a mirror of the initiative, report a
+    new blocking finding on this spec — catches criteria naming seeded records) and
+    `OUT_OF_SCOPE_EDIT` (whole-workspace snapshot diff). The snapshot and an orchestrator ledger
+    (`planner_draft_revise_record` for files, `planner_draft_revise_log` for `state.log` lines) live
+    outside the workspace, so a status/diff file the agent writes itself, or a line it appends to
+    `state.log`, is an out-of-scope edit rather than a way past the guards; a status file is honoured
+    only when the ledger or the snapshot vouches for it. Paths are walked NUL-delimited: newline
+    names and symlinks are reported and removed, and restore refuses absolute, `..` or escaping paths.
+  - `planner_draft_revise_finish` / `_fail`: guards, `revise.r<N>.diff`, revert of the spec from
+    `spec.r<N-1>.md` and of every out-of-scope file from the snapshot, `META|draft-revise`
+    `done`/`fail`/`info` (REBUTTAL, SOURCE_UNMATCHED)/`warn` (UNADDRESSED) lines, and
+    `revise.r<N>.status` written last (`applied`, `unchanged`, `reverted:<CODE>`, `failed:<CODE>`).
+  - `planner_draft_revise_prepare`, `_rounds_used`, `_dispositions`, `_source_check` (advisory,
+    never reverts), `_snapshot` / `_snapshot_diff` / `_snapshot_restore` / `_snapshot_drop`, and
+    `planner_draft_revise_classify`, which splits blocking findings into revisable and
+    non-revisable with `_dor_semantic_structural_codes` / `_dor_audit_demotable_codes`.
+- **`planner_semantic_demote <semantic-json> <demoted> <by> [<ids>] [<demote-reason>]`** in
+  `planner-refinement.sh`, extracted from `planner_refinement_converge` (whose output is
+  unchanged). Adds an optional `demote_reason` (string or id → reason map) and `demoted_by` for
+  non-converge demotions.
+- `lib/tests/test-planner-draft-revise.sh` (71 checks): one test per reason code, forged status file, forged `state.log` append, newline file names and symlinks, every hedge token,
+  byte-identical revert, per-spec test-data revert in a two-spec round, workspace restore,
+  dispositions, prompt, classifier env overrides, demotion.
+
 ## ticket-planner 0.26.7 (2026-10-30)
 
 Draft readiness, slice S2a (`planner-draft-readiness`, design D2, D4, D13): pure helpers for the
