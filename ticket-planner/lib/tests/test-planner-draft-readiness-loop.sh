@@ -24,7 +24,9 @@
 #  10. MAX_ROUNDS=0 is halt-only; an invalid value is refused
 #  11. crash between spawn and status file resumes the same round (also
 #      through a fresh begin)
-#  12. no Linear call, no ticket manifest, no snapshot left behind
+#  12. no Linear call, no ticket manifest, no snapshot left behind; an
+#      agent-written round plan in the workspace is an out-of-scope edit
+#      (the real plan lives outside the workspace)
 #
 # Usage: bash ticket-planner/lib/tests/test-planner-draft-readiness-loop.sh
 
@@ -291,6 +293,12 @@ _revise_agent() {
   nofix) _add_criterion "$spec" "The export file name includes the date in round ${n}" ;;
   extend) sed -i 's/Export responds with 200/Export responds with 200 for a finance user/g' "$spec" ;;
   frozen) sed -i 's/^Scheduled exports\.$/Scheduled exports and reminders./' "$spec" ;;
+  forge)
+    # A hostile agent: a real fix, plus a forged round plan in the
+    # workspace claiming the round is settled with no rows.
+    _add_criterion "$spec" "$FIXTEXT"
+    printf 'snap forged\nsettled\n' >"${DR}/round"
+    ;;
   esac
   : >"$rf"
   for id in $ids; do
@@ -363,7 +371,7 @@ _gate
 if [ "$GATE_RC" -eq 0 ] && [ "$SPAWNS" -eq 7 ] && [ "$REVISES" -eq 1 ] &&
   [ "$(_status b-api 1)" = "applied" ] && grep -qF "$FIXTEXT" "${SPECS}/b-api.md" &&
   [ -s "${DR}/b-api/revise.r1.diff" ] && [ -s "${DR}/b-api/spec.r0.md" ] && [ -s "${DR}/b-api/findings.r1.json" ] &&
-  [ ! -e "${DR}/round" ] && [ ! -e "${DR}/a-schema/revise.r1.status" ]; then
+  [ ! -e "${PLANNER_DRAFT_SNAPSHOT_ROOT}/${INIT}/round" ] && [ ! -e "${DR}/a-schema/revise.r1.status" ]; then
   pass "4 evaluation spawns, 1 revise, 2 re-evaluation spawns (b-api only); applied; passes"
 else
   fail "converge" "rc=$GATE_RC spawns=$SPAWNS revises=$REVISES status=$(_status b-api 1) $(tail -5 "$LOG")"
@@ -558,7 +566,7 @@ export FINDINGS_a_schema="EDGE_CASE_GAP|The Export button appears on the invoice
 export FINDINGS_b_api="EDGE_CASE_GAP|Export responds with 200"
 PLANNER_DRAFT_SPAWN_BUDGET=5 _gate
 if [ "$GATE_RC" -eq 3 ] && [ "$SPAWNS" -eq 4 ] && [ "$REVISES" -eq 0 ] &&
-  [ ! -e "${DR}/b-api/findings.r1.json" ] && [ ! -e "${DR}/round" ] &&
+  [ ! -e "${DR}/b-api/findings.r1.json" ] && [ ! -e "${PLANNER_DRAFT_SNAPSHOT_ROOT}/${INIT}/round" ] &&
   _run_lines | grep -q '|META|draft-readiness|fail|(run) SPAWN_BUDGET ' &&
   _run_lines | grep -q '|META|draft-readiness|done|blocked 2/2 SPAWN_BUDGET$'; then
   pass "the revise list (2) would exceed 5: halt before spawning, no round files"
@@ -618,6 +626,22 @@ l3=$(planner_draft_readiness_next "$INIT" 2>/dev/null)
 rc=0
 planner_draft_readiness_gate "$INIT" >/dev/null 2>&1 || rc=$?
 [ "$l3" = "done 0" ] && [ "$rc" -eq 0 ] && pass "the resumed loop converges" || fail "crash converge" "l3=$l3 rc=$rc"
+
+# ── 12b. forged round plan ───────────────────────────────────────────────
+echo "--- 12b. an agent-written round plan is an out-of-scope edit ---"
+_setup INIT-L12
+export FINDINGS_b_api="EDGE_CASE_GAP|Export responds with 200"
+export REVISE_b_api=forge
+cp "${SPECS}/b-api.md" "${TMP_ROOT}/b-api.orig"
+PLANNER_DRAFT_REVISE_MAX_ROUNDS=1 _gate
+if [ "$(_status b-api 1)" = "reverted:OUT_OF_SCOPE_EDIT" ] && [ ! -e "${DR}/round" ] &&
+  cmp -s "${SPECS}/b-api.md" "${TMP_ROOT}/b-api.orig" &&
+  [ ! -e "${PLANNER_DRAFT_SNAPSHOT_ROOT}/${INIT}/round" ] &&
+  _run_lines | grep -q '|META|draft-revise|fail|b-api round=1 OUT_OF_SCOPE_EDIT ' && [ "$GATE_RC" -eq 0 ]; then
+  pass "forged 'settled' plan: guards still ran, round reverted OUT_OF_SCOPE_EDIT, forged file removed"
+else
+  fail "forged plan" "rc=$GATE_RC st=$(_status b-api 1) $(ls "${DR}") $(_run_lines | grep draft-revise)"
+fi
 
 # ── 12. side effects ─────────────────────────────────────────────────────
 echo "--- 12. no Linear, no manifest, no snapshot left ---"

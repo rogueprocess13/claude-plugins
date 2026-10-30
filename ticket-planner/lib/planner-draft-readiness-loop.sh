@@ -25,9 +25,9 @@
 # reverted/failed demotion).
 #
 # Files under artifacts/draft-readiness/ added by this slice:
-#   round          an open revise round: "snap <name>", then one
-#                  "<slug> <N> <spawned> <pending>" line per spec, and
-#                  "settled" once every status file exists
+#   (outside the workspace, _pdl_round_file) round — an open revise round:
+#                  "snap <name>", then one "<slug> <N> <spawned> <pending>"
+#                  line per spec, and "settled" once every status file exists
 #   spawns         "<n> <spec-set-hash>": draft-stage spawns since the spec
 #                  set last changed between gate runs (D8)
 #   halt           "<CODE> <detail>" — run-level halt of the current run
@@ -114,9 +114,26 @@ _pdl_log() {
   fi
 }
 
+# The open revise round's plan. It lives OUTSIDE the initiative workspace,
+# next to S3a's snapshots (PLANNER_DRAFT_SNAPSHOT_ROOT, mode 0700): the
+# revise agent can Write any workspace path, so a plan it could edit (rows
+# dropped, a forged `settled`) would let it skip finish and the guards. A
+# `round` file an agent writes into the workspace is just an out-of-scope
+# edit. Prints the path; creates the directory.
+_pdl_round_file() {
+  local d
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    echo "planner-draft-readiness: invalid initiative id" >&2
+    return 1
+  }
+  d="$(_pdrv_snap_root)/$1"
+  (umask 077 && mkdir -p "$d") || return 1
+  printf '%s/round' "$d"
+}
+
 _pdl_round_snap() {
   local f
-  f="$(_pdl_root "$1")/round"
+  f=$(_pdl_round_file "$1") || return 1
   [ -f "$f" ] && awk '$1 == "snap" { print $2; exit }' "$f"
 }
 
@@ -329,10 +346,10 @@ _pdl_revise_next() {
   done
   _pdl_spawns_add "$init" "${#plan[@]}"
   _pdl_info "$init" "${#plan[@]}" 0
-  printf '%s' "$marker" | _pdrv_write "${root}/round"
+  printf '%s' "$marker" | _pdrv_write "$(_pdl_round_file "$init")"
   printf '%s' "$out" | _pdrv_write "${root}/.pending"
   if ! planner_draft_revise_snapshot "$init" "$snap"; then
-    rm -f "${root}/round" "${root}/.pending"
+    rm -f "$(_pdl_round_file "$init")" "${root}/.pending"
     return 1
   fi
   for item in "${plan[@]}"; do
@@ -362,14 +379,14 @@ _pdl_round_retry_list() {
       out+="${slug}"$'\t'"revise"$'\t'"${PLANNER_DRAFT_REVISE_AGENT}"$'\t'"${dir}/revise-prompt.r${n}.txt"$'\t'"${dir}/revise.r${n}.md"$'\n'
     fi
     marker+="${slug} ${n} ${spawned} ${pending}"$'\n'
-  done <"${root}/round"
+  done <"$(_pdl_round_file "$init")"
   if [ -z "$out" ]; then
     echo "planner-draft-readiness: open revise round with nothing to spawn" >&2
     return 1
   fi
   # Retries are counted, never refused: a half-finished round cannot halt.
   _pdl_spawns_add "$init" "$k" "$snap"
-  printf '%s' "$marker" | _pdl_write "$init" "$snap" "${root}/round"
+  printf '%s' "$marker" | _pdrv_write "$(_pdl_round_file "$init")"
   printf '%s' "$out" | _pdl_write "$init" "$snap" "${root}/.pending"
   printf '%s' "$out"
 }
@@ -392,9 +409,9 @@ _pdl_round_apply() {
     [ -n "$slug" ] && [ "$slug" != "snap" ] && [ "$slug" != "settled" ] || continue
     rows+=("${slug} ${n} ${spawned} ${pending}")
     csv+="${csv:+,}${slug}"
-  done <"${root}/round"
+  done <"$(_pdl_round_file "$init")"
 
-  if ! grep -qx settled "${root}/round"; then
+  if ! grep -qx settled "$(_pdl_round_file "$init")"; then
     marker="snap ${snap}"$'\n'
     local row
     for row in "${rows[@]}"; do
@@ -407,7 +424,7 @@ _pdl_round_apply() {
       marker+="${slug} ${n} ${spawned} ${pending}"$'\n'
     done
     if [ "$wait" -eq 1 ]; then
-      printf '%s' "$marker" | _pdl_write "$init" "$snap" "${root}/round"
+      printf '%s' "$marker" | _pdrv_write "$(_pdl_round_file "$init")"
       return 0
     fi
     for row in "${rows[@]}"; do
@@ -421,7 +438,7 @@ _pdl_round_apply() {
         return 1
       fi
     done
-    echo settled >>"${root}/round"
+    echo settled >>"$(_pdl_round_file "$init")"
   fi
 
   planner_draft_revise_snapshot_drop "$init" "$snap"
@@ -449,7 +466,7 @@ _pdl_round_apply() {
       echo "CROSSCHECK_BLOCKED $(_pdl_crosscheck_codes "$init")" | _pdrv_write "${root}/halt"
     fi
   fi
-  rm -f "${root}/round"
+  rm -f "$(_pdl_round_file "$init")"
   return 0
 }
 

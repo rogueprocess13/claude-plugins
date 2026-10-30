@@ -199,7 +199,7 @@ planner_draft_readiness_begin() {
   _planner_refinement_source_deps >/dev/null || return 1
   # A revise round left open by a crash: write nothing the round's guards
   # would see as an out-of-scope edit; `next` settles the round first.
-  if [ -f "${root}/round" ]; then
+  if [ -f "$(_pdl_round_file "$init")" ]; then
     planner_draft_revise_log "$init" "$(_pdl_round_snap "$init")" "META" "draft-readiness" "start" "evaluator=${DOR_SEMANTIC_EVALUATOR:-} resume-round"
     return 0
   fi
@@ -268,9 +268,9 @@ planner_draft_readiness_next() {
   root=$(planner_draft_readiness_root "$init") || return 1
   # The spawn list is stdout's only content (strict contract, step 1e).
   # An open revise round settles first and writes nothing else meanwhile.
-  if [ -f "${root}/round" ]; then
+  if [ -f "$(_pdl_round_file "$init")" ]; then
     planner_draft_readiness_apply "$init" >&2 || return 1
-    if [ -f "${root}/round" ]; then
+    if [ -f "$(_pdl_round_file "$init")" ]; then
       _pdl_round_retry_list "$init"
       return
     fi
@@ -349,7 +349,7 @@ planner_draft_readiness_apply() {
   root=$(planner_draft_readiness_root "$init") || return 1
   [ -d "$root" ] || return 0
   _planner_refinement_source_deps >/dev/null || return 1
-  if [ -f "${root}/round" ]; then
+  if [ -f "$(_pdl_round_file "$init")" ]; then
     _pdl_round_apply "$init"
     return
   fi
