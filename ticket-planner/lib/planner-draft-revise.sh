@@ -29,7 +29,14 @@
 #   planner_draft_revise_snapshot_diff <INIT> <name> [<allowed-glob>...]
 #   planner_draft_revise_snapshot_restore <INIT> <name> <relpath>...
 #   planner_draft_revise_snapshot_drop <INIT> <name>
-#       whole-workspace snapshot (OUT_OF_SCOPE_EDIT, D10)
+#       whole-workspace snapshot (OUT_OF_SCOPE_EDIT, D10), kept OUTSIDE the
+#       workspace under PLANNER_DRAFT_SNAPSHOT_ROOT (default
+#       ${XDG_STATE_HOME:-~/.local/state}/ticket-planner/draft-revise/<INIT>/<name>)
+#   planner_draft_revise_record <INIT> <snapshot> <relpath>
+#   planner_draft_revise_log <INIT> <snapshot> <phase> <step> <status> <msg>
+#       the orchestrator's ledger: workspace files and state.log lines it
+#       writes between the snapshot and the round's last finish. Anything
+#       else that changed is an OUT_OF_SCOPE_EDIT.
 #   planner_draft_revise_check <INIT> <slug> <N> <snapshot> [<round-slugs-csv>]
 #       every D10 guard; prints "<CODE> <detail>" per failure, rc 1 on any
 #   planner_draft_revise_finish <INIT> <slug> <N> <snapshot> [<round-slugs-csv>]
@@ -690,13 +697,75 @@ planner_draft_revise_source_check() {
 
 # ── Whole-workspace snapshot (OUT_OF_SCOPE_EDIT, D10) ─────────────────────
 
-# Files the gate itself writes while agents run, never compared: snapshots,
-# lock files, the spawn counter, and the per-round diff/status outputs.
+# Trust model: the revise agent can Write any path, so the snapshot and the
+# orchestrator's ledger live OUTSIDE the initiative workspace, in a 0700
+# directory the prompt never names. Inside the workspace nothing is exempt
+# except the planner's own lock files: every other change must either be an
+# allowed path for this round or match the ledger — a hash (file) or a line
+# (state.log) that the orchestrator recorded when it wrote it. A status or
+# diff file the agent writes itself is therefore an OUT_OF_SCOPE_EDIT, and a
+# line the agent appends to state.log is too.
+
+# Marker printed by _snapshot_diff for any path whose name cannot be handled
+# line by line (newline/CR) or that is not a regular file (symlink).
+PLANNER_DRAFT_UNSAFE_PATH="(unsafe path)"
+
+_pdrv_snap_root() {
+  printf '%s' "${PLANNER_DRAFT_SNAPSHOT_ROOT:-${XDG_STATE_HOME:-${HOME}/.local/state}/ticket-planner/draft-revise}"
+}
+
+_pdrv_snap_dir() {
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] && [[ "$2" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    echo "planner-draft-revise: invalid initiative or snapshot name" >&2
+    return 1
+  }
+  printf '%s/%s/%s' "$(_pdrv_snap_root)" "$1" "$2"
+}
+
+# Lock files the planner itself takes while a round runs. Exact names only.
+_pdrv_is_lock_path() {
+  case "$1" in
+  state.log.lock | state.log.answers-lock | .phase-lock | state.log.answers-lock.d/*) return 0 ;;
+  esac
+  return 1
+}
+
+# Is <relpath> safe to name on a line and to join under the workspace?
+_pdrv_path_ok() {
+  local p="$1"
+  [ -n "$p" ] || return 1
+  case "$p" in /* | ..* | */../* | */.. | *$'\n'* | *$'\r'*) return 1 ;; esac
+  [[ "$p" == ./* ]] && return 1
+  return 0
+}
+
+# Regular files of the workspace, one relpath per line (NUL-safe walk). Paths
+# that cannot be listed safely, and symlinks, are reported once as the unsafe
+# marker on fd 3 when it is open (callers that care redirect it).
 _pdrv_snapshot_list() {
-  local sd="$1"
-  (cd "$sd" && find . -type f -print) | sed 's#^\./##' | grep -vE \
-    '(^|/)\.phase-lock$|\.lock$|-lock$|-lock\.d/|^artifacts/draft-readiness/\.snapshots/|^artifacts/draft-readiness/spawns$|^artifacts/draft-readiness/[^/]+/revise\.r[0-9]+\.(diff|status)$|\.tmp\.[0-9]+$' |
-    LC_ALL=C sort
+  local sd="$1" p
+  while IFS= read -r -d '' p; do
+    p="${p#./}"
+    _pdrv_is_lock_path "$p" && continue
+    if ! _pdrv_path_ok "$p" || [ -L "${sd}/${p}" ]; then
+      continue
+    fi
+    [ -f "${sd}/${p}" ] && printf '%s\n' "$p"
+  done < <(cd "$sd" && find . \( -type f -o -type l \) -print0) | LC_ALL=C sort
+  return 0
+}
+
+# Does the workspace hold a path _snapshot_list cannot represent?
+_pdrv_has_unsafe() {
+  local sd="$1" p
+  while IFS= read -r -d '' p; do
+    p="${p#./}"
+    _pdrv_is_lock_path "$p" && continue
+    if ! _pdrv_path_ok "$p" || [ -L "${sd}/${p}" ]; then
+      return 0
+    fi
+  done < <(cd "$sd" && find . -mindepth 1 \( -type f -o -type l -o -name $'*[\n\r]*' \) -print0)
+  return 1
 }
 
 _pdrv_manifest() {
@@ -707,31 +776,126 @@ _pdrv_manifest() {
   done < <(_pdrv_snapshot_list "$sd")
 }
 
-_pdrv_snap_dir() {
-  local root
-  root=$(planner_draft_readiness_root "$1") || return 1
-  printf '%s/.snapshots/%s' "$root" "$2"
+# Resolved <relpath> stays under the workspace (no symlinked parent escapes).
+_pdrv_under() {
+  local sd="$1" p="$2" root target
+  _pdrv_path_ok "$p" || return 1
+  root=$(realpath -m -- "$sd") || return 1
+  target=$(realpath -m -- "${sd}/${p}") || return 1
+  [[ "$target" == "$root"/* ]]
 }
 
 # planner_draft_revise_snapshot <INIT> <name>
+# rc 1 when the workspace already holds an unsafe path (nothing is taken).
 planner_draft_revise_snapshot() {
   local init="$1" name="$2" sd snap
-  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || {
-    echo "planner-draft-revise: invalid snapshot name '$name'" >&2
-    return 1
-  }
   sd=$(_pdrv_state_dir "$init") || return 1
   snap=$(_pdrv_snap_dir "$init" "$name") || return 1
+  if _pdrv_has_unsafe "$sd"; then
+    echo "planner-draft-revise: workspace holds a symlink or a file name with a newline — refusing to snapshot" >&2
+    return 1
+  fi
   rm -rf "$snap"
-  mkdir -p "$snap"
+  (umask 077 && mkdir -p "$snap") || return 1
   _pdrv_manifest "$sd" >"$snap/manifest" || return 1
-  _pdrv_snapshot_list "$sd" >"$snap/list"
-  tar -cf "$snap/files.tar" -C "$sd" -T "$snap/list" || return 1
+  _pdrv_snapshot_list "$sd" | sed 's#^#./#' >"$snap/list"
+  : >"$snap/ledger"
+  : >"$snap/loglines"
+  tar -cf "$snap/files.tar" -C "$sd" --verbatim-files-from -T "$snap/list" || return 1
+}
+
+# planner_draft_revise_record <INIT> <snapshot> <relpath>
+# Records a workspace file the orchestrator itself wrote during the round, by
+# content hash, so _snapshot_diff does not report it.
+planner_draft_revise_record() {
+  local init="$1" name="$2" p="$3" sd snap
+  sd=$(_pdrv_state_dir "$init") || return 1
+  snap=$(_pdrv_snap_dir "$init" "$name") || return 1
+  [ -d "$snap" ] && _pdrv_under "$sd" "$p" && [ -f "${sd}/${p}" ] || return 1
+  printf '%s  %s\n' "$(sha256sum <"${sd}/${p}" | cut -d' ' -f1)" "$p" >>"$snap/ledger"
+}
+
+# planner_draft_revise_log <INIT> <snapshot> <phase> <step> <status> <msg>
+# planner_state_write plus a ledger entry for the exact line written, so the
+# line is not mistaken for an agent-appended (forged) state.log line.
+planner_draft_revise_log() {
+  local init="$1" name="$2" phase="$3" step="$4" st="$5" msg="$6" snap log line
+  planner_state_write "$init" "$phase" "$step" "$st" "$msg" || return 1
+  snap=$(_pdrv_snap_dir "$init" "$name") || return 0
+  [ -d "$snap" ] || return 0
+  log=$(planner_state_log "$init") || return 0
+  msg=$(printf '%s' "$msg" | tr '|\r\n' '   ')
+  line=$(grep -F -- "|${phase}|${step}|${st}|${msg}" "$log" | tail -1)
+  [ -n "$line" ] && printf '%s\n' "$line" >>"$snap/loglines"
+  return 0
+}
+
+# Was <relpath>'s current content written by the orchestrator this round?
+_pdrv_in_ledger() {
+  local sd="$1" snap="$2" p="$3" h
+  [ -f "${sd}/${p}" ] || return 1
+  h=$(sha256sum <"${sd}/${p}" | cut -d' ' -f1)
+  grep -qxF -- "${h}  ${p}" "$snap/ledger"
+}
+
+# Appended state.log lines (after the snapshot's bytes), one per line.
+_pdrv_log_tail() {
+  local sd="$1" snap="$2" old size
+  old=$(mktemp)
+  tar -xOf "$snap/files.tar" ./state.log >"$old" 2>/dev/null
+  size=$(stat -c %s "$old")
+  if [ "$(stat -c %s "$sd/state.log")" -lt "$size" ] || ! cmp -s -n "$size" "$old" "$sd/state.log"; then
+    rm -f "$old"
+    return 1
+  fi
+  rm -f "$old"
+  tail -c +"$((size + 1))" "$sd/state.log"
+}
+
+# Every appended state.log line was recorded by planner_draft_revise_log.
+_pdrv_log_ok() {
+  local sd="$1" snap="$2" tail_txt l
+  grep -q '  state.log$' "$snap/manifest" || return 1
+  tail_txt=$(_pdrv_log_tail "$sd" "$snap") || return 1
+  local -A want=()
+  while IFS= read -r l; do
+    [ -n "$l" ] && want["$l"]=$((${want["$l"]:-0} + 1))
+  done <"$snap/loglines"
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    [ "${want["$l"]:-0}" -gt 0 ] || return 1
+    want["$l"]=$((${want["$l"]} - 1))
+  done <<<"$tail_txt"
+  return 0
+}
+
+# Restores state.log to the snapshot plus the orchestrator's own lines.
+_pdrv_restore_log() {
+  local sd="$1" snap="$2" tmp l
+  tmp=$(mktemp "${sd}/.state.log.restore.XXXXXX") || return 1
+  tar -xOf "$snap/files.tar" ./state.log >"$tmp" 2>/dev/null
+  local -A want=()
+  while IFS= read -r l; do
+    [ -n "$l" ] && want["$l"]=$((${want["$l"]:-0} + 1))
+  done <"$snap/loglines"
+  # Candidates: the appended tail when the snapshot's bytes are intact, else
+  # the whole current log; only lines the orchestrator recorded survive.
+  local src
+  src=$(_pdrv_log_tail "$sd" "$snap") || src=$(cat "$sd/state.log" 2>/dev/null)
+  while IFS= read -r l; do
+    if [ -n "$l" ] && [ "${want["$l"]:-0}" -gt 0 ]; then
+      want["$l"]=$((${want["$l"]} - 1))
+      printf '%s\n' "$l" >>"$tmp"
+    fi
+  done <<<"$src"
+  mv -f "$tmp" "$sd/state.log"
 }
 
 # planner_draft_revise_snapshot_diff <INIT> <name> [<allowed-glob>...]
 # Prints every changed, added or removed workspace path not matched by an
-# allowed glob. state.log is append-only: growth passes, a rewrite does not.
+# allowed glob and not written by the orchestrator (ledger). state.log may
+# only grow, and only by lines planner_draft_revise_log recorded. A path that
+# cannot be named on a line, or a symlink, prints PLANNER_DRAFT_UNSAFE_PATH.
 planner_draft_revise_snapshot_diff() {
   local init="$1" name="$2" sd snap
   shift 2
@@ -741,6 +905,7 @@ planner_draft_revise_snapshot_diff() {
     echo "planner-draft-revise: no snapshot '$name'" >&2
     return 1
   }
+  _pdrv_has_unsafe "$sd" && echo "$PLANNER_DRAFT_UNSAFE_PATH"
   local p g allowed
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -750,31 +915,41 @@ planner_draft_revise_snapshot_diff() {
       [[ "$p" == $g ]] && allowed=1
     done
     [ "$allowed" -eq 1 ] && continue
-    if [ "$p" = "state.log" ] && grep -q '  state.log$' "$snap/manifest" && [ -f "$sd/state.log" ]; then
-      local old
-      old=$(mktemp)
-      tar -xOf "$snap/files.tar" state.log >"$old" 2>/dev/null
-      if [ "$(stat -c %s "$sd/state.log")" -ge "$(stat -c %s "$old")" ] &&
-        cmp -s -n "$(stat -c %s "$old")" "$old" "$sd/state.log"; then
-        rm -f "$old"
-        continue
-      fi
-      rm -f "$old"
+    if [ "$p" = "state.log" ] && [ -f "$sd/state.log" ]; then
+      _pdrv_log_ok "$sd" "$snap" && continue
+    elif _pdrv_in_ledger "$sd" "$snap" "$p"; then
+      continue
     fi
     echo "$p"
   done < <(diff <(cat "$snap/manifest") <(_pdrv_manifest "$sd") | grep '^[<>]' | cut -c3- | sed 's/^[0-9a-f]*  //' | LC_ALL=C sort -u)
 }
 
 # planner_draft_revise_snapshot_restore <INIT> <name> <relpath>...
+# Each path must be relative, without `..`, and resolve under the workspace.
+# PLANNER_DRAFT_UNSAFE_PATH removes every symlink and every newline/CR-named
+# entry in the workspace (none can exist in a snapshot).
 planner_draft_revise_snapshot_restore() {
   local init="$1" name="$2" sd snap p rc=0
   shift 2
   sd=$(_pdrv_state_dir "$init") || return 1
   snap=$(_pdrv_snap_dir "$init" "$name") || return 1
+  [ -f "$snap/list" ] || return 1
   for p in "$@"; do
     [ -n "$p" ] || continue
-    if grep -qxF -- "$p" "$snap/list"; then
-      tar -xf "$snap/files.tar" -C "$sd" -- "$p" || rc=1
+    if [ "$p" = "$PLANNER_DRAFT_UNSAFE_PATH" ]; then
+      find "$sd" -mindepth 1 \( -type l -o -name $'*[\n\r]*' \) -prune -exec rm -rf -- {} + || rc=1
+      continue
+    fi
+    if ! _pdrv_under "$sd" "$p"; then
+      echo "planner-draft-revise: refusing to restore unsafe path" >&2
+      rc=1
+      continue
+    fi
+    if [ "$p" = "state.log" ]; then
+      _pdrv_restore_log "$sd" "$snap" || rc=1
+    elif grep -qxF -- "./$p" "$snap/list"; then
+      rm -f -- "${sd:?}/${p}"
+      tar -xf "$snap/files.tar" -C "$sd" -- "./$p" || rc=1
     else
       rm -f -- "${sd:?}/${p}"
     fi
@@ -891,14 +1066,42 @@ _pdrv_restore_round() {
   mapfile -t globs < <(_pdrv_allowed_globs "$round")
   mapfile -t paths < <(planner_draft_revise_snapshot_diff "$init" "$snap" "${globs[@]}")
   [ "${#paths[@]}" -gt 0 ] && planner_draft_revise_snapshot_restore "$init" "$snap" "${paths[@]}"
+  # spec.r<N-1>.md is now the snapshot's copy even if the agent touched it.
   cp -p "$d/spec.r$((n - 1)).md" "${spec}.tmp.$$" && mv -f "${spec}.tmp.$$" "$spec"
 }
 
+_pdrv_rel() {
+  local sd
+  sd=$(_pdrv_state_dir "$1") || return 1
+  printf '%s' "${2#"$sd"/}"
+}
+
+# Orchestrator-owned write of a workspace file: atomic, then ledger entry.
+_pdrv_owned_write() {
+  local init="$1" snap="$2" f="$3"
+  _pdrv_write "$f" || return 1
+  planner_draft_revise_record "$init" "$snap" "$(_pdrv_rel "$init" "$f")" || true
+}
+
 _pdrv_diff() {
-  local d="$1" spec="$2" n="$3"
+  local init="$1" snap="$2" d="$3" spec="$4" n="$5"
   diff -u --label "spec.r$((n - 1)).md" --label "$(basename "$spec")" \
-    "$d/spec.r$((n - 1)).md" "$spec" >"$d/revise.r${n}.diff.tmp.$$" 2>/dev/null
-  mv -f "$d/revise.r${n}.diff.tmp.$$" "$d/revise.r${n}.diff"
+    "$d/spec.r$((n - 1)).md" "$spec" 2>/dev/null | _pdrv_owned_write "$init" "$snap" "$d/revise.r${n}.diff"
+}
+
+# A status file is honoured only when the orchestrator wrote it: recorded in
+# this round's ledger, or already present (same bytes) when the snapshot was
+# taken. One the agent wrote during the round is neither, so the guards run
+# and report it as OUT_OF_SCOPE_EDIT.
+_pdrv_status_trusted() {
+  local init="$1" snapname="$2" f="$3" sd snap rel h
+  [ -f "$f" ] || return 1
+  sd=$(_pdrv_state_dir "$init") || return 1
+  snap=$(_pdrv_snap_dir "$init" "$snapname") || return 1
+  [ -f "$snap/manifest" ] || return 1
+  rel=$(_pdrv_rel "$init" "$f")
+  h=$(sha256sum <"$f" | cut -d' ' -f1)
+  grep -qxF -- "${h}  ${rel}" "$snap/ledger" || grep -qxF -- "${h}  ${rel}" "$snap/manifest"
 }
 
 # planner_draft_revise_fail <INIT> <slug> <N> <snapshot> <REASON> [<round-slugs-csv>]
@@ -906,14 +1109,14 @@ planner_draft_revise_fail() {
   local init="$1" slug="$2" n="$3" snap="$4" reason="$5" round="${6:-$2}" d spec
   d=$(_pdrv_dir "$init" "$slug") || return 1
   spec=$(_pdrv_spec "$init" "$slug") || return 1
-  [ -f "$d/revise.r${n}.status" ] && {
+  if _pdrv_status_trusted "$init" "$snap" "$d/revise.r${n}.status"; then
     cat "$d/revise.r${n}.status"
     return 0
-  }
-  _pdrv_diff "$d" "$spec" "$n"
+  fi
+  _pdrv_diff "$init" "$snap" "$d" "$spec" "$n"
   _pdrv_restore_round "$init" "$slug" "$n" "$snap" "$round"
-  planner_state_write "$init" "META" "draft-revise" "fail" "${slug} round=${n} ${reason} \"agent failed; spec left unchanged\"" || true
-  echo "failed:${reason}" | _pdrv_write "$d/revise.r${n}.status"
+  planner_draft_revise_log "$init" "$snap" "META" "draft-revise" "fail" "${slug} round=${n} ${reason} \"agent failed; spec left unchanged\"" || true
+  echo "failed:${reason}" | _pdrv_owned_write "$init" "$snap" "$d/revise.r${n}.status"
   echo "failed:${reason}"
 }
 
@@ -924,7 +1127,7 @@ planner_draft_revise_finish() {
   spec=$(_pdrv_spec "$init" "$slug") || return 1
   rf="$d/revise.r${n}.md"
   ff="$d/findings.r${n}.json"
-  if [ -f "$d/revise.r${n}.status" ]; then
+  if _pdrv_status_trusted "$init" "$snap" "$d/revise.r${n}.status"; then
     cat "$d/revise.r${n}.status"
     return 0
   fi
@@ -932,7 +1135,7 @@ planner_draft_revise_finish() {
 
   local reasons status disp added=0 extended=0 kind
   reasons=$(planner_draft_revise_check "$init" "$slug" "$n" "$snap" "$round")
-  _pdrv_diff "$d" "$spec" "$n"
+  _pdrv_diff "$init" "$snap" "$d" "$spec" "$n"
   disp=$(planner_draft_revise_dispositions "$rf" "$ff")
 
   if [ -n "$reasons" ]; then
@@ -943,7 +1146,7 @@ planner_draft_revise_finish() {
     detail="${detail# }"
     detail="${detail//\"/\'}"
     _pdrv_restore_round "$init" "$slug" "$n" "$snap" "$round"
-    planner_state_write "$init" "META" "draft-revise" "fail" "${slug} round=${n} ${code} \"${detail}\"" || true
+    planner_draft_revise_log "$init" "$snap" "META" "draft-revise" "fail" "${slug} round=${n} ${code} \"${detail}\"" || true
     status="reverted:${code}"
   else
     if cmp -s "$d/spec.r$((n - 1)).md" "$spec"; then
@@ -961,19 +1164,19 @@ planner_draft_revise_finish() {
     [ -n "$id" ] || continue
     code=$(jq -r --arg i "$id" '[.[] | select((.id // .code) == $i) | .code][0] // "UNKNOWN"' "$ff" 2>/dev/null)
     reason="${reason//\"/\'}"
-    planner_state_write "$init" "META" "draft-revise" "info" "${slug} REBUTTAL ${code:-UNKNOWN} ${id} \"${reason}\"" || true
+    planner_draft_revise_log "$init" "$snap" "META" "draft-revise" "info" "${slug} REBUTTAL ${code:-UNKNOWN} ${id} \"${reason}\"" || true
   done < <(jq -r '.rebutted[] | [.id, .reason] | @tsv' <<<"$disp")
   while IFS= read -r id; do
-    [ -n "$id" ] && planner_state_write "$init" "META" "draft-revise" "info" "${slug} SOURCE_UNMATCHED ${id}" || true
+    [ -n "$id" ] && planner_draft_revise_log "$init" "$snap" "META" "draft-revise" "info" "${slug} SOURCE_UNMATCHED ${id}" || true
   done < <(planner_draft_revise_source_check "$init" "$slug" "$disp" "$d/spec.r$((n - 1)).md")
   while IFS= read -r id; do
-    [ -n "$id" ] && planner_state_write "$init" "META" "draft-revise" "warn" "${slug} UNADDRESSED ${id}" || true
+    [ -n "$id" ] && planner_draft_revise_log "$init" "$snap" "META" "draft-revise" "warn" "${slug} UNADDRESSED ${id}" || true
   done < <(jq -r '.unaddressed[]' <<<"$disp")
 
   if [[ "$status" != reverted:* ]]; then
-    planner_state_write "$init" "META" "draft-revise" "done" \
+    planner_draft_revise_log "$init" "$snap" "META" "draft-revise" "done" \
       "${slug} round=${n} status=${status} resolved=$(jq '.resolved | length' <<<"$disp") rebutted=$(jq '.rebutted | length' <<<"$disp") unaddressed=$(jq '.unaddressed | length' <<<"$disp") added=${added} extended=${extended}" || true
   fi
-  echo "$status" | _pdrv_write "$d/revise.r${n}.status"
+  echo "$status" | _pdrv_owned_write "$init" "$snap" "$d/revise.r${n}.status"
   echo "$status"
 }

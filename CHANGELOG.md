@@ -94,7 +94,12 @@ differently. 0.27.0 is reserved for slice S2b (the halt-only gate).
     names), `SPEC_INVALID` (`planner_spec_validate_one` or the draft compose refuses),
     `TESTDATA_REGRESSION` (Crosscheck's test-data checks, run in a mirror of the initiative, report a
     new blocking finding on this spec — catches criteria naming seeded records) and
-    `OUT_OF_SCOPE_EDIT` (whole-workspace snapshot diff; `state.log` may only grow).
+    `OUT_OF_SCOPE_EDIT` (whole-workspace snapshot diff). The snapshot and an orchestrator ledger
+    (`planner_draft_revise_record` for files, `planner_draft_revise_log` for `state.log` lines) live
+    outside the workspace, so a status/diff file the agent writes itself, or a line it appends to
+    `state.log`, is an out-of-scope edit rather than a way past the guards; a status file is honoured
+    only when the ledger or the snapshot vouches for it. Paths are walked NUL-delimited: newline
+    names and symlinks are reported and removed, and restore refuses absolute, `..` or escaping paths.
   - `planner_draft_revise_finish` / `_fail`: guards, `revise.r<N>.diff`, revert of the spec from
     `spec.r<N-1>.md` and of every out-of-scope file from the snapshot, `META|draft-revise`
     `done`/`fail`/`info` (REBUTTAL, SOURCE_UNMATCHED)/`warn` (UNADDRESSED) lines, and
@@ -107,7 +112,7 @@ differently. 0.27.0 is reserved for slice S2b (the halt-only gate).
   `planner-refinement.sh`, extracted from `planner_refinement_converge` (whose output is
   unchanged). Adds an optional `demote_reason` (string or id → reason map) and `demoted_by` for
   non-converge demotions.
-- `lib/tests/test-planner-draft-revise.sh` (56 checks): one test per reason code, every hedge token,
+- `lib/tests/test-planner-draft-revise.sh` (71 checks): one test per reason code, forged status file, forged `state.log` append, newline file names and symlinks, every hedge token,
   byte-identical revert, per-spec test-data revert in a two-spec round, workspace restore,
   dispositions, prompt, classifier env overrides, demotion.
 

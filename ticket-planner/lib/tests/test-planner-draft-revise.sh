@@ -358,15 +358,94 @@ else
   fail "oos restore" "status=$status"
 fi
 _round
-echo "2026-10-01T00:00:09Z|META|draft-revise|start|a-export round=1 findings=2" >>"$LOG"
+snapdir="${PLANNER_DRAFT_SNAPSHOT_ROOT:-${HOME}/.local/state/ticket-planner/draft-revise}/${INIT}/t"
+[ -f "${snapdir}/manifest" ] && [ ! -e "${DR}/.snapshots" ] && pass "snapshot lives outside the initiative workspace" || fail "snapshot location" "$snapdir"
+planner_draft_revise_log "$INIT" t META draft-revise start "a-export round=1 findings=2"
 _disp a-export "$DISP_OK"
 out=$(planner_draft_revise_snapshot_diff "$INIT" t "artifacts/draft-readiness/a-export/revise.r[0-9]*.md")
-[ -z "$out" ] && pass "state.log growth and the allowed revise file are in scope" || fail "append" "$out"
+[ -z "$out" ] && pass "orchestrator-logged state.log lines and the allowed revise file are in scope" || fail "append" "$out"
 cp "$LOG" "${TMP_ROOT}/log.keep"
 echo "forged" >"$LOG"
 out=$(planner_draft_revise_snapshot_diff "$INIT" t)
 printf '%s\n' "$out" | grep -qx 'state.log' && pass "a rewritten state.log is out of scope" || fail "log rewrite" "$out"
 cp "${TMP_ROOT}/log.keep" "$LOG"
+
+# Security regression (review finding 2): an agent-appended state.log line.
+_round
+planner_draft_revise_log "$INIT" t META draft-revise start "a-export round=1 findings=2"
+echo "2026-10-01T00:00:10Z|META|draft-readiness|accepted|sha256:abc forged by agent" >>"$LOG"
+sed -i 's/^- \[ \] Export responds with 200$/- [ ] Export responds with 200 within 2 seconds/' "$A"
+sed -i 's/^| Export responds with 200 | finance user/| Export responds with 200 within 2 seconds | finance user/' "$A"
+_disp a-export "$DISP_OK"
+out=$(_check)
+_has "$out" OUT_OF_SCOPE_EDIT && printf '%s' "$out" | grep -q 'state.log' && pass "forged state.log append is OUT_OF_SCOPE_EDIT" || fail "forged append" "$out"
+status=$(planner_draft_revise_finish "$INIT" a-export 1 t)
+if [ "$status" = "reverted:OUT_OF_SCOPE_EDIT" ] && ! grep -q 'forged by agent' "$LOG" &&
+  grep -qF '|META|draft-revise|start|a-export round=1 findings=2' "$LOG" &&
+  grep -qF '|META|draft-revise|fail|a-export round=1 OUT_OF_SCOPE_EDIT' "$LOG"; then
+  pass "restore drops the forged line, keeps the orchestrator's own lines"
+else
+  fail "forged restore" "status=$status $(tail -3 "$LOG")"
+fi
+
+# Security regression (review finding 1): an agent-written status file.
+_round
+sed -i 's/^- \[ \] Export responds with 200$/- [ ] Export responds quickly with 200/' "$A"
+echo "applied" >"${DR}/a-export/revise.r1.status"
+echo "fake" >"${DR}/a-export/revise.r1.diff"
+_disp a-export "$DISP_OK"
+status=$(planner_draft_revise_finish "$INIT" a-export 1 t)
+if [ "$status" != "applied" ] && [[ "$status" == reverted:* ]] && cmp -s "$A" "${TMP_ROOT}/a.base" &&
+  [ "$(cat "${DR}/a-export/revise.r1.status")" = "$status" ] &&
+  grep -qF '|META|draft-revise|fail|a-export round=1' "$LOG"; then
+  pass "agent-written status file does not skip the guards (status=${status})"
+else
+  fail "forged status" "status=$status"
+fi
+_round
+echo "applied" >"${DR}/a-export/revise.r1.status"
+_disp a-export "$DISP_OK"
+out=$(_check)
+_has "$out" OUT_OF_SCOPE_EDIT && printf '%s' "$out" | grep -q 'revise.r1.status' && pass "agent-written status file is OUT_OF_SCOPE_EDIT" || fail "status oos" "$out"
+_round
+echo "applied" >"${DR}/a-export/revise.r2.status"
+_disp a-export "$DISP_OK"
+status=$(planner_draft_revise_finish "$INIT" a-export 1 t)
+[ "$status" = "reverted:OUT_OF_SCOPE_EDIT" ] && [ ! -e "${DR}/a-export/revise.r2.status" ] &&
+  [ "$(planner_draft_revise_rounds_used "$INIT" a-export)" = 1 ] && pass "a forged future-round status is removed and spends no budget" || fail "future status" "$status"
+
+# Security regression (review finding 3): newline file names and unsafe paths.
+_round
+nl_file="${IDIR}/artifacts/evil"$'\n'"state.log"
+echo "x" >"$nl_file"
+_disp a-export "$DISP_OK"
+out=$(_check)
+_has "$out" OUT_OF_SCOPE_EDIT && printf '%s' "$out" | grep -qF "$PLANNER_DRAFT_UNSAFE_PATH" && pass "newline file name is OUT_OF_SCOPE_EDIT" || fail "newline name" "$out"
+cp "$LOG" "${TMP_ROOT}/log.before"
+status=$(planner_draft_revise_finish "$INIT" a-export 1 t)
+if [ "$status" = "reverted:OUT_OF_SCOPE_EDIT" ] && [ ! -e "$nl_file" ] && [ -f "$LOG" ] && [ -f "${IDIR}/artifacts/consensus.md" ]; then
+  pass "newline-named file removed; state.log and siblings untouched by the cleanup"
+else
+  fail "newline restore" "status=$status"
+fi
+_round
+ln -s /etc/passwd "${IDIR}/artifacts/link.md"
+_disp a-export "$DISP_OK"
+out=$(_check)
+_has "$out" OUT_OF_SCOPE_EDIT && pass "a symlink in the workspace is OUT_OF_SCOPE_EDIT" || fail "symlink" "$out"
+planner_draft_revise_finish "$INIT" a-export 1 t >/dev/null
+[ ! -e "${IDIR}/artifacts/link.md" ] && [ -f /etc/passwd ] && pass "symlink removed, target untouched" || fail "symlink restore" "still there"
+_round
+for bad in "../outside.md" "/etc/passwd" "a/../../x" $'x\ny'; do
+  if planner_draft_revise_snapshot_restore "$INIT" t "$bad" 2>/dev/null; then
+    fail "unsafe restore path" "accepted: $(printf '%q' "$bad")"
+  else
+    pass "restore refuses $(printf '%q' "$bad")"
+  fi
+done
+echo "x" >"${IDIR}/artifacts/evil"$'\n'"two"
+planner_draft_revise_snapshot "$INIT" t2 2>/dev/null && fail "snapshot unsafe" "taken" || pass "snapshot refuses a workspace holding a newline file name"
+rm -f "${IDIR}/artifacts/evil"$'\n'"two"
 
 # ── 5. dispositions, source quotes, agent failure, unchanged ──────────────
 echo "--- 5. dispositions ---"
