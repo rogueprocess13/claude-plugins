@@ -31,7 +31,7 @@
 #   planner_ticketgen_spec_type <spec_file>          feature|bug|improvement|chore|security
 #   planner_ticketgen_signals <spec_file>            Signals JSON (compact), {} when absent
 #   planner_ticketgen_generated_ts <initiative_id>   the Planner Context `Generated` value
-#   planner_ticketgen_context_block <initiative_id> <epic_id> <spec_file>
+#   planner_ticketgen_context_block <initiative_id> <epic_id> <spec_file> [<generated_ts>]
 #   planner_ticketgen_vplan <spec_file>              the `## Verification Plan` section
 #   planner_ticketgen_testdata_prereqs <spec_file>   the `## Test Data Prerequisites` section
 #                                                    (from the notes table, with Source — #503)
@@ -336,15 +336,22 @@ planner_ticketgen_generated_ts() {
 }
 
 # The `## Planner Context` block for one spec — confidence and Pre-approved
-# computed here from the Signals JSON, never by the agent.
+# computed here from the Signals JSON, never by the agent. The optional 4th
+# argument overrides the `Generated` timestamp (planner-draft-readiness D2:
+# drafts pass the latest `Crosscheck|check|done` timestamp). Empty or absent
+# keeps planner_ticketgen_generated_ts, so TicketGen's output is unchanged.
 planner_ticketgen_context_block() {
-  local initiative_id="$1" epic_id="$2" spec_file="$3"
+  local initiative_id="$1" epic_id="$2" spec_file="$3" generated_ts="${4:-}"
   local signals confidence threshold pre_approved generated context_json
   signals=$(planner_ticketgen_signals "$spec_file") || return 1
   confidence=$(planner_confidence_derive "$signals")
   threshold="${PLANNER_CONFIDENCE_THRESHOLD:-0.85}"
   pre_approved=$(awk -v c="$confidence" -v t="$threshold" 'BEGIN { print ((c + 0 >= t + 0) ? "true" : "false") }')
-  generated=$(planner_ticketgen_generated_ts "$initiative_id")
+  if [ -n "$generated_ts" ]; then
+    generated="$generated_ts"
+  else
+    generated=$(planner_ticketgen_generated_ts "$initiative_id")
+  fi
   context_json=$(jq -nc \
     --argjson signals "$signals" \
     --arg confidence "$confidence" \
