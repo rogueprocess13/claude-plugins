@@ -99,6 +99,41 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## ticket-planner 0.30.0 (2026-10-30)
+
+Draft readiness, slice S3b (`planner-draft-readiness`, design D8, D11, D12, D14): the bounded
+auto-revise loop. Before the gate halts with `DRAFT_NOT_READY`, each spec with a revisable blocking
+finding is revised by one `ticket-planner:draft-revise-agent` spawn per round, checked by S3a's
+guards, Crosscheck re-runs, and only the changed drafts are re-evaluated. After the round budget,
+non-structural semantic findings are demoted the way Refinement demotes them. SKILL.md is
+unchanged: `revise` rows arrive through the existing step 1e spawn list.
+
+### Added
+- **`lib/planner-draft-readiness-loop.sh`** (sourced by the gate). Revise planning
+  (`planner_draft_revise_classify`; a spec is revised even when another spec has a non-revisable
+  blocker; never again after an `unchanged` round on the same spec), round open (findings,
+  prompt, round plan and `.pending` before S3a's snapshot — the plan lives outside the workspace next to the snapshots, so the agent cannot forge it; `draft-revise|start` lines through
+  the ledger), settle (one retry for a missing result, then `failed:AGENT_FAILED`; finishes run
+  only when every spec of the round has a result), Crosscheck re-run after an applied round with
+  a whole-round revert (`reverted:CROSSCHECK_REGRESSION`) and `CROSSCHECK_BLOCKED` when it still
+  blocks. End of loop: `planner_semantic_demote … round-limit draft-revise` with a reason class per
+  finding (`revised`/`rebutted`/`reverted`/`failed`), `drift` only for a re-phrased finding of an
+  addressed code on the revised unit, `META|draft-readiness|info|<slug> DEMOTED …` lines, verdict
+  re-judged with `dor_semantic_blocking_codes`.
+- **Draft lineage on disk**: the gate now judges drafts with S1's pure functions
+  (`dor_semantic_findings` → `dor_semantic_lineage_from` with `lineage.json` as prior →
+  `dor_semantic_assemble` → `dor_semantic_blocking_codes`) instead of `dor_semantic_apply` against
+  a throwaway `REPOS_ROOT`; `lineage.json` is written before `verdict`.
+- **Env**: `PLANNER_DRAFT_REVISE_MAX_ROUNDS` (default 2; `0` = the S2b halt-only gate; validated at
+  gate start), `PLANNER_DRAFT_SPAWN_BUDGET` (default 8 × spec count; `SPAWN_BUDGET` halt before
+  spawning), `PLANNER_DRAFT_DEMOTE_CEILING` (default 0.5; `DEMOTE_CEILING` halt). Run-level halts
+  are reported as `(run) <CODE>` fail lines and a `done|blocked n/m <CODE>` suffix.
+- Revision history in the halt report, the pass summary and each `DRAFT_NOT_READY` question
+  (`planner_draft_readiness_history`); per-iteration `META|draft-readiness|info|round=… spawns=…/…`.
+- `draft-revise` in `PLANNER_REPEATABLE_META_STEPS`.
+- `lib/tests/test-planner-draft-readiness-loop.sh` (27 checks, stubbed agents); the S2b suite runs
+  with `PLANNER_DRAFT_REVISE_MAX_ROUNDS=0` unchanged, as the halt-only parity check.
+
 ## ticket-planner 0.29.0 (2026-10-30)
 
 Draft readiness, slice S2b (`planner-draft-readiness`, design D1, D4–D7, D16): the halt-only gate.
