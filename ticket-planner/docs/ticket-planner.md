@@ -498,6 +498,29 @@ files live under `artifacts/draft-readiness/<slug>/` (`body.md`, `dor-result.jso
   and a `Security finding (review)` line in the epic summary. It reaches Refinement
   through the carried verdict like any demotion. The revise prompt marks such findings
   `security: yes`, and `ASSUMED` is refused for them.
+- **Audit MISSED entries.** The audit can name a gap the scan missed (`MISSED_n_CODE`/
+  `REASON`, stored as `missed`). An entry whose code is a known, blocking,
+  non-structural semantic code and whose code or reason matches the security rule joins
+  the findings as a blocking one (`origin: "audit-missed"`, id `m-<hash>`, no quote), so
+  it takes the security path above: the next revise round, else a round-limit demotion
+  shown as a security finding (its reason stands in for the quote). Every other entry
+  (non-security, structural or unknown code) blocks nothing and is listed under "Audit
+  advisories (gaps the scan missed; they do not block)" in the pass output and the halt
+  report; Refinement's advisory summary lists the real tickets' `missed` entries as
+  `Advisory (does not block) <TID> [Security ]MISSED <CODE>: <reason>`.
+- **A revision that creates a contradiction is reverted.** The revise prompt lists every
+  section the agent may not edit (Technical Context included) as one it must not
+  contradict. As a deterministic backstop, the first evaluation after an applied
+  revision is compared with the evaluation the round started from: a verified blocking
+  structural code (`CONTRADICTORY_REQUIREMENTS`, …) on a unit the revision changed that
+  the pre-round evaluation did not have reverts that spec's revision
+  (`reverted:REVISION_REGRESSION`, reason class `reverted`, a
+  `META|draft-revise|fail|<slug> round=<N> REVISION_REGRESSION "<codes>"` line), restores
+  the pre-round verdict and re-runs Crosscheck, instead of halting on a finding no round
+  can fix. The pre-round copy (spec, draft body, lineage, result files) lives outside the
+  workspace under `PLANNER_DRAFT_SNAPSHOT_ROOT/<INIT>/eval/`, like the round plan, so no
+  agent can forge the baseline or the spec the revert restores; the gate drops it when
+  it closes.
 
 ### Refinement carry-over
 
@@ -509,8 +532,13 @@ has no semantic verdict yet (`planner-draft-carryover.sh`):
 1. **Import.** The ticket's `body.md` (Linear's rendering, stored by
    `planner_ticketgen_record_baseline`) is compared with the draft after normalisation:
    the epic id, sibling ids and their Linear links are rewritten to draft tokens, the
-   Planner Context `Generated` value to a fixed token, then CRLF, trailing whitespace
-   and trailing blank lines are normalised. When the draft verdict is `ready`, the two
+   Planner Context `Generated` value to a fixed token, Linear's markdown re-rendering is
+   undone (`planner_draft_render_normalise`: `*` list markers → `-`, `[X]` → `[x]`,
+   table separator rows → `|---|` per column, backslash-escaped punctuation unescaped and
+   `**` dropped outside inline code, blank lines dropped outside fences — never words,
+   values, inline code or fenced blocks), then CRLF, trailing whitespace and trailing
+   blank lines are normalised. The carry-over's unit and section hashing uses the same
+   text, so a rendered-but-unchanged unit never reads as changed. When the draft verdict is `ready`, the two
    are equal and the evaluator matches, ticket-auto's `dor_semantic_import` stores the draft verdict on the ticket.
    Quotes are rewritten to real ids, and a finding whose quote no longer locates in the
    real body is dropped (never stored unverified). No agent is spawned and no round is
@@ -528,7 +556,7 @@ has no semantic verdict yet (`planner-draft-carryover.sh`):
    (`demoted: draft-passed-structural`, `demote_reason: unchanged-unit`). A structural
    finding on changed text still blocks. Deterministic codes, unverified findings and
    `SEMANTIC_*` codes are untouched. Logged as
-   `META|refinement-draft-import|skip|<TID> not-equivalent draft-passed round=<n>`.
+   `META|refinement-draft-import|skip|<TID> <reason> draft-passed round=<n>` (`<reason>`: `not-equivalent`, `accepted`, `no-semantic`, `equivalence-unknown` or `import-refused:<rc>`).
 
 A ticket that already has a semantic verdict is never touched, so a `resume` after
 Refinement keeps its own lineage. A spec whose draft never passed (gate skipped by

@@ -17,6 +17,54 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.34.0 (2026-10-30)
+
+Draft readiness fixes from a second offline replay of a dispatch rehearsal run. No DoR fixture,
+evaluator or ticket-auto-pipeline change.
+
+### Fixed
+- **A draft and its Linear-rendered ticket body now compare equal.** Linear re-renders a stored
+  description (`- ` → `* ` bullets, `[x]` → `[X]`, shortened table separator rows, `\#`
+  escapes, bold spans split around inline code, a blank line after a heading), so the
+  carry-over's equivalence check never matched and no draft verdict was ever imported. The new
+  `planner_draft_render_normalise` undoes exactly those changes before the comparison. It never
+  touches words, values, inline code or fenced blocks, so a changed criterion, test-data value,
+  table cell or code span still compares unequal (tested both ways).
+- **Rendering no longer makes units look changed to the carry-over.** The draft-passed seed
+  hashes units and sections on the same normalised text, so a demoted or accepted draft finding
+  is no longer re-raised as a blocker at Refinement because Linear re-rendered its unit.
+- **The carry-over skip line names the real reason** (`not-equivalent`, `accepted`,
+  `no-semantic`, `equivalence-unknown` or `import-refused:<rc>`) instead of always
+  `not-equivalent`.
+- **A revision that contradicts a frozen section is reverted, not halted on.** The revise prompt
+  now lists every section the agent may not edit (Technical Context included) as one it must
+  not contradict. As a deterministic backstop, a verified blocking structural code
+  (`CONTRADICTORY_REQUIREMENTS`, …) on a unit the revision changed, absent before the round,
+  reverts that spec's revision (`reverted:REVISION_REGRESSION`, reason class `reverted`) and
+  restores the pre-round verdict, instead of halting the gate on a finding no round can fix.
+  The pre-round copy lives outside the workspace, so an agent cannot forge it.
+- **Audit MISSED entries are no longer stored and ignored.** A MISSED entry that matches the
+  security rule (with a known, blocking, non-structural code) becomes a blocking finding and
+  takes the security path: the next revise round, else a round-limit demotion shown in the
+  SECURITY warn line, pass output, halt report and epic summary. Other entries are listed as
+  "Audit advisories" in the gate's pass output and halt report, and Refinement's advisory
+  summary lists the real tickets' MISSED entries.
+- **SKILL.md step 1e runs its Bash calls with `timeout: 600000`.** Settling a revise round
+  (guards plus a Crosscheck re-run) took about 7 minutes and overran the 120 s default.
+
+### Security
+- The normaliser is conservative by construction: CommonMark fence tracking (fence character
+  and length), no inline rewriting of indented lines or lines with an unpaired backtick, an
+  escaped backtick never toggles inline code, `\|` and `\\` stay escaped, `**` between two word
+  characters (`10**3`) stays, and a separator row is recognised only as a table's second row
+  with two or more dashes per cell. Negative tests pin each of these.
+- A revision-regression revert restores the spec from a copy outside the workspace and only
+  while the current spec is the one the revision produced, so a later hand edit is never
+  undone; stale copies are dropped at gate start and close. The Crosscheck-regression revert
+  now restores from the same outside copy when it exists.
+- Audit MISSED reasons are stored with control characters replaced and capped at 500
+  characters before they reach a report, the revise prompt or the Refinement summary.
+
 ## ticket-planner 0.33.0 (2026-10-30)
 
 Draft readiness gate fixes from an offline replay of a dispatch rehearsal run. No DoR fixture,
