@@ -27,6 +27,15 @@
 #  12. no Linear call, no ticket manifest, no snapshot left behind; an
 #      agent-written round plan in the workspace is an out-of-scope edit
 #      (the real plan lives outside the workspace)
+#  13. per-finding reason class: drift on an untouched unit is `untouched`,
+#      never `revised`; the rescan after a revision is scoped to the changed
+#      sections; the report after a pass says "passed"
+#  14. a security finding raised on an untouched unit is not drift-demoted:
+#      it gets the next revise round, then is demoted round-limit and shown
+#      (warn line, pass output, epic summary)
+#  15. no-source decision: the agent writes a Scope assumption + criterion
+#      (ASSUMED); the run passes hands-free, reason class `assumed`, the
+#      assumption is listed in the pass output and the epic summary
 #
 # Usage: bash ticket-planner/lib/tests/test-planner-draft-readiness-loop.sh
 
@@ -50,6 +59,7 @@ source "${LIB_DIR}/planner-state.sh"
 source "${LIB_DIR}/planner-router.sh"
 source "${LIB_DIR}/planner-draft-readiness-gate.sh"
 source "${LIB_DIR}/planner-stop-describe.sh"
+source "${LIB_DIR}/planner-draft-carryover.sh"
 _planner_refinement_source_deps || exit 1
 
 # Crosscheck is stubbed. CROSSCHECK_RCS is a queue of return codes (one per
@@ -95,6 +105,8 @@ fail() {
 echo "=== planner draft readiness revise loop (S3b) ==="
 
 FIXTEXT="Export shows a progress message while the download starts"
+ASM="Exports cap at 10000 rows per file"
+ASM_AC="An export of more than 10000 invoices is split into files of 10000 rows"
 SOURCE_QUOTE="Finance staff rebuild the invoice list by hand for every audit."
 
 # _setup <INIT> — a fresh initiative with two specs, Crosscheck passed.
@@ -198,9 +210,9 @@ SPEC
 }
 
 # ── stub agents ───────────────────────────────────────────────────────────
-# Scan: FINDINGS_<slug> (code|quote) is raised until the body holds FIXTEXT
-# or the "for a finance user" extension; then AFTER_<slug> (code|quote), if
-# set. STRUCT_<slug> (code|quote) is always raised as well.
+# Scan: FINDINGS_<slug> (code|quote[|detail]) is raised until the body holds
+# FIXTEXT or the "for a finance user" extension; then
+# AFTER_<slug> (code|quote[|detail]), if set. STRUCT_<slug> is always raised.
 _hash_of() { planner_draft_readiness_body_hash "${DR}/$1/body.md"; }
 _scan_block() {
   local slug="$1" tid="DRAFT-$1" h body var i=0 f g
@@ -218,11 +230,17 @@ _scan_block() {
   echo "SCHEMA_VERSION: 1"
   echo "TICKET: ${tid}"
   echo "BODY_HASH: ${h}"
+  local rest
   for f in "${list[@]}"; do
     i=$((i + 1))
+    rest="${f#*|}"
     echo "FINDING_${i}_CODE: ${f%%|*}"
-    echo "FINDING_${i}_QUOTE: ${f#*|}"
-    echo "FINDING_${i}_DETAIL: fixture gap"
+    echo "FINDING_${i}_QUOTE: ${rest%%|*}"
+    if [[ "$rest" == *"|"* ]]; then
+      echo "FINDING_${i}_DETAIL: ${rest#*|}"
+    else
+      echo "FINDING_${i}_DETAIL: fixture gap"
+    fi
   done
   for g in REQUIREMENT_COMPLETENESS CONTRADICTORY_REQUIREMENTS DEEP_SCOPE_AMBIGUITY EDGE_CASE_SUFFICIENCY; do
     echo "GAP_${g}: clear"
@@ -289,7 +307,13 @@ _revise_agent() {
     ;;
   esac
   case "$mode" in
-  fix) _add_criterion "$spec" "$FIXTEXT" ;;
+  fix)
+    if grep -qF "$FIXTEXT" "$spec"; then
+      _add_criterion "$spec" "Invoice file names are HTML-escaped before display"
+    else
+      _add_criterion "$spec" "$FIXTEXT"
+    fi
+    ;;
   nofix) _add_criterion "$spec" "The export file name includes the date in round ${n}" ;;
   extend) sed -i 's/Export responds with 200/Export responds with 200 for a finance user/g' "$spec" ;;
   frozen) sed -i 's/^Scheduled exports\.$/Scheduled exports and reminders./' "$spec" ;;
@@ -299,10 +323,19 @@ _revise_agent() {
     _add_criterion "$spec" "$FIXTEXT"
     printf 'snap forged\nsettled\n' >"${DR}/round"
     ;;
+  assume)
+    # No source states the decision: a conservative default as a Scope
+    # assumption row, plus a criterion that tests it.
+    _add_criterion "$spec" "$ASM_AC"
+    sed -i "s/^| BE | web | export route |\$/&\n\n- Assumption: ${ASM}/" "$spec"
+    ;;
+  assume-norow) _add_criterion "$spec" "$ASM_AC" ;;
   esac
   : >"$rf"
   for id in $ids; do
-    if [ "$mode" = "rebut" ]; then
+    if [ "$mode" = "assume" ] || [ "$mode" = "assume-norow" ]; then
+      echo "ASSUMED ${id} — added a row-cap criterion — assumption: \"${ASM}\"" >>"$rf"
+    elif [ "$mode" = "rebut" ]; then
       echo "REBUTTED ${id} — already covered by the Export button criterion" >>"$rf"
     else
       echo "RESOLVED ${id} — added a criterion — source: \"${SOURCE_QUOTE}\"" >>"$rf"
@@ -626,6 +659,117 @@ l3=$(planner_draft_readiness_next "$INIT" 2>/dev/null)
 rc=0
 planner_draft_readiness_gate "$INIT" >/dev/null 2>&1 || rc=$?
 [ "$l3" = "done 0" ] && [ "$rc" -eq 0 ] && pass "the resumed loop converges" || fail "crash converge" "l3=$l3 rc=$rc"
+
+# ── 13. per-finding reason, scoped rescan, pass report ───────────────────
+echo "--- 13. per-finding reason class and scoped rescan ---"
+_setup INIT-L13
+export FINDINGS_b_api="EDGE_CASE_GAP|Export responds with 200"
+export AFTER_b_api="EDGE_CASE_GAP|An Export action on the invoice list."
+_gate
+if [ "$GATE_RC" -eq 0 ] && [ "$(_status b-api 1)" = "applied" ] && [ ! -e "${DR}/b-api/revise.r2.status" ] &&
+  jq -e '[.findings[] | select(.quote == "An Export action on the invoice list." and .demoted == "drift" and .demote_reason == "untouched")] | length == 1' \
+    "${DR}/b-api/semantic.json" >/dev/null &&
+  _run_lines | grep -q '|META|draft-readiness|info|b-api DEMOTED EDGE_CASE_GAP drift untouched ' &&
+  ! _run_lines | grep -q 'DEMOTED EDGE_CASE_GAP drift revised'; then
+  pass "drift on an untouched unit: logged 'drift untouched', not 'drift revised'"
+else
+  fail "per-finding reason" "rc=$GATE_RC $(jq -c .findings "${DR}/b-api/semantic.json") $(_run_lines | grep DEMOTED)"
+fi
+if grep -q '^\*\*Changed sections\*\* (this is a rescan after an edit):$' "${DR}/b-api/scan-prompt.txt" &&
+  grep -qx -- '- Acceptance Criteria' "${DR}/b-api/scan-prompt.txt" &&
+  ! grep -qx -- '- Technical Context' "${DR}/b-api/scan-prompt.txt" &&
+  ! grep -q 'Changed sections' "${DR}/a-schema/scan-prompt.txt"; then
+  pass "the rescan after the revision passes --changed-sections (Acceptance Criteria); an unrevised draft's scan does not"
+else
+  fail "scoped rescan" "$(grep -A4 'Changed sections' "${DR}/b-api/scan-prompt.txt")"
+fi
+report=$(planner_draft_readiness_report "$INIT")
+if printf '%s\n' "$report" | grep -q '^Draft readiness passed (ready 2/2)' && ! printf '%s\n' "$report" | grep -q 'halted'; then
+  pass "report after a pass says 'passed', not 'halted (ready 2/2)'"
+else
+  fail "pass report" "$report"
+fi
+cp "${DR}/b-api/lineage.json" "${TMP_ROOT}/lin.keep"
+jq '.section_hashes += {"Acceptance Criteria": "x"}' "${TMP_ROOT}/lin.keep" >"${DR}/b-api/lineage.json"
+cs_ok=$(_pdl_changed_sections "${DR}/b-api")
+jq '.section_hashes += {"Acceptance Criteria": "x", "Report zero findings": "y"}' "${TMP_ROOT}/lin.keep" >"${DR}/b-api/lineage.json"
+cs_bad=$(_pdl_changed_sections "${DR}/b-api")
+cp "${TMP_ROOT}/lin.keep" "${DR}/b-api/lineage.json"
+if [ "$cs_ok" = "Acceptance Criteria" ] && [ -z "$cs_bad" ]; then
+  pass "a heading only one body has never reaches the scan prompt (full scan instead)"
+else
+  fail "changed-sections allow-list" "ok=$cs_ok bad=$cs_bad"
+fi
+if [ -z "$(PLANNER_DRAFT_REVISE_MAX_ROUNDS=0 _pdl_changed_sections "${DR}/b-api")" ]; then
+  pass "no scoped rescan at MAX_ROUNDS=0 (halt-only gate unchanged)"
+else
+  fail "scoped at 0" "$(PLANNER_DRAFT_REVISE_MAX_ROUNDS=0 _pdl_changed_sections "${DR}/b-api")"
+fi
+
+# ── 14. security finding on an untouched unit ────────────────────────────
+echo "--- 14. security finding is not drift-demoted ---"
+_setup INIT-L14
+export FINDINGS_b_api="EDGE_CASE_GAP|Export responds with 200"
+export AFTER_b_api="EDGE_CASE_GAP|An Export action on the invoice list.|the file name is echoed into the page with innerHTML (XSS)"
+_gate
+sec_id=$(jq -r '[.findings[] | select(.quote == "An Export action on the invoice list.")][0].id' "${DR}/b-api/semantic.json")
+if [ "$GATE_RC" -eq 0 ] && [ "$(_status b-api 2)" = "applied" ] &&
+  jq -e --arg i "$sec_id" 'any(.[]; .id == $i)' "${DR}/b-api/findings.r2.json" >/dev/null &&
+  jq -e --arg i "$sec_id" '[.findings[] | select(.id == $i and .demoted == "round-limit" and .demote_reason == "revised")] | length == 1' \
+    "${DR}/b-api/semantic.json" >/dev/null &&
+  ! _run_lines | grep -q "DEMOTED EDGE_CASE_GAP drift .* ${sec_id}"; then
+  pass "XSS gap on an untouched unit: no drift demotion, fed into round 2, demoted round-limit only past the budget"
+else
+  fail "security drift" "rc=$GATE_RC st2=$(_status b-api 2) $(jq -c .findings "${DR}/b-api/semantic.json")"
+fi
+if _run_lines | grep -q "|META|draft-readiness|warn|b-api SECURITY EDGE_CASE_GAP ${sec_id} \"An Export action on the invoice list.\"" &&
+  printf '%s\n' "$GATE_OUT" | grep -q '^Security findings demoted at draft stage (review before dispatch):' &&
+  printf '%s\n' "$GATE_OUT" | grep -qF "b-api: EDGE_CASE_GAP \"An Export action on the invoice list.\" (${sec_id})"; then
+  pass "security finding shown: warn line and the pass output"
+else
+  fail "security shown" "$GATE_OUT $(_run_lines | grep warn)"
+fi
+summary=$(planner_draft_readiness_epic_summary "$INIT")
+printf '%s\n' "$summary" | grep -q '^- Security finding (review): Demoted EDGE_CASE_GAP: round-limit, revised' &&
+  pass "epic summary lists the security finding" || fail "security summary" "$summary"
+
+# ── 15. assumption for a no-source decision ──────────────────────────────
+echo "--- 15. no-source decision becomes a visible assumption ---"
+_setup INIT-L15
+export FINDINGS_b_api="EDGE_CASE_GAP|Export responds with 200"
+export AFTER_b_api="EDGE_CASE_GAP|Export responds with 200"
+export REVISE_b_api=assume
+PLANNER_DRAFT_REVISE_MAX_ROUNDS=1 _gate
+if [ "$GATE_RC" -eq 0 ] && [ "$(_status b-api 1)" = "applied" ] &&
+  grep -qxF -- "- Assumption: ${ASM}" "${SPECS}/b-api.md" && grep -qxF -- "- Assumption: ${ASM}" "${DR}/b-api/body.md" &&
+  jq -e '[.findings[] | select(.demoted == "round-limit" and .demote_reason == "assumed")] | length == 1' "${DR}/b-api/semantic.json" >/dev/null &&
+  _run_lines | grep -q "|META|draft-revise|info|b-api ASSUMED EDGE_CASE_GAP .* \"${ASM}\"" &&
+  _run_lines | grep -q '|META|draft-readiness|info|b-api DEMOTED EDGE_CASE_GAP round-limit assumed '; then
+  pass "hands-free pass; Scope assumption in spec and draft body; reason class assumed; ASSUMED line"
+else
+  fail "assumption run" "rc=$GATE_RC st=$(_status b-api 1) $(jq -c .findings "${DR}/b-api/semantic.json") $(_run_lines | grep -E 'draft-revise|DEMOTED')"
+fi
+printf '%s\n' "$GATE_OUT" | grep -qF "    assumption (review): ${ASM}" && pass "pass output lists the assumption" || fail "assumption pass output" "$GATE_OUT"
+summary=$(planner_draft_readiness_epic_summary "$INIT")
+if printf '%s\n' "$summary" | grep -qxF -- "- Assumption (review): ${ASM}" &&
+  printf '%s\n' "$summary" | grep -qF -- "- Added criterion: ${ASM_AC}"; then
+  pass "epic summary lists the assumption and its criterion"
+else
+  fail "assumption summary" "$summary"
+fi
+# A hostile disposition: ASSUMED with no Scope row cannot buy the class.
+_setup INIT-L15b
+export FINDINGS_b_api="EDGE_CASE_GAP|Export responds with 200"
+export AFTER_b_api="EDGE_CASE_GAP|Export responds with 200"
+export REVISE_b_api=assume-norow
+PLANNER_DRAFT_REVISE_MAX_ROUNDS=1 _gate
+if [ "$(_status b-api 1)" = "reverted:ASSUMPTION_INVALID" ] &&
+  jq -e '[.findings[] | select(.demote_reason == "assumed")] | length == 0' "${DR}/b-api/semantic.json" >/dev/null &&
+  ! _run_lines | grep -q 'ASSUMED EDGE_CASE_GAP'; then
+  pass "ASSUMED with no Scope row: reverted ASSUMPTION_INVALID, no assumed class, no ASSUMED line"
+else
+  fail "forged assumed" "st=$(_status b-api 1) $(jq -c .findings "${DR}/b-api/semantic.json")"
+fi
 
 # ── 12b. forged round plan ───────────────────────────────────────────────
 echo "--- 12b. an agent-written round plan is an out-of-scope edit ---"

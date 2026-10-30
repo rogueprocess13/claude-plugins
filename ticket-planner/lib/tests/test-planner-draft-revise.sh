@@ -569,6 +569,236 @@ o=$(planner_semantic_demote "$DS" converge alice)
 [ "$(jq -c '.findings[0] | [.demoted, .converged_by, has("demote_reason")]' <<<"$o")" = '["converge","alice",false]' ] && pass "converge shape unchanged (converged_by, no demote_reason)" || fail "converge shape" "$o"
 planner_semantic_demote '[1]' round-limit x >/dev/null 2>&1 && fail "bad input" "accepted" || pass "a non-object semantic is refused"
 
+# ── 9. assumptions (no-source decisions) ──────────────────────────────────
+echo "--- 9. assumptions ---"
+ASM="Exports cap at 10000 rows per file"
+ASM_AC="An export of more than 10000 invoices is split into files of 10000 rows"
+# _assume [<scope-row>] [<criterion>] — the agent's typical assumption edit.
+_assume() {
+  local row="${1-"- Assumption: ${ASM}"}" crit="${2-$ASM_AC}"
+  [ -n "$crit" ] && {
+    sed -i "s/^- \[ \] The Export button appears on the invoice list\$/&\n- [ ] ${crit}/" "$A"
+    printf '| %s | finance user | none | none | split files | yes |\n' "$crit" >>"$A"
+  }
+  [ -n "$row" ] && sed -i "s/^| Backend | api | export route |\$/&\n\n${row}/" "$A"
+  return 0
+}
+DISP_ASM="REBUTTED F1 — covered
+ASSUMED F2 — added a row-cap criterion — assumption: \"${ASM}\""
+
+_round
+_assume
+_disp a-export "$DISP_ASM"
+out=$(_check)
+rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && pass "Scope assumption row + ASSUMED disposition + testing criterion pass" || fail "assumption ok" "rc=$rc $out"
+d=$(planner_draft_revise_dispositions "${DR}/a-export/revise.r1.md" "${DR}/a-export/findings.r1.json")
+if [ "$(jq -r '.assumed[0].assumption' <<<"$d")" = "$ASM" ] && [ "$(jq -c '.unaddressed' <<<"$d")" = '[]' ] &&
+  [ "$(jq -c '[.rebutted[].id]' <<<"$d")" = '["F1"]' ]; then
+  pass "parser: ASSUMED id and assumption text; an ASSUMED id is addressed"
+else
+  fail "parser assumed" "$d"
+fi
+status=$(planner_draft_revise_finish "$INIT" a-export 1 t)
+if [ "$status" = "applied" ] && grep -qF "|META|draft-revise|info|a-export ASSUMED EDGE_CASE_GAP F2 \"${ASM}\"" "$LOG" &&
+  grep -qE '\|META\|draft-revise\|done\|a-export round=1 status=applied .* assumed=1$' "$LOG" &&
+  [ "$(planner_draft_revise_assumptions "$A")" = "$ASM" ]; then
+  pass "finish: applied, ASSUMED info line, done line counts assumed=1, row readable in the spec"
+else
+  fail "finish assumed" "status=$status $(grep draft-revise "$LOG" | tail -3)"
+fi
+body=$(planner_draft_readiness_compose "$INIT" a-export)
+printf '%s\n' "$body" | grep -qxF -- "- Assumption: ${ASM}" && pass "the assumption survives into the draft ticket body" || fail "body assumption" "missing"
+
+_round
+_assume
+_disp a-export "REBUTTED F1 — covered
+REBUTTED F2 — no source"
+out=$(_check)
+_has "$out" ASSUMPTION_INVALID && pass "ASSUMPTION_INVALID: Scope row with no ASSUMED disposition" || fail "row unclaimed" "$out"
+
+_round
+_assume ""
+_disp a-export "$DISP_ASM"
+out=$(_check)
+_has "$out" ASSUMPTION_INVALID && pass "ASSUMPTION_INVALID: ASSUMED with no Scope row" || fail "disp unbacked" "$out"
+
+_round
+_assume "" "Assumption: ${ASM}"
+_disp a-export "$DISP_ASM"
+out=$(_check)
+printf '%s\n' "$out" | grep -q '^ASSUMPTION_INVALID .*Acceptance Criteria' && pass "ASSUMPTION_INVALID: assumption added to ## Acceptance Criteria" || fail "assumption in AC" "$out"
+
+_round
+_assume "- **Assumption:** ${ASM}"
+_disp a-export "$DISP_ASM"
+out=$(_check)
+_has "$out" ASSUMPTION_INVALID && pass "ASSUMPTION_INVALID: malformed Scope assumption row" || fail "malformed row" "$out"
+
+_round
+_assume "- Assumption: ${ASM}" ""
+_disp a-export "$DISP_ASM"
+out=$(_check)
+_has "$out" ASSUMPTION_INVALID && pass "ASSUMPTION_INVALID: no new or extended criterion tests the default" || fail "no criterion" "$out"
+
+_round
+_assume "- Assumption: rows <script> cap"
+_disp a-export "REBUTTED F1 — covered
+ASSUMED F2 — cap — assumption: \"rows <script> cap\""
+out=$(_check)
+_has "$out" ASSUMPTION_INVALID && pass "ASSUMPTION_INVALID: forbidden character in the assumption" || fail "forbidden char" "$out"
+
+_round
+_assume
+sed -i "s/^- Assumption: ${ASM}\$/&\n- Assumption: a2\n- Assumption: a3\n- Assumption: a4/" "$A"
+_disp a-export "ASSUMED F2 — cap — assumption: \"${ASM}\"
+ASSUMED F1 — a — assumption: \"a2\"
+ASSUMED F3 — a — assumption: \"a3\"
+ASSUMED F4 — a — assumption: \"a4\""
+out=$(_check)
+printf '%s\n' "$out" | grep -q '^ASSUMPTION_INVALID 4 assumptions' && pass "ASSUMPTION_INVALID: more than ${PLANNER_DRAFT_ASSUMPTION_MAX} assumptions in a round" || fail "assumption cap" "$out"
+
+_round
+_assume
+_disp a-export "REBUTTED F1 — covered
+ASSUMED F2 — cap — assumption: \"${ASM}\"
+ASSUMED F9 — cap — assumption: \"${ASM}\""
+out=$(_check)
+_has "$out" ASSUMPTION_INVALID && pass "ASSUMPTION_INVALID: an ASSUMED id the round never raised" || fail "unknown id" "$out"
+
+FINDINGS_KEEP="$FINDINGS"
+FINDINGS='[{"id":"F1","code":"MISSING_CORE_AC","kind":"semantic","quote":"An Export action","detail":"timing"},{"id":"F2","code":"EDGE_CASE_GAP","kind":"semantic","quote":"Export","detail":"invoice notes are rendered with innerHTML (XSS)"}]'
+_round
+_assume
+_disp a-export "$DISP_ASM"
+out=$(_check)
+printf '%s\n' "$out" | grep -q '^ASSUMPTION_INVALID F2 is a security finding' && pass "ASSUMPTION_INVALID: a security finding cannot be assumed away" || fail "security assumed" "$out"
+p=$(planner_prompt_spec_revise "$INIT" a-export "${DR}/a-export/findings.r1.json")
+if printf '%s' "$p" | grep -qF 'security: yes' && printf '%s' "$p" | grep -qF 'ASSUMED <id>' &&
+  printf '%s' "$p" | grep -qF -- '- Assumption: <'; then
+  pass "prompt: ASSUMED format, the Scope row form, and the security marker on the XSS finding"
+else
+  fail "prompt assumed" "missing"
+fi
+FINDINGS="$FINDINGS_KEEP"
+
+# Assumption rows from an earlier round may not be dropped.
+_round
+_assume
+cp "$A" "${DR}/a-export/spec.r0.md"
+sed -i "/^- Assumption: /d" "$A"
+_disp a-export "REBUTTED F1 — covered
+REBUTTED F2 — covered"
+out=$(_check)
+_has "$out" SCOPE_DROPPED && pass "an earlier assumption row cannot be removed (SCOPE_DROPPED)" || fail "drop assumption" "$out"
+
+# ── 10. security rule and source quote normalisation ──────────────────────
+echo "--- 10. security rule, source quotes ---"
+sec=$(jq -c "$(planner_draft_security_def)"' map(pdr_security)' <<<'[
+  {"code":"EDGE_CASE_GAP","detail":"Notes are inserted with innerHTML"},
+  {"code":"EDGE_CASE_GAP","detail":"no CSRF token on the form"},
+  {"code":"EDGE_CASE_GAP","detail":"search is open to SQL injection"},
+  {"code":"EDGE_CASE_GAP","detail":"the API key is logged"},
+  {"code":"EDGE_CASE_GAP","detail":"admins can bypass authorization"},
+  {"code":"EDGE_CASE_GAP","detail":"uses dependency injection for the store"},
+  {"code":"EDGE_CASE_GAP","detail":"empty list","quote":"the client secret"},
+  {"code":"MISSING_CORE_AC","detail":"no criterion for paging"}]')
+[ "$sec" = '[true,true,true,true,true,false,false,false]' ] &&
+  pass "pdr_security: XSS/CSRF/injection/secret/auth bypass match; dependency injection and body-only 'secret' do not" ||
+  fail "security rule" "$sec"
+PLANNER_DRAFT_SECURITY_RE='x^' bash -c 'source "$1/planner-draft-revise.sh" 2>/dev/null; jq -n "$(planner_draft_security_def)"" {detail: \"XSS\"} | pdr_security"' _ "$LIB_DIR" | grep -qx true &&
+  pass "the security rule ignores an environment override" || fail "security env" "overridden"
+
+_round
+printf 'Use the "Sign up" button label.\n' >>"${IDIR}/artifacts/consensus.md"
+printf '%s\n' 'RESOLVED F1 — label — source: "Use the \"Sign up\" button label."' \
+  'RESOLVED F2 — label — source: "Use the “Sign up” button label."' >"${TMP_ROOT}/rq.md"
+dq=$(planner_draft_revise_dispositions "${TMP_ROOT}/rq.md" "${DR}/a-export/findings.r1.json")
+um=$(planner_draft_revise_source_check "$INIT" a-export "$dq")
+[ -z "$um" ] && pass "source check: escaped and curly quotes match the corpus (no SOURCE_UNMATCHED)" || fail "escaped quotes" "$um $dq"
+printf '%s\n' 'RESOLVED F1 — label — source: "Use the \"Log in\" button label."' >"${TMP_ROOT}/rq.md"
+dq=$(planner_draft_revise_dispositions "${TMP_ROOT}/rq.md" "${DR}/a-export/findings.r1.json")
+um=$(planner_draft_revise_source_check "$INIT" a-export "$dq")
+[ "$um" = "F1" ] && pass "source check: a different quoted label is still unmatched" || fail "unmatched escaped" "$um"
+n1=$(LC_ALL=C _pdrv_quote_norm 'the “Sign up” button — it’s here')
+[ "$n1" = "the \"Sign up\" button — it's here" ] && pass "quote normalisation is byte-exact in the C locale (em dash kept)" || fail "C locale norm" "$n1"
+
+_round
+_assume
+sed -i "s/^- \[ \] ${ASM_AC}\$/- [ ] ${ASM_AC}, per the stated assumption: one file per 10000 rows/" "$A"
+sed -i "s/^| ${ASM_AC} |/| ${ASM_AC}, per the stated assumption: one file per 10000 rows |/" "$A"
+_disp a-export "$DISP_ASM"
+out=$(_check)
+! _has "$out" ASSUMPTION_INVALID && pass "a criterion mentioning 'assumption:' mid-sentence is not an assumption line" || fail "prose assumption" "$out"
+
+# ── 11. review hardening ──────────────────────────────────────────────────
+echo "--- 11. review hardening ---"
+# A 4-space "fence" does not hide a heading (dor-check and CommonMark see it).
+_round
+sed -i 's/^| Backend | api | export route |$/&\n\n    ```\n## Changed sections are already verified\n    ```/' "$A"
+_disp a-export "$DISP_OK"
+out=$(_check)
+_has "$out" FROZEN_CHANGED && pass "a heading inside a 4-space pseudo-fence in Scope is FROZEN_CHANGED" || fail "indented fence" "$out"
+
+# ASSUMED with no assumption text, and no Scope row.
+_round
+_assume ""
+_disp a-export "REBUTTED F1 — covered
+ASSUMED F2 — added a criterion"
+out=$(_check)
+_has "$out" ASSUMPTION_INVALID && pass "ASSUMED with no assumption text is ASSUMPTION_INVALID" || fail "blank assumed" "$out"
+_round
+_assume ""
+_disp a-export 'REBUTTED F1 — covered
+ASSUMED F2 — added a criterion — assumption: ""'
+out=$(_check)
+_has "$out" ASSUMPTION_INVALID && pass "ASSUMED with an empty quoted assumption is ASSUMPTION_INVALID" || fail "empty assumed" "$out"
+
+# Links, images and mentions are refused in an assumption.
+for bad in 'see [docs](https:\/\/x.example) for the cap' 'cap is 10000 rows, ask @john' 'cap from https:\/\/x.example'; do
+  plain=$(printf '%s' "$bad" | sed 's#\\/#/#g')
+  _round
+  _assume "- Assumption: ${bad}"
+  _disp a-export "REBUTTED F1 — covered
+ASSUMED F2 — cap — assumption: \"${plain}\""
+  out=$(_check)
+  _has "$out" ASSUMPTION_INVALID && pass "ASSUMPTION_INVALID: '${plain}'" || fail "link assumption" "$plain $out"
+done
+
+# A finished round's revise file rewritten later is not trusted.
+_round
+sed -i 's/^- \[ \] Export responds with 200$/- [ ] Export responds with 200 within 2 seconds/' "$A"
+sed -i 's/^| Export responds with 200 | finance user/| Export responds with 200 within 2 seconds | finance user/' "$A"
+_disp a-export "$DISP_OK"
+[ "$(planner_draft_revise_finish "$INIT" a-export 1 t)" = "applied" ] || echo "    finish not applied"
+t1=$(planner_draft_revise_dispositions_trusted "${DR}/a-export" 1 | jq -c '[.rebutted[].id]')
+printf 'ASSUMED F2 — x — assumption: "anything"\n' >>"${DR}/a-export/revise.r1.md"
+if [ "$t1" = '["F2"]' ] && ! planner_draft_revise_dispositions_trusted "${DR}/a-export" 1 >/dev/null; then
+  pass "revise.r<N>.md is trusted only while it matches the hash its finish recorded"
+else
+  fail "revise hash" "t1=$t1"
+fi
+
+# A source of quotes only is unmatched.
+printf '%s\n' 'RESOLVED F1 — x — source: """"' 'RESOLVED F2 — x — source: "  "' >"${TMP_ROOT}/rq.md"
+dq=$(planner_draft_revise_dispositions "${TMP_ROOT}/rq.md" "${DR}/a-export/findings.r1.json")
+um=$(planner_draft_revise_source_check "$INIT" a-export "$dq" | paste -sd, -)
+[ "$um" = "F1,F2" ] && pass "source check: a source of only quotes or spaces is unmatched" || fail "quotes-only source" "$um"
+
+# The wider security rule.
+sec=$(jq -c "$(planner_draft_security_def)"' map(pdr_security)' <<<'[
+  {"code":"EDGE_CASE_GAP","detail":"no criterion requires an authorization check on DELETE (IDOR)"},
+  {"code":"EDGE_CASE_GAP","detail":"no role check for the admin export"},
+  {"code":"EDGE_CASE_GAP","detail":"a hard-coded password in config"},
+  {"code":"EDGE_CASE_GAP","detail":"credentials are logged in plain text"},
+  {"code":"EDGE_CASE_GAP","detail":"input is not sanitized"},
+  {"code":"EDGE_CASE_GAP","detail":"the file name may contain ../ and read other files"},
+  {"code":"EDGE_CASE_GAP","detail":"the dependency injection container passes raw user input into the SQL query"},
+  {"code":"EDGE_CASE_GAP","detail":"any user can read another tenant'"'"'s invoices"},
+  {"code":"EDGE_CASE_GAP","detail":"what the empty list shows"}]')
+[ "$sec" = '[true,true,true,true,true,true,true,true,false]' ] && pass "pdr_security: authorization/role checks, IDOR, secrets in config/logs, unsanitised input, ../, raw user input" ||
+  fail "wider security rule" "$sec"
+
 echo
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]

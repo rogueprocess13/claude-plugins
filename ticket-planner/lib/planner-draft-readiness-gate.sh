@@ -292,7 +292,15 @@ planner_draft_readiness_next() {
     dir="${root}/${slug}"
     tid=$(_planner_draft_tid "$slug")
     if [ ! -s "${dir}/scan-result.txt" ]; then
-      dor_semantic_prompt scan "$tid" "${dir}/body.md" "${dir}/scan-result.txt" >"${dir}/scan-prompt.txt" || return 1
+      # After a revision (or any edit) the rescan is scoped to the changed
+      # sections, as Refinement scopes its rescans.
+      local cs
+      cs=$(_pdl_changed_sections "$dir")
+      if [ -n "$cs" ]; then
+        dor_semantic_prompt scan --changed-sections "$cs" "$tid" "${dir}/body.md" "${dir}/scan-result.txt" >"${dir}/scan-prompt.txt" || return 1
+      else
+        dor_semantic_prompt scan "$tid" "${dir}/body.md" "${dir}/scan-result.txt" >"${dir}/scan-prompt.txt" || return 1
+      fi
       out+="${slug}"$'\t'"scan"$'\t'"${PLANNER_DRAFT_AGENT_TYPE}"$'\t'"${dir}/scan-prompt.txt"$'\t'"${dir}/scan-result.txt"$'\n'
     elif [ ! -s "${dir}/audit-result.txt" ]; then
       dor_semantic_prompt audit "$tid" "${dir}/body.md" "${dir}/audit-result.txt" "${dir}/dor-result.json" >"${dir}/audit-prompt.txt" || return 1
@@ -466,6 +474,7 @@ planner_draft_readiness_gate() {
   rm -f "${root}/blocked-specs"
   planner_state_write "$init" "META" "draft-readiness" "done" "ready ${total}/${total}"
   planner_draft_readiness_history_report "$init"
+  planner_draft_readiness_security_report "$init"
   return 0
 }
 
@@ -489,6 +498,21 @@ planner_draft_readiness_report() {
     echo "Resume:     /ticket-planner resume ${init}"
     return 0
   fi
+  case "$done_msg" in
+  ready* | accepted*)
+    echo "Draft readiness passed (${done_msg}) — nothing was created in Linear yet."
+    echo ""
+    planner_draft_readiness_history_report "$init"
+    planner_draft_readiness_security_report "$init"
+    echo "Artifacts:  ${state_dir}/artifacts/draft-readiness/"
+    return 0
+    ;;
+  "")
+    echo "Draft readiness has not finished (no done line in the latest run)."
+    echo "Resume:     /ticket-planner resume ${init}"
+    return 0
+    ;;
+  esac
   echo "Draft readiness halted (${done_msg#blocked }) — nothing was created in Linear."
   printf '%s\n' "$run" | grep '^[^|]*|META|draft-readiness|fail|' | cut -d'|' -f5- |
     while read -r slug code quote; do
@@ -505,6 +529,7 @@ planner_draft_readiness_report() {
     done
   echo ""
   planner_draft_readiness_history_report "$init"
+  planner_draft_readiness_security_report "$init"
   echo "Edit artifacts/specs/<slug>.md, then: /ticket-planner resume ${init}"
   echo "A draft pass does not guarantee Refinement passes; Refinement re-checks the real ticket bodies."
   echo "Accept as is: /ticket-planner resume ${init} --accept DRAFT_NOT_READY:\"<reason>\""

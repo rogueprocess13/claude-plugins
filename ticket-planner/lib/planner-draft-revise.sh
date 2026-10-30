@@ -18,13 +18,17 @@
 #   planner_prompt_spec_revise <INIT> <slug> <findings-file>
 #       the revise agent prompt (stdout); N comes from findings.r<N>.json
 #   planner_draft_revise_dispositions <revise-file> [<findings-file>]
-#       {resolved:[{id,what,source}], rebutted:[{id,reason}],
-#        unaddressed:[id], unknown:[id], malformed:n}
+#       {resolved:[{id,what,source}], assumed:[{id,what,assumption}],
+#        rebutted:[{id,reason}], unaddressed:[id], unknown:[id], malformed:n}
 #   planner_draft_revise_source_check <INIT> <slug> <dispositions-json> [<before-spec>]
 #       ids whose `source:` quote is not in intent/idea/consensus/spec
-#       (advisory — never reverts)
-#   planner_draft_revise_check_text <before-spec> <after-spec> [<revise-file>]
+#       (advisory — never reverts; escaped and curly quotes normalised)
+#   planner_draft_revise_check_text <before-spec> <after-spec> [<revise-file> [<findings-file>]]
 #       text guards; prints "<CODE> <detail>" per failure, rc 1 on any
+#   planner_draft_revise_assumptions <spec>
+#       the `- Assumption: <text>` rows of the spec's `## Scope`, normalised
+#   planner_draft_security_def
+#       the jq definition `pdr_security` (security-relevant finding, below)
 #   planner_draft_revise_snapshot <INIT> <name>
 #   planner_draft_revise_snapshot_diff <INIT> <name> [<allowed-glob>...]
 #   planner_draft_revise_snapshot_restore <INIT> <name> <relpath>...
@@ -48,8 +52,42 @@
 #
 # Guard reason codes (D10): FROZEN_CHANGED CRITERION_DROPPED EXTENSION_INVALID
 # CRITERIA_FLOOD VNOTE_CHANGED SCOPE_DROPPED CONTRACT_DROPPED SPEC_INVALID
-# TESTDATA_REGRESSION OUT_OF_SCOPE_EDIT. A failing check may print several
-# codes; the first line is the primary one (the status reason).
+# TESTDATA_REGRESSION ASSUMPTION_INVALID OUT_OF_SCOPE_EDIT. A failing check
+# may print several codes; the first line is the primary one (the status
+# reason).
+#
+# Assumptions (no-source decisions). When a finding needs a product decision
+# that no source states, the agent picks a conservative default instead of a
+# rebuttal: it adds one `- Assumption: <text>` row to `## Scope` (the only
+# place an assumption may appear; Scope reaches the ticket body), adds or
+# extends a criterion that tests the default, and writes
+# `ASSUMED <id> — <what> — assumption: "<text>"`. ASSUMPTION_INVALID guards
+# it: every new Scope assumption row is claimed by exactly one ASSUMED line
+# and vice versa (same normalised text); no assumption-like line is added
+# outside `## Scope` (frozen sections are already byte-compared); at most
+# PLANNER_DRAFT_ASSUMPTION_MAX rows per round, each at most
+# PLANNER_DRAFT_ASSUMPTION_MAX_WORDS words with no `|`, `<`, `>`, backtick
+# or `##`; at least one new or extended criterion per ASSUMED line; the id
+# names a finding of the round, and never a security-relevant one
+# (pdr_security) — a security gap is not assumed away. Rows kept from an
+# earlier round are protected by SCOPE_DROPPED. Bash, not the agent, assigns
+# the `assumed` reason class, and only for an applied round.
+#
+# Security-relevant finding (pdr_security, deterministic): its code, detail,
+# quote or quote_b matches PLANNER_DRAFT_SECURITY_RE (XSS, innerHTML,
+# injection other than dependency injection, CSRF, SSRF, path traversal or
+# `../`, open redirect / redirect target, privilege escalation, auth bypass,
+# missing authorization/role/ownership check, IDOR, cross-tenant access,
+# hard-coded or plain-text secrets, unsanitised/unescaped/unencoded or
+# unvalidated input, raw user input, user-controlled values, SQL queries,
+# CORS, brute force, session tokens), or its detail (the evaluator's reason —
+# never body text alone) matches PLANNER_DRAFT_SECRET_RE (secrets, API and
+# private keys, access tokens, passwords, credentials, PII/personal data,
+# encryption, rate limiting, unvalidated tokens). Case-insensitive. The rule
+# errs wide on purpose: a false hit costs one revise round and forbids an
+# assumption, a miss lets a security gap be assumed away or drift-demoted.
+# Both are assigned at source time, so the environment cannot switch the
+# rule off.
 #
 # Sourceable library — no set -euo pipefail.
 
@@ -84,6 +122,12 @@ PLANNER_DRAFT_REVISE_AGENT="ticket-planner:draft-revise-agent"
 PLANNER_DRAFT_EDITABLE_SECTIONS="Acceptance Criteria|Verification Notes|Scope"
 # Negation, exception and hedge tokens an extension may not contain (D10).
 PLANNER_DRAFT_EXTEND_FORBIDDEN="except|unless|only if|optional|not required|may|when feasible|if possible"
+# Assumption limits (ASSUMPTION_INVALID). Constants, not env knobs.
+PLANNER_DRAFT_ASSUMPTION_MAX=3
+PLANNER_DRAFT_ASSUMPTION_MAX_WORDS=40
+# The security rule (see the header). Oniguruma syntax, matched with "i".
+PLANNER_DRAFT_SECURITY_RE='\b(xss|cross[- ]?site[- ]scripting|inner[- ]?html|outer[- ]?html|dangerouslysetinnerhtml|document\.write|(?<!dependency[- ])injections?|csrf|xsrf|cross[- ]?site[- ]request[- ]forgery|ssrf|server[- ]side[- ]request[- ]forgery|(path|directory)[- ]traversal|open[- ]redirects?|redirect[- ](target|url|destination)|privilege[- ]escalation|(auth|authentication|authorization|authorisation|access[- ]control|login|permission)[- ]bypass(es|ed)?|bypass(es|ed|ing)?[- ](the[- ])?(auth|authentication|authorization|authorisation|login|access[- ]control|permissions?)|(missing|no|without)[- ](an[- ])?(authori[sz]ation|role|permission|access[- ]control|ownership)[- ]checks?|authori[sz]ation[- ]checks?|role[- ]checks?|idor|insecure[- ]direct[- ]object|cross[- ]tenant|another[- ](user|tenant)|(hard[- ]?coded|plain[- ]?text)[- ](passwords?|credentials?|secrets?|tokens?|keys?)|unsani[tz]i[sz]ed|unescaped|unencoded|(not|never|without|no)[- ](sani[tz]i[sz]\w*|escap\w*|encod\w*|validat\w*)|input[- ]validation|raw[- ]user[- ]input|user[- ]controlled|sql[- ]quer(y|ies)|cors|brute[- ]?force|session[- ](tokens?|fixation|hijack\w*))\b|\.\./'
+PLANNER_DRAFT_SECRET_RE='\b(secrets?|api[- ]?keys?|private[- ]keys?|access[- ]tokens?|passwords?|credentials?|pii|personal[- ]data|encrypt\w*|rate[- ]limit\w*|tokens?[- ](is|are)[- ]not[- ]validated)\b'
 
 # ── Small helpers ─────────────────────────────────────────────────────────
 
@@ -124,13 +168,30 @@ _pdrv_write() {
   cat >"${f}.tmp.$$" && mv -f "${f}.tmp.$$" "$f"
 }
 
+# planner_draft_security_def — prints the jq definition `pdr_security`
+# (true for a security-relevant finding object). Prepend it to a filter.
+planner_draft_security_def() {
+  printf 'def pdr_security: ([.code, .detail, .quote, .quote_b] | map(select(type == "string")) | join(" ")) as $pdr_t | (($pdr_t | test(%s; "i")) or (((.detail // "") | tostring) | test(%s; "i")));' \
+    "$(jq -n --arg r "$PLANNER_DRAFT_SECURITY_RE" '$r')" "$(jq -n --arg r "$PLANNER_DRAFT_SECRET_RE" '$r')"
+}
+
+# Quote normalisation for source matching: escaped quotes and backslashes
+# unescaped, curly quotes straightened, whitespace collapsed.
+_pdrv_quote_norm() {
+  printf '%s' "$1" | sed -e 's/\\\(["'"'"'\\]\)/\1/g' -e 's/“/"/g; s/”/"/g' -e "s/‘/'/g; s/’/'/g" -e 's/\\$//' |
+    tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//'
+}
+
 # ── Section parsing (fence-aware, `## ` headings only) ────────────────────
+# A fence opens only with at most 3 spaces of indent — the rule dor-check's
+# _dor_section_records (and CommonMark) uses. A looser rule here would let a
+# 4-space "fence" hide a `## ` heading the ticket body and the evaluator see.
 
 # Lines outside the editable sections, each prefixed "<heading>\037".
 _pdrv_frozen_text() {
   tr -d '\r' <"$1" | awk -v allow="$PLANNER_DRAFT_EDITABLE_SECTIONS" '
     BEGIN { n = split(allow, a, "|"); for (i = 1; i <= n; i++) ok["## " a[i]] = 1; cur = "(text before the first heading)" }
-    /^[[:space:]]*(```|~~~)/ { fence = !fence }
+    /^ ? ? ?(```|~~~)/ { fence = !fence }
     !fence && /^## / { h = $0; sub(/[[:space:]]+$/, "", h); cur = h }
     { if (!(cur in ok)) print cur "\037" $0 }'
 }
@@ -138,7 +199,7 @@ _pdrv_frozen_text() {
 # Body lines of the exact `## <heading>` section (all occurrences).
 _pdrv_section() {
   tr -d '\r' <"$1" | awk -v h="## $2" '
-    /^[[:space:]]*(```|~~~)/ { fence = !fence }
+    /^ ? ? ?(```|~~~)/ { fence = !fence }
     !fence && /^## / { t = $0; sub(/[[:space:]]+$/, "", t); on = (t == h); next }
     on { print }'
 }
@@ -194,6 +255,22 @@ _pdrv_scope_lines() {
     l=$(_pdrv_norm "$l")
     [ -n "$l" ] && printf '%s\n' "$l"
   done
+}
+
+# planner_draft_revise_assumptions <spec> — the normalised text of every
+# `- Assumption: <text>` row of `## Scope`, one per line, in order.
+planner_draft_revise_assumptions() {
+  _pdrv_section "$1" "Scope" | while IFS= read -r l; do
+    if [[ "$l" =~ ^[[:space:]]*[-*][[:space:]]+Assumption:[[:space:]]*(.*[^[:space:]])[[:space:]]*$ ]]; then
+      _pdrv_norm "${BASH_REMATCH[1]}"
+      echo
+    fi
+  done
+}
+
+# Number of assumption-like lines in a section (any "assumption:" spelling).
+_pdrv_assumption_like() {
+  _pdrv_section "$1" "$2" | grep -ciE '^[[:space:]]*([-*+][[:space:]]+)?(\[[[:space:]xX]\][[:space:]]*)?(\|[[:space:]]*)?[*_]*assumptions?[*_]*[[:space:]]*:' || true
 }
 
 # Contract tokens of a spec, one per line: path:<p> tick:<t> status:<n> env:<N>.
@@ -267,20 +344,108 @@ _pdrv_ac_match() {
   done
 }
 
-# Number of distinct RESOLVED ids in a revise file (0 when absent).
+# Number of distinct RESOLVED and ASSUMED ids in a revise file (0 when absent).
 _pdrv_resolved_count() {
   [ -f "${1:-}" ] || {
     echo 0
     return 0
   }
-  planner_draft_revise_dispositions "$1" | jq '.resolved | length'
+  planner_draft_revise_dispositions "$1" | jq '(.resolved | length) + (.assumed | length)'
+}
+
+# _pdrv_assumption_check <before> <after> <revise-file> <findings-file> <new+extended>
+# ASSUMPTION_INVALID lines (see the header); prints nothing when valid.
+_pdrv_assumption_check() {
+  local before="$1" after="$2" rf="$3" ff="$4" changed="$5" sec l n
+  for sec in "Acceptance Criteria" "Verification Notes"; do
+    if [ "$(_pdrv_assumption_like "$after" "$sec")" -gt "$(_pdrv_assumption_like "$before" "$sec")" ]; then
+      echo "ASSUMPTION_INVALID an Assumption line was added to ## ${sec}; assumptions go in ## Scope only"
+      return 0
+    fi
+  done
+  local -a new=()
+  local -A old=()
+  while IFS= read -r l; do
+    [ -n "$l" ] && old["$l"]=$((${old["$l"]:-0} + 1))
+  done < <(planner_draft_revise_assumptions "$before")
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    if [ "${old["$l"]:-0}" -gt 0 ]; then
+      old["$l"]=$((${old["$l"]} - 1))
+    else
+      new+=("$l")
+    fi
+  done < <(planner_draft_revise_assumptions "$after")
+  local like_delta
+  like_delta=$(($(_pdrv_assumption_like "$after" "Scope") - $(_pdrv_assumption_like "$before" "Scope")))
+  if [ "$like_delta" -gt "${#new[@]}" ]; then
+    echo "ASSUMPTION_INVALID a Scope assumption line is not in the form '- Assumption: <text>'"
+    return 0
+  fi
+  local disp='{"assumed":[]}'
+  [ -n "$rf" ] && [ -f "$rf" ] && disp=$(planner_draft_revise_dispositions "$rf" "$ff")
+  n=$(jq '.assumed | length' <<<"$disp")
+  [ "${#new[@]}" -eq 0 ] && [ "$n" -eq 0 ] && return 0
+  local blank
+  blank=$(jq -r '.assumed[] | select((.assumption // "") | gsub("[\\s\"“”]"; "") == "") | .id' <<<"$disp" | head -1)
+  if [ -n "$blank" ] || [ "$n" -ne "${#new[@]}" ]; then
+    echo "ASSUMPTION_INVALID ${n} ASSUMED line(s) for ${#new[@]} new Scope assumption row(s)${blank:+ (${blank} names no assumption text)}"
+    return 0
+  fi
+  if [ "${#new[@]}" -gt "$PLANNER_DRAFT_ASSUMPTION_MAX" ]; then
+    echo "ASSUMPTION_INVALID ${#new[@]} assumptions in one round (max ${PLANNER_DRAFT_ASSUMPTION_MAX})"
+    return 0
+  fi
+  local words
+  for l in "${new[@]}"; do
+    words=$(printf '%s' "$l" | wc -w | tr -d ' ')
+    if [ "$words" -gt "$PLANNER_DRAFT_ASSUMPTION_MAX_WORDS" ]; then
+      echo "ASSUMPTION_INVALID assumption has ${words} words (max ${PLANNER_DRAFT_ASSUMPTION_MAX_WORDS}): ${l:0:60}"
+      return 0
+    fi
+    case "$l" in
+    *'|'* | *'<'* | *'>'* | *'`'* | *'##'* | *']('* | *'!['* | *'://'* | *'@'*)
+      echo "ASSUMPTION_INVALID assumption holds a forbidden character or heading marker: ${l:0:60}"
+      return 0
+      ;;
+    esac
+  done
+  # Every new row claimed by exactly one ASSUMED line, and vice versa.
+  local want got
+  want=$(printf '%s\n' "${new[@]}" | grep . | LC_ALL=C sort)
+  got=$(jq -r '.assumed[].assumption' <<<"$disp" | while IFS= read -r l; do
+    _pdrv_norm "$(_pdrv_quote_norm "$l")"
+    echo
+  done | grep . | LC_ALL=C sort)
+  if [ "$want" != "$got" ]; then
+    echo "ASSUMPTION_INVALID Scope assumption rows and ASSUMED dispositions do not match one to one"
+    return 0
+  fi
+  if [ "$changed" -lt "$n" ]; then
+    echo "ASSUMPTION_INVALID ${n} ASSUMED finding(s) but ${changed} new or extended criteria (one testable criterion per assumption)"
+    return 0
+  fi
+  local id bad
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    if [ -z "$ff" ] || ! jq -e --arg i "$id" 'any(.[]; (.id // .code) == $i)' "$ff" >/dev/null 2>&1; then
+      echo "ASSUMPTION_INVALID ASSUMED ${id} is not a finding of this round"
+      return 0
+    fi
+    bad=$(jq -r --arg i "$id" "$(planner_draft_security_def)"' [.[] | select((.id // .code) == $i) | select(pdr_security)] | length' "$ff")
+    if [ "${bad:-0}" -gt 0 ]; then
+      echo "ASSUMPTION_INVALID ${id} is a security finding; a security gap cannot be resolved by an assumption"
+      return 0
+    fi
+  done < <(jq -r '.assumed[].id' <<<"$disp")
+  return 0
 }
 
 # ── Text guards (D10) ─────────────────────────────────────────────────────
 
-# planner_draft_revise_check_text <before-spec> <after-spec> [<revise-file>]
+# planner_draft_revise_check_text <before-spec> <after-spec> [<revise-file> [<findings-file>]]
 planner_draft_revise_check_text() {
-  local before="$1" after="$2" disp="${3:-}" fails=""
+  local before="$1" after="$2" disp="${3:-}" ffile="${4:-}" fails=""
   [ -f "$before" ] && [ -f "$after" ] || {
     echo "SPEC_INVALID spec file missing"
     return 1
@@ -307,7 +472,7 @@ planner_draft_revise_check_text() {
   done < <(_pdrv_ac_prose "$before")
 
   # CRITERION_DROPPED / EXTENSION_INVALID / CRITERIA_FLOOD
-  local kind a b rest nnew=0 max words
+  local kind a b rest nnew=0 next=0 max words
   local -a exts=()
   max=$(_pdrv_extend_max)
   while read -r kind a b rest; do
@@ -316,6 +481,7 @@ planner_draft_revise_check_text() {
     ORDER) fails+="CRITERION_DROPPED criterion $((a + 1)) moved before an earlier one: ${O[$a]:0:80}"$'\n' ;;
     NEW) nnew=$((nnew + 1)) ;;
     EXT)
+      next=$((next + 1))
       exts+=("$rest")
       words=$(printf '%s' "$rest" | wc -w | tr -d ' ')
       if [ "$words" -gt "$max" ]; then
@@ -329,8 +495,11 @@ planner_draft_revise_check_text() {
   local resolved
   resolved=$(_pdrv_resolved_count "$disp")
   if [ "$nnew" -gt $((resolved + 2)) ]; then
-    fails+="CRITERIA_FLOOD ${nnew} new criteria for ${resolved} RESOLVED finding(s) (max $((resolved + 2)))"$'\n'
+    fails+="CRITERIA_FLOOD ${nnew} new criteria for ${resolved} RESOLVED/ASSUMED finding(s) (max $((resolved + 2)))"$'\n'
   fi
+  local aout
+  aout=$(_pdrv_assumption_check "$before" "$after" "$disp" "$ffile" $((nnew + next)))
+  [ -n "$aout" ] && fails+="${aout}"$'\n'
 
   # VNOTE_CHANGED — header kept, every old row kept (Criterion cell may only
   # carry the same extension as its criterion), prose kept.
@@ -543,7 +712,8 @@ planner_prompt_spec_revise() {
   n="${BASH_REMATCH[1]}"
   local revise="${d}/revise.r${n}.md" max findings_txt brief_block=""
   max=$(_pdrv_extend_max)
-  findings_txt=$(jq -r '.[] | "- id: \(.id // .code)\n  code: \(.code)\n  kind: \(.kind // "semantic")"
+  findings_txt=$(jq -r "$(planner_draft_security_def)"' .[] | "- id: \(.id // .code)\n  code: \(.code)\n  kind: \(.kind // "semantic")"
+      + (if pdr_security then "\n  security: yes" else "" end)
       + (if .quote then "\n  quote: \(.quote)" else "" end)
       + (if .quote_b then "\n  quote_b: \(.quote_b)" else "" end)
       + (if .detail then "\n  reason: \(.detail)" else "" end)
@@ -594,11 +764,13 @@ In the spec, edit only these regions:
   an existing item. An appended qualifier is at most ${max} words and may narrow
   where a criterion applies, never weaken what it requires: it must not contain
   "except", "unless", "only if", "optional", "not required", "may", "when
-  feasible" or "if possible". Add at most (number of RESOLVED findings + 2) new items.
+  feasible" or "if possible". Add at most (number of RESOLVED and ASSUMED findings + 2)
+  new items.
 - \`## Verification Notes\`: add rows; when you extend a criterion, extend that
   row's Criterion cell with the same appended text. Never change any other cell
   of an existing row, and never remove a row.
-- \`## Scope\`: add rows only.
+- \`## Scope\`: add rows only. An assumption (below) is a Scope row of exactly the
+  form \`- Assumption: <one plain sentence>\`; nowhere else.
 
 Everything else stays byte-identical: the text before the first heading,
 \`## Title\`, \`## Description\`, \`## Summary\`, \`## Outcome\`/\`## Enables\`, the
@@ -617,6 +789,13 @@ Behaviour\`, \`## Expected Behaviour\`), \`## Technical Context\`, \`## Test Use
   the spec's own behaviour section, and must not contradict them.
 - When a finding is wrong (already covered, or out of scope by the intent), write
   a rebuttal instead of an edit.
+- When a finding is right but needs a product decision that no source (intent,
+  brief, consensus, spec) states, do not rebut it. Choose the most conservative
+  sensible default, add one Scope row \`- Assumption: <the default, in plain words>\`
+  (at most ${PLANNER_DRAFT_ASSUMPTION_MAX} per round, ${PLANNER_DRAFT_ASSUMPTION_MAX_WORDS} words each, no \`|\`, \`<\`, \`>\`, backticks, links or \`@\`),
+  add or extend a criterion that tests that default, and mark it ASSUMED. A human
+  reviews every assumption later. Never use ASSUMED for a finding marked
+  \`security: yes\`: fix it with criteria, or rebut it.
 - A bash guard checks your edit. Any change outside the regions above, a dropped
   or reworded criterion, a weakening qualifier or an edit to any other file
   reverts the whole revision and spends the round.
@@ -626,6 +805,7 @@ Behaviour\`, \`## Expected Behaviour\`), \`## Technical Context\`, \`## Test Use
 Write \`${revise}\` with exactly one line per finding id:
 
     RESOLVED <id> — <what changed> — source: "<verbatim quote from intent, brief, consensus or spec>"
+    ASSUMED <id> — <criterion added> — assumption: "<the Scope assumption text, verbatim>"
     REBUTTED <id> — <reason, citing the covering criterion or intent line>
 
 Then return one line: \`DRAFT_REVISE written ${revise}\`.
@@ -637,9 +817,10 @@ PROMPT
 # planner_draft_revise_dispositions <revise-file> [<findings-file>]
 planner_draft_revise_dispositions() {
   local rf="$1" ff="${2:-}" line kind id rest what src malformed=0
-  local res='[]' reb='[]'
-  local re='^(RESOLVED|REBUTTED)[[:space:]]+([^[:space:]]+)[[:space:]]+(—|–|--|-)[[:space:]]*(.*)$'
+  local res='[]' reb='[]' asm='[]'
+  local re='^(RESOLVED|REBUTTED|ASSUMED)[[:space:]]+([^[:space:]]+)[[:space:]]+(—|–|--|-)[[:space:]]*(.*)$'
   local sre='^(.*[^[:space:]])[[:space:]]+(—|–|--|-)[[:space:]]+source:[[:space:]]*(.*)$'
+  local are='^(.*[^[:space:]])[[:space:]]+(—|–|--|-)[[:space:]]+assumption:[[:space:]]*(.*)$'
   if [ -f "$rf" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
       line="${line%$'\r'}"
@@ -660,6 +841,17 @@ planner_draft_revise_dispositions() {
           fi
           res=$(jq -c --arg i "$id" --arg w "$what" --arg s "$src" \
             'if any(.[]; .id == $i) then . else . + [{id: $i, what: $w, source: $s}] end' <<<"$res")
+        elif [ "$kind" = "ASSUMED" ]; then
+          what="$rest"
+          src=""
+          if [[ "$rest" =~ $are ]]; then
+            what="${BASH_REMATCH[1]}"
+            src="${BASH_REMATCH[3]}"
+            src="${src#[\"“]}"
+            src="${src%[\"”]}"
+          fi
+          asm=$(jq -c --arg i "$id" --arg w "$what" --arg s "$src" \
+            'if any(.[]; .id == $i) then . else . + [{id: $i, what: $w, assumption: $s}] end' <<<"$asm")
         else
           reb=$(jq -c --arg i "$id" --arg r "$rest" \
             'if any(.[]; .id == $i) then . else . + [{id: $i, reason: $r}] end' <<<"$reb")
@@ -671,9 +863,12 @@ planner_draft_revise_dispositions() {
   fi
   local ids='[]'
   [ -n "$ff" ] && [ -f "$ff" ] && ids=$(jq -c '[.[] | (.id // .code)]' "$ff")
-  jq -nc --argjson res "$res" --argjson reb "$reb" --argjson ids "$ids" --argjson m "$malformed" '
-    ([$res[].id] + [$reb[].id]) as $seen
-    | {resolved: $res, rebutted: [$reb[] | select(.id as $i | [$res[].id] | index($i) | not)],
+  jq -nc --argjson res "$res" --argjson reb "$reb" --argjson asm "$asm" --argjson ids "$ids" --argjson m "$malformed" '
+    ([$res[].id]) as $rids
+    | ([$asm[] | select(.id as $i | $rids | index($i) | not)]) as $asm
+    | ([$res[].id] + [$asm[].id] + [$reb[].id]) as $seen
+    | {resolved: $res, assumed: $asm,
+       rebutted: [$reb[] | select(.id as $i | ($rids + [$asm[].id]) | index($i) | not)],
        unaddressed: [$ids[] | select(. as $i | $seen | index($i) | not)],
        unknown: (if ($ids | length) > 0 then [$seen[] | select(. as $i | $ids | index($i) | not)] | unique else [] end),
        malformed: $m}'
@@ -684,15 +879,21 @@ planner_draft_revise_source_check() {
   local init="$1" slug="$2" disp="$3" before="${4:-}" sd corpus id src
   sd=$(_pdrv_state_dir "$init") || return 1
   [ -f "$disp" ] && disp=$(cat "$disp")
-  corpus=$(cat "${sd}/artifacts/intent.md" "${sd}/artifacts/idea.txt" "${sd}/artifacts/consensus.md" \
-    "${sd}/artifacts/specs/${slug}.md" ${before:+"$before"} 2>/dev/null | tr -s '[:space:]' ' ')
-  while IFS=$'\t' read -r id src; do
+  corpus=$(_pdrv_quote_norm "$(cat "${sd}/artifacts/intent.md" "${sd}/artifacts/idea.txt" "${sd}/artifacts/consensus.md" \
+    "${sd}/artifacts/specs/${slug}.md" ${before:+"$before"} 2>/dev/null)")
+  # A quote the agent escaped (\"Sign up\") or straightened still matches;
+  # failing that, both sides compare with double quotes removed.
+  while IFS= read -r id; do
     [ -n "$id" ] || continue
-    src=$(_pdrv_norm "$src")
-    if [ -z "$src" ] || ! printf '%s' "$corpus" | grep -qF -- "$src"; then
+    src=$(jq -r --arg i "$id" '[.resolved[] | select(.id == $i) | .source][0] // ""' <<<"$disp")
+    src=$(_pdrv_quote_norm "$src")
+    if [ -z "${src//[\"[:space:]]/}" ]; then
+      echo "$id"
+    elif ! printf '%s' "$corpus" | grep -qF -- "$src" &&
+      ! printf '%s' "${corpus//\"/}" | grep -qF -- "${src//\"/}"; then
       echo "$id"
     fi
-  done < <(jq -r '.resolved[] | [.id, .source] | @tsv' <<<"$disp")
+  done < <(jq -r '.resolved[].id' <<<"$disp")
 }
 
 # ── Whole-workspace snapshot (OUT_OF_SCOPE_EDIT, D10) ─────────────────────
@@ -1037,7 +1238,7 @@ planner_draft_revise_check() {
     return 1
   fi
 
-  out=$(planner_draft_revise_check_text "$before" "$spec" "$d/revise.r${n}.md")
+  out=$(planner_draft_revise_check_text "$before" "$spec" "$d/revise.r${n}.md" "$d/findings.r${n}.json")
   [ -n "$out" ] && fails+="${out}"$'\n'
 
   if ! out=$(planner_spec_validate_one "$spec" 2>&1 >/dev/null); then
@@ -1172,11 +1373,38 @@ planner_draft_revise_finish() {
   while IFS= read -r id; do
     [ -n "$id" ] && planner_draft_revise_log "$init" "$snap" "META" "draft-revise" "warn" "${slug} UNADDRESSED ${id}" || true
   done < <(jq -r '.unaddressed[]' <<<"$disp")
+  # An assumption is logged only once its round applied (the guards checked
+  # the Scope row against the disposition).
+  local nasm=0 text
+  if [ "$status" = "applied" ]; then
+    while IFS=$'\t' read -r id text; do
+      [ -n "$id" ] || continue
+      nasm=$((nasm + 1))
+      code=$(jq -r --arg i "$id" '[.[] | select((.id // .code) == $i) | .code][0] // "UNKNOWN"' "$ff" 2>/dev/null)
+      text=$(_pdrv_quote_norm "$text")
+      planner_draft_revise_log "$init" "$snap" "META" "draft-revise" "info" "${slug} ASSUMED ${code:-UNKNOWN} ${id} \"${text//\"/\'}\"" || true
+    done < <(jq -r '.assumed[] | [.id, .assumption] | @tsv' <<<"$disp")
+  fi
 
   if [[ "$status" != reverted:* ]]; then
     planner_draft_revise_log "$init" "$snap" "META" "draft-revise" "done" \
-      "${slug} round=${n} status=${status} resolved=$(jq '.resolved | length' <<<"$disp") rebutted=$(jq '.rebutted | length' <<<"$disp") unaddressed=$(jq '.unaddressed | length' <<<"$disp") added=${added} extended=${extended}" || true
+      "${slug} round=${n} status=${status} resolved=$(jq '.resolved | length' <<<"$disp") rebutted=$(jq '.rebutted | length' <<<"$disp") unaddressed=$(jq '.unaddressed | length' <<<"$disp") added=${added} extended=${extended}$([ "$nasm" -gt 0 ] && echo " assumed=${nasm}")" || true
   fi
+  # The dispositions a later reader trusts are the ones these guards saw:
+  # an agent of a later round may rewrite this round's revise file (its
+  # glob is allowed then), so readers check it against this hash.
+  sha256sum <"$rf" | cut -d' ' -f1 | _pdrv_owned_write "$init" "$snap" "$d/revise.r${n}.sha"
   echo "$status" | _pdrv_owned_write "$init" "$snap" "$d/revise.r${n}.status"
   echo "$status"
+}
+
+# planner_draft_revise_dispositions_trusted <dir> <N> — the dispositions of
+# finished round N, or nothing (rc 1) when revise.r<N>.md no longer matches
+# the hash its finish recorded.
+planner_draft_revise_dispositions_trusted() {
+  local d="$1" n="$2" want
+  [ -f "$d/revise.r${n}.md" ] && [ -f "$d/revise.r${n}.sha" ] || return 1
+  want=$(cat "$d/revise.r${n}.sha")
+  [ "$(sha256sum <"$d/revise.r${n}.md" | cut -d' ' -f1)" = "$want" ] || return 1
+  planner_draft_revise_dispositions "$d/revise.r${n}.md" "$d/findings.r${n}.json"
 }
