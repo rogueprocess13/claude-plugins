@@ -99,6 +99,46 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## ticket-planner 0.29.0 (2026-10-30)
+
+Draft readiness, slice S2b (`planner-draft-readiness`, design D1, D4–D7, D16): the halt-only gate.
+After Crosscheck passes, and again on every entry to Epic Gen, each spec's draft ticket body goes
+through the deterministic DoR check and the semantic evaluator (scan + audit) before anything is
+written to Linear. A blocking finding stops the run with `DRAFT_NOT_READY`. No revision loop yet
+(S3); every draft evaluation is round 1.
+
+### Added
+- **`lib/planner-draft-readiness-gate.sh`**: `planner_draft_readiness_begin` (start line; skip
+  under `--until Crosscheck`; re-runs Crosscheck when a spec changed since the last blocked run;
+  recompose + deterministic pass; an accept bound to the current drafts passes), `_next` (spawn
+  list: `<slug>\t<scan|audit>\t<agent-type>\t<prompt-file>\t<result-file>`, or `done 0`), `_apply`
+  (one retry, then `unavailable`; the next run retries it), `_gate` (one `META|draft-readiness|fail|<slug> <CODE> "<quote>"`
+  line per finding, `done|blocked n/m` or `ready m/m`), `_report`, `_accept`, `_combined_hash`,
+  `_state`. The semantic verdict comes from ticket-auto-pipeline's own `dor_semantic_apply` run
+  against a throwaway `REPOS_ROOT`, so drafts get Refinement's findings and `SEMANTIC_*` codes
+  without a copy and without writing any real manifest. It does not need S1.
+- **`--accept DRAFT_NOT_READY:"reason"`** has its own branch ahead of the Crosscheck accept, both
+  in SKILL.md step 2b and in `planner-answers.sh` (`flag:accept:DRAFT_NOT_READY`). It writes
+  `META|draft-readiness|accepted|<combined-hash> <reason>`, hashed at parse time over the current
+  drafts, and never `META|crosscheck|accepted`. Any spec edit re-arms the gate.
+- **Stop describer**: `DRAFT_NOT_READY` (in `PLANNER_STOP_BLOCK_REASONS`), checked before
+  `CREATE_GATE` at position Epic Gen: one `note` question per blocked spec, one
+  `flag:accept:DRAFT_NOT_READY`, one `resolved` note. A stale verdict is never reported as ready.
+- `draft-readiness` joins `PLANNER_REPEATABLE_META_STEPS`.
+- `lib/tests/test-planner-draft-readiness-gate.sh` (27 checks), registered in the Makefile.
+
+### Changed
+- **SKILL.md step 1b's inline batch-spawn bash moved into the lib** (task 4.1):
+  `planner_refinement_prepare` / `_next` / `_apply_pending` in `planner-refinement.sh`, driven by a
+  new shared spawn-list loop (step 1e) that the draft gate (new step 1d) uses too. Behaviour is the
+  same: scan then audit per ticket, `PLANNER_REFINEMENT_PARALLEL` per list, one retry, then
+  `SEMANTIC_UNAVAILABLE`. A spawn list holds only 5-field rows or `done N` (apply output goes to stderr), and prepare/begin drop a stale list left by a crash. SKILL.md shrank 96,327 → 95,352 bytes with the gate, the loop, the accept
+  branch and their prose included. `test-planner-refinement.sh` gains the driver tests and the halt
+  fixture mirrors the new block (goldens unchanged).
+- **The draft `Generated` timestamp is the first `Crosscheck|check|done` line, not the latest.**
+  The gate re-runs Crosscheck after a spec edit; a moving timestamp would change every draft and
+  re-evaluate all of them instead of only the edited one.
+
 ## ticket-planner 0.28.0 (2026-10-30)
 
 Draft readiness, slice S3a (`planner-draft-readiness`, design D8 classification, D9, D10, D11

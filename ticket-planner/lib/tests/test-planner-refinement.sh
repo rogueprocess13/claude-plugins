@@ -1064,6 +1064,134 @@ else
   fail "body edited after the scan still fails the binding check" "rc=$stale_rc err=$stale_err"
 fi
 
+# ── planner-draft-readiness S2b task 4.1: step 1b's spawn-list driver ────
+
+echo "--- spawn-list driver (prepare / next / apply_pending) ---"
+
+SL_INIT="INIT-1700000002-2222"
+SL_EPIC="PRO-400"
+planner_state_init "$SL_INIT" "spawn list idea"
+planner_state_write "$SL_INIT" "EpicGen" "create" "done" "EPIC_ID=${SL_EPIC}"
+planner_state_write "$SL_INIT" "TicketGen" "verify" "done" "ok"
+write_epic_manifest "$SL_EPIC" "" "per-ticket" "" '[]' >/dev/null
+_sl_dir() { echo "${REPOS_ROOT}/.ticket-auto/initiatives/${SL_INIT}/tickets/${1}/planner"; }
+for tid in PRO-401 PRO-402; do
+  write_ticket_manifest "$tid" "$SL_INIT" "feature" '[]' >/dev/null
+  add_epic_manifest_child "$SL_EPIC" "$tid" >/dev/null
+  mkdir -p "$(_sl_dir "$tid")"
+  cp "${FIXTURES_DIR}/22-sourced-contract.md" "$(_sl_dir "$tid")/body.md"
+done
+# A stale result from an earlier run must never be applied.
+echo "stale" >"$(_sl_dir PRO-401)/semantic-scan-result.txt"
+
+# Writes the canned results for a spawn list, through the test's own
+# _write_* helpers (which key on INIT_ID's ticket dirs — point them here).
+_sl_spawn() {
+  local tid kind agent pf rf h
+  while IFS=$'\t' read -r tid kind agent pf rf; do
+    [ -n "$tid" ] || continue
+    [ "${SL_SKIP:-}" = "$tid" ] && continue
+    h=$(_dor_body_hash "$(cat "$(_sl_dir "$tid")/body.md")")
+    if [ "$kind" = "scan" ]; then
+      INIT_ID="$SL_INIT" _write_clean_scan "$tid" "$h"
+    else
+      INIT_ID="$SL_INIT" _write_clean_audit "$tid" "$h"
+    fi
+  done <<<"$1"
+}
+
+sl_rc=0
+PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1 || sl_rc=$?
+pass_file="${REPOS_ROOT}/.ticket-auto/initiatives/${SL_INIT}/refinement-pass"
+if [ "$sl_rc" -eq 0 ] && [ "$(grep -c . "$pass_file")" = 2 ] && [ ! -e "$(_sl_dir PRO-401)/semantic-scan-result.txt" ]; then
+  pass "prepare: both children listed, stale results cleared"
+else
+  fail "prepare" "rc=$sl_rc $(cat "$pass_file" 2>/dev/null)"
+fi
+l1=$(planner_refinement_next "$SL_INIT")
+if [ "$(printf '%s\n' "$l1" | cut -f1,2,3 | tr '\t\n' ': ')" = "PRO-401:scan:ticket-auto-pipeline:dor-semantic-agent PRO-402:scan:ticket-auto-pipeline:dor-semantic-agent " ] &&
+  [ -s "$(printf '%s\n' "$l1" | head -1 | cut -f4)" ]; then
+  pass "next: one scan per listed ticket, prompt written to the named file"
+else
+  fail "next scans" "$l1"
+fi
+_sl_spawn "$l1"
+planner_refinement_apply_pending "$SL_INIT"
+l2=$(planner_refinement_next "$SL_INIT")
+[ "$(printf '%s\n' "$l2" | cut -f2 | sort -u)" = "audit" ] && pass "next: then the audits" || fail "next audits" "$l2"
+_sl_spawn "$l2"
+planner_refinement_apply_pending "$SL_INIT"
+l3=$(planner_refinement_next "$SL_INIT")
+if [ "$l3" = "done 0" ] && [ ! -s "$pass_file" ] &&
+  get_ticket_manifest_field "PRO-401" ready 2>/dev/null | jq -e '.semantic.findings == []' >/dev/null &&
+  planner_refinement_gate "$SL_INIT" >/dev/null 2>&1; then
+  pass "apply_pending: verdicts stored, pass list empty, done 0, gate passes"
+else
+  fail "apply_pending" "l3=$l3 pass=$(cat "$pass_file")"
+fi
+
+# An agent that never writes its result: one retry, then unavailable.
+echo "- an edit" >>"$(_sl_dir PRO-402)/body.md"
+PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1
+SL_SKIP="PRO-402"
+for _i in 1 2 3 4; do
+  l=$(planner_refinement_next "$SL_INIT")
+  [ "$l" = "done 0" ] && break
+  _sl_spawn "$l"
+  planner_refinement_apply_pending "$SL_INIT"
+done
+unset SL_SKIP
+if [ "$l" = "done 0" ] &&
+  get_ticket_manifest_field "PRO-402" ready 2>/dev/null | jq -e '.missing | index("SEMANTIC_UNAVAILABLE") != null' >/dev/null; then
+  pass "missing result twice: SEMANTIC_UNAVAILABLE, ticket leaves the list"
+else
+  fail "missing result twice" "l=$l $(get_ticket_manifest_field "PRO-402" ready 2>/dev/null | jq -c .missing)"
+fi
+
+# Strict list contract (step 1e): whatever apply prints never reaches the
+# spawn list — only 5-field rows or `done N`.
+eval "$(declare -f planner_refinement_apply | sed '1s/planner_refinement_apply/_sl_real_apply/')"
+# (eval, so shellcheck does not read this as the function's only definition)
+eval 'planner_refinement_apply() { echo "round=1 demoted=0 dropped=0"; _sl_real_apply "$@"; }'
+_sl_strict() { printf '%s\n' "$1" | awk -F'\t' '!(NF == 5 || /^done [0-9]+$/) { bad = 1 } END { exit bad }'; }
+sed -i "s/before import\.$/before import (v2)./" "$(_sl_dir PRO-401)/body.md"
+PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1
+sl_strict_ok=1
+for _i in 1 2 3 4 5 6; do
+  l=$(planner_refinement_next "$SL_INIT" 2>/dev/null)
+  _sl_strict "$l" || sl_strict_ok=0
+  [ "$l" = "done 0" ] && break
+  _sl_spawn "$l"
+  planner_refinement_apply_pending "$SL_INIT" >/dev/null 2>&1
+done
+if [ "$sl_strict_ok" -eq 1 ] && [ "$l" = "done 0" ]; then
+  pass "next prints only spawn rows or done N, even when apply prints to stdout"
+else
+  fail "strict list" "$l"
+fi
+eval "$(declare -f _sl_real_apply | sed '1s/_sl_real_apply/planner_refinement_apply/')"
+
+# A spawn list left by a crashed run is dropped by prepare: it must not
+# count as a failed attempt for every listed ticket.
+sed -i "s/before import (v2)\.$/before import (v3)./" "$(_sl_dir PRO-401)/body.md"
+PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1
+planner_refinement_next "$SL_INIT" >/dev/null 2>&1 # leaves .pending, no agent runs
+PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1
+l=$(planner_refinement_next "$SL_INIT" 2>/dev/null)
+if [ ! -e "$(_sl_dir PRO-401)/semantic-attempts" ] && printf '%s\n' "$l" | grep -q $'^PRO-401\tscan\t'; then
+  pass "prepare drops a stale spawn list: no failed attempt counted"
+else
+  fail "stale pending" "attempts=$(cat "$(_sl_dir PRO-401)/semantic-attempts" 2>/dev/null) l=$l"
+fi
+rm -f "${pass_file}.pending"
+# Semantic off: an empty list, NEXT done at once. Legacy: rc 2, nothing else.
+PLANNER_REFINEMENT_SEMANTIC=false PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1
+[ "$(planner_refinement_next "$SL_INIT")" = "done 0" ] && pass "semantic off: done at once" ||
+  fail "semantic off" "$(planner_refinement_next "$SL_INIT")"
+sl_rc=0
+planner_refinement_prepare "$LEGACY_INIT" >/dev/null 2>&1 || sl_rc=$?
+[ "$sl_rc" -eq 2 ] && pass "prepare: legacy initiative rc 2" || fail "prepare legacy" "rc=$sl_rc"
+
 # ── Summary ─────────────────────────────────────────────────────────────────
 
 echo ""

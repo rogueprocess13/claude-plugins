@@ -364,15 +364,11 @@ halt_fixture_run() {
           jq -nc --rawfile d "${REPOS_ROOT}/linear/${1}.md" '{data: {issue: {description: $d}}}'
         }
       fi
-      if planner_refinement_legacy "$INITIATIVE_ID"; then
-        planner_state_write "$INITIATIVE_ID" "META" "refinement" "skip" "legacy — TicketGen|dispatch-gate|done already recorded"
-        planner_state_write "$INITIATIVE_ID" "Refinement" "gate" "skip" "legacy initiative — Refinement not evaluated"
-      else
-        NEEDS_PASS=()
-        while IFS= read -r _tid; do
-          [ -n "$_tid" ] && NEEDS_PASS+=("$_tid")
-        done < <(planner_refinement_scan "$INITIATIVE_ID")
-        planner_refinement_converge_consume "$INITIATIVE_ID"
+      _rf_rc=0
+      planner_refinement_prepare "$INITIATIVE_ID" || _rf_rc=$?
+      if [ "$_rf_rc" -ne 2 ]; then
+        # Step 1e: the pass list is empty (semantic off), so NEXT is done at once.
+        [ "$(planner_refinement_next "$INITIATIVE_ID")" = "done 0" ] || exit 1
         if planner_refinement_gate "$INITIATIVE_ID"; then
           planner_refinement_advisory_summary "$INITIATIVE_ID"
         else

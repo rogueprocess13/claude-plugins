@@ -191,10 +191,10 @@ echo "--- 3. draft body composition ---"
 d1=$(planner_draft_readiness_compose "$INIT" "c-ui")
 d2=$(planner_draft_readiness_compose "$INIT" "c-ui")
 if [ -n "$d1" ] && [ "$d1" = "$d2" ] &&
-  printf '%s\n' "$d1" | grep -qxF '**Generated:** 2026-10-01T00:00:03Z' &&
+  printf '%s\n' "$d1" | grep -qxF '**Generated:** 2026-10-01T00:00:01Z' &&
   printf '%s\n' "$d1" | grep -qxF '**Epic:** DRAFT' &&
   printf '%s\n' "$d1" | grep -qxF -- '- Blocked by DRAFT-b-api — Finance can export invoices'; then
-  pass "byte-stable; epic DRAFT, latest Crosscheck ts, DRAFT-<slug> related"
+  pass "byte-stable; epic DRAFT, first Crosscheck ts, DRAFT-<slug> related"
 else
   fail "draft compose" "$d1"
 fi
