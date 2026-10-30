@@ -234,6 +234,35 @@ else
   fail "the sealed intent verifies, and Resolved Questions lists the answers" "$(grill_seal_verify "$W/intent.md" 2>&1)"
 fi
 
+# F26: the fold already refreshed the exported copy; after the seal both
+# copies say `sealed`, with the round, verdict and score from result.json.
+if [ "$(jq -r .status "$SCRATCH/export/state.json")" = "answers-folded" ]; then
+  pass "the fold refreshes the exported state.json (recorded export dir)"
+else
+  fail "the fold refreshes the exported state.json (recorded export dir)" "$(jq -r .status "$SCRATCH/export/state.json")"
+fi
+out=$(grill_hold_sealed "$W" "$W/intent.md")
+want="sealed|2|$(jq -r .readiness "$W/result.json")|$(jq -r .recommendation "$W/result.json")|$W/intent.md|0"
+q='[.status, (.round|tostring), (.readiness|tostring), .recommendation, .sealed, (.questions|length|tostring)] | join("|")'
+if [ "$(jq -r "$q" "$W/state.json")" = "$want" ] &&
+  cmp -s "$W/state.json" "$SCRATCH/export/state.json" &&
+  [ "$(jq -r '.answered["1"] // empty' "$W/state.json")" != "" ] &&
+  [[ "$out" == "GRILL_STATE=sealed recommendation=ready"* ]]; then
+  pass "after the seal, work and exported state.json both say sealed with verdict and score"
+else
+  fail "after the seal, work and exported state.json both say sealed with verdict and score" "$(jq -c . "$SCRATCH/export/state.json") out=$out"
+fi
+
+# A run that seals on round 1 has no state.json yet: the seal creates one.
+new_work sealed-r1
+grill_hold_sealed "$W" "$W/intent.md" "$SCRATCH/export-r1" >/dev/null
+if [ "$(jq -r '.status + "|" + (.round|tostring)' "$SCRATCH/export-r1/state.json")" = "sealed|1" ] &&
+  cmp -s "$W/state.json" "$SCRATCH/export-r1/state.json"; then
+  pass "a round-1 seal writes a sealed state.json to the work and export dirs"
+else
+  fail "a round-1 seal writes a sealed state.json to the work and export dirs" "$(ls "$SCRATCH/export-r1" 2>&1)"
+fi
+
 echo "=== round cap ==="
 
 new_work cap

@@ -29,6 +29,8 @@
 #                                          NEXT=seal|emit|cap from result.json
 #   grill_seal_with_gaps_prepare <work_dir>
 #                                          make sure a gap seal is never "ready"
+#   grill_hold_sealed <work_dir> <output_path> [export_dir]
+#                                          terminal state.json: status sealed
 #
 # grill_answers_fold exit codes (same meanings as ticket-planner's intake):
 #   0 folded, or this exact file was already folded (no-op)
@@ -149,22 +151,69 @@ _grill_render_hold() {
 
 # _grill_publish <work_dir> <round> <state_json> [export_dir]
 # Writes state.json + round-N.hold to the work dir (and copies to export_dir),
-# then prints the block.
+# then prints the block. The export dir is recorded in state.json, so later
+# rounds and the terminal states (fold, seal) keep the exported copy current
+# without the caller passing it again.
 _grill_publish() {
   local work_dir="$1" round="$2" state="$3" export_dir="${4:-}"
   local hold
-  # Keep what earlier rounds recorded (answered shas) across the rewrite.
+  # Keep what earlier rounds recorded (answered shas, export dir) across the rewrite.
   if [ -f "${work_dir}/state.json" ]; then
-    state=$(jq -c --argjson s "$state" '{answered: (.answered // {})} + $s' "${work_dir}/state.json")
+    state=$(jq -c --argjson s "$state" \
+      '{answered: (.answered // {})} + (if .export_dir then {export_dir} else {} end) + $s' \
+      "${work_dir}/state.json")
+  fi
+  if [ -n "$export_dir" ]; then
+    state=$(printf '%s' "$state" | jq -c --arg d "$export_dir" '.export_dir = $d')
   fi
   _grill_write_json "${work_dir}/state.json" "$state" || return 1
   hold=$(_grill_render_hold "$state") || return 1
   printf '%s\n' "$hold" >"${work_dir}/round-${round}.hold"
+  export_dir=$(printf '%s' "$state" | jq -r '.export_dir // empty')
   if [ -n "$export_dir" ]; then
     mkdir -p "$export_dir" || return 1
     cp -f "${work_dir}/round-${round}.hold" "${work_dir}/state.json" "$export_dir/"
   fi
   printf '%s\n' "$hold"
+}
+
+# _grill_export_state <work_dir> — copy state.json to its recorded export dir.
+_grill_export_state() {
+  local work_dir="$1" export_dir
+  export_dir=$(jq -r '.export_dir // empty' "${work_dir}/state.json" 2>/dev/null)
+  [ -n "$export_dir" ] || return 0
+  mkdir -p "$export_dir" && cp -f "${work_dir}/state.json" "$export_dir/"
+}
+
+# grill_hold_sealed <work_dir> <output_path> [export_dir]
+# The terminal state. After Steps 6-7 seal the intent, state.json says
+# `sealed`, with the round, readiness and recommendation from result.json and
+# the sealed path. Written to the work dir and copied to the export dir (the
+# one given, else the one an earlier round recorded), so no copy is left
+# saying `awaiting-answers` / `answers-folded` once the run is done.
+grill_hold_sealed() {
+  local work_dir="$1" output_path="$2" export_dir="${3:-}"
+  local result="${work_dir}/result.json" state="{}"
+  [ -f "$result" ] || {
+    echo "grill-me: no result.json in ${work_dir}" >&2
+    return 1
+  }
+  if [ -f "${work_dir}/state.json" ]; then
+    state=$(jq -c . "${work_dir}/state.json") || return 1
+  fi
+  state=$(jq -c --argjson s "$state" --arg out "$output_path" --arg d "$export_dir" '
+    ({schema_version: 1} + $s + {
+      status: "sealed",
+      round: (.round // $s.round),
+      readiness: .readiness,
+      recommendation: .recommendation,
+      sealed: $out,
+      questions: []})
+    | if $d != "" then .export_dir = $d else . end
+    | del(.reason, .kind, .audience, .blocks)' "$result") || return 1
+  _grill_write_json "${work_dir}/state.json" "$state" || return 1
+  _grill_export_state "$work_dir" || return 1
+  printf '%s' "$state" | jq -r '"GRILL_STATE=sealed recommendation=\(.recommendation) readiness=\(.readiness)"'
 }
 
 # ── emit ──────────────────────────────────────────────────────────────────────
@@ -454,6 +503,7 @@ grill_answers_fold() {
       '.answered[$r] = $sha | .status = "answers-folded"')
   fi
   _grill_write_json "$state_file" "$state" || return 1
+  _grill_export_state "$work_dir" || return 1
 
   echo "GRILL_ANSWERS_FOLDED round=${round} reason=${reason}"
   [ -n "$decision" ] && echo "GRILL_CAP_DECISION=${decision}"
@@ -490,8 +540,9 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   prompt) grill_answers_prompt "$@" ;;
   next) grill_next_step "$@" ;;
   seal-with-gaps) grill_seal_with_gaps_prepare "$@" ;;
+  sealed) grill_hold_sealed "$@" ;;
   *)
-    echo "Usage: grill-hold.sh work-dir|emit|cap|fold|prompt|next|seal-with-gaps <args>" >&2
+    echo "Usage: grill-hold.sh work-dir|emit|cap|fold|prompt|next|seal-with-gaps|sealed <args>" >&2
     exit 2
     ;;
   esac
