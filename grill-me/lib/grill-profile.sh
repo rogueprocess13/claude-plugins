@@ -23,10 +23,16 @@ set -euo pipefail
 
 # ── grill_profile_load ────────────────────────────────────────────────────────
 # Reads a profile JSON file and prints it to stdout.
-# Usage: grill_profile_load <path-to-profile.json>
+# Usage: grill_profile_load <path-to-profile.json | profile-id>
+# A bare id (e.g. product-idea — no slash, no .json) resolves to
+# <plugin>/profiles/<id>.json, so `--profile <id>` can be passed straight in.
 # ──────────────────────────────────────────────────────────────────────────────
 grill_profile_load() {
-  local profile_path="$1"
+  local profile_path="${1:-}"
+
+  if [[ "$profile_path" =~ ^[a-z0-9][a-z0-9-]*$ ]] && [ ! -f "$profile_path" ]; then
+    profile_path="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/profiles/${profile_path}.json"
+  fi
 
   if [ ! -f "$profile_path" ]; then
     echo "grill-profile: profile not found: ${profile_path}" >&2

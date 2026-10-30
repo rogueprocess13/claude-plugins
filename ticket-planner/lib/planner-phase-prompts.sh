@@ -982,7 +982,11 @@ Acceptance Criteria line, whose \`Criterion\` cell repeats that AC line **verbat
   \`none\` only when no data has to exist before the criterion is exercised — a
   criterion that lists, filters, searches, exports or counts records always needs
   them. Crosscheck flags a spec whose rows are all \`none\` while a criterion still
-  implies data (TEST_DATA_IMPLIED).
+  implies data (TEST_DATA_IMPLIED). A criterion that names a specific seeded record
+  (a slug, username, title or id) needs that record: cite it as Test data with its
+  Source. When the record does not matter to the check (routing, layout, 404
+  handling), use a path or value that names no seeded record, such as an obvious
+  placeholder slug, and write \`none\`.
 - **Source** — where the test data comes from (below); \`—\` when Test data is \`none\`.
 - **Navigation path** — optional; empty falls back to the spec's \`## Navigation Path\`.
 - **Expected** — the concrete, checkable value (a specific string, count, status or

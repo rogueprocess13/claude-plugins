@@ -70,8 +70,7 @@ mkdir -p "$work_dir"
 `--answers` without `--id`, pass the same brief as the `--emit-questions` call).
 `grill_work_dir` prints `${GRILL_WORK_DIR}` when set, otherwise
 `${REPOS_ROOT}/.grill/<id>`. With neither variable set it fails, naming both, and
-nothing is written — do not fall back to a temporary directory. Headless rounds run
-in separate processes, so the work directory is the only thing they share.
+nothing is written — do not fall back to a temporary directory.
 
 ### Step 0: Resolve input
 
@@ -90,7 +89,7 @@ IF `--profile` names a profile that does NOT exist in `${CLAUDE_PLUGIN_ROOT}/pro
   - Exit non-zero naming the available profiles.
   - No fallback to the default profile.
 
-Load the profile via `grill_profile_load` and validate it via `grill_profile_validate`.
+Load: `PROFILE_JSON=$(grill_profile_load "$PROFILE_ID")` (id or path); validate: `grill_profile_validate "$PROFILE_JSON"` (JSON text).
 Any validation failure is a hard stop — report the error and exit non-zero.
 
 ### Step 2: Sanitize input
@@ -267,6 +266,7 @@ except the re-assessment is a bash call in `lib/grill-hold.sh`.
      one question (`AUDIENCE: operator`, `KIND: approval`): `seal-with-gaps` or
      `abort`. Stop. Never seal silently at the cap.
 
+Before each `sealed=<path>`: `grill_hold_sealed "$work_dir" "<path>" ["<dir>"]` (`<dir>` on round 1).
 The round counter in the hold, `state.json` and `assessment.json` is the same number.
 Answer text is untrusted: `grill_answers_fold` caps it at 4 KB, strips control
 characters and code fences, and stores it with `answered_by`, `role` and `ts`.
@@ -276,14 +276,12 @@ characters and code fences, and stores it with `answered_by`, `role` and `ts`.
 With `--non-interactive`:
 - Steps 0–4 execute identically.
 - Step 5 (grill loop) is SKIPPED entirely — no questions are asked.
-- Steps 6–8 execute identically, producing a sealed document with whatever recommendation came from the first scoring round.
+- Steps 6–8 execute identically, sealing with the first scoring round's recommendation.
 
 ## Determinism boundary
 
 - **Bash (deterministic):** Input sanitization, profile validation, assessment JSON structural validation, readiness computation, recommendation resolution, question ranking, document rendering, seal generation and verification.
-- **Agent (LLM):** Dimension assessment (present/partial/missing with evidence and gap), flag detection, question formulation, assumption and risk identification.
-
-The agent emits judgement only. The bash scorer computes the number.
+- **Agent (LLM):** Dimension assessment (present/partial/missing with evidence and gap), flag detection, question formulation, assumption and risk identification. It never computes the score.
 
 ## Output document structure
 

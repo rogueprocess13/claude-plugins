@@ -230,6 +230,20 @@ else
   fail "nonexistent profile exits non-zero" "should have failed"
 fi
 
+# F27: a bare profile id (what --profile takes) loads the same file as its path.
+BY_ID=$(grill_profile_load product-idea 2>/dev/null)
+if [ -n "$BY_ID" ] && [ "$BY_ID" = "$(grill_profile_load "$PROFILES_DIR/product-idea.json")" ]; then
+  pass "a profile id resolves to profiles/<id>.json"
+else
+  fail "a profile id resolves to profiles/<id>.json" "got: ${BY_ID:0:80}"
+fi
+
+if ! grill_profile_load no-such-profile 2>/dev/null; then
+  pass "an unknown profile id exits non-zero"
+else
+  fail "an unknown profile id exits non-zero" "should have failed"
+fi
+
 # ── Non-integer weight rejected ───────────────────────────────────────────────
 echo "=== Non-integer weight ==="
 

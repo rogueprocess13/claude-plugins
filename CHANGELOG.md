@@ -64,6 +64,33 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## grill-me 0.4.1 / ticket-planner 0.26.6 (2026-10-30)
+
+Dispatch rehearsal iter 03, three minor findings (F26, F27, F30).
+
+### Fixed
+- **grill-me: the exported `state.json` shows the terminal state** (F26). After a headless run
+  sealed, the copy in the `--emit-questions` dir still said `awaiting-answers` and the work copy
+  `answers-folded`. New `grill_hold_sealed <work_dir> <output> [export_dir]`
+  (`lib/grill-hold.sh`, CLI `grill-hold.sh sealed`) sets `status: sealed` with round, readiness,
+  recommendation and the sealed path, in both copies. The export dir is now recorded in
+  `state.json` on the first emit, so later rounds, every answers fold (including a cap `abort`)
+  and the seal keep the exported copy current without the caller passing the dir again. The
+  skill calls it before each `sealed=<path>`.
+- **grill-me: `grill_profile_load` takes a profile id** (F27). The skill said "load via
+  `grill_profile_load`" and agents passed the `--profile` id, which failed (the function took only
+  a path). A bare id (`product-idea`) now resolves to `profiles/<id>.json`; a path works as before.
+  The skill text shows the exact call, and that `grill_profile_validate` takes the JSON text.
+
+### Changed
+- **ticket-planner Specify prompt: seeded records in criteria** (F30). A spec wrote a deep-link
+  criterion on a seeded article slug with Test data `none`, and Crosscheck's `TEST_DATA_IMPLIED`
+  flagged it. The Verification Notes guidance now says: a criterion that names a specific seeded
+  record cites it as test data with its Source; when the record does not matter to the check
+  (routing, layout, 404 handling), use a placeholder that names no seeded record and write
+  `none`. The pinned Specify prompt sha in `test-planner-business-framing.sh` is re-captured; the
+  rendered diff is only that sentence.
+
 ## ticket-planner 0.26.5 (2026-10-30)
 
 Dispatch rehearsal iter 03, finding F28: Crosscheck's `TEST_DATA_IMPLIED` blocked two specs whose
