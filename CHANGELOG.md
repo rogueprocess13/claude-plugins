@@ -112,7 +112,7 @@ unchanged: `revise` rows arrive through the existing step 1e spawn list.
 - **`lib/planner-draft-readiness-loop.sh`** (sourced by the gate). Revise planning
   (`planner_draft_revise_classify`; a spec is revised even when another spec has a non-revisable
   blocker; never again after an `unchanged` round on the same spec), round open (findings,
-  prompt, `round` marker and `.pending` before S3a's snapshot; `draft-revise|start` lines through
+  prompt, round plan and `.pending` before S3a's snapshot — the plan lives outside the workspace next to the snapshots, so the agent cannot forge it; `draft-revise|start` lines through
   the ledger), settle (one retry for a missing result, then `failed:AGENT_FAILED`; finishes run
   only when every spec of the round has a result), Crosscheck re-run after an applied round with
   a whole-round revert (`reverted:CROSSCHECK_REGRESSION`) and `CROSSCHECK_BLOCKED` when it still
@@ -131,7 +131,7 @@ unchanged: `revise` rows arrive through the existing step 1e spawn list.
 - Revision history in the halt report, the pass summary and each `DRAFT_NOT_READY` question
   (`planner_draft_readiness_history`); per-iteration `META|draft-readiness|info|round=… spawns=…/…`.
 - `draft-revise` in `PLANNER_REPEATABLE_META_STEPS`.
-- `lib/tests/test-planner-draft-readiness-loop.sh` (26 checks, stubbed agents); the S2b suite runs
+- `lib/tests/test-planner-draft-readiness-loop.sh` (27 checks, stubbed agents); the S2b suite runs
   with `PLANNER_DRAFT_REVISE_MAX_ROUNDS=0` unchanged, as the halt-only parity check.
 
 ## ticket-planner 0.29.0 (2026-10-30)
