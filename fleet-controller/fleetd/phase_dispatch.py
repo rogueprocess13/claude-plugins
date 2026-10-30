@@ -1833,41 +1833,78 @@ _LOOP_COUNTER_PATTERNS = {
 _VERIFY_SYNTHETIC_FAIL_RE = re.compile(r'^(zombie-detected|operator-stopped):')
 
 
-def _verify_attempt_count(log_lines):
+def read_verify_ctl(log_file):
+    """Lines of `<log_file>.verify-ctl`, the operator/orchestrator control
+    file verify-checkpoint.sh reads (resets, recorded synthetic closes).
+    `[]` when absent or unreadable."""
+    if not log_file:
+        return []
+    try:
+        return Path(f'{log_file}.verify-ctl').read_text().splitlines()
+    except OSError:
+        return []
+
+
+def _verify_reset_max():
+    raw = os.environ.get('VERIFY_RESET_MAX', '2')
+    return int(raw) if raw.isdigit() else 2
+
+
+def _parse_verify_ctl(ctl_lines):
+    """(reset_line, synthetic_line_numbers) — mirrors _VERIFY_CTL_AWK: at
+    most VERIFY_RESET_MAX resets, in file order, the effective point being
+    the highest of them."""
+    reset_ln, nres, synth = 0, 0, set()
+    rmax = _verify_reset_max()
+    for line in ctl_lines or ():
+        f = line.split('|')
+        if len(f) < 2 or not f[1].isdigit():
+            continue
+        if f[0] == 'reset' and nres < rmax:
+            nres += 1
+            reset_ln = max(reset_ln, int(f[1]))
+        elif f[0] == 'synthetic':
+            synth.add(int(f[1]))
+    return reset_ln, synth
+
+
+def _verify_attempt_count(log_lines, ctl_lines=None):
     """Failed VERIFY attempts — a port of verify-checkpoint.sh's
     `verify_attempt_count` (#573, #572), which detect-resume.sh and
     verify-retry-decide.sh both call.
 
     Attempts, not fail lines: every `VERIFY|verify|fail|` line between two
     attempt boundaries (`VERIFY|verify|waiting|`, `IMPLEMENT|implement|
-    waiting|`/`done|`) counts once. Synthetic `zombie-detected:` /
-    `operator-stopped:` closes never count. `META|verify-attempts-reset`
-    zeroes the count.
+    waiting|`/`done|`) counts once. Trust boundary: agents write the log, so
+    a `zombie-detected:`/`operator-stopped:` close is discounted only when
+    its (1-based) line number is recorded as `synthetic` in the control file,
+    and only a control-file `reset` (verify-attempts-reset.sh) zeroes the
+    count — a `META|verify-attempts-reset` log line is ignored.
     """
+    reset_ln, synth = _parse_verify_ctl(ctl_lines)
     n = 0
     counted = False
-    for line in log_lines:
+    for lineno, line in enumerate(log_lines, start=1):
         f = line.rstrip('\n').split('|')
-        if len(f) < 4:
-            continue
-        phase, step, status = f[1], f[2], f[3]
-        if phase == 'META' and step == 'verify-attempts-reset':
+        if len(f) >= 4:
+            phase, step, status = f[1], f[2], f[3]
+            if ((phase == 'VERIFY' and step == 'verify' and status == 'waiting')
+                    or (phase == 'IMPLEMENT' and step == 'implement'
+                        and status in ('waiting', 'done'))):
+                counted = False
+            elif phase == 'VERIFY' and step == 'verify' and status == 'fail':
+                msg = f[4].lstrip(' \t') if len(f) > 4 else ''
+                synthetic = (lineno in synth
+                             and _VERIFY_SYNTHETIC_FAIL_RE.match(msg))
+                if not synthetic and not counted:
+                    n += 1
+                    counted = True
+        if lineno == reset_ln:
             n, counted = 0, False
-        elif ((phase == 'VERIFY' and step == 'verify' and status == 'waiting')
-              or (phase == 'IMPLEMENT' and step == 'implement'
-                  and status in ('waiting', 'done'))):
-            counted = False
-        elif phase == 'VERIFY' and step == 'verify' and status == 'fail':
-            msg = f[4].lstrip(' \t') if len(f) > 4 else ''
-            if _VERIFY_SYNTHETIC_FAIL_RE.match(msg):
-                continue
-            if not counted:
-                n += 1
-                counted = True
     return n
 
 
-def resolve_loop_counters(log_lines):
+def resolve_loop_counters(log_lines, ctl_lines=None):
     """The four loop-cap counters `evaluate_loop` reads, derived from the log.
 
     Ports `detect-resume.sh`'s four counters exactly — ITERATION,
@@ -1884,7 +1921,7 @@ def resolve_loop_counters(log_lines):
         for name, literal in _LOOP_COUNTER_PATTERNS.items()
     }
     counters['RECONCILE_CYCLE'] = _distinct_reconcile_cycles(log_lines)
-    counters['VERIFY_ATTEMPTS'] = _verify_attempt_count(log_lines)
+    counters['VERIFY_ATTEMPTS'] = _verify_attempt_count(log_lines, ctl_lines)
     return counters
 
 

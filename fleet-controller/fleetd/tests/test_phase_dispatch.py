@@ -1988,6 +1988,23 @@ class TestResolveLoopCounters(unittest.TestCase):
 
     # #573/#572 fixtures — each also checked against the bash implementation
     # (verify-checkpoint.sh) below, so the two counters cannot diverge.
+    _SYNTH_LOG = [
+        'T|VERIFY|verify|waiting|Agent launched',
+        'T|VERIFY|verify|fail|zombie-detected: VERIFY verify',
+        'T|VERIFY|verify|waiting|Agent launched',
+        'T|VERIFY|verify|fail|operator-stopped: VERIFY verify',
+    ]
+    _RESET_LOG = [
+        'T|VERIFY|verify|waiting|Agent launched',
+        'T|VERIFY|verify|fail|FAIL a',
+        'T|IMPLEMENT|implement|waiting|Agent launched',
+        'T|VERIFY|verify|waiting|Agent launched',
+        'T|VERIFY|verify|fail|FAIL b',
+        'T|META|verify-attempts-reset|info|env repaired',
+        'T|VERIFY|verify|waiting|Agent launched',
+        'T|VERIFY|verify|fail|FAIL c',
+    ]
+    # (log lines, control-file lines, expected attempts)
     _VERIFY_ATTEMPT_FIXTURES = [
         # duplicate terminal lines within one attempt count once
         ([
@@ -1995,47 +2012,52 @@ class TestResolveLoopCounters(unittest.TestCase):
             'T|VERIFY|verify|fail|criterion 2 not met',
             'T|META|tokens|info|VERIFY:1/2/3/4',
             'T|VERIFY|verify|fail|FAIL — criterion 2 not met',
-        ], 1),
-        # synthetic zombie/operator-stop closes are never attempts
-        ([
-            'T|VERIFY|verify|waiting|Agent launched',
-            'T|VERIFY|verify|fail|zombie-detected: VERIFY verify',
-            'T|VERIFY|verify|waiting|Agent launched',
-            'T|VERIFY|verify|fail|operator-stopped: VERIFY verify',
-        ], 0),
-        # the operator reset marker zeroes the count
-        ([
-            'T|VERIFY|verify|waiting|Agent launched',
-            'T|VERIFY|verify|fail|FAIL a',
-            'T|IMPLEMENT|implement|waiting|Agent launched',
-            'T|VERIFY|verify|waiting|Agent launched',
-            'T|VERIFY|verify|fail|FAIL b',
-            'T|META|verify-attempts-reset|info|env repaired',
-            'T|VERIFY|verify|waiting|Agent launched',
-            'T|VERIFY|verify|fail|FAIL c',
-        ], 1),
+        ], [], 1),
+        # recorded synthetic closes are never attempts
+        (_SYNTH_LOG, ['synthetic|2', 'synthetic|4'], 0),
+        # trust boundary: the same closes without a record (agent-written) count
+        (_SYNTH_LOG, [], 2),
+        # trust boundary: a reset line in the log alone resets nothing
+        (_RESET_LOG, [], 3),
+        # an operator control-file reset after line 6 zeroes the count
+        (_RESET_LOG, ['reset|6|t|env repaired'], 1),
+        # at most VERIFY_RESET_MAX (2) resets are honoured
+        (_RESET_LOG, ['reset|2|t|a', 'reset|2|t|b', 'reset|8|t|c'], 2),
     ]
 
     def test_verify_attempts_per_attempt_rules(self):
-        for lines, expected in self._VERIFY_ATTEMPT_FIXTURES:
-            with self.subTest(lines=lines):
+        for lines, ctl, expected in self._VERIFY_ATTEMPT_FIXTURES:
+            with self.subTest(lines=lines, ctl=ctl):
                 self.assertEqual(
-                    resolve_loop_counters(lines)['VERIFY_ATTEMPTS'], expected)
+                    resolve_loop_counters(lines, ctl)['VERIFY_ATTEMPTS'],
+                    expected)
+
+    def test_read_verify_ctl(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / 'T-pipeline.log'
+            self.assertEqual(phase_dispatch.read_verify_ctl(str(log)), [])
+            Path(f'{log}.verify-ctl').write_text('synthetic|3\n')
+            self.assertEqual(phase_dispatch.read_verify_ctl(str(log)),
+                             ['synthetic|3'])
 
     def test_verify_attempts_parity_with_bash(self):
         script = (REPO_ROOT / 'ticket-auto-pipeline' / 'lib'
                   / 'verify-checkpoint.sh')
-        for lines, _ in self._VERIFY_ATTEMPT_FIXTURES:
-            with self.subTest(lines=lines), \
-                    tempfile.NamedTemporaryFile('w', suffix='.log') as fh:
-                fh.write('\n'.join(lines) + '\n')
-                fh.flush()
+        env = {k: v for k, v in os.environ.items() if k != 'VERIFY_RESET_MAX'}
+        for lines, ctl, _ in self._VERIFY_ATTEMPT_FIXTURES:
+            with self.subTest(lines=lines, ctl=ctl), \
+                    tempfile.TemporaryDirectory() as d:
+                log = Path(d) / 'T-pipeline.log'
+                log.write_text('\n'.join(lines) + '\n')
+                if ctl:
+                    Path(f'{log}.verify-ctl').write_text('\n'.join(ctl) + '\n')
                 out = subprocess.run(
-                    ['bash', str(script), 'attempts', fh.name],
-                    capture_output=True, text=True, check=True).stdout
+                    ['bash', str(script), 'attempts', str(log)],
+                    capture_output=True, text=True, check=True,
+                    env=env).stdout
                 self.assertEqual(
                     int(out.strip()),
-                    resolve_loop_counters(lines)['VERIFY_ATTEMPTS'])
+                    resolve_loop_counters(lines, ctl)['VERIFY_ATTEMPTS'])
 
     def test_iteration_counts_pr_review_done_warn_lines(self):
         lines = [

@@ -4583,7 +4583,8 @@ class Supervisor:
                             if log_file else [])
             except OSError:
                 log_lines = []
-            counters = _phase_mod.resolve_loop_counters(log_lines)
+            counters = _phase_mod.resolve_loop_counters(
+                log_lines, _phase_mod.read_verify_ctl(log_file))
 
         if step_id == _phase_mod.PR_ITERATE:
             try:
@@ -4762,7 +4763,8 @@ class Supervisor:
         # an earlier attempt's gate-stop/phase-result must never decide a
         # fresh one's outcome.
         bracket_lines = all_lines[offset:]
-        counters = _phase_mod.resolve_loop_counters(all_lines)
+        counters = _phase_mod.resolve_loop_counters(
+            all_lines, _phase_mod.read_verify_ctl(log_file))
 
         result = _phase_mod.classify_phase(
             phase_token, bracket_lines, exit_code=exit_code)

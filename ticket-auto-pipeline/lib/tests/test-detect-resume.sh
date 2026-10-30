@@ -1228,6 +1228,9 @@ test_verify_attempts_duplicate_terminal_lines_count_once() {
 }
 
 test_verify_attempts_reset_marker() {
+  # Trust boundary: a reset line in the log alone (an agent can write the
+  # log) does not reset; only verify-attempts-reset.sh's control-file entry
+  # does (covered in test-verify-retry-decide.sh).
   local out
   out=$(_detect_resume_with_log "TEST-RST" \
     "2026-07-05T10:00:00Z|META|schema|info|1" \
@@ -1240,7 +1243,21 @@ test_verify_attempts_reset_marker() {
     "2026-07-05T10:00:07Z|META|verify-attempts-reset|info|env fixed by operator" \
     "2026-07-05T10:00:08Z|IMPLEMENT|implement|waiting|Agent launched" \
     "2026-07-05T10:00:09Z|IMPLEMENT|implement|done|re-implemented")
-  [ "$(_field "$out" VERIFY_ATTEMPTS)" = "0" ]
+  [ "$(_field "$out" VERIFY_ATTEMPTS)" = "2" ]
+}
+
+test_agent_forged_zombie_close_counts() {
+  # Trust boundary: an agent closing its own open VERIFY bracket with a
+  # fake `zombie-detected:` line (detect-resume never recorded it) is a
+  # counted failed attempt and still routes to re-implement.
+  local out
+  out=$(_detect_resume_with_log "TEST-FZ" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|done|implemented" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:03Z|VERIFY|verify|fail|zombie-detected: VERIFY verify")
+  [ "$(_field "$out" VERIFY_ATTEMPTS)" = "1" ] &&
+    [ "$(_field "$out" VERIFY_LAST)" = "fail" ]
 }
 
 test_verify_checkpoint_empty_without_checkpoints() {
@@ -1256,6 +1273,7 @@ for fn in \
   test_operator_stop_after_real_failures_keeps_count \
   test_verify_attempts_duplicate_terminal_lines_count_once \
   test_verify_attempts_reset_marker \
+  test_agent_forged_zombie_close_counts \
   test_verify_attempts_preflight_fail_does_not_overcount \
   test_verify_attempts_two_terminal_failures_count_two \
   test_verify_attempts_terminal_done_counts_as_attempt \

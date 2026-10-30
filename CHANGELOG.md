@@ -45,13 +45,19 @@ count VERIFY attempts the same way as `detect-resume.sh`.
   `verify-retry-decide.sh` and fleetd (`_verify_attempt_count`, with a bash parity test) use it.
 - **Operator stop counted as a VERIFY attempt (#572).** A bracket followed by
   `META|operator-stop` is closed as `operator-stopped: <PHASE> <step>`, without the 5-minute
-  zombie wait. Neither that nor a `zombie-detected:` close counts as an attempt or sets
-  `VERIFY_LAST=fail`, so the run resumes VERIFY instead of re-implementing unjudged code.
+  zombie wait. Neither that nor a `zombie-detected:` close that detect-resume.sh wrote (and
+  recorded) counts as an attempt or sets `VERIFY_LAST=fail`, so the run resumes VERIFY
+  instead of re-implementing unjudged code.
 
 ### Added
-- **`META|verify-attempts-reset|info|<reason>`**, the supported operator reset: only
-  attempts after the last reset count toward the cap. Documented in
-  `ticket-auto-pipeline/docs/verify-attempt-counting.md`.
+- **`lib/verify-attempts-reset.sh <TID> <reason>`**, the supported operator reset. Only
+  attempts after the reset point count toward the cap. It refuses an agent context, and at
+  most `VERIFY_RESET_MAX` (default 2) resets are honoured.
+- **Trust boundary.** Phase agents write the pipeline log directly. So resets and
+  synthetic-close discounts are honoured only from the operator/orchestrator control file
+  `<log>.verify-ctl`, never from log lines. A `META|verify-attempts-reset` line is audit
+  only. A `zombie-detected:` close counts unless detect-resume.sh recorded its line number.
+  Documented in `ticket-auto-pipeline/docs/verify-attempt-counting.md`.
 
 ## ticket-planner 0.33.0 (2026-10-30)
 

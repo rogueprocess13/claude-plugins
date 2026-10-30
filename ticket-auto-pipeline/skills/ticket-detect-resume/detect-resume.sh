@@ -460,11 +460,20 @@ if [ -s "$LOG_FILE" ]; then
         # Older than 5 minutes (or operator-stopped) — check for agent process
         if ! _ticket_worker_alive "$TICKET_ID"; then
           if [ "$_z_opstop" = "1" ]; then
-            _plog "$LOG_FILE" "$_z_phase" "$_z_step" "fail" "operator-stopped: ${_z_phase} ${_z_step}"
+            _z_msg="operator-stopped: ${_z_phase} ${_z_step}"
+            _plog "$LOG_FILE" "$_z_phase" "$_z_step" "fail" "$_z_msg"
             hb_gate "zombie-detection" "skip" "operator stop: ${_z_phase}/${_z_step} — re-running phase, no attempt counted"
           else
-            _plog "$LOG_FILE" "$_z_phase" "$_z_step" "fail" "zombie-detected: ${_z_phase} ${_z_step}"
+            _z_msg="zombie-detected: ${_z_phase} ${_z_step}"
+            _plog "$LOG_FILE" "$_z_phase" "$_z_step" "fail" "$_z_msg"
             hb_gate "zombie-detection" "fail" "zombie detected: ${_z_phase}/${_z_step} — re-running phase"
+          fi
+          # Record this exact line as orchestrator-written in the control
+          # file: the attempt counters only discount a synthetic close they
+          # find recorded there, never one an agent appended to the log.
+          if declare -f verify_ctl_record_synthetic >/dev/null 2>&1 &&
+            tail -n 1 "$LOG_FILE" 2>/dev/null | grep -qF "|${_z_phase}|${_z_step}|fail|${_z_msg}"; then
+            verify_ctl_record_synthetic "$LOG_FILE" "$(wc -l <"$LOG_FILE" | tr -d ' ')"
           fi
 
           # Set resume point to re-run the phase
@@ -751,16 +760,15 @@ if [ "$RESUME_STEP" != "STEP_1" ] && [ "$RESUME_STEP" != "GATE_STILL_HELD" ]; th
     # line, the pipeline crashed before re-implementing — resuming straight into verify
     # would re-run against the same broken code. VERIFY_LAST tells STEP_4_5 to dispatch
     # re-implement first instead.
-    # A synthetic zombie-detected:/operator-stopped: close is not a verdict
-    # (#572): skip it, so an interrupted VERIFY resumes VERIFY instead of
-    # asking for a re-implement of code no verdict ever judged.
-    _verify_last_ln=$(awk -F'|' -v synth="${VERIFY_SYNTHETIC_FAIL_RE:-^(zombie-detected|operator-stopped):}" '
-      $2 == "VERIFY" && $3 == "verify" && ($4 == "done" || $4 == "fail") {
-        msg = $5; sub(/^[ \t]+/, "", msg)
-        if ($4 == "fail" && msg ~ synth) next
-        ln = NR
-      }
-      END { if (ln) print ln }' "$LOG_FILE" 2>/dev/null || true)
+    # A synthetic zombie-detected:/operator-stopped: close this script
+    # recorded in the control file is not a verdict (#572): skip it, so an
+    # interrupted VERIFY resumes VERIFY instead of asking for a re-implement
+    # of code no verdict ever judged. One that only an agent wrote counts.
+    if declare -f verify_last_verdict_line >/dev/null 2>&1; then
+      _verify_last_ln=$(verify_last_verdict_line "$LOG_FILE" 2>/dev/null || true)
+    else
+      _verify_last_ln=$(grep -nE '^[^|]*\|VERIFY\|verify\|(done|fail)\|' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d: -f1 || true)
+    fi
     if [ -n "$_verify_last_ln" ]; then
       _verify_last_content=$(sed -n "${_verify_last_ln}p" "$LOG_FILE")
       if echo "$_verify_last_content" | grep -q '|VERIFY|verify|fail|'; then
