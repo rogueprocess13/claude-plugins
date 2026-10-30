@@ -29,7 +29,25 @@
 #   dor_semantic_apply <TID> <body-file> <scan-json> <audit-json>
 #     Validates and stores a result via set_ticket_semantic (design.md
 #     Decision 6/10/11), then the finding lineage via set_ticket_lineage
-#     (planner-refinement-convergence D1/D3).
+#     (planner-refinement-convergence D1/D3). Built from the three pure
+#     functions below plus set_ticket_semantic's dor_semantic_blocking_codes
+#     (manifest-write.sh), which a draft on disk calls too
+#     (planner-draft-readiness D3/D16).
+#
+#   dor_semantic_findings <TID> <body> <scan-json> <audit-json>
+#     Prints {findings, unverified_gaps} (verified quotes, base severity).
+#     Exit 2 on a ticket or body-hash mismatch (apply maps it to 1).
+#
+#   dor_semantic_lineage_from <prior-lineage-json|null> <body> <hash> <findings> <audit> [<migrated-from>]
+#     Pure lineage/round/demotion. DOR_SEMANTIC_PRIOR_PASSED=true applies the
+#     draft-passed policy (no reset; draft-passed / draft-passed-structural).
+#
+#   dor_semantic_assemble <hash> <findings> <unverified-gaps> <scan-json> <audit-json>
+#     Prints the ready.semantic object apply stores.
+#
+#   dor_semantic_import <TID> <body-file> <semantic-json> <lineage-json> [<token-map>]
+#     Stores a draft verdict on the real ticket with no agent (D13). Prints
+#     `round=<n> demoted=<k> dropped=<d>`. Exit 0, 2 refused, 1 error.
 #
 #   _dor_unit_of <body> <quote>
 #     Prints every unit (dor-check.sh _dor_section_records units mode) whose
@@ -368,16 +386,47 @@ _dor_semantic_policy() {
 # else "round-limit" (round > DOR_SEMANTIC_MAX_ROUNDS, a positive integer).
 _dor_semantic_lineage() {
   local tid="$1" body="$2" hash="$3" findings="$4" audit="${5:-[]}" migrated_from="${6:-}"
-
-  local sec units prior policy
-  sec=$(_dor_section_hashes "$body") || return 1
-  units=$(_dor_unit_hashes "$body") || return 1
-  prior="null"
+  local prior="null"
   if [ -z "$migrated_from" ]; then
     prior=$(get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -c '.lineage // null' 2>/dev/null) || prior="null"
     [ -n "$prior" ] || prior="null"
   fi
+  dor_semantic_lineage_from "$prior" "$body" "$hash" "$findings" "$audit" "$migrated_from"
+}
+
+# dor_semantic_lineage_from <prior-lineage-json> <body> <body-hash> <findings-json> <audit-json-array> [<migrated-from>]
+# The pure half of _dor_semantic_lineage (planner-draft-readiness D11): same
+# output, same rules, but the prior lineage is an argument (`null` for none)
+# instead of a manifest read, so a draft can keep its lineage in a file. No
+# manifest or file I/O.
+#
+# Draft-passed policy (planner-draft-readiness D13), off unless
+# DOR_SEMANTIC_PRIOR_PASSED=true. The caller passes a prior lineage seeded
+# from a draft that passed readiness; then:
+#   - the reset rule is disabled (the round is never restarted at 1);
+#   - every verified, blocking, non-structural finding becomes advisory with
+#     demoted "draft-passed";
+#   - a verified, blocking, structural finding that is not carried from the
+#     prior lineage and whose units are all unchanged versus it becomes
+#     advisory with demoted "draft-passed-structural" and demote_reason
+#     "unchanged-unit". "Unchanged" is the drift test (unit hash equal to the
+#     prior's); the caller writes a prior whose unit hashes are the real
+#     body's for units equivalent modulo ids. A structural finding on a
+#     changed unit stays blocking.
+# Unverified findings are never touched by this policy. The policy snapshot
+# gains `prior_passed: true` only when it is on.
+dor_semantic_lineage_from() {
+  local prior="${1:-null}" body="$2" hash="$3" findings="$4" audit="${5:-[]}" migrated_from="${6:-}"
+  [ -n "$prior" ] || prior="null"
+
+  local sec units policy prior_passed="false"
+  sec=$(_dor_section_hashes "$body") || return 1
+  units=$(_dor_unit_hashes "$body") || return 1
   policy=$(_dor_semantic_policy) || return 1
+  if [ "${DOR_SEMANTIC_PRIOR_PASSED:-false}" = "true" ]; then
+    prior_passed="true"
+    policy=$(echo "$policy" | jq -c '. + {prior_passed: true}') || return 1
+  fi
 
   # Anchors and ids, computed in bash (the unit search), merged by index.
   local n i ann=() code quote quote_b verified ulist anchor id
@@ -415,6 +464,7 @@ _dor_semantic_lineage() {
     --argjson sec "$sec" --argjson units "$units" --arg hash "$hash" \
     --arg evaluator "$DOR_SEMANTIC_EVALUATOR" --argjson policy "$policy" \
     --argjson first_audit_new "$first_audit_new" --arg migrated_from "$migrated_from" \
+    --argjson prior_passed "$prior_passed" \
     '($policy.inert) as $inert
      | ($policy.structural) as $structural
      | ($policy.max_rounds // 0) as $max
@@ -430,7 +480,8 @@ _dor_semantic_lineage() {
                    | select((sub("#[0-9]+$"; "")) as $h | ($inert | index($h)) == null)
                    | select($os[.] != $sec[.])] | length) as $nchg
                | ($nprior > 0 and ($nchg / $nprior) >= $policy.round_reset_share)
-             else false end) as $reset
+             else false end) as $reset0
+          | ($reset0 and ($prior_passed | not)) as $reset
           | if $reset then {round: 1, reset: true} else {round: (($p.round // 0) + 1), reset: false} end
         end) as $r
      | (if $r.reset then null else $p end) as $pl
@@ -460,7 +511,13 @@ _dor_semantic_lineage() {
           else . + {lineage: "new", first_round: $r.round} end
         | del(.persisted)
         | .code as $code
-        | if .severity == "blocking" and (($structural | index($code)) == null) then
+        | if $prior_passed and .severity == "blocking" and .verified == true then
+            if (($structural | index($code)) == null) then . + {severity: "advisory", demoted: "draft-passed"}
+            elif .lineage != "carried" and ($pl != null) and ((.units | length) > 0)
+                 and (.units | all(unchanged(.))) then
+              . + {severity: "advisory", demoted: "draft-passed-structural", demote_reason: "unchanged-unit"}
+            else . end
+          elif .severity == "blocking" and (($structural | index($code)) == null) then
             if .lineage == "drift" and $policy.drift_demote then . + {severity: "advisory", demoted: "drift"}
             elif $max > 0 and $r.round > $max then . + {severity: "advisory", demoted: "round-limit"}
             else . end
@@ -514,6 +571,52 @@ dor_semantic_apply() {
   body=$(cat "$body_file")
   real_hash=$(_dor_body_hash "$body")
 
+  # Quote verification, severity, unverified gaps. A ticket or body-hash
+  # mismatch is rc 2 there and rc 1 here, as it always was (D16).
+  local judged rc=0
+  judged=$(dor_semantic_findings "$tid" "$body" "$scan_json" "$audit_json") || rc=$?
+  [ "$rc" -eq 0 ] || return 1
+
+  local findings_json unverified_gaps
+  findings_json=$(echo "$judged" | jq -c '.findings')
+  unverified_gaps=$(echo "$judged" | jq -c '.unverified_gaps')
+
+  # Identity, lineage, rounds and demotion (planner-refinement-convergence).
+  local built lineage_json
+  built=$(_dor_semantic_lineage "$tid" "$body" "$real_hash" "$findings_json" \
+    "$(echo "$audit_json" | jq -c '.audit // []')") || {
+    echo "dor-semantic: failed to compute finding lineage" >&2
+    return 1
+  }
+  findings_json=$(echo "$built" | jq -c '.findings')
+  lineage_json=$(echo "$built" | jq -c '.lineage')
+
+  local semantic_json
+  semantic_json=$(dor_semantic_assemble "$real_hash" "$findings_json" "$unverified_gaps" \
+    "$scan_json" "$audit_json") || {
+    echo "dor-semantic: failed to assemble semantic result JSON" >&2
+    return 1
+  }
+
+  set_ticket_semantic "$tid" "$semantic_json" || return $?
+  set_ticket_lineage "$tid" "$lineage_json"
+}
+
+# dor_semantic_findings <TID> <body> <scan-json> <audit-json>
+# The findings builder dor_semantic_apply uses (planner-draft-readiness D3),
+# pure: <body> is the body text, nothing is read or written. Prints
+# {"findings": [...], "unverified_gaps": [...]} — each finding
+# {code, dimension, severity (base, before any demotion), quote, quote_b,
+# detail, verified}; a quote (or quote_b) not found in the normalised body
+# is verified:false; a scan gap marked "finding" with no finding in its own
+# dimension is listed in unverified_gaps. Exit 2 when either result's
+# `ticket` differs from <TID> or `body_hash` from _dor_body_hash <body>.
+dor_semantic_findings() {
+  local tid="$1" body="$2" scan_json="$3" audit_json="$4"
+
+  local real_hash
+  real_hash=$(_dor_body_hash "$body")
+
   local scan_tid scan_hash audit_tid audit_hash
   scan_tid=$(echo "$scan_json" | jq -r '.ticket // ""' 2>/dev/null) || scan_tid=""
   scan_hash=$(echo "$scan_json" | jq -r '.body_hash // ""' 2>/dev/null) || scan_hash=""
@@ -522,11 +625,11 @@ dor_semantic_apply() {
 
   if [ "$scan_tid" != "$tid" ] || [ "$scan_hash" != "$real_hash" ]; then
     echo "dor-semantic: scan result TICKET/BODY_HASH mismatch (ticket=${scan_tid} want=${tid}, hash=${scan_hash} want=${real_hash})" >&2
-    return 1
+    return 2
   fi
   if [ "$audit_tid" != "$tid" ] || [ "$audit_hash" != "$real_hash" ]; then
     echo "dor-semantic: audit result TICKET/BODY_HASH mismatch (ticket=${audit_tid} want=${tid}, hash=${audit_hash} want=${real_hash})" >&2
-    return 1
+    return 2
   fi
 
   local norm_body
@@ -583,21 +686,20 @@ dor_semantic_apply() {
     unverified_gaps=$(printf '%s\n' "${ug_list[@]}" | jq -R . | jq -sc . 2>/dev/null) || unverified_gaps="[]"
   fi
 
-  # Identity, lineage, rounds and demotion (planner-refinement-convergence).
-  local built lineage_json
-  built=$(_dor_semantic_lineage "$tid" "$body" "$real_hash" "$findings_json" \
-    "$(echo "$audit_json" | jq -c '.audit // []')") || {
-    echo "dor-semantic: failed to compute finding lineage" >&2
-    return 1
-  }
-  findings_json=$(echo "$built" | jq -c '.findings')
-  lineage_json=$(echo "$built" | jq -c '.lineage')
+  jq -nc --argjson f "$findings_json" --argjson u "$unverified_gaps" \
+    '{findings: $f, unverified_gaps: $u}'
+}
 
-  local semantic_json
-  semantic_json=$(jq -nc \
+# dor_semantic_assemble <body-hash> <findings-json> <unverified-gaps-json> <scan-json> <audit-json>
+# Prints the `ready.semantic` object dor_semantic_apply stores: evaluator,
+# checked_at (now), body_hash, the lineage-annotated findings, the scan's
+# gaps, the audit's audit/missed/score fields, and unverified_gaps. Pure.
+dor_semantic_assemble() {
+  local hash="$1" findings_json="$2" unverified_gaps="$3" scan_json="$4" audit_json="$5"
+  jq -nc \
     --arg evaluator "$DOR_SEMANTIC_EVALUATOR" \
     --arg checked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg body_hash "$real_hash" \
+    --arg body_hash "$hash" \
     --argjson findings "$findings_json" \
     --argjson gaps "$(echo "$scan_json" | jq -c '.gaps // {}')" \
     --argjson audit "$(echo "$audit_json" | jq -c '.audit // []')" \
@@ -608,13 +710,182 @@ dor_semantic_apply() {
     '{evaluator: $evaluator, checked_at: $checked_at, body_hash: $body_hash,
       findings: $findings, gaps: $gaps, audit: $audit, missed: $missed,
       score_plausible: $score_plausible, score_reason: $score_reason,
-      unverified_gaps: $unverified_gaps}' 2>/dev/null) || {
-    echo "dor-semantic: failed to assemble semantic result JSON" >&2
+      unverified_gaps: $unverified_gaps}' 2>/dev/null
+}
+
+# _dor_semantic_json_arg <value> — prints <value>, or the file's content when
+# <value> names a readable file. Lets callers pass JSON or a path.
+_dor_semantic_json_arg() {
+  if [ -n "$1" ] && [ -f "$1" ]; then cat "$1"; else printf '%s' "$1"; fi
+}
+
+# dor_semantic_import <TID> <body-file> <semantic-json> <lineage-json> [<token-map>]
+# Stores a draft's semantic verdict on its real ticket without an agent
+# (planner-draft-readiness D13). Each JSON argument is JSON text or a path to
+# a file holding it. <token-map> is an object {"<draft token>": "<real
+# token>", ...} — e.g. {"DRAFT-row-schema": "WIL-126", "DRAFT": "WIL-125"} —
+# or TSV text / a TSV file, one `<draft token><TAB><real token>` per line
+# (ticket-planner's planner_draft_readiness_token_map), applied as literal
+# replacements, longest key first, to every finding's
+# quote, quote_b and detail. Default {}.
+#
+# Steps: refuse (exit 2) when the manifest already holds `ready.semantic` or
+# the draft's evaluator is not DOR_SEMANTIC_EVALUATOR; create the `ready`
+# object when missing (set_ticket_readiness with the real body's hashes —
+# set_ticket_semantic returns 3 without one); rewrite tokens; re-verify every
+# rewritten quote against the real body and DROP a finding that no longer
+# locates (it is never stored unverified, so it cannot raise
+# SEMANTIC_UNVERIFIED); recompute anchors and ids on the real body; rebase
+# the draft lineage onto the real body (body_hash, section/unit hashes,
+# first_audit hash, finding ids) and run dor_semantic_lineage_from with it,
+# so the round is unchanged and carried labels and demotions are kept; store
+# through set_ticket_semantic / set_ticket_lineage. The stored verdict
+# carries `imported_from: <draft body_hash>`. Prints one line
+# `round=<n> demoted=<k> dropped=<d>`. Exit 0 imported, 2 refused, 1 error
+# (no body file, no manifest, bad JSON, write failed).
+dor_semantic_import() {
+  local tid="$1" body_file="$2" semantic_json lineage_json token_map
+  semantic_json=$(_dor_semantic_json_arg "${3:-}")
+  lineage_json=$(_dor_semantic_json_arg "${4:-}")
+  token_map=$(_dor_semantic_json_arg "${5:-}")
+  [ -n "$token_map" ] || token_map='{}'
+  # A TSV map (`<draft token><TAB><real token>` per line, what ticket-planner's
+  # planner_draft_readiness_token_map writes) is converted to the object form.
+  if ! echo "$token_map" | jq -e 'type == "object"' >/dev/null 2>&1; then
+    token_map=$(printf '%s\n' "$token_map" | tr -d '\r' | jq -Rn '
+      [inputs | select(length > 0) | split("\t") | select(length >= 2 and .[0] != "")
+       | {(.[0]): .[1]}] | add // {}') || token_map=""
+  fi
+  [ -n "$lineage_json" ] || lineage_json='null'
+
+  [ -f "$body_file" ] || {
+    echo "dor-semantic: body file not found: $body_file" >&2
     return 1
   }
+  echo "$semantic_json" | jq -e 'type == "object"' >/dev/null 2>&1 || {
+    echo "dor-semantic: import: semantic JSON must be an object" >&2
+    return 1
+  }
+  echo "$lineage_json" | jq -e 'type == "object" or type == "null"' >/dev/null 2>&1 || {
+    echo "dor-semantic: import: lineage JSON must be an object or null" >&2
+    return 1
+  }
+  echo "$token_map" | jq -e 'type == "object" and ([.[] | type == "string"] | all)' >/dev/null 2>&1 || {
+    echo "dor-semantic: import: token map must be an object of strings" >&2
+    return 1
+  }
+  if [ "$(echo "$semantic_json" | jq -r '.evaluator // ""')" != "$DOR_SEMANTIC_EVALUATOR" ]; then
+    echo "dor-semantic: import refused: draft evaluator is not $DOR_SEMANTIC_EVALUATOR" >&2
+    return 2
+  fi
 
-  set_ticket_semantic "$tid" "$semantic_json" || return $?
-  set_ticket_lineage "$tid" "$lineage_json"
+  local manifest_path
+  manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
+  [ -f "$manifest_path" ] || {
+    echo "dor-semantic: import: no manifest for $tid" >&2
+    return 1
+  }
+  local ready
+  ready=$(jq -c '.ready // null' "$manifest_path" 2>/dev/null) || return 1
+  if echo "$ready" | jq -e '(.semantic // null) != null' >/dev/null 2>&1; then
+    echo "dor-semantic: import refused: $tid already has a semantic verdict" >&2
+    return 2
+  fi
+
+  local body hash sec units
+  body=$(cat "$body_file")
+  hash=$(_dor_body_hash "$body")
+  sec=$(_dor_section_hashes "$body") || return 1
+  units=$(_dor_unit_hashes "$body") || return 1
+
+  if [ "$ready" = "null" ]; then
+    set_ticket_readiness "$tid" "not-ready" '[]' '[]' \
+      "$(jq -nc --arg h "$hash" --argjson s "$sec" --argjson u "$units" \
+        '{body_hash: $h, section_hashes: $s, unit_hashes: $u}')" || return 1
+  fi
+
+  # Token rewrite, longest key first so DRAFT-<slug> wins over DRAFT.
+  local rewritten
+  rewritten=$(echo "$semantic_json" | jq -c --argjson m "$token_map" '
+    ($m | keys | sort_by(-length)) as $ks
+    | def rw: if type == "string" then
+                 reduce $ks[] as $k (.; split($k) | join($m[$k]))
+               else . end;
+    [(.findings // [])[] | .quote |= rw | .quote_b |= rw | .detail |= rw]') || return 1
+
+  # Relocate on the real body; drop what no longer locates.
+  local norm_body n i dropped=0 kept=() idmap=() f code quote quote_b old_id nq ulist anchor new_id ok
+  norm_body=$(_dor_semantic_normalise "$body")
+  n=$(echo "$rewritten" | jq 'length')
+  for ((i = 0; i < n; i++)); do
+    f=$(echo "$rewritten" | jq -c ".[$i]")
+    code=$(echo "$f" | jq -r '.code')
+    quote=$(echo "$f" | jq -r '.quote // ""')
+    quote_b=$(echo "$f" | jq -r '.quote_b // empty')
+    old_id=$(echo "$f" | jq -r '.id // empty')
+    ok=1
+    nq=$(_dor_semantic_normalise "$quote")
+    { [ -n "$nq" ] && [[ "$norm_body" == *"$nq"* ]]; } || ok=0
+    if [ "$ok" = "1" ] && [ -n "$quote_b" ]; then
+      nq=$(_dor_semantic_normalise "$quote_b")
+      [[ "$norm_body" == *"$nq"* ]] || ok=0
+    fi
+    if [ "$ok" = "0" ]; then
+      dropped=$((dropped + 1))
+      continue
+    fi
+    # Same anchor/id rule as dor_semantic_lineage_from.
+    ulist=$(_dor_unit_of "$body" "$quote")
+    if [ -n "$quote_b" ]; then
+      ulist=$(printf '%s\n%s\n' "$ulist" "$(_dor_unit_of "$body" "$quote_b")")
+    fi
+    anchor=$(printf '%s\n' "$ulist" | grep -m1 . || true)
+    new_id=$(_dor_semantic_finding_id "$code" "$anchor" "$quote")
+    if [ -n "$old_id" ]; then
+      idmap+=("$(jq -nc --arg o "$old_id" --arg n "$new_id" '{($o): $n}')")
+    fi
+    kept+=("$(echo "$f" | jq -c '. + {verified: true} | del(.id, .unit, .units, .lineage, .first_round)')")
+  done
+  local kept_json="[]" map_json="{}"
+  if [ "${#kept[@]}" -gt 0 ]; then
+    kept_json=$(printf '%s\n' "${kept[@]}" | jq -sc .)
+  fi
+  if [ "${#idmap[@]}" -gt 0 ]; then
+    map_json=$(printf '%s\n' "${idmap[@]}" | jq -sc 'add')
+  fi
+
+  # Rebase the draft lineage onto the real body: same hash means no round is
+  # added; ids follow the rewritten quotes; dropped findings leave the prior
+  # (so they are not reported as resolved).
+  local prior
+  prior=$(echo "$lineage_json" | jq -c --arg h "$hash" --argjson s "$sec" --argjson u "$units" \
+    --argjson m "$map_json" '
+    if . == null then null else
+      . + {body_hash: $h, section_hashes: $s, units: $u,
+           findings: [(.findings // [])[] | select($m[.id] != null) | .id = $m[.id]]}
+      + (if (.first_audit // null) != null then {first_audit: (.first_audit + {body_hash: $h})} else {} end)
+    end') || return 1
+
+  local built findings_out lineage_out
+  built=$(dor_semantic_lineage_from "$prior" "$body" "$hash" "$kept_json" \
+    "$(echo "$semantic_json" | jq -c '.audit // []')") || {
+    echo "dor-semantic: import: failed to compute finding lineage" >&2
+    return 1
+  }
+  findings_out=$(echo "$built" | jq -c '.findings')
+  lineage_out=$(echo "$built" | jq -c '.lineage')
+
+  local stored
+  stored=$(echo "$semantic_json" | jq -c --argjson f "$findings_out" --arg h "$hash" \
+    --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    del(.stale, .changed_sections, .rebased_from, .migrated_from)
+    + {findings: $f, imported_from: .body_hash, body_hash: $h, checked_at: $at}') || return 1
+
+  set_ticket_semantic "$tid" "$stored" || return 1
+  set_ticket_lineage "$tid" "$lineage_out" || return 1
+  printf 'round=%s demoted=%s dropped=%s\n' \
+    "$(echo "$lineage_out" | jq -r '.round')" \
+    "$(echo "$findings_out" | jq '[.[] | select(.demoted != null)] | length')" "$dropped"
 }
 
 # dor_semantic_migrate_v2 <TID> <body-file>

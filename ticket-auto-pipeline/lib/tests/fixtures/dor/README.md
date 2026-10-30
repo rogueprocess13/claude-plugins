@@ -72,6 +72,7 @@ all-empty fixtures"), not a frozen contract.
 - **26** — a contract-shaped planned body with one sourced test-data item, plus one acceptance criterion ("Duplicating a handover from the list creates a draft copy with the same line items") whose data — an existing handover with line items — is never listed. The deterministic check passes it; only the semantic `TEST_DATA_GAP` catches the miss (dor-semantic-test-data-gap).
 - **27** — the same miss in the planner's all-`none` shape: the composer bullet `- None — no acceptance criterion needs test data.` and no `Source:` anywhere. dor-check treats it as a legacy body, so no deterministic code fires; the semantic backstop is the only signal.
 - **28** — negative control: criteria built on a threshold, a timeout and an attempt count ("the session expires after 15 minutes", "lock after 5 attempts") with a `none` Test Data line. None of these is data, so `TEST_DATA_GAP` must not fire.
+- **30** — `30-chained-draft.md`: fixture 22 rewritten as a ticket-planner draft (`Epic: DRAFT`, Related Tickets naming `DRAFT-<slug>` blockers). `semantic/30-scan.txt` is a real `dor-semantic-agent` scan of it (planner-draft-readiness task 1.2: no `UNSTATED_DEPENDENCY` in three samples). Used by `test-dor-semantic-draft.sh` for parity and import.
 
 ## Semantic expectation (live golden sweep)
 

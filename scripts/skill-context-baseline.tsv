@@ -1,4 +1,5 @@
-dor-semantic	75395
+# allow-growth: planner-draft-readiness S1 adds pure evaluator functions (findings, lineage_from, assemble, import) to lib/dor-semantic.sh; the dor-semantic-agent prompt text it generates is unchanged
+dor-semantic	88790
 guidance-extractor	104504
 ticket-appraise	199623
 ticket-appraise-exec	148243
