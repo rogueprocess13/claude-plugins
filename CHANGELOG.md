@@ -99,6 +99,46 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## ticket-planner 0.31.0 / fleet-controller 0.44.2 (2026-10-30)
+
+Draft readiness, slice S4 (`planner-draft-readiness`, design D13, D14, D15): Refinement carries the
+draft verdict, the epic gets a revision summary, docs and the rehearsal runbook catch up.
+(ticket-planner 0.30.0 is the parallel S3b slice, the revision loop.)
+
+### Added
+- **Refinement carry-over** (`lib/planner-draft-carryover.sh`, called from
+  `planner_refinement_scan` for each child with no semantic verdict):
+  - *Import*: when the ticket's `body.md` (Linear's rendering) equals its spec's draft after the
+    id / Linear-link / `Generated` rewrite and normalisation, ticket-auto-pipeline's
+    `dor_semantic_import` stores the draft verdict. No `dor-semantic-agent` spawn, no added round;
+    a finding whose rewritten quote no longer locates is dropped, never stored unverified.
+    `META|refinement-draft-import|done|<TID> from=DRAFT-<slug> round=<n> demoted=<k> dropped=<d>`.
+  - *Draft-passed scan*: when the bodies differ but the draft verdict is `ready` (or `blocked` and
+    accepted on the current drafts), the ticket's prior lineage is seeded from the draft
+    (`lineage.json`, or a round-1 lineage rebuilt from `semantic.json`), with the real unit hash
+    for every unit equal modulo ids, and a `planner/draft-passed` marker makes the next
+    `planner_refinement_apply` run with `DOR_SEMANTIC_PRIOR_PASSED=true`: no reset, non-structural
+    findings → `draft-passed`, new structural findings on unchanged units →
+    `draft-passed-structural`; structural findings on changed text still block.
+    `META|refinement-draft-import|skip|<TID> not-equivalent draft-passed round=<n>`.
+  - `PLANNER_DRAFT_VERDICT_IMPORT=false` (catalogued in `fleet-controller/features.json`) or
+    `PLANNER_REFINEMENT_SEMANTIC=false` turns both off; a ticket with a semantic verdict, a stale
+    draft verdict or no draft directory takes the old path.
+- **Epic summary**: `planner_draft_readiness_epic_summary` prints `## Revised by draft readiness`
+  (per spec: revision rounds and statuses, criteria added and extended versus `spec.r0.md`,
+  demotions with reason class). The Epic Gen prompt appends it to the epic description in bash,
+  after humanizing. Never in a ticket body.
+- `lib/tests/test-planner-draft-carryover.sh` (30 checks), registered in the Makefile.
+
+### Changed
+- SKILL.md configuration table: one `PLANNER_DRAFT_*` row (the five variables) pointing at the new
+  `docs/ticket-planner.md` § Draft readiness table; SKILL.md stays under its baseline (95,352 →
+  95,343 bytes) by trimming three rows.
+- `docs/runbooks/dispatch-rehearsal.md` section 5: cap raised from 4 to 6 full runs per idea.
+- `state-log-format.md` documents `draft-readiness`, `draft-revise` and `refinement-draft-import`.
+- fleet-controller 0.44.2: catalog entry for `PLANNER_DRAFT_VERDICT_IMPORT`;
+  `DOR_SEMANTIC_PRIOR_PASSED`'s entry now names its caller.
+
 ## ticket-planner 0.29.0 (2026-10-30)
 
 Draft readiness, slice S2b (`planner-draft-readiness`, design D1, D4–D7, D16): the halt-only gate.

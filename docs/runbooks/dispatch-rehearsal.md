@@ -80,7 +80,7 @@ The idea passes after **two fresh full runs in a row**, after the last code chan
 
 Then run the holdout idea once. A class B or C failure there means the fixes overfit to the main idea. Report it; don't loop on it.
 
-**Cap:** 4 full runs per idea. Preflight-only and `replan` reruns don't count toward the cap. At the cap, stop and report what remains.
+**Cap:** 6 full runs per idea (raised from 4 for planner-draft-readiness: iter 04 is its live check, and iters 05–06 must be the two consecutive clean runs above). Preflight-only and `replan` reruns don't count toward the cap. At the cap, stop and report what remains.
 
 ## 6. Cleanup
 

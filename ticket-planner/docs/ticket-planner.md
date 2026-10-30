@@ -437,6 +437,71 @@ When an initiative carries the `Regenerate` flag (set to `true` in the Planner C
 
 **Regenerate is an explicit flag, not a default.** Reading feedback on every re-plan would make planner output depend on execution history in ways that are hard to reason about. Requiring the flag makes feedback ingestion a deliberate act with a visible trigger.
 
+## Draft readiness
+
+Draft readiness is not a phase. It runs after Crosscheck passes and on every Epic Gen
+entry, before the first Linear write (SKILL.md step 1d, `planner-draft-readiness-gate.sh`).
+For each spec it composes the ticket body TicketGen would write, with `DRAFT` as the epic
+and `DRAFT-<slug>` as sibling ids, and runs the same deterministic DoR check and the same
+`dor-semantic-agent` scan and audit that Refinement runs on real tickets. A blocking
+finding halts the run with `DRAFT_NOT_READY` while nothing exists in Linear. Per-spec
+files live under `artifacts/draft-readiness/<slug>/` (`body.md`, `dor-result.json`,
+`semantic.json`, `verdict` written last; revision history `spec.r<N-1>.md`,
+`findings.r<N>.json`, `revise.r<N>.*` once the revision loop runs).
+
+### Refinement carry-over
+
+A spec that passed draft readiness has already been scanned, audited and possibly
+revised. A fresh Refinement sample would re-block on findings the gate resolved or
+demoted, so `planner_refinement_scan` carries the draft verdict over to each ticket that
+has no semantic verdict yet (`planner-draft-carryover.sh`):
+
+1. **Import.** The ticket's `body.md` (Linear's rendering, stored by
+   `planner_ticketgen_record_baseline`) is compared with the draft after normalisation:
+   the epic id, sibling ids and their Linear links are rewritten to draft tokens, the
+   Planner Context `Generated` value to a fixed token, then CRLF, trailing whitespace
+   and trailing blank lines are normalised. When the two are equal and the evaluator
+   matches, ticket-auto's `dor_semantic_import` stores the draft verdict on the ticket.
+   Quotes are rewritten to real ids, and a finding whose quote no longer locates in the
+   real body is dropped (never stored unverified). No agent is spawned and no round is
+   added. Logged as `META|refinement-draft-import|done|<TID> from=DRAFT-<slug> round=<n> demoted=<k> dropped=<d>`.
+2. **Draft-passed scan.** When the bodies differ (or the import is refused) but the
+   draft verdict is `ready`, or `blocked` with an accept bound to the current drafts,
+   the ticket's prior lineage is seeded from the draft. Each unit whose text is equal
+   modulo ids gets the real body's hash, so it reads as unchanged. The normal scan then
+   runs, and its apply uses `DOR_SEMANTIC_PRIOR_PASSED=true`: no round reset, every
+   verified non-structural finding becomes advisory (`demoted: draft-passed`), and a new
+   structural finding on an unchanged unit becomes advisory
+   (`demoted: draft-passed-structural`, `demote_reason: unchanged-unit`). A structural
+   finding on changed text still blocks. Deterministic codes, unverified findings and
+   `SEMANTIC_*` codes are untouched. Logged as
+   `META|refinement-draft-import|skip|<TID> not-equivalent draft-passed round=<n>`.
+
+A ticket that already has a semantic verdict is never touched, so a `resume` after
+Refinement keeps its own lineage. A spec whose draft never passed (gate skipped by
+`--until Crosscheck`, a stale verdict, or no draft directory) takes the old path.
+
+### Epic summary
+
+When any spec was revised or had findings demoted, Epic Gen appends a
+`## Revised by draft readiness` section to the epic description (after humanizing, in
+bash): per spec, the revision rounds used with their statuses, criteria added and
+extended, and each demoted finding with its code and reason class. It goes on the epic
+only, never into a ticket body, so ticket body hashes and the import equivalence are
+unaffected.
+
+### Draft readiness variables
+
+Read each time the gate or Refinement runs, not persisted at argument parsing.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PLANNER_DRAFT_REVISE_MAX_ROUNDS` | 2 | Spec revisions per spec before the remaining non-structural findings are demoted (`round-limit`). `0` = halt-only gate |
+| `PLANNER_DRAFT_SPAWN_BUDGET` | 8 × spec count | Draft-stage agent spawns (scan, audit, revise, retries) before the gate halts with `DRAFT_NOT_READY` / `SPAWN_BUDGET` |
+| `PLANNER_DRAFT_DEMOTE_CEILING` | 0.5 | Share of specs ending with a `reverted`/`failed` demotion above which the gate halts with `DEMOTE_CEILING` |
+| `PLANNER_DRAFT_EXTEND_MAX_WORDS` | 25 | Words a revision may append to an existing criterion |
+| `PLANNER_DRAFT_VERDICT_IMPORT` | true | `false` turns the Refinement carry-over off, so Refinement takes an independent semantic sample (two spawns per ticket) |
+
 ## Determinism Boundary
 
 | Bash (deterministic) | Agent (LLM) |

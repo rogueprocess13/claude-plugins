@@ -396,6 +396,16 @@ planner_refinement_scan() {
   local -a needs_pass=()
   local tid
 
+  # Draft carry-over lib, sourced in this shell (functions defined in a
+  # command substitution would not survive it).
+  if [ -d "${repos_root}/.ticket-auto/initiatives/${initiative_id}/artifacts/draft-readiness" ] &&
+    ! declare -f planner_draft_carryover_ticket >/dev/null 2>&1; then
+    # shellcheck source=planner-draft-carryover.sh
+    source "${_PLANNER_REFINEMENT_LIB_DIR}/planner-draft-carryover.sh"
+  fi
+  local draft_map
+  draft_map=$(_planner_refinement_draft_map "$initiative_id")
+
   for tid in $(echo "$children" | jq -r '.[]' 2>/dev/null); do
     if [ -n "$only" ]; then
       case ",${only}," in *",${tid},"*) ;; *) continue ;; esac
@@ -497,8 +507,15 @@ planner_refinement_scan() {
       dor_semantic_migrate_v2 "$tid" "$body_file" >/dev/null 2>&1 || true
     fi
 
+    # Draft readiness carry-over (planner-draft-readiness D13): a ticket with
+    # no semantic verdict imports its spec's draft verdict, or is seeded for a
+    # draft-passed scan. planner-draft-carryover.sh.
     local ready_after needs="false" sem_hash sem_eval
     ready_after=$(get_ticket_manifest_field "$tid" ready 2>/dev/null)
+    if ! echo "$ready_after" | jq -e '.semantic' >/dev/null 2>&1; then
+      _planner_refinement_draft_carry "$initiative_id" "$tid" "$pdir" "$draft_map" >/dev/null
+      ready_after=$(get_ticket_manifest_field "$tid" ready 2>/dev/null)
+    fi
     if ! echo "$ready_after" | jq -e '.semantic' >/dev/null 2>&1; then
       needs="true"
     else
@@ -516,8 +533,40 @@ planner_refinement_scan() {
     fi
   done
 
+  [ -n "$draft_map" ] && rm -f "$draft_map"
   local t
   for t in "${needs_pass[@]}"; do echo "$t"; done
+}
+
+# _planner_refinement_draft_map <INIT>
+# Writes the draft→real token map to a temp file and prints its path, or
+# nothing when carry-over is off or the initiative has no draft directory
+# (the gate never ran: old path).
+_planner_refinement_draft_map() {
+  local init="$1" f
+  [ "${PLANNER_DRAFT_VERDICT_IMPORT:-true}" != "false" ] || return 0
+  [ "${PLANNER_REFINEMENT_SEMANTIC:-true}" != "false" ] || return 0
+  [ -d "${REPOS_ROOT:-}/.ticket-auto/initiatives/${init}/artifacts/draft-readiness" ] || return 0
+  declare -f planner_draft_carryover_ticket >/dev/null 2>&1 || return 0
+  f=$(mktemp "${TMPDIR:-/tmp}/planner-draft-map.XXXXXX") || return 0
+  planner_draft_readiness_token_map "$init" >"$f" 2>/dev/null || {
+    rm -f "$f"
+    return 0
+  }
+  echo "$f"
+}
+
+# _planner_refinement_draft_carry <INIT> <TID> <pdir> <map-file|"">
+# Prints import | draft-passed | none. With no map, clears a stale
+# draft-passed marker and takes the old path.
+_planner_refinement_draft_carry() {
+  local init="$1" tid="$2" pdir="$3" map="$4"
+  if [ -z "$map" ] || ! declare -f planner_draft_carryover_ticket >/dev/null 2>&1; then
+    rm -f "${pdir}/draft-passed" 2>/dev/null
+    echo none
+    return 0
+  fi
+  planner_draft_carryover_ticket "$init" "$tid" "$pdir" "$map"
 }
 
 # ── Semantic pass (design.md Decision 6) ─────────────────────────────────
@@ -578,12 +627,20 @@ planner_refinement_apply() {
   # Convergence policy (planner-refinement-convergence D1/D3), scoped to
   # this one call: bash restores the caller's values (or unsets them) when
   # dor_semantic_apply returns, so nothing leaks into the planner's env.
-  local apply_rc=0
+  # A ticket seeded by the draft carry-over (planner/draft-passed, D13) is
+  # judged once with the draft-passed policy: no reset, non-structural
+  # findings and new structural ones on unchanged units advisory.
+  local apply_rc=0 prior_passed="false"
+  if [ -f "${pdir}/draft-passed" ] && [ "${PLANNER_DRAFT_VERDICT_IMPORT:-true}" != "false" ]; then
+    prior_passed="true"
+  fi
   DOR_SEMANTIC_MAX_ROUNDS="${PLANNER_REFINEMENT_MAX_ROUNDS:-2}" \
     DOR_SEMANTIC_DRIFT_DEMOTE=true \
     DOR_SEMANTIC_ROUND_RESET_SHARE="${DOR_SEMANTIC_ROUND_RESET_SHARE:-0.5}" \
+    DOR_SEMANTIC_PRIOR_PASSED="$prior_passed" \
     dor_semantic_apply "$tid" "$body_file" "$scan_json" "$audit_json" || apply_rc=$?
   if [ "$apply_rc" -eq 0 ]; then
+    rm -f "${pdir}/draft-passed" 2>/dev/null
     if [ "${PLANNER_REFINEMENT_AUDIT_DEMOTE:-false}" = "true" ]; then
       _planner_refinement_audit_demote "$initiative_id" "$tid" "$body_file" || true
     fi
