@@ -1306,8 +1306,8 @@ For each phase to run:
     resume on unchanged specs spawns nothing.
 
 1e. **Spawn-list loop** (steps 1b and 1d name `NEXT` and `APPLY`, lib function names).
-    Functions do not survive between Bash calls: every call re-sources the step's lib
-    and sets `INITIATIVE_ID` and `REPOS_ROOT` first. Repeat:
+    Each Bash call re-sources the step's lib, sets `INITIATIVE_ID` and `REPOS_ROOT`, and
+    passes `timeout: 600000` (settling a revise round can take minutes). Repeat:
     1. `_list=$($NEXT "$INITIATIVE_ID")`. `done 0` ends the loop. A non-zero rc or
        empty output is an error: halt (`exit 1`), never treat it as done.
     2. Each line is `<id>\t<kind>\t<subagent-type>\t<prompt-file>\t<result-file>`. Spawn
@@ -1318,8 +1318,8 @@ For each phase to run:
     3. Run `$APPLY "$INITIATIVE_ID"` even if a spawn failed (the lib counts a missing
        result as a failed attempt), then go back to 1.
 
-    State is on disk, so after a crash rerun the step. The lib retries a failed agent
-    once, then records that ticket or draft as unavailable.
+    After a crash, rerun the step (state is on disk). A failed agent is retried once,
+    then recorded unavailable.
 
 1c. **Open business decisions halt the loop before Review** (planner-specify-waiting-on-human).
     Specify writes `**Outcome:** NEEDS_HUMAN_DECISION — <question>` in proposal.md's

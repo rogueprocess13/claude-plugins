@@ -205,6 +205,8 @@ planner_draft_readiness_begin() {
   fi
   planner_state_write "$init" "META" "draft-readiness" "start" "evaluator=${DOR_SEMANTIC_EVALUATOR:-}" || return 1
   rm -f "${root}/halt"
+  # No round open: a pre-round copy left by an interrupted run is stale.
+  _pdl_eval_drop "$init"
 
   if [ -f "${root}/blocked-specs" ]; then
     specs_now=$(_planner_draft_spec_hashes "$init") || return 1
@@ -278,6 +280,11 @@ planner_draft_readiness_next() {
   local refresh="" revise=""
   refresh=$(planner_draft_readiness_refresh "$init") || return 1
   planner_draft_readiness_apply "$init" "$refresh" >&2 || return 1
+  # A reverted revision changed a spec after the refresh: recompose.
+  if [ -f "${root}/.recompose" ]; then
+    rm -f "${root}/.recompose"
+    refresh=$(planner_draft_readiness_refresh "$init") || return 1
+  fi
   if [ -f "${root}/halt" ]; then
     refresh=""
   else
@@ -389,6 +396,12 @@ planner_draft_readiness_apply() {
       _planner_draft_fail "$init" "$slug" "$hash"
       continue
     fi
+    # A revision that raised a new structural finding is reverted, not judged.
+    local regress
+    if regress=$(_pdl_regression "$init" "$slug" "$eval_json"); then
+      _pdl_revert_regression "$init" "$slug" "$regress" || return 1
+      continue
+    fi
     printf '%s\n' "$eval_json" | jq -c '.semantic' >"${dir}/semantic.json.tmp" &&
       mv -f "${dir}/semantic.json.tmp" "${dir}/semantic.json" || return 1
     _pdl_lineage_write "$dir" "$(jq -c '.lineage' <<<"$eval_json")" || return 1
@@ -411,7 +424,8 @@ _planner_draft_findings() {
   [ -f "${dir}/semantic.json" ] && jq -r '
     if .unavailable == true then "SEMANTIC_UNAVAILABLE\t"
     else
-      ((.findings // [])[] | select(.verified == true and .severity == "blocking") | "\(.code)\t\(.quote // "")"),
+      ((.findings // [])[] | select(.verified == true and .severity == "blocking")
+        | "\(.code)\t\((.quote // .detail // "") | tostring | gsub("[\t\r\n]"; " "))"),
       ((.findings // [])[] | select(.verified == false) | "SEMANTIC_UNVERIFIED\t\(.code): \(.quote // "")"),
       ((.unverified_gaps // [])[] | "SEMANTIC_UNVERIFIED\tgap: \(.)")
     end' "${dir}/semantic.json" 2>/dev/null
@@ -431,6 +445,7 @@ planner_draft_readiness_gate() {
   local refresh halt=""
   refresh=$(planner_draft_readiness_refresh "$init") || return 1
   planner_draft_readiness_loop_close "$init" "$refresh" || return 1
+  _pdl_eval_drop "$init"
   [ -f "${root}/halt" ] && halt=$(cat "${root}/halt")
   while IFS=$'\t' read -r slug hash status; do
     [ -n "$slug" ] || continue
@@ -475,6 +490,7 @@ planner_draft_readiness_gate() {
   planner_state_write "$init" "META" "draft-readiness" "done" "ready ${total}/${total}"
   planner_draft_readiness_history_report "$init"
   planner_draft_readiness_security_report "$init"
+  planner_draft_readiness_missed_report "$init"
   return 0
 }
 
@@ -504,6 +520,7 @@ planner_draft_readiness_report() {
     echo ""
     planner_draft_readiness_history_report "$init"
     planner_draft_readiness_security_report "$init"
+    planner_draft_readiness_missed_report "$init"
     echo "Artifacts:  ${state_dir}/artifacts/draft-readiness/"
     return 0
     ;;
@@ -530,6 +547,7 @@ planner_draft_readiness_report() {
   echo ""
   planner_draft_readiness_history_report "$init"
   planner_draft_readiness_security_report "$init"
+  planner_draft_readiness_missed_report "$init"
   echo "Edit artifacts/specs/<slug>.md, then: /ticket-planner resume ${init}"
   echo "A draft pass does not guarantee Refinement passes; Refinement re-checks the real ticket bodies."
   echo "Accept as is: /ticket-planner resume ${init} --accept DRAFT_NOT_READY:\"<reason>\""

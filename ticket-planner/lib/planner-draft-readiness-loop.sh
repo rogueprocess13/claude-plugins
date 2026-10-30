@@ -261,11 +261,97 @@ _pdl_evaluate() {
   built=$(jq -c "$(planner_draft_security_def)"' .findings = [(.findings // [])[]
       | if .demoted == "drift" and .verified == true and pdr_security
         then del(.demoted) + {severity: "blocking"} else . end]' <<<"$built") || return 1
+  # An audit MISSED entry that matches the security rule is a gap the scan
+  # missed: it joins the findings as a blocking one (origin audit-missed), so
+  # it takes the security path — the next revise round while budget is left,
+  # else a round-limit demotion shown as a security finding.
+  local missed_f
+  missed_f=$(_pdl_missed_findings "$audit") || return 1
+  built=$(jq -c --argjson m "$missed_f" '.findings = ((.findings // []) + $m)' <<<"$built") || return 1
   sem=$(dor_semantic_assemble "$hash" "$(jq -c '.findings' <<<"$built")" \
     "$(jq -c '.unverified_gaps' <<<"$judged")" "$scan" "$audit") || return 1
   codes=$(dor_semantic_blocking_codes "$sem") || return 1
   jq -nc --argjson s "$sem" --argjson c "$codes" --argjson l "$(jq -c '.lineage' <<<"$built")" \
     '{semantic: $s, codes: $c, lineage: $l}'
+}
+
+# The one form a MISSED reason is stored and compared in: control
+# characters (tabs, newlines, ANSI escapes) become spaces, runs collapse,
+# at most 500 characters. Evaluator text, so it never reaches a terminal or
+# a prompt raw.
+PDL_MISSED_TEXT_DEF=' def pdl_missed_text: tostring | gsub("[[:cntrl:]]"; " ") | gsub(" +"; " ") | sub("^ "; "") | sub(" $"; "") | .[0:500];'
+
+# _pdl_missed_findings <audit-json> — a JSON array: one blocking finding per
+# audit MISSED entry ({code, reason}) whose code is a known, blocking,
+# non-structural semantic code and whose code/reason match the security rule
+# (planner_draft_security_def). Shape: {id: "m-<sha12>", code, dimension,
+# severity: "blocking", verified: true, detail: <reason>, origin:
+# "audit-missed", lineage: "new"} — no quote (the audit gives none), so it
+# never anchors to a unit. Every other MISSED entry stays in `missed` only
+# and is reported as an advisory (planner_draft_readiness_missed_report).
+_pdl_missed_findings() {
+  local audit="$1" known='{}' code structural cand out='[]' id reason
+  structural=$(_dor_semantic_structural_codes | jq -R . | jq -sc 'map(select(. != ""))')
+  for code in "${!DOR_SEMANTIC_CODES[@]}"; do
+    [ "$(_dor_semantic_severity "$code")" = blocking ] || continue
+    known=$(jq -c --arg c "$code" --arg d "${DOR_SEMANTIC_CODES[$code]}" '. + {($c): $d}' <<<"$known")
+  done
+  cand=$(jq -c --argjson k "$known" --argjson st "$structural" "$(planner_draft_security_def)${PDL_MISSED_TEXT_DEF}"'
+    [(.missed // [])[] | select(type == "object")
+     | {code: (.code // "" | tostring), detail: (.reason // "" | pdl_missed_text)}
+     | select($k[.code] != null and (.code as $c | $st | index($c)) == null and .detail != "")
+     | select(pdr_security) | . + {dimension: $k[.code]}]' <<<"$audit" 2>/dev/null) || cand='[]'
+  # Each candidate stays a JSON object end to end (its reason is stored
+  # byte-for-byte, so the advisory report can tell it was converted).
+  local c
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    code=$(jq -r '.code' <<<"$c")
+    reason=$(jq -r '.detail' <<<"$c")
+    id="m-$(printf '%s\n%s' "$code" "$(_pdrv_norm "$reason")" | sha256sum | cut -c1-12)"
+    out=$(jq -c --arg i "$id" --argjson f "$c" \
+      '. + [$f + {id: $i, severity: "blocking", verified: true, origin: "audit-missed", lineage: "new"}]
+       | unique_by(.id)' <<<"$out") || return 1
+  done < <(jq -c '.[]' <<<"$cand")
+  printf '%s\n' "$out"
+}
+
+# planner_draft_readiness_missed <INIT> — "<slug>\t<security|advisory>\t<CODE>\t<reason>"
+# per audit MISSED entry of every draft with a semantic verdict that did not
+# become a finding (_pdl_missed_findings): the scan missed it and nothing
+# blocks on it, so it is reported. `security` when it matches the security
+# rule (a structural or unknown code is never turned into a finding).
+planner_draft_readiness_missed() {
+  local init="$1" root d slug
+  root=$(_pdl_root "$init") || return 0
+  for d in "$root"/*/; do
+    [ -s "${d}semantic.json" ] || continue
+    slug=$(basename "$d")
+    jq -r --arg s "$slug" "$(planner_draft_security_def)${PDL_MISSED_TEXT_DEF}"'
+      [(.findings // [])[] | select(.origin == "audit-missed") | .detail] as $f
+      | (.missed // [])[] | select(type == "object")
+      | {code: (.code // "" | tostring | pdl_missed_text), detail: (.reason // "" | pdl_missed_text)}
+      | select(.detail != "" and (.detail as $r | ($f | index($r)) == null))
+      | [$s, (if pdr_security then "security" else "advisory" end), .code, .detail] | @tsv' \
+      "${d}semantic.json" 2>/dev/null
+  done
+  return 0
+}
+
+# planner_draft_readiness_missed_report <INIT> — the human-readable list, or
+# nothing.
+planner_draft_readiness_missed_report() {
+  local lines slug kind code reason
+  lines=$(planner_draft_readiness_missed "$1")
+  [ -n "$lines" ] || return 0
+  echo "Audit advisories (gaps the scan missed; they do not block):"
+  while IFS=$'\t' read -r slug kind code reason; do
+    if [ "$kind" = security ]; then
+      echo "  ${slug}: Security ${code} — ${reason}"
+    else
+      echo "  ${slug}: ${code} — ${reason}"
+    fi
+  done <<<"$lines"
 }
 
 # _pdl_lineage_write <dir> <lineage-json>: keeps the previous lineage of a
@@ -306,6 +392,147 @@ _pdl_changed_sections() {
              # revise agent cannot create, reach the prompt.
              | if all($chg[]; $o[.] != null and $s[.] != null) and all($chg[]; sub("#[0-9]+$"; "") | test($re))
                then [$chg[] | sub("#[0-9]+$"; "")] | unique | join("|") else "" end end end' "${dir}/lineage.json" 2>/dev/null || true
+}
+
+# ── Revision regression (a new structural finding) ────────────────────────
+#
+# A revision may add a criterion that contradicts a section it may not edit
+# (e.g. "an empty secret counts as unset" against a Technical Context
+# `?? 'default'` fallback). The evaluator then raises a structural code
+# (CONTRADICTORY_REQUIREMENTS, …) that is never revisable and never
+# demoted, so the gate would halt on a gap the revision itself created. The
+# first evaluation after an applied revision is therefore compared with the
+# evaluation the round started from: a verified structural code that was not
+# there before reverts that spec's revision (`reverted:REVISION_REGRESSION`,
+# reason class `reverted`) and restores the pre-round verdict, instead of
+# halting.
+#
+# The pre-round copy (spec, draft body, lineage, result files) lives OUTSIDE
+# the workspace, next to the round plan (mode 0700): every agent of the gate
+# can Write any workspace path. The spec it restores is copied before the
+# round's snapshot and is never read back from the workspace; the evaluation
+# files are copied from the workspace (the same trust the gate already gives
+# them), so forging them can at most suppress a revert (the gate then halts,
+# fail-closed) or restore a verdict the gate would have trusted anyway. A
+# revert also needs the current spec to be the one the revision produced
+# (`post.sha`, written by the orchestrator at settle), so a hand edit made
+# after an interrupted run is never undone.
+
+PLANNER_DRAFT_EVAL_SAVE_FILES="body.md lineage.json lineage.prev.json ${PLANNER_DRAFT_RESULT_FILES}"
+
+# _pdl_eval_dir <INIT> <slug> <N> — the pre-round copy for round N.
+_pdl_eval_dir() {
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] && [[ "$2" =~ ^[A-Za-z0-9._-]+$ ]] && [[ "$3" =~ ^[1-9][0-9]*$ ]] || {
+    echo "planner-draft-readiness: invalid initiative, slug or round" >&2
+    return 1
+  }
+  printf '%s/%s/eval/%s.r%s' "$(_pdrv_snap_root)" "$1" "$2" "$3"
+}
+
+# _pdl_eval_save <INIT> <slug> <N> — before round N's snapshot: the spec and
+# the draft's evaluation as they are now. Kept when present (a crash resume
+# must not overwrite it with a spec the agent may already have edited).
+_pdl_eval_save() {
+  local init="$1" slug="$2" n="$3" e dir spec f
+  e=$(_pdl_eval_dir "$init" "$slug" "$n") || return 1
+  [ -f "${e}/spec.md" ] && return 0
+  dir="$(_pdl_root "$init")/${slug}"
+  spec=$(_pdrv_spec "$init" "$slug") || return 1
+  rm -rf "${e}.tmp"
+  (umask 077 && mkdir -p "${e}.tmp") || return 1
+  for f in $PLANNER_DRAFT_EVAL_SAVE_FILES; do
+    if [ -f "${dir}/${f}" ] && [ ! -L "${dir}/${f}" ]; then
+      cp -p "${dir}/${f}" "${e}.tmp/${f}" || return 1
+    fi
+  done
+  cp -p "$spec" "${e}.tmp/spec.md" || return 1
+  rm -rf "$e"
+  mv -f "${e}.tmp" "$e"
+}
+
+# _pdl_eval_drop <INIT> — the gate's close: every pre-round copy goes (a
+# copy is only read by the first evaluation after its round, which the loop
+# has run by then).
+_pdl_eval_drop() {
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || return 0
+  rm -rf "$(_pdrv_snap_root)/$1/eval"
+}
+
+# _pdl_regression <INIT> <slug> <eval-json> — prints the new structural codes
+# (space-separated, rc 0) when <eval-json> is the first evaluation after the
+# spec's latest revision, that revision was applied, and it raised a verified
+# blocking structural code the pre-round evaluation did not have. rc 1
+# otherwise (no revision, not applied, no pre-round copy, nothing new).
+_pdl_regression() {
+  local init="$1" slug="$2" eval_json="$3" dir n e structural new
+  dir="$(_pdl_root "$init")/${slug}"
+  n=$(planner_draft_revise_rounds_used "$init" "$slug") || return 1
+  [ "$n" -gt 0 ] || return 1
+  [ "$(cat "${dir}/revise.r${n}.status" 2>/dev/null)" = "applied" ] || return 1
+  e=$(_pdl_eval_dir "$init" "$slug" "$n") || return 1
+  [ -f "${e}/spec.md" ] && [ -s "${e}/semantic.json" ] && [ -f "${e}/body.md" ] && [ -s "${e}/post.sha" ] || return 1
+  # Only the spec the revision produced: a later hand edit (e.g. after an
+  # interrupted run) is never undone by a revert.
+  [ "$(sha256sum <"$(_pdrv_spec "$init" "$slug")" | cut -c1-64)" = "$(head -1 "${e}/post.sha")" ] || return 1
+  # The pre-round body is not the one just judged: this is the evaluation of
+  # the revised draft, not a re-judgement of the old one.
+  [ "$(_dor_body_hash "$(cat "${e}/body.md")")" != "$(jq -r '.semantic.body_hash // ""' <<<"$eval_json")" ] || return 1
+  structural=$(_dor_semantic_structural_codes | jq -R . | jq -sc 'map(select(. != ""))')
+  # Only a finding on a unit the revision changed counts (evaluator noise on
+  # untouched text is not the revision's doing), when the pre-round lineage
+  # names its units.
+  local old_units='null'
+  [ -s "${e}/lineage.json" ] && old_units=$(jq -c '.units // null' "${e}/lineage.json" 2>/dev/null) || true
+  [ -n "$old_units" ] || old_units='null'
+  new=$(jq -r --argjson st "$structural" --argjson ou "$old_units" --slurpfile old "${e}/semantic.json" '
+    ([($old[0].findings // [])[] | select(.verified == true) | .code]) as $was
+    | (.lineage.units // {}) as $nu
+    | (if $ou == null then null
+       else [(($ou | keys) + ($nu | keys)) | unique[] | select($ou[.] != $nu[.])] end) as $chg
+    | [(.semantic.findings // [])[]
+       | select(.verified == true and .severity == "blocking")
+       | select($chg == null or ([(.units // [])[] | select(. as $u | ($chg | index($u)) != null)] | length > 0))
+       | .code | select(. as $c | ($st | index($c)) != null and ($was | index($c)) == null)]
+    | unique | join(" ")' <<<"$eval_json" 2>/dev/null) || return 1
+  [ -n "$new" ] || return 1
+  printf '%s\n' "$new"
+}
+
+# _pdl_revert_regression <INIT> <slug> <codes> — restores the spec and the
+# pre-round evaluation from the copy, marks the round
+# `reverted:REVISION_REGRESSION`, re-runs Crosscheck (CROSSCHECK_BLOCKED halt
+# when it now blocks) and flags the run so the next spawn list recomposes.
+_pdl_revert_regression() {
+  local init="$1" slug="$2" codes="$3" root dir n e spec f body vhash
+  root=$(_pdl_root "$init")
+  dir="${root}/${slug}"
+  n=$(planner_draft_revise_rounds_used "$init" "$slug") || return 1
+  e=$(_pdl_eval_dir "$init" "$slug" "$n") || return 1
+  spec=$(_pdrv_spec "$init" "$slug") || return 1
+  cp -p "${e}/spec.md" "${spec}.tmp.$$" && mv -f "${spec}.tmp.$$" "$spec" || return 1
+  for f in $PLANNER_DRAFT_EVAL_SAVE_FILES; do
+    rm -f "${dir:?}/${f}"
+  done
+  # Restore the pre-round verdict only when it is for the draft the restored
+  # spec composes to; otherwise the draft is simply re-evaluated.
+  vhash=""
+  [ -f "${e}/verdict" ] && read -r vhash _ _ <"${e}/verdict"
+  if body=$(planner_draft_readiness_compose "$init" "$slug" 2>/dev/null) &&
+    [ -n "$vhash" ] && [ "$(_dor_body_hash "$body")" = "$vhash" ]; then
+    for f in $PLANNER_DRAFT_EVAL_SAVE_FILES; do
+      [ "$f" = verdict ] && continue
+      [ -f "${e}/${f}" ] && cp -p "${e}/${f}" "${dir}/${f}"
+    done
+    cp -p "${e}/verdict" "${dir}/verdict"
+  elif [ -f "${e}/lineage.json" ]; then
+    cp -p "${e}/lineage.json" "${dir}/lineage.json"
+  fi
+  echo "reverted:REVISION_REGRESSION" | _pdrv_write "${dir}/revise.r${n}.status"
+  planner_state_write "$init" "META" "draft-revise" "fail" "${slug} round=${n} REVISION_REGRESSION \"${codes}\""
+  if ! planner_crosscheck_run "$init" >/dev/null 2>&1; then
+    echo "CROSSCHECK_BLOCKED $(_pdl_crosscheck_codes "$init")" | _pdrv_write "${root}/halt"
+  fi
+  : >"${root}/.recompose"
 }
 
 # ── Revise round: plan and spawn (D8 step 3) ──────────────────────────────
@@ -374,6 +601,7 @@ _pdl_revise_next() {
     n="${item#* }"
     dir="${root}/${slug}"
     planner_draft_revise_prepare "$init" "$slug" "$n" "$(_pdl_round_findings "$dir")" || return 1
+    _pdl_eval_save "$init" "$slug" "$n" || return 1
     planner_prompt_spec_revise "$init" "$slug" "${dir}/findings.r${n}.json" | _pdrv_write "${dir}/revise-prompt.r${n}.txt" || return 1
     csv+="${csv:+,}${slug}"
     marker+="${slug} ${n} 1 1"$'\n'
@@ -486,6 +714,13 @@ _pdl_round_apply() {
     read -r slug n _ _ <<<"$row"
     [ "$(cat "${root}/${slug}/revise.r${n}.status" 2>/dev/null)" = "applied" ] && applied+=("${slug} ${n}")
   done
+  # The spec each applied revision produced, for the regression check.
+  local e
+  for row in "${applied[@]}"; do
+    read -r slug n <<<"$row"
+    e=$(_pdl_eval_dir "$init" "$slug" "$n") || continue
+    [ -d "$e" ] && sha256sum <"$(_pdrv_spec "$init" "$slug")" | cut -c1-64 >"${e}/post.sha"
+  done
   if [ "${#applied[@]}" -gt 0 ] && ! planner_crosscheck_run "$init" >/dev/null 2>&1; then
     local codes spec
     codes=$(_pdl_crosscheck_codes "$init")
@@ -493,7 +728,10 @@ _pdl_round_apply() {
       read -r slug n <<<"$row"
       dir="${root}/${slug}"
       spec=$(_pdrv_spec "$init" "$slug")
-      cp -p "${dir}/spec.r$((n - 1)).md" "${spec}.tmp.$$" && mv -f "${spec}.tmp.$$" "$spec"
+      # The pre-round spec from outside the workspace when it exists.
+      local pre="${dir}/spec.r$((n - 1)).md" ec
+      ec=$(_pdl_eval_dir "$init" "$slug" "$n" 2>/dev/null) && [ -f "${ec}/spec.md" ] && pre="${ec}/spec.md"
+      cp -p "$pre" "${spec}.tmp.$$" && mv -f "${spec}.tmp.$$" "$spec"
       echo "reverted:CROSSCHECK_REGRESSION" | _pdrv_write "${dir}/revise.r${n}.status"
       planner_state_write "$init" "META" "draft-revise" "fail" "${slug} round=${n} CROSSCHECK_REGRESSION \"${codes}\""
     done
@@ -677,7 +915,7 @@ planner_draft_readiness_security() {
     slug=$(basename "$d")
     jq -r --arg s "$slug" "$(planner_draft_security_def)"' (.findings // [])[]
       | select(.verified == true and .demoted != null and pdr_security)
-      | [$s, .code, (.id // ""), ((.quote // "") | gsub("[\t\r\n]"; " "))] | @tsv' "${d}semantic.json" 2>/dev/null
+      | [$s, .code, (.id // ""), ((.quote // .detail // "") | gsub("[\t\r\n]"; " "))] | @tsv' "${d}semantic.json" 2>/dev/null
   done
   return 0
 }

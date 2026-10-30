@@ -289,6 +289,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-draft-readiness-loop.sh
 	bash ticket-planner/lib/tests/test-planner-draft-carryover.sh
 	bash ticket-planner/lib/tests/test-planner-draft-carryover-e2e.sh
+	bash ticket-planner/lib/tests/test-planner-draft-render-normalise.sh
 	bash ticket-planner/lib/tests/test-skill-arg-substitution.sh
 
 test-planner-intent-gate:
