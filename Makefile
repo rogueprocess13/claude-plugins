@@ -125,6 +125,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-dor-section-staleness.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-lineage.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-audit-demotion.sh
+	# planner-draft-readiness S1
+	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-draft.sh
 	bash ticket-auto-pipeline/lib/tests/test-body-baseline.sh
 	bash ticket-auto-pipeline/lib/tests/test-refinement-carryover.sh
 	# tracker-approval-by-script

@@ -1,0 +1,25 @@
+=== DOR_SEMANTIC_SCAN ===
+SCHEMA_VERSION: 1
+TICKET: @TICKET@
+BODY_HASH: @BODY_HASH@
+FINDING_1_CODE: INTENT_AC_MISMATCH
+FINDING_1_QUOTE: - [ ] A user without the ops role does not see the Upload menu item
+FINDING_1_DETAIL: The stated intent and Proposed Behaviour cover only pre-import row validation; role-gating of the Upload menu item is neither motivated nor described, so this criterion does not serve the stated intent (either out of scope or an undescribed behaviour).
+FINDING_2_CODE: EDGE_CASE_GAP
+FINDING_2_QUOTE: The upload page validates every row against the shared client upload row schema before import and rejects the file with a per-row error list when any row is invalid.
+FINDING_2_DETAIL: The criteria only exercise a file with a single invalid row; an implementation that stops at and reports only the first invalid row would pass, even though the behaviour promises a per-row error list covering every invalid row in a file with several bad rows.
+FINDING_3_CODE: TEST_DATA_GAP
+FINDING_3_QUOTE: - [ ] Uploading a file with an invalid row shows an error message naming the row number and imports nothing
+FINDING_3_DETAIL: Needs an upload file containing at least one schema-invalid row at a known row number (ideally several invalid rows); Test Data Prerequisites lists only a valid 1,000-row file and "a client with no configuration", which is not an invalid upload file.
+FINDING_4_CODE: TEST_DATA_GAP
+FINDING_4_QUOTE: - [ ] A user without the ops role does not see the Upload menu item
+FINDING_4_DETAIL: Needs one existing user account without the ops role (with credentials); the only Test User is ops-lead@example.com, and Test Data Prerequisites names no non-ops user or its source.
+GAP_REQUIREMENT_COMPLETENESS: finding
+GAP_REQUIREMENT_COMPLETENESS_REASON: The role-gating criterion does not serve the validation intent described in the ticket.
+GAP_CONTRADICTORY_REQUIREMENTS: clear
+GAP_CONTRADICTORY_REQUIREMENTS_REASON: No two requirements disagree; the mismatched test data for criterion 2 is recorded as a test-data gap.
+GAP_DEEP_SCOPE_AMBIGUITY: clear
+GAP_DEEP_SCOPE_AMBIGUITY_REASON: Scope is bounded to the gateway client-upload page and client-svc UploadController, with the row schema dependency named.
+GAP_EDGE_CASE_SUFFICIENCY: finding
+GAP_EDGE_CASE_SUFFICIENCY_REASON: Files with several invalid rows are not covered, so the per-row error list behaviour is not fully tested.
+=== END DOR_SEMANTIC_SCAN ===
