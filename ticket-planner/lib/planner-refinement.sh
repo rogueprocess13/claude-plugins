@@ -1392,6 +1392,9 @@ planner_refinement_prepare() {
   planner_refinement_converge_consume "$init"
   pass=$(_planner_refinement_pass_file "$init")
   mkdir -p "$(dirname "$pass")" && : >"$pass" || return 1
+  # A spawn list left by a crashed run belongs to that run: applying it
+  # would count every listed ticket as a failed attempt.
+  rm -f "${pass}.pending"
   [ "${PLANNER_REFINEMENT_SEMANTIC:-true}" != "false" ] || return 0
   for tid in "${needs[@]}"; do
     [ -n "$tid" ] || continue
@@ -1411,7 +1414,9 @@ planner_refinement_prepare() {
 # Decision 6). `done 0` when the pass list is empty.
 planner_refinement_next() {
   local init="$1" pass tid pdir max n=0 out=""
-  planner_refinement_apply_pending "$init" || return 1
+  # The spawn list is stdout's only content: anything apply prints goes to
+  # stderr (dor_semantic_apply reports `round=… demoted=…` on stdout).
+  planner_refinement_apply_pending "$init" >&2 || return 1
   pass=$(_planner_refinement_pass_file "$init")
   max="${PLANNER_REFINEMENT_PARALLEL:-4}"
   [[ "$max" =~ ^[1-9][0-9]*$ ]] || max=4
@@ -1463,7 +1468,7 @@ planner_refinement_apply_pending() {
     pdir="${REPOS_ROOT:-}/.ticket-auto/initiatives/${init}/tickets/${tid}/planner"
     if [ -z "${failed[$tid]:-}" ]; then
       [ "${seen[$tid]}" = "audit" ] || continue
-      if planner_refinement_apply "$init" "$tid"; then
+      if planner_refinement_apply "$init" "$tid" >&2; then
         _planner_refinement_pass_drop "$pass" "$tid"
         continue
       fi
@@ -1472,7 +1477,7 @@ planner_refinement_apply_pending() {
     echo "$n" >"${pdir}/semantic-attempts"
     rm -f "${pdir}/semantic-scan-result.txt" "${pdir}/semantic-audit-result.txt"
     if [ "$n" -ge 2 ]; then
-      planner_refinement_unavailable "$init" "$tid"
+      planner_refinement_unavailable "$init" "$tid" >&2
       _planner_refinement_pass_drop "$pass" "$tid"
     fi
   done

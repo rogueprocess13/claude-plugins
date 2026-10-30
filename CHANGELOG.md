@@ -125,14 +125,14 @@ written to Linear. A blocking finding stops the run with `DRAFT_NOT_READY`. No r
   `CREATE_GATE` at position Epic Gen: one `note` question per blocked spec, one
   `flag:accept:DRAFT_NOT_READY`, one `resolved` note. A stale verdict is never reported as ready.
 - `draft-readiness` joins `PLANNER_REPEATABLE_META_STEPS`.
-- `lib/tests/test-planner-draft-readiness-gate.sh` (26 checks), registered in the Makefile.
+- `lib/tests/test-planner-draft-readiness-gate.sh` (27 checks), registered in the Makefile.
 
 ### Changed
 - **SKILL.md step 1b's inline batch-spawn bash moved into the lib** (task 4.1):
   `planner_refinement_prepare` / `_next` / `_apply_pending` in `planner-refinement.sh`, driven by a
   new shared spawn-list loop (step 1e) that the draft gate (new step 1d) uses too. Behaviour is the
   same: scan then audit per ticket, `PLANNER_REFINEMENT_PARALLEL` per list, one retry, then
-  `SEMANTIC_UNAVAILABLE`. SKILL.md shrank 96,327 → 94,936 bytes with the gate, the loop, the accept
+  `SEMANTIC_UNAVAILABLE`. A spawn list holds only 5-field rows or `done N` (apply output goes to stderr), and prepare/begin drop a stale list left by a crash. SKILL.md shrank 96,327 → 95,352 bytes with the gate, the loop, the accept
   branch and their prose included. `test-planner-refinement.sh` gains the driver tests and the halt
   fixture mirrors the new block (goldens unchanged).
 - **The draft `Generated` timestamp is the first `Crosscheck|check|done` line, not the latest.**

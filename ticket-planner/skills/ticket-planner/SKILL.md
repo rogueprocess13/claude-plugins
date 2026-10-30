@@ -1251,7 +1251,7 @@ For each phase to run:
     ```
 
     rc 2 is a legacy initiative (planned before this phase; skip lines written):
-    continue to step 6. Otherwise print prepare's output verbatim (the one-shot
+    continue to step 6. Any other non-zero rc: halt (`exit 1`). On rc 0 print prepare's output verbatim (the one-shot
     `--converge` result), run step 1e with `NEXT=planner_refinement_next` and
     `APPLY=planner_refinement_apply_pending`, then:
 
@@ -1305,13 +1305,18 @@ For each phase to run:
     nothing is in Linear. The gate writes no manifest and calls no Linear endpoint; a
     resume on unchanged specs spawns nothing.
 
-1e. **Spawn-list loop** (steps 1b and 1d name `NEXT` and `APPLY`). Repeat:
-    1. `_list=$($NEXT "$INITIATIVE_ID")`. When it prints `done 0`, the loop is over.
+1e. **Spawn-list loop** (steps 1b and 1d name `NEXT` and `APPLY`, lib function names).
+    Functions do not survive between Bash calls: every call re-sources the step's lib
+    and sets `INITIATIVE_ID` and `REPOS_ROOT` first. Repeat:
+    1. `_list=$($NEXT "$INITIATIVE_ID")`. `done 0` ends the loop. A non-zero rc or
+       empty output is an error: halt (`exit 1`), never treat it as done.
     2. Each line is `<id>\t<kind>\t<subagent-type>\t<prompt-file>\t<result-file>`. Spawn
-       one Agent per line, all in the same response (they are independent):
-       `subagent_type` = column 3, `prompt` = the contents of the column-4 file,
-       `description` = "<kind>: <id>". Wait for all; each writes its column-5 file.
-    3. Run `$APPLY "$INITIATIVE_ID"`, then go back to 1.
+       one Agent per line, all in the same response (they are independent; a scan
+       and the audit of the same id never share a list): `subagent_type` = column 3,
+       `prompt` = the contents of the column-4 file, `description` = "<kind>: <id>".
+       Wait for all; each writes its column-5 file.
+    3. Run `$APPLY "$INITIATIVE_ID"` even if a spawn failed (the lib counts a missing
+       result as a failed attempt), then go back to 1.
 
     State is on disk, so after a crash rerun the step. The lib retries a failed agent
     once, then records that ticket or draft as unavailable.

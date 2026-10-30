@@ -253,7 +253,8 @@ planner_draft_readiness_begin() {
 planner_draft_readiness_next() {
   local init="$1" root slug hash status dir tid max emitted=0 out=""
   root=$(planner_draft_readiness_root "$init") || return 1
-  planner_draft_readiness_apply "$init" || return 1
+  # The spawn list is stdout's only content (strict contract, step 1e).
+  planner_draft_readiness_apply "$init" >&2 || return 1
   max="${PLANNER_REFINEMENT_PARALLEL:-4}"
   [[ "$max" =~ ^[1-9][0-9]*$ ]] || max=4
   while IFS=$'\t' read -r slug hash status; do

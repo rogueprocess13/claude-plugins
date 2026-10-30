@@ -328,6 +328,25 @@ planner_draft_readiness_gate "$INIT" >/dev/null 2>&1
 [ "$(wc -l <"$CROSSCHECK_CALLS")" -eq 0 ] && pass "no blocked run before: Crosscheck not re-run" ||
   fail "crosscheck rerun" "$(wc -l <"$CROSSCHECK_CALLS")"
 
+# A spawn list from a crashed run is dropped by begin (no failed attempt),
+# and every list is strictly spawn rows or `done N`.
+sed -i 's/invoice list toolbar/invoice list toolbar menu/' "${SPECS}/a-schema.md"
+planner_draft_readiness_begin "$INIT" >/dev/null 2>&1
+planner_draft_readiness_next "$INIT" >/dev/null 2>&1 # crash: no agent ran
+planner_draft_readiness_begin "$INIT" >/dev/null 2>&1
+l=$(planner_draft_readiness_next "$INIT" 2>/dev/null)
+if [ ! -e "${DR}/a-schema/attempts" ] && printf '%s\n' "$l" | grep -q $'^a-schema\tscan\t' &&
+  printf '%s\n' "$l" | awk -F'\t' 'NF != 5 { bad = 1 } END { exit bad }'; then
+  pass "begin drops a stale spawn list; list rows have 5 fields"
+else
+  fail "stale pending" "attempts=$(cat "${DR}/a-schema/attempts" 2>/dev/null) l=$l"
+fi
+_spawn_list "$l"
+planner_draft_readiness_apply "$INIT"
+_spawn_list "$(planner_draft_readiness_next "$INIT")"
+planner_draft_readiness_apply "$INIT"
+planner_draft_readiness_gate "$INIT" >/dev/null 2>&1
+
 # ── 4. blocking finding ──────────────────────────────────────────────────
 echo "--- 4. blocking finding halts ---"
 sed -i 's/Export responds with 200/Export responds with 200 OK/' "${SPECS}/b-api.md"

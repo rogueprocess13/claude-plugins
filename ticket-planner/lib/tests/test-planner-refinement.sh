@@ -1148,6 +1148,42 @@ else
   fail "missing result twice" "l=$l $(get_ticket_manifest_field "PRO-402" ready 2>/dev/null | jq -c .missing)"
 fi
 
+# Strict list contract (step 1e): whatever apply prints never reaches the
+# spawn list — only 5-field rows or `done N`.
+eval "$(declare -f planner_refinement_apply | sed '1s/planner_refinement_apply/_sl_real_apply/')"
+# (eval, so shellcheck does not read this as the function's only definition)
+eval 'planner_refinement_apply() { echo "round=1 demoted=0 dropped=0"; _sl_real_apply "$@"; }'
+_sl_strict() { printf '%s\n' "$1" | awk -F'\t' '!(NF == 5 || /^done [0-9]+$/) { bad = 1 } END { exit bad }'; }
+sed -i "s/before import\.$/before import (v2)./" "$(_sl_dir PRO-401)/body.md"
+PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1
+sl_strict_ok=1
+for _i in 1 2 3 4 5 6; do
+  l=$(planner_refinement_next "$SL_INIT" 2>/dev/null)
+  _sl_strict "$l" || sl_strict_ok=0
+  [ "$l" = "done 0" ] && break
+  _sl_spawn "$l"
+  planner_refinement_apply_pending "$SL_INIT" >/dev/null 2>&1
+done
+if [ "$sl_strict_ok" -eq 1 ] && [ "$l" = "done 0" ]; then
+  pass "next prints only spawn rows or done N, even when apply prints to stdout"
+else
+  fail "strict list" "$l"
+fi
+eval "$(declare -f _sl_real_apply | sed '1s/_sl_real_apply/planner_refinement_apply/')"
+
+# A spawn list left by a crashed run is dropped by prepare: it must not
+# count as a failed attempt for every listed ticket.
+sed -i "s/before import (v2)\.$/before import (v3)./" "$(_sl_dir PRO-401)/body.md"
+PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1
+planner_refinement_next "$SL_INIT" >/dev/null 2>&1 # leaves .pending, no agent runs
+PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1
+l=$(planner_refinement_next "$SL_INIT" 2>/dev/null)
+if [ ! -e "$(_sl_dir PRO-401)/semantic-attempts" ] && printf '%s\n' "$l" | grep -q $'^PRO-401\tscan\t'; then
+  pass "prepare drops a stale spawn list: no failed attempt counted"
+else
+  fail "stale pending" "attempts=$(cat "$(_sl_dir PRO-401)/semantic-attempts" 2>/dev/null) l=$l"
+fi
+rm -f "${pass_file}.pending"
 # Semantic off: an empty list, NEXT done at once. Legacy: rc 2, nothing else.
 PLANNER_REFINEMENT_SEMANTIC=false PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1
 [ "$(planner_refinement_next "$SL_INIT")" = "done 0" ] && pass "semantic off: done at once" ||
