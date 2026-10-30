@@ -63,6 +63,11 @@ ensure_worktree() {
   # Fetch origin to ensure the base ref is current
   git -C "$repo_path" fetch origin 2>/dev/null || true
 
+  # Drop registrations whose directory is gone (#577): a deleted but still
+  # registered worktree at this path, or one still holding <branch>, makes
+  # `git worktree add` fail. Prune skips locked entries, so unlock first.
+  _worktree_prune_repo "$repo_path" "$wt_path"
+
   # Check if the branch already exists locally in the main repo
   if git -C "$repo_path" rev-parse --verify "$branch" >/dev/null 2>&1; then
     # Branch exists — create worktree on it
@@ -80,6 +85,22 @@ ensure_worktree() {
   _mirror_gitignored_env_files "$repo_path" "$wt_path"
 
   echo "$wt_path"
+  return 0
+}
+
+# _worktree_prune_repo <repo_path> [wt_path]
+# `git -C <repo_path> worktree prune` — removes registrations whose worktree
+# directory no longer exists, never a live worktree (#577). With [wt_path]
+# and that path missing on disk, its registration is unlocked first (prune
+# skips locked entries). No-op for a non-repo path. Always returns 0.
+_worktree_prune_repo() {
+  local repo_path="$1" wt_path="${2:-}"
+  [ -n "$repo_path" ] || return 0
+  git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  if [ -n "$wt_path" ] && [ ! -e "$wt_path" ]; then
+    git -C "$repo_path" worktree unlock "$wt_path" >/dev/null 2>&1 || true
+  fi
+  git -C "$repo_path" worktree prune >/dev/null 2>&1 || true
   return 0
 }
 
@@ -169,11 +190,12 @@ release_worktree() {
     return 0
   fi
 
+  local repos_to_prune=() repo_path
   for wt_dir in "$wt_base"/*/; do
     [ -d "$wt_dir" ] || continue
+    repo_path=""
     # Check it's actually a git worktree
     if [ -f "$wt_dir/.git" ] || [ -d "$wt_dir/.git" ]; then
-      local repo_path
       repo_path=$(git -C "$wt_dir" rev-parse --git-common-dir 2>/dev/null | sed 's|/.git/worktrees/.*||' || true)
       if [ -n "$repo_path" ] && [ -d "$repo_path" ]; then
         git -C "$repo_path" worktree remove "$wt_dir" --force 2>/dev/null || {
@@ -181,13 +203,17 @@ release_worktree() {
         }
       fi
     fi
+    repos_to_prune+=("${repo_path:-${REPOS_ROOT:-.}/$(basename "$wt_dir")}")
   done
 
   # Clean up the ticket's worktree directory
   rm -rf "$wt_base" 2>/dev/null || true
 
-  # Prune stale entries
-  git worktree prune 2>/dev/null || true
+  # Prune stale entries in each repo whose worktree was removed. A bare
+  # `git worktree prune` prunes the current directory's repo instead (#577).
+  for repo_path in "${repos_to_prune[@]}"; do
+    _worktree_prune_repo "$repo_path"
+  done
 
   return 0
 }
@@ -216,9 +242,6 @@ worktree_gc() {
       release_worktree "$tid"
     fi
   done
-
-  # Prune any stale git worktree entries
-  git worktree prune 2>/dev/null || true
 
   return 0
 }

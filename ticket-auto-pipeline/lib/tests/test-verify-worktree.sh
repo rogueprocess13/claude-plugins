@@ -114,15 +114,132 @@ test_create_worktree() {
     echo "  file.txt missing in worktree" >&2
     return 1
   }
-  local actual_branch
-  actual_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD)
-  [ "$actual_branch" = "feat/CRE-1-fix" ] || {
-    echo "  expected branch feat/CRE-1-fix, got $actual_branch" >&2
+  # Detached at origin's tip (#591), never attached to the branch itself.
+  local head_ref head_sha origin_sha
+  head_ref=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD)
+  [ "$head_ref" = "HEAD" ] || {
+    echo "  expected a detached HEAD, got branch $head_ref" >&2
+    return 1
+  }
+  head_sha=$(git -C "$wt_path" rev-parse HEAD)
+  origin_sha=$(git -C "$FIXTURE_REPO" rev-parse origin/feat/CRE-1-fix)
+  [ "$head_sha" = "$origin_sha" ] || {
+    echo "  HEAD $head_sha is not origin/feat/CRE-1-fix ($origin_sha)" >&2
     return 1
   }
   return 0
 }
-_run "create worktree at expected repo/ticket path on expected branch" test_create_worktree
+_run "create worktree at expected repo/ticket path, detached at origin/<branch>" test_create_worktree
+
+# ── #591: branch already checked out in another (implement) worktree ────────
+
+test_create_when_branch_checked_out_elsewhere() {
+  _setup_fixture
+  # Stand-in for implement's worktree, which still holds the ticket branch.
+  local impl_wt="$FIXTURE_DIR/impl-wt"
+  git -C "$FIXTURE_REPO" worktree add "$impl_wt" feat/CRE-1-fix >/dev/null 2>&1 || return 1
+
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" 2>/dev/null) || {
+    echo "  create failed while the branch is checked out in another worktree" >&2
+    return 1
+  }
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$(git -C "$FIXTURE_REPO" rev-parse origin/feat/CRE-1-fix)" ] || return 1
+
+  # Reuse (detached HEAD is the normal state now) must also succeed.
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null 2>&1 || {
+    echo "  reuse of a detached verify worktree failed" >&2
+    return 1
+  }
+  # The implement worktree is untouched and still on its branch.
+  [ "$(git -C "$impl_wt" rev-parse --abbrev-ref HEAD)" = "feat/CRE-1-fix" ]
+}
+_run "#591: create + reuse succeed while implement's worktree holds the branch" test_create_when_branch_checked_out_elsewhere
+
+test_create_from_local_only_branch() {
+  _setup_fixture
+  git -C "$FIXTURE_REPO" branch feat/CRE-1-local main >/dev/null 2>&1 || return 1
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-local" 2>/dev/null) || return 1
+  [ "$(git -C "$wt_path" rev-parse HEAD)" = "$(git -C "$FIXTURE_REPO" rev-parse feat/CRE-1-local)" ] || return 1
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-local" >/dev/null 2>&1
+}
+_run "#591: a never-pushed branch is created detached from the local branch, and reused" test_create_from_local_only_branch
+
+test_adopts_manual_detached_recovery() {
+  _setup_fixture
+  # An operator's manual recovery: detached worktree at the expected path,
+  # with no recorded branch.
+  local wt_path
+  wt_path=$(verify_worktree_path "my-service" "CRE-1")
+  mkdir -p "$(dirname "$wt_path")"
+  git -C "$FIXTURE_REPO" worktree add --detach "$wt_path" origin/feat/CRE-1-fix >/dev/null 2>&1 || return 1
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null 2>&1 || return 1
+  # Adopted: a later call for another branch is refused by the recorded identity.
+  local rc=0
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "main" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 2 ]
+}
+_run "#591: an unrecorded detached worktree is adopted, then guarded" test_adopts_manual_detached_recovery
+
+test_reuses_legacy_attached_worktree() {
+  # A verify worktree created before #591 is attached to the branch; it is
+  # still reused and re-synced, not refused.
+  _setup_fixture
+  local wt_path
+  wt_path=$(verify_worktree_path "my-service" "CRE-1")
+  mkdir -p "$(dirname "$wt_path")"
+  git -C "$FIXTURE_REPO" worktree add "$wt_path" feat/CRE-1-fix >/dev/null 2>&1 || return 1
+  _push_second_commit
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null 2>&1 || return 1
+  [ -f "$wt_path/file2.txt" ]
+}
+_run "#591: a legacy attached verify worktree is still reused and re-synced" test_reuses_legacy_attached_worktree
+
+# ── #577: deleted-but-still-registered worktree ─────────────────────────────
+
+test_recreate_after_rm_rf() {
+  _setup_fixture
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" 2>/dev/null) || return 1
+  rm -rf "$wt_path"
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null 2>&1 || {
+    echo "  re-create after rm -rf failed (stale registration not pruned)" >&2
+    return 1
+  }
+  [ -e "$wt_path/.git" ]
+}
+_run "#577: re-create succeeds after the worktree dir was rm -rf'd" test_recreate_after_rm_rf
+
+test_recreate_after_rm_rf_locked() {
+  _setup_fixture
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" 2>/dev/null) || return 1
+  git -C "$FIXTURE_REPO" worktree lock "$wt_path" >/dev/null 2>&1 || return 1
+  rm -rf "$wt_path"
+  ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null 2>&1 || {
+    echo "  re-create after rm -rf of a locked worktree failed" >&2
+    return 1
+  }
+  [ -e "$wt_path/.git" ]
+}
+_run "#577: re-create succeeds when the stale registration is locked" test_recreate_after_rm_rf_locked
+
+test_create_failure_reports_git_error() {
+  _setup_fixture
+  local wt_path err
+  wt_path=$(verify_worktree_path "my-service" "CRE-1")
+  # A plain file where the worktree dir should go makes `worktree add` fail.
+  mkdir -p "$(dirname "$wt_path")"
+  echo "not a dir" >"$wt_path"
+  err=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" 2>&1 >/dev/null) && return 1
+  # git's own reason follows the generic prefix.
+  printf '%s' "$err" | grep -q "failed to create worktree for origin/feat/CRE-1-fix in .*: ." || {
+    echo "  stderr lacks git's error: $err" >&2
+    return 1
+  }
+}
+_run "#577: a failed worktree add reports git's own error" test_create_failure_reports_git_error
 
 # ── Path formula (deliberately repo/ticket, not ticket/repo) ─────────────────
 
@@ -311,6 +428,28 @@ test_release_leaves_other_tickets_alone() {
   return 0
 }
 _run "release only touches the named ticket's worktree" test_release_leaves_other_tickets_alone
+
+test_gc_prunes_the_worktrees_repo_not_cwd() {
+  # #577: a verify worktree dir that lost its .git (only rm -rf runs on it)
+  # must still leave no registration behind in its repo — the prune targets
+  # the repo behind the slug, not the caller's working directory.
+  _setup_fixture
+  local wt_path
+  wt_path=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" 2>/dev/null) || return 1
+  rm -rf "$wt_path"
+  mkdir -p "$wt_path"
+  local old_ts
+  old_ts=$(($(date +%s) - 100000))
+  touch -d "@$old_ts" "$wt_path" 2>/dev/null || touch -t 202001010000 "$wt_path" 2>/dev/null || return 1
+  (cd / && VERIFY_WORKTREE_TTL_HOURS=1 verify_worktree_gc >/dev/null 2>&1)
+  local n
+  n=$(git -C "$FIXTURE_REPO" worktree list --porcelain | grep -c '^worktree ')
+  [ "$n" -eq 1 ] || {
+    echo "  $n worktrees still registered after GC (expected only the main checkout)" >&2
+    return 1
+  }
+}
+_run "#577: GC prunes the worktree's own repo, from any cwd" test_gc_prunes_the_worktrees_repo_not_cwd
 
 echo ""
 echo "=== GC tests ==="
