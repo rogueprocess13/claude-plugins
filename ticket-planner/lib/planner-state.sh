@@ -268,7 +268,7 @@ PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id lin
 # exempt from duplicate-done suppression (their writers dedupe them).
 # `draft-readiness` is a gate run (start … done), repeatable by design: every
 # run of the draft readiness gate writes its own done line (S2b).
-PLANNER_REPEATABLE_META_STEPS="refinement-round refinement-converge refinement-dispute refinement-after-completed draft-readiness"
+PLANNER_REPEATABLE_META_STEPS="refinement-round refinement-converge refinement-dispute refinement-after-completed draft-readiness draft-revise"
 
 # Is <step> a config key rather than a progress marker?
 # Usage: _planner_is_config_key <step>

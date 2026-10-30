@@ -432,7 +432,7 @@ planner_stop_describe_json() {
   if [ "$pos" = "EpicGen" ]; then
     dr_state=$(planner_draft_readiness_state "$init" 2>/dev/null) || dr_state="none"
     if [ "$dr_state" = "blocked" ]; then
-      local d_slug d_code d_quote d_text
+      local d_slug d_code d_quote d_text d_hist
       local -A d_seen=()
       local -a d_order=()
       while IFS=$'\t' read -r d_slug d_code d_quote; do
@@ -442,9 +442,15 @@ planner_stop_describe_json() {
       done < <(planner_draft_readiness_blocked_findings "$init")
       for d_slug in "${d_order[@]}"; do
         d_text="${d_seen[$d_slug]%; }"
-        q=$(_planner_stop_question "draft-${d_slug}" "note" \
-          "The draft ticket body for spec ${d_slug} is not ready: $(_planner_stop_excerpt "$d_text"). Edit artifacts/specs/${d_slug}.md, then answer 'resolved' to re-run draft readiness." \
-          "resolved" "")
+        if [ "$d_slug" = "(run)" ]; then
+          q=$(_planner_stop_question "draft-run" "note" \
+            "Draft readiness stopped the revise loop: $(_planner_stop_excerpt "$d_text"). Answer 'resolved' to re-run draft readiness." "resolved" "")
+        else
+          d_hist=$(planner_draft_readiness_history "$init" "$d_slug" 2>/dev/null)
+          q=$(_planner_stop_question "draft-${d_slug}" "note" \
+            "The draft ticket body for spec ${d_slug} is not ready: $(_planner_stop_excerpt "$d_text").${d_hist:+ Auto-revise: ${d_hist}.} Edit artifacts/specs/${d_slug}.md, then answer 'resolved' to re-run draft readiness." \
+            "resolved" "")
+        fi
         questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
       done
       q=$(_planner_stop_question "accept-DRAFT_NOT_READY" "flag:accept:DRAFT_NOT_READY" \
