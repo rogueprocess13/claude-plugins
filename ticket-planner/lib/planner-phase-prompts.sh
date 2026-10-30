@@ -174,6 +174,37 @@ _planner_prompt_config() {
   planner_config_get "$initiative_id" "$key" 2>/dev/null || echo ""
 }
 
+# ── Acceptance-criteria checklist (generator side of the DoR rubric) ─────────
+# One binary rule per line, each tagged with the Definition-of-Ready codes it
+# pre-empts: the semantic evaluator's closed vocabulary (DOR_SEMANTIC_CODE_ORDER
+# in ticket-auto-pipeline/lib/dor-semantic.sh) and the deterministic AC codes of
+# dor-check.sh. Every semantic code is either named by a rule here or listed in
+# PLANNER_AC_CHECKLIST_SEMANTIC_NA (not about how a single criterion is written);
+# test-planner-ac-checklist.sh fails when the evaluator's list changes without
+# this table changing. Format: "<codes>|<rule text>".
+PLANNER_AC_CHECKLIST_SEMANTIC_NA="NEEDS_HUMAN_DECISION INTENT_AC_MISMATCH CONTRADICTORY_REQUIREMENTS SCOPE_AMBIGUOUS UNSTATED_DEPENDENCY"
+PLANNER_AC_CHECKLIST_RULES=(
+  "AC_NOT_TESTABLE AC_IMPLEMENTATION_ONLY|**Observable pass/fail** — an outsider can watch it hold or fail: a status, a shown value, a row, a message, a file. Never an internal fact (a method exists, a column is added)."
+  "TEST_DATA_GAP TEST_DATA_MISSING|**Names its input** — the concrete record, user, file or value it acts on (\"a \`client\` in state archived\", \"5 \`invoice\` records in state paid\"), and its Verification Notes row names the same data with a Source (\`none\` only when nothing must exist first)."
+  "VPLAN_UNVERIFIABLE|**Names its check** — its Verification Notes row has a concrete Expected value (exact text, count, status or state) and Verifiable \`yes\`, or says why no checkable value exists."
+  "AC_VAGUE|**No vague verbs** — never \"handle(s/d)\", \"support(s)\", \"properly\", \"correctly\", \"appropriately\", \"reasonably\", \"sufficiently\", \"robust\", \"intuitive\", \"seamlessly\", \"gracefully\", \"as expected\", \"should work\", \"works\", \"no errors\", \"looks good\", \"is fixed\", \"seems fine\". Write what is observed instead (\"the banner reads Saved\", not \"no errors\")."
+  "MISSING_CORE_AC EDGE_CASE_GAP|**One behaviour per criterion** — no \"and\"/\"or\" joining two outcomes; each branch (rejected, expired, missing, empty) is its own criterion."
+)
+
+# planner_ac_checklist — print the checklist block for a criteria-writing prompt.
+planner_ac_checklist() {
+  local entry codes text
+  printf '%s\n' "### Acceptance criteria checklist" "" \
+    "Refinement's Definition-of-Ready evaluator judges every criterion against the" \
+    "codes in brackets. Check each \`- [ ]\` line against every rule before handoff;" \
+    "rewrite any line that fails one:" ""
+  for entry in "${PLANNER_AC_CHECKLIST_RULES[@]}"; do
+    codes="${entry%%|*}"
+    text="${entry#*|}"
+    printf -- '- %s [%s]\n' "$text" "${codes// /, }"
+  done
+}
+
 # ── Appraisal ────────────────────────────────────────────────────────────────
 
 planner_prompt_appraisal() {
@@ -945,6 +976,8 @@ ticket whose stated behaviour has no criterion (\`MISSING_CORE_AC\`), after the
 ticket already exists in Linear; Crosscheck blocks earlier on a stated response
 code no criterion names (\`AC_STATUS_UNCOVERED\`).
 
+$(planner_ac_checklist)
+
 ### Verification Notes (planner-ready-by-construction)
 
 TicketGen builds each ticket's \`## Verification Plan\` table from this section
@@ -1159,6 +1192,7 @@ On failure, write \`fail\` instead of \`done\`.
 - Never invent actors, business value or metrics (planner-business-framing).
 - Dependency order must be a DAG.
 - Do not invent services or symbols — every reference must appear in upstream artifacts.
+- Every Acceptance Criteria line passes every rule of the acceptance criteria checklist.
 AGENT_PROMPT
 }
 
@@ -1304,6 +1338,10 @@ sentence of each spec you edited and name the criterion that checks it; add the
 missing ones. Never delete, soften or move a behaviour sentence to make the walk
 pass: if a sentence is wrong, change it for that reason and say so in
 **Findings Addressed**.
+
+Every criterion you add or change passes this checklist:
+
+$(planner_ac_checklist)
 
 ## Cited artifacts the operator must answer for (#504)
 

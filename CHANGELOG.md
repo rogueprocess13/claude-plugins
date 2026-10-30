@@ -99,6 +99,28 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## ticket-planner 0.32.0 (2026-10-30)
+
+Acceptance criteria written to pass the Definition-of-Ready rubric the first time, so the draft
+readiness revise loop is a safety net rather than the main fix. Prompt-side only: no gate,
+evaluator or DoR fixture changes.
+
+### Added
+- **`planner_ac_checklist`** (`lib/planner-phase-prompts.sh`) renders a five-rule, binary
+  checklist into the Specify prompt (where criteria are first written, ahead of Verification
+  Notes, plus a Constraints line) and the Consensus prompt (where accepted findings add or change
+  criteria): observable pass/fail, names its input, names its check, no vague verbs, one behaviour
+  per criterion. Each rule is tagged with the DoR codes it pre-empts (`AC_NOT_TESTABLE`,
+  `AC_IMPLEMENTATION_ONLY`, `TEST_DATA_GAP`, `TEST_DATA_MISSING`, `VPLAN_UNVERIFIABLE`,
+  `AC_VAGUE`, `MISSING_CORE_AC`, `EDGE_CASE_GAP`).
+- **`lib/tests/test-planner-ac-checklist.sh`**: a drift test that fails when the semantic
+  evaluator's `DOR_SEMANTIC_CODE_ORDER` gains or loses a code without the checklist naming it in a
+  rule or in `PLANNER_AC_CHECKLIST_SEMANTIC_NA`, checks every deterministic code a rule names
+  exists in `dor-check.sh`, and checks both prompts render the full checklist. The `AC_VAGUE`
+  rule's word list is pinned to a hash of `_DOR_VAGUE_WIDENED_RE` and `audit-ac-testability.sh`'s
+  `vague_patterns`, so a change to either fails the test until the rule is reviewed.
+- `test-planner-business-framing.sh`: Specify prompt sha re-captured for this deliberate change.
+
 ## ticket-planner 0.30.0 (2026-10-30)
 
 Draft readiness, slice S3b (`planner-draft-readiness`, design D8, D11, D12, D14): the bounded
