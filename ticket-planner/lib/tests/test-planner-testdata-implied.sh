@@ -43,11 +43,13 @@ assert_contains() {
 
 echo "--- _planner_testdata_implies_data: tier table ---"
 INV=$'invoice\nline item\nclient'
+INV2=$'article\nuser\ncomment\nprofile'
 # <expected tier>|<entities: inv or empty>|<criterion>
 while IFS='|' read -r want ents crit; do
   [ -n "$want" ] || continue
   e=""
   [ "$ents" = inv ] && e="$INV"
+  [ "$ents" = inv2 ] && e="$INV2"
   got=$(_planner_testdata_implies_data "$crit" "$e")
   assert_eq "${want}: ${crit}" "$got" "$want"
 done <<'TABLE'
@@ -84,8 +86,57 @@ none||The button is blue
 none||Call `planner_state_write` once
 none||The `GET /health` endpoint answers
 none||The user can search
-none||
+none||The README states that `conduit-dev-secret` is for local development only
+none||Running `npm run build` in `frontend/` exits with code 0
+none||The CLAUDE.md Build & Test row for `npm run build` is labelled "FE build"
+none||`git status` shows a clean tree after `make seed`
+none||Running `seed-tool --reset` exits 0
+none|inv|The docs mention that a `client` can export an `invoice`
+none||`frontend/package.json` defines the scripts `dev`, `build` and `preview`
+none||With a `jwt` value in localStorage, a request sent through the API helper `request` carries the header
+none||The create response author has no `following` field
+none||With port 5173 already in use, `npm run dev` exits with an error
+none||A request to an unknown route returns the backend's 404 body
+none|inv|Signed out, the header shows no "New Article" link
+none|inv|The page title reads "Invoice list"
+strong|inv|The archived "Q3" invoice is hidden from the list
+strong||With the `jake` account signed in, the header shows `jake`
+strong||`alice` can log in
+strong||The `welcome-post` article is listed on the home page
+strong||Running `npm test` passes and the `welcome-post` article is listed
+strong|inv|The README is shown to the client after login
+strong|inv2|`curl /api/profiles/jake` returns 200
+strong|inv2|`GET /api/profiles/jake` returns 200
+strong|inv2|`curl -s localhost:3000/api/articles/how-to-train-your-dragon` returns 200
+strong|inv2|The Getting Started guide lists `jake` as the demo login and logging in shows the feed
+strong||The fixture `users.json` includes `jake`, whose profile page renders
+none|inv2|The README states that `jake` and `jakejake` are demo logins
+none|inv2|A request to `http://localhost:5173/api/unknown` returns the backend's 404 body
 TABLE
+
+echo "--- F28: command spans and document wording are quoted content ---"
+for s in 'npm run build' 'git status' 'make seed' 'seed-tool --reset' 'a && b' 'echo $HOME'; do
+  _planner_testdata_span_is_command "$s" && pass "command span: $s" || fail "command span: $s" "not a command"
+done
+for s in 'alice' 'welcome-post' 'line item' 'npm' 'make' 'bin/seed' 'GET /api/profiles/jake' '/api/profiles/jake'; do
+  _planner_testdata_span_is_command "$s" && fail "name span: $s" "read as a command" || pass "name span: $s"
+done
+_planner_testdata_crit_is_doc_text 'The README states that `x` is local only' &&
+  pass "README + states is doc text" || fail "README + states is doc text" "not doc text"
+_planner_testdata_crit_is_doc_text 'The `welcome-post` article is listed' &&
+  fail "no document named is not doc text" "doc text" || pass "no document named is not doc text"
+_planner_testdata_crit_is_doc_text 'The README states that `jake` logs in and the feed shows' &&
+  fail "a behaviour clause is not doc text" "doc text" || pass "a behaviour clause is not doc text"
+_planner_testdata_crit_is_doc_text 'Logging states that the README exists' &&
+  fail "verb before the document is not doc text" "doc text" || pass "verb before the document is not doc text"
+assert_eq "command args keep the path" "$(_planner_testdata_span_args 'curl -s -X GET /api/profiles/jake')" "GET /api/profiles/jake"
+assert_eq "UI copy quote dropped, value quote kept" \
+  "$(_planner_testdata_strip_quotes 'Click "New Article" as "alice@example.com" then "x" button' false | tr -s ' ')" \
+  "Click as alice@example.com then button"
+assert_eq "quoted username stays in scan and matches an entity" \
+  "$(_planner_testdata_implies_data 'Logging in as "alice" shows the dashboard' alice)" "strong"
+# Known miss: a quoted email stays in the scanned text, but an inventory
+# entity never matches it (entity names are normalised to [a-z0-9 _-]).
 
 echo "--- _planner_testdata_implied_match: reason and phrase ---"
 m=$(_planner_testdata_implied_match 'Given 5 overdue `invoice` records, the dashboard shows 5' "" | tr '\037' '|')
@@ -279,6 +330,18 @@ printf '# td\n\n%s\n\n## Acceptance Criteria\n\n- [ ] Shows 5 invoices.\n' "$PLA
 printf '# en\n\n## Acceptance Criteria\n\n- [ ] Worker starts.\n\n## Signals\n\n```json\n{"Kind": "enabler"}\n```\n' >"${E}/specs/en.md"
 out=$(planner_crosscheck_testdata_tripwires INIT-trip-2)
 assert_eq "synth-marked and enabler specs are exempt" "$?:$out" "0:"
+
+echo "--- F28: quoted content in a contract initiative ---"
+F=$(new_init INIT-trip-f28)
+printf '# Discovery\n\n## Test Data Inventory\n\n| Entity | Load via |\n|---|---|\n| user | factories |\n| article | factories |\n' >"${F}/discovery.md"
+spec_none docs 'The README states that `conduit-dev-secret` is for local development only' >"${F}/specs/docs.md"
+spec_none fe 'Running `npm run build` in `frontend/` exits with code 0' >"${F}/specs/fe.md"
+out=$(planner_crosscheck_testdata_tripwires INIT-trip-f28)
+assert_eq "F28: doc-wording and command criteria raise nothing" "$?:$out" "0:"
+spec_none feed 'The `welcome-post` article is listed on the home page' >"${F}/specs/feed.md"
+out=$(planner_crosscheck_testdata_tripwires INIT-trip-f28)
+assert_contains "F28: a named record still blocks" "$out" "TEST_DATA_IMPLIED feed.md"
+case "$out" in *"docs.md"* | *"fe.md"*) fail "F28: only feed.md is reported" "$out" ;; *) pass "F28: only feed.md is reported" ;; esac
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
