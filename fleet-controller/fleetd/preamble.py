@@ -53,8 +53,9 @@ PREAMBLE_ENV_WRITE_FAILED = 6
 # pointedly not the gate-stop: a caller passing a bad argument must never be
 # recorded on a real ticket as a malformed branch directive. Nor is a failed
 # env-file write, which is a host fault — but it does stop the dispatch, since
-# a phase started without that file runs with no `REPOS_ROOT` and no
-# `LINEAR_API_KEY` and reports nothing about it.
+# a phase started without that file runs with no `REPOS_ROOT` and reports
+# nothing about it. (`LINEAR_API_KEY` is not in that file since GitHub #578;
+# a worker inherits it from fleetd's own environment.)
 #
 # The preflight failures are deliberately not gate-stops even though they are
 # equally unclearable by retry. A rejected API key or a team whose states no

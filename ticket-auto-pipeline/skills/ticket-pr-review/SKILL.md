@@ -146,7 +146,7 @@ verify-only. Write the terminal marker directly and stop; there is no code to
 review:
 
 ```bash
-if [ -n "$LOG_FILE" ] && grep -q '|IMPLEMENT|commit-push|skip|' "$LOG_FILE" && [ "$(echo "$PR_LIST" | jq 'length')" = "0" ]; then
+if [ -n "$TAP_LOG" ] && grep -q '|IMPLEMENT|commit-push|skip|' "$TAP_LOG" && [ "$(echo "$PR_LIST" | jq 'length')" = "0" ]; then
   bash ~/.claude/skills/lib/plog.sh PR-REVIEW pr-review done "N/A — no PR (verification-only ticket, no source diff produced by IMPLEMENT)"
   exit 0
 fi
@@ -210,7 +210,7 @@ Only once both checks pass: call `mcp__gitnexus__detect_changes` with `scope: "c
 - Note that changed files have no indexed execution flows (shell scripts, config, docs — expected for some repos), or that the index could not be verified/trusted for this branch
 - Log a warning and proceed — never block on GitNexus availability
 
-**If GitNexus's structural diff is unreliable for this repo** (branch verification failed, or the result failed the subset sanity check above) and you fall back to running the project's own test command directly as manual verification: redirect that command's stdout/stderr to `{ticket-dir}/pr-review-build-{repo-slug}.log`, never to `$LOG_FILE`. `$LOG_FILE` only ever gets one structured summary line (pass/fail, test counts), e.g. `bash ~/.claude/skills/lib/plog.sh PR-REVIEW manual-verify done "{repo}: {pass|fail}, {N} tests"`. Every consumer of the pipeline log (`detect-resume.sh`, `gate-check.sh`) parses strict `ISO|PHASE|STEP|STATUS|MSG` rows — raw build console output breaks that contract even though current parsers happen to skip unmatched lines.
+**If GitNexus's structural diff is unreliable for this repo** (branch verification failed, or the result failed the subset sanity check above) and you fall back to running the project's own test command directly as manual verification: redirect that command's stdout/stderr to `{ticket-dir}/pr-review-build-{repo-slug}.log`, never to `$TAP_LOG`. `$TAP_LOG` only ever gets one structured summary line (pass/fail, test counts), e.g. `bash ~/.claude/skills/lib/plog.sh PR-REVIEW manual-verify done "{repo}: {pass|fail}, {N} tests"`. Every consumer of the pipeline log (`detect-resume.sh`, `gate-check.sh`) parses strict `ISO|PHASE|STEP|STATUS|MSG` rows — raw build console output breaks that contract even though current parsers happen to skip unmatched lines.
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW gitnexus-impact done "{N} affected flows, risk: {highest-risk}"
 

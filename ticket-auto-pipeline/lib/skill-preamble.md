@@ -131,7 +131,7 @@ No-op on an already-scaffolded wiki; scaffolds only what's missing on a partial 
 ```
 ## Logging (--from-auto)
 
-If `$LOG_FILE` is set (passed by the `ticket-auto` orchestrator): read `~/.claude/skills/pipeline-log-format.md`. After each major step below, write progress entries to `$LOG_FILE` using the format defined there. Phase is `{PHASE}`.
+If `$TAP_LOG` is set (passed by the `ticket-auto` orchestrator): read `~/.claude/skills/pipeline-log-format.md`. After each major step below, write progress entries to `$TAP_LOG` using the format defined there. Phase is `{PHASE}`.
 ```
 
 <!-- endif -->
@@ -247,7 +247,7 @@ flow.sh (`tap_cache_find`), runs it, writes the failure record itself (`META|flo
 `retry` heartbeat; for exit 11 `META|gate-stop|fail|VERDICT_GATE_BLOCKED` + `verdict-gate`
 heartbeat) and exits with flow.sh's own code — see the exit-code contract in its header:
 ```bash
-bash ~/.claude/skills/lib/flow-run.sh --log-file "$LOG_FILE" {TICKET-ID} {trigger} [--data k=v]
+bash ~/.claude/skills/lib/flow-run.sh --log-file "$TAP_LOG" {TICKET-ID} {trigger} [--data k=v]
 _rc=$?
 # 0 ok · 11 verdict gate blocked (uat-pass / pr-review-pass-*: do NOT report PASS/Done)
 # 8 precondition · 9/10 fence · 42 lock busy · 127 flow.sh not found · other = flow.sh error

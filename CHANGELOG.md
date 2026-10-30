@@ -17,6 +17,46 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.79.0 (2026-10-30) — fleet-controller 0.45.0
+
+Spawn-helper hardening: the Linear key leaves the `/tmp` env file, unpaired spawn brackets are
+reported, and the pipeline log path is no longer exported as `LOG_FILE`.
+
+### Security
+- **The Linear API key is no longer written to `/tmp/ticket-auto-<ID>-env.sh`** (#578). The file
+  sits in shared `/tmp` for up to `TICKET_TMP_TTL_MIN` (24 h), so backups, snapshots or a `cat`
+  of it could leak the key. No consumer needed it: router-spawned agents inherit the router's
+  environment, fleetd workers inherit fleetd's, and `linear-api.sh` still falls back to a project
+  `.env`. The `tmp-sweep.sh` SessionStart hook scrubs the key line from any env file an older run
+  left behind.
+- `env-check.sh --mode=full` now masks `LINEAR_API_KEY`, `GITHUB_PERSONAL_ACCESS_TOKEN`,
+  `GH_TOKEN` and `ANTHROPIC_AUTH_TOKEN` to their last four characters instead of printing them.
+- The sweep also removes a `.ticket-auto-<ID>-env.XXXXXX` temp file older than a minute (a
+  pre-0.79.0 write killed before its rename, still holding the key), and never replaces an env
+  file that a newer run rewrote while the scrub was running.
+- fleet-controller 0.45.0: `SLACK_BOT_TOKEN` (`fleet-notify.sh`) and the Langfuse key pair
+  (`run-score-export.sh`) now reach curl on stdin (`-H @-`) instead of argv, where any local user
+  could read them in `ps`.
+
+### Fixed
+- **Pipeline log path exported as `TAP_LOG`, not `LOG_FILE`** (#575). Spring Boot maps a
+  `LOG_FILE` env var to `logging.file.name`, so a `mvn test` run by a phase agent appended its
+  application log to the pipeline log. `spawn_agent_pre`'s prompt prefix exports `TAP_LOG`
+  and keeps `LOG_FILE` only as an unexported shell variable; fleetd (0.45.0) sets `TAP_LOG`
+  on phase workers and drops any `LOG_FILE` inherited from its own environment, and the per-ticket
+  env file carries `TAP_LOG` too, so a phase started by a not-yet-restarted fleetd still finds
+  the log. Phase skill prose
+  reads `$TAP_LOG`; lib scripts that read the path from the environment fall back
+  `${LOG_FILE:-${TAP_LOG:-}}`, so older callers keep working. The spawn-meta file keeps its
+  `LOG_FILE=` key. `plog.sh` now treats an unsubstituted `{LOG_FILE}` placeholder like
+  `flow-run.sh` does. Restart fleetd after upgrading so it stops setting `LOG_FILE` on its workers.
+- **Unpaired `spawn_agent_pre`/`spawn_agent_post` calls are reported** (#579). Spawn-meta now
+  carries `CLOSED=0`/`CLOSED=1`. A pre over a still-open bracket of another phase, a post with no
+  `PHASE=` that would reuse an already-closed bracket (the previous phase's), and a post whose
+  `PHASE=` differs from the open bracket each write `META|spawn-unpaired|warn|`. Warn only; a
+  duplicate post stays silent and idempotent, and a meta with no `CLOSED` key (fleetd's) counts
+  as closed.
+
 ## ticket-planner 0.33.0 (2026-10-30)
 
 Draft readiness gate fixes from an offline replay of a dispatch rehearsal run. No DoR fixture,

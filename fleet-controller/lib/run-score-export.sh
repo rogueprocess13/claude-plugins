@@ -98,9 +98,12 @@ _score_export_cursor_set() {
 # an unreachable or slow backend can never stall the sweep beyond it.
 
 _score_export_post() {
-  local path="$1" body="$2"
-  curl -sS --max-time 15 \
-    -u "${LANGFUSE_PUBLIC_KEY}:${LANGFUSE_SECRET_KEY}" \
+  local path="$1" body="$2" basic
+  # Basic auth goes to curl on stdin (-H @-), never argv (`-u` would put the
+  # secret key in ps / /proc/<pid>/cmdline for every local user).
+  basic=$(printf '%s:%s' "$LANGFUSE_PUBLIC_KEY" "$LANGFUSE_SECRET_KEY" | base64 | tr -d '\n')
+  printf 'Authorization: Basic %s\n' "$basic" | curl -sS --max-time 15 \
+    -H @- \
     -H "Content-Type: application/json" \
     -d "$body" \
     "${LANGFUSE_HOST%/}${path}" 2>/dev/null

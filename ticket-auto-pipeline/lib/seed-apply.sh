@@ -87,10 +87,11 @@ fi
 
 # _seed_apply_log <status> <msg> — one pipeline-log line, log-safe message.
 _seed_apply_log() {
-  [ -n "${LOG_FILE:-}" ] || return 0
+  local _sa_log="${LOG_FILE:-${TAP_LOG:-}}"
+  [ -n "$_sa_log" ] || return 0
   local msg
   msg=$(printf '%s' "$2" | tr '|\r\n' '/  ')
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|seed-apply|$1|$msg" >>"$LOG_FILE" 2>/dev/null || true
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|VERIFY|seed-apply|$1|$msg" >>"$_sa_log" 2>/dev/null || true
 }
 
 # _seed_apply_body <TID> — echoes the blocker's local planner body.md.
@@ -193,7 +194,8 @@ seed_apply() {
   fi
 
   local workspace="${FLEET_PIPELINE_LOG_DIR:-./logs}"
-  [ -n "${LOG_FILE:-}" ] && workspace=$(dirname "$LOG_FILE")
+  local _sa_lf="${LOG_FILE:-${TAP_LOG:-}}"
+  [ -n "$_sa_lf" ] && workspace=$(dirname "$_sa_lf")
 
   local blocked_json rc=0
   blocked_json=$(get_ticket_manifest_field "$tid" blocked_by 2>/dev/null) || rc=$?

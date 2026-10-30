@@ -44,7 +44,7 @@ _idc_has_diff() {
 }
 
 implement_diff_check() {
-  local base_ref="" log="${LOG_FILE:-}"
+  local base_ref="" log="${LOG_FILE:-${TAP_LOG:-}}"
   while [ $# -gt 0 ]; do
     case "$1" in
     --base-ref | --log-file)

@@ -368,6 +368,18 @@ issues=0
 declare -a VAR_LINES
 _var() { VAR_LINES+=("$1|$2|$3|$4|$5"); }
 
+# Masks a secret to presence + last 4 chars (e.g. "****yw3D") so the report
+# never carries a full credential into a transcript (same rule as
+# fleet-controller's fleet-env-check.sh).
+_mask() {
+  local val="$1"
+  if [ "${#val}" -le 4 ]; then
+    printf '****'
+  else
+    printf '****%s' "${val: -4}"
+  fi
+}
+
 # Returns "filepath:value" if varname found in env block of either settings.local.json.
 # Checks project-local first, then global ~/.claude.
 find_in_settings() {
@@ -395,7 +407,7 @@ GIT_EMAIL="$(git config user.email 2>/dev/null || true)"
 # ── API keys ────────────────────────────────────────────────────────────────
 
 if [ -n "${LINEAR_API_KEY:-}" ]; then
-  _var "LINEAR_API_KEY" "ok" "${LINEAR_API_KEY}" "settings.local.json" ""
+  _var "LINEAR_API_KEY" "ok" "$(_mask "${LINEAR_API_KEY}")" "settings.local.json" ""
 elif DOTENV_LINEAR_KEY=$(grep -oP '^LINEAR_API_KEY=\K.*' "$PROJECT_DIR/.env" 2>/dev/null || true) && [ -n "$DOTENV_LINEAR_KEY" ]; then
   _var "LINEAR_API_KEY" "auto" "(in .env)" ".env" "key found in project .env"
 elif result=$(find_in_settings "LINEAR_API_KEY"); then
@@ -406,7 +418,7 @@ else
 fi
 
 if [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
-  _var "ANTHROPIC_AUTH_TOKEN" "ok" "${ANTHROPIC_AUTH_TOKEN}" "settings.local.json" ""
+  _var "ANTHROPIC_AUTH_TOKEN" "ok" "$(_mask "${ANTHROPIC_AUTH_TOKEN}")" "settings.local.json" ""
 elif result=$(find_in_settings "ANTHROPIC_AUTH_TOKEN"); then
   _var "ANTHROPIC_AUTH_TOKEN" "warn" "(in ${result%%:*} — restart session)" "settings.local.json" "found in file but not loaded"
 else
@@ -415,11 +427,11 @@ else
 fi
 
 if [ -n "${GITHUB_PERSONAL_ACCESS_TOKEN:-}" ]; then
-  _var "GITHUB_PERSONAL_ACCESS_TOKEN" "ok" "${GITHUB_PERSONAL_ACCESS_TOKEN}" "settings.local.json" ""
+  _var "GITHUB_PERSONAL_ACCESS_TOKEN" "ok" "$(_mask "${GITHUB_PERSONAL_ACCESS_TOKEN}")" "settings.local.json" ""
   if [ -z "${GH_TOKEN:-}" ]; then
     _var "GH_TOKEN" "auto" "(copy of GITHUB_PERSONAL_ACCESS_TOKEN)" "settings.local.json" "set same as GITHUB_PERSONAL_ACCESS_TOKEN"
   else
-    _var "GH_TOKEN" "ok" "${GH_TOKEN}" "settings.local.json" ""
+    _var "GH_TOKEN" "ok" "$(_mask "${GH_TOKEN}")" "settings.local.json" ""
   fi
 elif result=$(find_in_settings "GITHUB_PERSONAL_ACCESS_TOKEN"); then
   _var "GITHUB_PERSONAL_ACCESS_TOKEN" "warn" "(in ${result%%:*} — restart session)" "settings.local.json" "found in file but not loaded"

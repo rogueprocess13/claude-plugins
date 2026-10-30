@@ -89,7 +89,7 @@ code repo deterministically: the `META|pr-created` record, then the ticket's wor
 ```bash
 source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
 GH_REPO=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/pr-repo-resolve.sh" \
-  "{TICKET-ID}" --log-file "$LOG_FILE" --ticket-dir "{ticket-dir}")
+  "{TICKET-ID}" --log-file "$TAP_LOG" --ticket-dir "{ticket-dir}")
 echo "GH_REPO=$GH_REPO"
 [ -n "$GH_REPO" ] && gh pr list --repo "$GH_REPO" --search "{TICKET-ID} in:head" --json number,headRefName,url
 ```
@@ -113,7 +113,7 @@ find {ticket-dir} -name "pr-review-session.md"
 
 ```bash
 GH_REPO=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/pr-repo-resolve.sh" \
-  "{TICKET-ID}" --log-file "$LOG_FILE" --ticket-dir "{ticket-dir}")
+  "{TICKET-ID}" --log-file "$TAP_LOG" --ticket-dir "{ticket-dir}")
 _review_body=$(gh pr view {PR_NUMBER} --repo "$GH_REPO" --json comments --jq '.comments[] | select(.body | startswith("## Ticket alignment review")) | .body')
 _rc=$?
 echo "$_review_body"

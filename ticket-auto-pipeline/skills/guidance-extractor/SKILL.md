@@ -201,7 +201,7 @@ After checking all patterns:
 
 ## Output
 
-Write exactly ONE line to the pipeline log (`$LOG_FILE`):
+Write exactly ONE line to the pipeline log (`$TAP_LOG`):
 
 ```bash
 _pi_json=$(cat <<'PHASE_INSPECTOR_VERDICT_EOF'

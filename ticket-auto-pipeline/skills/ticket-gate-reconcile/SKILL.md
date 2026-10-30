@@ -15,7 +15,7 @@ Source the project environment file and extract ticket metadata:
 source /tmp/ticket-auto-{TICKET-ID}-env.sh
 
 # Read pipeline log for gate state
-export LOG_FILE="$PWD/logs/{TICKET-ID}-pipeline.log"
+export TAP_LOG="$PWD/logs/{TICKET-ID}-pipeline.log"
 export HB_LOG_FILE="$PWD/logs/{TICKET-ID}-heartbeat.log"
 
 ~/.claude/skills/lib/hb-wrap.sh
@@ -33,7 +33,7 @@ fi
 
 # ARTIFACT_TYPE: the EXEC create-artifact line (canonical token), else
 # notes.md's "Artifact type:" line, else simple-fix.
-ARTIFACT_TYPE=$(resolve_artifact_type "$LOG_FILE" "$NOTES_PATH")
+ARTIFACT_TYPE=$(resolve_artifact_type "$TAP_LOG" "$NOTES_PATH")
 ARTIFACT_TYPE="${ARTIFACT_TYPE:-simple-fix}"
 ```
 
@@ -75,7 +75,7 @@ Initialize the cycle counter and fetch Linear comments:
 ```bash
 # Distinct cycle numbers, not lines — the router echoes `cycle#N` in its own
 # done line, so a line count double-counts (same rule as detect-resume.sh).
-RECONCILE_N=$(grep -o '^[^|]*|GATE|reconcile|done|cycle#[0-9]*' "$LOG_FILE" 2>/dev/null |
+RECONCILE_N=$(grep -o '^[^|]*|GATE|reconcile|done|cycle#[0-9]*' "$TAP_LOG" 2>/dev/null |
   sed 's/.*cycle#//' | sort -u | wc -l | tr -d ' ' || true)
 RECONCILE_N=${RECONCILE_N:-0}
 RECONCILE_N=$((RECONCILE_N + 1))
@@ -93,7 +93,7 @@ COMMENTS_JSON=$(echo "$COMMENTS_JSON" | bash -c "source ~/.claude/skills/lib/lin
 ## Step 3 — Run comment reconciliation
 
 ```bash
-RECONCILE_OUTPUT=$(echo "$COMMENTS_JSON" | bash ~/.claude/skills/lib/reconcile-comments.sh "{TICKET-ID}" "$LOG_FILE")
+RECONCILE_OUTPUT=$(echo "$COMMENTS_JSON" | bash ~/.claude/skills/lib/reconcile-comments.sh "{TICKET-ID}" "$TAP_LOG")
 echo "$RECONCILE_OUTPUT"
 ```
 

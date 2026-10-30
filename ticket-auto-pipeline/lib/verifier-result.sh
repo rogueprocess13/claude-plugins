@@ -139,16 +139,17 @@ write_verifier_result() {
     return 0
   fi
 
-  # Write to pipeline log
-  if [ -z "${LOG_FILE:-}" ]; then
+  # Write to pipeline log (TAP_LOG is the name phase agents export, #575)
+  local _vr_log="${LOG_FILE:-${TAP_LOG:-}}"
+  if [ -z "$_vr_log" ]; then
     echo "[verifier-result] WARN: LOG_FILE unset, skipping verifier-result write" >&2
     return 0
   fi
 
   # F4: guard the final log append — disk full or unwritable LOG_FILE must not
   # abort the caller (all 6 pre-write validation paths return 0 gracefully)
-  echo "${iso}|META|verifier-result|info|${json}" >>"$LOG_FILE" || {
-    echo "[verifier-result] WARN: log write failed (LOG_FILE=${LOG_FILE})" >&2
+  echo "${iso}|META|verifier-result|info|${json}" >>"$_vr_log" || {
+    echo "[verifier-result] WARN: log write failed (LOG_FILE=${_vr_log})" >&2
     return 0
   }
   return 0

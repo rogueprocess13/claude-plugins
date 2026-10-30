@@ -96,7 +96,7 @@ _vr_phase_start_iso() {
 
 # verdict_recompute --phase <P> --return-file <f> --ticket-dir <d> [--log-file <l>]
 verdict_recompute() {
-  local phase="" return_file="" ticket_dir="" log_file="${LOG_FILE:-}"
+  local phase="" return_file="" ticket_dir="" log_file="${LOG_FILE:-${TAP_LOG:-}}"
 
   while [ $# -gt 0 ]; do
     case "$1" in

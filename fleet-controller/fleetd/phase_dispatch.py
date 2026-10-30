@@ -893,14 +893,22 @@ def capture_phase_return(tid, phase, text, attempt=None, lib_dir=None,
 # split them because a top-level `claude -p` session is not a subagent:
 #
 # * **Values become real process environment.** `spawn_agent_pre` prefixes the
-#   Agent prompt with `export LOG_FILE=…; export HB_LOG_FILE=…` because it has
+#   Agent prompt with `export TAP_LOG=…; export HB_LOG_FILE=…` because it has
 #   no other channel — a subagent shares the router's process and can only be
 #   told, not configured. fleetd forks the phase itself, so it sets these in
 #   `execvpe`'s environment, exactly as it already does for `FLEET_WORKER_PID`
 #   and `FLEET_STATE_DIR`. This is strictly stronger than the prompt form: the
 #   preamble sources its env file with `|| true`, so a missing or unwritable
-#   env file silently yields a phase running with no `REPOS_ROOT` and no
-#   `LINEAR_API_KEY` (task 4.16). A real env var cannot be half-applied.
+#   env file silently yields a phase running with no `REPOS_ROOT` (task
+#   4.16). A real env var cannot be half-applied. (`LINEAR_API_KEY` is not in
+#   the env file at all since GitHub #578: a worker inherits it from fleetd's
+#   own environment, `worker_env = dict(os.environ)`.)
+#
+# * **The pipeline log is `TAP_LOG`, never `LOG_FILE`** (GitHub #575).
+#   Spring Boot maps a `LOG_FILE` environment variable to
+#   `logging.file.name`, so every `mvn test` a worker ran appended its
+#   application log to the pipeline log. The spawn-meta file keeps its
+#   `LOG_FILE=` key: that is a file the hooks parse, not an environment.
 #
 # * **Shell function definitions stay prompt-embedded.** `source
 #   heartbeat.sh` defines functions inside the agent's own Bash tool
@@ -917,7 +925,11 @@ def capture_phase_return(tid, phase, text, attempt=None, lib_dir=None,
 
 # Env vars fleetd sets on a phase worker that the router instead embeds as
 # `export` statements in the agent prompt.
-_PROMPT_EXPORTED_VARS = ('LOG_FILE', 'HB_LOG_FILE', 'CLAUDE_LOG_FILE')
+_PROMPT_EXPORTED_VARS = ('TAP_LOG', 'HB_LOG_FILE', 'CLAUDE_LOG_FILE')
+
+# The name a phase worker reads its pipeline log path from. Deliberately not
+# `LOG_FILE` — see the comment above.
+PIPELINE_LOG_ENV = 'TAP_LOG'
 
 DEFAULT_PHASE_FLAGS = '--from-auto'
 
@@ -1000,7 +1012,7 @@ def build_phase_spawn(table, step_id, tid, log_file, hb_log_file='',
         prompt = f'{prompt}. {instructions}'
 
     env = {
-        'LOG_FILE': str(log_file or ''),
+        PIPELINE_LOG_ENV: str(log_file or ''),
         'HB_LOG_FILE': str(hb_log_file or ''),
         'CLAUDE_LOG_FILE': str(claude_log_file or ''),
         # The router exports this in its prompt prefix to keep git hooks from
@@ -1348,7 +1360,8 @@ def write_spawn_meta(tid, spawn, session_id, pinger_pid='', watchdog_pid='',
         f'PHASE={spawn.phase}',
         f'STEP={spawn.step}',
         f'TICKET_ID={tid}',
-        f'LOG_FILE={spawn.env.get("LOG_FILE", "")}',
+        # File key stays LOG_FILE (the hooks parse it); the env name is not.
+        f'LOG_FILE={spawn.env.get(PIPELINE_LOG_ENV, "")}',
         f'HB_LOG_FILE={spawn.env.get("HB_LOG_FILE", "")}',
         f'CLAUDE_LOG_FILE={spawn.env.get("CLAUDE_LOG_FILE", "")}',
         f'PINGER_PID={pinger_pid}',
@@ -2111,7 +2124,7 @@ def build_pr_iterate_spawn(tid, log_file, hb_log_file='', env_file='',
     than a table row.
     """
     env = {
-        'LOG_FILE': str(log_file or ''),
+        PIPELINE_LOG_ENV: str(log_file or ''),
         'HB_LOG_FILE': str(hb_log_file or ''),
         'HUSKY': '0',
         'FLEET_TICKET_ID': str(tid),
