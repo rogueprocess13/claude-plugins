@@ -635,14 +635,14 @@ The router never reasons about content; phases never mutate state directly (they
 | `PLANNER_MAX_PHASE_RETRIES` | 2 | Max retries per phase before failing the run |
 | `PLANNER_PHASE_TIMEOUT` | 600 | Seconds before timing out a hung phase agent |
 | `PLANNER_TSORT_TIMEOUT` | 30 | Seconds before timing out dependency graph sort |
-| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Confidence at or above which TicketGen writes `Pre-approved: true` in the Planner Context block (a block field, not a label). Downstream, `Pre-approved: true` makes the ticket eligible for ticket-appraise's fast-path at any confidence; it does not bypass the approval gate. Pre-approval only: ticket-auto-pipeline's `planned-ticket-check.sh` low-confidence floor is the separate `PLANNED_TICKET_MIN_CONFIDENCE` (default 0.5) |
+| `PLANNER_CONFIDENCE_THRESHOLD` | 0.85 | Confidence at or above which TicketGen writes `Pre-approved: true` in the Planner Context block (a field, not a label): eligible for ticket-appraise's fast-path, never a bypass of the approval gate. `planned-ticket-check.sh`'s floor is the separate `PLANNED_TICKET_MIN_CONFIDENCE` (0.5) |
 | `PLANNER_IDEA_MAX_LENGTH` | 2000 | Maximum idea length in chars (truncated with warning) |
 | `PLANNER_REQUIRE_INTENT` | false | When `true`, raw idea strings are refused — must pass a grill-me intent file |
 | `LINEAR_TEAM_ID` | *(unset)* | Team key, name or id to create on, the fallback for `--team`. Unset ⇒ the workspace's only team, or an error naming the candidates |
-| `LINEAR_PROJECT` | *(unset)* | Default project name or id for created epics/tickets, read once at parsing time as the fallback for `--project`. Unset ⇒ no project field is sent, and Epic Gen's project gate reports the omission (or stops on a single plausible candidate) unless `--no-project` was passed |
+| `LINEAR_PROJECT` | *(unset)* | Default project name or id, the fallback for `--project`. Unset ⇒ no project is sent; Epic Gen's project gate reports it (or stops on one plausible candidate) unless `--no-project` |
 | `LINEAR_PROJECT_MILESTONE` | *(unset)* | Default project milestone name or id, the fallback for `--milestone`. Requires a project when given by name |
 | `FLEET_AUTO_DISPATCH` | false | Must be true for automatic fleet-controller dispatch |
-| `PLANNER_UAT_POLICY` | *(unset)* | `per-ticket` or `epic` (anything else is refused). Read once at parsing time and persisted as the `uat-policy` config key; Epic Gen reads the key, never the variable. Unset: `epic` for a shared-branch epic with synthesized test-data specs or a sibling `blocked-by` chain, else the directive default |
+| `PLANNER_UAT_POLICY` | *(unset)* | `per-ticket` or `epic` (anything else is refused). Persisted at parsing as the `uat-policy` key, which Epic Gen reads. Unset: `epic` for a shared-branch epic with synthesized test-data specs or a sibling `blocked-by` chain, else the directive default |
 | `PLANNER_BASE_BRANCH`, `PLANNER_MERGE_POLICY`, `PLANNER_SYNC_POLICY` | detected, `manual`, `rebase-on-base-change` | Directive config keys, read once at parsing (`--base-branch` wins). See docs/ticket-planner.md |
 | `PLANNER_REFINEMENT_SEMANTIC` | true | When `false`, Refinement runs only the deterministic DoR check — no `dor-semantic-agent` spawns, and the epic gate never waits on a semantic verdict |
 | `PLANNER_REFINEMENT_PARALLEL` | 4 | Max concurrent per-ticket semantic-pass batches in Refinement |
@@ -650,10 +650,10 @@ The router never reasons about content; phases never mutate state directly (they
 | `PLANNER_REFINEMENT_AUDIT_DEMOTE` | false | When `true`, an audit dispute that quotes the code's own section demotes an allow-listed heuristic code to advisory (`ready.demoted`). Off by default |
 | `PLANNER_REFINEMENT_DRIFT_CHECK` | true | When `false`, Refinement does not read Linear to compare each child against its baseline: no adopt, no `BODY_DRIFT`, no `BODY_UNVERIFIED` |
 | `PLANNER_REFINEMENT_DRIFT_MAX_FAILS` | 3 | Consecutive failed Linear reads of one child before Refinement adds the blocking `BODY_UNVERIFIED` |
+| `PLANNER_DRAFT_*` | see docs | Draft readiness gate and its Refinement carry-over: `…_REVISE_MAX_ROUNDS` (2; 0 = halt-only), `…_SPAWN_BUDGET` (8 × specs), `…_DEMOTE_CEILING` (0.5), `…_EXTEND_MAX_WORDS` (25), `…_VERDICT_IMPORT` (true; `false` = fresh Refinement sample). docs/ticket-planner.md § Draft readiness |
 
-Every variable in this table except the `PLANNER_REFINEMENT_*` ones is read **once, in the shell that parses arguments**, and
-its effect is persisted to the state log there and then. The `PLANNER_REFINEMENT_*` variables are read by
-`lib/planner-refinement.sh` each time Refinement runs, so they must be set in the environment of the run that reaches Refinement. None of them is read again
+Every variable in this table except `PLANNER_REFINEMENT_*`/`PLANNER_DRAFT_*` is read **once, in the shell that parses arguments**, and
+its effect is persisted to the state log there and then. Those two families are read each time the gate or Refinement runs, so set them in the environment of that run. None of them is read again
 mid-run: the dispatch loop runs a fresh process per phase, so a variable exported during
 parsing is gone by the next iteration. Setting one of them *after* a run has started has
 no effect — re-invoke with the corresponding flag instead.

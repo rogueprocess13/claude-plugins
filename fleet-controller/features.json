@@ -458,7 +458,7 @@
       "summary": "Semantic DoR lineage treats the prior as a passed draft: no round reset, non-structural findings (and new structural ones on unchanged units) demoted to advisory.",
       "requires": [],
       "recommend": "off",
-      "why": "A call prefix for ticket-planner's draft-readiness carry-over into Refinement (planner-draft-readiness D13); no caller sets it yet. Nothing to set on a host.",
+      "why": "A call prefix for ticket-planner's draft-readiness carry-over into Refinement (planner-draft-readiness D13), which sets it per apply on a draft-passed ticket. Nothing to set on a host; PLANNER_DRAFT_VERDICT_IMPORT is the switch.",
       "docs": "ticket-auto-pipeline/lib/dor-semantic.sh"
     },
     {
@@ -523,6 +523,18 @@
       "requires": [],
       "recommend": "on",
       "why": "Leave on; false skips one Linear read per child and stops noticing hand edits.",
+      "docs": "ticket-planner/docs/ticket-planner.md"
+    },
+    {
+      "name": "PLANNER_DRAFT_VERDICT_IMPORT",
+      "plugin": "ticket-planner",
+      "default": "true",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "Refinement carries a spec's draft readiness verdict onto its ticket: imports it when the bodies are equivalent modulo ids, else scans with the draft-passed policy.",
+      "requires": [],
+      "recommend": "on",
+      "why": "Leave on; false gives Refinement an independent semantic sample (two spawns per ticket), useful only to measure draft-vs-ticket agreement.",
       "docs": "ticket-planner/docs/ticket-planner.md"
     }
   ]
