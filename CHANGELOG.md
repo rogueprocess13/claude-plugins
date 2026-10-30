@@ -108,13 +108,14 @@ draft verdict, the epic gets a revision summary, docs and the rehearsal runbook 
 ### Added
 - **Refinement carry-over** (`lib/planner-draft-carryover.sh`, called from
   `planner_refinement_scan` for each child with no semantic verdict):
-  - *Import*: when the ticket's `body.md` (Linear's rendering) equals its spec's draft after the
+  - *Import*: when the draft verdict is `ready` and the ticket's `body.md` (Linear's rendering)
+    equals its spec's draft after the
     id / Linear-link / `Generated` rewrite and normalisation, ticket-auto-pipeline's
     `dor_semantic_import` stores the draft verdict. No `dor-semantic-agent` spawn, no added round;
     a finding whose rewritten quote no longer locates is dropped, never stored unverified.
     `META|refinement-draft-import|done|<TID> from=DRAFT-<slug> round=<n> demoted=<k> dropped=<d>`.
-  - *Draft-passed scan*: when the bodies differ but the draft verdict is `ready` (or `blocked` and
-    accepted on the current drafts), the ticket's prior lineage is seeded from the draft
+  - *Draft-passed scan*: when the bodies differ (verdict `ready`), or the draft is `blocked` and
+    accepted on the current drafts (never imported: that would re-halt on the accepted findings), the ticket's prior lineage is seeded from the draft
     (`lineage.json`, or a round-1 lineage rebuilt from `semantic.json`), with the real unit hash
     for every unit equal modulo ids, and a `planner/draft-passed` marker makes the next
     `planner_refinement_apply` run with `DOR_SEMANTIC_PRIOR_PASSED=true`: no reset, non-structural
@@ -128,7 +129,13 @@ draft verdict, the epic gets a revision summary, docs and the rehearsal runbook 
   (per spec: revision rounds and statuses, criteria added and extended versus `spec.r0.md`,
   demotions with reason class). The Epic Gen prompt appends it to the epic description in bash,
   after humanizing. Never in a ticket body.
-- `lib/tests/test-planner-draft-carryover.sh` (30 checks), registered in the Makefile.
+- `lib/tests/test-planner-draft-carryover.sh` (30 checks) and `test-planner-draft-carryover-e2e.sh`
+  (10 checks: S3b's revise loop with stubbed agents runs to a passing draft, then its real
+  `lineage.json`/`semantic.json`/`revise.r*` output feeds the import, the seed and the epic
+  summary; an accepted draft is scanned, never imported), both registered in the Makefile.
+- An accepted draft's still-blocking findings are dropped from the seeded prior, so the
+  accepted gap is demoted (`draft-passed-structural` on an unchanged unit) instead of carried
+  and re-halting Refinement.
 
 ### Changed
 - SKILL.md configuration table: one `PLANNER_DRAFT_*` row (the five variables) pointing at the new
@@ -138,6 +145,41 @@ draft verdict, the epic gets a revision summary, docs and the rehearsal runbook 
 - `state-log-format.md` documents `draft-readiness`, `draft-revise` and `refinement-draft-import`.
 - fleet-controller 0.44.2: catalog entry for `PLANNER_DRAFT_VERDICT_IMPORT`;
   `DOR_SEMANTIC_PRIOR_PASSED`'s entry now names its caller.
+
+## ticket-planner 0.30.0 (2026-10-30)
+
+Draft readiness, slice S3b (`planner-draft-readiness`, design D8, D11, D12, D14): the bounded
+auto-revise loop. Before the gate halts with `DRAFT_NOT_READY`, each spec with a revisable blocking
+finding is revised by one `ticket-planner:draft-revise-agent` spawn per round, checked by S3a's
+guards, Crosscheck re-runs, and only the changed drafts are re-evaluated. After the round budget,
+non-structural semantic findings are demoted the way Refinement demotes them. SKILL.md is
+unchanged: `revise` rows arrive through the existing step 1e spawn list.
+
+### Added
+- **`lib/planner-draft-readiness-loop.sh`** (sourced by the gate). Revise planning
+  (`planner_draft_revise_classify`; a spec is revised even when another spec has a non-revisable
+  blocker; never again after an `unchanged` round on the same spec), round open (findings,
+  prompt, round plan and `.pending` before S3a's snapshot — the plan lives outside the workspace next to the snapshots, so the agent cannot forge it; `draft-revise|start` lines through
+  the ledger), settle (one retry for a missing result, then `failed:AGENT_FAILED`; finishes run
+  only when every spec of the round has a result), Crosscheck re-run after an applied round with
+  a whole-round revert (`reverted:CROSSCHECK_REGRESSION`) and `CROSSCHECK_BLOCKED` when it still
+  blocks. End of loop: `planner_semantic_demote … round-limit draft-revise` with a reason class per
+  finding (`revised`/`rebutted`/`reverted`/`failed`), `drift` only for a re-phrased finding of an
+  addressed code on the revised unit, `META|draft-readiness|info|<slug> DEMOTED …` lines, verdict
+  re-judged with `dor_semantic_blocking_codes`.
+- **Draft lineage on disk**: the gate now judges drafts with S1's pure functions
+  (`dor_semantic_findings` → `dor_semantic_lineage_from` with `lineage.json` as prior →
+  `dor_semantic_assemble` → `dor_semantic_blocking_codes`) instead of `dor_semantic_apply` against
+  a throwaway `REPOS_ROOT`; `lineage.json` is written before `verdict`.
+- **Env**: `PLANNER_DRAFT_REVISE_MAX_ROUNDS` (default 2; `0` = the S2b halt-only gate; validated at
+  gate start), `PLANNER_DRAFT_SPAWN_BUDGET` (default 8 × spec count; `SPAWN_BUDGET` halt before
+  spawning), `PLANNER_DRAFT_DEMOTE_CEILING` (default 0.5; `DEMOTE_CEILING` halt). Run-level halts
+  are reported as `(run) <CODE>` fail lines and a `done|blocked n/m <CODE>` suffix.
+- Revision history in the halt report, the pass summary and each `DRAFT_NOT_READY` question
+  (`planner_draft_readiness_history`); per-iteration `META|draft-readiness|info|round=… spawns=…/…`.
+- `draft-revise` in `PLANNER_REPEATABLE_META_STEPS`.
+- `lib/tests/test-planner-draft-readiness-loop.sh` (27 checks, stubbed agents); the S2b suite runs
+  with `PLANNER_DRAFT_REVISE_MAX_ROUNDS=0` unchanged, as the halt-only parity check.
 
 ## ticket-planner 0.29.0 (2026-10-30)
 

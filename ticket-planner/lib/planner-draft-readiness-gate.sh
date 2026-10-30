@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# planner-draft-readiness-gate.sh — the halt-only draft readiness gate
+# planner-draft-readiness-gate.sh — the draft readiness gate
 # (openspec change planner-draft-readiness, slice S2b: design D1, D4–D7, D16).
 #
 # Before the first Linear write, every spec's would-be ticket body (the draft,
 # planner-draft-readiness.sh) goes through the same deterministic DoR check
-# and the same semantic evaluator Refinement runs on real tickets. A draft
-# with a blocking finding halts the run with `DRAFT_NOT_READY` while nothing
-# exists in Linear yet. This slice is halt-only: no revision loop, no draft
-# lineage (every evaluation is round 1).
+# and the same semantic evaluator Refinement runs on real tickets. Before
+# a draft with a blocking finding halts the run with `DRAFT_NOT_READY`
+# (nothing exists in Linear yet), the bounded revise loop in
+# planner-draft-readiness-loop.sh (S3b) tries to fix the specs;
+# PLANNER_DRAFT_REVISE_MAX_ROUNDS=0 keeps the halt-only gate.
 #
 # Bash cannot spawn agents, so SKILL.md drives the gate with the shared
 # spawn-list loop (step 1d):
@@ -41,12 +42,11 @@
 # `blocked-specs` (spec file hashes of the last blocked run, D5 re-Crosscheck).
 #
 # The gate never calls Linear and never creates or writes a ticket or epic
-# manifest. The semantic verdict is judged by ticket-auto-pipeline's own
-# `dor_semantic_apply` + `set_ticket_semantic`, run against a throwaway
-# REPOS_ROOT holding one fresh manifest (null prior = round 1), so drafts get
-# the same findings, severity and SEMANTIC_* codes as Refinement without a
-# copy of either (D3/D16 parity). S3b switches this to S1's pure functions
-# when it adds draft lineage.
+# manifest. The semantic verdict is judged by ticket-auto-pipeline's own pure
+# functions (dor_semantic_findings → dor_semantic_lineage_from with the
+# draft's lineage.json as prior → dor_semantic_assemble →
+# dor_semantic_blocking_codes), so drafts get the same findings, severity and
+# SEMANTIC_* codes as Refinement without a copy of either (D3/D16 parity).
 #
 # Sourceable library — no set -euo pipefail.
 
@@ -55,6 +55,10 @@ _PLANNER_DRAFT_GATE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! declare -f planner_draft_readiness_refresh >/dev/null 2>&1; then
   # shellcheck source=planner-draft-readiness.sh
   source "${_PLANNER_DRAFT_GATE_LIB_DIR}/planner-draft-readiness.sh"
+fi
+if ! declare -f planner_draft_readiness_loop_close >/dev/null 2>&1; then
+  # shellcheck source=planner-draft-readiness-loop.sh
+  source "${_PLANNER_DRAFT_GATE_LIB_DIR}/planner-draft-readiness-loop.sh"
 fi
 
 PLANNER_DRAFT_AGENT_TYPE="ticket-auto-pipeline:dor-semantic-agent"
@@ -190,9 +194,17 @@ planner_draft_readiness_begin() {
     planner_state_write "$init" "META" "draft-readiness" "skip" "--until Crosscheck"
     return 2
   fi
+  planner_draft_readiness_config_check || return 1
   root=$(planner_draft_readiness_root "$init") || return 1
   _planner_refinement_source_deps >/dev/null || return 1
+  # A revise round left open by a crash: write nothing the round's guards
+  # would see as an out-of-scope edit; `next` settles the round first.
+  if [ -f "$(_pdl_round_file "$init")" ]; then
+    planner_draft_revise_log "$init" "$(_pdl_round_snap "$init")" "META" "draft-readiness" "start" "evaluator=${DOR_SEMANTIC_EVALUATOR:-} resume-round"
+    return 0
+  fi
   planner_state_write "$init" "META" "draft-readiness" "start" "evaluator=${DOR_SEMANTIC_EVALUATOR:-}" || return 1
+  rm -f "${root}/halt"
 
   if [ -f "${root}/blocked-specs" ]; then
     specs_now=$(_planner_draft_spec_hashes "$init") || return 1
@@ -220,6 +232,7 @@ planner_draft_readiness_begin() {
 
   local refresh
   refresh=$(planner_draft_readiness_refresh "$init") || return 1
+  planner_draft_readiness_spawns_begin "$init" || return 1
   while IFS=$'\t' read -r slug hash status; do
     [ -n "$slug" ] || continue
     n=$((n + 1))
@@ -254,7 +267,23 @@ planner_draft_readiness_next() {
   local init="$1" root slug hash status dir tid max emitted=0 out=""
   root=$(planner_draft_readiness_root "$init") || return 1
   # The spawn list is stdout's only content (strict contract, step 1e).
-  planner_draft_readiness_apply "$init" >&2 || return 1
+  # An open revise round settles first and writes nothing else meanwhile.
+  if [ -f "$(_pdl_round_file "$init")" ]; then
+    planner_draft_readiness_apply "$init" >&2 || return 1
+    if [ -f "$(_pdl_round_file "$init")" ]; then
+      _pdl_round_retry_list "$init"
+      return
+    fi
+  fi
+  local refresh="" revise=""
+  refresh=$(planner_draft_readiness_refresh "$init") || return 1
+  planner_draft_readiness_apply "$init" "$refresh" >&2 || return 1
+  if [ -f "${root}/halt" ]; then
+    refresh=""
+  else
+    refresh=$(_pdl_restatus "$init" "$refresh")
+    _pdl_det_missing "$init" "$refresh" || return 1
+  fi
   max="${PLANNER_REFINEMENT_PARALLEL:-4}"
   [[ "$max" =~ ^[1-9][0-9]*$ ]] || max=4
   while IFS=$'\t' read -r slug hash status; do
@@ -272,9 +301,20 @@ planner_draft_readiness_next() {
       continue
     fi
     emitted=$((emitted + 1))
-  done < <(planner_draft_readiness_refresh "$init")
+  done <<<"$refresh"
+  if [ -n "$out" ] && ! _pdl_budget_ok "$init" "$emitted"; then
+    out=""
+  elif [ -n "$out" ]; then
+    _pdl_spawns_add "$init" "$emitted"
+    [ "$(_pdl_max_rounds)" -gt 0 ] && _pdl_info "$init" 0 "$emitted"
+  fi
   if [ -z "$out" ]; then
     rm -f "${root}/.pending"
+    [ -f "${root}/halt" ] || revise=$(_pdl_revise_next "$init" "$refresh") || return 1
+    if [ -n "$revise" ]; then
+      printf '%s' "$revise"
+      return 0
+    fi
     echo "done 0"
     return 0
   fi
@@ -298,49 +338,26 @@ _planner_draft_fail() {
   fi
 }
 
-# _planner_draft_evaluate <tid> <body-file> <scan-json> <audit-json>
-# Prints {semantic, codes}: ticket-auto's dor_semantic_apply run against a
-# throwaway REPOS_ROOT with one fresh manifest (null prior lineage), read
-# back. Nothing under the real REPOS_ROOT is touched.
-_planner_draft_evaluate() {
-  local tid="$1" body="$2" scan="$3" audit="$4" sb rc=0 out
-  sb=$(mktemp -d "${TMPDIR:-/tmp}/planner-draft-eval.XXXXXX") || return 1
-  mkdir -p "${sb}/.ticket-auto/initiatives/_index" "${sb}/.ticket-auto/initiatives/_draft/tickets/${tid}/planner"
-  echo "_draft" >"${sb}/.ticket-auto/initiatives/_index/${tid}.initiative"
-  echo '{"ready":{"status":"not-ready","missing":[],"advisory":[]}}' \
-    >"${sb}/.ticket-auto/initiatives/_draft/tickets/${tid}/planner/manifest.json"
-  (
-    export REPOS_ROOT="$sb"
-    unset DOR_SEMANTIC_MAX_ROUNDS
-    DOR_SEMANTIC_DRIFT_DEMOTE=true \
-      DOR_SEMANTIC_ROUND_RESET_SHARE="${DOR_SEMANTIC_ROUND_RESET_SHARE:-0.5}" \
-      dor_semantic_apply "$tid" "$body" "$scan" "$audit" >/dev/null 2>&1
-  ) || rc=$?
-  if [ "$rc" -eq 0 ]; then
-    out=$(jq -c '{semantic: .ready.semantic,
-      codes: [(.ready.missing // [])[] | select(startswith("SEMANTIC_"))]}' \
-      "${sb}/.ticket-auto/initiatives/_draft/tickets/${tid}/planner/manifest.json" 2>/dev/null) || rc=1
-  fi
-  rm -rf "$sb"
-  [ "$rc" -eq 0 ] || return 1
-  printf '%s\n' "$out"
-}
-
-# planner_draft_readiness_apply <INIT>
+# planner_draft_readiness_apply <INIT> [<refresh-output>]
 # For each stale draft: a spawn in `.pending` whose result file is missing
 # is a failed attempt; a draft with both result files is parsed and judged.
 # A parse or judge failure is a failed attempt. A judged draft gets
 # semantic.json, then `verdict` (written last): blocked when the semantic
 # result has a SEMANTIC_* code or dor-result.json a missing code.
 planner_draft_readiness_apply() {
-  local init="$1" root parse slug hash status dir kind type pf rf
+  local init="$1" refresh="${2:-}" root parse slug hash status dir kind type pf rf
   root=$(planner_draft_readiness_root "$init") || return 1
   [ -d "$root" ] || return 0
   _planner_refinement_source_deps >/dev/null || return 1
+  if [ -f "$(_pdl_round_file "$init")" ]; then
+    _pdl_round_apply "$init"
+    return
+  fi
   parse=$(_planner_refinement_resolve "dor-semantic-parse.sh") || {
     echo "planner-draft-readiness: dor-semantic-parse.sh not found (install ticket-auto-pipeline)" >&2
     return 1
   }
+  [ -n "$refresh" ] || refresh=$(planner_draft_readiness_refresh "$init") || return 1
   local -A failed=()
   if [ -f "${root}/.pending" ]; then
     while IFS=$'\t' read -r slug kind type pf rf; do
@@ -360,18 +377,19 @@ planner_draft_readiness_apply() {
     local scan_json audit_json eval_json verdict=ready
     if ! scan_json=$(bash "$parse" --kind scan --result-file "${dir}/scan-result.txt" 2>/dev/null) ||
       ! audit_json=$(bash "$parse" --kind audit --result-file "${dir}/audit-result.txt" --det-result "${dir}/dor-result.json" 2>/dev/null) ||
-      ! eval_json=$(_planner_draft_evaluate "$(_planner_draft_tid "$slug")" "${dir}/body.md" "$scan_json" "$audit_json"); then
+      ! eval_json=$(_pdl_evaluate "$(_planner_draft_tid "$slug")" "$dir" "$scan_json" "$audit_json"); then
       _planner_draft_fail "$init" "$slug" "$hash"
       continue
     fi
     printf '%s\n' "$eval_json" | jq -c '.semantic' >"${dir}/semantic.json.tmp" &&
       mv -f "${dir}/semantic.json.tmp" "${dir}/semantic.json" || return 1
+    _pdl_lineage_write "$dir" "$(jq -c '.lineage' <<<"$eval_json")" || return 1
     if printf '%s\n' "$eval_json" | jq -e '.codes | length > 0' >/dev/null 2>&1 ||
       jq -e '(.missing // []) | length > 0' "${dir}/dor-result.json" >/dev/null 2>&1; then
       verdict=blocked
     fi
     planner_draft_readiness_verdict_write "$init" "$slug" "$hash" "${DOR_SEMANTIC_EVALUATOR:-}" "$verdict" || return 1
-  done < <(planner_draft_readiness_refresh "$init")
+  done <<<"$refresh"
   return 0
 }
 
@@ -402,8 +420,10 @@ planner_draft_readiness_gate() {
   local init="$1" root slug hash status dir v_hash v_eval v_status total=0 blocked=0 code quote
   root=$(planner_draft_readiness_root "$init") || return 1
   _planner_refinement_source_deps >/dev/null || return 1
-  local refresh
+  local refresh halt=""
   refresh=$(planner_draft_readiness_refresh "$init") || return 1
+  planner_draft_readiness_loop_close "$init" "$refresh" || return 1
+  [ -f "${root}/halt" ] && halt=$(cat "${root}/halt")
   while IFS=$'\t' read -r slug hash status; do
     [ -n "$slug" ] || continue
     total=$((total + 1))
@@ -432,14 +452,20 @@ planner_draft_readiness_gate() {
     done <<<"$lines"
   done <<<"$refresh"
 
-  if [ "$blocked" -gt 0 ]; then
+  _pdl_spawns_close "$init"
+  if [ -n "$halt" ]; then
+    quote="${halt#* }"
+    planner_state_write "$init" "META" "draft-readiness" "fail" "(run) ${halt%% *} \"${quote//\"/\'}\""
+  fi
+  if [ "$blocked" -gt 0 ] || [ -n "$halt" ]; then
     _planner_draft_spec_hashes "$init" >"${root}/blocked-specs.tmp" &&
       mv -f "${root}/blocked-specs.tmp" "${root}/blocked-specs"
-    planner_state_write "$init" "META" "draft-readiness" "done" "blocked ${blocked}/${total}"
+    planner_state_write "$init" "META" "draft-readiness" "done" "blocked ${blocked}/${total}${halt:+ ${halt%% *}}"
     return 3
   fi
   rm -f "${root}/blocked-specs"
   planner_state_write "$init" "META" "draft-readiness" "done" "ready ${total}/${total}"
+  planner_draft_readiness_history_report "$init"
   return 0
 }
 
@@ -478,6 +504,7 @@ planner_draft_readiness_report() {
       fi
     done
   echo ""
+  planner_draft_readiness_history_report "$init"
   echo "Edit artifacts/specs/<slug>.md, then: /ticket-planner resume ${init}"
   echo "A draft pass does not guarantee Refinement passes; Refinement re-checks the real ticket bodies."
   echo "Accept as is: /ticket-planner resume ${init} --accept DRAFT_NOT_READY:\"<reason>\""

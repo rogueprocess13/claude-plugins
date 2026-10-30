@@ -8,12 +8,14 @@
 # fresh Refinement sample would re-block on findings the gate resolved or
 # demoted, so Refinement carries the draft verdict over:
 #
-#   - Import: the ticket's real body (body.md, after TicketGen stored Linear's
-#     rendering) is equivalent to the draft modulo ids, links and the
-#     Planner Context timestamp → ticket-auto's dor_semantic_import stores
-#     the draft verdict on the ticket. No agent spawn, no added round.
-#   - Draft-passed scan: not equivalent (or import refused), but the draft
-#     verdict is `ready` or accepted → the ticket's prior lineage is seeded
+#   - Import: the draft verdict is `ready` and the ticket's real body
+#     (body.md, after TicketGen stored Linear's rendering) is equivalent to
+#     the draft modulo ids, links and the Planner Context timestamp →
+#     ticket-auto's dor_semantic_import stores the draft verdict (with the
+#     gate's lineage.json) on the ticket. No agent spawn, no added round.
+#   - Draft-passed scan: not equivalent, import refused, or the draft was
+#     `blocked` but accepted (its blocking findings must not be re-imported)
+#     → the ticket's prior lineage is seeded
 #     from the draft, with the real unit hash for every unit unchanged modulo
 #     ids, and the normal scan runs with DOR_SEMANTIC_PRIOR_PASSED=true
 #     (marker file `planner/draft-passed`, read by planner_refinement_apply).
@@ -34,8 +36,12 @@
 #       ready | accepted | blocked | unavailable | stale | none — the draft
 #       verdict, `stale` when it is not for the spec's current draft body or
 #       evaluator.
-#   planner_draft_carryover_seed <map-file> <real-body-file> <draft-dir>
-#       Prints the prior lineage for a draft-passed scan (JSON).
+#   planner_draft_carryover_seed <map-file> <real-body-file> <draft-dir> [accepted]
+#       Prints the prior lineage for a draft-passed scan (JSON). With
+#       `accepted`, the draft's still-blocking findings (the ones the operator
+#       accepted) leave the prior, so a re-raise on an unchanged unit is a new
+#       finding and the draft-passed policy demotes it; a carried one would
+#       stay blocking and re-halt Refinement on an accepted gap.
 #   planner_draft_carryover_ticket <INIT> <TID> <pdir> <map-file>
 #       Applies the rule to one ticket with no semantic verdict. Prints
 #       `import`, `draft-passed` or `none`. Writes the
@@ -180,7 +186,7 @@ _planner_draft_carryover_lineage() {
 }
 
 planner_draft_carryover_seed() {
-  local map="$1" real="$2" dir="$3" draft="${3}/body.md" lineage rbody dbody
+  local map="$1" real="$2" dir="$3" draft="${3}/body.md" accepted="${4:-}" lineage rbody dbody
   local r_units r_sec d_units d_sec units sec
   lineage=$(_planner_draft_carryover_lineage "$dir")
   [ -n "$lineage" ] && [ "$lineage" != "null" ] || return 1
@@ -194,8 +200,14 @@ planner_draft_carryover_seed() {
   [ -n "$d_sec" ] || d_sec=$(_dor_section_hashes "$dbody") || return 1
   units=$(_planner_draft_carryover_remap "$real" "$draft" "$map" units "$r_units" "$d_units") || return 1
   sec=$(_planner_draft_carryover_remap "$real" "$draft" "$map" sections "$r_sec" "$d_sec") || return 1
-  echo "$lineage" | jq -c --argjson u "$units" --argjson s "$sec" \
-    '. + {units: $u, section_hashes: $s, seeded_from: "draft"}'
+  local drop='[]'
+  if [ "$accepted" = accepted ] && [ -s "${dir}/semantic.json" ]; then
+    drop=$(jq -c '[(.findings // [])[] | select(.severity == "blocking") | .id | select(. != null)]' \
+      "${dir}/semantic.json" 2>/dev/null) || drop='[]'
+  fi
+  echo "$lineage" | jq -c --argjson u "$units" --argjson s "$sec" --argjson drop "$drop" \
+    '. + {units: $u, section_hashes: $s, seeded_from: "draft",
+          findings: [(.findings // [])[] | select(.id as $i | ($drop | index($i)) == null)]}'
 }
 
 planner_draft_carryover_ticket() {
@@ -208,15 +220,18 @@ planner_draft_carryover_ticket() {
   fi
   dir="$(planner_draft_readiness_root "$init")/${slug}"
   status=$(planner_draft_carryover_status "$init" "$slug")
-  case "$status" in ready | accepted | blocked) ;; *)
+  case "$status" in ready | accepted) ;; *)
     echo none
     return 0
     ;;
   esac
 
-  # Import: equivalent body, same evaluator (dor_semantic_import refuses
-  # another evaluator with rc 2).
-  if [ -s "${dir}/semantic.json" ] &&
+  # Import: a `ready` draft (the gate's own end-of-loop demotions included)
+  # whose body is equivalent; same evaluator (dor_semantic_import refuses
+  # another with rc 2). An accepted draft still holds the blocking findings
+  # the operator accepted, so importing it would re-halt Refinement on them:
+  # it takes the draft-passed scan instead.
+  if [ "$status" = ready ] && [ -s "${dir}/semantic.json" ] &&
     planner_draft_readiness_equivalent "$map" "$body_file" "${dir}/body.md"; then
     local lin="null"
     [ -s "${dir}/lineage.json" ] && lin="${dir}/lineage.json"
@@ -230,14 +245,11 @@ planner_draft_carryover_ticket() {
     fi
   fi
 
-  # Draft-passed scan: only a draft that passed (or was accepted).
-  case "$status" in ready | accepted) ;; *)
-    echo none
-    return 0
-    ;;
-  esac
+  # Draft-passed scan: not equivalent, import refused, or accepted.
   local prior round
-  if prior=$(planner_draft_carryover_seed "$map" "$body_file" "$dir") &&
+  local acc=""
+  [ "$status" = accepted ] && acc=accepted
+  if prior=$(planner_draft_carryover_seed "$map" "$body_file" "$dir" "$acc") &&
     set_ticket_lineage "$tid" "$prior" >/dev/null 2>&1; then
     printf '%s %s\n' "$slug" "$(cut -d' ' -f1 "${dir}/verdict")" >"${pdir}/${PLANNER_DRAFT_PASSED_MARKER}"
     round=$(echo "$prior" | jq -r '(.round // 0) + 1')

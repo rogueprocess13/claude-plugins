@@ -460,14 +460,17 @@ has no semantic verdict yet (`planner-draft-carryover.sh`):
    `planner_ticketgen_record_baseline`) is compared with the draft after normalisation:
    the epic id, sibling ids and their Linear links are rewritten to draft tokens, the
    Planner Context `Generated` value to a fixed token, then CRLF, trailing whitespace
-   and trailing blank lines are normalised. When the two are equal and the evaluator
-   matches, ticket-auto's `dor_semantic_import` stores the draft verdict on the ticket.
+   and trailing blank lines are normalised. When the draft verdict is `ready`, the two
+   are equal and the evaluator matches, ticket-auto's `dor_semantic_import` stores the draft verdict on the ticket.
    Quotes are rewritten to real ids, and a finding whose quote no longer locates in the
    real body is dropped (never stored unverified). No agent is spawned and no round is
    added. Logged as `META|refinement-draft-import|done|<TID> from=DRAFT-<slug> round=<n> demoted=<k> dropped=<d>`.
-2. **Draft-passed scan.** When the bodies differ (or the import is refused) but the
-   draft verdict is `ready`, or `blocked` with an accept bound to the current drafts,
-   the ticket's prior lineage is seeded from the draft. Each unit whose text is equal
+2. **Draft-passed scan.** When the bodies differ or the import is refused (draft
+   verdict `ready`), or the draft is `blocked` with an accept bound to the current drafts
+   (importing it would re-halt Refinement on the accepted findings), the ticket's prior
+   lineage is seeded from the draft (the gate's `lineage.json`). For an accepted draft,
+   the findings the operator accepted leave the seeded prior, so a re-raise on an
+   unchanged unit is demoted rather than carried as blocking. Each unit whose text is equal
    modulo ids gets the real body's hash, so it reads as unchanged. The normal scan then
    runs, and its apply uses `DOR_SEMANTIC_PRIOR_PASSED=true`: no round reset, every
    verified non-structural finding becomes advisory (`demoted: draft-passed`), and a new

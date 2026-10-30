@@ -41,6 +41,10 @@ mkdir -p "$HOME"
 export REPOS_ROOT="${TMP_ROOT}/repos"
 export TMPDIR="${TMP_ROOT}/tmp"
 mkdir -p "$TMPDIR"
+# S2b's halt-only gate is PLANNER_DRAFT_REVISE_MAX_ROUNDS=0 since S3b (the
+# revise loop has its own suite, test-planner-draft-readiness-loop.sh): this
+# suite unchanged is the MAX_ROUNDS=0 parity check.
+export PLANNER_DRAFT_REVISE_MAX_ROUNDS=0
 
 source "${LIB_DIR}/planner-state.sh"
 source "${LIB_DIR}/planner-router.sh"
