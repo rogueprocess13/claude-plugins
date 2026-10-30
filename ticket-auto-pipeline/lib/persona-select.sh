@@ -45,7 +45,9 @@ Options:
                      debugger overlay. Empty means absent; when absent and both
                      TICKET_ID and REPOS_ROOT are set, the local manifest `type` is used.
   --remediation      Verify-fail rework: sets the debugger overlay for any type
-  --with-qa          Include qa-engineer in prescan persona set (prescan phase only)
+  --with-qa          Include qa-engineer in prescan persona set (prescan phase only),
+                     with a qa/* specializer when the repo has Playwright or
+                     OpenAPI/Postman files
   --ticket-dir <dir> The ticket workspace ({ID}--slug). Uses <dir>/context.md as the
                      ticket text when TICKET_TEXT_FILE is unset or empty, and, when
                      --type is absent, derives the type: the manifest `type` if it is
@@ -439,6 +441,35 @@ select_specializer() {
   echo ""
 }
 
+# QA specializer for the qa-engineer lens (issue #559). Repo-file signals
+# only, so the result is the same for every ticket:
+#   Playwright config or @playwright/test dependency → qa/playwright-web
+#   OpenAPI/Swagger spec or Postman collection       → qa/api-testing
+# Always echoes and returns 0: a non-zero return inside $(...) would kill the
+# caller under set -e.
+select_qa_specializer() {
+  local f
+  for f in playwright.config.ts playwright.config.js playwright.config.mjs playwright.config.cjs; do
+    if probe_file "$f"; then
+      echo "specializers/qa/playwright-web.md"
+      return 0
+    fi
+  done
+  if probe_dep "@playwright/test"; then
+    echo "specializers/qa/playwright-web.md"
+    return 0
+  fi
+  if [ -n "$(find "$REPO" -maxdepth 4 \( -name node_modules -o -name .git \) -prune -o \
+    \( -iname 'openapi.json' -o -iname 'openapi.yaml' -o -iname 'openapi.yml' -o -iname 'swagger.json' \
+    -o -iname 'swagger.yaml' -o -iname 'swagger.yml' -o -iname '*.postman_collection.json' \) \
+    -print -quit 2>/dev/null || true)" ]; then
+    echo "specializers/qa/api-testing.md"
+    return 0
+  fi
+  echo ""
+  return 0
+}
+
 # ── Auto-include detection ─────────────────────────────────────────────────────
 
 select_auto_include() {
@@ -627,8 +658,15 @@ select_prescan_set() {
 
     persona_entry="$base_path"
 
-    # Attach specializer only for developer personas (backend/frontend)
+    # Attach a specializer to the developer personas (stack) and to
+    # qa-engineer (test tooling); the other lenses have none.
     case "$role" in
+    qa-engineer)
+      specializer_path=$(_persona_path "$(select_qa_specializer)")
+      if [ -n "$specializer_path" ]; then
+        persona_entry="${persona_entry}|${specializer_path}"
+      fi
+      ;;
     backend-developer | frontend-developer)
       # Temporarily set LAYER for specializer detection
       local saved_layer="$LAYER"

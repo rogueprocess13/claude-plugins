@@ -1610,6 +1610,18 @@ ensure_ticket_readiness "STALEFLAG-1" || rc=$?
   _pass "ensure_ticket_readiness: flag set after a cached ready verdict reports FLAG_NEEDS_INFO" ||
   _fail "a newly set flag should surface on a cache hit (rc=$rc missing=$DOR_MISSING)"
 
+# Issue #580: an early-exiting grep fed by a pipe from a >64KB string lets
+# SIGPIPE + pipefail turn a match into a miss. Here-strings have no writer.
+# The padding is many short lines: grep only stops early at a line boundary.
+_big_pad=$(head -c 200000 /dev/zero | tr '\0' 'x' | fold -w 100)
+_big_ok=0
+for _i in 1 2 3 4 5 6 7 8; do
+  _dor_td_legacy_sourced $'seeded by the fixtures/seed.sql script\n'"${_big_pad}" || _big_ok=1
+done
+[ "$_big_ok" = "0" ] &&
+  _pass "dor-check: >64KB inputs still match under pipefail (no SIGPIPE false miss)" ||
+  _fail "dor-check: >64KB inputs reported a false miss under pipefail"
+
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

@@ -18,7 +18,7 @@ ticket-auto-pipeline/agents/ticket-verify-agent.md	2848	10
 ticket-auto-pipeline/lib/skill-preamble-auto.md	17694	350
 ticket-auto-pipeline/lib/skill-preamble.md	11458	269
 ticket-auto-pipeline/personas/CHANGELOG.md	2963	64
-ticket-auto-pipeline/personas/README.md	17010	171
+ticket-auto-pipeline/personas/README.md	16999	171
 ticket-auto-pipeline/personas/base/analyzer.md	1890	32
 ticket-auto-pipeline/personas/base/architect.md	2022	31
 ticket-auto-pipeline/personas/base/backend-developer.md	1869	32
@@ -45,8 +45,8 @@ ticket-auto-pipeline/personas/specializers/debug/python.md	806	7
 ticket-auto-pipeline/personas/specializers/frontend/angular.md	1950	29
 ticket-auto-pipeline/personas/specializers/frontend/react.md	1999	29
 ticket-auto-pipeline/personas/specializers/frontend/vue.md	1849	29
-ticket-auto-pipeline/personas/specializers/qa/api-testing.md	2142	29
-ticket-auto-pipeline/personas/specializers/qa/playwright-web.md	1861	29
+ticket-auto-pipeline/personas/specializers/qa/api-testing.md	2135	29
+ticket-auto-pipeline/personas/specializers/qa/playwright-web.md	1859	29
 ticket-auto-pipeline/personas/specializers/testdata/api.md	1966	27
 ticket-auto-pipeline/personas/specializers/testdata/factories.md	2090	22
 ticket-auto-pipeline/personas/specializers/testdata/files.md	2060	22

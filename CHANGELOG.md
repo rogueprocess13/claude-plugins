@@ -113,6 +113,31 @@ evaluator or SKILL.md change.
 - `planner_draft_revise_source_check` reported `SOURCE_UNMATCHED` when the agent escaped quotes
   (`\"Sign up\"`) or used curly quotes; both sides are normalised before matching.
 
+## 0.81.0 (2026-10-30)
+
+Three bug fixes: a flaky body-check gate-stop on large tickets, wiki freshness false positives,
+and two QA personas that nothing ever selected.
+
+### Fixed
+- **Large planned bodies no longer fail the body check at random (#580).** The section
+  detectors in `planned-ticket-body-check.sh` piped the body into `grep -q` (and into early-exit
+  `awk`). `gate-check.sh` runs under `pipefail`. With a body over the 64 KB pipe buffer and an
+  early match, the writer died of SIGPIPE and a present section, such as Scope, read as missing.
+  This produced a false `PLANNED_BODY_INCOMPLETE` gate-stop. The detectors now read the body
+  from a here-string, which has no writer process. The same fix covers the body- and
+  section-sized sites in the sibling `dor-check.sh`.
+- **`wiki-check.sh` reads a multi-line `verified_against` (#576).** The key may now be an
+  indented block as well as an inline value. Both the single-repo shape (`repo:` + `sha:`) and a
+  multi-repo map (one `<repo>: <sha>` entry per line, or `{a: sha, b: sha}`) are accepted. With
+  several entries, freshness is the worst result across them. An entry whose sha is not hex marks
+  the frontmatter incomplete. Before this, every file in the map shape was reported
+  `incomplete:verified_against` and `decayed`.
+- **The `qa/*` persona specializers are selected (#559).** `persona-select.sh --phase prescan
+  --with-qa` now attaches `qa/playwright-web` to the qa-engineer lens when the repo has a
+  `playwright.config.*` file or an `@playwright/test` dependency, and `qa/api-testing` when it
+  has an OpenAPI/Swagger spec or a Postman collection. No other phase changes, and ticket-verify
+  still loads no persona.
+
 ## 0.76.0 (2026-10-30)
 
 Draft readiness, slice S1 (`planner-draft-readiness`, design D3/D11/D13/D16). The semantic

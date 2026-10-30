@@ -2,9 +2,8 @@
 name: API Testing QA Specialist
 extends: qa-engineer
 detect:
-  - UAT_URL is not set (API-only ticket)
-  - BE_TEST_CMD is set
-  - No frontend repo markers
+  - OpenAPI/Swagger spec or Postman collection
+  - No Playwright config or dependency
 version: 1
 last-reviewed: 2026-06-26
 ---
