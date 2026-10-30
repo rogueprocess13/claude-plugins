@@ -360,14 +360,16 @@ beforehand, and writes `Source: generate` for data no one produces yet.
   - **never**: a count followed by a unit on `PLANNER_TESTDATA_UNIT_DENYLIST` (minutes, seconds,
     ms, hours, days, attempts, requests, retries, times, bytes/kb/mb/gb, characters, px, percent,
     `%`), or a 1xx–5xx count next to http/status/returns/body/page/message. A number named by
-    the word before it (`port 5173`, `version 2`) is not a count. "exists" before
+    the word before it (`port 5173`, `localhost:5173`, `version 2`) is not a count. "exists" before
     behaviour/code/tests/api is not data.
-  - **quoted content is never data** (rehearsal F28). Dropped before any rule runs: every
-    double-quoted span (a UI label or literal); a backticked command (`npm run build`, any span
-    with a flag, `/`, shell operator or `$VAR`); a backticked identifier next to a key/field/
-    setting noun (`` `jwt` value ``, the scripts `` `dev` ``); and every backticked span of a
-    criterion about what a document or config file says (README/docs/`*.md`/`*.json`/… plus a
-    content verb such as states, mentions, labelled, defines).
+  - **quoted content is never data** (rehearsal F28). Before any rule runs: a backticked command
+    (`npm run build`, any span with a flag, shell operator or `$VAR`) keeps only its arguments and
+    paths, never as an entity; a backticked identifier next to a key/field/setting noun
+    (`` `jwt` value ``, the scripts `` `dev` ``) is dropped; a double-quoted UI label (Title Case
+    phrase, or a button/link/title nearby) is dropped while quoted usernames and emails stay; and
+    every quoted span of a criterion only about what a document or config file says
+    (README/docs/`*.md`/`*.json`/… then a content verb such as states, labelled, defines, with no
+    shows/returns/renders/logging-in clause) is dropped.
   - In legacy initiatives a strong match is reported as `TEST_DATA_IMPLIED_WEAK`.
 
   Message shape: `<slug>.md [<hash8>] match="<phrase>" (<tier>: <reason>) — …`.

@@ -74,25 +74,33 @@ have synthesized a test-data spec named after `npm run build`.
 
 ### Fixed
 - **Quoted content is not data** (`_planner_testdata_implied_match`,
-  `lib/planner-crosscheck-testdata.sh`). Before any rule runs, these are dropped from the scanned
-  text:
-  - a backticked command invocation (`_planner_testdata_span_is_command`): a multi-word span whose
-    first word is a CLI in `PLANNER_TESTDATA_COMMAND_WORDS` (`npm`, `git`, `make`, `curl`, ...), or
-    any span with a flag word, a `/`, a shell operator or a `$VAR`;
+  `lib/planner-crosscheck-testdata.sh`). Before any rule runs:
+  - a backticked command (`_planner_testdata_span_is_command`: a multi-word span whose first word
+    is a CLI in `PLANNER_TESTDATA_COMMAND_WORDS`, or any span with a flag word, a shell operator or
+    a `$VAR`) keeps only its arguments (`_planner_testdata_span_args`) and is never an entity, so
+    `` `curl -s /api/profiles/jake` `` still reaches the entity rules through its path. A `/` alone
+    never makes a command (`` `GET /api/profiles/jake` ``);
   - a backticked identifier next to a key/field/setting noun in `PLANNER_TESTDATA_IDENT_NOUNS`
     (`` `jwt` value ``, the `` `following` field ``, the scripts `` `dev` ``, the helper
-    `` `request` ``), and later spans in the same list;
-  - every double-quoted span (a UI label or literal string, such as `"New Article"`);
-  - every backticked span of a criterion about what a document or config file says
-    (`_planner_testdata_crit_is_doc_text`: README/CHANGELOG/docs/runbook/guide or a
-    `*.md`/`*.json`/`*.yml`/... file, plus a content verb such as states, mentions, documents,
-    labelled, defines or contains).
-- **Weak count rule**: a number named by the word before it (`port 5173`, `version 2`) is not a
-  count, and a status code followed by `body`, `page` or `message` is not data.
+    `` `request` ``) is dropped, and so are later spans in the same list;
+  - a double-quoted span that reads as UI copy (`_planner_testdata_quote_is_ui`: a short Title Case
+    phrase such as `"New Article"`, or a UI noun such as button/link/title within two words) is
+    dropped; quoted usernames and emails stay;
+  - every quoted span of a criterion only about what a document or config file says
+    (`_planner_testdata_crit_is_doc_text`: README/CHANGELOG/docs/runbook or a
+    `*.md`/`*.json`/`*.yml`/... file, followed by a content verb such as states, mentions,
+    labelled or defines, and no behaviour clause such as shows, returns, renders or logging in) is
+    dropped.
+- **Numbers named by the word before them** (`port 5173`, `localhost:5173`, `version 2`) are not
+  counts, and a status code followed by `body`, `page` or `message` is not data.
 
-Named records still fire: "`alice` can log in", "the `welcome-post` article is listed" and an
-inventory entity in prose are still strong. On the iter-03 specs the check now reports nothing
-(it reported the 2 blocking findings before, and 3 more were hidden behind them).
+Named records still fire: "`alice` can log in", "the `welcome-post` article is listed", an
+inventory entity in prose, and a resource in a command or URL path. On the iter-03 specs both
+F28 findings are gone. One finding remains on `frontend-scaffold.md` ("Loading
+`http://localhost:5173/article/welcome-to-conduit` directly shows the app header", match
+`article`). Main reports it as well, but it was hidden behind the `npm run build` finding. The URL
+names a seeded article while every row says `none`, so the operator answers it with
+`TESTDATA_CONFIRM`.
 
 ## grill-me 0.4.0 / ticket-planner 0.26.4 (2026-10-29)
 

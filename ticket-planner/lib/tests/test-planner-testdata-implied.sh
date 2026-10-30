@@ -43,11 +43,13 @@ assert_contains() {
 
 echo "--- _planner_testdata_implies_data: tier table ---"
 INV=$'invoice\nline item\nclient'
+INV2=$'article\nuser\ncomment\nprofile'
 # <expected tier>|<entities: inv or empty>|<criterion>
 while IFS='|' read -r want ents crit; do
   [ -n "$want" ] || continue
   e=""
   [ "$ents" = inv ] && e="$INV"
+  [ "$ents" = inv2 ] && e="$INV2"
   got=$(_planner_testdata_implies_data "$crit" "$e")
   assert_eq "${want}: ${crit}" "$got" "$want"
 done <<'TABLE'
@@ -103,19 +105,38 @@ strong||`alice` can log in
 strong||The `welcome-post` article is listed on the home page
 strong||Running `npm test` passes and the `welcome-post` article is listed
 strong|inv|The README is shown to the client after login
+strong|inv2|`curl /api/profiles/jake` returns 200
+strong|inv2|`GET /api/profiles/jake` returns 200
+strong|inv2|`curl -s localhost:3000/api/articles/how-to-train-your-dragon` returns 200
+strong|inv2|The Getting Started guide lists `jake` as the demo login and logging in shows the feed
+strong||The fixture `users.json` includes `jake`, whose profile page renders
+none|inv2|The README states that `jake` and `jakejake` are demo logins
+none|inv2|A request to `http://localhost:5173/api/unknown` returns the backend's 404 body
 TABLE
 
 echo "--- F28: command spans and document wording are quoted content ---"
-for s in 'npm run build' 'git status' 'make seed' 'seed-tool --reset' 'bin/seed' 'a && b' 'echo $HOME'; do
+for s in 'npm run build' 'git status' 'make seed' 'seed-tool --reset' 'a && b' 'echo $HOME'; do
   _planner_testdata_span_is_command "$s" && pass "command span: $s" || fail "command span: $s" "not a command"
 done
-for s in 'alice' 'welcome-post' 'line item' 'npm' 'make'; do
+for s in 'alice' 'welcome-post' 'line item' 'npm' 'make' 'bin/seed' 'GET /api/profiles/jake' '/api/profiles/jake'; do
   _planner_testdata_span_is_command "$s" && fail "name span: $s" "read as a command" || pass "name span: $s"
 done
 _planner_testdata_crit_is_doc_text 'The README states that `x` is local only' &&
   pass "README + states is doc text" || fail "README + states is doc text" "not doc text"
 _planner_testdata_crit_is_doc_text 'The `welcome-post` article is listed' &&
   fail "no document named is not doc text" "doc text" || pass "no document named is not doc text"
+_planner_testdata_crit_is_doc_text 'The README states that `jake` logs in and the feed shows' &&
+  fail "a behaviour clause is not doc text" "doc text" || pass "a behaviour clause is not doc text"
+_planner_testdata_crit_is_doc_text 'Logging states that the README exists' &&
+  fail "verb before the document is not doc text" "doc text" || pass "verb before the document is not doc text"
+assert_eq "command args keep the path" "$(_planner_testdata_span_args 'curl -s -X GET /api/profiles/jake')" "GET /api/profiles/jake"
+assert_eq "UI copy quote dropped, value quote kept" \
+  "$(_planner_testdata_strip_quotes 'Click "New Article" as "alice@example.com" then "x" button' false | tr -s ' ')" \
+  "Click as alice@example.com then button"
+assert_eq "quoted username stays in scan and matches an entity" \
+  "$(_planner_testdata_implies_data 'Logging in as "alice" shows the dashboard' alice)" "strong"
+# Known miss: a quoted email stays in the scanned text, but an inventory
+# entity never matches it (entity names are normalised to [a-z0-9 _-]).
 
 echo "--- _planner_testdata_implied_match: reason and phrase ---"
 m=$(_planner_testdata_implied_match 'Given 5 overdue `invoice` records, the dashboard shows 5' "" | tr '\037' '|')
