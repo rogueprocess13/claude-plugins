@@ -76,6 +76,10 @@
 #     SKILL.md step 2a: --converge needs --only; --only/--by need --converge;
 #     --only must be a comma-separated ticket-id list. Exit 1 with a message.
 #
+#   planner_semantic_demote <semantic-json> <demoted> <by> [<ids>] [<demote-reason>]
+#     The demotion rewrite converge uses, shared with the draft readiness
+#     gate's end-of-loop convergence (round-limit + demote_reason).
+#
 #   planner_refinement_converge_consume <INIT>
 #     Runs the persisted one-shot `converge` config key, then clears it.
 #     Nothing when the key is unset.
@@ -913,12 +917,7 @@ planner_refinement_converge() {
     fi
 
     local new_sem n
-    new_sem=$(echo "$ready_json" | jq -c --argjson s "$structural" --arg by "$by" '
-      .semantic
-      | .findings = [(.findings // [])[]
-          | if .severity == "blocking" and .verified != false and ((.code as $c | $s | index($c)) == null)
-            then . + {severity: "advisory", demoted: "converge", converged_by: $by}
-            else . end]') || {
+    new_sem=$(planner_semantic_demote "$(echo "$ready_json" | jq -c '.semantic')" converge "$by") || {
       echo "refused ${tid}: could not rewrite the verdict"
       continue
     }
@@ -934,6 +933,49 @@ planner_refinement_converge() {
     echo "converged ${tid} demoted=${n} by=${by}"
   done
   return 0
+}
+
+# planner_semantic_demote <semantic-json> <demoted> <by> [<ids>] [<demote-reason>]
+# The one demotion rewrite, shared by converge (demoted "converge",
+# converged_by <by>) and the draft gate's end-of-loop convergence
+# (planner-draft-readiness D11: demoted "round-limit", demoted_by <by>).
+# Every blocking, verified finding whose code is not structural (the
+# effective DOR_SEMANTIC_STRUCTURAL_CODES list) becomes advisory; with <ids>
+# (comma-separated finding ids) only those. <demote-reason> adds a
+# `demote_reason` field: a plain string for every demoted finding, or a JSON
+# object mapping finding id → reason class. Unverified findings, structural
+# findings and the bash-owned SEMANTIC_* codes keep blocking. Prints the new
+# semantic object; rc 1 on bad input.
+planner_semantic_demote() {
+  local sem="$1" demoted="$2" by="${3:-}" ids="${4:-}" reason="${5:-}"
+  _planner_refinement_source_deps || return 1
+  [ -n "$demoted" ] || {
+    echo "planner-refinement: planner_semantic_demote needs a demoted value" >&2
+    return 1
+  }
+  local structural ids_json='null' reason_json='null'
+  structural=$(_dor_semantic_structural_codes | jq -R . | jq -sc 'map(select(. != ""))')
+  [ -n "$ids" ] && ids_json=$(printf '%s' "$ids" | tr ',' '\n' | tr -d '[:space:]' | jq -R . | jq -sc 'map(select(. != ""))')
+  if [ -n "$reason" ]; then
+    if [ "${reason:0:1}" = "{" ]; then
+      reason_json=$(printf '%s' "$reason" | jq -c 'if type == "object" then . else error("not an object") end') || return 1
+    else
+      reason_json=$(jq -nc --arg r "$reason" '$r')
+    fi
+  fi
+  echo "$sem" | jq -c --argjson s "$structural" --arg d "$demoted" --arg by "$by" \
+    --argjson ids "$ids_json" --argjson rs "$reason_json" '
+    if type != "object" then error("semantic must be an object") else . end
+    | .findings = [(.findings // [])[]
+        | if .severity == "blocking" and .verified != false and ((.code as $c | $s | index($c)) == null)
+             and ($ids == null or ((.id as $i | $ids | index($i)) != null))
+          then . + (if $d == "converge" then {severity: "advisory", demoted: $d, converged_by: $by}
+                    else {severity: "advisory", demoted: $d, demoted_by: $by} end)
+                 + (if $rs == null then {}
+                    elif ($rs | type) == "string" then {demote_reason: $rs}
+                    elif $rs[.id] != null then {demote_reason: $rs[.id]}
+                    else {} end)
+          else . end]'
 }
 
 # planner_refinement_converge_consume <INIT>
