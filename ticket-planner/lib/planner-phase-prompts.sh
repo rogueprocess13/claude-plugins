@@ -1649,6 +1649,17 @@ if [ -n "\$PROJECT_REF" ]; then
     "project=\${RESOLVED_PROJECT_ID} milestone=\${RESOLVED_MILESTONE_ID:-none}"
 fi
 
+# Draft readiness summary (planner-draft-readiness D14): bash appends the
+# "## Revised by draft readiness" section after humanizing, epic only — never
+# a ticket body. Empty when no spec was revised and no finding demoted.
+source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-draft-carryover.sh"
+DRAFT_SUMMARY=\$(planner_draft_readiness_epic_summary "${initiative_id}" 2>/dev/null) || DRAFT_SUMMARY=""
+if [ -n "\$DRAFT_SUMMARY" ]; then
+  EPIC_DESCRIPTION="\${EPIC_DESCRIPTION}
+
+\${DRAFT_SUMMARY}"
+fi
+
 # Only create when step 2 did not already bind CREATED_EPIC_ID — a re-entering
 # run must not create a second epic.
 if [ -z "\$CREATED_EPIC_ID" ]; then
