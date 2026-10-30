@@ -13,6 +13,9 @@
 #   flag:refresh-bodies    yes → planner_config_set refresh-bodies true (the
 #                          one-shot --refresh-bodies flag, planner-refinement-
 #                          convergence D6); no → nothing
+#   flag:accept:DRAFT_NOT_READY
+#                          planner_draft_readiness_accept <reason> — its own
+#                          branch, never a Crosscheck accept
 #   flag:accept:<CODE>     planner_crosscheck_accept_set <CODE> <reason>
 #   flag:project           planner_config_set linear-project <value>, or
 #                          no-project=true for __none__
@@ -626,6 +629,17 @@ _planner_answers_apply_locked() {
         applied+=("refresh-bodies")
       else
         applied+=("refresh-bodies-declined")
+      fi
+      ;;
+    flag:accept:DRAFT_NOT_READY)
+      # Its own branch, ahead of flag:accept:* (planner-draft-readiness D16):
+      # never planner_crosscheck_accept_set, so no META|crosscheck|accepted
+      # line. The accept binds to the draft hashes computed now.
+      if [ "$value" != "__skip__" ]; then
+        declare -f planner_draft_readiness_accept >/dev/null 2>&1 ||
+          source "${_PLANNER_ANSWERS_DIR}/planner-draft-readiness-gate.sh"
+        planner_draft_readiness_accept "$init" "$(printf '%s' "$value" | tr '|' ' ')" || return 1
+        applied+=("accept:DRAFT_NOT_READY")
       fi
       ;;
     flag:accept:*)

@@ -38,7 +38,9 @@ to disk; Epic Gen (phase 8) is the first Linear write, and `plan` does not inclu
 Crosscheck (phase 7) is the last of those artifact-only phases — a deterministic
 citation and cross-ticket propagation linter (see `### Crosscheck` below), not an
 agent — and it runs unconditionally, so a blocking finding is caught and reported
-before `plan` even reaches the create gate. This is not a flag that can be forgotten
+before `plan` even reaches the create gate. Then draft readiness (step 1d) runs the
+DoR check and the semantic evaluator on each spec's would-be ticket body, and halts
+with `DRAFT_NOT_READY` on a blocking finding. This is not a flag that can be forgotten
 or fail to take effect — the phase sequence for `plan` simply ends at the write
 boundary. The run leaves the whole ticket set reviewable on disk (`proposal.md`,
 `review.md`, `consensus.md`, `specs/*.md`) and reports the command to continue.
@@ -143,6 +145,10 @@ recurs, so it stays visible in `status` mode's Crosscheck findings section and i
 `COMPLETED.md`'s Warnings section exactly like an automated pass or fail, with the
 operator's reason attached. Only the code named survives — a new finding under a
 different code still blocks normally.
+
+`--accept DRAFT_NOT_READY:"reason"` is not a Crosscheck accept: it passes a draft
+readiness halt (step 1d) by writing `META|draft-readiness|accepted|<hash> <reason>`,
+where `<hash>` covers the current drafts, so any spec edit re-arms the gate.
 
 ### Resume (`resume`)
 
@@ -986,6 +992,12 @@ if [ "${#ACCEPT_FLAGS[@]}" -gt 0 ]; then
   source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck.sh"
   for _accept_arg in "${ACCEPT_FLAGS[@]}"; do
     [ -z "$_accept_arg" ] && continue
+    if [ "${_accept_arg%%:*}" = "DRAFT_NOT_READY" ]; then
+      # Own branch: bound to the drafts' hashes now, never a Crosscheck accept.
+      source "${CLAUDE_PLUGIN_ROOT}/lib/planner-draft-readiness-gate.sh"
+      planner_draft_readiness_accept "$INITIATIVE_ID" "${_accept_arg#*:}" || exit 1
+      continue
+    fi
     planner_crosscheck_accept_set "$INITIATIVE_ID" "${_accept_arg%%:*}" "${_accept_arg#*:}"
   done
 fi
@@ -1151,8 +1163,9 @@ so the spawned agent never has to resolve anything.
 
 For each phase to run:
 
-1. **Check the create gate** before generating anything. Epic Gen and Ticket Gen write
-   to Linear; an initiative that has not been authorized stops here instead:
+1. **Check the create gate** before generating anything. If `$PHASE` is `EpicGen`, run
+   step 1d first. Epic Gen and Ticket Gen write to Linear; an unauthorized initiative
+   stops here:
 
    ```bash
    if ! planner_create_gate_check "$INITIATIVE_ID" "$PHASE"; then
@@ -1224,111 +1237,84 @@ For each phase to run:
     cannot produce a different answer. Stopping here (exit 0, a normal terminal
     outcome, not an error) and waiting for `resume` after the operator edits the
     artifacts is the correct response, exactly like the create gate. On success,
-    continue to step 6 (skip 2–5).
+    run step 1d, then continue to step 6 (skip 2–5).
 
 1b. **Refinement is not an agent phase either** (planner-refinement-phase). If `$PHASE`
     is `Refinement`, run it directly and skip steps 2–5 — like Crosscheck, it has no
     prompt in `planner_prompt_for_phase`:
 
-    <!-- size-gate: template -->
     ```bash
     source "${CLAUDE_PLUGIN_ROOT}/lib/planner-refinement.sh"
     source "${CLAUDE_PLUGIN_ROOT}/lib/planner-linear-api.sh"
-
-    if planner_refinement_legacy "$INITIATIVE_ID"; then
-      # Initiative planned before this change shipped — its log already carries
-      # TicketGen|dispatch-gate|done, it has no body.md, and its epic may already
-      # be dispatching. Skip straight through (design.md Decision 10).
-      planner_state_write "$INITIATIVE_ID" "META" "refinement" "skip" "legacy — TicketGen|dispatch-gate|done already recorded"
-      planner_state_write "$INITIATIVE_ID" "Refinement" "gate" "skip" "legacy initiative — Refinement not evaluated"
-    else
-      # --refresh-bodies is one-shot: consumed and cleared here, never sticky.
-      # It prints the ids of the children whose body.md it rewrote.
-      _REFRESHED=""
-      if [ "$(planner_config_get "$INITIATIVE_ID" "refresh-bodies")" = "true" ]; then
-        _REFRESHED=$(planner_refinement_refresh_bodies "$INITIATIVE_ID" | paste -sd, -)
-        planner_config_set "$INITIATIVE_ID" "refresh-bodies" "none"
-      fi
-
-      # On a Completed initiative (step 4) only the refreshed children are
-      # re-scanned; with nothing refreshed, nothing is (a converge-only run).
-      NEEDS_PASS=()
-      if [ "${REFINEMENT_AFTER_COMPLETED:-}" != "true" ]; then
-        while IFS= read -r _tid; do
-          [ -n "$_tid" ] && NEEDS_PASS+=("$_tid")
-        done < <(planner_refinement_scan "$INITIATIVE_ID")
-      elif [ -n "$_REFRESHED" ]; then
-        while IFS= read -r _tid; do
-          [ -n "$_tid" ] && NEEDS_PASS+=("$_tid")
-        done < <(planner_refinement_scan "$INITIATIVE_ID" --only "$_REFRESHED")
-      fi
-
-      # --converge is one-shot too (design D10): it spawns nothing, refuses a
-      # named ticket whose verdict is missing or stale (that ticket is named in
-      # the output and, when it is in NEEDS_PASS, scanned below as usual), and
-      # leaves structural findings blocking. Print its output verbatim.
-      planner_refinement_converge_consume "$INITIATIVE_ID"
-
-      if [ "${PLANNER_REFINEMENT_SEMANTIC:-true}" != "false" ] && [ "${#NEEDS_PASS[@]}" -gt 0 ]; then
-        _batch_size="${PLANNER_REFINEMENT_PARALLEL:-4}"
-        for ((_i = 0; _i < ${#NEEDS_PASS[@]}; _i += _batch_size)); do
-          _batch=("${NEEDS_PASS[@]:_i:_batch_size}")
-          for _tid in "${_batch[@]}"; do
-            _scan_prompt=$(planner_refinement_prompt "$INITIATIVE_ID" "$_tid" scan)
-            # Spawn Agent tool: subagent_type "ticket-auto-pipeline:dor-semantic-agent",
-            # prompt=$_scan_prompt, description="Refinement scan: $_tid". Wait for it —
-            # the audit prompt is built only after the scan stage returns (the scan
-            # never sees the deterministic result; design.md Decision 6, "the scan is
-            # blind by construction").
-            _audit_prompt=$(planner_refinement_prompt "$INITIATIVE_ID" "$_tid" audit)
-            # Spawn Agent tool again: same subagent_type, prompt=$_audit_prompt,
-            # description="Refinement audit: $_tid". Wait for it.
-            if ! planner_refinement_apply "$INITIATIVE_ID" "$_tid"; then
-              # One retry of both stages for this ticket only, then re-apply.
-              _scan_prompt=$(planner_refinement_prompt "$INITIATIVE_ID" "$_tid" scan)
-              # Spawn again, wait, then build and spawn the audit stage again, wait.
-              _audit_prompt=$(planner_refinement_prompt "$INITIATIVE_ID" "$_tid" audit)
-              if ! planner_refinement_apply "$INITIATIVE_ID" "$_tid"; then
-                planner_refinement_unavailable "$INITIATIVE_ID" "$_tid"
-              fi
-            fi
-          done
-        done
-      fi
-
-      if [ "${REFINEMENT_AFTER_COMPLETED:-}" = "true" ]; then
-        # Completed initiative: no gate, no phase line, no re-stamp — one META
-        # line, the report for any child still held, then step 8.
-        planner_refinement_after_completed_finish "$INITIATIVE_ID"
-        planner_refinement_report "$INITIATIVE_ID"
-      elif planner_refinement_gate "$INITIATIVE_ID"; then
-        # every child ready — fall through to step 6, like Crosscheck's success path.
-        # Advisory findings never block — TEST_DATA_GAP ones, and findings
-        # demoted by the round limit, drift, converge or an audit dispute — so
-        # show them here or nobody sees them before Completed.
-        planner_refinement_advisory_summary "$INITIATIVE_ID"
-      else
-        echo "Refinement halted — one or more tickets are not ready."
-        echo ""
-        planner_refinement_report "$INITIATIVE_ID"
-        echo ""
-        echo "Artifacts:  ${STATE_DIR}/artifacts/"
-        echo "Resume:     /ticket-planner resume ${INITIATIVE_ID}"
-        exit 0
-      fi
-    fi
+    _rf_rc=0
+    planner_refinement_prepare "$INITIATIVE_ID" || _rf_rc=$?
     ```
 
-    Each ticket in a batch (`${_batch[@]}`, size `PLANNER_REFINEMENT_PARALLEL`,
-    default 4) is independent — call the Agent tool for every ticket's scan stage in
-    the same response to run that part of the batch concurrently, per this harness's
-    own parallel-tool-call guidance; each ticket's own audit stage still waits for
-    that same ticket's scan stage to return first.
+    rc 2 is a legacy initiative (planned before this phase; skip lines written):
+    continue to step 6. Otherwise print prepare's output verbatim (the one-shot
+    `--converge` result), run step 1e with `NEXT=planner_refinement_next` and
+    `APPLY=planner_refinement_apply_pending`, then:
+
+    ```bash
+    if [ "${REFINEMENT_AFTER_COMPLETED:-}" = "true" ]; then
+      # Completed initiative (step 4): no gate, no phase line, no re-stamp.
+      planner_refinement_after_completed_finish "$INITIATIVE_ID"
+      planner_refinement_report "$INITIATIVE_ID"
+    elif planner_refinement_gate "$INITIATIVE_ID"; then
+      # Every child ready. Advisory findings (TEST_DATA_GAP, demotions) never
+      # block, so show them here or nobody sees them before Completed.
+      planner_refinement_advisory_summary "$INITIATIVE_ID"
+    else
+      echo "Refinement halted — one or more tickets are not ready."
+      echo ""
+      planner_refinement_report "$INITIATIVE_ID"
+      echo ""
+      echo "Artifacts:  ${STATE_DIR}/artifacts/"
+      echo "Resume:     /ticket-planner resume ${INITIATIVE_ID}"
+      exit 0
+    fi
+    ```
 
     Do not fall through to step 5's retry-budget check here — like Crosscheck, a
     Refinement halt is a content decision (a ticket is not ready), not a transient
     agent failure, so it never consumes `PLANNER_MAX_PHASE_RETRIES`. On a legacy-skip
     or a clean gate pass, continue to step 6 (skip 2–5).
+
+1d. **Draft readiness gates the first Linear write** (planner-draft-readiness). Run it
+    from step 1a's success path and from step 1 when `$PHASE` is `EpicGen`:
+
+    ```bash
+    source "${CLAUDE_PLUGIN_ROOT}/lib/planner-draft-readiness-gate.sh"
+    _dr_rc=0
+    planner_draft_readiness_begin "$INITIATIVE_ID" || _dr_rc=$?
+    ```
+
+    On rc 0, run step 1e with `NEXT=planner_draft_readiness_next` and
+    `APPLY=planner_draft_readiness_apply`, then:
+
+    ```bash
+    [ "$_dr_rc" -eq 0 ] && { planner_draft_readiness_gate "$INITIATIVE_ID" || _dr_rc=$?; }
+    case "$_dr_rc" in
+    0 | 2) ;; # 2: skipped by --until Crosscheck, or accepted
+    3) planner_draft_readiness_report "$INITIATIVE_ID"; exit 0 ;;
+    *) echo "ERROR: draft readiness could not run (message above)" >&2; exit 1 ;;
+    esac
+    ```
+
+    Report the output verbatim. rc 3 is a normal stop like Crosscheck's, not a retry:
+    nothing is in Linear. The gate writes no manifest and calls no Linear endpoint; a
+    resume on unchanged specs spawns nothing.
+
+1e. **Spawn-list loop** (steps 1b and 1d name `NEXT` and `APPLY`). Repeat:
+    1. `_list=$($NEXT "$INITIATIVE_ID")`. When it prints `done 0`, the loop is over.
+    2. Each line is `<id>\t<kind>\t<subagent-type>\t<prompt-file>\t<result-file>`. Spawn
+       one Agent per line, all in the same response (they are independent):
+       `subagent_type` = column 3, `prompt` = the contents of the column-4 file,
+       `description` = "<kind>: <id>". Wait for all; each writes its column-5 file.
+    3. Run `$APPLY "$INITIATIVE_ID"`, then go back to 1.
+
+    State is on disk, so after a crash rerun the step. The lib retries a failed agent
+    once, then records that ticket or draft as unavailable.
 
 1c. **Open business decisions halt the loop before Review** (planner-specify-waiting-on-human).
     Specify writes `**Outcome:** NEEDS_HUMAN_DECISION — <question>` in proposal.md's

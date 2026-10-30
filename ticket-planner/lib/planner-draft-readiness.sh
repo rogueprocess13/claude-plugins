@@ -6,7 +6,7 @@
 # Linear write. This file holds the parts that need no agent and no gate:
 #
 #   - D2 drafts: the body TicketGen would compose, with epic `DRAFT`, sibling
-#     ids `DRAFT-<slug>` and the latest `Crosscheck|check|done` timestamp as
+#     ids `DRAFT-<slug>` and the first `Crosscheck|check|done` timestamp as
 #     the Planner Context `Generated` value. Pure over the specs and the state
 #     log — no Linear call, no clock, byte-stable across runs.
 #   - D4 per-spec files and the cache: `artifacts/draft-readiness/<slug>/`,
@@ -16,11 +16,11 @@
 #     decides whether a ticket body Linear stored is the draft the evaluator
 #     saw. Refinement's carry-over (S4) and `dor_semantic_import` (S1) use it.
 #
-# Nothing here is called from SKILL.md or any gate yet (no behaviour change).
+# The gate itself (S2b) is planner-draft-readiness-gate.sh.
 #
 # Public API:
 #   planner_draft_readiness_root <INIT>          artifacts/draft-readiness
-#   planner_draft_readiness_generated_ts <INIT>  latest Crosscheck|check|done ts (rc 1: none)
+#   planner_draft_readiness_generated_ts <INIT>  first Crosscheck|check|done ts (rc 1: none)
 #   planner_draft_readiness_dep_refs <INIT> <spec_file>
 #                                                "DRAFT-<slug>\t<title>" per sibling,
 #                                                "<ext-id>\t" per external ref
@@ -76,14 +76,17 @@ planner_draft_readiness_root() {
 
 # ── D2: draft bodies ──────────────────────────────────────────────────────
 
-# Timestamp of the latest `Crosscheck|check|done` line — the draft's
-# `Generated` value, so the hash is stable and the clock is never read.
-# rc 1 (nothing printed) when Crosscheck has not passed.
+# Timestamp of the first `Crosscheck|check|done` line — the draft's
+# `Generated` value, so the hash is stable and the clock is never read. The
+# first, not the latest: the gate re-runs Crosscheck after a spec edit (D5),
+# and a moving timestamp would change every draft and re-evaluate them all
+# instead of only the edited spec (S2b). rc 1 (nothing printed) when
+# Crosscheck has not passed.
 planner_draft_readiness_generated_ts() {
   local log_file ts=""
   log_file=$(planner_state_log "$1" 2>/dev/null) || return 1
   [ -f "$log_file" ] || return 1
-  ts=$(grep -E '^[^|]*\|Crosscheck\|check\|done\|' "$log_file" 2>/dev/null | tail -1 | cut -d'|' -f1)
+  ts=$(grep -E '^[^|]*\|Crosscheck\|check\|done\|' "$log_file" 2>/dev/null | head -1 | cut -d'|' -f1)
   [ -n "$ts" ] || return 1
   echo "$ts"
 }

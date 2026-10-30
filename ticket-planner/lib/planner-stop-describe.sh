@@ -25,6 +25,12 @@
 #   CONSENSUS_BLOCKED       position Crosscheck with consensus.md Readiness:
 #                           blocked (one `note` question; the release is an
 #                           edit of consensus.md or a Consensus re-run)
+#   DRAFT_NOT_READY         position EpicGen, the latest draft readiness run
+#                           blocked and every draft verdict is still current
+#                           (one `note` question per blocked spec, one
+#                           flag:accept:DRAFT_NOT_READY, one `resolved` note).
+#                           A stale verdict is never reported as ready: the
+#                           create-gate question then says the gate runs first
 #   CREATE_GATE             the next phase writes to Linear, unauthorized
 #   PROJECT_GATE            Epic Gen stopped on a single matching project
 #   CROSSCHECK_BLOCKED      the last Crosscheck run has unaccepted blocking codes
@@ -64,9 +70,11 @@ declare -f planner_specify_decisions_open >/dev/null 2>&1 ||
   source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-specify-decisions.sh"
 declare -f planner_consensus_gate >/dev/null 2>&1 ||
   source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-consensus-gate.sh"
+declare -f planner_draft_readiness_state >/dev/null 2>&1 ||
+  source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-draft-readiness-gate.sh"
 
 # The reason values this script emits as a block (the rest are terminal lines).
-PLANNER_STOP_BLOCK_REASONS="CREATE_GATE CROSSCHECK_BLOCKED CONSENSUS_BLOCKED ADR_GATE SPECIFY_DECISION PROJECT_GATE REFINEMENT_HALT UNTIL_STOP"
+PLANNER_STOP_BLOCK_REASONS="CREATE_GATE DRAFT_NOT_READY CROSSCHECK_BLOCKED CONSENSUS_BLOCKED ADR_GATE SPECIFY_DECISION PROJECT_GATE REFINEMENT_HALT UNTIL_STOP"
 
 # Longest finding/message excerpt quoted inside a question.
 _PLANNER_STOP_EXCERPT_MAX=200
@@ -417,10 +425,47 @@ planner_stop_describe_json() {
     fi
   fi
 
+  # ── draft readiness (planner-draft-readiness D6) ───────────────────────
+  # Read-only: composes the drafts in memory and compares them with the
+  # verdict files. Checked before the create gate, like the consensus gate.
+  local dr_state="none"
+  if [ "$pos" = "EpicGen" ]; then
+    dr_state=$(planner_draft_readiness_state "$init" 2>/dev/null) || dr_state="none"
+    if [ "$dr_state" = "blocked" ]; then
+      local d_slug d_code d_quote d_text
+      local -A d_seen=()
+      local -a d_order=()
+      while IFS=$'\t' read -r d_slug d_code d_quote; do
+        [ -n "$d_slug" ] || continue
+        [ -n "${d_seen[$d_slug]:-}" ] || d_order+=("$d_slug")
+        d_seen[$d_slug]+="${d_code}${d_quote:+ ${d_quote}}; "
+      done < <(planner_draft_readiness_blocked_findings "$init")
+      for d_slug in "${d_order[@]}"; do
+        d_text="${d_seen[$d_slug]%; }"
+        q=$(_planner_stop_question "draft-${d_slug}" "note" \
+          "The draft ticket body for spec ${d_slug} is not ready: $(_planner_stop_excerpt "$d_text"). Edit artifacts/specs/${d_slug}.md, then answer 'resolved' to re-run draft readiness." \
+          "resolved" "")
+        questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
+      done
+      q=$(_planner_stop_question "accept-DRAFT_NOT_READY" "flag:accept:DRAFT_NOT_READY" \
+        "Accept the draft readiness findings as they are and continue? Give a reason (or __skip__). The accept holds only until a spec changes.")
+      questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
+      q=$(_planner_stop_question "draft-resolved" "note" \
+        "Answer 'resolved' once the specs are fixed; the resume re-runs Crosscheck when a spec changed, then draft readiness." \
+        "resolved" "")
+      questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
+      _planner_stop_model DRAFT_NOT_READY "artifacts/draft-readiness/" "$round" "$questions"
+      return 0
+    fi
+  fi
+
   # ── create gate ────────────────────────────────────────────────────────
   if planner_phase_writes_linear "$pos" && ! planner_create_authorized "$init"; then
+    local create_text="Planning for ${init} reached the create gate: Crosscheck passed and nothing is in Linear yet. Create the epic and its tickets in Linear?"
+    [ "$dr_state" = "stale" ] &&
+      create_text="${create_text} The specs changed since the last draft readiness run, so it runs again first on resume."
     q=$(_planner_stop_question "create" "flag:create" \
-      "Planning for ${init} reached the create gate: Crosscheck passed and nothing is in Linear yet. Create the epic and its tickets in Linear?" \
+      "$create_text" \
       "yes|no" "no")
     questions=$(jq -nc --argjson q "$q" '[$q]')
     _planner_stop_model CREATE_GATE "artifacts/specs/" "$round" "$questions"

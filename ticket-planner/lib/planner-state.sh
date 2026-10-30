@@ -266,7 +266,9 @@ PLANNER_CONFIG_KEYS="stop-after create-authorized linear-team linear-team-id lin
 
 # META steps whose `done` lines are per-ticket records, not progress markers:
 # exempt from duplicate-done suppression (their writers dedupe them).
-PLANNER_REPEATABLE_META_STEPS="refinement-round refinement-converge refinement-dispute refinement-after-completed"
+# `draft-readiness` is a gate run (start … done), repeatable by design: every
+# run of the draft readiness gate writes its own done line (S2b).
+PLANNER_REPEATABLE_META_STEPS="refinement-round refinement-converge refinement-dispute refinement-after-completed draft-readiness"
 
 # Is <step> a config key rather than a progress marker?
 # Usage: _planner_is_config_key <step>

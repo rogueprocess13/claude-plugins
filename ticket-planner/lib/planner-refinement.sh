@@ -1349,3 +1349,138 @@ planner_ticketgen_record_baseline() {
   esac
   return 0
 }
+
+# ── Spawn-list driver (planner-draft-readiness S2b, task 4.1) ────────────
+# SKILL.md step 1b used to carry this as ~90 lines of inline bash. It now
+# runs the shared spawn-list loop (SKILL.md step 1d) over these functions,
+# the same loop the draft readiness gate uses.
+
+# The semantic-pass list: one ticket id per line, written by prepare,
+# shrunk by apply as each ticket gets a verdict.
+_planner_refinement_pass_file() {
+  echo "${REPOS_ROOT:-}/.ticket-auto/initiatives/${1}/refinement-pass"
+}
+
+# planner_refinement_prepare <INIT>
+# Everything step 1b did before the agent spawns: the legacy skip (writes
+# its two lines, rc 2), the one-shot --refresh-bodies, the deterministic
+# scan (on a Completed initiative — REFINEMENT_AFTER_COMPLETED=true in the
+# caller's shell — only the refreshed children, or none), the one-shot
+# --converge (its output printed verbatim), then the semantic-pass list
+# (empty under PLANNER_REFINEMENT_SEMANTIC=false). Every listed ticket's
+# result files and attempt counter are cleared, so a stale result from an
+# earlier run is never applied. rc 0 = run the spawn loop, then the gate.
+planner_refinement_prepare() {
+  local init="$1" refreshed="" pass tid
+  if planner_refinement_legacy "$init"; then
+    # Planned before this phase shipped: its log already carries
+    # TicketGen|dispatch-gate|done (design.md Decision 10).
+    planner_state_write "$init" "META" "refinement" "skip" "legacy — TicketGen|dispatch-gate|done already recorded"
+    planner_state_write "$init" "Refinement" "gate" "skip" "legacy initiative — Refinement not evaluated"
+    return 2
+  fi
+  if [ "$(planner_config_get "$init" "refresh-bodies")" = "true" ]; then
+    refreshed=$(planner_refinement_refresh_bodies "$init" | paste -sd, -)
+    planner_config_set "$init" "refresh-bodies" "none"
+  fi
+  local -a needs=()
+  if [ "${REFINEMENT_AFTER_COMPLETED:-}" != "true" ]; then
+    mapfile -t needs < <(planner_refinement_scan "$init")
+  elif [ -n "$refreshed" ]; then
+    mapfile -t needs < <(planner_refinement_scan "$init" --only "$refreshed")
+  fi
+  planner_refinement_converge_consume "$init"
+  pass=$(_planner_refinement_pass_file "$init")
+  mkdir -p "$(dirname "$pass")" && : >"$pass" || return 1
+  [ "${PLANNER_REFINEMENT_SEMANTIC:-true}" != "false" ] || return 0
+  for tid in "${needs[@]}"; do
+    [ -n "$tid" ] || continue
+    local pdir="${REPOS_ROOT:-}/.ticket-auto/initiatives/${init}/tickets/${tid}/planner"
+    rm -f "${pdir}/semantic-scan-result.txt" "${pdir}/semantic-audit-result.txt" "${pdir}/semantic-attempts"
+    echo "$tid" >>"$pass"
+  done
+  return 0
+}
+
+# planner_refinement_next <INIT>
+# Applies results already on disk, then prints the next spawn list — one
+# "<TID>\t<scan|audit>\tticket-auto-pipeline:dor-semantic-agent\t<prompt-file>\t<result-file>"
+# line per agent, for at most PLANNER_REFINEMENT_PARALLEL (default 4)
+# tickets: a scan when the ticket has no scan result, else its audit (built
+# only after the scan returned — the scan is blind by construction, design
+# Decision 6). `done 0` when the pass list is empty.
+planner_refinement_next() {
+  local init="$1" pass tid pdir max n=0 out=""
+  planner_refinement_apply_pending "$init" || return 1
+  pass=$(_planner_refinement_pass_file "$init")
+  max="${PLANNER_REFINEMENT_PARALLEL:-4}"
+  [[ "$max" =~ ^[1-9][0-9]*$ ]] || max=4
+  if [ -s "$pass" ]; then
+    while IFS= read -r tid; do
+      [ -n "$tid" ] || continue
+      [ "$n" -lt "$max" ] || break
+      n=$((n + 1))
+      pdir="${REPOS_ROOT:-}/.ticket-auto/initiatives/${init}/tickets/${tid}/planner"
+      if [ ! -s "${pdir}/semantic-scan-result.txt" ]; then
+        planner_refinement_prompt "$init" "$tid" scan >"${pdir}/semantic-scan-prompt.txt" || return 1
+        out+="${tid}"$'\t'"scan"$'\t'"ticket-auto-pipeline:dor-semantic-agent"$'\t'"${pdir}/semantic-scan-prompt.txt"$'\t'"${pdir}/semantic-scan-result.txt"$'\n'
+      else
+        planner_refinement_prompt "$init" "$tid" audit >"${pdir}/semantic-audit-prompt.txt" || return 1
+        out+="${tid}"$'\t'"audit"$'\t'"ticket-auto-pipeline:dor-semantic-agent"$'\t'"${pdir}/semantic-audit-prompt.txt"$'\t'"${pdir}/semantic-audit-result.txt"$'\n'
+      fi
+    done <"$pass"
+  fi
+  if [ -z "$out" ]; then
+    rm -f "${pass}.pending"
+    echo "done 0"
+    return 0
+  fi
+  printf '%s' "$out" >"${pass}.pending"
+  printf '%s' "$out"
+}
+
+# planner_refinement_apply_pending <INIT>
+# For every ticket of the last spawn list: a missing result file is a
+# failed attempt; a ticket whose audit returned goes through
+# planner_refinement_apply. A failed attempt clears both result files (the
+# next list re-spawns the scan); the second one calls
+# planner_refinement_unavailable — one retry, as before. A ticket with a
+# verdict leaves the pass list.
+planner_refinement_apply_pending() {
+  local init="$1" pass tid kind agent pf rf pdir n
+  pass=$(_planner_refinement_pass_file "$init")
+  [ -f "${pass}.pending" ] || return 0
+  local -A seen=() failed=()
+  local -a order=()
+  while IFS=$'\t' read -r tid kind agent pf rf; do
+    [ -n "$tid" ] || continue
+    [ -n "${seen[$tid]:-}" ] || order+=("$tid")
+    seen[$tid]="$kind"
+    [ -s "$rf" ] || failed[$tid]=1
+  done <"${pass}.pending"
+  rm -f "${pass}.pending"
+  for tid in "${order[@]}"; do
+    pdir="${REPOS_ROOT:-}/.ticket-auto/initiatives/${init}/tickets/${tid}/planner"
+    if [ -z "${failed[$tid]:-}" ]; then
+      [ "${seen[$tid]}" = "audit" ] || continue
+      if planner_refinement_apply "$init" "$tid"; then
+        _planner_refinement_pass_drop "$pass" "$tid"
+        continue
+      fi
+    fi
+    n=$(($(cat "${pdir}/semantic-attempts" 2>/dev/null || echo 0) + 1))
+    echo "$n" >"${pdir}/semantic-attempts"
+    rm -f "${pdir}/semantic-scan-result.txt" "${pdir}/semantic-audit-result.txt"
+    if [ "$n" -ge 2 ]; then
+      planner_refinement_unavailable "$init" "$tid"
+      _planner_refinement_pass_drop "$pass" "$tid"
+    fi
+  done
+  return 0
+}
+
+_planner_refinement_pass_drop() {
+  local pass="$1" tid="$2"
+  grep -vxF "$tid" "$pass" >"${pass}.tmp" 2>/dev/null
+  mv -f "${pass}.tmp" "$pass"
+}
