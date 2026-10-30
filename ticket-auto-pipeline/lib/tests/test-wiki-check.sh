@@ -384,6 +384,107 @@ EOF
   [ "$ok" -eq 0 ]
 }
 
+# ── verified_against shapes (#576) ─────────────────────────────────────────────
+
+_sha_ledger=""
+_setup_two_repos() {
+  _setup
+  git init -q "$_ws/repos/ledger"
+  printf 'x\n' >"$_ws/repos/ledger/a.txt"
+  git -C "$_ws/repos/ledger" add -A
+  git -C "$_ws/repos/ledger" -c user.email=t@t.com -c user.name=t commit -q -m init
+  _sha_ledger=$(git -C "$_ws/repos/ledger" rev-parse HEAD)
+}
+
+# _fm_va <verified_against-lines> — a complete frontmatter whose
+# verified_against key (and anything under it) is the given text.
+_fm_va() {
+  cat <<EOF
+---
+services: [bom]
+related: []
+verified_at: "$(date -u +%Y-%m-%d)"
+$1
+stale_after: 90
+verified: machine-verified
+---
+
+# Flow
+EOF
+}
+
+_va_run() {
+  # _va_run <verified_against-lines> [env...] — prints the WIKI_CHECK line
+  _write_wiki_file "a.md" "$(_fm_va "$1")"
+  shift
+  env "$@" bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md 2>/dev/null || true
+}
+
+test_va_block_repo_sha_is_complete() {
+  _setup
+  local out
+  out=$(_va_run "$(printf 'verified_against:\n  repo: bom\n  sha: %s' "$_sha_v2")")
+  _teardown
+  [[ "$out" == *"frontmatter=complete"* && "$out" == *"freshness=fresh"* ]]
+}
+
+test_va_multiline_map_is_complete_and_fresh() {
+  _setup_two_repos
+  local out
+  out=$(_va_run "$(printf 'verified_against:\n  bom: %s\n  ledger: %s' "${_sha_v2:0:12}" "$_sha_ledger")")
+  _teardown
+  [[ "$out" == *"frontmatter=complete"* && "$out" == *"freshness=fresh"* ]]
+}
+
+test_va_inline_flow_map_is_complete() {
+  _setup_two_repos
+  local out
+  out=$(_va_run "verified_against: {bom: \"$_sha_v2\", ledger: $_sha_ledger}")
+  _teardown
+  [[ "$out" == *"frontmatter=complete"* && "$out" == *"freshness=fresh"* ]]
+}
+
+test_va_map_worst_entry_wins_stale() {
+  _setup_two_repos
+  local out
+  # bom is one commit behind, ledger is current: the file is stale, not fresh.
+  out=$(_va_run "$(printf 'verified_against:\n  ledger: %s\n  bom: %s' "$_sha_ledger" "$_sha_v1")")
+  _teardown
+  [[ "$out" == *"frontmatter=complete"* && "$out" == *"freshness=stale"* ]]
+}
+
+test_va_map_worst_entry_wins_decayed() {
+  _setup_two_repos
+  local out
+  out=$(_va_run "$(printf 'verified_against:\n  ledger: %s\n  bom: %s' "$_sha_ledger" "$_sha_v1")" WIKI_CHECK_DECAY_COMMIT_LIMIT=1)
+  _teardown
+  [[ "$out" == *"frontmatter=complete"* && "$out" == *"freshness=decayed"* ]]
+}
+
+test_va_map_unresolvable_repo_is_stale() {
+  _setup_two_repos
+  local out
+  out=$(_va_run "$(printf 'verified_against:\n  ledger: %s\n  no-such-repo: abcdef1234' "$_sha_ledger")")
+  _teardown
+  [[ "$out" == *"frontmatter=complete"* && "$out" == *"freshness=stale"* ]]
+}
+
+test_va_map_bad_sha_is_incomplete() {
+  _setup_two_repos
+  local out
+  out=$(_va_run "$(printf 'verified_against:\n  ledger: %s\n  bom: not-a-sha' "$_sha_ledger")")
+  _teardown
+  [[ "$out" == *"frontmatter=incomplete:verified_against"* && "$out" == *"freshness=decayed"* ]]
+}
+
+test_va_empty_block_is_incomplete() {
+  _setup
+  local out
+  out=$(_va_run "verified_against:")
+  _teardown
+  [[ "$out" == *"frontmatter=incomplete:verified_against"* ]]
+}
+
 # ── Runner ───────────────────────────────────────────────────────────────────
 
 for t in test_complete_frontmatter_fresh test_stale_after_one_commit \
@@ -395,7 +496,15 @@ for t in test_complete_frontmatter_fresh test_stale_after_one_commit \
   test_missing_wiki_root_errors test_changed_only_scopes_to_git_status \
   test_class_only_in_worktree_trees_is_unknown \
   test_class_budget_exhausted_skips_not_unknown \
-  test_class_grep_hang_is_time_bounded; do
+  test_class_grep_hang_is_time_bounded \
+  test_va_block_repo_sha_is_complete \
+  test_va_multiline_map_is_complete_and_fresh \
+  test_va_inline_flow_map_is_complete \
+  test_va_map_worst_entry_wins_stale \
+  test_va_map_worst_entry_wins_decayed \
+  test_va_map_unresolvable_repo_is_stale \
+  test_va_map_bad_sha_is_incomplete \
+  test_va_empty_block_is_incomplete; do
   if "$t"; then
     _pass "$t"
   else
