@@ -170,7 +170,7 @@ _DOR_BACKEND_CONTEXT_RE='`[A-Za-z0-9_./:-]*/[A-Za-z0-9_./:-]*`|\b(endpoint|contr
 # _has_section_test_user/_has_section_scope, fixed per heading this file
 # needs directly (no variable-built regex is ever passed to awk).
 _dor_test_user_content() {
-  echo "$1" | awk '/^##[[:space:]]*Test User/ {found=1; next} found && /^##/ {exit} found {print}'
+  awk '/^##[[:space:]]*Test User/ {found=1; next} found && /^##/ {exit} found {print}' <<<"$1"
 }
 
 # `## Test Data Provided` is excluded (planner-test-data-derivation): it is
@@ -178,10 +178,10 @@ _dor_test_user_content() {
 # ticket itself needs, so it is never read as this ticket's Test Data
 # section — by this extractor or by _dor_td_items.
 _dor_test_data_content() {
-  echo "$1" | awk '
+  awk '
     found && /^##/ {exit}
     /^##[[:space:]]*[Tt][Ee][Ss][Tt] [Dd][Aa][Tt][Aa]/ && tolower($0) !~ /^##[[:space:]]*test data provided/ {found=1; next}
-    found {print}'
+    found {print}' <<<"$1"
 }
 
 # _dor_section_content <body> <alias-set-name> — one shared extractor for
@@ -209,12 +209,12 @@ _dor_section_content() {
   local a lower_a content
   for a in "${aliases[@]}"; do
     lower_a=$(echo "$a" | tr '[:upper:]' '[:lower:]')
-    content=$(echo "$body" | awk -v h="$lower_a" '
+    content=$(awk -v h="$lower_a" '
       { line = tolower($0) }
       line ~ ("^##[[:space:]]*" h "[[:space:]]*$") { found=1; next }
       found && /^##/ { exit }
       found { print }
-    ')
+    ' <<<"$body")
     if [ -n "$(echo "$content" | tr -d '[:space:]')" ]; then
       echo "$content"
       return 0
@@ -272,7 +272,7 @@ _dor_is_placeholder() {
 # VPLAN_MISSING's satisfied-by-AC rule, and the score/gaps computation.
 _dor_ac_lines() {
   local body="$1" section
-  section=$(echo "$body" | awk '/^##[[:space:]]*Acceptance Criteria/ {found=1; next} found && /^##/ {exit} found {print}')
+  section=$(awk '/^##[[:space:]]*Acceptance Criteria/ {found=1; next} found && /^##/ {exit} found {print}' <<<"$body")
   [ -n "$(echo "$section" | tr -d '[:space:]')" ] || section="$body"
   echo "$section" |
     grep -E '^[[:space:]]*(-[[:space:]]*\[[ xX]\]|-|\*|[0-9]+[.)])[[:space:]]+\S' |
@@ -284,16 +284,16 @@ _dor_ac_lines() {
 
 # Per-line classifiers (task 4.2/design.md Decision 2/4).
 _dor_ac_is_impl() {
-  echo "$1" | grep -qiP "$_DOR_IMPL_VERB_RE" 2>/dev/null
+  grep -qiP "$_DOR_IMPL_VERB_RE" <<<"$1" 2>/dev/null
 }
 _dor_ac_is_outcome() {
-  echo "$1" | grep -qiP "$_DOR_OUTCOME_RE" 2>/dev/null
+  grep -qiP "$_DOR_OUTCOME_RE" <<<"$1" 2>/dev/null
 }
 _dor_ac_is_self_verifying() {
-  echo "$1" | grep -qiP "$_DOR_SELFVERIFY_RE" 2>/dev/null
+  grep -qiP "$_DOR_SELFVERIFY_RE" <<<"$1" 2>/dev/null
 }
 _dor_ac_is_edge_case() {
-  echo "$1" | grep -qiP "$_DOR_EDGE_RE" 2>/dev/null
+  grep -qiP "$_DOR_EDGE_RE" <<<"$1" 2>/dev/null
 }
 
 # _dor_ac_count <body> — approximate acceptance-criteria row count, used only
@@ -305,7 +305,7 @@ _dor_ac_is_edge_case() {
 # `- [ ]` shape), falling back to any bullet/numbered/AC-prefixed line.
 _dor_ac_count() {
   local body="$1" section n
-  section=$(echo "$body" | awk '/^##[[:space:]]*Acceptance Criteria/ {found=1; next} found && /^#/ && !/^###/ {exit} found {print}')
+  section=$(awk '/^##[[:space:]]*Acceptance Criteria/ {found=1; next} found && /^#/ && !/^###/ {exit} found {print}' <<<"$body")
   [ -n "$(echo "$section" | tr -d '[:space:]')" ] || section="$body"
   n=$(echo "$section" | grep -cP '^\s*- \[[ xX]\]\s' 2>/dev/null || true)
   n="${n//[^0-9]/}"
@@ -327,8 +327,8 @@ _dor_test_user_resolves() {
   local body="$1" catalog_path="$2" content role count
   content=$(_dor_test_user_content "$body")
 
-  if echo "$content" | grep -qiP 'email[:\s]*\S+@\S+\.\S+' 2>/dev/null &&
-    echo "$content" | grep -qiP 'password' 2>/dev/null; then
+  if grep -qiP 'email[:\s]*\S+@\S+\.\S+' <<<"$content" 2>/dev/null &&
+    grep -qiP 'password' <<<"$content" 2>/dev/null; then
     return 0
   fi
 
@@ -455,9 +455,9 @@ _DOR_TD_PATH_RE='(?:^|[\s(`])(?:\.{1,2}/|/)[\w.-]+|(?:^|[\s(`])[\w.-]+/[\w./-]*\
 _DOR_TD_TRACKER_RE='\b(?!(?:COVID|SKU|UTF|ISO|SHA|RFC|TLS|SSL|HTTP|AES|RSA|MD|CVE|PCI|WCAG|ECMA|IEEE|ANSI|SQL|HTML|CSS|ES|PO|INV|ORD|REF|ID|NO|EUR|USD|GBP|ZAR|GMT|UTC|IPV|SOC)-)[A-Z]{2,10}-[0-9]+\b'
 _dor_td_legacy_sourced() {
   local d="$1"
-  printf '%s' "$d" | grep -qiP "$_DOR_TD_BY_RE" 2>/dev/null && return 0
-  printf '%s' "$d" | grep -qP "$_DOR_TD_PATH_RE" 2>/dev/null && return 0
-  printf '%s' "$d" | grep -qP "$_DOR_TD_TRACKER_RE" 2>/dev/null && return 0
+  grep -qiP "$_DOR_TD_BY_RE" <<<"$d" 2>/dev/null && return 0
+  grep -qP "$_DOR_TD_PATH_RE" <<<"$d" 2>/dev/null && return 0
+  grep -qP "$_DOR_TD_TRACKER_RE" <<<"$d" 2>/dev/null && return 0
   return 1
 }
 
@@ -890,7 +890,7 @@ _dor_section_records() {
     norm_re='^[[:space:]]*(-[[:space:]]*\[[ xX]\]|-|\*|[0-9]+[.)])[[:space:]]*'
     while IFS=$'\037' read -r -d '' key text; do
       if [[ "$key" == "Acceptance Criteria"* ]] &&
-        printf '%s\n' "$text" | grep -qE "$item_re"; then
+        grep -qE "$item_re" <<<"$text"; then
         local rest="" seen_items=" "
         while IFS= read -r line; do
           if [[ "$line" =~ $item_re ]]; then
@@ -1068,7 +1068,7 @@ _dor_score() {
   # present.
   local _ctx_frac="0"
   if [ "$backend_only" = "true" ]; then
-    echo "$body" | grep -qiP "$_DOR_BACKEND_CONTEXT_RE" 2>/dev/null && _ctx_frac="0.6"
+    grep -qiP "$_DOR_BACKEND_CONTEXT_RE" <<<"$body" 2>/dev/null && _ctx_frac="0.6"
   else
     [ "$nav_path_present" = "true" ] && _ctx_frac="0.6"
   fi
@@ -1348,7 +1348,7 @@ check_ticket_ready() {
     audit_ac_testability "$_al" >/dev/null 2>&1 || true
     if [ "${VAGUE_AC_COUNT:-0}" -gt 0 ] 2>/dev/null; then
       ac_is_vague+=("1")
-    elif echo "$_al" | grep -qiP "$_DOR_VAGUE_WIDENED_RE" 2>/dev/null && ! _dor_ac_is_self_verifying "$_al"; then
+    elif grep -qiP "$_DOR_VAGUE_WIDENED_RE" <<<"$_al" 2>/dev/null && ! _dor_ac_is_self_verifying "$_al"; then
       ac_is_vague+=("1")
     else
       ac_is_vague+=("0")
