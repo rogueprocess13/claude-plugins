@@ -17,6 +17,60 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.33.0 (2026-10-30)
+
+Draft readiness gate fixes from an offline replay of a dispatch rehearsal run. No DoR fixture,
+evaluator or SKILL.md change.
+
+### Added
+- **No-source decisions become visible assumptions.** When a finding needs a product decision
+  that no source states, the revise agent no longer rebuts it (which demoted it to advisory and
+  hid it). It picks a conservative default, writes it as a `- Assumption: <text>` row in the
+  spec's `## Scope` (so it reaches the ticket body), adds or extends a criterion that tests it,
+  and records `ASSUMED <id> — <what> — assumption: "<text>"`. The run stays hands-free. A new
+  guard, `ASSUMPTION_INVALID`, reverts the round unless rows and dispositions match one to one,
+  no assumption line appears outside `## Scope`, there are at most 3 per round of at most 40
+  words without `|`, `<`, `>`, backticks or `##`, each has a testing criterion, and the finding
+  is one of the round's and not a security finding. Bash assigns the new reason class `assumed`
+  only for an applied round. Every assumption is listed in the pass output and in the epic's
+  `## Revised by draft readiness` section.
+- **Security findings are never drift-demoted at draft stage.** A finding whose code, detail,
+  quote or quote_b names XSS, `innerHTML`, injection (not dependency injection), CSRF, SSRF,
+  traversal, open redirect, privilege escalation, auth bypass or unsanitised/unescaped input, or
+  whose detail names secrets, API keys, private keys, access tokens or leaked credentials
+  (`planner_draft_security_def`, constants, not env knobs) stays blocking when the lineage
+  would call it drift, so the next revise round takes it. Past the round budget it is demoted
+  like any non-structural finding, but shown: a `META|draft-readiness|warn|<slug> SECURITY …`
+  line, a block in the pass output and halt report, and a `Security finding (review)` line in
+  the epic summary. The revise prompt marks such findings `security: yes`. The rule errs
+  wide (also missing authorization/role checks, IDOR, cross-tenant access, hard-coded or
+  plain-text secrets, unvalidated input, `../`, SQL queries, CORS, brute force, session
+  tokens, and passwords/credentials/PII/encryption/rate limiting in the evaluator's reason).
+
+### Security
+- Spec section parsing now opens a fence only with at most 3 spaces of indent, as
+  dor-check and CommonMark do, so a 4-space "fence" can no longer hide a `##` heading that
+  the ticket body and the evaluator would see.
+- `--changed-sections` never names a heading only one of the two bodies has or one that
+  does not look like a section name; that rescan is a full scan instead.
+- A finished round's `revise.r<N>.md` is bound to a hash recorded at finish
+  (`revise.r<N>.sha`); a later round that rewrites it cannot change reason classes.
+- An `ASSUMED` line with no assumption text, and assumption text with links, images, URLs
+  or `@`, is `ASSUMPTION_INVALID`. A source quote made only of quotes or spaces is
+  `SOURCE_UNMATCHED`.
+
+### Fixed
+- The draft rescan after a revision now passes `--changed-sections` (headings whose section
+  hash changed since the draft's last evaluation), as Refinement does, so the evaluator stops
+  raising findings on untouched units that were then drift-demoted.
+- The end-of-loop reason class is judged per finding. A drift finding on a unit no revision
+  touched was logged `DEMOTED … drift revised`; it is now `untouched`. The demotion ceiling
+  counts per-finding `reverted`/`failed` classes.
+- `planner_draft_readiness_report` after a pass printed "Draft readiness halted (ready 7/7)"; it
+  now prints "Draft readiness passed (…)".
+- `planner_draft_revise_source_check` reported `SOURCE_UNMATCHED` when the agent escaped quotes
+  (`\"Sign up\"`) or used curly quotes; both sides are normalised before matching.
+
 ## 0.76.0 (2026-10-30)
 
 Draft readiness, slice S1 (`planner-draft-readiness`, design D3/D11/D13/D16). The semantic

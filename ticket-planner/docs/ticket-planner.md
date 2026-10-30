@@ -449,6 +449,56 @@ files live under `artifacts/draft-readiness/<slug>/` (`body.md`, `dor-result.jso
 `semantic.json`, `verdict` written last; revision history `spec.r<N-1>.md`,
 `findings.r<N>.json`, `revise.r<N>.*` once the revision loop runs).
 
+### Revision loop: reasons, assumptions, security
+
+- **Reason class per finding.** At the end of the loop every demoted finding records why
+  it was not fixed, judged per finding: `assumed`, `rebutted`, `revised`, `reverted` or
+  `failed` from the rounds the finding was given to (highest of that order wins), else
+  `revised` for a finding on a unit the last applied revision changed, else `untouched`
+  (the evaluator raised it on text no revision changed). Logged as
+  `META|draft-readiness|info|<slug> DEMOTED <CODE> round-limit|drift <class> <id>`.
+- **Scoped rescan.** After a revision (or any edit) a draft's scan gets
+  `--changed-sections` with the headings whose section hash changed since its last
+  evaluation (`lineage.json`), as Refinement scopes its rescans. Not at
+  `PLANNER_DRAFT_REVISE_MAX_ROUNDS=0`, and never with a heading only one of the two
+  bodies has or one that does not look like a section name (that scan is a full scan),
+  so spec text cannot reach the evaluator prompt as a heading.
+- **No-source decisions become assumptions.** When a finding needs a product decision
+  that no source states, the revise agent picks a conservative default instead of
+  rebutting: one `- Assumption: <text>` row in the spec's `## Scope` (so it reaches the
+  ticket body), a new or extended criterion that tests it, and an
+  `ASSUMED <id> — <what> — assumption: "<text>"` disposition. The guard
+  `ASSUMPTION_INVALID` reverts the round unless rows and dispositions match one to one
+  (an ASSUMED line with no text fails), no assumption line appears outside `## Scope`,
+  there are at most 3 per round of at most 40 words without `|`, `<`, `>`, backticks,
+  `##`, links (`](`, `![`, `://`) or `@`, each has a testing criterion, and the finding is
+  one of the round's and not a security finding. A finished round's revise file is bound
+  to a hash recorded at finish (`revise.r<N>.sha`), so a later round cannot rewrite its
+  dispositions to change a reason class. Old rows are kept by
+  `SCOPE_DROPPED`. Bash logs `META|draft-revise|info|<slug> ASSUMED <CODE> <id> "<text>"`
+  and gives the class `assumed` only for an applied round. The run stays hands-free; every
+  assumption is listed in the pass output and the epic summary for a human to review.
+- **Security findings are never drift-demoted.** A finding is security-relevant when
+  its code, detail, quote or quote_b matches XSS, `innerHTML`/`outerHTML`/
+  `dangerouslySetInnerHTML`, injection (not dependency injection), CSRF/XSRF, SSRF, path
+  traversal or `../`, open redirect or redirect target, privilege escalation, auth or
+  permission bypass, a missing authorization/role/ownership check, IDOR, cross-tenant
+  access, hard-coded or plain-text secrets, unsanitised/unescaped/unencoded/unvalidated
+  input, raw user input, user-controlled values, SQL queries, CORS, brute force or
+  session tokens; or its detail (the evaluator's reason, never body text alone) names
+  secrets, API or private keys, access tokens, passwords, credentials, PII or personal
+  data, encryption, rate limiting or unvalidated tokens (`planner_draft_security_def`,
+  case-insensitive, not env-overridable). It errs wide on purpose: a false hit costs one
+  revise round, a miss lets a gap be assumed away or drift-demoted. Such a
+  finding stays blocking when the lineage would call it drift, so the next revise round
+  takes it while budget is left. Past the budget it is demoted `round-limit` like any
+  non-structural finding (the loop stays bounded and hands-free), but never silently: a
+  `META|draft-readiness|warn|<slug> SECURITY <CODE> <id> "<quote>"` line, a
+  "Security findings demoted at draft stage" block in the pass output and halt report,
+  and a `Security finding (review)` line in the epic summary. It reaches Refinement
+  through the carried verdict like any demotion. The revise prompt marks such findings
+  `security: yes`, and `ASSUMED` is refused for them.
+
 ### Refinement carry-over
 
 A spec that passed draft readiness has already been scanned, audited and possibly
@@ -489,7 +539,9 @@ Refinement keeps its own lineage. A spec whose draft never passed (gate skipped 
 When any spec was revised or had findings demoted, Epic Gen appends a
 `## Revised by draft readiness` section to the epic description (after humanizing, in
 bash): per spec, the revision rounds used with their statuses, criteria added and
-extended, and each demoted finding with its code and reason class. It goes on the epic
+extended, every assumption the revisions added (`Assumption (review)`), and each demoted
+finding with its code and reason class (security findings prefixed
+`Security finding (review)`). It goes on the epic
 only, never into a ticket body, so ticket body hashes and the import equivalence are
 unaffected.
 

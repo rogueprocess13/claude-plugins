@@ -311,9 +311,19 @@ planner_draft_readiness_epic_summary() {
         fi
       done <<<"$new"
     fi
+    if [ "$rounds" -gt 0 ] && [ -f "${dir}/spec.r0.md" ]; then
+      # Every assumption the revisions added (no source stated it): listed
+      # so a human reviews it. Read from the spec, not the agent's file.
+      local a
+      while IFS= read -r a; do
+        [ -n "$a" ] || continue
+        grep -qxF -- "$a" <<<"$(planner_draft_revise_assumptions "${dir}/spec.r0.md")" && continue
+        lines+="- Assumption (review): ${a}"$'\n'
+      done < <(planner_draft_revise_assumptions "${specs_dir}/${slug}.md")
+    fi
     if [ -s "${dir}/semantic.json" ]; then
-      lines+=$(jq -r '(.findings // [])[] | select(.demoted != null)
-        | "- Demoted \(.code): \(.demoted)\(if .demote_reason then ", \(.demote_reason)" else "" end)"' \
+      lines+=$(jq -r "$(planner_draft_security_def)"' (.findings // [])[] | select(.demoted != null)
+        | "- \(if (.verified == true and pdr_security) then "Security finding (review): " else "" end)Demoted \(.code): \(.demoted)\(if .demote_reason then ", \(.demote_reason)" else "" end)"' \
         "${dir}/semantic.json" 2>/dev/null)
       [ -n "$lines" ] && [ "${lines: -1}" != $'\n' ] && lines+=$'\n'
     fi
@@ -325,5 +335,5 @@ planner_draft_readiness_epic_summary() {
     out+="$lines"
   done < <(planner_ticketgen_slugs "$specs_dir")
   [ "$any" = 1 ] || return 0
-  printf '## Revised by draft readiness\n\nBefore any ticket was created, the draft readiness gate revised these specs or demoted findings to advisory. Demoted findings do not block; they reach each ticket'"'"'s Refinement Carry-over.\n%s' "$out"
+  printf '## Revised by draft readiness\n\nBefore any ticket was created, the draft readiness gate revised these specs or demoted findings to advisory. Demoted findings do not block; they reach each ticket'"'"'s Refinement Carry-over. An assumption is a default the gate chose because no source stated the decision; review each one.\n%s' "$out"
 }

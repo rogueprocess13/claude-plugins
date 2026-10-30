@@ -254,6 +254,13 @@ _pdl_evaluate() {
     DOR_SEMANTIC_ROUND_RESET_SHARE="${DOR_SEMANTIC_ROUND_RESET_SHARE:-0.5}" \
     dor_semantic_lineage_from "$prior" "$body" "$hash" "$(jq -c '.findings' <<<"$judged")" \
     "$(jq -c '.audit // []' <<<"$audit")" 2>/dev/null) || return 1
+  # A security-relevant finding (pdr_security) is never drift-demoted at
+  # draft stage: it stays blocking, so a revise round takes it while budget
+  # is left; past the budget it is demoted round-limit and reported as a
+  # security finding (pass output, warn line, epic summary).
+  built=$(jq -c "$(planner_draft_security_def)"' .findings = [(.findings // [])[]
+      | if .demoted == "drift" and .verified == true and pdr_security
+        then del(.demoted) + {severity: "blocking"} else . end]' <<<"$built") || return 1
   sem=$(dor_semantic_assemble "$hash" "$(jq -c '.findings' <<<"$built")" \
     "$(jq -c '.unverified_gaps' <<<"$judged")" "$scan" "$audit") || return 1
   codes=$(dor_semantic_blocking_codes "$sem") || return 1
@@ -271,6 +278,34 @@ _pdl_lineage_write() {
     [ "$old_h" != "$new_h" ] && cp -p "${dir}/lineage.json" "${dir}/lineage.prev.json"
   fi
   printf '%s\n' "$lin" | _pdrv_write "${dir}/lineage.json"
+}
+
+# Headings passed to the evaluator prompt must look like section names and
+# exist in both the last evaluated body and the current one; anything else
+# makes the scan a full scan instead of reaching the prompt.
+PLANNER_DRAFT_SECTION_NAME_RE='^[A-Za-z][A-Za-z0-9 ()/&,.-]{0,59}$'
+
+# _pdl_changed_sections <dir> — "<h1|h2…>": the headings whose section hash
+# differs between the draft's last evaluated body (lineage.json) and the
+# current body.md, `#n` repeat suffixes stripped — the scoped-rescan hint
+# Refinement passes as --changed-sections (planner-refinement-convergence
+# D4). Empty (full scan) at MAX_ROUNDS=0, with no lineage, for another
+# evaluator, or when nothing changed.
+_pdl_changed_sections() {
+  local dir="$1" sec
+  [ "$(_pdl_max_rounds)" -gt 0 ] && [ -s "${dir}/lineage.json" ] && [ -f "${dir}/body.md" ] || return 0
+  sec=$(_dor_section_hashes "$(cat "${dir}/body.md")" 2>/dev/null) || return 0
+  [ -n "$sec" ] || return 0
+  jq -r --argjson s "$sec" --arg e "${DOR_SEMANTIC_EVALUATOR:-}" --arg re "$PLANNER_DRAFT_SECTION_NAME_RE" '
+    if (.evaluator // "") != $e then ""
+    else (.section_hashes // null) as $o
+      | if ($o | type) != "object" then ""
+        else [(($o | keys) + ($s | keys) | unique)[] | select($o[.] != $s[.])] as $chg
+             # A heading added or removed since the last evaluation is not
+             # named (full scan): only headings both bodies share, which the
+             # revise agent cannot create, reach the prompt.
+             | if all($chg[]; $o[.] != null and $s[.] != null) and all($chg[]; sub("#[0-9]+$"; "") | test($re))
+               then [$chg[] | sub("#[0-9]+$"; "")] | unique | join("|") else "" end end end' "${dir}/lineage.json" 2>/dev/null || true
 }
 
 # ── Revise round: plan and spawn (D8 step 3) ──────────────────────────────
@@ -482,48 +517,66 @@ _pdl_crosscheck_codes() {
 
 # ── End of loop (D11) ─────────────────────────────────────────────────────
 
-# _pdl_reason_map <INIT> <slug> — {"<finding-id>": "<class>"} for the
-# current findings: `rebutted` when a round rebutted (or left unaddressed)
-# the id; otherwise `revised` when any round applied, `reverted` when every
-# round that changed nothing was reverted, `failed` when the agent failed,
-# `rebutted` for a spec only ever left unchanged.
+# _pdl_reason_map <INIT> <slug> — {"<finding-id>": "<class>"}, per finding.
+# A finding given to a round takes that round's class: `assumed` (ASSUMED in
+# an applied round — the guards checked its Scope row), `rebutted` (REBUTTED
+# or unaddressed, or any round left unchanged), `revised` (applied),
+# `reverted` (reverted by a guard or Crosscheck), `failed` (agent failed);
+# across rounds the highest of assumed > rebutted > revised > reverted >
+# failed wins. A finding no round was given is `revised` when it sits on a
+# unit the last body change made by an applied revision touched (a gap the
+# revision introduced, or the re-phrased form of the one it fixed), else
+# `untouched` — the evaluator raised it on text no revision changed.
 _pdl_reason_map() {
-  local init="$1" slug="$2" dir f st base="" any_applied=0 reverted=0 failed=0 rebutted="[]" disp
+  local init="$1" slug="$2" dir f st n ff disp cls given='{}' any_applied=0 chg='[]'
+  local none='{"resolved":[],"assumed":[],"rebutted":[],"unaddressed":[]}'
   dir="$(_pdl_root "$init")/${slug}"
   for f in "${dir}"/revise.r*.status; do
     [ -f "$f" ] || continue
     st=$(cat "$f")
-    case "$st" in
-    applied) any_applied=1 ;;
-    reverted:*) reverted=1 ;;
-    failed:*) failed=1 ;;
-    unchanged) ;;
-    esac
-    local n="${f##*/revise.r}"
+    n="${f##*/revise.r}"
     n="${n%.status}"
+    ff="${dir}/findings.r${n}.json"
+    [ -f "$ff" ] || continue
+    case "$st" in
+    applied)
+      cls=revised
+      any_applied=1
+      ;;
+    unchanged) cls=rebutted ;;
+    reverted:*) cls=reverted ;;
+    failed:*) cls=failed ;;
+    *) continue ;;
+    esac
+    disp="$none"
     if [ "$st" = "applied" ] || [ "$st" = "unchanged" ]; then
-      [ -f "${dir}/revise.r${n}.md" ] || continue
-      disp=$(planner_draft_revise_dispositions "${dir}/revise.r${n}.md" "${dir}/findings.r${n}.json" 2>/dev/null) || continue
-      rebutted=$(jq -c --argjson a "$rebutted" '$a + [.rebutted[].id] + .unaddressed' <<<"$disp")
+      # Only the revise file the guards saw (hash recorded at finish).
+      disp=$(planner_draft_revise_dispositions_trusted "$dir" "$n" 2>/dev/null) || disp="$none"
     fi
+    given=$(jq -c --slurpfile fs "$ff" --argjson d "$disp" --arg c "$cls" --arg st "$st" '
+      def rank: {"failed": 1, "reverted": 2, "revised": 3, "rebutted": 4, "assumed": 5}[.] // 0;
+      ([($d.rebutted // [])[].id] + ($d.unaddressed // [])) as $reb
+      | ([($d.assumed // [])[].id]) as $asm
+      | reduce ($fs[0][] | (.id // .code)) as $i (.;
+          (if $st == "applied" and ($asm | index($i)) != null then "assumed"
+           elif ($reb | index($i)) != null then "rebutted"
+           else $c end) as $k
+          | if ((.[$i] // "") | rank) < ($k | rank) then .[$i] = $k else . end)' <<<"$given") || return 1
   done
-  if [ "$any_applied" -eq 1 ]; then
-    base=revised
-  elif [ "$reverted" -eq 1 ]; then
-    base=reverted
-  elif [ "$failed" -eq 1 ]; then
-    base=failed
-  else
-    base=rebutted
+  if [ "$any_applied" -eq 1 ] && [ -s "${dir}/lineage.prev.json" ] && [ -s "${dir}/lineage.json" ]; then
+    chg=$(jq -nc --slurpfile p "${dir}/lineage.prev.json" --slurpfile c "${dir}/lineage.json" '
+      ($p[0].units // {}) as $pu | ($c[0].units // {}) as $cu
+      | [(($pu | keys) + ($cu | keys)) | unique[] | select($pu[.] != $cu[.])]') || chg='[]'
   fi
-  jq -c --arg b "$base" --argjson r "$rebutted" \
-    'reduce (.findings // [])[] as $f ({}; .[$f.id] = (if ($r | index($f.id)) != null then "rebutted" else $b end))' \
-    "${dir}/semantic.json"
+  jq -c --argjson g "$given" --argjson chg "$chg" '
+    reduce (.findings // [])[] as $f ({};
+      .[$f.id] = ($g[$f.id] // (if ([($f.units // [])[] | select(. as $u | ($chg | index($u)) != null)] | length) > 0
+                                then "revised" else "untouched" end)))' "${dir}/semantic.json"
 }
 
 # _pdl_drift_ids <dir> — ids of `new` findings on a unit the last applied
 # revision changed whose code matches a finding that revision addressed on
-# the same unit (D11 drift on revised units).
+# the same unit (D11 drift on revised units). Security findings excluded.
 _pdl_drift_ids() {
   local dir="$1" n=0 f k
   for f in "${dir}"/revise.r*.status; do
@@ -534,12 +587,14 @@ _pdl_drift_ids() {
   done
   [ "$n" -gt 0 ] && [ -s "${dir}/lineage.prev.json" ] && [ -s "${dir}/lineage.json" ] || return 0
   jq -r --slurpfile p "${dir}/lineage.prev.json" --slurpfile c "${dir}/lineage.json" \
-    --slurpfile a "${dir}/findings.r${n}.json" '
+    --slurpfile a "${dir}/findings.r${n}.json" "$(planner_draft_security_def)"'
     ($p[0].units // {}) as $pu | ($c[0].units // {}) as $cu
     | ([(($pu | keys) + ($cu | keys)) | unique[] | select($pu[.] != $cu[.])]) as $chg
     | [(.findings // [])[]
        | select(.verified == true and .lineage == "new"
                 and (.severity == "blocking" or (.demoted == "round-limit" and .demote_reason == null)))
+       # Never relabel a security finding as drift (evaluator noise).
+       | select(pdr_security | not)
        | select([(.units // [])[] | select(. as $u | ($chg | index($u)) != null)] | length > 0)
        | . as $f
        # Unit keys carry a content hash, so a rewritten criterion is a new
@@ -608,15 +663,53 @@ _pdl_converge() {
   echo "$ceil_hits"
 }
 
+# planner_draft_readiness_security <INIT> — "<slug>\t<CODE>\t<id>\t<quote>"
+# per security-relevant finding (pdr_security) that the draft stage demoted
+# to advisory, across every spec with a current verdict. These pass the gate
+# (the loop stays hands-free) but are never silent: the gate logs a warn
+# line per finding and prints them on pass, the halt report and the epic
+# summary list them, and Refinement carries them like any demotion.
+planner_draft_readiness_security() {
+  local init="$1" root d slug v_hash v_eval v_status
+  root=$(_pdl_root "$init") || return 0
+  for d in "$root"/*/; do
+    [ -s "${d}semantic.json" ] || continue
+    slug=$(basename "$d")
+    jq -r --arg s "$slug" "$(planner_draft_security_def)"' (.findings // [])[]
+      | select(.verified == true and .demoted != null and pdr_security)
+      | [$s, .code, (.id // ""), ((.quote // "") | gsub("[\t\r\n]"; " "))] | @tsv' "${d}semantic.json" 2>/dev/null
+  done
+  return 0
+}
+
+# planner_draft_readiness_security_report <INIT> — the human-readable list
+# (stdout), or nothing.
+planner_draft_readiness_security_report() {
+  local lines slug code id quote
+  lines=$(planner_draft_readiness_security "$1")
+  [ -n "$lines" ] || return 0
+  echo "Security findings demoted at draft stage (review before dispatch):"
+  while IFS=$'\t' read -r slug code id quote; do
+    echo "  ${slug}: ${code} \"${quote}\" (${id})"
+  done <<<"$lines"
+}
+
 # planner_draft_readiness_loop_close <INIT> <refresh-output> — called by the gate before it
-# writes its fail lines: end-of-loop demotion and the DEMOTE_CEILING halt.
-# A no-op at MAX_ROUNDS=0 or after another run-level halt.
+# writes its fail lines: end-of-loop demotion, the DEMOTE_CEILING halt, and
+# one `META|draft-readiness|warn|<slug> SECURITY <CODE> <id> "<quote>"` line
+# per demoted security finding. A no-op at MAX_ROUNDS=0 or after another
+# run-level halt.
 planner_draft_readiness_loop_close() {
   local init="$1" root hits total ceil
   root=$(_pdl_root "$init") || return 1
   [ "$(_pdl_max_rounds)" -gt 0 ] || return 0
   [ -f "${root}/halt" ] && return 0
   hits=$(_pdl_converge "$init" "$2") || return 1
+  local slug code id quote
+  while IFS=$'\t' read -r slug code id quote; do
+    [ -n "$slug" ] || continue
+    planner_state_write "$init" "META" "draft-readiness" "warn" "${slug} SECURITY ${code} ${id} \"${quote//\"/\'}\""
+  done < <(planner_draft_readiness_security "$init")
   total=$(planner_ticketgen_slugs "$(planner_ticketgen_specs_dir "$init")" | grep -c .)
   ceil="${PLANNER_DRAFT_DEMOTE_CEILING-0.5}"
   if [ "$total" -gt 0 ] && awk -v h="$hits" -v t="$total" -v c="$ceil" 'BEGIN { exit !(h / t > c) }'; then
@@ -659,6 +752,12 @@ planner_draft_readiness_history_report() {
       sed "s/^${slug} REBUTTAL /    rebutted: /"
     printf '%s\n' "$run" | grep -E "^[^|]*\|META\|draft-readiness\|info\|${slug} DEMOTED " | cut -d'|' -f5- |
       sed "s/^${slug} DEMOTED /    demoted (does not block): /"
+    planner_draft_revise_assumptions "$(_pdrv_spec "$init" "$slug")" 2>/dev/null |
+      grep -vxF -f <(
+        planner_draft_revise_assumptions "${d}spec.r0.md" 2>/dev/null
+        echo ""
+      ) |
+      sed 's/^/    assumption (review): /'
   done
   return 0
 }
