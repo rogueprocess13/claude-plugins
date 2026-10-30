@@ -64,6 +64,32 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## ticket-planner 0.26.7 (2026-10-30)
+
+Draft readiness, slice S2a (`planner-draft-readiness`, design D2, D4, D13): pure helpers for the
+gate that evaluates each spec's would-be ticket body before the first Linear write. Nothing calls
+them yet, so no run behaves differently.
+
+### Added
+- **`lib/planner-draft-readiness.sh`**. Drafts (D2): `planner_draft_readiness_compose <INIT> <slug>`
+  is `planner_ticket_body_compose` with epic `DRAFT`, sibling ids `DRAFT-<slug>`
+  (`planner_draft_readiness_dep_refs`) and the latest `Crosscheck|check|done` timestamp
+  (`planner_draft_readiness_generated_ts`), so it needs no created ticket and never reads the
+  clock. Cache (D4): `planner_draft_readiness_refresh <INIT>` recomposes every draft under
+  `artifacts/draft-readiness/<slug>/`, prints `<slug>\t<hash>\t<cached|stale|error>`, deletes
+  the evaluation result files when the body or the evaluator changes, keeps `lineage.json` and the
+  revision history, and drops the directory of a removed spec; `planner_draft_readiness_verdict_write`
+  / `_read` handle `verdict` = `<_dor_body_hash> <evaluator> <ready|blocked|unavailable>`.
+  Equivalence (D13): `planner_draft_readiness_token_map <INIT>` (`<draft-token>\t<real-token>`),
+  `planner_draft_readiness_rewrite <map> <to-draft|to-real>` (whole tokens, Linear links
+  unwrapped), and `planner_draft_readiness_equiv_text` / `_equiv_hash` / `_equivalent`, which
+  apply `body_baseline_hash`'s normalisation after the rewrite.
+- **`planner_ticketgen_context_block` takes an optional `<generated_ts>`.** Absent or empty, its
+  output is byte-identical to before; TicketGen does not pass it.
+- `lib/tests/test-planner-draft-readiness-helpers.sh` (34 checks): TicketGen unchanged, draft equals
+  the TicketGen body after the id rewrite, byte stability, cache layout, token rewrite, a
+  Linear-re-rendered body equivalent to its draft and an edited criterion not.
+
 ## grill-me 0.4.1 / ticket-planner 0.26.6 (2026-10-30)
 
 Dispatch rehearsal iter 03, three minor findings (F26, F27, F30).
