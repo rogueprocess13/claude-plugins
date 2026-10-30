@@ -298,6 +298,39 @@ test_release_nonexistent() {
 }
 _run "release non-existent ticket exits 0" test_release_nonexistent
 
+# #577: a worktree dir deleted without `git worktree remove` stays registered
+# (and keeps its branch "in use"), so a plain `worktree add` fails.
+test_recreate_after_rm_rf() {
+  _setup_fixture
+  local wt_path
+  wt_path=$(ensure_worktree "CRE-123" "$FIXTURE_REPO" "feat/CRE-123-fix" "main" 2>/dev/null) || return 1
+  rm -rf "$wt_path"
+  wt_path=$(ensure_worktree "CRE-123" "$FIXTURE_REPO" "feat/CRE-123-fix" "main" 2>/dev/null) || return 1
+  [ -e "$wt_path/.git" ] || {
+    echo "  worktree not re-created after rm -rf (stale registration not pruned)" >&2
+    return 1
+  }
+  [ "$(git -C "$wt_path" rev-parse --abbrev-ref HEAD)" = "feat/CRE-123-fix" ]
+}
+_run "#577: re-create succeeds after the worktree dir was rm -rf'd" test_recreate_after_rm_rf
+
+# #577: release prunes the worktree's own repo, not the caller's cwd repo.
+test_release_prunes_repo_from_any_cwd() {
+  _setup_fixture
+  local wt_path
+  wt_path=$(ensure_worktree "CRE-123" "$FIXTURE_REPO" "feat/CRE-123-fix" "main" 2>/dev/null) || return 1
+  # Lose the .git link so `worktree remove` cannot run for it.
+  rm -f "$wt_path/.git"
+  (cd / && release_worktree "CRE-123" >/dev/null 2>&1)
+  local n
+  n=$(git -C "$FIXTURE_REPO" worktree list --porcelain | grep -c '^worktree ')
+  [ "$n" -eq 1 ] || {
+    echo "  $n worktrees still registered after release (expected 1)" >&2
+    return 1
+  }
+}
+_run "#577: release prunes the worktree's own repo from any cwd" test_release_prunes_repo_from_any_cwd
+
 # Gitignored env file (e.g. worker/.env) is mirrored into a fresh worktree
 test_mirrors_gitignored_env_file() {
   _setup_fixture

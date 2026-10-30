@@ -1823,18 +1823,58 @@ def resolve_ticket_complexity(tid, repos_root='', lib_dir=None, timeout=30):
 
 _LOOP_COUNTER_PATTERNS = {
     'RECONCILE_CYCLE': 'GATE|reconcile|done|cycle#',
-    'VERIFY_ATTEMPTS': 'VERIFY|verify|fail|',
     'ITERATION': 'PR-REVIEW|pr-review|done|WARN',
     'PR_FEEDBACK_CYCLE': 'PR-REVIEW|pr-reconcile|done|cycle#',
 }
+
+# Message prefixes of the synthetic `VERIFY|verify|fail|` closes
+# detect-resume.sh writes for an abandoned bracket. Mirrors
+# VERIFY_SYNTHETIC_FAIL_RE in ticket-auto-pipeline/lib/verify-checkpoint.sh.
+_VERIFY_SYNTHETIC_FAIL_RE = re.compile(r'^(zombie-detected|operator-stopped):')
+
+
+def _verify_attempt_count(log_lines):
+    """Failed VERIFY attempts — a port of verify-checkpoint.sh's
+    `verify_attempt_count` (#573, #572), which detect-resume.sh and
+    verify-retry-decide.sh both call.
+
+    Attempts, not fail lines: every `VERIFY|verify|fail|` line between two
+    attempt boundaries (`VERIFY|verify|waiting|`, `IMPLEMENT|implement|
+    waiting|`/`done|`) counts once. Synthetic `zombie-detected:` /
+    `operator-stopped:` closes never count. `META|verify-attempts-reset`
+    zeroes the count.
+    """
+    n = 0
+    counted = False
+    for line in log_lines:
+        f = line.rstrip('\n').split('|')
+        if len(f) < 4:
+            continue
+        phase, step, status = f[1], f[2], f[3]
+        if phase == 'META' and step == 'verify-attempts-reset':
+            n, counted = 0, False
+        elif ((phase == 'VERIFY' and step == 'verify' and status == 'waiting')
+              or (phase == 'IMPLEMENT' and step == 'implement'
+                  and status in ('waiting', 'done'))):
+            counted = False
+        elif phase == 'VERIFY' and step == 'verify' and status == 'fail':
+            msg = f[4].lstrip(' \t') if len(f) > 4 else ''
+            if _VERIFY_SYNTHETIC_FAIL_RE.match(msg):
+                continue
+            if not counted:
+                n += 1
+                counted = True
+    return n
 
 
 def resolve_loop_counters(log_lines):
     """The four loop-cap counters `evaluate_loop` reads, derived from the log.
 
-    Ports `detect-resume.sh`'s four counters exactly — VERIFY_ATTEMPTS,
-    ITERATION, PR_FEEDBACK_CYCLE as `grep -c '^[^|]*|...'` line counts and
-    RECONCILE_CYCLE as a count of distinct cycle numbers — so a
+    Ports `detect-resume.sh`'s four counters exactly — ITERATION,
+    PR_FEEDBACK_CYCLE as `grep -c '^[^|]*|...'` line counts,
+    RECONCILE_CYCLE as a count of distinct cycle numbers, and
+    VERIFY_ATTEMPTS as `verify-checkpoint.sh`'s per-attempt count
+    (`_verify_attempt_count`) — so a
     Python reimplementation cannot silently diverge from the bash one. `''`
     (no matching lines) resolves to `0`, matching `detect-resume.sh`'s own
     `${VAR:-0}` fallback after an empty grep.
@@ -1844,6 +1884,7 @@ def resolve_loop_counters(log_lines):
         for name, literal in _LOOP_COUNTER_PATTERNS.items()
     }
     counters['RECONCILE_CYCLE'] = _distinct_reconcile_cycles(log_lines)
+    counters['VERIFY_ATTEMPTS'] = _verify_attempt_count(log_lines)
     return counters
 
 

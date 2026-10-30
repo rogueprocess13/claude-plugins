@@ -13,11 +13,13 @@
 # re-implement before VERIFY_EXHAUSTED.
 #
 # Decision — everything recomputed from the log at call time:
-#   * The LATEST attempt is the last `|VERIFY|verify|done|` or
-#     `|VERIFY|verify|fail|` terminal line. `done` → advance (PR review).
+#   * The LATEST attempt is the last real `|VERIFY|verify|done|` or
+#     `|VERIFY|verify|fail|` terminal line (verify_latest_verdict — synthetic
+#     `zombie-detected:`/`operator-stopped:` lines skipped). `done` → advance.
 #   * Otherwise (latest is `fail`, or no terminal at all — a not-passed
-#     attempt is never advanced) VERIFY_ATTEMPTS = count of
-#     `|VERIFY|verify|fail|` lines, the same pattern detect-resume.sh and
+#     attempt is never advanced) VERIFY_ATTEMPTS = verify_attempt_count:
+#     failed attempts, not fail lines, since the last
+#     `META|verify-attempts-reset` (#573) — the same rule detect-resume.sh and
 #     fleetd's resolve_loop_counters use. VERIFY_ATTEMPTS >= cap → exhausted,
 #     else retry (re-implement, then verify again).
 #   * The cap is STEP_4_5's `loop.max_iterations` in dispatch-table.json (the
@@ -38,6 +40,8 @@
 set -eo pipefail
 
 _VRD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=verify-checkpoint.sh
+source "$_VRD_DIR/verify-checkpoint.sh"
 
 _vrd_usage() {
   echo "Usage: verify-retry-decide.sh [--table <dispatch-table.json>] <LOG-FILE>" >&2
@@ -84,13 +88,17 @@ verify_retry_decide() {
   fi
   [[ "$cap" =~ ^[0-9]+$ ]] || cap=2
 
+  # Both come from verify-checkpoint.sh, the same functions detect-resume.sh
+  # uses: synthetic zombie/operator-stop terminals are skipped, and attempts
+  # are counted per attempt (not per fail line) since the last
+  # META|verify-attempts-reset (#573, #572).
   local latest
-  latest=$(grep -E '^[^|]*\|VERIFY\|verify\|(done|fail)\|' "$log" 2>/dev/null | tail -1 | awk -F'|' '{print $4}') || latest=""
+  latest=$(verify_latest_verdict "$log") || latest=""
   [ -n "$latest" ] || latest="none"
 
   local attempts
-  attempts=$(grep -Ec '^[^|]*\|VERIFY\|verify\|fail\|' "$log" 2>/dev/null) || attempts=0
-  attempts=${attempts:-0}
+  attempts=$(verify_attempt_count "$log") || attempts=0
+  [[ "$attempts" =~ ^[0-9]+$ ]] || attempts=0
 
   local decision
   if [ "$latest" = "done" ]; then

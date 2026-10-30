@@ -66,8 +66,12 @@ test_verify_attempts_two_terminal_failures_count_two() {
   local out
   out=$(_detect_resume_with_log "TEST-2" \
     "2026-07-05T10:00:00Z|META|schema|info|1" \
-    "2026-07-05T10:00:01Z|VERIFY|verify|fail|reproduction failed" \
-    "2026-07-05T10:00:02Z|VERIFY|verify|fail|reproduction failed again")
+    "2026-07-05T10:00:01Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|fail|reproduction failed" \
+    "2026-07-05T10:00:03Z|IMPLEMENT|implement|waiting|Agent launched" \
+    "2026-07-05T10:00:04Z|IMPLEMENT|implement|done|re-implemented" \
+    "2026-07-05T10:00:05Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:06Z|VERIFY|verify|fail|reproduction failed again")
   [ "$(_field "$out" VERIFY_ATTEMPTS)" = "2" ]
 }
 
@@ -1156,16 +1160,87 @@ test_verify_checkpoint_previous_attempt_ignored() {
 }
 
 test_verify_checkpoint_zombie_bracket_ends_attempt() {
-  # A crashed attempt's stale bracket becomes a synthesized verify|fail (an
-  # attempt; VERIFY_LAST=fail routes to re-implement), so its checkpoints
-  # must not carry into the re-verify that follows.
+  # A crashed attempt's stale bracket becomes a synthesized
+  # `verify|fail|zombie-detected:` close, so its checkpoints must not carry
+  # into the re-verify that follows. That close is not a verdict (#572): it
+  # neither counts as an attempt nor sets VERIFY_LAST=fail (which would ask
+  # for a re-implement of code no verdict judged) — VERIFY simply re-runs.
   local out
   out=$(_detect_resume_with_log "TEST-VC5" \
     "2026-07-05T10:00:00Z|META|schema|info|1" \
     "2026-07-05T10:00:01Z|VERIFY|verify|waiting|Agent launched" \
     "2026-07-05T10:00:03Z|VERIFY|checkpoint|done|criterion-1-pass")
   [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ] &&
+    [ -z "$(_field "$out" VERIFY_LAST)" ] &&
+    [ "$(_field "$out" VERIFY_ATTEMPTS)" = "0" ] &&
+    [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]
+}
+
+# ── #572: operator-stopped VERIFY is not an attempt ──────────────────────────
+
+test_operator_stop_is_not_a_verify_attempt() {
+  # A fresh bracket (inside the 5-minute zombie window) followed by
+  # META|operator-stop: closed as operator-stopped, resumes VERIFY, counts
+  # nothing, and does not route to re-implement.
+  local now out
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  out=$(_detect_resume_with_log "TEST-OS1" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|done|implemented" \
+    "${now}|VERIFY|verify|waiting|Agent launched" \
+    "${now}|META|operator-stop|info|stopped by operator")
+  [ "$(_field "$out" VERIFY_ATTEMPTS)" = "0" ] &&
+    [ -z "$(_field "$out" VERIFY_LAST)" ] &&
+    [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]
+}
+
+test_operator_stop_after_real_failures_keeps_count() {
+  # One real failed attempt, re-implement, then an operator-stopped second
+  # attempt: still 1 attempt, VERIFY_LAST clear (re-implement already ran).
+  local out
+  out=$(_detect_resume_with_log "TEST-OS2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|fail|FAIL — criterion 2" \
+    "2026-07-05T10:00:03Z|IMPLEMENT|implement|waiting|Agent launched" \
+    "2026-07-05T10:00:04Z|IMPLEMENT|implement|done|re-implemented" \
+    "2026-07-05T10:00:05Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:06Z|META|operator-stop|info|stopped by operator")
+  [ "$(_field "$out" VERIFY_ATTEMPTS)" = "1" ] &&
+    [ -z "$(_field "$out" VERIFY_LAST)" ] &&
+    [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]
+}
+
+# ── #573: attempts, not lines; operator reset ───────────────────────────────
+
+test_verify_attempts_duplicate_terminal_lines_count_once() {
+  # The agent writes its own terminal fail, then the router's
+  # spawn_agent_post writes the canonical one: one attempt, not two.
+  local out
+  out=$(_detect_resume_with_log "TEST-DUP" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|fail|criterion 2 not met" \
+    "2026-07-05T10:00:03Z|META|tokens|info|VERIFY:1/2/3/4" \
+    "2026-07-05T10:00:04Z|VERIFY|verify|fail|FAIL — criterion 2 not met")
+  [ "$(_field "$out" VERIFY_ATTEMPTS)" = "1" ] &&
     [ "$(_field "$out" VERIFY_LAST)" = "fail" ]
+}
+
+test_verify_attempts_reset_marker() {
+  local out
+  out=$(_detect_resume_with_log "TEST-RST" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|fail|FAIL a" \
+    "2026-07-05T10:00:03Z|IMPLEMENT|implement|waiting|Agent launched" \
+    "2026-07-05T10:00:04Z|IMPLEMENT|implement|done|re-implemented" \
+    "2026-07-05T10:00:05Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:06Z|VERIFY|verify|fail|FAIL b" \
+    "2026-07-05T10:00:07Z|META|verify-attempts-reset|info|env fixed by operator" \
+    "2026-07-05T10:00:08Z|IMPLEMENT|implement|waiting|Agent launched" \
+    "2026-07-05T10:00:09Z|IMPLEMENT|implement|done|re-implemented")
+  [ "$(_field "$out" VERIFY_ATTEMPTS)" = "0" ]
 }
 
 test_verify_checkpoint_empty_without_checkpoints() {
@@ -1177,6 +1252,10 @@ test_verify_checkpoint_empty_without_checkpoints() {
 }
 
 for fn in \
+  test_operator_stop_is_not_a_verify_attempt \
+  test_operator_stop_after_real_failures_keeps_count \
+  test_verify_attempts_duplicate_terminal_lines_count_once \
+  test_verify_attempts_reset_marker \
   test_verify_attempts_preflight_fail_does_not_overcount \
   test_verify_attempts_two_terminal_failures_count_two \
   test_verify_attempts_terminal_done_counts_as_attempt \

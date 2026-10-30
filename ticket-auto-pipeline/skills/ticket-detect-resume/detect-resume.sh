@@ -444,12 +444,28 @@ if [ -s "$LOG_FILE" ]; then
         continue
       fi
 
+      # An operator stopped this phase on purpose (#572): a later
+      # `META|operator-stop|` line. The bracket is closed with a distinct
+      # `operator-stopped:` message, which verify-checkpoint.sh's counters
+      # (VERIFY_ATTEMPTS, VERIFY_LAST, verify-retry-decide.sh) skip just like
+      # `zombie-detected:` — neither is a verdict. The 5-minute age cutoff
+      # does not apply: the stop marker is the evidence, not elapsed time.
+      _z_opstop=0
+      if grep -q '^[^|]*|META|operator-stop|' <<<"$_z_rest"; then
+        _z_opstop=1
+      fi
+
       _z_epoch=$(date -d "$_z_iso" +%s 2>/dev/null || echo 0)
-      if [ "$_z_epoch" -gt 0 ] && [ "$_z_epoch" -lt "$_zombie_cutoff" ]; then
-        # Older than 5 minutes — check for agent process
+      if [ "$_z_opstop" = "1" ] || { [ "$_z_epoch" -gt 0 ] && [ "$_z_epoch" -lt "$_zombie_cutoff" ]; }; then
+        # Older than 5 minutes (or operator-stopped) — check for agent process
         if ! _ticket_worker_alive "$TICKET_ID"; then
-          _plog "$LOG_FILE" "$_z_phase" "$_z_step" "fail" "zombie-detected: ${_z_phase} ${_z_step}"
-          hb_gate "zombie-detection" "fail" "zombie detected: ${_z_phase}/${_z_step} — re-running phase"
+          if [ "$_z_opstop" = "1" ]; then
+            _plog "$LOG_FILE" "$_z_phase" "$_z_step" "fail" "operator-stopped: ${_z_phase} ${_z_step}"
+            hb_gate "zombie-detection" "skip" "operator stop: ${_z_phase}/${_z_step} — re-running phase, no attempt counted"
+          else
+            _plog "$LOG_FILE" "$_z_phase" "$_z_step" "fail" "zombie-detected: ${_z_phase} ${_z_step}"
+            hb_gate "zombie-detection" "fail" "zombie detected: ${_z_phase}/${_z_step} — re-running phase"
+          fi
 
           # Set resume point to re-run the phase
           case "$_z_phase" in
@@ -706,8 +722,20 @@ if [ "$RESUME_STEP" != "STEP_1" ] && [ "$RESUME_STEP" != "GATE_STILL_HELD" ]; th
     # R6: count only terminal FAIL entries — a PASS naturally exits the retry
     # loop and should not inflate the 3-attempt exhaustion cap. Counting
     # both fail|done would ambiguously mix success and failure into the limit.
-    VERIFY_ATTEMPTS=$(grep -Ec '^[^|]*\|VERIFY\|verify\|fail\|' "$LOG_FILE" 2>/dev/null || true)
-    VERIFY_ATTEMPTS=${VERIFY_ATTEMPTS:-0}
+    # #573/#572: counted per attempt, not per fail line (the agent's own
+    # terminal plus the router's spawn_agent_post line are one attempt),
+    # synthetic zombie-detected:/operator-stopped: closes never count, and
+    # META|verify-attempts-reset zeroes the count. One implementation in
+    # lib/verify-checkpoint.sh, shared with verify-retry-decide.sh.
+    if declare -f verify_attempt_count >/dev/null 2>&1; then
+      VERIFY_ATTEMPTS=$(verify_attempt_count "$LOG_FILE" 2>/dev/null || true)
+    else
+      # verify-checkpoint.sh missing: never fail open to 0 (the cap would
+      # never trip) — fall back to the old per-line count, which over-counts.
+      echo "detect-resume: verify-checkpoint.sh not found; VERIFY_ATTEMPTS uses the per-line fallback" >&2
+      VERIFY_ATTEMPTS=$(grep -Ec '^[^|]*\|VERIFY\|verify\|fail\|' "$LOG_FILE" 2>/dev/null || true)
+    fi
+    [[ "$VERIFY_ATTEMPTS" =~ ^[0-9]+$ ]] || VERIFY_ATTEMPTS=0
 
     # WARN is the canonical verdict token spawn_agent_post prepends for a
     # gaps-found PR-review verdict (see pipeline-log-format.md#verdict-tokens).
@@ -723,7 +751,16 @@ if [ "$RESUME_STEP" != "STEP_1" ] && [ "$RESUME_STEP" != "GATE_STILL_HELD" ]; th
     # line, the pipeline crashed before re-implementing — resuming straight into verify
     # would re-run against the same broken code. VERIFY_LAST tells STEP_4_5 to dispatch
     # re-implement first instead.
-    _verify_last_ln=$(grep -nE '^[^|]*\|VERIFY\|verify\|(done|fail)\|' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d: -f1 || true)
+    # A synthetic zombie-detected:/operator-stopped: close is not a verdict
+    # (#572): skip it, so an interrupted VERIFY resumes VERIFY instead of
+    # asking for a re-implement of code no verdict ever judged.
+    _verify_last_ln=$(awk -F'|' -v synth="${VERIFY_SYNTHETIC_FAIL_RE:-^(zombie-detected|operator-stopped):}" '
+      $2 == "VERIFY" && $3 == "verify" && ($4 == "done" || $4 == "fail") {
+        msg = $5; sub(/^[ \t]+/, "", msg)
+        if ($4 == "fail" && msg ~ synth) next
+        ln = NR
+      }
+      END { if (ln) print ln }' "$LOG_FILE" 2>/dev/null || true)
     if [ -n "$_verify_last_ln" ]; then
       _verify_last_content=$(sed -n "${_verify_last_ln}p" "$LOG_FILE")
       if echo "$_verify_last_content" | grep -q '|VERIFY|verify|fail|'; then

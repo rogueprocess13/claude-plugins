@@ -17,6 +17,42 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.78.0 / fleet-controller 0.44.3 (2026-10-30)
+
+VERIFY phase fixes: worktree creation (#591, #577) and attempt counting (#573, #572).
+Also moves `fleet-controller` to 0.44.3, because fleetd's `resolve_loop_counters` must
+count VERIFY attempts the same way as `detect-resume.sh`.
+
+### Fixed
+- **Verify worktree fails when implement's worktree holds the branch (#591).**
+  `ensure_verify_worktree` now creates the worktree detached at `origin/<branch>` (or the
+  local branch when it was never pushed), not checked out on the branch, so git no longer
+  refuses with `already used by worktree`. The branch is recorded in the worktree's admin
+  dir; the identity guard reads it (a detached worktree with no record, such as a manual
+  `worktree add --detach` recovery, is adopted). Existing attached verify worktrees are
+  still reused. `verify_served_report` prints the recorded branch plus `detached`.
+- **Deleted-but-registered worktrees break `worktree add` (#577).** Both
+  `ensure_verify_worktree` and implement's `ensure_worktree` run
+  `git -C <repo> worktree prune` before `worktree add` (unlocking a locked stale entry for
+  that path first). `release_verify_worktree`, `verify_worktree_gc`, `release_worktree` and
+  `worktree_gc` prune the repo the worktree belonged to instead of running a bare
+  `git worktree prune` in the caller's directory. A failed verify `worktree add` now
+  includes git's own error message.
+- **Duplicate terminal lines used up the VERIFY cap (#573).** New
+  `verify_attempt_count` in `lib/verify-checkpoint.sh` counts attempts, not
+  `VERIFY|verify|fail|` lines: lines between two attempt boundaries (`VERIFY|verify|waiting`,
+  `IMPLEMENT|implement|waiting`/`done`) count once. `detect-resume.sh`,
+  `verify-retry-decide.sh` and fleetd (`_verify_attempt_count`, with a bash parity test) use it.
+- **Operator stop counted as a VERIFY attempt (#572).** A bracket followed by
+  `META|operator-stop` is closed as `operator-stopped: <PHASE> <step>`, without the 5-minute
+  zombie wait. Neither that nor a `zombie-detected:` close counts as an attempt or sets
+  `VERIFY_LAST=fail`, so the run resumes VERIFY instead of re-implementing unjudged code.
+
+### Added
+- **`META|verify-attempts-reset|info|<reason>`**, the supported operator reset: only
+  attempts after the last reset count toward the cap. Documented in
+  `ticket-auto-pipeline/docs/verify-attempt-counting.md`.
+
 ## ticket-planner 0.33.0 (2026-10-30)
 
 Draft readiness gate fixes from an offline replay of a dispatch rehearsal run. No DoR fixture,

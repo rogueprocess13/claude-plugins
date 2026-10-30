@@ -1978,11 +1978,64 @@ class TestResolveLoopCounters(unittest.TestCase):
 
     def test_verify_attempts_counts_verify_fail_lines(self):
         lines = [
-            '2026-09-06T10:00:00Z|VERIFY|verify|fail|timeout',
+            '2026-09-06T10:00:00Z|VERIFY|verify|waiting|Agent launched',
+            '2026-09-06T10:00:30Z|VERIFY|verify|fail|timeout',
+            '2026-09-06T10:00:40Z|IMPLEMENT|implement|done|re-implemented',
             '2026-09-06T10:01:00Z|VERIFY|verify|fail|assertion mismatch',
             '2026-09-06T10:02:00Z|VERIFY|verify|done|PASS (2 attempts)',
         ]
         self.assertEqual(resolve_loop_counters(lines)['VERIFY_ATTEMPTS'], 2)
+
+    # #573/#572 fixtures — each also checked against the bash implementation
+    # (verify-checkpoint.sh) below, so the two counters cannot diverge.
+    _VERIFY_ATTEMPT_FIXTURES = [
+        # duplicate terminal lines within one attempt count once
+        ([
+            'T|VERIFY|verify|waiting|Agent launched',
+            'T|VERIFY|verify|fail|criterion 2 not met',
+            'T|META|tokens|info|VERIFY:1/2/3/4',
+            'T|VERIFY|verify|fail|FAIL — criterion 2 not met',
+        ], 1),
+        # synthetic zombie/operator-stop closes are never attempts
+        ([
+            'T|VERIFY|verify|waiting|Agent launched',
+            'T|VERIFY|verify|fail|zombie-detected: VERIFY verify',
+            'T|VERIFY|verify|waiting|Agent launched',
+            'T|VERIFY|verify|fail|operator-stopped: VERIFY verify',
+        ], 0),
+        # the operator reset marker zeroes the count
+        ([
+            'T|VERIFY|verify|waiting|Agent launched',
+            'T|VERIFY|verify|fail|FAIL a',
+            'T|IMPLEMENT|implement|waiting|Agent launched',
+            'T|VERIFY|verify|waiting|Agent launched',
+            'T|VERIFY|verify|fail|FAIL b',
+            'T|META|verify-attempts-reset|info|env repaired',
+            'T|VERIFY|verify|waiting|Agent launched',
+            'T|VERIFY|verify|fail|FAIL c',
+        ], 1),
+    ]
+
+    def test_verify_attempts_per_attempt_rules(self):
+        for lines, expected in self._VERIFY_ATTEMPT_FIXTURES:
+            with self.subTest(lines=lines):
+                self.assertEqual(
+                    resolve_loop_counters(lines)['VERIFY_ATTEMPTS'], expected)
+
+    def test_verify_attempts_parity_with_bash(self):
+        script = (REPO_ROOT / 'ticket-auto-pipeline' / 'lib'
+                  / 'verify-checkpoint.sh')
+        for lines, _ in self._VERIFY_ATTEMPT_FIXTURES:
+            with self.subTest(lines=lines), \
+                    tempfile.NamedTemporaryFile('w', suffix='.log') as fh:
+                fh.write('\n'.join(lines) + '\n')
+                fh.flush()
+                out = subprocess.run(
+                    ['bash', str(script), 'attempts', fh.name],
+                    capture_output=True, text=True, check=True).stdout
+                self.assertEqual(
+                    int(out.strip()),
+                    resolve_loop_counters(lines)['VERIFY_ATTEMPTS'])
 
     def test_iteration_counts_pr_review_done_warn_lines(self):
         lines = [
@@ -2003,7 +2056,8 @@ class TestResolveLoopCounters(unittest.TestCase):
     def test_counters_are_independent_of_each_other(self):
         lines = (
             ['2026-09-06T10:00:00Z|GATE|reconcile|done|cycle#1'] * 1
-            + ['2026-09-06T10:01:00Z|VERIFY|verify|fail|x'] * 2
+            + ['2026-09-06T10:01:00Z|VERIFY|verify|waiting|Agent launched',
+               '2026-09-06T10:01:00Z|VERIFY|verify|fail|x'] * 2
             + ['2026-09-06T10:02:00Z|PR-REVIEW|pr-review|done|WARN'] * 3
             + ['2026-09-06T10:03:00Z|PR-REVIEW|pr-reconcile|done|cycle#1'] * 4
         )
