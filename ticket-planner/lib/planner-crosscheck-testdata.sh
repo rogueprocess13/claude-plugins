@@ -1278,9 +1278,54 @@ _planner_testdata_np() {
   printf '%s' "$out"
 }
 
+# First tokens that make a multi-word backticked span a command line, not a
+# name: package managers and runtimes, build tools, VCS/HTTP clients and
+# container/infra CLIs. A span is a command when it starts with one of these
+# and has a second word (`npm run build`, `git status`, `make seed`).
+PLANNER_TESTDATA_COMMAND_WORDS="npm npx node yarn pnpm bun deno corepack git gh curl wget http make cmake just python python3 pip pip3 pipx poetry uv pytest ruby gem bundle rake rails go cargo rustc java javac mvn mvnw gradle gradlew dotnet php composer docker docker-compose podman kubectl helm terraform ansible bash sh zsh source cd ls cat grep sed awk jq echo export env sudo psql mysql sqlite3 redis-cli mongosh vite tsc eslint prettier jest vitest playwright"
+
+# Is a backticked span (raw text) a command invocation rather than a name?
+# True for a multi-word span whose first word is in
+# PLANNER_TESTDATA_COMMAND_WORDS, and for any span carrying a flag word
+# (`-x`, `--flag`), a path separator, a shell operator or a `$VAR`.
+_planner_testdata_span_is_command() {
+  local span="$1" first rest
+  [[ "$span" =~ (^|[[:space:]])--?[A-Za-z] ]] && return 0
+  [[ "$span" == */* || "$span" == *'|'* || "$span" == *'&&'* || "$span" == *'$'* ]] && return 0
+  read -r first rest <<<"$span"
+  [ -n "$rest" ] || return 1
+  first=$(_planner_testdata_lower "$first")
+  _planner_testdata_in_list "$first" "$PLANNER_TESTDATA_COMMAND_WORDS"
+}
+
+# Is the criterion about what a document or file says rather than about app
+# behaviour? True when it names a document (README, CHANGELOG, docs,
+# documentation, runbook, guide) or a docs/config file (*.md, *.json,
+# *.yml, *.toml, *.env, ...) and a content verb (states, mentions,
+# documents, describes, says, explains, notes, labelled, lists, warns,
+# defines, declares, contains, includes, ...). Its quoted spans are then
+# quoted content, not data.
+_planner_testdata_crit_is_doc_text() {
+  local lower
+  lower=$(_planner_testdata_lower "$1")
+  [[ "$lower" =~ (^|[^a-z0-9_])(readme|changelog|docs|documentation|runbook|guide|[a-z0-9_.-]*\.(md|json|ya?ml|toml|ini|cfg|conf|env|txt|xml|properties|lock))([^a-z0-9_]|$) ]] || return 1
+  [[ "$lower" =~ (^|[^a-z])(states?|stated|mentions?|mentioned|documents?|documented|describes?|described|says|said|explains?|explained|notes?|noted|labell?ed|labels?|reads|names|named|lists?|listed|warns?|warned|tells?|instructs?|defines?|defined|declares?|declared|contains?|contained|includes?|included)([^a-z]|$) ]]
+}
+
+# Words that, right before or after a backticked span, make it the name of a
+# key, field, setting or script — an identifier in code, not a record
+# (`jwt` value, the `following` field, the scripts `dev`).
+PLANNER_TESTDATA_IDENT_NOUNS="value values key keys helper helpers module modules component components hook hooks field fields header headers property properties prop props param params parameter parameters argument arguments arg args variable variables column columns flag flags attribute attributes cookie cookies script scripts command commands option options setting settings function functions method methods"
+
 # Classify one acceptance criterion for implied test data (design Decision 3).
 # Pure: no I/O beyond stdout. Prints "<tier>\x1f<reason>\x1f<matched phrase>",
 # tier strong|weak|none (reason and phrase empty for none).
+# Quoted content is not data (rehearsal F28). Dropped from the scanned text
+# before any rule runs: every double-quoted span (a UI label or literal
+# string); a backticked command invocation (_planner_testdata_span_is_command);
+# a backticked identifier next to a PLANNER_TESTDATA_IDENT_NOUNS word (or
+# continuing a list of them); and, in a criterion about what a document or
+# file says (_planner_testdata_crit_is_doc_text), every backticked span.
 #   strong: an inventory entity or a backticked lowercase entity in the
 #           criterion (count+entity preferred for the phrase); existing /
 #           seeded / pre-existing / already-existing state; "given a|an|the …
@@ -1290,22 +1335,45 @@ _planner_testdata_np() {
 #           HTTP status code; a record-state word with no entity.
 # Usage: _planner_testdata_implied_match <criterion> <entities-newline-list>
 _planner_testdata_implied_match() {
-  local crit="$1" ents_in="$2" lower span e
-  lower=$(_planner_testdata_lower "$crit")
+  local crit="$1" ents_in="$2" lower span e doc=false scan=""
   local -a ents=()
   while IFS= read -r e; do
     e=$(_planner_testdata_entity_norm "$e")
     [ -n "$e" ] && ents+=("$e")
   done <<<"$ents_in"
+  _planner_testdata_crit_is_doc_text "$crit" && doc=true
   # A backticked span that reads as a plain lowercase noun is an entity too
   # (`invoice`, `line item`); code-like spans (`GET`, `foo()`, `a/b`,
-  # `snake_case_fn`) are not.
-  local rest="$crit"
+  # `snake_case_fn`) are not. Quoted content (see above) is removed from the
+  # scanned text instead.
+  local rest="$crit" pre prev_w next_w ident=false
   while [[ "$rest" =~ \`([^\`]+)\` ]]; do
     span="${BASH_REMATCH[1]}"
+    pre="${rest%%\`"${span}"\`*}"
     rest="${rest#*\`"${span}"\`}"
+    scan="${scan}${pre} "
+    # A list continuation (", " / " and " / " or ") inherits the previous
+    # span's identifier status; otherwise look at the adjacent words.
+    if [ "$ident" = true ] && [[ "$pre" =~ ^[[:space:],]*((and|or)[[:space:]]+)?$ ]]; then
+      :
+    else
+      prev_w=$(_planner_testdata_lower "$pre" | tr -c 'a-z\n' ' ' | awk '{ print $NF }')
+      next_w=$(_planner_testdata_lower "$rest" | tr -c 'a-z\n' ' ' | awk 'NR == 1 { print $1 }')
+      ident=false
+      if _planner_testdata_in_list "${prev_w:-.}" "$PLANNER_TESTDATA_IDENT_NOUNS" ||
+        _planner_testdata_in_list "${next_w:-.}" "$PLANNER_TESTDATA_IDENT_NOUNS"; then
+        ident=true
+      fi
+    fi
+    if [ "$doc" = true ] || [ "$ident" = true ] || _planner_testdata_span_is_command "$span"; then
+      continue
+    fi
+    scan="${scan}\`${span}\`"
     [[ "$span" =~ ^[a-z][a-z0-9\ -]{0,40}$ ]] && ents+=("$(_planner_testdata_entity_norm "$span")")
   done
+  scan="${scan}${rest}"
+  scan=$(printf '%s' "$scan" | sed -E 's/"[^"]*"/ /g')
+  lower=$(_planner_testdata_lower "$scan")
 
   local -a w=()
   local tok
@@ -1407,10 +1475,13 @@ _planner_testdata_implied_match() {
     done
   fi
   # Weak 1: a count followed by a noun that is not a unit or a status code.
+  # A number named by the word before it (port 5173, version 2) is an
+  # identifier, not a count.
   local num nx pv
   for ((i = 0; i + 1 < n; i++)); do
     num="${w[i]}"
     [[ "$num" =~ ^[0-9]+([.][0-9]+)?$ ]] || continue
+    [ "$i" -gt 0 ] && _planner_testdata_in_list "${w[i - 1]}" "port version v" && continue
     nx="${w[i + 1]}"
     [[ "$nx" =~ ^[a-z][a-z-]*$ ]] || continue
     _planner_testdata_in_list "$nx" "$PLANNER_TESTDATA_UNIT_DENYLIST" && continue
@@ -1419,7 +1490,7 @@ _planner_testdata_implied_match() {
       pv=""
       [ "$i" -gt 0 ] && pv="${w[i - 1]}"
       _planner_testdata_in_list "$pv" "http status code returns return returned responds respond responded with" && continue
-      _planner_testdata_in_list "$nx" "ok created accepted error status response not bad unauthorized forbidden conflict found redirect" && continue
+      _planner_testdata_in_list "$nx" "ok created accepted error status response body page message not bad unauthorized forbidden conflict found redirect" && continue
     fi
     printf 'weak\037count+noun\037%s\n' "${num} ${nx}"
     return 0

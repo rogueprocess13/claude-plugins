@@ -64,6 +64,36 @@ shrank by 21,873 bytes and 336 lines across 15 skills; `ticket-auto` alone went 
 - `ticket-gate-reconcile`'s held marker is written as `cycle#N held: <reason>` (5 fields). Every
   consumer matches it, and a new detect-resume test pins it.
 
+## ticket-planner 0.26.5 (2026-10-30)
+
+Dispatch rehearsal iter 03, finding F28: Crosscheck's `TEST_DATA_IMPLIED` blocked two specs whose
+criteria need no data. "The README states that `conduit-dev-secret` is for local development only"
+and "Running `npm run build` in `frontend/` exits with code 0" both matched as strong entities,
+because any backticked lowercase span counted as a named record. The default operator answer would
+have synthesized a test-data spec named after `npm run build`.
+
+### Fixed
+- **Quoted content is not data** (`_planner_testdata_implied_match`,
+  `lib/planner-crosscheck-testdata.sh`). Before any rule runs, these are dropped from the scanned
+  text:
+  - a backticked command invocation (`_planner_testdata_span_is_command`): a multi-word span whose
+    first word is a CLI in `PLANNER_TESTDATA_COMMAND_WORDS` (`npm`, `git`, `make`, `curl`, ...), or
+    any span with a flag word, a `/`, a shell operator or a `$VAR`;
+  - a backticked identifier next to a key/field/setting noun in `PLANNER_TESTDATA_IDENT_NOUNS`
+    (`` `jwt` value ``, the `` `following` field ``, the scripts `` `dev` ``, the helper
+    `` `request` ``), and later spans in the same list;
+  - every double-quoted span (a UI label or literal string, such as `"New Article"`);
+  - every backticked span of a criterion about what a document or config file says
+    (`_planner_testdata_crit_is_doc_text`: README/CHANGELOG/docs/runbook/guide or a
+    `*.md`/`*.json`/`*.yml`/... file, plus a content verb such as states, mentions, documents,
+    labelled, defines or contains).
+- **Weak count rule**: a number named by the word before it (`port 5173`, `version 2`) is not a
+  count, and a status code followed by `body`, `page` or `message` is not data.
+
+Named records still fire: "`alice` can log in", "the `welcome-post` article is listed" and an
+inventory entity in prose are still strong. On the iter-03 specs the check now reports nothing
+(it reported the 2 blocking findings before, and 3 more were hidden behind them).
+
 ## grill-me 0.4.0 / ticket-planner 0.26.4 (2026-10-29)
 
 Dispatch rehearsal findings F1, F6 and F19 (`grill-me-verbatim-brief`): the sealed intent lost
