@@ -45,8 +45,8 @@ The keyword triggers below (security auto-include, test-data signals, migration/
 | `angular.json` | `frontend/angular` |
 | `react`/`react-dom` in `package.json` | `frontend/react` |
 | `vue` in `package.json` | `frontend/vue` |
-| QA phase + UAT_URL present | `qa/playwright-web` |
-| QA phase + no UAT_URL | `qa/api-testing` |
+| QA + Playwright config | `qa/playwright-web` |
+| QA + OpenAPI/Postman | `qa/api-testing` |
 | Multi-service repo structure | `architect/microservices` |
 | Single-service repo structure | `architect/monolith` |
 
@@ -138,8 +138,8 @@ Read `base/<role>.md`, then read the matching `specializers/<group>/<stack>.md`.
 | `frontend` | `angular.md` | frontend-developer | Standalone components, RxJS + async pipe, OnPush change detection, lazy loading, Karma/Jasmine or Jest, SCSS conventions | `angular.json` |
 | `frontend` | `react.md` | frontend-developer | Hooks (useState/useReducer/useContext), React.memo, code splitting (lazy+Suspense), Jest + RTL + msw, stale closure awareness | `react`/`react-dom` in `package.json` |
 | `frontend` | `vue.md` | frontend-developer | Composition API (<script setup>), Pinia stores, ref/reactive/computed, Vitest + @vue/test-utils, scoped styles, SSR hydration (Nuxt) | `vue` in `package.json` |
-| `qa` | `playwright-web.md` | qa-engineer | Page Object Model, accessibility snapshots, user-flow-first verification, getByRole/getByLabel selectors, waitFor assertions, multi-viewport testing | UAT_URL present (web flow) |
-| `qa` | `api-testing.md` | qa-engineer | Contract testing (OpenAPI/JSON Schema), status code assertions, auth token handling (valid/expired/malformed), idempotency verification, error message leakage detection | No UAT_URL (API-only) |
+| `qa` | `playwright-web.md` | qa-engineer | Page Object Model, accessibility snapshots, user-flow-first verification, getByRole/getByLabel selectors, waitFor assertions, multi-viewport testing | Playwright config/dep |
+| `qa` | `api-testing.md` | qa-engineer | Contract testing (OpenAPI/JSON Schema), status code assertions, auth token handling (valid/expired/malformed), idempotency verification, error message leakage detection | OpenAPI/Postman file |
 | `architect` | `microservices.md` | architect | Bounded contexts, event-driven communication, API Gateway, Saga pattern, distributed tracing (OpenTelemetry), independent deployability | Multi-service directory structure |
 | `testdata` | `sql.md` | test-data-engineer | Upserts (`ON CONFLICT`/`MERGE`), FK-ordered inserts, deterministic ids, Flyway/Liquibase seed locations kept out of production, reset by key prefix | `Seed channel: sql`, SQL keywords, migrations dir / `*.sql` / Flyway / Liquibase |
 | `testdata` | `api.md` | test-data-engineer | Seeding through the app's own API, GET-before-POST / PUT-by-key idempotency, contract-shaped payloads, async side effects, env-var credentials | `Seed channel: api`, endpoint keywords, OpenAPI/Swagger file |
