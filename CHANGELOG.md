@@ -17,6 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.80.0 (2026-10-30)
+
+### Fixed
+- **Gate reconcile no longer counts the pipeline's own appraisal comment as user feedback**
+  (#568, #582). `lib/reconcile-comments.sh` matched the appraisal comment with an exact
+  `**Ticket appraised**` prefix, and appraise-exec agents sometimes write `**Ticket appraised.**`.
+  The comment then neither set the reconcile boundary nor was excluded, so it (and everything
+  since the earlier log fallback time) showed up in `UNPROCESSED_COMMENTS` and could hold the
+  gate for a spurious amendment cycle. The appraise-exec and gate-reconcile comment templates now
+  carry a hidden marker (`<!-- ticket-auto:appraisal -->` / `<!-- ticket-auto:amendment -->`),
+  and the script matches on it. Comments without the marker fall back to a tolerant heading match
+  (case-insensitive, optional punctuation inside the bold).
+- **Interactive `/ticket-auto` runs spawn the plugin's phase skills, not stale personal copies**
+  (#569). `skills/ticket-auto/SKILL.md` passed bare names (`SKILL=/ticket-implement`) to
+  `spawn_agent_pre`, and a bare name resolves to `~/.claude/skills/<name>` first. Every `SKILL=`
+  in the router is now plugin-qualified, and `spawn_agent_pre` qualifies any bare plugin skill
+  name itself (`spawn_qualify_skill`), so a regressed call site still spawns the plugin skill.
+  Guarded by `lib/tests/test-spawn-skill-qualified.sh`.
+
 ## ticket-planner 0.33.0 (2026-10-30)
 
 Draft readiness gate fixes from an offline replay of a dispatch rehearsal run. No DoR fixture,

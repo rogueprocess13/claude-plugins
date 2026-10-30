@@ -99,7 +99,7 @@ echo "$RECONCILE_OUTPUT"
 
 Parse the output to set `{LAST_RECONCILE_AT}`, `{APPRAISAL_COMMENT_AT}`, and `{UNPROCESSED_COMMENTS}`.
 
-**How it works:** The script (`lib/reconcile-comments.sh`) identifies the appraisal comment by `**Ticket appraised**` prefix and amendment comments by `**Amendment cycle #` prefix. `LAST_RECONCILE_AT` is the later of the two — everything after it is from the current hold window. Pipeline-authored comments are excluded, so `UNPROCESSED_COMMENTS` contains only user-authored comments in `timestamp|user|body` format.
+**How it works:** `lib/reconcile-comments.sh` finds the appraisal and amendment comments by their `<!-- ticket-auto:... -->` markers. `LAST_RECONCILE_AT` is the later of the two; `UNPROCESSED_COMMENTS` holds only user comments after it, as `timestamp|user|body`.
 
 ## Step 4 — Read open questions from notes.md
 
@@ -167,7 +167,7 @@ AMENDMENT_BODY="**Amendment cycle #${RECONCILE_N}**
 {list of new questions, or 'None'}"
 ```
 
-Run `AMENDMENT_BODY` through the `simple-english` skill (embedded mode, Plain) before posting — the open-questions list is the part users most often report as hard to follow, and this keeps it readable. Leave code blocks, identifiers, and file paths untouched.
+Run `AMENDMENT_BODY` through the `simple-english` skill (embedded mode, Plain) before posting (users find the open-questions list hardest to read). Leave code blocks, identifiers, and file paths untouched. Then append `<!-- ticket-auto:amendment -->` verbatim as the last line: reconcile finds the comment by it.
 
 Use the Linear access strategy to post the comment (bash `save_comment` when `LINEAR_API_KEY` is set, MCP fallback otherwise).
 
