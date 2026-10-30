@@ -17,6 +17,41 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.76.0 (2026-10-30)
+
+Draft readiness, slice S1 (`planner-draft-readiness`, design D3/D11/D13/D16). The semantic
+Definition-of-Ready evaluator is split into pure functions, so ticket-planner can judge a ticket
+draft on disk, before any Linear write, with the same code that judges a real ticket. Nothing
+calls the new functions yet; `dor_semantic_apply`, `_dor_semantic_lineage` and
+`set_ticket_semantic` behave exactly as before (existing tests unchanged, plus a parity test).
+Also moves `fleet-controller` to 0.44.1 (a `features.json` catalog entry for the new flag).
+
+### Added
+- **`dor_semantic_findings <TID> <body> <scan-json> <audit-json>`** prints
+  `{findings, unverified_gaps}`: quote verification and base severity, taken out of
+  `dor_semantic_apply`. Exit 2 on a ticket or body-hash mismatch; apply still returns 1.
+- **`dor_semantic_blocking_codes <semantic-json>`** (`manifest-write.sh`) prints the
+  `SEMANTIC_*` codes a verdict puts into `ready.missing`. `set_ticket_semantic` now calls it.
+- **`dor_semantic_lineage_from <prior|null> <body> <hash> <findings> <audit>`** is the pure half
+  of `_dor_semantic_lineage`. The wrapper reads the manifest and calls it. A draft keeps its prior
+  lineage in a file instead.
+- **`DOR_SEMANTIC_PRIOR_PASSED=true`** (draft-passed policy, off by default): no round reset; a
+  verified non-structural blocking finding becomes advisory `demoted: draft-passed`; a new
+  structural finding whose units are unchanged versus the prior becomes advisory
+  `demoted: draft-passed-structural` with `demote_reason: unchanged-unit`. A structural finding on
+  a changed unit still blocks. The policy snapshot records `prior_passed: true`.
+- **`dor_semantic_assemble`** builds the `ready.semantic` object apply stores.
+- **`dor_semantic_import <TID> <body-file> <semantic-json> <lineage-json> [<token-map>]`** stores
+  a draft verdict on its real ticket with no agent: creates `ready` if missing, rewrites draft
+  tokens (`DRAFT-<slug>` → real id; a JSON object or ticket-planner's TSV map) in quotes, drops
+  a finding whose quote no longer locates (never stored unverified), rebases the lineage so the round is unchanged. Refuses (exit 2) a
+  ticket that already has `ready.semantic` or a draft from another evaluator.
+- **Fixture `30-chained-draft.md`** with a live scan result (`semantic/30-scan.txt`). Three live
+  `dor-semantic-agent` scans of this chained draft raised no `UNSTATED_DEPENDENCY` for its
+  `DRAFT-<slug>` Related Tickets, so the scan prompt needs no new rule (task 1.2).
+- **`lib/tests/test-dor-semantic-draft.sh`** (43 checks, incl. parity over fixtures 26–30 and two
+  synthetic verdicts), registered in the Makefile.
+
 ## 0.75.0 (2026-10-28)
 
 Skill glue collapse (`skill-glue-collapse`, change 2 of the skill-size reduction programme).

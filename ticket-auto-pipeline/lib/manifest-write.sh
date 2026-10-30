@@ -786,6 +786,29 @@ waive_ticket_readiness_code() {
   return "$write_rc"
 }
 
+# dor_semantic_blocking_codes <semantic_json>
+# Prints the JSON array (sorted, unique) of `SEMANTIC_*` codes a semantic
+# verdict puts into ready.missing — steps 2–4 of set_ticket_semantic below:
+# SEMANTIC_UNAVAILABLE when .unavailable is true, SEMANTIC_UNVERIFIED once
+# when any finding has verified:false or .unverified_gaps is non-empty, and
+# SEMANTIC_<DIMENSION_UPPER> per finding whose severity is "blocking". Pure:
+# no manifest read or write. Extracted (planner-draft-readiness D3) so a
+# draft verdict on disk is judged by the same jq that judges a ticket. It
+# lives here, not in dor-semantic.sh, because set_ticket_semantic calls it
+# and this file does not source dor-semantic.sh. Exit 1 on a non-object.
+dor_semantic_blocking_codes() {
+  local semantic_json="$1"
+  echo "$semantic_json" | jq -c 'if type != "object" then error("not an object") else . end
+     | (.unavailable == true) as $unavailable
+     | (([.findings[]? | select(.verified == false)] | length > 0)
+        or ((.unverified_gaps // []) | length > 0)) as $has_unverified
+     | ([.findings[]? | select(.severity == "blocking")
+         | ("SEMANTIC_" + (.dimension | ascii_upcase))]) as $blocking_codes
+     | ((if $unavailable then ["SEMANTIC_UNAVAILABLE"] else [] end)
+        + (if $has_unverified then ["SEMANTIC_UNVERIFIED"] else [] end)
+        + $blocking_codes | unique)' 2>/dev/null || return 1
+}
+
 # set_ticket_semantic <TID> <semantic_json>
 # The third writer of `ready` (dor-semantic-evaluator design.md Decision 8),
 # modelled on waive_ticket_readiness_code. Requires an existing `ready`
@@ -820,6 +843,9 @@ set_ticket_semantic() {
   manifest_path=$(get_ticket_manifest_path "$tid" 2>/dev/null) || return 1
   [ -f "$manifest_path" ] || return 1
 
+  local new_semantic_codes
+  new_semantic_codes=$(dor_semantic_blocking_codes "$semantic_json") || return 1
+
   _manifest_readiness_lock "${manifest_path}.lock" || return 1
 
   if ! jq -e '(.ready // null) != null' "$manifest_path" >/dev/null 2>&1; then
@@ -831,15 +857,8 @@ set_ticket_semantic() {
   local content write_rc
   content=$(jq -c \
     --argjson semantic "$semantic_json" \
-    '($semantic.unavailable == true) as $unavailable
-     | (([$semantic.findings[]? | select(.verified == false)] | length > 0)
-        or (($semantic.unverified_gaps // []) | length > 0)) as $has_unverified
-     | ([$semantic.findings[]? | select(.severity == "blocking")
-         | ("SEMANTIC_" + (.dimension | ascii_upcase))]) as $blocking_codes
-     | ((if $unavailable then ["SEMANTIC_UNAVAILABLE"] else [] end)
-        + (if $has_unverified then ["SEMANTIC_UNVERIFIED"] else [] end)
-        + $blocking_codes | unique) as $new_semantic_codes
-     | .ready.missing = (((.ready.missing // []) | map(select(startswith("SEMANTIC_") | not)))
+    --argjson new_semantic_codes "$new_semantic_codes" \
+    '.ready.missing = (((.ready.missing // []) | map(select(startswith("SEMANTIC_") | not)))
                           + $new_semantic_codes | unique)
      | .ready.semantic = $semantic
      | .ready.status = (if ((.ready.missing - (.ready.waived // {} | keys)) == []) then "ready" else "not-ready" end)' \

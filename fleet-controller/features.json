@@ -450,6 +450,18 @@
       "docs": "ticket-auto-pipeline/docs/dor-semantic-schema.md"
     },
     {
+      "name": "DOR_SEMANTIC_PRIOR_PASSED",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "intentional-off",
+      "summary": "Semantic DoR lineage treats the prior as a passed draft: no round reset, non-structural findings (and new structural ones on unchanged units) demoted to advisory.",
+      "requires": [],
+      "recommend": "off",
+      "why": "A call prefix for ticket-planner's draft-readiness carry-over into Refinement (planner-draft-readiness D13); no caller sets it yet. Nothing to set on a host.",
+      "docs": "ticket-auto-pipeline/lib/dor-semantic.sh"
+    },
+    {
       "name": "PLANNER_REFINEMENT_AUDIT_DEMOTE",
       "plugin": "ticket-planner",
       "default": "false",

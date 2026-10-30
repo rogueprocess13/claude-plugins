@@ -1380,7 +1380,8 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
       fix), blocker classes A-D, exit criteria. Reusable per idea; not openspec.
 - [ ] 3. Loop on Conduit-lite (RealWorld subset: auth + articles; tags at first clean) in
       dexter-sandbox, WIL / "Dexter Sandbox", `rehearsal` label. Exit: two clean fresh full runs
-      after the last code change. Cap 4 full runs. Holdout: comments + favorites slice, run once.
+      after the last code change. Cap ~~4~~ 6 full runs (raised 2026-10-30: iter 04 = draft-readiness
+      live check, iters 05–06 = two consecutive clean runs). Holdout: comments + favorites slice, run once.
       Fixes: class C/D as commit + test; class B or grill-me profile changes get their own openspec.
       - **Iter 01 (2026-10-24): FAIL**, full run 1 of 4. Work root
         `/home/mortal/workspace/workbench/e2e-conduit`. Grill-me sealed `ready` (54 → 100, 2 rounds).
@@ -1398,8 +1399,9 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
               `--base-branch` / `base-branch` config key, detection develop → origin/HEAD → main →
               master over Discovery's pinned repos; merge/sync policy also off the agent env.
               Implement after the change above (both edit `planner_prompt_epicgen`).
-        - [ ] F1 + F6 (A, grill-me): 2000-char silent input truncation; sealed intent loses brief
-              detail (seed titles). Raise/refuse loudly; carry the brief verbatim in the seal.
+        - [x] F1 + F6 (A, grill-me): 2000-char silent input truncation; sealed intent loses brief
+              detail (seed titles). **PR #571 merged** (grill-me 0.4.0, with F19): brief sealed
+              verbatim, input limits loud, planner passes the brief to Discovery.
         - [ ] F10, F12, F14, F4 (B, minor): untyped Consensus questions invisible to headless;
               Discovery lists public reference specs as Cited Artifacts; duplicate VN rows; IDEA
               extraction includes clarified answers.
@@ -1414,19 +1416,32 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
               2026-10-25: two entry points (after Crosscheck, before the EpicGen create gate), shared
               evaluator split out of `dor_semantic_apply`/`set_ticket_semantic`, own accept line (not
               Crosscheck's), re-Crosscheck after spec edits, no opt-out. **Build after iter 02** (so iter
-              02 measures the F16 prompt rules alone); iter 03 is its live check.
+              02 measures the F16 prompt rules alone). **Amended 2026-10-30** (after iter 03): bounded
+              auto-revise loop inside the gate (D8–D16); user decision: build it in 6 slices — S1
+              (ticket-auto evaluator extractions), S2a (draft helpers), S2b (halt-only gate), S3a
+              (revise guards + agent), S3b (revision loop), S4 (Refinement carry-over, docs). Iter 04
+              is its live check.
       - **Iter 02 (2026-10-29): FAIL**, full run 2 of 4. Grill-me sealed `ready` (100). Planner
         `INIT-1793284709-5497` reached Consensus (14/15 findings accepted, ready-for-spec), then
         **Crosscheck BLOCKED, 43 findings**:
-        - [x] F22 (B): `CONTRACT_MISMATCH` ×5 against iter 01's cancelled initiative. Fixed on
-              `fix/planner-abandoned-initiative-contracts` (ticket-planner 0.26.1):
+        - [x] F22 (B): `CONTRACT_MISMATCH` ×5 against iter 01's cancelled initiative. **PR #567
+              merged** (ticket-planner 0.26.1):
               `planner_initiative_abandon` + sibling skip in the contract check; both rehearsal
               initiatives marked abandoned; contract check now rc 0.
-        - [ ] F23 (D+B): `CITATION_UNRESOLVED` ×31, sandbox left with code on diverged remote
-              branches. Runbook reset step added; **sandbox reset pending a human**. Planner side:
-              Discovery should pin the ref it actually reads.
-        - [ ] F24 (B, = F12): `CITED_ARTIFACT_UNRESOLVED`/`UNREFERENCED` ×4 (public `openapi.yml`, "the brief").
-        - [ ] F25 (B): `RESOLUTION_NOT_PROPAGATED` ×3, Consensus resolutions not carried to every spec.
+        - [x] F23 (D+B): `CITATION_UNRESOLVED` ×31, sandbox left with code on diverged remote
+              branches. Runbook reset step added. **PR #574 merged**: Discovery pins the ref it
+              reads; citations resolve at that ref.
+        - [x] F24 (B, = F12): `CITED_ARTIFACT_UNRESOLVED`/`UNREFERENCED` ×4 (public `openapi.yml`,
+              "the brief"). **PR #570 merged**: reference contracts are not cited artifacts.
+        - [x] F25 (B): `RESOLUTION_NOT_PROPAGATED` ×3. **PR #570 merged**: per-ticket shares of the
+              Consensus block.
+      - **Iter 03 (2026-10-29/30): FAIL**, full run 3 of 6. Grill-me sealed `ready` (100). Crosscheck
+        43 → 2 findings; F28 (`TEST_DATA_IMPLIED` on quoted content) fixed by **PR #581**; resumed
+        with one `TESTDATA_CONFIRM` answer. `--create`: epic WIL-125 + children WIL-126..132,
+        `dispatch=true`. **Refinement halted 6/7** on round-1 non-structural semantic AC gaps (F31),
+        the create → halt loop draft readiness removes. **PR #583** fixed F26/F27/F30 (minor).
+        - [ ] Cancel WIL-125..132 before iter 04.
+        - [ ] Iter 04 = live check of `planner-draft-readiness` (all 6 slices merged first).
 - [ ] 4. Follow-up, start once item 3 converges (it supplies the baseline): **chain consistency
       check**. Bash steps (dor/gate/body checks, dispatch) are already repeatable and unit-tested;
       grill-me, the planner and critique are LLM steps, so "similar results" means invariants, not
