@@ -9,7 +9,7 @@ You are maintaining pre-traced call-chain wiki files. Your input is errata entri
 
 ## Logging (--from-auto)
 
-If `$LOG_FILE` is set (passed by the `ticket-auto` orchestrator): read `~/.claude/skills/pipeline-log-format.md`. Write progress entries at step boundaries. Phase is `MAINTENANCE`.
+If `$TAP_LOG` is set (passed by the `ticket-auto` orchestrator): read `~/.claude/skills/pipeline-log-format.md`. Write progress entries at step boundaries. Phase is `MAINTENANCE`.
 
 ## Heartbeat (--from-auto)
 
@@ -45,7 +45,7 @@ directory owned by the ticket id instead, aged out after `WIKI_LOCK_STALE_SECS` 
 its holder crashed:
 
 ```bash
-bash "$HOME/.claude/skills/lib/wiki-lock.sh" acquire --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}" --log-file "${LOG_FILE:-}"
+bash "$HOME/.claude/skills/lib/wiki-lock.sh" acquire --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}" --log-file "${TAP_LOG:-}"
 echo "WIKI_LOCK_RC=$?"
 ```
 

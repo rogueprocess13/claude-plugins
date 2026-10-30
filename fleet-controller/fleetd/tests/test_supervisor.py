@@ -1230,7 +1230,7 @@ class PhaseDispatchRegressionPassTest(unittest.TestCase):
             "plan = json.loads(open(os.environ['FAKE_CLAUDE_PLAN']).read())\n"
             "step_id = os.environ.get('FLEET_DISPATCH_STEP_ID', '')\n"
             "entry = plan.get(step_id, {})\n"
-            "log_file = os.environ.get('LOG_FILE', '')\n"
+            "log_file = os.environ.get('TAP_LOG', '')\n"
             "line = entry.get('line')\n"
             "if log_file and line:\n"
             "    with open(log_file, 'a') as f:\n"
@@ -3713,16 +3713,24 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
         """
         from fleetd.supervisor import spawn_worker
 
+        from unittest import mock
+
         out = self.workspace / 'TST-ENV-verify-gen1.json'
+        # fleetd itself started with a bare LOG_FILE (GitHub #575).
+        env_patch = mock.patch.dict(os.environ,
+                                    {'LOG_FILE': '/tmp/fleetd-own.log'})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
         pid, _ = spawn_worker(
             tid='TST-ENV', generation=1, state_dir=str(self.workspace),
             phase='VERIFY',
-            extra_env={'LOG_FILE': '/w/logs/TST-ENV-pipeline.log',
+            extra_env={'TAP_LOG': '/w/logs/TST-ENV-pipeline.log',
                        'FLEET_PHASE': 'VERIFY'},
             cmd_override=[
                 sys.executable, '-c',
-                'import os; print(os.environ["LOG_FILE"], '
-                'os.environ["FLEET_PHASE"])'],
+                'import os; print(os.environ["TAP_LOG"], '
+                'os.environ["FLEET_PHASE"], '
+                'os.environ.get("LOG_FILE", "no-bare-log-file"))'],
         )
         os.waitpid(pid, 0)
         deadline = time.time() + 5
@@ -3731,6 +3739,9 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
             time.sleep(0.05)
         self.assertIn('/w/logs/TST-ENV-pipeline.log', out.read_text())
         self.assertIn('VERIFY', out.read_text())
+        # GitHub #575: a LOG_FILE in fleetd's own environment never reaches
+        # a worker, where Spring Boot would read it as its log file.
+        self.assertIn('no-bare-log-file', out.read_text())
 
     def test_phase_prompt_replaces_the_ticket_auto_invocation(self):
         """`-p` carries one phase, and nothing else about the spawn changes."""

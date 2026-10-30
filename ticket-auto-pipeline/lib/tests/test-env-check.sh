@@ -118,6 +118,21 @@ test_full_mode_emits_begin_end_sentinels() {
   echo "$output" | grep -q -e '---BEGIN_VARS---' && echo "$output" | grep -q -e '---END_VARS---'
 }
 
+# GitHub #578 follow-up: full mode's VAR table is shown to the operator and
+# lands in transcripts — a secret must appear masked, never in full.
+test_full_mode_masks_secrets() {
+  local tmpdir output
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  output=$(LINEAR_API_KEY=lin_api_SECRETVALUE578abcd \
+    GITHUB_PERSONAL_ACCESS_TOKEN=ghp_SECRETVALUE578wxyz \
+    ANTHROPIC_AUTH_TOKEN=sk-SECRETVALUE578mnop \
+    bash "$LIB_DIR/env-check.sh" --mode=full "$tmpdir" 2>/dev/null || true)
+  rm -rf "$tmpdir"
+  ! echo "$output" | grep -q 'SECRETVALUE578' || return 1
+  echo "$output" | grep -q '^LINEAR_API_KEY|ok|\*\*\*\*abcd|'
+}
+
 test_full_mode_rowcount_matches_var_lines() {
   local tmpdir
   tmpdir=$(mktemp -d)
@@ -366,6 +381,7 @@ for fn in \
   test_validate_warns_missing_optional \
   test_full_mode_emits_begin_end_sentinels \
   test_full_mode_rowcount_matches_var_lines \
+  test_full_mode_masks_secrets \
   test_full_mode_gh_token_derived \
   test_full_mode_local_url_env_priority \
   test_full_mode_linear_key_in_dotenv \

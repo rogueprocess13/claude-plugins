@@ -85,7 +85,42 @@ while [ "$i" -lt "${#FILES[@]}" ]; do
   i=$((i + 1))
 done
 
+# GitHub #578: env files written before 0.79.0 carried an
+# `export LINEAR_API_KEY="..."` line. A surviving (still-live) one is scrubbed
+# in place rather than left on disk for the rest of its TTL. Only files this
+# user owns, never through a symlink; the rewrite keeps mode 0600 and replaces
+# the file by rename, the same way spawn_write_env writes it.
+scrubbed=0
+for f in "$TMP_DIR"/ticket-auto-*-env.sh; do
+  [ -f "$f" ] && [ ! -L "$f" ] && [ -O "$f" ] || continue
+  grep -q '^export LINEAR_API_KEY=' "$f" 2>/dev/null || continue
+  _scrub_id=$(stat -c '%i:%Y' "$f" 2>/dev/null) || continue
+  _scrub_tmp=$(mktemp "$TMP_DIR/.ticket-auto-scrub.XXXXXX" 2>/dev/null) || continue
+  # grep -v exits 1 when nothing is left, which is still a correct result.
+  grep -v '^export LINEAR_API_KEY=' "$f" >"$_scrub_tmp" 2>/dev/null || true
+  touch -r "$f" "$_scrub_tmp" 2>/dev/null || true
+  # A run that rewrote the file meanwhile (new inode or mtime) already wrote
+  # a key-free copy; never replace it with this older one.
+  if [ "$(stat -c '%i:%Y' "$f" 2>/dev/null)" = "$_scrub_id" ] &&
+    mv -f "$_scrub_tmp" "$f" 2>/dev/null; then
+    scrubbed=$((scrubbed + 1))
+  else
+    rm -f "$_scrub_tmp" 2>/dev/null || true
+  fi
+done
+
+# A pre-0.79.0 spawn_write_env killed between its mktemp and its rename left
+# `.ticket-auto-<TID>-env.XXXXXX` holding the key, a name no glob above
+# matches. A finished write renames within milliseconds, so one older than a
+# minute is a crash leftover. Same ownership/symlink rules as above.
+for f in "$TMP_DIR"/.ticket-auto-*-env.*; do
+  [ -f "$f" ] && [ ! -L "$f" ] && [ -O "$f" ] || continue
+  [ "$(_sweep_mtime "$f")" -lt "$(($(date +%s) - 60))" ] || continue
+  rm -f -- "$f" 2>/dev/null || true
+done
+
 # stderr only — SessionStart hook stdout is injected into the session context.
+[ "$scrubbed" -gt 0 ] && echo "ticket-auto: removed a stored Linear API key from $scrubbed legacy env file(s)" >&2
 [ "$removed" -gt 0 ] && echo "ticket-auto: swept $removed stale scratch file(s) from $TMP_DIR" >&2
 
 # Best-effort housekeeping — never block session start.

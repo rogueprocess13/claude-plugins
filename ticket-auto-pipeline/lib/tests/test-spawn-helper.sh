@@ -188,13 +188,17 @@ test_write_env_merge_policy_defaults_to_empty() {
   grep -q 'export MERGE_POLICY=""' /tmp/ticket-auto-TEST-MP-DEF-env.sh
 }
 
-test_write_env_appends_linear_key_when_set() {
+# GitHub #578: the env file sits in shared /tmp for up to 24h, so the Linear
+# key must never be written to it — not as an export, not as a bare value.
+test_write_env_never_writes_linear_key_when_set() {
   local tmpfile
   source "$LIB_DIR/spawn-helper.sh"
-  LINEAR_API_KEY=test-spawn-key spawn_write_env TICKET_ID=TEST-LL \
-    REPOS_ROOT=/repos ISSUE_PREFIX=TEST BE_SERVICES=svc1 >/dev/null 2>&1
+  LINEAR_API_KEY=lin_api_test-spawn-key-578 spawn_write_env TICKET_ID=TEST-LL \
+    REPOS_ROOT=/repos ISSUE_PREFIX=TEST BE_SERVICES=svc1 >/dev/null 2>&1 || return 1
   tmpfile=/tmp/ticket-auto-TEST-LL-env.sh
-  grep -q 'export LINEAR_API_KEY="test-spawn-key"' "$tmpfile"
+  [ -s "$tmpfile" ] || return 1
+  ! grep -q 'LINEAR_API_KEY' "$tmpfile" || return 1
+  ! grep -q 'test-spawn-key-578' "$tmpfile"
 }
 
 test_write_env_empty_integration_branch() {
@@ -226,6 +230,19 @@ test_write_env_does_not_append_linear_key_when_unset() {
   spawn_write_env TICKET_ID=TEST-NK \
     REPOS_ROOT=/repos ISSUE_PREFIX=TEST BE_SERVICES=svc1 >/dev/null 2>&1
   ! grep -q 'LINEAR_API_KEY' /tmp/ticket-auto-TEST-NK-env.sh
+}
+
+# GitHub #575: the env file carries the pipeline log as TAP_LOG, never as a
+# LOG_FILE line a sourcing shell would export to Spring Boot.
+test_write_env_writes_tap_log_not_log_file() {
+  local f got
+  source "$LIB_DIR/spawn-helper.sh"
+  spawn_write_env TICKET_ID=TEST-TL REPOS_ROOT=/repos ISSUE_PREFIX=TEST \
+    BE_SERVICES=svc1 TAP_LOG=/w/logs/TEST-TL-pipeline.log >/dev/null 2>&1 || return 1
+  f=/tmp/ticket-auto-TEST-TL-env.sh
+  ! grep -q '^export LOG_FILE=' "$f" || return 1
+  got=$(env -u LOG_FILE bash -c 'source "$1"; sh -c "echo \${TAP_LOG:-unset}/\${LOG_FILE:-unset}"' _ "$f")
+  [ "$got" = "/w/logs/TEST-TL-pipeline.log/unset" ]
 }
 
 test_write_env_rejects_empty_ticket_id() {
@@ -271,21 +288,20 @@ test_write_env_roundtrip_hostile_values() {
   local v_inj='$(touch '"$marker"') `touch '"$marker"'` ${HOME}'
   local v_nl=$'line1\nline2 & "q"'
   local v_bs='C:\path\to | pipe \'
-  LINEAR_API_KEY='k"$(touch '"$marker"')' spawn_write_env TICKET_ID=TEST-RT \
+  spawn_write_env TICKET_ID=TEST-RT \
     REPOS_ROOT="$v_bs" ISSUE_PREFIX=TEST BE_SERVICES="$v_nl" \
     UAT_URL="$v_url" LOCAL_URL="$v_url" BE_TEST_CMD="$v_cmd" \
     FE_TEST_CMD="$v_inj" >/dev/null 2>&1 || return 1
   f=/tmp/ticket-auto-TEST-RT-env.sh
   got=$(bash -c 'source "$1" || exit 9
     printf "%s\0" "$UAT_URL" "$LOCAL_URL" "$BE_TEST_CMD" "$FE_TEST_CMD" \
-      "$BE_SERVICES" "$REPOS_ROOT" "$LINEAR_API_KEY"' _ "$f" | od -An -c)
+      "$BE_SERVICES" "$REPOS_ROOT"' _ "$f" | od -An -c)
   local want
-  want=$(printf '%s\0' "$v_url" "$v_url" "$v_cmd" "$v_inj" "$v_nl" "$v_bs" \
-    'k"$(touch '"$marker"')' | od -An -c)
+  want=$(printf '%s\0' "$v_url" "$v_url" "$v_cmd" "$v_inj" "$v_nl" "$v_bs" | od -An -c)
   [ "$got" = "$want" ] && [ ! -e "$marker" ]
 }
 
-# BE-9: the file holds LINEAR_API_KEY — it must be 0600, and a path planted
+# BE-9: the file holds project paths — it must be 0600, and a path planted
 # at the predictable name (a symlink) must be replaced, never written through.
 test_write_env_private_and_not_written_through_symlink() {
   local d f mode
@@ -311,6 +327,30 @@ test_pre_rejects_missing_phase() {
 test_pre_rejects_missing_ticket_id() {
   source "$LIB_DIR/spawn-helper.sh"
   spawn_agent_pre PHASE=TEST STEP=test SKILL=/ticket-test >/dev/null 2>&1 && false || true
+}
+
+# GitHub #575: Spring Boot maps a LOG_FILE env var to logging.file.name, so
+# the prompt prefix must export the pipeline log as TAP_LOG and leave no
+# exported LOG_FILE behind — even one the agent's shell already inherited —
+# while still giving the agent's own shell a usable $LOG_FILE.
+test_pre_prompt_exports_tap_log_file_never_log_file() {
+  local d log line prefix got
+  d=$(_mktemp_test_dir)
+  log="$d/TEST-LF575-pipeline.log"
+  : >"$log"
+  line=$(
+    source "$LIB_DIR/spawn-helper.sh"
+    spawn_agent_pre PHASE=IMPLEMENT STEP=implement TICKET_ID=TEST-LF575 \
+      SKILL=/ticket-implement LOG_FILE="$log" 2>/dev/null | grep '^AGENT_PROMPT='
+  ) || return 1
+  case "$line" in *"export LOG_FILE"*) return 1 ;; esac
+  prefix="${line#*Before starting, run: }"
+  prefix="${prefix%. *}"
+  got=$(LOG_FILE=/tmp/inherited-575.log bash -c "$prefix
+    sh -c 'echo \"child=\${LOG_FILE:-unset} tap=\${TAP_LOG:-unset}\"'
+    echo \"shell=\$LOG_FILE\"" 2>/dev/null)
+  echo "$got" | grep -qx "child=unset tap=$log" &&
+    echo "$got" | grep -qx "shell=$log"
 }
 
 test_pre_prints_agent_prompt_line() {
@@ -1644,6 +1684,143 @@ test_spawn_agent_pre_still_opens_through_the_helper() {
     grep -q '^MODEL=claude-opus-5$' "$meta"
 }
 
+# ── spawn_agent_pre/post pairing (GitHub #579) ─────────────────────────────────
+# _pair_setup <tid> — fresh log + no stale meta; echoes the log path.
+_pair_setup() {
+  local tid="$1" d
+  d=$(_mktemp_test_dir)
+  rm -f "/tmp/ticket-auto-${tid}-spawn-meta.txt"
+  echo "2026-06-02T10:00:00Z|META|schema|info|1" >"$d/${tid}-pipeline.log"
+  echo "$d/${tid}-pipeline.log"
+}
+
+test_pairing_clean_pair_is_silent_and_closes_meta() {
+  local log meta
+  log=$(_pair_setup TEST-PAIR1)
+  meta=/tmp/ticket-auto-TEST-PAIR1-spawn-meta.txt
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    spawn_agent_pre PHASE=APPRAISE STEP=appraise TICKET_ID=TEST-PAIR1 \
+      SKILL=/ticket-appraise LOG_FILE="$log" >/dev/null 2>&1
+    grep -q '^CLOSED=0$' "$meta" || exit 1
+    spawn_agent_post TICKET_ID=TEST-PAIR1 RESULT=done MSG=ok >/dev/null 2>&1
+    spawn_agent_pre PHASE=EXEC STEP=exec TICKET_ID=TEST-PAIR1 \
+      SKILL=/ticket-appraise-exec LOG_FILE="$log" >/dev/null 2>&1
+    spawn_agent_post TICKET_ID=TEST-PAIR1 RESULT=done MSG=ok >/dev/null 2>&1
+  ) || return 1
+  ! grep -q 'spawn-unpaired' "$log" || return 1
+  grep -q '|APPRAISE|appraise|done|ok$' "$log" && grep -q '|EXEC|exec|done|ok$' "$log" &&
+    [ "$(grep '^CLOSED=' "$meta" | tail -1)" = "CLOSED=1" ]
+}
+
+test_pairing_pre_over_open_meta_warns() {
+  local log
+  log=$(_pair_setup TEST-PAIR2)
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    spawn_agent_pre PHASE=VERIFY STEP=verify TICKET_ID=TEST-PAIR2 \
+      SKILL=/ticket-verify LOG_FILE="$log" >/dev/null 2>&1
+    # No spawn_agent_post — the router went straight to the next phase.
+    spawn_agent_pre PHASE=PR-REVIEW STEP=pr-review TICKET_ID=TEST-PAIR2 \
+      SKILL=/ticket-pr-review LOG_FILE="$log" >/dev/null 2>&1
+  ) || return 1
+  grep -q '|META|spawn-unpaired|warn|spawn_agent_pre PR-REVIEW/pr-review: previous VERIFY/verify has no spawn_agent_post$' "$log" &&
+    # Warn only: the new bracket still opened.
+    grep -q '|PR-REVIEW|pr-review|waiting|' "$log"
+}
+
+test_pairing_pre_retry_of_same_bracket_is_silent() {
+  local log
+  log=$(_pair_setup TEST-PAIR3)
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    spawn_agent_pre PHASE=VERIFY STEP=verify TICKET_ID=TEST-PAIR3 \
+      SKILL=/ticket-verify LOG_FILE="$log" >/dev/null 2>&1
+    spawn_agent_pre PHASE=VERIFY STEP=verify TICKET_ID=TEST-PAIR3 \
+      SKILL=/ticket-verify LOG_FILE="$log" >/dev/null 2>&1
+  ) || return 1
+  ! grep -q 'spawn-unpaired' "$log"
+}
+
+test_pairing_post_without_pre_warns() {
+  # The MAINTENANCE case: PR-REVIEW's bracket is closed, the router skips
+  # spawn_agent_pre and calls spawn_agent_post with no PHASE=.
+  local log
+  log=$(_pair_setup TEST-PAIR4)
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    spawn_agent_pre PHASE=PR-REVIEW STEP=pr-review TICKET_ID=TEST-PAIR4 \
+      SKILL=/ticket-pr-review LOG_FILE="$log" >/dev/null 2>&1
+    spawn_agent_post TICKET_ID=TEST-PAIR4 RESULT=done VERDICT=PASS MSG=merged >/dev/null 2>&1
+    echo "2026-06-02T10:05:00Z|META|retro-trigger|info|x" >>"$log"
+    # The unbracketed maintenance agent's own progress line.
+    echo "2026-06-02T10:06:00Z|MAINTENANCE|document|start|ai-context" >>"$log"
+    spawn_agent_post TICKET_ID=TEST-PAIR4 RESULT=done MSG="ai-context written" >/dev/null 2>&1
+  ) || return 1
+  grep -q '|META|spawn-unpaired|warn|spawn_agent_post read closed spawn-meta PR-REVIEW/pr-review' "$log"
+}
+
+test_pairing_post_explicit_phase_mismatch_warns() {
+  local log meta
+  log=$(_pair_setup TEST-PAIR5)
+  meta=/tmp/ticket-auto-TEST-PAIR5-spawn-meta.txt
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    spawn_agent_pre PHASE=IMPLEMENT STEP=implement TICKET_ID=TEST-PAIR5 \
+      SKILL=/ticket-implement LOG_FILE="$log" >/dev/null 2>&1
+    spawn_agent_post TICKET_ID=TEST-PAIR5 RESULT=done PHASE=MAINTENANCE \
+      STEP=document MSG=ok LOG_FILE="$log" >/dev/null 2>&1
+  ) || return 1
+  grep -q '|META|spawn-unpaired|warn|spawn_agent_post PHASE=MAINTENANCE but open spawn-meta is IMPLEMENT' "$log" &&
+    # The IMPLEMENT bracket was not closed by a post for another phase.
+    [ "$(grep '^CLOSED=' "$meta" | tail -1)" = "CLOSED=0" ]
+}
+
+test_pairing_duplicate_post_is_silent_and_idempotent() {
+  local log
+  log=$(_pair_setup TEST-PAIR6)
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    spawn_agent_pre PHASE=APPRAISE STEP=appraise TICKET_ID=TEST-PAIR6 \
+      SKILL=/ticket-appraise LOG_FILE="$log" >/dev/null 2>&1
+    spawn_agent_post TICKET_ID=TEST-PAIR6 RESULT=done MSG=ok >/dev/null 2>&1
+  ) || return 1
+  ! grep -q 'spawn-unpaired' "$log" &&
+    [ "$(grep -c '|APPRAISE|appraise|done|' "$log")" -eq 1 ]
+}
+
+test_pairing_duplicate_post_after_meta_lines_is_silent() {
+  # SubagentStop writes token lines after the terminal; a retried post must
+  # still read as a duplicate, not as a post without a pre.
+  local log
+  log=$(_pair_setup TEST-PAIR8)
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    spawn_agent_pre PHASE=APPRAISE STEP=appraise TICKET_ID=TEST-PAIR8 \
+      SKILL=/ticket-appraise LOG_FILE="$log" >/dev/null 2>&1
+    spawn_agent_post TICKET_ID=TEST-PAIR8 RESULT=done MSG=ok >/dev/null 2>&1
+    echo "2026-06-02T10:05:00Z|META|tokens|info|APPRAISE:1/2/3/4" >>"$log"
+    spawn_agent_post TICKET_ID=TEST-PAIR8 RESULT=done MSG=ok >/dev/null 2>&1
+  ) || return 1
+  ! grep -q 'spawn-unpaired' "$log"
+}
+
+test_pairing_meta_without_closed_key_counts_as_closed() {
+  # fleetd's phase dispatch (and pre-0.79.0 versions) write spawn-meta with no
+  # CLOSED= key. A manual router run right after must not warn.
+  local log meta
+  log=$(_pair_setup TEST-PAIR7)
+  meta=/tmp/ticket-auto-TEST-PAIR7-spawn-meta.txt
+  printf '%s\n' PHASE=VERIFY STEP=verify TICKET_ID=TEST-PAIR7 "LOG_FILE=$log" \
+    SESSION_ID=abc SPAWNED_BY=fleetd >"$meta"
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    spawn_agent_pre PHASE=PR-REVIEW STEP=pr-review TICKET_ID=TEST-PAIR7 \
+      SKILL=/ticket-pr-review LOG_FILE="$log" >/dev/null 2>&1
+  ) || return 1
+  ! grep -q 'spawn-unpaired' "$log"
+}
+
 # ── phase_terminal_write (design.md D13) ─────────────────────────────────────
 # The writing half of spawn_agent_post, extracted so fleetd can resolve a
 # bracket on the automated path without going through the router. These tests
@@ -1981,6 +2158,45 @@ test_tmp_sweep_ignores_unmanaged_files() {
     [ -f "$dir/ticket-auto-env.sh" ]
 }
 
+# GitHub #578: an env file left by a pre-0.79.0 run still carries the key.
+# The sweep scrubs that line from a live file, keeps every other line, keeps
+# mode 0600, and never follows a symlink.
+test_tmp_sweep_scrubs_legacy_linear_key() {
+  local dir f link target
+  dir=$(_mktemp_test_dir)
+  f="$dir/ticket-auto-TEST-SW-KEY-env.sh"
+  printf '%s\n' 'export REPOS_ROOT="/r"' 'export LINEAR_API_KEY="lin_api_legacy578"' \
+    'export BASE_BRANCH="develop"' >"$f"
+  chmod 600 "$f"
+  target="$dir/target-env"
+  printf '%s\n' 'export LINEAR_API_KEY="lin_api_linked578"' >"$target"
+  link="$dir/ticket-auto-TEST-SW-LNK-env.sh"
+  ln -s "$target" "$link"
+  TICKET_TMP_DIR="$dir" bash "$(_sweep_hook)" 2>/dev/null
+  [ -f "$f" ] || return 1
+  ! grep -q 'LINEAR_API_KEY' "$f" || return 1
+  grep -q '^export REPOS_ROOT="/r"$' "$f" || return 1
+  grep -q '^export BASE_BRANCH="develop"$' "$f" || return 1
+  [ "$(stat -c %a "$f")" = "600" ] || return 1
+  # The symlink's target is not this sweep's to rewrite.
+  grep -q 'lin_api_linked578' "$target"
+}
+
+# GitHub #578: a pre-0.79.0 spawn_write_env killed mid-write left its mktemp
+# file (holding the key) under a dot-name no other glob matches.
+test_tmp_sweep_removes_stale_env_write_leftovers() {
+  local dir old fresh
+  dir=$(_mktemp_test_dir)
+  old="$dir/.ticket-auto-TEST-SW-TMP-env.AbC123"
+  fresh="$dir/.ticket-auto-TEST-SW-TMP2-env.XyZ789"
+  echo 'export LINEAR_API_KEY="lin_api_leftover578"' >"$old"
+  echo 'export REPOS_ROOT="/r"' >"$fresh"
+  touch -d "10 minutes ago" "$old"
+  TICKET_TMP_DIR="$dir" bash "$(_sweep_hook)" 2>/dev/null
+  # The old leftover goes; a write that may still be in flight stays.
+  [ ! -e "$old" ] && [ -f "$fresh" ]
+}
+
 test_tmp_sweep_honours_ttl_override() {
   local dir
   dir=$(_mktemp_test_dir)
@@ -2270,8 +2486,9 @@ for fn in \
   test_write_env_empty_worktree_root \
   test_write_env_uat_policy_defaults_to_per_ticket \
   test_write_env_merge_policy_defaults_to_empty \
-  test_write_env_appends_linear_key_when_set \
+  test_write_env_never_writes_linear_key_when_set \
   test_write_env_does_not_append_linear_key_when_unset \
+  test_write_env_writes_tap_log_not_log_file \
   test_write_env_rejects_empty_ticket_id \
   test_write_env_rejects_unknown_param \
   test_write_env_handles_special_chars_in_values \
@@ -2281,6 +2498,7 @@ for fn in \
   test_pre_rejects_missing_phase \
   test_pre_rejects_missing_ticket_id \
   test_pre_prints_agent_prompt_line \
+  test_pre_prompt_exports_tap_log_file_never_log_file \
   test_pre_prints_agent_type_line_default \
   test_pre_prints_agent_type_line_explicit \
   test_pre_prompt_includes_skill_and_ticket \
@@ -2338,6 +2556,14 @@ for fn in \
   test_phase_bracket_open_never_forges_a_log_line \
   test_phase_bracket_open_echoes_the_model_without_a_log_file \
   test_spawn_agent_pre_still_opens_through_the_helper \
+  test_pairing_clean_pair_is_silent_and_closes_meta \
+  test_pairing_pre_over_open_meta_warns \
+  test_pairing_pre_retry_of_same_bracket_is_silent \
+  test_pairing_post_without_pre_warns \
+  test_pairing_post_explicit_phase_mismatch_warns \
+  test_pairing_duplicate_post_is_silent_and_idempotent \
+  test_pairing_duplicate_post_after_meta_lines_is_silent \
+  test_pairing_meta_without_closed_key_counts_as_closed \
   test_phase_terminal_write_emits_done_marker \
   test_phase_terminal_write_prefixes_verdict \
   test_phase_terminal_write_marks_warn_continue \
@@ -2354,6 +2580,8 @@ for fn in \
   test_tmp_sweep_keeps_old_env_when_group_is_active \
   test_tmp_sweep_leaves_concurrent_run_intact \
   test_tmp_sweep_ignores_unmanaged_files \
+  test_tmp_sweep_scrubs_legacy_linear_key \
+  test_tmp_sweep_removes_stale_env_write_leftovers \
   test_tmp_sweep_honours_ttl_override \
   test_tmp_sweep_bad_ttl_falls_back_to_default \
   test_token_tracker_prunes_start_files_without_a_match \
