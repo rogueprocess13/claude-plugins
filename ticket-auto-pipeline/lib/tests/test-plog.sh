@@ -127,6 +127,21 @@ rc=0
 LOG_FILE="$TMP/t10.log" bash "$PLOG" GATE x fail y 2>/dev/null || rc=$?
 expect "10: unwritable target exits 1" "1" "$rc"
 
+# ── 11. TAP_LOG (GitHub #575) ──────────────────────────────────────────
+# Phase agents export the pipeline log as TAP_LOG, never LOG_FILE (which
+# Spring Boot reads as its own log file).
+(
+  unset LOG_FILE
+  TAP_LOG="$TMP/t11.log" bash "$PLOG" GATE g done ok
+)
+expect "11a: TAP_LOG is the fallback target" "ISO|GATE|g|done|ok" "$(mask "$TMP/t11.log")"
+(
+  unset LOG_FILE
+  TAP_LOG="$TMP/t11b.log" bash "$PLOG" --log-file "{LOG_FILE}" GATE g done ok
+)
+expect "11b: unsubstituted placeholder falls back" "ISO|GATE|g|done|ok" "$(mask "$TMP/t11b.log")"
+if [ ! -e "{LOG_FILE}" ]; then pass "11c: no file named {LOG_FILE}"; else fail "11c: no file named {LOG_FILE}" "created"; fi
+
 echo ""
 echo "plog: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

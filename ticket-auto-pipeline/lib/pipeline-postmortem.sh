@@ -79,7 +79,7 @@ EXIT_CODE="${EXIT_CODE:-0}"
 
 # ── Resolve log paths ────────────────────────────────────────────────────────────
 
-LOG_FILE="${LOG_FILE:-./logs/${TICKET_ID}-pipeline.log}"
+LOG_FILE="${LOG_FILE:-${TAP_LOG:-./logs/${TICKET_ID}-pipeline.log}}"
 HB_FILE="${HB_FILE:-./logs/${TICKET_ID}-heartbeat.log}"
 TICKET_DIR="${TICKET_DIR:-}"
 

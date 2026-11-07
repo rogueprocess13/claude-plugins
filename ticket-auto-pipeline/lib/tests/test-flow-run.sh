@@ -169,6 +169,12 @@ expect "5: empty --log-file falls back to \$LOG_FILE" 1 "$(grep -c 'flow-error|f
 expect "5: unsubstituted {LOG_FILE} placeholder falls back to \$LOG_FILE" 2 "$(grep -c 'flow-error|fail|exit 8' "$ENVLOG" || true)"
 [ -e "${TMP}/{LOG_FILE}" ] && fail "5: no file literally named {LOG_FILE}" "created" || pass "5: no file literally named {LOG_FILE}"
 
+# GitHub #575: phase agents export the log as TAP_LOG, not LOG_FILE.
+TAPLOG="${TMP}/taplog.log"
+: >"$TAPLOG"
+(cd "$TMP" && unset LOG_FILE && TAP_LOG="$TAPLOG" STUB_RC=8 FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" --log-file "{LOG_FILE}" TEST-1 needs-info >/dev/null 2>&1) || true
+expect "5: placeholder falls back to \$TAP_LOG" 1 "$(grep -c 'flow-error|fail|exit 8' "$TAPLOG" || true)"
+
 RC=0
 (cd "$TMP" && STUB_RC=3 FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1) || RC=$?
 expect "5: no log file → still propagates rc" 3 "$RC"

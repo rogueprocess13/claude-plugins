@@ -23,8 +23,8 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 ### Step dispatch
 **Context restoration when skipping early steps:**
 - Worktree path: read from notes.md `### ... — pre-implementation checkpoint` entry (`Worktree:` field) or re-derive via `source "$HOME/.claude/skills/lib/worktree.sh" && worktree_path "$TICKET_ID" "{repo-slug}"`.
-- Branch name: read from notes.md checkpoint or from `IMPLEMENT|checkout-branch|done|` in `$LOG_FILE`.
-- Implementation mode: read from `IMPLEMENT|detect-path|done|` in `$LOG_FILE` (value: `simple-fix` or `openspec`).
+- Branch name: read from notes.md checkpoint or from `IMPLEMENT|checkout-branch|done|` in `$TAP_LOG`.
+- Implementation mode: read from `IMPLEMENT|detect-path|done|` in `$TAP_LOG` (value: `simple-fix` or `openspec`).
 - Affected repos: re-derive from notes.md `Initial Investigation` section and CLAUDE.md table.
 - `$IMPLEMENT_TICKETS_ROOT`: never restored from a log or checkpoint — captured fresh via
   `$(pwd)` before Step 0.6 on every invocation of this skill, resume or not, since the session's
@@ -41,7 +41,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `code-review` | Step 5 (commit/push) | — |
 | `commit-push` | Step 5.5 (plan artifact durability check) | mode from log `detect-path\|done` entry |
 
-**Concurrency guard:** if you need to check whether another worker is already implementing this ticket, never grep the process table (`ps`/`pgrep`) for markers matching your own launch prompt or skill name — a self-checking agent's own process (and its own `spawn_agent_pre` shell) will always match those markers, producing a guaranteed false positive that aborts real work. Use file-based signals instead: an existing worktree/branch with commits already on it, a lockfile whose PID is not in your own ancestry, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line already present in `$LOG_FILE` for this ticket.
+**Concurrency guard:** if you need to check whether another worker is already implementing this ticket, never grep the process table (`ps`/`pgrep`) for markers matching your own launch prompt or skill name — a self-checking agent's own process (and its own `spawn_agent_pre` shell) will always match those markers, producing a guaranteed false positive that aborts real work. Use file-based signals instead: an existing worktree/branch with commits already on it, a lockfile whose PID is not in your own ancestry, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line already present in `$TAP_LOG` for this ticket.
 
 **Capture the tickets repo root — the very first bash action of this session, regardless of `--from-step`.** Step 4 `cd`s into a code worktree and nothing downstream `cd`s back (Step 5's own git commands deliberately use `git -C "$WORKTREE_PATH"` instead of relying on the earlier `cd`, for exactly this reason). Every invocation of this skill — a fresh run or a `--from-step` resume — starts with CWD already at the tickets repo root (the shared preamble Guard already verified this, or the caller did for `--from-auto`), so this capture is always valid the instant the session starts, before Step 0.6 or any step-dispatch jump:
 
@@ -151,7 +151,7 @@ From `notes.md` and `context.md`, identify affected repos. Cross-reference with 
 **Implementation path** — use the one plan-artifact resolver (whole-ID match: `TEST-7` never
 picks up `TEST-77`'s files). Run it from the tickets repo (CWD here):
 ```bash
-bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root . --log-file "$LOG_FILE"
+bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root . --log-file "$TAP_LOG"
 ```
 It prints `PLAN_MODE=`, `PLAN_PATH=` and, for openspec, `CHANGE_DIR=`.
 - Exit 0, `PLAN_MODE=simple-fix` → mode **simple-fix**. Read `PLAN_PATH` now.
@@ -532,7 +532,7 @@ step that no longer matches the code — any of these counts, on any outcome lab
 ticket that quietly worked around a wrong class name in the wiki is exactly the case a
 misprediction-only gate misses: the wiki stays wrong and nothing ever reports it.
 
-- **No gap found:** log `META|wiki-check|info|wiki consulted, no gap found` (via `$LOG_FILE`
+- **No gap found:** log `META|wiki-check|info|wiki consulted, no gap found` (via `$TAP_LOG`
   when `--from-auto`) and move on. Nothing to write.
 - **Gap found:** open the referenced wiki flow file(s) and append an errata entry using the
   canonical schema from `wiki-maintenance` Step 1 (`Gap:`/`Fix:` — no date, no outcome label,
@@ -619,7 +619,7 @@ base), the script writes `IMPLEMENT|commit-push|skip|…` and exits 4 — the li
 ```bash
 source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
 bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/implement-diff-check.sh" \
-  --base-ref "origin/${BASE_BRANCH:-develop}" --log-file "$LOG_FILE" \
+  --base-ref "origin/${BASE_BRANCH:-develop}" --log-file "$TAP_LOG" \
   "$WORKTREE_PATH" # one argument per affected repo's worktree
 _idc_rc=$?
 ```

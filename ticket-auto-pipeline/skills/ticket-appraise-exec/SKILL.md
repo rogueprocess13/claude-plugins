@@ -177,7 +177,7 @@ Omit this section if there are none.}
 ```bash
 source ~/.claude/skills/lib/planner-artifacts.sh
 source ~/.claude/skills/lib/appraise-exec-planned.sh
-adopt_planner_proposal "{TICKET-ID}" "{change-name}" "$LOG_FILE"
+adopt_planner_proposal "{TICKET-ID}" "{change-name}" "$TAP_LOG"
 case $? in
   0) echo "Planner proposal adopted — skipping /opsx:propose re-derivation" ;;
   1) echo "No planner proposal found — running /opsx:propose to derive plan"
@@ -356,7 +356,7 @@ Map: clear → PASS, CONFLICT → WARN, ADJACENT → WARN, SUPERSEDES → PASS.
 
 ```bash
 source ~/.claude/skills/lib/adversarial-rounds.sh
-ADV_PRIOR_BLOCKS=$(adversarial_round_count "${LOG_FILE:-}")
+ADV_PRIOR_BLOCKS=$(adversarial_round_count "${TAP_LOG:-}")
 ADV_ROUND=$((ADV_PRIOR_BLOCKS + 1))
 echo "ADV_PRIOR_BLOCKS=${ADV_PRIOR_BLOCKS} ADV_ROUND=${ADV_ROUND}"
 bash ~/.claude/skills/lib/plog.sh EXEC adversarial-review start "Spawning adversarial agent (round ${ADV_ROUND})"

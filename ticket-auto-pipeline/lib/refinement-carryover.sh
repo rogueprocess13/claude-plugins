@@ -320,8 +320,9 @@ refinement_carryover_drift_check() {
     lhash="${lhash:0:12}"
     [ -f "$notes" ] || : >"$notes"
     _rco_mirror_questions "$notes" "- [needs-human] Linear description differs from the body Refinement evaluated (${class}) — run \`/ticket-planner resume ${init} --refresh-bodies\` or confirm the Linear text. (carry-over body-drift:${lhash:-unknown})" || true
-    if [ -n "${LOG_FILE:-}" ]; then
-      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|body-drift|info|${class}" >>"$LOG_FILE" 2>/dev/null || true
+    local _rc_log="${LOG_FILE:-${TAP_LOG:-}}"
+    if [ -n "$_rc_log" ]; then
+      echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|body-drift|info|${class}" >>"$_rc_log" 2>/dev/null || true
     fi
     ;;
   esac

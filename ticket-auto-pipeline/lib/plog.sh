@@ -47,6 +47,11 @@ if ! declare -f _plog >/dev/null 2>&1; then
   source "$_PLOG_LIB_DIR/heartbeat.sh"
 fi
 
+# TAP_LOG is the name phase agents export (GitHub #575). An
+# unsubstituted "{LOG_FILE}" placeholder falls back the same way flow-run.sh's
+# --log-file does, instead of creating a file literally named that.
+case "${LOG_FILE:-}" in "{"*"}") LOG_FILE="" ;; esac
+LOG_FILE="${LOG_FILE:-${TAP_LOG:-}}"
 if [ -z "${LOG_FILE:-}" ]; then
   exit 0
 fi

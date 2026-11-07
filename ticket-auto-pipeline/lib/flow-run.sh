@@ -29,7 +29,8 @@
 #   --log-file FILE   Pipeline log to record failures in. May appear anywhere in
 #                     the argument list; it is consumed here and never passed to
 #                     flow.sh. An empty value, or an unsubstituted
-#                     placeholder like "{LOG_FILE}", falls back to $LOG_FILE. The
+#                     placeholder like "{LOG_FILE}", falls back to $LOG_FILE, then
+#                     $TAP_LOG (the name phase agents export, #575). The
 #                     resolved path is exported to flow.sh as LOG_FILE, so the
 #                     verdict gate and flow.sh's own log lines see the same log.
 #   Every other argument (--data k=v, --provenance X, --override "reason",
@@ -81,7 +82,7 @@ _fr_usage() {
   echo "Usage: flow-run.sh [--log-file FILE] <TICKET-ID> <TRIGGER> [flow.sh args...]" >&2
 }
 
-_fr_log_file="${LOG_FILE:-}"
+_fr_log_file="${LOG_FILE:-${TAP_LOG:-}}"
 _fr_pos=()
 _fr_pass=()
 # A --log-file value is used only when it is non-empty and not an

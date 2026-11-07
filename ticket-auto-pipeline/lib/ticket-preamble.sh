@@ -479,9 +479,11 @@ ticket_preamble_run() {
     _ctx["$_k"]="$_v"
   done < <(ticket_preamble_project_context "$PROJECT_DIR")
 
-  # A phase that starts without this file runs with no REPOS_ROOT and no
-  # LINEAR_API_KEY and says nothing about it — the skill preamble sources it
-  # with `|| true`. So the write is checked, and a failure returns a code that
+  # A phase that starts without this file runs with no REPOS_ROOT and says
+  # nothing about it — the skill preamble sources it with `|| true`. (The
+  # file no longer carries LINEAR_API_KEY, #578: phases inherit the key from
+  # the process environment, which the preflight above has already proved
+  # usable.) So the write is checked, and a failure returns a code that
   # means "do not spawn" rather than letting `set -e` collapse it into 1.
   source "$_TP_LIB_DIR/spawn-helper.sh"
   spawn_write_env \
@@ -502,7 +504,8 @@ ticket_preamble_run() {
     TICKET_BRANCH="$TICKET_BRANCH" \
     UAT_POLICY="$UAT_POLICY" \
     AUTONOMY="$AUTONOMY" \
-    MERGE_POLICY="$MERGE_POLICY" >/dev/null || return $TP_ENV_WRITE_FAILED
+    MERGE_POLICY="$MERGE_POLICY" \
+    TAP_LOG="$LOG_FILE" >/dev/null || return $TP_ENV_WRITE_FAILED
   [ -s "/tmp/ticket-auto-${TICKET_ID}-env.sh" ] || return $TP_ENV_WRITE_FAILED
 
   # 0.6 tail — autonomy and provenance. A mode that differs from the recorded

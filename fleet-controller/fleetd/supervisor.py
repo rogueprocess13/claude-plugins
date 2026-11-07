@@ -2708,9 +2708,14 @@ def spawn_worker(tid, generation, state_dir, reason='dispatched',
         if start_ticks:
             worker_env['FLEET_WORKER_START_TICKS'] = start_ticks
         worker_env.update(_NON_INTERACTIVE_ENV)
-        # Last, so a phase's own LOG_FILE/HB_LOG_FILE win over anything
+        # Never hand a worker a bare LOG_FILE inherited from fleetd's own
+        # environment (GitHub #575): Spring Boot reads it as its log file, so
+        # a `mvn test` in the worker would append to that path. Phases get
+        # their pipeline log as TAP_LOG via extra_env below.
+        worker_env.pop('LOG_FILE', None)
+        # Last, so a phase's own TAP_LOG/HB_LOG_FILE win over anything
         # inherited from the daemon's environment — fleetd may itself have
-        # been started with a LOG_FILE set, and a phase writing its bracket
+        # been started with one set, and a phase writing its bracket
         # into the wrong log is silent and unrecoverable.
         if extra_env:
             worker_env.update({k: str(v) for k, v in extra_env.items()})

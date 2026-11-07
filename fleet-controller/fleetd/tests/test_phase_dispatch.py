@@ -788,11 +788,23 @@ class TestPhaseSpawnConstruction(unittest.TestCase):
             self.table, 'STEP_1', 'CRE-9', '/w/logs/CRE-9-pipeline.log',
             hb_log_file='/w/logs/CRE-9-hb.log',
             claude_log_file='/tmp/CRE-9-claude.log')
-        self.assertEqual(spawn.env['LOG_FILE'], '/w/logs/CRE-9-pipeline.log')
+        self.assertEqual(spawn.env['TAP_LOG'], '/w/logs/CRE-9-pipeline.log')
         self.assertEqual(spawn.env['HB_LOG_FILE'], '/w/logs/CRE-9-hb.log')
         self.assertEqual(spawn.env['CLAUDE_LOG_FILE'], '/tmp/CRE-9-claude.log')
         self.assertEqual(spawn.env['HUSKY'], '0')
         self.assertNotIn('export LOG_FILE', spawn.prompt)
+
+    def test_pipeline_log_is_never_exported_as_bare_log_file(self):
+        """GitHub #575 — Spring Boot maps a LOG_FILE env var to
+        logging.file.name, so a worker's `mvn test` appended its application
+        log to the pipeline log. Neither spawn builder may set it."""
+        for spawn in (
+                build_phase_spawn(self.table, 'STEP_1', 'CRE-9',
+                                  '/w/logs/CRE-9-pipeline.log'),
+                build_pr_iterate_spawn('CRE-9', '/w/logs/CRE-9-pipeline.log')):
+            self.assertNotIn('LOG_FILE', spawn.env)
+            self.assertEqual(spawn.env['TAP_LOG'],
+                             '/w/logs/CRE-9-pipeline.log')
 
     def test_phase_identity_is_in_the_environment(self):
         spawn = build_phase_spawn(self.table, 'STEP_4_5', 'CRE-9', '/w/log')

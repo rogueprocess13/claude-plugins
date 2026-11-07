@@ -104,8 +104,9 @@ tracker_read() {
 _tracker_read_log_fail() {
   local class="$1"
   local site="$2"
-  if [ -n "${LOG_FILE:-}" ]; then
-    _plog "$LOG_FILE" "META" "tracker-read-fail" "fail" "class=${class} site=${site}"
+  local _trf_log="${LOG_FILE:-${TAP_LOG:-}}"
+  if [ -n "$_trf_log" ]; then
+    _plog "$_trf_log" "META" "tracker-read-fail" "fail" "class=${class} site=${site}"
   fi
   hb_source "tracker-read-fail" "fail" "class=${class} site=${site}" "{\"class\":\"${class}\"}"
 }

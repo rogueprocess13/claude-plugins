@@ -9,7 +9,7 @@ You are documenting a completed implementation for future AI agents. Your input 
 
 ## Logging (--from-auto)
 
-If `$LOG_FILE` is set (passed by the `ticket-auto` orchestrator): read `~/.claude/skills/pipeline-log-format.md`. Write progress entries at step boundaries. Phase is `MAINTENANCE`.
+If `$TAP_LOG` is set (passed by the `ticket-auto` orchestrator): read `~/.claude/skills/pipeline-log-format.md`. Write progress entries at step boundaries. Phase is `MAINTENANCE`.
 
 ## Heartbeat (--from-auto)
 

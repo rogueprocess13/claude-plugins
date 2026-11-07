@@ -22,7 +22,7 @@ Where `--data` supplies trigger-specific values (e.g. `complexity=simple`, `outc
 This skill is a thin wrapper around `flow.sh`. All state machine logic and the local manifest write are handled deterministically by the script — `flow.sh` performs no tracker I/O (tracker-flow-projection-cutover). It reads and writes only `workflow.json` and the ticket's local manifest, then emits one outbox event and drains it. `$LINEAR_API_KEY` is not required to invoke this skill; it is required only for the board projection to actually reach Linear (the driver `flow.sh` dispatches to at exit, via `outbox-drain.sh`), and its absence never fails or delays a transition.
 
 ```bash
-bash ~/.claude/skills/lib/flow-run.sh --log-file "${LOG_FILE:-}" "<TICKET-ID>" "<TRIGGER>" [--data key=value] [--dry-run] [--override REASON]
+bash ~/.claude/skills/lib/flow-run.sh --log-file "${TAP_LOG:-}" "<TICKET-ID>" "<TRIGGER>" [--data key=value] [--dry-run] [--override REASON]
 ```
 
 `lib/flow-run.sh` is the one shell entry point for a trigger. It resolves `flow.sh`

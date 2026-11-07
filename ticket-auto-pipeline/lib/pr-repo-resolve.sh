@@ -32,7 +32,7 @@ declare -f _pe_origin_slug >/dev/null 2>&1 || source "$_PRR_DIR/pr-evidence.sh" 
 declare -f ticket_pipeline_pr_ref >/dev/null 2>&1 || source "$_PRR_DIR/manifest-read.sh" 2>/dev/null || true
 
 pr_repo_resolve() {
-  local tid="" log="${LOG_FILE:-}" tdir=""
+  local tid="" log="${LOG_FILE:-${TAP_LOG:-}}" tdir=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --log-file | --ticket-dir)

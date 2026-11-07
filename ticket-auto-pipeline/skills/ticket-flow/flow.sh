@@ -168,6 +168,12 @@ fi
 
 # ── Pipeline log helper ─────────────────────────────────────────────────────
 
+# The pipeline log path arrives as LOG_FILE (flow-run.sh, older callers) or
+# as TAP_LOG, the name phase agents export since GitHub #575 — a bare
+# LOG_FILE in an agent's environment is read by Spring Boot as its own log
+# file, so the exported name is namespaced. Shell-local from here on.
+LOG_FILE="${LOG_FILE:-${TAP_LOG:-}}"
+
 # --dry-run is side-effect free (review QA-4): no log lines, no heartbeat,
 # no manifest bootstrap, no pending-event replay. Every writer below checks
 # DRY_RUN itself, so a refusal path (exit 8/9/10/11) still reports on

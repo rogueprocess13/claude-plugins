@@ -70,8 +70,10 @@ print(json.dumps(body))
   }
 
   local response
-  if ! response=$(curl -sS --max-time 10 \
-    -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+  # The token reaches curl on stdin (-H @-), never argv: a command line is
+  # readable by every local user through ps / /proc/<pid>/cmdline.
+  if ! response=$(printf 'Authorization: Bearer %s\n' "$SLACK_BOT_TOKEN" | curl -sS --max-time 10 \
+    -H @- \
     -H "Content-Type: application/json; charset=utf-8" \
     -d "$payload" \
     https://slack.com/api/chat.postMessage 2>&1); then
