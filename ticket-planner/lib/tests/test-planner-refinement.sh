@@ -877,6 +877,17 @@ if [ "$(echo "$summary" | grep -c 'Advisory (does not block)')" = "1" ] &&
 else
   fail "planner_refinement_advisory_summary: one Advisory line for the ready child" "got: $summary"
 fi
+# (e) audit MISSED entries are listed (security ones marked), never silent
+mpath=$(get_ticket_manifest_path PRO-701)
+jq '.ready.semantic.missed = [{"code":"MISSING_CORE_AC","reason":"an innerHTML implementation passes every criterion"},{"code":"EDGE_CASE_GAP","reason":"a 5xx leaves the page blank"}]' \
+  "$mpath" >"${mpath}.tmp" && mv "${mpath}.tmp" "$mpath"
+summary_m=$(planner_refinement_advisory_summary "$TDG_INIT" 2>/dev/null) || summary_m=""
+if echo "$summary_m" | grep -qxF "Advisory (does not block) PRO-701 Security MISSED MISSING_CORE_AC: an innerHTML implementation passes every criterion" &&
+  echo "$summary_m" | grep -qxF "Advisory (does not block) PRO-701 MISSED EDGE_CASE_GAP: a 5xx leaves the page blank"; then
+  pass "planner_refinement_advisory_summary: audit MISSED entries listed, security one marked"
+else
+  fail "planner_refinement_advisory_summary: audit MISSED entries" "got: $summary_m"
+fi
 summary_none=$(planner_refinement_advisory_summary "$INIT_ID" 2>/dev/null) || summary_none="(rc!=0)"
 if [ -z "$summary_none" ]; then
   pass "planner_refinement_advisory_summary: prints nothing for an initiative with no finding"
