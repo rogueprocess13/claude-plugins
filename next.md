@@ -1447,8 +1447,9 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
         - [ ] F33 (C): unquoted `find` prune patterns glob against the caller's cwd. Reproduced: old lib 57 from the
               work root, 0 from `/`; fixed lib 0. Fix on `fix/planner-crosscheck-cwd-glob` (planner 0.34.1), not merged.
         - [x] F35 (D): sandbox `CLAUDE.md` set `skip-worktree`, value kept; runbook updated.
-        - [ ] Before iter 05: land #594 → #596 → #595; security regex misses XSS worded as "render as text, never
-              as HTML"; earlier `MISSED` advisories dropped; `advisory_summary` empty in a fresh shell; grill-me
+        - [ ] Before iter 05: land #594 → #596 → #595; three queued gate bugs (security regex wording, earlier
+              `MISSED` advisories dropped, `advisory_summary` empty in a fresh shell) fixed on
+              `fix/planner-draft-gate-queued-bugs` (planner 0.34.2), not merged; grill-me
               `## Assumptions & Defaults` + failure-behaviour probe (F36); F37 runbook note; abandon the iter 04
               initiative; update plugins to the checkout and restart.
         - [ ] Watch in iter 05 (F34): no revision has yet been evaluated after applying, so the loop's second half is
