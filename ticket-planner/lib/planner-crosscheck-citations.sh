@@ -90,29 +90,25 @@ fi
 
 # ── Internal helpers ────────────────────────────────────────────────────────
 
-# Build the `find`/`grep` prune arguments for PLANNER_CROSSCHECK_EXCLUDE_DIRS.
-# Usage: eval "$(_planner_crosscheck_find_prune_args)"; find "$root" "${PRUNE_ARGS[@]}" ...
-_planner_crosscheck_find_prune_expr() {
-  local dir first=1
-  printf '('
-  for dir in "${PLANNER_CROSSCHECK_EXCLUDE_DIRS[@]}"; do
-    if [ "$first" -eq 1 ]; then
-      first=0
-    else
-      printf ' -o'
-    fi
-    printf ' -path */%s/*' "$dir"
-  done
-  printf ' )'
-}
-
 # Resolve a cited relative path under REPOS_ROOT.
 # Usage: _planner_crosscheck_resolve_path <repos_root> <relative_path>
 # Output: absolute path on stdout, or empty if not found.
 _planner_crosscheck_resolve_path() {
   local repos_root="$1" rel_path="$2"
-  local prune_expr
-  prune_expr=$(_planner_crosscheck_find_prune_expr)
+
+  # An array, never a string expanded unquoted: `*/.git/*` would glob against
+  # the caller's working directory. With several matches find aborts, and the
+  # stderr redirect below turns that into "not found" for every citation; with
+  # one match the directory silently stops being pruned (rehearsal F33).
+  local -a prune_args=("(")
+  local excl_dir
+  for excl_dir in "${PLANNER_CROSSCHECK_EXCLUDE_DIRS[@]}"; do
+    if [ "${#prune_args[@]}" -gt 1 ]; then
+      prune_args+=(-o)
+    fi
+    prune_args+=(-path "*/${excl_dir}/*")
+  done
+  prune_args+=(")")
 
   # A citation is sometimes written with a leading slash (e.g.
   # "/upload/UploadPageClient.tsx", shorthand for an app-router path).
@@ -140,8 +136,7 @@ _planner_crosscheck_resolve_path() {
   done
 
   local found
-  # shellcheck disable=SC2086
-  found=$(find "$repos_root" $prune_expr -prune -o "${anchored_prune[@]}" \
+  found=$(find "$repos_root" "${prune_args[@]}" -prune -o "${anchored_prune[@]}" \
     -type f -path "*/${escaped_rel_path}" -print 2>/dev/null | head -1)
   if [ -n "$found" ]; then
     echo "$found"
