@@ -402,6 +402,28 @@ spawn_write_env() {
 # defaults to "general-purpose" when the caller omits it — every dispatch
 # site SHOULD pass the value from SKILL.md's generated "Agent types" table
 # so a phase's tool allowlist and system prompt (agents/*.md) actually bind.
+# Every skill this plugin ships (skills/*/). Kept literal because this file is
+# also sourced from the synced ~/.claude/skills/lib, which has no skills/
+# sibling to list; lib/tests/test-spawn-skill-qualified.sh fails if it drifts.
+SPAWN_PLUGIN_SKILLS="adr-gate app-knowledge guidance-extractor nav-hints skill-docs ticket-appraise ticket-appraise-exec ticket-approve ticket-audit ticket-audit-exec ticket-auto ticket-batch-appraise ticket-batch-verify ticket-create ticket-critique ticket-detect-resume ticket-document ticket-env-check ticket-fleet-controller ticket-flow ticket-gate-reconcile ticket-implement ticket-overseer ticket-persona-refresh ticket-prescan ticket-pr-iterate ticket-pr-review ticket-reject ticket-reproduce ticket-retro ticket-setup ticket-verify wiki-maintenance"
+
+spawn_qualify_skill() {
+  # Plugin-qualify a bare name of one of this plugin's skills
+  # (/ticket-implement → /ticket-auto-pipeline:ticket-implement). A bare name
+  # resolves to a personal ~/.claude/skills/<name> copy first, so a stale copy
+  # there would silently shadow the plugin's phase skill (GitHub #569).
+  # Qualified names and names this plugin does not ship pass through as-is.
+  local s="$1" name
+  case "$s" in
+  /*:* | /) ;;
+  /*)
+    name="${s#/}"
+    case " $SPAWN_PLUGIN_SKILLS " in *" $name "*) s="/ticket-auto-pipeline:$name" ;; esac
+    ;;
+  esac
+  printf '%s\n' "$s"
+}
+
 spawn_agent_pre() {
   local PHASE=""
   local STEP=""
@@ -458,6 +480,8 @@ spawn_agent_pre() {
     echo "spawn_agent_pre: missing required parameters:$missing" >&2
     return 1
   fi
+
+  SKILL=$(spawn_qualify_skill "$SKILL")
 
   # If FROM_STEP is set, append to FLAGS
   if [ -n "$FROM_STEP" ]; then

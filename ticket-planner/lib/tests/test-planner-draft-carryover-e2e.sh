@@ -423,7 +423,7 @@ cp "${IDIR}/tickets/CRE-22/planner/tg.md" "${IDIR}/tickets/CRE-22/planner/body.m
 listed=$(planner_refinement_scan "$INIT")
 if grep -qx CRE-21 <<<"$listed" && [ -f "${PA2}/draft-passed" ] &&
   ! get_ticket_manifest_field CRE-21 ready | jq -e '.semantic' >/dev/null 2>&1 &&
-  grep -qE '\|META\|refinement-draft-import\|skip\|CRE-21 not-equivalent draft-passed round=2$' "$LOG" &&
+  grep -qE '\|META\|refinement-draft-import\|skip\|CRE-21 accepted draft-passed round=2$' "$LOG" &&
   grep -qE '\|META\|refinement-draft-import\|done\|CRE-22 from=DRAFT-b-api ' "$LOG"; then
   pass "accepted draft with an equivalent body: seeded and scanned; the ready sibling imported"
 else

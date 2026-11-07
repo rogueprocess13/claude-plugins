@@ -34,6 +34,8 @@
 #   planner_draft_readiness_token_map <INIT>     "<draft-token>\t<real-token>" lines
 #   planner_draft_readiness_rewrite <map-file> <to-draft|to-real>
 #                                                stdin → stdout token rewrite
+#   planner_draft_render_normalise               stdin → stdout, Linear's markdown
+#                                                re-rendering undone (conservative)
 #   planner_draft_readiness_equiv_text <map-file> <real|draft>
 #                                                stdin → normalised comparison text
 #   planner_draft_readiness_equiv_hash <map-file> <real|draft> <body-file>
@@ -339,12 +341,122 @@ planner_draft_readiness_rewrite() {
   ' "$map" -
 }
 
+# planner_draft_render_normalise — stdin → stdout. Undoes the markdown
+# re-rendering Linear applies to a stored description, so a draft and the
+# body Linear hands back compare equal (observed on real tickets):
+#   - `* ` list markers → `- ` (any indent; `+ ` is left alone — Linear does
+#     not emit it, and a leading `+`/`-` can be a sign);
+#   - task checkbox `- [X]` → `- [x]`;
+#   - a table separator row (the row right after a table's first row, leading
+#     pipe, two or more dashes per cell, alignment colons) → `|---|---|` with
+#     the same number of columns;
+#   - a backslash escape of markdown punctuation (`\#`, `\*`, `\_`, `\[`, …;
+#     never `\|`, `\\` or `\``) → the bare character, outside inline code;
+#   - `**` bold markers removed outside inline code, except between two word
+#     characters (`10**3` stays) — Linear splits a bold span around inline
+#     code: `**a (`x`)**` → `**a (**`x`**)**`;
+#   - blank lines dropped outside fenced blocks (Linear inserts one after a
+#     heading that had none).
+# Conservative on purpose: words, digits, spacing inside a line, inline code
+# spans, fenced blocks (CommonMark open/close rule), lines indented 4+
+# columns and lines with an unpaired backtick are never rewritten inline, so
+# a changed criterion, value or test-data item still compares unequal. No
+# non-blank line is added, removed or reordered, so headings and list items
+# — the carry-over's section and unit records, paired by position — keep
+# their count. CR is stripped first.
+planner_draft_render_normalise() {
+  awk '
+    function esc(c) { return index("#*_[](){}>+-.!~", c) > 0 }
+    function alnum(c) { return c ~ /^[A-Za-z0-9]$/ }
+    # Unescaped backticks; an odd count means a span this pass cannot pair,
+    # so the line is left as it is.
+    function ticks(s,   i, n, c, k) {
+      k = 0; n = length(s)
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (c == "\\") { i++; continue }
+        if (c == "`") k++
+      }
+      return k
+    }
+    function inline(s,   out, i, n, c, nx, pv, af, code) {
+      if (ticks(s) % 2) return s
+      out = ""; n = length(s); code = 0
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        nx = substr(s, i + 1, 1)
+        if (c == "\\" && nx == "`") { out = out c nx; i++; continue }
+        if (c == "`") { code = !code; out = out c; continue }
+        if (!code) {
+          if (c == "\\" && nx != "" && esc(nx)) { out = out nx; i++; continue }
+          if (c == "*" && nx == "*") {
+            pv = substr(s, i - 1, 1); af = substr(s, i + 2, 1)
+            # `10**3`, `a**b`: an operator between two word characters stays.
+            if (!(alnum(pv) && alnum(af))) { i++; continue }
+          }
+        }
+        out = out c
+      }
+      return out
+    }
+    function pipe_row(s) { return s ~ /^[ \t]*\|/ }
+    function sep_row(s,   t, n, k, cells, out) {
+      t = s
+      # A leading pipe and at least two dashes per cell: a data row of
+      # single-dash cells (`| - | - |`) or a list item (`- |`) is content.
+      if (t !~ /^[ \t]*\|([ \t]*:?--+:?[ \t]*\|)+[ \t]*(:?--+:?)?[ \t]*$/) return ""
+      sub(/^[ \t]*\|/, "", t); sub(/\|[ \t]*$/, "", t)
+      n = split(t, cells, "|")
+      out = "|"
+      for (k = 1; k <= n; k++) out = out "---|"
+      return out
+    }
+    # fence_open(s): sets fch/flen and returns 1 for a CommonMark fence line
+    # (at most 3 spaces of indent, 3+ backticks or tildes).
+    function lead(s,   i) { i = 1; while (substr(s, i, 1) == " ") i++; return i - 1 }
+    function run(s, at, ch,   i) { i = at; while (substr(s, i, 1) == ch) i++; return i - at }
+    function fence_open(s,   ind, ch, n) {
+      ind = lead(s); if (ind > 3) return 0
+      ch = substr(s, ind + 1, 1); if (ch != "`" && ch != "~") return 0
+      n = run(s, ind + 1, ch); if (n < 3) return 0
+      if (ch == "`" && index(substr(s, ind + 1 + n), "`") > 0) return 0
+      fch = ch; flen = n; return 1
+    }
+    function fence_close(s,   ind, n) {
+      ind = lead(s); if (ind > 3) return 0
+      n = run(s, ind + 1, fch); if (n < flen) return 0
+      return substr(s, ind + 1 + n) ~ /^[ \t]*$/
+    }
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (fence) { if (fence_close(line)) fence = 0; print line; p2 = p1; p1 = line; next }
+      if (fence_open(line)) { fence = 1; print line; p2 = p1; p1 = line; next }
+      if (line ~ /^[ \t]*$/) { p2 = p1; p1 = ""; next }
+      # A separator only as the second row of a table.
+      s = ""
+      if (pipe_row(p1) && !pipe_row(p2)) s = sep_row(line)
+      p2 = p1; p1 = line
+      if (s != "") { print s; next }
+      if (match(line, /^[ \t]*[*][ \t]+/)) {
+        pre = substr(line, 1, RLENGTH)
+        sub(/[*]/, "-", pre)
+        line = pre substr(line, RLENGTH + 1)
+      }
+      if (match(line, /^[ \t]*- \[X\]/)) line = substr(line, 1, RLENGTH - 2) "x]" substr(line, RLENGTH + 1)
+      # Indented (4+ columns) lines may be code: no inline rewriting.
+      if (line ~ /^(    |\t)/) { print line; next }
+      print inline(line)
+    }'
+}
+
 # planner_draft_readiness_equiv_text <map-file> <real|draft>
 # stdin → the text both sides are compared on: a real body is rewritten
 # to-draft first; then the Planner Context `**Generated:**` value becomes
-# PLANNER_DRAFT_GENERATED_TOKEN; then body-baseline.sh's normalisation
-# (CRLF → LF, trailing whitespace, trailing blank lines). Units can be fed
-# through it one at a time to compare them "modulo ids" (S4).
+# PLANNER_DRAFT_GENERATED_TOKEN; then planner_draft_render_normalise (Linear's
+# markdown re-rendering); then body-baseline.sh's normalisation (CRLF → LF,
+# trailing whitespace, trailing blank lines). Units can be fed through it one
+# at a time to compare them "modulo ids" (S4).
 planner_draft_readiness_equiv_text() {
   local map="$1" side="$2"
   _planner_refinement_source_baseline >/dev/null 2>&1 || {
@@ -361,7 +473,7 @@ planner_draft_readiness_equiv_text() {
   esac | PDR_TOK="$PLANNER_DRAFT_GENERATED_TOKEN" awk '
     /^\*\*Generated:\*\*/ { print "**Generated:** " ENVIRON["PDR_TOK"]; next }
     { print }
-  ' | _body_baseline_normalise
+  ' | planner_draft_render_normalise | _body_baseline_normalise
 }
 
 planner_draft_readiness_equiv_hash() {

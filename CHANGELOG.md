@@ -17,10 +17,10 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.78.0 / fleet-controller 0.44.3 (2026-10-30)
+## 0.83.0 / fleet-controller 0.45.0 (2026-11-07)
 
 VERIFY phase fixes: worktree creation (#591, #577) and attempt counting (#573, #572).
-Also moves `fleet-controller` to 0.44.3, because fleetd's `resolve_loop_counters` must
+Also moves `fleet-controller` to 0.45.0, because fleetd's `resolve_loop_counters` must
 count VERIFY attempts the same way as `detect-resume.sh`.
 
 ### Fixed
@@ -58,6 +58,73 @@ count VERIFY attempts the same way as `detect-resume.sh`.
   `<log>.verify-ctl`, never from log lines. A `META|verify-attempts-reset` line is audit
   only. A `zombie-detected:` close counts unless detect-resume.sh recorded its line number.
   Documented in `ticket-auto-pipeline/docs/verify-attempt-counting.md`.
+
+## 0.82.0 (2026-10-30)
+
+### Fixed
+- **Gate reconcile no longer counts the pipeline's own appraisal comment as user feedback**
+  (#568, #582). `lib/reconcile-comments.sh` matched the appraisal comment with an exact
+  `**Ticket appraised**` prefix, and appraise-exec agents sometimes write `**Ticket appraised.**`.
+  The comment then neither set the reconcile boundary nor was excluded, so it (and everything
+  since the earlier log fallback time) showed up in `UNPROCESSED_COMMENTS` and could hold the
+  gate for a spurious amendment cycle. The appraise-exec and gate-reconcile comment templates now
+  carry a hidden marker (`<!-- ticket-auto:appraisal -->` / `<!-- ticket-auto:amendment -->`),
+  and the script matches on it. Comments without the marker fall back to a tolerant heading match
+  (case-insensitive, optional punctuation inside the bold).
+- **Interactive `/ticket-auto` runs spawn the plugin's phase skills, not stale personal copies**
+  (#569). `skills/ticket-auto/SKILL.md` passed bare names (`SKILL=/ticket-implement`) to
+  `spawn_agent_pre`, and a bare name resolves to `~/.claude/skills/<name>` first. Every `SKILL=`
+  in the router is now plugin-qualified, and `spawn_agent_pre` qualifies any bare plugin skill
+  name itself (`spawn_qualify_skill`), so a regressed call site still spawns the plugin skill.
+  Guarded by `lib/tests/test-spawn-skill-qualified.sh`.
+
+## ticket-planner 0.34.0 (2026-10-30)
+
+Draft readiness fixes from a second offline replay of a dispatch rehearsal run. No DoR fixture,
+evaluator or ticket-auto-pipeline change.
+
+### Fixed
+- **A draft and its Linear-rendered ticket body now compare equal.** Linear re-renders a stored
+  description (`- ` → `* ` bullets, `[x]` → `[X]`, shortened table separator rows, `\#`
+  escapes, bold spans split around inline code, a blank line after a heading), so the
+  carry-over's equivalence check never matched and no draft verdict was ever imported. The new
+  `planner_draft_render_normalise` undoes exactly those changes before the comparison. It never
+  touches words, values, inline code or fenced blocks, so a changed criterion, test-data value,
+  table cell or code span still compares unequal (tested both ways).
+- **Rendering no longer makes units look changed to the carry-over.** The draft-passed seed
+  hashes units and sections on the same normalised text, so a demoted or accepted draft finding
+  is no longer re-raised as a blocker at Refinement because Linear re-rendered its unit.
+- **The carry-over skip line names the real reason** (`not-equivalent`, `accepted`,
+  `no-semantic`, `equivalence-unknown` or `import-refused:<rc>`) instead of always
+  `not-equivalent`.
+- **A revision that contradicts a frozen section is reverted, not halted on.** The revise prompt
+  now lists every section the agent may not edit (Technical Context included) as one it must
+  not contradict. As a deterministic backstop, a verified blocking structural code
+  (`CONTRADICTORY_REQUIREMENTS`, …) on a unit the revision changed, absent before the round,
+  reverts that spec's revision (`reverted:REVISION_REGRESSION`, reason class `reverted`) and
+  restores the pre-round verdict, instead of halting the gate on a finding no round can fix.
+  The pre-round copy lives outside the workspace, so an agent cannot forge it.
+- **Audit MISSED entries are no longer stored and ignored.** A MISSED entry that matches the
+  security rule (with a known, blocking, non-structural code) becomes a blocking finding and
+  takes the security path: the next revise round, else a round-limit demotion shown in the
+  SECURITY warn line, pass output, halt report and epic summary. Other entries are listed as
+  "Audit advisories" in the gate's pass output and halt report, and Refinement's advisory
+  summary lists the real tickets' MISSED entries.
+- **SKILL.md step 1e runs its Bash calls with `timeout: 600000`.** Settling a revise round
+  (guards plus a Crosscheck re-run) took about 7 minutes and overran the 120 s default.
+
+### Security
+- The normaliser is conservative by construction: CommonMark fence tracking (fence character
+  and length), no inline rewriting of indented lines or lines with an unpaired backtick, an
+  escaped backtick never toggles inline code, `\|` and `\\` stay escaped, `**` between two word
+  characters (`10**3`) stays, and a separator row is recognised only as a table's second row
+  with two or more dashes per cell. Negative tests pin each of these.
+- A revision-regression revert restores the spec from a copy outside the workspace and only
+  while the current spec is the one the revision produced, so a later hand edit is never
+  undone; stale copies are dropped at gate start and close. The Crosscheck-regression revert
+  now restores from the same outside copy when it exists.
+- Audit MISSED reasons are stored with control characters replaced and capped at 500
+  characters before they reach a report, the revise prompt or the Refinement summary.
 
 ## ticket-planner 0.33.0 (2026-10-30)
 

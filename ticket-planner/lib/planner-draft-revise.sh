@@ -786,7 +786,13 @@ Behaviour\`, \`## Expected Behaviour\`), \`## Technical Context\`, \`## Test Use
   "admin@example.com" or "invoice INV-42". Seeded data and credentials are Test
   Data concerns you may not touch.
 - Every addition must be derivable from the intent, the brief, the consensus or
-  the spec's own behaviour section, and must not contradict them.
+  the spec's own behaviour section, and must not contradict them or any section
+  you may not edit: the behaviour section, \`## Technical Context\` (its code,
+  defaults and fallbacks included), \`## Test User\`, \`## Test Data\` sections,
+  \`## Navigation Path\` and \`## Out of Scope\`. When the only fix would contradict
+  one of them, rebut the finding instead. A revision that makes the evaluator
+  raise a new structural finding (such as contradictory requirements) is
+  reverted.
 - When a finding is wrong (already covered, or out of scope by the intent), write
   a rebuttal instead of an edit.
 - When a finding is right but needs a product decision that no source (intent,

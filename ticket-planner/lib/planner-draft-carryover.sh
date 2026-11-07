@@ -231,8 +231,21 @@ planner_draft_carryover_ticket() {
   # another with rc 2). An accepted draft still holds the blocking findings
   # the operator accepted, so importing it would re-halt Refinement on them:
   # it takes the draft-passed scan instead.
-  if [ "$status" = ready ] && [ -s "${dir}/semantic.json" ] &&
-    planner_draft_readiness_equivalent "$map" "$body_file" "${dir}/body.md"; then
+  # `why` names the real reason the import did not happen (logged on the
+  # skip line): accepted, no-semantic, not-equivalent, equivalence-unknown
+  # or import-refused:<rc>.
+  local why="accepted" eq_rc=0
+  if [ "$status" = ready ] && [ ! -s "${dir}/semantic.json" ]; then
+    why="no-semantic"
+  elif [ "$status" = ready ]; then
+    planner_draft_readiness_equivalent "$map" "$body_file" "${dir}/body.md" || eq_rc=$?
+    case "$eq_rc" in
+    0) ;;
+    1) why="not-equivalent" ;;
+    *) why="equivalence-unknown" ;;
+    esac
+  fi
+  if [ "$status" = ready ] && [ -s "${dir}/semantic.json" ] && [ "$eq_rc" -eq 0 ]; then
     local lin="null"
     [ -s "${dir}/lineage.json" ] && lin="${dir}/lineage.json"
     rc=0
@@ -243,6 +256,7 @@ planner_draft_carryover_ticket() {
       echo import
       return 0
     fi
+    why="import-refused:${rc}"
   fi
 
   # Draft-passed scan: not equivalent, import refused, or accepted.
@@ -254,7 +268,7 @@ planner_draft_carryover_ticket() {
     printf '%s %s\n' "$slug" "$(cut -d' ' -f1 "${dir}/verdict")" >"${pdir}/${PLANNER_DRAFT_PASSED_MARKER}"
     round=$(echo "$prior" | jq -r '(.round // 0) + 1')
     planner_state_write "$init" "META" "refinement-draft-import" "skip" \
-      "${tid} not-equivalent draft-passed round=${round}"
+      "${tid} ${why} draft-passed round=${round}"
     echo draft-passed
     return 0
   fi

@@ -133,7 +133,7 @@ Every agent spawn follows this 3-step pattern:
    _prompt=$(spawn_agent_pre \
      PHASE=<phase> STEP=<step> TICKET_ID={TICKET-ID} \
      LOG_FILE={LOG_FILE} HB_LOG_FILE={HB_LOG_FILE} CLAUDE_LOG_FILE=$CLAUDE_LOG_FILE \
-     SKILL=/ticket-<skill> FLAGS="--from-auto" \
+     SKILL=/ticket-auto-pipeline:ticket-<skill> FLAGS="--from-auto" \
      AGENT_TYPE="<subagent_type from the Agent types table>" \
      FROM_STEP={<FROM>} \
      DESCRIPTION="<what the agent does>" \
@@ -372,10 +372,10 @@ if flock -n "$lock_fd"; then
   _prompt=$(spawn_agent_pre \
     PHASE=MAINTENANCE STEP=prescan TICKET_ID={TICKET-ID} \
     LOG_FILE={LOG_FILE} HB_LOG_FILE={HB_LOG_FILE} CLAUDE_LOG_FILE=$CLAUDE_LOG_FILE \
-    SKILL=/ticket-prescan FLAGS="--from-auto" \
+    SKILL=/ticket-auto-pipeline:ticket-prescan FLAGS="--from-auto" \
     AGENT_TYPE="ticket-auto-pipeline:ticket-prescan-agent" \
     DESCRIPTION="Refresh prescan docs for $slug ($PRESCAN_STATUS)" \
-    INSTRUCTIONS="Run /ticket-prescan --from-auto on $repo. Repo slug: $slug. Cadence: $PRESCAN_STATUS.")
+    INSTRUCTIONS="Run /ticket-auto-pipeline:ticket-prescan --from-auto on $repo. Repo slug: $slug. Cadence: $PRESCAN_STATUS.")
 
   # Spawn: the Agent tool is NOT a bash function. Invoke it as a tool call (see
   # "Agent spawn template" step 2) with prompt = the text after AGENT_PROMPT= in
@@ -468,7 +468,7 @@ After state detection, enter the stateless dispatch loop. Re-run `detect-resume.
 
 ### STEP_1 — Appraise
 
-**First, fail fast on a structurally incomplete planned ticket** (issue #410). `gate-check.sh --mode planned` runs the entry gate's own Check 2.7 (template, required body sections, DoR readiness) before any agent is spawned. A planned ticket missing `## Test User`, `## Scope` (a `| Layer | Service | Area |` table) or `## Navigation Path` used to be stopped only at STEP_2_5, after APPRAISE and EXEC had both run to completion. Ad-hoc tickets pass straight through without a Linear call, and a failed issue fetch defers to the entry gate rather than stopping here:
+**First, fail fast on a structurally incomplete planned ticket** (issue #410). `gate-check.sh --mode planned` runs the entry gate's own Check 2.7 (template, required body sections, DoR readiness) before any agent is spawned. Ad-hoc tickets pass straight through without a Linear call, and a failed issue fetch defers to the entry gate rather than stopping here:
 
 ```bash
 _gate_sh="${HOME}/.claude/skills/lib/gate-check.sh"
@@ -497,7 +497,7 @@ hb-wrap.sh gate "ticket-claimed" "ok" "ticket claimed — Todo + claimed label +
 ```
 
 ```
-STEP=appraise PHASE=APPRAISE SKILL=/ticket-appraise FROM_STEP={APPRAISE_FROM}
+STEP=appraise PHASE=APPRAISE SKILL=/ticket-auto-pipeline:ticket-appraise FROM_STEP={APPRAISE_FROM}
 DESCRIPTION="Investigate the ticket and produce complexity score"
 INSTRUCTIONS="Follow the skill exactly."
 NEXT_PHASE=APPRAISE
@@ -506,7 +506,7 @@ NEXT_PHASE=APPRAISE
 ### STEP_1_5 — Reproduce (bug tickets only)
 
 ```
-STEP=reproduce PHASE=REPRODUCE SKILL=/ticket-reproduce FROM_STEP={REPRODUCE_FROM}
+STEP=reproduce PHASE=REPRODUCE SKILL=/ticket-auto-pipeline:ticket-reproduce FROM_STEP={REPRODUCE_FROM}
 DESCRIPTION="Reproduce the bug and capture evidence"
 INSTRUCTIONS="Follow the skill exactly."
 NEXT_PHASE=REPRODUCE
@@ -515,7 +515,7 @@ NEXT_PHASE=REPRODUCE
 ### STEP_2 — Appraise Exec
 
 ```
-STEP=exec PHASE=EXEC SKILL=/ticket-appraise-exec FROM_STEP={EXEC_FROM}
+STEP=exec PHASE=EXEC SKILL=/ticket-auto-pipeline:ticket-appraise-exec FROM_STEP={EXEC_FROM}
 DESCRIPTION="Create implementation artifacts (simple-fix.md or OpenSpec change)"
 INSTRUCTIONS="Follow the skill exactly."
 NEXT_PHASE=EXEC
@@ -564,7 +564,7 @@ fi
 ```
 
 ```
-STEP=reconcile PHASE=GATE SKILL=/ticket-gate-reconcile
+STEP=reconcile PHASE=GATE SKILL=/ticket-auto-pipeline:ticket-gate-reconcile
 DESCRIPTION="Reconcile comments after gate hold and re-approval"
 INSTRUCTIONS="Follow the skill exactly. Load context from env.sh, pipeline log, and artifact files."
 NEXT_PHASE=GATE
@@ -598,7 +598,7 @@ agent timeout directly (harness-controlled), but pre-warming reduces the
 risk of timeout during initial context load.
 
 ```
-STEP=implement PHASE=IMPLEMENT SKILL=/ticket-implement FROM_STEP={IMPLEMENT_FROM}
+STEP=implement PHASE=IMPLEMENT SKILL=/ticket-auto-pipeline:ticket-implement FROM_STEP={IMPLEMENT_FROM}
 EXTRA_FLAGS="--from-auto --mode extract"
 DESCRIPTION="Implement the changes described in the artifact"
 INSTRUCTIONS="Use Serena for all code navigation. For openspec tickets: first read tasks.md in full, then proceed task by task. Pre-warm by reading all task descriptions before starting implementation."
@@ -686,7 +686,7 @@ fi
 **If PHASE_INSPECTOR_READY is not "skip":** spawn the guidance-extractor-agent using the standard pattern:
 
 ```
-STEP=phase-inspector-implement PHASE=IMPLEMENT SKILL=/guidance-extractor
+STEP=phase-inspector-implement PHASE=IMPLEMENT SKILL=/ticket-auto-pipeline:guidance-extractor
 AGENT_TYPE=ticket-auto-pipeline:guidance-extractor-agent
 EXTRA_FLAGS="--from-auto --mode extract"
 DESCRIPTION="Phase inspector for IMPLEMENT"
@@ -752,7 +752,7 @@ fi
 ```
 
 ```
-STEP=verify PHASE=VERIFY SKILL=/ticket-verify FROM_STEP={VERIFY_FROM}
+STEP=verify PHASE=VERIFY SKILL=/ticket-auto-pipeline:ticket-verify FROM_STEP={VERIFY_FROM}
 EXTRA_FLAGS="--from-auto --mode extract"
 DESCRIPTION="Run Playwright UAT verification"
 INSTRUCTIONS="Follow the skill exactly. Use per-criterion checkpointing: after each criterion passes, write VERIFY|checkpoint|done|criterion-{N}-pass to LOG_FILE. On a resume, take the criteria already passed in THIS attempt from lib/verify-checkpoint.sh (see the skill's Checkpoint resume rule) — never from an earlier attempt. PHASE_RESULT_ATTEMPT=$(({VERIFY_ATTEMPTS} + 1)) — emit this verbatim as the ATTEMPT field of your phase result block."
@@ -811,7 +811,7 @@ fi
 **If PHASE_INSPECTOR_READY is not "skip":** spawn the guidance-extractor-agent:
 
 ```
-STEP=phase-inspector-verify PHASE=VERIFY SKILL=/guidance-extractor
+STEP=phase-inspector-verify PHASE=VERIFY SKILL=/ticket-auto-pipeline:guidance-extractor
 AGENT_TYPE=ticket-auto-pipeline:guidance-extractor-agent
 EXTRA_FLAGS="--from-auto --mode extract"
 DESCRIPTION="Phase inspector for VERIFY"
@@ -861,7 +861,7 @@ esac
 The router manages the pr-review→pr-iterate→re-implement→verify→pr-review cycle.
 
 ```
-STEP=pr-review PHASE=PR-REVIEW SKILL=/ticket-pr-review
+STEP=pr-review PHASE=PR-REVIEW SKILL=/ticket-auto-pipeline:ticket-pr-review
 DESCRIPTION="Review the PR for code quality and correctness"
 INSTRUCTIONS="Follow the skill exactly. Return verdict: ✅ ✅, ⚠️, or ❌. PHASE_RESULT_ATTEMPT=$(({ITERATION} + 1)) — emit this verbatim as the ATTEMPT field of your phase result block."
 NEXT_PHASE=PR-REVIEW
@@ -912,7 +912,7 @@ fi
 **If PHASE_INSPECTOR_READY is not "skip":** spawn the guidance-extractor-agent:
 
 ```
-STEP=phase-inspector-pr-review PHASE=PR-REVIEW SKILL=/guidance-extractor
+STEP=phase-inspector-pr-review PHASE=PR-REVIEW SKILL=/ticket-auto-pipeline:guidance-extractor
 AGENT_TYPE=ticket-auto-pipeline:guidance-extractor-agent
 EXTRA_FLAGS="--from-auto --mode extract"
 DESCRIPTION="Phase inspector for PR-REVIEW"
@@ -944,7 +944,7 @@ Then evaluate verdict:
 **PR iteration loop:**
 
 ```
-STEP=pr-iterate PHASE=PR-REVIEW SKILL=/ticket-pr-iterate
+STEP=pr-iterate PHASE=PR-REVIEW SKILL=/ticket-auto-pipeline:ticket-pr-iterate
 DESCRIPTION="Iterate on PR feedback"
 INSTRUCTIONS="Apply the requested changes from the PR review."
 NEXT_PHASE=PR-REVIEW
@@ -985,7 +985,7 @@ bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/auto-merge.sh" \
 Sequential spawns (non-blocking — `FAIL_ACTION=warn-continue`):
 
 ```
-STEP=document PHASE=MAINTENANCE SKILL=/ticket-document
+STEP=document PHASE=MAINTENANCE SKILL=/ticket-auto-pipeline:ticket-document
 DESCRIPTION="Generate ai-context.md documentation"
 INSTRUCTIONS="Follow the skill exactly."
 FAIL_ACTION=warn-continue
@@ -993,7 +993,7 @@ NEXT_PHASE=MAINTENANCE
 ```
 
 ```
-STEP=wiki-maintenance PHASE=MAINTENANCE SKILL=/wiki-maintenance
+STEP=wiki-maintenance PHASE=MAINTENANCE SKILL=/ticket-auto-pipeline:wiki-maintenance
 DESCRIPTION="Process wiki errata and update documentation"
 INSTRUCTIONS="Follow the skill exactly."
 FAIL_ACTION=warn-continue
@@ -1026,7 +1026,7 @@ fi
 ```
 
 ```
-STEP=pr-reconcile PHASE=PR-REVIEW SKILL=/ticket-pr-iterate
+STEP=pr-reconcile PHASE=PR-REVIEW SKILL=/ticket-auto-pipeline:ticket-pr-iterate
 DESCRIPTION="Reconcile PR comments from human reviewers"
 INSTRUCTIONS="Check for new human comments on the open PR. Apply amend/push-back/clean logic."
 NEXT_PHASE=PR-REVIEW
@@ -1117,9 +1117,9 @@ exit 1
 
 1. **No inline LLM reasoning**: Every conditional between dispatch calls is a deterministic bash comparison (string equality, numeric comparison, file existence check).
 2. **Stateless router**: All state lives in the pipeline log. The router re-reads it via `detect-resume.sh` before every dispatch decision.
-3. **3-step spawn pattern at every dispatch site**: `spawn_agent_pre` → agent spawn → `spawn_capture` (saves agent return value to `-{phase}-agent.log`) → `spawn_agent_post`. Token-tracker SubagentStop hook captures token counts only — agent output text logging requires the explicit `spawn_capture` step. The agent's return is handed to `spawn_capture` as a **file** (`RESULT_FILE=`, written with a quoted heredoc), never interpolated into a quoted `RESULT="..."` argument.
+3. **3-step spawn pattern at every dispatch site**: `spawn_agent_pre` → agent spawn → `spawn_capture` (saves agent return value to `-{phase}-agent.log`) → `spawn_agent_post`. The agent's return is handed to `spawn_capture` as a **file** (`RESULT_FILE=`, written with a quoted heredoc), never interpolated into a quoted `RESULT="..."` argument.
 7. **Phase results are observe-only**: `phase-result-parse.sh` runs at the three loop-bearing sites (IMPLEMENT, VERIFY, PR-REVIEW) between `spawn_capture` and `spawn_agent_post`, and only appends `META|phase-result|info|{json}` to the log. The router continues to route on its existing `RESULT=done|fail` and `VERDICT=` tokens. The parser emits no gate-stop code, and every call site is `|| true`-guarded, so a parser failure cannot halt a run. See [phase-result schema](../../docs/phase-result-schema.md).
-8. **Verdict recompute is observe-only (RLVR)**: `verdict-recompute.sh` runs immediately after `phase-result-parse.sh` on the VERIFY path only, deriving a verdict from `verify-session.md` independently of the agent's claim and appending `META|claim-delta|info|{json}` to the log. Same guarantees as item 7 — no gate-stop, `|| true`-guarded, never changes routing. IMPLEMENT and PR-REVIEW recompute rules are deferred. See [pipeline-log-format.md](../../pipeline-log-format.md#claim-delta-entries-rlvr-verdict-recompute).
+8. **Verdict recompute is observe-only (RLVR)**: `verdict-recompute.sh` runs immediately after `phase-result-parse.sh` on the VERIFY path only, deriving a verdict from `verify-session.md` independently of the agent's claim and appending `META|claim-delta|info|{json}` to the log. Same guarantees as item 7 — no gate-stop, `|| true`-guarded, never changes routing. See [pipeline-log-format.md](../../pipeline-log-format.md#claim-delta-entries-rlvr-verdict-recompute).
 4. **Sequential dispatch**: Agents are spawned one at a time. The dispatch loop guarantees only one agent is in flight at a time.
 5. **Bash gates**: Gate decisions are deterministic bash scripts (`gate-check.sh`, `outcome-label-check.sh`), not Claude agents.
 6. **Router-managed loops**: Verify retry and PR iteration loops are managed by the router tracking counters from the pipeline log, not by phase agents internally.
