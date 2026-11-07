@@ -55,6 +55,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-pr-evidence.sh
 	bash ticket-auto-pipeline/lib/tests/test-pipeline-finalize.sh
 	bash ticket-auto-pipeline/lib/tests/test-spawn-helper.sh
+	bash ticket-auto-pipeline/lib/tests/test-spawn-skill-qualified.sh
 	bash ticket-auto-pipeline/lib/tests/test-worker-hooks.sh
 	bash ticket-auto-pipeline/lib/tests/test-agent-activity.sh
 	bash ticket-auto-pipeline/lib/tests/test-tool-error-capture.sh
@@ -289,6 +290,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-draft-readiness-loop.sh
 	bash ticket-planner/lib/tests/test-planner-draft-carryover.sh
 	bash ticket-planner/lib/tests/test-planner-draft-carryover-e2e.sh
+	bash ticket-planner/lib/tests/test-planner-draft-render-normalise.sh
 	bash ticket-planner/lib/tests/test-skill-arg-substitution.sh
 
 test-planner-intent-gate:

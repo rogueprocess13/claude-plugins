@@ -2,8 +2,8 @@
 name: Playwright Web QA Specialist
 extends: qa-engineer
 detect:
-  - UAT_URL is set
-  - Playwright config file (playwright.config.ts, playwright.config.js)
+  - Playwright config file (playwright.config.*)
+  - or @playwright/test in package.json
 version: 1
 last-reviewed: 2026-06-26
 ---

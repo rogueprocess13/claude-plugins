@@ -367,6 +367,62 @@ FEATURE_HEADER_ONLY_NAV='## Acceptance Criteria
 _run_check "feature with only the Navigation path column header fails" 1 "Navigation Path" \
   "TEST-17" "feature" "$FEATURE_HEADER_ONLY_NAV" "true"
 
+# ── Large bodies under pipefail (issue #580) ─────────────────────────────────
+# `echo "$body" | grep -q` on a body larger than the pipe buffer lets grep
+# exit on an early match, kills echo with SIGPIPE, and pipefail (set at the
+# top of this file, as in gate-check.sh) turns a found section into "missing".
+# Each detector is run several times because the failure is scheduling-bound.
+BIG_PAD=$(printf 'x%.0s' $(seq 1 2000))
+BIG_PAD=$(for _i in $(seq 1 100); do printf '%s\n' "$BIG_PAD"; done)
+BIG_BODY='## Acceptance Criteria
+- [ ] Export works
+## Test User
+`admin@example.com` — password `admin`
+## Scope
+| Layer | Service | Area |
+| ----- | ------- | ---- |
+| FE    | gateway | page |
+## Navigation Path
+Clients > Matters
+Navigate via `Clients > Matters`
+| Step | Navigation path |
+| ---- | --------------- |
+| 1    | Clients > Matters |
+## Test Data Prerequisites
+- five handovers
+## Steps to Reproduce
+1. Log in as admin
+## Notes
+'"$BIG_PAD"
+_big_repeat() {
+  local i
+  for i in 1 2 3 4 5 6 7 8; do "$@" "$BIG_BODY" || return 1; done
+}
+_big_nav_rule4() {
+  # Rule 4 only: strip every other nav evidence, keep the table + padding.
+  local b=$'| Step | Navigation path |\n| ---- | --------------- |\n| 1    | Clients > Matters |\n'"$BIG_PAD"
+  _has_section_nav_path "$b"
+}
+_big_layers() { [ "$(_scope_layers "$1")" = "FE " ]; }
+_run "big body (>64KB): body is actually larger than a pipe buffer" test "${#BIG_BODY}" -gt 131072
+_run "big body: AC detected under pipefail" _big_repeat _has_section_ac
+_run "big body: Test User detected under pipefail" _big_repeat _has_section_test_user
+_run "big body: Scope detected under pipefail" _big_repeat _has_section_scope
+_run "big body: Scope layers extracted under pipefail" _big_repeat _big_layers
+_run "big body: Navigation Path detected under pipefail" _big_repeat _has_section_nav_path
+_run "big body: nav table column (rule 4) detected under pipefail" _big_nav_rule4
+_run "big body: Test Data heading detected under pipefail" _big_repeat _has_heading_test_data
+_run "big body: Test Data detected under pipefail" _big_repeat _has_section_test_data
+_run "big body: repro steps detected under pipefail" _big_repeat _has_section_repro_steps
+_big_full_check() {
+  local i
+  for i in 1 2 3 4 5; do
+    check_planned_body "TEST-BIG" "feature" "$BIG_BODY" "true" 2>/dev/null || true
+    [ "$BODY_CHECK_EXIT_CODE" = "0" ] || return 1
+  done
+}
+_run "big feature body passes check_planned_body under pipefail" _big_full_check
+
 # Cleanup
 rm -rf "$REPOS_ROOT/.ticket-auto"
 

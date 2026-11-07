@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.79.0 (2026-10-30) — fleet-controller 0.45.0
+## 0.84.0 (2026-11-08) — fleet-controller 0.46.0
 
 Spawn-helper hardening: the Linear key leaves the `/tmp` env file, unpaired spawn brackets are
 reported, and the pipeline log path is no longer exported as `LOG_FILE`.
@@ -32,9 +32,9 @@ reported, and the pipeline log path is no longer exported as `LOG_FILE`.
 - `env-check.sh --mode=full` now masks `LINEAR_API_KEY`, `GITHUB_PERSONAL_ACCESS_TOKEN`,
   `GH_TOKEN` and `ANTHROPIC_AUTH_TOKEN` to their last four characters instead of printing them.
 - The sweep also removes a `.ticket-auto-<ID>-env.XXXXXX` temp file older than a minute (a
-  pre-0.79.0 write killed before its rename, still holding the key), and never replaces an env
+  pre-0.84.0 write killed before its rename, still holding the key), and never replaces an env
   file that a newer run rewrote while the scrub was running.
-- fleet-controller 0.45.0: `SLACK_BOT_TOKEN` (`fleet-notify.sh`) and the Langfuse key pair
+- fleet-controller 0.46.0: `SLACK_BOT_TOKEN` (`fleet-notify.sh`) and the Langfuse key pair
   (`run-score-export.sh`) now reach curl on stdin (`-H @-`) instead of argv, where any local user
   could read them in `ps`.
 
@@ -42,7 +42,7 @@ reported, and the pipeline log path is no longer exported as `LOG_FILE`.
 - **Pipeline log path exported as `TAP_LOG`, not `LOG_FILE`** (#575). Spring Boot maps a
   `LOG_FILE` env var to `logging.file.name`, so a `mvn test` run by a phase agent appended its
   application log to the pipeline log. `spawn_agent_pre`'s prompt prefix exports `TAP_LOG`
-  and keeps `LOG_FILE` only as an unexported shell variable; fleetd (0.45.0) sets `TAP_LOG`
+  and keeps `LOG_FILE` only as an unexported shell variable; fleetd (0.46.0) sets `TAP_LOG`
   on phase workers and drops any `LOG_FILE` inherited from its own environment, and the per-ticket
   env file carries `TAP_LOG` too, so a phase started by a not-yet-restarted fleetd still finds
   the log. Phase skill prose
@@ -56,6 +56,115 @@ reported, and the pipeline log path is no longer exported as `LOG_FILE`.
   `PHASE=` differs from the open bracket each write `META|spawn-unpaired|warn|`. Warn only; a
   duplicate post stays silent and idempotent, and a meta with no `CLOSED` key (fleetd's) counts
   as closed.
+
+## 0.83.0 / fleet-controller 0.45.0 (2026-11-07)
+
+VERIFY phase fixes: worktree creation (#591, #577) and attempt counting (#573, #572).
+Also moves `fleet-controller` to 0.45.0, because fleetd's `resolve_loop_counters` must
+count VERIFY attempts the same way as `detect-resume.sh`.
+
+### Fixed
+- **Verify worktree fails when implement's worktree holds the branch (#591).**
+  `ensure_verify_worktree` now creates the worktree detached at `origin/<branch>` (or the
+  local branch when it was never pushed), not checked out on the branch, so git no longer
+  refuses with `already used by worktree`. The branch is recorded in the worktree's admin
+  dir; the identity guard reads it (a detached worktree with no record, such as a manual
+  `worktree add --detach` recovery, is adopted). Existing attached verify worktrees are
+  still reused. `verify_served_report` prints the recorded branch plus `detached`.
+- **Deleted-but-registered worktrees break `worktree add` (#577).** Both
+  `ensure_verify_worktree` and implement's `ensure_worktree` run
+  `git -C <repo> worktree prune` before `worktree add` (unlocking a locked stale entry for
+  that path first). `release_verify_worktree`, `verify_worktree_gc`, `release_worktree` and
+  `worktree_gc` prune the repo the worktree belonged to instead of running a bare
+  `git worktree prune` in the caller's directory. A failed verify `worktree add` now
+  includes git's own error message.
+- **Duplicate terminal lines used up the VERIFY cap (#573).** New
+  `verify_attempt_count` in `lib/verify-checkpoint.sh` counts attempts, not
+  `VERIFY|verify|fail|` lines: lines between two attempt boundaries (`VERIFY|verify|waiting`,
+  `IMPLEMENT|implement|waiting`/`done`) count once. `detect-resume.sh`,
+  `verify-retry-decide.sh` and fleetd (`_verify_attempt_count`, with a bash parity test) use it.
+- **Operator stop counted as a VERIFY attempt (#572).** A bracket followed by
+  `META|operator-stop` is closed as `operator-stopped: <PHASE> <step>`, without the 5-minute
+  zombie wait. Neither that nor a `zombie-detected:` close that detect-resume.sh wrote (and
+  recorded) counts as an attempt or sets `VERIFY_LAST=fail`, so the run resumes VERIFY
+  instead of re-implementing unjudged code.
+
+### Added
+- **`lib/verify-attempts-reset.sh <TID> <reason>`**, the supported operator reset. Only
+  attempts after the reset point count toward the cap. It refuses an agent context, and at
+  most `VERIFY_RESET_MAX` (default 2) resets are honoured.
+- **Trust boundary.** Phase agents write the pipeline log directly. So resets and
+  synthetic-close discounts are honoured only from the operator/orchestrator control file
+  `<log>.verify-ctl`, never from log lines. A `META|verify-attempts-reset` line is audit
+  only. A `zombie-detected:` close counts unless detect-resume.sh recorded its line number.
+  Documented in `ticket-auto-pipeline/docs/verify-attempt-counting.md`.
+
+## 0.82.0 (2026-10-30)
+
+### Fixed
+- **Gate reconcile no longer counts the pipeline's own appraisal comment as user feedback**
+  (#568, #582). `lib/reconcile-comments.sh` matched the appraisal comment with an exact
+  `**Ticket appraised**` prefix, and appraise-exec agents sometimes write `**Ticket appraised.**`.
+  The comment then neither set the reconcile boundary nor was excluded, so it (and everything
+  since the earlier log fallback time) showed up in `UNPROCESSED_COMMENTS` and could hold the
+  gate for a spurious amendment cycle. The appraise-exec and gate-reconcile comment templates now
+  carry a hidden marker (`<!-- ticket-auto:appraisal -->` / `<!-- ticket-auto:amendment -->`),
+  and the script matches on it. Comments without the marker fall back to a tolerant heading match
+  (case-insensitive, optional punctuation inside the bold).
+- **Interactive `/ticket-auto` runs spawn the plugin's phase skills, not stale personal copies**
+  (#569). `skills/ticket-auto/SKILL.md` passed bare names (`SKILL=/ticket-implement`) to
+  `spawn_agent_pre`, and a bare name resolves to `~/.claude/skills/<name>` first. Every `SKILL=`
+  in the router is now plugin-qualified, and `spawn_agent_pre` qualifies any bare plugin skill
+  name itself (`spawn_qualify_skill`), so a regressed call site still spawns the plugin skill.
+  Guarded by `lib/tests/test-spawn-skill-qualified.sh`.
+
+## ticket-planner 0.34.0 (2026-10-30)
+
+Draft readiness fixes from a second offline replay of a dispatch rehearsal run. No DoR fixture,
+evaluator or ticket-auto-pipeline change.
+
+### Fixed
+- **A draft and its Linear-rendered ticket body now compare equal.** Linear re-renders a stored
+  description (`- ` → `* ` bullets, `[x]` → `[X]`, shortened table separator rows, `\#`
+  escapes, bold spans split around inline code, a blank line after a heading), so the
+  carry-over's equivalence check never matched and no draft verdict was ever imported. The new
+  `planner_draft_render_normalise` undoes exactly those changes before the comparison. It never
+  touches words, values, inline code or fenced blocks, so a changed criterion, test-data value,
+  table cell or code span still compares unequal (tested both ways).
+- **Rendering no longer makes units look changed to the carry-over.** The draft-passed seed
+  hashes units and sections on the same normalised text, so a demoted or accepted draft finding
+  is no longer re-raised as a blocker at Refinement because Linear re-rendered its unit.
+- **The carry-over skip line names the real reason** (`not-equivalent`, `accepted`,
+  `no-semantic`, `equivalence-unknown` or `import-refused:<rc>`) instead of always
+  `not-equivalent`.
+- **A revision that contradicts a frozen section is reverted, not halted on.** The revise prompt
+  now lists every section the agent may not edit (Technical Context included) as one it must
+  not contradict. As a deterministic backstop, a verified blocking structural code
+  (`CONTRADICTORY_REQUIREMENTS`, …) on a unit the revision changed, absent before the round,
+  reverts that spec's revision (`reverted:REVISION_REGRESSION`, reason class `reverted`) and
+  restores the pre-round verdict, instead of halting the gate on a finding no round can fix.
+  The pre-round copy lives outside the workspace, so an agent cannot forge it.
+- **Audit MISSED entries are no longer stored and ignored.** A MISSED entry that matches the
+  security rule (with a known, blocking, non-structural code) becomes a blocking finding and
+  takes the security path: the next revise round, else a round-limit demotion shown in the
+  SECURITY warn line, pass output, halt report and epic summary. Other entries are listed as
+  "Audit advisories" in the gate's pass output and halt report, and Refinement's advisory
+  summary lists the real tickets' MISSED entries.
+- **SKILL.md step 1e runs its Bash calls with `timeout: 600000`.** Settling a revise round
+  (guards plus a Crosscheck re-run) took about 7 minutes and overran the 120 s default.
+
+### Security
+- The normaliser is conservative by construction: CommonMark fence tracking (fence character
+  and length), no inline rewriting of indented lines or lines with an unpaired backtick, an
+  escaped backtick never toggles inline code, `\|` and `\\` stay escaped, `**` between two word
+  characters (`10**3`) stays, and a separator row is recognised only as a table's second row
+  with two or more dashes per cell. Negative tests pin each of these.
+- A revision-regression revert restores the spec from a copy outside the workspace and only
+  while the current spec is the one the revision produced, so a later hand edit is never
+  undone; stale copies are dropped at gate start and close. The Crosscheck-regression revert
+  now restores from the same outside copy when it exists.
+- Audit MISSED reasons are stored with control characters replaced and capped at 500
+  characters before they reach a report, the revise prompt or the Refinement summary.
 
 ## ticket-planner 0.33.0 (2026-10-30)
 
@@ -110,6 +219,31 @@ evaluator or SKILL.md change.
   now prints "Draft readiness passed (…)".
 - `planner_draft_revise_source_check` reported `SOURCE_UNMATCHED` when the agent escaped quotes
   (`\"Sign up\"`) or used curly quotes; both sides are normalised before matching.
+
+## 0.81.0 (2026-10-30)
+
+Three bug fixes: a flaky body-check gate-stop on large tickets, wiki freshness false positives,
+and two QA personas that nothing ever selected.
+
+### Fixed
+- **Large planned bodies no longer fail the body check at random (#580).** The section
+  detectors in `planned-ticket-body-check.sh` piped the body into `grep -q` (and into early-exit
+  `awk`). `gate-check.sh` runs under `pipefail`. With a body over the 64 KB pipe buffer and an
+  early match, the writer died of SIGPIPE and a present section, such as Scope, read as missing.
+  This produced a false `PLANNED_BODY_INCOMPLETE` gate-stop. The detectors now read the body
+  from a here-string, which has no writer process. The same fix covers the body- and
+  section-sized sites in the sibling `dor-check.sh`.
+- **`wiki-check.sh` reads a multi-line `verified_against` (#576).** The key may now be an
+  indented block as well as an inline value. Both the single-repo shape (`repo:` + `sha:`) and a
+  multi-repo map (one `<repo>: <sha>` entry per line, or `{a: sha, b: sha}`) are accepted. With
+  several entries, freshness is the worst result across them. An entry whose sha is not hex marks
+  the frontmatter incomplete. Before this, every file in the map shape was reported
+  `incomplete:verified_against` and `decayed`.
+- **The `qa/*` persona specializers are selected (#559).** `persona-select.sh --phase prescan
+  --with-qa` now attaches `qa/playwright-web` to the qa-engineer lens when the repo has a
+  `playwright.config.*` file or an `@playwright/test` dependency, and `qa/api-testing` when it
+  has an OpenAPI/Swagger spec or a Postman collection. No other phase changes, and ticket-verify
+  still loads no persona.
 
 ## 0.76.0 (2026-10-30)
 

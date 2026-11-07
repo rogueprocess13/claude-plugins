@@ -85,7 +85,7 @@ while [ "$i" -lt "${#FILES[@]}" ]; do
   i=$((i + 1))
 done
 
-# GitHub #578: env files written before 0.79.0 carried an
+# GitHub #578: env files written before 0.84.0 carried an
 # `export LINEAR_API_KEY="..."` line. A surviving (still-live) one is scrubbed
 # in place rather than left on disk for the rest of its TTL. Only files this
 # user owns, never through a symlink; the rewrite keeps mode 0600 and replaces
@@ -109,7 +109,7 @@ for f in "$TMP_DIR"/ticket-auto-*-env.sh; do
   fi
 done
 
-# A pre-0.79.0 spawn_write_env killed between its mktemp and its rename left
+# A pre-0.84.0 spawn_write_env killed between its mktemp and its rename left
 # `.ticket-auto-<TID>-env.XXXXXX` holding the key, a name no glob above
 # matches. A finished write renames within milliseconds, so one older than a
 # minute is a crash leftover. Same ownership/symlink rules as above.

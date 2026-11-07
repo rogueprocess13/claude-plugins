@@ -196,7 +196,7 @@ check_planned_body() {
 _has_section_ac() {
   local body="$1"
   # Acceptance Criteria heading OR at least one checkbox line (- [ ] or - [x])
-  if echo "$body" | grep -qiP '(acceptance criteria|##\s*Acceptance)' 2>/dev/null; then
+  if grep -qiP '(acceptance criteria|##\s*Acceptance)' <<<"$body" 2>/dev/null; then
     return 0
   fi
   # Check for checkbox items even without heading
@@ -210,20 +210,20 @@ _has_section_ac() {
 _has_section_test_user() {
   local body="$1"
   # Test User heading — must have non-whitespace content after it
-  if echo "$body" | grep -qiP '##\s*Test User' 2>/dev/null; then
+  if grep -qiP '##\s*Test User' <<<"$body" 2>/dev/null; then
     local section_content
-    section_content=$(echo "$body" | awk '/^##[[:space:]]*Test User/ {found=1; next} found && /^##/ {exit} found {print}')
+    section_content=$(awk '/^##[[:space:]]*Test User/ {found=1; next} found && /^##/ {exit} found {print}' <<<"$body")
     if [ -n "$(echo "$section_content" | tr -d '[:space:]')" ]; then
       return 0
     fi
     return 1 # heading present but empty — spec requires non-empty sections
   fi
   # Legacy "test user" loose text match (case-insensitive, anywhere in body)
-  if echo "$body" | grep -qiP 'test user' 2>/dev/null; then
+  if grep -qiP 'test user' <<<"$body" 2>/dev/null; then
     return 0
   fi
   # User identification patterns
-  if echo "$body" | grep -qiP '(\*\*User:\*\*\s*\S|email[:\s]*\S+@\S+\.\S+|log in as \S|password.*`admin`)' 2>/dev/null; then
+  if grep -qiP '(\*\*User:\*\*\s*\S|email[:\s]*\S+@\S+\.\S+|log in as \S|password.*`admin`)' <<<"$body" 2>/dev/null; then
     return 0
   fi
   return 1
@@ -233,20 +233,20 @@ _has_section_test_user() {
 _has_section_scope() {
   local body="$1"
   # Scope heading — must have a table row following it
-  if echo "$body" | grep -qiP '##\s*Scope' 2>/dev/null; then
+  if grep -qiP '##\s*Scope' <<<"$body" 2>/dev/null; then
     local section_content
-    section_content=$(echo "$body" | awk '/^##[[:space:]]*Scope/ {found=1; next} found && /^##/ {exit} found {print}')
-    if echo "$section_content" | grep -qiP '\|\s*Layer\s*\|' 2>/dev/null; then
+    section_content=$(awk '/^##[[:space:]]*Scope/ {found=1; next} found && /^##/ {exit} found {print}' <<<"$body")
+    if grep -qiP '\|\s*Layer\s*\|' <<<"$section_content" 2>/dev/null; then
       return 0
     fi
     return 1 # heading present but no table — spec requires non-empty sections
   fi
   # Fallback: bold Scope label with content OR a scope table anywhere in the body
-  if echo "$body" | grep -qiP '(\*\*Scope:?\*\*\s*\S)' 2>/dev/null; then
+  if grep -qiP '(\*\*Scope:?\*\*\s*\S)' <<<"$body" 2>/dev/null; then
     return 0
   fi
   # Scope table pattern: | Layer | Service | Area | (anywhere, even without heading)
-  if echo "$body" | grep -qiP '\|\s*Layer\s*\|' 2>/dev/null; then
+  if grep -qiP '\|\s*Layer\s*\|' <<<"$body" 2>/dev/null; then
     return 0
   fi
   return 1
@@ -257,13 +257,12 @@ _has_section_scope() {
 _scope_layers() {
   local body="$1"
   local section_content
-  if echo "$body" | grep -qiP '##\s*Scope' 2>/dev/null; then
-    section_content=$(echo "$body" | awk '/^##[[:space:]]*Scope/ {found=1; next} found && /^##/ {exit} found {print}')
+  if grep -qiP '##\s*Scope' <<<"$body" 2>/dev/null; then
+    section_content=$(awk '/^##[[:space:]]*Scope/ {found=1; next} found && /^##/ {exit} found {print}' <<<"$body")
   else
     section_content="$body"
   fi
-  echo "$section_content" |
-    grep -oP '^\s*\|\s*\K[A-Za-z]+(?=\s*\|)' 2>/dev/null |
+  grep -oP '^\s*\|\s*\K[A-Za-z]+(?=\s*\|)' <<<"$section_content" 2>/dev/null |
     grep -viP '^layer$' |
     tr '[:lower:]' '[:upper:]' | sort -u | tr '\n' ' '
 }
@@ -305,25 +304,25 @@ _scope_is_backend_only() {
 _has_section_nav_path() {
   local body="$1" content
   # Rule 1 — heading with non-placeholder content.
-  content=$(echo "$body" | awk '
+  content=$(awk '
     { line = tolower($0) }
     line ~ /^###?[[:space:]]*navigation path:?[[:space:]]*$/ { f=1; next }
     f && /^#/ { f=0 }
     f { print }
-  ' | grep -vP '^\s*((-|\*|_|–|—)+\s*)?(\{[^}]*\}|TBD|TODO|N/?A|none)?\s*$' 2>/dev/null || true)
+  ' <<<"$body" | grep -vP '^\s*((-|\*|_|–|—)+\s*)?(\{[^}]*\}|TBD|TODO|N/?A|none)?\s*$' 2>/dev/null || true)
   if [ -n "$content" ]; then
     return 0
   fi
   # Rule 2 — inline bold label with text after it.
-  if echo "$body" | grep -qiP '\*\*Navigation Path:?\*\*:?\s*\S' 2>/dev/null; then
+  if grep -qiP '\*\*Navigation Path:?\*\*:?\s*\S' <<<"$body" 2>/dev/null; then
     return 0
   fi
   # Rule 3 — backticked Menu > Submenu > Page click path.
-  if echo "$body" | grep -qiP '`[^`]+ > [^`]+( > [^`]+)*`' 2>/dev/null; then
+  if grep -qiP '`[^`]+ > [^`]+( > [^`]+)*`' <<<"$body" 2>/dev/null; then
     return 0
   fi
   # Rule 4 — a `Navigation path` table column whose data cell holds A > B.
-  if echo "$body" | awk -F'|' '
+  if awk -F'|' '
     !/^[[:space:]]*\|/ { col = 0; next }
     {
       hdr = 0
@@ -336,7 +335,7 @@ _has_section_nav_path() {
     }
     col && index($col, " > ") { ok = 1; exit }
     END { exit !ok }
-  '; then
+  ' <<<"$body"; then
     return 0
   fi
   return 1
@@ -346,7 +345,7 @@ _has_section_nav_path() {
 _has_section_repro_steps() {
   local body="$1"
   # Steps to Reproduce heading
-  if echo "$body" | grep -qiP '(steps to repro|reproduc|how to repro|reproduction steps|to reproduce|##\s*Steps to Reproduce)' 2>/dev/null; then
+  if grep -qiP '(steps to repro|reproduc|how to repro|reproduction steps|to reproduce|##\s*Steps to Reproduce)' <<<"$body" 2>/dev/null; then
     return 0
   fi
   # Numbered browser-action steps (at least 2)
@@ -365,7 +364,8 @@ _has_section_repro_steps() {
 # a test-data chore supplies) does not count. Same section boundary as
 # dor-check.sh's _dor_test_data_content.
 _has_heading_test_data() {
-  printf '%s\n' "$1" | tr -d '\r' | awk '
+  awk '
+    { gsub(/\r/, "") }
     /^[ \t]*(```|~~~)/ { fence = !fence; next }
     fence { next }
     /^##[ \t]/ && !/^###/ {
@@ -375,14 +375,14 @@ _has_heading_test_data() {
     }
     insec && $0 ~ /[^ \t]/ { found = 1; exit }
     END { exit(found ? 0 : 1) }
-  '
+  ' <<<"$1"
 }
 
 # _has_section_test_data <body> — true if body has test data prerequisites
 _has_section_test_data() {
   local body="$1"
   # Test Data Prerequisites heading OR test-data-like content
-  if echo "$body" | grep -qiP '(test data|prerequisite|##\s*Test Data Prerequisites|before (testing|running)|seed[- ]?data|fixture)' 2>/dev/null; then
+  if grep -qiP '(test data|prerequisite|##\s*Test Data Prerequisites|before (testing|running)|seed[- ]?data|fixture)' <<<"$body" 2>/dev/null; then
     return 0
   fi
   return 1

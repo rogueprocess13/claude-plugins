@@ -2,19 +2,24 @@
 # wiki-check.sh — deterministic freshness + completeness lint for WIKI_ROOT.
 #
 # Implements the freshness contract from the wiki-cross-repo-knowledge-layer
-# change (#335, §5): per-file frontmatter (verified_at, verified_against
-# {repo, sha}, stale_after, verified), broken `related:` links, backticked
+# change (#335, §5): per-file frontmatter (verified_at, verified_against,
+# stale_after, verified), broken `related:` links, backticked
 # class names that don't resolve to any known repo (best-effort), and a
 # freshness classification (fresh|stale|decayed) derived from commit activity
 # since verified_against plus stale_after.
+#
+# verified_against accepts two shapes (#576), inline or as an indented block:
+#   - one repo:  `{repo: x, sha: y}`, or `repo: x` + `sha: y` block lines;
+#   - a map, one `<repo>: <sha>` entry per repo, for flows that span repos.
+# With several entries, freshness is the worst result across them.
 #
 # The wiki-side contract this implements was written from the issue's own
 # prose spec — the external reference commit
 # (credit-network-biz/wiki@38fdc17) was not accessible when this was built.
 #
 # Zero LLM involvement — pure bash, modeled on prescan-check.sh's freshness
-# gate. Fast by design: exactly one `git rev-list --count` per file (not per
-# line), and the class-name check is capped, short-circuits per identifier,
+# gate. Fast by design: one `git rev-list --count` per verified_against
+# entry (not per line), and the class-name check is capped, short-circuits per identifier,
 # skips worktree/scratch/build trees, and runs under a hard wall-clock budget.
 #
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
@@ -131,9 +136,10 @@ _resolve_repo_path() {
 }
 
 # ── Frontmatter extraction ──────────────────────────────────────────────────────
-# Frontmatter is expected as single-line flow-style YAML between the first two
-# `---` lines (matches the schema wiki-maintenance's SKILL.md writes). No YAML
-# parser dependency — this is an internal contract, not user-authored YAML.
+# Frontmatter is expected between the first two `---` lines. Values are
+# single-line, except verified_against, which may also be an indented block
+# (see _fm_get_block). No YAML parser dependency — this is an internal
+# contract, not user-authored YAML.
 
 _extract_frontmatter() {
   local file="$1"
@@ -152,6 +158,65 @@ _fm_get() {
   # incomplete-frontmatter file — the thing this script exists to detect)
   # would otherwise abort the caller via the pipefail-computed exit status.
   echo "$1" | grep -m1 "^${2}:" | sed "s/^${2}: *//" | sed 's/^"//; s/"$//' || true
+}
+
+_fm_get_block() {
+  # _fm_get_block <frontmatter-text> <key>
+  # Prints the indented lines under `<key>:` when the key has no inline value
+  # (a YAML block mapping), leading whitespace stripped, blank and `#` comment
+  # lines skipped. Prints nothing when the key is absent or has an inline value.
+  # Fed by a here-string, not a pipe: awk exits early, which under pipefail
+  # would make a writer process die of SIGPIPE.
+  awk -v k="$2" '
+    found && /^[ \t]*(#.*)?$/ { next }
+    found && /^[ \t]/ { sub(/^[ \t]+/, ""); print; next }
+    found { exit }
+    index($0, k ":") == 1 {
+      rest = substr($0, length(k) + 2)
+      sub(/#.*/, "", rest)
+      gsub(/[ \t]/, "", rest)
+      if (rest == "") found = 1
+    }
+  ' <<<"$1"
+}
+
+# _va_entries <inline-value> <block-lines>
+# Prints one `<repo>\t<sha>` line per verified_against entry. An entry whose
+# sha is not 7-40 hex digits is printed with an empty sha, so the caller can
+# mark the frontmatter incomplete. Prints nothing when there are no entries.
+_va_entries() {
+  local inline="$1" block="$2" text repo sha
+  text="${inline}"$'\n'"${block}"
+  # Shape 1: a single repo given as `repo:` + `sha:` keys (inline or block).
+  if grep -qE '(^|[{,[:space:]])repo:' <<<"$text" && grep -qE '(^|[{,[:space:]])sha:' <<<"$text"; then
+    repo=$(grep -oE '(^|[{,[:space:]])repo: *"?[A-Za-z0-9_.-]+"?' <<<"$text" | head -1 | sed -E 's/^[{,[:space:]]?repo: *"?//; s/"$//' || true)
+    sha=$(grep -oE '(^|[{,[:space:]])sha: *"?[0-9a-fA-F]+"?' <<<"$text" | head -1 | sed -E 's/^[{,[:space:]]?sha: *"?//; s/"$//' || true)
+    [ -n "$repo" ] && printf '%s\t%s\n' "$repo" "$sha"
+    return 0
+  fi
+  # Shape 2: a map of `<repo>: <sha>` entries — block lines, or an inline
+  # flow map `{a: sha1, b: sha2}`.
+  local entries line key val
+  if [ -n "$inline" ]; then
+    entries=$(sed 's/^[[:space:]]*{//; s/}[[:space:]]*$//' <<<"$inline" | tr ',' '\n')
+  else
+    entries="$block"
+  fi
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    case "$line" in *:*) ;; *) continue ;; esac
+    key="${line%%:*}"
+    val="${line#*:}"
+    key=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^"//; s/"$//' <<<"$key")
+    val=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^"//; s/"$//' <<<"$val")
+    [ -z "$key" ] && continue
+    if [[ "$val" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+      printf '%s\t%s\n' "$key" "$val"
+    else
+      printf '%s\t\n' "$key"
+    fi
+  done <<<"$entries"
+  return 0
 }
 
 # ── Class-name resolution (bounded) ──────────────────────────────────────────
@@ -206,17 +271,19 @@ _check_file() {
   stale_after=$(_fm_get "$fm" "stale_after")
   verified=$(_fm_get "$fm" "verified")
 
-  local va_repo="" va_sha=""
-  if [ -n "$verified_against" ]; then
-    # `|| true` guards each pipe the same way as _fm_get above.
-    va_repo=$(echo "$verified_against" | grep -oE 'repo: *"?[A-Za-z0-9_.-]+"?' | head -1 | sed 's/repo: *"\{0,1\}//; s/"$//' || true)
-    va_sha=$(echo "$verified_against" | grep -oE 'sha: *"?[0-9a-fA-F]+"?' | head -1 | sed 's/sha: *"\{0,1\}//; s/"$//' || true)
+  # verified_against: zero or more `<repo>\t<sha>` entries (see _va_entries).
+  local va_block va_entries va_valid="false"
+  va_block=""
+  [ -z "$verified_against" ] && va_block=$(_fm_get_block "$fm" "verified_against")
+  va_entries=$(_va_entries "$verified_against" "$va_block")
+  if [ -n "$va_entries" ] && ! grep -qP '\t$' <<<"$va_entries"; then
+    va_valid="true"
   fi
 
   # ── Frontmatter completeness ──
   local missing=()
   if [ -z "$verified_at" ]; then missing+=("verified_at"); fi
-  if [ -z "$va_repo" ] || [ -z "$va_sha" ]; then missing+=("verified_against"); fi
+  if [ "$va_valid" != "true" ]; then missing+=("verified_against"); fi
   if [ -z "$stale_after" ]; then missing+=("stale_after"); fi
   case "$verified" in
   unverified | machine-verified | human-reviewed) ;;
@@ -300,19 +367,33 @@ _check_file() {
   fi
 
   # ── Freshness ──
-  # One git call total (rev-list --count) — not one per line/commit.
+  # One git call (rev-list --count) per verified_against entry — not one per
+  # line/commit. Across entries the worst result wins: any entry at or past
+  # the churn limit decays the file; otherwise any unresolvable entry leaves
+  # commits_since unknown (stale at best); otherwise the highest count counts.
   local freshness="decayed" commits_since="" age_days=""
-  if [ -n "$verified_at" ] && [ -n "$va_repo" ] && [ -n "$va_sha" ] && [ -n "$stale_after" ]; then
-    local repo_path
-    repo_path=$(_resolve_repo_path "$repos_root" "$va_repo")
+  if [ -n "$verified_at" ] && [ "$va_valid" = "true" ] && [ -n "$stale_after" ]; then
     local now_epoch va_epoch
     now_epoch=$(date -u +%s)
     va_epoch=$(date -u -d "$verified_at" +%s 2>/dev/null || date -u -jf "%Y-%m-%d" "$verified_at" +%s 2>/dev/null || echo "")
     if [ -n "$va_epoch" ]; then
       age_days=$(((now_epoch - va_epoch) / 86400))
     fi
-    if [ -n "$repo_path" ] && [ -d "$repo_path/.git" ]; then
-      commits_since=$(git -C "$repo_path" rev-list --count "${va_sha}..HEAD" 2>/dev/null || echo "")
+    local va_repo va_sha repo_path n max_commits=0 unresolved="false"
+    while IFS=$'\t' read -r va_repo va_sha; do
+      n=""
+      repo_path=$(_resolve_repo_path "$repos_root" "$va_repo")
+      if [ -n "$repo_path" ] && [ -d "$repo_path/.git" ]; then
+        n=$(git -C "$repo_path" rev-list --count "${va_sha}..HEAD" 2>/dev/null || echo "")
+      fi
+      if [[ "$n" =~ ^[0-9]+$ ]]; then
+        [ "$n" -gt "$max_commits" ] && max_commits="$n"
+      else
+        unresolved="true"
+      fi
+    done <<<"$va_entries"
+    if [ "$max_commits" -ge "$DECAY_COMMIT_LIMIT" ] || [ "$unresolved" = "false" ]; then
+      commits_since="$max_commits"
     fi
     # Hard expiry: past stale_after regardless of how quiet the repo's been.
     if [ -n "$age_days" ] && [ "$age_days" -gt "$stale_after" ] 2>/dev/null; then

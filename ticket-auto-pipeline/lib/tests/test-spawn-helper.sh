@@ -1806,7 +1806,7 @@ test_pairing_duplicate_post_after_meta_lines_is_silent() {
 }
 
 test_pairing_meta_without_closed_key_counts_as_closed() {
-  # fleetd's phase dispatch (and pre-0.79.0 versions) write spawn-meta with no
+  # fleetd's phase dispatch (and pre-0.84.0 versions) write spawn-meta with no
   # CLOSED= key. A manual router run right after must not warn.
   local log meta
   log=$(_pair_setup TEST-PAIR7)
@@ -2158,7 +2158,7 @@ test_tmp_sweep_ignores_unmanaged_files() {
     [ -f "$dir/ticket-auto-env.sh" ]
 }
 
-# GitHub #578: an env file left by a pre-0.79.0 run still carries the key.
+# GitHub #578: an env file left by a pre-0.84.0 run still carries the key.
 # The sweep scrubs that line from a live file, keeps every other line, keeps
 # mode 0600, and never follows a symlink.
 test_tmp_sweep_scrubs_legacy_linear_key() {
@@ -2182,7 +2182,7 @@ test_tmp_sweep_scrubs_legacy_linear_key() {
   grep -q 'lin_api_linked578' "$target"
 }
 
-# GitHub #578: a pre-0.79.0 spawn_write_env killed mid-write left its mktemp
+# GitHub #578: a pre-0.84.0 spawn_write_env killed mid-write left its mktemp
 # file (holding the key) under a dot-name no other glob matches.
 test_tmp_sweep_removes_stale_env_write_leftovers() {
   local dir old fresh

@@ -1088,6 +1088,63 @@ for st in jvm python node browser; do
     "$PERSONAS_ROOT/specializers/debug/${st}.md" "$PERSONAS_ROOT"/specializers/backend/*.md "$PERSONAS_ROOT"/specializers/frontend/*.md
 done
 
+# ── QA specializers on the prescan --with-qa lens (issue #559) ─────────────────
+
+echo ""
+echo "--- QA specializers (prescan --with-qa) ---"
+
+# _qa_line <output> — the PERSONA_SET line carrying the qa-engineer base.
+_qa_line() { printf '%s\n' "$1" | sed 's/^PERSONA_SET=//' | grep 'base/qa-engineer.md' || true; }
+
+assert_qa_line() {
+  local desc="$1" line="$2" want="$3" # want: a substring, or "" for no specializer
+  local ok="false"
+  if [ -n "$line" ]; then
+    if [ -n "$want" ]; then
+      case "$line" in *"|"*"$want") [ -f "${line#*|}" ] && ok="true" ;; esac
+    else
+      case "$line" in *"|"*) ;; *) ok="true" ;; esac
+    fi
+  fi
+  if [ "$ok" = "true" ]; then
+    PASS=$((PASS + 1))
+    echo "  PASS: $desc"
+  else
+    FAIL=$((FAIL + 1))
+    echo "  FAIL: $desc — qa-engineer entry was '${line}'" >&2
+  fi
+}
+
+mkdir -p "$TMPDIR/qa-playwright" "$TMPDIR/qa-playwright-dep" "$TMPDIR/qa-openapi/docs" "$TMPDIR/qa-postman" "$TMPDIR/qa-both"
+touch "$TMPDIR/qa-playwright/playwright.config.ts"
+echo '{"devDependencies": {"@playwright/test": "^1.0.0"}}' >"$TMPDIR/qa-playwright-dep/package.json"
+touch "$TMPDIR/qa-openapi/docs/openapi.yaml"
+touch "$TMPDIR/qa-postman/smoke.postman_collection.json"
+touch "$TMPDIR/qa-both/playwright.config.js" "$TMPDIR/qa-both/swagger.json"
+
+output=$("$SELECTOR" --repo "$TMPDIR/qa-playwright" --phase prescan --with-qa)
+assert_qa_line "playwright.config.ts → qa-engineer|qa/playwright-web" "$(_qa_line "$output")" "specializers/qa/playwright-web.md"
+output=$("$SELECTOR" --repo "$TMPDIR/qa-playwright-dep" --phase prescan --with-qa)
+assert_qa_line "@playwright/test dependency → qa/playwright-web" "$(_qa_line "$output")" "specializers/qa/playwright-web.md"
+output=$("$SELECTOR" --repo "$TMPDIR/qa-openapi" --phase prescan --with-qa)
+assert_qa_line "nested openapi.yaml → qa-engineer|qa/api-testing" "$(_qa_line "$output")" "specializers/qa/api-testing.md"
+output=$("$SELECTOR" --repo "$TMPDIR/qa-postman" --phase prescan --with-qa)
+assert_qa_line "Postman collection → qa/api-testing" "$(_qa_line "$output")" "specializers/qa/api-testing.md"
+output=$("$SELECTOR" --repo "$TMPDIR/qa-both" --phase prescan --with-qa)
+assert_qa_line "Playwright wins over OpenAPI" "$(_qa_line "$output")" "specializers/qa/playwright-web.md"
+output=$("$SELECTOR" --repo "$TMPDIR/python-project" --phase prescan --with-qa)
+assert_qa_line "no qa signal → bare qa-engineer, exit 0" "$(_qa_line "$output")" ""
+output=$("$SELECTOR" --repo "$TMPDIR/qa-playwright" --phase prescan)
+if printf '%s\n' "$output" | grep -q 'qa-engineer\|specializers/qa/'; then
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: without --with-qa no qa persona is emitted" >&2
+else
+  PASS=$((PASS + 1))
+  echo "  PASS: without --with-qa no qa persona is emitted"
+fi
+output=$("$SELECTOR" --repo "$TMPDIR/qa-playwright" --layer FE --phase implement)
+assert_not_contains "implement phase never emits a qa specializer" "$output" "PERSONA_SPECIALIZER" "specializers/qa/"
+
 # ── Results ────────────────────────────────────────────────────────────────────
 
 echo ""

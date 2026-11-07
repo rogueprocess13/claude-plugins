@@ -822,6 +822,34 @@ planner_refinement_advisory_summary() {
   local initiative_id="$1"
   _planner_refinement_testdata_summary "$initiative_id"
   _planner_refinement_demoted_summary "$initiative_id"
+  _planner_refinement_missed_summary "$initiative_id"
+  return 0
+}
+
+# _planner_refinement_missed_summary <INIT> — one line per audit MISSED entry
+# (`ready.semantic.missed`, a gap the audit says the scan missed) on every
+# child: `Advisory (does not block) <TID> MISSED <CODE>: <reason>`, with
+# `Security` before MISSED when it matches the draft gate's security rule
+# (planner_draft_security_def). Stored by every semantic apply and carried
+# by a draft import, but read by nothing else, so it is never silent.
+_planner_refinement_missed_summary() {
+  local initiative_id="$1"
+  (
+    if ! declare -f planner_draft_security_def >/dev/null 2>&1 &&
+      [ -f "${_PLANNER_REFINEMENT_LIB_DIR}/planner-draft-revise.sh" ]; then
+      # shellcheck source=planner-draft-revise.sh
+      source "${_PLANNER_REFINEMENT_LIB_DIR}/planner-draft-revise.sh" >/dev/null 2>&1
+    fi
+    local def='def pdr_security: false;' tid
+    declare -f planner_draft_security_def >/dev/null 2>&1 && def=$(planner_draft_security_def)
+    for tid in $(_planner_refinement_children "$initiative_id"); do
+      get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r --arg t "$tid" "${def}"'
+        (.semantic.missed // [])[] | select(type == "object")
+        | {code: (.code // "" | tostring), detail: (.reason // "" | tostring)}
+        | select(.detail != "")
+        | "Advisory (does not block) \($t) \(if pdr_security then "Security " else "" end)MISSED \(.code | gsub("[[:cntrl:]]"; " ")): \(.detail | gsub("[[:cntrl:]]"; " ") | .[0:500])"' 2>/dev/null || true
+    done
+  )
   return 0
 }
 

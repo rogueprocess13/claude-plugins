@@ -781,10 +781,10 @@ If no `## Re-appraisal` section exists (first run), or `**Changes detected:** ye
 
 bash ~/.claude/skills/lib/plog.sh EXEC post-linear start "Posting appraisal comment"
 
-Post a comment via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP `save_comment` fallback otherwise) summarising the appraisal:
+Post a comment via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP `save_comment` fallback otherwise) summarising the appraisal. Keep the `<!-- ticket-auto:appraisal -->` marker verbatim: gate reconcile finds the comment by it.
 
 ```
-**Ticket appraised** — local workspace created.
+**Ticket appraised** — local workspace created. <!-- ticket-auto:appraisal -->
 
 **Initial investigation:**
 {2-4 bullets from Initial Investigation in notes.md}
@@ -798,7 +798,7 @@ Post a comment via the Linear access strategy (bash `save_comment` when `LINEAR_
 {First concrete action from notes.md Next Steps}
 ```
 
-If notes.md's Open Questions section has no `[needs-human]`-tagged bullet (empty, "None", or only `[agent-resolvable]` bullets already resolved), omit the warning line — post the Open Questions block as-is.
+If no Open Questions bullet is tagged `[needs-human]`, omit the warning line.
 
 bash ~/.claude/skills/lib/plog.sh EXEC post-linear done "Comment posted"
 

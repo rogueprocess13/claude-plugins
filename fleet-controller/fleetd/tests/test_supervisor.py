@@ -581,7 +581,9 @@ class PhaseDispatchFirstDispatchTest(unittest.TestCase):
 
         log_file = self.state_dir / 'CRE-20-pipeline.log'
         log_file.write_text(
+            # Two real attempts (#573: attempts are counted, not lines).
             '2026-09-06T10:00:00Z|VERIFY|verify|fail|timeout\n'
+            '2026-09-06T10:00:30Z|IMPLEMENT|implement|done|re-implemented\n'
             '2026-09-06T10:01:00Z|VERIFY|verify|fail|timeout\n'
         )
         sup_mod._store_record_position(str(self.state_dir), 'CRE-20', 'STEP_4_5')
