@@ -258,6 +258,141 @@ test_whole_id_simple_fix_not_matched_by_longer_id() {
   return $rc
 }
 
+# ── Verifier-result recording (GitHub #598) ───────────────────────────────────
+# Each runs the script from this checkout's lib (CLAUDE_SKILLS_LIB) with the
+# caller's LOG_FILE/TAP_LOG unset, as in the router shell after #575.
+
+_rcc_logged() {
+  # _rcc_logged <log> <args...> — stdout to $_ws/out.env, stderr to $_ws/err
+  local log="$1" _saved_opts="$-"
+  shift
+  set +e
+  env -u LOG_FILE -u TAP_LOG CLAUDE_SKILLS_LIB="$LIB_DIR" HB_LOG_FILE= \
+    bash "$RCC" "$@" --repos-root "$_root" ${log:+--log-file "$log"} >"$_ws/out.env" 2>"$_ws/err"
+  RCC_EXIT=$?
+  case "$_saved_opts" in *e*) set -e ;; esac
+}
+
+_rc_lines() { grep -c '"verifier":"return_completeness"' "$1" 2>/dev/null || true; }
+
+_latest_rc() {
+  { grep '"verifier":"return_completeness"' "$1" 2>/dev/null || true; } | tail -1 | sed 's/^[^{]*//'
+}
+
+# C: a 36-box PASS is recorded as 36/36, not 1/1.
+test_pass_records_real_box_count() {
+  _setup
+  local body="" i
+  for i in $(seq 1 36); do body+="- [x] 1.$i task"$'\n'; done
+  _write_tasks "TEST-30" "$body"
+  local log="$_ws/TEST-30-pipeline.log"
+  _rcc_logged "$log" "TEST-30"
+  local j
+  j=$(_latest_rc "$log")
+  _teardown
+  [ "$RCC_EXIT" -eq 0 ] &&
+    [ "$(jq -r .verdict <<<"$j")" = "PASS" ] &&
+    [ "$(jq -r .criteria_met <<<"$j")" = "36" ] &&
+    [ "$(jq -r .criteria_total <<<"$j")" = "36" ] || {
+    echo "rc=$RCC_EXIT record=$j" >&2
+    return 1
+  }
+}
+
+# B: with LOG_FILE/TAP_LOG unset in the caller, --log-file still records.
+test_log_file_flag_records_without_env() {
+  _setup
+  _write_tasks "TEST-31" "- [x] 1.1 a"$'\n'"- [ ] 1.2 b"
+  local log="$_ws/TEST-31-pipeline.log"
+  _rcc_logged "$log" "TEST-31"
+  local n j
+  n=$(_rc_lines "$log")
+  j=$(_latest_rc "$log")
+  local recorded=1
+  grep -qx 'VERIFIER_RESULT=recorded' "$_ws/out.env" && recorded=0
+  _teardown
+  [ "$RCC_EXIT" -eq 1 ] && [ "$n" -eq 1 ] && [ "$recorded" -eq 0 ] &&
+    [ "$(jq -r .verdict <<<"$j")" = "FAIL" ] &&
+    [ "$(jq -r .criteria_met <<<"$j")/$(jq -r .criteria_total <<<"$j")" = "1/2" ] || {
+    echo "rc=$RCC_EXIT lines=$n recorded=$recorded record=$j" >&2
+    return 1
+  }
+}
+
+# B: no log anywhere → loud (stdout marker + stderr warning), never silent.
+test_no_log_is_loud() {
+  _setup
+  _write_tasks "TEST-32" "- [ ] 1.1 open"
+  _rcc_logged "" "TEST-32"
+  local marker=1 warned=1
+  grep -qx 'VERIFIER_RESULT=unrecorded' "$_ws/out.env" && marker=0
+  grep -q 'NOT recorded; the verdict gate is unarmed' "$_ws/err" && warned=0
+  _teardown
+  [ "$RCC_EXIT" -eq 1 ] && [ "$marker" -eq 0 ] && [ "$warned" -eq 0 ] || {
+    echo "rc=$RCC_EXIT marker=$marker warned=$warned" >&2
+    return 1
+  }
+}
+
+# A: implement leaves 2 boxes for verify → FAIL; verify ticks them; the
+# post-verify --refresh writes PASS 4/4 and the FAIL is no longer live.
+test_refresh_supersedes_stale_fail() {
+  _setup
+  _write_tasks "TEST-33" "- [x] 1.1 a"$'\n'"- [x] 1.2 b"$'\n'"- [ ] 1.3 c"$'\n'"- [ ] 1.4 d"
+  local log="$_ws/TEST-33-pipeline.log"
+  _rcc_logged "$log" "TEST-33"
+  local first_rc=$RCC_EXIT
+  _write_tasks "TEST-33" "- [x] 1.1 a"$'\n'"- [x] 1.2 b"$'\n'"- [x] 1.3 c"$'\n'"- [x] 1.4 d"
+  _rcc_logged "$log" "TEST-33" --refresh
+  local j live
+  j=$(_latest_rc "$log")
+  # shellcheck source=/dev/null
+  live=$(source "$LIB_DIR/verifier-result.sh" && verifier_latest_verdict "$log")
+  _teardown
+  [ "$first_rc" -eq 1 ] && [ "$RCC_EXIT" -eq 0 ] && [ -z "$live" ] &&
+    [ "$(jq -r .verdict <<<"$j")" = "PASS" ] &&
+    [ "$(jq -r .criteria_met <<<"$j")/$(jq -r .criteria_total <<<"$j")" = "4/4" ] &&
+    [ "$(jq -r .attempt <<<"$j")" = "2" ] || {
+    echo "first_rc=$first_rc rc=$RCC_EXIT live='$live' record=$j" >&2
+    return 1
+  }
+}
+
+# A: --refresh writes nothing when the latest result is already PASS.
+test_refresh_noop_when_latest_passes() {
+  _setup
+  _write_tasks "TEST-34" "- [x] 1.1 a"
+  local log="$_ws/TEST-34-pipeline.log"
+  _rcc_logged "$log" "TEST-34"
+  _rcc_logged "$log" "TEST-34" --refresh
+  local n status
+  n=$(_rc_lines "$log")
+  status=$(sed -n 's/^RETURN_COMPLETENESS_STATUS=//p' "$_ws/out.env")
+  _teardown
+  [ "$RCC_EXIT" -eq 0 ] && [ "$n" -eq 1 ] && [ "$status" = "current" ] || {
+    echo "rc=$RCC_EXIT lines=$n status=$status" >&2
+    return 1
+  }
+}
+
+# A: boxes still open after verify → refresh records FAIL again (gate keeps blocking).
+test_refresh_still_incomplete_stays_failing() {
+  _setup
+  _write_tasks "TEST-35" "- [x] 1.1 a"$'\n'"- [ ] 1.2 b"
+  local log="$_ws/TEST-35-pipeline.log"
+  _rcc_logged "$log" "TEST-35"
+  _rcc_logged "$log" "TEST-35" --refresh
+  local n live
+  n=$(_rc_lines "$log")
+  # shellcheck source=/dev/null
+  live=$(source "$LIB_DIR/verifier-result.sh" && verifier_latest_verdict "$log")
+  _teardown
+  [ "$RCC_EXIT" -eq 1 ] && [ "$n" -eq 2 ] && [ "$live" = "return_completeness|IMPLEMENT|FAIL" ] || {
+    echo "rc=$RCC_EXIT lines=$n live='$live'" >&2
+    return 1
+  }
+}
+
 # ── Runner ─────────────────────────────────────────────────────────────────────
 
 echo "=== return-completeness-check.sh unit tests ==="
@@ -274,6 +409,12 @@ _run "simple-fix unchecked box → exit 1" test_simple_fix_unchecked_box_exits_1
 _run "simple-fix missing checklist section → exit 2" test_simple_fix_missing_checklist_exits_2
 _run "TEST-7 ignores test-77 tasks.md (whole-ID)" test_whole_id_tasks_not_matched_by_longer_id
 _run "TEST-7 ignores test-77 simple-fix.md (whole-ID)" test_whole_id_simple_fix_not_matched_by_longer_id
+_run "#598 C: PASS records n/n, not 1/1" test_pass_records_real_box_count
+_run "#598 B: --log-file records with LOG_FILE/TAP_LOG unset" test_log_file_flag_records_without_env
+_run "#598 B: no pipeline log is loud, not silent" test_no_log_is_loud
+_run "#598 A: --refresh PASS supersedes stale FAIL" test_refresh_supersedes_stale_fail
+_run "#598 A: --refresh no-op when latest is PASS" test_refresh_noop_when_latest_passes
+_run "#598 A: --refresh keeps FAIL when boxes stay open" test_refresh_still_incomplete_stays_failing
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="

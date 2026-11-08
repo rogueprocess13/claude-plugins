@@ -613,24 +613,19 @@ AGENT_RETURN_EOF
 
 spawn_capture TICKET_ID={TICKET-ID} PHASE=IMPLEMENT RESULT_FILE=/tmp/ticket-auto-{TICKET-ID}-agent-return.txt
 
-# Phase-result parse (advisory, observe-only). Converts the agent's terminal
-# === PHASE_RESULT === block into META|phase-result|info|{json} on the pipeline log.
-# Runs after spawn_capture and before spawn_agent_post — the same insertion point as
-# return-completeness-check.sh below, and before the phase inspector appends to the
-# same capture file.
-# Exit 1 (absent or malformed block → claimed_verdict=UNKNOWN) is a NORMAL outcome,
-# not an error. Nothing routes on this channel in this increment, so a parser failure
-# cannot halt a run. Hence `|| true`.
+# Phase-result parse (advisory, observe-only): the agent's === PHASE_RESULT === block
+# → META|phase-result|info|{json}. Runs before spawn_agent_post and before the phase
+# inspector appends to the capture file. Exit 1 (absent/malformed block →
+# claimed_verdict=UNKNOWN) is normal; nothing routes on it. Hence `|| true`.
 _prp_sh="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/phase-result-parse.sh"
 bash "$_prp_sh" --phase IMPLEMENT \
   --return-file "./logs/{TICKET_ID}-implement-agent.log" \
   --log-file "{LOG_FILE}" >/dev/null 2>&1 || true
 
-# Return-completeness gate — runs for all artifact types.
-# Handles both openspec tasks.md and simple-fix.md Completion Checklist
-# internally. Resolution order: tasks.md first, simple-fix.md fallback.
+# Return-completeness gate (tasks.md, else simple-fix.md). --log-file: LOG_FILE
+# is not exported; with no log no verifier-result is written (stderr says so).
 _rcc_sh="${HOME}/.claude/skills/lib/return-completeness-check.sh"
-_rcc_out=$(bash "$_rcc_sh" "{TICKET_ID}" --repos-root "{REPOS_ROOT}" 2>/dev/null) || true
+_rcc_out=$(bash "$_rcc_sh" "{TICKET_ID}" --repos-root "{REPOS_ROOT}" --log-file "{LOG_FILE}") || true
 eval "$_rcc_out" 2>/dev/null || true
 if [ "${RETURN_COMPLETENESS_STATUS:-complete}" != "complete" ]; then
   # Warn-only (Phase 1): log via gate-warn, never gate-stop. Does NOT
@@ -795,6 +790,10 @@ bash "$_vrc_sh" --phase VERIFY \
 
 spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done VERDICT=PASS MSG="<summary>" NEXT_PHASE=PR-REVIEW LOOP_BEARING=true  # on PASS
 spawn_agent_post TICKET_ID={TICKET-ID} RESULT=fail VERDICT=FAIL MSG="<summary>" LOOP_BEARING=true                         # on FAIL
+
+# Verify may tick deferred tasks: re-count if return_completeness is FAIL (#598).
+bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/return-completeness-check.sh" "{TICKET_ID}" \
+  --repos-root "{REPOS_ROOT}" --log-file "{LOG_FILE}" --refresh >/dev/null || true
 
 # Phase inspector (RLVR Phase 1): post-VERIFY advisory inspection.
 # Assembles verifier context; if results exist, spawn guidance-extractor-agent.
