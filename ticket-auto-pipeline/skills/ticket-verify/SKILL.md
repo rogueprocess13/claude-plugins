@@ -39,16 +39,16 @@ When `--from-auto` is present, VERIFY is a loop-bearing phase: additionally foll
 - **Verdict**: after the final pass/fail determination, write `hb-wrap.sh decision "verification-verdict" "fired" "PASS|FAIL" '{"verdict":"PASS|FAIL","criteria_met":"N","criteria_total":"M"}'`
 
 ### Step dispatch
-**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (Step 4c for build-only, Step 4c-live for live-backend) directly at the next unchecked criterion (per-criterion checkpoint), not `build-plan`.
+**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1.
 
 | `--from-step` value | Effective skip to | Restore from |
 |---------------------|-------------------|--------------|
-| `load-context` | Step 2 (build plan) | ticket already loaded; re-use from notes.md/context.md |
+| `load-context` | **Step 1** (start over) | Step 1.6 (lock, env, seeds) runs after it |
 | `build-plan` | Step 3 (browser session) | re-run Steps 3+ in full |
 | `browser-session` | **falls back to `build-plan`** | browser state lost on crash |
 | `navigate` | **falls back to `build-plan`** | browser state lost on crash |
 | `execute-steps` | **falls back to `build-plan`** | browser state lost on crash |
-| `checkpoint` | treated as `execute-steps` (so `build-plan` in browser mode) | `detect-resume.sh` no longer emits it; accepted only from an older router |
+| `checkpoint` | treated as `execute-steps` (so `build-plan` in browser mode) | older routers only |
 
 **Checkpoint resume (deterministic).** Which criteria already passed is never inferred
 from memory or prose. At the start of the criterion loop (Step 4b / 4c / 4c-live), run:

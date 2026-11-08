@@ -17,6 +17,20 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## Unreleased
+
+### Fixed
+
+- **`ticket-auto-pipeline`** — `detect-resume.sh` no longer passes VERIFY step
+  names `ticket-verify` does not know (`seed-apply`, `seed-precheck`,
+  `verify-lock`, any future step) as `--from-step`. `VERIFY_FROM` is now an
+  allow-list: only `build-plan` (written after Step 1.6's lock, env and seeds)
+  passes through, browser steps and `checkpoint` still map to `build-plan`, and
+  every other step, `load-context` included, resumes `ticket-verify` from
+  Step 1. fleetd's `last_verify_checkpoint` applies the same
+  mapping, with parity fixtures. `ticket-verify` SKILL.md states the
+  unknown-value rule (size-neutral). (#620)
+
 ## 0.87.0 (2026-11-08) — fleet-controller 0.46.1
 
 VERIFY checkpoints survive a crashed attempt, and `ticket-retro` finds its lib in the plugin layout.

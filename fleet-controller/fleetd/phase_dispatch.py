@@ -1659,14 +1659,19 @@ def resolve_dispatch_position(store, tid, project_dir=None, script=None,
 _VERIFY_UNRESUMABLE_SUBSTEPS = frozenset(
     {'browser-session', 'navigate', 'execute-steps'})
 
+# The `--from-step` values ticket-verify resumes from as-is. Only build-plan:
+# it is written after Step 1.6 (lock, worktrees, env, seeds); load-context is
+# written before it, so resuming there would skip that setup (#620).
+_VERIFY_RESUMABLE_SUBSTEPS = frozenset({'build-plan'})
+
 
 def last_verify_checkpoint(log_lines, ctl_lines=None):
     """The `--from-step` value a retried VERIFY worker should resume from.
 
     Mirrors `detect-resume.sh`'s `VERIFY_FROM` derivation exactly — the last
     `|VERIFY|<step>|done|` entry's step field, with `verify` and
-    `phase-inspector-*` excluded, then the same browser-state correction —
-    so a Python reimplementation cannot silently diverge from the bash one.
+    `phase-inspector-*` excluded, then the same browser-state correction and
+    the same allow-list (any other step returns `''`) — so a Python reimplementation cannot silently diverge from the bash one.
     Read directly rather than shelled out to, per D7: this is a per-attempt
     reconstruction fleetd performs on its own dispatch path, not the one-time
     adoption `resolve_dispatch_position` owns.
@@ -1696,6 +1701,11 @@ def last_verify_checkpoint(log_lines, ctl_lines=None):
         last_step = 'execute-steps'
     if last_step in _VERIFY_UNRESUMABLE_SUBSTEPS:
         return 'build-plan'
+    # Allow-list (#620), same as detect-resume.sh: any step ticket-verify's
+    # `--from-step` table does not resume past setup (load-context,
+    # seed-apply, seed-precheck, verify-lock, ...) restarts from Step 1.
+    if last_step not in _VERIFY_RESUMABLE_SUBSTEPS:
+        return ''
     return last_step
 
 

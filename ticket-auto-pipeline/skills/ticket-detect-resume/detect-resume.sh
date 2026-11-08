@@ -667,8 +667,19 @@ RECONCILE_CYCLE=${RECONCILE_CYCLE:-0}
 if [ "$VERIFY_FROM" = "checkpoint" ]; then
   VERIFY_FROM="execute-steps"
 fi
+# Allow-list (#620): only build-plan resumes past setup. It is written at the
+# end of Step 2, after Step 1.6 (verify lock, worktrees, env-start, seeds) and
+# Step 1.7 have completed. Every other step — load-context (end of Step 1,
+# before 1.6), seed-apply, seed-precheck, verify-lock, worktree-setup,
+# pre-flight, or a step added later — restarts ticket-verify from Step 1
+# (empty): seeding is idempotent and the lock must be re-acquired after a
+# crash anyway. Passed criteria are still skipped: ticket-verify reads its
+# checkpoint at the criterion loop, independent of --from-step. fleetd's
+# last_verify_checkpoint applies the same mapping.
 case "$VERIFY_FROM" in
+"" | build-plan) ;;
 browser-session | navigate | execute-steps) VERIFY_FROM="build-plan" ;;
+*) VERIFY_FROM="" ;;
 esac
 
 # ── Context restoration (mid-pipeline only) ─────────────────────────────────
