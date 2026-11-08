@@ -11,7 +11,7 @@ You have been given a ticket ID as the argument (e.g. `WIL-42`). Execute the ste
 
 If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=<from args>, PHASE=PR-REVIEW, HAS_LINEAR_ACCESS=false, HAS_LOGGING=true, HAS_HEARTBEAT=true, EMITS_PHASE_RESULT=false.
 
-**Why `EMITS_PHASE_RESULT=false`** (recorded decision, `rlvr-phase-result-contract` task 5.6): this skill runs inside the PR iteration loop but it is not a verdict-producing phase — it applies requested changes and hands back to IMPLEMENT → VERIFY → PR-REVIEW, all three of which emit. Its own outcome is therefore always re-validated downstream. It also runs under `PHASE=PR-REVIEW` with no verifier of its own, so a block from here would carry the same `(phase, verifier)` pair as the real review and no consumer could tell the two apart. Excluded deliberately, not by omission. Before starting, source the project context: `source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=PR-REVIEW, FROM_FLAG=none, HAS_LINEAR_ACCESS=false, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT,ISSUE_PREFIX, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
+**Why `EMITS_PHASE_RESULT=false`** (recorded decision, `rlvr-phase-result-contract` task 5.6): this skill runs inside the PR iteration loop but it is not a verdict-producing phase — it applies requested changes and hands back to IMPLEMENT → VERIFY → PR-REVIEW, all three of which emit. Its own outcome is therefore always re-validated downstream. It also runs under `PHASE=PR-REVIEW` with no verifier of its own, so a block from here would carry the same `(phase, verifier)` pair as the real review and no consumer could tell the two apart. Excluded deliberately, not by omission. Before starting, source the project context: `source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=PR-REVIEW, FROM_FLAG=none, HAS_LINEAR_ACCESS=false, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT,ISSUE_PREFIX, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
 
 ### Heartbeat points
 - **Findings source**: after locating review findings, write `hb-wrap.sh decision "findings-source" "info" "findings from {PR|session-file}" '{"source":"{pr|session-file}"}'`
@@ -87,7 +87,7 @@ code repo deterministically: the `META|pr-created` record, then the ticket's wor
 `origin`, then the `Worktree:` checkpoint in `notes.md`:
 
 ```bash
-source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
 GH_REPO=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/pr-repo-resolve.sh" \
   "{TICKET-ID}" --log-file "$TAP_LOG" --ticket-dir "{ticket-dir}")
 echo "GH_REPO=$GH_REPO"

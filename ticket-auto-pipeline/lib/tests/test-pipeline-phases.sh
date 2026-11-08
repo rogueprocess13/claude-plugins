@@ -316,7 +316,7 @@ test_gate_reconcile_skill_exists() {
 test_gate_reconcile_has_context_loading() {
   local skill_md="$SKILLS_DIR/ticket-gate-reconcile/SKILL.md"
   [ -f "$skill_md" ] || return 1
-  grep -q 'source /tmp/ticket-auto' "$skill_md" && grep -q 'env.sh' "$skill_md" || {
+  grep -q 'source ~/.claude/skills/lib/ticket-env.sh {TICKET-ID}' "$skill_md" || {
     echo "gate-reconcile missing env.sh context loading"
     return 1
   }
@@ -467,7 +467,7 @@ test_router_prescan_success_judged_by_content() {
   # Success must be judged by the agent's returned CONTENT, not by spawn_capture's
   # exit code. The return now arrives as a file (RESULT_FILE=, quoted heredoc) rather
   # than an interpolated "$AGENT_RESULT" argument, so the content check greps the file.
-  echo "$block" | grep -q 'grep -q "\$slug: scanned" /tmp/ticket-auto-{TICKET-ID}-agent-return.txt' || {
+  echo "$block" | grep -q 'grep -q "\$slug: scanned" ./logs/{TICKET-ID}-agent-return.txt' || {
     echo "prescan success no longer judged by the agent's returned content"
     return 1
   }

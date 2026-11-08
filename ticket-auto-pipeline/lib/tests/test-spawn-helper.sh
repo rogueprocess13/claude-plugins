@@ -35,18 +35,17 @@ _cleanup_test_tmpdirs() {
   done
 }
 
-# Scratch files this suite writes straight into /tmp (spawn_write_env,
-# spawn_agent_pre and the token-tracker hooks all hardcode /tmp). Every ticket
-# id used here starts with TEST-, so the glob cannot reach a real run's files.
-# Without this, dormant fixtures outlive the suite and end up as live input to
-# the production hooks (#273).
+# Scratch files this suite writes (spawn_write_env, spawn_agent_pre and the
+# token-tracker hooks) go to the private scratch dir lib/ticket-tmp.sh
+# resolves (GitHub #619). Point it at a dir of the suite's own so no fixture
+# can outlive the suite or become live input to the production hooks (#273).
+TICKET_TMP_DIR=$(mktemp -d)
+export TICKET_TMP_DIR
+# tmp-sweep.sh also cleans the pre-#619 location (shared /tmp); keep the
+# suite's sweeps out of the real one.
+export TICKET_TMP_LEGACY_DIR="$TICKET_TMP_DIR"
 _cleanup_test_tmp_fixtures() {
-  local f
-  shopt -s nullglob
-  for f in /tmp/ticket-auto-TEST-*; do
-    rm -f -- "$f" 2>/dev/null || true
-  done
-  shopt -u nullglob
+  rm -rf "$TICKET_TMP_DIR" 2>/dev/null || true
 }
 
 _cleanup_test_exit() {
@@ -117,19 +116,19 @@ test_write_env_creates_file() {
   spawn_write_env TICKET_ID=TEST-42 REPOS_ROOT=/tmp/test ISSUE_PREFIX=TEST BE_SERVICES=svc1 WIKI_ROOT=/tmp/wiki BE_TEST_CMD="make test" FE_TEST_CMD="npm test" LOCAL_URL=http://localhost:3000 UAT_URL=http://localhost:8080 SLACK_CHANNEL="#test" >/dev/null 2>&1
   local rc=$?
   rm -rf "$tmpdir"
-  [ "$rc" -eq 0 ] && [ -f "/tmp/ticket-auto-TEST-42-env.sh" ]
+  [ "$rc" -eq 0 ] && [ -f "$TICKET_TMP_DIR/ticket-auto-TEST-42-env.sh" ]
 }
 
 test_write_env_exports_ticket_id() {
   source "$LIB_DIR/spawn-helper.sh"
   spawn_write_env TICKET_ID=TEST-42 REPOS_ROOT=/tmp/test ISSUE_PREFIX=TEST BE_SERVICES=svc1 >/dev/null 2>&1
-  grep -q 'export TICKET_ID="TEST-42"' /tmp/ticket-auto-TEST-42-env.sh
+  grep -q 'export TICKET_ID="TEST-42"' $TICKET_TMP_DIR/ticket-auto-TEST-42-env.sh
 }
 
 test_write_env_exports_repos_root() {
   source "$LIB_DIR/spawn-helper.sh"
   spawn_write_env TICKET_ID=TEST-42 REPOS_ROOT=/home/user/repos ISSUE_PREFIX=TEST BE_SERVICES=svc1 >/dev/null 2>&1
-  grep -q 'export REPOS_ROOT="/home/user/repos"' /tmp/ticket-auto-TEST-42-env.sh
+  grep -q 'export REPOS_ROOT="/home/user/repos"' $TICKET_TMP_DIR/ticket-auto-TEST-42-env.sh
 }
 
 test_write_env_exports_all_fields() {
@@ -151,7 +150,7 @@ test_write_env_exports_all_fields() {
     AUTONOMY=semi-auto \
     MERGE_POLICY=manual \
     WORKTREE_ROOT=/home/user/worktrees/TEST-42 >/dev/null 2>&1
-  local f=/tmp/ticket-auto-TEST-42-env.sh
+  local f=$TICKET_TMP_DIR/ticket-auto-TEST-42-env.sh
   grep -q 'export TICKET_ID="TEST-42"' "$f" &&
     grep -q 'export REPOS_ROOT="/repos"' "$f" &&
     grep -q 'export BE_SERVICES="svc1 svc2"' "$f" &&
@@ -173,7 +172,7 @@ test_write_env_uat_policy_defaults_to_per_ticket() {
   source "$LIB_DIR/spawn-helper.sh"
   spawn_write_env TICKET_ID=TEST-UP-DEF \
     REPOS_ROOT=/repos ISSUE_PREFIX=TEST BE_SERVICES=svc1 >/dev/null 2>&1
-  grep -q 'export UAT_POLICY="per-ticket"' /tmp/ticket-auto-TEST-UP-DEF-env.sh
+  grep -q 'export UAT_POLICY="per-ticket"' $TICKET_TMP_DIR/ticket-auto-TEST-UP-DEF-env.sh
 }
 
 test_write_env_merge_policy_defaults_to_empty() {
@@ -185,7 +184,7 @@ test_write_env_merge_policy_defaults_to_empty() {
   source "$LIB_DIR/spawn-helper.sh"
   spawn_write_env TICKET_ID=TEST-MP-DEF \
     REPOS_ROOT=/repos ISSUE_PREFIX=TEST BE_SERVICES=svc1 >/dev/null 2>&1
-  grep -q 'export MERGE_POLICY=""' /tmp/ticket-auto-TEST-MP-DEF-env.sh
+  grep -q 'export MERGE_POLICY=""' $TICKET_TMP_DIR/ticket-auto-TEST-MP-DEF-env.sh
 }
 
 # GitHub #578: the env file sits in shared /tmp for up to 24h, so the Linear
@@ -195,7 +194,7 @@ test_write_env_never_writes_linear_key_when_set() {
   source "$LIB_DIR/spawn-helper.sh"
   LINEAR_API_KEY=lin_api_test-spawn-key-578 spawn_write_env TICKET_ID=TEST-LL \
     REPOS_ROOT=/repos ISSUE_PREFIX=TEST BE_SERVICES=svc1 >/dev/null 2>&1 || return 1
-  tmpfile=/tmp/ticket-auto-TEST-LL-env.sh
+  tmpfile=$TICKET_TMP_DIR/ticket-auto-TEST-LL-env.sh
   [ -s "$tmpfile" ] || return 1
   ! grep -q 'LINEAR_API_KEY' "$tmpfile" || return 1
   ! grep -q 'test-spawn-key-578' "$tmpfile"
@@ -208,7 +207,7 @@ test_write_env_empty_integration_branch() {
     BASE_BRANCH=develop \
     INTEGRATION_BRANCH= \
     TICKET_BRANCH=feat/TEST-42-fix-bug >/dev/null 2>&1
-  local f=/tmp/ticket-auto-TEST-42-env.sh
+  local f=$TICKET_TMP_DIR/ticket-auto-TEST-42-env.sh
   # Empty INTEGRATION_BRANCH should produce empty placeholder (not error)
   grep -q 'export INTEGRATION_BRANCH=""' "$f"
 }
@@ -219,7 +218,7 @@ test_write_env_empty_worktree_root() {
     REPOS_ROOT=/repos ISSUE_PREFIX=TEST BE_SERVICES=svc1 \
     BASE_BRANCH=develop \
     WORKTREE_ROOT= >/dev/null 2>&1
-  local f=/tmp/ticket-auto-TEST-42-env.sh
+  local f=$TICKET_TMP_DIR/ticket-auto-TEST-42-env.sh
   # Empty WORKTREE_ROOT should produce empty placeholder (not error)
   grep -q 'export WORKTREE_ROOT=""' "$f"
 }
@@ -229,7 +228,7 @@ test_write_env_does_not_append_linear_key_when_unset() {
   unset LINEAR_API_KEY
   spawn_write_env TICKET_ID=TEST-NK \
     REPOS_ROOT=/repos ISSUE_PREFIX=TEST BE_SERVICES=svc1 >/dev/null 2>&1
-  ! grep -q 'LINEAR_API_KEY' /tmp/ticket-auto-TEST-NK-env.sh
+  ! grep -q 'LINEAR_API_KEY' $TICKET_TMP_DIR/ticket-auto-TEST-NK-env.sh
 }
 
 # GitHub #575: the env file carries the pipeline log as TAP_LOG, never as a
@@ -239,7 +238,7 @@ test_write_env_writes_tap_log_not_log_file() {
   source "$LIB_DIR/spawn-helper.sh"
   spawn_write_env TICKET_ID=TEST-TL REPOS_ROOT=/repos ISSUE_PREFIX=TEST \
     BE_SERVICES=svc1 TAP_LOG=/w/logs/TEST-TL-pipeline.log >/dev/null 2>&1 || return 1
-  f=/tmp/ticket-auto-TEST-TL-env.sh
+  f=$TICKET_TMP_DIR/ticket-auto-TEST-TL-env.sh
   ! grep -q '^export LOG_FILE=' "$f" || return 1
   got=$(env -u LOG_FILE bash -c 'source "$1"; sh -c "echo \${TAP_LOG:-unset}/\${LOG_FILE:-unset}"' _ "$f")
   [ "$got" = "/w/logs/TEST-TL-pipeline.log/unset" ]
@@ -261,7 +260,7 @@ test_write_env_handles_special_chars_in_values() {
   # BE-4 bug itself: inside "..." it expands on source.)
   source "$LIB_DIR/spawn-helper.sh"
   spawn_write_env TICKET_ID=TEST-42 REPOS_ROOT=/tmp/test ISSUE_PREFIX=TEST BE_SERVICES="svc1,svc2;svc3 \$dollar" >/dev/null 2>&1
-  local f=/tmp/ticket-auto-TEST-42-env.sh got
+  local f=$TICKET_TMP_DIR/ticket-auto-TEST-42-env.sh got
   got=$(bash -c 'source "$1"; printf %s "$BE_SERVICES"' _ "$f")
   [ "$got" = 'svc1,svc2;svc3 $dollar' ]
 }
@@ -271,7 +270,7 @@ test_write_env_no_shell_expansion_in_heredoc() {
   # file is sourced — the literal text comes back.
   source "$LIB_DIR/spawn-helper.sh"
   spawn_write_env TICKET_ID=TEST-42 REPOS_ROOT='$(echo pwned)' ISSUE_PREFIX=TEST BE_SERVICES='$HOME' >/dev/null 2>&1
-  local f=/tmp/ticket-auto-TEST-42-env.sh got
+  local f=$TICKET_TMP_DIR/ticket-auto-TEST-42-env.sh got
   got=$(bash -c 'source "$1"; printf "%s|%s" "$REPOS_ROOT" "$BE_SERVICES"' _ "$f")
   [ "$got" = '$(echo pwned)|$HOME' ]
 }
@@ -292,7 +291,7 @@ test_write_env_roundtrip_hostile_values() {
     REPOS_ROOT="$v_bs" ISSUE_PREFIX=TEST BE_SERVICES="$v_nl" \
     UAT_URL="$v_url" LOCAL_URL="$v_url" BE_TEST_CMD="$v_cmd" \
     FE_TEST_CMD="$v_inj" >/dev/null 2>&1 || return 1
-  f=/tmp/ticket-auto-TEST-RT-env.sh
+  f=$TICKET_TMP_DIR/ticket-auto-TEST-RT-env.sh
   got=$(bash -c 'source "$1" || exit 9
     printf "%s\0" "$UAT_URL" "$LOCAL_URL" "$BE_TEST_CMD" "$FE_TEST_CMD" \
       "$BE_SERVICES" "$REPOS_ROOT"' _ "$f" | od -An -c)
@@ -306,7 +305,7 @@ test_write_env_roundtrip_hostile_values() {
 test_write_env_private_and_not_written_through_symlink() {
   local d f mode
   d=$(_mktemp_test_dir)
-  f=/tmp/ticket-auto-TEST-SYM-env.sh
+  f=$TICKET_TMP_DIR/ticket-auto-TEST-SYM-env.sh
   rm -f "$f"
   echo original >"$d/target"
   ln -s "$d/target" "$f"
@@ -390,16 +389,16 @@ test_pre_appends_from_step_to_flags() {
 }
 
 test_pre_writes_metadata_file() {
-  rm -f /tmp/ticket-auto-TEST-42-spawn-meta.txt
+  rm -f $TICKET_TMP_DIR/ticket-auto-TEST-42-spawn-meta.txt
   source "$LIB_DIR/spawn-helper.sh"
   spawn_agent_pre PHASE=TEST STEP=test TICKET_ID=TEST-42 SKILL=/ticket-test >/dev/null 2>&1
-  [ -f /tmp/ticket-auto-TEST-42-spawn-meta.txt ]
+  [ -f $TICKET_TMP_DIR/ticket-auto-TEST-42-spawn-meta.txt ]
 }
 
 test_pre_metadata_contains_correct_phase() {
   source "$LIB_DIR/spawn-helper.sh"
   spawn_agent_pre PHASE=IMPLEMENT STEP=implement TICKET_ID=TEST-42 SKILL=/ticket-implement >/dev/null 2>&1
-  grep -q 'PHASE=IMPLEMENT' /tmp/ticket-auto-TEST-42-spawn-meta.txt
+  grep -q 'PHASE=IMPLEMENT' $TICKET_TMP_DIR/ticket-auto-TEST-42-spawn-meta.txt
 }
 
 test_pre_printf_q_escapes_shell_metachars() {
@@ -427,10 +426,10 @@ test_pre_printf_q_escapes_shell_metachars() {
 }
 
 test_pre_writes_context_file() {
-  rm -f /tmp/ticket-auto-TEST-42-ctx.txt
+  rm -f $TICKET_TMP_DIR/ticket-auto-TEST-42-ctx.txt
   source "$LIB_DIR/spawn-helper.sh"
   spawn_agent_pre PHASE=APPRAISE STEP=appraise TICKET_ID=TEST-42 SKILL=/ticket-appraise LOG_FILE=/tmp/test.log >/dev/null 2>&1
-  grep -q 'APPRAISE|/tmp/test.log' /tmp/ticket-auto-TEST-42-ctx.txt
+  grep -q 'APPRAISE|/tmp/test.log' $TICKET_TMP_DIR/ticket-auto-TEST-42-ctx.txt
 }
 
 # ── env file integration tests (Tasks 4.1-4.2) ──────────────────────────────
@@ -447,18 +446,18 @@ test_pre_prompt_includes_env_file_path() {
   # Now call spawn_agent_pre and check the prompt
   local output
   output=$(spawn_agent_pre PHASE=TEST STEP=test TICKET_ID=TEST-42 SKILL=/ticket-test FLAGS="--from-auto" 2>/dev/null)
-  echo "$output" | grep -q 'source /tmp/ticket-auto-TEST-42-env.sh'
+  echo "$output" | grep -qF "export TICKET_TMP_DIR=$TICKET_TMP_DIR; source ~/.claude/skills/lib/ticket-env.sh TEST-42"
 }
 
 test_pre_completes_when_env_file_missing() {
   # Task 4.2: spawn_agent_pre must succeed even when the env file doesn't exist.
   # The AGENT_PROMPT still includes the source command (sub-agent tolerates missing file).
-  rm -f /tmp/ticket-auto-TEST-42-env.sh
+  rm -f $TICKET_TMP_DIR/ticket-auto-TEST-42-env.sh
   source "$LIB_DIR/spawn-helper.sh"
   local output
   output=$(spawn_agent_pre PHASE=TEST STEP=test TICKET_ID=TEST-42 SKILL=/ticket-test FLAGS="--from-auto" 2>/dev/null)
   local rc=$?
-  [ "$rc" -eq 0 ] && echo "$output" | grep -q 'source /tmp/ticket-auto-TEST-42-env.sh'
+  [ "$rc" -eq 0 ] && echo "$output" | grep -qF "export TICKET_TMP_DIR=$TICKET_TMP_DIR; source ~/.claude/skills/lib/ticket-env.sh TEST-42"
 }
 
 # ── spawn_agent_post tests ─────────────────────────────────────────────────────
@@ -466,7 +465,7 @@ test_pre_completes_when_env_file_missing() {
 test_post_reads_metadata_file() {
   source "$LIB_DIR/spawn-helper.sh"
   # Write metadata manually to simulate spawn_agent_pre having run
-  cat >/tmp/ticket-auto-TEST-42-spawn-meta.txt <<'META'
+  cat >$TICKET_TMP_DIR/ticket-auto-TEST-42-spawn-meta.txt <<'META'
 PHASE=TEST
 STEP=test
 TICKET_ID=TEST-42
@@ -495,13 +494,13 @@ test_post_rejects_bad_result_value() {
 }
 
 test_post_done_explicit_params_no_metadata() {
-  rm -f /tmp/ticket-auto-TEST-42-spawn-meta.txt
+  rm -f $TICKET_TMP_DIR/ticket-auto-TEST-42-spawn-meta.txt
   source "$LIB_DIR/spawn-helper.sh"
   spawn_agent_post TICKET_ID=TEST-42 RESULT=done PHASE=TEST STEP=test MSG="explicit done" >/dev/null 2>&1
 }
 
 test_post_fail_explicit_params() {
-  rm -f /tmp/ticket-auto-TEST-42-spawn-meta.txt
+  rm -f $TICKET_TMP_DIR/ticket-auto-TEST-42-spawn-meta.txt
   source "$LIB_DIR/spawn-helper.sh"
   spawn_agent_post TICKET_ID=TEST-42 RESULT=fail PHASE=TEST STEP=test MSG="something broke" >/dev/null 2>&1
 }
@@ -510,7 +509,7 @@ test_post_meta_file_persists_after_done() {
   # Meta file must persist after spawn_agent_post so duplicate calls
   # can still read PHASE/STEP for idempotency guard tail-checks.
   # It is overwritten by the next spawn_agent_pre call.
-  cat >/tmp/ticket-auto-TEST-42-spawn-meta.txt <<'META'
+  cat >$TICKET_TMP_DIR/ticket-auto-TEST-42-spawn-meta.txt <<'META'
 PHASE=TEST
 STEP=test
 TICKET_ID=TEST-42
@@ -518,11 +517,11 @@ LOG_FILE=/tmp/test-cleanup.log
 META
   source "$LIB_DIR/spawn-helper.sh"
   spawn_agent_post TICKET_ID=TEST-42 RESULT=done >/dev/null 2>&1
-  [ -f /tmp/ticket-auto-TEST-42-spawn-meta.txt ]
+  [ -f $TICKET_TMP_DIR/ticket-auto-TEST-42-spawn-meta.txt ]
 }
 
 test_post_warn_continue_stops_pinger_but_does_not_exit() {
-  cat >/tmp/ticket-auto-TEST-42-spawn-meta.txt <<'META'
+  cat >$TICKET_TMP_DIR/ticket-auto-TEST-42-spawn-meta.txt <<'META'
 PHASE=MAINTENANCE
 STEP=maintenance
 TICKET_ID=TEST-42
@@ -540,10 +539,10 @@ test_token_tracker_resolves_phase_from_spawn_meta() {
   # entry under the correct phase.
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tk.log"
+  local log_file="$tmpdir/test-tk-pipeline.log"
   local transcript="$tmpdir/transcript.jsonl"
-  local meta_file="/tmp/ticket-auto-TEST-TK01-spawn-meta.txt"
-  local start_file="/tmp/ticket-auto-TEST-TK01-start-APPRAISE-$(date +%s%N).ts"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TK01-spawn-meta.txt"
+  local start_file="$TICKET_TMP_DIR/ticket-auto-TEST-TK01-start-APPRAISE-$(date +%s%N).ts"
 
   # Clean any prior run
   rm -f "$meta_file" "$start_file" "$log_file"
@@ -600,10 +599,10 @@ test_token_tracker_ignores_session_mismatch() {
   # sessions, no guessing.
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tk2.log"
+  local log_file="$tmpdir/test-tk2-pipeline.log"
   local transcript="$tmpdir/transcript2.jsonl"
-  local meta_file="/tmp/ticket-auto-TEST-TK02-spawn-meta.txt"
-  local start_file="/tmp/ticket-auto-TEST-TK02-start-IMPLEMENT-$(date +%s%N).ts"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TK02-spawn-meta.txt"
+  local start_file="$TICKET_TMP_DIR/ticket-auto-TEST-TK02-start-IMPLEMENT-$(date +%s%N).ts"
 
   rm -f "$meta_file" "$start_file" "$log_file"
 
@@ -644,10 +643,10 @@ test_token_tracker_no_session_in_payload_writes_nothing() {
   # target, so the hook must not guess (no UNKNOWN phase fallback).
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tk3.log"
+  local log_file="$tmpdir/test-tk3-pipeline.log"
   local transcript="$tmpdir/transcript3.jsonl"
-  local meta_file="/tmp/ticket-auto-TEST-TK03-spawn-meta.txt"
-  local start_file="/tmp/ticket-auto-TEST-TK03-start-APPRAISE-$(date +%s%N).ts"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TK03-spawn-meta.txt"
+  local start_file="$TICKET_TMP_DIR/ticket-auto-TEST-TK03-start-APPRAISE-$(date +%s%N).ts"
 
   rm -f "$meta_file" "$start_file" "$log_file"
 
@@ -687,9 +686,9 @@ test_token_tracker_skips_when_transcript_path_absent() {
   # session's own transcript and would corrupt every downstream aggregate.
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tkb.log"
-  local meta_file="/tmp/ticket-auto-TEST-TKB-spawn-meta.txt"
-  local start_file="/tmp/ticket-auto-TEST-TKB-start-APPRAISE-$(date +%s%N).ts"
+  local log_file="$tmpdir/test-tkb-pipeline.log"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKB-spawn-meta.txt"
+  local start_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKB-start-APPRAISE-$(date +%s%N).ts"
 
   rm -f "$meta_file" "$start_file" "$log_file"
 
@@ -729,9 +728,9 @@ test_token_tracker_transcript_path_with_quote_is_safe() {
   local quote_dir="$tmpdir/te'st"
   mkdir -p "$quote_dir"
   local transcript="$quote_dir/transcript.jsonl"
-  local log_file="$tmpdir/test-tkq.log"
-  local meta_file="/tmp/ticket-auto-TEST-TKQ-spawn-meta.txt"
-  local start_file="/tmp/ticket-auto-TEST-TKQ-start-APPRAISE-$(date +%s%N).ts"
+  local log_file="$tmpdir/test-tkq-pipeline.log"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKQ-spawn-meta.txt"
+  local start_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKQ-start-APPRAISE-$(date +%s%N).ts"
 
   rm -f "$meta_file" "$start_file" "$log_file"
 
@@ -769,8 +768,8 @@ JSONL
 
 test_token_tracker_start_writes_timestamp_on_session_match() {
   local ticket_id="TEST-TKS1"
-  local meta_file="/tmp/ticket-auto-${ticket_id}-spawn-meta.txt"
-  rm -f "$meta_file" /tmp/ticket-auto-${ticket_id}-start-APPRAISE-*.ts
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-${ticket_id}-spawn-meta.txt"
+  rm -f "$meta_file" $TICKET_TMP_DIR/ticket-auto-${ticket_id}-start-APPRAISE-*.ts
 
   cat >"$meta_file" <<META
 PHASE=APPRAISE
@@ -789,17 +788,17 @@ META
 
   local result=0
   local found
-  found=$(ls /tmp/ticket-auto-${ticket_id}-start-APPRAISE-*.ts 2>/dev/null | head -1 || true)
+  found=$(ls $TICKET_TMP_DIR/ticket-auto-${ticket_id}-start-APPRAISE-*.ts 2>/dev/null | head -1 || true)
   [ -z "$found" ] && result=1
 
-  rm -f "$meta_file" /tmp/ticket-auto-${ticket_id}-start-APPRAISE-*.ts 2>/dev/null || true
+  rm -f "$meta_file" $TICKET_TMP_DIR/ticket-auto-${ticket_id}-start-APPRAISE-*.ts 2>/dev/null || true
   return $result
 }
 
 test_token_tracker_start_ignores_session_mismatch() {
   local ticket_id="TEST-TKS2"
-  local meta_file="/tmp/ticket-auto-${ticket_id}-spawn-meta.txt"
-  rm -f "$meta_file" /tmp/ticket-auto-${ticket_id}-start-APPRAISE-*.ts
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-${ticket_id}-spawn-meta.txt"
+  rm -f "$meta_file" $TICKET_TMP_DIR/ticket-auto-${ticket_id}-start-APPRAISE-*.ts
 
   cat >"$meta_file" <<META
 PHASE=APPRAISE
@@ -818,10 +817,10 @@ META
 
   local result=0
   local found
-  found=$(ls /tmp/ticket-auto-${ticket_id}-start-APPRAISE-*.ts 2>/dev/null | head -1 || true)
+  found=$(ls $TICKET_TMP_DIR/ticket-auto-${ticket_id}-start-APPRAISE-*.ts 2>/dev/null | head -1 || true)
   [ -n "$found" ] && result=1
 
-  rm -f "$meta_file" /tmp/ticket-auto-${ticket_id}-start-APPRAISE-*.ts 2>/dev/null || true
+  rm -f "$meta_file" $TICKET_TMP_DIR/ticket-auto-${ticket_id}-start-APPRAISE-*.ts 2>/dev/null || true
   return $result
 }
 
@@ -850,13 +849,13 @@ test_post_duplicate_done_suppressed() {
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
   local log_file="$tmpdir/test.log"
-  cat >/tmp/ticket-auto-TEST-DUP2-spawn-meta.txt <<'META'
+  cat >$TICKET_TMP_DIR/ticket-auto-TEST-DUP2-spawn-meta.txt <<'META'
 PHASE=TEST
 STEP=test_step
 TICKET_ID=TEST-DUP2
 LOG_FILE=LOG_FILE_PLACEHOLDER
 META
-  sed -i "s|LOG_FILE_PLACEHOLDER|$log_file|" /tmp/ticket-auto-TEST-DUP2-spawn-meta.txt
+  sed -i "s|LOG_FILE_PLACEHOLDER|$log_file|" $TICKET_TMP_DIR/ticket-auto-TEST-DUP2-spawn-meta.txt
   source "$LIB_DIR/spawn-helper.sh"
   # First call: writes done
   spawn_agent_post TICKET_ID=TEST-DUP2 RESULT=done MSG="first done" >/dev/null 2>&1
@@ -876,7 +875,7 @@ test_post_phase_uppercase_in_log() {
   tmpdir=$(_mktemp_test_dir)
   local log_file="$tmpdir/test.log"
   local hb_file="$tmpdir/test.hb"
-  cat >/tmp/ticket-auto-TEST-CASE-spawn-meta.txt <<'META'
+  cat >$TICKET_TMP_DIR/ticket-auto-TEST-CASE-spawn-meta.txt <<'META'
 PHASE=appraise
 STEP=appraise
 TICKET_ID=TEST-CASE
@@ -885,8 +884,8 @@ HB_LOG_FILE=HB_FILE_PLACEHOLDER
 PINGER_PID=
 WATCHDOG_PID=
 META
-  sed -i "s|LOG_FILE_PLACEHOLDER|$log_file|" /tmp/ticket-auto-TEST-CASE-spawn-meta.txt
-  sed -i "s|HB_FILE_PLACEHOLDER|$hb_file|" /tmp/ticket-auto-TEST-CASE-spawn-meta.txt
+  sed -i "s|LOG_FILE_PLACEHOLDER|$log_file|" $TICKET_TMP_DIR/ticket-auto-TEST-CASE-spawn-meta.txt
+  sed -i "s|HB_FILE_PLACEHOLDER|$hb_file|" $TICKET_TMP_DIR/ticket-auto-TEST-CASE-spawn-meta.txt
   source "$LIB_DIR/spawn-helper.sh"
   spawn_agent_post TICKET_ID=TEST-CASE RESULT=done MSG="phase casing test" >/dev/null 2>&1
   local has_upper
@@ -917,7 +916,7 @@ test_post_loop_phase_two_brackets_produce_two_done_lines() {
   spawn_agent_post TICKET_ID=TEST-LOOP RESULT=done MSG="Verdict: second pass" >/dev/null 2>&1
   local done_count
   done_count=$(grep -c '|PR-REVIEW|pr-review|done|' "$log_file" 2>/dev/null || true)
-  rm -rf "$tmpdir" /tmp/ticket-auto-TEST-LOOP-spawn-meta.txt 2>/dev/null
+  rm -rf "$tmpdir" $TICKET_TMP_DIR/ticket-auto-TEST-LOOP-spawn-meta.txt 2>/dev/null
   [ "$done_count" -eq 2 ]
 }
 
@@ -928,13 +927,13 @@ test_post_retry_after_fail_writes_new_bracket() {
   tmpdir=$(_mktemp_test_dir)
   local log_file="$tmpdir/test.log"
   # Set up metadata for post
-  cat >/tmp/ticket-auto-TEST-RETRY-spawn-meta.txt <<'META'
+  cat >$TICKET_TMP_DIR/ticket-auto-TEST-RETRY-spawn-meta.txt <<'META'
 PHASE=TEST
 STEP=test_step
 TICKET_ID=TEST-RETRY
 LOG_FILE=LOG_FILE_PLACEHOLDER
 META
-  sed -i "s|LOG_FILE_PLACEHOLDER|$log_file|" /tmp/ticket-auto-TEST-RETRY-spawn-meta.txt
+  sed -i "s|LOG_FILE_PLACEHOLDER|$log_file|" $TICKET_TMP_DIR/ticket-auto-TEST-RETRY-spawn-meta.txt
   source "$LIB_DIR/spawn-helper.sh"
   # First pre: writes waiting
   spawn_agent_pre PHASE=TEST STEP=test_step TICKET_ID=TEST-RETRY \
@@ -962,7 +961,7 @@ test_post_done_verdict_prepended_to_log_msg() {
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
   local log_file="$tmpdir/test.log"
-  cat >/tmp/ticket-auto-TEST-VERDICT1-spawn-meta.txt <<META
+  cat >$TICKET_TMP_DIR/ticket-auto-TEST-VERDICT1-spawn-meta.txt <<META
 PHASE=VERIFY
 STEP=verify
 TICKET_ID=TEST-VERDICT1
@@ -973,7 +972,7 @@ META
   local rc=$?
   local matched
   matched=$(grep -c '|VERIFY|verify|done|PASS — 3/3 criteria met' "$log_file" 2>/dev/null || true)
-  rm -rf "$tmpdir" /tmp/ticket-auto-TEST-VERDICT1-spawn-meta.txt
+  rm -rf "$tmpdir" $TICKET_TMP_DIR/ticket-auto-TEST-VERDICT1-spawn-meta.txt
   [ "$rc" -eq 0 ] && [ "$matched" -eq 1 ]
 }
 
@@ -981,7 +980,7 @@ test_post_fail_verdict_prepended_to_log_msg() {
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
   local log_file="$tmpdir/test.log"
-  cat >/tmp/ticket-auto-TEST-VERDICT2-spawn-meta.txt <<META
+  cat >$TICKET_TMP_DIR/ticket-auto-TEST-VERDICT2-spawn-meta.txt <<META
 PHASE=VERIFY
 STEP=verify
 TICKET_ID=TEST-VERDICT2
@@ -991,7 +990,7 @@ META
   spawn_agent_post TICKET_ID=TEST-VERDICT2 RESULT=fail VERDICT=FAIL MSG="2/3 criteria met" >/dev/null 2>&1
   local matched
   matched=$(grep -c '|VERIFY|verify|fail|FAIL — 2/3 criteria met' "$log_file" 2>/dev/null || true)
-  rm -rf "$tmpdir" /tmp/ticket-auto-TEST-VERDICT2-spawn-meta.txt
+  rm -rf "$tmpdir" $TICKET_TMP_DIR/ticket-auto-TEST-VERDICT2-spawn-meta.txt
   [ "$matched" -eq 1 ]
 }
 
@@ -1000,7 +999,7 @@ test_post_no_verdict_leaves_msg_unprefixed() {
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
   local log_file="$tmpdir/test.log"
-  cat >/tmp/ticket-auto-TEST-VERDICT3-spawn-meta.txt <<META
+  cat >$TICKET_TMP_DIR/ticket-auto-TEST-VERDICT3-spawn-meta.txt <<META
 PHASE=MAINTENANCE
 STEP=document
 TICKET_ID=TEST-VERDICT3
@@ -1010,7 +1009,7 @@ META
   spawn_agent_post TICKET_ID=TEST-VERDICT3 RESULT=done MSG="ai-context.md written" >/dev/null 2>&1
   local matched
   matched=$(grep -c '|MAINTENANCE|document|done|ai-context.md written$' "$log_file" 2>/dev/null || true)
-  rm -rf "$tmpdir" /tmp/ticket-auto-TEST-VERDICT3-spawn-meta.txt
+  rm -rf "$tmpdir" $TICKET_TMP_DIR/ticket-auto-TEST-VERDICT3-spawn-meta.txt
   [ "$matched" -eq 1 ]
 }
 
@@ -1678,7 +1677,7 @@ test_spawn_agent_pre_still_opens_through_the_helper() {
       PHASE=APPRAISE STEP=appraise TICKET_ID=TEST-PBO5 SKILL=/ticket-appraise \
       LOG_FILE="$log" DESCRIPTION="appraise agent" >/dev/null
   )
-  meta="/tmp/ticket-auto-TEST-PBO5-spawn-meta.txt"
+  meta="$TICKET_TMP_DIR/ticket-auto-TEST-PBO5-spawn-meta.txt"
   grep -q '|APPRAISE|appraise|waiting|Agent launched — appraise agent$' "$log" &&
     grep -q '|META|model|info|{"phase":"APPRAISE","model":"claude-opus-5"}$' "$log" &&
     grep -q '^MODEL=claude-opus-5$' "$meta"
@@ -1689,7 +1688,7 @@ test_spawn_agent_pre_still_opens_through_the_helper() {
 _pair_setup() {
   local tid="$1" d
   d=$(_mktemp_test_dir)
-  rm -f "/tmp/ticket-auto-${tid}-spawn-meta.txt"
+  rm -f "$TICKET_TMP_DIR/ticket-auto-${tid}-spawn-meta.txt"
   echo "2026-06-02T10:00:00Z|META|schema|info|1" >"$d/${tid}-pipeline.log"
   echo "$d/${tid}-pipeline.log"
 }
@@ -1697,7 +1696,7 @@ _pair_setup() {
 test_pairing_clean_pair_is_silent_and_closes_meta() {
   local log meta
   log=$(_pair_setup TEST-PAIR1)
-  meta=/tmp/ticket-auto-TEST-PAIR1-spawn-meta.txt
+  meta=$TICKET_TMP_DIR/ticket-auto-TEST-PAIR1-spawn-meta.txt
   (
     source "$LIB_DIR/spawn-helper.sh"
     spawn_agent_pre PHASE=APPRAISE STEP=appraise TICKET_ID=TEST-PAIR1 \
@@ -1763,7 +1762,7 @@ test_pairing_post_without_pre_warns() {
 test_pairing_post_explicit_phase_mismatch_warns() {
   local log meta
   log=$(_pair_setup TEST-PAIR5)
-  meta=/tmp/ticket-auto-TEST-PAIR5-spawn-meta.txt
+  meta=$TICKET_TMP_DIR/ticket-auto-TEST-PAIR5-spawn-meta.txt
   (
     source "$LIB_DIR/spawn-helper.sh"
     spawn_agent_pre PHASE=IMPLEMENT STEP=implement TICKET_ID=TEST-PAIR5 \
@@ -1810,7 +1809,7 @@ test_pairing_meta_without_closed_key_counts_as_closed() {
   # CLOSED= key. A manual router run right after must not warn.
   local log meta
   log=$(_pair_setup TEST-PAIR7)
-  meta=/tmp/ticket-auto-TEST-PAIR7-spawn-meta.txt
+  meta=$TICKET_TMP_DIR/ticket-auto-TEST-PAIR7-spawn-meta.txt
   printf '%s\n' PHASE=VERIFY STEP=verify TICKET_ID=TEST-PAIR7 "LOG_FILE=$log" \
     SESSION_ID=abc SPAWNED_BY=fleetd >"$meta"
   (
@@ -1957,7 +1956,7 @@ test_spawn_agent_post_waits_for_captured_pids() {
   # and attempts to wait for them after writing stop files.
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local meta_file="/tmp/ticket-auto-TEST-WAIT-spawn-meta.txt"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-WAIT-spawn-meta.txt"
   # Start a long-running subshell to simulate a background pinger
   sleep 10 &
   local test_pid=$!
@@ -2240,6 +2239,35 @@ test_tmp_sweep_removes_stale_env_write_leftovers() {
   [ ! -e "$old" ] && [ -f "$fresh" ]
 }
 
+# GitHub #619: files an earlier version left in shared /tmp age out the same
+# way, but only this user's regular files - never a symlink.
+test_tmp_sweep_cleans_legacy_dir() {
+  local dir legacy target
+  dir=$(_mktemp_test_dir)
+  legacy=$(_mktemp_test_dir)
+  _mk_scratch_group "$legacy" "TEST-SW-LEG" "2 days ago"
+  target="$legacy/not-ours-to-delete"
+  : >"$target"
+  ln -s "$target" "$legacy/ticket-auto-TEST-SW-LEGL-ctx.txt"
+  touch -h -d "2 days ago" "$legacy/ticket-auto-TEST-SW-LEGL-ctx.txt"
+  TICKET_TMP_DIR="$dir" TICKET_TMP_LEGACY_DIR="$legacy" bash "$(_sweep_hook)" 2>/dev/null
+  [ ! -e "$legacy/ticket-auto-TEST-SW-LEG-env.sh" ] &&
+    [ -L "$legacy/ticket-auto-TEST-SW-LEGL-ctx.txt" ] && [ -f "$target" ]
+}
+
+# A scratch dir others can write is not ours to judge: nothing in it is swept.
+test_tmp_sweep_skips_loose_scratch_dir() {
+  local dir
+  dir=$(_mktemp_test_dir)
+  _mk_scratch_group "$dir" "TEST-SW-LOOSE" "2 days ago"
+  chmod 777 "$dir"
+  TICKET_TMP_DIR="$dir" bash "$(_sweep_hook)" 2>/dev/null
+  local rc=0
+  [ -f "$dir/ticket-auto-TEST-SW-LOOSE-env.sh" ] || rc=1
+  chmod 700 "$dir"
+  return "$rc"
+}
+
 test_tmp_sweep_honours_ttl_override() {
   local dir
   dir=$(_mktemp_test_dir)
@@ -2262,9 +2290,9 @@ test_token_tracker_prunes_start_files_without_a_match() {
   # this stop — the accumulation it prevents is worst exactly then (#273).
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tk-prune.log"
-  local meta_file="/tmp/ticket-auto-TEST-TKP1-spawn-meta.txt"
-  local stale="/tmp/ticket-auto-TEST-TKP1-start-APPRAISE-111.ts"
+  local log_file="$tmpdir/test-tk-prune-pipeline.log"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKP1-spawn-meta.txt"
+  local stale="$TICKET_TMP_DIR/ticket-auto-TEST-TKP1-start-APPRAISE-111.ts"
 
   rm -f "$meta_file" "$stale"
   cat >"$meta_file" <<'META'
@@ -2293,9 +2321,9 @@ test_token_tracker_keeps_recent_start_file_of_live_sibling() {
   # spawn still in flight and must survive an unrelated sibling's stop.
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tk-prune2.log"
-  local meta_file="/tmp/ticket-auto-TEST-TKP2-spawn-meta.txt"
-  local fresh="/tmp/ticket-auto-TEST-TKP2-start-APPRAISE-222.ts"
+  local log_file="$tmpdir/test-tk-prune2-pipeline.log"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKP2-spawn-meta.txt"
+  local fresh="$TICKET_TMP_DIR/ticket-auto-TEST-TKP2-start-APPRAISE-222.ts"
 
   rm -f "$meta_file" "$fresh"
   cat >"$meta_file" <<'META'
@@ -2350,9 +2378,9 @@ test_token_tracker_stop_event_captures_fleetd_phase() {
   # META|tokens under the phase from spawn-meta.
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tk-fleetd.log"
+  local log_file="$tmpdir/test-tk-fleetd-pipeline.log"
   local transcript="$tmpdir/top-transcript.jsonl"
-  local meta_file="/tmp/ticket-auto-TEST-TKF1-spawn-meta.txt"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKF1-spawn-meta.txt"
 
   rm -f "$meta_file" "$log_file"
   _tt_write_fleetd_meta "$meta_file" TEST-TKF1 VERIFY sess-tkf1 "$log_file"
@@ -2375,9 +2403,9 @@ test_token_tracker_subagent_stop_ignores_fleetd_phase() {
   # imminent Stop is about to count in full.
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tk-fleetd2.log"
+  local log_file="$tmpdir/test-tk-fleetd2-pipeline.log"
   local transcript="$tmpdir/sub-transcript.jsonl"
-  local meta_file="/tmp/ticket-auto-TEST-TKF2-spawn-meta.txt"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKF2-spawn-meta.txt"
 
   rm -f "$meta_file" "$log_file"
   _tt_write_fleetd_meta "$meta_file" TEST-TKF2 VERIFY sess-tkf2 "$log_file"
@@ -2401,9 +2429,9 @@ test_token_tracker_stop_ignores_router_spawn() {
   # open at the time.
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tk-router.log"
+  local log_file="$tmpdir/test-tk-router-pipeline.log"
   local transcript="$tmpdir/router-transcript.jsonl"
-  local meta_file="/tmp/ticket-auto-TEST-TKF3-spawn-meta.txt"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKF3-spawn-meta.txt"
 
   rm -f "$meta_file" "$log_file"
   cat >"$meta_file" <<META
@@ -2431,9 +2459,9 @@ test_token_tracker_stop_never_falls_back_to_agent_transcript() {
   # field is absent, the hook must not reach for the other event's field.
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tk-nofallback.log"
+  local log_file="$tmpdir/test-tk-nofallback-pipeline.log"
   local transcript="$tmpdir/other-transcript.jsonl"
-  local meta_file="/tmp/ticket-auto-TEST-TKF4-spawn-meta.txt"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKF4-spawn-meta.txt"
 
   rm -f "$meta_file" "$log_file"
   _tt_write_fleetd_meta "$meta_file" TEST-TKF4 IMPLEMENT sess-tkf4 "$log_file"
@@ -2455,10 +2483,10 @@ test_token_tracker_fleetd_phase_records_elapsed_from_start_marker() {
   # either. Without it the phase's duration silently disappears.
   local tmpdir
   tmpdir=$(_mktemp_test_dir)
-  local log_file="$tmpdir/test-tk-elapsed.log"
+  local log_file="$tmpdir/test-tk-elapsed-pipeline.log"
   local transcript="$tmpdir/elapsed-transcript.jsonl"
-  local meta_file="/tmp/ticket-auto-TEST-TKF5-spawn-meta.txt"
-  local start_file="/tmp/ticket-auto-TEST-TKF5-start-VERIFY-$(date +%s%N).ts"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKF5-spawn-meta.txt"
+  local start_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKF5-start-VERIFY-$(date +%s%N).ts"
 
   rm -f "$meta_file" "$log_file" "$start_file"
   _tt_write_fleetd_meta "$meta_file" TEST-TKF5 VERIFY sess-tkf5 "$log_file"
@@ -2627,6 +2655,8 @@ for fn in \
   test_tmp_sweep_ignores_unmanaged_files \
   test_tmp_sweep_scrubs_legacy_linear_key \
   test_tmp_sweep_removes_stale_env_write_leftovers \
+  test_tmp_sweep_cleans_legacy_dir \
+  test_tmp_sweep_skips_loose_scratch_dir \
   test_tmp_sweep_honours_ttl_override \
   test_tmp_sweep_bad_ttl_falls_back_to_default \
   test_token_tracker_prunes_start_files_without_a_match \

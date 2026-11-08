@@ -14,8 +14,12 @@
 #   8. MSG is optional (empty 5th field).
 #   9. Usage errors exit 2 and write nothing.
 #  10. Unwritable target exits 1.
-#  13. META|adversarial-override / verify-attempts-reset refused (exit 3).
-#  14. `|`/CR/LF in PHASE/STEP/STATUS rejected (exit 2); no forged marker line.
+#  11. TAP_LOG fallback.
+#  12. Recovery from the spawn-meta file (#605).
+#  13. Untrusted spawn-meta: symlink, writable mode, non-pipeline-log path,
+#      bad TICKET_ID, directory (#619).
+#  14. META|adversarial-override / verify-attempts-reset refused (exit 3).
+#  15. `|`/CR/LF in PHASE/STEP/STATUS rejected (exit 2); no forged marker line.
 #
 # Run: bash ticket-auto-pipeline/lib/tests/test-plog.sh
 
@@ -147,17 +151,19 @@ if [ ! -e "{LOG_FILE}" ]; then pass "11c: no file named {LOG_FILE}"; else fail "
 # ── 12. Lost env in a later agent Bash call (GitHub #605) ────────────────────
 # No LOG_FILE/TAP_LOG: recover the path from the spawn-meta file when
 # TICKET_ID is known, and warn on stderr when the line really is dropped.
-# spawn-helper.sh always writes the meta file under /tmp, so the test does too,
-# under an id unique to this run.
+# spawn-helper.sh writes the meta file in the private scratch dir
+# (ticket-tmp.sh, #619); TICKET_TMP_DIR points that at a 0700 dir of our own.
+export TICKET_TMP_DIR="$TMP/scratch"
+mkdir -m 700 "$TICKET_TMP_DIR"
 T12_ID="PLOGTEST-$$"
-T12_META="/tmp/ticket-auto-${T12_ID}-spawn-meta.txt"
-trap 'rm -rf "$TMP"; rm -f "$T12_META"' EXIT
-printf 'PHASE=MAINTENANCE\nTICKET_ID=%s\nLOG_FILE=%s\nCLOSED=0\n' "$T12_ID" "$TMP/t12.log" >"$T12_META"
+T12_META="$TICKET_TMP_DIR/ticket-auto-${T12_ID}-spawn-meta.txt"
+printf 'PHASE=MAINTENANCE\nTICKET_ID=%s\nLOG_FILE=%s\nCLOSED=0\n' "$T12_ID" "$TMP/t12-pipeline.log" >"$T12_META"
+chmod 600 "$T12_META"
 rc=0
-err=$(env -u LOG_FILE -u TAP_LOG TICKET_ID="$T12_ID" TICKET_TMP_DIR="$TMP/elsewhere" \
+err=$(env -u LOG_FILE -u TAP_LOG TICKET_ID="$T12_ID" \
   bash "$PLOG" MAINTENANCE document start "" 2>&1) || rc=$?
 expect "12a: recovered from spawn-meta, exit 0" "0" "$rc"
-expect "12b: line written to spawn-meta LOG_FILE" "ISO|MAINTENANCE|document|start|" "$(mask "$TMP/t12.log" 2>/dev/null || true)"
+expect "12b: line written to spawn-meta LOG_FILE" "ISO|MAINTENANCE|document|start|" "$(mask "$TMP/t12-pipeline.log" 2>/dev/null || true)"
 expect "12c: no warning when recovered" "" "$err"
 rc=0
 err=$(env -u LOG_FILE -u TAP_LOG -u TICKET_ID \
@@ -175,21 +181,89 @@ case "${rc}:${err}" in
 *) fail "12f: TICKET_ID without spawn-meta" "rc=$rc stderr='$err'" ;;
 esac
 
-# ── 13. Operator markers are refused (GitHub #610) ───────────────────────────
+# ── 13. Untrusted spawn-meta (GitHub #619) ───────────────────────────────────
+# The meta file sits at a predictable path, so another local user can plant
+# one. Each case must drop the line with a stderr warning, exit 0, and write
+# nothing to the path the planted file names.
+t13_run() { # $1=ticket id; prints "rc:stderr"
+  local rc=0 err
+  err=$(env -u LOG_FILE -u TAP_LOG TICKET_ID="$1" bash "$PLOG" IMPLEMENT x done ok 2>&1 >/dev/null) || rc=$?
+  printf '%s:%s' "$rc" "$err"
+}
+t13_expect_drop() { # $1=name $2=result $3=target that must stay untouched $4=stderr fragment
+  case "$2" in
+  "0:"*"$4"*"line dropped"*) pass "$1: dropped with warning, exit 0" ;;
+  *) fail "$1: dropped with warning" "got '$2'" ;;
+  esac
+  if [ ! -s "$3" ]; then pass "$1: target untouched"; else fail "$1: target untouched" "written"; fi
+}
+T13_ID="PLOGTEST13-$$"
+T13_META="$TICKET_TMP_DIR/ticket-auto-${T13_ID}-spawn-meta.txt"
+
+# 13a: symlink to a meta file the user does own.
+printf 'LOG_FILE=%s\n' "$TMP/t13a-pipeline.log" >"$TMP/t13a-real-meta.txt"
+chmod 600 "$TMP/t13a-real-meta.txt"
+ln -s "$TMP/t13a-real-meta.txt" "$T13_META"
+t13_expect_drop "13a symlink" "$(t13_run "$T13_ID")" "$TMP/t13a-pipeline.log" "untrusted spawn-meta"
+rm -f "$T13_META"
+
+# 13b: group/other-writable meta file. A file owned by another user cannot be
+# created without root, so this mode check stands in for the foreign-owner
+# case, which the same branch rejects via `-O`.
+printf 'LOG_FILE=%s\n' "$TMP/t13b-pipeline.log" >"$T13_META"
+chmod 666 "$T13_META"
+t13_expect_drop "13b world-writable" "$(t13_run "$T13_ID")" "$TMP/t13b-pipeline.log" "group/other writable"
+chmod 620 "$T13_META"
+t13_expect_drop "13c group-writable" "$(t13_run "$T13_ID")" "$TMP/t13b-pipeline.log" "group/other writable"
+rm -f "$T13_META"
+
+# 13d: the recovered path is not a pipeline log.
+printf 'LOG_FILE=%s\n' "$TMP/t13d-target.txt" >"$T13_META"
+chmod 600 "$T13_META"
+t13_expect_drop "13d non-pipeline-log path" "$(t13_run "$T13_ID")" "$TMP/t13d-target.txt" "is not a *-pipeline.log"
+rm -f "$T13_META"
+
+# 13e: a TICKET_ID that would change the path.
+t13_expect_drop "13e bad TICKET_ID" "$(t13_run "../${T13_ID}")" "$TMP/none" "invalid TICKET_ID"
+t13_expect_drop "13f TICKET_ID with a space" "$(t13_run "A B")" "$TMP/none" "invalid TICKET_ID"
+
+# 13g: a directory at the meta path is not a regular file.
+mkdir "$T13_META"
+t13_expect_drop "13g directory" "$(t13_run "$T13_ID")" "$TMP/none" "untrusted spawn-meta"
+rmdir "$T13_META"
+
+# 13i: an honest meta file inside a scratch dir others can write is refused,
+# because the dir itself is refused.
+mkdir -m 700 "$TMP/loose"
+printf 'LOG_FILE=%s\n' "$TMP/t13i-pipeline.log" >"$TMP/loose/ticket-auto-${T13_ID}-spawn-meta.txt"
+chmod 600 "$TMP/loose/ticket-auto-${T13_ID}-spawn-meta.txt"
+chmod 777 "$TMP/loose"
+t13_expect_drop "13i world-writable scratch dir" "$(TICKET_TMP_DIR="$TMP/loose" t13_run "$T13_ID")" "$TMP/t13i-pipeline.log" "no usable scratch dir"
+chmod 700 "$TMP/loose"
+
+# 13j: a scratch dir that is a symlink is refused.
+ln -s "$TMP/loose" "$TMP/linked"
+t13_expect_drop "13j symlinked scratch dir" "$(TICKET_TMP_DIR="$TMP/linked" t13_run "$T13_ID")" "$TMP/t13i-pipeline.log" "no usable scratch dir"
+
+# 13h: an explicit LOG_FILE skips recovery entirely, so no checks apply.
+rc=0
+LOG_FILE="$TMP/t13h.log" TICKET_ID="../bad" bash "$PLOG" IMPLEMENT x done ok 2>/dev/null || rc=$?
+expect "13h: explicit LOG_FILE ignores TICKET_ID" "0:ISO|IMPLEMENT|x|done|ok" "${rc}:$(mask "$TMP/t13h.log" 2>/dev/null || true)"
+# ── 14. Operator markers are refused (GitHub #610) ───────────────────────────
 for _step in adversarial-override verify-attempts-reset; do
   rc=0
   err=$(bash "$PLOG" --log-file "$TMP/t13.log" META "$_step" info "reason=x" 2>&1) || rc=$?
-  expect "13: META|$_step refused with exit 3" "3" "$rc"
+  expect "14: META|$_step refused with exit 3" "3" "$rc"
   case "$err" in
-  *"operator marker"*) pass "13: META|$_step refusal explains why" ;;
-  *) fail "13: META|$_step refusal explains why" "stderr was '$err'" ;;
+  *"operator marker"*) pass "14: META|$_step refusal explains why" ;;
+  *) fail "14: META|$_step refusal explains why" "stderr was '$err'" ;;
   esac
 done
-if [ ! -s "$TMP/t13.log" ]; then pass "13: nothing written"; else fail "13: nothing written" "$(cat "$TMP/t13.log")"; fi
+if [ ! -s "$TMP/t13.log" ]; then pass "14: nothing written"; else fail "14: nothing written" "$(cat "$TMP/t13.log")"; fi
 bash "$PLOG" --log-file "$TMP/t13b.log" EXEC adversarial-override done ok
-expect "13: same step under another phase still written" "ISO|EXEC|adversarial-override|done|ok" "$(mask "$TMP/t13b.log")"
+expect "14: same step under another phase still written" "ISO|EXEC|adversarial-override|done|ok" "$(mask "$TMP/t13b.log")"
 
-# ── 14. Field-delimiter injection cannot forge an operator marker (#610) ────
+# ── 15. Field-delimiter injection cannot forge an operator marker (#610) ────
 _t14_forged() { if [ -f "$1" ]; then grep -c '|META|adversarial-override|' "$1" || true; else echo 0; fi; }
 rc=0
 bash "$PLOG" --log-file "$TMP/t14a.log" "META|adversarial-override" info "reason=x" 2>/dev/null || rc=$?

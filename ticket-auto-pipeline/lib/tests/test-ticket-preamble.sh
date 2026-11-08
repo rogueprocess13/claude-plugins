@@ -15,6 +15,12 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Scratch files (env.sh, spawn-meta) live in the private dir lib/ticket-tmp.sh
+# resolves (GitHub #619); point it at a dir this suite owns.
+TICKET_TMP_DIR=$(mktemp -d)
+export TICKET_TMP_DIR
+trap 'rm -rf "$TICKET_TMP_DIR"' EXIT
 PREAMBLE_SH="$LIB_DIR/ticket-preamble.sh"
 
 PASS=0
@@ -84,7 +90,7 @@ STUB
 
 _sandbox_rm() {
   [ -n "$_SANDBOX" ] && rm -rf "$_SANDBOX"
-  rm -f /tmp/ticket-auto-TEST-PRE*-env.sh
+  rm -f "$TICKET_TMP_DIR"/ticket-auto-TEST-PRE*-env.sh
   _SANDBOX=""
 }
 
@@ -97,7 +103,7 @@ test_writes_env_file_log_and_branch_context() {
   local log="$_SANDBOX/logs/TEST-PRE-1-pipeline.log"
 
   [ "$rc" -eq 0 ] &&
-    [ -f /tmp/ticket-auto-TEST-PRE-1-env.sh ] &&
+    [ -f "$TICKET_TMP_DIR/ticket-auto-TEST-PRE-1-env.sh" ] &&
     grep -q '^[^|]*|META|schema|info|1$' "$log" &&
     grep -q '|META|branch-context|info|base=develop;integration=epic/thing;source=epic-directive;ticket=feat/test-1;uat-policy=epic;merge-policy=auto$' "$log" &&
     grep -q '|META|autonomy|info|auto$' "$log" &&
@@ -208,12 +214,12 @@ test_autonomy_change_is_logged_not_overwritten() {
 test_reentry_repairs_a_swept_env_file() {
   _sandbox_new
   _preamble TEST-PRE-7 >/dev/null
-  rm -f /tmp/ticket-auto-TEST-PRE-7-env.sh
+  rm -f "$TICKET_TMP_DIR/ticket-auto-TEST-PRE-7-env.sh"
   _preamble TEST-PRE-7 >/dev/null
 
-  [ -f /tmp/ticket-auto-TEST-PRE-7-env.sh ] &&
-    grep -q 'export BASE_BRANCH="develop"' /tmp/ticket-auto-TEST-PRE-7-env.sh &&
-    grep -q 'export UAT_POLICY="epic"' /tmp/ticket-auto-TEST-PRE-7-env.sh
+  [ -f "$TICKET_TMP_DIR/ticket-auto-TEST-PRE-7-env.sh" ] &&
+    grep -q 'export BASE_BRANCH="develop"' "$TICKET_TMP_DIR/ticket-auto-TEST-PRE-7-env.sh" &&
+    grep -q 'export UAT_POLICY="epic"' "$TICKET_TMP_DIR/ticket-auto-TEST-PRE-7-env.sh"
   local ok=$?
   _sandbox_rm
   return $ok

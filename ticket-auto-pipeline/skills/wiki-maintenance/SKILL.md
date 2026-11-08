@@ -27,7 +27,7 @@ If `$HB_LOG_FILE` is set (passed by the orchestrator): call `~/.claude/skills/li
 If `--from-auto` is set: source the project context env file instead of reading CLAUDE.md.
 
 ```bash
-source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
 ```
 
 Use `$WIKI_ROOT` from the environment. If `$WIKI_ROOT` is empty, fall back to reading CLAUDE.md in the current directory — and when you resolve a value that way, `export WIKI_ROOT="<resolved absolute path>"` explicitly. Every later step in this skill (including the Step 4 commit guard) reads `$WIKI_ROOT` as a real shell variable, not by re-parsing this section's prose — an unexported value here reads as "not configured" downstream, which is the safe failure mode but not the correct one if a wiki actually exists.

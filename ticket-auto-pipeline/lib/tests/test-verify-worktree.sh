@@ -10,6 +10,12 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Scratch files (env.sh, spawn-meta) live in the private dir lib/ticket-tmp.sh
+# resolves (GitHub #619); point it at a dir this suite owns.
+TICKET_TMP_DIR=$(mktemp -d)
+export TICKET_TMP_DIR
+trap 'rm -rf "$TICKET_TMP_DIR"' EXIT
+
 # ── CI-safe declare guards ─────────────────────────────────────────────────
 if ! declare -f _plog >/dev/null 2>&1; then
   _plog() { :; }
@@ -851,8 +857,9 @@ _run "verify_env_init keeps an already-set REPOS_ROOT" test_env_init_keeps_set_r
 test_env_init_reads_ticket_env_file() {
   _setup_fixture
   local tid="TESTENV$$" env_file
-  env_file="/tmp/ticket-auto-${tid}-env.sh"
+  env_file="$TICKET_TMP_DIR/ticket-auto-${tid}-env.sh"
   printf 'export TICKET_ID="%s"\nexport REPOS_ROOT="%s"\nexport LOCAL_URL="http://x:1"\n' "$tid" "$REPOS_ROOT" >"$env_file"
+  chmod 600 "$env_file"
   local rc=0
   (
     unset REPOS_ROOT LOCAL_URL
@@ -874,7 +881,7 @@ test_env_init_unescapes_spawn_write_env_value() {
   local tid="TESTENVQ$$" env_file odd rc=0
   odd="$FIXTURE_DIR/re\$po\"s"
   mkdir -p "$odd"
-  env_file="/tmp/ticket-auto-${tid}-env.sh"
+  env_file="$TICKET_TMP_DIR/ticket-auto-${tid}-env.sh"
   (
     unset LINEAR_API_KEY
     source "$LIB_DIR/spawn-helper.sh"
