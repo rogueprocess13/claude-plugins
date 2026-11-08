@@ -23,6 +23,25 @@ source "$LIB_DIR/verify-lock.sh"
 PASS=0
 FAIL=0
 
+# Holder pids seen by the same-ticket tests (#626). The EXIT trap kills any
+# survivor so a failing test never leaks a detached holder; the last test
+# asserts none are left alive.
+# _track_holder is often called inside $( ), so pids go to a file, not an
+# array a subshell would lose.
+_LEAK_FILE=$(mktemp)
+_track_holder() {
+  local p
+  p=$(cat "${VERIFY_LOCK_FILE}.holder" 2>/dev/null || true)
+  [ -n "$p" ] && echo "$p" >>"$_LEAK_FILE"
+  echo "$p"
+}
+_kill_tracked() {
+  local p
+  while read -r p; do kill "$p" 2>/dev/null || true; done <"$_LEAK_FILE"
+  rm -f "$_LEAK_FILE"
+}
+trap _kill_tracked EXIT
+
 _run() {
   local name="$1"
   shift
@@ -386,6 +405,177 @@ test_status_held() {
   return 0
 }
 _run "status reports the holding ticket when held" test_status_held
+
+echo ""
+echo "=== Same-ticket takeover (#626) ==="
+echo ""
+
+test_held_by_reports_ticket() {
+  _setup_fixture
+  verify_lock_held_by "T-1" && {
+    echo "  held_by true on a free lock" >&2
+    _teardown_fixture
+    return 1
+  }
+  verify_lock_acquire "T-1" >/dev/null 2>&1 || {
+    _teardown_fixture
+    return 1
+  }
+  _track_holder >/dev/null
+  local rc=0
+  verify_lock_held_by "T-1" || rc=1
+  verify_lock_held_by "T-2" && rc=1
+  verify_lock_held_by "" && rc=1
+  _teardown_fixture
+  return "$rc"
+}
+_run "verify_lock_held_by names only the live holder's ticket" test_held_by_reports_ticket
+
+test_same_ticket_orphan_adopted_quickly() {
+  _setup_fixture
+  # Long timeout: a wait on the orphan would show up as a slow return.
+  export VERIFY_LOCK_TIMEOUT_SECS=20
+  verify_lock_acquire "T-1" >/dev/null 2>&1 || {
+    _teardown_fixture
+    return 1
+  }
+  local old new start elapsed rc=0
+  old=$(_track_holder)
+  kill -0 "$old" 2>/dev/null || {
+    echo "  first holder not alive" >&2
+    _teardown_fixture
+    return 1
+  }
+  # The "crashed agent" never released; a resumed run acquires again.
+  start=$(date +%s)
+  verify_lock_acquire "T-1" >/dev/null 2>&1 || rc=$?
+  elapsed=$(($(date +%s) - start))
+  new=$(_track_holder)
+  [ "$rc" -eq 0 ] || echo "  same-ticket re-acquire failed (rc=$rc)" >&2
+  [ "$elapsed" -le 4 ] || {
+    echo "  same-ticket re-acquire took ${elapsed}s — it waited on itself" >&2
+    rc=1
+  }
+  [ -n "$new" ] && [ "$new" != "$old" ] || {
+    echo "  token not re-issued to a fresh holder (old=$old new=$new)" >&2
+    rc=1
+  }
+  sleep 1
+  kill -0 "$old" 2>/dev/null && {
+    echo "  orphaned holder $old still alive after takeover" >&2
+    rc=1
+  }
+  verify_lock_held_by "T-1" || {
+    echo "  lock not held for T-1 after takeover" >&2
+    rc=1
+  }
+  _teardown_fixture
+  return "$rc"
+}
+_run "same-ticket orphan holder is taken over without waiting" test_same_ticket_orphan_adopted_quickly
+
+test_different_ticket_still_blocks() {
+  _setup_fixture
+  verify_lock_acquire "T-1" >/dev/null 2>&1 || {
+    _teardown_fixture
+    return 1
+  }
+  local holder start elapsed rc=0 waiter_rc=0
+  holder=$(_track_holder)
+  start=$(date +%s)
+  verify_lock_acquire "T-2" >/dev/null 2>&1 || waiter_rc=$?
+  elapsed=$(($(date +%s) - start))
+  [ "$waiter_rc" -ne 0 ] || {
+    echo "  T-2 acquired while T-1 held the lock" >&2
+    rc=1
+  }
+  [ "$elapsed" -ge 2 ] || {
+    echo "  T-2 gave up after ${elapsed}s — it did not wait" >&2
+    rc=1
+  }
+  kill -0 "$holder" 2>/dev/null || {
+    echo "  T-1's holder was stopped by a different ticket" >&2
+    rc=1
+  }
+  [ ! -f "${VERIFY_LOCK_FILE}.stop" ] || {
+    echo "  a different ticket touched T-1's stop file" >&2
+    rc=1
+  }
+  verify_lock_held_by "T-1" || rc=1
+  _teardown_fixture
+  return "$rc"
+}
+_run "a different-ticket holder still blocks until timeout" test_different_ticket_still_blocks
+
+# A build-plan resume runs the Step 1.6a3 lock block before the criterion
+# loop. Both crash shapes must end with the lock held for the ticket: the
+# old holder killed with the agent (lock free), or left alive (takeover).
+test_build_plan_resume_holds_lock() {
+  _setup_fixture
+  local rc=0 old
+  verify_lock_acquire "T-1" >/dev/null 2>&1 || rc=1
+  old=$(_track_holder)
+  kill -9 "$old" 2>/dev/null || true
+  sleep 0.5
+  verify_lock_acquire "T-1" >/dev/null 2>&1 || rc=1
+  _track_holder >/dev/null
+  verify_lock_held_by "T-1" || {
+    echo "  resume after a dead holder does not hold the lock" >&2
+    rc=1
+  }
+  verify_lock_acquire "T-1" >/dev/null 2>&1 || rc=1
+  _track_holder >/dev/null
+  verify_lock_held_by "T-1" || {
+    echo "  resume over a live same-ticket holder does not hold the lock" >&2
+    rc=1
+  }
+  _teardown_fixture
+  return "$rc"
+}
+_run "a build-plan resume ends up holding the lock" test_build_plan_resume_holds_lock
+
+# The SKILL.md side of the same contract: the build-plan resume row runs
+# the 1.6a3 lock block, and Step 7 (reached from Steps 3b/4 without
+# passing Step 5) releases it.
+test_skill_resume_reacquires_lock() {
+  local skill="$LIB_DIR/../skills/ticket-verify/SKILL.md"
+  grep -qE '^\| `build-plan` \|.*1\.6a3' "$skill" || {
+    echo "  build-plan resume row does not re-run the 1.6a3 lock block" >&2
+    return 1
+  }
+  awk '/^## Step 7 /{f=1} /^### 7b /{f=0} f' "$skill" | grep -q 'verify_lock_release' || {
+    echo "  Step 7 does not release the lock" >&2
+    return 1
+  }
+}
+_run "ticket-verify re-acquires on build-plan resume, releases at Step 7" test_skill_resume_reacquires_lock
+
+# Children of this test shell, minus the command-substitution subshell
+# that runs the check itself (pgrep excludes only its own pid).
+_children_of() {
+  local x
+  for x in $(pgrep -P "$1" 2>/dev/null); do
+    [ "$x" = "$BASHPID" ] || echo "$x"
+  done
+}
+
+test_no_leaked_holders() {
+  local p deadline alive kids
+  deadline=$(($(date +%s) + 5))
+  while :; do
+    alive=""
+    while read -r p; do
+      kill -0 "$p" 2>/dev/null && alive="$alive $p"
+    done <"$_LEAK_FILE"
+    kids=$(_children_of $$)
+    [ -z "$alive" ] && [ -z "$kids" ] && return 0
+    [ "$(date +%s)" -ge "$deadline" ] && break
+    sleep 0.5
+  done
+  echo "  leaked holders:${alive} children: $(echo "$kids" | tr '\n' ' ')" >&2
+  return 1
+}
+_run "no holder processes leak from the takeover tests" test_no_leaked_holders
 
 echo ""
 echo "=== Missing dependency ==="

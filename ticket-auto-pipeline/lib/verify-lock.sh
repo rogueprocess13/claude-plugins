@@ -40,6 +40,16 @@
 #   verify_lock_acquire "CRE-123" || exit 1   # blocks (polling) up to the timeout
 #   ...                                        # start stack, run checks
 #   verify_lock_release                        # idempotent — call on every exit path
+#   verify_lock_held_by "CRE-123"              # exit 0 iff a live holder holds it for CRE-123
+#
+# Same-ticket takeover (#626): the lock is owned per acquire call (the
+# token file names that call's holder pid), but a resumed run for the same
+# ticket is a new process. Without help it would wait on its own orphaned
+# holder — left alive by a crashed agent — for up to the max-hold time,
+# longer than its own acquire timeout. So acquire first checks the holder
+# info: a live holder for THIS ticket is stopped through its stop file and
+# the lock is then acquired fresh (fresh max-hold timer). A live holder
+# for any other ticket is never signalled — that caller waits as before.
 
 _verify_lock_file() { echo "${VERIFY_LOCK_FILE:-/tmp/ticket-verify.lock}"; }
 _verify_lock_token_file() { echo "$(_verify_lock_file).holder"; }
@@ -67,6 +77,7 @@ verify_lock_acquire() {
   fi
 
   mkdir -p "$(dirname "$lockfile")" 2>/dev/null || true
+  _verify_lock_stop_same_ticket "$ticket_id"
   # Clear leftover bookkeeping ONLY when the pid it names is no longer
   # alive. This must never touch a live holder's files: two acquirers can
   # race here (one holding the flock, another about to wait on it), and
@@ -153,6 +164,57 @@ verify_lock_acquire() {
   [ -f "$info_file" ] && holder_info=" — currently held by: $(tr '\n' ' ' <"$info_file" 2>/dev/null)"
   echo "verify-lock: timed out after ${timeout}s waiting for the ticket-verify lock ($lockfile) for ticket ${ticket_id}${holder_info}. Another verify run is using the local app stack — retry later, or investigate a stuck holder (only remove ${lockfile}.holder/.info/.stop after confirming that pid is actually gone)." >&2
   return 1
+}
+
+# _verify_lock_holder_ticket
+# Prints the ticket id of the LIVE holder (token pid alive, info file's
+# ticket= line), nothing otherwise. Read-only.
+_verify_lock_holder_ticket() {
+  local pid
+  pid=$(cat "$(_verify_lock_token_file)" 2>/dev/null || true)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 0
+  sed -n 's/^ticket=//p' "$(_verify_lock_info_file)" 2>/dev/null | head -n 1
+}
+
+# verify_lock_held_by <TICKET_ID>
+# Exit 0 iff the lock is held by a live holder for exactly <TICKET_ID>,
+# 1 otherwise (free, stale, unreadable, or another ticket). Read-only.
+verify_lock_held_by() {
+  local want="${1:-}" got
+  [ -n "$want" ] || return 1
+  got=$(_verify_lock_holder_ticket)
+  [ "$got" = "$want" ]
+}
+
+# _verify_lock_stop_same_ticket <TICKET_ID>
+# The takeover half of acquire: when a live holder holds the lock for this
+# same ticket, ask it to stop and wait (bounded, ~6s) for it to exit so
+# the flock frees. A no-op for a free lock or another ticket's holder —
+# those files are never touched. Like release(), it snapshots the holder
+# pid first and only touches the stop file while the token still names
+# that pid, so a different holder that wins in between is left alone (the
+# re-check narrows, though cannot fully close, that window — the same
+# residual as release()). If the holder does not exit in time, the normal
+# acquire path below simply waits on the flock as it always has.
+_verify_lock_stop_same_ticket() {
+  local ticket_id="$1" token_file stop_file old
+  token_file=$(_verify_lock_token_file)
+  stop_file=$(_verify_lock_stop_file)
+  verify_lock_held_by "$ticket_id" || return 0
+  old=$(cat "$token_file" 2>/dev/null || true)
+  [ -n "$old" ] || return 0
+  [ "$(cat "$token_file" 2>/dev/null || true)" = "$old" ] || return 0
+  echo "verify-lock: ${ticket_id} already holds the lock (pid ${old}, likely an earlier attempt's orphaned holder) — taking it over." >&2
+  touch "$stop_file" 2>/dev/null || true
+  local _ticks=0
+  # Done once the holder has cleared its own token (its last act before
+  # exiting and dropping the flock) or is gone; flock -w covers the rest.
+  while [ "$_ticks" -lt 12 ] && kill -0 "$old" 2>/dev/null &&
+    [ "$(cat "$token_file" 2>/dev/null || true)" = "$old" ]; do
+    sleep 0.5
+    _ticks=$((_ticks + 1))
+  done
+  return 0
 }
 
 # verify_lock_release

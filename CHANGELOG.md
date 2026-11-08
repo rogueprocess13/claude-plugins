@@ -30,6 +30,18 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
   Step 1. fleetd's `last_verify_checkpoint` applies the same
   mapping, with parity fixtures. `ticket-verify` SKILL.md states the
   unknown-value rule (size-neutral). (#620)
+- **`ticket-auto-pipeline`** — the VERIFY lock is ticket-aware. When
+  `verify_lock_acquire` finds a live holder for the same ticket (an earlier
+  attempt's orphaned holder after a crash), it stops that holder through its
+  stop file, waits a few seconds at most for the flock to free, and acquires
+  fresh. It no longer waits on itself until it times out. A holder for another
+  ticket is never signalled and still blocks as before. New helper:
+  `verify_lock_held_by <TID>`. `ticket-verify` re-runs the Step 1.6a3 lock
+  block on every resume past Step 1.6 (`build-plan`, or a 4c/4c-live
+  `execute-steps` re-entry), so the criterion loop never runs unlocked, and
+  Step 7 now releases the lock, because a login or navigation failure reaches
+  it without passing Step 5 (size-neutral). fleetd and the fleet detectors do
+  not read the lock's holder files, so they need no change. (#626)
 
 ## 0.87.0 (2026-11-08) — fleet-controller 0.46.1
 
