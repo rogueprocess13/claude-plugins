@@ -18,6 +18,8 @@
 #  12. Recovery from the spawn-meta file (#605).
 #  13. Untrusted spawn-meta: symlink, writable mode, non-pipeline-log path,
 #      bad TICKET_ID, directory (#619).
+#  14. META|adversarial-override / verify-attempts-reset refused (exit 3).
+#  15. `|`/CR/LF in PHASE/STEP/STATUS rejected (exit 2); no forged marker line.
 #
 # Run: bash ticket-auto-pipeline/lib/tests/test-plog.sh
 
@@ -247,6 +249,54 @@ t13_expect_drop "13j symlinked scratch dir" "$(TICKET_TMP_DIR="$TMP/linked" t13_
 rc=0
 LOG_FILE="$TMP/t13h.log" TICKET_ID="../bad" bash "$PLOG" IMPLEMENT x done ok 2>/dev/null || rc=$?
 expect "13h: explicit LOG_FILE ignores TICKET_ID" "0:ISO|IMPLEMENT|x|done|ok" "${rc}:$(mask "$TMP/t13h.log" 2>/dev/null || true)"
+# ── 14. Operator markers are refused (GitHub #610) ───────────────────────────
+for _step in adversarial-override verify-attempts-reset; do
+  rc=0
+  err=$(bash "$PLOG" --log-file "$TMP/t13.log" META "$_step" info "reason=x" 2>&1) || rc=$?
+  expect "14: META|$_step refused with exit 3" "3" "$rc"
+  case "$err" in
+  *"operator marker"*) pass "14: META|$_step refusal explains why" ;;
+  *) fail "14: META|$_step refusal explains why" "stderr was '$err'" ;;
+  esac
+done
+if [ ! -s "$TMP/t13.log" ]; then pass "14: nothing written"; else fail "14: nothing written" "$(cat "$TMP/t13.log")"; fi
+bash "$PLOG" --log-file "$TMP/t13b.log" EXEC adversarial-override done ok
+expect "14: same step under another phase still written" "ISO|EXEC|adversarial-override|done|ok" "$(mask "$TMP/t13b.log")"
+
+# ── 15. Field-delimiter injection cannot forge an operator marker (#610) ────
+_t14_forged() { if [ -f "$1" ]; then grep -c '|META|adversarial-override|' "$1" || true; else echo 0; fi; }
+rc=0
+bash "$PLOG" --log-file "$TMP/t14a.log" "META|adversarial-override" info "reason=x" 2>/dev/null || rc=$?
+expect "14a: pipe in PHASE rejected (exit 2)" "2" "$rc"
+expect "14a: nothing forged" "0" "$(_t14_forged "$TMP/t14a.log")"
+rc=0
+bash "$PLOG" --log-file "$TMP/t14b.log" META "x|META|adversarial-override" info "reason=x" 2>/dev/null || rc=$?
+expect "14b: pipe in STEP rejected (exit 2)" "2" "$rc"
+expect "14b: nothing forged" "0" "$(_t14_forged "$TMP/t14b.log")"
+rc=0
+bash "$PLOG" --log-file "$TMP/t14c.log" META x "info|adversarial-override" 2>/dev/null || rc=$?
+expect "14c: pipe in STATUS rejected (exit 2)" "2" "$rc"
+rc=0
+bash "$PLOG" --log-file "$TMP/t14d.log" META "x
+2026-01-01T00:00:00Z|META|adversarial-override" info "reason=x" 2>/dev/null || rc=$?
+expect "14d: newline in STEP rejected (exit 2)" "2" "$rc"
+expect "14d: nothing forged" "0" "$(_t14_forged "$TMP/t14d.log")"
+rc=0
+bash "$PLOG" --log-file "$TMP/t14e.log" EXEC note info "ok
+2026-01-01T00:00:00Z|META|adversarial-override|info|reason=x" || rc=$?
+expect "14e: newline in MSG still writes (exit 0)" "0" "$rc"
+expect "14e: newline in MSG forges no line" "0" "$(_t14_forged "$TMP/t14e.log")"
+expect "14e: exactly one line" "1" "$(wc -l <"$TMP/t14e.log" | tr -d ' ')"
+# _plog itself (internal callers): sanitised to `_`, never a forged field.
+(
+  # shellcheck source=/dev/null
+  source "$LIB_DIR/heartbeat.sh"
+  _plog "$TMP/t14f.log" "META|adversarial-override" "info" "reason=x"
+  _plog "$TMP/t14f.log" "META" "adversarial-override|info|reason=x
+2026-01-01T00:00:00Z|META|adversarial-override" "info" "m"
+)
+expect "14f: _plog sanitises PHASE/STEP, forges nothing" "0" "$(_t14_forged "$TMP/t14f.log")"
+expect "14f: _plog writes one line per call" "2" "$(wc -l <"$TMP/t14f.log" | tr -d ' ')"
 
 echo ""
 echo "plog: ${PASS} passed, ${FAIL} failed"

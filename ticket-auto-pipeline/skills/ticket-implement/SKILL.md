@@ -17,7 +17,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 - **Test command**: if BE_TEST_RUNNER found, write `hb-wrap.sh heartbeat "test-command" "BE_TEST_RUNNER configured" '{"cmd":"<cmd>"}'`; elif BE_TEST_CMD found, write `hb-wrap.sh heartbeat "test-command" "BE_TEST_CMD configured" '{"cmd":"<cmd>"}'`; if absent, write `hb-wrap.sh heartbeat "test-command" "skip" "no BE_TEST_CMD or BE_TEST_RUNNER"`
 - **Artifact path**: after detecting the plan artifact, write `hb-wrap.sh decision "artifact-path" "info" "artifact detected" '{"type":"simple-fix|openspec"}'`
 - **Implementation mode**: after detect-path, write `hb-wrap.sh decision "implementation-mode" "fired" "simple|openspec" '{"mode":"..."}'`
-- **Code-writing progress (long-running step)**: the code-writing stage is one of the two steps enumerated in [pipeline-heartbeat-format.md § Long-running steps](../../pipeline-heartbeat-format.md#long-running-steps-enumerated). It routinely runs for many minutes inside a single step, and to anything reading the heartbeat log that silence is indistinguishable from a hang. After completing each file (simple-fix) or each task (openspec), write `hb-wrap.sh heartbeat "step-progress" "ok" "implement: <file-or-task> (N of M)" '{"step":"implement-changes","done":"N","total":"M"}'`. Advisory: nothing gates on these events and omitting them never fails the phase — it only leaves the fleet detector guessing.
+- **Code-writing progress (long-running step)**: the code-writing stage is one of the two steps enumerated in [pipeline-heartbeat-format.md § Long-running steps](../../pipeline-heartbeat-format.md#long-running-steps-enumerated). Its long silence looks like a hang. After completing each file (simple-fix) or each task (openspec), write `hb-wrap.sh heartbeat "step-progress" "ok" "implement: <file-or-task> (N of M)" '{"step":"implement-changes","done":"N","total":"M"}'`. Advisory: nothing gates on these events and omitting them never fails the phase — it only leaves the fleet detector guessing.
 - **Plan artifact durability**: after Step 5.5's `openspec-tracking-check.sh assert` call, write `hb-wrap.sh gate "artifact-durability" "ok|warn" "tracked|not-applicable|{status}" '{"ticket":"{TICKET-ID}","status":"{OPENSPEC_TRACK_STATUS}"}'`
 
 ### Step dispatch
@@ -41,7 +41,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `code-review` | Step 5 (commit/push) | — |
 | `commit-push` | Step 5.5 (plan artifact durability check) | mode from log `detect-path\|done` entry |
 
-**Concurrency guard:** if you need to check whether another worker is already implementing this ticket, never grep the process table (`ps`/`pgrep`) for markers matching your own launch prompt or skill name — a self-checking agent's own process (and its own `spawn_agent_pre` shell) will always match those markers, producing a guaranteed false positive that aborts real work. Use file-based signals instead: an existing worktree/branch with commits already on it, a lockfile whose PID is not in your own ancestry, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line already present in `$TAP_LOG` for this ticket.
+**Concurrency guard:** if you need to check whether another worker is already implementing this ticket, never grep the process table (`ps`/`pgrep`) for your own prompt or skill name — your own process (and its own `spawn_agent_pre` shell) always matches. Use file-based signals instead: an existing worktree/branch with commits already on it, a lockfile whose PID is not in your own ancestry, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line already present in `$TAP_LOG` for this ticket.
 
 **Capture the tickets repo root — the very first bash action of this session, regardless of `--from-step`.** Step 4 `cd`s into a code worktree and nothing downstream `cd`s back (Step 5's own git commands deliberately use `git -C "$WORKTREE_PATH"` instead of relying on the earlier `cd`, for exactly this reason). Every invocation of this skill — a fresh run or a `--from-step` resume — starts with CWD already at the tickets repo root (the shared preamble Guard already verified this, or the caller did for `--from-auto`), so this capture is always valid the instant the session starts, before Step 0.6 or any step-dispatch jump:
 
@@ -174,9 +174,10 @@ bash ~/.claude/skills/lib/plog.sh META persona-select info "base=$(basename "$PE
 ```
 Read the persona files at `$PERSONA_BASE` and `$PERSONA_SPECIALIZER`. If `$PERSONA_AUTO_INCLUDE` is non-empty, read that too. If `$PERSONA_TESTDATA` is non-empty, read it and every path in `$PERSONA_TESTDATA_SPECIALIZERS` (colon-separated) — they say how to build idempotent, namespaced, synthetic test data for the channels the ticket uses. If `$PERSONA_DEBUG` is non-empty (a bug ticket), read it and `$PERSONA_DEBUG_SPECIALIZER` when set — a debugging procedure layered on top of the stack persona, not a replacement for it: reproduce, trace back to the original trigger, state one hypothesis with evidence, write the failing test first, make one change. Keep the `PERSONA_TYPE` value printed above — Step 2.5 Part B reuses it.
 
-The selector now receives the ticket text, so its keyword triggers fire on real tickets: security auto-include, migration/refactor specializers, and the test-data strong signal (a `## Test Data Provided` ticket swaps `$PERSONA_BASE` to `test-data-engineer.md`). A hand-filed Linear bug with neither a manifest `type` nor a `bug` label gets no debugger overlay.
+A `## Test Data Provided` ticket swaps `$PERSONA_BASE` to `test-data-engineer.md`. A hand-filed bug with neither a manifest `type` nor a `bug` label gets no debugger overlay.
 - Mixed → run once per layer; switch at the FE/BE boundary. Note the boundary in `notes.md`.
 - Test-data ticket (`$PERSONA_BASE` is `test-data-engineer.md`) → the whole deliverable is data, so do not split per layer. Make the ticket's `Seed command:` and `Verify command:` real (create the targets or scripts they name, or correct the lines to match what you built) and run the seed command twice to prove it is idempotent.
+- Seeder scenario on any ticket → static checks in Step 4b "Seeder scenarios" (#601).
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT detect-path done "{simple-fix|openspec}"
 
@@ -328,7 +329,7 @@ bash ~/.claude/skills/lib/plog.sh IMPLEMENT checkout-branch done "{TICKET_BRANCH
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT implement start "Implementing changes"
 
-**Prefer smart_search for code navigation during editing — for both modes.** Use `smart_search` to locate symbols by name, `smart_outline` to get structural views, then `smart_unfold` or `Read` to load only confirmed targets. Fall back to Serena if smart_search returns nothing: symbol search or go_to_definition to locate the target, find_references to check downstream impact. Read only what these tools pinpoint — never scan whole files.
+**Navigate with smart_search (both modes):** `smart_search`, `smart_outline`, then `smart_unfold`/`Read` on confirmed targets only; if it finds nothing, Serena (symbol search, go_to_definition, find_references). Never scan whole files.
 
 **Before editing, run GitNexus blast radius:** Call `mcp__gitnexus__impact` on each target symbol from the plan. Compare the result's d=1 (WILL BREAK) callers against the affected files listed in the plan. If any d=1 symbol is NOT in the plan, append it to the implementation scope. If GitNexus is unavailable, log a warning and proceed — never block on it.
 
@@ -344,12 +345,8 @@ ordinary implementation-detail choice you're free to make yourself.
 
 ### Simple-fix mode
 
-Work through each change in `simple-fix.md` in order. **As each acceptance
-criterion is verified, check off its box in the `## Completion Checklist`
-section of `simple-fix.md`** (`- [ ]` → `- [x]`) before moving on to Step 4b.
-`return-completeness-check.sh` reads these boxes directly and reports
-`RETURN_INCOMPLETE` for any left unchecked — even when the underlying work
-is fully done and verified.
+Work through each change in `simple-fix.md` in order. **As each acceptance criterion is verified, check off its box in the `## Completion Checklist` section of `simple-fix.md`** (`- [ ]` → `- [x]`) before moving on to Step 4b.
+`return-completeness-check.sh` reads these boxes directly and reports `RETURN_INCOMPLETE` for any left unchecked — even when the underlying work is fully done and verified.
 
 ### Openspec mode
 
@@ -451,11 +448,11 @@ This is a bounded fix-and-re-review loop, **capped at 3 cycles** — the same ca
   ```
   This ticket needs human review.
 
-Do not proceed to commit until the review is clean or the loop gate-stops.
-
-**Residual low-severity findings** at a clean exit: append them to notes.md under a `## Code Review — Deferred Findings` heading (create it if absent), one line per finding — `- {file}:{line} — {finding summary}`. These are informational only and never block.
+Do not commit until the review is clean or the loop gate-stops. At a clean exit, append residual low-severity findings to notes.md under `## Code Review — Deferred Findings` (create if absent), one `- {file}:{line} — {finding summary}` line each; they never block.
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review done "cycle#{N} clean"
+
+**Seeder scenarios (#601).** If the ticket ships one (`seed.sh <scenario>`, `Seed command:`, a diff under `$WIKI_ROOT/api/_tools/seed/`), check every request it makes against the OpenAPI contract (path, method, param min/max, required fields) and that a re-run takes its "already exists" paths. Do not start or reset the shared stack: VERIFY Step 1.6d runs it twice on its clean baseline before any criterion.
 
 ---
 
@@ -642,7 +639,7 @@ For each affected repo:
      source "$HOME/.claude/skills/lib/gitnexus-preflight.sh"
      gitnexus_verify_branch "$WORKTREE_PATH" "{lastCommit}" "HEAD"
      ```
-     (Run from `$WORKTREE_PATH`, or pass it explicitly — `HEAD` here means this worktree's own current commit, i.e. the branch you're about to push.) `list_repos`' own `staleness.commitsBehind` is computed against whatever the *indexed* clone currently has checked out, not against this worktree's branch, so it cannot by itself tell you the index is safe to trust here. `ok <n>` (exit 0) means verified — proceed to `detect_changes`. `wrong-branch`/`ahead <n>`/`stale <n>` (exit 1) or `unresolvable <reason>` (exit 2) mean unverified — skip `detect_changes`, log a warning, and proceed without it (never block the push on GitNexus).
+     (Run from `$WORKTREE_PATH`: `HEAD` is the branch you're about to push. `list_repos`' `commitsBehind` is measured against the indexed clone's checkout, not this branch.) `ok <n>` (exit 0) means verified — proceed to `detect_changes`. `wrong-branch`/`ahead <n>`/`stale <n>` (exit 1) or `unresolvable <reason>` (exit 2) mean unverified — skip `detect_changes`, log a warning, and proceed without it (never block the push on GitNexus).
    - Only once verified: call `mcp__gitnexus__detect_changes` with `scope: "compare"` and `base_ref: "$BASE_BRANCH"`.
    - **Sanity-check the result (#359):** compare the affected-file list against `git -C "$WORKTREE_PATH" diff --name-only "$BASE_BRANCH"...HEAD` (one path per line each) via `gitnexus_check_result_subset "$RETURNED_FILES" "$KNOWN_DIFF_FILES"`. A non-subset result (exit 1) means the structural diff named files outside this branch's actual changes — discard it, log a warning, and proceed without it.
    - If the result shows `risk_level: "high"` or `"critical"`, OR affected execution flows outside the ticket's stated scope: append a warning to the handoff output.

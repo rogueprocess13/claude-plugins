@@ -420,6 +420,17 @@ esac
 
 # ── Verdict gate (VERDICT_FAIL_NOT_ENFORCED, issue #368) ────────────────────
 _verdict_gate=$(echo "$def" | jq -r '.verdict_gate // false')
+# Unarmed is loud, never silent (GitHub #598 B): with no pipeline log, or a
+# verifier-result.sh predating the reader, the gate cannot see any verdict.
+# The transition still goes through (absence of evidence is not failure),
+# but stderr and the heartbeat say the gate did not run.
+if [ "$_verdict_gate" = "true" ] && { [ -z "${LOG_FILE:-}" ] || ! declare -f verifier_latest_verdict >/dev/null 2>&1; }; then
+  _unarmed_why="no pipeline log (LOG_FILE/TAP_LOG unset)"
+  [ -n "${LOG_FILE:-}" ] && _unarmed_why="verifier_latest_verdict not loaded"
+  echo "flow.sh: WARNING — verdict gate UNARMED for '${TRIGGER}' on ${TICKET_ID}: ${_unarmed_why}; no verifier-result was checked" >&2
+  _log "META|verdict-gate|warn|UNARMED trigger=${TRIGGER} — ${_unarmed_why}"
+  _hb_gate "verdict-gate" "warn" "verdict gate unarmed: ${_unarmed_why}" "$(_hb_detail ticket "$TICKET_ID" trigger "$TRIGGER")"
+fi
 if [ "$_verdict_gate" = "true" ] && declare -f verifier_latest_verdict >/dev/null 2>&1 && [ -n "${LOG_FILE:-}" ]; then
   _failing_verdicts=$(verifier_latest_verdict "$LOG_FILE")
   if [ -n "$_failing_verdicts" ]; then

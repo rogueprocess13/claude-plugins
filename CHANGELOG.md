@@ -49,6 +49,46 @@ Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file an
 - The agent progress file now lives in the scratch dir, where both the agents and the watchdog look
   for it. Agents used to write it in `/tmp` while the watchdog read the fleet state dir.
 
+## 0.89.0 (2026-11-08)
+
+Verdict gate: a stale FAIL/BLOCK no longer refuses a ticket whose verifier has since passed, and
+a human override of an adversarial BLOCK no longer needs a second bypass hours later.
+
+### Fixed
+- `verifier_latest_verdict` (flow.sh's verdict gate) uses one rule: the latest verdict-bearing
+  record per `(verifier, phase)` pair wins. A later PASS/WARN supersedes an earlier FAIL/BLOCK.
+  With no pipeline log the gate says it is unarmed (stderr, `META|verdict-gate|warn|UNARMED`,
+  heartbeat) instead of skipping silently (#598, #610).
+- `return-completeness-check.sh --refresh` re-checks after VERIFY and writes a fresh
+  `return_completeness` result, so a FAIL from an earlier phase no longer blocks the merge (#598).
+
+### Added
+- `lib/adversarial-override.sh`: the one way to accept a plan the adversarial review BLOCKED.
+  Operator-only: it refuses agent and fleetd-worker context. It writes
+  `META|adversarial-override|info|reason=…`, which the verdict gate counts as WARN, plus the
+  done line `detect-resume.sh` reads. A plain `EXEC|adversarial-review|done|PASS` line no longer
+  clears the gate. `plog.sh` refuses to write `META|adversarial-override` and
+  `META|verify-attempts-reset` (exit 3) and any PHASE/STEP/STATUS outside `[A-Za-z0-9_-]+`
+  (exit 2), so a `|` or newline cannot forge the marker; `_plog` replaces `|`/CR/LF in those
+  fields with `_` (#610).
+
+## 0.88.0 (2026-11-08)
+
+Gate reconcile, AC drift and a seeder precheck in VERIFY.
+
+### Fixed
+- ticket-gate-reconcile no longer holds a cycle whose only unprocessed comments answer the open
+  questions. It records the answers, posts the amendment without `re-claim`, and passes. Bad or
+  missing counts hold the ticket (`lib/reconcile-decide.sh`, #599).
+- ACs added in the tracker during the gate hold now reach `context.md` and the Verification Plan,
+  and VERIFY numbers its plan from the tracker list when they differ. New gate-warns:
+  `AC_DRIFT_AT_GATE`, `AC_DRIFT_AT_VERIFY`, `AC_DRIFT_UNKNOWN` (`lib/ac-drift.sh`, #604).
+- ticket-verify Step 1.6d runs the seeder scenarios this ticket's own seed-tool commits changed,
+  twice each, under VERIFY's lock and before any criterion (`lib/seed-precheck.sh`, #601).
+  Scenario names come only from the seed repo's git history, never from ticket text; each run is
+  an argv list in its own process group, and a timeout kills the whole group. A failure is a
+  normal verify FAIL that counts one attempt. ticket-implement checks seeders statically only.
+
 ## 0.87.0 (2026-11-08) — fleet-controller 0.46.1
 
 VERIFY checkpoints survive a crashed attempt, and `ticket-retro` finds its lib in the plugin layout.
