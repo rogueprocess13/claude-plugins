@@ -17,6 +17,29 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.93.0 (2026-11-08)
+
+### Fixed
+
+- **`ticket-auto-pipeline`** — the VERIFY lock is ticket-aware. The holder
+  info now records the lock's owner: the process alive exactly as long as the
+  invocation that took it (`FLEET_WORKER_PID` under fleetd, else the nearest
+  `claude` ancestor, with its start time to catch pid reuse). When
+  `verify_lock_acquire` finds a live holder for the same ticket whose owner is
+  dead (a crashed attempt's orphan), it stops that holder through its stop
+  file, waits a few seconds at most for the flock to free, and acquires fresh.
+  It no longer waits on itself until it times out. If the owner is alive (a
+  zombie VERIFY may still be serving the worktree) or unknown (an info file
+  written before this change), it does not take over: it waits as before and
+  writes a `META|verify-lock-self-wait|warn` line to `TAP_LOG`. A holder for
+  another ticket is never signalled and still blocks as before. New helper:
+  `verify_lock_held_by <TID>`. `ticket-verify` re-runs the Step 1.6a3 lock
+  block on every resume past Step 1.6 (`build-plan`, or a 4c/4c-live
+  `execute-steps` re-entry), so the criterion loop never runs unlocked, and
+  Step 7 now releases the lock, because a login or navigation failure reaches
+  it without passing Step 5 (size-neutral). fleetd and the fleet detectors do
+  not read the lock's holder files, so they need no change. (#626)
+
 ## 0.92.0 (2026-11-08)
 
 Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file another user could have planted.
