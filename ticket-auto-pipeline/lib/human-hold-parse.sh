@@ -399,7 +399,7 @@ _hh_block_v2_json() {
 
 # parse_human_hold --phase <P> --return-file <f> [--log-file <l>] [--ticket-dir <d>]
 parse_human_hold() {
-  local phase="" return_file="" log_file="${LOG_FILE:-}" ticket_dir=""
+  local phase="" return_file="" log_file="${LOG_FILE:-${TAP_LOG:-}}" ticket_dir=""
 
   while [ $# -gt 0 ]; do
     case "$1" in

@@ -66,6 +66,10 @@ done
 if [ -n "${FAKE_CURL_CAPTURE:-}" ]; then
   printf '%s' "$payload" >"$FAKE_CURL_CAPTURE"
 fi
+if [ -n "${FAKE_CURL_ARGV:-}" ]; then
+  printf '%s\n' "$*" >"$FAKE_CURL_ARGV"
+  cat >"${FAKE_CURL_ARGV}.stdin" 2>/dev/null || true
+fi
 if [ "${FAKE_CURL_MODE:-success}" = "fail" ]; then
   exit 7
 fi
@@ -111,6 +115,19 @@ test_follow_up_reuses_stored_thread_ts() {
   SLACK_BOT_TOKEN="xoxb-test" SLACK_CHANNEL="#alerts" FAKE_CURL_CAPTURE="$capture" \
     PATH="$bindir:$PATH" fleet_slack_post "TST-3" "$state_dir" "follow up" >/dev/null 2>&1
   grep -q "1700000000.000100" "$capture"
+}
+
+# The bot token must never be on curl's argv (visible in ps), only on stdin.
+test_token_reaches_curl_on_stdin_not_argv() {
+  local state_dir bindir argv
+  state_dir=$(_mktemp_test_dir)
+  bindir=$(_with_stub_path)
+  argv="$state_dir/.argv"
+  SLACK_BOT_TOKEN="xoxb-argvcheck4242" SLACK_CHANNEL="#alerts" FAKE_CURL_ARGV="$argv" \
+    PATH="$bindir:$PATH" fleet_slack_post "TST-ARGV" "$state_dir" "hello" >/dev/null 2>&1
+  [ -s "$argv" ] || return 1
+  ! grep -q 'xoxb-argvcheck4242' "$argv" || return 1
+  grep -q '^Authorization: Bearer xoxb-argvcheck4242$' "${argv}.stdin"
 }
 
 test_transport_failure_degrades_to_log_only_and_returns_zero() {
@@ -732,6 +749,7 @@ for fn in \
   test_success_persists_thread_ts \
   test_follow_up_reuses_stored_thread_ts \
   test_transport_failure_degrades_to_log_only_and_returns_zero \
+  test_token_reaches_curl_on_stdin_not_argv \
   test_transport_failure_message_never_leaks_bare_token \
   test_worker_event_includes_ticket_and_exit_fields \
   test_worker_event_includes_last_assistant_message_when_present \

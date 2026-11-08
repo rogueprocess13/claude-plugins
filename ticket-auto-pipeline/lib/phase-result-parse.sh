@@ -162,7 +162,7 @@ _pr_emit() {
 
 # parse_phase_result --phase <P> --return-file <f> [--log-file <l>] [--ticket-dir <d>]
 parse_phase_result() {
-  local phase="" return_file="" log_file="${LOG_FILE:-}" ticket_dir=""
+  local phase="" return_file="" log_file="${LOG_FILE:-${TAP_LOG:-}}" ticket_dir=""
 
   while [ $# -gt 0 ]; do
     case "$1" in

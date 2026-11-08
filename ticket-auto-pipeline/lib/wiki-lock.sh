@@ -241,7 +241,7 @@ _wiki_lock_log() {
 }
 
 _wiki_lock_parse_args() {
-  _WL_ROOT="" _WL_TICKET="" _WL_LOG="${LOG_FILE:-}" _WL_MSG=""
+  _WL_ROOT="" _WL_TICKET="" _WL_LOG="${LOG_FILE:-${TAP_LOG:-}}" _WL_MSG=""
   while [ $# -gt 0 ]; do
     case "${1}" in
     --wiki-root)

@@ -99,8 +99,8 @@ _verify_worktree_remove_one() {
   local wt_dir="$1"
   [ -d "$wt_dir" ] || return 0
 
+  local repo_path=""
   if [ -f "$wt_dir/.git" ] || [ -d "$wt_dir/.git" ]; then
-    local repo_path
     repo_path=$(git -C "$wt_dir" rev-parse --git-common-dir 2>/dev/null | sed 's|/.git/worktrees/.*||' || true)
     if [ -n "$repo_path" ] && [ -d "$repo_path" ]; then
       git -C "$repo_path" worktree remove "$wt_dir" --force 2>/dev/null || {
@@ -110,6 +110,47 @@ _verify_worktree_remove_one() {
   fi
 
   rm -rf "$wt_dir" 2>/dev/null || true
+  # The rm -rf above (or a failed `worktree remove`) can leave the worktree
+  # registered under the repo's .git/worktrees/ (#577): prune that repo.
+  [ -z "$repo_path" ] || _verify_worktree_prune "$repo_path"
+  return 0
+}
+
+# _verify_worktree_prune <repo_path> [wt_path]
+# Drops registrations whose worktree directory is gone (#577). A deleted but
+# still-registered worktree makes a later `git worktree add` fail ("missing
+# but already registered", or "<branch> is already used by worktree at
+# <deleted path>"). With [wt_path], a registration for exactly that missing
+# path is unlocked first, since prune skips locked entries. Never touches a
+# worktree whose directory still exists. Always returns 0.
+_verify_worktree_prune() {
+  local repo_path="$1" wt_path="${2:-}"
+  [ -n "$repo_path" ] || return 0
+  git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  if [ -n "$wt_path" ] && [ ! -e "$wt_path" ]; then
+    git -C "$repo_path" worktree unlock "$wt_path" >/dev/null 2>&1 || true
+  fi
+  git -C "$repo_path" worktree prune >/dev/null 2>&1 || true
+  return 0
+}
+
+# _verify_worktree_branch_file <wt_path>
+# Where a verify worktree records the branch it was created for. Verify
+# worktrees are detached (#591), so HEAD alone no longer names the branch.
+# The file lives in the worktree's own admin dir (.git/worktrees/<name>/),
+# outside the working tree, so reset/clean never touch it, and git deletes
+# it together with the registration.
+_verify_worktree_branch_file() {
+  local gd
+  gd=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  [ -n "$gd" ] || return 1
+  printf '%s/ticket-verify-branch' "$gd"
+}
+
+_verify_worktree_record_branch() {
+  local f
+  f=$(_verify_worktree_branch_file "$1") || return 0
+  printf '%s\n' "$2" >"$f" 2>/dev/null || true
   return 0
 }
 
@@ -125,8 +166,15 @@ verify_worktree_path() {
 }
 
 # ensure_verify_worktree <TICKET_ID> <repo_path> <branch>
-# Ensures a git worktree exists at the computed path, checked out on <branch>.
-# Creates it when absent. Unlike implement's ensure_worktree, a verify
+# Ensures a git worktree exists at the computed path at <branch>'s tip.
+# Creates it when absent, as a DETACHED checkout of origin/<branch> (or of
+# the local <branch> when it was never pushed): git refuses to check one
+# branch out in two worktrees, and implement's worktree normally still holds
+# the ticket branch when verify starts (#591). Verify only reads the pushed
+# tip, so a detached HEAD loses nothing. The branch is recorded in the
+# worktree's admin dir for the identity guard below. Stale registrations are
+# pruned before `worktree add` (#577), and git's own error is kept in the
+# failure message. Unlike implement's ensure_worktree, a verify
 # worktree never brings a branch into existence — verify only ever checks
 # out a branch ticket-implement has already pushed, so there is no <base>
 # parameter. On reuse (same branch), always fetches and hard-resets to
@@ -160,19 +208,41 @@ ensure_verify_worktree() {
   git -C "$repo_path" fetch origin "$branch" 2>/dev/null || true
 
   if [ -d "$wt_path/.git" ] || [ -f "$wt_path/.git" ]; then
-    local current_branch
+    local current_branch recorded="" branch_file=""
     current_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 
-    if [ "$current_branch" != "$branch" ]; then
+    # Verify worktrees are created detached (#591), so "HEAD" is the normal
+    # state and the recorded branch is the identity. A detached worktree with
+    # no record (an operator's manual `worktree add --detach` recovery) is
+    # adopted for <branch>. A worktree attached to <branch> (created before
+    # #591) is still reused as-is.
+    if [ "$current_branch" = "HEAD" ]; then
+      branch_file=$(_verify_worktree_branch_file "$wt_path" || true)
+      if [ -n "$branch_file" ] && [ -f "$branch_file" ]; then
+        recorded=$(head -1 "$branch_file" 2>/dev/null || true)
+      fi
+      if [ -n "$recorded" ] && [ "$recorded" != "$branch" ]; then
+        echo "verify-worktree: $wt_path was created for branch '$recorded', expected '$branch' — refusing to reuse; release it first" >&2
+        return 2
+      fi
+      [ -n "$recorded" ] || _verify_worktree_record_branch "$wt_path" "$branch"
+    elif [ "$current_branch" != "$branch" ]; then
       echo "verify-worktree: $wt_path exists on branch '$current_branch', expected '$branch' — refusing to reuse; release it first" >&2
       return 2
     fi
 
     # Reuse: always re-sync to the remote tip. A stale local checkout would
-    # silently re-verify an earlier, already-superseded attempt.
-    if git -C "$wt_path" rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
-      git -C "$wt_path" reset --hard "origin/$branch" >/dev/null 2>&1 || {
-        echo "verify-worktree: failed to sync $wt_path to origin/$branch" >&2
+    # silently re-verify an earlier, already-superseded attempt. A detached
+    # worktree of a never-pushed branch follows the local branch instead.
+    local sync_ref=""
+    if git -C "$wt_path" rev-parse --verify "refs/remotes/origin/$branch" >/dev/null 2>&1; then
+      sync_ref="origin/$branch"
+    elif [ "$current_branch" = "HEAD" ] && git -C "$wt_path" rev-parse --verify "refs/heads/$branch" >/dev/null 2>&1; then
+      sync_ref="refs/heads/$branch"
+    fi
+    if [ -n "$sync_ref" ]; then
+      git -C "$wt_path" reset --hard "$sync_ref" >/dev/null 2>&1 || {
+        echo "verify-worktree: failed to sync $wt_path to $sync_ref" >&2
         return 3
       }
       git -C "$wt_path" clean -fdx >/dev/null 2>&1 || true
@@ -184,24 +254,27 @@ ensure_verify_worktree() {
     return 0
   fi
 
-  # Doesn't exist — create it. Never brands a new branch: the branch must
-  # already exist (locally or on origin) for there to be anything to verify.
-  if git -C "$repo_path" rev-parse --verify "$branch" >/dev/null 2>&1; then
-    mkdir -p "$(dirname "$wt_path")"
-    git -C "$repo_path" worktree add "$wt_path" "$branch" >/dev/null 2>&1 || {
-      echo "verify-worktree: failed to create worktree for $branch in $repo_path" >&2
-      return 1
-    }
-  elif git -C "$repo_path" rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
-    mkdir -p "$(dirname "$wt_path")"
-    git -C "$repo_path" worktree add -b "$branch" "$wt_path" "origin/$branch" >/dev/null 2>&1 || {
-      echo "verify-worktree: failed to create worktree for origin/$branch in $repo_path" >&2
-      return 1
-    }
+  # Doesn't exist — create it, detached. Never brands a new branch: the
+  # branch must already exist (on origin or locally) for there to be anything
+  # to verify. The pushed tip wins: it is what the PR will merge.
+  local start_ref=""
+  if git -C "$repo_path" rev-parse --verify "refs/remotes/origin/$branch" >/dev/null 2>&1; then
+    start_ref="origin/$branch"
+  elif git -C "$repo_path" rev-parse --verify "refs/heads/$branch" >/dev/null 2>&1; then
+    start_ref="refs/heads/$branch"
   else
     echo "verify-worktree: branch '$branch' not found locally or on origin for $repo_path — nothing to verify" >&2
     return 1
   fi
+
+  _verify_worktree_prune "$repo_path" "$wt_path"
+  mkdir -p "$(dirname "$wt_path")"
+  local add_err
+  add_err=$(git -C "$repo_path" worktree add --detach "$wt_path" "$start_ref" 2>&1 >/dev/null) || {
+    echo "verify-worktree: failed to create worktree for $start_ref in $repo_path: ${add_err:-git printed no error}" >&2
+    return 1
+  }
+  _verify_worktree_record_branch "$wt_path" "$branch"
 
   _verify_worktree_mirror_env "$repo_path" "$wt_path"
   _verify_worktree_touch "$wt_path"
@@ -531,7 +604,7 @@ verify_served_check_ports() {
 # up/down) via the CLI below: `bash verify-worktree.sh served 3000 8080`.
 # Always returns 0; a port with no visible listener says so.
 verify_served_report() {
-  local port pid cwd top branch sha dirty
+  local port pid cwd top branch sha dirty detached bfile
   for port in $(verify_served_ports "$@"); do
     local pids
     pids=$(_verify_listening_pids "$port")
@@ -551,10 +624,19 @@ verify_served_report() {
         continue
       fi
       branch=$(git -C "$top" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+      detached=""
+      if [ "$branch" = "HEAD" ]; then
+        # A verify worktree is detached (#591): name the branch it records.
+        detached=" detached"
+        bfile=$(_verify_worktree_branch_file "$top" || true)
+        if [ -n "$bfile" ] && [ -s "$bfile" ]; then
+          branch=$(head -1 "$bfile" 2>/dev/null || echo HEAD)
+        fi
+      fi
       sha=$(git -C "$top" rev-parse --short=12 HEAD 2>/dev/null || echo "?")
       dirty=""
       [ -n "$(git -C "$top" status --porcelain --untracked-files=no 2>/dev/null)" ] && dirty=" dirty"
-      echo ":$port pid=$pid cwd=$cwd checkout=$top branch=$branch sha=$sha$dirty"
+      echo ":$port pid=$pid cwd=$cwd checkout=$top branch=$branch sha=$sha$detached$dirty"
     done
   done
   return 0
@@ -577,10 +659,12 @@ release_verify_worktree() {
     local wt_dir="${repo_dir}${ticket_id}"
     [ -d "$wt_dir" ] || continue
     _verify_worktree_remove_one "$wt_dir"
+    # Not a bare `git worktree prune`: that prunes the current directory's
+    # repo, not the one this worktree belonged to (#577).
+    _verify_worktree_prune "${REPOS_ROOT:-.}/$(basename "$repo_dir")"
     rmdir "$repo_dir" 2>/dev/null || true
   done
 
-  git worktree prune 2>/dev/null || true
   return 0
 }
 
@@ -630,10 +714,10 @@ verify_worktree_gc() {
         removed=$((removed + 1))
       fi
     done
+    # Prune the repo behind this slug, not the current directory's (#577).
+    _verify_worktree_prune "${REPOS_ROOT:-.}/$(basename "$repo_dir")"
     rmdir "$repo_dir" 2>/dev/null || true
   done
-
-  git worktree prune 2>/dev/null || true
 
   [ "$removed" -gt 0 ] && echo "verify-worktree: swept $removed stale worktree(s) older than ${ttl_hours}h" >&2
   return 0

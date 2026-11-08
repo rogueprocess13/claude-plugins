@@ -44,6 +44,126 @@ Fixes the false Crosscheck failure that halted dispatch rehearsal iter 04 (F33).
   loop then reverted all 5 valid spec revisions. With one match the directory silently stopped
   being pruned. The patterns are now an array.
 
+## 0.85.0 (2026-11-08)
+
+Failure diagnostics: pipeline failures that were silent or mislabelled now say what went wrong.
+
+### Fixed
+- `plog.sh` no longer drops pipeline-log lines silently. With no `TAP_LOG`/`LOG_FILE` it recovers
+  the path from the ticket's spawn-meta file (via `TICKET_ID`), and otherwise warns on stderr that
+  the line was dropped (#605).
+- `flow-run.sh` failure records now carry flow.sh's own error message (`META|flow-error` line and
+  heartbeat `error_snippet`). The message is the text before flow.sh's usage block and is kept as
+  valid UTF-8. Exit 1 is labelled `usage` only for real usage errors (else `flow_error`). Exit 12
+  maps to `emit_replay` and 13 to `env`. flow.sh's stderr still streams to the caller (#606).
+- `flow.sh` refuses to run with an unset `REPOS_ROOT`. It exits with the new code 13, a clear
+  stderr message and `META|flow-refused|fail|REPOS_ROOT_UNSET`, before the from-check and before
+  any write. Before, it logged a misleading `ILLEGAL_TRANSITION from <none>` and exited 1
+  silently. A failed manifest write now logs `META|flow-refused|fail|MANIFEST_WRITE_FAILED` (#608).
+- `spawn_agent_post`/`phase_terminal_write` no longer write a "sub-agent spawn failure" RETRO hint
+  when the phase ended in a deliberate `META|gate-stop` (#611).
+
+## 0.84.0 (2026-11-08) — fleet-controller 0.46.0
+
+Spawn-helper hardening: the Linear key leaves the `/tmp` env file, unpaired spawn brackets are
+reported, and the pipeline log path is no longer exported as `LOG_FILE`.
+
+### Security
+- **The Linear API key is no longer written to `/tmp/ticket-auto-<ID>-env.sh`** (#578). The file
+  sits in shared `/tmp` for up to `TICKET_TMP_TTL_MIN` (24 h), so backups, snapshots or a `cat`
+  of it could leak the key. No consumer needed it: router-spawned agents inherit the router's
+  environment, fleetd workers inherit fleetd's, and `linear-api.sh` still falls back to a project
+  `.env`. The `tmp-sweep.sh` SessionStart hook scrubs the key line from any env file an older run
+  left behind.
+- `env-check.sh --mode=full` now masks `LINEAR_API_KEY`, `GITHUB_PERSONAL_ACCESS_TOKEN`,
+  `GH_TOKEN` and `ANTHROPIC_AUTH_TOKEN` to their last four characters instead of printing them.
+- The sweep also removes a `.ticket-auto-<ID>-env.XXXXXX` temp file older than a minute (a
+  pre-0.84.0 write killed before its rename, still holding the key), and never replaces an env
+  file that a newer run rewrote while the scrub was running.
+- fleet-controller 0.46.0: `SLACK_BOT_TOKEN` (`fleet-notify.sh`) and the Langfuse key pair
+  (`run-score-export.sh`) now reach curl on stdin (`-H @-`) instead of argv, where any local user
+  could read them in `ps`.
+
+### Fixed
+- **Pipeline log path exported as `TAP_LOG`, not `LOG_FILE`** (#575). Spring Boot maps a
+  `LOG_FILE` env var to `logging.file.name`, so a `mvn test` run by a phase agent appended its
+  application log to the pipeline log. `spawn_agent_pre`'s prompt prefix exports `TAP_LOG`
+  and keeps `LOG_FILE` only as an unexported shell variable; fleetd (0.46.0) sets `TAP_LOG`
+  on phase workers and drops any `LOG_FILE` inherited from its own environment, and the per-ticket
+  env file carries `TAP_LOG` too, so a phase started by a not-yet-restarted fleetd still finds
+  the log. Phase skill prose
+  reads `$TAP_LOG`; lib scripts that read the path from the environment fall back
+  `${LOG_FILE:-${TAP_LOG:-}}`, so older callers keep working. The spawn-meta file keeps its
+  `LOG_FILE=` key. `plog.sh` now treats an unsubstituted `{LOG_FILE}` placeholder like
+  `flow-run.sh` does. Restart fleetd after upgrading so it stops setting `LOG_FILE` on its workers.
+- **Unpaired `spawn_agent_pre`/`spawn_agent_post` calls are reported** (#579). Spawn-meta now
+  carries `CLOSED=0`/`CLOSED=1`. A pre over a still-open bracket of another phase, a post with no
+  `PHASE=` that would reuse an already-closed bracket (the previous phase's), and a post whose
+  `PHASE=` differs from the open bracket each write `META|spawn-unpaired|warn|`. Warn only; a
+  duplicate post stays silent and idempotent, and a meta with no `CLOSED` key (fleetd's) counts
+  as closed.
+
+## 0.83.0 / fleet-controller 0.45.0 (2026-11-07)
+
+VERIFY phase fixes: worktree creation (#591, #577) and attempt counting (#573, #572).
+Also moves `fleet-controller` to 0.45.0, because fleetd's `resolve_loop_counters` must
+count VERIFY attempts the same way as `detect-resume.sh`.
+
+### Fixed
+- **Verify worktree fails when implement's worktree holds the branch (#591).**
+  `ensure_verify_worktree` now creates the worktree detached at `origin/<branch>` (or the
+  local branch when it was never pushed), not checked out on the branch, so git no longer
+  refuses with `already used by worktree`. The branch is recorded in the worktree's admin
+  dir; the identity guard reads it (a detached worktree with no record, such as a manual
+  `worktree add --detach` recovery, is adopted). Existing attached verify worktrees are
+  still reused. `verify_served_report` prints the recorded branch plus `detached`.
+- **Deleted-but-registered worktrees break `worktree add` (#577).** Both
+  `ensure_verify_worktree` and implement's `ensure_worktree` run
+  `git -C <repo> worktree prune` before `worktree add` (unlocking a locked stale entry for
+  that path first). `release_verify_worktree`, `verify_worktree_gc`, `release_worktree` and
+  `worktree_gc` prune the repo the worktree belonged to instead of running a bare
+  `git worktree prune` in the caller's directory. A failed verify `worktree add` now
+  includes git's own error message.
+- **Duplicate terminal lines used up the VERIFY cap (#573).** New
+  `verify_attempt_count` in `lib/verify-checkpoint.sh` counts attempts, not
+  `VERIFY|verify|fail|` lines: lines between two attempt boundaries (`VERIFY|verify|waiting`,
+  `IMPLEMENT|implement|waiting`/`done`) count once. `detect-resume.sh`,
+  `verify-retry-decide.sh` and fleetd (`_verify_attempt_count`, with a bash parity test) use it.
+- **Operator stop counted as a VERIFY attempt (#572).** A bracket followed by
+  `META|operator-stop` is closed as `operator-stopped: <PHASE> <step>`, without the 5-minute
+  zombie wait. Neither that nor a `zombie-detected:` close that detect-resume.sh wrote (and
+  recorded) counts as an attempt or sets `VERIFY_LAST=fail`, so the run resumes VERIFY
+  instead of re-implementing unjudged code.
+
+### Added
+- **`lib/verify-attempts-reset.sh <TID> <reason>`**, the supported operator reset. Only
+  attempts after the reset point count toward the cap. It refuses an agent context, and at
+  most `VERIFY_RESET_MAX` (default 2) resets are honoured.
+- **Trust boundary.** Phase agents write the pipeline log directly. So resets and
+  synthetic-close discounts are honoured only from the operator/orchestrator control file
+  `<log>.verify-ctl`, never from log lines. A `META|verify-attempts-reset` line is audit
+  only. A `zombie-detected:` close counts unless detect-resume.sh recorded its line number.
+  Documented in `ticket-auto-pipeline/docs/verify-attempt-counting.md`.
+
+## 0.82.0 (2026-10-30)
+
+### Fixed
+- **Gate reconcile no longer counts the pipeline's own appraisal comment as user feedback**
+  (#568, #582). `lib/reconcile-comments.sh` matched the appraisal comment with an exact
+  `**Ticket appraised**` prefix, and appraise-exec agents sometimes write `**Ticket appraised.**`.
+  The comment then neither set the reconcile boundary nor was excluded, so it (and everything
+  since the earlier log fallback time) showed up in `UNPROCESSED_COMMENTS` and could hold the
+  gate for a spurious amendment cycle. The appraise-exec and gate-reconcile comment templates now
+  carry a hidden marker (`<!-- ticket-auto:appraisal -->` / `<!-- ticket-auto:amendment -->`),
+  and the script matches on it. Comments without the marker fall back to a tolerant heading match
+  (case-insensitive, optional punctuation inside the bold).
+- **Interactive `/ticket-auto` runs spawn the plugin's phase skills, not stale personal copies**
+  (#569). `skills/ticket-auto/SKILL.md` passed bare names (`SKILL=/ticket-implement`) to
+  `spawn_agent_pre`, and a bare name resolves to `~/.claude/skills/<name>` first. Every `SKILL=`
+  in the router is now plugin-qualified, and `spawn_agent_pre` qualifies any bare plugin skill
+  name itself (`spawn_qualify_skill`), so a regressed call site still spawns the plugin skill.
+  Guarded by `lib/tests/test-spawn-skill-qualified.sh`.
+
 ## ticket-planner 0.34.0 (2026-10-30)
 
 Draft readiness fixes from a second offline replay of a dispatch rehearsal run. No DoR fixture,

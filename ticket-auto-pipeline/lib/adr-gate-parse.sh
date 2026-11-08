@@ -131,7 +131,7 @@ _agp_emit() {
 
 # parse_adr_gate_result --result-file <f> [--log-file <l>] [--ticket-dir <d>]
 parse_adr_gate_result() {
-  local result_file="" log_file="${LOG_FILE:-}" ticket_dir=""
+  local result_file="" log_file="${LOG_FILE:-${TAP_LOG:-}}" ticket_dir=""
 
   while [ $# -gt 0 ]; do
     case "$1" in

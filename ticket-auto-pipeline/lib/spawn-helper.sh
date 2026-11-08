@@ -224,6 +224,34 @@ _spawn_env_line() {
   printf 'export %s="%s"\n' "$1" "$(_spawn_env_quote "$2")"
 }
 
+# ── spawn-meta pairing helpers (GitHub #579) ─────────────────────────────────────
+# spawn_agent_pre writes CLOSED=0 into the spawn-meta file; spawn_agent_post
+# appends CLOSED=1 after its terminal write. The last CLOSED= value wins, so
+# no in-place edit is ever needed. A meta file with no CLOSED key at all
+# (written by fleetd's phase dispatch, or by a version before this check)
+# counts as closed: only an explicit CLOSED=0 is an open bracket.
+
+# _spawn_meta_get <meta_file> <key> — last value of KEY= in the meta file.
+_spawn_meta_get() {
+  [ -f "$1" ] || return 0
+  grep "^${2}=" "$1" 2>/dev/null | tail -1 | cut -d= -f2- || true
+}
+
+# _spawn_meta_is_open <meta_file> — 0 when the last CLOSED= value is 0.
+_spawn_meta_is_open() {
+  [ "$(_spawn_meta_get "$1" CLOSED)" = "0" ]
+}
+
+# _spawn_unpaired_warn <log_file> <msg> — stderr + META|spawn-unpaired|warn.
+# Warn only: nothing here ever blocks a bracket write.
+_spawn_unpaired_warn() {
+  echo "spawn-helper: WARNING: $2" >&2
+  if [ -n "$1" ]; then
+    _plog "$1" "META" "spawn-unpaired" "warn" "$2" || true
+  fi
+  return 0
+}
+
 # ── spawn_write_env ──────────────────────────────────────────────────────────────
 # Write extracted CLAUDE.md fields to /tmp/ticket-auto-{TICKET_ID}-env.sh as
 # `export NAME="<escaped>"` lines (see _spawn_env_quote). Sub-agents source this
@@ -236,7 +264,7 @@ _spawn_env_line() {
 #          [BASE_BRANCH=<branch>] [INTEGRATION_BRANCH=<branch>] [TICKET_BRANCH=<branch>]
 #          [UAT_POLICY=<per-ticket|epic>] [AUTONOMY=<manual|semi-auto|auto>]
 #          [MERGE_POLICY=<manual|on-all-children-done>]
-#          [WORKTREE_ROOT=<path>]
+#          [WORKTREE_ROOT=<path>] [TAP_LOG=<pipeline log path>]
 #
 # Values are escaped for a double-quoted context — sourcing the file
 # reproduces each value exactly and never expands or executes it.
@@ -260,6 +288,7 @@ spawn_write_env() {
   local MERGE_POLICY=""
   local WORKTREE_ROOT=""
   local FROM_PLANNED=""
+  local TAP_LOG=""
 
   # Parse named parameters
   for arg in "$@"; do
@@ -283,6 +312,7 @@ spawn_write_env() {
     MERGE_POLICY=*) MERGE_POLICY="${arg#MERGE_POLICY=}" ;;
     WORKTREE_ROOT=*) WORKTREE_ROOT="${arg#WORKTREE_ROOT=}" ;;
     FROM_PLANNED=*) FROM_PLANNED="${arg#FROM_PLANNED=}" ;;
+    TAP_LOG=*) TAP_LOG="${arg#TAP_LOG=}" ;;
     *)
       echo "spawn_write_env: unknown parameter '$arg'" >&2
       return 1
@@ -319,7 +349,8 @@ spawn_write_env() {
   # not see it — no field written here is multi-line in practice.
   #
   # The file is built in a mktemp file (mode 0600 from creation, BE-9 — it
-  # carries LINEAR_API_KEY) and renamed over the target, so it is never
+  # carries project paths and branch names; it no longer carries
+  # LINEAR_API_KEY, #578) and renamed over the target, so it is never
   # world-readable and a pre-planted path is replaced, not written through.
   local _tmp_env
   _tmp_env=$(mktemp "/tmp/.ticket-auto-${TICKET_ID}-env.XXXXXX") || {
@@ -363,10 +394,20 @@ spawn_write_env() {
     _spawn_env_line WORKTREE_ROOT "$WORKTREE_ROOT"
     _spawn_env_line FROM_PLANNED "$FROM_PLANNED"
     _spawn_env_line CLAUDE_PLUGIN_ROOT "$_plugin_root"
-    # Auto-append LINEAR_API_KEY to env file when available
-    if [ -n "${LINEAR_API_KEY:-}" ]; then
-      _spawn_env_line LINEAR_API_KEY "$LINEAR_API_KEY"
+    # The pipeline log, under its namespaced name (GitHub #575 — never
+    # LOG_FILE, which Spring Boot reads as its own log file). Every phase
+    # sources this file, so a phase gets the path even from an orchestrator
+    # that still passes it some other way.
+    if [ -n "$TAP_LOG" ]; then
+      _spawn_env_line TAP_LOG "$TAP_LOG"
     fi
+    # LINEAR_API_KEY is deliberately NOT written here (GitHub #578). This file
+    # lives in shared /tmp for up to TICKET_TMP_TTL_MIN, so a secret in it
+    # leaks through backups, snapshots and any `cat` of the file. Every
+    # consumer already has the key another way: router-spawned subagents
+    # inherit the router's process environment (settings.local.json `env`),
+    # fleetd workers get it from fleetd's own environment, and linear-api.sh's
+    # check_api_key falls back to a project `.env`.
   } >"$_tmp_env" || {
     rm -f "$_tmp_env"
     echo "spawn_write_env: failed writing $env_file" >&2
@@ -402,6 +443,28 @@ spawn_write_env() {
 # defaults to "general-purpose" when the caller omits it — every dispatch
 # site SHOULD pass the value from SKILL.md's generated "Agent types" table
 # so a phase's tool allowlist and system prompt (agents/*.md) actually bind.
+# Every skill this plugin ships (skills/*/). Kept literal because this file is
+# also sourced from the synced ~/.claude/skills/lib, which has no skills/
+# sibling to list; lib/tests/test-spawn-skill-qualified.sh fails if it drifts.
+SPAWN_PLUGIN_SKILLS="adr-gate app-knowledge guidance-extractor nav-hints skill-docs ticket-appraise ticket-appraise-exec ticket-approve ticket-audit ticket-audit-exec ticket-auto ticket-batch-appraise ticket-batch-verify ticket-create ticket-critique ticket-detect-resume ticket-document ticket-env-check ticket-fleet-controller ticket-flow ticket-gate-reconcile ticket-implement ticket-overseer ticket-persona-refresh ticket-prescan ticket-pr-iterate ticket-pr-review ticket-reject ticket-reproduce ticket-retro ticket-setup ticket-verify wiki-maintenance"
+
+spawn_qualify_skill() {
+  # Plugin-qualify a bare name of one of this plugin's skills
+  # (/ticket-implement → /ticket-auto-pipeline:ticket-implement). A bare name
+  # resolves to a personal ~/.claude/skills/<name> copy first, so a stale copy
+  # there would silently shadow the plugin's phase skill (GitHub #569).
+  # Qualified names and names this plugin does not ship pass through as-is.
+  local s="$1" name
+  case "$s" in
+  /*:* | /) ;;
+  /*)
+    name="${s#/}"
+    case " $SPAWN_PLUGIN_SKILLS " in *" $name "*) s="/ticket-auto-pipeline:$name" ;; esac
+    ;;
+  esac
+  printf '%s\n' "$s"
+}
+
 spawn_agent_pre() {
   local PHASE=""
   local STEP=""
@@ -459,6 +522,8 @@ spawn_agent_pre() {
     return 1
   fi
 
+  SKILL=$(spawn_qualify_skill "$SKILL")
+
   # If FROM_STEP is set, append to FLAGS
   if [ -n "$FROM_STEP" ]; then
     FLAGS="$FLAGS --from-step $FROM_STEP"
@@ -487,6 +552,23 @@ spawn_agent_pre() {
   phase_lower=$(echo "$STEP" | tr '[:upper:]' '[:lower:]')
   # Normalize phase to uppercase for detect-resume.sh compatibility
   phase_upper=$(echo "$PHASE" | tr '[:lower:]' '[:upper:]')
+
+  # 0. Unpaired-bracket guard (GitHub #579). A still-open spawn-meta for a
+  # DIFFERENT phase/step means the previous spawn never reached
+  # spawn_agent_post, so its |waiting| line will later be reported as a
+  # zombie. Say so now, while the cause is known. A re-run of the same
+  # phase/step is a retry of the same bracket, not a break, and stays silent.
+  local _pair_meta="/tmp/ticket-auto-${TICKET_ID}-spawn-meta.txt"
+  if [ -f "$_pair_meta" ] && _spawn_meta_is_open "$_pair_meta"; then
+    local _prev_phase _prev_step
+    _prev_phase=$(_spawn_meta_get "$_pair_meta" PHASE)
+    _prev_step=$(_spawn_meta_get "$_pair_meta" STEP)
+    if [ "$(echo "$_prev_phase" | tr '[:lower:]' '[:upper:]')" != "$phase_upper" ] ||
+      [ "$(echo "$_prev_step" | tr '[:upper:]' '[:lower:]')" != "$phase_lower" ]; then
+      _spawn_unpaired_warn "$LOG_FILE" \
+        "spawn_agent_pre ${phase_upper}/${phase_lower}: previous ${_prev_phase}/${_prev_step} has no spawn_agent_post"
+    fi
+  fi
 
   # 1. Open the bracket: the |waiting| line and the META|model entry.
   # Delegated to phase_bracket_open so the grammar has one writer and two
@@ -545,7 +627,13 @@ spawn_agent_pre() {
   # in path values, preventing command injection if a path contains ";", $(), etc.
   local _q
   _q() { printf '%q' "$1"; }
-  local env_prefix="export LOG_FILE=$(_q "${LOG_FILE}"); export HB_LOG_FILE=$(_q "${HB_LOG_FILE}"); export CLAUDE_LOG_FILE=$(_q "${CLAUDE_LOG_FILE}"); export HUSKY=0; source ~/.claude/skills/lib/heartbeat.sh; source /tmp/ticket-auto-$(_q "${TICKET_ID}")-env.sh"
+  # The pipeline log is exported as TAP_LOG, never as LOG_FILE (GitHub
+  # #575): Spring Boot maps a LOG_FILE env var to logging.file.name, so any
+  # `mvn test` the agent ran appended its application log to the pipeline
+  # log. LOG_FILE is still set, unexported (`unset` first drops an inherited
+  # export attribute; works in bash and zsh), for prose written before the
+  # rename — child processes never see it.
+  local env_prefix="export TAP_LOG=$(_q "${LOG_FILE}"); unset LOG_FILE; LOG_FILE=\"\$TAP_LOG\"; export HB_LOG_FILE=$(_q "${HB_LOG_FILE}"); export CLAUDE_LOG_FILE=$(_q "${CLAUDE_LOG_FILE}"); export HUSKY=0; source ~/.claude/skills/lib/heartbeat.sh; source /tmp/ticket-auto-$(_q "${TICKET_ID}")-env.sh"
 
   echo "AGENT_PROMPT=Run ${SKILL} ${TICKET_ID} ${FLAGS}. Before starting, run: ${env_prefix}. ${INSTRUCTIONS}"
   echo "AGENT_TYPE=${AGENT_TYPE}"
@@ -567,6 +655,7 @@ CLAUDE_LOG_FILE=$CLAUDE_LOG_FILE
 PINGER_PID=$PINGER_PID
 WATCHDOG_PID=$WATCHDOG_PID
 SESSION_ID=${CLAUDE_CODE_SESSION_ID:-}
+CLOSED=0
 EOF
 
   # F10: Append ATTEMPT to spawn-meta when router supplies it.
@@ -697,6 +786,20 @@ phase_bracket_open() {
 #
 # PHASE and STEP are normalized here (phase uppercased, step lowercased) rather
 # than by the caller, so both callers produce byte-identical lines.
+
+# _phase_gate_stopped_in_bracket <log> <PHASE> — rc 0 when a META|gate-stop|fail
+# line follows the phase's last |PHASE|<step>|waiting| line (GitHub #611).
+# rc 1 otherwise, including no log or no open bracket.
+_phase_gate_stopped_in_bracket() {
+  local log="$1" phase="$2"
+  [ -n "$log" ] && [ -f "$log" ] || return 1
+  awk -F'|' -v p="$phase" '
+    $2 == p && $4 == "waiting" { opened = 1; stopped = 0; next }
+    opened && $2 == "META" && $3 == "gate-stop" && $4 == "fail" { stopped = 1 }
+    END { exit (stopped ? 0 : 1) }
+  ' "$log" 2>/dev/null
+}
+
 phase_terminal_write() {
   local PHASE="" STEP="" RESULT="" MSG="" VERDICT="" NEXT_PHASE=""
   local FAIL_ACTION="" LOG_FILE="" HB_LOG_FILE="" CLAUDE_LOG_FILE=""
@@ -786,7 +889,11 @@ phase_terminal_write() {
       local last_hb="unknown"
       [ -n "${HB_LOG_FILE:-}" ] && [ -f "$HB_LOG_FILE" ] && last_hb=$(tail -1 "$HB_LOG_FILE" 2>/dev/null | cut -d'|' -f2-4 || echo "unknown")
       cl_write "$phase_upper" "context" "fail" "${phase_lower:-agent} agent failed (${fail_action}) — last_hb: ${last_hb}"
-      if [ "$fail_action" = "stop" ]; then
+      # A META|gate-stop written inside this phase's bracket (after its last
+      # |waiting| line) means the agent returned and the stop was a designed
+      # gate (e.g. ADVERSARIAL_BLOCKED), not a spawn failure — no hint then,
+      # or retro goes hunting for a spawn bug that does not exist (#611).
+      if [ "$fail_action" = "stop" ] && ! _phase_gate_stopped_in_bracket "${LOG_FILE:-}" "$phase_upper"; then
         cl_write RETRO hint info "sub-agent spawn failure in $phase_upper phase — check agent isolation, tool availability, and CLAUDE_LOG_FILE export for diagnostics"
       fi
     fi
@@ -882,6 +989,12 @@ spawn_agent_post() {
   local meta_file="/tmp/ticket-auto-${TICKET_ID}-spawn-meta.txt"
   local PINGER_PID=""
   local WATCHDOG_PID=""
+  # Pairing state, captured before PHASE is filled from the meta (GitHub #579).
+  local _meta_open="" _meta_phase="" _phase_explicit="${PHASE:+1}"
+  if [ -f "$meta_file" ]; then
+    _spawn_meta_is_open "$meta_file" && _meta_open=1
+    _meta_phase=$(_spawn_meta_get "$meta_file" PHASE)
+  fi
   if [ -f "$meta_file" ] && [ -z "$PHASE" ]; then
     while IFS='=' read -r key val; do
       case "$key" in
@@ -899,6 +1012,38 @@ spawn_agent_post() {
   if [ -z "$TICKET_ID" ] || [ -z "$RESULT" ]; then
     echo "spawn_agent_post: TICKET_ID and RESULT are required" >&2
     return 1
+  fi
+
+  # Pairing checks (GitHub #579). Warn only — nothing here blocks the terminal
+  # write, so a duplicate post stays idempotent.
+  if [ -f "$meta_file" ]; then
+    local _pu _pl _tail
+    _pu=$(echo "$PHASE" | tr '[:lower:]' '[:upper:]')
+    _pl=$(echo "$STEP" | tr '[:upper:]' '[:lower:]')
+    if [ -z "$_phase_explicit" ] && [ -z "$_meta_open" ]; then
+      # PHASE came from a meta whose bracket is already closed. A duplicate
+      # post (a retry of the same post) finds that bracket's own terminal
+      # followed only by META lines (tokens, phase-result, inspectors...) —
+      # silent. A post with no spawn_agent_pre finds another phase's lines
+      # after that terminal (the unbracketed agent's own progress), or no
+      # terminal at all, and is about to attribute its terminal to the
+      # previous phase. Best effort: an unbracketed agent that logged nothing
+      # is indistinguishable from a duplicate.
+      local _after
+      _after=$(awk -F'|' -v p="$_pu" -v s="${_pl:-unknown}" '
+        $2 == p && $3 == s && ($4 == "done" || $4 == "fail") { seen = 1; other = 0; next }
+        seen && $2 != "META" { other = 1 }
+        END { if (!seen) print "none"; else if (other) print "other"; else print "meta" }
+      ' "${LOG_FILE:-/dev/null}" 2>/dev/null || true)
+      if [ "$_after" != "meta" ]; then
+        _spawn_unpaired_warn "${LOG_FILE:-}" \
+          "spawn_agent_post read closed spawn-meta ${_pu}/${_pl} — spawn_agent_pre not run for this spawn?"
+      fi
+    elif [ -n "$_phase_explicit" ] && [ -n "$_meta_open" ] && [ -n "$_meta_phase" ] &&
+      [ "$(echo "$_meta_phase" | tr '[:lower:]' '[:upper:]')" != "$_pu" ]; then
+      _spawn_unpaired_warn "${LOG_FILE:-}" \
+        "spawn_agent_post PHASE=${_pu} but open spawn-meta is ${_meta_phase} — mismatched pre/post"
+    fi
   fi
 
   # PHASE/STEP normalization deliberately lives in phase_terminal_write, not
@@ -973,6 +1118,15 @@ spawn_agent_post() {
   # Meta file persists until next spawn_agent_pre overwrites it.
   # This allows duplicate spawn_agent_post calls to read PHASE/STEP
   # for idempotency guard tail-checks.
+  # CLOSED=1 (appended; last value wins) lets the next pre/post tell a
+  # finished bracket from an open one (GitHub #579). Only the bracket this
+  # post actually closed is marked: an explicit PHASE= for a different phase
+  # than the open meta leaves that meta open.
+  if [ -f "$meta_file" ] && [ -n "$_meta_open" ] &&
+    { [ -z "$_phase_explicit" ] ||
+      [ "$(echo "$_meta_phase" | tr '[:lower:]' '[:upper:]')" = "$(echo "$PHASE" | tr '[:lower:]' '[:upper:]')" ]; }; then
+    echo "CLOSED=1" >>"$meta_file" 2>/dev/null || true
+  fi
 
   return 0
 }

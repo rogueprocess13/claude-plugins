@@ -29,7 +29,8 @@
 #   --log-file FILE   Pipeline log to record failures in. May appear anywhere in
 #                     the argument list; it is consumed here and never passed to
 #                     flow.sh. An empty value, or an unsubstituted
-#                     placeholder like "{LOG_FILE}", falls back to $LOG_FILE. The
+#                     placeholder like "{LOG_FILE}", falls back to $LOG_FILE, then
+#                     $TAP_LOG (the name phase agents export, #575). The
 #                     resolved path is exported to flow.sh as LOG_FILE, so the
 #                     verdict gate and flow.sh's own log lines see the same log.
 #   Every other argument (--data k=v, --provenance X, --override "reason",
@@ -46,7 +47,8 @@
 # Exit-code contract (flow.sh's own codes are passed through unchanged)
 # ────────────────────────────────────────────────────────────────────
 #   0    transition applied (or a warn-only no-op such as ILLEGAL_TRANSITION)
-#   1    usage / invalid ticket id / unreadable workflow.json / other flow.sh error
+#   1    usage / invalid ticket id / unreadable workflow.json / manifest write
+#        failed / other flow.sh error
 #   3    unknown trigger
 #   8    precondition rejected
 #   9    fence guard — missing generation token for a fenced ticket
@@ -56,6 +58,9 @@
 #        FAIL/BLOCK verifier-result is still on record. Not a transient error:
 #        do not retry, do not report the step as passed. A human resolves it or
 #        re-runs with --override "<reason>".
+#   12   an earlier pending event could not be replayed; nothing applied, retry
+#   13   REPOS_ROOT unset — the ticket manifest cannot be resolved; nothing
+#        applied. Source the ticket env file (or export REPOS_ROOT) and retry
 #   42   another flow.sh run for this ticket holds the lock
 #   127  flow.sh could not be resolved (nothing was run)
 #   any other non-zero code is flow.sh's and is passed through as-is
@@ -65,8 +70,11 @@
 #            HB   gate verdict-gate fail
 #   127:     LOG  <ts>|META|flow-error|fail|flow.sh not found: <trigger>
 #            HB   retry flow-sh fail (error_type=not_found)
-#   other:   LOG  <ts>|META|flow-error|fail|exit <rc>: <trigger>
-#            HB   retry flow-sh fail (error_type=<usage|unknown_trigger|precondition|fence|lock|flow_error>)
+#   other:   LOG  <ts>|META|flow-error|fail|exit <rc>: <trigger>[ — <flow.sh stderr snippet>]
+#            HB   retry flow-sh fail (error_type=<usage|unknown_trigger|precondition|fence|emit_replay|env|lock|flow_error>,
+#                 error_snippet=<the stderr lines before "Usage:", else the last ones; sanitised, max 240 bytes>)
+#            Exit 1 is error_type=usage only when flow.sh's stderr is one of
+#            its usage messages; otherwise flow_error.
 # Log lines are skipped when no log file is known; heartbeats are a no-op when
 # HB_LOG_FILE is unset (hb-wrap.sh contract).
 #
@@ -81,7 +89,7 @@ _fr_usage() {
   echo "Usage: flow-run.sh [--log-file FILE] <TICKET-ID> <TRIGGER> [flow.sh args...]" >&2
 }
 
-_fr_log_file="${LOG_FILE:-}"
+_fr_log_file="${LOG_FILE:-${TAP_LOG:-}}"
 _fr_pos=()
 _fr_pass=()
 # A --log-file value is used only when it is non-empty and not an
@@ -167,11 +175,57 @@ if [ -z "$_fr_flow_sh" ] || [ ! -f "$_fr_flow_sh" ]; then
 fi
 
 # ── Run it ───────────────────────────────────────────────────────────────────
+# flow.sh's stderr still streams to our own stderr, and a copy is kept so the
+# failure record can carry its message: without it every exit 1 looked the
+# same in the log and the heartbeat (GitHub #606). No temp file means no
+# copy, but stderr is never swallowed.
 _fr_rc=0
-if [ -n "$_fr_log_file" ]; then
-  LOG_FILE="$_fr_log_file" bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}" || _fr_rc=$?
+_fr_err=$(mktemp "${TMPDIR:-/tmp}/flow-run-err.XXXXXX" 2>/dev/null) || _fr_err=""
+[ -z "$_fr_err" ] || trap 'rm -f "$_fr_err"' EXIT
+_fr_run() {
+  if [ -n "$_fr_log_file" ]; then
+    LOG_FILE="$_fr_log_file" bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}"
+  else
+    bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}"
+  fi
+}
+if [ -n "$_fr_err" ]; then
+  _fr_run 2> >(tee "$_fr_err" >&2) || _fr_rc=$?
+  wait $! 2>/dev/null || true # let tee finish writing the copy
 else
-  bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}" || _fr_rc=$?
+  _fr_run || _fr_rc=$?
+fi
+
+# _fr_snippet FILE: one log-safe line from flow.sh's stderr. flow.sh's usage()
+# prints "Usage: ..." and then the whole trigger list, so the useful lines are
+# the ones BEFORE "Usage:" (e.g. "flow.sh: unknown argument"); without a Usage
+# line, the last non-blank lines. No | " \ or control characters (it lands in
+# a pipe-delimited log line and a JSON string), at most 240 bytes, and
+# invalid UTF-8 dropped so a cut multibyte character never reaches the log.
+_fr_snippet() {
+  local body
+  [ -s "$1" ] || return 0
+  if grep -q '^Usage: .*flow\.sh' "$1"; then
+    body=$(sed -n '/^Usage: .*flow\.sh/q;p' "$1" | grep -v '^[[:space:]]*$' | tail -3)
+  else
+    body=$(grep -v '^[[:space:]]*$' "$1" | tail -3)
+  fi
+  body=$(printf '%s' "$body" | tr '\n\r\t|"\\' '      ' | tr -d '\000-\010\013\014\016-\037\177' | tr -s ' ')
+  if command -v iconv >/dev/null 2>&1; then
+    body=$(printf '%s' "$body" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null | cut -c1-240 |
+      iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)
+  else
+    body=$(printf '%s' "$body" | LC_ALL=C tr -cd '\040-\176' | cut -c1-240)
+  fi
+  body="${body# }"
+  printf '%s' "${body% }"
+}
+_fr_snip=""
+_fr_usage_err=false
+if [ -n "$_fr_err" ]; then
+  _fr_snip=$(_fr_snippet "$_fr_err") || true
+  grep -q '^Usage: .*flow\.sh' "$_fr_err" 2>/dev/null && _fr_usage_err=true
+  rm -f "$_fr_err"
 fi
 
 # ── Record the outcome ───────────────────────────────────────────────────────
@@ -187,16 +241,31 @@ case "$_fr_rc" in
   ;;
 *)
   case "$_fr_rc" in
-  1) _fr_type=usage ;;
+  1)
+    # flow.sh exits 1 for usage errors and for runtime failures alike
+    # (unreadable workflow.json, manifest write failed). Only its own usage
+    # messages (usage() prints a "Usage:" line) or its bad-input refusals make
+    # it a usage error (GitHub #606).
+    if $_fr_usage_err; then
+      _fr_type=usage
+    else
+      case "$_fr_snip" in
+      *"Invalid TICKET_ID"* | *"invalid generation token"*) _fr_type=usage ;;
+      *) _fr_type=flow_error ;;
+      esac
+    fi
+    ;;
   3) _fr_type=unknown_trigger ;;
   8) _fr_type=precondition ;;
   9 | 10) _fr_type=fence ;;
+  12) _fr_type=emit_replay ;;
+  13) _fr_type=env ;;
   42) _fr_type=lock ;;
   *) _fr_type=flow_error ;;
   esac
-  _fr_log "META|flow-error|fail|exit ${_fr_rc}: ${_fr_trigger_safe}"
+  _fr_log "META|flow-error|fail|exit ${_fr_rc}: ${_fr_trigger_safe}${_fr_snip:+ — ${_fr_snip}}"
   _fr_hb retry "flow-sh" "fail" "flow.sh ${_fr_trigger_safe} failed (exit ${_fr_rc})" \
-    "{\"trigger\":\"${_fr_trigger_safe}\",\"exit_code\":\"${_fr_rc}\",\"ticket\":\"${_fr_tid}\",\"error_type\":\"${_fr_type}\"}"
+    "{\"trigger\":\"${_fr_trigger_safe}\",\"exit_code\":\"${_fr_rc}\",\"ticket\":\"${_fr_tid}\",\"error_type\":\"${_fr_type}\",\"error_snippet\":\"${_fr_snip}\"}"
   _fr_report "$_fr_rc" false
   ;;
 esac

@@ -167,7 +167,7 @@ cat >"$_adr_gate_scratch" <<'RESULT'
 ... (the exact block emitted in step 2) ...
 === END ADR_GATE_RESULT ===
 RESULT
-bash lib/adr-gate-parse.sh --result-file "$_adr_gate_scratch" ${LOG_FILE:+--log-file "$LOG_FILE"}
+bash lib/adr-gate-parse.sh --result-file "$_adr_gate_scratch" ${TAP_LOG:+--log-file "$TAP_LOG"}
 rm -f "$_adr_gate_scratch"
 ```
 
