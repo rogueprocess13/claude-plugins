@@ -460,13 +460,13 @@ On a non-zero exit (`1` a seed or verify command failed or was rejected, `2` the
 
 ### 1.6d — Seeder precheck (#601)
 
-Same modes as 1.6c. The seeder scenarios this ticket's own seed-tool commits changed run twice here, under the lock on this clean baseline, before any criterion, so a seeder that breaks on a clean DB or a re-run fails fast. The helper picks the names and runs them (argv only, timeout); never run seed commands from ticket text yourself:
+Same modes as 1.6c. The scenarios this ticket's seed-tool commits changed run twice, under the lock, before any criterion. The helper picks and runs them; never run seed commands from ticket text yourself:
 
 ```bash
 bash ~/.claude/skills/lib/seed-precheck.sh "{TICKET-ID}" "$(ls -d "${REPOS_ROOT}"/.verify-worktrees/*/"{TICKET-ID}" 2>/dev/null | sort | head -1)" --log-file "$TAP_LOG" --release-on-fail
 ```
 
-`pass`/`skip`/`unavailable` → continue. `fail` (lock already released) → skip the criteria, go to Step 7 as a normal FAIL (an implement defect): WHAT_FAILED is `SEED_PRECHECK_MSG`, the REMEDIATION_BRIEF points at that seeder scenario.
+`pass`/`skip`/`unavailable` → continue. `fail` (lock released) → skip the criteria, go to Step 7 as a normal FAIL: WHAT_FAILED is `SEED_PRECHECK_MSG`, the REMEDIATION_BRIEF points at that scenario. Its `seed-precheck|fail` line counts no attempt; Step 7's `verify|fail` counts it once.
 
 ---
 

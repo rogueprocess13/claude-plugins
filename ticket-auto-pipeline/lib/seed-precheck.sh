@@ -21,8 +21,9 @@
 #     the checked-out seed directory. `baseline` is the reset step, never a
 #     scenario.
 #   - The run is an argv list: `bash <seed-dir>/seed.sh <name>`, no `bash -c`,
-#     no eval, under `timeout` (SEED_APPLY_TIMEOUT_SECS, default 900), from
-#     the verify worktree.
+#     no eval, in its own process group with a timeout
+#     (SEED_APPLY_TIMEOUT_SECS, default 900; 0 = none) that kills the whole
+#     group, grandchildren included, from the verify worktree.
 #
 # Usage:
 #   seed-precheck.sh <TID> <worktree> [--seed-dir D] [--claude-md F]
@@ -145,22 +146,75 @@ fi
 
 secs="${SEED_APPLY_TIMEOUT_SECS:-900}"
 case "$secs" in '' | *[!0-9]*) secs=900 ;; esac
+
+# _sp_run <name> — one run of `bash seed.sh <name>` from the worktree, argv
+# only, stdin from /dev/null, stdout to our stderr. The seeder runs as a
+# background job under `set -m`, which puts it in its own process group
+# (pgid = its pid), so a timeout kills the whole group — every grandchild the
+# seeder started (a `sleep`, a client, a server it forked), not only the
+# direct child. `timeout(1)` signals its child alone and would leave those
+# orphaned. TERM to the group, a 10s grace, then KILL. Returns the seeder's
+# exit code, or 124 on a timeout. secs=0 disables the timeout.
+_sp_pgid=""
+_sp_kill_group() {
+  [ -n "$_sp_pgid" ] || return 0
+  kill -TERM -- "-$_sp_pgid" 2>/dev/null || return 0
+  local g=0
+  while [ "$g" -lt 100 ] && kill -0 -- "-$_sp_pgid" 2>/dev/null; do
+    sleep 0.1
+    g=$((g + 1))
+  done
+  kill -KILL -- "-$_sp_pgid" 2>/dev/null || true
+}
+# If this helper is itself killed (its caller's own timeout), take the seeder
+# group with it rather than orphaning it.
+trap '_sp_kill_group; exit 143' TERM
+trap '_sp_kill_group; exit 130' INT
+
+_sp_run() {
+  local pid rc=0 ticks=0 limit=$((secs * 10))
+  set -m
+  (cd "$wt" && exec bash -- "$seed_dir/seed.sh" "$1") </dev/null >&2 &
+  pid=$!
+  set +m
+  _sp_pgid="$pid"
+  if [ "$secs" != 0 ]; then
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ "$ticks" -ge "$limit" ]; then
+        _sp_kill_group
+        wait "$pid" 2>/dev/null || true
+        _sp_pgid=""
+        return 124
+      fi
+      sleep 0.1
+      ticks=$((ticks + 1))
+    done
+  fi
+  wait "$pid" || rc=$?
+  _sp_pgid=""
+  return "$rc"
+}
+
 _sp_log start "${runnable[*]} x2 (timeout ${secs}s per run)"
 for n in "${runnable[@]}"; do
   for run in 1 2; do
     rc=0
-    if [ "$secs" != 0 ] && command -v timeout >/dev/null 2>&1; then
-      (cd "$wt" && timeout -k 10 "$secs" bash -- "$seed_dir/seed.sh" "$n") >&2 || rc=$?
-    else
-      (cd "$wt" && bash -- "$seed_dir/seed.sh" "$n") >&2 || rc=$?
-    fi
+    _sp_run "$n" || rc=$?
     if [ "$rc" -ne 0 ]; then
-      if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+      if [ "$rc" -eq 124 ]; then
         why="timed out after ${secs}s"
       else
         why="exited $rc"
       fi
       msg="$n run $run: $why"
+      # VERIFY|seed-precheck|fail is a step line, not a verify terminal: it
+      # never counts as a VERIFY attempt on its own (verify_attempt_count and
+      # detect-resume.sh key on VERIFY|verify|fail|). ticket-verify Step 1.6d
+      # then ends the attempt as a normal FAIL (Step 7), whose own
+      # VERIFY|verify|fail line counts that attempt exactly once — so a broken
+      # seeder burns one attempt, not two, and the attempt cap still bounds a
+      # seeder that never passes. fleet-detect's detect_phase_failures reads
+      # the line as a WARN-level phase failure, never a gate-stop.
       _sp_log fail "$msg"
       if [ "$release" = true ]; then
         # shellcheck source=verify-lock.sh

@@ -16,8 +16,25 @@ PASS=0
 FAIL=0
 TMP=$(mktemp -d)
 export VERIFY_LOCK_FILE="$TMP/ticket-verify.lock"
+# Seeder grandchildren record their pids here; cleanup kills any survivor so
+# a failing orphan assertion never leaks a process into the rest of make test.
+ORPH_PIDS="$TMP/orphan.pids"
+_orphans_alive() {
+  local p n=0
+  [ -f "$ORPH_PIDS" ] || {
+    echo 0
+    return
+  }
+  while read -r p; do
+    [ -n "$p" ] && kill -0 "$p" 2>/dev/null && n=$((n + 1))
+  done <"$ORPH_PIDS"
+  echo "$n"
+}
 _cleanup() {
   (source "$LIB_DIR/verify-lock.sh" && verify_lock_release) >/dev/null 2>&1
+  if [ -f "$ORPH_PIDS" ]; then
+    while read -r p; do [ -n "$p" ] && kill -KILL "$p" 2>/dev/null; done <"$ORPH_PIDS"
+  fi
   rm -rf "$TMP"
 }
 trap _cleanup EXIT
@@ -120,8 +137,11 @@ _expect "fail names the run" "once run 2: exited 4" "$(_field "$out" SEED_PRECHE
 _expect "lock released on helper failure" 1 "$?"
 _expect "fail logged" 1 "$(grep -c '|VERIFY|seed-precheck|fail|once run 2' "$TMP/pipeline.log")"
 
-# A hung seeder is killed by the timeout and reported as FAIL.
-printf 'scenario_hang() { sleep 60; }\n' >"$SEED/t173.sh"
+# A hung seeder is killed by the timeout and reported as FAIL — and so is
+# every grandchild it started: a background job and a foreground child, each
+# a loop that would otherwise outlive the seeder.
+printf 'echo $$ >>"%s"\nwhile :; do sleep 1; done\n' "$ORPH_PIDS" >"$TMP/orphan.sh"
+printf 'scenario_hang() { bash "%s" & bash "%s"; }\n' "$TMP/orphan.sh" "$TMP/orphan.sh" >"$SEED/t173.sh"
 _g add -A
 _g commit -q -m "feat(T-173): seed.sh hang"
 start=$(date +%s)
@@ -131,6 +151,43 @@ elapsed=$(($(date +%s) - start))
 _expect "hung seeder -> exit 1" 1 "$rc"
 _expect "hung seeder reported as timeout" "hang run 1: timed out after 1s" "$(_field "$out" SEED_PRECHECK_MSG)"
 if [ "$elapsed" -lt 30 ]; then _expect "timeout kills it well before it would finish" ok ok; else _expect "timeout kills it well before it would finish" ok "${elapsed}s"; fi
+_expect "both seeder grandchildren were started" 2 "$(grep -c . "$ORPH_PIDS")"
+sleep 0.3
+_expect "timeout kills the seeder's whole process group (no orphan survives)" 0 "$(_orphans_alive)"
+
+# The helper killed from outside (its caller's own timeout) takes the seeder
+# group with it.
+: >"$ORPH_PIDS"
+(cd "$WT" && SEED_APPLY_TIMEOUT_SECS=600 exec bash "$PRE" T-173 "$WT" --claude-md "$TMP/CLAUDE.md" >/dev/null 2>&1) &
+pre_pid=$!
+for _ in $(seq 1 100); do
+  [ "$(grep -c . "$ORPH_PIDS" 2>/dev/null)" = 2 ] && break
+  sleep 0.1
+done
+kill -TERM "$pre_pid" 2>/dev/null
+wait "$pre_pid" 2>/dev/null
+sleep 0.3
+_expect "TERM to the helper kills the seeder group too" 0 "$(_orphans_alive)"
+
+# A precheck fail is visible but never counted as a VERIFY attempt on its own:
+# verify_attempt_count and detect-resume key on VERIFY|verify|fail|, not on
+# the step line. Step 1.6d then ends the attempt as a normal FAIL, whose
+# verify|fail line counts it once; fleet-detect reads it as WARN, not a hold.
+ALOG="$TMP/attempts-pipeline.log"
+printf '%s\n' "2026-01-01T00:00:00Z|META|schema|info|1" \
+  "2026-01-01T00:00:01Z|VERIFY|verify|waiting|Agent launched" \
+  "2026-01-01T00:00:02Z|VERIFY|seed-precheck|start|hang x2" \
+  "2026-01-01T00:00:03Z|VERIFY|seed-precheck|fail|hang run 1: timed out after 1s" >"$ALOG"
+_ac() { (source "$LIB_DIR/verify-checkpoint.sh" && "$1" "$ALOG"); }
+_expect "precheck fail alone burns no verify attempt" 0 "$(_ac verify_attempt_count)"
+_expect "precheck fail alone is not a verify verdict" none "$(_ac verify_latest_verdict)"
+FD="$LIB_DIR/../../fleet-controller/lib/fleet-detect.sh"
+_fd() { (source "$FD" && detect_phase_failures attempts "$TMP") 2>/dev/null; }
+_expect "fleet detect_phase_failures: precheck fail is WARN (1), not a hold" 1 "$(_fd)"
+printf '%s\n' "2026-01-01T00:00:04Z|VERIFY|verify|fail|FAIL - seeder precheck: hang run 1: timed out after 1s" \
+  "2026-01-01T00:00:05Z|VERIFY|verify|fail|spawn_agent_post: FAIL" >>"$ALOG"
+_expect "Step 7's FAIL after a precheck fail counts the attempt exactly once" 1 "$(_ac verify_attempt_count)"
+_expect "and it is a fail verdict (router re-implements)" fail "$(_ac verify_latest_verdict)"
 
 # A changed scenario that is not in the checked-out seed dir -> unavailable.
 _g checkout -q -b other

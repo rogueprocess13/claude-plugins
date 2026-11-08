@@ -17,6 +17,23 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.86.0 (2026-11-08)
+
+Gate reconcile, AC drift and a seeder precheck in VERIFY.
+
+### Fixed
+- ticket-gate-reconcile no longer holds a cycle whose only unprocessed comments answer the open
+  questions. It records the answers, posts the amendment without `re-claim`, and passes. Bad or
+  missing counts hold the ticket (`lib/reconcile-decide.sh`, #599).
+- ACs added in the tracker during the gate hold now reach `context.md` and the Verification Plan,
+  and VERIFY numbers its plan from the tracker list when they differ. New gate-warns:
+  `AC_DRIFT_AT_GATE`, `AC_DRIFT_AT_VERIFY`, `AC_DRIFT_UNKNOWN` (`lib/ac-drift.sh`, #604).
+- ticket-verify Step 1.6d runs the seeder scenarios this ticket's own seed-tool commits changed,
+  twice each, under VERIFY's lock and before any criterion (`lib/seed-precheck.sh`, #601).
+  Scenario names come only from the seed repo's git history, never from ticket text; each run is
+  an argv list in its own process group, and a timeout kills the whole group. A failure is a
+  normal verify FAIL that counts one attempt. ticket-implement checks seeders statically only.
+
 ## 0.85.0 (2026-11-08)
 
 Failure diagnostics: pipeline failures that were silent or mislabelled now say what went wrong.
