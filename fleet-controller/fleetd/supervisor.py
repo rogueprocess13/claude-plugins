@@ -122,11 +122,28 @@ _ID_RE = re.compile(r'^[A-Z][A-Z0-9-]*-\d+$')
 # In the container this is the tickets directory.
 DEFAULT_WORKSPACE = os.environ.get('FLEETD_WORKSPACE', '.')
 
-# Path to the pidfile used for single-instance enforcement.
-DEFAULT_PIDFILE = os.environ.get(
-    'FLEETD_PIDFILE',
-    '/tmp/fleetd.pid',
-)
+# Path to the pidfile used for single-instance enforcement. Unset means
+# `<ticket_tmp_dir>/fleetd.pid` (see _default_pidfile).
+DEFAULT_PIDFILE = os.environ.get('FLEETD_PIDFILE') or None
+
+# Where fleetd kept its pidfile before GitHub #624. Never written any more;
+# only probed at startup so a still-running older fleetd of this uid keeps
+# the new one from starting during an upgrade.
+LEGACY_PIDFILE = '/tmp/fleetd.pid'
+
+
+def _default_pidfile():
+    """The default pidfile: `fleetd.pid` in the private per-user scratch dir.
+
+    Resolved through phase_dispatch.ticket_tmp_dir, the same rule as
+    ticket-tmp.sh (`$TICKET_TMP_DIR`, else `/tmp/ticket-auto-<euid>`, 0700,
+    refused when planted or loose). Shared /tmp let another local user plant
+    the pidfile, a symlink or a hard link to one of our files (GitHub #624).
+    Raises OSError when the scratch dir is refused or cannot be resolved.
+    """
+    if _phase_mod is None:
+        raise OSError('fleetd.phase_dispatch is unavailable; set FLEETD_PIDFILE')
+    return _phase_mod.ticket_tmp_dir() / 'fleetd.pid'
 
 
 def _resolve_state_dir():
@@ -149,16 +166,45 @@ class InstanceLock:
     instance can report which process holds the lock.
     """
 
-    def __init__(self, pidfile_path):
+    def __init__(self, pidfile_path, legacy_path=None):
         self._path = Path(pidfile_path)
+        self._legacy = Path(legacy_path) if legacy_path else None
         self._fd = None
+
+    def _legacy_holder_alive(self):
+        """True when an older fleetd of this uid still holds the legacy pidfile.
+
+        Read-only probe: no O_CREAT, no write, O_NOFOLLOW. A file that is not
+        ours (or not a regular file) is ignored, so a planted legacy file can
+        never block startup.
+        """
+        if self._legacy is None or self._legacy == self._path:
+            return False
+        try:
+            fd = os.open(self._legacy, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except OSError:
+            return False
+        try:
+            st = os.fstat(fd)
+            if not S_ISREG(st.st_mode) or st.st_uid != os.geteuid():
+                return False
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            return False
+        finally:
+            os.close(fd)
 
     def acquire(self):
         """Acquire the exclusive lock. Raises SystemExit if another instance holds it."""
-        # The default pidfile sits in shared /tmp, so another local user could
-        # pre-plant it (GitHub #624). O_NOFOLLOW refuses a symlink, and the
-        # fstat check refuses a file that is not ours or that others can
-        # write: ftruncate below must never touch a file someone else chose.
+        # An explicit pidfile may still sit in a shared directory, where
+        # another local user could pre-plant it (GitHub #624). O_NOFOLLOW
+        # refuses a symlink; the fstat check refuses a file that is not ours,
+        # that others can write, or that has a second name (a hard link in
+        # /tmp to one of our files): ftruncate below must only ever touch a
+        # file this lock created or owns outright.
         try:
             self._fd = os.open(self._path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o644)
         except OSError as e:
@@ -166,10 +212,10 @@ class InstanceLock:
             sys.exit(1)
         st = os.fstat(self._fd)
         if (not S_ISREG(st.st_mode) or st.st_uid != os.geteuid()
-                or st.st_mode & 0o022):
+                or st.st_mode & 0o022 or st.st_nlink != 1):
             print(
                 f"fleetd: refusing pidfile {self._path} (not a regular file owned by "
-                f"uid {os.geteuid()}, or group/other writable)",
+                f"uid {os.geteuid()}, group/other writable, or hard-linked)",
                 file=sys.stderr,
             )
             os.close(self._fd)
@@ -180,7 +226,7 @@ class InstanceLock:
         except OSError:
             # Another instance holds the lock — report who and exit.
             try:
-                holder_pid = Path(self._path).read_text().strip()
+                holder_pid = os.pread(self._fd, 32, 0).decode().strip() or 'unknown'
             except Exception:
                 holder_pid = 'unknown'
             print(
@@ -190,6 +236,15 @@ class InstanceLock:
             )
             os.close(self._fd)
             self._fd = None
+            sys.exit(1)
+
+        if self._legacy_holder_alive():
+            print(
+                f"fleetd: an older fleetd still holds {self._legacy}. "
+                f"Stop it before starting this one. Refusing to start.",
+                file=sys.stderr,
+            )
+            self.release()
             sys.exit(1)
 
         # Truncate and write our PID so others can identify us.
@@ -3413,6 +3468,13 @@ class Supervisor:
                  claude_cmd=None):
         self._state_dir = Path(state_dir) if state_dir else _resolve_state_dir()
         self._pidfile = pidfile or DEFAULT_PIDFILE
+        self._pidfile_is_default = not self._pidfile
+        if self._pidfile_is_default:
+            try:
+                self._pidfile = _default_pidfile()
+            except OSError as e:
+                print(f"fleetd: cannot resolve the default pidfile: {e}", file=sys.stderr)
+                sys.exit(1)
         self._port = port or FLEETD_PORT
         self._bind = bind or FLEETD_BIND
         self._cycle_interval = cycle_interval
@@ -3425,7 +3487,10 @@ class Supervisor:
         self._fleet_lib_dir = (
             Path(fleet_lib_dir) if fleet_lib_dir else Path(_DEFAULT_FLEET_LIB)
         )
-        self._lock = InstanceLock(self._pidfile)
+        self._lock = InstanceLock(
+            self._pidfile,
+            legacy_path=LEGACY_PIDFILE if self._pidfile_is_default else None,
+        )
         # RLock (not plain Lock): dispatch_epic/stop_epic hold the lock while
         # calling helpers (_consume_queue) that also acquire it.
         self._state_lock = threading.RLock()

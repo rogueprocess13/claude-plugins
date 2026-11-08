@@ -54,9 +54,14 @@ Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file an
 - `lib/fence-check.sh` no longer falls back to `/tmp/<tid>-fence` when `fleet-config.sh` is not
   found; it uses the same rule as `_fleet_fence_file` (the caller's state dir, else `./logs`). Fence
   state left `/tmp` in 56b3a56, so only a planted file could ever be found there (#624).
-- fleetd's single-instance pidfile (default `/tmp/fleetd.pid`) is opened with `O_NOFOLLOW` and
-  refused unless it is a regular file owned by fleetd's uid and not group/other writable, so a
-  planted file or symlink can no longer make fleetd truncate someone else's file (#624).
+- fleetd's single-instance pidfile moves from `/tmp/fleetd.pid` to `fleetd.pid` in the private
+  per-user scratch dir (`/tmp/ticket-auto-<euid>/`, or `$TICKET_TMP_DIR`). `FLEETD_PIDFILE` and
+  `--pidfile` still override it. Every pidfile is opened with `O_NOFOLLOW` and refused unless it is
+  a regular file owned by fleetd's uid, not group/other writable, with exactly one link. Before
+  this, a symlink or a hard link planted in `/tmp` could make fleetd truncate one of the fleetd
+  user's own files. During an upgrade, a new fleetd on the default path refuses to start while an
+  older fleetd of the same uid still holds `/tmp/fleetd.pid`. That check is a read-only probe;
+  the legacy file is never created or written (#624).
 
 ### Changed
 - `hooks/tmp-sweep.sh` sweeps the private scratch dir and, for this user's own files only and never

@@ -219,6 +219,75 @@ class InstanceLockTrustTest(unittest.TestCase):
         self._acquire(pf)
         self.assertEqual(pf.read_text(), 'keep')
 
+    def test_hardlinked_pidfile_refused_and_target_untouched(self):
+        # Another user can hard-link a shared-/tmp pidfile name to a file we
+        # own; O_NOFOLLOW, S_ISREG, uid and mode all pass, so only the link
+        # count tells it apart. The target must not be truncated.
+        victim = self.d / 'victim.txt'
+        victim.write_text('keep')
+        os.chmod(victim, 0o600)
+        pf = self.d / 'fleetd.pid'
+        os.link(victim, pf)
+        self._acquire(pf)
+        self.assertEqual(victim.read_text(), 'keep')
+
+    def test_default_pidfile_is_in_private_scratch_dir(self):
+        from fleetd import supervisor as sup_mod
+        scratch = self.d / 'scratch'
+        os.mkdir(scratch, 0o700)
+        old = os.environ.get('TICKET_TMP_DIR')
+        os.environ['TICKET_TMP_DIR'] = str(scratch)
+        try:
+            self.assertEqual(sup_mod._default_pidfile(), scratch / 'fleetd.pid')
+            lock = sup_mod.InstanceLock(str(sup_mod._default_pidfile()))
+            lock.acquire()
+            try:
+                st = os.stat(scratch / 'fleetd.pid')
+                self.assertEqual(st.st_uid, os.geteuid())
+                self.assertEqual(st.st_nlink, 1)
+            finally:
+                lock.release()
+        finally:
+            if old is None:
+                os.environ.pop('TICKET_TMP_DIR', None)
+            else:
+                os.environ['TICKET_TMP_DIR'] = old
+
+    def test_default_pidfile_refused_in_loose_scratch_dir(self):
+        from fleetd import supervisor as sup_mod
+        scratch = self.d / 'loose'
+        os.mkdir(scratch)
+        os.chmod(scratch, 0o777)
+        old = os.environ.get('TICKET_TMP_DIR')
+        os.environ['TICKET_TMP_DIR'] = str(scratch)
+        try:
+            with self.assertRaises(OSError):
+                sup_mod._default_pidfile()
+        finally:
+            if old is None:
+                os.environ.pop('TICKET_TMP_DIR', None)
+            else:
+                os.environ['TICKET_TMP_DIR'] = old
+
+    def test_live_legacy_pidfile_holder_blocks_start(self):
+        # Upgrade guard: an older fleetd still locking the legacy /tmp path
+        # (simulated here in the temp dir) keeps the new one from starting.
+        from fleetd.supervisor import InstanceLock
+        legacy = self.d / 'legacy.pid'
+        fd = os.open(legacy, os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock = InstanceLock(str(self.d / 'fleetd.pid'), legacy_path=str(legacy))
+            with self.assertRaises(SystemExit):
+                lock.acquire()
+            self.assertIsNone(lock.hold_fd)
+        finally:
+            os.close(fd)
+        # Once the old holder is gone the legacy file is ignored.
+        lock = InstanceLock(str(self.d / 'fleetd.pid'), legacy_path=str(legacy))
+        lock.acquire()
+        lock.release()
+
     def test_own_private_pidfile_accepted(self):
         from fleetd.supervisor import InstanceLock
         pf = self.d / 'fleetd.pid'
