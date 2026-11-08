@@ -35,6 +35,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: return-completeness-check.sh <TICKET-ID> [--repos-root <path>]
                                      [--tasks-file <path>] [--simple-fix-file <path>]
+                                     [--log-file <path>] [--refresh]
 
 Counts unchecked `- [ ]` boxes in the ticket's plan artifact — openspec
 tasks.md (whole-file count) or simple-fix.md's ## Completion Checklist
@@ -46,6 +47,13 @@ fallback when no openspec change directory matches.
   --repos-root <path>       Root under which to search for the ticket's openspec
                              change directory or ticket workspace directory.
                              Falls back to the REPOS_ROOT env var.
+  --log-file <path>         Pipeline log for the verifier-result. Falls back to
+                             LOG_FILE, then TAP_LOG. With none, the result is
+                             not recorded: VERIFIER_RESULT=unrecorded plus a
+                             stderr warning (the verdict gate is unarmed).
+  --refresh                 Post-VERIFY re-check: runs only when the latest
+                             return_completeness result is FAIL/BLOCK, else
+                             prints RETURN_COMPLETENESS_STATUS=current, exit 0.
 
 Emits KEY=value lines:
   RETURN_COMPLETENESS_STATUS   complete | incomplete | error
@@ -55,6 +63,7 @@ Emits KEY=value lines:
   UNCHECKED_ITEMS              first few unchecked lines, ; -separated
   REASON                       reason code
   ARTIFACT_TYPE                openspec | simple-fix | (empty on error)
+  VERIFIER_RESULT              recorded | unrecorded
 
 Exit codes: 0 complete, 1 incomplete, 2 error (no plan artifact found/unresolvable)
 EOF
@@ -142,8 +151,13 @@ _emit() {
   printf 'REASON=%s\n' "${REASON:-unknown}"
   printf 'ARTIFACT_TYPE=%s\n' "${ARTIFACT_TYPE:-}"
 
-  # Phase 0 RLVR — record verifier result after return-completeness check
-  local verdict="PASS" criteria_met=1 criteria_total=1
+  # Phase 0 RLVR — record verifier result after return-completeness check.
+  # PASS records the real box count (36/36), not 1/1 (GitHub #598 C); 1/1
+  # only when the artifact has no boxes at all.
+  local verdict="PASS" criteria_met="${TOTAL_COUNT:-0}" criteria_total="${TOTAL_COUNT:-0}"
+  if [ "$criteria_total" -eq 0 ] 2>/dev/null || ! [[ "$criteria_total" =~ ^[0-9]+$ ]]; then
+    criteria_met=1 criteria_total=1
+  fi
   if [ "${RETURN_COMPLETENESS_STATUS:-error}" = "incomplete" ]; then
     verdict="FAIL"
     criteria_met=$((TOTAL_COUNT - UNCHECKED_COUNT))
@@ -151,12 +165,44 @@ _emit() {
     [ "$criteria_total" -eq 0 ] && criteria_total=1
   elif [ "${RETURN_COMPLETENESS_STATUS:-error}" = "error" ]; then
     verdict="BLOCK"
-    criteria_met=0
+    criteria_met=0 criteria_total=1
   fi
-  write_verifier_result \
+
+  # No pipeline log means no verifier-result, which leaves flow.sh's verdict
+  # gate unarmed for this check (GitHub #598 B). Say so loudly — on stdout
+  # for the caller's eval, on stderr, and as a heartbeat — never silently.
+  local _rcc_log="${LOG_FILE:-${TAP_LOG:-}}"
+  if [ -z "$_rcc_log" ] || ! declare -f write_verifier_result >/dev/null 2>&1; then
+    printf 'VERIFIER_RESULT=unrecorded\n'
+    echo "[return-completeness] WARN: no pipeline log (--log-file, LOG_FILE or TAP_LOG) or verifier-result.sh missing — return_completeness ${verdict} NOT recorded; the verdict gate is unarmed for this check" >&2
+    hb_gate "return-completeness" "warn" "verifier-result not recorded: no pipeline log" \
+      "{\"ticket\":\"${TICKET_ID:-}\",\"verdict\":\"$verdict\"}" 2>/dev/null || true
+    return 0
+  fi
+  printf 'VERIFIER_RESULT=recorded\n'
+  # attempt = this pair's record count + 1, so a post-VERIFY refresh reads
+  # as attempt 2 rather than a second attempt 1.
+  local _rcc_attempt
+  _rcc_attempt=$(grep -c '|META|verifier-result|info|{"verifier":"return_completeness"' "$_rcc_log" 2>/dev/null || true)
+  _rcc_attempt=$((${_rcc_attempt:-0} + 1))
+  LOG_FILE="$_rcc_log" write_verifier_result \
     verifier=return_completeness verdict="$verdict" \
     criteria_met="$criteria_met" criteria_total="$criteria_total" \
-    attempt=1 phase=IMPLEMENT 2>/dev/null || true
+    attempt="$_rcc_attempt" phase=IMPLEMENT || true
+}
+
+# --refresh (GitHub #598 A): IMPLEMENT may leave tasks for VERIFY to tick
+# (they need the running build), so the IMPLEMENT-time FAIL goes stale. Run
+# after VERIFY, this re-counts only when the latest return_completeness
+# result is FAIL/BLOCK; the fresh record then supersedes the stale one
+# under verifier_latest_verdict's latest-record-wins rule. Otherwise it
+# writes nothing. Returns 0 when a re-check is due, 1 when not.
+_rcc_refresh_due() {
+  local _log="${LOG_FILE:-${TAP_LOG:-}}"
+  [ -n "$_log" ] && declare -f verifier_latest_verdict >/dev/null 2>&1 || return 0
+  local _failing
+  _failing=$(verifier_latest_verdict "$_log")
+  [[ $'\n'"$_failing" == *$'\n'"return_completeness|IMPLEMENT|"* ]]
 }
 
 # ── Main dispatch (only when executed directly, not when sourced for testing) ─
@@ -166,6 +212,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   REPOS_ROOT="${REPOS_ROOT:-}"
   TASKS_FILE_ARG=""
   SIMPLE_FIX_FILE_ARG=""
+  REFRESH=false
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -180,6 +227,15 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     --simple-fix-file)
       SIMPLE_FIX_FILE_ARG="${2:-}"
       shift 2
+      ;;
+    --log-file)
+      # An unsubstituted "{LOG_FILE}" placeholder counts as absent.
+      case "${2:-}" in "{"*"}" | "") ;; *) LOG_FILE="$2" ;; esac
+      shift 2
+      ;;
+    --refresh)
+      REFRESH=true
+      shift
       ;;
     --help | -h)
       usage
@@ -201,6 +257,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   done
 
   [ -z "$TICKET_ID" ] && usage
+
+  if [ "$REFRESH" = "true" ] && ! _rcc_refresh_due; then
+    printf 'RETURN_COMPLETENESS_STATUS=current\nREASON=LATEST_NOT_FAILING\n'
+    exit 0
+  fi
 
   TASKS_FILE=""
   SIMPLE_FIX_FILE=""

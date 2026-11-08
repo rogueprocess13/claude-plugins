@@ -47,9 +47,16 @@ _plog() {
   msg=${msg//|/ }
   msg=${msg//$'\r'/ }
   msg=${msg//$'\n'/ }
+  # PHASE/STEP/STATUS get the same treatment, with `_` (GitHub #610): a `|`
+  # or newline there would forge a field or a line, e.g. an operator marker.
+  # Sanitised, not rejected, so an internal caller never loses a line.
+  local f2="${2:-}" f3="${3:-}" f4="${4:-}"
+  f2=${f2//[|$'\r'$'\n']/_}
+  f3=${f3//[|$'\r'$'\n']/_}
+  f4=${f4//[|$'\r'$'\n']/_}
 
   _ensure_dir_for "$file"
-  echo "$(_iso_now)|${2:-}|${3:-}|${4:-}|${msg}" >>"$file"
+  echo "$(_iso_now)|${f2}|${f3}|${f4}|${msg}" >>"$file"
 }
 
 # Write a heartbeat log entry.

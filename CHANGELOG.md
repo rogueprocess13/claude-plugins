@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## Unreleased
+## 0.90.0 (2026-11-08)
 
 ### Fixed
 - A seeder can no longer leave processes running after VERIFY's seed steps. `lib/seed-run.sh` is
@@ -28,6 +28,29 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
   `VERIFY|seed-apply|warn|` / `VERIFY|seed-precheck|warn|<n> processes survived …`. seed-apply's
   `make` targets used coreutils `timeout`, which signalled only `make` itself; a timeout is still
   logged as `exited 124` (#621).
+
+## 0.89.0 (2026-11-08)
+
+Verdict gate: a stale FAIL/BLOCK no longer refuses a ticket whose verifier has since passed, and
+a human override of an adversarial BLOCK no longer needs a second bypass hours later.
+
+### Fixed
+- `verifier_latest_verdict` (flow.sh's verdict gate) uses one rule: the latest verdict-bearing
+  record per `(verifier, phase)` pair wins. A later PASS/WARN supersedes an earlier FAIL/BLOCK.
+  With no pipeline log the gate says it is unarmed (stderr, `META|verdict-gate|warn|UNARMED`,
+  heartbeat) instead of skipping silently (#598, #610).
+- `return-completeness-check.sh --refresh` re-checks after VERIFY and writes a fresh
+  `return_completeness` result, so a FAIL from an earlier phase no longer blocks the merge (#598).
+
+### Added
+- `lib/adversarial-override.sh`: the one way to accept a plan the adversarial review BLOCKED.
+  Operator-only: it refuses agent and fleetd-worker context. It writes
+  `META|adversarial-override|info|reason=…`, which the verdict gate counts as WARN, plus the
+  done line `detect-resume.sh` reads. A plain `EXEC|adversarial-review|done|PASS` line no longer
+  clears the gate. `plog.sh` refuses to write `META|adversarial-override` and
+  `META|verify-attempts-reset` (exit 3) and any PHASE/STEP/STATUS outside `[A-Za-z0-9_-]+`
+  (exit 2), so a `|` or newline cannot forge the marker; `_plog` replaces `|`/CR/LF in those
+  fields with `_` (#610).
 
 ## 0.88.0 (2026-11-08)
 
