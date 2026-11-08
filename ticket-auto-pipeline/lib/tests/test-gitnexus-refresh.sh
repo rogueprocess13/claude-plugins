@@ -255,6 +255,45 @@ test_unindexed_repo_skips() {
   [ "$ok" = 1 ]
 }
 
+# The agent env file lives in /tmp: it is read as text, never sourced.
+test_base_read_from_env_file_as_text() {
+  _setup
+  _advance_origin two
+  printf '%s\n' '#!/usr/bin/env bash' 'export INTEGRATION_BRANCH=""' 'export BASE_BRANCH="main"' >"$_ws/env.sh"
+  _gr --repo acme/widget --env-file "$_ws/env.sh"
+  local ok=1
+  [ "$_rc" = 0 ] && _analyzed && grep -q '|META|gitnexus-refresh|done|widget ' "$_ws/log" || ok=0
+  _teardown
+  [ "$ok" = 1 ]
+}
+
+test_hostile_env_file_never_executed() {
+  _setup
+  _advance_origin two
+  # shellcheck disable=SC2016
+  printf 'export BASE_BRANCH="$(touch %s/marker)"\nexport INTEGRATION_BRANCH=`touch %s/marker2`\n' "$_ws" "$_ws" >"$_ws/env.sh"
+  _gr --repo acme/widget --env-file "$_ws/env.sh"
+  local ok=1
+  [ "$_rc" = 0 ] && [ ! -e "$_ws/marker" ] && [ ! -e "$_ws/marker2" ] && ! _analyzed &&
+    grep -q '|skip|acme/widget: base branch unknown' "$_ws/log" || ok=0
+  _teardown
+  [ "$ok" = 1 ]
+}
+
+test_symlinked_env_file_refused() {
+  _setup
+  _advance_origin two
+  # shellcheck disable=SC2016
+  printf 'export BASE_BRANCH="main"\n: "$(touch %s/marker)"\n' "$_ws" >"$_ws/real-env.sh"
+  ln -s "$_ws/real-env.sh" "$_ws/env.sh"
+  _gr --repo acme/widget --env-file "$_ws/env.sh"
+  local ok=1
+  [ "$_rc" = 0 ] && [ ! -e "$_ws/marker" ] && ! _analyzed &&
+    grep -q '|skip|acme/widget: base branch unknown' "$_ws/log" || ok=0
+  _teardown
+  [ "$ok" = 1 ]
+}
+
 test_usage_error() {
   local rc=0
   bash "$GR" only-one-arg >/dev/null 2>&1 || rc=$?
@@ -273,6 +312,9 @@ _run "concurrent refresh is locked out" test_concurrent_refresh_is_locked_out
 _run "repo and base come from the pipeline log" test_repo_and_base_from_pipeline_log
 _run "no PR recorded skips" test_no_pr_recorded_skips
 _run "unindexed repo skips" test_unindexed_repo_skips
+_run "base read from env file as text" test_base_read_from_env_file_as_text
+_run "hostile env file is never executed" test_hostile_env_file_never_executed
+_run "symlinked env file is refused" test_symlinked_env_file_refused
 _run "usage error exits 2" test_usage_error
 
 echo ""

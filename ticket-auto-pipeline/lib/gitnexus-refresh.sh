@@ -70,6 +70,26 @@ _gr_slug() {
   printf '%s\n' "$u" | awk -F/ 'NF>=2 {print tolower($(NF-1) "/" $NF)}'
 }
 
+# _gr_env_value <file> <NAME> — the value of NAME in the agent env file, read
+# as text and never sourced: the file sits in /tmp, where another local user
+# could plant it or swap it for a symlink. The file must be a regular,
+# non-symlink file owned by the current user. Reads the last
+# `export NAME="..."` / `NAME=...` line, strips one pair of surrounding quotes,
+# and prints the value only when it is a valid git branch name (which also
+# rules out quotes, `$`, backticks and backslashes). Prints nothing otherwise.
+_gr_env_value() {
+  local f="$1" name="$2" v
+  [ -f "$f" ] && [ ! -L "$f" ] && [ -O "$f" ] || return 0
+  v=$(sed -n "s/^\(export[[:space:]]\{1,\}\)\{0,1\}${name}=//p" "$f" 2>/dev/null | tail -1) || v=""
+  case "$v" in
+  \"*\") v="${v#\"}" v="${v%\"}" ;;
+  \'*\') v="${v#\'}" v="${v%\'}" ;;
+  esac
+  [ -n "$v" ] || return 0
+  git check-ref-format --branch "$v" >/dev/null 2>&1 || return 0
+  printf '%s\n' "$v"
+}
+
 _gr_timeout() {
   if command -v timeout >/dev/null 2>&1; then
     timeout --kill-after=30 "$@"
@@ -200,16 +220,15 @@ main() {
   fi
   if [ -z "$base" ]; then
     [ -n "$env_file" ] || env_file="/tmp/ticket-auto-${tid}-env.sh"
-    if [ -f "$env_file" ]; then
-      # shellcheck disable=SC1090
-      base=$(
-        source "$env_file" >/dev/null 2>&1 || true
-        printf '%s' "${INTEGRATION_BRANCH:-${BASE_BRANCH:-}}"
-      )
-    fi
+    base=$(_gr_env_value "$env_file" INTEGRATION_BRANCH)
+    [ -n "$base" ] || base=$(_gr_env_value "$env_file" BASE_BRANCH)
   fi
   if [ -z "$base" ]; then
     _gr_log skip "${repo}: base branch unknown"
+    return 0
+  fi
+  if ! git check-ref-format --branch "$base" >/dev/null 2>&1; then
+    _gr_log skip "${repo}: base branch is not a valid branch name"
     return 0
   fi
 
