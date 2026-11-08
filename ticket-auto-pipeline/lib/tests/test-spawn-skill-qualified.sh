@@ -113,6 +113,73 @@ test_spawn_agent_pre_prompt_is_qualified() {
   echo "$out" | grep -q '^AGENT_PROMPT=Run /ticket-auto-pipeline:ticket-implement TEST-569 '
 }
 
+# GitHub #602: a phase agent type has no Skill tool, so it finds SKILL.md on
+# disk and could pick a stale ~/.claude/skills/<name>/SKILL.md even with the
+# qualified name. spawn_agent_pre must name the installed plugin's file.
+# _fake_home <dir> [installed=1] — a HOME holding a stale personal copy and,
+# optionally, an installed plugin version recorded in installed_plugins.json.
+_fake_home() {
+  local h="$1"
+  mkdir -p "$h/.claude/skills/ticket-gate-reconcile"
+  echo "STALE personal copy" >"$h/.claude/skills/ticket-gate-reconcile/SKILL.md"
+  [ "${2:-1}" = 1 ] || return 0
+  local inst="$h/.claude/plugins/cache/willard-pro-claude-plugins/ticket-auto-pipeline/9.9.9"
+  mkdir -p "$inst/skills/ticket-gate-reconcile"
+  echo "installed copy" >"$inst/skills/ticket-gate-reconcile/SKILL.md"
+  cat >"$h/.claude/plugins/installed_plugins.json" <<EOF
+{"plugins": {"ticket-auto-pipeline@willard-pro-claude-plugins": [{"installPath": "$inst"}]}}
+EOF
+}
+
+_prompt_with_home() {
+  local h="$1" log="$_TMPDIR/TEST-569-pipeline.log"
+  touch "$log"
+  (
+    export HOME="$h"
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/spawn-helper.sh" >/dev/null 2>&1
+    unset HB_LOG_FILE
+    spawn_agent_pre PHASE=GATE STEP=gate-reconcile TICKET_ID=TEST-569 \
+      LOG_FILE="$log" SKILL=/ticket-auto-pipeline:ticket-gate-reconcile 2>/dev/null
+  ) | grep '^AGENT_PROMPT='
+}
+
+test_spawn_prompt_pins_installed_skill_file() {
+  local h="$_TMPDIR/home-installed" out want
+  _fake_home "$h" 1
+  want="$h/.claude/plugins/cache/willard-pro-claude-plugins/ticket-auto-pipeline/9.9.9/skills/ticket-gate-reconcile/SKILL.md"
+  out=$(_prompt_with_home "$h")
+  if ! grep -qF "The skill's instructions are the file ${want}: read that exact file" <<<"$out"; then
+    echo "  prompt does not pin $want:" >&2
+    echo "  $out" >&2
+    return 1
+  fi
+  # The stale personal copy is named only as the one NOT to use.
+  ! grep -qF "file $h/.claude/skills/ticket-gate-reconcile/SKILL.md" <<<"$out"
+}
+
+test_spawn_prompt_unpinned_when_not_installed() {
+  local h="$_TMPDIR/home-bare" out
+  _fake_home "$h" 0
+  out=$(_prompt_with_home "$h")
+  grep -q '^AGENT_PROMPT=Run /ticket-auto-pipeline:ticket-gate-reconcile TEST-569 --from-auto\. Before starting' <<<"$out"
+}
+
+test_skill_file_ignores_foreign_skills() {
+  local h="$_TMPDIR/home-foreign"
+  _fake_home "$h" 1
+  (
+    export HOME="$h"
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/spawn-helper.sh" >/dev/null 2>&1
+    declare -f spawn_skill_file >/dev/null &&
+      [ -n "$(spawn_skill_file /ticket-auto-pipeline:ticket-gate-reconcile)" ] &&
+      [ -z "$(spawn_skill_file /opsx:apply)" ] &&
+      [ -z "$(spawn_skill_file /ticket-gate-reconcile)" ] &&
+      [ -z "$(spawn_skill_file /ticket-auto-pipeline:../x)" ]
+  )
+}
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -122,7 +189,10 @@ for fn in \
   test_qualify_bare_names \
   test_qualify_leaves_qualified_and_foreign_names \
   test_plugin_skill_list_matches_skills_dir \
-  test_spawn_agent_pre_prompt_is_qualified; do
+  test_spawn_agent_pre_prompt_is_qualified \
+  test_spawn_prompt_pins_installed_skill_file \
+  test_spawn_prompt_unpinned_when_not_installed \
+  test_skill_file_ignores_foreign_skills; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

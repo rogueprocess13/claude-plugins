@@ -465,6 +465,31 @@ spawn_qualify_skill() {
   printf '%s\n' "$s"
 }
 
+spawn_skill_file() {
+  # Absolute path of the installed plugin's SKILL.md for a
+  # /ticket-auto-pipeline:<name> skill, or nothing (GitHub #602). Phase agent
+  # types have no Skill tool, so they find a skill's SKILL.md on disk — and a
+  # search by name can land on a stale personal ~/.claude/skills/<name>/ copy
+  # even when the prompt names the qualified skill. Naming the exact file the
+  # plugin ships removes the search. Resolved through tap_cache_find
+  # (installed_plugins.json installPath, then newest cached version), never
+  # CLAUDE_PLUGIN_ROOT, which is unset in Bash-tool context.
+  local s="$1" name
+  case "$s" in
+  /ticket-auto-pipeline:*) name="${s#/ticket-auto-pipeline:}" ;;
+  *) return 0 ;;
+  esac
+  case "$name" in "" | */* | *..*) return 0 ;; esac
+  if ! declare -f tap_cache_find >/dev/null 2>&1; then
+    local _pc
+    _pc="$(dirname "${BASH_SOURCE[0]}")/plugin-cache.sh"
+    [ -f "$_pc" ] || return 0
+    # shellcheck source=plugin-cache.sh
+    source "$_pc" || return 0
+  fi
+  tap_cache_find ticket-auto-pipeline "skills/${name}/SKILL.md" || true
+}
+
 spawn_agent_pre() {
   local PHASE=""
   local STEP=""
@@ -635,7 +660,15 @@ spawn_agent_pre() {
   # rename — child processes never see it.
   local env_prefix="export TAP_LOG=$(_q "${LOG_FILE}"); unset LOG_FILE; LOG_FILE=\"\$TAP_LOG\"; export HB_LOG_FILE=$(_q "${HB_LOG_FILE}"); export CLAUDE_LOG_FILE=$(_q "${CLAUDE_LOG_FILE}"); export HUSKY=0; source ~/.claude/skills/lib/heartbeat.sh; source /tmp/ticket-auto-$(_q "${TICKET_ID}")-env.sh"
 
-  echo "AGENT_PROMPT=Run ${SKILL} ${TICKET_ID} ${FLAGS}. Before starting, run: ${env_prefix}. ${INSTRUCTIONS}"
+  # Pin the skill file (GitHub #602) when the installed copy resolves; when it
+  # does not, the prompt is unchanged and the agent resolves the name as before.
+  local _skill_file _skill_pin=""
+  _skill_file=$(spawn_skill_file "$SKILL") || _skill_file=""
+  if [ -n "$_skill_file" ]; then
+    _skill_pin=" The skill's instructions are the file ${_skill_file}: read that exact file and follow it, and resolve its relative references/ paths from its directory. Do not use any other copy of this skill, such as ~/.claude/skills/${SKILL#/ticket-auto-pipeline:}/SKILL.md, which may be stale."
+  fi
+
+  echo "AGENT_PROMPT=Run ${SKILL} ${TICKET_ID} ${FLAGS}.${_skill_pin} Before starting, run: ${env_prefix}. ${INSTRUCTIONS}"
   echo "AGENT_TYPE=${AGENT_TYPE}"
 
   # 6. Store spawn metadata for spawn_agent_post
