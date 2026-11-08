@@ -13,8 +13,20 @@
 
 _ticket_env_tid="${1:-}"
 if [ -n "$_ticket_env_tid" ]; then
+  # Find ticket-tmp.sh beside this file. BASH_SOURCE is empty when an agent
+  # sources this from zsh, so fall back to the synced lib dir (the same
+  # CLAUDE_SKILLS_LIB convention the router prose uses).
+  _ticket_env_lib=""
+  if [ -n "${BASH_SOURCE[0]:-}" ]; then
+    _ticket_env_lib="${BASH_SOURCE[0]%/*}"
+    [ "$_ticket_env_lib" != "${BASH_SOURCE[0]}" ] || _ticket_env_lib="."
+  fi
+  if [ -z "$_ticket_env_lib" ] || [ ! -f "$_ticket_env_lib/ticket-tmp.sh" ]; then
+    _ticket_env_lib="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}"
+  fi
   # shellcheck source=ticket-tmp.sh
-  source "$(dirname "${BASH_SOURCE[0]}")/ticket-tmp.sh" 2>/dev/null || true
+  source "$_ticket_env_lib/ticket-tmp.sh" 2>/dev/null || true
+  unset _ticket_env_lib
   if declare -f ticket_tmp_path >/dev/null 2>&1; then
     _ticket_env_file=$(ticket_tmp_path "$_ticket_env_tid" env.sh) || _ticket_env_file=""
     if [ -n "$_ticket_env_file" ] && { [ -e "$_ticket_env_file" ] || [ -L "$_ticket_env_file" ]; }; then

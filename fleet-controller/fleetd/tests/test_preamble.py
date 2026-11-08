@@ -58,7 +58,7 @@ class TestParseResultBlock(unittest.TestCase):
             'noise before\n'
             'TICKET_PREAMBLE_RESULT:\n'
             '  TICKET_ID: CRE-9\n'
-            '  ENV_FILE: /tmp/ticket-auto-1000/ticket-auto-CRE-9-env.sh\n'
+            '  ENV_FILE: /scratch/ticket-auto-CRE-9-env.sh\n'
             '  BASE_BRANCH: develop\n'
             'trailing noise\n'
             '  TICKET_ID: WRONG\n'
@@ -110,7 +110,7 @@ class TestRouting(unittest.TestCase):
             'cat <<EOF\n'
             'TICKET_PREAMBLE_RESULT:\n'
             '  TICKET_ID: CRE-1\n'
-            '  ENV_FILE: /tmp/ticket-auto-1000/ticket-auto-CRE-1-env.sh\n'
+            '  ENV_FILE: /scratch/ticket-auto-CRE-1-env.sh\n'
             '  LOG_FILE: /w/logs/CRE-1-pipeline.log\n'
             'EOF\n'
         )
@@ -118,7 +118,7 @@ class TestRouting(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.action, preamble.ACTION_PROCEED)
         self.assertEqual(result.fields['ENV_FILE'],
-                         '/tmp/ticket-auto-1000/ticket-auto-CRE-1-env.sh')
+                         '/scratch/ticket-auto-CRE-1-env.sh')
         self.assertEqual(result.gate_stop_code, '')
 
     def test_branch_directive_invalid_is_the_one_gate_stop(self):
@@ -216,6 +216,13 @@ class TestAgainstTheRealScript(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix='fleetd-preamble-real-')
+        # The env file goes to the private scratch dir (GitHub #619). Point
+        # it at a 0700 dir of the test's own: the uid default would make the
+        # expected path depend on who runs the suite, and leak the file.
+        self.scratch = tempfile.mkdtemp(prefix='fleetd-preamble-scratch-')
+        os.chmod(self.scratch, 0o700)
+        self._saved_tmp_dir = os.environ.get('TICKET_TMP_DIR')
+        os.environ['TICKET_TMP_DIR'] = self.scratch
         self.lib = Path(self.tmp) / 'lib'
         self.lib.mkdir()
         for src in LIB_DIR.glob('*.sh'):
@@ -224,9 +231,12 @@ class TestAgainstTheRealScript(unittest.TestCase):
         (Path(self.tmp) / 'logs').mkdir()
 
     def tearDown(self):
+        if self._saved_tmp_dir is None:
+            os.environ.pop('TICKET_TMP_DIR', None)
+        else:
+            os.environ['TICKET_TMP_DIR'] = self._saved_tmp_dir
         shutil.rmtree(self.tmp, ignore_errors=True)
-        for stale in Path('/tmp').glob('ticket-auto-PYPRE-*-env.sh'):
-            stale.unlink(missing_ok=True)
+        shutil.rmtree(self.scratch, ignore_errors=True)
 
     def test_round_trip_and_idempotent_re_entry(self):
         kwargs = dict(lib_dir=self.lib, project_dir=self.tmp,
@@ -235,7 +245,7 @@ class TestAgainstTheRealScript(unittest.TestCase):
         first = preamble.run_preamble('PYPRE-1', **kwargs)
         self.assertTrue(first.ok, first.detail)
         self.assertEqual(first.fields['ENV_FILE'],
-                         '/tmp/ticket-auto-1000/ticket-auto-PYPRE-1-env.sh')
+                         f'{self.scratch}/ticket-auto-PYPRE-1-env.sh')
         self.assertEqual(first.fields['BRANCH_ORIGIN'], 'resolved')
         self.assertEqual(first.fields['INTEGRATION_BRANCH'], 'epic/py')
         self.assertTrue(Path(first.fields['ENV_FILE']).is_file())

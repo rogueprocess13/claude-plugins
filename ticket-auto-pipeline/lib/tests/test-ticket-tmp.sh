@@ -142,6 +142,26 @@ expect "7e: bad id sources nothing, returns 0" "after:unset" "$out"
 out=$(TICKET_TMP_DIR="$S7" bash -c 'set -e; f=$1; set --; source "$f"; echo after' _ "$TENV" 2>&1)
 expect "7f: no id is a silent no-op" "after" "$out"
 
+# 7g: a copy of ticket-env.sh with no ticket-tmp.sh beside it (the situation
+# under zsh, where BASH_SOURCE is empty) falls back to CLAUDE_SKILLS_LIB.
+mkdir -m 700 "$TMP/lone"
+cp "$TENV" "$TMP/lone/ticket-env.sh"
+chmod 600 "$S7/ticket-auto-T-7-env.sh"
+expect "7g: falls back to CLAUDE_SKILLS_LIB for ticket-tmp.sh" "/r7" \
+  "$(TICKET_TMP_DIR="$S7" CLAUDE_SKILLS_LIB="$LIB_DIR" bash -c 'source "$1" T-7; printf %s "$REPOS_ROOT"' _ "$TMP/lone/ticket-env.sh")"
+
+# 7h: the same source line from zsh, when zsh is installed.
+if command -v zsh >/dev/null 2>&1; then
+  expect "7h: zsh sources a trusted env file" "/r7" \
+    "$(TICKET_TMP_DIR="$S7" CLAUDE_SKILLS_LIB="$LIB_DIR" zsh -c 'source "$1" T-7; printf %s "$REPOS_ROOT"' _ "$TENV" 2>/dev/null)"
+  chmod 664 "$S7/ticket-auto-T-7-env.sh"
+  expect "7i: zsh refuses an untrusted env file" "unset" \
+    "$(TICKET_TMP_DIR="$S7" CLAUDE_SKILLS_LIB="$LIB_DIR" zsh -c 'source "$1" T-7; printf %s "${REPOS_ROOT:-unset}"' _ "$TENV" 2>/dev/null)"
+  chmod 600 "$S7/ticket-auto-T-7-env.sh"
+else
+  echo "  SKIP 7h/7i: zsh not installed"
+fi
+
 # ── 8. Hook ignores a non-pipeline-log LOG_FILE ──────────────────────────────
 S8="$TMP/s8"
 mkdir -m 700 "$S8" "$TMP/ws8"
