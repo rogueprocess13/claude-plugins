@@ -17,6 +17,8 @@
 #       ISO|VERIFY|seed-apply|done|<n> seeds applied (...)
 #       ISO|VERIFY|seed-apply|skip|no test-data blockers with a Seed command (...)
 #       ISO|VERIFY|seed-apply|fail|<blocker> <seed|verify> command exited <rc>
+#         (rc 124 = SEED_APPLY_TIMEOUT_SECS expired; the whole group was killed)
+#       ISO|VERIFY|seed-apply|warn|<n> processes survived <blocker> <seed|verify> command (killed)
 #       ISO|VERIFY|seed-apply|fail|<blocker> rejected <Seed|Verify> command: not 'make <target>'
 #     Also sets SEED_APPLY_STATUS (done|skip|fail), SEED_APPLY_COUNT and
 #     SEED_APPLY_MSG (the log message, `|`/CR/LF-free) for the caller.
@@ -67,7 +69,9 @@
 #   FLEET_PIPELINE_LOG_DIR   where blocker pipeline logs live, when LOG_FILE
 #                            is unset (LOG_FILE's directory wins)
 #   SEED_APPLY_TIMEOUT_SECS  per-command timeout (default 900; 0 disables;
-#                            needs coreutils `timeout`)
+#                            non-numeric = 900). Enforced by lib/seed-run.sh,
+#                            which kills make's whole process group and
+#                            sweeps any setsid'd descendant (#621)
 #
 # Usage:
 #   source lib/seed-apply.sh
@@ -83,6 +87,10 @@ fi
 if ! declare -f resolve_planner_dir >/dev/null 2>&1; then
   # shellcheck source=planner-artifacts.sh
   source "$_SEED_APPLY_DIR/planner-artifacts.sh"
+fi
+if ! declare -f seed_run >/dev/null 2>&1; then
+  # shellcheck source=seed-run.sh
+  source "$_SEED_APPLY_DIR/seed-run.sh"
 fi
 
 # _seed_apply_log <status> <msg> — one pipeline-log line, log-safe message.
@@ -155,18 +163,23 @@ seed_apply_parse_make() {
   printf '%s\n%s\n' "$dir" "$target"
 }
 
-# _seed_apply_run <worktree> <dir> <target> — runs `make [-C dir] -- target`
-# as an argv list in the worktree; returns make's rc.
+# _seed_apply_run <worktree> <dir> <target> <tid> <seed|verify> — runs
+# `make [-C dir] -- target` as an argv list in the worktree through
+# lib/seed-run.sh (#621): own process group, SEED_APPLY_TIMEOUT_SECS kills
+# the whole group (rc 124), and a post-run sweep kills anything make started
+# that left the group (setsid), logged as `warn|<N> processes survived
+# <tid> <seed|verify> command (killed)`. Returns make's rc, or 124.
 _seed_apply_run() {
-  local wt="$1" dir="$2" target="$3" secs="${SEED_APPLY_TIMEOUT_SECS:-900}"
+  local wt="$1" dir="$2" target="$3" secs="${SEED_APPLY_TIMEOUT_SECS:-900}" rc=0
+  case "$secs" in '' | *[!0-9]*) secs=900 ;; esac
   local -a cmd=(make)
   [ -n "$dir" ] && cmd+=(-C "$dir")
   cmd+=(-- "$target")
-  if [ "$secs" != "0" ] && command -v timeout >/dev/null 2>&1; then
-    (cd "$wt" && timeout "$secs" "${cmd[@]}") >&2
-  else
-    (cd "$wt" && "${cmd[@]}") >&2
+  seed_run --timeout "$secs" --cwd "$wt" -- "${cmd[@]}" || rc=$?
+  if [ "$SEED_RUN_SURVIVORS" -gt 0 ] 2>/dev/null; then
+    _seed_apply_log warn "${SEED_RUN_SURVIVORS} processes survived $4 $5 command (killed)"
   fi
+  return "$rc"
 }
 
 # _seed_apply_reject <tid> <Seed|Verify> — the rejection fail line; rc 1.
@@ -255,7 +268,7 @@ seed_apply() {
     fi
 
     src_rc=0
-    _seed_apply_run "$wt" "$seed_dir" "$seed_target" || src_rc=$?
+    _seed_apply_run "$wt" "$seed_dir" "$seed_target" "$b" seed || src_rc=$?
     if [ "$src_rc" -ne 0 ]; then
       SEED_APPLY_MSG="$b seed command exited $src_rc: $seed"
       _seed_apply_log fail "$SEED_APPLY_MSG"
@@ -264,7 +277,7 @@ seed_apply() {
     fi
     if [ -n "$verify_target" ]; then
       src_rc=0
-      _seed_apply_run "$wt" "$verify_dir" "$verify_target" || src_rc=$?
+      _seed_apply_run "$wt" "$verify_dir" "$verify_target" "$b" verify || src_rc=$?
       if [ "$src_rc" -ne 0 ]; then
         SEED_APPLY_MSG="$b verify command exited $src_rc: $verify"
         _seed_apply_log fail "$SEED_APPLY_MSG"
