@@ -788,11 +788,23 @@ class TestPhaseSpawnConstruction(unittest.TestCase):
             self.table, 'STEP_1', 'CRE-9', '/w/logs/CRE-9-pipeline.log',
             hb_log_file='/w/logs/CRE-9-hb.log',
             claude_log_file='/tmp/CRE-9-claude.log')
-        self.assertEqual(spawn.env['LOG_FILE'], '/w/logs/CRE-9-pipeline.log')
+        self.assertEqual(spawn.env['TAP_LOG'], '/w/logs/CRE-9-pipeline.log')
         self.assertEqual(spawn.env['HB_LOG_FILE'], '/w/logs/CRE-9-hb.log')
         self.assertEqual(spawn.env['CLAUDE_LOG_FILE'], '/tmp/CRE-9-claude.log')
         self.assertEqual(spawn.env['HUSKY'], '0')
         self.assertNotIn('export LOG_FILE', spawn.prompt)
+
+    def test_pipeline_log_is_never_exported_as_bare_log_file(self):
+        """GitHub #575 — Spring Boot maps a LOG_FILE env var to
+        logging.file.name, so a worker's `mvn test` appended its application
+        log to the pipeline log. Neither spawn builder may set it."""
+        for spawn in (
+                build_phase_spawn(self.table, 'STEP_1', 'CRE-9',
+                                  '/w/logs/CRE-9-pipeline.log'),
+                build_pr_iterate_spawn('CRE-9', '/w/logs/CRE-9-pipeline.log')):
+            self.assertNotIn('LOG_FILE', spawn.env)
+            self.assertEqual(spawn.env['TAP_LOG'],
+                             '/w/logs/CRE-9-pipeline.log')
 
     def test_phase_identity_is_in_the_environment(self):
         spawn = build_phase_spawn(self.table, 'STEP_4_5', 'CRE-9', '/w/log')
@@ -1978,11 +1990,86 @@ class TestResolveLoopCounters(unittest.TestCase):
 
     def test_verify_attempts_counts_verify_fail_lines(self):
         lines = [
-            '2026-09-06T10:00:00Z|VERIFY|verify|fail|timeout',
+            '2026-09-06T10:00:00Z|VERIFY|verify|waiting|Agent launched',
+            '2026-09-06T10:00:30Z|VERIFY|verify|fail|timeout',
+            '2026-09-06T10:00:40Z|IMPLEMENT|implement|done|re-implemented',
             '2026-09-06T10:01:00Z|VERIFY|verify|fail|assertion mismatch',
             '2026-09-06T10:02:00Z|VERIFY|verify|done|PASS (2 attempts)',
         ]
         self.assertEqual(resolve_loop_counters(lines)['VERIFY_ATTEMPTS'], 2)
+
+    # #573/#572 fixtures — each also checked against the bash implementation
+    # (verify-checkpoint.sh) below, so the two counters cannot diverge.
+    _SYNTH_LOG = [
+        'T|VERIFY|verify|waiting|Agent launched',
+        'T|VERIFY|verify|fail|zombie-detected: VERIFY verify',
+        'T|VERIFY|verify|waiting|Agent launched',
+        'T|VERIFY|verify|fail|operator-stopped: VERIFY verify',
+    ]
+    _RESET_LOG = [
+        'T|VERIFY|verify|waiting|Agent launched',
+        'T|VERIFY|verify|fail|FAIL a',
+        'T|IMPLEMENT|implement|waiting|Agent launched',
+        'T|VERIFY|verify|waiting|Agent launched',
+        'T|VERIFY|verify|fail|FAIL b',
+        'T|META|verify-attempts-reset|info|env repaired',
+        'T|VERIFY|verify|waiting|Agent launched',
+        'T|VERIFY|verify|fail|FAIL c',
+    ]
+    # (log lines, control-file lines, expected attempts)
+    _VERIFY_ATTEMPT_FIXTURES = [
+        # duplicate terminal lines within one attempt count once
+        ([
+            'T|VERIFY|verify|waiting|Agent launched',
+            'T|VERIFY|verify|fail|criterion 2 not met',
+            'T|META|tokens|info|VERIFY:1/2/3/4',
+            'T|VERIFY|verify|fail|FAIL — criterion 2 not met',
+        ], [], 1),
+        # recorded synthetic closes are never attempts
+        (_SYNTH_LOG, ['synthetic|2', 'synthetic|4'], 0),
+        # trust boundary: the same closes without a record (agent-written) count
+        (_SYNTH_LOG, [], 2),
+        # trust boundary: a reset line in the log alone resets nothing
+        (_RESET_LOG, [], 3),
+        # an operator control-file reset after line 6 zeroes the count
+        (_RESET_LOG, ['reset|6|t|env repaired'], 1),
+        # at most VERIFY_RESET_MAX (2) resets are honoured
+        (_RESET_LOG, ['reset|2|t|a', 'reset|2|t|b', 'reset|8|t|c'], 2),
+    ]
+
+    def test_verify_attempts_per_attempt_rules(self):
+        for lines, ctl, expected in self._VERIFY_ATTEMPT_FIXTURES:
+            with self.subTest(lines=lines, ctl=ctl):
+                self.assertEqual(
+                    resolve_loop_counters(lines, ctl)['VERIFY_ATTEMPTS'],
+                    expected)
+
+    def test_read_verify_ctl(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / 'T-pipeline.log'
+            self.assertEqual(phase_dispatch.read_verify_ctl(str(log)), [])
+            Path(f'{log}.verify-ctl').write_text('synthetic|3\n')
+            self.assertEqual(phase_dispatch.read_verify_ctl(str(log)),
+                             ['synthetic|3'])
+
+    def test_verify_attempts_parity_with_bash(self):
+        script = (REPO_ROOT / 'ticket-auto-pipeline' / 'lib'
+                  / 'verify-checkpoint.sh')
+        env = {k: v for k, v in os.environ.items() if k != 'VERIFY_RESET_MAX'}
+        for lines, ctl, _ in self._VERIFY_ATTEMPT_FIXTURES:
+            with self.subTest(lines=lines, ctl=ctl), \
+                    tempfile.TemporaryDirectory() as d:
+                log = Path(d) / 'T-pipeline.log'
+                log.write_text('\n'.join(lines) + '\n')
+                if ctl:
+                    Path(f'{log}.verify-ctl').write_text('\n'.join(ctl) + '\n')
+                out = subprocess.run(
+                    ['bash', str(script), 'attempts', str(log)],
+                    capture_output=True, text=True, check=True,
+                    env=env).stdout
+                self.assertEqual(
+                    int(out.strip()),
+                    resolve_loop_counters(lines, ctl)['VERIFY_ATTEMPTS'])
 
     def test_iteration_counts_pr_review_done_warn_lines(self):
         lines = [
@@ -2003,7 +2090,8 @@ class TestResolveLoopCounters(unittest.TestCase):
     def test_counters_are_independent_of_each_other(self):
         lines = (
             ['2026-09-06T10:00:00Z|GATE|reconcile|done|cycle#1'] * 1
-            + ['2026-09-06T10:01:00Z|VERIFY|verify|fail|x'] * 2
+            + ['2026-09-06T10:01:00Z|VERIFY|verify|waiting|Agent launched',
+               '2026-09-06T10:01:00Z|VERIFY|verify|fail|x'] * 2
             + ['2026-09-06T10:02:00Z|PR-REVIEW|pr-review|done|WARN'] * 3
             + ['2026-09-06T10:03:00Z|PR-REVIEW|pr-reconcile|done|cycle#1'] * 4
         )

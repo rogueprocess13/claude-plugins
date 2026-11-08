@@ -893,14 +893,22 @@ def capture_phase_return(tid, phase, text, attempt=None, lib_dir=None,
 # split them because a top-level `claude -p` session is not a subagent:
 #
 # * **Values become real process environment.** `spawn_agent_pre` prefixes the
-#   Agent prompt with `export LOG_FILE=…; export HB_LOG_FILE=…` because it has
+#   Agent prompt with `export TAP_LOG=…; export HB_LOG_FILE=…` because it has
 #   no other channel — a subagent shares the router's process and can only be
 #   told, not configured. fleetd forks the phase itself, so it sets these in
 #   `execvpe`'s environment, exactly as it already does for `FLEET_WORKER_PID`
 #   and `FLEET_STATE_DIR`. This is strictly stronger than the prompt form: the
 #   preamble sources its env file with `|| true`, so a missing or unwritable
-#   env file silently yields a phase running with no `REPOS_ROOT` and no
-#   `LINEAR_API_KEY` (task 4.16). A real env var cannot be half-applied.
+#   env file silently yields a phase running with no `REPOS_ROOT` (task
+#   4.16). A real env var cannot be half-applied. (`LINEAR_API_KEY` is not in
+#   the env file at all since GitHub #578: a worker inherits it from fleetd's
+#   own environment, `worker_env = dict(os.environ)`.)
+#
+# * **The pipeline log is `TAP_LOG`, never `LOG_FILE`** (GitHub #575).
+#   Spring Boot maps a `LOG_FILE` environment variable to
+#   `logging.file.name`, so every `mvn test` a worker ran appended its
+#   application log to the pipeline log. The spawn-meta file keeps its
+#   `LOG_FILE=` key: that is a file the hooks parse, not an environment.
 #
 # * **Shell function definitions stay prompt-embedded.** `source
 #   heartbeat.sh` defines functions inside the agent's own Bash tool
@@ -917,7 +925,11 @@ def capture_phase_return(tid, phase, text, attempt=None, lib_dir=None,
 
 # Env vars fleetd sets on a phase worker that the router instead embeds as
 # `export` statements in the agent prompt.
-_PROMPT_EXPORTED_VARS = ('LOG_FILE', 'HB_LOG_FILE', 'CLAUDE_LOG_FILE')
+_PROMPT_EXPORTED_VARS = ('TAP_LOG', 'HB_LOG_FILE', 'CLAUDE_LOG_FILE')
+
+# The name a phase worker reads its pipeline log path from. Deliberately not
+# `LOG_FILE` — see the comment above.
+PIPELINE_LOG_ENV = 'TAP_LOG'
 
 DEFAULT_PHASE_FLAGS = '--from-auto'
 
@@ -1000,7 +1012,7 @@ def build_phase_spawn(table, step_id, tid, log_file, hb_log_file='',
         prompt = f'{prompt}. {instructions}'
 
     env = {
-        'LOG_FILE': str(log_file or ''),
+        PIPELINE_LOG_ENV: str(log_file or ''),
         'HB_LOG_FILE': str(hb_log_file or ''),
         'CLAUDE_LOG_FILE': str(claude_log_file or ''),
         # The router exports this in its prompt prefix to keep git hooks from
@@ -1348,7 +1360,8 @@ def write_spawn_meta(tid, spawn, session_id, pinger_pid='', watchdog_pid='',
         f'PHASE={spawn.phase}',
         f'STEP={spawn.step}',
         f'TICKET_ID={tid}',
-        f'LOG_FILE={spawn.env.get("LOG_FILE", "")}',
+        # File key stays LOG_FILE (the hooks parse it); the env name is not.
+        f'LOG_FILE={spawn.env.get(PIPELINE_LOG_ENV, "")}',
         f'HB_LOG_FILE={spawn.env.get("HB_LOG_FILE", "")}',
         f'CLAUDE_LOG_FILE={spawn.env.get("CLAUDE_LOG_FILE", "")}',
         f'PINGER_PID={pinger_pid}',
@@ -1823,18 +1836,95 @@ def resolve_ticket_complexity(tid, repos_root='', lib_dir=None, timeout=30):
 
 _LOOP_COUNTER_PATTERNS = {
     'RECONCILE_CYCLE': 'GATE|reconcile|done|cycle#',
-    'VERIFY_ATTEMPTS': 'VERIFY|verify|fail|',
     'ITERATION': 'PR-REVIEW|pr-review|done|WARN',
     'PR_FEEDBACK_CYCLE': 'PR-REVIEW|pr-reconcile|done|cycle#',
 }
 
+# Message prefixes of the synthetic `VERIFY|verify|fail|` closes
+# detect-resume.sh writes for an abandoned bracket. Mirrors
+# VERIFY_SYNTHETIC_FAIL_RE in ticket-auto-pipeline/lib/verify-checkpoint.sh.
+_VERIFY_SYNTHETIC_FAIL_RE = re.compile(r'^(zombie-detected|operator-stopped):')
 
-def resolve_loop_counters(log_lines):
+
+def read_verify_ctl(log_file):
+    """Lines of `<log_file>.verify-ctl`, the operator/orchestrator control
+    file verify-checkpoint.sh reads (resets, recorded synthetic closes).
+    `[]` when absent or unreadable."""
+    if not log_file:
+        return []
+    try:
+        return Path(f'{log_file}.verify-ctl').read_text().splitlines()
+    except OSError:
+        return []
+
+
+def _verify_reset_max():
+    raw = os.environ.get('VERIFY_RESET_MAX', '2')
+    return int(raw) if raw.isdigit() else 2
+
+
+def _parse_verify_ctl(ctl_lines):
+    """(reset_line, synthetic_line_numbers) — mirrors _VERIFY_CTL_AWK: at
+    most VERIFY_RESET_MAX resets, in file order, the effective point being
+    the highest of them."""
+    reset_ln, nres, synth = 0, 0, set()
+    rmax = _verify_reset_max()
+    for line in ctl_lines or ():
+        f = line.split('|')
+        if len(f) < 2 or not f[1].isdigit():
+            continue
+        if f[0] == 'reset' and nres < rmax:
+            nres += 1
+            reset_ln = max(reset_ln, int(f[1]))
+        elif f[0] == 'synthetic':
+            synth.add(int(f[1]))
+    return reset_ln, synth
+
+
+def _verify_attempt_count(log_lines, ctl_lines=None):
+    """Failed VERIFY attempts — a port of verify-checkpoint.sh's
+    `verify_attempt_count` (#573, #572), which detect-resume.sh and
+    verify-retry-decide.sh both call.
+
+    Attempts, not fail lines: every `VERIFY|verify|fail|` line between two
+    attempt boundaries (`VERIFY|verify|waiting|`, `IMPLEMENT|implement|
+    waiting|`/`done|`) counts once. Trust boundary: agents write the log, so
+    a `zombie-detected:`/`operator-stopped:` close is discounted only when
+    its (1-based) line number is recorded as `synthetic` in the control file,
+    and only a control-file `reset` (verify-attempts-reset.sh) zeroes the
+    count — a `META|verify-attempts-reset` log line is ignored.
+    """
+    reset_ln, synth = _parse_verify_ctl(ctl_lines)
+    n = 0
+    counted = False
+    for lineno, line in enumerate(log_lines, start=1):
+        f = line.rstrip('\n').split('|')
+        if len(f) >= 4:
+            phase, step, status = f[1], f[2], f[3]
+            if ((phase == 'VERIFY' and step == 'verify' and status == 'waiting')
+                    or (phase == 'IMPLEMENT' and step == 'implement'
+                        and status in ('waiting', 'done'))):
+                counted = False
+            elif phase == 'VERIFY' and step == 'verify' and status == 'fail':
+                msg = f[4].lstrip(' \t') if len(f) > 4 else ''
+                synthetic = (lineno in synth
+                             and _VERIFY_SYNTHETIC_FAIL_RE.match(msg))
+                if not synthetic and not counted:
+                    n += 1
+                    counted = True
+        if lineno == reset_ln:
+            n, counted = 0, False
+    return n
+
+
+def resolve_loop_counters(log_lines, ctl_lines=None):
     """The four loop-cap counters `evaluate_loop` reads, derived from the log.
 
-    Ports `detect-resume.sh`'s four counters exactly — VERIFY_ATTEMPTS,
-    ITERATION, PR_FEEDBACK_CYCLE as `grep -c '^[^|]*|...'` line counts and
-    RECONCILE_CYCLE as a count of distinct cycle numbers — so a
+    Ports `detect-resume.sh`'s four counters exactly — ITERATION,
+    PR_FEEDBACK_CYCLE as `grep -c '^[^|]*|...'` line counts,
+    RECONCILE_CYCLE as a count of distinct cycle numbers, and
+    VERIFY_ATTEMPTS as `verify-checkpoint.sh`'s per-attempt count
+    (`_verify_attempt_count`) — so a
     Python reimplementation cannot silently diverge from the bash one. `''`
     (no matching lines) resolves to `0`, matching `detect-resume.sh`'s own
     `${VAR:-0}` fallback after an empty grep.
@@ -1844,6 +1934,7 @@ def resolve_loop_counters(log_lines):
         for name, literal in _LOOP_COUNTER_PATTERNS.items()
     }
     counters['RECONCILE_CYCLE'] = _distinct_reconcile_cycles(log_lines)
+    counters['VERIFY_ATTEMPTS'] = _verify_attempt_count(log_lines, ctl_lines)
     return counters
 
 
@@ -2111,7 +2202,7 @@ def build_pr_iterate_spawn(tid, log_file, hb_log_file='', env_file='',
     than a table row.
     """
     env = {
-        'LOG_FILE': str(log_file or ''),
+        PIPELINE_LOG_ENV: str(log_file or ''),
         'HB_LOG_FILE': str(hb_log_file or ''),
         'HUSKY': '0',
         'FLEET_TICKET_ID': str(tid),

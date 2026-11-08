@@ -67,7 +67,7 @@ design D5) — do not restate it here.
 ```
 ## Logging (--from-auto)
 
-If `$LOG_FILE` is set (passed by the `ticket-auto` orchestrator): read `~/.claude/skills/pipeline-log-format.md`. After each major step below, write progress entries to `$LOG_FILE` using the format defined there. Phase is `{PHASE}`.
+If `$TAP_LOG` is set (passed by the `ticket-auto` orchestrator): read `~/.claude/skills/pipeline-log-format.md`. After each major step below, write progress entries to `$TAP_LOG` using the format defined there. Phase is `{PHASE}`.
 ```
 
 <!-- endif -->
@@ -149,7 +149,7 @@ flow.sh (`tap_cache_find`), runs it, writes the failure record itself (`META|flo
 `retry` heartbeat; for exit 11 `META|gate-stop|fail|VERDICT_GATE_BLOCKED` + `verdict-gate`
 heartbeat) and exits with flow.sh's own code — see the exit-code contract in its header:
 ```bash
-bash ~/.claude/skills/lib/flow-run.sh --log-file "$LOG_FILE" {TICKET-ID} {trigger} [--data k=v]
+bash ~/.claude/skills/lib/flow-run.sh --log-file "$TAP_LOG" {TICKET-ID} {trigger} [--data k=v]
 _rc=$?
 # 0 ok · 11 verdict gate blocked (uat-pass / pr-review-pass-*: do NOT report PASS/Done)
 # 8 precondition · 9/10 fence · 42 lock busy · 127 flow.sh not found · other = flow.sh error
@@ -311,20 +311,20 @@ REQUEST
 ```
 
 Then invoke `/adr-gate --request-file "$_adr_gate_req" --wiki-root "$WIKI_ROOT" --log-file
-"$LOG_FILE"`. Read the `=== ADR_GATE_RESULT ===` block it returns and route on
+"$TAP_LOG"`. Read the `=== ADR_GATE_RESULT ===` block it returns and route on
 `ADR_VERDICT` directly from that block — do not re-invoke `lib/adr-gate-parse.sh`
 yourself, the gate already self-parsed its own result once for the log:
 
 - **`NOT_ARCHITECTURAL`** — continue. Nothing further to do. If the ticket currently
   carries `needs-adr` (a prior run parked or stopped on this same matter and a human has
-  since acted), clear it: `bash ~/.claude/skills/lib/flow-run.sh --log-file "$LOG_FILE" {TICKET-ID} needs-adr-resolved`.
+  since acted), clear it: `bash ~/.claude/skills/lib/flow-run.sh --log-file "$TAP_LOG" {TICKET-ID} needs-adr-resolved`.
 - **`GOVERNED`** — continue, bound by the stated constraint. No hold. Same clearing step
   as `NOT_ARCHITECTURAL` above if the ticket still carries `needs-adr` from an earlier
   run — this is the re-run case where the governing ADR has since been accepted.
 - **`CREATED_PROPOSED`** or **`SUPERSEDE_REQUIRED`** — the gate already wrote a `proposed`
   ADR. Emit the `=== HUMAN_HOLD ===` block from § 7 above with `REASON: ARCH_COMMITMENT`
   and `BLOCKS` naming the new ADR's file path and its `## Decision` section. Also apply
-  the label: `bash ~/.claude/skills/lib/flow-run.sh --log-file "$LOG_FILE" {TICKET-ID} needs-adr`. Do not proceed toward implementation
+  the label: `bash ~/.claude/skills/lib/flow-run.sh --log-file "$TAP_LOG" {TICKET-ID} needs-adr`. Do not proceed toward implementation
   or merge on the strength of this decision until the ADR is accepted.
 - **`CONFLICT`** — your proposed approach contradicts an Accepted decision. Emit the
   structural gate-stop `ADR_CONFLICT` and apply the same label (the same
@@ -338,7 +338,7 @@ slash command: phase agents have no Skill tool), non-fatal on failure (`flow-run
 hold/gate-stop itself from taking effect):
 
 ```bash
-bash ~/.claude/skills/lib/flow-run.sh --log-file "$LOG_FILE" {TICKET-ID} needs-adr
+bash ~/.claude/skills/lib/flow-run.sh --log-file "$TAP_LOG" {TICKET-ID} needs-adr
 _rc=$?
 # flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
 # needs-adr carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.

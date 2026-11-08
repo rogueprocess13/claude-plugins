@@ -984,6 +984,19 @@ test_no_log_file_still_emits_on_stdout() {
   return "$ok"
 }
 
+# GitHub #575: phase agents export the pipeline log as TAP_LOG, not LOG_FILE.
+test_tap_log_is_the_default_log_file() {
+  _setup
+  _canonical_block | _write_ret ret.txt
+  : >"$_ws/tap.log"
+  env -u LOG_FILE TAP_LOG="$_ws/tap.log" bash "$PARSER" --phase VERIFY \
+    --return-file "$_ws/ret.txt" >/dev/null 2>&1 || true
+  local ok=1
+  grep -q '|META|phase-result|info|' "$_ws/tap.log" && ok=0
+  _teardown
+  return "$ok"
+}
+
 test_claim_is_not_written_to_verifier_result_channel() {
   _setup
   _canonical_block | _write_ret ret.txt
@@ -1160,6 +1173,7 @@ TESTS=(
   test_retried_phase_records_each_attempt
   test_rejected_record_still_carries_its_phase
   test_sourceable_as_a_lib
+  test_tap_log_is_the_default_log_file
 )
 
 FILTER="${1:-}"

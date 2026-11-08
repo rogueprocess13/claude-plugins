@@ -54,7 +54,7 @@ When `--from-auto` is present, VERIFY is a loop-bearing phase: additionally foll
 from memory or prose. At the start of the criterion loop (Step 4b / 4c / 4c-live), run:
 
 ```bash
-VERIFY_CHECKPOINT=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verify-checkpoint.sh" "$LOG_FILE" 2>/dev/null) || VERIFY_CHECKPOINT=""
+VERIFY_CHECKPOINT=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verify-checkpoint.sh" "$TAP_LOG" 2>/dev/null) || VERIFY_CHECKPOINT=""
 ```
 
 It prints the highest `N` with a `VERIFY|checkpoint|done|criterion-N-pass` line in the

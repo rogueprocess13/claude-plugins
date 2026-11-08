@@ -607,13 +607,14 @@ EOF
   # pipeline log open — epic branch sync can run outside any single ticket's
   # pipeline run. lib/pr-evidence.sh is the one writer of the marker and the
   # pr-opened event (GitHub #525).
-  if [ -n "${LOG_FILE:-}" ] && [ -n "$_pr_url" ]; then
+  local _eb_log="${LOG_FILE:-${TAP_LOG:-}}"
+  if [ -n "$_eb_log" ] && [ -n "$_pr_url" ]; then
     if ! declare -f record_pr_created >/dev/null 2>&1; then
       _EB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
       [ -f "$_EB_LIB_DIR/pr-evidence.sh" ] && source "$_EB_LIB_DIR/pr-evidence.sh"
     fi
     if declare -f record_pr_created >/dev/null 2>&1; then
-      record_pr_created --new --epic "$LOG_FILE" "$epic_id" "$_pr_url" >/dev/null 2>&1 || true
+      record_pr_created --new --epic "$_eb_log" "$epic_id" "$_pr_url" >/dev/null 2>&1 || true
     fi
   fi
 
