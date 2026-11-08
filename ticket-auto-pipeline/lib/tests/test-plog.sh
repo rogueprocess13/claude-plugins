@@ -14,6 +14,10 @@
 #   8. MSG is optional (empty 5th field).
 #   9. Usage errors exit 2 and write nothing.
 #  10. Unwritable target exits 1.
+#  11. TAP_LOG fallback.
+#  12. Recovery from the spawn-meta file (#605).
+#  13. Untrusted spawn-meta: symlink, writable mode, non-pipeline-log path,
+#      bad TICKET_ID, directory (#619).
 #
 # Run: bash ticket-auto-pipeline/lib/tests/test-plog.sh
 
@@ -150,12 +154,13 @@ if [ ! -e "{LOG_FILE}" ]; then pass "11c: no file named {LOG_FILE}"; else fail "
 T12_ID="PLOGTEST-$$"
 T12_META="/tmp/ticket-auto-${T12_ID}-spawn-meta.txt"
 trap 'rm -rf "$TMP"; rm -f "$T12_META"' EXIT
-printf 'PHASE=MAINTENANCE\nTICKET_ID=%s\nLOG_FILE=%s\nCLOSED=0\n' "$T12_ID" "$TMP/t12.log" >"$T12_META"
+printf 'PHASE=MAINTENANCE\nTICKET_ID=%s\nLOG_FILE=%s\nCLOSED=0\n' "$T12_ID" "$TMP/t12-pipeline.log" >"$T12_META"
+chmod 600 "$T12_META"
 rc=0
 err=$(env -u LOG_FILE -u TAP_LOG TICKET_ID="$T12_ID" TICKET_TMP_DIR="$TMP/elsewhere" \
   bash "$PLOG" MAINTENANCE document start "" 2>&1) || rc=$?
 expect "12a: recovered from spawn-meta, exit 0" "0" "$rc"
-expect "12b: line written to spawn-meta LOG_FILE" "ISO|MAINTENANCE|document|start|" "$(mask "$TMP/t12.log" 2>/dev/null || true)"
+expect "12b: line written to spawn-meta LOG_FILE" "ISO|MAINTENANCE|document|start|" "$(mask "$TMP/t12-pipeline.log" 2>/dev/null || true)"
 expect "12c: no warning when recovered" "" "$err"
 rc=0
 err=$(env -u LOG_FILE -u TAP_LOG -u TICKET_ID \
@@ -172,6 +177,63 @@ case "${rc}:${err}" in
 "0:"*"line dropped"*) pass "12f: TICKET_ID without spawn-meta warns, exit 0" ;;
 *) fail "12f: TICKET_ID without spawn-meta" "rc=$rc stderr='$err'" ;;
 esac
+
+# ── 13. Untrusted spawn-meta (GitHub #619) ───────────────────────────────────
+# The meta file sits at a predictable path, so another local user can plant
+# one. Each case must drop the line with a stderr warning, exit 0, and write
+# nothing to the path the planted file names.
+t13_run() { # $1=ticket id; prints "rc:stderr"
+  local rc=0 err
+  err=$(env -u LOG_FILE -u TAP_LOG TICKET_ID="$1" bash "$PLOG" IMPLEMENT x done ok 2>&1 >/dev/null) || rc=$?
+  printf '%s:%s' "$rc" "$err"
+}
+t13_expect_drop() { # $1=name $2=result $3=target that must stay untouched $4=stderr fragment
+  case "$2" in
+  "0:"*"$4"*"line dropped"*) pass "$1: dropped with warning, exit 0" ;;
+  *) fail "$1: dropped with warning" "got '$2'" ;;
+  esac
+  if [ ! -s "$3" ]; then pass "$1: target untouched"; else fail "$1: target untouched" "written"; fi
+}
+T13_ID="PLOGTEST13-$$"
+T13_META="/tmp/ticket-auto-${T13_ID}-spawn-meta.txt"
+trap 'rm -rf "$TMP"; rm -f "$T12_META" "$T13_META"' EXIT
+
+# 13a: symlink to a meta file the user does own.
+printf 'LOG_FILE=%s\n' "$TMP/t13a-pipeline.log" >"$TMP/t13a-real-meta.txt"
+chmod 600 "$TMP/t13a-real-meta.txt"
+ln -s "$TMP/t13a-real-meta.txt" "$T13_META"
+t13_expect_drop "13a symlink" "$(t13_run "$T13_ID")" "$TMP/t13a-pipeline.log" "untrusted spawn-meta"
+rm -f "$T13_META"
+
+# 13b: group/other-writable meta file. A file owned by another user cannot be
+# created without root, so this mode check stands in for the foreign-owner
+# case, which the same branch rejects via `-O`.
+printf 'LOG_FILE=%s\n' "$TMP/t13b-pipeline.log" >"$T13_META"
+chmod 666 "$T13_META"
+t13_expect_drop "13b world-writable" "$(t13_run "$T13_ID")" "$TMP/t13b-pipeline.log" "group/other writable"
+chmod 620 "$T13_META"
+t13_expect_drop "13c group-writable" "$(t13_run "$T13_ID")" "$TMP/t13b-pipeline.log" "group/other writable"
+rm -f "$T13_META"
+
+# 13d: the recovered path is not a pipeline log.
+printf 'LOG_FILE=%s\n' "$TMP/t13d-target.txt" >"$T13_META"
+chmod 600 "$T13_META"
+t13_expect_drop "13d non-pipeline-log path" "$(t13_run "$T13_ID")" "$TMP/t13d-target.txt" "is not a *-pipeline.log"
+rm -f "$T13_META"
+
+# 13e: a TICKET_ID that would change the path.
+t13_expect_drop "13e bad TICKET_ID" "$(t13_run "../${T13_ID}")" "$TMP/none" "invalid TICKET_ID"
+t13_expect_drop "13f TICKET_ID with a space" "$(t13_run "A B")" "$TMP/none" "invalid TICKET_ID"
+
+# 13g: a directory at the meta path is not a regular file.
+mkdir "$T13_META"
+t13_expect_drop "13g directory" "$(t13_run "$T13_ID")" "$TMP/none" "untrusted spawn-meta"
+rmdir "$T13_META"
+
+# 13h: an explicit LOG_FILE skips recovery entirely, so no checks apply.
+rc=0
+LOG_FILE="$TMP/t13h.log" TICKET_ID="../bad" bash "$PLOG" IMPLEMENT x done ok 2>/dev/null || rc=$?
+expect "13h: explicit LOG_FILE ignores TICKET_ID" "0:ISO|IMPLEMENT|x|done|ok" "${rc}:$(mask "$TMP/t13h.log" 2>/dev/null || true)"
 
 echo ""
 echo "plog: ${PASS} passed, ${FAIL} failed"

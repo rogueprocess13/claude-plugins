@@ -19,7 +19,9 @@
 # Exit codes:
 #   0  line written, or no log file configured (LOG_FILE/TAP_LOG empty and no
 #      spawn-meta LOG_FILE for $TICKET_ID: the line is dropped with a stderr
-#      warning, #605) — safe as the last statement under `set -e`
+#      warning, #605), or the spawn-meta file or the path it names is not
+#      trusted (#619, also dropped with a warning) — safe as the last
+#      statement under `set -e`
 #   1  heartbeat.sh not found next to this script, or the log is not writable
 #   2  usage: fewer than PHASE STEP STATUS, or --log-file without a value
 
@@ -58,12 +60,38 @@ LOG_FILE="${LOG_FILE:-${TAP_LOG:-}}"
 # the router's spawn-meta file when TICKET_ID is known; otherwise say on
 # stderr that the line was dropped instead of losing it silently. Still
 # exit 0: a missing log must not abort a `set -e` caller.
+# GitHub #619: the meta file sits at a predictable path, so it is trusted only
+# when this user owns it, it is a regular file and not a symlink, and nobody
+# else can write it; and the path it names must be a pipeline log. Anything
+# else is warned about and the line dropped - never written somewhere a file
+# we do not control told us to write.
+_plog_line="$1|$2|$3"
+_plog_untrusted() {
+  echo "plog.sh: WARNING $1 - line dropped: $_plog_line" >&2
+  exit 0
+}
+_plog_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }
 if [ -z "${LOG_FILE:-}" ] && [ -n "${TICKET_ID:-}" ]; then
+  [[ "$TICKET_ID" =~ ^[A-Za-z0-9_-]+$ ]] || _plog_untrusted "invalid TICKET_ID '$TICKET_ID'"
   # Same fixed path spawn_agent_pre writes (lib/spawn-helper.sh).
   _plog_meta="/tmp/ticket-auto-${TICKET_ID}-spawn-meta.txt"
-  if [ -f "$_plog_meta" ]; then
+  if [ -e "$_plog_meta" ] || [ -L "$_plog_meta" ]; then
+    if [ -L "$_plog_meta" ] || [ ! -f "$_plog_meta" ] || [ ! -O "$_plog_meta" ]; then
+      _plog_untrusted "untrusted spawn-meta $_plog_meta (symlink, not a regular file, or not owned by this user)"
+    fi
+    _plog_m=$(_plog_mode "$_plog_meta")
+    case "$_plog_m" in
+    '' | *[!0-7]*) _plog_untrusted "cannot read the mode of $_plog_meta" ;;
+    esac
+    if (((8#$_plog_m & 8#022) != 0)); then
+      _plog_untrusted "untrusted spawn-meta $_plog_meta (group/other writable, mode $_plog_m)"
+    fi
     LOG_FILE=$(sed -n 's/^LOG_FILE=//p' "$_plog_meta" 2>/dev/null | head -1)
     case "$LOG_FILE" in "{"*"}") LOG_FILE="" ;; esac
+    case "$LOG_FILE" in
+    '' | *-pipeline.log) ;;
+    *) _plog_untrusted "spawn-meta LOG_FILE '$LOG_FILE' is not a *-pipeline.log" ;;
+    esac
   fi
 fi
 if [ -z "${LOG_FILE:-}" ]; then

@@ -693,7 +693,11 @@ spawn_agent_pre() {
   # SubagentStart/SubagentStop hooks (token-tracker-start.sh, token-tracker.sh)
   # can match a firing subagent back to THIS spawn by session identity instead
   # of guessing via ls -t across all of /tmp.
+  # Mode 0600 (GitHub #619): plog.sh refuses a group/other-writable meta
+  # file, and a umask of 002 would otherwise make it group-writable.
   local meta_file="/tmp/ticket-auto-${TICKET_ID}-spawn-meta.txt"
+  (umask 077 && : >>"$meta_file") 2>/dev/null || true
+  chmod 600 "$meta_file" 2>/dev/null || true
   cat >"$meta_file" <<EOF
 PHASE=$PHASE
 STEP=$STEP

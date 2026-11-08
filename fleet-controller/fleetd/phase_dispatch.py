@@ -1375,6 +1375,9 @@ def write_spawn_meta(tid, spawn, session_id, pinger_pid='', watchdog_pid='',
         model = os.environ.get('ANTHROPIC_MODEL', 'unknown')
     lines.append(f'MODEL={model}')
     path.write_text('\n'.join(lines) + '\n')
+    # 0600 whatever the umask: plog.sh trusts this file to name its log only
+    # when nobody else can write it (GitHub #619).
+    os.chmod(path, 0o600)
     return path
 
 
