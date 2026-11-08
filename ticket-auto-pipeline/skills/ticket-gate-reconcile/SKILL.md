@@ -139,7 +139,7 @@ Update `## Open Questions` in notes.md:
 Bash decides (#599): hold on any unstruck `[needs-human]` bullet or new-input comment, never on answers alone.
 
 ```bash
-eval "$(bash ~/.claude/skills/lib/reconcile-decide.sh --notes "$NOTES_PATH" --comments "${COMMENTS_N:-0}" --new-input "${NEW_INPUT_N:-${COMMENTS_N:-0}}")"
+eval "$(bash ~/.claude/skills/lib/reconcile-decide.sh --notes "$NOTES_PATH" --comments "$COMMENTS_N" --new-input "$NEW_INPUT_N")"
 echo "$RECONCILE_DECISION $HOLD_REASON"
 ```
 
