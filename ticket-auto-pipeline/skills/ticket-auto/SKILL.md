@@ -999,11 +999,10 @@ FAIL_ACTION=warn-continue
 NEXT_PHASE=MAINTENANCE
 ```
 
-**After both spawns complete**, write the STEP_5 rollup line. `detect-resume.sh`'s
-STEP_5→STEP_6 transition looks for this exact marker — neither sub-skill writes it on
-its own (`ticket-document` writes its own `MAINTENANCE|document|done|` line and
-`wiki-maintenance` writes `MAINTENANCE|wiki-maintenance|done|`). Without this rollup
-line, a resumed run loops STEP_5 indefinitely:
+**After both spawns complete**, start the GitNexus refresh (detached, never fails) as
+one Bash call: `bash ~/.claude/skills/lib/gitnexus-refresh.sh "{TICKET_ID}" "{LOG_FILE}" || true`.
+Then, in a separate Bash call, write the STEP_5 rollup line. `detect-resume.sh`'s
+STEP_5→STEP_6 transition needs this marker; without it a resumed run loops STEP_5:
 
 ```bash
 bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE maintenance done "clean"

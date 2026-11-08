@@ -785,6 +785,18 @@ dq=$(planner_draft_revise_dispositions "${TMP_ROOT}/rq.md" "${DR}/a-export/findi
 um=$(planner_draft_revise_source_check "$INIT" a-export "$dq" | paste -sd, -)
 [ "$um" = "F1,F2" ] && pass "source check: a source of only quotes or spaces is unmatched" || fail "quotes-only source" "$um"
 
+# XSS worded without any XSS term (rehearsal iter 03/04).
+sec=$(jq -c "$(planner_draft_security_def)"' map(pdr_security)' <<<'[
+  {"code":"EDGE_CASE_GAP","detail":"the article body must render as text, never as HTML"},
+  {"code":"EDGE_CASE_GAP","detail":"the body is displayed verbatim as plain text"},
+  {"code":"EDGE_CASE_GAP","detail":"comments are not rendered as HTML"},
+  {"code":"EDGE_CASE_GAP","detail":"author bio accepts raw HTML"},
+  {"code":"EDGE_CASE_GAP","detail":"a title holding a <script> element"},
+  {"code":"EDGE_CASE_GAP","detail":"the 404 response returns JSON, not HTML"},
+  {"code":"EDGE_CASE_GAP","detail":"the page is served as HTML"},
+  {"code":"EDGE_CASE_GAP","detail":"the README says how to run the text editor"}]')
+[ "$sec" = '[true,true,true,true,true,false,false,false]' ] && pass "pdr_security: text-not-HTML wording matches; a JSON-not-HTML response format does not" ||
+  fail "text-not-HTML security rule" "$sec"
 # The wider security rule.
 sec=$(jq -c "$(planner_draft_security_def)"' map(pdr_security)' <<<'[
   {"code":"EDGE_CASE_GAP","detail":"no criterion requires an authorization check on DELETE (IDOR)"},

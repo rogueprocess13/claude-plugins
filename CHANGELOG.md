@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.86.0 (2026-11-08)
+## 0.89.0 (2026-11-08)
 
 Verdict gate: a stale FAIL/BLOCK no longer refuses a ticket whose verifier has since passed, and
 a human override of an adversarial BLOCK no longer needs a second bypass hours later.
@@ -39,6 +39,85 @@ a human override of an adversarial BLOCK no longer needs a second bypass hours l
   `META|verify-attempts-reset` (exit 3) and any PHASE/STEP/STATUS outside `[A-Za-z0-9_-]+`
   (exit 2), so a `|` or newline cannot forge the marker; `_plog` replaces `|`/CR/LF in those
   fields with `_` (#610).
+
+## 0.88.0 (2026-11-08)
+
+Gate reconcile, AC drift and a seeder precheck in VERIFY.
+
+### Fixed
+- ticket-gate-reconcile no longer holds a cycle whose only unprocessed comments answer the open
+  questions. It records the answers, posts the amendment without `re-claim`, and passes. Bad or
+  missing counts hold the ticket (`lib/reconcile-decide.sh`, #599).
+- ACs added in the tracker during the gate hold now reach `context.md` and the Verification Plan,
+  and VERIFY numbers its plan from the tracker list when they differ. New gate-warns:
+  `AC_DRIFT_AT_GATE`, `AC_DRIFT_AT_VERIFY`, `AC_DRIFT_UNKNOWN` (`lib/ac-drift.sh`, #604).
+- ticket-verify Step 1.6d runs the seeder scenarios this ticket's own seed-tool commits changed,
+  twice each, under VERIFY's lock and before any criterion (`lib/seed-precheck.sh`, #601).
+  Scenario names come only from the seed repo's git history, never from ticket text; each run is
+  an argv list in its own process group, and a timeout kills the whole group. A failure is a
+  normal verify FAIL that counts one attempt. ticket-implement checks seeders statically only.
+
+## 0.87.0 (2026-11-08) — fleet-controller 0.46.1
+
+VERIFY checkpoints survive a crashed attempt, and `ticket-retro` finds its lib in the plugin layout.
+
+### Fixed
+- A recorded `zombie-detected:` VERIFY close is no longer treated as a verdict when scoping
+  checkpoints. `verify_attempt_lines` (`VERIFY_CHECKPOINT`, `VERIFY_FROM`, ticket-verify's skip
+  list) now counts only lines after the last real `VERIFY|verify` verdict, `IMPLEMENT|implement`
+  line, recorded `operator-stopped:` close or honoured control-file reset, so a crashed VERIFY
+  resumes from its checkpoints instead of re-checking every criterion. An operator stop or reset
+  still ends the scope, since a person intervened. fleetd's `last_verify_checkpoint` /
+  `last_verify_criterion` apply the same rule, with parity fixtures (#607).
+- `retro.sh` resolves its lib as `<plugin>/lib` in the plugin layout and falls back to the synced
+  `skills/lib` layout. It defines `_iso_now` itself when no lib provides it, so the cursor is
+  always written, and prints a stderr line on either fallback (#600).
+
+## 0.86.0 (2026-11-08)
+
+Phase agents read the right skill file, and a stale GitNexus index is refreshed after a ticket's PRs.
+
+### Fixed
+- Phase agents spawned by the router are told the absolute path of the plugin's own `SKILL.md`. The
+  path comes from the plugin root the SessionStart sync now records in
+  `~/.claude/skills/lib/.plugin-root`, else from the installed plugin cache. Agents no longer pick a
+  stale `~/.claude/skills/<name>/SKILL.md` copy (#602).
+
+### Added
+- MAINTENANCE (STEP_5) refreshes the GitNexus index of every repo the ticket opened a PR in, through
+  `lib/gitnexus-refresh.sh`, but only in pipeline-owned index worktrees under
+  `.ticket-auto/worktrees/gitnexus/`. It fetches the PR base and checks it out detached (no hooks, no
+  prompts), then runs `gitnexus analyze` detached under a `~/.gitnexus/locks` lock. It backs up the
+  database and `meta.json` and restores both if analyze fails. User checkouts are never touched: they
+  get one `META|gitnexus-stale` warn line naming the manual command. The STEP_5 rollup line is
+  written in its own Bash call (#609).
+
+## ticket-planner 0.34.2 (2026-11-07)
+
+Three draft readiness and Refinement reporting fixes queued from dispatch rehearsal replays.
+
+### Fixed
+- **XSS worded without an XSS term now counts as a security finding.** "Render as text, never as
+  HTML", raw HTML, HTML escaping and script tags now match the security rule, so such a finding
+  can't be assumed away or drift-demoted. A response format ("returns JSON, not HTML") does not match.
+- **Audit advisories survive a revision.** `MISSED` entries were read only from a spec's latest
+  evaluation, so a revise round silently dropped earlier ones. They are now kept per spec and
+  reported together; one the latest evaluation no longer raises is marked `(from an earlier revision)`.
+- **`planner_refinement_advisory_summary` no longer prints nothing in a fresh shell.** It loaded its
+  dependencies only inside a command substitution, so the manifest readers were undefined in the
+  calling shell and every advisory line was lost, as SKILL.md's gate-pass step runs it.
+
+## ticket-planner 0.34.1 (2026-11-07)
+
+Fixes the false Crosscheck failure that halted dispatch rehearsal iter 04 (F33).
+
+### Fixed
+- **Citation resolution no longer depends on the working directory.** The linter passed its
+  exclude patterns to `find` as an unquoted string, so `*/.git/*` globbed against the caller's
+  working directory. With several matches `find` aborted, the error was discarded, and every
+  citation read as `CITATION_UNRESOLVED`: 57 blocking findings on iter 04, whose draft readiness
+  loop then reverted all 5 valid spec revisions. With one match the directory silently stopped
+  being pruned. The patterns are now an array.
 
 ## 0.85.0 (2026-11-08)
 
