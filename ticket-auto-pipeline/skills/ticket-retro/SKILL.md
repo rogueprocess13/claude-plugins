@@ -105,13 +105,14 @@ If `{FAILURE_HISTOGRAM}` is empty (no failures), skip to Step 4 to write a short
 
 ## Step 1.5 — Scan Claude log for failure signals and improvement hints
 
-Source `retro.sh` for the Claude log scan helpers, then scan `$CLAUDE_LOG_FILE` (if set and present) for failure signals, `★ Insight` blocks, and `RETRO|hint` entries:
+Source `retro.sh` for the Claude log scan helpers, then scan `$CLAUDE_LOG_FILE` (if set and present) for failure signals, `★ Insight` blocks, and `RETRO|hint` entries. Scratch files go in the private dir the first line prints; note it as `{RETRO_TMP}` for Step 5.5:
 
 ```bash
-CLAUDE_FAILURES="/tmp/claude-log-failures.txt"
-CLAUDE_INSIGHTS="/tmp/claude-log-insights.txt"
-CLAUDE_HINTS="/tmp/claude-log-hints.txt"
-CLAUDE_CORRELATED="/tmp/claude-log-correlated.txt"
+RETRO_TMP=$(bash ~/.claude/skills/lib/ticket-tmp.sh) || exit 1; echo "RETRO_TMP=$RETRO_TMP"
+CLAUDE_FAILURES="$RETRO_TMP/claude-log-failures.txt"
+CLAUDE_INSIGHTS="$RETRO_TMP/claude-log-insights.txt"
+CLAUDE_HINTS="$RETRO_TMP/claude-log-hints.txt"
+CLAUDE_CORRELATED="$RETRO_TMP/claude-log-correlated.txt"
 
 if [ -n "${CLAUDE_LOG_FILE:-}" ] && [ -f "$CLAUDE_LOG_FILE" ]; then
   # Absolute installed path, same as Step 1 — never relative to the script name: in a skill
@@ -140,11 +141,11 @@ else
 fi
 ```
 
-Read the output files into context variables:
-- `{CLAUDE_FAILURES}` — content of `/tmp/claude-log-failures.txt` (failure keyword hits, line-numbered)
-- `{CLAUDE_INSIGHTS}` — content of `/tmp/claude-log-insights.txt` (★ Insight blocks with 5 lines context)
-- `{CLAUDE_HINTS}` — content of `/tmp/claude-log-hints.txt` (RETRO|hint entries verbatim)
-- `{CLAUDE_CORRELATED}` — content of `/tmp/claude-log-correlated.txt` (phase-grouped failure report, or empty if no phase boundaries)
+Read the output files (under `{RETRO_TMP}`) into context variables:
+- `{CLAUDE_FAILURES}` — failure keyword hits, line-numbered
+- `{CLAUDE_INSIGHTS}` — ★ Insight blocks with 5 lines context
+- `{CLAUDE_HINTS}` — RETRO|hint entries verbatim
+- `{CLAUDE_CORRELATED}` — phase-grouped failure report, or empty if no phase boundaries
 
 If `$CLAUDE_LOG_FILE` is unset or missing, all variables are empty and all Claude log sections are omitted from the proposal.
 
@@ -552,7 +553,7 @@ elif ! github_check_auth; then
 fi
 ```
 
-If `github_check_auth` fails or the library is unavailable, skip all GitHub operations. The proposal is still written — this is graceful degradation.
+If `github_check_auth` fails or the library is unavailable, skip all GitHub operations. The proposal is still written.
 
 ### 5.5b — Generate issue body and comment files
 
@@ -562,7 +563,7 @@ For each failure code in `{FAILURE_HISTOGRAM}` where count ≥ 2:
 
 2. **Fill the issue body template** (`lib/github-issue-body.template.md`) with placeholders from the pattern analysis in Step 3:
    - `{FAILURE_CODE}`, `{PATTERN_SUMMARY}`, `{PATTERN_DESCRIPTION}`, `{EXPECTED_BEHAVIOR}`, `{STEPS}`, `{ROOT_CAUSE}`, `{FILES}`, `{FIX_APPROACH}`, `{CONSTRAINTS}`, `{VERIFICATION_CHECKLIST}`, `{RELATED}`, `{WINDOW}`, `{COUNT}`
-   - Write the filled body to a temp file: `/tmp/issue-body-{CODE}.md`
+   - Write the filled body to a temp file: `{RETRO_TMP}/issue-body-{CODE}.md`
 
 3. **Prepare the evidence comment** (used if an existing open issue is found):
    ```markdown
@@ -573,7 +574,7 @@ For each failure code in `{FAILURE_HISTOGRAM}` where count ≥ 2:
    Additional occurrence(s) of this failure pattern detected in the current retro window.
    See proposal at `~/.claude/state/ticket-retro/proposals/{YYYY-MM-DD}-retro.md` for updated analysis.
    ```
-   - Write to a temp file: `/tmp/evidence-{CODE}.md`
+   - Write to a temp file: `{RETRO_TMP}/evidence-{CODE}.md`
 
 4. **Build the input JSON** for `github_retro_process`:
    ```json
@@ -582,19 +583,15 @@ For each failure code in `{FAILURE_HISTOGRAM}` where count ≥ 2:
        "EXEC_NO_ARTIFACT": {
          "count": 4,
          "title": "Fix EXEC_NO_ARTIFACT — artifact not found after exec phase",
-         "body_file": "/tmp/issue-body-EXEC_NO_ARTIFACT.md",
-         "comment_file": "/tmp/evidence-EXEC_NO_ARTIFACT.md"
+         "body_file": "{RETRO_TMP}/issue-body-EXEC_NO_ARTIFACT.md",
+         "comment_file": "{RETRO_TMP}/evidence-EXEC_NO_ARTIFACT.md"
        }
      }
    }
    ```
    The `title` format is: `Fix {FAILURE_CODE} — {PATTERN_SUMMARY}`
 
-5. **Write the input JSON** to a temp file:
-   ```bash
-   INPUT_FILE=$(mktemp)
-   echo "$INPUT_JSON" > "$INPUT_FILE"
-   ```
+5. **Write the input JSON** to `{RETRO_TMP}/retro-input.json`.
 
 ### 5.5c — Execute deterministic state machine
 
@@ -602,7 +599,7 @@ For each failure code in `{FAILURE_HISTOGRAM}` where count ≥ 2:
 GITHUB_RETRO_LIB="$HOME/.claude/skills/lib/github-issue-retro.sh"
 if [ -f "$GITHUB_RETRO_LIB" ]; then
   source "$GITHUB_RETRO_LIB"
-  RESULT=$(github_retro_process "$INPUT_FILE")
+  RESULT=$(github_retro_process "{RETRO_TMP}/retro-input.json")
   echo "$RESULT"
 else
   echo "WARN: github-issue-retro.sh not found — skipping GitHub post"
@@ -615,8 +612,7 @@ This single call handles ALL deterministic mechanics:
 - Severity mapping (bash case statement — no AI interpretation)
 - Open-issue check (`github_issue_lookup` → OPEN, CLOSED, or NOT_FOUND)
 - Create vs. comment decision
-- State file update (atomic write + JSON validation)
-- Incremental state writes (after each successful operation)
+- State file update (atomic, JSON-validated, after each successful operation)
 
 The result JSON has the shape:
 ```json
@@ -644,7 +640,7 @@ Store `{GITHUB_CREATED}` and `{GITHUB_UPDATED}` for the proposal GitHub Issues s
 
 Clean up temp files:
 ```bash
-rm -f "$INPUT_FILE" /tmp/issue-body-*.md /tmp/evidence-*.md
+cd "{RETRO_TMP}" && rm -f retro-input.json issue-body-*.md evidence-*.md
 ```
 
 ---

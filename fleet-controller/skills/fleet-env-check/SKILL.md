@@ -23,7 +23,7 @@ No arguments. Run from the project directory containing `CLAUDE.md`.
 Write `fleet-env-check.sh` output to a temp file (avoids bash stdout truncation). Tries the installed plugin version first (`installed_plugins.json`, then the newest cached version by version order), falling back to the repo-relative path.
 
 ```bash
-rm -f /tmp/fleet-env-check-output.txt
+OUT=$(mktemp) # private 0600 file, never a fixed /tmp name
 ENV_CHECK=""
 # Not synced: the installed version recorded in installed_plugins.json, then the
 # newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
@@ -36,14 +36,12 @@ if [ -z "$ENV_CHECK" ] && [ -f "$CLAUDE_PLUGIN_ROOT/lib/fleet-env-check.sh" ]; t
   ENV_CHECK="$CLAUDE_PLUGIN_ROOT/lib/fleet-env-check.sh"
 fi
 if [ -n "$ENV_CHECK" ]; then
-  bash "$ENV_CHECK" --summary-file /tmp/fleet-env-check-output.txt || true
+  bash "$ENV_CHECK" --summary-file "$OUT" || true
 else
   echo "fleet-env-check.sh not found — reinstall the plugin"
 fi
-```
-
-```bash
-[ -f /tmp/fleet-env-check-output.txt ] && cat /tmp/fleet-env-check-output.txt || echo "OUTPUT_FILE_MISSING"
+[ -s "$OUT" ] && cat "$OUT" || echo "OUTPUT_FILE_MISSING"
+rm -f "$OUT"
 ```
 
 ### Step 2 — Display as table

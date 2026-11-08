@@ -877,7 +877,7 @@ Run each build command from the Step 2 (build-only variant) plan sequentially, i
 
 1. Run the command, capturing stdout+stderr and the exit code:
    ```bash
-   cd "{worktree path}" && { {build command} ; } > /tmp/ticket-verify-{TICKET-ID}-{step}.log 2>&1
+   L=$(bash ~/.claude/skills/lib/ticket-tmp.sh {TICKET-ID} verify-{step}.log) && cd "{worktree path}" && { {build command} ; } > "$L" 2>&1
    _rc=$?
    ```
 2. Record the **observed result** — exit code, and (if relevant to the criterion) whether the expected artifact/version/output string appears in the captured log (e.g. `BUILD SUCCESS`, a specific dependency version resolved, absence of a removed property).
@@ -894,7 +894,7 @@ At any point, if a command exits non-zero or the expected output/state is absent
 - What was expected (from the pass criterion)
 - What was observed — quote the relevant lines of build output verbatim (last 20–30 lines, or the specific error block)
 
-Continue executing remaining commands unless the failure makes downstream commands meaningless (e.g. `mvn -N install` failing means every dependent module's `mvn clean compile` will fail for the same reason — note this and skip re-running them individually rather than spamming identical failures).
+Continue executing remaining commands unless the failure makes downstream commands meaningless (e.g. `mvn -N install` failing means every dependent module's `mvn clean compile` will fail for the same reason — note this and skip re-running them).
 
 bash ~/.claude/skills/lib/plog.sh VERIFY execute-steps done "{N} build commands executed"
 
@@ -910,7 +910,7 @@ The environment is already up (Step 1.6b ran `env-start.sh` for `live-backend` m
 
 1. Run the check, capturing output:
    ```bash
-   { {env-status.sh invocation or curl command} ; } > /tmp/ticket-verify-{TICKET-ID}-{step}.log 2>&1
+   L=$(bash ~/.claude/skills/lib/ticket-tmp.sh {TICKET-ID} verify-{step}.log) && { {env-status.sh invocation or curl command} ; } > "$L" 2>&1
    _rc=$?
    ```
    Use `bash {TICKETS_ROOT}/env-status.sh` for service-health/registration reads. Use `curl -sS -w '\n%{http_code}\n'` (or the project's documented API-check invocation) for direct service-to-service or endpoint checks. For failure-simulation criteria (e.g. circuit breaker), use the project's documented fault-injection method — typically stopping a dependency via `env-start.sh`/`env-stop.sh` — then re-run the check to confirm the expected degraded/recovered behaviour.
@@ -1203,13 +1203,13 @@ marker.
 **Build-only mode:** substitute build diagnostics for the browser ones above — these map onto the same REMEDIATION_BRIEF fields (7c) so downstream skills don't need mode-specific parsing:
 1. **Failed command + exit code** — maps to `CONSOLE_ERRORS` field
 2. **Repo/module + branch** — maps to `CURRENT_URL` field (use `{repo}@{branch}` in place of a URL)
-3. **Last 20–30 lines of captured build output** (`/tmp/ticket-verify-{TICKET-ID}-{step}.log`) — maps to `SNAPSHOT_EXCERPT` field
+3. **Last 20–30 lines of captured build output** (the step's `$L` log) — maps to `SNAPSHOT_EXCERPT` field
 4. **Failed step** — step number, expected vs. observed (command + exit code)
 
 **Live-backend mode:** substitute live-check diagnostics for the browser ones above — same field mapping convention as build-only:
 1. **Failed check + exit code/HTTP status** — maps to `CONSOLE_ERRORS` field
 2. **Service/environment + endpoint checked** — maps to `CURRENT_URL` field (use `{service}@{env}` or the endpoint URL)
-3. **Last 20–30 lines of captured check output** (`/tmp/ticket-verify-{TICKET-ID}-{step}.log`), plus `env-status.sh` output at the point of failure — maps to `SNAPSHOT_EXCERPT` field
+3. **Last 20–30 lines of captured check output** (the step's `$L` log), plus `env-status.sh` output at the point of failure — maps to `SNAPSHOT_EXCERPT` field
 4. **Failed step** — step number, expected vs. observed (check + result)
 
 ### 7b — Write the failure report
@@ -1488,7 +1488,7 @@ information, and any consumer must then fall back to whole-run classification.
 
 ## Notes
 
-- **Isolated worktrees + single-flight lock (Step 1.6a2–1.6a4):** browser and live-backend verification no longer run against whatever branch happens to be checked out in the shared `REPOS_ROOT` clones, and no longer race a concurrent verify's app stack. Step 1.6a2 sweeps stale worktrees by TTL (`verify_worktree_gc`, default 24h idle) — unlocked, since it never touches this run's own worktree, but it self-guards by skipping the whole sweep whenever the lock is currently held by anyone (there's no way to tell from there which specific ticket's worktree a live holder might be serving files from). Step 1.6a3 acquires the single-flight lock via `lib/verify-lock.sh` — a well-known lockfile (`VERIFY_LOCK_FILE`, default `/tmp/ticket-verify.lock`) held across the whole "start stack → checks" window, since the local dev stack's ports aren't namespaced per run. Only then, in Step 1.6a4, does `ensure_verify_worktree` (`lib/verify-worktree.sh`) resolve/resync *this run's own* per-repo, per-ticket worktree (`REPOS_ROOT/.verify-worktrees/{repo}/{TICKET-ID}`, distinct from `ticket-implement`'s own `.ticket-auto/worktrees/{TICKET-ID}/{repo}` — verify must never read a directory implement might still be writing to) and export `VERIFY_REPO_PATH_<SERVICE>` for `env-start.sh` to consume if/when it's updated to accept per-service path overrides — that script lives in the consuming workspace, not this plugin, so this skill checks deterministically (`grep` for `VERIFY_REPO_PATH`) rather than assuming either way. The reuse path's resync is destructive (`reset --hard`/`clean -fdx`) and always re-syncs to the branch's remote tip rather than preserving local state, which is exactly why it's gated behind the lock: a second `ticket-verify` invocation for the same ticket (e.g. the "zombie steps" scenario below) must never reset a worktree a still-live first invocation's app stack is actively serving files from. All three steps are skipped exactly when Step 1.6 itself is skipped (`--env uat`, `--no-env-start`, `VERIFY_MODE=build-only`). The lock is released at Step 5 (or explicitly at the two earlier exit points that can precede it — see 1.6a3) and self-expires past `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) even if release is never called, so a killed agent can't wedge the lock open indefinitely.
+- **Isolated worktrees + single-flight lock (Step 1.6a2–1.6a4):** browser and live-backend verification no longer run against whatever branch happens to be checked out in the shared `REPOS_ROOT` clones, and no longer race a concurrent verify's app stack. Step 1.6a2 sweeps stale worktrees by TTL (`verify_worktree_gc`, default 24h idle) — unlocked, since it never touches this run's own worktree, but it self-guards by skipping the whole sweep whenever the lock is currently held by anyone (there's no way to tell from there which specific ticket's worktree a live holder might be serving files from). Step 1.6a3 acquires the single-flight lock via `lib/verify-lock.sh` — a per-user lockfile (`VERIFY_LOCK_FILE`, default in the private scratch dir) held across the whole "start stack → checks" window, since the local dev stack's ports aren't namespaced per run. Only then, in Step 1.6a4, does `ensure_verify_worktree` (`lib/verify-worktree.sh`) resolve/resync *this run's own* per-repo, per-ticket worktree (`REPOS_ROOT/.verify-worktrees/{repo}/{TICKET-ID}`, distinct from `ticket-implement`'s own `.ticket-auto/worktrees/{TICKET-ID}/{repo}` — verify must never read a directory implement might still be writing to) and export `VERIFY_REPO_PATH_<SERVICE>` for `env-start.sh` to consume if/when it's updated to accept per-service path overrides — that script lives in the consuming workspace, not this plugin, so this skill checks deterministically (`grep` for `VERIFY_REPO_PATH`) rather than assuming either way. The reuse path's resync is destructive (`reset --hard`/`clean -fdx`) and always re-syncs to the branch's remote tip rather than preserving local state, which is exactly why it's gated behind the lock: a second `ticket-verify` invocation for the same ticket (e.g. the "zombie steps" scenario below) must never reset a worktree a still-live first invocation's app stack is actively serving files from. All three steps are skipped exactly when Step 1.6 itself is skipped (`--env uat`, `--no-env-start`, `VERIFY_MODE=build-only`). The lock is released at Step 5 (or explicitly at the two earlier exit points that can precede it — see 1.6a3) and self-expires past `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) even if release is never called, so a killed agent can't wedge the lock open indefinitely.
 - **Session reuse:** If the browser is already open and logged in at the correct environment, skip Step 3b. Detect this from the snapshot — if the nav shows a user name, proceed directly to Step 4.
 - **Snapshot verbosity:** Trim snapshots to the relevant component subtree in all reports. Full snapshots can be hundreds of lines — include only what is needed to understand the failure.
 - **Multiple failing criteria:** If more than one criterion fails, report all of them in 7b and 7c. The WHAT_FAILED and SNAPSHOT_EXCERPT should cover the first failure point; list subsequent failures under a `ADDITIONAL_FAILURES:` key in the brief.

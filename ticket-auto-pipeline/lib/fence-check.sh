@@ -91,13 +91,12 @@ check_generation_fence() {
     source "$_fence_config_sh"
     _fence_file=$(_fleet_fence_file "$ticket_id" "${fleet_state_dir:-./logs}")
   else
-    # Fallback: match config.sh resolution logic — FLEET_STATE_DIR takes
-    # precedence, workspace-derived path second, /tmp last (backward compat).
-    if [ -n "$fleet_state_dir" ]; then
-      _fence_file="${fleet_state_dir}/${ticket_id}-fence"
-    else
-      _fence_file="/tmp/${ticket_id}-fence"
-    fi
+    # Fallback: the same rule as _fleet_fence_file — the caller's state dir,
+    # else ./logs. The old last resort, /tmp/<tid>-fence, dated from before
+    # fleet state moved out of /tmp (56b3a56); nothing writes there any more,
+    # and a file another local user planted there could fence or unfence a
+    # ticket (GitHub #624).
+    _fence_file="${fleet_state_dir:-./logs}/${ticket_id}-fence"
   fi
 
   if [ ! -f "$_fence_file" ]; then
