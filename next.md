@@ -1380,8 +1380,7 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
       fix), blocker classes A-D, exit criteria. Reusable per idea; not openspec.
 - [ ] 3. Loop on Conduit-lite (RealWorld subset: auth + articles; tags at first clean) in
       dexter-sandbox, WIL / "Dexter Sandbox", `rehearsal` label. Exit: two clean fresh full runs
-      after the last code change. Cap ~~4~~ 6 full runs (raised 2026-10-30: iter 04 = draft-readiness
-      live check, iters 05–06 = two consecutive clean runs). Holdout: comments + favorites slice, run once.
+      after the last code change, ending at fleet dry-run (user, 2026-11-07: no real `ticket-auto` dispatch for now). Cap ~~4~~ ~~6~~ 10 full runs (raised 2026-11-07). Holdout: comments + favorites slice, run once.
       Fixes: class C/D as commit + test; class B or grill-me profile changes get their own openspec.
       - **Iter 01 (2026-10-24): FAIL**, full run 1 of 4. Work root
         `/home/mortal/workspace/workbench/e2e-conduit`. Grill-me sealed `ready` (54 → 100, 2 rounds).
@@ -1440,8 +1439,20 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
         with one `TESTDATA_CONFIRM` answer. `--create`: epic WIL-125 + children WIL-126..132,
         `dispatch=true`. **Refinement halted 6/7** on round-1 non-structural semantic AC gaps (F31),
         the create → halt loop draft readiness removes. **PR #583** fixed F26/F27/F30 (minor).
-        - [ ] Cancel WIL-125..132 before iter 04.
-        - [ ] Iter 04 = live check of `planner-draft-readiness` (all 6 slices merged first).
+        - [x] Cancel WIL-125..132 before iter 04 (all Canceled in Linear, checked 2026-11-07).
+        - [x] Iter 04 = live check of `planner-draft-readiness` (all 6 slices merged first).
+      - **Iter 04 (2026-10-30/31): FAIL**, full run 4 of 10. Grill-me sealed `ready` (93, 2 rounds).
+        `INIT-1793396786-8715` passed first Crosscheck, then the gate revised 5/7 specs and reverted all 5 as
+        `CROSSCHECK_REGRESSION` on 57 false `CITATION_UNRESOLVED`; halted `DRAFT_NOT_READY`, no Linear writes.
+        - [ ] F33 (C): unquoted `find` prune patterns glob against the caller's cwd. Reproduced: old lib 57 from the
+              work root, 0 from `/`; fixed lib 0. Fix on `fix/planner-crosscheck-cwd-glob` (planner 0.34.1), not merged.
+        - [x] F35 (D): sandbox `CLAUDE.md` set `skip-worktree`, value kept; runbook updated.
+        - [ ] Before iter 05: land #594 → #596 → #595; security regex misses XSS worded as "render as text, never
+              as HTML"; earlier `MISSED` advisories dropped; `advisory_summary` empty in a fresh shell; grill-me
+              `## Assumptions & Defaults` + failure-behaviour probe (F36); F37 runbook note; abandon the iter 04
+              initiative; update plugins to the checkout and restart.
+        - [ ] Watch in iter 05 (F34): no revision has yet been evaluated after applying, so the loop's second half is
+              unproven live.
 - [ ] 4. Follow-up, start once item 3 converges (it supplies the baseline): **chain consistency
       check**. Bash steps (dor/gate/body checks, dispatch) are already repeatable and unit-tested;
       grill-me, the planner and critique are LLM steps, so "similar results" means invariants, not
