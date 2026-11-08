@@ -166,6 +166,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-retro-claude-log-marker.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-gate-held.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-complexity-calibration.sh
+	bash ticket-auto-pipeline/lib/tests/test-retro-lib-layout.sh
 	# ticket-audit tests
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-split-detection.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-drift.sh
@@ -209,6 +210,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-verify-lock.sh
 	# GitNexus pre-flight branch verification (#359)
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-preflight.sh
+	bash ticket-auto-pipeline/lib/tests/test-gitnexus-refresh.sh
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-agent-tools.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-agent-guard.sh
 	# version-aware plugin-cache lookup (#468)

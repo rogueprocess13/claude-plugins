@@ -1159,21 +1159,157 @@ test_verify_checkpoint_previous_attempt_ignored() {
     [ -z "$(_field "$out" VERIFY_FROM)" ]
 }
 
-test_verify_checkpoint_zombie_bracket_ends_attempt() {
-  # A crashed attempt's stale bracket becomes a synthesized
-  # `verify|fail|zombie-detected:` close, so its checkpoints must not carry
-  # into the re-verify that follows. That close is not a verdict (#572): it
-  # neither counts as an attempt nor sets VERIFY_LAST=fail (which would ask
-  # for a re-implement of code no verdict judged) — VERIFY simply re-runs.
+test_verify_checkpoint_zombie_bracket_keeps_checkpoints() {
+  # #607: a crashed attempt's stale bracket becomes a synthesized
+  # `verify|fail|zombie-detected:` close. A crash is not a verdict: no
+  # re-implement runs before VERIFY re-runs, so the code is unchanged and the
+  # criteria the crashed run passed stay passed. The close neither counts as
+  # an attempt nor sets VERIFY_LAST=fail, and it keeps the checkpoint.
   local out
   out=$(_detect_resume_with_log "TEST-VC5" \
     "2026-07-05T10:00:00Z|META|schema|info|1" \
     "2026-07-05T10:00:01Z|VERIFY|verify|waiting|Agent launched" \
     "2026-07-05T10:00:03Z|VERIFY|checkpoint|done|criterion-1-pass")
-  [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ] &&
+  [ "$(_field "$out" VERIFY_CHECKPOINT)" = "1" ] &&
     [ -z "$(_field "$out" VERIFY_LAST)" ] &&
     [ "$(_field "$out" VERIFY_ATTEMPTS)" = "0" ] &&
     [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]
+}
+
+# Runs detect-resume.sh N times against one log (each run sees the lines the
+# previous one wrote, e.g. its zombie close) and echoes the last result block.
+_detect_resume_runs() {
+  local runs="$1" ticket_id="$2"
+  shift 2
+  local tmpdir line i out=""
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  for line in "$@"; do
+    echo "$line" >>"$tmpdir/logs/${ticket_id}-pipeline.log"
+  done
+  for ((i = 0; i < runs; i++)); do
+    out=$(cd "$tmpdir" && bash "$DETECT_SH" "$ticket_id" 2>/dev/null) || true
+  done
+  rm -rf "$tmpdir"
+  echo "$out"
+}
+
+test_zombie_verify_resume_keeps_checkpoints_across_reruns() {
+  # #607, the observed shape: a VERIFY agent killed after passing 37
+  # criteria. The first resume writes the zombie close; the second resume
+  # reads a log that already holds it. Both must keep checkpoint 37, count
+  # no attempt and not ask for a re-implement.
+  local -a lines=(
+    "2026-07-05T10:00:00Z|META|schema|info|1"
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|waiting|Agent launched"
+    "2026-07-05T10:00:02Z|IMPLEMENT|implement|done|implemented"
+    "2026-07-05T10:00:03Z|VERIFY|verify|waiting|Agent launched"
+    "2026-07-05T10:00:04Z|VERIFY|build-plan|done|ok"
+  )
+  local n out runs
+  for n in $(seq 1 37); do
+    lines+=("2026-07-05T10:01:00Z|VERIFY|checkpoint|done|criterion-${n}-pass")
+  done
+  for runs in 1 2; do
+    out=$(_detect_resume_runs "$runs" "TEST-ZV1" "${lines[@]}")
+    { [ "$(_field "$out" VERIFY_CHECKPOINT)" = "37" ] &&
+      [ "$(_field "$out" VERIFY_ATTEMPTS)" = "0" ] &&
+      [ -z "$(_field "$out" VERIFY_LAST)" ] &&
+      [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]; } || return 1
+  done
+}
+
+test_zombie_verify_after_real_fail_keeps_count_and_checkpoints() {
+  # One real failed attempt, re-implement, then a crashed second attempt:
+  # the count stays 1 (the crash burns nothing), VERIFY_LAST is clear and
+  # only the second attempt's checkpoint survives.
+  local out
+  out=$(_detect_resume_runs 2 "TEST-ZV2" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:02Z|VERIFY|checkpoint|done|criterion-5-pass" \
+    "2026-07-05T10:00:03Z|VERIFY|verify|fail|FAIL — criterion 6" \
+    "2026-07-05T10:00:04Z|IMPLEMENT|implement|waiting|Agent launched" \
+    "2026-07-05T10:00:05Z|IMPLEMENT|implement|done|re-implemented" \
+    "2026-07-05T10:00:06Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:07Z|VERIFY|checkpoint|done|criterion-2-pass")
+  [ "$(_field "$out" VERIFY_CHECKPOINT)" = "2" ] &&
+    [ "$(_field "$out" VERIFY_ATTEMPTS)" = "1" ] &&
+    [ -z "$(_field "$out" VERIFY_LAST)" ] &&
+    [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]
+}
+
+test_reimplement_after_synthetic_close_drops_checkpoints() {
+  # A synthetic close no longer ends the attempt, so a re-implement must:
+  # checkpoints taken against older code never carry past an
+  # IMPLEMENT|implement line.
+  local now out
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  out=$(_detect_resume_runs 1 "TEST-ZV3" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:02Z|VERIFY|checkpoint|done|criterion-4-pass" \
+    "2026-07-05T10:00:03Z|META|operator-stop|info|stopped by operator" \
+    "2026-07-05T10:00:04Z|IMPLEMENT|implement|waiting|Agent launched" \
+    "${now}|IMPLEMENT|implement|done|re-implemented")
+  [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ]
+}
+
+test_operator_stop_drops_checkpoints_without_reimplement() {
+  # An operator stop is an intervention, not a crash: the person may fix the
+  # environment (build, seed data) before resuming, so passes taken before
+  # the stop must be re-checked even though no IMPLEMENT line follows. The
+  # stop still counts no attempt and asks for no re-implement (#572).
+  local now out
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  out=$(_detect_resume_runs 2 "TEST-ZV5" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|done|implemented" \
+    "${now}|VERIFY|verify|waiting|Agent launched" \
+    "${now}|VERIFY|checkpoint|done|criterion-1-pass" \
+    "${now}|VERIFY|checkpoint|done|criterion-2-pass" \
+    "${now}|META|operator-stop|info|stopped by operator")
+  [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ] &&
+    [ "$(_field "$out" VERIFY_ATTEMPTS)" = "0" ] &&
+    [ -z "$(_field "$out" VERIFY_LAST)" ] &&
+    [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]
+}
+
+test_operator_reset_drops_checkpoints_of_crashed_attempt() {
+  # A crashed attempt passed criteria 1-2, then the operator ran
+  # verify-attempts-reset.sh (control-file reset after line 5). The reset is
+  # an intervention too: the zombie close after it must not carry the
+  # pre-reset passes into the resumed VERIFY.
+  local tmpdir out log
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  log="$tmpdir/logs/TEST-ZV6-pipeline.log"
+  printf '%s\n' \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|done|implemented" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:03Z|VERIFY|checkpoint|done|criterion-1-pass" \
+    "2026-07-05T10:00:04Z|VERIFY|checkpoint|done|criterion-2-pass" \
+    "2026-07-05T10:00:05Z|META|verify-attempts-reset|info|env repaired" >"$log"
+  printf 'reset|5|2026-07-05T10:00:05Z|env repaired\n' >"$log.verify-ctl"
+  out=$(cd "$tmpdir" && bash "$DETECT_SH" "TEST-ZV6" 2>/dev/null) || true
+  rm -rf "$tmpdir"
+  [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ] &&
+    [ "$(_field "$out" VERIFY_ATTEMPTS)" = "0" ] &&
+    [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]
+}
+
+test_agent_forged_zombie_close_ends_checkpoint_scope() {
+  # Trust boundary: an unrecorded `zombie-detected:` line (an agent wrote
+  # it) is a real verdict, so it still ends the attempt's checkpoints.
+  local out
+  out=$(_detect_resume_with_log "TEST-ZV4" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|done|implemented" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:03Z|VERIFY|checkpoint|done|criterion-3-pass" \
+    "2026-07-05T10:00:04Z|VERIFY|verify|fail|zombie-detected: VERIFY verify")
+  [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ]
 }
 
 # ── #572: operator-stopped VERIFY is not an attempt ──────────────────────────
@@ -1342,7 +1478,13 @@ for fn in \
   test_verify_checkpoint_current_attempt \
   test_verify_from_is_never_checkpoint \
   test_verify_checkpoint_previous_attempt_ignored \
-  test_verify_checkpoint_zombie_bracket_ends_attempt \
+  test_verify_checkpoint_zombie_bracket_keeps_checkpoints \
+  test_zombie_verify_resume_keeps_checkpoints_across_reruns \
+  test_zombie_verify_after_real_fail_keeps_count_and_checkpoints \
+  test_reimplement_after_synthetic_close_drops_checkpoints \
+  test_agent_forged_zombie_close_ends_checkpoint_scope \
+  test_operator_stop_drops_checkpoints_without_reimplement \
+  test_operator_reset_drops_checkpoints_of_crashed_attempt \
   test_verify_checkpoint_empty_without_checkpoints; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"

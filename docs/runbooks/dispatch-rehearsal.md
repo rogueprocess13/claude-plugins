@@ -15,7 +15,7 @@ Take one idea through grill-me → ticket-planner → `--create` → fleet dry-r
 - [ ] **Work root.** Pick a dedicated work root and export it:
   - `export WORK=<dir> REPOS_ROOT=<dir>`, where both are the same directory.
   - Only the target repo clone may live under it, because fleet dry-run enumerates every git repo under `REPOS_ROOT` and runs `git fetch` in each.
-- [ ] **Target repo.** The clone needs an `origin` remote, because the epic branch step fetches it. Record the clean starting commit in `rehearsal/base.sha`; section 6 resets to it before every full run. Its `CLAUDE.md` carries `REPOS_ROOT`, `LOCAL_URL`/`UAT_URL` and the test users.
+- [ ] **Target repo.** The clone needs an `origin` remote, because the epic branch step fetches it. Record the clean starting commit in `rehearsal/base.sha`; section 6 resets to it before every full run. Its `CLAUDE.md` carries `REPOS_ROOT`, `LOCAL_URL`/`UAT_URL` and the test users. The env checks read `REPOS_ROOT` from that file, not the environment, so point it at the work root and run `git update-index --skip-worktree CLAUDE.md`. Agents otherwise see an uncommitted change and plan around it (F7, F35). The rehearsal stops at dry-run, so nothing needs to commit that file; undo with `--no-skip-worktree` before any real dispatch.
 - [ ] **Environment checks.** Run `/fleet-controller:fleet-env-check` and `/ticket-auto-pipeline:ticket-env-check`. Fix every problem before iteration 1, so environment issues never count as findings.
 - [ ] **Rehearsal folder.** Create `$WORK/rehearsal/`, then:
   - Write the brief to `idea.md`.
@@ -80,7 +80,7 @@ The idea passes after **two fresh full runs in a row**, after the last code chan
 
 Then run the holdout idea once. A class B or C failure there means the fixes overfit to the main idea. Report it; don't loop on it.
 
-**Cap:** 6 full runs per idea (raised from 4 for planner-draft-readiness: iter 04 is its live check, and iters 05–06 must be the two consecutive clean runs above). Preflight-only and `replan` reruns don't count toward the cap. At the cap, stop and report what remains.
+**Cap:** 10 full runs per idea (raised from 6 on 2026-11-07, because a late failure at 6 would have left no room for the two consecutive clean runs above). Preflight-only and `replan` reruns don't count toward the cap. At the cap, stop and report what remains.
 
 ## 6. Cleanup
 
