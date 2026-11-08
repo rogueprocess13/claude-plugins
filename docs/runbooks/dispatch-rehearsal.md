@@ -54,15 +54,17 @@ Put each iteration's output in `$WORK/rehearsal/iter-NN/`.
 - [ ] **Critique each child, read-only:**
   `/ticket-critique <TID> --no-post --result-file iter-NN/preflight/critique/<TID>.txt`
 - [ ] **Run the preflight:**
-  `scripts/e2e-preflight.sh <INIT> --out iter-NN/preflight`
+  `scripts/e2e-preflight.sh <EPIC> --out iter-NN/preflight`, where `<EPIC>` is the epic's folder under
+  `$REPOS_ROOT/.ticket-auto/initiatives/` (the epic id `--create` made), not the `INIT-…` planning folder.
 - [ ] **Run the negative control** (section 2).
 - [ ] **Record the run, always — even when it halted before `--create` or before the preflight.**
   Write `iter-NN/run-record.md` with:
   - **Outcome:** the furthest phase reached, and the halt code if any.
   - **Grill:** verdict, score and number of rounds, copied from the sealed intent, not from memory.
   - **Preflight:** the verdict line (`PREFLIGHT <EPIC> PASS|PARTIAL|FAIL rows=N failed=M`), or `not run: <reason>`. `PARTIAL` (critique skipped) is not a pass.
-  - **Timing:** wall-clock per phase, from the first and last `state.log` timestamp of each phase, and the total.
-  - **Cost:** tokens and cost per phase if recorded; otherwise write `UNMEASURED`. Never estimate.
+  - **Timing:** wall-clock per phase and the total, from the `Timing:` line of `iter-NN/run-telemetry.md`.
+  - **Cost:** tokens per phase from the `Cost:` line of `iter-NN/run-telemetry.md`; a phase it lists as
+    `UNMEASURED` stays `UNMEASURED`. Never estimate.
   - **Human input:** each answer file and each manual edit, with the phase it unblocked.
   - **Findings:** the IDs added to `findings.md` by this run.
   The run is not finished until this file exists. Without it, runs cannot be compared later.
