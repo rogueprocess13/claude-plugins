@@ -59,7 +59,8 @@
 #   verify_lock_release                        # idempotent — call on every exit path
 
 # shellcheck source=ticket-tmp.sh
-source "$(dirname "${BASH_SOURCE[0]}")/ticket-tmp.sh" 2>/dev/null || true
+source "$(dirname "${BASH_SOURCE[0]:-.}")/ticket-tmp.sh" 2>/dev/null ||
+  source "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/ticket-tmp.sh" 2>/dev/null || true
 
 # _verify_lock_trusted <lockfile> — 0 when the lock's directory and every
 # lock file that exists may be used (see the header). Prints why on refusal.
