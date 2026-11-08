@@ -17,6 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.86.0 (2026-11-08)
+
+Phase agents read the right skill file, and a stale GitNexus index is refreshed after a ticket's PRs.
+
+### Fixed
+- Phase agents spawned by the router are told the absolute path of the plugin's own `SKILL.md`. The
+  path comes from the plugin root the SessionStart sync now records in
+  `~/.claude/skills/lib/.plugin-root`, else from the installed plugin cache. Agents no longer pick a
+  stale `~/.claude/skills/<name>/SKILL.md` copy (#602).
+
+### Added
+- MAINTENANCE (STEP_5) refreshes the GitNexus index of every repo the ticket opened a PR in, through
+  `lib/gitnexus-refresh.sh`, but only in pipeline-owned index worktrees under
+  `.ticket-auto/worktrees/gitnexus/`. It fetches the PR base and checks it out detached (no hooks, no
+  prompts), then runs `gitnexus analyze` detached under a `~/.gitnexus/locks` lock. It backs up the
+  database and `meta.json` and restores both if analyze fails. User checkouts are never touched: they
+  get one `META|gitnexus-stale` warn line naming the manual command. The STEP_5 rollup line is
+  written in its own Bash call (#609).
+
 ## 0.85.0 (2026-11-08)
 
 Failure diagnostics: pipeline failures that were silent or mislabelled now say what went wrong.
