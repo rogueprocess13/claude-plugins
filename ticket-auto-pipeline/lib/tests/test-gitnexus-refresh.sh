@@ -107,8 +107,9 @@ _pr_created() {
   echo "2026-11-01T00:00:0${3:-0}Z|META|pr-created|info|{\"pr\":$2,\"url\":\"https://github.com/$1/pull/$2\",\"repo\":\"$1\"}" >>"$_ws/log"
 }
 
-# _stub_gitnexus <rc> <sleep_secs> — records its args; on failure it first
-# clobbers the database, as gitnexus 1.6.4 deletes lbug* before rebuilding.
+# _stub_gitnexus <rc> <sleep_secs> — records its args; it first clobbers the
+# database, as gitnexus 1.6.4 deletes lbug* before rebuilding, and on failure
+# it has already saved a new meta.json (saveMeta runs before registerRepo).
 _stub_gitnexus() {
   cat >"$_ws/bin/gitnexus" <<EOF
 #!/usr/bin/env bash
@@ -117,7 +118,7 @@ p="\${!#}"
 rm -f "\$p"/.gitnexus/lbug*
 echo partial >"\$p/.gitnexus/lbug"
 sleep $2
-[ $1 = 0 ] && echo new-db >"\$p/.gitnexus/lbug"
+if [ $1 = 0 ]; then echo new-db >"\$p/.gitnexus/lbug"; else echo saved-new-meta >"\$p/.gitnexus/meta.json"; fi
 exit $1
 EOF
   chmod +x "$_ws/bin/gitnexus"
@@ -245,6 +246,7 @@ test_analyze_failure_restores_previous_index() {
   local ok=1
   _wait_result widget || ok=0
   [ "$_rc" = 0 ] && _analyzed "$p" && [ "$(cat "$p/.gitnexus/lbug")" = old-db ] &&
+    [ "$(cat "$p/.gitnexus/meta.json")" = tracked ] &&
     [ ! -e "$p/.gitnexus/.refresh-backup" ] &&
     grep -q '|gitnexus-refresh|fail|widget: analyze exited 3; previous index restored' "$(_alog widget)" &&
     ! grep -q '|fail|' "$_ws/log" && grep -q '|META|gitnexus-refresh|start|widget ' "$_ws/log" || ok=0

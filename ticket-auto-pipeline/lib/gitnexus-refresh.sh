@@ -30,7 +30,7 @@
 #   registry's lastCommit, `gitnexus analyze --skip-agents-md <path>` starts
 #   detached (setsid/nohup), holding the lock, logging to
 #   ~/.gitnexus/refresh-logs/<name>.log (GITNEXUS_REFRESH_LOG_DIR). It backs up
-#   .gitnexus/lbug* first and restores the backup when analyze fails: gitnexus
+#   .gitnexus/lbug* and meta.json first and restores them when analyze fails: gitnexus
 #   deletes the old database before rebuilding, so a failed run would
 #   otherwise leave an empty index. There is no kill timeout for the same
 #   reason; GITNEXUS_REFRESH_TIMEOUT sets one, and a timeout also restores.
@@ -208,7 +208,7 @@ _gr_analyze_worker() {
   bak="${path}/.gitnexus/.refresh-backup"
   rm -rf "$bak" 2>/dev/null
   mkdir -p "$bak" 2>/dev/null || true
-  for f in "$path"/.gitnexus/lbug*; do
+  for f in "$path"/.gitnexus/lbug* "$path"/.gitnexus/meta.json; do
     [ -e "$f" ] && cp -pR "$f" "$bak/"
   done
   echo "$(_gr_iso)|gitnexus-refresh|start|${name} ${old:0:7}→${new:0:7} in ${path}"
@@ -222,8 +222,11 @@ _gr_analyze_worker() {
     echo "$(_gr_iso)|gitnexus-refresh|done|${name} ${old:0:7}→${new:0:7}"
     return 0
   fi
+  # meta.json too: gitnexus writes the new lastCommit into it before a step
+  # that can still fail, and an up-to-date meta.json makes every later analyze
+  # return early over the restored old database.
   rm -rf "$path"/.gitnexus/lbug* 2>/dev/null
-  for f in "$bak"/lbug*; do
+  for f in "$bak"/lbug* "$bak"/meta.json; do
     [ -e "$f" ] && cp -pR "$f" "$path/.gitnexus/"
   done
   rm -rf "$bak"
