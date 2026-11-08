@@ -14,14 +14,14 @@
 #   --comments   number of unprocessed comments (reconcile-comments.sh)
 #   --new-input  how many of them are new input: a new requirement, a scope
 #                change, a disagreement with the plan, or a question back.
-#                Omitted means all of them (the safe direction: hold).
+#                Empty or omitted means all of them (the safe direction).
 #
 # Reads notes.md AFTER the amendment step: the open questions are the
 # unstruck `- [needs-human]` bullets of `## Open Questions` (struck ones read
 # `- ~~[needs-human] …~~` and do not match). New questions raised by the
 # amendment are open bullets too, so they hold.
 #
-# Output (KEY=value):
+# Output (KEY=value, always printed — callers eval it):
 #   OPEN_QUESTIONS=<n>
 #   RECONCILE_DECISION=hold | clean-recorded | clean
 #     hold            post the amendment, re-claim, hold
@@ -29,37 +29,40 @@
 #                     reconcile boundary past them) WITHOUT re-claim, then pass
 #     clean           nothing to record, pass
 #   HOLD_REASON=unanswered_questions | unprocessed_comments | both joined by +
+#               | reconcile_decide_error (bad or missing arguments)
 #
-# Exit: 0 decided, 2 usage.
+# Exit: 0 decided, 2 usage (still prints a hold decision, never fails open).
 
-_rd_usage() {
-  echo "usage: reconcile-decide.sh --notes <notes.md> --comments <N> [--new-input <N>]" >&2
+_rd_error() {
+  echo "reconcile-decide: $1 — holding (usage: --notes <notes.md> --comments <N> [--new-input <N>])" >&2
+  echo "OPEN_QUESTIONS=0"
+  echo "RECONCILE_DECISION=hold"
+  echo "HOLD_REASON=reconcile_decide_error"
   exit 2
 }
 
 notes="" comments="" new_input=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
-  --notes)
-    notes="${2:-}"
-    shift 2 || _rd_usage
+  --notes | --comments | --new-input)
+    [ "$#" -ge 2 ] || _rd_error "$1 needs a value"
+    case "$1" in
+    --notes) notes="$2" ;;
+    --comments) comments="$2" ;;
+    --new-input) new_input="$2" ;;
+    esac
+    shift 2
     ;;
-  --comments)
-    comments="${2:-}"
-    shift 2 || _rd_usage
-    ;;
-  --new-input)
-    new_input="${2:-}"
-    shift 2 || _rd_usage
-    ;;
-  *) _rd_usage ;;
+  *) _rd_error "unknown argument $1" ;;
   esac
 done
 
-case "$comments" in '' | *[!0-9]*) _rd_usage ;; esac
+case "$comments" in '' | *[!0-9]*) _rd_error "--comments must be a count, got '${comments}'" ;; esac
 [ -n "$new_input" ] || new_input="$comments"
-case "$new_input" in *[!0-9]*) _rd_usage ;; esac
-[ "$new_input" -le "$comments" ] || new_input="$comments"
+case "$new_input" in *[!0-9]*) _rd_error "--new-input must be a count, got '${new_input}'" ;; esac
+# A new-input count above the total means the total is wrong, not the
+# new-input count: raise the total (never lower the new-input count).
+[ "$new_input" -le "$comments" ] || comments="$new_input"
 
 open=0
 if [ -n "$notes" ] && [ -f "$notes" ]; then

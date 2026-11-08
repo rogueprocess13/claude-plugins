@@ -226,17 +226,17 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|corrections-error|warn|append_correcti
 The `gate-warn` channel carries non-blocking warnings: unlike `gate-stop`, it never changes the
 phase result.
 
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|info|RETURN_INCOMPLETE — UNCHECKED_BOXES (unchecked=2/5, artifact=openspec)" >> "$LOG_FILE"
+```
+2026-01-01T00:00:00Z|META|gate-warn|info|RETURN_INCOMPLETE — UNCHECKED_BOXES (unchecked=2/5, artifact=openspec)
 ```
 
 Gate-warn codes:
 - `RETURN_INCOMPLETE` — `- [ ]` boxes left in tasks.md or simple-fix.md's
-  `## Completion Checklist` (`return-completeness-check.sh`, warn-only). In enforce mode it
-  becomes a `gate-stop` and triggers `IMPLEMENT_RETRY` (max 2).
-- `COMPLETION_CHECKLIST_MISSING` — simple-fix.md has no `## Completion Checklist`
-  (exit 2); the artifact needs re-appraisal.
-- `AC_DRIFT_AT_GATE`/`_AT_VERIFY` — tracker ACs differ from `context.md` (`lib/ac-drift.sh`).
+  `## Completion Checklist` (`return-completeness-check.sh`). In enforce mode a `gate-stop`
+  triggering `IMPLEMENT_RETRY` (max 2).
+- `COMPLETION_CHECKLIST_MISSING` — simple-fix.md has no `## Completion Checklist`.
+  Treated as `error` (exit 2); needs re-appraisal.
+- `AC_DRIFT_AT_GATE`/`_AT_VERIFY`/`AC_DRIFT_UNKNOWN` — tracker vs `context.md` ACs (`lib/ac-drift.sh`).
 - `SEED_RUN_MISSING`/`_CONSUMED_DB`/`_STATIC_ONLY` — no clean seeder run (`lib/seed-run-check.sh`).
 
 `gate-warn` counters are tracked separately from `gate-stop` in retro.sh aggregation

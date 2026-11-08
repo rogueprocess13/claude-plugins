@@ -41,7 +41,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `code-review` | Step 5 (commit/push) | — |
 | `commit-push` | Step 5.5 (plan artifact durability check) | mode from log `detect-path\|done` entry |
 
-**Concurrency guard:** if you need to check whether another worker is already implementing this ticket, never grep the process table (`ps`/`pgrep`) for your own prompt or skill name — your own process always matches. Use file-based signals instead: an existing worktree/branch with commits already on it, a lockfile whose PID is not in your own ancestry, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line already present in `$TAP_LOG` for this ticket.
+**Concurrency guard:** if you need to check whether another worker is already implementing this ticket, never grep the process table (`ps`/`pgrep`) for your own prompt or skill name — your own process (and its own `spawn_agent_pre` shell) always matches. Use file-based signals instead: an existing worktree/branch with commits already on it, a lockfile whose PID is not in your own ancestry, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line already present in `$TAP_LOG` for this ticket.
 
 **Capture the tickets repo root — the very first bash action of this session, regardless of `--from-step`.** Step 4 `cd`s into a code worktree and nothing downstream `cd`s back (Step 5's own git commands deliberately use `git -C "$WORKTREE_PATH"` instead of relying on the earlier `cd`, for exactly this reason). Every invocation of this skill — a fresh run or a `--from-step` resume — starts with CWD already at the tickets repo root (the shared preamble Guard already verified this, or the caller did for `--from-auto`), so this capture is always valid the instant the session starts, before Step 0.6 or any step-dispatch jump:
 
@@ -177,7 +177,7 @@ Read the persona files at `$PERSONA_BASE` and `$PERSONA_SPECIALIZER`. If `$PERSO
 A `## Test Data Provided` ticket swaps `$PERSONA_BASE` to `test-data-engineer.md`. A hand-filed bug with neither a manifest `type` nor a `bug` label gets no debugger overlay.
 - Mixed → run once per layer; switch at the FE/BE boundary. Note the boundary in `notes.md`.
 - Test-data ticket (`$PERSONA_BASE` is `test-data-engineer.md`) → the whole deliverable is data, so do not split per layer. Make the ticket's `Seed command:` and `Verify command:` real (create the targets or scripts they name, or correct the lines to match what you built) and run the seed command twice to prove it is idempotent.
-- Seeder scenario on any ticket (`seed.sh <scenario>` in a task or AC, a `Seed command:` line, or a diff under `$WIKI_ROOT/api/_tools/seed/`) → before Step 5, run it twice against this ticket's implement worktree, from the clean baseline VERIFY uses (reset DB + `seed.sh baseline`), on a verify-fail re-run too. Start the stack if down; never defer to VERIFY (#601). Record in notes.md `seed-run: clean <scenario> x2`, else `seed-run: consumed-db (<why>)` or, after checking every request against the OpenAPI contract, `seed-run: static-only (<why>)`. Then: `bash ~/.claude/skills/lib/seed-run-check.sh {ticket-dir} {plan-file} --log-file "$TAP_LOG"`.
+- Seeder scenario on any ticket → run it in Step 4b's "Seeder run" (#601).
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT detect-path done "{simple-fix|openspec}"
 
@@ -329,7 +329,7 @@ bash ~/.claude/skills/lib/plog.sh IMPLEMENT checkout-branch done "{TICKET_BRANCH
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT implement start "Implementing changes"
 
-**Prefer smart_search for code navigation during editing — for both modes.** Use `smart_search` to locate symbols by name, `smart_outline` to get structural views, then `smart_unfold` or `Read` to load only confirmed targets. Fall back to Serena if smart_search returns nothing: symbol search or go_to_definition to locate the target, find_references to check downstream impact. Read only what these tools pinpoint — never scan whole files.
+**Navigate with smart_search (both modes):** `smart_search`, `smart_outline`, then `smart_unfold`/`Read` on confirmed targets only; if it finds nothing, Serena (symbol search, go_to_definition, find_references). Never scan whole files.
 
 **Before editing, run GitNexus blast radius:** Call `mcp__gitnexus__impact` on each target symbol from the plan. Compare the result's d=1 (WILL BREAK) callers against the affected files listed in the plan. If any d=1 symbol is NOT in the plan, append it to the implementation scope. If GitNexus is unavailable, log a warning and proceed — never block on it.
 
@@ -448,11 +448,11 @@ This is a bounded fix-and-re-review loop, **capped at 3 cycles** — the same ca
   ```
   This ticket needs human review.
 
-Do not proceed to commit until the review is clean or the loop gate-stops.
-
-**Residual low-severity findings** at a clean exit: append them to notes.md under a `## Code Review — Deferred Findings` heading (create it if absent), one line per finding — `- {file}:{line} — {finding summary}`. These are informational only and never block.
+Do not commit until the review is clean or the loop gate-stops. At a clean exit, append residual low-severity findings to notes.md under `## Code Review — Deferred Findings` (create if absent), one `- {file}:{line} — {finding summary}` line each; they never block.
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review done "cycle#{N} clean"
+
+**Seeder run (#601).** If a task, AC, `Seed command:` or diff under `$WIKI_ROOT/api/_tools/seed/` names a seeder scenario, run it twice now, every implement run; never defer to VERIFY. The stack is VERIFY's, so lock it and reset only via the project's `SEED_RESET_CMD`, never improvised: `eval "$(bash ~/.claude/skills/lib/seed-run-check.sh prepare {TICKET-ID} {ticket-dir})"`. `locked` → same block: `bash -c "$SEED_RESET_CMD"`, start the stack if down, run the scenario twice against this worktree, `seed-run-check.sh record {ticket-dir} clean "<scenario> x2"` (or `consumed-db "(<why>)"`), then always `seed-run-check.sh release`. `static-only` (recorded) → check requests against the OpenAPI contract. Then `seed-run-check.sh check {ticket-dir} {plan-file} --log-file "$TAP_LOG"` (exit 1 is advisory; continue).
 
 ---
 

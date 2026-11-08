@@ -26,24 +26,48 @@
 #
 # On drift, --log-file writes one line:
 #   META|gate-warn|info|AC_DRIFT_AT_<TAG> — tracker N ACs, context.md M, ...
-# --refresh replaces context.md's Acceptance Criteria section with the
-# tracker's, so every later phase reads the current list.
+# and on AC_DRIFT=unknown: META|gate-warn|info|AC_DRIFT_UNKNOWN — ...
+# --refresh replaces the body of context.md's Acceptance Criteria section with
+# the tracker's, so every later phase reads the current list. It never runs
+# when the tracker side is unknown.
 #
 # Exit: 0 no drift or unknown, 1 drift, 2 usage / ticket dir unreadable.
 
 _AC_DRIFT_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# _ac_section — print the Acceptance Criteria section (heading excluded) of
-# stdin. It ends at the next level-1/2 heading or a `---` rule (context.md
-# separates its Description from Links with one). Fenced lines are skipped.
+# Shared awk helpers. An Acceptance Criteria section starts at a markdown
+# heading of any level (`#`..`######`, as notes-parse.sh's get_ac_count
+# reads it) or a bold line (`**Acceptance Criteria**`, optional colon). A
+# heading start ends at the next heading of the same or a higher level; a
+# bold start ends at any heading or the next bold-only line. Both end at a
+# `---` rule (context.md separates its Description from Links with one).
+# shellcheck disable=SC2016 # awk program, not shell expansion
+_AC_AWK_FUNCS='
+  function hlevel(s,   n) { if (s !~ /^#+[ \t]/) return 0; n = 0; while (substr(s, n + 1, 1) == "#") n++; return n }
+  function ac_start(s,   l) {
+    l = tolower(s)
+    if (l ~ /^#+[ \t]*acceptance criteria/) return hlevel(s)
+    if (l ~ /^\*\*[ \t]*acceptance criteria[ \t]*:?[ \t]*\*\*[ \t]*:?[ \t]*$/) return 99
+    return 0
+  }
+  function ac_end(s, lvl,   h) {
+    if (s ~ /^---[ \t]*$/) return 1
+    h = hlevel(s)
+    if (h > 0 && (lvl == 99 || h <= lvl)) return 1
+    if (lvl == 99 && s ~ /^\*\*[^*]+\*\*[ \t]*:?[ \t]*$/) return 1
+    return 0
+  }
+'
+
+# _ac_section — print the Acceptance Criteria section (start line excluded)
+# of stdin. Fenced lines are skipped.
 _ac_section() {
-  awk '
+  awk "$_AC_AWK_FUNCS"'
     /^[[:space:]]*(```|~~~)/ { fence = !fence; next }
     fence { next }
-    tolower($0) ~ /^##?[[:space:]]*acceptance criteria/ { f = 1; next }
-    f && /^##?[[:space:]]/ { exit }
-    f && /^---[[:space:]]*$/ { exit }
-    f { print }
+    !lvl { lvl = ac_start($0); next }
+    ac_end($0, lvl) { exit }
+    { print }
   '
 }
 
@@ -69,24 +93,24 @@ _ac_norm() {
 
 _ac_count() { grep -c . <<<"$1" || true; }
 
-# _ac_refresh <context.md> <description> — replace (or append) the AC
-# section of context.md with the description's, heading included.
+# _ac_refresh <context.md> <description> — replace the body of context.md's
+# AC section with the description's, keeping context.md's own start line;
+# append a `## Acceptance Criteria` section when context.md has none.
 _ac_refresh() {
   local ctx="$1" desc="$2" new tmp
   new=$(printf '%s\n' "$desc" | _ac_section)
-  new="## Acceptance Criteria"$'\n'"${new%$'\n'}"
   tmp="$ctx.ac-drift.$$"
-  if grep -qiE '^##?[[:space:]]*acceptance criteria' "$ctx"; then
-    NEW_AC="$new" awk '
-      state == 1 && (/^##?[[:space:]]/ || /^---[[:space:]]*$/) { state = 2; print "" }
+  if [ -n "$(_ac_section <"$ctx")" ] || awk "$_AC_AWK_FUNCS"'ac_start($0) { found = 1 } END { exit !found }' "$ctx"; then
+    NEW_AC="${new%$'\n'}" awk "$_AC_AWK_FUNCS"'
+      state == 1 && ac_end($0, lvl) { state = 2; print "" }
       state == 1 { next }
-      state == 0 && tolower($0) ~ /^##?[[:space:]]*acceptance criteria/ { print ENVIRON["NEW_AC"]; state = 1; next }
+      state == 0 && (lvl = ac_start($0)) { print; print ""; print ENVIRON["NEW_AC"]; state = 1; next }
       { print }
     ' "$ctx" >"$tmp"
   else
     {
       cat "$ctx"
-      printf '\n%s\n' "$new"
+      printf '\n## Acceptance Criteria\n\n%s\n' "$new"
     } >"$tmp"
   fi
   mv "$tmp" "$ctx"
@@ -158,6 +182,12 @@ ac_drift_main() {
   printf 'AC_LINEAR=%q\nAC_CONTEXT=%q\nAC_VPLAN=%q\n' "$n_lin" "$n_ctx" "$n_vplan"
   if [ "$n_lin" -eq 0 ]; then
     printf 'AC_DRIFT=unknown\nAC_ADDED_COUNT=0\nAC_REMOVED_COUNT=0\nAC_REFRESHED=false\n'
+    # Never silent: an empty fetch or a body with no AC section means the
+    # check did not happen, and context.md is left untouched.
+    if [ -n "$log_file" ]; then
+      bash "$_AC_DRIFT_LIB/plog.sh" --log-file "$log_file" META gate-warn info \
+        "AC_DRIFT_UNKNOWN — tracker description has no Acceptance Criteria items (empty fetch or no AC section); context.md ${n_ctx} ACs, not compared at ${tag}" || true
+    fi
     return 0
   fi
 

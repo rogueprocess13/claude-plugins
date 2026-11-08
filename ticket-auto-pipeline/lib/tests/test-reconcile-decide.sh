@@ -66,8 +66,36 @@ _check "--new-input omitted -> every comment counts as new input (safe default)"
   "OPEN_QUESTIONS=0 RECONCILE_DECISION=hold HOLD_REASON=unprocessed_comments" \
   "$(_decide --notes "$TMP/answered.md" --comments 1)"
 
+_check "new-input above the total raises the total, never lowers new-input -> hold" \
+  "OPEN_QUESTIONS=0 RECONCILE_DECISION=hold HOLD_REASON=unprocessed_comments" \
+  "$(_decide --notes "$TMP/answered.md" --comments 0 --new-input 1)"
+
+_check "empty --new-input (unset NEW_INPUT_N) -> every comment is new input" \
+  "OPEN_QUESTIONS=0 RECONCILE_DECISION=hold HOLD_REASON=unprocessed_comments" \
+  "$(_decide --notes "$TMP/answered.md" --comments 1 --new-input "")"
+
+# Unset COMMENTS_N reaches the script as an empty value: it must still print
+# a decision Step 7 can route, and that decision must be hold.
+_check "empty --comments (unset COMMENTS_N) -> hold reconcile_decide_error" \
+  "OPEN_QUESTIONS=0 RECONCILE_DECISION=hold HOLD_REASON=reconcile_decide_error" \
+  "$(_decide --notes "$TMP/answered.md" --comments "" --new-input "")"
+
+_check "non-numeric count -> hold reconcile_decide_error" \
+  "OPEN_QUESTIONS=0 RECONCILE_DECISION=hold HOLD_REASON=reconcile_decide_error" \
+  "$(_decide --notes "$TMP/answered.md" --comments 1 --new-input x)"
+
+_check "missing --comments -> hold reconcile_decide_error" \
+  "OPEN_QUESTIONS=0 RECONCILE_DECISION=hold HOLD_REASON=reconcile_decide_error" \
+  "$(_decide --notes "$TMP/answered.md")"
+
 bash "$DECIDE" --notes "$TMP/answered.md" >/dev/null 2>&1
-_check "missing --comments is a usage error" "2" "$?"
+_check "missing --comments still exits 2" "2" "$?"
+
+if grep -q 'adds behaviour, a field, a role or an AC is new-input' "$SKILL"; then
+  _check "SKILL.md: an answer that adds scope is new-input" ok ok
+else
+  _check "SKILL.md: an answer that adds scope is new-input" ok missing
+fi
 
 # The skill must route Step 7 through the script, not the old
 # "any unprocessed comment holds" rule.

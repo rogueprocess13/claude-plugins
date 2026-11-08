@@ -139,6 +139,52 @@ d=$(_mk_ticket noac)
 out=$(printf 'Just prose, no criteria.\n' | bash "$DRIFT" "$d")
 _expect "description without ACs -> unknown, exit 0" "AC_DRIFT=unknown" "$(grep '^AC_DRIFT=' <<<"$out")"
 
+# Empty fetch + --refresh: context.md untouched, and the skipped check is
+# logged rather than silent.
+d=$(_mk_ticket empty)
+cp "$d/context.md" "$TMP/empty-before.md"
+: >"$TMP/desc-empty.md"
+bash "$DRIFT" "$d" --description-file "$TMP/desc-empty.md" --refresh --tag GATE --log-file "$d/pipeline.log" >/dev/null
+_expect "empty description -> exit 0" 0 "$?"
+if cmp -s "$d/context.md" "$TMP/empty-before.md"; then _ok "empty description + --refresh leaves context.md untouched"; else _ko "empty description + --refresh leaves context.md untouched"; fi
+_expect "empty description logs AC_DRIFT_UNKNOWN" 1 "$(grep -c '|META|gate-warn|info|AC_DRIFT_UNKNOWN' "$d/pipeline.log")"
+
+# h3 heading in the tracker: the section runs to the next h3 or higher,
+# not past it into an unrelated list.
+cat >"$TMP/desc-h3.md" <<'EOF'
+## Story
+
+### Acceptance Criteria
+
+- [ ] Upload is accepted
+- [ ] Batch reaches COMPLETE
+- [ ] Third criterion from an h3 section
+
+### Notes
+
+- [ ] not an AC: a notes checklist
+EOF
+d=$(_mk_ticket h3)
+out=$(bash "$DRIFT" "$d" --description-file "$TMP/desc-h3.md" --refresh)
+_expect "### Acceptance Criteria is read (3 ACs, Notes excluded)" "AC_LINEAR=3" "$(grep '^AC_LINEAR=' <<<"$out")"
+_expect "### heading: one added AC" "AC_ADDED_COUNT=1" "$(grep '^AC_ADDED_COUNT=' <<<"$out")"
+_expect "### heading refresh writes 3 items into context.md" 3 "$(grep -c '^- \[ \]' "$d/context.md")"
+
+# Bold label instead of a heading.
+printf 'Intro.\n\n**Acceptance Criteria:**\n\n- [ ] Upload is accepted\n- [ ] Batch reaches COMPLETE\n- [ ] Bold-label criterion\n\n## Scope\n\n- [ ] not an AC\n' >"$TMP/desc-bold.md"
+d=$(_mk_ticket bold)
+out=$(bash "$DRIFT" "$d" --description-file "$TMP/desc-bold.md")
+_expect "**Acceptance Criteria:** is read (3 ACs, Scope excluded)" "AC_LINEAR=3" "$(grep '^AC_LINEAR=' <<<"$out")"
+
+# context.md with an h3 AC heading keeps its own heading level on refresh,
+# and the following h3 section survives.
+d=$(_mk_ticket ctxh3)
+printf '# T\n\n## Description\n\n### Acceptance Criteria\n\n- [ ] Upload is accepted\n\n### Out of scope\n\nExports.\n' >"$d/context.md"
+bash "$DRIFT" "$d" --description-file "$TMP/desc-added.md" --refresh >/dev/null
+_expect "context.md keeps its ### AC heading" 1 "$(grep -c '^### Acceptance Criteria' "$d/context.md")"
+_expect "context.md ### Out of scope survives refresh" 1 "$(grep -c '^### Out of scope' "$d/context.md")"
+_expect "context.md ### refresh has 4 items" 4 "$(grep -c '^- \[ \]' "$d/context.md")"
+
 bash "$DRIFT" "$TMP/missing" </dev/null >/dev/null 2>&1
 _expect "missing ticket dir -> exit 2" 2 "$?"
 

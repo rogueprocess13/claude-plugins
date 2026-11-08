@@ -84,8 +84,8 @@ fi
 # Normalize to flat array of {createdAt, body, user: {name}} objects
 COMMENTS_JSON=$(echo "$COMMENTS_JSON" | bash -c "source ~/.claude/skills/lib/linear-api.sh; normalize_comments")
 
-# Description for Step 8 (MCP fallback: write get_issue's description here).
-bash -c "source ~/.claude/skills/lib/linear-api.sh; get_issue '{TICKET-ID}'" | jq -r '.description // ""' >/tmp/ticket-auto-{TICKET-ID}-desc.md
+# For Step 8 (MCP fallback: write the description here).
+bash -c "source ~/.claude/skills/lib/linear-api.sh; get_issue '{TICKET-ID}'" | jq -r '.description // ""' >"$TICKET_DIR/artifacts/tracker-description.md"
 ```
 
 ## Step 3 — Run comment reconciliation
@@ -117,7 +117,7 @@ If `{OPEN_QUESTIONS_LIST}` is empty or contains only placeholder text ("None", "
 
 **Questions:** for each bullet in `{OPEN_QUESTIONS_LIST}`, scan `{UNPROCESSED_COMMENTS}` and all post-appraisal comments for a concrete answer — one that resolves, decides, or explicitly dismisses it. Vague replies ("we'll see", "TBD", "maybe") are not answers.
 
-**Comments:** classify each unprocessed comment. **answer-only**: it answers open questions and asks for nothing else (any plan edit it implies is the one the question already proposed). **new-input**: anything else — a new requirement, a scope change, a disagreement with the plan, a question back. Set `NEW_INPUT_N` to the new-input count and `COMMENTS_N` to the total.
+**Comments:** classify each unprocessed comment. **answer-only**: it answers open questions and asks for nothing else (any plan edit it implies is the one the question already proposed). **new-input**: anything else — a new requirement, a scope change, a disagreement with the plan, a question back. An answer that adds behaviour, a field, a role or an AC is new-input. Set `NEW_INPUT_N` to the new-input count and `COMMENTS_N` to the total.
 
 If there are no unprocessed comments and no answered-but-unstruck question, skip Step 6.
 
@@ -131,7 +131,7 @@ Read the current plan artifact from `$ARTIFACT_PATH`. Append an `## Amendment #N
 3. Notes any design decisions made during reconciliation
 
 Update `## Open Questions` in notes.md:
-- Mark resolved `[needs-human]` questions with `~~strikethrough~~`, tag included inside the strike (do NOT delete them — preserve history). Step 7 counts every unstruck `- [needs-human]` bullet as open.
+- Strike resolved `[needs-human]` questions, tag inside the strike (`- ~~[needs-human] …~~`); never delete them. Step 7 counts every unstruck one as open.
 - If new unresolvable questions arise from amendment, append them as new `- [needs-human]` bullets
 
 ## Step 7 — Decide, post amendment, re-claim, hold
@@ -143,7 +143,7 @@ eval "$(bash ~/.claude/skills/lib/reconcile-decide.sh --notes "$NOTES_PATH" --co
 echo "$RECONCILE_DECISION $HOLD_REASON"
 ```
 
-`clean` → Step 8. `clean-recorded` → post the amendment comment below (it moves the next cycle's boundary past the answers), skip `re-claim` and the held entry, go to Step 8. `hold` → all of this step.
+`clean` → Step 8. `clean-recorded` → post the amendment comment below (moving the next boundary past the answers) without `re-claim` or the held entry, then Step 8. `hold` → all of this step.
 
 Post an amendment comment to Linear summarizing what changed and what's still open:
 
@@ -200,14 +200,14 @@ Review the amendment comment in Linear, then run `/ticket-approve {TICKET-ID}` a
 First compare the tracker's ACs, which the operator may have edited during the hold, with the workspace (#604). On drift (exit 1) the script refreshes `context.md`; add a notes.md Verification Plan row (same columns, next number) for each `AC_ADDED_n` and any AC still without one, and note it in the Session Log:
 
 ```bash
-bash ~/.claude/skills/lib/ac-drift.sh "$TICKET_DIR" --description-file /tmp/ticket-auto-{TICKET-ID}-desc.md --refresh --tag GATE --log-file "$TAP_LOG"
+bash ~/.claude/skills/lib/ac-drift.sh "$TICKET_DIR" --description-file "$TICKET_DIR/artifacts/tracker-description.md" --refresh --tag GATE --log-file "$TAP_LOG"
 ```
 
 Write the clean log entry:
 
 ```bash
 bash ~/.claude/skills/lib/plog.sh GATE reconcile done "clean"
-hb-wrap.sh decision "reconcile-result" "fired" "clean pass — no unprocessed comments or unanswered questions" "{\"cycle\":\"${RECONCILE_N}\"}"
+hb-wrap.sh decision "reconcile-result" "fired" "clean pass — no open questions or new input" "{\"cycle\":\"${RECONCILE_N}\"}"
 hb-wrap.sh gate "reconcile" "ok" "clean pass — proceeding to implement"
 hb-wrap.sh gate "phase-transition" "ok" "GATE → IMPLEMENT"
 ```
