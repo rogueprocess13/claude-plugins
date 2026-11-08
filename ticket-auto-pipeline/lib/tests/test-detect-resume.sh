@@ -1312,6 +1312,46 @@ test_agent_forged_zombie_close_ends_checkpoint_scope() {
   [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ]
 }
 
+# ── #620: VERIFY_FROM is an allow-list of ticket-verify --from-step values ──
+
+_verify_from_after() {
+  _field "$(_detect_resume_with_log "$1" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|VERIFY|load-context|done|ok" \
+    "2026-07-05T10:00:02Z|VERIFY|$2|done|ok")" VERIFY_FROM
+}
+
+test_verify_from_seed_apply_restarts_verify() {
+  [ -z "$(_verify_from_after TEST-VF1 seed-apply)" ]
+}
+
+test_verify_from_seed_precheck_restarts_verify() {
+  [ -z "$(_verify_from_after TEST-VF2 seed-precheck)" ]
+}
+
+test_verify_from_unknown_step_restarts_verify() {
+  [ -z "$(_verify_from_after TEST-VF3 some-future-step)" ] &&
+    [ -z "$(_verify_from_after TEST-VF4 verify-lock)" ]
+}
+
+test_verify_from_load_context_restarts_verify() {
+  # load-context is written at the end of Step 1, before Step 1.6 (lock,
+  # worktrees, env, seeds): resuming past it would skip that setup.
+  local out
+  out=$(_detect_resume_with_log "TEST-VF5" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|VERIFY|load-context|done|ok")
+  [ -z "$(_field "$out" VERIFY_FROM)" ]
+}
+
+test_verify_from_known_steps_unchanged() {
+  [ "$(_verify_from_after TEST-VF6 build-plan)" = "build-plan" ] || return 1
+  local s
+  for s in browser-session navigate execute-steps; do
+    [ "$(_verify_from_after "TEST-VF7-$s" "$s")" = "build-plan" ] || return 1
+  done
+}
+
 # ── #572: operator-stopped VERIFY is not an attempt ──────────────────────────
 
 test_operator_stop_is_not_a_verify_attempt() {
@@ -1485,7 +1525,12 @@ for fn in \
   test_agent_forged_zombie_close_ends_checkpoint_scope \
   test_operator_stop_drops_checkpoints_without_reimplement \
   test_operator_reset_drops_checkpoints_of_crashed_attempt \
-  test_verify_checkpoint_empty_without_checkpoints; do
+  test_verify_checkpoint_empty_without_checkpoints \
+  test_verify_from_seed_apply_restarts_verify \
+  test_verify_from_seed_precheck_restarts_verify \
+  test_verify_from_unknown_step_restarts_verify \
+  test_verify_from_load_context_restarts_verify \
+  test_verify_from_known_steps_unchanged; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

@@ -19,27 +19,10 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 
 ## Unreleased
 
-Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file another user could have planted.
+The remaining shared-`/tmp` names leave `/tmp`, and fleetd's pidfile can no longer be used to
+truncate a file (#624).
 
 ### Security
-- `lib/plog.sh` recovered a missing `LOG_FILE` from a spawn-meta file at a predictable `/tmp` path and
-  appended to whatever path it named, so another local user could redirect pipeline-log writes. It
-  now validates `TICKET_ID` (`^[A-Za-z0-9_-]+$`), trusts the meta file only when it is a regular file,
-  not a symlink, owned by the current user and not group/other writable, and accepts the recovered
-  path only when it ends in `-pipeline.log`. Anything else drops the line with a stderr warning, exit 0
-  as before (#619).
-- Every per-ticket scratch file (env file, spawn-meta, ctx, start stamps, agent progress, the
-  tool-error dedup stamp, and the stop-file/background-PID ledger fallback) moves to a private
-  per-user directory resolved by the new `lib/ticket-tmp.sh`: `$TICKET_TMP_DIR` when set, else
-  `/tmp/ticket-auto-$EUID`. It is created 0700 and refused when it is a symlink, not a directory, owned
-  by someone else, or group/other accessible. The default depends only on the uid, so the router, its
-  phase agents, the hooks and fleetd agree without being told; fleetd's
-  `phase_dispatch.ticket_tmp_dir` mirrors the rule under a bash/python parity test, and
-  `spawn_agent_pre` also exports the resolved dir to each agent (#619).
-- Skill prose sources the env file through the new `lib/ticket-env.sh <ID>`, which sources it only
-  when it passes the same ownership and mode checks. `auto-merge.sh` and `verify-worktree.sh` apply
-  the same checks before reading it. The hooks also ignore a spawn-meta `LOG_FILE` that is not a
-  `*-pipeline.log`, and spawn-meta files are written 0600 whatever the umask (#619).
 - The remaining shared-`/tmp` names are gone (#624). ticket-verify's build and live-check logs go
   through `ticket-tmp.sh <ID> verify-<step>.log`. ticket-retro, ticket-audit and ticket-prescan keep
   their scratch files in the private scratch dir, the three env-check/features skills use `mktemp`,
@@ -63,6 +46,36 @@ Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file an
   older fleetd of the same uid still holds `/tmp/fleetd.pid`. That check is a read-only probe;
   the legacy file is never created or written (#624).
 
+### Fixed
+- `adopt_planner_proposal` (ticket-appraise-exec, planned tickets) accepted a log path only under
+  `/tmp`, so the real `$TAP_LOG` in `./logs` was refused and an adopted proposal was reported as a
+  copy failure. It now takes any `*-pipeline.log` that is not a symlink and, if it exists, is ours
+  and not group/other writable (#624).
+
+## 0.92.0 (2026-11-08)
+
+Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file another user could have planted.
+
+### Security
+- `lib/plog.sh` recovered a missing `LOG_FILE` from a spawn-meta file at a predictable `/tmp` path and
+  appended to whatever path it named, so another local user could redirect pipeline-log writes. It
+  now validates `TICKET_ID` (`^[A-Za-z0-9_-]+$`), trusts the meta file only when it is a regular file,
+  not a symlink, owned by the current user and not group/other writable, and accepts the recovered
+  path only when it ends in `-pipeline.log`. Anything else drops the line with a stderr warning, exit 0
+  as before (#619).
+- Every per-ticket scratch file (env file, spawn-meta, ctx, start stamps, agent progress, the
+  tool-error dedup stamp, and the stop-file/background-PID ledger fallback) moves to a private
+  per-user directory resolved by the new `lib/ticket-tmp.sh`: `$TICKET_TMP_DIR` when set, else
+  `/tmp/ticket-auto-$EUID`. It is created 0700 and refused when it is a symlink, not a directory, owned
+  by someone else, or group/other accessible. The default depends only on the uid, so the router, its
+  phase agents, the hooks and fleetd agree without being told; fleetd's
+  `phase_dispatch.ticket_tmp_dir` mirrors the rule under a bash/python parity test, and
+  `spawn_agent_pre` also exports the resolved dir to each agent (#619).
+- Skill prose sources the env file through the new `lib/ticket-env.sh <ID>`, which sources it only
+  when it passes the same ownership and mode checks. `auto-merge.sh` and `verify-worktree.sh` apply
+  the same checks before reading it. The hooks also ignore a spawn-meta `LOG_FILE` that is not a
+  `*-pipeline.log`, and spawn-meta files are written 0600 whatever the umask (#619).
+
 ### Changed
 - `hooks/tmp-sweep.sh` sweeps the private scratch dir and, for this user's own files only and never
   through a symlink, the files earlier versions left in `/tmp` (`TICKET_TMP_LEGACY_DIR`).
@@ -71,11 +84,19 @@ Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file an
 - The agent progress file now lives in the scratch dir, where both the agents and the watchdog look
   for it. Agents used to write it in `/tmp` while the watchdog read the fleet state dir.
 
+## 0.91.0 (2026-11-08)
+
 ### Fixed
-- `adopt_planner_proposal` (ticket-appraise-exec, planned tickets) accepted a log path only under
-  `/tmp`, so the real `$TAP_LOG` in `./logs` was refused and an adopted proposal was reported as a
-  copy failure. It now takes any `*-pipeline.log` that is not a symlink and, if it exists, is ours
-  and not group/other writable (#624).
+
+- **`ticket-auto-pipeline`** — `detect-resume.sh` no longer passes VERIFY step
+  names `ticket-verify` does not know (`seed-apply`, `seed-precheck`,
+  `verify-lock`, any future step) as `--from-step`. `VERIFY_FROM` is now an
+  allow-list: only `build-plan` (written after Step 1.6's lock, env and seeds)
+  passes through, browser steps and `checkpoint` still map to `build-plan`, and
+  every other step, `load-context` included, resumes `ticket-verify` from
+  Step 1. fleetd's `last_verify_checkpoint` applies the same
+  mapping, with parity fixtures. `ticket-verify` SKILL.md states the
+  unknown-value rule (size-neutral). (#620)
 
 ## 0.90.0 (2026-11-08)
 
