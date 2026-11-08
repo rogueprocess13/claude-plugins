@@ -77,6 +77,18 @@ Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file an
   copy failure. It now takes any `*-pipeline.log` that is not a symlink and, if it exists, is ours
   and not group/other writable (#624).
 
+## 0.90.0 (2026-11-08)
+
+### Fixed
+- A seeder can no longer leave processes running after VERIFY's seed steps. `lib/seed-run.sh` is
+  now the one runner for `seed-apply.sh` (Step 1.6c) and `seed-precheck.sh` (Step 1.6d): own
+  process group, `SEED_APPLY_TIMEOUT_SECS` kills the whole group, and after every run a sweep
+  kills any process carrying the run's `TICKET_SEED_RUN_ID` environment marker, which catches
+  descendants that left the group with `setsid`. Strays are logged as
+  `VERIFY|seed-apply|warn|` / `VERIFY|seed-precheck|warn|<n> processes survived …`. seed-apply's
+  `make` targets used coreutils `timeout`, which signalled only `make` itself; a timeout is still
+  logged as `exited 124` (#621).
+
 ## 0.89.0 (2026-11-08)
 
 Verdict gate: a stale FAIL/BLOCK no longer refuses a ticket whose verifier has since passed, and
