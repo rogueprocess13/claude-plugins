@@ -17,12 +17,16 @@ as `_verify_attempt_count`, and a parity test runs both on the same fixtures.
   bracket. It is discounted, and `VERIFY_LAST`/`VERIFY_LATEST` skip it, **only when
   detect-resume.sh recorded that line number in the control file** (below).
 - An operator reset zeroes the count. Only attempts after the reset point count.
-- A recorded synthetic close also keeps the attempt's checkpoints (#607). `verify_attempt_lines`
-  (`VERIFY_CHECKPOINT`, `VERIFY_FROM`, and the criteria ticket-verify skips on a resume) scopes
-  to lines after the last real verdict or the last `IMPLEMENT|implement|waiting|`/`done|` line.
-  A crash leaves the code unchanged, so the criteria it already passed stay passed. A
-  re-implement still discards them. fleetd's `last_verify_checkpoint`/`last_verify_criterion`
-  take the control-file lines as a second argument and apply the same rule.
+- Checkpoint scope (#607). `verify_attempt_lines` (`VERIFY_CHECKPOINT`, `VERIFY_FROM`, and the
+  criteria ticket-verify skips on a resume) keeps only lines after the latest of: a
+  `VERIFY|verify|done|`/`fail|` line, an `IMPLEMENT|implement|waiting|`/`done|` line, or an
+  honoured `reset` point. One close does not end the scope: a recorded `zombie-detected:` close.
+  That close marks an unattended crash, which leaves code and environment unchanged, so the
+  criteria the crashed run passed stay passed. A recorded `operator-stopped:` close and an
+  operator reset do end the scope. A person intervened and may have fixed the build or the seed
+  data by hand, so earlier passes are checked again. fleetd's `last_verify_checkpoint` and
+  `last_verify_criterion` take the control-file lines as a second argument and apply the same
+  rule.
 
 ## Trust boundary: the control file
 

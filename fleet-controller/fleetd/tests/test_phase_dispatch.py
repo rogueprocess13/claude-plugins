@@ -1204,6 +1204,29 @@ class TestVerifyCheckpointResume(unittest.TestCase):
         lines.append('2026-01-01T00:00:04Z|IMPLEMENT|implement|done|re')
         self.assertEqual(last_verify_criterion(lines, ['synthetic|3']), '')
 
+    def test_operator_interventions_end_the_checkpoint_scope(self):
+        # A recorded operator-stopped close and an honoured reset are
+        # interventions, not crashes: earlier passes are not trusted.
+        stopped = [
+            '2026-01-01T00:00:01Z|VERIFY|verify|waiting|Agent launched',
+            '2026-01-01T00:00:02Z|VERIFY|checkpoint|done|criterion-7-pass',
+            '2026-01-01T00:00:03Z|VERIFY|verify|fail|operator-stopped: VERIFY verify',
+        ]
+        self.assertEqual(last_verify_criterion(stopped, ['synthetic|3']), '')
+        crashed = [
+            '2026-01-01T00:00:01Z|VERIFY|verify|waiting|Agent launched',
+            '2026-01-01T00:00:02Z|VERIFY|checkpoint|done|criterion-7-pass',
+            '2026-01-01T00:00:03Z|META|verify-attempts-reset|info|fixed',
+            '2026-01-01T00:00:04Z|VERIFY|verify|fail|zombie-detected: VERIFY verify',
+        ]
+        self.assertEqual(last_verify_criterion(crashed, ['synthetic|4']), '7')
+        self.assertEqual(
+            last_verify_criterion(crashed, ['synthetic|4', 'reset|3|t|fixed']),
+            '')
+        # A reset recorded at the last line of the log also counts.
+        self.assertEqual(
+            last_verify_criterion(crashed[:2], ['reset|2|t|fixed']), '')
+
     def test_browser_state_cannot_be_resumed_so_falls_back_to_build_plan(self):
         for substep in ('browser-session', 'navigate', 'execute-steps'):
             lines = [f'2026-01-01T00:00:01Z|VERIFY|{substep}|done|ok']
@@ -1247,12 +1270,14 @@ class TestVerifyCheckpointParity(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _real_verify_from(self, tid, log_lines):
+    def _real_verify_from(self, tid, log_lines, ctl=None):
         log = self.project_dir / 'logs' / f'{tid}-pipeline.log'
         log.write_text(
             '2026-01-01T00:00:00Z|META|schema|info|1\n'
             + '\n'.join(log_lines) + ('\n' if log_lines else '')
         )
+        if ctl:
+            Path(f'{log}.verify-ctl').write_text('\n'.join(ctl) + '\n')
         env = dict(os.environ)
         env['CLAUDE_SKILLS_LIB'] = str(TICKET_AUTO_LIB)
         proc = subprocess.run(
@@ -1316,10 +1341,29 @@ class TestVerifyCheckpointParity(unittest.TestCase):
                 '2026-01-01T00:00:02Z|IMPLEMENT|implement|waiting|Agent launched',
                 '2026-01-01T00:00:03Z|IMPLEMENT|implement|done|ok',
             ]),
+            # An operator stop is an intervention: the recorded
+            # `operator-stopped:` close ends the scope, no IMPLEMENT needed.
+            ('CRE-P10', [
+                '2026-01-01T00:00:01Z|IMPLEMENT|implement|done|ok',
+                '2026-01-01T00:00:02Z|VERIFY|verify|waiting|Agent launched',
+                '2026-01-01T00:00:03Z|VERIFY|checkpoint|done|criterion-2-pass',
+                '2026-01-01T00:00:04Z|META|operator-stop|info|stopped',
+            ]),
+            # An honoured control-file reset (after log line 6, counting the
+            # schema line the helper prepends) starts a fresh scope, even
+            # though the crash close after it is a recorded zombie.
+            ('CRE-P11', [
+                '2026-01-01T00:00:01Z|IMPLEMENT|implement|done|ok',
+                '2026-01-01T00:00:02Z|VERIFY|verify|waiting|Agent launched',
+                '2026-01-01T00:00:03Z|VERIFY|checkpoint|done|criterion-1-pass',
+                '2026-01-01T00:00:04Z|VERIFY|checkpoint|done|criterion-2-pass',
+                '2026-01-01T00:00:05Z|META|verify-attempts-reset|info|env repaired',
+            ], ['reset|6|2026-01-01T00:00:05Z|env repaired']),
         ]
-        for tid, lines in fixtures:
+        for tid, lines, *pre_ctl in fixtures:
             with self.subTest(tid=tid):
-                real_from, real_cp = self._real_verify_from(tid, lines)
+                real_from, real_cp = self._real_verify_from(
+                    tid, lines, pre_ctl[0] if pre_ctl else None)
                 after, ctl = self.after_lines, self.after_ctl
                 self.assertEqual(last_verify_checkpoint(after, ctl), real_from,
                                  f'{tid}: {after}')
@@ -1330,6 +1374,14 @@ class TestVerifyCheckpointParity(unittest.TestCase):
         real_from, real_cp = self._real_verify_from('CRE-P7', fixtures[6][1])
         self.assertEqual(real_cp, '4')
         self.assertTrue(any(c.startswith('synthetic|') for c in self.after_ctl))
+        # The intervention fixtures really had something to drop.
+        for idx in (9, 10):
+            tid, lines, *pre_ctl = fixtures[idx]
+            _, real_cp = self._real_verify_from(
+                tid, lines, pre_ctl[0] if pre_ctl else None)
+            self.assertEqual(real_cp, '', tid)
+            self.assertTrue(
+                any(c.startswith('synthetic|') for c in self.after_ctl), tid)
 
 
 class TestDriftPreventionCoverage(unittest.TestCase):

@@ -58,9 +58,8 @@ VERIFY_CHECKPOINT=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verify-
 ```
 
 It prints the highest `N` with a `VERIFY|checkpoint|done|criterion-N-pass` line in the
-**current attempt only** — lines after the last `VERIFY|verify|done|`/`fail|` terminal. An
-earlier attempt's checkpoints never count: that attempt ended, the code was re-implemented,
-and every criterion must be re-checked. The router also receives the same value as
+**current attempt only**: after the last verdict, re-implement or operator stop/reset. Only
+an unattended crash keeps earlier passes. The router also receives the same value as
 `VERIFY_CHECKPOINT` from `detect-resume.sh`.
 
 - Build-only and live-backend mode: if `VERIFY_CHECKPOINT` is a number `N`, record criteria

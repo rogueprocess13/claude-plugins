@@ -83,6 +83,10 @@ _assert_ran_clean() {
     echo "  notes-parse.sh of this layout was not sourced"
     return 1
   }
+  ! grep -q 'using fallback' "$work/err.txt" || {
+    echo "  unexpected fallback: $(cat "$work/err.txt")"
+    return 1
+  }
   jq -e '."LAY-1".scanned_at | test("^[0-9]{4}-")' "$work/cursor.json" >/dev/null || {
     echo "  cursor not written: $(cat "$work/cursor.json" 2>/dev/null)"
     return 1
@@ -104,7 +108,26 @@ test_synced_skills_layout() {
   _assert_ran_clean "$_TMP/work-skills" "$rc"
 }
 
-for fn in test_plugin_layout test_synced_skills_layout; do
+test_missing_lib_warns_and_still_writes_cursor() {
+  # No lib in either place: retro.sh must say so on stderr (one line per
+  # fallback) instead of degrading silently, and still write the cursor.
+  local root="$_TMP/bare" work="$_TMP/work-bare" rc=0
+  mkdir -p "$root/skills/ticket-retro"
+  cp "$RETRO_SRC" "$root/skills/ticket-retro/retro.sh"
+  _run_retro "$root/skills/ticket-retro/retro.sh" "$work" || rc=$?
+  [ "$rc" -eq 0 ] || {
+    echo "  exit $rc: $(cat "$work/err.txt")"
+    return 1
+  }
+  grep -q '^retro: notes-parse.sh not found under .*, using fallback$' "$work/err.txt" &&
+    grep -q '^retro: heartbeat.sh not loaded from .*, using fallback _iso_now$' "$work/err.txt" || {
+    echo "  missing fallback warning: $(cat "$work/err.txt")"
+    return 1
+  }
+  jq -e '."LAY-1".scanned_at | test("^[0-9]{4}-")' "$work/cursor.json" >/dev/null
+}
+
+for fn in test_plugin_layout test_synced_skills_layout test_missing_lib_warns_and_still_writes_cursor; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

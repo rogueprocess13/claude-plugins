@@ -1255,6 +1255,50 @@ test_reimplement_after_synthetic_close_drops_checkpoints() {
   [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ]
 }
 
+test_operator_stop_drops_checkpoints_without_reimplement() {
+  # An operator stop is an intervention, not a crash: the person may fix the
+  # environment (build, seed data) before resuming, so passes taken before
+  # the stop must be re-checked even though no IMPLEMENT line follows. The
+  # stop still counts no attempt and asks for no re-implement (#572).
+  local now out
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  out=$(_detect_resume_runs 2 "TEST-ZV5" \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|done|implemented" \
+    "${now}|VERIFY|verify|waiting|Agent launched" \
+    "${now}|VERIFY|checkpoint|done|criterion-1-pass" \
+    "${now}|VERIFY|checkpoint|done|criterion-2-pass" \
+    "${now}|META|operator-stop|info|stopped by operator")
+  [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ] &&
+    [ "$(_field "$out" VERIFY_ATTEMPTS)" = "0" ] &&
+    [ -z "$(_field "$out" VERIFY_LAST)" ] &&
+    [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]
+}
+
+test_operator_reset_drops_checkpoints_of_crashed_attempt() {
+  # A crashed attempt passed criteria 1-2, then the operator ran
+  # verify-attempts-reset.sh (control-file reset after line 5). The reset is
+  # an intervention too: the zombie close after it must not carry the
+  # pre-reset passes into the resumed VERIFY.
+  local tmpdir out log
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  log="$tmpdir/logs/TEST-ZV6-pipeline.log"
+  printf '%s\n' \
+    "2026-07-05T10:00:00Z|META|schema|info|1" \
+    "2026-07-05T10:00:01Z|IMPLEMENT|implement|done|implemented" \
+    "2026-07-05T10:00:02Z|VERIFY|verify|waiting|Agent launched" \
+    "2026-07-05T10:00:03Z|VERIFY|checkpoint|done|criterion-1-pass" \
+    "2026-07-05T10:00:04Z|VERIFY|checkpoint|done|criterion-2-pass" \
+    "2026-07-05T10:00:05Z|META|verify-attempts-reset|info|env repaired" >"$log"
+  printf 'reset|5|2026-07-05T10:00:05Z|env repaired\n' >"$log.verify-ctl"
+  out=$(cd "$tmpdir" && bash "$DETECT_SH" "TEST-ZV6" 2>/dev/null) || true
+  rm -rf "$tmpdir"
+  [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ] &&
+    [ "$(_field "$out" VERIFY_ATTEMPTS)" = "0" ] &&
+    [ "$(_field "$out" RESUME_STEP)" = "STEP_4_5" ]
+}
+
 test_agent_forged_zombie_close_ends_checkpoint_scope() {
   # Trust boundary: an unrecorded `zombie-detected:` line (an agent wrote
   # it) is a real verdict, so it still ends the attempt's checkpoints.
@@ -1439,6 +1483,8 @@ for fn in \
   test_zombie_verify_after_real_fail_keeps_count_and_checkpoints \
   test_reimplement_after_synthetic_close_drops_checkpoints \
   test_agent_forged_zombie_close_ends_checkpoint_scope \
+  test_operator_stop_drops_checkpoints_without_reimplement \
+  test_operator_reset_drops_checkpoints_of_crashed_attempt \
   test_verify_checkpoint_empty_without_checkpoints; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"

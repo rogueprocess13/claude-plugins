@@ -624,8 +624,8 @@ if [ -s "$LOG_FILE" ]; then
   # An attempt that reached a verdict is over — the next attempt runs against
   # re-implemented code and must re-check every criterion, never skip one an
   # earlier attempt passed. A crashed attempt reached no verdict, so its own
-  # progress is kept, including across the zombie close written above (#607:
-  # a recorded synthetic close is not a verdict). The scoping
+  # progress is kept, including across a recorded zombie close written above
+  # (#607); an operator stop or reset ends the attempt. The scoping
   # lives in lib/verify-checkpoint.sh, which ticket-verify also calls; fleetd
   # mirrors it in last_verify_checkpoint / last_verify_criterion.
   VERIFY_FROM=$(verify_attempt_lines "$LOG_FILE" |

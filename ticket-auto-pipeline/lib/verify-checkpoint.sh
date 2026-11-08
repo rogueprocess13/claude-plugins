@@ -6,15 +6,16 @@
 # phase_dispatch.last_verify_checkpoint / last_verify_criterion, with a
 # parity test against detect-resume.sh.
 #
-# The current attempt is everything after the last real `VERIFY|verify|done|`
-# or `VERIFY|verify|fail|` verdict, or after the last
-# `IMPLEMENT|implement|waiting|`/`done|` line, whichever is later. An attempt
-# that reached a verdict is over, and code that was (re-)implemented must be
-# re-checked in full. A crashed attempt reached no verdict, so its progress
-# is kept (#607): the synthesized `zombie-detected:`/`operator-stopped:`
-# close detect-resume.sh writes for its stale bracket does not end the
-# attempt, when that line is recorded in the control file (see below), and
-# the resumed VERIFY skips the criteria the crashed run already passed.
+# The current attempt is everything after the last `VERIFY|verify|done|`/
+# `fail|` line, the last `IMPLEMENT|implement|waiting|`/`done|` line, or an
+# honoured operator reset, whichever is latest. An attempt that reached a
+# verdict is over, and code that was (re-)implemented must be re-checked in
+# full. The one exception is an unattended crash (#607): a
+# `zombie-detected:` close detect-resume.sh wrote and recorded in the
+# control file (see below) does not end the attempt, so the resumed VERIFY
+# skips the criteria the crashed run already passed. An `operator-stopped:`
+# close does end it: a person intervened and may have changed the
+# environment, so earlier passes are not trusted.
 #
 # Functions (sourceable; no set -e leak):
 #   verify_attempt_lines <LOG>      — lines of the current attempt
@@ -146,10 +147,19 @@ verify_attempt_lines() {
   local log="$1" ctl
   [ -f "$log" ] || return 0
   ctl=$(_verify_ctl_file "$log")
+  # Only a recorded crash close keeps the scope open. An operator stop is a
+  # deliberate intervention (the environment may be fixed by hand before the
+  # resume), so it ends the scope like a verdict, and so does an honoured
+  # reset: neither may let a pre-intervention PASS skip a re-check.
   awk -F'|' -v ctlf="$ctl" -v synthre="$VERIFY_SYNTHETIC_FAIL_RE" -v rmax="$(_verify_reset_max)" "$_VERIFY_CTL_AWK"'
+    function is_crash_close(   msg) {
+      msg = $5; sub(/^[ \t]+/, "", msg)
+      return is_synthetic() && msg ~ /^zombie-detected:/
+    }
     { line[FNR] = $0 }
-    ($2 == "VERIFY" && $3 == "verify" && ($4 == "done" || $4 == "fail") && !is_synthetic()) ||
+    ($2 == "VERIFY" && $3 == "verify" && ($4 == "done" || $4 == "fail") && !is_crash_close()) ||
     ($2 == "IMPLEMENT" && $3 == "implement" && ($4 == "waiting" || $4 == "done")) { start = FNR }
+    FNR == reset_ln { start = FNR }
     END { for (i = start + 1; i <= FNR; i++) print line[i] }
   ' "$ctl" "$log" 2>/dev/null || true
   return 0

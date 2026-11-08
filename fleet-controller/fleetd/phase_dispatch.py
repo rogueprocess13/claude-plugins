@@ -1722,12 +1722,16 @@ def _current_verify_attempt(log_lines, ctl_lines=None):
     """VERIFY lines of the current attempt — a port of verify-checkpoint.sh's
     `verify_attempt_lines`: everything after the last real
     `VERIFY|verify|done|fail` verdict or `IMPLEMENT|implement|waiting|done`
-    line. A synthetic `zombie-detected:`/`operator-stopped:` close recorded
-    in the control file is not a verdict (#607), so a crashed attempt keeps
-    its checkpoints across the resume."""
-    _, synth = _parse_verify_ctl(ctl_lines)
+    line, or after an honoured control-file reset. Only a recorded
+    `zombie-detected:` close (an unattended crash) keeps the attempt open
+    (#607); an `operator-stopped:` close ends it like a verdict, since a
+    person intervened and may have changed the environment."""
+    reset_ln, synth = _parse_verify_ctl(ctl_lines)
     rows = []
     for lineno, line in enumerate(log_lines, start=1):
+        if lineno <= reset_ln:
+            # At or before an honoured reset: never part of the attempt.
+            continue
         fields = line.rstrip('\n').split('|', 4)
         if len(fields) < 4:
             continue
@@ -1740,7 +1744,7 @@ def _current_verify_attempt(log_lines, ctl_lines=None):
         if fields[2] == 'verify' and fields[3] in ('done', 'fail'):
             msg = fields[4].lstrip(' \t') if len(fields) > 4 else ''
             if not (fields[3] == 'fail' and lineno in synth
-                    and _VERIFY_SYNTHETIC_FAIL_RE.match(msg)):
+                    and msg.startswith('zombie-detected:')):
                 rows = []
             continue
         if len(fields) < 5:
