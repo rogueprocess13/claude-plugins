@@ -404,6 +404,7 @@ planner_draft_readiness_apply() {
     fi
     printf '%s\n' "$eval_json" | jq -c '.semantic' >"${dir}/semantic.json.tmp" &&
       mv -f "${dir}/semantic.json.tmp" "${dir}/semantic.json" || return 1
+    _pdl_missed_record "$dir"
     _pdl_lineage_write "$dir" "$(jq -c '.lineage' <<<"$eval_json")" || return 1
     if printf '%s\n' "$eval_json" | jq -e '.codes | length > 0' >/dev/null 2>&1 ||
       jq -e '(.missing // []) | length > 0' "${dir}/dor-result.json" >/dev/null 2>&1; then

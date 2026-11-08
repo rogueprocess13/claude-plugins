@@ -360,6 +360,32 @@ else
   fail "missing artifacts directory fails cleanly" "expected non-zero return"
 fi
 
+# ── Resolution does not depend on the working directory (rehearsal F33) ──
+echo "--- _planner_crosscheck_resolve_path ignores the caller's working directory ---"
+# Several `*/.git/*` matches here made find abort, so every citation read as
+# unresolved; the gate then reverted every valid spec revision.
+F33_MANY="${TMPDIR}/cwd-many"
+mkdir -p "${F33_MANY}/clone/.git"
+touch "${F33_MANY}/clone/.git/config" "${F33_MANY}/clone/.git/HEAD"
+f33_got=$(cd "$F33_MANY" && _planner_crosscheck_resolve_path "$REPOS_ROOT" "ledgerly/lib/document-badges.ts")
+if [ "$f33_got" = "${APP_DIR}/lib/document-badges.ts" ]; then
+  pass "resolves from a directory where an exclude glob has several matches"
+else
+  fail "resolves from a directory where an exclude glob has several matches" "got '${f33_got}'"
+fi
+
+# One match made the exclude name that one file, so the directory stopped being pruned.
+F33_ONE="${TMPDIR}/cwd-one"
+mkdir -p "${F33_ONE}/clone/node_modules" "${APP_DIR}/node_modules/dep"
+touch "${F33_ONE}/clone/node_modules/only" "${APP_DIR}/node_modules/dep/index.js"
+f33_got=$(cd "$F33_ONE" && _planner_crosscheck_resolve_path "$REPOS_ROOT" "dep/index.js")
+if [ -z "$f33_got" ]; then
+  pass "excluded directories stay pruned when an exclude glob has one match"
+else
+  fail "excluded directories stay pruned when an exclude glob has one match" "got '${f33_got}'"
+fi
+rm -rf "${APP_DIR}/node_modules"
+
 # ── summary ──────────────────────────────────────────────────────────────────
 
 echo ""

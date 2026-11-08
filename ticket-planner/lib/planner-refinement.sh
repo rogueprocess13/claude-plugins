@@ -820,6 +820,10 @@ _planner_refinement_note_testdata() {
 # when there are none or the epic cannot be resolved. Always exit 0.
 planner_refinement_advisory_summary() {
   local initiative_id="$1"
+  # Here, not only in _planner_refinement_children: every sub-summary calls that
+  # inside $(...), so what it sources is gone again in this shell. Called from a
+  # fresh shell the manifest readers were undefined and every line silently lost.
+  _planner_refinement_source_deps 2>/dev/null || return 0
   _planner_refinement_testdata_summary "$initiative_id"
   _planner_refinement_demoted_summary "$initiative_id"
   _planner_refinement_missed_summary "$initiative_id"
