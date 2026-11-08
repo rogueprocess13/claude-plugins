@@ -165,16 +165,19 @@ write_verifier_result() {
 # records are:
 #
 #   1. `META|verifier-result|info|<json>` — every verifier.
-#   2. `EXEC|adversarial-review|done|<PASS|WARNINGS|BLOCKED>…` — the
-#      adversarial review's own terminal line, mapped PASS→PASS,
-#      WARNINGS→WARN, BLOCKED→BLOCK for the `adversarial_review|EXEC` pair.
-#      detect-resume.sh reads this same line to decide whether an
-#      ADVERSARIAL_BLOCKED stop is resolved, so the resume router and the
-#      verdict gate cannot disagree (GitHub #610): a human override written
-#      as `done|WARNINGS — HUMAN OVERRIDE …` supersedes the BLOCK for both,
-#      and a fresh BLOCKED round after it re-arms both. A reviewed round
-#      writes its done line and then a verifier-result with the same
-#      verdict, so this changes nothing for it.
+#   2. `META|adversarial-override|info|reason=…` — written only by the
+#      operator script lib/adversarial-override.sh (GitHub #610), which
+#      refuses agent and fleetd-worker context. It counts as WARN for the
+#      `adversarial_review|EXEC` pair (the script also writes that WARN as a
+#      verifier-result), so a human override supersedes an earlier BLOCK
+#      and a fresh BLOCK round after it re-arms the gate.
+#
+# A plain `EXEC|adversarial-review|done|PASS/WARNINGS` line is NOT a
+# record: any phase agent can write it with plog.sh, so it must never clear
+# a BLOCK on its own. The gate stays the independent second reader. Like
+# verify-attempts-reset.sh this raises the bar and is not a sandbox: an
+# agent that writes the override marker or a PASS verifier-result itself is
+# deliberately forging operator state, and no prompt tells it how.
 #
 # A stale return_completeness FAIL (GitHub #598) clears the same way: the
 # post-VERIFY `return-completeness-check.sh --refresh` writes a later
@@ -202,12 +205,8 @@ verifier_latest_verdict() {
     $2=="META" && $3=="verifier-result" {
       s=$5; for (i=6;i<=NF;i++) s=s"|"$i; print s; next
     }
-    $2=="EXEC" && $3=="adversarial-review" && $4=="done" {
-      v=""
-      if ($5 ~ /^PASS/) v="PASS"
-      else if ($5 ~ /^WARNINGS/) v="WARN"
-      else if ($5 ~ /^BLOCKED/) v="BLOCK"
-      if (v != "") printf "{\"verifier\":\"adversarial_review\",\"phase\":\"EXEC\",\"verdict\":\"%s\"}\n", v
+    $2=="META" && $3=="adversarial-override" && $4=="info" && $5 ~ /^reason=./ {
+      print "{\"verifier\":\"adversarial_review\",\"phase\":\"EXEC\",\"verdict\":\"WARN\"}"
     }' "$log_file" 2>/dev/null | jq -s -r '
     reduce .[] as $e ({}; .[(($e.verifier // "")) + "|" + ($e.phase // "")] = ($e.verdict // ""))
     | to_entries[]

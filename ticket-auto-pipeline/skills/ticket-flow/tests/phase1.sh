@@ -1457,15 +1457,35 @@ _adv_block_round() {
 }
 
 _adv_override() {
-  local ts
-  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  {
-    echo "${ts}|META|human-decision|info|ADVERSARIAL_BLOCKED override after round 4"
-    echo "${ts}|EXEC|adversarial-review|done|WARNINGS — HUMAN OVERRIDE (no review run)"
-  } >>"$1"
+  # The operator script, run as a human at a terminal would run it.
+  env -u CLAUDE_CODE_SESSION_ID -u FLEET_WORKER_PID -u FLEET_GENERATION HB_LOG_FILE= \
+    bash "$PLUGIN_DIR/lib/adversarial-override.sh" --log-file "$1" WIL-99 \
+    --reason "plan accepted after round 4" >/dev/null
 }
 
-# #610: a human override of the adversarial gate supersedes the BLOCK.
+# #610 forgery: a plain done|WARNINGS line (what an agent can write with
+# plog.sh) after a BLOCK must not open the gate.
+test_flow_verdict_gate_bare_done_line_still_refused() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  _flow_verdict_manifest "$tmpdir/repos" WIL-99
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  _adv_block_round "$log" 4
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|EXEC|adversarial-review|done|WARNINGS — HUMAN OVERRIDE (no review run)" >>"$log"
+
+  local rc=0
+  _flow_run "$tmpdir" WIL-99 pr-review-pass-uat >/dev/null 2>&1 || rc=$?
+  local stage
+  stage=$(_flow_stage "$tmpdir" WIL-99)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 11 ] && [ "$stage" = "Review" ] || {
+    echo "rc=$rc stage=$stage"
+    return 1
+  }
+}
+
+# #610: an operator override (adversarial-override.sh) supersedes the BLOCK.
 test_flow_verdict_gate_override_then_no_block_allowed() {
   local tmpdir
   tmpdir=$(mktemp -d)
@@ -1842,6 +1862,7 @@ for fn in \
   test_flow_verdict_gate_skipped_when_not_declared \
   test_flow_verdict_gate_fails_open_without_verifier_result_lib \
   test_flow_verdict_gate_stale_fail_then_refresh_pass_allowed \
+  test_flow_verdict_gate_bare_done_line_still_refused \
   test_flow_verdict_gate_override_then_no_block_allowed \
   test_flow_verdict_gate_override_then_fresh_block_refused \
   test_flow_verdict_gate_unarmed_is_loud \

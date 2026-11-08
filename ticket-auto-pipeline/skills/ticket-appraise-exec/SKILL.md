@@ -497,8 +497,6 @@ Fix the plan, then re-run /ticket-appraise-exec {TICKET-ID} --from-step create-a
 
 If `{ADV_ROUND}` ≥ 2, add this line to the message: `This plan has now been blocked {ADV_ROUND} times in a row. Before another detail pass, check whether the approach itself is the problem (see ### Approach review from round 3 on).` If the review contains `**Approach:** RECONSIDER`, quote its alternative in the message too.
 
-**Human override of a BLOCK:** plog `META human-decision info "<reason>"`, then `EXEC adversarial-review done "WARNINGS — HUMAN OVERRIDE: <reason>"`. That line clears both detect-resume and the verdict gate (#610); a later BLOCKED round re-arms both.
-
 If WARNINGS or PASS, proceed to Step 3.7 — do NOT skip ahead to Step 4; Steps 3.7 and 3.8 both apply in this same complex-ticket branch and still have to run first.
 
 ---
