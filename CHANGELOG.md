@@ -36,6 +36,21 @@ Phase agents read the right skill file, and a stale GitNexus index is refreshed 
   get one `META|gitnexus-stale` warn line naming the manual command. The STEP_5 rollup line is
   written in its own Bash call (#609).
 
+## ticket-planner 0.34.2 (2026-11-07)
+
+Three draft readiness and Refinement reporting fixes queued from dispatch rehearsal replays.
+
+### Fixed
+- **XSS worded without an XSS term now counts as a security finding.** "Render as text, never as
+  HTML", raw HTML, HTML escaping and script tags now match the security rule, so such a finding
+  can't be assumed away or drift-demoted. A response format ("returns JSON, not HTML") does not match.
+- **Audit advisories survive a revision.** `MISSED` entries were read only from a spec's latest
+  evaluation, so a revise round silently dropped earlier ones. They are now kept per spec and
+  reported together; one the latest evaluation no longer raises is marked `(from an earlier revision)`.
+- **`planner_refinement_advisory_summary` no longer prints nothing in a fresh shell.** It loaded its
+  dependencies only inside a command substitution, so the manifest readers were undefined in the
+  calling shell and every advisory line was lost, as SKILL.md's gate-pass step runs it.
+
 ## ticket-planner 0.34.1 (2026-11-07)
 
 Fixes the false Crosscheck failure that halted dispatch rehearsal iter 04 (F33).

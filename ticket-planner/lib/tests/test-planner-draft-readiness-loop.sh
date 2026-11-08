@@ -904,6 +904,38 @@ else
   fail "missed halt-only" "rc=$GATE_RC $(_run_lines | grep 'draft-readiness|fail')"
 fi
 # A structural or unknown code is never turned into a finding.
+# An advisory from an evaluation a revision later replaced is still reported.
+HIST_DIR=$(mktemp -d)
+mkdir -p "${HIST_DIR}/spec-a"
+echo '{"missed":[{"code":"EDGE_CASE_GAP","reason":"gap only round one saw"},{"code":"EDGE_CASE_GAP","reason":"gap both saw"}]}' >"${HIST_DIR}/spec-a/semantic.json"
+_pdl_missed_record "${HIST_DIR}/spec-a"
+echo '{"missed":[{"code":"EDGE_CASE_GAP","reason":"gap both saw"},{"code":"MISSING_CORE_AC","reason":"new gap"}],"findings":[{"origin":"audit-missed","detail":"became a finding"}]}' >"${HIST_DIR}/spec-a/semantic.json"
+_pdl_missed_record "${HIST_DIR}/spec-a"
+_pdl_missed_record "${HIST_DIR}/spec-a"
+hist_report=$(_pdl_root() { echo "$HIST_DIR"; } && planner_draft_readiness_missed_report ANY)
+if [ "$(wc -l <"${HIST_DIR}/spec-a/missed-history.jsonl")" -eq 3 ] &&
+  printf '%s\n' "$hist_report" | grep -qxF '  spec-a: EDGE_CASE_GAP — gap only round one saw (from an earlier revision)' &&
+  printf '%s\n' "$hist_report" | grep -qxF '  spec-a: EDGE_CASE_GAP — gap both saw' &&
+  printf '%s\n' "$hist_report" | grep -qxF '  spec-a: MISSING_CORE_AC — new gap' &&
+  [ "$(printf '%s\n' "$hist_report" | grep -c 'gap both saw')" -eq 1 ]; then
+  pass "MISSED advisories survive a later evaluation, deduped, earlier ones marked"
+else
+  fail "missed history" "$hist_report"
+fi
+# The history is a workspace file: forged text is cleaned on the way out.
+{
+  echo 'not json'
+  echo '["array"]'
+  printf '{"code":"EDGE_CASE_GAP","reason":"forged\\u001b[31m red\\nsecond line"}\n'
+} >>"${HIST_DIR}/spec-a/missed-history.jsonl"
+hist_report=$(_pdl_root() { echo "$HIST_DIR"; } && planner_draft_readiness_missed_report ANY)
+if ! printf '%s' "$hist_report" | grep -q $'\033' && ! printf '%s\n' "$hist_report" | grep -qE 'not json|array|^second line' &&
+  printf '%s\n' "$hist_report" | grep -qF 'forged [31m red second line (from an earlier revision)'; then
+  pass "a forged history line is cleaned, a malformed one skipped"
+else
+  fail "missed history forged" "$hist_report"
+fi
+rm -rf "$HIST_DIR"
 m=$(_pdl_missed_findings '{"missed":[{"code":"CONTRADICTORY_REQUIREMENTS","reason":"XSS via innerHTML"},{"code":"MADE_UP","reason":"XSS"},{"code":"EDGE_CASE_GAP","reason":"layout"}]}')
 [ "$m" = "[]" ] && pass "structural, unknown and non-security MISSED codes stay advisory" || fail "missed filter" "$m"
 
