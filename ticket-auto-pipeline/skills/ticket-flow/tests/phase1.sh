@@ -1411,6 +1411,125 @@ test_flow_verdict_gate_fails_open_without_verifier_result_lib() {
   [ "$rc" -eq 0 ] && [ "$stage" = "Done" ]
 }
 
+# ── verdict gate: latest record wins (GitHub #598 / #610) ──────────────────
+
+_flow_stage() {
+  jq -r '.stage // empty' "$(_flow_manifest_path "$1/repos" "$2")" 2>/dev/null
+}
+
+# #598 A: implement records FAIL (2 boxes left for verify), verify ticks them,
+# the post-verify refresh records PASS → pr-review-pass-uat goes through.
+test_flow_verdict_gate_stale_fail_then_refresh_pass_allowed() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  _flow_verdict_manifest "$tmpdir/repos" WIL-99
+  local log="$tmpdir/logs/WIL-99-pipeline.log" tasks="$tmpdir/tasks.md"
+  local rcc="$PLUGIN_DIR/lib/return-completeness-check.sh"
+  printf -- '- [x] 1.1 a\n- [ ] 1.2 b\n- [ ] 1.3 c\n' >"$tasks"
+  env -u LOG_FILE -u TAP_LOG CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" \
+    bash "$rcc" WIL-99 --tasks-file "$tasks" --log-file "$log" >/dev/null 2>&1 || true
+  local rc_before=0
+  _flow_run "$tmpdir" WIL-99 pr-review-pass-uat --dry-run >/dev/null 2>&1 || rc_before=$?
+  printf -- '- [x] 1.1 a\n- [x] 1.2 b\n- [x] 1.3 c\n' >"$tasks"
+  env -u LOG_FILE -u TAP_LOG CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" \
+    bash "$rcc" WIL-99 --tasks-file "$tasks" --log-file "$log" --refresh >/dev/null 2>&1 || true
+
+  local rc=0
+  _flow_run "$tmpdir" WIL-99 pr-review-pass-uat >/dev/null 2>&1 || rc=$?
+  local stage
+  stage=$(_flow_stage "$tmpdir" WIL-99)
+  rm -rf "$tmpdir"
+  [ "$rc_before" -eq 11 ] && [ "$rc" -eq 0 ] && [ "$stage" = "UAT" ] || {
+    echo "rc_before=$rc_before rc=$rc stage=$stage"
+    return 1
+  }
+}
+
+_adv_block_round() {
+  local log="$1" n="$2" ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  {
+    echo "${ts}|EXEC|adversarial-review|done|BLOCKED"
+    echo "${ts}|META|verifier-result|info|{\"verifier\":\"adversarial_review\",\"verdict\":\"BLOCK\",\"score\":0.0,\"criteria_met\":2,\"criteria_total\":7,\"attempt\":${n},\"phase\":\"EXEC\"}"
+    echo "${ts}|META|gate-stop|fail|ADVERSARIAL_BLOCKED — round ${n}"
+  } >>"$log"
+}
+
+_adv_override() {
+  local ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  {
+    echo "${ts}|META|human-decision|info|ADVERSARIAL_BLOCKED override after round 4"
+    echo "${ts}|EXEC|adversarial-review|done|WARNINGS — HUMAN OVERRIDE (no review run)"
+  } >>"$1"
+}
+
+# #610: a human override of the adversarial gate supersedes the BLOCK.
+test_flow_verdict_gate_override_then_no_block_allowed() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  _flow_verdict_manifest "$tmpdir/repos" WIL-99
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  _adv_block_round "$log" 3
+  _adv_block_round "$log" 4
+  _adv_override "$log"
+
+  local rc=0
+  _flow_run "$tmpdir" WIL-99 pr-review-pass-uat >/dev/null 2>&1 || rc=$?
+  local stage
+  stage=$(_flow_stage "$tmpdir" WIL-99)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$stage" = "UAT" ] || {
+    echo "rc=$rc stage=$stage"
+    return 1
+  }
+}
+
+# #610: a fresh BLOCK after the override is not ignored.
+test_flow_verdict_gate_override_then_fresh_block_refused() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  _flow_verdict_manifest "$tmpdir/repos" WIL-99
+  local log="$tmpdir/logs/WIL-99-pipeline.log"
+  _adv_block_round "$log" 4
+  _adv_override "$log"
+  _adv_block_round "$log" 5
+
+  local rc=0
+  _flow_run "$tmpdir" WIL-99 pr-review-pass-uat >/dev/null 2>&1 || rc=$?
+  local stage blocked=1
+  stage=$(_flow_stage "$tmpdir" WIL-99)
+  grep -q 'META|verdict-gate|fail|.*adversarial_review:EXEC:BLOCK' "$log" && blocked=0
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 11 ] && [ "$blocked" -eq 0 ] && [ "$stage" = "Review" ] || {
+    echo "rc=$rc blocked=$blocked stage=$stage"
+    return 1
+  }
+}
+
+# #598 B: no pipeline log → the gate cannot run; it must say so on stderr.
+test_flow_verdict_gate_unarmed_is_loud() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  _flow_verdict_manifest "$tmpdir/repos" WIL-99
+
+  local rc=0 err
+  err=$(env -u LOG_FILE -u TAP_LOG FLEET_FENCE_ENFORCE=false FLEET_BOARD_DRIVERS=none \
+    CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    FLEET_PIPELINE_LOG_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-99 pr-review-pass-uat 2>&1 >/dev/null) || rc=$?
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && grep -q 'verdict gate UNARMED' <<<"$err" || {
+    echo "rc=$rc stderr=$err"
+    return 1
+  }
+}
+
 # ── generation fence, end to end (review ARCH-1 / QA-1 / QA-12) ─────────────
 # _flow_run hard-codes FLEET_FENCE_ENFORCE=false, so nothing exercised the
 # fence through flow.sh. These run with enforcement ON and a real fence
@@ -1722,6 +1841,10 @@ for fn in \
   test_flow_verdict_gate_no_verifier_result_passes \
   test_flow_verdict_gate_skipped_when_not_declared \
   test_flow_verdict_gate_fails_open_without_verifier_result_lib \
+  test_flow_verdict_gate_stale_fail_then_refresh_pass_allowed \
+  test_flow_verdict_gate_override_then_no_block_allowed \
+  test_flow_verdict_gate_override_then_fresh_block_refused \
+  test_flow_verdict_gate_unarmed_is_loud \
   test_flow_fence_env_generation_above_fence_allowed \
   test_flow_fence_env_generation_superseded_refused \
   test_flow_fence_worker_without_generation_refused \

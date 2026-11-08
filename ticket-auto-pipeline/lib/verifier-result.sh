@@ -159,16 +159,34 @@ write_verifier_result() {
 #
 # verifier_latest_verdict <log_file>
 #
-# Scans a pipeline log for `META|verifier-result|info|<json>` entries and,
-# for each distinct (verifier, phase) pair, keeps only the most recently
-# written verdict — a later PASS/WARN for the same pair supersedes an
-# earlier FAIL/BLOCK. Prints one line per pair whose latest verdict is FAIL
-# or BLOCK, in the form:
+# One rule: for each (verifier, phase) pair, the LATEST verdict-bearing
+# record in the log wins. A later PASS/WARN supersedes an earlier FAIL/BLOCK
+# for the same pair, and a later FAIL/BLOCK re-arms it. Verdict-bearing
+# records are:
+#
+#   1. `META|verifier-result|info|<json>` — every verifier.
+#   2. `EXEC|adversarial-review|done|<PASS|WARNINGS|BLOCKED>…` — the
+#      adversarial review's own terminal line, mapped PASS→PASS,
+#      WARNINGS→WARN, BLOCKED→BLOCK for the `adversarial_review|EXEC` pair.
+#      detect-resume.sh reads this same line to decide whether an
+#      ADVERSARIAL_BLOCKED stop is resolved, so the resume router and the
+#      verdict gate cannot disagree (GitHub #610): a human override written
+#      as `done|WARNINGS — HUMAN OVERRIDE …` supersedes the BLOCK for both,
+#      and a fresh BLOCKED round after it re-arms both. A reviewed round
+#      writes its done line and then a verifier-result with the same
+#      verdict, so this changes nothing for it.
+#
+# A stale return_completeness FAIL (GitHub #598) clears the same way: the
+# post-VERIFY `return-completeness-check.sh --refresh` writes a later
+# verifier-result for the same pair.
+#
+# Prints one line per pair whose latest verdict is FAIL or BLOCK, in the
+# form:
 #
 #   <verifier>|<phase>|<verdict>
 #
 # Prints nothing (and always returns 0) when the log is missing, empty, has
-# no verifier-result entries, or every pair's latest verdict is PASS/WARN.
+# no verdict-bearing records, or every pair's latest verdict is PASS/WARN.
 # Absence of evidence is deliberately not failure — a ticket with zero
 # verifier-results must transition exactly as it did before this reader
 # existed.
@@ -180,9 +198,17 @@ verifier_latest_verdict() {
   [ -n "$log_file" ] && [ -f "$log_file" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
 
-  awk -F'|' '$2=="META" && $3=="verifier-result" {
-    s=$5; for (i=6;i<=NF;i++) s=s"|"$i; print s
-  }' "$log_file" 2>/dev/null | jq -s -r '
+  awk -F'|' '
+    $2=="META" && $3=="verifier-result" {
+      s=$5; for (i=6;i<=NF;i++) s=s"|"$i; print s; next
+    }
+    $2=="EXEC" && $3=="adversarial-review" && $4=="done" {
+      v=""
+      if ($5 ~ /^PASS/) v="PASS"
+      else if ($5 ~ /^WARNINGS/) v="WARN"
+      else if ($5 ~ /^BLOCKED/) v="BLOCK"
+      if (v != "") printf "{\"verifier\":\"adversarial_review\",\"phase\":\"EXEC\",\"verdict\":\"%s\"}\n", v
+    }' "$log_file" 2>/dev/null | jq -s -r '
     reduce .[] as $e ({}; .[(($e.verifier // "")) + "|" + ($e.phase // "")] = ($e.verdict // ""))
     | to_entries[]
     | select(.value == "FAIL" or .value == "BLOCK")
