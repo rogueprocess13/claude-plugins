@@ -57,6 +57,23 @@
 #   verify_lock_acquire "CRE-123" || exit 1   # blocks (polling) up to the timeout
 #   ...                                        # start stack, run checks
 #   verify_lock_release                        # idempotent — call on every exit path
+#   verify_lock_held_by "CRE-123"              # exit 0 iff a live holder holds it for CRE-123
+#
+# Same-ticket takeover (#626): the lock is owned per acquire call (the
+# token file names that call's holder pid), but a resumed run for the same
+# ticket is a new process. Without help it would wait on its own orphaned
+# holder — left alive by a crashed agent — for up to the max-hold time,
+# longer than its own acquire timeout. So acquire also records the OWNER:
+# the process that stays alive exactly as long as the ticket-verify
+# invocation that took the lock (see _verify_lock_owner_pid). A live holder
+# for THIS ticket whose owner is provably dead is stopped through its stop
+# file and the lock acquired fresh. A same-ticket holder whose owner is
+# alive, or whose owner is unknown (an info file written before owners
+# were recorded), is NOT taken over: a still-live earlier invocation (a
+# zombie VERIFY) may be serving the worktree Step 1.6a4 would reset, so
+# acquire waits as before and says so (stderr plus a
+# META|verify-lock-self-wait line when TAP_LOG is set). A live holder for
+# any other ticket is never signalled — that caller waits as before.
 
 # shellcheck source=ticket-tmp.sh
 source "$(dirname "${BASH_SOURCE[0]:-.}")/ticket-tmp.sh" 2>/dev/null ||
@@ -105,6 +122,81 @@ _verify_lock_token_file() { echo "$(_verify_lock_file).holder"; }
 _verify_lock_info_file() { echo "$(_verify_lock_file).info"; }
 _verify_lock_stop_file() { echo "$(_verify_lock_file).stop"; }
 
+# _verify_lock_start_ticks <pid>
+# Start time of a live pid (field 22 of /proc/PID/stat, read after the
+# last ')' so a comm with spaces cannot shift it); empty when unknown.
+_verify_lock_start_ticks() {
+  local s
+  s=$(cat "/proc/$1/stat" 2>/dev/null) || return 0
+  s=${s##*) }
+  # shellcheck disable=SC2086
+  set -- $s
+  echo "${20:-}"
+}
+
+# _verify_lock_owner_pid
+# The pid that is alive exactly while this ticket-verify invocation is:
+#   1. VERIFY_LOCK_OWNER_PID, an explicit caller override;
+#   2. FLEET_WORKER_PID — fleetd's `claude -p` phase worker, one process
+#      per VERIFY attempt, already the liveness anchor of spawn-helper's
+#      watchdog;
+#   3. the nearest `claude` ancestor of this shell — the agent session
+#      whose Bash tool runs each SKILL.md block. `$$` itself is useless:
+#      every Bash tool call is a new, short-lived shell.
+# Prints nothing when none is found (e.g. a plain terminal): the owner is
+# then unknown and a later same-ticket acquire never takes over from it.
+_verify_lock_owner_pid() {
+  if [ -n "${VERIFY_LOCK_OWNER_PID:-}" ]; then
+    echo "$VERIFY_LOCK_OWNER_PID"
+    return 0
+  fi
+  if [ -n "${FLEET_WORKER_PID:-}" ]; then
+    echo "$FLEET_WORKER_PID"
+    return 0
+  fi
+  local p="$BASHPID" i=0 st
+  while [ "$i" -lt 16 ] && [ "${p:-0}" -gt 1 ] 2>/dev/null; do
+    if [ "$(cat "/proc/$p/comm" 2>/dev/null)" = "claude" ]; then
+      echo "$p"
+      return 0
+    fi
+    st=$(cat "/proc/$p/stat" 2>/dev/null) || return 0
+    st=${st##*) }
+    # shellcheck disable=SC2086
+    set -- $st
+    p="${2:-0}"
+    i=$((i + 1))
+  done
+  return 0
+}
+
+# _verify_lock_owner_state
+# Liveness of the current holder's recorded owner: prints dead, alive or
+# unknown (no owner recorded, or not a pid). A recorded start time that no
+# longer matches means the pid was reused, so the owner is dead.
+_verify_lock_owner_state() {
+  local info owner start cur
+  info=$(_verify_lock_info_file)
+  owner=$(sed -n 's/^owner_pid=//p' "$info" 2>/dev/null | head -n 1)
+  start=$(sed -n 's/^owner_start=//p' "$info" 2>/dev/null | head -n 1)
+  case "$owner" in
+  '' | *[!0-9]*)
+    echo unknown
+    return 0
+    ;;
+  esac
+  if ! kill -0 "$owner" 2>/dev/null && ! ps -p "$owner" >/dev/null 2>&1; then
+    echo dead
+    return 0
+  fi
+  cur=$(_verify_lock_start_ticks "$owner")
+  if [ -n "$start" ] && [ -n "$cur" ] && [ "$start" != "$cur" ]; then
+    echo dead
+    return 0
+  fi
+  echo alive
+}
+
 # verify_lock_acquire <TICKET_ID> [timeout_secs]
 # Blocks (polling once a second) until the lock is acquired or
 # <timeout_secs> (default VERIFY_LOCK_TIMEOUT_SECS) elapses.
@@ -126,6 +218,10 @@ verify_lock_acquire() {
   fi
 
   mkdir -p "$(dirname "$lockfile")" 2>/dev/null || true
+  _verify_lock_stop_same_ticket "$ticket_id"
+  local owner_pid owner_start=""
+  owner_pid=$(_verify_lock_owner_pid)
+  [ -n "$owner_pid" ] && owner_start=$(_verify_lock_start_ticks "$owner_pid")
   # Clear leftover bookkeeping ONLY when the pid it names is no longer
   # alive. This must never touch a live holder's files: two acquirers can
   # race here (one holding the flock, another about to wait on it), and
@@ -165,6 +261,8 @@ verify_lock_acquire() {
       printf 'ticket=%s\n' "$ticket_id"
       printf 'acquired_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       printf 'pid=%s\n' "$BASHPID"
+      printf 'owner_pid=%s\n' "$owner_pid"
+      printf 'owner_start=%s\n' "$owner_start"
     } >"$info_file"
     # 0.5s ticks (not 1s): halves worst-case latency between
     # verify_lock_release touching the stop file and this loop noticing it.
@@ -213,6 +311,69 @@ verify_lock_acquire() {
   [ -f "$info_file" ] && holder_info=" — currently held by: $(tr '\n' ' ' <"$info_file" 2>/dev/null)"
   echo "verify-lock: timed out after ${timeout}s waiting for the ticket-verify lock ($lockfile) for ticket ${ticket_id}${holder_info}. Another verify run is using the local app stack — retry later, or investigate a stuck holder (only remove ${lockfile}.holder/.info/.stop after confirming that pid is actually gone)." >&2
   return 1
+}
+
+# _verify_lock_holder_ticket
+# Prints the ticket id of the LIVE holder (token pid alive, info file's
+# ticket= line), nothing otherwise. Read-only.
+_verify_lock_holder_ticket() {
+  local pid
+  pid=$(cat "$(_verify_lock_token_file)" 2>/dev/null || true)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 0
+  sed -n 's/^ticket=//p' "$(_verify_lock_info_file)" 2>/dev/null | head -n 1
+}
+
+# verify_lock_held_by <TICKET_ID>
+# Exit 0 iff the lock is held by a live holder for exactly <TICKET_ID>,
+# 1 otherwise (free, stale, unreadable, or another ticket). Read-only.
+verify_lock_held_by() {
+  local want="${1:-}" got
+  [ -n "$want" ] || return 1
+  got=$(_verify_lock_holder_ticket)
+  [ "$got" = "$want" ]
+}
+
+# _verify_lock_stop_same_ticket <TICKET_ID>
+# The takeover half of acquire: when a live holder holds the lock for this
+# same ticket AND its owner is dead, ask it to stop and wait (bounded,
+# ~6s) for it to exit so the flock frees. A no-op for a free lock or
+# another ticket's holder — those files are never touched. A same-ticket
+# holder with a live or unknown owner is left alone too: only a self-wait
+# line is written, and acquire waits as for any other holder. Like release(), it snapshots the holder
+# pid first and only touches the stop file while the token still names
+# that pid, so a different holder that wins in between is left alone (the
+# re-check narrows, though cannot fully close, that window — the same
+# residual as release()). If the holder does not exit in time, the normal
+# acquire path below simply waits on the flock as it always has.
+_verify_lock_stop_same_ticket() {
+  local ticket_id="$1" token_file stop_file old
+  token_file=$(_verify_lock_token_file)
+  stop_file=$(_verify_lock_stop_file)
+  verify_lock_held_by "$ticket_id" || return 0
+  old=$(cat "$token_file" 2>/dev/null || true)
+  [ -n "$old" ] || return 0
+  local owner_state
+  owner_state=$(_verify_lock_owner_state)
+  if [ "$owner_state" != "dead" ]; then
+    local msg="a live same-ticket holder exists for ${ticket_id} (holder pid ${old}, owner ${owner_state}) — not taking it over; waiting"
+    echo "verify-lock: ${msg}." >&2
+    local plog="${TAP_LOG:-${LOG_FILE:-}}"
+    [ -n "$plog" ] && [ -f "$plog" ] &&
+      printf '%s|META|verify-lock-self-wait|warn|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$msg" >>"$plog"
+    return 0
+  fi
+  [ "$(cat "$token_file" 2>/dev/null || true)" = "$old" ] || return 0
+  echo "verify-lock: ${ticket_id} already holds the lock (pid ${old}) and its owner is dead — taking over the orphaned holder." >&2
+  touch "$stop_file" 2>/dev/null || true
+  local _ticks=0
+  # Done once the holder has cleared its own token (its last act before
+  # exiting and dropping the flock) or is gone; flock -w covers the rest.
+  while [ "$_ticks" -lt 12 ] && kill -0 "$old" 2>/dev/null &&
+    [ "$(cat "$token_file" 2>/dev/null || true)" = "$old" ]; do
+    sleep 0.5
+    _ticks=$((_ticks + 1))
+  done
+  return 0
 }
 
 # verify_lock_release

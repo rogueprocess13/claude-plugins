@@ -39,12 +39,12 @@ When `--from-auto` is present, VERIFY is a loop-bearing phase: additionally foll
 - **Verdict**: after the final pass/fail determination, write `hb-wrap.sh decision "verification-verdict" "fired" "PASS|FAIL" '{"verdict":"PASS|FAIL","criteria_met":"N","criteria_total":"M"}'`
 
 ### Step dispatch
-**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1.
+**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1. Any resume past Step 1.6 (`build-plan`, or a 4c/4c-live `execute-steps` re-entry) first runs the 1.6a3 lock block unless this run skips 1.6; a dead attempt's orphaned lock for this ticket is taken over.
 
 | `--from-step` value | Effective skip to | Restore from |
 |---------------------|-------------------|--------------|
 | `load-context` | **Step 1** (start over) | Step 1.6 (lock, env, seeds) runs after it |
-| `build-plan` | Step 3 (browser session) | re-run Steps 3+ in full |
+| `build-plan` | Step 3, after the 1.6a3 lock block | re-run Steps 3+ in full |
 | `browser-session` | **falls back to `build-plan`** | browser state lost on crash |
 | `navigate` | **falls back to `build-plan`** | browser state lost on crash |
 | `execute-steps` | **falls back to `build-plan`** | browser state lost on crash |
@@ -299,7 +299,7 @@ fi
 bash ~/.claude/skills/lib/plog.sh VERIFY verify-lock done "acquired"
 ```
 
-`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at every earlier point that can exit before Step 5 — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, Step 1.6d's seeder-precheck failure (the helper releases it), and Step 1.7a's "no test user found" SKIP exit. `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
+`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at every earlier point that can exit before Step 5 — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, Step 1.6d's seeder-precheck failure (the helper releases it), Step 1.7a's "no test user found" SKIP exit, and Step 7 (Steps 3b/4 reach it without Step 5). `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
 
 ### 1.6a4 — Resolve isolated worktrees for affected repos
 
@@ -1200,6 +1200,8 @@ marker.
 
 ## Step 7 — Failure report
 
+First run Step 5's `verify_lock_release` block (idempotent).
+
 ### 7a — Collect diagnostics
 
 **Browser mode:**
@@ -1481,8 +1483,6 @@ If `--env local`: no state change — the ticket is still in `Ready`, code just 
 A failure still reports. End your return with the `=== PHASE_RESULT ===` block described in **§ 6 Phase result emission** of the auto preamble: `PHASE: VERIFY`, `VERDICT: FAIL`, `VERIFIER` set to this run's actual verifier, `CRITERIA_MET` the number that passed, `CRITERIA_TOTAL` the number attempted, and `UNADDRESSED` naming any criterion never reached. This is **additive** — the REMEDIATION_BRIEF above is unchanged and keeps its canonical format. The block goes last, after everything else in the return.
 
 A FAIL with a block is a usable signal; a FAIL with no block is an absence of information, and any consumer must then fall back to whole-run classification.
-
----
 
 ## Notes
 
