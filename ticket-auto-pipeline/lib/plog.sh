@@ -22,6 +22,10 @@
 #      warning, #605) — safe as the last statement under `set -e`
 #   1  heartbeat.sh not found next to this script, or the log is not writable
 #   2  usage: fewer than PHASE STEP STATUS, or --log-file without a value
+#   3  refused: META|adversarial-override or META|verify-attempts-reset is an
+#      operator marker, written only by its own operator script
+#      (adversarial-override.sh, verify-attempts-reset.sh), never through
+#      this agent-facing writer (GitHub #610)
 
 _PLOG_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -37,6 +41,20 @@ if [ "${1:-}" = "--log-file" ]; then
 fi
 
 [ "$#" -ge 3 ] || _plog_usage
+
+# GitHub #610: operator markers clear gates (the adversarial override counts
+# as a WARN in flow.sh's verdict gate). They have their own operator-only
+# scripts, so the agent-facing writer refuses them. This closes the one-call
+# path, not every path: a direct `>>` append is still possible (accepted
+# residual risk, see lib/verifier-result.sh).
+if [ "$1" = "META" ]; then
+  case "$2" in
+  adversarial-override | verify-attempts-reset)
+    echo "plog.sh: refusing META|$2 - operator marker; run lib/$2.sh from a terminal" >&2
+    exit 3
+    ;;
+  esac
+fi
 
 # A test harness may pre-load a mock _plog; otherwise use the real one.
 if ! declare -f _plog >/dev/null 2>&1; then

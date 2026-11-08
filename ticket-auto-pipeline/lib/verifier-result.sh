@@ -175,9 +175,11 @@ write_verifier_result() {
 # A plain `EXEC|adversarial-review|done|PASS/WARNINGS` line is NOT a
 # record: any phase agent can write it with plog.sh, so it must never clear
 # a BLOCK on its own. The gate stays the independent second reader. Like
-# verify-attempts-reset.sh this raises the bar and is not a sandbox: an
-# agent that writes the override marker or a PASS verifier-result itself is
-# deliberately forging operator state, and no prompt tells it how.
+# verify-attempts-reset.sh this raises the bar and is not a sandbox:
+# plog.sh refuses to write the marker (exit 3), but an agent that appends it
+# with a raw `>>`, or writes a PASS/WARN verifier-result itself, is
+# deliberately forging operator state, and no prompt tells it how. The log
+# is a same-user file, so no in-process check can make it tamper-proof.
 #
 # A stale return_completeness FAIL (GitHub #598) clears the same way: the
 # post-VERIFY `return-completeness-check.sh --refresh` writes a later

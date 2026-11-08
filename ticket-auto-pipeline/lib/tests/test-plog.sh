@@ -173,6 +173,20 @@ case "${rc}:${err}" in
 *) fail "12f: TICKET_ID without spawn-meta" "rc=$rc stderr='$err'" ;;
 esac
 
+# ── 13. Operator markers are refused (GitHub #610) ───────────────────────────
+for _step in adversarial-override verify-attempts-reset; do
+  rc=0
+  err=$(bash "$PLOG" --log-file "$TMP/t13.log" META "$_step" info "reason=x" 2>&1) || rc=$?
+  expect "13: META|$_step refused with exit 3" "3" "$rc"
+  case "$err" in
+  *"operator marker"*) pass "13: META|$_step refusal explains why" ;;
+  *) fail "13: META|$_step refusal explains why" "stderr was '$err'" ;;
+  esac
+done
+if [ ! -s "$TMP/t13.log" ]; then pass "13: nothing written"; else fail "13: nothing written" "$(cat "$TMP/t13.log")"; fi
+bash "$PLOG" --log-file "$TMP/t13b.log" EXEC adversarial-override done ok
+expect "13: same step under another phase still written" "ISO|EXEC|adversarial-override|done|ok" "$(mask "$TMP/t13b.log")"
+
 echo ""
 echo "plog: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
