@@ -17,6 +17,22 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.95.0 (2026-11-08)
+
+### Fixed
+- `seed_run`'s post-run sweep could miss a `setsid` stray started just before the seeder exited,
+  and the stray then kept running. The sweep scanned `/proc` once, and a process in the middle of
+  `execve` reads an empty `/proc/<pid>/environ`: the kernel installs the new address space before
+  it records where the environment is. A stray passes through several execs (`setsid`, `env`,
+  `bash`) right as the sweep starts, which made `test-seed-run.sh` flaky on CI. The sweep now
+  re-scans every 0.2s until two passes in a row are quiet. For the first
+  `SEED_RUN_SWEEP_SETTLE_SECS` (default 2) a pass is not quiet while any non-zombie process of
+  this user reads an empty environ. A marked process gets TERM when first seen and KILL after
+  `SEED_RUN_SWEEP_GRACE_SECS`, and the sweep stops at settle + grace. A clean run now takes about
+  0.2s longer. `test-seed-run.sh` strays signal readiness once their marker is visible, a new
+  case builds a stray whose marker is not readable at exit, and the "nothing left" checks poll
+  and clean up, so one survivor no longer fails every later case (follow-up to #625).
+
 ## 0.94.0 (2026-11-08) — fleet-controller 0.46.2
 
 The remaining shared-`/tmp` names leave `/tmp`, and fleetd's pidfile can no longer be used to
