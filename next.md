@@ -1444,14 +1444,47 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
       - **Iter 04 (2026-10-30/31): FAIL**, full run 4 of 10. Grill-me sealed `ready` (93, 2 rounds).
         `INIT-1793396786-8715` passed first Crosscheck, then the gate revised 5/7 specs and reverted all 5 as
         `CROSSCHECK_REGRESSION` on 57 false `CITATION_UNRESOLVED`; halted `DRAFT_NOT_READY`, no Linear writes.
-        - [ ] F33 (C): unquoted `find` prune patterns glob against the caller's cwd. Reproduced: old lib 57 from the
-              work root, 0 from `/`; fixed lib 0. Fix on `fix/planner-crosscheck-cwd-glob` (planner 0.34.1), not merged.
+        - [x] F33 (C): unquoted `find` prune patterns glob against the caller's cwd. Reproduced: old lib 57 from the
+              work root, 0 from `/`; fixed lib 0. **PR #612 merged 2026-11-08** (planner 0.34.1).
         - [x] F35 (D): sandbox `CLAUDE.md` set `skip-worktree`, value kept; runbook updated.
-        - [ ] Before iter 05: land #594 → #596 → #595; three queued gate bugs (security regex wording, earlier
-              `MISSED` advisories dropped, `advisory_summary` empty in a fresh shell) fixed on
-              `fix/planner-draft-gate-queued-bugs` (planner 0.34.2), not merged; grill-me
+        - [ ] Before iter 05: ~~land #594 → #596 → #595~~ (merged); ~~three queued gate bugs (security regex
+              wording, earlier `MISSED` advisories dropped, `advisory_summary` empty in a fresh shell)~~
+              (**PR #613 merged 2026-11-08**, planner 0.34.2); land the post-iter-04 issue batch below; grill-me
               `## Assumptions & Defaults` + failure-behaviour probe (F36); F37 runbook note; abandon the iter 04
               initiative; update plugins to the checkout and restart.
+        - [x] Post-iter-04 GitHub issue batch (2026-11-08/09): **all merged**, one version per PR, in this order:
+          - #614 (#605/#606/#608/#611 failure diagnostics, ticket-auto-pipeline 0.85.0)
+          - #612 (F33 citation cwd glob, ticket-planner 0.34.1); #613 (queued draft-gate bugs, ticket-planner 0.34.2)
+          - #615 (#602 stale skill copies, #609 GitNexus refresh, 0.86.0)
+          - #616 (#607 zombie VERIFY keeps checkpoints, #600 retro lib layout, 0.87.0, fleet-controller 0.46.1)
+          - #617 (#599 answer-only reconcile passes, #604 AC drift reaches VERIFY, #601 seeder precheck before
+            VERIFY, 0.88.0). Precheck takes scenario names from seed-repo git history and runs argv-only; a
+            precheck fail burns one VERIFY attempt on purpose (the attempt cap is the only loop bound).
+          - #618 (#598 verdict gate honours the latest result, #610 adversarial override operator-only; plog.sh
+            rejects `|`/CR/LF in fields, 0.89.0). Accepted residual risk: a same-uid agent can still forge the
+            marker with a raw append to the log.
+          - #625 (#621 shared seeder runner `lib/seed-run.sh`: process group plus marker sweep catches `setsid`
+            strays; seed-apply gets a timeout, 0.90.0); #629 (sweep race with processes mid-exec, 0.95.0)
+          - #623 (#620 resume only past setup from `build-plan`; unknown VERIFY steps restart at Step 1, 0.91.0)
+          - #622 (#619 private per-user scratch dir `lib/ticket-tmp.sh`; plog.sh trusts only owned, private
+            spawn-meta, 0.92.0)
+          - #627 (#626 same-ticket lock takeover only when the owner is dead; `build-plan` resume re-locks;
+            Step 7 releases the lock, 0.93.0). Manual router: a crashed sub-agent's owner is the live router
+            session, so it waits (visible as `META|verify-lock-self-wait`); fleetd path takes over.
+          - #628 (#624 remaining `/tmp` paths: per-user verify lock, fence fallback removed, verify/retro/audit
+            scratch, fleetd pidfile in the scratch dir with O_NOFOLLOW + nlink check, 0.94.0, fleet-controller 0.46.2)
+          - #632 (#630 skill-size gate: duplicate baseline rows take the min, keep comments, fail as `DUPLICATE`)
+          - #633 (#631 planner + grill-me run telemetry: per-phase time/tokens from transcripts,
+            `planner-run-report.sh`; ticket-planner 0.35.0, grill-me 0.5.0)
+        - [ ] Live checks for the batch, on the tickets host: restart fleetd (pidfile moved to the scratch dir;
+              it refuses to start while an old fleetd holds `/tmp/fleetd.pid`); one ticket run end to end to
+              confirm agents load the env file via `ticket-env.sh`; one planner run to confirm
+              `planner-run-report.sh` shows tokens.
+        - [ ] Possible follow-up (not filed): ticket-auto `hooks/token-tracker.sh` sums usage per transcript
+              line without de-duplicating by message id, so existing `META|tokens` figures likely overcount.
+        - [ ] Before iter 05: the grill-me + planner self-assessment prompt is at
+              `~/.claude/plans/grill-planner-self-assessment-prompt.md` (runs 05/06 rows are `<FILL IN>`). Every
+              rehearsal run now writes `iter-NN/run-record.md` (runbook §3).
         - [ ] Watch in iter 05 (F34): no revision has yet been evaluated after applying, so the loop's second half is
               unproven live.
 - [ ] 4. Follow-up, start once item 3 converges (it supplies the baseline): **chain consistency

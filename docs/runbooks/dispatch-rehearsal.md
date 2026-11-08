@@ -54,8 +54,20 @@ Put each iteration's output in `$WORK/rehearsal/iter-NN/`.
 - [ ] **Critique each child, read-only:**
   `/ticket-critique <TID> --no-post --result-file iter-NN/preflight/critique/<TID>.txt`
 - [ ] **Run the preflight:**
-  `scripts/e2e-preflight.sh <INIT> --out iter-NN/preflight`
+  `scripts/e2e-preflight.sh <EPIC> --out iter-NN/preflight`, where `<EPIC>` is the epic's folder under
+  `$REPOS_ROOT/.ticket-auto/initiatives/` (the epic id `--create` made), not the `INIT-…` planning folder.
 - [ ] **Run the negative control** (section 2).
+- [ ] **Record the run, always — even when it halted before `--create` or before the preflight.**
+  Write `iter-NN/run-record.md` with:
+  - **Outcome:** the furthest phase reached, and the halt code if any.
+  - **Grill:** verdict, score and number of rounds, copied from the sealed intent, not from memory.
+  - **Preflight:** the verdict line (`PREFLIGHT <EPIC> PASS|PARTIAL|FAIL rows=N failed=M`), or `not run: <reason>`. `PARTIAL` (critique skipped) is not a pass.
+  - **Timing:** wall-clock per phase and the total, from the `Timing:` line of `iter-NN/run-telemetry.md`.
+  - **Cost:** tokens per phase from the `Cost:` line of `iter-NN/run-telemetry.md`; a phase it lists as
+    `UNMEASURED` stays `UNMEASURED`. Never estimate.
+  - **Human input:** each answer file and each manual edit, with the phase it unblocked.
+  - **Findings:** the IDs added to `findings.md` by this run.
+  The run is not finished until this file exists. Without it, runs cannot be compared later.
 - [ ] **Classify** every non-zero row of `preflight.tsv` and every planner halt into `findings.md`, one class each (section 4).
 - [ ] **Fix.** Make one commit per fix, each with a regression test. A new `lib/tests` file also needs its Makefile line.
 - [ ] **Re-run from the cheapest step** the fix affects (section 4).
@@ -93,4 +105,4 @@ Then run the holdout idea once. A class B or C failure there means the fixes ove
   `REPOS_ROOT=$WORK bash -c 'source ticket-planner/lib/planner-state.sh; planner_initiative_abandon <INIT> "rehearsal iter NN issues cancelled"'`
 - Reset the target repo to its clean starting state before the next full run: `origin`'s default branch at the setup commit, no other branches left by earlier pipeline runs, and the local checkout matching it. Code left on diverged remote branches makes Discovery cite files that are not on the ref it pins, and Crosscheck then reports them all as `CITATION_UNRESOLVED` (iter 02: 31 findings). A reset rewrites the remote, so a human runs it.
 - Keep every `iter-NN/` folder so iterations can be diffed (`diff -r`).
-- Record the outcome in next.md Step 16. The PR body gets one table row per run: findings by class, preflight failures, brief size and gate fixture results.
+- Record the outcome in next.md Step 16. The PR body gets one table row per run: findings by class, preflight failures, brief size and gate fixture results. Take each row from that run's `iter-NN/run-record.md`.
