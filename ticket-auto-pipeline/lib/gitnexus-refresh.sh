@@ -1,48 +1,56 @@
 #!/usr/bin/env bash
-# gitnexus-refresh.sh — best-effort GitNexus re-index after a ticket's PR
+# gitnexus-refresh.sh — best-effort GitNexus re-index after a ticket's PRs
 # (GitHub #609).
 #
 # gitnexus_verify_branch (gitnexus-preflight.sh) detects a stale index, but
 # nothing refreshed it: every later ticket on the same repo fell back to grep,
 # and the lag grew with each merge. The router runs this script in MAINTENANCE
-# (STEP_5), after the PR review, so the analyze cost stays off the review path.
+# (STEP_5), in its own Bash call. It returns in seconds: the analyze itself
+# runs detached.
 #
 # Usage:
-#   gitnexus-refresh.sh [--repo OWNER/NAME] [--base BRANCH] [--env-file FILE]
-#                       <TICKET-ID> <LOG-FILE>
+#   gitnexus-refresh.sh [--repo OWNER/NAME --base BRANCH] <TICKET-ID> <LOG-FILE>
 #
-# Inputs:
-#   repo  --repo, else the `repo` of the ticket's META|pr-created record
-#         (ticket_pipeline_pr_ref, manifest-read.sh).
-#   base  --base, else the PR's baseRefName (`gh pr view`), else
-#         INTEGRATION_BRANCH, else BASE_BRANCH from the agent env file
-#         (/tmp/ticket-auto-<TID>-env.sh, or --env-file).
-#   The indexed clones come from the GitNexus registry (GITNEXUS_REGISTRY,
-#   default ~/.gitnexus/registry.json): every entry whose remoteUrl names
-#   OWNER/NAME.
+# Targets: every distinct repo named by a META|pr-created line (a ticket can
+# open several PRs), each with its own base: the PR's baseRefName (`gh pr
+# view`), else the log's META|branch-context integration=/base= value.
+# --repo/--base name one target by hand instead. Every base must pass
+# `git check-ref-format --branch`. The agent env file in /tmp is never read.
 #
-# For each indexed clone, under a per-clone lock (flock -n, else mkdir), it:
-#   1. skips unless the clone has <base> checked out (never switches branches
-#      in a shared clone; a detached HEAD is skipped too),
-#   2. skips a dirty clone (tracked changes outside .gitnexus/),
-#   3. fast-forwards it from origin/<base> (`git pull --ff-only`; never
-#      resets, so a tracked .gitnexus/ is left alone),
-#   4. skips when the registry's lastCommit already equals HEAD,
-#   5. runs `timeout GITNEXUS_REFRESH_TIMEOUT gitnexus analyze --skip-agents-md
-#      <path>` (default 300 s). --skip-agents-md keeps analyze from editing
-#      AGENTS.md / CLAUDE.md in the shared clone.
-#   The merge does not have to have landed yet (`gh pr merge --auto` merges
-#   later): the step catches the clone up to whatever is on <base>, so the next
-#   ticket's MAINTENANCE picks up a merge this one missed.
+# Indexed clones come from the GitNexus registry (GITNEXUS_REGISTRY, default
+# ~/.gitnexus/registry.json), matched on remoteUrl. Two kinds:
 #
-# Log lines (one per indexed clone, or one for the whole run when nothing is
-# indexed). They are META lines on purpose: detect-resume.sh reads
+#   Pipeline-owned index worktrees (path under */.ticket-auto/worktrees/gitnexus/*,
+#   a detached HEAD by design). Under a per-path lock in ~/.gitnexus/locks
+#   (mode 0700, a symlinked dir or lock file is refused), when the tree is
+#   clean outside .gitnexus/:
+#     git fetch origin <base>, then git checkout --detach FETCH_HEAD
+#   with GIT_TERMINAL_PROMPT=0, ssh BatchMode, core.hooksPath=/dev/null and a
+#   fetch timeout. No branch is ever moved. When HEAD differs from the
+#   registry's lastCommit, `gitnexus analyze --skip-agents-md <path>` starts
+#   detached (setsid/nohup), holding the lock, logging to
+#   ~/.gitnexus/refresh-logs/<name>.log (GITNEXUS_REFRESH_LOG_DIR). It backs up
+#   .gitnexus/lbug* first and restores the backup when analyze fails: gitnexus
+#   deletes the old database before rebuilding, so a failed run would
+#   otherwise leave an empty index. There is no kill timeout for the same
+#   reason; GITNEXUS_REFRESH_TIMEOUT sets one, and a timeout also restores.
+#
+#   Any other clone is the user's own checkout: it is never fetched, pulled or
+#   checked out. When its indexed commit differs from its own
+#   refs/remotes/origin/<base>, one META|gitnexus-stale|warn line names the
+#   manual command.
+#
+# Pipeline-log lines, written at once, one per indexed clone (or one per repo
+# when nothing is indexed). META lines on purpose: detect-resume.sh reads
 # MAINTENANCE|*|done lines as resume points.
-#   META|gitnexus-refresh|done|<name> <old7>→<new7>
+#   META|gitnexus-refresh|start|<name> <old7>→<new7>, log: <file>
 #   META|gitnexus-refresh|skip|<name>: <reason>
 #   META|gitnexus-refresh|warn|<name>: <failure> — run: gitnexus analyze <path>
+#   META|gitnexus-stale|warn|<name>: ... — run: git -C <p> pull && gitnexus analyze <p>
+# The analyze result goes to the analyze log only, so META|outcome stays the
+# pipeline log's last line.
 #
-# Never fails the pipeline: exit 0 on every refresh outcome, 2 on bad usage.
+# Exit 0 on every refresh outcome, 2 on bad usage.
 #
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"
@@ -50,142 +58,210 @@
 set -o pipefail
 
 _GR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_GR_SELF="${_GR_DIR}/$(basename "${BASH_SOURCE[0]}")"
 _GR_LOG=""
 
 _gr_usage() {
-  echo "Usage: gitnexus-refresh.sh [--repo OWNER/NAME] [--base BRANCH] [--env-file FILE] <TICKET-ID> <LOG-FILE>" >&2
+  echo "Usage: gitnexus-refresh.sh [--repo OWNER/NAME --base BRANCH] <TICKET-ID> <LOG-FILE>" >&2
   exit 2
 }
 
+_gr_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
 _gr_log() {
   [ -n "$_GR_LOG" ] || return 0
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gitnexus-refresh|$1|$2" >>"$_GR_LOG" 2>/dev/null || true
+  echo "$(_gr_iso)|META|$1|$2|$3" >>"$_GR_LOG" 2>/dev/null || true
 }
 
 # _gr_slug <url> — owner/name of a git remote URL, lower-cased.
 _gr_slug() {
   local u="${1%/}"
   u="${u%.git}"
-  u="${u##*:}" # git@host:owner/name → owner/name (and drops an https scheme's host)
+  u="${u##*:}"
   printf '%s\n' "$u" | awk -F/ 'NF>=2 {print tolower($(NF-1) "/" $NF)}'
 }
 
-# _gr_env_value <file> <NAME> — the value of NAME in the agent env file, read
-# as text and never sourced: the file sits in /tmp, where another local user
-# could plant it or swap it for a symlink. The file must be a regular,
-# non-symlink file owned by the current user. Reads the last
-# `export NAME="..."` / `NAME=...` line, strips one pair of surrounding quotes,
-# and prints the value only when it is a valid git branch name (which also
-# rules out quotes, `$`, backticks and backslashes). Prints nothing otherwise.
-_gr_env_value() {
-  local f="$1" name="$2" v
-  [ -f "$f" ] && [ ! -L "$f" ] && [ -O "$f" ] || return 0
-  v=$(sed -n "s/^\(export[[:space:]]\{1,\}\)\{0,1\}${name}=//p" "$f" 2>/dev/null | tail -1) || v=""
-  case "$v" in
-  \"*\") v="${v#\"}" v="${v%\"}" ;;
-  \'*\') v="${v#\'}" v="${v%\'}" ;;
-  esac
-  [ -n "$v" ] || return 0
-  git check-ref-format --branch "$v" >/dev/null 2>&1 || return 0
-  printf '%s\n' "$v"
+_gr_valid_branch() { [ -n "$1" ] && git check-ref-format --branch "$1" >/dev/null 2>&1; }
+
+# git with no hooks, no prompts, no interactive ssh.
+_gr_git() {
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -oBatchMode=yes' \
+    git -c core.hooksPath=/dev/null "$@"
 }
 
 _gr_timeout() {
   if command -v timeout >/dev/null 2>&1; then
-    timeout --kill-after=30 "$@"
+    timeout --kill-after=10 "$@"
   else
     shift
     "$@"
   fi
 }
 
-# _gr_refresh_one <name> <path> <indexed_commit> <base>
-_gr_refresh_one() {
+# _gr_branch_ctx <field> — a field of the log's last META|branch-context line.
+_gr_branch_ctx() {
+  local line
+  line=$(grep '^[^|]*|META|branch-context|info|' "$_GR_LOG" 2>/dev/null | tail -1) || line=""
+  [ -n "$line" ] || return 0
+  printf '%s\n' "${line#*|META|branch-context|info|}" | tr ';' '\n' | sed -n "s/^$1=//p" | head -1
+}
+
+# _gr_targets — "repo<TAB>pr" per distinct repo across every META|pr-created
+# line (the latest PR per repo wins).
+_gr_targets() {
+  grep '|META|pr-created|info|' "$_GR_LOG" 2>/dev/null |
+    awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}' |
+    jq -r 'select(.repo != null and .repo != "") | [.repo, ((.pr // "") | tostring)] | @tsv' 2>/dev/null |
+    awk -F'\t' '{last[$1]=$2; if (!($1 in seen)) {seen[$1]=1; order[++n]=$1}}
+      END {for (i=1;i<=n;i++) print order[i] "\t" last[order[i]]}'
+}
+
+# _gr_lock_dir — ~/.gitnexus/locks, created 0700; refused when it is a
+# symlink or not owned by this user.
+_gr_lock_dir() {
+  local d="${HOME}/.gitnexus/locks"
+  [ -L "$d" ] && return 1
+  mkdir -p -m 700 "$d" 2>/dev/null || return 1
+  [ -d "$d" ] && [ ! -L "$d" ] && [ -O "$d" ] || return 1
+  printf '%s\n' "$d"
+}
+
+# _gr_user_clone <name> <path> <indexed> <base> — read-only staleness check.
+_gr_user_clone() {
+  local name="$1" path="$2" old="$3" base="$4" tip
+  tip=$(git -C "$path" rev-parse --verify -q "refs/remotes/origin/${base}^{commit}" 2>/dev/null) || tip=""
+  if [ -n "$tip" ] && [ "$tip" = "$old" ]; then
+    _gr_log gitnexus-refresh skip "${name}: user clone index already at origin/${base}"
+    return 0
+  fi
+  _gr_log gitnexus-stale warn "${name}: index of user clone ${path} is not at origin/${base}, not refreshed automatically — run: git -C ${path} pull && gitnexus analyze ${path}"
+}
+
+# _gr_owned <name> <path> <indexed> <base> — refresh a pipeline-owned worktree.
+_gr_owned() {
   local name="$1" path="$2" old="$3" base="$4"
-  local lock_dir="${GITNEXUS_REFRESH_LOCK_DIR:-/tmp}" key lock fd="" branch new rc
+  local hint="run: gitnexus analyze ${path}"
 
   if ! git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    _gr_log skip "${name}: ${path} is not a git work tree"
+    _gr_log gitnexus-refresh skip "${name}: ${path} is not a git work tree"
     return 0
   fi
-
-  key="$(printf '%s' "$path" | cksum | cut -d' ' -f1)"
-  lock="${lock_dir}/gitnexus-refresh-${key}.lock"
-  if command -v flock >/dev/null 2>&1; then
-    exec {fd}>"$lock" || {
-      _gr_log skip "${name}: cannot open lock ${lock}"
-      return 0
-    }
-    if ! flock -n "$fd"; then
-      exec {fd}>&-
-      _gr_log skip "${name}: another refresh of ${path} is running"
-      return 0
-    fi
-  elif ! mkdir "${lock}.d" 2>/dev/null; then
-    _gr_log skip "${name}: another refresh of ${path} is running"
+  local ldir lock fd
+  if ! ldir=$(_gr_lock_dir); then
+    _gr_log gitnexus-refresh warn "${name}: lock dir ~/.gitnexus/locks is unsafe or missing — ${hint}"
     return 0
   fi
-
-  _gr_refresh_locked "$name" "$path" "$old" "$base"
-
-  if [ -n "$fd" ]; then
+  lock="${ldir}/$(printf '%s' "$path" | cksum | cut -d' ' -f1).lock"
+  if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
+    _gr_log gitnexus-refresh warn "${name}: refusing lock ${lock} (not a regular file) — ${hint}"
+    return 0
+  fi
+  exec {fd}>>"$lock" || {
+    _gr_log gitnexus-refresh warn "${name}: cannot open lock ${lock} — ${hint}"
+    return 0
+  }
+  if ! flock -n "$fd"; then
     exec {fd}>&-
-  else
-    rmdir "${lock}.d" 2>/dev/null || true
+    _gr_log gitnexus-refresh skip "${name}: a refresh of ${path} is already running"
+    return 0
   fi
+
+  if [ -n "$(git -C "$path" status --porcelain --untracked-files=no -- . ':(exclude).gitnexus' 2>/dev/null)" ]; then
+    exec {fd}>&-
+    _gr_log gitnexus-refresh warn "${name}: index worktree ${path} has local changes, not refreshed — ${hint}"
+    return 0
+  fi
+  if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -oBatchMode=yes' \
+    _gr_timeout "${GITNEXUS_REFRESH_FETCH_TIMEOUT:-120}" \
+    git -c core.hooksPath=/dev/null -C "$path" fetch --quiet origin "$base" >/dev/null 2>&1 ||
+    ! _gr_git -C "$path" checkout --quiet --detach FETCH_HEAD >/dev/null 2>&1; then
+    exec {fd}>&-
+    _gr_log gitnexus-refresh warn "${name}: fetch/checkout of origin/${base} failed in ${path} — ${hint}"
+    return 0
+  fi
+  local new
+  new=$(git -C "$path" rev-parse HEAD 2>/dev/null) || new=""
+  if [ -n "$old" ] && [ "$old" = "$new" ]; then
+    exec {fd}>&-
+    _gr_log gitnexus-refresh skip "${name}: index already at ${new:0:7} (origin/${base})"
+    return 0
+  fi
+
+  local logdir="${GITNEXUS_REFRESH_LOG_DIR:-$HOME/.gitnexus/refresh-logs}" alog
+  mkdir -p -m 700 "$logdir" 2>/dev/null || true
+  alog="${logdir}/$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_').log"
+  # The detached worker inherits the lock fd, so the lock stays held until
+  # analyze ends; this process then drops its own copy.
+  local runner=()
+  command -v setsid >/dev/null 2>&1 && runner=(setsid)
+  "${runner[@]}" nohup bash "$_GR_SELF" --analyze-worker "$name" "$path" "$old" "$new" \
+    </dev/null >>"$alog" 2>&1 &
+  exec {fd}>&-
+  _gr_log gitnexus-refresh start "${name} ${old:0:7}→${new:0:7}, log: ${alog}"
   return 0
 }
 
-_gr_refresh_locked() {
-  local name="$1" path="$2" old="$3" base="$4" branch new rc=0
-
-  branch=$(git -C "$path" symbolic-ref --short -q HEAD 2>/dev/null) || branch=""
-  if [ -z "$branch" ]; then
-    _gr_log skip "${name}: detached HEAD in ${path}, not refreshing"
-    return 0
-  fi
-  if [ "$branch" != "$base" ]; then
-    _gr_log skip "${name}: clone is on ${branch}, not ${base}"
-    return 0
-  fi
-  if [ -n "$(git -C "$path" status --porcelain --untracked-files=no -- . ':(exclude).gitnexus' 2>/dev/null)" ]; then
-    _gr_log skip "${name}: dirty clone ${path}"
-    return 0
-  fi
-  if ! _gr_timeout 120 git -C "$path" pull --ff-only --quiet origin "$base" >/dev/null 2>&1; then
-    _gr_log skip "${name}: git pull --ff-only origin ${base} failed in ${path}"
-    return 0
-  fi
-
-  new=$(git -C "$path" rev-parse HEAD 2>/dev/null) || new=""
-  if [ -n "$old" ] && [ "$old" = "$new" ]; then
-    _gr_log skip "${name}: index already at ${new:0:7}"
-    return 0
-  fi
-
-  local t="${GITNEXUS_REFRESH_TIMEOUT:-300}"
-  _gr_timeout "$t" "${GITNEXUS_BIN:-gitnexus}" analyze --skip-agents-md "$path" >/dev/null 2>&1 || rc=$?
-  if [ "$rc" -eq 0 ]; then
-    _gr_log "done" "${name} ${old:0:7}→${new:0:7}"
-  elif [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
-    _gr_log warn "${name}: analyze timed out after ${t}s — run: gitnexus analyze ${path}"
+# _gr_analyze_worker <name> <path> <old> <new> — runs detached; output goes
+# to the analyze log only.
+_gr_analyze_worker() {
+  local name="$1" path="$2" old="$3" new="$4" bak rc=0 f
+  bak="${path}/.gitnexus/.refresh-backup"
+  rm -rf "$bak" 2>/dev/null
+  mkdir -p "$bak" 2>/dev/null || true
+  for f in "$path"/.gitnexus/lbug*; do
+    [ -e "$f" ] && cp -pR "$f" "$bak/"
+  done
+  echo "$(_gr_iso)|gitnexus-refresh|start|${name} ${old:0:7}→${new:0:7} in ${path}"
+  if [ -n "${GITNEXUS_REFRESH_TIMEOUT:-}" ]; then
+    _gr_timeout "$GITNEXUS_REFRESH_TIMEOUT" "${GITNEXUS_BIN:-gitnexus}" analyze --skip-agents-md "$path" || rc=$?
   else
-    _gr_log warn "${name}: analyze exited ${rc} — run: gitnexus analyze ${path}"
+    "${GITNEXUS_BIN:-gitnexus}" analyze --skip-agents-md "$path" || rc=$?
   fi
+  if [ "$rc" -eq 0 ]; then
+    rm -rf "$bak"
+    echo "$(_gr_iso)|gitnexus-refresh|done|${name} ${old:0:7}→${new:0:7}"
+    return 0
+  fi
+  rm -rf "$path"/.gitnexus/lbug* 2>/dev/null
+  for f in "$bak"/lbug*; do
+    [ -e "$f" ] && cp -pR "$f" "$path/.gitnexus/"
+  done
+  rm -rf "$bak"
+  echo "$(_gr_iso)|gitnexus-refresh|fail|${name}: analyze exited ${rc}; previous index restored — run: gitnexus analyze ${path}"
   return 0
+}
+
+_gr_refresh_repo() {
+  local repo="$1" base="$2" registry="$3"
+  local want name path last url found=0
+  want=$(printf '%s\n' "$repo" | tr '[:upper:]' '[:lower:]')
+  while IFS=$'\t' read -r name path last url; do
+    [ -n "$path" ] && [ -n "$url" ] || continue
+    [ "$(_gr_slug "$url")" = "$want" ] || continue
+    found=1
+    case "$path" in
+    */.ticket-auto/worktrees/gitnexus/*) _gr_owned "${name:-$want}" "$path" "$last" "$base" ;;
+    *) _gr_user_clone "${name:-$want}" "$path" "$last" "$base" ;;
+    esac
+  done < <(jq -r '(if type == "array" then . else (.repos // []) end)[]
+    | [(.name // ""), (.path // ""), (.lastCommit // ""), (.remoteUrl // "")] | @tsv' \
+    "$registry" 2>/dev/null)
+  [ "$found" = 1 ] || _gr_log gitnexus-refresh skip "${repo}: not indexed by GitNexus"
 }
 
 main() {
-  local repo="" base="" env_file=""
+  if [ "${1:-}" = "--analyze-worker" ]; then
+    shift
+    [ $# -eq 4 ] || exit 2
+    _gr_analyze_worker "$@"
+    return 0
+  fi
+  local repo="" base=""
   while [ $# -gt 0 ]; do
     case "$1" in
-    --repo | --base | --env-file)
+    --repo | --base)
       [ $# -ge 2 ] || _gr_usage
-      case "$1" in
-      --repo) repo="$2" ;;
-      --base) base="$2" ;;
-      --env-file) env_file="$2" ;;
-      esac
+      if [ "$1" = --repo ]; then repo="$2"; else base="$2"; fi
       shift 2
       ;;
     --) shift && break ;;
@@ -197,63 +273,42 @@ main() {
   local tid="$1"
   _GR_LOG="$2"
 
-  local pr=""
-  if [ -z "$repo" ] || [ -z "$base" ]; then
-    if ! declare -f ticket_pipeline_pr_ref >/dev/null 2>&1; then
-      # shellcheck source=manifest-read.sh
-      source "$_GR_DIR/manifest-read.sh" 2>/dev/null || true
-    fi
-    if declare -f ticket_pipeline_pr_ref >/dev/null 2>&1; then
-      local ref
-      ref=$(ticket_pipeline_pr_ref "$_GR_LOG") || ref=""
-      pr=$(printf '%s\n' "$ref" | cut -f2)
-      [ -n "$repo" ] || repo=$(printf '%s\n' "$ref" | cut -f3)
-    fi
+  local targets
+  if [ -n "$repo" ]; then
+    targets=$(printf '%s\t\n' "$repo")
+  else
+    targets=$(_gr_targets)
   fi
-  if [ -z "$repo" ]; then
-    _gr_log skip "no PR repo recorded for ${tid}"
+  if [ -z "$targets" ]; then
+    _gr_log gitnexus-refresh skip "no PR repo recorded for ${tid}"
     return 0
   fi
-
-  if [ -z "$base" ] && [ -n "$pr" ] && command -v gh >/dev/null 2>&1; then
-    base=$(_gr_timeout 30 gh pr view "$pr" --repo "$repo" --json baseRefName --jq '.baseRefName' 2>/dev/null) || base=""
-  fi
-  if [ -z "$base" ]; then
-    [ -n "$env_file" ] || env_file="/tmp/ticket-auto-${tid}-env.sh"
-    base=$(_gr_env_value "$env_file" INTEGRATION_BRANCH)
-    [ -n "$base" ] || base=$(_gr_env_value "$env_file" BASE_BRANCH)
-  fi
-  if [ -z "$base" ]; then
-    _gr_log skip "${repo}: base branch unknown"
-    return 0
-  fi
-  if ! git check-ref-format --branch "$base" >/dev/null 2>&1; then
-    _gr_log skip "${repo}: base branch is not a valid branch name"
-    return 0
-  fi
-
   if ! command -v "${GITNEXUS_BIN:-gitnexus}" >/dev/null 2>&1; then
-    _gr_log skip "${repo}: gitnexus CLI not installed"
+    _gr_log gitnexus-refresh skip "gitnexus CLI not installed"
     return 0
   fi
   local registry="${GITNEXUS_REGISTRY:-$HOME/.gitnexus/registry.json}"
   if [ ! -f "$registry" ]; then
-    _gr_log skip "${repo}: no GitNexus registry at ${registry}"
+    _gr_log gitnexus-refresh skip "no GitNexus registry at ${registry}"
     return 0
   fi
 
-  local want entries="" name path last url found=0
-  want=$(printf '%s\n' "$repo" | tr '[:upper:]' '[:lower:]')
-  entries=$(jq -r '(if type == "array" then . else (.repos // []) end)[]
-    | [(.name // ""), (.path // ""), (.lastCommit // ""), (.remoteUrl // "")] | @tsv' \
-    "$registry" 2>/dev/null) || entries=""
-  while IFS=$'\t' read -r name path last url; do
-    [ -n "$path" ] && [ -n "$url" ] || continue
-    [ "$(_gr_slug "$url")" = "$want" ] || continue
-    found=1
-    _gr_refresh_one "${name:-$want}" "$path" "$last" "$base"
-  done <<<"$entries"
-  [ "$found" = 1 ] || _gr_log skip "${repo}: not indexed by GitNexus"
+  local ctx_base r pr b
+  ctx_base=$(_gr_branch_ctx integration)
+  [ -n "$ctx_base" ] || ctx_base=$(_gr_branch_ctx base)
+  while IFS=$'\t' read -r r pr; do
+    [ -n "$r" ] || continue
+    b="$base"
+    if [ -z "$b" ] && [ -n "$pr" ] && command -v gh >/dev/null 2>&1; then
+      b=$(_gr_timeout 30 gh pr view "$pr" --repo "$r" --json baseRefName --jq '.baseRefName' 2>/dev/null) || b=""
+    fi
+    [ -n "$b" ] || b="$ctx_base"
+    if ! _gr_valid_branch "$b"; then
+      _gr_log gitnexus-refresh skip "${r}: base branch unknown or invalid"
+      continue
+    fi
+    _gr_refresh_repo "$r" "$b" "$registry"
+  done <<<"$targets"
   return 0
 }
 

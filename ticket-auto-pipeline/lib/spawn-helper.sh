@@ -471,15 +471,31 @@ spawn_skill_file() {
   # types have no Skill tool, so they find a skill's SKILL.md on disk — and a
   # search by name can land on a stale personal ~/.claude/skills/<name>/ copy
   # even when the prompt names the qualified skill. Naming the exact file the
-  # plugin ships removes the search. Resolved through tap_cache_find
-  # (installed_plugins.json installPath, then newest cached version), never
-  # CLAUDE_PLUGIN_ROOT, which is unset in Bash-tool context.
+  # plugin ships removes the search. First choice: the plugin root the
+  # SessionStart sync recorded in ~/.claude/skills/lib/.plugin-root — the same
+  # root these libs were copied from, so the skill and the libs it calls are
+  # one version even under --plugin-dir or after a mid-session update.
+  # Fallback: tap_cache_find (installed_plugins.json installPath, then newest
+  # cached version). CLAUDE_PLUGIN_ROOT itself is unset in Bash-tool context.
   local s="$1" name
   case "$s" in
   /ticket-auto-pipeline:*) name="${s#/ticket-auto-pipeline:}" ;;
   *) return 0 ;;
   esac
   case "$name" in "" | */* | *..*) return 0 ;; esac
+  local _rf _root=""
+  _rf="${SPAWN_PLUGIN_ROOT_FILE:-$(dirname "${BASH_SOURCE[0]}")/.plugin-root}"
+  if [ -f "$_rf" ] && [ ! -L "$_rf" ]; then
+    IFS= read -r _root <"$_rf" 2>/dev/null || true
+  fi
+  case "$_root" in
+  /*)
+    if [ -f "${_root%/}/skills/${name}/SKILL.md" ]; then
+      printf '%s\n' "${_root%/}/skills/${name}/SKILL.md"
+      return 0
+    fi
+    ;;
+  esac
   if ! declare -f tap_cache_find >/dev/null 2>&1; then
     local _pc
     _pc="$(dirname "${BASH_SOURCE[0]}")/plugin-cache.sh"

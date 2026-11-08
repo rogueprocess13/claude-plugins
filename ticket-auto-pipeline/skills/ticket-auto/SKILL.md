@@ -1000,12 +1000,12 @@ FAIL_ACTION=warn-continue
 NEXT_PHASE=MAINTENANCE
 ```
 
-**After both spawns complete**, refresh the GitNexus index (best-effort, never fails),
-then write the STEP_5 rollup line. `detect-resume.sh`'s STEP_5→STEP_6 transition needs
-this exact marker and neither sub-skill writes it; without it a resumed run loops STEP_5:
+**After both spawns complete**, start the GitNexus refresh (detached, never fails) as
+one Bash call: `bash ~/.claude/skills/lib/gitnexus-refresh.sh "{TICKET_ID}" "{LOG_FILE}" || true`.
+Then, in a separate Bash call, write the STEP_5 rollup line. `detect-resume.sh`'s
+STEP_5→STEP_6 transition needs this marker; without it a resumed run loops STEP_5:
 
 ```bash
-bash ~/.claude/skills/lib/gitnexus-refresh.sh "{TICKET_ID}" "{LOG_FILE}" || true  # Bash timeout 600000
 bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE maintenance done "clean"
 ```
 

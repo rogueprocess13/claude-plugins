@@ -135,7 +135,7 @@ _prompt_with_home() {
   local h="$1" log="$_TMPDIR/TEST-569-pipeline.log"
   touch "$log"
   (
-    export HOME="$h"
+    export HOME="$h" SPAWN_PLUGIN_ROOT_FILE="${SPAWN_PLUGIN_ROOT_FILE:-$h/no-plugin-root}"
     # shellcheck source=/dev/null
     source "$LIB_DIR/spawn-helper.sh" >/dev/null 2>&1
     unset HB_LOG_FILE
@@ -169,7 +169,7 @@ test_skill_file_ignores_foreign_skills() {
   local h="$_TMPDIR/home-foreign"
   _fake_home "$h" 1
   (
-    export HOME="$h"
+    export HOME="$h" SPAWN_PLUGIN_ROOT_FILE="${SPAWN_PLUGIN_ROOT_FILE:-$h/no-plugin-root}"
     # shellcheck source=/dev/null
     source "$LIB_DIR/spawn-helper.sh" >/dev/null 2>&1
     declare -f spawn_skill_file >/dev/null &&
@@ -178,6 +178,32 @@ test_skill_file_ignores_foreign_skills() {
       [ -z "$(spawn_skill_file /ticket-gate-reconcile)" ] &&
       [ -z "$(spawn_skill_file /ticket-auto-pipeline:../x)" ]
   )
+}
+
+# The plugin root the SessionStart sync recorded wins over tap_cache_find, so
+# the pinned SKILL.md and the synced libs come from one plugin version.
+test_plugin_root_pin_beats_cache() {
+  local h="$_TMPDIR/home-root" root="$_TMPDIR/dev-plugin" out
+  _fake_home "$h" 1
+  mkdir -p "$root/skills/ticket-gate-reconcile"
+  echo "dev copy" >"$root/skills/ticket-gate-reconcile/SKILL.md"
+  printf '%s\n' "$root" >"$_TMPDIR/plugin-root"
+  out=$(SPAWN_PLUGIN_ROOT_FILE="$_TMPDIR/plugin-root" _prompt_with_home "$h")
+  grep -qF "the file $root/skills/ticket-gate-reconcile/SKILL.md: read that exact file" <<<"$out" || return 1
+  # A recorded root without the skill falls back to the cache.
+  printf '%s\n' "$_TMPDIR/nowhere" >"$_TMPDIR/plugin-root"
+  out=$(SPAWN_PLUGIN_ROOT_FILE="$_TMPDIR/plugin-root" _prompt_with_home "$h")
+  grep -qF "ticket-auto-pipeline/9.9.9/skills/ticket-gate-reconcile/SKILL.md: read" <<<"$out"
+}
+
+# The SessionStart sync command records CLAUDE_PLUGIN_ROOT next to the libs.
+test_session_start_sync_records_plugin_root() {
+  local h="$_TMPDIR/home-sync" cmd
+  mkdir -p "$h"
+  cmd=$(jq -r '.hooks.SessionStart[0].hooks[0].command' "$LIB_DIR/../.claude-plugin/plugin.json")
+  HOME="$h" CLAUDE_PLUGIN_ROOT="$(cd "$LIB_DIR/.." && pwd)" bash -c "$cmd" >/dev/null 2>&1
+  [ "$(cat "$h/.claude/skills/lib/.plugin-root" 2>/dev/null)" = "$(cd "$LIB_DIR/.." && pwd)" ] &&
+    [ -f "$h/.claude/skills/lib/spawn-helper.sh" ]
 }
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
@@ -192,7 +218,9 @@ for fn in \
   test_spawn_agent_pre_prompt_is_qualified \
   test_spawn_prompt_pins_installed_skill_file \
   test_spawn_prompt_unpinned_when_not_installed \
-  test_skill_file_ignores_foreign_skills; do
+  test_skill_file_ignores_foreign_skills \
+  test_plugin_root_pin_beats_cache \
+  test_session_start_sync_records_plugin_root; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done
