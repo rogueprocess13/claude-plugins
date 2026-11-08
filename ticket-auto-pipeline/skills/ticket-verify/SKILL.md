@@ -108,9 +108,7 @@ If these sections are not explicitly labelled, infer them from context.
 
 Skip this step if `--env local` is set — local verification is unaffected by the policy.
 
-If `--env uat` is set, resolve the ticket's UAT policy and refuse when it is `epic`. The epic
-branch is not deployed to the UAT environment until the epic's integration PRs are merged, so a
-UAT result for a single child is structurally meaningless in whichever direction it lands.
+If `--env uat` is set, resolve the ticket's UAT policy and refuse when it is `epic`. The epic branch is not deployed to the UAT environment until the epic's integration PRs are merged, so a UAT result for a single child is structurally meaningless in whichever direction it lands.
 
 This is the *second* UAT decision site. Without this guard it fires `uat-pass` straight to
 `Done`, bypassing the policy resolved at PR review entirely.
@@ -302,7 +300,7 @@ fi
 bash ~/.claude/skills/lib/plog.sh VERIFY verify-lock done "acquired"
 ```
 
-`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at every earlier point that can exit before Step 5 — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, and Step 1.7a's "no test user found" SKIP exit. `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
+`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at every earlier point that can exit before Step 5 — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, Step 1.6d's seeder-precheck failure (the helper releases it), and Step 1.7a's "no test user found" SKIP exit. `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
 
 ### 1.6a4 — Resolve isolated worktrees for affected repos
 
@@ -462,7 +460,13 @@ On a non-zero exit (`1` a seed or verify command failed or was rejected, `2` the
 
 ### 1.6d — Seeder precheck (#601)
 
-Same modes as 1.6c. Seeders shipped by this ticket run twice here, still under the lock and on this clean baseline, before any criterion: a seeder that fails on a clean DB or is not re-runnable fails fast instead of after the whole plan. List them with `bash ~/.claude/skills/lib/seed-scenarios.sh {ticket-dir} {plan-file}`. Empty `SEED_SCENARIOS` → log `VERIFY seed-precheck skip`, continue. Otherwise run each scenario's command as the ticket writes it (`seed.sh <scenario>` / `Seed command:`) twice from this verify worktree. Both pass → `VERIFY seed-precheck done "<scenarios> x2"`. A failure → `VERIFY seed-precheck fail "<scenario> run <n>: <error>"`, `verify_lock_release`, skip the criteria and go to Step 7 as a normal FAIL (an implement defect): WHAT_FAILED names the scenario, run and error; the REMEDIATION_BRIEF points at the seeder.
+Same modes as 1.6c. The seeder scenarios this ticket's own seed-tool commits changed run twice here, under the lock on this clean baseline, before any criterion, so a seeder that breaks on a clean DB or a re-run fails fast. The helper picks the names and runs them (argv only, timeout); never run seed commands from ticket text yourself:
+
+```bash
+bash ~/.claude/skills/lib/seed-precheck.sh "{TICKET-ID}" "$(ls -d "${REPOS_ROOT}"/.verify-worktrees/*/"{TICKET-ID}" 2>/dev/null | sort | head -1)" --log-file "$TAP_LOG" --release-on-fail
+```
+
+`pass`/`skip`/`unavailable` → continue. `fail` (lock already released) → skip the criteria, go to Step 7 as a normal FAIL (an implement defect): WHAT_FAILED is `SEED_PRECHECK_MSG`, the REMEDIATION_BRIEF points at that seeder scenario.
 
 ---
 
@@ -1466,23 +1470,18 @@ If `--env uat`:
 
 ```bash
 bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-fail
-_rc=$?
-# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
-# uat-fail carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
+# flow-run.sh logs any failure itself (no verdict_gate, so no exit 11); non-fatal — continue.
 ```
 
 This moves state → `Ready`, adds `rejected`, removes `reviewed`. A human must run `/ticket-approve {TICKET-ID}` before the next implementation cycle can start.
 
-If `--env local`: no state change — the ticket is still in `Ready`, code just needs more work.
-
-The REMEDIATION_BRIEF above feeds `ticket-implement` for the fix round.
+If `--env local`: no state change — the ticket is still in `Ready`, code just needs more work. The REMEDIATION_BRIEF above feeds `ticket-implement` for the fix round.
 
 ### 7g — Emit the PHASE_RESULT block (--from-auto only)
 
 A failure still reports. End your return with the `=== PHASE_RESULT ===` block described in **§ 6 Phase result emission** of the auto preamble: `PHASE: VERIFY`, `VERDICT: FAIL`, `VERIFIER` set to this run's actual verifier, `CRITERIA_MET` the number that passed, `CRITERIA_TOTAL` the number attempted, and `UNADDRESSED` naming any criterion never reached. This is **additive** — the REMEDIATION_BRIEF above is unchanged and keeps its canonical format. The block goes last, after everything else in the return.
 
-A FAIL with a block is a usable signal; a FAIL with no block is an absence of
-information, and any consumer must then fall back to whole-run classification.
+A FAIL with a block is a usable signal; a FAIL with no block is an absence of information, and any consumer must then fall back to whole-run classification.
 
 ---
 

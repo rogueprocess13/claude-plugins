@@ -45,7 +45,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-reconcile-comments.sh
 	bash ticket-auto-pipeline/lib/tests/test-reconcile-decide.sh
 	bash ticket-auto-pipeline/lib/tests/test-ac-drift.sh
-	bash ticket-auto-pipeline/lib/tests/test-seed-scenarios.sh
+	bash ticket-auto-pipeline/lib/tests/test-seed-precheck.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-preamble.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-identity.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-summary.sh
