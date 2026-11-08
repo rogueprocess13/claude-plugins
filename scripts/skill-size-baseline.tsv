@@ -57,15 +57,13 @@ ticket-auto-pipeline/skills/app-knowledge/SKILL.md	5197	100
 ticket-auto-pipeline/skills/guidance-extractor/SKILL.md	15735	251
 ticket-auto-pipeline/skills/nav-hints/SKILL.md	3993	93
 ticket-auto-pipeline/skills/skill-docs/SKILL.md	5337	194
-# exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	46285	849
+ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	46003	847
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	70269	1064
 ticket-auto-pipeline/skills/ticket-approve/SKILL.md	2190	27
 ticket-auto-pipeline/skills/ticket-audit-exec/SKILL.md	11515	330
 ticket-auto-pipeline/skills/ticket-audit/SKILL.md	17130	364
-# exception: router floor ~22-26 KB (spawn bracketing, Agent-tool instruction, dispatch table, verdict rules)
-ticket-auto-pipeline/skills/ticket-auto/SKILL.md	57947	1110
+ticket-auto-pipeline/skills/ticket-auto/SKILL.md	57941	1109
 ticket-auto-pipeline/skills/ticket-batch-appraise/SKILL.md	4841	135
 ticket-auto-pipeline/skills/ticket-batch-verify/SKILL.md	9399	207
 ticket-auto-pipeline/skills/ticket-create/SKILL.md	6818	71

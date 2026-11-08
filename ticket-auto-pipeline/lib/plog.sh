@@ -24,6 +24,12 @@
 #      statement under `set -e`
 #   1  heartbeat.sh not found next to this script, or the log is not writable
 #   2  usage: fewer than PHASE STEP STATUS, or --log-file without a value
+#   2  also: PHASE, STEP or STATUS outside [A-Za-z0-9_-]+ (a `|`, CR or LF
+#      there would forge extra fields or a whole extra line; GitHub #610)
+#   3  refused: META|adversarial-override or META|verify-attempts-reset is an
+#      operator marker, written only by its own operator script
+#      (adversarial-override.sh, verify-attempts-reset.sh), never through
+#      this agent-facing writer (GitHub #610)
 
 _PLOG_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -39,6 +45,31 @@ if [ "${1:-}" = "--log-file" ]; then
 fi
 
 [ "$#" -ge 3 ] || _plog_usage
+
+# GitHub #610: PHASE/STEP/STATUS are bare tokens. A `|`, CR or LF in one
+# would let a caller forge extra fields or a whole extra line (e.g.
+# `plog.sh "META|adversarial-override" info ...`), so reject anything else
+# before the operator-marker check below. MSG is sanitised by _plog.
+for _plog_f in "$1" "$2" "$3"; do
+  if ! [[ "$_plog_f" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    printf 'plog.sh: invalid PHASE/STEP/STATUS %q - must match [A-Za-z0-9_-]+\n' "$_plog_f" >&2
+    exit 2
+  fi
+done
+
+# GitHub #610: operator markers clear gates (the adversarial override counts
+# as a WARN in flow.sh's verdict gate). They have their own operator-only
+# scripts, so the agent-facing writer refuses them. This closes the one-call
+# path, not every path: a direct `>>` append is still possible (accepted
+# residual risk, see lib/verifier-result.sh).
+if [ "$1" = "META" ]; then
+  case "$2" in
+  adversarial-override | verify-attempts-reset)
+    echo "plog.sh: refusing META|$2 - operator marker; run lib/$2.sh from a terminal" >&2
+    exit 3
+    ;;
+  esac
+fi
 
 # A test harness may pre-load a mock _plog; otherwise use the real one.
 if ! declare -f _plog >/dev/null 2>&1; then
