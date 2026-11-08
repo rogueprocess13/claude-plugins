@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## Unreleased
+## ticket-planner 0.35.0, grill-me 0.5.0 (2026-11-08)
 
 ticket-planner 0.35.0, grill-me 0.5.0 (GitHub #631). ticket-auto-pipeline unchanged.
 
