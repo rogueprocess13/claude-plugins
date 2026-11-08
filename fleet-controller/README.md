@@ -173,7 +173,7 @@ Health API: `GET http://127.0.0.1:21001/health` → live workers, queue depth, c
 | Spawn instructions printed, unconsumed | Forks `claude` directly |
 | No health endpoint | `GET /health` |
 
-Single-instance enforced via `fcntl.flock` on a pidfile. On restart it verifies surviving PIDs against `/proc/<pid>/stat` start time before adopting them, so a recycled PID can't be mistaken for a live worker.
+Single-instance enforced via `fcntl.flock` on a pidfile (default `/tmp/ticket-auto-<euid>/fleetd.pid`, the private per-user scratch dir; override with `FLEETD_PIDFILE` or `--pidfile`). On restart it verifies surviving PIDs against `/proc/<pid>/stat` start time before adopting them, so a recycled PID can't be mistaken for a live worker.
 
 ## HTTP API
 

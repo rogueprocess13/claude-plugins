@@ -35,6 +35,23 @@
 # Path/timeouts: VERIFY_LOCK_FILE, VERIFY_LOCK_TIMEOUT_SECS and
 # VERIFY_LOCK_MAX_HOLD_SECS come from config.sh.
 #
+# Where the lock lives (GitHub #624): per user, not host-wide. With
+# VERIFY_LOCK_FILE unset the lock is <ticket_tmp_dir>/ticket-verify.lock,
+# inside the private 0700 scratch dir from ticket-tmp.sh. The contenders are
+# the verify runs one fleet starts, and fleetd spawns every worker under its
+# own uid, so they all resolve the same dir. A host-wide /tmp lock never
+# coordinated two uids anyway: `kill -0` on another user's holder pid fails
+# (EPERM, read as "dead"), `exec 9>` on their 0644 lockfile fails, and the
+# sticky bit stops `rm` of their sidecars. It only let another local user
+# pre-create the lock and block every VERIFY, or forge the holder info. A
+# second uid's stack still cannot start silently: its ports are taken.
+#
+# A VERIFY_LOCK_FILE override is used only when its directory is a real
+# directory we own with no group/other write bit, and when the lock and its
+# .holder/.info/.stop sidecars are, if present, regular files we own with no
+# group/other write bit. Anything else (a symlink, a foreign owner, a loose
+# mode) is refused: acquire fails, release does nothing, status reports held.
+#
 # Usage:
 #   source lib/verify-lock.sh
 #   verify_lock_acquire "CRE-123" || exit 1   # blocks (polling) up to the timeout
@@ -58,7 +75,49 @@
 # META|verify-lock-self-wait line when TAP_LOG is set). A live holder for
 # any other ticket is never signalled — that caller waits as before.
 
-_verify_lock_file() { echo "${VERIFY_LOCK_FILE:-/tmp/ticket-verify.lock}"; }
+# shellcheck source=ticket-tmp.sh
+source "$(dirname "${BASH_SOURCE[0]:-.}")/ticket-tmp.sh" 2>/dev/null ||
+  source "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/ticket-tmp.sh" 2>/dev/null || true
+
+# _verify_lock_trusted <lockfile> — 0 when the lock's directory and every
+# lock file that exists may be used (see the header). Prints why on refusal.
+_verify_lock_trusted() {
+  local lf="$1" d m f
+  d=$(dirname "$lf")
+  if [ -L "$d" ] || [ ! -d "$d" ] || [ ! -O "$d" ]; then
+    echo "verify-lock: refusing lock dir $d (symlink, missing, or not ours)" >&2
+    return 1
+  fi
+  m=$(_ticket_tmp_mode "$d")
+  if [[ ! "$m" =~ ^[0-7]+$ ]] || (((8#$m & 8#022) != 0)); then
+    echo "verify-lock: refusing lock dir $d (mode ${m:-?}, group/other writable)" >&2
+    return 1
+  fi
+  for f in "$lf" "$lf.holder" "$lf.info" "$lf.stop"; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    if ! ticket_tmp_trusted "$f"; then
+      echo "verify-lock: refusing $f (symlink, not a regular file, not ours, or group/other writable)" >&2
+      return 1
+    fi
+  done
+}
+
+# Prints the lock path, or returns 1 (nothing printed) when it is refused.
+_verify_lock_file() {
+  local lf="${VERIFY_LOCK_FILE:-}" d
+  if ! declare -f ticket_tmp_trusted >/dev/null 2>&1; then
+    echo "verify-lock: ticket-tmp.sh not found beside verify-lock.sh" >&2
+    return 1
+  fi
+  if [ -z "$lf" ]; then
+    d=$(ticket_tmp_dir) || return 1
+    lf="$d/ticket-verify.lock"
+  else
+    mkdir -p -m 700 "$(dirname "$lf")" 2>/dev/null || true
+  fi
+  _verify_lock_trusted "$lf" || return 1
+  printf '%s\n' "$lf"
+}
 _verify_lock_token_file() { echo "$(_verify_lock_file).holder"; }
 _verify_lock_info_file() { echo "$(_verify_lock_file).info"; }
 _verify_lock_stop_file() { echo "$(_verify_lock_file).stop"; }
@@ -148,7 +207,7 @@ verify_lock_acquire() {
   local timeout="${2:-${VERIFY_LOCK_TIMEOUT_SECS:-2400}}"
   local max_hold="${VERIFY_LOCK_MAX_HOLD_SECS:-3600}"
   local lockfile token_file info_file stop_file
-  lockfile=$(_verify_lock_file)
+  lockfile=$(_verify_lock_file) || return 1
   token_file=$(_verify_lock_token_file)
   info_file=$(_verify_lock_info_file)
   stop_file=$(_verify_lock_stop_file)
@@ -184,6 +243,7 @@ verify_lock_acquire() {
 
   (
     set +e
+    umask 077
     exec 9>"$lockfile"
     if ! flock -w "$timeout" 9; then
       exit 1
@@ -340,7 +400,7 @@ _verify_lock_stop_same_ticket() {
 # now-signal-less perspective) for up to VERIFY_LOCK_MAX_HOLD_SECS.
 verify_lock_release() {
   local lockfile token_file info_file stop_file
-  lockfile=$(_verify_lock_file)
+  lockfile=$(_verify_lock_file) || return 0 # refused: not ours to signal
   token_file=$(_verify_lock_token_file)
   info_file=$(_verify_lock_info_file)
   stop_file=$(_verify_lock_stop_file)
@@ -356,7 +416,7 @@ verify_lock_release() {
     return 0
   fi
 
-  touch "$stop_file" 2>/dev/null || true
+  (umask 077 && touch "$stop_file") 2>/dev/null || true
 
   # 0.5s ticks for ~6s total — matches the holder's own 0.5s poll tick
   # (see verify_lock_acquire). Bail out the instant token_file's content
@@ -393,6 +453,12 @@ verify_lock_release() {
 # otherwise. Exit 0 held, 1 free. Diagnostic only — never mutates state.
 verify_lock_status() {
   local token_file info_file
+  # A refused lock path reads as held, so verify_worktree_gc skips its sweep
+  # rather than act on bookkeeping it cannot trust.
+  if ! _verify_lock_file >/dev/null; then
+    echo "ticket-verify lock path refused (see stderr)"
+    return 0
+  fi
   token_file=$(_verify_lock_token_file)
   info_file=$(_verify_lock_info_file)
 

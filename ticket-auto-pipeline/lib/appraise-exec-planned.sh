@@ -95,12 +95,18 @@ adopt_planner_proposal() {
     return 2
   }
 
-  # Log adoption — validate log_file stays under /tmp/ (realpath, not regex)
+  # Log adoption. The log is the ticket's pipeline log (the skill passes
+  # $TAP_LOG, which lives in the workspace ./logs). The old rule required a
+  # path under shared /tmp, which refused every real pipeline log and steered
+  # the write toward a directory any local user can plant in (GitHub #624).
+  # Same rule as plog.sh (#619): a *-pipeline.log name, never through a
+  # symlink, and an existing file must be ours and not group/other writable.
   if [ -n "$log_file" ]; then
-    local resolved_log allowed_log_prefix
-    resolved_log=$(realpath -m "$log_file" 2>/dev/null) || true
-    allowed_log_prefix=$(realpath "/tmp/" 2>/dev/null) || true
-    if [ -z "$resolved_log" ] || [ -z "$allowed_log_prefix" ] || [[ "$resolved_log" != "$allowed_log_prefix"/* ]]; then
+    local _log_mode=""
+    [ -e "$log_file" ] && _log_mode=$(stat -c %a "$log_file" 2>/dev/null || stat -f %Lp "$log_file" 2>/dev/null)
+    if [[ "$log_file" != *-pipeline.log ]] || [ -L "$log_file" ] ||
+      { [ -e "$log_file" ] && { [ ! -f "$log_file" ] || [ ! -O "$log_file" ] ||
+        [[ ! "$_log_mode" =~ ^[0-7]+$ ]] || (((8#$_log_mode & 8#022) != 0)); }; }; then
       echo "adopt_planner_proposal: log_file path rejected '$log_file'" >&2
       return 2
     fi
@@ -131,7 +137,7 @@ if [ "${1:-}" = "--self-test" ]; then
 
   # Test 1: Successful adoption
   cd "$tmpdir"
-  if adopt_planner_proposal "TEST-1" "test-1-fix" "/tmp/test-adopt.log"; then
+  if adopt_planner_proposal "TEST-1" "test-1-fix" "$tmpdir/TEST-1-pipeline.log"; then
     if [ -f "openspec/changes/test-1-fix/proposal.md" ]; then
       echo "✓ successful adoption"
     else

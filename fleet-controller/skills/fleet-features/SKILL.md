@@ -25,7 +25,7 @@ Features in this marketplace ship behind flags, most of them off by default. Thi
 Find the installed script the same way `/fleet-env-check` does (installed version first, then the newest cache version, then `$CLAUDE_PLUGIN_ROOT`). Write the JSON to a temp file, so the output does not get truncated.
 
 ```bash
-rm -f /tmp/fleet-features-output.json
+OUT=$(mktemp) # private 0600 file, never a fixed /tmp name
 FEATURES_SH=""
 if [ -f ~/.claude/skills/lib/fleet-plugin-cache.sh ]; then
   source ~/.claude/skills/lib/fleet-plugin-cache.sh
@@ -36,14 +36,12 @@ if [ -z "$FEATURES_SH" ] && [ -f "$CLAUDE_PLUGIN_ROOT/lib/fleet-features.sh" ]; 
 fi
 if [ -n "$FEATURES_SH" ]; then
   # Pass --workspace DIR here when the user gave one.
-  bash "$FEATURES_SH" --json >/tmp/fleet-features-output.json || echo "fleet-features.sh failed (exit $?)"
+  bash "$FEATURES_SH" --json >"$OUT" || echo "fleet-features.sh failed (exit $?)"
 else
   echo "fleet-features.sh not found — reinstall the fleet-controller plugin"
 fi
-```
-
-```bash
-[ -s /tmp/fleet-features-output.json ] && cat /tmp/fleet-features-output.json || echo "OUTPUT_FILE_MISSING"
+[ -s "$OUT" ] && cat "$OUT" || echo "OUTPUT_FILE_MISSING"
+rm -f "$OUT"
 ```
 
 The output is one JSON object: `workspace`, `catalog`, `sources` (which layers were found), `count`, and `flags[]`. Each flag has `name`, `plugin`, `category`, `value`, `source`, `default`, `enabled`, `recommend`, `summary`, `why`, `docs`, `requires[]`, `requires_met` (`true`, `false`, or `null` when only manual steps apply), `unmet[]` and `manual_steps[]`.
