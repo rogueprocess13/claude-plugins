@@ -207,6 +207,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-verify-lock.sh
 	# GitNexus pre-flight branch verification (#359)
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-preflight.sh
+	bash ticket-auto-pipeline/lib/tests/test-gitnexus-refresh.sh
 	bash ticket-auto-pipeline/lib/tests/test-gitnexus-agent-tools.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-agent-guard.sh
 	# version-aware plugin-cache lookup (#468)

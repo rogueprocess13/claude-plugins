@@ -888,6 +888,13 @@ if echo "$summary_m" | grep -qxF "Advisory (does not block) PRO-701 Security MIS
 else
   fail "planner_refinement_advisory_summary: audit MISSED entries" "got: $summary_m"
 fi
+# (f) a fresh shell holding only what SKILL.md step 1b sources has no ticket-auto deps
+summary_fresh=$(REPOS_ROOT="$REPOS_ROOT" bash -c 'source "$1/planner-state.sh"; source "$1/planner-refinement.sh"; planner_refinement_advisory_summary "$2"' _ "$LIB_DIR" "$TDG_INIT" 2>/dev/null) || summary_fresh=""
+if [ -n "$summary_m" ] && [ "$summary_fresh" = "$summary_m" ]; then
+  pass "planner_refinement_advisory_summary: a fresh shell prints the same lines"
+else
+  fail "planner_refinement_advisory_summary: a fresh shell prints the same lines" "got: $summary_fresh"
+fi
 summary_none=$(planner_refinement_advisory_summary "$INIT_ID" 2>/dev/null) || summary_none="(rc!=0)"
 if [ -z "$summary_none" ]; then
   pass "planner_refinement_advisory_summary: prints nothing for an initiative with no finding"
