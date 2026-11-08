@@ -22,7 +22,7 @@ No arguments. Run from the project directory containing `CLAUDE.md`.
 Write `env-check.sh` output to a temp file (avoids bash stdout truncation). Tries the installed plugin version first (`installed_plugins.json`, then the newest cached version by version order), falling back to the synced `~/.claude/skills/lib/` path.
 
 ```bash
-rm -f /tmp/env-check-output.txt
+OUT=$(mktemp) # private 0600 file, never a fixed /tmp name
 ENV_CHECK=""
 # Installed (else newest cached) version by version order (#468) via tap_cache_find.
 if [ -f ~/.claude/skills/lib/plugin-cache.sh ]; then
@@ -33,14 +33,12 @@ if [ -z "$ENV_CHECK" ] && [ -f ~/.claude/skills/lib/env-check.sh ]; then
   ENV_CHECK=~/.claude/skills/lib/env-check.sh
 fi
 if [ -n "$ENV_CHECK" ]; then
-  bash "$ENV_CHECK" --summary-file /tmp/env-check-output.txt || true
+  bash "$ENV_CHECK" --summary-file "$OUT" || true
 else
   echo "env-check.sh not found — reinstall the plugin"
 fi
-```
-
-```bash
-[ -f /tmp/env-check-output.txt ] && cat /tmp/env-check-output.txt || echo "OUTPUT_FILE_MISSING"
+[ -s "$OUT" ] && cat "$OUT" || echo "OUTPUT_FILE_MISSING"
+rm -f "$OUT"
 ```
 
 ### Step 2 — Display as table
