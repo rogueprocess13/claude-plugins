@@ -17,6 +17,22 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.87.0 (2026-11-08) — fleet-controller 0.46.1
+
+VERIFY checkpoints survive a crashed attempt, and `ticket-retro` finds its lib in the plugin layout.
+
+### Fixed
+- A recorded `zombie-detected:` VERIFY close is no longer treated as a verdict when scoping
+  checkpoints. `verify_attempt_lines` (`VERIFY_CHECKPOINT`, `VERIFY_FROM`, ticket-verify's skip
+  list) now counts only lines after the last real `VERIFY|verify` verdict, `IMPLEMENT|implement`
+  line, recorded `operator-stopped:` close or honoured control-file reset, so a crashed VERIFY
+  resumes from its checkpoints instead of re-checking every criterion. An operator stop or reset
+  still ends the scope, since a person intervened. fleetd's `last_verify_checkpoint` /
+  `last_verify_criterion` apply the same rule, with parity fixtures (#607).
+- `retro.sh` resolves its lib as `<plugin>/lib` in the plugin layout and falls back to the synced
+  `skills/lib` layout. It defines `_iso_now` itself when no lib provides it, so the cursor is
+  always written, and prints a stderr line on either fallback (#600).
+
 ## 0.86.0 (2026-11-08)
 
 Phase agents read the right skill file, and a stale GitNexus index is refreshed after a ticket's PRs.

@@ -1660,7 +1660,7 @@ _VERIFY_UNRESUMABLE_SUBSTEPS = frozenset(
     {'browser-session', 'navigate', 'execute-steps'})
 
 
-def last_verify_checkpoint(log_lines):
+def last_verify_checkpoint(log_lines, ctl_lines=None):
     """The `--from-step` value a retried VERIFY worker should resume from.
 
     Mirrors `detect-resume.sh`'s `VERIFY_FROM` derivation exactly — the last
@@ -1675,15 +1675,17 @@ def last_verify_checkpoint(log_lines):
     bash script's empty-string default.
 
     Attempt-scoped (review finding DET-RV-16), like the bash script: only
-    lines after the last `VERIFY|verify|done|`/`fail|` terminal count — an
-    attempt that reached a terminal is over, and the next one must re-check
-    every criterion against re-implemented code. `checkpoint` is never
+    lines after the last real `VERIFY|verify|done|`/`fail|` verdict or
+    `IMPLEMENT|implement` line count — an attempt that reached a verdict is
+    over, and re-implemented code must be re-checked in full. A synthetic
+    close recorded in `ctl_lines` (the `.verify-ctl` control file) does not
+    end the attempt (#607). `checkpoint` is never
     returned: a per-criterion checkpoint is written inside execute-steps, so
     it resumes as execute-steps (then the browser correction → build-plan).
     The criterion number itself is `last_verify_criterion`.
     """
     last_step = ''
-    for fields in _current_verify_attempt(log_lines):
+    for fields in _current_verify_attempt(log_lines, ctl_lines):
         if fields[3] != 'done':
             continue
         step = fields[2]
@@ -1700,13 +1702,13 @@ def last_verify_checkpoint(log_lines):
 _VERIFY_CRITERION_RE = re.compile(r'^criterion-(\d+)-pass')
 
 
-def last_verify_criterion(log_lines):
+def last_verify_criterion(log_lines, ctl_lines=None):
     """detect-resume.sh's `VERIFY_CHECKPOINT`: the highest criterion N with a
     `VERIFY|checkpoint|done|criterion-N-pass` line in the current verify
     attempt (same scoping as `last_verify_checkpoint`), or `''`.
     """
     best = None
-    for fields in _current_verify_attempt(log_lines):
+    for fields in _current_verify_attempt(log_lines, ctl_lines):
         if fields[2] != 'checkpoint' or fields[3] != 'done':
             continue
         m = _VERIFY_CRITERION_RE.match(fields[4])
@@ -1716,15 +1718,36 @@ def last_verify_criterion(log_lines):
     return '' if best is None else str(best)
 
 
-def _current_verify_attempt(log_lines):
-    """Split VERIFY lines after the last `VERIFY|verify|done|fail` terminal."""
+def _current_verify_attempt(log_lines, ctl_lines=None):
+    """VERIFY lines of the current attempt — a port of verify-checkpoint.sh's
+    `verify_attempt_lines`: everything after the last real
+    `VERIFY|verify|done|fail` verdict or `IMPLEMENT|implement|waiting|done`
+    line, or after an honoured control-file reset. Only a recorded
+    `zombie-detected:` close (an unattended crash) keeps the attempt open
+    (#607); an `operator-stopped:` close ends it like a verdict, since a
+    person intervened and may have changed the environment."""
+    reset_ln, synth = _parse_verify_ctl(ctl_lines)
     rows = []
-    for line in log_lines:
+    for lineno, line in enumerate(log_lines, start=1):
+        if lineno <= reset_ln:
+            # At or before an honoured reset: never part of the attempt.
+            continue
         fields = line.rstrip('\n').split('|', 4)
-        if len(fields) < 5 or fields[1] != 'VERIFY':
+        if len(fields) < 4:
+            continue
+        if (fields[1] == 'IMPLEMENT' and fields[2] == 'implement'
+                and fields[3] in ('waiting', 'done')):
+            rows = []
+            continue
+        if fields[1] != 'VERIFY':
             continue
         if fields[2] == 'verify' and fields[3] in ('done', 'fail'):
-            rows = []
+            msg = fields[4].lstrip(' \t') if len(fields) > 4 else ''
+            if not (fields[3] == 'fail' and lineno in synth
+                    and msg.startswith('zombie-detected:')):
+                rows = []
+            continue
+        if len(fields) < 5:
             continue
         rows.append(fields)
     return rows
