@@ -192,8 +192,9 @@ Approval and rejection are facts in the ticket's local manifest (tracker-approva
 | `/ticket-approve <id>` | Approve a ticket held at the gate: fires `human-approve` (`Approve → Ready`), records `approved: true` / `approval_provenance: human` in the manifest, clears a `needs-info` flag. Re-run `/ticket-auto <id>` afterwards. |
 | `/ticket-reject <id>` | Reject the plan: fires `human-reject` (`Approve → Todo`) and clears the approval fact, so the ticket is re-appraised. |
 | Answer Open Questions | Reply in the ticket's Linear comment thread before approving; the gate-reconcile agent folds the answers into the plan on the next run. |
+| `bash ~/.claude/skills/lib/adversarial-override.sh [--log-file F] <id> --reason "<why>"` | Accept a plan the adversarial review BLOCKED without another review round. Writes `META\|adversarial-override\|info\|reason=…`, an `EXEC\|adversarial-review\|done\|WARNINGS — HUMAN OVERRIDE: …` line (so resume continues) and a WARN `adversarial_review` verifier-result (so `flow.sh`'s verdict gate does not refuse `pr-review-pass-*` later). Run it from a plain terminal: it refuses when `CLAUDE_CODE_SESSION_ID`, `FLEET_WORKER_PID` or `FLEET_GENERATION` is set (exit 4), needs a non-empty reason (exit 2), and refuses when no adversarial BLOCK is live (exit 5). The log defaults to `$FLEET_PIPELINE_LOG_DIR` (else `./logs`)`/<id>-pipeline.log`. A hand-written `done\|WARNINGS` line no longer clears the verdict gate ([#610](https://github.com/willard-pro/claude-plugins/issues/610)). Re-run `/ticket-auto <id>` afterwards. |
 
-Both commands need `REPOS_ROOT` in the environment (see [Required Environment](#required-environment)).
+The two slash commands need `REPOS_ROOT` in the environment (see [Required Environment](#required-environment)).
 
 ### Flow Control
 
@@ -380,7 +381,7 @@ When the pipeline halts with a gate-stop, check the pipeline log for the specifi
 |------|----------------|-----|
 | `EXEC_NO_ARTIFACT` | Appraise-exec produced no artifact file | Re-run `/ticket-appraise-exec <id>`. Check `notes.md` has a `## Complexity` section. |
 | `COMPLEXITY_ARTIFACT_MISMATCH` | Artifact type doesn't match complexity score | Re-run `/ticket-appraise <id>` to re-evaluate complexity. |
-| `ADVERSARIAL_BLOCKED` | Adversarial review found blocking issues in the plan | Review `## Adversarial Review` in notes.md, fix the plan, re-run `/ticket-appraise-exec <id> --from-step create-artifact`. The detail names the round; from round 3 on, read the `### Approach review` section first — a `RECONSIDER` there means change the approach, not add detail. |
+| `ADVERSARIAL_BLOCKED` | Adversarial review found blocking issues in the plan | Review `## Adversarial Review` in notes.md, fix the plan, re-run `/ticket-appraise-exec <id> --from-step create-artifact`. The detail names the round; from round 3 on, read the `### Approach review` section first — a `RECONSIDER` there means change the approach, not add detail. To accept the plan as is, run `adversarial-override.sh` (see [Human Decisions](#human-decisions)). |
 | `APPROVAL_REVOKED` | The manifest records no approval at re-approve time (approval was never granted, or was cleared by `re-claim`/`/ticket-reject`) | Run `/ticket-approve <id>`. |
 | `REMEDIATION_BRIEF_TRUNCATED` | Remediation brief is incomplete or empty | Re-run `/ticket-appraise-exec <id>` with full remediation notes. |
 | `PR_REVIEW_VERDICT_UNPARSEABLE` | PR review comment format couldn't be parsed | Check the PR review comment follows the expected verdict format. Re-run `/ticket-pr-review <id>`. |

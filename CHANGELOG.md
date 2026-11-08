@@ -21,15 +21,6 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 
 ### Fixed
 
-- **`ticket-auto-pipeline`** — `detect-resume.sh` no longer passes VERIFY step
-  names `ticket-verify` does not know (`seed-apply`, `seed-precheck`,
-  `verify-lock`, any future step) as `--from-step`. `VERIFY_FROM` is now an
-  allow-list: only `build-plan` (written after Step 1.6's lock, env and seeds)
-  passes through, browser steps and `checkpoint` still map to `build-plan`, and
-  every other step, `load-context` included, resumes `ticket-verify` from
-  Step 1. fleetd's `last_verify_checkpoint` applies the same
-  mapping, with parity fixtures. `ticket-verify` SKILL.md states the
-  unknown-value rule (size-neutral). (#620)
 - **`ticket-auto-pipeline`** — the VERIFY lock is ticket-aware. The holder
   info now records the lock's owner: the process alive exactly as long as the
   invocation that took it (`FLEET_WORKER_PID` under fleetd, else the nearest
@@ -48,6 +39,72 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
   Step 7 now releases the lock, because a login or navigation failure reaches
   it without passing Step 5 (size-neutral). fleetd and the fleet detectors do
   not read the lock's holder files, so they need no change. (#626)
+
+## 0.91.0 (2026-11-08)
+
+### Fixed
+
+- **`ticket-auto-pipeline`** — `detect-resume.sh` no longer passes VERIFY step
+  names `ticket-verify` does not know (`seed-apply`, `seed-precheck`,
+  `verify-lock`, any future step) as `--from-step`. `VERIFY_FROM` is now an
+  allow-list: only `build-plan` (written after Step 1.6's lock, env and seeds)
+  passes through, browser steps and `checkpoint` still map to `build-plan`, and
+  every other step, `load-context` included, resumes `ticket-verify` from
+  Step 1. fleetd's `last_verify_checkpoint` applies the same
+  mapping, with parity fixtures. `ticket-verify` SKILL.md states the
+  unknown-value rule (size-neutral). (#620)
+
+## 0.90.0 (2026-11-08)
+
+### Fixed
+- A seeder can no longer leave processes running after VERIFY's seed steps. `lib/seed-run.sh` is
+  now the one runner for `seed-apply.sh` (Step 1.6c) and `seed-precheck.sh` (Step 1.6d): own
+  process group, `SEED_APPLY_TIMEOUT_SECS` kills the whole group, and after every run a sweep
+  kills any process carrying the run's `TICKET_SEED_RUN_ID` environment marker, which catches
+  descendants that left the group with `setsid`. Strays are logged as
+  `VERIFY|seed-apply|warn|` / `VERIFY|seed-precheck|warn|<n> processes survived …`. seed-apply's
+  `make` targets used coreutils `timeout`, which signalled only `make` itself; a timeout is still
+  logged as `exited 124` (#621).
+
+## 0.89.0 (2026-11-08)
+
+Verdict gate: a stale FAIL/BLOCK no longer refuses a ticket whose verifier has since passed, and
+a human override of an adversarial BLOCK no longer needs a second bypass hours later.
+
+### Fixed
+- `verifier_latest_verdict` (flow.sh's verdict gate) uses one rule: the latest verdict-bearing
+  record per `(verifier, phase)` pair wins. A later PASS/WARN supersedes an earlier FAIL/BLOCK.
+  With no pipeline log the gate says it is unarmed (stderr, `META|verdict-gate|warn|UNARMED`,
+  heartbeat) instead of skipping silently (#598, #610).
+- `return-completeness-check.sh --refresh` re-checks after VERIFY and writes a fresh
+  `return_completeness` result, so a FAIL from an earlier phase no longer blocks the merge (#598).
+
+### Added
+- `lib/adversarial-override.sh`: the one way to accept a plan the adversarial review BLOCKED.
+  Operator-only: it refuses agent and fleetd-worker context. It writes
+  `META|adversarial-override|info|reason=…`, which the verdict gate counts as WARN, plus the
+  done line `detect-resume.sh` reads. A plain `EXEC|adversarial-review|done|PASS` line no longer
+  clears the gate. `plog.sh` refuses to write `META|adversarial-override` and
+  `META|verify-attempts-reset` (exit 3) and any PHASE/STEP/STATUS outside `[A-Za-z0-9_-]+`
+  (exit 2), so a `|` or newline cannot forge the marker; `_plog` replaces `|`/CR/LF in those
+  fields with `_` (#610).
+
+## 0.88.0 (2026-11-08)
+
+Gate reconcile, AC drift and a seeder precheck in VERIFY.
+
+### Fixed
+- ticket-gate-reconcile no longer holds a cycle whose only unprocessed comments answer the open
+  questions. It records the answers, posts the amendment without `re-claim`, and passes. Bad or
+  missing counts hold the ticket (`lib/reconcile-decide.sh`, #599).
+- ACs added in the tracker during the gate hold now reach `context.md` and the Verification Plan,
+  and VERIFY numbers its plan from the tracker list when they differ. New gate-warns:
+  `AC_DRIFT_AT_GATE`, `AC_DRIFT_AT_VERIFY`, `AC_DRIFT_UNKNOWN` (`lib/ac-drift.sh`, #604).
+- ticket-verify Step 1.6d runs the seeder scenarios this ticket's own seed-tool commits changed,
+  twice each, under VERIFY's lock and before any criterion (`lib/seed-precheck.sh`, #601).
+  Scenario names come only from the seed repo's git history, never from ticket text; each run is
+  an argv list in its own process group, and a timeout kills the whole group. A failure is a
+  normal verify FAIL that counts one attempt. ticket-implement checks seeders statically only.
 
 ## 0.87.0 (2026-11-08) — fleet-controller 0.46.1
 

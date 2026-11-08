@@ -38,11 +38,15 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-env-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-notes-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-rounds.sh
+	bash ticket-auto-pipeline/lib/tests/test-adversarial-override.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-dir.sh
 	bash ticket-auto-pipeline/lib/tests/test-plan-artifact-callers.sh
 	bash ticket-auto-pipeline/lib/tests/test-heartbeat.sh
 	bash ticket-auto-pipeline/lib/tests/test-capture-transcript.sh
 	bash ticket-auto-pipeline/lib/tests/test-reconcile-comments.sh
+	bash ticket-auto-pipeline/lib/tests/test-reconcile-decide.sh
+	bash ticket-auto-pipeline/lib/tests/test-ac-drift.sh
+	bash ticket-auto-pipeline/lib/tests/test-seed-precheck.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-preamble.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-identity.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-summary.sh
@@ -119,6 +123,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-vplan-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-seed-apply.sh
+	bash ticket-auto-pipeline/lib/tests/test-seed-run.sh
 	# dor-semantic-evaluator
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic.sh

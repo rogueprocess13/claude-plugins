@@ -446,6 +446,17 @@ persisted at parse time) says otherwise.
   run the seed then verify `make` target in the verify worktree (no shell, no tracker read).
   Logs `VERIFY|seed-apply|start|done|skip|fail`; a failure writes
   `META|gate-stop|fail|VERIFY_SEED_FAILED — <msg>` and holds the ticket.
+- **VERIFY Step 1.6d** (`ticket-auto-pipeline/lib/seed-precheck.sh`, #601): right after 1.6c,
+  still under the verify lock, every `scenario_<name>` this ticket's own seed-tool commits add or
+  change runs twice (`seed.sh <name>` as an argv list, `SEED_APPLY_TIMEOUT_SECS` per run) before
+  any criterion. Names come from the seed tool's git history only, never from ticket text. A
+  failure is a normal verify FAIL with a REMEDIATION_BRIEF on the seeder, not a hold.
+- **Containment (#621)**: both steps run each `make` target / scenario through
+  `ticket-auto-pipeline/lib/seed-run.sh`: own process group, `SEED_APPLY_TIMEOUT_SECS` (default
+  900, `0` = none) kills the whole group (a seed-apply timeout logs `exited 124`), and after every
+  run any process the seeder started that left the group (`setsid`, a daemonising tool) is found
+  by an environment marker and killed, logged `warn|<n> processes survived …`. A seed target must
+  not leave a service running; the stack belongs to `env-start.sh`.
 - **dor-check**: on a contract body (a known-kind Source anywhere), `TEST_DATA_MISSING` and
   `TEST_DATA_UNSEEDED` are hard; chore and security are exempt; `DOR_STRICT_TEST_DATA=false`
   demotes them, and legacy bodies stay advisory unless it is `true`. The planner's Refinement
