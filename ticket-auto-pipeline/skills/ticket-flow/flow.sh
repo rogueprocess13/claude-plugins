@@ -275,7 +275,7 @@ fi
 # for the same exit, and pipeline-postmortem.sh counts each flow-error line.
 _emit_schema_header
 if [ -z "${REPOS_ROOT:-}" ]; then
-  echo "flow.sh: REPOS_ROOT is not set — cannot read or write the ticket manifest for ${TICKET_ID}; '${TRIGGER}' not applied. Source /tmp/ticket-auto-${TICKET_ID}-env.sh or export REPOS_ROOT, then retry." >&2
+  echo "flow.sh: REPOS_ROOT is not set — cannot read or write the ticket manifest for ${TICKET_ID}; '${TRIGGER}' not applied. Run 'source ~/.claude/skills/lib/ticket-env.sh ${TICKET_ID}' or export REPOS_ROOT, then retry." >&2
   _log "META|flow-refused|fail|REPOS_ROOT_UNSET trigger=${TRIGGER} — manifest root unresolvable, nothing applied"
   exit 13
 fi

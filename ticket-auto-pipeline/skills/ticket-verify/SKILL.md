@@ -1042,7 +1042,7 @@ Verification passed on localhost — the implementation is confirmed working. No
 1. Read `notes.md` for the branch name, repo, and worktree path from the `pre-implementation checkpoint` entry.
 2. For each affected repo, check if a PR already exists for this branch, then open one against `$BASE_BRANCH`:
    ```bash
-   source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+   source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
    # Resolve worktree path — prefer notes.md checkpoint, fall back to path computation
    WORKTREE_PATH=$(grep "Worktree:" {ticket-dir}/notes.md 2>/dev/null | head -1 | sed 's/.*Worktree: //')
    if [ -z "$WORKTREE_PATH" ]; then

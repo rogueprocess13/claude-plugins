@@ -24,6 +24,8 @@ and expensive to notice:
 
 import json
 import os
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -913,6 +915,111 @@ class TestHookIdentityFiles(unittest.TestCase):
         self.assertGreater(int(path.read_text()), 0)
 
 
+class TestScratchDirParity(unittest.TestCase):
+    """GitHub #619 — fleetd and ticket-tmp.sh resolve the same scratch dir.
+
+    fleetd writes spawn-meta and start stamps that the bash hooks read, and a
+    worker's skill prose sources its env file through ticket-env.sh. If the
+    two derivations ever disagree, hooks silently find nothing. This runs the
+    real bash helper and compares, for the override, for the uid default, and
+    for each refusal.
+    """
+
+    LIB = (Path(__file__).resolve().parents[3] / 'ticket-auto-pipeline'
+           / 'lib' / 'ticket-tmp.sh')
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _bash(self, override, *args):
+        env = {k: v for k, v in os.environ.items() if k != 'TICKET_TMP_DIR'}
+        if override is not None:
+            env['TICKET_TMP_DIR'] = str(override)
+        r = subprocess.run(['bash', str(self.LIB), *args], env=env,
+                           capture_output=True, text=True)
+        return r.returncode, r.stdout.strip()
+
+    def _py(self, override):
+        saved = os.environ.pop('TICKET_TMP_DIR', None)
+        try:
+            if override is not None:
+                os.environ['TICKET_TMP_DIR'] = str(override)
+            try:
+                return 0, str(phase_dispatch.ticket_tmp_dir())
+            except OSError:
+                return 1, ''
+        finally:
+            os.environ.pop('TICKET_TMP_DIR', None)
+            if saved is not None:
+                os.environ['TICKET_TMP_DIR'] = saved
+
+    def test_override_resolves_identically_and_is_created_0700(self):
+        d = self.tmp / 'scratch'
+        self.assertEqual(self._bash(d), (0, str(d)))
+        self.assertEqual(stat.S_IMODE(os.lstat(d).st_mode), 0o700)
+        self.assertEqual(self._py(d), (0, str(d)))
+        d2 = self.tmp / 'scratch-py'
+        self.assertEqual(self._py(d2), (0, str(d2)))
+        self.assertEqual(stat.S_IMODE(os.lstat(d2).st_mode), 0o700)
+        self.assertEqual(self._bash(d2), (0, str(d2)))
+
+    def test_uid_default_resolves_identically(self):
+        expected = f'/tmp/ticket-auto-{os.geteuid()}'
+        rc_b, out_b = self._bash(None)
+        rc_p, out_p = self._py(None)
+        self.assertEqual(out_b, out_p)
+        self.assertEqual(rc_b, rc_p)
+        if rc_b == 0:
+            self.assertEqual(out_b, expected)
+
+    def test_empty_override_means_default(self):
+        self.assertEqual(self._bash(''), self._bash(None))
+        self.assertEqual(self._py(''), self._py(None))
+
+    def test_refusals_agree(self):
+        loose = self.tmp / 'loose'
+        loose.mkdir()
+        os.chmod(loose, 0o777)
+        target = self.tmp / 'real'
+        target.mkdir(mode=0o700)
+        link = self.tmp / 'link'
+        link.symlink_to(target)
+        plain = self.tmp / 'plain-file'
+        plain.write_text('x')
+        for path in (loose, link, plain):
+            with self.subTest(path=path.name):
+                self.assertEqual(self._bash(path)[0], 1)
+                self.assertEqual(self._py(path)[0], 1)
+
+    def test_file_paths_agree(self):
+        d = self.tmp / 'scratch'
+        rc, out = self._bash(d, 'CRE-9', 'spawn-meta.txt')
+        self.assertEqual(rc, 0)
+        os.environ['TICKET_TMP_DIR'] = str(d)
+        try:
+            self.assertEqual(out, str(phase_dispatch.spawn_meta_path('CRE-9')))
+        finally:
+            del os.environ['TICKET_TMP_DIR']
+
+    def test_bad_ticket_id_refused_by_both(self):
+        d = self.tmp / 'scratch'
+        self.assertEqual(self._bash(d, '../x', 'env.sh')[0], 1)
+        os.environ['TICKET_TMP_DIR'] = str(d)
+        try:
+            with self.assertRaises(OSError):
+                phase_dispatch.spawn_meta_path('../x')
+        finally:
+            del os.environ['TICKET_TMP_DIR']
+
+    def test_spawn_meta_is_written_0600(self):
+        spawn = build_phase_spawn(
+            DispatchTable.load(TABLE_PATH), 'STEP_4_5', 'CRE-9',
+            '/w/logs/CRE-9-pipeline.log')
+        path = write_spawn_meta('CRE-9', spawn, 's', meta_dir=self.tmp)
+        self.assertEqual(stat.S_IMODE(os.lstat(path).st_mode), 0o600)
+
+
 class TestLoopCaps(unittest.TestCase):
     """Task 4.6 — the four router-managed cycle caps.
 
@@ -1675,15 +1782,17 @@ class TestPhaseContract(unittest.TestCase):
                / 'lib' / 'spawn-helper.sh')
         tid = f'TEST-PEF{os.getpid()}'
         value = 'mvn -Dq="a b" $(x) `y` C:\\p & z'
-        env_path = Path(f'/tmp/ticket-auto-{tid}-env.sh')
+        scratch = Path(tempfile.mkdtemp())
+        env_path = scratch / f'ticket-auto-{tid}-env.sh'
         try:
             subprocess.run(
                 ['bash', '-c', 'source "$1"; spawn_write_env TICKET_ID="$2" '
                  'REPOS_ROOT=/r ISSUE_PREFIX=T BE_SERVICES=s BE_TEST_CMD="$3"',
                  '_', str(lib), tid, value],
                 check=True, capture_output=True, text=True,
-                env={k: v for k, v in os.environ.items()
-                     if k != 'LINEAR_API_KEY'})
+                env={**{k: v for k, v in os.environ.items()
+                        if k != 'LINEAR_API_KEY'},
+                     'TICKET_TMP_DIR': str(scratch)})
             env = phase_dispatch._parse_env_file(str(env_path))
             self.assertEqual(env['BE_TEST_CMD'], value)
             sourced = subprocess.run(
@@ -1692,7 +1801,7 @@ class TestPhaseContract(unittest.TestCase):
                 text=True).stdout
             self.assertEqual(sourced, value)
         finally:
-            env_path.unlink(missing_ok=True)
+            shutil.rmtree(scratch, ignore_errors=True)
 
     def test_parse_env_file_missing_file_returns_empty_dict(self):
         self.assertEqual(phase_dispatch._parse_env_file('/nonexistent'), {})

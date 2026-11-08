@@ -506,7 +506,9 @@ ticket_preamble_run() {
     AUTONOMY="$AUTONOMY" \
     MERGE_POLICY="$MERGE_POLICY" \
     TAP_LOG="$LOG_FILE" >/dev/null || return $TP_ENV_WRITE_FAILED
-  [ -s "/tmp/ticket-auto-${TICKET_ID}-env.sh" ] || return $TP_ENV_WRITE_FAILED
+  local _env_file
+  _env_file=$(ticket_tmp_path "$TICKET_ID" env.sh) || return $TP_ENV_WRITE_FAILED
+  [ -s "$_env_file" ] || return $TP_ENV_WRITE_FAILED
 
   # 0.6 tail — autonomy and provenance. A mode that differs from the recorded
   # one is logged as a change rather than overwritten: gate decisions already
@@ -530,7 +532,7 @@ ticket_preamble_run() {
   cat <<EOF
 TICKET_PREAMBLE_RESULT:
   TICKET_ID: $TICKET_ID
-  ENV_FILE: /tmp/ticket-auto-${TICKET_ID}-env.sh
+  ENV_FILE: $_env_file
   LOG_FILE: $LOG_FILE
   HB_LOG_FILE: $HB_LOG_FILE
   CLAUDE_LOG_FILE: $CLAUDE_LOG_FILE

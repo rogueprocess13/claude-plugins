@@ -15,12 +15,17 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Scratch files (env.sh, spawn-meta) live in the private dir lib/ticket-tmp.sh
+# resolves (GitHub #619); point it at a dir this suite owns.
+TICKET_TMP_DIR=$(mktemp -d)
+export TICKET_TMP_DIR
 ROUTER_SKILL="$LIB_DIR/../skills/ticket-auto/SKILL.md"
 
 _TMPDIR=$(mktemp -d)
 _cleanup() {
   rm -rf "$_TMPDIR" 2>/dev/null || true
-  rm -f /tmp/ticket-auto-TEST-569-* 2>/dev/null || true
+  rm -rf "$TICKET_TMP_DIR" 2>/dev/null || true
 }
 trap _cleanup EXIT
 

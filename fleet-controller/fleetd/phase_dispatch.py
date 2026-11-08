@@ -34,6 +34,7 @@ Stdlib only. Third-party dependencies stay quarantined in `otel.py` (D11).
 import json
 import os
 import re
+import stat
 import subprocess
 import tempfile
 import time
@@ -1325,12 +1326,49 @@ def write_phase_contract(state_dir, table, step_id, tid, env_file=None,
 
 # ── Hook identity (design.md D15, task 4.13) ────────────────────────────────
 
-SPAWN_META_DIR = Path('/tmp')
+def ticket_tmp_dir():
+    """The pipeline's private per-user scratch dir (GitHub #619).
+
+    Mirrors `ticket-auto-pipeline/lib/ticket-tmp.sh`'s `ticket_tmp_dir`
+    exactly — one resolution rule, two implementations, held together by a
+    parity test: `$TICKET_TMP_DIR` when set and non-empty, else
+    `/tmp/ticket-auto-<euid>`. The default depends on nothing but the uid, so
+    fleetd, the workers it spawns, their hooks and a manual router all land on
+    the same directory whatever XDG_RUNTIME_DIR or TMPDIR say.
+
+    Created 0700 when missing. Raises OSError — which `_phase_write_identity`
+    already catches and warns about — when the path is a symlink, not a
+    directory, owned by someone else, or has any group/other permission bit:
+    a planted directory must cost telemetry, never redirect a write.
+    """
+    d = Path(os.environ.get('TICKET_TMP_DIR') or f'/tmp/ticket-auto-{os.geteuid()}')
+    try:
+        os.mkdir(d, 0o700)
+    except FileExistsError:
+        pass
+    st = os.lstat(d)
+    if (stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode)
+            or st.st_uid != os.geteuid() or st.st_mode & 0o077):
+        raise OSError(f'refusing scratch dir {d} (symlink, not a directory, '
+                      f'not owned by uid {os.geteuid()}, or mode '
+                      f'{stat.S_IMODE(st.st_mode):o} is not 700)')
+    return d
+
+
+_TID_RE = re.compile(r'[A-Za-z0-9_-]+')
+
+
+def _scratch_tid(tid):
+    """Refuse a ticket id that would change a scratch path (ticket-tmp.sh's
+    ticket_tmp_valid_id). OSError so the existing fail-soft catch applies."""
+    if not isinstance(tid, str) or not _TID_RE.fullmatch(tid):
+        raise OSError(f'invalid ticket id {tid!r} for a scratch path')
+    return tid
 
 
 def spawn_meta_path(tid):
     """The spawn-meta file every identity-resolving hook reads."""
-    return SPAWN_META_DIR / f'ticket-auto-{tid}-spawn-meta.txt'
+    return ticket_tmp_dir() / f'ticket-auto-{_scratch_tid(tid)}-spawn-meta.txt'
 
 
 def write_spawn_meta(tid, spawn, session_id, pinger_pid='', watchdog_pid='',
@@ -1354,8 +1392,8 @@ def write_spawn_meta(tid, spawn, session_id, pinger_pid='', watchdog_pid='',
 
     Written before `execvpe` so no hook can fire against a missing file.
     """
-    meta_dir = Path(meta_dir) if meta_dir else SPAWN_META_DIR
-    path = meta_dir / f'ticket-auto-{tid}-spawn-meta.txt'
+    meta_dir = Path(meta_dir) if meta_dir else ticket_tmp_dir()
+    path = meta_dir / f'ticket-auto-{_scratch_tid(tid)}-spawn-meta.txt'
     lines = [
         f'PHASE={spawn.phase}',
         f'STEP={spawn.step}',
@@ -1375,6 +1413,9 @@ def write_spawn_meta(tid, spawn, session_id, pinger_pid='', watchdog_pid='',
         model = os.environ.get('ANTHROPIC_MODEL', 'unknown')
     lines.append(f'MODEL={model}')
     path.write_text('\n'.join(lines) + '\n')
+    # 0600 whatever the umask: plog.sh trusts this file to name its log only
+    # when nobody else can write it (GitHub #619).
+    os.chmod(path, 0o600)
     return path
 
 
@@ -1389,9 +1430,9 @@ def write_phase_start_marker(tid, phase, meta_dir=None):
     The filename keeps the hook's existing `-start-{PHASE}-{ns}.ts` shape so
     the reader needs no change, and the same `find -mmin +5` cleanup applies.
     """
-    meta_dir = Path(meta_dir) if meta_dir else SPAWN_META_DIR
+    meta_dir = Path(meta_dir) if meta_dir else ticket_tmp_dir()
     stamp = time.time_ns()
-    path = meta_dir / f'ticket-auto-{tid}-start-{phase}-{stamp}.ts'
+    path = meta_dir / f'ticket-auto-{_scratch_tid(tid)}-start-{phase}-{stamp}.ts'
     path.write_text(str(stamp))
     return path
 

@@ -316,7 +316,7 @@ class TestEnvItem(unittest.TestCase):
         ctx = {'tid': 'CRE-3'}
         result = orchestration.run_env(
             {'kind': 'env', 'export': 'CLAUDE_LOG_FILE',
-             'value': '/tmp/ticket-auto-{TICKET-ID}-verify-$(date +%s).log'},
+             'value': './logs/{TICKET-ID}-verify-$(date +%s).log'},
             ctx)
         self.assertEqual(result.status, orchestration.OK)
         value = ctx['env']['CLAUDE_LOG_FILE']

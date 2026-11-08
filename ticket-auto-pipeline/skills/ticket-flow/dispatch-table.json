@@ -281,7 +281,7 @@
         {
           "kind": "env",
           "export": "CLAUDE_LOG_FILE",
-          "value": "/tmp/ticket-auto-{TICKET-ID}-verify-$(date +%s).log",
+          "value": "./logs/{TICKET-ID}-verify-$(date +%s).log",
           "description": "Crash diagnostics path that survives agent crashes."
         }
       ],

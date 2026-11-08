@@ -7,6 +7,13 @@
 # errors in this bash version when nounset is active.
 set -eo pipefail
 
+# Private per-user scratch directory for env/spawn-meta/ctx/progress files
+# (GitHub #619) — ticket_tmp_dir / ticket_tmp_path.
+if ! declare -f ticket_tmp_path >/dev/null 2>&1; then
+  # shellcheck source=ticket-tmp.sh
+  source "$(dirname "${BASH_SOURCE[0]}")/ticket-tmp.sh"
+fi
+
 # Source heartbeat library (provides _plog, _iso_now, hb_* and cl_write)
 # unless already loaded (e.g. test mocks)
 if ! declare -f _plog >/dev/null 2>&1; then
@@ -25,7 +32,8 @@ fi
 # Discovery order:
 #   1. FLEET_STATE_DIR env var — explicit override, always wins
 #   2. fleet-config.sh constructors — when fleet-controller is co-installed
-#   3. /tmp — backward compatible with non-fleet-controller environments
+#   3. ticket_tmp_dir — the private per-user scratch dir (GitHub #619; was a
+#      predictable path in shared /tmp)
 #
 # Usage: _worker_stop_file <type>
 #   type: pinger | watchdog
@@ -60,7 +68,7 @@ _worker_state_dir() {
   elif [ -n "${FLEET_STATE_DIR:-}" ]; then
     echo "$FLEET_STATE_DIR"
   else
-    echo "/tmp"
+    ticket_tmp_dir
   fi
 }
 _worker_stop_file() {
@@ -77,9 +85,13 @@ _worker_stop_file() {
     echo "$(_worker_state_dir)/ticket-auto-${TICKET_ID}-${type}-stop"
   fi
 }
+# The progress file is agent scratch, not fleet state: agents write it from
+# skill prose that knows only the ticket id, so it lives in the private
+# scratch dir whatever FLEET_STATE_DIR says (GitHub #619 — agents used to
+# write /tmp while the watchdog read the state dir).
 _worker_progress_file() {
   local tid="${1:-${TICKET_ID:-}}"
-  echo "$(_worker_state_dir)/ticket-auto-${tid}-progress.txt"
+  ticket_tmp_path "$tid" progress.txt
 }
 
 # ── Background-process ledger ────────────────────────────────────────────────────
@@ -253,7 +265,7 @@ _spawn_unpaired_warn() {
 }
 
 # ── spawn_write_env ──────────────────────────────────────────────────────────────
-# Write extracted CLAUDE.md fields to /tmp/ticket-auto-{TICKET_ID}-env.sh as
+# Write extracted CLAUDE.md fields to $(ticket_tmp_dir)/ticket-auto-{TICKET_ID}-env.sh as
 # `export NAME="<escaped>"` lines (see _spawn_env_quote). Sub-agents source this
 # file to get project context without reading CLAUDE.md independently.
 #
@@ -325,7 +337,12 @@ spawn_write_env() {
     return 1
   fi
 
-  local env_file="/tmp/ticket-auto-${TICKET_ID}-env.sh"
+  local env_file _tmp_dir
+  env_file=$(ticket_tmp_path "$TICKET_ID" env.sh) || {
+    echo "spawn_write_env: no usable scratch dir for ${TICKET_ID}" >&2
+    return 1
+  }
+  _tmp_dir=$(dirname "$env_file")
 
   # Plugin root (two levels up from this file's own lib/ dir), so
   # persona-select.sh's `${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/personas`
@@ -353,7 +370,7 @@ spawn_write_env() {
   # LINEAR_API_KEY, #578) and renamed over the target, so it is never
   # world-readable and a pre-planted path is replaced, not written through.
   local _tmp_env
-  _tmp_env=$(mktemp "/tmp/.ticket-auto-${TICKET_ID}-env.XXXXXX") || {
+  _tmp_env=$(mktemp "${_tmp_dir}/.ticket-auto-${TICKET_ID}-env.XXXXXX") || {
     echo "spawn_write_env: cannot create temp file" >&2
     return 1
   }
@@ -402,7 +419,7 @@ spawn_write_env() {
       _spawn_env_line TAP_LOG "$TAP_LOG"
     fi
     # LINEAR_API_KEY is deliberately NOT written here (GitHub #578). This file
-    # lives in shared /tmp for up to TICKET_TMP_TTL_MIN, so a secret in it
+    # lives on disk for up to TICKET_TMP_TTL_MIN, so a secret in it
     # leaks through backups, snapshots and any `cat` of the file. Every
     # consumer already has the key another way: router-spawned subagents
     # inherit the router's process environment (settings.local.json `env`),
@@ -599,7 +616,11 @@ spawn_agent_pre() {
   # spawn_agent_post, so its |waiting| line will later be reported as a
   # zombie. Say so now, while the cause is known. A re-run of the same
   # phase/step is a retry of the same bracket, not a break, and stays silent.
-  local _pair_meta="/tmp/ticket-auto-${TICKET_ID}-spawn-meta.txt"
+  local _pair_meta
+  _pair_meta=$(ticket_tmp_path "$TICKET_ID" spawn-meta.txt) || {
+    echo "spawn_agent_pre: no usable scratch dir for ${TICKET_ID}" >&2
+    return 1
+  }
   if [ -f "$_pair_meta" ] && _spawn_meta_is_open "$_pair_meta"; then
     local _prev_phase _prev_step
     _prev_phase=$(_spawn_meta_get "$_pair_meta" PHASE)
@@ -647,14 +668,13 @@ spawn_agent_pre() {
 
   # 3. Write phase context file
   if [ -n "$LOG_FILE" ]; then
-    echo "${PHASE}|${LOG_FILE}" >"/tmp/ticket-auto-${TICKET_ID}-ctx.txt"
+    echo "${PHASE}|${LOG_FILE}" >"$(dirname "$_pair_meta")/ticket-auto-${TICKET_ID}-ctx.txt"
 
     # 3b. Create empty agent progress file — agents write single-line status
     # updates here. The watchdog reads it each cycle for agent-progress heartbeats.
     local _prog_file
-    _prog_file="$(_worker_progress_file)"
-    mkdir -p "$(dirname "$_prog_file")" 2>/dev/null || true
-    : >"$_prog_file"
+    _prog_file="$(_worker_progress_file)" || _prog_file=""
+    [ -z "$_prog_file" ] || : >"$_prog_file"
   fi
 
   # 4. Write cl_write handoff
@@ -674,7 +694,7 @@ spawn_agent_pre() {
   # log. LOG_FILE is still set, unexported (`unset` first drops an inherited
   # export attribute; works in bash and zsh), for prose written before the
   # rename — child processes never see it.
-  local env_prefix="export TAP_LOG=$(_q "${LOG_FILE}"); unset LOG_FILE; LOG_FILE=\"\$TAP_LOG\"; export HB_LOG_FILE=$(_q "${HB_LOG_FILE}"); export CLAUDE_LOG_FILE=$(_q "${CLAUDE_LOG_FILE}"); export HUSKY=0; source ~/.claude/skills/lib/heartbeat.sh; source /tmp/ticket-auto-$(_q "${TICKET_ID}")-env.sh"
+  local env_prefix="export TAP_LOG=$(_q "${LOG_FILE}"); unset LOG_FILE; LOG_FILE=\"\$TAP_LOG\"; export HB_LOG_FILE=$(_q "${HB_LOG_FILE}"); export CLAUDE_LOG_FILE=$(_q "${CLAUDE_LOG_FILE}"); export HUSKY=0; source ~/.claude/skills/lib/heartbeat.sh; export TICKET_TMP_DIR=$(_q "$(dirname "$_pair_meta")"); source ~/.claude/skills/lib/ticket-env.sh $(_q "${TICKET_ID}")"
 
   # Pin the skill file (GitHub #602) when the installed copy resolves; when it
   # does not, the prompt is unchanged and the agent resolves the name as before.
@@ -693,7 +713,11 @@ spawn_agent_pre() {
   # SubagentStart/SubagentStop hooks (token-tracker-start.sh, token-tracker.sh)
   # can match a firing subagent back to THIS spawn by session identity instead
   # of guessing via ls -t across all of /tmp.
-  local meta_file="/tmp/ticket-auto-${TICKET_ID}-spawn-meta.txt"
+  # Mode 0600 (GitHub #619): plog.sh refuses a group/other-writable meta
+  # file, and a umask of 002 would otherwise make it group-writable.
+  local meta_file="$_pair_meta"
+  (umask 077 && : >>"$meta_file") 2>/dev/null || true
+  chmod 600 "$meta_file" 2>/dev/null || true
   cat >"$meta_file" <<EOF
 PHASE=$PHASE
 STEP=$STEP
@@ -1035,7 +1059,8 @@ spawn_agent_post() {
   esac
 
   # If metadata file exists and explicit params not given, read from it
-  local meta_file="/tmp/ticket-auto-${TICKET_ID}-spawn-meta.txt"
+  local meta_file
+  meta_file=$(ticket_tmp_path "$TICKET_ID" spawn-meta.txt) || meta_file=""
   local PINGER_PID=""
   local WATCHDOG_PID=""
   # Pairing state, captured before PHASE is filled from the meta (GitHub #579).
@@ -1109,9 +1134,8 @@ spawn_agent_post() {
 
     # Truncate agent progress file — agent has returned
     local _prog_file_post
-    _prog_file_post="$(_worker_progress_file)"
-    mkdir -p "$(dirname "$_prog_file_post")" 2>/dev/null || true
-    : >"$_prog_file_post"
+    _prog_file_post="$(_worker_progress_file)" || _prog_file_post=""
+    [ -z "$_prog_file_post" ] || : >"$_prog_file_post"
 
     # Reap background processes — wait for captured PIDs to prevent zombie accumulation.
     # Handles stale PIDs (process already exited): wait on dead PID returns immediately
@@ -1329,8 +1353,8 @@ spawn_watchdog_start() {
       # Read agent progress file — if non-empty, emit as agent-progress heartbeat
       if [ -n "$ticket_id" ]; then
         local prog_file
-        prog_file=$(_worker_progress_file "$ticket_id")
-        if [ -f "$prog_file" ] && [ -s "$prog_file" ]; then
+        prog_file=$(_worker_progress_file "$ticket_id" 2>/dev/null) || prog_file=""
+        if [ -n "$prog_file" ] && [ -f "$prog_file" ] && [ -s "$prog_file" ]; then
           local prog_content
           prog_content=$(head -1 "$prog_file" 2>/dev/null || true)
           [ -n "$prog_content" ] && hb_heartbeat "agent-progress" "${prog_content}" || true

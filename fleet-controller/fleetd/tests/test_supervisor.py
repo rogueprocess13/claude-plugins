@@ -3489,6 +3489,16 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.workspace = Path(self._tmp.name)
+        # spawn_phase_worker writes spawn-meta to the private scratch dir
+        # (GitHub #619); keep it inside this test's own tree.
+        scratch = self.workspace / 'scratch'
+        scratch.mkdir(mode=0o700)
+        os.chmod(scratch, 0o700)
+        from unittest import mock
+        self._env_patch = mock.patch.dict(
+            os.environ, {'TICKET_TMP_DIR': str(scratch)})
+        self._env_patch.start()
+        self.addCleanup(self._env_patch.stop)
         self._append_queue_entry('TST-S1', 'test-spawn', generation=1)
 
     def tearDown(self):

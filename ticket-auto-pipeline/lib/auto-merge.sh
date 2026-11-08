@@ -27,7 +27,7 @@
 #      differ from it (an unreadable head ref skips — never merges).
 #   6. gh pr merge <n> --squash --auto.
 #
-# Inputs: flags win over the agent env file (/tmp/ticket-auto-<TID>-env.sh,
+# Inputs: flags win over the agent env file ($(ticket_tmp_dir)/ticket-auto-<TID>-env.sh,
 # or --env-file), which wins over the process environment. COMPLEXITY is not
 # in the env file — the router passes detect-resume's value via --complexity.
 #
@@ -102,8 +102,18 @@ main() {
   [ -n "$tid" ] && [ -n "$_AM_LOG" ] || _am_usage
 
   # Precedence: process env < env file < flags.
-  [ -n "$env_file" ] || env_file="/tmp/ticket-auto-${tid}-env.sh"
-  if [ -f "$env_file" ]; then
+  # The default env file is trusted only as ticket-tmp.sh judges it (#619);
+  # an explicit --env-file is the caller's own choice.
+  if [ -z "$env_file" ]; then
+    # shellcheck source=ticket-tmp.sh
+    source "$_AM_DIR/ticket-tmp.sh" 2>/dev/null || true
+    env_file=$(ticket_tmp_path "$tid" env.sh 2>/dev/null) || env_file=""
+    if [ -n "$env_file" ] && [ -e "$env_file" ] && ! ticket_tmp_trusted "$env_file"; then
+      echo "auto-merge: ignoring untrusted env file $env_file" >&2
+      env_file=""
+    fi
+  fi
+  if [ -n "$env_file" ] && [ -f "$env_file" ]; then
     # shellcheck disable=SC1090
     source "$env_file" 2>/dev/null || true
   fi
