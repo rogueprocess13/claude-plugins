@@ -17,6 +17,34 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.35.0, grill-me 0.5.0 (2026-11-08)
+
+ticket-planner 0.35.0, grill-me 0.5.0 (GitHub #631). ticket-auto-pipeline unchanged.
+
+### Added
+- **Planner run telemetry.** Each initiative now has `telemetry/runs.jsonl` with one
+  `planner_phase` record per phase attempt (start, end, wall-clock, outcome or halt code,
+  agents, input/output/cache tokens) and one `planner_run` summary per invocation (furthest
+  phase, stop reason and halt code, draft-readiness revise rounds, human answer rounds, phase and
+  orchestrator token totals). The summary is written on completion and on every halt: SKILL.md
+  step 7 opens the run with one call (`lib/planner-run-telemetry.sh begin`), and the plugin's new
+  `Stop` hook (`hooks/planner-telemetry-stop.sh`) closes it when the turn ends. Time comes from
+  `state.log`. Tokens come from Claude Code's own subagent transcripts, matched by the Agent
+  description the skill already passes, and counted once per message id. They are `null` when no
+  transcript holds them, never estimated. The ticket-auto token-tracker hooks are not reused: they
+  only accept a `*-pipeline.log` target, which fleet detectors read as a live ticket pipeline.
+- `ticket-planner/lib/planner-run-report.sh <INIT>` prints the phase and run tables plus
+  `Timing:` and `Cost:` lines for a rehearsal's `run-record.md` (UNMEASURED where no transcript
+  was found). The dispatch-rehearsal runbook's Collect step runs it.
+- **grill-me run telemetry.** `grill_score` writes a `grill_round` record per scoring to
+  `<work_dir>/telemetry/runs.jsonl` (wall-clock, time spent waiting for answers, tokens from the
+  session transcript in the round's window, readiness and recommendation). The plugin's new
+  `Stop` hook writes a `grill_session` record per invocation (sealed, waiting for answers,
+  aborted, refused) with verdict, score and rounds. No SKILL.md change. Active only inside a
+  Claude Code session. `lib/grill-telemetry.sh report <work_dir>` prints both tables.
+- Design and record fields: `ticket-planner/docs/run-telemetry.md`. The new kinds are kept out of
+  the workspace `runs.jsonl`, and a test checks that ticket-auto's readers ignore them anyway.
+
 ## Repo tooling (2026-11-08) — no plugin release
 
 ### Fixed

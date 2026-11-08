@@ -9,6 +9,7 @@ Architecture, contracts, and reference documentation for the ticket-planner plug
 ## Format Specs
 
 - [../state-log-format.md](../state-log-format.md) — State log format spec: `ISO|PHASE|STEP|STATUS|MSG` schema, phases and steps, statuses, META pseudo-phase, integrity guarantees.
+- [run-telemetry.md](run-telemetry.md) — Per-phase and per-run time and token records for planner runs and grill-me sessions (`telemetry/runs.jsonl`), how tokens are attributed, and the read-out.
 
 ## Diagrams
 

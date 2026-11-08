@@ -46,7 +46,11 @@ Put each iteration's output in `$WORK/rehearsal/iter-NN/`.
 - [ ] **Collect.** Copy the following into the iteration folder:
   - `state.log`;
   - the Crosscheck output and `testdata-synth.json`;
-  - each child's `body.md` and `manifest.json`, into `tickets/<TID>/`.
+  - each child's `body.md` and `manifest.json`, into `tickets/<TID>/`;
+  - the run's time and tokens, for `run-record.md`'s Timing and Cost fields:
+    `REPOS_ROOT=$WORK bash ticket-planner/lib/planner-run-report.sh <INIT> > iter-NN/run-telemetry.md`,
+    and for full runs `bash grill-me/lib/grill-telemetry.sh report <grill work dir> >> iter-NN/run-telemetry.md`.
+    A phase whose transcript was not found prints UNMEASURED.
 - [ ] **Critique each child, read-only:**
   `/ticket-critique <TID> --no-post --result-file iter-NN/preflight/critique/<TID>.txt`
 - [ ] **Run the preflight:**

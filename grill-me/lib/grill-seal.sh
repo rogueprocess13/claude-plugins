@@ -22,6 +22,16 @@
 
 set -euo pipefail
 
+# Run telemetry (#631, lib/grill-telemetry.sh): silent, best effort, never
+# changes a return code. Inactive outside a Claude Code session.
+_grill_telemetry_call() {
+  [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || return 0
+  local t
+  t="$(dirname "${BASH_SOURCE[0]}")/grill-telemetry.sh"
+  [ -f "$t" ] && bash "$t" "$@" >/dev/null 2>&1 || true
+  return 0
+}
+
 # ── grill_seal_generate ───────────────────────────────────────────────────────
 grill_seal_generate() {
   local doc_path="$1"
@@ -98,6 +108,7 @@ EOF
   mv "$tmp" "$doc_path"
 
   echo "grill-seal: seal generated for ${doc_path} (readiness=${readiness}, rec=${recommendation})" >&2
+  _grill_telemetry_call sealed "$doc_path"
   return 0
 }
 

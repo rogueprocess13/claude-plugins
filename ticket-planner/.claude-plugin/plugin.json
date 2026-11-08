@@ -1,6 +1,6 @@
 {
   "name": "ticket-planner",
-  "version": "0.34.2",
+  "version": "0.35.0",
   "description": "11-phase autonomous planner — turns business ideas into dependency-ordered planned tickets. Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → Epic Gen → Ticket Gen → Refinement → Completed. Produces Planner Context blocks, Branch Directives for shared epic branches, and initiative epics with tickets that pass a deterministic + semantic readiness check before fleet-controller dispatch.",
   "author": {
     "name": "John Willard"
@@ -23,6 +23,17 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/planner-lib-sync.sh",
             "timeout": 10,
             "statusMessage": "Syncing ticket-planner lib scripts..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/planner-telemetry-stop.sh",
+            "timeout": 30
           }
         ]
       }
