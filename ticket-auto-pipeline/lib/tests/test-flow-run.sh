@@ -60,6 +60,7 @@ cat >"$STUB" <<'EOF'
 for a in "$@"; do printf '%s\n' "$a" >>"$STUB_ARGS"; done
 printf '%s\n' "${LOG_FILE:-<unset>}" >"$STUB_ENV"
 echo "stub flow.sh ran"
+if [ -n "${STUB_ERR:-}" ]; then printf '%b\n' "$STUB_ERR" >&2; fi
 exit "${STUB_RC:-0}"
 EOF
 export STUB_ARGS="${TMP}/args" STUB_ENV="${TMP}/env"
@@ -118,6 +119,80 @@ grep -q '|gate|verdict-gate|fail|' "$HBL" && pass "2: rc 11 heartbeat gate verdi
 : >"$HBL"
 STUB_RC=9 HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" TEST-1 uat-pass >/dev/null 2>&1 || true
 grep -q '|retry|flow-sh|fail|.*"error_type":"fence"' "$HBL" && pass "2: rc 9 heartbeat retry error_type=fence" || fail "2: rc 9 heartbeat" "$(cat "$HBL")"
+
+# GitHub #606: flow.sh's stderr reaches the failure record, and exit 1 is
+# labelled usage only when flow.sh's message is a usage message.
+echo "--- 2b: stderr snippet + error_type (#606) ---"
+LOG="${TMP}/rc1-snip.log"
+: >"$LOG"
+: >"$HBL"
+RC=0
+ERR_OUT=$(STUB_RC=1 STUB_ERR='noise line\nflow.sh: manifest write failed for TEST-1 (rc 1); "x"|y not applied' \
+  HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" --log-file "$LOG" TEST-1 implement-outcome 2>&1 >/dev/null) || RC=$?
+expect "2b: rc 1 propagated" 1 "$RC"
+case "$ERR_OUT" in *"manifest write failed"*) pass "2b: flow.sh stderr still reaches the caller" ;; *) fail "2b: stderr passthrough" "$ERR_OUT" ;; esac
+grep -q '|META|flow-error|fail|exit 1: implement-outcome — .*manifest write failed for TEST-1' "$LOG" &&
+  pass "2b: log line carries the stderr snippet" || fail "2b: log snippet" "$(cat "$LOG")"
+expect "2b: log line keeps 5 fields" 5 "$(awk -F'|' '{print NF}' "$LOG")"
+grep -q '"error_type":"flow_error"' "$HBL" && pass "2b: runtime exit 1 is error_type=flow_error, not usage" ||
+  fail "2b: runtime exit 1 error_type" "$(cat "$HBL")"
+grep -q '"error_snippet":"[^"]*manifest write failed' "$HBL" && pass "2b: heartbeat carries error_snippet" ||
+  fail "2b: heartbeat error_snippet" "$(cat "$HBL")"
+tail -1 "$HBL" | cut -d'|' -f6- | jq -e . >/dev/null 2>&1 && pass "2b: heartbeat detail is valid JSON" ||
+  fail "2b: heartbeat detail JSON" "$(tail -1 "$HBL")"
+: >"$HBL"
+STUB_RC=1 STUB_ERR='flow.sh: unknown argument: --dryrun\nUsage: flow.sh <TICKET-ID> <TRIGGER>\n\nValid triggers:\n  re-claim\n  uat-fail\n  uat-pass' \
+  HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1 || true
+grep -q '"error_type":"usage"' "$HBL" && pass "2b: usage message keeps error_type=usage" || fail "2b: usage error_type" "$(cat "$HBL")"
+# Another tool's usage text (here jq's) reaching flow.sh's stderr is a runtime
+# error inside flow.sh, not a flow.sh usage error.
+: >"$HBL"
+STUB_RC=1 STUB_ERR='jq: error: syntax error\nUsage: jq [OPTIONS] FILTER [FILES...]\n  jq --help' \
+  HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1 || true
+grep -q '"error_type":"flow_error"' "$HBL" && pass "2b: jq usage text is error_type=flow_error" ||
+  fail "2b: jq usage error_type" "$(cat "$HBL")"
+
+# The REAL flow.sh: a bad argument prints the error, then usage() with the
+# whole trigger list. The snippet must be the error line, not trigger names.
+REAL_FLOW="${PLUGIN_ROOT}/skills/ticket-flow/flow.sh"
+LOG="${TMP}/real-usage.log"
+: >"$LOG"
+: >"$HBL"
+RC=0
+CLAUDE_SKILLS_LIB="$LIB_DIR" TICKET_FLOW_LOCK_DIR="${TMP}/locks" HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$REAL_FLOW" \
+  bash "$FLOW_RUN" --log-file "$LOG" WIL-5 needs-info --dryrun >/dev/null 2>&1 || RC=$?
+expect "2b: real flow.sh bad arg exits 1" 1 "$RC"
+grep -q '"error_type":"usage"' "$HBL" && pass "2b: real flow.sh bad arg is error_type=usage" ||
+  fail "2b: real flow.sh error_type" "$(cat "$HBL")"
+grep -q '"error_snippet":"flow.sh: unknown argument: --dryrun"' "$HBL" &&
+  pass "2b: real flow.sh snippet is the error line" || fail "2b: real flow.sh snippet" "$(cat "$HBL")"
+grep -q 'exit 1: needs-info — flow.sh: unknown argument: --dryrun$' "$LOG" &&
+  pass "2b: real flow.sh log line names the bad argument" || fail "2b: real flow.sh log line" "$(cat "$LOG")"
+
+# The stderr copy is a temp file under TMPDIR; it must not be left behind.
+mkdir -p "${TMP}/tmpdir"
+TMPDIR="${TMP}/tmpdir" STUB_RC=1 STUB_ERR='boom' FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1 || true
+expect "2b: stderr temp file removed" "" "$(ls -A "${TMP}/tmpdir")"
+
+# A multibyte character cut at the 240-character boundary must not leave
+# invalid UTF-8 in the log (fleetd reads it as UTF-8).
+LOG="${TMP}/mb.log"
+: >"$LOG"
+mb_err="flow.sh: $(printf 'é%.0s' $(seq 1 300))"
+STUB_RC=1 STUB_ERR="$mb_err" FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" --log-file "$LOG" TEST-1 needs-info >/dev/null 2>&1 || true
+if iconv -f UTF-8 -t UTF-8 "$LOG" >/dev/null 2>&1; then pass "2b: multibyte snippet stays valid UTF-8"; else fail "2b: multibyte snippet" "invalid UTF-8 in log"; fi
+snip_chars=$(sed -n 's/.*exit 1: needs-info — //p' "$LOG" | LC_ALL=C.UTF-8 wc -m | tr -d ' ')
+[ "${snip_chars:-0}" -gt 100 ] && [ "${snip_chars:-0}" -le 241 ] && pass "2b: multibyte snippet capped (${snip_chars} chars)" ||
+  fail "2b: multibyte snippet length" "$snip_chars"
+: >"$HBL"
+RC=0
+STUB_RC=13 STUB_ERR='flow.sh: REPOS_ROOT is not set' HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$STUB" \
+  bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1 || RC=$?
+expect "2b: rc 13 propagated" 13 "$RC"
+grep -q '"error_type":"env"' "$HBL" && pass "2b: rc 13 is error_type=env" || fail "2b: rc 13 error_type" "$(cat "$HBL")"
+: >"$HBL"
+STUB_RC=12 HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1 || true
+grep -q '"error_type":"emit_replay"' "$HBL" && pass "2b: rc 12 is error_type=emit_replay" || fail "2b: rc 12 error_type" "$(cat "$HBL")"
 
 # ── 3. flow.sh not found ─────────────────────────────────────────────────────
 echo "--- 3: flow.sh not found ---"
