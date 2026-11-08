@@ -26,6 +26,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from stat import S_ISREG
 
 # The state store. Imported defensively: a supervisor that cannot open its
 # store must still supervise processes, because the store is an accelerant
@@ -154,7 +155,26 @@ class InstanceLock:
 
     def acquire(self):
         """Acquire the exclusive lock. Raises SystemExit if another instance holds it."""
-        self._fd = os.open(self._path, os.O_CREAT | os.O_RDWR, 0o644)
+        # The default pidfile sits in shared /tmp, so another local user could
+        # pre-plant it (GitHub #624). O_NOFOLLOW refuses a symlink, and the
+        # fstat check refuses a file that is not ours or that others can
+        # write: ftruncate below must never touch a file someone else chose.
+        try:
+            self._fd = os.open(self._path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o644)
+        except OSError as e:
+            print(f"fleetd: refusing pidfile {self._path} ({e.strerror}; a symlink?)", file=sys.stderr)
+            sys.exit(1)
+        st = os.fstat(self._fd)
+        if (not S_ISREG(st.st_mode) or st.st_uid != os.geteuid()
+                or st.st_mode & 0o022):
+            print(
+                f"fleetd: refusing pidfile {self._path} (not a regular file owned by "
+                f"uid {os.geteuid()}, or group/other writable)",
+                file=sys.stderr,
+            )
+            os.close(self._fd)
+            self._fd = None
+            sys.exit(1)
         try:
             fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:

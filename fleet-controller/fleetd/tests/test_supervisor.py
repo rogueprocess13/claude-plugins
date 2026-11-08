@@ -184,6 +184,52 @@ class SingleInstanceTest(unittest.TestCase):
             p2.wait(timeout=5)
 
 
+class InstanceLockTrustTest(unittest.TestCase):
+    """GitHub #624: the default pidfile is in shared /tmp, so InstanceLock
+    refuses a planted symlink and a file others can write, and never
+    truncates the target. A foreign owner cannot be created without root;
+    the st_uid test sits in the same refusal branch as the mode test."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.d = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _acquire(self, path):
+        from fleetd.supervisor import InstanceLock
+        lock = InstanceLock(str(path))
+        with self.assertRaises(SystemExit):
+            lock.acquire()
+        self.assertIsNone(lock.hold_fd)
+
+    def test_symlink_pidfile_refused_and_target_untouched(self):
+        victim = self.d / 'victim.txt'
+        victim.write_text('keep')
+        link = self.d / 'fleetd.pid'
+        link.symlink_to(victim)
+        self._acquire(link)
+        self.assertEqual(victim.read_text(), 'keep')
+
+    def test_group_writable_pidfile_refused(self):
+        pf = self.d / 'fleetd.pid'
+        pf.write_text('keep')
+        os.chmod(pf, 0o664)
+        self._acquire(pf)
+        self.assertEqual(pf.read_text(), 'keep')
+
+    def test_own_private_pidfile_accepted(self):
+        from fleetd.supervisor import InstanceLock
+        pf = self.d / 'fleetd.pid'
+        lock = InstanceLock(str(pf))
+        lock.acquire()
+        try:
+            self.assertEqual(pf.read_text(), str(os.getpid()))
+        finally:
+            lock.release()
+
+
 class StartupEnvCheckGateTest(unittest.TestCase):
     """fleetd's own startup gate on fleet-env-check.sh (lib/fleet-env-check.sh).
 
