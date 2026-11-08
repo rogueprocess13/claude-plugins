@@ -25,7 +25,7 @@ If `$HB_LOG_FILE` is set (passed by the orchestrator): call `~/.claude/skills/li
 If `--from-auto` is set, source the project context env file before anything else:
 
 ```bash
-source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
 ```
 
 The orchestrator passes the ticket directory path in the spawn instruction. Identify it from the instruction text. If ambiguous, derive it from the ticket ID (passed alongside the spawn instruction or derivable from the branch name).
@@ -68,7 +68,7 @@ Run both commands from the worktree (use `$WORKTREE_PATH` resolved in Step 1):
 Diff against the base's **remote** ref, not the local one — on a per-epic branch strategy the local epic ref only advances when someone explicitly fetches, which no pipeline phase does, so a stale local ref silently attributes a previous ticket's commits to this one.
 
 ```bash
-source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
 git -C "$WORKTREE_PATH" fetch origin "${BASE_BRANCH:-develop}" --quiet 2>/dev/null || true
 git -C "$WORKTREE_PATH" diff "${BASE_REF:-origin/${BASE_BRANCH:-develop}}"...{branch}
 ```

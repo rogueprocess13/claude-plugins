@@ -21,9 +21,9 @@
 # session's session_id (a common field across all hook events). spawn_agent_pre
 # stamps that same value (via $CLAUDE_CODE_SESSION_ID) into SESSION_ID= in the
 # spawn-meta file it writes for every live pipeline spawn
-# (/tmp/ticket-auto-{ID}-spawn-meta.txt). This hook only considers spawn-meta
+# ($(ticket_tmp_dir)/ticket-auto-{ID}-spawn-meta.txt). This hook only considers spawn-meta
 # files whose SESSION_ID matches the payload's — never the globally newest
-# file across /tmp, and never an UNKNOWN-phase guess. A subagent stopping with
+# file in the scratch dir, and never an UNKNOWN-phase guess. A subagent stopping with
 # no live pipeline spawn for its session resolves nothing and exits 0 without
 # writing anywhere. token-tracker-start.sh resolves identity the same way, so
 # the two hooks can no longer disagree about which spawn they belong to.
@@ -43,6 +43,13 @@
 # ZSH_VERSION references that trigger false-positive "unbound variable"
 # errors in this bash version when nounset is active.
 set -eo pipefail
+
+# Private per-user scratch dir (GitHub #619). Hooks never create it: no dir
+# means no pipeline spawn on this host, so there is nothing to resolve.
+_TT_LIB="${BASH_SOURCE[0]%/*}/../lib/ticket-tmp.sh"
+# shellcheck source=../lib/ticket-tmp.sh
+{ [ -f "$_TT_LIB" ] && source "$_TT_LIB" && ticket_tmp_peek; } || exit 0
+SCRATCH="$TICKET_TMP_RESOLVED"
 
 read -r hook_json
 SESSION_ID=$(echo "$hook_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
@@ -65,7 +72,7 @@ PHASE=""
 LOG_FILE=""
 TICKET_ID=""
 SPAWNED_BY=""
-for f in $(ls -t /tmp/ticket-auto-*-spawn-meta.txt 2>/dev/null || true); do
+for f in $(ls -t "$SCRATCH"/ticket-auto-*-spawn-meta.txt 2>/dev/null || true); do
   [ -f "$f" ] || continue
   _phase="" _log="" _sid="" _by=""
   while IFS='=' read -r key val; do
@@ -89,6 +96,10 @@ done
 [ -z "$TICKET_ID" ] && exit 0
 [ -z "$PHASE" ] && exit 0
 [ -z "$LOG_FILE" ] && exit 0
+ticket_tmp_valid_id "$TICKET_ID" || exit 0
+# A spawn-meta LOG_FILE is only ever a pipeline log; anything else is not
+# ours to write next to (GitHub #619).
+case "$LOG_FILE" in *-pipeline.log) ;; *) exit 0 ;; esac
 
 # ── Pick the transcript this event is actually authoritative for. ──────────
 # Wrong pairing is worse than no pairing: a Stop firing against a router spawn
@@ -111,7 +122,7 @@ START_FILE=""
 _start_files=()
 while IFS= read -r -d '' _sf; do
   _start_files+=("$_sf")
-done < <(find /tmp -maxdepth 1 -name "ticket-auto-${TICKET_ID}-start-${PHASE}-*.ts" -print0 2>/dev/null || true)
+done < <(find "$SCRATCH" -maxdepth 1 -name "ticket-auto-${TICKET_ID}-start-${PHASE}-*.ts" -print0 2>/dev/null || true)
 if [ "${#_start_files[@]}" -gt 0 ]; then
   START_FILE=$(ls -t -- "${_start_files[@]}" 2>/dev/null | head -1 || true)
 fi
@@ -157,7 +168,7 @@ fi
 # is worst exactly when matching keeps failing, which is when the old nested
 # placement never ran. Bounded to this ticket+phase; the SessionStart sweep
 # (hooks/tmp-sweep.sh) is the host-wide backstop for everything else.
-find /tmp -maxdepth 1 -name "ticket-auto-${TICKET_ID}-start-${PHASE}-*.ts" -mmin +5 -delete 2>/dev/null || true
+find "$SCRATCH" -maxdepth 1 -name "ticket-auto-${TICKET_ID}-start-${PHASE}-*.ts" -mmin +5 -delete 2>/dev/null || true
 
 # Best-effort telemetry — never block the agent that triggered this hook.
 exit 0

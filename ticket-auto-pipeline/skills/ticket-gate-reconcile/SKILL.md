@@ -9,10 +9,10 @@ description: Post-gate-hold comment reconciliation agent. Spawned when a held ti
 
 ## Step 1 — Load context (agent starts cold)
 
-Source the project environment file and extract ticket metadata:
+Load the env file and ticket metadata:
 
 ```bash
-source /tmp/ticket-auto-{TICKET-ID}-env.sh
+source ~/.claude/skills/lib/ticket-env.sh {TICKET-ID}
 
 # Read pipeline log for gate state
 export TAP_LOG="$PWD/logs/{TICKET-ID}-pipeline.log"

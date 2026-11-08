@@ -39,10 +39,10 @@ _mktemp_test_dir() {
   echo "$d"
 }
 
-# Every ticket id here starts with TESTACT- so the /tmp glob below cannot reach
-# a real run's spawn-meta files. The hook hardcodes /tmp (as token-tracker.sh
-# does), so these fixtures are genuinely global while they exist — leaving one
-# behind would make it live input to the production hook (#273).
+# The hooks read spawn-meta from the private scratch dir lib/ticket-tmp.sh
+# resolves (GitHub #619); point it at a dir this suite owns.
+TICKET_TMP_DIR=$(mktemp -d)
+export TICKET_TMP_DIR
 _TEST_BG_PIDS=()
 _cleanup() {
   local d p
@@ -52,7 +52,7 @@ _cleanup() {
   for p in "${_TEST_BG_PIDS[@]}"; do
     [ -n "$p" ] && kill -KILL "$p" 2>/dev/null || true
   done
-  rm -f /tmp/ticket-auto-TESTACT-*-spawn-meta.txt 2>/dev/null || true
+  rm -rf "$TICKET_TMP_DIR" 2>/dev/null || true
 }
 trap _cleanup EXIT
 
@@ -60,7 +60,7 @@ trap _cleanup EXIT
 # Usage: _write_meta <tid> <session_id> <phase> <log_file>
 _write_meta() {
   local tid="$1" sid="$2" phase="$3" log_file="$4"
-  cat >"/tmp/ticket-auto-${tid}-spawn-meta.txt" <<EOF
+  cat >"$TICKET_TMP_DIR/ticket-auto-${tid}-spawn-meta.txt" <<EOF
 PHASE=$phase
 STEP=implement
 TICKET_ID=$tid
@@ -174,14 +174,14 @@ test_hook_rejects_traversal_ticket_id() {
   local ws
   ws=$(_mktemp_test_dir)
   # A spawn-meta filename whose embedded ticket id escapes the log directory.
-  cat >"/tmp/ticket-auto-TESTACT-..-evil-spawn-meta.txt" <<EOF
+  cat >"$TICKET_TMP_DIR/ticket-auto-TESTACT-..-evil-spawn-meta.txt" <<EOF
 PHASE=IMPLEMENT
 LOG_FILE=$ws/x-pipeline.log
 SESSION_ID=sess-ggg
 EOF
   local rc=0
   _fire_hook "sess-ggg" "Bash" || rc=$?
-  rm -f "/tmp/ticket-auto-TESTACT-..-evil-spawn-meta.txt"
+  rm -f "$TICKET_TMP_DIR/ticket-auto-TESTACT-..-evil-spawn-meta.txt"
 
   [ "$rc" -eq 0 ] || return 1
   # Nothing written under the resolved directory at all.

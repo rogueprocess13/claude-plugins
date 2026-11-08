@@ -30,7 +30,7 @@ Automated circuit breaker for the ticket-auto pipeline. Runs continuous detectio
 |----------|----------|-------------|
 | Terminal dashboard | stdout | Health table with severity and anomalies |
 | Fleet report | ./logs/reports/fleet-dashboard.md | Markdown report with alerts + diagnostics |
-| Stop files | /tmp/ticket-auto-{ID}-pinger-stop | Pipeline kill signals |
+| Stop files | {state_dir}/ticket-auto-{ID}-pinger-stop (fallback: the private scratch dir, `lib/ticket-tmp.sh`) | Pipeline kill signals |
 | Restart agents | Agent spawn (interactive) or JSONL queue (cron) | Fresh pipeline spawns |
 | Audit entries | Heartbeat log | `decision|fleet-kill|fired`, `decision|fleet-restart|fired` |
 

@@ -17,6 +17,38 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## Unreleased
+
+Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file another user could have planted.
+
+### Security
+- `lib/plog.sh` recovered a missing `LOG_FILE` from a spawn-meta file at a predictable `/tmp` path and
+  appended to whatever path it named, so another local user could redirect pipeline-log writes. It
+  now validates `TICKET_ID` (`^[A-Za-z0-9_-]+$`), trusts the meta file only when it is a regular file,
+  not a symlink, owned by the current user and not group/other writable, and accepts the recovered
+  path only when it ends in `-pipeline.log`. Anything else drops the line with a stderr warning, exit 0
+  as before (#619).
+- Every per-ticket scratch file (env file, spawn-meta, ctx, start stamps, agent progress, the
+  tool-error dedup stamp, and the stop-file/background-PID ledger fallback) moves to a private
+  per-user directory resolved by the new `lib/ticket-tmp.sh`: `$TICKET_TMP_DIR` when set, else
+  `/tmp/ticket-auto-$EUID`. It is created 0700 and refused when it is a symlink, not a directory, owned
+  by someone else, or group/other accessible. The default depends only on the uid, so the router, its
+  phase agents, the hooks and fleetd agree without being told; fleetd's
+  `phase_dispatch.ticket_tmp_dir` mirrors the rule under a bash/python parity test, and
+  `spawn_agent_pre` also exports the resolved dir to each agent (#619).
+- Skill prose sources the env file through the new `lib/ticket-env.sh <ID>`, which sources it only
+  when it passes the same ownership and mode checks. `auto-merge.sh` and `verify-worktree.sh` apply
+  the same checks before reading it. The hooks also ignore a spawn-meta `LOG_FILE` that is not a
+  `*-pipeline.log`, and spawn-meta files are written 0600 whatever the umask (#619).
+
+### Changed
+- `hooks/tmp-sweep.sh` sweeps the private scratch dir and, for this user's own files only and never
+  through a symlink, the files earlier versions left in `/tmp` (`TICKET_TMP_LEGACY_DIR`).
+- The router's agent-return hand-off file and the VERIFY `CLAUDE_LOG_FILE` move from `/tmp` to the
+  workspace `./logs/` directory, next to the capture logs.
+- The agent progress file now lives in the scratch dir, where both the agents and the watchdog look
+  for it. Agents used to write it in `/tmp` while the watchdog read the fleet state dir.
+
 ## 0.87.0 (2026-11-08) — fleet-controller 0.46.1
 
 VERIFY checkpoints survive a crashed attempt, and `ticket-retro` finds its lib in the plugin layout.

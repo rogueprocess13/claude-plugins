@@ -47,7 +47,7 @@ _extract_gr_step1() {
     /^```[[:space:]]*$/ { if (in_block) { in_block = 0; blocks++ }; next }
     in_block            { print }
   ' "$GR_SKILL" |
-    sed -e 's#^source /tmp/ticket-auto-.*#:#' \
+    sed -e 's#^source ~/.claude/skills/lib/ticket-env.sh.*#:#' \
       -e 's#^~/.claude/skills/lib/hb-wrap.sh.*#:#' \
       -e 's#^source ~/.claude/skills/lib/linear-api.sh.*#:#' \
       -e "s#~/.claude/skills/lib#$LIB_DIR#g" \

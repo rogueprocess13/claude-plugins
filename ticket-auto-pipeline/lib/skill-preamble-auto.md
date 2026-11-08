@@ -41,7 +41,7 @@ Project context fields are provided via the environment, not read from CLAUDE.md
 
 Source the env file before any other operations:
 ```bash
-source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
 ```
 
 Available variables: `$REPOS_ROOT`, `$ISSUE_PREFIX`, `$BE_SERVICES`, `$WIKI_ROOT`, `$BE_TEST_CMD`, `$BE_TEST_RUNNER`, `$FE_TEST_CMD`, `$LOCAL_URL`, `$UAT_URL`.
@@ -107,14 +107,9 @@ Example: `~/.claude/skills/lib/hb-wrap.sh decision complexity-score fired "simpl
 ```
 ## Agent Progress File (--from-auto)
 
-Before significant operations (editing files, running commands, making decisions), write a single-line status update to `/tmp/ticket-auto-{TICKET_ID}-progress.txt`. The orchestrator's watchdog reads this file each cycle and emits `agent-progress` heartbeats.
+Before significant operations (editing files, running commands, making decisions), write a one-line status (under 200 characters) to the progress file. The orchestrator's watchdog reads it each cycle and emits `agent-progress` heartbeats. Examples: `implement: editing src/auth/middleware.ts`, `verify: navigating to /dashboard, step 3/5`, `appraise: running complexity sweep`.
 
-Progress updates MUST be a single line under 200 characters. Examples:
-- `implement: editing src/auth/middleware.ts`
-- `verify: navigating to /dashboard, step 3/5`
-- `appraise: running complexity sweep`
-
-Write the progress file via Bash: `echo "implement: editing src/auth/middleware.ts" > /tmp/ticket-auto-{TICKET_ID}-progress.txt`
+Write it via Bash: `echo "implement: editing src/auth/middleware.ts" > "$(bash ~/.claude/skills/lib/ticket-tmp.sh {TICKET_ID} progress.txt)"`
 ```
 
 ---

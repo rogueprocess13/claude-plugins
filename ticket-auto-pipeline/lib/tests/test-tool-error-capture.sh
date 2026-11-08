@@ -13,6 +13,11 @@ set -eo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="$(cd "$TEST_DIR/../.." && pwd)/hooks/tool-error-capture.sh"
 
+# Scratch files (env.sh, spawn-meta) live in the private dir lib/ticket-tmp.sh
+# resolves (GitHub #619); point it at a dir this suite owns.
+TICKET_TMP_DIR=$(mktemp -d)
+export TICKET_TMP_DIR
+
 PASS=0
 FAIL=0
 
@@ -47,7 +52,7 @@ _setup() {
   _ws=$(mktemp -d "${TMPDIR:-/tmp}/test-tool-err.XXXXXX")
   _tid="TESTTE${_n}"
   _sid="sess-test-tool-err-$$-${_n}"
-  _meta="/tmp/ticket-auto-${_tid}-spawn-meta.txt"
+  _meta="$TICKET_TMP_DIR/ticket-auto-${_tid}-spawn-meta.txt"
   cat >"$_meta" <<EOF
 PHASE=VERIFY
 LOG_FILE=${_ws}/${_tid}-pipeline.log
@@ -57,8 +62,7 @@ EOF
 }
 
 _cleanup() {
-  rm -f /tmp/ticket-auto-TESTTE*-spawn-meta.txt 2>/dev/null || true
-  rm -f /tmp/tool-err-TESTTE* 2>/dev/null || true
+  rm -rf "$TICKET_TMP_DIR" 2>/dev/null || true
   rm -rf "${TMPDIR:-/tmp}"/test-tool-err.* 2>/dev/null || true
 }
 trap _cleanup EXIT

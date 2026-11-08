@@ -60,32 +60,27 @@ LOG_FILE="${LOG_FILE:-${TAP_LOG:-}}"
 # the router's spawn-meta file when TICKET_ID is known; otherwise say on
 # stderr that the line was dropped instead of losing it silently. Still
 # exit 0: a missing log must not abort a `set -e` caller.
-# GitHub #619: the meta file sits at a predictable path, so it is trusted only
-# when this user owns it, it is a regular file and not a symlink, and nobody
-# else can write it; and the path it names must be a pipeline log. Anything
-# else is warned about and the line dropped - never written somewhere a file
-# we do not control told us to write.
+# GitHub #619: the meta file is trusted only when it sits in the private
+# scratch dir (ticket-tmp.sh refuses a planted or loose one), is a regular
+# file, not a symlink, ours, and not group/other writable; and the path it
+# names must be a pipeline log. Anything else is warned about and the line
+# dropped - never written somewhere a file we do not control told us to.
 _plog_line="$1|$2|$3"
 _plog_untrusted() {
   echo "plog.sh: WARNING $1 - line dropped: $_plog_line" >&2
   exit 0
 }
-_plog_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1" 2>/dev/null; }
 if [ -z "${LOG_FILE:-}" ] && [ -n "${TICKET_ID:-}" ]; then
-  [[ "$TICKET_ID" =~ ^[A-Za-z0-9_-]+$ ]] || _plog_untrusted "invalid TICKET_ID '$TICKET_ID'"
-  # Same fixed path spawn_agent_pre writes (lib/spawn-helper.sh).
-  _plog_meta="/tmp/ticket-auto-${TICKET_ID}-spawn-meta.txt"
+  # shellcheck source=ticket-tmp.sh
+  source "$_PLOG_LIB_DIR/ticket-tmp.sh" 2>/dev/null ||
+    _plog_untrusted "ticket-tmp.sh not found in $_PLOG_LIB_DIR"
+  ticket_tmp_valid_id "$TICKET_ID" || _plog_untrusted "invalid TICKET_ID '$TICKET_ID'"
+  # Same path spawn_agent_pre writes (lib/spawn-helper.sh).
+  _plog_meta=$(ticket_tmp_path "$TICKET_ID" spawn-meta.txt) ||
+    _plog_untrusted "no usable scratch dir"
   if [ -e "$_plog_meta" ] || [ -L "$_plog_meta" ]; then
-    if [ -L "$_plog_meta" ] || [ ! -f "$_plog_meta" ] || [ ! -O "$_plog_meta" ]; then
-      _plog_untrusted "untrusted spawn-meta $_plog_meta (symlink, not a regular file, or not owned by this user)"
-    fi
-    _plog_m=$(_plog_mode "$_plog_meta")
-    case "$_plog_m" in
-    '' | *[!0-7]*) _plog_untrusted "cannot read the mode of $_plog_meta" ;;
-    esac
-    if (((8#$_plog_m & 8#022) != 0)); then
-      _plog_untrusted "untrusted spawn-meta $_plog_meta (group/other writable, mode $_plog_m)"
-    fi
+    ticket_tmp_trusted "$_plog_meta" ||
+      _plog_untrusted "untrusted spawn-meta $_plog_meta (symlink, not a regular file, not owned by this user, or group/other writable)"
     LOG_FILE=$(sed -n 's/^LOG_FILE=//p' "$_plog_meta" 2>/dev/null | head -1)
     case "$LOG_FILE" in "{"*"}") LOG_FILE="" ;; esac
     case "$LOG_FILE" in
@@ -95,7 +90,7 @@ if [ -z "${LOG_FILE:-}" ] && [ -n "${TICKET_ID:-}" ]; then
   fi
 fi
 if [ -z "${LOG_FILE:-}" ]; then
-  echo "plog.sh: WARNING no pipeline log (TAP_LOG/LOG_FILE unset; source /tmp/ticket-auto-<ID>-env.sh or pass --log-file) - line dropped: $1|$2|$3" >&2
+  echo "plog.sh: WARNING no pipeline log (TAP_LOG/LOG_FILE unset; source ~/.claude/skills/lib/ticket-env.sh <ID> or pass --log-file) - line dropped: $1|$2|$3" >&2
   exit 0
 fi
 

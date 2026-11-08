@@ -149,15 +149,16 @@ if [ ! -e "{LOG_FILE}" ]; then pass "11c: no file named {LOG_FILE}"; else fail "
 # ── 12. Lost env in a later agent Bash call (GitHub #605) ────────────────────
 # No LOG_FILE/TAP_LOG: recover the path from the spawn-meta file when
 # TICKET_ID is known, and warn on stderr when the line really is dropped.
-# spawn-helper.sh always writes the meta file under /tmp, so the test does too,
-# under an id unique to this run.
+# spawn-helper.sh writes the meta file in the private scratch dir
+# (ticket-tmp.sh, #619); TICKET_TMP_DIR points that at a 0700 dir of our own.
+export TICKET_TMP_DIR="$TMP/scratch"
+mkdir -m 700 "$TICKET_TMP_DIR"
 T12_ID="PLOGTEST-$$"
-T12_META="/tmp/ticket-auto-${T12_ID}-spawn-meta.txt"
-trap 'rm -rf "$TMP"; rm -f "$T12_META"' EXIT
+T12_META="$TICKET_TMP_DIR/ticket-auto-${T12_ID}-spawn-meta.txt"
 printf 'PHASE=MAINTENANCE\nTICKET_ID=%s\nLOG_FILE=%s\nCLOSED=0\n' "$T12_ID" "$TMP/t12-pipeline.log" >"$T12_META"
 chmod 600 "$T12_META"
 rc=0
-err=$(env -u LOG_FILE -u TAP_LOG TICKET_ID="$T12_ID" TICKET_TMP_DIR="$TMP/elsewhere" \
+err=$(env -u LOG_FILE -u TAP_LOG TICKET_ID="$T12_ID" \
   bash "$PLOG" MAINTENANCE document start "" 2>&1) || rc=$?
 expect "12a: recovered from spawn-meta, exit 0" "0" "$rc"
 expect "12b: line written to spawn-meta LOG_FILE" "ISO|MAINTENANCE|document|start|" "$(mask "$TMP/t12-pipeline.log" 2>/dev/null || true)"
@@ -195,8 +196,7 @@ t13_expect_drop() { # $1=name $2=result $3=target that must stay untouched $4=st
   if [ ! -s "$3" ]; then pass "$1: target untouched"; else fail "$1: target untouched" "written"; fi
 }
 T13_ID="PLOGTEST13-$$"
-T13_META="/tmp/ticket-auto-${T13_ID}-spawn-meta.txt"
-trap 'rm -rf "$TMP"; rm -f "$T12_META" "$T13_META"' EXIT
+T13_META="$TICKET_TMP_DIR/ticket-auto-${T13_ID}-spawn-meta.txt"
 
 # 13a: symlink to a meta file the user does own.
 printf 'LOG_FILE=%s\n' "$TMP/t13a-pipeline.log" >"$TMP/t13a-real-meta.txt"
@@ -229,6 +229,19 @@ t13_expect_drop "13f TICKET_ID with a space" "$(t13_run "A B")" "$TMP/none" "inv
 mkdir "$T13_META"
 t13_expect_drop "13g directory" "$(t13_run "$T13_ID")" "$TMP/none" "untrusted spawn-meta"
 rmdir "$T13_META"
+
+# 13i: an honest meta file inside a scratch dir others can write is refused,
+# because the dir itself is refused.
+mkdir -m 700 "$TMP/loose"
+printf 'LOG_FILE=%s\n' "$TMP/t13i-pipeline.log" >"$TMP/loose/ticket-auto-${T13_ID}-spawn-meta.txt"
+chmod 600 "$TMP/loose/ticket-auto-${T13_ID}-spawn-meta.txt"
+chmod 777 "$TMP/loose"
+t13_expect_drop "13i world-writable scratch dir" "$(TICKET_TMP_DIR="$TMP/loose" t13_run "$T13_ID")" "$TMP/t13i-pipeline.log" "no usable scratch dir"
+chmod 700 "$TMP/loose"
+
+# 13j: a scratch dir that is a symlink is refused.
+ln -s "$TMP/loose" "$TMP/linked"
+t13_expect_drop "13j symlinked scratch dir" "$(TICKET_TMP_DIR="$TMP/linked" t13_run "$T13_ID")" "$TMP/t13i-pipeline.log" "no usable scratch dir"
 
 # 13h: an explicit LOG_FILE skips recovery entirely, so no checks apply.
 rc=0

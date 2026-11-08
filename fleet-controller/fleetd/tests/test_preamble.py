@@ -58,7 +58,7 @@ class TestParseResultBlock(unittest.TestCase):
             'noise before\n'
             'TICKET_PREAMBLE_RESULT:\n'
             '  TICKET_ID: CRE-9\n'
-            '  ENV_FILE: /tmp/ticket-auto-CRE-9-env.sh\n'
+            '  ENV_FILE: /tmp/ticket-auto-1000/ticket-auto-CRE-9-env.sh\n'
             '  BASE_BRANCH: develop\n'
             'trailing noise\n'
             '  TICKET_ID: WRONG\n'
@@ -110,7 +110,7 @@ class TestRouting(unittest.TestCase):
             'cat <<EOF\n'
             'TICKET_PREAMBLE_RESULT:\n'
             '  TICKET_ID: CRE-1\n'
-            '  ENV_FILE: /tmp/ticket-auto-CRE-1-env.sh\n'
+            '  ENV_FILE: /tmp/ticket-auto-1000/ticket-auto-CRE-1-env.sh\n'
             '  LOG_FILE: /w/logs/CRE-1-pipeline.log\n'
             'EOF\n'
         )
@@ -118,7 +118,7 @@ class TestRouting(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.action, preamble.ACTION_PROCEED)
         self.assertEqual(result.fields['ENV_FILE'],
-                         '/tmp/ticket-auto-CRE-1-env.sh')
+                         '/tmp/ticket-auto-1000/ticket-auto-CRE-1-env.sh')
         self.assertEqual(result.gate_stop_code, '')
 
     def test_branch_directive_invalid_is_the_one_gate_stop(self):
@@ -235,7 +235,7 @@ class TestAgainstTheRealScript(unittest.TestCase):
         first = preamble.run_preamble('PYPRE-1', **kwargs)
         self.assertTrue(first.ok, first.detail)
         self.assertEqual(first.fields['ENV_FILE'],
-                         '/tmp/ticket-auto-PYPRE-1-env.sh')
+                         '/tmp/ticket-auto-1000/ticket-auto-PYPRE-1-env.sh')
         self.assertEqual(first.fields['BRANCH_ORIGIN'], 'resolved')
         self.assertEqual(first.fields['INTEGRATION_BRANCH'], 'epic/py')
         self.assertTrue(Path(first.fields['ENV_FILE']).is_file())
