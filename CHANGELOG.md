@@ -45,6 +45,21 @@ ticket-planner 0.35.0, grill-me 0.5.0 (GitHub #631). ticket-auto-pipeline unchan
 - Design and record fields: `ticket-planner/docs/run-telemetry.md`. The new kinds are kept out of
   the workspace `runs.jsonl`, and a test checks that ticket-auto's readers ignore them anyway.
 
+## Repo tooling (2026-11-08) — no plugin release
+
+### Fixed
+
+- **repo tooling** — the skill-size gate no longer trusts the last copy of a
+  duplicated baseline row. `merge=union` keeps both copies when two branches
+  change the same row of `scripts/skill-size-baseline.tsv` or
+  `scripts/skill-context-baseline.tsv`; the gate used the last one, so the
+  ratchet could loosen and `make skill-baseline` dropped `# exception:` notes.
+  A repeated key now takes the min of its values and keeps every copy's
+  comment lines. Check mode fails with `DUPLICATE: <key>`, and
+  `make skill-baseline` writes one row per key. Comment lines in the context
+  baseline now survive regeneration too. No custom merge driver: it would need
+  per-clone config and GitHub's PR merges never run one (see `.gitattributes`).
+
 ## 0.95.0 (2026-11-08)
 
 ### Fixed
