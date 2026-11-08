@@ -11,9 +11,10 @@ Pre-work readiness gate. Any agent can invoke it before acting on an input — i
 ```
 grill-me/
   .claude-plugin/plugin.json      # Plugin manifest (name, version, hooks)
+  hooks/grill-telemetry-stop.sh   # Stop hook — writes the grill_session telemetry record
   skills/grill-me/SKILL.md        # Single skill: /grill-me
-  lib/                            # Shared bash libraries (6 files)
-  lib/tests/                      # Test suites (6 files)
+  lib/                            # Shared bash libraries (7 files)
+  lib/tests/                      # Test suites (7 files)
   profiles/                       # Dimension profiles (JSON)
   docs/                           # Architecture and reference docs
   README.md                       # Marketplace entry point
@@ -56,6 +57,7 @@ The agent SHALL NOT contain a computed score. Every scoring rule is a unit-testa
 | `grill-score.sh` | `grill_score` — assessment JSON validation, readiness computation, recommendation resolution, question ranking, `KEY=value` + `result.json` output |
 | `grill-render.sh` | `grill_render <result> <assessment> [out] [brief-file]` — document rendering with fixed section order, tabular gap and score reporting; a non-empty brief file adds `## Original Brief` as the last body section |
 | `grill-seal.sh` | `grill_seal_generate`, `grill_seal_verify` — seal block generation and verification with exit-code contract |
+| `grill-telemetry.sh` | Run telemetry (#631, `ticket-planner/docs/run-telemetry.md`), active only inside a Claude Code session (`CLAUDE_CODE_SESSION_ID`). `grill_score` writes one `grill_round` record per scoring to `<work_dir>/telemetry/runs.jsonl` (round window: previous score or the person's last prompt → now; tokens from the session transcript in that window, once per message id; `human_wait_ms` from AskUserQuestion call → answer); `grill_answers_fold` opens the session on success and `grill_seal_generate` marks it sealed; `hooks/grill-telemetry-stop.sh` writes the `grill_session` record (status, verdict, score, rounds, tokens) at turn end. Tokens are `null` when no transcript holds them, never estimated. Prints nothing on stdout (grill_score's callers parse it) except `report <work_dir>`. `_grill_transcript_usage` is a port of ticket-planner's `planner_transcript_usage` — keep the two in step |
 | `grill-hold.sh` | Headless question rounds (planner-headless-questions). `grill_work_dir` (`GRILL_WORK_DIR` → `${REPOS_ROOT}/.grill/<id>`, `<id>` = `--id` or 12 hex of the brief's sha256; fails naming both variables when neither is set), `grill_hold_emit` (ranked `result.json` questions → `round-N.hold`, a human-hold v2 block with `KIND: input`, `AUDIENCE: client`, `grill:<dimension>` bindings, plus `state.json`), `grill_answers_fold` (validate round/ids/roles, sanitise, fold into `assessment.json` `resolved[]` with attribution; same exit codes as ticket-planner's answers intake), `grill_answers_prompt` (answers fenced as verbatim human data for the re-assessment), `grill_next_step` (`NEXT=seal\|emit\|cap`), `grill_hold_cap_emit` (round cap with a critical dimension unresolved → one operator approval, `seal-with-gaps\|abort`), `grill_seal_with_gaps_prepare` (a gap seal is never `ready`), `grill_hold_sealed` (terminal `state.json`: `status: sealed` with round/readiness/recommendation). The export dir is recorded in `state.json` on first emit, and every later write (emit, fold, seal) refreshes the exported copy |
 
 ## Seal canonicalization

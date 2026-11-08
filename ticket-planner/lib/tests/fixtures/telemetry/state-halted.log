@@ -1,0 +1,10 @@
+2026-11-01T10:00:00Z|META|schema|start|1
+2026-11-01T10:00:05Z|Appraisal|scope|start|Interpreting idea
+2026-11-01T10:01:05Z|Appraisal|scope|done|Scope summary written
+2026-11-01T10:01:10Z|Discovery|explore|start|Exploring
+2026-11-01T10:03:10Z|Discovery|explore|done|Discovery written
+2026-11-01T10:03:20Z|Crosscheck|check|start|Running checks
+2026-11-01T10:03:21Z|Crosscheck|testdata-synth|start|synth
+2026-11-01T10:03:22Z|Crosscheck|testdata-synth|done|0 TD spec(s), 0 need(s)
+2026-11-01T10:03:23Z|META|crosscheck|fail|CITATION_UNRESOLVED specs/a.md cites x.py:1
+2026-11-01T10:03:25Z|Crosscheck|check|fail|1 blocking finding(s)

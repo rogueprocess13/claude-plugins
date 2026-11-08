@@ -1161,6 +1161,9 @@ depend on it being inherited — `planner_prompt_for_phase` resolves the plugin 
 prompt-generation time and interpolates the literal path into each prompt's preamble,
 so the spawned agent never has to resolve anything.
 
+First open the run's telemetry record (the Stop hook closes it on any halt or completion):
+`bash "${CLAUDE_PLUGIN_ROOT}/lib/planner-run-telemetry.sh" begin "$INITIATIVE_ID" || true`
+
 For each phase to run:
 
 1. **Check the create gate** before generating anything. If `$PHASE` is `EpicGen`, run
@@ -1466,12 +1469,8 @@ For each phase to run:
    fi
    ```
 
-   Refinement's gate stamp is the part operators watch now, because it is the part
-   that lets fleet dispatch release tickets into work. A run that stops there looks
-   done from Linear (ready siblings of a held ticket already dispatch — design.md
-   Decision 2) while the operator's primary summary document was never written —
-   the same gap `Completed`'s own dispatch here closes regardless of which phase
-   did the stamping.
+   A run that stops after Refinement's gate stamp looks done from Linear while
+   `COMPLETED.md` was never written; dispatching Completed here closes that gap.
 
 ### 8. After completion
 

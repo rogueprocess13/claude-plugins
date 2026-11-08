@@ -300,6 +300,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-draft-carryover.sh
 	bash ticket-planner/lib/tests/test-planner-draft-carryover-e2e.sh
 	bash ticket-planner/lib/tests/test-planner-draft-render-normalise.sh
+	bash ticket-planner/lib/tests/test-planner-run-telemetry.sh
 	bash ticket-planner/lib/tests/test-skill-arg-substitution.sh
 
 test-planner-intent-gate:
@@ -314,6 +315,7 @@ test-grill:
 	bash grill-me/lib/tests/test-grill-seal.sh
 	bash grill-me/lib/tests/test-grill-render.sh
 	bash grill-me/lib/tests/test-grill-hold.sh
+	bash grill-me/lib/tests/test-grill-telemetry.sh
 
 test-flow:
 	@echo "=== ticket-flow tests ==="

@@ -478,6 +478,10 @@ JSON
   if [ -n "$result_path" ]; then
     mkdir -p "$(dirname "$result_path")" 2>/dev/null || true
     echo "$result_json" >"$result_path"
+    # One grill_round record per scoring (#631); silent, never fails a score.
+    if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/grill-telemetry.sh" ]; then
+      bash "$(dirname "${BASH_SOURCE[0]}")/grill-telemetry.sh" round "$(dirname "$result_path")" >/dev/null 2>&1 || true
+    fi
   fi
 
   # ── Emit KEY=value lines ──────────────────────────────────────────────────
