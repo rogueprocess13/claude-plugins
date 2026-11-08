@@ -177,7 +177,7 @@ Read the persona files at `$PERSONA_BASE` and `$PERSONA_SPECIALIZER`. If `$PERSO
 A `## Test Data Provided` ticket swaps `$PERSONA_BASE` to `test-data-engineer.md`. A hand-filed bug with neither a manifest `type` nor a `bug` label gets no debugger overlay.
 - Mixed → run once per layer; switch at the FE/BE boundary. Note the boundary in `notes.md`.
 - Test-data ticket (`$PERSONA_BASE` is `test-data-engineer.md`) → the whole deliverable is data, so do not split per layer. Make the ticket's `Seed command:` and `Verify command:` real (create the targets or scripts they name, or correct the lines to match what you built) and run the seed command twice to prove it is idempotent.
-- Seeder scenario on any ticket → run it in Step 4b's "Seeder run" (#601).
+- Seeder scenario on any ticket → static checks in Step 4b "Seeder scenarios" (#601).
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT detect-path done "{simple-fix|openspec}"
 
@@ -452,7 +452,7 @@ Do not commit until the review is clean or the loop gate-stops. At a clean exit,
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review done "cycle#{N} clean"
 
-**Seeder run (#601).** If a task, AC, `Seed command:` or diff under `$WIKI_ROOT/api/_tools/seed/` names a seeder scenario, run it twice now, every implement run; never defer to VERIFY. The stack is VERIFY's, so lock it and reset only via the project's `SEED_RESET_CMD`, never improvised: `eval "$(bash ~/.claude/skills/lib/seed-run-check.sh prepare {TICKET-ID} {ticket-dir})"`. `locked` → same block: `bash -c "$SEED_RESET_CMD"`, start the stack if down, run the scenario twice against this worktree, `seed-run-check.sh record {ticket-dir} clean "<scenario> x2"` (or `consumed-db "(<why>)"`), then always `seed-run-check.sh release`. `static-only` (recorded) → check requests against the OpenAPI contract. Then `seed-run-check.sh check {ticket-dir} {plan-file} --log-file "$TAP_LOG"` (exit 1 is advisory; continue).
+**Seeder scenarios (#601).** If the ticket ships one (`seed.sh <scenario>`, `Seed command:`, a diff under `$WIKI_ROOT/api/_tools/seed/`), check every request it makes against the OpenAPI contract (path, method, param min/max, required fields) and that a re-run takes its "already exists" paths. Do not start or reset the shared stack: VERIFY Step 1.6d runs it twice on its clean baseline before any criterion.
 
 ---
 

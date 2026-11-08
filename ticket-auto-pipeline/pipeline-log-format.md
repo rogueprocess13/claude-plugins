@@ -237,8 +237,6 @@ Gate-warn codes:
 - `COMPLETION_CHECKLIST_MISSING` — simple-fix.md has no `## Completion Checklist`.
   Treated as `error` (exit 2); needs re-appraisal.
 - `AC_DRIFT_AT_GATE`/`_AT_VERIFY`/`AC_DRIFT_UNKNOWN` — tracker vs `context.md` ACs (`lib/ac-drift.sh`).
-- `SEED_RUN_MISSING`/`_CONSUMED_DB`/`_STATIC_ONLY` — no clean seeder run (`lib/seed-run-check.sh`).
-
 `gate-warn` counters are tracked separately from `gate-stop` in retro.sh aggregation
 (`GATE_WARN_TOTAL` vs `GATE_STOP_TOTAL`) — they drive Phase 2 false-positive measurement,
 not severity classification.
