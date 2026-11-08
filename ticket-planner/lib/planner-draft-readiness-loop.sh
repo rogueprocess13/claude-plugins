@@ -32,6 +32,7 @@
 #                  set last changed between gate runs (D8)
 #   halt           "<CODE> <detail>" — run-level halt of the current run
 #   <slug>/lineage.json, lineage.prev.json   draft lineage (D11)
+#   <slug>/missed-history.jsonl              audit advisories of every evaluation
 #   <slug>/revise-prompt.r<N>.txt            the revise agent's prompt
 #
 # Env: PLANNER_DRAFT_REVISE_MAX_ROUNDS (default 2, 0 = the halt-only gate),
@@ -316,24 +317,66 @@ _pdl_missed_findings() {
   printf '%s\n' "$out"
 }
 
-# planner_draft_readiness_missed <INIT> — "<slug>\t<security|advisory>\t<CODE>\t<reason>"
-# per audit MISSED entry of every draft with a semantic verdict that did not
-# become a finding (_pdl_missed_findings): the scan missed it and nothing
-# blocks on it, so it is reported. `security` when it matches the security
-# rule (a structural or unknown code is never turned into a finding).
+# _pdl_missed_advisories <semantic.json> — {code, reason} JSON lines: the audit
+# MISSED entries of one evaluation that did not become a finding.
+_pdl_missed_advisories() {
+  jq -c "${PDL_MISSED_TEXT_DEF}"'
+    [(.findings // [])[] | select(.origin == "audit-missed") | .detail] as $f
+    | (.missed // [])[] | select(type == "object")
+    | {code: (.code // "" | tostring | pdl_missed_text), reason: (.reason // "" | pdl_missed_text)}
+    | select(.reason != "" and (.reason as $r | ($f | index($r)) == null))' "$1" 2>/dev/null
+}
+
+# _pdl_missed_record <dir> — adds this evaluation's advisories to
+# <dir>/missed-history.jsonl. A revision replaces semantic.json, so without this
+# an advisory lasts only until the spec's next evaluation. Never fails the
+# evaluation that called it, and survives a recompose (not a result file).
+_pdl_missed_record() {
+  local dir="$1" entry
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    grep -qxF "$entry" "${dir}/missed-history.jsonl" 2>/dev/null ||
+      printf '%s\n' "$entry" >>"${dir}/missed-history.jsonl"
+  done < <(_pdl_missed_advisories "${dir}/semantic.json")
+  return 0
+}
+
+# _pdl_missed_history_read <file> — the history as {code, reason} JSON lines,
+# cleaned again here: it is a workspace file an agent can write, and its text
+# reaches a terminal. A malformed or non-object line is skipped.
+_pdl_missed_history_read() {
+  [ -s "$1" ] || return 0
+  jq -Rc "${PDL_MISSED_TEXT_DEF}"'
+    fromjson? | select(type == "object")
+    | {code: (.code // "" | tostring | pdl_missed_text), reason: (.reason // "" | pdl_missed_text)}
+    | select(.reason != "")' "$1" 2>/dev/null
+  return 0
+}
+
+# planner_draft_readiness_missed <INIT> —
+# "<slug>\t<security|advisory>\t<CODE>\t<reason>[\tearlier]" per audit MISSED
+# entry of any evaluation of every draft that did not become a finding
+# (_pdl_missed_findings): the scan missed it and nothing blocks on it, so it is
+# reported. `security` when it matches the security rule (a structural or
+# unknown code is never turned into a finding). `earlier` when the draft's
+# latest evaluation no longer raises it, so the revision may have closed it.
 planner_draft_readiness_missed() {
-  local init="$1" root d slug
+  local init="$1" root d slug current entry mark
   root=$(_pdl_root "$init") || return 0
   for d in "$root"/*/; do
-    [ -s "${d}semantic.json" ] || continue
+    [ -s "${d}semantic.json" ] || [ -s "${d}missed-history.jsonl" ] || continue
     slug=$(basename "$d")
-    jq -r --arg s "$slug" "$(planner_draft_security_def)${PDL_MISSED_TEXT_DEF}"'
-      [(.findings // [])[] | select(.origin == "audit-missed") | .detail] as $f
-      | (.missed // [])[] | select(type == "object")
-      | {code: (.code // "" | tostring | pdl_missed_text), detail: (.reason // "" | pdl_missed_text)}
-      | select(.detail != "" and (.detail as $r | ($f | index($r)) == null))
-      | [$s, (if pdr_security then "security" else "advisory" end), .code, .detail] | @tsv' \
-      "${d}semantic.json" 2>/dev/null
+    current=""
+    [ -s "${d}semantic.json" ] && current=$(_pdl_missed_advisories "${d}semantic.json")
+    while IFS= read -r entry; do
+      [ -n "$entry" ] || continue
+      mark=""
+      grep -qxF "$entry" <<<"$current" || mark="earlier"
+      jq -r --arg s "$slug" --arg m "$mark" "$(planner_draft_security_def)"'
+        {code, detail: .reason}
+        | [$s, (if pdr_security then "security" else "advisory" end), .code, .detail]
+          + (if $m != "" then [$m] else [] end) | @tsv' <<<"$entry" 2>/dev/null
+    done < <(_pdl_missed_history_read "${d}missed-history.jsonl" | cat - <(printf '%s\n' "$current") | awk 'NF && !seen[$0]++')
   done
   return 0
 }
@@ -341,15 +384,17 @@ planner_draft_readiness_missed() {
 # planner_draft_readiness_missed_report <INIT> — the human-readable list, or
 # nothing.
 planner_draft_readiness_missed_report() {
-  local lines slug kind code reason
+  local lines slug kind code reason earlier label
   lines=$(planner_draft_readiness_missed "$1")
   [ -n "$lines" ] || return 0
   echo "Audit advisories (gaps the scan missed; they do not block):"
-  while IFS=$'\t' read -r slug kind code reason; do
-    if [ "$kind" = security ]; then
-      echo "  ${slug}: Security ${code} — ${reason}"
+  while IFS=$'\t' read -r slug kind code reason earlier; do
+    label="$code"
+    [ "$kind" = security ] && label="Security ${code}"
+    if [ -n "$earlier" ]; then
+      echo "  ${slug}: ${label} — ${reason} (from an earlier revision)"
     else
-      echo "  ${slug}: ${code} — ${reason}"
+      echo "  ${slug}: ${label} — ${reason}"
     fi
   done <<<"$lines"
 }
