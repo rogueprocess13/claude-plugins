@@ -168,9 +168,9 @@ find "$TICKETS_ROOT" -type d -name "{TICKET-ID}*"
 ```
 
 If found, read:
-- `context.md` — for any additional reproduction detail. For `planned` tickets, `context.md` was already seeded from the planner's `body.md` during `ticket-setup` (bash-resolved, not LLM-resolved). The Description section contains the authoritative body — no source-preference decision needed.
-- `notes.md` — for the fix summary and any UAT notes left by the implement session
-- `artifacts/` — check for any playwright scripts, test plans, or snapshots left by the implementer
+- `context.md` — extra reproduction detail; an appraisal-time snapshot (of `body.md` for `planned` tickets). Pipe the Step 1b description into `bash ~/.claude/skills/lib/ac-drift.sh {ticket-dir} --tag VERIFY --log-file "$TAP_LOG"`: on exit 1 (AC drift) number the plan from the Linear list (#604).
+- `notes.md` — the fix summary and UAT notes from implement
+- `artifacts/` — playwright scripts, test plans or snapshots from implement
 
 If not found, continue — the Linear description alone is sufficient.
 
