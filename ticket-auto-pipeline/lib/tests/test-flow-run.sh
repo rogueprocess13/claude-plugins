@@ -144,6 +144,13 @@ tail -1 "$HBL" | cut -d'|' -f6- | jq -e . >/dev/null 2>&1 && pass "2b: heartbeat
 STUB_RC=1 STUB_ERR='flow.sh: unknown argument: --dryrun\nUsage: flow.sh <TICKET-ID> <TRIGGER>\n\nValid triggers:\n  re-claim\n  uat-fail\n  uat-pass' \
   HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1 || true
 grep -q '"error_type":"usage"' "$HBL" && pass "2b: usage message keeps error_type=usage" || fail "2b: usage error_type" "$(cat "$HBL")"
+# Another tool's usage text (here jq's) reaching flow.sh's stderr is a runtime
+# error inside flow.sh, not a flow.sh usage error.
+: >"$HBL"
+STUB_RC=1 STUB_ERR='jq: error: syntax error\nUsage: jq [OPTIONS] FILTER [FILES...]\n  jq --help' \
+  HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1 || true
+grep -q '"error_type":"flow_error"' "$HBL" && pass "2b: jq usage text is error_type=flow_error" ||
+  fail "2b: jq usage error_type" "$(cat "$HBL")"
 
 # The REAL flow.sh: a bad argument prints the error, then usage() with the
 # whole trigger list. The snippet must be the error line, not trigger names.

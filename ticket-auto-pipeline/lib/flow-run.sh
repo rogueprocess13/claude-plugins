@@ -205,8 +205,8 @@ fi
 _fr_snippet() {
   local body
   [ -s "$1" ] || return 0
-  if grep -q '^Usage:' "$1"; then
-    body=$(sed -n '/^Usage:/q;p' "$1" | grep -v '^[[:space:]]*$' | tail -3)
+  if grep -q '^Usage: .*flow\.sh' "$1"; then
+    body=$(sed -n '/^Usage: .*flow\.sh/q;p' "$1" | grep -v '^[[:space:]]*$' | tail -3)
   else
     body=$(grep -v '^[[:space:]]*$' "$1" | tail -3)
   fi
@@ -224,7 +224,7 @@ _fr_snip=""
 _fr_usage_err=false
 if [ -n "$_fr_err" ]; then
   _fr_snip=$(_fr_snippet "$_fr_err") || true
-  grep -q '^Usage:' "$_fr_err" 2>/dev/null && _fr_usage_err=true
+  grep -q '^Usage: .*flow\.sh' "$_fr_err" 2>/dev/null && _fr_usage_err=true
   rm -f "$_fr_err"
 fi
 
