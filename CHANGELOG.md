@@ -17,6 +17,18 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.34.1 (2026-11-07)
+
+Fixes the false Crosscheck failure that halted dispatch rehearsal iter 04 (F33).
+
+### Fixed
+- **Citation resolution no longer depends on the working directory.** The linter passed its
+  exclude patterns to `find` as an unquoted string, so `*/.git/*` globbed against the caller's
+  working directory. With several matches `find` aborted, the error was discarded, and every
+  citation read as `CITATION_UNRESOLVED`: 57 blocking findings on iter 04, whose draft readiness
+  loop then reverted all 5 valid spec revisions. With one match the directory silently stopped
+  being pruned. The patterns are now an array.
+
 ## 0.85.0 (2026-11-08)
 
 Failure diagnostics: pipeline failures that were silent or mislabelled now say what went wrong.
