@@ -17,6 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.85.0 (2026-11-08)
+
+Failure diagnostics: pipeline failures that were silent or mislabelled now say what went wrong.
+
+### Fixed
+- `plog.sh` no longer drops pipeline-log lines silently. With no `TAP_LOG`/`LOG_FILE` it recovers
+  the path from the ticket's spawn-meta file (via `TICKET_ID`), and otherwise warns on stderr that
+  the line was dropped (#605).
+- `flow-run.sh` failure records now carry flow.sh's own error message (`META|flow-error` line and
+  heartbeat `error_snippet`). The message is the text before flow.sh's usage block and is kept as
+  valid UTF-8. Exit 1 is labelled `usage` only for real usage errors (else `flow_error`). Exit 12
+  maps to `emit_replay` and 13 to `env`. flow.sh's stderr still streams to the caller (#606).
+- `flow.sh` refuses to run with an unset `REPOS_ROOT`. It exits with the new code 13, a clear
+  stderr message and `META|flow-refused|fail|REPOS_ROOT_UNSET`, before the from-check and before
+  any write. Before, it logged a misleading `ILLEGAL_TRANSITION from <none>` and exited 1
+  silently. A failed manifest write now logs `META|flow-refused|fail|MANIFEST_WRITE_FAILED` (#608).
+- `spawn_agent_post`/`phase_terminal_write` no longer write a "sub-agent spawn failure" RETRO hint
+  when the phase ended in a deliberate `META|gate-stop` (#611).
+
 ## 0.84.0 (2026-11-08) — fleet-controller 0.46.0
 
 Spawn-helper hardening: the Linear key leaves the `/tmp` env file, unpaired spawn brackets are
