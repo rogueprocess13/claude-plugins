@@ -38,10 +38,8 @@ shell command, so a following `_rc=$?` would read nothing, and the phase agents
 | Code | Meaning | Recorded by `flow-run.sh` |
 |------|---------|---------------------------|
 | `0` | Transition applied (or a warn-only no-op such as `ILLEGAL_TRANSITION`) | nothing |
-| `1` | Usage / invalid ticket id / unreadable `workflow.json` / other `flow.sh` error | `META\|flow-error\|fail\|exit 1: <trigger>` |
-| `3` | Unknown trigger | `META\|flow-error` |
-| `8` | Precondition rejected (`must_be_epic` / `must_not_be_epic`) | `META\|flow-error` |
-| `9` / `10` | Generation fence: missing token / superseded generation | `META\|flow-error` |
+| `1` | Usage (`error_type=usage`) or runtime error (`flow_error`) | `META\|flow-error\|fail\|exit 1: <trigger> — <stderr>` |
+| `3`/`8`/`9`/`10`/`12`/`13` | Unknown trigger / precondition / fence: no token / fence: superseded / pending event not replayable / `REPOS_ROOT` unset | `META\|flow-error` |
 | `11` | **Verdict gate blocked** — a `verdict_gate` trigger (`uat-pass`, `pr-review-pass-done`, `pr-review-pass-uat`) refused because a trailing FAIL/BLOCK verifier-result is on record. Not transient: do not retry and do not report PASS/Done. | `META\|gate-stop\|fail\|VERDICT_GATE_BLOCKED — <trigger> refused, see flow.sh stderr` |
 | `42` | Another `flow.sh` run for this ticket holds the lock | `META\|flow-error` |
 | `127` | `flow.sh` could not be resolved — nothing ran | `META\|flow-error\|fail\|flow.sh not found: <trigger>` |

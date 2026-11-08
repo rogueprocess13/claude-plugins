@@ -141,9 +141,42 @@ grep -q '"error_snippet":"[^"]*manifest write failed' "$HBL" && pass "2b: heartb
 tail -1 "$HBL" | cut -d'|' -f6- | jq -e . >/dev/null 2>&1 && pass "2b: heartbeat detail is valid JSON" ||
   fail "2b: heartbeat detail JSON" "$(tail -1 "$HBL")"
 : >"$HBL"
-STUB_RC=1 STUB_ERR='flow.sh: unknown argument: --dryrun\nUsage: flow.sh <TICKET-ID> <TRIGGER>' \
+STUB_RC=1 STUB_ERR='flow.sh: unknown argument: --dryrun\nUsage: flow.sh <TICKET-ID> <TRIGGER>\n\nValid triggers:\n  re-claim\n  uat-fail\n  uat-pass' \
   HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1 || true
 grep -q '"error_type":"usage"' "$HBL" && pass "2b: usage message keeps error_type=usage" || fail "2b: usage error_type" "$(cat "$HBL")"
+
+# The REAL flow.sh: a bad argument prints the error, then usage() with the
+# whole trigger list. The snippet must be the error line, not trigger names.
+REAL_FLOW="${PLUGIN_ROOT}/skills/ticket-flow/flow.sh"
+LOG="${TMP}/real-usage.log"
+: >"$LOG"
+: >"$HBL"
+RC=0
+CLAUDE_SKILLS_LIB="$LIB_DIR" TICKET_FLOW_LOCK_DIR="${TMP}/locks" HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$REAL_FLOW" \
+  bash "$FLOW_RUN" --log-file "$LOG" WIL-5 needs-info --dryrun >/dev/null 2>&1 || RC=$?
+expect "2b: real flow.sh bad arg exits 1" 1 "$RC"
+grep -q '"error_type":"usage"' "$HBL" && pass "2b: real flow.sh bad arg is error_type=usage" ||
+  fail "2b: real flow.sh error_type" "$(cat "$HBL")"
+grep -q '"error_snippet":"flow.sh: unknown argument: --dryrun"' "$HBL" &&
+  pass "2b: real flow.sh snippet is the error line" || fail "2b: real flow.sh snippet" "$(cat "$HBL")"
+grep -q 'exit 1: needs-info — flow.sh: unknown argument: --dryrun$' "$LOG" &&
+  pass "2b: real flow.sh log line names the bad argument" || fail "2b: real flow.sh log line" "$(cat "$LOG")"
+
+# The stderr copy is a temp file under TMPDIR; it must not be left behind.
+mkdir -p "${TMP}/tmpdir"
+TMPDIR="${TMP}/tmpdir" STUB_RC=1 STUB_ERR='boom' FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1 || true
+expect "2b: stderr temp file removed" "" "$(ls -A "${TMP}/tmpdir")"
+
+# A multibyte character cut at the 240-character boundary must not leave
+# invalid UTF-8 in the log (fleetd reads it as UTF-8).
+LOG="${TMP}/mb.log"
+: >"$LOG"
+mb_err="flow.sh: $(printf 'é%.0s' $(seq 1 300))"
+STUB_RC=1 STUB_ERR="$mb_err" FLOW_RUN_FLOW_SH="$STUB" bash "$FLOW_RUN" --log-file "$LOG" TEST-1 needs-info >/dev/null 2>&1 || true
+if iconv -f UTF-8 -t UTF-8 "$LOG" >/dev/null 2>&1; then pass "2b: multibyte snippet stays valid UTF-8"; else fail "2b: multibyte snippet" "invalid UTF-8 in log"; fi
+snip_chars=$(sed -n 's/.*exit 1: needs-info — //p' "$LOG" | LC_ALL=C.UTF-8 wc -m | tr -d ' ')
+[ "${snip_chars:-0}" -gt 100 ] && [ "${snip_chars:-0}" -le 241 ] && pass "2b: multibyte snippet capped (${snip_chars} chars)" ||
+  fail "2b: multibyte snippet length" "$snip_chars"
 : >"$HBL"
 RC=0
 STUB_RC=13 STUB_ERR='flow.sh: REPOS_ROOT is not set' HB_LOG_FILE="$HBL" FLOW_RUN_FLOW_SH="$STUB" \

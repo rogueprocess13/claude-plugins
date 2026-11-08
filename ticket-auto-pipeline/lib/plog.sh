@@ -59,7 +59,8 @@ LOG_FILE="${LOG_FILE:-${TAP_LOG:-}}"
 # stderr that the line was dropped instead of losing it silently. Still
 # exit 0: a missing log must not abort a `set -e` caller.
 if [ -z "${LOG_FILE:-}" ] && [ -n "${TICKET_ID:-}" ]; then
-  _plog_meta="${TICKET_TMP_DIR:-/tmp}/ticket-auto-${TICKET_ID}-spawn-meta.txt"
+  # Same fixed path spawn_agent_pre writes (lib/spawn-helper.sh).
+  _plog_meta="/tmp/ticket-auto-${TICKET_ID}-spawn-meta.txt"
   if [ -f "$_plog_meta" ]; then
     LOG_FILE=$(sed -n 's/^LOG_FILE=//p' "$_plog_meta" 2>/dev/null | head -1)
     case "$LOG_FILE" in "{"*"}") LOG_FILE="" ;; esac

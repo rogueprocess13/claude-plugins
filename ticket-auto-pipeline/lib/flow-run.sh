@@ -72,7 +72,7 @@
 #            HB   retry flow-sh fail (error_type=not_found)
 #   other:   LOG  <ts>|META|flow-error|fail|exit <rc>: <trigger>[ — <flow.sh stderr snippet>]
 #            HB   retry flow-sh fail (error_type=<usage|unknown_trigger|precondition|fence|emit_replay|env|lock|flow_error>,
-#                 error_snippet=<last stderr lines, sanitised, max 240 chars>)
+#                 error_snippet=<the stderr lines before "Usage:", else the last ones; sanitised, max 240 bytes>)
 #            Exit 1 is error_type=usage only when flow.sh's stderr is one of
 #            its usage messages; otherwise flow_error.
 # Log lines are skipped when no log file is known; heartbeats are a no-op when
@@ -175,24 +175,56 @@ if [ -z "$_fr_flow_sh" ] || [ ! -f "$_fr_flow_sh" ]; then
 fi
 
 # ── Run it ───────────────────────────────────────────────────────────────────
-# flow.sh's stderr is captured (and replayed to our own stderr afterwards) so
-# the failure record can carry its message: without it every exit 1 looked
-# the same in the log and the heartbeat (GitHub #606).
+# flow.sh's stderr still streams to our own stderr, and a copy is kept so the
+# failure record can carry its message: without it every exit 1 looked the
+# same in the log and the heartbeat (GitHub #606). No temp file means no
+# copy, but stderr is never swallowed.
 _fr_rc=0
-_fr_err=$(mktemp "${TMPDIR:-/tmp}/flow-run-err.XXXXXX" 2>/dev/null) || _fr_err=/dev/null
-if [ -n "$_fr_log_file" ]; then
-  LOG_FILE="$_fr_log_file" bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}" 2>"$_fr_err" || _fr_rc=$?
+_fr_err=$(mktemp "${TMPDIR:-/tmp}/flow-run-err.XXXXXX" 2>/dev/null) || _fr_err=""
+[ -z "$_fr_err" ] || trap 'rm -f "$_fr_err"' EXIT
+_fr_run() {
+  if [ -n "$_fr_log_file" ]; then
+    LOG_FILE="$_fr_log_file" bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}"
+  else
+    bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}"
+  fi
+}
+if [ -n "$_fr_err" ]; then
+  _fr_run 2> >(tee "$_fr_err" >&2) || _fr_rc=$?
+  wait $! 2>/dev/null || true # let tee finish writing the copy
 else
-  bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}" 2>"$_fr_err" || _fr_rc=$?
+  _fr_run || _fr_rc=$?
 fi
+
+# _fr_snippet FILE: one log-safe line from flow.sh's stderr. flow.sh's usage()
+# prints "Usage: ..." and then the whole trigger list, so the useful lines are
+# the ones BEFORE "Usage:" (e.g. "flow.sh: unknown argument"); without a Usage
+# line, the last non-blank lines. No | " \ or control characters (it lands in
+# a pipe-delimited log line and a JSON string), at most 240 bytes, and
+# invalid UTF-8 dropped so a cut multibyte character never reaches the log.
+_fr_snippet() {
+  local body
+  [ -s "$1" ] || return 0
+  if grep -q '^Usage:' "$1"; then
+    body=$(sed -n '/^Usage:/q;p' "$1" | grep -v '^[[:space:]]*$' | tail -3)
+  else
+    body=$(grep -v '^[[:space:]]*$' "$1" | tail -3)
+  fi
+  body=$(printf '%s' "$body" | tr '\n\r\t|"\\' '      ' | tr -d '\000-\010\013\014\016-\037\177' | tr -s ' ')
+  if command -v iconv >/dev/null 2>&1; then
+    body=$(printf '%s' "$body" | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null | cut -c1-240 |
+      iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)
+  else
+    body=$(printf '%s' "$body" | LC_ALL=C tr -cd '\040-\176' | cut -c1-240)
+  fi
+  body="${body# }"
+  printf '%s' "${body% }"
+}
 _fr_snip=""
-if [ "$_fr_err" != /dev/null ]; then
-  cat "$_fr_err" >&2 2>/dev/null || true
-  # Last non-blank stderr lines, one line, no pipes/quotes/backslashes/control
-  # characters (it lands in a pipe-delimited log line and a JSON field).
-  _fr_snip=$(grep -v '^[[:space:]]*$' "$_fr_err" 2>/dev/null | tail -3 | tr '\n\r\t|"\\' '      ' |
-    tr -d '[:cntrl:]' | tr -s ' ' | cut -c1-240 || true)
-  _fr_snip="${_fr_snip% }"
+_fr_usage_err=false
+if [ -n "$_fr_err" ]; then
+  _fr_snip=$(_fr_snippet "$_fr_err") || true
+  grep -q '^Usage:' "$_fr_err" 2>/dev/null && _fr_usage_err=true
   rm -f "$_fr_err"
 fi
 
@@ -212,13 +244,16 @@ case "$_fr_rc" in
   1)
     # flow.sh exits 1 for usage errors and for runtime failures alike
     # (unreadable workflow.json, manifest write failed). Only its own usage
-    # messages make it a usage error (GitHub #606).
-    case "$_fr_snip" in
-    *"Usage:"* | *"unknown argument"* | *"requires a value"* | *"expects key=value"* | *"Invalid TICKET_ID"* | *"invalid generation token"*)
+    # messages (usage() prints a "Usage:" line) or its bad-input refusals make
+    # it a usage error (GitHub #606).
+    if $_fr_usage_err; then
       _fr_type=usage
-      ;;
-    *) _fr_type=flow_error ;;
-    esac
+    else
+      case "$_fr_snip" in
+      *"Invalid TICKET_ID"* | *"invalid generation token"*) _fr_type=usage ;;
+      *) _fr_type=flow_error ;;
+      esac
+    fi
     ;;
   3) _fr_type=unknown_trigger ;;
   8) _fr_type=precondition ;;

@@ -1168,13 +1168,19 @@ test_flow_repos_root_unset_fails_fast() {
   after=$(cat "$manifest")
   local illegal flow_err
   illegal=$(grep -c 'ILLEGAL_TRANSITION' "$log" 2>/dev/null || true)
-  flow_err=$(grep -c '|META|flow-error|fail|REPOS_ROOT_UNSET trigger=implement-complete' "$log" 2>/dev/null || true)
+  # flow-refused, not flow-error: flow-run.sh writes the flow-error line for
+  # this exit, and pipeline-postmortem.sh would count both.
+  flow_err=$(grep -c '|META|flow-refused|fail|REPOS_ROOT_UNSET trigger=implement-complete' "$log" 2>/dev/null || true)
+  local dup_err first
+  dup_err=$(grep -c '|META|flow-error|' "$log" 2>/dev/null || true)
+  first=$(head -1 "$log" 2>/dev/null | cut -d'|' -f2-4)
   local outbox_lines
   outbox_lines=$(cat "$tmpdir/logs/"*outbox* 2>/dev/null | wc -l | tr -d ' ')
   rm -rf "$tmpdir"
   if [ "$rc" -ne 13 ] || [[ "$err" != *"REPOS_ROOT is not set"* ]] || [ "${illegal:-0}" -ne 0 ] ||
-    [ "${flow_err:-0}" -ne 1 ] || [ "$before" != "$after" ] || [ "$outbox_lines" -ne 0 ]; then
-    echo "rc=$rc illegal=$illegal flow_err=$flow_err outbox=$outbox_lines err=$err" >&2
+    [ "${flow_err:-0}" -ne 1 ] || [ "${dup_err:-0}" -ne 0 ] || [ "$first" != "META|schema|info" ] ||
+    [ "$before" != "$after" ] || [ "$outbox_lines" -ne 0 ]; then
+    echo "rc=$rc illegal=$illegal flow_refused=$flow_err flow_error=$dup_err first=$first outbox=$outbox_lines err=$err" >&2
     [ "$before" = "$after" ] || echo "manifest changed: $after" >&2
     return 1
   fi
