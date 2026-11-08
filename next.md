@@ -1444,14 +1444,35 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
       - **Iter 04 (2026-10-30/31): FAIL**, full run 4 of 10. Grill-me sealed `ready` (93, 2 rounds).
         `INIT-1793396786-8715` passed first Crosscheck, then the gate revised 5/7 specs and reverted all 5 as
         `CROSSCHECK_REGRESSION` on 57 false `CITATION_UNRESOLVED`; halted `DRAFT_NOT_READY`, no Linear writes.
-        - [ ] F33 (C): unquoted `find` prune patterns glob against the caller's cwd. Reproduced: old lib 57 from the
-              work root, 0 from `/`; fixed lib 0. Fix on `fix/planner-crosscheck-cwd-glob` (planner 0.34.1), not merged.
+        - [x] F33 (C): unquoted `find` prune patterns glob against the caller's cwd. Reproduced: old lib 57 from the
+              work root, 0 from `/`; fixed lib 0. **PR #612 merged 2026-11-08** (planner 0.34.1).
         - [x] F35 (D): sandbox `CLAUDE.md` set `skip-worktree`, value kept; runbook updated.
-        - [ ] Before iter 05: land #594 → #596 → #595; three queued gate bugs (security regex wording, earlier
-              `MISSED` advisories dropped, `advisory_summary` empty in a fresh shell) fixed on
-              `fix/planner-draft-gate-queued-bugs` (planner 0.34.2), not merged; grill-me
+        - [ ] Before iter 05: ~~land #594 → #596 → #595~~ (merged); ~~three queued gate bugs (security regex
+              wording, earlier `MISSED` advisories dropped, `advisory_summary` empty in a fresh shell)~~
+              (**PR #613 merged 2026-11-08**, planner 0.34.2); land the post-iter-04 issue batch below; grill-me
               `## Assumptions & Defaults` + failure-behaviour probe (F36); F37 runbook note; abandon the iter 04
               initiative; update plugins to the checkout and restart.
+        - [ ] Post-iter-04 GitHub issue batch (2026-11-08), merged in order, one ticket-auto-pipeline version each:
+          - [x] #614 (#605/#606/#608/#611 failure diagnostics, 0.85.0) — merged.
+          - [x] #615 (#602 stale skill copies, #609 GitNexus refresh, 0.86.0) — merged.
+          - [x] #616 (#607 zombie VERIFY keeps checkpoints, #600 retro lib layout; 0.87.0, fleet-controller
+                0.46.1) — merged.
+          - [ ] #617 (#599 answer-only reconcile passes, #604 AC drift reaches VERIFY, #601 seeder precheck
+                before VERIFY) — target 0.88.0. Precheck takes scenario names from seed-repo git history, runs
+                argv-only in its own process group; a precheck fail burns one VERIFY attempt (deliberate — the
+                attempt cap is the only loop bound).
+          - [ ] #618 (#598 verdict gate honours latest result, #610 adversarial override operator-only) — target
+                0.89.0. Residual risk accepted: same-uid agent can still forge the log marker with a raw append.
+          - [ ] #619 predictable `/tmp/ticket-auto-*` scratch files trusted for write targets (security, Medium,
+                pre-existing from #614) — **PR #622**, reviewed, fixes applied; needs user force-push (rebased).
+          - [ ] #620 resume passes unknown VERIFY steps — **PR #623** (only `build-plan` resumes past setup);
+                needs user force-push (rebased).
+          - [ ] #621 seeder containment — **draft PR #625** (stacked on #617; re-merge main after #617 lands).
+          - [ ] Filed, not started: #624 (remaining predictable `/tmp` paths: verify logs/lock, fence fallback,
+                retro), #626 (VERIFY lock: resumed run waits on its own orphan holder; `build-plan` resume unlocked).
+          - [x] Follow-ups filed: #620 (detect-resume passes unknown VERIFY steps such as `seed-apply` /
+                `seed-precheck` to ticket-verify `--from-step`; Medium) and #621 (a `setsid` seeder escapes the
+                timeout group kill, and seed-apply has no timeout; Low).
         - [ ] Watch in iter 05 (F34): no revision has yet been evaluated after applying, so the loop's second half is
               unproven live.
 - [ ] 4. Follow-up, start once item 3 converges (it supplies the baseline): **chain consistency
