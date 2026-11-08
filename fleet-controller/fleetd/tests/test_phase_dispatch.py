@@ -1187,6 +1187,23 @@ class TestVerifyCheckpointResume(unittest.TestCase):
             '2026-01-01T00:00:06Z|VERIFY|checkpoint|done|criterion-3-pass')
         self.assertEqual(last_verify_criterion(lines), '3')
 
+    def test_recorded_zombie_close_keeps_the_crashed_attempts_checkpoint(self):
+        # #607: a recorded synthetic close is a crash, not a verdict — the
+        # code was never re-implemented, so passed criteria stay passed.
+        lines = [
+            '2026-01-01T00:00:01Z|VERIFY|verify|waiting|Agent launched',
+            '2026-01-01T00:00:02Z|VERIFY|checkpoint|done|criterion-7-pass',
+            '2026-01-01T00:00:03Z|VERIFY|verify|fail|zombie-detected: VERIFY verify',
+        ]
+        self.assertEqual(last_verify_criterion(lines, ['synthetic|3']), '7')
+        self.assertEqual(last_verify_checkpoint(lines, ['synthetic|3']),
+                         'build-plan')
+        # Trust boundary: the same line unrecorded is a verdict.
+        self.assertEqual(last_verify_criterion(lines), '')
+        # A re-implement still ends the attempt.
+        lines.append('2026-01-01T00:00:04Z|IMPLEMENT|implement|done|re')
+        self.assertEqual(last_verify_criterion(lines, ['synthetic|3']), '')
+
     def test_browser_state_cannot_be_resumed_so_falls_back_to_build_plan(self):
         for substep in ('browser-session', 'navigate', 'execute-steps'):
             lines = [f'2026-01-01T00:00:01Z|VERIFY|{substep}|done|ok']
@@ -1245,6 +1262,11 @@ class TestVerifyCheckpointParity(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         fields = parse_detect_resume_block(proc.stdout)
+        # The script may append to the log (a zombie close) and record that
+        # line in the control file; the Python side reads both as they are
+        # after the run, exactly like fleetd would on its next dispatch.
+        self.after_lines = log.read_text().splitlines()
+        self.after_ctl = phase_dispatch.read_verify_ctl(str(log))
         return fields.get('VERIFY_FROM', ''), fields.get('VERIFY_CHECKPOINT', '')
 
     def test_parity_across_fixtures(self):
@@ -1274,15 +1296,40 @@ class TestVerifyCheckpointParity(unittest.TestCase):
                 '2026-01-01T00:00:01Z|VERIFY|checkpoint|done|criterion-1-pass',
                 '2026-01-01T00:00:02Z|VERIFY|verify|done|PASS',
             ]),
+            # #607: a stale open bracket — detect-resume.sh closes it as a
+            # recorded zombie, which keeps the crashed attempt's checkpoint.
+            ('CRE-P7', [
+                '2026-01-01T00:00:01Z|IMPLEMENT|implement|done|ok',
+                '2026-01-01T00:00:02Z|VERIFY|verify|waiting|Agent launched',
+                '2026-01-01T00:00:03Z|VERIFY|build-plan|done|ok',
+                '2026-01-01T00:00:04Z|VERIFY|checkpoint|done|criterion-4-pass',
+            ]),
+            # An agent-forged (unrecorded) zombie close is a verdict.
+            ('CRE-P8', [
+                '2026-01-01T00:00:01Z|VERIFY|verify|waiting|Agent launched',
+                '2026-01-01T00:00:02Z|VERIFY|checkpoint|done|criterion-4-pass',
+                '2026-01-01T00:00:03Z|VERIFY|verify|fail|zombie-detected: VERIFY verify',
+            ]),
+            # A re-implement ends the attempt even with no verify verdict.
+            ('CRE-P9', [
+                '2026-01-01T00:00:01Z|VERIFY|checkpoint|done|criterion-4-pass',
+                '2026-01-01T00:00:02Z|IMPLEMENT|implement|waiting|Agent launched',
+                '2026-01-01T00:00:03Z|IMPLEMENT|implement|done|ok',
+            ]),
         ]
         for tid, lines in fixtures:
             with self.subTest(tid=tid):
                 real_from, real_cp = self._real_verify_from(tid, lines)
-                self.assertEqual(last_verify_checkpoint(lines), real_from,
-                                 f'{tid}: {lines}')
-                self.assertEqual(last_verify_criterion(lines), real_cp,
-                                 f'{tid}: {lines}')
+                after, ctl = self.after_lines, self.after_ctl
+                self.assertEqual(last_verify_checkpoint(after, ctl), real_from,
+                                 f'{tid}: {after}')
+                self.assertEqual(last_verify_criterion(after, ctl), real_cp,
+                                 f'{tid}: {after}')
                 self.assertNotEqual(real_from, 'checkpoint')
+        # The zombie fixture really exercised the recorded-close path.
+        real_from, real_cp = self._real_verify_from('CRE-P7', fixtures[6][1])
+        self.assertEqual(real_cp, '4')
+        self.assertTrue(any(c.startswith('synthetic|') for c in self.after_ctl))
 
 
 class TestDriftPreventionCoverage(unittest.TestCase):

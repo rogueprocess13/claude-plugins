@@ -6,12 +6,15 @@
 # phase_dispatch.last_verify_checkpoint / last_verify_criterion, with a
 # parity test against detect-resume.sh.
 #
-# The current attempt is everything after the last `VERIFY|verify|done|` or
-# `VERIFY|verify|fail|` terminal line. An attempt that reached a terminal is
-# over: the next attempt runs against re-implemented code and must re-check
-# every criterion. A crashed attempt has no terminal, so its own progress is
-# kept — but note detect-resume.sh turns a stale open bracket into a
-# synthesized `verify|fail` (zombie), which ends that attempt too.
+# The current attempt is everything after the last real `VERIFY|verify|done|`
+# or `VERIFY|verify|fail|` verdict, or after the last
+# `IMPLEMENT|implement|waiting|`/`done|` line, whichever is later. An attempt
+# that reached a verdict is over, and code that was (re-)implemented must be
+# re-checked in full. A crashed attempt reached no verdict, so its progress
+# is kept (#607): the synthesized `zombie-detected:`/`operator-stopped:`
+# close detect-resume.sh writes for its stale bracket does not end the
+# attempt, when that line is recorded in the control file (see below), and
+# the resumed VERIFY skips the criteria the crashed run already passed.
 #
 # Functions (sourceable; no set -e leak):
 #   verify_attempt_lines <LOG>      — lines of the current attempt
@@ -140,10 +143,16 @@ verify_ctl_record_synthetic() {
 }
 
 verify_attempt_lines() {
-  local log="$1" ln
+  local log="$1" ctl
   [ -f "$log" ] || return 0
-  ln=$(grep -nE '^[^|]*\|VERIFY\|verify\|(done|fail)\|' "$log" 2>/dev/null | tail -1 | cut -d: -f1) || ln=""
-  awk -v n="${ln:-0}" 'NR>n' "$log" 2>/dev/null || true
+  ctl=$(_verify_ctl_file "$log")
+  awk -F'|' -v ctlf="$ctl" -v synthre="$VERIFY_SYNTHETIC_FAIL_RE" -v rmax="$(_verify_reset_max)" "$_VERIFY_CTL_AWK"'
+    { line[FNR] = $0 }
+    ($2 == "VERIFY" && $3 == "verify" && ($4 == "done" || $4 == "fail") && !is_synthetic()) ||
+    ($2 == "IMPLEMENT" && $3 == "implement" && ($4 == "waiting" || $4 == "done")) { start = FNR }
+    END { for (i = start + 1; i <= FNR; i++) print line[i] }
+  ' "$ctl" "$log" 2>/dev/null || true
+  return 0
 }
 
 verify_checkpoint_criterion() {

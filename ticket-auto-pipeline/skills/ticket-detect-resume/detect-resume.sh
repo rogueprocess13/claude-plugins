@@ -619,11 +619,13 @@ if [ -s "$LOG_FILE" ]; then
     tail -1 | awk -F'|' '{print $3}' || true)
 
   # VERIFY_FROM and VERIFY_CHECKPOINT are scoped to the CURRENT verify attempt
-  # (review finding DET-RV-16): only lines after the last `VERIFY|verify|done|`
-  # or `VERIFY|verify|fail|` terminal count. An attempt that reached a terminal
-  # is over — the next attempt runs against re-implemented code and must
-  # re-check every criterion, never skip one an earlier attempt passed. A
-  # crashed attempt has no terminal, so its own progress is kept. The scoping
+  # (review finding DET-RV-16): only lines after the last real
+  # `VERIFY|verify|done|`/`fail|` verdict or `IMPLEMENT|implement` line count.
+  # An attempt that reached a verdict is over — the next attempt runs against
+  # re-implemented code and must re-check every criterion, never skip one an
+  # earlier attempt passed. A crashed attempt reached no verdict, so its own
+  # progress is kept, including across the zombie close written above (#607:
+  # a recorded synthetic close is not a verdict). The scoping
   # lives in lib/verify-checkpoint.sh, which ticket-verify also calls; fleetd
   # mirrors it in last_verify_checkpoint / last_verify_criterion.
   VERIFY_FROM=$(verify_attempt_lines "$LOG_FILE" |

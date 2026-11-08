@@ -146,8 +146,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Source the shared complexity parser ──────────────────────────────────
-LIBS_DIR="$(dirname "$(readlink -f "$0")")/../lib"
-# shellcheck source=../lib/notes-parse.sh
+# Two install layouts (GitHub #600): the plugin cache keeps lib/ at the plugin
+# root (<plugin>/skills/ticket-retro -> <plugin>/lib), the synced skills dir
+# keeps it beside the skills (~/.claude/skills/ticket-retro -> ~/.claude/skills/lib).
+_RETRO_DIR="$(dirname "$(readlink -f "$0")")"
+if [ -f "$_RETRO_DIR/../../lib/notes-parse.sh" ]; then
+  LIBS_DIR="$_RETRO_DIR/../../lib"
+else
+  LIBS_DIR="$_RETRO_DIR/../lib"
+fi
+# shellcheck source=../../lib/notes-parse.sh
 source "$LIBS_DIR/notes-parse.sh" 2>/dev/null || {
   get_complexity() {
     local ticket_dir="$1"
@@ -750,6 +758,9 @@ jq -n \
   }'
 
 # ── Write cursor file ────────────────────────────────────────────────────
+# _iso_now comes from heartbeat.sh via notes-parse.sh -> error-handler.sh. If
+# the lib could not be sourced, the cursor must still be written (GitHub #600).
+declare -f _iso_now >/dev/null 2>&1 || _iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 _CURSOR_JSON="{"
 _CURSOR_FIRST=1
 for tid in "${!SCANNED_MTIMES[@]}"; do
