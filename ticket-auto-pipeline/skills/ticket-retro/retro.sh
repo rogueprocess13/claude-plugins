@@ -630,25 +630,20 @@ HB_RETRY_JSON=$(_HB_BUILD_OBJ HB_RETRY_COUNT)
 
 # ── Build failure histogram JSON (sorted descending by count) ────────────
 
-HISTOGRAM_JSON="{"
-HIST_FIRST=1
-for code in "${!FAILURE_COUNT[@]}"; do
-  echo "${FAILURE_COUNT[$code]} $code"
-done | sort -rn | while read -r count code; do
-  # This while-read runs in a subshell due to the pipe, so we use a temp file
-  echo "$count $code"
-done >/tmp/retro-hist-sorted.$$.txt
-
-# Re-read from temp file to avoid subshell issues
+# Process substitution keeps the read loop in this shell, with no temp file
+# (a fixed /tmp/retro-hist-sorted.$$ name could be pre-planted, GitHub #624).
 HISTOGRAM_JSON="{"
 HIST_FIRST=1
 while read -r count code; do
   [ -z "$code" ] && continue
   [ "$HIST_FIRST" -eq 1 ] && HIST_FIRST=0 || HISTOGRAM_JSON+=", "
   HISTOGRAM_JSON+="\"$code\": $count"
-done </tmp/retro-hist-sorted.$$.txt
+done < <(
+  for code in "${!FAILURE_COUNT[@]}"; do
+    echo "${FAILURE_COUNT[$code]} $code"
+  done | sort -rn
+)
 HISTOGRAM_JSON+="}"
-rm -f /tmp/retro-hist-sorted.$$.txt
 
 # ── Compute complexity calibration ───────────────────────────────────────
 # Computed over the full window population of ticket-auto logs, independent

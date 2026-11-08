@@ -39,12 +39,12 @@ When `--from-auto` is present, VERIFY is a loop-bearing phase: additionally foll
 - **Verdict**: after the final pass/fail determination, write `hb-wrap.sh decision "verification-verdict" "fired" "PASS|FAIL" '{"verdict":"PASS|FAIL","criteria_met":"N","criteria_total":"M"}'`
 
 ### Step dispatch
-**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1.
+**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1. Any resume past Step 1.6 (`build-plan`, or a 4c/4c-live `execute-steps` re-entry) first runs the 1.6a3 lock block unless this run skips 1.6; a dead attempt's orphaned lock for this ticket is taken over.
 
 | `--from-step` value | Effective skip to | Restore from |
 |---------------------|-------------------|--------------|
 | `load-context` | **Step 1** (start over) | Step 1.6 (lock, env, seeds) runs after it |
-| `build-plan` | Step 3 (browser session) | re-run Steps 3+ in full |
+| `build-plan` | Step 3, after the 1.6a3 lock block | re-run Steps 3+ in full |
 | `browser-session` | **falls back to `build-plan`** | browser state lost on crash |
 | `navigate` | **falls back to `build-plan`** | browser state lost on crash |
 | `execute-steps` | **falls back to `build-plan`** | browser state lost on crash |
@@ -299,7 +299,7 @@ fi
 bash ~/.claude/skills/lib/plog.sh VERIFY verify-lock done "acquired"
 ```
 
-`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at every earlier point that can exit before Step 5 — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, Step 1.6d's seeder-precheck failure (the helper releases it), and Step 1.7a's "no test user found" SKIP exit. `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
+`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at every earlier point that can exit before Step 5 — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, Step 1.6d's seeder-precheck failure (the helper releases it), Step 1.7a's "no test user found" SKIP exit, and Step 7 (Steps 3b/4 reach it without Step 5). `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
 
 ### 1.6a4 — Resolve isolated worktrees for affected repos
 
@@ -885,7 +885,7 @@ Run each build command from the Step 2 (build-only variant) plan sequentially, i
 
 1. Run the command, capturing stdout+stderr and the exit code:
    ```bash
-   cd "{worktree path}" && { {build command} ; } > /tmp/ticket-verify-{TICKET-ID}-{step}.log 2>&1
+   L=$(bash ~/.claude/skills/lib/ticket-tmp.sh {TICKET-ID} verify-{step}.log) && cd "{worktree path}" && { {build command} ; } > "$L" 2>&1
    _rc=$?
    ```
 2. Record the **observed result** — exit code, and (if relevant to the criterion) whether the expected artifact/version/output string appears in the captured log (e.g. `BUILD SUCCESS`, a specific dependency version resolved, absence of a removed property).
@@ -902,7 +902,7 @@ At any point, if a command exits non-zero or the expected output/state is absent
 - What was expected (from the pass criterion)
 - What was observed — quote the relevant lines of build output verbatim (last 20–30 lines, or the specific error block)
 
-Continue executing remaining commands unless the failure makes downstream commands meaningless (e.g. `mvn -N install` failing means every dependent module's `mvn clean compile` will fail for the same reason — note this and skip re-running them individually rather than spamming identical failures).
+Continue with the remaining commands unless the failure makes them meaningless (e.g. a failed `mvn -N install` dooms every dependent module's `mvn clean compile` — note it and skip them).
 
 bash ~/.claude/skills/lib/plog.sh VERIFY execute-steps done "{N} build commands executed"
 
@@ -918,7 +918,7 @@ The environment is already up (Step 1.6b ran `env-start.sh` for `live-backend` m
 
 1. Run the check, capturing output:
    ```bash
-   { {env-status.sh invocation or curl command} ; } > /tmp/ticket-verify-{TICKET-ID}-{step}.log 2>&1
+   L=$(bash ~/.claude/skills/lib/ticket-tmp.sh {TICKET-ID} verify-{step}.log) && { {env-status.sh invocation or curl command} ; } > "$L" 2>&1
    _rc=$?
    ```
    Use `bash {TICKETS_ROOT}/env-status.sh` for service-health/registration reads. Use `curl -sS -w '\n%{http_code}\n'` (or the project's documented API-check invocation) for direct service-to-service or endpoint checks. For failure-simulation criteria (e.g. circuit breaker), use the project's documented fault-injection method — typically stopping a dependency via `env-start.sh`/`env-stop.sh` — then re-run the check to confirm the expected degraded/recovered behaviour.
@@ -1200,6 +1200,8 @@ marker.
 
 ## Step 7 — Failure report
 
+First run Step 5's `verify_lock_release` block (idempotent).
+
 ### 7a — Collect diagnostics
 
 **Browser mode:**
@@ -1211,13 +1213,13 @@ marker.
 **Build-only mode:** substitute build diagnostics for the browser ones above — these map onto the same REMEDIATION_BRIEF fields (7c) so downstream skills don't need mode-specific parsing:
 1. **Failed command + exit code** — maps to `CONSOLE_ERRORS` field
 2. **Repo/module + branch** — maps to `CURRENT_URL` field (use `{repo}@{branch}` in place of a URL)
-3. **Last 20–30 lines of captured build output** (`/tmp/ticket-verify-{TICKET-ID}-{step}.log`) — maps to `SNAPSHOT_EXCERPT` field
+3. **Last 20–30 lines of the step's `$L` log** — maps to `SNAPSHOT_EXCERPT`
 4. **Failed step** — step number, expected vs. observed (command + exit code)
 
 **Live-backend mode:** substitute live-check diagnostics for the browser ones above — same field mapping convention as build-only:
 1. **Failed check + exit code/HTTP status** — maps to `CONSOLE_ERRORS` field
 2. **Service/environment + endpoint checked** — maps to `CURRENT_URL` field (use `{service}@{env}` or the endpoint URL)
-3. **Last 20–30 lines of captured check output** (`/tmp/ticket-verify-{TICKET-ID}-{step}.log`), plus `env-status.sh` output at the point of failure — maps to `SNAPSHOT_EXCERPT` field
+3. **Last 20–30 lines of the step's `$L` log**, plus `env-status.sh` output at the failure — maps to `SNAPSHOT_EXCERPT`
 4. **Failed step** — step number, expected vs. observed (check + result)
 
 ### 7b — Write the failure report
@@ -1482,11 +1484,9 @@ A failure still reports. End your return with the `=== PHASE_RESULT ===` block d
 
 A FAIL with a block is a usable signal; a FAIL with no block is an absence of information, and any consumer must then fall back to whole-run classification.
 
----
-
 ## Notes
 
-- **Isolated worktrees + single-flight lock (Step 1.6a2–1.6a4):** verification runs this ticket's own worktree (`REPOS_ROOT/.verify-worktrees/{repo}/{TICKET-ID}`, never implement's) and holds `lib/verify-lock.sh` (`VERIFY_LOCK_FILE`, default `/tmp/ticket-verify.lock`) from stack start through the checks, because the local stack's ports are not namespaced. GC (1.6a2) skips while anyone holds the lock; the destructive worktree resync (1.6a4) runs only under it. All three are skipped when Step 1.6 is. The lock is released at Step 5 or at the earlier exits listed in 1.6a3, and self-expires after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h).
+- **Isolated worktrees + single-flight lock (Step 1.6a2–1.6a4):** VERIFY runs this ticket's own worktree (`REPOS_ROOT/.verify-worktrees/{repo}/{TICKET-ID}`, never implement's) under `lib/verify-lock.sh` (per-user lock; the stack's ports are not namespaced). GC skips while the lock is held; the 1.6a4 resync runs only under it. Released at Step 5 or the 1.6a3 early exits; self-expires after `VERIFY_LOCK_MAX_HOLD_SECS` (1h).
 - **Session reuse:** If the browser is already open and logged in at the correct environment, skip Step 3b. Detect this from the snapshot — if the nav shows a user name, proceed directly to Step 4.
 - **Snapshot verbosity:** Trim snapshots to the relevant component subtree in all reports. Full snapshots can be hundreds of lines — include only what is needed to understand the failure.
 - **Multiple failing criteria:** If more than one criterion fails, report all of them in 7b and 7c. The WHAT_FAILED and SNAPSHOT_EXCERPT should cover the first failure point; list subsequent failures under a `ADDITIONAL_FAILURES:` key in the brief.

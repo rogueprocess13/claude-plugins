@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## Unreleased
+## 0.95.0 (2026-11-08)
 
 ### Fixed
 - `seed_run`'s post-run sweep could miss a `setsid` stray started just before the seeder exited,
@@ -32,6 +32,64 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
   0.2s longer. `test-seed-run.sh` strays signal readiness once their marker is visible, a new
   case builds a stray whose marker is not readable at exit, and the "nothing left" checks poll
   and clean up, so one survivor no longer fails every later case (follow-up to #625).
+
+## 0.94.0 (2026-11-08) — fleet-controller 0.46.2
+
+The remaining shared-`/tmp` names leave `/tmp`, and fleetd's pidfile can no longer be used to
+truncate a file (#624).
+
+### Security
+- The remaining shared-`/tmp` names are gone (#624). ticket-verify's build and live-check logs go
+  through `ticket-tmp.sh <ID> verify-<step>.log`. ticket-retro, ticket-audit and ticket-prescan keep
+  their scratch files in the private scratch dir, the three env-check/features skills use `mktemp`,
+  and `retro.sh` builds its histogram without a temp file.
+- The ticket-verify lock is now per user: `VERIFY_LOCK_FILE` unset means
+  `<scratch dir>/ticket-verify.lock`. A shared `/tmp/ticket-verify.lock` never coordinated two
+  users anyway (another user's holder pid reads as dead, and their lock file is not writable), but
+  it let any local user block every VERIFY or forge the holder info. An explicit `VERIFY_LOCK_FILE`
+  is used only in a directory we own with no group/other write bit, and the lock and its
+  `.holder`/`.info`/`.stop` files are refused when they are symlinks, not ours, or group/other
+  writable. Lock files are created 0600 (#624).
+- `lib/fence-check.sh` no longer falls back to `/tmp/<tid>-fence` when `fleet-config.sh` is not
+  found; it uses the same rule as `_fleet_fence_file` (the caller's state dir, else `./logs`). Fence
+  state left `/tmp` in 56b3a56, so only a planted file could ever be found there (#624).
+- fleetd's single-instance pidfile moves from `/tmp/fleetd.pid` to `fleetd.pid` in the private
+  per-user scratch dir (`/tmp/ticket-auto-<euid>/`, or `$TICKET_TMP_DIR`). `FLEETD_PIDFILE` and
+  `--pidfile` still override it. Every pidfile is opened with `O_NOFOLLOW` and refused unless it is
+  a regular file owned by fleetd's uid, not group/other writable, with exactly one link. Before
+  this, a symlink or a hard link planted in `/tmp` could make fleetd truncate one of the fleetd
+  user's own files. During an upgrade, a new fleetd on the default path refuses to start while an
+  older fleetd of the same uid still holds `/tmp/fleetd.pid`. That check is a read-only probe;
+  the legacy file is never created or written (#624).
+
+### Fixed
+- `adopt_planner_proposal` (ticket-appraise-exec, planned tickets) accepted a log path only under
+  `/tmp`, so the real `$TAP_LOG` in `./logs` was refused and an adopted proposal was reported as a
+  copy failure. It now takes any `*-pipeline.log` that is not a symlink and, if it exists, is ours
+  and not group/other writable (#624).
+
+## 0.93.0 (2026-11-08)
+
+### Fixed
+
+- **`ticket-auto-pipeline`** — the VERIFY lock is ticket-aware. The holder
+  info now records the lock's owner: the process alive exactly as long as the
+  invocation that took it (`FLEET_WORKER_PID` under fleetd, else the nearest
+  `claude` ancestor, with its start time to catch pid reuse). When
+  `verify_lock_acquire` finds a live holder for the same ticket whose owner is
+  dead (a crashed attempt's orphan), it stops that holder through its stop
+  file, waits a few seconds at most for the flock to free, and acquires fresh.
+  It no longer waits on itself until it times out. If the owner is alive (a
+  zombie VERIFY may still be serving the worktree) or unknown (an info file
+  written before this change), it does not take over: it waits as before and
+  writes a `META|verify-lock-self-wait|warn` line to `TAP_LOG`. A holder for
+  another ticket is never signalled and still blocks as before. New helper:
+  `verify_lock_held_by <TID>`. `ticket-verify` re-runs the Step 1.6a3 lock
+  block on every resume past Step 1.6 (`build-plan`, or a 4c/4c-live
+  `execute-steps` re-entry), so the criterion loop never runs unlocked, and
+  Step 7 now releases the lock, because a login or navigation failure reaches
+  it without passing Step 5 (size-neutral). fleetd and the fleet detectors do
+  not read the lock's holder files, so they need no change. (#626)
 
 ## 0.92.0 (2026-11-08)
 

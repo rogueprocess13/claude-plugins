@@ -62,7 +62,7 @@ resolve_planner_dir() {
 # Test 1: Successful proposal adoption
 WORK_DIR=$(mktemp -d)
 rc=0
-_run_in_dir "$WORK_DIR" adopt_planner_proposal "TEST-1" "test-1-fix-bug" "/tmp/test-adopt-planned.log" || rc=$?
+_run_in_dir "$WORK_DIR" adopt_planner_proposal "TEST-1" "test-1-fix-bug" "$WORK_DIR/TEST-1-pipeline.log" || rc=$?
 if [ "$rc" = "0" ] && [ -f "$WORK_DIR/openspec/changes/test-1-fix-bug/proposal.md" ]; then
   echo "PASS: successful proposal adoption (exit=0, file created)"
   ((PASS++)) || true
@@ -115,9 +115,9 @@ resolve_planner_dir() {
 }
 
 # Test 5: Log file written on successful adoption
-LOG_FILE="/tmp/test-adopt-planned-log-2"
-rm -f "$LOG_FILE"
 WORK_DIR=$(mktemp -d)
+LOG_DIR=$(mktemp -d)
+LOG_FILE="$LOG_DIR/TEST-1-pipeline.log"
 rc=0
 _run_in_dir "$WORK_DIR" adopt_planner_proposal "TEST-1" "test-1-log" "$LOG_FILE" || rc=$?
 if [ "$rc" = "0" ] && [ -f "$LOG_FILE" ] && grep -q "planner proposal reused" "$LOG_FILE"; then
@@ -127,7 +127,32 @@ else
   echo "FAIL: log file missing or missing adoption marker (rc=$rc)"
   ((FAIL++)) || true
 fi
-rm -rf "$WORK_DIR" "$LOG_FILE"
+rm -rf "$WORK_DIR"
+
+# Test 6 (GitHub #624): the log path must be a *-pipeline.log that is not a
+# symlink, and an existing file must be ours and not group/other writable.
+# Each case must refuse with exit 2 and leave the target untouched.
+VICTIM="$LOG_DIR/victim.txt"
+echo "keep" >"$VICTIM"
+ln -s "$VICTIM" "$LOG_DIR/LINK-pipeline.log"
+echo "x" >"$LOG_DIR/LOOSE-pipeline.log"
+chmod 666 "$LOG_DIR/LOOSE-pipeline.log"
+for bad in "$LOG_DIR/not-a-log.txt" "$LOG_DIR/LINK-pipeline.log" "$LOG_DIR/LOOSE-pipeline.log"; do
+  WORK_DIR=$(mktemp -d)
+  rc=0
+  _run_in_dir "$WORK_DIR" adopt_planner_proposal "TEST-1" "test-1-bad" "$bad" 2>/dev/null || rc=$?
+  if [ "$rc" = "2" ] && [ "$(cat "$VICTIM")" = "keep" ] && ! grep -q "planner proposal reused" "$bad" 2>/dev/null; then
+    echo "PASS: log path refused: $(basename "$bad")"
+    ((PASS++)) || true
+  else
+    echo "FAIL: log path not refused: $(basename "$bad") (rc=$rc)"
+    ((FAIL++)) || true
+  fi
+  rm -rf "$WORK_DIR"
+done
+# A foreign-owned log cannot be created without root; the -O test sits in the
+# same refusal branch as the loose-mode case above.
+rm -rf "$LOG_DIR"
 
 # Cleanup
 rm -rf "$REPOS_ROOT/.ticket-auto"

@@ -13,8 +13,8 @@
 #       "EXEC_NO_ARTIFACT": {
 #         "count": 4,
 #         "title": "Fix EXEC_NO_ARTIFACT — artifact not found after exec phase",
-#         "body_file": "/tmp/issue-body-EXEC_NO_ARTIFACT.md",
-#         "comment_file": "/tmp/evidence-EXEC_NO_ARTIFACT.md"
+#         "body_file": "<scratch dir>/issue-body-EXEC_NO_ARTIFACT.md",
+#         "comment_file": "<scratch dir>/evidence-EXEC_NO_ARTIFACT.md"
 #       }
 #     }
 #   }
