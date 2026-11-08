@@ -38,11 +38,15 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-env-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-notes-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-rounds.sh
+	bash ticket-auto-pipeline/lib/tests/test-adversarial-override.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-dir.sh
 	bash ticket-auto-pipeline/lib/tests/test-plan-artifact-callers.sh
 	bash ticket-auto-pipeline/lib/tests/test-heartbeat.sh
 	bash ticket-auto-pipeline/lib/tests/test-capture-transcript.sh
 	bash ticket-auto-pipeline/lib/tests/test-reconcile-comments.sh
+	bash ticket-auto-pipeline/lib/tests/test-reconcile-decide.sh
+	bash ticket-auto-pipeline/lib/tests/test-ac-drift.sh
+	bash ticket-auto-pipeline/lib/tests/test-seed-precheck.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-preamble.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-identity.sh
 	bash ticket-auto-pipeline/lib/tests/test-run-summary.sh
@@ -119,6 +123,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-vplan-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-seed-apply.sh
+	bash ticket-auto-pipeline/lib/tests/test-seed-run.sh
 	# dor-semantic-evaluator
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic-parse.sh
 	bash ticket-auto-pipeline/lib/tests/test-dor-semantic.sh
@@ -163,6 +168,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-retro-claude-log-marker.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-gate-held.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-complexity-calibration.sh
+	bash ticket-auto-pipeline/lib/tests/test-retro-lib-layout.sh
 	# ticket-audit tests
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-split-detection.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-drift.sh
@@ -213,6 +219,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-plugin-cache.sh
 	bash ticket-auto-pipeline/lib/tests/test-flow-run.sh
 	bash ticket-auto-pipeline/lib/tests/test-plog.sh
+	bash ticket-auto-pipeline/lib/tests/test-ticket-tmp.sh
+	bash ticket-auto-pipeline/lib/tests/test-tmp-trust.sh
 	bash ticket-auto-pipeline/lib/tests/test-skill-ref.sh
 	bash fleet-controller/lib/tests/test-fleet-plugin-cache.sh
 
@@ -292,6 +300,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-draft-carryover.sh
 	bash ticket-planner/lib/tests/test-planner-draft-carryover-e2e.sh
 	bash ticket-planner/lib/tests/test-planner-draft-render-normalise.sh
+	bash ticket-planner/lib/tests/test-planner-run-telemetry.sh
 	bash ticket-planner/lib/tests/test-skill-arg-substitution.sh
 
 test-planner-intent-gate:
@@ -306,6 +315,7 @@ test-grill:
 	bash grill-me/lib/tests/test-grill-seal.sh
 	bash grill-me/lib/tests/test-grill-render.sh
 	bash grill-me/lib/tests/test-grill-hold.sh
+	bash grill-me/lib/tests/test-grill-telemetry.sh
 
 test-flow:
 	@echo "=== ticket-flow tests ==="

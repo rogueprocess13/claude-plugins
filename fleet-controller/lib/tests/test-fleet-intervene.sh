@@ -24,6 +24,11 @@ _run() {
   fi
 }
 
+# spawn_agent_pre writes spawn-meta/ctx into the private scratch dir
+# (GitHub #619); keep the suite's files out of the real one.
+TICKET_TMP_DIR=$(mktemp -d)
+export TICKET_TMP_DIR
+
 # ── Helpers ──────────────────────────────────────────────────────────────────────
 
 _setup_workspace() {
@@ -1074,6 +1079,8 @@ for fn in \
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done
+
+rm -rf "$TICKET_TMP_DIR" 2>/dev/null || true
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

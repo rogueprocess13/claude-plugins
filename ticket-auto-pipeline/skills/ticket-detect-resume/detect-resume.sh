@@ -619,11 +619,13 @@ if [ -s "$LOG_FILE" ]; then
     tail -1 | awk -F'|' '{print $3}' || true)
 
   # VERIFY_FROM and VERIFY_CHECKPOINT are scoped to the CURRENT verify attempt
-  # (review finding DET-RV-16): only lines after the last `VERIFY|verify|done|`
-  # or `VERIFY|verify|fail|` terminal count. An attempt that reached a terminal
-  # is over — the next attempt runs against re-implemented code and must
-  # re-check every criterion, never skip one an earlier attempt passed. A
-  # crashed attempt has no terminal, so its own progress is kept. The scoping
+  # (review finding DET-RV-16): only lines after the last real
+  # `VERIFY|verify|done|`/`fail|` verdict or `IMPLEMENT|implement` line count.
+  # An attempt that reached a verdict is over — the next attempt runs against
+  # re-implemented code and must re-check every criterion, never skip one an
+  # earlier attempt passed. A crashed attempt reached no verdict, so its own
+  # progress is kept, including across a recorded zombie close written above
+  # (#607); an operator stop or reset ends the attempt. The scoping
   # lives in lib/verify-checkpoint.sh, which ticket-verify also calls; fleetd
   # mirrors it in last_verify_checkpoint / last_verify_criterion.
   VERIFY_FROM=$(verify_attempt_lines "$LOG_FILE" |
@@ -665,8 +667,19 @@ RECONCILE_CYCLE=${RECONCILE_CYCLE:-0}
 if [ "$VERIFY_FROM" = "checkpoint" ]; then
   VERIFY_FROM="execute-steps"
 fi
+# Allow-list (#620): only build-plan resumes past setup. It is written at the
+# end of Step 2, after Step 1.6 (verify lock, worktrees, env-start, seeds) and
+# Step 1.7 have completed. Every other step — load-context (end of Step 1,
+# before 1.6), seed-apply, seed-precheck, verify-lock, worktree-setup,
+# pre-flight, or a step added later — restarts ticket-verify from Step 1
+# (empty): seeding is idempotent and the lock must be re-acquired after a
+# crash anyway. Passed criteria are still skipped: ticket-verify reads its
+# checkpoint at the criterion loop, independent of --from-step. fleetd's
+# last_verify_checkpoint applies the same mapping.
 case "$VERIFY_FROM" in
+"" | build-plan) ;;
 browser-session | navigate | execute-steps) VERIFY_FROM="build-plan" ;;
+*) VERIFY_FROM="" ;;
 esac
 
 # ── Context restoration (mid-pipeline only) ─────────────────────────────────

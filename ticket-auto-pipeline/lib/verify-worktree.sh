@@ -464,7 +464,7 @@ verify_served_worktree_check() {
 # verify_served_worktree_check finds nothing to compare against — the exact
 # silent wrong-worktree run the check exists to catch. Resolves, first match
 # wins: an already-set REPOS_ROOT; the REPOS_ROOT line of the ticket's env file
-# (/tmp/ticket-auto-<TID>-env.sh, written by spawn_write_env — read, never
+# ($(ticket_tmp_dir)/ticket-auto-<TID>-env.sh, written by spawn_write_env — read, never
 # sourced, so nothing else in it leaks into the caller); the project CLAUDE.md's
 # REPOS_ROOT field. Also fills VERIFY_SERVED_PORTS from the CLAUDE.md field
 # when the environment does not set it. Exports both.
@@ -473,8 +473,15 @@ verify_env_init() {
   local ticket_id="$1" claude_md="${2:-./CLAUDE.md}" val=""
 
   if [ -z "${REPOS_ROOT:-}" ] && [ -n "$ticket_id" ]; then
-    local env_file="/tmp/ticket-auto-${ticket_id}-env.sh"
-    if [ -f "$env_file" ]; then
+    local env_file=""
+    if ! declare -f ticket_tmp_path >/dev/null 2>&1; then
+      # shellcheck source=ticket-tmp.sh
+      source "$(dirname "${BASH_SOURCE[0]}")/ticket-tmp.sh" 2>/dev/null || true
+    fi
+    if declare -f ticket_tmp_path >/dev/null 2>&1; then
+      env_file=$(ticket_tmp_path "$ticket_id" env.sh 2>/dev/null) || env_file=""
+    fi
+    if [ -n "$env_file" ] && ticket_tmp_trusted "$env_file"; then
       # spawn_write_env backslash-escapes \ " $ ` inside the quotes; undo
       # exactly that so the value matches what `source` would give.
       val=$(sed -n 's/^export REPOS_ROOT="\(.*\)"$/\1/p' "$env_file" 2>/dev/null | head -1 |

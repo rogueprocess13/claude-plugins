@@ -9,7 +9,7 @@ Orchestrates repository prescan to build durable, freshness-tracked agent-knowle
 
 ## Pipeline Preamble
 
-If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=none, PHASE=PRESCAN, HAS_LINEAR_ACCESS=false, HAS_LOGGING=true, HAS_HEARTBEAT=true. Before starting, source the project context: `source /tmp/ticket-auto-env.sh 2>/dev/null || true`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=none, PHASE=PRESCAN, FROM_FLAG=none, HAS_LINEAR_ACCESS=false, HAS_GUARD=false, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=false, HAS_TASK_TRACKER=false
+If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=none, PHASE=PRESCAN, HAS_LINEAR_ACCESS=false, HAS_LOGGING=true, HAS_HEARTBEAT=true. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=none, PHASE=PRESCAN, FROM_FLAG=none, HAS_LINEAR_ACCESS=false, HAS_GUARD=false, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=false, HAS_TASK_TRACKER=false
 
 ## Logging
 
@@ -222,12 +222,12 @@ the prior doc.
 
    Each agent prompt includes: persona file path, repo path, assigned output file (absolute path), existing CLAUDE.md context, gitnexus data if available. Agents MUST NOT modify source, create branches, or commit.
 
-   After dispatching wave 1, log the count so a skipped fan-out is visible in the log rather than silent: `_plog "PRESCAN" "fanout-wave1" "done" "$slug: N agents spawned"` (N must equal the number of persona docs owed for this repo — if N is lower because a persona doesn't apply, e.g. no `frontend.md` for a backend-only repo, that's fine; N being 0 is not).
+   After dispatching wave 1, log the count so a skipped fan-out is visible: `_plog "PRESCAN" "fanout-wave1" "done" "$slug: N agents spawned"` (N = persona docs owed for this repo; fewer because a persona doesn't apply, e.g. no `frontend.md` for a backend-only repo, is fine; 0 is not).
 
 3. **Wait for all wave 1 agents** to complete.
 
 4. **Spawn technical-writer agent** (wave 2 — runs solo after all content exists):
-   - **Technical writer agent** → reads all wave 1 output files, synthesizes `INDEX.md` with Lookup by Topic and Lookup by Service tables. This MUST run after wave 1 completes — it reads the other agents' files to build the index.
+   - **Technical writer agent** → reads all wave 1 output files, synthesizes `INDEX.md` with Lookup by Topic and Lookup by Service tables. It MUST run after wave 1: it reads those files.
 
    Log the spawn: `_plog "PRESCAN" "fanout-wave2" "done" "$slug: technical-writer agent spawned"`.
 
@@ -235,14 +235,13 @@ the prior doc.
 
 For a repo where HEAD moved with source changes (but not decayed):
 
-1. Run `prescan-docs.sh` for deterministic structure dump:
+1. Save the gitnexus JSON in the private scratch dir `$S`, then run `prescan-docs.sh`:
    ```bash
+   S=$(bash ~/.claude/skills/lib/ticket-tmp.sh) || exit 1
    bash "$HOME/.claude/skills/lib/prescan-docs.sh" \
      --repos-root "$REPOS_ROOT" --repo-slug "$slug" \
-     --clusters /tmp/gitnexus-clusters.json \
-     --routes /tmp/gitnexus-routes.json \
-     --processes /tmp/gitnexus-processes.json \
-     --update-meta
+     --clusters "$S/gitnexus-clusters.json" --routes "$S/gitnexus-routes.json" \
+     --processes "$S/gitnexus-processes.json" --update-meta
    ```
 
 2. Spawn a single targeted agent to re-scan only the clusters affected by `CHANGED_FILES` (from freshness gate). The agent updates only the persona files whose owned clusters changed.

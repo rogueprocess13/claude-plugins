@@ -39,16 +39,16 @@ When `--from-auto` is present, VERIFY is a loop-bearing phase: additionally foll
 - **Verdict**: after the final pass/fail determination, write `hb-wrap.sh decision "verification-verdict" "fired" "PASS|FAIL" '{"verdict":"PASS|FAIL","criteria_met":"N","criteria_total":"M"}'`
 
 ### Step dispatch
-**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (Step 4c for build-only, Step 4c-live for live-backend) directly at the next unchecked criterion (per-criterion checkpoint), not `build-plan`.
+**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1. Any resume past Step 1.6 (`build-plan`, or a 4c/4c-live `execute-steps` re-entry) first runs the 1.6a3 lock block unless this run skips 1.6; a dead attempt's orphaned lock for this ticket is taken over.
 
 | `--from-step` value | Effective skip to | Restore from |
 |---------------------|-------------------|--------------|
-| `load-context` | Step 2 (build plan) | ticket already loaded; re-use from notes.md/context.md |
-| `build-plan` | Step 3 (browser session) | re-run Steps 3+ in full |
+| `load-context` | **Step 1** (start over) | Step 1.6 (lock, env, seeds) runs after it |
+| `build-plan` | Step 3, after the 1.6a3 lock block | re-run Steps 3+ in full |
 | `browser-session` | **falls back to `build-plan`** | browser state lost on crash |
 | `navigate` | **falls back to `build-plan`** | browser state lost on crash |
 | `execute-steps` | **falls back to `build-plan`** | browser state lost on crash |
-| `checkpoint` | treated as `execute-steps` (so `build-plan` in browser mode) | `detect-resume.sh` no longer emits it; accepted only from an older router |
+| `checkpoint` | treated as `execute-steps` (so `build-plan` in browser mode) | older routers only |
 
 **Checkpoint resume (deterministic).** Which criteria already passed is never inferred
 from memory or prose. At the start of the criterion loop (Step 4b / 4c / 4c-live), run:
@@ -58,9 +58,8 @@ VERIFY_CHECKPOINT=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verify-
 ```
 
 It prints the highest `N` with a `VERIFY|checkpoint|done|criterion-N-pass` line in the
-**current attempt only** — lines after the last `VERIFY|verify|done|`/`fail|` terminal. An
-earlier attempt's checkpoints never count: that attempt ended, the code was re-implemented,
-and every criterion must be re-checked. The router also receives the same value as
+**current attempt only**: after the last verdict, re-implement or operator stop/reset. Only
+an unattended crash keeps earlier passes. The router also receives the same value as
 `VERIFY_CHECKPOINT` from `detect-resume.sh`.
 
 - Build-only and live-backend mode: if `VERIFY_CHECKPOINT` is a number `N`, record criteria
@@ -108,9 +107,7 @@ If these sections are not explicitly labelled, infer them from context.
 
 Skip this step if `--env local` is set — local verification is unaffected by the policy.
 
-If `--env uat` is set, resolve the ticket's UAT policy and refuse when it is `epic`. The epic
-branch is not deployed to the UAT environment until the epic's integration PRs are merged, so a
-UAT result for a single child is structurally meaningless in whichever direction it lands.
+If `--env uat` is set, resolve the ticket's UAT policy and refuse when it is `epic`. The epic branch is not deployed to the UAT environment until the epic's integration PRs are merged, so a UAT result for a single child is structurally meaningless in whichever direction it lands.
 
 This is the *second* UAT decision site. Without this guard it fires `uat-pass` straight to
 `Done`, bypassing the policy resolved at PR review entirely.
@@ -168,9 +165,9 @@ find "$TICKETS_ROOT" -type d -name "{TICKET-ID}*"
 ```
 
 If found, read:
-- `context.md` — for any additional reproduction detail. For `planned` tickets, `context.md` was already seeded from the planner's `body.md` during `ticket-setup` (bash-resolved, not LLM-resolved). The Description section contains the authoritative body — no source-preference decision needed.
-- `notes.md` — for the fix summary and any UAT notes left by the implement session
-- `artifacts/` — check for any playwright scripts, test plans, or snapshots left by the implementer
+- `context.md` — extra reproduction detail; an appraisal-time snapshot (of `body.md` for `planned` tickets). Pipe the Step 1b description into `bash ~/.claude/skills/lib/ac-drift.sh {ticket-dir} --tag VERIFY --log-file "$TAP_LOG"`: on exit 1 (AC drift) number the plan from the Linear list (#604).
+- `notes.md` — the fix summary and UAT notes from implement
+- `artifacts/` — playwright scripts, test plans or snapshots from implement
 
 If not found, continue — the Linear description alone is sufficient.
 
@@ -302,7 +299,7 @@ fi
 bash ~/.claude/skills/lib/plog.sh VERIFY verify-lock done "acquired"
 ```
 
-`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at every earlier point that can exit before Step 5 — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, and Step 1.7a's "no test user found" SKIP exit. `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
+`verify_lock_acquire` blocks (polling), waiting up to `VERIFY_LOCK_TIMEOUT_SECS` (default 2400s/40min) for the previous holder to finish, and self-expires even an unreleased lock after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) — a crash backstop, not something to rely on for normal teardown. **Once acquired, the lock must be released on every exit path**, not only the happy path: it's released as the first action of Step 5 (the funnel point every mode reaches after its checks finish, on both pass and fail), and explicitly at every earlier point that can exit before Step 5 — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, Step 1.6d's seeder-precheck failure (the helper releases it), Step 1.7a's "no test user found" SKIP exit, and Step 7 (Steps 3b/4 reach it without Step 5). `verify_lock_release` is idempotent and always exits 0 — safe to call even when the lock isn't held.
 
 ### 1.6a4 — Resolve isolated worktrees for affected repos
 
@@ -459,6 +456,16 @@ fi
 ```
 
 On a non-zero exit (`1` a seed or verify command failed or was rejected, `2` the manifest could not be read or the worktree is missing), **stop here**: the block writes the `VERIFY_SEED_FAILED` gate-stop — the same `META|gate-stop|fail|<CODE>` hold the other Step 1.6 checks use, so `pipeline-finalize.sh` records `held: gate` — emits the outbox `gate-held` fact with the reason, as `gate-check.sh` does for its holds, and releases the verify lock. Do not run acceptance testing against missing data, and do not write a verify FAIL or a `REMEDIATION_BRIEF`: the fix belongs in the TD ticket's seed target (or the environment), not in this ticket's code. Only `merged` blockers count — a `no-pr` blocker has no seed target on the base branch, and one that is still `open` has not been reviewed; both are named in the `done`/`skip` message as `not merged: <tid>=<state>`. `skip` is normal for a ticket with no TD blockers; continue.
+
+### 1.6d — Seeder precheck (#601)
+
+Same modes as 1.6c. The scenarios this ticket's seed-tool commits changed run twice, under the lock, before any criterion. The helper picks and runs them; never run seed commands from ticket text yourself:
+
+```bash
+bash ~/.claude/skills/lib/seed-precheck.sh "{TICKET-ID}" "$(ls -d "${REPOS_ROOT}"/.verify-worktrees/*/"{TICKET-ID}" 2>/dev/null | sort | head -1)" --log-file "$TAP_LOG" --release-on-fail
+```
+
+`pass`/`skip`/`unavailable` → continue. `fail` (lock released) → skip the criteria, go to Step 7 as a normal FAIL: WHAT_FAILED is `SEED_PRECHECK_MSG`, the REMEDIATION_BRIEF points at that scenario. Its `seed-precheck|fail` line counts no attempt; Step 7's `verify|fail` counts it once.
 
 ---
 
@@ -878,7 +885,7 @@ Run each build command from the Step 2 (build-only variant) plan sequentially, i
 
 1. Run the command, capturing stdout+stderr and the exit code:
    ```bash
-   cd "{worktree path}" && { {build command} ; } > /tmp/ticket-verify-{TICKET-ID}-{step}.log 2>&1
+   L=$(bash ~/.claude/skills/lib/ticket-tmp.sh {TICKET-ID} verify-{step}.log) && cd "{worktree path}" && { {build command} ; } > "$L" 2>&1
    _rc=$?
    ```
 2. Record the **observed result** — exit code, and (if relevant to the criterion) whether the expected artifact/version/output string appears in the captured log (e.g. `BUILD SUCCESS`, a specific dependency version resolved, absence of a removed property).
@@ -895,7 +902,7 @@ At any point, if a command exits non-zero or the expected output/state is absent
 - What was expected (from the pass criterion)
 - What was observed — quote the relevant lines of build output verbatim (last 20–30 lines, or the specific error block)
 
-Continue executing remaining commands unless the failure makes downstream commands meaningless (e.g. `mvn -N install` failing means every dependent module's `mvn clean compile` will fail for the same reason — note this and skip re-running them individually rather than spamming identical failures).
+Continue with the remaining commands unless the failure makes them meaningless (e.g. a failed `mvn -N install` dooms every dependent module's `mvn clean compile` — note it and skip them).
 
 bash ~/.claude/skills/lib/plog.sh VERIFY execute-steps done "{N} build commands executed"
 
@@ -911,7 +918,7 @@ The environment is already up (Step 1.6b ran `env-start.sh` for `live-backend` m
 
 1. Run the check, capturing output:
    ```bash
-   { {env-status.sh invocation or curl command} ; } > /tmp/ticket-verify-{TICKET-ID}-{step}.log 2>&1
+   L=$(bash ~/.claude/skills/lib/ticket-tmp.sh {TICKET-ID} verify-{step}.log) && { {env-status.sh invocation or curl command} ; } > "$L" 2>&1
    _rc=$?
    ```
    Use `bash {TICKETS_ROOT}/env-status.sh` for service-health/registration reads. Use `curl -sS -w '\n%{http_code}\n'` (or the project's documented API-check invocation) for direct service-to-service or endpoint checks. For failure-simulation criteria (e.g. circuit breaker), use the project's documented fault-injection method — typically stopping a dependency via `env-start.sh`/`env-stop.sh` — then re-run the check to confirm the expected degraded/recovered behaviour.
@@ -1035,7 +1042,7 @@ Verification passed on localhost — the implementation is confirmed working. No
 1. Read `notes.md` for the branch name, repo, and worktree path from the `pre-implementation checkpoint` entry.
 2. For each affected repo, check if a PR already exists for this branch, then open one against `$BASE_BRANCH`:
    ```bash
-   source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+   source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
    # Resolve worktree path — prefer notes.md checkpoint, fall back to path computation
    WORKTREE_PATH=$(grep "Worktree:" {ticket-dir}/notes.md 2>/dev/null | head -1 | sed 's/.*Worktree: //')
    if [ -z "$WORKTREE_PATH" ]; then
@@ -1193,6 +1200,8 @@ marker.
 
 ## Step 7 — Failure report
 
+First run Step 5's `verify_lock_release` block (idempotent).
+
 ### 7a — Collect diagnostics
 
 **Browser mode:**
@@ -1204,13 +1213,13 @@ marker.
 **Build-only mode:** substitute build diagnostics for the browser ones above — these map onto the same REMEDIATION_BRIEF fields (7c) so downstream skills don't need mode-specific parsing:
 1. **Failed command + exit code** — maps to `CONSOLE_ERRORS` field
 2. **Repo/module + branch** — maps to `CURRENT_URL` field (use `{repo}@{branch}` in place of a URL)
-3. **Last 20–30 lines of captured build output** (`/tmp/ticket-verify-{TICKET-ID}-{step}.log`) — maps to `SNAPSHOT_EXCERPT` field
+3. **Last 20–30 lines of the step's `$L` log** — maps to `SNAPSHOT_EXCERPT`
 4. **Failed step** — step number, expected vs. observed (command + exit code)
 
 **Live-backend mode:** substitute live-check diagnostics for the browser ones above — same field mapping convention as build-only:
 1. **Failed check + exit code/HTTP status** — maps to `CONSOLE_ERRORS` field
 2. **Service/environment + endpoint checked** — maps to `CURRENT_URL` field (use `{service}@{env}` or the endpoint URL)
-3. **Last 20–30 lines of captured check output** (`/tmp/ticket-verify-{TICKET-ID}-{step}.log`), plus `env-status.sh` output at the point of failure — maps to `SNAPSHOT_EXCERPT` field
+3. **Last 20–30 lines of the step's `$L` log**, plus `env-status.sh` output at the failure — maps to `SNAPSHOT_EXCERPT`
 4. **Failed step** — step number, expected vs. observed (check + result)
 
 ### 7b — Write the failure report
@@ -1462,34 +1471,22 @@ If `--env uat`:
 
 ```bash
 bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-fail
-_rc=$?
-# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
-# uat-fail carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
+# flow-run.sh logs any failure itself (no verdict_gate, so no exit 11); non-fatal — continue.
 ```
 
 This moves state → `Ready`, adds `rejected`, removes `reviewed`. A human must run `/ticket-approve {TICKET-ID}` before the next implementation cycle can start.
 
-If `--env local`: no state change — the ticket is still in `Ready`, code just needs more work.
-
-The REMEDIATION_BRIEF above feeds `ticket-implement` for the fix round.
+If `--env local`: no state change — the ticket is still in `Ready`, code just needs more work. The REMEDIATION_BRIEF above feeds `ticket-implement` for the fix round.
 
 ### 7g — Emit the PHASE_RESULT block (--from-auto only)
 
-A failure still reports. End your return with the `=== PHASE_RESULT ===` block described
-in **§ 6 Phase result emission** of the auto preamble: `PHASE: VERIFY`, `VERDICT: FAIL`,
-`VERIFIER` set to this run's actual verifier, `CRITERIA_MET` the number that passed,
-`CRITERIA_TOTAL` the number attempted, and `UNADDRESSED` naming any criterion never
-reached. This is **additive** — the REMEDIATION_BRIEF above is unchanged and keeps its
-canonical format. The block goes last, after everything else in the return.
+A failure still reports. End your return with the `=== PHASE_RESULT ===` block described in **§ 6 Phase result emission** of the auto preamble: `PHASE: VERIFY`, `VERDICT: FAIL`, `VERIFIER` set to this run's actual verifier, `CRITERIA_MET` the number that passed, `CRITERIA_TOTAL` the number attempted, and `UNADDRESSED` naming any criterion never reached. This is **additive** — the REMEDIATION_BRIEF above is unchanged and keeps its canonical format. The block goes last, after everything else in the return.
 
-A FAIL with a block is a usable signal; a FAIL with no block is an absence of
-information, and any consumer must then fall back to whole-run classification.
-
----
+A FAIL with a block is a usable signal; a FAIL with no block is an absence of information, and any consumer must then fall back to whole-run classification.
 
 ## Notes
 
-- **Isolated worktrees + single-flight lock (Step 1.6a2–1.6a4):** browser and live-backend verification no longer run against whatever branch happens to be checked out in the shared `REPOS_ROOT` clones, and no longer race a concurrent verify's app stack. Step 1.6a2 sweeps stale worktrees by TTL (`verify_worktree_gc`, default 24h idle) — unlocked, since it never touches this run's own worktree, but it self-guards by skipping the whole sweep whenever the lock is currently held by anyone (there's no way to tell from there which specific ticket's worktree a live holder might be serving files from). Step 1.6a3 acquires the single-flight lock via `lib/verify-lock.sh` — a well-known lockfile (`VERIFY_LOCK_FILE`, default `/tmp/ticket-verify.lock`) held across the whole "start stack → checks" window, since the local dev stack's ports aren't namespaced per run. Only then, in Step 1.6a4, does `ensure_verify_worktree` (`lib/verify-worktree.sh`) resolve/resync *this run's own* per-repo, per-ticket worktree (`REPOS_ROOT/.verify-worktrees/{repo}/{TICKET-ID}`, distinct from `ticket-implement`'s own `.ticket-auto/worktrees/{TICKET-ID}/{repo}` — verify must never read a directory implement might still be writing to) and export `VERIFY_REPO_PATH_<SERVICE>` for `env-start.sh` to consume if/when it's updated to accept per-service path overrides — that script lives in the consuming workspace, not this plugin, so this skill checks deterministically (`grep` for `VERIFY_REPO_PATH`) rather than assuming either way. The reuse path's resync is destructive (`reset --hard`/`clean -fdx`) and always re-syncs to the branch's remote tip rather than preserving local state, which is exactly why it's gated behind the lock: a second `ticket-verify` invocation for the same ticket (e.g. the "zombie steps" scenario below) must never reset a worktree a still-live first invocation's app stack is actively serving files from. All three steps are skipped exactly when Step 1.6 itself is skipped (`--env uat`, `--no-env-start`, `VERIFY_MODE=build-only`). The lock is released at Step 5 (or explicitly at the two earlier exit points that can precede it — see 1.6a3) and self-expires past `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h) even if release is never called, so a killed agent can't wedge the lock open indefinitely.
+- **Isolated worktrees + single-flight lock (Step 1.6a2–1.6a4):** VERIFY runs this ticket's own worktree (`REPOS_ROOT/.verify-worktrees/{repo}/{TICKET-ID}`, never implement's) under `lib/verify-lock.sh` (per-user lock; the stack's ports are not namespaced). GC skips while the lock is held; the 1.6a4 resync runs only under it. Released at Step 5 or the 1.6a3 early exits; self-expires after `VERIFY_LOCK_MAX_HOLD_SECS` (1h).
 - **Session reuse:** If the browser is already open and logged in at the correct environment, skip Step 3b. Detect this from the snapshot — if the nav shows a user name, proceed directly to Step 4.
 - **Snapshot verbosity:** Trim snapshots to the relevant component subtree in all reports. Full snapshots can be hundreds of lines — include only what is needed to understand the failure.
 - **Multiple failing criteria:** If more than one criterion fails, report all of them in 7b and 7c. The WHAT_FAILED and SNAPSHOT_EXCERPT should cover the first failure point; list subsequent failures under a `ADDITIONAL_FAILURES:` key in the brief.

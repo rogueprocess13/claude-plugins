@@ -281,7 +281,7 @@
         {
           "kind": "env",
           "export": "CLAUDE_LOG_FILE",
-          "value": "/tmp/ticket-auto-{TICKET-ID}-verify-$(date +%s).log",
+          "value": "./logs/{TICKET-ID}-verify-$(date +%s).log",
           "description": "Crash diagnostics path that survives agent crashes."
         }
       ],
@@ -295,6 +295,15 @@
           ],
           "blocking": false,
           "description": "Advisory, observe-only. Takes the LAST block in the capture file, which is this attempt's."
+        },
+        {
+          "kind": "bash",
+          "script": "return-completeness-check.sh",
+          "args": [
+            "--refresh"
+          ],
+          "blocking": false,
+          "description": "GitHub #598: verify may tick tasks implement deferred. Re-counts only when the latest return_completeness verifier-result is FAIL/BLOCK, so a fresh result supersedes the stale IMPLEMENT one before pr-review-pass-* reaches the verdict gate. Writes nothing otherwise."
         },
         {
           "kind": "inspector",

@@ -1,5 +1,14 @@
 # Parallel PRs lower different lines of the size baselines; union merge avoids
 # conflicts, and the gate re-validates after merge (a stale higher value only
 # shows as SLACK).
+#
+# When two branches change the SAME row, union keeps both copies. The gate
+# handles that itself: scripts/check-skill-size.sh reads a repeated key as the
+# min of its values plus every copy's comments, fails check mode with
+# "DUPLICATE: <key>", and `make skill-baseline` collapses it to one row.
+#
+# No custom merge driver on purpose: a driver needs `git config` in every
+# clone, and GitHub's server-side PR merges never run one, so it would not
+# cover the merges that actually produce duplicates. The gate-side check does.
 scripts/skill-size-baseline.tsv merge=union
 scripts/skill-context-baseline.tsv merge=union

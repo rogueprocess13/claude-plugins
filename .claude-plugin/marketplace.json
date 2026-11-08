@@ -9,19 +9,19 @@
   "plugins": [
     {
       "name": "ticket-planner",
-      "version": "0.34.2",
+      "version": "0.35.0",
       "source": "./ticket-planner",
       "description": "11-phase autonomous planner — turns business ideas into dependency-ordered planned tickets. Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → Epic Gen → Ticket Gen → Refinement → Completed. Produces Planner Context blocks, Branch Directives for shared epic branches, and initiative epics with tickets that pass a deterministic + semantic readiness check before fleet-controller dispatch. Supports grill-me validated intent files as optional pre-flight gate."
     },
     {
       "name": "grill-me",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "source": "./grill-me",
       "description": "Pre-work readiness gate — assesses business ideas against profile-driven dimensions, asks ranked clarification questions interactively, scores readiness deterministically, and produces cryptographically sealed Validated Business Intent documents. Any agent can invoke it before acting."
     },
     {
       "name": "ticket-auto-pipeline",
-      "version": "0.86.0",
+      "version": "0.95.0",
       "source": "./ticket-auto-pipeline",
       "description": "Fully autonomous Linear ticket pipeline — appraise, implement, verify, and merge with zero user input. Bundles 20+ skills, state machine config, pipeline safety gates, and retrospective analysis."
     },
@@ -33,7 +33,7 @@
     },
     {
       "name": "fleet-controller",
-      "version": "0.46.0",
+      "version": "0.46.2",
       "source": "./fleet-controller",
       "description": "Parent orchestrator above ticket-planner and ticket-auto — dispatches planned tickets from initiative epics, monitors all active pipeline health via 16 detection engines, manages epic branch lifecycle (create, sync, GC), aggregates execution feedback back to the planner, and supervises an optional deterministic agent-observer sidecar. Bash-only, zero Claude agents."
     }

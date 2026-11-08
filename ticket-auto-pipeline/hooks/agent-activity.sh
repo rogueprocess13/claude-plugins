@@ -13,7 +13,7 @@
 # same value (via $CLAUDE_CODE_SESSION_ID) into SESSION_ID= in the spawn-meta
 # file it writes for every live pipeline spawn. Only the spawn-meta file whose
 # SESSION_ID matches the payload's is considered — never the globally newest
-# file across /tmp.
+# file in the scratch dir.
 #
 # Fail-soft contract (mirrors stop-capture.sh): this hook fires on EVERY tool
 # call in EVERY Claude Code session with this plugin installed, including
@@ -23,11 +23,18 @@
 # used: a failed write must not abort the hook with a non-zero status.
 set -o pipefail
 
+# Private per-user scratch dir (GitHub #619). Hooks never create it: no dir
+# means no pipeline spawn on this host, so there is nothing to resolve.
+_TT_LIB="${BASH_SOURCE[0]%/*}/../lib/ticket-tmp.sh"
+# shellcheck source=../lib/ticket-tmp.sh
+{ [ -f "$_TT_LIB" ] && source "$_TT_LIB" && ticket_tmp_peek; } || exit 0
+SCRATCH="$TICKET_TMP_RESOLVED"
+
 # ── Fast path: no live pipeline spawn anywhere on this host ────────────────
 # A single glob, evaluated before any parsing. This is the branch taken by
 # virtually every tool call on a machine that is not running the pipeline.
 _has_meta=0
-for _f in /tmp/ticket-auto-*-spawn-meta.txt; do
+for _f in "$SCRATCH"/ticket-auto-*-spawn-meta.txt; do
   [ -e "$_f" ] && _has_meta=1
   break
 done
@@ -59,7 +66,7 @@ fi
 PHASE=""
 LOG_FILE=""
 TICKET_ID=""
-for f in $(ls -t /tmp/ticket-auto-*-spawn-meta.txt 2>/dev/null || true); do
+for f in $(ls -t "$SCRATCH"/ticket-auto-*-spawn-meta.txt 2>/dev/null || true); do
   [ -f "$f" ] || continue
   _phase="" _log="" _sid=""
   while IFS='=' read -r key val; do
@@ -80,6 +87,9 @@ done
 # No matching live pipeline spawn for this session — nothing to record.
 [ -z "$TICKET_ID" ] && exit 0
 [ -z "$LOG_FILE" ] && exit 0
+# A spawn-meta LOG_FILE is only ever a pipeline log; anything else is not
+# ours to write next to (GitHub #619).
+case "$LOG_FILE" in *-pipeline.log) ;; *) exit 0 ;; esac
 
 # ── Security: sanitize TICKET_ID — reject traversal attempts ──────────────
 case "$TICKET_ID" in

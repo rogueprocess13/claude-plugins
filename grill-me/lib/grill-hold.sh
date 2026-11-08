@@ -48,6 +48,16 @@
 GRILL_ANSWERS_SCHEMA_MAJOR=1
 GRILL_ANSWER_MAX_BYTES=4096
 
+# Run telemetry (#631, lib/grill-telemetry.sh): silent, best effort, never
+# changes a return code. Inactive outside a Claude Code session.
+_grill_telemetry_call() {
+  [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || return 0
+  local t
+  t="$(dirname "${BASH_SOURCE[0]}")/grill-telemetry.sh"
+  [ -f "$t" ] && bash "$t" "$@" >/dev/null 2>&1 || true
+  return 0
+}
+
 # ── work dir ──────────────────────────────────────────────────────────────────
 
 # grill_work_dir [--id <id>] <brief>
@@ -504,6 +514,9 @@ grill_answers_fold() {
   fi
   _grill_write_json "$state_file" "$state" || return 1
   _grill_export_state "$work_dir" || return 1
+  # Open this invocation's telemetry session (#631) — an `abort` answer
+  # scores nothing, and would otherwise leave no session record.
+  _grill_telemetry_call begin "$work_dir"
 
   echo "GRILL_ANSWERS_FOLDED round=${round} reason=${reason}"
   [ -n "$decision" ] && echo "GRILL_CAP_DECISION=${decision}"

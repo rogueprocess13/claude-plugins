@@ -146,9 +146,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Source the shared complexity parser ──────────────────────────────────
-LIBS_DIR="$(dirname "$(readlink -f "$0")")/../lib"
-# shellcheck source=../lib/notes-parse.sh
+# Two install layouts (GitHub #600): the plugin cache keeps lib/ at the plugin
+# root (<plugin>/skills/ticket-retro -> <plugin>/lib), the synced skills dir
+# keeps it beside the skills (~/.claude/skills/ticket-retro -> ~/.claude/skills/lib).
+_RETRO_DIR="$(dirname "$(readlink -f "$0")")"
+if [ -f "$_RETRO_DIR/../../lib/notes-parse.sh" ]; then
+  LIBS_DIR="$_RETRO_DIR/../../lib"
+else
+  LIBS_DIR="$_RETRO_DIR/../lib"
+fi
+# shellcheck source=../../lib/notes-parse.sh
 source "$LIBS_DIR/notes-parse.sh" 2>/dev/null || {
+  echo "retro: notes-parse.sh not found under $LIBS_DIR, using fallback" >&2
   get_complexity() {
     local ticket_dir="$1"
     local notes="$ticket_dir/notes.md"
@@ -621,25 +630,20 @@ HB_RETRY_JSON=$(_HB_BUILD_OBJ HB_RETRY_COUNT)
 
 # ── Build failure histogram JSON (sorted descending by count) ────────────
 
-HISTOGRAM_JSON="{"
-HIST_FIRST=1
-for code in "${!FAILURE_COUNT[@]}"; do
-  echo "${FAILURE_COUNT[$code]} $code"
-done | sort -rn | while read -r count code; do
-  # This while-read runs in a subshell due to the pipe, so we use a temp file
-  echo "$count $code"
-done >/tmp/retro-hist-sorted.$$.txt
-
-# Re-read from temp file to avoid subshell issues
+# Process substitution keeps the read loop in this shell, with no temp file
+# (a fixed /tmp/retro-hist-sorted.$$ name could be pre-planted, GitHub #624).
 HISTOGRAM_JSON="{"
 HIST_FIRST=1
 while read -r count code; do
   [ -z "$code" ] && continue
   [ "$HIST_FIRST" -eq 1 ] && HIST_FIRST=0 || HISTOGRAM_JSON+=", "
   HISTOGRAM_JSON+="\"$code\": $count"
-done </tmp/retro-hist-sorted.$$.txt
+done < <(
+  for code in "${!FAILURE_COUNT[@]}"; do
+    echo "${FAILURE_COUNT[$code]} $code"
+  done | sort -rn
+)
 HISTOGRAM_JSON+="}"
-rm -f /tmp/retro-hist-sorted.$$.txt
 
 # ── Compute complexity calibration ───────────────────────────────────────
 # Computed over the full window population of ticket-auto logs, independent
@@ -750,6 +754,12 @@ jq -n \
   }'
 
 # ── Write cursor file ────────────────────────────────────────────────────
+# _iso_now comes from heartbeat.sh via notes-parse.sh -> error-handler.sh. If
+# the lib could not be sourced, the cursor must still be written (GitHub #600).
+if ! declare -f _iso_now >/dev/null 2>&1; then
+  echo "retro: heartbeat.sh not loaded from $LIBS_DIR, using fallback _iso_now" >&2
+  _iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+fi
 _CURSOR_JSON="{"
 _CURSOR_FIRST=1
 for tid in "${!SCANNED_MTIMES[@]}"; do

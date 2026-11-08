@@ -17,6 +17,237 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.35.0, grill-me 0.5.0 (2026-11-08)
+
+ticket-planner 0.35.0, grill-me 0.5.0 (GitHub #631). ticket-auto-pipeline unchanged.
+
+### Added
+- **Planner run telemetry.** Each initiative now has `telemetry/runs.jsonl` with one
+  `planner_phase` record per phase attempt (start, end, wall-clock, outcome or halt code,
+  agents, input/output/cache tokens) and one `planner_run` summary per invocation (furthest
+  phase, stop reason and halt code, draft-readiness revise rounds, human answer rounds, phase and
+  orchestrator token totals). The summary is written on completion and on every halt: SKILL.md
+  step 7 opens the run with one call (`lib/planner-run-telemetry.sh begin`), and the plugin's new
+  `Stop` hook (`hooks/planner-telemetry-stop.sh`) closes it when the turn ends. Time comes from
+  `state.log`. Tokens come from Claude Code's own subagent transcripts, matched by the Agent
+  description the skill already passes, and counted once per message id. They are `null` when no
+  transcript holds them, never estimated. The ticket-auto token-tracker hooks are not reused: they
+  only accept a `*-pipeline.log` target, which fleet detectors read as a live ticket pipeline.
+- `ticket-planner/lib/planner-run-report.sh <INIT>` prints the phase and run tables plus
+  `Timing:` and `Cost:` lines for a rehearsal's `run-record.md` (UNMEASURED where no transcript
+  was found). The dispatch-rehearsal runbook's Collect step runs it.
+- **grill-me run telemetry.** `grill_score` writes a `grill_round` record per scoring to
+  `<work_dir>/telemetry/runs.jsonl` (wall-clock, time spent waiting for answers, tokens from the
+  session transcript in the round's window, readiness and recommendation). The plugin's new
+  `Stop` hook writes a `grill_session` record per invocation (sealed, waiting for answers,
+  aborted, refused) with verdict, score and rounds. No SKILL.md change. Active only inside a
+  Claude Code session. `lib/grill-telemetry.sh report <work_dir>` prints both tables.
+- Design and record fields: `ticket-planner/docs/run-telemetry.md`. The new kinds are kept out of
+  the workspace `runs.jsonl`, and a test checks that ticket-auto's readers ignore them anyway.
+
+## Repo tooling (2026-11-08) — no plugin release
+
+### Fixed
+
+- **repo tooling** — the skill-size gate no longer trusts the last copy of a
+  duplicated baseline row. `merge=union` keeps both copies when two branches
+  change the same row of `scripts/skill-size-baseline.tsv` or
+  `scripts/skill-context-baseline.tsv`; the gate used the last one, so the
+  ratchet could loosen and `make skill-baseline` dropped `# exception:` notes.
+  A repeated key now takes the min of its values and keeps every copy's
+  comment lines. Check mode fails with `DUPLICATE: <key>`, and
+  `make skill-baseline` writes one row per key. Comment lines in the context
+  baseline now survive regeneration too. No custom merge driver: it would need
+  per-clone config and GitHub's PR merges never run one (see `.gitattributes`).
+
+## 0.95.0 (2026-11-08)
+
+### Fixed
+- `seed_run`'s post-run sweep could miss a `setsid` stray started just before the seeder exited,
+  and the stray then kept running. The sweep scanned `/proc` once, and a process in the middle of
+  `execve` reads an empty `/proc/<pid>/environ`: the kernel installs the new address space before
+  it records where the environment is. A stray passes through several execs (`setsid`, `env`,
+  `bash`) right as the sweep starts, which made `test-seed-run.sh` flaky on CI. The sweep now
+  re-scans every 0.2s until two passes in a row are quiet. For the first
+  `SEED_RUN_SWEEP_SETTLE_SECS` (default 2) a pass is not quiet while any non-zombie process of
+  this user reads an empty environ. A marked process gets TERM when first seen and KILL after
+  `SEED_RUN_SWEEP_GRACE_SECS`, and the sweep stops at settle + grace. A clean run now takes about
+  0.2s longer. `test-seed-run.sh` strays signal readiness once their marker is visible, a new
+  case builds a stray whose marker is not readable at exit, and the "nothing left" checks poll
+  and clean up, so one survivor no longer fails every later case (follow-up to #625).
+
+## 0.94.0 (2026-11-08) — fleet-controller 0.46.2
+
+The remaining shared-`/tmp` names leave `/tmp`, and fleetd's pidfile can no longer be used to
+truncate a file (#624).
+
+### Security
+- The remaining shared-`/tmp` names are gone (#624). ticket-verify's build and live-check logs go
+  through `ticket-tmp.sh <ID> verify-<step>.log`. ticket-retro, ticket-audit and ticket-prescan keep
+  their scratch files in the private scratch dir, the three env-check/features skills use `mktemp`,
+  and `retro.sh` builds its histogram without a temp file.
+- The ticket-verify lock is now per user: `VERIFY_LOCK_FILE` unset means
+  `<scratch dir>/ticket-verify.lock`. A shared `/tmp/ticket-verify.lock` never coordinated two
+  users anyway (another user's holder pid reads as dead, and their lock file is not writable), but
+  it let any local user block every VERIFY or forge the holder info. An explicit `VERIFY_LOCK_FILE`
+  is used only in a directory we own with no group/other write bit, and the lock and its
+  `.holder`/`.info`/`.stop` files are refused when they are symlinks, not ours, or group/other
+  writable. Lock files are created 0600 (#624).
+- `lib/fence-check.sh` no longer falls back to `/tmp/<tid>-fence` when `fleet-config.sh` is not
+  found; it uses the same rule as `_fleet_fence_file` (the caller's state dir, else `./logs`). Fence
+  state left `/tmp` in 56b3a56, so only a planted file could ever be found there (#624).
+- fleetd's single-instance pidfile moves from `/tmp/fleetd.pid` to `fleetd.pid` in the private
+  per-user scratch dir (`/tmp/ticket-auto-<euid>/`, or `$TICKET_TMP_DIR`). `FLEETD_PIDFILE` and
+  `--pidfile` still override it. Every pidfile is opened with `O_NOFOLLOW` and refused unless it is
+  a regular file owned by fleetd's uid, not group/other writable, with exactly one link. Before
+  this, a symlink or a hard link planted in `/tmp` could make fleetd truncate one of the fleetd
+  user's own files. During an upgrade, a new fleetd on the default path refuses to start while an
+  older fleetd of the same uid still holds `/tmp/fleetd.pid`. That check is a read-only probe;
+  the legacy file is never created or written (#624).
+
+### Fixed
+- `adopt_planner_proposal` (ticket-appraise-exec, planned tickets) accepted a log path only under
+  `/tmp`, so the real `$TAP_LOG` in `./logs` was refused and an adopted proposal was reported as a
+  copy failure. It now takes any `*-pipeline.log` that is not a symlink and, if it exists, is ours
+  and not group/other writable (#624).
+
+## 0.93.0 (2026-11-08)
+
+### Fixed
+
+- **`ticket-auto-pipeline`** — the VERIFY lock is ticket-aware. The holder
+  info now records the lock's owner: the process alive exactly as long as the
+  invocation that took it (`FLEET_WORKER_PID` under fleetd, else the nearest
+  `claude` ancestor, with its start time to catch pid reuse). When
+  `verify_lock_acquire` finds a live holder for the same ticket whose owner is
+  dead (a crashed attempt's orphan), it stops that holder through its stop
+  file, waits a few seconds at most for the flock to free, and acquires fresh.
+  It no longer waits on itself until it times out. If the owner is alive (a
+  zombie VERIFY may still be serving the worktree) or unknown (an info file
+  written before this change), it does not take over: it waits as before and
+  writes a `META|verify-lock-self-wait|warn` line to `TAP_LOG`. A holder for
+  another ticket is never signalled and still blocks as before. New helper:
+  `verify_lock_held_by <TID>`. `ticket-verify` re-runs the Step 1.6a3 lock
+  block on every resume past Step 1.6 (`build-plan`, or a 4c/4c-live
+  `execute-steps` re-entry), so the criterion loop never runs unlocked, and
+  Step 7 now releases the lock, because a login or navigation failure reaches
+  it without passing Step 5 (size-neutral). fleetd and the fleet detectors do
+  not read the lock's holder files, so they need no change. (#626)
+
+## 0.92.0 (2026-11-08)
+
+Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file another user could have planted.
+
+### Security
+- `lib/plog.sh` recovered a missing `LOG_FILE` from a spawn-meta file at a predictable `/tmp` path and
+  appended to whatever path it named, so another local user could redirect pipeline-log writes. It
+  now validates `TICKET_ID` (`^[A-Za-z0-9_-]+$`), trusts the meta file only when it is a regular file,
+  not a symlink, owned by the current user and not group/other writable, and accepts the recovered
+  path only when it ends in `-pipeline.log`. Anything else drops the line with a stderr warning, exit 0
+  as before (#619).
+- Every per-ticket scratch file (env file, spawn-meta, ctx, start stamps, agent progress, the
+  tool-error dedup stamp, and the stop-file/background-PID ledger fallback) moves to a private
+  per-user directory resolved by the new `lib/ticket-tmp.sh`: `$TICKET_TMP_DIR` when set, else
+  `/tmp/ticket-auto-$EUID`. It is created 0700 and refused when it is a symlink, not a directory, owned
+  by someone else, or group/other accessible. The default depends only on the uid, so the router, its
+  phase agents, the hooks and fleetd agree without being told; fleetd's
+  `phase_dispatch.ticket_tmp_dir` mirrors the rule under a bash/python parity test, and
+  `spawn_agent_pre` also exports the resolved dir to each agent (#619).
+- Skill prose sources the env file through the new `lib/ticket-env.sh <ID>`, which sources it only
+  when it passes the same ownership and mode checks. `auto-merge.sh` and `verify-worktree.sh` apply
+  the same checks before reading it. The hooks also ignore a spawn-meta `LOG_FILE` that is not a
+  `*-pipeline.log`, and spawn-meta files are written 0600 whatever the umask (#619).
+
+### Changed
+- `hooks/tmp-sweep.sh` sweeps the private scratch dir and, for this user's own files only and never
+  through a symlink, the files earlier versions left in `/tmp` (`TICKET_TMP_LEGACY_DIR`).
+- The router's agent-return hand-off file and the VERIFY `CLAUDE_LOG_FILE` move from `/tmp` to the
+  workspace `./logs/` directory, next to the capture logs.
+- The agent progress file now lives in the scratch dir, where both the agents and the watchdog look
+  for it. Agents used to write it in `/tmp` while the watchdog read the fleet state dir.
+
+## 0.91.0 (2026-11-08)
+
+### Fixed
+
+- **`ticket-auto-pipeline`** — `detect-resume.sh` no longer passes VERIFY step
+  names `ticket-verify` does not know (`seed-apply`, `seed-precheck`,
+  `verify-lock`, any future step) as `--from-step`. `VERIFY_FROM` is now an
+  allow-list: only `build-plan` (written after Step 1.6's lock, env and seeds)
+  passes through, browser steps and `checkpoint` still map to `build-plan`, and
+  every other step, `load-context` included, resumes `ticket-verify` from
+  Step 1. fleetd's `last_verify_checkpoint` applies the same
+  mapping, with parity fixtures. `ticket-verify` SKILL.md states the
+  unknown-value rule (size-neutral). (#620)
+
+## 0.90.0 (2026-11-08)
+
+### Fixed
+- A seeder can no longer leave processes running after VERIFY's seed steps. `lib/seed-run.sh` is
+  now the one runner for `seed-apply.sh` (Step 1.6c) and `seed-precheck.sh` (Step 1.6d): own
+  process group, `SEED_APPLY_TIMEOUT_SECS` kills the whole group, and after every run a sweep
+  kills any process carrying the run's `TICKET_SEED_RUN_ID` environment marker, which catches
+  descendants that left the group with `setsid`. Strays are logged as
+  `VERIFY|seed-apply|warn|` / `VERIFY|seed-precheck|warn|<n> processes survived …`. seed-apply's
+  `make` targets used coreutils `timeout`, which signalled only `make` itself; a timeout is still
+  logged as `exited 124` (#621).
+
+## 0.89.0 (2026-11-08)
+
+Verdict gate: a stale FAIL/BLOCK no longer refuses a ticket whose verifier has since passed, and
+a human override of an adversarial BLOCK no longer needs a second bypass hours later.
+
+### Fixed
+- `verifier_latest_verdict` (flow.sh's verdict gate) uses one rule: the latest verdict-bearing
+  record per `(verifier, phase)` pair wins. A later PASS/WARN supersedes an earlier FAIL/BLOCK.
+  With no pipeline log the gate says it is unarmed (stderr, `META|verdict-gate|warn|UNARMED`,
+  heartbeat) instead of skipping silently (#598, #610).
+- `return-completeness-check.sh --refresh` re-checks after VERIFY and writes a fresh
+  `return_completeness` result, so a FAIL from an earlier phase no longer blocks the merge (#598).
+
+### Added
+- `lib/adversarial-override.sh`: the one way to accept a plan the adversarial review BLOCKED.
+  Operator-only: it refuses agent and fleetd-worker context. It writes
+  `META|adversarial-override|info|reason=…`, which the verdict gate counts as WARN, plus the
+  done line `detect-resume.sh` reads. A plain `EXEC|adversarial-review|done|PASS` line no longer
+  clears the gate. `plog.sh` refuses to write `META|adversarial-override` and
+  `META|verify-attempts-reset` (exit 3) and any PHASE/STEP/STATUS outside `[A-Za-z0-9_-]+`
+  (exit 2), so a `|` or newline cannot forge the marker; `_plog` replaces `|`/CR/LF in those
+  fields with `_` (#610).
+
+## 0.88.0 (2026-11-08)
+
+Gate reconcile, AC drift and a seeder precheck in VERIFY.
+
+### Fixed
+- ticket-gate-reconcile no longer holds a cycle whose only unprocessed comments answer the open
+  questions. It records the answers, posts the amendment without `re-claim`, and passes. Bad or
+  missing counts hold the ticket (`lib/reconcile-decide.sh`, #599).
+- ACs added in the tracker during the gate hold now reach `context.md` and the Verification Plan,
+  and VERIFY numbers its plan from the tracker list when they differ. New gate-warns:
+  `AC_DRIFT_AT_GATE`, `AC_DRIFT_AT_VERIFY`, `AC_DRIFT_UNKNOWN` (`lib/ac-drift.sh`, #604).
+- ticket-verify Step 1.6d runs the seeder scenarios this ticket's own seed-tool commits changed,
+  twice each, under VERIFY's lock and before any criterion (`lib/seed-precheck.sh`, #601).
+  Scenario names come only from the seed repo's git history, never from ticket text; each run is
+  an argv list in its own process group, and a timeout kills the whole group. A failure is a
+  normal verify FAIL that counts one attempt. ticket-implement checks seeders statically only.
+
+## 0.87.0 (2026-11-08) — fleet-controller 0.46.1
+
+VERIFY checkpoints survive a crashed attempt, and `ticket-retro` finds its lib in the plugin layout.
+
+### Fixed
+- A recorded `zombie-detected:` VERIFY close is no longer treated as a verdict when scoping
+  checkpoints. `verify_attempt_lines` (`VERIFY_CHECKPOINT`, `VERIFY_FROM`, ticket-verify's skip
+  list) now counts only lines after the last real `VERIFY|verify` verdict, `IMPLEMENT|implement`
+  line, recorded `operator-stopped:` close or honoured control-file reset, so a crashed VERIFY
+  resumes from its checkpoints instead of re-checking every criterion. An operator stop or reset
+  still ends the scope, since a person intervened. fleetd's `last_verify_checkpoint` /
+  `last_verify_criterion` apply the same rule, with parity fixtures (#607).
+- `retro.sh` resolves its lib as `<plugin>/lib` in the plugin layout and falls back to the synced
+  `skills/lib` layout. It defines `_iso_now` itself when no lib provides it, so the cursor is
+  always written, and prints a stderr line on either fallback (#600).
+
 ## 0.86.0 (2026-11-08)
 
 Phase agents read the right skill file, and a stale GitNexus index is refreshed after a ticket's PRs.

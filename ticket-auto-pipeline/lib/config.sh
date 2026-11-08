@@ -56,9 +56,10 @@ BRANCH_PREFIX="${BRANCH_PREFIX:-feat/}"
 # scratch-file TTL default (TICKET_TMP_TTL_MIN=1440min=24h).
 VERIFY_WORKTREE_TTL_HOURS="${VERIFY_WORKTREE_TTL_HOURS:-24}"
 
-# Well-known lockfile serializing ticket-verify's local app stack — only one
-# verify run's stack is ever up at a time (hardcoded ports collide otherwise).
-VERIFY_LOCK_FILE="${VERIFY_LOCK_FILE:-/tmp/ticket-verify.lock}"
+# Lockfile serializing ticket-verify's local app stack — only one verify
+# run's stack is ever up at a time (hardcoded ports collide otherwise). Empty
+# means <ticket_tmp_dir>/ticket-verify.lock: per user, see lib/verify-lock.sh.
+VERIFY_LOCK_FILE="${VERIFY_LOCK_FILE:-}"
 # How long a waiter blocks for the lock before giving up (seconds).
 # Comfortably over the documented 30-minute verify phase timeout.
 VERIFY_LOCK_TIMEOUT_SECS="${VERIFY_LOCK_TIMEOUT_SECS:-2400}"

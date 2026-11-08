@@ -10,7 +10,7 @@
 #
 # Ticket resolution matches the invoking session against the spawn-meta file's
 # SESSION_ID, exactly as token-tracker.sh and agent-activity.sh do. It is not the
-# globally newest /tmp file: with the matcher widened this hook now fires for
+# globally newest scratch file: with the matcher widened this hook now fires for
 # failures in unrelated sessions, where a newest-file scan would attribute
 # another session's error to whichever ticket happened to spawn last.
 #
@@ -25,11 +25,18 @@
 # Pipes in MSG are escaped to \x7c to avoid field corruption.
 set -eo pipefail
 
+# Private per-user scratch dir (GitHub #619). Hooks never create it: no dir
+# means no pipeline spawn on this host, so there is nothing to resolve.
+_TT_LIB="${BASH_SOURCE[0]%/*}/../lib/ticket-tmp.sh"
+# shellcheck source=../lib/ticket-tmp.sh
+{ [ -f "$_TT_LIB" ] && source "$_TT_LIB" && ticket_tmp_peek; } || exit 0
+SCRATCH="$TICKET_TMP_RESOLVED"
+
 # ── Fast path: no live pipeline spawn anywhere on this host ──────────────────
 # A single glob before any parsing. With the matcher widened past Bash this hook
 # runs in every session, and this is the branch nearly all of them take.
 _has_meta=0
-for _f in /tmp/ticket-auto-*-spawn-meta.txt; do
+for _f in "$SCRATCH"/ticket-auto-*-spawn-meta.txt; do
   [ -e "$_f" ] && _has_meta=1
   break
 done
@@ -76,7 +83,7 @@ TICKET_ID=""
 # phase of the same session never wins over the current one.
 META_FILE=""
 if [ -n "$HOOK_SESSION_ID" ]; then
-  for f in $(ls -t /tmp/ticket-auto-*-spawn-meta.txt 2>/dev/null || true); do
+  for f in $(ls -t "$SCRATCH"/ticket-auto-*-spawn-meta.txt 2>/dev/null || true); do
     [ -f "$f" ] || continue
     _phase="" _log="" _sid=""
     while IFS='=' read -r key val; do
@@ -99,6 +106,9 @@ fi
 # No active ticket-auto pipeline — nothing to log
 [ -z "$TICKET_ID" ] && exit 0
 [ -z "$LOG_FILE" ] && exit 0
+# A spawn-meta LOG_FILE is only ever a pipeline log; anything else is not
+# ours to write next to (GitHub #619).
+case "$LOG_FILE" in *-pipeline.log) ;; *) exit 0 ;; esac
 
 # ── Security: sanitize TICKET_ID — reject traversal attempts ─────────────────
 case "$TICKET_ID" in
@@ -212,7 +222,9 @@ esac
 
 # ── Dedup: same ticket+tool+type within window → skip ────────────────────────
 DEDUP_KEY="tool-err-${TICKET_ID}-${TOOL_NAME}-${ERROR_TYPE}"
-DEDUP_FILE="/tmp/${DEDUP_KEY}"
+# In the private scratch dir, not shared /tmp, where a planted symlink would
+# have redirected this write (GitHub #619).
+DEDUP_FILE="${SCRATCH}/${DEDUP_KEY//\//_}"
 DEDUP_WINDOW="${TOOL_ERROR_DEDUP_WINDOW:-300}"
 
 if [ -f "$DEDUP_FILE" ]; then

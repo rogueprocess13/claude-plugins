@@ -142,7 +142,10 @@ test_sourcing_defines_helpers_without_running_retro() {
 test_direct_execution_still_runs() {
   local tmpdir rc=0
   tmpdir=$(_mktemp_test_dir)
-  HOME="$tmpdir" REPOS_ROOT="$tmpdir" bash "$RETRO_SH" --window 7d >"$tmpdir/out" 2>"$tmpdir/err" || rc=$?
+  # Run from the empty tmpdir: retro.sh scans ./logs, and the repo root can
+  # hold a ./logs left by other suites. Until #600 that went unnoticed, since
+  # retro.sh then died on an undefined _iso_now (exit 127) anyway.
+  (cd "$tmpdir" && HOME="$tmpdir" REPOS_ROOT="$tmpdir" bash "$RETRO_SH" --window 7d >"$tmpdir/out" 2>"$tmpdir/err") || rc=$?
   # No logs in an empty HOME: retro.sh reports that and exits non-zero —
   # proof the main body ran rather than returning at the guard.
   [ "$rc" -ne 0 ] && [ -s "$tmpdir/err" ]

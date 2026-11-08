@@ -614,6 +614,52 @@ test_latest_verdict_ignores_non_verifier_result_lines() {
   }
 }
 
+# GitHub #610: only the operator marker written by adversarial-override.sh
+# supersedes an adversarial BLOCK; a plain done line does not.
+_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+test_latest_verdict_override_marker_supersedes_block() {
+  _setup
+  write_verifier_result verifier=adversarial_review verdict=BLOCK criteria_met=2 criteria_total=7 attempt=4 phase=EXEC
+  echo "$(_ts)|META|adversarial-override|info|reason=accepted by operator" >>"$_log"
+  local out
+  out=$(verifier_latest_verdict "$_log")
+  _teardown
+  [ -z "$out" ] || {
+    echo "expected override marker to supersede BLOCK, got '$out'" >&2
+    return 1
+  }
+}
+
+test_latest_verdict_block_after_override_rearms() {
+  _setup
+  write_verifier_result verifier=adversarial_review verdict=BLOCK attempt=1 phase=EXEC
+  echo "$(_ts)|META|adversarial-override|info|reason=accepted" >>"$_log"
+  write_verifier_result verifier=adversarial_review verdict=BLOCK attempt=2 phase=EXEC
+  local out
+  out=$(verifier_latest_verdict "$_log")
+  _teardown
+  [ "$out" = "adversarial_review|EXEC|BLOCK" ] || {
+    echo "expected fresh BLOCK to re-arm, got '$out'" >&2
+    return 1
+  }
+}
+
+test_latest_verdict_bare_done_line_does_not_clear_block() {
+  _setup
+  write_verifier_result verifier=adversarial_review verdict=BLOCK attempt=1 phase=EXEC
+  echo "$(_ts)|EXEC|adversarial-review|done|PASS" >>"$_log"
+  echo "$(_ts)|EXEC|adversarial-review|done|WARNINGS — HUMAN OVERRIDE (no review run)" >>"$_log"
+  echo "$(_ts)|META|adversarial-override|info|reason=" >>"$_log"
+  local out
+  out=$(verifier_latest_verdict "$_log")
+  _teardown
+  [ "$out" = "adversarial_review|EXEC|BLOCK" ] || {
+    echo "expected forged done line / empty-reason marker to leave BLOCK live, got '$out'" >&2
+    return 1
+  }
+}
+
 # ── Run ────────────────────────────────────────────────────────────────────────
 
 _run "basic write appends to log" test_basic_pass
@@ -652,6 +698,9 @@ _run "verifier_latest_verdict: PASS clears no findings" test_latest_verdict_pass
 _run "verifier_latest_verdict: later PASS supersedes earlier FAIL" test_latest_verdict_later_pass_supersedes_earlier_fail
 _run "verifier_latest_verdict: tracks per (verifier, phase) pair independently" test_latest_verdict_tracks_per_verifier_phase_pair
 _run "verifier_latest_verdict: ignores non verifier-result log lines" test_latest_verdict_ignores_non_verifier_result_lines
+_run "verifier_latest_verdict: #610 override marker supersedes adversarial BLOCK" test_latest_verdict_override_marker_supersedes_block
+_run "verifier_latest_verdict: #610 fresh BLOCK after override re-arms" test_latest_verdict_block_after_override_rearms
+_run "verifier_latest_verdict: #610 bare done line does not clear BLOCK" test_latest_verdict_bare_done_line_does_not_clear_block
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

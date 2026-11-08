@@ -9,7 +9,7 @@ You have been given a ticket ID as the argument (e.g. `WIL-42`). Execute the ful
 
 ## Pipeline Preamble
 
-If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=<from args>, PHASE=PR-REVIEW, HAS_LINEAR_ACCESS=true, LINEAR_OPS=get_issue,save_comment, HAS_LOGGING=true, HAS_HEARTBEAT=true, EMITS_PHASE_RESULT=true, PHASE_RESULT_TIER=1, PHASE_RESULT_VERIFIER=pr_review, PHASE_RESULT_ATTEMPT=<the `PHASE_RESULT_ATTEMPT=` value in your spawn INSTRUCTIONS; omit the ATTEMPT field entirely if you were not given one>. Before starting, source the project context: `source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=PR-REVIEW, FROM_FLAG=none, HAS_LINEAR_ACCESS=true, LINEAR_OPS=get_issue,save_comment, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=ISSUE_PREFIX,REPOS_ROOT, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
+If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=<from args>, PHASE=PR-REVIEW, HAS_LINEAR_ACCESS=true, LINEAR_OPS=get_issue,save_comment, HAS_LOGGING=true, HAS_HEARTBEAT=true, EMITS_PHASE_RESULT=true, PHASE_RESULT_TIER=1, PHASE_RESULT_VERIFIER=pr_review, PHASE_RESULT_ATTEMPT=<the `PHASE_RESULT_ATTEMPT=` value in your spawn INSTRUCTIONS; omit the ATTEMPT field entirely if you were not given one>. Before starting, source the project context: `source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=PR-REVIEW, FROM_FLAG=none, HAS_LINEAR_ACCESS=true, LINEAR_OPS=get_issue,save_comment, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=ISSUE_PREFIX,REPOS_ROOT, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
 
 ### Heartbeat points
 - **Requirement extraction**: after extracting requirements from the ticket, write `hb-wrap.sh decision "requirement-extraction" "ok" "extracted N requirements" '{"count":"N"}'`
@@ -120,7 +120,7 @@ per step means Step 4 cannot inherit this step's variables, so both steps resolv
 independently), then derive `owner/repo` from its git remote — never from cwd:
 
 ```bash
-source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
 source "$HOME/.claude/skills/lib/worktree.sh"
 WORKTREE_PATH=$(worktree_path "$TICKET_ID" "{repo-slug}")
 if [ ! -d "$WORKTREE_PATH/.git" ] && [ ! -f "$WORKTREE_PATH/.git" ]; then
@@ -169,7 +169,7 @@ bash ~/.claude/skills/lib/plog.sh PR-REVIEW checkout-pr done "{number}"
 Resolve the worktree path from `notes.md` pre-implementation checkpoint or the env file, then:
 
 ```bash
-source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true
+source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
 source "$HOME/.claude/skills/lib/worktree.sh"
 WORKTREE_PATH=$(worktree_path "$TICKET_ID" "{repo-slug}")
 git -C "$WORKTREE_PATH" fetch origin

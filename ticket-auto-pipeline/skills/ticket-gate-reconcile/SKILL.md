@@ -9,10 +9,10 @@ description: Post-gate-hold comment reconciliation agent. Spawned when a held ti
 
 ## Step 1 — Load context (agent starts cold)
 
-Source the project environment file and extract ticket metadata:
+Load the env file and ticket metadata:
 
 ```bash
-source /tmp/ticket-auto-{TICKET-ID}-env.sh
+source ~/.claude/skills/lib/ticket-env.sh {TICKET-ID}
 
 # Read pipeline log for gate state
 export TAP_LOG="$PWD/logs/{TICKET-ID}-pipeline.log"
@@ -37,16 +37,11 @@ ARTIFACT_TYPE=$(resolve_artifact_type "$TAP_LOG" "$NOTES_PATH")
 ARTIFACT_TYPE="${ARTIFACT_TYPE:-simple-fix}"
 ```
 
-Resolve the plan artifact. An openspec change lives at the tickets-repo root
-(the current directory — the same `openspec/changes/` that
-`ticket-appraise-exec` writes to), never under `$TICKET_DIR`, and it must be
-**this** ticket's change, matched by ticket id. If it cannot be found, the
-block logs a `GATE|reconcile|fail` line and exits non-zero — stop there and
-report the error; never amend some other change's `tasks.md`:
+Resolve the plan artifact: **this** ticket's openspec change under the tickets-repo root's
+`openspec/changes/` (never `$TICKET_DIR`). If the block exits non-zero, stop and report the
+error; never amend another change's `tasks.md`:
 
 ```bash
-# The one plan-artifact resolver (lib/ticket-dir.sh): whole-id match, so
-# TEST-7 never picks up test-77-...; exit 2 when two change dirs match.
 PLAN_PATH=""
 _plan_rc=0
 _plan_out=$(resolve_plan_artifact "{TICKET-ID}" --root . --ticket-dir "$TICKET_DIR" --type "$ARTIFACT_TYPE") || _plan_rc=$?
@@ -88,6 +83,9 @@ fi
 
 # Normalize to flat array of {createdAt, body, user: {name}} objects
 COMMENTS_JSON=$(echo "$COMMENTS_JSON" | bash -c "source ~/.claude/skills/lib/linear-api.sh; normalize_comments")
+
+# For Step 8 (MCP fallback: write the description here).
+bash -c "source ~/.claude/skills/lib/linear-api.sh; get_issue '{TICKET-ID}'" | jq -r '.description // ""' >"$TICKET_DIR/artifacts/tracker-description.md"
 ```
 
 ## Step 3 — Run comment reconciliation
@@ -99,7 +97,7 @@ echo "$RECONCILE_OUTPUT"
 
 Parse the output to set `{LAST_RECONCILE_AT}`, `{APPRAISAL_COMMENT_AT}`, and `{UNPROCESSED_COMMENTS}`.
 
-**How it works:** `lib/reconcile-comments.sh` finds the appraisal and amendment comments by their `<!-- ticket-auto:... -->` markers. `LAST_RECONCILE_AT` is the later of the two; `UNPROCESSED_COMMENTS` holds only user comments after it, as `timestamp|user|body`.
+`UNPROCESSED_COMMENTS` holds the user comments (`timestamp|user|body`) after the latest marked appraisal/amendment comment.
 
 ## Step 4 — Read open questions from notes.md
 
@@ -108,38 +106,24 @@ RAW_SECTION=$(sed -n '/^## Open Questions/,/^## /p' "$NOTES_PATH")
 if echo "$RAW_SECTION" | grep -q '^## '; then
   RAW_SECTION=$(echo "$RAW_SECTION" | sed '/^## Open Questions$/!{/^## /q}')
 fi
-# Only [needs-human] bullets reach the gate. [agent-resolvable] questions are
-# resolved inline by ticket-appraise Step 3.5 (with a mandatory path:line
-# citation, verified by the claim-verifier agent) and never left open — the
-# gate has no business re-litigating a self-closed factual lookup. This also
-# retires strikethrough as a signal here: it was never a reliable one, since
-# ticket-appraise's own inline resolutions use the same `~~...~~` marker this
-# gate writes at Step 6, with no way to tell which producer wrote which.
+# Only unstruck [needs-human] bullets reach the gate; [agent-resolvable] ones
+# are closed by ticket-appraise Step 3.5 with a verified path:line citation.
 OPEN_QUESTIONS_LIST=$(echo "$RAW_SECTION" | grep '^\- \[needs-human\]' || true)
 ```
 
 If `{OPEN_QUESTIONS_LIST}` is empty or contains only placeholder text ("None", "—"), skip the unanswered-questions check in Step 5.
 
-## Step 5 — Evaluate hold conditions
+## Step 5 — Judge answers and comments
 
-Two independent conditions. If either triggers, the pipeline holds (proceed to Step 6).
+**Questions:** for each bullet in `{OPEN_QUESTIONS_LIST}`, scan `{UNPROCESSED_COMMENTS}` and all post-appraisal comments for a concrete answer — one that resolves, decides, or explicitly dismisses it. Vague replies ("we'll see", "TBD", "maybe") are not answers.
 
-**Condition 1 — Unanswered open questions:**
+**Comments:** classify each unprocessed comment. **answer-only**: it answers open questions and asks for nothing else (any plan edit it implies is the one the question already proposed). **new-input**: anything else — a new requirement, a scope change, a disagreement with the plan, a question back. An answer that adds behaviour, a field, a role or an AC is new-input. Set `NEW_INPUT_N` to the new-input count and `COMMENTS_N` to the total.
 
-For each bullet in `{OPEN_QUESTIONS_LIST}`, scan `{UNPROCESSED_COMMENTS}` and all post-appraisal comments for a concrete answer. Use semantic judgment:
-- A concrete answer resolves, decides, or explicitly dismisses the question
-- Vague replies ("we'll see", "TBD", "maybe", "I'll think about it") do NOT count as answers
-- If ANY question lacks a concrete answer → set `HOLD_REASON=unanswered_questions`
-
-**Condition 2 — Unprocessed user comments:**
-
-If `{UNPROCESSED_COMMENTS}` is non-empty → set `HOLD_REASON=unprocessed_comments` (combine with condition 1 if both apply: `HOLD_REASON=unanswered_questions+unprocessed_comments`).
-
-**If neither condition triggers** → skip to Step 8 (clean pass).
+If there are no unprocessed comments and no answered-but-unstruck question, skip Step 6.
 
 ## Step 6 — Amendment logic
 
-When a hold condition is active, incorporate user feedback into the plan artifact before re-claiming.
+Incorporate the comments and answers into the plan artifact.
 
 Read the current plan artifact from `$ARTIFACT_PATH`. Append an `## Amendment #N` section (where N = `{RECONCILE_N}`) that:
 1. Summarizes the user comments being incorporated
@@ -147,10 +131,19 @@ Read the current plan artifact from `$ARTIFACT_PATH`. Append an `## Amendment #N
 3. Notes any design decisions made during reconciliation
 
 Update `## Open Questions` in notes.md:
-- Mark resolved `[needs-human]` questions with `~~strikethrough~~`, tag included inside the strike (do NOT delete them — preserve history). Strikethrough is presentation only now — provenance and gate-relevance both live in the `[needs-human]`/`[agent-resolvable]` tag (Step 4), not in whether a bullet is struck.
+- Strike resolved `[needs-human]` questions, tag inside the strike (`- ~~[needs-human] …~~`); never delete them. Step 7 counts every unstruck one as open.
 - If new unresolvable questions arise from amendment, append them as new `- [needs-human]` bullets
 
-## Step 7 — Post amendment, re-claim, hold
+## Step 7 — Decide, post amendment, re-claim, hold
+
+Bash decides (#599): hold on any unstruck `[needs-human]` bullet or new-input comment, never on answers alone.
+
+```bash
+eval "$(bash ~/.claude/skills/lib/reconcile-decide.sh --notes "$NOTES_PATH" --comments "$COMMENTS_N" --new-input "$NEW_INPUT_N")"
+echo "$RECONCILE_DECISION $HOLD_REASON"
+```
+
+`clean` → Step 8. `clean-recorded` → post the amendment comment below (moving the next boundary past the answers) without `re-claim` or the held entry, then Step 8. `hold` → all of this step.
 
 Post an amendment comment to Linear summarizing what changed and what's still open:
 
@@ -175,9 +168,7 @@ Call `re-claim` to clear the approval fact (and remove the `pre-approved` label)
 
 ```bash
 bash ~/.claude/skills/lib/flow-run.sh --log-file "$PWD/logs/{TICKET-ID}-pipeline.log" {TICKET-ID} re-claim
-_rc=$?
-# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
-# re-claim carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
+# flow-run.sh logs any failure itself; it is non-fatal — continue.
 ```
 
 Write the held log entry:
@@ -206,11 +197,17 @@ Review the amendment comment in Linear, then run `/ticket-approve {TICKET-ID}` a
 
 ## Step 8 — Clean pass
 
-No hold conditions active. All open questions are answered and no unprocessed user comments exist. Write the clean log entry:
+First compare the tracker's ACs, which the operator may have edited during the hold, with the workspace (#604). On drift (exit 1) the script refreshes `context.md`; add a notes.md Verification Plan row (same columns, next number) for each `AC_ADDED_n` and any AC still without one, and note it in the Session Log:
+
+```bash
+bash ~/.claude/skills/lib/ac-drift.sh "$TICKET_DIR" --description-file "$TICKET_DIR/artifacts/tracker-description.md" --refresh --tag GATE --log-file "$TAP_LOG"
+```
+
+Write the clean log entry:
 
 ```bash
 bash ~/.claude/skills/lib/plog.sh GATE reconcile done "clean"
-hb-wrap.sh decision "reconcile-result" "fired" "clean pass — no unprocessed comments or unanswered questions" "{\"cycle\":\"${RECONCILE_N}\"}"
+hb-wrap.sh decision "reconcile-result" "fired" "clean pass — no open questions or new input" "{\"cycle\":\"${RECONCILE_N}\"}"
 hb-wrap.sh gate "reconcile" "ok" "clean pass — proceeding to implement"
 hb-wrap.sh gate "phase-transition" "ok" "GATE → IMPLEMENT"
 ```

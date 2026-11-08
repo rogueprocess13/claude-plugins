@@ -9,7 +9,7 @@ You have been given a ticket ID as the argument (e.g. `WIL-42`). The investigati
 
 ## Pipeline Preamble
 
-If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=<from args>, PHASE=EXEC, HAS_LINEAR_ACCESS=true, LINEAR_OPS=save_comment, HAS_LOGGING=true, HAS_HEARTBEAT=true. Before starting, source the project context: `source /tmp/ticket-auto-{TICKET_ID}-env.sh 2>/dev/null || true`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=EXEC, FROM_FLAG=none, HAS_LINEAR_ACCESS=true, LINEAR_OPS=save_comment, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT,ISSUE_PREFIX,BE_SERVICES,BE_TEST_CMD, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
+If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=<from args>, PHASE=EXEC, HAS_LINEAR_ACCESS=true, LINEAR_OPS=save_comment, HAS_LOGGING=true, HAS_HEARTBEAT=true. Before starting, source the project context: `source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=EXEC, FROM_FLAG=none, HAS_LINEAR_ACCESS=true, LINEAR_OPS=save_comment, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT,ISSUE_PREFIX,BE_SERVICES,BE_TEST_CMD, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
 
 ### Heartbeat points
 - **Complexity read**: after extracting complexity from notes.md, write `hb-wrap.sh decision "complexity-read" "info" "complexity: {simple|complex}" '{"score":"{COMPLEXITY}"}'`
@@ -463,9 +463,9 @@ If you choose RECONSIDER, the verdict is still BLOCKED. Put the alternative firs
 
 Append its output verbatim to notes.md under the `## Adversarial Review` heading. Do not reinterpret or summarise.
 
-**Then keep going — do not stop here.** After appending the review to notes.md, immediately evaluate the verdict below and proceed. This step is not the last step of the skill: Steps 3.7, 3.8, 4, 5, and 6 still have to run in this same session before the ticket is actually assigned, commented on, and moved to Approve.
+**Then keep going — do not stop here.** Evaluate the verdict below and proceed: Steps 3.7, 3.8, 4, 5 and 6 still run in this session before the ticket is assigned, commented on and moved to Approve.
 
-**Record the verdict — every verdict, BLOCKED included, before any gate-stop.** Write the `done` line and the verifier result first, so a BLOCKED round is visible in the log as a completed review and not only as a gate-stop:
+**Record every verdict, BLOCKED included, before any gate-stop** (`done` line, then verifier result):
 
 ```bash
 bash ~/.claude/skills/lib/plog.sh EXEC adversarial-review done "{PASS|WARNINGS|BLOCKED}"
@@ -478,9 +478,7 @@ write_verifier_result verifier=adversarial_review verdict=<PASS|WARN|BLOCK> crit
 ```
 Map: PASS → PASS, WARNINGS → WARN, BLOCKED → BLOCK. `attempt` is `{ADV_ROUND}` from the round-awareness block above — not a fixed `1`.
 
-**Gate on BLOCKED:**
-
-If the agent's verdict is BLOCKED, write the gate-stop **after** the `done` line above. Keep `ADVERSARIAL_BLOCKED` as the first word of the detail: `exit-path.sh`, `detect-resume.sh` and `adversarial-rounds.sh` all match it by prefix.
+**Gate on BLOCKED:** write the gate-stop **after** the `done` line above. Keep `ADVERSARIAL_BLOCKED` as the first word of the detail: `exit-path.sh`, `detect-resume.sh` and `adversarial-rounds.sh` all match it by prefix.
 
 ```bash
 bash ~/.claude/skills/lib/plog.sh META gate-stop fail "ADVERSARIAL_BLOCKED — round {ADV_ROUND} — {ISSUE-ID} adversarial review found blocking issues"

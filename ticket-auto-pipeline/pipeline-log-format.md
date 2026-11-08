@@ -223,24 +223,20 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|corrections-error|warn|append_correcti
 
 ### Gate-warn channel
 
-The `gate-warn` channel (distinct from `gate-stop`) carries non-blocking completeness warnings
-from `return-completeness-check.sh`. Unlike `gate-stop`, which halts the pipeline, `gate-warn`
-events are informational — they signal a potential issue without changing the phase result.
+The `gate-warn` channel carries non-blocking warnings: unlike `gate-stop`, it never changes the
+phase result.
 
-```bash
-# Warn-only (Phase 1): unchecked boxes detected but pipeline continues
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|info|RETURN_INCOMPLETE — UNCHECKED_BOXES (unchecked=2/5, artifact=openspec)" >> "$LOG_FILE"
+```
+2026-01-01T00:00:00Z|META|gate-warn|info|RETURN_INCOMPLETE — UNCHECKED_BOXES (unchecked=2/5, artifact=openspec)
 ```
 
 Gate-warn codes:
-- `RETURN_INCOMPLETE` — one or more `- [ ]` boxes remain unchecked in tasks.md
-  or simple-fix.md's `## Completion Checklist`. Emitted by the return-completeness
-  gate in warn-only mode (Phase 1). In enforce mode (Phase 2+), this flips to the
-  `gate-stop` channel as `RETURN_INCOMPLETE` and triggers `IMPLEMENT_RETRY` (max 2).
-- `COMPLETION_CHECKLIST_MISSING` — simple-fix.md lacks a `## Completion Checklist`
-  section (artifact predates Section 2 fast-follow). Treated as `error` (exit 2) by
-  the gate script; signals the artifact needs re-appraisal.
-
+- `RETURN_INCOMPLETE` — `- [ ]` boxes left in tasks.md or simple-fix.md's
+  `## Completion Checklist` (`return-completeness-check.sh`). In enforce mode a `gate-stop`
+  triggering `IMPLEMENT_RETRY` (max 2).
+- `COMPLETION_CHECKLIST_MISSING` — simple-fix.md has no `## Completion Checklist`.
+  Treated as `error` (exit 2); needs re-appraisal.
+- `AC_DRIFT_AT_GATE`/`_AT_VERIFY`/`AC_DRIFT_UNKNOWN` — tracker vs `context.md` ACs (`lib/ac-drift.sh`).
 `gate-warn` counters are tracked separately from `gate-stop` in retro.sh aggregation
 (`GATE_WARN_TOTAL` vs `GATE_STOP_TOTAL`) — they drive Phase 2 false-positive measurement,
 not severity classification.
@@ -1026,7 +1022,7 @@ in between.
 
 1. **Outcome is final**: `META|outcome|info|<result>` MUST be the last substantive entry in the log. It SHALL be written after all MAINTENANCE phase steps and retro-trigger evaluation are complete, on every exit path (success, gate-stop, no-op, crash).
 2. **Bracket uniqueness**: Each phase-step transition produces exactly one `waiting` entry and exactly one terminal entry (`done`, `fail`, or `skip`). Writers guard against duplicates by tail-checking the last log line before appending.
-3. **Token META accuracy**: `META|tokens` lines carry the correct PHASE label matching the agent that consumed those tokens. The phase is resolved from the spawn-meta file (`/tmp/ticket-auto-{ID}-spawn-meta.txt`), not the volatile ctx file.
+3. **Token META accuracy**: `META|tokens` lines carry the correct PHASE label matching the agent that consumed those tokens. The phase is resolved from the spawn-meta file (`ticket-auto-{ID}-spawn-meta.txt`), not the volatile ctx file.
 4. **Retro-trigger before outcome**: `META|retro-trigger` SHALL appear before `META|outcome`, not after. Retro-trigger entries are idempotent — at most one per pipeline run.
 5. **MAINTENANCE before outcome**: On success and no-op paths, all `MAINTENANCE|*` entries SHALL appear before `META|outcome`.
 6. **Nothing follows outcome** (Branch B, Commercial Evidence MVP): no component SHALL append to the pipeline log after `META|outcome` has been written. Every post-outcome fact (merge truth, human approval, cost) goes to `logs/runs.jsonl` instead — see "runs.jsonl — post-outcome evidence channel" above. The sanctioned fleet-kill postmortem exception (rule 1's note above) predates this rule and is unaffected: it concerns `META|postmortem` timing relative to outcome, not a new pipeline-log append.
