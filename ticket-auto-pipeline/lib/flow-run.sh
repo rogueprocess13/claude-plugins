@@ -47,7 +47,8 @@
 # Exit-code contract (flow.sh's own codes are passed through unchanged)
 # ────────────────────────────────────────────────────────────────────
 #   0    transition applied (or a warn-only no-op such as ILLEGAL_TRANSITION)
-#   1    usage / invalid ticket id / unreadable workflow.json / other flow.sh error
+#   1    usage / invalid ticket id / unreadable workflow.json / manifest write
+#        failed / other flow.sh error
 #   3    unknown trigger
 #   8    precondition rejected
 #   9    fence guard — missing generation token for a fenced ticket
@@ -57,6 +58,9 @@
 #        FAIL/BLOCK verifier-result is still on record. Not a transient error:
 #        do not retry, do not report the step as passed. A human resolves it or
 #        re-runs with --override "<reason>".
+#   12   an earlier pending event could not be replayed; nothing applied, retry
+#   13   REPOS_ROOT unset — the ticket manifest cannot be resolved; nothing
+#        applied. Source the ticket env file (or export REPOS_ROOT) and retry
 #   42   another flow.sh run for this ticket holds the lock
 #   127  flow.sh could not be resolved (nothing was run)
 #   any other non-zero code is flow.sh's and is passed through as-is
@@ -66,8 +70,11 @@
 #            HB   gate verdict-gate fail
 #   127:     LOG  <ts>|META|flow-error|fail|flow.sh not found: <trigger>
 #            HB   retry flow-sh fail (error_type=not_found)
-#   other:   LOG  <ts>|META|flow-error|fail|exit <rc>: <trigger>
-#            HB   retry flow-sh fail (error_type=<usage|unknown_trigger|precondition|fence|lock|flow_error>)
+#   other:   LOG  <ts>|META|flow-error|fail|exit <rc>: <trigger>[ — <flow.sh stderr snippet>]
+#            HB   retry flow-sh fail (error_type=<usage|unknown_trigger|precondition|fence|emit_replay|env|lock|flow_error>,
+#                 error_snippet=<last stderr lines, sanitised, max 240 chars>)
+#            Exit 1 is error_type=usage only when flow.sh's stderr is one of
+#            its usage messages; otherwise flow_error.
 # Log lines are skipped when no log file is known; heartbeats are a no-op when
 # HB_LOG_FILE is unset (hb-wrap.sh contract).
 #
@@ -168,11 +175,25 @@ if [ -z "$_fr_flow_sh" ] || [ ! -f "$_fr_flow_sh" ]; then
 fi
 
 # ── Run it ───────────────────────────────────────────────────────────────────
+# flow.sh's stderr is captured (and replayed to our own stderr afterwards) so
+# the failure record can carry its message: without it every exit 1 looked
+# the same in the log and the heartbeat (GitHub #606).
 _fr_rc=0
+_fr_err=$(mktemp "${TMPDIR:-/tmp}/flow-run-err.XXXXXX" 2>/dev/null) || _fr_err=/dev/null
 if [ -n "$_fr_log_file" ]; then
-  LOG_FILE="$_fr_log_file" bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}" || _fr_rc=$?
+  LOG_FILE="$_fr_log_file" bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}" 2>"$_fr_err" || _fr_rc=$?
 else
-  bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}" || _fr_rc=$?
+  bash "$_fr_flow_sh" "$_fr_tid" "$_fr_trigger" "${_fr_pass[@]}" 2>"$_fr_err" || _fr_rc=$?
+fi
+_fr_snip=""
+if [ "$_fr_err" != /dev/null ]; then
+  cat "$_fr_err" >&2 2>/dev/null || true
+  # Last non-blank stderr lines, one line, no pipes/quotes/backslashes/control
+  # characters (it lands in a pipe-delimited log line and a JSON field).
+  _fr_snip=$(grep -v '^[[:space:]]*$' "$_fr_err" 2>/dev/null | tail -3 | tr '\n\r\t|"\\' '      ' |
+    tr -d '[:cntrl:]' | tr -s ' ' | cut -c1-240 || true)
+  _fr_snip="${_fr_snip% }"
+  rm -f "$_fr_err"
 fi
 
 # ── Record the outcome ───────────────────────────────────────────────────────
@@ -188,16 +209,28 @@ case "$_fr_rc" in
   ;;
 *)
   case "$_fr_rc" in
-  1) _fr_type=usage ;;
+  1)
+    # flow.sh exits 1 for usage errors and for runtime failures alike
+    # (unreadable workflow.json, manifest write failed). Only its own usage
+    # messages make it a usage error (GitHub #606).
+    case "$_fr_snip" in
+    *"Usage:"* | *"unknown argument"* | *"requires a value"* | *"expects key=value"* | *"Invalid TICKET_ID"* | *"invalid generation token"*)
+      _fr_type=usage
+      ;;
+    *) _fr_type=flow_error ;;
+    esac
+    ;;
   3) _fr_type=unknown_trigger ;;
   8) _fr_type=precondition ;;
   9 | 10) _fr_type=fence ;;
+  12) _fr_type=emit_replay ;;
+  13) _fr_type=env ;;
   42) _fr_type=lock ;;
   *) _fr_type=flow_error ;;
   esac
-  _fr_log "META|flow-error|fail|exit ${_fr_rc}: ${_fr_trigger_safe}"
+  _fr_log "META|flow-error|fail|exit ${_fr_rc}: ${_fr_trigger_safe}${_fr_snip:+ — ${_fr_snip}}"
   _fr_hb retry "flow-sh" "fail" "flow.sh ${_fr_trigger_safe} failed (exit ${_fr_rc})" \
-    "{\"trigger\":\"${_fr_trigger_safe}\",\"exit_code\":\"${_fr_rc}\",\"ticket\":\"${_fr_tid}\",\"error_type\":\"${_fr_type}\"}"
+    "{\"trigger\":\"${_fr_trigger_safe}\",\"exit_code\":\"${_fr_rc}\",\"ticket\":\"${_fr_tid}\",\"error_type\":\"${_fr_type}\",\"error_snippet\":\"${_fr_snip}\"}"
   _fr_report "$_fr_rc" false
   ;;
 esac

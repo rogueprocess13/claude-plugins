@@ -60,7 +60,8 @@ usage() {
   echo "  --provenance human|policy   Who approved (human-approve/pr-iterate only; default human)" >&2
   echo "" >&2
   echo "Exit codes: 0 ok, 1 usage, 3 unknown trigger, 8 precondition, 9/10 generation fence," >&2
-  echo "  11 verdict gate, 12 an earlier pending event could not be emitted, 42 ticket in flight" >&2
+  echo "  11 verdict gate, 12 an earlier pending event could not be emitted," >&2
+  echo "  13 REPOS_ROOT unset (manifest root unresolvable), 42 ticket in flight" >&2
   echo "" >&2
   echo "Valid triggers (from workflow.json):" >&2
   jq -r '.triggers | keys[]' "$SM" 2>/dev/null | sed 's/^/  /' >&2
@@ -261,6 +262,19 @@ if [ -z "$def" ]; then
   echo "Valid triggers:" >&2
   jq -r '.triggers | keys[]' "$SM" | sed 's/^/  /' >&2
   exit 3
+fi
+
+# ── Manifest root (GitHub #608) ─────────────────────────────────────────────
+# Every manifest read and write resolves REPOS_ROOT. Unset, the readers below
+# return rc 3, which the `|| true` guards cannot tell apart from rc 1 ("no
+# manifest yet"): the from-check then logged a misleading ILLEGAL_TRANSITION
+# "from <none>" and the manifest write died under set -e with no message.
+# Refuse up front, before the from-check and before any manifest write. A dry
+# run refuses too: its "current" stage would be just as wrong.
+if [ -z "${REPOS_ROOT:-}" ]; then
+  echo "flow.sh: REPOS_ROOT is not set — cannot read or write the ticket manifest for ${TICKET_ID}; '${TRIGGER}' not applied. Source /tmp/ticket-auto-${TICKET_ID}-env.sh or export REPOS_ROOT, then retry." >&2
+  _log "META|flow-error|fail|REPOS_ROOT_UNSET trigger=${TRIGGER} — manifest root unresolvable, nothing applied"
+  exit 13
 fi
 
 _emit_schema_header
@@ -539,7 +553,15 @@ if [ -n "$_EVENT_NAME" ]; then
   _PENDING_EVENT_JSON=$(jq -nc --arg e "$_EVENT_NAME" --argjson d "$_EVENT_DATA" '{event: $e, data: $d}')
 fi
 
-_manifest_set_transition "$NEW_STAGE" "$NEW_FLAGS_JSON" "$_PENDING_EVENT_JSON"
+# A failed write used to abort here under set -e with no message (GitHub
+# #608). Same exit code (1), but now it says why.
+_set_rc=0
+_manifest_set_transition "$NEW_STAGE" "$NEW_FLAGS_JSON" "$_PENDING_EVENT_JSON" || _set_rc=$?
+if [ "$_set_rc" -ne 0 ]; then
+  echo "flow.sh: manifest write failed for ${TICKET_ID} (rc ${_set_rc}); '${TRIGGER}' not applied" >&2
+  _log "META|flow-error|fail|MANIFEST_WRITE_FAILED trigger=${TRIGGER} rc=${_set_rc}"
+  exit 1
+fi
 
 if [ "$TRIGGER" = "implement-outcome" ] && [ -n "${DATA[outcome]:-}" ]; then
   _log "IMPLEMENT|implement-outcome|info|${DATA[outcome]}"
