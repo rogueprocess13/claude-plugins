@@ -1895,6 +1895,49 @@ test_phase_terminal_write_suppresses_back_to_back_duplicate() {
   [ "$count" = "1" ]
 }
 
+# GitHub #611: a deliberate gate-stop inside the bracket is not a spawn
+# failure, so no "sub-agent spawn failure" RETRO hint is written for it.
+test_phase_terminal_write_gate_stop_writes_no_spawn_failure_hint() {
+  local tmpdir log cl
+  tmpdir=$(_mktemp_test_dir)
+  log="$tmpdir/TEST-PTW6-pipeline.log"
+  cl="$tmpdir/TEST-PTW6-claude.log"
+  {
+    echo "2026-06-02T10:00:00Z|META|schema|info|1"
+    echo "2026-06-02T10:00:01Z|EXEC|context|waiting|exec agent spawned"
+    echo "2026-06-02T10:05:00Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — round 2"
+  } >"$log"
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    phase_terminal_write PHASE=EXEC STEP=context RESULT=fail MSG="exec agent failed" \
+      FAIL_ACTION=stop LOG_FILE="$log" CLAUDE_LOG_FILE="$cl"
+  )
+  grep -q '|EXEC|context|fail|context agent failed (stop)' "$cl" || return 1
+  ! grep -q '|RETRO|hint|' "$cl"
+}
+
+# A gate-stop from an EARLIER bracket must not mask a real spawn failure in
+# the current one.
+test_phase_terminal_write_real_failure_still_writes_hint() {
+  local tmpdir log cl
+  tmpdir=$(_mktemp_test_dir)
+  log="$tmpdir/TEST-PTW7-pipeline.log"
+  cl="$tmpdir/TEST-PTW7-claude.log"
+  {
+    echo "2026-06-02T10:00:00Z|META|schema|info|1"
+    echo "2026-06-02T10:00:01Z|EXEC|context|waiting|exec agent spawned"
+    echo "2026-06-02T10:05:00Z|META|gate-stop|fail|ADVERSARIAL_BLOCKED — round 1"
+    echo "2026-06-02T10:05:01Z|EXEC|context|fail|exec agent failed"
+    echo "2026-06-02T10:10:00Z|EXEC|context|waiting|exec agent spawned"
+  } >"$log"
+  (
+    source "$LIB_DIR/spawn-helper.sh"
+    phase_terminal_write PHASE=EXEC STEP=context RESULT=fail MSG="exec agent failed" \
+      FAIL_ACTION=stop LOG_FILE="$log" CLAUDE_LOG_FILE="$cl"
+  )
+  grep -q '|RETRO|hint|info|sub-agent spawn failure in EXEC phase' "$cl"
+}
+
 test_spawn_agent_post_still_writes_through_the_helper() {
   # The router path must be unchanged by the extraction: same line, same shape.
   local tmpdir log
@@ -2569,6 +2612,8 @@ for fn in \
   test_phase_terminal_write_marks_warn_continue \
   test_phase_terminal_write_rejects_bad_verdict \
   test_phase_terminal_write_suppresses_back_to_back_duplicate \
+  test_phase_terminal_write_gate_stop_writes_no_spawn_failure_hint \
+  test_phase_terminal_write_real_failure_still_writes_hint \
   test_spawn_agent_post_still_writes_through_the_helper \
   test_f10_guard_clears_stale_stop_files_from_prior_phase \
   test_f10_guard_still_blocks_external_kill \

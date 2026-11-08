@@ -77,6 +77,8 @@ ticket-auto-pipeline/skills/ticket-env-check/SKILL.md	4687	86
 ticket-auto-pipeline/skills/ticket-fleet-controller/SKILL.md	1600	28
 ticket-auto-pipeline/skills/ticket-flow/SKILL.md	13646	221
 ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	9550	211
+ticket-auto-pipeline/skills/ticket-flow/SKILL.md	13582	219
+ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	9688	214
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-implement/SKILL.md	46074	738
 ticket-auto-pipeline/skills/ticket-overseer/SKILL.md	3767	81
