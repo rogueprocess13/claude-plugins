@@ -1340,6 +1340,28 @@ class TestVerifyCheckpointResume(unittest.TestCase):
             self.assertEqual(last_verify_checkpoint(lines), 'build-plan',
                              f'substep={substep}')
 
+    def test_unknown_or_setup_step_restarts_from_step_1(self):
+        # #620: only values ticket-verify's --from-step table knows pass
+        # through; setup steps and any unknown step restart the phase.
+        for substep in ('load-context', 'seed-apply', 'seed-precheck',
+                        'verify-lock',
+                        'worktree-setup', 'pre-flight', 'report',
+                        'some-future-step'):
+            lines = [
+                '2026-01-01T00:00:01Z|VERIFY|load-context|done|ok',
+                f'2026-01-01T00:00:02Z|VERIFY|{substep}|done|ok',
+            ]
+            self.assertEqual(last_verify_checkpoint(lines), '',
+                             f'substep={substep}')
+
+    def test_only_build_plan_passes_through(self):
+        # build-plan is written after Step 1.6; load-context before it, so
+        # resuming at load-context would skip the lock, env and seeds.
+        lines = ['2026-01-01T00:00:01Z|VERIFY|build-plan|done|ok']
+        self.assertEqual(last_verify_checkpoint(lines), 'build-plan')
+        lines = ['2026-01-01T00:00:01Z|VERIFY|load-context|done|ok']
+        self.assertEqual(last_verify_checkpoint(lines), '')
+
     def test_no_completed_substep_returns_empty(self):
         self.assertEqual(last_verify_checkpoint([]), '')
         self.assertEqual(
@@ -1466,6 +1488,23 @@ class TestVerifyCheckpointParity(unittest.TestCase):
                 '2026-01-01T00:00:04Z|VERIFY|checkpoint|done|criterion-2-pass',
                 '2026-01-01T00:00:05Z|META|verify-attempts-reset|info|env repaired',
             ], ['reset|6|2026-01-01T00:00:05Z|env repaired']),
+            # #620: setup and unknown steps restart VERIFY from Step 1;
+            # load-context too, since Step 1.6 runs after it.
+            ('CRE-P12', [
+                '2026-01-01T00:00:01Z|VERIFY|load-context|done|ok',
+                '2026-01-01T00:00:02Z|VERIFY|seed-apply|done|1 seeds applied',
+            ]),
+            ('CRE-P13', [
+                '2026-01-01T00:00:01Z|VERIFY|load-context|done|ok',
+                '2026-01-01T00:00:02Z|VERIFY|seed-precheck|done|ok',
+            ]),
+            ('CRE-P14', [
+                '2026-01-01T00:00:01Z|VERIFY|load-context|done|ok',
+            ]),
+            ('CRE-P15', [
+                '2026-01-01T00:00:01Z|VERIFY|build-plan|done|ok',
+                '2026-01-01T00:00:02Z|VERIFY|some-future-step|done|ok',
+            ]),
         ]
         for tid, lines, *pre_ctl in fixtures:
             with self.subTest(tid=tid):

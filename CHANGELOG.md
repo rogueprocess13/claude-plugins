@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## Unreleased
+## 0.92.0 (2026-11-08)
 
 Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file another user could have planted.
 
@@ -48,6 +48,32 @@ Pipeline scratch files leave shared `/tmp`, and nothing trusts a scratch file an
   workspace `./logs/` directory, next to the capture logs.
 - The agent progress file now lives in the scratch dir, where both the agents and the watchdog look
   for it. Agents used to write it in `/tmp` while the watchdog read the fleet state dir.
+
+## 0.91.0 (2026-11-08)
+
+### Fixed
+
+- **`ticket-auto-pipeline`** — `detect-resume.sh` no longer passes VERIFY step
+  names `ticket-verify` does not know (`seed-apply`, `seed-precheck`,
+  `verify-lock`, any future step) as `--from-step`. `VERIFY_FROM` is now an
+  allow-list: only `build-plan` (written after Step 1.6's lock, env and seeds)
+  passes through, browser steps and `checkpoint` still map to `build-plan`, and
+  every other step, `load-context` included, resumes `ticket-verify` from
+  Step 1. fleetd's `last_verify_checkpoint` applies the same
+  mapping, with parity fixtures. `ticket-verify` SKILL.md states the
+  unknown-value rule (size-neutral). (#620)
+
+## 0.90.0 (2026-11-08)
+
+### Fixed
+- A seeder can no longer leave processes running after VERIFY's seed steps. `lib/seed-run.sh` is
+  now the one runner for `seed-apply.sh` (Step 1.6c) and `seed-precheck.sh` (Step 1.6d): own
+  process group, `SEED_APPLY_TIMEOUT_SECS` kills the whole group, and after every run a sweep
+  kills any process carrying the run's `TICKET_SEED_RUN_ID` environment marker, which catches
+  descendants that left the group with `setsid`. Strays are logged as
+  `VERIFY|seed-apply|warn|` / `VERIFY|seed-precheck|warn|<n> processes survived …`. seed-apply's
+  `make` targets used coreutils `timeout`, which signalled only `make` itself; a timeout is still
+  logged as `exited 124` (#621).
 
 ## 0.89.0 (2026-11-08)
 
