@@ -21,9 +21,12 @@
 #                     up to --grace SECS (default 10), then KILL; rc 124.
 #     After every run (pass, fail or timeout) the sweep runs: every process
 #     owned by our uid whose /proc/<pid>/environ carries the marker gets
-#     TERM, a short grace (SEED_RUN_SWEEP_GRACE_SECS, default 2), then KILL
-#     (re-scanned, so a child forked during the grace is caught too). Where
-#     /proc is absent the sweep is skipped quietly (count 0).
+#     TERM, a short grace (SEED_RUN_SWEEP_GRACE_SECS, default 2), then KILL.
+#     It re-scans every 0.2s until two passes in a row find nothing, so a
+#     stray still starting (mid-execve, environ not yet readable) when the
+#     command exits is caught on a later pass; SEED_RUN_SWEEP_SETTLE_SECS
+#     (default 2) bounds that wait. Where /proc is absent the sweep is
+#     skipped quietly (count 0).
 #     A TERM/INT delivered to the calling shell during the run kills the
 #     group and sweeps before exiting 143/130; the caller's own TERM/INT
 #     traps are restored when the run returns.
@@ -49,50 +52,112 @@ _seed_run_new_id() {
   printf 'seed-%s\n' "$u"
 }
 
-# _seed_run_marked <id> — pids owned by our uid whose environ carries the
-# marker, one per line. Empty (rc 0) when /proc is absent.
-_seed_run_marked() {
-  [ -d /proc/self ] || return 0
-  local f pid
-  # One grep over every environ: other users' files are unreadable and
-  # silently skipped; -z reads NUL-separated entries, -x whole entry.
-  grep -lzxF -- "TICKET_SEED_RUN_ID=$1" /proc/[0-9]*/environ 2>/dev/null |
-    while IFS= read -r f; do
-      pid="${f#/proc/}"
-      pid="${pid%/environ}"
-      [ "$pid" = "$$" ] && continue
-      [ "$pid" = "${BASHPID:-}" ] && continue
-      [ -O "/proc/$pid" ] || continue
-      printf '%s\n' "$pid"
-    done
+# _seed_run_pid_of <"/proc/<pid>/environ"> — sets _SR_PID to <pid> when it
+# is ours and not this shell; rc 1 otherwise. No fork: called per hit.
+_seed_run_pid_of() {
+  _SR_PID="${1#/proc/}"
+  _SR_PID="${_SR_PID%/environ}"
+  [ "$_SR_PID" = "$$" ] && return 1
+  [ "$_SR_PID" = "${BASHPID:-}" ] && return 1
+  [ -O "/proc/$_SR_PID" ]
 }
 
-# _seed_run_sweep <id> — TERM, grace, then KILL every marked process.
-# Echoes how many were found on the first scan.
+# _seed_run_scan <id> — one pass over /proc. Sets:
+#   _SR_MARKED  pids owned by our uid whose environ carries the marker
+#   _SR_UNSURE  1 when some process of ours that is not a zombie reads an
+#               empty environ, else 0
+# An empty environ is what a process shows mid-execve: the kernel installs
+# the new mm before it records env_start/env_end, so for that window (which
+# spans loading ld.so, longer on a cold-cache host) a marked stray reads as
+# unmarked. A setsid stray passes through several execs (setsid, env,
+# bash) right after it forks, exactly when a sweep starts (#621 follow-up).
+# Both greps run in command substitutions, never in a pipeline: a pipeline
+# stage still in its own execve would read empty and look unsure.
+_seed_run_scan() {
+  _SR_MARKED="" _SR_UNSURE=0
+  [ -d /proc/self ] || return 0
+  local out f st
+  # -z: NUL-separated entries; -x: whole entry. Other users' files are
+  # unreadable and skipped.
+  out=$(grep -lzxF -- "TICKET_SEED_RUN_ID=$1" /proc/[0-9]*/environ 2>/dev/null)
+  for f in $out; do
+    _seed_run_pid_of "$f" && _SR_MARKED="$_SR_MARKED $_SR_PID"
+  done
+  # grep -c '' prints <file>:0 only for an empty file.
+  out=$(grep -c '' /proc/[0-9]*/environ 2>/dev/null)
+  for f in $out; do
+    case "$f" in *:0) ;; *) continue ;; esac
+    _seed_run_pid_of "${f%:0}" || continue
+    read -r st 2>/dev/null <"/proc/$_SR_PID/stat" || continue
+    st="${st##*) }"
+    case "${st%% *}" in Z | X) continue ;; esac
+    _SR_UNSURE=1
+    break
+  done
+}
+
+# _seed_run_marked <id> — the marked pids, one per line (abort path, tests).
+_seed_run_marked() {
+  _seed_run_scan "$1"
+  local p
+  for p in $_SR_MARKED; do printf '%s\n' "$p"; done
+}
+
+# _seed_run_sweep <id> — scan every 0.2s until two passes in a row are
+# quiet. A marked pid gets TERM when first seen and KILL once it has
+# outlived SEED_RUN_SWEEP_GRACE_SECS (default 2). For the first
+# SEED_RUN_SWEEP_SETTLE_SECS (default 2) a pass with an unsure process is
+# not quiet, so a stray caught mid-exec is scanned again once it has an
+# environ; past that window unsure processes are ignored (they may be an
+# unrelated env -i process of this user). Hard stop at settle + grace: a
+# final KILL of whatever is still marked. A clean run costs two scans and
+# one 0.2s sleep. Echoes how many distinct marked pids were found.
 _seed_run_sweep() {
-  local id="$1" grace="${SEED_RUN_SWEEP_GRACE_SECS:-2}" pids n=0 p ticks=0
+  local id="$1" grace="${SEED_RUN_SWEEP_GRACE_SECS:-2}" settle="${SEED_RUN_SWEEP_SETTLE_SECS:-2}"
   case "$grace" in '' | *[!0-9]*) grace=2 ;; esac
-  pids=$(_seed_run_marked "$id")
-  if [ -z "$pids" ]; then
+  case "$settle" in '' | *[!0-9]*) settle=2 ;; esac
+  if [ ! -d /proc/self ]; then
     echo 0
     return 0
   fi
-  n=$(printf '%s\n' "$pids" | grep -c .)
-  for p in $pids; do kill -TERM "$p" 2>/dev/null || true; done
-  while [ "$ticks" -lt $((grace * 10)) ]; do
-    pids=$(_seed_run_marked "$id")
-    [ -n "$pids" ] || break
-    sleep 0.1
-    ticks=$((ticks + 1))
-  done
-  # KILL whatever is left, re-scanning until nothing marked remains (bounded).
-  local round=0
-  while [ "$round" -lt 5 ]; do
-    pids=$(_seed_run_marked "$id")
-    [ -n "$pids" ] || break
-    for p in $pids; do kill -KILL "$p" 2>/dev/null || true; done
-    sleep 0.1
-    round=$((round + 1))
+  local -A seen=()
+  local n=0 t=0 quiet=0 p round
+  local grace_t=$((grace * 5)) settle_t=$((settle * 5))
+  local stop_t=$((settle_t + grace_t))
+  while :; do
+    _seed_run_scan "$id"
+    if [ -z "$_SR_MARKED" ] && { [ "$_SR_UNSURE" = 0 ] || [ "$t" -ge "$settle_t" ]; }; then
+      quiet=$((quiet + 1))
+      [ "$quiet" -ge 2 ] && break
+    else
+      quiet=0
+      for p in $_SR_MARKED; do
+        if [ -z "${seen[$p]+x}" ]; then
+          seen[$p]=$t
+          n=$((n + 1))
+          kill -TERM "$p" 2>/dev/null || true
+        elif [ $((t - seen[$p])) -ge "$grace_t" ]; then
+          kill -KILL "$p" 2>/dev/null || true
+        fi
+      done
+    fi
+    if [ "$t" -ge "$stop_t" ]; then
+      round=0
+      while [ "$round" -lt 5 ]; do
+        _seed_run_scan "$id"
+        [ -n "$_SR_MARKED" ] || break
+        for p in $_SR_MARKED; do
+          [ -n "${seen[$p]+x}" ] || n=$((n + 1))
+          seen[$p]=$t
+          kill -KILL "$p" 2>/dev/null || true
+        done
+        sleep 0.1
+        round=$((round + 1))
+      done
+      break
+    fi
+    sleep 0.2
+    t=$((t + 1))
   done
   echo "$n"
 }
