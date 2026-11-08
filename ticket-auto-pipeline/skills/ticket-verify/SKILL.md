@@ -902,7 +902,7 @@ At any point, if a command exits non-zero or the expected output/state is absent
 - What was expected (from the pass criterion)
 - What was observed — quote the relevant lines of build output verbatim (last 20–30 lines, or the specific error block)
 
-Continue executing remaining commands unless the failure makes downstream commands meaningless (e.g. `mvn -N install` failing means every dependent module's `mvn clean compile` will fail for the same reason — note this and skip re-running them).
+Continue with the remaining commands unless the failure makes them meaningless (e.g. a failed `mvn -N install` dooms every dependent module's `mvn clean compile` — note it and skip them).
 
 bash ~/.claude/skills/lib/plog.sh VERIFY execute-steps done "{N} build commands executed"
 
@@ -1213,13 +1213,13 @@ First run Step 5's `verify_lock_release` block (idempotent).
 **Build-only mode:** substitute build diagnostics for the browser ones above — these map onto the same REMEDIATION_BRIEF fields (7c) so downstream skills don't need mode-specific parsing:
 1. **Failed command + exit code** — maps to `CONSOLE_ERRORS` field
 2. **Repo/module + branch** — maps to `CURRENT_URL` field (use `{repo}@{branch}` in place of a URL)
-3. **Last 20–30 lines of captured build output** (the step's `$L` log) — maps to `SNAPSHOT_EXCERPT` field
+3. **Last 20–30 lines of the step's `$L` log** — maps to `SNAPSHOT_EXCERPT`
 4. **Failed step** — step number, expected vs. observed (command + exit code)
 
 **Live-backend mode:** substitute live-check diagnostics for the browser ones above — same field mapping convention as build-only:
 1. **Failed check + exit code/HTTP status** — maps to `CONSOLE_ERRORS` field
 2. **Service/environment + endpoint checked** — maps to `CURRENT_URL` field (use `{service}@{env}` or the endpoint URL)
-3. **Last 20–30 lines of captured check output** (the step's `$L` log), plus `env-status.sh` output at the point of failure — maps to `SNAPSHOT_EXCERPT` field
+3. **Last 20–30 lines of the step's `$L` log**, plus `env-status.sh` output at the failure — maps to `SNAPSHOT_EXCERPT`
 4. **Failed step** — step number, expected vs. observed (check + result)
 
 ### 7b — Write the failure report
@@ -1486,7 +1486,7 @@ A FAIL with a block is a usable signal; a FAIL with no block is an absence of in
 
 ## Notes
 
-- **Isolated worktrees + single-flight lock (Step 1.6a2–1.6a4):** verification runs this ticket's own worktree (`REPOS_ROOT/.verify-worktrees/{repo}/{TICKET-ID}`, never implement's) and holds `lib/verify-lock.sh` (`VERIFY_LOCK_FILE`, default per user in the scratch dir) from stack start through the checks, because the local stack's ports are not namespaced. GC (1.6a2) skips while anyone holds the lock; the destructive worktree resync (1.6a4) runs only under it. All three are skipped when Step 1.6 is. The lock is released at Step 5 or at the earlier exits listed in 1.6a3, and self-expires after `VERIFY_LOCK_MAX_HOLD_SECS` (default 1h).
+- **Isolated worktrees + single-flight lock (Step 1.6a2–1.6a4):** VERIFY runs this ticket's own worktree (`REPOS_ROOT/.verify-worktrees/{repo}/{TICKET-ID}`, never implement's) under `lib/verify-lock.sh` (per-user lock; the stack's ports are not namespaced). GC skips while the lock is held; the 1.6a4 resync runs only under it. Released at Step 5 or the 1.6a3 early exits; self-expires after `VERIFY_LOCK_MAX_HOLD_SECS` (1h).
 - **Session reuse:** If the browser is already open and logged in at the correct environment, skip Step 3b. Detect this from the snapshot — if the nav shows a user name, proceed directly to Step 4.
 - **Snapshot verbosity:** Trim snapshots to the relevant component subtree in all reports. Full snapshots can be hundreds of lines — include only what is needed to understand the failure.
 - **Multiple failing criteria:** If more than one criterion fails, report all of them in 7b and 7c. The WHAT_FAILED and SNAPSHOT_EXCERPT should cover the first failure point; list subsequent failures under a `ADDITIONAL_FAILURES:` key in the brief.
