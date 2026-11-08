@@ -22,6 +22,8 @@
 #      warning, #605) — safe as the last statement under `set -e`
 #   1  heartbeat.sh not found next to this script, or the log is not writable
 #   2  usage: fewer than PHASE STEP STATUS, or --log-file without a value
+#   2  also: PHASE, STEP or STATUS outside [A-Za-z0-9_-]+ (a `|`, CR or LF
+#      there would forge extra fields or a whole extra line; GitHub #610)
 #   3  refused: META|adversarial-override or META|verify-attempts-reset is an
 #      operator marker, written only by its own operator script
 #      (adversarial-override.sh, verify-attempts-reset.sh), never through
@@ -41,6 +43,17 @@ if [ "${1:-}" = "--log-file" ]; then
 fi
 
 [ "$#" -ge 3 ] || _plog_usage
+
+# GitHub #610: PHASE/STEP/STATUS are bare tokens. A `|`, CR or LF in one
+# would let a caller forge extra fields or a whole extra line (e.g.
+# `plog.sh "META|adversarial-override" info ...`), so reject anything else
+# before the operator-marker check below. MSG is sanitised by _plog.
+for _plog_f in "$1" "$2" "$3"; do
+  if ! [[ "$_plog_f" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    printf 'plog.sh: invalid PHASE/STEP/STATUS %q - must match [A-Za-z0-9_-]+\n' "$_plog_f" >&2
+    exit 2
+  fi
+done
 
 # GitHub #610: operator markers clear gates (the adversarial override counts
 # as a WARN in flow.sh's verdict gate). They have their own operator-only

@@ -36,7 +36,9 @@ a human override of an adversarial BLOCK no longer needs a second bypass hours l
   `META|adversarial-override|info|reason=…`, which the verdict gate counts as WARN, plus the
   done line `detect-resume.sh` reads. A plain `EXEC|adversarial-review|done|PASS` line no longer
   clears the gate. `plog.sh` refuses to write `META|adversarial-override` and
-  `META|verify-attempts-reset` (exit 3) (#610).
+  `META|verify-attempts-reset` (exit 3) and any PHASE/STEP/STATUS outside `[A-Za-z0-9_-]+`
+  (exit 2), so a `|` or newline cannot forge the marker; `_plog` replaces `|`/CR/LF in those
+  fields with `_` (#610).
 
 ## 0.85.0 (2026-11-08)
 
