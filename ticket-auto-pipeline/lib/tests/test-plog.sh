@@ -142,6 +142,37 @@ expect "11a: TAP_LOG is the fallback target" "ISO|GATE|g|done|ok" "$(mask "$TMP/
 expect "11b: unsubstituted placeholder falls back" "ISO|GATE|g|done|ok" "$(mask "$TMP/t11b.log")"
 if [ ! -e "{LOG_FILE}" ]; then pass "11c: no file named {LOG_FILE}"; else fail "11c: no file named {LOG_FILE}" "created"; fi
 
+# ── 12. Lost env in a later agent Bash call (GitHub #605) ────────────────────
+# No LOG_FILE/TAP_LOG: recover the path from the spawn-meta file when
+# TICKET_ID is known, and warn on stderr when the line really is dropped.
+# spawn-helper.sh always writes the meta file under /tmp, so the test does too,
+# under an id unique to this run.
+T12_ID="PLOGTEST-$$"
+T12_META="/tmp/ticket-auto-${T12_ID}-spawn-meta.txt"
+trap 'rm -rf "$TMP"; rm -f "$T12_META"' EXIT
+printf 'PHASE=MAINTENANCE\nTICKET_ID=%s\nLOG_FILE=%s\nCLOSED=0\n' "$T12_ID" "$TMP/t12.log" >"$T12_META"
+rc=0
+err=$(env -u LOG_FILE -u TAP_LOG TICKET_ID="$T12_ID" TICKET_TMP_DIR="$TMP/elsewhere" \
+  bash "$PLOG" MAINTENANCE document start "" 2>&1) || rc=$?
+expect "12a: recovered from spawn-meta, exit 0" "0" "$rc"
+expect "12b: line written to spawn-meta LOG_FILE" "ISO|MAINTENANCE|document|start|" "$(mask "$TMP/t12.log" 2>/dev/null || true)"
+expect "12c: no warning when recovered" "" "$err"
+rc=0
+err=$(env -u LOG_FILE -u TAP_LOG -u TICKET_ID \
+  bash "$PLOG" MAINTENANCE document start "" 2>&1 >/dev/null) || rc=$?
+expect "12d: dropped line still exits 0" "0" "$rc"
+case "$err" in
+*"line dropped: MAINTENANCE|document|start"*) pass "12e: dropped line warns on stderr" ;;
+*) fail "12e: dropped line warns on stderr" "stderr was '$err'" ;;
+esac
+rc=0
+err=$(env -u LOG_FILE -u TAP_LOG TICKET_ID="PLOGTEST-NOMETA-$$" \
+  bash "$PLOG" IMPLEMENT x done ok 2>&1 >/dev/null) || rc=$?
+case "${rc}:${err}" in
+"0:"*"line dropped"*) pass "12f: TICKET_ID without spawn-meta warns, exit 0" ;;
+*) fail "12f: TICKET_ID without spawn-meta" "rc=$rc stderr='$err'" ;;
+esac
+
 echo ""
 echo "plog: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

@@ -786,6 +786,20 @@ phase_bracket_open() {
 #
 # PHASE and STEP are normalized here (phase uppercased, step lowercased) rather
 # than by the caller, so both callers produce byte-identical lines.
+
+# _phase_gate_stopped_in_bracket <log> <PHASE> — rc 0 when a META|gate-stop|fail
+# line follows the phase's last |PHASE|<step>|waiting| line (GitHub #611).
+# rc 1 otherwise, including no log or no open bracket.
+_phase_gate_stopped_in_bracket() {
+  local log="$1" phase="$2"
+  [ -n "$log" ] && [ -f "$log" ] || return 1
+  awk -F'|' -v p="$phase" '
+    $2 == p && $4 == "waiting" { opened = 1; stopped = 0; next }
+    opened && $2 == "META" && $3 == "gate-stop" && $4 == "fail" { stopped = 1 }
+    END { exit (stopped ? 0 : 1) }
+  ' "$log" 2>/dev/null
+}
+
 phase_terminal_write() {
   local PHASE="" STEP="" RESULT="" MSG="" VERDICT="" NEXT_PHASE=""
   local FAIL_ACTION="" LOG_FILE="" HB_LOG_FILE="" CLAUDE_LOG_FILE=""
@@ -875,7 +889,11 @@ phase_terminal_write() {
       local last_hb="unknown"
       [ -n "${HB_LOG_FILE:-}" ] && [ -f "$HB_LOG_FILE" ] && last_hb=$(tail -1 "$HB_LOG_FILE" 2>/dev/null | cut -d'|' -f2-4 || echo "unknown")
       cl_write "$phase_upper" "context" "fail" "${phase_lower:-agent} agent failed (${fail_action}) — last_hb: ${last_hb}"
-      if [ "$fail_action" = "stop" ]; then
+      # A META|gate-stop written inside this phase's bracket (after its last
+      # |waiting| line) means the agent returned and the stop was a designed
+      # gate (e.g. ADVERSARIAL_BLOCKED), not a spawn failure — no hint then,
+      # or retro goes hunting for a spawn bug that does not exist (#611).
+      if [ "$fail_action" = "stop" ] && ! _phase_gate_stopped_in_bracket "${LOG_FILE:-}" "$phase_upper"; then
         cl_write RETRO hint info "sub-agent spawn failure in $phase_upper phase — check agent isolation, tool availability, and CLAUDE_LOG_FILE export for diagnostics"
       fi
     fi

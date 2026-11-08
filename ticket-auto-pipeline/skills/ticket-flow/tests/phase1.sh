@@ -1144,6 +1144,63 @@ test_flow_illegal_transition_warn_array_from_is_non_fatal() {
   fi
 }
 
+# ── Unset REPOS_ROOT fails fast (GitHub #608) ───────────────────────────────
+# Without REPOS_ROOT the manifest readers return rc 3, which the `|| true`
+# guards treated as "no manifest yet": a misleading ILLEGAL_TRANSITION
+# "from <none>" was logged and the write then died with a bare exit 1. Now:
+# exit 13, a stderr message naming REPOS_ROOT, one META|flow-error line, no
+# ILLEGAL_TRANSITION, no manifest change.
+test_flow_repos_root_unset_fails_fast() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs"
+  _flow_seed_manifest "$tmpdir/repos" WIL-98
+  local manifest before after
+  manifest=$(_flow_manifest_path "$tmpdir/repos" WIL-98)
+  _flow_set_manifest_field "$manifest" '.stage = "Ready" | .rev = 4'
+  before=$(cat "$manifest")
+  local log="$tmpdir/logs/WIL-98-pipeline.log"
+  local rc=0 err
+  err=$(env -u REPOS_ROOT FLEET_FENCE_ENFORCE=false FLEET_BOARD_DRIVERS=none \
+    CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" LOG_FILE="$log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" FLEET_PIPELINE_LOG_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-98 implement-complete 2>&1 >/dev/null) || rc=$?
+  after=$(cat "$manifest")
+  local illegal flow_err
+  illegal=$(grep -c 'ILLEGAL_TRANSITION' "$log" 2>/dev/null || true)
+  # flow-refused, not flow-error: flow-run.sh writes the flow-error line for
+  # this exit, and pipeline-postmortem.sh would count both.
+  flow_err=$(grep -c '|META|flow-refused|fail|REPOS_ROOT_UNSET trigger=implement-complete' "$log" 2>/dev/null || true)
+  local dup_err first
+  dup_err=$(grep -c '|META|flow-error|' "$log" 2>/dev/null || true)
+  first=$(head -1 "$log" 2>/dev/null | cut -d'|' -f2-4)
+  local outbox_lines
+  outbox_lines=$(cat "$tmpdir/logs/"*outbox* 2>/dev/null | wc -l | tr -d ' ')
+  rm -rf "$tmpdir"
+  if [ "$rc" -ne 13 ] || [[ "$err" != *"REPOS_ROOT is not set"* ]] || [ "${illegal:-0}" -ne 0 ] ||
+    [ "${flow_err:-0}" -ne 1 ] || [ "${dup_err:-0}" -ne 0 ] || [ "$first" != "META|schema|info" ] ||
+    [ "$before" != "$after" ] || [ "$outbox_lines" -ne 0 ]; then
+    echo "rc=$rc illegal=$illegal flow_refused=$flow_err flow_error=$dup_err first=$first outbox=$outbox_lines err=$err" >&2
+    [ "$before" = "$after" ] || echo "manifest changed: $after" >&2
+    return 1
+  fi
+}
+
+# With REPOS_ROOT set and no manifest yet, appraise-start still bootstraps
+# the ticket (the rc 1 "no manifest yet" path is unchanged).
+test_flow_repos_root_set_no_manifest_still_works() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/repos"
+  local rc=0
+  _flow_run "$tmpdir" WIL-97 appraise-start --data complexity=simple >/dev/null 2>&1 || rc=$?
+  local stage
+  stage=$(jq -r '.stage // empty' \
+    "$tmpdir/repos/.ticket-auto/initiatives/_adhoc/tickets/WIL-97/planner/manifest.json" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] && [ "$stage" = "Todo" ]
+}
+
 # ── needs-info round-trip (human-hold-protocol task 7.4) ───────────────────
 # human-hold-protocol reuses `needs-info` unchanged as the human-signal
 # flag for a hold — set adds it to the manifest's flags, resolved removes
@@ -1848,6 +1905,8 @@ for fn in \
   test_flow_uat_pass_writes_stage \
   test_flow_adhoc_ticket_gets_manifest_via_flow \
   test_flow_illegal_transition_warn_array_from_is_non_fatal \
+  test_flow_repos_root_unset_fails_fast \
+  test_flow_repos_root_set_no_manifest_still_works \
   test_needs_info_set_adds_the_flag \
   test_needs_info_resolved_removes_the_flag \
   test_needs_info_does_not_change_stage \
