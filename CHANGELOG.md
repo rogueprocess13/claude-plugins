@@ -30,12 +30,18 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
   Step 1. fleetd's `last_verify_checkpoint` applies the same
   mapping, with parity fixtures. `ticket-verify` SKILL.md states the
   unknown-value rule (size-neutral). (#620)
-- **`ticket-auto-pipeline`** — the VERIFY lock is ticket-aware. When
-  `verify_lock_acquire` finds a live holder for the same ticket (an earlier
-  attempt's orphaned holder after a crash), it stops that holder through its
-  stop file, waits a few seconds at most for the flock to free, and acquires
-  fresh. It no longer waits on itself until it times out. A holder for another
-  ticket is never signalled and still blocks as before. New helper:
+- **`ticket-auto-pipeline`** — the VERIFY lock is ticket-aware. The holder
+  info now records the lock's owner: the process alive exactly as long as the
+  invocation that took it (`FLEET_WORKER_PID` under fleetd, else the nearest
+  `claude` ancestor, with its start time to catch pid reuse). When
+  `verify_lock_acquire` finds a live holder for the same ticket whose owner is
+  dead (a crashed attempt's orphan), it stops that holder through its stop
+  file, waits a few seconds at most for the flock to free, and acquires fresh.
+  It no longer waits on itself until it times out. If the owner is alive (a
+  zombie VERIFY may still be serving the worktree) or unknown (an info file
+  written before this change), it does not take over: it waits as before and
+  writes a `META|verify-lock-self-wait|warn` line to `TAP_LOG`. A holder for
+  another ticket is never signalled and still blocks as before. New helper:
   `verify_lock_held_by <TID>`. `ticket-verify` re-runs the Step 1.6a3 lock
   block on every resume past Step 1.6 (`build-plan`, or a 4c/4c-live
   `execute-steps` re-entry), so the criterion loop never runs unlocked, and
