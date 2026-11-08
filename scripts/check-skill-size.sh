@@ -41,7 +41,9 @@
 #                        (default origin/main; --base-file overrides it)
 #   --strict             SLACK, STALE and CONTEXT-SLACK fail instead of warn
 #   --regenerate         rewrite both baselines: min(actual, previous), add new
-#                        paths within the ceiling, drop removed paths; never raises
+#                        paths within the ceiling, drop removed paths; never raises.
+#                        Collapses duplicate rows to one (min value, all comments)
+#   (check mode fails with DUPLICATE: on a key listed twice in either baseline)
 #
 # Exit codes:
 #   0  within budget (warnings may have been printed)
@@ -246,37 +248,58 @@ done
 
 # ── Baseline parsing ────────────────────────────────────────────────────────
 # Comment lines directly above an entry (no blank line between) attach to it.
-declare -A B_BYTES=() B_LINES=() B_COMMENTS=() B_PREV=()
+# A key may appear more than once: .gitattributes merges these files with
+# merge=union, which keeps both copies when two branches change the same row.
+# A repeated key takes the min of each value (the stricter ratchet) and the
+# union of every copy's comment lines, de-duplicated in first-seen order.
+# Check mode fails on any duplicate; --regenerate collapses them.
+declare -A B_BYTES=() B_LINES=() B_COMMENTS=() B_DUPS=()
 B_ORDER=()
-_load_baseline() { # $1=file $2=bytes-array-name $3=lines-array-name ($3 may be "")
-  local file="$1" line pending="" prev="" p v l
-  local -n _bb="$2"
+_load_baseline() { # $1=file $2=values $3=lines ("" for none) $4=comments $5=order $6=dups
+  local file="$1" line pending="" p v l c
+  local -n _lb_v="$2" _lb_c="$4" _lb_o="$5" _lb_d="$6"
+  [ -z "$3" ] || local -n _lb_l="$3"
   [ -r "$file" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
-    '') pending="" prev="" ;;
-    '#'*)
-      pending+="$line"$'\n'
-      prev="$line"
-      ;;
+    '') pending="" ;;
+    '#'*) pending+="$line"$'\n' ;;
     *)
       IFS=$'\t' read -r p v l <<<"$line"
-      _bb[$p]="$v"
-      if [ -n "$3" ]; then
-        local -n _bl="$3"
-        _bl[$p]="${l:-0}"
+      l="${l:-0}"
+      if [ -z "${_lb_v[$p]+x}" ]; then
+        _lb_v[$p]="$v"
+        [ -z "$3" ] || _lb_l[$p]="$l"
+        _lb_c[$p]="$pending"
+        _lb_o+=("$p")
+        _lb_d[$p]=1
+      else
+        [ "$v" -ge "${_lb_v[$p]}" ] || _lb_v[$p]="$v"
+        if [ -n "$3" ] && [ "$l" -lt "${_lb_l[$p]}" ]; then _lb_l[$p]="$l"; fi
+        while IFS= read -r c; do
+          [ -n "$c" ] || continue
+          grep -qxF -- "$c" <<<"${_lb_c[$p]}" || _lb_c[$p]+="$c"$'\n'
+        done <<<"$pending"
+        _lb_d[$p]=$((_lb_d[$p] + 1))
       fi
-      if [ "$2" = B_BYTES ]; then
-        B_COMMENTS[$p]="$pending"
-        B_PREV[$p]="$prev"
-        B_ORDER+=("$p")
-      fi
-      pending="" prev=""
+      pending=""
       ;;
     esac
   done <"$file"
 }
-_load_baseline "$BASELINE" B_BYTES B_LINES
+# The comment line directly above an entry once written: the last attached one.
+_prev_comment() { # $1=comments block
+  local c="${1%$'\n'}"
+  printf '%s' "${c##*$'\n'}"
+}
+_report_dups() { # $1=file $2=order $3=dups
+  local -n _rd_o="$2" _rd_d="$3"
+  local p
+  for p in "${_rd_o[@]}"; do
+    [ "${_rd_d[$p]}" -le 1 ] || _fail "DUPLICATE: $p (${_rd_d[$p]} rows) in $(basename "$1") — run make skill-baseline"
+  done
+}
+_load_baseline "$BASELINE" B_BYTES B_LINES B_COMMENTS B_ORDER B_DUPS
 
 _is_skill_path() { _matches_any "$1" "${SKILL_GLOBS[@]}"; }
 _over_ceiling() { [ "$1" -gt "$CEILING_BYTES" ] || [ "$2" -gt "$CEILING_LINES" ]; }
@@ -346,14 +369,18 @@ if [ "$REGENERATE" -eq 1 ]; then
   mv "$tmp" "$BASELINE"
 
   if [ -f "$TABLE" ]; then
-    declare -A CB=()
-    _load_baseline "$CONTEXT_BASELINE" CB ""
+    declare -A CB=() CB_COMMENTS=() CB_DUPS=()
+    CB_ORDER=()
+    _load_baseline "$CONTEXT_BASELINE" CB "" CB_COMMENTS CB_ORDER CB_DUPS
     ctmp="$CONTEXT_BASELINE.tmp"
     : >"$ctmp"
     while IFS= read -r m; do
       [ -n "$m" ] || continue
       v="${C_ACTUAL[$m]}"
-      [ -z "${CB[$m]+x}" ] || v="$(_min "$v" "${CB[$m]}")"
+      if [ -n "${CB[$m]+x}" ]; then
+        v="$(_min "$v" "${CB[$m]}")"
+        printf '%s' "${CB_COMMENTS[$m]}" >>"$ctmp"
+      fi
       printf '%s\t%s\n' "$m" "$v" >>"$ctmp"
     done < <(printf '%s\n' "${C_ORDER[@]}" | LC_ALL=C sort)
     mv "$ctmp" "$CONTEXT_BASELINE"
@@ -376,6 +403,7 @@ for f in "${FILES[@]}"; do
     [ "$ab" -le "$CEILING_BYTES" ] || _fail "CEILING: $f bytes $ab > $CEILING_BYTES"
   fi
 done
+_report_dups "$BASELINE" B_ORDER B_DUPS
 for p in "${B_ORDER[@]}"; do
   [ -n "${KIND[$p]+x}" ] || _soft "STALE: $p is in the baseline but no longer exists"
 done
@@ -392,10 +420,11 @@ else
   fi
 fi
 if [ "$base_ok" -eq 1 ]; then
-  declare -A R_BYTES=() R_LINES=()
-  _load_baseline <(printf '%s\n' "$base_content") R_BYTES R_LINES
+  declare -A R_BYTES=() R_LINES=() R_COMMENTS=() R_DUPS=()
+  R_ORDER=()
+  _load_baseline <(printf '%s\n' "$base_content") R_BYTES R_LINES R_COMMENTS R_ORDER R_DUPS
   for p in "${B_ORDER[@]}"; do
-    case "${B_PREV[$p]}" in '# allow-growth: '?*) continue ;; esac
+    case "$(_prev_comment "${B_COMMENTS[$p]}")" in '# allow-growth: '?*) continue ;; esac
     if [ -n "${R_BYTES[$p]+x}" ]; then
       if [ "${B_BYTES[$p]}" -gt "${R_BYTES[$p]}" ] || [ "${B_LINES[$p]}" -gt "${R_LINES[$p]}" ]; then
         _fail "RAISE: $p ${B_BYTES[$p]}/${B_LINES[$p]} > base ${R_BYTES[$p]}/${R_LINES[$p]} — add '# allow-growth: <reason>' above the entry"
@@ -526,8 +555,10 @@ done
 
 # ── Effective context ───────────────────────────────────────────────────────
 if [ "${#C_ORDER[@]}" -gt 0 ]; then
-  declare -A CB=()
-  _load_baseline "$CONTEXT_BASELINE" CB ""
+  declare -A CB=() CB_COMMENTS=() CB_DUPS=()
+  CB_ORDER=()
+  _load_baseline "$CONTEXT_BASELINE" CB "" CB_COMMENTS CB_ORDER CB_DUPS
+  _report_dups "$CONTEXT_BASELINE" CB_ORDER CB_DUPS
   for m in "${C_ORDER[@]}"; do
     v="${C_ACTUAL[$m]}"
     echo "CONTEXT: $m $v"

@@ -192,6 +192,74 @@ test_regen_preserves_comment() {
   grep -B1 -F "$S1" "$(BL)" | head -1 | grep -qx '# allow-growth: kept'
 }
 
+# ── Duplicate rows (merge=union leftovers) ─────────────────────────────────
+_dup_entry() { # <path> <bytes> <lines> — append a second, comment-free copy
+  printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$(BL)"
+}
+test_dup_last_higher_uses_min() {
+  _mk_repo
+  local b l
+  IFS=$'\t' read -r _ b l <<<"$(_entry "$S1")"
+  _dup_entry "$S1" $((b + 100)) $((l + 5))
+  echo "extra" >>"$D/$S1"
+  _run
+  # The min (original) value still governs, so the growth is caught.
+  [ "$RC" -eq 1 ] && _has "GROWTH: $S1 lines $((l + 1)) > $l"
+}
+test_dup_check_mode_reports() {
+  _mk_repo
+  local b l
+  IFS=$'\t' read -r _ b l <<<"$(_entry "$S1")"
+  _dup_entry "$S1" "$b" "$l"
+  printf 's1\t99999999\n' >>"$(CBL)"
+  _run
+  [ "$RC" -eq 1 ] && _has "DUPLICATE: $S1 (2 rows) in skill-size-baseline.tsv" &&
+    _has "DUPLICATE: s1 (2 rows) in skill-context-baseline.tsv"
+}
+test_dup_regen_keeps_exception_note() {
+  _mk_repo
+  _skill "$D/plugin-a/skills/big/SKILL.md" big 600
+  _regen --allow-over-ceiling >/dev/null 2>&1
+  local big=plugin-a/skills/big/SKILL.md b l
+  awk -v p="$big" 'index($0, p "\t") == 1 { print "# exception: grandfathered router" } { print }' \
+    "$(BL)" >"$(BL).t" && mv "$(BL).t" "$(BL)"
+  IFS=$'\t' read -r _ b l <<<"$(_entry "$big")"
+  _dup_entry "$big" $((b + 100)) "$l"
+  _regen >/dev/null 2>&1
+  _run
+  [ "$(grep -c '^# exception: grandfathered router$' "$(BL)")" -eq 1 ] &&
+    grep -B1 -F "$big" "$(BL)" | head -1 | grep -qx '# exception: grandfathered router' &&
+    [ "$(_entry "$big" | cut -f2)" = "$b" ] && _has "grandfathered router"
+}
+test_dup_regen_merges_comments() {
+  _mk_repo
+  local b l
+  IFS=$'\t' read -r _ b l <<<"$(_entry "$S1")"
+  awk -v p="$S1" 'index($0, p "\t") == 1 { print "# note: one" } { print }' \
+    "$(BL)" >"$(BL).t" && mv "$(BL).t" "$(BL)"
+  printf '# note: one\n# note: two\n' >>"$(BL)"
+  _dup_entry "$S1" "$b" "$l"
+  printf '# ctx: kept\ns1\t99999999\n' >>"$(CBL)"
+  _regen >/dev/null 2>&1
+  [ "$(grep -c '^# note: one$' "$(BL)")" -eq 1 ] &&
+    [ "$(grep -c '^# note: two$' "$(BL)")" -eq 1 ] &&
+    grep -B1 -F "$S1" "$(BL)" | head -1 | grep -qx '# note: two' &&
+    grep -B1 '^s1' "$(CBL)" | head -1 | grep -qx '# ctx: kept'
+}
+test_dup_regen_unique_keys() {
+  _mk_repo
+  local b l
+  IFS=$'\t' read -r _ b l <<<"$(_entry "$S1")"
+  _dup_entry "$S1" $((b + 1)) "$l"
+  _dup_entry "$S1" "$b" $((l + 1))
+  printf 's1\t99999999\n' >>"$(CBL)"
+  _regen >/dev/null 2>&1
+  _run
+  [ -z "$(grep -v '^#' "$(BL)" | cut -f1 | sort | uniq -d)" ] &&
+    [ -z "$(grep -v '^#' "$(CBL)" | cut -f1 | sort | uniq -d)" ] &&
+    [ "$(_entry "$S1")" = "$S1"$'\t'"$b"$'\t'"$l" ] && [ "$RC" -eq 0 ] && ! _has "DUPLICATE:"
+}
+
 # ── Slack (1.5) ────────────────────────────────────────────────────────────
 test_slack_warns() {
   _mk_repo
