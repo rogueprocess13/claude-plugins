@@ -17,8 +17,9 @@
 # `set -e` caller when LOG_FILE is empty.
 #
 # Exit codes:
-#   0  line written, or no log file configured (LOG_FILE empty: a no-op, like
-#      `_plog` itself) — safe as the last statement under `set -e`
+#   0  line written, or no log file configured (LOG_FILE/TAP_LOG empty and no
+#      spawn-meta LOG_FILE for $TICKET_ID: the line is dropped with a stderr
+#      warning, #605) — safe as the last statement under `set -e`
 #   1  heartbeat.sh not found next to this script, or the log is not writable
 #   2  usage: fewer than PHASE STEP STATUS, or --log-file without a value
 
@@ -52,7 +53,21 @@ fi
 # --log-file does, instead of creating a file literally named that.
 case "${LOG_FILE:-}" in "{"*"}") LOG_FILE="" ;; esac
 LOG_FILE="${LOG_FILE:-${TAP_LOG:-}}"
+# GitHub #605: an agent's Bash calls do not keep env vars between calls, so a
+# call that did not re-source the env file has no log path. Recover it from
+# the router's spawn-meta file when TICKET_ID is known; otherwise say on
+# stderr that the line was dropped instead of losing it silently. Still
+# exit 0: a missing log must not abort a `set -e` caller.
+if [ -z "${LOG_FILE:-}" ] && [ -n "${TICKET_ID:-}" ]; then
+  # Same fixed path spawn_agent_pre writes (lib/spawn-helper.sh).
+  _plog_meta="/tmp/ticket-auto-${TICKET_ID}-spawn-meta.txt"
+  if [ -f "$_plog_meta" ]; then
+    LOG_FILE=$(sed -n 's/^LOG_FILE=//p' "$_plog_meta" 2>/dev/null | head -1)
+    case "$LOG_FILE" in "{"*"}") LOG_FILE="" ;; esac
+  fi
+fi
 if [ -z "${LOG_FILE:-}" ]; then
+  echo "plog.sh: WARNING no pipeline log (TAP_LOG/LOG_FILE unset; source /tmp/ticket-auto-<ID>-env.sh or pass --log-file) - line dropped: $1|$2|$3" >&2
   exit 0
 fi
 
