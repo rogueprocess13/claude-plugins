@@ -17,6 +17,18 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.46.4 (2026-11-09)
+
+### Changed
+
+- `test_supervisor.py` runs in ~36s instead of ~146s, same 218 tests (next.md
+  Step 17, item 2). Kill tests use a 0.2s grace and wait for the worker to
+  ignore SIGINT/SIGTERM before expecting a SIGKILL; fixed sleeps became polls
+  for an exited (gone or zombie) worker; the CLI kill-request test sets
+  `FLEET_KILL_GRACE_SECS=0`. `supervisor.py`'s fixed 1s wait after the final
+  SIGKILL is now the module constant `KILL_SIGKILL_WAIT_SECS` (still 1), so
+  tests can lower it. No behaviour change.
+
 ## Repo tooling (2026-11-09) — no plugin release
 
 ### Changed
