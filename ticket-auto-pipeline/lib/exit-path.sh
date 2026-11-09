@@ -147,7 +147,7 @@ _derive_failure_class_evidence() {
   # 1. human_intervention — a hold with no corresponding release entry. A
   #    released hold never leaves `held: human` as the *final* outcome line
   #    (pipeline-finalize.sh only ever writes it for an unreleased request).
-  if echo "$outcome" | grep -q '^held: human'; then
+  if grep -q '^held: human' <<<"$outcome"; then
     echo "human_intervention"
     return
   fi
@@ -177,7 +177,7 @@ _derive_failure_class_evidence() {
   fi
 
   # 3. approval_gate — a revoked approval, or held at the gate with no resume.
-  if echo "$outcome" | grep -q '^held: gate'; then
+  if grep -q '^held: gate' <<<"$outcome"; then
     echo "approval_gate"
     return
   fi
@@ -260,7 +260,7 @@ _derive_failure_class_evidence() {
   # 8. timeout — a fleet-kill whose recorded reason names a stall or
   #    watchdog anomaly (run-failure-classification SC7; the anomaly reaches
   #    this outcome line via fleet-monitor.sh's kill-reason threading).
-  if [ "$exit_path" = "fleet-kill" ] && echo "$outcome" | grep -qiE 'stall|watchdog'; then
+  if [ "$exit_path" = "fleet-kill" ] && grep -qiE 'stall|watchdog' <<<"$outcome"; then
     echo "timeout"
     return
   fi
@@ -341,7 +341,7 @@ derive_failure_class() {
   #    RETURN_INCOMPLETE branch inside it already special-cased for itself
   #    alone. Checked first so every later branch inherits the guarantee
   #    instead of needing its own copy of it.
-  if echo "$outcome" | grep -q '^completed:'; then
+  if grep -q '^completed:' <<<"$outcome"; then
     # Breadcrumb only when the override actually did something — a clean
     # run's evidence chain already returns "none" on its own, and logging
     # a no-op override on every completed run would just be noise nothing

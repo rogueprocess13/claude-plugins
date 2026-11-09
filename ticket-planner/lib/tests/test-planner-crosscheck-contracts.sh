@@ -618,6 +618,25 @@ else
   pass "entry point: missing artifacts dir returns 1"
 fi
 
+# GitHub #640: `printf '%s' "$block" | grep -qiE` under pipefail returned 141
+# once grep -q matched an early line while printf was still writing, so a
+# deferential paragraph read as non-deferential (every time for a big block).
+echo "--- large paragraph with an early deferential phrase, under pipefail ---"
+big_block="This shape is modeled on the existing \`AuditEvent\` record."$'\n'
+big_block+=$(printf 'filler line for size filler line for size filler line\n%.0s' $(seq 1 4000))
+_sp_fail=0
+for _ in 1 2 3 4 5; do
+  (
+    set -o pipefail
+    _planner_crosscheck_contracts_is_deferential "$big_block"
+  ) || _sp_fail=$((_sp_fail + 1))
+done
+if [ "$_sp_fail" -eq 0 ]; then
+  pass "is_deferential: ${#big_block}-byte block with an early match matches under pipefail"
+else
+  fail "is_deferential: large block under pipefail" "missed in $_sp_fail/5 runs (SIGPIPE from printf | grep -q)"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

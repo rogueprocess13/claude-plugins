@@ -670,10 +670,11 @@ _planner_refinement_logged() {
   local log_file
   log_file=$(planner_state_log "$initiative_id" 2>/dev/null) || return 1
   [ -f "$log_file" ] || return 1
-  grep -F "$prefix" "$log_file" 2>/dev/null |
-    grep -F "${prefix}${tid} " 2>/dev/null |
-    grep -F "${needle}" 2>/dev/null |
-    grep -qF "[${hash8}]" 2>/dev/null
+  grep -qF "[${hash8}]" 2>/dev/null < <(
+    grep -F "$prefix" "$log_file" 2>/dev/null |
+      grep -F "${prefix}${tid} " 2>/dev/null |
+      grep -F "${needle}" 2>/dev/null
+  )
 }
 
 # _planner_refinement_note_round <INIT> <TID>
@@ -789,9 +790,10 @@ _planner_refinement_note_testdata() {
   local log_file
   log_file=$(planner_state_log "$initiative_id" 2>/dev/null) || log_file=""
   if [ -n "$log_file" ] && [ -f "$log_file" ]; then
-    if grep -F '|META|refinement-testdata|warn|' "$log_file" 2>/dev/null |
-      grep -F "${tid} TEST_DATA_GAP" 2>/dev/null |
-      grep -qF "[${hash8}]" 2>/dev/null; then
+    if grep -qF "[${hash8}]" 2>/dev/null < <(
+      grep -F '|META|refinement-testdata|warn|' "$log_file" 2>/dev/null |
+        grep -F "${tid} TEST_DATA_GAP" 2>/dev/null
+    ); then
       return 0
     fi
   fi

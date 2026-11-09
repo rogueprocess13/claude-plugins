@@ -373,7 +373,7 @@ _detect_mislabel() {
   fi
 
   # Smooth outcome + failure evidence = mislabeled
-  if [ "$_has_failure" = "true" ] && echo "$_outcome_label" | grep -qi 'smooth'; then
+  if [ "$_has_failure" = "true" ] && grep -qi 'smooth' <<<"$_outcome_label"; then
     echo "true"
     return
   fi

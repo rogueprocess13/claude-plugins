@@ -142,7 +142,7 @@ _ac_check_hedging() {
   local lc
   lc=$(echo "$decision" | tr '[:upper:]' '[:lower:]')
   for hedge in $_ADR_HEDGES; do
-    if echo "$lc" | grep -qE "(^|[^a-z])${hedge}([^a-z]|\$)"; then
+    if grep -qE "(^|[^a-z])${hedge}([^a-z]|\$)" <<<"$lc"; then
       _ac_finding "$file" "HEDGED_DECISION" "contains hedging modal '${hedge}'"
       return 0
     fi

@@ -35,7 +35,7 @@ planner_validate_initiative_id() {
   esac
 
   # Reject if it doesn't match the expected pattern
-  if ! echo "$id" | grep -qE "$PLANNER_ID_PATTERN"; then
+  if ! grep -qE "$PLANNER_ID_PATTERN" <<<"$id"; then
     echo "ERROR: initiative ID '$id' does not match expected pattern ${PLANNER_ID_PATTERN}" >&2
     return 1
   fi
@@ -668,7 +668,7 @@ planner_state_repair() {
     fi
 
     # Validate ISO timestamp
-    if ! echo "$iso" | grep -qE "$iso_pattern" 2>/dev/null; then
+    if ! grep -qE "$iso_pattern" <<<"$iso" 2>/dev/null; then
       dropped=$((dropped + 1))
       echo "planner-state-repair: dropping line $line_count — invalid ISO: $iso" >&2
       continue
@@ -686,7 +686,7 @@ planner_state_repair() {
     fi
 
     # Validate status
-    if ! echo " $valid_statuses " | grep -q " $status " 2>/dev/null; then
+    if ! grep -q " $status " <<<" $valid_statuses " 2>/dev/null; then
       dropped=$((dropped + 1))
       echo "planner-state-repair: dropping line $line_count — invalid status: $status" >&2
       continue

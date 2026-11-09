@@ -1622,6 +1622,37 @@ done
   _pass "dor-check: >64KB inputs still match under pipefail (no SIGPIPE false miss)" ||
   _fail "dor-check: >64KB inputs reported a false miss under pipefail"
 
+# GitHub #640: the same race in audit_test_data_check (sourced by dor-check),
+# which matched each assumption pattern with `echo "$lower_text" | grep -qE`
+# over the whole ticket text.
+_big_ok=0
+for _i in 1 2 3 4 5; do
+  (
+    set -o pipefail
+    audit_test_data_check $'Open an existing handover and save it.\n'"${_big_pad}" >/dev/null
+    [ "$NEEDS_TEST_DATA" = "true" ]
+  ) || _big_ok=1
+done
+[ "$_big_ok" = "0" ] &&
+  _pass "audit_test_data_check: >64KB ticket text with an early assumption matches under pipefail" ||
+  _fail "audit_test_data_check: >64KB ticket text reported no assumption under pipefail"
+
+# GitHub #640: the constraints dimension's numeric-bound check runs per AC
+# line; a large body with an early bounded AC must still score it.
+_big_body=$'## Summary\nFast saves.\n\n## Acceptance Criteria\n- [ ] Save completes within 200 ms\n\n## Notes\n'"${_big_pad}"$'\n'
+_write_body "$TMP_ROOT/big-body.md" "$_big_body"
+_big_ok=0
+for _i in 1 2 3; do
+  (
+    set -o pipefail
+    check_ticket_ready "BIG-1" --body "$TMP_ROOT/big-body.md" --type chore --no-fetch >/dev/null 2>&1 || true
+    jq -e '.constraints == 5' <<<"$DOR_DIMENSIONS" >/dev/null
+  ) || _big_ok=1
+done
+[ "$_big_ok" = "0" ] &&
+  _pass "dor-check: >64KB body still scores an early numeric-bound AC under pipefail" ||
+  _fail "dor-check: >64KB body lost the numeric-bound AC under pipefail"
+
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

@@ -324,7 +324,7 @@ planner_telemetry_sync() {
     [ -n "$line" ] || continue
     local k
     k=$(printf '%s' "$line" | jq -r '[.phase, .started_at, .ended_at, .outcome, (.agents | tostring)] | join("|")')
-    if printf '%s\n' "$seen" | grep -Fxq -- "$k"; then
+    if grep -Fxq -- "$k" <<<"$seen"; then
       continue
     fi
     _prt_append "$runs" "$line"

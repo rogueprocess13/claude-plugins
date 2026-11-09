@@ -21,7 +21,7 @@ assert_contains() {
   local desc="$1" output="$2" key="$3" expected="$4"
   local actual
   actual=$(echo "$output" | grep "^${key}=" | cut -d'=' -f2-)
-  if echo "$actual" | grep -q "$expected"; then
+  if grep -q "$expected" <<<"$actual"; then
     PASS=$((PASS + 1))
     echo "  PASS: $desc"
   else
@@ -430,7 +430,7 @@ assert_count() {
 assert_not_contains() {
   local desc="$1" output="$2" key="$3" unexpected="$4" actual
   actual=$(echo "$output" | grep "^${key}=" | cut -d'=' -f2-)
-  if echo "$actual" | grep -q "$unexpected"; then
+  if grep -q "$unexpected" <<<"$actual"; then
     FAIL=$((FAIL + 1))
     echo "  FAIL: $desc — did not expect '$unexpected' in ${key}=${actual}" >&2
   else
@@ -1135,7 +1135,7 @@ assert_qa_line "Playwright wins over OpenAPI" "$(_qa_line "$output")" "specializ
 output=$("$SELECTOR" --repo "$TMPDIR/python-project" --phase prescan --with-qa)
 assert_qa_line "no qa signal → bare qa-engineer, exit 0" "$(_qa_line "$output")" ""
 output=$("$SELECTOR" --repo "$TMPDIR/qa-playwright" --phase prescan)
-if printf '%s\n' "$output" | grep -q 'qa-engineer\|specializers/qa/'; then
+if grep -q 'qa-engineer\|specializers/qa/' <<<"$output"; then
   FAIL=$((FAIL + 1))
   echo "  FAIL: without --with-qa no qa persona is emitted" >&2
 else

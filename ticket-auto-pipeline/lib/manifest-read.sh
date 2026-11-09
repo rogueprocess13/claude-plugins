@@ -431,8 +431,8 @@ ticket_pipeline_merge_state() {
   esac
 
   # ── 2. the pipeline's own merge record, after the PR reference ──────────
-  if tail -n "+$((pr_ln + 1))" "$log_file" 2>/dev/null |
-    grep -qE '\|PR-REVIEW\|merge-decision\|done\|merged|\|META\|(manual-merge|pr-merged)\|'; then
+  if grep -qE '\|PR-REVIEW\|merge-decision\|done\|merged|\|META\|(manual-merge|pr-merged)\|' \
+    < <(tail -n "+$((pr_ln + 1))" "$log_file" 2>/dev/null); then
     echo "merged"
     return 0
   fi

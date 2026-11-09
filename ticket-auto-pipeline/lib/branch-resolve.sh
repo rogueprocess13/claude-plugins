@@ -175,7 +175,7 @@ resolve_branch_context() {
       base_branch="$_EBD_BRANCH"
       integration_branch="$_EBD_BRANCH"
       branch_source="epic-directive"
-    elif [ -z "$epic_ref" ] && printf '%s' "$parent_description" | grep -q '## Branch Directive'; then
+    elif [ -z "$epic_ref" ] && grep -q '## Branch Directive' <<<"$parent_description"; then
       # #524: a parent that carries a directive but has no resolvable epic
       # manifest used to fall to default silently, branching children off
       # the base and dropping the epic's Merge Policy.
