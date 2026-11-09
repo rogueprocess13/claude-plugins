@@ -1506,7 +1506,7 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
         grill profile, planner phase prompts or gate libs. Mocked Linear for the fingerprint; real
         Linear only for the final dispatch check.
 
-## Step 17 — Faster CI — started 2026-11-09; items 1–2 DONE (CI ~55 → ~18 min), items 3–4 next
+## Step 17 — Faster CI — started 2026-11-09; items 1–3 DONE (CI ~55 → ~18 → 5 min), item 4 next
 
 PR CI takes a median of 46 min (`make test` is 53 of a ~55 min job), and a PR takes a median of
 2.8 h from opened to merged, because merging main in restarts CI. All 257 test commands run one
@@ -1539,8 +1539,20 @@ ticket-auto 635s, fleet-controller 240s, the rest < 40s.
         reach a real `gh issue create` (none was filed); `POSTMORTEM_STATE_DIR` + `gh` stub.
       - #650 (closes #648): fleetd tests ran the installed `~/.claude/skills` `flow.sh` and libs;
         one resolver with `FLEET_TICKET_FLOW_SH`, `_hermetic.py` isolation.
-- [ ] 3. Matrix shards (4 jobs, balanced by measured time) plus one gates job (lint, fmt,
+- [x] 3. Matrix shards (4 jobs, balanced by measured time) plus one gates job (lint, fmt,
       generated, registration, skill size) so shards skip the 112s shellcheck. Expect ~7-9 min.
+      **PR #651** (2026-11-09): `gates` + `tests (shard K/4)` + `otel` + `ci-ok` aggregator;
+      `run-tests.sh --shard K/N`, LPT-balanced by `scripts/test-durations.tsv` (replaces
+      `test-slow-first.txt`; refresh with `make test-durations`). Measured on the PR's green run:
+      **CI 5m00s** (was ~18 min median, 14–21), gates 2m25s, otel 20s, shards 4m41s / 3m43s /
+      4m51s / 3m25s (slowest = shard 3). Predicted shard loads (local seconds) 294.4 / 294.4 /
+      294.4 / 294.3; actual CI serial sums 934 / 806 / 1047 / 763s, runner wall 268 / 207 / 274 /
+      192s. The skew is the planner draft-readiness files, which run ~4x their local time on CI
+      against ~1.9x for the rest. `test-planner-draft-readiness-gate.sh` alone (67s local, 274s
+      CI) sets shard 3's wall time, so it is now the floor. Next levers: re-seed the durations file
+      from CI (`make test-durations RESULTS="<the 4 test-results-shard-K artifacts>"`) and split
+      or speed up that file. Also fixed: four ticket-auto tests shared `/tmp/test-repos-root` and
+      `rm -rf`'d each other's fixtures (or a real inherited `REPOS_ROOT`'s `.ticket-auto`).
 - [ ] 4. PR runs only the shards for the plugins a PR touches; ticket-auto changes also run
       fleet-controller (it sources ticket-auto libs). Decide inside one always-running job, never
       with a workflow `paths:` filter (a skipped required check stays Pending and blocks merging).

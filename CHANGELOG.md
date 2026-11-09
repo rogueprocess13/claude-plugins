@@ -28,7 +28,8 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
   `TEST_JOBS=4`, logs uploaded on failure), `otel` (the real-SDK exporter
   tests) and `ci-ok`, which passes only when every other job passed — the one
   stable check name to require on `main`. Install steps live in
-  `.github/actions/install-deps`.
+  `.github/actions/install-deps`. Measured on PR #651: the CI run took 5m00s
+  (it was ~18 min). Gates took 2m25s and the slowest shard 4m51s.
 - **`scripts/run-tests.sh --shard K/N`** (or `TEST_SHARD=K/N`) runs one shard
   of the command list. Shards are balanced by longest-processing-time-first
   greedy assignment over measured times; a command with no measured time gets
