@@ -22,7 +22,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `fetch-ticket` | Step 2 (extract requirements) | ticket data already cached; re-fetch if needed |
 | `extract-requirements` | Step 3 (find PR) | requirements log entry or re-extract from ticket |
 | `find-pr` | Step 4 (get changed code) | PR number from log `find-pr\|done` entry |
-| `validate-diff` | Step 5.5 (ADR gate check) | validation results from notes or re-run — routes through 5.5 and the Step 5.6 verdict write, not straight to 6, so a resumed run still passes through the ADR gate and records this run's verifier result before Step 6a's gated trigger fires (`VERDICT_FAIL_NOT_ENFORCED`, issue #368) |
+| `validate-diff` | Step 5.5 (ADR gate check) | validation results from notes or re-run — never straight to 6: Step 5.6 must record the verdict before 6a's gated trigger (#368) |
 | `post-findings` | Step 6b (merge decision) | verdict from log `post-findings\|done` entry |
 | `merge-decision` | End — skill already complete | — |
 
@@ -68,10 +68,8 @@ Capture:
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW fetch-ticket done "Fetched"
 
-**Resolve the ticket workspace directory** — the same directory every other pipeline
-phase (`ticket-appraise`, `ticket-implement`, `ticket-verify`) already created and
-wrote to. Never recompute a slug from the ticket title or branch name — it will not
-match the directory created at appraise time:
+**Resolve the ticket workspace directory** created at appraise time (never recompute a slug
+from the title or branch):
 
 ```bash
 find . -type d -name "{TICKET-ID}*"
@@ -112,12 +110,8 @@ bash ~/.claude/skills/lib/plog.sh PR-REVIEW extract-requirements done "{N} requi
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW find-pr start "Finding PR"
 
-**Resolve the code repo before searching.** The shared preamble guard forces cwd to the
-`tickets` workspace — itself a git repo with no code PRs — so a bare `gh pr list` always
-resolves against that repo and returns `[]` regardless of whether a PR exists (issue #366,
-`PR_REVIEW_REPO_UNSCOPED`). Resolve the worktree the same way Step 4 does (a fresh shell
-per step means Step 4 cannot inherit this step's variables, so both steps resolve it
-independently), then derive `owner/repo` from its git remote — never from cwd:
+**Resolve the code repo before searching** (#366: cwd is the `tickets` repo, so an unscoped
+`gh pr list` always returns `[]`). Derive `owner/repo` from the worktree's remote, never cwd:
 
 ```bash
 source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
@@ -139,11 +133,8 @@ PR_LIST=$(gh pr list --repo "$GH_REPO" --search "{TICKET-ID} in:head" --json num
 If `$GH_REPO` cannot be resolved, stop and tell the user:
 > "Cannot resolve the code repo for {TICKET-ID} — no worktree and no checkpoint entry in notes.md. Re-run /ticket-implement or specify the repo manually."
 
-**No-diff exemption:** if IMPLEMENT logged `commit-push|skip` (no source diff — a
-verification-only ticket) and the search above returned no results, this is not a
-missing-PR error — it's the expected outcome for a ticket whose scope was
-verify-only. Write the terminal marker directly and stop; there is no code to
-review:
+**No-diff exemption:** if IMPLEMENT logged `commit-push|skip` (verification-only ticket) and
+the search returned nothing, write the terminal marker and stop — there is no code to review:
 
 ```bash
 if [ -n "$TAP_LOG" ] && grep -q '|IMPLEMENT|commit-push|skip|' "$TAP_LOG" && [ "$(echo "$PR_LIST" | jq 'length')" = "0" ]; then
@@ -156,7 +147,7 @@ Otherwise, if no PR is found → stop and tell the user:
 > "No open PR found for {TICKET-ID}. Open a PR first, then re-run."
 
 Capture: `number`, `headRefName`, `baseRefName`, `url` (from `$PR_LIST`).
-Extract `owner` and `repo` from the PR URL (`https://github.com/{owner}/{repo}/pull/{number}`) for REST API calls in subsequent steps — this should match `$GH_REPO` resolved above; the PR URL remains the source of truth since a ticket can in principle touch more than one repo.
+Extract `owner` and `repo` from the PR URL (`https://github.com/{owner}/{repo}/pull/{number}`) for the REST calls below — the URL wins over `$GH_REPO`.
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW find-pr done "PR #{number}"
 # Write PR number to pipeline log for detect-resume.sh (primary lookup, not fallback)
@@ -184,7 +175,7 @@ This produces the full set of changes introduced by the branch relative to its b
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW gitnexus-impact start "Running detect_changes"
 
-**Pre-flight: GitNexus reachability + branch verification (#359).** Reachability alone is not enough — `list_repos` can return healthy while the indexed clone sits on a branch completely unrelated to this PR, which silently produces a confidently-wrong diff (`detect_changes --scope compare` diffs whatever the indexed clone happens to have checked out). Verify both:
+**Pre-flight: GitNexus reachability + branch verification (#359)** — a reachable index may sit on an unrelated branch. Verify both:
 
 1. **Reachability:** call `mcp__gitnexus__list_repos`. If the call fails or times out after 5 seconds, GitNexus is unavailable — skip to the fallback below. Log: `gitnexus-health|fail|unreachable` in the heartbeat.
 2. **Branch verification:** from the `list_repos` result, find the entry for this repo and read its `lastCommit`. Then run:
@@ -192,7 +183,7 @@ bash ~/.claude/skills/lib/plog.sh PR-REVIEW gitnexus-impact start "Running detec
    source "$HOME/.claude/skills/lib/gitnexus-preflight.sh"
    gitnexus_verify_branch "$WORKTREE_PATH" "{lastCommit}" "origin/{headRefName}"
    ```
-   (`$WORKTREE_PATH` was resolved in Step 4 and already has `origin` fetched.) This checks the indexed commit is actually an ancestor of the PR's head branch, not just present in *some* branch — `list_repos`' own `staleness.commitsBehind` is computed against whatever the indexed clone currently has checked out, so it cannot detect a wrong-branch index on its own. `ok <n>` (exit 0) means verified — proceed. `wrong-branch`, `ahead <n>` (a rebase/force-push moved the branch — same failure mode as wrong-branch for this purpose), or `stale <n>` (all exit 1), or `unresolvable <reason>` (exit 2), all mean **unverified** — log `gitnexus-health|fail|stale-or-wrong-branch` in the heartbeat and skip to the fallback below.
+   (`$WORKTREE_PATH` is from Step 4, `origin` fetched.) `ok <n>` (exit 0) means verified — proceed. Exit 1 (`wrong-branch`, `ahead <n>`, `stale <n>`) or 2 (`unresolvable <reason>`) means **unverified** — log `gitnexus-health|fail|stale-or-wrong-branch` in the heartbeat and skip to the fallback below.
 
 Only once both checks pass: call `mcp__gitnexus__detect_changes` with `scope: "compare"` and `base_ref: "{baseRefName}"`. This maps the full PR diff against the knowledge graph.
 
@@ -201,16 +192,16 @@ Only once both checks pass: call `mcp__gitnexus__detect_changes` with `scope: "c
   ```bash
   gitnexus_check_result_subset "$RETURNED_FILES" "$KNOWN_PR_FILES"
   ```
-  A non-subset result (exit 1 — files GitNexus named that aren't in the actual PR diff) means the structural diff is unreliable even though the branch check passed (e.g. a stale-but-ancestor index). Discard the result, log `gitnexus-health|fail|stale-or-wrong-branch`, and fall back below — never report findings sourced from an unverified result set.
+  Exit 1 (files outside the real PR diff) means the result is unreliable: discard it, log `gitnexus-health|fail|stale-or-wrong-branch`, and fall back below.
 - Record each affected execution flow with its risk level
-- **Constructor DI filter:** For each HIGH or CRITICAL risk flow, check if the change is limited to constructor parameter additions (new DI params, no logic changes). If so — downgrade risk to LOW. Constructor DI additions are structural, not behavioral — they add a new dependency parameter without changing call paths, control flow, or side effects. Log: `gitnexus-filter|info|constructor-DI downgrade: {flow-name} HIGH→LOW`
+- **Constructor DI filter:** a HIGH or CRITICAL flow whose change is only constructor parameter additions (new DI params, no logic change) is downgraded to LOW. Log: `gitnexus-filter|info|constructor-DI downgrade: {flow-name} HIGH→LOW`
 - If any non-DI flow remains at HIGH or CRITICAL risk, flag it prominently in the findings
 
 **If zero results, GitNexus unavailable, branch unverified, or the result set failed the subset check:**
 - Note that changed files have no indexed execution flows (shell scripts, config, docs — expected for some repos), or that the index could not be verified/trusted for this branch
 - Log a warning and proceed — never block on GitNexus availability
 
-**If GitNexus's structural diff is unreliable for this repo** (branch verification failed, or the result failed the subset sanity check above) and you fall back to running the project's own test command directly as manual verification: redirect that command's stdout/stderr to `{ticket-dir}/pr-review-build-{repo-slug}.log`, never to `$TAP_LOG`. `$TAP_LOG` only ever gets one structured summary line (pass/fail, test counts), e.g. `bash ~/.claude/skills/lib/plog.sh PR-REVIEW manual-verify done "{repo}: {pass|fail}, {N} tests"`. Every consumer of the pipeline log (`detect-resume.sh`, `gate-check.sh`) parses strict `ISO|PHASE|STEP|STATUS|MSG` rows — raw build console output breaks that contract even though current parsers happen to skip unmatched lines.
+**If GitNexus's structural diff is unreliable for this repo** (branch verification failed, or the result failed the subset sanity check above) and you fall back to running the project's own test command directly as manual verification: redirect that command's stdout/stderr to `{ticket-dir}/pr-review-build-{repo-slug}.log`, never to `$TAP_LOG`. `$TAP_LOG` gets one summary line only (its parsers expect strict `ISO|PHASE|STEP|STATUS|MSG` rows), e.g. `bash ~/.claude/skills/lib/plog.sh PR-REVIEW manual-verify done "{repo}: {pass|fail}, {N} tests"`.
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW gitnexus-impact done "{N} affected flows, risk: {highest-risk}"
 
@@ -238,44 +229,22 @@ bash ~/.claude/skills/lib/plog.sh PR-REVIEW validate-diff done "Coverage: {pass}
 
 ## Step 5.5 — ADR gate check
 
-While reviewing the diff (Steps 4–5), note whether it introduces a decision that looks
-architectural — a cross-cutting constraint other components or future work would now have to
-follow — with no governing ADR cited in the PR description or commits. This is the review phase
-finding what implementation didn't flag: a change that turned out to be architectural only once
-the diff as a whole is visible, not from any single file in isolation.
+If the diff as a whole introduces an architectural decision (a cross-cutting constraint other
+components or future work must follow) with no governing ADR cited in the PR or commits, invoke
+the gate now per preamble § 8, **before** Step 6. A `CONFLICT`, `CREATED_PROPOSED` or
+`SUPERSEDE_REQUIRED` verdict means Step 6b MUST NOT merge, regardless of requirements coverage.
 
-If such a change is present, invoke the gate now — see § 8 ADR gate in the shared preamble —
-**before** Step 6 posts findings or Step 6b merges. Route on the verdict per § 8: a `CONFLICT`
-verdict means Step 6b MUST NOT merge, regardless of requirements coverage. A `CREATED_PROPOSED`
-or `SUPERSEDE_REQUIRED` verdict likewise blocks the merge — a PR is not mergeable while it rests
-on an architectural commitment that has not yet been ratified.
-
-The overwhelmingly common case is nothing to check here — skip straight to **Step 5.6** (not
-Step 6) when the diff raises no such candidate. Step 5.6 is not optional: it is where this
-run's own verdict is written before Step 6 fires the Linear trigger, and skipping straight to
-Step 6 would skip that write for the overwhelming majority of runs — exactly the ordering bug
-Step 5.6 exists to close (`VERDICT_FAIL_NOT_ENFORCED`, issue #368).
+Otherwise go to **Step 5.6** — never straight to Step 6 (#368).
 
 ---
 
 ## Step 5.6 — Record verifier result (Phase 0 RLVR)
 
-**Before Step 6 posts findings, Step 6a fires the Linear trigger, or Step 6b merges** — the
-combined verdict (Step 5's requirements coverage plus Step 5.5's ADR gate outcome) is fully
-known by now, and both `pr-review-pass-done`/`pr-review-pass-uat` fired in Step 6a carry
-`verdict_gate: true` ([SKILL.md § Verdict gate](../ticket-flow/SKILL.md#verdict-gate)):
-`flow.sh` refuses either trigger when the latest recorded verdict for this ticket's
-verifier/phase pair is a trailing FAIL/BLOCK, and a later PASS only clears that block once
-it is actually on the log (`VERDICT_FAIL_NOT_ENFORCED`, issue #368). Writing the verdict
-after the trigger call — the historical order in this doc — means a second review pass that
-genuinely comes back ✅ after a first pass that came back ❌ would have its own `pr-review-pass-*`
-call check the log *before* the ✅ was written, still seeing the earlier BLOCK and refusing a
-transition that just legitimately became valid.
+**Before Step 6** — Step 6a's `pr-review-pass-*` triggers are verdict-gated
+([§ Verdict gate](../ticket-flow/SKILL.md#verdict-gate)), so this run's verdict must be on the
+log first or an earlier BLOCK would refuse a now-valid transition (#368).
 
-Source and call `write_verifier_result` now, mapping ✅ → `PASS`, ⚠️ → `WARN`, and a `CONFLICT`/
-`CREATED_PROPOSED`/`SUPERSEDE_REQUIRED` ADR gate verdict (Step 5.5) → `BLOCK` regardless of the
-requirements-coverage verdict — an unratified architectural commitment blocks forward progress
-the same way a missing requirement does:
+Map ✅ → `PASS`, ⚠️ → `WARN`, and a blocking Step 5.5 ADR verdict → `BLOCK` regardless of coverage:
 ```bash
 source ~/.claude/skills/lib/verifier-result.sh
 write_verifier_result verifier=pr_review verdict=<PASS|WARN|BLOCK> criteria_met=<met> criteria_total=<total> attempt=1 phase=PR-REVIEW
@@ -319,7 +288,7 @@ gh api "repos/{owner}/{repo}/issues/{number}/comments" -f body="$(cat <<'EOF'
 EOF
 )"
 ```
-**Why REST API:** `gh pr comment` uses GraphQL which has eventual consistency — a newly created PR may not be queryable for several seconds. The REST `/issues/{number}/comments` endpoint is immediately consistent.
+Use REST, not `gh pr comment` (GraphQL lags on a new PR).
 
 ### Step 6a — Update Linear label
 
@@ -335,14 +304,7 @@ Delegate to the flow executor:
   ```
 - **Verdict ✅** → the transition is chosen by `uat_decide_trigger`, not here:
   ```bash
-  # Single UAT-vs-Done decision site. The helper echoes the trigger to fire and
-  # evaluates the epic's UAT policy BEFORE the UAT target — the URL is exported
-  # into every pipeline agent's environment unconditionally, so a policy check
-  # placed after it would never be reached.
-  #
-  # Do NOT reintroduce a UAT_URL test here, and do not call get_project_config:
-  # that function no longer exists, and the branch that depended on it has been
-  # removed rather than left beside this path.
+  # Single UAT-vs-Done decision site (policy before UAT URL). Do NOT add a UAT_URL test here.
   source ~/.claude/skills/lib/branch-resolve.sh
 
   # UAT_POLICY is exported by the agent env file; --ticket is the standalone
@@ -351,11 +313,8 @@ Delegate to the flow executor:
   [ -z "$policy" ] && policy=$(resolve_uat_policy "{TICKET-ID}" 2>/dev/null)
   policy="${policy:-per-ticket}"
 
-  # Merge authorization is evaluated HERE, before the transition, not only in
-  # Step 6b (GitHub #412). If this run will leave the PR for a human to merge,
-  # a per-ticket ticket must not close to Done — its code is not on the base
-  # branch yet. merge_blocked_reason is the same function Step 6b calls, so the
-  # two steps cannot disagree about whether a human merge is required.
+  # Merge authorization before the transition (#412): a PR left for a human
+  # merge must not close a per-ticket ticket to Done. Same function as Step 6b.
   _merge_pending_flag=""
   _merge_reason=$(merge_blocked_reason "{TICKET-ID}")
   [ -n "$_merge_reason" ] && _merge_pending_flag="--merge-pending"
@@ -373,13 +332,8 @@ Delegate to the flow executor:
   _rc=$?
   _gate_blocked=false
   if [ "$_rc" -eq 11 ]; then
-    # Gate-blocked (verdict_gate on pr-review-pass-done/pr-review-pass-uat):
-    # this run's own verdict (already written in Step 5.6) was PASS/WARN, but
-    # flow.sh refused the transition because a trailing FAIL/BLOCK for a
-    # DIFFERENT verifier/phase is still the latest on record with nothing
-    # superseding it. Do not report this as a normal merge — see Step 6b/7/8.
-    # flow-run.sh has already written META|gate-stop|fail|VERDICT_GATE_BLOCKED
-    # and the verdict-gate heartbeat.
+    # Verdict gate refused: another verifier's FAIL/BLOCK is still latest.
+    # flow-run.sh already logged VERDICT_GATE_BLOCKED. See Steps 6b/7/8.
     _gate_blocked=true
   fi
   # Any other non-zero exit is already logged by flow-run.sh (META|flow-error).
@@ -403,29 +357,17 @@ bash ~/.claude/skills/lib/plog.sh PR-REVIEW post-findings done "Verdict: {✅|�
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision start "Merge decision"
 
-If the verdict has ⚠️ or ❌, skip this step entirely. Likewise, if Step 5.5's ADR gate check
-returned `CONFLICT`, `CREATED_PROPOSED`, or `SUPERSEDE_REQUIRED`, skip this step — treat that
-exactly as a ❌ for merge purposes, regardless of the requirements-coverage verdict. Skip this
-step too when `_gate_blocked=true` — merging a PR whose own Linear transition was just refused
-would leave the code merged while the ticket still shows its pre-review state, exactly the
-disagreement this gate exists to prevent.
+Skip this step entirely on ⚠️ or ❌, on a blocking Step 5.5 ADR verdict, or when
+`_gate_blocked=true` (a refused transition must not be followed by a merge).
 
-If the verdict is ✅ and Step 5.5 raised nothing blocking, **first determine merge authorization** — before spending any API calls on
-CI/conflict checks. This skill's own merge is a *direct* merge (no human in the loop); it must
-never fire when the pipeline's autonomy is `manual`, nor when the ticket's epic has declared a
-Branch Directive `Merge Policy` (both existing values, `manual` and `on-all-children-done`,
-require a human to merge — there is no `auto` value):
+Otherwise **first determine merge authorization**, before any CI/conflict checks. This direct
+merge never fires under `manual` autonomy or any epic `Merge Policy` (all of which need a human):
 
 ```bash
 source ~/.claude/skills/lib/branch-resolve.sh
 
-# AUTONOMY/MERGE_POLICY are exported by the agent env file (--from-auto runs
-# only). A standalone invocation outside a pipeline run has neither set —
-# merge_blocked_reason then resolves MERGE_POLICY directly so a standalone
-# review still honours an epic directive; AUTONOMY has no standalone meaning
-# (there is no pipeline autonomy to speak of), so it stays empty and does not
-# block a human-driven run. Step 6a already called this same function to
-# choose UAT over Done when a human merge is required (GitHub #412).
+# AUTONOMY/MERGE_POLICY come from the env file (--from-auto); standalone, the
+# function resolves MERGE_POLICY itself and an empty AUTONOMY does not block.
 _merge_blocked_reason=$(merge_blocked_reason "{TICKET-ID}")
 ```
 
@@ -444,23 +386,15 @@ bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "skipped: $_merg
 
 **If `_merge_blocked_reason` is empty**, check that all GitHub build checks have passed before merging.
 
-**Note (issue #365):** `gh pr checks --json` does not expose `status`/`conclusion` fields —
-`gh` (2.x) only accepts `bucket, completedAt, description, event, link, name, startedAt, state,
-workflow`. Requesting the old field names fails the command outright
-(`Unknown JSON field: "status"`). Use `bucket`, which is `gh`'s own stable rollup of the raw
-`state`, instead of re-deriving pass/fail from `state` — `state` alone doesn't distinguish a
-genuinely queued check from a completed one with a non-standard conclusion string.
+Use `bucket` (#365: `gh pr checks --json` has no `status`/`conclusion` fields).
 
 ```bash
 _checks_json=$(gh pr checks {number} --repo {owner}/{repo} --json name,state,bucket 2>&1)
 _checks_rc=$?
 ```
 
-**A non-zero exit here is not automatically a failure.** `gh pr checks` exits non-zero for two
-very different situations, and only one of them is a real problem: a genuinely checkless PR
-makes `gh` exit non-zero with the plain-text stderr message `no checks reported on the '<branch>'
-branch` — it never gets far enough to emit `[]`, so an empty JSON array is not actually
-reachable for this case. Check for that message first:
+**A non-zero exit is not automatically a failure:** a checkless PR exits non-zero with
+`no checks reported on the '<branch>' branch` instead of emitting `[]`. Check for that first:
 
 ```bash
 if [ "$_checks_rc" -ne 0 ] && echo "$_checks_json" | grep -qi "no checks reported"; then
@@ -470,9 +404,7 @@ else
 fi
 ```
 
-**If `$_checks_none` is true** — the PR legitimately has no configured checks — treat this the
-same as an empty checks array: not a failure, proceed straight to the merge (skip the rest of
-this check-evaluation section entirely).
+**If `$_checks_none` is true**, skip the rest of this check evaluation and merge.
 
 **Otherwise, if the command exited non-zero, or `$_checks_json` is not valid JSON**
 (`echo "$_checks_json" | jq -e . >/dev/null 2>&1` fails): treat this as a hard block — never as
@@ -492,12 +424,8 @@ Post the same message as a PR comment.
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "blocked: checks command failed"
 
-**Otherwise, parse the JSON array.** An empty array (`[]`) means the PR has no configured
-checks — that is legitimately not a failure, proceed to the merge (this branch is a belt-and-
-braces fallback; in practice `gh` reaches the `$_checks_none` case above instead of ever
-emitting `[]`, per its `populateStatusChecks` source). Otherwise evaluate every check's
-`bucket` — `gh pr checks --help` documents this as a closed five-value enum (`pass`, `fail`,
-`pending`, `skipping`, `cancel`), gh's own rollup of the raw `state`:
+**Otherwise, parse the JSON array.** An empty array (`[]`) is legitimately not a failure —
+merge. Otherwise evaluate every check's `bucket` (closed enum):
 - `pass` — passed, not blocking
 - `skipping` — skipped, not blocking
 - `pending` — still running, blocks the merge (not yet a failure, just not done)
@@ -524,10 +452,7 @@ bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "blocked: failin
 
 **If the array is empty, or every check's bucket is `pass`/`skipping`:**
 
-Scan the diff captured in Step 4 for conflict markers before merging. The script reports
-only a real conflict block — added `<<<<<<< `, `=======` and `>>>>>>> ` lines, in that
-order, in one file — so a markdown setext heading underline (`=======`) or an ASCII rule
-never blocks a merge:
+Scan the Step 4 diff for real conflict blocks (a setext `=======` underline never blocks):
 
 ```bash
 _cms_out=$(set -o pipefail; git -C "$WORKTREE_PATH" diff origin/{baseRefName}...origin/{headRefName} |
@@ -567,7 +492,7 @@ gh api "repos/{owner}/{repo}/pulls/{number}/merge" -X PUT -f merge_method=squash
   bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision fail "gh api merge failed for PR #{number}"
 }
 ```
-**Why REST API:** `gh pr merge` uses GraphQL which has eventual consistency — a newly created PR may not be immediately queryable. The REST `/pulls/{number}/merge` endpoint is immediately consistent and avoids the "Could not resolve to a PullRequest" error.
+Use REST, not `gh pr merge` (GraphQL lags on a new PR).
 
 If the merge fails (conflicts, branch protection, etc.), report it to the user — do not force-merge.
 
@@ -586,12 +511,9 @@ this run's own review passed but the Linear transition was refused:
 **PR:** {PR URL}
 **Verdict:** ✅ All requirements addressed — this run's own review passed.
 
-The ticket could **not** move to Done/UAT: `flow.sh` found a trailing FAIL/BLOCK
-verifier-result still on record for a different check on this ticket, with no later
-PASS/WARN superseding it (`VERDICT_FAIL_NOT_ENFORCED` guard, issue #368). The PR was
-**not merged**. A human needs to review the other check's failure and either fix it (a
-later PASS clears the block automatically) or re-run
-`/ticket-flow {TICKET-ID} {trigger} --override <reason>` once satisfied it's safe to close.
+The ticket could **not** move to Done/UAT: another check's FAIL/BLOCK verifier-result is
+still the latest on record (#368). The PR was **not merged**. Fix that check (a later PASS
+clears the block) or re-run `/ticket-flow {TICKET-ID} {trigger} --override <reason>`.
 
 Findings posted to PR #{number}.
 ```
@@ -611,17 +533,12 @@ Findings posted to PR #{number}.
 
 ## Step 8 — Emit the PHASE_RESULT block (--from-auto only)
 
-PR-REVIEW is the **last gate before merge**, and it is where a false claim is most
-expensive. End your return with the `=== PHASE_RESULT ===` block described in **§ 6 Phase
+End your return with the `=== PHASE_RESULT ===` block described in **§ 6 Phase
 result emission** of the auto preamble, with `PHASE: PR-REVIEW` and
 `VERIFIER: pr_review`.
 
 **If `_gate_blocked=true`**: `VERDICT: BLOCK`, regardless of the ✅/⚠️ requirements verdict —
-"the phase found something that must stop forward progress" (`docs/phase-result-schema.md`'s
-enum) describes this exactly: this run's own review passed, but a downstream gate stopped the
-ticket from advancing and the PR was not merged. Do **not** report `PASS` here — that would
-look identical to a real, unblocked completion in the log and in any consumer that reads
-`VERDICT` alone, silently reintroducing the state/reality mismatch this gate exists to fix.
+never `PASS`, which would read as an unblocked completion.
 
 **Otherwise**, map `VERDICT` from the emoji verdict exactly as the `write_verifier_result`
 call in Step 5.6 does: ✅ → `PASS`, ⚠️ → `WARN`, ❌ → `BLOCK`. Do not emit the emoji itself

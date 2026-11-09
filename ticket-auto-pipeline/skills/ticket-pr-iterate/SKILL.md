@@ -11,7 +11,7 @@ You have been given a ticket ID as the argument (e.g. `WIL-42`). Execute the ste
 
 If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=<from args>, PHASE=PR-REVIEW, HAS_LINEAR_ACCESS=false, HAS_LOGGING=true, HAS_HEARTBEAT=true, EMITS_PHASE_RESULT=false.
 
-**Why `EMITS_PHASE_RESULT=false`** (recorded decision, `rlvr-phase-result-contract` task 5.6): this skill runs inside the PR iteration loop but it is not a verdict-producing phase — it applies requested changes and hands back to IMPLEMENT → VERIFY → PR-REVIEW, all three of which emit. Its own outcome is therefore always re-validated downstream. It also runs under `PHASE=PR-REVIEW` with no verifier of its own, so a block from here would carry the same `(phase, verifier)` pair as the real review and no consumer could tell the two apart. Excluded deliberately, not by omission. Before starting, source the project context: `source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=PR-REVIEW, FROM_FLAG=none, HAS_LINEAR_ACCESS=false, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT,ISSUE_PREFIX, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
+`EMITS_PHASE_RESULT=false` on purpose: IMPLEMENT → VERIFY → PR-REVIEW re-validate this skill's outcome, and a block from here would be indistinguishable from the real review's. Before starting, source the project context: `source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=PR-REVIEW, FROM_FLAG=none, HAS_LINEAR_ACCESS=false, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT,ISSUE_PREFIX, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
 
 ### Heartbeat points
 - **Findings source**: after locating review findings, write `hb-wrap.sh decision "findings-source" "info" "findings from {PR|session-file}" '{"source":"{pr|session-file}"}'`
@@ -34,29 +34,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 
 ## Step 0.6 — Create task tracker
 
-Create a TaskCreate for every remaining step (Steps 1 through 7). Each task subject = the step heading. After each step is fully done, mark it completed with TaskUpdate. At session end, write a trace file:
-
-```bash
-cat > {ticket-dir}/pr-iterate-session.md << 'TRACE'
-# pr-iterate session — {ISSUE-ID}
-**Date:** {today}
-**Iteration:** #{N}
-**Source:** {PR #{number} | pr-review-session.md}
-**Gaps found:** {N}
-
-## Step trace
-- [x] Step 1: Load workspace — done
-- [x] Step 2: Find PR review findings — {PR #{number} | session file}
-- [x] Step 3: Determine iteration number — #{N}
-- [x] Step 4: Update plan artifact — {simple-fix.md | openspec tasks.md}
-- [x] Step 5: Update notes.md — done
-- [x] Step 6: Update Linear — Ready + approved
-- [x] Step 7: Report — done
-
-## Gaps addressed this iteration
-{gap summaries}
-TRACE
-```
+Per shared preamble § 8, one task per step (Steps 1 through 7). No trace file.
 
 ---
 
@@ -80,11 +58,8 @@ bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-load done "Workspace loaded"
 
 ### Step 2a — Find the PR
 
-**Scope every `gh` call with `--repo`.** cwd is the `tickets` workspace, a git repo with
-no code PRs, so a bare `gh pr list` resolves against it and returns `[]` whether or not the
-PR exists (issue #366, `PR_REVIEW_REPO_UNSCOPED`). `lib/pr-repo-resolve.sh` derives the
-code repo deterministically: the `META|pr-created` record, then the ticket's worktree
-`origin`, then the `Worktree:` checkpoint in `notes.md`:
+**Scope every `gh` call with `--repo`** (#366: cwd is the `tickets` repo, so an unscoped call
+returns `[]`). `lib/pr-repo-resolve.sh` derives the code repo:
 
 ```bash
 source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}

@@ -189,7 +189,7 @@ If `--from-step` is not provided, proceed normally from Step 1.
 
 **Before proceeding further**, create a TaskCreate for every remaining step. Each task subject = the step heading. This ensures no step is skipped even when context scrolls.
 
-After each step is fully done (including all sub-steps), mark it completed with TaskUpdate. At session end, write a trace file to the ticket directory:
+After each step is fully done (including all sub-steps), mark it completed with TaskUpdate. At session end, write the skill's trace file (if any):
 
 <!-- skill-specific trace template goes here -->
 ```
