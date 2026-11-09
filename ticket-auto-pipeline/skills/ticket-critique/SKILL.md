@@ -306,26 +306,15 @@ Score = min(table score, ceiling). When the ceiling lowers the score, record it 
 
 After all checks complete, count all `[WARNING]` findings across all checks (0-6, including Check 6 feature clarity).
 
-**If WARNING count >= 3 AND no individual `[BLOCKER]` findings exist:**
-- The overall status escalates from WARNINGS to BLOCKED
-- Record the reason: "Cumulative WARNING threshold: {N} warnings found. Individually minor gaps collectively make this ticket untestable."
-- List the top contributing WARNINGs
-
-**If WARNING count < 3 OR any `[BLOCKER]` finding exists:**
-- No escalation — individual findings determine the status
-
-A BLOCKER always takes precedence over cumulative escalation. If any BLOCKER exists, the ticket is BLOCKED regardless of WARNING count.
+**If WARNING count >= 3 AND no `[BLOCKER]` finding exists**, the status escalates to BLOCKED (`critique-status.sh` decides it). Record the reason — "Cumulative WARNING threshold: {N} warnings found. Individually minor gaps collectively make this ticket untestable." — and list the top contributing WARNINGs.
 
 ---
 
 ## Determine status
 
-Rules, first match wins: any BLOCKER, score < 40, or WARNING count >= 3 → **BLOCKED**; score 40-69
-→ **WARNINGS**; score >= 70 → **CLEAR** (WARNINGs allowed while fewer than 3).
-
-Do not apply these rules by hand — run the script, which applies them in this order and also
-gives the action and verifier mapping (`--blockers`/`--warnings` are the totals across all checks,
-`--score` the final score after the BLOCKER ceiling):
+Do not apply the status rules by hand (any BLOCKER, score < 40 or 3+ WARNINGs → BLOCKED; 40-69 →
+WARNINGS; else CLEAR) — run the script, which also gives the action and verifier mapping
+(`--blockers`/`--warnings` are totals across all checks, `--score` is after the BLOCKER ceiling):
 
 ```bash
 eval "$(bash ~/.claude/skills/lib/critique-status.sh --score {SCORE} --blockers {BLOCKER_COUNT} --warnings {WARNING_COUNT})"
@@ -379,10 +368,7 @@ If no findings: write `**Status:** CLEAR`, `**Score:** 100`, `**WARNING count:**
 
 ### If `CRITIQUE_ACTION=needs-info` (status BLOCKED — any reason)
 
-This branch covers every BLOCKED critique: a BLOCKER finding, a score below 40, **and** cumulative
-WARNING escalation. An escalated ticket with zero BLOCKER findings still gets the comment and the
-`needs-info` label — otherwise the entry gate holds it (`CRITIQUE_BLOCKED`) with nothing on the
-ticket telling a human what to add. Wherever the templates below say "BLOCKER items", use the
+Every BLOCKED critique takes this branch, including one with zero BLOCKER findings. Wherever the templates below say "BLOCKER items", use the
 `### Missing information` list from notes.md (which, for an escalated ticket, holds the
 contributing gaps), and add one line naming the reason when `CRITIQUE_BLOCK_REASON` is
 `low-score` (`Content quality score {N}/100 is below 40.`) or `cumulative-warnings`

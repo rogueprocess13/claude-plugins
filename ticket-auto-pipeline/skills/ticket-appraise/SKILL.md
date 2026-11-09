@@ -12,13 +12,12 @@ You have been given a ticket ID as the argument (e.g. `WIL-42`). Execute the inv
 If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=<from args>, PHASE=APPRAISE, HAS_LINEAR_ACCESS=true, LINEAR_OPS=get_issue,get_comments, HAS_LOGGING=true, HAS_HEARTBEAT=true. Before starting, source the project context: `source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=APPRAISE, FROM_FLAG=none, HAS_LINEAR_ACCESS=true, LINEAR_OPS=get_issue,get_comments, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT,ISSUE_PREFIX,BE_SERVICES,WIKI_ROOT, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
 
 ### Heartbeat points
-- **Fast-path**: after fast-path check, write `hb-wrap.sh decision "fast-path" "fired" "eligible|skipped" '{"eligible":"true|false","reason":"..."}'`
-- **Complexity axes**: after complexity sweep (or fast-path complexity), write `hb-wrap.sh decision "complexity-score" "fired" "...score..." '{"axes":"...","score":"..."}'`
-- **Blast radius**: after codebase investigation, write `hb-wrap.sh decision "blast-radius" "fired" "...N files..." '{"file_count":"N"}'`
-- **Prior art**: if prior art found, write `hb-wrap.sh decision "prior-art" "fired" "...N matches..."`; if none found, write `hb-wrap.sh decision "prior-art" "info" "no prior art found"`
-- **Wiki bootstrap**: if WIKI_ROOT not found in CLAUDE.md and fallback path used, write `hb-wrap.sh fallback "wiki-bootstrap" "fired" "using default wiki path" '{"reason":"WIKI_ROOT not in CLAUDE.md"}'`
-- **Regression verdict**: after the regression check, write `hb-wrap.sh decision "regression-verdict" "fired" "risky|clean" '{"verdict":"risky|clean"}'`
-- **Impact data fallback**: if gitnexus impact unavailable, write `hb-wrap.sh fallback "impact-data" "fired" "using local grep" '{"reason":"MCP tool unavailable"}'`
+Fast-path decisions are written inline in Step 1.3. Also write (event schema: `pipeline-heartbeat-format.md`):
+- after the complexity sweep (or fast-path complexity): `hb-wrap.sh decision "complexity-score" "fired" "...score..." '{"axes":"...","score":"..."}'`
+- after codebase investigation: `hb-wrap.sh decision "blast-radius" "fired" "...N files..." '{"file_count":"N"}'`
+- prior art: `hb-wrap.sh decision "prior-art" "fired" "...N matches..."`, or `hb-wrap.sh decision "prior-art" "info" "no prior art found"`
+- WIKI_ROOT absent from CLAUDE.md, default path used: `hb-wrap.sh fallback "wiki-bootstrap" "fired" "using default wiki path" '{"reason":"WIKI_ROOT not in CLAUDE.md"}'`
+- gitnexus impact unavailable: `hb-wrap.sh fallback "impact-data" "fired" "using local grep" '{"reason":"MCP tool unavailable"}'`
 
 ### Step dispatch
 Also: if `--from-step` is set, **suppress Resume Mode** in Step 1 — the workspace exists by definition, and re-evaluation is not needed.
@@ -237,15 +236,12 @@ BODY_DRIFT_CLASS=$(refinement_carryover_drift_check "{TICKET-ID}" "$NOTES_FILE")
 echo "BODY_DRIFT_CLASS=$BODY_DRIFT_CLASS"
 ```
 
-**Carry-over** (`refinement_carryover_append`) writes `## Refinement Carry-over` from `ready.semantic` and `ready.demoted`, replacing any earlier copy, and writes nothing when there is nothing to carry:
+Both functions' contracts are in `lib/refinement-carryover.sh`'s header. What this step does with the results:
 
-- `[agent-resolvable]` items — verified advisory `EDGE_CASE_GAP`, `AC_NOT_TESTABLE`, `TEST_DATA_GAP` findings and audit demotions. Treat each as an investigation prompt during blast radius (Step 2.8) and investigation (Step 3). They live in the carry-over section, not in Open Questions, so Step 3.5 does not have to close them, and **they never add `needs-info` or hold the ticket by themselves**.
-- `[needs-human]` items — verified advisory `SCOPE_AMBIGUOUS`. The function also mirrors each one into `## Open Questions` (suffix `(carry-over <key>)`), so the existing Open Questions rule holds the ticket at the gate and `ticket-gate-reconcile` releases it on an answer.
-- `### Test candidates` — one per verified advisory `MISSING_CORE_AC`. Leave them for `ticket-implement` (adds a test or records why not) and `ticket-verify` (non-failing `carry-over` check).
-
-Unverified findings are never carried.
-
-**Body drift** (`refinement_carryover_drift_check`) prints the class from `body_baseline_classify` (`lib/body-baseline.sh`) or `skip:<reason>`. Only a planned ticket whose cached `ready.status` is `ready` is checked. On `adopt`, `conflict` or `local-ahead` it has already added a `[needs-human]` Open Question naming `/ticket-planner resume <INIT> --refresh-bodies` and logged `META|body-drift|info|<class>` — nothing else to do; the gate holds through the Open Questions rule. `clean`, `rebaseline` and every `skip:*` value need no action. Never write the planner's `body.md` yourself: the planner owns it.
+- `[agent-resolvable]` carry-over items are investigation prompts for blast radius (Step 2.8) and investigation (Step 3). Step 3.5 does not have to close them, and **they never add `needs-info` or hold the ticket by themselves**.
+- `[needs-human]` items are already mirrored into `## Open Questions`, so the gate holds through the Open Questions rule and `ticket-gate-reconcile` releases it on an answer.
+- `### Test candidates` are left for `ticket-implement` and `ticket-verify`.
+- `BODY_DRIFT_CLASS`: nothing to do for any value — on `adopt`, `conflict` or `local-ahead` the function has already added the `[needs-human]` Open Question and logged it. Never write the planner's `body.md` yourself.
 
 ---
 
@@ -447,7 +443,7 @@ If the symbol is ambiguous (multiple candidates), pick the highest-relevance res
 eval "$(bash -c "source ~/.claude/skills/lib/notes-parse.sh; get_blast_radius_override '{ticket-dir}'")"
 ```
 
-`BLAST_OVERRIDE=complex` fires when any target reports HIGH or CRITICAL risk, OR any target **whose Edit is not `additive`** has 3+ d=1 callers, OR 2+ distinct execution flows are affected. `BLAST_OVERRIDE=complex` **is** the Step 2.5 **Blast radius** axis (weight 3) firing — the bash thresholds define it; do not re-judge them. When it fires, add `blast-radius:3` to `**Axes fired:**`, add 3 to `**Weighted score:**`, and recompute `**Score:**` against the threshold (any score with blast radius fired is ≥ 3, so `complex`). Append `BLAST_REASON` to `**Reason:**`. **Fast-path interaction:** If fast-path set complexity to `simple` (from Conservative strategy), blast radius still runs and can escalate to `complex`. It reads from notes.md and applies regardless of how complexity was originally set; on a fast-path `**Weighted score:** n/a` line, write `3 (threshold 3)`.
+The thresholds are in `get_blast_radius_override`'s header (`lib/notes-parse.sh`). `BLAST_OVERRIDE=complex` **is** the Step 2.5 **Blast radius** axis (weight 3) firing; do not re-judge it. When it fires, add `blast-radius:3` to `**Axes fired:**`, add 3 to `**Weighted score:**`, and recompute `**Score:**` against the threshold (any score with blast radius fired is ≥ 3, so `complex`). Append `BLAST_REASON` to `**Reason:**`. **Fast-path interaction:** If fast-path set complexity to `simple` (from Conservative strategy), blast radius still runs and can escalate to `complex`. It reads from notes.md and applies regardless of how complexity was originally set; on a fast-path `**Weighted score:** n/a` line, write `3 (threshold 3)`.
 
 ```markdown
 **Score:** complex (escalated from simple — blast radius: {BLAST_REASON})
@@ -455,13 +451,11 @@ eval "$(bash -c "source ~/.claude/skills/lib/notes-parse.sh; get_blast_radius_ov
 **Axes fired:** {existing list}, blast-radius:3
 ```
 
-**Additive-change exemption (caller-count trigger only):** a purely additive edit cannot change any existing caller's behaviour, so its caller count is not evidence of risk — and counts from the `impact-data` local-grep fallback are file counts, not call-graph edges, so they are an upper bound to begin with. This trigger alone used to override additive tickets to `complex`, and every such ticket landed `Smooth`. If `BLAST_ADDITIVE_SKIP` is non-empty, record it in `## Complexity`:
+**Additive-change exemption (caller-count trigger only):** if `BLAST_ADDITIVE_SKIP` is non-empty, record it in `## Complexity`:
 
 ```markdown
 **blast-radius:** additive — caller-count override skipped ({BLAST_ADDITIVE_SKIP})
 ```
-
-The HIGH/CRITICAL-risk and 2+-flows triggers still apply to additive targets.
 
 **Framework-migration:** no separate override any more. The `cross-layer (framework-migration):3` entry from Step 2.5 already scored `complex` on its own, so a LOW blast-radius result here changes nothing — the `impact()` thresholds are edge counts, and this class of defect has no edge. Such tickets take the Step 3-Agent (delegated) path so the bean-wiring surface is planned adversarially rather than inline.
 
@@ -479,7 +473,7 @@ bash ~/.claude/skills/lib/plog.sh APPRAISE blast-radius done "Risk: {highest-ris
 
 ## Step 3 — Investigate the codebase (inline path — simple tickets only)
 
-> **Fast-path:** Skip this step if fast-path is active. The Planner Context provides Target Symbols as investigation starting points. The `## Initial Investigation` section in notes.md was already populated. A lightweight pass is still recommended: use `smart_search` or `smart_outline` to confirm each target symbol exists at its listed path, and note any discrepancies in `## Open Questions`. But do NOT run the full multi-tier investigation (3a–3e).
+> **Fast-path:** Skip this step if fast-path is active. The Planner Context provides Target Symbols as investigation starting points. The `## Initial Investigation` section in notes.md was already populated. A lightweight pass is still recommended: Grep to confirm each target symbol exists at its listed path, and note any discrepancies in `## Open Questions`. But do NOT run the full multi-tier investigation (3a–3e).
 
 bash ~/.claude/skills/lib/plog.sh APPRAISE codebase-investigation start "Tracing call chain"
 
@@ -604,8 +598,8 @@ MATCHED=$(bash "$HOME/.claude/skills/lib/prescan-route.sh" --mode index \
 # PRESCAN_ROUTE_COUNT and matched file paths are emitted
 ```
 
-1. **If `PRESCAN_ROUTE_COUNT > 0`:** bash matched keywords → load the matched files. Use `smart_outline` first to confirm relevance before reading full files.
-2. **Verify against live source**: For every file:line reference found in prescan docs, confirm the referenced symbol still exists via `smart_search` or `smart_outline` on the source repo. Confirmed entries → tag `(prescan-confirmed)`. Unconfirmed entries → tag `(prescan-unconfirmed)` and note as open questions if `PRESCAN_STATUS` is stale/decayed.
+1. **If `PRESCAN_ROUTE_COUNT > 0`:** bash matched keywords → load the matched files.
+2. **Verify against live source**: For every file:line reference found in prescan docs, Grep the source repo to confirm the referenced symbol still exists. Confirmed entries → tag `(prescan-confirmed)`. Unconfirmed entries → tag `(prescan-unconfirmed)` and note as open questions if `PRESCAN_STATUS` is stale/decayed.
 3. Set `{PRESCAN_FLOW}` = the shortest non-index matched file (most focused prescan doc). Each doc contains pre-traced call chains with real class names, endpoints, and entity fields. If multiple files match, prefer `services/*.md` over top-level docs because service files are more targeted.
 4. Record prescan docs loaded in notes.md under Initial Investigation: `**Prescan bootstrap:** {list of files loaded} ({fresh|stale|decayed}) — routed by prescan-route.sh`
 5. **If `PRESCAN_ROUTE_COUNT = 0`:** INDEX.md keyword matching found nothing for this repo → fall through to Tier 2 (claude-mem corpus) for the per-repo search. This is independent of the wiki decision already made in 3a.0b.
@@ -647,11 +641,11 @@ When loading:
    Service** maps services to files. Match the ticket's labels, title, and description (already
    done once for the routing decision in 3a.0b — reuse that match) to identify which wiki files
    to load. The index is the authoritative routing table — do not use any hardcoded keyword list.
-2. **Scoped loading via smart_search**: Instead of loading every matched wiki file, use `smart_search` with the ticket's keywords, service names, and entity names against the wiki root to identify the most relevant files. Then use `smart_outline` on candidate files to confirm relevance before reading. Only Read the files (or sections) that smart_search confirms as relevant.
+2. **Scoped loading**: Grep the wiki root for the ticket's keywords, service names and entity names, and Read only the files (or sections) that match.
 3. Set `{WIKI_FLOW}` = the first flow file loaded (or the most relevant). Each file contains pre-traced call chains with real class names, endpoints, and entity fields.
 4. Also load `{WIKI_ROOT}/services.md` (service responsibilities and Feign wiring) — outline first, then read only the relevant service sections.
 5. Record the wiki files loaded in notes.md under Initial Investigation: `**Wiki bootstrap:** {list of files loaded} ({routed: multi-repo|topic-match | fallback: tiers-1-2-empty})`
-6. If no topic in the index matches, or smart_search returns no results, leave `{WIKI_FLOW}` empty — fall through to full discovery in 3c.
+6. If no topic in the index matches, or the Grep finds nothing, leave `{WIKI_FLOW}` empty — fall through to full discovery in 3c.
 
 **Freshness gate on each loaded wiki file** — run before trusting any of them, mirroring the
 prescan freshness gate in 3a.0:
@@ -690,7 +684,7 @@ Read the `CLAUDE.md` for every affected repository before touching any code. Thi
 
 **Path P — Prescan-bootstrapped (`{PRESCAN_FLOW}` was loaded in 3a.1):**
 
-For each layer listed in the prescan doc, use `smart_search` or `smart_outline` to confirm the file and method still exist at the listed paths. Read only the pinpointed method — do not scan whole files. After confirming each layer, append to Initial Investigation with: `(prescan-confirmed)` for fresh prescans, or `(prescan-verified)` for stale/decayed prescans where you re-verified the reference.
+For each layer listed in the prescan doc, Grep to confirm the file and method still exist at the listed paths. Read only the pinpointed method — do not scan whole files. After confirming each layer, append to Initial Investigation with: `(prescan-confirmed)` for fresh prescans, or `(prescan-verified)` for stale/decayed prescans where you re-verified the reference.
 
 If a symbol was renamed or moved, note the discrepancy and mark the finding `(prescan-stale)`. For stale/decayed prescans, demote unverifiable entries to the Open Questions section.
 
@@ -710,7 +704,7 @@ Skip the full traversal instructions below — you already have your roadmap.
 
 **Path A — Wiki-bootstrapped (`{WIKI_FLOW}` was loaded in 3a.3):**
 
-For each layer listed in the wiki flow file, use Serena to confirm the file and method still exist at the listed paths. Read only the pinpointed method — do not scan whole files. After confirming each layer, append the confirmed path to Initial Investigation with: `(wiki-confirmed)`.
+For each layer listed in the wiki flow file, Grep to confirm the file and method still exist at the listed paths. Read only the pinpointed method — do not scan whole files. After confirming each layer, append the confirmed path to Initial Investigation with: `(wiki-confirmed)`.
 
 If a class has been renamed or moved, note the discrepancy but continue. The wiki may be slightly stale — your job is to verify and update, not rediscover.
 
@@ -731,19 +725,13 @@ Skip the full traversal instructions below — you already have your roadmap.
 
 **Path B — No prescan or wiki (`{PRESCAN_FLOW}` and `{WIKI_FLOW}` are both empty):**
 
-**Preferred path — smart_search pre-filter:** Use `smart_search` first to locate symbols by name, class, or function. For each hit, use `smart_outline` to get a structural view (methods, signatures, imports) without loading full files. Then `smart_unfold` or `Read` only the confirmed symbols. This is 5-10x more token-efficient than full file reads.
-
-**Fallback — Serena:** If smart_search is unavailable or returns no results, use Serena for code navigation: symbol search or go_to_definition to locate, find_references to trace downstream effects, symbols_overview for file structure. Only Read after Serena has pinpointed the location — never grep for symbols.
-
-**Last resort — grep:** If neither smart_search nor Serena is available, use `grep -r` to locate symbols by name. This is the least efficient path and should only be used when both structural tools are unavailable.
-
 Do not stop at the first plausible file. Trace the feature end-to-end across all layers involved:
 
 **Frontend tickets:** template → component → service → HTTP call → backend API endpoint
 **Backend tickets:** API endpoint → delegate/controller → service → repository/feign client → database or downstream service
 **Full-stack tickets:** trace both directions and identify where they meet
 
-For each layer, use Serena to locate the specific file and method. Read only the relevant section after Serena has pinpointed it — do not scan whole files.
+For each layer, Grep to locate the specific file and method, then Read only that section — do not scan whole files.
 
 **Write findings to notes.md as you go — do not wait until the end of the step.** After each layer is traced, append what you found to the **Initial Investigation** section immediately.
 
@@ -850,7 +838,7 @@ PRESCAN_FLOW paragraph on a multi-repo ticket, since prescan (per-repo) and wiki
 are loaded together, not one instead of the other:}
 A wiki file at `{WIKI_FLOW}` contains a pre-traced call chain for this feature area. Read it now. It lists real class names, method signatures, endpoints, and entity fields. Start by CONFIRMING those paths — do not rediscover from scratch. If a class was renamed or moved, note it but follow the wiki's structure. If this and the PRESCAN_FLOW paragraph above describe the same cross-cutting fact differently, flag it as a conflict rather than silently picking one — the calling appraisal step resolves it by freshness (§3c conflict resolution).
 
-IMPORTANT — Prefer smart_search for code navigation: use `smart_search` to locate symbols by name, `smart_outline` for structural views, `smart_unfold` or `Read` to load only confirmed symbols. Fall back to Serena if smart_search returns nothing: symbol search or go_to_definition to locate, find_references to trace usages, symbols_overview for file structure. Only Read after pinpointing — never scan whole files. Use grep only as last resort.
+IMPORTANT — Grep to locate symbols, then Read only the pinpointed section — never scan whole files.
 
 Answer each question below with specific file paths and line numbers. If you cannot confirm an answer, say "NOT FOUND" — do not guess.
 
@@ -1023,7 +1011,7 @@ bash ~/.claude/skills/lib/plog.sh APPRAISE handoff done "Reported to user"
 If ticket-setup reported workspace already exists in Step 1:
 
 1. Read `context.md` and `notes.md` from the existing directory.
-2. Fetch the current state from Linear using the Linear access strategy above (bash `get_issue` + `get_comments` when `LINEAR_API_KEY` is set, MCP fallback otherwise).
+2. Fetch the current state from Linear (`get_issue` + `get_comments`, shared preamble § 2).
 3. **Diff comments** — compare Linear's current comments against the Comments section in `context.md`:
    - Count comments in `context.md` (count `**` bold author lines under `## Comments`). If Linear has more, or if any comment body/timestamp differs materially — new activity exists.
    - **If no new comments:** tell the user current status and last session notes. Ask: "Want to continue where you left off, or re-investigate?" Skip the rest of this section.
@@ -1046,15 +1034,15 @@ If ticket-setup reported workspace already exists in Step 1:
    - ⚠️ Artifacts exist (simple-fix.md / openspec change). New comments may require plan updates.
    ```
 8. **Record re-appraisal marker in notes.md.** Append a `## Re-appraisal` section:
-	   ```markdown
-	   ## Re-appraisal
-	   **Date:** {today}
-	   **Changes detected:** {yes | no}
-	   **Reason:** {e.g. "N new comments since last appraisal" or "no new activity — nothing to update"}
-	   ```
-	   Set `Changes detected: yes` if: new comments found, complexity score changed, or artifacts are stale. Otherwise `no`.
+   ```markdown
+   ## Re-appraisal
+   **Date:** {today}
+   **Changes detected:** {yes | no}
+   **Reason:** {e.g. "N new comments since last appraisal" or "no new activity — nothing to update"}
+   ```
+   Set `Changes detected: yes` if: new comments found, complexity score changed, or artifacts are stale. Otherwise `no`.
 
-	10. **Tell the user:**
+9. **Tell the user:**
    ```
    ## {TICKET-ID} — re-appraisal
 
@@ -1065,4 +1053,4 @@ If ticket-setup reported workspace already exists in Step 1:
    **Artifacts:** {up to date | ⚠️ may be stale — re-run `/ticket-appraise-exec {TICKET-ID}` to regenerate}
    ```
 
-11. Do NOT overwrite `context.md`. The comments section there is a snapshot from initial intake. You may append to `notes.md`.
+10. Do NOT overwrite `context.md`. The comments section there is a snapshot from initial intake. You may append to `notes.md`.

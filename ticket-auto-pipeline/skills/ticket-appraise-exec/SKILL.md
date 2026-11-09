@@ -12,16 +12,15 @@ You have been given a ticket ID as the argument (e.g. `WIL-42`). The investigati
 If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=<from args>, PHASE=EXEC, HAS_LINEAR_ACCESS=true, LINEAR_OPS=save_comment, HAS_LOGGING=true, HAS_HEARTBEAT=true. Before starting, source the project context: `source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=EXEC, FROM_FLAG=none, HAS_LINEAR_ACCESS=true, LINEAR_OPS=save_comment, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT,ISSUE_PREFIX,BE_SERVICES,BE_TEST_CMD, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
 
 ### Heartbeat points
-- **Complexity read**: after extracting complexity from notes.md, write `hb-wrap.sh decision "complexity-read" "info" "complexity: {simple|complex}" '{"score":"{COMPLEXITY}"}'`
-- **Artifact created**: after writing simple-fix.md or openspec change, write `hb-wrap.sh decision "artifact-created" "fired" "created {simple-fix|openspec}" '{"type":"{simple-fix|openspec}"}'`
-- **Coherence gate**: after complexity-coherence check, write `hb-wrap.sh gate "coherence-check" "ok|fail" "complexity-artifact match|mismatch" '{"declared":"{COMPLEXITY}","artifact":"{simple-fix|openspec}"}'`
-- **Artifact persisted**: after the openspec-tracking-check.sh commit step (complex tickets only), write `hb-wrap.sh gate "artifact-persisted" "ok|warn" "committed|noop|commit-failed" '{"dir":"{CHANGE_DIR}","rc":"{COMMIT_RC}"}'`
-- **Regression verdict**: after the regression guard, write `hb-wrap.sh decision "regression-verdict" "fired" "{CONFLICT|ADJACENT|SUPERSEDES|clear}" '{"verdict":"{CONFLICT|ADJACENT|SUPERSEDES|clear}"}'`
-- **Linear fallback**: if LINEAR_API_KEY is unset and MCP fallback is used for posting the comment, write `hb-wrap.sh fallback "linear-api" "fired" "using MCP Linear tools" '{"reason":"LINEAR_API_KEY unset"}'`
-- **Adversarial review**: after adversarial agent completes, write `hb-wrap.sh decision "adversarial-review" "fired" "{PASS|WARNINGS|BLOCKED}" '{"verdict":"{PASS|WARNINGS|BLOCKED}","issues":"{N}"}'`
-- **Verify plan derived**: after Step 3.7 completes, write `hb-wrap.sh gate "verify-plan-derived" "{ok|fail}" "{CLEAR|INSUFFICIENT_INFO}" '{"criteria":"{N}","verifiable":"{M}"}'`
-- **Re-appraisal skip**: if re-appraisal detected no changes and steps 5-6 are skipped, write `hb-wrap.sh decision "re-appraisal-skip" "info" "no changes detected, skipping Linear post"`
-- **Verification readiness**: after Step 3.8, write `hb-wrap.sh gate "verify-readiness" "{ok|fail}" "{CLEAR|WARNINGS|INCOMPLETE}" '{"missing":"{N}"}'`
+Steps 3.7 and 3.8 write their own heartbeats inline. Also write (event schema: `pipeline-heartbeat-format.md`):
+- after reading complexity: `hb-wrap.sh decision "complexity-read" "info" "complexity: {simple|complex}" '{"score":"{COMPLEXITY}"}'`
+- after writing the artifact: `hb-wrap.sh decision "artifact-created" "fired" "created {simple-fix|openspec}" '{"type":"{simple-fix|openspec}"}'`
+- after the coherence check: `hb-wrap.sh gate "coherence-check" "ok|fail" "complexity-artifact match|mismatch" '{"declared":"{COMPLEXITY}","artifact":"{simple-fix|openspec}"}'`
+- after the openspec-tracking-check.sh commit (complex only): `hb-wrap.sh gate "artifact-persisted" "ok|warn" "committed|noop|commit-failed" '{"dir":"{CHANGE_DIR}","rc":"{COMMIT_RC}"}'`
+- after the regression guard: `hb-wrap.sh decision "regression-verdict" "fired" "{CONFLICT|ADJACENT|SUPERSEDES|clear}" '{"verdict":"{CONFLICT|ADJACENT|SUPERSEDES|clear}"}'`
+- MCP fallback used to post the comment (LINEAR_API_KEY unset): `hb-wrap.sh fallback "linear-api" "fired" "using MCP Linear tools" '{"reason":"LINEAR_API_KEY unset"}'`
+- after the adversarial agent: `hb-wrap.sh decision "adversarial-review" "fired" "{PASS|WARNINGS|BLOCKED}" '{"verdict":"{PASS|WARNINGS|BLOCKED}","issues":"{N}"}'`
+- Step 4 skips Steps 5-6: `hb-wrap.sh decision "re-appraisal-skip" "info" "no changes detected, skipping Linear post"`
 
 ### Step dispatch
 | `--from-step` value | Skip to | Restore from |
@@ -65,35 +64,7 @@ bash ~/.claude/skills/lib/plog.sh EXEC load-workspace done "Loaded {COMPLEXITY}"
 
 ## Step 1.5 — Create task tracker
 
-Create a TaskCreate for every remaining step (Steps 2 through 6, including 2.5). Each task subject = the step heading. After each step is fully done, mark it completed with TaskUpdate. At session end, write a trace file:
-
-```bash
-cat > {ticket-dir}/appraise-exec-session.md << 'TRACE'
-# appraise-exec session — {ISSUE-ID}
-**Date:** {today}
-**Complexity:** {simple|complex}
-**Artifact:** {simple-fix.md | openspec: <name>}
-
-## Step trace
-- [x] Step 2: State already set by appraise (Todo + claimed + assignee)
-- [x] Step 2.5: ADR gate check — {no candidate | NOT_ARCHITECTURAL | GOVERNED | parked/stopped}
-- [x] Step 3: Create change artifacts — {type}
-- [x] Step 3.5: Regression guard — {clear | ADJACENT | CONFLICT | skipped (no prior art)}
-- [x] Step 3.6: Adversarial review — {PASS | WARNINGS | BLOCKED | skipped (simple)}
-- [x] Step 3.7: Verify plan derivation — {CLEAR | INSUFFICIENT_INFO | skipped (simple)}
-- [x] Step 3.8: Verification-readiness — {CLEAR | WARNINGS | INCOMPLETE}
-- [x] Step 4: Re-appraisal check — {skipped | no marker → continued}
-- [x] Step 5: Post Linear comment — {done | skipped (no changes)}
-- [x] Step 6: Set state → Approve — {done | skipped (no changes)}
-- [x] Step 7: Report — done
-TRACE
-```
-
----
-
-## Step 2 — State already set
-
-Ticket was already moved to `Todo` with `claimed` label and `assignee: "me"` by the router (or `ticket-appraise` when run standalone). No action needed — proceed to Step 3.
+Create a TaskCreate for every remaining step (Steps 2.5 through 7). Each task subject = the step heading. After each step is fully done, mark it completed with TaskUpdate.
 
 ---
 
@@ -366,7 +337,7 @@ bash ~/.claude/skills/lib/plog.sh EXEC adversarial-review start "Spawning advers
 
 Spawn a `general-purpose` agent with an adversarial framing. Its sole job is to find what's wrong, missing, or under-specified in the implementation plan — not to confirm it's correct.
 
-**⚠️ MANDATORY — read before spawning:** The `Task` tool call below returns control to *you*, the orchestrating agent, in this same session. That return is a normal mid-skill event, **not the end of `ticket-appraise-exec`**. The instant the `Task` call completes — with a result, an error, anything — you MUST immediately keep going in the same turn: read the sub-agent's output, follow **"When the agent returns"** below, then continue straight through the rest of this skill in order — Step 3.7 (derive verification plan) → Step 3.8 (verification-readiness) → Step 4 (re-appraisal check) → Step 5 (post the appraisal comment to Linear) → Step 6 (move the ticket to Approve) → Step 7 (report). Do not end your turn, summarize, or hand back to the caller right after the `Task` call returns — that is exactly the failure mode this warning exists to prevent (a clean sub-agent return has been observed to make the orchestrator stop dead here, leaving the ticket dead-lettered with no Linear comment ever posted). If your task tracker (Step 1.5) is active, do not mark Step 3.6 complete and then stop — marking it complete is itself the cue to immediately open and start the next task.
+**⚠️ MANDATORY — read before spawning:** the `Task` call's return is not the end of this skill. Handle it per **"When the agent returns"**, then continue in the same turn through Steps 3.7 → 3.8 → 4 → 5 → 6 → 7; stopping here leaves the ticket with no Linear comment.
 
 **Prompt the agent with:**
 
