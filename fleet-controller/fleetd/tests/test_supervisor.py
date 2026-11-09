@@ -109,6 +109,103 @@ def _safe_tmp_cleanup(tmp, retries=10, delay=0.1):
             time.sleep(delay)
 
 
+# ── Test-speed helpers ──────────────────────────────────────────────────
+#
+# Many tests below fork a real worker and then wait for it. They used to
+# wait with fixed sleeps (and kill escalation with a whole-second grace per
+# rung), which made this module the slowest in the suite. These helpers let
+# a test wait for the condition it needs instead of a fixed time.
+
+# kill_worker() grace per escalation rung. Tests that need a specific rung
+# wait for the worker to be ready first (see _wait_signals_ignored).
+FAST_GRACE = 0.2
+
+# Replaces supervisor.KILL_SIGKILL_WAIT_SECS (1s in production) for this
+# module — see setUpModule.
+_TEST_SIGKILL_WAIT_SECS = 0.3
+_saved_sigkill_wait = None
+
+
+def setUpModule():
+    global _saved_sigkill_wait
+    from fleetd import supervisor as sup_mod
+    _saved_sigkill_wait = sup_mod.KILL_SIGKILL_WAIT_SECS
+    sup_mod.KILL_SIGKILL_WAIT_SECS = _TEST_SIGKILL_WAIT_SECS
+
+
+def tearDownModule():
+    from fleetd import supervisor as sup_mod
+    if _saved_sigkill_wait is not None:
+        sup_mod.KILL_SIGKILL_WAIT_SECS = _saved_sigkill_wait
+
+
+def _proc_exited(pid):
+    """True once `pid` has exited — gone, or a zombie awaiting its reap.
+
+    Unlike kill(pid, 0), this does not report an unreaped zombie as alive,
+    and unlike waitpid it does not reap: the supervisor under test must
+    still be the one to collect the exit status.
+    """
+    try:
+        stat = Path(f'/proc/{pid}/stat').read_text()
+    except OSError:
+        return True
+    close_paren = stat.rfind(')')
+    state = stat[close_paren + 2:close_paren + 3] if close_paren != -1 else ''
+    return state in ('Z', 'X')
+
+
+def _wait_exited(pid, timeout=10):
+    """Poll until `pid` has exited (see _proc_exited). Returns True if so."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _proc_exited(pid):
+            return True
+        time.sleep(0.02)
+    return _proc_exited(pid)
+
+
+def _wait_children_exited(sup, timeout=10):
+    """Wait for every worker in the supervisor's child table to exit."""
+    pids = [child['pid'] for child in list(sup._children)]
+    for pid in pids:
+        assert _wait_exited(pid, timeout), f'worker {pid} did not exit'
+
+
+def _wait_signals_ignored(pid, signals=(signal.SIGINT, signal.SIGTERM),
+                          timeout=10):
+    """Wait until `pid` has set SIG_IGN for `signals` (/proc SigIgn mask).
+
+    An "ignoring" worker is a fresh Python process; with a short kill grace
+    a signal could otherwise arrive before its handlers are installed and
+    end it one rung early.
+    """
+    wanted = 0
+    for sig in signals:
+        wanted |= 1 << (int(sig) - 1)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            for line in Path(f'/proc/{pid}/status').read_text().splitlines():
+                if line.startswith('SigIgn:'):
+                    if int(line.split()[1], 16) & wanted == wanted:
+                        return True
+                    break
+        except OSError:
+            return False
+        time.sleep(0.02)
+    return False
+
+
+def _kill_and_reap(pid):
+    """End a directly-forked test worker now instead of waiting it out."""
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    os.waitpid(pid, 0)
+
+
 class SingleInstanceTest(unittest.TestCase):
     """Task 4.6: single-instance enforcement."""
 
@@ -1251,7 +1348,7 @@ class PhaseDispatchReapWiringTest(unittest.TestCase):
             sup.spawn_phase(
                 'CRE-39', 'STEP_4', str(log_file),
                 cmd_override=[sys.executable, '-c', 'pass'])
-            time.sleep(1)
+            _wait_children_exited(sup)
 
             with mock.patch.object(sup_mod, 'FLEET_PHASE_DISPATCH_ENABLE', True), \
                  mock.patch.object(sup, '_advance_phase_dispatch_locked') \
@@ -1276,7 +1373,7 @@ class PhaseDispatchReapWiringTest(unittest.TestCase):
             sup.spawn_phase(
                 'CRE-40', 'STEP_4', str(log_file),
                 cmd_override=[sys.executable, '-c', 'pass'])
-            time.sleep(1)
+            _wait_children_exited(sup)
 
             self.assertFalse(sup_mod.FLEET_PHASE_DISPATCH_ENABLE)
             with mock.patch.object(sup, '_advance_phase_dispatch_locked') \
@@ -1304,7 +1401,7 @@ class PhaseDispatchReapWiringTest(unittest.TestCase):
             from fleetd import phase_dispatch as phase_mod
             self.assertEqual(child['step_id'], phase_mod.PR_ITERATE)
         finally:
-            sup.kill_worker('CRE-41', grace_secs=1)
+            sup.kill_worker('CRE-41', grace_secs=FAST_GRACE)
             sup.release_lock()
 
 
@@ -1412,9 +1509,12 @@ class PhaseDispatchRegressionPassTest(unittest.TestCase):
                 # turn. Reaping in a loop here would race past this
                 # checkpoint straight through STEP_2's own (real, fast)
                 # exit and into STEP_2_5's synchronous bash gate.
-                deadline = time.time() + 10
-                while _pid_is_alive(first_child['pid']) and time.time() < deadline:
-                    time.sleep(0.05)
+                # (_wait_exited, not _pid_is_alive: the exited worker is an
+                # unreaped zombie until that reap, and kill(pid, 0) reports
+                # a zombie as alive — the old loop always ran to its 10s
+                # deadline.)
+                self.assertTrue(_wait_exited(first_child['pid']),
+                                "STEP_1 fake worker never exited")
                 sup._reap_children_locked()
 
                 second_child = sup._children.get(tid)
@@ -1422,7 +1522,7 @@ class PhaseDispatchRegressionPassTest(unittest.TestCase):
                                      "STEP_2 should be spawned after STEP_1")
                 self.assertEqual(second_child['step_id'], 'STEP_2')
         finally:
-            sup.kill_worker(tid, grace_secs=1)
+            sup.kill_worker(tid, grace_secs=FAST_GRACE)
             sup.release_lock()
 
     def test_verify_exhaustion_finalizes_instead_of_retrying_forever(self):
@@ -1923,7 +2023,7 @@ class SpawnAndReapTest(unittest.TestCase):
         sup.acquire_lock()
         try:
             # Spawn a worker that exits quickly.
-            cmd = _make_worker_cmd(sleep_secs=1)
+            cmd = _make_worker_cmd(sleep_secs=0.2)
             sup._consume_queue(cmd_override=cmd)
 
             child = sup._children.get('TST-S1')
@@ -1931,7 +2031,7 @@ class SpawnAndReapTest(unittest.TestCase):
             worker_pid = child['pid']
 
             # Wait for the worker to exit, then reap.
-            time.sleep(2)
+            _wait_children_exited(sup)
             sup._reap_children()
 
             # After reaping, the child should be removed from the table.
@@ -1961,14 +2061,14 @@ class SpawnAndReapTest(unittest.TestCase):
         sup.acquire_lock()
         try:
             # Spawn all three (short-lived).
-            cmd = _make_worker_cmd(sleep_secs=1)
+            cmd = _make_worker_cmd(sleep_secs=0.2)
             sup._consume_queue(cmd_override=cmd)
 
             self.assertEqual(len(sup._children), 3,
                              "all three workers should be in child table")
 
             # Wait for all to exit, then reap.
-            time.sleep(2)
+            _wait_children_exited(sup)
             sup._reap_children()
 
             self.assertEqual(len(sup._children), 0,
@@ -3742,7 +3842,7 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
         pid1, _ = spawn_worker(
             tid='TST-GEN', generation=1, state_dir=str(self.workspace),
             cmd_override=[sys.executable, '-c',
-                          'print("GEN1"); import time; time.sleep(1)'],
+                          'print("GEN1")'],
         )
         deadline = time.time() + 5
         gen1_file = self.workspace / 'TST-GEN-gen1.json'
@@ -3754,7 +3854,7 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
         pid2, _ = spawn_worker(
             tid='TST-GEN', generation=2, state_dir=str(self.workspace),
             cmd_override=[sys.executable, '-c',
-                          'print("GEN2"); import time; time.sleep(1)'],
+                          'print("GEN2")'],
         )
         gen2_file = self.workspace / 'TST-GEN-gen2.json'
         deadline = time.time() + 5
@@ -3793,7 +3893,7 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
                              "recorded ticks must match /proc field 22 for "
                              "the live worker")
         finally:
-            os.waitpid(pid, 0)
+            _kill_and_reap(pid)
 
     def test_phase_worker_gets_its_own_registry_and_stdio_files(self):
         """A ticket's phases run in sequence and must not overwrite each other.
@@ -3829,7 +3929,7 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
             self.assertTrue(stderr_file.is_file(),
                             "phase stdio must be namespaced too")
         finally:
-            os.waitpid(pid, 0)
+            _kill_and_reap(pid)
 
     def test_phase_worker_environment_reaches_the_process(self):
         """The env fleetd builds is the env the phase actually runs with.
@@ -4121,7 +4221,7 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
             self.assertEqual(entry['pid'], str(pid))
             self.assertEqual(entry['phase'], 'VERIFY')
         finally:
-            os.waitpid(pid, 0)
+            _kill_and_reap(pid)
 
     def test_spawn_phase_worker_writes_a_contract_when_observer_enabled(self):
         """agent-observer Inc 3: the contract is written at spawn under the flag."""
@@ -4316,9 +4416,11 @@ class KillEscalationTest(unittest.TestCase):
             pid = self._spawn_and_get_pid(sup, cmd)
             self.assertIsNotNone(pid, "worker should be spawned")
             self.assertTrue(_pid_is_alive(pid), "worker should be alive before kill")
+            self.assertTrue(_wait_signals_ignored(pid),
+                            "worker never installed its SIG_IGN handlers")
 
             # Kill with short grace periods for test speed.
-            result = sup.kill_worker('TST-K1', grace_secs=1)
+            result = sup.kill_worker('TST-K1', grace_secs=FAST_GRACE)
             self.assertTrue(result.success,
                             f"kill should succeed: {result.error}")
             self.assertEqual(result.method, 'SIGKILL',
@@ -4356,8 +4458,10 @@ class KillEscalationTest(unittest.TestCase):
             self.assertIsNotNone(child, "spawn_phase must register a child")
             self.assertEqual(child['pid'], pid)
             self.assertEqual(child['phase'], 'VERIFY')
+            self.assertTrue(_wait_signals_ignored(pid),
+                            "phase worker never installed its SIG_IGN handlers")
 
-            result = sup.kill_worker('TST-KPHASE', grace_secs=1)
+            result = sup.kill_worker('TST-KPHASE', grace_secs=FAST_GRACE)
             self.assertTrue(result.success, f"kill should succeed: {result.error}")
             self.assertEqual(result.method, 'SIGKILL',
                              "SIGTERM-ignoring phase worker should reach SIGKILL")
@@ -4406,11 +4510,14 @@ class KillEscalationTest(unittest.TestCase):
                             f"worker child {child_pid} should be alive")
 
             # Kill — process group signal should reach both.
-            result = sup.kill_worker('TST-K1', grace_secs=1)
+            result = sup.kill_worker('TST-K1', grace_secs=FAST_GRACE)
             self.assertTrue(result.success, f"kill should succeed: {result.error}")
 
-            # Both should be dead.
-            time.sleep(0.5)
+            # Both should be dead. The worker's own child is reparented
+            # on its death, so give its new parent a moment to reap it.
+            deadline = time.monotonic() + 5
+            while _pid_is_alive(child_pid) and time.monotonic() < deadline:
+                time.sleep(0.02)
             self.assertFalse(_pid_is_alive(pid),
                              "worker should be dead after escalation")
             self.assertFalse(_pid_is_alive(child_pid),
@@ -4423,7 +4530,7 @@ class KillEscalationTest(unittest.TestCase):
         from fleetd.supervisor import Supervisor
 
         # Use a very short-lived worker that exits during the grace period.
-        cmd = _make_worker_cmd(sleep_secs=1)
+        cmd = _make_worker_cmd(sleep_secs=0.1)
 
         sup = Supervisor(
             state_dir=str(self.workspace),
@@ -4436,10 +4543,10 @@ class KillEscalationTest(unittest.TestCase):
             pid = self._spawn_and_get_pid(sup, cmd)
             self.assertIsNotNone(pid)
 
-            # Wait a bit so the worker has time to start, then kill with
-            # grace period longer than the worker's remaining sleep.
-            time.sleep(0.5)
-            result = sup.kill_worker('TST-K1', grace_secs=2)
+            # Kill with a grace period well past the worker's own lifetime
+            # (startup plus a 0.1s sleep), so it exits during the
+            # cooperative-stop wait.
+            result = sup.kill_worker('TST-K1', grace_secs=1)
 
             self.assertTrue(result.success,
                             f"kill should succeed on early exit: {result.error}")
@@ -4483,7 +4590,7 @@ class KillEscalationTest(unittest.TestCase):
             cmd = _make_worker_cmd(sleep_secs=30)
             self._spawn_and_get_pid(sup, cmd)
 
-            sup.kill_worker('TST-K1', grace_secs=1)
+            sup.kill_worker('TST-K1', grace_secs=FAST_GRACE)
 
             # Verify stop files were created.
             pinger_stop = self.workspace / 'ticket-auto-TST-K1-pinger-stop'
@@ -4507,9 +4614,8 @@ class KillEscalationTest(unittest.TestCase):
         try:
             cmd = _make_worker_cmd(sleep_secs=1)
             self._spawn_and_get_pid(sup, cmd)
-            time.sleep(0.5)
 
-            sup.kill_worker('TST-K1', grace_secs=1)
+            sup.kill_worker('TST-K1', grace_secs=FAST_GRACE)
 
             fence_file = self.workspace / 'TST-K1-fence'
             self.assertTrue(fence_file.exists(),
@@ -4556,7 +4662,7 @@ class PhaseLivenessHeartbeatTest(unittest.TestCase):
             self.assertEqual(child['hb_log_file'], hb)
             self.assertTrue(child['start_ticks'])
         finally:
-            sup.kill_worker('TST-HB1', grace_secs=1)
+            sup.kill_worker('TST-HB1', grace_secs=FAST_GRACE)
             sup.release_lock()
 
     def test_emit_writes_a_heartbeat_for_a_live_phase_worker(self):
@@ -4574,7 +4680,7 @@ class PhaseLivenessHeartbeatTest(unittest.TestCase):
             sup.emit_phase_liveness_heartbeats()
             self.assertIn('|watchdog|alive|', Path(hb).read_text())
         finally:
-            sup.kill_worker('TST-HB2', grace_secs=1)
+            sup.kill_worker('TST-HB2', grace_secs=FAST_GRACE)
             sup.release_lock()
 
     def test_a_ticket_level_child_is_not_a_candidate(self):
@@ -4596,7 +4702,7 @@ class PhaseLivenessHeartbeatTest(unittest.TestCase):
             # file recorded on a ticket-level child, so nothing to write to).
             sup.emit_phase_liveness_heartbeats()
         finally:
-            sup.kill_worker('TST-HB3', grace_secs=1)
+            sup.kill_worker('TST-HB3', grace_secs=FAST_GRACE)
             sup.release_lock()
 
 
@@ -4669,21 +4775,16 @@ class CrashRecoveryTest(unittest.TestCase):
         is NOT adopted — it's a reused PID."""
         from fleetd.supervisor import Supervisor
 
-        # Spawn a sleeper and wait so its start time is clearly before
-        # our registry timestamp.
+        # Spawn a sleeper whose start time is clearly before our registry
+        # timestamp.
         sleeper = self._spawn_sleeper(tid_marker='TST-R1')
-        time.sleep(0.5)
 
-        # Write registry with started_at = NOW, but the sleeper started 0.5s ago.
-        # We need the gap to be > 5 seconds for the check to trigger.
-        # Actually, the check is: proc_start < (reg_epoch - 5).
-        # If proc started 0.5s before reg: 0.5 < 5 → false → check passes.
-        # We need proc to start 6+ seconds before reg.
-
-        # Wait longer so the PID reuse check triggers.
-        time.sleep(6)
-
-        started_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        # The check is: proc_start < (reg_epoch - 5), so the process must
+        # have started more than 5s before the registry was written. Rather
+        # than sleeping 6s+ for real, stamp the registry 10s after the
+        # sleeper's start — the same gap, from the other side.
+        started_at = (datetime.now(timezone.utc) + timedelta(seconds=10)
+                      ).strftime('%Y-%m-%dT%H:%M:%SZ')
         self._write_run_registry('TST-R1', sleeper.pid, started_at=started_at)
 
         sup = Supervisor(
@@ -4790,7 +4891,7 @@ class CrashRecoveryTest(unittest.TestCase):
         # Spawn a short-lived sleeper.
         sleeper = subprocess.Popen(
             [sys.executable, '-c',
-             'import time; time.sleep(1)  # worker: TST-P1'],
+             'import time; time.sleep(0.5)  # worker: TST-P1'],
         )
         started_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         self._write_run_registry('TST-P1', sleeper.pid, started_at=started_at)
@@ -4867,9 +4968,9 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         sup = self._make_sup()
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1, exit_code=1)
+            cmd = _make_worker_cmd(sleep_secs=0.2, exit_code=1)
             sup._consume_queue(cmd_override=cmd)
-            time.sleep(2)
+            _wait_children_exited(sup)
 
             recorded_scopes = []
             with mock.patch.object(
@@ -4899,7 +5000,7 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         sup = self._make_sup()
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1, exit_code=0)
+            cmd = _make_worker_cmd(sleep_secs=0.2, exit_code=0)
             sup._consume_queue(cmd_override=cmd)
             # Write the terminal marker AFTER spawn (consume-time terminality
             # would instead take the "stale queue entry" path and never
@@ -4910,7 +5011,7 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
                 '2026-08-29T00:00:00Z|META|schema|done|1\n'
                 '2026-08-29T00:00:01Z|META|outcome|done|completed\n'
             )
-            time.sleep(2)
+            _wait_children_exited(sup)
 
             called = []
             with mock.patch.object(
@@ -4935,9 +5036,9 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         sup = self._make_sup()
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1, exit_code=1)
+            cmd = _make_worker_cmd(sleep_secs=0.2, exit_code=1)
             sup._consume_queue(cmd_override=cmd)
-            time.sleep(2)
+            _wait_children_exited(sup)
 
             with mock.patch('fleetd.supervisor._notify_worker_event') as notify, \
                  mock.patch.object(sup, 'reconcile_orphaned_tickets'):
@@ -4959,14 +5060,14 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         sup = self._make_sup()
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1, exit_code=0)
+            cmd = _make_worker_cmd(sleep_secs=0.2, exit_code=0)
             sup._consume_queue(cmd_override=cmd)
             log_file = self.workspace / f'{tid}-pipeline.log'
             log_file.write_text(
                 '2026-08-29T00:00:00Z|META|schema|done|1\n'
                 '2026-08-29T00:00:01Z|META|outcome|done|completed\n'
             )
-            time.sleep(2)
+            _wait_children_exited(sup)
 
             with mock.patch('fleetd.supervisor._notify_worker_event') as notify:
                 sup._reap_children()
@@ -4984,9 +5085,9 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         sup = self._make_sup()
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1, exit_code=127)
+            cmd = _make_worker_cmd(sleep_secs=0.2, exit_code=127)
             sup._consume_queue(cmd_override=cmd)
-            time.sleep(2)
+            _wait_children_exited(sup)
 
             called = []
             with mock.patch.object(
@@ -5025,7 +5126,7 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
                 sup, 'reconcile_orphaned_tickets',
                 side_effect=lambda scope_tids=None: called.append(scope_tids),
             ):
-                result = sup.kill_worker(tid, grace_secs=1)
+                result = sup.kill_worker(tid, grace_secs=FAST_GRACE)
                 self.assertTrue(result.success)
                 self.assertEqual(result.method, 'SIGINT')
                 # The kill path itself must never trigger reconciliation —
@@ -5057,11 +5158,11 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         sup = self._make_sup()
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1, exit_code=0)
+            cmd = _make_worker_cmd(sleep_secs=0.2, exit_code=0)
             sup._consume_queue(cmd_override=cmd)
             hook_file = self.workspace / f'{tid}-gen1-hook.json'
             hook_file.write_text(json.dumps({'last_assistant_message': 'need clarification'}))
-            time.sleep(2)
+            _wait_children_exited(sup)
             sup._reap_children()
 
             record = self._read_exit_record(tid)
@@ -5082,11 +5183,11 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         sup = self._make_sup()
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1, exit_code=0)
+            cmd = _make_worker_cmd(sleep_secs=0.2, exit_code=0)
             sup._consume_queue(cmd_override=cmd)
             hook_file = self.workspace / f'{tid}-gen1-hook.json'
             hook_file.write_text(json.dumps({'last_assistant_message': 'need clarification'}))
-            time.sleep(2)
+            _wait_children_exited(sup)
             sup._reap_children()
 
             log_file = self.workspace / f'{tid}-pipeline.log'
@@ -5108,11 +5209,11 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         sup = self._make_sup()
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1, exit_code=0)
+            cmd = _make_worker_cmd(sleep_secs=0.2, exit_code=0)
             sup._consume_queue(cmd_override=cmd)
             gen_file = self.workspace / f'{tid}-gen1.json'
             gen_file.write_text(json.dumps({'result': 'adversarial review returned clean'}))
-            time.sleep(2)
+            _wait_children_exited(sup)
             sup._reap_children()
 
             log_file = self.workspace / f'{tid}-pipeline.log'
@@ -5132,9 +5233,9 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         sup = self._make_sup()
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1, exit_code=0)
+            cmd = _make_worker_cmd(sleep_secs=0.2, exit_code=0)
             sup._consume_queue(cmd_override=cmd)
-            time.sleep(2)
+            _wait_children_exited(sup)
             sup._reap_children()
 
             log_file = self.workspace / f'{tid}-pipeline.log'
@@ -5159,7 +5260,7 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
             hook_file = self.workspace / f'{tid}-gen1-hook.json'
             hook_file.write_text(json.dumps({'last_assistant_message': 'done early'}))
 
-            result = sup.kill_worker(tid, grace_secs=1)
+            result = sup.kill_worker(tid, grace_secs=FAST_GRACE)
             self.assertTrue(result.success)
 
             record = self._read_exit_record(tid)
@@ -5179,8 +5280,10 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         try:
             cmd = _make_ignoring_worker(sleep_secs=30)
             sup._consume_queue(cmd_override=cmd)
+            self.assertTrue(_wait_signals_ignored(sup._children.get(tid)['pid']),
+                            "worker never installed its SIG_IGN handlers")
 
-            result = sup.kill_worker(tid, grace_secs=1)
+            result = sup.kill_worker(tid, grace_secs=FAST_GRACE)
             self.assertTrue(result.success)
             self.assertEqual(result.method, 'SIGKILL')
 
@@ -5204,7 +5307,7 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         try:
             cmd = _make_worker_cmd(sleep_secs=0, exit_code=1)
             sup._consume_queue(cmd_override=cmd)
-            time.sleep(1)
+            _wait_children_exited(sup)
 
             with mock.patch.object(sup, 'reconcile_orphaned_tickets'):
                 sup._reap_children()
@@ -5235,7 +5338,7 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
             # Fast failure #1.
             cmd_fail = _make_worker_cmd(sleep_secs=0, exit_code=1)
             sup._consume_queue(cmd_override=cmd_fail)
-            time.sleep(1)
+            _wait_children_exited(sup)
             with mock.patch.object(sup, 'reconcile_orphaned_tickets'):
                 sup._reap_children()
             self.assertEqual(len(sup._fast_failure_streak), 1)
@@ -5244,7 +5347,7 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
             self._append_queue_entry('TST-CB-B')
             cmd_ok = _make_worker_cmd(sleep_secs=0, exit_code=0)
             sup._consume_queue(cmd_override=cmd_ok)
-            time.sleep(1)
+            _wait_children_exited(sup)
             with mock.patch.object(sup, 'reconcile_orphaned_tickets'):
                 sup._reap_children()
             self.assertEqual(sup._fast_failure_streak, [])
@@ -5262,9 +5365,9 @@ class ExitPersistenceAndRecoveryTest(unittest.TestCase):
         sup = self._make_sup(max_concurrent=1)
         sup.acquire_lock()
         try:
-            crash_cmd = _make_worker_cmd(sleep_secs=1, exit_code=1)
+            crash_cmd = _make_worker_cmd(sleep_secs=0.2, exit_code=1)
             sup._consume_queue(cmd_override=crash_cmd)
-            time.sleep(2)  # let it crash so the reaper has something to find
+            _wait_children_exited(sup)  # let it crash so the reaper has something to find
 
             entered = threading.Event()
             release = threading.Event()
@@ -5511,7 +5614,7 @@ class GenerationFencingTest(unittest.TestCase):
             self.assertGreater(killed_gen, 0)
 
             # Kill it.
-            sup.kill_worker('TST-G5', grace_secs=1)
+            sup.kill_worker('TST-G5', grace_secs=FAST_GRACE)
 
             # Fence file should exist with the killed generation.
             fence_file = self.workspace / 'TST-G5-fence'
@@ -5541,7 +5644,7 @@ class GenerationFencingTest(unittest.TestCase):
             sup._consume_queue(cmd_override=cmd)
             child = sup._children.get('TST-G6')
             gen1 = child['generation']
-            sup.kill_worker('TST-G6', grace_secs=1)
+            sup.kill_worker('TST-G6', grace_secs=FAST_GRACE)
 
             # Verify fence exists.
             fence_file = self.workspace / 'TST-G6-fence'
@@ -5559,7 +5662,7 @@ class GenerationFencingTest(unittest.TestCase):
                                f"fenced generation {gen1}")
 
             # Kill the respawn too.
-            sup.kill_worker('TST-G6', grace_secs=1)
+            sup.kill_worker('TST-G6', grace_secs=FAST_GRACE)
         finally:
             sup.release_lock()
 
@@ -5847,8 +5950,12 @@ class CLIAlignmentTest(unittest.TestCase):
                 'reason': 'manual-intervention',
             }))
 
-            # Process it.
-            sup._process_kill_requests()
+            # Process it. The request carries no grace_secs, so kill_worker
+            # falls back to FLEET_KILL_GRACE_SECS (10s per rung by default);
+            # zero it so the test does not wait out two full graces.
+            from unittest import mock
+            with mock.patch.dict(os.environ, {'FLEET_KILL_GRACE_SECS': '0'}):
+                sup._process_kill_requests()
 
             # Worker should be gone.
             self.assertIsNone(sup._children.get('TST-CLI2'),
@@ -6025,7 +6132,7 @@ class CostEventTest(unittest.TestCase):
         )
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1)
+            cmd = _make_worker_cmd(sleep_secs=0.2)
             sup._consume_queue(cmd_override=cmd)
             self.assertIsNotNone(sup._children.get('TST-C1'))
 
@@ -6033,7 +6140,7 @@ class CostEventTest(unittest.TestCase):
             gen_file = self.workspace / 'TST-C1-gen1.json'
             gen_file.write_text(json.dumps({'total_cost_usd': 0.4321}))
 
-            time.sleep(2)
+            _wait_children_exited(sup)
             sup._reap_children()
 
             exit_entry = json.loads(
@@ -6061,9 +6168,9 @@ class CostEventTest(unittest.TestCase):
         )
         sup.acquire_lock()
         try:
-            cmd = _make_worker_cmd(sleep_secs=1)
+            cmd = _make_worker_cmd(sleep_secs=0.2)
             sup._consume_queue(cmd_override=cmd)
-            time.sleep(2)
+            _wait_children_exited(sup)
             sup._reap_children()
 
             exit_entry = json.loads(
@@ -6092,7 +6199,7 @@ class CostEventTest(unittest.TestCase):
             gen_file = self.workspace / 'TST-C1-gen1.json'
             gen_file.write_text(json.dumps({'total_cost_usd': 1.5}))
 
-            result = sup.kill_worker('TST-C1', grace_secs=1)
+            result = sup.kill_worker('TST-C1', grace_secs=FAST_GRACE)
             self.assertTrue(result.success, f"kill should succeed: {result.error}")
 
             exit_entry = json.loads(
