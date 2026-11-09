@@ -17,6 +17,47 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.46.6 (2026-11-09)
+
+fleet-controller 0.46.6 (GitHub #648).
+
+### Fixed
+
+- fleetd's tests no longer run the installed `~/.claude/skills` copies.
+  `gate_hold.py` (two sites) and `orchestration._flow_script` each fell back
+  to `~/.claude/skills/ticket-flow/flow.sh` when the lib dir had no sibling
+  `skills/`; one `test_gate_hold.py` case really ran the installed `flow.sh`
+  and left a lock under `~/.claude/skills/ticket-flow/locks/`, and tests with
+  no lib dir loaded the installed `~/.claude/skills/lib`. The three fallbacks
+  are now one resolver, `phase_dispatch.ticket_flow_script`, which reads
+  `FLEET_TICKET_FLOW_SH` first (a path; unset keeps the production order).
+  `fleetd/tests/_hermetic.py` points `HOME`, `TICKET_FLOW_LOCK_DIR`,
+  `REPOS_ROOT`, the pipeline log dir and the libs at scratch or this checkout
+  for the five fleetd modules that shell out to ticket-auto-pipeline.
+  Regression: `test_flow_sh_hermetic.py`.
+
+## Repo tooling (2026-11-09, later) — no plugin release
+
+### Changed
+
+- **Tests stay out of the developer's real state (GitHub #645).** grill-me's
+  hold, seal, render and score tests and the planner intent-gate test unset
+  `CLAUDE_CODE_SESSION_ID`, so a run inside a Claude Code session no longer
+  registers `/tmp` work dirs in `~/.local/state/grill-me/telemetry/sessions/`
+  (whose Stop hook then wrote into dirs a running test was snapshotting — a
+  local-only flake). `scripts/run-tests.sh` also runs every test command
+  under `env -u CLAUDE_CODE_SESSION_ID`; a test that sets its own id keeps
+  it. Stale `/tmp/...` lines already in those marker files are harmless and
+  can be deleted.
+- **The slowest test files are faster (next.md Step 17, item 2).**
+  `test-planner-draft-readiness-loop.sh` (~300s) is now four files of
+  30–38s (`-rounds`, `-limits`, `-reasons`, `-regression`) sharing
+  `draft-readiness-loop-harness.sh`, which memoises draft composition keyed
+  on everything compose reads (`LOOP_TEST_COMPOSE_MEMO=0` turns it off);
+  52 → 55 assertions. With `test-env-check.sh` (97s → 1s, 0.96.1) and
+  `test_supervisor.py` (146s → 36s, fleet-controller 0.46.4), no test file
+  takes more than ~40s locally.
+
 ## 0.96.4 (2026-11-09)
 
 ticket-auto-pipeline 0.96.4 (GitHub #647).

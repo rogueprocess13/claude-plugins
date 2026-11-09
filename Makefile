@@ -240,6 +240,7 @@ test-fleetd:
 	python3 -m pytest fleet-controller/fleetd/tests/test_store.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_phase_dispatch.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_gate_hold.py -v
+	python3 -m pytest fleet-controller/fleetd/tests/test_flow_sh_hermetic.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_human_hold_integration.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_preamble.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_orchestration.py -v

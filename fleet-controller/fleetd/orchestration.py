@@ -379,14 +379,8 @@ def run_env(item, ctx, lib_dir=None, timeout=None):
 
 
 def _flow_script(lib_dir=None):
-    """Locate `flow.sh` — monorepo layout, then the installed skill."""
-    lib = Path(lib_dir) if lib_dir else phase_dispatch.ticket_auto_lib_dir()
-    for cand in (lib / '..' / 'skills' / 'ticket-flow' / 'flow.sh',
-                 Path.home() / '.claude' / 'skills' / 'ticket-flow'
-                 / 'flow.sh'):
-        if cand.is_file():
-            return cand.resolve()
-    return None
+    """Locate `flow.sh` (see `phase_dispatch.ticket_flow_script`)."""
+    return phase_dispatch.ticket_flow_script(lib_dir)
 
 
 def plan_step(table, step_id, when, ctx):

@@ -679,12 +679,7 @@ def post_human_hold_comment(tid, hold_id, blocks, questions, lib_dir=None,
             comment_posted = False
 
     label_applied = False
-    flow = None
-    for cand in ((lib / '..' / 'skills' / 'ticket-flow' / 'flow.sh'),
-                Path.home() / '.claude' / 'skills' / 'ticket-flow' / 'flow.sh'):
-        if cand.is_file():
-            flow = cand.resolve()
-            break
+    flow = phase_dispatch.ticket_flow_script(lib)
     if flow is not None:
         try:
             proc = subprocess.run(
@@ -720,12 +715,7 @@ def clear_needs_info_on_release(tid, lib_dir=None, timeout=30, env=None):
     """
     lib = Path(lib_dir) if lib_dir else phase_dispatch.ticket_auto_lib_dir()
     manifest_read = lib / 'manifest-read.sh'
-    flow = None
-    for cand in ((lib / '..' / 'skills' / 'ticket-flow' / 'flow.sh'),
-                 Path.home() / '.claude' / 'skills' / 'ticket-flow' / 'flow.sh'):
-        if cand.is_file():
-            flow = cand.resolve()
-            break
+    flow = phase_dispatch.ticket_flow_script(lib)
     if not manifest_read.is_file() or flow is None:
         return 'unavailable'
     script = ('source "$MANIFEST_READ" || exit 90; '

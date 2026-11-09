@@ -1506,7 +1506,7 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
         grill profile, planner phase prompts or gate libs. Mocked Linear for the fingerprint; real
         Linear only for the final dispatch check.
 
-## Step 17 — Faster CI — started 2026-11-09
+## Step 17 — Faster CI — started 2026-11-09; items 1–2 DONE (CI ~55 → ~18 min), items 3–4 next
 
 PR CI takes a median of 46 min (`make test` is 53 of a ~55 min job), and a PR takes a median of
 2.8 h from opened to merged, because merging main in restarts CI. All 257 test commands run one
@@ -1517,11 +1517,28 @@ serial, 0 failures; the CI runner is ~1.9x slower than local. Seven files are 55
 `test-planner-draft-readiness-gate.sh` 67s, `test-verify-lock.sh` 57s. By plugin: planner 750s,
 ticket-auto 635s, fleet-controller 240s, the rest < 40s.
 
-- [ ] 1. Run test files in parallel inside the one job (`scripts/run-tests.sh`, slow files first,
+- [x] 1. Run test files in parallel inside the one job (`scripts/run-tests.sh`, slow files first,
       per-test logs, failing logs printed in full; `make test-serial` keeps the old path).
-      Expect CI ~53 → ~19 min.
-- [ ] 2. Speed up or split the top 3 files. The slowest single file bounds any sharding (312s
-      local ≈ 10 min in CI). Expect ~14 min.
+      **PR #638 merged 2026-11-09**: CI job ~55 → 17m56s (unit tests 53 → 16m14s).
+- [x] 2. Speed up or split the top 3 files. **Merged 2026-11-09**: #643 (draft-readiness loop
+      ~300s → four files of 30–38s), #639 (`test-env-check.sh` 97s → 1s; a whole-filesystem
+      `find` per call), #641 (`test_supervisor.py` 146s → 36s; kill-grace sleeps). No file is
+      over ~40s locally. Measured CI after it: job 14–21 min (median ~18), unit tests 12–18 min.
+      Run-to-run noise on the shared runner (±4 min) is as large as this step's gain; its real
+      value is that sharding (item 3) is no longer floored by a 10-minute file.
+- [x] 2a. Parallel runs exposed real races, all fixed and merged 2026-11-09:
+      - #642 `vplan_parse` read a ticket with a Verification Plan as having none
+        (`echo | grep -q` SIGPIPE under `pipefail`; production bug, 0.96.2).
+      - #644 (closes #640): the same pattern in 117 non-test sites, 15 multi-stage producers and
+        977 test lines → here-strings; `scripts/check-grep-q-pipe.sh` in `make lint` blocks new
+        ones. Before it, about one PR CI run in three failed on a Broken-pipe flake.
+      - #646 (closes #645): grill-me tests registered `/tmp` dirs in the developer's telemetry
+        session marker and the session's Stop hook wrote into them; `run-tests.sh` now strips
+        `CLAUDE_CODE_SESSION_ID`.
+      - #649 (closes #647): the post-mortem test wrote into the real `~/.claude/state` and could
+        reach a real `gh issue create` (none was filed); `POSTMORTEM_STATE_DIR` + `gh` stub.
+      - #650 (closes #648): fleetd tests ran the installed `~/.claude/skills` `flow.sh` and libs;
+        one resolver with `FLEET_TICKET_FLOW_SH`, `_hermetic.py` isolation.
 - [ ] 3. Matrix shards (4 jobs, balanced by measured time) plus one gates job (lint, fmt,
       generated, registration, skill size) so shards skip the 112s shellcheck. Expect ~7-9 min.
 - [ ] 4. PR runs only the shards for the plugins a PR touches; ticket-auto changes also run

@@ -70,6 +70,28 @@ def ticket_auto_lib_dir():
     return _REPO_TICKET_AUTO_LIB
 
 
+def ticket_flow_script(lib_dir=None):
+    """Locate `flow.sh`, or `None` if no candidate exists.
+
+    `FLEET_TICKET_FLOW_SH` (a path) wins when set and names a file; it is the
+    seam the fleetd tests use to pin this checkout's `flow.sh`, so a test that
+    passes a scratch `lib` dir never falls through to the developer's
+    installed copy. Unset, the order is unchanged: `<lib>/../skills/
+    ticket-flow/flow.sh` (monorepo layout), then the installed skill under
+    `$HOME/.claude/skills/ticket-flow/`.
+    """
+    override = os.environ.get('FLEET_TICKET_FLOW_SH')
+    if override and Path(override).is_file():
+        return Path(override).resolve()
+    lib = Path(lib_dir) if lib_dir else ticket_auto_lib_dir()
+    for cand in (lib / '..' / 'skills' / 'ticket-flow' / 'flow.sh',
+                 Path.home() / '.claude' / 'skills' / 'ticket-flow'
+                 / 'flow.sh'):
+        if cand.is_file():
+            return cand.resolve()
+    return None
+
+
 def dispatch_table_path():
     """Location of the canonical dispatch table."""
     env = os.environ.get('FLEET_DISPATCH_TABLE')
