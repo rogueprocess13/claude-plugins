@@ -10,8 +10,16 @@
 # removed from each command's environment, so a run inside a Claude Code
 # session behaves like CI.
 #
-# Usage: run-tests.sh [--shard K/N] [--list] TARGET...
+# Usage: run-tests.sh [--shard K/N] [--only LIST] [--list] TARGET...
 #   --shard K/N   run only shard K of N (1-based); also TEST_SHARD=K/N
+#   --only LIST   run only the commands whose test file (the path after
+#                 `bash` or `python3 -m pytest`, relative to the repo root)
+#                 is under a LIST entry ending in "/" or equals a LIST
+#                 entry. LIST is space- or comma-separated; `all` keeps
+#                 everything, `none` keeps nothing. Also TEST_ONLY.
+#                 scripts/select-tests.sh prints it for a PR. The filter
+#                 runs before the shard split, so shards balance the subset,
+#                 and an empty selection exits 0.
 #   --list        print the commands this run would start, in start order,
 #                 and exit without running them
 #   TEST_JOBS     parallel jobs (default: nproc)
@@ -40,11 +48,12 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: run-tests.sh [--shard K/N] [--list] TARGET..." >&2
+  echo "usage: run-tests.sh [--shard K/N] [--only LIST] [--list] TARGET..." >&2
   exit 2
 }
 
 SHARD="${TEST_SHARD:-}"
+ONLY="${TEST_ONLY:-all}"
 LIST=0
 TARGETS=()
 while [ "$#" -gt 0 ]; do
@@ -56,6 +65,15 @@ while [ "$#" -gt 0 ]; do
     ;;
   --shard=*)
     SHARD="${1#--shard=}"
+    shift
+    ;;
+  --only)
+    [ "$#" -ge 2 ] || usage
+    ONLY="$2"
+    shift 2
+    ;;
+  --only=*)
+    ONLY="${1#--only=}"
     shift
     ;;
   --list)
@@ -103,6 +121,37 @@ make -s -n --no-print-directory -f "$MAKEFILE" "${TARGETS[@]}" |
 if [ ! -s "$CMDS.raw" ]; then
   echo "run-tests.sh: no test commands found for: ${TARGETS[*]}" >&2
   exit 2
+fi
+
+# The --only filter (see the header). Under --list, whose stdout is the
+# command list, banners go to stderr.
+say() { if [ "$LIST" -eq 1 ]; then echo "$1" >&2; else echo "$1"; fi; }
+if [ "$ONLY" != all ]; then
+  ALL_N=$(wc -l <"$CMDS.raw")
+  python3 - "$CMDS.raw" "$ROOT" "$ONLY" >"$CMDS.only" <<'PY'
+import re, sys
+root, spec = sys.argv[2], sys.argv[3]
+want = [p for p in re.split(r"[\s,]+", spec) if p and p != "none"]
+test_path = re.compile(r"(?:^|\s)(?:bash|python3 -m pytest)\s+(\S+)")
+for line in open(sys.argv[1]):
+    cmd = line.rstrip("\n")
+    m = test_path.search(cmd)
+    if not m:
+        continue
+    path = m.group(1)
+    if path.startswith(root + "/"):
+        path = path[len(root) + 1:]
+    while path.startswith("./"):
+        path = path[2:]
+    if any(path == w or (w.endswith("/") and path.startswith(w)) for w in want):
+        print(cmd)
+PY
+  mv "$CMDS.only" "$CMDS.raw"
+  say "=== run-tests: --only '$ONLY' keeps $(wc -l <"$CMDS.raw") of $ALL_N commands ==="
+  if [ ! -s "$CMDS.raw" ]; then
+    say "=== run-tests: no test command selected, nothing to run ==="
+    exit 0
+  fi
 fi
 
 # Start order and shard split from the durations file (see the header).
