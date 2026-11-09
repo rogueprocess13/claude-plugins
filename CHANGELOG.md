@@ -17,6 +17,30 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.96.7 (2026-11-09)
+
+Skill prose dedupe, sub-PR 3b (`skill-prose-dedupe`, change 3 of the skill-size reduction
+programme): `ticket-verify/SKILL.md` drops 9,940 bytes (91,409 to 81,469; 1,492 to 1,471 body
+lines). Deletion and compression only: no bash block, log-line template or REMEDIATION_BRIEF
+field changed. The skill fingerprint changes. This is intended.
+
+### Changed
+
+- **chore(ticket-verify): closing `## Notes` section removed.** Each bullet restated a step.
+  The two with no counterpart stay as one line each: "never modifies source code" in the
+  introduction, and the `ADDITIONAL_FAILURES:` rule in Step 7b.
+- **chore(ticket-verify): Step 1.6 rationale compressed.** The 1.6 preamble and 1.6a2 to 1.6a4
+  now state the order (GC, lock, resync) and the lock's release points; the reasons live in
+  `lib/verify-worktree.sh` and `lib/verify-lock.sh`. Every bash block is unchanged.
+- **chore(ticket-verify): mode skips stated once.** Step 1e names which steps each mode
+  skips; Step 3 keeps a one-line pointer.
+- **chore(ticket-verify): heartbeat points and 1.6c prose compressed.** The heartbeat list keeps
+  every `hb-wrap.sh` call and points at `pipeline-heartbeat-format.md`; Step 1.6c points at
+  `lib/seed-apply.sh` for its rules.
+- **chore(ticket-verify): duplicate checkpoint paragraph removed** in Step 4b.
+- **chore(ticket-verify): second `### 7d` renamed `### 7d2`** (Record in notes.md). `7f` is cited
+  by `agents/ticket-verify-agent.md`, so later steps keep their numbers.
+
 ## 0.96.6 (2026-11-09)
 
 Skill prose dedupe, sub-PR 3a (`skill-prose-dedupe`, change 3 of the skill-size reduction
