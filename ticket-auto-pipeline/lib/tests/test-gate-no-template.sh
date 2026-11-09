@@ -33,7 +33,11 @@ if ! declare -f get_complexity >/dev/null 2>&1; then
   get_complexity() { echo "simple"; }
 fi
 
-export REPOS_ROOT="${REPOS_ROOT:-/tmp/test-repos-root}"
+# Own scratch root: never an inherited REPOS_ROOT (this test rm -rf's its
+# .ticket-auto) and never a fixed path a parallel test also writes.
+REPOS_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/test-repos-root.XXXXXX")
+export REPOS_ROOT
+trap 'rm -rf "$REPOS_ROOT"' EXIT
 
 # Point CLAUDE_SKILLS_LIB at the repo's lib dir so gate-check.sh sources the
 # new template-select.sh / planner-artifacts.sh / planned-ticket-body-check.sh
