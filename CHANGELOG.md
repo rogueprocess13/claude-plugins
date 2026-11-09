@@ -17,6 +17,33 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.96.0 (2026-11-09)
+
+ticket-auto-pipeline 0.96.0, fleet-controller 0.46.3 (GitHub #635).
+
+### Fixed
+- **Token usage is counted once per assistant message.** Claude Code writes one
+  transcript line per content block of a streamed assistant message (thinking, text,
+  each tool call), and each line repeats the full `usage` of that message.
+  `hooks/token-tracker.sh` summed every line, so a turn with four content blocks was
+  counted four times. It now groups lines by `message.id` (falling back to the line
+  `uuid`) and keeps the last line of each group, which carries the final
+  `output_tokens`. This is the same rule `ticket-planner/lib/planner-run-telemetry.sh`
+  uses. The `META|tokens` and `META|cache-tokens` line formats are unchanged.
+- **fleetd observer cost estimate.** `fleetd/observer.py` added the estimated cost of
+  every `assistant` stream-json frame, and stream-json repeats the message usage on
+  each frame of the same message. It now adds only the cost delta per `message.id`, so
+  a repeated frame adds nothing and a growing `output_tokens` adds only the growth.
+  Finding thresholds are unchanged, so the runaway-cost finding now fires later than
+  before for the same run.
+
+### Note
+- `META|tokens` and `META|cache-tokens` values written before ticket-auto-pipeline
+  0.96.0 overstate input, output and cache tokens, roughly by the mean number of content
+  blocks per message. Anything derived from them (OTel `gen_ai.usage.*`, the token-based
+  cost fallback in `run-score-export.sh`, dashboards) is inflated the same way. Take care
+  when you compare those values with values from this version on.
+
 ## ticket-planner 0.35.0, grill-me 0.5.0 (2026-11-08)
 
 ticket-planner 0.35.0, grill-me 0.5.0 (GitHub #631). ticket-auto-pipeline unchanged.

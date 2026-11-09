@@ -766,6 +766,59 @@ JSONL
   return $result
 }
 
+test_token_tracker_dedupes_streamed_message_by_id() {
+  # GitHub #635: one streamed assistant message spans several transcript
+  # lines, each repeating the message's usage. It must be counted once, with
+  # the last line's output_tokens. A line with no message.id falls back to
+  # its uuid; a non-assistant line is ignored.
+  local tmpdir
+  tmpdir=$(_mktemp_test_dir)
+  local transcript="$tmpdir/transcript.jsonl"
+  local log_file="$tmpdir/test-tkd-pipeline.log"
+  local meta_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKD-spawn-meta.txt"
+  local start_file="$TICKET_TMP_DIR/ticket-auto-TEST-TKD-start-APPRAISE-$(date +%s%N).ts"
+
+  rm -f "$meta_file" "$start_file" "$log_file"
+
+  cat >"$meta_file" <<META
+PHASE=APPRAISE
+STEP=appraise
+TICKET_ID=TEST-TKD
+LOG_FILE=$log_file
+SESSION_ID=sess-tkd
+META
+  touch "$meta_file"
+
+  # msg_A: 3 lines, identical input/cache usage, output grows on the last.
+  # msg_B: 1 line. uuid-only line: no message.id, counted once by uuid.
+  cat >"$transcript" <<'JSONL'
+{"type": "user", "uuid": "u0", "message": {"content": "hi"}}
+{"type": "assistant", "uuid": "u1", "message": {"id": "msg_A", "usage": {"input_tokens": 100, "output_tokens": 5, "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 200}}}
+{"type": "assistant", "uuid": "u2", "message": {"id": "msg_A", "usage": {"input_tokens": 100, "output_tokens": 5, "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 200}}}
+{"type": "assistant", "uuid": "u3", "message": {"id": "msg_A", "usage": {"input_tokens": 100, "output_tokens": 40, "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 200}}}
+{"type": "assistant", "uuid": "u4", "message": {"id": "msg_B", "usage": {"input_tokens": 10, "output_tokens": 7, "cache_read_input_tokens": 50, "cache_creation_input_tokens": 0}}}
+{"type": "assistant", "uuid": "u5", "message": {"usage": {"input_tokens": 1, "output_tokens": 2, "cache_read_input_tokens": 3, "cache_creation_input_tokens": 4}}}
+JSONL
+
+  date +%s%N >"$start_file"
+
+  local hook_json="{\"session_id\": \"sess-tkd\", \"agent_transcript_path\": \"$transcript\"}"
+  local tracker="$LIB_DIR/../hooks/token-tracker.sh"
+  echo "$hook_json" | bash "$tracker" 2>/dev/null || true
+
+  # in = 100+10+1, out = 40+7+2, cache_read = 1000+50+3, cache_create = 200+0+4
+  local result=0
+  if [ -f "$log_file" ]; then
+    grep -qE '\|META\|tokens\|info\|APPRAISE:111/49/1257(\||$)' "$log_file" || result=1
+    grep -qE '\|META\|cache-tokens\|info\|APPRAISE:1053/204$' "$log_file" || result=1
+  else
+    result=1
+  fi
+
+  rm -rf "$tmpdir" "$meta_file" "$start_file" 2>/dev/null || true
+  return $result
+}
+
 test_token_tracker_start_writes_timestamp_on_session_match() {
   local ticket_id="TEST-TKS1"
   local meta_file="$TICKET_TMP_DIR/ticket-auto-${ticket_id}-spawn-meta.txt"
@@ -2547,6 +2600,7 @@ for fn in \
   test_token_tracker_no_session_in_payload_writes_nothing \
   test_token_tracker_skips_when_transcript_path_absent \
   test_token_tracker_transcript_path_with_quote_is_safe \
+  test_token_tracker_dedupes_streamed_message_by_id \
   test_token_tracker_start_writes_timestamp_on_session_match \
   test_token_tracker_start_ignores_session_mismatch \
   test_write_env_creates_file \
