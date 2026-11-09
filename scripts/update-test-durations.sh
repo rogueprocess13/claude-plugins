@@ -8,7 +8,11 @@
 # results.tsv lines are "secs<TAB>rc<TAB>index<TAB>command". Pass all four
 # shard results of one CI run, or the one results.tsv of a full run. The repo
 # root inside a command is written as {ROOT}, so the file is the same on every
-# checkout. A timed-out command (rc 124/137) is left out: its time is the
+# checkout. That includes a root other than this checkout's — a CI runner's
+# /home/runner/work/... in a downloaded test-results artifact: an absolute
+# path is cut at its first component that names a top-level directory of this
+# repo (ticket-auto-pipeline/, scripts/, ...), and everything before it
+# becomes {ROOT}. A timed-out command (rc 124/137) is left out: its time is the
 # timeout, not the test. A command run more than once keeps its largest time.
 # Lines are sorted slowest first, then by command, so a refresh diffs cleanly.
 #
@@ -46,8 +50,15 @@ if [ "${#FILES[@]}" -eq 0 ]; then
 fi
 
 python3 - "$ROOT" "$OUT" "${FILES[@]}" <<'PY'
-import os, sys, tempfile
+import os, re, sys, tempfile
 root, out, files = sys.argv[1], sys.argv[2], sys.argv[3:]
+tops = sorted(d for d in os.listdir(root) if not d.startswith(".") and os.path.isdir(os.path.join(root, d)))
+# Another checkout's root: the shortest absolute-path prefix followed by a
+# top-level directory of this repo.
+foreign = re.compile(r"(?<![\w{}])/[^\s\"'=]*?(?=/(?:" + "|".join(map(re.escape, tops)) + r")(?:/|[\s\"']|$))") if tops else None
+def norm(cmd):
+    cmd = cmd.replace(root, "{ROOT}")
+    return foreign.sub("{ROOT}", cmd) if foreign else cmd
 best = {}
 for f in files:
     for line in open(f):
@@ -58,7 +69,7 @@ for f in files:
             secs = float(parts[0])
         except ValueError:
             continue
-        key = parts[3].replace(root, "{ROOT}")
+        key = norm(parts[3])
         best[key] = max(secs, best.get(key, 0.0))
 if not best:
     print("update-test-durations.sh: no usable result lines in " + " ".join(files), file=sys.stderr)

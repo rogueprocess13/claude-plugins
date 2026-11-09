@@ -1549,10 +1549,24 @@ ticket-auto 635s, fleet-controller 240s, the rest < 40s.
       294.4 / 294.3; actual CI serial sums 934 / 806 / 1047 / 763s, runner wall 268 / 207 / 274 /
       192s. The skew is the planner draft-readiness files, which run ~4x their local time on CI
       against ~1.9x for the rest. `test-planner-draft-readiness-gate.sh` alone (67s local, 274s
-      CI) sets shard 3's wall time, so it is now the floor. Next levers: re-seed the durations file
-      from CI (`make test-durations RESULTS="<the 4 test-results-shard-K artifacts>"`) and split
-      or speed up that file. Also fixed: four ticket-auto tests shared `/tmp/test-repos-root` and
-      `rm -rf`'d each other's fixtures (or a real inherited `REPOS_ROOT`'s `.ticket-auto`).
+      CI) sets shard 3's wall time, so it is now the floor. Also fixed: four ticket-auto tests
+      shared `/tmp/test-repos-root` and `rm -rf`'d each other's fixtures (or a real inherited
+      `REPOS_ROOT`'s `.ticket-auto`).
+- [x] 3a. Both follow-ups of item 3, **PR `test/ci-durations-and-gate-split`** (2026-11-09):
+      - `test-planner-draft-readiness-gate.sh` (81s local today, 263–274s CI): the loop suites'
+        compose memo is now a shared sourced file (`draft-readiness-compose-memo.sh`), which
+        alone takes the file to 29s; then split into `-gate-flow` / `-gate-block` /
+        `-gate-recover` (scenarios 1–3 / 4–5 / 6–8: 9.7 / 11.6 / 12.8s local). Bodies moved
+        unchanged; the later files start with one clean `_gate_prelude` run. 27 checks → 34.
+      - `scripts/test-durations.tsv` re-seeded from the 070e91a `main` push run's four
+        `test-results-shard-K` artifacts (CI seconds now, not local). New files get local ×
+        the old file's CI/local ratio (263.3 / 81.0): 31.5 / 37.7 / 41.6s. Fixed on the way:
+        `update-test-durations.sh` left a CI runner's root in the 7 `CLAUDE_SKILLS_LIB=` commands,
+        so they never matched and got the median.
+      - Predicted shard loads (serial CI seconds): 981.0 x4 re-seeded with the unsplit file,
+        942.9 x4 after the split. The slowest single file is now `test-planner-draft-revise.sh`
+        (81s local, 268–355s CI, it set the 070e91a push run's 5m56s shard 1): it is the next
+        floor, and the next file to speed up or split.
 - [ ] 4. PR runs only the shards for the plugins a PR touches; ticket-auto changes also run
       fleet-controller (it sources ticket-auto libs). Decide inside one always-running job, never
       with a workflow `paths:` filter (a skipped required check stays Pending and blocks merging).
