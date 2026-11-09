@@ -1564,9 +1564,12 @@ ticket-auto 635s, fleet-controller 240s, the rest < 40s.
         `update-test-durations.sh` left a CI runner's root in the 7 `CLAUDE_SKILLS_LIB=` commands,
         so they never matched and got the median.
       - Predicted shard loads (serial CI seconds): 981.0 x4 re-seeded with the unsplit file,
-        942.9 x4 after the split. The slowest single file is now `test-planner-draft-revise.sh`
-        (81s local, 268–355s CI, it set the 070e91a push run's 5m56s shard 1): it is the next
-        floor, and the next file to speed up or split.
+        942.9 x4 after the split. Measured on the PR's green run: CI 5m19s; unit-test steps
+        4m55s / 3m07s / 4m22s / 4m05s (serial 929 / 744 / 1045 / 973s); gate files 26.2 / 49.1 /
+        35.9s on CI (estimated 31.5 / 37.7 / 41.6, same 111s total). The slowest file is now
+        `test-planner-draft-revise.sh` (81s local, 268–355s CI; 295s here, shard 1): it is the
+        floor and the next file to speed up or split. Shard serial sums still spread 744–1045s
+        against a predicted 943 each, so runner noise is now as large as the imbalance.
 - [ ] 4. PR runs only the shards for the plugins a PR touches; ticket-auto changes also run
       fleet-controller (it sources ticket-auto libs). Decide inside one always-running job, never
       with a workflow `paths:` filter (a skipped required check stays Pending and blocks merging).
