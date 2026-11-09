@@ -13,7 +13,11 @@ fi
 if ! declare -f _plog >/dev/null 2>&1; then _plog() { :; }; fi
 if ! declare -f hb_gate >/dev/null 2>&1; then hb_gate() { :; }; fi
 
-export REPOS_ROOT="${REPOS_ROOT:-/tmp/test-repos-root}"
+# Own scratch root: never an inherited REPOS_ROOT (this test rm -rf's its
+# .ticket-auto) and never a fixed path a parallel test also writes.
+REPOS_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/test-repos-root.XXXXXX")
+export REPOS_ROOT
+trap 'rm -rf "$REPOS_ROOT"' EXIT
 
 source "$LIB_DIR/planner-artifacts.sh"
 

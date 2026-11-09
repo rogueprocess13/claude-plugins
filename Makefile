@@ -1,16 +1,34 @@
 SCRIPTS := $(shell find . -name "*.sh" -not -path "./.git/*")
 
-.PHONY: test test-serial test-lib test-fleetd test-flow test-kc lint fmt-check fmt test-grill test-planner-intent-gate check-generated check-test-registration check-skill-size skill-baseline
+.PHONY: test test-serial test-lib test-fleetd test-flow test-kc lint fmt-check fmt test-grill test-planner-intent-gate check-generated check-test-registration check-skill-size skill-baseline print-test-targets test-durations
 
 TEST_TARGETS := test-lib test-fleetd test-planner test-flow test-kc test-grill test-planner-intent-gate
 
 # `make test` runs every test command from TEST_TARGETS in parallel
-# (scripts/run-tests.sh; TEST_JOBS, default nproc). `make test-serial` is the
+# (scripts/run-tests.sh; TEST_JOBS, default nproc; CI splits the same list into
+# shards with --shard K/N). `make test-serial` is the
 # old one-at-a-time run, for chasing a failure that only shows up in parallel.
 test: check-generated check-test-registration check-skill-size
 	bash scripts/run-tests.sh $(TEST_TARGETS)
 
 test-serial: check-generated check-test-registration check-skill-size $(TEST_TARGETS)
+
+# CI's test shards read the target list from here, so it is not repeated in
+# .github/workflows/test.yml: run-tests.sh --shard K/4 $(make -s print-test-targets).
+print-test-targets:
+	@echo $(TEST_TARGETS)
+
+# Re-measure every test command and rewrite scripts/test-durations.tsv, which
+# sets run-tests.sh's start order and --shard split. RESULTS="a.tsv b.tsv"
+# rebuilds it from existing run-tests.sh results.tsv files (e.g. CI shards')
+# without running the suite.
+test-durations:
+ifdef RESULTS
+	bash scripts/update-test-durations.sh $(RESULTS)
+else
+	d=$$(mktemp -d) && TEST_LOG_DIR="$$d" bash scripts/run-tests.sh $(TEST_TARGETS) && \
+	bash scripts/update-test-durations.sh "$$d/results.tsv"
+endif
 
 check-generated:
 	@echo "=== generated-section drift check ==="

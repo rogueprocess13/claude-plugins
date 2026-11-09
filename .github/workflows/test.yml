@@ -6,8 +6,16 @@ on:
   pull_request:
     branches: [main]
 
+# Three kinds of job run side by side:
+#   gates  — lint, format and the drift/size gates (what `make test` runs
+#            before its tests), once.
+#   tests  — the unit tests, split over 4 shards by scripts/run-tests.sh
+#            --shard, balanced by scripts/test-durations.tsv.
+#   otel   — the fleetd exporter tests against the real OpenTelemetry SDK.
+# ci-ok passes only when all of them passed; it is the one stable check name
+# to require on main.
 jobs:
-  lint-and-test:
+  gates:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,23 +24,7 @@ jobs:
           # hand-raised entries; a shallow checkout has no such ref.
           fetch-depth: 0
 
-      - name: Install deps
-        run: |
-          # The stock runner image preconfigures a google-chrome apt source we
-          # never install from (exact filename/format varies by runner image —
-          # classic .list or newer deb822 .sources). Its index has
-          # intermittently mismatched its own InRelease hash on Google's CDN,
-          # which makes `apt-get update` exit non-zero under `set -e` and
-          # block installs of packages that don't come from that repo at all.
-          # Find and drop any matching source file before updating, rather
-          # than depending on Google's mirror being consistent for an
-          # unrelated repo, or on one specific filename.
-          sudo grep -rl "dl\.google\.com" /etc/apt/sources.list.d/ /etc/apt/sources.list 2>/dev/null | xargs -r sudo rm -f
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq shellcheck socat jq python3-pytest
-          SHFMT_VER=3.10.0
-          curl -sSL "https://github.com/mvdan/sh/releases/download/v${SHFMT_VER}/shfmt_v${SHFMT_VER}_linux_amd64" -o /usr/local/bin/shfmt
-          chmod +x /usr/local/bin/shfmt
+      - uses: ./.github/actions/install-deps
 
       - name: Lint (ShellCheck)
         run: make lint
@@ -62,19 +54,85 @@ jobs:
         # This repo's CI cannot gate content in the separate WIKI_ROOT docs
         # repo (design.md D12) — this instead runs the validator directly
         # against a committed, real ADR store fixture, independent of the
-        # bash unit-test harness below. See
+        # bash unit-test harness. See
         # ticket-auto-pipeline/lib/tests/fixtures/adr-store/README.md.
         run: bash ticket-auto-pipeline/lib/adr-check.sh --wiki-root ticket-auto-pipeline/lib/tests/fixtures/adr-store
 
-      - name: Unit tests
-        run: make test
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    name: tests (shard ${{ matrix.shard }}/4)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Same full history as the single job these shards replace: some
+          # tests build git fixtures from this checkout.
+          fetch-depth: 0
 
-      # Deliberately AFTER the main run, and only here. The suite above runs
-      # with no opentelemetry installed, which is what keeps "fleetd works
-      # without its one optional dependency" continuously verified rather than
-      # assumed. This step then installs it and re-runs the exporter tests, so
-      # the real SDK path is covered too and an upstream API change is caught.
+      - uses: ./.github/actions/install-deps
+
+      # The suite runs with no opentelemetry installed, which keeps "fleetd
+      # works without its one optional dependency" verified; the otel job
+      # covers the real SDK.
+      - name: Unit tests (shard ${{ matrix.shard }}/4)
+        env:
+          TEST_JOBS: "4"
+          TEST_LOG_DIR: ${{ runner.temp }}/test-logs
+        run: bash scripts/run-tests.sh --shard ${{ matrix.shard }}/4 $(make -s --no-print-directory print-test-targets)
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-logs
+          retention-days: 14
+
+      # Per-command times, for `make test-durations RESULTS="..."`.
+      - name: Upload test times
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-logs/results.tsv
+          if-no-files-found: ignore
+          retention-days: 14
+
+  otel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/install-deps
+
+      # Installs the optional SDK and re-runs the exporter tests, so the real
+      # SDK path is covered and an upstream API change is caught. Its own job,
+      # so the shards keep running without it.
       - name: OTel exporter against the real SDK
         run: |
           python3 -m pip install --quiet -r fleet-controller/fleetd/requirements-otel.txt
           python3 -m pytest fleet-controller/fleetd/tests/test_otel.py -v
+
+  ci-ok:
+    # A job skipped by a condition counts as passing, so this runs always and
+    # checks every needed job's result itself.
+    if: always()
+    needs: [gates, tests, otel]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every needed job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS"
+          for r in $RESULTS; do
+            if [ "$r" != success ]; then
+              echo "a needed job ended with: $r" >&2
+              exit 1
+            fi
+          done
+          echo "all needed jobs succeeded: $RESULTS"

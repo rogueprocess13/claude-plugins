@@ -17,6 +17,44 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## Repo tooling (2026-11-09, CI shards) — no plugin release
+
+### Changed
+
+- **CI runs the unit tests in 4 parallel shards (next.md Step 17, item 3).**
+  `.github/workflows/test.yml` is now four kinds of job: `gates` (lint,
+  fmt-check, generated, test-registration, skill size, the langfuse boundary
+  grep, the ADR fixture check), `tests` (a 4-shard matrix, `fail-fast: false`,
+  `TEST_JOBS=4`, logs uploaded on failure), `otel` (the real-SDK exporter
+  tests) and `ci-ok`, which passes only when every other job passed — the one
+  stable check name to require on `main`. Install steps live in
+  `.github/actions/install-deps`.
+- **`scripts/run-tests.sh --shard K/N`** (or `TEST_SHARD=K/N`) runs one shard
+  of the command list. Shards are balanced by longest-processing-time-first
+  greedy assignment over measured times; a command with no measured time gets
+  the median. The split is deterministic and shards 1..N run every command
+  exactly once. `--list` prints the commands a run would start, without
+  running them. Without `--shard`, a run is unchanged apart from start order.
+- **`scripts/test-durations.tsv` replaces `scripts/test-slow-first.txt`** as
+  the one source of test times: it sets the start order (longest first) and
+  the shard split. `make test-durations` re-measures the suite and rewrites
+  it (`scripts/update-test-durations.sh`); `make test-durations
+  RESULTS="..."` rebuilds it from existing `results.tsv` files, such as the
+  `test-results-shard-K` artifacts every CI shard uploads. `results.tsv` now
+  records tenths of a second. `make print-test-targets` gives CI the target
+  list, so it is not repeated in the workflow.
+
+### Fixed
+
+- **Four ticket-auto-pipeline tests no longer share `/tmp/test-repos-root`.**
+  `test-planner-artifacts.sh`, `test-appraise-exec-planned.sh`,
+  `test-planned-body-check.sh` and `test-gate-no-template.sh` each
+  `rm -rf "$REPOS_ROOT/.ticket-auto"`, so two of them running at once broke
+  each other (the new start order made that happen locally). They also took
+  any inherited `REPOS_ROOT`, so a run from a shell with a real one set
+  deleted that tree's `.ticket-auto`. Each now uses its own `mktemp -d` root,
+  removed on exit.
+
 ## fleet-controller 0.46.6 (2026-11-09)
 
 fleet-controller 0.46.6 (GitHub #648).

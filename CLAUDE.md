@@ -68,7 +68,7 @@ Skills are Claude Code `.md` files with YAML frontmatter. Claude Code runs them 
 
 ## Skill size budget
 
-A SKILL.md body is loaded into context on every invocation, and after auto-compaction Claude Code re-attaches only its first 5,000 tokens. `scripts/check-skill-size.sh` (`make check-skill-size`, a dependency of `make test` and its own CI step) keeps prompt material from growing:
+A SKILL.md body is loaded into context on every invocation, and after auto-compaction Claude Code re-attaches only its first 5,000 tokens. `scripts/check-skill-size.sh` (`make check-skill-size`, a dependency of `make test` and its own step in CI's `gates` job) keeps prompt material from growing:
 
 - **Ratchet.** Every `*/skills/*/SKILL.md`, `*/agents/*.md`, `*/lib/skill-preamble*.md` and `*/personas/**/*.md` has an entry in `scripts/skill-size-baseline.tsv` (`path<TAB>max_bytes<TAB>max_body_lines`) and may only shrink. Raising an entry needs a `# allow-growth: <reason>` line directly above it; the gate checks the file against `origin/main` (`SKILL_SIZE_BASE`), so a hand edit cannot slip through. `scripts/skill-context-baseline.tsv` ratchets the per-manifest totals of `dispatch-table.json`'s `prompt_manifests` as well, so text moved into an always-loaded sibling still shows.
 - **Last step of any skill PR: `make skill-baseline`.** It lowers entries to the new sizes, adds new in-ceiling files, drops removed ones, and never raises anything. Leftover headroom is reported as `SLACK:`.
@@ -76,6 +76,8 @@ A SKILL.md body is loaded into context on every invocation, and after auto-compa
 - **Frontmatter.** Required on every skill and agent. `name` is ≤ 64 chars of `[a-z0-9-]`. `description` is ≤ 1024 chars with no `<…>` tags (write placeholders as `{ID}`). Allowed keys: `name, description, allowed-tools, category, tags` for skills and `name, description, tools` for agents.
 - **Fences.** A fenced block over 60 lines fails unless the line directly above it is `<!-- size-gate: template -->`. Over 25 lines warns. Lines between `<!-- GENERATED:<id> START/END -->` markers are left out of the ratchet and capped at 6 KB.
 - **`references/` and `templates/`.** Files under `skills/<name>/references/` or `templates/` must be mentioned from that SKILL.md by their literal `references/<file>.md` path. They stay one level deep (a reference never links another one), need a `## Contents` heading over 100 lines, and carry no bare `$1`/`$ARGUMENTS`.
+
+**CI layout** (`.github/workflows/test.yml`): a `gates` job runs lint, fmt-check and the `make test` gates (generated, registration, skill size); four `tests (shard K/4)` jobs run `scripts/run-tests.sh --shard K/4` over `make print-test-targets`, split by `scripts/test-durations.tsv` (refresh with `make test-durations`); `otel` runs the real-SDK exporter tests; `ci-ok` passes only when all of them passed. Locally `make test` / `make test-serial` are unchanged.
 
 ## Plan/file name matching — no guessing
 
