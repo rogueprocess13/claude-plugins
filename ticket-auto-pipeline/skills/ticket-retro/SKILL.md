@@ -181,24 +181,11 @@ If the template file exists, read it. If not, use the generic fallback: "Investi
 
 ### 3a.5 — Extract heartbeat error context for this failure code
 
-Before reading the implicated skill file, check `{ERROR_DIAGNOSTICS}` for structured error events related to this failure code:
-
-```bash
-# Find tickets in the failure histogram that also have heartbeat error events
-# Cross-reference by checking errors_by_ticket for tickets that produced this failure code
-```
-
-For each ticket that contributed to this failure code count, check `{ERROR_DIAGNOSTICS}.errors_by_ticket[ticket]` for error events. Extract:
-- `event` — error event name (e.g. `get-issue`, `flow-sh`, `jq-parse`)
-- `message` — human-readable failure description
-- `detail` — structured key-value pairs (command, ticket, exit_code, error_snippet, etc.)
-- `timestamp` — when the failure occurred
-
-Store as `{ERROR_CONTEXT}` for use in steps 3b and 3c.
+Before reading the implicated skill file, look up `{ERROR_DIAGNOSTICS}.errors_by_ticket[ticket]` for each ticket that contributed to this failure code (field catalogue: `retro.sh` header). Store as `{ERROR_CONTEXT}` for use in steps 3b and 3c.
 
 Also check if an agent transcript file exists on disk for any implicated ticket:
 ```bash
-TRANSCRIPT_PATH="./logs/{TICKET-ID}-{phase}-agent.log"  # e.g. logs/CRE-47-exec-agent.log
+TRANSCRIPT_PATH="./logs/{TICKET-ID}-{phase}-agent.log"  # e.g. logs/ABC-47-exec-agent.log
 ```
 Store the path as `{TRANSCRIPT_PATH}` if the file exists (used in Step 4 proposal — reference only, never grep the content).
 
@@ -232,22 +219,7 @@ Every diff proposed for one of these codes must target a `ticket-planner/...` pa
 
 ### 3b.5 — GitHub severity mapping (for --post-to-github)
 
-When `--post-to-github` is active, map each failure code to severity and type labels:
-
-| Failure Code | Severity | Type Label |
-|-------------|----------|------------|
-| `EXEC_NO_ARTIFACT` | P0 | bug |
-| `APPROVAL_REVOKED` | P0 | bug |
-| `PR_REVIEW_VERDICT_UNPARSEABLE` | P1 | bug |
-| `COMPLEXITY_ARTIFACT_MISMATCH` | P2 | bug |
-| `REMEDIATION_BRIEF_TRUNCATED` | P2 | bug |
-| `RETURN_INCOMPLETE` | P3 | improvement |
-| `complexity-drift` | P3 | improvement |
-| Unknown / new codes | P2 | bug |
-
-Gate-stop codes (those emitted as `|META|gate-stop|fail|<CODE>`) map to `bug`. Warning/drift codes map to `improvement`. The combined label string is `{type},{severity}` (e.g., `bug,P0`, `improvement,P3`).
-
-**Authoritative implementation**: The bash function `github_retro_map_severity()` in `lib/github-issue-retro.sh` is the canonical source — it uses a case statement, not AI table parsing. The table above is documentation; the bash function is execution.
+When `--post-to-github` is active, `github_retro_map_severity()` in `lib/github-issue-retro.sh` maps each failure code to its `{type},{severity}` label string (e.g. `bug,P0`); its case statement is the only mapping.
 
 ### 3c — Generate a unified diff
 
@@ -298,7 +270,7 @@ named false-simples. Always show `n` alongside the rate — never a bare ratio:
 | complex ⚠ confounded | 3    | 1     | 0    |
 
 **False-simple rate:** 0.250 (2 of 8 simple tickets went Rough/Hard; lower is better)
-**False-simples:** CRE-47 (Hard), CRE-52 (Rough)
+**False-simples:** ABC-47 (Hard), ABC-52 (Rough)
 **Unscoreable:** 1 missing declared, 0 missing outcome
 
 The complex row is shown for completeness only: a complex classification changes the
@@ -324,12 +296,12 @@ missed, sourced from Step 1.6:
 
 | Ticket | Source | Gap |
 |--------|--------|-----|
-| CRE-47 | appraise | Complexity sweep underestimated — undiscovered Feign dependency |
-| CRE-48 | exec | Plan artifact missed a required DB migration |
+| ABC-47 | appraise | Complexity sweep underestimated — undiscovered Feign dependency |
+| ABC-48 | exec | Plan artifact missed a required DB migration |
 
 **Corrected:**
-- CRE-47: {corrected text from the appraise-source CORRECTIONS entry}
-- CRE-48: {corrected text from the exec-source CORRECTIONS entry}
+- ABC-47: {corrected text from the appraise-source CORRECTIONS entry}
+- ABC-48: {corrected text from the exec-source CORRECTIONS entry}
 ```
 
 Omit this section entirely when `{CALIBRATION_NOTES}` is empty — a mismatch existing in the
@@ -399,7 +371,7 @@ One subsection per failure code with count ≥ 2:
 
 **Diagnostic context** (from heartbeat error events, if available):
 - Event: `<event name>` — `<message>`
-- Detail: `<key: value>` pairs from DETAIL JSON (e.g. `expected: ./tickets/CRE-47--slug/simple-fix.md`, `artifact_type: simple-fix`)
+- Detail: `<key: value>` pairs from DETAIL JSON (e.g. `expected: ./tickets/ABC-47--slug/simple-fix.md`, `artifact_type: simple-fix`)
 - (If no heartbeat error events for this failure code: "No structured diagnostic data — error capture may predate this run.")
 
 **Transcript** (for manual investigation, if available):
@@ -428,7 +400,7 @@ Brief notes on codes that appeared exactly once:
 ```markdown
 ## Single-occurrence Notes
 
-- **PR_REVIEW_VERDICT_UNPARSEABLE** (1 occurrence, CRE-49): isolated incident — monitor in next window before proposing a diff.
+- **PR_REVIEW_VERDICT_UNPARSEABLE** (1 occurrence, ABC-49): isolated incident — monitor in next window before proposing a diff.
 ```
 
 ### Section: Apply Instructions

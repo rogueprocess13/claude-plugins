@@ -19,7 +19,7 @@ If no argument: print all known areas.
 
 ## Step 1 — Load the hints file
 
-Read `{TICKETS_ROOT}/nav-hints.md` in the current working directory. If missing, create it from the template below.
+Read `{TICKETS_ROOT}/nav-hints.md` in the current working directory. If missing, create it with the header in § Hints file format.
 
 `{TICKETS_ROOT}` is the current working directory (must be `tickets`).
 
@@ -31,10 +31,10 @@ If `<area>` provided:
 - No match → report "No hint for '{area}'. Known areas: {list}. Use `/nav-hints add` after successful navigation to record it."
 
 If `add`:
-- Ask: "What area did you just reach? (short label, e.g. 'Handover Progress')"
-- Ask: "What is the URL path pattern? (e.g. `/handover-progress/{id}`)"
-- Ask: "What click-by-click steps got you there? Start from the nav bar or handover list."
-- Ask: "Which ticket was this for? (e.g. CRE-45)"
+- Ask: "What area did you just reach? (short label, e.g. 'Order Details')"
+- Ask: "What is the URL path pattern? (e.g. `/orders/{id}`)"
+- Ask: "What click-by-click steps got you there? Start from the nav bar."
+- Ask: "Which ticket was this for? (e.g. ABC-123)"
 - Append the hint to `{TICKETS_ROOT}/nav-hints.md` in the format below.
 - Tell the user: "Saved. Future tickets can use `/nav-hints {area}`."
 
@@ -59,7 +59,7 @@ The calling skill (verify/reproduce) uses these steps verbatim to execute Playwr
 
 ## Hints file format
 
-`{TICKETS_ROOT}/nav-hints.md`:
+`{TICKETS_ROOT}/nav-hints.md`, one per tickets workspace. A new file starts with the header below; every hint is appended as one `##` entry carrying when and from which ticket it was learned, so stale hints can be found:
 
 ```markdown
 # Navigation Hints — {PROJECT_NAME}
@@ -68,30 +68,8 @@ Hints are learned during ticket verification and reproduction sessions.
 Never hand-edit — use `/nav-hints add` to append.
 
 ## {Area Name}
-- **Path:** {URL pattern, e.g. `/handover-payment/{id}`}
-- **How to reach:** {numbered click-by-click steps}
+- **Path:** {URL pattern, e.g. `/orders/{id}`}
+- **How to reach:** {numbered click-by-click steps, e.g. Click "Orders" in the nav bar, then the order row}
 - **Learned from:** {TICKET-ID}
 - **Date:** {YYYY-MM-DD}
 ```
-
-Template for new files:
-
-```markdown
-# Navigation Hints — {PROJECT_NAME}
-
-Hints are learned during ticket verification and reproduction sessions.
-Never hand-edit — use `/nav-hints add` to append.
-
-## Handover List
-- **Path:** `/handover`
-- **How to reach:** Click "Handovers" in the nav bar. Default filter is "Active" (which = LEGAL state for Attorney users). If nav bar doesn't show Handovers link after login, log in again — first login sometimes fails to update nav (see app-knowledge Known Quirks).
-- **Learned from:** CRE-39, CRE-43
-- **Date:** 2026-05-05
-```
-
-## Rules
-
-- **No direct URLs.** Every hint must use click-by-click instructions. Calling code must use Playwright click actions, never `page.goto()`.
-- **Hints are project-scoped.** The file lives in `{TICKETS_ROOT}/nav-hints.md`, one per tickets workspace.
-- **Add after successful navigation.** When a verify/reproduce session reaches a new area through the UI, save the path immediately (Step 4a in ticket-verify already does this — this skill centralizes it).
-- **Date and ticket source.** Every hint records when it was learned and from which ticket, so stale hints can be identified.

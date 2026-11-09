@@ -59,9 +59,7 @@ Tickets:
    ```bash
    mkdir -p "${AUDIT_DIR}/recommendations" "${AUDIT_DIR}/archive"
    ```
-4. Parse all flags: `--milestone`, `--parent`, `--force`, `--include-completed` (summary already handled in Step 0)
-5. Determine `MODE` (milestone or parent) and `TARGET_ID` from args
-6. **Scan cache check:**
+4. **Scan cache check** (`MODE` and `TARGET_ID` come from Step 0):
    - Cache file: `{AUDIT_DIR}/.scan-cache.json`
    - If the file exists, read it: `jq -r --arg tid "$TARGET_ID" '.[$tid] // empty' "$AUDIT_DIR/.scan-cache.json"`
    - If cache entry found AND not `--force`:
@@ -76,11 +74,7 @@ Tickets:
 
 ## Step 2: Determine mode and extract target ID
 
-Already resolved in Step 1. Validate:
-- `--milestone`: target ID must be non-empty; fetch milestone meta via `get_milestone_issues` (the meta field)
-- `--parent`: target ID must be non-empty; fetch parent via `get_parent_with_children` (the parent field)
-- If `--force`: set `FORCE=true`, bypass cache
-- If `--include-completed`: set `INCLUDE_COMPLETED=true`, include all states
+The target ID must be non-empty; the fetch itself is Step 3a.
 
 ---
 
