@@ -238,6 +238,38 @@ rc=$?
 [ "$rc" -eq 0 ] && grep -q "0/0 ran" "$TMP/out-empty-shard.txt" && ok "shard with no commands exits 0" ||
   bad "empty shard exit $rc: $(tail -2 "$TMP/out-empty-shard.txt")"
 
+echo "=== --only keeps the commands under its entries, before the shard split ==="
+only_env=$(list only1 --only "$TMP/t/test-env.sh" good)
+[ "$only_env" = "FIXTURE_VAR=joined bash $TMP/t/test-env.sh" ] &&
+  ok "--only FILE keeps that command, env prefix included" || bad "--only FILE gave [$only_env]"
+[ "$(list only2 --only "$TMP/t/test-env.sh,$TMP/t/test-slow.sh" good | wc -l)" -eq 2 ] &&
+  ok "--only takes a comma-separated list" || bad "comma list did not keep 2"
+[ "$(list only3 --only "$TMP/t/" good | wc -l)" -eq 4 ] &&
+  ok "--only DIR/ keeps every command under it" || bad "dir prefix did not keep all 4"
+[ "$(TEST_ONLY="$TMP/t/test-slow.sh" list only4 good)" = "bash $TMP/t/test-slow.sh" ] &&
+  ok "TEST_ONLY equals --only" || bad "TEST_ONLY ignored"
+[ "$(list only5 --only all good | wc -l)" -eq 4 ] && ok "--only all keeps everything" || bad "--only all dropped commands"
+[ "$(list only6 --only "$TMP/t/test-pas" good | wc -l)" -eq 0 ] &&
+  ok "an entry without a trailing / matches whole paths only" || bad "partial path matched"
+: >"$TMP/only-union.txt"
+for K in 1 2 3 4; do list "only-s$K" --only "$TMP/t/test-slow.sh" --shard "$K/4" good >>"$TMP/only-union.txt"; done
+[ "$(cat "$TMP/only-union.txt")" = "bash $TMP/t/test-slow.sh" ] &&
+  ok "1 selected command over 4 shards: one shard runs it, three are empty" ||
+  bad "subset shards gave [$(cat "$TMP/only-union.txt")]"
+grep -q "keeps 1 of 4 commands" "$TMP/err-only-s1.txt" && ok "--only banner goes to stderr under --list" ||
+  bad "no --only banner: $(cat "$TMP/err-only-s1.txt")"
+run only-none --only none good
+rc=$?
+[ "$rc" -eq 0 ] && grep -q "nothing to run" "$TMP/out-only-none.txt" && [ ! -e "$TMP/logs-only-none/results.tsv" ] &&
+  ok "--only none runs nothing and exits 0" || bad "--only none exit $rc: $(cat "$TMP/out-only-none.txt")"
+TEST_JOBS=2 run only-shard --only "$TMP/t/test-slow.sh" --shard 3/4 good
+rc=$?
+[ "$rc" -eq 0 ] && grep -q "0/0 ran" "$TMP/out-only-shard.txt" && ok "an empty shard of a subset exits 0" ||
+  bad "empty subset shard exit $rc: $(tail -2 "$TMP/out-only-shard.txt")"
+TEST_MAKEFILE="$TMP/Makefile" bash "$RUNNER" good --only >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 2 ] && ok "--only with no value exits 2" || bad "--only with no value exit $rc"
+
 echo "=== shard loads on the real Makefile are balanced ==="
 read -r -a targets <<<"$(make -s --no-print-directory -C "$ROOT" print-test-targets)"
 real_all=$(TEST_LOG_DIR="$TMP/real" bash "$RUNNER" --list "${targets[@]}" 2>/dev/null | sort)

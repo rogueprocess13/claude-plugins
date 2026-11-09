@@ -180,6 +180,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-critique-no-post.sh
 	bash scripts/tests/test-e2e-preflight.sh
 	bash scripts/tests/test-run-tests.sh
+	bash scripts/tests/test-select-tests.sh
+	bash scripts/tests/test-ci-nightly-issue.sh
 	bash scripts/tests/test-check-grep-q-pipe.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \
 	bash ticket-auto-pipeline/lib/tests/test-gate-check.sh

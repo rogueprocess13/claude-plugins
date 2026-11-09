@@ -5,16 +5,79 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Nightly full run on main at 00:07 UTC (02:07 SAST), off the busy :00
+  # slot. A failure files, or comments on, one "Nightly CI failed on main"
+  # issue (nightly-issue below).
+  schedule:
+    - cron: '7 0 * * *'
+  workflow_dispatch:
 
-# Three kinds of job run side by side:
-#   gates  — lint, format and the drift/size gates (what `make test` runs
-#            before its tests), once.
-#   tests  — the unit tests, split over 4 shards by scripts/run-tests.sh
-#            --shard, balanced by scripts/test-durations.tsv.
-#   otel   — the fleetd exporter tests against the real OpenTelemetry SDK.
-# ci-ok passes only when all of them passed; it is the one stable check name
-# to require on main.
+# A new push to a PR cancels that PR's older run. Runs on main (push,
+# schedule, manual) are never cancelled: each gets its own group (run_id),
+# because a shared group keeps only one pending run and would drop the rest.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# Five jobs report on every run:
+#   changes — which tests this run needs (scripts/select-tests.sh). A PR runs
+#             the tests of the plugins it touches plus the plugins that
+#             depend on them; anything outside a plugin directory runs
+#             everything. Push to main, the schedule and a manual run always
+#             take everything.
+#   gates   — lint, format and the drift/size gates (what `make test` runs
+#             before its tests), on every run.
+#   tests   — the selected unit tests, split over 4 shards by
+#             scripts/run-tests.sh --shard, balanced by
+#             scripts/test-durations.tsv.
+#   otel    — the fleetd exporter tests against the real OpenTelemetry SDK,
+#             when fleet-controller is selected.
+#   ci-ok   — passes only when all of the above passed; the one stable check
+#             name to require on main.
+# A job never skips itself with a workflow `paths:` filter or a job-level
+# `if:`: a required check that is skipped stays Pending and blocks merging.
+# Unselected work is skipped step by step, so the job still reports success.
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      only: ${{ steps.select.outputs.only }}
+      otel: ${{ steps.select.outputs.otel }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A PR checks out its merge commit. Depth 2 brings both parents, so
+          # HEAD^1 (main as merged) diffs to exactly the PR's change.
+          fetch-depth: 2
+
+      - name: Select tests
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          only=all
+          if [ "$EVENT" = pull_request ] && git rev-parse -q --verify 'HEAD^2' >/dev/null; then
+            # A failed selection runs everything.
+            only=$(bash scripts/select-tests.sh --base 'HEAD^1') || only=all
+          fi
+          case " $only " in
+          " all " | *" fleet-controller/ "*) otel=true ;;
+          *) otel=false ;;
+          esac
+          echo "event=$EVENT only=$only otel=$otel"
+          echo "only=$only" >>"$GITHUB_OUTPUT"
+          echo "otel=$otel" >>"$GITHUB_OUTPUT"
+          {
+            echo "### Test selection"
+            echo
+            echo "- event: \`$EVENT\`"
+            echo "- tests (\`run-tests.sh --only\`): \`$only\`"
+            echo "- otel: \`$otel\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
   gates:
     runs-on: ubuntu-latest
     steps:
@@ -59,6 +122,7 @@ jobs:
         run: bash ticket-auto-pipeline/lib/adr-check.sh --wiki-root ticket-auto-pipeline/lib/tests/fixtures/adr-store
 
   tests:
+    needs: changes
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -72,16 +136,27 @@ jobs:
           # tests build git fixtures from this checkout.
           fetch-depth: 0
 
+      - name: Nothing selected
+        if: needs.changes.outputs.only == 'none'
+        run: echo "This change touches only root-level notes (e.g. CHANGELOG.md, next.md); no unit test runs."
+
       - uses: ./.github/actions/install-deps
+        if: needs.changes.outputs.only != 'none'
 
       # The suite runs with no opentelemetry installed, which keeps "fleetd
       # works without its one optional dependency" verified; the otel job
-      # covers the real SDK.
+      # covers the real SDK. TEST_ONLY narrows the Makefile's commands to the
+      # selection before the shard split, so the shards balance the subset.
       - name: Unit tests (shard ${{ matrix.shard }}/4)
+        if: needs.changes.outputs.only != 'none'
         env:
           TEST_JOBS: "4"
           TEST_LOG_DIR: ${{ runner.temp }}/test-logs
-        run: bash scripts/run-tests.sh --shard ${{ matrix.shard }}/4 $(make -s --no-print-directory print-test-targets)
+          TEST_ONLY: ${{ needs.changes.outputs.only }}
+        run: |
+          # The target list is meant to split into words.
+          # shellcheck disable=SC2046
+          bash scripts/run-tests.sh --shard ${{ matrix.shard }}/4 $(make -s --no-print-directory print-test-targets)
 
       - name: Upload test logs
         if: failure()
@@ -91,7 +166,8 @@ jobs:
           path: ${{ runner.temp }}/test-logs
           retention-days: 14
 
-      # Per-command times, for `make test-durations RESULTS="..."`.
+      # Per-command times, for `make test-durations RESULTS="..."`. Re-seed
+      # from a full run (push to main or nightly), not a PR's subset.
       - name: Upload test times
         if: always()
         uses: actions/upload-artifact@v4
@@ -102,16 +178,24 @@ jobs:
           retention-days: 14
 
   otel:
+    needs: changes
     runs-on: ubuntu-latest
     steps:
+      - name: Not selected
+        if: needs.changes.outputs.otel != 'true'
+        run: echo "fleet-controller is not selected for this change; the real-SDK exporter tests do not run."
+
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.otel == 'true'
 
       - uses: ./.github/actions/install-deps
+        if: needs.changes.outputs.otel == 'true'
 
       # Installs the optional SDK and re-runs the exporter tests, so the real
       # SDK path is covered and an upstream API change is caught. Its own job,
       # so the shards keep running without it.
       - name: OTel exporter against the real SDK
+        if: needs.changes.outputs.otel == 'true'
         run: |
           python3 -m pip install --quiet -r fleet-controller/fleetd/requirements-otel.txt
           python3 -m pytest fleet-controller/fleetd/tests/test_otel.py -v
@@ -120,7 +204,7 @@ jobs:
     # A job skipped by a condition counts as passing, so this runs always and
     # checks every needed job's result itself.
     if: always()
-    needs: [gates, tests, otel]
+    needs: [changes, gates, tests, otel]
     runs-on: ubuntu-latest
     steps:
       - name: Every needed job succeeded
@@ -136,3 +220,25 @@ jobs:
             fi
           done
           echo "all needed jobs succeeded: $RESULTS"
+
+  nightly-issue:
+    # Only a failed scheduled run files anything: a PR's or a manual run's
+    # failure is already in front of whoever started it. Skipped on every
+    # other run; it is not a check to require.
+    if: failure() && github.event_name == 'schedule'
+    needs: [ci-ok]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: File or comment on the nightly-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: bash scripts/ci-nightly-issue.sh

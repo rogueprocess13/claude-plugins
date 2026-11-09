@@ -17,6 +17,42 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## Repo tooling (2026-11-09, path-aware CI) — no plugin release
+
+### Changed
+
+- **A PR's CI runs only the tests its change needs (next.md Step 17, item 4).**
+  A new `changes` job runs `scripts/select-tests.sh --base HEAD^1` on the PR's
+  merge commit and hands the result to the shards as `TEST_ONLY`. A plugin
+  change runs that plugin's tests, the tests of the plugins that depend on it,
+  and the two tests that scan every plugin (`test-fleet-features.sh`,
+  `test-diagram-drift.sh`). The dependency map, found by grepping each
+  plugin for paths into the others, is: ticket-auto-pipeline → fleet-controller,
+  ticket-planner, grill-me and `scripts/tests`; fleet-controller →
+  ticket-auto-pipeline, ticket-planner and `scripts/tests`; ticket-planner →
+  `test-ticket-create.sh` only; grill-me → ticket-planner;
+  knowledge-curator → nothing. A change outside the plugin directories
+  (`.github/`, `scripts/`, `Makefile`, `docs/`, the root `README.md` or
+  `CLAUDE.md`, a new directory) runs everything. A change to root-level notes
+  only (`CHANGELOG.md`, `next.md`, …) runs no unit test. On the real Makefile
+  that is 9 of 265 commands for a knowledge-curator change, 65 for a
+  ticket-planner change, 71 for grill-me, and nearly all for ticket-auto or
+  fleet-controller. The `otel` job runs only when fleet-controller is
+  selected. Push to `main`, the schedule and a manual run take everything.
+  Selection happens inside steps, never with a `paths:` filter or job-level
+  `if:`, so every check, `ci-ok` included, reports on every PR.
+- **Nightly full run** at `7 0 * * *` UTC (02:07 SAST), plus
+  `workflow_dispatch`. When the scheduled run fails, the `nightly-issue` job
+  runs `scripts/ci-nightly-issue.sh`: it files one "Nightly CI failed on main"
+  issue labelled `ci-nightly` in the agent-handoff shape
+  (`github_issue_body_template` + `github_issue_create`), or comments on the
+  open one, so failures do not pile up as new issues.
+- **`concurrency`**: a new push to a PR cancels that PR's older run; runs on
+  `main` are never cancelled.
+- **`scripts/run-tests.sh --only LIST`** (or `TEST_ONLY`) keeps the commands
+  whose test file is under a `dir/` entry or equals a file entry, before the
+  shard split, so shards balance the subset. `all` keeps everything; `none`,
+  or a selection that matches nothing, exits 0 without running anything.
 ## Repo tooling (2026-11-09, CI test times) — no plugin release
 
 ### Changed
