@@ -1,8 +1,16 @@
 SCRIPTS := $(shell find . -name "*.sh" -not -path "./.git/*")
 
-.PHONY: test test-lib test-fleetd test-flow test-kc lint fmt-check fmt test-grill test-planner-intent-gate check-generated check-test-registration check-skill-size skill-baseline
+.PHONY: test test-serial test-lib test-fleetd test-flow test-kc lint fmt-check fmt test-grill test-planner-intent-gate check-generated check-test-registration check-skill-size skill-baseline
 
-test: check-generated check-test-registration check-skill-size test-lib test-fleetd test-planner test-flow test-kc test-grill test-planner-intent-gate
+TEST_TARGETS := test-lib test-fleetd test-planner test-flow test-kc test-grill test-planner-intent-gate
+
+# `make test` runs every test command from TEST_TARGETS in parallel
+# (scripts/run-tests.sh; TEST_JOBS, default nproc). `make test-serial` is the
+# old one-at-a-time run, for chasing a failure that only shows up in parallel.
+test: check-generated check-test-registration check-skill-size
+	bash scripts/run-tests.sh $(TEST_TARGETS)
+
+test-serial: check-generated check-test-registration check-skill-size $(TEST_TARGETS)
 
 check-generated:
 	@echo "=== generated-section drift check ==="
@@ -153,6 +161,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-critique-status.sh
 	bash ticket-auto-pipeline/lib/tests/test-critique-no-post.sh
 	bash scripts/tests/test-e2e-preflight.sh
+	bash scripts/tests/test-run-tests.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \
 	bash ticket-auto-pipeline/lib/tests/test-gate-check.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \

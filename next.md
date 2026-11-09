@@ -1506,6 +1506,34 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
         grill profile, planner phase prompts or gate libs. Mocked Linear for the fingerprint; real
         Linear only for the final dispatch check.
 
+## Step 17 — Faster CI — started 2026-11-09
+
+PR CI takes a median of 46 min (`make test` is 53 of a ~55 min job), and a PR takes a median of
+2.8 h from opened to merged, because merging main in restarts CI. All 257 test commands run one
+after another on a 4-vCPU runner. Local profile with 4 at a time: 9.8 min wall against 27.7 min
+serial, 0 failures; the CI runner is ~1.9x slower than local. Seven files are 55% of the time:
+`test-planner-draft-readiness-loop.sh` 312s, `test-env-check.sh` 176s, `test_supervisor.py` 147s,
+`test-planner-draft-revise.sh` 81s, `test-ticket-create-guard.sh` 75s,
+`test-planner-draft-readiness-gate.sh` 67s, `test-verify-lock.sh` 57s. By plugin: planner 750s,
+ticket-auto 635s, fleet-controller 240s, the rest < 40s.
+
+- [ ] 1. Run test files in parallel inside the one job (`scripts/run-tests.sh`, slow files first,
+      per-test logs, failing logs printed in full; `make test-serial` keeps the old path).
+      Expect CI ~53 → ~19 min.
+- [ ] 2. Speed up or split the top 3 files. The slowest single file bounds any sharding (312s
+      local ≈ 10 min in CI). Expect ~14 min.
+- [ ] 3. Matrix shards (4 jobs, balanced by measured time) plus one gates job (lint, fmt,
+      generated, registration, skill size) so shards skip the 112s shellcheck. Expect ~7-9 min.
+- [ ] 4. PR runs only the shards for the plugins a PR touches; ticket-auto changes also run
+      fleet-controller (it sources ticket-auto libs). Decide inside one always-running job, never
+      with a workflow `paths:` filter (a skipped required check stays Pending and blocks merging).
+      Nightly full run at `7 0 * * *` UTC (02:07 local, off the busy :00 slot), plus the OTel SDK
+      step, opening an issue on failure. `concurrency` with `cancel-in-progress` for PR runs only.
+      Expect ~5 min on most PRs.
+- Not doing: merge queue. It runs a separate full CI per queued PR (no speed-up) and is offered
+  only for organisation-owned repos; this repo is user-owned. `main` has no required status
+  checks today; add one once step 4 lands.
+
 ---
 
 ## Ordering rationale

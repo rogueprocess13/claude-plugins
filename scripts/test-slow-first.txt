@@ -1,0 +1,26 @@
+# Test files that start first under scripts/run-tests.sh, slowest first (local profile 2026-11-09).
+# Order only: a file missing here still runs, and a stale line is ignored.
+ticket-planner/lib/tests/test-planner-draft-readiness-loop.sh
+ticket-auto-pipeline/lib/tests/test-env-check.sh
+fleet-controller/fleetd/tests/test_supervisor.py
+ticket-planner/lib/tests/test-planner-draft-revise.sh
+ticket-auto-pipeline/lib/tests/test-ticket-create-guard.sh
+ticket-planner/lib/tests/test-planner-draft-readiness-gate.sh
+ticket-auto-pipeline/lib/tests/test-verify-lock.sh
+ticket-auto-pipeline/lib/tests/test-seed-run.sh
+ticket-planner/lib/tests/test-planner-draft-carryover-e2e.sh
+ticket-auto-pipeline/lib/tests/test-dor-check.sh
+ticket-planner/lib/tests/test-planner-refinement.sh
+ticket-planner/lib/tests/test-planner-answers.sh
+ticket-auto-pipeline/lib/tests/test-spawn-helper.sh
+ticket-planner/lib/tests/test-planner-stop-describe.sh
+ticket-planner/lib/tests/test-planner-refinement-convergence.sh
+ticket-planner/lib/tests/test-planner-crosscheck-fixtures.sh
+ticket-auto-pipeline/lib/tests/test-heartbeat.sh
+ticket-auto-pipeline/lib/tests/test-seed-precheck.sh
+ticket-planner/lib/tests/test-planner-artifact-qa.sh
+fleet-controller/lib/tests/test-fleet-dispatch.sh
+ticket-planner/lib/tests/test-planner-ticket-body.sh
+ticket-planner/lib/tests/test-planner-cited-answers.sh
+ticket-planner/lib/tests/test-planner-body-drift.sh
+scripts/tests/test-e2e-preflight.sh

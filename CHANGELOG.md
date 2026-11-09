@@ -17,6 +17,20 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## Repo tooling (2026-11-09) — no plugin release
+
+### Changed
+
+- **repo tooling** — `make test` runs the test commands in parallel
+  (`scripts/run-tests.sh`, `TEST_JOBS`, default `nproc`). CI's 4-vCPU runner
+  used one core: the unit-test step took ~53 min of a ~55 min job. The
+  Makefile is still the one list of tests (the runner reads the targets'
+  recipes with `make -n`), so a new test still needs only its Makefile line.
+  Each command runs with stdin from `/dev/null`, its own log file and a
+  `TEST_TIMEOUT` (default 1800s); failing logs are printed in full at the end,
+  with the 10 slowest commands. `scripts/test-slow-first.txt` starts the
+  longest tests first. `make test-serial` keeps the one-at-a-time run.
+
 ## 0.96.0 (2026-11-09)
 
 ticket-auto-pipeline 0.96.0, fleet-controller 0.46.3 (GitHub #635).
