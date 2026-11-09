@@ -5,7 +5,7 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 
 > Public repo — no ticket IDs, no customer data in this file.
 
-Last reviewed: 2026-09-23 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
+Last reviewed: 2026-11-09 (see the 2026-11-09 housekeeping note below). Earlier: 2026-09-23 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
 CI green on #386. Step 7b Track B Phase B1 merged and archived — PR #388, plus a CI-caught
 shell-flags fix. Phase B2 (pusher/drivers) merged and archived — PR #392, CI green
 (`lint-and-test: pass`), specs synced to main tree, version-bumped to ticket-auto-pipeline 0.51.0 /
@@ -1168,15 +1168,16 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
 
 **Bugs: one branch and one PR per issue, no openspec.** The issue body is the plan.
 
-- [ ] 1. #535 — VPLAN_ROW_GAP counts Environment checkboxes as ACs (ticket-auto-pipeline,
-      `dor-check.sh`).
+- [x] 1. #535 — VPLAN_ROW_GAP counts Environment checkboxes as ACs (ticket-auto-pipeline,
+      `dor-check.sh`). **Fixed by PR #537 (2026-10-22).**
 - [ ] 2. File and fix: `FLAG_NEEDS_INFO` stays set after the questions are answered
       (`dor-check.sh:1302`, `gate-check.sh:425`).
-- [ ] 3. Dispatch path: #524 (epic manifest lookup), #525 (no `META|pr-created` from VERIFY),
-      #529 (hold-reconcile on an empty scratch log). File and fix `/ticket-flow needs-info` failing
-      on claimed tickets. Check the four unverified items in the report (reconcile double-count,
-      openspec path, heartbeat `start`, dropped `|` lines) against `main`, then file only those
-      that reproduce.
+- [ ] 3. Dispatch path: ~~#524 (epic manifest lookup), #525 (no `META|pr-created` from VERIFY),
+      #529 (hold-reconcile on an empty scratch log)~~ fixed by PRs #538, #541, #539 (2026-10-22).
+      ~~File and fix `/ticket-flow needs-info` failing on claimed tickets~~ — already fixed by
+      #396/#423, and `flow.sh` no longer writes to Linear at all. **Left:** check the four
+      unverified items in the report (reconcile double-count, openspec path, heartbeat `start`,
+      dropped `|` lines) against `main`, then file only those that reproduce.
 
 **Openspec changes: one branch each. Review each plan with 3 Sonnet reviewers before implementing.**
 
@@ -1305,7 +1306,7 @@ debugging-strategies, brunoborges/jdb-agentic-debugger.
 
 ---
 
-## Step 15 — Skill size reduction programme — six openspec changes proposed + validated 2026-10-24, not started
+## Step 15 — Skill size reduction programme — changes 1–2 merged (#561, #562), next `skill-prose-dedupe`
 
 42 `SKILL.md` files total 825 KB; the four largest (ticket-planner 96 KB, ticket-verify 93 KB,
 ticket-auto 75 KB, ticket-appraise 72 KB) are 41%. Anthropic's authoring guidance is a body under
@@ -1321,13 +1322,13 @@ metric.
 Chained openspec changes (each its own PR(s), version bump, `make skill-baseline` last; chain
 `ticket-auto-pipeline` PRs, do not parallelise — they all bump the same version):
 
-- [x] 1. `skill-size-gate` (6 specs, 38 tasks) — MERGED PR #561 (ecc12f5, 0.72.1) 2026-10-24; archive pending — `scripts/check-skill-size.sh` + committed TSV
+- [x] 1. `skill-size-gate` (6 specs, 38 tasks) — MERGED PR #561 (ecc12f5, 0.72.1) 2026-10-24; archived 2026-10-24 — `scripts/check-skill-size.sh` + committed TSV
       ratchet baseline (may only shrink; raises checked against `origin/main`, need
       `# allow-growth:`), 500-line/20 KB ceiling for new skills, frontmatter allowlist, fence >60
       lines fails unless `<!-- size-gate: template -->`, generated blocks excluded + 6 KB cap,
       `references/` link rules, per-manifest context ratchet. Day-one fixes: overseer frontmatter,
       5 fence markers. **Ship first.**
-- [ ] 2. `skill-glue-collapse` (5 specs, 40 tasks) — `lib/plog.sh` CLI over existing `_plog`
+- [x] 2. `skill-glue-collapse` (5 specs, 40 tasks) — **MERGED PR #562 (0.75.0) 2026-10-29; archived 2026-11-09; live check 6.6 on the tickets host still open** — `lib/plog.sh` CLI over existing `_plog`
       (~140 inline log echoes, bare-`&&` guards in 8 skills), `lib/skill-ref.sh`, plugin-cache
       resolver dedupe (6 pastes in ticket-auto), ticket-auto Steps 0.1-0.6 → `ticket-preamble.sh`
       with new `TICKET_ARG=`/`ANNOUNCE_START`/`NEW_RUN` manual modes, `persona-select.sh
@@ -1506,7 +1507,7 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
         grill profile, planner phase prompts or gate libs. Mocked Linear for the fingerprint; real
         Linear only for the final dispatch check.
 
-## Step 17 — Faster CI — DONE 2026-11-09 (items 1–4; CI ~55 → ~18 → 5 min); open: `ci-ok` required check (user's call), next floor `test-planner-draft-revise.sh`
+## Step 17 — Faster CI — DONE 2026-11-09 (items 1–4; CI ~55 → ~18 → 5 min); `ci-ok` is the required check on `main`; optional next floor `test-planner-draft-revise.sh`
 
 PR CI takes a median of 46 min (`make test` is 53 of a ~55 min job), and a PR takes a median of
 2.8 h from opened to merged, because merging main in restarts CI. All 257 test commands run one
@@ -1594,8 +1595,24 @@ ticket-auto 635s, fleet-controller 240s, the rest < 40s.
       PR, and `ci-nightly-issue.sh` against real GitHub (stub-tested only). Left: make `ci-ok`
       a required check on `main` (blocks the merge-right-after-push shortcut; user's call).
 - Not doing: merge queue. It runs a separate full CI per queued PR (no speed-up) and is offered
-  only for organisation-owned repos; this repo is user-owned. `main` has no required status
-  checks today; add one once step 4 lands.
+  only for organisation-owned repos; this repo is user-owned.
+- [x] Required check: `ci-ok` (GitHub Actions only, `strict: false`) required on `main` since
+  2026-11-09, admins included. #657 was the first PR it held: a GitHub Actions outage left jobs
+  `abandoned`, `ci-ok` failed closed, and the PR merged on a re-run after recovery. Follow-ups
+  #655 (kc-render) and #657 (exit-path, closes #656) fixed the two `while … break` SIGPIPE
+  readers left after #644.
+
+**Housekeeping, 2026-11-09:** checkboxes brought in line with `main`. Step 12 item 1 (#535 → PR
+#537) and the three issues in item 3 (#524 → #538, #529 → #539, #525 → #541) were fixed on
+2026-10-22; Step 15 item 2 (`skill-glue-collapse`) merged as #562; Step 17 closed with `ci-ok` the
+required check on `main`. Six merged openspec changes archived locally (`openspec/` is gitignored):
+`debugger-persona-overlay`, `dispatch-rehearsal-preflight`, `grill-me-verbatim-brief`,
+`skill-glue-collapse`, `planner-ac-coverage-and-epic-uat`, `planner-base-branch-config`. Their only
+open tasks were live or rehearsal checks, still tracked here: Step 14 (debugger, 6.4), Step 15 item
+2 (glue collapse, 6.6), Step 16 (preflight 4.4, verbatim brief 3.4, AC coverage and base branch
+5.1). `planner-draft-readiness` stays active: its open tasks are the iteration 05/06 exit
+criteria. `langfuse-evidence-layer` (16 live tasks) and the four unstarted Step 15 changes are
+unchanged.
 
 ---
 
