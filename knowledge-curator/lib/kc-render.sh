@@ -232,12 +232,15 @@ echo ""
 SORTED=$(sort -t"${TAB}" -k1,1n -k2,2 "$ROWS_TMP")
 
 # Find the first unblocked row's id — that's what goes in the NEXT box.
-next_id=$(echo "$SORTED" | while IFS="${TAB}" read -r _ _ id _ _ _ _ _ _ blocked _; do
+# A here-string, not `echo | while`: the loop breaks early, and a writer still
+# feeding the pipe then dies of SIGPIPE, which pipefail + set -e turn into a
+# silent exit 141 (seen ~2% of runs under parallel load).
+next_id=$(while IFS="${TAB}" read -r _ _ id _ _ _ _ _ _ blocked _; do
   if [ "$blocked" = "0" ]; then
     echo "$id"
     break
   fi
-done)
+done <<<"$SORTED")
 
 # Record what this render put on screen, in display order (NEXT first), so
 # `/kc stats` can later ask whether the claimed item was the one promoted.
