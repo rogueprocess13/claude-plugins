@@ -408,7 +408,7 @@ the rest of SKILL.md stays hand-written. Edit the JSON and regenerate; never han
 the block. `make check-generated` runs the gate as the first dependency of `make test`
 and as its own CI step.
 
-The JSON carries more than the three rendered columns: per-step spawn parameters (skill,
+The JSON carries more than the two rendered columns (`RESUME_STEP`, `Action`; an alias step such as `STEP_3` is folded onto its target's row): per-step spawn parameters (skill,
 phase, `FROM_STEP` variable, extra flags, instructions), the four router-managed loop
 caps with their counters and gate-stop codes, the `STEP_2_5`/`STEP_3` alias, the
 `VERIFY_LAST=fail` precondition on `STEP_4_5`, and each step's non-agent pre/post

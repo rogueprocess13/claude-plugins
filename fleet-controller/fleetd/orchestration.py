@@ -449,7 +449,7 @@ def finalize_terminal(table, tid, exit_code, gate_stop_code, log_file,
     release (SKILL.md's gate-stop/exhaustion exit points never release the
     worktree; a ticket stopped for cause usually still needs a human looking
     at it). Worktree release only happens on a clean STEP_6 completion
-    (SKILL.md ~1312-1326), and reuses STEP_6's own declared `post_dispatch`
+    (SKILL.md STEP_6 worktree release), and reuses STEP_6's own declared `post_dispatch`
     pair (`worktree` then `finalize`, in that table order) via
     `run_step_orchestration` rather than duplicating it — `next_step` only
     ever returns `exit_code=0` for STEP_6's own terminal, so branching on that

@@ -20,7 +20,6 @@
       "step_id": "STEP_1",
       "table_label": "`STEP_1`",
       "table_action": "Spawn `ticket-appraise` agent",
-      "table_type": "Agent",
       "action": "agent",
       "aliases": [],
       "spawn": {
@@ -55,7 +54,6 @@
       "step_id": "STEP_1_5",
       "table_label": "`STEP_1_5`",
       "table_action": "Spawn `ticket-reproduce` agent",
-      "table_type": "Agent",
       "action": "agent",
       "aliases": [],
       "condition": "bug tickets only",
@@ -78,7 +76,6 @@
       "step_id": "STEP_2",
       "table_label": "`STEP_2`",
       "table_action": "Spawn `ticket-appraise-exec` agent",
-      "table_type": "Agent",
       "action": "agent",
       "aliases": [],
       "spawn": {
@@ -103,7 +100,6 @@
       "step_id": "STEP_2_5",
       "table_label": "`STEP_2_5`",
       "table_action": "Run `bash gate-check.sh --mode entry`",
-      "table_type": "**Bash only**",
       "action": "bash",
       "aliases": [
         "STEP_3"
@@ -131,7 +127,6 @@
       "step_id": "STEP_3",
       "table_label": "`STEP_3`",
       "table_action": "Alias for `STEP_2_5` — run `bash gate-check.sh --mode entry`",
-      "table_type": "**Bash only**",
       "action": "alias",
       "alias_of": "STEP_2_5",
       "aliases": [],
@@ -141,7 +136,6 @@
       "step_id": "STEP_3_5",
       "table_label": "`STEP_3_5`",
       "table_action": "Spawn `ticket-gate-reconcile` agent",
-      "table_type": "Agent",
       "action": "agent",
       "aliases": [],
       "loop": {
@@ -171,7 +165,6 @@
       "step_id": "STEP_4",
       "table_label": "`STEP_4`",
       "table_action": "Spawn `ticket-implement` agent, run `return-completeness-check.sh` (openspec tickets only), then `outcome-label-check.sh`",
-      "table_type": "Agent + Bash",
       "action": "agent",
       "aliases": [],
       "spawn": {
@@ -207,7 +200,7 @@
           "kind": "flow_trigger",
           "trigger": "implement-complete",
           "on_failure": "log_and_continue",
-          "description": "Ready → Review once implementation is committed and pushed. The router fires this one itself (SKILL.md:897-910); every other lifecycle trigger (human-approve, pr-review-pass-done/uat, uat-pass) is fired by the phase skill that earns it, so it travels with the phase and needs no owner in the dispatch layer."
+          "description": "Ready → Review once implementation is committed and pushed. The router fires this one itself (SKILL.md STEP_4); every other lifecycle trigger (human-approve, pr-review-pass-done/uat, uat-pass) is fired by the phase skill that earns it, so it travels with the phase and needs no owner in the dispatch layer."
         },
         {
           "kind": "bash",
@@ -231,7 +224,6 @@
       "step_id": "STEP_4_5",
       "table_label": "`STEP_4_5`",
       "table_action": "Verify retry sub-loop (see below)",
-      "table_type": "Router-managed loop",
       "action": "loop",
       "aliases": [],
       "loop": {
@@ -321,7 +313,6 @@
       "step_id": "STEP_4_6",
       "table_label": "`STEP_4_6`",
       "table_action": "PR review + iteration sub-loop (see below)",
-      "table_type": "Router-managed loop",
       "action": "loop",
       "aliases": [],
       "loop": {
@@ -398,7 +389,6 @@
       "step_id": "STEP_5",
       "table_label": "`STEP_5`",
       "table_action": "Spawn `ticket-document`, then `wiki-maintenance` (sequential)",
-      "table_type": "Agent",
       "action": "agent_sequence",
       "aliases": [],
       "fail_action": "warn-continue",
@@ -430,7 +420,6 @@
       "step_id": "STEP_5_5",
       "table_label": "`STEP_5_5`",
       "table_action": "PR comment reconciliation",
-      "table_type": "Agent",
       "action": "agent",
       "aliases": [],
       "loop": {
@@ -462,7 +451,6 @@
       "step_id": "STEP_6",
       "table_label": "`STEP_6`",
       "table_action": "Retro check + optional `ticket-retro` + outcome write",
-      "table_type": "Bash + Agent",
       "action": "bash_then_optional_agent",
       "aliases": [],
       "retro_trigger_conditions": [
@@ -498,7 +486,6 @@
       "step_id": "done",
       "table_label": "`done`",
       "table_action": "Exit 0",
-      "table_type": "—",
       "action": "terminal",
       "exit_code": 0,
       "aliases": [],
@@ -508,7 +495,6 @@
       "step_id": "*",
       "table_label": "`*` (unknown)",
       "table_action": "Log error, exit 1",
-      "table_type": "—",
       "action": "error",
       "exit_code": 1,
       "aliases": [],

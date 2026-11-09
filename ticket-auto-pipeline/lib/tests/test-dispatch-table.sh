@@ -58,7 +58,7 @@ data = json.load(open(sys.argv[1]))
 steps = data["steps"]
 assert steps, "no steps"
 for i, s in enumerate(steps):
-    for f in ("step_id", "table_label", "table_action", "table_type", "action"):
+    for f in ("step_id", "table_label", "table_action", "action"):
         assert f in s, f"steps[{i}] missing {f}"
 ids = [s["step_id"] for s in steps]
 assert len(ids) == len(set(ids)), f"duplicate step_id in {ids}"
@@ -104,6 +104,18 @@ assert "STEP_3" in steps["STEP_2_5"]["aliases"]
 PY
 }
 
+# skill-prose-dedupe 3a: the rendered table has no Type column and no row of
+# its own for an alias step. The alias id must still reach the router, on its
+# target's row — detect-resume.sh can emit STEP_3.
+test_rendered_table_has_no_type_column_and_folds_aliases() {
+  local block
+  block=$(python3 "$GEN")
+  grep -qxF '| RESUME_STEP | Action |' <<<"$block" || return 1
+  ! grep -q '| Type |' <<<"$block" || return 1
+  grep -q '^| `STEP_2_5` / `STEP_3` | Run `bash gate-check.sh --mode entry` |$' <<<"$block" || return 1
+  ! grep -q '^| `STEP_3` |' <<<"$block"
+}
+
 test_verify_last_precondition_is_captured() {
   # Task 1.3: the VERIFY_LAST=fail crash-resume branch is dispatch-relevant
   # control flow a step->action table cannot express.
@@ -136,7 +148,7 @@ p = sys.argv[1]
 data = json.load(open(p))
 data["steps"].append({
     "step_id": "STEP_TEST_ONLY", "table_label": "`STEP_TEST_ONLY`",
-    "table_action": "Throwaway row", "table_type": "Agent", "action": "agent",
+    "table_action": "Throwaway row", "action": "agent",
 })
 json.dump(data, open(p, "w"), indent=2)
 PY
@@ -156,12 +168,12 @@ p = sys.argv[1]
 data = json.load(open(p))
 data["steps"].append({
     "step_id": "STEP_TEST_ONLY", "table_label": "`STEP_TEST_ONLY`",
-    "table_action": "Throwaway row", "table_type": "Agent", "action": "agent",
+    "table_action": "Throwaway row", "action": "agent",
 })
 json.dump(data, open(p, "w"), indent=2)
 PY
   _gen --write >/dev/null
-  grep -q '^| `STEP_TEST_ONLY` | Throwaway row | Agent |$' "$_sandbox/SKILL.md" || return 1
+  grep -q '^| `STEP_TEST_ONLY` | Throwaway row |$' "$_sandbox/SKILL.md" || return 1
   # And the gate is green again once regenerated.
   _gen --check >/dev/null || return 1
   # A write that actually rewrites the file must still leave every byte outside
@@ -201,7 +213,7 @@ test_missing_required_field_is_rejected() {
 import json, sys
 p = sys.argv[1]
 data = json.load(open(p))
-del data["steps"][0]["table_type"]
+del data["steps"][0]["table_action"]
 json.dump(data, open(p, "w"), indent=2)
 PY
   local rc=0
