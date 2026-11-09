@@ -53,6 +53,43 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
   whose test file is under a `dir/` entry or equals a file entry, before the
   shard split, so shards balance the subset. `all` keeps everything; `none`,
   or a selection that matches nothing, exits 0 without running anything.
+## Repo tooling (2026-11-09, CI test times) — no plugin release
+
+### Changed
+
+- **`test-planner-draft-readiness-gate.sh` is three files and ~2.4x faster
+  (next.md Step 17, item 3 follow-up).** It was the slowest file on CI
+  (263–274s; 67–81s locally) and set the slowest shard's wall time. The
+  compose memo the draft-readiness loop suites use is now its own sourced
+  file, `draft-readiness-compose-memo.sh`, shared by both harnesses; it cut
+  the gate file from 81s to 29s locally. The eight scenarios are split over
+  `test-planner-draft-readiness-gate-{flow,block,recover}.sh` (scenarios 1–3,
+  4–5, 6–8; 9.7s / 11.6s / 12.8s locally) with the setup and stub agents in
+  `draft-readiness-gate-harness.sh`. Scenario bodies are moved unchanged. The
+  scenarios ran in one sequence, so `block` and `recover` start with
+  `_gate_prelude`, one clean first run that reaches the state their first
+  scenario expects. Checks: 27 before, 34 after (the same 27, a prelude check
+  in two files, the side-effect check and the done-line check in each file).
+  All three also pass with the memo off (`LOOP_TEST_COMPOSE_MEMO=0`).
+- **`scripts/test-durations.tsv` is re-seeded from CI times** (the four
+  `test-results-shard-K` artifacts of the `main` push run for 070e91a), so
+  the shard split balances the files that run ~4x their local time on CI
+  (the planner draft-readiness suites) instead of ~1.9x. The three new gate
+  files have no CI time yet; each gets its local time × the unsplit file's
+  CI/local ratio (263.3s / 81.0s), 31.5s / 37.7s / 41.6s. A command missing
+  from the file would otherwise get the median, 2.2s.
+  Predicted shard loads (serial CI seconds): 981.0 each with the unsplit
+  file, 942.9 each after the split. The slowest single file is now
+  `test-planner-draft-revise.sh` (268–355s on CI).
+
+### Fixed
+
+- **`update-test-durations.sh` writes a CI runner's checkout root as
+  `{ROOT}`.** It replaced only this checkout's root, so the seven
+  `CLAUDE_SKILLS_LIB="<root>/..."` commands from a CI artifact kept
+  `/home/runner/work/...` and never matched: they were weighted by the
+  median. An absolute path is now cut at its first top-level directory of
+  the repo.
 
 ## Repo tooling (2026-11-09, CI shards) — no plugin release
 

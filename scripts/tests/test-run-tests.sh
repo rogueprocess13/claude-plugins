@@ -304,14 +304,15 @@ UPD="$ROOT/scripts/update-test-durations.sh"
   printf '30.0\t124\t2\tbash hang.sh\n'
   printf '4.5\t0\t3\tFOO="%s/lib" bash b.sh\n' "$ROOT"
   printf '0.3\t1\t4\tbash a.sh\n'
+  printf '7.0\t0\t5\tFOO="/home/runner/work/x/x/scripts/lib" bash c.sh\n'
 } >"$TMP/r1.tsv"
 printf '2.0\t0\t1\tbash a.sh\n' >"$TMP/r2.tsv"
 bash "$UPD" --out "$TMP/dur-out.tsv" "$TMP/r1.tsv" "$TMP/r2.tsv" >/dev/null
 rc=$?
 body=$(grep -v '^#' "$TMP/dur-out.tsv")
-want=$(printf 'FOO="{ROOT}/lib" bash b.sh\t4.5\nbash a.sh\t2.0')
+want=$(printf 'FOO="{ROOT}/scripts/lib" bash c.sh\t7.0\nFOO="{ROOT}/lib" bash b.sh\t4.5\nbash a.sh\t2.0')
 [ "$rc" -eq 0 ] && [ "$body" = "$want" ] &&
-  ok "root written as {ROOT}, timeout dropped, max kept, slowest first" || bad "got rc=$rc: $body"
+  ok "root (this checkout's or a CI runner's) written as {ROOT}, timeout dropped, max kept, slowest first" || bad "got rc=$rc: $body"
 bash "$UPD" --out "$TMP/dur-none.tsv" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 2 ] && ok "no results file exits 2" || bad "no results file exit $rc"
