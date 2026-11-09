@@ -1,5 +1,6 @@
 #!/bin/bash
-# Token accounting hook — parses an agent transcript, sums token usage, and
+# Token accounting hook — parses an agent transcript, sums token usage once
+# per assistant message (de-duplicated by message.id, GitHub #635), and
 # appends META|tokens to the pipeline log. Registered on TWO events, because a
 # phase reaches its end two different ways:
 #
@@ -130,19 +131,29 @@ fi
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
   TOKEN_LINE=$(python3 -c '
 import json, sys
-input_t = output_t = cache_read = cache_create = 0
+# One streamed assistant message spans several transcript lines (one per
+# content block), and every line repeats the usage of that message. Count each
+# message once: key by message.id, else the line uuid, else the line itself;
+# the last line of a key wins, because it carries the final output_tokens
+# (GitHub #635; same rule as ticket-planner/lib/planner-run-telemetry.sh).
+usage_by_key = {}
 with open(sys.argv[1]) as f:
-    for line in f:
+    for n, line in enumerate(f):
         try:
             msg = json.loads(line)
         except Exception:
             continue
-        if msg.get("type") == "assistant":
-            u = msg.get("message", {}).get("usage", {})
-            input_t += u.get("input_tokens", 0)
-            output_t += u.get("output_tokens", 0)
-            cache_read += u.get("cache_read_input_tokens", 0)
-            cache_create += u.get("cache_creation_input_tokens", 0)
+        if not isinstance(msg, dict) or msg.get("type") != "assistant":
+            continue
+        m = msg.get("message") or {}
+        key = m.get("id") or msg.get("uuid") or ("line", n)
+        usage_by_key[key] = m.get("usage") or {}
+input_t = output_t = cache_read = cache_create = 0
+for u in usage_by_key.values():
+    input_t += u.get("input_tokens") or 0
+    output_t += u.get("output_tokens") or 0
+    cache_read += u.get("cache_read_input_tokens") or 0
+    cache_create += u.get("cache_creation_input_tokens") or 0
 print(f"{input_t}/{output_t}/{cache_read + cache_create}/{cache_read}/{cache_create}")
 ' "$TRANSCRIPT" 2>/dev/null)
   if [ -n "$TOKEN_LINE" ]; then

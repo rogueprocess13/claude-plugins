@@ -257,6 +257,55 @@ class TranslatorEdgeCaseTest(unittest.TestCase):
         self.assertIn('truncated', events[0]['content'])
 
 
+class CostDedupeByMessageIdTest(unittest.TestCase):
+    """GitHub #635: stream-json emits one assistant frame per content block,
+    each repeating the message's usage — cost is counted once per message id,
+    with growth in output_tokens added as a delta."""
+
+    _BASE = {'input_tokens': 100, 'cache_read_input_tokens': 1000,
+             'cache_creation_input_tokens': 200}
+
+    def _frame(self, usage, msg_id=None, uuid=None):
+        message = {'content': [{'type': 'text', 'text': 'x'}], 'usage': usage}
+        if msg_id:
+            message['id'] = msg_id
+        frame = {'type': 'assistant', 'message': message}
+        if uuid:
+            frame['uuid'] = uuid
+        return json.dumps(frame)
+
+    def test_split_message_counts_once_with_final_output_tokens(self):
+        translator = observer.PhaseStreamTranslator(
+            'CRE-9', 'VERIFY', 1, lambda t: t, 512)
+        now = time.time()
+        a_partial = dict(self._BASE, output_tokens=5)
+        a_final = dict(self._BASE, output_tokens=40)
+        b = {'input_tokens': 10, 'output_tokens': 7,
+             'cache_read_input_tokens': 50}
+        no_id = {'input_tokens': 1, 'output_tokens': 2,
+                 'cache_read_input_tokens': 3,
+                 'cache_creation_input_tokens': 4}
+        translator.feed_line(self._frame(a_partial, 'msg_A', 'u1'), now)
+        translator.feed_line(self._frame(a_partial, 'msg_A', 'u2'), now)
+        translator.feed_line(self._frame(a_final, 'msg_A', 'u3'), now)
+        translator.feed_line(self._frame(b, 'msg_B', 'u4'), now)
+        translator.feed_line(self._frame(no_id, uuid='u5'), now)
+        expected = (observer._estimate_frame_cost(a_final)
+                    + observer._estimate_frame_cost(b)
+                    + observer._estimate_frame_cost(no_id))
+        self.assertAlmostEqual(translator.estimated_cost_usd, expected, places=9)
+
+    def test_repeated_frame_for_known_id_adds_nothing(self):
+        translator = observer.PhaseStreamTranslator(
+            'CRE-9', 'VERIFY', 1, lambda t: t, 512)
+        now = time.time()
+        usage = dict(self._BASE, output_tokens=5)
+        translator.feed_line(self._frame(usage, 'msg_A'), now)
+        once = translator.estimated_cost_usd
+        translator.feed_line(self._frame(usage, 'msg_A'), now)
+        self.assertAlmostEqual(translator.estimated_cost_usd, once, places=9)
+
+
 class ObserverPollTest(unittest.TestCase):
     """The sidecar loop: discover, tail, write events, release."""
 

@@ -418,7 +418,8 @@ class PhaseStreamTranslator:
     """Turns one phase worker's NDJSON lines into normalized event dicts.
 
     Stateful only in `finalized_at` (set the moment the terminal `result`
-    frame is seen) — everything else is a pure per-line translation, so
+    frame is seen) and the running cost estimate with its per-message-id
+    ledger — everything else is a pure per-line translation, so
     re-feeding the same lines to a fresh translator reproduces the same
     events, the same restart-safety property `otel.py`'s TicketTranslator
     documents for the same reason.
@@ -441,6 +442,11 @@ class PhaseStreamTranslator:
         # also produces a tool_call event (a pure-text turn has no tool_use
         # content but still spends tokens).
         self.estimated_cost_usd = 0.0
+        # Cost already counted per assistant `message.id`. stream-json emits
+        # one assistant frame per content block of a message, each repeating
+        # the message's usage, so only the growth since the last frame of the
+        # same id is added (GitHub #635).
+        self._cost_by_msg = {}
 
     def feed_line(self, line, now):
         line = line.strip()
@@ -462,9 +468,17 @@ class PhaseStreamTranslator:
         elif ftype == 'assistant':
             raw_events.extend(
                 _tool_call_events(frame, self._redact, self._max_field))
-            usage = (frame.get('message') or {}).get('usage')
+            message = frame.get('message') or {}
+            usage = message.get('usage')
             if usage:
-                self.estimated_cost_usd += _estimate_frame_cost(usage)
+                cost = _estimate_frame_cost(usage)
+                msg_id = message.get('id')
+                if msg_id:
+                    self.estimated_cost_usd += (
+                        cost - self._cost_by_msg.get(msg_id, 0.0))
+                    self._cost_by_msg[msg_id] = cost
+                else:
+                    self.estimated_cost_usd += cost
         elif ftype == 'user':
             raw_events.extend(
                 _tool_result_events(frame, self._redact, self._max_field))
