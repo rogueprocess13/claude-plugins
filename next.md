@@ -1476,12 +1476,14 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
           - #632 (#630 skill-size gate: duplicate baseline rows take the min, keep comments, fail as `DUPLICATE`)
           - #633 (#631 planner + grill-me run telemetry: per-phase time/tokens from transcripts,
             `planner-run-report.sh`; ticket-planner 0.35.0, grill-me 0.5.0)
+          - #636 (#635 token usage counted once per assistant message, by `message.id`, last line wins, in
+            ticket-auto `hooks/token-tracker.sh` and fleetd `observer.py` cost; 0.96.0, fleet-controller 0.46.3).
+            `META|tokens`/`META|cache-tokens` written before 0.96.0 overstate usage, so don't compare them
+            with later runs.
         - [ ] Live checks for the batch, on the tickets host: restart fleetd (pidfile moved to the scratch dir;
               it refuses to start while an old fleetd holds `/tmp/fleetd.pid`); one ticket run end to end to
               confirm agents load the env file via `ticket-env.sh`; one planner run to confirm
-              `planner-run-report.sh` shows tokens.
-        - [ ] Possible follow-up (not filed): ticket-auto `hooks/token-tracker.sh` sums usage per transcript
-              line without de-duplicating by message id, so existing `META|tokens` figures likely overcount.
+              `planner-run-report.sh` shows tokens; the ticket's `META|tokens` should now be lower than in pre-0.96.0 runs.
         - [ ] Before iter 05: the grill-me + planner self-assessment prompt is at
               `~/.claude/plans/grill-planner-self-assessment-prompt.md` (runs 05/06 rows are `<FILL IN>`). Every
               rehearsal run now writes `iter-NN/run-record.md` (runbook §3).
