@@ -1559,6 +1559,21 @@ ticket-auto 635s, fleet-controller 240s, the rest < 40s.
       Nightly full run at `7 0 * * *` UTC (02:07 local, off the busy :00 slot), plus the OTel SDK
       step, opening an issue on failure. `concurrency` with `cancel-in-progress` for PR runs only.
       Expect ~5 min on most PRs.
+      **PR open (branch `ci/path-aware-tests`, 2026-11-09)**: a `changes` job runs
+      `scripts/select-tests.sh --base HEAD^1` and passes `TEST_ONLY` to the shards
+      (`run-tests.sh --only`, filtered before the shard split); `otel` runs only when
+      fleet-controller is selected; every job skips by step, so all checks report.
+      Map: ticket-auto → fleet-controller, planner, grill-me, scripts/tests;
+      fleet-controller → ticket-auto, planner, scripts/tests; planner →
+      `test-ticket-create.sh`; grill-me → planner; knowledge-curator → none; plus
+      `test-fleet-features.sh` and `test-diagram-drift.sh` on any plugin change;
+      outside a plugin → all; root notes (CHANGELOG.md, next.md) → none. Real
+      Makefile: kc 9, planner 65, grill-me 71 of 265 commands; ticket-auto or
+      fleet-controller ≈ all, so the gain is on planner/grill/kc/notes PRs. Nightly
+      `7 0 * * *` + `workflow_dispatch`; a failed nightly files/comments on one
+      `ci-nightly` issue (`scripts/ci-nightly-issue.sh`). PR-only
+      `cancel-in-progress`. Left for after merge: make `ci-ok` a required check on
+      `main`.
 - Not doing: merge queue. It runs a separate full CI per queued PR (no speed-up) and is offered
   only for organisation-owned repos; this repo is user-owned. `main` has no required status
   checks today; add one once step 4 lands.
