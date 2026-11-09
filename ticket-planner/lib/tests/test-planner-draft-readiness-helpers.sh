@@ -152,14 +152,14 @@ echo "--- 1. planner_ticketgen_context_block optional timestamp ---"
 echo "2026-10-01T00:00:05Z|EpicGen|create|done|EPIC_ID=CRE-10" >>"$LOG"
 c3=$(planner_ticketgen_context_block "$INIT" "CRE-10" "${SPECS}/b-api.md")
 c4=$(planner_ticketgen_context_block "$INIT" "CRE-10" "${SPECS}/b-api.md" "")
-if [ -n "$c3" ] && [ "$c3" = "$c4" ] && printf '%s\n' "$c3" | grep -qxF '**Generated:** 2026-10-01T00:00:05Z'; then
+if [ -n "$c3" ] && [ "$c3" = "$c4" ] && grep -qxF '**Generated:** 2026-10-01T00:00:05Z' <<<"$c3"; then
   pass "absent/empty timestamp: byte-identical, Generated from the EpicGen line"
 else
   fail "absent timestamp" "c3=$c3"
 fi
 c5=$(planner_ticketgen_context_block "$INIT" "CRE-10" "${SPECS}/b-api.md" "2026-09-09T09:09:09Z")
 if [ "$(diff <(echo "$c3") <(echo "$c5") | grep -c '^[<>]')" = 2 ] &&
-  printf '%s\n' "$c5" | grep -qxF '**Generated:** 2026-09-09T09:09:09Z'; then
+  grep -qxF '**Generated:** 2026-09-09T09:09:09Z' <<<"$c5"; then
   pass "explicit timestamp changes only the Generated line"
 else
   fail "explicit timestamp" "$(diff <(echo "$c3") <(echo "$c5"))"
@@ -191,9 +191,9 @@ echo "--- 3. draft body composition ---"
 d1=$(planner_draft_readiness_compose "$INIT" "c-ui")
 d2=$(planner_draft_readiness_compose "$INIT" "c-ui")
 if [ -n "$d1" ] && [ "$d1" = "$d2" ] &&
-  printf '%s\n' "$d1" | grep -qxF '**Generated:** 2026-10-01T00:00:01Z' &&
-  printf '%s\n' "$d1" | grep -qxF '**Epic:** DRAFT' &&
-  printf '%s\n' "$d1" | grep -qxF -- '- Blocked by DRAFT-b-api — Finance can export invoices'; then
+  grep -qxF '**Generated:** 2026-10-01T00:00:01Z' <<<"$d1" &&
+  grep -qxF '**Epic:** DRAFT' <<<"$d1" &&
+  grep -qxF -- '- Blocked by DRAFT-b-api — Finance can export invoices' <<<"$d1"; then
   pass "byte-stable; epic DRAFT, first Crosscheck ts, DRAFT-<slug> related"
 else
   fail "draft compose" "$d1"

@@ -243,7 +243,7 @@ test_future_schema_version() {
   local rc=$?
   [ $rc -eq 0 ] || return 1
   # Should warn about future version
-  echo "$stderr" | grep -q "Schema-Version" || return 1
+  grep -q "Schema-Version" <<<"$stderr" || return 1
 }
 
 # ── Test: invalid Generated timestamp ──────────────────────────────────────
@@ -523,9 +523,9 @@ test_strip_removes_block() {
   local desc stripped
   desc=$(_build_block)
   stripped=$(_strip_planner_context_block "$desc")
-  ! echo "$stripped" | grep -q "Planner Context" &&
-    ! echo "$stripped" | grep -q "Affected Services" &&
-    echo "$stripped" | grep -q "Some ticket description text."
+  ! grep -q "Planner Context" <<<"$stripped" &&
+    ! grep -q "Affected Services" <<<"$stripped" &&
+    grep -q "Some ticket description text." <<<"$stripped"
 }
 
 test_strip_no_block_is_noop() {
@@ -539,8 +539,8 @@ test_strip_preserves_trailing_section() {
   local desc stripped
   desc=$(_build_block)
   stripped=$(_strip_planner_context_block "$desc")
-  echo "$stripped" | grep -q "## Acceptance Criteria" &&
-    echo "$stripped" | grep -q "Something works"
+  grep -q "## Acceptance Criteria" <<<"$stripped" &&
+    grep -q "Something works" <<<"$stripped"
 }
 
 _run "strip removes Planner Context block" test_strip_removes_block

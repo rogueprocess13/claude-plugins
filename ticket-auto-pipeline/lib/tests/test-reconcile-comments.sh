@@ -39,7 +39,7 @@ test_finds_appraisal_comment_boundary() {
   output=$(echo "$comments" | bash "$LIB_DIR/reconcile-comments.sh" "WIL-1" "$log_file" 2>/dev/null)
 
   rm -rf "$tmpdir"
-  echo "$output" | grep -q "APPRAISAL_COMMENT_AT: 2024-01-01T10:00:00Z"
+  grep -q "APPRAISAL_COMMENT_AT: 2024-01-01T10:00:00Z" <<<"$output"
 }
 
 test_falls_back_to_log_when_no_appraisal_comment() {
@@ -53,7 +53,7 @@ test_falls_back_to_log_when_no_appraisal_comment() {
   output=$(echo "$comments" | bash "$LIB_DIR/reconcile-comments.sh" "WIL-1" "$log_file" 2>/dev/null)
 
   rm -rf "$tmpdir"
-  echo "$output" | grep -q "APPRAISAL_COMMENT_AT: 2024-01-01T09:00:00Z"
+  grep -q "APPRAISAL_COMMENT_AT: 2024-01-01T09:00:00Z" <<<"$output"
 }
 
 test_amendment_boundary_wins_when_later() {
@@ -70,7 +70,7 @@ test_amendment_boundary_wins_when_later() {
   output=$(echo "$comments" | bash "$LIB_DIR/reconcile-comments.sh" "WIL-1" "$log_file" 2>/dev/null)
 
   rm -rf "$tmpdir"
-  echo "$output" | grep -q "LAST_RECONCILE_AT: 2024-01-01T11:00:00Z"
+  grep -q "LAST_RECONCILE_AT: 2024-01-01T11:00:00Z" <<<"$output"
 }
 
 test_excludes_pipeline_authored_comments() {
@@ -88,7 +88,7 @@ test_excludes_pipeline_authored_comments() {
   output=$(echo "$comments" | bash "$LIB_DIR/reconcile-comments.sh" "WIL-1" "$log_file" 2>/dev/null)
 
   rm -rf "$tmpdir"
-  echo "$output" | grep -q "(none)"
+  grep -q "(none)" <<<"$output"
 }
 
 test_returns_none_when_no_unprocessed() {
@@ -106,7 +106,7 @@ test_returns_none_when_no_unprocessed() {
   output=$(echo "$comments" | bash "$LIB_DIR/reconcile-comments.sh" "WIL-1" "$log_file" 2>/dev/null)
 
   rm -rf "$tmpdir"
-  echo "$output" | grep -q "UNPROCESSED_COMMENTS:" && echo "$output" | grep -q "(none)"
+  grep -q "UNPROCESSED_COMMENTS:" <<<"$output" && grep -q "(none)" <<<"$output"
 }
 
 # GitHub #568/#582: an agent-paraphrased heading ("**Ticket appraised.**")
@@ -125,8 +125,8 @@ test_paraphrased_appraisal_heading_is_boundary() {
   output=$(echo "$comments" | bash "$LIB_DIR/reconcile-comments.sh" "WIL-1" "$log_file" 2>/dev/null)
 
   rm -rf "$tmpdir"
-  echo "$output" | grep -q "LAST_RECONCILE_AT: 2024-01-01T10:00:00Z" &&
-    echo "$output" | grep -q "(none)"
+  grep -q "LAST_RECONCILE_AT: 2024-01-01T10:00:00Z" <<<"$output" &&
+    grep -q "(none)" <<<"$output"
 }
 
 # The hidden marker is authoritative regardless of the heading's wording,
@@ -147,10 +147,10 @@ test_marker_identifies_pipeline_comments() {
   output=$(echo "$comments" | bash "$LIB_DIR/reconcile-comments.sh" "WIL-1" "$log_file" 2>/dev/null)
 
   rm -rf "$tmpdir"
-  echo "$output" | grep -q "APPRAISAL_COMMENT_AT: 2024-01-01T10:00:00Z" &&
-    echo "$output" | grep -q "LAST_RECONCILE_AT: 2024-01-01T11:00:00Z" &&
-    echo "$output" | grep -q "^2024-01-01T12:00:00Z|alice|follow-up question$" &&
-    ! echo "$output" | grep -q "user answer\|ticket-auto:"
+  grep -q "APPRAISAL_COMMENT_AT: 2024-01-01T10:00:00Z" <<<"$output" &&
+    grep -q "LAST_RECONCILE_AT: 2024-01-01T11:00:00Z" <<<"$output" &&
+    grep -q "^2024-01-01T12:00:00Z|alice|follow-up question$" <<<"$output" &&
+    ! grep -q "user answer\|ticket-auto:" <<<"$output"
 }
 
 # A user comment that merely mentions the phrase mid-body is not pipeline output.
@@ -168,8 +168,8 @@ test_user_comment_mentioning_phrase_is_unprocessed() {
   output=$(echo "$comments" | bash "$LIB_DIR/reconcile-comments.sh" "WIL-1" "$log_file" 2>/dev/null)
 
   rm -rf "$tmpdir"
-  echo "$output" | grep -q "LAST_RECONCILE_AT: 2024-01-01T10:00:00Z" &&
-    echo "$output" | grep -q "|alice|Re the"
+  grep -q "LAST_RECONCILE_AT: 2024-01-01T10:00:00Z" <<<"$output" &&
+    grep -q "|alice|Re the" <<<"$output"
 }
 
 # The posting skills must carry the markers the script matches on.

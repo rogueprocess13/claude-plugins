@@ -403,7 +403,7 @@ test_finalize_run_event_carries_repo_for_verify_opened_pr() {
   last=$(tail -1 "$log")
   _teardown
   [ "$run_repo" = "acme/repo" ] && [ "$merge_state" = "open" ] &&
-    echo "$last" | grep -q '|META|outcome|info|'
+    grep -q '|META|outcome|info|' <<<"$last"
 }
 
 # ── ticket-verify must call the deterministic recorder ──────────────────────

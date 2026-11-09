@@ -104,19 +104,19 @@ test_dashboard_and_report_show_needs_attention() {
     fleet_render_dashboard_from_data "$json" "$ws" 2>/dev/null
     fleet_write_report_from_data "$json" "$ws" 2>/dev/null
   )
-  echo "$out" | grep -q "Needs Attention" || {
+  grep -q "Needs Attention" <<<"$out" || {
     echo "dashboard has no Needs Attention section: $out" >&2
     rc=1
   }
-  echo "$out" | grep -q "CRE-1  stopped: gate-stop EXEC_NO_ARTIFACT" || {
+  grep -q "CRE-1  stopped: gate-stop EXEC_NO_ARTIFACT" <<<"$out" || {
     echo "dashboard missing gate-stop line: $out" >&2
     rc=1
   }
-  echo "$out" | grep -q "CRE-3  dead-letter: orphaned-after-max-restarts" || {
+  grep -q "CRE-3  dead-letter: orphaned-after-max-restarts" <<<"$out" || {
     echo "dashboard missing dead-letter line" >&2
     rc=1
   }
-  if echo "$out" | grep -qE "^  CRE-(4|5) "; then
+  if grep -qE "^  CRE-(4|5) " <<<"$out"; then
     echo "completed/held ticket listed under Needs Attention" >&2
     rc=1
   fi

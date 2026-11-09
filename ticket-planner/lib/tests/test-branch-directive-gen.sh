@@ -98,31 +98,31 @@ echo "=== Generator output tests ==="
 echo "--- G5: valid input → formatted block ---"
 VALID='{"initiative_id":"INIT-42","title_slug":"debt-collection","base_branch":"develop","merge_policy":"manual","sync_policy":"none"}'
 OUTPUT=$(branch_directive_generate "$VALID")
-echo "$OUTPUT" | grep -q "## Branch Directive" && echo "PASS: output has header" && PASS=$((PASS + 1)) || {
+grep -q "## Branch Directive" <<<"$OUTPUT" && echo "PASS: output has header" && PASS=$((PASS + 1)) || {
   echo "FAIL: missing header"
   FAIL=$((FAIL + 1))
 }
-echo "$OUTPUT" | grep -q "^\*\*Schema-Version:\*\*" && echo "PASS: Schema-Version present" && PASS=$((PASS + 1)) || {
+grep -q "^\*\*Schema-Version:\*\*" <<<"$OUTPUT" && echo "PASS: Schema-Version present" && PASS=$((PASS + 1)) || {
   echo "FAIL: missing Schema-Version"
   FAIL=$((FAIL + 1))
 }
-echo "$OUTPUT" | grep -q "^\*\*Branch:\*\*" && echo "PASS: Branch present" && PASS=$((PASS + 1)) || {
+grep -q "^\*\*Branch:\*\*" <<<"$OUTPUT" && echo "PASS: Branch present" && PASS=$((PASS + 1)) || {
   echo "FAIL: missing Branch"
   FAIL=$((FAIL + 1))
 }
-echo "$OUTPUT" | grep -q "^\*\*Base:\*\*" && echo "PASS: Base present" && PASS=$((PASS + 1)) || {
+grep -q "^\*\*Base:\*\*" <<<"$OUTPUT" && echo "PASS: Base present" && PASS=$((PASS + 1)) || {
   echo "FAIL: missing Base"
   FAIL=$((FAIL + 1))
 }
-echo "$OUTPUT" | grep -q "^\*\*Merge Policy:\*\*" && echo "PASS: Merge Policy present" && PASS=$((PASS + 1)) || {
+grep -q "^\*\*Merge Policy:\*\*" <<<"$OUTPUT" && echo "PASS: Merge Policy present" && PASS=$((PASS + 1)) || {
   echo "FAIL: missing Merge Policy"
   FAIL=$((FAIL + 1))
 }
-echo "$OUTPUT" | grep -q "^\*\*Sync Policy:\*\*" && echo "PASS: Sync Policy present" && PASS=$((PASS + 1)) || {
+grep -q "^\*\*Sync Policy:\*\*" <<<"$OUTPUT" && echo "PASS: Sync Policy present" && PASS=$((PASS + 1)) || {
   echo "FAIL: missing Sync Policy"
   FAIL=$((FAIL + 1))
 }
-echo "$OUTPUT" | grep -qE "^\*\*Created:\*\* [0-9]{4}-[0-9]{2}-[0-9]{2}T" && echo "PASS: Created timestamp present" && PASS=$((PASS + 1)) || {
+grep -qE "^\*\*Created:\*\* [0-9]{4}-[0-9]{2}-[0-9]{2}T" <<<"$OUTPUT" && echo "PASS: Created timestamp present" && PASS=$((PASS + 1)) || {
   echo "FAIL: missing or malformed Created"
   FAIL=$((FAIL + 1))
 }
@@ -212,7 +212,7 @@ echo "=== Branch naming tests ==="
 echo "--- N1: normal name ---"
 NAME=$(branch_directive_name_derive "INIT-42" "debt-collection-v2")
 echo "  Derived: $NAME"
-echo "$NAME" | grep -qE '^epic/init-[0-9]+-' && echo "PASS: normal name derived correctly" && PASS=$((PASS + 1)) || {
+grep -qE '^epic/init-[0-9]+-' <<<"$NAME" && echo "PASS: normal name derived correctly" && PASS=$((PASS + 1)) || {
   echo "FAIL: unexpected name format"
   FAIL=$((FAIL + 1))
 }
@@ -226,11 +226,11 @@ echo "  Derived: $NAME (${#NAME} chars)"
   echo "FAIL: too long (${#NAME})"
   FAIL=$((FAIL + 1))
 }
-echo "$NAME" | grep -qv -- '-$' && echo "PASS: no trailing dash" && PASS=$((PASS + 1)) || {
+grep -qv -- '-$' <<<"$NAME" && echo "PASS: no trailing dash" && PASS=$((PASS + 1)) || {
   echo "FAIL: trailing dash"
   FAIL=$((FAIL + 1))
 }
-echo "$NAME" | grep -qv '/$' && echo "PASS: no trailing slash" && PASS=$((PASS + 1)) || {
+grep -qv '/$' <<<"$NAME" && echo "PASS: no trailing slash" && PASS=$((PASS + 1)) || {
   echo "FAIL: trailing slash"
   FAIL=$((FAIL + 1))
 }
@@ -239,7 +239,7 @@ echo "$NAME" | grep -qv '/$' && echo "PASS: no trailing slash" && PASS=$((PASS +
 echo "--- N3: special chars sanitized ---"
 NAME=$(branch_directive_name_derive "INIT-99" "My Cool Feature!!! (2026)")
 echo "  Derived: $NAME"
-echo "$NAME" | grep -qv '[!() ]' && echo "PASS: special chars removed" && PASS=$((PASS + 1)) || {
+grep -qv '[!() ]' <<<"$NAME" && echo "PASS: special chars removed" && PASS=$((PASS + 1)) || {
   echo "FAIL: special chars remain"
   FAIL=$((FAIL + 1))
 }
@@ -248,7 +248,7 @@ echo "$NAME" | grep -qv '[!() ]' && echo "PASS: special chars removed" && PASS=$
 echo "--- N4: uppercase lowered ---"
 NAME=$(branch_directive_name_derive "INIT-42" "Debt-Collection-V2")
 echo "  Derived: $NAME"
-echo "$NAME" | grep -q "^epic/init-42-debt-collection-v2$" && echo "PASS: correctly lowercased" && PASS=$((PASS + 1)) || {
+grep -q "^epic/init-42-debt-collection-v2$" <<<"$NAME" && echo "PASS: correctly lowercased" && PASS=$((PASS + 1)) || {
   echo "FAIL: not lowercased correctly"
   FAIL=$((FAIL + 1))
 }
@@ -257,7 +257,7 @@ echo "$NAME" | grep -q "^epic/init-42-debt-collection-v2$" && echo "PASS: correc
 echo "--- N5: leading char check ---"
 NAME=$(branch_directive_name_derive "INIT-1" "-bad-start")
 echo "  Derived: $NAME"
-echo "$NAME" | grep -qE '^[a-z0-9]' && echo "PASS: valid leading char" && PASS=$((PASS + 1)) || {
+grep -qE '^[a-z0-9]' <<<"$NAME" && echo "PASS: valid leading char" && PASS=$((PASS + 1)) || {
   echo "FAIL: bad leading char"
   FAIL=$((FAIL + 1))
 }
@@ -265,7 +265,7 @@ echo "$NAME" | grep -qE '^[a-z0-9]' && echo "PASS: valid leading char" && PASS=$
 # Test N6: No parent path traversal
 echo "--- N6: no path traversal ---"
 NAME=$(branch_directive_name_derive "INIT-42" "debt-collection-v2")
-if ! echo "$NAME" | grep -q '\.\.'; then
+if ! grep -q '\.\.' <<<"$NAME"; then
   echo "PASS: no .. in name"
   PASS=$((PASS + 1))
 else
@@ -285,7 +285,7 @@ UAT_ABSENT_JSON='{"initiative_id":"INIT-42","title_slug":"debt-collection","base
 
 echo "--- U1: uat_policy emitted when supplied ---"
 OUT=$(branch_directive_generate "$UAT_EPIC_JSON")
-if echo "$OUT" | grep -q '^\*\*UAT Policy:\*\* epic$'; then
+if grep -q '^\*\*UAT Policy:\*\* epic$' <<<"$OUT"; then
   echo "PASS: UAT Policy line emitted"
   PASS=$((PASS + 1))
 else
@@ -296,7 +296,7 @@ fi
 
 echo "--- U2: field omitted entirely when not supplied ---"
 OUT=$(branch_directive_generate "$UAT_ABSENT_JSON")
-if echo "$OUT" | grep -q 'UAT Policy'; then
+if grep -q 'UAT Policy' <<<"$OUT"; then
   echo "FAIL: UAT Policy emitted although not requested — pre-existing epics must be byte-identical"
   FAIL=$((FAIL + 1))
 else
@@ -473,7 +473,7 @@ echo "--- M5: Epic Gen re-entry does not exit before the Branch Directive step -
 if declare -f planner_prompt_epicgen >/dev/null 2>&1; then
   M5_RENDERED=$(planner_prompt_epicgen "INIT-265" "idea" "/tmp/planner-test-sd")
 
-  if echo "$M5_RENDERED" | grep -qi 'exit agent'; then
+  if grep -qi 'exit agent' <<<"$M5_RENDERED"; then
     echo "FAIL: rendered prompt still instructs the agent to exit on an existing epic"
     FAIL=$((FAIL + 1))
   else
@@ -496,7 +496,7 @@ if declare -f planner_prompt_epicgen >/dev/null 2>&1; then
     FAIL=$((FAIL + 1))
   fi
 
-  if echo "$M5_RENDERED" | grep -q 'existing_epic'; then
+  if grep -q 'existing_epic' <<<"$M5_RENDERED"; then
     echo "FAIL: rendered prompt still references the old existing_epic variable"
     FAIL=$((FAIL + 1))
   else
@@ -532,10 +532,10 @@ echo "--- M6: Epic Gen 5c writes back, 5d sources the checker and fails loudly -
 if declare -f planner_prompt_epicgen >/dev/null 2>&1; then
   M6_RENDERED=$(planner_prompt_epicgen "INIT-498" "idea" "/tmp/planner-test-sd")
 
-  if echo "$M6_RENDERED" | grep -q 'Linear API update call'; then
+  if grep -q 'Linear API update call' <<<"$M6_RENDERED"; then
     echo "FAIL: step 5c still carries the update-call placeholder"
     FAIL=$((FAIL + 1))
-  elif echo "$M6_RENDERED" | grep -q 'planner_linear_update_issue_description "\$CREATED_EPIC_ID" "\$NEW_DESCRIPTION"'; then
+  elif grep -q 'planner_linear_update_issue_description "\$CREATED_EPIC_ID" "\$NEW_DESCRIPTION"' <<<"$M6_RENDERED"; then
     echo "PASS: step 5c calls planner_linear_update_issue_description"
     PASS=$((PASS + 1))
   else

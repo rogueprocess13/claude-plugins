@@ -23,10 +23,10 @@ _eq() {
   if [ "$2" = "$3" ]; then _pass "$1"; else _fail "$1 (expected '$3', got '$2')"; fi
 }
 _has() {
-  if printf '%s' "$2" | grep -qF -- "$3"; then _pass "$1"; else _fail "$1 (missing '$3')"; fi
+  if grep -qF -- "$3" <<<"$2"; then _pass "$1"; else _fail "$1 (missing '$3')"; fi
 }
 _lacks() {
-  if printf '%s' "$2" | grep -qF -- "$3"; then _fail "$1 (unexpected '$3')"; else _pass "$1"; fi
+  if grep -qF -- "$3" <<<"$2"; then _fail "$1 (unexpected '$3')"; else _pass "$1"; fi
 }
 _count() { printf '%s\n' "$1" | grep -cF -- "$2" || true; }
 

@@ -194,7 +194,7 @@ test_timeout_message_names_holder() {
   }
   local err
   err=$(verify_lock_acquire "WAITER" 2>&1 >/dev/null) || true
-  echo "$err" | grep -q "HOLDER-X" || {
+  grep -q "HOLDER-X" <<<"$err" || {
     echo "  timeout message did not name the current holder: $err" >&2
     _teardown_fixture
     return 1
@@ -414,7 +414,7 @@ test_status_held() {
     _teardown_fixture
     return 1
   }
-  echo "$out" | grep -q "CRE-9" || {
+  grep -q "CRE-9" <<<"$out" || {
     echo "  status output did not name the holding ticket: $out" >&2
     _teardown_fixture
     return 1
@@ -545,7 +545,7 @@ _assert_same_ticket_blocks() {
     echo "  ${label}: holder's stop file was touched" >&2
     rc=1
   }
-  echo "$err" | grep -q "live same-ticket holder exists" || {
+  grep -q "live same-ticket holder exists" <<<"$err" || {
     echo "  ${label}: no self-wait diagnostic: $err" >&2
     rc=1
   }

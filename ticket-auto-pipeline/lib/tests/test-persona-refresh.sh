@@ -49,7 +49,7 @@ run() { CLAUDE_PLUGIN_ROOT="$TMP" bash "$PR" "$@"; }
 out=$(run list all 2>&1)
 rc=$?
 n=$(printf '%s\n' "$out" | grep -c '\.md' || true)
-if [ "$rc" -eq 0 ] && [ "$n" -eq 4 ] && ! printf '%s' "$out" | grep -q README; then
+if [ "$rc" -eq 0 ] && [ "$n" -eq 4 ] && ! grep -q README <<<"$out"; then
   ok "list all enumerates 4 persona files, no README"
 else
   nok "list all enumerates 4 persona files, no README (rc=$rc n=$n): $out"

@@ -45,7 +45,7 @@ unset LINEAR_API_KEY LINEAR_TEAM_ID
 unset REPOS_ROOT
 OUT=$(planner_doctor_run 2>/dev/null)
 ROW=$(doctor_row "$OUT" "REPOS_ROOT")
-if echo "$ROW" | grep -q '|missing|'; then
+if grep -q '|missing|' <<<"$ROW"; then
   pass "unset REPOS_ROOT is reported missing"
 else
   fail "unset REPOS_ROOT reported missing" "$ROW"
@@ -54,7 +54,7 @@ fi
 export REPOS_ROOT="${TMPDIR}/does-not-exist"
 OUT=$(planner_doctor_run 2>/dev/null)
 ROW=$(doctor_row "$OUT" "REPOS_ROOT")
-if echo "$ROW" | grep -q '|missing|'; then
+if grep -q '|missing|' <<<"$ROW"; then
   pass "REPOS_ROOT pointing at a non-directory is reported missing"
 else
   fail "non-directory REPOS_ROOT reported missing" "$ROW"
@@ -64,7 +64,7 @@ export REPOS_ROOT="${TMPDIR}/repos"
 mkdir -p "$REPOS_ROOT"
 OUT=$(planner_doctor_run 2>/dev/null)
 ROW=$(doctor_row "$OUT" "REPOS_ROOT")
-if echo "$ROW" | grep -q "|ok|${REPOS_ROOT}|"; then
+if grep -q "|ok|${REPOS_ROOT}|" <<<"$ROW"; then
   pass "a real REPOS_ROOT directory resolves ok"
 else
   fail "real REPOS_ROOT resolves ok" "$ROW"
@@ -91,11 +91,11 @@ MOCK_CREATE_LABEL='{"data":{"issueLabelCreate":{"success":true,"issueLabel":{"id
 _LABELS_RESPONSE="$MOCK_LABELS_ALL_PRESENT"
 planner_linear_graphql() {
   local payload="$1"
-  if echo "$payload" | grep -q '"query Teams'; then
+  if grep -q '"query Teams' <<<"$payload"; then
     echo "$MOCK_TEAMS"
-  elif echo "$payload" | grep -q '"query LabelIds'; then
+  elif grep -q '"query LabelIds' <<<"$payload"; then
     echo "$_LABELS_RESPONSE"
-  elif echo "$payload" | grep -q '"mutation CreateLabel'; then
+  elif grep -q '"mutation CreateLabel' <<<"$payload"; then
     echo "$MOCK_CREATE_LABEL"
   fi
 }
@@ -105,16 +105,16 @@ export LINEAR_TEAM_ID="CRE"
 
 OUT=$(planner_doctor_run 2>/dev/null)
 ROW=$(doctor_row "$OUT" "LINEAR_TEAM_ID")
-if echo "$ROW" | grep -q "|ok|team-uuid-1|"; then
+if grep -q "|ok|team-uuid-1|" <<<"$ROW"; then
   pass "team resolves via mocked Linear API"
 else
   fail "team resolves" "$ROW"
 fi
 
-if echo "$OUT" | grep -q '^label:needs-info|ok|' &&
-  echo "$OUT" | grep -q '^label:needs-adr|ok|' &&
-  echo "$OUT" | grep -q '^label:rejected|ok|' &&
-  echo "$OUT" | grep -q '^label:reviewed|ok|'; then
+if grep -q '^label:needs-info|ok|' <<<"$OUT" &&
+  grep -q '^label:needs-adr|ok|' <<<"$OUT" &&
+  grep -q '^label:rejected|ok|' <<<"$OUT" &&
+  grep -q '^label:reviewed|ok|' <<<"$OUT"; then
   pass "all 4 board-projected labels report ok when present"
 else
   fail "all 4 board-projected labels ok" "$OUT"
@@ -124,7 +124,7 @@ fi
 unset LINEAR_API_KEY
 OUT=$(planner_doctor_run 2>/dev/null)
 if doctor_row "$OUT" "LINEAR_TEAM_ID" | grep -q '|missing|' &&
-  echo "$OUT" | grep -q '^label:needs-info|warn|'; then
+  grep -q '^label:needs-info|warn|' <<<"$OUT"; then
   pass "missing LINEAR_API_KEY skips (not fakes) label checks"
 else
   fail "missing LINEAR_API_KEY skips label checks" "$OUT"
@@ -134,7 +134,7 @@ export LINEAR_API_KEY="test-key"
 # One label genuinely missing — the exact defect from #223, found twice.
 _LABELS_RESPONSE="$MOCK_LABELS_ONE_MISSING"
 OUT=$(planner_doctor_run 2>/dev/null)
-if echo "$OUT" | grep -q '^label:reviewed|missing|'; then
+if grep -q '^label:reviewed|missing|' <<<"$OUT"; then
   pass "a genuinely missing board-projected label is reported missing"
 else
   fail "missing board-projected label reported" "$OUT"
@@ -149,7 +149,7 @@ fi
 
 # --fix creates the missing label instead of only reporting it.
 OUT=$(planner_doctor_run --fix 2>/dev/null)
-if echo "$OUT" | grep -q '^label:reviewed|fixed|lbl-new|'; then
+if grep -q '^label:reviewed|fixed|lbl-new|' <<<"$OUT"; then
   pass "--fix creates a genuinely missing board-projected label"
 else
   fail "--fix creates missing label" "$OUT"
@@ -186,7 +186,7 @@ planner_state_write "$INIT_ID" "META" "discovery" "repo-ref" "ledgerly@develop@$
 
 OUT=$(planner_doctor_run "$INIT_ID" 2>/dev/null)
 ROW=$(doctor_row "$OUT" "repo-ref:ledgerly")
-if echo "$ROW" | grep -q '|ok|' && echo "$ROW" | grep -q "REPOS_ROOT/ledgerly-crosscheck"; then
+if grep -q '|ok|' <<<"$ROW" && grep -q "REPOS_ROOT/ledgerly-crosscheck" <<<"$ROW"; then
   pass "a diverged live checkout gets an isolated worktree, reported ok"
 else
   fail "diverged checkout ensures a worktree" "$ROW"
@@ -199,7 +199,7 @@ planner_state_init "$INIT_ID2" "doctor test 2" >/dev/null 2>&1
 planner_state_write "$INIT_ID2" "META" "discovery" "repo-ref" "ledgerly@develop@${DEVELOP_SHA}" >/dev/null 2>&1
 OUT=$(planner_doctor_run "$INIT_ID2" 2>/dev/null)
 ROW=$(doctor_row "$OUT" "repo-ref:ledgerly")
-if echo "$ROW" | grep -q "|ok|${DEVELOP_SHA}|REPOS_ROOT/ledgerly|"; then
+if grep -q "|ok|${DEVELOP_SHA}|REPOS_ROOT/ledgerly|" <<<"$ROW"; then
   pass "a live checkout already matching Discovery's ref needs no worktree"
 else
   fail "matching checkout reported ok without a worktree" "$ROW"
@@ -222,7 +222,7 @@ planner_state_init "$INIT_ID3" "doctor test 3" >/dev/null 2>&1
 planner_state_write "$INIT_ID3" "META" "discovery" "repo-ref" "debt-collection@main@${NESTED_SHA}" >/dev/null 2>&1
 OUT=$(planner_doctor_run "$INIT_ID3" 2>/dev/null)
 ROW=$(doctor_row "$OUT" "repo-ref:debt-collection")
-if echo "$ROW" | grep -q "|ok|${NESTED_SHA}|REPOS_ROOT/microservices/debt-collection|"; then
+if grep -q "|ok|${NESTED_SHA}|REPOS_ROOT/microservices/debt-collection|" <<<"$ROW"; then
   pass "a bare-named nested repo resolves under REPOS_ROOT/microservices (#500)"
 else
   fail "bare-named nested repo resolves (#500)" "$ROW"
@@ -233,7 +233,7 @@ planner_state_init "$INIT_ID4" "doctor test 4" >/dev/null 2>&1
 planner_state_write "$INIT_ID4" "META" "discovery" "repo-ref" "microservices/debt-collection@main@${NESTED_SHA}" >/dev/null 2>&1
 OUT=$(planner_doctor_run "$INIT_ID4" 2>/dev/null)
 ROW=$(doctor_row "$OUT" "repo-ref:microservices/debt-collection")
-if echo "$ROW" | grep -q "|ok|${NESTED_SHA}|REPOS_ROOT/microservices/debt-collection|"; then
+if grep -q "|ok|${NESTED_SHA}|REPOS_ROOT/microservices/debt-collection|" <<<"$ROW"; then
   pass "a relative-path repo-ref resolves to the nested checkout (#500)"
 else
   fail "relative-path repo-ref resolves (#500)" "$ROW"
@@ -244,7 +244,7 @@ planner_state_init "$INIT_ID5" "doctor test 5" >/dev/null 2>&1
 planner_state_write "$INIT_ID5" "META" "discovery" "repo-ref" "no-such-repo@main@${NESTED_SHA}" >/dev/null 2>&1
 OUT=$(planner_doctor_run "$INIT_ID5" 2>/dev/null)
 ROW=$(doctor_row "$OUT" "repo-ref:no-such-repo")
-if echo "$ROW" | grep -q '|missing|' && echo "$ROW" | grep -q "no git checkout named"; then
+if grep -q '|missing|' <<<"$ROW" && grep -q "no git checkout named" <<<"$ROW"; then
   pass "a repo absent from REPOS_ROOT is reported missing with a reason (#500)"
 else
   fail "absent repo reported missing with a reason (#500)" "$ROW"
@@ -253,7 +253,7 @@ fi
 # No initiative id — repo-ref check is informational, not a failure.
 OUT=$(planner_doctor_run 2>/dev/null)
 ROW=$(doctor_row "$OUT" "repo-ref")
-if echo "$ROW" | grep -q '|info|'; then
+if grep -q '|info|' <<<"$ROW"; then
   pass "omitting the initiative id reports repo-ref as informational"
 else
   fail "no-initiative-id repo-ref is informational" "$ROW"
@@ -275,7 +275,7 @@ fi
 
 echo "--- Test 5: output shape ---"
 
-if echo "$OUT" | grep -q '^---BEGIN_VARS---$' && echo "$OUT" | grep -q '^---END_VARS---$'; then
+if grep -q '^---BEGIN_VARS---$' <<<"$OUT" && grep -q '^---END_VARS---$' <<<"$OUT"; then
   pass "output is wrapped in BEGIN/END markers"
 else
   fail "BEGIN/END markers present" "$OUT"

@@ -190,7 +190,7 @@ relates: []
 EOF
 
 WARN_OUTPUT=$("$KC_INDEX" "$TEST_DIR/knowledge" 2>&1) || true
-if echo "$WARN_OUTPUT" | grep -q "Orphaned file"; then
+if grep -q "Orphaned file" <<<"$WARN_OUTPUT"; then
   pass "Orphaned non-KC-NNNN file triggers warning"
 else
   fail "Orphaned non-KC-NNNN file triggers warning — got: $WARN_OUTPUT"
@@ -216,7 +216,7 @@ EOF
 
 WARN_OUTPUT2=$("$KC_INDEX" "$TEST_DIR/knowledge" 2>&1) || true
 # KC-0005 should appear in INDEX.md (the file), not in stderr warnings
-if grep -q "KC-0005" "$TEST_DIR/knowledge/INDEX.md" && ! echo "$WARN_OUTPUT2" | grep -q "KC-0005"; then
+if grep -q "KC-0005" "$TEST_DIR/knowledge/INDEX.md" && ! grep -q "KC-0005" <<<"$WARN_OUTPUT2"; then
   pass "KC-NNNN file does not trigger orphaned warning"
 else
   fail "KC-NNNN file does not trigger orphaned warning"
@@ -246,7 +246,7 @@ relates: []
 EOF
 
 WARN_OUTPUT3=$("$KC_INDEX" "$TEST_DIR/knowledge" 2>&1) || true
-if echo "$WARN_OUTPUT3" | grep -q "Skipping item with missing required fields"; then
+if grep -q "Skipping item with missing required fields" <<<"$WARN_OUTPUT3"; then
   pass "Item with empty required fields triggers skip warning"
 else
   fail "Item with empty required fields triggers skip warning — got: $WARN_OUTPUT3"
@@ -396,7 +396,7 @@ fi
 # Now delete the item file and rebuild
 rm "$TEST_DIR/knowledge/KC-0020--will-vanish.md"
 OUTPUT=$("$KC_INDEX" "$TEST_DIR/knowledge" 2>&1) || true
-if echo "$OUTPUT" | grep -q "Previously tracked item vanished.*KC-0020"; then
+if grep -q "Previously tracked item vanished.*KC-0020" <<<"$OUTPUT"; then
   pass "Vanished item triggers warning"
 else
   fail "Vanished item triggers warning — got: $OUTPUT"

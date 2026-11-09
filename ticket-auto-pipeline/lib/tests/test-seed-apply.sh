@@ -260,10 +260,10 @@ seed_apply CON-1 "$WT" 2>/dev/null || rc=$?
 
 # ── CLI entry ────────────────────────────────────────────────────────────
 cli_out=$(LOG_FILE="" bash "$LIB_DIR/seed-apply.sh" 2>&1) && cli_rc=0 || cli_rc=$?
-[ "$cli_rc" = "2" ] && echo "$cli_out" | grep -q "Usage: seed-apply.sh" &&
+[ "$cli_rc" = "2" ] && grep -q "Usage: seed-apply.sh" <<<"$cli_out" &&
   _pass "CLI: no args → usage, rc 2" || _fail "CLI usage: rc=$cli_rc out=$cli_out"
 cli_out=$(LOG_FILE="" bash "$LIB_DIR/seed-apply.sh" CLI-1 "$WT" 2>/dev/null) && cli_rc=0 || cli_rc=$?
-[ "$cli_rc" = "0" ] && echo "$cli_out" | grep -q "^SEED_APPLY_STATUS=skip$" &&
+[ "$cli_rc" = "0" ] && grep -q "^SEED_APPLY_STATUS=skip$" <<<"$cli_out" &&
   _pass "CLI: ticket with no manifest → skip, rc 0" || _fail "CLI run: rc=$cli_rc out=$cli_out"
 
 echo "---"

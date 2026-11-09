@@ -93,7 +93,7 @@ test_no_repos_is_clean_sweep() {
   local out actual
   out=$("$PRESCAN_SWEEP" --repos-root "$_root" 2>/dev/null)
   actual=$?
-  echo "$out" | grep -q "^TOTAL=0$"
+  grep -q "^TOTAL=0$" <<<"$out"
   local rc=$?
   _teardown
   return $rc
@@ -137,9 +137,9 @@ test_mixed_status_counts() {
   set +e
   out=$("$PRESCAN_SWEEP" --repos-root "$_root" 2>/dev/null)
   set -e
-  echo "$out" | grep -q "^TOTAL=2$" &&
-    echo "$out" | grep -q "^FRESH=1$" &&
-    echo "$out" | grep -q "^MISSING=1$"
+  grep -q "^TOTAL=2$" <<<"$out" &&
+    grep -q "^FRESH=1$" <<<"$out" &&
+    grep -q "^MISSING=1$" <<<"$out"
   local rc=$?
   _teardown
   return $rc
@@ -170,7 +170,7 @@ test_fresh_repo_not_in_needs_refresh() {
   set -e
   local needs_line
   needs_line=$(echo "$out" | grep "^NEEDS_REFRESH=")
-  ! echo "$needs_line" | grep -q "repo-all-good"
+  ! grep -q "repo-all-good" <<<"$needs_line"
   local rc=$?
   _teardown
   return $rc

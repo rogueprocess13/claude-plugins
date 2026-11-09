@@ -82,7 +82,7 @@ _seed_index() {
 _seed_index "TEST-1" "INIT-42"
 rc=0
 actual=$(resolve_planner_dir "TEST-1" "$PLANNER_DESC" "true" 2>/dev/null) || rc=$?
-if [ "$rc" = "0" ] && echo "$actual" | grep -q "INIT-42"; then
+if [ "$rc" = "0" ] && grep -q "INIT-42" <<<"$actual"; then
   _pass "resolve_planner_dir: present dir → exit 0"
 else
   _fail "resolve_planner_dir: expected exit 0 with INIT-42 path, got rc=$rc path='$actual'"
@@ -171,7 +171,7 @@ mkdir -p "$REPOS_ROOT/.ticket-auto/initiatives/INIT-77/tickets/TEST-IDX/planner"
 echo "INIT-77" >"$REPOS_ROOT/.ticket-auto/initiatives/_index/TEST-IDX.initiative"
 rc=0
 actual=$(resolve_planner_dir "TEST-IDX" 2>/dev/null) || rc=$?
-if [ "$rc" = "0" ] && echo "$actual" | grep -q "INIT-77"; then
+if [ "$rc" = "0" ] && grep -q "INIT-77" <<<"$actual"; then
   _pass "resolve_planner_dir: index fast path resolves without description/label args"
 else
   _fail "resolve_planner_dir: expected index fast path to resolve INIT-77, got rc=$rc path='$actual'"
@@ -180,7 +180,7 @@ fi
 # 9. Index takes precedence over a stale/mismatched inline description.
 rc=0
 actual=$(resolve_planner_dir "TEST-IDX" "some unrelated description" "false" 2>/dev/null) || rc=$?
-if [ "$rc" = "0" ] && echo "$actual" | grep -q "INIT-77"; then
+if [ "$rc" = "0" ] && grep -q "INIT-77" <<<"$actual"; then
   _pass "resolve_planner_dir: index takes precedence over inline description/label"
 else
   _fail "resolve_planner_dir: expected index to win over inline args, got rc=$rc path='$actual'"

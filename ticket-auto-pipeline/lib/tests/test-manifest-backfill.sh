@@ -74,7 +74,7 @@ test_backfill_seeds_from_mocked_get_issue() {
     [ "$stage2" = "Backlog" ] && [ -z "$approved2" ] &&
     [ "$type1" = "bug" ] && [ "$init1" = "INIT-42" ] &&
     [ "$blocked1" = '["WIL-9"]' ] && [ "$flags1" = '["needs-info"]' ] &&
-    echo "$out" | grep -q "2 seeded, 0 already complete, 0 failed"; then
+    grep -q "2 seeded, 0 already complete, 0 failed" <<<"$out"; then
     _pass "manifest-backfill.sh: seeds approved+stage+type+initiative+blocked_by+flags from mocked get_issue"
   else
     _fail "manifest-backfill.sh: seeding mismatch (rc=$rc approved1=$approved1 stage1=$stage1 stage2=$stage2 approved2=$approved2 type1=$type1 init1=$init1 blocked1=$blocked1 flags1=$flags1 out=$out)"
@@ -93,7 +93,7 @@ test_backfill_idempotent() {
   out=$(CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" "$ws/logs" 2>&1) || rc=$?
   rm -rf "$ws"
 
-  if [ "$rc" -eq 0 ] && echo "$out" | grep -q "0 seeded, 2 already complete, 0 failed"; then
+  if [ "$rc" -eq 0 ] && grep -q "0 seeded, 2 already complete, 0 failed" <<<"$out"; then
     _pass "manifest-backfill.sh: second run is a no-op for every already-processed ticket"
   else
     _fail "manifest-backfill.sh: should be a no-op on re-run (rc=$rc out=$out)"
@@ -117,7 +117,7 @@ test_backfill_dry_run_writes_nothing() {
   rm -rf "$ws"
 
   if [ "$rc" -eq 0 ] && [ "$manifest_count" -eq 0 ] && [ "$index_count" -eq 0 ] &&
-    echo "$out" | grep -q "WOULD SEED" && echo "$out" | grep -q "dry-run"; then
+    grep -q "WOULD SEED" <<<"$out" && grep -q "dry-run" <<<"$out"; then
     _pass "manifest-backfill.sh: --dry-run reports without writing any manifest or index file"
   else
     _fail "manifest-backfill.sh: --dry-run should write nothing (rc=$rc manifests=$manifest_count index=$index_count out=$out)"
@@ -157,7 +157,7 @@ test_backfill_reports_get_issue_failure() {
   out=$(CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" "$ws/logs" 2>&1) || rc=$?
   rm -rf "$ws"
 
-  echo "$out" | grep -q "0 seeded, 0 already complete, 1 failed" &&
+  grep -q "0 seeded, 0 already complete, 1 failed" <<<"$out" &&
     _pass "manifest-backfill.sh: a get_issue failure is counted as failed, not silently skipped" ||
     _fail "manifest-backfill.sh: expected 1 failed in summary (out=$out)"
 }
@@ -203,7 +203,7 @@ test_backfill_stamps_epic_dispatch_from_state_execution() {
 
   if [ "$rc" -eq 0 ] && [ "$dispatch" = "true" ] && [ "$branch" = "epic/init-99" ] &&
     [ "$uat" = "per-ticket" ] && [ "$merge" = "manual" ] && [ "$children" = '["WIL-1"]' ] &&
-    echo "$out" | grep -q "1 seeded, 0 already complete, 0 failed"; then
+    grep -q "1 seeded, 0 already complete, 0 failed" <<<"$out"; then
     _pass "manifest-backfill.sh: stamps epic dispatch+directive+children from state:execution"
   else
     _fail "manifest-backfill.sh: epic stamp mismatch (rc=$rc dispatch=$dispatch branch=$branch uat=$uat merge=$merge children=$children out=$out)"
@@ -219,7 +219,7 @@ test_backfill_epic_dispatch_idempotent() {
   out=$(CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" "$ws/logs" 2>&1) || rc=$?
   rm -rf "$ws"
 
-  if [ "$rc" -eq 0 ] && echo "$out" | grep -q "0 seeded, 1 already complete, 0 failed"; then
+  if [ "$rc" -eq 0 ] && grep -q "0 seeded, 1 already complete, 0 failed" <<<"$out"; then
     _pass "manifest-backfill.sh: second run is a no-op for an already-stamped epic"
   else
     _fail "manifest-backfill.sh: epic stamp should be idempotent (rc=$rc out=$out)"
@@ -238,7 +238,7 @@ test_backfill_epic_dry_run_writes_nothing() {
   rm -rf "$ws"
 
   if [ "$rc" -eq 0 ] && [ "$manifest_count" -eq 0 ] &&
-    echo "$out" | grep -q "epics (dry-run): 1 would be seeded"; then
+    grep -q "epics (dry-run): 1 would be seeded" <<<"$out"; then
     _pass "manifest-backfill.sh: --dry-run reports the epic stamp without writing it"
   else
     _fail "manifest-backfill.sh: --dry-run should not write the epic manifest (rc=$rc manifests=$manifest_count out=$out)"
@@ -278,8 +278,8 @@ test_backfill_readiness_stamps_never_dispatched_child() {
 
   if [ "$rc" -eq 0 ] && [ "$status" = "ready" ] && [ "$by" = "legacy-backfill" ] &&
     [ -n "$reason" ] && [ "$missing" = "[]" ] &&
-    echo "$out" | grep -q "WIL-5: SEEDED ready=ready" &&
-    echo "$out" | grep -q "readiness: 1 seeded, 0 already complete/ad-hoc/no-manifest, 0 failed"; then
+    grep -q "WIL-5: SEEDED ready=ready" <<<"$out" &&
+    grep -q "readiness: 1 seeded, 0 already complete/ad-hoc/no-manifest, 0 failed" <<<"$out"; then
     _pass "manifest-backfill.sh: enumerates and stamps a never-dispatched child via epic children[], recording the legacy waiver as migration-granted"
   else
     _fail "manifest-backfill.sh: readiness stamp mismatch (rc=$rc status=$status by=$by reason=$reason missing=$missing out=$out)"
@@ -299,8 +299,8 @@ test_backfill_readiness_dry_run_writes_nothing() {
   rm -rf "$ws"
 
   if [ "$rc" -eq 0 ] && [ -z "$ready_field" ] &&
-    echo "$out" | grep -q "WIL-5: WOULD SEED ready=ready" &&
-    echo "$out" | grep -q "readiness (dry-run): 1 would be seeded"; then
+    grep -q "WIL-5: WOULD SEED ready=ready" <<<"$out" &&
+    grep -q "readiness (dry-run): 1 would be seeded" <<<"$out"; then
     _pass "manifest-backfill.sh: --dry-run reports the readiness stamp without writing it"
   else
     _fail "manifest-backfill.sh: --dry-run readiness pass should write nothing (rc=$rc ready_field=$ready_field out=$out)"
@@ -316,8 +316,8 @@ test_backfill_readiness_idempotent() {
   out=$(CLAUDE_SKILLS_LIB="$ws/lib" REPOS_ROOT="$ws/repos" bash "$BACKFILL_SH" "$ws/logs" 2>&1) || rc=$?
   rm -rf "$ws"
 
-  if [ "$rc" -eq 0 ] && echo "$out" | grep -q "WIL-5: SKIP (already carries ready)" &&
-    echo "$out" | grep -q "readiness: 0 seeded, 1 already complete/ad-hoc/no-manifest, 0 failed"; then
+  if [ "$rc" -eq 0 ] && grep -q "WIL-5: SKIP (already carries ready)" <<<"$out" &&
+    grep -q "readiness: 0 seeded, 1 already complete/ad-hoc/no-manifest, 0 failed" <<<"$out"; then
     _pass "manifest-backfill.sh: second run is a no-op for an already-stamped readiness field"
   else
     _fail "manifest-backfill.sh: readiness stamp should be idempotent (rc=$rc out=$out)"
@@ -348,8 +348,8 @@ test_backfill_readiness_skips_adhoc_and_already_ready() {
   rm -rf "$ws"
 
   if [ "$rc" -eq 0 ] && [ "$status1" = "not-ready" ] && [ -z "$ready9" ] &&
-    echo "$out" | grep -q "WIL-1: SKIP (already carries ready)" &&
-    echo "$out" | grep -q "WIL-9: SKIP (ad-hoc, not planned)"; then
+    grep -q "WIL-1: SKIP (already carries ready)" <<<"$out" &&
+    grep -q "WIL-9: SKIP (ad-hoc, not planned)" <<<"$out"; then
     _pass "manifest-backfill.sh: readiness pass never clobbers an existing verdict and never stamps an ad-hoc ticket"
   else
     _fail "manifest-backfill.sh: readiness pass should skip pre-existing ready + ad-hoc tickets (rc=$rc status1=$status1 ready9=$ready9 out=$out)"

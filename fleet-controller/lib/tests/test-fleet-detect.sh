@@ -866,7 +866,7 @@ test_detect_all_caps_severity_when_auto_restart_off() {
     local anomalies
     anomalies=$(echo "$r" | jq -r '.pipelines[0].anomalies')
     rm -rf "$ws"
-    [ "$max_sev" -eq 2 ] && echo "$anomalies" | grep -q "restart degraded to kill"
+    [ "$max_sev" -eq 2 ] && grep -q "restart degraded to kill" <<<"$anomalies"
   )
 }
 
@@ -883,7 +883,7 @@ test_last_field_rejects_high_index() {
   local stderr_str
   stderr_str=$(cat "$stderr_out")
   rm -rf "$ws" "$stderr_out"
-  [ "$rc" -ne 0 ] && echo "$stderr_str" | grep -q "truncate pipe-containing"
+  [ "$rc" -ne 0 ] && grep -q "truncate pipe-containing" <<<"$stderr_str"
 }
 
 test_last_field_safe_indices_still_work() {
@@ -1048,7 +1048,7 @@ test_diagnostics_with_claude_log() {
   local out
   out=$(extract_diagnostics "CRE-47" "IMPLEMENT" "$ws" 2>&1) || true
   rm -rf "$ws"
-  echo "$out" | grep -q "build error" && echo "$out" | grep -q "fix the thing"
+  grep -q "build error" <<<"$out" && grep -q "fix the thing" <<<"$out"
 }
 
 # ── awk field extraction ─────────────────────────────────────────────────────────
@@ -1062,7 +1062,7 @@ test_awk_last_msg_preserves_pipes() {
   local msg
   msg=$(_last_msg "${ws}/CRE-47-pipeline.log")
   rm -rf "$ws"
-  echo "$msg" | grep -q "complex reason | with | pipes"
+  grep -q "complex reason | with | pipes" <<<"$msg"
 }
 
 # ── Auto-mode block detection (7th detector) ─────────────────────────────────────
@@ -1150,7 +1150,7 @@ test_auto_mode_blocks_integrated_in_fleet_detect_all() {
   sev=$(echo "$r" | jq -r '.pipelines[0].severity')
   anomalies=$(echo "$r" | jq -r '.pipelines[0].anomalies')
   rm -rf "$ws"
-  [ "$sev" -eq 1 ] && echo "$anomalies" | grep -q "auto-block(S1)"
+  [ "$sev" -eq 1 ] && grep -q "auto-block(S1)" <<<"$anomalies"
 }
 
 # ── Tool error detection (8th detector) — cross-generation scoping (#327) ────────
@@ -1318,11 +1318,11 @@ test_initiative_dispatch_notes_stop_file() {
   findings=$(echo "$r" | jq -r '.findings')
   rm -rf "$ws" "$repos_root"
 
-  echo "$findings" | grep -q "INIT-42(1)" || {
+  grep -q "INIT-42(1)" <<<"$findings" || {
     echo "expected INIT-42(1) in findings: $findings" >&2
     return 1
   }
-  echo "$findings" | grep -q "stopped: stop-INIT-42.json" || {
+  grep -q "stopped: stop-INIT-42.json" <<<"$findings" || {
     echo "expected stop-file note in findings: $findings" >&2
     return 1
   }
@@ -1343,7 +1343,7 @@ test_initiative_dispatch_no_stop_note_when_unstopped() {
   findings=$(echo "$r" | jq -r '.findings')
   rm -rf "$ws" "$repos_root"
 
-  echo "$findings" | grep -q "stopped:" && {
+  grep -q "stopped:" <<<"$findings" && {
     echo "unexpected stop note when no stop-file exists: $findings" >&2
     return 1
   }
@@ -1417,7 +1417,7 @@ test_stalled_approved_no_worker_no_queue_is_flagged() {
     echo "expected severity 1, got $sev" >&2
     return 1
   }
-  echo "$findings" | grep -q "CRE-77" || {
+  grep -q "CRE-77" <<<"$findings" || {
     echo "expected CRE-77 in findings: $findings" >&2
     return 1
   }
@@ -1609,11 +1609,11 @@ test_fleet_local_epics_excludes_dispatch_false() {
   out=$(REPOS_ROOT="$repos_root" fleet_local_epics)
   rm -rf "$repos_root"
 
-  echo "$out" | grep -qx "INIT-50" || {
+  grep -qx "INIT-50" <<<"$out" || {
     echo "expected INIT-50 (dispatch:true) in output: $out" >&2
     return 1
   }
-  echo "$out" | grep -qx "INIT-51" && {
+  grep -qx "INIT-51" <<<"$out" && {
     echo "INIT-51 (dispatch:false) should be excluded: $out" >&2
     return 1
   }
@@ -1632,11 +1632,11 @@ test_fleet_local_epics_excludes_underscore_initiative() {
   out=$(REPOS_ROOT="$repos_root" fleet_local_epics)
   rm -rf "$repos_root"
 
-  echo "$out" | grep -qx "_adhoc" && {
+  grep -qx "_adhoc" <<<"$out" && {
     echo "_adhoc (reserved, underscore-prefixed) must never be enumerated: $out" >&2
     return 1
   }
-  echo "$out" | grep -qx "INIT-52" || {
+  grep -qx "INIT-52" <<<"$out" || {
     echo "expected INIT-52 in output: $out" >&2
     return 1
   }
@@ -1682,7 +1682,7 @@ test_initiative_dispatch_enumerates_from_epic_manifest() {
     echo "expected severity 1, got $sev: $r" >&2
     return 1
   }
-  echo "$findings" | grep -q "INIT-60(1)" || {
+  grep -q "INIT-60(1)" <<<"$findings" || {
     echo "expected INIT-60(1) (child with no manifest counted as undispatched): $findings" >&2
     return 1
   }
@@ -1758,7 +1758,7 @@ test_epic_branch_ready_enumerates_from_manifest() {
     echo "expected severity 1 (epic ready for integration PR), got $sev: $r" >&2
     return 1
   }
-  echo "$findings" | grep -q "INIT-71" || {
+  grep -q "INIT-71" <<<"$findings" || {
     echo "expected INIT-71 in findings: $findings" >&2
     return 1
   }
@@ -1792,11 +1792,11 @@ test_stalled_approved_children_enumerates_from_epic_manifest() {
     echo "expected severity 1, got $sev: $r" >&2
     return 1
   }
-  echo "$findings" | grep -q "CRE-940" || {
+  grep -q "CRE-940" <<<"$findings" || {
     echo "expected CRE-940 (approved+stage=Ready, no worker/queue) flagged: $findings" >&2
     return 1
   }
-  echo "$findings" | grep -q "CRE-941" && {
+  grep -q "CRE-941" <<<"$findings" && {
     echo "CRE-941 (no ticket manifest) must not be flagged as stalled: $findings" >&2
     return 1
   }
@@ -1849,11 +1849,11 @@ test_initiative_dispatch_not_ready_separated_from_undispatched() {
     echo "expected severity 1 (a ready-undispatched child exists), got $sev: $r" >&2
     return 1
   }
-  echo "$findings" | grep -q "1 undispatched: INIT-90(1)" || {
+  grep -q "1 undispatched: INIT-90(1)" <<<"$findings" || {
     echo "expected undispatched count to exclude the not-ready child: $findings" >&2
     return 1
   }
-  echo "$findings" | grep -q "not-ready: INIT-90(1)" || {
+  grep -q "not-ready: INIT-90(1)" <<<"$findings" || {
     echo "expected the not-ready child reported under its own count: $findings" >&2
     return 1
   }
@@ -1881,7 +1881,7 @@ test_initiative_dispatch_all_not_ready_severity_zero_but_reported() {
     echo "expected severity 0 (no ready-undispatched child, so not an awaiting-dispatch WARN), got $sev: $r" >&2
     return 1
   }
-  echo "$findings" | grep -q "not-ready: INIT-91(1)" || {
+  grep -q "not-ready: INIT-91(1)" <<<"$findings" || {
     echo "expected the not-ready child still reported: $findings" >&2
     return 1
   }
@@ -1957,7 +1957,7 @@ test_stalled_approved_stale_not_ready_reported_distinctly() {
     echo "expected severity 1 for a stale not-ready child, got $sev: $r" >&2
     return 1
   }
-  echo "$findings" | grep -q "stale not-ready: CRE-964" || {
+  grep -q "stale not-ready: CRE-964" <<<"$findings" || {
     echo "expected stale not-ready finding text: $findings" >&2
     return 1
   }
@@ -1991,7 +1991,7 @@ test_stalled_approved_blocking_sibling_not_ready_reported_distinctly() {
     echo "expected severity 1 for a not-ready child blocking a sibling, got $sev: $r" >&2
     return 1
   }
-  echo "$findings" | grep -q "blocking-sibling not-ready: CRE-965" || {
+  grep -q "blocking-sibling not-ready: CRE-965" <<<"$findings" || {
     echo "expected blocking-sibling not-ready finding text: $findings" >&2
     return 1
   }

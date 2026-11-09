@@ -52,8 +52,8 @@ test_full_scaffold() {
   _bootstrap
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q "^WIKI_BOOTSTRAP_STATUS=ok$" || ok=0
-  echo "$_OUT" | grep -q "^WIKI_BOOTSTRAP_CREATED=index.md,decisions/index.md,glossary.md$" || ok=0
+  grep -q "^WIKI_BOOTSTRAP_STATUS=ok$" <<<"$_OUT" || ok=0
+  grep -q "^WIKI_BOOTSTRAP_CREATED=index.md,decisions/index.md,glossary.md$" <<<"$_OUT" || ok=0
   [ -f "$_wiki/index.md" ] || ok=0
   [ -f "$_wiki/decisions/index.md" ] || ok=0
   [ -f "$_wiki/glossary.md" ] || ok=0
@@ -100,7 +100,7 @@ test_noop_existing_wiki() {
   _bootstrap
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q "^WIKI_BOOTSTRAP_CREATED=$" || ok=0
+  grep -q "^WIKI_BOOTSTRAP_CREATED=$" <<<"$_OUT" || ok=0
   grep -q "HAND-WRITTEN CONTENT" "$_wiki/index.md" || ok=0
   [ "$(sha256sum "$_wiki/decisions/index.md" | cut -d' ' -f1)" = "$sentinel_sha" ] || ok=0
   _teardown
@@ -116,7 +116,7 @@ test_partial_scaffold() {
   _bootstrap
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q "^WIKI_BOOTSTRAP_CREATED=decisions/index.md,glossary.md$" || ok=0
+  grep -q "^WIKI_BOOTSTRAP_CREATED=decisions/index.md,glossary.md$" <<<"$_OUT" || ok=0
   grep -q "HAND-WRITTEN INDEX" "$_wiki/index.md" || ok=0
   [ -f "$_wiki/decisions/index.md" ] || ok=0
   [ -f "$_wiki/glossary.md" ] || ok=0
@@ -132,8 +132,8 @@ test_noop_unset_wiki_root() {
   set -e
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q "^WIKI_BOOTSTRAP_STATUS=skipped$" || ok=0
-  echo "$_OUT" | grep -q "^WIKI_BOOTSTRAP_REASON=no-wiki-root$" || ok=0
+  grep -q "^WIKI_BOOTSTRAP_STATUS=skipped$" <<<"$_OUT" || ok=0
+  grep -q "^WIKI_BOOTSTRAP_REASON=no-wiki-root$" <<<"$_OUT" || ok=0
   [ "$ok" = "1" ]
 }
 
@@ -211,8 +211,8 @@ EOF
   set -e
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q "^TERM_DRIFT|.*flows/billing.md|fee|Commission$" || ok=0
-  echo "$_OUT" | grep -q "^TERM_DRIFT|.*flows/billing.md|take-rate|Commission$" || ok=0
+  grep -q "^TERM_DRIFT|.*flows/billing.md|fee|Commission$" <<<"$_OUT" || ok=0
+  grep -q "^TERM_DRIFT|.*flows/billing.md|take-rate|Commission$" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }

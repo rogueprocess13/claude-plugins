@@ -83,7 +83,7 @@ else
 fi
 
 err=$(planner_project_gate_check "INIT-ONE" "$TEAM_ID" 2>&1 || true)
-if echo "$err" | grep -q -- "--project 'Ledgerly'" && echo "$err" | grep -q -- "--no-project"; then
+if grep -q -- "--project 'Ledgerly'" <<<"$err" && grep -q -- "--no-project" <<<"$err"; then
   pass "the refusal names both the confirm and the opt-out command"
 else
   fail "refusal names both commands" "$err"
@@ -192,7 +192,7 @@ Unrelated prose that mentions Ledgerly only as prior art.
 PROPOSAL
 
 text=$(planner_project_match_text INIT-SCOPE)
-if echo "$text" | grep -q "billing-service" && ! echo "$text" | grep -q "prior art"; then
+if grep -q "billing-service" <<<"$text" && ! grep -q "prior art" <<<"$text"; then
   pass "match text carries Affected Services and excludes unrelated prose"
 else
   fail "match text scope" "$text"
@@ -237,7 +237,7 @@ _The input exactly as assessed._
 INTENT
 
 text=$(planner_project_match_text INIT-BRIEF)
-if echo "$text" | grep -q "a billing idea" && ! echo "$text" | grep -q "Ledgerly"; then
+if grep -q "a billing idea" <<<"$text" && ! grep -q "Ledgerly" <<<"$text"; then
   pass "with a sealed brief the match text uses the Objective, not idea.txt"
 else
   fail "sealed brief excluded from match text" "$text"

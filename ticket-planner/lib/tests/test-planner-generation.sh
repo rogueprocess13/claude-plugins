@@ -165,12 +165,12 @@ ctx=$(
 JSON
 )
 block=$(planner_context_generate "$ctx" 2>&1) || { fail "valid block generation" "$block"; }
-if echo "$block" | grep -q '## Planner Context'; then
+if grep -q '## Planner Context' <<<"$block"; then
   pass "valid block has Planner Context heading"
 else
   fail "valid block has Planner Context heading" "missing"
 fi
-if echo "$block" | grep -q '\*\*Confidence:\*\* 0.85'; then
+if grep -q '\*\*Confidence:\*\* 0.85' <<<"$block"; then
   pass "valid block includes Confidence field"
 else
   fail "valid block includes Confidence field" "missing"
@@ -179,7 +179,7 @@ fi
 for field in "Schema-Version" "Initiative" "Epic" "Confidence" "Strategy" \
   "Decision" "Affected Services" "Target Symbols" "Pre-approved" \
   "Generated" "Regenerate"; do
-  if echo "$block" | grep -q "\*\*${field}:\*\*"; then
+  if grep -q "\*\*${field}:\*\*" <<<"$block"; then
     : # present
   else
     fail "  required field '$field' present" "missing in generated block"
@@ -222,7 +222,7 @@ ctx=$(
 JSON
 )
 block=$(planner_context_generate "$ctx" 2>&1)
-if echo "$block" | grep -qE '\*\*Generated:\*\* 20[0-9]{2}-[0-9]{2}-[0-9]{2}T'; then
+if grep -qE '\*\*Generated:\*\* 20[0-9]{2}-[0-9]{2}-[0-9]{2}T' <<<"$block"; then
   pass "empty Generated field auto-filled with ISO timestamp"
 else
   fail "empty Generated field auto-filled" "missing timestamp"
@@ -401,7 +401,7 @@ fi
 
 echo "--- validate: incomplete feature body rejected with ticket_type ---"
 err=$(planner_validate_ticket "$INCOMPLETE_FEATURE_DESC" "true" "feature" 2>&1 1>/dev/null) && rc=0 || rc=$?
-if [ "$rc" -eq 1 ] && echo "$err" | grep -q "missing required section"; then
+if [ "$rc" -eq 1 ] && grep -q "missing required section" <<<"$err"; then
   pass "incomplete feature body rejected (rc=1, reports missing sections)"
 else
   fail "incomplete feature body rejected" "rc=$rc err='$err'"

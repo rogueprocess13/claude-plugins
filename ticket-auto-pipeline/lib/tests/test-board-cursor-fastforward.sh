@@ -132,7 +132,7 @@ test_already_drained_ticket_is_skipped() {
   local out
   out=$(board_cursor_fastforward_sweep)
   _teardown
-  echo "$out" | grep -q '^SKIPPED T-1 counting already at 3$'
+  grep -q '^SKIPPED T-1 counting already at 3$' <<<"$out"
 }
 
 _run "(a) no fast-forward replays every historical entry" test_no_fastforward_replays_every_historical_entry

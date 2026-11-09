@@ -165,7 +165,7 @@ else
   fail "planner_refinement_gate: no-EPIC_ID failure logged as META (not phase-named)" "line missing"
 fi
 report=$(planner_refinement_report "$INIT_ID")
-if echo "$report" | grep -qi "no EpicGen EPIC_ID"; then
+if grep -qi "no EpicGen EPIC_ID" <<<"$report"; then
   pass "planner_refinement_report: no-EPIC_ID case reported"
 else
   fail "planner_refinement_report: no-EPIC_ID case reported" "got: $report"
@@ -271,7 +271,7 @@ stale_json=$(echo "$ready_json" | jq -c '.missing += ["SEMANTIC_STALE"] | .missi
 manifest_path=$(get_ticket_manifest_path "PRO-102" 2>/dev/null)
 jq --argjson r "$stale_json" '.ready = $r' "$manifest_path" >"${manifest_path}.tmp" && mv "${manifest_path}.tmp" "$manifest_path"
 needs4=$(planner_refinement_scan "$INIT_ID")
-if echo "$needs4" | grep -q "^PRO-102$"; then
+if grep -q "^PRO-102$" <<<"$needs4"; then
   pass "planner_refinement_scan: SEMANTIC_STALE re-lists the ticket"
 else
   fail "planner_refinement_scan: SEMANTIC_STALE re-lists the ticket" "got: $needs4"
@@ -422,17 +422,17 @@ report=$(planner_refinement_report "$MIXED_INIT")
 # planner-refinement-convergence D3: blocking findings are labelled by
 # lineage ("Blocking (new)" on a first verdict), and a ticket held by a
 # non-structural one is offered the no-rescan converge.
-if echo "$report" | grep -q "## PRO-403" && echo "$report" | grep -qF "Blocking (new) MISSING_CORE_AC"; then
+if grep -q "## PRO-403" <<<"$report" && grep -qF "Blocking (new) MISSING_CORE_AC" <<<"$report"; then
   pass "planner_refinement_report: lists the not-ready ticket with its semantic finding"
 else
   fail "planner_refinement_report: lists the not-ready ticket with its semantic finding" "got: $report"
 fi
-if echo "$report" | grep -qF -- "--converge --only PRO-403"; then
+if grep -qF -- "--converge --only PRO-403" <<<"$report"; then
   pass "planner_refinement_report: offers converge for a non-structural blocking finding"
 else
   fail "planner_refinement_report: offers converge for a non-structural blocking finding" "got: $report"
 fi
-if echo "$report" | grep -q "refresh-bodies"; then
+if grep -q "refresh-bodies" <<<"$report"; then
   pass "planner_refinement_report: closes with the --refresh-bodies note"
 else
   fail "planner_refinement_report: closes with the --refresh-bodies note" "note missing"
@@ -539,7 +539,7 @@ else
 fi
 
 report501=$(planner_refinement_report "$DISPUTE_INIT")
-if echo "$report501" | grep -q "Disputed: AC_MISSING" && echo "$report501" | grep -q 'dor-check.sh --waive PRO-501 AC_MISSING'; then
+if grep -q "Disputed: AC_MISSING" <<<"$report501" && grep -q 'dor-check.sh --waive PRO-501 AC_MISSING' <<<"$report501"; then
   pass "report shows the disputed code and the exact waive command"
 else
   fail "report shows the disputed code and the exact waive command" "got: $report501"
@@ -626,7 +626,7 @@ set_ticket_readiness "PRO-106" "not-ready" '["AC_MISSING"]' '[]' >/dev/null
 old_content=$(cat "$(_planner_dir "PRO-106")/body.md")
 planner_refinement_refresh_bodies "$INIT_ID" >/dev/null
 new_content=$(cat "$(_planner_dir "PRO-106")/body.md")
-if [ "$new_content" != "$old_content" ] && echo "$new_content" | grep -q "fetched, testable criterion"; then
+if [ "$new_content" != "$old_content" ] && grep -q "fetched, testable criterion" <<<"$new_content"; then
   pass "planner_refinement_refresh_bodies: overwrites a not-ready ticket's body"
 else
   fail "planner_refinement_refresh_bodies: overwrites a not-ready ticket's body" "unchanged or wrong content"
@@ -752,7 +752,7 @@ else
 fi
 unset PLANNER_REFINEMENT_SEMANTIC
 strict_report=$(planner_refinement_report "$STRICT_INIT")
-if echo "$strict_report" | grep -q "## PRO-601" && echo "$strict_report" | grep -q "VPLAN_MISSING"; then
+if grep -q "## PRO-601" <<<"$strict_report" && grep -q "VPLAN_MISSING" <<<"$strict_report"; then
   pass "planner_refinement_report: lists VPLAN_MISSING for the child"
 else
   fail "planner_refinement_report: lists VPLAN_MISSING for the child" "got: $strict_report"
@@ -840,8 +840,8 @@ else
   fail "TEST_DATA_GAP: the gate passes with an advisory finding" "returned nonzero"
 fi
 warn_line=$(grep -F '|META|refinement-testdata|warn|' "$tdg_log" 2>/dev/null || true)
-if [ "$(_tdg_warns "$TDG_INIT")" = "1" ] && echo "$warn_line" | grep -qF "PRO-701 TEST_DATA_GAP" &&
-  echo "$warn_line" | grep -qF "$TDG_QUOTE"; then
+if [ "$(_tdg_warns "$TDG_INIT")" = "1" ] && grep -qF "PRO-701 TEST_DATA_GAP" <<<"$warn_line" &&
+  grep -qF "$TDG_QUOTE" <<<"$warn_line"; then
   pass "TEST_DATA_GAP: exactly one warn line naming the tid and the quote"
 else
   fail "TEST_DATA_GAP: exactly one warn line naming the tid and the quote" "lines: $warn_line"
@@ -872,7 +872,7 @@ fi
 # (d) the summary: one line for the finding, nothing for an initiative without
 summary=$(planner_refinement_advisory_summary "$TDG_INIT" 2>/dev/null) || summary=""
 if [ "$(echo "$summary" | grep -c 'Advisory (does not block)')" = "1" ] &&
-  echo "$summary" | grep -qF "PRO-701 TEST_DATA_GAP: \"${TDG_QUOTE}\""; then
+  grep -qF "PRO-701 TEST_DATA_GAP: \"${TDG_QUOTE}\"" <<<"$summary"; then
   pass "planner_refinement_advisory_summary: one Advisory line for the ready child"
 else
   fail "planner_refinement_advisory_summary: one Advisory line for the ready child" "got: $summary"
@@ -882,8 +882,8 @@ mpath=$(get_ticket_manifest_path PRO-701)
 jq '.ready.semantic.missed = [{"code":"MISSING_CORE_AC","reason":"an innerHTML implementation passes every criterion"},{"code":"EDGE_CASE_GAP","reason":"a 5xx leaves the page blank"}]' \
   "$mpath" >"${mpath}.tmp" && mv "${mpath}.tmp" "$mpath"
 summary_m=$(planner_refinement_advisory_summary "$TDG_INIT" 2>/dev/null) || summary_m=""
-if echo "$summary_m" | grep -qxF "Advisory (does not block) PRO-701 Security MISSED MISSING_CORE_AC: an innerHTML implementation passes every criterion" &&
-  echo "$summary_m" | grep -qxF "Advisory (does not block) PRO-701 MISSED EDGE_CASE_GAP: a 5xx leaves the page blank"; then
+if grep -qxF "Advisory (does not block) PRO-701 Security MISSED MISSING_CORE_AC: an innerHTML implementation passes every criterion" <<<"$summary_m" &&
+  grep -qxF "Advisory (does not block) PRO-701 MISSED EDGE_CASE_GAP: a 5xx leaves the page blank" <<<"$summary_m"; then
   pass "planner_refinement_advisory_summary: audit MISSED entries listed, security one marked"
 else
   fail "planner_refinement_advisory_summary: audit MISSED entries" "got: $summary_m"
@@ -902,7 +902,7 @@ else
   fail "planner_refinement_advisory_summary: prints nothing for an initiative with no finding" "got: $summary_none"
 fi
 report_none=$(planner_refinement_report "$INIT_ID")
-if ! echo "$report_none" | grep -q "Advisory test-data findings"; then
+if ! grep -q "Advisory test-data findings" <<<"$report_none"; then
   pass "planner_refinement_report: no advisory heading when there is no finding"
 else
   fail "planner_refinement_report: no advisory heading when there is no finding" "got: $report_none"
@@ -918,8 +918,8 @@ else
 fi
 tdg_report=$(planner_refinement_report "$TDG_INIT")
 advisory_section=$(echo "$tdg_report" | sed -n '/^## Advisory test-data findings/,$p')
-if echo "$tdg_report" | grep -q "^## PRO-703" && [ -n "$advisory_section" ] &&
-  echo "$advisory_section" | grep -qF "PRO-701 TEST_DATA_GAP"; then
+if grep -q "^## PRO-703" <<<"$tdg_report" && [ -n "$advisory_section" ] &&
+  grep -qF "PRO-701 TEST_DATA_GAP" <<<"$advisory_section"; then
   pass "planner_refinement_report: halt report carries an advisory section naming the ready child"
 else
   fail "planner_refinement_report: halt report carries an advisory section naming the ready child" "got: $tdg_report"
@@ -953,7 +953,7 @@ DOR_SEMANTIC_EVALUATOR="dor-semantic-v1" planner_refinement_apply "$TDG2_INIT" "
 needs_v1=$(planner_refinement_scan "$TDG2_INIT")
 planner_refinement_apply "$TDG2_INIT" "PRO-712" >/dev/null 2>&1 || true
 needs_v3=$(planner_refinement_scan "$TDG2_INIT")
-if echo "$needs_v1" | grep -qx "PRO-712" && ! echo "$needs_v3" | grep -qx "PRO-712" &&
+if grep -qx "PRO-712" <<<"$needs_v1" && ! grep -qx "PRO-712" <<<"$needs_v3" &&
   get_ticket_manifest_field "PRO-712" ready 2>/dev/null | jq -e '.semantic.evaluator == "dor-semantic-v3"' >/dev/null; then
   pass "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges on v3"
 else
@@ -1013,19 +1013,19 @@ fi
 echo "--- scan prompt blindness ---"
 
 scan_prompt=$(planner_refinement_prompt "$INIT_ID" "PRO-101" scan)
-if ! echo "$scan_prompt" | grep -q "dor-result.json"; then
+if ! grep -q "dor-result.json" <<<"$scan_prompt"; then
   pass "scan prompt contains no dor-result.json path"
 else
   fail "scan prompt contains no dor-result.json path" "found a reference"
 fi
-if ! echo "$scan_prompt" | grep -qE "SCOPE_MISSING|AC_MISSING|TEST_USER_MISSING"; then
+if ! grep -qE "SCOPE_MISSING|AC_MISSING|TEST_USER_MISSING" <<<"$scan_prompt"; then
   pass "scan prompt contains no deterministic code name"
 else
   fail "scan prompt contains no deterministic code name" "found one"
 fi
 
 audit_prompt=$(planner_refinement_prompt "$INIT_ID" "PRO-101" audit)
-if echo "$audit_prompt" | grep -q "dor-result.json"; then
+if grep -q "dor-result.json" <<<"$audit_prompt"; then
   pass "audit prompt DOES reference dor-result.json"
 else
   fail "audit prompt DOES reference dor-result.json" "reference missing"
@@ -1057,7 +1057,7 @@ if [ -n "$h497_real" ] && [ "$h497_scan" = "$h497_real" ] && [ "$h497_audit" = "
 else
   fail "scan and audit prompts carry the body hash as a literal" "scan=$h497_scan audit=$h497_audit want=$h497_real"
 fi
-if ! echo "$p497_scan$p497_audit" | grep -qi "compute this yourself"; then
+if ! grep -qi "compute this yourself" <<<"$p497_scan$p497_audit"; then
   pass "prompts no longer ask the agent to compute the hash"
 else
   fail "prompts no longer ask the agent to compute the hash" "found the old instruction"
@@ -1076,7 +1076,7 @@ fi
 echo "- a criterion added after the scan" >>"$(_planner_dir "PRO-190")/body.md"
 stale_rc=0
 stale_err=$(planner_refinement_apply "$INIT_ID" "PRO-190" 2>&1 >/dev/null) || stale_rc=$?
-if [ "$stale_rc" -ne 0 ] && echo "$stale_err" | grep -q "BODY_HASH mismatch"; then
+if [ "$stale_rc" -ne 0 ] && grep -q "BODY_HASH mismatch" <<<"$stale_err"; then
   pass "body edited after the scan still fails the binding check"
 else
   fail "body edited after the scan still fails the binding check" "rc=$stale_rc err=$stale_err"
@@ -1196,7 +1196,7 @@ PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev
 planner_refinement_next "$SL_INIT" >/dev/null 2>&1 # leaves .pending, no agent runs
 PLANNER_REFINEMENT_DRIFT_CHECK=false planner_refinement_prepare "$SL_INIT" >/dev/null 2>&1
 l=$(planner_refinement_next "$SL_INIT" 2>/dev/null)
-if [ ! -e "$(_sl_dir PRO-401)/semantic-attempts" ] && printf '%s\n' "$l" | grep -q $'^PRO-401\tscan\t'; then
+if [ ! -e "$(_sl_dir PRO-401)/semantic-attempts" ] && grep -q $'^PRO-401\tscan\t' <<<"$l"; then
   pass "prepare drops a stale spawn list: no failed attempt counted"
 else
   fail "stale pending" "attempts=$(cat "$(_sl_dir PRO-401)/semantic-attempts" 2>/dev/null) l=$l"

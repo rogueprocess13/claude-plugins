@@ -348,22 +348,22 @@ test_pre_prompt_exports_tap_log_file_never_log_file() {
   got=$(LOG_FILE=/tmp/inherited-575.log bash -c "$prefix
     sh -c 'echo \"child=\${LOG_FILE:-unset} tap=\${TAP_LOG:-unset}\"'
     echo \"shell=\$LOG_FILE\"" 2>/dev/null)
-  echo "$got" | grep -qx "child=unset tap=$log" &&
-    echo "$got" | grep -qx "shell=$log"
+  grep -qx "child=unset tap=$log" <<<"$got" &&
+    grep -qx "shell=$log" <<<"$got"
 }
 
 test_pre_prints_agent_prompt_line() {
   source "$LIB_DIR/spawn-helper.sh"
   local output
   output=$(spawn_agent_pre PHASE=TEST STEP=test TICKET_ID=TEST-42 SKILL=/ticket-test FLAGS="--from-auto" DESCRIPTION="testing" 2>/dev/null)
-  echo "$output" | grep -q '^AGENT_PROMPT='
+  grep -q '^AGENT_PROMPT=' <<<"$output"
 }
 
 test_pre_prints_agent_type_line_default() {
   source "$LIB_DIR/spawn-helper.sh"
   local output
   output=$(spawn_agent_pre PHASE=TEST STEP=test TICKET_ID=TEST-42 SKILL=/ticket-test 2>/dev/null)
-  echo "$output" | grep -q '^AGENT_TYPE=general-purpose$'
+  grep -q '^AGENT_TYPE=general-purpose$' <<<"$output"
 }
 
 test_pre_prints_agent_type_line_explicit() {
@@ -371,21 +371,21 @@ test_pre_prints_agent_type_line_explicit() {
   local output
   output=$(spawn_agent_pre PHASE=TEST STEP=test TICKET_ID=TEST-42 SKILL=/ticket-appraise \
     AGENT_TYPE="ticket-auto-pipeline:ticket-appraise-agent" 2>/dev/null)
-  echo "$output" | grep -q '^AGENT_TYPE=ticket-auto-pipeline:ticket-appraise-agent$'
+  grep -q '^AGENT_TYPE=ticket-auto-pipeline:ticket-appraise-agent$' <<<"$output"
 }
 
 test_pre_prompt_includes_skill_and_ticket() {
   source "$LIB_DIR/spawn-helper.sh"
   local output
   output=$(spawn_agent_pre PHASE=TEST STEP=test TICKET_ID=TEST-42 SKILL=/ticket-test FLAGS="--from-auto" 2>/dev/null)
-  echo "$output" | grep -q '/ticket-test TEST-42 --from-auto'
+  grep -q '/ticket-test TEST-42 --from-auto' <<<"$output"
 }
 
 test_pre_appends_from_step_to_flags() {
   source "$LIB_DIR/spawn-helper.sh"
   local output
   output=$(spawn_agent_pre PHASE=TEST STEP=test TICKET_ID=TEST-42 SKILL=/ticket-test FLAGS="--from-auto" FROM_STEP=code-review 2>/dev/null)
-  echo "$output" | grep -q '\-\-from-step code-review'
+  grep -q '\-\-from-step code-review' <<<"$output"
 }
 
 test_pre_writes_metadata_file() {
@@ -418,9 +418,9 @@ test_pre_printf_q_escapes_shell_metachars() {
   local rc=0
   # The escaped values should appear in single quotes (printf '%q' output)
   # and NOT contain unescaped double-quote-shell-break patterns
-  echo "$output" | grep -q "AGENT_PROMPT=" || rc=1
+  grep -q "AGENT_PROMPT=" <<<"$output" || rc=1
   # The unescaped injection string should be absent from the final prompt
-  echo "$output" | grep -q 'echo pwned' && rc=1
+  grep -q 'echo pwned' <<<"$output" && rc=1
   rm -rf "$tmpdir"
   return $rc
 }
@@ -446,7 +446,7 @@ test_pre_prompt_includes_env_file_path() {
   # Now call spawn_agent_pre and check the prompt
   local output
   output=$(spawn_agent_pre PHASE=TEST STEP=test TICKET_ID=TEST-42 SKILL=/ticket-test FLAGS="--from-auto" 2>/dev/null)
-  echo "$output" | grep -qF "export TICKET_TMP_DIR=$TICKET_TMP_DIR; source ~/.claude/skills/lib/ticket-env.sh TEST-42"
+  grep -qF "export TICKET_TMP_DIR=$TICKET_TMP_DIR; source ~/.claude/skills/lib/ticket-env.sh TEST-42" <<<"$output"
 }
 
 test_pre_completes_when_env_file_missing() {
@@ -457,7 +457,7 @@ test_pre_completes_when_env_file_missing() {
   local output
   output=$(spawn_agent_pre PHASE=TEST STEP=test TICKET_ID=TEST-42 SKILL=/ticket-test FLAGS="--from-auto" 2>/dev/null)
   local rc=$?
-  [ "$rc" -eq 0 ] && echo "$output" | grep -qF "export TICKET_TMP_DIR=$TICKET_TMP_DIR; source ~/.claude/skills/lib/ticket-env.sh TEST-42"
+  [ "$rc" -eq 0 ] && grep -qF "export TICKET_TMP_DIR=$TICKET_TMP_DIR; source ~/.claude/skills/lib/ticket-env.sh TEST-42" <<<"$output"
 }
 
 # ── spawn_agent_post tests ─────────────────────────────────────────────────────
@@ -1195,8 +1195,8 @@ test_env_prefix_survives_shell_special_chars_in_paths() {
     LOG_FILE="$try_log" HB_LOG_FILE="$try_log" CLAUDE_LOG_FILE="$try_log" 2>/dev/null || true)
   rm -rf "$tmpdir"
   # The output must not contain an unquoted command injection site
-  ! echo "$output" | grep -qF 'echo BAD'
-  ! echo "$output" | grep -qF '$(id)'
+  ! grep -qF 'echo BAD' <<<"$output"
+  ! grep -qF '$(id)' <<<"$output"
 }
 
 # ── heartbeat source guard ────────────────────────────────────────────────────
@@ -2564,7 +2564,7 @@ test_skill_prescan_example_uses_only_accepted_params() {
   local skill="$SCRIPT_DIR/../../skills/ticket-auto/SKILL.md" block
   block=$(sed -n '/_prompt=\$(spawn_agent_pre \\$/,/INSTRUCTIONS=.*prescan/p' "$skill" | awk '/STEP=prescan/{f=1} f')
   [ -n "$block" ] || return 1
-  if echo "$block" | grep -qE '(^|[[:space:]])(REPO|REPO_SLUG|CADENCE)='; then return 1; fi
+  if grep -qE '(^|[[:space:]])(REPO|REPO_SLUG|CADENCE)=' <<<"$block"; then return 1; fi
   # and the rendered call must actually succeed against the real helper
   (
     source "$SCRIPT_DIR/../spawn-helper.sh"

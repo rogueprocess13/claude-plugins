@@ -236,7 +236,7 @@ if [ -n "$GRILL_SEAL" ]; then
   warn_exit=$?
 
   if [ "$warn_exit" -eq 0 ]; then
-    if echo "$WARN_OUT" | grep -qi "warn"; then
+    if grep -qi "warn" <<<"$WARN_OUT"; then
       pass "proceed-with-warnings → exit 0, warning emitted"
     else
       pass "proceed-with-warnings → exit 0 (warning on stderr)"
@@ -370,7 +370,7 @@ EMPTY_PROBE=$(REPOS_ROOT="$EMPTY_REPOS" bash -c "
   log=\$(planner_state_log INIT-test-456-empty)
   if [ -f \"\$log\" ] && grep -q '|META|intent|' \"\$log\"; then echo WROTE; else echo NOT_WRITTEN; fi
 " 2>&1)
-if echo "$EMPTY_PROBE" | grep -q '^RC=nonzero$' && echo "$EMPTY_PROBE" | grep -q '^NOT_WRITTEN$'; then
+if grep -q '^RC=nonzero$' <<<"$EMPTY_PROBE" && grep -q '^NOT_WRITTEN$' <<<"$EMPTY_PROBE"; then
   pass "planner_intent_record refuses empty hash (non-zero, nothing written)"
 else
   fail "planner_intent_record refuses empty fields" "got: ${EMPTY_PROBE}"

@@ -407,19 +407,19 @@ planner_replan_record "INIT-REPLOG" "manual" "3" "2" "1" "0" \
   '{"avg_drift":0.3,"systematic_overconfidence":true}'
 
 log_content=$(planner_state_read "INIT-REPLOG")
-if echo "$log_content" | grep -q '|META|replan-start|start|'; then
+if grep -q '|META|replan-start|start|' <<<"$log_content"; then
   pass "replan_record writes replan-start to state log"
 else
   fail "replan_record writes replan-start" "not found in log"
 fi
 
-if echo "$log_content" | grep -q '|META|replan-drift|start|'; then
+if grep -q '|META|replan-drift|start|' <<<"$log_content"; then
   pass "replan_record writes replan-drift to state log"
 else
   fail "replan_record writes replan-drift" "not found in log"
 fi
 
-if echo "$log_content" | grep -q '|META|replan-result|start|'; then
+if grep -q '|META|replan-result|start|' <<<"$log_content"; then
   pass "replan_record writes replan-result to state log"
 else
   fail "replan_record writes replan-result" "not found in log"
@@ -454,7 +454,7 @@ planner_replan_record "INIT-REPLOG-RG" "manual" "1" "1" "0" "0" \
 
 log_content=$(planner_state_read "INIT-REPLOG-RG")
 rg_line=$(echo "$log_content" | grep '|META|replan-readiness-gaps|start|' || true)
-if [ -n "$rg_line" ] && echo "$rg_line" | grep -q 'gate_stop_count":3'; then
+if [ -n "$rg_line" ] && grep -q 'gate_stop_count":3' <<<"$rg_line"; then
   pass "replan_record writes populated replan-readiness-gaps line"
 else
   fail "replan_record writes populated replan-readiness-gaps line" "got: $rg_line"
@@ -467,7 +467,7 @@ planner_replan_record "INIT-REPLOG-RG-NONE" "manual" "1" "1" "0" "0" \
   '{"avg_drift":0,"systematic_overconfidence":false}' "$empty_rg"
 
 log_content=$(planner_state_read "INIT-REPLOG-RG-NONE")
-if echo "$log_content" | grep -q '|META|replan-readiness-gaps|start|none$'; then
+if grep -q '|META|replan-readiness-gaps|start|none$' <<<"$log_content"; then
   pass "replan_record writes literal 'none' when readiness gaps are empty"
 else
   fail "replan_record writes literal 'none' when empty" "got: $(echo "$log_content" | grep 'replan-readiness-gaps' || echo '(no line)')"
@@ -479,7 +479,7 @@ planner_replan_record "INIT-REPLOG-RG-OMITTED" "manual" "1" "1" "0" "0" \
   '{"avg_drift":0,"systematic_overconfidence":false}'
 
 log_content=$(planner_state_read "INIT-REPLOG-RG-OMITTED")
-if echo "$log_content" | grep -q '|META|replan-readiness-gaps|start|none$'; then
+if grep -q '|META|replan-readiness-gaps|start|none$' <<<"$log_content"; then
   pass "replan_record with omitted 8th arg → 'none' (backward compatible)"
 else
   fail "replan_record omitted 8th arg → 'none'" "got: $(echo "$log_content" | grep 'replan-readiness-gaps' || echo '(no line)')"

@@ -57,7 +57,7 @@ It should support email and push."
 
 echo "--- Whitespace normalization ---"
 output=$(planner_sanitize_input "  multiple   spaces  here  ")
-if echo "$output" | grep -q "multiple spaces here"; then
+if grep -q "multiple spaces here" <<<"$output"; then
   echo "PASS: whitespace normalized"
   PASS=$((PASS + 1))
 else
@@ -121,7 +121,7 @@ assert_block "yOu ArE nOw" \
 echo "--- Zero-width character stripping ---"
 # ZWSP (U+200B) stripped — input that ISN'T a blocked pattern
 output=$(planner_sanitize_input "normal$(printf '\xE2\x80\x8B') text")
-if echo "$output" | grep -q "normal text" && ! echo "$output" | grep -q $'\xE2\x80\x8B'; then
+if grep -q "normal text" <<<"$output" && ! grep -q $'\xE2\x80\x8B' <<<"$output"; then
   echo "PASS: ZWSP stripped from benign input"
   PASS=$((PASS + 1))
 else
@@ -135,7 +135,7 @@ assert_block "ZWSP-stripped reveals blocked pattern" \
 
 # BOM stripped
 output=$(planner_sanitize_input "$(printf '\xEF\xBB\xBF')Add collaboration")
-if ! echo "$output" | grep -q $'\xEF\xBB\xBF'; then
+if ! grep -q $'\xEF\xBB\xBF' <<<"$output"; then
   echo "PASS: BOM stripped"
   PASS=$((PASS + 1))
 else
@@ -148,7 +148,7 @@ fi
 echo "--- RTL override stripping ---"
 # RLO (U+202E) — should be stripped
 output=$(planner_sanitize_input "normal text$(printf '\xE2\x80\xAE')")
-if ! echo "$output" | grep -q $'\xE2\x80\xAE'; then
+if ! grep -q $'\xE2\x80\xAE' <<<"$output"; then
   echo "PASS: RLO stripped"
   PASS=$((PASS + 1))
 else

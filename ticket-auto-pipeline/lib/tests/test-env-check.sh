@@ -115,7 +115,7 @@ test_full_mode_emits_begin_end_sentinels() {
   output=$(LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
     bash "$LIB_DIR/env-check.sh" --mode=full "$tmpdir" 2>/dev/null || true)
   rm -rf "$tmpdir"
-  echo "$output" | grep -q -e '---BEGIN_VARS---' && echo "$output" | grep -q -e '---END_VARS---'
+  grep -q -e '---BEGIN_VARS---' <<<"$output" && grep -q -e '---END_VARS---' <<<"$output"
 }
 
 # GitHub #578 follow-up: full mode's VAR table is shown to the operator and
@@ -129,8 +129,8 @@ test_full_mode_masks_secrets() {
     ANTHROPIC_AUTH_TOKEN=sk-SECRETVALUE578mnop \
     bash "$LIB_DIR/env-check.sh" --mode=full "$tmpdir" 2>/dev/null || true)
   rm -rf "$tmpdir"
-  ! echo "$output" | grep -q 'SECRETVALUE578' || return 1
-  echo "$output" | grep -q '^LINEAR_API_KEY|ok|\*\*\*\*abcd|'
+  ! grep -q 'SECRETVALUE578' <<<"$output" || return 1
+  grep -q '^LINEAR_API_KEY|ok|\*\*\*\*abcd|' <<<"$output"
 }
 
 test_full_mode_rowcount_matches_var_lines() {
@@ -231,7 +231,7 @@ test_validate_reads_backticked_repos_root() {
   output=$(LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
     bash "$LIB_DIR/env-check.sh" --mode=validate "$tmpdir" 2>&1 || true)
   rm -rf "$tmpdir"
-  echo "$output" | grep -q 'REPOS_ROOT (/tmp/test-repos-backticked)' &&
+  grep -q 'REPOS_ROOT (/tmp/test-repos-backticked)' <<<"$output" &&
     ! echo "$output" | grep 'REPOS_ROOT' | grep -q 'MISS'
 }
 
@@ -245,7 +245,7 @@ test_validate_reads_backticked_local_url() {
       bash "$LIB_DIR/env-check.sh" --mode=validate "$tmpdir" 2>&1 || true
   )
   rm -rf "$tmpdir"
-  echo "$output" | grep -q 'LOCAL_URL (http://localhost:4000)'
+  grep -q 'LOCAL_URL (http://localhost:4000)' <<<"$output"
 }
 
 test_validate_passes_backticked_project() {
@@ -271,9 +271,9 @@ test_full_mode_reads_backticked_fields() {
       bash "$LIB_DIR/env-check.sh" --mode=full "$tmpdir" 2>/dev/null || true
   )
   rm -rf "$tmpdir"
-  echo "$output" | grep -q '^REPOS_ROOT|ok|/tmp/test-repos-backticked|' &&
-    echo "$output" | grep -q '^LOCAL_URL|ok|http://localhost:4000|' &&
-    echo "$output" | grep -q '^UAT_URL|ok|http://uat.example.com|'
+  grep -q '^REPOS_ROOT|ok|/tmp/test-repos-backticked|' <<<"$output" &&
+    grep -q '^LOCAL_URL|ok|http://localhost:4000|' <<<"$output" &&
+    grep -q '^UAT_URL|ok|http://uat.example.com|' <<<"$output"
 }
 
 # The shared reader the preamble (runtime) and env-check (diagnostic) both
@@ -320,7 +320,7 @@ test_validate_passes_wired_env_start() {
   printf '#!/usr/bin/env bash\nAPP_DIR="${VERIFY_REPO_PATH_APP:-$REPOS_ROOT/app}"\n' >"$tmpdir/env-start.sh"
   output=$(_validate_output "$tmpdir")
   rm -rf "$tmpdir"
-  echo "$output" | grep -q 'ok.*env-start.sh reads VERIFY_REPO_PATH_'
+  grep -q 'ok.*env-start.sh reads VERIFY_REPO_PATH_' <<<"$output"
 }
 
 test_validate_no_env_start_is_silent() {
@@ -329,7 +329,7 @@ test_validate_no_env_start_is_silent() {
   _mk_project_dir "$tmpdir"
   output=$(_validate_output "$tmpdir")
   rm -rf "$tmpdir"
-  ! echo "$output" | grep -q 'env-start.sh'
+  ! grep -q 'env-start.sh' <<<"$output"
 }
 
 test_validate_verify_served_ports() {
@@ -338,7 +338,7 @@ test_validate_verify_served_ports() {
   _mk_project_dir "$tmpdir"
   echo 'VERIFY_SERVED_PORTS = 8080, http://localhost:9000' >>"$tmpdir/CLAUDE.md"
   output=$(_validate_output "$tmpdir")
-  echo "$output" | grep -q 'ok.*VERIFY_SERVED_PORTS (8080, http://localhost:9000)' || {
+  grep -q 'ok.*VERIFY_SERVED_PORTS (8080, http://localhost:9000)' <<<"$output" || {
     rm -rf "$tmpdir"
     return 1
   }
@@ -365,7 +365,7 @@ test_summary_file_flag_writes_to_path() {
   stdout_output=$(LINEAR_API_KEY=test GITHUB_PERSONAL_ACCESS_TOKEN=test \
     bash "$LIB_DIR/env-check.sh" --mode=full --summary-file="$summary_file" "$tmpdir" 2>/dev/null || true)
   local ok=0
-  [ -f "$summary_file" ] && echo "$stdout_output" | grep -q "Summary written to" || ok=1
+  [ -f "$summary_file" ] && grep -q "Summary written to" <<<"$stdout_output" || ok=1
   rm -rf "$tmpdir"
   [ "$ok" -eq 0 ]
 }

@@ -185,7 +185,7 @@ test_embedded_pipe_in_json() {
   local recovered
   recovered=$(awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}' "$_log" | tail -1)
   # The recovered JSON should contain the full "test|pipe" string
-  echo "$recovered" | grep -q 'test|pipe' || {
+  grep -q 'test|pipe' <<<"$recovered" || {
     _teardown
     return 1
   }
@@ -586,11 +586,11 @@ test_latest_verdict_tracks_per_verifier_phase_pair() {
   local out
   out=$(verifier_latest_verdict "$_log")
   _teardown
-  echo "$out" | grep -qx "live_backend|VERIFY|FAIL" || {
+  grep -qx "live_backend|VERIFY|FAIL" <<<"$out" || {
     echo "expected live_backend|VERIFY|FAIL to survive, got: $out" >&2
     return 1
   }
-  echo "$out" | grep -qx "return_completeness|IMPLEMENT|FAIL" || {
+  grep -qx "return_completeness|IMPLEMENT|FAIL" <<<"$out" || {
     echo "expected return_completeness|IMPLEMENT|FAIL to survive, got: $out" >&2
     return 1
   }

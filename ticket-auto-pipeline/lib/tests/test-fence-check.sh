@@ -174,7 +174,7 @@ test_cli_prints_status_on_refusal() {
   local out rc=0
   out=$(FLEET_FENCE_ENFORCE=true bash "$FC" "T-1" "2" "$_ws/state" 2>/dev/null) || rc=$?
   _teardown
-  [ "$rc" -eq 10 ] && printf '%s\n' "$out" | grep -qx 'FENCE_CHECK_STATUS=superseded'
+  [ "$rc" -eq 10 ] && grep -qx 'FENCE_CHECK_STATUS=superseded' <<<"$out"
 }
 
 # ── sourcing fence-check.sh must not mutate the caller's shell flags ───────

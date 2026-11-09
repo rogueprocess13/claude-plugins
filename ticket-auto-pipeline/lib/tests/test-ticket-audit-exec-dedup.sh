@@ -290,7 +290,7 @@ test_multi_ticket_extraction_merge_candidate() {
   all_tids10=$(echo "$checklist" | jq -r '.structural_items[] | select(.ticket_id == "WIL-10") | .all_ticket_ids')
 
   # Should include BOTH WIL-10 and WIL-11
-  if echo "$all_tids10" | grep -q "WIL-10" && echo "$all_tids10" | grep -q "WIL-11"; then
+  if grep -q "WIL-10" <<<"$all_tids10" && grep -q "WIL-11" <<<"$all_tids10"; then
     cleanup
     return 0
   else
@@ -336,7 +336,7 @@ test_comment_body_no_redundancy() {
   detail_clean=$(echo "$checklist" | jq -r '.structural_items[] | select(.ticket_id == "WIL-10") | .detail_clean')
 
   # detail_clean should NOT contain the finding type prefix from detail
-  if echo "$detail" | grep -q "^merge candidate: " && echo "$detail_clean" | grep -qv "^merge candidate: "; then
+  if grep -q "^merge candidate: " <<<"$detail" && grep -qv "^merge candidate: " <<<"$detail_clean"; then
     cleanup
     return 0
   else

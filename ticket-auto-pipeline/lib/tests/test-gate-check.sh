@@ -270,7 +270,7 @@ test_entry_simple_auto_calls_flow_human_approve() {
     echo "expected exit 0, got $rc"
     return 1
   }
-  echo "$flow_calls" | grep -q "human-approve" || {
+  grep -q "human-approve" <<<"$flow_calls" || {
     echo "flow.sh human-approve not called"
     return 1
   }
@@ -292,7 +292,7 @@ test_entry_simple_semi_auto_calls_flow_human_approve() {
     echo "expected exit 0, got $rc"
     return 1
   }
-  echo "$flow_calls" | grep -q "human-approve" || {
+  grep -q "human-approve" <<<"$flow_calls" || {
     echo "flow.sh human-approve not called"
     return 1
   }
@@ -885,7 +885,7 @@ BODYEOF
     echo "unexpected Check 2.6 hold: body.md table should have supplied all 4 prereqs"
     return 1
   }
-  echo "$source_line" | grep -q 'source=body\.md' || {
+  grep -q 'source=body\.md' <<<"$source_line" || {
     echo "expected vplan-source log line to name body.md, got: $source_line"
     return 1
   }
@@ -1349,11 +1349,11 @@ test_critique_blocked_implausible_score_named() {
     echo "expected exit 2 (gate-stop), got $rc"
     return 1
   }
-  echo "$gate_stop" | grep -q '|fail|CRITIQUE_BLOCKED' || {
+  grep -q '|fail|CRITIQUE_BLOCKED' <<<"$gate_stop" || {
     echo "expected the gate-stop code to stay CRITIQUE_BLOCKED, got: $gate_stop"
     return 1
   }
-  echo "$gate_stop" | grep -qF 'CRITIQUE_SCORE_IMPLAUSIBLE: score 100 with 1 BLOCKER(s) (max plausible: 70)' || {
+  grep -qF 'CRITIQUE_SCORE_IMPLAUSIBLE: score 100 with 1 BLOCKER(s) (max plausible: 70)' <<<"$gate_stop" || {
     echo "expected CRITIQUE_SCORE_IMPLAUSIBLE detail on the BLOCKED gate-stop, got: $gate_stop"
     return 1
   }
@@ -1378,7 +1378,7 @@ test_critique_blocked_plausible_score_plain() {
     echo "expected exit 2 (gate-stop), got $rc"
     return 1
   }
-  echo "$gate_stop" | grep -q '|fail|CRITIQUE_BLOCKED$' || {
+  grep -q '|fail|CRITIQUE_BLOCKED$' <<<"$gate_stop" || {
     echo "expected a bare CRITIQUE_BLOCKED gate-stop, got: $gate_stop"
     return 1
   }
@@ -1885,11 +1885,11 @@ ARTEOF
     echo "expected exit 1 (held: 2/4 prerequisites missing in browser mode), got $rc"
     return 1
   }
-  echo "$missing_line" | grep -q 'missing 2/4' || {
+  grep -q 'missing 2/4' <<<"$missing_line" || {
     echo "expected browser mode to still require all 4 prerequisites, got: $missing_line"
     return 1
   }
-  echo "$missing_line" | grep -q 'mode=browser' || {
+  grep -q 'mode=browser' <<<"$missing_line" || {
     echo "expected ticket to stay in browser mode (real feature path + real test user present), got: $missing_line"
     return 1
   }
@@ -2264,11 +2264,11 @@ test_check5_auto_approve_emits_released_policy() {
     echo "expected exit 0, got $rc"
     return 1
   }
-  echo "$emit_calls" | grep -q 'emit_event|.*|gate-released|{"provenance":"policy"}' || {
+  grep -q 'emit_event|.*|gate-released|{"provenance":"policy"}' <<<"$emit_calls" || {
     echo "expected emit_event gate-released with policy provenance, got: $emit_calls"
     return 1
   }
-  echo "$flow_calls" | grep -q -- "--provenance policy" || {
+  grep -q -- "--provenance policy" <<<"$flow_calls" || {
     echo "expected flow.sh human-approve called with --provenance policy, got: $flow_calls"
     return 1
   }
@@ -2299,7 +2299,7 @@ test_check28c_manual_override_emits_released_human() {
     echo "expected exit 0, got $rc"
     return 1
   }
-  echo "$emit_calls" | grep -q 'emit_event|.*|gate-released|{"provenance":"human"}' || {
+  grep -q 'emit_event|.*|gate-released|{"provenance":"human"}' <<<"$emit_calls" || {
     echo "expected emit_event gate-released with human provenance, got: $emit_calls"
     return 1
   }
@@ -2330,7 +2330,7 @@ test_check4_manual_override_emits_released_human() {
     echo "expected exit 0, got $rc"
     return 1
   }
-  echo "$emit_calls" | grep -q 'emit_event|.*|gate-released|{"provenance":"human"}' || {
+  grep -q 'emit_event|.*|gate-released|{"provenance":"human"}' <<<"$emit_calls" || {
     echo "expected emit_event gate-released with human provenance, got: $emit_calls"
     return 1
   }
@@ -2655,7 +2655,7 @@ test_check27e_not_ready_planned_ticket_gate_stops_naming_codes() {
     echo "expected exit 2, got $rc"
     return 1
   }
-  echo "$gate_stop" | grep -q "SCOPE_MISSING" && echo "$gate_stop" | grep -q "AC_VAGUE" || {
+  grep -q "SCOPE_MISSING" <<<"$gate_stop" && grep -q "AC_VAGUE" <<<"$gate_stop" || {
     echo "expected TICKET_NOT_READY gate-stop naming SCOPE_MISSING,AC_VAGUE — got: $gate_stop"
     return 1
   }
@@ -2743,7 +2743,7 @@ test_check27e_fires_on_needs_info_flag_alone() {
     echo "expected exit 2, got $rc"
     return 1
   }
-  echo "$gate_stop" | grep -q "FLAG_NEEDS_INFO" || {
+  grep -q "FLAG_NEEDS_INFO" <<<"$gate_stop" || {
     echo "expected TICKET_NOT_READY gate-stop naming FLAG_NEEDS_INFO — got: $gate_stop"
     return 1
   }
@@ -2790,7 +2790,7 @@ test_check27c_header_only_nav_gate_stops_planned_body_incomplete() {
 
   rm -rf "$repos_root"
   _teardown
-  [ "$rc" -eq 2 ] && echo "$gate_stop" | grep -q "Navigation Path" || {
+  [ "$rc" -eq 2 ] && grep -q "Navigation Path" <<<"$gate_stop" || {
     echo "expected PLANNED_BODY_INCOMPLETE naming Navigation Path with exit 2 — rc=$rc got: $gate_stop"
     return 1
   }
@@ -2829,9 +2829,9 @@ test_planned_mode_incomplete_body_gate_stops_before_appraise() {
     echo "expected exit 2 (gate-stop), got $rc"
     return 1
   }
-  echo "$gate_stop" | grep -q "Test User" &&
-    echo "$gate_stop" | grep -q "Scope" &&
-    echo "$gate_stop" | grep -q "Navigation Path" || {
+  grep -q "Test User" <<<"$gate_stop" &&
+    grep -q "Scope" <<<"$gate_stop" &&
+    grep -q "Navigation Path" <<<"$gate_stop" || {
     echo "expected PLANNED_BODY_INCOMPLETE naming Test User, Scope and Navigation Path — got: $gate_stop"
     return 1
   }
@@ -2854,7 +2854,7 @@ test_planned_mode_not_ready_gate_stops_before_appraise() {
 
   rm -rf "$repos_root"
   _teardown
-  [ "$rc" -eq 2 ] && echo "$gate_stop" | grep -q "AC_VAGUE" || {
+  [ "$rc" -eq 2 ] && grep -q "AC_VAGUE" <<<"$gate_stop" || {
     echo "expected TICKET_NOT_READY naming AC_VAGUE with exit 2 — rc=$rc got: $gate_stop"
     return 1
   }

@@ -150,10 +150,10 @@ test_complete_frontmatter_fresh() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md)
   local ok=1
-  echo "$out" | grep -qF 'frontmatter=complete' &&
-    echo "$out" | grep -qF 'freshness=fresh' &&
-    echo "$out" | grep -qF 'broken_related=0' &&
-    echo "$out" | grep -qF 'unknown_classes=0' && ok=0
+  grep -qF 'frontmatter=complete' <<<"$out" &&
+    grep -qF 'freshness=fresh' <<<"$out" &&
+    grep -qF 'broken_related=0' <<<"$out" &&
+    grep -qF 'unknown_classes=0' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -164,7 +164,7 @@ test_stale_after_one_commit() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md)
   local ok=1
-  echo "$out" | grep -qF 'freshness=stale' && ok=0
+  grep -qF 'freshness=stale' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -175,7 +175,7 @@ test_decayed_by_age() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md)
   local ok=1
-  echo "$out" | grep -qF 'freshness=decayed' && ok=0
+  grep -qF 'freshness=decayed' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -189,8 +189,8 @@ No frontmatter block at all.
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md)
   local ok=1
-  echo "$out" | grep -qF 'frontmatter=incomplete' &&
-    echo "$out" | grep -qF 'freshness=decayed' && ok=0
+  grep -qF 'frontmatter=incomplete' <<<"$out" &&
+    grep -qF 'freshness=decayed' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -201,7 +201,7 @@ test_broken_related_link_detected() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md)
   local ok=1
-  echo "$out" | grep -qF 'broken_related=1:does-not-exist.md' && ok=0
+  grep -qF 'broken_related=1:does-not-exist.md' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -215,7 +215,7 @@ test_related_link_that_exists_not_flagged() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md)
   local ok=1
-  echo "$out" | grep -qF 'broken_related=0' && ok=0
+  grep -qF 'broken_related=0' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -226,7 +226,7 @@ test_unknown_class_flagged() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md)
   local ok=1
-  echo "$out" | grep -qF 'unknown_classes=1:TotallyMadeUpClass' && ok=0
+  grep -qF 'unknown_classes=1:TotallyMadeUpClass' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -237,7 +237,7 @@ test_known_class_not_flagged() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md)
   local ok=1
-  echo "$out" | grep -qF 'unknown_classes=0' && ok=0
+  grep -qF 'unknown_classes=0' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -248,7 +248,7 @@ test_no_repos_root_skips_class_check() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --file a.md)
   local ok=1
-  echo "$out" | grep -qF 'unknown_classes=0' && ok=0
+  grep -qF 'unknown_classes=0' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -260,7 +260,7 @@ test_index_md_excluded_from_full_scan() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos")
   local ok=1
-  echo "$out" | grep -qF 'files=1' && ok=0
+  grep -qF 'files=1' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -299,8 +299,8 @@ test_changed_only_scopes_to_git_status() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --changed-only)
   local has_uncommitted=1 has_committed=1
-  echo "$out" | grep -qF 'uncommitted.md' && has_uncommitted=0
-  echo "$out" | grep -qF '|committed.md|' && has_committed=0
+  grep -qF 'uncommitted.md' <<<"$out" && has_uncommitted=0
+  grep -qF '|committed.md|' <<<"$out" && has_committed=0
   _teardown
   [ "$has_uncommitted" -eq 0 ] && [ "$has_committed" -eq 1 ]
 }
@@ -321,7 +321,7 @@ test_class_only_in_worktree_trees_is_unknown() {
   local out
   out=$(bash "$CHECK" --wiki-root "$_ws/wiki" --repos-root "$_ws/repos" --file a.md)
   local ok=1
-  echo "$out" | grep -qF 'unknown_classes=1:TotallyMadeUpClass' && ok=0
+  grep -qF 'unknown_classes=1:TotallyMadeUpClass' <<<"$out" && ok=0
   _teardown
   [ "$ok" -eq 0 ]
 }
@@ -336,9 +336,9 @@ test_class_budget_exhausted_skips_not_unknown() {
   out=$(WIKI_CHECK_CLASS_BUDGET_SECS=0 bash "$CHECK" --wiki-root "$_ws/wiki" \
     --repos-root "$_ws/repos" --file a.md 2>"$err") || rc=$?
   local ok=1
-  if echo "$out" | grep -qF 'unknown_classes=0|' &&
-    echo "$out" | grep -q '^WIKI_CHECK_SUMMARY|' &&
-    ! echo "$out" | grep -q 'WIKI_CHECK_NOTE' &&
+  if grep -qF 'unknown_classes=0|' <<<"$out" &&
+    grep -q '^WIKI_CHECK_SUMMARY|' <<<"$out" &&
+    ! grep -q 'WIKI_CHECK_NOTE' <<<"$out" &&
     grep -qF 'WIKI_CHECK_NOTE|a.md|class_check=partial|skipped=1|' "$err" &&
     [ "$rc" -eq 0 ]; then
     ok=0
@@ -376,7 +376,7 @@ EOF
   elapsed=$(($(date +%s) - start))
   local ok=1
   if [ "$elapsed" -lt 15 ] &&
-    echo "$out" | grep -qF 'unknown_classes=0|' &&
+    grep -qF 'unknown_classes=0|' <<<"$out" &&
     grep -qF 'class_check=partial|skipped=1|' "$err"; then
     ok=0
   fi

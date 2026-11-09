@@ -70,17 +70,17 @@ test_checklist_source_line_format() {
 
 test_checklist_items_use_checkbox_format() {
   local item="- [ ] WIL-1 — needs-info: missing repro steps"
-  echo "$item" | grep -qE '^- \[ \] WIL-[0-9]+ —' || return 1
+  grep -qE '^- \[ \] WIL-[0-9]+ —' <<<"$item" || return 1
 
   local item2="- [ ] WIL-78 — merge candidate: duplicate of WIL-79 (Jaccard: 88%)"
-  echo "$item2" | grep -qE '^- \[ \] WIL-[0-9]+ — merge candidate' || return 1
+  grep -qE '^- \[ \] WIL-[0-9]+ — merge candidate' <<<"$item2" || return 1
 }
 
 test_checklist_empty_needs_info_shows_none() {
   local section="## Needs Info (run 1 — delegate to ticket-critique)
 
 No issues requiring information."
-  echo "$section" | grep -q "No issues requiring information"
+  grep -q "No issues requiring information" <<<"$section"
 }
 
 # ── Split threshold boundary ──────────────────────────────────────────────────

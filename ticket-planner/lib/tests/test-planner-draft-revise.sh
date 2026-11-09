@@ -162,7 +162,7 @@ DISP_OK='RESOLVED F1 — added a timing criterion — source: "Exports must fini
 REBUTTED F2 — covered by the Export button criterion'
 
 _check() { planner_draft_revise_check "$INIT" a-export 1 t "${1:-a-export}"; }
-_has() { printf '%s\n' "$1" | grep -q "^$2\b"; }
+_has() { grep -q "^$2\b" <<<"$1"; }
 
 # ── 1. a clean revision passes and is applied ─────────────────────────────
 echo "--- 1. clean revision ---"
@@ -197,7 +197,7 @@ _round
 sed -i 's/^An Export action on the invoice list\./An Export button on the invoice list./' "$A"
 _disp a-export "$DISP_OK"
 out=$(_check)
-_has "$out" FROZEN_CHANGED && printf '%s' "$out" | grep -q 'Proposed Behaviour' && pass "FROZEN_CHANGED: behaviour section reworded" || fail "FROZEN_CHANGED behaviour" "$out"
+_has "$out" FROZEN_CHANGED && grep -q 'Proposed Behaviour' <<<"$out" && pass "FROZEN_CHANGED: behaviour section reworded" || fail "FROZEN_CHANGED behaviour" "$out"
 
 _round
 sed -i 's/^planned, feature$/planned, feature, blocked-by:b-other/' "$A"
@@ -245,7 +245,7 @@ long=$(printf ' word%.0s' $(seq 1 26))
 sed -i "s/^- \[ \] Export responds with 200\$/- [ ] Export responds with 200 for${long}/" "$A"
 _disp a-export "$DISP_OK"
 out=$(_check)
-_has "$out" EXTENSION_INVALID && printf '%s' "$out" | grep -q '27 words (max 25)' && pass "EXTENSION_INVALID: more than 25 words" || fail "extension words" "$out"
+_has "$out" EXTENSION_INVALID && grep -q '27 words (max 25)' <<<"$out" && pass "EXTENSION_INVALID: more than 25 words" || fail "extension words" "$out"
 _round
 sed -i "s/^- \[ \] Export responds with 200\$/- [ ] Export responds with 200 for${long}/" "$A"
 _disp a-export "$DISP_OK"
@@ -269,7 +269,7 @@ _round
 sed -i 's/^- \[ \] The Export button appears on the invoice list$/&\n- [ ] N1 holds\n- [ ] N2 holds\n- [ ] N3 holds\n- [ ] N4 holds/' "$A"
 _disp a-export "$DISP_OK"
 out=$(_check)
-_has "$out" CRITERIA_FLOOD && printf '%s' "$out" | grep -q '4 new criteria for 1 RESOLVED' && pass "CRITERIA_FLOOD: 4 new for 1 RESOLVED" || fail "flood" "$out"
+_has "$out" CRITERIA_FLOOD && grep -q '4 new criteria for 1 RESOLVED' <<<"$out" && pass "CRITERIA_FLOOD: 4 new for 1 RESOLVED" || fail "flood" "$out"
 _round
 sed -i 's/^- \[ \] The Export button appears on the invoice list$/&\n- [ ] N1 holds\n- [ ] N2 holds\n- [ ] N3 holds/' "$A"
 _disp a-export "$DISP_OK"
@@ -304,10 +304,10 @@ sed -i 's/^- \[ \] The Export button appears on the invoice list$/- [ ] The Expo
 cp "$A" "${TMP_ROOT}/with-token.md"
 sed -i 's/^- \[ \] The Export button appears; the `exportInvoices` handler runs$/- [ ] The Export button appears; the handler runs/' "$A"
 out=$(planner_draft_revise_check_text "${TMP_ROOT}/with-token.md" "$A")
-_has "$out" CONTRACT_DROPPED && printf '%s' "$out" | grep -q 'tick:exportInvoices' && pass "CONTRACT_DROPPED: a backticked identifier disappears" || fail "contract" "$out"
+_has "$out" CONTRACT_DROPPED && grep -q 'tick:exportInvoices' <<<"$out" && pass "CONTRACT_DROPPED: a backticked identifier disappears" || fail "contract" "$out"
 toks=$(_pdrv_contract_tokens "${TMP_ROOT}/a.base")
-if printf '%s\n' "$toks" | grep -qxF 'path:/api/invoices/export' && printf '%s\n' "$toks" | grep -qxF 'status:200' &&
-  printf '%s\n' "$toks" | grep -qxF 'env:X_EXPORT_CAP' && printf '%s\n' "$toks" | grep -qxF 'tick:X_EXPORT_CAP'; then
+if grep -qxF 'path:/api/invoices/export' <<<"$toks" && grep -qxF 'status:200' <<<"$toks" &&
+  grep -qxF 'env:X_EXPORT_CAP' <<<"$toks" && grep -qxF 'tick:X_EXPORT_CAP' <<<"$toks"; then
   pass "contract tokens: API path, status code, env var, backticked identifier"
 else
   fail "contract tokens" "$toks"
@@ -317,7 +317,7 @@ _round
 printf '\n## Acceptance Criteria\n\n- [ ] A second heading\n' >>"$A"
 _disp a-export "$DISP_OK"
 out=$(_check)
-_has "$out" SPEC_INVALID && printf "%s" "$out" | grep -q "compose refused" && pass "SPEC_INVALID: compose refuses a second Acceptance Criteria heading" || fail "spec invalid" "$out"
+_has "$out" SPEC_INVALID && grep -q "compose refused" <<<"$out" && pass "SPEC_INVALID: compose refuses a second Acceptance Criteria heading" || fail "spec invalid" "$out"
 
 # ── 3. test-data regression reverts one spec, not the round ───────────────
 echo "--- 3. TESTDATA_REGRESSION (per spec) ---"
@@ -330,7 +330,7 @@ sed -i 's/^| Export responds with 200 | finance user/| Export responds with 200 
 _disp a-export "$DISP_OK"
 _disp b-other "$DISP_OK"
 out=$(_check "a-export,b-other")
-_has "$out" TESTDATA_REGRESSION && printf "%s" "$out" | grep -q "TESTDATA_REGRESSION TEST_DATA_IMPLIED a-export.md" && pass "TESTDATA_REGRESSION: criterion naming seeded records" || fail "testdata" "$out"
+_has "$out" TESTDATA_REGRESSION && grep -q "TESTDATA_REGRESSION TEST_DATA_IMPLIED a-export.md" <<<"$out" && pass "TESTDATA_REGRESSION: criterion naming seeded records" || fail "testdata" "$out"
 sa=$(planner_draft_revise_finish "$INIT" a-export 1 t "a-export,b-other")
 sb=$(planner_draft_revise_finish "$INIT" b-other 1 t "a-export,b-other")
 if [ "$sa" = "reverted:TESTDATA_REGRESSION" ] && [ "$sb" = "applied" ] &&
@@ -367,7 +367,7 @@ out=$(planner_draft_revise_snapshot_diff "$INIT" t "artifacts/draft-readiness/a-
 cp "$LOG" "${TMP_ROOT}/log.keep"
 echo "forged" >"$LOG"
 out=$(planner_draft_revise_snapshot_diff "$INIT" t)
-printf '%s\n' "$out" | grep -qx 'state.log' && pass "a rewritten state.log is out of scope" || fail "log rewrite" "$out"
+grep -qx 'state.log' <<<"$out" && pass "a rewritten state.log is out of scope" || fail "log rewrite" "$out"
 cp "${TMP_ROOT}/log.keep" "$LOG"
 
 # Security regression (review finding 2): an agent-appended state.log line.
@@ -378,7 +378,7 @@ sed -i 's/^- \[ \] Export responds with 200$/- [ ] Export responds with 200 with
 sed -i 's/^| Export responds with 200 | finance user/| Export responds with 200 within 2 seconds | finance user/' "$A"
 _disp a-export "$DISP_OK"
 out=$(_check)
-_has "$out" OUT_OF_SCOPE_EDIT && printf '%s' "$out" | grep -q 'state.log' && pass "forged state.log append is OUT_OF_SCOPE_EDIT" || fail "forged append" "$out"
+_has "$out" OUT_OF_SCOPE_EDIT && grep -q 'state.log' <<<"$out" && pass "forged state.log append is OUT_OF_SCOPE_EDIT" || fail "forged append" "$out"
 status=$(planner_draft_revise_finish "$INIT" a-export 1 t)
 if [ "$status" = "reverted:OUT_OF_SCOPE_EDIT" ] && ! grep -q 'forged by agent' "$LOG" &&
   grep -qF '|META|draft-revise|start|a-export round=1 findings=2' "$LOG" &&
@@ -406,7 +406,7 @@ _round
 echo "applied" >"${DR}/a-export/revise.r1.status"
 _disp a-export "$DISP_OK"
 out=$(_check)
-_has "$out" OUT_OF_SCOPE_EDIT && printf '%s' "$out" | grep -q 'revise.r1.status' && pass "agent-written status file is OUT_OF_SCOPE_EDIT" || fail "status oos" "$out"
+_has "$out" OUT_OF_SCOPE_EDIT && grep -q 'revise.r1.status' <<<"$out" && pass "agent-written status file is OUT_OF_SCOPE_EDIT" || fail "status oos" "$out"
 _round
 echo "applied" >"${DR}/a-export/revise.r2.status"
 _disp a-export "$DISP_OK"
@@ -420,7 +420,7 @@ nl_file="${IDIR}/artifacts/evil"$'\n'"state.log"
 echo "x" >"$nl_file"
 _disp a-export "$DISP_OK"
 out=$(_check)
-_has "$out" OUT_OF_SCOPE_EDIT && printf '%s' "$out" | grep -qF "$PLANNER_DRAFT_UNSAFE_PATH" && pass "newline file name is OUT_OF_SCOPE_EDIT" || fail "newline name" "$out"
+_has "$out" OUT_OF_SCOPE_EDIT && grep -qF "$PLANNER_DRAFT_UNSAFE_PATH" <<<"$out" && pass "newline file name is OUT_OF_SCOPE_EDIT" || fail "newline name" "$out"
 cp "$LOG" "${TMP_ROOT}/log.before"
 status=$(planner_draft_revise_finish "$INIT" a-export 1 t)
 if [ "$status" = "reverted:OUT_OF_SCOPE_EDIT" ] && [ ! -e "$nl_file" ] && [ -f "$LOG" ] && [ -f "${IDIR}/artifacts/consensus.md" ]; then
@@ -524,16 +524,16 @@ for need in "${SPECS}/a-export.md" "${DR}/a-export/body.md" "${DR}/a-export/find
   "${DR}/a-export/revise.r1.md" '````untrusted-data findings' 'untrusted-data original-brief' 'untrusted-data idea.txt' \
   '## Title' '## Labels' '## Signals' '## Technical Context' 'blocked-by:' 'an administrator' 'RESOLVED <id>' 'REBUTTED <id>' \
   'DRAFT_REVISE written'; do
-  printf '%s' "$p" | grep -qF -- "$need" || {
+  grep -qF -- "$need" <<<"$p" || {
     ok=0
     echo "    missing: $need"
   }
 done
 [ "$ok" -eq 1 ] && pass "inputs, untrusted fences, forbidden sections, roles and disposition format named" || fail "prompt" "see above"
-printf '%s\n' "$p" | grep -qx '````' && pass "fence outgrows a backtick run inside a finding" || fail "fence length" "no 4-backtick fence"
+grep -qx '````' <<<"$p" && pass "fence outgrows a backtick run inside a finding" || fail "fence length" "no 4-backtick fence"
 mv "${IDIR}/artifacts/idea.txt" "${TMP_ROOT}/idea.keep"
 p=$(planner_prompt_spec_revise "$INIT" a-export "${DR}/a-export/findings.r1.json")
-if ! printf '%s' "$p" | grep -q 'original-brief' && ! printf '%s' "$p" | grep -q 'Ignore all previous'; then
+if ! grep -q 'original-brief' <<<"$p" && ! grep -q 'Ignore all previous' <<<"$p"; then
   pass "no brief block when _planner_intent_has_brief is false"
 else
   fail "brief absent" "brief still present"
@@ -608,7 +608,7 @@ else
   fail "finish assumed" "status=$status $(grep draft-revise "$LOG" | tail -3)"
 fi
 body=$(planner_draft_readiness_compose "$INIT" a-export)
-printf '%s\n' "$body" | grep -qxF -- "- Assumption: ${ASM}" && pass "the assumption survives into the draft ticket body" || fail "body assumption" "missing"
+grep -qxF -- "- Assumption: ${ASM}" <<<"$body" && pass "the assumption survives into the draft ticket body" || fail "body assumption" "missing"
 
 _round
 _assume
@@ -627,7 +627,7 @@ _round
 _assume "" "Assumption: ${ASM}"
 _disp a-export "$DISP_ASM"
 out=$(_check)
-printf '%s\n' "$out" | grep -q '^ASSUMPTION_INVALID .*Acceptance Criteria' && pass "ASSUMPTION_INVALID: assumption added to ## Acceptance Criteria" || fail "assumption in AC" "$out"
+grep -q '^ASSUMPTION_INVALID .*Acceptance Criteria' <<<"$out" && pass "ASSUMPTION_INVALID: assumption added to ## Acceptance Criteria" || fail "assumption in AC" "$out"
 
 _round
 _assume "- **Assumption:** ${ASM}"
@@ -656,7 +656,7 @@ ASSUMED F1 — a — assumption: \"a2\"
 ASSUMED F3 — a — assumption: \"a3\"
 ASSUMED F4 — a — assumption: \"a4\""
 out=$(_check)
-printf '%s\n' "$out" | grep -q '^ASSUMPTION_INVALID 4 assumptions' && pass "ASSUMPTION_INVALID: more than ${PLANNER_DRAFT_ASSUMPTION_MAX} assumptions in a round" || fail "assumption cap" "$out"
+grep -q '^ASSUMPTION_INVALID 4 assumptions' <<<"$out" && pass "ASSUMPTION_INVALID: more than ${PLANNER_DRAFT_ASSUMPTION_MAX} assumptions in a round" || fail "assumption cap" "$out"
 
 _round
 _assume
@@ -672,10 +672,10 @@ _round
 _assume
 _disp a-export "$DISP_ASM"
 out=$(_check)
-printf '%s\n' "$out" | grep -q '^ASSUMPTION_INVALID F2 is a security finding' && pass "ASSUMPTION_INVALID: a security finding cannot be assumed away" || fail "security assumed" "$out"
+grep -q '^ASSUMPTION_INVALID F2 is a security finding' <<<"$out" && pass "ASSUMPTION_INVALID: a security finding cannot be assumed away" || fail "security assumed" "$out"
 p=$(planner_prompt_spec_revise "$INIT" a-export "${DR}/a-export/findings.r1.json")
-if printf '%s' "$p" | grep -qF 'security: yes' && printf '%s' "$p" | grep -qF 'ASSUMED <id>' &&
-  printf '%s' "$p" | grep -qF -- '- Assumption: <'; then
+if grep -qF 'security: yes' <<<"$p" && grep -qF 'ASSUMED <id>' <<<"$p" &&
+  grep -qF -- '- Assumption: <' <<<"$p"; then
   pass "prompt: ASSUMED format, the Scope row form, and the security marker on the XSS finding"
 else
   fail "prompt assumed" "missing"

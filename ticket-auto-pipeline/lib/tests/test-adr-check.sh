@@ -115,7 +115,7 @@ test_clean_pass() {
   _fixture "0001-clean.md" "ADR-0001" "proposed"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 0 ] && echo "$_OUT" | grep -q "violations=0"
+  [ "$_RC" -eq 0 ] && grep -q "violations=0" <<<"$_OUT"
 }
 
 # ── duplicate id ─────────────────────────────────────────────────────────────
@@ -125,7 +125,7 @@ test_duplicate_id() {
   _fixture "0002-b.md" "ADR-0001" "proposed"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "DUPLICATE_ID"
+  [ "$_RC" -eq 1 ] && grep -q "DUPLICATE_ID" <<<"$_OUT"
 }
 
 # ── invalid status ───────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ test_invalid_status() {
   _fixture "0001-a.md" "ADR-0001" "bogus"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "INVALID_STATUS"
+  [ "$_RC" -eq 1 ] && grep -q "INVALID_STATUS" <<<"$_OUT"
 }
 
 # ── dangling supersedes target ──────────────────────────────────────────────
@@ -143,7 +143,7 @@ test_dangling_supersedes() {
   SUPERSEDES_OVERRIDE="ADR-9999" _fixture "0001-a.md" "ADR-0001" "proposed"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "SUPERSEDES_TARGET_MISSING"
+  [ "$_RC" -eq 1 ] && grep -q "SUPERSEDES_TARGET_MISSING" <<<"$_OUT"
 }
 
 # ── non-reciprocal supersession ─────────────────────────────────────────────
@@ -163,7 +163,7 @@ test_non_reciprocal_supersession() {
   SUPERSEDED_BY_OVERRIDE="ADR-0999" _fixture "0001-a.md" "ADR-0001" "superseded"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "SUPERSESSION_NOT_RECIPROCAL\|SUPERSEDES_TARGET_MISSING"
+  [ "$_RC" -eq 1 ] && grep -q "SUPERSESSION_NOT_RECIPROCAL\|SUPERSEDES_TARGET_MISSING" <<<"$_OUT"
 }
 
 # ── missing required section ────────────────────────────────────────────────
@@ -173,7 +173,7 @@ test_missing_section() {
     _fixture "0001-a.md" "ADR-0001" "proposed"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "MISSING_SECTIONS"
+  [ "$_RC" -eq 1 ] && grep -q "MISSING_SECTIONS" <<<"$_OUT"
 }
 
 # ── agent-created ADR not proposed ──────────────────────────────────────────
@@ -182,7 +182,7 @@ test_new_adr_not_proposed() {
   DECIDERS_OVERRIDE="[alice]" _fixture "0001-a.md" "ADR-0001" "accepted"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "NEW_ADR_NOT_PROPOSED"
+  [ "$_RC" -eq 1 ] && grep -q "NEW_ADR_NOT_PROPOSED" <<<"$_OUT"
 }
 
 # ── accepted without deciders ───────────────────────────────────────────────
@@ -191,7 +191,7 @@ test_accepted_without_deciders() {
   _fixture "0001-a.md" "ADR-0001" "accepted"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "ACCEPTED_WITHOUT_DECIDERS"
+  [ "$_RC" -eq 1 ] && grep -q "ACCEPTED_WITHOUT_DECIDERS" <<<"$_OUT"
 }
 
 # ── superseded without replacement ──────────────────────────────────────────
@@ -200,7 +200,7 @@ test_superseded_without_replacement() {
   DECIDERS_OVERRIDE="[alice]" _fixture "0001-a.md" "ADR-0001" "superseded"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "SUPERSEDED_WITHOUT_REPLACEMENT"
+  [ "$_RC" -eq 1 ] && grep -q "SUPERSEDED_WITHOUT_REPLACEMENT" <<<"$_OUT"
 }
 
 # ── deprecated with replacement reference (invalid) ─────────────────────────
@@ -210,7 +210,7 @@ test_deprecated_with_replacement() {
     _fixture "0001-a.md" "ADR-0001" "deprecated"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "DEPRECATED_WITH_REPLACEMENT"
+  [ "$_RC" -eq 1 ] && grep -q "DEPRECATED_WITH_REPLACEMENT" <<<"$_OUT"
 }
 
 # ── hedged decision ──────────────────────────────────────────────────────────
@@ -220,7 +220,7 @@ test_hedged_decision() {
     _fixture "0001-a.md" "ADR-0001" "proposed"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "HEDGED_DECISION"
+  [ "$_RC" -eq 1 ] && grep -q "HEDGED_DECISION" <<<"$_OUT"
 }
 
 # ── committed decision (no hedge) passes ────────────────────────────────────
@@ -229,7 +229,7 @@ test_committed_decision_passes() {
   _fixture "0001-a.md" "ADR-0001" "proposed"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 0 ] && ! echo "$_OUT" | grep -q "HEDGED_DECISION"
+  [ "$_RC" -eq 0 ] && ! grep -q "HEDGED_DECISION" <<<"$_OUT"
 }
 
 # ── accepted ADR body modified in place ─────────────────────────────────────
@@ -241,7 +241,7 @@ test_accepted_adr_modified() {
   sed -i 's/We will do the thing\./We will do a different thing now./' "$_wiki/decisions/0001-a.md"
   _check --file "$_wiki/decisions/0001-a.md"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "ACCEPTED_ADR_MODIFIED"
+  [ "$_RC" -eq 1 ] && grep -q "ACCEPTED_ADR_MODIFIED" <<<"$_OUT"
 }
 
 # ── accepted ADR frontmatter-only edit (no body change) stays clean ────────
@@ -252,7 +252,7 @@ test_accepted_adr_unmodified_passes() {
   _git_commit "accept ADR-0001"
   _check --file "$_wiki/decisions/0001-a.md"
   _teardown
-  [ "$_RC" -eq 0 ] && ! echo "$_OUT" | grep -q "ACCEPTED_ADR_MODIFIED"
+  [ "$_RC" -eq 0 ] && ! grep -q "ACCEPTED_ADR_MODIFIED" <<<"$_OUT"
 }
 
 # ── invalid transition: accepted -> proposed is rejected ────────────────────
@@ -266,7 +266,7 @@ test_invalid_transition_accepted_to_proposed() {
   sed -i 's/^status: accepted/status: proposed/' "$_wiki/decisions/0001-a.md"
   _check --file "$_wiki/decisions/0001-a.md"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "INVALID_TRANSITION|accepted -> proposed"
+  [ "$_RC" -eq 1 ] && grep -q "INVALID_TRANSITION|accepted -> proposed" <<<"$_OUT"
 }
 
 # ── invalid transition: proposed -> superseded is rejected ──────────────────
@@ -278,7 +278,7 @@ test_invalid_transition_proposed_to_superseded() {
   SUPERSEDED_BY_OVERRIDE="ADR-0002" _fixture "0001-a.md" "ADR-0001" "superseded"
   _check --file "$_wiki/decisions/0001-a.md"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "INVALID_TRANSITION|proposed -> superseded"
+  [ "$_RC" -eq 1 ] && grep -q "INVALID_TRANSITION|proposed -> superseded" <<<"$_OUT"
 }
 
 # ── valid transition: accepted -> superseded is NOT flagged ─────────────────
@@ -294,7 +294,7 @@ test_valid_transition_accepted_to_superseded() {
     _fixture "0001-a.md" "ADR-0001" "superseded"
   _check --file "$_wiki/decisions/0001-a.md"
   _teardown
-  [ "$_RC" -eq 0 ] && ! echo "$_OUT" | grep -q "INVALID_TRANSITION"
+  [ "$_RC" -eq 0 ] && ! grep -q "INVALID_TRANSITION" <<<"$_OUT"
 }
 
 # ── topic-shaped title mismatch ─────────────────────────────────────────────
@@ -303,7 +303,7 @@ test_title_id_mismatch() {
   TITLE_OVERRIDE="# ADR-0002: Wrong id in title" _fixture "0001-a.md" "ADR-0001" "proposed"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "TITLE_ID_MISMATCH"
+  [ "$_RC" -eq 1 ] && grep -q "TITLE_ID_MISMATCH" <<<"$_OUT"
 }
 
 # ── missing frontmatter fields ───────────────────────────────────────────────
@@ -322,7 +322,7 @@ test_missing_fields() {
   } >"$_wiki/decisions/0001-a.md"
   _check --wiki-root "$_wiki"
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "MISSING_FIELDS"
+  [ "$_RC" -eq 1 ] && grep -q "MISSING_FIELDS" <<<"$_OUT"
 }
 
 # ── single-file mode reports store checks as unevaluated ───────────────────
@@ -331,7 +331,7 @@ test_single_file_unevaluated() {
   _fixture "0001-a.md" "ADR-0001" "proposed"
   _check --file "$_wiki/decisions/0001-a.md"
   _teardown
-  [ "$_RC" -eq 0 ] && echo "$_OUT" | grep -q "UNEVALUATED"
+  [ "$_RC" -eq 0 ] && grep -q "UNEVALUATED" <<<"$_OUT"
 }
 
 # ── setup error: missing store path ─────────────────────────────────────────

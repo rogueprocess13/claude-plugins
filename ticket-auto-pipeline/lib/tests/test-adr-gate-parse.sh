@@ -64,10 +64,10 @@ EOF
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"ok"' || ok=0
-  echo "$_OUT" | grep -q '"verdict":"CREATED_PROPOSED"' || ok=0
-  echo "$_OUT" | grep -q '"adr_id":"ADR-0012"' || ok=0
-  echo "$_OUT" | grep -q '"adr_required":true' || ok=0
+  grep -q '"parse_status":"ok"' <<<"$_OUT" || ok=0
+  grep -q '"verdict":"CREATED_PROPOSED"' <<<"$_OUT" || ok=0
+  grep -q '"adr_id":"ADR-0012"' <<<"$_OUT" || ok=0
+  grep -q '"adr_required":true' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -90,8 +90,8 @@ EOF
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"ok"' || ok=0
-  echo "$_OUT" | grep -q '"verdict":"NOT_ARCHITECTURAL"' || ok=0
+  grep -q '"parse_status":"ok"' <<<"$_OUT" || ok=0
+  grep -q '"verdict":"NOT_ARCHITECTURAL"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -112,8 +112,8 @@ EOF
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"invalid"' || ok=0
-  echo "$_OUT" | grep -q 'missing required field: RATIONALE' || ok=0
+  grep -q '"parse_status":"invalid"' <<<"$_OUT" || ok=0
+  grep -q 'missing required field: RATIONALE' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -133,8 +133,8 @@ EOF
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"invalid"' || ok=0
-  echo "$_OUT" | grep -q "not in the closed set" || ok=0
+  grep -q '"parse_status":"invalid"' <<<"$_OUT" || ok=0
+  grep -q "not in the closed set" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -156,8 +156,8 @@ EOF
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"invalid"' || ok=0
-  echo "$_OUT" | grep -q "CONFLICT requires a non-empty ADR_ID" || ok=0
+  grep -q '"parse_status":"invalid"' <<<"$_OUT" || ok=0
+  grep -q "CONFLICT requires a non-empty ADR_ID" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -179,7 +179,7 @@ EOF
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"invalid"' || ok=0
+  grep -q '"parse_status":"invalid"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -201,8 +201,8 @@ EOF
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"ok"' || ok=0
-  echo "$_OUT" | grep -q '"verdict":"CONFLICT"' || ok=0
+  grep -q '"parse_status":"ok"' <<<"$_OUT" || ok=0
+  grep -q '"verdict":"CONFLICT"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -221,8 +221,8 @@ EOF
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"invalid"' || ok=0
-  echo "$_OUT" | grep -q "missing closing marker" || ok=0
+  grep -q '"parse_status":"invalid"' <<<"$_OUT" || ok=0
+  grep -q "missing closing marker" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -235,7 +235,7 @@ test_absent_block_rejected() {
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"invalid"' || ok=0
+  grep -q '"parse_status":"invalid"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -255,7 +255,7 @@ EOF
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q "ADR_REQUIRED must be 'true' or 'false'" || ok=0
+  grep -q "ADR_REQUIRED must be 'true' or 'false'" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -275,7 +275,7 @@ EOF
   _parse "$_ws/r.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q "unsupported SCHEMA_VERSION" || ok=0
+  grep -q "unsupported SCHEMA_VERSION" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }

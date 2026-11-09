@@ -69,7 +69,7 @@ EOF
   local window
   window=$(run_summary_window "$log")
   _teardown
-  echo "$window" | grep -q 'schema'
+  grep -q 'schema' <<<"$window"
 }
 
 # ── versions passthrough ─────────────────────────────────────────────────────

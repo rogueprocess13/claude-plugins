@@ -116,8 +116,8 @@ eq "halted session still recorded" "$(jq -c 'select(.kind == "grill_session") | 
 echo "=== read-out ==="
 report=$(bash "$LIB_DIR/grill-telemetry.sh" report "$WD")
 eq "report exit 0" "$?" "0"
-echo "$report" | grep -Fq '| 1 | 2 | 3m 0s | 2m 0s |' && pass "round row" || fail "round row" "$report"
-echo "$report" | grep -Fq '| 1 | sealed |' && pass "session row" || fail "session row" "$report"
+grep -Fq '| 1 | 2 | 3m 0s | 2m 0s |' <<<"$report" && pass "round row" || fail "round row" "$report"
+grep -Fq '| 1 | sealed |' <<<"$report" && pass "session row" || fail "session row" "$report"
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

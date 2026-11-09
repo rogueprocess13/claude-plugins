@@ -47,7 +47,7 @@ test_feedback_no_logs() {
   local output
   output=$(fleet_aggregate_feedback "$ws" 2>&1 || true)
   # A fresh workspace with no pipeline logs → should report "no feedback"
-  echo "$output" | grep -q "does not exist\|no pipeline logs\|no feedback" && return 0 || {
+  grep -q "does not exist\|no pipeline logs\|no feedback" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -61,7 +61,7 @@ test_feedback_no_entries() {
 
   local output
   output=$(fleet_aggregate_feedback "$ws" 2>&1 || true)
-  echo "$output" | grep -q "no feedback to aggregate" && return 0 || {
+  grep -q "no feedback to aggregate" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -75,7 +75,7 @@ test_feedback_malformed_json_skipped() {
   local output
   output=$(fleet_aggregate_feedback "$ws" 2>&1 || true)
   # With no initiative labels, it should skip or report no feedback
-  echo "$output" | grep -q "no feedback\|skipping" && return 0 || {
+  grep -q "no feedback\|skipping" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -88,7 +88,7 @@ test_feedback_dry_run_flag_accepted() {
   local output
   output=$(FLEET_DRY_RUN=true REPOS_ROOT="$ws" fleet_aggregate_feedback "$ws" --dry-run 2>&1 || true)
   # Should still say "no feedback" (no entries) but not crash
-  echo "$output" | grep -q "no feedback" && return 0 || {
+  grep -q "no feedback" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -101,7 +101,7 @@ test_feedback_empty_workspace() {
   local output
   output=$(fleet_aggregate_feedback "$ws" 2>&1 || true)
   # Workspace exists but has no pipeline logs
-  echo "$output" | grep -q "no pipeline logs\|no feedback\|does not exist" && return 0 || {
+  grep -q "no pipeline logs\|no feedback\|does not exist" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }

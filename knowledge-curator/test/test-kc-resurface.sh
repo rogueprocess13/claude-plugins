@@ -98,17 +98,17 @@ cat >"$TEST_DIR/knowledge/INDEX.md" <<'EOF'
 EOF
 cd "$TEST_DIR"
 OUTPUT=$("$HOOK" 2>&1)
-if echo "$OUTPUT" | grep -q "KC-RESURFACE"; then
+if grep -q "KC-RESURFACE" <<<"$OUTPUT"; then
   pass "P1 items: emits KC-RESURFACE context block"
 else
   fail "P1 items: emits KC-RESURFACE context block — got: $OUTPUT"
 fi
-if echo "$OUTPUT" | grep -q "2 p1 item"; then
+if grep -q "2 p1 item" <<<"$OUTPUT"; then
   pass "P1 items: shows p1 count (2)"
 else
   fail "P1 items: shows p1 count — got: $OUTPUT"
 fi
-if echo "$OUTPUT" | grep -q "KC-0001"; then
+if grep -q "KC-0001" <<<"$OUTPUT"; then
   pass "P1 items: includes item KC-0001 in output"
 else
   fail "P1 items: includes item KC-0001 — got: $OUTPUT"
@@ -135,12 +135,12 @@ cat >"$TEST_DIR/knowledge/INDEX.md" <<'EOF'
 EOF
 cd "$TEST_DIR"
 OUTPUT=$("$HOOK" 2>&1)
-if echo "$OUTPUT" | grep -q "KC-RESURFACE"; then
+if grep -q "KC-RESURFACE" <<<"$OUTPUT"; then
   pass "P2 items: emits context block (has items to show)"
 else
   fail "P2 items: emits context block — got: $OUTPUT"
 fi
-if echo "$OUTPUT" | grep -q "KC-0001"; then
+if grep -q "KC-0001" <<<"$OUTPUT"; then
   pass "P2 items: includes item KC-0001"
 else
   fail "P2 items: includes item KC-0001 — got: $OUTPUT"
@@ -166,7 +166,7 @@ cat >"$TEST_DIR/knowledge/INDEX.md" <<'EOF'
 EOF
 cd "$TEST_DIR"
 OUTPUT=$("$HOOK" 2>&1)
-if echo "$OUTPUT" | grep -q "2 item.* in progress"; then
+if grep -q "2 item.* in progress" <<<"$OUTPUT"; then
   pass "In-progress: shows count (2)"
 else
   fail "In-progress: shows count (2) — got: $OUTPUT"
@@ -206,7 +206,7 @@ else
   fail "Top-N limit: shows exactly 5 items (got: $COUNT)"
 fi
 # KC-0006 and KC-0007 should be excluded (items 6 and 7)
-if ! echo "$OUTPUT" | grep -q "KC-0006" && ! echo "$OUTPUT" | grep -q "KC-0007"; then
+if ! grep -q "KC-0006" <<<"$OUTPUT" && ! grep -q "KC-0007" <<<"$OUTPUT"; then
   pass "Top-N limit: items beyond 5 excluded"
 else
   fail "Top-N limit: items beyond 5 excluded"

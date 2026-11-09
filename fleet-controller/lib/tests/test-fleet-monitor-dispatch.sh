@@ -95,15 +95,15 @@ test_queue_consume_entry() {
   " 2>/dev/null || true)
   # PO-2: the monitor cannot spawn, so it must report the entry as pending
   # and leave it for fleetd: no removal, no PID=0 owner record.
-  echo "$output" | grep -q "PENDING:spawn tid=CRE-101" || {
+  grep -q "PENDING:spawn tid=CRE-101" <<<"$output" || {
     echo "output missing PENDING:spawn line: $output" >&2
     return 1
   }
-  echo "$output" | grep -q "FLEETD_SPAWN_ENABLED=1" || {
+  grep -q "FLEETD_SPAWN_ENABLED=1" <<<"$output" || {
     echo "pending line does not say fleetd is required: $output" >&2
     return 1
   }
-  if echo "$output" | grep -q "ACTION:spawn"; then
+  if grep -q "ACTION:spawn" <<<"$output"; then
     echo "monitor still prints an ACTION:spawn line nothing acts on: $output" >&2
     return 1
   fi
@@ -188,7 +188,7 @@ test_monitor_cycle_leaves_queue_for_fleetd() {
     fleet_monitor_cycle '$ws' 2>&1
   " 2>/dev/null || true)
 
-  echo "$output" | grep -q "PENDING:spawn tid=CRE-101" || {
+  grep -q "PENDING:spawn tid=CRE-101" <<<"$output" || {
     echo "expected pending line for CRE-101; output: $output" >&2
     return 1
   }
@@ -238,7 +238,7 @@ test_queue_consume_drops_terminal_entry() {
     _spawn_queue_consume '$ws' 0 2>&1
   " 2>/dev/null || true)
 
-  if echo "$output" | grep -q "PENDING:spawn tid=CRE-TERM"; then
+  if grep -q "PENDING:spawn tid=CRE-TERM" <<<"$output"; then
     echo "terminal entry was spawned; output: $output" >&2
     return 1
   fi
@@ -280,7 +280,7 @@ test_queue_consume_override_terminal_bypasses_drop() {
   " 2>/dev/null || true)
 
   # Not dropped as terminal: it stays queued for fleetd and is reported.
-  echo "$output" | grep -q "PENDING:spawn tid=CRE-OVR" || {
+  grep -q "PENDING:spawn tid=CRE-OVR" <<<"$output" || {
     echo "override_terminal entry was not kept pending; output: $output" >&2
     return 1
   }
@@ -319,7 +319,7 @@ test_queue_consume_dead_letter_dropped_without_override() {
     _spawn_queue_consume '$ws' 0 2>&1
   " 2>/dev/null || true)
 
-  if echo "$output" | grep -q "PENDING:spawn tid=CRE-NOV"; then
+  if grep -q "PENDING:spawn tid=CRE-NOV" <<<"$output"; then
     echo "dead-lettered entry without override_terminal was spawned; output: $output" >&2
     return 1
   fi

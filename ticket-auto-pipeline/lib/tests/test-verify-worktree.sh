@@ -240,7 +240,7 @@ test_create_failure_reports_git_error() {
   echo "not a dir" >"$wt_path"
   err=$(ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" 2>&1 >/dev/null) && return 1
   # git's own reason follows the generic prefix.
-  printf '%s' "$err" | grep -q "failed to create worktree for origin/feat/CRE-1-fix in .*: ." || {
+  grep -q "failed to create worktree for origin/feat/CRE-1-fix in .*: ." <<<"$err" || {
     echo "  stderr lacks git's error: $err" >&2
     return 1
   }
@@ -583,7 +583,7 @@ test_exports_ignore_other_tickets() {
   ensure_verify_worktree "CRE-1" "$FIXTURE_REPO" "feat/CRE-1-fix" >/dev/null || return 1
   local out
   out=$(verify_worktree_exports "CRE-2")
-  if printf '%s' "$out" | grep -q VERIFY_REPO_PATH_; then
+  if grep -q VERIFY_REPO_PATH_ <<<"$out"; then
     echo "  exports for CRE-2 leaked CRE-1's worktree: $out" >&2
     return 1
   fi
@@ -760,15 +760,15 @@ test_skill_md_env_start_gets_worktree_contract() {
     echo "  Step 1.6b section not found" >&2
     return 1
   }
-  printf '%s' "$section" | grep -q 'eval "$(verify_worktree_exports "{TICKET-ID}")"' || {
+  grep -q 'eval "$(verify_worktree_exports "{TICKET-ID}")"' <<<"$section" || {
     echo "  Step 1.6b does not eval verify_worktree_exports before env-start.sh" >&2
     return 1
   }
-  printf '%s' "$section" | grep -q 'verify_served_check_ports "{TICKET-ID}"' || {
+  grep -q 'verify_served_check_ports "{TICKET-ID}"' <<<"$section" || {
     echo "  Step 1.6b does not run verify_served_check_ports" >&2
     return 1
   }
-  printf '%s' "$section" | grep -q 'VERIFY_SERVED_WRONG_WORKTREE' || {
+  grep -q 'VERIFY_SERVED_WRONG_WORKTREE' <<<"$section" || {
     echo "  Step 1.6b does not gate-stop on a wrong served checkout" >&2
     return 1
   }
@@ -813,11 +813,11 @@ test_skill_md_worktree_setup_resolves_repos_root() {
     echo "  Step 1.6a4 does not call verify_env_init before ensure_verify_worktree" >&2
     return 1
   }
-  printf '%s' "$section" | grep -q 'VERIFY_WORKTREE_NONE' || {
+  grep -q 'VERIFY_WORKTREE_NONE' <<<"$section" || {
     echo "  Step 1.6a4 does not warn when no worktree was created" >&2
     return 1
   }
-  printf '%s' "$section" | grep -q 'verify_worktree_env_var' || {
+  grep -q 'verify_worktree_env_var' <<<"$section" || {
     echo "  Step 1.6a4 names the export without verify_worktree_env_var" >&2
     return 1
   }
@@ -1011,7 +1011,7 @@ test_check_ports_any_wrong_wins() {
     echo "  summary is not one line: $out" >&2
     return 1
   }
-  printf '%s' "$out" | grep -q ":$SERVE_PORT ok" && printf '%s' "$out" | grep -q ":$SERVE2_PORT wrong"
+  grep -q ":$SERVE_PORT ok" <<<"$out" && grep -q ":$SERVE2_PORT wrong" <<<"$out"
 }
 _run "multi-port check: ok on one port + wrong on another -> rc 1, one-line summary" test_check_ports_any_wrong_wins
 
@@ -1073,12 +1073,12 @@ test_skill_md_gc_resolves_repos_root() {
   local section
   section=$(awk '/^### 1\.6a2 /{f=1} /^### 1\.6a2b /{f=0} f' "$skill_md")
   [ -n "$section" ] || return 1
-  printf '%s\n' "$section" | grep -q '^verify_env_init "{TICKET-ID}" ./CLAUDE.md && verify_worktree_gc' || {
+  grep -q '^verify_env_init "{TICKET-ID}" ./CLAUDE.md && verify_worktree_gc' <<<"$section" || {
     echo "  Step 1.6a2 does not resolve REPOS_ROOT before verify_worktree_gc" >&2
     return 1
   }
   # No bare GC call that would run with an unresolved REPOS_ROOT.
-  ! printf '%s\n' "$section" | grep -q '^verify_worktree_gc'
+  ! grep -q '^verify_worktree_gc' <<<"$section"
 }
 _run "SKILL.md Step 1.6a2 resolves REPOS_ROOT before the GC sweep" test_skill_md_gc_resolves_repos_root
 
@@ -1088,7 +1088,7 @@ test_skill_md_undecided_is_a_gate_warn() {
   local section
   section=$(awk '/^### 1\.6b /{f=1} /^## Step 1\.7/{f=0} f' "$skill_md")
   [ -n "$section" ] || return 1
-  if printf '%s' "$section" | grep -qE 'served-worktree\|skip|VERIFY served-worktree skip'; then
+  if grep -qE 'served-worktree\|skip|VERIFY served-worktree skip' <<<"$section"; then
     echo "  Step 1.6b still logs an undecided check as a quiet skip" >&2
     return 1
   fi
@@ -1098,7 +1098,7 @@ test_skill_md_undecided_is_a_gate_warn() {
     echo "  expected VERIFY_SERVED_UNVERIFIED gate-warns for rc 3 and rc 4, found $warns" >&2
     return 1
   }
-  printf '%s' "$section" | grep -q 'env-start.sh with --restart' || {
+  grep -q 'env-start.sh with --restart' <<<"$section" || {
     echo "  wrong-worktree message does not tell the operator how to recover" >&2
     return 1
   }
@@ -1115,8 +1115,8 @@ test_served_report_and_cli() {
   report=$(bash "$LIB_DIR/verify-worktree.sh" served "http://127.0.0.1:$SERVE_PORT" 2>/dev/null)
   bash "$LIB_DIR/verify-worktree.sh" check TICKET-1 "$SERVE_PORT" </dev/null >/dev/null 2>&1 || rc=$?
   _serve_stop
-  printf '%s' "$report" | grep -q "checkout=$(cd "$wt_path" && pwd -P)" &&
-    printf '%s' "$report" | grep -q "branch=feat/CRE-1-fix" || {
+  grep -q "checkout=$(cd "$wt_path" && pwd -P)" <<<"$report" &&
+    grep -q "branch=feat/CRE-1-fix" <<<"$report" || {
     echo "  report missing checkout/branch: $report" >&2
     return 1
   }

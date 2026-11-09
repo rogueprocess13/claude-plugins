@@ -77,8 +77,8 @@ test_planner_labels_section_removed() {
 test_well_known_labels_no_retired_planner_labels() {
   local labels
   labels=$(jq -r '.well_known_labels | join(",")' "$SM")
-  echo "$labels" | grep -qw "bug" && return 1
-  echo "$labels" | grep -qw "feature" && return 1
+  grep -qw "bug" <<<"$labels" && return 1
+  grep -qw "feature" <<<"$labels" && return 1
   return 0
 }
 
@@ -95,7 +95,7 @@ test_triggers_intact() {
 test_human_reject_removes_pre_approved() {
   local removes
   removes=$(jq -r '.triggers."human-reject".removes | join(",")' "$SM")
-  echo "$removes" | grep -q "pre-approved"
+  grep -q "pre-approved" <<<"$removes"
 }
 
 # ── Test: pre-approved label removed by re-claim trigger ────────────────────
@@ -103,7 +103,7 @@ test_human_reject_removes_pre_approved() {
 test_re_claim_removes_pre_approved() {
   local removes
   removes=$(jq -r '.triggers."re-claim".removes | join(",")' "$SM")
-  echo "$removes" | grep -q "pre-approved"
+  grep -q "pre-approved" <<<"$removes"
 }
 
 # ── Precondition evaluation (exercises the executor's real code path) ───────

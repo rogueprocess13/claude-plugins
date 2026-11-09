@@ -171,7 +171,7 @@ test_unchecked_items_lists_content() {
 EOF
   )"
   _run_check "TEST-5"
-  echo "$UNCHECKED_ITEMS" | grep -q "write the docs"
+  grep -q "write the docs" <<<"$UNCHECKED_ITEMS"
   local rc=$?
   _teardown
   return $rc
