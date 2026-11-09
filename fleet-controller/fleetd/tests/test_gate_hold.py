@@ -31,6 +31,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from fleetd import gate_hold  # noqa: E402
 from fleetd.phase_dispatch import DispatchTable  # noqa: E402
 
+from fleetd.tests import _hermetic  # noqa: E402
+
+
+def setUpModule():
+    # GitHub #648: never run the installed ~/.claude/skills copy of flow.sh
+    # or its libs, and never write under the real home.
+    global _restore_env
+    _restore_env = _hermetic.isolate()
+
+
+def tearDownModule():
+    _restore_env()
+
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 TABLE_PATH = (
     REPO_ROOT / 'ticket-auto-pipeline' / 'skills' / 'ticket-flow'
