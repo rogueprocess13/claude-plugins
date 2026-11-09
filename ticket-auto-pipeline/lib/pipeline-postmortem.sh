@@ -30,12 +30,17 @@ POSTMORTEM_ENABLED="${POSTMORTEM_ENABLED:-true}"
 POSTMORTEM_FILE_ISSUES="${POSTMORTEM_FILE_ISSUES:-false}"
 POSTMORTEM_ISSUES_PER_HOUR="${POSTMORTEM_ISSUES_PER_HOUR:-5}"
 GITHUB_ISSUE_REPO="${GITHUB_ISSUE_REPO:-willard-pro/claude-plugins}"
-STATE_BASE="${HOME}/.claude/state/ticket-auto/postmortem"
+# POSTMORTEM_STATE_DIR overrides where the rate marker, locks and signature
+# state live (tests point it at a scratch dir); default is unchanged.
+STATE_BASE="${POSTMORTEM_STATE_DIR:-${HOME}/.claude/state/ticket-auto/postmortem}"
 
-# Resolve lib paths (runtime: ~/.claude/skills/lib/; dev: relative to this script)
+# Resolve lib paths (explicit: $CLAUDE_SKILLS_LIB; runtime: ~/.claude/skills/lib/;
+# dev: relative to this script)
 _resolve_lib() {
   local lib_name="$1"
-  if [ -f "$HOME/.claude/skills/lib/${lib_name}" ]; then
+  if [ -n "${CLAUDE_SKILLS_LIB:-}" ] && [ -f "${CLAUDE_SKILLS_LIB}/${lib_name}" ]; then
+    echo "${CLAUDE_SKILLS_LIB}/${lib_name}"
+  elif [ -f "$HOME/.claude/skills/lib/${lib_name}" ]; then
     echo "$HOME/.claude/skills/lib/${lib_name}"
   else
     local _script_dir

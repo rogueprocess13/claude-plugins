@@ -17,6 +17,23 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.96.4 (2026-11-09)
+
+ticket-auto-pipeline 0.96.4 (GitHub #647).
+
+### Fixed
+
+- `pipeline-postmortem.sh` reads its state root from `POSTMORTEM_STATE_DIR`
+  (default unchanged: `~/.claude/state/ticket-auto/postmortem`) and resolves
+  its helper libs from `CLAUDE_SKILLS_LIB` first, like `gate-check.sh`.
+  `test-pipeline-postmortem.sh` now keeps all post-mortem state in a scratch
+  dir, so it no longer writes `.rate.lock` into the developer's real
+  `~/.claude/state` or reads the real hourly rate marker. It also puts a `gh`
+  stub first on `PATH`: on a machine where `gh` was logged in, the two
+  `POSTMORTEM_FILE_ISSUES=true` cases could reach a real `gh issue create`
+  against this repo (none was ever filed). New test: nothing lands under
+  `$HOME` and the rate lock lands under `POSTMORTEM_STATE_DIR`.
+
 ## ticket-auto-pipeline 0.96.3, ticket-planner 0.35.1, fleet-controller 0.46.5, grill-me 0.5.1, knowledge-curator 0.2.16 (2026-11-09)
 
 GitHub #640.
