@@ -17,6 +17,28 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.96.9 (2026-11-09)
+
+Skill prose dedupe, sub-PR 3d (`skill-prose-dedupe`, change 3 of the skill-size reduction
+programme): implement, PR review, PR iterate and gate reconcile drop 15,042 bytes. Deletion and
+compression only: no bash block, log-line template, `notes.md` heading or `**Field:**` label
+changed. The skill fingerprints change. This is intended.
+
+### Changed
+
+- `ticket-implement/SKILL.md` 46,047 → 41,062 bytes (−4,985). The `implement-session.md` trace
+  template is gone (nothing reads it). Step 4 navigation now names Grep and Read, the agent's real
+  tools, instead of `smart_search`/Serena. The ADR gate, BASE_REF, commit-title, CORRECTIONS and
+  Step 5.5 (#363) prose is cut to the rule.
+- `ticket-pr-review/SKILL.md` 34,350 → 25,798 bytes (−8,552). Issue backstories (#359, #365,
+  #366, #368, #412) are one line each; the REST-vs-GraphQL notes and Step 6a/6b bash comments
+  are compressed. The `pr-review-session.md` trace stays: `ticket-pr-iterate` reads it.
+- `ticket-pr-iterate/SKILL.md` 12,127 → 10,707 bytes (−1,420). The unread `pr-iterate-session.md`
+  trace template and the `EMITS_PHASE_RESULT=false` rationale are gone.
+- `ticket-gate-reconcile/SKILL.md` 9,535 → 9,503 bytes (−32). The bare `hb-wrap.sh` call in
+  Step 1 is gone: with no arguments it wrote nothing and exited 1.
+- `lib/skill-preamble.md` § 8: a skill without a trace template writes no trace file.
+
 ## 0.96.8 (2026-11-09)
 
 Skill prose dedupe, sub-PR 3c (`skill-prose-dedupe`, change 3 of the skill-size reduction

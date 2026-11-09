@@ -16,7 +16,7 @@ ticket-auto-pipeline/agents/ticket-pr-review-agent.md	887	2
 ticket-auto-pipeline/agents/ticket-prescan-agent.md	987	2
 ticket-auto-pipeline/agents/ticket-verify-agent.md	2848	10
 ticket-auto-pipeline/lib/skill-preamble-auto.md	17606	345
-ticket-auto-pipeline/lib/skill-preamble.md	11455	269
+ticket-auto-pipeline/lib/skill-preamble.md	11450	269
 ticket-auto-pipeline/personas/CHANGELOG.md	2963	64
 ticket-auto-pipeline/personas/README.md	16999	171
 ticket-auto-pipeline/personas/base/analyzer.md	1890	32
@@ -76,14 +76,14 @@ ticket-auto-pipeline/skills/ticket-document/SKILL.md	9652	217
 ticket-auto-pipeline/skills/ticket-env-check/SKILL.md	4657	84
 ticket-auto-pipeline/skills/ticket-fleet-controller/SKILL.md	1600	28
 ticket-auto-pipeline/skills/ticket-flow/SKILL.md	13582	219
-ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	9535	211
+ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	9503	210
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-implement/SKILL.md	46047	738
+ticket-auto-pipeline/skills/ticket-implement/SKILL.md	41062	671
 ticket-auto-pipeline/skills/ticket-overseer/SKILL.md	3767	81
 ticket-auto-pipeline/skills/ticket-persona-refresh/SKILL.md	8897	218
-ticket-auto-pipeline/skills/ticket-pr-iterate/SKILL.md	12127	279
+ticket-auto-pipeline/skills/ticket-pr-iterate/SKILL.md	10707	254
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-pr-review/SKILL.md	34350	630
+ticket-auto-pipeline/skills/ticket-pr-review/SKILL.md	25798	547
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-prescan/SKILL.md	24034	470
 ticket-auto-pipeline/skills/ticket-reject/SKILL.md	1555	27

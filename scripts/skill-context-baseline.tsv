@@ -3,10 +3,10 @@ guidance-extractor	104018
 ticket-appraise	194801
 ticket-appraise-exec	144617
 ticket-document	81874
-ticket-gate-reconcile	10353
-ticket-implement	163759
-ticket-pr-iterate	112864
-ticket-pr-review	152255
+ticket-gate-reconcile	10321
+ticket-implement	158774
+ticket-pr-iterate	111444
+ticket-pr-review	143703
 ticket-reproduce	114064
 ticket-retro	29954
 ticket-verify	210525

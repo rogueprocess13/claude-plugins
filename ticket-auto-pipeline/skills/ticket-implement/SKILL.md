@@ -17,7 +17,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 - **Test command**: if BE_TEST_RUNNER found, write `hb-wrap.sh heartbeat "test-command" "BE_TEST_RUNNER configured" '{"cmd":"<cmd>"}'`; elif BE_TEST_CMD found, write `hb-wrap.sh heartbeat "test-command" "BE_TEST_CMD configured" '{"cmd":"<cmd>"}'`; if absent, write `hb-wrap.sh heartbeat "test-command" "skip" "no BE_TEST_CMD or BE_TEST_RUNNER"`
 - **Artifact path**: after detecting the plan artifact, write `hb-wrap.sh decision "artifact-path" "info" "artifact detected" '{"type":"simple-fix|openspec"}'`
 - **Implementation mode**: after detect-path, write `hb-wrap.sh decision "implementation-mode" "fired" "simple|openspec" '{"mode":"..."}'`
-- **Code-writing progress (long-running step)**: the code-writing stage is one of the two steps enumerated in [pipeline-heartbeat-format.md § Long-running steps](../../pipeline-heartbeat-format.md#long-running-steps-enumerated). Its long silence looks like a hang. After completing each file (simple-fix) or each task (openspec), write `hb-wrap.sh heartbeat "step-progress" "ok" "implement: <file-or-task> (N of M)" '{"step":"implement-changes","done":"N","total":"M"}'`. Advisory: nothing gates on these events and omitting them never fails the phase — it only leaves the fleet detector guessing.
+- **Code-writing progress** ([long-running step](../../pipeline-heartbeat-format.md#long-running-steps-enumerated); advisory, nothing gates on it): after each file (simple-fix) or task (openspec), write `hb-wrap.sh heartbeat "step-progress" "ok" "implement: <file-or-task> (N of M)" '{"step":"implement-changes","done":"N","total":"M"}'`.
 - **Plan artifact durability**: after Step 5.5's `openspec-tracking-check.sh assert` call, write `hb-wrap.sh gate "artifact-durability" "ok|warn" "tracked|not-applicable|{status}" '{"ticket":"{TICKET-ID}","status":"{OPENSPEC_TRACK_STATUS}"}'`
 
 ### Step dispatch
@@ -26,10 +26,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 - Branch name: read from notes.md checkpoint or from `IMPLEMENT|checkout-branch|done|` in `$TAP_LOG`.
 - Implementation mode: read from `IMPLEMENT|detect-path|done|` in `$TAP_LOG` (value: `simple-fix` or `openspec`).
 - Affected repos: re-derive from notes.md `Initial Investigation` section and CLAUDE.md table.
-- `$IMPLEMENT_TICKETS_ROOT`: never restored from a log or checkpoint — captured fresh via
-  `$(pwd)` before Step 0.6 on every invocation of this skill, resume or not, since the session's
-  starting CWD is always the tickets repo (see the capture instruction above the "Step 0.6"
-  heading).
+- `$IMPLEMENT_TICKETS_ROOT`: never restored — captured fresh on every invocation (below).
 
 | `--from-step` value | Skip to | Restore |
 |---------------------|---------|---------|
@@ -43,40 +40,17 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 
 **Concurrency guard:** if you need to check whether another worker is already implementing this ticket, never grep the process table (`ps`/`pgrep`) for your own prompt or skill name — your own process (and its own `spawn_agent_pre` shell) always matches. Use file-based signals instead: an existing worktree/branch with commits already on it, a lockfile whose PID is not in your own ancestry, or a terminal `IMPLEMENT|implement|done|`/`|fail|` line already present in `$TAP_LOG` for this ticket.
 
-**Capture the tickets repo root — the very first bash action of this session, regardless of `--from-step`.** Step 4 `cd`s into a code worktree and nothing downstream `cd`s back (Step 5's own git commands deliberately use `git -C "$WORKTREE_PATH"` instead of relying on the earlier `cd`, for exactly this reason). Every invocation of this skill — a fresh run or a `--from-step` resume — starts with CWD already at the tickets repo root (the shared preamble Guard already verified this, or the caller did for `--from-auto`), so this capture is always valid the instant the session starts, before Step 0.6 or any step-dispatch jump:
+**Capture the tickets repo root — the very first bash action of this session, regardless of `--from-step`.** Every invocation starts at the tickets repo root; Step 4 `cd`s into a code worktree and nothing `cd`s back, so Step 5.5 uses this instead of CWD:
 
 ```bash
 IMPLEMENT_TICKETS_ROOT="$(pwd)"
 ```
 
-Step 5.5 uses `$IMPLEMENT_TICKETS_ROOT` explicitly rather than relying on ambient CWD, since by then CWD may be the code worktree.
-
 ---
 
 ## Step 0.6 — Create task tracker
 
-Create a TaskCreate for every remaining step (Steps 1 through 6). Each task subject = the step heading. After each step is fully done (including sub-steps like 4b, 4c), mark it completed with TaskUpdate. At session end, write a trace file:
-
-```bash
-cat > {ticket-dir}/implement-session.md << 'TRACE'
-# implement session — {ISSUE-ID}
-**Date:** {today}
-**Branch:** {branch-name}
-**Worktree:** {WORKTREE_PATH}
-**Mode:** {simple-fix | openspec: <name>}
-**Outcome:** {Smooth|Rough|Hard}
-
-## Step trace
-- [x] Step 1: Approval guard + load workspace — approved
-- [x] Step 2: Set Ready + identify path — {mode}
-- [x] Step 3: Worktree and branch — {branch} at {worktree}
-- [x] Step 4: Implement — {N} files changed
-- [x] Step 4b: Tests + code review — {pass/failures}
-- [x] Step 4c: Rate complexity — {Smooth|Rough|Hard}
-- [x] Step 5: Commit, push, PR — {PR URL}
-- [x] Step 6: Close out — Review
-TRACE
-```
+Per shared preamble § 8, one task per step (Steps 1 through 6, sub-steps included in their parent). No trace file.
 
 ---
 
@@ -329,19 +303,11 @@ bash ~/.claude/skills/lib/plog.sh IMPLEMENT checkout-branch done "{TICKET_BRANCH
 
 bash ~/.claude/skills/lib/plog.sh IMPLEMENT implement start "Implementing changes"
 
-**Navigate with smart_search (both modes):** `smart_search`, `smart_outline`, then `smart_unfold`/`Read` on confirmed targets only; if it finds nothing, Serena (symbol search, go_to_definition, find_references). Never scan whole files.
+**Navigate (both modes):** Grep to locate, then Read confirmed targets only. Never scan whole files.
 
 **Before editing, run GitNexus blast radius:** Call `mcp__gitnexus__impact` on each target symbol from the plan. Compare the result's d=1 (WILL BREAK) callers against the affected files listed in the plan. If any d=1 symbol is NOT in the plan, append it to the implementation scope. If GitNexus is unavailable, log a warning and proceed — never block on it.
 
-**ADR gate — approach selection:** If, while working through the plan, the intended work turns
-out to require a different system-level approach than the plan assumed — not a local
-implementation detail, but a choice that would constrain how other components or future work
-must integrate — invoke the gate before committing to that approach. See § 8 ADR gate in the
-shared preamble. This is the "implement discovers an unforeseen commitment" case: the plan's
-own approach was already vetted at appraise-exec (Step 2.5 there); it is a *new* approach
-surfacing mid-implementation that has not yet been classified. Most tickets never hit this —
-only invoke the gate for a candidate that meets the reversibility test in § 8, not for an
-ordinary implementation-detail choice you're free to make yourself.
+**ADR gate:** the plan's approach was vetted at appraise-exec. If the work turns out to need a different system-level approach (one that constrains other components or future work, not a local detail), invoke the gate per preamble § 8 before committing to it.
 
 ### Simple-fix mode
 
@@ -356,7 +322,7 @@ Spawn a `general-purpose` agent to apply the change and return a difficulty summ
 ```
 Apply the openspec change `{change-name}` by running `/opsx:apply` in the worktree at `{WORKTREE_PATH}`. Follow its instructions fully.
 
-Use smart_search for code navigation during editing: `smart_search` to locate symbols, `smart_outline` for structural views, then `smart_unfold` or `Read` for confirmed targets only. Fall back to Serena if smart_search returns nothing: symbol search or go_to_definition to locate, find_references to trace usages. Read only what these tools pinpoint — never scan whole files. Before starting edits, run GitNexus `impact()` on target symbols to map blast radius.
+Locate code with Grep, then Read confirmed targets only — never scan whole files. Before starting edits, run GitNexus `impact()` on target symbols to map blast radius.
 
 Track these metrics as you work:
 - fix_cycles: how many times did you need to fix and re-run tests?
@@ -431,13 +397,13 @@ bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review start "Reviewing changes
 
 Spawn a `general-purpose` agent for each repo with changes. Pass it:
 - The worktree path and branch name
-- The list of changed files (`git -C "$WORKTREE_PATH" fetch origin "$BASE_BRANCH" --quiet 2>/dev/null; git -C "$WORKTREE_PATH" diff --name-only "${BASE_REF:-origin/$BASE_BRANCH}"` — diff against the base's remote ref, never the local one: on a per-epic branch strategy the local epic ref only advances when someone explicitly fetches, which no pipeline phase does, so a stale local ref silently attributes a previous ticket's commits to this one)
+- The list of changed files (`git -C "$WORKTREE_PATH" fetch origin "$BASE_BRANCH" --quiet 2>/dev/null; git -C "$WORKTREE_PATH" diff --name-only "${BASE_REF:-origin/$BASE_BRANCH}"` — always the remote base ref: a stale local epic ref would attribute earlier tickets' commits to this one)
 - The ticket ID and a one-sentence description of what was implemented
 - This exact instruction: **Invoke `Skill("superpowers:requesting-code-review")` — use the Skill tool with this exact name. Do NOT use any other review tool, plugin, or slash command.**
 
 The agent returns a findings list, each tagged with a severity. **Only `medium` severity and above are blockers** — `low`-severity findings (style preferences, naming opinions) never gate the commit.
 
-This is a bounded fix-and-re-review loop, **capped at 3 cycles** — the same cap used for verify retry and PR iteration (`pipeline-log-format.md`). Track it with a `cycle#N` counter on the log line, the same convention `pr-reconcile` uses for `PR_FEEDBACK_CYCLE`:
+This fix-and-re-review loop is **capped at 3 cycles**, tracked with a `cycle#N` counter on the log line:
 
 - Cycle 1: spawn the agent. If there are no medium+ findings, the review is clean — stop here.
 - If medium+ findings exist and `cycle < 3`: fix each one, re-run unit tests, re-spawn the agent with the updated file list as the next cycle.
@@ -490,8 +456,6 @@ write_verifier_result verifier=implement_tests verdict=<PASS|FAIL> outcome=<Smoo
 ```
 Map test results: all pass → PASS, any fail → FAIL. Pass outcome and corrections count.
 
-This adds the outcome label while preserving all existing labels including `simple`/`complex`. The pairing of predicted complexity and actual outcome is preserved for training and history.
-
 **Mismatch retrospective (only if prediction and outcome disagree):**
 
 A mismatch means the appraisal missed something. When `simple` + `Rough`/`Hard`, or `complex` + `Smooth`:
@@ -512,9 +476,8 @@ A mismatch means the appraisal missed something. When `simple` + `Rough`/`Hard`,
    - What signal the complexity sweep missed
    - What to look for next time in that area
 
-This mismatch signal is scoring feedback for `ticket-appraise` — not codebase knowledge — so it
-never touches the wiki. It's written to notes.md as a `source=appraise`/`source=exec`
-CORRECTIONS block in Part 4 below, and `ticket-retro` Step 1.6 is its consumer.
+This is scoring feedback for `ticket-appraise`, not wiki knowledge: it goes to notes.md as a
+`source=appraise`/`source=exec` CORRECTIONS block (Part 4), read by `ticket-retro` Step 1.6.
 
 ### Part 3 — Wiki errata (always checked — never gated on complexity mismatch)
 
@@ -525,9 +488,7 @@ exists, skip this Part entirely — there is nothing wiki-sourced to check.
 If the wiki was consulted, ask independently of the mismatch check above: **did anything the
 wiki said turn out wrong, stale, or missing during implementation?** A wrong class name, a
 Feign client the flow didn't mention, an entity field the wiki didn't document, a call-chain
-step that no longer matches the code — any of these counts, on any outcome label. A `Smooth`
-ticket that quietly worked around a wrong class name in the wiki is exactly the case a
-misprediction-only gate misses: the wiki stays wrong and nothing ever reports it.
+step that no longer matches the code — any of these counts, on any outcome label, `Smooth` included.
 
 - **No gap found:** log `META|wiki-check|info|wiki consulted, no gap found` (via `$TAP_LOG`
   when `--from-auto`) and move on. Nothing to write.
@@ -554,11 +515,8 @@ Two independent triggers write to the same CORRECTIONS block in notes.md, so dow
 back into their own artifacts:
 
 - **Complexity mismatch** (outcome label disagrees with prediction) → `source=appraise` or
-  `source=exec`, per the mapping table below. Gated on mismatch — this is scoring feedback, not
-  a standing fact, so it is only meaningful when the prediction was actually wrong.
-- **Wiki gap found in Part 3** → `source=wiki`. Gated on "a gap was found", never on mismatch —
-  this is the fix for the bug this change closes: a wiki gap discovered on a `Smooth` ticket is
-  just as real as one discovered on a `Hard` one.
+  `source=exec`, per the mapping table below.
+- **Wiki gap found in Part 3** → `source=wiki`, whatever the outcome label.
 
 The source maps to the skill whose prediction was overturned:
 
@@ -596,11 +554,7 @@ append_correction "{ticket-dir}/notes.md" \
 || bash ~/.claude/skills/lib/plog.sh META corrections-error warn "append_correction wiki failed"
 ```
 
-**Rules:**
-- `source=appraise`/`source=exec` corrections are written only on mismatch — never on agreement.
-- `source=wiki` corrections are written whenever Part 3 found a gap — independent of mismatch.
-- The atomic `tmp` → `mv` pattern prevents torn blocks on crash.
-- Failure to write a correction logs a `corrections-error` warning but **never halts** the implement phase.
+A failed correction write logs a `corrections-error` warning and **never halts** the implement phase.
 
 ---
 
@@ -648,22 +602,8 @@ For each affected repo:
 
 ### Commit title template
 
-```
-type(TICKET-ID): imperative-mood description
-```
-
-| Type | When |
-|------|------|
-| `feat` | Feature |
-| `fix` | Bug |
-| `refactor` | Refactor |
-| `chore` | Tooling, deps, config |
-
-The ticket ID is **mandatory** — no bare descriptive titles.
-
-**Examples:**
-- `feat(WIL-34): add hash-based duplicate document detection`
-- `fix(WIL-35): add SSE log replay buffer for late-connecting clients`
+`type(TICKET-ID): imperative-mood description`, type one of `feat`, `fix`, `refactor`, `chore`
+(tooling, deps, config). The ticket ID is **mandatory**, e.g. `fix(WIL-35): add SSE log replay buffer`.
 
 **Append to `notes.md`:**
 ```markdown
@@ -687,20 +627,13 @@ bash ~/.claude/skills/lib/plog.sh IMPLEMENT commit-push done "Pushed {branch-nam
 
 ## Step 5.5 — Plan artifact durability check
 
-The plan artifact that drove this implementation (openspec `tasks.md`/`design.md`, for complex
-tickets) must be durably tracked in the tickets repo — not merely present on disk. This is a
-safety net for issue #363 (OPENSPEC_ARTIFACTS_UNTRACKED): `ticket-appraise-exec` now commits the
-change dir when it first writes it (Step 3.4 there), but a resumed exec run can skip that step
-entirely, and nothing prevents the commit from being reverted between exec and implement. This
-check must resolve against the tickets repo, not wherever CWD happens to be by now — Step 5 `cd`s
-into the code worktree and never `cd`s back. Use `$IMPLEMENT_TICKETS_ROOT` (captured before Step
-0.6) explicitly, both for the mode re-derivation and for `assert`'s `--root`:
+Backstop for #363: an openspec plan artifact must be committed in the tickets repo, not merely on
+disk (appraise-exec Step 3.4 commits it, but a resumed exec can skip that). Resolve against
+`$IMPLEMENT_TICKETS_ROOT`, not CWD:
 
 ```bash
 EXPECT_FLAG=""
-# Mode was already determined in Step 2 ("detect-path"): simple-fix.md found → simple-fix,
-# else → openspec. Re-derive the same way rather than trusting carried state — resolved against
-# $IMPLEMENT_TICKETS_ROOT explicitly, not "." (CWD is the code worktree by this point).
+# Re-derive the mode (simple-fix.md found → simple-fix, else openspec) rather than trust carried state.
 bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$IMPLEMENT_TICKETS_ROOT" --type simple-fix >/dev/null 2>&1 || EXPECT_FLAG="--expect"
 bash ~/.claude/skills/lib/openspec-tracking-check.sh assert "{TICKET-ID}" $EXPECT_FLAG --root "$IMPLEMENT_TICKETS_ROOT"
 ASSERT_RC=$?

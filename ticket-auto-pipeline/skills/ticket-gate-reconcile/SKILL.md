@@ -18,7 +18,6 @@ source ~/.claude/skills/lib/ticket-env.sh {TICKET-ID}
 export TAP_LOG="$PWD/logs/{TICKET-ID}-pipeline.log"
 export HB_LOG_FILE="$PWD/logs/{TICKET-ID}-heartbeat.log"
 
-~/.claude/skills/lib/hb-wrap.sh
 source ~/.claude/skills/lib/linear-api.sh
 source ~/.claude/skills/lib/ticket-dir.sh
 source ~/.claude/skills/lib/notes-parse.sh
