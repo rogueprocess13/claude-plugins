@@ -1,7 +1,6 @@
 # Test files that start first under scripts/run-tests.sh, slowest first (local profile 2026-11-09).
 # Order only: a file missing here still runs, and a stale line is ignored.
 ticket-planner/lib/tests/test-planner-draft-readiness-loop.sh
-ticket-auto-pipeline/lib/tests/test-env-check.sh
 fleet-controller/fleetd/tests/test_supervisor.py
 ticket-planner/lib/tests/test-planner-draft-revise.sh
 ticket-auto-pipeline/lib/tests/test-ticket-create-guard.sh
