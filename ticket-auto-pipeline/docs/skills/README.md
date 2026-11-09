@@ -31,7 +31,6 @@ The ticket-auto-pipeline ships 25 skills that automate the full Linear ticket li
 | [ticket-detect-resume](ticket-detect-resume.md) | *(Private)* Reads pipeline log to find crash recovery restart point |
 | [ticket-document](ticket-document.md) | Generates ai-context.md after implementation for future agents |
 | [ticket-env-check](ticket-env-check.md) | Validates all env vars and CLAUDE.md fields required by the pipeline |
-| [ticket-fleet-controller](ticket-fleet-controller.md) | Automated pipeline intervention — detect, kill, and restart stalled pipelines |
 | [ticket-gate-reconcile](ticket-gate-reconcile.md) | Post-gate-hold comment reconciliation for re-approved tickets |
 | [ticket-overseer](ticket-overseer.md) | Produces standup and in-flight status reports from pipeline logs |
 | [ticket-prescan](ticket-prescan.md) | Builds durable agent-knowledge docs for repos — eliminates per-ticket codebase rediscovery |

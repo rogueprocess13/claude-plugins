@@ -354,16 +354,6 @@ Treat any `BOARD_PROJECTION_STALLED` notification as requiring action (see `META
 on the ticket's pipeline log) before rolling back — a dead-lettered entry's column is stale and a
 reverted `flow.sh` would compute its next transition from that stale state.
 
-## Migrating from `/ticket-fleet-controller`
-
-The fleet controller used to live inside `ticket-auto-pipeline`. The old `/ticket-fleet-controller` command is a **deprecated forwarder** kept for one release cycle.
-
-```
-/ticket-fleet-controller monitor   →   /fleet-controller monitor
-```
-
-Update any cron jobs or scripts still calling the old name.
-
 ## Documentation
 
 | Document | Audience | Contents |

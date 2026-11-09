@@ -17,6 +17,32 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.97.0 (2026-11-09)
+
+Skill prose dedupe, sub-PR 3f (`skill-prose-dedupe`, change 3 of the skill-size reduction
+programme): the deprecated `ticket-fleet-controller` forwarder skill is removed. It was kept "for
+one release cycle" when the fleet controller moved to its own plugin (2026-07-07). Also
+fleet-controller 0.46.7 (README only).
+
+### Removed
+
+- **BREAKING (minor):** `ticket-auto-pipeline/skills/ticket-fleet-controller/SKILL.md` (1,600
+  bytes) and its generated page `docs/skills/ticket-fleet-controller.md`. `/ticket-fleet-controller`
+  and `/ticket-auto-pipeline:ticket-fleet-controller` no longer resolve. Use `/fleet-controller`
+  (`/fleet-controller:fleet-controller`) with the same mode names; update any cron job or script
+  still calling the old name.
+
+### Changed
+
+- `lib/spawn-helper.sh`: `SPAWN_PLUGIN_SKILLS` no longer lists `ticket-fleet-controller`
+  (`test-spawn-skill-qualified.sh` pins the list to `skills/`).
+- Docs: the forwarder is gone from the skill index (`docs/skills/README.md`), the `ticket-retro`
+  related-skills list, the README supporting-skills list, the plugin and root `CLAUDE.md` skill
+  lists, and `plugin-overview.md` (now points at the `fleet-controller` plugin's
+  `lib/fleet-*.sh`). `fleet-controller/README.md` drops its "Migrating from
+  `/ticket-fleet-controller`" section.
+- `scripts/skill-size-baseline.tsv`: the forwarder's entry is dropped.
+
 ## 0.96.10 (2026-11-09)
 
 Skill prose dedupe, sub-PR 3e (`skill-prose-dedupe`, change 3 of the skill-size reduction

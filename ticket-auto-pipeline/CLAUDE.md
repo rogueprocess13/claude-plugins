@@ -85,7 +85,6 @@ Both new hooks deliberately avoid two payload assumptions the observed `SessionS
 - `ticket-detect-resume` — crash recovery via pipeline log checkpoint
 - `ticket-retro` — post-mortem failure analysis from logs
 - `ticket-overseer` — pipeline queue dashboard (human-facing)
-- `ticket-fleet-controller` — DEPRECATED forwarder to `fleet-controller` plugin (extracted 2026-07-07). Use `/fleet-controller` instead.
 - `ticket-batch-appraise` / `ticket-batch-verify` — batch operations
 - `ticket-reproduce` — bug reproduction (Step 1.5 for bug tickets)
 - `ticket-gate-reconcile` — post-gate-hold comment reconciliation (isolated agent, spawned by router at STEP_3_5)
