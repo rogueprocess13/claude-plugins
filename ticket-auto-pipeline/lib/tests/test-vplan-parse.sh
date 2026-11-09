@@ -296,6 +296,30 @@ out=$(printf 'stdin text' | {
   _pass "#514 review: an empty argument does not read stdin" ||
   _fail "#514 review: empty argument consumed stdin (got '$out')"
 
+# SIGPIPE: `echo "$text" | grep -q` under pipefail returned 141 once grep -q
+# exited on its early match while echo was still writing, so a body with a
+# real Verification Plan parsed as having none (flaked under parallel make
+# test; every time for a large body).
+big=$(printf '## Verification Plan\n\n### Per-Criterion Verification\n\n| # | Criterion | Check | Verifiable |\n|---|---|---|---|\n| 1 | a | b | ✓ |\n\n## Notes\n')
+filler=$(printf 'filler line for size filler line for size filler line\n%.0s' $(seq 1 4000))
+big="$big"$'\n'"$filler"
+_sp_fail=0
+for _ in 1 2 3 4 5; do
+  if ! (
+    set -o pipefail
+    vplan_parse "$big"
+  ) || [ "$(
+    set -o pipefail
+    vplan_parse "$big"
+    echo "$VPLAN_ROWS"
+  )" != "1" ]; then
+    _sp_fail=$((_sp_fail + 1))
+  fi
+done
+[ "$_sp_fail" -eq 0 ] &&
+  _pass "large body (${#big} bytes) with an early Verification Plan parses under pipefail" ||
+  _fail "large body parsed as no Verification Plan in $_sp_fail/5 runs (SIGPIPE from echo | grep -q)"
+
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1
