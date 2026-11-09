@@ -17,6 +17,21 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.96.2 (2026-11-09)
+
+ticket-auto-pipeline 0.96.2.
+
+### Fixed
+
+- `vplan_parse` no longer reads a ticket that has a Verification Plan as having
+  none. It tested for the heading with `echo "$text" | grep -q`; under the
+  caller's `pipefail`, `grep -q` exits on its first match, the still-writing
+  `echo` gets SIGPIPE and the pipeline returns 141. Every time for a large
+  body, now and then for a small one on a loaded host (it surfaced once
+  `make test` ran in parallel). Now a here-string. Regression test: a ~216 KB
+  body with an early plan parses under `pipefail`. The other ~117 sites of the
+  pattern are #640.
+
 ## 0.96.1 (2026-11-09)
 
 ticket-auto-pipeline 0.96.1.
