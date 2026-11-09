@@ -1506,7 +1506,7 @@ This is the live check of Step 12 item 0, and it will likely re-hit Step 12 item
         grill profile, planner phase prompts or gate libs. Mocked Linear for the fingerprint; real
         Linear only for the final dispatch check.
 
-## Step 17 — Faster CI — started 2026-11-09; items 1–3 DONE (CI ~55 → ~18 → 5 min), item 4 next
+## Step 17 — Faster CI — DONE 2026-11-09 (items 1–4; CI ~55 → ~18 → 5 min); open: `ci-ok` required check (user's call), next floor `test-planner-draft-revise.sh`
 
 PR CI takes a median of 46 min (`make test` is 53 of a ~55 min job), and a PR takes a median of
 2.8 h from opened to merged, because merging main in restarts CI. All 257 test commands run one
@@ -1552,7 +1552,7 @@ ticket-auto 635s, fleet-controller 240s, the rest < 40s.
       CI) sets shard 3's wall time, so it is now the floor. Also fixed: four ticket-auto tests
       shared `/tmp/test-repos-root` and `rm -rf`'d each other's fixtures (or a real inherited
       `REPOS_ROOT`'s `.ticket-auto`).
-- [x] 3a. Both follow-ups of item 3, **PR `test/ci-durations-and-gate-split`** (2026-11-09):
+- [x] 3a. Both follow-ups of item 3, **PR #653 merged 2026-11-09** (eb65bda):
       - `test-planner-draft-readiness-gate.sh` (81s local today, 263–274s CI): the loop suites'
         compose memo is now a shared sourced file (`draft-readiness-compose-memo.sh`), which
         alone takes the file to 29s; then split into `-gate-flow` / `-gate-block` /
@@ -1570,13 +1570,13 @@ ticket-auto 635s, fleet-controller 240s, the rest < 40s.
         `test-planner-draft-revise.sh` (81s local, 268–355s CI; 295s here, shard 1): it is the
         floor and the next file to speed up or split. Shard serial sums still spread 744–1045s
         against a predicted 943 each, so runner noise is now as large as the imbalance.
-- [ ] 4. PR runs only the shards for the plugins a PR touches; ticket-auto changes also run
+- [x] 4. PR runs only the shards for the plugins a PR touches; ticket-auto changes also run
       fleet-controller (it sources ticket-auto libs). Decide inside one always-running job, never
       with a workflow `paths:` filter (a skipped required check stays Pending and blocks merging).
       Nightly full run at `7 0 * * *` UTC (02:07 local, off the busy :00 slot), plus the OTel SDK
       step, opening an issue on failure. `concurrency` with `cancel-in-progress` for PR runs only.
       Expect ~5 min on most PRs.
-      **PR open (branch `ci/path-aware-tests`, 2026-11-09)**: a `changes` job runs
+      **PR #652 merged 2026-11-09** (7136904): a `changes` job runs
       `scripts/select-tests.sh --base HEAD^1` and passes `TEST_ONLY` to the shards
       (`run-tests.sh --only`, filtered before the shard split); `otel` runs only when
       fleet-controller is selected; every job skips by step, so all checks report.
@@ -1589,8 +1589,10 @@ ticket-auto 635s, fleet-controller 240s, the rest < 40s.
       fleet-controller ≈ all, so the gain is on planner/grill/kc/notes PRs. Nightly
       `7 0 * * *` + `workflow_dispatch`; a failed nightly files/comments on one
       `ci-nightly` issue (`scripts/ci-nightly-issue.sh`). PR-only
-      `cancel-in-progress`. Left for after merge: make `ci-ok` a required check on
-      `main`.
+      `cancel-in-progress`; non-PR runs get their own group (`run_id`), so a burst of merges
+      never drops a queued `main` run. Not yet seen live: the subset path on a single-plugin
+      PR, and `ci-nightly-issue.sh` against real GitHub (stub-tested only). Left: make `ci-ok`
+      a required check on `main` (blocks the merge-right-after-push shortcut; user's call).
 - Not doing: merge queue. It runs a separate full CI per queued PR (no speed-up) and is offered
   only for organisation-owned repos; this repo is user-owned. `main` has no required status
   checks today; add one once step 4 lands.
