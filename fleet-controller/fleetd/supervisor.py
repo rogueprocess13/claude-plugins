@@ -2028,6 +2028,12 @@ def _try_reap(pid):
         return True  # No such child — definitely dead
 
 
+# Wait after the final SIGKILL before checking the worker is gone. A module
+# constant rather than a literal only so tests can shorten it; production
+# behaviour is unchanged.
+KILL_SIGKILL_WAIT_SECS = 1
+
+
 def kill_worker(tid, pid, generation, state_dir, reason='fleet-kill',
                 grace_secs=None):
     """Escalate: cooperative stop → grace → SIGINT → grace → SIGTERM → grace → SIGKILL.
@@ -2097,7 +2103,7 @@ def kill_worker(tid, pid, generation, state_dir, reason='fleet-kill',
 
     # ── Step 4: SIGKILL to process group ──────────────────────────────────
     _signal_process_group(pid, signal.SIGKILL)
-    time.sleep(1)  # Brief wait for kernel to reap
+    time.sleep(KILL_SIGKILL_WAIT_SECS)  # Brief wait for kernel to reap
 
     if _is_dead():
         _write_fence_files(tid, generation, state_dir)
