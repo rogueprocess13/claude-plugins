@@ -119,6 +119,21 @@ eq "report exit 0" "$?" "0"
 grep -Fq '| 1 | 2 | 3m 0s | 2m 0s |' <<<"$report" && pass "round row" || fail "round row" "$report"
 grep -Fq '| 1 | sealed |' <<<"$report" && pass "session row" || fail "session row" "$report"
 
+echo "=== emit/seal tests stay out of the session marker (#645) ==="
+# Inside a Claude Code session the other grill-me tests must not register
+# their scratch work dirs in the developer's real marker: the session's Stop
+# hook would later write into them while a test is still snapshotting them.
+# Run each one with a session id set and XDG_STATE_HOME pointed at scratch.
+for t in test-grill-hold.sh test-grill-seal.sh test-grill-render.sh test-grill-score.sh; do
+  xdg="$SCRATCH/xdg-${t%.sh}"
+  env -u GRILL_TELEMETRY_STATE_DIR CLAUDE_CODE_SESSION_ID=leak-probe XDG_STATE_HOME="$xdg" \
+    bash "$TEST_DIR/$t" >"$SCRATCH/${t%.sh}.out" 2>&1
+  eq "$t passes with a session id set" "$?" "0"
+  [ -e "$xdg/grill-me/telemetry/sessions/leak-probe" ] &&
+    fail "$t marker" "registered: $(cat "$xdg/grill-me/telemetry/sessions/leak-probe")" ||
+    pass "$t registers nothing in the session marker"
+done
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

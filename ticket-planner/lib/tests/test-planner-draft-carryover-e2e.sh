@@ -4,7 +4,7 @@
 # carry-over and the epic summary.
 #
 # The gate is driven exactly as SKILL.md steps 1d + 1e drive it, with the
-# stubbed agents of test-planner-draft-readiness-loop.sh (a scan that raises
+# stubbed agents of draft-readiness-loop-harness.sh (a scan that raises
 # a fixed finding until the spec holds a fix text; a revise agent that adds a
 # criterion without fixing it). Then TicketGen bodies are written as Linear
 # stores them and planner_refinement_scan runs over them.
@@ -171,7 +171,7 @@ _setup() {
   unset FINDINGS_a_schema FINDINGS_b_api STRUCT_a_schema STRUCT_b_api REVISE_a_schema REVISE_b_api
 }
 
-# ── stub agents (as in test-planner-draft-readiness-loop.sh) ─────────────
+# ── stub agents (as in draft-readiness-loop-harness.sh) ───────────────
 _hash_of() { planner_draft_readiness_body_hash "${DR}/$1/body.md"; }
 _scan_block() {
   local slug="$1" tid="DRAFT-$1" h body var i=0 f g
