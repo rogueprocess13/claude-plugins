@@ -5,6 +5,11 @@
 
 set -euo pipefail
 
+# grill-me telemetry off (#645): with a session id set, grill_seal_generate
+# rewrites open.json in every work dir listed in the developer's real
+# grill-me session marker.
+unset CLAUDE_CODE_SESSION_ID
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$TEST_DIR/.." && pwd)"
 
