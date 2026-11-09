@@ -25,10 +25,7 @@ Run the `mkdir -p` once, before the first `_plog` call. Without it, `_plog`'s `>
 
 ## Heartbeat
 
-- **Freshness gate**: `hb-wrap.sh decision "prescan-gate" "fired" "<status>:<reason>" '{"status":"...","reason":"..."}'`
-- **Fallback**: if gitnexus unavailable, `hb-wrap.sh fallback "gitnexus" "fired" "gitnexus MCP unavailable" '{"section":"..."}'`
-- **Corpus build**: if corpus build fails, `hb-wrap.sh fallback "corpus-build" "fired" "corpus unavailable" '{"repo":"<slug>"}'`
-- **Scaffold verify**: `hb-wrap.sh gate "prescan-scaffold" "<ok|fail>" "<msg>" '{"docs_dir":"..."}'`
+Each heartbeat event is written inline at its step (event schema: `pipeline-heartbeat-format.md`).
 
 ---
 
@@ -370,12 +367,9 @@ bash "$HOME/.claude/skills/lib/prescan-wire-claude-md.sh" "${_wire_args[@]}"
 _plog "PRESCAN" "wire" "done" "$slug: CLAUDE.md wired"
 ```
 
-The script handles both first-time insertion (appends block) and replacement (content between START/END markers). Idempotent — running twice produces identical output. Existing surrounding content is preserved.
-
-When `WIKI_ROOT` is set, the same call also ensures a `| Cross-repo | {WIKI_ROOT}/index.md |`
-row exists in this repo's own INDEX.md **Lookup by Topic** table — prescan is per-repo and
-cannot answer a cross-repo question, so its own routing table should say where to go for one.
-This is what `ticket-appraise` Step 3a reads to know it isn't the only knowledge source in play.
+The script is idempotent and leaves content outside its markers untouched. When `WIKI_ROOT` is
+set it also adds a `| Cross-repo | {WIKI_ROOT}/index.md |` row to the repo's INDEX.md
+**Lookup by Topic** table, which `ticket-appraise` Step 3a reads.
 
 ---
 
@@ -400,41 +394,14 @@ Partial multi-repo failure is non-fatal. A failed repo scan emits `failed` and l
 
 ## Standalone maintenance sweep (proactive, ticket-independent)
 
-Running `/ticket-prescan` with **no repo argument** already enumerates every
-repo under `REPOS_ROOT` (Step 0) and, for each `stale`/`decayed`/`missing`
-one, runs full cadence-dependent doc generation (Step 4) — it is not
-scoped to any single ticket. That makes it the correct mechanism for
-proactively refreshing repos a ticket never happens to touch. The gap is
-that nothing invokes it this way: the only caller in the pipeline is
-`ticket-auto`'s per-ticket "Prescan gate" (Phase 2), which runs the same
-enumeration but does so once per ticket dispatch — competing with that
-ticket's own budget and priorities, not on a standing schedule. In
-practice most repos under `REPOS_ROOT` sit `decayed`/`missing`
-indefinitely unless a ticket happens to name them directly.
-
-To close that gap, schedule `/ticket-prescan` (bare) to run periodically,
-decoupled from ticket dispatch — e.g. via the `schedule` skill or a cron
-entry, at a cadence matched to `PRESCAN_DECAY_AGE_DAYS` (default 30 days).
-Because a bare run always fans out a full multi-persona `Agent` spawn per
-non-fresh repo, gate the (expensive) Claude invocation behind the
-zero-token `prescan-sweep.sh` pre-check so a scheduled run that finds
-nothing stale costs nothing beyond a few bash calls:
+A bare `/ticket-prescan` (no repo argument) refreshes every non-fresh repo under `REPOS_ROOT`.
+To schedule it, gate the Claude run behind the zero-token pre-check; usage, exit codes and
+`--format json`: `lib/prescan-sweep.sh` usage text.
 
 ```bash
-# Cheap, deterministic, no Agent/Claude session spawned:
 bash lib/prescan-sweep.sh --repos-root "$REPOS_ROOT"
-# exit 0 → everything fresh, nothing to do
-# exit 1 → NEEDS_REFRESH lists repos needing a scan; only then invoke:
-#   claude -p "/ticket-prescan"
+if [ $? -eq 1 ]; then claude -p "/ticket-prescan"; fi  # 1 = refresh needed
 ```
-
-`prescan-sweep.sh` enumerates repos the same way Step 0 does and calls
-`prescan-check.sh` per repo (see that script's own freshness rules) —
-it performs no doc generation itself, so it never contends for the
-per-repo `.lock` used by an actual scan. `--format json` emits
-`{total, fresh, stale, decayed, missing, needs_refresh}` for programmatic
-callers (e.g. a fleet-controller detection engine deciding whether a
-maintenance dispatch is worth spawning).
 
 ---
 

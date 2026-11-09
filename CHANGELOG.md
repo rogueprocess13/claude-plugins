@@ -17,6 +17,47 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.96.10 (2026-11-09)
+
+Skill prose dedupe, sub-PR 3e (`skill-prose-dedupe`, change 3 of the skill-size reduction
+programme): the support skills drop 29,166 bytes. Deletion and compression only, apart from two
+moves to the file that owns the content: the guidance-extractor detection patterns now live in
+the `PHASEINSPECT` heredoc in `lib/phase-inspector.sh`, and the retro error-event field catalogue
+is a header comment in `retro.sh`. The skill fingerprints change, including all six
+`prompt_manifests` entries that list `ticket-flow/SKILL.md`. This is intended.
+
+### Changed
+
+- `lib/phase-inspector.sh`: the injected inspector instructions now carry, for each of the five
+  patterns, its detection logic and evidence-format template. `trivial_pass` uses the
+  `criteria_total == 1` wording that matches `lib/inspect-verifiers.sh`. `test-phase-inspector.sh`
+  asserts them.
+- `guidance-extractor/SKILL.md` 15,735 → 8,633 bytes (−7,102). Input Context, Detection Patterns,
+  Verdict Computation, Output and Adding New Detection Patterns are gone (owned by the heredoc).
+- `ticket-flow/SKILL.md` 13,582 → 7,322 bytes (−6,260). The States, Labels, Transitions, Epic
+  acceptance and Preconditions tables are replaced by a pointer to `workflow.json` and a `jq`
+  one-liner. Verdict gate is cut to the caller contract; the `#verdict-gate` anchor stays.
+  `docs/label-audit.md` citations of the old legend are annotated and a dated addendum records the
+  re-run grep.
+- `wiki-maintenance/SKILL.md` 33,261 → 28,838 bytes (−4,423). Steps 2.5e, 3, 3.5 and 4 point at
+  `docs/glossary-schema.md`, `wiki-check.sh` and `wiki-lock.sh` instead of restating them; Notes
+  keeps only the two rules stated nowhere else.
+- `ticket-prescan/SKILL.md` 24,034 → 21,699 bytes (−2,335). The heartbeat list (every event is
+  written inline) and the standalone-sweep prose (owned by `prescan-sweep.sh`) are cut.
+- `ticket-retro/SKILL.md` 29,954 → 28,689 bytes (−1,265). The severity table (owned by
+  `github_retro_map_severity`) and the 3a.5 field list (now the `retro.sh` header) are gone.
+- `ticket-audit` −459 and `ticket-audit-exec` −1,339 bytes: duplicate Step 2 checks, the repeated
+  5c steps, the run-1 summary repeat and the phase diagram are gone.
+- `nav-hints` −945, `skill-docs` −169 (the skill list is now a `find` glob), `ticket-persona-refresh`
+  −768 (the `Co-Authored-By` commit examples are gone), `ticket-reproduce` −229, `ticket-appraise-exec`
+  −21 bytes.
+- `app-knowledge/SKILL.md` 5,197 → 1,346 bytes (−3,851) is now a skeleton: environments
+  placeholders, the `## Role Scope Registry` marker and the append contract. Project data lives only
+  in the host's runtime copy (`~/.claude/skills/app-knowledge/SKILL.md`), which this release does
+  not touch. `install.sh` no longer offers to archive that copy. `ticket-reproduce` and
+  `ticket-appraise-exec` now say the file may be empty.
+- Client ticket IDs are gone from every skill this release edits.
+
 ## 0.96.9 (2026-11-09)
 
 Skill prose dedupe, sub-PR 3d (`skill-prose-dedupe`, change 3 of the skill-size reduction

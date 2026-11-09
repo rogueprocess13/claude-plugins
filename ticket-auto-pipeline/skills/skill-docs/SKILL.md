@@ -34,32 +34,15 @@ If `$SKILLS_DIR` does not exist, abort with: `Error: skills/ directory not found
 
 ## Step 2 — Build the skill list
 
-Enumerate skill directories in two ordered groups (alphabetical within each group):
+Enumerate every skill from disk, never from a hard-coded list:
 
-**Pipeline Skills** (process first):
-1. `ticket-appraise`
-2. `ticket-appraise-exec`
-3. `ticket-auto`
-4. `ticket-flow`
-5. `ticket-implement`
-6. `ticket-pr-iterate`
-7. `ticket-pr-review`
-8. `ticket-retro`
-9. `ticket-setup`
-10. `ticket-verify`
+```bash
+find "$SKILLS_DIR" -mindepth 2 -maxdepth 2 -name SKILL.md | sort
+```
 
-**Support Skills** (process second):
-1. `app-knowledge`
-2. `nav-hints`
-3. `ticket-batch-appraise`
-4. `ticket-batch-verify`
-5. `ticket-critique`
-6. `ticket-detect-resume`
-7. `ticket-document`
-8. `ticket-env-check`
-9. `ticket-overseer`
-10. `ticket-reproduce`
-11. `wiki-maintenance`
+Classify each skill as **Pipeline** or **Support**: a frontmatter `category:` value wins; otherwise
+keep the section the skill is already listed under in `$DOCS_DIR/README.md`; a skill listed in
+neither goes under Support. Process Pipeline skills first, then Support, alphabetical within each.
 
 Track two counters: `written=0`, `skipped=0`. Track a `skipped_list=()`.
 
@@ -67,7 +50,7 @@ Track two counters: `written=0`, `skipped=0`. Track a `skipped_list=()`.
 
 ## Step 3 — Process each skill
 
-For each skill name in the ordered list above:
+For each skill in the ordered list from Step 2:
 
 ### 3a — Read the SKILL.md
 
@@ -156,7 +139,7 @@ After all per-skill files have been written, write `$DOCS_DIR/README.md`:
 ```markdown
 # Skill Reference
 
-The ticket-auto-pipeline ships 21 skills that automate the full Linear ticket lifecycle — from investigation through implementation, verification, and merge. **Pipeline Skills** form the core workflow invoked by `/ticket-auto`. **Support Skills** provide targeted utilities callable independently.
+The ticket-auto-pipeline ships <N> skills that automate the full Linear ticket lifecycle — from investigation through implementation, verification, and merge. **Pipeline Skills** form the core workflow invoked by `/ticket-auto`. **Support Skills** provide targeted utilities callable independently.
 
 ## Pipeline Skills
 

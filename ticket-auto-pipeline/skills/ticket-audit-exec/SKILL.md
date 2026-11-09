@@ -213,29 +213,7 @@ If PENDING_STRUCTURAL is 0:
 
 ### 5c: Process each structural item
 
-For each item in `structural_items` where state is `pending` or `resumed`:
-
-Extract items needing processing (includes `detail_clean` and `all_ticket_ids` for multi-ticket handling):
-```bash
-echo "$CHECKLIST" | jq -r '.structural_items[] | select(.state == "pending" or .state == "resumed") | "\(.ticket_id)|||\(.detail)|||\(.detail_clean)|||\(.all_ticket_ids)"'
-```
-
-For each pending item (iterate through the IDs):
-
-1. **Write-ahead**: Mark the item `[>]` in the file:
-   ```bash
-   write_ahead_mark "$TARGET_FILE" "{TICKET_ID}"
-   ```
-
-2. **Dedup guard**: Call the guard script:
-   ```bash
-   GUARD_SOURCE="${SOURCE_ID}:{TICKET_ID}:structural"
-   if bash "$PLUGIN_LIB/audit-comment-guard.sh" "{TICKET_ID}" "$GUARD_SOURCE"; then
-     echo "Dedup: existing audit comment found for {TICKET_ID} — skipping"
-     mark_item_done "$TARGET_FILE" "{TICKET_ID}"
-     continue to next item
-   fi
-   ```
+For each item in `structural_items` where state is `pending` or `resumed` (same extraction as 4c, over `.structural_items[]`), run 4c steps 1-2 (write-ahead, dedup guard) with `GUARD_SOURCE="${SOURCE_ID}:{TICKET_ID}:structural"`, then:
 
 3. **Compose and post comment**: Extract the finding type from the detail (first colon-delimited segment, e.g., "merge candidate", "split candidate", "duplicate", "drift", "goal misalignment"). Use `detail_clean` (stripped of the finding type prefix) to avoid redundancy.
 
@@ -297,11 +275,7 @@ fi
 
 ## Step 7: Print summary
 
-### Run 1 summary (after Step 4)
-Already printed in Step 4d with:
-- Items delegated to ticket-critique
-- `[!]` failures with ticket IDs
-- "Resolve needs-info tickets, then re-run ticket-audit-exec for structural phase."
+Run 1 prints its summary in Step 4d.
 
 ### Run 2 summary (after Step 5+6)
 
@@ -321,14 +295,3 @@ Print:
 | In-progress | `- [>]` | Prior run crashed during processing | Re-process from start (dedup guard prevents double-apply) |
 | Complete | `- [x]` | Applied successfully | Skip |
 | Failed | `- [!]` | Error during application | Skip (reported in summary; human investigates) |
-
-## Phase state machine
-
-```
-needs-info ──(run 1)──▶ needs-info-done ──(run 2)──▶ structural-done ──▶ archive/
-     ▲                        │                         │
-     │                        │                         │
-     └── unrecognized         └── run 1 incomplete      └── all items [x]/[!]
-        (treat as needs-info)    (block structural,        (move to archive/)
-                                 exit with message)
-```

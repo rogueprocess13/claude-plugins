@@ -168,21 +168,36 @@ assemble_inspector_context() {
 
   # Instructions section: quoted heredoc — no shell expansion at all.
   # Safe against backticks, $(), and ${} in the template text itself.
+  # This block is the single owner of the detection-pattern definitions
+  # (skills/guidance-extractor/SKILL.md no longer repeats them). To add a
+  # pattern, add a numbered entry here with id, severity, detection logic and
+  # evidence format; no router change is needed. Prefer WARN; promote a
+  # pattern to FAIL only after >=5 confirmed true positives.
   local _instructions_block
   _instructions_block=$(
     cat <<'PHASEINSPECT'
 
 ## Instructions
 
-Inspect the verifier results above. Check for these known defect patterns:
+Inspect the verifier results above. Check for these known defect patterns. Each one is listed with its id (the `pattern` value), severity, detection logic and evidence-format template. Evidence must cite specific verifier IDs and values, never vague text.
 
 1. **flaky_tests** (WARN): A PASS verifier followed by a FAIL verifier on overlapping criteria (cross-phase — check for PASS+FAIL pairs within the available results or across phases when multi-phase context is provided)
+   - Detection logic: flag it if any verifier has verdict PASS and another verifier in the results has verdict FAIL. The canonical case is IMPLEMENT unit tests PASS but VERIFY browser UAT FAIL.
+   - Evidence format: `"{pass_verifier} PASS but {fail_verifier} FAIL — possible flaky test"`
 2. **missing_requirement** (WARN): PR review OK but critique/audit found gaps
+   - Detection logic: flag it if any verifier with "review" in its ID reports PASS and any verifier with "critique" or "audit" in its ID reports WARN or FAIL.
+   - Evidence format: `"{review_verifier} PASS but {critique_verifier} {critique_verdict} — possible missed requirement"`
 3. **trivial_pass** (WARN): Any non-gate verifier PASS with criteria_total between 1 and 1 (single-criterion verification). Exclude verifiers with criteria_total=0 (outcome-scored) and known single-criterion gates (gate_check, return_completeness).
+   - Detection logic: for each verifier with verdict PASS, flag it if criteria_total == 1 and the verifier is not excluded above. Only PASS verdicts count (a FAIL with one criterion is not a trivial pass).
+   - Evidence format: `"{verifier} PASS with criteria_total={N} — verification too shallow"`
 4. **verdict_disagreement** (WARN): Two verifiers in the inspected phase(s) disagree (e.g., one PASS and one FAIL/BLOCK)
+   - Detection logic: collect the unique verdicts across verifiers; flag it if the set holds PASS and (FAIL or BLOCK).
+   - Evidence format: `"verdicts diverge: {verifier1}={v1}, {verifier2}={v2}"`
 5. **incomplete_implementation** (WARN): PASS verifier + "RETURN_INCOMPLETE present" is true above. Only the IMPLEMENT inspection ever reports it true — unchecked boxes left at VERIFY / PR-REVIEW time belong to those later phases and are not an implementation gap, so never raise this pattern from the gate-warn text alone.
+   - Detection logic: flag it if "RETURN_INCOMPLETE present" is true and any verifier has verdict PASS.
+   - Evidence format: `"{verifier} PASS but RETURN_INCOMPLETE gate-warn present — unchecked boxes remain"`
 
-Verdict computation: worst severity wins across all detected patterns (PASS if 0 patterns, WARN if ≥1 WARN and 0 FAIL, FAIL if ≥1 FAIL).
+Verdict computation: worst severity wins across all detected patterns (PASS if 0 patterns, WARN if ≥1 WARN and 0 FAIL, FAIL if ≥1 FAIL). `signals` is the number of patterns found. Write `detail` as one line: for PASS "All verifiers clean: {summary}", for WARN "{N} pattern(s) detected: {list}", for FAIL "BLOCKING: {pattern} — {brief reason}".
 
 Write exactly one line to the pipeline log (`$LOG_FILE`) with this command block, filling in only the single JSON line between the `JSON` markers. The written line MUST start with the ISO-8601 UTC timestamp field — the pipeline log format is `ISO|PHASE|STEP|STATUS|MSG`, and a line without its leading timestamp breaks every consumer that splits on `|`. Keep the rest of the block exactly as written:
 ```bash

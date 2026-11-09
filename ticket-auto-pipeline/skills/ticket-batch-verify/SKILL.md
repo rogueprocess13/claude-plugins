@@ -50,7 +50,7 @@ Call `mcp__linear-server__list_issues` with the qualifiers from the `--from` val
 
 Common query: `--from state:UAT` — all tickets awaiting UAT verification.
 
-**If explicit IDs** (comma or space-separated, e.g. `CRE-45, CRE-46, CRE-47`):
+**If explicit IDs** (comma or space-separated, e.g. `ABC-45, ABC-46, ABC-47`):
 
 Parse the argument string. Split on commas and/or whitespace. Each token is a ticket ID. Deduplicate. Cap at 10 tickets — if more, warn and take the first 10.
 

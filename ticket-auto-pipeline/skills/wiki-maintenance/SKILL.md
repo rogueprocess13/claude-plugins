@@ -104,7 +104,7 @@ find {WIKI_ROOT} -name "*.md" ! -name "index.md" | sort
 
 For each file, grep for `## Errata` — if found, read the errata section. Parse each entry to identify:
 
-- **Ticket ID** — the ticket that discovered the gap (provenance tag, e.g. `CRE-47`)
+- **Ticket ID** — the ticket that discovered the gap (provenance tag, e.g. `ABC-47`)
 - **Gap** — what was missed, in terms of code/paths — not dates, not outcome labels
 - **Fix** — what should be added/changed
 
@@ -128,16 +128,16 @@ If entries exist, summarize:
 
 | File | Ticket | Gap (summary) |
 |------|--------|---------------|
-| flows/handover.md | CRE-47 | BomFeignClient.getCommission() not in payment flow |
-| flows/billing.md | CRE-52 | BodyServiceResourceUsage.reference field use undocumented |
+| flows/handover.md | ABC-47 | BomFeignClient.getCommission() not in payment flow |
+| flows/billing.md | ABC-52 | BodyServiceResourceUsage.reference field use undocumented |
 ```
 
 **Style rule — applies to every write this skill makes**, both here and in Step 2.5/2.6:
 what the code does and where it lives (repo-relative paths, never line numbers — those drift
-the moment the file changes); ticket IDs only as `(CRE-XX)`-style provenance tags on the
+the moment the file changes); ticket IDs only as `(ABC-XX)`-style provenance tags on the
 content they support, never as a standalone changelog entry; no dates, outcome labels
 (Smooth/Rough/Hard, predicted-vs-actual), adversarial-review counts, or "not yet
-merged/fixed" status lines — this kind of content rots in days (a CRE-69 section once
+merged/fixed" status lines — this kind of content rots in days (a ABC-69 section once
 described a fix mechanism that was never merged in that form, and stayed wrong for months
 because nothing re-checked it). If you're about to write something that will read as false in
 three months, cut it.
@@ -159,16 +159,16 @@ Work through unresolved entries in order. For each:
 
 Edit the flow file to incorporate the missing detail directly into the existing flow structure
 — a fix is a content change, not a new changelog line. Tag the inserted content with the
-source ticket as a trailing provenance marker, `(CRE-XX)`, and nothing else (no date, no
+source ticket as a trailing provenance marker, `(ABC-XX)`, and nothing else (no date, no
 outcome label). Common patterns:
 
 | Gap type | Where to fix | Example change |
 |----------|-------------|----------------|
-| Missing Feign client call in flow | Add a sub-step to the flow section listing the Feign call | "6. Call `BomFeignClient.charge(reserve=true, usage)` via `POST /body-service-resource-usages/charge` (CRE-47)" |
-| Entity field not documented | Add the field to the entity table | `amount` \| `BigDecimal(21,2)` \| Recovery amount (CRE-52) |
+| Missing Feign client call in flow | Add a sub-step to the flow section listing the Feign call | "6. Call `BomFeignClient.charge(reserve=true, usage)` via `POST /body-service-resource-usages/charge` (ABC-47)" |
+| Entity field not documented | Add the field to the entity table | `amount` \| `BigDecimal(21,2)` \| Recovery amount (ABC-52) |
 | Method signature stale | Update class name or method name in the Key Classes table | Replace `ReportJobService.setStatus()` with correct method |
 | Missing endpoint | Add to REST Endpoints table | Add row with method, path, purpose |
-| Cross-service dependency undocumented | Add a "## Dependencies" section or note in the flow | "Requires BOM service for commission calculation via `BomFeignClient` (CRE-61)" |
+| Cross-service dependency undocumented | Add a "## Dependencies" section or note in the flow | "Requires BOM service for commission calculation via `BomFeignClient` (ABC-61)" |
 
 After editing, the flow file must still read as a coherent document — the errata entry
 described a fix, but you apply it as part of the regular flow structure, not as an appended note.
@@ -176,8 +176,7 @@ described a fix, but you apply it as part of the regular flow structure, not as 
 **If the fix requires creating a new wiki file** (e.g. a flow that has no wiki page yet):
 
 1. Create the file with YAML frontmatter — use this schema (the freshness fields are the
-   contract `lib/wiki-check.sh` lints, see the Freshness contract note at the bottom of this
-   skill):
+   contract `lib/wiki-check.sh` lints, checked in Step 3):
    ```yaml
    ---
    services: [list of microservice names]
@@ -313,7 +312,7 @@ human/AI pair is just two places for the same fact to go stale:
 
 Omit any subsection with nothing to say — a two-line entry with just Summary and one
 convention bullet is complete on its own. Provenance lives on the bullet it supports, not in a
-separate ticket list — a bullet with two contributing tickets carries both: `(CRE-47, CRE-61)`.
+separate ticket list — a bullet with two contributing tickets carries both: `(ABC-47, ABC-61)`.
 
 ### 2.5d — Count and track
 
@@ -321,21 +320,15 @@ Track the number of ai-context.md files processed and the number of findings pro
 
 ### 2.5e — Glossary maintenance
 
-After processing all findings above, do two things (docs/glossary-schema.md § Glossary maintenance):
+Follow [docs/glossary-schema.md](../../docs/glossary-schema.md): add a glossary entry for each concept
+term a Step 2 fix or a 2.5c ADR introduced that `{WIKI_ROOT}/glossary.md` lacks, then run the
+term-drift check and resolve each `TERM_DRIFT` line as that doc describes (correct the usage, or
+split the entry when the synonym is a different concept):
 
-1. **Define new concept terms.** If a fix incorporated in Step 2, or an ADR the gate wrote in
-   2.5c, introduces a concept term not already in `{WIKI_ROOT}/glossary.md`, add an entry for
-   it (term heading, short definition, `Avoid:`/`Related:` as applicable — see
-   [docs/glossary-schema.md](../../docs/glossary-schema.md)).
-2. **Resolve reported term drift.** Run the term-drift check:
-   ```bash
-   source "$HOME/.claude/skills/lib/wiki-bootstrap.sh"
-   wiki_term_drift_check "$WIKI_ROOT"
-   ```
-   For each `TERM_DRIFT` line reported, resolve it one of two ways: correct the usage in the
-   named file to the preferred term, or — when the "avoided" synonym turns out to denote a
-   genuinely different concept rather than a drifted usage — split the glossary entry into two,
-   defining both terms separately instead of rewriting real content to fit a bad merge.
+```bash
+source "$HOME/.claude/skills/lib/wiki-bootstrap.sh"
+wiki_term_drift_check "$WIKI_ROOT"
+```
 
 Track the number of glossary entries added and term-drift violations resolved. Include both in the Step 5 report.
 
@@ -372,58 +365,28 @@ touched:
 bash "$HOME/.claude/skills/lib/wiki-check.sh" --wiki-root "$WIKI_ROOT" --repos-root "$REPOS_ROOT" --changed-only
 ```
 
-(`$REPOS_ROOT` may be empty in standalone, non-`--from-auto` runs — `wiki-check.sh` degrades
-gracefully, skipping only the backticked-class-name check when it's unset.)
-
-`wiki-check.sh` (§5 of the wiki-cross-repo-knowledge-layer change) reports per file: line
-count, frontmatter completeness, broken `related:` links, backticked class names that don't
-resolve to any known repo, and a freshness classification (`fresh`/`stale`/`decayed`) derived
-from `verified_against` + `stale_after` + commit activity since. A file this run just edited
-without refreshing `verified_at`/`verified_against` (Step 2b) will show up `decayed` here —
-treat that as a signal you skipped the frontmatter refresh, not as noise to ignore. Non-zero
-exit does not block the commit — wiki-maintenance logs the findings (`META|wiki-lint|warn|...`
-when `--from-auto`) and proceeds; a human incorporates lint fixes on the next pass.
+What it checks: `lib/wiki-check.sh` header. A file this run edited that shows `decayed` means
+Step 2b's `verified_at`/`verified_against` refresh was skipped. A non-zero exit does not block
+the commit: log the findings (`META|wiki-lint|warn|...` when `--from-auto`) and proceed.
 
 ---
 
 ## Step 3.5 — Plain-English pass
 
-Every wiki file this run touched (Steps 2, 2.5, 2.6 — new content, edited flow sections, new
-files) gets a language pass before it ships. Invoke the `simple-english` skill (Plain mode) on
-the prose you just wrote or edited — not the whole file, just the sections you changed this run,
-so an untouched section keeps its existing wording rather than getting rewritten as a side
-effect of an unrelated fix.
-
-Apply the skill's "never touch" rule literally: code, identifiers, commands, file paths,
-class/method names, `(TICKET-ID)` provenance tags, and YAML frontmatter are exempt — only the
-surrounding descriptive/procedural prose is rewritten. A flow-section fix like "Call
-`BomFeignClient.charge(reserve=true, usage)` via `POST /body-service-resource-usages/charge`
-(CRE-47)" changes nothing (it is already scoped code/paths, not prose); an errata-derived
-paragraph explaining *why* a step exists is exactly the target.
-
-If a fix is a single terse table row or list item (the common case per the fix-pattern table in
-Step 2b), there is usually no prose left to simplify — skip it rather than padding a plain fact
-into a sentence. Reserve the pass for entries that introduced actual descriptive text (new
-"## Dependencies" notes, new flow narration, new file content from Step 2b's "create a new wiki
-file" branch, new Step 2.5c wiki entries).
-
-This runs after Step 3's lint, not before — the lint checks structure and freshness metadata
-(frontmatter completeness, broken links, staleness), none of which a wording pass touches, so
-there is nothing gained by ordering it earlier and no risk of the rewrite disturbing what the
-lint just checked.
+Run the `simple-english` skill (Plain mode) on the prose this run wrote or edited in Steps 2,
+2.5 and 2.6, not on whole files, so untouched sections keep their wording. Its "never touch"
+rule applies literally (code, identifiers, paths, `(TICKET-ID)` tags, frontmatter). Skip fixes
+that are only a table row or list item; there is no prose to simplify. It runs after Step 3
+because the lint checks nothing a wording pass changes.
 
 ---
 
 ## Step 4 — Commit WIKI_ROOT
 
-`WIKI_ROOT` is its own docs repo with no branches — after Steps 1-3.5 land their edits (lint has
-run and prose is simplified), commit them scoped strictly to that directory. The guard below is a literal
-precondition on the commit, not just a rule to reason about: `git -C ""` is documented, standard
-git behavior for "leave the working directory unchanged" — it is **not** an error and does
-**not** fail to resolve — so an empty or unset `WIKI_ROOT` reaching a bare `git -C "$WIKI_ROOT"
-commit` would silently commit against whatever the shell's current working directory happens to
-be (potentially a source repo). `[ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git" ]` is the
-deterministic bash check that makes that impossible regardless of how the empty value got there:
+`WIKI_ROOT` is its own docs repo with no branches; commit this run's edits scoped strictly to
+it. The `[ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git" ]` guard is load-bearing:
+`git -C ""` is not an error, so an empty `WIKI_ROOT` would commit in the current directory
+(possibly a source repo).
 
 ```bash
 _wlock="$HOME/.claude/skills/lib/wiki-lock.sh"
@@ -470,18 +433,10 @@ if [ -n "$WIKI_ROOT" ] && [ -d "$WIKI_ROOT" ]; then
 fi
 ```
 
-Before running this block, re-run the Step 0 `acquire` block once. It refreshes the lock's age,
-so a long run cannot drift into "stale", and it returns `0` only while this ticket still owns the
-lock. If it returns anything else, another run broke the lock as stale: do not run the commit
-(the guard above would refuse it anyway, with rc `5`), but still run the release line.
-
-The commit includes a file that was already dirty before this run took the lock only if this
-run changed it further. Files nobody touched this run stay out of the commit, even when they are
-dirty.
-
-Always use `git -C "$WIKI_ROOT"` — never a bare `git commit` from the pipeline's working
-directory, which would catch unrelated changes in a source repo. See
-`agents/ticket-maintenance-agent.md` for why this is the one commit this agent is allowed to
+Before running this block, re-run the Step 0 `acquire` block once (it refreshes the lock's
+age). If it returns anything other than `0`, another run broke the lock as stale: skip the
+commit but still run the release line. Lock and scoped-commit semantics: `lib/wiki-lock.sh`
+header. See `agents/ticket-maintenance-agent.md` for why this is the one commit this agent may
 make.
 
 ---
@@ -537,10 +492,6 @@ has for freshness/link findings.
 
 ## Notes
 
-- **One entry at a time** — read context, apply fix, delete the entry, then move to the next. Do not batch.
-- **Errata format is canonical** — the `### {TICKET-ID}` header identifies the entry (`Gap:`/`Fix:` below it). An entry that's been incorporated is deleted, never left behind struck through.
-- **If an errata entry is unclear** — mark it with a comment and skip: `<!-- UNCLEAR: {why} -->` instead of resolving.
-- **Source is authoritative** — if an errata entry contradicts the wiki flow, trust the errata (it comes from actual ticket implementation, not pre-computed analysis). Verify by reading the referenced source code if needed.
-- **Scope** — writes only to files under `{WIKI_ROOT}/`. Does not modify source code.
-- **One writer at a time** — every `WIKI_ROOT` write happens while holding the `lib/wiki-lock.sh` lock (Step 0), and the commit goes through `wiki-lock.sh commit`, never `git add -A`. Do not write under `WIKI_ROOT` before the lock is acquired or after it is released.
-- **Freshness contract** — every file this skill writes or edits carries `verified_at`, `verified_against: {repo, sha}`, `stale_after`, and `verified` frontmatter (schema in Step 2b). `lib/wiki-check.sh` (Step 3) is the lint for that contract; `ticket-appraise` Step 3a reads its `decayed` classification the same way it already reads decayed prescan docs.
+- **If an errata entry is unclear** — mark it with `<!-- UNCLEAR: {why} -->` and skip it instead of resolving.
+- **Source is authoritative** — if an errata entry contradicts the wiki flow, trust the errata (it comes from actual ticket implementation). Verify by reading the referenced source code if needed.
+

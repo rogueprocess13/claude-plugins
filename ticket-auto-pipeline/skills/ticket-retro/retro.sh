@@ -8,6 +8,16 @@
 #   retro.sh --window <N>d [--force] [<single-log-path>]
 #   retro.sh --window 7d
 #   retro.sh --window 1 --force ./logs/CRE-47-pipeline.log
+#
+# Output field catalogue — error_diagnostics.errors_by_ticket[<ticket>] is an
+# array of heartbeat error events, each with (ticket-retro SKILL.md Step 3a.5
+# reads these as {ERROR_CONTEXT}):
+#   event      error event name (e.g. get-issue, flow-sh, jq-parse)
+#   message    human-readable failure description
+#   detail     structured key-value pairs (command, ticket, exit_code,
+#              error_snippet, ...)
+#   timestamp  when the failure occurred
+#   category   retry, api or gate
 
 # Sourcing this file (ticket-retro SKILL.md Step 1.5) defines only the
 # Claude log scan helpers below; the source guard after them returns before

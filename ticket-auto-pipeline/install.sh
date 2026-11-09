@@ -28,8 +28,10 @@ for skill in "${TICKET_SKILLS[@]}"; do
   fi
 done
 
-# Also check support skills
-SUPPORT_SKILLS=(wiki-maintenance nav-hints app-knowledge)
+# Also check support skills. app-knowledge is deliberately absent: the plugin
+# ships only a skeleton, and the host copy holds the project's own data (and
+# ticket-appraise-exec's Role Scope Registry appends), so it is never archived.
+SUPPORT_SKILLS=(wiki-maintenance nav-hints)
 for skill in "${SUPPORT_SKILLS[@]}"; do
   if [ -d "$HOST_SKILLS/$skill" ]; then
     EXISTING+=("$skill")

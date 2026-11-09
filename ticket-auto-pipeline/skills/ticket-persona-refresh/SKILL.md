@@ -175,25 +175,10 @@ For each approved change:
 4. **Commit**:
    ```bash
    git add personas/specializers/backend/python.md personas/CHANGELOG.md
-   git commit -m "feat(personas): refresh backend/python (v1→v2)
-
-   Updated: ruff format as primary, black as fallback
-   Added: uv package manager, pyproject.toml config consolidation
-
-   Co-Authored-By: Claude <noreply@anthropic.com>"
+   git commit -m "feat(personas): refresh backend/python (v1→v2)"
    ```
 
-If multiple personas were refreshed, commit them together with a summary message:
-
-```
-feat(personas): refresh python, react, java personas
-
-backend/python (v1→v2): ruff format, uv, pyproject.toml
-frontend/react (v1→v2): React 19 conventions, Server Components
-backend/java (v1→v2): JUnit 5.11 ParameterizedTest, Spring Boot 3.4
-
-Co-Authored-By: Claude <noreply@anthropic.com>
-```
+   Follow the repository's commit conventions (its `CLAUDE.md`). If several personas were refreshed, commit them together with one summary line per persona in the body.
 
 ---
 
@@ -215,8 +200,5 @@ Summary of what was done:
 
 ## Notes
 
-- **Idempotency**: Running this skill twice in quick succession should report "still current" on the second run (all findings already applied).
 - **Scope**: This skill only refreshes persona CONTENT. It does not modify `persona-select.sh` selection logic. If a new specializer is needed (e.g., `backend/kotlin`), that's a separate task.
 - **`debug/` group**: `specializers/debug/*.md` are evidence procedures (which command or artifact to collect on that runtime), not stack idioms. Refresh only the commands and flags; do not add framework pitfalls or failure causes there — those belong in `backend/*` / `frontend/*`.
-- **Version bumps**: Always integer increment. `persona-refresh.sh bump` handles this deterministically.
-- **No pipeline integration**: This skill is for maintainers only. It writes no pipeline logs and triggers no state transitions.
