@@ -13,6 +13,19 @@ LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PASS=0
 FAIL=0
 
+# Speed + hermeticity. Validate mode walks the whole filesystem for a stale
+# Docker jgit lock (seconds per call) and probes api.github.com with the PAT.
+# Point the walk at an empty scratch dir and shim curl to fail fast, the way
+# the probe behaves offline and in CI. No assertion reads either result except
+# the jgit-lock tests below, which plant their own lock under the scratch root.
+_TEST_SCRATCH=$(mktemp -d)
+trap 'rm -rf "$_TEST_SCRATCH"' EXIT
+export ENV_CHECK_JGIT_LOCK_ROOT="$_TEST_SCRATCH/lockroot"
+mkdir -p "$ENV_CHECK_JGIT_LOCK_ROOT" "$_TEST_SCRATCH/bin"
+printf '#!/bin/sh\nexit 7\n' >"$_TEST_SCRATCH/bin/curl"
+chmod +x "$_TEST_SCRATCH/bin/curl"
+export PATH="$_TEST_SCRATCH/bin:$PATH"
+
 _run() {
   local name="$1"
   shift
@@ -349,6 +362,30 @@ test_validate_verify_served_ports() {
   echo "$output" | grep 'VERIFY_SERVED_PORTS' | grep -q 'warn.*nope'
 }
 
+test_validate_jgit_lock_none() {
+  local tmpdir output
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  output=$(_validate_output "$tmpdir")
+  rm -rf "$tmpdir"
+  echo "$output" | grep -q 'Docker jgit lock (none found)'
+}
+
+test_validate_jgit_lock_stale_auto_cleaned() {
+  local tmpdir output lock
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  lock="$tmpdir/cnb-local-registry/repo/jgit/config.lock"
+  mkdir -p "$(dirname "$lock")"
+  : >"$lock"
+  touch -d '2 hours ago' "$lock"
+  output=$(ENV_CHECK_JGIT_LOCK_ROOT="$tmpdir" _validate_output "$tmpdir")
+  local gone=1
+  [ -e "$lock" ] || gone=0
+  rm -rf "$tmpdir"
+  [ "$gone" -eq 0 ] && echo "$output" | grep -q 'Docker jgit lock (stale, auto-cleaned)'
+}
+
 test_unknown_mode_exits_1() {
   local exit_code=0
   bash "$LIB_DIR/env-check.sh" --mode=garbage >/dev/null 2>&1 || exit_code=$?
@@ -395,6 +432,8 @@ for fn in \
   test_validate_passes_wired_env_start \
   test_validate_no_env_start_is_silent \
   test_validate_verify_served_ports \
+  test_validate_jgit_lock_none \
+  test_validate_jgit_lock_stale_auto_cleaned \
   test_unknown_mode_exits_1 \
   test_summary_file_flag_writes_to_path; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
