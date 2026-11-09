@@ -573,6 +573,54 @@ EOF
   return $ok
 }
 
+# #656: the verifier-result scan breaks out of its read loop at the first FAIL
+# (newest first). With a log far larger than a pipe buffer, the writer feeding
+# that loop used to die of SIGPIPE, and a `set -euo pipefail` caller then
+# exited 141 with no output. 5 runs, so a timing-dependent failure shows.
+test_phase_survives_early_break_on_a_large_log() {
+  local log i
+  log=$(_tmp_log)
+  {
+    echo "2026-01-01T00:00:00Z|VERIFY|verify|waiting|attempt 1"
+    for i in $(seq 1 4000); do
+      echo "2026-01-01T00:00:01Z|META|verifier-result|info|{\"verifier\":\"playwright_uat\",\"verdict\":\"PASS\",\"phase\":\"IMPLEMENT\",\"pad\":\"$(printf '%0100d' 0)\"}"
+    done
+    echo '2026-01-01T00:00:10Z|META|verifier-result|info|{"verifier":"playwright_uat","verdict":"FAIL","phase":"VERIFY"}'
+    echo "2026-01-01T00:00:11Z|VERIFY|verify|fail|FAIL criterion 2"
+  } >"$log"
+  local ok=0 out
+  for i in $(seq 1 5); do
+    # Called directly, not inside $(...): bash turns errexit off in a command
+    # substitution, which hides the failure from a caller that captures it.
+    out=$(bash -c "set -euo pipefail; source '$LIB_DIR/exit-path.sh'; derive_failure_phase '$log'") || {
+      ok=1
+      break
+    }
+    [ "$out" = "VERIFY" ] || {
+      ok=1
+      break
+    }
+  done
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
+# #656: the fallback lookups must not fail a direct `set -euo pipefail` caller
+# when a grep in them matches nothing (no verifier results, no fail bracket).
+test_phase_fallbacks_are_errexit_safe() {
+  local log
+  log=$(_tmp_log)
+  cat >"$log" <<'EOF'
+2026-01-01T00:00:00Z|IMPLEMENT|implement|waiting|x
+2026-01-01T00:00:11Z|META|gate-stop|fail|EXEC_NO_ARTIFACT
+EOF
+  local ok=0 out
+  out=$(bash -c "set -euo pipefail; source '$LIB_DIR/exit-path.sh'; derive_failure_phase '$log'") || ok=1
+  [ "$out" = "IMPLEMENT" ] || ok=1
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
 test_phase_falls_back_to_last_running_phase_for_a_gate_stop() {
   local log
   log=$(_tmp_log)
@@ -628,6 +676,8 @@ _run "classification is repeatable" test_classification_is_repeatable
 _run "no model is invoked" test_no_model_is_invoked
 _run "phase: reports last failing verifier's phase" test_phase_reports_last_failing_verifier_phase
 _run "phase: falls back to last running phase for a gate-stop" test_phase_falls_back_to_last_running_phase_for_a_gate_stop
+_run "phase: survives an early loop exit on a large log (#656)" test_phase_survives_early_break_on_a_large_log
+_run "phase: fallbacks are safe under set -e (#656)" test_phase_fallbacks_are_errexit_safe
 
 echo ""
 echo "exit-path: $PASS passed, $FAIL failed"

@@ -374,14 +374,17 @@ derive_failure_phase() {
   # Most specific: the phase recorded on the last failing/blocked
   # verifier-result line.
   local last_fail_line last_fail_json phase
-  last_fail_line=$(grep '|META|verifier-result|' "$log_file" 2>/dev/null | tac | while IFS= read -r line; do
+  # The loop reads a here-string, not a pipe: it breaks at the first match,
+  # and a writer still feeding a pipe would then die of SIGPIPE, which
+  # pipefail + errexit in a direct caller turn into a silent exit 141 (#656).
+  last_fail_line=$(while IFS= read -r line; do
     last_fail_json=$(_exitpath_json_field "$line")
     verdict=$(echo "$last_fail_json" | jq -r '.verdict // empty' 2>/dev/null)
     if [ "$verdict" = "FAIL" ] || [ "$verdict" = "BLOCK" ]; then
       echo "$line"
       break
     fi
-  done)
+  done <<<"$(grep '|META|verifier-result|' "$log_file" 2>/dev/null | tac)")
   if [ -n "$last_fail_line" ]; then
     phase=$(echo "$(_exitpath_json_field "$last_fail_line")" | jq -r '.phase // empty' 2>/dev/null)
     if [ -n "$phase" ]; then
@@ -392,7 +395,9 @@ derive_failure_phase() {
 
   # Next: the phase of the log's most recent `|fail|` bracket terminal.
   local last_bracket_fail
-  last_bracket_fail=$(grep -E '^[^|]*\|[A-Za-z-]+\|[^|]*\|fail\|' "$log_file" 2>/dev/null | grep -v '|META|' | tail -1)
+  # `|| true`: a grep that matches nothing fails the pipeline under pipefail,
+  # and a direct `set -e` caller would exit instead of reaching the fallbacks.
+  last_bracket_fail=$(grep -E '^[^|]*\|[A-Za-z-]+\|[^|]*\|fail\|' "$log_file" 2>/dev/null | grep -v '|META|' | tail -1) || true
   if [ -n "$last_bracket_fail" ]; then
     echo "$last_bracket_fail" | awk -F'|' '{print $2}'
     return
@@ -401,7 +406,7 @@ derive_failure_phase() {
   # Gate-stop and fleet-kill both name no phase field of their own — fall
   # back to the phase of the log's last non-META line before the halt, which
   # is the phase that was actually running when it happened.
-  phase=$(grep -v '|META|' "$log_file" 2>/dev/null | tail -1 | awk -F'|' '{print $2}')
+  phase=$(grep -v '|META|' "$log_file" 2>/dev/null | tail -1 | awk -F'|' '{print $2}') || true
   if [ -n "$phase" ]; then
     echo "$phase"
     return
