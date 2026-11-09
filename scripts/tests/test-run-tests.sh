@@ -36,6 +36,12 @@ EOF
 cat >"$TMP/t/test-slow.sh" <<'EOF'
 date +%s%N >"$MARK_DIR/slow"; sleep 1
 EOF
+cat >"$TMP/t/test-nosession.sh" <<'EOF'
+[ -z "${CLAUDE_CODE_SESSION_ID+x}" ] || { echo "inherited session id: $CLAUDE_CODE_SESSION_ID"; exit 1; }
+EOF
+cat >"$TMP/t/test-ownsession.sh" <<'EOF'
+[ "${CLAUDE_CODE_SESSION_ID:-}" = "own" ] || { echo "own session id lost: ${CLAUDE_CODE_SESSION_ID:-}"; exit 1; }
+EOF
 cat >"$TMP/t/test-hang.sh" <<'EOF'
 sleep 30
 EOF
@@ -57,6 +63,9 @@ EOF
   printf '\tbash %s/t/test-hang.sh\n' "$TMP"
   printf 'many:\n'
   for _ in $(seq 1 200); do printf '\tbash %s/t/test-pass.sh\n' "$TMP"; done
+  printf 'session:\n'
+  printf '\tbash %s/t/test-nosession.sh\n' "$TMP"
+  printf '\tCLAUDE_CODE_SESSION_ID=own bash %s/t/test-ownsession.sh\n' "$TMP"
   printf 'empty:\n'
   printf '\t@echo nothing here\n'
 } >"$TMP/Makefile"
@@ -109,6 +118,14 @@ rc=$?
 [ "$rc" -eq 0 ] && ok "200-command run exits 0" || bad "200-command run exit $rc"
 grep -q "200/200 ran, 0 failed" "$TMP/out-many.txt" && ok "summary line printed" ||
   bad "no summary: $(tail -2 "$TMP/out-many.txt")"
+
+echo "=== a Claude Code session id is not inherited by test commands (#645) ==="
+CLAUDE_CODE_SESSION_ID=developer-session run session session
+rc=$?
+[ "$rc" -eq 0 ] && ok "session id removed, a command's own id kept" ||
+  bad "session target exit $rc: $(cat "$TMP/out-session.txt")"
+grep -q "2/2 ran, 0 failed" "$TMP/out-session.txt" && ok "both session commands ran" ||
+  bad "$(tail -2 "$TMP/out-session.txt")"
 
 echo "=== a target with no test commands is a usage error ==="
 run empty empty
