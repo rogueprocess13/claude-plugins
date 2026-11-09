@@ -368,7 +368,7 @@ test_validate_jgit_lock_none() {
   _mk_project_dir "$tmpdir"
   output=$(_validate_output "$tmpdir")
   rm -rf "$tmpdir"
-  echo "$output" | grep -q 'Docker jgit lock (none found)'
+  grep -q 'Docker jgit lock (none found)' <<<"$output"
 }
 
 test_validate_jgit_lock_stale_auto_cleaned() {
@@ -383,7 +383,7 @@ test_validate_jgit_lock_stale_auto_cleaned() {
   local gone=1
   [ -e "$lock" ] || gone=0
   rm -rf "$tmpdir"
-  [ "$gone" -eq 0 ] && echo "$output" | grep -q 'Docker jgit lock (stale, auto-cleaned)'
+  [ "$gone" -eq 0 ] && grep -q 'Docker jgit lock (stale, auto-cleaned)' <<<"$output"
 }
 
 test_unknown_mode_exits_1() {
