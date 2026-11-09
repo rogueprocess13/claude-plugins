@@ -92,7 +92,7 @@ test_index_exact_match_one() {
   _write_index "$_ws/docs"
   _route_index "$_ws/docs/INDEX.md" "Add payment processing to checkout" "backend,payment"
   [ "$ROUTE_RC" = "0" ] && [ "$PRESCAN_ROUTE_COUNT" = "1" ] &&
-    echo "$ROUTE_FILES" | grep -q "services/payment.md"
+    grep -q "services/payment.md" <<<"$ROUTE_FILES"
   local rc=$?
   _teardown
   return $rc
@@ -112,7 +112,7 @@ test_index_case_insensitive() {
   _setup
   _write_index "$_ws/docs"
   _route_index "$_ws/docs/INDEX.md" "PAYMENT PROCESSING broken" ""
-  [ "$ROUTE_RC" = "0" ] && echo "$ROUTE_FILES" | grep -q "services/payment.md"
+  [ "$ROUTE_RC" = "0" ] && grep -q "services/payment.md" <<<"$ROUTE_FILES"
   local rc=$?
   _teardown
   return $rc
@@ -156,7 +156,7 @@ test_index_missing_referenced_file_filtered() {
 EOF
   _route_index "$_ws/docs/INDEX.md" "ghost service migration" ""
   # ghost.md doesn't exist → should not be included in matches
-  echo "$ROUTE_FILES" | grep -qv "ghost.md" 2>/dev/null || true
+  grep -qv "ghost.md" <<<"$ROUTE_FILES" 2>/dev/null || true
   local rc=$?
   _teardown
   return $rc
@@ -192,7 +192,7 @@ test_index_combined_text_matches() {
   _write_index "$_ws/docs"
   # Title doesn't match but labels do
   _route_index "$_ws/docs/INDEX.md" "Fix stuff" "payment,billing"
-  [ "$ROUTE_RC" = "0" ] && echo "$ROUTE_FILES" | grep -q "services/payment.md"
+  [ "$ROUTE_RC" = "0" ] && grep -q "services/payment.md" <<<"$ROUTE_FILES"
   local rc=$?
   _teardown
   return $rc

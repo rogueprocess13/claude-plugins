@@ -115,7 +115,7 @@ test_spawn_agent_pre_prompt_is_qualified() {
     spawn_agent_pre PHASE=IMPLEMENT STEP=implement TICKET_ID=TEST-569 \
       LOG_FILE="$log" SKILL=/ticket-implement 2>/dev/null
   )
-  echo "$out" | grep -q '^AGENT_PROMPT=Run /ticket-auto-pipeline:ticket-implement TEST-569 '
+  grep -q '^AGENT_PROMPT=Run /ticket-auto-pipeline:ticket-implement TEST-569 ' <<<"$out"
 }
 
 # GitHub #602: a phase agent type has no Skill tool, so it finds SKILL.md on

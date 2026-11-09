@@ -221,7 +221,7 @@ test_subset_fails_when_extra_files() {
     echo "  expected exit 1 (not a subset), got $rc" >&2
     return 1
   }
-  echo "$out" | grep -qF "worker/main.py" || {
+  grep -qF "worker/main.py" <<<"$out" || {
     echo "  expected offending file 'worker/main.py' in output, got '$out'" >&2
     return 1
   }

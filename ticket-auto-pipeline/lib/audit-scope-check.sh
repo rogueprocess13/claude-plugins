@@ -50,7 +50,7 @@ audit_scope_check() {
       # Match service name (with hyphen/underscore variants)
       local svc_pattern
       svc_pattern=$(echo "$svc" | sed 's/[-_]/[_-]/g')
-      if echo "$lower_text" | grep -qE "(^|[^a-z])${svc_pattern}($|[^a-z])" 2>/dev/null; then
+      if grep -qE "(^|[^a-z])${svc_pattern}($|[^a-z])" <<<"$lower_text" 2>/dev/null; then
         MATCHED_SERVICES="${MATCHED_SERVICES}${svc} "
         SCOPE_FOUND="true"
       fi
@@ -64,7 +64,7 @@ audit_scope_check() {
       [ -z "$pattern" ] && continue
       local lower_pattern
       lower_pattern=$(echo "$pattern" | tr '[:upper:]' '[:lower:]')
-      if echo "$lower_text" | grep -qi "$lower_pattern" 2>/dev/null; then
+      if grep -qi "$lower_pattern" <<<"$lower_text" 2>/dev/null; then
         MATCHED_PATTERNS="${MATCHED_PATTERNS}${pattern} "
         SCOPE_FOUND="true"
       fi
@@ -77,7 +77,7 @@ audit_scope_check() {
   if [ "$SCOPE_FOUND" != "true" ]; then
     local scope_indicators="api endpoint controller service component module page form modal route handler repository migration job cron"
     for indicator in $scope_indicators; do
-      if echo "$lower_text" | grep -qiE "(^|[^a-z])${indicator}($|[^a-z])" 2>/dev/null; then
+      if grep -qiE "(^|[^a-z])${indicator}($|[^a-z])" <<<"$lower_text" 2>/dev/null; then
         MATCHED_PATTERNS="${MATCHED_PATTERNS}${indicator} "
         SCOPE_FOUND="true"
         break # One indicator is enough to show scope is identifiable

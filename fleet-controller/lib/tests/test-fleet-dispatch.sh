@@ -179,7 +179,7 @@ test_dispatch_no_linear_api() {
     source '$LIB_DIR/fleet-dispatch.sh' 2>/dev/null
     fleet_dispatch_initiative 'INIT-99' '$ws' 2>&1
   " 2>/dev/null || true)
-  echo "$output" | grep -qi "no local epic manifest" && return 0 || {
+  grep -qi "no local epic manifest" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -194,7 +194,7 @@ test_dispatch_missing_initiative_arg() {
     source '$LIB_DIR/fleet-dispatch.sh' 2>/dev/null
     fleet_dispatch_initiative '' '$ws' 2>&1
   " 2>/dev/null || true)
-  echo "$output" | grep -qi "required" && return 0 || {
+  grep -qi "required" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -214,7 +214,7 @@ test_dispatch_no_state_execution() {
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   rm -rf "$repos_root"
-  echo "$output" | grep -qi "not in execution" && return 0 || {
+  grep -qi "not in execution" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -234,7 +234,7 @@ test_dispatch_no_child_tickets() {
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   rm -rf "$repos_root"
-  echo "$output" | grep -qi "no child tickets\|no dispatchable" && return 0 || {
+  grep -qi "no child tickets\|no dispatchable" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -270,7 +270,7 @@ test_dispatch_with_children_extracts_correctly() {
   # CRE-101: dispatch:false, unblocked → should be enqueued
   # CRE-102: dispatch:true already → skipped
   # CRE-103: dispatch:false but blocked-by CRE-100 (no completed log) → skipped
-  echo "$output" | grep -q "CRE-101" && return 0 || {
+  grep -q "CRE-101" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -319,7 +319,7 @@ test_dispatch_blocker_done_unblocks() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
   # CRE-103: blocker CRE-100 is Done → should be enqueued
-  echo "$output" | grep -q "CRE-103" && return 0 || {
+  grep -q "CRE-103" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -342,7 +342,7 @@ test_dispatch_dry_run_no_write() {
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
   rm -rf "$repos_root"
-  echo "$output" | grep -qi "DRY-RUN" && return 0 || {
+  grep -qi "DRY-RUN" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -381,7 +381,7 @@ test_dispatch_queue_idempotent() {
   local cre101_count
   cre101_count=$(grep -c '"tid":"CRE-101"' "$queue_file" 2>/dev/null || true)
   rm -rf "$repos_root"
-  if echo "$output" | grep -q "enqueued 0 ticket(s)" && [ "$cre101_count" = "1" ]; then
+  if grep -q "enqueued 0 ticket(s)" <<<"$output" && [ "$cre101_count" = "1" ]; then
     return 0
   fi
   echo "output: $output; CRE-101 queue lines: $cre101_count"
@@ -428,7 +428,7 @@ test_dispatch_fleet_max_concurrent_enforced() {
   kill "$act1_pid" "$act2_pid" 2>/dev/null || true
   rm -rf "$repos_root"
   # 2 live + max 3 → only 1 slot available
-  echo "$output" | grep -q "can enqueue up to 1" && return 0 || {
+  grep -q "can enqueue up to 1" <<<"$output" && return 0 || {
     echo "output: $output"
     return 1
   }
@@ -525,7 +525,7 @@ test_dead_letter_on_exhausted_retries() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -qi "dead-letter" || {
+  grep -qi "dead-letter" <<<"$output" || {
     echo "expected dead-letter message in output: $output" >&2
     rm -rf "$ws"
     return 1
@@ -726,14 +726,14 @@ test_contended_append_retried_then_dead_lettered() {
 
   # The dispatch should have written a dead-letter error to stderr and dead-letter
   # the entry to the dead-letter file
-  echo "$output" | grep -qi "dead-letter" || {
+  grep -qi "dead-letter" <<<"$output" || {
     echo "expected dead-letter message in output: $output" >&2
     rm -rf "$ws"
     return 1
   }
 
   # Structured notification line: names the ticket and the reason.
-  echo "$output" | grep -q "fleet-dead-letter|tid=CRE-101|reason=queue-contention-exhausted" || {
+  grep -q "fleet-dead-letter|tid=CRE-101|reason=queue-contention-exhausted" <<<"$output" || {
     echo "expected structured fleet-dead-letter line in output: $output" >&2
     rm -rf "$ws"
     return 1
@@ -871,7 +871,7 @@ test_multi_repo_creation_covers_all_repos() {
     return 1
   }
   # Dispatch still proceeded (dry-run enqueue of CRE-101)
-  echo "$output" | grep -q "CRE-101" || {
+  grep -q "CRE-101" <<<"$output" || {
     echo "expected CRE-101 enqueue after multi-repo creation; output: $output" >&2
     return 1
   }
@@ -901,15 +901,15 @@ test_multi_repo_creation_failure_gate_stops() {
   " 2>/dev/null || true)
 
   # Gate-stop must name the failing repo and enqueue nothing.
-  echo "$output" | grep -q "EPIC_BRANCH_UNAVAILABLE" || {
+  grep -q "EPIC_BRANCH_UNAVAILABLE" <<<"$output" || {
     echo "expected EPIC_BRANCH_UNAVAILABLE; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q "repo-b" || {
+  grep -q "repo-b" <<<"$output" || {
     echo "gate-stop must name failing repo; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q "would enqueue" && {
+  grep -q "would enqueue" <<<"$output" && {
     echo "children enqueued despite gate-stop; output: $output" >&2
     return 1
   }
@@ -943,14 +943,14 @@ test_epic_branch_gate_stop_reaches_stdout() {
     fleet_dispatch_initiative 'INIT-42' '$ws'
   " 2>/dev/null || true)
 
-  echo "$stdout_only" | grep -q "EPIC_BRANCH_UNAVAILABLE" || {
+  grep -q "EPIC_BRANCH_UNAVAILABLE" <<<"$stdout_only" || {
     echo "gate-stop did not reach stdout; stdout: $stdout_only" >&2
     rm -rf "$ws"
     return 1
   }
 
   # The reason from ensure_epic_branch must survive into the gate-stop line.
-  echo "$stdout_only" | grep -q "HOOK-REJECTED-381" || {
+  grep -q "HOOK-REJECTED-381" <<<"$stdout_only" || {
     echo "gate-stop lost the underlying reason; stdout: $stdout_only" >&2
     rm -rf "$ws"
     return 1
@@ -995,7 +995,7 @@ test_multi_repo_sync_failure_does_not_block() {
   " 2>/dev/null || true)
 
   # Sync failure reported...
-  echo "$output" | grep -q "sync warning" || {
+  grep -q "sync warning" <<<"$output" || {
     echo "expected sync warning; output: $output" >&2
     return 1
   }
@@ -1005,7 +1005,7 @@ test_multi_repo_sync_failure_does_not_block() {
     return 1
   }
   # ...and ready children still enqueue.
-  echo "$output" | grep -q "CRE-101" || {
+  grep -q "CRE-101" <<<"$output" || {
     echo "expected CRE-101 enqueue despite sync failure; output: $output" >&2
     return 1
   }
@@ -1040,12 +1040,12 @@ test_repos_under_root_finds_nested_repos() {
   ")
 
   for expect in top-repo microservices/gateway microservices/bom endpoints/transunion; do
-    echo "$output" | grep -q "$expect" || {
+    grep -q "$expect" <<<"$output" || {
       echo "expected '$expect' in enumeration; got: $output" >&2
       return 1
     }
   done
-  echo "$output" | grep -q "not-a-repo" && {
+  grep -q "not-a-repo" <<<"$output" && {
     echo "non-git directory enumerated: $output" >&2
     return 1
   }
@@ -1065,11 +1065,11 @@ test_repos_under_root_respects_depth_limit() {
     _fleet_repos_under_root '$repos_root'
   ")
 
-  echo "$output" | grep -q "top-repo" || {
+  grep -q "top-repo" <<<"$output" || {
     echo "expected top-repo at depth 1; got: $output" >&2
     return 1
   }
-  echo "$output" | grep -q "microservices/gateway" && {
+  grep -q "microservices/gateway" <<<"$output" && {
     echo "depth limit not respected — nested repo found at depth 1: $output" >&2
     return 1
   }
@@ -1095,15 +1095,15 @@ test_repos_under_root_explicit_override() {
     echo "expected exactly 2 repos from override; got: $output" >&2
     return 1
   }
-  echo "$output" | grep -q "microservices/gateway" || {
+  grep -q "microservices/gateway" <<<"$output" || {
     echo "override missing gateway; got: $output" >&2
     return 1
   }
-  echo "$output" | grep -q "endpoints/transunion" || {
+  grep -q "endpoints/transunion" <<<"$output" || {
     echo "override missing transunion; got: $output" >&2
     return 1
   }
-  echo "$output" | grep -q "top-repo" && {
+  grep -q "top-repo" <<<"$output" && {
     echo "override should bypass discovery entirely — top-repo leaked in: $output" >&2
     return 1
   }
@@ -1249,11 +1249,11 @@ test_dispatch_resumes_incomplete_child() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q '^  resumed TEST-1$' || {
+  grep -q '^  resumed TEST-1$' <<<"$output" || {
     echo "expected '  resumed TEST-1' line; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q 'resumed 1 |' || {
+  grep -q 'resumed 1 |' <<<"$output" || {
     echo "expected 'resumed 1' in summary; output: $output" >&2
     return 1
   }
@@ -1272,7 +1272,7 @@ test_dispatch_resumes_incomplete_child() {
   # Summary is the LAST stdout line.
   local last_line
   last_line=$(echo "$output" | tail -1)
-  echo "$last_line" | grep -q '^fleet_dispatch: resumed 1 | dead-lettered 0 | blocked 0 | not_ready 0 | enqueued 1 ticket(s) for INIT-42$' || {
+  grep -q '^fleet_dispatch: resumed 1 | dead-lettered 0 | blocked 0 | not_ready 0 | enqueued 1 ticket(s) for INIT-42$' <<<"$last_line" || {
     echo "expected summary as last line, got '$last_line'" >&2
     return 1
   }
@@ -1301,7 +1301,7 @@ test_dispatch_dry_run_resume_leaves_queue_untouched() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q '\[DRY-RUN\] would resume TEST-1' || {
+  grep -q '\[DRY-RUN\] would resume TEST-1' <<<"$output" || {
     echo "expected dry-run would-resume line; output: $output" >&2
     return 1
   }
@@ -1315,7 +1315,7 @@ test_dispatch_dry_run_resume_leaves_queue_untouched() {
   }
   local last_line
   last_line=$(echo "$output" | tail -1)
-  echo "$last_line" | grep -q '^\[DRY-RUN\] would resume 1 | blocked 0 | not_ready 0 | would enqueue 1 ticket(s) for INIT-42$' || {
+  grep -q '^\[DRY-RUN\] would resume 1 | blocked 0 | not_ready 0 | would enqueue 1 ticket(s) for INIT-42$' <<<"$last_line" || {
     echo "expected dry-run summary as last line, got '$last_line'" >&2
     return 1
   }
@@ -1373,7 +1373,7 @@ test_dispatch_reserves_queued_for_epic_slots() {
   rm -rf "$repos_root"
 
   # 0 live + 1 queued-for-epic = slot gone → at capacity, TEST-2 not enqueued.
-  echo "$output" | grep -q "at capacity" || {
+  grep -q "at capacity" <<<"$output" || {
     echo "expected at-capacity; output: $output" >&2
     return 1
   }
@@ -1406,13 +1406,13 @@ test_dispatch_reports_blocked_children() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q '^  blocked CRE-103$' || {
+  grep -q '^  blocked CRE-103$' <<<"$output" || {
     echo "expected '  blocked CRE-103' line; output: $output" >&2
     return 1
   }
   local last_line
   last_line=$(echo "$output" | tail -1)
-  echo "$last_line" | grep -q '^\[DRY-RUN\] would resume 0 | blocked 1 | not_ready 0 | would enqueue 0 ticket(s) for INIT-42$' || {
+  grep -q '^\[DRY-RUN\] would resume 0 | blocked 1 | not_ready 0 | would enqueue 0 ticket(s) for INIT-42$' <<<"$last_line" || {
     echo "expected blocked summary as last line, got '$last_line'" >&2
     return 1
   }
@@ -1464,7 +1464,7 @@ test_stop_pins_incomplete_child_with_empty_queue() {
     fleet_stop_initiative 'INIT-42' 'test' '$ws' 2>&1
   " 2>/dev/null || true)
 
-  echo "$output" | grep -q '  pinned TEST-9 (incomplete pipeline)' || {
+  grep -q '  pinned TEST-9 (incomplete pipeline)' <<<"$output" || {
     echo "expected incomplete-pipeline pin line; output: $output" >&2
     return 1
   }
@@ -1494,7 +1494,7 @@ test_stop_purges_campaign_resume_and_child_tid_entries() {
     fleet_stop_initiative 'INIT-42' 'test' '$ws' 2>&1
   " 2>/dev/null || true)
 
-  echo "$output" | grep -q 'purged=\["TEST-10","TEST-11"\]' || {
+  grep -q 'purged=\["TEST-10","TEST-11"\]' <<<"$output" || {
     echo "expected TEST-10 (reason) + TEST-11 (tid) purged; output: $output" >&2
     return 1
   }
@@ -1522,11 +1522,11 @@ test_stop_children_query_failure_degrades() {
     fleet_stop_initiative 'INIT-42' 'test' '$ws' 2>&1
   " 2>/dev/null || true)
 
-  echo "$output" | grep -q 'cannot fetch children of INIT-42' || {
+  grep -q 'cannot fetch children of INIT-42' <<<"$output" || {
     echo "expected children-fetch warning; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q 'STOP_RESULT|purged=\[\]|killed=\[\]' || {
+  grep -q 'STOP_RESULT|purged=\[\]|killed=\[\]' <<<"$output" || {
     echo "stop did not complete after children-query failure; output: $output" >&2
     return 1
   }
@@ -1640,7 +1640,7 @@ test_dispatch_lock_different_epics_do_not_block() {
   wait "$holder" 2>/dev/null || true
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q "enqueued" || {
+  grep -q "enqueued" <<<"$output" || {
     echo "output: $output"
     return 1
   }
@@ -1660,7 +1660,7 @@ test_stopped_epic_enqueues_nothing() {
     fleet_dispatch_initiative 'INIT-42' '$ws' 2>&1
   " 2>/dev/null || true)
 
-  echo "$output" | grep -q "stopped" || {
+  grep -q "stopped" <<<"$output" || {
     echo "output: $output"
     return 1
   }
@@ -1687,7 +1687,7 @@ test_resume_clears_and_dispatches() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q "stop-file cleared" || {
+  grep -q "stop-file cleared" <<<"$output" || {
     echo "output: $output"
     return 1
   }
@@ -1718,7 +1718,7 @@ test_stop_file_inert_to_other_epics() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q "enqueued" || {
+  grep -q "enqueued" <<<"$output" || {
     echo "output: $output"
     return 1
   }
@@ -1740,7 +1740,7 @@ test_stop_initiative_purges_and_writes_stop_file() {
     fleet_stop_initiative 'INIT-42' 'test reason' '$ws' 2>&1
   " 2>/dev/null || true)
 
-  echo "$output" | grep -q "STOP_RESULT|purged=\[\"CRE-101\",\"CRE-102\"\]|killed=\[\]" || {
+  grep -q "STOP_RESULT|purged=\[\"CRE-101\",\"CRE-102\"\]|killed=\[\]" <<<"$output" || {
     echo "output: $output"
     return 1
   }
@@ -1773,7 +1773,7 @@ test_stop_initiative_idempotent() {
     fleet_stop_initiative 'INIT-42' 'second' '$ws' 2>&1
   " 2>/dev/null || true)
 
-  echo "$output2" | grep -q "STOP_RESULT|purged=\[\]|killed=\[\]" || {
+  grep -q "STOP_RESULT|purged=\[\]|killed=\[\]" <<<"$output2" || {
     echo "output: $output2"
     return 1
   }
@@ -1802,7 +1802,7 @@ test_stop_purge_flock_failure_aborts() {
     rm -rf "$ws"
     return 1
   }
-  echo "$output" | grep -q "stop aborted" || {
+  grep -q "stop aborted" <<<"$output" || {
     echo "expected abort message; output: $output" >&2
     rm -rf "$ws"
     return 1
@@ -1873,7 +1873,7 @@ test_stop_kill_refused_pins_not_killed() {
   " 2>/dev/null || true)
   kill "$worker_pid" 2>/dev/null || true
 
-  echo "$output" | grep -q 'STOP_RESULT|purged=\[\]|killed=\[\]|pinned=\["CRE-102"\]' || {
+  grep -q 'STOP_RESULT|purged=\[\]|killed=\[\]|pinned=\["CRE-102"\]' <<<"$output" || {
     echo "output: $output" >&2
     rm -rf "$ws"
     return 1
@@ -1905,7 +1905,7 @@ test_stop_unverified_survivor_pinned_not_killed() {
   " 2>/dev/null || true)
   kill "$worker_pid" 2>/dev/null || true
 
-  echo "$output" | grep -q 'killed=\[\]|pinned=\["CRE-102"\]' || {
+  grep -q 'killed=\[\]|pinned=\["CRE-102"\]' <<<"$output" || {
     echo "output: $output" >&2
     rm -rf "$ws"
     return 1
@@ -1932,7 +1932,7 @@ test_stop_dead_worker_without_queue_entry_pinned() {
     fleet_stop_initiative 'INIT-42' 'test' '$ws' 2>&1
   " 2>/dev/null || true)
 
-  echo "$output" | grep -q 'purged=\[\]|killed=\[\]|pinned=\["CRE-102"\]' || {
+  grep -q 'purged=\[\]|killed=\[\]|pinned=\["CRE-102"\]' <<<"$output" || {
     echo "output: $output" >&2
     rm -rf "$ws"
     return 1
@@ -1964,7 +1964,7 @@ test_stop_children_query_failure_pins_incomplete_workspace_logs() {
     fleet_stop_initiative 'INIT-42' 'test' '$ws' 2>&1
   " 2>/dev/null || true)
 
-  echo "$output" | grep -q 'cannot fetch children of INIT-42' || {
+  grep -q 'cannot fetch children of INIT-42' <<<"$output" || {
     echo "expected children-fetch warning; output: $output" >&2
     return 1
   }
@@ -2022,7 +2022,7 @@ test_dispatch_reconcile_respects_stop_pins() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q 'TEST-P — pinned by stop-file, left alone' || {
+  grep -q 'TEST-P — pinned by stop-file, left alone' <<<"$output" || {
     echo "expected pinned-skip line; output: $output" >&2
     return 1
   }
@@ -2171,7 +2171,7 @@ test_dispatch_dead_letter_at_restart_cap_reported() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q 'fleet-dead-letter|tid=TEST-8|reason=orphaned-after-max-restarts' || {
+  grep -q 'fleet-dead-letter|tid=TEST-8|reason=orphaned-after-max-restarts' <<<"$output" || {
     echo "expected dead-letter line; output: $output" >&2
     return 1
   }
@@ -2234,11 +2234,11 @@ test_dispatch_manifest_epic_not_dispatched() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q "not in execution state (manifest dispatch=false)" || {
+  grep -q "not in execution state (manifest dispatch=false)" <<<"$output" || {
     echo "expected manifest-sourced not-in-execution message, got: $output" >&2
     return 1
   }
-  ! echo "$output" | grep -q "enqueued" || {
+  ! grep -q "enqueued" <<<"$output" || {
     echo "should not have enqueued anything: $output" >&2
     return 1
   }
@@ -2280,15 +2280,15 @@ test_dispatch_manifest_full_localization() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q "would enqueue: .*CRE-412" || {
+  grep -q "would enqueue: .*CRE-412" <<<"$output" || {
     echo "expected CRE-412 to be enqueued: $output" >&2
     return 1
   }
-  ! echo "$output" | grep -q "CRE-410" || {
+  ! grep -q "CRE-410" <<<"$output" || {
     echo "already-dispatched CRE-410 should never be considered: $output" >&2
     return 1
   }
-  echo "$output" | grep -q "blocked CRE-411" || {
+  grep -q "blocked CRE-411" <<<"$output" || {
     echo "expected CRE-411 reported as blocked: $output" >&2
     return 1
   }
@@ -2335,19 +2335,19 @@ test_dispatch_blocker_unmerged_pr_holds_dependent() {
   output=$(bash -c "$script" 2>/dev/null || true)
 
   local rc=0
-  echo "$output" | grep -q "blocked by CRE-430 (run completed, PR still open" || {
+  grep -q "blocked by CRE-430 (run completed, PR still open" <<<"$output" || {
     echo "expected CRE-430's open PR to block CRE-440: $output" >&2
     rc=1
   }
-  echo "$output" | grep -q "blocked by CRE-431 (PR closed unmerged" || {
+  grep -q "blocked by CRE-431 (PR closed unmerged" <<<"$output" || {
     echo "expected CRE-431's closed-unmerged PR to block (and be surfaced): $output" >&2
     rc=1
   }
-  echo "$output" | grep -q "blocked by CRE-432 (run completed, PR merge state unknown" || {
+  grep -q "blocked by CRE-432 (run completed, PR merge state unknown" <<<"$output" || {
     echo "expected CRE-432's unknown merge state to block: $output" >&2
     rc=1
   }
-  ! echo "$output" | grep -q "would enqueue:" || {
+  ! grep -q "would enqueue:" <<<"$output" || {
     echo "nothing should be enqueued while every blocker's PR is unmerged: $output" >&2
     rc=1
   }
@@ -2358,15 +2358,15 @@ test_dispatch_blocker_unmerged_pr_holds_dependent() {
   output=$(bash -c "$script" 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q "blocked-by CRE-430 resolved (Done, merged)" || {
+  grep -q "blocked-by CRE-430 resolved (Done, merged)" <<<"$output" || {
     echo "expected CRE-430 resolved once merged: $output" >&2
     rc=1
   }
-  echo "$output" | grep -q "would enqueue: .*CRE-440" || {
+  grep -q "would enqueue: .*CRE-440" <<<"$output" || {
     echo "expected CRE-440 enqueued after its blocker merged: $output" >&2
     rc=1
   }
-  ! echo "$output" | grep -qE "would enqueue: .*CRE-44[12]" || {
+  ! grep -qE "would enqueue: .*CRE-44[12]" <<<"$output" || {
     echo "CRE-441/CRE-442 must stay blocked: $output" >&2
     rc=1
   }
@@ -2400,11 +2400,11 @@ test_dispatch_manifest_per_child_skipped_without_manifest() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q "skip CRE-420 (no ticket manifest)" || {
+  grep -q "skip CRE-420 (no ticket manifest)" <<<"$output" || {
     echo "expected CRE-420 to be skipped for having no ticket manifest: $output" >&2
     return 1
   }
-  echo "$output" | grep -q "would enqueue: .*CRE-420" && {
+  grep -q "would enqueue: .*CRE-420" <<<"$output" && {
     echo "CRE-420 must never be enqueued with no ticket manifest: $output" >&2
     return 1
   }
@@ -2505,17 +2505,17 @@ test_dispatch_not_ready_child_excluded_and_counted_separately() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q '^  not-ready CRE-201 ' || {
+  grep -q '^  not-ready CRE-201 ' <<<"$output" || {
     echo "expected CRE-201 reported not-ready; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q '^  blocked CRE-202$' || {
+  grep -q '^  blocked CRE-202$' <<<"$output" || {
     echo "expected CRE-202 reported blocked; output: $output" >&2
     return 1
   }
   local last_line
   last_line=$(echo "$output" | tail -1)
-  echo "$last_line" | grep -q '^\[DRY-RUN\] would resume 0 | blocked 1 | not_ready 1 | would enqueue 0 ticket(s) for INIT-42$' || {
+  grep -q '^\[DRY-RUN\] would resume 0 | blocked 1 | not_ready 1 | would enqueue 0 ticket(s) for INIT-42$' <<<"$last_line" || {
     echo "expected blocked/not_ready counted separately, got '$last_line'" >&2
     return 1
   }
@@ -2545,7 +2545,7 @@ test_dispatch_no_readiness_field_computed_live_unavailable_excludes() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q '^  not-ready CRE-301 ' || {
+  grep -q '^  not-ready CRE-301 ' <<<"$output" || {
     echo "expected CRE-301 (no cached readiness, no body reachable) excluded as not-ready; output: $output" >&2
     return 1
   }
@@ -2573,11 +2573,11 @@ test_dispatch_no_readiness_field_computed_live_body_admits() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q 'would enqueue: .*CRE-302' || {
+  grep -q 'would enqueue: .*CRE-302' <<<"$output" || {
     echo "expected CRE-302 (no cached readiness, live body resolves ready) enqueued; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q '^  not-ready CRE-302 ' && {
+  grep -q '^  not-ready CRE-302 ' <<<"$output" && {
     echo "CRE-302 should not be excluded once live computation resolves ready; output: $output" >&2
     return 1
   }
@@ -2608,11 +2608,11 @@ test_dispatch_needs_info_child_excluded() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q '^  not-ready CRE-303 .*needs_info=true' || {
+  grep -q '^  not-ready CRE-303 .*needs_info=true' <<<"$output" || {
     echo "expected CRE-303 excluded for needs-info flag; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q 'would enqueue: .*CRE-303' && {
+  grep -q 'would enqueue: .*CRE-303' <<<"$output" && {
     echo "CRE-303 must never be enqueued while needs-info is set; output: $output" >&2
     return 1
   }
@@ -2647,7 +2647,7 @@ test_dispatch_not_ready_summary_includes_score_and_gaps() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q '^  not-ready CRE-501 .*score=41 gaps=requirement_completeness,deep_scope_ambiguity' || {
+  grep -q '^  not-ready CRE-501 .*score=41 gaps=requirement_completeness,deep_scope_ambiguity' <<<"$output" || {
     echo "expected CRE-501's not-ready line to report score=41 and its gaps; output: $output" >&2
     return 1
   }
@@ -2681,23 +2681,23 @@ test_dispatch_semantic_scope_child_refused_and_reported() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q 'not-ready CRE-701' || {
+  grep -q 'not-ready CRE-701' <<<"$output" || {
     echo "expected CRE-701 to be reported not-ready; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q 'CRE-701 .*not enqueue' && {
+  grep -q 'CRE-701 .*not enqueue' <<<"$output" && {
     echo "CRE-701 must not be enqueued: $output" >&2
     return 1
   }
-  echo "$output" | grep -q 'semantic=SEMANTIC_SCOPE' || {
+  grep -q 'semantic=SEMANTIC_SCOPE' <<<"$output" || {
     echo "expected semantic=SEMANTIC_SCOPE in the not-ready line; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q 'disputed=\[AC_VAGUE (AC-4 already qualifies this) — waive: dor-check.sh --waive CRE-701 AC_VAGUE' || {
+  grep -q 'disputed=\[AC_VAGUE (AC-4 already qualifies this) — waive: dor-check.sh --waive CRE-701 AC_VAGUE' <<<"$output" || {
     echo "expected the disputed AC_VAGUE entry with its waive command; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -qE 'not_ready [1-9]' || {
+  grep -qE 'not_ready [1-9]' <<<"$output" || {
     echo "expected the fleet summary line to count CRE-701 under not_ready; output: $output" >&2
     return 1
   }
@@ -2734,15 +2734,15 @@ test_dispatch_demoted_dispute_has_no_waive_hint() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q 'not-ready CRE-702' || {
+  grep -q 'not-ready CRE-702' <<<"$output" || {
     echo "expected CRE-702 to be reported not-ready; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q 'waive CRE-702 AC_VAGUE' && {
+  grep -q 'waive CRE-702 AC_VAGUE' <<<"$output" && {
     echo "a demoted code must not get a waive hint; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q 'disputed=\[NAV_PATH_MISSING (nav is in the intro) — waive: dor-check.sh --waive CRE-702 NAV_PATH_MISSING' || {
+  grep -q 'disputed=\[NAV_PATH_MISSING (nav is in the intro) — waive: dor-check.sh --waive CRE-702 NAV_PATH_MISSING' <<<"$output" || {
     echo "expected the undemoted NAV_PATH_MISSING dispute to keep its waive hint; output: $output" >&2
     return 1
   }
@@ -2776,15 +2776,15 @@ test_dispatch_child_with_only_demoted_code_is_enqueued() {
   " 2>/dev/null || true)
   rm -rf "$repos_root"
 
-  echo "$output" | grep -q 'DEMOTE-FAILED' && {
+  grep -q 'DEMOTE-FAILED' <<<"$output" && {
     echo "set_ticket_demotions fixture write failed; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q 'not-ready CRE-703' && {
+  grep -q 'not-ready CRE-703' <<<"$output" && {
     echo "CRE-703's only hard code was demoted, it must not be not-ready; output: $output" >&2
     return 1
   }
-  echo "$output" | grep -q '\[DRY-RUN\] would enqueue:.*CRE-703' || {
+  grep -q '\[DRY-RUN\] would enqueue:.*CRE-703' <<<"$output" || {
     echo "expected CRE-703 to be enqueued; output: $output" >&2
     return 1
   }

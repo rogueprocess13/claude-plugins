@@ -210,9 +210,9 @@ for want in \
   "| Discovery | 1 | 2026-11-01T10:01:10Z | 2m 0s | done | 0 | UNMEASURED | | | |" \
   "| Crosscheck | 1 | 2026-11-01T10:03:20Z | 5s | halt CROSSCHECK_BLOCKED | 0 | n/a (bash) | | | |" \
   "Cost: tokens in 23 / out 34 / cache read 183 / cache write 64 (phase agents + orchestrator); UNMEASURED: Discovery"; do
-  if printf '%s\n' "$report" | grep -Fxq -- "$want"; then _pass "report line: ${want:0:60}"; else _fail "report lacks: $want"; fi
+  if grep -Fxq -- "$want" <<<"$report"; then _pass "report line: ${want:0:60}"; else _fail "report lacks: $want"; fi
 done
-printf '%s\n' "$report" | grep -q '^Timing: 4m 9s wall-clock across 2 run(s); phases ' && _pass "Timing line" || _fail "Timing line: $(printf '%s\n' "$report" | grep '^Timing')"
+grep -q '^Timing: 4m 9s wall-clock across 2 run(s); phases ' <<<"$report" && _pass "Timing line" || _fail "Timing line: $(printf '%s\n' "$report" | grep '^Timing')"
 bash "${LIB_DIR}/planner-run-report.sh" INIT-none >/dev/null 2>&1
 _eq "no telemetry -> exit 1" "$?" "1"
 

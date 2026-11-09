@@ -165,12 +165,12 @@ ctx=$(
 JSON
 )
 block=$(planner_context_generate "$ctx" 2>&1) || { fail "valid block generation" "$block"; }
-if echo "$block" | grep -q '## Planner Context'; then
+if grep -q '## Planner Context' <<<"$block"; then
   pass "valid block has Planner Context heading"
 else
   fail "valid block has Planner Context heading" "missing"
 fi
-if echo "$block" | grep -q '\*\*Confidence:\*\* 0.85'; then
+if grep -q '\*\*Confidence:\*\* 0.85' <<<"$block"; then
   pass "valid block includes Confidence field"
 else
   fail "valid block includes Confidence field" "missing"
@@ -179,7 +179,7 @@ fi
 for field in "Schema-Version" "Initiative" "Epic" "Confidence" "Strategy" \
   "Decision" "Affected Services" "Target Symbols" "Pre-approved" \
   "Generated" "Regenerate"; do
-  if echo "$block" | grep -q "\*\*${field}:\*\*"; then
+  if grep -q "\*\*${field}:\*\*" <<<"$block"; then
     : # present
   else
     fail "  required field '$field' present" "missing in generated block"
@@ -222,7 +222,7 @@ ctx=$(
 JSON
 )
 block=$(planner_context_generate "$ctx" 2>&1)
-if echo "$block" | grep -qE '\*\*Generated:\*\* 20[0-9]{2}-[0-9]{2}-[0-9]{2}T'; then
+if grep -qE '\*\*Generated:\*\* 20[0-9]{2}-[0-9]{2}-[0-9]{2}T' <<<"$block"; then
   pass "empty Generated field auto-filled with ISO timestamp"
 else
   fail "empty Generated field auto-filled" "missing timestamp"
@@ -401,7 +401,7 @@ fi
 
 echo "--- validate: incomplete feature body rejected with ticket_type ---"
 err=$(planner_validate_ticket "$INCOMPLETE_FEATURE_DESC" "true" "feature" 2>&1 1>/dev/null) && rc=0 || rc=$?
-if [ "$rc" -eq 1 ] && echo "$err" | grep -q "missing required section"; then
+if [ "$rc" -eq 1 ] && grep -q "missing required section" <<<"$err"; then
   pass "incomplete feature body rejected (rc=1, reports missing sections)"
 else
   fail "incomplete feature body rejected" "rc=$rc err='$err'"
@@ -479,6 +479,25 @@ if ! planner_verify_tickets "INIT-TEST" '["CRE-502"]' >/dev/null 2>&1; then
   pass "verify fails when no ticket manifest exists"
 else
   fail "verify fails on a missing manifest" "returned zero"
+fi
+
+# GitHub #640: `echo "$description" | grep -q '## Planner Context'` under
+# pipefail returned 141 once grep -q matched while echo was still writing, so a
+# large ticket body with the block near the top was reported as missing it.
+big_desc="## Planner Context"$'\n\n'"**Schema-Version:** 1"$'\n'
+big_desc+=$(printf 'filler line for size filler line for size filler line\n%.0s' $(seq 1 4000))
+_sp_fail=0
+for _ in 1 2 3 4 5; do
+  err=$(
+    set -o pipefail
+    planner_validate_ticket "$big_desc" "true" 2>&1 1>/dev/null
+  ) || true
+  case "$err" in *"missing Planner Context block"*) _sp_fail=$((_sp_fail + 1)) ;; esac
+done
+if [ "$_sp_fail" -eq 0 ]; then
+  pass "validate: ${#big_desc}-byte body with the block near the top finds it under pipefail"
+else
+  fail "validate: large body under pipefail" "block reported missing in $_sp_fail/5 runs (SIGPIPE from echo | grep -q)"
 fi
 
 echo ""

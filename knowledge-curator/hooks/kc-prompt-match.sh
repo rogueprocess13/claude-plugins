@@ -35,7 +35,7 @@ MATCHES=""
 for term in $TERMS; do
   while IFS= read -r line; do
     # Avoid duplicate lines
-    if ! echo "$MATCHES" | grep -qF "$line"; then
+    if ! grep -qF "$line" <<<"$MATCHES"; then
       MATCHES="${MATCHES}${line}"$'\n'
     fi
   done < <(grep -i "$term" "$INDEX_FILE" 2>/dev/null | grep -E '^\| KC-' | head -3 || true)

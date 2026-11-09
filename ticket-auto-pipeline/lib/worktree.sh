@@ -238,7 +238,7 @@ worktree_gc() {
     tid=$(basename "$ticket_dir")
 
     # Check if this ticket is terminal
-    if [ -n "$terminal_ids" ] && echo "$terminal_ids" | grep -qw "$tid"; then
+    if [ -n "$terminal_ids" ] && grep -qw "$tid" <<<"$terminal_ids"; then
       release_worktree "$tid"
     fi
   done

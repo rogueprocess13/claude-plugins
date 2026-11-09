@@ -84,7 +84,7 @@ else
   fail "Render: log line has exactly 5 fields (got: $LINE)"
 fi
 
-if echo "$LINE" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\|render\|KC-0001\|KC-0001\|total=1 blocked=0$'; then
+if grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\|render\|KC-0001\|KC-0001\|total=1 blocked=0$' <<<"$LINE"; then
   pass "Render: line matches ISO|render|next|ranked|detail schema"
 else
   fail "Render: line matches schema (got: $LINE)"
@@ -198,7 +198,7 @@ teardown
 
 setup
 OUT=$("$KC_RENDER" --stats "$KDIR")
-if echo "$OUT" | grep -q "No ranking telemetry yet"; then
+if grep -q "No ranking telemetry yet" <<<"$OUT"; then
   pass "Stats: friendly message when no telemetry exists"
 else
   fail "Stats: friendly message when no telemetry exists (got: $OUT)"
@@ -213,12 +213,12 @@ write_item "$KDIR/KC-0002--beta.md" KC-0002 "Beta" active p3 "$NOW" ""
 "$KC_RENDER" "$KDIR" >/dev/null
 KNOWLEDGE_DIR="$KDIR" "$KC_ITEM" claim KC-0001 >/dev/null
 OUT=$("$KC_RENDER" --stats "$KDIR")
-if echo "$OUT" | grep -qE "NEXT box claimed +1"; then
+if grep -qE "NEXT box claimed +1" <<<"$OUT"; then
   pass "Stats: claiming the NEXT item counts as a hit"
 else
   fail "Stats: NEXT hit (got: $OUT)"
 fi
-if echo "$OUT" | grep -qE "1 renders · 1 claims"; then
+if grep -qE "1 renders · 1 claims" <<<"$OUT"; then
   pass "Stats: render and claim totals reported"
 else
   fail "Stats: totals (got: $OUT)"
@@ -233,7 +233,7 @@ write_item "$KDIR/KC-0002--beta.md" KC-0002 "Beta" active p2 "$NOW" ""
 "$KC_RENDER" "$KDIR" >/dev/null
 KNOWLEDGE_DIR="$KDIR" "$KC_ITEM" claim KC-0002 >/dev/null
 OUT=$("$KC_RENDER" --stats "$KDIR")
-if echo "$OUT" | grep -qE "claimed from top 3 +1"; then
+if grep -qE "claimed from top 3 +1" <<<"$OUT"; then
   pass "Stats: claiming position 2 counts as top-3, not a hit"
 else
   fail "Stats: top-3 classification (got: $OUT)"
@@ -251,12 +251,12 @@ write_item "$KDIR/KC-0005--item5.md" KC-0005 "Item 5" active p3 "$NOW" ""
 "$KC_RENDER" "$KDIR" >/dev/null
 KNOWLEDGE_DIR="$KDIR" "$KC_ITEM" claim KC-0005 >/dev/null
 OUT=$("$KC_RENDER" --stats "$KDIR")
-if echo "$OUT" | grep -qE "claimed further down +1"; then
+if grep -qE "claimed further down +1" <<<"$OUT"; then
   pass "Stats: claiming position 4+ counts as further down"
 else
   fail "Stats: deep claim classification (got: $OUT)"
 fi
-if echo "$OUT" | grep -q "avg position 5.0"; then
+if grep -q "avg position 5.0" <<<"$OUT"; then
   pass "Stats: reports average position for deep claims"
 else
   fail "Stats: avg position (got: $OUT)"
@@ -274,7 +274,7 @@ write_item "$KDIR/KC-0002--beta.md" KC-0002 "Beta" active p2 "$NOW" "  - rel: de
 "$KC_RENDER" "$KDIR" >/dev/null
 KNOWLEDGE_DIR="$KDIR" "$KC_ITEM" claim KC-0002 >/dev/null
 OUT=$("$KC_RENDER" --stats "$KDIR")
-if echo "$OUT" | grep -qE "claims of blocked items +1"; then
+if grep -qE "claims of blocked items +1" <<<"$OUT"; then
   pass "Stats: counts claims of items demoted as blocked"
 else
   fail "Stats: blocked claim count (got: $OUT)"
@@ -287,7 +287,7 @@ setup
 write_item "$KDIR/KC-0001--alpha.md" KC-0001 "Alpha" active p2 "$NOW" ""
 KNOWLEDGE_DIR="$KDIR" "$KC_ITEM" claim KC-0001 >/dev/null
 OUT=$("$KC_RENDER" --stats "$KDIR")
-if echo "$OUT" | grep -qE "claimed without a render +1"; then
+if grep -qE "claimed without a render +1" <<<"$OUT"; then
   pass "Stats: claim with no preceding render counted separately"
 else
   fail "Stats: cold claim classification (got: $OUT)"
@@ -302,7 +302,7 @@ write_item "$KDIR/KC-0001--alpha.md" KC-0001 "Alpha" active p2 "$NOW" ""
 write_item "$KDIR/KC-0009--late.md" KC-0009 "Late arrival" active p2 "$NOW" ""
 KNOWLEDGE_DIR="$KDIR" "$KC_ITEM" claim KC-0009 >/dev/null
 OUT=$("$KC_RENDER" --stats "$KDIR")
-if echo "$OUT" | grep -qE "not on screen +1"; then
+if grep -qE "not on screen +1" <<<"$OUT"; then
   pass "Stats: item absent from the last render counted as not on screen"
 else
   fail "Stats: not-on-screen classification (got: $OUT)"
@@ -315,7 +315,7 @@ setup
 write_item "$KDIR/KC-0001--alpha.md" KC-0001 "Alpha" active p2 "$NOW" ""
 "$KC_RENDER" "$KDIR" >/dev/null
 OUT=$("$KC_RENDER" --stats "$KDIR")
-if echo "$OUT" | grep -q "No claims logged yet"; then
+if grep -q "No claims logged yet" <<<"$OUT"; then
   pass "Stats: renders without claims reports nothing to compare"
 else
   fail "Stats: no-claims message (got: $OUT)"

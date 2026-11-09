@@ -150,7 +150,7 @@ _planner_crosscheck_slugs_in_text() {
   shift
   local slug
   for slug in "$@"; do
-    if echo "$text" | grep -qE "(^|[^A-Za-z0-9_-])${slug}([^A-Za-z0-9_-]|\$)"; then
+    if grep -qE "(^|[^A-Za-z0-9_-])${slug}([^A-Za-z0-9_-]|\$)" <<<"$text"; then
       echo "$slug"
     fi
   done

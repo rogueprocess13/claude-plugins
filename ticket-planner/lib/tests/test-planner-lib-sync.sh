@@ -92,7 +92,7 @@ if grep -q '^# working tree$' "${H}/.claude/skills/lib/planner-state.sh" 2>/dev/
 else
   fail "dev → skills lib" "skills lib still holds the installed copy"
 fi
-if echo "$out" | grep -q "source checkout"; then
+if grep -q "source checkout" <<<"$out"; then
   pass "a dev sync announces itself on stdout"
 else
   fail "dev sync notice" "no notice emitted, got '$out'"

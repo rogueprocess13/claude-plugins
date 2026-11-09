@@ -65,7 +65,7 @@ _topic_matches() {
   [ -z "$topic_lower" ] && return 1
   # Require at least 3 chars to avoid spurious matches on short words
   [ ${#topic_lower} -lt 3 ] && return 1
-  echo "$haystack" | grep -Fq "$topic_lower" 2>/dev/null && return 0 || return 1
+  grep -Fq "$topic_lower" <<<"$haystack" 2>/dev/null && return 0 || return 1
 }
 
 # ── INDEX.md routing ──────────────────────────────────────────────────────────
@@ -89,29 +89,29 @@ _route_index() {
   # Extract topic keyword from col 1, file path from col 2.
   while IFS= read -r line; do
     # Track which table we're in
-    if echo "$line" | grep -q '^## Lookup by Topic'; then
+    if grep -q '^## Lookup by Topic' <<<"$line"; then
       in_topic_table=true
       in_service_table=false
       continue
     fi
-    if echo "$line" | grep -q '^## Lookup by Service'; then
+    if grep -q '^## Lookup by Service' <<<"$line"; then
       in_topic_table=false
       in_service_table=true
       continue
     fi
     # Next ## heading ends the table
-    if echo "$line" | grep -q '^## ' && ! echo "$line" | grep -q 'Lookup by'; then
+    if grep -q '^## ' <<<"$line" && ! grep -q 'Lookup by' <<<"$line"; then
       in_topic_table=false
       in_service_table=false
       continue
     fi
 
     # Only process table rows (skip header and separator lines)
-    if ! echo "$line" | grep -qE '^\|.*\|.*\|'; then
+    if ! grep -qE '^\|.*\|.*\|' <<<"$line"; then
       continue
     fi
     # Skip separator rows like |-------|------|
-    if echo "$line" | grep -qE '^\|[- ]+\|'; then
+    if grep -qE '^\|[- ]+\|' <<<"$line"; then
       continue
     fi
 
@@ -175,7 +175,7 @@ _route_repos() {
     local kept=() r name
     for r in "${repos[@]}"; do
       name=$(basename "$r" | tr '[:upper:]' '[:lower:]')
-      if printf '%s\n' "$haystack" | grep -qwF -- "$name"; then
+      if grep -qwF -- "$name" <<<"$haystack"; then
         kept+=("$r")
       fi
     done

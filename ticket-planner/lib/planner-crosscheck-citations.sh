@@ -265,12 +265,12 @@ _planner_crosscheck_strip_symbol_annotation() {
 # Usage: _planner_crosscheck_symbol_marked_new <symbol>
 _planner_crosscheck_symbol_marked_new() {
   local symbol="$1"
-  echo "$symbol" | grep -qiE '\([[:space:]]*new\b[^)]*\)[[:space:]]*$' && return 0
+  grep -qiE '\([[:space:]]*new\b[^)]*\)[[:space:]]*$' <<<"$symbol" && return 0
   # By the time this is called, the caller has already split the TargetSymbols
   # entry on its first ':' into symbol/token — the "new route: <path>" prefix's
   # own colon is gone from $symbol, so the trailing ':' this regex used to
   # require can never match. Anchor on the end of string instead.
-  echo "$symbol" | grep -qiE '^[[:space:]]*new[[:space:]]+(route|endpoint|file)[[:space:]]*$' && return 0
+  grep -qiE '^[[:space:]]*new[[:space:]]+(route|endpoint|file)[[:space:]]*$' <<<"$symbol" && return 0
   return 1
 }
 
@@ -452,7 +452,7 @@ _planner_crosscheck_check_citation() {
     local subsym missing=""
     for subsym in "${subsymbols[@]}"; do
       [ -z "$subsym" ] && continue
-      sed -n "${lo},${hi}p" "$resolved" | grep -qF "$subsym" && continue
+      grep -qF "$subsym" < <(sed -n "${lo},${hi}p" "$resolved") && continue
       local def_line
       def_line=$(_planner_crosscheck_find_definition_line "$resolved" "$subsym")
       [ -n "$def_line" ] && [ "$def_line" -le "$start_line" ] && continue

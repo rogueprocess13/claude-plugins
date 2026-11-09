@@ -104,7 +104,7 @@ See the `Document` interface (`lib/document-badges-nonexistent.ts:14`).
 EOF
 
 OUT=$(planner_crosscheck_citations_one "$MISSING_SPEC" "$REPOS_ROOT" 2>&1)
-if [ $? -ne 0 ] && echo "$OUT" | grep -q "CITATION_UNRESOLVED"; then
+if [ $? -ne 0 ] && grep -q "CITATION_UNRESOLVED" <<<"$OUT"; then
   pass "missing file reports CITATION_UNRESOLVED"
 else
   fail "missing file reports CITATION_UNRESOLVED" "$OUT"
@@ -123,7 +123,7 @@ The badge helper is at `lib/document-badges.ts:9999`.
 EOF
 
 OUT=$(planner_crosscheck_citations_one "$RANGE_SPEC" "$REPOS_ROOT" 2>&1)
-if [ $? -ne 0 ] && echo "$OUT" | grep -q "CITATION_LINE_OUT_OF_RANGE"; then
+if [ $? -ne 0 ] && grep -q "CITATION_LINE_OUT_OF_RANGE" <<<"$OUT"; then
   pass "out-of-range line reports CITATION_LINE_OUT_OF_RANGE"
 else
   fail "out-of-range line reports CITATION_LINE_OUT_OF_RANGE" "$OUT"
@@ -154,7 +154,7 @@ Triage helper lives in the worker.
 EOF
 
 OUT=$(planner_crosscheck_citations_one "$SYMBOL_SPEC" "$REPOS_ROOT" 2>&1)
-if [ $? -ne 0 ] && echo "$OUT" | grep -q "CITATION_SYMBOL_MISMATCH"; then
+if [ $? -ne 0 ] && grep -q "CITATION_SYMBOL_MISMATCH" <<<"$OUT"; then
   pass "symbol at wrong line reports CITATION_SYMBOL_MISMATCH"
 else
   fail "symbol at wrong line reports CITATION_SYMBOL_MISMATCH" "$OUT"
@@ -232,7 +232,7 @@ Compound citation spec with a bad symbol
 EOF
 
 OUT=$(planner_crosscheck_citations_one "$COMPOUND_BAD_SPEC" "$REPOS_ROOT" 2>&1)
-if [ $? -ne 0 ] && echo "$OUT" | grep -q "CITATION_SYMBOL_MISMATCH"; then
+if [ $? -ne 0 ] && grep -q "CITATION_SYMBOL_MISMATCH" <<<"$OUT"; then
   pass "compound citation with a genuinely missing symbol still reports CITATION_SYMBOL_MISMATCH"
 else
   fail "compound citation with a genuinely missing symbol still reports CITATION_SYMBOL_MISMATCH" "$OUT"
@@ -251,7 +251,7 @@ This mirrors the existing `needsEdit` auto-expand rule already in the upload que
 EOF
 
 OUT=$(planner_crosscheck_citations_one "$PRECEDENT_SPEC" "$REPOS_ROOT" 2>&1)
-if [ $? -ne 0 ] && echo "$OUT" | grep -q "PRECEDENT_NOT_FOUND"; then
+if [ $? -ne 0 ] && grep -q "PRECEDENT_NOT_FOUND" <<<"$OUT"; then
   pass "precedent claim with zero matches reports PRECEDENT_NOT_FOUND"
 else
   fail "precedent claim with zero matches reports PRECEDENT_NOT_FOUND" "$OUT"
@@ -337,7 +337,7 @@ EOF
 
 OUT=$(planner_crosscheck_citations "$INIT_ID" 2>&1)
 RC=$?
-if [ "$RC" -eq 0 ] && echo "$OUT" | grep -q "3 passed, 0 failed out of 3 files"; then
+if [ "$RC" -eq 0 ] && grep -q "3 passed, 0 failed out of 3 files" <<<"$OUT"; then
   pass "clean initiative sweep passes and skips INDEX.md"
 else
   fail "clean initiative sweep passes and skips INDEX.md" "$OUT"
@@ -347,7 +347,7 @@ echo "--- planner_crosscheck_citations fails when one spec has a defect ---"
 cp "$MISSING_SPEC" "${ARTIFACTS_DIR}/specs/vs-2.md"
 OUT=$(planner_crosscheck_citations "$INIT_ID" 2>&1)
 RC=$?
-if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "3 passed, 1 failed out of 4 files"; then
+if [ "$RC" -ne 0 ] && grep -q "3 passed, 1 failed out of 4 files" <<<"$OUT"; then
   pass "initiative sweep fails when one spec has a defect"
 else
   fail "initiative sweep fails when one spec has a defect" "$OUT"

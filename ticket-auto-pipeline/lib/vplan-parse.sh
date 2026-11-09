@@ -100,7 +100,11 @@ vplan_parse() {
   # subsection heading below.
   text=${text//$'\r'/}
   [ -n "$text" ] || return 1
-  echo "$text" | grep -q '## Verification Plan' 2>/dev/null || return 1
+  # A here-string, not `echo | grep -q`: grep -q exits on the first match, and
+  # under the caller's pipefail the writer's SIGPIPE (rc 141) then reads as
+  # "no Verification Plan" — every time for a large body, now and then for a
+  # small one on a loaded host.
+  grep -q '## Verification Plan' <<<"$text" 2>/dev/null || return 1
 
   local vplan_section
   vplan_section=$(echo "$text" | awk '/^### Per-Criterion Verification$/,/^## /' 2>/dev/null || true)

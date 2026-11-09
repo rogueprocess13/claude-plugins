@@ -339,7 +339,7 @@ planner_draft_readiness_begin "$INIT" >/dev/null 2>&1
 planner_draft_readiness_next "$INIT" >/dev/null 2>&1 # crash: no agent ran
 planner_draft_readiness_begin "$INIT" >/dev/null 2>&1
 l=$(planner_draft_readiness_next "$INIT" 2>/dev/null)
-if [ ! -e "${DR}/a-schema/attempts" ] && printf '%s\n' "$l" | grep -q $'^a-schema\tscan\t' &&
+if [ ! -e "${DR}/a-schema/attempts" ] && grep -q $'^a-schema\tscan\t' <<<"$l" &&
   printf '%s\n' "$l" | awk -F'\t' 'NF != 5 { bad = 1 } END { exit bad }'; then
   pass "begin drops a stale spawn list; list rows have 5 fields"
 else
@@ -372,9 +372,9 @@ report=$(planner_draft_readiness_report "$INIT")
 if [ "$GATE_RC" -eq 3 ] && [ "$SPAWNS" -eq 0 ] &&
   [ "$(grep -c '|META|draft-readiness|fail|b-api EDGE_CASE_GAP' "$LOG")" -eq 2 ] &&
   [ "$(printf '%s\n' "$report" | grep -c 'EDGE_CASE_GAP')" -eq 1 ] &&
-  printf '%s\n' "$report" | grep -q '^b-api (artifacts/specs/b-api.md)$' &&
-  printf '%s\n' "$report" | grep -q 'does not guarantee Refinement passes' &&
-  printf '%s\n' "$report" | grep -q -- '--accept DRAFT_NOT_READY'; then
+  grep -q '^b-api (artifacts/specs/b-api.md)$' <<<"$report" &&
+  grep -q 'does not guarantee Refinement passes' <<<"$report" &&
+  grep -q -- '--accept DRAFT_NOT_READY' <<<"$report"; then
   pass "cached re-run still blocks; report reads only the latest run"
 else
   fail "scoped report" "rc=$GATE_RC spawns=$SPAWNS $report"
@@ -461,7 +461,7 @@ CROSSCHECK_RC=0
 report=$(planner_draft_readiness_report "$INIT")
 if [ "$GATE_RC" -eq 3 ] && [ "$SPAWNS" -eq 0 ] &&
   tail -1 "$LOG" | grep -q '|META|draft-readiness|done|blocked crosscheck$' &&
-  printf '%s\n' "$report" | grep -q 'CROSSCHECK REPORT' &&
+  grep -q 'CROSSCHECK REPORT' <<<"$report" &&
   [ "$(planner_draft_readiness_state "$INIT")" = "crosscheck" ]; then
   pass "Crosscheck blocks: halt with Crosscheck's report, no draft spawn"
 else

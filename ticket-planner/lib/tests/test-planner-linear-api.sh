@@ -183,7 +183,7 @@ fi
 if err=$(planner_linear_resolve_label_ids "$TEAM_UUID" '["planned","nonexistent"]' 2>&1); then
   fail "unknown label is a hard failure" "returned 0 with '$err'"
 else
-  if echo "$err" | grep -q "nonexistent"; then
+  if grep -q "nonexistent" <<<"$err"; then
     pass "unknown label hard-fails and names the missing label"
   else
     fail "unknown label names the missing label" "$err"
@@ -278,7 +278,7 @@ declare -gA _PLANNER_LABEL_CACHE
 CREATE_LOG="$(mktemp)"
 planner_linear_graphql() {
   local body="$1"
-  if echo "$body" | grep -q "issueLabelCreate"; then
+  if grep -q "issueLabelCreate" <<<"$body"; then
     local name
     name=$(echo "$body" | jq -r '.variables.input.name')
     echo "$name" >>"$CREATE_LOG"
@@ -343,7 +343,7 @@ CAPTURE_FILE="$(mktemp)"
 
 planner_linear_graphql() {
   local body="$1"
-  if echo "$body" | grep -q "issueCreate"; then
+  if grep -q "issueCreate" <<<"$body"; then
     printf '%s' "$body" >"$CAPTURE_FILE"
     echo '{"data":{"issueCreate":{"success":true,"issue":{"id":"i1","identifier":"CRE-1","title":"T","url":"u"}}}}'
     return 0
@@ -439,7 +439,7 @@ fi
 if err=$(planner_linear_resolve_team_id "NOPE" 2>&1); then
   fail "an unknown team is rejected" "accepted"
 else
-  if echo "$err" | grep -q "CRE (Credit Network)"; then
+  if grep -q "CRE (Credit Network)" <<<"$err"; then
     pass "an unknown team is rejected, listing the available ones"
   else
     fail "rejection lists available teams" "$err"
@@ -450,7 +450,7 @@ TEAMS_RESPONSE="$TWO_TEAMS"
 if err=$(planner_linear_resolve_team_id 2>&1); then
   fail "an ambiguous workspace is an error, not a guess" "resolved to '$err'"
 else
-  if echo "$err" | grep -q "LINEAR_TEAM_ID"; then
+  if grep -q "LINEAR_TEAM_ID" <<<"$err"; then
     pass "several visible teams is an error naming how to disambiguate"
   else
     fail "ambiguity names the fix" "$err"

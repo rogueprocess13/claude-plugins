@@ -553,7 +553,7 @@ test_auto_restart_disabled_skipped_with_reason() {
     echo "ticket re-enqueued despite FLEET_AUTO_RESTART=false" >&2
     return 1
   }
-  echo "$out" | grep -q "auto-restart disabled" || {
+  grep -q "auto-restart disabled" <<<"$out" || {
     echo "expected disabled-reason in output, got: $out" >&2
     return 1
   }
@@ -592,7 +592,7 @@ test_at_cap_dead_lettered_not_reenqueued() {
     return 1
   }
   # Structured notification line naming ticket + reason.
-  echo "$out" | grep -q "fleet-dead-letter|tid=CRE-16|reason=orphaned-after-max-restarts" || {
+  grep -q "fleet-dead-letter|tid=CRE-16|reason=orphaned-after-max-restarts" <<<"$out" || {
     echo "expected structured fleet-dead-letter line, got: $out" >&2
     return 1
   }
@@ -745,7 +745,7 @@ test_dead_letter_wiring_uses_exec_silent_exit_reason() {
     echo "expected distinct reason in dead-letter file: $(cat "$dead_letter_file" 2>/dev/null)" >&2
     return 1
   }
-  echo "$out" | grep -q "fleet-dead-letter|tid=CRE-65|reason=exec-silent-exit-after-subagent-return" || {
+  grep -q "fleet-dead-letter|tid=CRE-65|reason=exec-silent-exit-after-subagent-return" <<<"$out" || {
     echo "expected structured fleet-dead-letter line with distinct reason, got: $out" >&2
     return 1
   }
@@ -911,11 +911,11 @@ test_scoped_tids_only_resume_listed() {
     return 1
   }
   # Real-mode resume lines — the supervisor's dispatch_epic parses these.
-  echo "$out" | grep -q '^  resumed CRE-9$' || {
+  grep -q '^  resumed CRE-9$' <<<"$out" || {
     echo "expected '  resumed CRE-9' line, got: $out" >&2
     return 1
   }
-  echo "$out" | grep -q '^  resumed CRE-10$' || {
+  grep -q '^  resumed CRE-10$' <<<"$out" || {
     echo "expected '  resumed CRE-10' line, got: $out" >&2
     return 1
   }
@@ -936,7 +936,7 @@ test_dry_run_resume_writes_nothing() {
   local out
   out=$(FLEET_RECONCILE_DRY_RUN=1 fleet_reconcile_orphans "$ws" "$queue_file" "" 2>&1)
 
-  echo "$out" | grep -q '\[DRY-RUN\] would resume CRE-25' || {
+  grep -q '\[DRY-RUN\] would resume CRE-25' <<<"$out" || {
     echo "expected dry-run would-resume line, got: $out" >&2
     return 1
   }
@@ -968,7 +968,7 @@ test_dry_run_cap_reports_dead_letter_without_writing() {
   local out
   out=$(FLEET_RECONCILE_DRY_RUN=1 fleet_reconcile_orphans "$ws" "$queue_file" "" 2>&1)
 
-  echo "$out" | grep -q '\[DRY-RUN\] would dead-letter CRE-26 (restart cap)' || {
+  grep -q '\[DRY-RUN\] would dead-letter CRE-26 (restart cap)' <<<"$out" || {
     echo "expected dry-run dead-letter line, got: $out" >&2
     return 1
   }
@@ -1085,7 +1085,7 @@ test_unscoped_leaves_gate_stopped_and_gate_held_alone() {
   fi
   # The skip line must name the scope reason, not read like a genuine done —
   # this is exactly how the original CRE-9 stall was diagnosed from fleetd.log.
-  echo "$out" | grep -q "CRE-9 — gate-stopped, left alone (no epic scope)" || {
+  grep -q "CRE-9 — gate-stopped, left alone (no epic scope)" <<<"$out" || {
     echo "expected scope-qualified skip line, got: $out" >&2
     return 1
   }

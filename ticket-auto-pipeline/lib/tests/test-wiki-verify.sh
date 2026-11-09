@@ -138,8 +138,8 @@ test_clean_wiki_verifies() {
   _verify
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -qE '^WIKI_VERIFY_SUMMARY\|checks=[0-9]+\|violations=0$' || ok=0
-  echo "$_OUT" | grep -q '^WIKI_VERIFY|' && ok=0
+  grep -qE '^WIKI_VERIFY_SUMMARY\|checks=[0-9]+\|violations=0$' <<<"$_OUT" || ok=0
+  grep -q '^WIKI_VERIFY|' <<<"$_OUT" && ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -165,7 +165,7 @@ EOF
   _verify
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '^WIKI_VERIFY|UNREGISTERED_FILE|.*orphan.md|' || ok=0
+  grep -q '^WIKI_VERIFY|UNREGISTERED_FILE|.*orphan.md|' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -183,7 +183,7 @@ PY
   _verify
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q "^WIKI_VERIFY|ORPHANED_REGISTRY_ROW|.*index.md|registry names 'ghost.md'" || ok=0
+  grep -q "^WIKI_VERIFY|ORPHANED_REGISTRY_ROW|.*index.md|registry names 'ghost.md'" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -217,7 +217,7 @@ PY
   _verify
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q "^WIKI_VERIFY|LINK_INTEGRITY|.*flow-a.md|related: target 'missing.md' does not exist$" || ok=0
+  grep -q "^WIKI_VERIFY|LINK_INTEGRITY|.*flow-a.md|related: target 'missing.md' does not exist$" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -232,7 +232,7 @@ Ctx only, no other sections."
   _verify
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '^WIKI_VERIFY|ADR_CHECK:MISSING_SECTIONS|.*0001-broken.md|' || ok=0
+  grep -q '^WIKI_VERIFY|ADR_CHECK:MISSING_SECTIONS|.*0001-broken.md|' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -244,7 +244,7 @@ test_adr_duplicate_source_forwarded() {
   _verify
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '^WIKI_VERIFY|ADR_CHECK:DUPLICATE_SOURCE|' || ok=0
+  grep -q '^WIKI_VERIFY|ADR_CHECK:DUPLICATE_SOURCE|' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -268,7 +268,7 @@ PY
   _verify
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q "^WIKI_VERIFY|UNINDEXED_ADR|.*${fname}|id '${id}' has no row" || ok=0
+  grep -q "^WIKI_VERIFY|UNINDEXED_ADR|.*${fname}|id '${id}' has no row" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -280,7 +280,7 @@ test_index_orphan_row() {
   _verify
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q "^WIKI_VERIFY|INDEX_ORPHAN_ROW|.*index.md|index names 'ADR-0099'" || ok=0
+  grep -q "^WIKI_VERIFY|INDEX_ORPHAN_ROW|.*index.md|index names 'ADR-0099'" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -323,9 +323,9 @@ PY
   _verify
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q "^WIKI_VERIFY|TERM_DRIFT|.*flow-b.md|uses avoided synonym 'fee' for preferred term 'Commission'$" || ok=0
+  grep -q "^WIKI_VERIFY|TERM_DRIFT|.*flow-b.md|uses avoided synonym 'fee' for preferred term 'Commission'$" <<<"$_OUT" || ok=0
   # "commission" also appears in flow-b.md, so the term itself is used — no rot.
-  echo "$_OUT" | grep -q '^WIKI_VERIFY|GLOSSARY_ROT|' && ok=0
+  grep -q '^WIKI_VERIFY|GLOSSARY_ROT|' <<<"$_OUT" && ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -342,7 +342,7 @@ PY
   _verify
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q "^WIKI_VERIFY|GLOSSARY_ROT|.*glossary.md|term 'NeverUsedTerm' has no usages" || ok=0
+  grep -q "^WIKI_VERIFY|GLOSSARY_ROT|.*glossary.md|term 'NeverUsedTerm' has no usages" <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -356,8 +356,8 @@ test_setup_failure_distinguishable_from_clean() {
   set -e
   local ok=1
   [ "$_RC" -eq 2 ] || ok=0
-  echo "$_OUT" | grep -q '^ERROR:' || ok=0
-  echo "$_OUT" | grep -q '^WIKI_VERIFY_SUMMARY' && ok=0
+  grep -q '^ERROR:' <<<"$_OUT" || ok=0
+  grep -q '^WIKI_VERIFY_SUMMARY' <<<"$_OUT" && ok=0
   [ "$ok" = "1" ]
 }
 

@@ -74,7 +74,7 @@ _log_effectively_done() {
   while IFS= read -r line; do
     [ -z "$line" ] && continue
     step=$(echo "$line" | awk -F'|' '{print $3}')
-    echo "$step" | grep -qE "$_DONE_TRAILING_META_ALLOWLIST" || return 1
+    grep -qE "$_DONE_TRAILING_META_ALLOWLIST" <<<"$step" || return 1
   done <<<"$rest"
 
   return 0
@@ -271,7 +271,7 @@ else
   elif {
     _adv_ln=$(grep -n '^[^|]*|META|gate-stop|fail|ADVERSARIAL_BLOCKED' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d: -f1 || true)
     [ -n "$_adv_ln" ]
-  } && ! tail -n "+$((_adv_ln + 1))" "$LOG_FILE" 2>/dev/null | grep -qE '^[^|]*\|EXEC\|adversarial-review\|done\|(PASS|WARNINGS)'; then
+  } && ! grep -qE '^[^|]*\|EXEC\|adversarial-review\|done\|(PASS|WARNINGS)' < <(tail -n "+$((_adv_ln + 1))" "$LOG_FILE" 2>/dev/null); then
     # Only a passing re-review (PASS/WARNINGS) resolves the block. Since
     # GitHub #203, Step 3.6 writes `adversarial-review|done|BLOCKED`
     # *before* its gate-stop, so a run that died between those two lines
@@ -784,10 +784,10 @@ if [ "$RESUME_STEP" != "STEP_1" ] && [ "$RESUME_STEP" != "GATE_STILL_HELD" ]; th
     fi
     if [ -n "$_verify_last_ln" ]; then
       _verify_last_content=$(sed -n "${_verify_last_ln}p" "$LOG_FILE")
-      if echo "$_verify_last_content" | grep -q '|VERIFY|verify|fail|'; then
+      if grep -q '|VERIFY|verify|fail|' <<<"$_verify_last_content"; then
         _implement_after=$(awk -F'|' -v n="$_verify_last_ln" 'NR>n && $2=="IMPLEMENT" && $3=="implement" && $4=="done"{f=1; exit} END{print f+0}' "$LOG_FILE")
         [ "$_implement_after" = "0" ] && VERIFY_LAST="fail"
-      elif echo "$_verify_last_content" | grep -q '|VERIFY|verify|done|PASS'; then
+      elif grep -q '|VERIFY|verify|done|PASS' <<<"$_verify_last_content"; then
         VERIFY_LAST="pass"
       fi
     fi

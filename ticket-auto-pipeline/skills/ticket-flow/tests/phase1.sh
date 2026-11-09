@@ -125,7 +125,7 @@ test_validate_linear_config_dry_run() {
 
   local ok=1
   [ "$rc1" -eq 0 ] && [ "$cached" = yes ] && [ "$rc2" -eq 0 ] &&
-    echo "$out" | grep -q "sentinel-valid" && ! echo "$out" | grep -q "NOT FOUND" && ok=0
+    grep -q "sentinel-valid" <<<"$out" && ! grep -q "NOT FOUND" <<<"$out" && ok=0
   [ "$ok" -eq 0 ] || echo "rc=$rc1/$rc2 cached=$cached out=$out" >&2
   rm -rf "$tmpdir"
   return "$ok"
@@ -144,7 +144,7 @@ test_validate_linear_config_missing_item_writes_no_sentinel() {
     bash "$VALIDATE_SH" --dry-run TEST_TEAM_ID 2>&1) || rc=$?
   local ok=1
   [ -n "$label" ] && [ "$rc" -eq 0 ] && [ ! -e "$sentinel_dir/validated-TEST_TEAM_ID" ] &&
-    echo "$out" | grep -q "NOT FOUND" && echo "$out" | grep -q -- "--dry-run: exiting 0" && ok=0
+    grep -q "NOT FOUND" <<<"$out" && grep -q -- "--dry-run: exiting 0" <<<"$out" && ok=0
   [ "$ok" -eq 0 ] || echo "rc=$rc label=$label out=$out" >&2
   rm -rf "$tmpdir"
   return "$ok"
@@ -168,7 +168,7 @@ test_preflight_aborts_on_unset_key() {
     SENTINEL_DIR="$sentinel_dir" bash "$VALIDATE_SH" --force TEST_TEAM_ID 2>&1 >/dev/null) || rc=$?
 
   local ok=1
-  [ "$rc" -eq 4 ] && echo "$err" | grep -q "LINEAR_API_KEY not set" &&
+  [ "$rc" -eq 4 ] && grep -q "LINEAR_API_KEY not set" <<<"$err" &&
     [ ! -e "$log" ] && [ ! -e "$sentinel_dir" ] && ok=0
   [ "$ok" -eq 0 ] || echo "rc=$rc err=$err" >&2
   rm -rf "$tmpdir"
@@ -266,7 +266,7 @@ test_detect_resume_schema_mismatch() {
   local out
   out=$(cd "$tmpdir" && bash "$DETECT_RESUME_SH" WIL-99 2>/dev/null || true)
   rm -rf "$tmpdir"
-  echo "$out" | grep -q "SCHEMA_MISMATCH"
+  grep -q "SCHEMA_MISMATCH" <<<"$out"
 }
 
 # ── test_detect_resume_maintenance_document_done ────────────────────────────
@@ -553,7 +553,7 @@ test_detect_resume_no_step3() {
   out=$(CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" cd "$tmpdir" && bash "$DETECT_RESUME_SH" WIL-99 2>/dev/null || true)
   rm -rf "$tmpdir"
   # RESUME_STEP must not be STEP_3 (without _5 suffix)
-  echo "$out" | grep -q 'RESUME_STEP:.*STEP_3$' && return 1
+  grep -q 'RESUME_STEP:.*STEP_3$' <<<"$out" && return 1
   return 0
 }
 
@@ -1841,7 +1841,7 @@ test_flow_unknown_flag_rejected() {
   local wrote=false
   [ -d "$tmpdir/repos" ] && wrote=true
   rm -rf "$tmpdir"
-  [ "$rc" -ne 0 ] && ! $wrote && printf '%s' "$err" | grep -q 'unknown argument: --dryrun'
+  [ "$rc" -ne 0 ] && ! $wrote && grep -q 'unknown argument: --dryrun' <<<"$err"
 }
 
 # A value-taking flag with no value used to crash (bad array subscript) or
@@ -1853,7 +1853,7 @@ test_flow_flag_missing_value_rejected() {
   for flag in --data --generation --override --provenance --state-dir; do
     rc=0
     err=$(_flow_run "$tmpdir" WIL-98 appraise-start "$flag" 2>&1 >/dev/null) || rc=$?
-    if [ "$rc" -eq 0 ] || ! printf '%s' "$err" | grep -q -- "$flag requires a value"; then
+    if [ "$rc" -eq 0 ] || ! grep -q -- "$flag requires a value" <<<"$err"; then
       echo "  $flag -> rc=$rc" >&2
       ok=1
     fi

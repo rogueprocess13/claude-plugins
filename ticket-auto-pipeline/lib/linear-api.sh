@@ -268,7 +268,7 @@ _retry_classify() {
   # NOTE: '429' deliberately excluded — UUID substrings trigger false positives on
   # successful responses (e.g. dd816776-4ce4-429c-ad38). HTTP 429 is caught by the
   # status-code check above; GraphQL rate-limit errors by _linear_is_rate_limited.
-  if echo "$body" | grep -qiE 'rate[ ._-]?limit|timeout|temporar'; then
+  if grep -qiE 'rate[ ._-]?limit|timeout|temporar' <<<"$body"; then
     echo "transient"
     return
   fi

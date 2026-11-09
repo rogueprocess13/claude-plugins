@@ -458,7 +458,7 @@ test_create_issue_invalid_label_ids_errors_cleanly() {
     linear_graphql() { echo 'SENTINEL_SHOULD_NOT_BE_CALLED'; }
     create_issue 'team-1' 'New ticket' 'A description' '' '' 'not-json'
   " 2>&1) || rc=$?
-  [ "$rc" -eq 1 ] && ! echo "$out" | grep -q SENTINEL_SHOULD_NOT_BE_CALLED
+  [ "$rc" -eq 1 ] && ! grep -q SENTINEL_SHOULD_NOT_BE_CALLED <<<"$out"
 }
 
 # ── get_me test (mock linear_graphql) ────────────────────────────────────────

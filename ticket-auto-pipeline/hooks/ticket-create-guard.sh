@@ -323,7 +323,7 @@ fail_closed() {
     s=$(_raw_send)
     [ -n "$s" ] && deny "issueCreate and $s in a command the scanner could not judge ($1)"
   fi
-  if printf '%s\n' "$cmd" | grep -qE '(^|[;&|(`][[:space:]]*|^[[:space:]]+)create_issue([[:space:];)`]|$)'; then
+  if grep -qE '(^|[;&|(`][[:space:]]*|^[[:space:]]+)create_issue([[:space:];)`]|$)' <<<"$cmd"; then
     deny "create_issue at the start of a command the scanner could not judge ($1)"
   fi
   exit 0
@@ -339,7 +339,7 @@ max_scan=${TICKET_CREATE_GUARD_MAX_SCAN:-65536}
 
 findings=$(printf '%s\n' "$cmd" | _scan 2>/dev/null) || fail_closed "scanner error"
 
-if printf '%s\n' "$findings" | grep -qx 'create_issue'; then
+if grep -qx 'create_issue' <<<"$findings"; then
   deny "create_issue called as a command"
 fi
 if [[ "$cmd" == *issueCreate* ]]; then
@@ -347,7 +347,7 @@ if [[ "$cmd" == *issueCreate* ]]; then
   # anywhere in the raw command. git runs filters, textconv and pagers from
   # config an earlier stage may have written (printf/echo/heredoc into
   # .git/config or .gitattributes). gh is exempt.
-  if printf '%s\n' "$findings" | grep -qx 'gitstage'; then
+  if grep -qx 'gitstage' <<<"$findings"; then
     gsend=$(_raw_send)
     [ -n "$gsend" ] && deny "issueCreate and $gsend in a call with a git stage"
   fi
@@ -361,7 +361,7 @@ fi
 
 # The scanner allowed it, but ended inside an open quote, substitution or
 # ${: fall back to the raw-text rule rather than trust its pipelines.
-if printf '%s\n' "$findings" | grep -qx 'unbalanced'; then
+if grep -qx 'unbalanced' <<<"$findings"; then
   fail_closed "unbalanced quoting"
 fi
 

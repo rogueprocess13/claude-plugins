@@ -147,7 +147,7 @@ fi
 
 echo "--- 2c: resume correctly identifies failed phase ---"
 resume_out=$(planner_resume "INIT-FAIL" 2>&1)
-if echo "$resume_out" | grep -q 'PLANNER_NEXT_PHASE=Architecture'; then
+if grep -q 'PLANNER_NEXT_PHASE=Architecture' <<<"$resume_out"; then
   pass "planner_resume routes to Architecture after Architecture fail"
 else
   fail "planner_resume routes to Architecture after fail" "got: $resume_out"
@@ -222,7 +222,7 @@ fi
 
 echo "--- 3b: resume after crash surfaces correct phase ---"
 resume_out=$(planner_resume "INIT-CRASH" 2>&1)
-if echo "$resume_out" | grep -q 'PLANNER_NEXT_PHASE=Architecture'; then
+if grep -q 'PLANNER_NEXT_PHASE=Architecture' <<<"$resume_out"; then
   pass "planner_resume after crash returns Architecture"
 else
   fail "planner_resume after crash returns Architecture" "got: $resume_out"

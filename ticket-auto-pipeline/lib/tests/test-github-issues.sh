@@ -228,18 +228,18 @@ TEMPLATE_OUTPUT=$(github_issue_body_template \
   "- [ ] Existing recommender tests pass" \
   "See #217 for the same class of masked-by-earlier-failure bug.")
 assert_eq "includes severity" "**Severity:** P0" "$(echo "$TEMPLATE_OUTPUT" | head -1)"
-echo "$TEMPLATE_OUTPUT" | grep -q "^## Current Behavior (Actual)$"
+grep -q "^## Current Behavior (Actual)$" <<<"$TEMPLATE_OUTPUT"
 assert_ok "includes Current Behavior section" "$?"
-echo "$TEMPLATE_OUTPUT" | grep -q "^## Root Cause$"
+grep -q "^## Root Cause$" <<<"$TEMPLATE_OUTPUT"
 assert_ok "includes Root Cause section" "$?"
-echo "$TEMPLATE_OUTPUT" | grep -q "^## Related$"
+grep -q "^## Related$" <<<"$TEMPLATE_OUTPUT"
 assert_ok "includes Related section when provided" "$?"
 
 TEMPLATE_NO_RELATED=$(github_issue_body_template \
   "P2" "fleet-controller" "lib/fleet-notify.sh" \
   "current" "expected" "steps" "root cause" "handover" "verification")
 GREP_CODE=0
-echo "$TEMPLATE_NO_RELATED" | grep -q "^## Related$" || GREP_CODE=$?
+grep -q "^## Related$" <<<"$TEMPLATE_NO_RELATED" || GREP_CODE=$?
 assert_fail "omits Related section when not provided" "$GREP_CODE"
 
 CODE=$(run_test github_issue_body_template "P0" "ticket-planner" "" \

@@ -465,7 +465,7 @@ planner_draft_revise_check_text() {
   local l
   while IFS= read -r l; do
     [ -n "$l" ] || continue
-    if ! _pdrv_ac_prose "$after" | grep -qxF -- "$l"; then
+    if ! grep -qxF -- "$l" < <(_pdrv_ac_prose "$after"); then
       fails+="FROZEN_CHANGED ## Acceptance Criteria prose line removed: ${l:0:80}"$'\n'
       break
     fi
@@ -486,7 +486,7 @@ planner_draft_revise_check_text() {
       words=$(printf '%s' "$rest" | wc -w | tr -d ' ')
       if [ "$words" -gt "$max" ]; then
         fails+="EXTENSION_INVALID criterion $((a + 1)) extension adds ${words} words (max ${max})"$'\n'
-      elif printf '%s' "$rest" | grep -qiE "(^|[^[:alnum:]_])(${PLANNER_DRAFT_EXTEND_FORBIDDEN})([^[:alnum:]_]|$)"; then
+      elif grep -qiE "(^|[^[:alnum:]_])(${PLANNER_DRAFT_EXTEND_FORBIDDEN})([^[:alnum:]_]|$)" <<<"$rest"; then
         fails+="EXTENSION_INVALID criterion $((a + 1)) extension weakens it: ${rest:0:80}"$'\n'
       fi
       ;;
@@ -569,7 +569,7 @@ planner_draft_revise_check_text() {
   fi
   while IFS= read -r l; do
     [ -n "$l" ] || continue
-    if ! _pdrv_vn_prose "$after" | grep -qxF -- "$l"; then
+    if ! grep -qxF -- "$l" < <(_pdrv_vn_prose "$after"); then
       fails+="VNOTE_CHANGED Verification Notes line removed: ${l:0:80}"$'\n'
       break
     fi
@@ -597,8 +597,8 @@ planner_draft_revise_check_text() {
     [ -n "$tok" ] || continue
     val="${tok#*:}"
     case "$tok" in
-    path:* | tick:*) printf '%s' "$atext" | grep -qF -- "$val" || fails+="CONTRACT_DROPPED ${tok}"$'\n' ;;
-    status:* | env:*) printf '%s' "$atext" | grep -qw -- "$val" || fails+="CONTRACT_DROPPED ${tok}"$'\n' ;;
+    path:* | tick:*) grep -qF -- "$val" <<<"$atext" || fails+="CONTRACT_DROPPED ${tok}"$'\n' ;;
+    status:* | env:*) grep -qw -- "$val" <<<"$atext" || fails+="CONTRACT_DROPPED ${tok}"$'\n' ;;
     esac
   done < <(_pdrv_contract_tokens "$before")
 
@@ -895,8 +895,8 @@ planner_draft_revise_source_check() {
     src=$(_pdrv_quote_norm "$src")
     if [ -z "${src//[\"[:space:]]/}" ]; then
       echo "$id"
-    elif ! printf '%s' "$corpus" | grep -qF -- "$src" &&
-      ! printf '%s' "${corpus//\"/}" | grep -qF -- "${src//\"/}"; then
+    elif ! grep -qF -- "$src" <<<"$corpus" &&
+      ! grep -qF -- "${src//\"/}" <<<"${corpus//\"/}"; then
       echo "$id"
     fi
   done < <(jq -r '.resolved[].id' <<<"$disp")
@@ -1187,7 +1187,7 @@ _pdrv_testdata_keys() {
     code="${body%% *}"
     [[ "$code" =~ ^[A-Z][A-Z0-9_]*$ ]] || continue
     _planner_crosscheck_is_warn_code "$code" && continue
-    printf '%s' "$body" | grep -qE "(^|[^A-Za-z0-9_-])${slug}([^A-Za-z0-9_-]|$)" || continue
+    grep -qE "(^|[^A-Za-z0-9_-])${slug}([^A-Za-z0-9_-]|$)" <<<"$body" || continue
     body="${body%% — *}"
     printf '%s\n' "$body" | sed -E 's/ ?\[[0-9a-f]{6,64}\]//g'
   done | LC_ALL=C sort -u

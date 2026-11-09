@@ -157,7 +157,7 @@ fi
 
 echo "=== Content-Hash is last non-empty line ==="
 LAST_LINE=$(grep -v '^[[:space:]]*$' "$OUTPUT_FILE" | tail -1)
-if echo "$LAST_LINE" | grep -q '^\*\*Content-Hash:\*\*'; then
+if grep -q '^\*\*Content-Hash:\*\*' <<<"$LAST_LINE"; then
   pass "Content-Hash is last non-empty line"
 else
   fail "Content-Hash is last non-empty line" "last line: $LAST_LINE"
@@ -326,7 +326,7 @@ grill_render "$RESULT_FILE" "$ASSESSMENT_RESOLVED_FILE" "$OUTPUT_RESOLVED_FILE" 
 
 RESOLVED_SECTION=$(sed -n '/^## Resolved Questions$/,/^## Open Gaps$/p' "$OUTPUT_RESOLVED_FILE")
 
-if echo "$RESOLVED_SECTION" | grep -q "ANSWER_TEXT_SHOULD_APPEAR" && ! echo "$RESOLVED_SECTION" | grep -q "_(pending)_" && ! echo "$RESOLVED_SECTION" | grep -q "No questions were asked"; then
+if grep -q "ANSWER_TEXT_SHOULD_APPEAR" <<<"$RESOLVED_SECTION" && ! grep -q "_(pending)_" <<<"$RESOLVED_SECTION" && ! grep -q "No questions were asked" <<<"$RESOLVED_SECTION"; then
   pass "Resolved Questions renders real answer text from .resolved"
 else
   fail "Resolved Questions renders real answer text from .resolved" "$RESOLVED_SECTION"
@@ -397,7 +397,7 @@ CONSTRAINTS_SECTION=$(sed -n '/^## Constraints$/,/^## Dependencies$/p' "$OUTPUT_
 SUP_TABLE=$(sed -n '/^## Resolved Questions$/,/^## Open Gaps$/p' "$OUTPUT_SUP_FILE")
 
 # Section reflects Q11 ...
-if echo "$CONSTRAINTS_SECTION" | grep -q "NEW_ANSWER_REUSE_EXISTING_STATE"; then
+if grep -q "NEW_ANSWER_REUSE_EXISTING_STATE" <<<"$CONSTRAINTS_SECTION"; then
   pass "later-round answer is rendered in its dimension section"
 else
   fail "later-round answer is rendered in its dimension section" "$CONSTRAINTS_SECTION"
@@ -497,7 +497,7 @@ else
 fi
 
 TD_SECTION=$(sed -n '/^## Test Data$/,/^## Assumptions (require validation)$/p' "$OUTPUT_V11_FILE")
-if echo "$TD_SECTION" | grep -qF "$TD_EVIDENCE"; then
+if grep -qF "$TD_EVIDENCE" <<<"$TD_SECTION"; then
   pass "Test Data section body is the test_data evidence"
 else
   fail "Test Data section body is the test_data evidence" "$TD_SECTION"

@@ -51,7 +51,7 @@ test_flaky_tests_detected() {
   local verdict patterns
   verdict=$(echo "$result" | jq -r '.verdict')
   patterns=$(echo "$result" | jq -r '.patterns | [.[].pattern] | join(",")')
-  [ "$verdict" = "WARN" ] && echo "$patterns" | grep -q "flaky_tests"
+  [ "$verdict" = "WARN" ] && grep -q "flaky_tests" <<<"$patterns"
 }
 
 test_incomplete_implementation_detected() {
@@ -62,7 +62,7 @@ test_incomplete_implementation_detected() {
   local verdict patterns
   verdict=$(echo "$result" | jq -r '.verdict')
   patterns=$(echo "$result" | jq -r '.patterns | [.[].pattern] | join(",")')
-  [ "$verdict" = "WARN" ] && echo "$patterns" | grep -q "incomplete_implementation"
+  [ "$verdict" = "WARN" ] && grep -q "incomplete_implementation" <<<"$patterns"
 }
 
 # #418: RETURN_INCOMPLETE is an IMPLEMENT signal — never fires for later phases
@@ -81,7 +81,7 @@ test_trivial_pass_detected() {
   ]' "false" "VERIFY")
   local patterns
   patterns=$(echo "$result" | jq -r '.patterns | [.[].pattern] | join(",")')
-  echo "$patterns" | grep -q "trivial_pass"
+  grep -q "trivial_pass" <<<"$patterns"
 }
 
 test_trivial_pass_excludes_gates() {
@@ -117,7 +117,7 @@ test_missing_requirement_detected() {
   ]' "false" "PR-REVIEW")
   local patterns
   patterns=$(echo "$result" | jq -r '.patterns | [.[].pattern] | join(",")')
-  echo "$patterns" | grep -q "missing_requirement"
+  grep -q "missing_requirement" <<<"$patterns"
 }
 
 test_validate_corrects_mismatched_verdict() {

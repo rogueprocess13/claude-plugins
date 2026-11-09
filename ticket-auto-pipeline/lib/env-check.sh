@@ -127,7 +127,9 @@ if [ "${_MODE:-full}" = "validate" ]; then
   # Docker registry lock check
   # cnb-local-registry uses jgit for config storage — stale lock files from
   # crashed processes block env-start.sh. Check and auto-clean if stale (>1h).
-  _docker_jgit_lock=$(find / -path "*/cnb-local-registry/*/jgit/config.lock" -type f 2>/dev/null | head -1 || true)
+  # ENV_CHECK_JGIT_LOCK_ROOT narrows the search (default "/", a whole-filesystem
+  # walk that takes seconds) — tests point it at a scratch dir.
+  _docker_jgit_lock=$(find "${ENV_CHECK_JGIT_LOCK_ROOT:-/}" -path "*/cnb-local-registry/*/jgit/config.lock" -type f 2>/dev/null | head -1 || true)
   if [ -n "$_docker_jgit_lock" ]; then
     _lock_age=$(($(date +%s) - $(stat -c %Y "$_docker_jgit_lock" 2>/dev/null || echo 0)))
     if [ "$_lock_age" -gt 3600 ]; then

@@ -423,7 +423,7 @@ _check_dirty() {
   if [ -n "$porcelain" ]; then
     DIRTY="true"
     # Append dirty note to reason if not already set
-    if [ -n "${PRESCAN_REASON:-}" ] && ! echo "$PRESCAN_REASON" | grep -q 'dirty_tree'; then
+    if [ -n "${PRESCAN_REASON:-}" ] && ! grep -q 'dirty_tree' <<<"$PRESCAN_REASON"; then
       PRESCAN_REASON="${PRESCAN_REASON}+dirty_tree"
     fi
   else

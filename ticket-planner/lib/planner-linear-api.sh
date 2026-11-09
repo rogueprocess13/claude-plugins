@@ -149,7 +149,7 @@ _planner_retry_classify() {
   fi
 
   # Body contains transient keywords (rate limit, timeout, temporary)
-  if echo "$body" | grep -qiE 'rate[ ._-]?limit|timeout|temporar'; then
+  if grep -qiE 'rate[ ._-]?limit|timeout|temporar' <<<"$body"; then
     echo "transient"
     return
   fi

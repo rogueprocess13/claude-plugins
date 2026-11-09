@@ -76,7 +76,7 @@ test_happy_path_merges() {
   _setup
   _am
   local ok=1
-  [ "$_rc" = 0 ] && _merged && echo "$_out" | grep -q '^AUTO_MERGE=merged' &&
+  [ "$_rc" = 0 ] && _merged && grep -q '^AUTO_MERGE=merged' <<<"$_out" &&
     grep -q '|META|pr-auto-merge|done|12' "$_ws/log" || ok=0
   _teardown
   [ "$ok" = 1 ]
@@ -95,7 +95,7 @@ test_merge_policy_manual_skips() {
   _setup
   _am --merge-policy manual
   local ok=1
-  [ "$_rc" = 3 ] && ! _merged && echo "$_out" | grep -q 'Merge Policy: manual' &&
+  [ "$_rc" = 3 ] && ! _merged && grep -q 'Merge Policy: manual' <<<"$_out" &&
     grep -q '|META|pr-auto-merge|skip|MERGE_AUTHORIZATION' "$_ws/log" || ok=0
   _teardown
   [ "$ok" = 1 ]
@@ -206,7 +206,7 @@ test_gh_merge_failure_is_soft_rc4() {
   _stub_gh 'feat/cre-2' 0 1
   _am
   local ok=1
-  [ "$_rc" = 4 ] && echo "$_out" | grep -q '^AUTO_MERGE=failed' &&
+  [ "$_rc" = 4 ] && grep -q '^AUTO_MERGE=failed' <<<"$_out" &&
     ! grep -q '|pr-auto-merge|done|' "$_ws/log" || ok=0
   _teardown
   [ "$ok" = 1 ]
@@ -243,7 +243,7 @@ test_usage_rc2() {
 test_router_delegates_to_script() {
   local section
   section=$(awk '/^### Auto-merge logic/{f=1;next} f&&/^### /{exit} f' "$PLUGIN_DIR/skills/ticket-auto/SKILL.md")
-  echo "$section" | grep -q 'auto-merge.sh' && ! echo "$section" | grep -q 'gh pr merge "\$_pr_num"'
+  grep -q 'auto-merge.sh' <<<"$section" && ! grep -q 'gh pr merge "\$_pr_num"' <<<"$section"
 }
 
 _run "happy path merges" test_happy_path_merges

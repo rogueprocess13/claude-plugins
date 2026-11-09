@@ -175,7 +175,7 @@ planned_feedback_write() {
         local missed_list=""
         while IFS= read -r f; do
           [ -z "$f" ] && continue
-          if ! echo "$traced_files" | grep -qF "$f"; then
+          if ! grep -qF "$f" <<<"$traced_files"; then
             missed_list="${missed_list}${missed_list:+,}\"${f}\""
           fi
         done <<<"$changed_files_list"
@@ -187,7 +187,7 @@ planned_feedback_write() {
           [ -z "$entry" ] && continue
           local sym_file
           sym_file=$(echo "$entry" | sed 's/^[^:]*://') # extract file from symbol:file
-          if ! echo "$changed_files_list" | grep -qF "$sym_file"; then
+          if ! grep -qF "$sym_file" <<<"$changed_files_list"; then
             false_list="${false_list}${false_list:+,}\"${entry}\""
           fi
         done <<<"$(echo "$code_paths_traced" | tr ';' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')"

@@ -43,14 +43,14 @@ audit_repro_check() {
 
   # ── Check if this is a bug ticket ────────────────────────────────────────
   if [ -n "$labels" ]; then
-    if echo "$labels" | grep -qi 'bug' 2>/dev/null; then
+    if grep -qi 'bug' <<<"$labels" 2>/dev/null; then
       IS_BUG="true"
     fi
   fi
 
   # Also check text for bug indicators
   if [ "$IS_BUG" != "true" ] && [ -n "$text" ]; then
-    if echo "$text" | grep -qiE '(^|[^a-z])(bug|defect|issue|error|crash|broken|not working)($|[^a-z])' 2>/dev/null; then
+    if grep -qiE '(^|[^a-z])(bug|defect|issue|error|crash|broken|not working)($|[^a-z])' <<<"$text" 2>/dev/null; then
       IS_BUG="true"
     fi
   fi

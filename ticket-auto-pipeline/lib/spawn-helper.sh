@@ -922,7 +922,7 @@ phase_terminal_write() {
       # pre-guard's tail-check semantics (see spawn_agent_pre above).
       local last_line
       last_line=$(tail -1 "${LOG_FILE}" 2>/dev/null || true)
-      if echo "$last_line" | grep -q "|$phase_upper|${phase_lower:-unknown}|done|"; then
+      if grep -q "|$phase_upper|${phase_lower:-unknown}|done|" <<<"$last_line"; then
         : # already written, skip (back-to-back duplicate)
       else
         _plog "$LOG_FILE" "$phase_upper" "${phase_lower:-unknown}" "done" "${done_msg}"
@@ -949,7 +949,7 @@ phase_terminal_write() {
     if [ -n "${LOG_FILE:-}" ]; then
       local last_line
       last_line=$(tail -1 "${LOG_FILE}" 2>/dev/null || true)
-      if echo "$last_line" | grep -q "|$phase_upper|${phase_lower:-unknown}|fail|"; then
+      if grep -q "|$phase_upper|${phase_lower:-unknown}|fail|" <<<"$last_line"; then
         : # already written, skip (back-to-back duplicate)
       else
         _plog "$LOG_FILE" "$phase_upper" "${phase_lower:-unknown}" "fail" "${fail_msg}${suffix}"
@@ -1042,7 +1042,7 @@ spawn_agent_post() {
   # on these tokens to advance. If the router LLM omits the token, the
   # counter silently freezes — defeating the 3-attempt safety cap.
   if [ "$LOOP_BEARING" = "true" ]; then
-    if [ -z "$VERDICT" ] && ! echo "$MSG" | grep -q 'cycle#'; then
+    if [ -z "$VERDICT" ] && ! grep -q 'cycle#' <<<"$MSG"; then
       echo "spawn_agent_post: LOOP_BEARING=true requires VERDICT=<token> or MSG containing 'cycle#'" >&2
       echo "  Phase: ${PHASE:-unknown}, Step: ${STEP:-unknown}" >&2
       echo "  This prevents silent loop-counter freeze from an omitted verdict token." >&2

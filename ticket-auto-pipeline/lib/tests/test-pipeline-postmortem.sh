@@ -207,7 +207,7 @@ test_exit_path_gate_stop() {
   local _exit_path
   _exit_path=$(grep '|META|postmortem|info|.*"exit_path"' "$_log_file" 2>/dev/null | tail -1 |
     awk -F'|' '{for(i=5;i<=NF;i++) printf "%s%s", $i, (i==NF?"":"|")}' | jq -r '.exit_path')
-  if echo "$_exit_path" | grep -q 'gate-stop'; then
+  if grep -q 'gate-stop' <<<"$_exit_path"; then
     _teardown
     return 0
   fi
@@ -562,7 +562,7 @@ test_issue_body_rendering_no_crash() {
 _filter="${1:-}"
 
 for _test in $(declare -F | cut -d' ' -f3 | grep '^test_'); do
-  if [ -n "$_filter" ] && ! echo "$_test" | grep -q "$_filter"; then
+  if [ -n "$_filter" ] && ! grep -q "$_filter" <<<"$_test"; then
     continue
   fi
   _run "$_test" $_test

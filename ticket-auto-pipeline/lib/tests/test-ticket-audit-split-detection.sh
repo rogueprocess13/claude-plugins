@@ -57,13 +57,13 @@ test_ac_count_above_threshold_flags() {
 - Item 6
 "
   _run_size_check "$text" ""
-  echo "$SIGNALS" | grep -q "ac_count" || return 1
+  grep -q "ac_count" <<<"$SIGNALS" || return 1
   [ "${SIGNAL_COUNT:-0}" -ge 1 ]
 }
 
 test_word_count_below_threshold_no_flag() {
   _run_size_check "Short description" ""
-  echo "$SIGNALS" | grep -q "word_count" && return 1
+  grep -q "word_count" <<<"$SIGNALS" && return 1
   return 0
 }
 
@@ -71,7 +71,7 @@ test_word_count_boundary_400_no_flag() {
   local text
   text=$(printf 'word%.0s ' $(seq 1 400))
   _run_size_check "$text" ""
-  echo "$SIGNALS" | grep -q "word_count" && return 1
+  grep -q "word_count" <<<"$SIGNALS" && return 1
   return 0
 }
 
@@ -79,18 +79,18 @@ test_word_count_boundary_401_flags() {
   local text
   text=$(printf 'word%.0s ' $(seq 1 401))
   _run_size_check "$text" ""
-  echo "$SIGNALS" | grep -q "word_count" || return 1
+  grep -q "word_count" <<<"$SIGNALS" || return 1
 }
 
 test_wiki_service_count_below_3_no_flag() {
   _run_size_check "This references attorney-service and case-service but not enough." "attorney-service,case-service,payment-service"
-  echo "$SIGNALS" | grep -q "wiki_service_count" && return 1
+  grep -q "wiki_service_count" <<<"$SIGNALS" && return 1
   return 0
 }
 
 test_wiki_service_count_3_flags() {
   _run_size_check "The attorney-service API, case-service module, and payment-service handler all need changes." "attorney-service,case-service,payment-service"
-  echo "$SIGNALS" | grep -q "wiki_service_count" || return 1
+  grep -q "wiki_service_count" <<<"$SIGNALS" || return 1
 }
 
 # ── Split candidate: 2+ signals ───────────────────────────────────────────────
@@ -125,7 +125,7 @@ test_empty_text_zero_signals() {
 
 test_wiki_unset_no_service_signal() {
   _run_size_check "Attorney service, case service, payment service all mentioned." ""
-  echo "$SIGNALS" | grep -q "wiki_service_count" && return 1
+  grep -q "wiki_service_count" <<<"$SIGNALS" && return 1
   return 0
 }
 

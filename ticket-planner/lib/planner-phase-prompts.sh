@@ -146,7 +146,7 @@ planner_sanitize_input() {
   )
 
   for pattern in "${blocked_patterns[@]}"; do
-    if echo "$lower" | grep -qF "$pattern" 2>/dev/null; then
+    if grep -qF "$pattern" <<<"$lower" 2>/dev/null; then
       echo "planner-phase-prompts: blocked input containing injection pattern: '${pattern}'" >&2
       return 1
     fi

@@ -113,7 +113,7 @@ _grill_injection_screen() {
   )
 
   for pattern in "${blocked_patterns[@]}"; do
-    if printf '%s\n' "$lower" | grep -qF "$pattern" 2>/dev/null; then
+    if grep -qF "$pattern" <<<"$lower" 2>/dev/null; then
       echo "grill-input: blocked input containing injection pattern: '${pattern}'" >&2
       return 1
     fi

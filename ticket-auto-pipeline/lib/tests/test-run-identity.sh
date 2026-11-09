@@ -183,7 +183,7 @@ test_malformed_inherited_run_id_is_refused() {
     bash -c "source '$_SANDBOX/lib/run-identity.sh'; run_identity_stamp T-32 '$log'" >/dev/null
   local run_id ok
   run_id=$(grep '|META|run-id|info|' "$log" | cut -d'|' -f5- | jq -r '.run_id')
-  [ "$run_id" != "not-a-conforming-value" ] && echo "$run_id" | grep -q '^T-32-'
+  [ "$run_id" != "not-a-conforming-value" ] && grep -q '^T-32-' <<<"$run_id"
   ok=$?
   _sandbox_rm
   return $ok

@@ -51,7 +51,7 @@ test_pr_review_agent_grants_list_repos() {
   }
   local tools_line
   tools_line=$(_agent_tools_line "$agent_file")
-  echo "$tools_line" | grep -qF 'mcp__gitnexus__list_repos' || {
+  grep -qF 'mcp__gitnexus__list_repos' <<<"$tools_line" || {
     echo "  ticket-pr-review-agent.md tools: line is missing mcp__gitnexus__list_repos: $tools_line" >&2
     return 1
   }
@@ -73,7 +73,7 @@ test_implement_agent_grants_list_repos() {
   }
   local tools_line
   tools_line=$(_agent_tools_line "$agent_file")
-  echo "$tools_line" | grep -qF 'mcp__gitnexus__list_repos' || {
+  grep -qF 'mcp__gitnexus__list_repos' <<<"$tools_line" || {
     echo "  ticket-implement-agent.md tools: line is missing mcp__gitnexus__list_repos: $tools_line" >&2
     return 1
   }
@@ -85,11 +85,11 @@ test_implement_agent_still_grants_detect_changes_and_impact() {
   local agent_file="$AGENTS_DIR/ticket-implement-agent.md"
   local tools_line
   tools_line=$(_agent_tools_line "$agent_file")
-  echo "$tools_line" | grep -qF 'mcp__gitnexus__detect_changes' || {
+  grep -qF 'mcp__gitnexus__detect_changes' <<<"$tools_line" || {
     echo "  missing mcp__gitnexus__detect_changes: $tools_line" >&2
     return 1
   }
-  echo "$tools_line" | grep -qF 'mcp__gitnexus__impact' || {
+  grep -qF 'mcp__gitnexus__impact' <<<"$tools_line" || {
     echo "  missing mcp__gitnexus__impact: $tools_line" >&2
     return 1
   }

@@ -93,9 +93,9 @@ test_canonical_scan_valid() {
   _parse scan "$_ws/scan.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"ok"' || ok=0
-  echo "$_OUT" | grep -q '"code":"MISSING_CORE_AC"' || ok=0
-  echo "$_OUT" | grep -q '"requirement_completeness":{"verdict":"finding"' || ok=0
+  grep -q '"parse_status":"ok"' <<<"$_OUT" || ok=0
+  grep -q '"code":"MISSING_CORE_AC"' <<<"$_OUT" || ok=0
+  grep -q '"requirement_completeness":{"verdict":"finding"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -106,9 +106,9 @@ test_canonical_audit_valid() {
   _parse audit "$_ws/audit.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"ok"' || ok=0
-  echo "$_OUT" | grep -q '"code":"AC_VAGUE","verdict":"agree"' || ok=0
-  echo "$_OUT" | grep -q '"score_plausible":true' || ok=0
+  grep -q '"parse_status":"ok"' <<<"$_OUT" || ok=0
+  grep -q '"code":"AC_VAGUE","verdict":"agree"' <<<"$_OUT" || ok=0
+  grep -q '"score_plausible":true' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -124,7 +124,7 @@ test_block_after_prose() {
   _parse scan "$_ws/prosed.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"ok"' || ok=0
+  grep -q '"parse_status":"ok"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -149,7 +149,7 @@ EOF
   _parse scan "$_ws/scan.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"findings":\[\]' || ok=0
+  grep -q '"findings":\[\]' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -161,7 +161,7 @@ test_crlf_accepted() {
   _parse scan "$_ws/scan-crlf.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"ok"' || ok=0
+  grep -q '"parse_status":"ok"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -201,8 +201,8 @@ test_last_block_wins() {
   _parse scan "$_ws/two.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"ticket":"WIL-123"' || ok=0
-  echo "$_OUT" | grep -qv 'WIL-000-FIRST' || ok=0
+  grep -q '"ticket":"WIL-123"' <<<"$_OUT" || ok=0
+  grep -qv 'WIL-000-FIRST' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -220,7 +220,7 @@ test_truncated_last_block_uses_prior_complete() {
   _parse scan "$_ws/trunc.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"ticket":"WIL-123"' || ok=0
+  grep -q '"ticket":"WIL-123"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -232,7 +232,7 @@ test_lowercase_key_rejected() {
   _parse scan "$_ws/scan-lc.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"invalid"' || ok=0
+  grep -q '"parse_status":"invalid"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -256,7 +256,7 @@ test_duplicate_key_rejected() {
   _parse scan "$_ws/scan-dup.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q 'duplicate' || ok=0
+  grep -q 'duplicate' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -270,7 +270,7 @@ test_json_envelope_accepted() {
   _parse scan "$_ws/scan-json.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"ok"' || ok=0
+  grep -q '"parse_status":"ok"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -298,7 +298,7 @@ test_unknown_code_rejected() {
   _parse scan "$_ws/scan-unk.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q 'not a known code' || ok=0
+  grep -q 'not a known code' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -321,7 +321,7 @@ test_wrong_schema_version_rejected() {
   _parse scan "$_ws/scan-v2.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q 'SCHEMA_VERSION' || ok=0
+  grep -q 'SCHEMA_VERSION' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -332,7 +332,7 @@ test_absent_block_is_exit_1() {
   _parse scan "$_ws/none.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q '"parse_status":"invalid"' || ok=0
+  grep -q '"parse_status":"invalid"' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -354,7 +354,7 @@ test_shell_metachars_inert() {
   _parse scan "$_ws/scan-inj.txt"
   local ok=1
   [ ! -f /tmp/dor-semantic-pwned ] || ok=0
-  echo "$_OUT" | grep -qF '$(touch /tmp/dor-semantic-pwned)' || ok=0
+  grep -qF '$(touch /tmp/dor-semantic-pwned)' <<<"$_OUT" || ok=0
   rm -f /tmp/dor-semantic-pwned
   _teardown
   [ "$ok" = "1" ]
@@ -367,7 +367,7 @@ test_unicode_values_preserved() {
   _parse scan "$_ws/scan-uni.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '日本語' || ok=0
+  grep -q '日本語' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -384,7 +384,7 @@ test_missing_gap_verdict_rejected() {
   _parse scan "$_ws/scan-nogap.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q 'GAP_EDGE_CASE_SUFFICIENCY' || ok=0
+  grep -q 'GAP_EDGE_CASE_SUFFICIENCY' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -411,7 +411,7 @@ EOF
   _parse scan "$_ws/scan.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q 'QUOTE_B' || ok=0
+  grep -q 'QUOTE_B' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -423,7 +423,7 @@ test_hard_code_not_audited_rejected() {
   _parse audit "$_ws/audit.txt" "$_ws/det.json"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q 'not audited\|AUDIT_n entry' || ok=0
+  grep -q 'not audited\|AUDIT_n entry' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -456,7 +456,7 @@ EOF
   _parse audit "$_ws/audit.txt"
   local ok=1
   [ "$_RC" -eq 1 ] || ok=0
-  echo "$_OUT" | grep -q 'disputed' || ok=0
+  grep -q 'disputed' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }
@@ -478,8 +478,8 @@ EOF
   _parse audit "$_ws/audit.txt"
   local ok=1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -qv 'ghp_1234567890abcdefghij1234567890' || ok=0
-  echo "$_OUT" | grep -q 'REDACTED' || ok=0
+  grep -qv 'ghp_1234567890abcdefghij1234567890' <<<"$_OUT" || ok=0
+  grep -q 'REDACTED' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = "1" ]
 }

@@ -170,7 +170,7 @@ test_router_step_4_is_implement() {
   [ -f "$skill_md" ] || return 1
   local section
   section=$(sed -n '/### STEP_4 —\|### STEP_4$/,/^### /p' "$skill_md" 2>/dev/null)
-  echo "$section" | grep -qi 'implement' || {
+  grep -qi 'implement' <<<"$section" || {
     echo "STEP_4 not associated with implement"
     return 1
   }
@@ -181,7 +181,7 @@ test_router_step_4_6_is_pr_review() {
   [ -f "$skill_md" ] || return 1
   local section
   section=$(sed -n '/### STEP_4_6/,/^### /p' "$skill_md" 2>/dev/null)
-  echo "$section" | grep -qiE 'pr.review|PR Review' || {
+  grep -qiE 'pr.review|PR Review' <<<"$section" || {
     echo "STEP_4_6 not associated with PR review"
     return 1
   }
@@ -192,7 +192,7 @@ test_router_step_5_is_document_wiki() {
   [ -f "$skill_md" ] || return 1
   local section
   section=$(sed -n '/### STEP_5 —\|### STEP_5$/,/^### /p' "$skill_md" 2>/dev/null)
-  echo "$section" | grep -qiE 'document|wiki|maintenance' || {
+  grep -qiE 'document|wiki|maintenance' <<<"$section" || {
     echo "STEP_5 not associated with document/wiki"
     return 1
   }
@@ -203,7 +203,7 @@ test_router_step_6_is_report() {
   [ -f "$skill_md" ] || return 1
   local section
   section=$(sed -n '/### STEP_6/,/^---/p' "$skill_md" 2>/dev/null)
-  echo "$section" | grep -qiE 'retro|report|outcome' || {
+  grep -qiE 'retro|report|outcome' <<<"$section" || {
     echo "STEP_6 not associated with report"
     return 1
   }
@@ -444,15 +444,15 @@ test_router_implement_complete_has_plugin_cache_fallback() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/Then transition from Ready/,/^```$/p' "$skill_md")
-  echo "$block" | grep -q 'flow-run\.sh --log-file "{LOG_FILE}" "{TICKET_ID}" implement-complete' || {
+  grep -q 'flow-run\.sh --log-file "{LOG_FILE}" "{TICKET_ID}" implement-complete' <<<"$block" || {
     echo "implement-complete is not fired through lib/flow-run.sh"
     return 1
   }
-  echo "$block" | grep -q 'installPath' && {
+  grep -q 'installPath' <<<"$block" && {
     echo "implement-complete still carries an inline flow.sh resolver"
     return 1
   }
-  echo "$block" | grep -q '|| true' && {
+  grep -q '|| true' <<<"$block" && {
     echo "implement-complete flow.sh resolution still swallows failure with || true"
     return 1
   }
@@ -467,11 +467,11 @@ test_router_prescan_success_judged_by_content() {
   # Success must be judged by the agent's returned CONTENT, not by spawn_capture's
   # exit code. The return now arrives as a file (RESULT_FILE=, quoted heredoc) rather
   # than an interpolated "$AGENT_RESULT" argument, so the content check greps the file.
-  echo "$block" | grep -q 'grep -q "\$slug: scanned" ./logs/{TICKET-ID}-agent-return.txt' || {
+  grep -q 'grep -q "\$slug: scanned" ./logs/{TICKET-ID}-agent-return.txt' <<<"$block" || {
     echo "prescan success no longer judged by the agent's returned content"
     return 1
   }
-  echo "$block" | grep -qE '\bif \[ \$\? -eq 0 \]' && {
+  grep -qE '\bif \[ \$\? -eq 0 \]' <<<"$block" && {
     echo "prescan success still judged by spawn_capture exit code"
     return 1
   }
@@ -483,22 +483,22 @@ test_router_retro_condition_2_uses_success_markers() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/Condition 2: did the ticket NOT reach/,/^fi/p' "$skill_md")
-  echo "$block" | grep -q 'VERIFY|verify|done|PASS' || {
+  grep -q 'VERIFY|verify|done|PASS' <<<"$block" || {
     echo "retro condition 2 does not check verify PASS marker"
     return 1
   }
   # PR-REVIEW's own Verdict tokens are OK/WARN/BLOCK, never PASS (that's
   # VERIFY-only) — GitHub #149. N/A is also a legitimate success marker
   # (verification-only ticket, no PR to review) — GitHub #318.
-  echo "$block" | grep -qF 'PR-REVIEW\|pr-review\|done\|(OK|N/A)' || {
+  grep -qF 'PR-REVIEW\|pr-review\|done\|(OK|N/A)' <<<"$block" || {
     echo "retro condition 2 does not check PR-review OK/N-A marker"
     return 1
   }
-  echo "$block" | grep -q 'PR-REVIEW|pr-review|done|PASS' && {
+  grep -q 'PR-REVIEW|pr-review|done|PASS' <<<"$block" && {
     echo "retro condition 2 still checks the non-existent PR-review PASS token"
     return 1
   }
-  echo "$block" | grep -q 'META|outcome|info|completed:' && {
+  grep -q 'META|outcome|info|completed:' <<<"$block" && {
     echo "retro condition 2 still tests the tautological outcome marker"
     return 1
   }
@@ -568,11 +568,11 @@ test_router_verify_dispatch_uses_verdict_tokens() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/### STEP_4_5 —/,/### STEP_4_6 —/p' "$skill_md")
-  echo "$block" | grep -q 'VERDICT=PASS' || {
+  grep -q 'VERDICT=PASS' <<<"$block" || {
     echo "STEP_4_5 does not pass VERDICT=PASS on verify success"
     return 1
   }
-  echo "$block" | grep -q 'VERDICT=FAIL' || {
+  grep -q 'VERDICT=FAIL' <<<"$block" || {
     echo "STEP_4_5 does not pass VERDICT=FAIL on verify failure"
     return 1
   }
@@ -583,11 +583,11 @@ test_router_verify_checks_verify_last_before_dispatch() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/### STEP_4_5 —/,/### STEP_4_6 —/p' "$skill_md")
-  echo "$block" | grep -q '{VERIFY_LAST}' || {
+  grep -q '{VERIFY_LAST}' <<<"$block" || {
     echo "STEP_4_5 does not branch on VERIFY_LAST"
     return 1
   }
-  echo "$block" | grep -qi 're-implement' || {
+  grep -qi 're-implement' <<<"$block" || {
     echo "STEP_4_5 does not dispatch re-implement when VERIFY_LAST=fail"
     return 1
   }
@@ -598,15 +598,15 @@ test_router_pr_review_dispatch_uses_verdict_tokens() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/### STEP_4_6 —/,/### Auto-merge logic/p' "$skill_md")
-  echo "$block" | grep -q 'VERDICT=OK' || {
+  grep -q 'VERDICT=OK' <<<"$block" || {
     echo "STEP_4_6 does not map ✅ to VERDICT=OK"
     return 1
   }
-  echo "$block" | grep -q 'VERDICT=WARN' || {
+  grep -q 'VERDICT=WARN' <<<"$block" || {
     echo "STEP_4_6 does not map ⚠️ to VERDICT=WARN"
     return 1
   }
-  echo "$block" | grep -q 'VERDICT=BLOCK' || {
+  grep -q 'VERDICT=BLOCK' <<<"$block" || {
     echo "STEP_4_6 does not map ❌ to VERDICT=BLOCK"
     return 1
   }
@@ -656,11 +656,11 @@ test_router_auto_merge_reads_outcome_label_not_implement_line() {
   [ -f "$src" ] || return 1
   local block
   block=$(cat "$src")
-  echo "$block" | grep -q 'META|outcome-label|info|' || {
+  grep -q 'META|outcome-label|info|' <<<"$block" || {
     echo "auto-merge does not read the authoritative outcome-label META line"
     return 1
   }
-  echo "$block" | grep -q "IMPLEMENT|implement|done|" && {
+  grep -q "IMPLEMENT|implement|done|" <<<"$block" && {
     echo "auto-merge still reads OUTCOME from the implement terminal line"
     return 1
   }
@@ -696,11 +696,11 @@ test_router_pr_feedback_cycle_caps_at_3() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/### STEP_5_5 —/,/^### STEP_6/p' "$skill_md")
-  echo "$block" | grep -q '{PR_FEEDBACK_CYCLE}" -ge 3' || {
+  grep -q '{PR_FEEDBACK_CYCLE}" -ge 3' <<<"$block" || {
     echo "STEP_5_5 does not cap PR_FEEDBACK_CYCLE at 3"
     return 1
   }
-  echo "$block" | grep -q 'PR_FEEDBACK_EXHAUSTED' || {
+  grep -q 'PR_FEEDBACK_EXHAUSTED' <<<"$block" || {
     echo "STEP_5_5 does not gate-stop with PR_FEEDBACK_EXHAUSTED"
     return 1
   }
@@ -711,7 +711,7 @@ test_router_pr_reconcile_emits_cycle_marker() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/### STEP_5_5 —/,/^### STEP_6/p' "$skill_md")
-  echo "$block" | grep -q 'MSG="cycle#' || {
+  grep -q 'MSG="cycle#' <<<"$block" || {
     echo "STEP_5_5 does not emit a cycle# marker for PR_FEEDBACK_CYCLE to count"
     return 1
   }
@@ -722,11 +722,11 @@ test_router_reconcile_cycle_caps_at_3() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/### STEP_3_5 —/,/^### STEP_4/p' "$skill_md")
-  echo "$block" | grep -q '{RECONCILE_CYCLE}" -ge 3' || {
+  grep -q '{RECONCILE_CYCLE}" -ge 3' <<<"$block" || {
     echo "STEP_3_5 does not cap RECONCILE_CYCLE at 3"
     return 1
   }
-  echo "$block" | grep -q 'RECONCILE_EXHAUSTED' || {
+  grep -q 'RECONCILE_EXHAUSTED' <<<"$block" || {
     echo "STEP_3_5 does not gate-stop with RECONCILE_EXHAUSTED"
     return 1
   }
@@ -737,11 +737,11 @@ test_router_prescan_skipped_on_late_resume() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/## Prescan gate/,/### Identify affected repos/p' "$skill_md")
-  echo "$block" | grep -q 'Skip on late resume' || {
+  grep -q 'Skip on late resume' <<<"$block" || {
     echo "prescan gate missing late-resume skip section"
     return 1
   }
-  echo "$block" | grep -qE 'STEP_4 \| STEP_4_5 \| STEP_4_6' || {
+  grep -qE 'STEP_4 \| STEP_4_5 \| STEP_4_6' <<<"$block" || {
     echo "prescan gate does not skip STEP_4+ resume steps"
     return 1
   }
@@ -836,21 +836,21 @@ test_appraise_exec_comment_warns_on_needs_human_questions() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/^## Step 5 — Post a Linear comment/,/^## Step 6/p' "$skill_md")
-  echo "$block" | grep -q '\[needs-human\]' || {
+  grep -q '\[needs-human\]' <<<"$block" || {
     echo "Step 5 comment template does not mention [needs-human] gating"
     return 1
   }
-  echo "$block" | grep -qi "before running \`/ticket-approve\`" || {
+  grep -qi "before running \`/ticket-approve\`" <<<"$block" || {
     echo "Step 5 comment template does not warn to answer before approving"
     return 1
   }
-  echo "$block" | grep -qi 'gate-reconcile' || {
+  grep -qi 'gate-reconcile' <<<"$block" || {
     echo "Step 5 comment template does not mention the extra gate-reconcile hold cycle"
     return 1
   }
   # Must be explicitly conditioned on the tag being present — a blanket line
   # would fire even on tickets with no open questions at all.
-  echo "$block" | grep -qi 'omit the warning' || {
+  grep -qi 'omit the warning' <<<"$block" || {
     echo "Step 5 does not gate the warning line on [needs-human] presence"
     return 1
   }
@@ -861,15 +861,15 @@ test_router_gate_held_message_mentions_open_questions() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/### STEP_2_5 — Gate Check/,/^### STEP_3/p' "$skill_md")
-  echo "$block" | grep -qi 'Open Questions' || {
+  grep -qi 'Open Questions' <<<"$block" || {
     echo "STEP_2_5 gate-held message does not mention Open Questions"
     return 1
   }
-  echo "$block" | grep -qi 'approved' || {
+  grep -qi 'approved' <<<"$block" || {
     echo "STEP_2_5 gate-held message does not mention the approved label"
     return 1
   }
-  echo "$block" | grep -qi 'gate-reconcile\|hold' || {
+  grep -qi 'gate-reconcile\|hold' <<<"$block" || {
     echo "STEP_2_5 gate-held message does not warn about a re-hold on next resume"
     return 1
   }
@@ -928,11 +928,11 @@ test_ticket_verify_pr_created_covers_both_branches() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/existing_pr=\$(cd/,/record_pr_created --new/p' "$skill_md")
-  echo "$block" | grep -q '_pr_url="\$existing_pr"' || {
+  grep -q '_pr_url="\$existing_pr"' <<<"$block" || {
     echo "existing-PR branch does not set _pr_url for pr-created capture"
     return 1
   }
-  echo "$block" | grep -q '_pr_url=\$(cd' || {
+  grep -q '_pr_url=\$(cd' <<<"$block" || {
     echo "new-PR branch does not set _pr_url for pr-created capture"
     return 1
   }
@@ -953,7 +953,7 @@ test_ticket_verify_local_closeout_skips_implement_complete_under_from_auto() {
   # Item 4 of the local close-out: from its "4." line up to item 5.
   item=$(sed -n '/^### If `--env local`: Open PR and close out/,/^### If `--env uat`/p' "$skill_md" |
     sed -n '/^4\. /,/^5\. /p')
-  echo "$item" | grep -q 'flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} implement-complete' || {
+  grep -q 'flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} implement-complete' <<<"$item" || {
     echo "local close-out item 4 no longer fires implement-complete (test anchor drifted)"
     return 1
   }
@@ -993,7 +993,7 @@ test_ticket_pr_review_gh_pr_list_scoped_to_repo() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/^## Step 3 /,/^## Step 4 /p' "$skill_md")
-  echo "$block" | grep -q 'PR_LIST=\$(gh pr list --repo "\$GH_REPO"' || {
+  grep -q 'PR_LIST=\$(gh pr list --repo "\$GH_REPO"' <<<"$block" || {
     echo "Step 3 gh pr list is not scoped with --repo \$GH_REPO"
     return 1
   }
@@ -1039,7 +1039,7 @@ test_ticket_pr_review_unresolvable_repo_stops() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/^## Step 3 /,/^## Step 4 /p' "$skill_md")
-  echo "$block" | grep -q 'Cannot resolve the code repo' || {
+  grep -q 'Cannot resolve the code repo' <<<"$block" || {
     echo "no unresolvable-repo stop message found in Step 3"
     return 1
   }
@@ -1057,7 +1057,7 @@ test_ticket_pr_review_checks_uses_real_json_fields() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/^\*\*If `_merge_blocked_reason` is empty\*\*/,/^\*\*If the array is empty/p' "$skill_md")
-  echo "$block" | grep -q 'gh pr checks {number} --repo {owner}/{repo} --json name,state,bucket' || {
+  grep -q 'gh pr checks {number} --repo {owner}/{repo} --json name,state,bucket' <<<"$block" || {
     echo "Step 6b gh pr checks does not request --json name,state,bucket"
     return 1
   }
@@ -1165,11 +1165,11 @@ test_ticket_pr_review_checks_command_failure_is_guarded() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/^\*\*If `_merge_blocked_reason` is empty\*\*/,/^\*\*If the array is empty/p' "$skill_md")
-  echo "$block" | grep -qi 'exited non-zero' || {
+  grep -qi 'exited non-zero' <<<"$block" || {
     echo "Step 6b does not guard against gh pr checks exiting non-zero"
     return 1
   }
-  echo "$block" | grep -qi 'not valid JSON' || {
+  grep -qi 'not valid JSON' <<<"$block" || {
     echo "Step 6b does not guard against unparseable JSON output"
     return 1
   }
@@ -1188,15 +1188,15 @@ test_ticket_pr_review_checks_bucket_evaluation() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/^\*\*If `_merge_blocked_reason` is empty\*\*/,/^\*\*If the array is empty/p' "$skill_md")
-  echo "$block" | grep -q '`fail`, `cancel`.*hard block' || {
+  grep -q '`fail`, `cancel`.*hard block' <<<"$block" || {
     echo "Step 6b does not treat fail/cancel bucket as a hard block"
     return 1
   }
-  echo "$block" | grep -q '`pending`.*blocks the merge' || {
+  grep -q '`pending`.*blocks the merge' <<<"$block" || {
     echo "Step 6b does not treat pending bucket as blocking (still running)"
     return 1
   }
-  echo "$block" | grep -qi 'no configured.*checks.*not a failure\|legitimately not a failure' || {
+  grep -qi 'no configured.*checks.*not a failure\|legitimately not a failure' <<<"$block" || {
     echo "Step 6b does not tolerate a legitimately empty checks array"
     return 1
   }
@@ -1207,7 +1207,7 @@ test_ticket_pr_review_checks_report_table_uses_state_bucket() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/^\*\*If any check has a blocking bucket/,/^Post the same message as a PR comment\./p' "$skill_md")
-  echo "$block" | grep -q '| Check | State | Bucket |' || {
+  grep -q '| Check | State | Bucket |' <<<"$block" || {
     echo "failing-checks report table no longer reports State/Bucket columns"
     return 1
   }
@@ -1244,7 +1244,7 @@ test_ticket_pr_review_step6b_uses_shared_merge_rule() {
   [ -f "$skill_md" ] || return 1
   local block
   block=$(sed -n '/^### Step 6b/,/^\*\*If `_merge_blocked_reason` is non-empty/p' "$skill_md")
-  echo "$block" | grep -q '_merge_blocked_reason=$(merge_blocked_reason "{TICKET-ID}")' || {
+  grep -q '_merge_blocked_reason=$(merge_blocked_reason "{TICKET-ID}")' <<<"$block" || {
     echo "Step 6b does not call merge_blocked_reason"
     return 1
   }
@@ -1255,7 +1255,7 @@ test_ticket_pr_review_step6b_uses_shared_merge_rule() {
 filter="${1:-}"
 
 for func in $(declare -F | grep '^declare -f test_' | sed 's/declare -f //'); do
-  if [ -z "$filter" ] || echo "$func" | grep -q "$filter"; then
+  if [ -z "$filter" ] || grep -q "$filter" <<<"$func"; then
     _run "$func" "$func"
   fi
 done

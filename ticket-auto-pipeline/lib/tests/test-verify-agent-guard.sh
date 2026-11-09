@@ -124,7 +124,7 @@ test_preflight_fails_without_playwright_config() {
   out=$(HOME="$home" bash "$PREFLIGHT" "$log" "$proj")
   [ "$(wc -l <"$log")" -eq 1 ] || return 1
   grep -qF '|META|preflight|fail|VERIFY_PREFLIGHT_FAILED' "$log" || return 1
-  echo "$out" | grep -qF "no MCP server named 'playwright'"
+  grep -qF "no MCP server named 'playwright'" <<<"$out"
 }
 _run "(c) verify-preflight.sh logs one honest fail line when no playwright server is configured" \
   test_preflight_fails_without_playwright_config

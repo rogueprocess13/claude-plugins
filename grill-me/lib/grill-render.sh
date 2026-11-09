@@ -108,7 +108,7 @@ grill_render() {
     clar=$(_render_clarifications "$assessment" "$1" "$round")
     if [ -n "$body" ]; then
       echo "$body"
-    elif ! echo "$clar" | grep -q '^- \*\*Q[0-9]*\*\* (round [^)]*): '; then
+    elif ! grep -q '^- \*\*Q[0-9]*\*\* (round [^)]*): ' <<<"$clar"; then
       # No evidence and no current (non-superseded) answer.
       echo "$2"
     fi

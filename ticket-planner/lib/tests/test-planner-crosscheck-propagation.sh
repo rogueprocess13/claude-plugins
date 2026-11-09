@@ -92,8 +92,8 @@ EOF
 
 OUT=$(planner_crosscheck_consensus_propagation "$CONSENSUS2" "$SPECS2" 2>&1)
 RC=$?
-if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "RESOLUTION_NOT_PROPAGATED" &&
-  echo "$OUT" | grep -q "has-it=\[vs-3\]" && echo "$OUT" | grep -q "missing-it=\[vs-4\]"; then
+if [ "$RC" -ne 0 ] && grep -q "RESOLUTION_NOT_PROPAGATED" <<<"$OUT" &&
+  grep -q "has-it=\[vs-3\]" <<<"$OUT" && grep -q "missing-it=\[vs-4\]" <<<"$OUT"; then
   pass "asymmetric propagation reports RESOLUTION_NOT_PROPAGATED naming both sides"
 else
   fail "asymmetric propagation reports RESOLUTION_NOT_PROPAGATED naming both sides" "$OUT"
@@ -196,7 +196,7 @@ Users get sequential numbers.
 EOF
 OUT=$(planner_crosscheck_consensus_propagation "$CONSENSUS5" "$SPECS5" 2>&1)
 RC=$?
-if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "missing-it=\[store\]" && ! echo "$OUT" | grep -q "missing-it=\[[^]]*auth"; then
+if [ "$RC" -ne 0 ] && grep -q "missing-it=\[store\]" <<<"$OUT" && ! grep -q "missing-it=\[[^]]*auth" <<<"$OUT"; then
   pass "store without its UUID share is RESOLUTION_NOT_PROPAGATED, auth is not"
 else
   fail "store without its UUID share is RESOLUTION_NOT_PROPAGATED, auth is not" "$OUT"
@@ -214,7 +214,7 @@ cat >"$CONSENSUS6" <<'EOF'
 - Copied into a, b and c: run `npm install` in `backend/` before every attempt.
 EOF
 OUT=$(planner_crosscheck_consensus_propagation "$CONSENSUS6" "$SPECS6" 2>&1)
-if echo "$OUT" | grep -q "has-it=\[a b\] missing-it=\[c\]"; then
+if grep -q "has-it=\[a b\] missing-it=\[c\]" <<<"$OUT"; then
   pass "list member without the shared text fires"
 else
   fail "list member without the shared text fires" "$OUT"
@@ -227,7 +227,7 @@ cat >"$CONSENSUS7" <<'EOF'
 - Both paths set `status` on the response.
 EOF
 OUT=$(planner_crosscheck_consensus_propagation "$CONSENSUS7" "$SPECS2" 2>&1)
-if echo "$OUT" | grep -q "has-it=\[vs-3\] missing-it=\[vs-4\]"; then
+if grep -q "has-it=\[vs-3\] missing-it=\[vs-4\]" <<<"$OUT"; then
   pass "header-only slugs fall back to the block's slug-less text"
 else
   fail "header-only slugs fall back to the block's slug-less text" "$OUT"
@@ -258,7 +258,7 @@ EOF
 
 OUT=$(planner_crosscheck_forward_references "$SPECS5" 2>&1)
 RC=$?
-if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "FORWARD_REF_UNFULFILLED" && echo "$OUT" | grep -q "vs-5c"; then
+if [ "$RC" -ne 0 ] && grep -q "FORWARD_REF_UNFULFILLED" <<<"$OUT" && grep -q "vs-5c" <<<"$OUT"; then
   pass "unfulfilled forward reference reports FORWARD_REF_UNFULFILLED"
 else
   fail "unfulfilled forward reference reports FORWARD_REF_UNFULFILLED" "$OUT"
@@ -337,7 +337,7 @@ EOF
 
 OUT=$(planner_crosscheck_carve_scope "$LOG8" "$SPECS8" 2>&1)
 RC=$?
-if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q "CARVE_SCOPE_LOST"; then
+if [ "$RC" -ne 0 ] && grep -q "CARVE_SCOPE_LOST" <<<"$OUT"; then
   pass "ticket count mismatch reports CARVE_SCOPE_LOST"
 else
   fail "ticket count mismatch reports CARVE_SCOPE_LOST" "$OUT"

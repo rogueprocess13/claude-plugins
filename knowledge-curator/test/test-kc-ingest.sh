@@ -57,7 +57,7 @@ if [ "$out" = "$PLANS/later-plan.md" ]; then pass "plan newer than marker → li
 # 4. --since-hours widens the first-sweep window
 rm -f "$K/.kc-sweep-marker"
 out=$(bash "$KI" new-plans --plans-dir "$PLANS" --knowledge-dir "$K" --since-hours 96 2>&1)
-if printf '%s\n' "$out" | grep -qx "$PLANS/old-plan.md"; then pass "--since-hours 96 includes a 3-day-old plan"; else fail "--since-hours 96: '$out'"; fi
+if grep -qx "$PLANS/old-plan.md" <<<"$out"; then pass "--since-hours 96 includes a 3-day-old plan"; else fail "--since-hours 96: '$out'"; fi
 
 # 5. missing plans dir / empty knowledge dir → no error
 out=$(bash "$KI" new-plans --plans-dir "$TMP/nope" --knowledge-dir "$K" 2>&1)
@@ -65,7 +65,7 @@ rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$out" ]; then pass "missing plans dir → empty, exit 0"; else fail "missing plans dir (rc=$rc '$out')"; fi
 mkdir -p "$TMP/k2"
 out=$(bash "$KI" new-plans --plans-dir "$PLANS" --knowledge-dir "$TMP/k2" 2>&1)
-if printf '%s\n' "$out" | grep -qx "$PLANS/imported-plan.md"; then pass "no items yet → nothing excluded"; else fail "no items yet: '$out'"; fi
+if grep -qx "$PLANS/imported-plan.md" <<<"$out"; then pass "no items yet → nothing excluded"; else fail "no items yet: '$out'"; fi
 
 echo "title"
 
