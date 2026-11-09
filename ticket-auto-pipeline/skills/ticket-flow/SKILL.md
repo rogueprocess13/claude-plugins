@@ -49,155 +49,60 @@ Every call site that fires a verdict-gated trigger branches on `11` explicitly;
 
 ## Reference: State Machine
 
-### States
+`skills/ticket-flow/workflow.json` owns the states, triggers, label deltas and preconditions;
+`flow.sh` reads it live. Print the trigger table (name, from, to, adds, removes, precondition,
+verdict gate) with:
 
-| State | Meaning |
-|-------|---------|
-| `Backlog` | New, unclaimed |
-| `Blocked` | Waiting on external dependency |
-| `Todo` | Claimed, under appraisal |
-| `Approve` | Appraisal done, awaiting human sign-off |
-| `Ready` | Approved, implementation in progress |
-| `Review` | PR(s) open, awaiting code review / QA |
-| `UAT` | Code reviewed, awaiting business partner acceptance testing |
-| `Done` | Verified — all acceptance criteria confirmed |
+```bash
+jq -r '.triggers | to_entries[] | [.key, (.value.from|tostring), (.value.to // "-"), (.value.adds // [] | join(",")), (.value.removes // [] | join(",")), (.value.precondition // "-"), (if .value.verdict_gate then "verdict_gate" else "-" end)] | @tsv' skills/ticket-flow/workflow.json
+```
 
-Epic issues reuse these same states for their own acceptance (see the epic triggers below):
-`Backlog` while children execute → `Review` when integration PRs are open → `UAT` when the
-integration is merged and deployed → `Done` on acceptance.
+Each trigger's `description` and `emits` fields carry its notes and its outbox event.
 
 ### Labels
 
-Four labels — the complete set the pipeline writes to the board, per `workflow.json`'s
-`board_drivers.linear.projected_labels` (tracker-flow-projection-cutover). They are outputs:
-written by the board driver from the ticket's manifest `flags`, read by nothing. Every other
-label a ticket carries (`bug`, `feature`, a still-planner-written `planned`/`INIT-*`, or anything
-hand-applied) is preserved untouched by the driver — it only ever adds/removes these four.
-
-| Label | Meaning |
-|-------|---------|
-| `needs-info` | Blocked waiting for clarification |
-| `needs-adr` | Parked or stopped on an ADR gate verdict |
-| `rejected` | PR review found gaps OR UAT verification failed — ticket needs rework |
-| `reviewed` | PR review passed. Under `per-ticket` UAT policy this means "awaiting QA" and is cleared by `uat-pass`. **Under `UAT Policy: epic` it does not mean that** — the child goes straight to `Done` and retains the label, because there is no per-ticket QA step. Do not key an "in flight" heuristic on it. |
-
-Approval (`approved`), predicted complexity (`Simple`/`Complex`, removed — vestigial per
-`docs/label-audit.md`), and implementation outcome (`Smooth`/`Rough`/`Hard`) are **not** tracker
-labels: approval lives in the local manifest as the authoritative decision fact
-(`/ticket-approve`/`/ticket-reject`, tracker-approval-by-script), and outcome lives in the
-manifest's `outcome_label` field (`outcome-label-check.sh`). Neither is ever written to Linear.
+The board driver writes exactly four labels, `needs-info`, `needs-adr`, `rejected` and
+`reviewed` (`workflow.json` `board_drivers.linear.projected_labels`), from the manifest's
+`flags`; nothing reads them back. Every other label on a ticket is left untouched. Under
+`UAT Policy: epic` a child goes straight to `Done` and keeps `reviewed`, so `reviewed` does not
+mean "awaiting QA" there: do not key an "in flight" heuristic on it. Approval and the
+`Smooth`/`Rough`/`Hard` outcome are manifest facts, never tracker labels.
 
 **The board is a projection, not the source of truth.** It lags at most one pusher interval
-(`FLEET_BOARD_PUSHER_INTERVAL`, default 300s) when only `fleetd` drains a ticket's outbox; it
-updates within the same command when the router does (`flow.sh` drains at exit, unconditionally).
-Hand-editing one of the four projected labels is reconciled — reverted, if the pipeline's own
-state disagrees — on the next event that projects to that label, not immediately; every other
-label a person applies by hand is left alone indefinitely.
+(`FLEET_BOARD_PUSHER_INTERVAL`, default 300s) when only `fleetd` drains a ticket's outbox, and
+updates within the same command when `flow.sh` drains at exit. A hand edit to one of the four
+projected labels is reverted on the next event that projects to it, if pipeline state
+disagrees; any other hand-applied label is left alone.
 
-### Transitions
-
-| Trigger | State | Flags Added | Flags Removed | Notes |
-|---------|-------|-------------|----------------|-------|
-| `appraise-start` | `Todo` | — | — | Board projection also sets `assignee: "me"` |
-| `appraise-complete` | `Approve` | — | — | |
-| `human-approve` | `Ready` | — | `rejected` | Manifest `approved`/`approval_provenance` set (tracker-approval-by-script) |
-| `human-reject` | `Todo` | — | — | |
-| `implement-outcome` | — | — | — | No state or flag change; outcome recorded in the manifest, not the board |
-| `implement-complete` | `Review` | — | — | Manifest `approved` cleared |
-| `pr-review-pass-done` | `Done` | `reviewed` | `rejected` | Chosen by `uat_decide_trigger` — fires under `UAT Policy: epic`, or under `per-ticket` with no UAT target and no pending human merge |
-| `pr-review-pass-uat` | `UAT` | `reviewed` | `rejected` | Chosen by `uat_decide_trigger` — fires under `per-ticket` policy with a UAT target, or when the PR is left for a human merge (`--merge-pending`, GitHub #412) |
-| `pr-review-fail` | — | `rejected` | `reviewed` | No state change; clears an earlier `reviewed` verdict (#489) |
-| `pr-iterate` | `Ready` | — | `reviewed`, `rejected` | |
-| `uat-pass` | `Done` | — | `reviewed` | |
-| `uat-fail` | `Ready` | `rejected` | `reviewed` | |
-| `needs-info` | — | `needs-info` | — | No state change |
-| `needs-info-resolved` | — | — | `needs-info` | No state change |
-| `needs-adr` | — | `needs-adr` | — | No state change |
-| `needs-adr-resolved` | — | — | `needs-adr` | No state change |
-| `re-claim` | — | — | — | No state change; manifest `approved` cleared; restarts gate hold cycle |
-
-**Which of the two pass triggers fires is not decided here.** It is computed by
-`uat_decide_trigger` in `lib/branch-resolve.sh`, which evaluates the epic's UAT policy *before*
-the UAT target. That ordering is load-bearing: `UAT_URL` is exported into every pipeline agent's
-environment unconditionally, so a policy check placed after a "is UAT configured?" test would
-never be reached. The decision is recorded in the pipeline log as `META|uat-policy|info|<policy>`.
-
-### Epic acceptance transitions
-
-These act on the **epic issue itself**, not on child tickets. They add and remove no labels, so no
-new workspace label is required, and each declares a single-valued source state so log and
-telemetry records stay on one line.
-
-| Trigger | From | To | Labels | Notes |
-|---------|------|----|--------|-------|
-| `epic-integration-open` | `Backlog` | `Review` | — | Fired by the fleet controller's epic-readiness detector once at least one integration PR is observed open |
-| `epic-uat-start` | `Review` | `UAT` | — | Operator signals the integration has been merged and deployed |
-| `epic-uat-pass` | `UAT` | `Done` | — | Epic UAT accepted |
-
-There is deliberately **no epic-rejection trigger**. `Ready` means "approved, implementation in
-progress" — a child-workflow state nothing acts on for an epic whose children are all `Done`. At
-the moment a business partner rejects, a human is already in Linear and can move the card.
+**Which pass trigger fires (`pr-review-pass-done` or `pr-review-pass-uat`) is not decided here.**
+`uat_decide_trigger` in `lib/branch-resolve.sh` evaluates the epic's UAT policy *before* the UAT
+target. That ordering is load-bearing: `UAT_URL` is exported into every pipeline agent's
+environment, so a policy check placed after an "is UAT configured?" test would never be reached.
+The decision is logged as `META|uat-policy|info|<policy>`.
 
 ### Preconditions
 
-A precondition may be declared on a **trigger** as well as on a label, and the epic guard is
-**bidirectional**:
-
-| Precondition | Effect |
-|---|---|
-| `must_be_epic` | The trigger or label is rejected (exit 8) on a non-epic issue. Carried by the three epic triggers and by the `state:execution` label. |
-| `must_not_be_epic` | The trigger is rejected (exit 8) on an epic issue. Carried by every child lifecycle trigger. |
-
-The inverse direction matters because the router does not branch on which trigger fired: without
-it, an epic accidentally pushed through the ticket pipeline would take a child's pass-to-`Done`
-trigger and close itself.
-
-An issue counts as an epic when it carries the epic marker label (`EPIC_MARKER_LABEL`, default
-`epic`) **or** a valid `## Branch Directive` in its description — both already present in the
-payload `flow.sh` fetches, so neither costs an extra request. The evaluator lives in
-`lib/epic-precondition.sh` and `flow.sh` sources it, so tests exercise the same code path the
-executor runs.
+The epic guard is **bidirectional**: `must_be_epic` rejects (exit 8) the three epic triggers on
+a non-epic issue, and `must_not_be_epic` rejects every child lifecycle trigger on an epic. The
+inverse direction matters because the router does not branch on which trigger fired: without it,
+an epic pushed through the ticket pipeline would take a child's pass-to-`Done` trigger and close
+itself. The epic triggers act on the epic issue itself; there is deliberately no epic-rejection
+trigger (a human moves the card). Epic detection lives in `lib/epic-precondition.sh`, which
+`flow.sh` sources.
 
 ### Verdict gate
 
-Independent of the epic precondition above, a trigger may also declare `"verdict_gate": true` in
-`workflow.json`. `pr-review-pass-done`, `pr-review-pass-uat`, and `uat-pass` carry it —
-the three triggers that can land a ticket in `Done` or `UAT`. Before dispatching such a trigger,
-`flow.sh` calls `verifier_latest_verdict` (`lib/verifier-result.sh`) to find the most recently
-recorded verdict for every `(verifier, phase)` pair the pipeline log has written a
-`META|verifier-result` entry for. If any pair's **latest** verdict is `FAIL` or `BLOCK`, the
-trigger is refused (exit 11) with a clear message naming the offending pair — a later `PASS`/
-`WARN` for that same pair supersedes the earlier failure and clears the block on its own.
+`pr-review-pass-done`, `pr-review-pass-uat` and `uat-pass` carry `"verdict_gate": true`.
+`flow.sh` refuses them with exit 11 while any `(verifier, phase)` pair's **latest**
+`META|verifier-result` is `FAIL` or `BLOCK` (see `verifier_latest_verdict` in
+`lib/verifier-result.sh`). Caller contract:
 
-To force the trigger through anyway (e.g. a fix verified by hand, outside the pipeline), pass
-`--override <reason>`. The reason is recorded as `META|verdict-override` alongside which
-`(verifier, phase)` pairs it superseded — never silently.
-
-A ticket with zero `META|verifier-result` entries (every ticket that predates this gate) is
-unaffected: absence of evidence is not failure.
-
-```
-flow.sh <TICKET-ID> pr-review-pass-done --override "manually verified per WIL-79, HTTP 500 fixed in 979b648"
-```
-
-**Callers must write their own verdict before dispatching the gated trigger, not after.**
-`ticket-verify` and `ticket-pr-review` each call `write_verifier_result` immediately once
-their own verdict is known, strictly before the `uat-pass` / `pr-review-pass-*` call —
-otherwise the router's own documented verify-retry loop (attempt 1 FAILs and is logged,
-attempt 2 genuinely PASSes) would have attempt 2's own trigger call check the log *before*
-its own PASS was written, still see attempt 1's stale FAIL, and block a ticket that just
-legitimately passed. On a `flow.sh` exit `11`, both callers skip their normal PASS
-comment/`PHASE_RESULT` and emit `META|gate-stop|fail|VERDICT_GATE_BLOCKED` with
-`PHASE_RESULT: VERDICT: BLOCK` instead — a gate block must never look identical to a real
-completion in the log or in Linear, the inverted form of the bug this gate exists to fix.
-
-**`epic-uat-pass` deliberately carries no `verdict_gate`.** No phase writes a per-epic
-`META|verifier-result` against the epic issue's own pipeline log — verifier-results are
-written by child-ticket phases (VERIFY/PR-REVIEW) against each *child's* log. A
-`verdict_gate` on the epic trigger would read an always-empty per-epic verifier history and
-never block anything — worse than no gate, since it would look load-bearing without being
-one. See `workflow.json`'s `epic-uat-pass` `description` field for the same note next
-to the trigger it documents.
+- **Write your own verdict (`write_verifier_result`) before firing the gated trigger, not
+  after**, or a verify retry that now passes is blocked by the previous attempt's FAIL.
+- On exit `11`, skip the PASS comment and `PHASE_RESULT`; emit
+  `META|gate-stop|fail|VERDICT_GATE_BLOCKED` and `PHASE_RESULT: VERDICT: BLOCK` instead.
+- `--override <reason>` forces the trigger and records `META|verdict-override` with the pairs it
+  superseded.
 
 ## Preflight Sentinel
 

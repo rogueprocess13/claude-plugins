@@ -574,6 +574,67 @@ test_log_writes_carry_iso_timestamp() {
   return 0
 }
 
+# ── Test: injected instructions own the detection-pattern definitions ─────────
+# skill-prose-dedupe D3: guidance-extractor SKILL.md no longer carries the
+# per-pattern detection logic and evidence templates, so the injected
+# INSPECTOR_INSTRUCTIONS must. Each pattern needs its id, a detection-logic
+# line and an evidence-format template; the trivial_pass wording must match
+# lib/inspect-verifiers.sh (criteria_total == 1, 0 excluded).
+
+test_instructions_carry_detection_patterns() {
+  _setup
+  _vr_write "unit_tests" "PASS" "IMPLEMENT" 5 5
+
+  local out instructions
+  out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
+  instructions=$(_extract_instructions "$out")
+
+  local p
+  for p in flaky_tests missing_requirement trivial_pass verdict_disagreement incomplete_implementation; do
+    if ! grep -qF "**${p}**" <<<"$instructions"; then
+      echo "pattern id missing from instructions: $p"
+      _teardown
+      return 1
+    fi
+  done
+
+  local n_logic n_evidence
+  n_logic=$(grep -c 'Detection logic:' <<<"$instructions" || true)
+  n_evidence=$(grep -c 'Evidence format: `"' <<<"$instructions" || true)
+  if [ "$n_logic" -lt 5 ] || [ "$n_evidence" -lt 5 ]; then
+    echo "expected 5 detection-logic and 5 evidence-format lines, got $n_logic / $n_evidence"
+    _teardown
+    return 1
+  fi
+
+  local needle
+  for needle in \
+    '"review" in its ID' \
+    '"critique" or "audit"' \
+    '{pass_verifier} PASS but {fail_verifier} FAIL — possible flaky test' \
+    '{review_verifier} PASS but {critique_verifier} {critique_verdict} — possible missed requirement' \
+    'criteria_total == 1' \
+    'criteria_total=0 (outcome-scored)' \
+    '{verifier} PASS with criteria_total={N} — verification too shallow' \
+    'verdicts diverge: {verifier1}={v1}, {verifier2}={v2}' \
+    'PASS but RETURN_INCOMPLETE gate-warn present — unchecked boxes remain' \
+    'Only the IMPLEMENT inspection ever reports it true'; do
+    if ! grep -qF -- "$needle" <<<"$instructions"; then
+      echo "instructions missing: $needle"
+      _teardown
+      return 1
+    fi
+  done
+  if grep -qF 'criteria_total <= 1' <<<"$instructions" || grep -qF 'criteria_total ≤ 1' <<<"$instructions"; then
+    echo "instructions carry the stale <= 1 trivial_pass wording"
+    _teardown
+    return 1
+  fi
+
+  _teardown
+  return 0
+}
+
 # ── Run ─────────────────────────────────────────────────────────────────────────
 
 echo "=== test-phase-inspector.sh ==="
@@ -598,6 +659,7 @@ _run "jq absence handled gracefully" test_jq_absence_skip
 _run "sourcing preserves shell flags" test_sourcing_preserves_shell_flags
 _run "100-entry stress test extracts correct phase" test_large_verifier_count
 _run "every log line written carries the ISO timestamp (#421)" test_log_writes_carry_iso_timestamp
+_run "instructions carry detection logic and evidence formats (D3)" test_instructions_carry_detection_patterns
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

@@ -201,7 +201,7 @@ and § Final disposition for how this list changed after removal execution surfa
   `verify-lock.sh`, "agent's claimed verdict" in `inspect-verifiers.sh`/`phase_dispatch.py`,
   knowledge-curator's unrelated `kc-item.sh` claim/complete/release lifecycle). Zero readers of the
   Linear label itself, confirming the design doc's premise exactly.
-- **Human-consumer search:** appears only in `ticket-flow/SKILL.md`'s legend
+- **Human-consumer search:** appears only in `ticket-flow/SKILL.md`'s legend (legend removed since; see § Citation update)
   ("Actively being worked (set at appraisal start, cleared at Done)") — purely descriptive, and
   fully redundant with information already visible via the ticket's Linear *state* (`Todo`) and
   *assignee* field. No instruction to act on it found anywhere.
@@ -218,7 +218,7 @@ and § Final disposition for how this list changed after removal execution surfa
   reads complexity the same way — from `notes.md` text, not the label. Grepped all five plugins for
   a decision branch on the literal `simple`/`complex` label value: none found (both words are also
   common English, so most hits were unrelated code/prose, correctly excluded).
-- **Human-consumer search:** `ticket-flow/SKILL.md` legend entries ("Predicted
+- **Human-consumer search:** `ticket-flow/SKILL.md` legend entries (legend removed since; see § Citation update) ("Predicted
   simple/complex (set by appraise)") are purely descriptive and duplicate information the operator
   dashboard (`ticket-overseer`) already surfaces from `notes.md` — the actually-consulted source.
   No instruction to act on the *label* found; the same redundancy argument that confirmed `claimed`
@@ -236,7 +236,7 @@ and § Final disposition for how this list changed after removal execution surfa
   tests/state-machine.json — every hit is unrelated (ADR status enum in `adr-check.sh`, Slack
   transport-failure strings in `fleet-notify.sh`, planner consensus-log prose, knowledge-curator
   test names).
-- **Human-consumer search:** `ticket-flow/SKILL.md` — "PR review found gaps OR UAT verification
+- **Human-consumer search:** `ticket-flow/SKILL.md` (now `workflow.json` `board_drivers.linear.projected_labels` and `ticket-flow/SKILL.md` § Labels; see § Citation update) — "PR review found gaps OR UAT verification
   failed — ticket needs rework." Unlike `claimed`, this is **not** redundant with visible ticket
   state: a ticket bounced back to `Ready` (via `uat-fail`) or sitting in `Review` after
   `pr-review-fail` (no state change) looks identical, on state alone, to a ticket that has never
@@ -255,7 +255,7 @@ and § Final disposition for how this list changed after removal execution surfa
   `uat-fail`.
 - **Decision readers:** none found (same grep sweep as `rejected`; the few whole-word hits — persona
   `last-reviewed` field, `wiki-check.sh`'s `human-reviewed` frontmatter enum value — are unrelated).
-- **Human-consumer search:** `ticket-flow/SKILL.md` gives unusually detailed operator guidance:
+- **Human-consumer search:** `ticket-flow/SKILL.md` (now `workflow.json` `board_drivers.linear.projected_labels` and `ticket-flow/SKILL.md` § Labels; see § Citation update) gives unusually detailed operator guidance:
   "PR review passed. Under `per-ticket` UAT policy this means 'awaiting QA'... **Under `UAT Policy:
   epic` it does not mean that** — the child goes straight to `Done` and retains the label... Do not
   key an 'in flight' heuristic on it." This is a documented anti-pattern warning, which is stronger
@@ -314,7 +314,7 @@ and § Final disposition for how this list changed after removal execution surfa
   zero automated writers, meaning it can only ever appear on a ticket via manual application in the
   Linear UI.
 - **Decision readers:** none found.
-- **Human-consumer search:** `ticket-flow/SKILL.md` — "Bug could not be reproduced." Specific,
+- **Human-consumer search:** `ticket-flow/SKILL.md` (legend removed since; see § Citation update) — "Bug could not be reproduced." Specific,
   non-generic meaning. Given it has zero code writers, if it is used at all it is used exclusively
   by a human manually tagging a ticket for other humans — which is the purest form of human-signal,
   but there is no positive evidence (comment, doc instruction, or usage record) that anyone actually
@@ -385,7 +385,7 @@ and § Final disposition for how this list changed after removal execution surfa
   `knowledge-curator/`, `grill-me/`, excluding `tests/` — 20 files matched, all read in full at the
   relevant sections.
 - For labels with no decision read, searched `skills/*/SKILL.md` prose, `lib/skill-preamble*.md`,
-  plugin `README.md`/`CLAUDE.md` files, and `ticket-flow/SKILL.md`'s label legend
+  plugin `README.md`/`CLAUDE.md` files, and `ticket-flow/SKILL.md`'s label legend (legend removed since; see § Citation update)
   (`grep -rn "<label>"` scoped to `.md` files, reviewed manually for actual instructional content vs.
   incidental mention).
 - For generic-English-word labels (`simple`, `complex`, `bug`, `feature`, `security`, `chore`,
@@ -545,7 +545,7 @@ treat as confirmed on the strength of this citation.
 (repeat grep clean), and `ticket-pr-review/SKILL.md` Step 6a confirms the label is applied only as a
 write action ("This adds `reviewed` or `rejected`... only when `_rc` is `0`") — never read back
 by that skill or any other to branch on. The existing citation
-(`ticket-flow/SKILL.md`'s explicit anti-pattern warning: "Under `UAT Policy: epic` [`reviewed`]
+(`ticket-flow/SKILL.md` § Labels, still present, explicit anti-pattern warning: "Under `UAT Policy: epic` [`reviewed`]
 does not mean [awaiting QA]... Do not key an 'in flight' heuristic on it") is a genuine documented
 warning aimed at whoever builds future tooling, which is stronger than an incidental mention.
 Verdict unchanged (`human-signal`), evidence upgraded from "weaker" to confirmed.
@@ -555,7 +555,7 @@ evidence found.** Confirmed again: zero writers anywhere in the repository (incl
 `ticket-reproduce/SKILL.md`, whose name suggests it would apply this label — it only posts a
 comment via `save_comment`, never touches the label). No decision read. No dashboard or overseer
 report renders it. The only citation is the one-line legend definition
-(`ticket-flow/SKILL.md`, "Bug could not be reproduced") — the harder search (git history,
+(`ticket-flow/SKILL.md`, "Bug could not be reproduced"; legend removed since; see § Citation update) — the harder search (git history,
 broader skill-prose reads, dashboard/report code) found nothing beyond that same line. This
 differs from `rejected`/`reviewed` in kind: those two have an automated writer and a documented
 reason a human needs the distinction; `repro-failed` has no automated writer at all, meaning its
@@ -862,3 +862,31 @@ end-to-end functional run on the tickets host (planner creates a zero-label epic
 dispatches from manifests, `blocked_by` resolves against local terminal state, D-12/D-18 both fire)
 — treat that as the only live-fleet evidence this document's `retired` classifications above will
 ever have, and do not treat this branch as mergeable until it passes.
+
+## Citation update (2026-11-09, skill-prose-dedupe)
+
+`ticket-flow/SKILL.md` no longer carries a label legend. Its States/Labels/Transitions/
+Preconditions tables were replaced by a pointer to `workflow.json` and a `jq` one-liner
+(skill-prose-dedupe, sub-PR 3e). The citations above that quote the legend describe the file as it
+was at this audit's commit and are annotated rather than rewritten.
+
+Re-running the § Method human-consumer grep (`grep -rn` over `skills/*/SKILL.md`,
+`lib/*.md`, plugin `README.md`/`CLAUDE.md`) against the new file:
+
+- **`rejected`, `reviewed`**: still named, as two of the four projected labels listed in
+  `ticket-flow/SKILL.md` § Labels, which points at `workflow.json`
+  `board_drivers.linear.projected_labels`. The `reviewed` anti-pattern warning ("under
+  `UAT Policy: epic` … do not key an 'in flight' heuristic on it") is retained there, so the
+  2026-09-19 evidence upgrade for `reviewed` still stands. The legend's `rejected` meaning
+  ("PR review found gaps OR UAT verification failed") is gone from the SKILL, but the writers
+  (`pr-review-fail`, `uat-fail` in `workflow.json`) carry the same distinction, so the
+  `human-signal` classification is unchanged.
+- **`repro-failed`**: its only citation, the one-line legend definition, is gone. The grep now
+  finds the label only in `workflow.json`'s `well_known_labels`, with no prose meaning anywhere.
+  This weakens the already-weakest `human-signal` case further; it is a candidate for re-audit,
+  not a reclassification made here.
+- **`claimed`, `simple`, `complex`**: already removed from `workflow.json` (see the dispositions
+  above); their legend entries were already absent before this update. Stale prose mentions of
+  `claimed` remain in `ticket-appraise`, `ticket-appraise-exec`, `ticket-batch-appraise` and
+  `ticket-verify` SKILL.md files; they describe the label as still written and are left for a
+  later prose-cleanup change.
