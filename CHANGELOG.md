@@ -17,6 +17,19 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## knowledge-curator 0.2.17 (2026-11-09)
+
+### Fixed
+
+- **`kc-render.sh` exited silently with code 141 about one run in fifty under
+  parallel load.** The NEXT-box lookup fed `echo "$SORTED"` into a `while`
+  loop that `break`s on the first unblocked row; when the loop stopped reading
+  before `echo` finished, the writer took SIGPIPE, and `pipefail` + `set -e`
+  ended the render with no output. The loop now reads a here-string. Same
+  class as #644, but with `while … break` as the early-exiting reader, which
+  `scripts/check-grep-q-pipe.sh` does not look for. Reproduced as 4 of 200
+  runs of `test-kc-render.sh` at 32-way parallelism before the fix.
+
 ## Repo tooling (2026-11-09, path-aware CI) — no plugin release
 
 ### Changed
