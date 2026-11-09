@@ -46,7 +46,7 @@ if [ "$(wc -l <"$CROSSCHECK_CALLS")" -eq 1 ] && [ -s "${DR}/b-api/lineage.json" 
 else
   fail "converge details" "xc=$(wc -l <"$CROSSCHECK_CALLS") $(_run_lines | grep -E 'draft-revise|info')"
 fi
-if printf '%s\n' "$GATE_OUT" | grep -q '^Revision history:' && printf '%s\n' "$GATE_OUT" | grep -q 'b-api: 1 revision(s): applied'; then
+if grep -q '^Revision history:' <<<"$GATE_OUT" && grep -q 'b-api: 1 revision(s): applied' <<<"$GATE_OUT"; then
   pass "pass summary lists the revision history"
 else
   fail "pass summary" "$GATE_OUT"

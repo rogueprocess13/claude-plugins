@@ -107,9 +107,9 @@ if [ "$GATE_RC" -eq 0 ] && [ "$(_status b-api 1)" = "applied" ] && grep -qF "$MI
 else
   fail "missed security round" "rc=$GATE_RC st=$(_status b-api 1) $(cat "${DR}/b-api/findings.r1.json" 2>/dev/null)"
 fi
-if printf '%s\n' "$GATE_OUT" | grep -q '^Audit advisories (gaps the scan missed; they do not block):' &&
-  printf '%s\n' "$GATE_OUT" | grep -qF '  a-schema: EDGE_CASE_GAP — a 5xx from the backend leaves the page blank' &&
-  ! printf '%s\n' "$GATE_OUT" | grep -q 'b-api: Security'; then
+if grep -q '^Audit advisories (gaps the scan missed; they do not block):' <<<"$GATE_OUT" &&
+  grep -qF '  a-schema: EDGE_CASE_GAP — a 5xx from the backend leaves the page blank' <<<"$GATE_OUT" &&
+  ! grep -q 'b-api: Security' <<<"$GATE_OUT"; then
   pass "non-security MISSED entry listed as an advisory in the pass output"
 else
   fail "missed advisory" "$GATE_OUT"
@@ -123,7 +123,7 @@ PLANNER_DRAFT_REVISE_MAX_ROUNDS=1 _gate
 if [ "$GATE_RC" -eq 0 ] &&
   jq -e '[.findings[] | select(.origin == "audit-missed" and .demoted == "round-limit")] | length == 1' "${DR}/b-api/semantic.json" >/dev/null &&
   _run_lines | grep -q '|META|draft-readiness|warn|b-api SECURITY MISSING_CORE_AC m-[0-9a-f]* "the title is still written with innerHTML (XSS)"$' &&
-  printf '%s\n' "$GATE_OUT" | grep -qF 'b-api: MISSING_CORE_AC "the title is still written with innerHTML (XSS)"' &&
+  grep -qF 'b-api: MISSING_CORE_AC "the title is still written with innerHTML (XSS)"' <<<"$GATE_OUT" &&
   planner_draft_readiness_epic_summary "$INIT" | grep -q '^- Security finding (review): Demoted MISSING_CORE_AC: round-limit'; then
   pass "re-raised past the budget: demoted, SECURITY warn line, pass output, epic summary"
 else
@@ -150,9 +150,9 @@ _pdl_missed_record "${HIST_DIR}/spec-a"
 _pdl_missed_record "${HIST_DIR}/spec-a"
 hist_report=$(_pdl_root() { echo "$HIST_DIR"; } && planner_draft_readiness_missed_report ANY)
 if [ "$(wc -l <"${HIST_DIR}/spec-a/missed-history.jsonl")" -eq 3 ] &&
-  printf '%s\n' "$hist_report" | grep -qxF '  spec-a: EDGE_CASE_GAP — gap only round one saw (from an earlier revision)' &&
-  printf '%s\n' "$hist_report" | grep -qxF '  spec-a: EDGE_CASE_GAP — gap both saw' &&
-  printf '%s\n' "$hist_report" | grep -qxF '  spec-a: MISSING_CORE_AC — new gap' &&
+  grep -qxF '  spec-a: EDGE_CASE_GAP — gap only round one saw (from an earlier revision)' <<<"$hist_report" &&
+  grep -qxF '  spec-a: EDGE_CASE_GAP — gap both saw' <<<"$hist_report" &&
+  grep -qxF '  spec-a: MISSING_CORE_AC — new gap' <<<"$hist_report" &&
   [ "$(printf '%s\n' "$hist_report" | grep -c 'gap both saw')" -eq 1 ]; then
   pass "MISSED advisories survive a later evaluation, deduped, earlier ones marked"
 else
@@ -165,8 +165,8 @@ fi
   printf '{"code":"EDGE_CASE_GAP","reason":"forged\\u001b[31m red\\nsecond line"}\n'
 } >>"${HIST_DIR}/spec-a/missed-history.jsonl"
 hist_report=$(_pdl_root() { echo "$HIST_DIR"; } && planner_draft_readiness_missed_report ANY)
-if ! printf '%s' "$hist_report" | grep -q $'\033' && ! printf '%s\n' "$hist_report" | grep -qE 'not json|array|^second line' &&
-  printf '%s\n' "$hist_report" | grep -qF 'forged [31m red second line (from an earlier revision)'; then
+if ! grep -q $'\033' <<<"$hist_report" && ! grep -qE 'not json|array|^second line' <<<"$hist_report" &&
+  grep -qF 'forged [31m red second line (from an earlier revision)' <<<"$hist_report"; then
   pass "a forged history line is cleaned, a malformed one skipped"
 else
   fail "missed history forged" "$hist_report"

@@ -43,8 +43,8 @@ _spawn_list "$l"
 # Crash: no apply. A new invocation re-enters through begin.
 planner_draft_readiness_begin "$INIT" >/dev/null 2>&1
 l2=$(planner_draft_readiness_next "$INIT" 2>/dev/null)
-if printf '%s\n' "$l" | grep -q $'^b-api\trevise\t' && [ "$(_status b-api 1)" = "applied" ] &&
-  [ ! -e "${DR}/b-api/revise.r2.status" ] && printf '%s\n' "$l2" | grep -q $'^b-api\tscan\t' &&
+if grep -q $'^b-api\trevise\t' <<<"$l" && [ "$(_status b-api 1)" = "applied" ] &&
+  [ ! -e "${DR}/b-api/revise.r2.status" ] && grep -q $'^b-api\tscan\t' <<<"$l2" &&
   ! grep -q 'OUT_OF_SCOPE_EDIT' "$LOG" && grep -q '|META|draft-readiness|start|evaluator=.* resume-round$' "$LOG"; then
   pass "the same round settles after the crash (no OUT_OF_SCOPE_EDIT); next re-evaluates b-api"
 else
@@ -83,7 +83,7 @@ else
   fail "scoped rescan" "$(grep -A4 'Changed sections' "${DR}/b-api/scan-prompt.txt")"
 fi
 report=$(planner_draft_readiness_report "$INIT")
-if printf '%s\n' "$report" | grep -q '^Draft readiness passed (ready 2/2)' && ! printf '%s\n' "$report" | grep -q 'halted'; then
+if grep -q '^Draft readiness passed (ready 2/2)' <<<"$report" && ! grep -q 'halted' <<<"$report"; then
   pass "report after a pass says 'passed', not 'halted (ready 2/2)'"
 else
   fail "pass report" "$report"
@@ -122,14 +122,14 @@ else
   fail "security drift" "rc=$GATE_RC st2=$(_status b-api 2) $(jq -c .findings "${DR}/b-api/semantic.json")"
 fi
 if _run_lines | grep -q "|META|draft-readiness|warn|b-api SECURITY EDGE_CASE_GAP ${sec_id} \"An Export action on the invoice list.\"" &&
-  printf '%s\n' "$GATE_OUT" | grep -q '^Security findings demoted at draft stage (review before dispatch):' &&
-  printf '%s\n' "$GATE_OUT" | grep -qF "b-api: EDGE_CASE_GAP \"An Export action on the invoice list.\" (${sec_id})"; then
+  grep -q '^Security findings demoted at draft stage (review before dispatch):' <<<"$GATE_OUT" &&
+  grep -qF "b-api: EDGE_CASE_GAP \"An Export action on the invoice list.\" (${sec_id})" <<<"$GATE_OUT"; then
   pass "security finding shown: warn line and the pass output"
 else
   fail "security shown" "$GATE_OUT $(_run_lines | grep warn)"
 fi
 summary=$(planner_draft_readiness_epic_summary "$INIT")
-printf '%s\n' "$summary" | grep -q '^- Security finding (review): Demoted EDGE_CASE_GAP: round-limit, revised' &&
+grep -q '^- Security finding (review): Demoted EDGE_CASE_GAP: round-limit, revised' <<<"$summary" &&
   pass "epic summary lists the security finding" || fail "security summary" "$summary"
 
 # ── 15. assumption for a no-source decision ──────────────────────────────
@@ -148,10 +148,10 @@ if [ "$GATE_RC" -eq 0 ] && [ "$(_status b-api 1)" = "applied" ] &&
 else
   fail "assumption run" "rc=$GATE_RC st=$(_status b-api 1) $(jq -c .findings "${DR}/b-api/semantic.json") $(_run_lines | grep -E 'draft-revise|DEMOTED')"
 fi
-printf '%s\n' "$GATE_OUT" | grep -qF "    assumption (review): ${ASM}" && pass "pass output lists the assumption" || fail "assumption pass output" "$GATE_OUT"
+grep -qF "    assumption (review): ${ASM}" <<<"$GATE_OUT" && pass "pass output lists the assumption" || fail "assumption pass output" "$GATE_OUT"
 summary=$(planner_draft_readiness_epic_summary "$INIT")
-if printf '%s\n' "$summary" | grep -qxF -- "- Assumption (review): ${ASM}" &&
-  printf '%s\n' "$summary" | grep -qF -- "- Added criterion: ${ASM_AC}"; then
+if grep -qxF -- "- Assumption (review): ${ASM}" <<<"$summary" &&
+  grep -qF -- "- Added criterion: ${ASM_AC}" <<<"$summary"; then
   pass "epic summary lists the assumption and its criterion"
 else
   fail "assumption summary" "$summary"

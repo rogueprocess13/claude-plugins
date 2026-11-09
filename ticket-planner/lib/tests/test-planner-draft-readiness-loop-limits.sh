@@ -118,7 +118,7 @@ else
   fail "budget" "rc=$GATE_RC spawns=$SPAWNS revises=$REVISES $(_run_lines | grep -E 'fail|done|warn')"
 fi
 report=$(planner_draft_readiness_report "$INIT")
-printf '%s\n' "$report" | grep -q 'SPAWN_BUDGET' && pass "report shows SPAWN_BUDGET" || fail "budget report" "$report"
+grep -q 'SPAWN_BUDGET' <<<"$report" && pass "report shows SPAWN_BUDGET" || fail "budget report" "$report"
 if ! (PLANNER_DRAFT_SPAWN_BUDGET=abc planner_draft_readiness_begin "$INIT" >/dev/null 2>&1); then
   pass "an invalid spawn budget is refused at gate start"
 else
