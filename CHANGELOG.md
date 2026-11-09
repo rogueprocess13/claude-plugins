@@ -17,6 +17,19 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.96.1 (2026-11-09)
+
+ticket-auto-pipeline 0.96.1.
+
+### Changed
+
+- `lib/env-check.sh` reads the root of its stale jgit-lock search from
+  `ENV_CHECK_JGIT_LOCK_ROOT` (default `/`, unchanged). `test-env-check.sh`
+  points it at an empty scratch dir and stubs `curl`, so the file runs in ~1s
+  instead of ~97s (a whole-filesystem `find` took ~7.7s per validate call).
+  Two new tests cover the jgit-lock branch: none found, and a stale lock
+  (over 1h) auto-cleaned (next.md Step 17, item 2).
+
 ## fleet-controller 0.46.4 (2026-11-09)
 
 ### Changed
