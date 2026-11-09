@@ -87,7 +87,7 @@ fi
 grep -v '^FINDING_1_DETAIL:' "$TMP_ROOT/a-scan.txt" >"$TMP_ROOT/b-scan.txt"
 rc=0
 out=$(bash "$PARSER" --kind scan --result-file "$TMP_ROOT/b-scan.txt" 2>&1) || rc=$?
-if [ "$rc" = "1" ] && echo "$out" | grep -q 'FINDING_1' && echo "$out" | grep -q 'DETAIL'; then
+if [ "$rc" = "1" ] && grep -q 'FINDING_1' <<<"$out" && grep -q 'DETAIL' <<<"$out"; then
   _pass "(b) TEST_DATA_GAP without DETAIL: exit 1 naming FINDING_1"
 else
   _fail "(b) TEST_DATA_GAP without DETAIL should exit 1 naming the finding (rc=$rc out=$out)"
@@ -198,19 +198,19 @@ else
   _fail "(h) TEST_DATA_GAP should sit between EDGE_CASE_GAP and UNSTATED_DEPENDENCY (edge=$ln_edge td=$ln_td dep=$ln_dep)"
 fi
 dep_text=$(echo "$prompt" | awk '/UNSTATED_DEPENDENCY —/{p=1} p&&/^[0-9]+\. AC_NOT_TESTABLE/{exit} p{print}') || dep_text=""
-if [ -n "$dep_text" ] && ! echo "$dep_text" | grep -qi 'prior state'; then
+if [ -n "$dep_text" ] && ! grep -qi 'prior state' <<<"$dep_text"; then
   _pass "(h) UNSTATED_DEPENDENCY no longer mentions prior state"
 else
   _fail "(h) UNSTATED_DEPENDENCY should not mention prior state (got: $dep_text)"
 fi
 prompt_flat=$(echo "$prompt" | tr '\n' ' ' | tr -s ' ')
-if echo "$prompt_flat" | grep -qi 'a threshold, a timeout, an attempt count or an HTTP status is not data'; then
+if grep -qi 'a threshold, a timeout, an attempt count or an HTTP status is not data' <<<"$prompt_flat"; then
   _pass "(h) prompt says thresholds/timeouts/attempt counts/HTTP statuses are not data"
 else
   _fail "(h) prompt should carve out thresholds, timeouts, attempt counts and HTTP statuses"
 fi
 n_gaps=$(echo "$prompt" | grep -oE '^GAP_[A-Z_]+:' | grep -vc '_REASON:') || n_gaps=0
-if echo "$prompt" | grep -q '^SCHEMA_VERSION: 1$' && [ "$n_gaps" = "4" ]; then
+if grep -q '^SCHEMA_VERSION: 1$' <<<"$prompt" && [ "$n_gaps" = "4" ]; then
   _pass "(h) scan template keeps SCHEMA_VERSION: 1 and exactly four GAP_ lines"
 else
   _fail "(h) scan template should keep SCHEMA_VERSION: 1 and four gaps"

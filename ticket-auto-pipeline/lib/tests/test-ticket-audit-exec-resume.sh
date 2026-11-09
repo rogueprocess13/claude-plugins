@@ -277,7 +277,7 @@ test_failed_does_not_block_archive() {
   # Archive should succeed
   local archive_result
   archive_result=$(archive_checklist "$recfile")
-  if echo "$archive_result" | grep -q "ARCHIVE_PATH="; then
+  if grep -q "ARCHIVE_PATH=" <<<"$archive_result"; then
     cleanup
     return 0
   else

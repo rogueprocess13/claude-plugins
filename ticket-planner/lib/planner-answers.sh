@@ -317,7 +317,7 @@ _planner_answers_specify_recover() {
     [[ "$id" =~ ^decision-${oid}-([0-9a-f]{8})$ ]] || return 1
     h8="${BASH_REMATCH[1]}"
     grep -qF "|META|specify-answer|step|${oid} [${h8}] " "$log" || return 1
-    grep -F "|META|specify-answer|step|${oid} [${h8}] " "$log" | grep -qF "(round ${round}, " || return 1
+    grep -qF "(round ${round}, " < <(grep -F "|META|specify-answer|step|${oid} [${h8}] " "$log") || return 1
     value=$(printf '%s' "$rec" | jq -r '.value')
     role=$(printf '%s' "$rec" | jq -r '.role')
     question=$(printf '%s' "$rec" | jq -r '.question // ""')

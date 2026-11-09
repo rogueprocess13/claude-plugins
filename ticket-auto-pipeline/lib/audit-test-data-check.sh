@@ -70,7 +70,7 @@ audit_test_data_check() {
     local pattern="${entry%%|*}"
     local label="${entry##*|}"
 
-    if echo "$lower_text" | grep -qE "$pattern" 2>/dev/null; then
+    if grep -qE "$pattern" <<<"$lower_text" 2>/dev/null; then
       ASSUMPTION_COUNT=$((ASSUMPTION_COUNT + 1))
       if [ -z "$found_assumptions" ]; then
         found_assumptions="$label"

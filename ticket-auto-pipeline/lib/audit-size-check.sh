@@ -53,7 +53,7 @@ audit_size_check() {
     for svc in $wiki_services_csv; do
       svc=$(echo "$svc" | xargs) # trim whitespace
       [ -z "$svc" ] && continue
-      if echo "$text" | grep -qi "$svc" 2>/dev/null; then
+      if grep -qi "$svc" <<<"$text" 2>/dev/null; then
         service_count=$((service_count + 1))
       fi
     done
@@ -71,20 +71,20 @@ audit_size_check() {
   if [ "$signal_count" -ge 2 ] 2>/dev/null; then
     local parts=""
     # Build suggestion based on which signals fired
-    if echo "$signals" | grep -q "ac_count"; then
+    if grep -q "ac_count" <<<"$signals"; then
       parts="${parts}${ac_count} acceptance criteria"
     fi
-    if echo "$signals" | grep -q "word_count"; then
+    if grep -q "word_count" <<<"$signals"; then
       parts="${parts}${parts:+, }large scope (${word_count}+ words)"
     fi
-    if echo "$signals" | grep -q "wiki_service_count"; then
+    if grep -q "wiki_service_count" <<<"$signals"; then
       parts="${parts}${parts:+, }touches ${service_count}+ services"
     fi
 
     SPLIT_SUGGESTION="Split candidate: ticket spans ${parts}. Suggested split by: "
-    if echo "$signals" | grep -q "wiki_service_count"; then
+    if grep -q "wiki_service_count" <<<"$signals"; then
       SPLIT_SUGGESTION="${SPLIT_SUGGESTION}service boundary (one ticket per service)"
-    elif echo "$signals" | grep -q "ac_count" && echo "$signals" | grep -q "word_count"; then
+    elif grep -q "ac_count" <<<"$signals" && grep -q "word_count" <<<"$signals"; then
       SPLIT_SUGGESTION="${SPLIT_SUGGESTION}logical feature boundary (group 2-3 related ACs per ticket)"
     else
       SPLIT_SUGGESTION="${SPLIT_SUGGESTION}user story boundary (one clear outcome per ticket)"

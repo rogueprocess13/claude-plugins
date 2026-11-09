@@ -49,7 +49,7 @@ _run_check() {
   check_planned_body "$@" 2>/dev/null || true
   if [ "$BODY_CHECK_EXIT_CODE" = "$expected_exit" ]; then
     if [ -n "$expected_missing" ]; then
-      if echo "$BODY_CHECK_MISSING" | grep -q "$expected_missing"; then
+      if grep -q "$expected_missing" <<<"$BODY_CHECK_MISSING"; then
         echo "PASS: $name (exit=$BODY_CHECK_EXIT_CODE missing='$BODY_CHECK_MISSING')"
         ((PASS++)) || true
       else

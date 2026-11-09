@@ -301,7 +301,7 @@ has_migration_keywords() {
   local haystack
   haystack=$(_ticket_haystack)
   if [ -z "$haystack" ]; then return 1; fi
-  echo "$haystack" | grep -qiE '\b(upgrade|migration|migrate|bump.*version|version.*bump|java\s*[0-9]+\s*→|java\s*[0-9]+\s*->|java\s*[0-9]+\s*to)\b' && return 0 || return 1
+  grep -qiE '\b(upgrade|migration|migrate|bump.*version|version.*bump|java\s*[0-9]+\s*→|java\s*[0-9]+\s*->|java\s*[0-9]+\s*to)\b' <<<"$haystack" && return 0 || return 1
 }
 
 # Detect refactor/restructuring intent from ticket text (explicit user signal).
@@ -310,7 +310,7 @@ has_refactor_keywords() {
   local haystack
   haystack=$(_ticket_haystack)
   if [ -z "$haystack" ]; then return 1; fi
-  echo "$haystack" | grep -qiE '\b(refactor|refactoring|restructur\w*|clean\s*up|improve\s+structure|code\s+quality|technical\s+debt|pay\s+down\s+debt)\b' && return 0 || return 1
+  grep -qiE '\b(refactor|refactoring|restructur\w*|clean\s*up|improve\s+structure|code\s+quality|technical\s+debt|pay\s+down\s+debt)\b' <<<"$haystack" && return 0 || return 1
 }
 
 # detect_stack <layer> — the one layer-gated stack detector, shared by the
@@ -328,7 +328,7 @@ detect_stack() {
       echo "python"
       return 0
     fi
-    if [ -n "${BE_TEST_RUNNER:-}" ] && echo "$BE_TEST_RUNNER" | grep -qiE "pyenv|pipenv|poetry"; then
+    if [ -n "${BE_TEST_RUNNER:-}" ] && grep -qiE "pyenv|pipenv|poetry" <<<"$BE_TEST_RUNNER"; then
       echo "python"
       return 0
     fi
@@ -484,7 +484,7 @@ select_auto_include() {
   fi
 
   # Case-insensitive keyword match for security-sensitive terms
-  if echo "$haystack" | grep -qiE '\b(auth|authentication|authorization|login|password|credential|token|payment|billing|PII|personal.data|encryption|vulnerability)\b'; then
+  if grep -qiE '\b(auth|authentication|authorization|login|password|credential|token|payment|billing|PII|personal.data|encryption|vulnerability)\b' <<<"$haystack"; then
     echo "base/security.md"
     return
   fi

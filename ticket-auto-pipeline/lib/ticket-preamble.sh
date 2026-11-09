@@ -443,7 +443,7 @@ ticket_preamble_run() {
     fi
 
     if [ "$_br_rc" -ne 0 ]; then
-      if echo "$_br_out" | grep -q 'BRANCH_DIRECTIVE_INVALID'; then
+      if grep -q 'BRANCH_DIRECTIVE_INVALID' <<<"$_br_out"; then
         _plog "$LOG_FILE" "META" "gate-stop" "fail" "BRANCH_DIRECTIVE_INVALID"
         hb_gate "branch-context" "fail" "BRANCH_DIRECTIVE_INVALID" \
           "{\"ticket\":\"$TICKET_ID\"}" 2>/dev/null || true

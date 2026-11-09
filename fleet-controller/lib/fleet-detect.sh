@@ -1670,7 +1670,7 @@ _fleet_sa_process_child() {
   # checks dispatch itself uses when no store is available, so this
   # detector still functions on a host with no fleetd/sqlite3.
   if [ "$store_ready" -eq 0 ]; then
-    if printf '%s\n' "$in_flight_tids" | grep -qx "$child_id"; then
+    if grep -qx "$child_id" <<<"$in_flight_tids"; then
       return 0
     fi
   else

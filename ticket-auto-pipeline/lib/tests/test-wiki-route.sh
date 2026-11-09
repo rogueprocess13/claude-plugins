@@ -93,17 +93,17 @@ if [ ! -e "$TMP/pwned" ]; then ok "ticket text is not executed"; else nok "ticke
 
 # 9. prescan-route repos filter: whole-word, case-insensitive; no text → all
 out=$(bash "$ROUTE" --mode repos --repos-root "$WS" --ticket-desc "REPORTS page is rapid" 2>/dev/null)
-if printf '%s\n' "$out" | grep -qx 'PRESCAN_ROUTE_COUNT=1' && printf '%s\n' "$out" | grep -q '/reports$'; then
+if grep -qx 'PRESCAN_ROUTE_COUNT=1' <<<"$out" && grep -q '/reports$' <<<"$out"; then
   ok "repos filter keeps named repo only"
 else
   nok "repos filter keeps named repo only: $out"
 fi
 out=$(bash "$ROUTE" --mode repos --repos-root "$WS" 2>/dev/null)
-if printf '%s\n' "$out" | grep -qx 'PRESCAN_ROUTE_COUNT=5' && printf '%s\n' "$out" | grep -qxF "$WS/web-app" &&
-  ! printf '%s\n' "$out" | grep -qxF "$WS"; then ok "repos without ticket text lists all"; else nok "repos without ticket text lists all: $out"; fi
+if grep -qx 'PRESCAN_ROUTE_COUNT=5' <<<"$out" && grep -qxF "$WS/web-app" <<<"$out" &&
+  ! grep -qxF "$WS" <<<"$out"; then ok "repos without ticket text lists all"; else nok "repos without ticket text lists all: $out"; fi
 mkdir -p "$TMP/ws2/api/.git"
 out=$(bash "$ROUTE" --mode repos --repos-root "$TMP/ws2" --ticket-desc "rapid change" 2>/dev/null || true)
-if printf '%s\n' "$out" | grep -qx 'PRESCAN_ROUTE_COUNT=0'; then ok "repo name matches whole words only"; else nok "repo name matches whole words only: $out"; fi
+if grep -qx 'PRESCAN_ROUTE_COUNT=0' <<<"$out"; then ok "repo name matches whole words only"; else nok "repo name matches whole words only: $out"; fi
 
 # 10. the skill no longer counts ${#REPOS[@]}
 SKILL="$PLUGIN_DIR/skills/ticket-appraise/SKILL.md"

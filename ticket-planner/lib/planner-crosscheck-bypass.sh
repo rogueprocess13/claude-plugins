@@ -178,15 +178,15 @@ _planner_crosscheck_bypass_search_writers() {
   local file
   while IFS= read -r file; do
     [ -f "$file" ] || continue
-    echo "$file" | grep -qiE "$PLANNER_CROSSCHECK_BYPASS_TEST_PATH_REGEX" && continue
+    grep -qiE "$PLANNER_CROSSCHECK_BYPASS_TEST_PATH_REGEX" <<<"$file" && continue
     local line_num_and_line line_num line t all_present
     while IFS=: read -r line_num line; do
       [ -z "$line" ] && continue
-      echo "$line" | grep -qiE "$write_regex" || continue
+      grep -qiE "$write_regex" <<<"$line" || continue
 
       all_present=1
       for t in "${terms[@]}"; do
-        echo "$line" | grep -qiF "$t" || {
+        grep -qiF "$t" <<<"$line" || {
           all_present=0
           break
         }
@@ -220,7 +220,7 @@ planner_crosscheck_bypass_sweep() {
     local block
     while IFS= read -r -d '' block; do
       [ -z "$block" ] && continue
-      echo "$block" | grep -qiE "$guard_regex" || continue
+      grep -qiE "$guard_regex" <<<"$block" || continue
 
       local -a terms
       mapfile -t terms < <(echo "$block" | grep -oE '`[^`]+`' | sed -e 's/^`//' -e 's/`$//' | sort -u)

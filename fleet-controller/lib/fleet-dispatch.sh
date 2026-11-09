@@ -170,7 +170,7 @@ _fleet_queued_count_for_epic() {
     [ -z "$line" ] && continue
     entry=$(echo "$line" | jq -c . 2>/dev/null) || continue
     entry_reason=$(echo "$entry" | jq -r '.reason // empty' 2>/dev/null)
-    if echo "$entry_reason" | grep -qE "(planned-dispatch|campaign-resume) from ${epic_id}( |$)"; then
+    if grep -qE "(planned-dispatch|campaign-resume) from ${epic_id}( |$)" <<<"$entry_reason"; then
       count=$((count + 1))
     fi
   done <"$queue_file"
@@ -982,9 +982,9 @@ _fleet_stop_initiative_locked() {
         # a resume entry must die with the stop, and a child-tid entry with
         # some other reason still belongs to this epic.
         do_purge=false
-        if echo "$entry_reason" | grep -qE "(planned-dispatch|campaign-resume) from ${epic_id}( |$)"; then
+        if grep -qE "(planned-dispatch|campaign-resume) from ${epic_id}( |$)" <<<"$entry_reason"; then
           do_purge=true
-        elif [ -n "$child_set" ] && echo "$child_set" | grep -qx "$tid"; then
+        elif [ -n "$child_set" ] && grep -qx "$tid" <<<"$child_set"; then
           do_purge=true
         fi
         if [ "$do_purge" = "true" ]; then
@@ -1031,7 +1031,7 @@ _fleet_stop_initiative_locked() {
     run_reason=$(echo "$run_data" | jq -r '.reason // empty' 2>/dev/null)
     run_pid=$(echo "$run_data" | jq -r '.pid // empty' 2>/dev/null)
     [ -z "$run_tid" ] && continue
-    if echo "$run_reason" | grep -qE "(planned-dispatch|campaign-resume) from ${epic_id}( |$)"; then
+    if grep -qE "(planned-dispatch|campaign-resume) from ${epic_id}( |$)" <<<"$run_reason"; then
       # Dead worker: nothing to kill, but pin it anyway — a FIRST stop must
       # record it, or restart reconciliation resurrects the ticket.
       if [ -z "$run_pid" ] || [ "$run_pid" = "0" ] || ! kill -0 "$run_pid" 2>/dev/null; then

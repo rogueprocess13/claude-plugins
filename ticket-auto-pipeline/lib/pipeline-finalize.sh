@@ -88,7 +88,7 @@ _pf_has_unreleased_gate_hold() {
   lineno=0
   while IFS= read -r line; do
     lineno=$((lineno + 1))
-    if printf '%s' "$line" | grep -qE '^[^|]*\|GATE\|(gate\|done\||reconcile\|done\|clean)'; then
+    if grep -qE '^[^|]*\|GATE\|(gate\|done\||reconcile\|done\|clean)' <<<"$line"; then
       resolved_lineno=$lineno
     fi
   done <"$log_file"
@@ -258,7 +258,7 @@ fi
 # retried finalize call reaches it even when the outcome line was written by
 # an earlier call.
 _last_line=$(tail -1 "$LOG_FILE" 2>/dev/null || true)
-if ! echo "$_last_line" | grep -q '|META|outcome|info|'; then
+if ! grep -q '|META|outcome|info|' <<<"$_last_line"; then
   # GitHub #525: a PR the log names without a `META|pr-created` record (an
   # agent paraphrased ticket-verify's capture step) gets one now, before the
   # outcome line — run-summary.sh needs its repo, or merge-poll records

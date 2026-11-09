@@ -565,7 +565,7 @@ planner_ticketgen_testdata_prereqs() {
   local spec_file="$1" result
   result=$(_planner_tb_vplan_json "$spec_file" 2>/dev/null) || return 1
   if [ "$(jq -r '.table' <<<"$result")" -eq 0 ]; then
-    _planner_tb_section "$spec_file" "test data prerequisites" | grep -q '[^[:space:]]' && return 1
+    grep -q '[^[:space:]]' < <(_planner_tb_section "$spec_file" "test data prerequisites") && return 1
     echo "## Test Data Prerequisites"
     echo ""
     local label data kind value bullets=""
@@ -686,7 +686,7 @@ _planner_tb_guard() {
   # vplan-parse.sh reads every `### Per-Criterion Verification` range in the
   # body, not only the one under the generated `## Verification Plan` — a copy
   # anywhere in the spec would be read as the real table (forged ✓ marks).
-  if tr -d '\r' <"$spec_file" | _planner_testdata_fold_ws | grep -qi 'per-criterion verification'; then
+  if grep -qi 'per-criterion verification' < <(tr -d '\r' <"$spec_file" | _planner_testdata_fold_ws); then
     echo "planner-ticket-body: ${name}: contains 'Per-Criterion Verification' — the composer writes the only one; remove it from the spec" >&2
     return 1
   fi
@@ -698,7 +698,7 @@ _planner_tb_guard() {
   # section (planner_ticketgen_testdata_prereqs).
   local -a owned=("verification plan" "related tickets")
   if [ "$(_planner_tb_notes_table "$(_planner_testdata_section "$spec_file" "Verification Notes")")" != "[]" ] ||
-    ! _planner_tb_section "$spec_file" "test data prerequisites" | grep -q '[^[:space:]]'; then
+    ! grep -q '[^[:space:]]' < <(_planner_tb_section "$spec_file" "test data prerequisites"); then
     owned+=("test data prerequisites")
   fi
   local h looks fenced raw

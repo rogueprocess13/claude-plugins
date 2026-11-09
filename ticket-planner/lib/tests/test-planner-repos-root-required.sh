@@ -67,7 +67,7 @@ if [ ! -e "/state.log" ] && [ ! -e "/state.log.lock" ]; then
 else
   fail "does not fall through to /state.log" "/state.log exists"
 fi
-if printf '%s' "$ERR" | grep -q 'REPOS_ROOT'; then
+if grep -q 'REPOS_ROOT' <<<"$ERR"; then
   pass "error names REPOS_ROOT"
 else
   fail "error names REPOS_ROOT" "stderr: $ERR"
@@ -121,7 +121,7 @@ mkdir -p "${H4}/repos/.ticket-auto/initiatives/${INIT}/artifacts/specs"
 run_unset "$H4" 'source "$LIB_DIR/planner-state.sh"
 source "$LIB_DIR/planner-crosscheck-deps.sh"
 planner_crosscheck_deps "$INIT"'
-if [ "$RC" -ne 0 ] && printf '%s' "$ERR" | grep -q 'REPOS_ROOT'; then
+if [ "$RC" -ne 0 ] && grep -q 'REPOS_ROOT' <<<"$ERR"; then
   pass "planner_crosscheck_deps fails naming REPOS_ROOT"
 else
   fail "planner_crosscheck_deps fails naming REPOS_ROOT" "rc=$RC stderr: $ERR"
@@ -151,7 +151,7 @@ source "$LIB_DIR/planner-state.sh"
 source "$LIB_DIR/planner-phase-prompts.sh"
 planner_prompt_for_phase Consensus "$INIT" "an idea" "$REPOS_ROOT/.ticket-auto/initiatives/$INIT"' 2>/dev/null) || true
 expected="export REPOS_ROOT=$(printf '%q' "$PROMPT_ROOT")"
-if printf '%s\n' "$PROMPT" | grep -qxF "$expected"; then
+if grep -qxF "$expected" <<<"$PROMPT"; then
   pass "Consensus prompt contains '$expected'"
 else
   fail "Consensus prompt contains literal export" "missing '$expected'"
@@ -181,8 +181,8 @@ PROMPT_UNSET=$(env -u REPOS_ROOT LIB_DIR="$LIB_DIR" INIT="$INIT" bash -c '
 source "$LIB_DIR/planner-state.sh"
 source "$LIB_DIR/planner-phase-prompts.sh"
 planner_prompt_for_phase Consensus "$INIT" "an idea" "/nonexistent"' 2>/dev/null) || true
-if printf '%s\n' "$PROMPT_UNSET" | grep -q 'FATAL: REPOS_ROOT is not set' &&
-  ! printf '%s\n' "$PROMPT_UNSET" | grep -qx "export REPOS_ROOT=''"; then
+if grep -q 'FATAL: REPOS_ROOT is not set' <<<"$PROMPT_UNSET" &&
+  ! grep -qx "export REPOS_ROOT=''" <<<"$PROMPT_UNSET"; then
   pass "unset generator emits a fail-loud guard"
 else
   fail "unset generator emits a fail-loud guard" "no guard line found"

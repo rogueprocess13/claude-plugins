@@ -121,7 +121,7 @@ _planner_crosscheck_contracts_is_generic_word() {
   case "$bare" in
   *.* | *_*) return 1 ;;
   esac
-  printf '%s' "$bare" | grep -qE '[a-z][A-Z]' && return 1
+  grep -qE '[a-z][A-Z]' <<<"$bare" && return 1
   [ "${#bare}" -lt 8 ]
 }
 
@@ -266,7 +266,7 @@ _planner_crosscheck_contracts_files_with_structure() {
   for f in "$specs_dir"/*.md; do
     [ -f "$f" ] || continue
     [ "$(basename "$f")" = "INDEX.md" ] && continue
-    _planner_crosscheck_contracts_defenced "$f" | grep -qF "\`${structure}\`" && echo "$f"
+    grep -qF "\`${structure}\`" < <(_planner_crosscheck_contracts_defenced "$f") && echo "$f"
   done
   return 0
 }
@@ -278,7 +278,7 @@ _planner_crosscheck_contracts_first_block_with_structure() {
   local file="$1" structure="$2" block
   while IFS= read -r -d '' block; do
     [ -z "$block" ] && continue
-    if echo "$block" | grep -qF "\`${structure}\`"; then
+    if grep -qF "\`${structure}\`" <<<"$block"; then
       printf '%s' "$block"
       return 0
     fi
@@ -301,7 +301,7 @@ _planner_crosscheck_contracts_any_block_deferential() {
   local file="$1" structure="$2" block
   while IFS= read -r -d '' block; do
     [ -z "$block" ] && continue
-    if echo "$block" | grep -qF "\`${structure}\`" && _planner_crosscheck_contracts_is_deferential "$block"; then
+    if grep -qF "\`${structure}\`" <<<"$block" && _planner_crosscheck_contracts_is_deferential "$block"; then
       return 0
     fi
   done < <(_planner_crosscheck_contracts_blocks "$file")
@@ -376,7 +376,7 @@ planner_crosscheck_contract_undefined() {
     local block
     while IFS= read -r -d '' block; do
       [ -z "$block" ] && continue
-      echo "$block" | grep -qiE "$PLANNER_CROSSCHECK_CONTRACTS_UNDEF_REGEX" || continue
+      grep -qiE "$PLANNER_CROSSCHECK_CONTRACTS_UNDEF_REGEX" <<<"$block" || continue
 
       local structure
       structure=$(echo "$block" | grep -oE '`[^`]+`' | head -1 | sed -e 's/^`//' -e 's/`$//')
@@ -387,7 +387,7 @@ planner_crosscheck_contract_undefined() {
       # named somewhere in this paragraph and this is not a finding.
       local remainder
       remainder=$(echo "$block" | sed '0,/`[^`]*`/{s/`[^`]*`//}')
-      echo "$remainder" | grep -qE '`[^`]+`' && continue
+      grep -qE '`[^`]+`' <<<"$remainder" && continue
 
       local snippet
       snippet=$(echo "$block" | tr '\n' ' ' | cut -c1-160)
@@ -441,8 +441,9 @@ _planner_crosscheck_contracts_is_deferential() {
   # spec touches `entities.status` at all. Same false-positive shape as the
   # other deferential phrasings below, just a phrasing this guard didn't
   # cover yet.
-  printf '%s' "$block" | grep -qiE \
-    "modeled on|'s conventions|not by this ticket|left (completely )?(untouched|unchanged)|leaves? .{0,40}(untouched|unchanged)|follow(s|ing)?( the)?( exact)? .{0,40}(discipline|precedent|pattern|convention)"
+  grep -qiE \
+    "modeled on|'s conventions|not by this ticket|left (completely )?(untouched|unchanged)|leaves? .{0,40}(untouched|unchanged)|follow(s|ing)?( the)?( exact)? .{0,40}(discipline|precedent|pattern|convention)" \
+    <<<"$block"
 }
 
 # Fixed shape-descriptor phrase pairs — the audit's actual contradiction
@@ -644,7 +645,7 @@ _planner_crosscheck_contracts_text_has_genuine_retire_phrase() {
     [ -z "$sentence" ] && continue
     while IFS= read -r ctx; do
       [ -z "$ctx" ] && continue
-      if ! echo "$ctx" | grep -qiE "$PLANNER_CROSSCHECK_CONTRACTS_NEGATION_REGEX"; then
+      if ! grep -qiE "$PLANNER_CROSSCHECK_CONTRACTS_NEGATION_REGEX" <<<"$ctx"; then
         return 0
       fi
     done < <(echo "$sentence" | grep -oiE "([A-Za-z0-9_']+[[:space:]]+){0,5}(${PLANNER_CROSSCHECK_CONTRACTS_RETIRE_REGEX})")
@@ -735,8 +736,8 @@ _planner_crosscheck_contracts_is_retire_object() {
   active="(^|[^A-Za-z0-9_\`])(${PLANNER_CROSSCHECK_CONTRACTS_RETIRE_ACTIVE_REGEX})${ws}(${gap_tok}${ws}){0,6}\`${esc}\`"
   passive="\`${esc}\`,?(${ws}${gap_tok}){0,6}(${ws}(${PLANNER_CROSSCHECK_CONTRACTS_RETIRE_AUX_WORDS})){0,4}${ws}(${PLANNER_CROSSCHECK_CONTRACTS_RETIRE_PASSIVE_REGEX})([^A-Za-z0-9_\`]|$)"
 
-  echo "$sentence" | grep -qiE "$active" && return 0
-  echo "$sentence" | grep -qiE "$passive" && return 0
+  grep -qiE "$active" <<<"$sentence" && return 0
+  grep -qiE "$passive" <<<"$sentence" && return 0
   return 1
 }
 
@@ -755,8 +756,8 @@ _planner_crosscheck_contracts_is_extended() {
   subject_first="\`${esc}\`[^.;]{0,40}[[:space:]](gains?|gaining|gets|adds?|receives?|grows?|extends?|is[[:space:]]+extended)[[:space:]][^.;]{0,60}${member}([^A-Za-z]|$)"
   # "adds / introduces a new (optional) field ... to / on `X`"
   object_last="(adds?|adding|added|introduces?|new|additional|extra)[[:space:]][^.;]{0,60}${member}[^.;]{0,40}[[:space:]](to|on|in)[[:space:]]+(the[[:space:]]+)?\`${esc}\`"
-  _planner_crosscheck_contracts_sentences "$(_planner_crosscheck_contracts_defenced "$file")" |
-    grep -qiE "${subject_first}|${object_last}"
+  grep -qiE "${subject_first}|${object_last}" \
+    < <(_planner_crosscheck_contracts_sentences "$(_planner_crosscheck_contracts_defenced "$file")")
 }
 
 # For every spec paragraph in this initiative that retires/removes/
@@ -797,7 +798,7 @@ planner_crosscheck_contract_consumers_unnotified() {
     local block
     while IFS= read -r -d '' block; do
       [ -z "$block" ] && continue
-      echo "$block" | grep -qiE "$PLANNER_CROSSCHECK_CONTRACTS_RETIRE_REGEX" || continue
+      grep -qiE "$PLANNER_CROSSCHECK_CONTRACTS_RETIRE_REGEX" <<<"$block" || continue
 
       # Candidate structures are drawn only from sentences that themselves
       # carry a genuine retire-phrase — not every backtick-quoted name
@@ -834,8 +835,8 @@ planner_crosscheck_contract_consumers_unnotified() {
 
       local s
       for s in "${structures[@]}"; do
-        echo "$s" | grep -qE "$PLANNER_CROSSCHECK_CONTRACTS_STRUCTURE_REGEX" || continue
-        echo "$s" | grep -qiE "$PLANNER_CROSSCHECK_CONTRACTS_NON_STRUCTURE_EXT_REGEX" && continue
+        grep -qE "$PLANNER_CROSSCHECK_CONTRACTS_STRUCTURE_REGEX" <<<"$s" || continue
+        grep -qiE "$PLANNER_CROSSCHECK_CONTRACTS_NON_STRUCTURE_EXT_REGEX" <<<"$s" && continue
         _planner_crosscheck_contracts_is_builtin "$s" && continue
         _planner_crosscheck_contracts_is_generic_word "$s" && continue
         _planner_crosscheck_contracts_is_commodity "$initiatives_root" "$s" && continue

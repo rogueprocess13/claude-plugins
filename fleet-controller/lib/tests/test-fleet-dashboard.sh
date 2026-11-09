@@ -70,7 +70,7 @@ test_severity_3_capped_to_kill_when_restart_off() {
   # Default: FLEET_AUTO_RESTART unset → defaults to false → capped to KILL
   local icon label
   IFS='|' read -r icon label <<<"$(_severity_info 3)"
-  [ "$icon" = "🔴" ] && echo "$label" | grep -q "KILL"
+  [ "$icon" = "🔴" ] && grep -q "KILL" <<<"$label"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -81,28 +81,28 @@ test_render_no_pipelines() {
   local data='{"summary":{"total":0,"healthy":0,"warn":0,"kill":0,"restart":0},"pipelines":[]}'
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
-  echo "$output" | grep -q "No active pipelines"
+  grep -q "No active pipelines" <<<"$output"
 }
 
 test_render_header_present() {
   local data='{"summary":{"total":1,"healthy":1,"warn":0,"kill":0,"restart":0},"pipelines":[{"tid":"WIL-1","phase":"IMPLEMENT","hb_age_secs":30,"severity":0,"anomalies":"none"}]}'
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
-  echo "$output" | grep -q "TICKET" && echo "$output" | grep -q "PHASE" && echo "$output" | grep -q "SEV"
+  grep -q "TICKET" <<<"$output" && grep -q "PHASE" <<<"$output" && grep -q "SEV" <<<"$output"
 }
 
 test_render_shows_ticket_row() {
   local data='{"summary":{"total":1,"healthy":1,"warn":0,"kill":0,"restart":0},"pipelines":[{"tid":"WIL-1","phase":"IMPLEMENT","hb_age_secs":30,"severity":0,"anomalies":"none"}]}'
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
-  echo "$output" | grep -q "WIL-1" && echo "$output" | grep -q "IMPLEMENT"
+  grep -q "WIL-1" <<<"$output" && grep -q "IMPLEMENT" <<<"$output"
 }
 
 test_render_shows_summary() {
   local data='{"summary":{"total":3,"healthy":1,"warn":1,"kill":1,"restart":0},"pipelines":[]}'
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
-  echo "$output" | grep -q "3 active" && echo "$output" | grep -q "1 healthy"
+  grep -q "3 active" <<<"$output" && grep -q "1 healthy" <<<"$output"
 }
 
 test_render_formats_stall_over_1h() {
@@ -110,7 +110,7 @@ test_render_formats_stall_over_1h() {
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
   # 3723 seconds = 1h2m3s → should show "1h2m"
-  echo "$output" | grep -q "1h2m"
+  grep -q "1h2m" <<<"$output"
 }
 
 test_render_formats_stall_under_1m() {
@@ -118,7 +118,7 @@ test_render_formats_stall_under_1m() {
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
   # 45 seconds → should show "45s"
-  echo "$output" | grep -q "45s"
+  grep -q "45s" <<<"$output"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -171,7 +171,7 @@ test_render_includes_findings_column_header() {
   local data='{"summary":{"total":1,"healthy":1,"warn":0,"kill":0,"restart":0},"pipelines":[{"tid":"WIL-1","phase":"IMPLEMENT","hb_age_secs":30,"severity":0,"anomalies":"none"}]}'
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
-  echo "$output" | grep -q "FINDINGS"
+  grep -q "FINDINGS" <<<"$output"
 }
 
 test_render_shows_findings_for_a_ticket() {
@@ -182,7 +182,7 @@ test_render_shows_findings_for_a_ticket() {
   local output
   output=$(fleet_render_dashboard_from_data "$data" "$tmpdir")
   rm -rf "$tmpdir"
-  echo "$output" | grep -q "1H/0W"
+  grep -q "1H/0W" <<<"$output"
 }
 
 test_write_report_includes_findings_column() {
@@ -250,9 +250,9 @@ test_render_fleet_wide_warn_detector() {
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
   # Should show fleet-wide section with detector name and findings
-  echo "$output" | grep -q "Fleet-Wide Detectors" &&
-    echo "$output" | grep -q "detect_blocked_by" &&
-    echo "$output" | grep -q "CRE-101"
+  grep -q "Fleet-Wide Detectors" <<<"$output" &&
+    grep -q "detect_blocked_by" <<<"$output" &&
+    grep -q "CRE-101" <<<"$output"
 }
 
 test_render_fleet_wide_clear_detector() {
@@ -260,8 +260,8 @@ test_render_fleet_wide_clear_detector() {
   data='{"summary":{"total":1,"healthy":1,"warn":0,"kill":0,"restart":0},"pipelines":[{"tid":"WIL-1","phase":"IMPLEMENT","hb_age_secs":30,"severity":0,"anomalies":"none","type":"pipeline"}],"fleet_wide":[{"name":"detect_initiative_dispatch","severity":0,"findings":"","type":"fleet-wide"}]}'
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
-  echo "$output" | grep -q "detect_initiative_dispatch" &&
-    echo "$output" | grep -q "clear"
+  grep -q "detect_initiative_dispatch" <<<"$output" &&
+    grep -q "clear" <<<"$output"
 }
 
 test_write_report_includes_fleet_wide_section() {
@@ -327,10 +327,10 @@ test_render_fleet_wide_section_survives_zero_active_pipelines() {
   data='{"summary":{"total":0,"healthy":0,"warn":0,"kill":0,"restart":0},"pipelines":[],"fleet_wide":[{"name":"detect_initiative_dispatch","severity":1,"findings":"1 undispatched: WIL-74(1)","type":"fleet-wide"}]}'
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
-  echo "$output" | grep -q "No active pipelines" &&
-    echo "$output" | grep -q "Fleet-Wide Detectors" &&
-    echo "$output" | grep -q "detect_initiative_dispatch" &&
-    echo "$output" | grep -q "WIL-74"
+  grep -q "No active pipelines" <<<"$output" &&
+    grep -q "Fleet-Wide Detectors" <<<"$output" &&
+    grep -q "detect_initiative_dispatch" <<<"$output" &&
+    grep -q "WIL-74" <<<"$output"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -344,7 +344,7 @@ test_render_includes_blocked_by_dispatch_hold_headers() {
   local data='{"summary":{"total":1,"healthy":1,"warn":0,"kill":0,"restart":0},"pipelines":[{"tid":"WIL-1","phase":"IMPLEMENT","hb_age_secs":30,"severity":0,"anomalies":"none"}]}'
   local output
   output=$(fleet_render_dashboard_from_data "$data" "/tmp/test-ws")
-  echo "$output" | grep -q "BLOCKED-BY" && echo "$output" | grep -q "DISPATCH" && echo "$output" | grep -q "HOLD"
+  grep -q "BLOCKED-BY" <<<"$output" && grep -q "DISPATCH" <<<"$output" && grep -q "HOLD" <<<"$output"
 }
 
 test_blocked_by_helper_reads_manifest() {

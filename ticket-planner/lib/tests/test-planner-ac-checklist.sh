@@ -64,7 +64,7 @@ done
 # evaluator's vocabulary, plus the declared not-applicable set.
 covered=""
 for c in $rule_codes; do
-  echo "$evaluator_codes" | grep -qx "$c" && covered="$covered $c"
+  grep -qx "$c" <<<"$evaluator_codes" && covered="$covered $c"
 done
 accounted=$(printf '%s\n' $covered $PLANNER_AC_CHECKLIST_SEMANTIC_NA | sort)
 
@@ -76,7 +76,7 @@ else
 fi
 
 for c in $PLANNER_AC_CHECKLIST_SEMANTIC_NA; do
-  if echo "$evaluator_codes" | grep -qx "$c"; then
+  if grep -qx "$c" <<<"$evaluator_codes"; then
     pass "not-applicable code $c is a real evaluator code"
   else
     fail "not-applicable code $c" "not in DOR_SEMANTIC_CODE_ORDER"
@@ -86,7 +86,7 @@ done
 # ── 2. Deterministic codes are real ─────────────────────────────────────────
 echo "--- deterministic codes named by rules exist in dor-check.sh ---"
 for c in $rule_codes; do
-  echo "$evaluator_codes" | grep -qx "$c" && continue
+  grep -qx "$c" <<<"$evaluator_codes" && continue
   if grep -q "\b${c}\b" "${TAP_LIB_DIR}/dor-check.sh"; then
     pass "deterministic code $c exists in dor-check.sh"
   else
@@ -129,7 +129,7 @@ echo "--- rendered checklist ---"
 CHECKLIST=$(planner_ac_checklist)
 for phrase in "Observable pass/fail" "Names its input" "Names its check" "No vague verbs" "One behaviour per criterion" \
   '"handle(s/d)"' '"support(s)"' '"properly"' '"appropriately"'; do
-  if echo "$CHECKLIST" | grep -qF -- "$phrase"; then
+  if grep -qF -- "$phrase" <<<"$CHECKLIST"; then
     pass "checklist carries $phrase"
   else
     fail "checklist carries $phrase" "missing"
@@ -141,7 +141,7 @@ if [ "$n_rules" -eq "${#PLANNER_AC_CHECKLIST_RULES[@]}" ]; then
 else
   fail "one rendered line per rule" "rendered $n_rules, table has ${#PLANNER_AC_CHECKLIST_RULES[@]}"
 fi
-if echo "$CHECKLIST" | grep -qF '[AC_NOT_TESTABLE, AC_IMPLEMENTATION_ONLY]'; then
+if grep -qF '[AC_NOT_TESTABLE, AC_IMPLEMENTATION_ONLY]' <<<"$CHECKLIST"; then
   pass "rules are tagged with their DoR codes"
 else
   fail "rules are tagged with their DoR codes" "tag missing"
@@ -159,7 +159,7 @@ for name in SPECIFY_PROMPT CONSENSUS_PROMPT; do
     fail "$name contains the full rendered checklist" "missing or altered"
   fi
 done
-if echo "$SPECIFY_PROMPT" | grep -qF "passes every rule of the acceptance criteria checklist"; then
+if grep -qF "passes every rule of the acceptance criteria checklist" <<<"$SPECIFY_PROMPT"; then
   pass "Specify constraints require the checklist"
 else
   fail "Specify constraints require the checklist" "missing"

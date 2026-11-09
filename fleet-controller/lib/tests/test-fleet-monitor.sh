@@ -203,7 +203,7 @@ test_interactive_mode_restart_is_queued() {
   output=$(export CLAUDE_CODE_SESSION_ID=abc123 FLEET_INSTANCE_ID=test-restart FLEET_STATE_DIR="$tmpdir" &&
     source "$LIB_DIR/fleet-monitor.sh" && _spawn_restart "TEST-42" "auto-restart" 1 "$tmpdir" 2>/dev/null)
   local ok=0
-  echo "$output" | grep -q "PENDING:spawn tid=TEST-42" || ok=1
+  grep -q "PENDING:spawn tid=TEST-42" <<<"$output" || ok=1
   grep -q '"tid":"TEST-42"' "$queue_file" 2>/dev/null || ok=1
   rm -rf "$tmpdir"
   return "$ok"

@@ -17,6 +17,28 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-auto-pipeline 0.96.3, ticket-planner 0.35.1, fleet-controller 0.46.5, grill-me 0.5.1, knowledge-curator 0.2.16 (2026-11-09)
+
+GitHub #640.
+
+### Fixed
+
+- **No more `echo "$x" | grep -q` (SIGPIPE under `pipefail`).** `grep -q`
+  exits on its first match; a writer still writing gets SIGPIPE and, under
+  `pipefail`, the pipeline returns 141, so a real match read as a miss —
+  every time for a large multi-line input, now and then for a small one on a
+  loaded host. It showed up as random CI failures once `make test` ran in
+  parallel. All 117 non-test sites and 977 test lines are now here-strings
+  (`grep -q PAT <<<"$x"`), and 15 multi-stage producers of unbounded text
+  (`cat`/`jq`/`sed`/log tails) feed `grep -q` through `< <(…)`. Patterns and
+  flags are unchanged. Regression tests: ~216 KB inputs with an early match
+  under `pipefail` for `planner_validate_ticket`, the crosscheck contracts
+  check and `audit_test_data_check`.
+- **Repo tooling:** `scripts/check-grep-q-pipe.sh` (run by `make lint`) fails
+  on any new `echo|printf … | grep -q` in a tracked `*.sh`, tests included.
+  `scripts/rewrite-grep-q-pipe.py` is the one-off converter used for the test
+  files.
+
 ## 0.96.2 (2026-11-09)
 
 ticket-auto-pipeline 0.96.2.

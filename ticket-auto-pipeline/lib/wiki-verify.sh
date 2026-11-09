@@ -72,8 +72,8 @@ _wv_registry_rows() {
       ;;
     esac
     [ "$in_table" = "true" ] || continue
-    echo "$line" | grep -qE '^\|.*\|.*\|' || continue
-    echo "$line" | grep -qE '^\|[- ]+\|' && continue
+    grep -qE '^\|.*\|.*\|' <<<"$line" || continue
+    grep -qE '^\|[- ]+\|' <<<"$line" && continue
     path=$(echo "$line" | cut -d'|' -f2 | sed -E 's/^[[:space:]]+|[[:space:]]+$//g; s/^`//; s/`$//')
     [ -z "$path" ] && continue
     [ "$path" = "File" ] && continue
@@ -188,8 +188,8 @@ _wv_decisions_index_ids() {
   local index_path="$1" line id
   [ -f "$index_path" ] || return 0
   while IFS= read -r line; do
-    echo "$line" | grep -qE '^\|.*\|.*\|' || continue
-    echo "$line" | grep -qE '^\|[- ]+\|' && continue
+    grep -qE '^\|.*\|.*\|' <<<"$line" || continue
+    grep -qE '^\|[- ]+\|' <<<"$line" && continue
     id=$(echo "$line" | cut -d'|' -f2 | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
     [ -z "$id" ] && continue
     [ "$id" = "ADR" ] && continue

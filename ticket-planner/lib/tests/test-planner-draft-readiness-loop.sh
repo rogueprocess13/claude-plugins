@@ -436,7 +436,7 @@ if [ "$(wc -l <"$CROSSCHECK_CALLS")" -eq 1 ] && [ -s "${DR}/b-api/lineage.json" 
 else
   fail "converge details" "xc=$(wc -l <"$CROSSCHECK_CALLS") $(_run_lines | grep -E 'draft-revise|info')"
 fi
-if printf '%s\n' "$GATE_OUT" | grep -q '^Revision history:' && printf '%s\n' "$GATE_OUT" | grep -q 'b-api: 1 revision(s): applied'; then
+if grep -q '^Revision history:' <<<"$GATE_OUT" && grep -q 'b-api: 1 revision(s): applied' <<<"$GATE_OUT"; then
   pass "pass summary lists the revision history"
 else
   fail "pass summary" "$GATE_OUT"
@@ -625,7 +625,7 @@ else
   fail "budget" "rc=$GATE_RC spawns=$SPAWNS revises=$REVISES $(_run_lines | grep -E 'fail|done|warn')"
 fi
 report=$(planner_draft_readiness_report "$INIT")
-printf '%s\n' "$report" | grep -q 'SPAWN_BUDGET' && pass "report shows SPAWN_BUDGET" || fail "budget report" "$report"
+grep -q 'SPAWN_BUDGET' <<<"$report" && pass "report shows SPAWN_BUDGET" || fail "budget report" "$report"
 if ! (PLANNER_DRAFT_SPAWN_BUDGET=abc planner_draft_readiness_begin "$INIT" >/dev/null 2>&1); then
   pass "an invalid spawn budget is refused at gate start"
 else
@@ -662,8 +662,8 @@ _spawn_list "$l"
 # Crash: no apply. A new invocation re-enters through begin.
 planner_draft_readiness_begin "$INIT" >/dev/null 2>&1
 l2=$(planner_draft_readiness_next "$INIT" 2>/dev/null)
-if printf '%s\n' "$l" | grep -q $'^b-api\trevise\t' && [ "$(_status b-api 1)" = "applied" ] &&
-  [ ! -e "${DR}/b-api/revise.r2.status" ] && printf '%s\n' "$l2" | grep -q $'^b-api\tscan\t' &&
+if grep -q $'^b-api\trevise\t' <<<"$l" && [ "$(_status b-api 1)" = "applied" ] &&
+  [ ! -e "${DR}/b-api/revise.r2.status" ] && grep -q $'^b-api\tscan\t' <<<"$l2" &&
   ! grep -q 'OUT_OF_SCOPE_EDIT' "$LOG" && grep -q '|META|draft-readiness|start|evaluator=.* resume-round$' "$LOG"; then
   pass "the same round settles after the crash (no OUT_OF_SCOPE_EDIT); next re-evaluates b-api"
 else
@@ -702,7 +702,7 @@ else
   fail "scoped rescan" "$(grep -A4 'Changed sections' "${DR}/b-api/scan-prompt.txt")"
 fi
 report=$(planner_draft_readiness_report "$INIT")
-if printf '%s\n' "$report" | grep -q '^Draft readiness passed (ready 2/2)' && ! printf '%s\n' "$report" | grep -q 'halted'; then
+if grep -q '^Draft readiness passed (ready 2/2)' <<<"$report" && ! grep -q 'halted' <<<"$report"; then
   pass "report after a pass says 'passed', not 'halted (ready 2/2)'"
 else
   fail "pass report" "$report"
@@ -741,14 +741,14 @@ else
   fail "security drift" "rc=$GATE_RC st2=$(_status b-api 2) $(jq -c .findings "${DR}/b-api/semantic.json")"
 fi
 if _run_lines | grep -q "|META|draft-readiness|warn|b-api SECURITY EDGE_CASE_GAP ${sec_id} \"An Export action on the invoice list.\"" &&
-  printf '%s\n' "$GATE_OUT" | grep -q '^Security findings demoted at draft stage (review before dispatch):' &&
-  printf '%s\n' "$GATE_OUT" | grep -qF "b-api: EDGE_CASE_GAP \"An Export action on the invoice list.\" (${sec_id})"; then
+  grep -q '^Security findings demoted at draft stage (review before dispatch):' <<<"$GATE_OUT" &&
+  grep -qF "b-api: EDGE_CASE_GAP \"An Export action on the invoice list.\" (${sec_id})" <<<"$GATE_OUT"; then
   pass "security finding shown: warn line and the pass output"
 else
   fail "security shown" "$GATE_OUT $(_run_lines | grep warn)"
 fi
 summary=$(planner_draft_readiness_epic_summary "$INIT")
-printf '%s\n' "$summary" | grep -q '^- Security finding (review): Demoted EDGE_CASE_GAP: round-limit, revised' &&
+grep -q '^- Security finding (review): Demoted EDGE_CASE_GAP: round-limit, revised' <<<"$summary" &&
   pass "epic summary lists the security finding" || fail "security summary" "$summary"
 
 # ── 15. assumption for a no-source decision ──────────────────────────────
@@ -767,10 +767,10 @@ if [ "$GATE_RC" -eq 0 ] && [ "$(_status b-api 1)" = "applied" ] &&
 else
   fail "assumption run" "rc=$GATE_RC st=$(_status b-api 1) $(jq -c .findings "${DR}/b-api/semantic.json") $(_run_lines | grep -E 'draft-revise|DEMOTED')"
 fi
-printf '%s\n' "$GATE_OUT" | grep -qF "    assumption (review): ${ASM}" && pass "pass output lists the assumption" || fail "assumption pass output" "$GATE_OUT"
+grep -qF "    assumption (review): ${ASM}" <<<"$GATE_OUT" && pass "pass output lists the assumption" || fail "assumption pass output" "$GATE_OUT"
 summary=$(planner_draft_readiness_epic_summary "$INIT")
-if printf '%s\n' "$summary" | grep -qxF -- "- Assumption (review): ${ASM}" &&
-  printf '%s\n' "$summary" | grep -qF -- "- Added criterion: ${ASM_AC}"; then
+if grep -qxF -- "- Assumption (review): ${ASM}" <<<"$summary" &&
+  grep -qF -- "- Added criterion: ${ASM_AC}" <<<"$summary"; then
   pass "epic summary lists the assumption and its criterion"
 else
   fail "assumption summary" "$summary"
@@ -871,9 +871,9 @@ if [ "$GATE_RC" -eq 0 ] && [ "$(_status b-api 1)" = "applied" ] && grep -qF "$MI
 else
   fail "missed security round" "rc=$GATE_RC st=$(_status b-api 1) $(cat "${DR}/b-api/findings.r1.json" 2>/dev/null)"
 fi
-if printf '%s\n' "$GATE_OUT" | grep -q '^Audit advisories (gaps the scan missed; they do not block):' &&
-  printf '%s\n' "$GATE_OUT" | grep -qF '  a-schema: EDGE_CASE_GAP — a 5xx from the backend leaves the page blank' &&
-  ! printf '%s\n' "$GATE_OUT" | grep -q 'b-api: Security'; then
+if grep -q '^Audit advisories (gaps the scan missed; they do not block):' <<<"$GATE_OUT" &&
+  grep -qF '  a-schema: EDGE_CASE_GAP — a 5xx from the backend leaves the page blank' <<<"$GATE_OUT" &&
+  ! grep -q 'b-api: Security' <<<"$GATE_OUT"; then
   pass "non-security MISSED entry listed as an advisory in the pass output"
 else
   fail "missed advisory" "$GATE_OUT"
@@ -887,7 +887,7 @@ PLANNER_DRAFT_REVISE_MAX_ROUNDS=1 _gate
 if [ "$GATE_RC" -eq 0 ] &&
   jq -e '[.findings[] | select(.origin == "audit-missed" and .demoted == "round-limit")] | length == 1' "${DR}/b-api/semantic.json" >/dev/null &&
   _run_lines | grep -q '|META|draft-readiness|warn|b-api SECURITY MISSING_CORE_AC m-[0-9a-f]* "the title is still written with innerHTML (XSS)"$' &&
-  printf '%s\n' "$GATE_OUT" | grep -qF 'b-api: MISSING_CORE_AC "the title is still written with innerHTML (XSS)"' &&
+  grep -qF 'b-api: MISSING_CORE_AC "the title is still written with innerHTML (XSS)"' <<<"$GATE_OUT" &&
   planner_draft_readiness_epic_summary "$INIT" | grep -q '^- Security finding (review): Demoted MISSING_CORE_AC: round-limit'; then
   pass "re-raised past the budget: demoted, SECURITY warn line, pass output, epic summary"
 else
@@ -914,9 +914,9 @@ _pdl_missed_record "${HIST_DIR}/spec-a"
 _pdl_missed_record "${HIST_DIR}/spec-a"
 hist_report=$(_pdl_root() { echo "$HIST_DIR"; } && planner_draft_readiness_missed_report ANY)
 if [ "$(wc -l <"${HIST_DIR}/spec-a/missed-history.jsonl")" -eq 3 ] &&
-  printf '%s\n' "$hist_report" | grep -qxF '  spec-a: EDGE_CASE_GAP — gap only round one saw (from an earlier revision)' &&
-  printf '%s\n' "$hist_report" | grep -qxF '  spec-a: EDGE_CASE_GAP — gap both saw' &&
-  printf '%s\n' "$hist_report" | grep -qxF '  spec-a: MISSING_CORE_AC — new gap' &&
+  grep -qxF '  spec-a: EDGE_CASE_GAP — gap only round one saw (from an earlier revision)' <<<"$hist_report" &&
+  grep -qxF '  spec-a: EDGE_CASE_GAP — gap both saw' <<<"$hist_report" &&
+  grep -qxF '  spec-a: MISSING_CORE_AC — new gap' <<<"$hist_report" &&
   [ "$(printf '%s\n' "$hist_report" | grep -c 'gap both saw')" -eq 1 ]; then
   pass "MISSED advisories survive a later evaluation, deduped, earlier ones marked"
 else
@@ -929,8 +929,8 @@ fi
   printf '{"code":"EDGE_CASE_GAP","reason":"forged\\u001b[31m red\\nsecond line"}\n'
 } >>"${HIST_DIR}/spec-a/missed-history.jsonl"
 hist_report=$(_pdl_root() { echo "$HIST_DIR"; } && planner_draft_readiness_missed_report ANY)
-if ! printf '%s' "$hist_report" | grep -q $'\033' && ! printf '%s\n' "$hist_report" | grep -qE 'not json|array|^second line' &&
-  printf '%s\n' "$hist_report" | grep -qF 'forged [31m red second line (from an earlier revision)'; then
+if ! grep -q $'\033' <<<"$hist_report" && ! grep -qE 'not json|array|^second line' <<<"$hist_report" &&
+  grep -qF 'forged [31m red second line (from an earlier revision)' <<<"$hist_report"; then
   pass "a forged history line is cleaned, a malformed one skipped"
 else
   fail "missed history forged" "$hist_report"

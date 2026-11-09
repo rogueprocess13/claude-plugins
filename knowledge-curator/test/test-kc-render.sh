@@ -64,7 +64,7 @@ write_item() {
 TEST_DIR=$(mktemp -d)
 OUTPUT=$("$KC_RENDER" "$TEST_DIR/nonexistent")
 EXIT=$?
-if [ "$EXIT" -eq 0 ] && echo "$OUTPUT" | grep -q "No knowledge/ directory found"; then
+if [ "$EXIT" -eq 0 ] && grep -q "No knowledge/ directory found" <<<"$OUTPUT"; then
   pass "Missing directory: friendly message, exit 0"
 else
   fail "Missing directory: friendly message, exit 0 (got: $OUTPUT)"
@@ -75,7 +75,7 @@ rm -rf "$TEST_DIR"
 
 setup
 OUTPUT=$("$KC_RENDER" "$KNOWLEDGE_DIR")
-if echo "$OUTPUT" | grep -q "No outstanding items"; then
+if grep -q "No outstanding items" <<<"$OUTPUT"; then
   pass "Empty directory: 'No outstanding items' message"
 else
   fail "Empty directory: 'No outstanding items' message (got: $OUTPUT)"
@@ -87,12 +87,12 @@ teardown
 setup
 write_item "$KNOWLEDGE_DIR/KC-0001--solo.md" "KC-0001" "idea" "Solo item" "active" "p2" "2026-07-01T12:00:00Z" "the only thing on the stack" ""
 OUTPUT=$("$KC_RENDER" "$KNOWLEDGE_DIR")
-if echo "$OUTPUT" | grep -q "NEXT"; then
+if grep -q "NEXT" <<<"$OUTPUT"; then
   pass "Single item: rendered in NEXT box"
 else
   fail "Single item: rendered in NEXT box"
 fi
-if echo "$OUTPUT" | grep -q "the only thing on the stack"; then
+if grep -q "the only thing on the stack" <<<"$OUTPUT"; then
   pass "Single item: why line shown"
 else
   fail "Single item: why line shown"
@@ -106,12 +106,12 @@ write_item "$KNOWLEDGE_DIR/KC-0001--done.md" "KC-0001" "idea" "Done item" "done"
 write_item "$KNOWLEDGE_DIR/KC-0002--obsolete.md" "KC-0002" "idea" "Obsolete item" "obsolete" "p1" "2026-07-01T12:00:00Z" "should not appear either" ""
 write_item "$KNOWLEDGE_DIR/KC-0003--active.md" "KC-0003" "idea" "Active item" "active" "p2" "2026-07-01T12:00:00Z" "should appear" ""
 OUTPUT=$("$KC_RENDER" "$KNOWLEDGE_DIR")
-if ! echo "$OUTPUT" | grep -q "Done item" && ! echo "$OUTPUT" | grep -q "Obsolete item"; then
+if ! grep -q "Done item" <<<"$OUTPUT" && ! grep -q "Obsolete item" <<<"$OUTPUT"; then
   pass "done/obsolete items excluded from render"
 else
   fail "done/obsolete items excluded from render"
 fi
-if echo "$OUTPUT" | grep -q "Active item"; then
+if grep -q "Active item" <<<"$OUTPUT"; then
   pass "active item still appears"
 else
   fail "active item still appears"
@@ -125,7 +125,7 @@ write_item "$KNOWLEDGE_DIR/KC-0001--p1.md" "KC-0001" "idea" "P1 item" "active" "
 write_item "$KNOWLEDGE_DIR/KC-0002--p2.md" "KC-0002" "idea" "P2 item" "active" "p2" "2026-06-01T12:00:00Z" "medium priority, older" ""
 OUTPUT=$("$KC_RENDER" "$KNOWLEDGE_DIR")
 NEXT_LINE=$(echo "$OUTPUT" | grep -A1 "NEXT" | tail -1)
-if echo "$NEXT_LINE" | grep -q "KC-0001"; then
+if grep -q "KC-0001" <<<"$NEXT_LINE"; then
   pass "Unblocked p1 selected as NEXT over p2"
 else
   fail "Unblocked p1 selected as NEXT over p2 (got: $NEXT_LINE)"
@@ -144,7 +144,7 @@ if echo "$OUTPUT" | grep "KC-0002" | grep -q "▲"; then
 else
   fail "Blocked item flagged with ▲"
 fi
-if echo "$OUTPUT" | grep -q "depends"; then
+if grep -q "depends" <<<"$OUTPUT"; then
   pass "Relation type (depends) preserved in output, not just bare id"
 else
   fail "Relation type (depends) preserved in output, not just bare id"
@@ -174,7 +174,7 @@ write_item "$KNOWLEDGE_DIR/KC-0002--b.md" "KC-0002" "idea" "B" "active" "p2" "20
     id: KC-0001"
 OUTPUT=$("$KC_RENDER" "$KNOWLEDGE_DIR")
 EXIT=$?
-if [ "$EXIT" -eq 0 ] && echo "$OUTPUT" | grep -q "All outstanding items are blocked"; then
+if [ "$EXIT" -eq 0 ] && grep -q "All outstanding items are blocked" <<<"$OUTPUT"; then
   pass "Mutual depends cycle: reports all-blocked, does not hang or crash"
 else
   fail "Mutual depends cycle: reports all-blocked, does not hang or crash"
@@ -188,7 +188,7 @@ write_item "$KNOWLEDGE_DIR/KC-0001--dangling.md" "KC-0001" "idea" "Dangling ref"
     id: KC-9999"
 OUTPUT=$("$KC_RENDER" "$KNOWLEDGE_DIR")
 EXIT=$?
-if [ "$EXIT" -eq 0 ] && echo "$OUTPUT" | grep -q "KC-9999"; then
+if [ "$EXIT" -eq 0 ] && grep -q "KC-9999" <<<"$OUTPUT"; then
   pass "Dangling relation target rendered without crashing"
 else
   fail "Dangling relation target rendered without crashing"
@@ -207,7 +207,7 @@ if echo "$OUTPUT" | grep "KC-0002" | grep -q "▲"; then
 else
   pass "Item depending on a done item is not marked blocked"
 fi
-if echo "$OUTPUT" | grep -q "\[done\]"; then
+if grep -q "\[done\]" <<<"$OUTPUT"; then
   pass "Relation to a done item shows [done] suffix"
 else
   fail "Relation to a done item shows [done] suffix"

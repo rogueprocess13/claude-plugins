@@ -54,7 +54,7 @@ test_capture_multi_attempt_appends_with_separator() {
   local content
   content=$(cat "$tmpdir/logs/WIL-1-verify-agent.log")
   rm -rf "$tmpdir"
-  echo "$content" | grep -q -e "--- Attempt 2 ---" && echo "$content" | grep -q "second try"
+  grep -q -e "--- Attempt 2 ---" <<<"$content" && grep -q "second try" <<<"$content"
 }
 
 test_capture_noop_empty_ticket_id() {

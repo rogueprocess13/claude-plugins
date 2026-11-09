@@ -212,9 +212,9 @@ _get_complexity() {
 _get_artifact_type() {
   local artifact_line atype
   artifact_line=$(grep '^[^|]*|EXEC|create-artifact|done|' "$LOG_FILE" 2>/dev/null | tail -1 || true)
-  if echo "$artifact_line" | grep -q 'openspec'; then
+  if grep -q 'openspec' <<<"$artifact_line"; then
     atype="openspec"
-  elif echo "$artifact_line" | grep -q 'simple-fix'; then
+  elif grep -q 'simple-fix' <<<"$artifact_line"; then
     atype="simple-fix"
   else
     atype="simple-fix"
@@ -422,7 +422,7 @@ _gate_planned_checks() {
       if [ "$readiness_rc" = "2" ] && [ -z "$not_ready_codes" ]; then
         not_ready_codes="unavailable"
       fi
-      if [ "$flags_blocked" = "true" ] && ! echo ",${not_ready_codes}," | grep -q ',FLAG_NEEDS_INFO,'; then
+      if [ "$flags_blocked" = "true" ] && ! grep -q ',FLAG_NEEDS_INFO,' <<<",${not_ready_codes},"; then
         not_ready_codes="${not_ready_codes:+${not_ready_codes},}FLAG_NEEDS_INFO"
       fi
       [ -n "$not_ready_codes" ] || not_ready_codes="unknown"

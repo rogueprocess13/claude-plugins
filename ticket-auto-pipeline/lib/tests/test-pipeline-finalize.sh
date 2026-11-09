@@ -63,7 +63,7 @@ EOF
   local last
   last=$(tail -1 "$log")
   _teardown
-  echo "$last" | grep -q '|META|outcome|info|held: human'
+  grep -q '|META|outcome|info|held: human' <<<"$last"
 }
 
 test_invalid_human_hold_does_not_park() {
@@ -78,7 +78,7 @@ EOF
   local last
   last=$(tail -1 "$log")
   _teardown
-  ! echo "$last" | grep -q 'held: human'
+  ! grep -q 'held: human' <<<"$last"
 }
 
 test_released_human_hold_does_not_re_park() {
@@ -94,7 +94,7 @@ EOF
   local last
   last=$(tail -1 "$log")
   _teardown
-  ! echo "$last" | grep -q 'held: human'
+  ! grep -q 'held: human' <<<"$last"
 }
 
 # ── FINALIZE_FALSE_SUCCESS_OUTCOME (issue #357) ──────────────────────────────
@@ -114,7 +114,7 @@ EOF
   local last
   last=$(tail -1 "$log")
   _teardown
-  echo "$last" | grep -q '|META|outcome|info|held: human'
+  grep -q '|META|outcome|info|held: human' <<<"$last"
 }
 
 test_released_human_hold_does_not_block_clean_completion() {
@@ -130,7 +130,7 @@ EOF
   local last
   last=$(tail -1 "$log")
   _teardown
-  echo "$last" | grep -q '|META|outcome|info|completed: STEP_6'
+  grep -q '|META|outcome|info|completed: STEP_6' <<<"$last"
 }
 
 # ── held: gate branch (mirrors held: human, issue #357) ──────────────────────
@@ -153,7 +153,7 @@ EOF
   local last
   last=$(tail -1 "$log")
   _teardown
-  echo "$last" | grep -q '|META|outcome|info|held: gate'
+  grep -q '|META|outcome|info|held: gate' <<<"$last"
 }
 
 test_resolved_gate_hold_does_not_re_hold_a_clean_completion() {
@@ -174,7 +174,7 @@ EOF
   local last
   last=$(tail -1 "$log")
   _teardown
-  echo "$last" | grep -q '|META|outcome|info|completed: STEP_6'
+  grep -q '|META|outcome|info|completed: STEP_6' <<<"$last"
 }
 
 test_resolved_gate_hold_via_reconcile_clean_does_not_re_hold() {
@@ -191,7 +191,7 @@ EOF
   local last
   last=$(tail -1 "$log")
   _teardown
-  echo "$last" | grep -q '|META|outcome|info|completed: STEP_6'
+  grep -q '|META|outcome|info|completed: STEP_6' <<<"$last"
 }
 
 # ── Outcome ordering ─────────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ EOF
   local runs_lines
   runs_lines=$(wc -l <"$_ws/logs/runs.jsonl" 2>/dev/null || echo 0)
   _teardown
-  echo "$last" | grep -q '|META|outcome|info|' && [ "$runs_lines" -ge 1 ]
+  grep -q '|META|outcome|info|' <<<"$last" && [ "$runs_lines" -ge 1 ]
 }
 
 test_exactly_one_run_line() {
@@ -294,7 +294,7 @@ EOF
   local outcome
   outcome=$(tail -1 "$log")
   _teardown
-  [ "$rc" -eq 2 ] && echo "$outcome" | grep -q 'gate-stop EXEC_NO_ARTIFACT'
+  [ "$rc" -eq 2 ] && grep -q 'gate-stop EXEC_NO_ARTIFACT' <<<"$outcome"
 }
 
 test_full_sequence_with_pr_and_linear_key() {

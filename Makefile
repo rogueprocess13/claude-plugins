@@ -162,6 +162,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-critique-no-post.sh
 	bash scripts/tests/test-e2e-preflight.sh
 	bash scripts/tests/test-run-tests.sh
+	bash scripts/tests/test-check-grep-q-pipe.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \
 	bash ticket-auto-pipeline/lib/tests/test-gate-check.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \
@@ -341,8 +342,11 @@ test-kc:
 	bash knowledge-curator/test/test-kc-prompt-match.sh
 	bash knowledge-curator/test/test-kc-ingest.sh
 
+# `echo … | grep -q` under pipefail misreads a match as a miss (SIGPIPE 141,
+# GitHub #640); scripts/check-grep-q-pipe.sh fails on any such line in non-test shell.
 lint:
 	shellcheck -S error $(SCRIPTS)
+	bash scripts/check-grep-q-pipe.sh
 
 lint-strict:
 	shellcheck $(SCRIPTS)

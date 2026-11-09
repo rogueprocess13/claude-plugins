@@ -121,7 +121,7 @@ test_every_call_site_has_ticket_text_prefix() {
       [ -n "$inv" ] || continue
       count=$((count + 1))
       # The assignment must come before the script on the same (joined) line.
-      if ! echo "$inv" | grep -qE 'TICKET_TEXT_FILE=[^[:space:]]*[[:space:]].*persona-select\.sh'; then
+      if ! grep -qE 'TICKET_TEXT_FILE=[^[:space:]]*[[:space:]].*persona-select\.sh' <<<"$inv"; then
         bad="$bad\n  $skill: $inv"
       fi
     done < <(_invocations "$md")
@@ -144,7 +144,7 @@ It does not modify `persona-select.sh` selection logic.
 EOF
   out=$(_invocations "$tmp")
   rm -f "$tmp"
-  [ "$(echo "$out" | grep -c 'persona-select')" -eq 1 ] && echo "$out" | grep -q -- '--phase prescan'
+  [ "$(echo "$out" | grep -c 'persona-select')" -eq 1 ] && grep -q -- '--phase prescan' <<<"$out"
 }
 
 # ── used-by ↔ invocation cross-check ───────────────────────────────────────────
@@ -213,24 +213,24 @@ test_implement_step2_passes_type_and_logs_meta_line() {
   sec=$(_section "$SKILLS_DIR/ticket-implement/SKILL.md" '^## Step 2 — ' '^## Step 2\.5')
   # Type derivation (manifest type, else bug label) lives in persona-select.sh
   # --ticket-dir, covered by lib/test-persona-select.sh section 1.7.
-  echo "$sec" | grep -q -- '--ticket-dir "{ticket-dir}"' || {
+  grep -q -- '--ticket-dir "{ticket-dir}"' <<<"$sec" || {
     echo "  Step 2 does not pass --ticket-dir"
     return 1
   }
-  echo "$sec" | grep -q 'for _k in PERSONA_TYPE ' || {
+  grep -q 'for _k in PERSONA_TYPE ' <<<"$sec" || {
     echo "  Step 2 does not print PERSONA_TYPE (Part B reuses it)"
     return 1
   }
-  echo "$sec" | grep -q 'PERSONA_DEBUG_SPECIALIZER' || {
+  grep -q 'PERSONA_DEBUG_SPECIALIZER' <<<"$sec" || {
     echo "  Step 2 does not read PERSONA_DEBUG_SPECIALIZER"
     return 1
   }
-  echo "$sec" | grep -qF 'plog.sh META persona-select info "base=' || {
+  grep -qF 'plog.sh META persona-select info "base=' <<<"$sec" || {
     echo "  Step 2 does not write META|persona-select|info|base=…"
     return 1
   }
   # Never an IMPLEMENT|persona-select line — detect-resume would turn it into IMPLEMENT_FROM.
-  if echo "$sec" | grep -qE '\|IMPLEMENT\|persona-select\||plog\.sh IMPLEMENT persona-select'; then
+  if grep -qE '\|IMPLEMENT\|persona-select\||plog\.sh IMPLEMENT persona-select' <<<"$sec"; then
     echo "  Step 2 writes an IMPLEMENT|persona-select line"
     return 1
   fi
@@ -244,18 +244,18 @@ test_implement_rework_section_has_debugger_rules() {
     return 1
   }
   for tok in 'persona-select.sh' '--remediation' 'VERIFY_EXHAUSTED' 'failing test' '=== HUMAN_HOLD ===' 'last rework' 'hypothesis'; do
-    echo "$sec" | grep -qF -- "$tok" || missing="$missing [$tok]"
+    grep -qF -- "$tok" <<<"$sec" || missing="$missing [$tok]"
   done
   [ -z "$missing" ] || {
     echo "  Part B missing:$missing"
     return 1
   }
   # The old "starting point" instruction must be gone.
-  if echo "$sec" | grep -qF 'Use the Suggested Fix as the starting point'; then
+  if grep -qF 'Use the Suggested Fix as the starting point' <<<"$sec"; then
     echo "  Part B still says to use the Suggested Fix as the starting point"
     return 1
   fi
-  echo "$sec" | grep -qE 'PR Review #N.*--remediation|--remediation.*PR Review #N' || {
+  grep -qE 'PR Review #N.*--remediation|--remediation.*PR Review #N' <<<"$sec" || {
     echo "  Part B does not say the PR Review #N path skips --remediation"
     return 1
   }
@@ -264,21 +264,21 @@ test_implement_rework_section_has_debugger_rules() {
 test_appraise_step3_writes_root_cause_hypothesis() {
   local md="$SKILLS_DIR/ticket-appraise/SKILL.md" s25 s3 s3a
   s25=$(_section "$md" '^## Step 2\.5' '^## Step 2\.6')
-  echo "$s25" | grep -q -- '--ticket-dir "{TICKET-DIR}"' || {
+  grep -q -- '--ticket-dir "{TICKET-DIR}"' <<<"$s25" || {
     echo "  Step 2.5 does not pass --ticket-dir (which derives --type)"
     return 1
   }
   s3=$(_section "$md" '^## Step 3 — ' '^## Step 3-Agent')
-  echo "$s3" | grep -qF '### Root cause hypothesis' || {
+  grep -qF '### Root cause hypothesis' <<<"$s3" || {
     echo "  Step 3 lacks ### Root cause hypothesis"
     return 1
   }
-  echo "$s3" | grep -qF 'would disprove' || {
+  grep -qF 'would disprove' <<<"$s3" || {
     echo "  Step 3 lacks 'would disprove'"
     return 1
   }
   s3a=$(_section "$md" '^## Step 3-Agent' '^## Step 3\.5')
-  echo "$s3a" | grep -qF 'Root cause hypothesis' || {
+  grep -qF 'Root cause hypothesis' <<<"$s3a" || {
     echo "  Step 3-Agent lacks Root cause hypothesis"
     return 1
   }
@@ -288,7 +288,7 @@ test_pr_review_step2_adds_bug_checks() {
   local sec tok missing=""
   sec=$(_section "$SKILLS_DIR/ticket-pr-review/SKILL.md" '^## Step 2 — ' '^## Step 3 — ')
   for tok in 'PERSONA_DEBUG' 'root cause' 'regression test' '--ticket-dir "{ticket-dir}"'; do
-    echo "$sec" | grep -qF -- "$tok" || missing="$missing [$tok]"
+    grep -qF -- "$tok" <<<"$sec" || missing="$missing [$tok]"
   done
   [ -z "$missing" ] || {
     echo "  pr-review Step 2 missing:$missing"
@@ -353,7 +353,7 @@ test_verify_cap_is_two() {
 filter="${1:-}"
 
 for func in $(declare -F | grep '^declare -f test_' | sed 's/declare -f //'); do
-  if [ -z "$filter" ] || echo "$func" | grep -q "$filter"; then
+  if [ -z "$filter" ] || grep -q "$filter" <<<"$func"; then
     _run "$func" "$func"
   fi
 done

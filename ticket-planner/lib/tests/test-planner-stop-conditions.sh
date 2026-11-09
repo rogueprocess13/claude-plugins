@@ -101,7 +101,7 @@ fi
 if err=$(planner_create_gate_check INIT-GATE EpicGen 2>&1); then
   fail "EpicGen is refused without authorization" "allowed"
 else
-  if echo "$err" | grep -q -- "--create"; then
+  if grep -q -- "--create" <<<"$err"; then
     pass "EpicGen is refused, naming the --create command"
   else
     fail "refusal names --create" "$err"
@@ -266,7 +266,7 @@ reset_env
 if err=$(planner_until_validate "Banana" 2>&1); then
   fail "an unknown phase is rejected" "accepted"
 else
-  if echo "$err" | grep -q "Appraisal" && echo "$err" | grep -q "Completed"; then
+  if grep -q "Appraisal" <<<"$err" && grep -q "Completed" <<<"$err"; then
     pass "an unknown phase is rejected and lists the valid names"
   else
     fail "rejection lists valid names" "$err"
@@ -293,7 +293,7 @@ fi
 if err=$(planner_until_validate "Appraisal" "INIT-STOP" 2>&1); then
   fail "a phase already passed is rejected" "accepted"
 else
-  if echo "$err" | grep -q "Specify"; then
+  if grep -q "Specify" <<<"$err"; then
     pass "a phase already passed is rejected, naming the current position"
   else
     fail "rejection names the current position" "$err"

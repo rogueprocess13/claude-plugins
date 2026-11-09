@@ -427,7 +427,7 @@ test_initiative_dispatch_manifest_finds_undispatched() {
 
   sev=$(echo "$result" | jq -r '.severity // -1')
   findings=$(echo "$result" | jq -r '.findings // ""')
-  [ "$sev" = "1" ] && echo "$findings" | grep -q "INIT-50(1)" || {
+  [ "$sev" = "1" ] && grep -q "INIT-50(1)" <<<"$findings" || {
     echo "expected severity 1 with INIT-50(1) undispatched, got: $result"
     return 1
   }

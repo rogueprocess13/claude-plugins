@@ -585,7 +585,7 @@ test_msg_field_preserves_embedded_pipes() {
   local artifact_type
   artifact_type=$(_field "$out" ARTIFACT_TYPE)
   # Full message including pipes should be preserved
-  echo "$artifact_type" | grep -q "openspec"
+  grep -q "openspec" <<<"$artifact_type"
 }
 
 test_schema_v1_exact_match_accepted() {
@@ -1440,7 +1440,7 @@ test_verify_checkpoint_empty_without_checkpoints() {
   local out
   out=$(_detect_resume_with_log "TEST-VC4" \
     "2026-07-05T10:00:00Z|META|schema|info|1")
-  echo "$out" | grep -q '^  VERIFY_CHECKPOINT:' &&
+  grep -q '^  VERIFY_CHECKPOINT:' <<<"$out" &&
     [ -z "$(_field "$out" VERIFY_CHECKPOINT)" ]
 }
 

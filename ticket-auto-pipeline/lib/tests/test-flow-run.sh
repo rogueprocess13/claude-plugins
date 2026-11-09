@@ -81,10 +81,10 @@ run_wrapper 0 --log-file "$LOG" TEST-1 appraise-start --data complexity=simple
 expect "1: rc 0" 0 "$RC"
 expect "1: args forwarded" "TEST-1|appraise-start|--data|complexity=simple" "$(paste -sd'|' "$STUB_ARGS")"
 expect "1: no log line on success" 0 "$(wc -l <"$LOG" | tr -d ' ')"
-echo "$OUT" | grep -qx 'FLOW_RC=0' && pass "1: FLOW_RC=0 printed" || fail "1: FLOW_RC=0 printed" "$OUT"
-echo "$OUT" | grep -qx 'FLOW_GATE_BLOCKED=false' && pass "1: FLOW_GATE_BLOCKED=false" || fail "1: FLOW_GATE_BLOCKED=false" "$OUT"
-echo "$OUT" | grep -qx 'FLOW_TRIGGER=appraise-start' && pass "1: FLOW_TRIGGER printed" || fail "1: FLOW_TRIGGER printed" "$OUT"
-echo "$OUT" | grep -q 'stub flow.sh ran' && pass "1: flow.sh stdout passed through" || fail "1: flow.sh stdout passed through" "$OUT"
+grep -qx 'FLOW_RC=0' <<<"$OUT" && pass "1: FLOW_RC=0 printed" || fail "1: FLOW_RC=0 printed" "$OUT"
+grep -qx 'FLOW_GATE_BLOCKED=false' <<<"$OUT" && pass "1: FLOW_GATE_BLOCKED=false" || fail "1: FLOW_GATE_BLOCKED=false" "$OUT"
+grep -qx 'FLOW_TRIGGER=appraise-start' <<<"$OUT" && pass "1: FLOW_TRIGGER printed" || fail "1: FLOW_TRIGGER printed" "$OUT"
+grep -q 'stub flow.sh ran' <<<"$OUT" && pass "1: flow.sh stdout passed through" || fail "1: flow.sh stdout passed through" "$OUT"
 
 # ── 2. Exit codes propagated ─────────────────────────────────────────────────
 echo "--- 2: exit codes ---"
@@ -105,8 +105,8 @@ expect "2: rc 11 propagated" 11 "$RC"
 expect "2: rc 11 writes one VERDICT_GATE_BLOCKED gate-stop" 1 \
   "$(grep -c '|META|gate-stop|fail|VERDICT_GATE_BLOCKED — uat-pass refused, see flow.sh stderr$' "$LOG" || true)"
 expect "2: rc 11 writes no flow-error line" 0 "$(grep -c 'flow-error' "$LOG" || true)"
-echo "$OUT" | grep -qx 'FLOW_GATE_BLOCKED=true' && pass "2: rc 11 FLOW_GATE_BLOCKED=true" || fail "2: rc 11 FLOW_GATE_BLOCKED=true" "$OUT"
-echo "$OUT" | grep -qx 'FLOW_RC=11' && pass "2: rc 11 FLOW_RC=11" || fail "2: rc 11 FLOW_RC=11" "$OUT"
+grep -qx 'FLOW_GATE_BLOCKED=true' <<<"$OUT" && pass "2: rc 11 FLOW_GATE_BLOCKED=true" || fail "2: rc 11 FLOW_GATE_BLOCKED=true" "$OUT"
+grep -qx 'FLOW_RC=11' <<<"$OUT" && pass "2: rc 11 FLOW_RC=11" || fail "2: rc 11 FLOW_RC=11" "$OUT"
 
 # Heartbeats: hb-wrap.sh is a no-op without HB_LOG_FILE; with it, 11 → gate and
 # a generic failure → retry with an error_type.
@@ -202,7 +202,7 @@ RC=0
 OUT=$(bash "$FLOW_RUN" --log-file "$LOG" TEST-1 needs-info 2>/dev/null) || RC=$?
 expect "3: rc 127" 127 "$RC"
 expect "3: META|flow-error not-found line" 1 "$(grep -c '|META|flow-error|fail|flow.sh not found: needs-info$' "$LOG" || true)"
-echo "$OUT" | grep -qx 'FLOW_RC=127' && pass "3: FLOW_RC=127" || fail "3: FLOW_RC=127" "$OUT"
+grep -qx 'FLOW_RC=127' <<<"$OUT" && pass "3: FLOW_RC=127" || fail "3: FLOW_RC=127" "$OUT"
 RC=0
 FLOW_RUN_FLOW_SH="${TMP}/does-not-exist.sh" bash "$FLOW_RUN" TEST-1 needs-info >/dev/null 2>&1 || RC=$?
 expect "3: dangling FLOW_RUN_FLOW_SH with nothing else → 127" 127 "$RC"

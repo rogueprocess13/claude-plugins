@@ -339,7 +339,7 @@ DOR_SEMANTIC_MAX_ROUNDS=2 DOR_SEMANTIC_DRIFT_DEMOTE=true _apply "DRF-2" "[$(_f A
 
 _write_body "POL-1" "$base_body"
 err=$(_apply "POL-1" "[]" 2>&1 >/dev/null)
-echo "$err" | grep -qi 'policy override' &&
+grep -qi 'policy override' <<<"$err" &&
   _fail "policy: no warning expected with the default list (got $err)" ||
   _pass "policy: the default structural list does not warn"
 _ready POL-1 | jq -e '.lineage.policy.structural == ["NEEDS_HUMAN_DECISION","CONTRADICTORY_REQUIREMENTS","UNSTATED_DEPENDENCY","INTENT_AC_MISMATCH"] and .lineage.policy.overridden == false' >/dev/null &&
@@ -351,7 +351,7 @@ _ready POL-1 | jq -e '.lineage.policy.structural == ["NEEDS_HUMAN_DECISION","CON
 
 _write_body "POL-2" "$base_body"
 err=$(DOR_SEMANTIC_STRUCTURAL_CODES="NEEDS_HUMAN_DECISION" _apply "POL-2" "[]" 2>&1 >/dev/null)
-echo "$err" | grep -qi 'policy override' &&
+grep -qi 'policy override' <<<"$err" &&
   _pass "policy: an overridden structural list warns on stderr" ||
   _fail "policy: override should warn (got '$err')"
 _ready POL-2 | jq -e '.lineage.policy.structural == ["NEEDS_HUMAN_DECISION"] and .lineage.policy.overridden == true' >/dev/null &&
@@ -439,15 +439,15 @@ dor_semantic_migrate_v2 "MIG-1" "$TMP_ROOT/MIG-1.md" >/dev/null 2>&1 || rc=$?
 # ── 8. Scoped-rescan prompt hint ───────────────────────────────────────────
 
 p=$(dor_semantic_prompt scan "HINT-1" "$TMP_ROOT/RND-1.md" "$TMP_ROOT/out.txt" --changed-sections "Acceptance Criteria|Planner Context")
-echo "$p" | grep -q 'Changed sections' && echo "$p" | grep -q -- '- Acceptance Criteria' &&
-  echo "$p" | grep -q -- '- Planner Context' &&
+grep -q 'Changed sections' <<<"$p" && grep -q -- '- Acceptance Criteria' <<<"$p" &&
+  grep -q -- '- Planner Context' <<<"$p" &&
   _pass "prompt: --changed-sections lists each changed section" ||
   _fail "prompt: changed sections hint missing"
-echo "$p" | grep -q 'dor-result.json' &&
+grep -q 'dor-result.json' <<<"$p" &&
   _fail "prompt: the scan must stay blind (dor-result.json referenced)" ||
   _pass "prompt: the hinted scan does not reference dor-result.json"
 p0=$(dor_semantic_prompt scan "HINT-1" "$TMP_ROOT/RND-1.md" "$TMP_ROOT/out.txt")
-echo "$p0" | grep -q 'Changed sections' &&
+grep -q 'Changed sections' <<<"$p0" &&
   _fail "prompt: no hint expected without --changed-sections" ||
   _pass "prompt: no hint without --changed-sections"
 

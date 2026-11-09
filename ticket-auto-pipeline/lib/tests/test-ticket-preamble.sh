@@ -242,10 +242,10 @@ MD
   out=$(REPOS_ROOT=/repos/from/env bash -c \
     "source '$PREAMBLE_SH'; ticket_preamble_project_context '$tmp'")
 
-  echo "$out" | grep -qx 'REPOS_ROOT=/repos/from/env' &&
-    echo "$out" | grep -qx 'ISSUE_PREFIX=CRE' &&
-    echo "$out" | grep -qx 'BE_TEST_CMD=mvn -q test' &&
-    echo "$out" | grep -qx 'WIKI_ROOT='
+  grep -qx 'REPOS_ROOT=/repos/from/env' <<<"$out" &&
+    grep -qx 'ISSUE_PREFIX=CRE' <<<"$out" &&
+    grep -qx 'BE_TEST_CMD=mvn -q test' <<<"$out" &&
+    grep -qx 'WIKI_ROOT=' <<<"$out"
   local ok=$?
   rm -rf "$tmp"
   return $ok
@@ -260,7 +260,7 @@ test_context_emits_every_field_for_a_bare_project() {
     -u BE_TEST_CMD -u BE_TEST_RUNNER -u FE_TEST_CMD -u LOCAL_URL \
     -u UAT_URL -u SLACK_CHANNEL \
     bash -c "source '$PREAMBLE_SH'; ticket_preamble_project_context '$tmp'")
-  [ "$(echo "$out" | wc -l)" -eq 10 ] && ! echo "$out" | grep -qv '=$'
+  [ "$(echo "$out" | wc -l)" -eq 10 ] && ! grep -qv '=$' <<<"$out"
   local ok=$?
   rm -rf "$tmp"
   return $ok
@@ -457,7 +457,7 @@ test_dashboard_fields_only_in_new_run_mode() {
   plain=$(_preamble TEST-PRE-23)
   manual=$(_preamble TEST-PRE-23 NEW_RUN=true)
   local log="$_SANDBOX/logs/TEST-PRE-23-pipeline.log"
-  ! echo "$plain" | grep -q 'DASHBOARD_CMD' &&
+  ! grep -q 'DASHBOARD_CMD' <<<"$plain" &&
     [ "$(echo "$plain" | grep -c '^  [A-Z_]*:')" -eq 15 ] &&
     [ "$(_field "$manual" DASHBOARD_CMD_LOG)" = "python3 ~/.claude/skills/ticket-auto/dashboard.py $log" ] &&
     [ "$(_field "$manual" DASHBOARD_CMD_FLEET)" = "python3 ~/.claude/skills/ticket-auto/dashboard.py --fleet $_SANDBOX/logs" ] &&
@@ -505,8 +505,8 @@ test_detect_resume_routes_a_manual_preamble_log_like_a_legacy_one() {
     "$legacy_dir/logs/TEST-PRE-25-pipeline.log" || true)
 
   [ -n "$a" ] && [ "$a" = "$b" ] &&
-    echo "$a" | grep -q 'RESUME_STEP: *STEP_1$' &&
-    echo "$a" | grep -q 'AUTONOMY: *auto$' &&
+    grep -q 'RESUME_STEP: *STEP_1$' <<<"$a" &&
+    grep -q 'AUTONOMY: *auto$' <<<"$a" &&
     [ "$migrated" -eq 1 ] &&
     ! grep -q '|META|migration|' "$_SANDBOX/logs/TEST-PRE-25-pipeline.log"
   local ok=$?
@@ -543,8 +543,8 @@ test_preflight_teams_query_failure_has_its_own_message() {
   local err rc=0
   err=$(TEAMS_RESPONSE='not json' _preflight 2>&1 >/dev/null) || rc=$?
   [ "$rc" -eq 5 ] &&
-    echo "$err" | grep -q 'Linear teams query failed' &&
-    ! echo "$err" | grep -q 'set LINEAR_TEAM_ID'
+    grep -q 'Linear teams query failed' <<<"$err" &&
+    ! grep -q 'set LINEAR_TEAM_ID' <<<"$err"
   local ok=$?
   _sandbox_rm
   return $ok
@@ -556,8 +556,8 @@ test_preflight_multiple_teams_asks_for_linear_team_id() {
   err=$(TEAMS_RESPONSE='{"data":{"teams":{"nodes":[{"id":"a"},{"id":"b"}]}}}' \
     _preflight 2>&1 >/dev/null) || rc=$?
   [ "$rc" -eq 4 ] &&
-    echo "$err" | grep -q '2 Linear teams visible — set LINEAR_TEAM_ID' &&
-    ! echo "$err" | grep -q 'query failed'
+    grep -q '2 Linear teams visible — set LINEAR_TEAM_ID' <<<"$err" &&
+    ! grep -q 'query failed' <<<"$err"
   local ok=$?
   _sandbox_rm
   return $ok

@@ -618,7 +618,7 @@ test_skill_declared_verifiers_are_in_the_enum() {
   local skills_dir="$LIB_DIR/../skills" id ok=0 accepted
   accepted=$(_parser_verifiers)
   for id in implement_tests playwright_uat build_only live_backend pr_review; do
-    printf '%s\n' "$accepted" | grep -qx "$id" || {
+    grep -qx "$id" <<<"$accepted" || {
       echo "  skill-declared verifier '$id' is not in the parser enum" >&2
       ok=1
     }

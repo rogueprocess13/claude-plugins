@@ -357,7 +357,7 @@ test_rpa_cli() {
   touch "$t/openspec/changes/wil-42-x/tasks.md"
   out=$(bash "$LIB_DIR/ticket-dir.sh" plan WIL-42 --root "$t" 2>/dev/null) || rc=$?
   rm -rf "$t"
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q '^PLAN_MODE=openspec$'
+  [ "$rc" -eq 0 ] && grep -q '^PLAN_MODE=openspec$' <<<"$out"
 }
 
 # ── resolve_artifact_type ─────────────────────────────────────────────────────

@@ -513,7 +513,7 @@ teardown
 setup
 "$KC_ITEM" edit KC-0001 title "Updated title"
 TITLE=$(awk '/^title:/ {sub(/^title: *"?/,""); sub(/"$/,""); print}' "$KNOWLEDGE_DIR/KC-0001--test-item.md")
-if echo "$TITLE" | grep -q "Updated title"; then
+if grep -q "Updated title" <<<"$TITLE"; then
   pass "edit updates title field"
 else
   fail "edit updates title field (got: $TITLE)"
@@ -580,7 +580,7 @@ teardown
 setup
 "$KC_ITEM" edit KC-0001 title "Fix foo/bar/baz parsing"
 TITLE=$(awk '/^title:/ {sub(/^title: *"?/,""); sub(/"$/,""); print}' "$KNOWLEDGE_DIR/KC-0001--test-item.md")
-if echo "$TITLE" | grep -q "foo/bar/baz"; then
+if grep -q "foo/bar/baz" <<<"$TITLE"; then
   pass "edit handles / in value"
 else
   fail "edit handles / in value (got: $TITLE)"
@@ -592,7 +592,7 @@ teardown
 setup
 "$KC_ITEM" edit KC-0001 title "Foo & Bar"
 TITLE=$(awk '/^title:/ {sub(/^title: *"?/,""); sub(/"$/,""); print}' "$KNOWLEDGE_DIR/KC-0001--test-item.md")
-if echo "$TITLE" | grep -q "Foo & Bar"; then
+if grep -q "Foo & Bar" <<<"$TITLE"; then
   pass "edit handles & in value"
 else
   fail "edit handles & in value (got: $TITLE)"

@@ -248,7 +248,7 @@ if [ "$REC" = "do-not-proceed" ]; then
 else
   fail "critical-missing gives do-not-proceed despite 86" "got $REC"
 fi
-if echo "$CRIT" | grep -q "success_criteria"; then
+if grep -q "success_criteria" <<<"$CRIT"; then
   pass "GRILL_CRITICAL_MISSING names success_criteria"
 else
   fail "GRILL_CRITICAL_MISSING names success_criteria" "got '$CRIT'"
@@ -377,7 +377,7 @@ REC=$(echo "$OUTPUT" | grep "^GRILL_RECOMMENDATION=" | cut -d= -f2)
 READY=$(echo "$OUTPUT" | grep "^GRILL_READINESS=" | cut -d= -f2)
 
 # Ready should be 85 (100 - 15 penalty), recommendation capped at proceed-with-warnings
-if echo "$READY" | grep -qE '^[0-9]+$'; then
+if grep -qE '^[0-9]+$' <<<"$READY"; then
   if [ "$READY" -ge 80 ] && [ "$REC" = "proceed-with-warnings" ]; then
     pass "overscoped cap prevents ready (score=${READY}, rec=${REC})"
   elif [ "$REC" = "proceed-with-warnings" ]; then

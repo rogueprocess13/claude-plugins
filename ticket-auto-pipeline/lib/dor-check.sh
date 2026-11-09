@@ -1115,7 +1115,7 @@ _dor_score() {
   _constraints_content=$(_dor_section_content "$body" constraints 2>/dev/null) || _constraints_content=""
   local _has_numeric_bound="false" _idx3
   for ((_idx3 = 0; _idx3 < ac_count; _idx3++)); do
-    echo "${ac_lines[$_idx3]}" | grep -qP '[0-9]+ ?(ms|s|%|kb|mb)\b' 2>/dev/null && _has_numeric_bound="true"
+    grep -qP '[0-9]+ ?(ms|s|%|kb|mb)\b' <<<"${ac_lines[$_idx3]}" 2>/dev/null && _has_numeric_bound="true"
   done
   if { [ -n "$_constraints_content" ] && ! _dor_is_placeholder "$_constraints_content"; } || [ "$_has_numeric_bound" = "true" ]; then
     dims[constraints]="5.00"
