@@ -17,6 +17,22 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.96.5 (2026-11-09)
+
+### Fixed
+
+- **`derive_failure_phase` (`lib/exit-path.sh`) could fail a direct
+  `set -euo pipefail` caller (#656).** The last-failing-verifier lookup fed
+  `grep | tac` into a `while` loop that `break`s at the first FAIL/BLOCK; on a
+  log larger than a pipe buffer `tac` then died of SIGPIPE and the caller
+  exited 141 with no output (10 of 10 runs on a 4,000-result log). The loop now
+  reads a here-string. The two fallback lookups (last `|fail|` bracket, last
+  running phase) also failed such a caller whenever their `grep` matched
+  nothing; they now end in `|| true`. The one production caller,
+  `fleet-controller/lib/run-score-export.sh`, captures the result with `$(...)`,
+  where bash turns errexit off, so it was not affected; the CLI and any future
+  direct caller were. Two regression tests in `lib/tests/test-exit-path.sh`.
+
 ## knowledge-curator 0.2.17 (2026-11-09)
 
 ### Fixed
