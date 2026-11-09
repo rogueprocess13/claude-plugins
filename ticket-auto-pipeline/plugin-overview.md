@@ -49,7 +49,7 @@ The orchestrator (`ticket-auto`) is a **thin stateless dispatch router** — it 
 | Comment reconciliation | `ticket-gate-reconcile` | Isolated agent for post-gate-hold comment reconciliation |
 | Failure analysis | `ticket-retro`, retro templates | Post-mortem classification + fix proposals |
 | Monitoring | `ticket-overseer`, `dashboard.py`, `report.py` | Queue status, stall detection (human-facing) |
-| Fleet control | `ticket-fleet-controller`, `lib/fleet-detect.sh`, `lib/fleet-intervene.sh`, `lib/fleet-dashboard.sh` | Automated intervention — detect, kill, restart pipelines |
+| Fleet control | `fleet-controller` plugin (`fleet-controller/lib/fleet-detect.sh`, `fleet-intervene.sh`, `fleet-dashboard.sh`) | Automated intervention — detect, kill, restart pipelines |
 | Validation | `ticket-env-check`, `validate-linear-config.sh` | Pre-flight checks |
 | Batch ops | `ticket-batch-appraise`, `ticket-batch-verify` | Bulk ticket processing |
 | Audit | `ticket-audit`, `ticket-audit-exec`, `lib/audit-size-check.sh`, `lib/audit-drift-check.sh`, `lib/audit-title-similarity.sh`, `lib/audit-scope-check.sh`, `lib/audit-repro-check.sh`, `lib/audit-ac-testability.sh`, `lib/audit-test-data-check.sh`, `lib/audit-overlap-check.sh`, `lib/audit-comment-guard.sh`, `lib/ticket-audit-exec.sh` | Cross-ticket audit within milestone/parent — detects duplicates, overlaps, empty tickets, goal misalignment, stale tickets, split candidates, wiki misalignment. Two-phase apply agent delegates needs-info to ticket-critique, posts structural comments. |
@@ -90,7 +90,7 @@ Support (invoked independently):
   ticket-detect-resume ── reads pipeline log (also called as bash by router)
   ticket-retro ── reads pipeline + heartbeat logs
   ticket-overseer ── reads pipeline logs
-  ticket-fleet-controller ── reads pipeline + heartbeat logs, writes interventions
+  fleet-controller (separate plugin, lib/fleet-*.sh) ── reads pipeline + heartbeat logs, writes interventions
   ticket-env-check ── validates environment
   ticket-flow ── all Linear state/label mutations (deterministic bash)
 ```

@@ -53,6 +53,5 @@ flowchart TD
 
 ## Related skills
 
-- [`/ticket-fleet-controller`](ticket-fleet-controller.md) -- real-time intervention (complementary to retro's post-hoc analysis)
 - [`/ticket-detect-resume`](ticket-detect-resume.md) -- crash recovery from pipeline log
 - [`/ticket-overseer`](ticket-overseer.md) -- human-facing pipeline dashboard

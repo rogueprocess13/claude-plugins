@@ -211,11 +211,11 @@ The two slash commands need `REPOS_ROOT` in the environment (see [Required Envir
 |---------|-------------|
 | `/ticket-overseer` | Pipeline queue dashboard report (human-facing) |
 
-Fleet monitoring now lives in the separate [`fleet-controller`](../fleet-controller/README.md) plugin — `/fleet-controller status`, `monitor`, `intervene`, `dispatch`, `feedback`. The old `/ticket-fleet-controller` command is a deprecated forwarder kept for one release cycle; update any cron jobs still calling it.
+Fleet monitoring now lives in the separate [`fleet-controller`](../fleet-controller/README.md) plugin — `/fleet-controller status`, `monitor`, `intervene`, `dispatch`, `feedback`. The old `/ticket-fleet-controller` command has been removed.
 
 ### Supporting
 
-`ticket-audit`, `ticket-audit-exec`, `ticket-batch-appraise`, `ticket-batch-verify`, `ticket-critique`, `ticket-detect-resume`, `ticket-fleet-controller`, `ticket-reproduce`, `wiki-maintenance`, `nav-hints`, `app-knowledge`.
+`ticket-audit`, `ticket-audit-exec`, `ticket-batch-appraise`, `ticket-batch-verify`, `ticket-critique`, `ticket-detect-resume`, `ticket-reproduce`, `wiki-maintenance`, `nav-hints`, `app-knowledge`.
 
 ## Architecture
 

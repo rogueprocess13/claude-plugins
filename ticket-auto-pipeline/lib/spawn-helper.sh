@@ -463,7 +463,7 @@ spawn_write_env() {
 # Every skill this plugin ships (skills/*/). Kept literal because this file is
 # also sourced from the synced ~/.claude/skills/lib, which has no skills/
 # sibling to list; lib/tests/test-spawn-skill-qualified.sh fails if it drifts.
-SPAWN_PLUGIN_SKILLS="adr-gate app-knowledge guidance-extractor nav-hints skill-docs ticket-appraise ticket-appraise-exec ticket-approve ticket-audit ticket-audit-exec ticket-auto ticket-batch-appraise ticket-batch-verify ticket-create ticket-critique ticket-detect-resume ticket-document ticket-env-check ticket-fleet-controller ticket-flow ticket-gate-reconcile ticket-implement ticket-overseer ticket-persona-refresh ticket-prescan ticket-pr-iterate ticket-pr-review ticket-reject ticket-reproduce ticket-retro ticket-setup ticket-verify wiki-maintenance"
+SPAWN_PLUGIN_SKILLS="adr-gate app-knowledge guidance-extractor nav-hints skill-docs ticket-appraise ticket-appraise-exec ticket-approve ticket-audit ticket-audit-exec ticket-auto ticket-batch-appraise ticket-batch-verify ticket-create ticket-critique ticket-detect-resume ticket-document ticket-env-check ticket-flow ticket-gate-reconcile ticket-implement ticket-overseer ticket-persona-refresh ticket-prescan ticket-pr-iterate ticket-pr-review ticket-reject ticket-reproduce ticket-retro ticket-setup ticket-verify wiki-maintenance"
 
 spawn_qualify_skill() {
   # Plugin-qualify a bare name of one of this plugin's skills
