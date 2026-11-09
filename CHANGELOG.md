@@ -17,6 +17,28 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.96.8 (2026-11-09)
+
+Skill prose dedupe, sub-PR 3c (`skill-prose-dedupe`, change 3 of the skill-size reduction
+programme): the appraise family drops 7,045 bytes. Deletion and compression only: no bash block,
+log-line template, `notes.md` heading or `**Field:**` label changed. The skill fingerprints change.
+This is intended.
+
+### Changed
+
+- `ticket-appraise/SKILL.md` 70,269 → 66,647 bytes (−3,622). Step 2.1 and Step 2.8 no longer
+  restate `refinement-carryover.sh` and `get_blast_radius_override`; they point at the lib headers.
+  The Serena and `smart_*` navigation tiers are gone from Steps 3, 3a, 3c and 3-Agent-b
+  (`ticket-appraise-agent` cannot call them); Grep and Read remain. The heartbeat list drops the
+  fast-path entry (written inline in Step 1.3) and a stale `regression-verdict` entry (appraise has
+  no regression check). Resume-mode numbering is fixed (no step 9 gap).
+- `ticket-appraise-exec/SKILL.md` 46,003 → 43,221 bytes (−2,782). The no-op `## Step 2 — State
+  already set` and the unconsumed `appraise-exec-session.md` trace template are deleted; the
+  heartbeat list drops the two entries Steps 3.7 and 3.8 write inline; the Step 3.6 MANDATORY
+  paragraph is cut to its rule.
+- `ticket-critique/SKILL.md` 20,742 → 20,101 bytes (−641). The status and escalation rules are
+  stated once; `critique-status.sh` owns them.
+
 ## 0.96.7 (2026-11-09)
 
 Skill prose dedupe, sub-PR 3b (`skill-prose-dedupe`, change 3 of the skill-size reduction

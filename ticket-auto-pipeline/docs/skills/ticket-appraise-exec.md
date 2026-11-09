@@ -52,8 +52,8 @@ Posts a summary comment to Linear and moves the ticket to the Approve state.
 
 ```
 Step 1   — Load ticket workspace
-Step 1.5 — Create task tracker + session trace
-Step 2   — State check (already set by appraise)
+Step 1.5 — Create task tracker
+Step 2.5 — ADR gate check
 Step 3   — Create change artifacts (simple-fix.md or openspec change)
 Step 3.4 — Complexity-coherence gate
 Step 3.5 — Regression guard (cross-reference against prior art)
