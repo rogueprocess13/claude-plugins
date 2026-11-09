@@ -449,10 +449,10 @@ if need "$name" planner_specify_gate planner_specify_halt_report; then
   planner_specify_gate "$INIT" || rc=$?
   report=$(planner_specify_halt_report "$INIT" "$IDIR")
   if [ "$rc" -eq 3 ] &&
-    printf '%s\n' "$report" | grep -qF "Specify is waiting on 1 business decision(s)" &&
-    printf '%s\n' "$report" | grep -qF "  O1  which role consumes the classified documents?" &&
-    printf '%s\n' "$report" | grep -qF "bash lib/planner-stop-describe.sh ${INIT}, then /ticket-planner resume ${INIT} --answers <file>" &&
-    printf '%s\n' "$report" | grep -qF "Proposal:   ${IDIR}/artifacts/proposal.md"; then
+    grep -qF "Specify is waiting on 1 business decision(s)" <<<"$report" &&
+    grep -qF "  O1  which role consumes the classified documents?" <<<"$report" &&
+    grep -qF "bash lib/planner-stop-describe.sh ${INIT}, then /ticket-planner resume ${INIT} --answers <file>" <<<"$report" &&
+    grep -qF "Proposal:   ${IDIR}/artifacts/proposal.md" <<<"$report"; then
     pass "$name"
   else fail "$name" "rc=$rc report=[$report]"; fi
 fi

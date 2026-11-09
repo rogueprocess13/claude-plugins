@@ -63,12 +63,12 @@ EOF
 cd "$TEST_DIR"
 # Prompt contains "database" which should match KC-0001's tags
 OUTPUT=$(echo "how do we handle the database connection pooling" | "$HOOK" 2>&1) || true
-if echo "$OUTPUT" | grep -q "KC-PROMPT-MATCH"; then
+if grep -q "KC-PROMPT-MATCH" <<<"$OUTPUT"; then
   pass "Matching term: emits KC-PROMPT-MATCH context block"
 else
   fail "Matching term: emits KC-PROMPT-MATCH context block — got: $OUTPUT"
 fi
-if echo "$OUTPUT" | grep -q "KC-0001"; then
+if grep -q "KC-0001" <<<"$OUTPUT"; then
   pass "Matching term: includes matching item KC-0001"
 else
   fail "Matching term: includes matching item KC-0001 — got: $OUTPUT"
@@ -95,7 +95,7 @@ EOF
 cd "$TEST_DIR"
 # "memory leak" in prompt should match KC-0001 title
 OUTPUT=$(echo "we have a memory leak in the auth service" | "$HOOK" 2>&1) || true
-if echo "$OUTPUT" | grep -q "KC-0001"; then
+if grep -q "KC-0001" <<<"$OUTPUT"; then
   pass "Title match: finds item by title text"
 else
   fail "Title match: finds item by title text — got: $OUTPUT"
@@ -203,7 +203,7 @@ EOF
 cd "$TEST_DIR"
 # "KC" is 2 chars — should match KC-0001 and KC-0002
 OUTPUT=$(echo "what is the status of KC tickets" | "$HOOK" 2>&1) || true
-if echo "$OUTPUT" | grep -q "KC-0001"; then
+if grep -q "KC-0001" <<<"$OUTPUT"; then
   pass "2-char term: matches item by ID prefix"
 else
   fail "2-char term: matches item by ID prefix — got: $OUTPUT"
@@ -211,7 +211,7 @@ fi
 
 # "p1" is 2 chars — should match the p1 item
 OUTPUT2=$(echo "show me p1 items" | "$HOOK" 2>&1) || true
-if echo "$OUTPUT2" | grep -q "KC-0001"; then
+if grep -q "KC-0001" <<<"$OUTPUT2"; then
   pass "2-char term: matches by priority label"
 else
   fail "2-char term: matches by priority label — got: $OUTPUT2"
@@ -332,7 +332,7 @@ EOF
 cd "$TEST_DIR"
 # Prompt with special characters — should still extract "postgres"
 OUTPUT=$(echo "!!! what about postgres ??? @#$%^&*()" | "$HOOK" 2>&1) || true
-if echo "$OUTPUT" | grep -q "KC-0001"; then
+if grep -q "KC-0001" <<<"$OUTPUT"; then
   pass "Special chars: matches despite !@#$% in prompt"
 else
   fail "Special chars: matches despite !@#$% in prompt — got: $OUTPUT"

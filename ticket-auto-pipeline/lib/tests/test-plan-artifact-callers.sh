@@ -88,8 +88,8 @@ test_gr_notes_fallback_resolves_openspec() {
   out=$(_run_gr_step1 TEST-7 "$ws") || rc=$?
   rm -rf "$ws"
   [ "$rc" -eq 0 ] &&
-    echo "$out" | grep -qx 'ARTIFACT_TYPE=openspec' &&
-    echo "$out" | grep -qx 'ARTIFACT_PATH=openspec/changes/test-7-add-thing/tasks.md'
+    grep -qx 'ARTIFACT_TYPE=openspec' <<<"$out" &&
+    grep -qx 'ARTIFACT_PATH=openspec/changes/test-7-add-thing/tasks.md' <<<"$out"
 }
 
 # Whole-ID: TEST-7 must never amend test-77's tasks.md; it fails closed.
@@ -102,7 +102,7 @@ test_gr_openspec_whole_id_fails_closed() {
   out=$(_run_gr_step1 TEST-7 "$ws") || rc=$?
   grep -q '|GATE|reconcile|fail|' "$ws/logs/TEST-7-pipeline.log" && logged=1
   rm -rf "$ws"
-  [ "$rc" -eq 1 ] && [ "$logged" -eq 1 ] && ! echo "$out" | grep -q 'test-77'
+  [ "$rc" -eq 1 ] && [ "$logged" -eq 1 ] && ! grep -q 'test-77' <<<"$out"
 }
 
 test_gr_simple_fix_path() {
@@ -114,8 +114,8 @@ test_gr_simple_fix_path() {
   out=$(_run_gr_step1 TEST-7 "$ws") || rc=$?
   rm -rf "$ws"
   [ "$rc" -eq 0 ] &&
-    echo "$out" | grep -qx 'ARTIFACT_TYPE=simple-fix' &&
-    echo "$out" | grep -qx 'ARTIFACT_PATH=./TEST-7--fix/simple-fix.md'
+    grep -qx 'ARTIFACT_TYPE=simple-fix' <<<"$out" &&
+    grep -qx 'ARTIFACT_PATH=./TEST-7--fix/simple-fix.md' <<<"$out"
 }
 
 # Lint: no SKILL.md keeps a substring plan-artifact lookup.

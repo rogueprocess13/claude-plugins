@@ -83,7 +83,7 @@ test_first_adr_numbering() {
   _body
   _write "Do X" "foo" --ticket "T-1"
   _teardown
-  echo "$_OUT" | grep -q "ADR_ID=ADR-0001"
+  grep -q "ADR_ID=ADR-0001" <<<"$_OUT"
 }
 
 # ── test: gap-tolerant numbering ────────────────────────────────────────────
@@ -94,7 +94,7 @@ test_gap_tolerant_numbering() {
   _body
   _write "Do X" "foo" --ticket "T-1"
   _teardown
-  echo "$_OUT" | grep -q "ADR_ID=ADR-0004"
+  grep -q "ADR_ID=ADR-0004" <<<"$_OUT"
 }
 
 # ── test: existence check true ──────────────────────────────────────────────
@@ -107,7 +107,7 @@ test_exists_true() {
   _RC=$?
   set -e
   _teardown
-  [ "$_RC" -eq 0 ] && echo "$_OUT" | grep -q "ADR_STORE_EXISTS=true"
+  [ "$_RC" -eq 0 ] && grep -q "ADR_STORE_EXISTS=true" <<<"$_OUT"
 }
 
 # ── test: existence check false ─────────────────────────────────────────────
@@ -120,7 +120,7 @@ test_exists_false() {
   _RC=$?
   set -e
   _teardown
-  [ "$_RC" -eq 1 ] && echo "$_OUT" | grep -q "ADR_STORE_EXISTS=false"
+  [ "$_RC" -eq 1 ] && grep -q "ADR_STORE_EXISTS=false" <<<"$_OUT"
 }
 
 # ── test: existence match survives a title change (idempotent re-run) ──────
@@ -135,7 +135,7 @@ test_exists_after_title_change() {
   second_id=$(echo "$_OUT" | grep ADR_ID= | cut -d= -f2)
   count=$(find "$_wiki/decisions" -maxdepth 1 -name '*.md' ! -name index.md | wc -l | tr -d ' ')
   _teardown
-  echo "$_OUT" | grep -q "ADR_STORE_STATUS=exists" &&
+  grep -q "ADR_STORE_STATUS=exists" <<<"$_OUT" &&
     [ "$first_id" = "$second_id" ] && [ "$count" = "1" ]
 }
 
@@ -251,7 +251,7 @@ test_query_by_component() {
   _RC=$?
   set -e
   _teardown
-  [ "$_RC" -eq 0 ] && echo "$_OUT" | grep -q "ADR-0001" && ! echo "$_OUT" | grep -q "ADR-0002"
+  [ "$_RC" -eq 0 ] && grep -q "ADR-0001" <<<"$_OUT" && ! grep -q "ADR-0002" <<<"$_OUT"
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────

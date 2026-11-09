@@ -79,7 +79,7 @@ audit_ac_testability() {
 
     local is_vague=false
     for pat in "${vague_patterns[@]}"; do
-      if echo "$lower_line" | grep -qE "$pat" 2>/dev/null; then
+      if grep -qE "$pat" <<<"$lower_line" 2>/dev/null; then
         is_vague=true
         break
       fi

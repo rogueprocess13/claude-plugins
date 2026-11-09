@@ -160,7 +160,7 @@ test_fleet_kill_pipeline_nonexistent_ticket() {
     if out=$(fleet_kill_pipeline "NOEXIST-99" "test" "./logs" 2>&1); then
       false # should return non-zero
     else
-      echo "$out" | grep -q "no pipeline log" || false
+      grep -q "no pipeline log" <<<"$out" || false
     fi
   )
   local rc=$?
@@ -895,7 +895,7 @@ test_fleet_restart_pipeline_no_restart_eligible_stdout() {
     local stdout
     stdout=$(fleet_restart_pipeline "CRE-47" "test-restart" "./logs" 2>&1) || true
     # Should NOT contain "RESTART_ELIGIBLE="
-    if echo "$stdout" | grep -q "RESTART_ELIGIBLE="; then
+    if grep -q "RESTART_ELIGIBLE=" <<<"$stdout"; then
       echo "unexpected RESTART_ELIGIBLE in output: $stdout" >&2
       false
     else
@@ -977,7 +977,7 @@ test_stop_file_path_equality_default() {
       exit 1
     }
     # Verify both paths are under the state directory, not /tmp
-    echo "$fleet_pinger" | grep -qv "/tmp" || {
+    grep -qv "/tmp" <<<"$fleet_pinger" || {
       echo "stop file path should not be under /tmp (default config): $fleet_pinger" >&2
       exit 1
     }
@@ -1009,7 +1009,7 @@ test_stop_file_path_equality_fleet_state_dir_set() {
       exit 1
     }
     # Verify both paths honour FLEET_STATE_DIR
-    echo "$fleet_pinger" | grep -q "/var/fleet/state" || {
+    grep -q "/var/fleet/state" <<<"$fleet_pinger" || {
       echo "stop file path should honour FLEET_STATE_DIR: $fleet_pinger" >&2
       exit 1
     }

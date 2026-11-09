@@ -93,7 +93,7 @@ test_last_match_wins_dedup() {
   # Count should be 1 (deduped), and the value should be the second write
   [ "$CORRECTION_COUNT" -eq 1 ] &&
     [ "$CORRECTION_0_SOURCE" = "prescan" ] &&
-    echo "$CORRECTION_0_CORRECTED" | grep -q "confirmed by second impl"
+    grep -q "confirmed by second impl" <<<"$CORRECTION_0_CORRECTED"
   local rc=$?
   _teardown
   return $rc

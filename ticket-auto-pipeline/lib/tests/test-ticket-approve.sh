@@ -83,7 +83,7 @@ test_approve_planned_ticket() {
   rm -rf "$tmpdir"
 
   if [ "$rc" -eq 0 ] && [ "$approved" = "true" ] && [ "$stage" = "Ready" ] &&
-    echo "$out" | grep -q "approved=true" && echo "$out" | grep -q "approval_provenance=human"; then
+    grep -q "approved=true" <<<"$out" && grep -q "approval_provenance=human" <<<"$out"; then
     _pass "approve.sh: approves a planned ticket, prints manifest fields"
   else
     _fail "approve.sh: should approve a planned ticket (rc=$rc approved=$approved stage=$stage out=$out)"
@@ -138,7 +138,7 @@ test_reject_clears_approval() {
   provenance=$(jq -r '.approval_provenance // empty' "$manifest" 2>/dev/null)
   rm -rf "$tmpdir"
 
-  if [ "$rc" -eq 0 ] && [ -z "$approved" ] && [ -z "$provenance" ] && echo "$out" | grep -q "approved=false"; then
+  if [ "$rc" -eq 0 ] && [ -z "$approved" ] && [ -z "$provenance" ] && grep -q "approved=false" <<<"$out"; then
     _pass "reject.sh: clears approved and approval_provenance"
   else
     _fail "reject.sh: should clear both fields (rc=$rc approved=$approved provenance=$provenance out=$out)"
@@ -172,7 +172,7 @@ test_approve_well_formed_ticket_with_no_tracker_presence_succeeds() {
   approved=$(jq -r '.approved // empty' "$manifest" 2>/dev/null)
   rm -rf "$tmpdir"
 
-  if [ "$rc" -eq 0 ] && [ "$approved" = "true" ] && echo "$out" | grep -q "approved=true"; then
+  if [ "$rc" -eq 0 ] && [ "$approved" = "true" ] && grep -q "approved=true" <<<"$out"; then
     _pass "approve.sh: a ticket ID absent from the tracker still approves (ad-hoc manifest)"
   else
     _fail "approve.sh: should ad-hoc-approve regardless of tracker presence (rc=$rc approved=$approved out=$out)"
@@ -199,7 +199,7 @@ test_approve_clears_needs_info_flag() {
   flags=$(jq -c '.flags // []' "$manifest" 2>/dev/null)
   rm -rf "$tmpdir"
 
-  if [ "$rc" -eq 0 ] && [ "$flags" = "[]" ] && echo "$out" | grep -q "needs_info_cleared=true"; then
+  if [ "$rc" -eq 0 ] && [ "$flags" = "[]" ] && grep -q "needs_info_cleared=true" <<<"$out"; then
     _pass "approve.sh: clears a set needs-info flag via needs-info-resolved"
   else
     _fail "approve.sh: should clear needs-info flag (rc=$rc flags=$flags out=$out)"
@@ -222,7 +222,7 @@ test_approve_noop_when_needs_info_absent() {
     bash "$APPROVE_SH" WIL-1 2>&1) || rc=$?
   rm -rf "$tmpdir"
 
-  if [ "$rc" -eq 0 ] && echo "$out" | grep -q "needs_info_cleared=false"; then
+  if [ "$rc" -eq 0 ] && grep -q "needs_info_cleared=false" <<<"$out"; then
     _pass "approve.sh: no-op (needs_info_cleared=false) when flag is absent"
   else
     _fail "approve.sh: should report needs_info_cleared=false when flag absent (rc=$rc out=$out)"

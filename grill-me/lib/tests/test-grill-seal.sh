@@ -277,7 +277,7 @@ grill_seal_generate "$CH_DOC" "product-idea" "88" "ready" "1" "2026-07-26T00:00:
 
 # Get the last non-empty line
 LAST_LINE=$(grep -v '^[[:space:]]*$' "$CH_DOC" | tail -1)
-if echo "$LAST_LINE" | grep -q '^\*\*Content-Hash:\*\*'; then
+if grep -q '^\*\*Content-Hash:\*\*' <<<"$LAST_LINE"; then
   pass "Content-Hash is the last non-empty line"
 else
   fail "Content-Hash is the last non-empty line" "last line: $LAST_LINE"

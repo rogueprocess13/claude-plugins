@@ -46,7 +46,7 @@ test_exec_no_artifact_fires_when_file_missing() {
   local result
   result=$(cat "$log")
   rm -rf "$tmp"
-  echo "$result" | grep -q "EXEC_NO_ARTIFACT"
+  grep -q "EXEC_NO_ARTIFACT" <<<"$result"
 }
 
 # ── Gate 2: COMPLEXITY_ARTIFACT_MISMATCH ─────────────────────────────────────
@@ -68,7 +68,7 @@ test_complexity_mismatch_complex_declared_simple_found() {
   local result
   result=$(cat "$log" 2>/dev/null || true)
   rm -rf "$tmp"
-  echo "$result" | grep -q "COMPLEXITY_ARTIFACT_MISMATCH"
+  grep -q "COMPLEXITY_ARTIFACT_MISMATCH" <<<"$result"
 }
 
 test_complexity_mismatch_simple_declared_no_artifact() {
@@ -87,7 +87,7 @@ test_complexity_mismatch_simple_declared_no_artifact() {
   local result
   result=$(cat "$log" 2>/dev/null || true)
   rm -rf "$tmp"
-  echo "$result" | grep -q "COMPLEXITY_ARTIFACT_MISMATCH"
+  grep -q "COMPLEXITY_ARTIFACT_MISMATCH" <<<"$result"
 }
 
 test_complexity_mismatch_missing_score() {
@@ -105,7 +105,7 @@ test_complexity_mismatch_missing_score() {
   local result
   result=$(cat "$log" 2>/dev/null || true)
   rm -rf "$tmp"
-  echo "$result" | grep -q "COMPLEXITY_ARTIFACT_MISMATCH"
+  grep -q "COMPLEXITY_ARTIFACT_MISMATCH" <<<"$result"
 }
 
 # ── Gate 3: APPROVAL_REVOKED ─────────────────────────────────────────────────
@@ -125,7 +125,7 @@ test_approval_revoked_when_label_missing() {
   local result
   result=$(cat "$log")
   rm -f "$log"
-  echo "$result" | grep -q "APPROVAL_REVOKED"
+  grep -q "APPROVAL_REVOKED" <<<"$result"
 }
 
 test_approval_revoked_wrong_state() {
@@ -138,7 +138,7 @@ test_approval_revoked_wrong_state() {
   local result
   result=$(cat "$log")
   rm -f "$log"
-  echo "$result" | grep -q "APPROVAL_REVOKED"
+  grep -q "APPROVAL_REVOKED" <<<"$result"
 }
 
 # ── Gate 4: REMEDIATION_BRIEF_TRUNCATED ──────────────────────────────────────
@@ -170,7 +170,7 @@ EOF
   local result
   result=$(cat "$log" 2>/dev/null || true)
   rm -rf "$tmp"
-  echo "$result" | grep -q "REMEDIATION_BRIEF_TRUNCATED"
+  grep -q "REMEDIATION_BRIEF_TRUNCATED" <<<"$result"
 }
 
 test_remediation_brief_passes_with_marker() {
@@ -212,7 +212,7 @@ test_verdict_unparseable_zero_lines() {
   local result
   result=$(cat "$log")
   rm -f "$log"
-  echo "$result" | grep -q "PR_REVIEW_VERDICT_UNPARSEABLE"
+  grep -q "PR_REVIEW_VERDICT_UNPARSEABLE" <<<"$result"
 }
 
 test_verdict_unparseable_two_lines() {
@@ -227,7 +227,7 @@ test_verdict_unparseable_two_lines() {
   local result
   result=$(cat "$log")
   rm -f "$log"
-  echo "$result" | grep -q "PR_REVIEW_VERDICT_UNPARSEABLE"
+  grep -q "PR_REVIEW_VERDICT_UNPARSEABLE" <<<"$result"
 }
 
 test_verdict_passes_with_trailing_text() {
@@ -248,7 +248,7 @@ test_verdict_wrong_emoji_fires() {
   local result
   result=$(cat "$log")
   rm -f "$log"
-  echo "$result" | grep -q "PR_REVIEW_VERDICT_UNPARSEABLE"
+  grep -q "PR_REVIEW_VERDICT_UNPARSEABLE" <<<"$result"
 }
 
 # ── dispatch ──────────────────────────────────────────────────────────────────

@@ -205,7 +205,7 @@ _dor_audit_never_demote SEMANTIC_STALE && _dor_audit_never_demote SEMANTIC_EDGE_
 _seed "DEM-4" '["TEST_DATA_UNSOURCED","VPLAN_ROW_GAP"]'
 err=$(DOR_AUDIT_DEMOTABLE_CODES="TEST_DATA_UNSOURCED VPLAN_ROW_GAP" \
   _apply "DEM-4" "$(_arr "$(_a TEST_DATA_UNSOURCED disputed "$TD_QUOTE")" "$(_a VPLAN_ROW_GAP disputed "$AC_QUOTE")")" 2>&1 >/dev/null)
-echo "$err" | grep -q 'DOR_AUDIT_DEMOTABLE_CODES' &&
+grep -q 'DOR_AUDIT_DEMOTABLE_CODES' <<<"$err" &&
   _pass "policy: an overridden demotable list warns on stderr" ||
   _fail "policy: override should warn (got '$err')"
 _ready "DEM-4" | jq -e '.lineage.policy.audit_demotable == ["TEST_DATA_UNSOURCED","VPLAN_ROW_GAP"]
@@ -220,7 +220,7 @@ DOUT=$(DOR_AUDIT_DEMOTABLE_CODES="TEST_DATA_UNSOURCED VPLAN_ROW_GAP" dor_audit_d
   _fail "TEST_DATA_UNSOURCED must stay blocking (rc=$DRC ready=$(_ready DEM-4 | jq -c '{missing, demoted}'))"
 
 err=$(_apply "DEM-1b" "$(_arr "$(_a VPLAN_ROW_GAP disputed "$VPLAN_QUOTE")")" 2>&1 >/dev/null)
-echo "$err" | grep -qi 'policy override' &&
+grep -qi 'policy override' <<<"$err" &&
   _fail "policy: the default demotable list must not warn (got $err)" ||
   _pass "policy: the default demotable list does not warn"
 _ready "DEM-1b" | jq -e '.lineage.policy.audit_demotable == ["VPLAN_ROW_GAP","VPLAN_UNVERIFIABLE","AC_VAGUE","AC_IMPLEMENTATION_ONLY","NAV_PATH_MISSING"]

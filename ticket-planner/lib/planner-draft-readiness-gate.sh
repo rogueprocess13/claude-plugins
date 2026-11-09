@@ -243,7 +243,7 @@ planner_draft_readiness_begin() {
   done <<<"$refresh"
   rm -f "${root}/.pending"
 
-  if ! printf '%s\n' "$refresh" | grep -q $'\terror$'; then
+  if ! grep -q $'\terror$' <<<"$refresh"; then
     combined=$(
       printf '%s\n' "$refresh" | awk -F'\t' 'NF {print $1 " " $2}'
       printf 'evaluator %s\n' "${DOR_SEMANTIC_EVALUATOR:-}"

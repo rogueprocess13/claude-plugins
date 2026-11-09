@@ -120,13 +120,13 @@ if [ "${1:-}" = "--self-test" ]; then
 
 ## Next Section'
   block=$(_extract_planner_context_block "$desc")
-  if echo "$block" | grep -q "INIT-42" 2>/dev/null; then
+  if grep -q "INIT-42" <<<"$block" 2>/dev/null; then
     echo "✓ block extraction includes Initiative"
   else
     echo "✗ block extraction missing Initiative"
   fi
 
-  if ! echo "$block" | grep -q "Next Section"; then
+  if ! grep -q "Next Section" <<<"$block"; then
     echo "✓ block extraction stops at next ## heading"
   else
     echo "✗ block extraction includes content past next ## heading"

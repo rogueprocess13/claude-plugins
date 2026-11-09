@@ -96,7 +96,7 @@ test_hb_write_accepts_skip_status() {
   local line
   line=$(cat "$tmpfile")
   rm -f "$tmpfile"
-  [ "$exit_code" -eq 0 ] && echo "$line" | grep -q '|decision|test-event|skip|'
+  [ "$exit_code" -eq 0 ] && grep -q '|decision|test-event|skip|' <<<"$line"
 }
 
 test_hb_write_rejects_camelCase_event() {
@@ -284,7 +284,7 @@ test_cl_write_retro_hint_format() {
   local line
   line=$(cat "$tmpfile")
   rm -f "$tmpfile"
-  echo "$line" | grep -qE '^\S+\|RETRO\|hint\|info\|test hint message$'
+  grep -qE '^\S+\|RETRO\|hint\|info\|test hint message$' <<<"$line"
 }
 
 test_cl_init_idempotent() {
@@ -528,7 +528,7 @@ test_hb_write_hb_category_diagnostic() {
   local stderr_str
   stderr_str=$(cat "$stderr_out")
   rm -rf "$tmpdir" "$stderr_out"
-  echo "$stderr_str" | grep -q "category 'HB' is not valid"
+  grep -q "category 'HB' is not valid" <<<"$stderr_str"
 }
 
 test_hb_validate_line_rejects_hb_category() {
@@ -540,7 +540,7 @@ test_hb_validate_line_rejects_hb_category() {
   local stderr_str
   stderr_str=$(cat "$stderr_out")
   rm -f "$stderr_out"
-  [ "$rc" -ne 0 ] && echo "$stderr_str" | grep -q "bad category 'HB'"
+  [ "$rc" -ne 0 ] && grep -q "bad category 'HB'" <<<"$stderr_str"
 }
 
 test_hb_write_bash_source_warns_outside_caller() {
@@ -568,7 +568,7 @@ CALLEREOF
   output=$("$test_script" "$LIB_DIR/heartbeat.sh" "$hb_log" 2>&1) || true
   rm -rf "$tmpdir"
   # Should succeed (sub-agent pattern) but may emit WARNING
-  echo "$output" | grep -q "WARNING" || true
+  grep -q "WARNING" <<<"$output" || true
   # The entry should still be written (non-rejecting)
   return 0
 }

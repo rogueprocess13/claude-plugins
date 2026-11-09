@@ -202,10 +202,10 @@ test_planned_ticket_passes_validator() {
 
   # Validator should pass (exit 0) — confidence 0.92, pre-approved, all required fields present
   # Note: field names are wrapped in **markdown bold** in the Planner Context block
-  if echo "$desc" | grep -q "Planner Context" &&
-    echo "$desc" | grep -q "Schema-Version" &&
-    echo "$desc" | grep -q "Confidence.*0\.92" &&
-    echo "$desc" | grep -q "Pre-approved.*true"; then
+  if grep -q "Planner Context" <<<"$desc" &&
+    grep -q "Schema-Version" <<<"$desc" &&
+    grep -q "Confidence.*0\.92" <<<"$desc" &&
+    grep -q "Pre-approved.*true" <<<"$desc"; then
     return 0
   fi
   return 1
@@ -221,11 +221,11 @@ test_schema_v2_fields_present() {
 
   # All Schema-Version 2 fields should be present
   # Note: field names wrapped in **markdown bold**
-  echo "$desc" | grep -q "Exploration Depth.*standard" || return 1
-  echo "$desc" | grep -q "Code Paths Traced" || return 1
-  echo "$desc" | grep -q "API Contracts Analyzed" || return 1
-  echo "$desc" | grep -q "Alternative Approaches" || return 1
-  echo "$desc" | grep -q "Open Questions" || return 1
+  grep -q "Exploration Depth.*standard" <<<"$desc" || return 1
+  grep -q "Code Paths Traced" <<<"$desc" || return 1
+  grep -q "API Contracts Analyzed" <<<"$desc" || return 1
+  grep -q "Alternative Approaches" <<<"$desc" || return 1
+  grep -q "Open Questions" <<<"$desc" || return 1
   return 0
 }
 _run "4.2b: Schema-Version 2 fields present in context block" test_schema_v2_fields_present
@@ -254,11 +254,11 @@ test_validator_accepts_planned_ticket() {
 
   # Fallback: manual validation
   local errors=0
-  echo "$desc" | grep -q "## Planner Context" || ((errors++))
-  echo "$desc" | grep -q "Schema-Version:" || ((errors++))
-  echo "$desc" | grep -q "Initiative:" || ((errors++))
-  echo "$desc" | grep -q "Epic:" || ((errors++))
-  echo "$desc" | grep -q "Confidence:" || ((errors++))
+  grep -q "## Planner Context" <<<"$desc" || ((errors++))
+  grep -q "Schema-Version:" <<<"$desc" || ((errors++))
+  grep -q "Initiative:" <<<"$desc" || ((errors++))
+  grep -q "Epic:" <<<"$desc" || ((errors++))
+  grep -q "Confidence:" <<<"$desc" || ((errors++))
   [ "$errors" -eq 0 ] || return 1
   return 0
 }
@@ -321,7 +321,7 @@ test_blocked_ticket_has_label() {
   setup_44
   local labels
   labels=$(echo "$MOCK_LABELS" | jq -r '.["TEST-4"][]' 2>/dev/null)
-  echo "$labels" | grep -q "blocked-by:TEST-3" || return 1
+  grep -q "blocked-by:TEST-3" <<<"$labels" || return 1
   return 0
 }
 _run "4.4: blocked ticket has blocked-by label" test_blocked_ticket_has_label
@@ -330,7 +330,7 @@ test_blocker_is_not_blocked() {
   setup_44
   local labels
   labels=$(echo "$MOCK_LABELS" | jq -r '.["TEST-3"][]' 2>/dev/null)
-  if echo "$labels" | grep -q "blocked-by"; then
+  if grep -q "blocked-by" <<<"$labels"; then
     return 1 # Blocker should not itself be blocked
   fi
   return 0
@@ -345,7 +345,7 @@ test_blocked_skipped_blocker_dispatched() {
   for tid in TEST-3 TEST-4; do
     local labels
     labels=$(echo "$MOCK_LABELS" | jq -r ".[\"$tid\"][]" 2>/dev/null)
-    if echo "$labels" | grep -q "blocked-by:"; then
+    if grep -q "blocked-by:" <<<"$labels"; then
       skipped+=("$tid")
     else
       dispatchable+=("$tid")
@@ -368,7 +368,7 @@ test_unblocked_when_blocker_resolved() {
   # Now TEST-4 should be dispatchable
   local labels
   labels=$(echo "$MOCK_LABELS" | jq -r '.["TEST-4"][]' 2>/dev/null)
-  if echo "$labels" | grep -q "blocked-by:"; then
+  if grep -q "blocked-by:" <<<"$labels"; then
     return 1 # Should no longer be blocked
   fi
   return 0
@@ -451,7 +451,7 @@ test_unplanned_no_planner_context() {
   setup_46
   local desc
   desc=$(echo "$MOCK_ISSUES" | jq -r '.["TEST-U1"].description')
-  if echo "$desc" | grep -q "Planner Context"; then
+  if grep -q "Planner Context" <<<"$desc"; then
     return 1 # Unplanned tickets should NOT have Planner Context
   fi
   return 0
@@ -462,7 +462,7 @@ test_unplanned_no_planned_label() {
   setup_46
   local labels
   labels=$(echo "$MOCK_LABELS" | jq -r '.["TEST-U1"][]' 2>/dev/null)
-  if echo "$labels" | grep -q "planned"; then
+  if grep -q "planned" <<<"$labels"; then
     return 1 # Unplanned tickets should NOT have planned label
   fi
   return 0
@@ -475,7 +475,7 @@ test_unplanned_standard_pipeline() {
   labels=$(echo "$MOCK_LABELS" | jq -r '.["TEST-U1"][]' 2>/dev/null)
 
   # Unplanned ticket should still have valid labels for standard pipeline
-  echo "$labels" | grep -q "bug" || return 1
+  grep -q "bug" <<<"$labels" || return 1
   return 0
 }
 _run "4.6c: unplanned ticket follows standard pipeline path" test_unplanned_standard_pipeline

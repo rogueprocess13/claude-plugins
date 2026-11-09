@@ -55,7 +55,7 @@ done
 # Table structure: heading, blank line, column header line, separator line
 topic_header=$(grep -A2 '## Lookup by Topic' "$GOLDEN" | tail -1 || true)
 for col in "${EXPECTED_TOPIC_COLS[@]}"; do
-  if echo "$topic_header" | grep -q "$col"; then
+  if grep -q "$col" <<<"$topic_header"; then
     _pass "Lookup by Topic column: $col"
   else
     _fail "Lookup by Topic missing column: $col (got: $topic_header)"
@@ -65,7 +65,7 @@ done
 # Test 4: Golden fixture has correct table column headers (Lookup by Service)
 svc_header=$(grep -A2 '## Lookup by Service' "$GOLDEN" | tail -1 || true)
 for col in "${EXPECTED_SERVICE_COLS[@]}"; do
-  if echo "$svc_header" | grep -q "$col"; then
+  if grep -q "$col" <<<"$svc_header"; then
     _pass "Lookup by Service column: $col"
   else
     _fail "Lookup by Service missing column: $col (got: $svc_header)"
@@ -95,7 +95,7 @@ if [ -f "$LIB_DIR/prescan-docs.sh" ]; then
     # Verify column headers in generated output (heading, blank line, column header)
     gen_topic=$(grep -A2 '## Lookup by Topic' "$generated_index" | tail -1 || true)
     for col in "${EXPECTED_TOPIC_COLS[@]}"; do
-      if echo "$gen_topic" | grep -q "$col"; then
+      if grep -q "$col" <<<"$gen_topic"; then
         _pass "prescan-docs.sh Lookup by Topic column: $col"
       else
         _fail "prescan-docs.sh Lookup by Topic missing column: $col (got: $gen_topic)"
@@ -104,7 +104,7 @@ if [ -f "$LIB_DIR/prescan-docs.sh" ]; then
 
     gen_svc=$(grep -A2 '## Lookup by Service' "$generated_index" | tail -1 || true)
     for col in "${EXPECTED_SERVICE_COLS[@]}"; do
-      if echo "$gen_svc" | grep -q "$col"; then
+      if grep -q "$col" <<<"$gen_svc"; then
         _pass "prescan-docs.sh Lookup by Service column: $col"
       else
         _fail "prescan-docs.sh Lookup by Service missing column: $col (got: $gen_svc)"

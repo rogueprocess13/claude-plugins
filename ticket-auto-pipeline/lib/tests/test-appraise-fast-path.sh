@@ -457,25 +457,25 @@ test_fast_path_conservative_migration_escalates() {
   local notes
   notes=$(_fast_path_notes_for "$(_build_neutral_description "Conservative" \
     "Add a nullable archived_at column: ALTER TABLE report ADD COLUMN archived_at.")") || return 1
-  echo "$notes" | grep -q '^\*\*Score:\*\* complex$' &&
-    echo "$notes" | grep -q '^\*\*Weighted score:\*\* 3 (threshold 3)$' &&
-    echo "$notes" | grep -q '^\*\*Axes fired:\*\* reversibility:3 (fast-path keyword — schema-migration: ' &&
-    echo "$notes" | grep -q 'Escalated to complex: Reversibility fired'
+  grep -q '^\*\*Score:\*\* complex$' <<<"$notes" &&
+    grep -q '^\*\*Weighted score:\*\* 3 (threshold 3)$' <<<"$notes" &&
+    grep -q '^\*\*Axes fired:\*\* reversibility:3 (fast-path keyword — schema-migration: ' <<<"$notes" &&
+    grep -q 'Escalated to complex: Reversibility fired' <<<"$notes"
 }
 
 test_fast_path_conservative_no_trigger_stays_simple() {
   local notes
   notes=$(_fast_path_notes_for "$(_build_neutral_description "Conservative")") || return 1
-  echo "$notes" | grep -q '^\*\*Score:\*\* simple$' &&
-    echo "$notes" | grep -q '^\*\*Weighted score:\*\* n/a (fast-path' &&
-    echo "$notes" | grep -q 'reversibility keyword scan: no match'
+  grep -q '^\*\*Score:\*\* simple$' <<<"$notes" &&
+    grep -q '^\*\*Weighted score:\*\* n/a (fast-path' <<<"$notes" &&
+    grep -q 'reversibility keyword scan: no match' <<<"$notes"
 }
 
 test_fast_path_innovative_no_trigger_stays_complex() {
   local notes
   notes=$(_fast_path_notes_for "$(_build_neutral_description "Innovative")") || return 1
-  echo "$notes" | grep -q '^\*\*Score:\*\* complex$' &&
-    echo "$notes" | grep -q 'reversibility keyword scan: no match'
+  grep -q '^\*\*Score:\*\* complex$' <<<"$notes" &&
+    grep -q 'reversibility keyword scan: no match' <<<"$notes"
 }
 
 test_fast_path_unknown_strategy_stays_complex() {
@@ -494,7 +494,7 @@ test_fast_path_unknown_strategy_stays_complex() {
 test_fast_path_payment_fixture_escalates() {
   local notes
   notes=$(_fast_path_notes_for "$(_build_ticket_description "0.92" "true" "Conservative" "false")") || return 1
-  echo "$notes" | grep -q '^\*\*Axes fired:\*\* reversibility:3 (fast-path keyword — payment-path: '
+  grep -q '^\*\*Axes fired:\*\* reversibility:3 (fast-path keyword — payment-path: ' <<<"$notes"
 }
 
 test_reversibility_trigger_positives() {

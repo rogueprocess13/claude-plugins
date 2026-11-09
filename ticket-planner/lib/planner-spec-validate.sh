@@ -43,7 +43,7 @@ planner_spec_validate_one() {
 
   # 1. Check required sections
   for section in "${PLANNER_SPEC_REQUIRED_SECTIONS[@]}"; do
-    if ! echo "$content" | grep -qF "$section" 2>/dev/null; then
+    if ! grep -qF "$section" <<<"$content" 2>/dev/null; then
       echo "planner-spec-validate: $spec_file — missing section: $section" >&2
       failures=$((failures + 1))
     fi

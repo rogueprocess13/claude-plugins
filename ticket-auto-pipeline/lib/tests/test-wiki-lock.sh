@@ -67,7 +67,7 @@ test_acquire_fresh() {
   local ok=1
   _lock acquire --wiki-root "$_wiki" --ticket T-1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '^WIKI_LOCK_STATUS=acquired$' || ok=0
+  grep -q '^WIKI_LOCK_STATUS=acquired$' <<<"$_OUT" || ok=0
   grep -q '^T-1 [0-9]*$' "$_wiki/.git/wiki-maintenance.lock.d/owner" || ok=0
   _teardown
   [ "$ok" = 1 ]
@@ -79,7 +79,7 @@ test_second_ticket_waits_and_logs_once() {
   _lock acquire --wiki-root "$_wiki" --ticket T-1
   WIKI_LOCK_WAIT_SECS=0 _lock acquire --wiki-root "$_wiki" --ticket T-2 --log-file "$_log"
   [ "$_RC" -eq 3 ] || ok=0
-  echo "$_OUT" | grep -q '^WIKI_LOCK_HOLDER=T-1$' || ok=0
+  grep -q '^WIKI_LOCK_HOLDER=T-1$' <<<"$_OUT" || ok=0
   WIKI_LOCK_WAIT_SECS=0 _lock acquire --wiki-root "$_wiki" --ticket T-2 --log-file "$_log"
   [ "$_RC" -eq 3 ] || ok=0
   [ "$(grep -c 'META|wiki-contention|warn|' "$_log")" -eq 1 ] || ok=0
@@ -121,7 +121,7 @@ test_same_ticket_reacquires() {
   _lock acquire --wiki-root "$_wiki" --ticket T-1
   _lock acquire --wiki-root "$_wiki" --ticket T-1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '^WIKI_LOCK_STATUS=reacquired$' || ok=0
+  grep -q '^WIKI_LOCK_STATUS=reacquired$' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = 1 ]
 }
@@ -133,7 +133,7 @@ test_stale_lock_broken() {
   echo "T-DEAD 1000" >"$_wiki/.git/wiki-maintenance.lock.d/owner"
   _lock acquire --wiki-root "$_wiki" --ticket T-2 --log-file "$_log"
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '^WIKI_LOCK_PREVIOUS_HOLDER=T-DEAD$' || ok=0
+  grep -q '^WIKI_LOCK_PREVIOUS_HOLDER=T-DEAD$' <<<"$_OUT" || ok=0
   grep -q 'META|wiki-lock|warn|broke stale WIKI_ROOT lock held by T-DEAD' "$_log" || ok=0
   grep -q '^T-2 ' "$_wiki/.git/wiki-maintenance.lock.d/owner" || ok=0
   _teardown
@@ -152,7 +152,7 @@ test_release_is_identity_safe() {
   [ ! -d "$_wiki/.git/wiki-maintenance.lock.d" ] || ok=0
   _lock release --wiki-root "$_wiki" --ticket T-1
   [ "$_RC" -eq 0 ] || ok=0
-  echo "$_OUT" | grep -q '^WIKI_LOCK_STATUS=not-held$' || ok=0
+  grep -q '^WIKI_LOCK_STATUS=not-held$' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = 1 ]
 }
@@ -245,7 +245,7 @@ test_nongit_symlinked_base_refused() {
   ln -s "$_ws/elsewhere" "$_ws/xdg/ticket-auto/wiki-lock"
   XDG_RUNTIME_DIR="$_ws/xdg" _lock acquire --wiki-root "$plain" --ticket T-1
   [ "$_RC" -eq 7 ] || ok=0
-  echo "$_OUT" | grep -q 'symlink' || ok=0
+  grep -q 'symlink' <<<"$_OUT" || ok=0
   [ -z "$(ls -A "$_ws/elsewhere")" ] || ok=0
   _teardown
   [ "$ok" = 1 ]
@@ -260,7 +260,7 @@ test_nongit_foreign_owned_base_refused() {
   mkdir -p "$plain"
   WIKI_LOCK_BASE_DIR=/ _lock acquire --wiki-root "$plain" --ticket T-1
   [ "$_RC" -eq 7 ] || ok=0
-  echo "$_OUT" | grep -q 'not owned' || ok=0
+  grep -q 'not owned' <<<"$_OUT" || ok=0
   _teardown
   [ "$ok" = 1 ]
 }

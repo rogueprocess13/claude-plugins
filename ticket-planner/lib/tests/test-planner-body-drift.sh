@@ -210,11 +210,11 @@ else
   fail "dor-check.sh --waive refuses BODY_DRIFT" "ready=$(_ready "PRO-511")"
 fi
 report=$(planner_refinement_report "$C_INIT")
-if echo "$report" | grep -qF "PRO-511 body drift (conflict)" &&
-  echo "$report" | grep -qF "/ticket-planner resume ${C_INIT} --refresh-bodies" &&
-  echo "$report" | grep -qF "PRO-512 body drift (local-ahead)" &&
+if grep -qF "PRO-511 body drift (conflict)" <<<"$report" &&
+  grep -qF "/ticket-planner resume ${C_INIT} --refresh-bodies" <<<"$report" &&
+  grep -qF "PRO-512 body drift (local-ahead)" <<<"$report" &&
   echo "$report" | grep -A2 -F "PRO-512 body drift (local-ahead)" | grep -qi "copy the local edit into Linear first" &&
-  ! echo "$report" | grep -q -- "--waive PRO-51[12] BODY_DRIFT"; then
+  ! grep -q -- "--waive PRO-51[12] BODY_DRIFT" <<<"$report"; then
   pass "report: names --refresh-bodies for conflict and local-ahead, never a waive"
 else
   fail "report: names --refresh-bodies for conflict and local-ahead, never a waive" "$report"
@@ -315,7 +315,7 @@ else
   fail "dor-check.sh --waive refuses BODY_UNVERIFIED" "waived"
 fi
 report=$(planner_refinement_report "$F_INIT")
-if echo "$report" | grep -qF "PRO-531 body unverified" && echo "$report" | grep -qF -- "--refresh-bodies"; then
+if grep -qF "PRO-531 body unverified" <<<"$report" && grep -qF -- "--refresh-bodies" <<<"$report"; then
   pass "report: BODY_UNVERIFIED names the refresh"
 else
   fail "report: BODY_UNVERIFIED names the refresh" "$report"

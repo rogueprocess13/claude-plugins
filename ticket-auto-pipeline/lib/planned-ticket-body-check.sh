@@ -428,7 +428,7 @@ At least one active handover.'
 | FE    | gateway | page |'
 
   check_planned_body "TEST-2" "feature" "$feat_body" "true"
-  if [ "$BODY_CHECK_EXIT_CODE" != "0" ] && echo "$BODY_CHECK_MISSING" | grep -q "Navigation Path"; then
+  if [ "$BODY_CHECK_EXIT_CODE" != "0" ] && grep -q "Navigation Path" <<<"$BODY_CHECK_MISSING"; then
     echo "✓ feature missing Nav Path fails with correct identifier"
   else
     echo "✗ feature missing Nav Path: exit=$BODY_CHECK_EXIT_CODE missing=$BODY_CHECK_MISSING"

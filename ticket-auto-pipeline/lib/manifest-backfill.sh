@@ -121,7 +121,7 @@ for log_file in "$LOG_DIR"/*-pipeline.log; do
   live_labels=$(echo "$issue_json" | jq -r '[.labels.nodes[]?.name? // empty] | .[]' 2>/dev/null)
   live_type=""
   for _t in "${_BACKFILL_KNOWN_TYPES[@]}"; do
-    if echo "$live_labels" | grep -qx "$_t"; then
+    if grep -qx "$_t" <<<"$live_labels"; then
       live_type="$_t"
       break
     fi

@@ -159,7 +159,7 @@ pr_evidence_backfill() {
   [ -f "$log" ] && [ -n "$tid" ] || return 0
 
   # 1. Never beside an existing record of this run (real or backfilled).
-  _pe_window "$log" | grep -q '|META|pr-created|info|' && return 0
+  grep -q '|META|pr-created|info|' < <(_pe_window "$log") && return 0
 
   # 2. Candidates.
   local urls checkout nums

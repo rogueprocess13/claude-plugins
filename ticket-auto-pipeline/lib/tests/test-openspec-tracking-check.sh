@@ -60,7 +60,7 @@ test_commit_force_adds_gitignored_dir() {
   local tracked
   tracked=$(git -C "$_ws" ls-files -- openspec/changes/wil-1--fix-thing/ | wc -l | tr -d ' ')
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_COMMIT_STATUS=committed' && [ "$tracked" -eq 1 ]
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_COMMIT_STATUS=committed' <<<"$out" && [ "$tracked" -eq 1 ]
 }
 
 test_commit_is_idempotent_noop_on_rerun() {
@@ -71,7 +71,7 @@ test_commit_is_idempotent_noop_on_rerun() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" commit "openspec/changes/wil-2--fix-thing/" WIL-2) || rc=$?
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_COMMIT_STATUS=noop'
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_COMMIT_STATUS=noop' <<<"$out"
 }
 
 test_commit_picks_up_regenerated_content() {
@@ -85,7 +85,7 @@ test_commit_picks_up_regenerated_content() {
   local log_count
   log_count=$(git -C "$_ws" log --oneline -- openspec/changes/wil-3--fix-thing/ | wc -l | tr -d ' ')
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_COMMIT_STATUS=committed' && [ "$log_count" -eq 2 ]
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_COMMIT_STATUS=committed' <<<"$out" && [ "$log_count" -eq 2 ]
 }
 
 test_commit_errors_on_missing_dir() {
@@ -116,7 +116,7 @@ test_assert_reports_gitignored_before_commit() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" assert WIL-6) || rc=$?
   _teardown
-  [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=gitignored'
+  [ "$rc" -eq 1 ] && grep -q 'OPENSPEC_TRACK_STATUS=gitignored' <<<"$out"
 }
 
 test_assert_reports_tracked_after_commit() {
@@ -127,7 +127,7 @@ test_assert_reports_tracked_after_commit() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" assert WIL-7) || rc=$?
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=tracked'
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_TRACK_STATUS=tracked' <<<"$out"
 }
 
 test_assert_no_change_dir_without_expect_is_not_applicable() {
@@ -135,7 +135,7 @@ test_assert_no_change_dir_without_expect_is_not_applicable() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" assert WIL-8) || rc=$?
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=not-applicable'
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_TRACK_STATUS=not-applicable' <<<"$out"
 }
 
 test_assert_no_change_dir_with_expect_is_missing() {
@@ -143,7 +143,7 @@ test_assert_no_change_dir_with_expect_is_missing() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" assert WIL-9 --expect) || rc=$?
   _teardown
-  [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=missing'
+  [ "$rc" -eq 1 ] && grep -q 'OPENSPEC_TRACK_STATUS=missing' <<<"$out"
 }
 
 test_assert_untracked_but_not_ignored() {
@@ -152,7 +152,7 @@ test_assert_untracked_but_not_ignored() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" assert WIL-10) || rc=$?
   _teardown
-  [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=untracked'
+  [ "$rc" -eq 1 ] && grep -q 'OPENSPEC_TRACK_STATUS=untracked' <<<"$out"
 }
 
 test_assert_partial_when_some_files_committed_some_not() {
@@ -164,7 +164,7 @@ test_assert_partial_when_some_files_committed_some_not() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" assert WIL-11) || rc=$?
   _teardown
-  [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=partial'
+  [ "$rc" -eq 1 ] && grep -q 'OPENSPEC_TRACK_STATUS=partial' <<<"$out"
 }
 
 test_assert_reports_partial_for_uncommitted_modification_to_tracked_file() {
@@ -177,8 +177,8 @@ test_assert_reports_partial_for_uncommitted_modification_to_tracked_file() {
   out=$(cd "$_ws" && bash "$CHECK" assert WIL-17) || rc=$?
   _teardown
   [ "$rc" -eq 1 ] &&
-    echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=partial' &&
-    ! echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=tracked'
+    grep -q 'OPENSPEC_TRACK_STATUS=partial' <<<"$out" &&
+    ! grep -q 'OPENSPEC_TRACK_STATUS=tracked' <<<"$out"
 }
 
 test_assert_reports_partial_for_staged_but_uncommitted_modification() {
@@ -191,7 +191,7 @@ test_assert_reports_partial_for_staged_but_uncommitted_modification() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" assert WIL-18) || rc=$?
   _teardown
-  [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=partial'
+  [ "$rc" -eq 1 ] && grep -q 'OPENSPEC_TRACK_STATUS=partial' <<<"$out"
 }
 
 test_assert_root_flag_resolves_correctly_from_arbitrary_cwd() {
@@ -204,7 +204,7 @@ test_assert_root_flag_resolves_correctly_from_arbitrary_cwd() {
   # the only thing that matters, never ambient pwd.
   out=$(cd /tmp && bash "$CHECK" assert WIL-19 --root "$_ws") || rc=$?
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=tracked'
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_TRACK_STATUS=tracked' <<<"$out"
 }
 
 test_assert_root_flag_with_untracked_change_from_arbitrary_cwd() {
@@ -214,7 +214,7 @@ test_assert_root_flag_with_untracked_change_from_arbitrary_cwd() {
   local out rc=0
   out=$(cd /tmp && bash "$CHECK" assert WIL-20 --root "$_ws") || rc=$?
   _teardown
-  [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=gitignored'
+  [ "$rc" -eq 1 ] && grep -q 'OPENSPEC_TRACK_STATUS=gitignored' <<<"$out"
 }
 
 test_commit_refuses_path_outside_openspec_changes() {
@@ -280,7 +280,7 @@ test_commit_accepts_absolute_change_dir_from_assert_root() {
   local tracked
   tracked=$(git -C "$_ws" ls-files -- openspec/changes/wil-24--fix-thing/ | wc -l | tr -d ' ')
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_COMMIT_STATUS=committed' && [ "$tracked" -eq 1 ]
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_COMMIT_STATUS=committed' <<<"$out" && [ "$tracked" -eq 1 ]
 }
 
 test_assert_is_case_insensitive_on_ticket_id() {
@@ -291,7 +291,7 @@ test_assert_is_case_insensitive_on_ticket_id() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" assert wil-12) || rc=$?
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=tracked'
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_TRACK_STATUS=tracked' <<<"$out"
 }
 
 # ── audit ─────────────────────────────────────────────────────────────────
@@ -304,7 +304,7 @@ test_audit_reports_all_clean() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" audit) || rc=$?
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_SUMMARY|total=1|issues=0'
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_TRACK_SUMMARY|total=1|issues=0' <<<"$out"
 }
 
 test_audit_detects_existing_untracked_changes() {
@@ -318,9 +318,9 @@ test_audit_detects_existing_untracked_changes() {
   out=$(cd "$_ws" && bash "$CHECK" audit) || rc=$?
   _teardown
   [ "$rc" -eq 1 ] &&
-    echo "$out" | grep -q 'wil-14--fix-thing.*gitignored' &&
-    echo "$out" | grep -q 'wil-15--fix-thing.*tracked' &&
-    echo "$out" | grep -q 'OPENSPEC_TRACK_SUMMARY|total=2|issues=1'
+    grep -q 'wil-14--fix-thing.*gitignored' <<<"$out" &&
+    grep -q 'wil-15--fix-thing.*tracked' <<<"$out" &&
+    grep -q 'OPENSPEC_TRACK_SUMMARY|total=2|issues=1' <<<"$out"
 }
 
 test_audit_with_explicit_root() {
@@ -331,7 +331,7 @@ test_audit_with_explicit_root() {
   local out rc=0
   out=$(bash "$CHECK" audit --root "$_ws") || rc=$?
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_SUMMARY|total=1|issues=0'
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_TRACK_SUMMARY|total=1|issues=0' <<<"$out"
 }
 
 test_audit_no_changes_is_clean() {
@@ -339,7 +339,7 @@ test_audit_no_changes_is_clean() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" audit) || rc=$?
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_SUMMARY|total=0|issues=0'
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_TRACK_SUMMARY|total=0|issues=0' <<<"$out"
 }
 
 # DET-IP-2: TEST-7 must not resolve to another ticket's test-77-* change dir.
@@ -350,8 +350,8 @@ test_assert_whole_id_does_not_match_longer_id() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" assert TEST-7) || rc=$?
   _teardown
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=not-applicable' &&
-    ! echo "$out" | grep -q 'test-77'
+  [ "$rc" -eq 0 ] && grep -q 'OPENSPEC_TRACK_STATUS=not-applicable' <<<"$out" &&
+    ! grep -q 'test-77' <<<"$out"
 }
 
 test_assert_whole_id_picks_own_dir_beside_longer_id() {
@@ -362,7 +362,7 @@ test_assert_whole_id_picks_own_dir_beside_longer_id() {
   local out rc=0
   out=$(cd "$_ws" && bash "$CHECK" assert TEST-7) || rc=$?
   _teardown
-  echo "$out" | grep -q '^CHANGE_DIR=openspec/changes/test-7-mine/$'
+  grep -q '^CHANGE_DIR=openspec/changes/test-7-mine/$' <<<"$out"
 }
 
 test_assert_two_change_dirs_is_ambiguous() {
@@ -377,7 +377,7 @@ test_assert_two_change_dirs_is_ambiguous() {
   grep -q 'wil-30-a' "$err" && grep -q 'wil-30-b' "$err" && both=1
   rm -f "$err"
   _teardown
-  [ "$rc" -eq 1 ] && echo "$out" | grep -q 'OPENSPEC_TRACK_STATUS=ambiguous' && [ "$both" -eq 1 ]
+  [ "$rc" -eq 1 ] && grep -q 'OPENSPEC_TRACK_STATUS=ambiguous' <<<"$out" && [ "$both" -eq 1 ]
 }
 
 test_usage_exits_2_with_no_args() {

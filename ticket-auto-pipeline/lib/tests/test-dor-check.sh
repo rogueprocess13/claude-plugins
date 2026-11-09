@@ -308,7 +308,7 @@ write_ticket_manifest "WAIVE-1" "INIT-1" "feature" '[]'
 set_ticket_readiness "WAIVE-1" "not-ready" '["AC_VAGUE"]' '[]'
 
 waive_out=$(bash "$LIB_DIR/dor-check.sh" --waive "WAIVE-1" "AC_VAGUE" "reviewed, wording is fine" --by tester)
-echo "$waive_out" | grep -q "status now ready" &&
+grep -q "status now ready" <<<"$waive_out" &&
   _pass "--waive CLI: last hard code waived flips status to ready" ||
   _fail "--waive CLI should report status now ready (got: $waive_out)"
 
@@ -322,7 +322,7 @@ write_ticket_manifest "WAIVE-2" "INIT-1" "feature" '[]'
 set_ticket_readiness "WAIVE-2" "ready" '[]' '[]'
 waive_out2=$(bash "$LIB_DIR/dor-check.sh" --waive "WAIVE-2" "AC_VAGUE" "n/a" 2>&1)
 rc2=$?
-[ "$rc2" = "0" ] && echo "$waive_out2" | grep -q "status now ready" &&
+[ "$rc2" = "0" ] && grep -q "status now ready" <<<"$waive_out2" &&
   _pass "--waive CLI: no-op on an already-ready ticket still succeeds" ||
   _fail "--waive CLI should succeed as a no-op on a ready ticket (rc=$rc2 out=$waive_out2)"
 
@@ -1017,8 +1017,8 @@ td_items_body='## Test Data Prerequisites
 '
 td_items=$(_dor_td_items "$td_items_body")
 td_count=$(printf '%s\n' "$td_items" | grep -c . || true)
-[ "$td_count" = "3" ] && printf '%s' "$td_items" | grep -q $'^vplan#1\037five invoices (Source: external:finance)$' &&
-  ! printf '%s' "$td_items" | grep -q "not an item" &&
+[ "$td_count" = "3" ] && grep -q $'^vplan#1\037five invoices (Source: external:finance)$' <<<"$td_items" &&
+  ! grep -q "not an item" <<<"$td_items" &&
   _pass "_dor_td_items: list items + Verification Plan cell, fenced code and blank cells skipped" ||
   _fail "_dor_td_items should yield 3 items (got: $(printf '%s' "$td_items" | tr '\037' '='))"
 
@@ -1030,8 +1030,8 @@ td_table_body='## Test Data Prerequisites
 | A client | generate |
 '
 td_items=$(_dor_td_items "$td_table_body")
-printf '%s' "$td_items" | grep -q $'^tdp#1\037Five invoices Source: seeded-by:inv-pack$' &&
-  printf '%s' "$td_items" | grep -q $'^tdp#2\037A client Source: generate$' &&
+grep -q $'^tdp#1\037Five invoices Source: seeded-by:inv-pack$' <<<"$td_items" &&
+  grep -q $'^tdp#2\037A client Source: generate$' <<<"$td_items" &&
   _pass "_dor_td_items: a Test Data table with a Source column reads that column as the Source" ||
   _fail "_dor_td_items table form (got: $(printf '%s' "$td_items" | tr '\037' '='))"
 
@@ -1182,7 +1182,7 @@ td_items=$(_dor_td_items '## Test Data Prerequisites
 
 Trailing prose after a blank line.
 - Second. Source: exists:x')
-[ "$(printf '%s\n' "$td_items" | grep -c .)" = "2" ] && ! printf '%s' "$td_items" | grep -q "Trailing prose" &&
+[ "$(printf '%s\n' "$td_items" | grep -c .)" = "2" ] && ! grep -q "Trailing prose" <<<"$td_items" &&
   _pass "_dor_td_items: prose after a blank line ends the item and is not an item itself" ||
   _fail "_dor_td_items blank-line boundary (got: $(printf '%s' "$td_items" | tr '\037' '='))"
 
@@ -1258,8 +1258,8 @@ td_items=$(_dor_td_items '## Verification Plan
 | 1 | One | five invoices | seeded-by:inv-pack | ✓ |
 | 2 | Two | a client | | ✓ |
 ')
-printf '%s' "$td_items" | grep -q $'^vplan#1\037five invoices Source: seeded-by:inv-pack$' &&
-  printf '%s' "$td_items" | grep -q $'^vplan#2\037a client$' &&
+grep -q $'^vplan#1\037five invoices Source: seeded-by:inv-pack$' <<<"$td_items" &&
+  grep -q $'^vplan#2\037a client$' <<<"$td_items" &&
   _pass "_dor_td_items: a Verification Plan Source column is read as the Source" ||
   _fail "_dor_td_items VP Source column (got: $(printf '%s' "$td_items" | tr '\037' '='))"
 
@@ -1341,7 +1341,7 @@ td_items=$(_dor_td_items '## Test Data Prerequisites
     - 1,000 rows
   - an invalid file. Source: generate')
 [ "$(printf '%s\n' "$td_items" | grep -c .)" = "2" ] &&
-  printf '%s' "$td_items" | grep -q $'^tdp#1\037a valid file. Source: seeded-by:pack 1,000 rows$' &&
+  grep -q $'^tdp#1\037a valid file. Source: seeded-by:pack 1,000 rows$' <<<"$td_items" &&
   _pass "_dor_td_items: a Source-less grandchild joins the sourced child above it" ||
   _fail "_dor_td_items grandchild (got: $(printf '%s' "$td_items" | tr '\037' '='))"
 
@@ -1621,6 +1621,37 @@ done
 [ "$_big_ok" = "0" ] &&
   _pass "dor-check: >64KB inputs still match under pipefail (no SIGPIPE false miss)" ||
   _fail "dor-check: >64KB inputs reported a false miss under pipefail"
+
+# GitHub #640: the same race in audit_test_data_check (sourced by dor-check),
+# which matched each assumption pattern with `echo "$lower_text" | grep -qE`
+# over the whole ticket text.
+_big_ok=0
+for _i in 1 2 3 4 5; do
+  (
+    set -o pipefail
+    audit_test_data_check $'Open an existing handover and save it.\n'"${_big_pad}" >/dev/null
+    [ "$NEEDS_TEST_DATA" = "true" ]
+  ) || _big_ok=1
+done
+[ "$_big_ok" = "0" ] &&
+  _pass "audit_test_data_check: >64KB ticket text with an early assumption matches under pipefail" ||
+  _fail "audit_test_data_check: >64KB ticket text reported no assumption under pipefail"
+
+# GitHub #640: the constraints dimension's numeric-bound check runs per AC
+# line; a large body with an early bounded AC must still score it.
+_big_body=$'## Summary\nFast saves.\n\n## Acceptance Criteria\n- [ ] Save completes within 200 ms\n\n## Notes\n'"${_big_pad}"$'\n'
+_write_body "$TMP_ROOT/big-body.md" "$_big_body"
+_big_ok=0
+for _i in 1 2 3; do
+  (
+    set -o pipefail
+    check_ticket_ready "BIG-1" --body "$TMP_ROOT/big-body.md" --type chore --no-fetch >/dev/null 2>&1 || true
+    jq -e '.constraints == 5' <<<"$DOR_DIMENSIONS" >/dev/null
+  ) || _big_ok=1
+done
+[ "$_big_ok" = "0" ] &&
+  _pass "dor-check: >64KB body still scores an early numeric-bound AC under pipefail" ||
+  _fail "dor-check: >64KB body lost the numeric-bound AC under pipefail"
 
 echo "---"
 echo "$PASS passed, $FAIL failed"

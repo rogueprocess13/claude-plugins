@@ -209,7 +209,7 @@ test_integrity_fail_missing_doc_is_stale() {
   echo "# Security" >"$docs_dir/security-surfaces.md"
   echo "# Svc" >"$docs_dir/services/test-service.md"
   _run_check "$_repo"
-  [ "$PRESCAN_STATUS" = "stale" ] && echo "$PRESCAN_REASON" | grep -q "integrity_fail"
+  [ "$PRESCAN_STATUS" = "stale" ] && grep -q "integrity_fail" <<<"$PRESCAN_REASON"
   local rc=$?
   _teardown
   return $rc
@@ -229,7 +229,7 @@ test_integrity_fail_empty_doc_is_stale() {
   echo "# Security" >"$docs_dir/security-surfaces.md"
   echo "# Svc" >"$docs_dir/services/test-service.md"
   _run_check "$_repo"
-  [ "$PRESCAN_STATUS" = "stale" ] && echo "$PRESCAN_REASON" | grep -q "integrity_fail:overview.md"
+  [ "$PRESCAN_STATUS" = "stale" ] && grep -q "integrity_fail:overview.md" <<<"$PRESCAN_REASON"
   local rc=$?
   _teardown
   return $rc
@@ -439,7 +439,7 @@ test_integrity_services_empty() {
   echo "# Security" >"$docs_dir/security-surfaces.md"
   # services/ dir intentionally not created
   _run_check "$_repo"
-  [ "$PRESCAN_STATUS" = "stale" ] && echo "$PRESCAN_REASON" | grep -q "services/"
+  [ "$PRESCAN_STATUS" = "stale" ] && grep -q "services/" <<<"$PRESCAN_REASON"
   local rc=$?
   _teardown
   return $rc
@@ -458,7 +458,7 @@ test_integrity_services_no_md_files() {
   echo "# Security" >"$docs_dir/security-surfaces.md"
   # services/ exists but has NO .md files
   _run_check "$_repo"
-  [ "$PRESCAN_STATUS" = "stale" ] && echo "$PRESCAN_REASON" | grep -q "services/"
+  [ "$PRESCAN_STATUS" = "stale" ] && grep -q "services/" <<<"$PRESCAN_REASON"
   local rc=$?
   _teardown
   return $rc

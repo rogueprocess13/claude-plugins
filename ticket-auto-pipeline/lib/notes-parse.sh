@@ -376,7 +376,7 @@ get_critique_has_finding() {
   # disposition, not a live finding: the critique is documenting that the
   # check doesn't apply to this ticket, not flagging a gap. Only count
   # matches that aren't qualified N/A on the same line.
-  tail -n "+$start_line" "$notes" 2>/dev/null | sed -n '1,/^## /p' | grep "$pattern" 2>/dev/null | grep -qvi 'N/A'
+  grep -qvi 'N/A' < <(tail -n "+$start_line" "$notes" 2>/dev/null | sed -n '1,/^## /p' | grep "$pattern" 2>/dev/null)
 }
 
 # get_test_users_by_role <role> [catalog_path]

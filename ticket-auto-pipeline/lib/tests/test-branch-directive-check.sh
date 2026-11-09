@@ -171,11 +171,11 @@ _run_exit_code "valid block exits 0" 0 \
 test_valid_parsed_values() {
   local output
   output=$(check_branch_directive_description "$VALID_BLOCK_DESC" 2>/dev/null) || return 1
-  echo "$output" | grep -q "BRANCH_DIRECTIVE_BRANCH='epic/debt-collection-v2'" || return 1
-  echo "$output" | grep -q "BRANCH_DIRECTIVE_BASE='develop'" || return 1
-  echo "$output" | grep -q "BRANCH_DIRECTIVE_MERGE_POLICY='manual'" || return 1
-  echo "$output" | grep -q "BRANCH_DIRECTIVE_SYNC_POLICY='rebase-on-base-change'" || return 1
-  echo "$output" | grep -q "BRANCH_DIRECTIVE_CREATED='2026-07-25T10:00:00Z'" || return 1
+  grep -q "BRANCH_DIRECTIVE_BRANCH='epic/debt-collection-v2'" <<<"$output" || return 1
+  grep -q "BRANCH_DIRECTIVE_BASE='develop'" <<<"$output" || return 1
+  grep -q "BRANCH_DIRECTIVE_MERGE_POLICY='manual'" <<<"$output" || return 1
+  grep -q "BRANCH_DIRECTIVE_SYNC_POLICY='rebase-on-base-change'" <<<"$output" || return 1
+  grep -q "BRANCH_DIRECTIVE_CREATED='2026-07-25T10:00:00Z'" <<<"$output" || return 1
   return 0
 }
 _run "valid block emits parsed values" test_valid_parsed_values
@@ -213,7 +213,7 @@ test_future_version() {
   # Capture both stdout and stderr
   output=$(check_branch_directive_description "$desc" 2>&1) || return 1
   # Should produce warning on stderr about version
-  echo "$output" | grep -q "tolerance" || return 1
+  grep -q "tolerance" <<<"$output" || return 1
   return 0
 }
 _run "future Schema-Version warns and exits 0" test_future_version
@@ -349,7 +349,7 @@ test_base_main() {
 **Created:** 2026-07-25T10:00:00Z'
   local output
   output=$(check_branch_directive_description "$desc" 2>/dev/null) || return 1
-  echo "$output" | grep -q "BRANCH_DIRECTIVE_BASE='main'" || return 1
+  grep -q "BRANCH_DIRECTIVE_BASE='main'" <<<"$output" || return 1
   return 0
 }
 _run "base can be main" test_base_main

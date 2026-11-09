@@ -285,13 +285,13 @@ test_result_block_structure() {
   output=$(resolve_branch_context "CRE-123" \
     --title "Fix auth bug" 2>/dev/null) || return 1
 
-  echo "$output" | grep -q "BRANCH_CONTEXT_RESULT" || return 1
-  echo "$output" | grep -q "END_BRANCH_CONTEXT_RESULT" || return 1
-  echo "$output" | grep -q "TICKET_BRANCH:" || return 1
-  echo "$output" | grep -q "BASE_BRANCH:" || return 1
-  echo "$output" | grep -q "INTEGRATION_BRANCH:" || return 1
-  echo "$output" | grep -q "EPIC_ID:" || return 1
-  echo "$output" | grep -q "BRANCH_SOURCE:" || return 1
+  grep -q "BRANCH_CONTEXT_RESULT" <<<"$output" || return 1
+  grep -q "END_BRANCH_CONTEXT_RESULT" <<<"$output" || return 1
+  grep -q "TICKET_BRANCH:" <<<"$output" || return 1
+  grep -q "BASE_BRANCH:" <<<"$output" || return 1
+  grep -q "INTEGRATION_BRANCH:" <<<"$output" || return 1
+  grep -q "EPIC_ID:" <<<"$output" || return 1
+  grep -q "BRANCH_SOURCE:" <<<"$output" || return 1
   return 0
 }
 _run "result block has all required fields" test_result_block_structure
@@ -305,7 +305,7 @@ test_ticket_branch_format() {
   local tb
   tb=$(echo "$output" | sed -n 's/^[[:space:]]*TICKET_BRANCH:[[:space:]]*\(.*\)$/\1/p')
   # Should start with the prefix and contain the ticket ID
-  echo "$tb" | grep -q "CRE-123" || {
+  grep -q "CRE-123" <<<"$tb" || {
     echo "  TICKET_BRANCH missing ticket ID: $tb" >&2
     return 1
   }
@@ -367,7 +367,7 @@ test_special_title_chars() {
   local tb
   tb=$(echo "$output" | sed -n 's/^[[:space:]]*TICKET_BRANCH:[[:space:]]*\(.*\)$/\1/p')
   # Should not contain metacharacters
-  echo "$tb" | grep -qv '[;&|()!$`<>]' || {
+  grep -qv '[;&|()!$`<>]' <<<"$tb" || {
     echo "  TICKET_BRANCH has metacharacters: $tb" >&2
     return 1
   }
@@ -522,7 +522,7 @@ _run "UAT_POLICY survives an explicit --branch override" test_uat_policy_survive
 test_result_block_has_uat_policy() {
   local output
   output=$(resolve_branch_context "CRE-123" --title "Fix auth" 2>/dev/null) || return 1
-  echo "$output" | grep -q "UAT_POLICY:" || {
+  grep -q "UAT_POLICY:" <<<"$output" || {
     echo "  result block is missing the UAT_POLICY field" >&2
     return 1
   }
@@ -625,7 +625,7 @@ _run "MERGE_POLICY survives an explicit --branch override" test_merge_policy_sur
 test_result_block_has_merge_policy() {
   local output
   output=$(resolve_branch_context "CRE-123" --title "Fix auth" 2>/dev/null) || return 1
-  echo "$output" | grep -q "MERGE_POLICY:" || {
+  grep -q "MERGE_POLICY:" <<<"$output" || {
     echo "  result block is missing the MERGE_POLICY field" >&2
     return 1
   }
@@ -1044,7 +1044,7 @@ test_planner_layout_warns_on_unresolved_directive() {
   err=$(REPOS_ROOT="$tmp" resolve_branch_context "CRE-777" --title "Orphan" \
     --parent-json "{\"id\":\"$_PL_UUID\",\"identifier\":\"CRE-776\",\"description\":\"## Branch Directive\\n**Branch:** epic/x\"}" 2>&1 >/dev/null)
   rm -rf "$tmp"
-  echo "$err" | grep -q "WARN" || {
+  grep -q "WARN" <<<"$err" || {
     echo "  expected a WARN on stderr, got '$err'" >&2
     return 1
   }

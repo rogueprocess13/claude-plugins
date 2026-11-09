@@ -74,7 +74,7 @@ planner_validate_ticket() {
   fi
 
   # Check Planner Context block presence
-  if ! echo "$description" | grep -q '## Planner Context'; then
+  if ! grep -q '## Planner Context' <<<"$description"; then
     echo "planner-validate: missing Planner Context block" >&2
     return 1
   fi

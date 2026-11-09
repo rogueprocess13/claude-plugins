@@ -387,7 +387,7 @@ case "$report" in
 esac
 
 # A finding with a file but no line number must not render an empty "L".
-if printf '%s\n' "$report" | grep -q '^    vs-2\.md references'; then
+if grep -q '^    vs-2\.md references' <<<"$report"; then
   pass "report: file-only finding renders without an L prefix"
 else
   fail "report: file-only finding renders without an L prefix" "got: $report"

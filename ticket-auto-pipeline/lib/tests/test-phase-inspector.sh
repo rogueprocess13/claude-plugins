@@ -69,12 +69,12 @@ test_extract_implement_phase() {
   out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
 
   # Should return INSPECTOR_INSTRUCTIONS (meaning verifier results were found)
-  if echo "$out" | grep -q '^INSPECTOR_INSTRUCTIONS='; then
+  if grep -q '^INSPECTOR_INSTRUCTIONS=' <<<"$out"; then
     # Verify context contains only IMPLEMENT verifiers (not VERIFY)
     local instructions
     instructions=$(_extract_instructions "$out")
-    if echo "$instructions" | grep -q "unit_tests" && echo "$instructions" | grep -q "return_completeness"; then
-      if echo "$instructions" | grep -q "playwright_uat"; then
+    if grep -q "unit_tests" <<<"$instructions" && grep -q "return_completeness" <<<"$instructions"; then
+      if grep -q "playwright_uat" <<<"$instructions"; then
         echo "VERIFY verifier leaked into IMPLEMENT context"
         _teardown
         return 1
@@ -100,7 +100,7 @@ test_empty_log_skips() {
   out=$(assemble_inspector_context "VERIFY" "CRE-123" "$_log" 2>/dev/null) || true
 
   # Should signal skip
-  if echo "$out" | grep -q '^INSPECTOR_SKIP=true'; then
+  if grep -q '^INSPECTOR_SKIP=true' <<<"$out"; then
     # Should write a skip entry to the log
     if grep -q '|META|phase-inspector|info|' "$_log" 2>/dev/null; then
       local skip_json
@@ -131,13 +131,13 @@ test_missing_phase_skips() {
   local out
   out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
 
-  if echo "$out" | grep -q '^INSPECTOR_INSTRUCTIONS='; then
+  if grep -q '^INSPECTOR_INSTRUCTIONS=' <<<"$out"; then
     echo "Expected INSPECTOR_SKIP for missing phase, got INSPECTOR_INSTRUCTIONS"
     _teardown
     return 1
   fi
 
-  if echo "$out" | grep -q '^INSPECTOR_SKIP=true'; then
+  if grep -q '^INSPECTOR_SKIP=true' <<<"$out"; then
     _teardown
     return 0
   fi
@@ -158,11 +158,11 @@ test_embedded_pipe_roundtrip() {
   out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
 
   # Should find both entries and produce instructions
-  if echo "$out" | grep -q '^INSPECTOR_INSTRUCTIONS='; then
+  if grep -q '^INSPECTOR_INSTRUCTIONS=' <<<"$out"; then
     local instructions
     instructions=$(_extract_instructions "$out")
     # The JSON should contain the full "test|pipe" verifier name (not truncated)
-    if echo "$instructions" | grep -q 'test|pipe'; then
+    if grep -q 'test|pipe' <<<"$instructions"; then
       _teardown
       return 0
     fi
@@ -183,7 +183,7 @@ test_missing_log_file_returns_zero() {
   out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "/nonexistent/log" 2>/dev/null)
   local rc=$?
   set -e
-  if [ $rc -eq 0 ] && echo "$out" | grep -q 'INSPECTOR_SKIP=true'; then
+  if [ $rc -eq 0 ] && grep -q 'INSPECTOR_SKIP=true' <<<"$out"; then
     _teardown
     return 0
   fi
@@ -203,7 +203,7 @@ test_missing_params_returns_zero() {
   rc=$?
   set -e
   _teardown
-  if [ $rc -eq 0 ] && echo "$out" | grep -q 'INSPECTOR_SKIP=true'; then
+  if [ $rc -eq 0 ] && grep -q 'INSPECTOR_SKIP=true' <<<"$out"; then
     return 0
   fi
   echo "Expected exit 0 and INSPECTOR_SKIP for missing params, got rc=$rc out=$out"
@@ -228,7 +228,7 @@ test_verifier_ids_in_context() {
     return 1
   fi
 
-  if echo "$instructions" | grep -q "unit_tests" && echo "$instructions" | grep -q "gate_check"; then
+  if grep -q "unit_tests" <<<"$instructions" && grep -q "gate_check" <<<"$instructions"; then
     _teardown
     return 0
   fi
@@ -250,7 +250,7 @@ test_gate_warns_in_context() {
   local instructions
   instructions=$(_extract_instructions "$out")
 
-  if echo "$instructions" | grep -q "RETURN_INCOMPLETE"; then
+  if grep -q "RETURN_INCOMPLETE" <<<"$instructions"; then
     _teardown
     return 0
   fi
@@ -274,7 +274,7 @@ test_cross_phase_context() {
   instructions=$(_extract_instructions "$out")
 
   # Context should contain both IMPLEMENT and VERIFY verifiers
-  if echo "$instructions" | grep -q "unit_tests" && echo "$instructions" | grep -q "playwright_uat"; then
+  if grep -q "unit_tests" <<<"$instructions" && grep -q "playwright_uat" <<<"$instructions"; then
     _teardown
     return 0
   fi
@@ -299,7 +299,7 @@ test_gate_warn_scoped_to_phase_window() {
   instructions=$(_extract_instructions "$out")
 
   # The old gate-warn should NOT be included (timestamp before first verifier result)
-  if echo "$instructions" | grep -q "old run"; then
+  if grep -q "old run" <<<"$instructions"; then
     echo "Gate-warn from outside phase window leaked into context"
     _teardown
     return 1
@@ -331,8 +331,8 @@ test_return_incomplete_detected_for_implement() {
   _write_418_log
   local out rc=0
   out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
-  echo "$out" | grep -q 'RETURN_INCOMPLETE present\*\*: true' || rc=1
-  echo "$out" | grep -q 'unchecked=8/36' || rc=1
+  grep -q 'RETURN_INCOMPLETE present\*\*: true' <<<"$out" || rc=1
+  grep -q 'unchecked=8/36' <<<"$out" || rc=1
   [ "$rc" -eq 0 ] || echo "IMPLEMENT inspection missed the gate-warn written after its verifier results"
   _teardown
   return "$rc"
@@ -343,8 +343,8 @@ test_return_incomplete_not_attributed_to_verify() {
   _write_418_log
   local out rc=0
   out=$(assemble_inspector_context "VERIFY" "CRE-123" "$_log" "IMPLEMENT" 2>/dev/null) || true
-  echo "$out" | grep -q 'RETURN_INCOMPLETE present\*\*: false' || rc=1
-  if echo "$out" | grep -q 'unchecked=8/36'; then rc=1; fi
+  grep -q 'RETURN_INCOMPLETE present\*\*: false' <<<"$out" || rc=1
+  if grep -q 'unchecked=8/36' <<<"$out"; then rc=1; fi
   [ "$rc" -eq 0 ] || echo "VERIFY inspection attributed IMPLEMENT's RETURN_INCOMPLETE to itself"
   _teardown
   return "$rc"
@@ -355,8 +355,8 @@ test_return_incomplete_not_attributed_to_pr_review() {
   _write_418_log
   local out rc=0
   out=$(assemble_inspector_context "PR-REVIEW" "CRE-123" "$_log" "IMPLEMENT VERIFY" 2>/dev/null) || true
-  echo "$out" | grep -q 'RETURN_INCOMPLETE present\*\*: false' || rc=1
-  if echo "$out" | grep -q 'unchecked=8/36'; then rc=1; fi
+  grep -q 'RETURN_INCOMPLETE present\*\*: false' <<<"$out" || rc=1
+  if grep -q 'unchecked=8/36' <<<"$out"; then rc=1; fi
   [ "$rc" -eq 0 ] || echo "PR-REVIEW inspection attributed IMPLEMENT's RETURN_INCOMPLETE to itself"
   _teardown
   return "$rc"
@@ -368,7 +368,7 @@ test_other_gate_warns_kept_for_verify() {
   echo "2026-01-01T00:05:00Z|META|gate-warn|info|SOME_OTHER_WARN — still shown" >>"$_log"
   local out rc=0
   out=$(assemble_inspector_context "VERIFY" "CRE-123" "$_log" "IMPLEMENT" 2>/dev/null) || true
-  echo "$out" | grep -q 'SOME_OTHER_WARN' || rc=1
+  grep -q 'SOME_OTHER_WARN' <<<"$out" || rc=1
   _teardown
   return "$rc"
 }
@@ -384,7 +384,7 @@ test_spawn_phase_inspector_wrapper() {
   out=$(spawn_phase_inspector "IMPLEMENT" "CRE-123" "$_log" "/fake/hb.log" "" 2>/dev/null) || true
 
   # Should behave identically to assemble_inspector_context
-  if echo "$out" | grep -q '^INSPECTOR_SKIP=false' && echo "$out" | grep -q '^INSPECTOR_INSTRUCTIONS='; then
+  if grep -q '^INSPECTOR_SKIP=false' <<<"$out" && grep -q '^INSPECTOR_INSTRUCTIONS=' <<<"$out"; then
     _teardown
     return 0
   fi
@@ -453,10 +453,10 @@ test_large_verifier_count() {
   local instructions
   instructions=$(_extract_instructions "$out")
 
-  if echo "$instructions" | grep -q "impl_check_1" &&
-    echo "$instructions" | grep -q "impl_check_40" &&
-    ! echo "$instructions" | grep -q "verify_check_" &&
-    ! echo "$instructions" | grep -q "pr_check_"; then
+  if grep -q "impl_check_1" <<<"$instructions" &&
+    grep -q "impl_check_40" <<<"$instructions" &&
+    ! grep -q "verify_check_" <<<"$instructions" &&
+    ! grep -q "pr_check_" <<<"$instructions"; then
     _teardown
     return 0
   fi
@@ -557,7 +557,7 @@ test_log_writes_carry_iso_timestamp() {
       return 1
     fi
     while IFS= read -r line; do
-      if ! printf '%s\n' "$line" | grep -qE "$_ISO_LINE_RE"; then
+      if ! grep -qE "$_ISO_LINE_RE" <<<"$line"; then
         echo "line without ISO timestamp in $(basename "$f"): $line"
         _teardown
         return 1

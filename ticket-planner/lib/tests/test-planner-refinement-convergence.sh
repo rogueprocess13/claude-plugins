@@ -182,7 +182,7 @@ fi
 _edit "$R_INIT" "PRO-201" "Validate bulk client uploads before import." "Validate bulk client uploads before any import."
 planner_refinement_scan "$R_INIT" >/dev/null
 scan_prompt2=$(planner_refinement_prompt "$R_INIT" "PRO-201" scan)
-if echo "$scan_prompt2" | grep -qF "**Changed sections**" && echo "$scan_prompt2" | grep -qF "Summary"; then
+if grep -qF "**Changed sections**" <<<"$scan_prompt2" && grep -qF "Summary" <<<"$scan_prompt2"; then
   pass "scan prompt after an edit names the changed sections (--changed-sections)"
 else
   fail "scan prompt after an edit names the changed sections (--changed-sections)" "no Changed sections block"
@@ -204,7 +204,7 @@ else
 fi
 
 report2=$(planner_refinement_report "$R_INIT")
-if echo "$report2" | grep -q "^Round: 2" && echo "$report2" | grep -qF "Blocking (carried since round 1) EDGE_CASE_GAP"; then
+if grep -q "^Round: 2" <<<"$report2" && grep -qF "Blocking (carried since round 1) EDGE_CASE_GAP" <<<"$report2"; then
   pass "report: shows the round and carried blocking findings"
 else
   fail "report: shows the round and carried blocking findings" "got: $report2"
@@ -229,7 +229,7 @@ else
   fail "round 3: the gate passes" "gate returned nonzero"
 fi
 summary3=$(planner_refinement_advisory_summary "$R_INIT")
-if echo "$summary3" | grep -qF "Advisory (does not block) PRO-201 EDGE_CASE_GAP (demoted: round-limit)"; then
+if grep -qF "Advisory (does not block) PRO-201 EDGE_CASE_GAP (demoted: round-limit)" <<<"$summary3"; then
   pass "advisory summary names the demoted finding with round-limit"
 else
   fail "advisory summary names the demoted finding with round-limit" "got: $summary3"
@@ -250,9 +250,9 @@ else
   fail "round 4: UNSTATED_DEPENDENCY still halts after the limit" "round=$(_round "PRO-201") ready=$(_ready "PRO-201")"
 fi
 report4=$(planner_refinement_report "$R_INIT")
-if echo "$report4" | grep -qF "Structural drift (blocks) UNSTATED_DEPENDENCY" &&
-  echo "$report4" | grep -q "^Demoted (does not block):" &&
-  echo "$report4" | grep -qF "  - EDGE_CASE_GAP (round-limit)"; then
+if grep -qF "Structural drift (blocks) UNSTATED_DEPENDENCY" <<<"$report4" &&
+  grep -q "^Demoted (does not block):" <<<"$report4" &&
+  grep -qF "  - EDGE_CASE_GAP (round-limit)" <<<"$report4"; then
   pass "report: structural drift and the Demoted (does not block) list"
 else
   fail "report: structural drift and the Demoted (does not block) list" "got: $report4"
@@ -334,7 +334,7 @@ _scan "$R_INIT" "PRO-204"
 _audit "$R_INIT" "PRO-204"
 DOR_SEMANTIC_EVALUATOR="dor-semantic-v2" planner_refinement_apply "$R_INIT" "PRO-204" >/dev/null 2>&1
 needs_mig=$(planner_refinement_scan "$R_INIT")
-if ! echo "$needs_mig" | grep -qx "PRO-204" &&
+if ! grep -qx "PRO-204" <<<"$needs_mig" &&
   _ready "PRO-204" | jq -e '.semantic.evaluator == "dor-semantic-v3" and .semantic.migrated_from == "dor-semantic-v2"' >/dev/null; then
   pass "planner_refinement_scan migrates an unchanged v2 verdict instead of listing it"
 else
@@ -372,13 +372,13 @@ else
   fail "PLANNER_REFINEMENT_AUDIT_DEMOTE=true demotes and logs refinement-dispute" "ready=$(_ready "PRO-252") log=$(grep refinement-dispute "$log_a")"
 fi
 summary_a=$(planner_refinement_advisory_summary "$A_INIT")
-if echo "$summary_a" | grep -qF "Advisory (does not block) PRO-252 VPLAN_ROW_GAP (demoted: audit dispute)"; then
+if grep -qF "Advisory (does not block) PRO-252 VPLAN_ROW_GAP (demoted: audit dispute)" <<<"$summary_a"; then
   pass "advisory summary names an audit demotion"
 else
   fail "advisory summary names an audit demotion" "got: $summary_a"
 fi
 report_a=$(planner_refinement_report "$A_INIT")
-if echo "$report_a" | grep -q "^## PRO-251" && echo "$report_a" | grep -qF "dor-check.sh --waive PRO-251 VPLAN_ROW_GAP"; then
+if grep -q "^## PRO-251" <<<"$report_a" && grep -qF "dor-check.sh --waive PRO-251 VPLAN_ROW_GAP" <<<"$report_a"; then
   pass "report: a non-demoted dispute still offers the waive"
 else
   fail "report: a non-demoted dispute still offers the waive" "got: $report_a"
@@ -435,7 +435,7 @@ if [ "$(_dem "PRO-302" EDGE_CASE_GAP)" = "converge" ] && [ "$(_dem "PRO-302" NEE
 else
   fail "a structural code survives converge" "ready=$(_ready "PRO-302")"
 fi
-if [ "$(_ready "PRO-303" | jq -c '.semantic')" = "$sem303_before" ] && echo "$conv_out" | grep -q "PRO-303.*scan" &&
+if [ "$(_ready "PRO-303" | jq -c '.semantic')" = "$sem303_before" ] && grep -q "PRO-303.*scan" <<<"$conv_out" &&
   ! grep -qF '|META|refinement-converge|done|PRO-303' "$log_c"; then
   pass "a stale ticket is refused, unchanged, and named as needing a scan"
 else
@@ -447,13 +447,13 @@ else
   fail "converge touches only the named tickets" "PRO-304 changed"
 fi
 needs_after=$(planner_refinement_scan "$C_INIT")
-if ! echo "$needs_after" | grep -qx "PRO-301" && [ "$(_status "PRO-301")" = "ready" ]; then
+if ! grep -qx "PRO-301" <<<"$needs_after" && [ "$(_status "PRO-301")" = "ready" ]; then
   pass "a later deterministic scan keeps the converged verdict"
 else
   fail "a later deterministic scan keeps the converged verdict" "needs=$needs_after status=$(_status "PRO-301")"
 fi
 conv_report=$(planner_refinement_report "$C_INIT")
-if echo "$conv_report" | grep -q "^## PRO-302" && echo "$conv_report" | grep -qF "  - EDGE_CASE_GAP (converge, by alice)"; then
+if grep -q "^## PRO-302" <<<"$conv_report" && grep -qF "  - EDGE_CASE_GAP (converge, by alice)" <<<"$conv_report"; then
   pass "report: a converged finding is listed under Demoted with its operator"
 else
   fail "report: a converged finding is listed under Demoted with its operator" "got: $conv_report"

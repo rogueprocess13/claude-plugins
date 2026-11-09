@@ -57,8 +57,8 @@ inspect_verifiers() {
   # ── Pattern 1: flaky_tests (WARN) ─────────────────────────────────────
   # PASS verifier + FAIL verifier in the same result set
   local _has_pass _has_fail
-  _has_pass=$(echo "$_verdicts" | grep -q "PASS" && echo "true" || echo "false")
-  _has_fail=$(echo "$_verdicts" | grep -q "FAIL" && echo "true" || echo "false")
+  _has_pass=$(grep -q "PASS" <<<"$_verdicts" && echo "true" || echo "false")
+  _has_fail=$(grep -q "FAIL" <<<"$_verdicts" && echo "true" || echo "false")
 
   if [ "$_has_pass" = "true" ] && [ "$_has_fail" = "true" ]; then
     local _flaky_evidence
@@ -127,7 +127,7 @@ inspect_verifiers() {
   # ── Pattern 4: verdict_disagreement (WARN) ────────────────────────────
   # At least one PASS AND at least one FAIL or BLOCK in the same set
   local _has_block
-  _has_block=$(echo "$_verdicts" | grep -q "BLOCK" && echo "true" || echo "false")
+  _has_block=$(grep -q "BLOCK" <<<"$_verdicts" && echo "true" || echo "false")
 
   # Already detected by flaky_tests for PASS+FAIL; also check PASS+BLOCK
   if [ "$_has_pass" = "true" ] && [ "$_has_block" = "true" ]; then

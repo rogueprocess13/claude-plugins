@@ -40,7 +40,7 @@ test_fleet_instance_id_from_git() {
     cd "$LIB_DIR/.."
     source "$LIB_DIR/config.sh"
     # Should be something like "willard.pro-claude-plugins"
-    echo "$FLEET_INSTANCE_ID" | grep -q '-'
+    grep -q '-' <<<"$FLEET_INSTANCE_ID"
   )
 }
 
@@ -59,7 +59,7 @@ test_fleet_instance_id_fallback_to_pwd_basename() {
     cd "$tmpdir"
     # Not a git repo, should fall back to basename
     source "$LIB_DIR/config.sh" 2>/dev/null || true
-    echo "$FLEET_INSTANCE_ID" | grep -q "$(basename "$tmpdir")"
+    grep -q "$(basename "$tmpdir")" <<<"$FLEET_INSTANCE_ID"
   )
   rm -rf "$tmpdir"
 }

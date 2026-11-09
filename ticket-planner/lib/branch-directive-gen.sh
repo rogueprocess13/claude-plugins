@@ -94,7 +94,7 @@ branch_directive_name_derive() {
   fi
 
   # Ensure leading char is lowercase alphanumeric
-  if ! echo "$candidate" | grep -qE '^[a-z0-9]'; then
+  if ! grep -qE '^[a-z0-9]' <<<"$candidate"; then
     echo "ERROR: derived branch name starts with invalid char: $candidate" >&2
     return 1
   fi
@@ -440,25 +440,25 @@ if [ "${1:-}" = "--self-test" ]; then
 
   # Branch name derivation
   name=$(branch_directive_name_derive "INIT-42" "debt-collection-v2")
-  echo "$name" | grep -qE '^[a-z0-9]' && echo "✓ name starts with valid char: $name" || echo "✗ bad leading char: $name"
+  grep -qE '^[a-z0-9]' <<<"$name" && echo "✓ name starts with valid char: $name" || echo "✗ bad leading char: $name"
   [ "${#name}" -le 60 ] && echo "✓ name within 60 chars (${#name})" || echo "✗ name too long: ${#name}"
-  echo "$name" | grep -q "^epic/" && echo "✓ name has epic/ prefix" || echo "✗ missing epic/ prefix: $name"
+  grep -q "^epic/" <<<"$name" && echo "✓ name has epic/ prefix" || echo "✗ missing epic/ prefix: $name"
 
   # No trailing dash after truncation
   long_slug=$(python3 -c "print('x' * 70)" 2>/dev/null || printf 'x%.0s' {1..70})
   name=$(branch_directive_name_derive "INIT-42" "$long_slug")
   [ "${#name}" -le 60 ] && echo "✓ long name truncated to ${#name}" || echo "✗ not truncated: ${#name}"
-  echo "$name" | grep -qv -- '-$' && echo "✓ no trailing dash" || echo "✗ trailing dash: $name"
-  echo "$name" | grep -qv '/$' && echo "✓ no trailing slash" || echo "✗ trailing slash: $name"
+  grep -qv -- '-$' <<<"$name" && echo "✓ no trailing dash" || echo "✗ trailing dash: $name"
+  grep -qv '/$' <<<"$name" && echo "✓ no trailing slash" || echo "✗ trailing slash: $name"
 
   # No forbidden chars
-  ! echo "$name" | grep -q '[[:space:];`$(){}\<\>\|\&!#~\\'\''\"*\?]' && echo "✓ no forbidden chars" || echo "✗ forbidden chars found"
+  ! grep -q '[[:space:];`$(){}\<\>\|\&!#~\\'\''\"*\?]' <<<"$name" && echo "✓ no forbidden chars" || echo "✗ forbidden chars found"
 
   # Generator accepts valid JSON
   valid_json='{"initiative_id":"INIT-42","title_slug":"debt-collection","base_branch":"develop","merge_policy":"manual","sync_policy":"none"}'
   output=$(branch_directive_generate "$valid_json") && rc=$? || rc=$?
   [ "$rc" -eq 0 ] && echo "✓ valid JSON accepted" || echo "✗ valid JSON rejected: rc=$rc"
-  echo "$output" | grep -q "## Branch Directive" && echo "✓ output contains header" || echo "✗ missing header"
+  grep -q "## Branch Directive" <<<"$output" && echo "✓ output contains header" || echo "✗ missing header"
 
   # Generator rejects invalid merge policy
   bad_merge='{"initiative_id":"INIT-42","title_slug":"test","base_branch":"develop","merge_policy":"auto","sync_policy":"none"}'
