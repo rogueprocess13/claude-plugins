@@ -8,6 +8,11 @@
 
 set -o pipefail
 
+# Telemetry off (#645): with a session id set, grill_hold_emit would register
+# this test's scratch work dirs in the developer's real session marker, and
+# that session's Stop hook would later write into them mid-test.
+unset CLAUDE_CODE_SESSION_ID
+
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "$TEST_DIR/.." && pwd)"
 PROFILE="$LIB_DIR/../profiles/product-idea.json"

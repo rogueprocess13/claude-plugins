@@ -6,7 +6,9 @@
 # its Makefile line, and check-test-registration.sh still guards that list.
 # Each command runs in its own process with stdin from /dev/null and its
 # output in its own log file, so parallel output never interleaves and a test
-# that reads stdin cannot swallow the command list.
+# that reads stdin cannot swallow the command list. CLAUDE_CODE_SESSION_ID is
+# removed from each command's environment, so a run inside a Claude Code
+# session behaves like CI.
 #
 # Usage: run-tests.sh TARGET...
 #   TEST_JOBS     parallel jobs (default: nproc)
@@ -81,7 +83,10 @@ run_one() {
   local i="$1" cmd="$2" s e rc
   s=$(date +%s%N)
   rc=0
-  timeout --kill-after=30 "$TIMEOUT" bash -c "$cmd" </dev/null >"$LOG_DIR/test-$i.log" 2>&1 || rc=$?
+  # No test inherits the developer's Claude Code session (#645): with it,
+  # grill-me/planner telemetry registers scratch dirs in the real per-user
+  # session marker. CI has no session id either; tests that need one set it.
+  timeout --kill-after=30 "$TIMEOUT" env -u CLAUDE_CODE_SESSION_ID bash -c "$cmd" </dev/null >"$LOG_DIR/test-$i.log" 2>&1 || rc=$?
   e=$(date +%s%N)
   local secs=$(((e - s) / 1000000000))
   printf '%s\t%s\t%s\t%s\n' "$secs" "$rc" "$i" "$cmd" >>"$RESULTS"
