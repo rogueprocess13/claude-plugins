@@ -2054,7 +2054,7 @@ def _distinct_reconcile_cycles(log_lines):
 # ── Bash-only step dispatch (task 10.1.9, design.md D22) ────────────────────
 #
 # STEP_2_5/STEP_3 is the one loop-bearing-shaped step with no agent spawn at
-# all (`action: bash` — table_type "Bash only") — `gate-check.sh` decides it,
+# all (`action: bash`) — `gate-check.sh` decides it,
 # synchronously, in one subprocess call. `next_step` already routes on its
 # exit code (0/1/2); this is the missing piece that actually runs it, mirroring
 # `resolve_ticket_complexity`'s shell-out discipline rather than a second

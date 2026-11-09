@@ -17,6 +17,32 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.96.6 (2026-11-09)
+
+Skill prose dedupe, sub-PR 3a (`skill-prose-dedupe`, change 3 of the skill-size reduction
+programme): `ticket-auto/SKILL.md` drops 3,501 bytes (60,504 to 57,003; the gated body went
+from 57,941 to 54,687 bytes and 1,109 to 1,076 lines). Deletion and compression only: no bash
+block, log-line template or routing rule changed. The skill fingerprint changes. This is intended.
+
+### Changed
+
+- **chore(ticket-auto): one statement of the agent-isolation rule.** The `Agent`-not-`Skill`
+  rule now lives only in "CRITICAL — Agent isolation requirement" and the "Agent spawn template".
+  The "Self-check after each spawn" checklist and the Dispatch Loop's "`Skill` tool is BANNED"
+  paragraph are gone; the Dispatch Loop keeps a one-line cross-reference.
+- **chore(ticket-auto): Auto-merge logic points at `lib/auto-merge.sh`.** The six-rule list
+  restated the script's header. The invocation block is unchanged.
+- **chore(ticket-auto): Router invariants cut from 8 to 3.** Invariants already stated in the
+  introduction or the spawn template are replaced by a pointer; the two observe-only parser
+  invariants are merged into one. `## Step trace` is unchanged.
+- **chore(dispatch-table): no Type column, no alias row.** `gen-dispatch-table.py` renders
+  `| RESUME_STEP | Action |` and folds an alias step onto its target's row
+  (`` `STEP_2_5` / `STEP_3` ``), since `detect-resume.sh` can still emit `STEP_3`. The unused
+  `table_type` field is removed from `dispatch-table.json`; `STEP_3`'s `alias_of` entry, which
+  fleetd reads, stays. `test-dispatch-table.sh` is retargeted and gains a test for the new shape.
+- Stale `SKILL.md` line citations in `fleet-controller/fleetd/orchestration.py` and
+  `phase_dispatch.py` comments now cite headings (comments only, no fleet-controller release).
+
 ## 0.96.5 (2026-11-09)
 
 ### Fixed

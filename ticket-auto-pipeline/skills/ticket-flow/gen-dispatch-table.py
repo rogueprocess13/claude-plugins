@@ -48,7 +48,7 @@ def load_steps(table_path):
         die("dispatch table has no 'steps' array")
 
     for i, step in enumerate(steps):
-        for field in ("step_id", "table_label", "table_action", "table_type"):
+        for field in ("step_id", "table_label", "table_action"):
             if field not in step:
                 die(f"steps[{i}] is missing required field '{field}'")
     return steps
@@ -81,15 +81,24 @@ def _step_agents(step):
             yield entry["skill"], entry.get("agent")
 
 
+def _row_label(step):
+    """The step's label, followed by every alias that dispatches identically.
+
+    Alias entries (``action: alias``, e.g. STEP_3 -> STEP_2_5) get no row of
+    their own: the router still needs to recognise the alias id, so it is
+    rendered on its target's row instead (``STEP_2_5`` / ``STEP_3``).
+    """
+    aliases = step.get("aliases") or []
+    return " / ".join([step["table_label"]] + ["`{}`".format(a) for a in aliases])
+
+
 def render(steps):
     """Render the generated block. Entry order in the JSON is the render order."""
-    lines = [START_MARKER, PREAMBLE, "", "| RESUME_STEP | Action | Type |", "|-------------|--------|------|"]
+    lines = [START_MARKER, PREAMBLE, "", "| RESUME_STEP | Action |", "|-------------|--------|"]
     for step in steps:
-        lines.append(
-            "| {} | {} | {} |".format(
-                step["table_label"], step["table_action"], step["table_type"]
-            )
-        )
+        if step.get("action") == "alias":
+            continue
+        lines.append("| {} | {} |".format(_row_label(step), step["table_action"]))
     lines.append("")
     lines.append(
         "**Agent types** — the `subagent_type` each phase's `Agent` tool "

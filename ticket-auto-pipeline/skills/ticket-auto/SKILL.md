@@ -117,11 +117,7 @@ exit <exit-code>
 
 ### :rotating_light: CRITICAL — Agent isolation requirement
 
-**Every phase agent MUST run in an isolated Agent invocation, never inline.** The `Skill` tool runs skills INLINE in the router's context window — it burns tokens on phase-internal details that the router should never see. The `Agent` tool spawns an isolated subagent that returns only its final result.
-
-**Absolute rule:** After `spawn_agent_pre` produces `$_prompt`, you MUST use the `Agent` tool. You MUST NOT use the `Skill` tool for phase dispatch. The `Skill` tool is for running skills inline; the `Agent` tool is for spawning isolated subagents. Phase dispatch requires isolation.
-
-If you use `Skill` instead of `Agent`, every phase's full context (code reads, file writes, test output, internal reasoning) burns tokens in the router's window. A 4-phase pipeline will consume 150k–300k tokens instead of ~15k for the router + per-agent summaries.
+**Every phase agent MUST run in an isolated `Agent` invocation; the `Skill` tool is never used for phase dispatch.** `Skill` runs the phase inline in the router's context window, so every code read, test output and internal step lands there: a 4-phase pipeline burns 150k–300k tokens instead of ~15k for the router plus per-agent summaries. `Agent` returns only the subagent's final result.
 
 ### Agent spawn template
 
@@ -148,7 +144,7 @@ Every agent spawn follows this 3-step pattern:
      prompt: <content after AGENT_PROMPT= from step 1>
      subagent_type: <content after AGENT_TYPE= from step 1>
    ```
-   **NEVER use `Skill` tool here.** `Skill` runs inline and defeats isolation. Always `Agent`, and always the `subagent_type` `spawn_agent_pre` printed — never hardcode `general-purpose`: a phase's tool allowlist and system prompt (`ticket-auto-pipeline/agents/*.md`) only apply when the matching named agent type is used.
+   Always `Agent` (never `Skill` — see above), and always the `subagent_type` `spawn_agent_pre` printed — never hardcode `general-purpose`: a phase's tool allowlist and system prompt (`ticket-auto-pipeline/agents/*.md`) only apply when the matching named agent type is used.
 
 3. **Post-spawn** — `spawn_capture` persists agent output to `-{phase}-agent.log`, then `spawn_agent_post` writes done/fail log entries, stops pinger, and writes heartbeat transitions.
 
@@ -180,13 +176,6 @@ Every agent spawn follows this 3-step pattern:
    spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done VERDICT=PASS MSG="<result>" NEXT_PHASE=<next>
    spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done VERDICT=WARN MSG="Verdict: ⚠️ <summary>" NEXT_PHASE=<next>
    ```
-
-### Self-check after each spawn
-
-Before proceeding to the next dispatch, verify:
-- [ ] I used `Agent` tool (not `Skill`) for the phase agent
-- [ ] I ran `spawn_agent_post` after the agent returned
-- [ ] I re-ran `detect-resume.sh` to get fresh state
 
 ---
 
@@ -422,31 +411,28 @@ Prescan failure, timeout, or lock contention SHALL NEVER prevent the pipeline fr
 
 After state detection, enter the stateless dispatch loop. Re-run `detect-resume.sh` before each dispatch decision to get current state from the pipeline log.
 
-**At every agent dispatch site:** Run `spawn_agent_pre` → spawn via `Agent` tool (NOT `Skill`) → `spawn_capture` → `spawn_agent_post` → re-run `detect-resume.sh`. See "Agent spawn template" above for the exact 3-step pattern.
-
-**`Skill` tool is BANNED at all agent dispatch sites.** The `Skill` tool runs skills inline in the router's context. The `Agent` tool spawns isolated subagents. Every phase dispatch MUST use `Agent`.
+**At every agent dispatch site:** `spawn_agent_pre` → `Agent` tool (see "Agent isolation requirement") → `spawn_capture` → `spawn_agent_post` → re-run `detect-resume.sh`. Exact pattern: "Agent spawn template" above.
 
 ### Dispatch table
 
 <!-- GENERATED:dispatch-table START -->
 <!-- Generated from skills/ticket-flow/dispatch-table.json by skills/ticket-flow/gen-dispatch-table.py. Do not hand-edit: edit the JSON and regenerate. CI fails the build when this block drifts. -->
 
-| RESUME_STEP | Action | Type |
-|-------------|--------|------|
-| `STEP_1` | Spawn `ticket-appraise` agent | Agent |
-| `STEP_1_5` | Spawn `ticket-reproduce` agent | Agent |
-| `STEP_2` | Spawn `ticket-appraise-exec` agent | Agent |
-| `STEP_2_5` | Run `bash gate-check.sh --mode entry` | **Bash only** |
-| `STEP_3` | Alias for `STEP_2_5` — run `bash gate-check.sh --mode entry` | **Bash only** |
-| `STEP_3_5` | Spawn `ticket-gate-reconcile` agent | Agent |
-| `STEP_4` | Spawn `ticket-implement` agent, run `return-completeness-check.sh` (openspec tickets only), then `outcome-label-check.sh` | Agent + Bash |
-| `STEP_4_5` | Verify retry sub-loop (see below) | Router-managed loop |
-| `STEP_4_6` | PR review + iteration sub-loop (see below) | Router-managed loop |
-| `STEP_5` | Spawn `ticket-document`, then `wiki-maintenance` (sequential) | Agent |
-| `STEP_5_5` | PR comment reconciliation | Agent |
-| `STEP_6` | Retro check + optional `ticket-retro` + outcome write | Bash + Agent |
-| `done` | Exit 0 | — |
-| `*` (unknown) | Log error, exit 1 | — |
+| RESUME_STEP | Action |
+|-------------|--------|
+| `STEP_1` | Spawn `ticket-appraise` agent |
+| `STEP_1_5` | Spawn `ticket-reproduce` agent |
+| `STEP_2` | Spawn `ticket-appraise-exec` agent |
+| `STEP_2_5` / `STEP_3` | Run `bash gate-check.sh --mode entry` |
+| `STEP_3_5` | Spawn `ticket-gate-reconcile` agent |
+| `STEP_4` | Spawn `ticket-implement` agent, run `return-completeness-check.sh` (openspec tickets only), then `outcome-label-check.sh` |
+| `STEP_4_5` | Verify retry sub-loop (see below) |
+| `STEP_4_6` | PR review + iteration sub-loop (see below) |
+| `STEP_5` | Spawn `ticket-document`, then `wiki-maintenance` (sequential) |
+| `STEP_5_5` | PR comment reconciliation |
+| `STEP_6` | Retro check + optional `ticket-retro` + outcome write |
+| `done` | Exit 0 |
+| `*` (unknown) | Log error, exit 1 |
 
 **Agent types** — the `subagent_type` each phase's `Agent` tool spawn MUST use (see "Agent spawn template" below). A skill with no dedicated agent type falls back to `general-purpose`.
 
@@ -951,28 +937,11 @@ NEXT_PHASE=PR-REVIEW
 
 ### Auto-merge logic
 
-After PR review ✅, run `lib/auto-merge.sh`. The whole decision is in that script — do not
-re-derive any part of it here. It applies, in order:
-
-1. `merge_blocked_reason` (`lib/branch-resolve.sh`) — the same merge-authorization rule
-   `ticket-pr-review` Step 6b uses. Any epic `MERGE_POLICY` (`manual`,
-   `on-all-children-done`) or an `AUTONOMY` other than `auto`/`semi-auto` means a human
-   merges. Logged as `META|pr-auto-merge|skip|MERGE_AUTHORIZATION: …`.
-2. `COMPLEXITY` = `simple`.
-3. The latest `META|outcome-label|info|` reads `Smooth` (never the IMPLEMENT terminal line,
-   which does not carry Smooth/Rough/Hard).
-4. A PR number is recorded (`PR-REVIEW|checkout-pr|done|<n>`). It is resolved before the
-   integration guard.
-5. With `INTEGRATION_BRANCH` set, the PR head ref must be readable and must differ from it.
-   An integration PR logs `INTEGRATION_PR_GUARD`. An unreadable head ref (a `gh pr view`
-   failure) logs `PR_HEAD_UNREADABLE` and does **not** merge — fail closed.
-6. `gh pr merge <n> --squash --auto`, scoped with `--repo` from `META|pr-created` when present.
-
-`AUTONOMY`, `MERGE_POLICY` and `INTEGRATION_BRANCH` come from the agent env file
-(`lib/ticket-env.sh`); `COMPLEXITY` comes from `DETECT_RESUME_RESULT`.
-Exit 0 merged, 3 skipped, 4 `gh pr merge` failed. All three continue to STEP_5 — an
-unmerged PR is a human's to look at, never a reason to fail a finished ticket. fleetd's
-`orchestration.run_auto_merge` applies the same rules.
+After PR review ✅, run `lib/auto-merge.sh`. The whole decision (merge authorization, complexity,
+outcome label, PR number, integration-branch guard) and its exit codes are in that script's
+header — do not re-derive any part of it here. Exit 0 merged, 3 skipped, 4 `gh pr merge` failed:
+all three continue to STEP_5. An unmerged PR is a human's to look at, never a reason to fail a
+finished ticket. `{COMPLEXITY}` comes from `DETECT_RESUME_RESULT`.
 
 ```bash
 bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/auto-merge.sh" \
@@ -1113,14 +1082,11 @@ exit 1
 
 ## Router invariants
 
-1. **No inline LLM reasoning**: Every conditional between dispatch calls is a deterministic bash comparison (string equality, numeric comparison, file existence check).
-2. **Stateless router**: All state lives in the pipeline log. The router re-reads it via `detect-resume.sh` before every dispatch decision.
-3. **3-step spawn pattern at every dispatch site**: `spawn_agent_pre` → agent spawn → `spawn_capture` (saves agent return value to `-{phase}-agent.log`) → `spawn_agent_post`. The agent's return is handed to `spawn_capture` as a **file** (`RESULT_FILE=`, written with a quoted heredoc), never interpolated into a quoted `RESULT="..."` argument.
-7. **Phase results are observe-only**: `phase-result-parse.sh` runs at the three loop-bearing sites (IMPLEMENT, VERIFY, PR-REVIEW) between `spawn_capture` and `spawn_agent_post`, and only appends `META|phase-result|info|{json}` to the log. The router continues to route on its existing `RESULT=done|fail` and `VERDICT=` tokens. The parser emits no gate-stop code, and every call site is `|| true`-guarded, so a parser failure cannot halt a run. See [phase-result schema](../../docs/phase-result-schema.md).
-8. **Verdict recompute is observe-only (RLVR)**: `verdict-recompute.sh` runs immediately after `phase-result-parse.sh` on the VERIFY path only, deriving a verdict from `verify-session.md` independently of the agent's claim and appending `META|claim-delta|info|{json}` to the log. Same guarantees as item 7 — no gate-stop, `|| true`-guarded, never changes routing. See [pipeline-log-format.md](../../pipeline-log-format.md#claim-delta-entries-rlvr-verdict-recompute).
-4. **Sequential dispatch**: Agents are spawned one at a time. The dispatch loop guarantees only one agent is in flight at a time.
-5. **Bash gates**: Gate decisions are deterministic bash scripts (`gate-check.sh`, `outcome-label-check.sh`), not Claude agents.
-6. **Router-managed loops**: Verify retry and PR iteration loops are managed by the router tracking counters from the pipeline log, not by phase agents internally.
+Statelessness, no inline reasoning and bash-only gates: see the introduction. The spawn pattern: "Agent spawn template".
+
+1. **Sequential dispatch**: one agent in flight at a time.
+2. **Router-managed loops**: the verify retry, PR iteration, reconcile and PR-feedback loops are counted by the router from the pipeline log, never inside a phase agent.
+3. **Advisory parsers never route**: `phase-result-parse.sh` (IMPLEMENT, VERIFY, PR-REVIEW) and `verdict-recompute.sh` (VERIFY) only append `META|phase-result|info|` / `META|claim-delta|info|` lines, are `|| true`-guarded and emit no gate-stop code. Routing stays on `RESULT=` and `VERDICT=`. See [phase-result schema](../../docs/phase-result-schema.md) and [pipeline-log-format.md](../../pipeline-log-format.md#claim-delta-entries-rlvr-verdict-recompute).
 
 ---
 
