@@ -12,6 +12,27 @@ CP="$LIB_DIR/corrections-parse.sh"
 
 source "$CP"
 
+# ── Hermetic sandbox (#647) ───────────────────────────────────────────────────
+# The lib keeps rate/signature state under $HOME/.claude/state by default and
+# prefers an installed lib copy under $HOME/.claude/skills/lib. Point both at
+# per-run scratch / this checkout, and shadow gh so no test can reach GitHub:
+# `gh auth status` succeeds (filing path is exercised), every other call fails.
+SCRATCH=$(mktemp -d)
+trap 'rm -rf "$SCRATCH"' EXIT
+STAMP="$SCRATCH/stamp"
+: >"$STAMP"
+export POSTMORTEM_STATE_DIR="$SCRATCH/state"
+export CLAUDE_SKILLS_LIB="$LIB_DIR"
+mkdir -p "$SCRATCH/bin"
+cat >"$SCRATCH/bin/gh" <<'GH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "auth" ] && [ "${2:-}" = "status" ]; then exit 0; fi
+echo "gh stub: network calls disabled in tests" >&2
+exit 1
+GH
+chmod +x "$SCRATCH/bin/gh"
+export PATH="$SCRATCH/bin:$PATH"
+
 PASS=0
 FAIL=0
 
@@ -555,6 +576,36 @@ test_issue_body_rendering_no_crash() {
   echo "FAIL: script crashed before writing any postmortem entry" >&2
   _teardown
   return 1
+}
+
+# #647 regression: post-mortem state must follow POSTMORTEM_STATE_DIR and never
+# land under $HOME/.claude/state. HOME is pointed at scratch for this probe so
+# the assertion itself never touches the developer's real home.
+test_state_stays_out_of_home() {
+  _setup
+  _write_log "
+2026-08-08T10:01:00Z|META|gate-stop|fail|EXEC_NO_ARTIFACT
+"
+  local _fake_home="$SCRATCH/home"
+  local _home_state="$_fake_home/.claude/state/ticket-auto/postmortem"
+  mkdir -p "$_home_state"
+  # A filing run reaches the rate-limit check, which creates the rate lock.
+  HOME="$_fake_home" POSTMORTEM_ENABLED=true POSTMORTEM_FILE_ISSUES=true \
+    LOG_FILE="$_log_file" HB_FILE="/dev/null" TICKET_DIR="$_ticket_dir" \
+    bash "$PM" "TEST-123" --exit-code 1 2>/dev/null || true
+  local _leaked
+  _leaked=$(find "$_home_state" -mindepth 1 -newer "$STAMP" 2>/dev/null)
+  if [ -n "$_leaked" ]; then
+    echo "FAIL: post-mortem state written under HOME: $_leaked" >&2
+    _teardown
+    return 1
+  fi
+  if [ -z "$(find "$POSTMORTEM_STATE_DIR" -name .rate.lock 2>/dev/null)" ]; then
+    echo "FAIL: rate lock not written under POSTMORTEM_STATE_DIR (filing path not reached)" >&2
+    _teardown
+    return 1
+  fi
+  _teardown
 }
 
 # ── Runner ────────────────────────────────────────────────────────────────────
