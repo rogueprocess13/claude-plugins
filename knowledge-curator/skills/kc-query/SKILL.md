@@ -61,14 +61,7 @@ Report how often the `NEXT` box matched what actually got claimed:
 bash "${CLAUDE_PLUGIN_ROOT}/lib/kc-render.sh" --stats knowledge
 ```
 
-Print the output verbatim. It reports facts, not a verdict — there is no "correct" agreement rate, only the trend and what it implies:
-
-| Signal | What it means | Where to retune |
-|--------|---------------|-----------------|
-| High **NEXT box claimed** | The score matches how you work. Leave it alone. | — |
-| High **claimed further down** | Priority/age weights are misordering the stack. Check `avg position`. | `priority_weight()` / `age_bonus` in `lib/kc-render.sh` |
-| High **claims of blocked items** | The blocked penalty is too harsh — you work on blocked things anyway. | the `- (blocked * 60)` term |
-| High **claimed without a render** | The stack isn't being consulted at all — a workflow signal, not a scoring one. | — |
+Print the output verbatim. It reports facts, not a verdict; README § "Is the ranking any good?" maps each signal to the weight it implicates.
 
 Do not offer to retune the weights off a handful of claims. The numbers only mean something after a few weeks of real use. If the user asks for a change, it is confined to `priority_weight()`, the `age_bonus` line, and the `- (blocked * 60)` term in `lib/kc-render.sh`.
 

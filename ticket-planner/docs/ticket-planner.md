@@ -306,6 +306,30 @@ Feedback payload:
 
 Aggregated to `${REPOS_ROOT}/.ticket-auto/initiatives/{ID}/feedback/{rundate}.json` with summary statistics (total tickets, avg confidence, drift count, services touched).
 
+### 6. Cross-plugin validators (not bundled here)
+
+The planner ships no copy of the scripts that define these contracts — it resolves
+them from the plugins that own them, via a three-level fallback (plugin cache →
+skills lib → sibling path in the same repo). A drifting duplicate would silently
+produce output the downstream pipeline rejects, so the dependency is deliberate.
+Run `/ticket-planner doctor` to see whether each one resolves on this install.
+
+| Script | Owning plugin | What it owns | Planner call site |
+|---|---|---|---|
+| `planned-ticket-check.sh` | ticket-auto-pipeline | Planner Context block **structure** — required fields, `Schema-Version`, confidence range, and the `Target Symbols` grammar (`_validate_target_symbols`: each `;`-separated entry must be `symbol:file` or `symbol:file:line` — a zero-colon bare path is rejected). Also the canonical `_extract_md_section` / `_extract_field` markdown helpers. | `planner_validate_ticket` (`planner-ticket-validate.sh`), before every Ticket Gen create; `branch_directive_source_md_helpers` (`branch-directive-gen.sh`), in the Epic Gen idempotency check |
+| `planned-ticket-body-check.sh` | ticket-auto-pipeline | Ticket **body** section completeness — the `##` headings gate-check's Check 2.7c requires per type (`check_planned_body`), sourced from `templates/{bug,feature,improvement,security,chore}.md` ([#285](https://github.com/willard-pro/claude-plugins/issues/285)) | `planner_validate_ticket` (`planner-ticket-validate.sh`), before every Ticket Gen create, when called with a `ticket_type` argument |
+| `branch-directive-check.sh` | ticket-auto-pipeline | Branch Directive block schema and enums | `_resolve_branch_directive_checker` (`branch-directive-gen.sh`) — generated blocks are round-trip tested against it |
+| `grill-seal.sh` | grill-me | Validated Business Intent seal verification | `planner_intent_gate` (`planner-intent-gate.sh`) |
+
+**Validation is split across two plugins, and neither side sees the other's rules.**
+Crosscheck's citation linter (`planner-crosscheck-citations.sh`) checks that a
+`symbol:path:line` TargetSymbols entry *resolves* against the repo; it does not
+check the entry's *shape*. The shape rule lives only in `_validate_target_symbols`
+above, which does not run until Ticket Gen's pre-creation validation — so a
+malformed entry surfaces as a late creation failure rather than at the
+artifact-only gate. **Any change to the TargetSymbols grammar must be made in both
+validators**, or one of them will start rejecting what the other emits.
+
 ## Confidence Derivation
 
 Confidence is derived from five concrete signals — never a uniform constant. A planner that emits uniformly high confidence would silently disable the investigation that catches its own mistakes.
@@ -434,8 +458,214 @@ When an initiative carries the `Regenerate` flag (set to `true` in the Planner C
 3. Regenerates tickets still in `Backlog` and not present in the spawn queue.
 4. Dispatched, in-progress, and completed tickets are left unchanged and reported as such.
 5. Validates the regenerated dependency set remains acyclic.
+6. Aggregates each feedback file's `summary.readiness_gaps` (`planner_readiness_gaps_compute`) into a `META|replan-readiness-gaps` entry. Report-only: it surfaces gate-stop and no-test-user patterns from fleet-controller's readiness-gap scan, and never feeds confidence adjustment, ticket selection or dependency validation.
 
 **Regenerate is an explicit flag, not a default.** Reading feedback on every re-plan would make planner output depend on execution history in ways that are hard to reason about. Requiring the flag makes feedback ingestion a deliberate act with a visible trigger.
+
+## Crosscheck
+
+Unlike every other phase, Crosscheck is not an agent — `planner_crosscheck_run` (in
+`lib/planner-crosscheck.sh`) is deterministic bash, so the dispatch loop calls it
+directly instead of spawning one (SKILL.md step 1a). Its check families include:
+
+- **Citation + precedent linter** ([#172](https://github.com/willard-pro/claude-plugins/issues/172)) — every `path:line` citation and Signals `TargetSymbols` entry must resolve against `REPOS_ROOT`; every "mirrors the existing `X`"-style precedent claim must name a symbol that actually exists in the repo.
+- **Cross-ticket propagation linter** ([#173](https://github.com/willard-pro/claude-plugins/issues/173)) — a Consensus resolution or in-spec forward reference naming 2+ tickets must actually reach all of them; a post-Specify ticket-count change is flagged for manual scope audit.
+- **Test-data provenance + cited artifacts** ([#503](https://github.com/willard-pro/claude-plugins/issues/503)/[#504](https://github.com/willard-pro/claude-plugins/issues/504)) — every Verification Notes test-data need (a row of the Criterion table, `Source` column) must name an owned Source (`TEST_DATA_UNOWNED`), and every external artifact Discovery could not retrieve must be raised and answered in consensus.md `## Open Questions` (`CITED_ARTIFACT_UNRAISED`/`CITED_ARTIFACT_UNRESOLVED`). Contract: [docs/test-data-source.md](test-data-source.md).
+- **Test-data derivation** (planner-test-data-derivation, contract §3) — first, the `testdata-synth` sub-step (`Crosscheck|testdata-synth|start`/`done|<N> TD spec(s), <M> need(s)`, before every family) turns `generate` needs and `generate:` answers into synth-marked test-data specs (`<prefix>-test-data-pack` / `<slug>-test-data`, type chore, Seed/Verify `make` targets, Seed channel) plus `artifacts/testdata-synth.json` (Source overrides + `blocked_by` edges; consumer specs untouched). Then: `VERIFICATION_NOTES_MISSING` (blocking — a spec with ACs and no notes rows), `TEST_DATA_IMPLIED` (blocking — rows all `none` but a criterion clearly implies data; answerable via `TESTDATA_CONFIRM`) / `TEST_DATA_IMPLIED_WEAK` (warn), `TEST_DATA_INVENTORY_MISSING` (warn — discovery.md lacks `## Test Data Inventory`), `TEST_DATA_SYNTH_FAILED` (blocking — an unmarked file holds a TD slug) and `DEPENDENCY_CYCLE` (blocking — cycle in the blocked-by graph including sidecar edges).
+
+(Bypass, contract, Signals and dangling-dependency checks also run — see `lib/planner-crosscheck.sh`.)
+
+The citation + precedent linter also runs once earlier, as a self-lint at the end of
+the Specify phase ([#218](https://github.com/willard-pro/claude-plugins/issues/218)) —
+the Specify agent runs `planner_crosscheck_citations` against its own fresh output and
+fixes findings before handing off to Review, catching the defect class in the same
+context window that introduced it. This front-loads the check; it does not replace
+Crosscheck, which still re-runs it as the final gate against the fully-reviewed
+artifacts.
+
+Every finding is written to state.log as `META|crosscheck|fail|<CODE> <message>` — the
+shape `ticket-retro`'s failure-histogram parser already reads (see
+[#176](https://github.com/willard-pro/claude-plugins/issues/176),
+[#177](https://github.com/willard-pro/claude-plugins/issues/177)). A blocking finding
+halts the dispatch loop immediately, before the create gate is even checked — retrying
+a deterministic check against unchanged artifacts cannot produce a different answer, so
+this is not folded into the phase-retry budget. Fix the cited artifact and
+`/ticket-planner resume <INIT_ID>` re-runs Crosscheck; it proceeds once clean. If the
+finding is genuine but expected rather than a defect (a documented rescope, say),
+`/ticket-planner resume <INIT_ID> --accept CODE:"reason"` is the supported alternative
+to fixing the artifact — see [Accepting a genuine Crosscheck finding](#accepting-a-genuine-crosscheck-finding---accept).
+
+`#174` (bypass sweep for guarded fields) and `#175` (cross-initiative contract check)
+now run as their own check families (see the parenthetical above).
+
+### Resolving against the ref Discovery explored, not whatever REPOS_ROOT is now ([#217](https://github.com/willard-pro/claude-plugins/issues/217))
+
+REPOS_ROOT is a shared checkout — it can move to a different branch between
+Discovery and Crosscheck (another terminal, another initiative's pipeline, an
+operator). Left unaddressed, the citation linter resolves against whatever the
+live checkout happens to be on *right now*, which produces
+`CITATION_UNRESOLVED`/`CITATION_LINE_OUT_OF_RANGE` findings indistinguishable
+from a genuinely bad citation — confirmed live on two initiatives (VS-2, VS-3),
+worked around both times by hand with a throwaway worktree.
+
+The fix: Discovery records the ref it actually explored per repo —
+`META|discovery|repo-ref|<repo>@<branch>@<sha>` (`<repo>` is the path relative to
+REPOS_ROOT, e.g. `microservices/foo`; a bare name from an older initiative is
+resolved by searching REPOS_ROOT for exactly one git checkout of that name, #500)
+— and `planner_crosscheck_citations`
+(`lib/planner-crosscheck-citations.sh`) reads it back via
+`planner_crosscheck_repo_ref_setup` (`lib/planner-crosscheck-repo-ref.sh`) before
+resolving any citation. For any repo whose live checkout no longer matches the
+pinned sha, it creates (or reuses) an isolated `git worktree` alongside the live
+repo — `<live-repo-dir>-crosscheck-<ref>-<short-sha>` — and excludes the live
+copy from resolution for the duration of that Crosscheck run, so citations
+resolve against the worktree instead. The live checkout is never touched. This is
+best-effort: a repo Discovery recorded no ref for, or one whose worktree creation
+fails, silently falls back to resolving against whatever the live checkout has.
+
+**Hard rule: the planner never runs `git checkout`, `git switch`, or `git reset`
+against a REPOS_ROOT repo — anywhere, in any phase.** It may only read from a
+REPOS_ROOT repo, or create a worktree alongside it. This is enforced by
+convention in every phase prompt that touches REPOS_ROOT (see Discovery's
+prompt in `planner-phase-prompts.sh`) since the planner's own agents are the
+only thing that could violate it — there is no live checkout mutation path in
+the deterministic bash libraries to guard against.
+
+## Refinement
+
+Like Crosscheck, Refinement is not an agent phase — SKILL.md's dispatch-loop step 1b
+runs it directly (`lib/planner-refinement.sh`), and it has no entry in
+`planner_prompt_for_phase`. It sits between Ticket Gen and Completed
+(planner-refinement-phase) and is the phase that answers a question the
+deterministic DoR check alone cannot: whether the criteria are the *right*
+ones, whether requirements contradict each other, or whether an autonomous
+agent could build the ticket without asking a human.
+
+For each child of the epic:
+
+1. **Deterministic** — `check_ticket_ready` (ticket-auto-pipeline's
+   `dor-check.sh`) against the ticket's local `planner/body.md` (written by
+   Ticket Gen; fetched once from Linear, read-only, if somehow missing), run
+   strict: `DOR_STRICT_TEST_DATA=true DOR_STRICT_VPLAN=true` as a call prefix,
+   so missing/unseeded test data and Verification Plan gaps are hard here even
+   where the host keeps them advisory (planner-test-data-derivation).
+2. **Semantic** — unless `PLANNER_REFINEMENT_SEMANTIC=false`, two
+   `ticket-auto-pipeline:dor-semantic-agent` spawns: a **scan** of the body
+   that never sees the deterministic result, then an **audit** of that
+   result. Bash parses and applies both via `dor-semantic-parse.sh` /
+   `dor_semantic_apply`. A blocking semantic finding joins `ready.missing`
+   as a `SEMANTIC_*` code, exactly like a deterministic hard code.
+
+Blocking is **per ticket** — the epic manifest is stamped `dispatch=true`
+once every child has a verdict (deterministic, and semantic when enabled),
+whatever that verdict is. Fleet dispatch already refuses a not-ready child
+individually, so a held ticket does not stop its ready siblings from
+dispatching. The planner itself is stricter: while any child is not ready,
+Refinement halts (no `Refinement|gate|done`, no retry-budget consumption —
+same "content decision, not a transient failure" treatment as a Crosscheck
+halt) and the run does not advance to Completed.
+
+A halt prints a report per not-ready ticket: its deterministic codes, its
+round, each semantic finding with its quote and label (`Blocking (new)`,
+`Blocking (carried since round <k>)`, `Structural drift (blocks)`,
+`Unverified finding`, `Advisory finding`), a `Demoted (does not block):` list,
+codes the evaluator believes the deterministic check missed, and every
+deterministic code the evaluator disputes with its reason plus the exact
+`dor-check.sh --waive` command that releases it. A ticket with a blocking,
+non-structural, verified finding also gets a `Converge (no rescan):` hint.
+After the report, `## Demoted findings on ready tickets` lists what was
+demoted on tickets that did pass. `/ticket-planner resume <INIT_ID>`
+re-enters Refinement and reuses every cached verdict whose body and evaluator
+version are unchanged — only a ticket whose `body.md` changed, or whose
+evaluator version is stale, is re-evaluated.
+
+**Rounds and convergence** (planner-refinement-convergence). Each new body a
+ticket is scanned on is one round, counted per ticket in `ready.lineage`.
+Every finding has an id (code + anchor section or acceptance-criteria item +
+normalised quote) and is labelled `new`, `carried` or `drift`:
+
+- **Round limit.** From round `PLANNER_REFINEMENT_MAX_ROUNDS + 1` (default 2,
+  so from round 3) a non-structural semantic finding is stored as advisory
+  with `demoted: round-limit`. The limit bounds blocking, not scanning.
+- **Drift.** From round 2, a new id on an unchanged unit that holds no open
+  carried finding is evaluator drift, and is demoted (`demoted: drift`).
+- **Structural codes** — `NEEDS_HUMAN_DECISION`,
+  `CONTRADICTORY_REQUIREMENTS`, `UNSTATED_DEPENDENCY`, `INTENT_AC_MISMATCH`
+  (`DOR_SEMANTIC_STRUCTURAL_CODES` overrides the list) — are never demoted by
+  the round limit, drift or converge. A structural code on an unchanged
+  section prints as `Structural drift (blocks)`. The deterministic codes
+  (test data included) and the bash-owned `SEMANTIC_*` codes are not touched
+  either.
+- **Reset.** A rewrite that changes 50% or more of the non-inert sections
+  (`DOR_SEMANTIC_ROUND_RESET_SHARE`) restarts the ticket at round 1.
+- **Scoped rescan.** An edit confined to the inert sections (default only
+  `Related Tickets`, `DOR_SEMANTIC_INERT_SECTIONS`) with no finding anchored
+  there rebases the verdict instead of staling it, and does not count as a
+  round. Any other stale verdict is rescanned with the changed sections named
+  in the prompt.
+- Each round writes one `META|refinement-round|done` trend line per ticket and
+  body hash (`round=`, `new=`, `carried=`, `drift=`, `resolved=`,
+  `unverified=`, `reset=`).
+- The evaluator is now `dor-semantic-v3`. An unchanged v2 verdict is migrated
+  in place at the start of the scan, so only tickets edited since are
+  rescanned.
+
+Demoted and other advisory findings are not lost: ticket-auto appraisal
+writes them into the ticket's notes as a `## Refinement Carry-over` section
+(`SCOPE_AMBIGUOUS` as a `[needs-human]` Open Question, `MISSING_CORE_AC` as a
+`### Test candidates` entry ticket-implement tests and ticket-verify checks,
+the rest `[agent-resolvable]`).
+
+**Converge.** `/ticket-planner resume <INIT_ID> --converge --only <TID[,…]>
+[--by <name>]` demotes the named tickets' remaining blocking, verified,
+non-structural findings on the stored verdict (`demoted: converge`, stamped
+with the operator) without a rescan, and logs
+`META|refinement-converge|done|<TID> demoted=<n> by=<op>`. A ticket whose
+verdict is missing, stale, unavailable, for an edited body or from another
+evaluator is refused (`META|refinement-converge|skip`) and scanned as usual;
+re-run converge after it. Converge runs after the deterministic scan and
+before the semantic passes.
+
+**Audit demotion (off by default).** Under `PLANNER_REFINEMENT_AUDIT_DEMOTE=true`,
+an audit that disputes an allow-listed heuristic code (`VPLAN_ROW_GAP`,
+`VPLAN_UNVERIFIABLE`, `AC_VAGUE`, `AC_IMPLEMENTATION_ONLY`,
+`NAV_PATH_MISSING`) and quotes the code's own section verbatim moves that code
+from `missing` to `advisory`, recorded in `ready.demoted` and bound to the body
+hash. Only the first audit for a body hash counts, and more than
+`DOR_AUDIT_DEMOTE_MAX` (default 2) qualifying codes on one ticket is refused as
+a blanket dispute. Each demotion logs `META|refinement-dispute|done`; a refusal
+or failure logs `META|refinement-dispute|warn`. A demoted code gets no waive
+command in the report, and fleet-controller drops it from its `disputed` hints.
+
+**Body drift.** Ticket Gen records a baseline hash of Linear's own rendering of
+each description (`planner/linear-baseline.sha`; when Linear stores a
+different rendering, `body.md` takes Linear's text and a
+`META|ticketgen|warn` line says so). Unless `PLANNER_REFINEMENT_DRIFT_CHECK=false`,
+every Refinement scan reads each child from Linear once and compares:
+
+- Linear changed, `body.md` did not → **adopted**: `body.md` takes the Linear
+  text, the baseline moves, `META|refinement|step|<TID> body adopted from Linear
+  [<old8>→<new8>]` is logged, and it counts as a new body.
+- `body.md` and Linear were both edited differently, or there is no baseline and
+  they differ (`conflict`), or only `body.md` was edited (`local-ahead`) →
+  blocking `BODY_DRIFT`. Both edited the same way → the baseline is re-recorded.
+- The read failed → `META|refinement|warn|<TID>: Linear read failed (n/max) …`;
+  after `PLANNER_REFINEMENT_DRIFT_MAX_FAILS` (default 3) in a row, blocking
+  `BODY_UNVERIFIED`. A recorded `BODY_DRIFT` survives a failed read.
+
+`BODY_DRIFT` and `BODY_UNVERIFIED` cannot be waived. The release is
+`/ticket-planner resume <INIT_ID> --refresh-bodies` (copy a local edit into
+Linear first if you want to keep it), which the halt also offers as a headless
+`flag:refresh-bodies` question. The same check runs in ticket-auto appraisal:
+a ready ticket whose Linear text drifted gets a `[needs-human]` Open Question
+and a `META|body-drift|info` line. `--refresh-bodies` and `--converge` also
+work on a Completed initiative: the resume re-runs Refinement on the refreshed
+and named children only, writes `META|refinement-after-completed|done`, and
+writes no phase line.
+
+An initiative planned before this change shipped (its log already carries
+the retired `TicketGen|dispatch-gate|done` line) skips Refinement entirely
+— it has no local body and its epic may already be dispatching.
 
 ## Draft readiness
 
@@ -599,6 +829,8 @@ Read each time the gate or Refinement runs, not persisted at argument parsing.
 | Confidence signal derivation | Review critique generation |
 | Pre-creation validation (`planned-ticket-check.sh`, `planned-ticket-body-check.sh` — [#285](https://github.com/willard-pro/claude-plugins/issues/285)) | Ticket body content, humanized (issue #285) |
 | Auto-dispatch detection and enqueuing | Re-planning decisions |
+| The Crosscheck phase (`planner-crosscheck.sh`) | — |
+| Refinement's own decisions: which tickets need a semantic pass, the deterministic DoR verdict, the epic dispatch stamp, halt vs. proceed (`planner-refinement.sh`) | Refinement's per-ticket semantic judgement (the two `dor-semantic-agent` spawns) |
 
 The router never reasons about content. Phases never mutate state directly (they write log entries the router reads).
 
@@ -612,6 +844,9 @@ The router never reasons about content. Phases never mutate state directly (they
 | `PLANNER_IDEA_MAX_LENGTH` | 2000 | Maximum idea length in chars (truncated with warning) |
 | `PLANNER_TSORT_TIMEOUT` | 30 | Seconds before timing out dependency graph sort |
 | `PLANNER_PHASE_TIMEOUT` | 600 | Seconds before timing out a hung phase agent |
+| `PLANNER_REQUIRE_INTENT` | false | When `true`, raw idea strings are refused — `plan` must be given a grill-me intent file |
+
+The `PLANNER_REFINEMENT_*` and `PLANNER_DRAFT_*` families are read each time Refinement or the draft gate runs, so set them in the environment of that run. Every other planner variable is read **once, in the shell that parses arguments**, and its effect is persisted to the state log there and then; setting one after a run has started has no effect — re-invoke with the corresponding flag instead (see [Why the controls live on disk](#why-the-controls-live-on-disk)).
 
 ### Cross-plugin variables (fleet-controller)
 
@@ -687,6 +922,78 @@ Stopping is not a distinct mode. The router holds no in-memory state, so a stop 
 just "quit dispatching", and `resume` is the continuation — the same path crash
 recovery already uses.
 
+A plain `resume` on an initiative sitting at the gate does not create anything. It
+reports the position and the `--create` command, and stops. `--until` accepts any phase
+name from `planner_phase_sequence`; an unknown phase, or one the initiative has already
+passed, is rejected with the valid names (or the current position) in the message.
+
+### Plan and resume flags
+
+Flags are accepted by both `plan` and `resume`. Every one of them is **written to the
+state log the moment it is parsed** and re-read from there wherever it is used — none
+of them is carried in an environment variable, because the dispatch loop spans a fresh
+process per phase and an `export` does not survive that (#144).
+
+| Flag | Effect |
+|------|--------|
+| `--create` | **`resume` only.** Authorize Linear creation, then run Epic Gen → Ticket Gen → Completed |
+| `--accept CODE:"reason"` | **`resume` only.** Mark a Crosscheck finding genuine-and-expected; non-blocking on the next Crosscheck run. Repeatable |
+| `--shared-branch` | Force a shared-branch directive on the epic regardless of the heuristic |
+| `--no-shared-branch` | Suppress the shared-branch directive regardless of the heuristic |
+| `--until <Phase>` | Stop the dispatch loop once `<Phase>` completes; `resume` continues |
+| `--dry-run` | Accepted and redundant — stopping before Linear is already the default |
+| `--team <key\|name\|id>` | Linear team to create on (overrides `LINEAR_TEAM_ID`) |
+| `--project <name\|id>` | Linear project for the epic and its tickets |
+| `--no-project` | File the epic and its tickets with no Linear project, deliberately — silences the project gate |
+| `--milestone <name\|id>` | Linear project milestone (needs `--project` when given by name) |
+| `--no-tests-rule[=true\|false]` | Record that the project forbids implementation from writing tests (#503): Crosscheck then does not count a spec that seeds its own test data as an owner, so a synthesized test-data spec (or an `exists:`/`external:` Source) becomes mandatory. `=false` records the opposite. Without the flag, the first `plan`/`resume` detects it once from `REPOS_ROOT` CLAUDE.md files and records where it found it. Sticky — persisted as the `no-tests-rule` config key. `PLANNER_NO_TESTS_RULE` is the default, read once here |
+| `--refresh-bodies` | **`resume` only.** Re-read every child's description from Linear — ready and waived tickets included — before Refinement re-evaluates. Only a ticket whose Linear text no longer matches its baseline is rewritten: `body.md` takes Linear's text, the baseline is re-recorded, and the ticket is re-scanned. A clean ticket is left alone, and waivers are kept. This is the release for `BODY_DRIFT` (a local edit and a Linear edit conflict) and `BODY_UNVERIFIED` (repeated failed reads), neither of which can be waived. A plain Linear edit over an unchanged `body.md` does not need it — every resume adopts that on its own. Also accepted on a Completed initiative. One-shot — consumed and cleared by this invocation, never sticky |
+| `--converge --only <TID[,TID...]> [--by <name>]` | **`resume` only.** Release the named tickets from their stored semantic verdict without a rescan: every blocking, verified, non-structural semantic finding becomes advisory with `demoted: converge` and the operator's name. Structural codes, unverified findings, deterministic codes and the bash-owned `SEMANTIC_*` codes keep blocking. A ticket with no verdict, or a stale, unavailable, edited-since or older-evaluator one, is refused and logged as `META\|refinement-converge\|skip`. `--only` is mandatory (there is no epic-wide converge); `--only`/`--by` without `--converge` are rejected; `--by` defaults to `$USER` (`operator` when unset). Spawns no agent. Also accepted on a Completed initiative. One-shot — persisted as the `converge` config key and cleared once Refinement consumes it |
+| `--answers <file>` | **`resume` only.** Apply an answers file to the open question round from `planner-stop-describe.sh`, then resume. Each answer becomes the flag it is bound to (`--create`, `--accept`, `--project`/`--no-project`, `--refresh-bodies`, a DoR waiver). See [Headless use](#headless-use---answers) |
+
+The branch flags are optional. Supplying both together is an error. When neither is supplied,
+the binary heuristic decides (≥ 3 tickets **and** dependency chain depth ≥ 2).
+
+`--create` is rejected in `plan` mode. Authorizing creation is a separate, deliberate
+invocation made *after* the artifacts exist and have been read — a single command that
+both plans and creates would be the footgun this design exists to remove.
+
+### Accepting a genuine Crosscheck finding (`--accept`)
+
+Some blocking findings are correct about the artifacts but not defects — most often
+`CARVE_SCOPE_LOST` when a ticket count was deliberately rescoped after Specify and the
+rescope is already documented in `consensus.md` or a post-Consensus coverage-audit doc.
+Before this flag existed the only way to unblock the create gate was hand-writing a
+`META|crosscheck|accepted|...`-shaped line directly into `state.log` — undocumented,
+easy to get wrong, and indistinguishable from an automated pass unless you already knew
+to look for it (#222).
+
+```
+/ticket-planner resume INIT-42 --accept CARVE_SCOPE_LOST:"documented rescope, see consensus.md#tickets-6"
+```
+
+`--accept CODE:"reason"` is **`resume` only**, same restriction as `--create` — a
+finding can only be accepted after Crosscheck has reported it. It is parsed and
+persisted the same way `--create`/`--until` are: written to the state log as
+`META|crosscheck|accepted|<CODE> <reason>` the moment it is parsed, before the dispatch
+loop reaches Crosscheck again, so the decision survives the process boundary between
+phases (the governing principle from #144 — see [Plan and resume flags](#plan-and-resume-flags) above). The
+flag is repeatable — pass it once per code to accept more than one finding in the same
+`resume`.
+
+Once accepted, the code stays accepted for the life of the initiative; there is no
+un-accept. On the next Crosscheck run, `planner_crosscheck_run` treats a finding whose
+code was accepted as non-blocking — the create gate does not see it — but still writes
+it to the state log as `META|crosscheck|accepted|<CODE> <message>` every time it
+recurs, so it stays visible in `status` mode's Crosscheck findings section and in
+`COMPLETED.md`'s Warnings section exactly like an automated pass or fail, with the
+operator's reason attached. Only the code named survives — a new finding under a
+different code still blocks normally.
+
+`--accept DRAFT_NOT_READY:"reason"` is not a Crosscheck accept: it passes a draft
+readiness halt (SKILL.md step 1d) by writing `META|draft-readiness|accepted|<hash> <reason>`,
+where `<hash>` covers the current drafts, so any spec edit re-arms the gate.
+
 #### Why the controls live on disk
 
 Every value that survives the dispatch loop correctly — the initiative ID, the idea,
@@ -724,6 +1031,88 @@ exist is an error; the planner does not create milestones.
 
 The resolved ids are recorded at EpicGen as `EpicGen|project|done|project=… milestone=…`
 so a later reader can tell where the initiative was filed without re-querying Linear.
+
+## Headless use (`--answers`)
+
+A caller with no terminal — an orchestrator running `claude -p`, a Slack bridge, a
+script — cannot read the halt prose. It runs this loop instead:
+
+1. **Describe.** `bash lib/planner-stop-describe.sh <INIT_ID>` prints why the run
+   stopped, as a human-hold Schema-Version 2 block (`REASON`, `ROUND`, and one
+   question per decision, each with an id, a binding and, for a closed choice,
+   options). A run with
+   nothing to ask prints one line: `REASON=COMPLETED`, `REASON=RUNNING` (just
+   resume) or `REASON=FAILED_RETRY_EXHAUSTED`.
+2. **Answer.** The caller collects answers and writes them to a JSON file: the
+   block's `ROUND`, plus `id`, `value`, `answered_by`, `role` and `ts` per answer.
+   The block format and the answers-file format are defined in
+   `ticket-auto-pipeline/docs/human-hold-schema.md` § Schema-Version 2.
+3. **Resume.** `/ticket-planner resume <INIT_ID> --answers <file>`.
+
+| Stop (`REASON`) | Question binding | What the answer does |
+|---|---|---|
+| `CREATE_GATE` | `flag:create` | `yes` = `--create`. `no` records the round; the run stops at the gate again |
+| `CROSSCHECK_BLOCKED` | `flag:accept:<CODE>` | the reason = `--accept CODE:"reason"`. `__skip__` declines |
+| `CROSSCHECK_BLOCKED` (`CITED_ARTIFACT_UNRESOLVED`) | `consensus-answer:cited:<n>`, one per unanswered artifact | `exists:<where>`, `external:<who>` or `generate`, written into the `Answer:` field of consensus.md's `n`th `CITED_ARTIFACT:` question. Any other value, or one with `\|`, CR or LF, is `INVALID_VALUE`. Specs are not edited: a spec need whose `Source` disagrees is `CITED_ARTIFACT_SOURCE_MISMATCH` on the re-run. The code's `flag:accept` question is still offered |
+| `CROSSCHECK_BLOCKED` (`TEST_DATA_IMPLIED`) | `consensus-answer:testdata:<slug>`, one per blocking spec, id `testdata-<slug>-<hash8>` | `none`, `generate: <desc>` (default `generate: <match phrase>`), `exists:<where>` or `external:<who>`, written as consensus.md's ``TESTDATA_CONFIRM: `<slug>` [<hash8>] — Answer: <value>`` line. `hash8` is re-derived from the spec's current trigger criterion at intake; a mismatch is `STALE_QUESTION` (exit 2, nothing written). The code's `flag:accept` question is still offered |
+| `CONSENSUS_BLOCKED` | `note` | recorded only — fix the plan and change consensus.md's Readiness from `blocked` (or re-run Consensus); the gate re-reads consensus.md on resume |
+| `PROJECT_GATE` | `flag:project` | a name or id = `--project`. `__none__` = `--no-project` |
+| `REFINEMENT_HALT` (`BODY_DRIFT` / `BODY_UNVERIFIED`) | `flag:refresh-bodies`, id `refresh-bodies`, asked first; options `yes\|no`, default `no` | `yes` = `--refresh-bodies` on the resume. `no` records the round; the held tickets stay held. Its text lists each held `<TID> (<codes>)`. These codes get no `waive:` question — they cannot be waived |
+| `REFINEMENT_HALT` | `waive:<TICKET>:<CODE>` | the reason = `dor-check.sh --waive <TICKET> <CODE> "reason"`. `__skip__` declines. Not offered for `BODY_*` codes or for a code in `ready.demoted` (an audit dispute already took it off the blocking list) |
+| `ADR_GATE` | `note` | recorded only — accept the ADR out of band (`adr-store.sh accept` refuses inside an agent session) |
+| `UNTIL_STOP` | `note` | recorded only — resuming is what continues past the `--until` phase |
+| `SPECIFY_DECISION` | `specify-answer:O<n>`, one per open decision, id `decision-O<n>-<hash8>`; `KIND input`, `AUDIENCE either`, no options or default | one line of at most 500 characters, written into proposal.md as `**Outcome:** Human decision (verbatim, round N, <role>): "<answer>"`. `__defer__` writes `**Outcome:** Deferred decision: <question>` and keeps the old outcome: the epic carries the question unresolved. Either a client or an operator may answer |
+
+`lib/planner-answers.sh` checks the file before it writes anything: the round must be
+the open one (exit 4, `STALE_ROUND`), every id must belong to it and an operator
+question needs `role: operator` (exit 2), and the file's `schema_version` major must
+be `1`. It writes `artifacts/answers/round-N.json`, applies the bindings through the
+same functions SKILL.md step 2b uses for the flags, and appends
+`META|human-hold|done|round=N sha=<sha256>` last. The same file again is a no-op; a
+different file for an answered round exits 3 (`ROUND_ALREADY_ANSWERED`). Answer text
+is untrusted: capped at 4 KB, stripped of control characters and code fences, stored
+with its attribution, and never evaluated.
+
+A `SPECIFY_DECISION` answer has stricter rules. It must be one line of at most 500
+characters after trimming; a longer value is `INVALID_VALUE` (exit 2), never cut. The
+first answer wins: an answer to a decision that was already answered, or whose
+question was edited in proposal.md, is `UNKNOWN_QUESTION_ID` (exit 2) — describe again
+and ask the new question. A round may answer only some decisions; the next describe
+opens round N+1 with the rest. Every intake runs under a per-initiative lock
+(`<state.log>.answers-lock`), so two concurrent files for one round give one exit 0
+and one exit 3. The answer text is written into proposal.md and `round-N.json`, never
+into state.log.
+
+The halts themselves do not change — same prose, same exit codes. The describer reads
+the state log the halts already write. The one halt added with the describer in mind
+is SKILL.md step 1c's open-decision halt: its describer check reads proposal.md, read-only,
+at position `Review`, so after `--until Specify` the decision is described before
+`UNTIL_STOP`.
+
+### When the client asks back
+
+A reply can be a question instead of an answer ("why do you need this?"). The caller
+decides which it is with an explicit affordance (a button, a command, a `?` prefix),
+never by asking a model. A question goes to the read-only Q&A script:
+
+```bash
+REPOS_ROOT=… bash lib/planner-artifact-qa.sh <INIT_ID> --question-file <file|-> \
+  [--qa-id <id>] [--about <QUESTION_ID>]
+```
+
+It answers from a read-only snapshot of the initiative's artifacts in its own sandboxed
+`claude -p` session and prints one JSON object: `status` (`answered` or
+`not_in_plan`), `answer`, `sources`, `about_open`, `phase_running`, `round`. An answer
+with no source in the plan comes back as `That is not in the plan yet.` Its exit codes
+are its own — do not reuse the `planner-answers.sh` table: 0 post the answer, 1 could
+not run, 2 input rejected, 3 `NO_ARTIFACTS`, 4 `QA_MODEL_FAILED` (retry once with the
+same `--qa-id`, unless stderr says `QA_MODEL_FAILED: budget`), 5 sandbox unsafe or
+violated (never retry).
+
+A question back is never an answer. The script does not touch `state.log`,
+`artifacts/` or the answers round: the open round stays open and its question stays
+pending. When `phase_running` is true a phase is running and the plan may still change;
+say so next to the answer.
 
 ## Planned-Entry Gate Dormancy
 

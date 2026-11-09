@@ -187,7 +187,7 @@ answering ("why do you need this?"), the caller runs
 `bash lib/planner-artifact-qa.sh <INIT_ID> --question-file <f> [--about <QID>]` and
 posts the JSON `.answer`. It is a sandboxed, read-only Q&A over the artifacts; it never
 answers, closes or renumbers the open round, so the pending question stays pending.
-See the `planner-artifact-qa.sh` lib row above and SKILL.md § Headless use.
+See the `planner-artifact-qa.sh` lib row above and [docs/ticket-planner.md § Headless use](docs/ticket-planner.md#headless-use---answers).
 
 ## State log format
 

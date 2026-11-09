@@ -56,8 +56,6 @@ else
 fi
 ```
 
-This handles the zero-items case (first capture in a fresh repo starts at KC-0001).
-
 Write to `knowledge/KC-NNNN--<slug>.md` using the frontmatter schema:
 
 ```yaml
