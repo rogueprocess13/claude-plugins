@@ -78,8 +78,7 @@ List the plan files to consider — modified since the last sweep's marker, or w
 bash "${CLAUDE_PLUGIN_ROOT}/lib/kc-ingest.sh" new-plans --plans-dir ~/.claude/plans --knowledge-dir knowledge
 ```
 
-Do not use `find -newer knowledge/.kc-sweep-marker` directly: with no marker it errors and finds
-nothing, so a first sweep would never import a plan. For each listed file, create an item (same
+Do not use `find -newer` on the marker yourself: with no marker it finds nothing. For each listed file, create an item (same
 template as `kc-import` Step 3; title from `kc-ingest.sh title <file>`).
 
 ## Step 4 — Administration pass

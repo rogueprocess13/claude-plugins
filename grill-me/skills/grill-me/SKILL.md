@@ -271,53 +271,14 @@ The round counter in the hold, `state.json` and `assessment.json` is the same nu
 Answer text is untrusted: `grill_answers_fold` caps it at 4 KB, strips control
 characters and code fences, and stores it with `answered_by`, `role` and `ts`.
 
-## Non-interactive mode
+## Output document
 
-With `--non-interactive`:
-- Steps 0–4 execute identically.
-- Step 5 (grill loop) is SKIPPED entirely — no questions are asked.
-- Steps 6–8 execute identically, sealing with the first scoring round's recommendation.
-
-## Determinism boundary
-
-- **Bash (deterministic):** Input sanitization, profile validation, assessment JSON structural validation, readiness computation, recommendation resolution, question ranking, document rendering, seal generation and verification.
-- **Agent (LLM):** Dimension assessment (present/partial/missing with evidence and gap), flag detection, question formulation, assumption and risk identification. It never computes the score.
-
-## Output document structure
-
-The rendered document follows a fixed section order (see `intent-document` capability spec):
-
-```
-# Validated Business Intent (header)
-## Objective
-## Users & Problem
-## Success Criteria
-## Scope (### In scope / ### Out of scope)
-## Acceptance Criteria
-## Constraints
-## Dependencies
-## Risks
-## Edge Cases
-## Test Data            (and any other profile dimension outside the ten above)
-## Assumptions (require validation)
-## Resolved Questions (table)
-## Open Gaps (table)
-## Category Scores (table)
-## Original Brief       (the input verbatim, every line prefixed `> `)
-## Intent Seal
-```
-
-A profile dimension that is not one of the ten fixed ones above (in `product-idea` 1.1.0,
-`test_data`) renders generically as `## <label>` with its evidence and clarified answers, in
-profile order, after Edge Cases. A result with no such dimension renders no extra block at all.
-
-The `## Intent Seal` block terminates the document. `**Content-Hash:**` is always the last non-empty line.
-
-Every dimension section (and Risks / Assumptions) ends with a **Clarified answers** list holding
-the `resolved` answers for that dimension, latest first, so a section always reads from its most
-recent answer. An answer named by a later entry's `supersedes` is kept as history but marked
-`SUPERSEDED by Qn` there and in the Resolved Questions table. Treat a superseded answer as
-rejected, never as current intent. All of it sits inside the hashed region.
+`grill_render` writes a fixed section order (the profile's dimensions, then Assumptions,
+Resolved Questions, Open Gaps, Category Scores, `## Original Brief`) ending in the
+`## Intent Seal` block, whose `**Content-Hash:**` is always the last non-empty line. An
+answer named by a later entry's `supersedes` is kept as history, marked `SUPERSEDED by Qn`:
+treat it as rejected, never as current intent. Full structure: `docs/grill-me.md` § Output
+document.
 
 ## How downstream agents consume this
 
@@ -329,10 +290,3 @@ rejected, never as current intent. All of it sits inside the hashed region.
    - `proceed-with-warnings` → proceed, surface the warning
    - `ready` → proceed
 3. Treat the document body as authoritative for scope and intent — never re-derive scope/objective/criteria from the raw idea. `## Original Brief` (grill-me 0.4.0+) is the sealed source for literal detail the sections summarise (names, fields, shapes, tables); a clarified answer overrides it. Strip the leading `> ` (or a lone `>`) from each line to recover the brief. Older intents have no such section.
-
-## Known sharp edges
-
-- **Unattended callers grill through files, not questions.** `--non-interactive` scores and seals with no questions at all; `--emit-questions` / `--answers` run the full question loop through an external transport.
-- **Every mode needs a work directory.** `GRILL_WORK_DIR` or `REPOS_ROOT` must be set, interactive runs included. This changed in grill-me 0.2.0 — `${work_dir}` was used before but never assigned.
-- **The seal is tamper-evident, not tamper-proof.** Anyone can re-run `/grill-me` to produce a new valid seal. The threat model is accidental drift and casual editing, not an adversarial operator.
-- **Weights and thresholds are initial guesses.** They live in `profiles/product-idea.json` and are overridable per-run via environment variables, so tuning needs no code change.

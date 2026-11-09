@@ -74,19 +74,7 @@ Vars that are **discoverable** (can search for candidate values):
 | missing/auto | `REPOS_ROOT` | Search sibling repos under the derived candidate directory for `.git`/`CLAUDE.md` markers (the script already proposes one when found) |
 | missing | `CLAUDE_BIN` / `CLAUDE_CMD` | Run `command -v claude` and any known wrapper binary names; if `CLAUDE_CMD` is set, report which token in it failed to resolve |
 
-Vars that require **manual setup** (secrets — cannot discover):
-
-| Status | Var | Where to get it |
-|--------|-----|-----------------|
-| missing | `LINEAR_API_KEY` | Linear → Settings → API → Create personal API key |
-| missing (only when `FLEET_EPIC_AUTO_PR=true`) | `GITHUB_PERSONAL_ACCESS_TOKEN` | GitHub → Settings → Developer settings → Personal access tokens |
-
-Vars that just need a CLI tool installed:
-
-| Status | Var | Fix |
-|--------|-----|-----|
-| missing | `jq` / `git` / `python3` | Install via the system package manager — all three are hard requirements (`jq` for detection engines, `git` for worktree/epic-branch ops, `python3` for `fleetd`) |
-| missing (only when `FLEET_EPIC_AUTO_PR=true`) | `gh` | Install the GitHub CLI — required for `epic_branch_open_pr` |
+Every other `missing` row (secrets such as `LINEAR_API_KEY` and, with `FLEET_EPIC_AUTO_PR=true`, `GITHUB_PERSONAL_ACCESS_TOKEN`; CLI tools such as `jq`, `git`, `python3`, `sqlite3`, `gh`) cannot be discovered: relay its **Note** column, which says where to get the value or what the tool is needed for. The GitHub token comes from GitHub → Settings → Developer settings → Personal access tokens.
 
 If the user agrees to discovery, run the relevant discovery commands for each discoverable var. Present each candidate value and ask the user to confirm before applying. **Do NOT write to files** — the user handles the actual edits.
 

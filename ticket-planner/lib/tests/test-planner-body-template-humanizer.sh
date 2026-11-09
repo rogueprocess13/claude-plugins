@@ -171,14 +171,23 @@ else
   fail "humanizer instruction precedes the real create call" "humanize_line=$humanize_line create_line=$create_line"
 fi
 
-# ── SKILL.md documents the cross-plugin body-check dependency ───────────────
+# ── The docs document the cross-plugin body-check dependency ───────────────
+# The validators table moved from SKILL.md to docs/ticket-planner.md
+# § Contracts (skill-prose-dedupe 3g); SKILL.md keeps a one-line pointer.
 
-SKILL_MD="${LIB_DIR}/../skills/ticket-planner/SKILL.md"
-echo "--- SKILL.md documents planned-ticket-body-check.sh as a cross-plugin validator ---"
-if grep -qF 'planned-ticket-body-check.sh' "$SKILL_MD"; then
-  pass "SKILL.md's cross-plugin validators table lists planned-ticket-body-check.sh"
+DOCS_MD="${LIB_DIR}/../docs/ticket-planner.md"
+echo "--- docs list planned-ticket-body-check.sh as a cross-plugin validator ---"
+VALIDATORS_SECTION=$(awk '/^### [0-9]+\. Cross-plugin validators/{f=1;next} f&&/^##/{exit} f' "$DOCS_MD")
+if grep -qF '| `planned-ticket-body-check.sh` | ticket-auto-pipeline |' <<<"$VALIDATORS_SECTION"; then
+  pass "docs' cross-plugin validators table lists planned-ticket-body-check.sh"
 else
-  fail "SKILL.md lists planned-ticket-body-check.sh" "not found in $SKILL_MD"
+  fail "docs list planned-ticket-body-check.sh" "not found in the Cross-plugin validators section of $DOCS_MD"
+fi
+SKILL_MD="${LIB_DIR}/../skills/ticket-planner/SKILL.md"
+if grep -qF 'planned-ticket-body-check.sh' "$SKILL_MD"; then
+  pass "SKILL.md's Contracts pointer still names planned-ticket-body-check.sh"
+else
+  fail "SKILL.md names planned-ticket-body-check.sh" "not found in $SKILL_MD"
 fi
 
 # ── Validation block: exit-3 hard stop actually fires (issue #472) ─────────

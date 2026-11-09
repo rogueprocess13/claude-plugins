@@ -1,11 +1,11 @@
-fleet-controller/skills/fleet-controller/SKILL.md	16923	250
-fleet-controller/skills/fleet-env-check/SKILL.md	5284	88
-fleet-controller/skills/fleet-features/SKILL.md	6300	69
-grill-me/skills/grill-me/SKILL.md	16933	328
-knowledge-curator/skills/kc-capture/SKILL.md	5493	122
-knowledge-curator/skills/kc-import/SKILL.md	5100	142
-knowledge-curator/skills/kc-query/SKILL.md	5131	90
-knowledge-curator/skills/kc-sweep/SKILL.md	4722	120
+fleet-controller/skills/fleet-controller/SKILL.md	9277	145
+fleet-controller/skills/fleet-env-check/SKILL.md	4889	76
+fleet-controller/skills/fleet-features/SKILL.md	6050	69
+grill-me/skills/grill-me/SKILL.md	14436	282
+knowledge-curator/skills/kc-capture/SKILL.md	5408	120
+knowledge-curator/skills/kc-import/SKILL.md	4496	142
+knowledge-curator/skills/kc-query/SKILL.md	4528	83
+knowledge-curator/skills/kc-sweep/SKILL.md	4654	119
 ticket-auto-pipeline/agents/dor-semantic-agent.md	1444	8
 ticket-auto-pipeline/agents/guidance-extractor-agent.md	1128	2
 ticket-auto-pipeline/agents/ticket-appraise-agent.md	659	2
@@ -97,4 +97,4 @@ ticket-auto-pipeline/skills/wiki-maintenance/SKILL.md	28838	493
 # allow-growth: no-source decisions become ASSUMED Scope assumptions; the agent must know the disposition and that security findings are excluded
 ticket-planner/agents/draft-revise-agent.md	1598	8
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-planner/skills/ticket-planner/SKILL.md	95244	1521
+ticket-planner/skills/ticket-planner/SKILL.md	60867	1151

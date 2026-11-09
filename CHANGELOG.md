@@ -17,6 +17,38 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.35.2, fleet-controller 0.46.8, grill-me 0.5.2, knowledge-curator 0.2.18 (2026-11-09)
+
+Skill prose dedupe, sub-PR 3g (`skill-prose-dedupe`, change 3 of the skill-size reduction
+programme): the last slice, covering the four plugins outside ticket-auto-pipeline (unchanged at
+0.97.0). SKILL.md text that the plugin's own docs, README or CLAUDE.md already carry is deleted;
+durable explanation that only lived in a SKILL.md moves into the plugin's docs. Runtime procedure
+and every bash block stay. 46,525 bytes removed across nine skills.
+
+### Changed
+
+- **ticket-planner** `SKILL.md` 95,244 → 60,867 bytes (−34,377). The Crosscheck and Refinement
+  explanations, the headless `--answers` reference (stop reasons, bindings, intake and Q&A exit
+  codes), the full flag table, the `--accept` background and the cross-plugin validators table
+  move to `docs/ticket-planner.md` (new sections: Plan and resume flags, Accepting a genuine
+  Crosscheck finding, Crosscheck, Refinement, Contracts § 6 Cross-plugin validators, Headless
+  use). `## State and Resume` is deleted (the docs carry it). Contracts, Determinism Boundary and
+  Configuration become short pointers that keep the read-once-at-parsing and earliest-stop rules.
+  Re-planning details keeps only the rules step 6 applies. Implementation steps are unchanged.
+  README and CLAUDE.md links to `SKILL.md#headless-use---answers` now point at the docs.
+- **fleet-controller** `skills/fleet-controller/SKILL.md` 16,923 → 9,277 (−7,646): Detection
+  Rules, Escalation Path, Configuration, Scheduling, Output and Owned Worker Lifecycle are deleted
+  (README.md/CLAUDE.md own them); the frontmatter description no longer states an engine count.
+  `fleet-env-check` 5,284 → 4,889 (−395) stops restating the script's Note column;
+  `fleet-features` 6,300 → 6,050 (−250) drops the JSON field list.
+- **grill-me** `SKILL.md` 16,933 → 14,436 (−2,497): Non-interactive mode, Determinism boundary and
+  Known sharp edges are deleted (CLAUDE.md and `docs/grill-me.md` carry them); the output section
+  enumeration moves to `docs/grill-me.md` § Output document.
+- **knowledge-curator** kc-query −603 (retune table, kept in README), kc-import −604 (historical
+  label note cut to its rule), kc-capture −85, kc-sweep −68.
+- `test-planner-body-template-humanizer.sh` now pins `planned-ticket-body-check.sh` in the docs'
+  Cross-plugin validators table, plus the SKILL.md pointer.
+
 ## 0.97.0 (2026-11-09)
 
 Skill prose dedupe, sub-PR 3f (`skill-prose-dedupe`, change 3 of the skill-size reduction

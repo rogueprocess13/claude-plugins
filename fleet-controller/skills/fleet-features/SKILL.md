@@ -44,7 +44,7 @@ fi
 rm -f "$OUT"
 ```
 
-The output is one JSON object: `workspace`, `catalog`, `sources` (which layers were found), `count`, and `flags[]`. Each flag has `name`, `plugin`, `category`, `value`, `source`, `default`, `enabled`, `recommend`, `summary`, `why`, `docs`, `requires[]`, `requires_met` (`true`, `false`, or `null` when only manual steps apply), `unmet[]` and `manual_steps[]`.
+The output is one JSON object with a `flags[]` array; the fields each step uses are named where it uses them.
 
 **Process environment caveat.** The `env` source is this Claude Code session's own environment. That is the right view for interactive planner and ticket-auto sessions, because Claude Code loads `settings.local.json`'s `env` into it. fleetd workers get their environment from `fleet-start.sh` instead. If the user asks "what does fleetd run with", run the script again with `--no-env` and use that result for fleetd-side flags.
 

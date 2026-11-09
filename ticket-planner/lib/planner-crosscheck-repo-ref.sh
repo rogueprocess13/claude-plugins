@@ -30,7 +30,7 @@
 # Hard rule: this library — and everything upstream of it in the planner —
 # never runs `git checkout`, `git switch`, or `git reset` against a live
 # REPOS_ROOT checkout. It only reads from one, or creates a worktree beside
-# it. See ticket-planner SKILL.md's "Crosscheck" section.
+# it. See docs/ticket-planner.md § Crosscheck.
 #
 # Sourceable library — no set -euo pipefail.
 

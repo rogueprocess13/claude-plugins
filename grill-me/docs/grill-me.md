@@ -80,9 +80,45 @@ When the recommendation is not `ready` and `--non-interactive` is not set:
 4. Fold answers back into the assessment — only dimensions targeted by the round's questions are re-assessed (design D9). Each answer is appended to `resolved`; an answer that reverses an earlier one names it with `supersedes: [n]` (its 1-based `resolved` position). The renderer lists each dimension's answers in its section, latest first, and marks superseded ones `SUPERSEDED by Qn`.
 5. Re-score and repeat until `ready` or `--max-rounds` is reached.
 
+## Output document
+
+The rendered document follows a fixed section order (see `intent-document` capability spec):
+
+```
+# Validated Business Intent (header)
+## Objective
+## Users & Problem
+## Success Criteria
+## Scope (### In scope / ### Out of scope)
+## Acceptance Criteria
+## Constraints
+## Dependencies
+## Risks
+## Edge Cases
+## Test Data            (and any other profile dimension outside the ten above)
+## Assumptions (require validation)
+## Resolved Questions (table)
+## Open Gaps (table)
+## Category Scores (table)
+## Original Brief       (the input verbatim, every line prefixed `> `)
+## Intent Seal
+```
+
+A profile dimension that is not one of the ten fixed ones above (in `product-idea` 1.1.0,
+`test_data`) renders generically as `## <label>` with its evidence and clarified answers, in
+profile order, after Edge Cases. A result with no such dimension renders no extra block at all.
+
+The `## Intent Seal` block terminates the document. `**Content-Hash:**` is always the last non-empty line.
+
+Every dimension section (and Risks / Assumptions) ends with a **Clarified answers** list holding
+the `resolved` answers for that dimension, latest first, so a section always reads from its most
+recent answer. An answer named by a later entry's `supersedes` is kept as history but marked
+`SUPERSEDED by Qn` there and in the Resolved Questions table. Treat a superseded answer as
+rejected, never as current intent. All of it sits inside the hashed region.
+
 ## Non-interactive mode
 
-Agent-to-agent mode. Scores, renders, and seals without asking any question. A fleet-controller or cron caller can gate on `GRILL_RECOMMENDATION` without a human present.
+Agent-to-agent mode. Scores, renders, and seals without asking any question. Steps 0–4 and 6–8 run as in interactive mode; Step 5 (the grill loop) is skipped, so the seal carries the first scoring round's recommendation. A fleet-controller or cron caller can gate on `GRILL_RECOMMENDATION` without a human present.
 
 ## Cross-plugin integration
 

@@ -17,7 +17,7 @@ Architecture, contracts, and reference documentation for the ticket-planner plug
 
 ## Skill Reference
 
-- [../skills/ticket-planner/SKILL.md](../skills/ticket-planner/SKILL.md) — Skill procedure: modes (`plan`, `resume`, `status`, `replan`), phase table, contracts, determinism boundary, configuration, and implementation instructions.
+- [../skills/ticket-planner/SKILL.md](../skills/ticket-planner/SKILL.md) — Skill procedure: modes (`plan`, `resume`, `status`, `replan`, `doctor`), flags, phase table and implementation instructions. Contracts, configuration, Crosscheck, Refinement and headless use are documented in [ticket-planner.md](ticket-planner.md).
 
 ## Related Plugins
 
