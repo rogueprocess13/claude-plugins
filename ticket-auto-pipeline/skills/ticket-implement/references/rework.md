@@ -11,18 +11,11 @@ Read only under the condition in SKILL.md "Reference files (load condition)": a 
 
 Before reading the section, assert the closing marker:
 
-**REMEDIATION_BRIEF integrity check:**
+**REMEDIATION_BRIEF integrity check** (`PLAN` from the Step 2.5 call):
 ```bash
-# Find the last ## Verification # section in the plan
-LAST_SECTION_LINE=$(grep -n '^## Verification #' "$PLAN" | tail -1 | cut -d: -f1)
-# Extract the non-blank lines of that section up to the next ## heading or EOF
-SECTION_TAIL=$(awk "NR>$LAST_SECTION_LINE && /^## / {exit} NF" "$PLAN" | tail -1)
+bash ~/.claude/skills/lib/remediation-check.sh integrity "{TICKET-ID}" --plan "{PLAN}"
 ```
-If `SECTION_TAIL` ≠ `<!-- /REMEDIATION_BRIEF -->`:
-```bash
-bash ~/.claude/skills/lib/plog.sh META gate-stop fail "REMEDIATION_BRIEF_TRUNCATED — marker missing in: $PLAN"
-```
-Stop. Report: `{TICKET-ID} pipeline halted: REMEDIATION_BRIEF closing marker missing in ${PLAN}. The verify step may have been interrupted mid-write. Re-run ticket-verify to regenerate the brief.`
+Exit 1 means the last `## Verification #` section does not end with `<!-- /REMEDIATION_BRIEF -->` and `META|gate-stop|fail|REMEDIATION_BRIEF_TRUNCATED — marker missing in: {PLAN}` is logged. Stop. Report: `{TICKET-ID} pipeline halted: REMEDIATION_BRIEF closing marker missing in {PLAN}. The verify step may have been interrupted mid-write. Re-run ticket-verify to regenerate the brief.`
 
 On marker present proceed to process the failures:
 1. Count existing `## Verification #` sections in the plan to determine N (0 if none)

@@ -1,0 +1,9 @@
+# Notes
+
+## Session Log
+
+### DATE — plan artifact durability warning
+- ⚠️ openspec change for WIL-30 is not durably tracked in the tickets repo (status:
+  gitignored). It is one `git clean` from loss. Fix with:
+  `bash ~/.claude/skills/lib/openspec-tracking-check.sh commit "$WS/openspec/changes/wil-30--fix-thing/" "WIL-30"`
+  from the tickets repo root.

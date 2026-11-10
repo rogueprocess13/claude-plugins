@@ -203,74 +203,48 @@ fallback when Tiers 1-2 return nothing for a single-repo ticket)** → **Path B 
 
 ---
 
-#### 3a.0 — Identify affected repos and check prescan freshness
+#### 3a.0 — One call: repos, freshness, routed docs and the wiki route
 
-**Deterministic repo enumeration** via `prescan-route.sh` (mode=repos) — no LLM judgment on which repos are affected:
+Run the deterministic half of 3a.0, 3a.0b and 3a.1 in one call — no LLM judgment on which repos
+are affected, which prescan docs match or whether the wiki is routed to. It reads the ticket's
+title, labels and description from `context.md` itself:
 
 ```bash
-REPOS=$(bash "$HOME/.claude/skills/lib/prescan-route.sh" --mode repos --repos-root "$REPOS_ROOT")
+bash ~/.claude/skills/lib/appraise-knowledge-load.sh --ticket-dir "{ticket-dir}" \
+  --repos-root "{REPOS_ROOT}" --wiki-root "{WIKI_ROOT}" --affected-services "{AFFECTED_SERVICES}"   # "" when unset/absent
 ```
 
-For each repo in the list, derive the slug and check freshness:
+It prints one `PRESCAN_REPO=<slug>|<status>|<routed doc count or ->|<path>` line per repo under
+`REPOS_ROOT` (`prescan-route.sh --mode repos`, then `prescan-check.sh`), a
+`PRESCAN_DOC=<slug>|<path>` line per doc `prescan-route.sh --mode index` matched in that repo's
+`INDEX.md` (3a.1), the `wiki_bootstrap` lines when `WIKI_ROOT` is set (a no-op on a scaffolded
+wiki; it covers the `--from-auto` path, where Step 0.5's own bootstrap never ran), and
+`wiki-route.sh`'s eval-safe `WIKI_ROUTE`, `WIKI_ROUTE_REASON`, `WIKI_ROUTE_REPO_COUNT`,
+`WIKI_ROUTE_TOPIC_FILES` and `WIKI_ROUTE_LINE`.
 
-1. Derive the repo slug: `_derive_slug() { basename "$repo" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g'; }`
-2. Run the freshness gate:
-   ```bash
-   eval $(bash "$HOME/.claude/skills/lib/prescan-check.sh" "$repo" --repos-root "$REPOS_ROOT")
-   ```
-3. Record the status:
-   - `PRESCAN_STATUS=fresh` → trust prescan docs, tag findings `(prescan-confirmed)`
-   - `PRESCAN_STATUS=stale` or `decayed` → load prescan docs but treat ALL entries as **unconfirmed** — re-verify every file:line reference against live source before trusting. Demote unverifiable entries to open questions.
-   - `PRESCAN_STATUS=missing` → skip prescan entirely for that repo, fall through to the wiki (3a.3).
+Per repo status:
+- `fresh` → trust prescan docs, tag findings `(prescan-confirmed)`
+- `stale` or `decayed` → load prescan docs but treat ALL entries as **unconfirmed** — re-verify every file:line reference against live source before trusting. Demote unverifiable entries to open questions.
+- `missing` → skip prescan entirely for that repo, fall through to the wiki (3a.3).
 
-This list is every repo under `REPOS_ROOT` (it is the freshness sweep's input, not the
-ticket's scope). The ticket's affected-repo count for 3a.0b is computed separately by
-`wiki-route.sh`, which filters the list to repos the ticket actually names — never count this
-list.
+The repo list is every repo under `REPOS_ROOT` (the freshness sweep's input, not the ticket's
+scope). The ticket's affected-repo count is `WIKI_ROUTE_REPO_COUNT` — never count the repo lines.
 
 ---
 
-#### 3a.0b — Always load WIKI_ROOT/index.md, and decide whether to route to it
+#### 3a.0b — Read WIKI_ROOT/index.md, and act on the routing decision
 
-Regardless of prescan status, if `{WIKI_ROOT}` is set (from Step 0.5), bootstrap it first —
-covers the `--from-auto` path, where `WIKI_ROOT` reached this skill via the router's env file
-rather than Step 0.5's own CLAUDE.md read, so Step 0.5's bootstrap call never ran this run:
+If `{WIKI_ROOT}` is set, read `{WIKI_ROOT}/index.md` now. It is short by design (~110 lines) —
+cheap enough to load unconditionally rather than wait for Tiers 1-2 to come up empty first.
+Prescan is per-repo and cannot answer a cross-repo question no matter how fresh it is.
 
-```bash
-source "$HOME/.claude/skills/lib/wiki-bootstrap.sh"
-wiki_bootstrap "$WIKI_ROOT"
-```
-
-No-op on an already-scaffolded wiki. Then read `{WIKI_ROOT}/index.md`
-now. It is short by design (~110 lines) — cheap enough to load unconditionally rather than wait
-for Tiers 1-2 to come up empty first. Prescan is per-repo and cannot answer a cross-repo
-question no matter how fresh it is, so there is nothing to lose by loading the wiki's own index
-alongside prescan's.
-
-Then compute the routing decision deterministically — no LLM judgment, and no counting by eye:
-
-```bash
-eval "$(bash "$HOME/.claude/skills/lib/wiki-route.sh" \
-  --wiki-root "$WIKI_ROOT" --repos-root "$REPOS_ROOT" \
-  --ticket-title "{TICKET_TITLE}" --ticket-labels "{TICKET_LABELS}" --ticket-desc "{TICKET_DESC}" \
-  --affected-services "{AFFECTED_SERVICES}")"   # Planner Context field; "" when absent
-```
-
-It evaluates two signals:
-
-1. **Multi-repo scope** — more than one repo under `REPOS_ROOT` is named (whole word,
-   case-insensitive) in the ticket's title, labels or description (`prescan-route.sh --mode repos`
-   with the ticket text), or the Planner Context `Affected Services` field lists more than one
-   service. A workspace that merely *contains* several repos does not count.
-2. **Index topic match** — `prescan-route.sh --mode index` against `{WIKI_ROOT}/index.md`'s
-   Lookup by Topic/Service tables (the same case-insensitive substring matching prescan uses).
-
-It emits `WIKI_ROUTE=true|false`, `WIKI_ROUTE_REASON`, `WIKI_ROUTE_REPO_COUNT`,
-`WIKI_ROUTE_TOPIC_FILES` and `WIKI_ROUTE_LINE`. If `WIKI_ROUTE=true`, 3a.3 loads wiki files as a
-**primary** source, run in addition to Tiers 1-2 rather than only as their fallback (start from
-`WIKI_ROUTE_TOPIC_FILES` when the reason is `topic`). If `WIKI_ROUTE=false`, the wiki index stays
-loaded only as the fallback path already described in 3a.3 — a single-repo ticket with no topic
-match has no reason to pull in cross-repo context.
+`WIKI_ROUTE` is `true` on either signal: **multi-repo scope** (more than one repo under
+`REPOS_ROOT` named, whole word, in the ticket's title, labels or description, or more than one
+`Affected Services` entry — a workspace that merely *contains* several repos does not count) or
+an **index topic match** (`{WIKI_ROOT}/index.md`'s Lookup by Topic/Service tables, matched the
+way prescan matches). If `WIKI_ROUTE=true`, 3a.3 loads wiki files as a **primary** source, in
+addition to Tiers 1-2 (start from `WIKI_ROUTE_TOPIC_FILES` when the reason is `topic`). If
+`WIKI_ROUTE=false`, the wiki index stays loaded only as 3a.3's fallback.
 
 Record the decision in notes.md under Initial Investigation by writing `$WIKI_ROUTE_LINE`
 verbatim (`**Wiki routing:** {multi-repo (N repos) | topic match: {files} | not routed — per-repo ticket}`).
@@ -287,24 +261,15 @@ Most tickets surface nothing here — this is not a mandatory step per ticket, o
 
 #### 3a.1 — Tier 1: INDEX.md routing (primary path)
 
-**If `PRESCAN_STATUS` is `fresh`, `stale`, or `decayed`** and `.ticket-auto/<repo-slug>/docs/INDEX.md` exists:
+**For a repo whose status is `fresh`, `stale` or `decayed`** and that has a
+`.ticket-auto/<repo-slug>/docs/INDEX.md`, the 3a.0 call already routed it (case-insensitive
+substring match of the ticket text against its Lookup tables — zero LLM variance):
 
-**Deterministic keyword routing** via `prescan-route.sh` (mode=index) — bash parses the table, does case-insensitive substring matching, emits the file list. Zero LLM variance between runs:
-
-```bash
-MATCHED=$(bash "$HOME/.claude/skills/lib/prescan-route.sh" --mode index \
-  --index "$REPOS_ROOT/.ticket-auto/$slug/docs/INDEX.md" \
-  --ticket-title "{TICKET_TITLE}" \
-  --ticket-labels "{TICKET_LABELS}" \
-  --ticket-desc "{TICKET_DESC_FIRST_500}")
-# PRESCAN_ROUTE_COUNT and matched file paths are emitted
-```
-
-1. **If `PRESCAN_ROUTE_COUNT > 0`:** bash matched keywords → load the matched files.
-2. **Verify against live source**: For every file:line reference found in prescan docs, Grep the source repo to confirm the referenced symbol still exists. Confirmed entries → tag `(prescan-confirmed)`. Unconfirmed entries → tag `(prescan-unconfirmed)` and note as open questions if `PRESCAN_STATUS` is stale/decayed.
+1. **If its routed doc count > 0:** load its `PRESCAN_DOC` files.
+2. **Verify against live source**: For every file:line reference found in prescan docs, Grep the source repo to confirm the referenced symbol still exists. Confirmed entries → tag `(prescan-confirmed)`. Unconfirmed entries → tag `(prescan-unconfirmed)` and note as open questions if the status is stale/decayed.
 3. Set `{PRESCAN_FLOW}` = the shortest non-index matched file (most focused prescan doc). Each doc contains pre-traced call chains with real class names, endpoints, and entity fields. If multiple files match, prefer `services/*.md` over top-level docs because service files are more targeted.
 4. Record prescan docs loaded in notes.md under Initial Investigation: `**Prescan bootstrap:** {list of files loaded} ({fresh|stale|decayed}) — routed by prescan-route.sh`
-5. **If `PRESCAN_ROUTE_COUNT = 0`:** INDEX.md keyword matching found nothing for this repo → fall through to Tier 2 (claude-mem corpus) for the per-repo search. This is independent of the wiki decision already made in 3a.0b.
+5. **If its routed doc count is 0:** INDEX.md keyword matching found nothing for this repo → fall through to Tier 2 (claude-mem corpus) for the per-repo search. This is independent of the wiki decision already made in 3a.0b.
 
 ---
 
@@ -508,8 +473,8 @@ bash ~/.claude/skills/lib/plog.sh APPRAISE codebase-investigation start "Delegat
 
 Run exactly the same loading logic as Step 3a above — wiki alongside prescan, not after it:
 
-1. **Wiki index (3a.0b):** Always load `{WIKI_ROOT}/index.md` if `{WIKI_ROOT}` is set. Decide `WIKI_ROUTE` from multi-repo scope or an index topic match.
-2. **Tier 1 (prescan INDEX.md):** Read `REPOS_ROOT/.ticket-auto/<repo-slug>/docs/INDEX.md`, run `prescan-check.sh` for freshness, match ticket keywords against Lookup by Topic/Service tables, load and verify identified files, tag confirmed entries `(prescan-confirmed)`, set `{PRESCAN_FLOW}` if a relevant doc is found.
+1. **One call (3a.0):** run `appraise-knowledge-load.sh` for repo freshness, routed prescan docs and `WIKI_ROUTE`; read `{WIKI_ROOT}/index.md` if `{WIKI_ROOT}` is set (3a.0b).
+2. **Tier 1 (3a.1):** load and verify each repo's `PRESCAN_DOC` files, tag confirmed entries `(prescan-confirmed)`, set `{PRESCAN_FLOW}` if a relevant doc is found.
 3. **Tier 2 (claude-mem corpus):** If Tier 1 misses, prime and query the prescan corpus semantically.
 4. **Wiki files (3a.3):** Load wiki flow files as a primary source when `WIKI_ROUTE=true`, or as the fallback when Tiers 1-2 produced nothing. Set `{WIKI_FLOW}` to the most relevant flow file or leave empty.
 5. **Cross-repo:** For multi-repo tickets, load `REPOS_ROOT/.ticket-auto/system.md`.

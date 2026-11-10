@@ -17,6 +17,58 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.109.0 (2026-11-10)
+
+The deterministic bash of ticket-appraise, ticket-appraise-exec and ticket-implement moves
+into tested lib scripts (`skill-deterministic-extraction`, group 5). Always-loaded SKILL.md
+bytes: ticket-appraise-exec 32,284 → 29,834, ticket-implement 34,975 → 33,676,
+ticket-appraise 36,841 → 36,834. Conditional references: ticket-appraise
+`full-investigation.md` 34,200 → 32,683, ticket-implement `feedback.md` + `rework.md`
+10,304 → 9,949. Log step names, `--from-step` values, phase names and the
+`detect-resume.sh` contract are unchanged. Each script's log lines match fixtures produced by
+running the old blocks (`lib/tests/fixtures/{appraise-exec-coherence,openspec-assert-warn,implement-feedback}/`,
+plus old-fence oracles inside `test-appraise-knowledge-load.sh` and `test-remediation-check.sh`).
+Other plugins unchanged.
+
+### Added
+
+- `lib/appraise-exec-coherence.sh` — appraise-exec Step 3.4: complexity read, artifact check,
+  `COMPLEXITY_ARTIFACT_MISMATCH` gate-stop, the openspec commit with its gate-warn, and the
+  coherence-check / artifact-persisted heartbeats, in one call.
+- `lib/appraise-knowledge-load.sh` — appraise Step 3a.0/3a.0b/3a.1 (full-investigation
+  reference): repo freshness, routed prescan docs, wiki bootstrap and `wiki-route.sh`, with the
+  ticket text read from `context.md` instead of argv placeholders.
+- `openspec-tracking-check.sh assert-warn` — implement Step 5.5: derives `--expect`, asserts,
+  and on a non-zero status writes the `OPENSPEC_ARTIFACT_UNTRACKED` gate-warn and the notes.md
+  durability warning.
+- `lib/implement-feedback.sh` (`record`, `wiki-ok`, `correction`) and `lib/implement-rate.sh` —
+  implement Step 4c: outcome trigger, `implement_tests` verifier result, the mismatch decision,
+  the wiki-check line, the CORRECTIONS writes, and the outcome label from the agent's counts.
+- `lib/remediation-check.sh` (`status`, `integrity`) — implement Step 2.5 counts, the
+  `REWORK_OPEN` resume rule, and the REMEDIATION_BRIEF integrity gate-stop.
+
+### Changed (behaviour)
+
+- **The outcome label is computed**, worst of fix cycles / discovery rounds (0, 1–2, 3+) and
+  plan deviation, instead of rated by the agent from a table.
+- **Fences that leaned on another fence's shell state now work in one call:** Step 3.4's commit
+  read `$CHANGE_DIR` and the wiki CORRECTIONS block called `append_correction`, both defined
+  only in an earlier Bash call. In a fresh shell the commit got an empty dir and the wiki
+  correction logged `corrections-error` without writing.
+- **appraise-exec Step 3.4 writes its own heartbeats** (the agent used to), and the gate-stop's
+  `artifact=` is now always one of `simple-fix`, `openspec`, `ambiguous`, `none`.
+- **appraise's fast-path heartbeats call `bash ~/.claude/skills/lib/hb-wrap.sh`** without the
+  `[ -n "$HB_LOG_FILE" ] &&` guard: the bare `hb-wrap.sh` was not on `PATH`, and the guard
+  returned 1 under `set -e`. hb-wrap.sh is a no-op without `HB_LOG_FILE`.
+- The knowledge-load call takes `{REPOS_ROOT}`/`{WIKI_ROOT}` as filled placeholders rather than
+  shell variables a fresh Bash call does not have.
+
+### Not changed
+
+- appraise-exec Step 3.8's readiness score was **not** merged with `gate-check.sh` Check 2.6:
+  the two rules differ (thresholds, mode awareness, sources, stop kind), so sharing one would
+  change gate verdicts. Recorded for a decision in the change's handoff.
+
 ## 0.108.0 (2026-11-10)
 
 ticket-verify's deterministic bash moves into tested lib scripts

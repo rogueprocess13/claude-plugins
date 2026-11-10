@@ -12,11 +12,9 @@ You have been given a ticket ID as the argument (e.g. `WIL-42`). The investigati
 If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=<from args>, PHASE=EXEC, HAS_LINEAR_ACCESS=true, LINEAR_OPS=save_comment, HAS_LOGGING=true, HAS_HEARTBEAT=true. Before starting, source the project context: `source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=EXEC, FROM_FLAG=none, HAS_LINEAR_ACCESS=true, LINEAR_OPS=save_comment, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT,ISSUE_PREFIX,BE_SERVICES,BE_TEST_CMD, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
 
 ### Heartbeat points
-Steps 3.7 and 3.8 write their own heartbeats inline. Also write (event schema: `pipeline-heartbeat-format.md`):
+Steps 3.7 and 3.8 write their own heartbeats inline; Step 3.4's script writes its own. Also write (event schema: `pipeline-heartbeat-format.md`):
 - after reading complexity: `hb-wrap.sh decision "complexity-read" "info" "complexity: {simple|complex}" '{"score":"{COMPLEXITY}"}'`
 - after writing the artifact: `hb-wrap.sh decision "artifact-created" "fired" "created {simple-fix|openspec}" '{"type":"{simple-fix|openspec}"}'`
-- after the coherence check: `hb-wrap.sh gate "coherence-check" "ok|fail" "complexity-artifact match|mismatch" '{"declared":"{COMPLEXITY}","artifact":"{simple-fix|openspec}"}'`
-- after the openspec-tracking-check.sh commit (complex only): `hb-wrap.sh gate "artifact-persisted" "ok|warn" "committed|noop|commit-failed" '{"dir":"{CHANGE_DIR}","rc":"{COMMIT_RC}"}'`
 - after the regression guard: `hb-wrap.sh decision "regression-verdict" "fired" "{CONFLICT|ADJACENT|SUPERSEDES|clear}" '{"verdict":"{CONFLICT|ADJACENT|SUPERSEDES|clear}"}'`
 - MCP fallback used to post the comment (LINEAR_API_KEY unset): `hb-wrap.sh fallback "linear-api" "fired" "using MCP Linear tools" '{"reason":"LINEAR_API_KEY unset"}'`
 - after the adversarial agent: `hb-wrap.sh decision "adversarial-review" "fired" "{PASS|WARNINGS|BLOCKED}" '{"verdict":"{PASS|WARNINGS|BLOCKED}","issues":"{N}"}'`
@@ -162,59 +160,14 @@ cl_write RETRO hint info "artifact path derived from TICKET_DIR={TICKET_DIR} —
 
 ## Step 3.4 — Complexity-coherence gate
 
-After writing the artifact, verify that the declared complexity matches what was produced.
-
-Read complexity from notes.md using the shared helper:
+After writing the artifact, check that the declared complexity matches what was produced. Run it from the tickets repo root:
 ```bash
-COMPLEXITY=$(bash -c "source ~/.claude/skills/lib/notes-parse.sh; get_complexity '{TICKET_DIR}'")
+bash ~/.claude/skills/lib/appraise-exec-coherence.sh "{TICKET-ID}" "{TICKET_DIR}"
 ```
 
-Check artifact presence **by testing the file path directly** — do not rely on grep of notes.md:
-```bash
-# simple-fix path — must exist as a real file
-if [ -f "{TICKET_DIR}/simple-fix.md" ]; then SIMPLE_FIX="{TICKET_DIR}/simple-fix.md"; else SIMPLE_FIX=""; fi
-# openspec path — the one change-dir resolver (lib/ticket-dir.sh): whole-ID
-# match, so WIL-4 never picks up wil-42-*. Exit 2 = several dirs match this
-# ticket (listed on stderr) — treat it as a mismatch, never pick one.
-CHANGE_DIR_RC=0
-CHANGE_DIR=$(bash ~/.claude/skills/lib/ticket-dir.sh change-dir "{TICKET-ID}" .) || CHANGE_DIR_RC=$?
-[ "$CHANGE_DIR_RC" -eq 0 ] || CHANGE_DIR=""
-OPENSPEC_TASKS="${CHANGE_DIR}tasks.md"
-```
+It reads `**Score:**` under `## Complexity` (`notes-parse.sh`), tests `simple-fix.md` and the openspec change dir (`ticket-dir.sh change-dir`, whole-ID match) on disk, and writes the coherence-check heartbeat. A mismatch is several matching change dirs, no score, `simple` with no `simple-fix.md`, or `complex` with no change dir `tasks.md`: it writes `META|gate-stop|fail|COMPLEXITY_ARTIFACT_MISMATCH — declared=… artifact=…` and exits 1. Then stop with non-zero exit so `ticket-auto` halts the pipeline.
 
-Assert coherence:
-- If `CHANGE_DIR_RC` = 2 → gate fires: `COMPLEXITY_ARTIFACT_MISMATCH — several openspec change dirs match {TICKET-ID}`
-- If `COMPLEXITY` is empty → gate fires: `COMPLEXITY_ARTIFACT_MISMATCH — notes.md missing **Score:** under ## Complexity`
-- If `COMPLEXITY` = `simple` AND `SIMPLE_FIX` is empty → gate fires: `COMPLEXITY_ARTIFACT_MISMATCH — declared simple but no simple-fix.md found`
-- If `COMPLEXITY` = `complex` AND (`CHANGE_DIR` is empty OR `OPENSPEC_TASKS` does not exist) → gate fires: `COMPLEXITY_ARTIFACT_MISMATCH — declared complex but no openspec tasks.md found`
-- If `COMPLEXITY` = `simple` AND `SIMPLE_FIX` empty but openspec dir exists → gate fires: `COMPLEXITY_ARTIFACT_MISMATCH — declared simple but found openspec artifact (not simple-fix.md)`
-
-On any mismatch:
-```bash
-bash ~/.claude/skills/lib/plog.sh META gate-stop fail "COMPLEXITY_ARTIFACT_MISMATCH — declared={COMPLEXITY} artifact={artifact-found}"
-```
-Stop with non-zero exit so `ticket-auto` halts the pipeline.
-
-On match, if `{COMPLEXITY}` = `complex`, persist the openspec change into the tickets repo before
-proceeding — it is the plan of record and otherwise durability depends entirely on whether an
-operator happens to `git add` it later (issue #363, OPENSPEC_ARTIFACTS_UNTRACKED). `CHANGE_DIR`
-is already resolved and verified to contain `tasks.md` by the checks above.
-
-```bash
-bash ~/.claude/skills/lib/openspec-tracking-check.sh commit "$CHANGE_DIR" "{TICKET-ID}"
-COMMIT_RC=$?
-bash ~/.claude/skills/lib/plog.sh META gate-warn "$([ "$COMMIT_RC" -eq 0 ] && echo info || echo warn)" "OPENSPEC_ARTIFACT_COMMIT — rc=$COMMIT_RC dir=$CHANGE_DIR"
-```
-
-A non-zero `COMMIT_RC` (not inside a git repo, or the dir vanished between the checks above and
-now) is logged as a warning but never halts the pipeline — the artifact still exists on disk and
-`ticket-implement`'s close-out re-checks tracking before the pipeline finishes, so a transient
-commit failure here is not the last chance to catch this. Force-adds (`git add -f`) past any
-blanket `openspec/` ignore in the tickets repo — that ignore rule predates this requirement and
-the tickets repo is this pipeline's designated durable home for these artifacts regardless (see
-the script's header comment for the full rationale). Never touches a code repo.
-
-On simple tickets, or once the commit step above completes, proceed silently to Step 3.5.
+On a `complex` match it commits the change dir into the tickets repo (`openspec-tracking-check.sh commit`, issue #363: the plan of record must not depend on an operator's `git add`), force-adding past any blanket `openspec/` ignore and never touching a code repo. It logs `META|gate-warn|info|OPENSPEC_ARTIFACT_COMMIT — rc=… dir=…` (`warn` on a failed commit) and writes the artifact-persisted heartbeat. A failed commit never halts: `ticket-implement` Step 5.5 re-checks tracking. Exit 0 → proceed to Step 3.5.
 
 ---
 

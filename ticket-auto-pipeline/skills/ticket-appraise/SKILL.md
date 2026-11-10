@@ -89,7 +89,7 @@ If `FAST_PATH_ELIGIBLE=true`:
    generate_fast_path_notes "{ticket-dir}" "{TICKET-ID}"
    ```
 
-   This writes the full notes.md with:
+   This writes notes.md with:
    - `## Complexity` — derived from Strategy field (Conservative → simple, Balanced/Innovative → complex), then escalated to `complex` when `detect_reversibility_trigger` finds a Reversibility keyword in the description (schema DDL, migration tooling, destructive data change, payment/billing, auth, breaking API, no-revert). Escalation-only — it never lowers a Strategy-derived `complex`. The result, fired or not, is recorded in `**Axes fired:**`.
    - `## Prior Art` — skipped (planner-provided context)
    - `## Initial Investigation` — populated from Affected Services + Target Symbols + Decision
@@ -99,7 +99,7 @@ If `FAST_PATH_ELIGIBLE=true`:
 2. **Write heartbeat:**
 
    ```bash
-   [ -n "$HB_LOG_FILE" ] && hb-wrap.sh decision "fast-path" "fired" "eligible" \
+   bash ~/.claude/skills/lib/hb-wrap.sh decision "fast-path" "fired" "eligible" \
      '{"eligible":"true","reason":"'"$FAST_PATH_REASON"'","strategy":"'"$FAST_PATH_STRATEGY"'","confidence":"'"$FAST_PATH_CONFIDENCE"'"}'
    ```
 
@@ -141,7 +141,7 @@ If `FAST_PATH_ELIGIBLE=true`:
 If `FAST_PATH_ELIGIBLE=false`:
 
 ```bash
-[ -n "$HB_LOG_FILE" ] && hb-wrap.sh decision "fast-path" "fired" "skipped" \
+bash ~/.claude/skills/lib/hb-wrap.sh decision "fast-path" "fired" "skipped" \
   '{"eligible":"false","reason":"'"$FAST_PATH_REASON"'"}'
 bash ~/.claude/skills/lib/plog.sh APPRAISE fast-path skip "Not eligible — ${FAST_PATH_REASON}"
 ```

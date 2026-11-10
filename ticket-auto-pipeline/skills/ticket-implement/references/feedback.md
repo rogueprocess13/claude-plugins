@@ -53,28 +53,14 @@ The source maps to the skill whose prediction was overturned:
 | `Hard` (predicted `simple`), plan was accurate | `exec` | Plan artifact missed key details |
 | `Rough` (predicted `simple`), plan was accurate | `exec` | Plan artifact missed key details |
 
-Use the atomic `.tmp` → `mv` pattern from `corrections-parse.sh`:
+Write each through `implement-feedback.sh correction` (`append_correction`, atomic `.tmp` → `mv`; a failed write logs `META|corrections-error|warn` and exits 0):
 
 ```bash
-source "$HOME/.claude/skills/lib/corrections-parse.sh"
-
-# Only when there is a complexity mismatch (see mapping table above)
-_correction_fact="Predicted {simple|complex} but actual outcome was {Smooth|Rough|Hard}"
-_correction_source="{appraise|exec}"   # per mapping table
-_correction_detail="{What the investigation missed — concrete gap description from the mismatch comment above}"
-
-append_correction "{ticket-dir}/notes.md" \
-  "$_correction_fact" \
-  "$_correction_source" \
-  "$_correction_detail" \
-|| bash ~/.claude/skills/lib/plog.sh META corrections-error warn "append_correction failed"
-```
-
-```bash
+# Only on MISMATCH=true; --source per the mapping table above
+bash ~/.claude/skills/lib/implement-feedback.sh correction --ticket-dir "{ticket-dir}" --source {appraise|exec} \
+  --fact "Predicted {simple|complex} but actual outcome was {Smooth|Rough|Hard}" \
+  --detail "{What the investigation missed — concrete gap description from the mismatch comment above}"
 # Only when Part 3 found a wiki gap — independent of mismatch
-append_correction "{ticket-dir}/notes.md" \
-  "Wiki flow file {filename} missing or stale for {specific detail}" \
-  "wiki" \
-  "Wiki gap found: {What the wiki missed}" \
-|| bash ~/.claude/skills/lib/plog.sh META corrections-error warn "append_correction wiki failed"
+bash ~/.claude/skills/lib/implement-feedback.sh correction --ticket-dir "{ticket-dir}" --source wiki \
+  --fact "Wiki flow file {filename} missing or stale for {specific detail}" --detail "Wiki gap found: {What the wiki missed}"
 ```
