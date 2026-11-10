@@ -6,7 +6,7 @@
 
 Performs end-to-end browser verification of a ticket fix using Playwright. Loads the ticket's acceptance criteria from Linear, expands compound requirements into atomic pass criteria, derives the navigation path using nav-hints and app-knowledge (never `page.goto()` for in-app nav), logs into the app, executes click-by-click steps through the UI, evaluates each criterion, and produces a structured pass/fail report. On local pass, opens a PR and moves to Review. On UAT pass, moves to Done. On failure, emits a REMEDIATION_BRIEF with SUGGESTED_FIX, diagnostics, and context files, and writes a Verification section to the plan artifact.
 
-Step 1e picks one of three verification modes. **browser** (the default) drives the app with Playwright as above. **build-only** runs the project's build commands instead (e.g. a parent-POM or dependency change with no UI or API surface). **live-backend** checks a running backend through health and API calls (e.g. service registration or circuit-breaker behaviour). The build-only and live-backend steps (their Step 2 plan variant, Step 4c / 4c-live and their Step 7a diagnostics) live in `skills/ticket-verify/references/build-only.md` and `references/live-backend.md`. Step 1f reads only the file for the detected mode, also on a `--from-step` resume, and a browser run reads neither. The report and Linear comment templates live in `references/templates.md`, which Step 5 reads just before the pass or failure report. The REMEDIATION_BRIEF and the verifier-result lines stay in SKILL.md.
+Step 1e picks one of three verification modes with `lib/verify-mode.sh` (gate-check's Check 2.6 classifier lives in the same file). **browser** (the default) drives the app with Playwright as above. **build-only** runs the project's build commands instead (e.g. a parent-POM or dependency change with no UI or API surface). **live-backend** checks a running backend through health and API calls (e.g. service registration or circuit-breaker behaviour). The build-only and live-backend steps (their Step 2 plan variant, Step 4c / 4c-live and their Step 7a diagnostics) live in `skills/ticket-verify/references/build-only.md` and `references/live-backend.md`. Step 1f reads only the file for the detected mode, also on a `--from-step` resume, and a browser run reads neither. The report and Linear comment templates live in `references/templates.md`, which Step 5 reads just before the pass or failure report. The REMEDIATION_BRIEF stays in SKILL.md; the verdict is recorded with `verify_record_verdict` (`lib/verifier-result.sh`), which maps the mode to the verifier id, and the brief's plan section is appended by `lib/remediation-append.sh`. `lib/uat-policy-guard.sh` refuses `--env uat` for a child of an epic with `UAT Policy: epic`.
 
 ## Trigger
 
@@ -71,11 +71,14 @@ flowchart TD
 ## Serving the ticket's own code (local env)
 
 For `--env local`, VERIFY must test the ticket's branch, not whatever the primary checkout under
-`REPOS_ROOT` has checked out. Three pieces make that hold (`lib/verify-worktree.sh`):
+`REPOS_ROOT` has checked out. One call, `lib/verify-env-up.sh up` (Steps 1.6a3 to 1.6c), takes the
+single-flight verify lock, then does the three pieces below (`lib/verify-worktree.sh`), starts the
+stack and loads test-data seeds. It releases the lock on every failure and on SIGTERM/SIGINT; on
+success the lock stays held until Step 5.
 
 1. **Isolated worktree** (Step 1.6a4): `ensure_verify_worktree` checks out the ticket's pushed
    branch at `REPOS_ROOT/.verify-worktrees/<repo>/<TICKET_ID>`, under the single-flight verify lock.
-2. **Hand-off to `env-start.sh`** (Step 1.6b): in the same shell that runs the project's
+2. **Hand-off to `env-start.sh`** (Step 1.6b): in the process that runs the project's
    `env-start.sh`, `verify_env_init` resolves `REPOS_ROOT` and `verify_worktree_exports` exports
    `VERIFY_TICKET_ID` and one `VERIFY_REPO_PATH_<REPO>` per worktree (repo name upper-cased,
    other characters mapped to `_`).
