@@ -1306,7 +1306,7 @@ debugging-strategies, brunoborges/jdb-agentic-debugger.
 
 ---
 
-## Step 15 — Skill size reduction programme — changes 1–2 merged (#561, #562), next `skill-prose-dedupe`
+## Step 15 — Skill size reduction programme — changes 1–3 merged (#561, #562, #659–#665), next `skill-progressive-disclosure`
 
 42 `SKILL.md` files total 825 KB; the four largest (ticket-planner 96 KB, ticket-verify 93 KB,
 ticket-auto 75 KB, ticket-appraise 72 KB) are 41%. Anthropic's authoring guidance is a body under
@@ -1334,7 +1334,24 @@ Chained openspec changes (each its own PR(s), version bump, `make skill-baseline
       with new `TICKET_ARG=`/`ANNOUNCE_START`/`NEW_RUN` manual modes, `persona-select.sh
       --ticket-dir` (3 pastes, not 5). Confirm-first tasks: #362 rule (already enforced by
       `gate-check.sh require_issue_payload`), fleetd tolerance of new preamble fields. Live check.
-- [ ] 3. `skill-prose-dedupe` (3 specs, 133 tasks, 7 sub-PRs 3a-3g) — deletion/compression only.
+- [x] 3. `skill-prose-dedupe` (3 specs, 133 tasks, 7 sub-PRs 3a-3g) — **MERGED #659–#665
+      (2026-11-09, b8fe01a … f0da6f8); archived 2026-11-10.** ~113 KB of skill text removed
+      (planner 95 → 61 KB, ticket-verify 91 → 81 KB); ticket-auto-pipeline 0.97.0 (BREAKING minor:
+      `ticket-fleet-controller` forwarder removed), planner 0.35.2, fleet-controller 0.46.8,
+      grill-me 0.5.2, kc 0.2.18. Deviations: dispatch-table aliases folded into the target row
+      (`detect-resume.sh` still emits `STEP_3`); planner text not in docs moved to
+      `ticket-planner/docs/ticket-planner.md`. Out-of-scope findings, left for change 4/5 or small
+      fixes (full list: `openspec/changes/archive/2026-11-10-skill-prose-dedupe/handoff.md`
+      § Follow-ups, local only):
+      - ticket-implement-agent lacks the Agent/Skill tools its SKILL.md Steps 4/4b/5 use (issue to file)
+      - appraise-exec `--from-step regression-guard` resumes at Step 4, skipping Steps 3.6–3.8
+      - gate-reconcile calls `hb_init` without sourcing `heartbeat.sh`
+      - stale `approved`/`claimed` label prose (pr-iterate, appraise, appraise-exec, batch-appraise,
+        verify) and retired dispatch labels in fleet-controller's Dispatch mode
+      - fleet-controller engine count (16/12/19) and `FLEET_STALL_WARN_SECS` (README 300, code 600)
+      - CRE-* IDs left in ticket-critique and ticket-verify; planner `--base-branch` missing from
+        the flags tables; docs/skills/ticket-flow.md still describes Linear calls and exit 7
+      Original scope:
       Preconditions inside: move detection-logic/evidence strings into `phase-inspector.sh`
       injection before cutting guidance-extractor; app-knowledge → skeleton (CRE ticket IDs also in
       nav-hints, reproduce, batch-verify; `install.sh` SUPPORT_SKILLS entry); delete
@@ -1613,6 +1630,11 @@ open tasks were live or rehearsal checks, still tracked here: Step 14 (debugger,
 5.1). `planner-draft-readiness` stays active: its open tasks are the iteration 05/06 exit
 criteria. `langfuse-evidence-layer` (16 live tasks) and the four unstarted Step 15 changes are
 unchanged.
+
+**Housekeeping, 2026-11-10:** Step 15 item 3 (`skill-prose-dedupe`) merged as seven chained PRs
+#659–#665 and archived locally; its delta specs were synced (`skill-single-source-of-truth` and
+`skill-public-repo-hygiene` added, `phase-inspector-detection-patterns` modified). Next in the
+programme is `skill-progressive-disclosure`.
 
 ---
 
