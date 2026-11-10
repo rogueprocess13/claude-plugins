@@ -1306,7 +1306,7 @@ debugging-strategies, brunoborges/jdb-agentic-debugger.
 
 ---
 
-## Step 15 — Skill size reduction programme — changes 1–3 merged (#561, #562, #659–#665), next `skill-progressive-disclosure`
+## Step 15 — Skill size reduction programme — changes 1–3 merged (#561, #562, #659–#665), change 4 merged except group 14 (#668–#675), next `skill-deterministic-extraction`
 
 42 `SKILL.md` files total 825 KB; the four largest (ticket-planner 96 KB, ticket-verify 93 KB,
 ticket-auto 75 KB, ticket-appraise 72 KB) are 41%. Anthropic's authoring guidance is a body under
@@ -1343,7 +1343,7 @@ Chained openspec changes (each its own PR(s), version bump, `make skill-baseline
       `ticket-planner/docs/ticket-planner.md`. Out-of-scope findings, left for change 4/5 or small
       fixes (full list: `openspec/changes/archive/2026-11-10-skill-prose-dedupe/handoff.md`
       § Follow-ups, local only):
-      - ticket-implement-agent lacks the Agent/Skill tools its SKILL.md Steps 4/4b/5 use (issue to file)
+      - ticket-implement-agent lacks the Agent/Skill tools its SKILL.md Steps 4/4b/5 use (#667)
       - appraise-exec `--from-step regression-guard` resumes at Step 4, skipping Steps 3.6–3.8
       - gate-reconcile calls `hb_init` without sourcing `heartbeat.sh`
       - stale `approved`/`claimed` label prose (pr-iterate, appraise, appraise-exec, batch-appraise,
@@ -1356,7 +1356,25 @@ Chained openspec changes (each its own PR(s), version bump, `make skill-baseline
       injection before cutting guidance-extractor; app-knowledge → skeleton (CRE ticket IDs also in
       nav-hints, reproduce, batch-verify; `install.sh` SUPPORT_SKILLS entry); delete
       `ticket-fleet-controller`; fleet-controller drops the six duplicated sections.
-- [ ] 4. `skill-progressive-disclosure` (5 specs, 120 tasks) — `references/` convention, appraise
+- [ ] 4. `skill-progressive-disclosure` (5 specs, 120 tasks) — **groups 1–13 MERGED #668–#675
+      (2026-11-10, 7a7805a … 1aaacef), ticket-auto-pipeline 0.105.0; change kept open (not
+      archived) for group 14 and the tickets-host live checks** (checklist:
+      `openspec/changes/skill-progressive-disclosure/handoff.md` § Summary, local only).
+      Always-loaded context −69.5 KB across 7 manifests; 91 KB now loads only behind its
+      condition (new `<manifest>:conditional` rows in the context baseline). Moved: appraise
+      (−31.8 KB fast path), verify (−10.7), appraise-exec (−10.9), implement (−6.1), setup
+      (−2.0 per appraise/reproduce run), retro `--post-to-github` only (−4.2), wiki errata/ADR
+      (−3.7). Measured first, no move: critique (6), document (10), reproduce (12) — the text is
+      read on almost every run. Dropped: grill-me (11), kc (13) — `skill-ref.sh` resolves
+      ticket-auto-pipeline files only. Full-read paths grew a little (appraise +4.4 KB, others
+      < 1.4 KB). Open findings:
+      - ticket-critique picks Check 5/6 from the `bug` label; planned bugs carry no label, so they
+        never get the bug checks (issue body ready, not yet filed)
+      - `META|reference-missing` is not in `pipeline-log-format.md`
+      - `test-fleet-features.sh` scans SKILL.md only, not `references/`
+      - retro `REMEDIATION_BRIEF_TRUNCATED` template points at a stale location
+      - `skill-ref.sh` cannot resolve other plugins' references (blocks grill-me/kc/planner)
+      Original scope: `references/` convention, appraise
       split (condition is `FAST_PATH_ELIGIBLE=false`, not the planned label; 2.1/2.7/2.8/3.5 stay
       inline), verify mode refs (`build_only`/`live_backend` ids stay in SKILL.md), then
       appraise-exec, implement, critique, setup, retro, wiki, document, grill-me, reproduce, kc.
@@ -1633,8 +1651,10 @@ unchanged.
 
 **Housekeeping, 2026-11-10:** Step 15 item 3 (`skill-prose-dedupe`) merged as seven chained PRs
 #659–#665 and archived locally; its delta specs were synced (`skill-single-source-of-truth` and
-`skill-public-repo-hygiene` added, `phase-inspector-detection-patterns` modified). Next in the
-programme is `skill-progressive-disclosure`.
+`skill-public-repo-hygiene` added, `phase-inspector-detection-patterns` modified). Step 15 item 4
+(`skill-progressive-disclosure`) groups 1–13 merged as #668–#675 the same day; the change stays
+active for group 14 (waits on Step 12 items 5–7) and its live checks. Next in the programme is
+`skill-deterministic-extraction`.
 
 ---
 
