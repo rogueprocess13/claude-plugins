@@ -185,35 +185,13 @@ change). If it exits 0, read `tasks.md` at `PLAN_PATH` to understand what was im
 
 ### 1e — Detect verification mode (browser vs. build-only vs. live-backend)
 
-Some tickets have no UI or API surface to exercise — e.g. a root parent-POM introduction, a dependency-version bump, a build-plugin config change. These are verified by running the project's build tooling and checking exit codes/output, not by driving a browser. Others need a **running backend checked via API/health-check, with no UI in the loop** — e.g. service-to-service calls, Eureka registration, circuit-breaker behaviour under simulated failure. A build command can't verify these (nothing to compile), and driving a browser is wrong too (no login, no page in the AC) — treating them as either bucket produces a silent false-pass (the real check never runs) or a stall (browser mode tries to resolve a test user that doesn't exist for an infra ticket). Classify the ticket using the same signal-based approach as `gate-check.sh`'s Check 2.6, so the two phases agree on ticket shape, with an added live-backend trigger evaluated ahead of the build-only test — a ticket can mention a build tool (`mvn`, `pom.xml`) in passing while its actual AC is a live runtime check, and live-backend must win that case:
+Some tickets are verified by running build tooling (no UI or API surface: a parent-POM, a dependency bump), some by checking a running backend through health/API calls (service registration, circuit breakers: no login, no page), and the rest in a browser. Treating one as another gives a silent false-pass or a stall. `lib/verify-mode.sh` classifies the ticket from its plan and `context.md`; live-backend is tested before build-only, so a passing mention of `mvn` never hides a runtime check. It writes the `load-context` log line itself:
 
 ```bash
-_plan_file=$(bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$TICKETS_ROOT" --type simple-fix 2>/dev/null | sed -n 's/^PLAN_PATH=//p')
-[ -z "$_plan_file" ] && _plan_file="{ticket-dir}/notes.md"
-_signal_text="$(cat "$_plan_file" {ticket-dir}/context.md 2>/dev/null)"$'\n'"${description:-}"
-
-_browser_signals=$(echo "$_signal_text" | grep -ciE '\b(navigate|click|button|dropdown|screen|browser|playwright|snapshot|login|nav[- ]?bar)\b|\bopen(s|ed|ing)? (the |a |modal|dialog|page)\b' || true)
-_build_signals=$(echo "$_signal_text" | grep -ciE '\b(mvn|maven|gradle|pom\.xml|build\.gradle|clean install|clean compile|clean package|mvn test|BUILD SUCCESS)\b' || true)
-# Live-backend trigger: either an explicit infra/runtime-check keyword, or the
-# combination of an explicitly-absent test user ("N/A" — not merely unmentioned)
-# with an environment that names a running full stack. That combination is the
-# real signal: no login needed, but a live system must be up.
-_live_backend_signals=$(echo "$_signal_text" | grep -ciE '\b(docker compose|eureka|circuit breaker|service.to.service|downstream failure|register(s|ed)? with)\b' || true)
-_test_user_na=$(echo "$_signal_text" | grep -ciE '\*\*?Test User\*?\*?:?\s*N/A' || true)
-_env_full_stack=$(echo "$_signal_text" | grep -ciE '\b(docker compose|full stack)\b' || true)
-
-if [ "${_browser_signals:-0}" -eq 0 ] && { [ "${_live_backend_signals:-0}" -gt 0 ] || { [ "${_test_user_na:-0}" -gt 0 ] && [ "${_env_full_stack:-0}" -gt 0 ]; }; }; then
-  VERIFY_MODE="live-backend"
-elif [ "${_browser_signals:-0}" -eq 0 ] && [ "${_build_signals:-0}" -gt 0 ]; then
-  VERIFY_MODE="build-only"
-else
-  VERIFY_MODE="browser"
-fi
+bash ~/.claude/skills/lib/verify-mode.sh "{TICKET-ID}" --ticket-dir "{ticket-dir}" --root "$TICKETS_ROOT"
 ```
 
-Record `VERIFY_MODE` for the rest of this skill. `browser` (the default) runs every step. `build-only` skips Step 1.6, 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c instead. `live-backend` runs Step 1.6 (a real system must be up) but skips 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c-live instead. Steps 2, 6 and 7 carry per-mode variants. The REMEDIATION_BRIEF and reports keep their field names in every mode (Step 7a maps the diagnostics).
-
-bash ~/.claude/skills/lib/plog.sh VERIFY load-context done "Context loaded, mode=${VERIFY_MODE}"
+Record the printed `VERIFY_MODE` for the rest of this skill. `browser` (the default) runs every step. `build-only` skips Step 1.6, 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c instead. `live-backend` runs Step 1.6 (a real system must be up) but skips 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c-live instead. Steps 2, 6 and 7 carry per-mode variants. The REMEDIATION_BRIEF and reports keep their field names in every mode (Step 7a maps the diagnostics).
 
 ### 1f — Mode reference (load condition)
 

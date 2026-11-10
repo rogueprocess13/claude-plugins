@@ -1,0 +1,2 @@
+VERIFY_MODE=build-only
+TS|VERIFY|load-context|done|Context loaded, mode=build-only
