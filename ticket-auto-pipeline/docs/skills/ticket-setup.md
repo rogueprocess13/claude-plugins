@@ -8,6 +8,8 @@
 
 Scaffolds the local workspace for a Linear ticket. Fetches issue data, derives the directory path from ticket ID and title slug, creates the directory under the tickets root, and writes two files: `context.md` (ticket scope, labels, comments snapshot) and a minimal `notes.md` stub. Also handles project readiness checks: validates the environment, detects the project root, checks CLAUDE.md exists, and optionally bootstraps GitNexus indexing. Returns a JSON summary with ticket_dir, title, status, and other key fields for the calling skill.
 
+**Reference file (skill-progressive-disclosure):** Step 0.4, which initializes a missing CLAUDE.md (0.4a GitNexus, 0.4b existing code, 0.4c empty-project `claude init`), lives in `skills/ticket-setup/references/project-init.md`. SKILL.md reads it only when CLAUDE.md is missing at the project root. A run in a project that already has a CLAUDE.md, which is every pipeline run, never reads it. If the file cannot be resolved, the skill stops and does not initialize CLAUDE.md from memory. Steps 0.1–0.3 and 0.5 stay in SKILL.md.
+
 ## Trigger
 
 **Slash command:** `/ticket-setup <TICKET-ID>`
@@ -41,7 +43,7 @@ flowchart TD
     C --> D[Detect project root]
     D --> E{CLAUDE.md exists?}
     E -->|Yes| F[Step 0.5: GitNexus check]
-    E -->|No| G[Initialize CLAUDE.md]
+    E -->|No| G[Read references/project-init.md<br/>Initialize CLAUDE.md]
     G --> F
     F --> H[Run setup.sh]
     H --> I[Fetch Linear issue]

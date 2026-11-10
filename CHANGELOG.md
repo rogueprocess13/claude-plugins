@@ -17,6 +17,32 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.103.0 (2026-11-10)
+
+`ticket-setup` Step 0.4 moves to a reference (`skill-progressive-disclosure`, group 7).
+Relocation only: no step changes what it does.
+
+### Changed
+
+- `skills/ticket-setup/SKILL.md` 6,657 → 4,615 bytes. Moved verbatim to
+  `references/project-init.md`: Step 0.4a (GitNexus context), 0.4b (existing code) and 0.4c (the
+  empty-project `claude init` fallback). The `### Step 0.4` heading stays and holds the load
+  condition: read the reference only if `CLAUDE.md` is missing at the project root. If
+  `skill-ref.sh` exits non-zero, the skill stops and does not initialize CLAUDE.md from memory.
+- Kept inline: Steps 0.1–0.3 and 0.5, the `--from-auto` skip, the Step 0.3 "Skip to Step 0.5"
+  rule and the `heartbeat|project-init` line. The task's `--from-auto` condition saves nothing in
+  the pipeline: ticket-appraise and ticket-reproduce call plain `/ticket-setup {ID}`. The real skip
+  is "CLAUDE.md already exists", which is true for every pipeline project.
+- **Fingerprint:** the `ticket-setup` skill fingerprint changes, and with it the
+  `ticket-appraise` and `ticket-reproduce` manifests. Both list `references/project-init.md`
+  directly after `ticket-setup/SKILL.md`.
+- Context (rule 9): `ticket-appraise` 158,735 → 156,693 (−2,042), `ticket-appraise:conditional`
+  34,200 → 36,841 (raised by hand with an `# allow-growth:` reason); `ticket-reproduce` 109,984 →
+  107,942 (−2,042) plus a new `ticket-reproduce:conditional` 2,641. A run in a project with no
+  CLAUDE.md reads both files and carries +599 bytes over before.
+- Tests: `test-skill-references.sh` `test_setup_project_init_condition` checks the condition, the
+  inline contracts and what the reference holds. No existing test pinned Step 0.4 text.
+
 ## 0.102.0 (2026-11-10)
 
 `ticket-implement` rework and feedback text moves to references
