@@ -48,13 +48,10 @@ IMPLEMENT_TICKETS_ROOT="$(pwd)"
 
 ### Reference files (load condition)
 
-**Rework.** Run `bash ~/.claude/skills/lib/skill-ref.sh ticket-implement references/rework.md` only on a rework entry: Step 2.5 finds `FAIL_COUNT` > `SECTION_COUNT`, or a `--from-step` resume that skips Step 2.5 (`detect-path`, `checkout-branch`, `implement`) while a rework is still open. On such a resume, a rework is open when notes.md's last `— verification re-run #` entry comes after its last `— committed` entry:
-```bash
-awk '/^### .* — verification re-run #/{r=NR} /^### .* — committed/{c=NR} END{print (r>c)?"REWORK_OPEN=true":"REWORK_OPEN=false"}' "{ticket-dir}/notes.md"
-```
+**Rework.** Run `bash ~/.claude/skills/lib/skill-ref.sh ticket-implement references/rework.md` only on a rework entry: Step 2.5 finds `FAIL_COUNT` > `SECTION_COUNT`, or a `--from-step` resume that skips Step 2.5 (`detect-path`, `checkout-branch`, `implement`) while a rework is still open (`REWORK_OPEN=true` from the Step 2.5 call: notes.md's last `— verification re-run #` entry comes after its last `— committed` entry).
 A first implementation attempt, and a run whose verify failures are all addressed, does not read it.
 
-**Feedback.** Run `bash ~/.claude/skills/lib/skill-ref.sh ticket-implement references/feedback.md` in Step 4c only when a feedback item exists: a complexity mismatch (predicted `simple` with outcome `Rough`/`Hard`, or predicted `complex` with `Smooth`), or a wiki gap found in Part 3. A run with neither does not read it.
+**Feedback.** Run `bash ~/.claude/skills/lib/skill-ref.sh ticket-implement references/feedback.md` in Step 4c only when a feedback item exists: a complexity mismatch (`MISMATCH=true`: predicted `simple` with outcome `Rough`/`Hard`, or predicted `complex` with `Smooth`), or a wiki gap found in Part 3. A run with neither does not read it.
 
 Read each printed path in full and do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/<file>.md"` with the file that failed and stop: never run the rework, or write the mismatch comment, errata or CORRECTIONS, from memory. After a context compaction, read the reference again before continuing the step it covers.
 
@@ -171,11 +168,13 @@ bash ~/.claude/skills/lib/plog.sh IMPLEMENT detect-path done "{simple-fix|opensp
 
 ## Step 2.5 — Detect verification re-run
 
-Count all `### {date} — Verification FAIL` entries in `notes.md`. Count all `## Verification #` sections in the plan artifact (`simple-fix.md` or openspec `tasks.md`).
+```bash
+bash ~/.claude/skills/lib/remediation-check.sh status "{TICKET-ID}" --ticket-dir "{ticket-dir}" --root .
+```
+It prints `PLAN=`, `FAIL_COUNT=` (`### {date} — Verification FAIL` entries in notes.md), `SECTION_COUNT=` (`## Verification #` sections in the plan), `REWORK=` and `REWORK_OPEN=`.
 
-- **If `FAIL_COUNT` = 0** → gate skipped (no brief expected). Proceed to Step 3.
-- **If `FAIL_COUNT` <= `SECTION_COUNT`** → all failures already addressed. Proceed to Step 3.
-- **If `FAIL_COUNT` > `SECTION_COUNT`** → unaddressed failures remain: this is a rework entry. Read `references/rework.md` (load condition above), then run its integrity check, failure processing and Part B, in that order, before Step 3.
+- **`REWORK=false`** (`FAIL_COUNT` 0, or ≤ `SECTION_COUNT`: every failure addressed) → proceed to Step 3.
+- **`REWORK=true`** (`FAIL_COUNT` > `SECTION_COUNT`) → a rework entry. Read `references/rework.md` (load condition above), then run its integrity check, failure processing and Part B, in that order, before Step 3.
 
 Moved to `references/rework.md` (the REMEDIATION_BRIEF integrity check with its `REMEDIATION_BRIEF_TRUNCATED` gate-stop, the `## Verification #{N+1}` append to the plan and the notes.md re-run entry), read per "Reference files (load condition)" above.
 
@@ -342,57 +341,36 @@ bash ~/.claude/skills/lib/plog.sh IMPLEMENT code-review done "cycle#{N} clean"
 
 ## Step 4c — Rate actual complexity and update Linear label
 
-Assign an outcome label based on implementation difficulty:
-
-| Label | Criteria |
-|---|---|
-| `Smooth` | Plan was accurate, followed without deviation, tests passed first run, no extra discovery needed |
-| `Rough` | 1–2 fix cycles needed, or minor gaps required small additional investigation |
-| `Hard` | Multiple fix/test cycles, significant extra discovery, or the plan was materially incomplete |
-
-Rate from `{DIFFICULTY_SUMMARY}` (openspec) or in-context history (simple-fix). Take the worst signal: fix cycles (0/1–2/3+ → Smooth/Rough/Hard), discovery rounds (none/minor/significant), plan deviation (followed/adapted/rewrote).
-
-**Update Linear:**
-
+Rate the outcome from `{DIFFICULTY_SUMMARY}` (openspec: write the agent's JSON to `{ticket-dir}/difficulty-summary.json`) or from your own counts (simple-fix):
 ```bash
-bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} implement-outcome --data outcome={Smooth|Rough|Hard}
-_rc=$?
-# flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
-# implement-outcome carries no verdict_gate, so exit 11 cannot occur; a failure is non-fatal — continue.
-# flow.sh's implement-outcome trigger itself writes the dedicated
-# IMPLEMENT|implement-outcome|info| entry that outcome-label-check.sh reads —
-# so the Linear label and the pipeline log can never drift apart. No manual
-# log write needed here.
+bash ~/.claude/skills/lib/implement-rate.sh --summary "{ticket-dir}/difficulty-summary.json"   # or: --fix-cycles N --discovery-rounds N --plan-deviation followed|adapted|rewrote
 ```
+It prints `OUTCOME=Smooth|Rough|Hard`, the worst of the three signals (fix cycles and discovery rounds 0 / 1–2 / 3+; plan deviation followed / adapted / rewrote).
 
-### Post-implement: Record verifier result (Phase 0 RLVR)
-
-After writing the implement-outcome, source and call write_verifier_result:
+**Update Linear and record the verifier result** (`VERDICT`: all tests pass → `PASS`, any fail → `FAIL`; `N` = corrections written below, 0 if unknown yet):
 ```bash
-source ~/.claude/skills/lib/verifier-result.sh
-write_verifier_result verifier=implement_tests verdict=<PASS|FAIL> outcome=<Smooth|Rough|Hard> corrections=<N> phase=IMPLEMENT
+bash ~/.claude/skills/lib/implement-feedback.sh record "{TICKET-ID}" --ticket-dir "{ticket-dir}" --outcome {OUTCOME} --verdict {VERDICT} --corrections {N} --log-file "$TAP_LOG"
 ```
-Map test results: all pass → PASS, any fail → FAIL. Pass outcome and corrections count.
+It fires the `implement-outcome` trigger (flow.sh writes the `IMPLEMENT|implement-outcome|info|` line `outcome-label-check.sh` reads; a flow failure is logged by `flow-run.sh` and never halts), writes the `implement_tests` verifier result, and prints `PREDICTED=`, `MISMATCH=true|false` and `WIKI_CONSULTED=true|false` for the two checks below.
 
-**Mismatch retrospective (only if prediction and outcome disagree):**
+### Post-implement: mismatch retrospective
 
-A mismatch means the appraisal missed something. When `simple` + `Rough`/`Hard`, or `complex` + `Smooth`:
+**Only on `MISMATCH=true`: `simple` + `Rough`/`Hard`, or `complex` + `Smooth`:** the appraisal missed something.
 
 Moved to `references/feedback.md` (the Linear mismatch comment, the claude-mem feedback memory, and why this is scoring feedback for Part 4's `source=appraise`/`source=exec` CORRECTIONS block, not wiki knowledge), read per "Reference files (load condition)" above.
 
 ### Part 3 — Wiki errata (always checked — never gated on complexity mismatch)
 
-Check notes.md for a `Wiki bootstrap:` line under Initial Investigation (written by
-`ticket-appraise` Step 3a when it loaded a wiki flow file for this ticket). If no such line
-exists, skip this Part entirely — there is nothing wiki-sourced to check.
+`WIKI_CONSULTED=false` (no `Wiki bootstrap:` line in notes.md, written by `ticket-appraise`
+Step 3a when it loaded a wiki flow file) → skip this Part: there is nothing wiki-sourced to check.
 
 If the wiki was consulted, ask independently of the mismatch check above: **did anything the
 wiki said turn out wrong, stale, or missing during implementation?** A wrong class name, a
 Feign client the flow didn't mention, an entity field the wiki didn't document, a call-chain
 step that no longer matches the code — any of these counts, on any outcome label, `Smooth` included.
 
-- **No gap found:** log `META|wiki-check|info|wiki consulted, no gap found` (via `$TAP_LOG`
-  when `--from-auto`) and move on. Nothing to write.
+- **No gap found:** run `bash ~/.claude/skills/lib/implement-feedback.sh wiki-ok --log-file "$TAP_LOG"`
+  (writes `META|wiki-check|info|wiki consulted, no gap found`) and move on.
 - **Gap found:** read the feedback reference (load condition above), then write the errata entry and the `source=wiki` correction it describes.
 
 Moved to `references/feedback.md` (the errata entry in `wiki-maintenance`'s `Gap:`/`Fix:` schema, which wiki file to append it to, and the unconditional `source=wiki` correction), read per the load condition above.
@@ -407,7 +385,7 @@ back into their own artifacts:
   `source=exec`, per the mapping table in the feedback reference.
 - **Wiki gap found in Part 3** → `source=wiki`, whatever the outcome label.
 
-Moved to `references/feedback.md` (the outcome-vs-prediction source mapping table and the two `append_correction` blocks), read per the load condition above.
+Moved to `references/feedback.md` (the outcome-vs-prediction source mapping table and the two `implement-feedback.sh correction` calls), read per the load condition above.
 
 A failed correction write logs a `corrections-error` warning and **never halts** the implement phase.
 
@@ -487,29 +465,16 @@ disk (appraise-exec Step 3.4 commits it, but a resumed exec can skip that). Reso
 `$IMPLEMENT_TICKETS_ROOT`, not CWD:
 
 ```bash
-EXPECT_FLAG=""
-# Re-derive the mode (simple-fix.md found → simple-fix, else openspec) rather than trust carried state.
-bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$IMPLEMENT_TICKETS_ROOT" --type simple-fix >/dev/null 2>&1 || EXPECT_FLAG="--expect"
-bash ~/.claude/skills/lib/openspec-tracking-check.sh assert "{TICKET-ID}" $EXPECT_FLAG --root "$IMPLEMENT_TICKETS_ROOT"
-ASSERT_RC=$?
+bash ~/.claude/skills/lib/openspec-tracking-check.sh assert-warn "{TICKET-ID}" --root "$IMPLEMENT_TICKETS_ROOT" --ticket-dir "{ticket-dir}"
 ```
 
+It expects a change dir unless a `simple-fix.md` plan exists, and prints `OPENSPEC_TRACK_STATUS=`.
 - **Exit 0** (`tracked`, or `not-applicable` for a simple-fix ticket) — proceed silently to Step 6.
-- **Non-zero** — the change dir is `gitignored`, `untracked`, `partial`, or (with `--expect`)
-  `missing` entirely. **Warn loudly — never gate-stop.** The implementation itself is unaffected;
-  losing the design rationale is a documentation-durability problem, not a correctness one.
-  ```bash
-  bash ~/.claude/skills/lib/plog.sh META gate-warn info "OPENSPEC_ARTIFACT_UNTRACKED — plan artifact for {TICKET-ID} is not durably tracked in the tickets repo"
-  ```
-  Append to `notes.md`:
-  ```markdown
-  ### {today's date} — plan artifact durability warning
-  - ⚠️ openspec change for {TICKET-ID} is not durably tracked in the tickets repo (status:
-    {OPENSPEC_TRACK_STATUS from the assert output}). It is one `git clean` from loss. Fix with:
-    `bash ~/.claude/skills/lib/openspec-tracking-check.sh commit "{CHANGE_DIR}" "{TICKET-ID}"`
-    from the tickets repo root.
-  ```
-  Include the same warning in the final report (Step 5's report block, above). Continue to Step 6.
+- **Non-zero** (`gitignored`, `untracked`, `partial`, `ambiguous` or `missing`) — the script has
+  already written `META|gate-warn|info|OPENSPEC_ARTIFACT_UNTRACKED` and the notes.md
+  "plan artifact durability warning" entry with the fix command. **Never gate-stop**: losing the
+  design rationale is a durability problem, not a correctness one. Include the warning in the
+  final report (Step 5's report block, above). Continue to Step 6.
 
 ---
 

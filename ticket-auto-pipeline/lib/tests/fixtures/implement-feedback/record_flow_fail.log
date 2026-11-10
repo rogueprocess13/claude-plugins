@@ -1,0 +1,2 @@
+TS|META|flow-error|fail|exit 1: implement-outcome — boom
+TS|META|verifier-result|info|{"verifier":"implement_tests","verdict":"PASS","score":0.60,"criteria_met":0,"criteria_total":0,"attempt":1,"phase":"IMPLEMENT"}

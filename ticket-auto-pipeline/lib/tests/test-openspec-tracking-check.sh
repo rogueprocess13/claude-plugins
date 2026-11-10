@@ -2,7 +2,16 @@
 # test-openspec-tracking-check.sh — tests for lib/openspec-tracking-check.sh
 # Covers the durability guard for openspec plan artifacts (issue #363,
 # OPENSPEC_ARTIFACTS_UNTRACKED): commit (idempotent git add -f + commit),
-# assert (close-out warn check), and audit (one-off sweep).
+# assert (close-out warn check), assert-warn (ticket-implement Step 5.5 in one
+# call, skill-deterministic-extraction 5) and audit (one-off sweep).
+#
+# fixtures/openspec-assert-warn/<case>.{log,notes} were produced by running the
+# pre-extraction Step 5.5 fences of ticket-implement SKILL.md (main @ 20b4113:
+# the EXPECT_FLAG/assert block, then on a non-zero ASSERT_RC the gate-warn line
+# and the notes.md entry with its placeholders filled from the assert output)
+# over the workspaces _aw_ws builds — never by the script. Timestamps are
+# masked to TS, the date to DATE, the workspace path to $WS.
+# With OTC_TEST_LIB_ONLY=1 the file only defines its helpers.
 set -eo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,6 +56,88 @@ _write_change() {
   local ticket_lower="$1"
   mkdir -p "$_ws/openspec/changes/${ticket_lower}--fix-thing"
   printf '# tasks\n- [ ] do it\n' >"$_ws/openspec/changes/${ticket_lower}--fix-thing/tasks.md"
+}
+
+# ── assert-warn workspaces ────────────────────────────────────────────────
+
+AW_FX="$TEST_DIR/fixtures/openspec-assert-warn"
+AW_CASES="simple tracked gitignored missing"
+
+_aw_ws() { # case
+  _setup
+  _ws=$(cd "$_ws" && pwd -P)
+  mkdir -p "$_ws/home/.claude/skills" "$_ws/logs" "$_ws/WIL-30--fix-thing"
+  ln -s "$LIB_DIR" "$_ws/home/.claude/skills/lib"
+  export HOME="$_ws/home" TAP_LOG="$_ws/logs/WIL-30-pipeline.log"
+  unset LOG_FILE HB_LOG_FILE
+  printf '# Notes\n\n## Session Log\n' >"$_ws/WIL-30--fix-thing/notes.md"
+  : >"$TAP_LOG"
+  printf 'openspec/\nlogs/\nhome/\n' >"$_ws/.gitignore"
+  git -C "$_ws" add .gitignore
+  git -C "$_ws" commit -q -m ignore
+  case "$1" in
+  simple) printf '# fix\n' >"$_ws/WIL-30--fix-thing/simple-fix.md" ;;
+  tracked)
+    _write_change wil-30
+    git -C "$_ws" add -f openspec/
+    git -C "$_ws" commit -q -m plan
+    ;;
+  gitignored) _write_change wil-30 ;;
+  missing) ;;
+  esac
+}
+_aw_mask() {
+  sed -e "s|$_ws|\$WS|g" -e 's/[0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z/TS/g' \
+    -e 's/^### [0-9]\{4\}-[0-9][0-9]-[0-9][0-9] —/### DATE —/'
+}
+
+[ "${OTC_TEST_LIB_ONLY:-0}" = 1 ] && return 0
+
+# ── assert-warn ───────────────────────────────────────────────────────────
+
+test_assert_warn_parity_with_step_5_5() {
+  local c rc out want bad=0
+  for c in $AW_CASES; do
+    _aw_ws "$c"
+    rc=0
+    out=$(cd /tmp && bash "$CHECK" assert-warn WIL-30 --root "$_ws" --ticket-dir "$_ws/WIL-30--fix-thing") || rc=$?
+    case "$c" in simple | tracked) want=0 ;; *) want=1 ;; esac
+    [ "$rc" = "$want" ] || {
+      echo "  $c: rc=$rc want $want"
+      bad=1
+    }
+    [ "$(_aw_mask <"$TAP_LOG")" = "$(cat "$AW_FX/$c.log")" ] || {
+      echo "  $c: log differs"
+      bad=1
+    }
+    [ "$(_aw_mask <"$_ws/WIL-30--fix-thing/notes.md")" = "$(cat "$AW_FX/$c.notes")" ] || {
+      echo "  $c: notes differ"
+      diff <(_aw_mask <"$_ws/WIL-30--fix-thing/notes.md") "$AW_FX/$c.notes" | sed 's/^/    /' || true
+      bad=1
+    }
+    _teardown
+  done
+  [ "$bad" = 0 ]
+}
+
+test_assert_warn_no_log_file_is_set_e_safe() {
+  _aw_ws gitignored
+  unset TAP_LOG
+  local rc=0
+  (
+    set -e
+    cd /tmp && bash "$CHECK" assert-warn WIL-30 --root "$_ws" --ticket-dir "$_ws/WIL-30--fix-thing" >/dev/null 2>&1
+  ) || rc=$?
+  local n
+  n=$(grep -c 'plan artifact durability warning' "$_ws/WIL-30--fix-thing/notes.md" || true)
+  _teardown
+  [ "$rc" = 1 ] && [ "$n" = 1 ]
+}
+
+test_assert_warn_usage() {
+  local rc=0
+  bash "$CHECK" assert-warn WIL-30 --root /tmp >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 2 ]
 }
 
 # ── commit ────────────────────────────────────────────────────────────────
@@ -406,7 +497,8 @@ for t in test_commit_force_adds_gitignored_dir test_commit_is_idempotent_noop_on
   test_audit_reports_all_clean test_audit_detects_existing_untracked_changes \
   test_audit_with_explicit_root test_audit_no_changes_is_clean test_usage_exits_2_with_no_args \
   test_assert_whole_id_does_not_match_longer_id test_assert_whole_id_picks_own_dir_beside_longer_id \
-  test_assert_two_change_dirs_is_ambiguous; do
+  test_assert_two_change_dirs_is_ambiguous test_assert_warn_parity_with_step_5_5 \
+  test_assert_warn_no_log_file_is_set_e_safe test_assert_warn_usage; do
   if "$t"; then
     _pass "$t"
   else

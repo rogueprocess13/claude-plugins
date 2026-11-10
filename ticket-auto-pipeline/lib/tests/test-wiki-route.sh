@@ -107,10 +107,13 @@ if grep -qx 'PRESCAN_ROUTE_COUNT=0' <<<"$out"; then ok "repo name matches whole 
 
 # 10. the skill no longer counts ${#REPOS[@]}. Step 3a.0b lives in the
 # full-investigation reference (skill-progressive-disclosure group 2), so the
-# wiki-route.sh call is looked for there and the count in both files.
+# wiki-route.sh call is looked for there and the count in both files. Since
+# skill-deterministic-extraction 5 the reference calls appraise-knowledge-load.sh,
+# which runs wiki-route.sh.
 SKILL="$PLUGIN_DIR/skills/ticket-appraise/SKILL.md"
 REF="$PLUGIN_DIR/skills/ticket-appraise/references/full-investigation.md"
-if [ ! -f "$REF" ] || grep -qF '${#REPOS[@]}' "$SKILL" "$REF" || ! grep -q 'wiki-route.sh' "$REF"; then
+if [ ! -f "$REF" ] || grep -qF '${#REPOS[@]}' "$SKILL" "$REF" || ! grep -q 'appraise-knowledge-load.sh' "$REF" ||
+  ! grep -q 'wiki-route.sh' "$PLUGIN_DIR/lib/appraise-knowledge-load.sh"; then
   nok "ticket-appraise 3a.0b uses wiki-route.sh"
 else
   ok "ticket-appraise 3a.0b uses wiki-route.sh"

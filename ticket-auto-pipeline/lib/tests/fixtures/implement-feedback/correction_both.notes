@@ -1,0 +1,17 @@
+# Notes
+
+## Complexity
+**Score:** simple
+
+## Initial Investigation
+- **Wiki bootstrap:** flows/x.md (routed: topic-match)
+<!-- CORRECTIONS -->
+- fact: Predicted simple but actual outcome was Rough
+- source: appraise
+- corrected: The export path was undocumented
+<!-- /CORRECTIONS -->
+<!-- CORRECTIONS -->
+- fact: Wiki flow file flows/x.md missing or stale for the export step
+- source: wiki
+- corrected: Wiki gap found: no export step
+<!-- /CORRECTIONS -->

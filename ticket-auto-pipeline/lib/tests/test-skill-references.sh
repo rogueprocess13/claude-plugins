@@ -548,11 +548,17 @@ test_implement_feedback_rework_condition() {
       return 1
     }
   done
-  # Inline contracts every path needs: the verifier id, the outcome trigger,
-  # the mismatch definition, the Part 3 wiki check and the no-halt rule.
-  for tok in 'write_verifier_result verifier=implement_tests' 'implement-outcome --data outcome=' \
+  # Inline contracts every path needs: the verifier id and outcome trigger
+  # (now implement-feedback.sh record, skill-deterministic-extraction 5), the
+  # mismatch definition, the Part 3 wiki check and the no-halt rule.
+  grep -qF 'verifier=implement_tests' "$SCRIPT_DIR/../implement-feedback.sh" &&
+    grep -qF 'implement-outcome --data "outcome=$outcome"' "$SCRIPT_DIR/../implement-feedback.sh" || {
+    echo "  implement-feedback.sh lost the verifier id or the outcome trigger"
+    return 1
+  }
+  for tok in 'implement-feedback.sh record' 'implement_tests' \
     '`simple` + `Rough`/`Hard`, or `complex` + `Smooth`' 'Wiki bootstrap:' \
-    'META|wiki-check|info|wiki consulted, no gap found' 'never halts' \
+    'META|wiki-check|info|wiki consulted, no gap found' 'never halts' 'implement-rate.sh' \
     'Keep the `PERSONA_TYPE` value printed above'; do
     grep -qF -- "$tok" "$md" || {
       echo "  inline contract left SKILL.md: $tok"
@@ -565,7 +571,7 @@ test_implement_feedback_rework_condition() {
     grep -qF -- '--remediation' "$refs/rework.md" &&
     grep -qF '**Complexity mismatch**' "$refs/feedback.md" &&
     grep -qF '**Gap:**' "$refs/feedback.md" &&
-    grep -qF 'append_correction wiki failed' "$refs/feedback.md" || {
+    grep -qF 'implement-feedback.sh correction --ticket-dir "{ticket-dir}" --source wiki' "$refs/feedback.md" || {
     echo "  a reference lost its moved text"
     return 1
   }

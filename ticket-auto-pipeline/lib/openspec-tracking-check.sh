@@ -19,7 +19,7 @@
 # own unrelated openspec dogfooding, if any), that is not this script's
 # concern; it never runs `git` inside anything but the tickets repo CWD.
 #
-# Three subcommands:
+# Four subcommands:
 #   commit  — idempotent `git add -f` + commit of one change dir. Called by
 #             ticket-appraise-exec immediately after the artifact is written.
 #             Always runs against CWD — callers must invoke it from the
@@ -31,6 +31,11 @@
 #             persisted. Accepts --root <path> so a caller does not have to
 #             trust ambient CWD after an earlier step `cd`'d into a code
 #             worktree — pass the tickets repo path explicitly.
+#   assert-warn — ticket-implement Step 5.5 in one call
+#             (skill-deterministic-extraction 5): derives --expect (no
+#             simple-fix.md plan → expect a change dir), runs assert, and on a
+#             non-zero status writes the OPENSPEC_ARTIFACT_UNTRACKED gate-warn
+#             and the notes.md durability-warning entry. Never gate-stops.
 #   audit   — one-off sweep of every openspec/changes/*/ dir under a tickets
 #             repo (--root <path>, default CWD), for detecting pre-existing
 #             untracked artifacts.
@@ -59,6 +64,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage: openspec-tracking-check.sh commit <change-dir> <TICKET-ID>
        openspec-tracking-check.sh assert <TICKET-ID> [--expect] [--root <path>]
+       openspec-tracking-check.sh assert-warn <TICKET-ID> [--root <path>] --ticket-dir <dir>
        openspec-tracking-check.sh audit [--root <path>]
 
 commit always runs `git` against the current working directory — always the
@@ -87,6 +93,15 @@ assert <TICKET-ID> [--expect] [--root <path>]
   (exit 1) — pass --expect when the ticket's notes.md declares
   COMPLEXITY=complex, so a deleted-on-disk change dir is caught, not
   silently treated as "nothing to check".
+
+assert-warn <TICKET-ID> [--root <path>] --ticket-dir <dir>
+  ticket-implement Step 5.5. Passes --expect to assert unless
+  `ticket-dir.sh plan --type simple-fix` finds a simple-fix.md plan under
+  <path>. On a non-zero assert, writes
+  META|gate-warn|info|OPENSPEC_ARTIFACT_UNTRACKED — ... through plog.sh and
+  appends the "plan artifact durability warning" entry to <dir>/notes.md.
+  Prints assert's KEY=value lines. Exit: assert's own code (0 tracked or
+  not-applicable, 1 warned); 2 usage or git error (also warned).
 
 audit [--root <path>]
   Scans <path>/openspec/changes/*/ (default: current directory) and reports
@@ -300,6 +315,52 @@ _cmd_assert() {
   esac
 }
 
+# ── assert-warn ───────────────────────────────────────────────────────────
+
+_cmd_assert_warn() {
+  local ticket_id="" root="." td=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --root | --ticket-dir)
+      [ $# -ge 2 ] || usage
+      # An empty --root (an unset $IMPLEMENT_TICKETS_ROOT in a fresh Bash
+      # call) means CWD, as assert's own --root does.
+      if [ "$1" = --root ]; then root="${2:-.}"; else td="$2"; fi
+      shift 2
+      ;;
+    -*)
+      echo "Unknown flag: $1" >&2
+      usage
+      ;;
+    *)
+      [ -z "$ticket_id" ] || usage
+      ticket_id="$1"
+      shift
+      ;;
+    esac
+  done
+  [ -n "$ticket_id" ] && [ -n "$td" ] || usage
+
+  local expect="" out rc=0 status change_dir
+  (resolve_plan_artifact "$ticket_id" --root "$root" --type simple-fix) >/dev/null 2>&1 || expect="--expect"
+  out=$(_cmd_assert "$ticket_id" $expect --root "$root") || rc=$?
+  [ -z "$out" ] || echo "$out"
+  [ "$rc" -ne 0 ] || return 0
+
+  status=$(sed -n 's/^OPENSPEC_TRACK_STATUS=//p' <<<"$out")
+  change_dir=$(sed -n 's/^CHANGE_DIR=//p' <<<"$out")
+  bash "$_OTC_SCRIPT_DIR/plog.sh" META gate-warn info \
+    "OPENSPEC_ARTIFACT_UNTRACKED — plan artifact for $ticket_id is not durably tracked in the tickets repo" || true
+  {
+    printf '\n### %s — plan artifact durability warning\n' "$(date +%Y-%m-%d)"
+    printf -- '- ⚠️ openspec change for %s is not durably tracked in the tickets repo (status:\n' "$ticket_id"
+    printf '  %s). It is one `git clean` from loss. Fix with:\n' "${status:-unknown}"
+    printf '  `bash ~/.claude/skills/lib/openspec-tracking-check.sh commit "%s" "%s"`\n' "$change_dir" "$ticket_id"
+    printf '  from the tickets repo root.\n'
+  } >>"$td/notes.md" || echo "WARN: could not append the durability warning to $td/notes.md" >&2
+  return "$rc"
+}
+
 # ── audit ─────────────────────────────────────────────────────────────────
 
 _cmd_audit() {
@@ -351,6 +412,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     ;;
   assert)
     _cmd_assert "$@"
+    exit $?
+    ;;
+  assert-warn)
+    _cmd_assert_warn "$@"
     exit $?
     ;;
   audit)

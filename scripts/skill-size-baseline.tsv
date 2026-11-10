@@ -58,9 +58,9 @@ ticket-auto-pipeline/skills/guidance-extractor/SKILL.md	8633	132
 ticket-auto-pipeline/skills/nav-hints/SKILL.md	3048	71
 ticket-auto-pipeline/skills/skill-docs/SKILL.md	5168	177
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	32284	595
+ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md	29834	548
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	36841	542
+ticket-auto-pipeline/skills/ticket-appraise/SKILL.md	36834	542
 ticket-auto-pipeline/skills/ticket-approve/SKILL.md	2190	27
 ticket-auto-pipeline/skills/ticket-audit-exec/SKILL.md	10176	293
 ticket-auto-pipeline/skills/ticket-audit/SKILL.md	16671	358
@@ -77,7 +77,7 @@ ticket-auto-pipeline/skills/ticket-env-check/SKILL.md	4657	84
 ticket-auto-pipeline/skills/ticket-flow/SKILL.md	7322	124
 ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	9503	210
 # exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-implement/SKILL.md	34975	526
+ticket-auto-pipeline/skills/ticket-implement/SKILL.md	33676	491
 ticket-auto-pipeline/skills/ticket-overseer/SKILL.md	3767	81
 ticket-auto-pipeline/skills/ticket-persona-refresh/SKILL.md	8129	200
 ticket-auto-pipeline/skills/ticket-pr-iterate/SKILL.md	9901	226
