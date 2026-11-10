@@ -92,6 +92,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-verify-record-verdict.sh
 	bash ticket-auto-pipeline/lib/tests/test-remediation-append.sh
 	bash ticket-auto-pipeline/lib/tests/test-uat-policy-guard.sh
+	bash ticket-auto-pipeline/lib/tests/test-verify-env-up.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-evidence.sh
 	bash ticket-auto-pipeline/lib/tests/test-pipeline-finalize.sh
 	bash ticket-auto-pipeline/lib/tests/test-spawn-helper.sh

@@ -354,45 +354,13 @@ source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
 verify_lock_release
 ```
 
-**Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from — a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, resolve the process listening on `LOCAL_URL`'s port — plus every port in the project's optional `VERIFY_SERVED_PORTS` CLAUDE.md field (comma/space separated ports or URLs, e.g. an API server port) — and compare each one's checkout with this ticket's verify worktrees:
+**Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from, so a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, compare the checkout behind `LOCAL_URL`'s port, and every port in the project's optional `VERIFY_SERVED_PORTS` CLAUDE.md field, with this ticket's verify worktrees. Run this for `live-backend` mode too:
 
 ```bash
-source "$HOME/.claude/skills/lib/config.sh" 2>/dev/null || true
-source "$HOME/.claude/skills/lib/verify-worktree.sh"
-source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
-verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
-_ports=$(verify_served_ports "{LOCAL_URL}" "${VERIFY_SERVED_PORTS:-}" 2>/dev/null)
-_served_rc=0
-# shellcheck disable=SC2086
-_served_msg=$(verify_served_check_ports "{TICKET-ID}" $_ports) || _served_rc=$?
-_served_msg=$(printf '%s' "$_served_msg" | tr '\n|' ' /')
-_served_stop() {
-  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "${1} — ${_served_msg}"
-  echo "ticket-verify: ${2} — ${_served_msg}" >&2
-  verify_lock_release
-  exit 1
-}
-case "$_served_rc" in
-0) bash ~/.claude/skills/lib/plog.sh VERIFY served-worktree done "${_served_msg}" ;;
-1)
-  [ "${VERIFY_SERVED_WORKTREE_ENFORCE:-true}" = "true" ] &&
-    _served_stop VERIFY_SERVED_WRONG_WORKTREE "the dev server is not serving this ticket's code. Stop the stale server on that port, or re-run env-start.sh with --restart for that service, so it starts from VERIFY_REPO_PATH_<REPO> (see the contract above)"
-  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_SERVED_WRONG_WORKTREE — ${_served_msg} (VERIFY_SERVED_WORKTREE_ENFORCE=false)"
-  ;;
-4)
-  [ "${VERIFY_SERVED_WORKTREE_STRICT:-false}" = "true" ] &&
-    _served_stop VERIFY_SERVED_UNVERIFIED "no verify worktree to compare the served checkout with"
-  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_SERVED_UNVERIFIED — ${_served_msg}"
-  ;;
-*)
-  [ "${VERIFY_SERVED_WORKTREE_STRICT:-false}" = "true" ] &&
-    _served_stop VERIFY_SERVED_UNVERIFIED "could not tell which checkout the dev server serves (VERIFY_SERVED_WORKTREE_STRICT=true)"
-  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_SERVED_UNVERIFIED — could not tell which checkout LOCAL_URL's port serves: ${_served_msg}"
-  ;;
-esac
+bash ~/.claude/skills/lib/verify-env-up.sh served-check "{TICKET-ID}" --local-url "{LOCAL_URL}"
 ```
 
-Exit codes of `verify_served_check_ports` (most severe first): `4` no verify worktree exists for this ticket to compare with (almost always `REPOS_ROOT` unresolved, which also means `env-start.sh` got no exports) — loud `gate-warn` `VERIFY_SERVED_UNVERIFIED`, never a quiet skip; `1` some port serves a checkout of a repo under test on a different commit or with uncommitted changes — gate-stop `VERIFY_SERVED_WRONG_WORKTREE`; `0` `LOCAL_URL`'s port serves this ticket's verify worktree (or a clean checkout of the same repo at the same commit) and no port serves another checkout — an extra port that is ok never stands in for an undecided `LOCAL_URL` port; `3` `LOCAL_URL`'s port could not be decided (no visible listener, unreadable cwd, container-served port, cwd outside any git checkout, or the served repo is not one this ticket touches) — a visible `gate-warn` `VERIFY_SERVED_UNVERIFIED`, proceed. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades the wrong-worktree gate-stop to a `gate-warn`; `VERIFY_SERVED_WORKTREE_STRICT=true` turns the `3`/`4` cases into a `VERIFY_SERVED_UNVERIFIED` gate-stop, for hosts where every served port is a local process. Run this check for `live-backend` mode too.
+Exit 0: continue — the port serves this ticket's code (`served-worktree|done`), or the check could not decide and logged a visible `VERIFY_SERVED_UNVERIFIED` gate-warn (no worktree to compare, an unreadable or container-served port). Exit 1: the script wrote a gate-stop (`VERIFY_SERVED_WRONG_WORKTREE`: a port serves a different commit or a dirty checkout of a repo under test), printed how to recover and released the lock; stop. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades the wrong-worktree stop to a gate-warn; `VERIFY_SERVED_WORKTREE_STRICT=true` turns every undecided case into a `VERIFY_SERVED_UNVERIFIED` gate-stop.
 
 ### 1.6c — Apply seeds from merged test-data blockers
 

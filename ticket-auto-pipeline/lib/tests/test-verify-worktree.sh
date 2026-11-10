@@ -764,21 +764,20 @@ test_skill_md_env_start_gets_worktree_contract() {
     echo "  Step 1.6b does not eval verify_worktree_exports before env-start.sh" >&2
     return 1
   }
-  grep -q 'verify_served_check_ports "{TICKET-ID}"' <<<"$section" || {
-    echo "  Step 1.6b does not run verify_served_check_ports" >&2
-    return 1
-  }
-  grep -q 'VERIFY_SERVED_WRONG_WORKTREE' <<<"$section" || {
-    echo "  Step 1.6b does not gate-stop on a wrong served checkout" >&2
+  # skill-deterministic-extraction 4: the served-checkout check is
+  # verify-env-up.sh served-check; its branches are tested by
+  # test-verify-env-up.sh against fixtures from the old block.
+  grep -q 'verify-env-up.sh served-check "{TICKET-ID}"' <<<"$section" || {
+    echo "  Step 1.6b does not run verify-env-up.sh served-check" >&2
     return 1
   }
   # Every block that derives worktree paths must resolve REPOS_ROOT itself:
-  # each env-start.sh block and the served-checkout block.
+  # each env-start.sh block.
   local blocks inits
   blocks=$(printf '%s\n' "$section" | grep -c '^```bash' || true)
   inits=$(printf '%s\n' "$section" | grep -c '^verify_env_init "{TICKET-ID}"' || true)
-  [ "$inits" -ge 3 ] || {
-    echo "  Step 1.6b: verify_env_init appears $inits time(s) across $blocks blocks, expected >= 3" >&2
+  [ "$inits" -ge 2 ] || {
+    echo "  Step 1.6b: verify_env_init appears $inits time(s) across $blocks blocks, expected >= 2" >&2
     return 1
   }
   # Every env-start.sh call is preceded, in its block, by verify_env_init and
@@ -1082,29 +1081,9 @@ test_skill_md_gc_resolves_repos_root() {
 }
 _run "SKILL.md Step 1.6a2 resolves REPOS_ROOT before the GC sweep" test_skill_md_gc_resolves_repos_root
 
-test_skill_md_undecided_is_a_gate_warn() {
-  # rc 3 used to be a quiet `served-worktree|skip`; it must be a visible warn.
-  local skill_md="$LIB_DIR/../skills/ticket-verify/SKILL.md"
-  local section
-  section=$(awk '/^### 1\.6b /{f=1} /^## Step 1\.7/{f=0} f' "$skill_md")
-  [ -n "$section" ] || return 1
-  if grep -qE 'served-worktree\|skip|VERIFY served-worktree skip' <<<"$section"; then
-    echo "  Step 1.6b still logs an undecided check as a quiet skip" >&2
-    return 1
-  fi
-  local warns
-  warns=$(printf '%s\n' "$section" | grep -c 'plog.sh META gate-warn warn "VERIFY_SERVED_UNVERIFIED' || true)
-  [ "$warns" -ge 2 ] || {
-    echo "  expected VERIFY_SERVED_UNVERIFIED gate-warns for rc 3 and rc 4, found $warns" >&2
-    return 1
-  }
-  grep -q 'env-start.sh with --restart' <<<"$section" || {
-    echo "  wrong-worktree message does not tell the operator how to recover" >&2
-    return 1
-  }
-  return 0
-}
-_run "SKILL.md Step 1.6b writes undecided checks as a VERIFY_SERVED_UNVERIFIED gate-warn" test_skill_md_undecided_is_a_gate_warn
+# test_skill_md_undecided_is_a_gate_warn moved to test-verify-env-up.sh
+# (skill-deterministic-extraction 4): the sv_undecided / sv_noworktree cases
+# assert the VERIFY_SERVED_UNVERIFIED gate-warn, sv_wrong the recovery hint.
 
 test_served_report_and_cli() {
   _setup_fixture
