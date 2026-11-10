@@ -592,7 +592,8 @@
     },
     "ticket-retro": {
       "files": [
-        "plugin:skills/ticket-retro/SKILL.md"
+        "plugin:skills/ticket-retro/SKILL.md",
+        "plugin:skills/ticket-retro/references/github-issues.md"
       ]
     },
     "ticket-verify": {

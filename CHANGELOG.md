@@ -17,6 +17,37 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.104.0 (2026-11-10)
+
+`ticket-retro`'s `--post-to-github` material moves to a reference (`skill-progressive-disclosure`,
+group 8). Relocation only: no step changes what it does.
+
+### Changed
+
+- `skills/ticket-retro/SKILL.md` 28,689 → 24,513 bytes. Moved verbatim to
+  `references/github-issues.md`: Step 4's "Section: GitHub Issues" templates and all of Step 5.5
+  (5.5a auth, 5.5b issue body and evidence files, 5.5c `github_retro_process`, 5.5d report). The
+  `### Section: GitHub Issues` heading holds the load condition: read the reference only with
+  `--post-to-github`. If `skill-ref.sh` exits non-zero, the skill warns and skips every GitHub
+  operation, and the proposal is still written. Step 5.5 keeps its heading and a `Moved to` stub.
+- Deviation from the task list: task 8.1 planned to move all of Step 4 into
+  `templates/proposal-sections.md`. Every retro run reaches Step 4 (a clean window skips to it), so
+  that file would be read on every run and grow each one by the condition text. Only the
+  flag-gated text moved. The automatic retro from ticket-auto STEP_6 passes no flags.
+- Kept inline: the `--post-to-github` flag description, the Step 3b.5 severity pointer, the
+  "Proposal verify" block, and the Completion summary-line rules (including "omitted entirely"
+  when the flag is not set).
+- **Fingerprint:** the `ticket-retro` skill fingerprint changes. Its manifest lists
+  `references/github-issues.md` directly after `ticket-retro/SKILL.md`.
+- Context (rule 9): `ticket-retro` 28,689 → 24,513 (−4,176) on every run without the flag, which
+  includes every automatic run. New `ticket-retro:conditional` 5,124. A `--post-to-github` run
+  reads both files: 29,637, +948 over before.
+- Tests: `test-skill-references.sh` `test_retro_github_issues_condition` checks the condition, the
+  inline contracts and what the reference holds. No existing test pinned the moved text.
+- The 13 pre-existing `REF-ORPHAN` warnings for `skills/ticket-retro/templates/*.md` stay. Step 3a
+  loads them as `templates/{CODE}.md`; naming each one literally would add about 400 bytes to
+  every run.
+
 ## 0.103.0 (2026-11-10)
 
 `ticket-setup` Step 0.4 moves to a reference (`skill-progressive-disclosure`, group 7).

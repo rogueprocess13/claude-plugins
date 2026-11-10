@@ -615,6 +615,43 @@ test_setup_project_init_condition() {
   done
 }
 
+test_retro_github_issues_condition() {
+  local md="$REPO_ROOT/ticket-auto-pipeline/skills/ticket-retro/SKILL.md"
+  local ref line tok
+  ref="$(dirname "$md")/references/github-issues.md"
+  line=$(grep -F 'references/github-issues.md' "$md" | grep -F 'skill-ref.sh' | head -1)
+  for tok in 'Only with `--post-to-github`' 'skip Step 5.5' 'never post issues from memory'; do
+    grep -qF -- "$tok" <<<"$line" || {
+      echo "  github-issues conditional line lacks: $tok"
+      return 1
+    }
+  done
+  # The conditional line sits under Step 4, before the Step 5.5 stub.
+  _section "$md" '^### Section: GitHub Issues' '^## Step 5 ' | grep -qF 'skill-ref.sh' || {
+    echo "  github-issues.md is not read under the Step 4 GitHub Issues section"
+    return 1
+  }
+  # Text every run needs stays inline: the flag, the 3b.5 severity pointer,
+  # the proposal verify and the completion summary line rules.
+  for tok in '--post-to-github`: if present' '### 3b.5 ' '**Proposal verify**' \
+    'If `--post-to-github` was not used: omitted entirely'; do
+    grep -qF -- "$tok" "$md" || {
+      echo "  inline contract left SKILL.md: $tok"
+      return 1
+    }
+  done
+  for tok in '### 5.5a ' '### 5.5c ' 'github_retro_process' 'GitHub posting skipped'; do
+    grep -qF -- "$tok" "$ref" || {
+      echo "  github-issues.md lost: $tok"
+      return 1
+    }
+    ! grep -qF -- "$tok" "$md" || {
+      echo "  moved text still in SKILL.md: $tok"
+      return 1
+    }
+  done
+}
+
 test_shared_section_ref_helper() {
   local out
   # shellcheck source=skill-text.sh
