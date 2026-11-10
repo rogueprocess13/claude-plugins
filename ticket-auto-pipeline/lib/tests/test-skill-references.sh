@@ -407,8 +407,8 @@ test_verify_mode_reference_condition() {
       return 1
     }
   done
-  for tok in 'No test user found' 'Checkpoint resume (deterministic)' 'write_verifier_result verifier=build_only' \
-    'write_verifier_result verifier=live_backend' 'record_pr_created --new' 'flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-pass'; do
+  for tok in 'No test user found' 'Checkpoint resume (deterministic)' 'verify_record_verdict "{VERIFY_MODE}" PASS' \
+    'verify_record_verdict "{VERIFY_MODE}" FAIL' '`build-only` → `build_only`' '`live-backend` → `live_backend`' 'record_pr_created --new' 'flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-pass'; do
     grep -qF -- "$tok" "$md" || {
       echo "  inline contract left SKILL.md: $tok"
       return 1

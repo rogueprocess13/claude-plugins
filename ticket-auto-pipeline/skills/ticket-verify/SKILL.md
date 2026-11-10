@@ -827,35 +827,13 @@ Append to `{ticket-dir}/notes.md`:
 
 ### Post-verdict: Record verifier result (Phase 0 RLVR) — PASS
 
-You only reach this point on the pass branch (`### Pass` above routes here; `### Fail` routes
-to Step 7, which has its own FAIL write — see **Post-verdict: Record verifier result (Phase 0
-RLVR) — FAIL** under 7b below).
-
-**Before either state-transition branch below** — the `uat-pass` branch is gated on this
-exact record (`VERDICT_FAIL_NOT_ENFORCED`, issue #368): `flow.sh` refuses `uat-pass` when
-the latest recorded verdict for this ticket's verifier/phase pair is a trailing FAIL/BLOCK,
-and a later PASS only clears that block once it is actually on the log. Writing the verdict
-after the trigger call — the historical order in this doc — means the router's own
-documented verify-retry loop (attempt 1 FAILs and gets logged, attempt 2 genuinely PASSes)
-would have attempt 2's `uat-pass` call check the log *before* its own PASS was written,
-still seeing attempt 1's stale FAIL and blocking a ticket that just legitimately passed.
-Source and call `write_verifier_result` now, with criteria_met=criteria_total=total passing
-criteria:
+You only reach this point on the pass branch (`### Fail` routes to Step 7, which records FAIL). Record the verdict **before either state-transition branch below**: `uat-pass` is verdict-gated (#368), and a later PASS clears an earlier attempt's FAIL only once it is on the log. `criteria_met` = `criteria_total` = the passing-criterion count:
 
 ```bash
-source ~/.claude/skills/lib/verifier-result.sh
-write_verifier_result verifier=playwright_uat verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+source ~/.claude/skills/lib/verifier-result.sh && verify_record_verdict "{VERIFY_MODE}" PASS <N> <M> <A>
 ```
 
-**If `VERIFY_MODE=build-only`**, use `verifier=build_only` instead of `playwright_uat`:
-```bash
-write_verifier_result verifier=build_only verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
-
-**If `VERIFY_MODE=live-backend`**, use `verifier=live_backend` instead of `playwright_uat`:
-```bash
-write_verifier_result verifier=live_backend verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
+`verify_record_verdict` picks the verifier from the mode — `browser` → `playwright_uat`, `build-only` → `build_only`, `live-backend` → `live_backend` — and writes the same `META|verifier-result` line `write_verifier_result verifier=<id> … phase=VERIFY` did. Exit 2 means the mode or verdict was not filled in and nothing was recorded: fix the call and re-run it.
 
 ### If `--env local`: Open PR and close out
 
@@ -971,7 +949,7 @@ Then continue to **Post-verdict: Emit the PHASE_RESULT block** below with `VERDI
 
 End your return with the `=== PHASE_RESULT ===` block described in **§ 6 Phase result
 emission** of the auto preamble: `PHASE: VERIFY`, `VERIFIER` set to this run's actual
-verifier, and `CRITERIA_MET`/`CRITERIA_TOTAL`/`ATTEMPT` matching the `write_verifier_result`
+verifier, and `CRITERIA_MET`/`CRITERIA_TOTAL`/`ATTEMPT` matching the `verify_record_verdict`
 call above. `VERDICT` is `PASS` in every case above except the gate-blocked `--env uat`
 branch, where it is `BLOCK` — "the phase found something that must stop forward progress"
 (`docs/phase-result-schema.md`'s enum) describes this exactly: this run's own check passed,
@@ -1004,29 +982,10 @@ If several criteria fail, report all of them here and in 7c: WHAT_FAILED and SNA
 
 ### Post-verdict: Record verifier result (Phase 0 RLVR) — FAIL
 
-Same call as the pass-branch write above, now with the FAIL verdict — this is the one write
-site that actually exercises the verdict gate's namesake failure mode
-(`VERDICT_FAIL_NOT_ENFORCED`, issue #368): a real verify FAIL must land on the pipeline log so
-`verifier_latest_verdict` can see it and block any subsequent attempt (buggy retry, or a human
-manually re-running `uat-pass`) to force a Done/UAT transition while it stands as the latest
-verdict for this `(verifier, phase)` pair. Source and call `write_verifier_result` now, using
-the criteria counts from the table above:
+A real FAIL must land on the log so the verdict gate (#368) blocks any later `uat-pass` while it stands. `criteria_met` is the passing-criterion count, `criteria_total` the attempted count:
 
 ```bash
-source ~/.claude/skills/lib/verifier-result.sh
-write_verifier_result verifier=playwright_uat verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
-`criteria_met` is the passing-criterion count, `criteria_total` the attempted count — same
-shape as the Step 6 PASS call.
-
-**If `VERIFY_MODE=build-only`**, use `verifier=build_only` instead of `playwright_uat`:
-```bash
-write_verifier_result verifier=build_only verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
-
-**If `VERIFY_MODE=live-backend`**, use `verifier=live_backend` instead of `playwright_uat`:
-```bash
-write_verifier_result verifier=live_backend verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+source ~/.claude/skills/lib/verifier-result.sh && verify_record_verdict "{VERIFY_MODE}" FAIL <N> <M> <A>
 ```
 
 ### 7c — Emit the REMEDIATION_BRIEF
@@ -1084,39 +1043,9 @@ rather than guessing.}
 
 ### 7c5 — Write REMEDIATION_BRIEF to plan artifact
 
-After emitting the brief in chat, persist it to the plan artifact so `ticket-implement` can read the structured remediation data (SUGGESTED_FIX, SNAPSHOT_EXCERPT, diagnostics, context files).
+Persist the brief to the plan artifact, so `ticket-implement` can read SUGGESTED_FIX, SNAPSHOT_EXCERPT, the diagnostics and the context files. Write this section body to `{ticket-dir}/remediation-section.md`, filling every placeholder and ending at the context-file list:
 
-### 7d — Post VERIFY_EXHAUSTED summary to Linear
-
-When the verify phase has exhausted its retries (2 attempts), post the **VERIFY_EXHAUSTED comment** from `references/templates.md` to the Linear ticket. This is the final communication — no further retries will occur.
-
-Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP fallback otherwise). This ensures the ticket author knows:
-- Which criteria passed (so they don't need to re-test those)
-- Which criteria failed (so they know what to fix)
-- That no further automated retries will occur
-
-**Detect plan artifact** (same detection as `ticket-implement` Step 2):
-
-```bash
-bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root .
-```
-
-- Exit 0 → `PLAN = PLAN_PATH`, mode = `PLAN_MODE` (`simple-fix` or `openspec`)
-- Exit 2 (several change dirs match this ticket) or exit 12 (none) → skip write. Report: "No plan artifact found for REMEDIATION_BRIEF — brief emitted to chat and notes.md only."
-
-**Count existing sections and write atomically:**
-
-Count `^## Verification #` lines in the plan to determine `N` (0 if none).
-
-Write to a temporary file first, then atomically rename:
-```bash
-PLAN_TMP="${PLAN}.tmp"
-# Write: original content + new section + closing marker
-cat "$PLAN" > "$PLAN_TMP"
-cat >> "$PLAN_TMP" << 'SECTION'
-
-## Verification #{N+1}
-
+```markdown
 **Date:** {today's date}
 **Environment:** {env}
 **Failed at step:** {N} — {step description}
@@ -1139,20 +1068,19 @@ cat >> "$PLAN_TMP" << 'SECTION'
 
 ### Context Files
 {CONTEXT_FILES list items}
-
-<!-- /REMEDIATION_BRIEF -->
-SECTION
-
-# Atomic rename — partial writes never visible at the destination
-mv "$PLAN_TMP" "$PLAN" || {
-  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "REMEDIATION_BRIEF_TRUNCATED — rename failed: $PLAN"
-  cl_write RETRO hint info "REMEDIATION_BRIEF atomic rename failed — plan path: $PLAN, TMP: $PLAN_TMP. Check filesystem permissions and cross-device rename restrictions"
-  rm -f "$PLAN_TMP"
-  exit 1
-}
 ```
 
-If the write or rename fails for any reason, emit `|META|gate-stop|fail|REMEDIATION_BRIEF_TRUNCATED` and abort. The `.tmp` file is removed on the way out.
+Then append it:
+
+```bash
+bash ~/.claude/skills/lib/remediation-append.sh "{TICKET-ID}" --section "{ticket-dir}/remediation-section.md" --root .
+```
+
+The script finds the plan (`ticket-dir.sh plan`), adds `## Verification #<N>` (existing sections + 1), your file verbatim and the `<!-- /REMEDIATION_BRIEF -->` marker through a temp file and a rename, and prints `PLAN=`/`N=` for 7d2. Exit 3: no single plan artifact; report "No plan artifact found for REMEDIATION_BRIEF — brief emitted to chat and notes.md only." Exit 1: the write or rename failed and `REMEDIATION_BRIEF_TRUNCATED` is logged; stop.
+
+### 7d — Post VERIFY_EXHAUSTED summary to Linear
+
+When the verify phase has exhausted its retries (2 attempts), post the **VERIFY_EXHAUSTED comment** from `references/templates.md` to the Linear ticket via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP fallback otherwise). This is the final communication — no further retries will occur — so it says which criteria passed, which failed, and that no automated retry follows.
 
 ### 7d2 — Record in notes.md
 
@@ -1164,7 +1092,7 @@ Append to `{ticket-dir}/notes.md`:
 - **Expected:** {expected}
 - **Observed:** {observed}
 - **Console errors:** {count or "none"}
-- **Plan updated:** {PLAN path or "not found"} — `## Verification #{N+1}` appended
+- **Plan updated:** {PLAN from 7c5, or "not found"} — `## Verification #{N}` appended
 ```
 
 ### 7e — Post findings to Linear
