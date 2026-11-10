@@ -6,7 +6,8 @@ ticket-appraise-exec:conditional	14328
 ticket-appraise:conditional	34200
 ticket-document	81874
 ticket-gate-reconcile	10321
-ticket-implement	152514
+ticket-implement	146427
+ticket-implement:conditional	10304
 ticket-pr-iterate	105184
 ticket-pr-review	137443
 ticket-reproduce	109984

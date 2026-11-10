@@ -503,6 +503,74 @@ test_appraise_exec_complexity_condition() {
   }
 }
 
+test_implement_feedback_rework_condition() {
+  local md="$REPO_ROOT/ticket-auto-pipeline/skills/ticket-implement/SKILL.md"
+  local refs line tok h sec rel
+  refs="$(dirname "$md")/references"
+  # shellcheck source=skill-text.sh
+  source "$SCRIPT_DIR/skill-text.sh"
+  line=$(grep -F 'references/rework.md' "$md" | grep -F 'skill-ref.sh' | head -1)
+  for tok in '`FAIL_COUNT` > `SECTION_COUNT`' '--from-step' 'detect-path' 'checkout-branch' '`implement`'; do
+    grep -qF -- "$tok" <<<"$line" || {
+      echo "  rework conditional line lacks: $tok"
+      return 1
+    }
+  done
+  line=$(grep -F 'references/feedback.md' "$md" | grep -F 'skill-ref.sh' | head -1)
+  for tok in 'Step 4c' 'complexity mismatch' 'wiki gap'; do
+    grep -qF -- "$tok" <<<"$line" || {
+      echo "  feedback conditional line lacks: $tok"
+      return 1
+    }
+  done
+  sec=$(_section "$md" '^### Reference files [(]load condition[)]' '^## Step 0[.]6')
+  for tok in 'REWORK_OPEN=' 'reference-missing' 'Read each printed path in full'; do
+    grep -qF -- "$tok" <<<"$sec" || {
+      echo "  load condition lacks: $tok"
+      return 1
+    }
+  done
+  # Each moved section keeps its heading over a stub.
+  for h in '^## Step 2[.]5 :references/rework.md' '^### Part B :references/rework.md' \
+    '^### Post-implement:references/feedback.md' '^### Part 3 :references/feedback.md' \
+    '^### Part 4 :references/feedback.md'; do
+    rel=${h#*:}
+    sec=$(_section "$md" "${h%%:*}" '^##')
+    grep -q "^Moved to \`$rel\`" <<<"$sec" || {
+      echo "  no stub for $rel under ${h%%:*}"
+      return 1
+    }
+  done
+  # Resume rows that skip Step 2.5 name the rework reference.
+  for tok in detect-path checkout-branch implement; do
+    grep -F "| \`$tok\` |" "$md" | grep -qF 'references/rework.md' || {
+      echo "  $tok dispatch row does not name rework.md"
+      return 1
+    }
+  done
+  # Inline contracts every path needs: the verifier id, the outcome trigger,
+  # the mismatch definition, the Part 3 wiki check and the no-halt rule.
+  for tok in 'write_verifier_result verifier=implement_tests' 'implement-outcome --data outcome=' \
+    '`simple` + `Rough`/`Hard`, or `complex` + `Smooth`' 'Wiki bootstrap:' \
+    'META|wiki-check|info|wiki consulted, no gap found' 'never halts' \
+    'Keep the `PERSONA_TYPE` value printed above'; do
+    grep -qF -- "$tok" "$md" || {
+      echo "  inline contract left SKILL.md: $tok"
+      return 1
+    }
+  done
+  # Each reference holds what it is named for.
+  grep -qF 'REMEDIATION_BRIEF_TRUNCATED' "$refs/rework.md" &&
+    grep -qF '## UAT Rework Context' "$refs/rework.md" &&
+    grep -qF -- '--remediation' "$refs/rework.md" &&
+    grep -qF '**Complexity mismatch**' "$refs/feedback.md" &&
+    grep -qF '**Gap:**' "$refs/feedback.md" &&
+    grep -qF 'append_correction wiki failed' "$refs/feedback.md" || {
+    echo "  a reference lost its moved text"
+    return 1
+  }
+}
+
 # The REMEDIATION_BRIEF block (Step 7c) is parsed by ticket-implement and fix
 # skills; skill-progressive-disclosure keeps it inline and byte-identical.
 # Changing the block on purpose means updating this hash in the same PR.
