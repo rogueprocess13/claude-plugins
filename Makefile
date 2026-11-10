@@ -395,6 +395,7 @@ test-kc:
 	bash knowledge-curator/test/test-kc-resurface.sh
 	bash knowledge-curator/test/test-kc-prompt-match.sh
 	bash knowledge-curator/test/test-kc-ingest.sh
+	bash knowledge-curator/test/test-kc-skill-blocks.sh
 
 # `echo … | grep -q` under pipefail misreads a match as a miss (SIGPIPE 141,
 # GitHub #640); scripts/check-grep-q-pipe.sh fails on any such line in non-test shell.

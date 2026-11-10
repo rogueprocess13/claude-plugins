@@ -19,41 +19,13 @@ The user may specify one or more sources. If none specified, import all three:
 
 ## Step 2 — Openspec ingester
 
-For each directory in `openspec/changes/` (excluding `archive/`):
-
-1. Read `proposal.md` for title and summary
-2. Read `tasks.md` for completion status
-3. Check if an item with `source: openspec:<change>` already exists
-   - If yes: update `status`, `updated`, and task completion
-   - If no: create new item
+List every change in `openspec/changes/` with its title, task completion and matching item:
 
 ```bash
-for change_dir in openspec/changes/*/; do
-  name=$(basename "$change_dir")
-  [ "$name" = "archive" ] && continue
-  # Check for existing item
-  existing=$(grep -l "source: openspec:${name}" knowledge/KC-*.md 2>/dev/null | head -1)
-
-  # Get title from proposal.md: its first `# ` heading (fence-aware), else its
-  # first `## `, else the change name
-  title=$(bash "${CLAUDE_PLUGIN_ROOT}/lib/kc-ingest.sh" title "${change_dir}proposal.md" "$name")
-
-  # Get completion from tasks.md
-  # `|| true`, not `|| echo 0`: grep -c already prints "0" on zero matches
-  total=$(grep -c '^\- \[' "${change_dir}tasks.md" 2>/dev/null || true)
-  total=${total:-0}
-  done=$(grep -c '^\- \[x\]' "${change_dir}tasks.md" 2>/dev/null || true)
-  done=${done:-0}
-
-  if [ "$done" -eq "$total" ] && [ "$total" -gt 0 ]; then
-    status="done"
-  else
-    status="active"
-  fi
-
-  # Create or update item...
-done
+bash "${CLAUDE_PLUGIN_ROOT}/lib/kc-ingest.sh" audit
 ```
+
+It prints one tab-separated line per change (`archive/` skipped): `name status done total existing title`. `status` is `done` when every task is checked, else `active`. `existing` is the item already carrying `source: openspec:<name>`: update its `status`, `updated` and task completion when set, otherwise create one (summary from `proposal.md`).
 
 Item template for openspec:
 ```yaml
@@ -83,7 +55,7 @@ relates: []
 
 For each `.md` file in `~/.claude/plans/`:
 
-1. Extract title from first `# ` heading (`kc-ingest.sh title "$plan_file"` — falls back to the first `## `, then the slug)
+1. Title: `bash "${CLAUDE_PLUGIN_ROOT}/lib/kc-ingest.sh" title "$plan_file"` (first `# ` heading, else first `## `, else the slug)
 2. Check for existing item with `source: plan:<slug>`
 3. Derive project from referenced paths/content
 4. Create or update

@@ -17,6 +17,32 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## knowledge-curator 0.3.0 (2026-11-10)
+
+`skill-deterministic-extraction` group 6b: the inline bash of kc-capture (Step 3 id allocation,
+plan-mode flush) and kc-import Step 2 (openspec loop) moves into tested subcommands. SKILL.md
+bytes: kc-capture 5,408 → 5,063, kc-import 4,496 → 3,802. Each subcommand is tested against the
+old fence, which is embedded in the test as an oracle.
+
+### Added
+- `kc-item.sh next-id [--queue-dir D]` and `kc-item.sh flush-queue [--queue-dir D]` (kc-capture
+  only; the agent contract is still claim/complete/add).
+- `kc-ingest.sh audit [--changes-dir C] [--knowledge-dir K]`: one
+  `name status done total existing title` line per openspec change.
+- `test/test-kc-skill-blocks.sh`, registered in `make test-kc`.
+
+### Changed (behaviour)
+- **Plan-mode flush no longer orphans items.** The old loop moved
+  `/tmp/kc-capture-queue-KC-NNNN.md` to `knowledge/KC-NNNN.md`. That name has no `--slug`, so
+  `kc-index.sh` reported it as an orphan and never indexed it. `flush-queue` now runs `add` on each
+  draft: it validates the schema, names the file `KC-NNNN--<slug>.md`, never overwrites, and
+  removes the queue file only once it is added. A draft that fails stays queued and is printed as
+  `Still queued: <path>` (exit 4).
+- **`next-id` counts queued drafts.** A second capture in plan mode used to get the same id as the
+  first queued one and overwrite its queue file.
+- **kc-import's existing-item match uses the whole `source:` value.** The old `grep -l` was a
+  substring match, so change `foo` matched the item of `foo-bar`. Quoted values still match.
+
 ## 0.111.0 (2026-11-10)
 
 The rest of `skill-deterministic-extraction` group 6a for ticket-auto-pipeline: the deterministic
