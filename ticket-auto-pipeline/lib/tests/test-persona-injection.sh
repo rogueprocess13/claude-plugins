@@ -245,7 +245,8 @@ test_implement_step2_passes_type_and_logs_meta_line() {
 
 test_implement_rework_section_has_debugger_rules() {
   local sec tok missing=""
-  sec=$(_section "$SKILLS_DIR/ticket-implement/SKILL.md" '^### Part B' '^## Step 3')
+  # Part B lives in the rework reference (skill-progressive-disclosure group 5).
+  sec=$(_section_ref ticket-implement/references/rework.md '^### Part B') || return 1
   [ -n "$sec" ] || {
     echo "  Part B section not found"
     return 1

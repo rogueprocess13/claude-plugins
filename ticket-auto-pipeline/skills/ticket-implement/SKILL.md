@@ -31,9 +31,9 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `--from-step` value | Skip to | Restore |
 |---------------------|---------|---------|
 | `check-approval` | Step 2 (detect path) | ticket dir from find; notes.md and context.md |
-| `detect-path` | Step 3 (checkout branch) | mode from log `detect-path\|done` entry |
-| `checkout-branch` | Step 4 (implement) | branch + worktree from notes.md checkpoint; mode from log |
-| `implement` | Step 4b (write tests) | changed files from `git -C "$WORKTREE_PATH" diff --name-only "$BASE_BRANCH"` |
+| `detect-path` | Step 3 (checkout branch) | mode from log `detect-path\|done` entry; `references/rework.md` if a rework is open (load condition below) |
+| `checkout-branch` | Step 4 (implement) | branch + worktree from notes.md checkpoint; mode from log; `references/rework.md` if a rework is open |
+| `implement` | Step 4b (write tests) | changed files from `git -C "$WORKTREE_PATH" diff --name-only "$BASE_BRANCH"`; `references/rework.md` if a rework is open |
 | `run-tests` | Step 4b code-review | — |
 | `code-review` | Step 5 (commit/push) | — |
 | `commit-push` | Step 5.5 (plan artifact durability check) | mode from log `detect-path\|done` entry |
@@ -45,6 +45,18 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 ```bash
 IMPLEMENT_TICKETS_ROOT="$(pwd)"
 ```
+
+### Reference files (load condition)
+
+**Rework.** Run `bash ~/.claude/skills/lib/skill-ref.sh ticket-implement references/rework.md` only on a rework entry: Step 2.5 finds `FAIL_COUNT` > `SECTION_COUNT`, or a `--from-step` resume that skips Step 2.5 (`detect-path`, `checkout-branch`, `implement`) while a rework is still open. On such a resume, a rework is open when notes.md's last `— verification re-run #` entry comes after its last `— committed` entry:
+```bash
+awk '/^### .* — verification re-run #/{r=NR} /^### .* — committed/{c=NR} END{print (r>c)?"REWORK_OPEN=true":"REWORK_OPEN=false"}' "{ticket-dir}/notes.md"
+```
+A first implementation attempt, and a run whose verify failures are all addressed, does not read it.
+
+**Feedback.** Run `bash ~/.claude/skills/lib/skill-ref.sh ticket-implement references/feedback.md` in Step 4c only when a feedback item exists: a complexity mismatch (predicted `simple` with outcome `Rough`/`Hard`, or predicted `complex` with `Smooth`), or a wiki gap found in Part 3. A run with neither does not read it.
+
+Read each printed path in full and do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/<file>.md"` with the file that failed and stop: never run the rework, or write the mismatch comment, errata or CORRECTIONS, from memory. After a context compaction, read the reference again before continuing the step it covers.
 
 ---
 
@@ -163,107 +175,13 @@ Count all `### {date} — Verification FAIL` entries in `notes.md`. Count all `#
 
 - **If `FAIL_COUNT` = 0** → gate skipped (no brief expected). Proceed to Step 3.
 - **If `FAIL_COUNT` <= `SECTION_COUNT`** → all failures already addressed. Proceed to Step 3.
-- **If `FAIL_COUNT` > `SECTION_COUNT`** → unaddressed failures remain. Before reading the section, assert the closing marker:
+- **If `FAIL_COUNT` > `SECTION_COUNT`** → unaddressed failures remain: this is a rework entry. Read `references/rework.md` (load condition above), then run its integrity check, failure processing and Part B, in that order, before Step 3.
 
-**REMEDIATION_BRIEF integrity check:**
-```bash
-# Find the last ## Verification # section in the plan
-LAST_SECTION_LINE=$(grep -n '^## Verification #' "$PLAN" | tail -1 | cut -d: -f1)
-# Extract the non-blank lines of that section up to the next ## heading or EOF
-SECTION_TAIL=$(awk "NR>$LAST_SECTION_LINE && /^## / {exit} NF" "$PLAN" | tail -1)
-```
-If `SECTION_TAIL` ≠ `<!-- /REMEDIATION_BRIEF -->`:
-```bash
-bash ~/.claude/skills/lib/plog.sh META gate-stop fail "REMEDIATION_BRIEF_TRUNCATED — marker missing in: $PLAN"
-```
-Stop. Report: `{TICKET-ID} pipeline halted: REMEDIATION_BRIEF closing marker missing in ${PLAN}. The verify step may have been interrupted mid-write. Re-run ticket-verify to regenerate the brief.`
-
-On marker present proceed to process the failures:
-1. Count existing `## Verification #` sections in the plan to determine N (0 if none)
-2. Extract from notes.md: env, failed step, expected, observed, console errors
-3. Append to the plan artifact (`simple-fix.md` or `openspec tasks.md`):
-
-```markdown
-## Verification #{N+1}
-
-**Date:** {date from notes.md}
-**Environment:** {env}
-**Failed at step:** {N} — {step description}
-
-### Gaps
-| # | Expected | Observed |
-|---|----------|----------|
-| 1 | {expected} | {observed} |
-
-### Diagnostics
-**Console errors:** {count or "none"}
-```
-
-4. Append to `notes.md`:
-```markdown
-### {today's date} — verification re-run #{N+1}
-- Addressing verification failures from {date}. Plan updated.
-```
-
-When implementing, the `## Verification #N` section is treated the same as `## PR Review #N` — each gap must be resolved before the implementation round is complete.
+Moved to `references/rework.md` (the REMEDIATION_BRIEF integrity check with its `REMEDIATION_BRIEF_TRUNCATED` gate-stop, the `## Verification #{N+1}` append to the plan and the notes.md re-run entry), read per "Reference files (load condition)" above.
 
 ### Part B — Extract REMEDIATION_BRIEF from the Verification section
 
-After appending the Gaps table, read the `## Verification #{N+1}` section from the plan artifact. If additional REMEDIATION_BRIEF fields are present (written by `ticket-verify` Step 7c5), extract them into the implementation context.
-
-**Debugger overlay for the rework.** A verify FAIL is a defect whatever the ticket type, so re-run the selector with `--remediation` (same prefix, repo and layer as Step 2; add `--type {PERSONA_TYPE}` only if Step 2 printed a non-empty one) and keep only the two debug keys — Step 2's base, specializer and other overlays stay as they were:
-```bash
-eval "$(TICKET_TEXT_FILE="{ticket-dir}/context.md" bash ~/.claude/skills/lib/persona-select.sh --repo <repo> --layer <FE|BE> --phase implement --remediation | grep '^PERSONA_DEBUG')"
-echo "PERSONA_DEBUG=${PERSONA_DEBUG:-}"; echo "PERSONA_DEBUG_SPECIALIZER=${PERSONA_DEBUG_SPECIALIZER:-}"
-```
-Read `$PERSONA_DEBUG` and, when set, `$PERSONA_DEBUG_SPECIALIZER`. The `## PR Review #N` rework path never passes `--remediation`: a PR-review gap is a review finding, not a runtime failure.
-
-**Rework rule — this is the last rework before `VERIFY_EXHAUSTED`.** The router caps verify at 2 attempts, so this rework runs once; a failed attempt 2 ends the pipeline. It applies in gaps-only mode too:
-1. Treat the Suggested Fix (or, in gaps-only mode, your own reading of the gaps) as a **hypothesis**, not an instruction.
-2. Confirm it with evidence: reproduce the failing criterion, then trace from the console error or failed step back to the source line that causes it. Write down "X because Y" with the file:line that shows it.
-3. Write a failing test that reproduces the verify failure **before** editing any code.
-4. Make one change. Run the failing test, then the full suite.
-5. If the evidence disproves the hypothesis, or the failing test cannot be made to pass with one change, do not stack a second patch. Append to `notes.md` a `### {today's date} — rework hold: why attempt 1 failed` entry (what attempt 1 assumed, what the evidence showed, what is still unknown), then emit the `=== HUMAN_HOLD ===` block from the preamble § 7 with `REASON: SCOPE_UNDEFINED`, `BLOCKS: {plan path}#Verification #{N+1}`, and a question stating the disproved hypothesis and the decision you need.
-
-Parse these headings from the `## Verification #{N+1}` section:
-
-| Heading in plan | Source |
-|-----------------|--------|
-| `### Suggested Fix` | SUGGESTED_FIX — verifier's hypothesis about root cause |
-| `### Expected` | WHAT_WAS_EXPECTED |
-| `### Observed` | WHAT_FAILED |
-| `### Diagnostics` | CURRENT_URL, CONSOLE_ERRORS, SNAPSHOT_EXCERPT |
-| `### Context Files` | CONTEXT_FILES |
-
-**If the section contains only a Gaps table** (pre-Change-2 format): the richer context is not available. Proceed with gaps-only mode as before.
-
-**If REMEDIATION_BRIEF fields are present**, emit this context block:
-
-```
-## UAT Rework Context — {TICKET-ID}
-
-**Suggested Fix (from ticket-verify):**
-{SUGGESTED_FIX}
-
-**What was expected:**
-{WHAT_WAS_EXPECTED}
-
-**What failed:**
-{WHAT_FAILED}
-
-**Console errors:** {CONSOLE_ERRORS}
-**URL at failure:** {CURRENT_URL}
-
-**Context files:** {CONTEXT_FILES}
-
-This is the last rework before VERIFY_EXHAUSTED. The Suggested Fix is a hypothesis: confirm it
-with evidence, write a failing test that reproduces the verify failure before editing, make one
-change. If the hypothesis is disproved or the test cannot pass, record why attempt 1 failed and
-emit === HUMAN_HOLD === instead of a second patch. Cross-reference with the original plan and any
-PR Review gaps.
-```
-
-The SUGGESTED_FIX is the verifier's hypothesis about the root cause — a starting point for the investigation in the rework rule above, not a fix to apply unchecked. The `## Verification #N` gaps must still be resolved alongside any `## PR Review #N` gaps. These are treated identically — each must be addressed before the implementation round is complete.
+Moved to `references/rework.md` (the debugger overlay re-run with `--remediation`, the Rework rule, the REMEDIATION_BRIEF heading table and the UAT Rework Context block), read per the same condition. Its persona selector call reuses the `PERSONA_TYPE` Step 2 printed.
 
 ---
 
@@ -460,24 +378,7 @@ Map test results: all pass → PASS, any fail → FAIL. Pass outcome and correct
 
 A mismatch means the appraisal missed something. When `simple` + `Rough`/`Hard`, or `complex` + `Smooth`:
 
-1. **Post a Linear comment** via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP fallback otherwise):
-   ```
-   **Complexity mismatch** — predicted `{simple|complex}`, ran `{Smooth|Rough|Hard}`.
-
-   **What the investigation missed:**
-   {Specific gap: was the data not where the plan said? Was there an undiscovered dependency? Did a test reveal an assumption was wrong? Be concrete.}
-
-   **What would have caught it:**
-   {One sentence: the question the appraise investigation should have asked but didn't.}
-   ```
-
-2. **Save to claude-mem** — write a feedback memory capturing the pattern so future appraisals on similar tickets benefit:
-   - Component or service area involved
-   - What signal the complexity sweep missed
-   - What to look for next time in that area
-
-This is scoring feedback for `ticket-appraise`, not wiki knowledge: it goes to notes.md as a
-`source=appraise`/`source=exec` CORRECTIONS block (Part 4), read by `ticket-retro` Step 1.6.
+Moved to `references/feedback.md` (the Linear mismatch comment, the claude-mem feedback memory, and why this is scoring feedback for Part 4's `source=appraise`/`source=exec` CORRECTIONS block, not wiki knowledge), read per "Reference files (load condition)" above.
 
 ### Part 3 — Wiki errata (always checked — never gated on complexity mismatch)
 
@@ -492,21 +393,9 @@ step that no longer matches the code — any of these counts, on any outcome lab
 
 - **No gap found:** log `META|wiki-check|info|wiki consulted, no gap found` (via `$TAP_LOG`
   when `--from-auto`) and move on. Nothing to write.
-- **Gap found:** open the referenced wiki flow file(s) and append an errata entry using the
-  canonical schema from `wiki-maintenance` Step 1 (`Gap:`/`Fix:` — no date, no outcome label,
-  the ticket ID is the header):
+- **Gap found:** read the feedback reference (load condition above), then write the errata entry and the `source=wiki` correction it describes.
 
-  ```markdown
-  ### {TICKET-ID}
-  **Gap:** {What was missed: undiscovered Feign dependency? Entity field not in wiki? Method signature wrong?}
-  **Fix:** {What to add/change in this wiki file to prevent the next ticket from hitting the same gap}
-  ```
-
-  - If the file already has an `## Errata` section, append to it. If not, create the section.
-  - If multiple wiki files were loaded, append to the most specific flow file. If the gap is cross-service (e.g. credit-report → BOM interaction), append to both.
-  - Also write a `source=wiki` correction to notes.md (Part 4 below) — unconditionally when a
-    gap was found here, regardless of whether this ticket's outcome matched its predicted
-    complexity.
+Moved to `references/feedback.md` (the errata entry in `wiki-maintenance`'s `Gap:`/`Fix:` schema, which wiki file to append it to, and the unconditional `source=wiki` correction), read per the load condition above.
 
 ### Part 4 — Write CORRECTIONS to notes.md
 
@@ -515,44 +404,10 @@ Two independent triggers write to the same CORRECTIONS block in notes.md, so dow
 back into their own artifacts:
 
 - **Complexity mismatch** (outcome label disagrees with prediction) → `source=appraise` or
-  `source=exec`, per the mapping table below.
+  `source=exec`, per the mapping table in the feedback reference.
 - **Wiki gap found in Part 3** → `source=wiki`, whatever the outcome label.
 
-The source maps to the skill whose prediction was overturned:
-
-| Outcome vs Prediction | Source | Meaning |
-|-----------------------|--------|---------|
-| `Hard` (predicted `simple`) | `appraise` | Complexity sweep underestimated the ticket |
-| `Rough` (predicted `simple`) | `appraise` | Complexity sweep underestimated the ticket |
-| `Smooth` (predicted `complex`) | `appraise` | Complexity sweep overestimated — could have auto-approved |
-| `Hard` (predicted `simple`), plan was accurate | `exec` | Plan artifact missed key details |
-| `Rough` (predicted `simple`), plan was accurate | `exec` | Plan artifact missed key details |
-
-Use the atomic `.tmp` → `mv` pattern from `corrections-parse.sh`:
-
-```bash
-source "$HOME/.claude/skills/lib/corrections-parse.sh"
-
-# Only when there is a complexity mismatch (see mapping table above)
-_correction_fact="Predicted {simple|complex} but actual outcome was {Smooth|Rough|Hard}"
-_correction_source="{appraise|exec}"   # per mapping table
-_correction_detail="{What the investigation missed — concrete gap description from the mismatch comment above}"
-
-append_correction "{ticket-dir}/notes.md" \
-  "$_correction_fact" \
-  "$_correction_source" \
-  "$_correction_detail" \
-|| bash ~/.claude/skills/lib/plog.sh META corrections-error warn "append_correction failed"
-```
-
-```bash
-# Only when Part 3 found a wiki gap — independent of mismatch
-append_correction "{ticket-dir}/notes.md" \
-  "Wiki flow file {filename} missing or stale for {specific detail}" \
-  "wiki" \
-  "Wiki gap found: {What the wiki missed}" \
-|| bash ~/.claude/skills/lib/plog.sh META corrections-error warn "append_correction wiki failed"
-```
+Moved to `references/feedback.md` (the outcome-vs-prediction source mapping table and the two `append_correction` blocks), read per the load condition above.
 
 A failed correction write logs a `corrections-error` warning and **never halts** the implement phase.
 

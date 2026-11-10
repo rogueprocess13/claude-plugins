@@ -551,6 +551,8 @@
     "ticket-implement": {
       "files": [
         "plugin:skills/ticket-implement/SKILL.md",
+        "plugin:skills/ticket-implement/references/feedback.md",
+        "plugin:skills/ticket-implement/references/rework.md",
         "plugin:agents/ticket-implement-agent.md",
         "lib:skill-preamble-auto.md",
         "home:pipeline-log-format.md",

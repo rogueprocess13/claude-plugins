@@ -8,6 +8,8 @@ Executes the implementation plan produced during appraisal. Checks the approval 
 
 **Fixed in issue #363 (OPENSPEC_ARTIFACTS_UNTRACKED):** Step 5.5, immediately after commit + push, asserts the plan artifact (openspec change dir, for complex tickets) is durably tracked in the tickets repo. This is a backstop, not the primary fix — `ticket-appraise-exec` now commits the change dir when it first writes it — so it only ever warns (`META|gate-warn`, `notes.md`, and the final report) and never gate-stops the pipeline. Since Step 4 `cd`s into a code worktree and nothing downstream `cd`s back, the very first action of the whole skill (before Step 0.6, so it survives a `--from-step` resume) captures `IMPLEMENT_TICKETS_ROOT="$(pwd)"`, and Step 5.5 passes it explicitly via `openspec-tracking-check.sh assert ... --root "$IMPLEMENT_TICKETS_ROOT"` rather than trusting ambient CWD.
 
+**Reference files (skill-progressive-disclosure):** two parts of the skill live under `skills/ticket-implement/references/` and are read only when their trigger fires. The load condition sits after the Step dispatch table. `rework.md` holds the Step 2.5 REMEDIATION_BRIEF integrity check, the `## Verification #{N+1}` append and Part B (the `--remediation` debugger overlay and the Rework rule). It is read on a rework entry, when notes.md has more `Verification FAIL` entries than the plan has `## Verification #` sections, or on a `detect-path`/`checkout-branch`/`implement` resume while a rework is open. `feedback.md` holds the Step 4c mismatch comment and memory, the wiki errata entry and the CORRECTIONS writes. It is read only when a complexity mismatch or a wiki gap exists. A first attempt with no feedback reads neither. A file that cannot be resolved logs `META|reference-missing|fail` and stops the run. The outcome label, the `implement_tests` verifier result, the mismatch definition, the Part 3 wiki check and the no-halt rule stay in SKILL.md.
+
 ## Trigger
 
 **Slash command:** `/ticket-implement <ID>`
@@ -54,6 +56,8 @@ flowchart TD
     E -->|No| G[Mode: openspec]
     F --> H[Step 2.5: Verify re-run check]
     G --> H
+    H -->|rework entry| RW[Read references/rework.md]
+    RW --> I
     H --> I[Step 3: Checkout + branch]
     I --> J[Step 4: Implement changes]
     J --> K[Step 4b: Write + run tests]
@@ -63,6 +67,8 @@ flowchart TD
     M --> N{Clean?}
     N -->|No| J
     N -->|Yes| O[Step 4c: Rate complexity]
+    O -->|mismatch or wiki gap| FB[Read references/feedback.md]
+    FB --> P
     O --> P[Step 5: Commit + push]
     P --> Q[Step 5.5: Plan artifact durability check]
     Q --> R{Tracked?}

@@ -17,6 +17,42 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.102.0 (2026-11-10)
+
+`ticket-implement` rework and feedback text moves to references
+(`skill-progressive-disclosure`, group 5). Relocation only: no step changes what it does.
+
+### Changed
+
+- `skills/ticket-implement/SKILL.md` 41,062 → 34,975 bytes. Moved verbatim:
+  - `references/rework.md` (rework entry only): the Step 2.5 REMEDIATION_BRIEF integrity check
+    with its `REMEDIATION_BRIEF_TRUNCATED` gate-stop, the `## Verification #{N+1}` append, the
+    notes.md re-run entry, and all of Part B (the `--remediation` debugger overlay, the Rework
+    rule, the heading table and the UAT Rework Context block).
+  - `references/feedback.md` (feedback items only): the Step 4c mismatch comment and claude-mem
+    memory, the Part 3 gap-found errata entry, and the Part 4 source mapping table and
+    `append_correction` blocks.
+
+  Each moved section keeps its heading over a `Moved to` stub.
+- New "Reference files (load condition)" after the Step dispatch table. `rework.md` is read when
+  Step 2.5 finds `FAIL_COUNT` > `SECTION_COUNT`, or on a `detect-path`, `checkout-branch` or
+  `implement` resume while a rework is open (an `awk` over notes.md: the last `verification
+  re-run #` entry comes after the last `committed` entry). Those three dispatch rows name it.
+  `feedback.md` is read in Step 4c only on a complexity mismatch or a Part 3 wiki gap. A missing
+  reference logs `META|reference-missing|fail` and stops.
+- Kept inline: the Step 2.5 counts and branches, the outcome label and `implement-outcome`
+  trigger, the `implement_tests` verifier result, the mismatch definition, the Part 3 wiki check
+  and its no-gap log line, the Part 4 triggers and the no-halt rule.
+- **Fingerprint:** the `ticket-implement` skill fingerprint changes.
+  `prompt_manifests["ticket-implement"]` lists both references directly after SKILL.md.
+- Context (rule 9): `ticket-implement` 152,514 → 146,427 plus `ticket-implement:conditional`
+  10,304. A first attempt with no feedback reads 146,427 (−6,087), with feedback 150,466
+  (−2,048), a rework with no feedback 152,692 (+178), and a rework with feedback 156,731
+  (+4,217: the condition text and reference headers cost more than they save when both load).
+- Tests: `test-persona-injection.sh` reads Part B from `rework.md`;
+  `test-skill-references.sh` `test_implement_feedback_rework_condition` checks the conditions,
+  stubs, resume rows, inline contracts and what each reference holds.
+
 ## 0.101.0 (2026-11-10)
 
 `ticket-appraise-exec` complexity-specific text moves to references
