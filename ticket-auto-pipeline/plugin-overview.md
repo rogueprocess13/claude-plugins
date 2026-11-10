@@ -30,7 +30,7 @@ The orchestrator (`ticket-auto`) is a **thin stateless dispatch router** — it 
 | 0 | Prescan | `ticket-prescan-agent` | Named agent — auto-invoke before Step 1. Runs `prescan-check.sh` per repo; if stale/missing, spawns prescan to refresh `.ticket-auto/` docs. Non-blocking — failure/skip falls through to appraise Path B. |
 | 1 | Appraise | `ticket-appraise-agent` | Named agent — investigates ticket, scores complexity. Step 3a loads prescan docs (Tier 1: INDEX.md routing via `prescan-route.sh`, Tier 2: claude-mem corpus, Tier 3: wiki fallback). |
 | 1.5 | Reproduce | `ticket-appraise-agent` | Named agent — bug reproduction (bug tickets only) |
-| 2 | Exec | `ticket-appraise-agent` | Named agent — creates artifact, regression guard, adversarial review (complex), verification plan derivation (complex, Step 3.7), verification-readiness gate (Step 3.8) |
+| 2 | Exec | `ticket-appraise-agent` | Named agent — creates artifact, regression guard, adversarial review (complex), verification plan derivation (complex, Step 3.7), advisory verification-readiness score (Step 3.8, `verify-readiness.sh`) |
 | 2.5 | Gate | `bash gate-check.sh --mode entry` | **Bash only** — artifact existence, complexity coherence, verification readiness (reads derived plan + artifact fallback), autonomy routing |
 | 3.5 | Reconcile | `ticket-gate-reconcile-agent` | Named agent — post-gate-hold comment reconciliation (only when held ticket re-approved) |
 | 4 | Implement | `ticket-implement-agent` | Named agent — code changes, then `bash outcome-label-check.sh` |

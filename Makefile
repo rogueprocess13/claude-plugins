@@ -89,6 +89,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-router-step.sh
 	bash ticket-auto-pipeline/lib/tests/test-prescan-run.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-mode.sh
+	bash ticket-auto-pipeline/lib/tests/test-verify-readiness.sh
 	bash ticket-auto-pipeline/lib/tests/test-verify-record-verdict.sh
 	bash ticket-auto-pipeline/lib/tests/test-remediation-append.sh
 	bash ticket-auto-pipeline/lib/tests/test-uat-policy-guard.sh

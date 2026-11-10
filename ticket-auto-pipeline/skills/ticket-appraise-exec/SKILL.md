@@ -12,7 +12,7 @@ You have been given a ticket ID as the argument (e.g. `WIL-42`). The investigati
 If `--from-auto` is present in the arguments, follow the auto-pipeline preamble in `~/.claude/skills/lib/skill-preamble-auto.md` with parameters: TICKET_ID=<from args>, PHASE=EXEC, HAS_LINEAR_ACCESS=true, LINEAR_OPS=save_comment, HAS_LOGGING=true, HAS_HEARTBEAT=true. Before starting, source the project context: `source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}`. Otherwise, follow the full pipeline preamble in `~/.claude/skills/lib/skill-preamble.md` with parameters: TICKET_ID=<from args>, PHASE=EXEC, FROM_FLAG=none, HAS_LINEAR_ACCESS=true, LINEAR_OPS=save_comment, HAS_GUARD=true, HAS_PROJECT_CONTEXT=true, PROJECT_CONTEXT_FIELDS=REPOS_ROOT,ISSUE_PREFIX,BE_SERVICES,BE_TEST_CMD, HAS_LOGGING=true, HAS_HEARTBEAT=true, HAS_STEP_DISPATCH=true, HAS_TASK_TRACKER=true
 
 ### Heartbeat points
-Steps 3.7 and 3.8 write their own heartbeats inline; Step 3.4's script writes its own. Also write (event schema: `pipeline-heartbeat-format.md`):
+Step 3.7 writes its own heartbeats inline; the Step 3.4 and 3.8 scripts write their own. Also write (event schema: `pipeline-heartbeat-format.md`):
 - after reading complexity: `hb-wrap.sh decision "complexity-read" "info" "complexity: {simple|complex}" '{"score":"{COMPLEXITY}"}'`
 - after writing the artifact: `hb-wrap.sh decision "artifact-created" "fired" "created {simple-fix|openspec}" '{"type":"{simple-fix|openspec}"}'`
 - after the regression guard: `hb-wrap.sh decision "regression-verdict" "fired" "{CONFLICT|ADJACENT|SUPERSEDES|clear}" '{"verdict":"{CONFLICT|ADJACENT|SUPERSEDES|clear}"}'`
@@ -372,99 +372,16 @@ Proceed to Step 3.8.
 
 ---
 
-## Step 3.8 — Verification-Readiness Gate
+## Step 3.8 — Verification readiness (advisory)
 
-bash ~/.claude/skills/lib/plog.sh EXEC verify-readiness start "Checking plan for verification prerequisites"
-
-Check the plan artifact for 4 prerequisites required to verify the ticket:
-
-1. **Test user** — an email, `**User:**` field, role mention, or actual test user from the test user catalog
-2. **Navigation target** — a URL path (`/handover/`, `/admin/`), "Navigate to" instruction, or explicit menu path
-3. **Expected behavior** — a description of what "working" looks like (from acceptance criteria or a `## Expected Behavior` section)
-4. **Environment prerequisites** — any data setup, seed data references, or service dependencies needed before testing
-
-### How to check
-
-**Primary path — read the derived verification plan:**
-If `{TICKET_DIR}/notes.md` contains a `## Verification Plan` section with a populated per-criterion table, extract the 4 prerequisites directly from the derived plan's table columns:
-1. **Test user** — from the "Role scope" column (if role-specific, the named role is the test user)
-2. **Navigation target** — from the "Navigation path" column
-3. **Expected behavior** — from the "Expected behavior" column
-4. **Environment prerequisites** — from the "Test data needed" column
-
-If any column is empty or missing for a criterion, count that prerequisite as missing for that criterion. If all criteria have the prerequisite populated, count it as found.
-
-**Fallback — scan the plan artifact directly:**
-If no `## Verification Plan` section exists in notes.md (backward compat for old tickets), scan the plan artifact:
-- If `{COMPLEXITY}` = simple: read `{TICKET_DIR}/simple-fix.md`
-- If `{COMPLEXITY}` = complex: find the openspec change dir and read `design.md` and `tasks.md`
-
-For each prerequisite, scan the artifact content:
-1. **Test user**: look for an email pattern, `**User:**`, "as an [role]", "log in as", "test as", or a name matching the test user catalog (`test-users.json` — project-local, resolved via `resolve_test_user_catalog`). Also check if the `## Verification Readiness` section from notes.md already has one from a prior run.
-2. **Navigation target**: look for URL paths, "Navigate to", "Go to", menu paths, or feature area labels that map to known nav-hints entries.
-3. **Expected behavior**: look for acceptance criteria, `## Expected Behavior` sections, or descriptions of observable outcomes. If the artifact references the ticket's AC (e.g., "Verify AC-1: ..."), that counts.
-4. **Environment prerequisites**: look for data setup steps, seed data references (`seed-db`, `data.sql`), service dependencies, or pre-existing state descriptions.
-
-### Score
-
-Count how many of the 4 prerequisites are missing:
-
-| Missing | Status |
-|---------|--------|
-| 0 | CLEAR — all verification prerequisites present |
-| 1 | WARNINGS — one prerequisite missing, still verifiable |
-| 2+ | INCOMPLETE — too many gaps for reliable verification |
-
-**Backward compat exception:** For tickets without structured plan sections (single-file simple-fix.md with minimal structure), a single missing flag produces WARNINGS, not INCOMPLETE. Only go to INCOMPLETE when 2+ are missing.
-
-### Act on result
-
-**If CLEAR or WARNINGS:**
-Proceed to Step 4. Record in the heartbeat:
-```
-hb-wrap.sh gate "verify-readiness" "ok" "{CLEAR|WARNINGS}" "{\"missing\":\"{N}\"}"
-```
-
-**If INCOMPLETE:**
-
-If `--from-auto` is in the arguments:
+Score the plan against the verify phase's prerequisites. Run it from the tickets repo root, with `{ARTIFACT}` = `{TICKET_DIR}/simple-fix.md` (simple) or the change dir `openspec/changes/{change-name}` (complex):
 ```bash
-bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_READINESS_INCOMPLETE — plan missing {N} verification prerequisites: {list}"
-```
-Stop with non-zero exit.
-
-If interactive (no `--from-auto`):
-```
-⚠️  VERIFICATION-READINESS — INCOMPLETE
-
-The plan for {TICKET-ID} is missing {N} verification prerequisites:
-
-{list of missing prerequisites}
-
-Please update the plan artifact with these details, then re-run
-/ticket-appraise-exec {TICKET-ID} --from-step create-artifact.
+bash ~/.claude/skills/lib/verify-readiness.sh "{TICKET-ID}" --ticket-dir "{TICKET_DIR}" --artifact "{ARTIFACT}"
 ```
 
-### Write results to notes.md
+It is the same scorer as the entry gate (`gate-check.sh` Check 2.6, with the same mode classifier as ticket-verify). It logs `EXEC|verify-readiness|start` and `done|{CLEAR|WARNINGS|INCOMPLETE} — advisory, …`, writes the `verify-readiness` heartbeat, replaces the notes.md `## Verification Readiness` section (a prerequisite table whose Source cell is the matching plan line), and prints `VR_STATUS=`, `VR_MODE=`, `VR_MISSING=`, `VR_MISSING_LIST=`. It always exits 0.
 
-Append a `## Verification Readiness` section to notes.md:
-
-```markdown
-## Verification Readiness
-**Date:** {today}
-**Status:** {CLEAR | WARNINGS | INCOMPLETE}
-
-| Prerequisite | Status | Source |
-|-------------|--------|--------|
-| Test user | {found | missing} | {where found or "not specified"} |
-| Navigation target | {found | missing} | {where found or "not specified"} |
-| Expected behavior | {found | missing} | {where found or "not specified"} |
-| Environment prerequisites | {found | missing} | {where found or "not specified"} |
-```
-
-If the section already exists from a prior re-run, replace it.
-
-bash ~/.claude/skills/lib/plog.sh EXEC verify-readiness done "{CLEAR|WARNINGS|INCOMPLETE}"
+**This step never stops the pipeline.** The entry gate alone decides whether a gap holds the ticket. Whatever the status, proceed to Step 4. If `VR_STATUS=INCOMPLETE` and you are interactive (no `--from-auto`), tell the user which prerequisites are missing (`VR_MISSING_LIST`) and that the entry gate will hold the ticket unless the plan supplies them.
 
 ---
 

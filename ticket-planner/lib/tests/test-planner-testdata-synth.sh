@@ -359,11 +359,15 @@ assert_not_contains "gate: no gate-stop" "$gate" "gate-stop"
 assert_not_contains "gate: no Check 2.6 hold" "$gate" "held:"
 # Check 2.6 classifies by scanning the plan artifact when no Verification Plan
 # table parses (notes.md, body.md and the description all lack one) — the
-# path a TD ticket takes when its appraise artifact carries no table.
+# path a TD ticket takes when its appraise artifact carries no table. Since
+# ticket-auto-pipeline 0.113.0 the gate uses verify's own classifier, whose
+# build vocabulary has no `make`; a seed chore with no browser, build or
+# runtime signal maps to the api-only profile (expected behaviour + env
+# setup), which the TD body meets.
 sed '/^## Verification Plan$/,/^## Related Tickets$/{/^## Related Tickets$/!d}' "$body_f" >"${TMPDIR}/td-novplan.body"
 gate=$(_td_gate_run "$body_f" "${TMPDIR}/td-novplan.body" false)
-assert_contains "gate: Check 2.6 artifact scan classifies the TD body build-only" "$gate" "mode=build-only"
-assert_contains "gate: …and the build-only prerequisites are met (no hold)" "$gate" "rc=0 "
+assert_contains "gate: Check 2.6 artifact scan classifies the TD body api-only (no-signal profile)" "$gate" "mode=api-only"
+assert_contains "gate: …and the api-only prerequisites are met (no hold)" "$gate" "rc=0 "
 assert_contains "gate: …the scan path was taken" "$gate" "source=none"
 gate=$(_td_gate_run "$body_f" "${TMPDIR}/td-novplan.body" false 0)
 assert_contains "gate: test seam is inert without GATE_CHECK_TEST_MODE=1" "$gate" "mode=unset"
