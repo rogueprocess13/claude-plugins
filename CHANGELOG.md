@@ -17,6 +17,57 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.107.0 (2026-11-10)
+
+The ticket-auto router's deterministic tails move into two tested lib scripts
+(`skill-deterministic-extraction`, group 3). `skills/ticket-auto/SKILL.md` drops from
+57,003 to 45,551 bytes. Log step names, `--from-step` values, phase names, RESUME_STEP ids
+and the `detect-resume.sh` contract are unchanged. Each subcommand writes the same log lines
+the prose blocks did (pinned by `lib/tests/fixtures/router-step/` and
+`lib/tests/fixtures/prescan-run/`, produced by running the old blocks). `META|outcome` is
+still written only by `pipeline-finalize.sh`. Other plugins unchanged.
+
+### Added
+
+- `lib/router-step.sh` — the single entry point the manual router uses now, and fleetd will
+  use later (`fleetd-shared-router-steps`):
+  - `post-spawn <PHASE>`: capture, the advisory `phase-result-parse.sh`, `verdict-recompute.sh`
+    (VERIFY), and the warn-only return-completeness gate (IMPLEMENT). It runs before
+    `spawn_agent_post`, which stays the router's own call.
+  - `inspector <PHASE>`: calls `spawn_phase_inspector` with `|| true`, in a subshell, so it
+    can never fail the step.
+  - `inspector-done <PHASE>`.
+  - `retro-check`: STEP_6's five conditions. It prints `NEEDS_RETRO`/`DRIFT`/`RETRO_REASONS`.
+    `--no-drift-log` is for a caller that writes `META|drift` itself.
+- `lib/prescan-run.sh gate|done` — the prescan gate around the `ticket-prescan-agent` spawn,
+  which stays in the skill. `gate` skips on a late resume, walks the repos, runs the freshness
+  check and the lock probe, and stops at the first stale repo. `done` judges the return by
+  its `<slug>: scanned` marker. An EXIT trap is installed before the lock is acquired.
+- Tests: `test-router-step.sh`, `test-prescan-run.sh`. The second one kills the gate while it
+  holds the lock to prove the lock is released.
+
+### Changed (behaviour)
+
+- **The prescan gate now gets real paths.** The old blocks read `$REPOS_ROOT` and
+  `${BASE_BRANCH}`, which are unset in a fresh Bash call. The call line now passes
+  `{REPOS_ROOT}`/`{BASE_BRANCH}` from the preamble result. Expect the gate to actually walk
+  repos and, for a `stale` repo, spawn `ticket-prescan-agent`. Repos are walked in sorted
+  order, and the walk resumes after the last spawned repo (`--after`). A `prescan-check.sh`
+  that prints nothing is now logged as an unknown status. Before, it reused the previous
+  repo's status.
+- **The phase inspector's assembled context now reaches the agent.** It is written to
+  `INSPECTOR_INSTRUCTIONS_FILE`, and the spawn passes `INSTRUCTIONS="$(cat <file>)"`. Before,
+  it lived in a shell variable that ended before `spawn_agent_pre` ran. `phase-inspector.sh`
+  is now sourced by the script itself. Before, the VERIFY and PR-REVIEW blocks relied on a
+  `source` from Step 0.1, which was a different shell.
+- `retro-check` prints its verdict. The old block set `NEEDS_RETRO` without echoing it.
+
+### Removed
+
+- Seven prose-grep tests in `test-pipeline-phases.sh` (prescan late-resume / stale-only /
+  content-judged success, retro conditions 1–3 and #149/#318). Their behaviour is now
+  asserted against the scripts.
+
 ## 0.106.0 (2026-11-10)
 
 ticket-pr-review's and ticket-pr-iterate's deterministic bash moves into four tested lib
