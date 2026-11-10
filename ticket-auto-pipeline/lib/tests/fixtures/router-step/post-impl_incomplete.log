@@ -1,0 +1,4 @@
+TS|META|schema|info|1
+TS|META|phase-result|info|{"schema_version":1,"phase":"IMPLEMENT","verifier":"implement_tests","claimed_verdict":"PASS","criteria_met":2,"criteria_total":3,"attempt":1,"evidence":"checked","unaddressed":"","extra":{},"parse_status":"ok","parse_error":""}
+TS|META|verifier-result|info|{"verifier":"return_completeness","verdict":"FAIL","score":0.500,"criteria_met":1,"criteria_total":2,"attempt":1,"phase":"IMPLEMENT"}
+TS|META|gate-warn|info|RETURN_INCOMPLETE — UNCHECKED_BOXES (unchecked=1/2, artifact=openspec)

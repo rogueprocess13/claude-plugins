@@ -1,0 +1,3 @@
+TS|META|schema|info|1
+TS|VERIFY|verify|waiting|Agent launched — Run Playwright UAT verification
+TS|META|phase-result|info|{"schema_version":1,"phase":"VERIFY","verifier":"playwright_uat","claimed_verdict":"FAIL","criteria_met":2,"criteria_total":3,"attempt":1,"evidence":"checked","unaddressed":"","extra":{},"parse_status":"ok","parse_error":""}

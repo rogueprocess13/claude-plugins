@@ -1,0 +1,4 @@
+TS|META|schema|info|1
+TS|VERIFY|verify|fail|FAIL — 1/3
+TS|VERIFY|verify|done|PASS — 3/3
+TS|PR-REVIEW|pr-review|done|OK — Verdict: ✅

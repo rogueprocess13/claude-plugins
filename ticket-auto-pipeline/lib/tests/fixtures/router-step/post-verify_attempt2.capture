@@ -1,0 +1,15 @@
+--- Attempt 1 ---
+first attempt
+--- Attempt 2 ---
+Work done. A $HOME and a "quote" and `tick` survive verbatim.
+=== PHASE_RESULT ===
+SCHEMA_VERSION: 1
+PHASE: VERIFY
+VERIFIER: playwright_uat
+VERDICT: FAIL
+CRITERIA_MET: 2
+CRITERIA_TOTAL: 3
+ATTEMPT: 1
+EVIDENCE: checked
+UNADDRESSED:
+=== END PHASE_RESULT ===

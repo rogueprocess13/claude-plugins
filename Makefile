@@ -86,6 +86,8 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-pr-review-transition.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-review-comment.sh
 	bash ticket-auto-pipeline/lib/tests/test-plan-append-review.sh
+	bash ticket-auto-pipeline/lib/tests/test-router-step.sh
+	bash ticket-auto-pipeline/lib/tests/test-prescan-run.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-evidence.sh
 	bash ticket-auto-pipeline/lib/tests/test-pipeline-finalize.sh
 	bash ticket-auto-pipeline/lib/tests/test-spawn-helper.sh

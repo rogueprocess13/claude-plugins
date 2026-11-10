@@ -177,6 +177,33 @@ Every agent spawn follows this 3-step pattern:
    spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done VERDICT=WARN MSG="Verdict: ⚠️ <summary>" NEXT_PHASE=<next>
    ```
 
+### Phase inspector (after IMPLEMENT, VERIFY, PR-REVIEW)
+
+RLVR Phase 1 advisory inspection. It never changes a verdict and never blocks the next transition. `{P}` is the phase and `{p}` its lowercase form (`implement`, `verify`, `pr-review`). Each of those steps runs:
+
+```bash
+bash ~/.claude/skills/lib/router-step.sh inspector {P} {TICKET_ID} --log-file "{LOG_FILE}" || true
+```
+
+The script adds the cross-phase context (VERIFY reads IMPLEMENT's verifier results too, PR-REVIEW reads both). With no verifier results it logs the skip itself and prints `PHASE_INSPECTOR_READY=skip`; then skip the rest of this section. Otherwise it prints `INSPECTOR_INSTRUCTIONS_FILE=<path>`. Spawn the guidance-extractor-agent with the standard pattern:
+
+```
+STEP=phase-inspector-{p} PHASE={P} SKILL=/ticket-auto-pipeline:guidance-extractor
+AGENT_TYPE=ticket-auto-pipeline:guidance-extractor-agent
+EXTRA_FLAGS="--from-auto --mode extract"
+DESCRIPTION="Phase inspector for {P}"
+INSTRUCTIONS="$(cat <INSPECTOR_INSTRUCTIONS_FILE>)"
+FAIL_ACTION=warn-continue
+```
+
+After it returns, write its return to `./logs/{TICKET-ID}-agent-return.txt` (quoted heredoc), then run:
+
+```bash
+bash ~/.claude/skills/lib/router-step.sh inspector-done {P} {TICKET_ID} || true
+```
+
+`inspector-done` captures the return with `ATTEMPT=inspector`, which appends to the phase agent's own capture instead of overwriting the phase-result parser's input, then calls `spawn_agent_post STEP=phase-inspector-{p}`.
+
 ---
 
 ## Step 0.7 — State detection (direct bash invocation)
@@ -248,162 +275,34 @@ env file is regenerated with the same values.
 
 ## Prescan gate (Phase 2 — auto-invoke before appraise)
 
-Before entering the dispatch loop, ensure prescan docs are fresh for each repo affected by this ticket. Prescan is an optimization, not a correctness requirement — failures or lock contention MUST NOT block the pipeline.
+Prescan keeps the `.ticket-auto/` docs fresh before appraise. It is an optimization: failure, timeout or lock contention never blocks the pipeline, and appraise Step 3a falls back INDEX.md → claude-mem corpus → WIKI_ROOT → Path B.
 
-### Skip on late resume
-
-Prescan only benefits the appraise phase — skip the entire gate when resuming at STEP_4
-or later. Crash recovery mid-implement/verify/PR-review/report should not pay the
-per-repo freshness-check cost on every resume:
+`lib/prescan-run.sh gate` does the deterministic part (its header lists the log lines). It skips the whole gate when resuming at STEP_4 or later, walks every repo under `REPOS_ROOT`, and runs `prescan-check.sh` against `{BASE_BRANCH}` (the ticket's target, not whatever `HEAD` the shared checkout has). It logs a skip for `decayed`/`missing` repos: they need `/ticket-prescan`'s Path A fan-out, and `ticket-prescan-agent` has no `Agent` tool, so an operator runs `/ticket-prescan <repo>` interactively. It also logs a skip for an unknown status or a held lock. It stops at the first `stale` repo, which `ticket-prescan-agent` can refresh with Path B. Run it, and prepare the spawn when it names a repo:
 
 ```bash
-case "{RESUME_STEP}" in
-STEP_4 | STEP_4_5 | STEP_4_6 | STEP_5 | STEP_5_5 | STEP_6 | done)
-  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "resuming at {RESUME_STEP} — prescan skipped"
-  ;;
-*)
-  # Not a late resume — run the freshness gate below.
-  ;;
-esac
-```
-
-If `{RESUME_STEP}` matched the case above, skip the rest of this section entirely and go
-straight to the Dispatch Loop.
-
-### Identify affected repos
-
-Primary: Derive the repo(s) this ticket touches from the project CLAUDE.md codebase map and ticket labels/description.
-
-**Safety net — deterministic enumeration:** As a fallback, also scan all repos under `REPOS_ROOT`. The freshness gate is a cheap single-bash-call per repo (~10ms for `fresh`), so overscanning is harmless. This guarantees no repo is missed if the LLM misidentifies the affected set.
-
-```bash
-_derive_slug() { basename "$repo" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g'; }
-
-# Deterministic enumeration of all repos under REPOS_ROOT.
-# -type d excludes git-worktree ".git" *files* (worktree pointer files, e.g.
-# under .ticket-auto/worktrees/**), which would otherwise resolve to bogus
-# ancestor paths. %h is already the repo root (parent of the matched ".git"
-# dir) — do not dirname() it again, that walks one level too high.
-REPOS=()
-while IFS= read -r -d '' repo_dir; do
-  REPOS+=("$repo_dir")
-done < <(find "$REPOS_ROOT" -maxdepth 3 -name ".git" -type d -printf '%h\0' 2>/dev/null || true)
-
-# If no repos found, skip prescan entirely (nothing to scan)
-if [ ${#REPOS[@]} -eq 0 ]; then
-  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "no repos found under REPOS_ROOT"
-fi
-```
-
-### Run freshness gate
-
-For each repo under `REPOS_ROOT`. Pass `--branch "${BASE_BRANCH}"` (resolved by the Step 0.1
-preamble, well before this gate runs) so the freshness check diffs against the ticket's actual target
-branch instead of literal `HEAD` — repos in this project's local-dev convention run as one
-shared checkout, so `HEAD` is whichever branch happens to be checked out at the moment the
-MAINTENANCE step runs, not necessarily this ticket's target (e.g. a long-lived epic branch
-that has diverged from `develop`/`main`):
-
-```bash
-eval $(bash "$HOME/.claude/skills/lib/prescan-check.sh" "$repo" --repos-root "$REPOS_ROOT" --branch "${BASE_BRANCH}")
-```
-
-Branch on status:
-
-- **`fresh`**: Skip. Log nothing — overhead is one bash call per repo.
-- **`stale`**: Attempt prescan spawn. This is `/ticket-prescan`'s Path B (incremental
-  refresh), which `ticket-prescan-agent` can complete on its own.
-- **`decayed` or `missing`** (including `missing` with `no_marker`, a first-time scan): Do
-  NOT spawn. These need `/ticket-prescan`'s Path A — a per-persona `Agent` fan-out — and
-  `ticket-prescan-agent`'s tool allowlist has no `Agent` tool (a headless worker cannot spawn
-  nested sub-agents), so the spawn would fail every time and burn a spawn per ticket. Log an
-  actionable skip and move to the next repo; an operator brings the repo back to `fresh` by
-  running `/ticket-prescan <repo>` interactively. Appraise proceeds on whatever docs exist.
-- **Any other value**: Skip (unknown status — never spawn on it).
-
-```bash
-# Inside the per-repo loop, right after the freshness-gate eval above.
-case "${PRESCAN_STATUS}" in
-fresh)
-  continue
-  ;;
-stale)
-  : # fall through to "Acquire lock and spawn" below
-  ;;
-decayed | missing)
-  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "$slug ${PRESCAN_STATUS} — full fan-out needs an interactive /ticket-prescan $repo (headless prescan agent has no Agent tool)"
-  continue
-  ;;
-*)
-  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "$slug unknown prescan status '${PRESCAN_STATUS}' — not spawning"
-  continue
-  ;;
-esac
-```
-
-### Acquire lock and spawn (if stale)
-
-Use flock-based concurrency — non-blocking, skip on contention:
-
-```bash
-LOCK_FILE="$REPOS_ROOT/.ticket-auto/$slug/.lock"
-mkdir -p "$(dirname "$LOCK_FILE")"
-exec {lock_fd}>"$LOCK_FILE"
-if flock -n "$lock_fd"; then
-  # Lock acquired — proceed with prescan spawn
-  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan waiting "$slug prescan triggered ($PRESCAN_STATUS)"
-
-  # Spawn using standard bracketed pattern
-  # spawn_agent_pre accepts only its documented params (PHASE, STEP, LOG_FILE,
-  # HB_LOG_FILE, CLAUDE_LOG_FILE, TICKET_ID, SKILL, FLAGS, AGENT_TYPE,
-  # INSTRUCTIONS, DESCRIPTION, FROM_STEP, ATTEMPT) — anything else is rejected
-  # as "unknown parameter". Repo, slug and cadence travel in INSTRUCTIONS.
+source ~/.claude/skills/lib/spawn-helper.sh
+eval "$(bash ~/.claude/skills/lib/prescan-run.sh gate --log-file "{LOG_FILE}" --repos-root "{REPOS_ROOT}" --branch "{BASE_BRANCH}" --resume-step "{RESUME_STEP}" {PRESCAN_AFTER} || true)"
+echo "PRESCAN_REPO=$PRESCAN_REPO PRESCAN_SLUG=$PRESCAN_SLUG PRESCAN_STATUS=$PRESCAN_STATUS"
+if [ -n "$PRESCAN_REPO" ]; then
+  # spawn_agent_pre accepts only its documented params; repo, slug and cadence travel in INSTRUCTIONS.
   _prompt=$(spawn_agent_pre \
     PHASE=MAINTENANCE STEP=prescan TICKET_ID={TICKET-ID} \
     LOG_FILE={LOG_FILE} HB_LOG_FILE={HB_LOG_FILE} CLAUDE_LOG_FILE=$CLAUDE_LOG_FILE \
     SKILL=/ticket-auto-pipeline:ticket-prescan FLAGS="--from-auto" \
     AGENT_TYPE="ticket-auto-pipeline:ticket-prescan-agent" \
-    DESCRIPTION="Refresh prescan docs for $slug ($PRESCAN_STATUS)" \
-    INSTRUCTIONS="Run /ticket-auto-pipeline:ticket-prescan --from-auto on $repo. Repo slug: $slug. Cadence: $PRESCAN_STATUS.")
-
-  # Spawn: the Agent tool is NOT a bash function. Invoke it as a tool call (see
-  # "Agent spawn template" step 2) with prompt = the text after AGENT_PROMPT= in
-  # $_prompt and subagent_type = the text after AGENT_TYPE=, then continue below
-  # with the agent's verbatim return.
-
-  # Hand the return over as a file (quoted heredoc — see "Agent spawn template").
-  cat > ./logs/{TICKET-ID}-agent-return.txt <<'AGENT_RETURN_EOF'
-<the prescan agent's return text, verbatim>
-AGENT_RETURN_EOF
-
-  spawn_capture TICKET_ID={TICKET-ID} PHASE=MAINTENANCE RESULT_FILE=./logs/{TICKET-ID}-agent-return.txt
-
-  # Judge success by the PRESCAN_RESULT block's per-repo marker, not spawn_capture's
-  # exit code (spawn_capture is a log write and succeeds regardless of agent outcome).
-  if grep -q "$slug: scanned" ./logs/{TICKET-ID}-agent-return.txt; then
-    spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done \
-      MSG="$slug prescan complete: $PRESCAN_STATUS → fresh" NEXT_PHASE=APPRAISE
-    bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan done "$slug prescan complete"
-  else
-    FAIL_ACTION=warn-continue spawn_agent_post TICKET_ID={TICKET-ID} RESULT=fail \
-      MSG="$slug prescan failed (non-blocking)"
-    bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan fail "$slug prescan failed"
-  fi
-
-  flock -u "$lock_fd"
-else
-  # Lock contended — skip, proceed to appraise
-  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" MAINTENANCE prescan skip "$slug locked by another process"
+    DESCRIPTION="Refresh prescan docs for $PRESCAN_SLUG ($PRESCAN_STATUS)" \
+    INSTRUCTIONS="Run /ticket-auto-pipeline:ticket-prescan --from-auto on $PRESCAN_REPO. Repo slug: $PRESCAN_SLUG. Cadence: $PRESCAN_STATUS.")
+  echo "$_prompt"
 fi
 ```
 
-### Token-tracker label
+`{PRESCAN_AFTER}` is empty on the first call. If `PRESCAN_REPO` is empty, go to the Dispatch Loop. Otherwise spawn the agent (Agent spawn template step 2). Write its return to `./logs/{TICKET-ID}-agent-return.txt` with the quoted heredoc, then run:
 
-The token-tracker hook labels prescan spawns as `PRESCAN` in the `META|tokens` free-form label field. The spawn-meta file written by `spawn_agent_pre` sets `PHASE=MAINTENANCE` which the hook reads. The `PRESCAN` label is informational only — NOT a resumable pipeline phase.
+```bash
+bash ~/.claude/skills/lib/prescan-run.sh done {TICKET-ID} --slug "{PRESCAN_SLUG}" --status "{PRESCAN_STATUS}" --log-file "{LOG_FILE}" || true
+```
 
-### Non-blocking invariant
-
-Prescan failure, timeout, or lock contention SHALL NEVER prevent the pipeline from proceeding. On any failure path, log the issue and continue to the dispatch loop. Appraise Step 3a handles missing/stale prescan docs via the fallthrough chain: INDEX.md → claude-mem corpus → WIKI_ROOT → Path B from-scratch.
+`done` captures the return and judges success by the `{PRESCAN_SLUG}: scanned` marker in it. It writes the done or fail terminal (fail is `warn-continue`). Then run the gate block again with `{PRESCAN_AFTER}` set to `--after "{PRESCAN_REPO}"`, and repeat until it names no repo. The token-tracker hook labels these spawns `PRESCAN` (informational only, not a resumable phase).
 
 ---
 
@@ -558,10 +457,9 @@ NEXT_PHASE=GATE
 
 ### STEP_4 — Implement
 
-Spawn implement agent. This phase overrides the generic post-spawn step: run
-`spawn_capture` as usual, but insert `return-completeness-check.sh` **before**
-`spawn_agent_post` — the gate must see the agent's returned work before the
-router commits the phase as `done`.
+Spawn implement agent. Its post-spawn step (`router-step.sh post-spawn IMPLEMENT`)
+runs the return-completeness gate **before** `spawn_agent_post`: the gate must see
+the agent's returned work before the router commits the phase as `done`.
 
 **Pre-warming (openspec tickets):** For complex/openspec tickets, the implement
 agent may time out during context loading before any work is done. When
@@ -591,39 +489,22 @@ INSTRUCTIONS="Use Serena for all code navigation. For openspec tickets: first re
 NEXT_PHASE=IMPLEMENT
 ```
 
+After the agent returns, write its return to the file, then run the post-spawn step **before** `spawn_agent_post`:
+
 ```bash
-# Hand the return over as a file (quoted heredoc — see "Agent spawn template").
 cat > ./logs/{TICKET-ID}-agent-return.txt <<'AGENT_RETURN_EOF'
 <the implement agent's return text, verbatim>
 AGENT_RETURN_EOF
 
-spawn_capture TICKET_ID={TICKET-ID} PHASE=IMPLEMENT RESULT_FILE=./logs/{TICKET-ID}-agent-return.txt
-
-# Phase-result parse (advisory, observe-only): the agent's === PHASE_RESULT === block
-# → META|phase-result|info|{json}. Runs before spawn_agent_post and before the phase
-# inspector appends to the capture file. Exit 1 (absent/malformed block →
-# claimed_verdict=UNKNOWN) is normal; nothing routes on it. Hence `|| true`.
-_prp_sh="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/phase-result-parse.sh"
-bash "$_prp_sh" --phase IMPLEMENT \
-  --return-file "./logs/{TICKET_ID}-implement-agent.log" \
-  --log-file "{LOG_FILE}" >/dev/null 2>&1 || true
-
-# Return-completeness gate (tasks.md, else simple-fix.md). --log-file: LOG_FILE
-# is not exported; with no log no verifier-result is written (stderr says so).
-_rcc_sh="${HOME}/.claude/skills/lib/return-completeness-check.sh"
-_rcc_out=$(bash "$_rcc_sh" "{TICKET_ID}" --repos-root "{REPOS_ROOT}" --log-file "{LOG_FILE}") || true
-eval "$_rcc_out" 2>/dev/null || true
-if [ "${RETURN_COMPLETENESS_STATUS:-complete}" != "complete" ]; then
-  # Warn-only (Phase 1): log via gate-warn, never gate-stop. Does NOT
-  # flip done->fail — the pipeline continues as if the phase were done.
-  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META gate-warn info "RETURN_INCOMPLETE — ${REASON:-unknown} (unchecked=${UNCHECKED_COUNT:-?}/${TOTAL_COUNT:-?}, artifact=${ARTIFACT_TYPE:-?})"
-fi
+bash ~/.claude/skills/lib/router-step.sh post-spawn IMPLEMENT {TICKET_ID} --log-file "{LOG_FILE}" --repos-root "{REPOS_ROOT}"
 
 # On success:
 spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done MSG="<result>" NEXT_PHASE=IMPLEMENT
 # On failure (blocking):
 spawn_agent_post TICKET_ID={TICKET-ID} RESULT=fail MSG="<reason>"
 ```
+
+`post-spawn IMPLEMENT` captures the return, runs the advisory `phase-result-parse.sh` (observe-only, nothing routes on it), then the return-completeness gate (tasks.md, else simple-fix.md). In Phase 1 that gate is warn-only. When it is not `complete` it logs `META|gate-warn|info|RETURN_INCOMPLETE — …` and never changes `RESULT`. It prints `RETURN_COMPLETENESS_STATUS`.
 
 **Hard contract (D3):** whenever `return-completeness-check.sh` exits non-zero
 in enforce mode (Phase 2+), the router MUST call `spawn_agent_post RESULT=fail`
@@ -649,45 +530,9 @@ if [ -f "$_feedback_sh" ]; then
   source "$_feedback_sh"
   planned_feedback_write "{TICKET_ID}" "{LOG_FILE}" || true
 fi
-
-# Phase inspector (RLVR Phase 1): post-IMPLEMENT advisory inspection.
-# Assembles verifier context; if results exist, spawn guidance-extractor-agent.
-# Uses standard spawn pattern — assemble_inspector_context produces INSTRUCTIONS,
-# router spawns agent, then runs spawn_capture + spawn_agent_post.
-source ~/.claude/skills/lib/phase-inspector.sh 2>/dev/null || true
-_pi_out=$(assemble_inspector_context "IMPLEMENT" "{TICKET_ID}" "{LOG_FILE}") || true
-if echo "$_pi_out" | grep -q '^INSPECTOR_INSTRUCTIONS='; then
-  _pi_instructions=$(echo "$_pi_out" | awk '/^INSPECTOR_INSTRUCTIONS=/{sub(/^INSPECTOR_INSTRUCTIONS=/,""); found=1; print; next} found{print}')
-  echo "PHASE_INSPECTOR_READY=IMPLEMENT"
-else
-  echo "PHASE_INSPECTOR_READY=skip"
-fi
 ```
 
-**If PHASE_INSPECTOR_READY is not "skip":** spawn the guidance-extractor-agent using the standard pattern:
-
-```
-STEP=phase-inspector-implement PHASE=IMPLEMENT SKILL=/ticket-auto-pipeline:guidance-extractor
-AGENT_TYPE=ticket-auto-pipeline:guidance-extractor-agent
-EXTRA_FLAGS="--from-auto --mode extract"
-DESCRIPTION="Phase inspector for IMPLEMENT"
-INSTRUCTIONS=<_pi_instructions contents>
-FAIL_ACTION=warn-continue
-```
-
-After the agent returns:
-
-```bash
-cat > ./logs/{TICKET-ID}-agent-return.txt <<'AGENT_RETURN_EOF'
-<the inspector agent's return text, verbatim>
-AGENT_RETURN_EOF
-
-# ATTEMPT=inspector puts this capture in append-with-separator mode. Without it
-# the inspector's return overwrites the implement agent's at the same path
-# (./logs/{TID}-implement-agent.log), destroying the parser's input.
-spawn_capture TICKET_ID={TICKET-ID} PHASE=IMPLEMENT RESULT_FILE=./logs/{TICKET-ID}-agent-return.txt ATTEMPT=inspector
-spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done MSG="Phase inspector completed for IMPLEMENT" PHASE=IMPLEMENT STEP=phase-inspector-implement 2>/dev/null || true
-```
+Then run the [Phase inspector](#phase-inspector-after-implement-verify-pr-review) for `IMPLEMENT`: `bash ~/.claude/skills/lib/router-step.sh inspector IMPLEMENT {TICKET_ID} --log-file "{LOG_FILE}" || true`.
 
 Then transition from Ready → Review via implement-complete:
 ```bash
@@ -695,7 +540,6 @@ Then transition from Ready → Review via implement-complete:
 # retry heartbeat itself; the router continues and detect-resume decides the next step.
 bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" "{TICKET_ID}" implement-complete 2>&1
 ```
-
 ### STEP_4_5 — Verify (with retry sub-loop)
 
 The router manages the verify→implement→verify retry loop. The verify agent has a
@@ -745,34 +589,13 @@ NEXT_PHASE=VERIFY
 depends on router prose, then re-run `detect-resume.sh` and check VERIFY_ATTEMPTS:
 
 ```bash
-# Capture first. VERIFY retries, so ATTEMPT is mandatory here — without it the
-# second attempt overwrites the first at ./logs/{TID}-verify-agent.log and the
-# retry history is gone.
 cat > ./logs/{TICKET-ID}-agent-return.txt <<'AGENT_RETURN_EOF'
 <the verify agent's return text, verbatim>
 AGENT_RETURN_EOF
 
-spawn_capture TICKET_ID={TICKET-ID} PHASE=VERIFY \
-  RESULT_FILE=./logs/{TICKET-ID}-agent-return.txt \
-  ATTEMPT=$(({VERIFY_ATTEMPTS} + 1))
-
-# Phase-result parse (advisory, observe-only) — see STEP_4 for the full rationale.
-# The parser takes the LAST block in the capture file, which is this attempt's.
-_prp_sh="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/phase-result-parse.sh"
-bash "$_prp_sh" --phase VERIFY \
-  --return-file "./logs/{TICKET_ID}-verify-agent.log" \
-  --log-file "{LOG_FILE}" >/dev/null 2>&1 || true
-
-# Verdict recompute (advisory, observe-only, RLVR) — bash independently derives
-# the verdict from verify-session.md and compares it against the claim the
-# parser just logged. Same insertion point as phase-result-parse.sh, runs
-# immediately after it. Never gates, never halts on a mismatch — see
-# lib/verdict-recompute.sh and pipeline-log-format.md's claim-delta section.
-_vrc_sh="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/verdict-recompute.sh"
-bash "$_vrc_sh" --phase VERIFY \
-  --return-file "./logs/{TICKET_ID}-verify-agent.log" \
-  --ticket-dir "{TICKET_DIR}" \
-  --log-file "{LOG_FILE}" >/dev/null 2>&1 || true
+# VERIFY retries, so --attempt is mandatory: without it the second attempt
+# overwrites the first capture and the retry history is gone.
+bash ~/.claude/skills/lib/router-step.sh post-spawn VERIFY {TICKET_ID} --log-file "{LOG_FILE}" --attempt $(({VERIFY_ATTEMPTS} + 1)) --ticket-dir "{TICKET_DIR}"
 
 spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done VERDICT=PASS MSG="<summary>" NEXT_PHASE=PR-REVIEW LOOP_BEARING=true  # on PASS
 spawn_agent_post TICKET_ID={TICKET-ID} RESULT=fail VERDICT=FAIL MSG="<summary>" LOOP_BEARING=true                         # on FAIL
@@ -780,41 +603,11 @@ spawn_agent_post TICKET_ID={TICKET-ID} RESULT=fail VERDICT=FAIL MSG="<summary>" 
 # Verify may tick deferred tasks: re-count if return_completeness is FAIL (#598).
 bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/return-completeness-check.sh" "{TICKET_ID}" \
   --repos-root "{REPOS_ROOT}" --log-file "{LOG_FILE}" --refresh >/dev/null || true
-
-# Phase inspector (RLVR Phase 1): post-VERIFY advisory inspection.
-# Assembles verifier context; if results exist, spawn guidance-extractor-agent.
-# Non-blocking — runs before the retry/advance decision but does not affect it.
-_pi_out=$(assemble_inspector_context "VERIFY" "{TICKET_ID}" "{LOG_FILE}" "IMPLEMENT") || true
-if echo "$_pi_out" | grep -q '^INSPECTOR_INSTRUCTIONS='; then
-  _pi_instructions=$(echo "$_pi_out" | awk '/^INSPECTOR_INSTRUCTIONS=/{sub(/^INSPECTOR_INSTRUCTIONS=/,""); found=1; print; next} found{print}')
-  echo "PHASE_INSPECTOR_READY=VERIFY"
-else
-  echo "PHASE_INSPECTOR_READY=skip"
-fi
 ```
 
-**If PHASE_INSPECTOR_READY is not "skip":** spawn the guidance-extractor-agent:
+`post-spawn VERIFY` captures this attempt, runs the advisory `phase-result-parse.sh` (it reads the last block, which is this attempt's), then `verdict-recompute.sh`. That script derives the verdict from `verify-session.md` on its own and logs `META|claim-delta`. It never gates or halts on a mismatch.
 
-```
-STEP=phase-inspector-verify PHASE=VERIFY SKILL=/ticket-auto-pipeline:guidance-extractor
-AGENT_TYPE=ticket-auto-pipeline:guidance-extractor-agent
-EXTRA_FLAGS="--from-auto --mode extract"
-DESCRIPTION="Phase inspector for VERIFY"
-INSTRUCTIONS=<_pi_instructions contents>
-FAIL_ACTION=warn-continue
-```
-
-After the agent returns:
-
-```bash
-cat > ./logs/{TICKET-ID}-agent-return.txt <<'AGENT_RETURN_EOF'
-<the inspector agent's return text, verbatim>
-AGENT_RETURN_EOF
-
-# ATTEMPT=inspector — append, do not overwrite the verify agent's own capture.
-spawn_capture TICKET_ID={TICKET-ID} PHASE=VERIFY RESULT_FILE=./logs/{TICKET-ID}-agent-return.txt ATTEMPT=inspector
-spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done MSG="Phase inspector completed for VERIFY" PHASE=VERIFY STEP=phase-inspector-verify 2>/dev/null || true
-```
+Then run the [Phase inspector](#phase-inspector-after-implement-verify-pr-review) for `VERIFY`, before the retry/advance decision (it does not affect that decision): `bash ~/.claude/skills/lib/router-step.sh inspector VERIFY {TICKET_ID} --log-file "{LOG_FILE}" || true`.
 
 Then evaluate the verify verdict for retry/advance:
 
@@ -858,23 +651,12 @@ mapped from the review's emoji verdict (see
 counts on, so it must never be skipped or left as free-text prose:
 
 ```bash
-# Capture first. PR-REVIEW iterates, so ATTEMPT is mandatory — without it a
-# second review cycle overwrites the first at ./logs/{TID}-pr-review-agent.log.
 cat > ./logs/{TICKET-ID}-agent-return.txt <<'AGENT_RETURN_EOF'
 <the pr-review agent's return text, verbatim>
 AGENT_RETURN_EOF
 
-spawn_capture TICKET_ID={TICKET-ID} PHASE=PR-REVIEW \
-  RESULT_FILE=./logs/{TICKET-ID}-agent-return.txt \
-  ATTEMPT=$(({ITERATION} + 1))
-
-# Phase-result parse (advisory, observe-only) — see STEP_4 for the full rationale.
-# This is the last gate before merge, so it is the record most worth having; it is
-# still observe-only, and the router's VERDICT token below remains what routes.
-_prp_sh="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/phase-result-parse.sh"
-bash "$_prp_sh" --phase PR-REVIEW \
-  --return-file "./logs/{TICKET_ID}-pr-review-agent.log" \
-  --log-file "{LOG_FILE}" >/dev/null 2>&1 || true
+# PR-REVIEW iterates, so --attempt is mandatory (a second cycle must not overwrite the first capture).
+bash ~/.claude/skills/lib/router-step.sh post-spawn PR-REVIEW {TICKET_ID} --log-file "{LOG_FILE}" --attempt $(({ITERATION} + 1))
 
 # ✅ → VERDICT=OK
 # ⚠️ → VERDICT=WARN
@@ -882,40 +664,9 @@ bash "$_prp_sh" --phase PR-REVIEW \
 spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done VERDICT=<OK|WARN|BLOCK> MSG="Verdict: <emoji> <summary>" NEXT_PHASE=<next> LOOP_BEARING=true
 ```
 
-**After spawn_agent_post**, run the phase inspector (RLVR Phase 1) — post-PR-REVIEW advisory inspection. Non-blocking:
+`post-spawn PR-REVIEW` captures this cycle and runs the advisory `phase-result-parse.sh`. This is the last gate before merge, so its record matters most, but it stays observe-only. The `VERDICT` token is what routes.
 
-```bash
-_pi_out=$(assemble_inspector_context "PR-REVIEW" "{TICKET_ID}" "{LOG_FILE}" "IMPLEMENT VERIFY") || true
-if echo "$_pi_out" | grep -q '^INSPECTOR_INSTRUCTIONS='; then
-  _pi_instructions=$(echo "$_pi_out" | awk '/^INSPECTOR_INSTRUCTIONS=/{sub(/^INSPECTOR_INSTRUCTIONS=/,""); found=1; print; next} found{print}')
-  echo "PHASE_INSPECTOR_READY=PR-REVIEW"
-else
-  echo "PHASE_INSPECTOR_READY=skip"
-fi
-```
-
-**If PHASE_INSPECTOR_READY is not "skip":** spawn the guidance-extractor-agent:
-
-```
-STEP=phase-inspector-pr-review PHASE=PR-REVIEW SKILL=/ticket-auto-pipeline:guidance-extractor
-AGENT_TYPE=ticket-auto-pipeline:guidance-extractor-agent
-EXTRA_FLAGS="--from-auto --mode extract"
-DESCRIPTION="Phase inspector for PR-REVIEW"
-INSTRUCTIONS=<_pi_instructions contents>
-FAIL_ACTION=warn-continue
-```
-
-After the agent returns:
-
-```bash
-cat > ./logs/{TICKET-ID}-agent-return.txt <<'AGENT_RETURN_EOF'
-<the inspector agent's return text, verbatim>
-AGENT_RETURN_EOF
-
-# ATTEMPT=inspector — append, do not overwrite the pr-review agent's own capture.
-spawn_capture TICKET_ID={TICKET-ID} PHASE=PR-REVIEW RESULT_FILE=./logs/{TICKET-ID}-agent-return.txt ATTEMPT=inspector
-spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done MSG="Phase inspector completed for PR-REVIEW" PHASE=PR-REVIEW STEP=phase-inspector-pr-review 2>/dev/null || true
-```
+**After spawn_agent_post**, run the [Phase inspector](#phase-inspector-after-implement-verify-pr-review) for `PR-REVIEW`: `bash ~/.claude/skills/lib/router-step.sh inspector PR-REVIEW {TICKET_ID} --log-file "{LOG_FILE}" || true`.
 
 Then evaluate verdict:
 
@@ -1011,48 +762,10 @@ spawn_agent_post TICKET_ID={TICKET-ID} RESULT=done MSG="cycle#$(({PR_FEEDBACK_CY
 
 Retro auto-trigger check (bash only):
 ```bash
-# Condition 1: did any gate-stop fire during this run?
-if grep -q '|META|gate-stop|fail|' "{LOG_FILE}"; then
-  NEEDS_RETRO=true
-fi
-# Condition 2: did the ticket NOT reach a successful outcome?
-# Tested as the absence of positive success markers (verify PASS + PR-review ✅).
-# The prior version tested the absence of the STEP_6 outcome-write marker below —
-# that line's only writer is this same step, written after this check ran, so the
-# condition was tautologically true on every run.
-# PR-REVIEW's own Verdict tokens (pipeline-log-format.md) are OK/WARN/BLOCK, never
-# PASS — PASS is VERIFY-only. The literal 'PASS' check below never matched a real
-# PR-REVIEW success line, so this condition was true on every run regardless of
-# outcome (false-positive retro trigger — GitHub #149).
-# N/A is also a legitimate success marker: a verification-only ticket whose
-# IMPLEMENT phase made no source diff has no PR to review, and ticket-pr-review
-# writes `done|N/A` directly for that case (GitHub #318) — it is not retro-worthy.
-if ! grep -q '^[^|]*|VERIFY|verify|done|PASS' "{LOG_FILE}" || ! grep -qE '^[^|]*\|PR-REVIEW\|pr-review\|done\|(OK|N/A)' "{LOG_FILE}"; then
-  NEEDS_RETRO=true
-fi
-# Condition 3: did any heartbeat fallback event fire?
-# Fallback events signal degraded paths — missing tools, unconfigured services,
-# path resolution failures. Even if the pipeline "succeeded," fallbacks mean
-# something is drifting and needs attention.
-if grep -q '|fallback|' "{HB_LOG_FILE}" 2>/dev/null; then
-  NEEDS_RETRO=true
-  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META drift warn "drift detected — heartbeat fallback events present"
-fi
-# Condition 4: VERIFY_EXHAUSTED — verify phase exhausted all retries.
-# Condition 1 covers this via gate-stop, but gate-stop lines can be written
-# in agent sub-shells where the log write may not be visible to the router's
-# file descriptor. Explicit check as a safety net.
-if grep -q 'VERIFY_EXHAUSTED' "{LOG_FILE}" 2>/dev/null; then
-  NEEDS_RETRO=true
-fi
-# Condition 5: VERIFY_FAIL — verify phase explicit failure.
-# Same sub-shell visibility concern as Condition 4.
-if grep -q '^[^|]*|VERIFY|verify|fail|' "{LOG_FILE}" 2>/dev/null; then
-  NEEDS_RETRO=true
-fi
+bash ~/.claude/skills/lib/router-step.sh retro-check --log-file "{LOG_FILE}" --hb-log-file "{HB_LOG_FILE}"
 ```
 
-If `NEEDS_RETRO=true`, spawn `ticket-retro` agent. Then release the worktree (non-fatal):
+It prints `NEEDS_RETRO=true|false`, `DRIFT` and `RETRO_REASONS`. Any one of five conditions sets `NEEDS_RETRO=true`: a gate-stop; no VERIFY `PASS` plus PR-REVIEW `OK`/`N/A` success markers; a heartbeat fallback event (this one also logs `META|drift|warn`); `VERIFY_EXHAUSTED`; or a VERIFY fail line. The script header lists them in full. If `NEEDS_RETRO=true`, spawn the `ticket-retro` agent. Then release the worktree (non-fatal):
 
 ```bash
 # Release worktree — non-fatal: a failed removal warns but never halts the pipeline.

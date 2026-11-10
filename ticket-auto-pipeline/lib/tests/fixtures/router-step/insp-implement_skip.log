@@ -1,0 +1,2 @@
+TS|META|schema|info|1
+TS|META|phase-inspector|info|{"phase":"IMPLEMENT","verdict":"WARN","signals":0,"detail":"No verifier results available for IMPLEMENT","verifiers_consulted":[],"patterns":[]}

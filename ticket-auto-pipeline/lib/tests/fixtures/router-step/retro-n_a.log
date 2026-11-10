@@ -1,0 +1,3 @@
+TS|META|schema|info|1
+TS|VERIFY|verify|done|PASS
+TS|PR-REVIEW|pr-review|done|N/A — no PR (verification-only ticket, no source diff produced by IMPLEMENT)

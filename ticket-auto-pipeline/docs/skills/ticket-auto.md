@@ -57,6 +57,15 @@ stateDiagram-v2
     STEP_6_Report --> [*]
 ```
 
+## Scripts
+
+| Step | Script | Role |
+|------|--------|------|
+| Prescan gate | `lib/prescan-run.sh gate` / `done` | Late-resume skip, repo walk, freshness check, lock probe; judges the prescan agent's return. The spawn stays in the skill |
+| STEP_4 / 4_5 / 4_6 | `lib/router-step.sh post-spawn <PHASE>` | Capture, advisory phase-result parse, verdict recompute (VERIFY), return-completeness gate (IMPLEMENT) |
+| STEP_4 / 4_5 / 4_6 | `lib/router-step.sh inspector` / `inspector-done` | Phase inspector context (advisory, `\|\| true`) and its capture |
+| STEP_6 | `lib/router-step.sh retro-check` | The five retro-trigger conditions; prints `NEEDS_RETRO` |
+
 ## Related skills
 
 - [`/ticket-appraise`](ticket-appraise.md) -- investigation phase agent

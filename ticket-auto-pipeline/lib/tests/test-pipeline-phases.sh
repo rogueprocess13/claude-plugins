@@ -459,109 +459,11 @@ test_router_implement_complete_has_plugin_cache_fallback() {
   return 0
 }
 
-test_router_prescan_success_judged_by_content() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  local block
-  block=$(sed -n '/spawn_capture TICKET_ID={TICKET-ID} PHASE=MAINTENANCE/,/flock -u/p' "$skill_md")
-  # Success must be judged by the agent's returned CONTENT, not by spawn_capture's
-  # exit code. The return now arrives as a file (RESULT_FILE=, quoted heredoc) rather
-  # than an interpolated "$AGENT_RESULT" argument, so the content check greps the file.
-  grep -q 'grep -q "\$slug: scanned" ./logs/{TICKET-ID}-agent-return.txt' <<<"$block" || {
-    echo "prescan success no longer judged by the agent's returned content"
-    return 1
-  }
-  grep -qE '\bif \[ \$\? -eq 0 \]' <<<"$block" && {
-    echo "prescan success still judged by spawn_capture exit code"
-    return 1
-  }
-  return 0
-}
-
-test_router_retro_condition_2_uses_success_markers() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  local block
-  block=$(sed -n '/Condition 2: did the ticket NOT reach/,/^fi/p' "$skill_md")
-  grep -q 'VERIFY|verify|done|PASS' <<<"$block" || {
-    echo "retro condition 2 does not check verify PASS marker"
-    return 1
-  }
-  # PR-REVIEW's own Verdict tokens are OK/WARN/BLOCK, never PASS (that's
-  # VERIFY-only) — GitHub #149. N/A is also a legitimate success marker
-  # (verification-only ticket, no PR to review) — GitHub #318.
-  grep -qF 'PR-REVIEW\|pr-review\|done\|(OK|N/A)' <<<"$block" || {
-    echo "retro condition 2 does not check PR-review OK/N-A marker"
-    return 1
-  }
-  grep -q 'PR-REVIEW|pr-review|done|PASS' <<<"$block" && {
-    echo "retro condition 2 still checks the non-existent PR-review PASS token"
-    return 1
-  }
-  grep -q 'META|outcome|info|completed:' <<<"$block" && {
-    echo "retro condition 2 still tests the tautological outcome marker"
-    return 1
-  }
-  return 0
-}
-
-# GitHub #318 — a verification-only ticket (IMPLEMENT made no source diff) has
-# no PR to review, so ticket-pr-review writes `done|N/A` directly instead of a
-# false "no PR found" stop. STEP_6's Condition 2 must not flag that as
-# retro-worthy. These tests eval the *actual* extracted condition against a
-# synthetic log — not just a string match on the SKILL.md prose — so a future
-# edit that reintroduces the #149-style false positive is caught here too.
-_extract_retro_condition_2() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  sed -n '/Condition 2: did the ticket NOT reach/,/^fi/p' "$skill_md" | grep -v '^#'
-}
-
-test_router_retro_condition_2_accepts_n_a_marker() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  local cond
-  cond="$(_extract_retro_condition_2)"
-  [ -n "$cond" ] || return 1
-
-  local log
-  log=$(mktemp)
-  printf '%s\n' \
-    '2026-09-07T19:50:00Z|VERIFY|verify|done|PASS' \
-    '2026-09-07T19:54:53Z|PR-REVIEW|pr-review|done|N/A — no PR (verification-only ticket, no source diff produced by IMPLEMENT)' \
-    >"$log"
-
-  local NEEDS_RETRO=false
-  eval "${cond//\{LOG_FILE\}/$log}"
-  rm -f "$log"
-
-  [ "$NEEDS_RETRO" = "false" ] || {
-    echo "retro condition 2 flags a clean N/A (no-diff) outcome as retro-worthy"
-    return 1
-  }
-}
-
-test_router_retro_condition_2_still_flags_missing_pr_review() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  local cond
-  cond="$(_extract_retro_condition_2)"
-  [ -n "$cond" ] || return 1
-
-  local log
-  log=$(mktemp)
-  printf '%s\n' \
-    '2026-09-07T19:50:00Z|VERIFY|verify|done|PASS' \
-    >"$log"
-
-  local NEEDS_RETRO=false
-  eval "${cond//\{LOG_FILE\}/$log}"
-  rm -f "$log"
-
-  [ "$NEEDS_RETRO" = "true" ] || {
-    echo "retro condition 2 no longer flags a ticket with no PR-REVIEW outcome at all"
-    return 1
-  }
-}
+# The prescan gate and STEP_6 retro-trigger prose tests (#149, #318, #411,
+# late-resume skip, success judged by returned content) moved with the code:
+# lib/tests/test-prescan-run.sh and lib/tests/test-router-step.sh assert the
+# behaviour of lib/prescan-run.sh and `router-step.sh retro-check` against
+# fixtures lifted from the pre-extraction SKILL.md (skill-deterministic-extraction 3).
 
 test_router_verify_dispatch_uses_verdict_tokens() {
   local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
@@ -676,19 +578,6 @@ test_outcome_label_check_writes_meta_line() {
   }
 }
 
-test_router_retro_conditions_1_and_3_unchanged() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  grep -q "META|gate-stop|fail|" "$skill_md" || {
-    echo "retro condition 1 (gate-stop) missing"
-    return 1
-  }
-  grep -q "grep -q '|fallback|' \"{HB_LOG_FILE}\"" "$skill_md" || {
-    echo "retro condition 3 (heartbeat fallback) missing or changed"
-    return 1
-  }
-}
-
 # ── Increment F — hygiene batch (R10, R11, R12, R13) ──────────────────────────
 
 test_router_pr_feedback_cycle_caps_at_3() {
@@ -730,73 +619,6 @@ test_router_reconcile_cycle_caps_at_3() {
     echo "STEP_3_5 does not gate-stop with RECONCILE_EXHAUSTED"
     return 1
   }
-}
-
-test_router_prescan_skipped_on_late_resume() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  local block
-  block=$(sed -n '/## Prescan gate/,/### Identify affected repos/p' "$skill_md")
-  grep -q 'Skip on late resume' <<<"$block" || {
-    echo "prescan gate missing late-resume skip section"
-    return 1
-  }
-  grep -qE 'STEP_4 \| STEP_4_5 \| STEP_4_6' <<<"$block" || {
-    echo "prescan gate does not skip STEP_4+ resume steps"
-    return 1
-  }
-}
-
-# Issue #411 — a decayed/missing repo needs /ticket-prescan's Path A (an Agent
-# fan-out), which the headless ticket-prescan-agent cannot run (no Agent tool).
-# The router must only spawn for `stale` and log an actionable skip otherwise.
-# Executes the gate's real case block from SKILL.md for each status.
-test_router_prescan_spawns_only_for_stale() {
-  local skill_md="$SKILLS_DIR/ticket-auto/SKILL.md"
-  [ -f "$skill_md" ] || return 1
-  local code
-  code=$(sed -n '/^Branch on status:/,/^### Acquire lock and spawn/p' "$skill_md" |
-    sed -n '/^```bash$/,/^```$/p' | sed '1d;$d')
-  [ -n "$code" ] || {
-    echo "prescan gate has no executable status-branch bash block"
-    return 1
-  }
-  local tmp log
-  tmp=$(mktemp -d)
-  log="$tmp/pipeline.log"
-  : >"$log"
-  code=${code//\{LOG_FILE\}/$log}
-  # The block logs through the synced ~/.claude/skills/lib/plog.sh; point it at
-  # the checkout's lib (CI and dev hosts may have no synced copy).
-  code=${code//\~\/.claude\/skills\/lib\//$LIB_DIR/}
-  local reached
-  reached=$(
-    slug=repo-x
-    repo=/r/repo-x
-    for PRESCAN_STATUS in fresh stale decayed missing bogus; do
-      eval "$code"
-      echo "$PRESCAN_STATUS"
-    done
-  )
-  local rc=0
-  [ "$reached" = "stale" ] || {
-    echo "spawn reached for statuses: $(echo "$reached" | tr '\n' ' ')(want: stale)"
-    rc=1
-  }
-  grep -q '|MAINTENANCE|prescan|skip|repo-x decayed .*interactive /ticket-prescan' "$log" || {
-    echo "decayed repo not logged as an actionable skip"
-    rc=1
-  }
-  grep -q '|MAINTENANCE|prescan|skip|repo-x missing .*interactive /ticket-prescan' "$log" || {
-    echo "missing repo not logged as an actionable skip"
-    rc=1
-  }
-  grep -qE 'repo-x (fresh|stale)' "$log" && {
-    echo "fresh/stale repo wrongly logged as a skip"
-    rc=1
-  }
-  rm -rf "$tmp"
-  return $rc
 }
 
 # test_router_autonomy_write_is_guarded pinned Step 0.6's inline META|autonomy

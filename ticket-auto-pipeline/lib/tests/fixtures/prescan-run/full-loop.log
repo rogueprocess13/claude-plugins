@@ -1,0 +1,13 @@
+TS|META|schema|info|1
+TS|MAINTENANCE|prescan|waiting|bb-stale prescan triggered (stale)
+TS|META|model|info|{"phase":"MAINTENANCE","model":"unknown"}
+TS|MAINTENANCE|prescan|done|bb-stale prescan complete: stale → fresh
+TS|MAINTENANCE|prescan|done|bb-stale prescan complete
+TS|MAINTENANCE|prescan|skip|cc-decayed decayed — full fan-out needs an interactive /ticket-prescan $WS/repos/cc-decayed (headless prescan agent has no Agent tool)
+TS|MAINTENANCE|prescan|waiting|dd-stale prescan triggered (stale)
+TS|META|model|info|{"phase":"MAINTENANCE","model":"unknown"}
+TS|MAINTENANCE|prescan|fail|dd-stale prescan failed (non-blocking) — continuing
+TS|MAINTENANCE|prescan|fail|dd-stale prescan failed
+TS|MAINTENANCE|prescan|skip|ee-missing missing — full fan-out needs an interactive /ticket-prescan $WS/repos/ee-missing (headless prescan agent has no Agent tool)
+TS|MAINTENANCE|prescan|skip|ff-bogus unknown prescan status 'bogus' — not spawning
+TS|MAINTENANCE|prescan|skip|gg-stale locked by another process
