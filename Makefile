@@ -82,6 +82,10 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-implement-diff-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-conflict-marker-scan.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-repo-resolve.sh
+	bash ticket-auto-pipeline/lib/tests/test-pr-merge-gate.sh
+	bash ticket-auto-pipeline/lib/tests/test-pr-review-transition.sh
+	bash ticket-auto-pipeline/lib/tests/test-pr-review-comment.sh
+	bash ticket-auto-pipeline/lib/tests/test-plan-append-review.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-evidence.sh
 	bash ticket-auto-pipeline/lib/tests/test-pipeline-finalize.sh
 	bash ticket-auto-pipeline/lib/tests/test-spawn-helper.sh

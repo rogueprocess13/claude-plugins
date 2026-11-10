@@ -44,19 +44,27 @@ flowchart TD
     D -->|No| F{session file?}
     F -->|Yes| G[Read pr-review-session.md]
     F -->|No| STOP1[Stop: no findings]
-    E --> H[Step 2c: Parse gaps + verdict]
+    E --> H[Step 2b/2c: pr-review-comment.sh parse]
     G --> H
     H --> I{Verdict?}
     I -->|PASS| STOP2[Stop: no gaps]
-    I -->|GAPS| J[Step 3: Determine iteration N]
+    I -->|GAPS| J[Step 3: plan-append-review.sh next]
     J --> K{N > 3?}
     K -->|Yes| STOP3[Stop: manual intervention]
-    K -->|No| L[Step 4: Append to plan artifact]
-    L --> M[Post-write verify]
+    K -->|No| L[Step 4: plan-append-review.sh append]
+    L --> M[Atomic append + heading verify]
     M --> N[Step 5: Update notes.md]
     N --> O[Step 6: flow.sh pr-iterate]
     O --> P[Step 7: Report]
 ```
+
+## Scripts
+
+| Step | Script | Role |
+|------|--------|------|
+| 2b | `lib/pr-review-comment.sh parse` | Reads the latest review comment: verdict, rows, next steps |
+| 3 | `lib/plan-append-review.sh next` | Resolves the plan artifact and the next iteration N; exit 4 past 3 iterations |
+| 4 | `lib/plan-append-review.sh append` | Appends the PR Review #N section atomically and logs `iterate-plan` |
 
 ## Related skills
 

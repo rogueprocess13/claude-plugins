@@ -1,0 +1,2 @@
+TS|META|uat-policy|info|per-ticket
+TS|META|uat-decision|info|trigger=pr-review-pass-uat; merge pending: pipeline autonomy=manual requires human merge
