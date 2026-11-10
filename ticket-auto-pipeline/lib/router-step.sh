@@ -203,7 +203,7 @@ _rs_inspector() {
     spawn_phase_inspector "$_rs_phase" "$_rs_tid" "$_rs_log_file" \
       "$_rs_hb_log_file" "$_extra"
   ) || true
-  if printf '%s\n' "$_pi_out" | grep -q '^INSPECTOR_INSTRUCTIONS='; then
+  if grep -q '^INSPECTOR_INSTRUCTIONS=' <<<"$_pi_out"; then
     local _out="${_rs_out:-./logs/${_rs_tid}-${_rs_phase_lower}-inspector-instructions.txt}"
     mkdir -p "$(dirname "$_out")" 2>/dev/null || true
     if printf '%s\n' "$_pi_out" |
