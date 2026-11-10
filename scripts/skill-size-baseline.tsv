@@ -80,9 +80,8 @@ ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	9503	210
 ticket-auto-pipeline/skills/ticket-implement/SKILL.md	34975	526
 ticket-auto-pipeline/skills/ticket-overseer/SKILL.md	3767	81
 ticket-auto-pipeline/skills/ticket-persona-refresh/SKILL.md	8129	200
-ticket-auto-pipeline/skills/ticket-pr-iterate/SKILL.md	10707	254
-# exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-pr-review/SKILL.md	25798	547
+ticket-auto-pipeline/skills/ticket-pr-iterate/SKILL.md	9901	226
+ticket-auto-pipeline/skills/ticket-pr-review/SKILL.md	19700	361
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-prescan/SKILL.md	21699	437
 ticket-auto-pipeline/skills/ticket-reject/SKILL.md	1555	27

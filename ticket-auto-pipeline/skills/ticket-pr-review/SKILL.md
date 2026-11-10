@@ -256,247 +256,61 @@ write_verifier_result verifier=pr_review verdict=<PASS|WARN|BLOCK> criteria_met=
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW post-findings start "Posting review findings"
 
-Format the findings as a GitHub comment and post:
+Write the Step 5 table as tab-separated lines to `{ticket-dir}/pr-review-rows.tsv`
+(`N<TAB>requirement<TAB>✅|⚠️|❌`), any Step 4.5 flows to `pr-review-impact.tsv`
+(`flow<TAB>risk`), and on gaps one suggested next step per line ("Add a commit addressing X" or
+"Confirm with the team if X was intentionally descoped") to `pr-review-steps.txt`. The script
+renders the comment ticket-pr-iterate parses back, verdict included (✅ only when every row is ✅).
+Post with REST, not `gh pr comment` (GraphQL lags on a new PR):
 
 ```bash
-gh api "repos/{owner}/{repo}/issues/{number}/comments" -f body="$(cat <<'EOF'
-## Ticket alignment review — {TICKET-ID}
-
-**Ticket:** {Linear URL}
-
-### Requirements coverage
-
-| # | Requirement | Status |
-|---|---|---|
-{table rows}
-
-{If GitNexus returned results:}
-### Structural impact (GitNexus)
-
-| Affected Flow | Risk |
-|---------------|------|
-{table rows from detect_changes}
-
-{If any HIGH/CRITICAL risk:} ⚠️  High structural impact detected — review the affected execution flows above carefully.
-
-**Verdict:** ✅ All requirements addressed
-— or —
-**Verdict:** ⚠️ Gaps found — see partial/missing rows above
-
-{If gaps: ### Suggested next steps
-- {For each ❌ or ⚠️: "Add a commit addressing X" or "Confirm with the team if X was intentionally descoped"}}
-EOF
-)"
+_lib="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}"
+gh api "repos/{owner}/{repo}/issues/{number}/comments" -f body="$(bash "$_lib/pr-review-comment.sh" render \
+  --ticket "{TICKET-ID}" --url "{Linear URL}" --rows "{ticket-dir}/pr-review-rows.tsv" \
+  --impact "{ticket-dir}/pr-review-impact.tsv" --next-steps "{ticket-dir}/pr-review-steps.txt")"
 ```
-Use REST, not `gh pr comment` (GraphQL lags on a new PR).
+
+Leave out `--impact` / `--next-steps` when you wrote no such file.
 
 ### Step 6a — Update Linear label
 
-Delegate to the flow executor:
+```bash
+source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
+bash ~/.claude/skills/lib/pr-review-transition.sh --log-file "{LOG_FILE}" --verdict {pass|gaps} {TICKET-ID}
+```
 
-- **Verdict ⚠️** (gaps found):
-  ```bash
-  bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} pr-review-fail
-  _rc=$?
-  _gate_blocked=false  # pr-review-fail carries no verdict_gate — exit 11 cannot happen here
-  # flow-run.sh has already logged any non-zero exit (META|flow-error + heartbeat).
-  # A failure here is non-fatal — continue.
-  ```
-- **Verdict ✅** → the transition is chosen by `uat_decide_trigger`, not here:
-  ```bash
-  # Single UAT-vs-Done decision site (policy before UAT URL). Do NOT add a UAT_URL test here.
-  source ~/.claude/skills/lib/branch-resolve.sh
-
-  # UAT_POLICY is exported by the agent env file; --ticket is the standalone
-  # fallback for an invocation outside a pipeline run.
-  policy="${UAT_POLICY:-}"
-  [ -z "$policy" ] && policy=$(resolve_uat_policy "{TICKET-ID}" 2>/dev/null)
-  policy="${policy:-per-ticket}"
-
-  # Merge authorization before the transition (#412): a PR left for a human
-  # merge must not close a per-ticket ticket to Done. Same function as Step 6b.
-  _merge_pending_flag=""
-  _merge_reason=$(merge_blocked_reason "{TICKET-ID}")
-  [ -n "$_merge_reason" ] && _merge_pending_flag="--merge-pending"
-
-  trigger=$(uat_decide_trigger --policy "$policy" ${_merge_pending_flag})
-
-  # Record the decision so any Done reached without an individual UAT step is
-  # explainable from the log alone.
-  bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META uat-policy info "${policy}"
-  if [ -n "$_merge_pending_flag" ]; then
-    bash ~/.claude/skills/lib/plog.sh --log-file "{LOG_FILE}" META uat-decision info "trigger=${trigger}; merge pending: ${_merge_reason}"
-  fi
-
-  bash ~/.claude/skills/lib/flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} "$trigger"
-  _rc=$?
-  _gate_blocked=false
-  if [ "$_rc" -eq 11 ]; then
-    # Verdict gate refused: another verifier's FAIL/BLOCK is still latest.
-    # flow-run.sh already logged VERDICT_GATE_BLOCKED. See Steps 6b/7/8.
-    _gate_blocked=true
-  fi
-  # Any other non-zero exit is already logged by flow-run.sh (META|flow-error).
-  ```
-
-Under `UAT Policy: epic` the trigger is `pr-review-pass-done`, so the child closes on
-code-level verification and its `blocked-by` dependents are released — `--merge-pending` does
-not change that path. Under `per-ticket` (the default), a passing review goes to `UAT` when a
-UAT target is configured **or** when the PR is being left for a human merge (pipeline autonomy
-`manual`, or any epic `Merge Policy`). It goes to `Done` only when neither applies, i.e. when
-this run is itself allowed to merge the PR in Step 6b. A ticket parked in `UAT` for a pending
+`--verdict gaps` (⚠️) fires `pr-review-fail` (no verdict gate). `--verdict pass` (✅) fires the
+trigger `uat_decide_trigger` picks, after `merge_blocked_reason` (#412): under `UAT Policy: epic`
+it is `pr-review-pass-done`, so the child closes and its `blocked-by` dependents are released.
+Under `per-ticket` (the default) a passing review goes to `UAT` when a UAT target is configured
+**or** the PR is left for a human merge (autonomy `manual`, or any epic `Merge Policy`), and to
+`Done` only when this run may merge the PR in Step 6b. A ticket parked in `UAT` for a pending
 merge stays there until a human merges the PR and fires `uat-pass`.
 
-This adds `reviewed` or `rejected`, keeping all other labels — only when `_rc` is `0`.
-`_gate_blocked` (set only on the ✅ branch; always `false` on the ⚠️ branch, since
-`pr-review-fail` carries no `verdict_gate`) carries forward into Steps 6b/7/8 below.
+Exit `11` (it prints `GATE_BLOCKED=true`) means the verdict gate refused the transition: another
+verifier's FAIL/BLOCK is still latest. `_gate_blocked=true` carries into Steps 6b/7/8. Any
+other flow failure is already logged and non-fatal.
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW post-findings done "Verdict: {✅|⚠️}"
 
 ### Step 6b — Merge PR if all requirements addressed
 
-bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision start "Merge decision"
-
-Skip this step entirely on ⚠️ or ❌, on a blocking Step 5.5 ADR verdict, or when
-`_gate_blocked=true` (a refused transition must not be followed by a merge).
-
-Otherwise **first determine merge authorization**, before any CI/conflict checks. This direct
-merge never fires under `manual` autonomy or any epic `Merge Policy` (all of which need a human):
+One script makes the whole merge decision and fails closed on every `gh`/git error:
+`merge_blocked_reason` first (the same rule as Step 6a), then `gh pr checks` buckets (only
+`pass`/`skipping` pass; a checkless PR is fine), then `conflict-marker-scan.sh` over the Step 4
+diff, then a REST squash merge — never forced. It logs `merge-decision` and posts any refusal as
+a PR comment itself.
 
 ```bash
-source ~/.claude/skills/lib/branch-resolve.sh
-
-# AUTONOMY/MERGE_POLICY come from the env file (--from-auto); standalone, the
-# function resolves MERGE_POLICY itself and an empty AUTONOMY does not block.
-_merge_blocked_reason=$(merge_blocked_reason "{TICKET-ID}")
+source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
+bash ~/.claude/skills/lib/pr-merge-gate.sh --log-file "{LOG_FILE}" {SKIP} --repo {owner}/{repo} --pr {number} \
+  --base {baseRefName} --head {headRefName} --worktree "{Step 4 WORKTREE_PATH}" {TICKET-ID}
 ```
 
-**If `_merge_blocked_reason` is non-empty:** do NOT merge. Report to the user:
-
-```
-✅ PR #{number} passed review and is ready to merge, but requires a human: {_merge_blocked_reason}.
-
-Merge it yourself once you're ready:
-gh pr merge {number} --repo {owner}/{repo} --squash
-```
-
-Post the same message as a PR comment.
-
-bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "skipped: $_merge_blocked_reason"
-
-**If `_merge_blocked_reason` is empty**, check that all GitHub build checks have passed before merging.
-
-Use `bucket` (#365: `gh pr checks --json` has no `status`/`conclusion` fields).
-
-```bash
-_checks_json=$(gh pr checks {number} --repo {owner}/{repo} --json name,state,bucket 2>&1)
-_checks_rc=$?
-```
-
-**A non-zero exit is not automatically a failure:** a checkless PR exits non-zero with
-`no checks reported on the '<branch>' branch` instead of emitting `[]`. Check for that first:
-
-```bash
-if [ "$_checks_rc" -ne 0 ] && echo "$_checks_json" | grep -qi "no checks reported"; then
-  _checks_none=true
-else
-  _checks_none=false
-fi
-```
-
-**If `$_checks_none` is true**, skip the rest of this check evaluation and merge.
-
-**Otherwise, if the command exited non-zero, or `$_checks_json` is not valid JSON**
-(`echo "$_checks_json" | jq -e . >/dev/null 2>&1` fails): treat this as a hard block — never as
-"no blocking checks found". Do NOT merge. Report to the user:
-
-```
-⛔ PR #{number} — could not read CI check status, merge blocked.
-
-`gh pr checks` failed or returned unparseable output:
-{_checks_json}
-
-Investigate the checks command failure and re-run `/ticket-pr-review {TICKET-ID}` or merge
-manually once you've confirmed checks are green.
-```
-
-Post the same message as a PR comment.
-
-bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "blocked: checks command failed"
-
-**Otherwise, parse the JSON array.** An empty array (`[]`) is legitimately not a failure —
-merge. Otherwise evaluate every check's `bucket` (closed enum):
-- `pass` — passed, not blocking
-- `skipping` — skipped, not blocking
-- `pending` — still running, blocks the merge (not yet a failure, just not done)
-- `fail`, `cancel` — hard block
-
-**If any check has a blocking bucket (`pending`, `fail`, or `cancel`):**
-
-Do NOT merge. Report to the user:
-
-```
-⛔ PR #{number} has failing or pending build checks — merge blocked.
-
-| Check | State | Bucket |
-|-------|-------|--------|
-| {name} | {state} | {bucket} |
-...
-
-Fix the failing checks and re-run `/ticket-pr-review {TICKET-ID}` or merge manually once they pass.
-```
-
-Post the same message as a PR comment.
-
-bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "blocked: failing checks"
-
-**If the array is empty, or every check's bucket is `pass`/`skipping`:**
-
-Scan the Step 4 diff for real conflict blocks (a setext `=======` underline never blocks):
-
-```bash
-_cms_out=$(set -o pipefail; git -C "$WORKTREE_PATH" diff origin/{baseRefName}...origin/{headRefName} |
-  bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/conflict-marker-scan.sh")
-_cms_rc=$?
-echo "CONFLICT_SCAN_RC=$_cms_rc"
-echo "$_cms_out"
-```
-
-`_cms_rc=0` → no conflict markers. `_cms_rc=1` → conflict markers found (`_cms_out` lists
-`<path>:<opening marker>` per block). `_cms_rc=2` (or any other code) → the scan could not
-run, or `git diff` failed (the subshell runs with `pipefail`); treat it as found — do NOT
-merge.
-
-If any conflict markers are found, do NOT merge. Report to the user:
-
-```
-⛔ PR #{number} contains conflict markers — merge blocked.
-
-Lines with conflict markers:
-{_cms_out}
-
-Resolve the conflicts on the branch and re-run `/ticket-pr-review {TICKET-ID}`.
-```
-
-Post the same message as a PR comment.
-
-bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "blocked: conflict markers"
-
-**If no conflict markers found:**
-
-```bash
-gh api "repos/{owner}/{repo}/pulls/{number}/merge" -X PUT -f merge_method=squash 2>&1 || {
-  echo "ERROR: REST API merge failed for PR #{number}" >&2
-  hb-wrap.sh retry "pr-merge" "fail" "REST API merge failed for PR #{number}" \
-    "{\"pr_number\":\"{number}\",\"owner\":\"{owner}\",\"repo\":\"{repo}\"}"
-  bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision fail "gh api merge failed for PR #{number}"
-}
-```
-Use REST, not `gh pr merge` (GraphQL lags on a new PR).
-
-If the merge fails (conflicts, branch protection, etc.), report it to the user — do not force-merge.
-
-bash ~/.claude/skills/lib/plog.sh PR-REVIEW merge-decision done "{merged|skipped|gate-blocked}"
+`{SKIP}` is `--skip gate-blocked` when `_gate_blocked=true`, `--skip skipped` on ⚠️/❌ or a
+blocking Step 5.5 ADR verdict, otherwise empty. Exit 0 merged,
+3 not merged, 4 the merge call failed. On 3 or 4 report the printed message (after the
+`MERGE_RESULT`/`MERGE_REASON` lines) to the user. Never merge any other way.
 
 ---
 

@@ -17,6 +17,42 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.106.0 (2026-11-10)
+
+ticket-pr-review's and ticket-pr-iterate's deterministic bash moves into four tested lib
+scripts (`skill-deterministic-extraction`, group 2). Log step names, `--from-step` values,
+phase names and verifier ids are unchanged; each script writes the same log lines the prose
+did (pinned by `lib/tests/fixtures/pr-review/`). Other plugins unchanged.
+
+### Added
+
+- `lib/pr-merge-gate.sh` — Step 6b as one fail-closed script: `merge_blocked_reason`, then
+  `gh pr checks --json name,state,bucket` (checkless PR passes; any other `gh` failure,
+  non-array output or a bucket outside pass/skipping blocks), then `conflict-marker-scan.sh`
+  (a failed `git diff` blocks), then the REST squash merge. Posts each refusal as a PR
+  comment. Exit 0 merged, 3 not merged, 4 merge call failed.
+- `lib/pr-review-transition.sh` — Step 6a: one `flow-run.sh` call, trigger from
+  `uat_decide_trigger` with `--merge-pending` when the PR is left for a human (#412); exit 11
+  when the verdict gate refuses.
+- `lib/pr-review-comment.sh render|parse` — the findings comment, written by pr-review and
+  read by pr-iterate from one file. `parse` uses the latest review comment, so a re-reviewed
+  PR no longer feeds every earlier round's rows to the iteration.
+- `lib/plan-append-review.sh next|append` — pr-iterate Steps 3–4: iteration number and guard,
+  then an atomic (temp file + `mv`), idempotent append of the `## PR Review #N` section.
+- Tests: `test-pr-merge-gate.sh` (mock `gh`), `test-pr-review-transition.sh` (stub
+  `flow.sh`), `test-pr-review-comment.sh`, `test-plan-append-review.sh`.
+
+### Changed
+
+- `skills/ticket-pr-review/SKILL.md` 25,798 → 19,700 bytes (547 → 361 body lines). It now
+  fits the 20 KB ceiling, so its `# exception:` baseline entry is gone.
+- `skills/ticket-pr-iterate/SKILL.md` 10,707 → 9,901 bytes.
+- Steps 6a and 6b source the ticket env file before calling the scripts, so `AUTONOMY`,
+  `MERGE_POLICY` and `UAT_POLICY` reach the merge rule. The old fences relied on variables a
+  fresh Bash call did not have, and an empty `AUTONOMY` never blocks a merge.
+- The Step 6a/6b prose-grep tests in `test-pipeline-phases.sh` became behavioural tests in
+  the two new test files.
+
 ## ticket-planner 0.35.3 (2026-11-10)
 
 The planner skill's deterministic bash moves into tested library functions

@@ -25,7 +25,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 | `--from-step` value | Skip to | Restore from |
 |---------------------|---------|--------------|
 | `iterate-load` | Step 2 (find findings) | workspace already loaded; notes.md and context.md available |
-| `iterate-findings` | Step 4 (update plan) | gaps already parsed; {N} from existing `## PR Review #` sections in plan |
+| `iterate-findings` | Step 3 (iteration number) | gaps already parsed; re-run Step 2b to recover them |
 | `iterate-plan` | Step 5 (update notes) | plan artifact already updated |
 | `iterate-notes` | Step 6 (update Linear) | notes.md already updated |
 | `iterate-linear` | End — skill already complete | — |
@@ -84,37 +84,28 @@ find {ticket-dir} -name "pr-review-session.md"
 - **Not found** → stop and tell the user:
   > "No PR or pr-review-session.md found for {TICKET-ID}. Run `/ticket-pr-review {TICKET-ID}` first."
 
-### Step 2b — Fetch the PR review comment
+### Step 2b — Fetch and parse the PR review comment
 
 ```bash
-GH_REPO=$(bash "${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}/pr-repo-resolve.sh" \
-  "{TICKET-ID}" --log-file "$TAP_LOG" --ticket-dir "{ticket-dir}")
-_review_body=$(gh pr view {PR_NUMBER} --repo "$GH_REPO" --json comments --jq '.comments[] | select(.body | startswith("## Ticket alignment review")) | .body')
-_rc=$?
-echo "$_review_body"
-if [ $_rc -ne 0 ] || [ -z "$_review_body" ]; then
-  hb-wrap.sh retry "jq-parse" "fail" "gh --jq extraction failed for PR review comment" \
-    "{\"error_type\":\"jq_parse\",\"command\":\"gh pr view\"}"
-fi
+_lib="${CLAUDE_SKILLS_LIB:-$HOME/.claude/skills/lib}"
+GH_REPO=$(bash "$_lib/pr-repo-resolve.sh" "{TICKET-ID}" --log-file "$TAP_LOG" --ticket-dir "{ticket-dir}")
+gh pr view {PR_NUMBER} --repo "$GH_REPO" --json comments --jq '.comments[] | select(.body | startswith("## Ticket alignment review")) | .body' |
+  bash "$_lib/pr-review-comment.sh" parse || hb-wrap.sh retry "jq-parse" "fail" "PR review comment fetch/parse failed" \
+  "{\"error_type\":\"jq_parse\",\"command\":\"gh pr view\"}"
 ```
 
-If no matching comment is found → fall back to `pr-review-session.md` as in Step 2a. If that also doesn't exist → stop.
+`pr-review-comment.sh` (the format ticket-pr-review renders) reads the latest review comment and
+prints `VERDICT=pass|gaps`, one `ROW<TAB>N<TAB>status<TAB>requirement` per requirement,
+`NEXT_STEP<TAB>text` per suggested next step, and `GAPS=<n>`. Exit 1 (no review comment) → fall
+back to `pr-review-session.md` as in Step 2a; if that also doesn't exist → stop.
 
-### Step 2c — Parse the findings
+### Step 2c — Collect the gaps
 
-From the comment body, extract:
+If `VERDICT=pass`, stop and report:
+> "{TICKET-ID} PR review already passed — no gaps to iterate on."
 
-1. **Coverage table rows** — look for lines matching `| N | ... | ⚠️ |` or `| N | ... | ❌ |`. For each:
-   - Requirement number
-   - Requirement text
-   - Status (⚠️ Partial or ❌ Missing)
-
-2. **Verdict** — look for `**Verdict:** ⚠️` or `**Verdict:** ✅`. If ✅, stop and report:
-   > "{TICKET-ID} PR review already passed — no gaps to iterate on."
-
-3. **Suggested next steps** — if a `### Suggested next steps` section exists, capture each bullet as a suggested fix for the corresponding gap.
-
-Store these as `{GAPS}` — a list of objects with: `number`, `requirement`, `status`, `suggested_fix` (if available).
+Otherwise `{GAPS}` = the `ROW` lines whose status is ⚠️ (Partial) or ❌ (Missing): `number`,
+`requirement`, `status`, and `suggested_fix` — the `NEXT_STEP` that names that requirement, if any.
 
 bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-findings done "{N} gaps parsed"
 
@@ -122,36 +113,22 @@ bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-findings done "{N} gaps pars
 
 ## Step 3 — Determine iteration number
 
-Check which plan artifact exists:
-
 ```bash
-bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root . --ticket-dir "{ticket-dir}"
+bash ~/.claude/skills/lib/plan-append-review.sh next "{TICKET-ID}" --ticket-dir "{ticket-dir}"
 ```
 
-This is the one plan-artifact resolver (whole-ID match, so `TEST-7` never picks up `TEST-77`'s
-change). It prints `PLAN_MODE=`, `PLAN_PATH=` and, for openspec, `CHANGE_DIR=`.
-
-- **`PLAN_MODE=simple-fix`** → set `{ARTIFACT}` = `PLAN_PATH` (`simple-fix.md`). Count existing `## PR Review #` sections:
-  ```bash
-  grep -c "^## PR Review #" {ticket-dir}/simple-fix.md
-  ```
-- **`PLAN_MODE=openspec`** → set `{ARTIFACT}` = `PLAN_PATH` (the change's `tasks.md`). Count existing `## PR Review #` sections in it.
-- **Exit 2** (several change dirs match) or **exit 12** (no plan artifact) → stop and report it.
-
-Set `{N}` = count + 1. If this is the first iteration, `{N}` = 1.
-
-**Guard:** if `{N} > 3` → stop and report:
-```
-{ticket-id} has reached 3 PR review iterations. Manual intervention recommended — the plan may need a full re-appraisal.
-```
+It resolves the plan artifact with the one resolver (`ticket-dir.sh plan`: `simple-fix.md`, or
+the openspec change's `tasks.md`) and prints `PLAN_MODE=`, `PLAN_PATH=`, `ARTIFACT=` and `N=`
+(existing `## PR Review #` sections + 1). Exit 4 → the 3-iteration guard fired: stop and report
+the printed message. Exit 2 (several change dirs) or 12 (no plan artifact) → stop and report it.
 
 ---
 
 ## Step 4 — Update the plan artifact
 
-### If simple-fix.md
+Write the section for `PLAN_MODE` to `{ticket-dir}/pr-review-{N}.md`, then append it.
 
-Append to `{ticket-dir}/simple-fix.md`:
+### If simple-fix.md
 
 ```markdown
 ## PR Review #{N} — {today's date}
@@ -173,8 +150,6 @@ Append to `{ticket-dir}/simple-fix.md`:
 
 ### If openspec tasks.md
 
-Append to the openspec `tasks.md`:
-
 ```markdown
 ## PR Review #{N} — {today's date}
 
@@ -189,17 +164,14 @@ Append to the openspec `tasks.md`:
 
 Use `N` as the task group prefix (e.g., iteration 1 tasks are `1.1`, `1.2`, `1.3`).
 
-**Post-write section verify** — confirm the heading actually landed in the artifact before logging done:
-
 ```bash
-_section_count=$(grep -c "^## PR Review #${N}" "{ARTIFACT_PATH}" 2>/dev/null || true)
-if [ "${_section_count:-0}" -lt 1 ]; then
-  bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-plan fail "PR Review #${N} section missing after write — {ARTIFACT_PATH}"
-  # Stop — a truncated write would cause ticket-implement to silently skip all gaps
-fi
+bash ~/.claude/skills/lib/plan-append-review.sh append "{TICKET-ID}" --ticket-dir "{ticket-dir}" \
+  --log-file "$TAP_LOG" --n {N} --section "{ticket-dir}/pr-review-{N}.md"
 ```
 
-bash ~/.claude/skills/lib/plog.sh PR-REVIEW iterate-plan done "{ARTIFACT} updated, iteration #{N}"
+It appends atomically, verifies the heading landed and logs `iterate-plan` itself. Exit 1 (section
+missing after the write) or 3 (file does not open with `## PR Review #{N}`) → stop: a truncated
+write would make ticket-implement silently skip every gap.
 
 ---
 

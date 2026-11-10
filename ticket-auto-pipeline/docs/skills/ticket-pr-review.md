@@ -46,14 +46,22 @@ flowchart TD
     G --> H[Step 5: Validate against diff]
     H --> I[Step 6: Post findings]
     I --> J{Verdict?}
-    J -->|GAPS| K[flow.sh pr-review-fail]
-    J -->|PASS| L[flow.sh pass variant]
+    J -->|GAPS| K[Step 6a: pr-review-transition.sh<br/>pr-review-fail]
+    J -->|PASS| L[Step 6a: pr-review-transition.sh<br/>uat_decide_trigger]
     K --> STOP2[Stop: gaps reported]
-    L --> M[Step 6b: CI check + merge]
-    M --> N{All checks green?}
+    L --> M[Step 6b: pr-merge-gate.sh]
+    M --> N{Authorized, checks green,<br/>no conflict markers?}
     N -->|No| STOP3[Stop: blocked]
     N -->|Yes| O[Squash merge via REST API]
 ```
+
+## Scripts
+
+| Step | Script | Role |
+|------|--------|------|
+| 6 | `lib/pr-review-comment.sh render` | Renders the findings comment (verdict derived from the rows) |
+| 6a | `lib/pr-review-transition.sh` | Picks and fires the one Review trigger; exit 11 = verdict gate refused |
+| 6b | `lib/pr-merge-gate.sh` | Merge authorization, CI buckets, conflict scan, REST merge; fails closed |
 
 ## Related skills
 
