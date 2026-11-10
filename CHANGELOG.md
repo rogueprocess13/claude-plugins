@@ -17,6 +17,37 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.105.0 (2026-11-10)
+
+`wiki-maintenance`'s errata-fix and ADR-decision text moves to two references
+(`skill-progressive-disclosure`, group 9). Relocation only: no step changes what it does.
+
+### Changed
+
+- `skills/wiki-maintenance/SKILL.md` 28,838 → 25,155 bytes. Moved verbatim:
+  - Step 2b's body (gap-type table, new-file frontmatter, `verified_at` refresh) to
+    `references/errata-fix.md`. Step 2b reads it only when Step 1 found unresolved errata, or when
+    Step 2.6 has a `source=wiki` or `source=prescan` correction to incorporate.
+  - Step 2.5c's "Decisions-section findings (adr-governance-gate)" verdict routing to
+    `references/adr-decisions.md`. Read only when a surviving finding comes from a Decisions section.
+  - If `skill-ref.sh` exits non-zero, the skill logs `META|reference-missing|fail` and leaves the
+    work for the next run: errata and corrections stay in place, Decisions findings are skipped.
+- Deviation from the task list: task 9.1 planned one `references/wiki-templates.md` read at the
+  step that writes a wiki page. Step 2.5c writes pages on most runs (ticket-document writes an
+  `ai-context.md` just before), so that file would be read on most runs. Evidence from 97 local
+  pipeline logs with a MAINTENANCE phase: 52 of 58 `errata-count` heartbeats found no unresolved
+  errata, and 1 of the 44 MAINTENANCE runs since the ADR gate shipped logged a MAINTENANCE
+  `adr-gate` verdict. Step 2.5c's other text, Step 2c, Step 2.6 and the Step 0 / Step 4 lock wiring
+  stay inline.
+- Prompt context (`wiki-maintenance` manifest): 101,060 → 97,377 on a run with neither condition
+  (−3,683). An errata run carries 100,496 (−564), a Decisions run 99,318 (−1,742), and a run with
+  both 102,437 (+1,377). New `wiki-maintenance:conditional` row 5,060.
+- `prompt_manifests[wiki-maintenance]` lists both references directly after SKILL.md, so the
+  `wiki-maintenance` skill fingerprint changes.
+- `lib/tests/test-skill-references.sh`: new `test_wiki_errata_adr_conditions`. No existing test
+  pinned the moved text; the `test-wiki-lock.sh` wiring checks are untouched.
+- `docs/skills/wiki-maintenance.md`: reference paragraph and two diagram branches.
+
 ## 0.104.0 (2026-11-10)
 
 `ticket-retro`'s `--post-to-github` material moves to a reference (`skill-progressive-disclosure`,
