@@ -17,6 +17,34 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.98.0 (2026-11-10)
+
+`references/` convention checks and test helpers (`skill-progressive-disclosure`, group 1: the
+convention slice). No SKILL.md moves yet and no skill fingerprint changes; this lands the checks
+the per-skill groups rely on.
+
+### Added
+
+- `lib/tests/test-skill-references.sh` (registered in `make test-lib`, and in
+  `scripts/select-tests.sh`'s every-plugin list): for each `skills/*/references/*.md`, SKILL.md
+  names the literal path, carries a conditional read line that calls `skill-ref.sh`, never reaches
+  a reference through `${CLAUDE_PLUGIN_ROOT}` or a `~/.claude/skills/<skill>/` path, puts that line
+  before the first `Moved to references/<file>.md` stub, and (ticket-auto-pipeline) lists the
+  reference in every `prompt_manifests` entry that lists the SKILL.md, directly after it. Proven on
+  fixtures; the repo has no `references/` files yet.
+- `lib/tests/skill-text.sh`: shared `_section` and `_section_ref <skill>/references/<f>.md
+  <start-re> [end-re]` heading-slice helpers, resolved from the source tree.
+  `test-persona-injection.sh` now uses it.
+- `test-dispatch-table.sh` checks `prompt_manifests` in the source tree: known label prefix,
+  `plugin:`/`lib:` files exist, and a reference entry is exactly
+  `plugin:skills/<name>/references/<f>.md` and exists.
+- `test-skill-fingerprint.sh`: a reference entry is hashed in manifest order, editing it moves only
+  its own skill's sha256, and a missing reference or a prefix typo yields `unresolved`.
+
+### Changed
+
+- Root `CLAUDE.md` describes the conditional-read phrasing for references.
+
 ## ticket-planner 0.35.2, fleet-controller 0.46.8, grill-me 0.5.2, knowledge-curator 0.2.18 (2026-11-09)
 
 Skill prose dedupe, sub-PR 3g (`skill-prose-dedupe`, change 3 of the skill-size reduction

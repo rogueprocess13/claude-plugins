@@ -65,15 +65,10 @@ _invocations() {
   ' "$1" | tr -d "\"'\`" | grep -E 'persona-select\.sh[[:space:]]+--repo' || true
 }
 
-# _section <file> <start-regex> <end-regex> — lines from the first start match
-# up to (not including) the next end match.
-_section() {
-  awk -v s="$2" -v e="$3" '
-    !on && $0 ~ s { on = 1; print; next }
-    on && $0 ~ e { exit }
-    on { print }
-  ' "$1"
-}
+# _section / _section_ref (heading slices of SKILL.md and of a skill's
+# references/<file>.md) come from the shared skill-text.sh.
+# shellcheck source=skill-text.sh
+source "$SCRIPT_DIR/skill-text.sh"
 
 # _used_by <persona.md> — skill names in the frontmatter `used-by:` list,
 # with any "(…)" annotation stripped.

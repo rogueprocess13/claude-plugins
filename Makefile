@@ -252,6 +252,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-ticket-tmp.sh
 	bash ticket-auto-pipeline/lib/tests/test-tmp-trust.sh
 	bash ticket-auto-pipeline/lib/tests/test-skill-ref.sh
+	bash ticket-auto-pipeline/lib/tests/test-skill-references.sh
 	bash fleet-controller/lib/tests/test-fleet-plugin-cache.sh
 
 test-fleetd:

@@ -380,6 +380,108 @@ test_unknown_label_prefix_is_unresolved() {
 }
 
 # ---------------------------------------------------------------------------
+# Reference files (skill-progressive-disclosure, design D5): a skill's
+# references/<f>.md is registered directly after its SKILL.md entry and hashed
+# unconditionally, whether or not a given run read it.
+# ---------------------------------------------------------------------------
+
+# Give alpha a reference file and register it right after alpha's SKILL.md.
+_add_reference() {
+  local sb="$1"
+  mkdir -p "$sb/plugin/skills/alpha/references"
+  echo 'alpha deep investigation' >"$sb/plugin/skills/alpha/references/deep.md"
+  _edit_table "$sb" '.prompt_manifests.alpha.files =
+    [.prompt_manifests.alpha.files[0], "plugin:skills/alpha/references/deep.md"]
+    + .prompt_manifests.alpha.files[1:]'
+}
+
+test_reference_entry_is_hashed_in_manifest_order() {
+  local sb registered moved
+  sb=$(_sandbox)
+  _add_reference "$sb"
+  _hook "$sb" || return 1
+  registered=$(_sha "$sb" alpha)
+  [ "${#registered}" -eq 64 ] || {
+    echo "  alpha with a registered reference should hash, got '$registered'"
+    return 1
+  }
+  [ "$(jq -r '.skills.alpha.manifest_n' "$(_artifact "$sb")")" = "5" ] || {
+    echo "  manifest_n should count the reference entry"
+    return 1
+  }
+
+  # Same entries, reference moved to the end: the position is in the hash.
+  _edit_table "$sb" '.prompt_manifests.alpha.files =
+    [.prompt_manifests.alpha.files[0]] + .prompt_manifests.alpha.files[2:]
+    + [.prompt_manifests.alpha.files[1]]'
+  _hook "$sb" || return 1
+  moved=$(_sha "$sb" alpha)
+  [ "$registered" != "$moved" ] || {
+    echo "  moving the reference entry did not move the fingerprint"
+    return 1
+  }
+  return 0
+}
+
+test_edited_reference_changes_only_its_skill() {
+  local sb a1 b1 a2 b2
+  sb=$(_sandbox)
+  _add_reference "$sb"
+  _hook "$sb" || return 1
+  a1=$(_sha "$sb" alpha)
+  b1=$(_sha "$sb" beta)
+
+  printf 'x' >>"$sb/plugin/skills/alpha/references/deep.md"
+
+  _hook "$sb" || return 1
+  a2=$(_sha "$sb" alpha)
+  b2=$(_sha "$sb" beta)
+  [ "$a1" != "$a2" ] || {
+    echo "  alpha fingerprint did not move on a reference edit"
+    return 1
+  }
+  [ "$b1" = "$b2" ] || {
+    echo "  beta moved on an edit to alpha's reference"
+    return 1
+  }
+  return 0
+}
+
+test_missing_reference_is_unresolved() {
+  local sb f
+  sb=$(_sandbox)
+  _add_reference "$sb"
+  # An unregistered rename: the manifest still names the old file.
+  mv "$sb/plugin/skills/alpha/references/deep.md" "$sb/plugin/skills/alpha/references/renamed.md"
+
+  _hook "$sb" || return 1
+  f=$(_artifact "$sb")
+  [ "$(jq -r '.skills.alpha.sha256' "$f")" = "unresolved" ] || {
+    echo "  alpha should be unresolved when its reference is gone"
+    return 1
+  }
+  jq -e '.skills.alpha.missing | index("plugin:skills/alpha/references/deep.md")' "$f" >/dev/null 2>&1 || {
+    echo "  the missing reference is not listed in alpha.missing"
+    return 1
+  }
+  return 0
+}
+
+test_reference_with_prefix_typo_is_unresolved() {
+  local sb
+  sb=$(_sandbox)
+  _add_reference "$sb"
+  _edit_table "$sb" '.prompt_manifests.alpha.files[1] = "plugn:skills/alpha/references/deep.md"'
+
+  _hook "$sb" || return 1
+  [ "$(_sha "$sb" alpha)" = "unresolved" ] || {
+    echo "  a reference label with a prefix typo must not be dropped from the hash"
+    return 1
+  }
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # 5.8 — the hook can never block a session
 # ---------------------------------------------------------------------------
 
@@ -643,6 +745,10 @@ _run "reordered manifest changes the fingerprint" test_reordered_manifest_change
 _run "missing manifest file yields unresolved" test_missing_manifest_file_is_unresolved
 _run "other skills unaffected by one missing file" test_other_skills_unaffected_by_missing_file
 _run "unknown label prefix yields unresolved" test_unknown_label_prefix_is_unresolved
+_run "reference entry is hashed in manifest order" test_reference_entry_is_hashed_in_manifest_order
+_run "edited reference changes only its skill" test_edited_reference_changes_only_its_skill
+_run "missing reference yields unresolved" test_missing_reference_is_unresolved
+_run "reference label with a prefix typo yields unresolved" test_reference_with_prefix_typo_is_unresolved
 _run "unset CLAUDE_PLUGIN_ROOT exits clean" test_unset_plugin_root_exits_clean
 _run "malformed dispatch table exits clean" test_malformed_table_exits_clean
 _run "missing dispatch table exits clean" test_missing_table_exits_clean

@@ -30,22 +30,23 @@ expect() {
 
 FF=fleet-controller/lib/tests/test-fleet-features.sh
 DD=ticket-auto-pipeline/lib/tests/test-diagram-drift.sh
+SR=ticket-auto-pipeline/lib/tests/test-skill-references.sh
 TC=ticket-auto-pipeline/lib/tests/test-ticket-create.sh
 
 echo "=== one changed path ==="
 expect "knowledge-curator: itself plus the every-plugin scans" \
-  "$FF knowledge-curator/ $DD" knowledge-curator/lib/kc-item.sh
+  "$FF knowledge-curator/ $DD $SR" knowledge-curator/lib/kc-item.sh
 expect "grill-me: itself, ticket-planner and the scans" \
-  "$FF grill-me/ $DD ticket-planner/" grill-me/lib/grill-seal.sh
+  "$FF grill-me/ $DD $SR ticket-planner/" grill-me/lib/grill-seal.sh
 expect "ticket-planner: itself, test-ticket-create.sh and the scans" \
-  "$FF $DD $TC ticket-planner/" ticket-planner/lib/planner-state.sh
+  "$FF $DD $SR $TC ticket-planner/" ticket-planner/lib/planner-state.sh
 expect "fleet-controller: itself, ticket-auto, ticket-planner, scripts" \
   "fleet-controller/ scripts/ ticket-auto-pipeline/ ticket-planner/" fleet-controller/fleetd/supervisor.py
 expect "ticket-auto-pipeline: everything but knowledge-curator" \
   "fleet-controller/ grill-me/ scripts/ ticket-auto-pipeline/ ticket-planner/" \
   ticket-auto-pipeline/lib/linear-api.sh
 expect "a plugin doc counts as the plugin (tests read docs)" \
-  "$FF $DD $TC ticket-planner/" ticket-planner/skills/ticket-planner/SKILL.md
+  "$FF $DD $SR $TC ticket-planner/" ticket-planner/skills/ticket-planner/SKILL.md
 expect "root notes (CHANGELOG.md) run nothing" none CHANGELOG.md
 expect "root notes (next.md) run nothing" none next.md
 for p in README.md CLAUDE.md .github/workflows/test.yml scripts/run-tests.sh Makefile \
@@ -56,9 +57,9 @@ expect "a file named like a plugin at the root runs everything" all ticket-plann
 
 echo "=== several changed paths ==="
 expect "notes plus a plugin: the plugin's selection" \
-  "$FF knowledge-curator/ $DD" CHANGELOG.md next.md knowledge-curator/test/test-kc-item.sh
+  "$FF knowledge-curator/ $DD $SR" CHANGELOG.md next.md knowledge-curator/test/test-kc-item.sh
 expect "two plugins: the union" \
-  "$FF grill-me/ knowledge-curator/ $DD ticket-planner/" knowledge-curator/x grill-me/y
+  "$FF grill-me/ knowledge-curator/ $DD $SR ticket-planner/" knowledge-curator/x grill-me/y
 expect "a plugin plus scripts/: everything" all knowledge-curator/x scripts/select-tests.sh
 expect "ticket-auto plus knowledge-curator: every group, said as all" all \
   ticket-auto-pipeline/lib/a.sh knowledge-curator/b
@@ -71,7 +72,7 @@ got=$(printf '\n\n' | bash "$SEL" 2>/dev/null)
 [ "$got" = all ] && ok "blank lines only run everything" || bad "blank lines gave [$got]"
 printf 'grill-me/a\nnext.md\n' >"$TMP/changed.txt"
 got=$(bash "$SEL" --files "$TMP/changed.txt" 2>"$TMP/why.txt")
-[ "$got" = "$FF grill-me/ $DD ticket-planner/" ] && ok "--files FILE reads the list" || bad "--files gave [$got]"
+[ "$got" = "$FF grill-me/ $DD $SR ticket-planner/" ] && ok "--files FILE reads the list" || bad "--files gave [$got]"
 grep -q "next.md -> no tests" "$TMP/why.txt" && grep -q "grill-me/a -> grill-me ticket-planner" "$TMP/why.txt" &&
   ok "the reason for each path goes to stderr" || bad "reasons: $(cat "$TMP/why.txt")"
 
@@ -101,7 +102,7 @@ mkdir -p "$R/knowledge-curator/lib" "$R/grill-me"
     git commit -qam two
 ) || bad "fixture repo setup failed"
 got=$(cd "$R" && bash "$SEL" --base HEAD~1 2>/dev/null)
-[ "$got" = "$FF knowledge-curator/ $DD" ] && ok "--base HEAD~1 selects the commit's plugin" || bad "--base gave [$got]"
+[ "$got" = "$FF knowledge-curator/ $DD $SR" ] && ok "--base HEAD~1 selects the commit's plugin" || bad "--base gave [$got]"
 (cd "$R" && bash "$SEL" --base no-such-ref >/dev/null 2>&1)
 [ $? -eq 2 ] && ok "a bad --base ref exits 2 (the caller runs everything)" || bad "bad ref did not exit 2"
 
@@ -110,7 +111,7 @@ plugins_script=$(sed -n 's/^PLUGINS=(\(.*\))$/\1/p' "$SEL" | tr ' ' '\n' | sort)
 plugins_disk=$(cd "$ROOT" && for d in */.claude-plugin/plugin.json; do echo "${d%%/*}"; done | sort)
 [ "$plugins_script" = "$plugins_disk" ] && ok "PLUGINS is every directory with a .claude-plugin/plugin.json" ||
   bad "PLUGINS [$(echo $plugins_script)] vs disk [$(echo $plugins_disk)]"
-for f in "$FF" "$DD" "$TC"; do
+for f in "$FF" "$DD" "$SR" "$TC"; do
   if [ -f "$ROOT/$f" ] && grep -qF "$f" "$ROOT/Makefile"; then
     ok "$f exists and is a Makefile test"
   else
@@ -154,10 +155,10 @@ for change in knowledge-curator/lib/kc-item.sh ticket-planner/lib/planner-state.
 done
 only=$(sel knowledge-curator/lib/kc-item.sh)
 if TEST_LOG_DIR="$TMP/real" bash "$RUNNER" --list --only "$only" "${targets[@]}" 2>/dev/null |
-  grep -vqE "knowledge-curator/|$FF|$DD"; then
+  grep -vqE "knowledge-curator/|$FF|$DD|$SR"; then
   bad "a knowledge-curator change selected another plugin's tests"
 else
-  ok "a knowledge-curator change selects nothing else but the two scans"
+  ok "a knowledge-curator change selects nothing else but the every-plugin scans"
 fi
 grep -q "test-select-tests.sh" "$TMP/all.txt" && ok "this test is a Makefile test" || bad "test-select-tests.sh unregistered"
 
