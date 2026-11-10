@@ -42,7 +42,7 @@ Event catalogue: [pipeline-heartbeat-format.md](../../pipeline-heartbeat-format.
 - after the verdict: `decision "verification-verdict" "fired" "PASS|FAIL" '{"verdict":"PASS|FAIL","criteria_met":"N","criteria_total":"M"}'`
 
 ### Step dispatch
-**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1. Any resume past Step 1.6 (`build-plan`, or a 4c/4c-live `execute-steps` re-entry) first runs the 1.6a3 lock block unless this run skips 1.6; a dead attempt's orphaned lock for this ticket is taken over.
+**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1. Any resume past Step 1.6 (`build-plan`, or a 4c/4c-live `execute-steps` re-entry) first takes the lock alone (Step 1.6a3, `verify-env-up.sh lock`) unless this run skips 1.6; a dead attempt's orphaned lock for this ticket is taken over.
 
 | `--from-step` value | Effective skip to | Restore from |
 |---------------------|-------------------|--------------|
@@ -252,98 +252,33 @@ here. With no candidate (the common case), go to Step 1.6a3.
 
 ### 1.6a3 — Acquire the single-flight verify lock
 
-Only one verify app stack is ever up at a time; a concurrent request queues:
+Only one verify app stack is ever up at a time; a concurrent request queues. One call takes the lock and then runs Steps 1.6a4 to 1.6c in order. Give it a long Bash timeout: `env-start.sh` blocks until the stack is up.
 
 ```bash
-source "$HOME/.claude/skills/lib/verify-lock.sh"
-
-if ! verify_lock_acquire "{TICKET-ID}"; then
-  bash ~/.claude/skills/lib/plog.sh VERIFY verify-lock fail "timed out waiting for the app-stack lock"
-  echo "ticket-verify: could not acquire the single-flight verify lock — see the diagnostic above for who currently holds it. Retry later." >&2
-  exit 1
-fi
-bash ~/.claude/skills/lib/plog.sh VERIFY verify-lock done "acquired"
+bash ~/.claude/skills/lib/verify-env-up.sh up "{TICKET-ID}" --branch "{branch}" --services "{services}" --tickets-root "{TICKETS_ROOT}" --local-url "{LOCAL_URL}"
 ```
 
-Timeouts and the crash backstop live in `lib/verify-lock.sh`. **Release the lock on every exit path**: first action of Step 5, and at every earlier exit — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, Step 1.6d's seeder-precheck failure (the helper releases it), Step 1.7a's "no test user found" SKIP exit, and Step 7 (Steps 3b/4 reach it without Step 5). `verify_lock_release` is idempotent.
+`{branch}` is the ticket's branch (notes.md's pre-implementation-checkpoint `Worktree:`/branch entry, or `branch-resolve.sh`'s `BRANCH_CONTEXT_RESULT`). `{services}` is the 1.6a list, empty when 1.6a found none or the ticket dir is missing. Exit 0: the stack is up, serves this ticket's code and holds its seed data, and the lock stays held for the criteria. **Any non-zero exit: stop here.** The script has logged why and released the lock: exit 1 is a lock timeout (`verify-lock|fail`) or one of the gate-stops below; any other code is `env-start.sh`'s own failure, so abort with its error and do not proceed to the browser.
+
+On a resume past Step 1.6 (see Step dispatch), take the lock alone: `bash ~/.claude/skills/lib/verify-env-up.sh lock "{TICKET-ID}"` (exit 1: timed out; stop).
+
+Timeouts and the crash backstop live in `lib/verify-lock.sh`. **Release the lock on every exit path.** `up` releases it itself on every failure and on SIGTERM/SIGINT/SIGHUP. After it succeeds, release it as the first action of Step 5, and at every earlier exit — Step 1.6d's seeder-precheck failure (the helper releases it), Step 1.7a's "no test user found" SKIP exit, and Step 7 (Steps 3b/4 reach it without Step 5). `verify_lock_release` is idempotent.
 
 ### 1.6a4 — Resolve isolated worktrees for affected repos
 
-With the lock held, resolve/resync this run's own worktree per affected repo (destructive on reuse), so the stack serves this ticket's branch rather than whatever the shared clone holds. `{branch}` is the ticket's branch (notes.md's pre-implementation-checkpoint `Worktree:`/branch entry, or `branch-resolve.sh`'s `BRANCH_CONTEXT_RESULT`); `{services}` is the 1.6a list, left empty when 1.6a found none (the script then uses every git repo directly under `REPOS_ROOT`, as `env-start.sh` does):
-
-```bash
-bash ~/.claude/skills/lib/verify-env-up.sh worktrees "{TICKET-ID}" --branch "{branch}" --services "{services}" --tickets-root "{TICKETS_ROOT}"
-```
-
-Exit 1: a `VERIFY_WORKTREE_FAILED` gate-stop (REPOS_ROOT unresolved, or a repo's worktree could not be prepared) is logged and the lock released; stop. Otherwise it logs `worktree-setup|done` (with a `VERIFY_WORKTREE_NONE` gate-warn when no service is a git repo), and a `verify-worktree-unwired` warn when `env-start.sh` never reads `VERIFY_REPO_PATH_*` (branch isolation is then partial; Step 1.6b's served-checkout check decides). Each worktree path is `VERIFY_REPO_PATH_<SERVICE>` (e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`), which **Step 1.6b re-derives with `verify_worktree_exports` in the shell that runs `env-start.sh`**.
+Under the lock, `up` resolves or resyncs this run's own worktree per affected repo (destructive on reuse), so the stack serves this ticket's branch rather than whatever the shared clone holds. With no `{services}` it uses every git repo directly under `REPOS_ROOT`, as `env-start.sh` does. An unresolved `REPOS_ROOT` or a worktree that cannot be prepared is a `VERIFY_WORKTREE_FAILED` gate-stop. No git repo among the services is a `VERIFY_WORKTREE_NONE` gate-warn. An `env-start.sh` that never reads `VERIFY_REPO_PATH_*` gets a `verify-worktree-unwired` warn: branch isolation is then partial, and the served-checkout check decides.
 
 ### 1.6b — Run env-start.sh (BE + FE)
 
-Always start all services including the gateway FE. `env-start.sh` skips anything already running. Every invocation runs in **one** bash block together with `verify_env_init` and `verify_worktree_exports`, which re-export `REPOS_ROOT`, `VERIFY_TICKET_ID` and each `VERIFY_REPO_PATH_<REPO>` from 1.6a4 — a separate block would start `env-start.sh` without them (shell state does not carry over between blocks), and it would serve the primary checkout. `verify_env_init` comes first because `verify_worktree_exports` derives every path from `REPOS_ROOT`: with it unset, the exports come out empty.
+`up` then runs `env-start.sh` with `VERIFY_TICKET_ID` and each worktree's `VERIFY_REPO_PATH_<REPO>` (e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`) exported: `--restart {services} gateway-fe` when 1.6a found services, otherwise everything. `env-start.sh` skips anything already running.
 
 **env-start.sh contract** (implemented in the consuming workspace, not this plugin): when `VERIFY_REPO_PATH_<REPO>` is set, build and serve that repo from that path instead of `REPOS_ROOT/<repo>` (every path the script derives from the repo dir, such as a worker dir or an env file, follows it), and restart a service that is already running from a different directory rather than skipping it. Optionally, `env-status.sh` can show which checkout each port serves with `bash "$HOME/.claude/skills/lib/verify-worktree.sh" served <port>...`.
 
-If no specific affected services were detected in 1.6a (or ticket dir missing):
-
-```bash
-source "$HOME/.claude/skills/lib/verify-worktree.sh"
-verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
-eval "$(verify_worktree_exports "{TICKET-ID}")"
-bash {TICKETS_ROOT}/env-start.sh
-```
-
-If specific affected services were detected and the ticket dir exists, restart only those plus the FE:
-
-```bash
-source "$HOME/.claude/skills/lib/verify-worktree.sh"
-verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
-eval "$(verify_worktree_exports "{TICKET-ID}")"
-bash {TICKETS_ROOT}/env-start.sh --restart {affected-services} gateway-fe
-```
-
-Block until the script exits. If it exits non-zero, release the verify lock and abort ticket-verify with the script's error — do not proceed to browser:
-
-```bash
-source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
-verify_lock_release
-```
-
-**Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from, so a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, compare the checkout behind `LOCAL_URL`'s port, and every port in the project's optional `VERIFY_SERVED_PORTS` CLAUDE.md field, with this ticket's verify worktrees. Run this for `live-backend` mode too:
-
-```bash
-bash ~/.claude/skills/lib/verify-env-up.sh served-check "{TICKET-ID}" --local-url "{LOCAL_URL}"
-```
-
-Exit 0: continue — the port serves this ticket's code (`served-worktree|done`), or the check could not decide and logged a visible `VERIFY_SERVED_UNVERIFIED` gate-warn (no worktree to compare, an unreadable or container-served port). Exit 1: the script wrote a gate-stop (`VERIFY_SERVED_WRONG_WORKTREE`: a port serves a different commit or a dirty checkout of a repo under test), printed how to recover and released the lock; stop. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades the wrong-worktree stop to a gate-warn; `VERIFY_SERVED_WORKTREE_STRICT=true` turns every undecided case into a `VERIFY_SERVED_UNVERIFIED` gate-stop.
+**Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from, so a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, `up` compares the checkout behind `LOCAL_URL`'s port, and every port in the project's optional `VERIFY_SERVED_PORTS` CLAUDE.md field, with this ticket's verify worktrees (`verify-env-up.sh served-check`, also in `live-backend` mode). This ticket's code (`served-worktree|done`) continues. An undecided port (no worktree to compare, an unreadable or container-served port) is a visible `VERIFY_SERVED_UNVERIFIED` gate-warn and continues. A port serving a different commit or a dirty checkout of a repo under test is a `VERIFY_SERVED_WRONG_WORKTREE` gate-stop with recovery steps. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades that stop to a gate-warn; `VERIFY_SERVED_WORKTREE_STRICT=true` turns every undecided case into a `VERIFY_SERVED_UNVERIFIED` gate-stop.
 
 ### 1.6c — Apply seeds from merged test-data blockers
 
-Before any acceptance testing, load the data this ticket's merged test-data (TD) blockers provide. `lib/seed-apply.sh` owns the rules (which blockers count, the `make <target>` command check, its log lines). Run it in `browser` and `live-backend` modes:
-
-```bash
-source "$HOME/.claude/skills/lib/verify-worktree.sh"
-source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
-source "$HOME/.claude/skills/lib/events.sh" 2>/dev/null || true
-source "$HOME/.claude/skills/lib/seed-apply.sh"
-verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
-# The seed runs in this ticket's verify worktree: the first (sorted) one
-# 1.6a4 created, else REPOS_ROOT itself when no worktree exists.
-_seed_wt=$(ls -d "${REPOS_ROOT}"/.verify-worktrees/*/"{TICKET-ID}" 2>/dev/null | sort | head -1)
-[ -n "$_seed_wt" ] || _seed_wt="$REPOS_ROOT"
-_seed_rc=0
-seed_apply "{TICKET-ID}" "$_seed_wt" || _seed_rc=$?
-if [ "$_seed_rc" -ne 0 ]; then
-  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_SEED_FAILED — ${SEED_APPLY_MSG}"
-  if declare -f emit_event >/dev/null 2>&1; then
-    emit_event "{TICKET-ID}" gate-held "$(jq -nc --arg r "VERIFY_SEED_FAILED — ${SEED_APPLY_MSG}" '{reason: $r}')" 2>/dev/null || true
-  fi
-  echo "ticket-verify: test data could not be loaded — ${SEED_APPLY_MSG}" >&2
-  verify_lock_release
-  exit 1
-fi
-```
-
-On a non-zero exit, **stop here** (the block has written the `VERIFY_SEED_FAILED` gate-stop, emitted `gate-held` and released the lock). Do not run acceptance testing, and do not write a verify FAIL or a `REMEDIATION_BRIEF`: the fix belongs in the TD ticket's seed target, not this ticket's code. `skip` (no TD blockers) is normal; continue.
+Last, `up` loads the data this ticket's merged test-data (TD) blockers provide, in the first verify worktree (else `REPOS_ROOT`). `lib/seed-apply.sh` owns the rules (which blockers count, the `make <target>` command check, its log lines). `skip` (no TD blockers) is normal. A failure is a `VERIFY_SEED_FAILED` gate-stop plus a `gate-held` event: **stop here**, and do not write a verify FAIL or a `REMEDIATION_BRIEF` — the fix belongs in the TD ticket's seed target, not this ticket's code.
 
 ### 1.6d — Seeder precheck (#601)
 

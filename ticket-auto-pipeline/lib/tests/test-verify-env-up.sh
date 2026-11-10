@@ -44,7 +44,31 @@ if [ -n "${STUB_SERVED_RC:-}" ]; then
   }
 fi
 STUB
+  cat >>"$WS/lib/seed-apply.sh" <<'STUB'
+if [ -n "${STUB_SEED_RC:-}" ]; then
+  seed_apply() {
+    SEED_APPLY_MSG="${STUB_SEED_MSG:-}"
+    return "$STUB_SEED_RC"
+  }
+fi
+STUB
   ln -s "$WS/lib" "$WS/home/.claude/skills/lib"
+  mkdir -p "$WS/home/.claude/skills/ticket-flow" "$WS/tickets"
+  cp "$VE_LIB_DIR/../skills/ticket-flow/workflow.json" "$WS/home/.claude/skills/ticket-flow/"
+  export FLEET_PIPELINE_LOG_DIR="$WS/logs"
+  # env-start.sh stub: records its args and the verify exports, sleeps
+  # STUB_ENVSTART_SLEEP, exits STUB_ENVSTART_RC.
+  cat >"$WS/tickets/env-start.sh" <<'STUB'
+#!/usr/bin/env bash
+# reads VERIFY_REPO_PATH_*
+{
+  echo "args: $*"
+  env | grep -E '^(VERIFY_TICKET_ID|VERIFY_REPO_PATH_)' | sort
+} >>"${STUB_CALLS:-/dev/null}"
+[ -n "${STUB_ENVSTART_SLEEP:-}" ] && sleep "$STUB_ENVSTART_SLEEP"
+exit "${STUB_ENVSTART_RC:-0}"
+STUB
+  export STUB_CALLS="$WS/env-start.calls"
   export HOME="$WS/home" TICKET_TMP_DIR="$WS/scratch" CLAUDE_SKILLS_LIB="$WS/lib"
   export VERIFY_LOCK_FILE="$WS/scratch/ticket-verify.lock" VERIFY_LOCK_TIMEOUT_SECS=5 VERIFY_LOCK_OWNER_PID=$$
   export TAP_LOG="$WS/logs/$TID-pipeline.log"
@@ -101,7 +125,6 @@ _mk_repo() { # name: a repo under $WS/repos with $VE_BRANCH pushed to its origin
 # script's extra flags) and WT_BRANCH.
 _wt_case() {
   WT_BRANCH="$VE_BRANCH" WT_ARGS=() WT_SERVICES=""
-  mkdir -p "$WS/tickets"
   printf '#!/bin/sh\necho start\n' >"$WS/tickets/env-start.sh"
   case "$1" in
   wt_two)
@@ -139,6 +162,28 @@ _wt_case() {
     ;;
   esac
 }
+
+# up cases (stage 3). Sets UP_SERVICES and the stub env.
+VE_UP_CASES="up_ok_all up_ok_services up_envstart_fail up_served_wrong up_seed_fail up_lock_busy"
+_up_case() {
+  UP_SERVICES=""
+  _mk_repo svc-a
+  _mk_repo svc-b
+  export STUB_SERVED_RC=0 STUB_SERVED_MSG='port 3000: ok' STUB_PORTS=3000
+  case "$1" in
+  up_ok_services) UP_SERVICES="svc-a" ;;
+  up_envstart_fail) export STUB_ENVSTART_RC=7 ;;
+  up_served_wrong) export STUB_SERVED_RC=1 STUB_SERVED_MSG='port 3000: other checkout' ;;
+  up_seed_fail) export STUB_SEED_RC=1 STUB_SEED_MSG='T-3: make seed-demo exited 2' ;;
+  up_lock_busy)
+    (VERIFY_LOCK_OWNER_PID=$$ source "$WS/lib/verify-lock.sh" && verify_lock_acquire T-9 5) >/dev/null 2>&1
+    export VERIFY_LOCK_TIMEOUT_SECS=1
+    ;;
+  esac
+}
+_up_unenv() { unset STUB_SERVED_RC STUB_SERVED_MSG STUB_PORTS STUB_ENVSTART_RC STUB_SEED_RC STUB_SEED_MSG STUB_ENVSTART_SLEEP; }
+_lock_ticket() { sed -n 's/^ticket=//p' "$VERIFY_LOCK_FILE.info" 2>/dev/null || true; }
+_outbox() { jq -c '[.event, .data.reason]' "$WS/logs/$TID-outbox.jsonl" 2>/dev/null || true; }
 
 _sv_unenv() { unset STUB_SERVED_RC STUB_SERVED_MSG STUB_PORTS VERIFY_SERVED_WORKTREE_ENFORCE VERIFY_SERVED_WORKTREE_STRICT; }
 
@@ -200,6 +245,68 @@ for c in $VE_WT_CASES; do
   _ws_rm
 done
 
+echo "=== stage 3: up parity with Steps 1.6a3 to 1.6c ==="
+for c in $VE_UP_CASES; do
+  _ws_new
+  _up_case "$c"
+  rc=0
+  (cd "$WS" && bash "$VEU" up "$TID" --branch "$VE_BRANCH" --services "$UP_SERVICES" --tickets-root "$WS/tickets" --local-url "http://localhost:3000") 2>"$WS/err" || rc=$?
+  _up_unenv
+  _same "$c: log" "$(cat "$VE_FX/$c.log")" "$(_mask <"$TAP_LOG")"
+  _same "$c: exit" "$(cat "$VE_FX/$c.rc")" "$rc"
+  _same "$c: lock holder" "$(cat "$VE_FX/$c.lock")" "$(_lock_ticket)"
+  calls=""
+  [ -f "$STUB_CALLS" ] && calls=$(_mask <"$STUB_CALLS")
+  _same "$c: env-start calls" "$(cat "$VE_FX/$c.calls")" "$calls"
+  _same "$c: outbox" "$(cat "$VE_FX/$c.outbox")" "$(_outbox)"
+  _ws_rm
+done
+
+echo "=== stage 3: the lock is released on every exit path ==="
+# SIGTERM while env-start.sh runs: the trap releases the lock and stops the child.
+_ws_new
+_up_case up_ok_all
+export STUB_ENVSTART_SLEEP=30
+(cd "$WS" && exec bash "$VEU" up "$TID" --branch "$VE_BRANCH" --tickets-root "$WS/tickets" --local-url "http://localhost:3000") 2>/dev/null &
+pid=$!
+for _ in $(seq 1 100); do
+  [ -s "$STUB_CALLS" ] && break
+  sleep 0.1
+done
+[ "$(_lock_ticket)" = "$TID" ] && _ok "mid-run: lock held while env-start.sh runs" || _ko "mid-run: lock not held"
+kill -TERM "$pid"
+rc=0
+wait "$pid" || rc=$?
+_up_unenv
+_same "SIGTERM mid-run -> exit 143" 143 "$rc"
+sleep 1
+_lock_held && _ko "SIGTERM mid-run: lock still held" || _ok "SIGTERM mid-run: lock released"
+pgrep -f "sleep 30" >/dev/null 2>&1 && pgrep -f "$WS/tickets/env-start.sh" >/dev/null 2>&1 &&
+  _ko "SIGTERM mid-run: env-start.sh child left running" || _ok "SIGTERM mid-run: env-start.sh child stopped"
+_ws_rm
+
+# SIGTERM while waiting for another ticket's lock: that lock is never touched.
+_ws_new
+(VERIFY_LOCK_OWNER_PID=$$ source "$WS/lib/verify-lock.sh" && verify_lock_acquire T-9 5) >/dev/null 2>&1
+export VERIFY_LOCK_TIMEOUT_SECS=30
+(cd "$WS" && exec bash "$VEU" up "$TID" --branch "$VE_BRANCH" --tickets-root "$WS/tickets" --local-url "http://localhost:3000") 2>/dev/null &
+pid=$!
+sleep 2
+kill -TERM "$pid"
+wait "$pid" || true
+_same "SIGTERM while queued: the other ticket keeps its lock" T-9 "$(_lock_ticket)"
+[ ! -s "$STUB_CALLS" ] && [ ! -d "$WS/repos/.verify-worktrees" ] &&
+  _ok "SIGTERM while queued: no worktree resync, no env-start before the lock" || _ko "work done before the lock"
+_ws_rm
+
+# lock alone (resume past Step 1.6).
+_ws_new
+rc=0
+(cd "$WS" && bash "$VEU" lock "$TID") 2>/dev/null || rc=$?
+_same "lock: acquires and logs" "0|TS|VERIFY|verify-lock|done|acquired" "$rc|$(_mask <"$TAP_LOG")"
+_same "lock: still held after the call returns" "$TID" "$(_lock_ticket)"
+_ws_rm
+
 echo "=== usage ==="
 _ws_new
 rc=0
@@ -211,6 +318,9 @@ _same "unknown subcommand -> exit 2" 2 "$rc"
 rc=0
 bash "$VEU" worktrees "$TID" >/dev/null 2>&1 || rc=$?
 _same "worktrees without --branch -> exit 2" 2 "$rc"
+rc=0
+bash "$VEU" up "$TID" --branch b >/dev/null 2>&1 || rc=$?
+_same "up without --tickets-root -> exit 2" 2 "$rc"
 _ws_rm
 
 echo ""

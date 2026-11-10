@@ -1,0 +1,4 @@
+args: 
+VERIFY_REPO_PATH_SVC_A=$WS/repos/.verify-worktrees/svc-a/T-4
+VERIFY_REPO_PATH_SVC_B=$WS/repos/.verify-worktrees/svc-b/T-4
+VERIFY_TICKET_ID=T-4

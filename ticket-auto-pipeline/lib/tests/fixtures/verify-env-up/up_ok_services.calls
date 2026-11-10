@@ -1,0 +1,3 @@
+args: --restart svc-a gateway-fe
+VERIFY_REPO_PATH_SVC_A=$WS/repos/.verify-worktrees/svc-a/T-4
+VERIFY_TICKET_ID=T-4

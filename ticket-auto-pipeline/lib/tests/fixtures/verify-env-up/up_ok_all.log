@@ -1,0 +1,5 @@
+TS|VERIFY|verify-lock|done|acquired
+TS|VERIFY|worktree-setup|done|2 worktree(s) ready for feat/T-4-fix
+TS|VERIFY|served-worktree|done|port 3000: ok
+TS|VERIFY|seed-apply|start|0 blockers
+TS|VERIFY|seed-apply|skip|no test-data blockers with a Seed command
