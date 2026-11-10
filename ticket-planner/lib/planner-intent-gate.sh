@@ -14,6 +14,8 @@
 #                                           empty fields
 #   planner_intent_brief <path>  → the sealed `## Original Brief`, verbatim
 #                                  (grill-me 0.4.0+); exit 1 when absent
+#   planner_intent_idea <path>   → the state log idea line (## Objective,
+#                                  joined; the path when absent)
 #   planner_intent_capture_brief <path> <state_dir>
 #                                → writes the brief to artifacts/idea.txt;
 #                                  prints PLANNER_INTENT_BRIEF=captured|absent
@@ -342,3 +344,23 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   fi
   planner_intent_gate "$1"
 fi
+
+# ── planner_intent_idea ───────────────────────────────────────────────────────
+# Usage: planner_intent_idea <path-to-intent-file>
+#
+# Prints the state log's idea line for an accepted intent (plan-mode step 3):
+# every line between `## Objective` and the next `## ` heading, blank lines
+# dropped, joined with spaces, truncated to PLANNER_IDEA_MAX_LENGTH (default
+# 2000). The `_None specified_` placeholder or a missing section falls back to
+# the path. Phase agents read the whole document (artifacts/intent.md); this is
+# only the idea line. The fallback is an empty-string check, never a pipeline's
+# exit status: awk/sed exit 0 even when they match nothing.
+# ──────────────────────────────────────────────────────────────────────────────
+planner_intent_idea() {
+  local path="${1:-}" idea
+  idea=$(awk '/^## Objective$/{f=1;next}/^## /{f=0}f' "$path" 2>/dev/null |
+    sed '/^[[:space:]]*$/d' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+  if [ "$idea" = "_None specified_" ]; then idea=""; fi
+  idea="${idea:-$path}"
+  printf '%s\n' "${idea:0:${PLANNER_IDEA_MAX_LENGTH:-2000}}"
+}

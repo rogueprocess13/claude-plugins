@@ -10,7 +10,7 @@
 # The braced forms (`${1}`, `${1:-}`, `${1#*=}`) are not substituted.
 #
 # Test 1 lints every SKILL.md and commands/*.md in the repo for a bare token.
-# Test 2 renders ticket-planner's flag loop the way the loader does and runs it.
+# Test 2 renders ticket-planner's flag-parse call the way the loader does and runs it.
 #
 # Run: bash ticket-planner/lib/tests/test-skill-arg-substitution.sh
 
@@ -57,33 +57,40 @@ else
   fi
 fi
 
-# ── Test 2: the rendered planner flag loop parses its flags ─────────────────────
+# ── Test 2: the rendered planner flag call parses its flags ────────────────────
+#
+# The flag loop lives in lib/planner-invocation.sh since skill-deterministic-
+# extraction 1, out of the loader's reach. What the skill still carries is the
+# call line: render it the way the loader does, then run it against the lib.
 
-echo "--- Test 2: rendered flag loop parses resume <ID> --create ---"
+echo "--- Test 2: rendered planner_flags_parse call parses resume <ID> --create ---"
 
-loop=$(awk '/^while \[ "\$#" -gt 0 \]; do$/ {p = 1} p {print} p && /^done$/ {exit}' "$PLANNER_SKILL")
-if [ -z "$loop" ]; then
-  fail "flag loop extraction" "no 'while [ \"\$#\" -gt 0 ]' loop in step 2a of SKILL.md"
+if grep -qE '^while \[ "\$#" -gt 0 \]; do$' "$PLANNER_SKILL"; then
+  fail "flag loop location" "SKILL.md carries an inline flag loop again — it belongs in lib/planner-invocation.sh"
+fi
+call=$(grep -m1 '^planner_flags_parse ' "$PLANNER_SKILL" || true)
+if [ -z "$call" ]; then
+  fail "flag call extraction" "no 'planner_flags_parse' call in step 2a of SKILL.md"
 else
   # Emulate the loader for `/ticket-planner resume INIT-1-2 --create --until Review`:
   # every bare $N becomes the Nth (0-based) invocation argument.
-  rendered=$(printf '%s\n' "$loop" | SKILL_ARGS="resume INIT-1-2 --create --until Review" \
+  rendered=$(printf '%s\n' "$call" | SKILL_ARGS="resume INIT-1-2 --create --until Review" \
     perl -pe 'BEGIN { @a = split / /, $ENV{SKILL_ARGS} } s/\$(\d+)(?!\w)/$a[$1] \/\/ ""/ge')
 
-  # Step 2 shifts the mode off, so the loop sees the remaining args.
-  got=$(RENDERED="$rendered" bash -c '
-    CREATE_FLAG=""; UNTIL_PHASE=""; SHARED_BRANCH_FLAG=""; NO_SHARED_BRANCH_FLAG=""
-    TEAM_REF=""; PROJECT_REF=""; NO_PROJECT_FLAG=""; MILESTONE_REF=""
-    REFRESH_BODIES_FLAG=""; ACCEPT_FLAGS=()
+  # Step 2 shifts the mode off, so the call sees the remaining args.
+  got=$(RENDERED="$rendered" LIB="${PLUGIN_ROOT}/lib" REPOS_ROOT="$(mktemp -d)" bash -c '
+    source "${LIB}/planner-state.sh"; source "${LIB}/planner-router.sh"
+    source "${LIB}/planner-invocation.sh"
+    MODE=resume
     set -- INIT-1-2 --create --until Review
     eval "$RENDERED"
     echo "${CREATE_FLAG}|${UNTIL_PHASE}"
   ' 2>&1 || true)
 
   if [ "$got" = "true|Review" ]; then
-    pass "rendered loop sets CREATE_FLAG=true and UNTIL_PHASE=Review"
+    pass "rendered call sets CREATE_FLAG=true and UNTIL_PHASE=Review"
   else
-    fail "rendered loop did not parse flags" "expected 'true|Review', got '${got}'"
+    fail "rendered call did not parse flags" "expected 'true|Review', got '${got}'"
   fi
 fi
 
