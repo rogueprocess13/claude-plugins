@@ -62,7 +62,19 @@ _invocations() {
     /\\[[:space:]]*$/ { sub(/\\[[:space:]]*$/, ""); buf = buf $0 " "; next }
     { print buf $0; buf = "" }
     END { if (buf != "") print buf }
-  ' "$1" | tr -d "\"'\`" | grep -E 'persona-select\.sh[[:space:]]+--repo' || true
+  ' "$@" | tr -d "\"'\`" | grep -E 'persona-select\.sh[[:space:]]+--repo' || true
+}
+
+# _skill_files <skill> — the skill's prompt text: SKILL.md, then any
+# references/*.md it reads behind a condition (skill-progressive-disclosure).
+# A selector call or PERSONA_DEBUG use moved into a reference still counts.
+_skill_files() {
+  local f
+  printf '%s\n' "$SKILLS_DIR/$1/SKILL.md"
+  for f in "$SKILLS_DIR/$1"/references/*.md; do
+    [ -f "$f" ] && printf '%s\n' "$f"
+  done
+  return 0
 }
 
 # _section / _section_ref (heading slices of SKILL.md and of a skill's
@@ -119,7 +131,7 @@ test_every_call_site_has_ticket_text_prefix() {
       if ! grep -qE 'TICKET_TEXT_FILE=[^[:space:]]*[[:space:]].*persona-select\.sh' <<<"$inv"; then
         bad="$bad\n  $skill: $inv"
       fi
-    done < <(_invocations "$md")
+    done < <(mapfile -t files < <(_skill_files "$skill") && _invocations "${files[@]}")
     [ "$count" -gt 0 ] || bad="$bad\n  $skill: no persona-select.sh --repo invocation found"
   done
   [ -z "$bad" ] || {
@@ -153,7 +165,7 @@ test_used_by_skills_invoke_the_selector() {
       md="$SKILLS_DIR/$skill/SKILL.md"
       if [ ! -f "$md" ]; then
         bad="$bad\n  $(basename "$persona") used-by $skill: no skills/$skill/SKILL.md"
-      elif [ -z "$(_invocations "$md")" ]; then
+      elif [ -z "$(mapfile -t files < <(_skill_files "$skill") && _invocations "${files[@]}")" ]; then
         bad="$bad\n  $(basename "$persona") used-by $skill: no persona-select.sh --repo invocation"
       fi
     done < <(_used_by "$persona")
@@ -183,7 +195,7 @@ test_used_by_parser_reads_every_base_persona() {
 test_debug_skills_reference_persona_debug() {
   local skill missing=""
   for skill in "${DEBUG_SKILLS[@]}"; do
-    grep -q 'PERSONA_DEBUG' "$SKILLS_DIR/$skill/SKILL.md" || missing="$missing $skill"
+    _skill_files "$skill" | xargs -d '\n' grep -q 'PERSONA_DEBUG' || missing="$missing $skill"
   done
   [ -z "$missing" ] || {
     echo "  PERSONA_DEBUG missing in:$missing"
@@ -195,7 +207,7 @@ test_no_persona_skills_do_not_reference_persona_debug() {
   local skill leaked=""
   for skill in "${NO_PERSONA_SKILLS[@]}"; do
     [ -f "$SKILLS_DIR/$skill/SKILL.md" ] || continue
-    if grep -q 'PERSONA_DEBUG' "$SKILLS_DIR/$skill/SKILL.md"; then leaked="$leaked $skill"; fi
+    if _skill_files "$skill" | xargs -d '\n' grep -q 'PERSONA_DEBUG'; then leaked="$leaked $skill"; fi
   done
   [ -z "$leaked" ] || {
     echo "  PERSONA_DEBUG referenced in:$leaked"
@@ -257,13 +269,15 @@ test_implement_rework_section_has_debugger_rules() {
 }
 
 test_appraise_step3_writes_root_cause_hypothesis() {
-  local md="$SKILLS_DIR/ticket-appraise/SKILL.md" s25 s3 s3a
-  s25=$(_section "$md" '^## Step 2\.5' '^## Step 2\.6')
+  # Steps 2.5, 3 and 3-Agent live in the full-investigation reference
+  # (skill-progressive-disclosure group 2).
+  local ref="ticket-appraise/references/full-investigation.md" s25 s3 s3a
+  s25=$(_section_ref "$ref" '^## Step 2\.5' '^## Step 2\.6') || return 1
   grep -q -- '--ticket-dir "{TICKET-DIR}"' <<<"$s25" || {
     echo "  Step 2.5 does not pass --ticket-dir (which derives --type)"
     return 1
   }
-  s3=$(_section "$md" '^## Step 3 — ' '^## Step 3-Agent')
+  s3=$(_section_ref "$ref" '^## Step 3 — ' '^## Step 3-Agent') || return 1
   grep -qF '### Root cause hypothesis' <<<"$s3" || {
     echo "  Step 3 lacks ### Root cause hypothesis"
     return 1
@@ -272,7 +286,7 @@ test_appraise_step3_writes_root_cause_hypothesis() {
     echo "  Step 3 lacks 'would disprove'"
     return 1
   }
-  s3a=$(_section "$md" '^## Step 3-Agent' '^## Step 3\.5')
+  s3a=$(_section_ref "$ref" '^## Step 3-Agent') || return 1
   grep -qF 'Root cause hypothesis' <<<"$s3a" || {
     echo "  Step 3-Agent lacks Root cause hypothesis"
     return 1

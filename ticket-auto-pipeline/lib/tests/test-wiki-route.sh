@@ -105,9 +105,12 @@ mkdir -p "$TMP/ws2/api/.git"
 out=$(bash "$ROUTE" --mode repos --repos-root "$TMP/ws2" --ticket-desc "rapid change" 2>/dev/null || true)
 if grep -qx 'PRESCAN_ROUTE_COUNT=0' <<<"$out"; then ok "repo name matches whole words only"; else nok "repo name matches whole words only: $out"; fi
 
-# 10. the skill no longer counts ${#REPOS[@]}
+# 10. the skill no longer counts ${#REPOS[@]}. Step 3a.0b lives in the
+# full-investigation reference (skill-progressive-disclosure group 2), so the
+# wiki-route.sh call is looked for there and the count in both files.
 SKILL="$PLUGIN_DIR/skills/ticket-appraise/SKILL.md"
-if grep -qF '${#REPOS[@]}' "$SKILL" || ! grep -q 'wiki-route.sh' "$SKILL"; then
+REF="$PLUGIN_DIR/skills/ticket-appraise/references/full-investigation.md"
+if [ ! -f "$REF" ] || grep -qF '${#REPOS[@]}' "$SKILL" "$REF" || ! grep -q 'wiki-route.sh' "$REF"; then
   nok "ticket-appraise 3a.0b uses wiki-route.sh"
 else
   ok "ticket-appraise 3a.0b uses wiki-route.sh"

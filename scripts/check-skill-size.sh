@@ -31,7 +31,11 @@
 #   REF-DEAD / REF-CHAIN / REF-ARG   references/ and templates/ link rules (fail)
 #   REF-ORPHAN / REF-TOC             (warn)
 #   CONTEXT / CONTEXT-GROWTH         per-manifest byte totals from prompt_manifests,
-#                                    ratcheted in scripts/skill-context-baseline.tsv
+#                                    ratcheted in scripts/skill-context-baseline.tsv.
+#                                    references/ and templates/ entries are read only
+#                                    behind a condition, so they total separately as
+#                                    "<manifest>:conditional"; "<manifest>" is what a
+#                                    run that reads no reference carries
 #
 # Usage:
 #   check-skill-size.sh [--root DIR] [--baseline FILE] [--context-baseline FILE]
@@ -336,8 +340,16 @@ if [ -f "$TABLE" ]; then
       C_ORDER+=("$m")
     fi
     [ -n "$label" ] || continue
+    k="$m"
+    case "$label" in
+    plugin:skills/*/references/*.md | plugin:skills/*/templates/*.md) k="$m:conditional" ;;
+    esac
+    if [ -z "${C_ACTUAL[$k]+x}" ]; then
+      C_ACTUAL[$k]=0
+      C_ORDER+=("$k")
+    fi
     if path="$(_resolve_label "$plugin_dir" "$label")"; then
-      C_ACTUAL[$m]=$((C_ACTUAL[$m] + $(_bytes "$path")))
+      C_ACTUAL[$k]=$((C_ACTUAL[$k] + $(_bytes "$path")))
     else
       _warn "CONTEXT-WARN: $m unresolved $label"
     fi

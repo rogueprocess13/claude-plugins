@@ -1,10 +1,12 @@
 # ticket-appraise
 
-> Investigation planner for a Linear ticket. Fetches the issue, creates the local directory structure, runs a complexity sweep, searches prior art, and traces the full codebase call chain. Writes findings to notes.md. Use when the user says "appraise ticket <ID>", "/ticket-appraise <ID>", or "take on ticket <ID>". After this completes, run /ticket-appraise-exec to create artifacts and update Linear.
+> Investigation planner for a Linear ticket. Fetches the issue, creates the local directory structure, runs a complexity sweep, searches prior art, and traces the full codebase call chain. Supports fast-path for planned tickets (planned label + Planner Context block) — skips complexity sweep, prior art, and codebase investigation when planner metadata is available. Writes findings to notes.md. Use when the user says "appraise ticket {ID}", "/ticket-appraise {ID}", or "take on ticket {ID}". After this completes, run /ticket-appraise-exec to create artifacts and update Linear.
 
 ## What it does
 
 Investigates a Linear ticket end-to-end before any code is written. Sets up the local workspace via ticket-setup, scores complexity as a weighted sum of axes (multi-service and cross-layer weigh 2; reversibility, prior rejection and blast radius weigh 3; threshold 3), searches claude-mem and local tickets for prior art, runs a readiness critique, performs GitNexus blast-radius analysis, and traces the full codebase call chain. All findings are written to notes.md for the executor phase to consume.
+
+A planned ticket that passes the fast-path check (Step 1.3) takes its complexity, prior art and investigation surface from the Planner Context block and skips Steps 2, 2.5, 2.6 and 3. Those steps live in `skills/ticket-appraise/references/full-investigation.md`, which the agent reads only when fast-path is inactive, when the planner's `Exploration Depth` is `quick-scan`, or when it resumes into one of them. The Step 2.5 scoring rubric and the Open Questions tagging rule stay in SKILL.md because the fast path uses them.
 
 ## Trigger
 
@@ -41,11 +43,11 @@ flowchart TD
     A[Start: /ticket-appraise] --> B[Step 1: ticket-setup]
     B --> C{Workspace exists?}
     C -->|Yes| R[Resume mode]
-    C -->|No| D[Step 2: Expand notes.md]
+    C -->|No| FP{Step 1.3: fast-path?}
+    FP -->|eligible| H
+    FP -->|not eligible: read full-investigation reference| D[Step 2: Expand notes.md]
     D --> E[Step 2.5: Complexity sweep]
-    E --> F{Weighted score >= 3?}
-    F -->|No| G[Step 2.6: Prior-art search]
-    F -->|Yes| G
+    E --> G[Step 2.6: Prior-art search]
     G --> H[Step 2.7: Readiness critique]
     H --> I{BLOCKED?}
     I -->|Yes| STOP[Stop: needs-info]

@@ -530,6 +530,22 @@ test_context_growth_fails() {
   _run
   [ "$RC" -eq 1 ] && _has "CONTEXT-GROWTH: s1"
 }
+test_context_reference_totals_separately() {
+  _mk_repo
+  local base ref
+  base=$(($(wc -c <"$D/$S1") + $(wc -c <"$D/plugin-a/lib/skill-preamble-auto.md") + $(wc -c <"$D/plugin-a/doc.md")))
+  ref=$(wc -c <"$D/plugin-a/skills/s1/references/r.md")
+  sed -i 's#"plugin:skills/s1/SKILL.md",#"plugin:skills/s1/SKILL.md", "plugin:skills/s1/references/r.md",#' "$D/$TABLE_REL"
+  _run
+  # A conditional read is not always-loaded context: the plain total is
+  # unchanged, the reference appears under its own ratcheted key.
+  [ "$RC" -eq 0 ] && _has "CONTEXT: s1 $base" && _has "CONTEXT: s1:conditional $ref" || return 1
+  _regen >/dev/null 2>&1
+  grep -qxF "s1:conditional	$ref" "$(CBL)" || return 1
+  printf 'Reference grew.\n' >>"$D/plugin-a/skills/s1/references/r.md"
+  _run
+  [ "$RC" -eq 1 ] && _has "CONTEXT-GROWTH: s1:conditional"
+}
 test_context_removed_manifest_dropped() {
   _mk_repo
   printf '{"prompt_manifests": {}}\n' >"$D/$TABLE_REL"

@@ -286,6 +286,58 @@ test_unmanifested_plugin_needs_no_registration() {
   _check_references "$sb" >/dev/null
 }
 
+# ticket-appraise (group 2): the load condition covers every way into the
+# moved steps, and what the fast path needs stays in SKILL.md.
+test_appraise_full_investigation_condition() {
+  local md="$REPO_ROOT/ticket-auto-pipeline/skills/ticket-appraise/SKILL.md"
+  local rel="references/full-investigation.md" line tok h sec
+  # shellcheck source=skill-text.sh
+  source "$SCRIPT_DIR/skill-text.sh"
+  line=$(grep -F -- "$rel" "$md" | grep -F 'skill-ref.sh' | head -1)
+  [ -n "$line" ] || {
+    echo "  no conditional line for $rel"
+    return 1
+  }
+  for tok in 'FAST_PATH_ELIGIBLE=false' 'quick-scan' '--from-step' 'complexity-sweep' 'prior-art' \
+    'Resume mode' 'Read the printed path in full' 'reference-missing'; do
+    grep -qF -- "$tok" <<<"$line" || {
+      echo "  conditional line lacks: $tok"
+      return 1
+    }
+  done
+  # Each moved step keeps its heading over a stub naming the reference.
+  for h in '^## Step 2 — ' '^## Step 2\.5 ' '^## Step 2\.6 ' '^## Step 3 — ' '^## Step 3-Agent '; do
+    sec=$(_section "$md" "$h" '^## ')
+    grep -q "^Moved to \`$rel\`" <<<"$(sed 1d <<<"$sec")" || {
+      echo "  no stub under $h"
+      return 1
+    }
+  done
+  # Fast path reads these from SKILL.md alone: the Step 2.5 rubric (1.3c
+  # Reversibility judgement, 2.8 threshold) and the Step 2 tagging rule.
+  sec=$(_section "$md" '^## Step 2\.5 ' '^## Step 2\.6 ')
+  for tok in '| **Reversibility**' '**3 or more**' 'framework-migration'; do
+    grep -qF -- "$tok" <<<"$sec" || {
+      echo "  Step 2.5 rubric left SKILL.md: $tok"
+      return 1
+    }
+  done
+  sec=$(_section "$md" '^## Step 2 — ' '^## Step 2\.1 ')
+  grep -qF '**Open Questions tagging.**' <<<"$sec" || {
+    echo "  Step 2 tagging rule left SKILL.md"
+    return 1
+  }
+  # quick-scan and Resume mode name the reference where they act.
+  grep -F '| `quick-scan` |' "$md" | grep -qF -- "$rel" || {
+    echo "  quick-scan row does not name $rel"
+    return 1
+  }
+  _section "$md" '^## Resume mode' | grep -F 'Re-evaluate complexity' | grep -qF -- "$rel" || {
+    echo "  Resume mode step 6 does not name $rel"
+    return 1
+  }
+}
+
 test_shared_section_ref_helper() {
   local out
   # shellcheck source=skill-text.sh
