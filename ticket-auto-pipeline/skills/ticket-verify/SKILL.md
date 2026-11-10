@@ -269,59 +269,13 @@ Timeouts and the crash backstop live in `lib/verify-lock.sh`. **Release the lock
 
 ### 1.6a4 — Resolve isolated worktrees for affected repos
 
-With the lock held, resolve/resync this run's own worktree per affected repo (destructive on reuse), so the stack serves this ticket's branch rather than whatever the shared clone holds:
+With the lock held, resolve/resync this run's own worktree per affected repo (destructive on reuse), so the stack serves this ticket's branch rather than whatever the shared clone holds. `{branch}` is the ticket's branch (notes.md's pre-implementation-checkpoint `Worktree:`/branch entry, or `branch-resolve.sh`'s `BRANCH_CONTEXT_RESULT`); `{services}` is the 1.6a list, left empty when 1.6a found none (the script then uses every git repo directly under `REPOS_ROOT`, as `env-start.sh` does):
 
 ```bash
-source "$HOME/.claude/skills/lib/verify-worktree.sh"
-
-# This block is a fresh shell: REPOS_ROOT is resolved here, not inherited.
-# Unresolved, every repo below would be skipped and no worktree created — a
-# silent "worktrees ready" for a run that serves the primary checkout.
-verify_env_init "{TICKET-ID}" ./CLAUDE.md || {
-  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_WORKTREE_FAILED — REPOS_ROOT unresolved"
-  echo "ticket-verify: REPOS_ROOT could not be resolved — see stderr above." >&2
-  verify_lock_release
-  exit 1
-}
-
-_branch="{the ticket's branch — from notes.md's pre-implementation-checkpoint
-  'Worktree:'/branch entry, or branch-resolve.sh's BRANCH_CONTEXT_RESULT for
-  this ticket}"
-
-# Affected services from 1.6a; if 1.6a found none, use every repo directory
-# directly under REPOS_ROOT that has a .git (mirrors env-start.sh's own
-# "no specific services → everything" fallback).
-_verify_services="{affected services from 1.6a, or every REPOS_ROOT/*/.git repo}"
-
-_wt_count=0
-for _svc in $_verify_services; do
-  _repo_path="$REPOS_ROOT/$_svc"
-  [ -d "$_repo_path/.git" ] || continue
-  _wt=$(ensure_verify_worktree "{TICKET-ID}" "$_repo_path" "$_branch") || {
-    bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_WORKTREE_FAILED — $_svc @ $_branch"
-    echo "ticket-verify: could not prepare an isolated worktree for $_svc on branch $_branch — see stderr above." >&2
-    verify_lock_release
-    exit 1
-  }
-  export "$(verify_worktree_env_var "$_svc")=$_wt"
-  _wt_count=$((_wt_count + 1))
-done
-
-if [ "$_wt_count" -eq 0 ]; then
-  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_WORKTREE_NONE — none of '${_verify_services}' is a git repo under ${REPOS_ROOT}; the stack will serve whatever the primary checkouts hold"
-fi
-bash ~/.claude/skills/lib/plog.sh VERIFY worktree-setup done "${_wt_count} worktree(s) ready for ${_branch}"
+bash ~/.claude/skills/lib/verify-env-up.sh worktrees "{TICKET-ID}" --branch "{branch}" --services "{services}" --tickets-root "{TICKETS_ROOT}"
 ```
 
-Each path is exported as `VERIFY_REPO_PATH_<SERVICE>` (e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`), but only for this block's shell — **Step 1.6b re-derives the same values with `verify_worktree_exports` in the shell that runs `env-start.sh`**. `env-start.sh` lives in the consuming workspace, so check whether it reads them:
-
-```bash
-if ! grep -q "VERIFY_REPO_PATH" "{TICKETS_ROOT}/env-start.sh" 2>/dev/null; then
-  bash ~/.claude/skills/lib/plog.sh META verify-worktree-unwired warn "env-start.sh does not read VERIFY_REPO_PATH_* — branch isolation is partial (worktree checkout is correct; the running app stack may still build from the shared clone) until env-start.sh is updated to consume it"
-fi
-```
-
-The warning does not block; Step 1.6b's served-checkout check decides.
+Exit 1: a `VERIFY_WORKTREE_FAILED` gate-stop (REPOS_ROOT unresolved, or a repo's worktree could not be prepared) is logged and the lock released; stop. Otherwise it logs `worktree-setup|done` (with a `VERIFY_WORKTREE_NONE` gate-warn when no service is a git repo), and a `verify-worktree-unwired` warn when `env-start.sh` never reads `VERIFY_REPO_PATH_*` (branch isolation is then partial; Step 1.6b's served-checkout check decides). Each worktree path is `VERIFY_REPO_PATH_<SERVICE>` (e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`), which **Step 1.6b re-derives with `verify_worktree_exports` in the shell that runs `env-start.sh`**.
 
 ### 1.6b — Run env-start.sh (BE + FE)
 

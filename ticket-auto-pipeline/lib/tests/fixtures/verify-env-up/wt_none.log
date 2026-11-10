@@ -1,0 +1,3 @@
+TS|META|gate-warn|warn|VERIFY_WORKTREE_NONE — none of 'nope' is a git repo under $WS/repos; the stack will serve whatever the primary checkouts hold
+TS|VERIFY|worktree-setup|done|0 worktree(s) ready for feat/T-4-fix
+TS|META|verify-worktree-unwired|warn|env-start.sh does not read VERIFY_REPO_PATH_* — branch isolation is partial (worktree checkout is correct; the running app stack may still build from the shared clone) until env-start.sh is updated to consume it

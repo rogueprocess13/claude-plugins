@@ -798,31 +798,10 @@ test_skill_md_env_start_gets_worktree_contract() {
 }
 _run "SKILL.md Step 1.6b passes the worktree contract and checks the served checkout" test_skill_md_env_start_gets_worktree_contract
 
-test_skill_md_worktree_setup_resolves_repos_root() {
-  # Step 1.6a4 used to rely on an inherited REPOS_ROOT; unset, every repo was
-  # skipped and the step still logged "worktrees ready".
-  local skill_md="$LIB_DIR/../skills/ticket-verify/SKILL.md"
-  local section
-  section=$(awk '/^### 1\.6a4 /{f=1} /^### 1\.6b /{f=0} f' "$skill_md")
-  [ -n "$section" ] || return 1
-  local init_line ensure_line
-  init_line=$(printf '%s\n' "$section" | grep -n '^verify_env_init "{TICKET-ID}"' | head -1 | cut -d: -f1)
-  ensure_line=$(printf '%s\n' "$section" | grep -n 'ensure_verify_worktree "{TICKET-ID}"' | head -1 | cut -d: -f1)
-  [ -n "$init_line" ] && [ -n "$ensure_line" ] && [ "$init_line" -lt "$ensure_line" ] || {
-    echo "  Step 1.6a4 does not call verify_env_init before ensure_verify_worktree" >&2
-    return 1
-  }
-  grep -q 'VERIFY_WORKTREE_NONE' <<<"$section" || {
-    echo "  Step 1.6a4 does not warn when no worktree was created" >&2
-    return 1
-  }
-  grep -q 'verify_worktree_env_var' <<<"$section" || {
-    echo "  Step 1.6a4 names the export without verify_worktree_env_var" >&2
-    return 1
-  }
-  return 0
-}
-_run "SKILL.md Step 1.6a4 resolves REPOS_ROOT before creating worktrees" test_skill_md_worktree_setup_resolves_repos_root
+# test_skill_md_worktree_setup_resolves_repos_root moved to
+# test-verify-env-up.sh (skill-deterministic-extraction 4): wt_no_repos_root
+# asserts the REPOS_ROOT gate-stop, wt_none the VERIFY_WORKTREE_NONE warn,
+# wt_two/wt_fallback the worktrees and their branch.
 
 echo ""
 echo "=== REPOS_ROOT resolution, multi-port check, served report (#419) ==="
@@ -1134,7 +1113,8 @@ test_skill_md_acquires_lock_before_worktree_resync() {
   local lock_line worktree_heading_line first_ensure_call_line
   lock_line=$(grep -n '^### 1\.6a3 — Acquire the single-flight verify lock' "$skill_md" | head -1 | cut -d: -f1)
   worktree_heading_line=$(grep -n '^### 1\.6a4 — Resolve isolated worktrees' "$skill_md" | head -1 | cut -d: -f1)
-  first_ensure_call_line=$(grep -n 'ensure_verify_worktree "{TICKET-ID}"' "$skill_md" | head -1 | cut -d: -f1)
+  # skill-deterministic-extraction 4: the resync is verify-env-up.sh worktrees.
+  first_ensure_call_line=$(grep -n 'verify-env-up.sh worktrees "{TICKET-ID}"' "$skill_md" | head -1 | cut -d: -f1)
 
   [ -n "$lock_line" ] || {
     echo "  could not find the 'Acquire the single-flight verify lock' heading" >&2
@@ -1145,7 +1125,7 @@ test_skill_md_acquires_lock_before_worktree_resync() {
     return 1
   }
   [ -n "$first_ensure_call_line" ] || {
-    echo "  could not find an ensure_verify_worktree call in SKILL.md" >&2
+    echo "  could not find a verify-env-up.sh worktrees call in SKILL.md" >&2
     return 1
   }
 

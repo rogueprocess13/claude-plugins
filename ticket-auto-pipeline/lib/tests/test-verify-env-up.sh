@@ -73,6 +73,73 @@ _sv_env() { # case -> exports STUB_* and policy env
   sv_undecided_strict) export STUB_SERVED_RC=3 VERIFY_SERVED_WORKTREE_STRICT=true ;;
   esac
 }
+# Worktree cases (stage 2).
+VE_WT_CASES="wt_two wt_fallback wt_none wt_bad_branch wt_no_repos_root wt_wired"
+VE_BRANCH="feat/T-4-fix"
+
+_mk_repo() { # name: a repo under $WS/repos with $VE_BRANCH pushed to its origin
+  local r="$WS/repos/$1" o="$WS/origins/$1.git"
+  mkdir -p "$r" "$WS/origins"
+  git init -q -b main "$r" 2>/dev/null || git init -q "$r"
+  git -C "$r" config user.email t@t
+  git -C "$r" config user.name T
+  echo hi >"$r/README.md"
+  git -C "$r" add -A
+  git -C "$r" commit -qm init --no-gpg-sign
+  git init -q --bare "$o"
+  git -C "$r" remote add origin "$o"
+  git -C "$r" push -q origin main 2>/dev/null
+  git -C "$r" checkout -qb "$VE_BRANCH"
+  echo change >"$r/f.txt"
+  git -C "$r" add -A
+  git -C "$r" commit -qm change --no-gpg-sign
+  git -C "$r" push -q origin "$VE_BRANCH" 2>/dev/null
+  git -C "$r" checkout -q main
+}
+
+# Sets WT_SERVICES (what the old block's placeholder held), WT_ARGS (the
+# script's extra flags) and WT_BRANCH.
+_wt_case() {
+  WT_BRANCH="$VE_BRANCH" WT_ARGS=() WT_SERVICES=""
+  mkdir -p "$WS/tickets"
+  printf '#!/bin/sh\necho start\n' >"$WS/tickets/env-start.sh"
+  case "$1" in
+  wt_two)
+    _mk_repo svc-a
+    _mk_repo svc-b
+    WT_SERVICES="svc-a svc-b"
+    WT_ARGS=(--services "svc-a svc-b")
+    ;;
+  wt_fallback)
+    _mk_repo svc-a
+    _mk_repo svc-b
+    mkdir -p "$WS/repos/not-a-repo"
+    WT_SERVICES="svc-a svc-b"
+    ;;
+  wt_none)
+    WT_SERVICES="nope"
+    WT_ARGS=(--services "nope")
+    ;;
+  wt_bad_branch)
+    _mk_repo svc-a
+    WT_BRANCH="feat/T-4-missing"
+    WT_SERVICES="svc-a"
+    WT_ARGS=(--services "svc-a")
+    ;;
+  wt_no_repos_root)
+    printf 'LOCAL_URL = http://localhost:3000\n' >"$WS/CLAUDE.md"
+    WT_SERVICES="svc-a"
+    WT_ARGS=(--services "svc-a")
+    ;;
+  wt_wired)
+    _mk_repo svc-a
+    printf '#!/bin/sh\n: "${VERIFY_REPO_PATH_SVC_A:-}"\n' >"$WS/tickets/env-start.sh"
+    WT_SERVICES="svc-a"
+    WT_ARGS=(--services "svc-a")
+    ;;
+  esac
+}
+
 _sv_unenv() { unset STUB_SERVED_RC STUB_SERVED_MSG STUB_PORTS VERIFY_SERVED_WORKTREE_ENFORCE VERIFY_SERVED_WORKTREE_STRICT; }
 
 [ "${VERIFY_ENV_UP_TEST_LIB_ONLY:-0}" = 1 ] && return 0
@@ -110,6 +177,29 @@ for c in $VE_SERVED_CASES; do
   _ws_rm
 done
 
+echo "=== stage 2: worktrees parity with the Step 1.6a4 block ==="
+for c in $VE_WT_CASES; do
+  _ws_new
+  _lock_take
+  _wt_case "$c"
+  rc=0
+  (cd "$WS" && bash "$VEU" worktrees "$TID" --branch "$WT_BRANCH" "${WT_ARGS[@]}" --tickets-root "$WS/tickets") 2>"$WS/err" || rc=$?
+  _same "$c: log" "$(cat "$VE_FX/$c.log")" "$(_mask <"$TAP_LOG")"
+  _same "$c: exit" "$(cat "$VE_FX/$c.rc")" "$rc"
+  held=free
+  _lock_held && held=held
+  _same "$c: lock" "$(cat "$VE_FX/$c.lock")" "$held"
+  case "$c" in
+  wt_two | wt_fallback)
+    [ -d "$WS/repos/.verify-worktrees/svc-a/$TID" ] && [ -d "$WS/repos/.verify-worktrees/svc-b/$TID" ] &&
+      _ok "$c: both worktrees exist" || _ko "$c: worktrees missing"
+    [ "$(git -C "$WS/repos/.verify-worktrees/svc-a/$TID" rev-parse HEAD)" = "$(git -C "$WS/repos/svc-a" rev-parse "$VE_BRANCH")" ] &&
+      _ok "$c: worktree is at the ticket branch" || _ko "$c: worktree HEAD"
+    ;;
+  esac
+  _ws_rm
+done
+
 echo "=== usage ==="
 _ws_new
 rc=0
@@ -118,6 +208,9 @@ _same "served-check without a ticket -> exit 2" 2 "$rc"
 rc=0
 bash "$VEU" bogus "$TID" >/dev/null 2>&1 || rc=$?
 _same "unknown subcommand -> exit 2" 2 "$rc"
+rc=0
+bash "$VEU" worktrees "$TID" >/dev/null 2>&1 || rc=$?
+_same "worktrees without --branch -> exit 2" 2 "$rc"
 _ws_rm
 
 echo ""
