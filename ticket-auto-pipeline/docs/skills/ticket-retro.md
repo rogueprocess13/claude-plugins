@@ -6,9 +6,11 @@
 
 Aggregates pipeline log failures across a configurable time window, classifies recurring patterns (gate-stops, flow errors, complexity mismatches), and generates minimal unified diffs targeting the specific skill file sections where failures originate. Also scans the Claude log for failure signals, improvement hints, and insight blocks, and reads each mismatched ticket's own notes.md for the `source=appraise`/`source=exec` CORRECTIONS entries `ticket-implement` wrote — the qualitative gap behind the accuracy number. Writes a dated proposal to `~/.claude/state/ticket-retro/proposals/` with a failure histogram, complexity prediction accuracy table, complexity calibration notes, per-failure-class pattern analysis, and apply instructions. Never modifies skill files directly.
 
+**Reference file (skill-progressive-disclosure):** the `--post-to-github` material, Step 4's GitHub Issues proposal subsection and Step 5.5 (auth check, issue body and evidence files, the `github_retro_process` state machine, the report), lives in `skills/ticket-retro/references/github-issues.md`. SKILL.md reads it only when the flag is set. The automatic retro that ticket-auto STEP_6 spawns passes no flags, so it never reads the file. If the file cannot be resolved, the skill warns and skips every GitHub operation; the proposal is still written.
+
 ## Trigger
 
-**Slash command:** `/ticket-retro [--window Nd] [--post-to-linear] [--force]`
+**Slash command:** `/ticket-retro [--window Nd] [--post-to-linear] [--post-to-github] [--force]`
 
 **Natural language:** run retro, retrospect the pipeline
 
@@ -18,6 +20,7 @@ Aggregates pipeline log failures across a configurable time window, classifies r
 |-------|--------|----------|
 | --window Nd | CLI (default: 7d) | No |
 | --post-to-linear | CLI flag | No |
+| --post-to-github | CLI flag (reads `references/github-issues.md`) | No |
 | --force | CLI flag (bypass cursor dedup) | No |
 | Pipeline logs | ./logs/*-pipeline.log | Yes |
 | Heartbeat logs | ./logs/*-heartbeat.log | Yes |
@@ -47,8 +50,11 @@ flowchart TD
     J --> K[Step 4: Write proposal]
     K --> L{--post-to-linear?}
     L -->|Yes| M[Post to RETRO_LINEAR_ISSUE]
-    L -->|No| N[Report completion]
-    M --> N
+    L -->|No| P{--post-to-github?}
+    M --> P
+    P -->|Yes| Q[Read references/github-issues.md<br/>Step 5.5: create or update issues]
+    P -->|No| N[Report completion]
+    Q --> N
 ```
 
 ## Related skills
