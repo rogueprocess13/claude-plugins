@@ -194,9 +194,8 @@ _adr_exists_for() {
 
 # ── index generation (task 2.8) ─────────────────────────────────────────────
 
-# Regenerates decisions/index.md wholesale from every ADR's frontmatter, the
-# way knowledge-curator/lib/kc-index.sh regenerates its index — never a
-# hand-maintained row, always derived. Must be called with the lock already
+# Regenerates decisions/index.md wholesale from every ADR's frontmatter —
+# never a hand-maintained row, always derived. Must be called with the lock already
 # held by the caller.
 _adr_regen_index() {
   local decisions_dir="$1"

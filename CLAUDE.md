@@ -4,12 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository purpose
 
-Claude Code plugin marketplace (`willard-pro-claude-plugins`). Ships five plugins:
+Claude Code plugin marketplace (`willard-pro-claude-plugins`). Ships four plugins:
 
 - **`ticket-planner`** — 11-phase autonomous planner turning business ideas into dependency-ordered planned tickets. Sits upstream of ticket-auto. Appraisal → Discovery → Architecture → Specify → Review → Consensus → Crosscheck → Epic Gen → Ticket Gen → Refinement → Completed. Generates Branch Directives for shared epic branches.
 - **`ticket-auto-pipeline`** — fully autonomous Linear ticket pipeline that appraises, implements, verifies, and merges tickets with zero user input. Consumes planner output via the local ticket manifest (`tracker-planner-and-fallback-cutover` — no Linear label involved any more) + Planner Context block.
 - **`fleet-controller`** — parent orchestrator above ticket-planner and ticket-auto. Dispatches planned tickets from initiative epics, monitors pipeline health via 19 detection engines, manages epic branch lifecycle (create, sync, GC), aggregates execution feedback back to the planner, and supervises an optional OpenTelemetry exporter. Bash orchestration plus a stdlib Python supervisor; zero Claude agents.
-- **`knowledge-curator`** — durable cross-project knowledge tracking. Captures ideas, decisions, lessons, and discoveries with automatic resurfacing.
 - **`grill-me`** — pre-work readiness gate. Assesses business ideas against profile-driven dimensions, asks ranked clarification questions interactively, and produces cryptographically sealed Validated Business Intent documents. Any agent can invoke it before acting. Sits upstream of ticket-planner as an optional pre-flight gate.
 
 ## Ecosystem architecture

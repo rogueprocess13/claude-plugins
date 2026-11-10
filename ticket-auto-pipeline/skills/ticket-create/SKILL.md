@@ -14,11 +14,11 @@ Decide where the request belongs before you write anything:
 | What it is | Where it goes |
 |---|---|
 | Actionable work in a product repository (a bug, a feature, an improvement, a security fix, a chore) | A Linear ticket, through `create.sh` (this skill) |
-| A defect or improvement in **this plugin marketplace's own code** (`ticket-auto-pipeline`, `ticket-planner`, `fleet-controller`, `knowledge-curator`, `grill-me`) | A GitHub issue. Render the body with `github_issue_body_template` and create it with `github_issue_create` (`~/.claude/skills/lib/github-issues.sh`). No ticket IDs or user data — the repo is public. |
-| Knowledge, not work — a lesson, a decision, a fact you learned, a discovery with no concrete change attached | The `kc-capture` skill (knowledge-curator). No ticket. |
+| A defect or improvement in **this plugin marketplace's own code** (`ticket-auto-pipeline`, `ticket-planner`, `fleet-controller`, `grill-me`) | A GitHub issue. Render the body with `github_issue_body_template` and create it with `github_issue_create` (`~/.claude/skills/lib/github-issues.sh`). No ticket IDs or user data — the repo is public. |
+| Knowledge, not work — a lesson, a decision, a fact you learned, a discovery with no concrete change attached | Nowhere. It is not a ticket; do not create one. |
 | An idea that needs several tickets, an epic, or an initiative | `/ticket-planner` (or `/grill-me` first if the idea is still vague). This skill creates exactly one ticket. |
 
-There is no "discovery" ticket. A finding becomes a ticket only when it names concrete work. If you cannot say what should change, capture it as knowledge instead.
+There is no "discovery" ticket. A finding becomes a ticket only when it names concrete work. If you cannot say what should change, do not create a ticket.
 
 ## 2. Choose type and kind
 

@@ -12,10 +12,9 @@ Four installable plugins. Install only what you need — they work standalone an
 
 | Plugin | Version | What it does |
 |--------|---------|--------------|
-| [`ticket-auto-pipeline`](ticket-auto-pipeline/README.md) | 0.111.0 | **The core.** Takes a Linear ticket and appraises, implements, verifies, and merges it with zero user input. 20+ slash commands, state-machine flow control, deterministic safety gates. |
+| [`ticket-auto-pipeline`](ticket-auto-pipeline/README.md) | 0.112.0 | **The core.** Takes a Linear ticket and appraises, implements, verifies, and merges it with zero user input. 20+ slash commands, state-machine flow control, deterministic safety gates. |
 | [`ticket-planner`](ticket-planner/README.md) | 0.35.2 | **Upstream of the core.** Turns a one-sentence business idea into dependency-ordered, ready-to-execute tickets across 11 planning phases. Supports grill-me validated intent files as optional pre-flight gate. |
 | [`fleet-controller`](fleet-controller/README.md) | 0.47.0 | **Above the core.** Dispatches planned tickets, monitors every running pipeline via 19 detection engines, kills and restarts stuck runs, feeds results back to the planner. Bash-only. |
-| [`knowledge-curator`](knowledge-curator/README.md) | 0.3.0 | **Beside the core.** Durable cross-project knowledge tracking — captures ideas, decisions, and lessons, then resurfaces them when relevant. |
 | [`grill-me`](grill-me/README.md) | 0.5.2 | **Before the core.** Pre-work readiness gate — assesses ideas against profile-driven dimensions, asks ranked clarification questions, and produces cryptographically sealed Validated Business Intent documents. |
 
 ---
@@ -28,7 +27,6 @@ Four installable plugins. Install only what you need — they work standalone an
 | "I have an idea. Break it into tickets for me." | `ticket-planner` + `ticket-auto-pipeline` | `/ticket-planner plan "..."` |
 | "I have an idea — but is it ready to plan?" | `grill-me` | `/grill-me "..."` |
 | "Run many tickets at once, unattended, and recover from failures." | all three above | `fleetd` with `FLEETD_SPAWN_ENABLED=1` |
-| "Remember decisions and lessons across my projects." | `knowledge-curator` | Nothing — it's hook-driven |
 
 **Most people start with `ticket-auto-pipeline` alone**, run a few tickets by hand, and add the planner and fleet controller once they trust it.
 
@@ -74,7 +72,6 @@ Add the others as needed:
 ```bash
 claude plugin install ticket-planner@willard-pro-claude-plugins
 claude plugin install fleet-controller@willard-pro-claude-plugins
-claude plugin install knowledge-curator@willard-pro-claude-plugins
 ```
 
 ### 2. Set credentials
@@ -296,7 +293,6 @@ Interactive diagrams (open locally in a browser): [ticket-auto pipeline](docs/ti
 | [ticket-auto-pipeline/README.md](ticket-auto-pipeline/README.md) | Users | Quickstart, all slash commands, autonomy modes, safety gates, templates, troubleshooting |
 | [ticket-planner/README.md](ticket-planner/README.md) | Users | Quickstart, planning modes, branch-directive flags, resume |
 | [fleet-controller/README.md](fleet-controller/README.md) | Operators | Modes, detection engines, escalation, fleetd daemon, configuration |
-| [knowledge-curator/README.md](knowledge-curator/README.md) | Users | Trigger paths, commands, item lifecycle |
 
 **Going deeper:**
 

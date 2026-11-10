@@ -1,8 +1,8 @@
 SCRIPTS := $(shell find . -name "*.sh" -not -path "./.git/*")
 
-.PHONY: test test-serial test-lib test-fleetd test-flow test-kc lint fmt-check fmt test-grill test-planner-intent-gate check-generated check-test-registration check-skill-size skill-baseline print-test-targets test-durations
+.PHONY: test test-serial test-lib test-fleetd test-flow lint fmt-check fmt test-grill test-planner-intent-gate check-generated check-test-registration check-skill-size skill-baseline print-test-targets test-durations
 
-TEST_TARGETS := test-lib test-fleetd test-planner test-flow test-kc test-grill test-planner-intent-gate
+TEST_TARGETS := test-lib test-fleetd test-planner test-flow test-grill test-planner-intent-gate
 
 # `make test` runs every test command from TEST_TARGETS in parallel
 # (scripts/run-tests.sh; TEST_JOBS, default nproc; CI splits the same list into
@@ -386,17 +386,6 @@ test-flow:
 	@echo "=== ticket-flow tests ==="
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" bash ticket-auto-pipeline/skills/ticket-flow/tests/phase1.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" bash ticket-auto-pipeline/skills/ticket-flow/tests/phase2.sh
-
-test-kc:
-	@echo "=== knowledge-curator unit tests ==="
-	bash knowledge-curator/test/test-kc-index.sh
-	bash knowledge-curator/test/test-kc-item.sh
-	bash knowledge-curator/test/test-kc-render.sh
-	bash knowledge-curator/test/test-kc-rank-log.sh
-	bash knowledge-curator/test/test-kc-resurface.sh
-	bash knowledge-curator/test/test-kc-prompt-match.sh
-	bash knowledge-curator/test/test-kc-ingest.sh
-	bash knowledge-curator/test/test-kc-skill-blocks.sh
 
 # `echo … | grep -q` under pipefail misreads a match as a miss (SIGPIPE 141,
 # GitHub #640); scripts/check-grep-q-pipe.sh fails on any such line in non-test shell.

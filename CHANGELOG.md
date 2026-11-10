@@ -17,6 +17,23 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.112.0 (2026-11-10) — knowledge-curator removed from the marketplace
+
+`knowledge-curator` does not belong to this project, so it is no longer shipped here. Its
+directory, marketplace entry, Makefile `test-kc` target, CI wiring, test-selection map entry and
+skill-size baseline rows are gone. Git history keeps the code.
+
+### Removed
+- The `knowledge-curator` plugin (last version 0.3.0).
+
+### Changed
+- `ticket-create` no longer routes knowledge items to `kc-capture`. A lesson, decision or
+  discovery with no concrete change attached is not a ticket, and the skill does not create one.
+
+### Upgrade notes
+- If you installed it, run `/plugin uninstall knowledge-curator`. Data it wrote to your
+  repositories' `knowledge/` directories is not touched.
+
 ## fleet-controller 0.47.0 (2026-11-10)
 
 `skill-deterministic-extraction` group 6c: the fleet-env-check and fleet-features skills had separate

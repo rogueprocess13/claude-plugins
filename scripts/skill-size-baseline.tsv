@@ -2,10 +2,6 @@ fleet-controller/skills/fleet-controller/SKILL.md	9277	145
 fleet-controller/skills/fleet-env-check/SKILL.md	4151	60
 fleet-controller/skills/fleet-features/SKILL.md	5622	55
 grill-me/skills/grill-me/SKILL.md	14436	282
-knowledge-curator/skills/kc-capture/SKILL.md	5063	109
-knowledge-curator/skills/kc-import/SKILL.md	3802	114
-knowledge-curator/skills/kc-query/SKILL.md	4528	83
-knowledge-curator/skills/kc-sweep/SKILL.md	4654	119
 ticket-auto-pipeline/agents/dor-semantic-agent.md	1444	8
 ticket-auto-pipeline/agents/guidance-extractor-agent.md	1128	2
 ticket-auto-pipeline/agents/ticket-appraise-agent.md	659	2
@@ -68,7 +64,7 @@ ticket-auto-pipeline/skills/ticket-audit/SKILL.md	14740	301
 ticket-auto-pipeline/skills/ticket-auto/SKILL.md	43206	789
 ticket-auto-pipeline/skills/ticket-batch-appraise/SKILL.md	4841	135
 ticket-auto-pipeline/skills/ticket-batch-verify/SKILL.md	9399	207
-ticket-auto-pipeline/skills/ticket-create/SKILL.md	6818	71
+ticket-auto-pipeline/skills/ticket-create/SKILL.md	6781	71
 ticket-auto-pipeline/skills/ticket-critique/SKILL.md	19169	423
 ticket-auto-pipeline/skills/ticket-detect-resume/SKILL.md	1296	20
 ticket-auto-pipeline/skills/ticket-document/SKILL.md	7076	142
