@@ -101,6 +101,12 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-ai-context.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-subcommands.sh
 	bash ticket-auto-pipeline/lib/tests/test-guidance-record-finding.sh
+	bash ticket-auto-pipeline/lib/tests/test-gate-reconcile.sh
+	bash ticket-auto-pipeline/lib/tests/test-critique-fetch.sh
+	bash ticket-auto-pipeline/lib/tests/test-audit-run-checks.sh
+	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-exec-cli.sh
+	bash ticket-auto-pipeline/lib/tests/test-prescan-run-repo.sh
+	bash ticket-auto-pipeline/lib/tests/test-appraise-handoff-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-evidence.sh
 	bash ticket-auto-pipeline/lib/tests/test-pipeline-finalize.sh
 	bash ticket-auto-pipeline/lib/tests/test-spawn-helper.sh

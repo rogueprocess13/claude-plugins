@@ -28,54 +28,22 @@ FINDINGS
 
 ### If `--from-audit` is in the arguments
 
-No workspace is guaranteed — fetch everything from the Linear API directly.
+No workspace is guaranteed, so load the ticket from the Linear API (pass `--source-marker` when
+one was given):
 
-1. Source `lib/linear-api.sh` and `lib/config.sh`:
-   ```bash
-   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && cd ../../lib && pwd || echo "$HOME/.claude/skills/lib")"
-   source "$SCRIPT_DIR/linear-api.sh"
-   source "$SCRIPT_DIR/config.sh"
-   ```
+```bash
+bash ~/.claude/skills/lib/critique-fetch.sh {TICKET-ID} --from-audit --source-marker "{SOURCE_MARKER}"
+```
 
-2. Fetch the ticket. A failed or malformed fetch is a hard stop — never score
-   blank fields as an empty ticket (issue #362):
-   ```bash
-   ISSUE_JSON=$(get_issue "{TICKET_ID}") || {
-     echo "ticket-critique: get_issue failed for {TICKET_ID} — stopping" >&2
-     exit 1
-   }
-   require_issue_payload "$ISSUE_JSON" || {
-     echo "ticket-critique: get_issue returned an unreadable payload for {TICKET_ID} — stopping" >&2
-     exit 1
-   }
-   TITLE=$(echo "$ISSUE_JSON" | jq -r '.title')
-   DESCRIPTION=$(echo "$ISSUE_JSON" | jq -r '.description // ""')
-   LABELS=$(echo "$ISSUE_JSON" | jq -r '[.labels[]?.name] | join(", ")')
-   STATE=$(echo "$ISSUE_JSON" | jq -r '.state.name')
-   ```
-
-3. Fetch comments for additional context:
-   ```bash
-   COMMENTS_JSON=$(get_comments "{TICKET_ID}")
-   COMMENT_BODIES=$(echo "$COMMENTS_JSON" | jq -r '.[]?.body // ""' | head -5)
-   ```
-
-4. Analyse `$TITLE`, `$DESCRIPTION`, `$LABELS`, `$STATE`, `$COMMENT_BODIES`, and the
-   acceptance criteria in the description (numbered lists, "AC:", "Acceptance Criteria:").
-
-5. Read CLAUDE.md for known test users/environments (same as standard path):
-   ```bash
-   grep -A5 "test users\|UAT_URL\|LOCAL_URL" CLAUDE.md 2>/dev/null || true
-   ```
-
-Proceed to Checklist — same checks apply regardless of input source.
+It prints `TITLE`, `LABELS`, `STATE`, the description, the first comment bodies and the test-user /
+`UAT_URL` / `LOCAL_URL` lines of CLAUDE.md. Exit 1 means the fetch failed or the payload is
+unreadable: stop, never score blank fields as an empty ticket (#362). Analyse all of it, including
+the acceptance criteria in the description (numbered lists, "AC:", "Acceptance Criteria:"), and
+proceed to the Checklist — the same checks apply regardless of input source.
 
 ### If `--from-appraise` is in the arguments, the workspace is guaranteed to exist.
-Otherwise (no recognized flag), find it:
-```bash
-find . -type d -name "{TICKET-ID}*"
-```
-If not found → tell the user to run `/ticket-appraise {TICKET-ID}` first. Stop here.
+Otherwise (no recognized flag), find it with `bash ~/.claude/skills/lib/critique-fetch.sh {TICKET-ID} --workspace`;
+exit 3 → tell the user to run `/ticket-appraise {TICKET-ID}` first and stop.
 
 ---
 

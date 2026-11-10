@@ -141,14 +141,13 @@ This is one of maximum two persona invocations per audit run.
 
 ## Step 6: Per-ticket audit (deterministic-first, LLM for borderline)
 
-For each ticket in the fetched list (capped at `TICKET_AUDIT_MAX_TICKETS`), run these checks. **Bash scripts handle clear cases deterministically; LLM reviews only borderline/ambiguous results.**
+For each ticket in the fetched list (capped at `TICKET_AUDIT_MAX_TICKETS`), write its Linear issue object to a file and run the deterministic checks first. **Bash handles clear cases; the LLM reviews only borderline results.**
 
-Planner-generated tickets carry a `## Planner Context` block that the planner is required to emit (e.g. `Affected Services` always lists 3+ services). Strip it before running Checks 4 and 6 and split detection, so the planner's own mandated metadata is never counted as ticket content:
 ```bash
-source lib/planned-ticket-check.sh
-description_stripped="$(_strip_planner_context_block "$description")"
+bash ~/.claude/skills/lib/audit-run-checks.sh --ticket-json "{ticket.json}" --wiki-services "{wiki_services_csv}" --extra-patterns "{extra_patterns}"
 ```
-Use `$description_stripped` (not `$description`) in those three checks below.
+
+It strips the `## Planner Context` block (the planner's own mandated metadata, e.g. 3+ `Affected Services`) before Checks 4 and 6 and split detection, runs Checks 2, 3, 4, 5, 6 and 8 and split detection in that order, prints each check's raw output, then one `FINDING=<BLOCKER|WARNING>|<text>` line per deterministic finding (record each verbatim) and a `REVIEW=CHECK_2|…` / `REVIEW=CHECK_3|…` line when the LLM has flagged text to confirm. `lib/audit-run-checks.sh` header: inputs and the exact messages.
 
 ### Check 1: Multi-role credential gaps (BLOCKER — LLM)
 
@@ -156,54 +155,15 @@ Requires semantic understanding of role mentions vs credential availability. LLM
 
 ### Check 2: Untestable acceptance criteria (WARNING — bash → LLM confirm)
 
-**Bash pre-filter:**
-```bash
-source lib/audit-ac-testability.sh
-audit_ac_testability "$acceptance_criteria"
-```
-- If `ALL_CLEAR=true`: skip (no vague ACs found). Do not involve LLM.
-- If `VAGUE_AC_COUNT > 0`: LLM reviews ONLY the flagged ACs listed in `VAGUE_ACS`. If LLM confirms any are genuinely untestable, record as WARNING with the specific AC text.
+Only on `REVIEW=CHECK_2`: review just the ACs it lists. If you confirm any are genuinely untestable, record a WARNING with the specific AC text.
 
 ### Check 3: Missing test data assumptions (WARNING — bash → LLM confirm)
 
-**Bash pre-filter:**
-```bash
-source lib/audit-test-data-check.sh
-audit_test_data_check "${description}\n${acceptance_criteria}"
-```
-- If `NEEDS_TEST_DATA=false`: skip. Do not involve LLM.
-- If `NEEDS_TEST_DATA=true`: LLM reviews ONLY the assumption patterns in `ASSUMPTIONS`. If LLM confirms the assumptions are genuine gaps, record as WARNING.
+Only on `REVIEW=CHECK_3`: review just the assumption patterns it lists. If they are genuine gaps, record a WARNING.
 
-### Check 4: Scope identifiable (WARNING — bash)
+### Checks 4, 5, 6: Scope identifiable, bug without repro steps (WARNING), empty ticket (BLOCKER — bash)
 
-**Fully deterministic — no LLM involved:**
-```bash
-source lib/audit-scope-check.sh
-audit_scope_check "${title}\n${description_stripped}" "$wiki_services_csv" "$extra_patterns"
-```
-- If `SCOPE_FOUND=true`: skip. Scope is identifiable.
-- If `SCOPE_FOUND=false`: record as WARNING: "Scope unclear: ticket does not reference any known service, component, or scope indicator."
-
-### Check 5: Bug without repro steps (WARNING — bash)
-
-**Fully deterministic — no LLM involved:**
-```bash
-source lib/audit-repro-check.sh
-audit_repro_check "${description}\n${acceptance_criteria}" "$labels"
-```
-- If `IS_BUG=false`: skip (not a bug ticket).
-- If `HAS_REPRO=true`: skip (repro steps found — `$REPRO_FOUND_PATTERN`).
-- If `IS_BUG=true` AND `HAS_REPRO=false`: record as WARNING: "Bug without repro steps: no numbered steps, action bullets, or 'Steps to reproduce' section found."
-
-### Check 6: Empty ticket (BLOCKER — bash)
-
-```bash
-content="$(echo "$description_stripped $acceptance_criteria" | sed 's/[#*_`~>|\[\]()]//g')"
-word_count=$(echo "$content" | wc -w)
-if [ "$word_count" -lt 20 ]; then
-  echo "BLOCKER: Empty ticket (< 20 substantive words)"
-fi
-```
+Fully deterministic: their `FINDING=` lines are the result.
 
 ### Check 7: Goal misalignment (WARNING — LLM)
 
@@ -211,18 +171,7 @@ Requires semantic comparison against the milestone/parent goal context. LLM eval
 
 ### Check 8: Stale ticket (WARNING — bash)
 
-```bash
-stale_seconds=$((TICKET_AUDIT_STALE_DAYS * 86400))
-updated_epoch=$(date -d "$updatedAt" +%s 2>/dev/null || echo 0)
-now_epoch=$(date +%s)
-age_seconds=$((now_epoch - updated_epoch))
-if [ "$age_seconds" -gt "$stale_seconds" ]; then
-  state_name="$(echo "$ticket_json" | jq -r '.state.name')"
-  if [ "$state_name" = "Backlog" ] || [ "$state_name" = "Todo" ]; then
-    echo "WARNING: Stale ticket (not updated in ${TICKET_AUDIT_STALE_DAYS}+ days, still in $state_name)"
-  fi
-fi
-```
+Not updated in `TICKET_AUDIT_STALE_DAYS`+ days and still in Backlog/Todo: its `FINDING=` line is the result.
 
 ### Check 9: Wiki misalignment (WARNING — LLM, requires WIKI_ROOT)
 
@@ -230,19 +179,13 @@ Requires semantic comparison of ticket's claimed service references against wiki
 
 ### Split detection (bash-first with templated suggestions)
 
-1. **Bash signal detection** (build `ticket_text` from the stripped description — see Step 6 intro — so the planner's own `Affected Services` field can't inflate the wiki-service-count signal):
-   ```bash
-   ticket_text="${title}\n${description_stripped}\n${acceptance_criteria}"
-   source lib/audit-size-check.sh
-   audit_size_check "$ticket_text" "$wiki_services_csv"
-   ```
-2. If `SIGNAL_COUNT >= 2` → flag as WARNING: "Split candidate"
-3. **Use templated `SPLIT_SUGGESTION`** from the bash script. The suggestion is generated deterministically based on which signals fired (AC count, word count, service count). This covers 80%+ of split cases without LLM.
-4. **LLM persona only for complex splits:** If the ticket has FE AND BE signals (detected by keyword matching on title + description), write `$ticket_text` to `T="$(bash ~/.claude/skills/lib/ticket-tmp.sh)/audit-split.txt"` (`printf '%b' "$ticket_text" > "$T"`), run `TICKET_TEXT_FILE="$T" lib/persona-select.sh --repo <repo> --layer <FE|BE>` and read the persona file at `$PERSONA_BASE` for a layer-informed refinement of the templated suggestion. Otherwise, use `$SPLIT_SUGGESTION` directly.
+1. Bash signal detection runs in `audit-run-checks.sh` (AC count, word count, wiki service count over the stripped description, so the planner's `Affected Services` cannot inflate it). With 2+ signals it prints `FINDING=WARNING|Split candidate: <SPLIT_SUGGESTION>`.
+2. The templated suggestion covers 80%+ of split cases without the LLM; use it directly unless step 4 applies.
+3. **LLM persona only for complex splits:** If the ticket has FE AND BE signals (detected by keyword matching on title + description), write the title, stripped description and ACs to `T="$(bash ~/.claude/skills/lib/ticket-tmp.sh)/audit-split.txt"`, run `TICKET_TEXT_FILE="$T" lib/persona-select.sh --repo <repo> --layer <FE|BE>` and read the persona file at `$PERSONA_BASE` for a layer-informed refinement of the templated suggestion. Otherwise, use the templated suggestion directly.
    - **Backend signal keywords**: API, endpoint, service, migration, model, query, repository, controller, DTO, Feign, job, cron, async
    - **Frontend signal keywords**: component, page, form, modal, button, hook, route, CSS, React, TypeScript, layout, view
-5. This counts as the second persona invocation (max reached — no more FE/BE switches).
-6. No Linear ticket creation — suggestions are report/checklist items only.
+4. This counts as the second persona invocation (max reached — no more FE/BE switches).
+5. No Linear ticket creation — suggestions are report/checklist items only.
 
 ### Record findings
 

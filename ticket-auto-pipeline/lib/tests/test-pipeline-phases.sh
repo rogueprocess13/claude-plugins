@@ -316,7 +316,10 @@ test_gate_reconcile_skill_exists() {
 test_gate_reconcile_has_context_loading() {
   local skill_md="$SKILLS_DIR/ticket-gate-reconcile/SKILL.md"
   [ -f "$skill_md" ] || return 1
-  grep -q 'source ~/.claude/skills/lib/ticket-env.sh {TICKET-ID}' "$skill_md" || {
+  # Context loading moved into lib/gate-reconcile-prep.sh
+  # (skill-deterministic-extraction 6a), which sources the env file.
+  grep -q 'lib/gate-reconcile-prep.sh {TICKET-ID}' "$skill_md" &&
+    grep -q 'source "$_GR_DIR/ticket-env.sh" "$TID"' "$LIB_DIR/gate-reconcile-prep.sh" || {
     echo "gate-reconcile missing env.sh context loading"
     return 1
   }
@@ -324,34 +327,17 @@ test_gate_reconcile_has_context_loading() {
 
 # The openspec plan artifact lives at the tickets-repo root (cwd — where
 # ticket-appraise-exec writes it), never under TICKET_DIR, and must be THIS
-# ticket's change — not whichever dir `ls | head -1` lists first. Executes the
-# skill's real resolution block against fixture trees.
-_gate_reconcile_artifact_code() {
-  sed -n '/^Resolve the plan artifact/,/^## Step 2/p' "$SKILLS_DIR/ticket-gate-reconcile/SKILL.md" |
-    sed -n '/^```bash$/,/^```$/p' | sed '1d;$d'
-}
-
+# ticket's change — not whichever dir `ls | head -1` lists first. Runs the
+# resolution for real: lib/gate-reconcile-prep.sh, which replaced the skill's
+# Step 1 block (skill-deterministic-extraction 6a), against fixture trees.
 _gate_reconcile_resolve() {
   # $1 = cwd, $2 = ARTIFACT_TYPE, $3 = ticket id; echoes ARTIFACT_PATH
-  local code
-  code=$(_gate_reconcile_artifact_code)
-  [ -n "$code" ] || return 3
-  code=${code//\{TICKET-ID\}/$3}
-  # The block logs through the synced ~/.claude/skills/lib/plog.sh; point it
-  # at this checkout's lib (CI has no synced copy).
-  code=${code//\~\/.claude\/skills\/lib\//$LIB_DIR/}
-  (
-    cd "$1" || exit 3
-    # Step 1's load block sources ticket-dir.sh before this block runs; the
-    # resolution block calls its resolve_plan_artifact. Step 1 also exports
-    # LOG_FILE, which plog.sh reads from the environment.
-    source "$LIB_DIR/ticket-dir.sh"
-    export LOG_FILE="$1/logs/pipeline.log"
-    TICKET_DIR="$1/TEST-7--ticket-dir"
-    ARTIFACT_TYPE="$2"
-    eval "$code"
-    echo "$ARTIFACT_PATH"
-  )
+  mkdir -p "$1/logs" && mkdir -p -m 700 "$1/.scratch"
+  echo "2026-01-01T00:00:00Z|EXEC|create-artifact|done|$2" >>"$1/logs/$3-pipeline.log"
+  echo '[]' >"$1/.comments.json"
+  (cd "$1" && env -u LINEAR_API_KEY -u LOG_FILE -u TAP_LOG HOME="$1" TICKET_TMP_DIR="$1/.scratch" \
+    bash "$LIB_DIR/gate-reconcile-prep.sh" "$3" --comments-file .comments.json) | sed -n 's/^ARTIFACT_PATH=//p'
+  return "${PIPESTATUS[0]}"
 }
 
 test_gate_reconcile_artifact_resolves_own_change_at_repo_root() {
@@ -381,7 +367,7 @@ test_gate_reconcile_artifact_missing_change_fails_loudly() {
     echo "resolution succeeded with no change for the ticket"
     rc=1
   fi
-  grep -q '|GATE|reconcile|fail|.*TEST-7' "$tmp/logs/pipeline.log" 2>/dev/null || {
+  grep -q '|GATE|reconcile|fail|.*TEST-7' "$tmp/logs/TEST-7-pipeline.log" 2>/dev/null || {
     echo "no GATE|reconcile|fail line logged"
     rc=1
   }
@@ -395,7 +381,7 @@ test_gate_reconcile_artifact_simple_fix_unchanged() {
   mkdir -p "$tmp/logs" "$tmp/TEST-7--ticket-dir"
   touch "$tmp/TEST-7--ticket-dir/simple-fix.md"
   out=$(_gate_reconcile_resolve "$tmp" simple-fix TEST-7) || rc=1
-  [ "$out" = "$tmp/TEST-7--ticket-dir/simple-fix.md" ] || {
+  [ "$out" = "./TEST-7--ticket-dir/simple-fix.md" ] || {
     echo "resolved '$out'"
     rc=1
   }

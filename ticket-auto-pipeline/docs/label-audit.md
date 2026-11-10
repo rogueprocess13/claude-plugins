@@ -271,7 +271,7 @@ and § Final disposition for how this list changed after removal execution surfa
 - **Writer:** `fleetd/gate_hold.py:490-492` — applies the label via
   `bash flow.sh {tid} needs-info` as part of the human-hold comment-and-label sequence. Also
   reachable via `/ticket-flow {TICKET-ID} needs-info` from `ticket-critique` (per
-  `ticket-critique/SKILL.md:394-397`).
+  `ticket-critique/SKILL.md`, "Act on results", `flow-run.sh … needs-info`).
 - **Human consumer (file:line):**
   - `ticket-auto-pipeline/skills/ticket-audit-exec/SKILL.md:11` — "Human resolves flagged tickets
     before run 2," and again at `:192,304`: "Resolve needs-info tickets, then re-run

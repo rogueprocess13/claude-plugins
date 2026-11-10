@@ -2,6 +2,8 @@
 
 > Pre-scan a repository to build durable agent-knowledge artifacts under REPOS_ROOT/.ticket-auto/. Runs freshness gate, gitnexus indexing, multi-persona fan-out or incremental refresh, and corpus building. Produces per-repo docs consumed by ticket-appraise Step 3a.
 
+**Deterministic script (skill-deterministic-extraction 6a):** `lib/prescan-run-repo.sh` runs Step 0 (`list`), Step 1 and the lock probe (`gate`), Step 4.0 (`corrections`), the scaffold-verify gate (`verify`) and Step 6 (`--write-meta`). The persona spawns and the gitnexus/claude-mem calls stay in the skill.
+
 ## What it does
 
 Builds durable, freshness-tracked agent-knowledge docs per repo under `REPOS_ROOT/.ticket-auto/<repo-slug>/docs/`. A multi-persona agent fan-out produces distilled docs once; subsequent runs verify freshness deterministically via `prescan-check.sh` and only re-scan what changed. This replaces per-ticket codebase rediscovery with pre-built, verified knowledge — reducing appraise token costs and improving consistency.

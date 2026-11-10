@@ -2,6 +2,8 @@
 
 > Proactive cross-ticket audit within a milestone or parent/epic. Detects duplicates, overlaps, empty tickets, goal misalignment, stale tickets, split candidates, and wiki misalignment. Produces a recommendation checklist consumed by ticket-audit-exec. Never mutates Linear. Modes: --milestone <id>, --parent <id>. Flags: --force, --summary, --include-completed.
 
+**Deterministic script (skill-deterministic-extraction 6a):** Step 6's bash checks (2, 3, 4, 5, 6, 8 and split detection) run in one call, `lib/audit-run-checks.sh`, which prints `FINDING=` lines and `REVIEW=` lines for the LLM to confirm.
+
 ## What it does
 
 Runs a comprehensive batch audit across all tickets under a Linear milestone or parent/epic. Performs nine per-ticket checks (credential gaps, untestable ACs, missing test data, scope identification, bug repro steps, empty tickets, goal misalignment, staleness, wiki misalignment) plus cross-ticket analysis (duplicate detection via Jaccard title similarity, AC overlap detection, orphan detection). Deterministic bash scripts handle clear cases; LLM reviews only borderline results. Writes a structured recommendation checklist consumed by `/ticket-audit-exec` for phased application.

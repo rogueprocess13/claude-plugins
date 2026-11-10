@@ -2,11 +2,12 @@
 # test-plan-artifact-callers.sh — the callers of the one plan-artifact
 # resolver (lib/ticket-dir.sh, review findings DET-IP-2 / DET-AP-4 / DET-IP-13).
 #
-#   1. ticket-gate-reconcile Step 1 is executed for real: its first two bash
-#      blocks are extracted from SKILL.md and run in a fixture tickets repo.
-#      Guards DET-IP-13 (NOTES_PATH read before it was set, so an openspec
-#      ticket with no EXEC line resolved to simple-fix.md) and the whole-ID
-#      change-dir match.
+#   1. ticket-gate-reconcile's plan resolution runs for real:
+#      lib/gate-reconcile-prep.sh (skill-deterministic-extraction 6a, which
+#      replaced the Step 1 fences this test used to extract from SKILL.md)
+#      runs in a fixture tickets repo. Guards DET-IP-13 (NOTES_PATH read
+#      before it was set, so an openspec ticket with no EXEC line resolved to
+#      simple-fix.md) and the whole-ID change-dir match.
 #   2. A lint over every SKILL.md: no substring plan-artifact lookup
 #      (`grep -i "{ticket-id-lowercase}"`, `-path "*{TICKET-ID}*"`) survives.
 #
@@ -34,47 +35,23 @@ _run() {
   fi
 }
 
-# Writes the first two ```bash blocks of gate-reconcile's Step 1 to <out>,
-# with the host-only lines (env file, hb-wrap, linear-api) neutralised and
-# ~/.claude/skills/lib pointed at this checkout's lib.
-_extract_gr_step1() {
-  local tid="$1" out="$2"
-  awk '
-    /^## Step 1 /       { in_step = 1; next }
-    /^## Step 2 /       { in_step = 0 }
-    !in_step            { next }
-    /^```bash[[:space:]]*$/ { if (blocks < 2) { in_block = 1 }; next }
-    /^```[[:space:]]*$/ { if (in_block) { in_block = 0; blocks++ }; next }
-    in_block            { print }
-  ' "$GR_SKILL" |
-    sed -e 's#^source ~/.claude/skills/lib/ticket-env.sh.*#:#' \
-      -e 's#^~/.claude/skills/lib/hb-wrap.sh.*#:#' \
-      -e 's#^source ~/.claude/skills/lib/linear-api.sh.*#:#' \
-      -e "s#~/.claude/skills/lib#$LIB_DIR#g" \
-      -e "s#{TICKET-ID}#$tid#g" >"$out"
-}
-
-# Runs gate-reconcile Step 1 for <tid> inside <tickets-repo> and prints the
-# resolved ARTIFACT_TYPE / ARTIFACT_PATH. Exit = the block's exit status.
+# Runs lib/gate-reconcile-prep.sh for <tid> inside <tickets-repo> (comments
+# from an empty list, scratch dir private) and prints its ARTIFACT_TYPE /
+# ARTIFACT_PATH lines. Exit = the script's exit status.
 _run_gr_step1() {
-  local tid="$1" ws="$2" script
-  script="$ws/.gr-step1.sh"
-  _extract_gr_step1 "$tid" "$script"
-  {
-    echo 'echo "ARTIFACT_TYPE=$ARTIFACT_TYPE"'
-    echo 'echo "ARTIFACT_PATH=$ARTIFACT_PATH"'
-  } >>"$script"
-  (cd "$ws" && bash "$script" 2>/dev/null)
+  local tid="$1" ws="$2"
+  mkdir -p -m 700 "$ws/.scratch"
+  echo '[]' >"$ws/.comments.json"
+  (cd "$ws" && env -u LINEAR_API_KEY HOME="$ws" TICKET_TMP_DIR="$ws/.scratch" \
+    bash "$LIB_DIR/gate-reconcile-prep.sh" "$tid" --comments-file .comments.json 2>/dev/null) |
+    grep -E '^ARTIFACT_(TYPE|PATH)='
+  return "${PIPESTATUS[0]}"
 }
 
-test_gr_extraction_is_nonempty() {
-  local out
-  out=$(mktemp)
-  _extract_gr_step1 TEST-7 "$out"
-  local ok=0
-  grep -q 'ARTIFACT_TYPE=' "$out" && grep -q 'ARTIFACT_PATH=' "$out" && ok=1
-  rm -f "$out"
-  [ "$ok" -eq 1 ]
+# The skill calls the script, not an inline resolver.
+test_gr_skill_calls_prep() {
+  grep -q 'lib/gate-reconcile-prep.sh {TICKET-ID}' "$GR_SKILL" &&
+    ! grep -q 'resolve_plan_artifact' "$GR_SKILL"
 }
 
 # DET-IP-13: no EXEC create-artifact line, notes.md says openspec → openspec.
@@ -130,7 +107,7 @@ test_skills_have_no_substring_plan_lookup() {
   return 0
 }
 
-_run "gate-reconcile Step 1 extraction finds both blocks" test_gr_extraction_is_nonempty
+_run "gate-reconcile skill runs gate-reconcile-prep.sh" test_gr_skill_calls_prep
 _run "gate-reconcile: notes.md fallback resolves openspec (DET-IP-13)" test_gr_notes_fallback_resolves_openspec
 _run "gate-reconcile: TEST-7 never resolves test-77 change dir" test_gr_openspec_whole_id_fails_closed
 _run "gate-reconcile: simple-fix path" test_gr_simple_fix_path

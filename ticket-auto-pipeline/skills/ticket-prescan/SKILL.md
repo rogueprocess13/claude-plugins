@@ -13,15 +13,7 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 
 ## Logging
 
-Prescan uses its own repo-scoped log at `~/.claude/logs/prescan-<repo-slug>.log`. This is NOT a pipeline phase log — `detect-resume.sh` does not recognize a PRESCAN phase. Crash recovery: idempotent re-run (freshness gate re-evaluates).
-
-```bash
-mkdir -p "$HOME/.claude/logs"
-PRESCAN_LOG="$HOME/.claude/logs/prescan-<repo-slug>.log"
-_plog() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|${1}|${2}|${3}|${4}" >> "$PRESCAN_LOG"; }
-```
-
-Run the `mkdir -p` once, before the first `_plog` call. Without it, `_plog`'s `>>` redirect fails silently against a missing directory and every log line is lost.
+Prescan uses its own repo-scoped log at `~/.claude/logs/prescan-<repo-slug>.log` (run-level lines: `prescan.log`). This is NOT a pipeline phase log — `detect-resume.sh` does not recognize a PRESCAN phase. Crash recovery: idempotent re-run (freshness gate re-evaluates). `prescan-run-repo.sh` writes its own lines; any other line goes through `bash ~/.claude/skills/lib/plog.sh --log-file "$HOME/.claude/logs/prescan-{slug}.log" PRESCAN <step> <status> "<msg>"` (written `PRESCAN <step> <status>` below). Every Bash call is a fresh shell: fill `{REPOS_ROOT}`, `{repo}` and `{slug}` from Step 0's output.
 
 ## Heartbeat
 
@@ -29,90 +21,25 @@ Each heartbeat event is written inline at its step (event schema: `pipeline-hear
 
 ---
 
-## Step 0 — Environment check and repo enumeration
-
-Validate environment via `env-check.sh --mode=validate` from lib. Resolve `REPOS_ROOT` using `_derive_repos_root` (from ticket-setup Step 0.2). If the user provided a specific repo path as argument, use that single repo. Otherwise, enumerate all repos under `REPOS_ROOT`:
+## Step 0 — Repo enumeration
 
 ```bash
-source "$HOME/.claude/skills/lib/env-check.sh"
-if ! env_check_validate; then
-  _plog "PRESCAN" "env-check" "fail" "Environment validation failed"
-  exit 1
-fi
-
-# Resolve REPOS_ROOT from CLAUDE.md (`KEY = value` or `KEY: value`, either side
-# optionally backticked — the same grammar as lib/claude-md-field.sh)
-REPOS_ROOT="${REPOS_ROOT:-$(grep -oP '`?REPOS_ROOT`?\s*[=:]\s*`?\K[^`]+' "$HOME/.claude/CLAUDE.md" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//' || true)}"
-if [ -z "$REPOS_ROOT" ]; then
-  _plog "PRESCAN" "env-check" "fail" "REPOS_ROOT not set"
-  exit 1
-fi
-
-# Resolve WIKI_ROOT from CLAUDE.md (optional — prescan proceeds without it).
-# Threaded through to prescan-wire-claude-md.sh's --wiki-root below so every
-# repo's INDEX.md gets a "Cross-repo -> WIKI_ROOT/index.md" routing row
-# (wiki-cross-repo-knowledge-layer, appraise Step 3a reads it).
-WIKI_ROOT="${WIKI_ROOT:-$(grep -oP '`?WIKI_ROOT`?\s*[=:]\s*`?\K[^`]+' "$HOME/.claude/CLAUDE.md" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//' || true)}"
-
-# Enumerate repos: if user passed a path, use it; otherwise find all repos
-if [ -n "${1:-}" ] && [ -d "${1}" ]; then
-  REPOS=("${1}")
-else
-  REPOS=()
-  while IFS= read -r -d '' dir; do
-    [ -d "$dir/.git" ] && REPOS+=("$dir")
-  done < <(find "$REPOS_ROOT" -maxdepth 3 -name ".git" -printf '%h\0' 2>/dev/null || true)
-fi
+bash ~/.claude/skills/lib/prescan-run-repo.sh list {REPO_PATH}
 ```
 
-For each repo, derive the slug:
-```bash
-_derive_slug() { basename "${1}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g'; }
-```
+`{REPO_PATH}` is the repo argument the user gave, or empty for every repo. It resolves `REPOS_ROOT` and `WIKI_ROOT` (environment, then `./CLAUDE.md`, then `~/.claude/CLAUDE.md`) and prints them plus one `REPO=<path>|<slug>` line per repo. Exit 1: `REPOS_ROOT` is not set (logged) — stop.
 
 ---
 
-## Step 1 — Freshness gate per repo
+## Step 1 — Freshness gate and lock, per repo
 
-For each repo, run the deterministic freshness gate:
+For each repo (add `--force` when the flag was passed: `CADENCE=forced`, no freshness check):
 
 ```bash
-source "$HOME/.claude/skills/lib/prescan-check.sh"
-
-for repo in "${REPOS[@]}"; do
-  slug=$(_derive_slug "$repo")
-  _plog "PRESCAN" "freshness-gate" "start" "$slug"
-
-  eval $(bash "$HOME/.claude/skills/lib/prescan-check.sh" "$repo" --repos-root "$REPOS_ROOT")
-
-  hb-wrap.sh decision "prescan-gate" "fired" "$PRESCAN_STATUS:$PRESCAN_REASON" \
-    "{\"status\":\"$PRESCAN_STATUS\",\"reason\":\"$PRESCAN_REASON\"}"
-
-  case "$PRESCAN_STATUS" in
-  fresh)
-    _plog "PRESCAN" "freshness-gate" "skip" "$slug: fresh ($PRESCAN_REASON)"
-    PRESCAN_RESULTS["$slug"]="skipped-fresh"
-    continue
-    ;;
-  stale)
-    _plog "PRESCAN" "freshness-gate" "done" "$slug: stale — incremental refresh"
-    CADENCE="$PRESCAN_STATUS"
-    ;;
-  decayed)
-    _plog "PRESCAN" "freshness-gate" "done" "$slug: decayed — full re-dive"
-    CADENCE="decayed"
-    ;;
-  missing)
-    _plog "PRESCAN" "freshness-gate" "done" "$slug: missing — first-time scan"
-    CADENCE="missing"
-    ;;
-  esac
-
-  # Continue to Steps 2-6 for this repo...
-done
+bash ~/.claude/skills/lib/prescan-run-repo.sh gate "{repo}"
 ```
 
-If the `--force` flag was passed, set `CADENCE=forced` for all repos (bypass freshness gate).
+It logs the gate, writes the `prescan-gate` heartbeat and prints `SLUG`, `PRESCAN_STATUS`, `PRESCAN_REASON`, `CADENCE` (`stale`, `decayed`, `missing` or `forced`), `CHANGED_FILES` and `RESULT`: `scan` → Steps 2–6 for this repo; `skipped-fresh`, `skipped-locked` (another process holds `REPOS_ROOT/.ticket-auto/<slug>/.lock`) or `failed` → record it for Step 7 and go to the next repo.
 
 ---
 
@@ -166,45 +93,24 @@ For a first-time scan or decay-prompted re-dive, spawn multiple agents in parall
    # shared by every ticket, so no single ticket's wording may pick a migration/refactor
    # specializer for them.
    eval $(TICKET_TEXT_FILE="" bash "$HOME/.claude/skills/lib/persona-select.sh" \
-     --repo "$repo" --phase prescan ${WITH_QA:+--with-qa})
+     --repo "{repo}" --phase prescan ${WITH_QA:+--with-qa})
    # PERSONA_SET contains newline-separated persona paths
-   _plog "PRESCAN" "persona-select" "done" "$slug: $PERSONA_SET"
+   bash ~/.claude/skills/lib/plog.sh --log-file "$HOME/.claude/logs/prescan-{slug}.log" PRESCAN persona-select done "{slug}: $PERSONA_SET"
    ```
 
 ### Step 4.0 — Collect prescan corrections
 
-Before spawning persona agents, scan recent ticket workspaces for corrections with `source=prescan`. These corrections were written by `ticket-implement` Step 4c Part 4 when a pre-scan doc contributed to a complexity mismatch — they tell persona agents what the docs got wrong last time.
+Before spawning persona agents, collect the `source=prescan` corrections that `ticket-implement` Step 4c Part 4 wrote into recent ticket workspaces (what the docs got wrong last time). Run from the tickets root:
 
 ```bash
-source "$HOME/.claude/skills/lib/corrections-parse.sh"
-
-_corrections_summary=""
-for _ticket_dir in $(find . -maxdepth 3 -type d -name "*--*" -path "*/tickets/*" 2>/dev/null | head -20); do
-  _notes_file="$_ticket_dir/notes.md"
-  [ -f "$_notes_file" ] || continue
-  eval $(get_corrections_by_source "$_notes_file" "prescan" 2>/dev/null) || true
-  if [ "${CORRECTION_COUNT:-0}" -gt 0 ]; then
-    for _i in $(seq 0 $((CORRECTION_COUNT - 1))); do
-      _f_var="CORRECTION_${_i}_FACT"
-      _c_var="CORRECTION_${_i}_CORRECTED"
-      _corrections_summary="${_corrections_summary}  - ${!_f_var}: ${!_c_var}
-"
-    done
-  fi
-done
-
-if [ -n "$_corrections_summary" ]; then
-  _plog "PRESCAN" "corrections-collect" "done" "$slug: $(echo "$_corrections_summary" | wc -l) prescan corrections found"
-else
-  _plog "PRESCAN" "corrections-collect" "done" "$slug: no prescan corrections found"
-fi
+bash ~/.claude/skills/lib/prescan-run-repo.sh corrections "{repo}"
 ```
 
-Pass `_corrections_summary` as "Known corrections" context to each persona agent in wave 1. The prompt for each agent should include:
+It logs the count and prints one `  - fact: corrected` line per correction. Pass them to each wave 1 agent:
 
 ```
 **Known corrections (from prior ticket runs):**
-{_corrections_summary or "None — prior prescan docs were accurate."}
+{the printed lines, or "None — prior prescan docs were accurate."}
 
 Use these to avoid repeating documented mistakes. If a correction says a service list was incomplete,
 verify the full service set. If it says a call chain was wrong, trace it fresh rather than trusting
@@ -219,14 +125,14 @@ the prior doc.
 
    Each agent prompt includes: persona file path, repo path, assigned output file (absolute path), existing CLAUDE.md context, gitnexus data if available. Agents MUST NOT modify source, create branches, or commit.
 
-   After dispatching wave 1, log the count so a skipped fan-out is visible: `_plog "PRESCAN" "fanout-wave1" "done" "$slug: N agents spawned"` (N = persona docs owed for this repo; fewer because a persona doesn't apply, e.g. no `frontend.md` for a backend-only repo, is fine; 0 is not).
+   After dispatching wave 1, log the count so a skipped fan-out is visible: `PRESCAN fanout-wave1 done "{slug}: N agents spawned"` (N = persona docs owed for this repo; fewer because a persona doesn't apply, e.g. no `frontend.md` for a backend-only repo, is fine; 0 is not).
 
 3. **Wait for all wave 1 agents** to complete.
 
 4. **Spawn technical-writer agent** (wave 2 — runs solo after all content exists):
    - **Technical writer agent** → reads all wave 1 output files, synthesizes `INDEX.md` with Lookup by Topic and Lookup by Service tables. It MUST run after wave 1: it reads those files.
 
-   Log the spawn: `_plog "PRESCAN" "fanout-wave2" "done" "$slug: technical-writer agent spawned"`.
+   Log the spawn: `PRESCAN fanout-wave2 done "{slug}: technical-writer agent spawned"`.
 
 ### Path B: Incremental (stale)
 
@@ -236,7 +142,7 @@ For a repo where HEAD moved with source changes (but not decayed):
    ```bash
    S=$(bash ~/.claude/skills/lib/ticket-tmp.sh) || exit 1
    bash "$HOME/.claude/skills/lib/prescan-docs.sh" \
-     --repos-root "$REPOS_ROOT" --repo-slug "$slug" \
+     --repos-root "{REPOS_ROOT}" --repo-slug "{slug}" \
      --clusters "$S/gitnexus-clusters.json" --routes "$S/gitnexus-routes.json" \
      --processes "$S/gitnexus-processes.json" --update-meta
    ```
@@ -245,22 +151,13 @@ For a repo where HEAD moved with source changes (but not decayed):
 
 ### Scaffold-verify gate
 
-After doc generation (either path), run deterministic quality assertions via `prescan-verify.sh`:
+After doc generation (either path), run the deterministic quality assertions (`prescan-verify.sh`):
 
 ```bash
-bash "$HOME/.claude/skills/lib/prescan-verify.sh" \
-  --docs-dir "$REPOS_ROOT/.ticket-auto/$slug/docs" \
-  --cadence "$CADENCE"
-_rc=$?
-if [ $_rc -ne 0 ]; then
-  _plog "META" "gate-stop" "fail" "PRESCAN_NO_DOCS — quality violations: $(grep PRESCAN_VERIFY_VIOLATION | wc -l)"
-  hb-wrap.sh gate "prescan-scaffold" "fail" "quality violations" \
-    "{\"cadence\":\"$CADENCE\",\"violations\":\"$PRESCAN_VERIFY_VIOLATIONS\"}"
-  exit 1
-fi
-hb-wrap.sh gate "prescan-scaffold" "ok" "all docs present and valid" \
-  "{\"cadence\":\"$CADENCE\"}"
+bash ~/.claude/skills/lib/prescan-run-repo.sh verify "{repo}" --cadence {CADENCE}
 ```
+
+Exit 1: violations — it logged `META|gate-stop|fail|PRESCAN_NO_DOCS — quality violations: N` and the `prescan-scaffold` fail heartbeat; record `{slug}: failed` and stop work on this repo.
 
 ---
 
@@ -270,7 +167,7 @@ hb-wrap.sh gate "prescan-scaffold" "ok" "all docs present and valid" \
 
 ```bash
 # Collect all generated doc files
-DOC_FILES=$(find "$REPOS_ROOT/.ticket-auto/$slug/docs" -type f -name "*.md" | tr '\n' ',' | sed 's/,$//')
+DOC_FILES=$(find "{REPOS_ROOT}/.ticket-auto/{slug}/docs" -type f -name "*.md" | tr '\n' ',' | sed 's/,$//')
 
 mcp__plugin_claude-mem_mcp-search__build_corpus \
   name="prescan-$slug" \
@@ -285,12 +182,12 @@ mcp__plugin_claude-mem_mcp-search__list_corpora
 # confirm "prescan-$slug" is present in the result
 ```
 
-Log the outcome **unconditionally** — this `_plog` call must run regardless of whether `HB_LOG_FILE` is set, because `hb_fallback` is a silent no-op outside `--from-auto` runs and is not sufficient on its own to record a skip or failure:
+Log the outcome **unconditionally** — this log line must be written regardless of whether `HB_LOG_FILE` is set, because `hb_fallback` is a silent no-op outside `--from-auto` runs and is not sufficient on its own to record a skip or failure:
 
-- Corpus confirmed present: `_plog "PRESCAN" "corpus" "done" "$slug: corpus built and verified"`
-- Corpus missing after the build call, or the build call itself failed: `_plog "PRESCAN" "corpus" "fail" "$slug: corpus build failed or unverified"`, plus `hb-wrap.sh fallback "corpus-build" "fired" "corpus unavailable" '{"repo":"$slug"}'` for `--from-auto` runs.
+- Corpus confirmed present: `PRESCAN corpus done "{slug}: corpus built and verified"`
+- Corpus missing after the build call, or the build call itself failed: `PRESCAN corpus fail "{slug}: corpus build failed or unverified"`, plus `hb-wrap.sh fallback "corpus-build" "fired" "corpus unavailable" '{"repo":"$slug"}'` for `--from-auto` runs.
 
-If claude-mem MCP is genuinely unavailable, this is a degraded (not fatal) path — Tier 1 INDEX.md routing in `ticket-appraise` still works — but the degradation MUST be logged via the `_plog "fail"` line above, never silently skipped.
+If claude-mem MCP is genuinely unavailable, this is a degraded (not fatal) path — Tier 1 INDEX.md routing in `ticket-appraise` still works — but the degradation MUST be logged via the `fail` line above, never silently skipped.
 
 ---
 
@@ -301,10 +198,10 @@ After all repos in this scan pass complete, rebuild the cross-repo contract map 
 ```bash
 # Regenerates only the Generated line and the Indexed Repos table; the
 # FE → BE Contract Map and Shared Types rows are carried over verbatim.
-eval "$(bash "$HOME/.claude/skills/lib/prescan-system-index.sh" --repos-root "$REPOS_ROOT")"
+eval "$(bash "$HOME/.claude/skills/lib/prescan-system-index.sh" --repos-root "{REPOS_ROOT}")"
 
-_plog "PRESCAN" "system-index" "done" "system.md rebuilt from $SYSTEM_INDEX_REPOS repos"
-hb-wrap.sh decision "system-index" "fired" "system.md rebuilt" "{\"repo_count\":\"$SYSTEM_INDEX_REPOS\"}"
+bash ~/.claude/skills/lib/plog.sh --log-file "$HOME/.claude/logs/prescan.log" PRESCAN system-index done "system.md rebuilt from $SYSTEM_INDEX_REPOS repos"
+bash ~/.claude/skills/lib/hb-wrap.sh decision "system-index" "fired" "system.md rebuilt" "{\"repo_count\":\"$SYSTEM_INDEX_REPOS\"}"
 ```
 
 The contract map table is populated by the prescan agent when it detects cross-repo API calls during fan-out. Never rewrite `system.md` with a heredoc: `prescan-system-index.sh` preserves existing contract-map and shared-types rows (and any other `##` section) across rebuilds, so the agent only appends new rows.
@@ -313,63 +210,11 @@ The contract map table is populated by the prescan agent when it detects cross-r
 
 ## Step 6 — Write marker and wire CLAUDE.md
 
-After successful scan:
-
-### Write meta.json marker
-
-**Full fan-out (missing, decayed, or forced):** update all fields including full-dive:
+After a successful scan, one call writes `meta.json` (full fan-out — `missing`, `decayed`, `forced` — sets every field including the full-dive pair; `stale` bumps `last_scanned_*` and `incremental_scan_count` and keeps the full-dive fields), then wires the repo's CLAUDE.md managed block with `prescan-wire-claude-md.sh` (idempotent; content outside its markers untouched; with `WIKI_ROOT` set it also adds the `| Cross-repo | {WIKI_ROOT}/index.md |` row to INDEX.md's **Lookup by Topic** table, which `ticket-appraise` Step 3a reads) and logs `wire done`:
 
 ```bash
-HEAD_SHA=$(git -C "$repo" rev-parse HEAD)
-NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-cat > "$REPOS_ROOT/.ticket-auto/$slug/meta.json" <<METAEOF
-{
-  "schema_version": "1",
-  "last_scanned_sha": "$HEAD_SHA",
-  "last_scanned_at": "$NOW",
-  "last_full_dive_sha": "$HEAD_SHA",
-  "last_full_dive_ts": "$NOW",
-  "incremental_scan_count": 0,
-  "gitnexus_indexed": ${GITNEXUS_INDEXED:-false},
-  "gitnexus_symbol_count": ${GITNEXUS_SYMBOL_COUNT:-0},
-  "doc_count": $(find "$REPOS_ROOT/.ticket-auto/$slug/docs" -name "*.md" | wc -l)
-}
-METAEOF
+bash ~/.claude/skills/lib/prescan-run-repo.sh "{repo}" --write-meta --cadence {CADENCE} --gitnexus-indexed {GITNEXUS_INDEXED} --symbols {GITNEXUS_SYMBOL_COUNT}
 ```
-
-**Incremental (stale):** update scanned SHA only, increment counter, preserve full-dive fields:
-
-```bash
-HEAD_SHA=$(git -C "$repo" rev-parse HEAD)
-NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-META_PATH="$REPOS_ROOT/.ticket-auto/$slug/meta.json"
-
-jq --arg sha "$HEAD_SHA" --arg now "$NOW" \
-  '.last_scanned_sha = $sha | .last_scanned_at = $now | .incremental_scan_count = ((.incremental_scan_count // 0) + 1)' \
-  "$META_PATH" > "${META_PATH}.tmp" && mv "${META_PATH}.tmp" "$META_PATH"
-```
-
-### Wire CLAUDE.md managed block
-
-Use the deterministic `prescan-wire-claude-md.sh` script — no LLM-written sed commands:
-
-```bash
-_wire_args=(
-  --claude-md "$repo/CLAUDE.md"
-  --prescan-index "$REPOS_ROOT/.ticket-auto/$slug/docs/INDEX.md"
-  --repo-slug "$slug"
-)
-[ -n "$WIKI_ROOT" ] && _wire_args+=(--wiki-root "$WIKI_ROOT")
-
-bash "$HOME/.claude/skills/lib/prescan-wire-claude-md.sh" "${_wire_args[@]}"
-
-_plog "PRESCAN" "wire" "done" "$slug: CLAUDE.md wired"
-```
-
-The script is idempotent and leaves content outside its markers untouched. When `WIKI_ROOT` is
-set it also adds a `| Cross-repo | {WIKI_ROOT}/index.md |` row to the repo's INDEX.md
-**Lookup by Topic** table, which `ticket-appraise` Step 3a reads.
 
 ---
 
@@ -399,7 +244,7 @@ To schedule it, gate the Claude run behind the zero-token pre-check; usage, exit
 `--format json`: `lib/prescan-sweep.sh` usage text.
 
 ```bash
-bash lib/prescan-sweep.sh --repos-root "$REPOS_ROOT"
+bash ~/.claude/skills/lib/prescan-sweep.sh --repos-root "$REPOS_ROOT"
 if [ $? -eq 1 ]; then claude -p "/ticket-prescan"; fi  # 1 = refresh needed
 ```
 
@@ -407,24 +252,7 @@ if [ $? -eq 1 ]; then claude -p "/ticket-prescan"; fi  # 1 = refresh needed
 
 ## Concurrency
 
-Before writing to `REPOS_ROOT/.ticket-auto/<repo-slug>/`, acquire an exclusive lock:
-
-```bash
-LOCK_FILE="$REPOS_ROOT/.ticket-auto/$slug/.lock"
-mkdir -p "$(dirname "$LOCK_FILE")"
-exec {lock_fd}>"$LOCK_FILE"
-if ! flock -n "$lock_fd"; then
-  _plog "PRESCAN" "lock" "skip" "$slug: locked by another process"
-  PRESCAN_RESULTS["$slug"]="skipped-locked"
-  continue  # skip this repo, next one still runs
-fi
-# ... scan work ...
-flock -u "$lock_fd"  # release
-```
-
-Non-blocking: skip on contention with `PRESCAN_STATUS=skipped-locked`.
-
-**Compatibility:** `exec {lock_fd}>` (auto-allocated fd) requires bash 4.1+. macOS shipped bash 3.2 until recently — if running on an older system, replace `{lock_fd}` with a static fd number (e.g., `exec 9>"$LOCK_FILE"` and `flock -n 9`).
+Step 1's `gate` probes the exclusive `REPOS_ROOT/.ticket-auto/<repo-slug>/.lock` (non-blocking) and skips the repo with `skipped-locked` on contention. A flock cannot span this skill's many Bash calls, so the probe is released when `gate` exits (an EXIT trap covers every path); it keeps two runs from starting the same repo at once, not from overlapping later.
 
 ## RLVR Phase 0 — Verifier Result
 
