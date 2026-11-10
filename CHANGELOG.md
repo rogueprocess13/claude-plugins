@@ -40,6 +40,11 @@ old fence, which is embedded in the test as an oracle.
   `Still queued: <path>` (exit 4).
 - **`next-id` counts queued drafts.** A second capture in plan mode used to get the same id as the
   first queued one and overwrite its queue file.
+- **`flush-queue` takes only regular files the current user owns.** The queue lives in shared
+  `/tmp`, so a symlink or another user's file is printed as `Skipped (...)` and left alone; the
+  old loop moved whatever matched the glob. `next-id` ignores the same entries.
+- **`kc-item.sh add` refuses a frontmatter id that is not `KC-NNNN`** (exit 4). The id names the
+  target file, so `id: ../evil` used to write `knowledge/../evil--<slug>.md`, outside the store.
 - **kc-import's existing-item match uses the whole `source:` value.** The old `grep -l` was a
   substring match, so change `foo` matched the item of `foo-bar`. Quoted values still match.
 

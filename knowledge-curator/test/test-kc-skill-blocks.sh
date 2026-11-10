@@ -188,6 +188,37 @@ out=$(cd "$W" && bash "$KI" flush-queue --queue-dir "$Q" 2>&1)
 rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$out" ]; then pass "empty queue → exit 0, silent"; else fail "empty queue rc=$rc '$out'"; fi
 
+# Shared /tmp: a symlinked queue entry is skipped, never followed or added.
+ws f3
+item "$W/knowledge" KC-0001 first
+item "$TMP" KC-0007 elsewhere
+ln -s "$TMP/KC-0007--elsewhere.md" "$Q/kc-capture-queue-KC-0007.md"
+out=$(cd "$W" && bash "$KI" flush-queue --queue-dir "$Q" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && grep -q "^Skipped (symlink.*: $Q/kc-capture-queue-KC-0007.md" <<<"$out" &&
+  ! ls "$W/knowledge"/KC-0007--* >/dev/null 2>&1 && [ -f "$TMP/KC-0007--elsewhere.md" ]; then
+  pass "symlinked queue entry skipped, target untouched"
+else
+  fail "symlinked queue entry (rc=$rc): $out"
+fi
+eq "next-id ignores a symlinked queue entry" "KC-0002" "$(cd "$W" && bash "$KI" next-id --queue-dir "$Q")"
+
+# A draft whose frontmatter id is not KC-NNNN is refused (it names the target file).
+item "$Q" KC-0008 trav
+sed -i 's/^id: KC-0008$/id: ..\/..\/evil/' "$Q/KC-0008--trav.md"
+mv "$Q/KC-0008--trav.md" "$Q/kc-capture-queue-KC-0008.md"
+out=$(cd "$W" && bash "$KI" flush-queue --queue-dir "$Q" 2>&1)
+rc=$?
+if [ "$rc" -eq 4 ] && [ -f "$Q/kc-capture-queue-KC-0008.md" ] && ! ls "$TMP"/evil* "$W"/evil* >/dev/null 2>&1 &&
+  grep -q "Invalid id" <<<"$out"; then
+  pass "draft with a traversal id stays queued, nothing written outside knowledge/"
+else
+  fail "traversal id draft (rc=$rc): $out"
+fi
+out=$(cd "$W" && bash "$KI" add "$Q/kc-capture-queue-KC-0008.md" 2>&1)
+rc=$?
+eq "add refuses a non-KC-NNNN id (exit 4)" "4" "$rc"
+
 echo "audit"
 
 ws a1

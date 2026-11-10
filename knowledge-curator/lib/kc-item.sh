@@ -12,8 +12,9 @@
 # kc-capture helpers (user-facing capture flow, not part of the agent contract):
 #   next-id [--queue-dir D]      Print the next free KC-NNNN: one past the highest
 #                                id in $KNOWLEDGE_DIR or queued as D/kc-capture-queue-
-#                                KC-NNNN*.md (D defaults to /tmp). Read-only.
-#   flush-queue [--queue-dir D]  `add` every queued draft (D/kc-capture-queue-*.md),
+#                                KC-NNNN*.md owned by this user (D defaults to /tmp). Read-only.
+#   flush-queue [--queue-dir D]  `add` every queued draft (D/kc-capture-queue-*.md) that
+#                                is a regular file owned by this user (others print "Skipped (...): <path>"),
 #                                deleting each one that was added. A draft that fails
 #                                stays queued and is printed as "Still queued: <path>";
 #                                exit 4 if any remain.
@@ -228,6 +229,8 @@ add)
 
   # Extract id from frontmatter for the target filename
   id=$(awk '/^id:/ {print $2}' "$item_file" | tr -d '"'"'")
+  # The id names the target file: refuse anything but KC-NNNN (path traversal).
+  validate_id "$id" || die "Invalid id in ${item_file}: ${id} (expected KC-NNNN)" 4
   title=$(awk '/^title:/ {sub(/^title: *"?/,""); sub(/"$/,""); print}' "$item_file" | head -1)
   slug=$(echo "$title" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/--*/-/g; s/^-//; s/-$//' | head -c 60)
   target="$KNOWLEDGE_DIR/${id}--${slug}.md"
@@ -317,7 +320,7 @@ next-id | flush-queue)
   if [ "$subcommand" = "next-id" ]; then
     max=0
     for f in "$KNOWLEDGE_DIR"/KC-[0-9][0-9][0-9][0-9]--*.md "$queue_dir"/kc-capture-queue-KC-[0-9][0-9][0-9][0-9]*.md; do
-      [ -e "$f" ] || continue
+      [ -f "$f" ] && [ ! -L "$f" ] && [ -O "$f" ] || continue
       n=$(basename "$f" | grep -oE 'KC-[0-9]{4}' | head -1) || continue
       n=$((10#${n#KC-}))
       if [ "$n" -gt "$max" ]; then max=$n; fi
@@ -327,7 +330,12 @@ next-id | flush-queue)
   fi
   left=0
   for qf in "$queue_dir"/kc-capture-queue-*.md; do
-    [ -f "$qf" ] || continue
+    [ -e "$qf" ] || [ -L "$qf" ] || continue
+    # The queue dir is shared /tmp: take only regular files this user owns.
+    if [ ! -f "$qf" ] || [ -L "$qf" ] || [ ! -O "$qf" ]; then
+      echo "Skipped (symlink, not a regular file, or not owned by $(id -un)): $qf"
+      continue
+    fi
     if bash "$SCRIPT_DIR/kc-item.sh" add "$qf"; then
       rm -f "$qf"
     else
