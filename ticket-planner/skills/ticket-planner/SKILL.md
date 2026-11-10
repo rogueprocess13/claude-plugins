@@ -377,190 +377,16 @@ proceed to any other mode's steps.**
 
 ### 2a. Parse override flags
 
-Flags are accepted in both `plan` and `resume` mode. **Parse them into plain shell
-variables here; do not export them.** They are persisted to the state log in step 2b,
-once an initiative ID exists, and every consumer reads them back from there.
-
-Exporting is what broke `--dry-run` (#144): the dispatch loop below spans one Bash tool
-call per phase with an Agent tool call between, so each iteration is a fresh process and
-an `export` from this step is simply not there when a later phase looks for it.
-
-<!-- size-gate: template -->
-```bash
-SHARED_BRANCH_FLAG=""
-NO_SHARED_BRANCH_FLAG=""
-CREATE_FLAG=""
-UNTIL_PHASE=""
-TEAM_REF=""
-PROJECT_REF=""
-NO_PROJECT_FLAG=""
-MILESTONE_REF=""
-ACCEPT_FLAGS=()
-REFRESH_BODIES_FLAG=""
-CONVERGE_FLAG=""
-CONVERGE_ONLY=""
-CONVERGE_BY=""
-ANSWERS_FILE=""
-NO_TESTS_RULE_FLAG=""
-
-# Env vars are the defaults for the corresponding flags, read once, here.
-UNTIL_PHASE="${PLANNER_UNTIL:-}"
-[ "${PLANNER_REVIEW_HOLD:-false}" = "true" ] && UNTIL_PHASE="${UNTIL_PHASE:-Review}"
-TEAM_REF="${LINEAR_TEAM_ID:-}"
-PROJECT_REF="${LINEAR_PROJECT:-}"
-MILESTONE_REF="${LINEAR_PROJECT_MILESTONE:-}"
-case "${PLANNER_NO_TESTS_RULE:-}" in true | false) NO_TESTS_RULE_FLAG="${PLANNER_NO_TESTS_RULE}" ;; esac
-UAT_POLICY_REF="${PLANNER_UAT_POLICY:-}"
-BASE_BRANCH_REF="${PLANNER_BASE_BRANCH:-}"
-
-# Positional params are always braced ("${1}", never a bare dollar-digit): the
-# skill loader substitutes a bare dollar-digit token with the invocation's own
-# argument before this block ever runs, so a bare one in the case below matched
-# the literal initiative id and no flag ever parsed (#455).
-while [ "$#" -gt 0 ]; do
-  case "${1}" in
-    --shared-branch) SHARED_BRANCH_FLAG=true ;;
-    --no-shared-branch) NO_SHARED_BRANCH_FLAG=true ;;
-    --create) CREATE_FLAG=true ;;
-    --dry-run) ;;   # redundant: stopping before the first Linear write is the default
-    --until) shift; UNTIL_PHASE="${1:-}" ;;
-    --until=*) UNTIL_PHASE="${1#*=}" ;;
-    --accept) shift; ACCEPT_FLAGS+=("${1:-}") ;;
-    --accept=*) ACCEPT_FLAGS+=("${1#*=}") ;;
-    --team) shift; TEAM_REF="${1:-}" ;;
-    --team=*) TEAM_REF="${1#*=}" ;;
-    --project) shift; PROJECT_REF="${1:-}" ;;
-    --project=*) PROJECT_REF="${1#*=}" ;;
-    --no-project) NO_PROJECT_FLAG=true ;;
-    --milestone) shift; MILESTONE_REF="${1:-}" ;;
-    --milestone=*) MILESTONE_REF="${1#*=}" ;;
-    --refresh-bodies) REFRESH_BODIES_FLAG=true ;;
-    --converge) CONVERGE_FLAG=true ;;
-    --only) shift; CONVERGE_ONLY="${1:-}" ;;
-    --only=*) CONVERGE_ONLY="${1#*=}" ;;
-    --by) shift; CONVERGE_BY="${1:-}" ;;
-    --by=*) CONVERGE_BY="${1#*=}" ;;
-    --no-tests-rule) NO_TESTS_RULE_FLAG=true ;;
-    --no-tests-rule=*) NO_TESTS_RULE_FLAG="${1#*=}" ;;
-    --answers) shift; ANSWERS_FILE="${1:-}" ;;
-    --answers=*) ANSWERS_FILE="${1#*=}" ;;
-    --base-branch) shift; BASE_BRANCH_REF="${1:-}" ;;
-    --base-branch=*) BASE_BRANCH_REF="${1#*=}" ;;
-  esac
-  shift
-done
-
-case "$NO_TESTS_RULE_FLAG" in
-  "" | true | false) ;;
-  *) echo "ERROR: --no-tests-rule takes true or false, got '${NO_TESTS_RULE_FLAG}'" >&2; exit 1 ;;
-esac
-
-case "$UAT_POLICY_REF" in
-  "" | per-ticket | epic) ;;
-  *) echo "ERROR: PLANNER_UAT_POLICY takes per-ticket or epic, got '${UAT_POLICY_REF}'" >&2; exit 1 ;;
-esac
-source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-repo-ref.sh"
-planner_directive_config_check "$BASE_BRANCH_REF" || exit 1
-
-# Reject both branch flags together
-if [ "$SHARED_BRANCH_FLAG" = "true" ] && [ "$NO_SHARED_BRANCH_FLAG" = "true" ]; then
-  echo "ERROR: --shared-branch and --no-shared-branch are mutually exclusive" >&2
-  exit 1
-fi
-
-# Same for the project flags. --no-project is an opt-out, not an override: an
-# invocation that says both has not decided, and Epic Gen must not guess which
-# half was meant.
-if [ -n "$PROJECT_REF" ] && [ "$NO_PROJECT_FLAG" = "true" ]; then
-  echo "ERROR: --project and --no-project are mutually exclusive" >&2
-  exit 1
-fi
-
-# --create is a deliberate, separate gesture made after reading the artifacts.
-# A single command that both plans and creates is the footgun this design removes.
-if [ "$CREATE_FLAG" = "true" ] && [ "$MODE" = "plan" ]; then
-  echo "ERROR: --create is not valid for 'plan'. Plan first, read the artifacts, then:" >&2
-  echo "       /ticket-planner resume <INIT_ID> --create" >&2
-  exit 1
-fi
-
-# --accept, like --create, is only meaningful after Crosscheck has reported the
-# finding it accepts. Rejected in 'plan' for the same reason --create is (#222).
-if [ "${#ACCEPT_FLAGS[@]}" -gt 0 ] && [ "$MODE" = "plan" ]; then
-  echo "ERROR: --accept is not valid for 'plan'. Accept a finding only after Crosscheck reports it:" >&2
-  echo "       /ticket-planner resume <INIT_ID> --accept CODE:\"reason\"" >&2
-  exit 1
-fi
-
-# --refresh-bodies, same restriction — it re-reads not-ready tickets Refinement
-# has already held, so it is meaningless before TicketGen has run (planner-
-# refinement-phase).
-if [ "$REFRESH_BODIES_FLAG" = "true" ] && [ "$MODE" = "plan" ]; then
-  echo "ERROR: --refresh-bodies is not valid for 'plan'. It re-evaluates tickets Refinement already held:" >&2
-  echo "       /ticket-planner resume <INIT_ID> --refresh-bodies" >&2
-  exit 1
-fi
-
-# --converge --only <TIDs> [--by <name>] (planner-refinement-convergence D10):
-# a resume-only, one-shot operator action. --only is mandatory (there is no
-# epic-wide converge), and a bad combination is rejected here, before
-# anything is persisted.
-if [ "$CONVERGE_FLAG" = "true" ] && [ "$MODE" = "plan" ]; then
-  echo "ERROR: --converge is not valid for 'plan'. It releases tickets Refinement already held:" >&2
-  echo "       /ticket-planner resume <INIT_ID> --converge --only <TID[,TID...]> [--by <name>]" >&2
-  exit 1
-fi
-source "${CLAUDE_PLUGIN_ROOT}/lib/planner-refinement.sh"
-planner_refinement_converge_args_validate "$CONVERGE_FLAG" "$CONVERGE_ONLY" "$CONVERGE_BY" || exit 1
-[ "$CONVERGE_FLAG" = "true" ] && [ -z "$CONVERGE_BY" ] && CONVERGE_BY="${USER:-operator}"
-
-# --answers answers the questions a stopped run is asking (planner-headless-
-# questions), so like --create it only means something on 'resume'.
-if [ -n "$ANSWERS_FILE" ] && [ "$MODE" = "plan" ]; then
-  echo "ERROR: --answers is not valid for 'plan'. Answer a stopped run's questions on resume:" >&2
-  echo "       /ticket-planner resume <INIT_ID> --answers <file>" >&2
-  exit 1
-fi
-if [ -n "$ANSWERS_FILE" ] && [ ! -f "$ANSWERS_FILE" ]; then
-  echo "ERROR: --answers file not found: ${ANSWERS_FILE}" >&2
-  exit 1
-fi
-
-# Validate every --accept CODE:"reason" pair up front — CODE must look like a
-# real Crosscheck code (upper-snake-case, same shape _planner_crosscheck_emit_finding
-# requires) and reason must be non-empty. Split on the first ':' only, so a reason
-# containing ':' (a URL, a doc anchor) is preserved intact.
-for _accept_arg in "${ACCEPT_FLAGS[@]}"; do
-  [ -z "$_accept_arg" ] && continue
-  case "$_accept_arg" in
-  *:*)
-    _accept_code="${_accept_arg%%:*}"
-    _accept_reason="${_accept_arg#*:}"
-    ;;
-  *)
-    echo "ERROR: --accept requires CODE:\"reason\" (got '${_accept_arg}')" >&2
-    exit 1
-    ;;
-  esac
-  if [[ ! "$_accept_code" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
-    echo "ERROR: --accept code '${_accept_code}' is not a valid Crosscheck code (expected upper-snake-case, e.g. CARVE_SCOPE_LOST)" >&2
-    exit 1
-  fi
-  if [ -z "$_accept_reason" ]; then
-    echo "ERROR: --accept requires a non-empty reason: CODE:\"reason\"" >&2
-    exit 1
-  fi
-done
-```
-
-Validate `--until` against the canonical sequence before writing anything.
-`planner_until_validate` prints the valid phase names (or the current position) and
-returns 1 (unknown phase) or 2 (phase already passed):
+Flags are accepted in both `plan` and `resume` mode. `planner_flags_parse`
+(`planner-invocation.sh`) parses them into plain shell variables (never exported:
+each phase runs in a fresh process, so an export is gone by the next phase, #144),
+reads the env-var defaults once, and validates every combination and `--until`
+before anything is written. It prints the reason and returns 1 on a bad invocation.
+The variables live only in this shell: run step 2b in the same Bash call, or parse again there.
 
 ```bash
-if [ -n "$UNTIL_PHASE" ]; then
-  planner_until_validate "$UNTIL_PHASE" "${INITIATIVE_ID:-}" || exit 1
-fi
+source "${PLUGIN_ROOT}/lib/planner-invocation.sh"
+planner_flags_parse "$MODE" "$@" || exit 1
 ```
 
 ### 2b. Persist the invocation config
@@ -571,69 +397,12 @@ anything is dispatched. Nothing may be dispatched before it: the persisted confi
 later phase reads, and `--create` must be durable *before* Epic Gen can be reached, so
 that a crash in between does not lose the authorization.
 
-<!-- size-gate: template -->
+`planner_flags_persist` writes the parsed flags: `--answers` first (validated against
+the round the run is stopped on now; a rejected file stops here with nothing written),
+then the `--create` authorization, then every config key:
+
 ```bash
-# --answers first (planner-headless-questions): it is validated against the
-# round the run is stopped on *now*, before any other flag of this invocation
-# changes that stop. A rejected file (stale round, unknown id, wrong role)
-# stops here with nothing written; exit 0 covers both "applied" and "this
-# exact file was already applied".
-if [ -n "$ANSWERS_FILE" ]; then
-  source "${CLAUDE_PLUGIN_ROOT}/lib/planner-answers.sh"
-  planner_answers_apply "$INITIATIVE_ID" "$ANSWERS_FILE" || exit $?
-fi
-
-# Authorization first — it is the entry that must survive a crash.
-if [ "$CREATE_FLAG" = "true" ]; then
-  planner_authorize_create "$INITIATIVE_ID" "operator passed --create"
-  # --create with no new --until clears a stop point an earlier invocation set,
-  # so `plan --until Crosscheck` does not keep stopping the authorized run.
-  planner_stop_after_set "$INITIATIVE_ID" "$UNTIL_PHASE"
-elif [ -n "$UNTIL_PHASE" ]; then
-  planner_stop_after_set "$INITIATIVE_ID" "$UNTIL_PHASE"
-fi
-
-[ -n "$TEAM_REF" ] && planner_config_set "$INITIATIVE_ID" "linear-team" "$TEAM_REF"
-[ -n "$PROJECT_REF" ] && planner_config_set "$INITIATIVE_ID" "linear-project" "$PROJECT_REF"
-[ "$NO_PROJECT_FLAG" = "true" ] && planner_config_set "$INITIATIVE_ID" "no-project" "true"
-[ -n "$MILESTONE_REF" ] && planner_config_set "$INITIATIVE_ID" "linear-milestone" "$MILESTONE_REF"
-
-if [ "$SHARED_BRANCH_FLAG" = "true" ]; then
-  planner_config_set "$INITIATIVE_ID" "branch-override" "shared"
-elif [ "$NO_SHARED_BRANCH_FLAG" = "true" ]; then
-  planner_config_set "$INITIATIVE_ID" "branch-override" "no-shared"
-fi
-
-# Branch Directive config (UAT, base, merge, sync): Epic Gen reads the keys back.
-[ -n "$UAT_POLICY_REF" ] && planner_config_set "$INITIATIVE_ID" "uat-policy" "$UAT_POLICY_REF"
-planner_directive_config_persist "$INITIATIVE_ID" "$BASE_BRANCH_REF"
-
-# --refresh-bodies: one-shot, not sticky — step 1b clears it after Refinement uses it.
-[ "$REFRESH_BODIES_FLAG" = "true" ] && planner_config_set "$INITIATIVE_ID" "refresh-bodies" "true"
-
-# --converge (planner-refinement-convergence D10): one-shot too, stored as
-# "<TID,TID...> <operator>" and consumed (then cleared) by step 1b.
-[ "$CONVERGE_FLAG" = "true" ] && planner_config_set "$INITIATIVE_ID" "converge" "${CONVERGE_ONLY} ${CONVERGE_BY}"
-
-# No-tests rule (#503): the flag wins, else detected once from REPOS_ROOT CLAUDE.md files.
-source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-testdata.sh"
-planner_testdata_no_tests_rule_persist "$INITIATIVE_ID" "$NO_TESTS_RULE_FLAG"
-
-# --accept CODE:"reason" (#222): recorded via planner_crosscheck_accept_set, not
-# planner_config_set — a set of accepted codes, not a single last-write-wins value.
-if [ "${#ACCEPT_FLAGS[@]}" -gt 0 ]; then
-  source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck.sh"
-  for _accept_arg in "${ACCEPT_FLAGS[@]}"; do
-    [ -z "$_accept_arg" ] && continue
-    if [ "${_accept_arg%%:*}" = "DRAFT_NOT_READY" ]; then
-      # Own branch: bound to the drafts' hashes now, never a Crosscheck accept.
-      source "${CLAUDE_PLUGIN_ROOT}/lib/planner-draft-readiness-gate.sh"
-      planner_draft_readiness_accept "$INITIATIVE_ID" "${_accept_arg#*:}" || exit 1
-      continue
-    fi
-    planner_crosscheck_accept_set "$INITIATIVE_ID" "${_accept_arg%%:*}" "${_accept_arg#*:}"
-  done
-fi
+planner_flags_persist "$INITIATIVE_ID" || exit $?
 ```
 
 Config is last-write-wins, so a later invocation overrides an earlier one — that is how
@@ -678,21 +447,9 @@ When mode is `plan`:
      `PLANNER_INTENT_RECOMMENDATION`, `PLANNER_INTENT_HASH`, `PLANNER_INTENT_PROFILE`
      in the current shell. They must still be set at step 7 (same shell, or
      re-export them).
-   - Derive `IDEA` from the intent document's `## Objective` section: extract
-     every line between the `## Objective` heading and the next `## ` heading,
-     drop blank lines and the `_None specified_` placeholder, join with spaces,
-     and truncate to `PLANNER_IDEA_MAX_LENGTH`. Phase agents read the whole
-     document (`artifacts/intent.md`); this is only the state log's idea line.
-     ```
-     IDEA=$(awk '/^## Objective$/{f=1;next}/^## /{f=0}f' "$path" \
-       | sed '/^[[:space:]]*$/d' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
-     [ "$IDEA" = "_None specified_" ] && IDEA=""
-     IDEA="${IDEA:-$path}"
-     IDEA="${IDEA:0:${PLANNER_IDEA_MAX_LENGTH:-2000}}"
-     ```
-     Do not gate the fallback on a command's exit status — `head`/`sed`/`awk`
-     pipelines exit 0 even when they match nothing, so an empty-string check is
-     the only reliable signal.
+   - Derive the state log's idea line: `IDEA=$(planner_intent_idea "$path")` (the
+     `## Objective` lines joined, truncated to `PLANNER_IDEA_MAX_LENGTH`, else the
+     path). Phase agents read the whole document (`artifacts/intent.md`).
    - The original file path is preserved as `PLANNER_INTENT_FILE` for later artifact capture.
 4. Generate an initiative ID: `INIT-$(date +%s)-$(shuf -i 1000-9999 -n 1)` to avoid collision.
 5. Initialize state: `planner_state_init "$INITIATIVE_ID" "$IDEA"`
@@ -797,83 +554,41 @@ so the spawned agent never has to resolve anything.
 First open the run's telemetry record (the Stop hook closes it on any halt or completion):
 `bash "${CLAUDE_PLUGIN_ROOT}/lib/planner-run-telemetry.sh" begin "$INITIATIVE_ID" || true`
 
+Every halt below is one `planner_dispatch_gate <gate> "$INITIATIVE_ID" "$PHASE" "$STATE_DIR"`
+call (`planner-router.sh`). It returns 0 to proceed, 3 after printing a normal stop, or 1
+after an error on stderr; always call it as `... || exit $(($? == 3 ? 0 : 1))`. Report a
+stop's output verbatim (do not re-summarize or re-order it) as a normal terminal outcome,
+not a failure: do not ask the user whether to proceed, and never fall through to step 5's
+retry budget, because a halt is a content decision that re-running cannot change. The
+`resume` command it prints is the continuation, and it is theirs to invoke.
+
 For each phase to run:
 
-1. **Check the create gate** before generating anything. If `$PHASE` is `EpicGen`, run
-   step 1d first. Epic Gen and Ticket Gen write to Linear; an unauthorized initiative
-   stops here:
+1. **Pre-dispatch gates.** If `$PHASE` is `EpicGen`, run step 1d first. Then:
 
    ```bash
-   if ! planner_create_gate_check "$INITIATIVE_ID" "$PHASE"; then
-     echo "Planning complete — nothing was created in Linear."
-     echo "Artifacts:  ${STATE_DIR}/artifacts/"
-     echo "Specs:      ${STATE_DIR}/artifacts/specs/"
-     echo "State log:  $(planner_state_log "$INITIATIVE_ID")"
-     echo "To create:  /ticket-planner resume ${INITIATIVE_ID} --create"
-     exit 0
-   fi
+   planner_dispatch_gate pre "$INITIATIVE_ID" "$PHASE" "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
    ```
 
-   This is a normal terminal outcome of a `plan` run, not a failure — report it as
-   completion of the planning stage. Do not ask the user whether to proceed; `resume
-   --create` is the continuation, and it is theirs to invoke after reading the specs.
-
-1a0. **A blocked Consensus halts the loop before Crosscheck** (DET-PL-11). Consensus
-    writes `Readiness: blocked` in consensus.md when it cannot resolve a blocking review
-    finding. If `$PHASE` is `Crosscheck`, run the readiness gate before the check:
-
-    ```bash
-    source "${CLAUDE_PLUGIN_ROOT}/lib/planner-consensus-gate.sh"
-    if [ "$PHASE" = "Crosscheck" ]; then
-      _cg_rc=0
-      planner_consensus_gate "$INITIATIVE_ID" || _cg_rc=$?
-      if [ "$_cg_rc" -eq 3 ]; then
-        planner_consensus_halt_report "$INITIATIVE_ID" "$STATE_DIR"
-        exit 0
-      fi
-    fi
-    ```
-
-    Report the `planner_consensus_halt_report` output verbatim. Exit 0 is a normal stop,
-    not a failure: do not run Crosscheck, and do not fall through to step 5's retry
-    budget. Only an explicit `blocked` halts; `ready-for-spec`, `needs-further-discovery`
-    and a missing or unparseable Readiness field proceed as before. The gate holds no
-    state and writes nothing — it is re-read on every dispatch at `Crosscheck`, so it
-    releases once a person fixes the plan and changes consensus.md's Readiness (or the
-    plan is re-run through Consensus). On rc 0, continue to step 1a.
+   It runs, in order: the **create gate** (Epic Gen and Ticket Gen write to Linear; an
+   unauthorized initiative stops with "Planning complete — nothing was created in
+   Linear", the normal end of a `plan` run); for `Crosscheck`, the **Consensus
+   readiness gate** (DET-PL-11: only an explicit `Readiness: blocked` in consensus.md
+   halts; it holds no state and releases once a person changes Readiness or Consensus
+   re-runs); for `Review`, the **open business decisions gate** (step 1c).
 
 1a. **Crosscheck is not an agent phase.** If `$PHASE` is `Crosscheck`, run the check
     directly and skip steps 2–5 entirely — there is no prompt for it in
     `planner_prompt_for_phase`:
 
     ```bash
-    source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck.sh"
-    if ! planner_crosscheck_run "$INITIATIVE_ID"; then
-      echo "Crosscheck found blocking findings — fix the cited artifacts and resume."
-      echo ""
-      planner_crosscheck_findings_report "$INITIATIVE_ID"
-      echo ""
-      echo "Raw log:    grep 'META|crosscheck|fail' $(planner_state_log "$INITIATIVE_ID")"
-      echo "Artifacts:  ${STATE_DIR}/artifacts/"
-      echo "Resume:     /ticket-planner resume ${INITIATIVE_ID}"
-      exit 0
-    fi
+    planner_dispatch_gate crosscheck "$INITIATIVE_ID" "$PHASE" "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
     ```
 
-    Report the `planner_crosscheck_findings_report` output verbatim — it is the
-    remediation list, grouped artifact → code with the offending token and a
-    one-line fix hint per code (#233). Do not re-summarize it, re-order it, or
-    re-derive findings from the raw log: it already renders everything Crosscheck
-    recorded for this attempt, and the raw-log line above is there for auditing,
-    not for reading the findings out of.
-
-    Do not fall through to step 5's retry-budget check on a Crosscheck failure — a
-    blocking finding is a content defect in the artifacts, not a transient agent
-    failure, and re-running the same deterministic check against unchanged artifacts
-    cannot produce a different answer. Stopping here (exit 0, a normal terminal
-    outcome, not an error) and waiting for `resume` after the operator edits the
-    artifacts is the correct response, exactly like the create gate. On success,
-    run step 1d, then continue to step 6 (skip 2–5).
+    On a blocking finding it prints `planner_crosscheck_findings_report` (artifact →
+    code, the offending token, a one-line fix hint per code, #233) and stops: the check
+    is deterministic, so only an edit to the artifacts and a `resume` can change the
+    answer. On success, run step 1d, then continue to step 6 (skip 2–5).
 
 1b. **Refinement is not an agent phase either** (planner-refinement-phase). If `$PHASE`
     is `Refinement`, run it directly and skip steps 2–5 — like Crosscheck, it has no
@@ -892,29 +607,12 @@ For each phase to run:
     `APPLY=planner_refinement_apply_pending`, then:
 
     ```bash
-    if [ "${REFINEMENT_AFTER_COMPLETED:-}" = "true" ]; then
-      # Completed initiative (step 4): no gate, no phase line, no re-stamp.
-      planner_refinement_after_completed_finish "$INITIATIVE_ID"
-      planner_refinement_report "$INITIATIVE_ID"
-    elif planner_refinement_gate "$INITIATIVE_ID"; then
-      # Every child ready. Advisory findings (TEST_DATA_GAP, demotions) never
-      # block, so show them here or nobody sees them before Completed.
-      planner_refinement_advisory_summary "$INITIATIVE_ID"
-    else
-      echo "Refinement halted — one or more tickets are not ready."
-      echo ""
-      planner_refinement_report "$INITIATIVE_ID"
-      echo ""
-      echo "Artifacts:  ${STATE_DIR}/artifacts/"
-      echo "Resume:     /ticket-planner resume ${INITIATIVE_ID}"
-      exit 0
-    fi
+    planner_refinement_finish "$INITIATIVE_ID" "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
     ```
 
-    Do not fall through to step 5's retry-budget check here — like Crosscheck, a
-    Refinement halt is a content decision (a ticket is not ready), not a transient
-    agent failure, so it never consumes `PLANNER_MAX_PHASE_RETRIES`. On a legacy-skip
-    or a clean gate pass, continue to step 6 (skip 2–5).
+    It gates (or, with `REFINEMENT_AFTER_COMPLETED=true` from step 4, only reports),
+    prints the advisory summary on a pass, and halts like a dispatch gate when a ticket
+    is not ready. On a legacy-skip or a clean pass, continue to step 6 (skip 2–5).
 
 1d. **Draft readiness gates the first Linear write** (planner-draft-readiness). Run it
     from step 1a's success path and from step 1 when `$PHASE` is `EpicGen`:
@@ -959,39 +657,13 @@ For each phase to run:
 
 1c. **Open business decisions halt the loop before Review** (planner-specify-waiting-on-human).
     Specify writes `**Outcome:** NEEDS_HUMAN_DECISION — <question>` in proposal.md's
-    `## Business Outcomes` when no source states an outcome. If `$PHASE` is `Review`,
-    run the decision gate before generating the Review prompt:
-
-    ```bash
-    source "${CLAUDE_PLUGIN_ROOT}/lib/planner-specify-decisions.sh"
-    if [ "$PHASE" = "Review" ]; then
-      _sd_rc=0
-      planner_specify_gate "$INITIATIVE_ID" || _sd_rc=$?
-      case "$_sd_rc" in
-      0) ;;
-      3)
-        planner_specify_halt_report "$INITIATIVE_ID" "$STATE_DIR"
-        exit 0
-        ;;
-      *)
-        echo "ERROR: Specify decision gate could not read proposal.md" >&2
-        exit 1
-        ;;
-      esac
-    fi
-    ```
-
-    Report the `planner_specify_halt_report` output verbatim. Exit 0 is a normal stop,
-    not a failure: do not spawn Review, and do not fall through to step 5's retry budget.
-    The gate holds no state and writes no phase line. It runs again on every dispatch
-    at `Review` — right after Specify's `done`, on every `resume`, and after
-    `--answers` — so a crash between Specify and this step is safe. A person releases a
-    decision by answering it (`--answers`, binding `specify-answer:O<n>`), by answering
-    `__defer__` (the question goes into the epic unresolved, as before this gate
-    existed), or by editing the Outcome line in proposal.md by hand. Its only write is
-    a `META|specify-gate|warn` line, once per proposal version, naming any
-    `NEEDS_HUMAN_DECISION` text that is not a well-formed marker and so was not asked.
-    On rc 0, continue to step 2.
+    `## Business Outcomes` when no source states an outcome; step 1's `pre` gate halts
+    on one before the Review prompt is generated. It holds no state and runs again on
+    every dispatch at `Review`, so a crash between Specify and here is safe. A person
+    releases a decision by answering it (`--answers`, binding `specify-answer:O<n>`),
+    by answering `__defer__` (the question goes into the epic unresolved), or by editing
+    the Outcome line in proposal.md by hand. Its only write is a `META|specify-gate|warn`
+    line, once per proposal version, naming malformed `NEEDS_HUMAN_DECISION` text.
 
 2. **Get the prompt** for the current phase:
    ```bash
@@ -1010,33 +682,13 @@ For each phase to run:
 
 4. **Wait for the agent** to complete. The agent writes state log entries itself.
 
-4a. **ADR gate halt bridge (adr-governance-gate) — Architecture phase only.** If
-    `$PHASE` is `Architecture`, check for a blocking gate verdict before the retry
-    check in step 5 — a blocking verdict is a content defect the phase cannot resolve
-    itself (it needs a human to accept or resolve the ADR out of band), not a
-    transient agent failure, so it must not consume the retry budget the same way an
-    ordinary crash does:
+4a. **ADR gate halt bridge (adr-governance-gate).** Before step 5's retry check: a
+    blocking ADR verdict needs a human to accept or resolve the ADR out of band, so it
+    halts instead of consuming the retry budget (it is a no-op for any other phase):
 
     ```bash
-    source "${CLAUDE_PLUGIN_ROOT}/lib/planner-adr-gate.sh"
-    if _adr_hit=$(planner_adr_gate_blocked "$INITIATIVE_ID" "Architecture" "design"); then
-      _adr_verdict=$(echo "$_adr_hit" | cut -f1)
-      _adr_id=$(echo "$_adr_hit" | cut -f2)
-      echo "Architecture parked on the ADR gate: ${_adr_verdict} (${_adr_id})"
-      echo ""
-      echo "architecture.md was still written — the working design is unaffected. What's"
-      echo "missing is ratification: a human accepts ${_adr_id} (or resolves the conflict,"
-      echo "for a CONFLICT verdict) out of band, then this phase resumes and re-classifies."
-      echo ""
-      echo "Artifacts:  ${STATE_DIR}/artifacts/"
-      echo "Raw log:    grep 'META|adr-gate|fail' $(planner_state_log "$INITIATIVE_ID")"
-      echo "Resume:     /ticket-planner resume ${INITIATIVE_ID}"
-      exit 0
-    fi
+    planner_dispatch_gate adr "$INITIATIVE_ID" "$PHASE" "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
     ```
-
-    This mirrors step 1a's Crosscheck halt exactly: a normal terminal outcome (`exit
-    0`, not an error), not a retry. Do not fall through to step 5 on a hit here.
 
 5. **Check the result.** The retry budget is derived from `fail` entries in the state
    log, not held in memory, so it survives a crashed router:
@@ -1055,27 +707,14 @@ For each phase to run:
      (phases are idempotent, so re-running is safe).
 
 6. **Check the stop condition.** The create gate and `--until` collapse into one
-   earliest-stop-phase decision, resolved entirely from the state log — the initiative
-   ID is the only argument, and nothing is read from the environment:
+   earliest-stop-phase decision, resolved entirely from the state log:
 
    ```bash
-   if planner_should_stop_after "$INITIATIVE_ID" "$PHASE"; then
-     echo "Stopped after ${PHASE} — $(planner_stop_reason "$INITIATIVE_ID")"
-     echo "Artifacts:  ${STATE_DIR}/artifacts/"
-     echo "Specs:      ${STATE_DIR}/artifacts/specs/"
-     echo "State log:  $(planner_state_log "$INITIATIVE_ID")"
-     if planner_create_authorized "$INITIATIVE_ID"; then
-       echo "Continue:   /ticket-planner resume ${INITIATIVE_ID}"
-     else
-       echo "To create:  /ticket-planner resume ${INITIATIVE_ID} --create"
-     fi
-     exit 0
-   fi
+   planner_dispatch_gate stop "$INITIATIVE_ID" "$PHASE" "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
    ```
 
-   Report the initiative ID, the phase reached, the artifact directory, the spec files
-   written, and the exact continuation command. Do not ask the user a question —
-   stopping is a terminal outcome of this invocation, and `resume` is the continuation.
+   The stop report names the phase reached, the artifact and spec directories, the
+   state log and the exact continuation command.
 
 7. **Advance** by re-reading `planner_position_derive`, and read its result exactly:
 

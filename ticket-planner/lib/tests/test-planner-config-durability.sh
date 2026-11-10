@@ -250,19 +250,27 @@ fi
 # SKILL.md may *read* the env vars once during argument parsing — that shell does
 # see them. What it must never do again is `export` one and expect a later phase to
 # find it, which is the line-for-line mistake #144 was.
+# Since skill-deterministic-extraction 1 the parsing shell runs
+# planner-invocation.sh; both it and SKILL.md are checked.
 skill_md="${LIB_DIR}/../skills/ticket-planner/SKILL.md"
-exports=$(grep -nE '^\s*export (PLANNER_UNTIL|PLANNER_SHARED_BRANCH|PLANNER_NO_SHARED_BRANCH|LINEAR_PROJECT|LINEAR_PROJECT_MILESTONE)' "$skill_md" 2>/dev/null || true)
+invocation_sh="${LIB_DIR}/planner-invocation.sh"
+exports=$(grep -nE '^\s*export (PLANNER_UNTIL|PLANNER_SHARED_BRANCH|PLANNER_NO_SHARED_BRANCH|LINEAR_PROJECT|LINEAR_PROJECT_MILESTONE|[A-Z_]*_(FLAG|REF))' "$skill_md" "$invocation_sh" 2>/dev/null || true)
 if [ -z "$exports" ]; then
-  pass "SKILL.md exports no flag variable across the dispatch loop"
+  pass "neither SKILL.md nor planner-invocation.sh exports a flag variable"
 else
-  fail "SKILL.md does not export flag variables" "$exports"
+  fail "flag variables are not exported" "$exports"
 fi
 
 # And it must persist the authorization before it can dispatch a write phase.
-if grep -q 'planner_authorize_create' "$skill_md" && grep -q 'planner_create_gate_check' "$skill_md"; then
-  pass "SKILL.md persists authorization and checks the gate"
+# SKILL.md calls the two libraries; they carry the authorization write and the
+# gate check (and the halt goldens pin the gate's behaviour).
+if grep -q '^planner_flags_persist "\$INITIATIVE_ID"' "$skill_md" &&
+  grep -q '^ *planner_dispatch_gate pre "\$INITIATIVE_ID" "\$PHASE"' "$skill_md" &&
+  grep -q 'planner_authorize_create' "$invocation_sh" &&
+  grep -q 'planner_create_gate_check' "${LIB_DIR}/planner-router.sh"; then
+  pass "SKILL.md persists authorization and checks the gate (through the libraries)"
 else
-  fail "SKILL.md wires the create gate" "missing planner_authorize_create or planner_create_gate_check"
+  fail "create gate wiring" "missing planner_flags_persist/planner_dispatch_gate pre call, or the library halves"
 fi
 
 # ── Test 7: the no-tests rule crosses the boundary (#503) ─────────────────────
@@ -311,9 +319,9 @@ else
   fail "no ambient env read of PLANNER_NO_TESTS_RULE" "got '${got}'"
 fi
 
-hits=$(grep -ln '\${PLANNER_NO_TESTS_RULE' "${LIB_DIR}"/*.sh 2>/dev/null || true)
+hits=$(grep -ln '\${PLANNER_NO_TESTS_RULE' "${LIB_DIR}"/*.sh 2>/dev/null | grep -v '/planner-invocation\.sh$' || true)
 if [ -z "$hits" ]; then
-  pass "no library reads PLANNER_NO_TESTS_RULE (SKILL.md reads it once at parsing)"
+  pass "no library but planner-invocation.sh reads PLANNER_NO_TESTS_RULE (read once at parsing)"
 else
   fail "no library reads PLANNER_NO_TESTS_RULE" "$hits"
 fi
@@ -395,8 +403,8 @@ else
   fail "uat-policy-decision literal" "$(grep -m1 -A1 'uat-policy-decision' <<<"$prompt" || echo absent)"
 fi
 
-if grep -q 'planner_config_set "\$INITIATIVE_ID" "uat-policy"' "$skill_md"; then
-  pass "SKILL.md persists PLANNER_UAT_POLICY as the uat-policy config key"
+if grep -q 'planner_config_set "\$initiative_id" "uat-policy"' "$invocation_sh"; then
+  pass "planner-invocation.sh persists PLANNER_UAT_POLICY as the uat-policy config key"
 else
   fail "SKILL.md persists uat-policy" "no planner_config_set ... uat-policy line"
 fi
@@ -477,9 +485,9 @@ else
   fail "no-shared epic renders" "prompt failed"
 fi
 
-if grep -q 'planner_directive_config_persist "\$INITIATIVE_ID"' "$skill_md" &&
-  grep -q -- '--base-branch) shift; BASE_BRANCH_REF=' "$skill_md"; then
-  pass "SKILL.md parses --base-branch and persists the directive config"
+if grep -q 'planner_directive_config_persist "\$initiative_id"' "$invocation_sh" &&
+  grep -q -- '--base-branch=\*) BASE_BRANCH_REF=' "$invocation_sh"; then
+  pass "planner-invocation.sh parses --base-branch and persists the directive config"
 else
   fail "SKILL.md base-branch wiring" "flag or persist call missing"
 fi

@@ -1538,6 +1538,34 @@ planner_refinement_prepare() {
   return 0
 }
 
+# planner_refinement_finish <INIT> <state_dir>
+# SKILL.md step 1b after the step 1e spawn loop (skill-deterministic-extraction
+# 1; was inline bash). On a Completed initiative (REFINEMENT_AFTER_COMPLETED=true
+# in the caller's shell, as for prepare): no gate, no phase line, no re-stamp —
+# the after-Completed summary and the report, rc 0. Otherwise the gate: every
+# child ready prints the advisory summary (TEST_DATA_GAP, demotions never block,
+# so show them here or nobody sees them before Completed), rc 0; any child not
+# ready prints the halt report, rc 3 (a normal stop: the caller exits 0, and it
+# never consumes the retry budget).
+planner_refinement_finish() {
+  local initiative_id="$1" state_dir="$2"
+  if [ "${REFINEMENT_AFTER_COMPLETED:-}" = "true" ]; then
+    planner_refinement_after_completed_finish "$initiative_id"
+    planner_refinement_report "$initiative_id"
+  elif planner_refinement_gate "$initiative_id"; then
+    planner_refinement_advisory_summary "$initiative_id"
+  else
+    echo "Refinement halted — one or more tickets are not ready."
+    echo ""
+    planner_refinement_report "$initiative_id"
+    echo ""
+    echo "Artifacts:  ${state_dir}/artifacts/"
+    echo "Resume:     /ticket-planner resume ${initiative_id}"
+    return 3
+  fi
+  return 0
+}
+
 # planner_refinement_next <INIT>
 # Applies results already on disk, then prints the next spawn list — one
 # "<TID>\t<scan|audit>\tticket-auto-pipeline:dor-semantic-agent\t<prompt-file>\t<result-file>"

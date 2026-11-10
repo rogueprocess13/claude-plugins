@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# halt-fixtures.sh — fixture initiatives for every planner halt, plus each
-# halt's own bash block from skills/ticket-planner/SKILL.md, run verbatim
-# (planner-headless-questions task 1.1).
+# halt-fixtures.sh — fixture initiatives for every planner halt, plus a run of
+# each halt (planner-headless-questions task 1.1). The halts themselves live in
+# planner_dispatch_gate (planner-router.sh) and planner_refinement_prepare/
+# planner_refinement_finish (planner-refinement.sh), called here exactly as SKILL.md calls them
+# (skill-deterministic-extraction 1 — they were copied SKILL.md blocks before).
 #
 # Two consumers:
 #   - capture-halt-goldens.sh records each halt's stdout/stderr/exit code
@@ -16,9 +18,8 @@
 # checkout's ticket-auto-pipeline rather than whatever version is installed
 # — the goldens must not depend on the machine they were captured on.
 #
-# The SKILL.md blocks below are copied, not sourced: SKILL.md is markdown an
-# agent executes, not a script. If a halt block in SKILL.md changes, copy the
-# change here too — the golden diff is what notices when the two disagree.
+# The goldens were captured from the SKILL.md blocks themselves, before the
+# extraction; they are never regenerated from the functions.
 
 _HALT_FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _HALT_LIB_DIR="${_HALT_FIXTURES_DIR}/.."
@@ -248,7 +249,7 @@ _halt_refinement_demoted() {
 }
 
 # halt_fixture_run <name> <init_id> <out_dir>
-# Runs the halt's SKILL.md block in a subshell and writes out_dir/<name>.out,
+# Runs the halt (its SKILL.md call) in a subshell and writes out_dir/<name>.out,
 # .err and .rc, with the scratch REPOS_ROOT replaced by <REPOS_ROOT>.
 halt_fixture_run() {
   local name="$1" INITIATIVE_ID="$2" out_dir="$3"
@@ -261,36 +262,17 @@ halt_fixture_run() {
     case "$name" in
     create-gate-stop)
       # SKILL.md step 6, after a `plan` run's Crosscheck completes.
-      PHASE="Crosscheck"
-      if planner_should_stop_after "$INITIATIVE_ID" "$PHASE"; then
-        echo "Stopped after ${PHASE} — $(planner_stop_reason "$INITIATIVE_ID")"
-        echo "Artifacts:  ${STATE_DIR}/artifacts/"
-        echo "Specs:      ${STATE_DIR}/artifacts/specs/"
-        echo "State log:  $(planner_state_log "$INITIATIVE_ID")"
-        if planner_create_authorized "$INITIATIVE_ID"; then
-          echo "Continue:   /ticket-planner resume ${INITIATIVE_ID}"
-        else
-          echo "To create:  /ticket-planner resume ${INITIATIVE_ID} --create"
-        fi
-        exit 0
-      fi
+      planner_dispatch_gate stop "$INITIATIVE_ID" Crosscheck "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       ;;
     create-gate-dispatch)
       # SKILL.md step 1, a plain `resume` reaching EpicGen.
-      PHASE="EpicGen"
-      if ! planner_create_gate_check "$INITIATIVE_ID" "$PHASE"; then
-        echo "Planning complete — nothing was created in Linear."
-        echo "Artifacts:  ${STATE_DIR}/artifacts/"
-        echo "Specs:      ${STATE_DIR}/artifacts/specs/"
-        echo "State log:  $(planner_state_log "$INITIATIVE_ID")"
-        echo "To create:  /ticket-planner resume ${INITIATIVE_ID} --create"
-        exit 0
-      fi
+      planner_dispatch_gate pre "$INITIATIVE_ID" EpicGen "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       ;;
     crosscheck | crosscheck-testdata)
       # SKILL.md step 1a. planner_crosscheck_run is stubbed after sourcing:
       # the check families need real artifacts and a repo, and the halt's
-      # output depends only on what the run recorded.
+      # output depends only on what the run recorded. The gate sources the
+      # lib only when the function is missing, so the stub stands.
       source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck.sh"
       if [ "$name" = "crosscheck-testdata" ]; then
         planner_crosscheck_run() {
@@ -314,34 +296,11 @@ halt_fixture_run() {
           return 1
         }
       fi
-      if ! planner_crosscheck_run "$INITIATIVE_ID"; then
-        echo "Crosscheck found blocking findings — fix the cited artifacts and resume."
-        echo ""
-        planner_crosscheck_findings_report "$INITIATIVE_ID"
-        echo ""
-        echo "Raw log:    grep 'META|crosscheck|fail' $(planner_state_log "$INITIATIVE_ID")"
-        echo "Artifacts:  ${STATE_DIR}/artifacts/"
-        echo "Resume:     /ticket-planner resume ${INITIATIVE_ID}"
-        exit 0
-      fi
+      planner_dispatch_gate crosscheck "$INITIATIVE_ID" Crosscheck "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       ;;
     adr-gate)
       # SKILL.md step 4a.
-      source "${CLAUDE_PLUGIN_ROOT}/lib/planner-adr-gate.sh"
-      if _adr_hit=$(planner_adr_gate_blocked "$INITIATIVE_ID" "Architecture" "design"); then
-        _adr_verdict=$(echo "$_adr_hit" | cut -f1)
-        _adr_id=$(echo "$_adr_hit" | cut -f2)
-        echo "Architecture parked on the ADR gate: ${_adr_verdict} (${_adr_id})"
-        echo ""
-        echo "architecture.md was still written — the working design is unaffected. What's"
-        echo "missing is ratification: a human accepts ${_adr_id} (or resolves the conflict,"
-        echo "for a CONFLICT verdict) out of band, then this phase resumes and re-classifies."
-        echo ""
-        echo "Artifacts:  ${STATE_DIR}/artifacts/"
-        echo "Raw log:    grep 'META|adr-gate|fail' $(planner_state_log "$INITIATIVE_ID")"
-        echo "Resume:     /ticket-planner resume ${INITIATIVE_ID}"
-        exit 0
-      fi
+      planner_dispatch_gate adr "$INITIATIVE_ID" Architecture "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       ;;
     project-gate)
       # The Epic Gen prompt's project gate (planner-phase-prompts.sh). The
@@ -369,67 +328,20 @@ halt_fixture_run() {
       if [ "$_rf_rc" -ne 2 ]; then
         # Step 1e: the pass list is empty (semantic off), so NEXT is done at once.
         [ "$(planner_refinement_next "$INITIATIVE_ID")" = "done 0" ] || exit 1
-        if planner_refinement_gate "$INITIATIVE_ID"; then
-          planner_refinement_advisory_summary "$INITIATIVE_ID"
-        else
-          echo "Refinement halted — one or more tickets are not ready."
-          echo ""
-          planner_refinement_report "$INITIATIVE_ID"
-          echo ""
-          echo "Artifacts:  ${STATE_DIR}/artifacts/"
-          echo "Resume:     /ticket-planner resume ${INITIATIVE_ID}"
-          exit 0
-        fi
+        planner_refinement_finish "$INITIATIVE_ID" "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       fi
       ;;
     until)
       # SKILL.md step 6, after the --until phase completes.
-      PHASE="Review"
-      if planner_should_stop_after "$INITIATIVE_ID" "$PHASE"; then
-        echo "Stopped after ${PHASE} — $(planner_stop_reason "$INITIATIVE_ID")"
-        echo "Artifacts:  ${STATE_DIR}/artifacts/"
-        echo "Specs:      ${STATE_DIR}/artifacts/specs/"
-        echo "State log:  $(planner_state_log "$INITIATIVE_ID")"
-        if planner_create_authorized "$INITIATIVE_ID"; then
-          echo "Continue:   /ticket-planner resume ${INITIATIVE_ID}"
-        else
-          echo "To create:  /ticket-planner resume ${INITIATIVE_ID} --create"
-        fi
-        exit 0
-      fi
+      planner_dispatch_gate stop "$INITIATIVE_ID" Review "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       ;;
     specify-decision)
-      # SKILL.md step 1c, when the loop is about to dispatch Review.
-      PHASE="Review"
-      source "${CLAUDE_PLUGIN_ROOT}/lib/planner-specify-decisions.sh"
-      if [ "$PHASE" = "Review" ]; then
-        _sd_rc=0
-        planner_specify_gate "$INITIATIVE_ID" || _sd_rc=$?
-        case "$_sd_rc" in
-        0) ;;
-        3)
-          planner_specify_halt_report "$INITIATIVE_ID" "$STATE_DIR"
-          exit 0
-          ;;
-        *)
-          echo "ERROR: Specify decision gate could not read proposal.md" >&2
-          exit 1
-          ;;
-        esac
-      fi
+      # SKILL.md step 1 (pre gate, see 1c), when the loop is about to dispatch Review.
+      planner_dispatch_gate pre "$INITIATIVE_ID" Review "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       ;;
     consensus-blocked)
-      # SKILL.md step 1a0, when the loop is about to run Crosscheck.
-      PHASE="Crosscheck"
-      source "${CLAUDE_PLUGIN_ROOT}/lib/planner-consensus-gate.sh"
-      if [ "$PHASE" = "Crosscheck" ]; then
-        _cg_rc=0
-        planner_consensus_gate "$INITIATIVE_ID" || _cg_rc=$?
-        if [ "$_cg_rc" -eq 3 ]; then
-          planner_consensus_halt_report "$INITIATIVE_ID" "$STATE_DIR"
-          exit 0
-        fi
-      fi
+      # SKILL.md step 1 (pre gate), when the loop is about to run Crosscheck.
+      planner_dispatch_gate pre "$INITIATIVE_ID" Crosscheck "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       ;;
     esac
     # No halt fired — the fixture is wrong. Make that visible in the golden.

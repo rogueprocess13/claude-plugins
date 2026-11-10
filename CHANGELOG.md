@@ -17,6 +17,33 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.35.3 (2026-11-10)
+
+The planner skill's deterministic bash moves into tested library functions
+(`skill-deterministic-extraction`, group 1). Behaviour is unchanged: every halt prints
+the same bytes (pinned by `lib/tests/fixtures/halt-goldens/`), and no log step,
+phase name or `--from-step` value changes. ticket-auto-pipeline unchanged.
+
+### Changed
+
+- `skills/ticket-planner/SKILL.md` 60,867 → 44,852 bytes (1,151 → 790 body lines).
+- Steps 2a/2b (flag parsing, validation, persistence) are now `planner_flags_parse` and
+  `planner_flags_persist` in the new `lib/planner-invocation.sh`.
+- The dispatch loop's halt blocks (create gate, Consensus readiness, Crosscheck,
+  Specify decisions, ADR gate, stop condition) are one `planner_dispatch_gate <gate>`
+  call each (`lib/planner-router.sh`): rc 0 proceed, 3 halted (exit 0), 1 error.
+  Step 1a0 folds into step 1's `pre` gate.
+- Refinement's post-loop gate/report is `planner_refinement_finish`
+  (`lib/planner-refinement.sh`).
+- Plan mode's intent idea line is `planner_intent_idea` (`lib/planner-intent-gate.sh`).
+
+### Tests
+
+- New: `test-planner-invocation.sh`, `test-planner-dispatch-gate.sh`.
+- `halt-fixtures.sh` calls the functions instead of keeping copies of the SKILL.md
+  blocks; `test-skill-arg-substitution.sh` Test 2 and `test-planner-config-durability.sh`
+  check the library instead of SKILL.md prose.
+
 ## 0.105.0 (2026-11-10)
 
 `wiki-maintenance`'s errata-fix and ADR-decision text moves to two references

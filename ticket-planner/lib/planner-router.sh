@@ -315,6 +315,127 @@ planner_until_validate() {
   return 0
 }
 
+# ── Dispatch-loop halts ────────────────────────────────────────────────────────
+
+# The dispatch loop's halt blocks (SKILL.md step 7), one call each. Every gate
+# prints the operator report its inline SKILL.md block printed before
+# skill-deterministic-extraction moved it here; fixtures/halt-goldens pins the
+# bytes. A halt is a normal terminal outcome, never a retry.
+#
+# Usage: planner_dispatch_gate <gate> <initiative_id> <phase> <state_dir>
+#   pre        step 1 (create gate), then the Consensus readiness gate (only
+#              when <phase> is Crosscheck), then step 1c (open Specify
+#              decisions, only when <phase> is Review)
+#   create | consensus | specify   one of those alone
+#   crosscheck step 1a: runs Crosscheck; halts on a blocking finding
+#   adr        step 4a: Architecture parked on the ADR gate (Architecture only)
+#   stop       step 6: --until or the create gate stops the run after <phase>
+# Returns: 0 proceed (nothing printed but a gate's own output), 3 halted (the
+#          report is on stdout; the caller exits 0), 1 error (stderr; exit 1).
+#          The SKILL.md idiom: `planner_dispatch_gate ... || exit $(($? == 3 ? 0 : 1))`
+planner_dispatch_gate() {
+  local gate="$1" initiative_id="$2" phase="$3" state_dir="$4" rc g
+  case "$gate" in
+  pre)
+    for g in create consensus specify; do
+      rc=0
+      planner_dispatch_gate "$g" "$initiative_id" "$phase" "$state_dir" || rc=$?
+      [ "$rc" -eq 0 ] || return "$rc"
+    done
+    ;;
+  create)
+    if ! planner_create_gate_check "$initiative_id" "$phase"; then
+      echo "Planning complete — nothing was created in Linear."
+      echo "Artifacts:  ${state_dir}/artifacts/"
+      echo "Specs:      ${state_dir}/artifacts/specs/"
+      echo "State log:  $(planner_state_log "$initiative_id")"
+      echo "To create:  /ticket-planner resume ${initiative_id} --create"
+      return 3
+    fi
+    ;;
+  consensus)
+    # DET-PL-11: only an explicit `Readiness: blocked` halts; any other rc of
+    # the gate (ready, needs-further-discovery, missing) proceeds.
+    [ "$phase" = "Crosscheck" ] || return 0
+    _source_if_missing planner_consensus_gate "${_PLANNER_ROUTER_LIB_DIR}/planner-consensus-gate.sh"
+    rc=0
+    planner_consensus_gate "$initiative_id" || rc=$?
+    if [ "$rc" -eq 3 ]; then
+      planner_consensus_halt_report "$initiative_id" "$state_dir"
+      return 3
+    fi
+    ;;
+  specify)
+    [ "$phase" = "Review" ] || return 0
+    _source_if_missing planner_specify_gate "${_PLANNER_ROUTER_LIB_DIR}/planner-specify-decisions.sh"
+    rc=0
+    planner_specify_gate "$initiative_id" || rc=$?
+    case "$rc" in
+    0) ;;
+    3)
+      planner_specify_halt_report "$initiative_id" "$state_dir"
+      return 3
+      ;;
+    *)
+      echo "ERROR: Specify decision gate could not read proposal.md" >&2
+      return 1
+      ;;
+    esac
+    ;;
+  crosscheck)
+    _source_if_missing planner_crosscheck_run "${_PLANNER_ROUTER_LIB_DIR}/planner-crosscheck.sh"
+    if ! planner_crosscheck_run "$initiative_id"; then
+      echo "Crosscheck found blocking findings — fix the cited artifacts and resume."
+      echo ""
+      planner_crosscheck_findings_report "$initiative_id"
+      echo ""
+      echo "Raw log:    grep 'META|crosscheck|fail' $(planner_state_log "$initiative_id")"
+      echo "Artifacts:  ${state_dir}/artifacts/"
+      echo "Resume:     /ticket-planner resume ${initiative_id}"
+      return 3
+    fi
+    ;;
+  adr)
+    [ "$phase" = "Architecture" ] || return 0
+    _source_if_missing planner_adr_gate_blocked "${_PLANNER_ROUTER_LIB_DIR}/planner-adr-gate.sh"
+    local hit verdict adr_id
+    if hit=$(planner_adr_gate_blocked "$initiative_id" "Architecture" "design"); then
+      verdict=$(echo "$hit" | cut -f1)
+      adr_id=$(echo "$hit" | cut -f2)
+      echo "Architecture parked on the ADR gate: ${verdict} (${adr_id})"
+      echo ""
+      echo "architecture.md was still written — the working design is unaffected. What's"
+      echo "missing is ratification: a human accepts ${adr_id} (or resolves the conflict,"
+      echo "for a CONFLICT verdict) out of band, then this phase resumes and re-classifies."
+      echo ""
+      echo "Artifacts:  ${state_dir}/artifacts/"
+      echo "Raw log:    grep 'META|adr-gate|fail' $(planner_state_log "$initiative_id")"
+      echo "Resume:     /ticket-planner resume ${initiative_id}"
+      return 3
+    fi
+    ;;
+  stop)
+    if planner_should_stop_after "$initiative_id" "$phase"; then
+      echo "Stopped after ${phase} — $(planner_stop_reason "$initiative_id")"
+      echo "Artifacts:  ${state_dir}/artifacts/"
+      echo "Specs:      ${state_dir}/artifacts/specs/"
+      echo "State log:  $(planner_state_log "$initiative_id")"
+      if planner_create_authorized "$initiative_id"; then
+        echo "Continue:   /ticket-planner resume ${initiative_id}"
+      else
+        echo "To create:  /ticket-planner resume ${initiative_id} --create"
+      fi
+      return 3
+    fi
+    ;;
+  *)
+    echo "planner-router: planner_dispatch_gate: unknown gate '${gate}' (pre|create|consensus|specify|crosscheck|adr|stop)" >&2
+    return 1
+    ;;
+  esac
+  return 0
+}
+
 # ── Retry budget ───────────────────────────────────────────────────────────────
 
 # Has <phase> exhausted its retry budget? Derived from `fail` entries in the log,
