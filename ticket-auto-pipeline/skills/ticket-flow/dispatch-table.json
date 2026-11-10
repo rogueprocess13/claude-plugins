@@ -614,6 +614,8 @@
     "wiki-maintenance": {
       "files": [
         "plugin:skills/wiki-maintenance/SKILL.md",
+        "plugin:skills/wiki-maintenance/references/errata-fix.md",
+        "plugin:skills/wiki-maintenance/references/adr-decisions.md",
         "plugin:agents/ticket-maintenance-agent.md",
         "home:pipeline-log-format.md"
       ]

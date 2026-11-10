@@ -6,6 +6,8 @@
 
 `wiki-maintenance` keeps the project's call-chain wiki files accurate by processing the errata backlog accumulated during ticket work. When `/ticket-appraise` or `/ticket-implement` discovers that a wiki flow section is wrong or incomplete, it appends an errata entry to that flow file rather than modifying it mid-run — appraise closes the loop immediately at discovery time, implement closes it whenever a consulted wiki fact turns out wrong or missing, independent of whether the ticket's outcome matched its predicted complexity. `wiki-maintenance` collects all unresolved errata, applies the fixes directly into the existing flow structure (tagged `(TICKET-ID)` for provenance, not appended as a changelog), and **deletes** each entry once its fix lands — git history is the audit trail, so the wiki file itself only ever shows gaps still open. It then lints every touched file against the freshness contract (`lib/wiki-check.sh`), runs the `simple-english` skill over the descriptive prose it just wrote or edited (code, identifiers, paths, and provenance tags are exempt), and commits `WIKI_ROOT`, which is its own docs repo with no branches. Run when 5+ unresolved errata entries have accumulated, or on a scheduled basis.
 
+**Reference files (skill-progressive-disclosure):** two blocks that most runs never need live under `skills/wiki-maintenance/references/`. `errata-fix.md` holds Step 2b (the gap-type patterns, the new-file frontmatter and the `verified_at` refresh). SKILL.md reads it only when Step 1 finds unresolved errata, or when Step 2.6 has a `source=wiki` or `source=prescan` correction. `adr-decisions.md` holds Step 2.5c's routing of Decisions-section findings through the ADR gate. SKILL.md reads it only when a surviving finding comes from a Decisions section. If a file cannot be resolved, the skill logs `META|reference-missing|fail` and leaves that work for the next run: errata and corrections stay in place, and Decisions findings are skipped.
+
 ## Trigger
 
 **Slash command:** `/wiki-maintenance`
@@ -41,7 +43,8 @@ flowchart TD
     C --> D{Unresolved entries?}
     D -- none --> E[Step 2.5: ai-context.md synthesis\nruns regardless]
     D -- yes --> F[For each errata entry\nlocate target flow section]
-    F --> G{Section found?}
+    F --> RF[Read references/errata-fix.md]
+    RF --> G{Section found?}
     G -- yes --> H[Apply fix\ninto flow structure]
     G -- no --> I[Create new wiki file\nwith freshness frontmatter]
     H --> J[Delete errata entry\ngit keeps the history]
@@ -49,7 +52,10 @@ flowchart TD
     J --> K{More entries?}
     K -- yes --> F
     K -- no --> E
-    E --> L[Lint touched files\nlib/wiki-check.sh]
+    E --> DQ{Decisions-section finding?}
+    DQ -- yes --> RA[Read references/adr-decisions.md\nroute through the ADR gate]
+    DQ -- no --> L
+    RA --> L[Lint touched files\nlib/wiki-check.sh]
     L --> O[Simplify touched prose\nsimple-english skill]
     O --> M[Commit this run's paths only\nwiki-lock.sh commit]
     M --> R[Release WIKI_ROOT lock]

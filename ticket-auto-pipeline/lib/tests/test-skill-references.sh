@@ -652,6 +652,56 @@ test_retro_github_issues_condition() {
   done
 }
 
+test_wiki_errata_adr_conditions() {
+  local md="$REPO_ROOT/ticket-auto-pipeline/skills/wiki-maintenance/SKILL.md"
+  local dir ref line tok
+  # shellcheck source=skill-text.sh
+  source "$SCRIPT_DIR/skill-text.sh"
+  dir="$(dirname "$md")/references"
+  # Step 2b: read only with errata or a source=wiki/prescan correction.
+  line=$(_section "$md" '^### 2b ' '^### 2c ' | grep -F 'references/errata-fix.md' | grep -F 'skill-ref.sh')
+  for tok in 'Only when Step 1 found unresolved errata' 'source=prescan' \
+    'reference-missing fail "references/errata-fix.md"' 'never apply a fix from memory'; do
+    grep -qF -- "$tok" <<<"$line" || {
+      echo "  errata-fix conditional line (under 2b) lacks: $tok"
+      return 1
+    }
+  done
+  # 2.5c Decisions: read only for a surviving Decisions-section finding.
+  line=$(_section "$md" '^#### Decisions-section findings' '^#### Ordinary prose path' |
+    grep -F 'references/adr-decisions.md' | grep -F 'skill-ref.sh')
+  for tok in 'Only when a surviving finding comes from the Decisions section' \
+    'reference-missing fail "references/adr-decisions.md"' 'from memory'; do
+    grep -qF -- "$tok" <<<"$line" || {
+      echo "  adr-decisions conditional line (under 2.5c) lacks: $tok"
+      return 1
+    }
+  done
+  # Every-run text stays inline: Step 2c, the 2.5c idempotency check and
+  # prose path, Step 2.6 and the Step 0/Step 4 lock wiring.
+  for tok in '### 2c — Mark resolved' 'Idempotency check (task 6.3)' \
+    '#### Ordinary prose path' '## Step 2.6 ' 'wiki-lock.sh" acquire' \
+    '"$_wlock" commit' '"$_wlock" release'; do
+    grep -qF -- "$tok" "$md" || {
+      echo "  inline contract left SKILL.md: $tok"
+      return 1
+    }
+  done
+  for ref in errata-fix.md:'| Gap type |' errata-fix.md:'verified: machine-verified' \
+    errata-fix.md:'Lookup by Service' adr-decisions.md:'**`GOVERNED`**' \
+    adr-decisions.md:'ARCH_COMMITMENT' adr-decisions.md:'gate-stop per § 8'; do
+    tok="${ref#*:}"
+    grep -qF -- "$tok" "$dir/${ref%%:*}" || {
+      echo "  ${ref%%:*} lost: $tok"
+      return 1
+    }
+    ! grep -qF -- "$tok" "$md" || {
+      echo "  moved text still in SKILL.md: $tok"
+      return 1
+    }
+  done
+}
+
 test_shared_section_ref_helper() {
   local out
   # shellcheck source=skill-text.sh

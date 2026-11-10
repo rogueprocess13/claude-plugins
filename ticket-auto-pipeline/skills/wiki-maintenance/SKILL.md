@@ -157,51 +157,7 @@ Work through unresolved entries in order. For each:
 
 ### 2b — Apply the fix
 
-Edit the flow file to incorporate the missing detail directly into the existing flow structure
-— a fix is a content change, not a new changelog line. Tag the inserted content with the
-source ticket as a trailing provenance marker, `(ABC-XX)`, and nothing else (no date, no
-outcome label). Common patterns:
-
-| Gap type | Where to fix | Example change |
-|----------|-------------|----------------|
-| Missing Feign client call in flow | Add a sub-step to the flow section listing the Feign call | "6. Call `BomFeignClient.charge(reserve=true, usage)` via `POST /body-service-resource-usages/charge` (ABC-47)" |
-| Entity field not documented | Add the field to the entity table | `amount` \| `BigDecimal(21,2)` \| Recovery amount (ABC-52) |
-| Method signature stale | Update class name or method name in the Key Classes table | Replace `ReportJobService.setStatus()` with correct method |
-| Missing endpoint | Add to REST Endpoints table | Add row with method, path, purpose |
-| Cross-service dependency undocumented | Add a "## Dependencies" section or note in the flow | "Requires BOM service for commission calculation via `BomFeignClient` (ABC-61)" |
-
-After editing, the flow file must still read as a coherent document — the errata entry
-described a fix, but you apply it as part of the regular flow structure, not as an appended note.
-
-**If the fix requires creating a new wiki file** (e.g. a flow that has no wiki page yet):
-
-1. Create the file with YAML frontmatter — use this schema (the freshness fields are the
-   contract `lib/wiki-check.sh` lints, checked in Step 3):
-   ```yaml
-   ---
-   services: [list of microservice names]
-   entities: [list of key JPA entities or domain objects]
-   flows: [list of flow names this file covers]
-   keywords: [searchable terms a ticket description might contain]
-   related: ["path/to/related-file.md", ...]
-   verified_at: "{today, YYYY-MM-DD}"
-   verified_against: {repo: "{repo-slug}", sha: "{HEAD sha of that repo right now}"}
-   stale_after: 90
-   verified: machine-verified
-   ---
-   ```
-   `verified: machine-verified` is correct for content this skill itself wrote from a
-   ticket-implement/appraise finding — reserve `human-reviewed` for content a person actually
-   read and confirmed, and `unverified` for content copied in without independent checking.
-2. Add a row to the **File Registry** table in `{WIKI_ROOT}/index.md`.
-3. Add entries to the **Lookup by Topic** and **Lookup by Service** sections of `index.md`.
-4. Add the new file to the `related:` frontmatter field of any existing files it is related to.
-
-**If editing an existing file**, refresh its frontmatter the same way: set `verified_at` to
-today and `verified_against` to the sha of the repo the fix was verified against. A fix applied
-without updating `verified_at` leaves the file's freshness classification (`lib/wiki-check.sh`,
-§5) wrong — it would still show as decayed relative to the *old* verification, undercutting the
-work just done.
+Only when Step 1 found unresolved errata, or Step 2.6 has a `source=wiki` or `source=prescan` correction to incorporate: run `bash ~/.claude/skills/lib/skill-ref.sh wiki-maintenance references/errata-fix.md`, read the printed path in full and follow it (gap-type patterns, new-file frontmatter, the `verified_at` refresh). If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/errata-fix.md"` and leave every errata entry and correction in place for the next run: never apply a fix from memory.
 
 ### 2c — Mark resolved
 
@@ -269,29 +225,7 @@ described.
 
 #### Decisions-section findings (adr-governance-gate)
 
-For each surviving Decisions-section finding, invoke the gate — see § 8 ADR gate in the shared
-preamble — with `PHASE: MAINTENANCE`, `DECISION_CANDIDATE` and `IDENTIFIED_REASON` drawn from
-the finding, and `AFFECTED_COMPONENTS` from whatever the finding's source ticket named. Route on
-the verdict:
-
-- **`NOT_ARCHITECTURAL`** — this finding is decision-rationale worth capturing, but the gate
-  determined it isn't governance-worthy. Fall through to the ordinary prose path below (same
-  template as Patterns/Watch-out) rather than discarding it — a documented rationale is still
-  valuable even when it doesn't rise to an ADR.
-- **`GOVERNED`** — do not write new prose. Instead, ensure the relevant wiki file's entry (or a
-  new one, if none exists yet) references the governing ADR by id
-  (`**Decision:** See [ADR-NNNN](../decisions/{NNNN}-{slug}.md) — {one-line summary of the
-  constraint}.`) rather than restating it — the ADR is the source of truth, the wiki entry is a
-  pointer into it.
-- **`CREATED_PROPOSED`** or **`SUPERSEDE_REQUIRED`** — the gate already wrote a `proposed` ADR.
-  Emit the `=== HUMAN_HOLD ===` block per § 7/§ 8 with `REASON: ARCH_COMMITMENT`. Do not write a
-  wiki entry for this finding yet — there is nothing settled to point to until the ADR is
-  accepted; a future maintenance run's re-classification (now `GOVERNED`) is what adds the
-  pointer entry above. Release the `WIKI_ROOT` lock (Step 0) before you exit.
-- **`CONFLICT`** — the finding describes something that contradicts an Accepted ADR. Emit the
-  `ADR_CONFLICT` gate-stop per § 8. This maintenance run does not silently continue past a
-  discovered contradiction — someone needs to look at it. Release the `WIKI_ROOT` lock (Step 0)
-  before you exit.
+Only when a surviving finding comes from the Decisions section: run `bash ~/.claude/skills/lib/skill-ref.sh wiki-maintenance references/adr-decisions.md`, read the printed path in full and follow it to route each such finding by its ADR gate verdict. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/adr-decisions.md"` and skip the Decisions-section findings this run (a later run picks them up): never route them, or write prose for them, from memory.
 
 #### Ordinary prose path (Patterns used, Watch out for, cross-cutting — unchanged)
 
