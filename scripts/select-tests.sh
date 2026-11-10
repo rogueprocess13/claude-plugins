@@ -57,8 +57,9 @@
 #   knowledge-curator     nothing outside itself.
 # ANY_PLUGIN — test files that scan every plugin, so any plugin change runs
 # them: test-fleet-features.sh (a boolean feature flag in any plugin needs a
-# catalog entry) and test-diagram-drift.sh (every plugin's README.md and
-# CLAUDE.md).
+# catalog entry), test-diagram-drift.sh (every plugin's README.md and
+# CLAUDE.md) and test-skill-references.sh (every plugin's
+# skills/*/references/ files).
 set -euo pipefail
 
 PLUGINS=(ticket-auto-pipeline fleet-controller ticket-planner grill-me knowledge-curator)
@@ -75,6 +76,7 @@ declare -A DEPENDENTS=(
 ANY_PLUGIN=(
   fleet-controller/lib/tests/test-fleet-features.sh
   ticket-auto-pipeline/lib/tests/test-diagram-drift.sh
+  ticket-auto-pipeline/lib/tests/test-skill-references.sh
 )
 
 usage() {

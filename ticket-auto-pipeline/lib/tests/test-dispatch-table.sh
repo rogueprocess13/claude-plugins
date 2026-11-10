@@ -259,6 +259,88 @@ assert l.index("pr-iterate") < l.index("--mode reapprove"), l
 PYEOF
 }
 
+# ── prompt_manifests schema ──────────────────────────────────────────────────
+# hooks/skill-fingerprint.sh fails open to `unresolved` on a bad label, which is
+# only visible on a host. This check catches the same mistakes in the source
+# tree: an unknown label prefix, a plugin:/lib: entry that does not exist, and a
+# reference entry (skill-progressive-disclosure) that is not exactly
+# plugin:skills/<name>/references/<f>.md or names a file that is not there.
+_check_manifests() { # $1=table $2=plugin root
+  python3 - "$1" "$2" <<'PY'
+import json, os, re, sys
+table, root = sys.argv[1], sys.argv[2]
+data = json.load(open(table))
+ref_re = re.compile(r"^skills/[a-z0-9-]+/references/[A-Za-z0-9._-]+\.md$")
+errors = []
+for key, val in (data.get("prompt_manifests") or {}).items():
+    files = val.get("files") if isinstance(val, dict) else None
+    if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
+        errors.append(f"{key}: files must be a list of strings")
+        continue
+    for label in files:
+        prefix, sep, rest = label.partition(":")
+        if not sep or prefix not in ("plugin", "lib", "home"):
+            errors.append(f"{key}: unknown label prefix: {label}")
+            continue
+        if "references/" in rest:
+            if prefix != "plugin" or not ref_re.match(rest):
+                errors.append(f"{key}: reference must be plugin:skills/<name>/references/<f>.md: {label}")
+            elif not os.path.isfile(os.path.join(root, rest)):
+                errors.append(f"{key}: reference file missing: {label}")
+            continue
+        if prefix == "plugin" and not os.path.isfile(os.path.join(root, rest)):
+            errors.append(f"{key}: missing file: {label}")
+        if prefix == "lib" and not os.path.isfile(os.path.join(root, "lib", rest)):
+            errors.append(f"{key}: missing file: {label}")
+for e in errors:
+    print(e, file=sys.stderr)
+sys.exit(1 if errors else 0)
+PY
+}
+
+# A throwaway plugin root holding one skill with one reference file.
+_mkmanifest_root() {
+  _sandbox=$(mktemp -d "${TMPDIR:-/tmp}/test-dispatch-table.XXXXXX")
+  mkdir -p "$_sandbox/skills/alpha/references" "$_sandbox/lib"
+  echo body >"$_sandbox/skills/alpha/SKILL.md"
+  echo ref >"$_sandbox/skills/alpha/references/deep.md"
+}
+_manifest_table() { # $@=labels for manifest alpha
+  jq -n '{prompt_manifests: {alpha: {files: $ARGS.positional}}}' --args "$@" >"$_sandbox/t.json"
+}
+
+test_committed_prompt_manifests_resolve() {
+  _check_manifests "$TABLE" "$REPO_ROOT/ticket-auto-pipeline"
+}
+
+test_manifest_accepts_existing_reference() {
+  _mkmanifest_root
+  _manifest_table plugin:skills/alpha/SKILL.md plugin:skills/alpha/references/deep.md
+  _check_manifests "$_sandbox/t.json" "$_sandbox"
+}
+
+test_manifest_rejects_missing_reference() {
+  _mkmanifest_root
+  _manifest_table plugin:skills/alpha/SKILL.md plugin:skills/alpha/references/gone.md
+  ! _check_manifests "$_sandbox/t.json" "$_sandbox" 2>/dev/null
+}
+
+test_manifest_rejects_nested_or_misrooted_reference() {
+  _mkmanifest_root
+  mkdir -p "$_sandbox/skills/alpha/references/sub"
+  echo ref >"$_sandbox/skills/alpha/references/sub/x.md"
+  _manifest_table plugin:skills/alpha/references/sub/x.md
+  ! _check_manifests "$_sandbox/t.json" "$_sandbox" 2>/dev/null || return 1
+  _manifest_table lib:skills/alpha/references/deep.md
+  ! _check_manifests "$_sandbox/t.json" "$_sandbox" 2>/dev/null
+}
+
+test_manifest_rejects_unknown_prefix() {
+  _mkmanifest_root
+  _manifest_table plugn:skills/alpha/references/deep.md
+  ! _check_manifests "$_sandbox/t.json" "$_sandbox" 2>/dev/null
+}
+
 # ── runner ────────────────────────────────────────────────────────────────────
 FILTER="${1:-}"
 for t in $(declare -F | awk '{print $3}' | grep '^test_'); do
