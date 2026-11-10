@@ -1,0 +1,2 @@
+TS|VERIFY|worktree-setup|done|2 worktree(s) ready for feat/T-4-fix
+TS|META|verify-worktree-unwired|warn|env-start.sh does not read VERIFY_REPO_PATH_* — branch isolation is partial (worktree checkout is correct; the running app stack may still build from the shared clone) until env-start.sh is updated to consume it

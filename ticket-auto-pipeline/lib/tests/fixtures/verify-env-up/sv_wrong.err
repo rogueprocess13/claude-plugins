@@ -1,0 +1,1 @@
+ticket-verify: the dev server is not serving this ticket's code. Stop the stale server on that port, or re-run env-start.sh with --restart for that service, so it starts from VERIFY_REPO_PATH_<REPO> (see the contract above) — port 3000: pid 42 cwd=/x/y branch=feat/T-4

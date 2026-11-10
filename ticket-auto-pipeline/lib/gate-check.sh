@@ -46,6 +46,15 @@ elif [ -f "$SCRIPT_DIR/vplan-parse.sh" ]; then
   source "$SCRIPT_DIR/vplan-parse.sh"
 fi
 
+# verify-mode.sh backs Check 2.6's ticket-mode classification (skill-
+# deterministic-extraction 4). Sibling first: a stale synced copy must never
+# shadow the classifier this gate-check.sh shipped with.
+if [ -f "$SCRIPT_DIR/verify-mode.sh" ]; then
+  source "$SCRIPT_DIR/verify-mode.sh"
+elif [ -f "$LIB_DIR/verify-mode.sh" ]; then
+  source "$LIB_DIR/verify-mode.sh"
+fi
+
 # ── Verifier-result helper (Phase 0 RLVR) ──────────────────────────────────────
 # Writes a META|verifier-result at gate decision time.
 # Wrapped for set -e safety; failure never alters gate behaviour.
@@ -753,45 +762,15 @@ _gate_entry() {
     # (test user, nav path) are meaningless for them and would always false-hold.
     # Detection precedence: browser signals present → browser; else build-tool
     # signals present → build-only; else → api-only (existing fallback).
+    # Classification lives in verify-mode.sh (skill-deterministic-extraction
+    # 4): one file holds both mode detectors, so the gate never carries a
+    # second copy of the signal regexes. Unavailable → browser, the strictest
+    # prerequisite profile.
     local _ticket_mode="browser" _required_count has_build_command has_build_outcome
     has_build_command=0
     has_build_outcome=0
-    if [ "${has_nav_path:-0}" = "0" ] && [ "${has_test_user:-0}" = "0" ]; then
-      # Neither nav paths nor test users found in artifact — check for browser
-      # signals. "open" alone is too weak (matches "open question", "open a PR")
-      # so it's scoped to an actual UI object.
-      local _browser_signals _build_signals
-      _browser_signals=$(grep -ciP '(navigate|go to|open(s|ed|ing)?\s+(the\s+)?(page|browser|url|dialog|modal|menu|tab|app)\b|visit|click|browser|playwright|page\.|selector|screenshot|viewport)' "$artifact_path" 2>/dev/null || true)
-      if [ "${_browser_signals//[^0-9]/}" = "0" ] 2>/dev/null; then
-        _build_signals=$(grep -ciP '(\bmvn\b|\bgradle\b|\bnpm run\b|\bmake\b|pom\.xml|build\.gradle|clean compile|clean install|clean package|BUILD SUCCESS)' "$artifact_path" 2>/dev/null || true)
-        if [ "${_build_signals//[^0-9]/}" != "0" ] 2>/dev/null; then
-          _ticket_mode="build-only"
-        else
-          _ticket_mode="api-only"
-        fi
-      fi
-    elif [ "${has_nav_path:-0}" = "0" ]; then
-      # has_nav_path=0 but has_test_user=1 (the only other way to reach this
-      # branch) — a ticket can have a genuine test user (e.g. an API-auth smoke
-      # test) while its only navigation targets are infra dashboards/registries
-      # (Eureka, Zipkin, a bare host:port) that has_nav_path's regex never
-      # recognizes. Left unhandled, _ticket_mode falls through to its "browser"
-      # default and the cross-validation block below false-holds on nav_gap no
-      # matter how the plan phrases its navigation targets.
-      # A bare localhost:PORT/127.0.0.1:PORT mention is NOT sufficient on its own to
-      # signal infra: this project's own convention (LOCAL_URL in CLAUDE.md) is almost
-      # always a bare localhost:PORT value, and it's routine for a plan's Setup/
-      # Environment line to state it separately from the step-by-step nav instructions.
-      # Two-step check: a named infra keyword (Eureka/Zipkin/actuator/registry/
-      # discovery/config-server) must be present somewhere in the artifact for
-      # infra-only reclassification — a bare host:port mention with no named infra
-      # term anywhere in the artifact never triggers it on its own.
-      local _feature_path_signals _infra_named_signals
-      _feature_path_signals=$(grep -ciP '/(handover|admin|user-permission|organisation|portfolio)/' "$artifact_path" 2>/dev/null || true)
-      _infra_named_signals=$(grep -ciP '(eureka|zipkin|actuator|config[- ]server|service registry|discovery server)' "$artifact_path" 2>/dev/null || true)
-      if [ "${_feature_path_signals//[^0-9]/}" = "0" ] 2>/dev/null && [ "${_infra_named_signals//[^0-9]/}" != "0" ] 2>/dev/null; then
-        _ticket_mode="infra-only"
-      fi
+    if declare -f verify_mode_gate_class >/dev/null 2>&1; then
+      _ticket_mode=$(verify_mode_gate_class "$artifact_path" "${has_nav_path:-0}" "${has_test_user:-0}") || _ticket_mode="browser"
     fi
     # TEST SEAM (read by tests only, never by the pipeline): when the caller sets
     # GATE_CHECK_TEST_MODE=1, expose the classification after _gate_entry returns

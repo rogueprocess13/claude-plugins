@@ -17,6 +17,51 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.108.0 (2026-11-10)
+
+ticket-verify's deterministic bash moves into tested lib scripts
+(`skill-deterministic-extraction`, group 4). `skills/ticket-verify/SKILL.md` drops from
+70,732 to 58,408 bytes (1,209 → 952 body lines). Log step names, `--from-step` values,
+phase names, verifier ids and the `detect-resume.sh` contract are unchanged. Each script
+writes the same log lines the prose blocks did, pinned by fixtures under
+`lib/tests/fixtures/{verify-mode,verify-verdict,remediation-append,uat-policy-guard,verify-env-up}/`
+that were produced by running the old blocks. `META|outcome` is still written only by
+`pipeline-finalize.sh`. Other plugins unchanged.
+
+### Added
+
+- `lib/verify-mode.sh` — Step 1e's mode detection (`verify_mode_classify`) and gate-check
+  Check 2.6's ticket-mode classification (`verify_mode_gate_class`), side by side in one
+  file. `gate-check.sh` now calls it instead of carrying its own regexes.
+- `verify_record_verdict` in `lib/verifier-result.sh` — one call per verdict replaces the six
+  inline `write_verifier_result` lines; it maps the mode to `playwright_uat`, `build_only` or
+  `live_backend`.
+- `lib/remediation-append.sh` — Step 7c5's plan-artifact append: the agent writes the section
+  body to a file, the script adds `## Verification #<N>`, the body verbatim and the closing
+  marker through a temp file and a rename.
+- `lib/uat-policy-guard.sh` — Step 1b4's refusal of `--env uat` under an epic `UAT Policy: epic`.
+- `lib/verify-env-up.sh` — Step 1.6's bring-up, landed in three stages: `served-check`,
+  `worktrees`, then `lock` and `up` (lock → worktrees → `env-start.sh` → served check → seeds).
+  `up` releases the lock on every failure and on SIGTERM/SIGINT/SIGHUP, never releases a lock
+  it did not take, and keeps it held on success.
+
+### Changed (behaviour)
+
+- **The UAT-policy refusal exits 3**, not 0, so the refusal is visible to the caller. The log
+  lines and the message are unchanged, and no trigger fires.
+- **A signal during bring-up releases the verify lock.** Before, an agent killed between
+  the lock block and Step 5 left the lock to the max-hold backstop. `env-start.sh` now runs as
+  a child of `up`; a SIGTERM to `up` also stops it.
+- **A failed write of the remediation section no longer lands a truncated plan.** It logs
+  `REMEDIATION_BRIEF_TRUNCATED — write failed: <plan>` (new message; the rename failure keeps
+  `— rename failed:`) and leaves the plan untouched. The `cl_write RETRO hint` the old block
+  called, undefined in its fresh shell, now reaches `CLAUDE_LOG_FILE` when that is set.
+- **With no affected services, the worktree list is computed** (every git repo directly under
+  `REPOS_ROOT`, sorted) instead of written out by the agent.
+- Verify still reads its mode from the plan and `context.md` only: the old block's
+  `${description:-}` was always empty in a fresh shell, and `--description-file` is offered
+  but not passed.
+
 ## 0.107.0 (2026-11-10)
 
 The ticket-auto router's deterministic tails move into two tested lib scripts

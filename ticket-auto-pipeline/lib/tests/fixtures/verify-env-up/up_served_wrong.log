@@ -1,0 +1,3 @@
+TS|VERIFY|verify-lock|done|acquired
+TS|VERIFY|worktree-setup|done|2 worktree(s) ready for feat/T-4-fix
+TS|META|gate-stop|fail|VERIFY_SERVED_WRONG_WORKTREE — port 3000: other checkout

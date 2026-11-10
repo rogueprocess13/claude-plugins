@@ -1,0 +1,1 @@
+TS|META|gate-warn|warn|VERIFY_SERVED_WRONG_WORKTREE — port 3000: pid 42 cwd=/x/y branch=feat/T-4 (VERIFY_SERVED_WORKTREE_ENFORCE=false)

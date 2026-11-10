@@ -155,6 +155,39 @@ write_verifier_result() {
   return 0
 }
 
+# ── ticket-verify verdict sites (skill-deterministic-extraction 4) ──────────────
+# verify_record_verdict <VERIFY_MODE> <PASS|FAIL> <criteria_met> <criteria_total> <attempt>
+# The one call ticket-verify makes after its verdict (Step 6 PASS, Step 7
+# FAIL). Maps the mode to the verifier id, so the agent never picks one:
+#   browser      -> playwright_uat
+#   build-only   -> build_only
+#   live-backend -> live_backend
+# and writes the same META|verifier-result line the inline
+# `write_verifier_result verifier=<id> verdict=<V> criteria_met=<N>
+# criteria_total=<M> attempt=<A> phase=VERIFY` calls wrote. An unknown mode
+# (an unfilled placeholder) writes nothing and returns 2, loudly — recording
+# the wrong verifier would let a FAIL hide from the verdict gate.
+verify_record_verdict() {
+  local mode="${1:-}" verdict="${2:-}" met="${3:-}" total="${4:-}" attempt="${5:-}" verifier
+  case "$mode" in
+  browser) verifier=playwright_uat ;;
+  build-only) verifier=build_only ;;
+  live-backend) verifier=live_backend ;;
+  *)
+    echo "verify_record_verdict: unknown VERIFY_MODE '${mode}' (browser|build-only|live-backend) — verdict NOT recorded" >&2
+    return 2
+    ;;
+  esac
+  case "$verdict" in
+  PASS | FAIL) ;;
+  *)
+    echo "verify_record_verdict: verdict must be PASS or FAIL, got '${verdict}' — verdict NOT recorded" >&2
+    return 2
+    ;;
+  esac
+  write_verifier_result verifier="$verifier" verdict="$verdict" criteria_met="$met" criteria_total="$total" attempt="$attempt" phase=VERIFY
+}
+
 # ── Reader (VERDICT_FAIL_NOT_ENFORCED, issue #368) ──────────────────────────
 #
 # verifier_latest_verdict <log_file>

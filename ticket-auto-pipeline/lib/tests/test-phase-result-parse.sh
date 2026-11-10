@@ -635,18 +635,37 @@ test_skill_declared_verifiers_are_in_the_enum() {
 # skill-progressive-disclosure: build-only and live-backend material moved to
 # ticket-verify/references/, but the verifier ids are an inline contract. The
 # check above searches three SKILL.md files together, so it would still pass
-# if verify's copy moved; pin them in ticket-verify/SKILL.md itself, in the
-# write_verifier_result lines of both Step 6 (PASS) and Step 7 (FAIL).
+# if verify's copy moved; pin them in ticket-verify/SKILL.md itself.
+# skill-deterministic-extraction 4: the six inline write_verifier_result
+# lines became one verify_record_verdict call per verdict, which maps the
+# mode to the id. Pin both calls, the ids in the skill's mapping, and the
+# mapping itself by running it.
 test_verify_mode_verifier_ids_stay_in_skill_md() {
-  local md="$LIB_DIR/../skills/ticket-verify/SKILL.md" id verdict ok=0
-  for id in build_only live_backend; do
+  local md="$LIB_DIR/../skills/ticket-verify/SKILL.md" id verdict mode ok=0 log got
+  for verdict in PASS FAIL; do
+    grep -qF "verify_record_verdict \"{VERIFY_MODE}\" $verdict " "$md" || {
+      echo "  ticket-verify/SKILL.md lost the verify_record_verdict $verdict call" >&2
+      ok=1
+    }
+  done
+  log=$(mktemp)
+  for pair in browser:playwright_uat build-only:build_only live-backend:live_backend; do
+    mode=${pair%%:*} id=${pair##*:}
+    grep -qF "\`$mode\` → \`$id\`" "$md" || {
+      echo "  ticket-verify/SKILL.md lost the $mode → $id mapping" >&2
+      ok=1
+    }
     for verdict in PASS FAIL; do
-      grep -qF "write_verifier_result verifier=$id verdict=$verdict " "$md" || {
-        echo "  ticket-verify/SKILL.md lost 'write_verifier_result verifier=$id verdict=$verdict'" >&2
+      : >"$log"
+      TAP_LOG="$log" bash -c 'source "$0/verifier-result.sh" && verify_record_verdict "$1" "$2" 1 1 1' "$LIB_DIR" "$mode" "$verdict" 2>/dev/null
+      got=$(grep -o '"verifier":"[a-z_]*","verdict":"[A-Z]*"' "$log" || true)
+      [ "$got" = "\"verifier\":\"$id\",\"verdict\":\"$verdict\"" ] || {
+        echo "  verify_record_verdict $mode $verdict wrote '$got'" >&2
         ok=1
       }
     done
   done
+  rm -f "$log"
   return "$ok"
 }
 

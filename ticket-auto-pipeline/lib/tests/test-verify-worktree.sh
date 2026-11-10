@@ -749,81 +749,15 @@ test_served_no_listener_is_undeterminable() {
 }
 _run "no listener on the port -> undeterminable (rc 3)" test_served_no_listener_is_undeterminable
 
-test_skill_md_env_start_gets_worktree_contract() {
-  # The env-start.sh invocation must re-derive the worktree exports in its
-  # own block (an export in Step 1.6a4's block never reaches it) and must be
-  # followed by the served-checkout check.
-  local skill_md="$LIB_DIR/../skills/ticket-verify/SKILL.md"
-  local section
-  section=$(awk '/^### 1\.6b /{f=1} /^## Step 1\.7/{f=0} f' "$skill_md")
-  [ -n "$section" ] || {
-    echo "  Step 1.6b section not found" >&2
-    return 1
-  }
-  grep -q 'eval "$(verify_worktree_exports "{TICKET-ID}")"' <<<"$section" || {
-    echo "  Step 1.6b does not eval verify_worktree_exports before env-start.sh" >&2
-    return 1
-  }
-  grep -q 'verify_served_check_ports "{TICKET-ID}"' <<<"$section" || {
-    echo "  Step 1.6b does not run verify_served_check_ports" >&2
-    return 1
-  }
-  grep -q 'VERIFY_SERVED_WRONG_WORKTREE' <<<"$section" || {
-    echo "  Step 1.6b does not gate-stop on a wrong served checkout" >&2
-    return 1
-  }
-  # Every block that derives worktree paths must resolve REPOS_ROOT itself:
-  # each env-start.sh block and the served-checkout block.
-  local blocks inits
-  blocks=$(printf '%s\n' "$section" | grep -c '^```bash' || true)
-  inits=$(printf '%s\n' "$section" | grep -c '^verify_env_init "{TICKET-ID}"' || true)
-  [ "$inits" -ge 3 ] || {
-    echo "  Step 1.6b: verify_env_init appears $inits time(s) across $blocks blocks, expected >= 3" >&2
-    return 1
-  }
-  # Every env-start.sh call is preceded, in its block, by verify_env_init and
-  # the exports eval — in that order.
-  local bad
-  bad=$(printf '%s\n' "$section" | awk '
-    /^```bash/ { inb=1; init=0; ev=0; next }
-    /^```/     { inb=0; next }
-    inb && /^verify_env_init / { init=1 }
-    inb && /verify_worktree_exports/ { if (!init) print "exports before init"; ev=1 }
-    inb && /^bash .*env-start\.sh/ { if (!init || !ev) print "env-start without init+exports: " $0 }
-  ')
-  [ -z "$bad" ] || {
-    echo "  Step 1.6b: $bad" >&2
-    return 1
-  }
-  return 0
-}
-_run "SKILL.md Step 1.6b passes the worktree contract and checks the served checkout" test_skill_md_env_start_gets_worktree_contract
+# test_skill_md_env_start_gets_worktree_contract moved to
+# test-verify-env-up.sh (skill-deterministic-extraction 4): env-start.sh now
+# runs inside verify-env-up.sh up, and the up_ok_* cases assert that it gets
+# VERIFY_TICKET_ID and every VERIFY_REPO_PATH_<REPO>, then the served check.
 
-test_skill_md_worktree_setup_resolves_repos_root() {
-  # Step 1.6a4 used to rely on an inherited REPOS_ROOT; unset, every repo was
-  # skipped and the step still logged "worktrees ready".
-  local skill_md="$LIB_DIR/../skills/ticket-verify/SKILL.md"
-  local section
-  section=$(awk '/^### 1\.6a4 /{f=1} /^### 1\.6b /{f=0} f' "$skill_md")
-  [ -n "$section" ] || return 1
-  local init_line ensure_line
-  init_line=$(printf '%s\n' "$section" | grep -n '^verify_env_init "{TICKET-ID}"' | head -1 | cut -d: -f1)
-  ensure_line=$(printf '%s\n' "$section" | grep -n 'ensure_verify_worktree "{TICKET-ID}"' | head -1 | cut -d: -f1)
-  [ -n "$init_line" ] && [ -n "$ensure_line" ] && [ "$init_line" -lt "$ensure_line" ] || {
-    echo "  Step 1.6a4 does not call verify_env_init before ensure_verify_worktree" >&2
-    return 1
-  }
-  grep -q 'VERIFY_WORKTREE_NONE' <<<"$section" || {
-    echo "  Step 1.6a4 does not warn when no worktree was created" >&2
-    return 1
-  }
-  grep -q 'verify_worktree_env_var' <<<"$section" || {
-    echo "  Step 1.6a4 names the export without verify_worktree_env_var" >&2
-    return 1
-  }
-  return 0
-}
-_run "SKILL.md Step 1.6a4 resolves REPOS_ROOT before creating worktrees" test_skill_md_worktree_setup_resolves_repos_root
+# test_skill_md_worktree_setup_resolves_repos_root moved to
+# test-verify-env-up.sh (skill-deterministic-extraction 4): wt_no_repos_root
+# asserts the REPOS_ROOT gate-stop, wt_none the VERIFY_WORKTREE_NONE warn,
+# wt_two/wt_fallback the worktrees and their branch.
 
 echo ""
 echo "=== REPOS_ROOT resolution, multi-port check, served report (#419) ==="
@@ -1082,29 +1016,9 @@ test_skill_md_gc_resolves_repos_root() {
 }
 _run "SKILL.md Step 1.6a2 resolves REPOS_ROOT before the GC sweep" test_skill_md_gc_resolves_repos_root
 
-test_skill_md_undecided_is_a_gate_warn() {
-  # rc 3 used to be a quiet `served-worktree|skip`; it must be a visible warn.
-  local skill_md="$LIB_DIR/../skills/ticket-verify/SKILL.md"
-  local section
-  section=$(awk '/^### 1\.6b /{f=1} /^## Step 1\.7/{f=0} f' "$skill_md")
-  [ -n "$section" ] || return 1
-  if grep -qE 'served-worktree\|skip|VERIFY served-worktree skip' <<<"$section"; then
-    echo "  Step 1.6b still logs an undecided check as a quiet skip" >&2
-    return 1
-  fi
-  local warns
-  warns=$(printf '%s\n' "$section" | grep -c 'plog.sh META gate-warn warn "VERIFY_SERVED_UNVERIFIED' || true)
-  [ "$warns" -ge 2 ] || {
-    echo "  expected VERIFY_SERVED_UNVERIFIED gate-warns for rc 3 and rc 4, found $warns" >&2
-    return 1
-  }
-  grep -q 'env-start.sh with --restart' <<<"$section" || {
-    echo "  wrong-worktree message does not tell the operator how to recover" >&2
-    return 1
-  }
-  return 0
-}
-_run "SKILL.md Step 1.6b writes undecided checks as a VERIFY_SERVED_UNVERIFIED gate-warn" test_skill_md_undecided_is_a_gate_warn
+# test_skill_md_undecided_is_a_gate_warn moved to test-verify-env-up.sh
+# (skill-deterministic-extraction 4): the sv_undecided / sv_noworktree cases
+# assert the VERIFY_SERVED_UNVERIFIED gate-warn, sv_wrong the recovery hint.
 
 test_served_report_and_cli() {
   _setup_fixture
@@ -1134,53 +1048,10 @@ echo ""
 echo "=== SKILL.md step ordering ==="
 echo ""
 
-test_skill_md_acquires_lock_before_worktree_resync() {
-  # Regression (Finding 3, adversarial review of PR #338): the destructive
-  # worktree resync (`ensure_verify_worktree`, which resets/cleans on
-  # reuse) must be procedurally gated behind the single-flight lock — see
-  # the 1.6 preamble and Step 1.6a4 in SKILL.md. This isn't something a
-  # bash unit test can exercise directly (it's a step-ordering contract in
-  # a markdown procedure, not a function call), so assert the ordering
-  # itself: the "Acquire the single-flight verify lock" heading (1.6a3)
-  # must appear, by line number, before both the "Resolve isolated
-  # worktrees" heading (1.6a4) and the first `ensure_verify_worktree` call
-  # inside it. A future edit that moves the resync back above the lock (or
-  # renames the sections without moving the content) trips this.
-  local skill_md="$LIB_DIR/../skills/ticket-verify/SKILL.md"
-  [ -f "$skill_md" ] || {
-    echo "  SKILL.md not found at $skill_md" >&2
-    return 1
-  }
-
-  local lock_line worktree_heading_line first_ensure_call_line
-  lock_line=$(grep -n '^### 1\.6a3 — Acquire the single-flight verify lock' "$skill_md" | head -1 | cut -d: -f1)
-  worktree_heading_line=$(grep -n '^### 1\.6a4 — Resolve isolated worktrees' "$skill_md" | head -1 | cut -d: -f1)
-  first_ensure_call_line=$(grep -n 'ensure_verify_worktree "{TICKET-ID}"' "$skill_md" | head -1 | cut -d: -f1)
-
-  [ -n "$lock_line" ] || {
-    echo "  could not find the 'Acquire the single-flight verify lock' heading" >&2
-    return 1
-  }
-  [ -n "$worktree_heading_line" ] || {
-    echo "  could not find the 'Resolve isolated worktrees' heading" >&2
-    return 1
-  }
-  [ -n "$first_ensure_call_line" ] || {
-    echo "  could not find an ensure_verify_worktree call in SKILL.md" >&2
-    return 1
-  }
-
-  [ "$lock_line" -lt "$worktree_heading_line" ] || {
-    echo "  lock-acquire heading (line $lock_line) is not before the worktree-resync heading (line $worktree_heading_line)" >&2
-    return 1
-  }
-  [ "$lock_line" -lt "$first_ensure_call_line" ] || {
-    echo "  lock-acquire heading (line $lock_line) is not before the first ensure_verify_worktree call (line $first_ensure_call_line)" >&2
-    return 1
-  }
-  return 0
-}
-_run "SKILL.md acquires the verify lock before the worktree resync" test_skill_md_acquires_lock_before_worktree_resync
+# test_skill_md_acquires_lock_before_worktree_resync moved to
+# test-verify-env-up.sh (skill-deterministic-extraction 4): verify-env-up.sh
+# up takes the lock before the destructive resync, and "SIGTERM while
+# queued" proves no worktree is touched while the lock is still awaited.
 
 echo ""
 echo "=== Results: $((PASS + FAIL)) tests, $PASS passed, $FAIL failed ==="

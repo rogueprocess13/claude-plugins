@@ -42,7 +42,7 @@ Event catalogue: [pipeline-heartbeat-format.md](../../pipeline-heartbeat-format.
 - after the verdict: `decision "verification-verdict" "fired" "PASS|FAIL" '{"verdict":"PASS|FAIL","criteria_met":"N","criteria_total":"M"}'`
 
 ### Step dispatch
-**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1. Any resume past Step 1.6 (`build-plan`, or a 4c/4c-live `execute-steps` re-entry) first runs the 1.6a3 lock block unless this run skips 1.6; a dead attempt's orphaned lock for this ticket is taken over.
+**Important:** Steps `browser-session`, `navigate`, and `execute-steps` depend on a live Playwright session that is lost when the server crashes. If `--from-step` is one of these values, fall back to `build-plan` instead — always re-run browser steps from scratch. This does not apply in build-only or live-backend mode: neither has a browser session to lose, so an `execute-steps` resume in either mode re-enters its Step 4c variant (4c build-only, 4c-live live-backend) at the next unchecked criterion, not `build-plan`. Any value not in the table below (e.g. setup steps `seed-apply`, `verify-lock`) means start at Step 1. Any resume past Step 1.6 (`build-plan`, or a 4c/4c-live `execute-steps` re-entry) first takes the lock alone (Step 1.6a3, `verify-env-up.sh lock`) unless this run skips 1.6; a dead attempt's orphaned lock for this ticket is taken over.
 
 | `--from-step` value | Effective skip to | Restore from |
 |---------------------|-------------------|--------------|
@@ -108,33 +108,13 @@ If these sections are not explicitly labelled, infer them from context.
 
 ### 1b4 — Refuse UAT verification under epic UAT policy
 
-Skip this step if `--env local` is set — local verification is unaffected by the policy.
-
-If `--env uat` is set, resolve the ticket's UAT policy and refuse when it is `epic`. The epic branch is not deployed to the UAT environment until the epic's integration PRs are merged, so a UAT result for a single child is structurally meaningless in whichever direction it lands.
-
-This is the *second* UAT decision site. Without this guard it fires `uat-pass` straight to
-`Done`, bypassing the policy resolved at PR review entirely.
+The epic branch is not deployed to UAT until the epic's integration PRs merge, so a UAT result for one child of an epic with `UAT Policy: epic` is meaningless, and without this guard `uat-pass` would close it straight to `Done` (the second UAT decision site):
 
 ```bash
-source ~/.claude/skills/lib/branch-resolve.sh
-
-policy="${UAT_POLICY:-}"
-[ -z "$policy" ] && policy=$(resolve_uat_policy "{TICKET-ID}" 2>/dev/null)
-policy="${policy:-per-ticket}"
-
-if [ "$policy" = "epic" ]; then
-  echo "ticket-verify: refusing --env uat for {TICKET-ID} — its epic declares 'UAT Policy: epic'." >&2
-  echo "The epic branch is not deployed to the UAT environment until the epic's integration PRs" >&2
-  echo "are merged, so a UAT result for one child cannot be valid. Acceptance for this ticket" >&2
-  echo "happens at the epic level. Use --env local to verify the code change itself." >&2
-  bash ~/.claude/skills/lib/plog.sh META uat-policy info "${policy}"
-  bash ~/.claude/skills/lib/plog.sh VERIFY uat-policy-guard skip "refused --env uat under epic policy"
-  exit 0
-fi
+bash ~/.claude/skills/lib/uat-policy-guard.sh "{TICKET-ID}" --env {env}
 ```
 
-**No state transition occurs** — the ticket is left exactly as it was. In particular `uat-pass`
-is NOT fired.
+Exit 0: continue (always for `--env local`). Exit 3: refused — the script has printed why and logged `uat-policy-guard|skip`; stop here. **No state transition occurs** and `uat-pass` is NOT fired.
 
 ### 1b5 — Derive credentials (UAT only)
 
@@ -185,35 +165,13 @@ change). If it exits 0, read `tasks.md` at `PLAN_PATH` to understand what was im
 
 ### 1e — Detect verification mode (browser vs. build-only vs. live-backend)
 
-Some tickets have no UI or API surface to exercise — e.g. a root parent-POM introduction, a dependency-version bump, a build-plugin config change. These are verified by running the project's build tooling and checking exit codes/output, not by driving a browser. Others need a **running backend checked via API/health-check, with no UI in the loop** — e.g. service-to-service calls, Eureka registration, circuit-breaker behaviour under simulated failure. A build command can't verify these (nothing to compile), and driving a browser is wrong too (no login, no page in the AC) — treating them as either bucket produces a silent false-pass (the real check never runs) or a stall (browser mode tries to resolve a test user that doesn't exist for an infra ticket). Classify the ticket using the same signal-based approach as `gate-check.sh`'s Check 2.6, so the two phases agree on ticket shape, with an added live-backend trigger evaluated ahead of the build-only test — a ticket can mention a build tool (`mvn`, `pom.xml`) in passing while its actual AC is a live runtime check, and live-backend must win that case:
+Some tickets are verified by running build tooling (no UI or API surface: a parent-POM, a dependency bump), some by checking a running backend through health/API calls (service registration, circuit breakers: no login, no page), and the rest in a browser. Treating one as another gives a silent false-pass or a stall. `lib/verify-mode.sh` classifies the ticket from its plan and `context.md`; live-backend is tested before build-only, so a passing mention of `mvn` never hides a runtime check. It writes the `load-context` log line itself:
 
 ```bash
-_plan_file=$(bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root "$TICKETS_ROOT" --type simple-fix 2>/dev/null | sed -n 's/^PLAN_PATH=//p')
-[ -z "$_plan_file" ] && _plan_file="{ticket-dir}/notes.md"
-_signal_text="$(cat "$_plan_file" {ticket-dir}/context.md 2>/dev/null)"$'\n'"${description:-}"
-
-_browser_signals=$(echo "$_signal_text" | grep -ciE '\b(navigate|click|button|dropdown|screen|browser|playwright|snapshot|login|nav[- ]?bar)\b|\bopen(s|ed|ing)? (the |a |modal|dialog|page)\b' || true)
-_build_signals=$(echo "$_signal_text" | grep -ciE '\b(mvn|maven|gradle|pom\.xml|build\.gradle|clean install|clean compile|clean package|mvn test|BUILD SUCCESS)\b' || true)
-# Live-backend trigger: either an explicit infra/runtime-check keyword, or the
-# combination of an explicitly-absent test user ("N/A" — not merely unmentioned)
-# with an environment that names a running full stack. That combination is the
-# real signal: no login needed, but a live system must be up.
-_live_backend_signals=$(echo "$_signal_text" | grep -ciE '\b(docker compose|eureka|circuit breaker|service.to.service|downstream failure|register(s|ed)? with)\b' || true)
-_test_user_na=$(echo "$_signal_text" | grep -ciE '\*\*?Test User\*?\*?:?\s*N/A' || true)
-_env_full_stack=$(echo "$_signal_text" | grep -ciE '\b(docker compose|full stack)\b' || true)
-
-if [ "${_browser_signals:-0}" -eq 0 ] && { [ "${_live_backend_signals:-0}" -gt 0 ] || { [ "${_test_user_na:-0}" -gt 0 ] && [ "${_env_full_stack:-0}" -gt 0 ]; }; }; then
-  VERIFY_MODE="live-backend"
-elif [ "${_browser_signals:-0}" -eq 0 ] && [ "${_build_signals:-0}" -gt 0 ]; then
-  VERIFY_MODE="build-only"
-else
-  VERIFY_MODE="browser"
-fi
+bash ~/.claude/skills/lib/verify-mode.sh "{TICKET-ID}" --ticket-dir "{ticket-dir}" --root "$TICKETS_ROOT"
 ```
 
-Record `VERIFY_MODE` for the rest of this skill. `browser` (the default) runs every step. `build-only` skips Step 1.6, 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c instead. `live-backend` runs Step 1.6 (a real system must be up) but skips 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c-live instead. Steps 2, 6 and 7 carry per-mode variants. The REMEDIATION_BRIEF and reports keep their field names in every mode (Step 7a maps the diagnostics).
-
-bash ~/.claude/skills/lib/plog.sh VERIFY load-context done "Context loaded, mode=${VERIFY_MODE}"
+Record the printed `VERIFY_MODE` for the rest of this skill. `browser` (the default) runs every step. `build-only` skips Step 1.6, 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c instead. `live-backend` runs Step 1.6 (a real system must be up) but skips 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c-live instead. Steps 2, 6 and 7 carry per-mode variants. The REMEDIATION_BRIEF and reports keep their field names in every mode (Step 7a maps the diagnostics).
 
 ### 1f — Mode reference (load condition)
 
@@ -294,176 +252,33 @@ here. With no candidate (the common case), go to Step 1.6a3.
 
 ### 1.6a3 — Acquire the single-flight verify lock
 
-Only one verify app stack is ever up at a time; a concurrent request queues:
+Only one verify app stack is ever up at a time; a concurrent request queues. One call takes the lock and then runs Steps 1.6a4 to 1.6c in order. Give it a long Bash timeout: `env-start.sh` blocks until the stack is up.
 
 ```bash
-source "$HOME/.claude/skills/lib/verify-lock.sh"
-
-if ! verify_lock_acquire "{TICKET-ID}"; then
-  bash ~/.claude/skills/lib/plog.sh VERIFY verify-lock fail "timed out waiting for the app-stack lock"
-  echo "ticket-verify: could not acquire the single-flight verify lock — see the diagnostic above for who currently holds it. Retry later." >&2
-  exit 1
-fi
-bash ~/.claude/skills/lib/plog.sh VERIFY verify-lock done "acquired"
+bash ~/.claude/skills/lib/verify-env-up.sh up "{TICKET-ID}" --branch "{branch}" --services "{services}" --tickets-root "{TICKETS_ROOT}" --local-url "{LOCAL_URL}"
 ```
 
-Timeouts and the crash backstop live in `lib/verify-lock.sh`. **Release the lock on every exit path**: first action of Step 5, and at every earlier exit — Step 1.6b's `env-start.sh` failure and served-checkout gate-stops, Step 1.6c's seed-apply failure, Step 1.6d's seeder-precheck failure (the helper releases it), Step 1.7a's "no test user found" SKIP exit, and Step 7 (Steps 3b/4 reach it without Step 5). `verify_lock_release` is idempotent.
+`{branch}` is the ticket's branch (notes.md's pre-implementation-checkpoint `Worktree:`/branch entry, or `branch-resolve.sh`'s `BRANCH_CONTEXT_RESULT`). `{services}` is the 1.6a list, empty when 1.6a found none or the ticket dir is missing. Exit 0: the stack is up, serves this ticket's code and holds its seed data, and the lock stays held for the criteria. **Any non-zero exit: stop here.** The script has logged why and released the lock: exit 1 is a lock timeout (`verify-lock|fail`) or one of the gate-stops below; any other code is `env-start.sh`'s own failure, so abort with its error and do not proceed to the browser.
+
+On a resume past Step 1.6 (see Step dispatch), take the lock alone: `bash ~/.claude/skills/lib/verify-env-up.sh lock "{TICKET-ID}"` (exit 1: timed out; stop).
+
+Timeouts and the crash backstop live in `lib/verify-lock.sh`. **Release the lock on every exit path.** `up` releases it itself on every failure and on SIGTERM/SIGINT/SIGHUP. After it succeeds, release it as the first action of Step 5, and at every earlier exit — Step 1.6d's seeder-precheck failure (the helper releases it), Step 1.7a's "no test user found" SKIP exit, and Step 7 (Steps 3b/4 reach it without Step 5). `verify_lock_release` is idempotent.
 
 ### 1.6a4 — Resolve isolated worktrees for affected repos
 
-With the lock held, resolve/resync this run's own worktree per affected repo (destructive on reuse), so the stack serves this ticket's branch rather than whatever the shared clone holds:
-
-```bash
-source "$HOME/.claude/skills/lib/verify-worktree.sh"
-
-# This block is a fresh shell: REPOS_ROOT is resolved here, not inherited.
-# Unresolved, every repo below would be skipped and no worktree created — a
-# silent "worktrees ready" for a run that serves the primary checkout.
-verify_env_init "{TICKET-ID}" ./CLAUDE.md || {
-  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_WORKTREE_FAILED — REPOS_ROOT unresolved"
-  echo "ticket-verify: REPOS_ROOT could not be resolved — see stderr above." >&2
-  verify_lock_release
-  exit 1
-}
-
-_branch="{the ticket's branch — from notes.md's pre-implementation-checkpoint
-  'Worktree:'/branch entry, or branch-resolve.sh's BRANCH_CONTEXT_RESULT for
-  this ticket}"
-
-# Affected services from 1.6a; if 1.6a found none, use every repo directory
-# directly under REPOS_ROOT that has a .git (mirrors env-start.sh's own
-# "no specific services → everything" fallback).
-_verify_services="{affected services from 1.6a, or every REPOS_ROOT/*/.git repo}"
-
-_wt_count=0
-for _svc in $_verify_services; do
-  _repo_path="$REPOS_ROOT/$_svc"
-  [ -d "$_repo_path/.git" ] || continue
-  _wt=$(ensure_verify_worktree "{TICKET-ID}" "$_repo_path" "$_branch") || {
-    bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_WORKTREE_FAILED — $_svc @ $_branch"
-    echo "ticket-verify: could not prepare an isolated worktree for $_svc on branch $_branch — see stderr above." >&2
-    verify_lock_release
-    exit 1
-  }
-  export "$(verify_worktree_env_var "$_svc")=$_wt"
-  _wt_count=$((_wt_count + 1))
-done
-
-if [ "$_wt_count" -eq 0 ]; then
-  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_WORKTREE_NONE — none of '${_verify_services}' is a git repo under ${REPOS_ROOT}; the stack will serve whatever the primary checkouts hold"
-fi
-bash ~/.claude/skills/lib/plog.sh VERIFY worktree-setup done "${_wt_count} worktree(s) ready for ${_branch}"
-```
-
-Each path is exported as `VERIFY_REPO_PATH_<SERVICE>` (e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`), but only for this block's shell — **Step 1.6b re-derives the same values with `verify_worktree_exports` in the shell that runs `env-start.sh`**. `env-start.sh` lives in the consuming workspace, so check whether it reads them:
-
-```bash
-if ! grep -q "VERIFY_REPO_PATH" "{TICKETS_ROOT}/env-start.sh" 2>/dev/null; then
-  bash ~/.claude/skills/lib/plog.sh META verify-worktree-unwired warn "env-start.sh does not read VERIFY_REPO_PATH_* — branch isolation is partial (worktree checkout is correct; the running app stack may still build from the shared clone) until env-start.sh is updated to consume it"
-fi
-```
-
-The warning does not block; Step 1.6b's served-checkout check decides.
+Under the lock, `up` resolves or resyncs this run's own worktree per affected repo (destructive on reuse), so the stack serves this ticket's branch rather than whatever the shared clone holds. With no `{services}` it uses every git repo directly under `REPOS_ROOT`, as `env-start.sh` does. An unresolved `REPOS_ROOT` or a worktree that cannot be prepared is a `VERIFY_WORKTREE_FAILED` gate-stop. No git repo among the services is a `VERIFY_WORKTREE_NONE` gate-warn. An `env-start.sh` that never reads `VERIFY_REPO_PATH_*` gets a `verify-worktree-unwired` warn: branch isolation is then partial, and the served-checkout check decides.
 
 ### 1.6b — Run env-start.sh (BE + FE)
 
-Always start all services including the gateway FE. `env-start.sh` skips anything already running. Every invocation runs in **one** bash block together with `verify_env_init` and `verify_worktree_exports`, which re-export `REPOS_ROOT`, `VERIFY_TICKET_ID` and each `VERIFY_REPO_PATH_<REPO>` from 1.6a4 — a separate block would start `env-start.sh` without them (shell state does not carry over between blocks), and it would serve the primary checkout. `verify_env_init` comes first because `verify_worktree_exports` derives every path from `REPOS_ROOT`: with it unset, the exports come out empty.
+`up` then runs `env-start.sh` with `VERIFY_TICKET_ID` and each worktree's `VERIFY_REPO_PATH_<REPO>` (e.g. `VERIFY_REPO_PATH_CREDIT_REPORT`) exported: `--restart {services} gateway-fe` when 1.6a found services, otherwise everything. `env-start.sh` skips anything already running.
 
 **env-start.sh contract** (implemented in the consuming workspace, not this plugin): when `VERIFY_REPO_PATH_<REPO>` is set, build and serve that repo from that path instead of `REPOS_ROOT/<repo>` (every path the script derives from the repo dir, such as a worker dir or an env file, follows it), and restart a service that is already running from a different directory rather than skipping it. Optionally, `env-status.sh` can show which checkout each port serves with `bash "$HOME/.claude/skills/lib/verify-worktree.sh" served <port>...`.
 
-If no specific affected services were detected in 1.6a (or ticket dir missing):
-
-```bash
-source "$HOME/.claude/skills/lib/verify-worktree.sh"
-verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
-eval "$(verify_worktree_exports "{TICKET-ID}")"
-bash {TICKETS_ROOT}/env-start.sh
-```
-
-If specific affected services were detected and the ticket dir exists, restart only those plus the FE:
-
-```bash
-source "$HOME/.claude/skills/lib/verify-worktree.sh"
-verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
-eval "$(verify_worktree_exports "{TICKET-ID}")"
-bash {TICKETS_ROOT}/env-start.sh --restart {affected-services} gateway-fe
-```
-
-Block until the script exits. If it exits non-zero, release the verify lock and abort ticket-verify with the script's error — do not proceed to browser:
-
-```bash
-source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
-verify_lock_release
-```
-
-**Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from — a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, resolve the process listening on `LOCAL_URL`'s port — plus every port in the project's optional `VERIFY_SERVED_PORTS` CLAUDE.md field (comma/space separated ports or URLs, e.g. an API server port) — and compare each one's checkout with this ticket's verify worktrees:
-
-```bash
-source "$HOME/.claude/skills/lib/config.sh" 2>/dev/null || true
-source "$HOME/.claude/skills/lib/verify-worktree.sh"
-source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
-verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
-_ports=$(verify_served_ports "{LOCAL_URL}" "${VERIFY_SERVED_PORTS:-}" 2>/dev/null)
-_served_rc=0
-# shellcheck disable=SC2086
-_served_msg=$(verify_served_check_ports "{TICKET-ID}" $_ports) || _served_rc=$?
-_served_msg=$(printf '%s' "$_served_msg" | tr '\n|' ' /')
-_served_stop() {
-  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "${1} — ${_served_msg}"
-  echo "ticket-verify: ${2} — ${_served_msg}" >&2
-  verify_lock_release
-  exit 1
-}
-case "$_served_rc" in
-0) bash ~/.claude/skills/lib/plog.sh VERIFY served-worktree done "${_served_msg}" ;;
-1)
-  [ "${VERIFY_SERVED_WORKTREE_ENFORCE:-true}" = "true" ] &&
-    _served_stop VERIFY_SERVED_WRONG_WORKTREE "the dev server is not serving this ticket's code. Stop the stale server on that port, or re-run env-start.sh with --restart for that service, so it starts from VERIFY_REPO_PATH_<REPO> (see the contract above)"
-  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_SERVED_WRONG_WORKTREE — ${_served_msg} (VERIFY_SERVED_WORKTREE_ENFORCE=false)"
-  ;;
-4)
-  [ "${VERIFY_SERVED_WORKTREE_STRICT:-false}" = "true" ] &&
-    _served_stop VERIFY_SERVED_UNVERIFIED "no verify worktree to compare the served checkout with"
-  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_SERVED_UNVERIFIED — ${_served_msg}"
-  ;;
-*)
-  [ "${VERIFY_SERVED_WORKTREE_STRICT:-false}" = "true" ] &&
-    _served_stop VERIFY_SERVED_UNVERIFIED "could not tell which checkout the dev server serves (VERIFY_SERVED_WORKTREE_STRICT=true)"
-  bash ~/.claude/skills/lib/plog.sh META gate-warn warn "VERIFY_SERVED_UNVERIFIED — could not tell which checkout LOCAL_URL's port serves: ${_served_msg}"
-  ;;
-esac
-```
-
-Exit codes of `verify_served_check_ports` (most severe first): `4` no verify worktree exists for this ticket to compare with (almost always `REPOS_ROOT` unresolved, which also means `env-start.sh` got no exports) — loud `gate-warn` `VERIFY_SERVED_UNVERIFIED`, never a quiet skip; `1` some port serves a checkout of a repo under test on a different commit or with uncommitted changes — gate-stop `VERIFY_SERVED_WRONG_WORKTREE`; `0` `LOCAL_URL`'s port serves this ticket's verify worktree (or a clean checkout of the same repo at the same commit) and no port serves another checkout — an extra port that is ok never stands in for an undecided `LOCAL_URL` port; `3` `LOCAL_URL`'s port could not be decided (no visible listener, unreadable cwd, container-served port, cwd outside any git checkout, or the served repo is not one this ticket touches) — a visible `gate-warn` `VERIFY_SERVED_UNVERIFIED`, proceed. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades the wrong-worktree gate-stop to a `gate-warn`; `VERIFY_SERVED_WORKTREE_STRICT=true` turns the `3`/`4` cases into a `VERIFY_SERVED_UNVERIFIED` gate-stop, for hosts where every served port is a local process. Run this check for `live-backend` mode too.
+**Check what is actually served.** `env-status.sh` reports up/down only, not which checkout a process runs from, so a stack serving the primary clone (possibly another ticket's branch) reads green and yields a silent false PASS/FAIL. Once `env-start.sh` succeeds, `up` compares the checkout behind `LOCAL_URL`'s port, and every port in the project's optional `VERIFY_SERVED_PORTS` CLAUDE.md field, with this ticket's verify worktrees (`verify-env-up.sh served-check`, also in `live-backend` mode). This ticket's code (`served-worktree|done`) continues. An undecided port (no worktree to compare, an unreadable or container-served port) is a visible `VERIFY_SERVED_UNVERIFIED` gate-warn and continues. A port serving a different commit or a dirty checkout of a repo under test is a `VERIFY_SERVED_WRONG_WORKTREE` gate-stop with recovery steps. `VERIFY_SERVED_WORKTREE_ENFORCE=false` downgrades that stop to a gate-warn; `VERIFY_SERVED_WORKTREE_STRICT=true` turns every undecided case into a `VERIFY_SERVED_UNVERIFIED` gate-stop.
 
 ### 1.6c — Apply seeds from merged test-data blockers
 
-Before any acceptance testing, load the data this ticket's merged test-data (TD) blockers provide. `lib/seed-apply.sh` owns the rules (which blockers count, the `make <target>` command check, its log lines). Run it in `browser` and `live-backend` modes:
-
-```bash
-source "$HOME/.claude/skills/lib/verify-worktree.sh"
-source "$HOME/.claude/skills/lib/verify-lock.sh" 2>/dev/null || true
-source "$HOME/.claude/skills/lib/events.sh" 2>/dev/null || true
-source "$HOME/.claude/skills/lib/seed-apply.sh"
-verify_env_init "{TICKET-ID}" ./CLAUDE.md || true
-# The seed runs in this ticket's verify worktree: the first (sorted) one
-# 1.6a4 created, else REPOS_ROOT itself when no worktree exists.
-_seed_wt=$(ls -d "${REPOS_ROOT}"/.verify-worktrees/*/"{TICKET-ID}" 2>/dev/null | sort | head -1)
-[ -n "$_seed_wt" ] || _seed_wt="$REPOS_ROOT"
-_seed_rc=0
-seed_apply "{TICKET-ID}" "$_seed_wt" || _seed_rc=$?
-if [ "$_seed_rc" -ne 0 ]; then
-  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "VERIFY_SEED_FAILED — ${SEED_APPLY_MSG}"
-  if declare -f emit_event >/dev/null 2>&1; then
-    emit_event "{TICKET-ID}" gate-held "$(jq -nc --arg r "VERIFY_SEED_FAILED — ${SEED_APPLY_MSG}" '{reason: $r}')" 2>/dev/null || true
-  fi
-  echo "ticket-verify: test data could not be loaded — ${SEED_APPLY_MSG}" >&2
-  verify_lock_release
-  exit 1
-fi
-```
-
-On a non-zero exit, **stop here** (the block has written the `VERIFY_SEED_FAILED` gate-stop, emitted `gate-held` and released the lock). Do not run acceptance testing, and do not write a verify FAIL or a `REMEDIATION_BRIEF`: the fix belongs in the TD ticket's seed target, not this ticket's code. `skip` (no TD blockers) is normal; continue.
+Last, `up` loads the data this ticket's merged test-data (TD) blockers provide, in the first verify worktree (else `REPOS_ROOT`). `lib/seed-apply.sh` owns the rules (which blockers count, the `make <target>` command check, its log lines). `skip` (no TD blockers) is normal. A failure is a `VERIFY_SEED_FAILED` gate-stop plus a `gate-held` event: **stop here**, and do not write a verify FAIL or a `REMEDIATION_BRIEF` — the fix belongs in the TD ticket's seed target, not this ticket's code.
 
 ### 1.6d — Seeder precheck (#601)
 
@@ -849,35 +664,13 @@ Append to `{ticket-dir}/notes.md`:
 
 ### Post-verdict: Record verifier result (Phase 0 RLVR) — PASS
 
-You only reach this point on the pass branch (`### Pass` above routes here; `### Fail` routes
-to Step 7, which has its own FAIL write — see **Post-verdict: Record verifier result (Phase 0
-RLVR) — FAIL** under 7b below).
-
-**Before either state-transition branch below** — the `uat-pass` branch is gated on this
-exact record (`VERDICT_FAIL_NOT_ENFORCED`, issue #368): `flow.sh` refuses `uat-pass` when
-the latest recorded verdict for this ticket's verifier/phase pair is a trailing FAIL/BLOCK,
-and a later PASS only clears that block once it is actually on the log. Writing the verdict
-after the trigger call — the historical order in this doc — means the router's own
-documented verify-retry loop (attempt 1 FAILs and gets logged, attempt 2 genuinely PASSes)
-would have attempt 2's `uat-pass` call check the log *before* its own PASS was written,
-still seeing attempt 1's stale FAIL and blocking a ticket that just legitimately passed.
-Source and call `write_verifier_result` now, with criteria_met=criteria_total=total passing
-criteria:
+You only reach this point on the pass branch (`### Fail` routes to Step 7, which records FAIL). Record the verdict **before either state-transition branch below**: `uat-pass` is verdict-gated (#368), and a later PASS clears an earlier attempt's FAIL only once it is on the log. `criteria_met` = `criteria_total` = the passing-criterion count:
 
 ```bash
-source ~/.claude/skills/lib/verifier-result.sh
-write_verifier_result verifier=playwright_uat verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+source ~/.claude/skills/lib/verifier-result.sh && verify_record_verdict "{VERIFY_MODE}" PASS <N> <M> <A>
 ```
 
-**If `VERIFY_MODE=build-only`**, use `verifier=build_only` instead of `playwright_uat`:
-```bash
-write_verifier_result verifier=build_only verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
-
-**If `VERIFY_MODE=live-backend`**, use `verifier=live_backend` instead of `playwright_uat`:
-```bash
-write_verifier_result verifier=live_backend verdict=PASS criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
+`verify_record_verdict` picks the verifier from the mode — `browser` → `playwright_uat`, `build-only` → `build_only`, `live-backend` → `live_backend` — and writes the same `META|verifier-result` line `write_verifier_result verifier=<id> … phase=VERIFY` did. Exit 2 means the mode or verdict was not filled in and nothing was recorded: fix the call and re-run it.
 
 ### If `--env local`: Open PR and close out
 
@@ -993,7 +786,7 @@ Then continue to **Post-verdict: Emit the PHASE_RESULT block** below with `VERDI
 
 End your return with the `=== PHASE_RESULT ===` block described in **§ 6 Phase result
 emission** of the auto preamble: `PHASE: VERIFY`, `VERIFIER` set to this run's actual
-verifier, and `CRITERIA_MET`/`CRITERIA_TOTAL`/`ATTEMPT` matching the `write_verifier_result`
+verifier, and `CRITERIA_MET`/`CRITERIA_TOTAL`/`ATTEMPT` matching the `verify_record_verdict`
 call above. `VERDICT` is `PASS` in every case above except the gate-blocked `--env uat`
 branch, where it is `BLOCK` — "the phase found something that must stop forward progress"
 (`docs/phase-result-schema.md`'s enum) describes this exactly: this run's own check passed,
@@ -1026,29 +819,10 @@ If several criteria fail, report all of them here and in 7c: WHAT_FAILED and SNA
 
 ### Post-verdict: Record verifier result (Phase 0 RLVR) — FAIL
 
-Same call as the pass-branch write above, now with the FAIL verdict — this is the one write
-site that actually exercises the verdict gate's namesake failure mode
-(`VERDICT_FAIL_NOT_ENFORCED`, issue #368): a real verify FAIL must land on the pipeline log so
-`verifier_latest_verdict` can see it and block any subsequent attempt (buggy retry, or a human
-manually re-running `uat-pass`) to force a Done/UAT transition while it stands as the latest
-verdict for this `(verifier, phase)` pair. Source and call `write_verifier_result` now, using
-the criteria counts from the table above:
+A real FAIL must land on the log so the verdict gate (#368) blocks any later `uat-pass` while it stands. `criteria_met` is the passing-criterion count, `criteria_total` the attempted count:
 
 ```bash
-source ~/.claude/skills/lib/verifier-result.sh
-write_verifier_result verifier=playwright_uat verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
-`criteria_met` is the passing-criterion count, `criteria_total` the attempted count — same
-shape as the Step 6 PASS call.
-
-**If `VERIFY_MODE=build-only`**, use `verifier=build_only` instead of `playwright_uat`:
-```bash
-write_verifier_result verifier=build_only verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
-```
-
-**If `VERIFY_MODE=live-backend`**, use `verifier=live_backend` instead of `playwright_uat`:
-```bash
-write_verifier_result verifier=live_backend verdict=FAIL criteria_met=<N> criteria_total=<M> attempt=<A> phase=VERIFY
+source ~/.claude/skills/lib/verifier-result.sh && verify_record_verdict "{VERIFY_MODE}" FAIL <N> <M> <A>
 ```
 
 ### 7c — Emit the REMEDIATION_BRIEF
@@ -1106,39 +880,9 @@ rather than guessing.}
 
 ### 7c5 — Write REMEDIATION_BRIEF to plan artifact
 
-After emitting the brief in chat, persist it to the plan artifact so `ticket-implement` can read the structured remediation data (SUGGESTED_FIX, SNAPSHOT_EXCERPT, diagnostics, context files).
+Persist the brief to the plan artifact, so `ticket-implement` can read SUGGESTED_FIX, SNAPSHOT_EXCERPT, the diagnostics and the context files. Write this section body to `{ticket-dir}/remediation-section.md`, filling every placeholder and ending at the context-file list:
 
-### 7d — Post VERIFY_EXHAUSTED summary to Linear
-
-When the verify phase has exhausted its retries (2 attempts), post the **VERIFY_EXHAUSTED comment** from `references/templates.md` to the Linear ticket. This is the final communication — no further retries will occur.
-
-Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP fallback otherwise). This ensures the ticket author knows:
-- Which criteria passed (so they don't need to re-test those)
-- Which criteria failed (so they know what to fix)
-- That no further automated retries will occur
-
-**Detect plan artifact** (same detection as `ticket-implement` Step 2):
-
-```bash
-bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root .
-```
-
-- Exit 0 → `PLAN = PLAN_PATH`, mode = `PLAN_MODE` (`simple-fix` or `openspec`)
-- Exit 2 (several change dirs match this ticket) or exit 12 (none) → skip write. Report: "No plan artifact found for REMEDIATION_BRIEF — brief emitted to chat and notes.md only."
-
-**Count existing sections and write atomically:**
-
-Count `^## Verification #` lines in the plan to determine `N` (0 if none).
-
-Write to a temporary file first, then atomically rename:
-```bash
-PLAN_TMP="${PLAN}.tmp"
-# Write: original content + new section + closing marker
-cat "$PLAN" > "$PLAN_TMP"
-cat >> "$PLAN_TMP" << 'SECTION'
-
-## Verification #{N+1}
-
+```markdown
 **Date:** {today's date}
 **Environment:** {env}
 **Failed at step:** {N} — {step description}
@@ -1161,20 +905,19 @@ cat >> "$PLAN_TMP" << 'SECTION'
 
 ### Context Files
 {CONTEXT_FILES list items}
-
-<!-- /REMEDIATION_BRIEF -->
-SECTION
-
-# Atomic rename — partial writes never visible at the destination
-mv "$PLAN_TMP" "$PLAN" || {
-  bash ~/.claude/skills/lib/plog.sh META gate-stop fail "REMEDIATION_BRIEF_TRUNCATED — rename failed: $PLAN"
-  cl_write RETRO hint info "REMEDIATION_BRIEF atomic rename failed — plan path: $PLAN, TMP: $PLAN_TMP. Check filesystem permissions and cross-device rename restrictions"
-  rm -f "$PLAN_TMP"
-  exit 1
-}
 ```
 
-If the write or rename fails for any reason, emit `|META|gate-stop|fail|REMEDIATION_BRIEF_TRUNCATED` and abort. The `.tmp` file is removed on the way out.
+Then append it:
+
+```bash
+bash ~/.claude/skills/lib/remediation-append.sh "{TICKET-ID}" --section "{ticket-dir}/remediation-section.md" --root .
+```
+
+The script finds the plan (`ticket-dir.sh plan`), adds `## Verification #<N>` (existing sections + 1), your file verbatim and the `<!-- /REMEDIATION_BRIEF -->` marker through a temp file and a rename, and prints `PLAN=`/`N=` for 7d2. Exit 3: no single plan artifact; report "No plan artifact found for REMEDIATION_BRIEF — brief emitted to chat and notes.md only." Exit 1: the write or rename failed and `REMEDIATION_BRIEF_TRUNCATED` is logged; stop.
+
+### 7d — Post VERIFY_EXHAUSTED summary to Linear
+
+When the verify phase has exhausted its retries (2 attempts), post the **VERIFY_EXHAUSTED comment** from `references/templates.md` to the Linear ticket via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP fallback otherwise). This is the final communication — no further retries will occur — so it says which criteria passed, which failed, and that no automated retry follows.
 
 ### 7d2 — Record in notes.md
 
@@ -1186,7 +929,7 @@ Append to `{ticket-dir}/notes.md`:
 - **Expected:** {expected}
 - **Observed:** {observed}
 - **Console errors:** {count or "none"}
-- **Plan updated:** {PLAN path or "not found"} — `## Verification #{N+1}` appended
+- **Plan updated:** {PLAN from 7c5, or "not found"} — `## Verification #{N}` appended
 ```
 
 ### 7e — Post findings to Linear
