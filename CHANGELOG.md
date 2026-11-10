@@ -17,6 +17,39 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.99.0 (2026-11-10)
+
+`ticket-appraise` full investigation moves to a reference (`skill-progressive-disclosure`, group 2).
+Relocation only: no step changes what it does.
+
+### Changed
+
+- `skills/ticket-appraise/SKILL.md` 66,647 → 36,841 bytes. Steps 2 (the notes.md template), 2.5
+  (persona, scoring run, routing, `## Complexity` record), 2.6, 3 (3a–3f) and 3-Agent moved
+  verbatim to `skills/ticket-appraise/references/full-investigation.md` (34,200 bytes). Each moved
+  heading keeps its fast-path note and a `Moved to` stub, so step numbers and `--from-step` values
+  still resolve.
+- New Step 1.3e is the load condition: the agent runs `skill-ref.sh ticket-appraise
+  references/full-investigation.md` and reads it when `FAST_PATH_ELIGIBLE=false`, when fast-path is
+  active with `Exploration Depth` `quick-scan`, on a `--from-step` resume into a moved step, and
+  before Resume mode re-runs Step 2.5. A missing reference logs `META|reference-missing|fail` and
+  stops. An eligible fast-path run never loads it.
+- Kept inline because the fast path needs them: the Step 2.5 scoring rubric (axis table,
+  threshold, Reversibility triggers; Step 1.3c and Step 2.8 use it, and `ticket-retro`'s
+  complexity-drift template cites it) and the Step 2 Open Questions tagging rule. No
+  `complexity-rubric.md`, `prior-art.md` or `verifier-prompts.md` split: prior art and the Explore
+  prompt share the full-investigation condition, and the claim-verifier prompt (Step 3.5) is shared.
+- **Fingerprint:** the `ticket-appraise` skill fingerprint changes. `prompt_manifests
+  ["ticket-appraise"]` lists the reference directly after SKILL.md, so it is hashed on every run.
+- `scripts/check-skill-size.sh` rule 9: `references/` and `templates/` manifest entries total under
+  `<manifest>:conditional` instead of `<manifest>`, both ratcheted. `ticket-appraise` is now 158,735
+  (was 188,541) plus `ticket-appraise:conditional` 34,200.
+- Tests repointed: `test-persona-injection.sh` slices Steps 2.5, 3 and 3-Agent from the reference
+  with `_section_ref`, and its selector-call and `PERSONA_DEBUG` scans read a skill's references
+  too; `test-wiki-route.sh` check 10 looks for `wiki-route.sh` in the reference and for
+  `${#REPOS[@]}` in both files. `test-skill-references.sh` gains a check that the condition covers
+  `quick-scan`, `--from-step` and Resume mode, and that the rubric and tagging rule stay inline.
+
 ## 0.98.0 (2026-11-10)
 
 `references/` convention checks and test helpers (`skill-progressive-disclosure`, group 1: the

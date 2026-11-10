@@ -514,6 +514,7 @@
     "ticket-appraise": {
       "files": [
         "plugin:skills/ticket-appraise/SKILL.md",
+        "plugin:skills/ticket-appraise/references/full-investigation.md",
         "plugin:agents/ticket-appraise-agent.md",
         "lib:skill-preamble-auto.md",
         "home:pipeline-log-format.md",
