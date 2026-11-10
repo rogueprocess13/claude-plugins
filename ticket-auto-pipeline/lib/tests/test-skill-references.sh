@@ -583,6 +583,38 @@ test_verify_remediation_brief_unchanged() {
   }
 }
 
+test_setup_project_init_condition() {
+  local md="$REPO_ROOT/ticket-auto-pipeline/skills/ticket-setup/SKILL.md"
+  local ref line tok
+  ref="$(dirname "$md")/references/project-init.md"
+  line=$(grep -F 'references/project-init.md' "$md" | grep -F 'skill-ref.sh' | head -1)
+  for tok in 'Only if `CLAUDE.md` is missing' 'Step 0.5' 'never initialize CLAUDE.md from memory'; do
+    grep -qF -- "$tok" <<<"$line" || {
+      echo "  project-init conditional line lacks: $tok"
+      return 1
+    }
+  done
+  # Steps every run takes stay inline: env check, root detection, the
+  # CLAUDE.md-exists skip, GitNexus indexing and the readiness heartbeat.
+  for tok in 'env-check.sh --mode=validate' '### Step 0.2 ' 'Skip to Step 0.5' \
+    '### Step 0.5 ' 'heartbeat|project-init|ok|project ready' '--from-auto'; do
+    grep -qF -- "$tok" "$md" || {
+      echo "  inline contract left SKILL.md: $tok"
+      return 1
+    }
+  done
+  for tok in '#### Step 0.4a ' '#### Step 0.4b ' '#### Step 0.4c ' 'claude init'; do
+    grep -qF -- "$tok" "$ref" || {
+      echo "  project-init.md lost: $tok"
+      return 1
+    }
+    ! grep -qF -- "$tok" "$md" || {
+      echo "  moved text still in SKILL.md: $tok"
+      return 1
+    }
+  done
+}
+
 test_shared_section_ref_helper() {
   local out
   # shellcheck source=skill-text.sh

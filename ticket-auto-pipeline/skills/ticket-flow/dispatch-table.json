@@ -519,6 +519,7 @@
         "lib:skill-preamble-auto.md",
         "home:pipeline-log-format.md",
         "plugin:skills/ticket-setup/SKILL.md",
+        "plugin:skills/ticket-setup/references/project-init.md",
         "plugin:skills/ticket-critique/SKILL.md",
         "plugin:skills/ticket-flow/SKILL.md"
       ]
@@ -585,6 +586,7 @@
         "lib:skill-preamble-auto.md",
         "home:pipeline-log-format.md",
         "plugin:skills/ticket-setup/SKILL.md",
+        "plugin:skills/ticket-setup/references/project-init.md",
         "home:app-knowledge/SKILL.md"
       ]
     },
