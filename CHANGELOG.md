@@ -17,6 +17,46 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.113.0 (2026-11-10) — one readiness scorer and one mode classifier
+
+The entry gate (`gate-check.sh` Check 2.6) and ticket-appraise-exec Step 3.8 scored verification
+readiness with two different rules, and the gate classified a ticket's shape with its own regexes
+while ticket-verify used another set. A ticket could be held as build-only and then verified in a
+browser, or the reverse. Both now go through one scorer and one classifier.
+
+### Changed
+- New `lib/verify-readiness.sh`: the one readiness scorer. Check 2.6 calls it and is still the only
+  place a readiness gap holds a ticket (human-releasable GATE hold, critique cross-validation, and
+  the description-tier vplan fallback stay in gate-check). The held line is unchanged
+  (`held: plan missing N/M verification prerequisites (...)`).
+- appraise-exec Step 3.8 is now advisory: one `verify-readiness.sh` call that logs
+  `EXEC|verify-readiness|done|<STATUS> — advisory, …` and rewrites the notes.md
+  `## Verification Readiness` section. It never stops the pipeline.
+- `lib/verify-mode.sh` has one classifier. Check 2.6 maps verify's answer to a prerequisite
+  profile: `live-backend` → `api-only`, `build-only` → `build-only`, `browser` → `browser`, and a
+  text with no signal (and no test user or nav path in the plan) → `api-only`. The gate reads the
+  same text verify reads: the plan plus `context.md`. `verify_mode_gate_class` and the gate-only
+  `infra-only` class are removed.
+- Gate verdicts that move (21 of 65 cases in `test-verify-readiness.sh`), all toward holding or
+  toward a different hold reason: a ticket whose `context.md` clicks through a page is now held
+  for a test user and nav path, as verify will run it in a browser; a "circuit breaker" build
+  ticket is live-backend and needs expected behaviour plus environment setup; Zipkin/actuator
+  tickets with a test user are browser tickets again.
+- A planner-synthesized test-data chore (`make seed-…`) now classifies `api-only` at the gate,
+  not `build-only`: verify's build vocabulary has no `make`. It still passes Check 2.6 (its body
+  carries expected behaviour and environment setup).
+
+### Removed
+- `VERIFY_READINESS_INCOMPLETE` gate-stop (appraise-exec Step 3.8 no longer stops).
+
+### Fixed
+- The `**Test User:** N/A` bold form is now read as an explicit no-user marker (only
+  `**Test User**: N/A` matched before).
+- Check 2.6 scanned an openspec change directory with `grep` as if it were a file, which found
+  nothing. It now scans every `*.md` in the change dir.
+- The test-user role pattern now falls back to the known role set when `test-users.json` is
+  missing (the old pipeline's `|| echo` never fired, leaving an empty role alternative).
+
 ## 0.112.0 (2026-11-10) — knowledge-curator removed from the marketplace
 
 `knowledge-curator` does not belong to this project, so it is no longer shipped here. Its

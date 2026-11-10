@@ -5,8 +5,12 @@
 # fixtures/verify-mode/<case>.out were produced by running the pre-extraction
 # ticket-verify SKILL.md Step 1e block (main @ eacacbf) over the workspaces
 # the _case_* functions below build — never by verify-mode.sh. Timestamps are
-# masked to TS. fixtures/verify-mode/gate-<case>.out were produced the same
-# way from gate-check.sh Check 2.6's classification block at eacacbf.
+# masked to TS. One fixture moved on purpose since: live_na_full_stack is
+# live-backend now that the bold "**Test User:** N/A" form matches (decision 3
+# of skill-deterministic-extraction, readiness + mode unification).
+# The gate profile cases (verify_mode_gate_profile) carry their expected
+# profile inline: it is the verify classification mapped to a prerequisite
+# profile, not a parity fixture.
 #
 # Usage: bash test-verify-mode.sh
 # With VERIFY_MODE_TEST_LIB_ONLY=1 the file only defines its helpers.
@@ -21,7 +25,8 @@ TID="T-1"
 unset LOG_FILE TAP_LOG HB_LOG_FILE CLAUDE_LOG_FILE REPOS_ROOT FLEET_WORKER_PID FLEET_GENERATION TICKETS_ROOT
 
 VM_CASES="browser build_simple_fix live_keyword live_na_full_stack live_na_plain browser_beats_build live_beats_build no_signals no_files"
-VM_GATE_CASES="g_browser g_build g_make g_api g_infra g_infra_feature g_user_only g_nav_set g_dir"
+# name|expected profile (old verify_mode_gate_class answer, for the record)
+VM_GATE_CASES="g_browser|browser g_build|build-only g_make|api-only g_api|api-only g_infra|api-only g_infra_feature|api-only g_user_only|browser g_nav_set|build-only g_ui_word_nav|browser"
 
 _ws_new() {
   WS=$(mktemp -d)
@@ -44,42 +49,43 @@ _case_build_simple_fix() {
 }
 _case_live_keyword() { printf 'Service must register with Eureka on startup.\n' >"$TD/context.md"; }
 _case_live_na_full_stack() { printf '**Test User:** N/A\nEnvironment: full stack running locally\n' >"$TD/context.md"; }
-# The bold form "**Test User:** N/A" never matches the old regex (it expects
-# the stars before the colon, and at least one star); "**Test User**: N/A" does. Pinned as-is.
+# Both the bold form "**Test User:** N/A" and "**Test User**: N/A" match
+# (the old regex missed the first one; fixed in decision 3).
 _case_live_na_plain() { printf '**Test User**: N/A\nEnvironment: full stack running locally\n' >"$TD/context.md"; }
 _case_browser_beats_build() { printf 'Update pom.xml, then login and check the dashboard.\n' >"$TD/notes.md"; }
 _case_live_beats_build() { printf 'pom.xml gains resilience4j; circuit breaker opens on downstream failure.\n' >"$TD/notes.md"; }
 _case_no_signals() { printf 'Refactor the repository class.\n' >"$TD/notes.md"; }
 _case_no_files() { :; }
 
-# Gate cases: artifact text, has_nav_path, has_test_user.
-_gcase() { # name -> sets GA (artifact path), GN, GU
-  GA="$WS/artifact.md"
+# Gate cases: text, has_nav_path, has_test_user. Old gate answers (for the
+# record): g_make build-only, g_infra infra-only, g_infra_feature browser,
+# g_nav_set browser — each now follows what verify itself would run.
+_gcase() { # name -> sets GT (text), GN, GU
   GN=0 GU=0
   case "$1" in
-  g_browser) printf 'Open the page and click Save.\n' >"$GA" ;;
-  g_build) printf 'Run mvn clean compile; BUILD SUCCESS.\n' >"$GA" ;;
-  g_make) printf 'Run make seed-demo and confirm it succeeds.\n' >"$GA" ;;
-  g_api) printf 'POST /api/x returns 201.\n' >"$GA" ;;
+  g_browser) GT='Open the page and click Save.' ;;
+  g_build) GT='Run mvn clean compile; BUILD SUCCESS.' ;;
+  g_make) GT='Run make seed-demo and confirm it succeeds.' ;;
+  g_api) GT='POST /api/x returns 201.' ;;
   g_infra)
-    printf 'Check Eureka at localhost:8761 lists the service.\n' >"$GA"
+    GT='Check Eureka at localhost:8761 lists the service.'
     GU=1
     ;;
   g_infra_feature)
-    printf 'Check eureka, then /admin/ settings.\n' >"$GA"
+    GT='Check eureka, then /admin/ settings.'
     GU=1
     ;;
   g_user_only)
-    printf 'Log in at localhost:4200 and check things.\n' >"$GA"
+    GT='Log in at localhost:4200 and check things.'
     GU=1
     ;;
   g_nav_set)
-    printf 'mvn clean install\n' >"$GA"
+    GT='mvn clean install'
     GN=1
     ;;
-  g_dir)
-    GA="$WS/change-dir"
-    mkdir -p "$GA"
+  g_ui_word_nav)
+    GT='Refactor the repository class.'
+    GN=1
     ;;
   esac
 }
@@ -114,17 +120,28 @@ for c in $VM_CASES; do
   _ws_rm
 done
 
-echo "=== verify-mode.sh: gate-check Check 2.6 class parity ==="
+echo "=== verify-mode.sh: gate-check Check 2.6 profile ==="
 # shellcheck source=/dev/null
 source "$VM"
-for c in $VM_GATE_CASES; do
-  _ws_new
+for spec in $VM_GATE_CASES; do
+  c="${spec%%|*}" want="${spec#*|}"
   _gcase "$c"
-  got=$(verify_mode_gate_class "$GA" "$GN" "$GU")
-  want=$(cat "$VM_FX/gate-$c.out")
+  got=$(verify_mode_gate_profile "$GT" "$GN" "$GU")
   [ "$got" = "$want" ] && _ok "gate $c ($got)" || _ko "gate $c: want $want got $got"
-  _ws_rm
 done
+got=$(verify_mode_gate_profile "" 0 0)
+[ "$got" = "api-only" ] && _ok "gate: no text, no signal -> api-only" || _ko "gate empty: $got"
+
+echo "=== verify_mode_text ==="
+_ws_new
+printf 'PLAN\n' >"$WS/plan.md"
+printf 'CTX\n' >"$TD/context.md"
+printf 'DESC\n' >"$WS/d.txt"
+got=$(verify_mode_text "$WS/plan.md" "$TD" "$WS/d.txt")
+[ "$got" = "$(printf 'PLAN\nCTX\nDESC')" ] && _ok "plan, then context.md, then description" || _ko "verify_mode_text: $got"
+got=$(verify_mode_text "$WS/missing.md" "$TD")
+[ "$got" = "$(printf 'CTX\n')" ] && _ok "missing plan: context.md only" || _ko "verify_mode_text missing plan: [$got]"
+_ws_rm
 
 echo "=== CLI ==="
 _ws_new
@@ -142,12 +159,12 @@ bash "$VM" "$TID" --ticket-dir >/dev/null 2>&1 || rc=$?
 [ "$rc" = 2 ] && _ok "--ticket-dir without value -> exit 2" || _ko "--ticket-dir no value rc=$rc"
 _ws_rm
 
-echo "=== gate-check.sh calls verify-mode.sh (no second classifier) ==="
+echo "=== gate-check.sh scores through verify-readiness.sh (no second classifier) ==="
 gc="$VM_LIB_DIR/gate-check.sh"
-if grep -q 'verify_mode_gate_class' "$gc" && ! grep -q '_build_signals=' "$gc" && ! grep -q '_infra_named_signals=' "$gc"; then
-  _ok "gate-check.sh classifies through verify_mode_gate_class only"
+if grep -q 'verify_readiness_score' "$gc" && ! grep -q '_build_signals=' "$gc" && ! grep -q 'grep -ciP' "$gc" && ! grep -q 'verify_mode_gate_class' "$gc"; then
+  _ok "gate-check.sh classifies and scores through verify-readiness.sh only"
 else
-  _ko "gate-check.sh carries its own classification regexes"
+  _ko "gate-check.sh carries its own classification or probe regexes"
 fi
 
 echo ""

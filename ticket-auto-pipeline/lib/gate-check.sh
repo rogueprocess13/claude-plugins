@@ -46,13 +46,14 @@ elif [ -f "$SCRIPT_DIR/vplan-parse.sh" ]; then
   source "$SCRIPT_DIR/vplan-parse.sh"
 fi
 
-# verify-mode.sh backs Check 2.6's ticket-mode classification (skill-
-# deterministic-extraction 4). Sibling first: a stale synced copy must never
-# shadow the classifier this gate-check.sh shipped with.
-if [ -f "$SCRIPT_DIR/verify-mode.sh" ]; then
-  source "$SCRIPT_DIR/verify-mode.sh"
-elif [ -f "$LIB_DIR/verify-mode.sh" ]; then
-  source "$LIB_DIR/verify-mode.sh"
+# verify-readiness.sh is Check 2.6's scorer, and it sources verify-mode.sh,
+# the one ticket-mode classifier verify Step 1e also runs (skill-
+# deterministic-extraction, decisions 1 and 3). Sibling first: a stale synced
+# copy must never shadow the scorer this gate-check.sh shipped with.
+if [ -f "$SCRIPT_DIR/verify-readiness.sh" ]; then
+  source "$SCRIPT_DIR/verify-readiness.sh"
+elif [ -f "$LIB_DIR/verify-readiness.sh" ]; then
+  source "$LIB_DIR/verify-readiness.sh"
 fi
 
 # ── Verifier-result helper (Phase 0 RLVR) ──────────────────────────────────────
@@ -650,43 +651,24 @@ _gate_entry() {
   # Verification prerequisites are independent of critique readiness. Check them
   # whenever we have an artifact, regardless of whether a critique has run yet.
   if [ -n "$artifact_path" ] && { [ -f "$artifact_path" ] || [ -d "$artifact_path" ]; }; then
-    local has_test_user has_nav_path has_expected_behavior has_env_prereqs role_pattern missing_count
-    # Build role pattern from test-users.json catalog if available, fall back to known roles
-    role_pattern=$(jq -r '[.[].roles[]] | unique | join("|")' "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills}/config/test-users.json" 2>/dev/null | sed 's/_/[-_]/g' || echo 'attorney|admin|debtor|collection[-_]?agency|correspondent')
+    local has_test_user has_nav_path has_expected_behavior has_env_prereqs missing_count
 
     # Verification-plan extraction (task 3.2: delegated to the shared
     # vplan_parse — one parser, shared with dor-check.sh, design.md
     # Decision 5). Source order (task 3.3): notes.md → the planner's
-    # body.md → the ticket description — the first source that yields a
-    # non-empty per-criterion table wins; the chosen source is recorded in
-    # the gate's own log line below rather than only implied by which
-    # branch ran. The issue fetch this needs for the description tier is
-    # hoisted here from Check 2.7 (which used to be the only place in this
-    # function that fetched it) rather than duplicated — a fetch failure at
-    # this point surfaces exactly like a fetch failure previously did at
-    # 2.7, via the same _gate_fetch_issue/_gate_fetch_issue_fail path.
+    # body.md (both through verify_readiness_vplan) → the ticket
+    # description, which only the gate reads: the first source that yields a
+    # non-empty per-criterion table wins, and the chosen source is recorded
+    # in the gate's own log line below. The issue fetch this needs for the
+    # description tier is hoisted here from Check 2.7 rather than duplicated
+    # — a fetch failure surfaces via the same _gate_fetch_issue_fail path.
     local vplan_section="" vplan_source="none" vplan_rows=0 vplan_verifiable=0
-    local notes_path="$gate_td/notes.md" notes_text=""
-    [ -f "$notes_path" ] && notes_text=$(cat "$notes_path" 2>/dev/null || true)
-    if declare -f vplan_parse >/dev/null 2>&1 && vplan_parse "$notes_text" 2>/dev/null; then
-      vplan_section="1"
-      vplan_source="notes.md"
-      vplan_rows="$VPLAN_ROWS"
-      vplan_verifiable="$VPLAN_VERIFIABLE"
-    fi
-
-    local planner_dir_path body_text=""
-    if [ "$vplan_source" = "none" ] && declare -f resolve_planner_dir >/dev/null 2>&1; then
-      planner_dir_path=$(resolve_planner_dir "$TICKET_ID" 2>/dev/null) || true
-      if [ -n "$planner_dir_path" ] && [ -f "$planner_dir_path/body.md" ]; then
-        body_text=$(cat "$planner_dir_path/body.md" 2>/dev/null || true)
-        if declare -f vplan_parse >/dev/null 2>&1 && vplan_parse "$body_text" 2>/dev/null; then
-          vplan_section="1"
-          vplan_source="body.md"
-          vplan_rows="$VPLAN_ROWS"
-          vplan_verifiable="$VPLAN_VERIFIABLE"
-        fi
-      fi
+    if declare -f verify_readiness_vplan >/dev/null 2>&1; then
+      verify_readiness_vplan "$TICKET_ID" "$gate_td"
+      vplan_section="$VR_VPLAN_FOUND"
+      vplan_source="$VR_VPLAN_SOURCE"
+      vplan_rows="$VR_VPLAN_ROWS"
+      vplan_verifiable="$VR_VPLAN_VERIFIABLE"
     fi
 
     if [ "$vplan_source" = "none" ]; then
@@ -703,124 +685,50 @@ _gate_entry() {
 
     _plog "$LOG_FILE" "GATE" "vplan-source" "done" "source=$vplan_source rows=$vplan_rows verifiable=$vplan_verifiable"
 
-    if [ -n "$vplan_section" ]; then
-      # Check the Verifiable column for ✓/✔/Y/Yes entries (vplan_parse reads
-      # only that column, #514). If at least one criterion
-      # is marked verifiable, the plan has enough info. If none are marked, all 4
-      # prereqs are effectively missing (fallback triggers).
-      if [ "${vplan_verifiable:-0}" -gt 0 ] 2>/dev/null; then
-        # At least one criterion is fully verifiable — all 4 prereqs are present
-        # for that criterion. Mark all as found.
-        has_test_user=1
-        has_nav_path=1
-        has_expected_behavior=1
-        has_env_prereqs=1
-      else
-        # No criteria are verifiable — plan is incomplete
-        has_test_user=0
-        has_nav_path=0
-        has_expected_behavior=0
-        has_env_prereqs=0
-      fi
+    # Score the plan with the shared scorer (verify-readiness.sh). A
+    # verifiable plan row marks every prerequisite found; otherwise the
+    # artifact is scanned (an openspec change directory: every *.md in it).
+    # The ticket mode is verify's own classification (verify_mode_classify
+    # over the plan + context.md, the text verify Step 1e reads), mapped to a
+    # prerequisite profile: live-backend → api-only, build-only → build-only,
+    # browser → browser, or api-only when the text carries no signal at all.
+    # Scorer unavailable → browser with every prerequisite missing (the
+    # strictest profile).
+    local _ticket_mode="browser" _required_count=4 has_build_command=0 has_build_outcome=0
+    local _mode_plan="$artifact_path"
+    [ -d "$artifact_path" ] && _mode_plan="$gate_td/notes.md"
+    if declare -f verify_readiness_score >/dev/null 2>&1; then
+      verify_readiness_score "$artifact_path" "$(verify_mode_text "$_mode_plan" "$gate_td")" "$vplan_section" "$vplan_verifiable"
+      _ticket_mode="$VR_MODE"
+      _required_count="$VR_REQUIRED"
+      missing_count="$VR_MISSING"
+      has_test_user="$VR_TEST_USER"
+      has_nav_path="$VR_NAV"
+      has_expected_behavior="$VR_EXPECTED"
+      has_env_prereqs="$VR_ENV"
+      has_build_command="$VR_BUILD_COMMAND"
+      has_build_outcome="$VR_BUILD_OUTCOME"
+    else
+      VR_PLAN_TEST_USER=0 VR_PLAN_NAV=0
+      has_test_user=0 has_nav_path=0 has_expected_behavior=0 has_env_prereqs=0
+      missing_count=4
     fi
-
-    # Save pre-fallback values for cross-validation: the plan's own data
-    # (not artifact fallback) determines whether critique gaps were truly resolved.
-    local plan_has_test_user="${has_test_user:-0}"
-    local plan_has_nav_path="${has_nav_path:-0}"
-    local plan_has_expected="${has_expected_behavior:-0}"
-    local plan_has_env="${has_env_prereqs:-0}"
-
-    # Fallback: scan the plan artifact directly when:
-    # - no verification plan section exists, OR
-    # - any prerequisite grep returned 0 (grep may have missed data the LLM wrote)
-    if [ -z "$vplan_section" ] || [ "${has_test_user:-0}" = "0" ] || [ "${has_nav_path:-0}" = "0" ] || [ "${has_expected_behavior:-0}" = "0" ] || [ "${has_env_prereqs:-0}" = "0" ]; then
-      # grep -c outputs "0" on no match (and exits 1) — use || true to suppress exit code
-      # Tightened patterns (v2): require context proximity, not just substring match.
-      # Test user: require actual user identification — email, **User:** field with content,
-      # or explicit role with a named role (not just "log in as" alone).
-      has_test_user=$(grep -ciP '(\*\*User:\*\*\s*\S|email[:\s]*\S+@\S+\.\S+|log in as \S|test as \S|role[:\s]*('"$role_pattern"'))' "$artifact_path" 2>/dev/null || true)
-      # Navigation target: require URL path near a navigation verb (same line), OR
-      # explicit menu path with bracket notation, OR "navigate to" / "go to" with a target.
-      has_nav_path=$(grep -ciP '((navigate|go to|open|visit|click).{0,60}(/(handover|admin|user-permission|organisation|portfolio)/)|(/(handover|admin|user-permission|organisation|portfolio)/).{0,60}(navigate|go to|open|visit|click)|menu path.{0,30}\[|navigate to \S|go to \S)' "$artifact_path" 2>/dev/null || true)
-      # Expected behavior: remove bare "should " (matches every implementation instruction).
-      # Require AC context: acceptance criteria headings, numbered ACs with should/must,
-      # expected behavior sections, or verify/pass criterion phrasing.
-      has_expected_behavior=$(grep -ciP '(acceptance criteria|expected (behavi|result|outcome)|^\s*\d+[\.\)]\s.*(should |must )|verify that|pass criter|##\s*(Expected|Acceptance|Verification Plan)|AC[-:]\s|###\s*(Acceptance|Expected))' "$artifact_path" 2>/dev/null || true)
-      # Environment prerequisites: remove bare "setup" (matches "setup the project").
-      # Require data/test context: seed data, test data setup, migrations, fixtures,
-      # or "setup" qualified by "data"/"test"/"seed" within 3 words.
-      has_env_prereqs=$(grep -ciP '(seed[- ]?data|(test|data|environment|seed)\s+\w+\s+setup|setup\s+(test|data|seed)\s|prerequisite|before (testing|running)|database|migration|service.{0,10}start|data\.sql|fixture|test data)' "$artifact_path" 2>/dev/null || true)
-    fi
-
-    # Count missing prerequisites, adjusted for ticket type.
-    # API-only tickets (no browser nav patterns in artifact, no test user refs)
-    # only require expected_behavior + env_prereqs. Browser tickets require all 4.
-    # Build-only tickets (no UI, no API — pure compile/build verification, e.g.
-    # parent-POM/dependency-management changes) only require a concrete build/
-    # verify command + a stated success outcome — the browser/API prerequisites
-    # (test user, nav path) are meaningless for them and would always false-hold.
-    # Detection precedence: browser signals present → browser; else build-tool
-    # signals present → build-only; else → api-only (existing fallback).
-    # Classification lives in verify-mode.sh (skill-deterministic-extraction
-    # 4): one file holds both mode detectors, so the gate never carries a
-    # second copy of the signal regexes. Unavailable → browser, the strictest
-    # prerequisite profile.
-    local _ticket_mode="browser" _required_count has_build_command has_build_outcome
-    has_build_command=0
-    has_build_outcome=0
-    if declare -f verify_mode_gate_class >/dev/null 2>&1; then
-      _ticket_mode=$(verify_mode_gate_class "$artifact_path" "${has_nav_path:-0}" "${has_test_user:-0}") || _ticket_mode="browser"
-    fi
+    # Pre-fallback values for cross-validation: the plan's own data (not the
+    # artifact scan) determines whether critique gaps were truly resolved.
+    local plan_has_test_user="$VR_PLAN_TEST_USER"
+    local plan_has_nav_path="$VR_PLAN_NAV"
     # TEST SEAM (read by tests only, never by the pipeline): when the caller sets
     # GATE_CHECK_TEST_MODE=1, expose the classification after _gate_entry returns
     # as GATE_CHECK_TEST_TICKET_MODE (e.g. a planner-synthesized test-data chore
-    # must classify build-only, planner-test-data-derivation 6.6). Unset in
+    # classifies api-only, planner-test-data-derivation 6.6). Unset in
     # production, so nothing is exported and no gate decision depends on it.
     if [ "${GATE_CHECK_TEST_MODE:-0}" = "1" ]; then
       GATE_CHECK_TEST_TICKET_MODE="$_ticket_mode"
     fi
 
-    missing_count=0
-    case "$_ticket_mode" in
-    infra-only)
-      # Infra-only: dashboards/registries with no feature-path UI to navigate.
-      # Same shape as api-only (expected behavior + env prereqs only) — and,
-      # since this moves _ticket_mode away from "browser", it also prevents the
-      # nav_gap cross-validation false-hold at the block below (gated on
-      # `_ticket_mode = "browser"`).
-      _required_count=2
-      [ "$has_expected_behavior" = "0" ] && missing_count=$((missing_count + 1))
-      [ "$has_env_prereqs" = "0" ] && missing_count=$((missing_count + 1))
-      ;;
-    build-only)
-      # Build-only: require a concrete build/verify command plus a stated
-      # success outcome, in place of browser/API-shaped prerequisites that
-      # don't apply to a no-UI, no-API ticket.
-      _required_count=2
-      has_build_command=$(grep -ciP '(\bmvn\b\s|\bgradle\b|\bnpm run\b|\bmake\b\s|clean compile|clean install|clean package|clean test|\bCI run\b|\bworkflow run\b|feature-branch push)' "$artifact_path" 2>/dev/null || true)
-      has_build_outcome=$(grep -ciP '(BUILD SUCCESS|succeeds?\b|compiles?\s+(successfully|cleanly)|passes?\b|no (compile|build) error|exit code 0|green build|runs? successfully|legs? (are )?green)' "$artifact_path" 2>/dev/null || true)
-      [ "${has_build_command:-0}" = "0" ] && missing_count=$((missing_count + 1))
-      [ "${has_build_outcome:-0}" = "0" ] && missing_count=$((missing_count + 1))
-      ;;
-    api-only)
-      # API-only: skip browser-specific prerequisites
-      _required_count=2
-      [ "$has_expected_behavior" = "0" ] && missing_count=$((missing_count + 1))
-      [ "$has_env_prereqs" = "0" ] && missing_count=$((missing_count + 1))
-      ;;
-    *)
-      # Browser: all 4 required
-      _required_count=4
-      [ "$has_test_user" = "0" ] && missing_count=$((missing_count + 1))
-      [ "$has_nav_path" = "0" ] && missing_count=$((missing_count + 1))
-      [ "$has_expected_behavior" = "0" ] && missing_count=$((missing_count + 1))
-      [ "$has_env_prereqs" = "0" ] && missing_count=$((missing_count + 1))
-      ;;
-    esac
-
     # Hold if 2+ missing for browser tickets, or any missing for API-only/
-    # build-only (INCOMPLETE threshold from appraise-exec Step 3.8).
+    # build-only (verify_readiness_score's INCOMPLETE threshold; this gate is the
+    # only caller that holds on it — appraise-exec Step 3.8 is advisory).
     # Only enforce when a verification plan was attempted (plan section exists)
     # or a critique has been run (indicating the plan SHOULD exist). Tickets
     # without either are pre-verification-plan and the hold would be a false

@@ -1715,14 +1715,16 @@ test_entry_complex_manual_not_approved_still_held() {
 # Cross-validation browser-mode guard (issue #186)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Helper: build-only artifact — build command + BUILD SUCCESS outcome, no browser signals
+# Helper: build-only artifact — build command + BUILD SUCCESS outcome, no browser
+# signals. No runtime words either: verify-mode.sh reads "circuit breaker" as
+# live-backend (readiness + mode unification), which is a different profile.
 _scaffold_artifact_build_only() {
   local path="${1:-${_ws}/simple-fix.md}"
   cat >"$path" <<'ARTEOF'
 # Simple Fix — Test
 
 ## Summary
-Migrate circuit breaker library from Hystrix to Resilience4j.
+Bump the parent POM dependency versions.
 
 ## How to implement
 1. Run `mvn clean install`
@@ -1734,7 +1736,9 @@ ARTEOF
 test_cross_val_build_only_nav_gap_not_held() {
   _setup
   _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
-  _scaffold_context_md 2 "feature" "true"
+  # No UI repro steps: verify classifies the plan + context.md together, and
+  # a click-through in context.md would make it a browser ticket.
+  _scaffold_context_md 2 "feature" "false"
   _scaffold_critique_with_findings 65 "WARNINGS" "- [WARNING] No navigation path specified. Verifier will need to discover the feature location from code."
   _scaffold_artifact_build_only "${_ws}/simple-fix.md"
 
@@ -1782,12 +1786,14 @@ Phase A smoke test across 5 microservices.
 ARTEOF
 }
 
-# 43. Real test user + infra-dashboard-only nav target → reclassified out of
-# browser mode, so critique's nav gap finding no longer false-holds it.
-test_cross_val_infra_dashboard_nav_gap_not_held() {
+# 43. Real test user + infra-dashboard-only nav target (Eureka) and no UI
+# words → verify classifies it live-backend, the gate maps that to the api-only
+# profile, so critique's nav gap finding no longer false-holds it. (The old
+# gate-only infra-only class is gone: readiness + mode unification.)
+test_cross_val_live_backend_nav_gap_not_held() {
   _setup
   _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
-  _scaffold_context_md 2 "feature" "true"
+  _scaffold_context_md 2 "feature" "false"
   _scaffold_critique_with_findings 65 "WARNINGS" "- [WARNING] No navigation path specified. Verifier will need to discover the feature location from code."
   _scaffold_artifact_infra_dashboard "${_ws}/simple-fix.md"
 
@@ -1800,7 +1806,7 @@ test_cross_val_infra_dashboard_nav_gap_not_held() {
 
   _teardown
   [ "$rc" -eq 0 ] || {
-    echo "expected exit 0 (infra-only ticket, nav gap not applicable), got $rc"
+    echo "expected exit 0 (live-backend ticket, nav gap not applicable), got $rc"
     return 1
   }
   [ -z "$held_line" ] || {
@@ -1808,7 +1814,7 @@ test_cross_val_infra_dashboard_nav_gap_not_held() {
     return 1
   }
   [ -z "$missing_line" ] || {
-    echo "unexpected missing-prerequisite hold: infra-only mode should only require expected behavior + env prereqs"
+    echo "unexpected missing-prerequisite hold: the api-only profile only requires expected behavior + env prereqs"
     return 1
   }
 }
@@ -2993,7 +2999,7 @@ for fn in \
   test_entry_complex_manual_approved_ready_passes \
   test_entry_complex_manual_not_approved_still_held \
   test_cross_val_build_only_nav_gap_not_held \
-  test_cross_val_infra_dashboard_nav_gap_not_held \
+  test_cross_val_live_backend_nav_gap_not_held \
   test_cross_val_missing_nav_and_user_still_held \
   test_browser_mode_unaffected_with_feature_path_and_user \
   test_cross_val_bare_hostport_alone_stays_browser_mode \

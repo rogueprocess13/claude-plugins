@@ -6,9 +6,9 @@
 
 Consumes the investigation findings from notes.md and produces the implementation artifact. For simple tickets it writes a concrete simple-fix.md with affected files and step-by-step instructions. For complex tickets it spawns an openspec change via `/opsx:propose`. Runs a regression guard to cross-reference the plan against prior art, and for complex tickets spawns an adversarial review agent to find gaps before implementation begins.
 
-**New in 0.12.10:** For complex tickets, Step 3.7 derives a structured verification plan — determining role scope, navigation paths, expected behaviors, and test data requirements for each acceptance criterion. If any criterion cannot be fully derived, the pipeline pushes back with gate-stop codes (`VERIFY_PLAN_NO_ROLE_SCOPE`, `VERIFY_PLAN_NO_NAV_PATH`, `VERIFY_PLAN_VAGUE_BEHAVIOR`, `VERIFY_PLAN_NO_TEST_DATA`) before implementation starts. Role scope findings are ingested into `app-knowledge/SKILL.md` under a `## Role Scope Registry` section for future appraisals. The verification-readiness gate (Step 3.8) reads the derived plan from notes.md when present, falling back to plan artifact scan for backward compat.
+**New in 0.12.10:** For complex tickets, Step 3.7 derives a structured verification plan — determining role scope, navigation paths, expected behaviors, and test data requirements for each acceptance criterion. If any criterion cannot be fully derived, the pipeline pushes back with gate-stop codes (`VERIFY_PLAN_NO_ROLE_SCOPE`, `VERIFY_PLAN_NO_NAV_PATH`, `VERIFY_PLAN_VAGUE_BEHAVIOR`, `VERIFY_PLAN_NO_TEST_DATA`) before implementation starts. Role scope findings are ingested into `app-knowledge/SKILL.md` under a `## Role Scope Registry` section for future appraisals. Step 3.8 scores verification readiness with `lib/verify-readiness.sh`, the same scorer as the entry gate; it is advisory and never stops the pipeline.
 
-**Fixed in issue #363 (OPENSPEC_ARTIFACTS_UNTRACKED):** Step 3.4, on a coherence match for a complex ticket, now force-commits the openspec change dir into the tickets repo (`lib/openspec-tracking-check.sh commit`) — past any blanket `openspec/` ignore rule, since the tickets repo is this pipeline's designated durable home for the plan of record regardless of that convention. A commit failure is logged as a `gate-warn`, never a gate-stop; `ticket-implement`'s Step 5.5 re-checks tracking at close-out as a backstop. The whole Step 3.4 gate (complexity read, artifact check, `COMPLEXITY_ARTIFACT_MISMATCH` gate-stop, commit and heartbeats) is one call to `lib/appraise-exec-coherence.sh`. The Step 3.8 readiness score is still the agent's: it is not the same rule as `gate-check.sh` Check 2.6 (see the change's handoff), so the two were not merged.
+**Fixed in issue #363 (OPENSPEC_ARTIFACTS_UNTRACKED):** Step 3.4, on a coherence match for a complex ticket, now force-commits the openspec change dir into the tickets repo (`lib/openspec-tracking-check.sh commit`) — past any blanket `openspec/` ignore rule, since the tickets repo is this pipeline's designated durable home for the plan of record regardless of that convention. A commit failure is logged as a `gate-warn`, never a gate-stop; `ticket-implement`'s Step 5.5 re-checks tracking at close-out as a backstop. The whole Step 3.4 gate (complexity read, artifact check, `COMPLEXITY_ARTIFACT_MISMATCH` gate-stop, commit and heartbeats) is one call to `lib/appraise-exec-coherence.sh`. Since 0.113.0 the Step 3.8 readiness score is `lib/verify-readiness.sh`, shared with `gate-check.sh` Check 2.6; only the entry gate holds on it.
 
 Posts a summary comment to Linear and moves the ticket to the Approve state.
 
@@ -46,7 +46,7 @@ Posts a summary comment to Linear and moves the ticket to the Approve state.
 | Regression risk table | notes.md (## Regression Risk) | Conflict detection against prior art |
 | **Verification Plan** | **notes.md (## Verification Plan)** | **Per-criterion role scope, nav path, expected behavior, test data (complex only, Step 3.7)** |
 | **Role Scope Registry** | **app-knowledge/SKILL.md (## Role Scope Registry)** | **Cumulative role scope findings for future appraisals (Step 3.7)** |
-| Verification Readiness | notes.md (## Verification Readiness) | Gate verdict with 4-prerequisite checklist (Step 3.8) |
+| Verification Readiness | notes.md (## Verification Readiness) | Advisory readiness verdict and prerequisite table, written by `verify-readiness.sh` (Step 3.8); the entry gate decides holds |
 | Linear comment | Linear ticket | Appraisal summary posted to ticket |
 | Linear state | Linear | Ticket moved to Approve + claimed |
 
@@ -61,7 +61,7 @@ Step 3.4 — Complexity-coherence gate
 Step 3.5 — Regression guard (cross-reference against prior art)
 Step 3.6 — Adversarial review (complex tickets only)
 Step 3.7 — Derive verification plan (complex tickets only)     ← NEW in 0.12.10
-Step 3.8 — Verification-readiness gate                         ← Renumbered
+Step 3.8 — Verification readiness (advisory, never stops)
 Step 4   — Check for re-appraisal skip
 Step 5   — Post Linear comment
 Step 6   — Set Linear state → Approve
@@ -86,7 +86,7 @@ flowchart TD
     I -->|Yes| J[Step 3.5: Regression guard]
     J --> K{COMPLEXITY}
     K -->|complex| L[Step 3.6: Adversarial review]
-    K -->|simple| M[Step 3.8: Verification-readiness gate]
+    K -->|simple| M[Step 3.8: Verification readiness, advisory]
     L --> N{BLOCKED?}
     N -->|Yes| STOP3[Gate-stop: ADVERSARIAL_BLOCKED]
     N -->|No| O[Step 3.7: Derive verification plan]

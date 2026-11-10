@@ -1216,7 +1216,7 @@ const DATA = {
         { name: "regression-guard",      desc: "Scans the execution artifact against the existing test suite to flag tests the proposed changes are likely to break before a line of code is written." },
         { name: "adversarial-review",    desc: "Red-team pass on the artifact — challenges assumptions, pokes at edge cases, flags plan gaps before implementation begins." },
         { name: "verify-plan-derived",   desc: "Complex tickets only: derives a per-criterion verification plan — role scope, navigation path, expected behavior, and test data requirements. Any unresolvable dimension gate-stops the pipeline in auto mode (VERIFY_PLAN_* codes)." },
-        { name: "verification-readiness", desc: "Checks the artifact for 4 prerequisites: test user, nav target, expected behavior, environment. Scores CLEAR / WARNINGS / INCOMPLETE. In auto mode, INCOMPLETE (2+ gaps) gate-stops with VERIFY_READINESS_INCOMPLETE." },
+        { name: "verification-readiness", desc: "Advisory: scores the plan with lib/verify-readiness.sh, the same scorer and mode classifier the entry gate (Check 2.6) uses. Writes CLEAR / WARNINGS / INCOMPLETE to notes.md and never stops the pipeline; the entry gate alone holds on it." },
         { name: "post-linear",           desc: "Posts the artifact to the Linear ticket as a structured comment for reviewers." },
         { name: "handoff",               desc: "Marks the ticket ready for the gate and exits cleanly." },
       ],
@@ -1228,7 +1228,6 @@ const DATA = {
         { code: "VERIFY_PLAN_NO_NAV_PATH",      desc: "Navigation path unknown for one or more AC — verifier has no route to the feature." },
         { code: "VERIFY_PLAN_VAGUE_BEHAVIOR",   desc: "Expected behavior vague for one or more AC — pass/fail criterion cannot be determined." },
         { code: "VERIFY_PLAN_NO_TEST_DATA",     desc: "Test data required but no setup steps documented — prerequisite data cannot be created." },
-        { code: "VERIFY_READINESS_INCOMPLETE",  desc: "Plan artifact missing 2+ of 4 verification prerequisites in auto mode — verifier would have to guess." },
       ],
     },
 

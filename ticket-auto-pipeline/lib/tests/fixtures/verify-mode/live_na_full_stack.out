@@ -1,2 +1,2 @@
-VERIFY_MODE=browser
-TS|VERIFY|load-context|done|Context loaded, mode=browser
+VERIFY_MODE=live-backend
+TS|VERIFY|load-context|done|Context loaded, mode=live-backend
