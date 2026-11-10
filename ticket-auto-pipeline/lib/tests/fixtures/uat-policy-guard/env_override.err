@@ -1,0 +1,4 @@
+ticket-verify: refusing --env uat for CRE-500 — its epic declares 'UAT Policy: epic'.
+The epic branch is not deployed to the UAT environment until the epic's integration PRs
+are merged, so a UAT result for one child cannot be valid. Acceptance for this ticket
+happens at the epic level. Use --env local to verify the code change itself.

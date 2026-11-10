@@ -108,33 +108,13 @@ If these sections are not explicitly labelled, infer them from context.
 
 ### 1b4 — Refuse UAT verification under epic UAT policy
 
-Skip this step if `--env local` is set — local verification is unaffected by the policy.
-
-If `--env uat` is set, resolve the ticket's UAT policy and refuse when it is `epic`. The epic branch is not deployed to the UAT environment until the epic's integration PRs are merged, so a UAT result for a single child is structurally meaningless in whichever direction it lands.
-
-This is the *second* UAT decision site. Without this guard it fires `uat-pass` straight to
-`Done`, bypassing the policy resolved at PR review entirely.
+The epic branch is not deployed to UAT until the epic's integration PRs merge, so a UAT result for one child of an epic with `UAT Policy: epic` is meaningless, and without this guard `uat-pass` would close it straight to `Done` (the second UAT decision site):
 
 ```bash
-source ~/.claude/skills/lib/branch-resolve.sh
-
-policy="${UAT_POLICY:-}"
-[ -z "$policy" ] && policy=$(resolve_uat_policy "{TICKET-ID}" 2>/dev/null)
-policy="${policy:-per-ticket}"
-
-if [ "$policy" = "epic" ]; then
-  echo "ticket-verify: refusing --env uat for {TICKET-ID} — its epic declares 'UAT Policy: epic'." >&2
-  echo "The epic branch is not deployed to the UAT environment until the epic's integration PRs" >&2
-  echo "are merged, so a UAT result for one child cannot be valid. Acceptance for this ticket" >&2
-  echo "happens at the epic level. Use --env local to verify the code change itself." >&2
-  bash ~/.claude/skills/lib/plog.sh META uat-policy info "${policy}"
-  bash ~/.claude/skills/lib/plog.sh VERIFY uat-policy-guard skip "refused --env uat under epic policy"
-  exit 0
-fi
+bash ~/.claude/skills/lib/uat-policy-guard.sh "{TICKET-ID}" --env {env}
 ```
 
-**No state transition occurs** — the ticket is left exactly as it was. In particular `uat-pass`
-is NOT fired.
+Exit 0: continue (always for `--env local`). Exit 3: refused — the script has printed why and logged `uat-policy-guard|skip`; stop here. **No state transition occurs** and `uat-pass` is NOT fired.
 
 ### 1b5 — Derive credentials (UAT only)
 
