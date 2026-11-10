@@ -362,7 +362,7 @@ test_verify_mode_reference_condition() {
     done
   done
   # The condition sits right after Step 1e's detection, before Step 1.5.
-  cond1e=$(_section "$md" '^### 1f ' '^## Step 1\.5')
+  cond1e=$(_section "$md" '^### 1f ' '^## Step 1[.]5')
   grep -qF 'references/build-only.md' <<<"$cond1e" || {
     echo "  Step 1f does not hold the mode condition"
     return 1
@@ -373,14 +373,14 @@ test_verify_mode_reference_condition() {
     return 1
   }
   # Each moved section keeps its heading over a stub.
-  for h in '^### 2 \(build-only variant\)' '^## Step 4c — '; do
+  for h in '^### 2 [(]build-only variant[)]' '^## Step 4c — '; do
     sec=$(_section "$md" "$h" '^##')
     grep -q '^Moved to `references/build-only.md`' <<<"$(sed 1d <<<"$sec")" || {
       echo "  no build-only stub under $h"
       return 1
     }
   done
-  for h in '^### 2 \(live-backend variant\)' '^## Step 4c-live '; do
+  for h in '^### 2 [(]live-backend variant[)]' '^## Step 4c-live '; do
     sec=$(_section "$md" "$h" '^##')
     grep -q '^Moved to `references/live-backend.md`' <<<"$(sed 1d <<<"$sec")" || {
       echo "  no live-backend stub under $h"
