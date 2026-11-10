@@ -8,6 +8,8 @@ Aggregates pipeline log failures across a configurable time window, classifies r
 
 **Reference file (skill-progressive-disclosure):** the `--post-to-github` material, Step 4's GitHub Issues proposal subsection and Step 5.5 (auth check, issue body and evidence files, the `github_retro_process` state machine, the report), lives in `skills/ticket-retro/references/github-issues.md`. SKILL.md reads it only when the flag is set. The automatic retro that ticket-auto STEP_6 spawns passes no flags, so it never reads the file. If the file cannot be resolved, the skill warns and skips every GitHub operation; the proposal is still written.
 
+**Deterministic subcommands (skill-deterministic-extraction 6a):** `retro.sh --claude-scan` is Step 1.5. `retro.sh --render-sections <json>` renders the Failure Histogram, Complexity Calibration, Calibration Notes (`retro_calibration_notes`, Step 1.6) and, when the scan ran, the Claude Log Failures and Agent Improvement Hints sections. `retro.sh --github-post <dir>` is Step 5.5a/c/d; severity labels come only from `github_retro_map_severity`. The agent still writes Pattern Analysis, the diffs and the single-occurrence notes.
+
 ## Trigger
 
 **Slash command:** `/ticket-retro [--window Nd] [--post-to-linear] [--post-to-github] [--force]`

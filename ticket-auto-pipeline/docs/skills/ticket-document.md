@@ -6,6 +6,8 @@
 
 `ticket-document` captures the "why" of an implementation for future AI agents. Once code is committed, it diffs the branch against `develop`, reads `notes.md` for design rationale, and classifies the change as trivial or non-trivial. The output is `ai-context.md` — a terse, structured file recording which patterns were applied, which decisions were made, and which files changed. Future agents (e.g. a second ticket touching the same code) read this file instead of re-deriving the same context from scratch.
 
+**Deterministic scripts (skill-deterministic-extraction 6a):** `lib/ai-context-prep.sh` loads the corrections, logs `document start`, resolves the worktree and branch (spawn instruction, then the notes.md pre-implementation checkpoint, then the checkout) and prints the log and diff against the fetched remote base. `lib/ai-context-finalize.sh` counts what the agent wrote, appends the Session Log line, logs `document done` (or `document fail` when `ai-context.md` is missing), records the `ticket_document` verifier result and prints the `DOCUMENT_RESULT` block. The agent still classifies significance and writes `ai-context.md`.
+
 ## Trigger
 
 **Slash command:** `/ticket-document <TICKET-ID>`

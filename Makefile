@@ -97,6 +97,10 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-appraise-exec-coherence.sh
 	bash ticket-auto-pipeline/lib/tests/test-implement-feedback.sh
 	bash ticket-auto-pipeline/lib/tests/test-remediation-check.sh
+	bash ticket-auto-pipeline/lib/tests/test-wiki-finalize.sh
+	bash ticket-auto-pipeline/lib/tests/test-ai-context.sh
+	bash ticket-auto-pipeline/lib/tests/test-retro-subcommands.sh
+	bash ticket-auto-pipeline/lib/tests/test-guidance-record-finding.sh
 	bash ticket-auto-pipeline/lib/tests/test-pr-evidence.sh
 	bash ticket-auto-pipeline/lib/tests/test-pipeline-finalize.sh
 	bash ticket-auto-pipeline/lib/tests/test-spawn-helper.sh

@@ -17,6 +17,50 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.110.0 (2026-11-10)
+
+The deterministic bash of wiki-maintenance, ticket-document, ticket-retro and
+guidance-extractor moves into tested scripts (`skill-deterministic-extraction`, group 6a part 1).
+Always-loaded SKILL.md bytes: wiki-maintenance 25,155 → 19,979, ticket-retro 24,513 → 18,359
+(both leave the size-gate exception list; 8 exceptions remain), ticket-document 9,652 → 7,076,
+guidance-extractor 8,633 → 8,029. Conditional reference: ticket-retro `github-issues.md`
+5,124 → 4,179. Log step names, `--from-step` values, phase names and the `detect-resume.sh`
+contract are unchanged; each script is tested against the old fences, embedded verbatim as
+oracles.
+
+### Added
+- `lib/wiki-finalize.sh` (wiki-maintenance Steps 4 + 4.5) and `lib/ai-context-find.sh` (2.5a).
+- `lib/ai-context-prep.sh` and `lib/ai-context-finalize.sh` (ticket-document Steps 0–2, 5–6).
+- `retro.sh --claude-scan | --render-sections | --github-post` and `retro_calibration_notes`.
+- `guidance-store.sh record-finding` (`guidance_record_finding`).
+- Tests: `test-wiki-finalize.sh`, `test-ai-context.sh`, `test-retro-subcommands.sh`,
+  `test-guidance-record-finding.sh`; `test-wiki-lock.sh` and `test-skill-references.sh`
+  retargeted at the script call.
+
+### Changed (behaviour)
+- **wiki-maintenance commit gets a real `WIKI_ROOT`.** Step 4 takes `{WIKI_ROOT}` as a
+  placeholder. The old fence read `$WIKI_ROOT`, which a fresh Bash call does not have, so in an
+  agent that did not re-export it the guard read "not configured" and skipped the commit.
+- The prose "re-run acquire before committing" is now in the script. A failed re-acquire
+  logs `MAINTENANCE|wiki-commit|skip|WIKI_ROOT lock not re-acquired (rc N) — commit skipped`
+  (new line) and still releases. The lock is released on every exit path, including a kill.
+- ai-context.md discovery exits 1 when `find` fails instead of looking like "no files".
+- ticket-document: the diff fence used a `$WORKTREE_PATH` no shell had set (diffed the CWD);
+  the worktree and branch now come from the spawn instruction or the notes.md checkpoint. The
+  counts, the Session Log line and the `ticket_document` verdict are computed (PASS when all 5
+  sections have content or the change is trivial, WARN otherwise). A missing `ai-context.md`
+  logs `MAINTENANCE|document|fail|ai-context.md not written` (detect-resume routes `fail` like
+  `done`).
+- ticket-retro: the Failure Histogram, Complexity Calibration, Calibration Notes, Claude Log
+  Failures and Agent Improvement Hints sections are rendered by `retro.sh`, not hand-written.
+  Calibration notes mark a `complex`+`Smooth` ticket "(complex, confounded)". A clean window
+  prints "No failures in this window." The GitHub post no longer relies on `$RESULT` crossing
+  fences, and an auth failure now really skips `github_retro_process`.
+- guidance-extractor: the old fence ran `guidance-store.sh compute-id` as an executable, but
+  the file has no exec bit, so the id was empty and `guidance_upsert` refused every entry; and
+  it sourced `lib/corrections-parse.sh` relative to the CWD. `record-finding` fixes both. The
+  upsert now counts `occurrences` when the new entry carries the field.
+
 ## 0.109.0 (2026-11-10)
 
 The deterministic bash of ticket-appraise, ticket-appraise-exec and ticket-implement moves

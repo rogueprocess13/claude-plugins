@@ -11,7 +11,7 @@ ticket-auto-pipeline/agents/guidance-extractor-agent.md	1128	2
 ticket-auto-pipeline/agents/ticket-appraise-agent.md	659	2
 ticket-auto-pipeline/agents/ticket-gate-reconcile-agent.md	818	2
 ticket-auto-pipeline/agents/ticket-implement-agent.md	694	2
-ticket-auto-pipeline/agents/ticket-maintenance-agent.md	2673	28
+ticket-auto-pipeline/agents/ticket-maintenance-agent.md	2627	28
 ticket-auto-pipeline/agents/ticket-pr-review-agent.md	887	2
 ticket-auto-pipeline/agents/ticket-prescan-agent.md	987	2
 ticket-auto-pipeline/agents/ticket-verify-agent.md	2848	10
@@ -54,7 +54,7 @@ ticket-auto-pipeline/personas/specializers/testdata/sql.md	1965	22
 ticket-auto-pipeline/personas/specializers/testdata/ui-forms.md	1819	22
 ticket-auto-pipeline/skills/adr-gate/SKILL.md	11953	170
 ticket-auto-pipeline/skills/app-knowledge/SKILL.md	1346	28
-ticket-auto-pipeline/skills/guidance-extractor/SKILL.md	8633	132
+ticket-auto-pipeline/skills/guidance-extractor/SKILL.md	8029	98
 ticket-auto-pipeline/skills/nav-hints/SKILL.md	3048	71
 ticket-auto-pipeline/skills/skill-docs/SKILL.md	5168	177
 # exception: pending reduction, skill-size programme changes 3-5
@@ -72,7 +72,7 @@ ticket-auto-pipeline/skills/ticket-create/SKILL.md	6818	71
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/ticket-critique/SKILL.md	20101	455
 ticket-auto-pipeline/skills/ticket-detect-resume/SKILL.md	1296	20
-ticket-auto-pipeline/skills/ticket-document/SKILL.md	9652	217
+ticket-auto-pipeline/skills/ticket-document/SKILL.md	7076	142
 ticket-auto-pipeline/skills/ticket-env-check/SKILL.md	4657	84
 ticket-auto-pipeline/skills/ticket-flow/SKILL.md	7322	124
 ticket-auto-pipeline/skills/ticket-gate-reconcile/SKILL.md	9503	210
@@ -86,13 +86,11 @@ ticket-auto-pipeline/skills/ticket-pr-review/SKILL.md	19700	361
 ticket-auto-pipeline/skills/ticket-prescan/SKILL.md	21699	437
 ticket-auto-pipeline/skills/ticket-reject/SKILL.md	1555	27
 ticket-auto-pipeline/skills/ticket-reproduce/SKILL.md	14167	373
-# exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/ticket-retro/SKILL.md	24513	521
+ticket-auto-pipeline/skills/ticket-retro/SKILL.md	18359	361
 ticket-auto-pipeline/skills/ticket-setup/SKILL.md	4615	86
 # exception: floor ~45-60 KB (REMEDIATION_BRIEF contract, browser flow)
 ticket-auto-pipeline/skills/ticket-verify/SKILL.md	58408	952
-# exception: pending reduction, skill-size programme changes 3-5
-ticket-auto-pipeline/skills/wiki-maintenance/SKILL.md	25155	427
+ticket-auto-pipeline/skills/wiki-maintenance/SKILL.md	19979	345
 # allow-growth: no-source decisions become ASSUMED Scope assumptions; the agent must know the disposition and that security findings are excluded
 ticket-planner/agents/draft-revise-agent.md	1598	8
 # exception: pending reduction, skill-size programme changes 3-5
