@@ -1,6 +1,6 @@
 # ticket-appraise-exec
 
-> Artifact executor for a Linear ticket that has already been investigated by /ticket-appraise. Reads the complexity score from notes.md, creates either simple-fix.md or an openspec change, derives a verification plan (complex tickets), gates on verification readiness, assigns the ticket in Linear, posts the appraisal comment, and moves to Approve state. Run after /ticket-appraise has fully populated notes.md.
+> Artifact executor for a Linear ticket that has already been investigated by /ticket-appraise. Reads the complexity score from notes.md, creates either simple-fix.md or an openspec change, assigns the ticket in Linear, posts the appraisal comment, and moves to Approve state. Run after /ticket-appraise has fully populated notes.md.
 
 ## What it does
 
@@ -11,6 +11,8 @@ Consumes the investigation findings from notes.md and produces the implementatio
 **Fixed in issue #363 (OPENSPEC_ARTIFACTS_UNTRACKED):** Step 3.4, on a coherence match for a complex ticket, now force-commits the openspec change dir into the tickets repo (`lib/openspec-tracking-check.sh commit`) — past any blanket `openspec/` ignore rule, since the tickets repo is this pipeline's designated durable home for the plan of record regardless of that convention. A commit failure is logged as a `gate-warn`, never a gate-stop; `ticket-implement`'s Step 5.5 re-checks tracking at close-out as a backstop.
 
 Posts a summary comment to Linear and moves the ticket to the Approve state.
+
+**Reference files (skill-progressive-disclosure):** three parts of the skill live under `skills/ticket-appraise-exec/references/` and are read only for the complexity that uses them. Step 3 holds the load condition. A simple ticket reads `simple-fix-template.md` (the `simple-fix.md` template and its Completion Checklist rule). A complex ticket reads `adversarial-review.md` (the Step 3.6 reviewer prompt and the round-3 Approach review block) and `verification-plan.md` (the Step 3.7 inputs, derivation steps and push-back triggers). The `--from-step create-artifact` and `verify-plan-derived` resumes read the complex files too. A file that cannot be resolved logs `META|reference-missing|fail` and stops the run. The notes.md `## Verification Plan` schema, the Role Scope Registry write, the Step 5 comment and every gate stay in SKILL.md.
 
 ## Trigger
 

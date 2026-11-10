@@ -526,6 +526,9 @@
     "ticket-appraise-exec": {
       "files": [
         "plugin:skills/ticket-appraise-exec/SKILL.md",
+        "plugin:skills/ticket-appraise-exec/references/adversarial-review.md",
+        "plugin:skills/ticket-appraise-exec/references/simple-fix-template.md",
+        "plugin:skills/ticket-appraise-exec/references/verification-plan.md",
         "plugin:agents/ticket-appraise-agent.md",
         "lib:skill-preamble-auto.md",
         "home:pipeline-log-format.md",

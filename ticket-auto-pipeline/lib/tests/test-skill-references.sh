@@ -428,6 +428,81 @@ test_verify_mode_reference_condition() {
   done
 }
 
+# ticket-appraise-exec (group 4): a simple ticket reads only the simple-fix
+# template, a complex ticket only the adversarial prompt and the verification
+# plan derivation. Explicit paths: _SKILL_TEXT_SKILLS_DIR may point at a
+# sandbox left by an earlier test.
+test_appraise_exec_complexity_condition() {
+  local md="$REPO_ROOT/ticket-auto-pipeline/skills/ticket-appraise-exec/SKILL.md"
+  local refs line tok h sec rel
+  refs="$(dirname "$md")/references"
+  # shellcheck source=skill-text.sh
+  source "$SCRIPT_DIR/skill-text.sh"
+  line=$(grep -F 'references/simple-fix-template.md' "$md" | grep -F 'skill-ref.sh' | head -1)
+  [ -n "$line" ] || {
+    echo "  no conditional line"
+    return 1
+  }
+  for tok in '`{COMPLEXITY}` = simple' '`{COMPLEXITY}` = complex' 'references/adversarial-review.md' \
+    'references/verification-plan.md' 'before Step 3.6' 'before Step 3.7' '--from-step' \
+    'create-artifact' 'verify-plan-derived' 'reference-missing' 'Read each printed path in full'; do
+    grep -qF -- "$tok" <<<"$line" || {
+      echo "  conditional line lacks: $tok"
+      return 1
+    }
+  done
+  # The condition sits in Step 3, before Step 3-Simple.
+  sec=$(_section "$md" '^## Step 3 — ' '^### Step 3-Simple')
+  grep -qF 'skill-ref.sh ticket-appraise-exec references/verification-plan.md' <<<"$sec" || {
+    echo "  Step 3 does not hold the complexity condition"
+    return 1
+  }
+  # Each moved section keeps its heading over a stub.
+  for h in '^### Step 3-Simple:references/simple-fix-template.md' \
+    '^## Step 3[.]6 :references/adversarial-review.md' \
+    '^## Step 3[.]7 :references/verification-plan.md'; do
+    rel=${h#*:}
+    sec=$(_section "$md" "${h%%:*}" '^## ')
+    grep -q "^Moved to \`$rel\`" <<<"$sec" || {
+      echo "  no stub for $rel under ${h%%:*}"
+      return 1
+    }
+  done
+  # Resume rows that skip Step 3 name the references.
+  grep -F '| `create-artifact` |' "$md" | grep -F 'references/adversarial-review.md' |
+    grep -qF 'references/verification-plan.md' || {
+    echo "  create-artifact dispatch row does not name the complex references"
+    return 1
+  }
+  grep -F '| `verify-plan-derived` |' "$md" | grep -qF 'references/verification-plan.md' || {
+    echo "  verify-plan-derived dispatch row does not name verification-plan.md"
+    return 1
+  }
+  # Inline contracts: the notes.md schema read by vplan-parse.sh / gate-check,
+  # the Step 5 comment, the ADVERSARIAL_BLOCKED prefix and the round counter.
+  for tok in '**Derived by:** ticket-appraise-exec Step 3.7' '### Per-Criterion Verification' \
+    '<!-- ticket-auto:appraisal -->' '## Role Scope Registry' 'adversarial_round_count' \
+    'ADVERSARIAL_BLOCKED — round {ADV_ROUND}' 'write_verifier_result verifier=adversarial_review' \
+    'Keep going — do not stop here' 'EXEC_NO_ARTIFACT' 'COMPLEXITY_ARTIFACT_MISMATCH'; do
+    grep -qiF -- "$tok" "$md" || {
+      echo "  inline contract left SKILL.md: $tok"
+      return 1
+    }
+  done
+  # Each reference holds what it is named for, and nothing of the others.
+  grep -qF '## Completion Checklist' "$refs/simple-fix-template.md" &&
+    grep -qF 'You are an adversarial reviewer' "$refs/adversarial-review.md" &&
+    grep -qF '### 8. Approach review' "$refs/adversarial-review.md" &&
+    grep -qF 'VERIFY_PLAN_NO_ROLE_SCOPE' "$refs/verification-plan.md" || {
+    echo "  a reference lost its moved text"
+    return 1
+  }
+  ! grep -qF -- '**Derived by:**' "$refs/verification-plan.md" || {
+    echo "  verification-plan.md carries the notes.md schema"
+    return 1
+  }
+}
+
 # The REMEDIATION_BRIEF block (Step 7c) is parsed by ticket-implement and fix
 # skills; skill-progressive-disclosure keeps it inline and byte-identical.
 # Changing the block on purpose means updating this hash in the same PR.

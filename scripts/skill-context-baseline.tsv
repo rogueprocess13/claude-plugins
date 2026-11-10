@@ -1,7 +1,8 @@
 dor-semantic	88790
 guidance-extractor	96916
 ticket-appraise	158735
-ticket-appraise-exec	138336
+ticket-appraise-exec	127420
+ticket-appraise-exec:conditional	14328
 ticket-appraise:conditional	34200
 ticket-document	81874
 ticket-gate-reconcile	10321
