@@ -19,6 +19,18 @@
 # Both steps only return a path whose <relpath> file exists.
 #
 # Sourceable library — no set -euo pipefail. No jq dependency.
+#
+# CLI (skill-deterministic-extraction 6c), when run rather than sourced:
+#   fleet-plugin-cache.sh run [--summary-file] <relpath> [args...]
+# The shared locator for the fleet-env-check and fleet-features skills. It
+# finds fleet-controller's <relpath> (fleet_cache_find, else
+# $CLAUDE_PLUGIN_ROOT/<relpath>), runs it with bash and prints its output
+# from a private mktemp file, or OUTPUT_FILE_MISSING when that file is empty.
+# With --summary-file the script writes that file itself (`--summary-file F`
+# is passed first, its stdout passes through, and a non-zero exit is ignored);
+# otherwise its stdout goes to the file and a non-zero exit prints
+# "<name> failed (exit N)". Not found prints
+# "<name> not found — reinstall the fleet-controller plugin". Exit 0, 2 usage.
 
 # Read paths on stdin ({anything}/<plugin>/{version}/{rest}) and print the one
 # with the highest numeric major.minor.patch version; ties break on path text.
@@ -69,3 +81,50 @@ fleet_cache_find() {
   fi
   return 0
 }
+
+_fleet_cache_run() {
+  local summary=false rel s out rc name
+  if [ "${1:-}" = "--summary-file" ]; then
+    summary=true
+    shift
+  fi
+  rel="${1:-}"
+  [ -n "$rel" ] || {
+    echo "usage: fleet-plugin-cache.sh run [--summary-file] <relpath> [args...]" >&2
+    return 2
+  }
+  shift
+  name=$(basename "$rel")
+  s=$(fleet_cache_find fleet-controller "$rel")
+  if [ -z "$s" ] && [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "$CLAUDE_PLUGIN_ROOT/$rel" ]; then
+    s="$CLAUDE_PLUGIN_ROOT/$rel"
+  fi
+  out=$(mktemp) || return 1 # private 0600 file, never a fixed /tmp name
+  if [ -z "$s" ]; then
+    echo "$name not found — reinstall the fleet-controller plugin"
+  elif [ "$summary" = true ]; then
+    bash "$s" --summary-file "$out" "$@" || true
+  else
+    bash "$s" "$@" >"$out" || {
+      rc=$?
+      echo "$name failed (exit $rc)"
+    }
+  fi
+  if [ -s "$out" ]; then cat "$out"; else echo "OUTPUT_FILE_MISSING"; fi
+  rm -f "$out"
+  return 0
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1:-}" in
+  run)
+    shift
+    _fleet_cache_run "$@"
+    exit $?
+    ;;
+  *)
+    echo "usage: fleet-plugin-cache.sh run [--summary-file] <relpath> [args...]" >&2
+    exit 2
+    ;;
+  esac
+fi

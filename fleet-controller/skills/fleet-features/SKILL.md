@@ -22,27 +22,13 @@ Features in this marketplace ship behind flags, most of them off by default. Thi
 
 ### Step 1: Run the inventory
 
-Find the installed script the same way `/fleet-env-check` does (installed version first, then the newest cache version, then `$CLAUDE_PLUGIN_ROOT`). Write the JSON to a temp file, so the output does not get truncated.
+Run the installed script (installed version first, then the newest cached version, then `$CLAUDE_PLUGIN_ROOT`). The locator buffers its output in a private temp file, so it is not truncated. Add `--workspace DIR` after `--json` when the user gave one.
 
 ```bash
-OUT=$(mktemp) # private 0600 file, never a fixed /tmp name
-FEATURES_SH=""
-if [ -f ~/.claude/skills/lib/fleet-plugin-cache.sh ]; then
-  source ~/.claude/skills/lib/fleet-plugin-cache.sh
-  FEATURES_SH=$(fleet_cache_find fleet-controller lib/fleet-features.sh)
-fi
-if [ -z "$FEATURES_SH" ] && [ -f "$CLAUDE_PLUGIN_ROOT/lib/fleet-features.sh" ]; then
-  FEATURES_SH="$CLAUDE_PLUGIN_ROOT/lib/fleet-features.sh"
-fi
-if [ -n "$FEATURES_SH" ]; then
-  # Pass --workspace DIR here when the user gave one.
-  bash "$FEATURES_SH" --json >"$OUT" || echo "fleet-features.sh failed (exit $?)"
-else
-  echo "fleet-features.sh not found — reinstall the fleet-controller plugin"
-fi
-[ -s "$OUT" ] && cat "$OUT" || echo "OUTPUT_FILE_MISSING"
-rm -f "$OUT"
+bash ~/.claude/skills/lib/fleet-plugin-cache.sh run lib/fleet-features.sh --json
 ```
+
+If it prints nothing at all, the synced helper is missing or older than this skill: start a new Claude Code session (its SessionStart hook syncs `~/.claude/skills/lib/`) and run it again.
 
 The output is one JSON object with a `flags[]` array; the fields each step uses are named where it uses them.
 

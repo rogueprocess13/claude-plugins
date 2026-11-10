@@ -279,6 +279,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-skill-ref.sh
 	bash ticket-auto-pipeline/lib/tests/test-skill-references.sh
 	bash fleet-controller/lib/tests/test-fleet-plugin-cache.sh
+	bash fleet-controller/lib/tests/test-fleet-skill-locator.sh
 
 test-fleetd:
 	@echo "=== fleetd supervisor tests (must run from repo root) ==="
