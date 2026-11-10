@@ -50,7 +50,7 @@ Event catalogue: [pipeline-heartbeat-format.md](../../pipeline-heartbeat-format.
 | `build-plan` | Step 3, after the 1.6a3 lock block | re-run Steps 3+ in full |
 | `browser-session` | **falls back to `build-plan`** | browser state lost on crash |
 | `navigate` | **falls back to `build-plan`** | browser state lost on crash |
-| `execute-steps` | **falls back to `build-plan`** | browser state lost on crash |
+| `execute-steps` | **falls back to `build-plan`** (browser); Step 4c / 4c-live (build-only / live-backend, after reading `references/build-only.md` / `references/live-backend.md` per Step 1f) | browser state lost on crash |
 | `checkpoint` | treated as `execute-steps` (so `build-plan` in browser mode) | older routers only |
 
 **Checkpoint resume (deterministic).** Which criteria already passed is never inferred
@@ -214,6 +214,18 @@ fi
 Record `VERIFY_MODE` for the rest of this skill. `browser` (the default) runs every step. `build-only` skips Step 1.6, 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c instead. `live-backend` runs Step 1.6 (a real system must be up) but skips 1.7a/1.7b and Steps 3, 4 and 4b, and runs Step 4c-live instead. Steps 2, 6 and 7 carry per-mode variants. The REMEDIATION_BRIEF and reports keep their field names in every mode (Step 7a maps the diagnostics).
 
 bash ~/.claude/skills/lib/plog.sh VERIFY load-context done "Context loaded, mode=${VERIFY_MODE}"
+
+### 1f — Mode reference (load condition)
+
+**If `VERIFY_MODE=build-only`**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/build-only.md`; **if `VERIFY_MODE=live-backend`**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/live-backend.md`. Do this before Step 2, and before re-entering Step 4c or 4c-live on a `--from-step` resume (`build-plan`, `execute-steps` or `checkpoint`), then Read the printed path in full. Do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/${VERIFY_MODE}.md"` and stop: never run the Step 2 variant, Step 4c, Step 4c-live or their Step 7a diagnostics from memory. In `browser` mode, read neither file.
+
+A `--from-step` resume skips Step 1e, so take the mode from this ticket's latest `load-context` line:
+
+```bash
+VERIFY_MODE=$(grep '|VERIFY|load-context|done|' "$TAP_LOG" 2>/dev/null | tail -1 | sed -n 's/.*mode=//p')
+```
+
+If that prints nothing, run Steps 1b, 1c and 1e first. After a context compaction, read the mode reference again before continuing any of those steps.
 
 ---
 
@@ -544,90 +556,11 @@ bash ~/.claude/skills/lib/plog.sh VERIFY pre-flight done "User:{test_user} Nav:{
 
 ### 2 (build-only variant)
 
-**Derive the module list and build commands.** Read the plan artifact's Completion Checklist / task list and `notes.md` for the affected repos/modules (e.g. from a "pre-implementation checkpoint" or worktree list). For each affected module, determine the appropriate build command from the project's `CLAUDE.md` `BE_TEST_CMD` and standard Maven/Gradle conventions:
-
-- Root/parent POM changes → `mvn -N install` (or `mvn -N validate` if install would pollute the local repo unnecessarily) run first, since downstream modules resolve against it.
-- Each affected service/module → `mvn clean compile` (confirms the POM resolves and the module builds against the new parent/dependency set) and, if the ticket's acceptance criteria call for it, `mvn test` (or `{BE_TEST_CMD}`).
-
-**Expand acceptance criteria into atomic items** exactly as in 2b — each criterion should map to one build command + one pass condition (e.g. "parent POM installs cleanly" → `mvn -N install` exits 0; "bom module still builds against parent" → `mvn clean compile` in `bom/` exits 0 with no version override left unintentionally).
-
-Construct and print the **Verification Plan**:
-
-```
-## Verification Plan — {TICKET-ID}: {title} (build-only)
-
-**Environment:** build (no browser/API surface)
-**Modules under test:** {list of affected repos/modules}
-
-**What was broken:** {one sentence from Actual Behaviour}
-**What should be true now:** {one sentence from Expected Behaviour / AC}
-
-### Acceptance criteria (expanded — each item verified independently)
-1. {atomic criterion — one observable build fact, e.g. "mvn -N install succeeds for parent"}
-2. {atomic criterion}
-...
-
-### Build commands
-1. `cd {repo} && mvn -N install` — {why}
-2. `cd {module} && mvn clean compile` — {why}
-...
-
-### Pass criteria
-- [ ] {criterion 1 — command exits 0, no unexpected version diffs}
-- [ ] {criterion 2}
-...
-```
-
-If `--from-auto` is NOT set: pause and ask "Does this plan look right? (yes / adjust: ...)". If `--from-auto` IS set: print the plan and proceed directly to Step 4c (skip Steps 3, 4, 4b entirely — there is no browser session to establish).
-
-bash ~/.claude/skills/lib/plog.sh VERIFY build-plan done "{N} criteria (build-only)"
-
-Proceed to **Step 4c** below, skipping Steps 3, 4, and 4b.
-
----
+Moved to `references/build-only.md` (module list, build commands and plan template; then Step 4c, skipping Steps 3, 4 and 4b), read per the Step 1f condition.
 
 ### 2 (live-backend variant)
 
-**Derive the running-system checks.** Read the plan artifact and `notes.md`/`context.md` for the affected services and the specific runtime behaviour the acceptance criteria describe (e.g. "all services register with Eureka", "circuit breaker opens after N downstream failures", "service-to-service call succeeds"). Unlike build-only, there is no build command that can confirm these — the check has to run against the live services `env-start.sh` (Step 1.6b) brought up. Determine, per criterion, the concrete check:
-
-- **Registration/discovery claims** (e.g. "registers with Eureka") → an `env-status.sh` read and/or a `curl` against the discovery service's registry endpoint (e.g. `/eureka/apps`), confirming the expected service names appear.
-- **Service-to-service call claims** → a `curl` (or the project's documented API-check invocation) that exercises the call path directly and inspects the response status/body.
-- **Failure/resilience claims** (e.g. circuit breaker) → simulate the stated downstream failure (stop/block the dependency `env-start.sh` manages, or use the project's documented fault-injection method) and confirm the expected behaviour (breaker opens, fallback response, recovery on restore).
-
-**Expand acceptance criteria into atomic items** exactly as in 2b — each criterion maps to one live check + one pass condition.
-
-Construct and print the **Verification Plan**:
-
-```
-## Verification Plan — {TICKET-ID}: {title} (live-backend)
-
-**Environment:** {env} (live backend, no UI)
-**Services under test:** {list of affected services}
-
-**What was broken:** {one sentence from Actual Behaviour}
-**What should be true now:** {one sentence from Expected Behaviour / AC}
-
-### Acceptance criteria (expanded — each item verified independently)
-1. {atomic criterion — one observable runtime fact, e.g. "gateway registers with Eureka"}
-2. {atomic criterion}
-...
-
-### Live checks
-1. `{env-status.sh invocation or curl command}` — {why, what it confirms}
-2. `{env-status.sh invocation or curl command}` — {why, what it confirms}
-...
-
-### Pass criteria
-- [ ] {criterion 1 — expected response/state observed}
-- [ ] {criterion 2}
-...
-```
-
-If `--from-auto` is NOT set: pause and ask "Does this plan look right? (yes / adjust: ...)". If `--from-auto` IS set: print the plan and proceed directly to Step 4c-live (skip Steps 3, 4, 4b entirely — there is no browser session to establish).
-
-bash ~/.claude/skills/lib/plog.sh VERIFY build-plan done "{N} criteria (live-backend)"
-
-Proceed to **Step 4c-live** below, skipping Steps 3, 4, and 4b.
+Moved to `references/live-backend.md` (running-system checks and plan template; then Step 4c-live, skipping Steps 3, 4 and 4b), read per the Step 1f condition.
 
 ---
 
@@ -867,70 +800,13 @@ bash ~/.claude/skills/lib/plog.sh VERIFY execute-steps done "{N} steps executed"
 
 ## Step 4c — Execute build verification (build-only mode only)
 
-**Phase timeout:** same 30-minute wall-clock limit as Step 4b — checkpoint progress, don't crash on timeout.
-
-Run each build command from the Step 2 (build-only variant) plan sequentially, in the worktree for its repo/module. For **every command**:
-
-1. Run the command, capturing stdout+stderr and the exit code:
-   ```bash
-   L=$(bash ~/.claude/skills/lib/ticket-tmp.sh {TICKET-ID} verify-{step}.log) && cd "{worktree path}" && { {build command} ; } > "$L" 2>&1
-   _rc=$?
-   ```
-2. Record the **observed result** — exit code, and (if relevant to the criterion) whether the expected artifact/version/output string appears in the captured log (e.g. `BUILD SUCCESS`, a specific dependency version resolved, absence of a removed property).
-3. If the criterion also requires checking that something did NOT regress (e.g. "module-specific plugin pins were preserved"), diff the relevant POM/build file section against the pre-implementation state noted in `notes.md`, or `grep` for the expected value in the file directly.
-
-**Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry exactly as in Step 4b, so a crash resumes from the next criterion:
-
-```bash
-bash ~/.claude/skills/lib/plog.sh VERIFY checkpoint done "criterion-{N}-pass"
-```
-
-At any point, if a command exits non-zero or the expected output/state is absent, mark that criterion **FAIL** and record:
-- The command that was run and its exit code
-- What was expected (from the pass criterion)
-- What was observed — quote the relevant lines of build output verbatim (last 20–30 lines, or the specific error block)
-
-Continue with the remaining commands unless the failure makes them meaningless (e.g. a failed `mvn -N install` dooms every dependent module's `mvn clean compile` — note it and skip them).
-
-bash ~/.claude/skills/lib/plog.sh VERIFY execute-steps done "{N} build commands executed"
-
-Proceed to Step 5.
+Moved to `references/build-only.md` (run each build command, checkpoint each passing criterion, record failures, then Step 5), read per the Step 1f condition.
 
 ---
 
 ## Step 4c-live — Execute live-backend verification (live-backend mode only)
 
-**Phase timeout:** same 30-minute wall-clock limit as Step 4b — checkpoint progress, don't crash on timeout.
-
-The environment is already up (Step 1.6b ran `env-start.sh` for `live-backend` mode same as browser mode — see Step 1.6). Run each live check from the Step 2 (live-backend variant) plan sequentially. For **every check**:
-
-1. Run the check, capturing output:
-   ```bash
-   L=$(bash ~/.claude/skills/lib/ticket-tmp.sh {TICKET-ID} verify-{step}.log) && { {env-status.sh invocation or curl command} ; } > "$L" 2>&1
-   _rc=$?
-   ```
-   Use `bash {TICKETS_ROOT}/env-status.sh` for service-health/registration reads. Use `curl -sS -w '\n%{http_code}\n'` (or the project's documented API-check invocation) for direct service-to-service or endpoint checks. For failure-simulation criteria (e.g. circuit breaker), use the project's documented fault-injection method — typically stopping a dependency via `env-start.sh`/`env-stop.sh` — then re-run the check to confirm the expected degraded/recovered behaviour.
-2. Record the **observed result** — exit code / HTTP status, and whether the expected state appears in the captured output (e.g. the service name present in `/eureka/apps`, the expected HTTP status and body shape, the breaker's fallback response).
-3. If the criterion requires checking a state transition (e.g. breaker opens then recovers), run the check at each stage explicitly — before the fault, during, and after clearing it — and record all three observations, not just the final one.
-
-**Per-criterion checkpointing:** After EACH criterion passes, write a checkpoint entry exactly as in Step 4b, so a crash resumes from the next criterion:
-
-```bash
-bash ~/.claude/skills/lib/plog.sh VERIFY checkpoint done "criterion-{N}-pass"
-```
-
-At any point, if a check's exit code/HTTP status is unexpected or the expected state is absent, mark that criterion **FAIL** and record:
-- The check that was run and its result (exit code / HTTP status)
-- What was expected (from the pass criterion)
-- What was observed — quote the relevant lines of captured output verbatim
-
-Continue executing remaining checks unless the failure makes downstream checks meaningless (e.g. a service failing to start means every check against it will fail for the same reason — note this and skip re-running them individually).
-
-**Leave the environment as found:** if a fault-injection step stopped a dependency, restore it (`env-start.sh`) before finishing this step, even on FAIL — a left-down dependency would cause spurious failures in the next verification run.
-
-bash ~/.claude/skills/lib/plog.sh VERIFY execute-steps done "{N} live checks executed"
-
-Proceed to Step 5.
+Moved to `references/live-backend.md` (run each live check, checkpoint each passing criterion, restore any stopped dependency, then Step 5), read per the Step 1f condition.
 
 ---
 
@@ -951,35 +827,15 @@ All pass criteria are met → proceed to Step 6. Carry-over checks (Step 2d) are
 
 One or more pass criteria are not met → proceed to Step 7.
 
+### Report templates (load condition)
+
+Before writing the Step 6 pass report or the Step 7b failure report, including a Step 7 reached directly from Step 1b5, 1.6d, 3b or 4, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-verify references/templates.md`, then Read the printed path in full. Do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/templates.md"` and stop: never write a report or comment from memory. The REMEDIATION_BRIEF (7c), the notes.md records and the PR body stay in this file.
+
 ---
 
 ## Step 6 — Pass report
 
-Print to the user:
-
-```
-## ✅ {TICKET-ID} — VERIFIED PASS
-
-**Ticket:** {Linear URL}
-**Environment:** {env} ({base URL})
-**Tested as:** {--user}
-
-### Criteria
-| Criterion | Result |
-|---|---|
-| {criterion} | ✅ Pass |
-
-### Carry-over checks (do not affect the verdict)
-| Check | Result |
-|---|---|
-| carry-over — {behaviour} | ✅ Pass / ❌ Fail — {what was observed} |
-
-### Evidence
-- Step {N}: {brief description of what was observed confirming the fix}
-- Screenshots: {ticket-dir}/artifacts/verify-{TICKET-ID}-c{N}-pass.png, … (browser mode; none in build-only/live-backend mode)
-
-**Recommendation:** Ready to merge / promote.
-```
+Moved to `references/templates.md` (§ Pass report), read per the Step 5 condition. Print it to the user.
 
 Omit the Carry-over checks table when Step 2d added none. A failed carry-over check stays a pass verdict; also append it to notes.md (below) as `- **Carry-over failed:** {behaviour} (candidate {key}) — {observed}` so a follow-up can pick it up.
 
@@ -1095,20 +951,8 @@ Verification passed on localhost — the implementation is confirmed working. No
    - Status → Review
    ```
 
-6. Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set,
-   MCP `save_comment` fallback otherwise):
-   ```
-   ✅ ticket-verify PASS — local
-
-   **Tested as:** {--user}
-   **Date:** {today}
-
-   | Criterion | Result |
-   |---|---|
-   | {criterion} | ✅ Pass |
-
-   All acceptance criteria confirmed. PR {URL} opened against $BASE_BRANCH.
-   ```
+6. Post the **Local PASS comment** from `references/templates.md` via the Linear access strategy
+   (bash `save_comment` when `LINEAR_API_KEY` is set, MCP `save_comment` fallback otherwise).
 7. Skip to **Post-verdict: Emit the PHASE_RESULT block** below with `VERDICT: PASS`.
 
 ### If `--env uat`: Move to Done
@@ -1137,40 +981,12 @@ fi
 
 This moves state → `Done` and removes `claimed` + `reviewed` — only when `_rc` is `0`.
 
-**If `_rc` was `11`** (gate-blocked): post this instead of the pass comment, then skip to
-**Post-verdict: Emit the PHASE_RESULT block** below with `VERDICT: BLOCK` (not `PASS`):
-```
-⏸️ ticket-verify PASS, but Done transition BLOCKED — uat
-
-**Tested as:** {--user}
-**Date:** {today}
-
-| Criterion | Result |
-|---|---|
-| {criterion} | ✅ Pass |
-
-All acceptance criteria confirmed — this run's own verification passed. The ticket could
-**not** move to Done: `flow.sh` found a trailing FAIL/BLOCK verifier-result still on record
-for a different check on this ticket, with no later PASS/WARN superseding it
-(`VERDICT_FAIL_NOT_ENFORCED` guard, issue #368). A human needs to review the other check's
-failure and either fix it (a later PASS clears the block automatically) or re-run
-`/ticket-flow {TICKET-ID} uat-pass --override <reason>` once satisfied it's safe to close.
-```
+**If `_rc` was `11`** (gate-blocked): post the **UAT BLOCKED comment** from `references/templates.md`
+instead of the pass comment, then skip to **Post-verdict: Emit the PHASE_RESULT block** below
+with `VERDICT: BLOCK` (not `PASS`).
 
 **Otherwise** (`_rc` was `0`, or a non-gate error was logged and the caller chooses to
-continue) post the normal pass comment via the Linear access strategy:
-```
-✅ ticket-verify PASS — uat
-
-**Tested as:** {--user}
-**Date:** {today}
-
-| Criterion | Result |
-|---|---|
-| {criterion} | ✅ Pass |
-
-All acceptance criteria confirmed. Ticket moved to Done.
-```
+continue) post the **UAT PASS comment** from `references/templates.md` via the Linear access strategy.
 Then continue to **Post-verdict: Emit the PHASE_RESULT block** below with `VERDICT: PASS`.
 
 ### Post-verdict: Emit the PHASE_RESULT block (--from-auto only)
@@ -1188,7 +1004,7 @@ marker.
 
 ## Step 7 — Failure report
 
-First run Step 5's `verify_lock_release` block (idempotent).
+First run Step 5's `verify_lock_release` block (idempotent). If you reached Step 7 without passing Step 5, also read `references/templates.md` per the Step 5 condition.
 
 ### 7a — Collect diagnostics
 
@@ -1198,54 +1014,13 @@ First run Step 5's `verify_lock_release` block (idempotent).
 3. **Last snapshot YAML** — accessibility tree at the point of failure
 4. **Failed step** — step number, expected vs. observed
 
-**Build-only mode:** substitute build diagnostics for the browser ones above — these map onto the same REMEDIATION_BRIEF fields (7c) so downstream skills don't need mode-specific parsing:
-1. **Failed command + exit code** — maps to `CONSOLE_ERRORS` field
-2. **Repo/module + branch** — maps to `CURRENT_URL` field (use `{repo}@{branch}` in place of a URL)
-3. **Last 20–30 lines of the step's `$L` log** — maps to `SNAPSHOT_EXCERPT`
-4. **Failed step** — step number, expected vs. observed (command + exit code)
+Moved to `references/build-only.md` (build-only diagnostics and their REMEDIATION_BRIEF field mapping), read per the Step 1f condition.
 
-**Live-backend mode:** substitute live-check diagnostics for the browser ones above — same field mapping convention as build-only:
-1. **Failed check + exit code/HTTP status** — maps to `CONSOLE_ERRORS` field
-2. **Service/environment + endpoint checked** — maps to `CURRENT_URL` field (use `{service}@{env}` or the endpoint URL)
-3. **Last 20–30 lines of the step's `$L` log**, plus `env-status.sh` output at the failure — maps to `SNAPSHOT_EXCERPT`
-4. **Failed step** — step number, expected vs. observed (check + result)
+Moved to `references/live-backend.md` (live-backend diagnostics and their REMEDIATION_BRIEF field mapping), read per the Step 1f condition.
 
 ### 7b — Write the failure report
 
-Print to the user:
-
-```
-## ❌ {TICKET-ID} — VERIFICATION FAILED
-
-**Ticket:** {Linear URL}
-**Environment:** {env} ({base URL})
-**Tested as:** {--user}
-**Failed at step:** {N} — {step description}
-
-### Criteria result
-| Criterion | Result |
-|---|---|
-| {passing criterion} | ✅ Pass |
-| {failing criterion} | ❌ FAIL |
-
-### Carry-over checks (do not affect the verdict)
-| Check | Result |
-|---|---|
-| carry-over — {behaviour} | ✅ Pass / ❌ Fail — {what was observed} |
-
-### What happened
-**Expected:** {expected behaviour from pass criterion}
-**Observed:** {what was actually seen — quote element labels and states verbatim}
-
-### Diagnostics
-**URL at failure:** {url}
-**Screenshot at failure:** {ticket-dir}/artifacts/verify-{TICKET-ID}-c{N}-fail.png (browser mode)
-**Console errors:**
-{list, or "none"}
-
-**Snapshot at failure (relevant excerpt):**
-{10–20 most relevant lines of the accessibility tree YAML, focused on the component under test}
-```
+Moved to `references/templates.md` (§ Failure report), read per the Step 5 condition. Print it to the user.
 
 If several criteria fail, report all of them here and in 7c: WHAT_FAILED and SNAPSHOT_EXCERPT cover the first failure; list the rest under an `ADDITIONAL_FAILURES:` key in the brief.
 
@@ -1335,26 +1110,7 @@ After emitting the brief in chat, persist it to the plan artifact so `ticket-imp
 
 ### 7d — Post VERIFY_EXHAUSTED summary to Linear
 
-When the verify phase has exhausted its retries (2 attempts), post a structured failure summary to the Linear ticket. This is the final communication — no further retries will occur:
-
-```
-❌ Verify exhausted — {PASSED_N}/{TOTAL_N} criteria passed after 2 attempts
-
-**Passed criteria:**
-{list of passing criteria, or "none"}
-
-**Failed criteria:**
-{list of failing criteria with brief reason for each}
-
-**Last failure diagnostics:**
-- Failed at step: {N} — {description}
-- URL at failure: {url}
-- Console errors: {count or "none"}
-- Tested as: {user} on {env}
-- Date: {today}
-
-The REMEDIATION_BRIEF below contains structured fix guidance for /ticket-implement.
-```
+When the verify phase has exhausted its retries (2 attempts), post the **VERIFY_EXHAUSTED comment** from `references/templates.md` to the Linear ticket. This is the final communication — no further retries will occur.
 
 Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP fallback otherwise). This ensures the ticket author knows:
 - Which criteria passed (so they don't need to re-test those)
@@ -1435,25 +1191,7 @@ Append to `{ticket-dir}/notes.md`:
 
 ### 7e — Post findings to Linear
 
-Post via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP `save_comment` fallback otherwise):
-
-```
-❌ ticket-verify FAIL — {env}
-
-**Tested as:** {--user}
-**Date:** {today}
-**Failed at step:** {N} — {step description}
-
-| Criterion | Result |
-|---|---|
-| {passing criterion} | ✅ Pass |
-| {failing criterion} | ❌ FAIL |
-
-**Expected:** {expected behaviour}
-**Observed:** {observed behaviour — verbatim element labels/states}
-
-**Console errors:** {list or "none"}
-```
+Post the **FAIL comment** from `references/templates.md` via the Linear access strategy (bash `save_comment` when `LINEAR_API_KEY` is set, MCP `save_comment` fallback otherwise).
 
 ### 7f — Update Linear state (UAT only)
 

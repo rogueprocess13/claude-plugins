@@ -2,7 +2,8 @@
 # test-verify-agent-guard.sh — structural guards for the VERIFY phase prose
 # and its pre-spawn check.
 #
-#   (a) Every `mcp__playwright__*` tool that ticket-verify/SKILL.md or the
+#   (a) Every `mcp__playwright__*` tool that ticket-verify/SKILL.md, its
+#       references/*.md (read behind a mode or report condition) or the
 #       agent's own body tells it to use is granted in
 #       agents/ticket-verify-agent.md's `tools:` allowlist. The allowlist is an
 #       explicit per-tool grant (no wildcards), so a tool the skill names but
@@ -20,6 +21,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 AGENT_MD="$PLUGIN_DIR/agents/ticket-verify-agent.md"
 VERIFY_SKILL="$PLUGIN_DIR/skills/ticket-verify/SKILL.md"
+# SKILL.md plus every reference it reads behind a condition
+# (skill-progressive-disclosure): a tool or credential moved into a
+# reference must still be scanned.
+VERIFY_FILES=("$VERIFY_SKILL")
+for _f in "$PLUGIN_DIR"/skills/ticket-verify/references/*.md; do
+  [ -f "$_f" ] && VERIFY_FILES+=("$_f")
+done
 AUTO_SKILL="$PLUGIN_DIR/skills/ticket-auto/SKILL.md"
 PREFLIGHT="$PLUGIN_DIR/lib/verify-preflight.sh"
 
@@ -40,20 +48,47 @@ _run() {
 
 # ── (a) tool allowlist covers every referenced Playwright tool ──────────────
 
-test_agent_grants_every_referenced_playwright_tool() {
-  local tools_line missing=0 t
-  tools_line=$(grep -m1 '^tools:' "$AGENT_MD")
+# _check_tools <agent_md> <prose file>... — fail when a prose file names an
+# mcp__playwright__* tool the agent's tools: line does not grant.
+_check_tools() {
+  local agent="$1" tools_line missing=0 t
+  shift
+  tools_line=$(grep -m1 '^tools:' "$agent")
   while IFS= read -r t; do
     [ -n "$t" ] || continue
     if ! echo "$tools_line" | tr -d ' ' | tr ',' '\n' | grep -qxF "$t"; then
-      echo "  ticket-verify-agent.md tools: is missing $t" >&2
+      echo "  ${agent##*/} tools: is missing $t" >&2
       missing=1
     fi
-  done < <(grep -ohE 'mcp__playwright__[a-z_]+' "$VERIFY_SKILL" "$AGENT_MD" | sort -u)
+  done < <(grep -ohE 'mcp__playwright__[a-z_]+' "$@" "$agent" | sort -u)
   [ "$missing" -eq 0 ]
+}
+
+test_agent_grants_every_referenced_playwright_tool() {
+  _check_tools "$AGENT_MD" "${VERIFY_FILES[@]}"
 }
 _run "(a) verify agent grants every mcp__playwright__* tool its skill/agent prose names" \
   test_agent_grants_every_referenced_playwright_tool
+
+# A tool named only in a reference must still fail the guard.
+test_tool_named_only_in_a_reference_fails() {
+  local d
+  d=$(mktemp -d)
+  printf 'Use `mcp__playwright__browser_not_granted` here.\n' >"$d/ref.md"
+  if _check_tools "$AGENT_MD" "$VERIFY_SKILL" "$d/ref.md" 2>/dev/null; then
+    rm -rf "$d"
+    echo "  guard passed although a reference names an ungranted tool" >&2
+    return 1
+  fi
+  rm -rf "$d"
+  # Guard the guard: the real reference list is non-empty once refs exist.
+  [ "${#VERIFY_FILES[@]}" -ge 2 ] || {
+    echo "  VERIFY_FILES holds no ticket-verify/references/*.md" >&2
+    return 1
+  }
+}
+_run "(a) a playwright tool named only in a verify reference fails the guard" \
+  test_tool_named_only_in_a_reference_fails
 
 test_skill_does_not_call_skill_tool_for_nav_hints() {
   # The verify agent has no Skill tool; a `/nav-hints` slash invocation in a
@@ -70,7 +105,7 @@ _run "(a) ticket-verify does not invoke /nav-hints (agent has no Skill tool)" \
 
 test_no_hardcoded_password() {
   local f hits=0
-  for f in "$VERIFY_SKILL" "$AGENT_MD" \
+  for f in "${VERIFY_FILES[@]}" "$AGENT_MD" \
     "$PLUGIN_DIR/skills/ticket-batch-verify/SKILL.md" \
     "$PLUGIN_DIR/skills/ticket-reproduce/SKILL.md"; do
     if grep -niE 'password.{0,40}\badmin\b|\badmin\b.{0,20}password' "$f" >&2; then

@@ -591,6 +591,9 @@
     "ticket-verify": {
       "files": [
         "plugin:skills/ticket-verify/SKILL.md",
+        "plugin:skills/ticket-verify/references/build-only.md",
+        "plugin:skills/ticket-verify/references/live-backend.md",
+        "plugin:skills/ticket-verify/references/templates.md",
         "plugin:agents/ticket-verify-agent.md",
         "lib:skill-preamble-auto.md",
         "home:pipeline-log-format.md",

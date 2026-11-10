@@ -338,6 +338,108 @@ test_appraise_full_investigation_condition() {
   }
 }
 
+# ticket-verify (group 3): each mode reference is read only for its mode, on
+# every way into the moved steps; browser mode reads neither; the report
+# templates load at report time; the inline contracts stay inline.
+test_verify_mode_reference_condition() {
+  local md="$REPO_ROOT/ticket-auto-pipeline/skills/ticket-verify/SKILL.md"
+  local rel line tok h sec cond1e
+  # shellcheck source=skill-text.sh
+  source "$SCRIPT_DIR/skill-text.sh"
+  for rel in references/build-only.md references/live-backend.md; do
+    line=$(grep -F -- "$rel" "$md" | grep -F 'skill-ref.sh' | head -1)
+    [ -n "$line" ] || {
+      echo "  no conditional line for $rel"
+      return 1
+    }
+    for tok in 'VERIFY_MODE=build-only' 'VERIFY_MODE=live-backend' 'before Step 2' \
+      '--from-step' 'build-plan' 'execute-steps' 'Read the printed path in full' \
+      'reference-missing' 'In `browser` mode, read neither'; do
+      grep -qF -- "$tok" <<<"$line" || {
+        echo "  conditional line for $rel lacks: $tok"
+        return 1
+      }
+    done
+  done
+  # The condition sits right after Step 1e's detection, before Step 1.5.
+  cond1e=$(_section "$md" '^### 1f ' '^## Step 1[.]5')
+  grep -qF 'references/build-only.md' <<<"$cond1e" || {
+    echo "  Step 1f does not hold the mode condition"
+    return 1
+  }
+  # A resume skips Step 1e, so 1f recovers the mode from the log.
+  grep -qF '|VERIFY|load-context|done|' <<<"$cond1e" || {
+    echo "  Step 1f does not say how a resume recovers VERIFY_MODE"
+    return 1
+  }
+  # Each moved section keeps its heading over a stub.
+  for h in '^### 2 [(]build-only variant[)]' '^## Step 4c — '; do
+    sec=$(_section "$md" "$h" '^##')
+    grep -q '^Moved to `references/build-only.md`' <<<"$(sed 1d <<<"$sec")" || {
+      echo "  no build-only stub under $h"
+      return 1
+    }
+  done
+  for h in '^### 2 [(]live-backend variant[)]' '^## Step 4c-live '; do
+    sec=$(_section "$md" "$h" '^##')
+    grep -q '^Moved to `references/live-backend.md`' <<<"$(sed 1d <<<"$sec")" || {
+      echo "  no live-backend stub under $h"
+      return 1
+    }
+  done
+  # The resume row names both mode references.
+  grep -F '| `execute-steps` |' "$md" | grep -F 'references/build-only.md' |
+    grep -qF 'references/live-backend.md' || {
+    echo "  execute-steps dispatch row does not name the mode references"
+    return 1
+  }
+  # Templates load at report time (Step 5), not at skill start.
+  line=$(grep -nF 'references/templates.md' "$md" | grep -F 'skill-ref.sh' | head -1 | cut -d: -f1)
+  sec=$(_section "$md" '^## Step 5 ' '^## Step 6 ' | grep -F 'skill-ref.sh' | grep -cF 'references/templates.md' || true)
+  [ -n "$line" ] && [ "$sec" -ge 1 ] || {
+    echo "  templates.md is not read under a Step 5 condition"
+    return 1
+  }
+  # Inline contracts (design D4).
+  for h in '^## Step 4 ' '^## Step 4b ' '^## Step 6 ' '^### 7f '; do
+    grep -qE "$h" "$md" || {
+      echo "  heading left SKILL.md: $h"
+      return 1
+    }
+  done
+  for tok in 'No test user found' 'Checkpoint resume (deterministic)' 'write_verifier_result verifier=build_only' \
+    'write_verifier_result verifier=live_backend' 'record_pr_created --new' 'flow-run.sh --log-file "{LOG_FILE}" {TICKET-ID} uat-pass'; do
+    grep -qF -- "$tok" "$md" || {
+      echo "  inline contract left SKILL.md: $tok"
+      return 1
+    }
+  done
+  # The mode references hold no browser-mode material.
+  for rel in build-only live-backend; do
+    rel="$(dirname "$md")/references/$rel.md"
+    [ -f "$rel" ] || {
+      echo "  missing $rel"
+      return 1
+    }
+    ! grep -q 'mcp__playwright__' "$rel" || {
+      echo "  ${rel##*/} names a Playwright tool"
+      return 1
+    }
+  done
+}
+
+# The REMEDIATION_BRIEF block (Step 7c) is parsed by ticket-implement and fix
+# skills; skill-progressive-disclosure keeps it inline and byte-identical.
+# Changing the block on purpose means updating this hash in the same PR.
+test_verify_remediation_brief_unchanged() {
+  local md="$REPO_ROOT/ticket-auto-pipeline/skills/ticket-verify/SKILL.md" got
+  got=$(awk '/^### 7c /{f=1} f&&/^```/{c++; if(c==2){print; exit}} f&&c>=1' "$md" | sha256sum | cut -d' ' -f1)
+  [ "$got" = 950059a48475453c27de838df726990f3a214142ea9e9a26f18bc3647eb6c1aa ] || {
+    echo "  Step 7c REMEDIATION_BRIEF block changed (sha256 $got)"
+    return 1
+  }
+}
+
 test_shared_section_ref_helper() {
   local out
   # shellcheck source=skill-text.sh
