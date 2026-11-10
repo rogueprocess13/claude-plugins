@@ -632,6 +632,24 @@ test_skill_declared_verifiers_are_in_the_enum() {
   return "$ok"
 }
 
+# skill-progressive-disclosure: build-only and live-backend material moved to
+# ticket-verify/references/, but the verifier ids are an inline contract. The
+# check above searches three SKILL.md files together, so it would still pass
+# if verify's copy moved; pin them in ticket-verify/SKILL.md itself, in the
+# write_verifier_result lines of both Step 6 (PASS) and Step 7 (FAIL).
+test_verify_mode_verifier_ids_stay_in_skill_md() {
+  local md="$LIB_DIR/../skills/ticket-verify/SKILL.md" id verdict ok=0
+  for id in build_only live_backend; do
+    for verdict in PASS FAIL; do
+      grep -qF "write_verifier_result verifier=$id verdict=$verdict " "$md" || {
+        echo "  ticket-verify/SKILL.md lost 'write_verifier_result verifier=$id verdict=$verdict'" >&2
+        ok=1
+      }
+    done
+  done
+  return "$ok"
+}
+
 # The block grammar must exist in exactly one place. A SKILL.md that restates it
 # becomes a second source of truth that drifts from the parser unnoticed.
 #
@@ -1147,6 +1165,7 @@ TESTS=(
   test_unrelated_json_file_falls_through_to_text
   test_verifier_enum_matches_schema_doc
   test_skill_declared_verifiers_are_in_the_enum
+  test_verify_mode_verifier_ids_stay_in_skill_md
   test_block_grammar_is_declared_only_in_the_preamble
   test_missing_required_field
   test_non_numeric_in_numeric_field

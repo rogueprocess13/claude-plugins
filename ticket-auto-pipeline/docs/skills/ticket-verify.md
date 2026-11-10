@@ -1,10 +1,12 @@
 # ticket-verify
 
-> Verifies a Linear ticket fix by loading its requirements, navigating the live app via Playwright, reproducing the original issue steps, and confirming the fix works. Produces a structured pass/fail report. On failure, emits a REMEDIATION_BRIEF that can be fed directly to ticket-implement or a fix skill. Use when the user says "/ticket-verify <ID>", "verify ticket <ID>", "test ticket <ID>", or "check if <ID> is fixed". Accepts optional --user, --password, and --env flags.
+> Verifies a Linear ticket fix by loading its requirements, then navigating the live app via Playwright (browser tickets), running the project's build tooling (build-only tickets — e.g. parent-POM/dependency-management changes with no UI or API surface), or checking a running backend directly via health/API calls (live-backend tickets — e.g. service registration, circuit breaker behaviour — a live system with no UI to click), reproducing the original issue steps, and confirming the fix works. Produces a structured pass/fail report. On failure, emits a REMEDIATION_BRIEF that can be fed directly to ticket-implement or a fix skill. Use when the user says "/ticket-verify {ID}", "verify ticket {ID}", "test ticket {ID}", or "check if {ID} is fixed". Accepts optional --user, --password, and --env flags.
 
 ## What it does
 
 Performs end-to-end browser verification of a ticket fix using Playwright. Loads the ticket's acceptance criteria from Linear, expands compound requirements into atomic pass criteria, derives the navigation path using nav-hints and app-knowledge (never `page.goto()` for in-app nav), logs into the app, executes click-by-click steps through the UI, evaluates each criterion, and produces a structured pass/fail report. On local pass, opens a PR and moves to Review. On UAT pass, moves to Done. On failure, emits a REMEDIATION_BRIEF with SUGGESTED_FIX, diagnostics, and context files, and writes a Verification section to the plan artifact.
+
+Step 1e picks one of three verification modes. **browser** (the default) drives the app with Playwright as above. **build-only** runs the project's build commands instead (e.g. a parent-POM or dependency change with no UI or API surface). **live-backend** checks a running backend through health and API calls (e.g. service registration or circuit-breaker behaviour). The build-only and live-backend steps (their Step 2 plan variant, Step 4c / 4c-live and their Step 7a diagnostics) live in `skills/ticket-verify/references/build-only.md` and `references/live-backend.md`. Step 1f reads only the file for the detected mode, also on a `--from-step` resume, and a browser run reads neither. The report and Linear comment templates live in `references/templates.md`, which Step 5 reads just before the pass or failure report. The REMEDIATION_BRIEF and the verifier-result lines stay in SKILL.md.
 
 ## Trigger
 
@@ -47,14 +49,19 @@ flowchart TD
     B --> C[Load app-knowledge + nav-hints]
     C --> D[Fetch Linear ticket]
     D --> E[Derive credentials]
-    E --> F[Step 2: Build verification plan]
+    E --> MODE{Step 1e: verification mode}
+    MODE -->|browser| F[Step 2: Build verification plan]
+    MODE -->|build-only: read build-only reference| BO[Step 2 build-only plan → Step 4c: run build commands]
+    MODE -->|live-backend: read live-backend reference| LB[Step 2 live-backend plan → Step 4c-live: run live checks]
     F --> G[Expand AC into atomic criteria]
     G --> H[Step 3: Browser session + login]
     H --> I[Step 4: Navigate to feature]
     I --> J{3-attempt nav loop}
     J -->|Success| K[Step 4b: Execute steps]
     J -->|Failed| FAIL1[FAIL: nav exhausted]
-    K --> L[Step 5: Evaluate pass/fail]
+    K --> L[Step 5: Evaluate pass/fail, read templates reference]
+    BO --> L
+    LB --> L
     L -->|PASS| M[Step 6: Pass report + PR/uat-pass]
     L -->|FAIL| N[Step 7: Failure report]
     N --> O[Emit REMEDIATION_BRIEF]

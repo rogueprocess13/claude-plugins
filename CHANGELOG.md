@@ -17,6 +17,47 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.100.0 (2026-11-10)
+
+`ticket-verify` mode variants and report templates move to references
+(`skill-progressive-disclosure`, group 3). Relocation only: no step changes what it does.
+
+### Changed
+
+- `skills/ticket-verify/SKILL.md` 81,469 → 70,732 bytes. Moved verbatim:
+  - `references/build-only.md`: the Step 2 build-only variant, Step 4c and the build-only
+    diagnostics of Step 7a.
+  - `references/live-backend.md`: the Step 2 live-backend variant, Step 4c-live and the
+    live-backend diagnostics of Step 7a.
+  - `references/templates.md`: the Step 6 pass report, the local PASS, UAT PASS and UAT BLOCKED
+    comments, the Step 7b failure report, the Step 7d VERIFY_EXHAUSTED comment and the Step 7e
+    FAIL comment.
+
+  Each moved section keeps its heading over a `Moved to` stub. The two 7a pointer sentences now
+  name "SKILL.md Step 7a" instead of "above".
+- New Step 1f is the mode condition. In `build-only` mode the agent reads `build-only.md`, in
+  `live-backend` mode it reads `live-backend.md`, and in `browser` mode it reads neither. It reads
+  the file before Step 2 and before a `--from-step` resume re-enters Step 4c or 4c-live. A resume
+  skips Step 1e, so Step 1f takes the mode from the latest `VERIFY|load-context|done|…mode=` log
+  line. A new "Report templates" condition in Step 5 reads `templates.md` before the Step 6 or
+  Step 7b report, also when Step 7 is reached directly. A missing reference logs
+  `META|reference-missing|fail` and stops. The `execute-steps` dispatch row names both mode
+  references.
+- Kept inline: Step 1e detection, Step 1.6 (live-backend runs it too), the Step 4/4b/6/7f headings,
+  the REMEDIATION_BRIEF (7c, byte-identical), the `write_verifier_result verifier=build_only|live_backend`
+  lines, the checkpoint-resume contract, `No test user found`, the PR-open block with its PR body
+  (a REQUIRED `record_pr_created` block), every `flow-run.sh` call, the notes.md records and the
+  plan-artifact `## Verification #` section.
+- **Fingerprint:** the `ticket-verify` skill fingerprint changes. `prompt_manifests["ticket-verify"]`
+  lists the three references directly after SKILL.md, so they are hashed on every run.
+- Context (rule 9): `ticket-verify` 199,469 → 188,732 plus `ticket-verify:conditional` 16,693.
+  A browser run reads 193,149 (−6,320), build-only 198,692 (−777), live-backend 199,882 (+413).
+- Tests: `test-verify-agent-guard.sh` scans (a) Playwright tools and (b) credentials in every
+  `ticket-verify/references/*.md` too, with a fixture proving a tool named only in a reference
+  fails. `test-phase-result-parse.sh` pins `build_only`/`live_backend` in ticket-verify's own
+  SKILL.md. `test-skill-references.sh` checks the Step 1f and Step 5 conditions, the stubs, the
+  inline contracts and a sha256 of the REMEDIATION_BRIEF block.
+
 ## 0.99.0 (2026-11-10)
 
 `ticket-appraise` full investigation moves to a reference (`skill-progressive-disclosure`, group 2).

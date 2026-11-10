@@ -91,7 +91,7 @@ ticket-auto-pipeline/skills/ticket-reproduce/SKILL.md	14167	373
 ticket-auto-pipeline/skills/ticket-retro/SKILL.md	28689	651
 ticket-auto-pipeline/skills/ticket-setup/SKILL.md	6657	121
 # exception: floor ~45-60 KB (REMEDIATION_BRIEF contract, browser flow)
-ticket-auto-pipeline/skills/ticket-verify/SKILL.md	81469	1471
+ticket-auto-pipeline/skills/ticket-verify/SKILL.md	70732	1209
 # exception: pending reduction, skill-size programme changes 3-5
 ticket-auto-pipeline/skills/wiki-maintenance/SKILL.md	28838	493
 # allow-growth: no-source decisions become ASSUMED Scope assumptions; the agent must know the disposition and that security findings are excluded
