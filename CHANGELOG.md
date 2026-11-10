@@ -17,6 +17,55 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.111.0 (2026-11-10)
+
+The rest of `skill-deterministic-extraction` group 6a for ticket-auto-pipeline: the deterministic
+bash of ticket-gate-reconcile, ticket-critique, ticket-audit, ticket-audit-exec, ticket-prescan and
+ticket-appraise Step 5 moves into tested scripts. Always-loaded SKILL.md bytes:
+ticket-gate-reconcile 9,503 → 5,971, ticket-prescan 21,699 → 17,107 and ticket-critique
+20,101 → 19,169 (both leave the size-gate exception list; 6 exceptions remain), ticket-audit
+16,671 → 14,740, ticket-audit-exec 10,176 → 8,285, ticket-appraise 36,834 → 36,145. Log step
+names, `--from-step` values, phase names and the detect-resume contract are unchanged; each
+script is tested against the old fences embedded as oracles.
+
+### Added
+- `lib/gate-reconcile-prep.sh` / `lib/gate-reconcile-finish.sh` (Steps 1–4, 7–8);
+  `test-plan-artifact-callers.sh` now runs the prep script instead of extracting fences.
+- `lib/critique-fetch.sh`, `lib/audit-run-checks.sh`, the `ticket-audit-exec.sh` CLI
+  (`run`/`start`/`done`/`failed`/`advance`/`archive`), `lib/prescan-run-repo.sh`
+  (`list`/`gate`/`corrections`/`verify`/`--write-meta`) with `collect_corrections_by_source`,
+  and `lib/appraise-handoff-check.sh`.
+- Tests: `test-gate-reconcile.sh`, `test-critique-fetch.sh`, `test-audit-run-checks.sh`,
+  `test-ticket-audit-exec-cli.sh`, `test-prescan-run-repo.sh` (includes a kill-while-locked
+  check), `test-appraise-handoff-check.sh`.
+
+### Changed (behaviour)
+- **gate-reconcile:** the old steps passed `$TAP_LOG`, `$NOTES_PATH`, `$COMMENTS_JSON`,
+  `$RECONCILE_N` and `$HOLD_REASON` between separate Bash calls, so none of them arrived. The
+  steps also called `hb_init` without sourcing `heartbeat.sh` and ran a bare `hb-wrap.sh` that is
+  not on PATH. The scripts now do all of this, so the heartbeat log gets its schema line and the
+  reconcile heartbeats. With no `LINEAR_API_KEY`, prep exits 4 and asks for the MCP comments
+  through `--comments-file`; the old fence called an MCP tool from inside bash.
+- **ticket-critique `--from-audit`:** `linear-api.sh` sets errexit at file scope, and
+  `[.labels[]?.name]` fails on the real `.labels.nodes` payload, so the old fence died at LABELS.
+  Labels are now read from `.labels.nodes`.
+- **ticket-audit:** the checks sourced `lib/…` relative to the CWD and joined text with a literal
+  `\n`. They now use the installed lib and real newlines. `$acceptance_criteria` was never
+  defined; it is now the description's `## Acceptance Criteria` section, or else its
+  numbered/checkbox lines.
+- **ticket-audit-exec:** each step called functions that only an earlier, separate shell had
+  sourced. Every step now calls the CLI.
+- **ticket-prescan:**
+  - Step 0 called `env_check_validate`, which does not exist, so it always failed. It now only
+    requires `REPOS_ROOT`, read from the environment, then `./CLAUDE.md`, then
+    `~/.claude/CLAUDE.md`. Run-level lines go to `~/.claude/logs/prescan.log`.
+  - An unknown freshness status logs `freshness-gate|fail` and `--force` logs
+    `freshness-gate|done|<slug>: forced — full re-dive`. Both lines are new.
+  - The corrections count was one too many.
+  - The scaffold gate's violation count read stdin, not the verifier's output.
+  - The lock is an honest probe: a flock never outlived the Bash call that took it.
+  - The bare `hb-wrap.sh` calls now run.
+
 ## 0.110.0 (2026-11-10)
 
 The deterministic bash of wiki-maintenance, ticket-document, ticket-retro and

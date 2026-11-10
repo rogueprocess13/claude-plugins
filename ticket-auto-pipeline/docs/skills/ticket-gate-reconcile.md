@@ -4,6 +4,8 @@
 
 **Private helper** — not intended for direct invocation. Called internally by [`/ticket-auto`](ticket-auto.md) at STEP_3_5 when a held ticket is approved with `/ticket-approve`.
 
+**Deterministic scripts (skill-deterministic-extraction 6a):** `lib/gate-reconcile-prep.sh` runs Steps 1–4 in one call (plan artifact, cycle number, comments, open questions) and `lib/gate-reconcile-finish.sh` runs Step 7's `decide`/`hold` and Step 8's `clean`. The old steps relied on shell variables set in other Bash calls and on `hb-wrap.sh`/`hb_init` being on PATH; neither held, so the cycle number, comments and heartbeats now actually reach the later steps.
+
 ## What it does
 
 When a complex ticket was held at the gate and a human later approves it with `/ticket-approve` (a local manifest fact — the Linear `approved` label is not read), this agent reconciles any new Linear comments against the plan artifact. It checks two hold conditions: unanswered open questions from notes.md, and unprocessed user comments from the hold window. If either triggers, it amends the plan with an `## Amendment #N` section and re-holds the ticket. If both are clear, it writes a clean pass log entry and the router proceeds to implementation.

@@ -7,110 +7,29 @@ description: Post-gate-hold comment reconciliation agent. Spawned when a held ti
 
 **Entry condition:** `RESUME_STEP=STEP_3_5` — gate was held, `/ticket-approve` has been run.
 
-## Step 1 — Load context (agent starts cold)
+## Steps 1–4 — Load context, comments and open questions (agent starts cold)
 
-Load the env file and ticket metadata:
-
-```bash
-source ~/.claude/skills/lib/ticket-env.sh {TICKET-ID}
-
-# Read pipeline log for gate state
-export TAP_LOG="$PWD/logs/{TICKET-ID}-pipeline.log"
-export HB_LOG_FILE="$PWD/logs/{TICKET-ID}-heartbeat.log"
-
-source ~/.claude/skills/lib/linear-api.sh
-source ~/.claude/skills/lib/ticket-dir.sh
-source ~/.claude/skills/lib/notes-parse.sh
-
-# Resolve ticket directory and notes.md FIRST — the ARTIFACT_TYPE fallback
-# below reads notes.md, so NOTES_PATH must be set before it.
-TICKET_DIR=$(resolve_ticket_dir "{TICKET-ID}" "." 2>/dev/null || echo ".")
-NOTES_PATH="$TICKET_DIR/notes.md"
-if [ -f "$NOTES_PATH" ]; then
-  COMPLEXITY=$(get_complexity "$TICKET_DIR" 2>/dev/null || echo "$COMPLEXITY")
-fi
-
-# ARTIFACT_TYPE: the EXEC create-artifact line (canonical token), else
-# notes.md's "Artifact type:" line, else simple-fix.
-ARTIFACT_TYPE=$(resolve_artifact_type "$TAP_LOG" "$NOTES_PATH")
-ARTIFACT_TYPE="${ARTIFACT_TYPE:-simple-fix}"
-```
-
-Resolve the plan artifact: **this** ticket's openspec change under the tickets-repo root's
-`openspec/changes/` (never `$TICKET_DIR`). If the block exits non-zero, stop and report the
-error; never amend another change's `tasks.md`:
+Run from the tickets repo root:
 
 ```bash
-PLAN_PATH=""
-_plan_rc=0
-_plan_out=$(resolve_plan_artifact "{TICKET-ID}" --root . --ticket-dir "$TICKET_DIR" --type "$ARTIFACT_TYPE") || _plan_rc=$?
-[ "$_plan_rc" -eq 0 ] && eval "$_plan_out"
-if [ "$ARTIFACT_TYPE" = "openspec" ]; then
-  ARTIFACT_PATH="$PLAN_PATH"
-  if [ "$_plan_rc" -ne 0 ] || [ ! -f "$ARTIFACT_PATH" ]; then
-    bash ~/.claude/skills/lib/plog.sh GATE reconcile fail "openspec tasks.md for {TICKET-ID} not found under $PWD/openspec/changes/ (resolver rc=$_plan_rc)"
-    echo "ticket-gate-reconcile: no unique openspec change for {TICKET-ID} under $PWD/openspec/changes/ — cannot amend the plan" >&2
-    exit 1
-  fi
-else
-  ARTIFACT_PATH="${PLAN_PATH:-$TICKET_DIR/simple-fix.md}"
-fi
+bash ~/.claude/skills/lib/gate-reconcile-prep.sh {TICKET-ID}
 ```
 
-```bash
-hb_init
-hb-wrap.sh gate "reconcile" "info" "gate-reconcile agent starting" "{\"complexity\":\"$COMPLEXITY\"}"
-```
+It sources the env file, resolves the ticket dir, `COMPLEXITY`, the artifact type and **this**
+ticket's plan artifact (`ARTIFACT_PATH`: its openspec change under the tickets repo's
+`openspec/changes/`, never `$TICKET_DIR`), writes the start heartbeat, computes `RECONCILE_N`
+(this cycle), fetches and normalizes the Linear comments, saves the tracker description for Step 8
+and prints the `reconcile-comments.sh` output (`LAST_RECONCILE_AT`, `APPRAISAL_COMMENT_AT` and
+`UNPROCESSED_COMMENTS`: the user comments, `timestamp|user|body`, after the latest marked
+appraisal/amendment comment) and the unstruck `- [needs-human]` bullets of `## Open Questions`
+(`[agent-resolvable]` ones are closed by ticket-appraise Step 3.5). Exit 1: no unique openspec
+change, already logged; stop and report it, and never amend another change's `tasks.md`. Exit 4:
+`LINEAR_API_KEY` is unset; save `mcp__linear-server__list_comments` output to a file, re-run with
+`--comments-file <file>`, and write the issue description to
+`{ticket-dir}/artifacts/tracker-description.md` yourself.
 
-## Step 2 — Resolve gate cycle and fetch comments
-
-Initialize the cycle counter and fetch Linear comments:
-
-```bash
-# Distinct cycle numbers, not lines — the router echoes `cycle#N` in its own
-# done line, so a line count double-counts (same rule as detect-resume.sh).
-RECONCILE_N=$(grep -o '^[^|]*|GATE|reconcile|done|cycle#[0-9]*' "$TAP_LOG" 2>/dev/null |
-  sed 's/.*cycle#//' | sort -u | wc -l | tr -d ' ' || true)
-RECONCILE_N=${RECONCILE_N:-0}
-RECONCILE_N=$((RECONCILE_N + 1))
-
-if [ -n "${LINEAR_API_KEY:-}" ]; then
-  COMMENTS_JSON=$(bash -c "source ~/.claude/skills/lib/linear-api.sh; get_comments '{TICKET-ID}'")
-else
-  COMMENTS_JSON=$(mcp__linear-server__list_comments id="{TICKET-ID}")
-fi
-
-# Normalize to flat array of {createdAt, body, user: {name}} objects
-COMMENTS_JSON=$(echo "$COMMENTS_JSON" | bash -c "source ~/.claude/skills/lib/linear-api.sh; normalize_comments")
-
-# For Step 8 (MCP fallback: write the description here).
-bash -c "source ~/.claude/skills/lib/linear-api.sh; get_issue '{TICKET-ID}'" | jq -r '.description // ""' >"$TICKET_DIR/artifacts/tracker-description.md"
-```
-
-## Step 3 — Run comment reconciliation
-
-```bash
-RECONCILE_OUTPUT=$(echo "$COMMENTS_JSON" | bash ~/.claude/skills/lib/reconcile-comments.sh "{TICKET-ID}" "$TAP_LOG")
-echo "$RECONCILE_OUTPUT"
-```
-
-Parse the output to set `{LAST_RECONCILE_AT}`, `{APPRAISAL_COMMENT_AT}`, and `{UNPROCESSED_COMMENTS}`.
-
-`UNPROCESSED_COMMENTS` holds the user comments (`timestamp|user|body`) after the latest marked appraisal/amendment comment.
-
-## Step 4 — Read open questions from notes.md
-
-```bash
-RAW_SECTION=$(sed -n '/^## Open Questions/,/^## /p' "$NOTES_PATH")
-if echo "$RAW_SECTION" | grep -q '^## '; then
-  RAW_SECTION=$(echo "$RAW_SECTION" | sed '/^## Open Questions$/!{/^## /q}')
-fi
-# Only unstruck [needs-human] bullets reach the gate; [agent-resolvable] ones
-# are closed by ticket-appraise Step 3.5 with a verified path:line citation.
-OPEN_QUESTIONS_LIST=$(echo "$RAW_SECTION" | grep '^\- \[needs-human\]' || true)
-```
-
-If `{OPEN_QUESTIONS_LIST}` is empty or contains only placeholder text ("None", "—"), skip the unanswered-questions check in Step 5.
+If the open questions are empty or only placeholder text ("None", "—"), skip the
+unanswered-questions check in Step 5.
 
 ## Step 5 — Judge answers and comments
 
@@ -135,11 +54,10 @@ Update `## Open Questions` in notes.md:
 
 ## Step 7 — Decide, post amendment, re-claim, hold
 
-Bash decides (#599): hold on any unstruck `[needs-human]` bullet or new-input comment, never on answers alone.
+Bash decides (#599): `decide` runs `reconcile-decide.sh`, which holds on any unstruck `[needs-human]` bullet or new-input comment, never on answers alone.
 
 ```bash
-eval "$(bash ~/.claude/skills/lib/reconcile-decide.sh --notes "$NOTES_PATH" --comments "$COMMENTS_N" --new-input "$NEW_INPUT_N")"
-echo "$RECONCILE_DECISION $HOLD_REASON"
+bash ~/.claude/skills/lib/gate-reconcile-finish.sh {TICKET-ID} decide --comments {COMMENTS_N} --new-input {NEW_INPUT_N}
 ```
 
 `clean` → Step 8. `clean-recorded` → post the amendment comment below (moving the next boundary past the answers) without `re-claim` or the held entry, then Step 8. `hold` → all of this step.
@@ -163,18 +81,11 @@ Run `AMENDMENT_BODY` through the `simple-english` skill (embedded mode, Plain) b
 
 Use the Linear access strategy to post the comment (bash `save_comment` when `LINEAR_API_KEY` is set, MCP fallback otherwise).
 
-Call `re-claim` to clear the approval fact (and remove the `pre-approved` label):
+Then clear the approval fact (`re-claim`, which also removes the `pre-approved` label; non-fatal)
+and write the held log entry and heartbeat:
 
 ```bash
-bash ~/.claude/skills/lib/flow-run.sh --log-file "$PWD/logs/{TICKET-ID}-pipeline.log" {TICKET-ID} re-claim
-# flow-run.sh logs any failure itself; it is non-fatal — continue.
-```
-
-Write the held log entry:
-
-```bash
-bash ~/.claude/skills/lib/plog.sh GATE reconcile done "cycle#${RECONCILE_N} held: ${HOLD_REASON}"
-hb-wrap.sh decision "reconcile-result" "fired" "held: ${HOLD_REASON}" "{\"cycle\":\"${RECONCILE_N}\",\"reason\":\"${HOLD_REASON}\"}"
+bash ~/.claude/skills/lib/gate-reconcile-finish.sh {TICKET-ID} hold --reason "{HOLD_REASON}"
 ```
 
 Stop with a user-facing report:
@@ -196,19 +107,14 @@ Review the amendment comment in Linear, then run `/ticket-approve {TICKET-ID}` a
 
 ## Step 8 — Clean pass
 
-First compare the tracker's ACs, which the operator may have edited during the hold, with the workspace (#604). On drift (exit 1) the script refreshes `context.md`; add a notes.md Verification Plan row (same columns, next number) for each `AC_ADDED_n` and any AC still without one, and note it in the Session Log:
+One call compares the tracker's ACs, which the operator may have edited during the hold, with the
+workspace (#604: `ac-drift.sh ... --refresh --tag GATE`), then writes the clean log entry and
+heartbeats:
 
 ```bash
-bash ~/.claude/skills/lib/ac-drift.sh "$TICKET_DIR" --description-file "$TICKET_DIR/artifacts/tracker-description.md" --refresh --tag GATE --log-file "$TAP_LOG"
+bash ~/.claude/skills/lib/gate-reconcile-finish.sh {TICKET-ID} clean
 ```
 
-Write the clean log entry:
-
-```bash
-bash ~/.claude/skills/lib/plog.sh GATE reconcile done "clean"
-hb-wrap.sh decision "reconcile-result" "fired" "clean pass — no open questions or new input" "{\"cycle\":\"${RECONCILE_N}\"}"
-hb-wrap.sh gate "reconcile" "ok" "clean pass — proceeding to implement"
-hb-wrap.sh gate "phase-transition" "ok" "GATE → IMPLEMENT"
-```
-
-The router will detect this gate event and proceed to STEP_4.
+On drift it refreshes `context.md` and prints `AC_ADDED_n`: add a notes.md Verification Plan row
+(same columns, next number) for each, and for any AC still without one, and note it in the
+Session Log. The router then detects the gate event and proceeds to STEP_4.

@@ -26,7 +26,7 @@ bash script calling a shared helper. These are agent-mediated: the agent reads t
 judgment (appraisal, implementation, PR review), not a deterministic bash branch. They already carry
 explicit fail-closed instructions in prose — `lib/skill-preamble.md` § 9 ("get_issue failure pattern"): *"A failed or malformed fetch must be
 treated as a hard stop for the step, never substituted with a placeholder and evaluated further"* —
-and `skills/ticket-critique/SKILL.md:36-41` does the same inline. There is no shared-helper mechanism
+and `lib/critique-fetch.sh` (ticket-critique `--from-audit`) does the same. There is no shared-helper mechanism
 for prose to call, so section 3's helper does not apply to them, and they are not enumerated
 individually here — the design's own "~40 call sites" figure matches the bash-only count below,
 confirming this was the intended scope.

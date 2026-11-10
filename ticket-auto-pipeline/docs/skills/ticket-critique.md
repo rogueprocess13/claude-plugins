@@ -4,6 +4,8 @@
 
 **Private helper** -- not intended for direct invocation. Called internally by [`/ticket-appraise`](ticket-appraise.md) at Step 2.7.
 
+**Deterministic script (skill-deterministic-extraction 6a):** the `--from-audit` (and `--no-post`) ticket load is `lib/critique-fetch.sh`; it also finds the workspace when no flag is given. Labels are read from the real `.labels.nodes` payload.
+
 ## What it does
 
 Runs five completeness checks on a ticket before codebase investigation begins: multi-role credential completeness (are test credentials available for all required roles?), acceptance criteria testability (are ACs written as observable outcomes?), test data assumptions (is prerequisite state described?), scope identifiability (can the ticket be mapped to a known service?), and bug reproduction steps (are numbered steps present for bug tickets?). Classifies each finding as BLOCKER (must resolve) or WARNING (record and continue). On BLOCKER, posts a comment to Linear, adds the `needs-info` label, and halts the pipeline.

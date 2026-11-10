@@ -211,6 +211,32 @@ get_corrections_by_source() {
   done
 }
 
+# ── collect_corrections_by_source ─────────────────────────────────────────────
+# Collects one source's corrections across ticket workspaces (ticket-prescan
+# Step 4.0, skill-deterministic-extraction 6a): every `*--*` directory under
+# <root> (depth <= 3, inside a `tickets/` path, first <max> found) whose
+# notes.md has entries for <source>. Prints one `  - <fact>: <corrected>`
+# line per entry and nothing when there are none. Always returns 0.
+# Usage: collect_corrections_by_source <source> [root=.] [max=20]
+collect_corrections_by_source() {
+  local src="$1" root="${2:-.}" max="${3:-20}" dir out i f c
+  [ -n "$src" ] || return 0
+  while IFS= read -r dir; do
+    [ -f "$dir/notes.md" ] || continue
+    out=$(
+      set +eo pipefail
+      eval "$(get_corrections_by_source "$dir/notes.md" "$src" 2>/dev/null)" 2>/dev/null
+      for ((i = 0; i < ${CORRECTION_COUNT:-0}; i++)); do
+        f="CORRECTION_${i}_FACT"
+        c="CORRECTION_${i}_CORRECTED"
+        printf '  - %s: %s\n' "${!f}" "${!c}"
+      done
+    ) || true
+    [ -z "$out" ] || printf '%s\n' "$out"
+  done < <(find "$root" -maxdepth 3 -type d -name "*--*" -path "*/tickets/*" 2>/dev/null | head -"$max")
+  return 0
+}
+
 # ── Main dispatch ──────────────────────────────────────────────────────────────
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -227,6 +253,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   get-by-source)
     get_corrections_by_source "$@"
     ;;
+  collect)
+    collect_corrections_by_source "$@"
+    ;;
   --help | -h | "")
     cat >&2 <<'EOF'
 Usage: corrections-parse.sh <command> [args...]
@@ -235,6 +264,7 @@ Commands:
   append <notes-path> <fact> <source> <corrected>
   get <notes-path>
   get-by-source <notes-path> <source>
+  collect <source> [root] [max]
 EOF
     exit 1
     ;;

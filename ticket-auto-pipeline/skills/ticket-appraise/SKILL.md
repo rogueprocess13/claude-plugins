@@ -449,27 +449,13 @@ This sets state → `Todo`, assignee → `me`, and adds `claimed` + the complexi
 
 bash ~/.claude/skills/lib/plog.sh APPRAISE handoff start "Writing final report"
 
-**Pre-handoff completeness gate** — before reporting, verify `notes.md` is ready for the executor:
+**Pre-handoff completeness gate** — before reporting, verify `notes.md` is ready for the executor (a `## Complexity` Score line, and an `## Initial Investigation` with content beyond the template stub):
 
 ```bash
-NOTES_FILE="{ticket-dir}/notes.md"
-
-# Check ## Complexity section with a populated Score line
-_score=$(grep -A5 "^## Complexity" "$NOTES_FILE" 2>/dev/null | grep "^\*\*Score:\*\*" | grep -oi "simple\|complex" | head -1)
-if [ -z "$_score" ]; then
-  bash ~/.claude/skills/lib/plog.sh APPRAISE handoff fail "notes.md missing ## Complexity with Score"
-  # Stop — tell the user the complexity sweep is incomplete
-fi
-
-# Check ## Initial Investigation section has content beyond the template stub
-_inv_lines=$(awk '/^## Initial Investigation/{found=1; next} found && /^## /{exit} found{print}' "$NOTES_FILE" | grep -vc "^\s*$")
-if [ "${_inv_lines:-0}" -lt 2 ]; then
-  bash ~/.claude/skills/lib/plog.sh APPRAISE handoff fail "notes.md ## Initial Investigation is empty or stub"
-  # Stop — tell the user to complete Step 3 before running ticket-appraise-exec
-fi
+bash ~/.claude/skills/lib/appraise-handoff-check.sh "{ticket-dir}"
 ```
 
-If either check fails, stop and tell the user which section is incomplete. Do not run `/ticket-appraise-exec` — it will fail at its own guard with a less specific error.
+Exit 1: it logged which section is incomplete. Stop and tell the user; do not run `/ticket-appraise-exec` — it would fail at its own guard with a less specific error.
 
 Tell the user:
 

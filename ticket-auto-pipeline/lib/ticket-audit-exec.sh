@@ -7,6 +7,24 @@
 #   source lib/ticket-audit-exec.sh
 #   resolve_file ""           # => prints TARGET_FILE=...
 #   parse_checklist "$file"   # => prints JSON with phase, items, counts
+#
+# Usage (CLI, skill-deterministic-extraction 6a — what SKILL.md runs; each
+# fence is a fresh shell, so it never relies on functions sourced earlier):
+#   ticket-audit-exec.sh run [--file F] [--dry-run]
+#       Steps 0-2: resolve the file, parse it, print DRY_RUN, AUDIT_DIR,
+#       TARGET_FILE, PHASE, SOURCE_ID, PENDING_NEEDS_INFO, PENDING_STRUCTURAL,
+#       then one `ITEM=<needs-info|structural>|<state>|<id>|<detail>|
+#       <detail_clean>|<all_ticket_ids>` line per pending/resumed item.
+#       Exit 1 when no file resolves.
+#   ticket-audit-exec.sh start <file> <ticket-id> <source-id> <needs-info|structural>
+#       Write-ahead `[>]`, then the dedup guard for <source-id>:<ticket-id>:<kind>.
+#       Last line PROCEED, or DEDUP (an audit comment already exists: the item
+#       is marked done). Exit 0 either way.
+#   ticket-audit-exec.sh done|failed <file> <ticket-id>
+#   ticket-audit-exec.sh advance <file> <needs-info-done|structural-done>
+#   ticket-audit-exec.sh archive <file>
+#       Archives when no item is pending (prints ARCHIVE_PATH), else prints
+#       `PENDING — skipping archive`; reports an already-archived file.
 
 set -eo pipefail
 
@@ -291,9 +309,93 @@ get_item_state() {
   fi
 }
 
-# Allow sourcing without executing
+# ── CLI ─────────────────────────────────────────────────────────────────────────
+_tae_cli() {
+  local cmd="${1:-}" lib
+  lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  shift || true
+  case "$cmd" in
+  run)
+    local dry=false file="" checklist
+    while [ $# -gt 0 ]; do
+      case "$1" in
+      --file)
+        [ $# -ge 2 ] || return 2
+        file="$2"
+        shift 2
+        ;;
+      --dry-run)
+        dry=true
+        shift
+        ;;
+      *)
+        echo "Unknown flag: $1" >&2
+        return 2
+        ;;
+      esac
+    done
+    # shellcheck source=config.sh
+    source "$lib/config.sh"
+    echo "DRY_RUN=$dry"
+    echo "AUDIT_DIR=$AUDIT_DIR"
+    local out
+    out=$(resolve_file "$file") || return 1
+    eval "$out"
+    echo "TARGET_FILE=$TARGET_FILE"
+    checklist=$(parse_checklist "$TARGET_FILE")
+    jq -r '"PHASE=\(.phase)", "SOURCE_ID=\(.source_id)",
+      "PENDING_NEEDS_INFO=\(.pending_needs_info)", "PENDING_STRUCTURAL=\(.pending_structural)"' <<<"$checklist"
+    jq -r '(.needs_info_items[] | select(.state == "pending" or .state == "resumed") | ["needs-info"] + [.]),
+      (.structural_items[] | select(.state == "pending" or .state == "resumed") | ["structural"] + [.]) |
+      "ITEM=\(.[0])|\(.[1].state)|\(.[1].ticket_id)|\(.[1].detail)|\(.[1].detail_clean)|\(.[1].all_ticket_ids)"' <<<"$checklist"
+    ;;
+  start)
+    [ $# -eq 4 ] || return 2
+    case "$4" in needs-info | structural) ;; *) return 2 ;; esac
+    write_ahead_mark "$1" "$2"
+    if bash "$lib/audit-comment-guard.sh" "$2" "$3:$2:$4" >/dev/null 2>&1; then
+      mark_item_done "$1" "$2"
+      echo "DEDUP"
+    else
+      echo "PROCEED"
+    fi
+    ;;
+  done)
+    [ $# -eq 2 ] || return 2
+    mark_item_done "$1" "$2"
+    ;;
+  failed)
+    [ $# -eq 2 ] || return 2
+    mark_item_failed "$1" "$2"
+    ;;
+  advance)
+    [ $# -eq 2 ] || return 2
+    advance_phase "$1" "$2"
+    ;;
+  archive)
+    [ $# -eq 1 ] || return 2
+    # shellcheck source=config.sh
+    source "$lib/config.sh"
+    local arch="${AUDIT_DIR}/archive/$(basename "$1")"
+    if [ ! -f "$1" ] && [ -f "$arch" ]; then
+      echo "Already archived: $arch"
+    elif has_pending_items "$1"; then
+      echo "PENDING — skipping archive"
+    else
+      local out
+      out=$(archive_checklist "$1") || return 1
+      eval "$out"
+      echo "ARCHIVE_PATH=$ARCHIVE_PATH"
+    fi
+    ;;
+  *)
+    sed -n '/^# Usage (CLI/,/already-archived file\./p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+    return 2
+    ;;
+  esac
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  echo "This script is meant to be sourced, not executed directly." >&2
-  echo "Usage: source lib/ticket-audit-exec.sh" >&2
-  exit 1
+  _tae_cli "$@"
+  exit $?
 fi
