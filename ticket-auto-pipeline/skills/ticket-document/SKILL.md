@@ -15,71 +15,33 @@ If `$TAP_LOG` is set (passed by the `ticket-auto` orchestrator): read `~/.claude
 
 If `$HB_LOG_FILE` is set (passed by the orchestrator): call `~/.claude/skills/lib/hb-wrap.sh` then write heartbeat entries at these points:
 - **Classification decision**: after significance classification, write `hb-wrap.sh decision "significance-classification" "fired" "{trivial|non-trivial}" '{"reason":"{summary}"}'`
-- **Document written**: after ai-context.md is written, write `hb-wrap.sh decision "document-written" "fired" "ai-context.md generated" '{"patterns":"{N}","decisions":"{N}","significance":"{trivial|non-trivial}"}'`
-- **Document failed**: if generation fails, write `hb-wrap.sh decision "document-failed" "warn" "ai-context.md generation failed" '{"error":"{reason}"}'`
+- **Document written / failed**: written by `ai-context-finalize.sh` (Step 5).
 
 ---
 
-## Step 0 — Resolve context
+## Step 0 — Load context, branch and diff
 
-If `--from-auto` is set, source the project context env file before anything else:
+The orchestrator passes the ticket directory, and usually the worktree path and branch, in the
+spawn instruction. One call loads the rest (fill `{worktree}`/`{branch}` from the instruction,
+or leave them empty):
 
 ```bash
-source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
+bash ~/.claude/skills/lib/ai-context-prep.sh {TICKET_ID} --ticket-dir "{ticket-dir}" --worktree "{worktree}" --branch "{branch}"
 ```
 
-The orchestrator passes the ticket directory path in the spawn instruction. Identify it from the instruction text. If ambiguous, derive it from the ticket ID (passed alongside the spawn instruction or derivable from the branch name).
+It sources the ticket env file, logs `document start`, prints `CORRECTION_COUNT` and each
+correction's fields, `WORKTREE_PATH`/`BRANCH` (from the flags, else notes.md's
+pre-implementation checkpoint, else the worktree's checkout) and then the branch's `git log` and
+`git diff` against the base's **remote** ref after a fetch (a stale local epic ref would
+attribute a previous ticket's commits to this one). Exit 3: worktree or branch not found — find
+them (`worktree_path` in `lib/worktree.sh`, or `git branch -a | grep {TICKET-ID}`) and re-run
+with the flags.
 
 Read `notes.md` from the ticket directory. Extract:
 - `{COMPLEXITY}` — from the `## Complexity` section (simple or complex)
 - `{AFFECTED_REPOS}` — from `## Initial Investigation` (which services were touched)
 - `{KEY_FINDINGS}` — the main bullet points from Initial Investigation
 - `{PLAN_PATH}` — from `## Next Steps` or `## Plan` (path to simple-fix.md or openspec change directory)
-
-Extract CORRECTIONS from notes.md if the implement phase wrote any mismatch feedback:
-
-```bash
-source "$HOME/.claude/skills/lib/corrections-parse.sh"
-eval $(get_corrections "{ticket-dir}/notes.md" 2>/dev/null) || CORRECTION_COUNT=0
-```
-
-```bash
-bash ~/.claude/skills/lib/plog.sh MAINTENANCE document start "Reading notes.md for context"
-```
-
----
-
-## Step 1 — Determine the branch and worktree
-
-The ticket directory name follows the pattern `{ID}--{slug}`. Derive the branch name and worktree path from:
-1. The spawn instruction (orchestrator passes the branch and worktree path)
-2. If not in the instruction, read from `notes.md` pre-implementation checkpoint (`Worktree:` and `Branch:` fields)
-3. If that fails, source worktree.sh and resolve: `source "$HOME/.claude/skills/lib/worktree.sh" && WORKTREE_PATH=$(worktree_path "$TICKET_ID" "{repo-slug}")`, then run `git -C "$WORKTREE_PATH" branch --show-current`
-4. If still not found, search for branches matching the ticket ID: `git -C "$WORKTREE_PATH" branch -a | grep "{TICKET-ID}"`
-
-The worktree path is available as `$WORKTREE_ROOT` from the env file (the base), with per-repo worktrees at `$WORKTREE_ROOT/{repo-slug}`.
-
----
-
-## Step 2 — Gather git history
-
-Run both commands from the worktree (use `$WORKTREE_PATH` resolved in Step 1):
-
-Diff against the base's **remote** ref, not the local one — on a per-epic branch strategy the local epic ref only advances when someone explicitly fetches, which no pipeline phase does, so a stale local ref silently attributes a previous ticket's commits to this one.
-
-```bash
-source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
-git -C "$WORKTREE_PATH" fetch origin "${BASE_BRANCH:-develop}" --quiet 2>/dev/null || true
-git -C "$WORKTREE_PATH" diff "${BASE_REF:-origin/${BASE_BRANCH:-develop}}"...{branch}
-```
-
-This gives the full change set — all commits on the branch that are not on the base.
-
-```bash
-git -C "$WORKTREE_PATH" log "${BASE_REF:-origin/${BASE_BRANCH:-develop}}"..{branch} --oneline
-```
-
-This gives the commit messages for context on what each commit intended.
 
 ---
 
@@ -168,54 +130,17 @@ Trivial change — no architectural impact.
 
 ---
 
-## Step 5 — Update notes.md session log
+## Step 5 — Record the result
 
-Append to the ticket's `notes.md` session log:
-
-```markdown
-- ai-context.md written ({N} patterns, {N} decisions, {C} corrections)
-```
-
-Count N as: number of entries in Patterns used section (0 if skipped), number of entries in Decisions section (0 if skipped). C is `CORRECTION_COUNT` — the number of corrections carried forward from the implement phase.
-
----
-
-## Step 6 — Handoff output
-
-Emit a `DOCUMENT_RESULT` block at the end of your output:
-
-```
-=== DOCUMENT_RESULT ===
-file={ticket-dir}/ai-context.md
-patterns={N}
-decisions={N}
-significance={trivial|non-trivial}
-=== END DOCUMENT_RESULT ===
-```
-
-If generation failed for any reason, emit:
-
-```
-=== DOCUMENT_RESULT ===
-file=none
-patterns=0
-decisions=0
-significance=none
-error={reason}
-=== END DOCUMENT_RESULT ===
-```
+After writing `ai-context.md` (or failing to), run:
 
 ```bash
-bash ~/.claude/skills/lib/plog.sh MAINTENANCE document done "ai-context.md written ({N} patterns, {N} decisions)"
+bash ~/.claude/skills/lib/ai-context-finalize.sh {TICKET_ID} --ticket-dir "{ticket-dir}"
 ```
 
-**G1 — RLVR Phase 0**: After writing the document log entry, record a verifier-result for the quality check:
-```bash
-source ~/.claude/skills/lib/verifier-result.sh
-# Verdict: PASS if significance=non-trivial and all sections populated,
-# WARN if some sections sparse, FAIL if generation errored
-write_verifier_result \
-  verifier=ticket_document verdict=<PASS|WARN|FAIL> \
-  criteria_met=<sections-populated> criteria_total=<total-sections-expected> \
-  phase=MAINTENANCE
-```
+It counts the Patterns used and Decisions entries, appends `- ai-context.md written ({N}
+patterns, {N} decisions, {C} corrections)` to the notes.md Session Log, logs `document done`
+(or `document fail` with exit 1 when the file is missing), records the `ticket_document`
+verifier result (PASS when all five sections have content or the change is trivial, else WARN;
+FAIL when missing) and the heartbeat, and prints the `DOCUMENT_RESULT` block. End your output
+with that block, verbatim.

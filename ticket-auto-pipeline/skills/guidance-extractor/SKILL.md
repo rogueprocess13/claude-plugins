@@ -16,10 +16,10 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 This agent is shared between Phase 1 (Phase Inspector) and Phase 2 (Guidance Store). The behavioral split is controlled by the spawn mode:
 
 - **Phase 1 (`--mode inspect`, default)**: Read pre-parsed verifier results from prompt context. Write one `META|phase-inspector` line. No file reads, no API calls, no mutations. This is the advisory-only observer mode.
-- **Phase 2 (`--mode extract`)**: After producing the `META|phase-inspector` verdict, run a second classification pass. Classify each detected pattern's root cause (`skill-file | lib-script | agent-prompt | network-flake`). For `skill-file` and `lib-script` causes, write structured entries to the guidance store via `guidance_upsert` and append CORRECTIONS blocks to the ticket's notes.md. For `agent-prompt` and `network-flake`, log findings only — no store writes.
+- **Phase 2 (`--mode extract`)**: After producing the `META|phase-inspector` verdict, run a second classification pass. Classify each detected pattern's root cause (`skill-file | lib-script | agent-prompt | network-flake`). For `skill-file` and `lib-script` causes, write structured entries to the guidance store and append CORRECTIONS blocks to the ticket's notes.md (`guidance-store.sh record-finding`). For `agent-prompt` and `network-flake`, log findings only — no store writes.
 
 When `--mode extract` is active:
-- Bash tool calls ARE allowed: `guidance_upsert`, `guidance_query`, `append_correction`
+- Bash tool calls ARE allowed: `guidance-store.sh record-finding`, `guidance_query`
 - Multiple log lines may be written: `META|phase-inspector` + `META|guidance-extractor` + per-classification upserts
 - Root cause classification is the primary task; the inspector verdict is still written first
 
@@ -57,54 +57,20 @@ After producing the `META|phase-inspector` verdict, classify each detected patte
 
 3. **Pattern identifier:** use the pattern ID from the inspector verdict directly (snake_case).
 
-### Guidance Store Writes
+### Guidance Store Writes and CORRECTIONS
 
-For `skill-file` and `lib-script` classifications, write a guidance entry:
-
-```bash
-# Source the library
-source "${HOME}/.claude/skills/lib/guidance-store.sh" 2>/dev/null
-
-# Compute stable guidance_id
-guidance_id=$(${HOME}/.claude/skills/lib/guidance-store.sh compute-id "<component>" "<root_cause>" "<pattern>")
-
-# Write the entry
-guidance_upsert '{
-  "guidance_id": "<computed-id>",
-  "component": "<component-path>",
-  "root_cause": "<skill-file|lib-script>",
-  "pattern": "<pattern-id>",
-  "status": "proposed",
-  "severity": "<warn|fail>",
-  "summary": "<one-line description of the defect>",
-  "detail": "<full explanation with evidence from verifier results>",
-  "evidence_tickets": ["<TICKET_ID>"],
-  "source": "phase-inspector",
-  "run_id": "<RUN_ID>",
-  "phase": "<PHASE>",
-  "transitions": [
-    {"status": "proposed", "at": "<ISO timestamp>", "run_id": "<RUN_ID>"}
-  ]
-}'
-```
-
-The `evidence_tickets` array MUST include the current ticket ID so the defect is traceable. The `run_id` comes from the spawn context. The `phase` is the pipeline phase being inspected (IMPLEMENT, VERIFY, PR-REVIEW).
-
-### CORRECTIONS Block Integration
-
-For `skill-file` and `lib-script` classifications, also append a CORRECTIONS block to the ticket's notes.md:
+For each `skill-file` or `lib-script` finding, one call stores the guidance entry (stable id,
+upsert: a repeat merges `evidence_tickets` and counts `occurrences`) and appends the `inspector`
+CORRECTIONS block to the ticket's notes.md:
 
 ```bash
-source lib/corrections-parse.sh
-append_correction "$NOTES_PATH" \
-  "<fact: specific defect found>" \
-  "inspector" \
-  "<corrected: recommended fix>"
+bash ~/.claude/skills/lib/guidance-store.sh record-finding --component "<component-path>" --root-cause <skill-file|lib-script> --pattern "<pattern-id>" --severity <warn|fail> --summary "<one-line description of the defect>" --detail "<full explanation with evidence from verifier results>" --ticket "<TICKET_ID>" --run-id "<RUN_ID>" --phase "<PHASE>" --notes "<NOTES_PATH>" --fact "<specific defect found>" --corrected "<recommended fix>"
 ```
 
-The `inspector` source is already in the corrections-parse.sh enum — no code change needed.
-
-For `agent-prompt` and `network-flake` classifications, do NOT call `append_correction`. These root causes don't have a file to correct.
+`run_id` comes from the spawn context; `phase` is the phase inspected (IMPLEMENT, VERIFY,
+PR-REVIEW). Post-mortem findings add `--source postmortem`. For `agent-prompt` and
+`network-flake` classifications make no call: there is no file to correct. The call is fail-soft
+(it prints `GUIDANCE_RECORDED=` and `CORRECTION=` and exits 0).
 
 ### Log Output for Phase 2
 
@@ -132,5 +98,5 @@ Without `--mode extract`, only the inspector verdict is produced, following the 
 
 - **Fail-soft**: if you cannot produce a valid verdict (corrupted input, unparseable JSON), write a WARN skip entry and exit. Never block the pipeline. Guidance store write failures (lock timeout, disk full) exit 0 — the inspector verdict is unaffected.
 - **Phase 1 — No tool calls**: in inspect mode (default), you receive all context in the prompt. Do not read files or call APIs. One `META|phase-inspector` line only.
-- **Phase 2 — Tool calls allowed**: in extract mode (`--mode extract`), Bash tool calls to `guidance_upsert`, `guidance_query`, and `append_correction` are permitted. Multiple log lines may be written (`META|phase-inspector` + `META|guidance-extractor` + per-classification entries). The inspector verdict is written FIRST — classification failures do not affect it.
+- **Phase 2 — Tool calls allowed**: in extract mode (`--mode extract`), Bash tool calls to `guidance-store.sh record-finding` and `guidance_query` are permitted. Multiple log lines may be written (`META|phase-inspector` + `META|guidance-extractor` + per-classification entries). The inspector verdict is written FIRST — classification failures do not affect it.
 - **Deterministic**: same input → same verdict. No sampling, no creativity. Pattern matching is mechanical. Classification follows the heuristics table — no guessing.

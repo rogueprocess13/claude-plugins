@@ -109,6 +109,7 @@ guidance_upsert() {
           .status = $old.status |
           .transitions = $old.transitions |
           .evidence_tickets = (($old.evidence_tickets // []) + ($new.evidence_tickets // []) | unique) |
+          (if ($new | has("occurrences")) then .occurrences = (($old.occurrences // 1) + $new.occurrences) else . end) |
           .updated_at = ($new.updated_at // $ts) |
           .created_at = ($old.created_at // $ts)
         ' 2>/dev/null) || merged="$line"
@@ -168,6 +169,94 @@ guidance_upsert() {
   fi
 
   exec 9>&-
+  return 0
+}
+
+# ── guidance_record_finding ──────────────────────────────────────────────────────
+# One classified inspector/post-mortem finding (guidance-extractor Phase 2,
+# skill-deterministic-extraction 6a): builds the entry with jq (no hand-
+# written JSON), computes its stable id, upserts it, and for a notes.md path
+# appends the `inspector` CORRECTIONS block. Repeating a finding is an upsert:
+# one entry, evidence_tickets merged, `occurrences` counted.
+# Usage: guidance_record_finding --component C --root-cause skill-file|lib-script
+#          --pattern P --severity warn|fail --summary S --detail D --ticket T
+#          --run-id R --phase PHASE [--source phase-inspector|postmortem]
+#          [--notes N --fact F --corrected X]
+# agent-prompt / network-flake root causes are not stored (no file to fix).
+# Prints GUIDANCE_ID=, GUIDANCE_RECORDED=stored|skipped, CORRECTION=
+# appended|skipped|failed. Exit: 0 always except 2 on usage (fail-soft).
+guidance_record_finding() {
+  local comp="" rc="" pat="" sev="" sum="" det="" tick="" run="" ph="" src="phase-inspector"
+  local notes="" fact="" corr="" id entry now
+  while [[ $# -ge 2 ]]; do
+    case "$1" in
+    --component) comp="$2" ;;
+    --root-cause) rc="$2" ;;
+    --pattern) pat="$2" ;;
+    --severity) sev="$2" ;;
+    --summary) sum="$2" ;;
+    --detail) det="$2" ;;
+    --ticket) tick="$2" ;;
+    --run-id) run="$2" ;;
+    --phase) ph="$2" ;;
+    --source) src="$2" ;;
+    --notes) notes="$2" ;;
+    --fact) fact="$2" ;;
+    --corrected) corr="$2" ;;
+    *) break ;;
+    esac
+    shift 2
+  done
+  if [[ $# -ne 0 || -z "$comp" || -z "$rc" || -z "$pat" || -z "$sum" || -z "$tick" || -z "$ph" ]]; then
+    echo "guidance_record_finding: --component --root-cause --pattern --summary --ticket --phase required" >&2
+    return 2
+  fi
+  case "$rc" in
+  skill-file | lib-script) ;;
+  agent-prompt | network-flake)
+    echo "GUIDANCE_ID="
+    echo "GUIDANCE_RECORDED=skipped"
+    echo "CORRECTION=skipped"
+    return 0
+    ;;
+  *)
+    echo "guidance_record_finding: unknown --root-cause '$rc'" >&2
+    return 2
+    ;;
+  esac
+  case "$sev" in warn | fail) ;; *) sev="warn" ;; esac
+  case "$src" in phase-inspector | postmortem) ;; *) src="phase-inspector" ;; esac
+  id=$(_compute_guidance_id "$comp" "$rc" "$pat")
+  now=$(_now_iso)
+  entry=$(jq -cn --arg id "$id" --arg c "$comp" --arg r "$rc" --arg p "$pat" --arg s "$sev" \
+    --arg sum "$sum" --arg d "$det" --arg t "$tick" --arg src "$src" --arg run "$run" \
+    --arg ph "$ph" --arg now "$now" '{
+      guidance_id: $id, component: $c, root_cause: $r, pattern: $p, status: "proposed",
+      severity: $s, summary: $sum, detail: $d, evidence_tickets: [$t], source: $src,
+      run_id: $run, phase: $ph, occurrences: 1,
+      transitions: [{status: "proposed", at: $now, run_id: $run}]
+    }' 2>/dev/null) || entry=""
+  echo "GUIDANCE_ID=$id"
+  if [[ -n "$entry" ]]; then
+    guidance_upsert "$entry" || true
+    echo "GUIDANCE_RECORDED=stored"
+  else
+    echo "guidance_record_finding: jq could not build the entry" >&2
+    echo "GUIDANCE_RECORDED=skipped"
+  fi
+  if [[ -z "$notes" ]]; then
+    echo "CORRECTION=skipped"
+    return 0
+  fi
+  if (
+    # shellcheck source=corrections-parse.sh
+    source "$(dirname "${BASH_SOURCE[0]}")/corrections-parse.sh" &&
+      append_correction "$notes" "${fact:-$sum}" inspector "${corr:-$det}"
+  ) >/dev/null 2>&1; then
+    echo "CORRECTION=appended"
+  else
+    echo "CORRECTION=failed"
+  fi
   return 0
 }
 
@@ -546,6 +635,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   upsert)
     guidance_upsert "$@"
     ;;
+  record-finding)
+    guidance_record_finding "$@"
+    ;;
   query)
     guidance_query "$@"
     ;;
@@ -572,6 +664,10 @@ Commands:
   confirm <guidance_id> <ticket>            Promote entry to confirmed status
   deprecate <guidance_id> <reason>          Mark entry as deprecated
   stats                                     Aggregate counts
+  record-finding --component C --root-cause R --pattern P --severity S
+        --summary S --detail D --ticket T --run-id R --phase P
+        [--source S] [--notes N --fact F --corrected C]
+                                            Store one classified finding
   compute-id <component> <root_cause> <pattern>
                                             Compute stable guidance_id hash
 EOF

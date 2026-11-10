@@ -1,0 +1,15 @@
+{
+  "logs_by_source": {"ticket-auto": {"scanned": 5, "skipped": 0, "with_failures": 3}, "planner": {"scanned": 1, "skipped": 0, "with_failures": 0}},
+  "failure_histogram": {"APPROVAL_REVOKED": 2, "EXEC_NO_ARTIFACT": 4},
+  "complexity_predictions": [
+    {"ticket": "ABC-47", "declared": "simple", "actual": "Hard", "actual_source": "label"},
+    {"ticket": "ABC-48", "declared": "complex", "actual": "Smooth", "actual_source": "label"},
+    {"ticket": "ABC-52", "declared": "simple", "actual": "Rough", "actual_source": "label"}
+  ],
+  "complexity_calibration": {
+    "matrix": {"simple": {"Smooth": 6, "Rough": 1, "Hard": 1}, "complex": {"Smooth": 3, "Rough": 1, "Hard": 0}},
+    "false_simple_rate": 0.25, "simple_row_n": 8, "min_n": 3, "suppressed": false,
+    "false_simple_tickets": [{"ticket": "ABC-47", "outcome": "Hard"}, {"ticket": "ABC-52", "outcome": "Rough"}],
+    "unscoreable": {"missing_declared": 1, "missing_outcome": 0}
+  }
+}

@@ -687,7 +687,7 @@ test_wiki_errata_adr_conditions() {
   # prose path, Step 2.6 and the Step 0/Step 4 lock wiring.
   for tok in '### 2c — Mark resolved' 'Idempotency check (task 6.3)' \
     '#### Ordinary prose path' '## Step 2.6 ' 'wiki-lock.sh" acquire' \
-    '"$_wlock" commit' '"$_wlock" release'; do
+    'lib/wiki-finalize.sh --wiki-root' 'wiki-lock.sh" release'; do
     grep -qF -- "$tok" "$md" || {
       echo "  inline contract left SKILL.md: $tok"
       return 1

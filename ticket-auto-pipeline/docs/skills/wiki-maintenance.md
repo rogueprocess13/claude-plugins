@@ -8,6 +8,8 @@
 
 **Reference files (skill-progressive-disclosure):** two blocks that most runs never need live under `skills/wiki-maintenance/references/`. `errata-fix.md` holds Step 2b (the gap-type patterns, the new-file frontmatter and the `verified_at` refresh). SKILL.md reads it only when Step 1 finds unresolved errata, or when Step 2.6 has a `source=wiki` or `source=prescan` correction. `adr-decisions.md` holds Step 2.5c's routing of Decisions-section findings through the ADR gate. SKILL.md reads it only when a surviving finding comes from a Decisions section. If a file cannot be resolved, the skill logs `META|reference-missing|fail` and leaves that work for the next run: errata and corrections stay in place, and Decisions findings are skipped.
 
+**Deterministic scripts (skill-deterministic-extraction 6a):** Step 2.5a's file discovery is `lib/ai-context-find.sh` (absolute cutoff date; exit 1 when `find` itself failed, never an empty success). Steps 4 and 4.5 are one call, `lib/wiki-finalize.sh`: it refreshes the lock, runs the Accepted-ADR gate, makes the scoped commit, releases the lock on every exit path, and runs `wiki-verify.sh`. A lock that another run broke as stale now logs `MAINTENANCE|wiki-commit|skip` instead of being skipped silently. The agent passes the absolute `WIKI_ROOT` as a placeholder, because each Bash call is a fresh shell.
+
 ## Trigger
 
 **Slash command:** `/wiki-maintenance`

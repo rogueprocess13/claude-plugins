@@ -17,10 +17,10 @@ initial commit for months while its files were repeatedly edited on disk), which
 "git is the audit trail for incorporated errata" design (`wiki-maintenance` §2c/§3) had no git
 history to point to.
 
-The exception is scoped by construction, not by convention: always commit with
-`git -C "$WIKI_ROOT" commit -m "docs(wiki): <TICKET-ID> <summary>"` (see `wiki-maintenance`
-Step 4) — never a bare `git commit`, which would run against whatever the shell's current
-working directory happens to be and could catch a source repo's changes instead.
+The exception is scoped by construction, not by convention: always commit through
+`lib/wiki-finalize.sh` (`wiki-maintenance` Step 4), whose commit is `git -C "$WIKI_ROOT"` —
+never a bare `git commit`, which runs against the shell's current directory and could catch a
+source repo's changes instead.
 
 `-C ""` is not itself an error — `git -C` with an empty (or unset-and-therefore-empty) path is
 documented, standard git behavior for "leave the working directory unchanged," so a bare
@@ -28,6 +28,6 @@ documented, standard git behavior for "leave the working directory unchanged," s
 silently commits against the pipeline's current directory instead, which is exactly the failure
 mode this exception exists to prevent. The scoping is therefore a real, literal precondition run
 before the commit — `[ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git" ]` — not prose the agent is
-expected to reason its way through; see the exact guard in `wiki-maintenance` Step 4. Only when
+expected to reason its way through; see the exact guard in `lib/wiki-finalize.sh`. Only when
 that check passes may the `git -C "$WIKI_ROOT"` commit run. On a failing check, skip the commit
 and log a warning; do not fall back to committing anywhere else.

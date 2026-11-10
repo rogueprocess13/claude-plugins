@@ -6,6 +6,8 @@
 #
 # Usage:
 #   retro.sh --window <N>d [--force] [<single-log-path>]
+#   retro.sh --claude-scan | --render-sections <json> [...] | --github-post <dir>
+#     (subcommands, see "Subcommands" below)
 #   retro.sh --window 7d
 #   retro.sh --window 1 --force ./logs/CRE-47-pipeline.log
 #
@@ -19,12 +21,13 @@
 #   timestamp  when the failure occurred
 #   category   retry, api or gate
 
-# Sourcing this file (ticket-retro SKILL.md Step 1.5) defines only the
-# Claude log scan helpers below; the source guard after them returns before
-# any shell option is set or the aggregation runs (GitHub #420).
+# Sourcing this file defines only the helpers and subcommand functions
+# below (retro_calibration_notes is the sourceable one); the source guard
+# after them returns before any shell option is set or the aggregation runs
+# (GitHub #420). SKILL.md Step 1.5 now runs `retro.sh --claude-scan`.
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Claude Log Scan Helpers (sourced by ticket-retro SKILL.md)
+# Claude Log Scan Helpers (used by --claude-scan)
 # ══════════════════════════════════════════════════════════════════════════════
 
 # scan_claude_log_failures <claude-log> <output-file>
@@ -121,6 +124,235 @@ correlate_failures_with_phase() {
   return 0
 }
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Subcommands (skill-deterministic-extraction 6a). Each runs instead of the
+# aggregation when it is the first argument; none sets shell options.
+#   retro.sh --claude-scan
+#   retro.sh --render-sections <retro-json> [--scan-dir D] [--tickets-root R]
+#   retro.sh --github-post <scratch-dir>
+# ══════════════════════════════════════════════════════════════════════════════
+
+# _retro_libs_dir: lib/ beside the skills (synced) or at the plugin root.
+_retro_libs_dir() {
+  local d
+  d="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+  if [ -f "$d/../../lib/notes-parse.sh" ]; then echo "$d/../../lib"; else echo "$d/../lib"; fi
+}
+
+# retro_claude_scan — ticket-retro Step 1.5. Scans $CLAUDE_LOG_FILE (when set
+# and present) into the private scratch dir: claude-log-failures.txt,
+# -insights.txt (★ Insight blocks, 5 lines of context, first 100 lines),
+# -hints.txt (RETRO|hint entries, first 50) and -correlated.txt (phase-
+# grouped failures). Writes claude-log-scan.status (done|skipped) for
+# --render-sections and prints RETRO_TMP=<dir> plus the status line.
+retro_claude_scan() {
+  local tmp f i h c
+  tmp=$(bash "$(_retro_libs_dir)/ticket-tmp.sh") || return 1
+  echo "RETRO_TMP=$tmp"
+  f="$tmp/claude-log-failures.txt" i="$tmp/claude-log-insights.txt"
+  h="$tmp/claude-log-hints.txt" c="$tmp/claude-log-correlated.txt"
+  rm -f "$f" "$i" "$h" "$c"
+  if [ -n "${CLAUDE_LOG_FILE:-}" ] && [ -f "$CLAUDE_LOG_FILE" ]; then
+    scan_claude_log_failures "$CLAUDE_LOG_FILE" "$f" || true
+    grep -n -A5 "★ Insight" "$CLAUDE_LOG_FILE" 2>/dev/null | head -100 >"$i" || true
+    grep -n "RETRO|hint" "$CLAUDE_LOG_FILE" 2>/dev/null | head -50 >"$h" || true
+    if [ -s "$f" ]; then
+      correlate_failures_with_phase "$CLAUDE_LOG_FILE" "$f" "$c" || true
+    fi
+    echo done >"$tmp/claude-log-scan.status"
+    echo "claude-log-scan: done"
+  else
+    echo skipped >"$tmp/claude-log-scan.status"
+    echo "claude-log-scan: skipped (CLAUDE_LOG_FILE not set or file missing)"
+  fi
+}
+
+# retro_calibration_notes <ticket> [tickets-root] — ticket-retro Step 1.6.
+# Prints one `<ticket>\t<source>\t<fact>\t<corrected>` line per
+# source=appraise CORRECTIONS entry, then per source=exec entry, in the
+# ticket's notes.md. An unresolvable ticket dir prints nothing (best effort,
+# never a blocker). Always returns 0.
+retro_calibration_notes() {
+  local tid="$1" root="${2:-.}" libs td src out n k
+  libs=$(_retro_libs_dir)
+  td=$(
+    source "$libs/ticket-dir.sh" 2>/dev/null
+    resolve_ticket_dir "$tid" "$root" 2>/dev/null
+  ) || td=""
+  [ -n "$td" ] && [ -f "$td/notes.md" ] || return 0
+  for src in appraise exec; do
+    out=$(
+      set +eo pipefail
+      source "$libs/corrections-parse.sh" 2>/dev/null
+      set +eo pipefail
+      eval "$(get_corrections_by_source "$td/notes.md" "$src" 2>/dev/null)"
+      for ((k = 0; k < ${CORRECTION_COUNT:-0}; k++)); do
+        n="CORRECTION_${k}_FACT"
+        printf '%s\t%s\t%s\t' "$tid" "$src" "${!n}"
+        n="CORRECTION_${k}_CORRECTED"
+        printf '%s\n' "${!n}"
+      done
+    ) || true
+    [ -z "$out" ] || printf '%s\n' "$out"
+  done
+  return 0
+}
+
+# retro_render_sections <retro-json> [--scan-dir D] [--tickets-root R] —
+# ticket-retro Step 4's deterministic sections, in proposal order: Failure
+# Histogram, Complexity Calibration, Complexity Calibration Notes (omitted
+# when empty), Claude Log Failures and Agent Improvement Hints (both omitted
+# unless claude-log-scan.status in D says done). Markdown on stdout.
+retro_render_sections() {
+  local json="$1" scan="" root="." pl_s pl_k cal t first
+  shift
+  while [ $# -ge 2 ]; do
+    case "$1" in
+    --scan-dir) scan="$2" ;;
+    --tickets-root) root="$2" ;;
+    *) return 2 ;;
+    esac
+    shift 2
+  done
+  [ $# -eq 0 ] && [ -f "$json" ] && jq -e . "$json" >/dev/null 2>&1 || {
+    echo "retro: --render-sections needs a readable retro.sh JSON file" >&2
+    return 2
+  }
+
+  echo "## Failure Histogram"
+  echo
+  pl_s=$(jq -r '.logs_by_source.planner.scanned // 0' "$json")
+  pl_k=$(jq -r '.logs_by_source.planner.skipped // 0' "$json")
+  if [ "$pl_s" != 0 ] || [ "$pl_k" != 0 ]; then
+    echo "Sources scanned: ticket-auto $(jq -r '.logs_by_source["ticket-auto"].scanned // 0' "$json") log(s), planner $pl_s log(s)."
+    echo
+  fi
+  if [ "$(jq -r '.failure_histogram // {} | length' "$json")" = 0 ]; then
+    echo "No failures in this window."
+  else
+    echo "| Code | Count |"
+    echo "|------|-------|"
+    jq -r '.failure_histogram | to_entries | sort_by(-.value, .key)[] | "| \(.key) | \(.value) |"' "$json"
+  fi
+  echo
+
+  cal=$(jq -c '.complexity_calibration // {}' "$json")
+  echo "## Complexity Calibration"
+  echo
+  echo '| Declared \ Outcome | Smooth | Rough | Hard |'
+  echo "|--------------------|--------|-------|------|"
+  jq -r '.matrix as $m | ["simple", "complex"][] as $r |
+    [(if $r == "complex" then "complex ⚠ confounded" else $r end),
+     ($m[$r].Smooth // 0), ($m[$r].Rough // 0), ($m[$r].Hard // 0)] | @tsv' <<<"$cal" |
+    while IFS=$'\t' read -r l a b c; do
+      printf '| %-18s | %-6s | %-5s | %-4s |\n' "$l" "$a" "$b" "$c"
+    done
+  echo
+  if [ "$(jq -r '.suppressed' <<<"$cal")" = true ]; then
+    jq -r '"**False-simple rate:** suppressed — only \(.simple_row_n) simple ticket(s) this window (floor: \(.min_n))"' <<<"$cal"
+  else
+    local rate fs n
+    rate=$(jq -r '.false_simple_rate // 0' <<<"$cal")
+    fs=$(jq -r '(.matrix.simple.Rough // 0) + (.matrix.simple.Hard // 0)' <<<"$cal")
+    n=$(jq -r '.simple_row_n // 0' <<<"$cal")
+    LC_ALL=C printf '**False-simple rate:** %.3f (%s of %s simple tickets went Rough/Hard; lower is better)\n' "$rate" "$fs" "$n"
+  fi
+  if [ "$(jq -r '.false_simple_tickets // [] | length' <<<"$cal")" != 0 ]; then
+    jq -r '"**False-simples:** " + ([.false_simple_tickets[] | "\(.ticket) (\(.outcome))"] | join(", "))' <<<"$cal"
+  fi
+  jq -r 'select(((.unscoreable.missing_declared // 0) + (.unscoreable.missing_outcome // 0)) > 0) |
+    "**Unscoreable:** \(.unscoreable.missing_declared) missing declared, \(.unscoreable.missing_outcome) missing outcome"' <<<"$cal"
+  echo
+  echo "The complex row is shown for completeness only: a complex classification changes the"
+  echo "treatment, so its outcomes are not scored."
+  echo
+
+  local notes="" tick tag
+  while IFS=$'\t' read -r tick tag; do
+    [ -n "$tick" ] || continue
+    notes+=$(retro_calibration_notes "$tick" "$root" | awk -F'\t' -v tag="$tag" 'BEGIN{OFS="\t"} {$1 = $1 tag; print}')
+    notes+=$'\n'
+  done < <(
+    jq -r '(.complexity_calibration.false_simple_tickets // [])[] | "\(.ticket)\t"' "$json"
+    jq -r '(.complexity_predictions // [])[] | select(.declared == "complex" and .actual == "Smooth") | "\(.ticket)\t (complex, confounded)"' "$json"
+  )
+  notes=$(grep -v '^$' <<<"$notes" || true)
+  if [ -n "$notes" ]; then
+    echo "## Complexity Calibration Notes"
+    echo
+    echo "| Ticket | Source | Gap |"
+    echo "|--------|--------|-----|"
+    awk -F'\t' '{ g = $3; gsub(/\|/, "\\|", g); print "| " $1 " | " $2 " | " g " |" }' <<<"$notes"
+    echo
+    echo "**Corrected:**"
+    awk -F'\t' '{ t = $1; sub(/ \(complex, confounded\)$/, "", t); print "- " t ": " $4 }' <<<"$notes"
+    echo
+  fi
+
+  [ -n "$scan" ] && [ "$(cat "$scan/claude-log-scan.status" 2>/dev/null)" = done ] || return 0
+  echo "## Claude Log Failures"
+  echo
+  if [ -s "$scan/claude-log-correlated.txt" ]; then
+    cat "$scan/claude-log-correlated.txt"
+  elif [ -s "$scan/claude-log-failures.txt" ]; then
+    cat "$scan/claude-log-failures.txt"
+  else
+    echo "No failure signals detected in Claude log."
+  fi
+  echo
+  echo "## Agent Improvement Hints"
+  echo
+  if [ ! -s "$scan/claude-log-insights.txt" ] && [ ! -s "$scan/claude-log-hints.txt" ]; then
+    echo "No agent improvement hints found."
+  else
+    echo "### Insight Blocks"
+    echo
+    if [ -s "$scan/claude-log-insights.txt" ]; then cat "$scan/claude-log-insights.txt"; else echo "No ★ Insight blocks found."; fi
+    echo
+    echo "### Explicit Hints"
+    echo
+    if [ -s "$scan/claude-log-hints.txt" ]; then cat "$scan/claude-log-hints.txt"; else echo "No explicit RETRO|hint entries found."; fi
+  fi
+  echo
+  return 0
+}
+
+# retro_github_post <scratch-dir> — ticket-retro Step 5.5a/5.5c/5.5d after
+# the agent wrote <dir>/retro-input.json (5.5b). Sources github-issues.sh,
+# checks gh auth, runs github_retro_process (threshold, state file, the
+# github_retro_map_severity labels, create-vs-comment), removes the 5.5b
+# files and prints GITHUB_STATUS=posted|skipped-auth|skipped-lib,
+# GITHUB_CREATED, GITHUB_UPDATED and the result JSON. Always returns 0: the
+# proposal is written either way.
+retro_github_post() {
+  local tmp="$1" libs result
+  libs=$(_retro_libs_dir)
+  if ! { [ -f "$libs/github-issues.sh" ] && [ -f "$libs/github-issue-retro.sh" ]; }; then
+    echo "WARN: github-issues.sh / github-issue-retro.sh not found under $libs — skipping GitHub post"
+    printf 'GITHUB_STATUS=skipped-lib\nGITHUB_CREATED=0\nGITHUB_UPDATED=0\n'
+    return 0
+  fi
+  (
+    # shellcheck source=../../lib/github-issues.sh
+    source "$libs/github-issues.sh"
+    # shellcheck source=../../lib/github-issue-retro.sh
+    source "$libs/github-issue-retro.sh"
+    if ! github_check_auth; then
+      echo "WARN: gh CLI not authenticated — skipping GitHub post (proposal still written)"
+      printf 'GITHUB_STATUS=skipped-auth\nGITHUB_CREATED=0\nGITHUB_UPDATED=0\n'
+      exit 0
+    fi
+    result=$(github_retro_process "$tmp/retro-input.json") || result=""
+    [ -n "$result" ] || result='{"created":[],"updated":[],"skipped":[]}'
+    echo "GITHUB_STATUS=posted"
+    echo "GITHUB_CREATED=$(jq '.created | length' <<<"$result" 2>/dev/null || echo 0)"
+    echo "GITHUB_UPDATED=$(jq '.updated | length' <<<"$result" 2>/dev/null || echo 0)"
+    echo "$result"
+  )
+  (cd "$tmp" 2>/dev/null && rm -f retro-input.json issue-body-*.md evidence-*.md) || true
+  return 0
+}
+
 # ── Source guard (GitHub #420) ───────────────────────────────────────────
 # When sourced, stop here: the caller wants the helpers above, not a full
 # retro aggregation run inline in its own shell (with its errexit/pipefail
@@ -128,6 +360,26 @@ correlate_failures_with_phase() {
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
   return 0
 fi
+
+case "${1:-}" in
+--claude-scan)
+  retro_claude_scan
+  exit $?
+  ;;
+--render-sections)
+  shift
+  retro_render_sections "$@"
+  exit $?
+  ;;
+--github-post)
+  [ -n "${2:-}" ] || {
+    echo "usage: retro.sh --github-post <scratch-dir>" >&2
+    exit 2
+  }
+  retro_github_post "$2"
+  exit $?
+  ;;
+esac
 
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
 # ZSH_VERSION references that trigger false-positive "unbound variable"

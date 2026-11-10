@@ -30,19 +30,14 @@ If `--from-auto` is set: source the project context env file instead of reading 
 source ~/.claude/skills/lib/ticket-env.sh {TICKET_ID}
 ```
 
-Use `$WIKI_ROOT` from the environment. If `$WIKI_ROOT` is empty, fall back to reading CLAUDE.md in the current directory — and when you resolve a value that way, `export WIKI_ROOT="<resolved absolute path>"` explicitly. Every later step in this skill (including the Step 4 commit guard) reads `$WIKI_ROOT` as a real shell variable, not by re-parsing this section's prose — an unexported value here reads as "not configured" downstream, which is the safe failure mode but not the correct one if a wiki actually exists.
+Use `$WIKI_ROOT` from the environment. If `$WIKI_ROOT` is empty, fall back to reading CLAUDE.md in the current directory. Each Bash call is a fresh shell, so note the resolved absolute path: later calls take it as `{WIKI_ROOT}` (Step 4) or re-source the env file.
 
 Stop here if no `WIKI_ROOT` is available — no wiki exists for this project.
 
 **Concurrency guard — acquire the WIKI_ROOT lock before any write.** `WIKI_ROOT` is one repo
-shared by every concurrent pipeline on the host, so two tickets' MAINTENANCE phases can overlap.
-Without a lock, the second run edits files the first has not committed yet, and its commit picks
-up the other ticket's half-done edits. Everything from the bootstrap below through the Step 4
-commit — including Step 2.5's ai-context promotion — writes under `WIKI_ROOT`, so the lock is
-taken here, before any of it. A `flock` would not work: it is released when the Bash call that
-took it exits, and this skill runs as many separate calls. `lib/wiki-lock.sh` uses a lock
-directory owned by the ticket id instead, aged out after `WIKI_LOCK_STALE_SECS` (default 1h) if
-its holder crashed:
+shared by every concurrent pipeline on the host, and everything from the bootstrap below through
+the Step 4 commit writes under it. Take the lock here, before any of it (why a lock directory and
+not a `flock`: `lib/wiki-lock.sh` header):
 
 ```bash
 bash "$HOME/.claude/skills/lib/wiki-lock.sh" acquire --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}" --log-file "${TAP_LOG:-}"
@@ -66,9 +61,9 @@ Route on `WIKI_LOCK_RC` — this is a literal precondition, not a judgement call
   `WIKI_ROOT` writes: skip to Step 5 and report `Committed: skipped — unsafe WIKI_ROOT lock
   location`. Do not try to work around it.
 
-**Release on every exit.** Once acquired, the lock must be released on every path out of this
-skill — the normal end of Step 4, and every early exit (the Step 2.5c `HUMAN_HOLD`/`ADR_CONFLICT`
-stops, Step 4's `ACCEPTED_ADR_MODIFIED` refusal, or any other abort):
+**Release on every exit.** Step 4's `wiki-finalize.sh` releases the lock on all of its own
+paths. Every earlier exit (the Step 2.5c `HUMAN_HOLD`/`ADR_CONFLICT` stops, or any other abort)
+releases it here:
 
 ```bash
 bash "$HOME/.claude/skills/lib/wiki-lock.sh" release --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}"
@@ -174,20 +169,13 @@ In addition to errata (failures), scan recent `ai-context.md` files (successes) 
 
 ### 2.5a — Discover ai-context.md files
 
-Find `ai-context.md` files created within the last 90 days:
+Find the `ai-context.md` files written in the last 90 days (run from the tickets root):
 
 ```bash
-# Use an absolute ISO-8601 date, not GNU find's relative "90 days ago" form:
-# `find` is `bfs` on some hosts, and bfs rejects relative timestamps outright
-# rather than falling back. Combined with `2>/dev/null` and a `| head`
-# pipeline (whose exit status is head's, not find's), the rejection was
-# invisible and this step silently returned nothing on every run on such a
-# host (2026-09-10 retro).
-_cutoff=$(date -u -d '90 days ago' +%Y-%m-%d 2>/dev/null || date -u -v-90d +%Y-%m-%d)
-find . -path "*/tickets/*/ai-context.md" -newermt "$_cutoff"
+bash ~/.claude/skills/lib/ai-context-find.sh
 ```
 
-If this `find` invocation itself errors, treat it as a failure and log it — do not interpret an empty result as "no recent ai-context.md files" without confirming `find` succeeded. If the `tickets` directory is elsewhere, derive the path from the ticket-auto workspace structure or search from the repo root. If no files are found (and `find` succeeded), skip to Step 3 — Lint before commit (a no-op when nothing changed this run).
+Exit 1 means `date` or `find` failed: log it and treat the list as incomplete, never as "no recent files". If the `tickets` directory is elsewhere, pass `--root <dir>`. If the list is empty (exit 0), skip to Step 3 — Lint before commit (a no-op when nothing changed this run).
 
 ### 2.5b — Read and evaluate each file
 
@@ -315,92 +303,22 @@ because the lint checks nothing a wording pass changes.
 
 ---
 
-## Step 4 — Commit WIKI_ROOT
+## Step 4 — Commit WIKI_ROOT, then verify the store
 
-`WIKI_ROOT` is its own docs repo with no branches; commit this run's edits scoped strictly to
-it. The `[ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git" ]` guard is load-bearing:
-`git -C ""` is not an error, so an empty `WIKI_ROOT` would commit in the current directory
-(possibly a source repo).
-
-```bash
-_wlock="$HOME/.claude/skills/lib/wiki-lock.sh"
-if [ -z "$WIKI_ROOT" ] || [ ! -d "$WIKI_ROOT/.git" ]; then
-  echo "WARNING: WIKI_ROOT not configured or not a git repo — skipping wiki commit" >&2
-  bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-commit skip "WIKI_ROOT not configured or not a git repo"
-else
-  # adr-governance-gate: run before staging — adr-check.sh's immutability check
-  # diffs the working-tree body against the last COMMITTED revision, so it must
-  # see this run's edits while the prior commit is still the comparison point.
-  _adr_check_out=$(bash "$HOME/.claude/skills/lib/adr-check.sh" --wiki-root "$WIKI_ROOT" 2>&1)
-  _adr_check_rc=$?
-  if [ "$_adr_check_rc" -ne 0 ] && echo "$_adr_check_out" | grep -q 'ACCEPTED_ADR_MODIFIED'; then
-    echo "ERROR: adr-check.sh found a modification to an Accepted ADR — refusing to commit WIKI_ROOT." >&2
-    echo "Accepted ADRs are immutable in meaning (docs/adr-schema.md). Revert the edit and draft a superseding ADR instead." >&2
-    bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-commit fail "ACCEPTED_ADR_MODIFIED — commit refused"
-    bash "$_wlock" release --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}" >/dev/null
-    exit 1
-  elif [ "$_adr_check_rc" -ne 0 ]; then
-    # Other adr-check.sh violations (schema, hedging, etc.) are logged but do not
-    # block the commit — same non-fatal posture as Step 3's wiki-check.sh lint.
-    bash ~/.claude/skills/lib/plog.sh MAINTENANCE adr-check warn "violations found — see command output"
-  fi
-
-  # Scoped commit, never `git add -A`: wiki-lock.sh stages and commits only the
-  # paths that are new or changed since this run acquired the lock (Step 0), so
-  # another ticket's uncommitted WIKI_ROOT edits are never swept into this
-  # ticket's commit. It refuses (rc 5) unless {TICKET-ID} still owns the lock.
-  bash "$_wlock" commit --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}" \
-    --message "docs(wiki): {TICKET-ID} {one-line summary of what was incorporated}"
-  _wcommit_rc=$?
-  case "$_wcommit_rc" in
-    0) ;;
-    6) echo "Nothing of this run's to commit in WIKI_ROOT — skipping commit." ;;
-    5)
-      echo "WARNING: WIKI_ROOT lock no longer held by {TICKET-ID} — commit refused" >&2
-      bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-commit fail "WIKI_ROOT lock not held — commit refused"
-      ;;
-    *) bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-commit fail "git commit failed (rc $_wcommit_rc)" ;;
-  esac
-fi
-if [ -n "$WIKI_ROOT" ] && [ -d "$WIKI_ROOT" ]; then
-  bash "$_wlock" release --wiki-root "$WIKI_ROOT" --ticket "{TICKET-ID}"
-fi
-```
-
-Before running this block, re-run the Step 0 `acquire` block once (it refreshes the lock's
-age). If it returns anything other than `0`, another run broke the lock as stale: skip the
-commit but still run the release line. Lock and scoped-commit semantics: `lib/wiki-lock.sh`
-header. See `agents/ticket-maintenance-agent.md` for why this is the one commit this agent may
-make.
-
----
-
-## Step 4.5 — Wiki and ADR store integrity verification
-
-Run `lib/wiki-verify.sh` as the final step of this skill, after the commit lands — unlike Step
-3's `wiki-check.sh` (`--changed-only`) and Step 4's `adr-check.sh` (a targeted immutability gate),
-this is a whole-store structural pass: registry completeness (`index.md` File Registry vs the
-filesystem, both directions), `related:` link integrity, ADR schema/duplicate-source/supersession
-backstops, decisions-index consistency, and glossary term-drift/entry-rot
-(`openspec/changes/adr-governance-gate/specs/wiki-verify/spec.md`).
+`WIKI_ROOT` is its own docs repo with no branches. One call refreshes the Step 0 lock, refuses
+the commit when `adr-check.sh` finds an edit to an Accepted ADR (exit 1: revert it and draft a
+superseding ADR instead), makes the scoped commit of this run's own paths, releases the lock on
+every exit path, then runs the whole-store `wiki-verify.sh` pass. Fill `{WIKI_ROOT}` with the
+absolute path from Step 0; empty means not configured and nothing is committed:
 
 ```bash
-if [ -n "$WIKI_ROOT" ] && [ -d "$WIKI_ROOT" ]; then
-  _wiki_verify_out=$(bash "$HOME/.claude/skills/lib/wiki-verify.sh" --wiki-root "$WIKI_ROOT" 2>&1)
-  _wiki_verify_rc=$?
-  _wiki_verify_count=$(echo "$_wiki_verify_out" | grep -oE 'violations=[0-9]+' | tail -1 | cut -d= -f2)
-  if [ "$_wiki_verify_rc" -eq 2 ]; then
-    bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-verify fail "setup error — see command output"
-  elif [ "$_wiki_verify_rc" -ne 0 ]; then
-    bash ~/.claude/skills/lib/plog.sh MAINTENANCE wiki-verify warn "${_wiki_verify_count:-?} violations found — see command output"
-  fi
-fi
+bash ~/.claude/skills/lib/wiki-finalize.sh --wiki-root "{WIKI_ROOT}" --ticket "{TICKET-ID}" --message "docs(wiki): {TICKET-ID} {one-line summary of what was incorporated}"
 ```
 
-Non-blocking (design.md D13) — a structural-integrity violation warns and this run's report
-carries the count; it never fails the run or reverts the commit already made in Step 4. A human
-incorporates `wiki-verify.sh` findings on a later pass, the same posture Step 3's lint already
-has for freshness/link findings.
+Log lines and return codes: `lib/wiki-finalize.sh` header. A lock another run broke as stale
+skips the commit (`wiki-commit|skip`). `wiki-verify.sh` findings are non-blocking (design.md
+D13): they warn, the report carries the count, and a human handles them on a later pass. See
+`agents/ticket-maintenance-agent.md` for why this is the one commit this agent may make.
 
 ---
 

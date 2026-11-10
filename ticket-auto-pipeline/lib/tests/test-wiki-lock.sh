@@ -352,13 +352,16 @@ test_skill_has_no_unscoped_add() {
 }
 
 test_skill_acquires_before_bootstrap_and_commits_scoped() {
-  local acq boot commit
+  # The scoped commit and its release moved into lib/wiki-finalize.sh
+  # (skill-deterministic-extraction 6a; behaviour in test-wiki-finalize.sh).
+  local acq boot fin fsh="$LIB_DIR/wiki-finalize.sh"
   acq=$(grep -n 'wiki-lock.sh" acquire' "$SKILL" | head -1 | cut -d: -f1)
   boot=$(grep -n '^wiki_bootstrap "\$WIKI_ROOT"' "$SKILL" | head -1 | cut -d: -f1)
-  commit=$(grep -n '"\$_wlock" commit' "$SKILL" | head -1 | cut -d: -f1)
-  [ -n "$acq" ] && [ -n "$boot" ] && [ -n "$commit" ] || return 1
-  [ "$acq" -lt "$boot" ] || return 1
-  grep -q '"\$_wlock" release' "$SKILL"
+  fin=$(grep -n 'lib/wiki-finalize.sh --wiki-root' "$SKILL" | head -1 | cut -d: -f1)
+  [ -n "$acq" ] && [ -n "$boot" ] && [ -n "$fin" ] || return 1
+  [ "$acq" -lt "$boot" ] && [ "$boot" -lt "$fin" ] || return 1
+  grep -q '"\$_wlock" commit' "$fsh" && grep -q '"\$_wlock" release' "$fsh" &&
+    ! grep -qE 'git -C "\$_WF_ROOT" add -A' "$fsh"
 }
 
 # ── run ──────────────────────────────────────────────────────────────────────

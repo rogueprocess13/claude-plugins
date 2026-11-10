@@ -30,10 +30,10 @@ This is user state, not skill-bundle state. It survives plugin upgrades.
 
 ## Step 1 — Aggregate logs via retro.sh
 
-Invoke `retro.sh` with the window flag. Include `--force` to bypass cursor-based deduplication:
+Invoke `retro.sh` with the window flag (add `--force` to bypass cursor-based deduplication). It saves the JSON in the private scratch dir; note the printed `RETRO_JSON` path for Step 4:
 
 ```bash
-bash ~/.claude/skills/ticket-retro/retro.sh --window {WINDOW}
+R="$(bash ~/.claude/skills/lib/ticket-tmp.sh)/retro.json" && bash ~/.claude/skills/ticket-retro/retro.sh --window {WINDOW} >"$R" && cat "$R" && echo "RETRO_JSON=$R"
 ```
 
 `retro.sh` maintains a cursor file at `~/.claude/state/ticket-retro/retro-cursor.json` that records the last-scanned mtime for each log. On subsequent runs, logs whose mtime hasn't changed are skipped. This prevents re-reporting failures from logs that were already analyzed in a prior retro run. Use `--force` to re-scan all logs regardless.
@@ -60,42 +60,15 @@ Parse the JSON output into the following variables:
 
 ## Step 1.6 — Complexity calibration corrections
 
-`{COMPLEXITY_CALIBRATION}` (above) names the false-simples but not *why* a
-prediction missed. `ticket-implement` Step 4c already writes the qualitative gap for every
-mismatch as a `source=appraise` (complexity sweep) or `source=exec` (plan artifact) CORRECTIONS
-block in the ticket's own notes.md — this is scoring feedback for `ticket-appraise`, not
-codebase knowledge, so it belongs here rather than in the wiki (`wiki-maintenance` Step 2.6
-deliberately skips `source=appraise` entries and routes them here instead).
-
-Runs regardless of whether `{FAILURE_HISTOGRAM}` is empty — a complexity mismatch is not a
-gate-stop failure, so a "clean window" on failures can still have calibration signal to report.
-
-For each entry in `{COMPLEXITY_CALIBRATION}.false_simple_tickets`, and — as informational
-context only — each `{COMPLEXITY_PREDICTIONS}` entry with `declared=complex` and `actual=Smooth`
-(`ticket-implement` Step 4c still writes CORRECTIONS for that cell; it is confounded, so its notes
-are shown but never used to argue for loosening the classifier):
-
-```bash
-source "$HOME/.claude/skills/lib/ticket-dir.sh"
-source "$HOME/.claude/skills/lib/corrections-parse.sh"
-
-_tdir=$(resolve_ticket_dir "{ticket}" "." 2>/dev/null) || _tdir=""
-if [ -n "$_tdir" ] && [ -f "$_tdir/notes.md" ]; then
-  eval "$(get_corrections_by_source "$_tdir/notes.md" appraise)"
-  # CORRECTION_{N}_FACT / _SOURCE / _CORRECTED, N = 0..CORRECTION_COUNT-1 — appraise hits
-  _appraise_count="${CORRECTION_COUNT:-0}"
-  eval "$(get_corrections_by_source "$_tdir/notes.md" exec)"
-  # Same shape — exec hits (overwrites CORRECTION_COUNT/CORRECTION_*; read appraise first)
-fi
-```
-
-A ticket directory that can't be resolved (workspace already cleaned up, or retro is being run
-from a directory other than the tickets root) is skipped silently for that ticket — this
-section is best-effort enrichment layered on top of the log-derived calibration table, never a
-blocker on the rest of the retro run.
-
-Collect every hit into `{CALIBRATION_NOTES}` — a list of `{ticket, source, fact, corrected}` —
-for the Step 4 report section below.
+`{COMPLEXITY_CALIBRATION}` names the false-simples but not *why* a prediction missed.
+`ticket-implement` Step 4c writes that gap as a `source=appraise` (complexity sweep) or
+`source=exec` (plan artifact) CORRECTIONS block in the ticket's notes.md; it is scoring feedback
+for `ticket-appraise`, so it surfaces here, not in the wiki (`wiki-maintenance` Step 2.6 skips
+`source=appraise`). Step 4's `--render-sections` reads those blocks itself
+(`retro_calibration_notes` in `retro.sh`) for every false-simple, and for each `declared=complex`
+`actual=Smooth` ticket as confounded context only — never an argument for loosening the
+classifier. It runs whether or not the window had failures; a ticket dir it cannot resolve from
+the tickets root is skipped.
 
 ---
 
@@ -105,49 +78,17 @@ If `{FAILURE_HISTOGRAM}` is empty (no failures), skip to Step 4 to write a short
 
 ## Step 1.5 — Scan Claude log for failure signals and improvement hints
 
-Source `retro.sh` for the Claude log scan helpers, then scan `$CLAUDE_LOG_FILE` (if set and present) for failure signals, `★ Insight` blocks, and `RETRO|hint` entries. Scratch files go in the private dir the first line prints; note it as `{RETRO_TMP}` for Step 5.5:
+Scan `$CLAUDE_LOG_FILE` (if set and present) for failure signals, `★ Insight` blocks and
+`RETRO|hint` entries. Note the printed `RETRO_TMP` (private scratch dir) as `{RETRO_TMP}` for
+Steps 4 and 5.5:
 
 ```bash
-RETRO_TMP=$(bash ~/.claude/skills/lib/ticket-tmp.sh) || exit 1; echo "RETRO_TMP=$RETRO_TMP"
-CLAUDE_FAILURES="$RETRO_TMP/claude-log-failures.txt"
-CLAUDE_INSIGHTS="$RETRO_TMP/claude-log-insights.txt"
-CLAUDE_HINTS="$RETRO_TMP/claude-log-hints.txt"
-CLAUDE_CORRELATED="$RETRO_TMP/claude-log-correlated.txt"
-
-if [ -n "${CLAUDE_LOG_FILE:-}" ] && [ -f "$CLAUDE_LOG_FILE" ]; then
-  # Absolute installed path, same as Step 1 — never relative to the script name: in a skill
-  # bash block the script-name parameter is the shell (or a substituted argument), not this file
-  # (GitHub #420). retro.sh's source guard makes sourcing define helpers only.
-  RETRO_SH="$HOME/.claude/skills/ticket-retro/retro.sh"
-  source "$RETRO_SH"
-
-  # Phase 1: Failure signal scan
-  scan_claude_log_failures "$CLAUDE_LOG_FILE" "$CLAUDE_FAILURES" || true
-
-  # Phase 2a: ★ Insight block scan
-  grep -n -A5 "★ Insight" "$CLAUDE_LOG_FILE" 2>/dev/null | head -100 > "$CLAUDE_INSIGHTS" || true
-
-  # Phase 2b: RETRO|hint entries
-  grep -n "RETRO|hint" "$CLAUDE_LOG_FILE" 2>/dev/null | head -50 > "$CLAUDE_HINTS" || true
-
-  # Phase 3: Phase-windowed correlation on failures
-  if [ -s "$CLAUDE_FAILURES" ]; then
-    correlate_failures_with_phase "$CLAUDE_LOG_FILE" "$CLAUDE_FAILURES" "$CLAUDE_CORRELATED" || true
-  fi
-
-  echo "claude-log-scan: done"
-else
-  echo "claude-log-scan: skipped (CLAUDE_LOG_FILE not set or file missing)"
-fi
+bash ~/.claude/skills/ticket-retro/retro.sh --claude-scan
 ```
 
-Read the output files (under `{RETRO_TMP}`) into context variables:
-- `{CLAUDE_FAILURES}` — failure keyword hits, line-numbered
-- `{CLAUDE_INSIGHTS}` — ★ Insight blocks with 5 lines context
-- `{CLAUDE_HINTS}` — RETRO|hint entries verbatim
-- `{CLAUDE_CORRELATED}` — phase-grouped failure report, or empty if no phase boundaries
-
-If `$CLAUDE_LOG_FILE` is unset or missing, all variables are empty and all Claude log sections are omitted from the proposal.
+It writes `claude-log-{failures,insights,hints,correlated}.txt` there (read them for Step 3
+context) and prints `claude-log-scan: done` or `skipped` (no log: all Claude log sections are
+omitted from the proposal).
 
 ---
 
@@ -239,122 +180,21 @@ Collect all diffs into `{ALL_DIFFS}` for Step 4.
 
 Write `~/.claude/state/ticket-retro/proposals/{YYYY-MM-DD}-retro.md` with these sections in order:
 
-### Section: Failure Histogram
+### Sections: Failure Histogram through Agent Improvement Hints
 
-Markdown table of error codes and their frequencies, sorted descending:
+These five sections are rendered, not written by hand. Start the proposal with the output of:
 
-```markdown
-## Failure Histogram
-
-Sources scanned: ticket-auto {LOGS_BY_SOURCE.ticket-auto.scanned} log(s), planner {LOGS_BY_SOURCE.planner.scanned} log(s).
-
-| Code | Count |
-|------|-------|
-| EXEC_NO_ARTIFACT | 4 |
-| APPROVAL_REVOKED | 2 |
+```bash
+bash ~/.claude/skills/ticket-retro/retro.sh --render-sections "{RETRO_JSON}" --scan-dir "{RETRO_TMP}" --tickets-root .
 ```
 
-Omit the "Sources scanned" line when `{LOGS_BY_SOURCE}.planner.scanned` is `0` and `.skipped` is also `0` — i.e. no planner logs were ever in play for this run, so the source breakdown adds nothing.
-
-### Section: Complexity Calibration
-
-The declared × outcome matrix, the false-simple rate from the `declared=simple` row only, and the
-named false-simples. Always show `n` alongside the rate — never a bare ratio:
-
-```markdown
-## Complexity Calibration
-
-| Declared \ Outcome | Smooth | Rough | Hard |
-|--------------------|--------|-------|------|
-| simple             | 6      | 1     | 1    |
-| complex ⚠ confounded | 3    | 1     | 0    |
-
-**False-simple rate:** 0.250 (2 of 8 simple tickets went Rough/Hard; lower is better)
-**False-simples:** ABC-47 (Hard), ABC-52 (Rough)
-**Unscoreable:** 1 missing declared, 0 missing outcome
-
-The complex row is shown for completeness only: a complex classification changes the
-treatment, so its outcomes are not scored.
-```
-
-When `suppressed` is `true`, replace the rate line with:
-
-```markdown
-**False-simple rate:** suppressed — only {simple_row_n} simple ticket(s) this window (floor: {min_n})
-```
-
-Keep the **False-simples** line even when suppressed — the named tickets are evidence regardless
-of sample size. Omit it, and the **Unscoreable** line, when their values are empty / both `0`.
-
-### Section: Complexity Calibration Notes (if {CALIBRATION_NOTES} non-empty)
-
-The qualitative counterpart to the calibration table above — what specifically each mismatch
-missed, sourced from Step 1.6:
-
-```markdown
-## Complexity Calibration Notes
-
-| Ticket | Source | Gap |
-|--------|--------|-----|
-| ABC-47 | appraise | Complexity sweep underestimated — undiscovered Feign dependency |
-| ABC-48 | exec | Plan artifact missed a required DB migration |
-
-**Corrected:**
-- ABC-47: {corrected text from the appraise-source CORRECTIONS entry}
-- ABC-48: {corrected text from the exec-source CORRECTIONS entry}
-```
-
-Omit this section entirely when `{CALIBRATION_NOTES}` is empty — a mismatch existing in the
-calibration table with no resolvable notes.md (ticket dir cleaned up, or no CORRECTIONS block
-written) is not itself an error worth reporting here.
-
-### Section: Claude Log Failures (if scan ran)
-
-If `{CLAUDE_LOG_FILE}` was set and the scan found failures, include this section:
-
-```markdown
-## Claude Log Failures
-
-<!-- If phase correlation succeeded, use correlated output: -->
-{CLAUDE_CORRELATED}
-
-<!-- If phase correlation was unavailable but failures were found, use flat list: -->
-<!-- If neither, state: "No failure signals detected in Claude log." -->
-```
-
-**Phase-correlated format** (when `{CLAUDE_CORRELATED}` is non-empty): Use the content verbatim — it already has per-phase `###` headings with line-numbered failure entries.
-
-**Flat format** (when `{CLAUDE_CORRELATED}` is empty but `{CLAUDE_FAILURES}` has content): List each failure line with its line number. Precede with the "Phase correlation unavailable" note from the correlated output if present.
-
-If `{CLAUDE_FAILURES}` is empty (scan ran but found nothing): Write "No failure signals detected in Claude log."
-
-If the scan was skipped (CLAUDE_LOG_FILE unset): Omit this section entirely.
-
-### Section: Agent Improvement Hints (if scan ran)
-
-If `{CLAUDE_LOG_FILE}` was set and either insights or hints were found, include this section:
-
-```markdown
-## Agent Improvement Hints
-
-### Insight Blocks
-
-<!-- If {CLAUDE_INSIGHTS} is non-empty, list each Insight block verbatim: -->
-{CLAUDE_INSIGHTS}
-
-<!-- If empty: "No ★ Insight blocks found." -->
-
-### Explicit Hints
-
-<!-- If {CLAUDE_HINTS} is non-empty, list each RETRO|hint entry verbatim: -->
-{CLAUDE_HINTS}
-
-<!-- If empty: "No explicit RETRO|hint entries found." -->
-```
-
-If both Insight Blocks and Explicit Hints are empty, write "No agent improvement hints found."
-
-If the scan was skipped (CLAUDE_LOG_FILE unset): Omit this section entirely.
+It prints, in order: **Failure Histogram** (codes by count, plus the per-source line when planner
+logs were in play); **Complexity Calibration** (the declared × outcome matrix, the false-simple
+rate from the `declared=simple` row only with its `n` — or `suppressed` below the floor — the
+named false-simples and unscoreable counts; the complex row is marked confounded and never
+scored); **Complexity Calibration Notes** (Step 1.6, omitted when empty); and, only when the
+Step 1.5 scan ran, **Claude Log Failures** and **Agent Improvement Hints**. Never compute an
+overall accuracy from the matrix, and never report `complex`+`Smooth` as a misprediction.
 
 ### Section: Pattern Analysis
 

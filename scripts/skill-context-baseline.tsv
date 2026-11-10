@@ -1,11 +1,11 @@
 dor-semantic	88790
-guidance-extractor	96916
+guidance-extractor	96312
 ticket-appraise	156686
 ticket-appraise-exec	124970
 ticket-appraise-exec:conditional	14328
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
 ticket-appraise:conditional	35324
-ticket-document	81874
+ticket-document	79252
 ticket-gate-reconcile	10321
 ticket-implement	145128
 ticket-implement:conditional	9949
@@ -13,9 +13,9 @@ ticket-pr-iterate	104378
 ticket-pr-review	131345
 ticket-reproduce	107942
 ticket-reproduce:conditional	2641
-ticket-retro	24513
-ticket-retro:conditional	5124
+ticket-retro	18359
+ticket-retro:conditional	4179
 ticket-verify	176408
 ticket-verify:conditional	16693
-wiki-maintenance	97377
+wiki-maintenance	92155
 wiki-maintenance:conditional	5060
