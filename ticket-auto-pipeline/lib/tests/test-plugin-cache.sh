@@ -187,9 +187,12 @@ echo "--- Test 3: inline bootstrap blocks ---"
 # ticket-flow, ticket-env-check (tap_cache_find) and fleet-features
 # (fleet_cache_find) source the synced resolver instead of a pasted block, so
 # they are not listed. ticket-auto lost its last block (Step 0.4 _validate_sh)
-# to lib/ticket-preamble.sh (_tp_validate_script, Test 2). Only files that
-# still carry a block belong here — a listed file with none fails.
-BLOCK_FILES="fleet-controller/skills/fleet-env-check/SKILL.md"
+# to lib/ticket-preamble.sh (_tp_validate_script, Test 2), and fleet-env-check
+# its own to `fleet-plugin-cache.sh run` (fleet_cache_find; guarded by
+# fleet-controller/lib/tests/test-fleet-skill-locator.sh). Only files that
+# still carry a block belong here — a listed file with none fails, and an
+# unlisted markdown file that grows one fails the sweep below.
+BLOCK_FILES=""
 
 # extract_blocks <file> — prints each block, NUL-separated.
 extract_blocks() {
@@ -235,6 +238,18 @@ run_blocks 0.9.4 "follows installPath"
 write_installed 9.9.9
 run_blocks 0.62.7 "falls back from a stale installPath"
 echo "  ($((total_blocks / 3)) blocks)"
+
+# No markdown file outside BLOCK_FILES may carry an inline bootstrap block.
+unlisted=""
+while IFS= read -r f; do
+  case " $BLOCK_FILES " in *" $f "*) continue ;; esac
+  if [ -n "$(extract_blocks "${REPO_ROOT}/${f}" | tr -d '\0')" ]; then unlisted="$unlisted $f"; fi
+done < <(cd "$REPO_ROOT" && find ticket-auto-pipeline fleet-controller -name '*.md' -path '*/skills/*' -o -name '*.md' -path '*/lib/*' | sort)
+if [ -z "$unlisted" ]; then
+  pass "3: no unlisted SKILL.md/preamble carries an inline bootstrap block"
+else
+  fail "3: no unlisted SKILL.md/preamble carries an inline bootstrap block" "found in:$unlisted"
+fi
 
 # ticket-flow/SKILL.md's main execution block used to carry its own flow.sh
 # resolver; it now delegates to lib/flow-run.sh (tap_cache_find). Make sure it

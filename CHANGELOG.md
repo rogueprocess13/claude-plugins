@@ -17,6 +17,29 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.47.0 (2026-11-10)
+
+`skill-deterministic-extraction` group 6c: the fleet-env-check and fleet-features skills had separate
+inline script-locator fences. Both now make one call to `fleet-plugin-cache.sh run`. SKILL.md bytes:
+fleet-env-check 4,889 → 4,151, fleet-features 6,050 → 5,622. The output matches the old fences in
+every case the test embeds them for, except the one listed below.
+
+### Added
+- `fleet-plugin-cache.sh run [--summary-file] <relpath> [args...]` (CLI mode; sourcing is unchanged).
+  It locates `<relpath>` with `fleet_cache_find`, else `$CLAUDE_PLUGIN_ROOT`, runs it, and prints its
+  output from a private temp file, or `OUTPUT_FILE_MISSING` when that file is empty.
+- `lib/tests/test-fleet-skill-locator.sh`, registered in `make test-lib`.
+- `ticket-auto-pipeline/lib/tests/test-plugin-cache.sh` Test 3 now has an empty block list and fails
+  if any SKILL.md or preamble grows an unlisted inline bootstrap block again.
+
+### Changed (behaviour)
+- **fleet-env-check needs the synced helper.** It used to carry its own installPath/cache lookup,
+  so it worked before the SessionStart lib sync had run. It now runs
+  `~/.claude/skills/lib/fleet-plugin-cache.sh`, as fleet-features and ticket-env-check already did.
+  On a first install, start a new session before running it. The skill prose says so.
+- fleet-env-check's not-found line now reads "reinstall the fleet-controller plugin"
+  (previously "reinstall the plugin").
+
 ## knowledge-curator 0.3.0 (2026-11-10)
 
 `skill-deterministic-extraction` group 6b: the inline bash of kc-capture (Step 3 id allocation,

@@ -20,29 +20,13 @@ No arguments. Run from the project directory containing `CLAUDE.md`.
 
 ### Step 1 — Run the check
 
-Write `fleet-env-check.sh` output to a temp file (avoids bash stdout truncation). Tries the installed plugin version first (`installed_plugins.json`, then the newest cached version by version order), falling back to the repo-relative path.
+Run the installed `fleet-env-check.sh` (installed version first, then the newest cached version, then `$CLAUDE_PLUGIN_ROOT`). The locator has it write its summary to a private temp file and prints that, which avoids stdout truncation.
 
 ```bash
-OUT=$(mktemp) # private 0600 file, never a fixed /tmp name
-ENV_CHECK=""
-# Not synced: the installed version recorded in installed_plugins.json, then the
-# newest cached version by *version* order (a plain sort picks 0.9.x over 0.62.x, #468).
-[ -f "$ENV_CHECK" ] || ENV_CHECK="$(sed -n 's/.*"installPath"[[:space:]]*:[[:space:]]*"\([^"]*\/fleet-controller\/[^"]*\)".*/\1/p' \
-  "${HOME}/.claude/plugins/installed_plugins.json" 2>/dev/null | sort -V | tail -1)/lib/fleet-env-check.sh"
-[ -f "$ENV_CHECK" ] || ENV_CHECK=$(find "${HOME}/.claude/plugins/cache" \
-  -path "*/fleet-controller/*/lib/fleet-env-check.sh" 2>/dev/null | sort -V | tail -1)
-[ -f "$ENV_CHECK" ] || ENV_CHECK=""
-if [ -z "$ENV_CHECK" ] && [ -f "$CLAUDE_PLUGIN_ROOT/lib/fleet-env-check.sh" ]; then
-  ENV_CHECK="$CLAUDE_PLUGIN_ROOT/lib/fleet-env-check.sh"
-fi
-if [ -n "$ENV_CHECK" ]; then
-  bash "$ENV_CHECK" --summary-file "$OUT" || true
-else
-  echo "fleet-env-check.sh not found — reinstall the plugin"
-fi
-[ -s "$OUT" ] && cat "$OUT" || echo "OUTPUT_FILE_MISSING"
-rm -f "$OUT"
+bash ~/.claude/skills/lib/fleet-plugin-cache.sh run --summary-file lib/fleet-env-check.sh
 ```
+
+If it prints nothing at all, the synced helper is missing or older than this skill (for example on first install): start a new Claude Code session, whose SessionStart hook syncs `~/.claude/skills/lib/`, and run it again.
 
 ### Step 2 — Display as table
 
