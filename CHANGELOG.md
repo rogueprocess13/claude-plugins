@@ -17,6 +17,41 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.101.0 (2026-11-10)
+
+`ticket-appraise-exec` complexity-specific text moves to references
+(`skill-progressive-disclosure`, group 4). Relocation only: no step changes what it does.
+
+### Changed
+
+- `skills/ticket-appraise-exec/SKILL.md` 43,200 → 32,284 bytes. Moved verbatim:
+  - `references/simple-fix-template.md` (simple only): the Step 3-Simple Completion Checklist
+    requirement and the `simple-fix.md` template.
+  - `references/adversarial-review.md` (complex only): the Step 3.6 reviewer prompt and the
+    Approach review block appended from round 3 on.
+  - `references/verification-plan.md` (complex only): the Step 3.7 inputs, derivation steps A–E
+    and push-back triggers. Its override sentence now says "the same schema as SKILL.md Step 3.7"
+    instead of "below".
+
+  Each moved section keeps its heading over a `Moved to` stub.
+- New "Reference files (load condition)" in Step 3. A simple ticket reads the simple-fix template
+  before writing `simple-fix.md`. A complex ticket reads the adversarial prompt before Step 3.6 and
+  the derivation before Step 3.7, also on a `--from-step create-artifact` or `verify-plan-derived`
+  resume, which skips Step 3 (both dispatch rows name the references). A missing reference logs
+  `META|reference-missing|fail` and stops.
+- Kept inline: round awareness and the `ADVERSARIAL_BLOCKED` gate, the MANDATORY keep-going rule,
+  the verdict records, the notes.md `## Verification Plan` schema (`**Derived by:**`,
+  `### Per-Criterion Verification`, read by `vplan-parse.sh`), the Role Scope Registry write, the
+  Step 3.7 heartbeats, Steps 3.4, 3.5, 3.8 and the Step 5 comment template.
+- **Fingerprint:** the `ticket-appraise-exec` skill fingerprint changes.
+  `prompt_manifests["ticket-appraise-exec"]` lists the three references directly after SKILL.md.
+- Context (rule 9): `ticket-appraise-exec` 138,336 → 127,420 plus
+  `ticket-appraise-exec:conditional` 14,328. A simple ticket reads 129,655 (−8,681), a
+  complex ticket 139,513 (+1,177: the condition text and reference headers cost more than
+  the simple template it skips).
+- Tests: `test-skill-references.sh` `test_appraise_exec_complexity_condition` checks the
+  condition, the stubs, the resume rows, the inline contracts and what each reference holds.
+
 ## 0.100.0 (2026-11-10)
 
 `ticket-verify` mode variants and report templates move to references

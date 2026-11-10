@@ -26,9 +26,9 @@ Steps 3.7 and 3.8 write their own heartbeats inline. Also write (event schema: `
 | `--from-step` value | Skip to | Restore from |
 |---------------------|---------|--------------|
 | `load-workspace` | Step 3 (create artifact) | notes.md `## Complexity` for COMPLEXITY; context.md for ticket metadata |
-| `create-artifact` | Step 3.5 (regression guard) | simple-fix.md or openspec change already exists |
+| `create-artifact` | Step 3.5 (regression guard) | simple-fix.md or openspec change already exists; complex: `references/adversarial-review.md` and `references/verification-plan.md` per the Step 3 condition |
 | `regression-guard` | Step 4 (re-appraisal check) | `## ⚠️ Regression Risk` in notes.md if present |
-| `verify-plan-derived` | Step 3.7 (derive verification plan) | `## Verification Plan` in notes.md if present |
+| `verify-plan-derived` | Step 3.7 (derive verification plan) | `## Verification Plan` in notes.md if present; `references/verification-plan.md` per the Step 3 condition |
 | `post-linear` | End — skill already complete | — |
 
 ---
@@ -90,54 +90,19 @@ bash ~/.claude/skills/lib/plog.sh EXEC create-artifact start "Creating artifact"
 
 Branch on `{COMPLEXITY}` extracted from notes.md:
 
+### Reference files (load condition)
+
+**If `{COMPLEXITY}` = simple**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/simple-fix-template.md` before Step 3-Simple writes `simple-fix.md`. **If `{COMPLEXITY}` = complex**, run `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/adversarial-review.md` before Step 3.6 spawns the reviewer and `bash ~/.claude/skills/lib/skill-ref.sh ticket-appraise-exec references/verification-plan.md` before Step 3.7 derives the plan, including on a `--from-step` resume (`create-artifact`, `verify-plan-derived`) that skips this step. Read each printed path in full and do not continue until you have read it. If `skill-ref.sh` exits non-zero, run `bash ~/.claude/skills/lib/plog.sh META reference-missing fail "references/<file>.md"` with the file that failed and stop: never write `simple-fix.md`, the reviewer prompt or the verification plan from memory. A simple ticket reads neither complex file; a complex ticket does not read the simple-fix template.
+
+A `--from-step` resume skips Step 1, so take `{COMPLEXITY}` from notes.md `## Complexity` with the Step 3.4 `get_complexity` call. After a context compaction, read the reference again before continuing the step it covers.
+
 ---
 
 ### Step 3-Simple (complexity = simple)
 
 Create `simple-fix.md` in the ticket directory. Do not run `opsx:propose`.
 
-**Completion Checklist requirement:** The `## Completion Checklist` section is
-machine-validated by the return-completeness gate after implementation. Every
-`- [ ]` item must map to a ticket acceptance criterion. The implement agent must
-check these off as work is completed. If the ticket description has no explicit
-ACs, derive checklist items from the ticket's core behavioral requirements —
-one independently verifiable outcome per item.
-
-```markdown
-# Simple Fix — {ISSUE-ID}
-
-## Summary
-{one sentence: what the ticket asks for}
-
-## Affected files
-{For each file that needs to change:}
-- `{repo-relative-path}:{line or range}` — {what needs to change and why}
-
-## How to implement
-{Concrete step-by-step instructions derived from the investigation. Be specific enough
-that an implementer can follow without re-reading the ticket. Include method names,
-field names, enum values, config keys, etc. where known.}
-
-## Completion Checklist
-{For each acceptance criterion in the ticket description:
-- Start the line with `- [ ]` followed by the criterion in plain language
-- If no explicit ACs exist, derive checklist items from the ticket's core requirements
-- Each item must be independently verifiable — one concrete outcome per line
-Examples:
-- [ ] AC-1: User can initiate a handover from the matter detail page
-- [ ] AC-2: Error message displayed when handover fails due to missing attorney assignment}
-
-## Constraints and gotchas
-{Anything that could go wrong: ordering dependencies, side effects, things NOT to change.
-Omit this section if there are none.}
-
-{If BLAST_RADIUS is not "none":}
-## Blast Radius (from GitNexus)
-{Insert the blast radius table from notes.md verbatim.}
-
-{If any target has d=1 callers listed:}
-**⚠️  High-risk targets:** {list targets with HIGH/CRITICAL risk or 3+ d=1 callers}. These break if the change is wrong — verify each one is intentionally modified or confirmed unaffected.
-```
+Moved to `references/simple-fix-template.md` (the Completion Checklist requirement and the `simple-fix.md` template), read per the Step 3 condition.
 
 ---
 
@@ -339,96 +304,7 @@ Spawn a `general-purpose` agent with an adversarial framing. Its sole job is to 
 
 **⚠️ MANDATORY — read before spawning:** the `Task` call's return is not the end of this skill. Handle it per **"When the agent returns"**, then continue in the same turn through Steps 3.7 → 3.8 → 4 → 5 → 6 → 7; stopping here leaves the ticket with no Linear comment.
 
-**Prompt the agent with:**
-
-<!-- size-gate: template -->
-```
-You are an adversarial reviewer. Your job is to find holes in an implementation plan for a ticket. Be skeptical. Assume nothing. If the plan is solid, say so — but dig hard first.
-
-Ticket: {ISSUE-ID} — {title}
-Description: {description}
-Labels: {labels}
-
-Read these files in the ticket workspace ({TICKET_DIR}):
-1. `notes.md` — investigation findings, complexity, prior art, blast radius
-2. The implementation artifact:
-   - If `simple-fix.md` exists: read it (this shouldn't happen for complex tickets, but check)
-   - Otherwise: read `openspec/changes/{change-name}/design.md`, `openspec/changes/{change-name}/tasks.md`, and any spec files under `openspec/changes/{change-name}/specs/`
-
-Attack the plan from these angles. For each, report either "CLEAR" or what's wrong:
-
-### 1. Edge cases
-What inputs/states/conditions does the plan NOT handle? List specific scenarios the plan misses.
-
-### 2. Data assumptions
-Does the plan assume data exists where it might not? Are there null/empty/missing cases the plan doesn't address? Is a migration needed but not listed?
-
-### 3. Error handling
-What can fail that the plan doesn't account for? Network errors, timeouts, validation failures, concurrent writes?
-
-### 4. Security
-Any auth/authz gaps? Injection risks? Data exposure? Missing input validation?
-
-### 5. Side effects
-What else breaks if these changes land? Does the plan touch shared utilities, base classes, or Feign clients? Check the blast radius section in notes.md — are all high-risk targets addressed?
-
-### 6. Test coverage
-Does the plan include tests for the edge cases above? If it's a backend change and no unit test task exists, flag it.
-
-### 7. Missing steps
-What needs to happen that isn't in the plan? Config changes, env vars, DB migrations, cache invalidation, API version bumps?
-
-Report your findings in this exact format:
-
-## Adversarial Review
-
-**Verdict:** PASS | WARNINGS | BLOCKED
-
-### Edge cases
-{findings or "CLEAR"}
-
-### Data assumptions
-{findings or "CLEAR"}
-
-### Error handling
-{findings or "CLEAR"}
-
-### Security
-{findings or "CLEAR"}
-
-### Side effects
-{findings or "CLEAR"}
-
-### Test coverage
-{findings or "CLEAR"}
-
-### Missing steps
-{findings or "CLEAR"}
-
-**Summary:** {one sentence verdict with key finding count}
-
-Use BLOCKED if any finding would cause incorrect behavior, data loss, or a security vulnerability if not addressed.
-Use WARNINGS if findings are gaps worth noting but not correctness-critical.
-Use PASS if the plan is solid across all angles.
-```
-
-**Approach review (only when `{ADV_PRIOR_BLOCKS}` ≥ 2).** When this is round 3 or later, append the block below to the end of the prompt above, with `{N}` replaced by `{ADV_PRIOR_BLOCKS}` and `{ADV_ROUND}` by its value. Do not append it on rounds 1 and 2. Repeated blocks usually mean the approach is wrong, not that the plan lacks detail — another pass over the same design does not converge.
-
-```
-### 8. Approach review (round {ADV_ROUND} — this plan has been BLOCKED {N} times in a row)
-
-Read every earlier `## Adversarial Review` section in notes.md first. Then, before adding new detail findings, answer these three questions:
-
-- Is the plan fighting a documented framework or library limitation (something the framework deliberately does not support, or that its maintainers have declined to support)? Cite the source if you find one.
-- Which constraints did earlier rounds treat as fixed (where the code must live, which service owns it, which stack it runs on, which library it uses)? Which of them are actually soft?
-- Is there a materially different approach with a smaller surface — another service, module, or library that already provides most of the missing mechanism — that would make the earlier rounds' findings go away instead of patching them one by one?
-
-Report this in the output under a `### Approach review` heading, placed after `### Missing steps`. End it with exactly one of:
-- `**Approach:** KEEP` — the approach is sound; the remaining findings are fixable within it.
-- `**Approach:** RECONSIDER — {one-sentence alternative}` — the remaining findings come from the approach itself; name the smaller-surface alternative.
-
-If you choose RECONSIDER, the verdict is still BLOCKED. Put the alternative first in the Summary line, so the person revising the plan sees it before the detail findings.
-```
+Moved to `references/adversarial-review.md` (the reviewer prompt, plus the Approach review block appended from round 3 on, when `{ADV_PRIOR_BLOCKS}` ≥ 2), read per the Step 3 condition.
 
 **When the agent returns:**
 
@@ -480,106 +356,7 @@ bash ~/.claude/skills/lib/plog.sh EXEC verify-plan-derived start "Deriving verif
 
 Derive a structured verification plan from the ticket and plan artifact. This step produces the `## Verification Plan` section in notes.md that tells `ticket-verify` exactly what to test, who tests it, and how to navigate there. If derivation fails, the ticket has insufficient information — push back before implementation.
 
-### Inputs to read
-
-1. **Ticket description and acceptance criteria** — from `context.md` or the Linear issue
-2. **Plan artifact** — `simple-fix.md` or `openspec/changes/{change-name}/design.md` + `tasks.md` + spec files
-3. **`app-knowledge/SKILL.md`** — role constraints and navigation patterns, if recorded (it may be empty)
-4. **`test-users.json`** — project-local catalog (not bundled; copy `config/test-users.example.json` to your `TICKETS_ROOT` and populate). Provides available roles and emails. If absent, role scope must be inferred from the ticket and app-knowledge.
-5. **`notes.md`** — for investigation findings (`## Initial Investigation`, `## Blast Radius`), adversarial review results, and prior art context
-
-### Derivation steps
-
-#### A. Extract acceptance criteria
-
-Identify every acceptance criterion in the ticket. Each criterion is one row in the per-criterion table. Criteria sources, in order of preference:
-1. Numbered AC lines in the ticket description (e.g., "AC-1: ...", "1. ...")
-2. Bullet points under an "Acceptance Criteria" or "## Expected Behavior" heading
-3. Behavioral descriptions in the plan artifact (implementation tasks that describe user-visible outcomes)
-4. If no criteria are identifiable anywhere → the ticket is underspecified. Trigger `VERIFY_PLAN_NO_ROLE_SCOPE` (no criteria to derive roles from).
-
-#### B. Determine role scope per criterion
-
-For each criterion, determine which roles are affected. Use the following hierarchy:
-
-1. **Explicit role mention** (confidence: high): If the criterion text says "as an attorney", "admin only", "for debtors", etc. → role scope is the explicitly mentioned role(s). Scope type is "role-specific".
-
-2. **Code path role gating** (confidence: high): If the plan artifact references auth guards, role-based UI components (`*ngIf="role..."`, `hasRole(...)`), or role-specific service methods → role scope is the roles enumerated in the code. Scope type is "role-specific".
-
-3. **App-knowledge role-based UI rules** (confidence: medium): Cross-reference the feature area against `app-knowledge/SKILL.md`. If it documents a role constraint for that feature area (e.g., "only admins can access user-permission page") → derive role scope from the known rule. Scope type is "role-specific".
-
-4. **Default heuristic** (confidence: low):
-   - **Infrastructure changes** (authentication, routing, database schema, shared utilities, logging, error handling) → "global" (all roles). Scope type is "global".
-   - **Feature changes** with no role information → "unknown". This triggers a push-back.
-
-5. **Role scope classification:**
-   - **global**: Change affects all roles identically. Affected roles = all roles from `test-users.json`.
-   - **role-specific**: Change affects only certain roles. Affected roles = only the roles that can verify the behavior.
-
-#### C. Derive navigation path per criterion
-
-For each criterion, determine how to reach the feature in the browser:
-
-1. **URL in ticket**: Extract any URL path from the ticket description (`/handover/`, `/admin/`, `/user-permission/`, `/organisation/`).
-2. **nav-hints match**: Check `nav-hints.md` (or the nav-hints SKILL.md) for the feature area keyword. If a navigation path exists for that area, use it.
-3. **Infer from feature area**: Map feature area keywords to known URL patterns:
-   - "handover" / "matter handover" → `/handover/`
-   - "admin" / "user permission" → `/admin/user-permission`
-   - "organisation" / "entity" → `/organisation/`
-   - "correspondence" / "portfolio" → `/portfolio/`
-4. **Unknown**: If no nav path can be determined → trigger `VERIFY_PLAN_NO_NAV_PATH`.
-
-#### D. Extract expected behavior per criterion
-
-For each criterion, extract what "working correctly" looks like:
-
-1. **Acceptance criteria wording**: The criterion itself describes the expected outcome (e.g., "AC-1: Attorney clicks Send and the handover is created" → expected behavior: "Handover created after attorney clicks Send").
-2. **"Expected Behaviour" section**: If the ticket has a dedicated expected behavior section, use it.
-3. **Plan artifact behavioral descriptions**: Implementation tasks or design.md may describe user-visible outcomes.
-4. **Vague language detection**: If the only description is vague ("works correctly", "is fixed", "should be improved", "functions properly") with no observable outcome → trigger `VERIFY_PLAN_VAGUE_BEHAVIOR`.
-
-#### E. Detect test data requirements per criterion
-
-For each criterion, determine whether pre-existing data is needed:
-
-1. **Pre-existing state assumptions**: Does the criterion assume data exists (e.g., "an existing handover", "a debtor with overdue invoices", "a pending correspondence")?
-2. **Seed data references**: Does the plan mention `seed-db`, `data.sql`, fixtures, or setup scripts?
-3. **Setup steps**: Are there documented steps to create the required data (e.g., "Create a handover first via ...")?
-4. If data is required but no setup mechanism is documented → trigger `VERIFY_PLAN_NO_TEST_DATA`.
-
-### Push-back triggers
-
-If any single criterion cannot be fully derived, halt the pipeline. The following gate-stop codes apply:
-
-| Condition | Gate-stop code |
-|-----------|---------------|
-| Role scope unknown for any criterion | `VERIFY_PLAN_NO_ROLE_SCOPE` |
-| Navigation path unknown for any criterion | `VERIFY_PLAN_NO_NAV_PATH` |
-| Expected behavior vague for any criterion | `VERIFY_PLAN_VAGUE_BEHAVIOR` |
-| Test data required but no setup documented | `VERIFY_PLAN_NO_TEST_DATA` |
-
-**In `--from-auto` mode:** Push-back halts the pipeline immediately:
-```bash
-bash ~/.claude/skills/lib/plog.sh META gate-stop fail "{GATE-STOP-CODE} — {reason}"
-```
-Stop with non-zero exit so `ticket-auto` halts.
-
-**In interactive mode (no `--from-auto`):** Warn the user but allow override:
-```
-⚠️  VERIFICATION PLAN — {GATE-STOP-CODE}
-
-The verification plan for {TICKET-ID} could not be fully derived:
-
-{list of criteria and what's missing}
-
-The pipeline cannot verify this ticket reliably. Options:
-1. Update the ticket with the missing information and re-run
-2. Override and proceed anyway (verification may be incomplete)
-
-Re-run: /ticket-appraise-exec {TICKET-ID} --from-step verify-plan-derived
-```
-
-If the user chooses to override, proceed to Step 3.8 with the partial plan. **Write the partial verification plan to notes.md first** — use the same schema below, marking unverifiable criteria with `✗` in the Verifiable column and noting the missing dimension in the relevant column (e.g., "unknown" for role scope, "not specified" for nav path).
+Moved to `references/verification-plan.md` (inputs to read, derivation steps A–E for each criterion, and the push-back triggers with their gate-stop codes and the interactive override), read per the Step 3 condition. Then write the plan below.
 
 ### Write verification plan to notes.md
 
