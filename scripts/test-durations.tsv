@@ -42,7 +42,6 @@ bash ticket-auto-pipeline/lib/tests/test-heartbeat.sh	20.9
 bash ticket-planner/lib/tests/test-planner-crosscheck-testdata.sh	18.4
 bash ticket-auto-pipeline/lib/tests/test-ticket-preamble.sh	18.3
 bash grill-me/lib/tests/test-grill-score.sh	18.2
-bash knowledge-curator/test/test-kc-item.sh	17.6
 python3 -m pytest fleet-controller/fleetd/tests/test_worker_status_api.py -v	16.2
 bash grill-me/lib/tests/test-grill-render.sh	15.5
 bash ticket-planner/lib/tests/test-planner-specify-decisions.sh	15.3
@@ -79,7 +78,6 @@ bash ticket-auto-pipeline/lib/tests/test-manifest-write.sh	5.8
 bash ticket-auto-pipeline/lib/tests/test-ticket-approve.sh	5.6
 python3 -m pytest fleet-controller/fleetd/tests/test_http_control_auth.py -v	5.6
 bash ticket-planner/lib/tests/test-planner-answers-durability.sh	5.5
-bash knowledge-curator/test/test-kc-rank-log.sh	5.4
 bash ticket-planner/lib/tests/test-planner-base-branch.sh	5.4
 python3 -m pytest fleet-controller/fleetd/tests/test_observer.py -v	5.4
 bash ticket-auto-pipeline/lib/tests/test-linear-api.sh	5.3
@@ -113,7 +111,6 @@ bash ticket-auto-pipeline/lib/tests/test-worktree.sh	3.1
 bash ticket-planner/lib/tests/test-planner-generation.sh	3.1
 bash ticket-planner/lib/tests/test-planner-transitions.sh	3.1
 python3 -m pytest fleet-controller/fleetd/tests/test_store.py -v	3.0
-bash knowledge-curator/test/test-kc-render.sh	2.9
 bash ticket-planner/lib/tests/test-planner-stop-conditions.sh	2.9
 python3 -m pytest fleet-controller/fleetd/tests/test_flow_sh_hermetic.py -v	2.9
 bash ticket-planner/lib/tests/test-planner-crosscheck-ac-coverage.sh	2.8
@@ -144,7 +141,6 @@ bash fleet-controller/lib/tests/test-fleet-dashboard.sh	2.0
 bash ticket-auto-pipeline/lib/tests/test-flow-run.sh	2.0
 bash ticket-auto-pipeline/lib/tests/test-manifest-read.sh	2.0
 bash ticket-planner/lib/tests/test-branch-directive-gen.sh	2.0
-bash knowledge-curator/test/test-kc-index.sh	1.9
 bash ticket-auto-pipeline/lib/tests/test-board-pusher-integration.sh	1.9
 bash ticket-planner/lib/tests/test-planner-crosscheck-citations.sh	1.9
 bash ticket-auto-pipeline/lib/tests/test-persona-injection.sh	1.8
@@ -168,7 +164,6 @@ bash ticket-auto-pipeline/lib/tests/test-ticket-audit-exec-dedup.sh	1.3
 bash ticket-auto-pipeline/lib/tests/test-worker-hooks.sh	1.3
 bash ticket-planner/lib/tests/test-branch-decision.sh	1.3
 bash ticket-planner/lib/tests/test-planner-intent-testdata.sh	1.3
-bash knowledge-curator/test/test-kc-ingest.sh	1.2
 bash ticket-auto-pipeline/lib/tests/test-ac-drift.sh	1.2
 bash ticket-auto-pipeline/lib/tests/test-board-cursor-fastforward.sh	1.2
 bash ticket-auto-pipeline/lib/tests/test-dispatch-table.sh	1.2
@@ -190,7 +185,6 @@ bash ticket-planner/lib/tests/test-planner-sanitize.sh	0.9
 bash ticket-auto-pipeline/lib/tests/test-ticket-audit-exec-phase-gate.sh	0.8
 bash ticket-auto-pipeline/lib/tests/test-wiki-bootstrap.sh	0.8
 bash ticket-planner/lib/tests/test-planner-crosscheck-signals.sh	0.8
-bash knowledge-curator/test/test-kc-prompt-match.sh	0.7
 bash scripts/tests/test-check-grep-q-pipe.sh	0.7
 bash ticket-auto-pipeline/lib/tests/test-gitnexus-preflight.sh	0.7
 bash ticket-auto-pipeline/lib/tests/test-persona-refresh.sh	0.7
@@ -241,7 +235,6 @@ bash ticket-planner/lib/tests/test-planner-ac-checklist.sh	0.3
 CLAUDE_SKILLS_LIB="{ROOT}/ticket-auto-pipeline/lib" bash ticket-auto-pipeline/lib/tests/test-gate-no-template.sh	0.2
 bash fleet-controller/lib/tests/test-fleet-detect-outbox-staleness.sh	0.2
 bash fleet-controller/lib/tests/test-fleet-plugin-cache.sh	0.2
-bash knowledge-curator/test/test-kc-resurface.sh	0.2
 bash ticket-auto-pipeline/lib/tests/test-appraise-exec-planned.sh	0.2
 bash ticket-auto-pipeline/lib/tests/test-github-issues.sh	0.2
 bash ticket-auto-pipeline/lib/tests/test-planner-artifacts.sh	0.2

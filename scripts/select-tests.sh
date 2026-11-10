@@ -54,7 +54,6 @@
 #                         (the business-framing fixtures).
 #   grill-me              ticket-planner's intent gate, project gate, answers
 #                         and doctor source grill-me's lib/.
-#   knowledge-curator     nothing outside itself.
 # ANY_PLUGIN — test files that scan every plugin, so any plugin change runs
 # them: test-fleet-features.sh (a boolean feature flag in any plugin needs a
 # catalog entry), test-diagram-drift.sh (every plugin's README.md and
@@ -62,7 +61,7 @@
 # skills/*/references/ files).
 set -euo pipefail
 
-PLUGINS=(ticket-auto-pipeline fleet-controller ticket-planner grill-me knowledge-curator)
+PLUGINS=(ticket-auto-pipeline fleet-controller ticket-planner grill-me)
 
 # Keys quoted: shfmt reads a bare [a-b] key as arithmetic and rewrites it.
 declare -A DEPENDENTS=(
@@ -70,7 +69,6 @@ declare -A DEPENDENTS=(
   ["fleet-controller"]="ticket-auto-pipeline ticket-planner scripts"
   ["ticket-planner"]="ticket-auto-pipeline/lib/tests/test-ticket-create.sh"
   ["grill-me"]="ticket-planner"
-  ["knowledge-curator"]=""
 )
 
 ANY_PLUGIN=(

@@ -33,7 +33,6 @@ body:
         - ticket-planner — 11-phase business-idea → planned-tickets pipeline
         - ticket-auto-pipeline — autonomous ticket implementation pipeline
         - fleet-controller — parent orchestrator / dispatch / epic branch lifecycle
-        - knowledge-curator — cross-project knowledge tracking
         - grill-me — pre-work readiness gate
         - Repo-level (CI, Makefile, docs, marketplace manifest)
         - Multiple plugins

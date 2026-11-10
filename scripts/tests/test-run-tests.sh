@@ -165,7 +165,7 @@ rc=$?
 [ "$rc" -eq 2 ] && ok "no targets exits 2" || bad "no-arg exit $rc"
 
 echo "=== the real Makefile yields every registered test command ==="
-n=$(make -s -n --no-print-directory -C "$ROOT" test-lib test-fleetd test-planner test-flow test-kc test-grill test-planner-intent-gate |
+n=$(make -s -n --no-print-directory -C "$ROOT" test-lib test-fleetd test-planner test-flow test-grill test-planner-intent-gate |
   awk '{ if (sub(/\\$/, "")) { buf = buf $0; next } print buf $0; buf = "" }' |
   grep -E '(^|[[:space:]])(bash|python3 -m pytest)[[:space:]]' | grep -vcE '^[[:space:]]*(echo|#)')
 [ "$n" -gt 200 ] && ok "real Makefile parses to $n commands" || bad "only $n commands from the real Makefile"

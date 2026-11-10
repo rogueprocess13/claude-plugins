@@ -178,7 +178,7 @@ github_issue_comment() {
 #          <root_cause> <handover> <verification> [related]
 #   severity: P0|P1|P2|P3
 #   plugin: ticket-planner|ticket-auto-pipeline|fleet-controller|
-#           knowledge-curator|grill-me|Repo-level|Multiple plugins
+#           grill-me|Repo-level|Multiple plugins
 # Outputs the rendered markdown body on stdout.
 # Returns 0 on success, non-zero if a required field is missing.
 github_issue_body_template() {

@@ -84,7 +84,7 @@ _scan() {
 import os, re, sys
 root = sys.argv[1]
 plugins = ["fleet-controller", "ticket-auto-pipeline", "ticket-planner",
-           "knowledge-curator", "grill-me"]
+           "grill-me"]
 skip = re.compile(r"(^|/)(tests?|fixtures|openspec|node_modules|__pycache__)(/|$)")
 sh = re.compile(r"\$\{([A-Z][A-Z0-9_]*):-(false|0|off|true|on)\}")
 py = re.compile(r"(?:os\.environ\.get|os\.getenv)\(\s*['\"]([A-Z][A-Z0-9_]*)['\"]\s*,"
@@ -208,7 +208,7 @@ test_catalog_schema() {
   jq -e '
     .flags | length > 0 and all(
       (.name | test("^[A-Z][A-Z0-9_]*$")) and
-      (.plugin | IN("fleet-controller", "ticket-auto-pipeline", "ticket-planner", "knowledge-curator", "grill-me")) and
+      (.plugin | IN("fleet-controller", "ticket-auto-pipeline", "ticket-planner", "grill-me")) and
       (.default | type == "string") and
       (.category | IN("feature", "safety", "strictness", "debug-escape-hatch", "intentional-off")) and
       (.recommend | IN("on", "off", "situational")) and
