@@ -720,6 +720,232 @@ else
   fi
 fi
 
+# ── Specify parameters (planner-specify-parameters) ────────────────────────
+
+echo "--- specify parameters ---"
+
+PP_PROPOSAL='# Proposal
+
+## Business Outcomes
+
+### O1
+**Outcome:** NEEDS_HUMAN_DECISION — which role signs off the exported invoices?
+
+## Parameters
+
+| Name | Key | Kind | Default | Value | Source |
+|------|-----|------|---------|-------|--------|
+| Invoice rounding | `billing.total_rounding` | rounding | half-up, 2 decimal places | NEEDS_HUMAN_DECISION — round each line, or only the invoice total? | — |
+| Idle session timeout | `auth.session_idle_minutes` | duration | 30 minutes | 30 minutes | default |
+| Payment retry delay | `payments.retry_delay` | duration | 5 minutes | 5 minutes | default |
+| Export page size | `export.page_size` | limit | 50 | NEEDS_HUMAN_DECISION — how many invoices per export page? | — |
+| Late fee | `billing.late_fee` | policy | — | NEEDS_HUMAN_DECISION — what late fee applies? | — |
+
+## Risks
+
+None.'
+
+# pp_fresh <name> — a contract initiative at Review with O1 and four rows open.
+pp_fresh() {
+  sd_fresh "$1"
+  planner_state_write "$INIT" META contract start specify-parameters-v1
+  printf '%s\n' "$PP_PROPOSAL" >"$(sd_proposal)"
+}
+# pp_row <key> — the proposal line of that row.
+pp_row() { grep -F -- "| \`$1\` |" "$(sd_proposal)"; }
+# pp_open — the open keys, space-separated.
+pp_open() { planner_params_scan "$INIT" | cut -f1 | paste -sd' ' -; }
+# pp_refused <name> <key> <value> [role]
+pp_refused() {
+  local name="$1" before
+  pp_fresh "pp-refuse-$2"
+  sd_answers "${WORK}/pp.json" 1 "param-$2" "$3" "${4:-client}"
+  before=$(sd_snapshot)
+  apply "${WORK}/pp.json"
+  if [ "$RC" -eq 2 ] && [[ "$ERR" == *INVALID_VALUE* ]] && [[ "$ERR" == *"e.g."* ]] &&
+    [ "$(sd_snapshot)" = "$before" ]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$RC err=$ERR"
+  fi
+}
+
+if ! declare -f planner_params_scan >/dev/null 2>&1 || ! declare -f planner_params_render_row >/dev/null 2>&1; then
+  fail "specify parameters: tests" "planner-specify-params.sh is not sourced by planner-answers.sh"
+else
+  # A client sets a rounding rule.
+  pp_fresh pp-client
+  sd_answers "${WORK}/pp.json" 1 "param-billing.total_rounding" "round each line half-up to 2 decimals" client
+  apply "${WORK}/pp.json"
+  want=$(planner_params_render_row "Invoice rounding" billing.total_rounding rounding "half-up, 2 decimal places" \
+    "round each line half-up to 2 decimals" 1 client)
+  if [ "$RC" -eq 0 ] && [ "$(pp_row billing.total_rounding)" = "$want" ] &&
+    [[ "$want" == *"| human:r1:client |" ]] &&
+    log_has "|META|specify-param|step|billing.total_rounding answered (round 1, by U123, client)\$" &&
+    [ "$(grep -c 'half-up to 2 decimals' "$(planner_state_log "$INIT")")" = "0" ] &&
+    [[ " $(pp_open) " != *" billing.total_rounding "* ]]; then
+    pass "param: a client value is substituted, logged without its text, and its human source verifies"
+  else
+    fail "param: a client value is substituted, logged without its text, and its human source verifies" "rc=$RC err=$ERR row=$(pp_row billing.total_rounding) open=$(pp_open)"
+  fi
+  rf="$(planner_initiative_dir "$INIT")/artifacts/answers/round-1.json"
+  if [ "$(jq -r '.answers[0] | [.binding, .question, .suggestion, .value] | join("|")' "$rf" 2>/dev/null)" = "specify-param:billing.total_rounding|round each line, or only the invoice total?|half-up, 2 decimal places|round each line half-up to 2 decimals" ]; then
+    pass "param: round-1.json holds the question, the suggestion and the value"
+  else
+    fail "param: round-1.json holds the question, the suggestion and the value" "$(cat "$rf" 2>/dev/null)"
+  fi
+  if [ "$(tail -1 "$(planner_state_log "$INIT")" | cut -d'|' -f2-4)" = "META|human-hold|done" ]; then
+    pass "param: META|human-hold|done is the last line"
+  else
+    fail "param: META|human-hold|done is the last line" "$(tail -1 "$(planner_state_log "$INIT")")"
+  fi
+
+  # Accepting by typing the suggestion back.
+  pp_fresh pp-accept
+  sd_answers "${WORK}/pp.json" 1 "param-payments.retry_delay" "5 minutes" operator
+  apply "${WORK}/pp.json"
+  if [ "$RC" -eq 0 ] &&
+    [ "$(pp_row payments.retry_delay)" = '| Payment retry delay | `payments.retry_delay` | duration | 5 minutes | 5 minutes | human:r1:operator |' ] &&
+    [[ " $(pp_open) " != *" payments.retry_delay "* ]]; then
+    pass "param: typing the suggestion back accepts it (no sentinel)"
+  else
+    fail "param: typing the suggestion back accepts it (no sentinel)" "rc=$RC err=$ERR row=$(pp_row payments.retry_delay)"
+  fi
+
+  # Accepted forms by kind.
+  pp_fresh pp-forms
+  sd_answers "${WORK}/pp.json" 1 "param-payments.retry_delay" "30 min" client "param-export.page_size" "50" client
+  apply "${WORK}/pp.json"
+  if [ "$RC" -eq 0 ] && [[ "$(pp_row payments.retry_delay)" == *"| 30 min | human:r1:client |" ]] &&
+    [[ "$(pp_row export.page_size)" == *"| 50 | human:r1:client |" ]]; then
+    pass "param: a duration with a unit, and a bare positive number for a limit, are accepted"
+  else
+    fail "param: a duration with a unit, and a bare positive number for a limit, are accepted" "rc=$RC err=$ERR"
+  fi
+
+  # Refusals: nothing written, an example in the message.
+  pp_refused "param: __defer__ is refused" billing.total_rounding "__defer__"
+  pp_refused "param: a blank value is refused" billing.total_rounding "   "
+  pp_refused "param: a 501-character value is refused" billing.late_fee "$(printf 'a%.0s' $(seq 1 501))"
+  pp_refused "param: 'about half an hour' is refused for a duration row" payments.retry_delay "about half an hour"
+  pp_refused "param: '50 widgets per page' is refused for a limit row" export.page_size "50 widgets per page"
+  pp_refused "param: a value that neutralises to nothing is refused" billing.late_fee "<!-- x -->"
+
+  # Injection stays inert in a table cell.
+  pp_fresh pp-inject
+  sd_answers "${WORK}/pp.json" 1 "param-billing.late_fee" '5 | injected | cell <!-- x --> NEEDS_HUMAN_DECISION' client
+  apply "${WORK}/pp.json"
+  row=$(pp_row billing.late_fee)
+  if [ "$RC" -eq 0 ] && [ -z "$(planner_params_invalid "$INIT")" ] &&
+    [ "$(planner_params_rows "$INIT" | awk -F'\t' '$2 == "billing.late_fee" { print NF "|" $6 }')" = "7|5 | injected | cell NEEDS-HUMAN-DECISION" ] &&
+    [[ "$row" != *"<!--"* ]] && [[ "$row" != *NEEDS_HUMAN_DECISION* ]] && [[ "$row" == *'5 \| injected \| cell'* ]] &&
+    [[ " $(pp_open) " != *" billing.late_fee "* ]]; then
+    pass "param: injection text lands as one escaped, inert cell (six cells)"
+  else
+    fail "param: injection text lands as one escaped, inert cell (six cells)" "rc=$RC err=$ERR row=$row"
+  fi
+
+  # A mixed round: both substitutions, one start/done pair, records carry their fields.
+  pp_fresh pp-mixed
+  H1=$(sd_hash O1)
+  sd_answers "${WORK}/pp.json" 1 "decision-O1-${H1}" "Finance managers" client \
+    "param-billing.total_rounding" "half-up, 2 decimal places" client
+  apply "${WORK}/pp.json"
+  rf="$(planner_initiative_dir "$INIT")/artifacts/answers/round-1.json"
+  if [ "$RC" -eq 0 ] &&
+    [ "$(sd_line O1)" = '**Outcome:** Human decision (verbatim, round 1, client): "Finance managers"' ] &&
+    [[ "$(pp_row billing.total_rounding)" == *"| half-up, 2 decimal places | human:r1:client |" ]] &&
+    [ "$(grep -c '|META|human-hold|start|round=1 ' "$(planner_state_log "$INIT")")" = "1" ] &&
+    log_has "|META|specify-answer|step|O1 \[${H1}\] answered (round 1, by U123, client)" &&
+    log_has "|META|specify-param|step|billing.total_rounding answered (round 1, by U123, client)" &&
+    [ "$(jq -r '.answers[0] | (has("question") | tostring) + " " + (has("suggestion") | tostring)' "$rf")" = "true false" ] &&
+    [ "$(jq -r '.answers[1] | (has("question") | tostring) + " " + (has("suggestion") | tostring)' "$rf")" = "true true" ]; then
+    pass "param: a mixed round writes both answers in one replacement; outcome records keep question, param records add suggestion"
+  else
+    fail "param: a mixed round writes both answers in one replacement; outcome records keep question, param records add suggestion" "rc=$RC err=$ERR"
+  fi
+  # Round 2 asks what is left; the answered row is never asked again.
+  m=$(planner_stop_describe_json "$INIT")
+  if [ "$(echo "$m" | jq -r '.round')" = "2" ] &&
+    ! echo "$m" | jq -e '.questions[] | select(.id == "param-billing.total_rounding")' >/dev/null; then
+    pass "param: an answered row is not asked in the next round"
+  else
+    fail "param: an answered row is not asked in the next round" "$m"
+  fi
+  sd_answers "${WORK}/pp2.json" 2 "param-billing.total_rounding" "half-even" client
+  before=$(sd_snapshot)
+  apply "${WORK}/pp2.json"
+  if [ "$RC" -eq 2 ] && [[ "$ERR" == *UNKNOWN_QUESTION_ID* ]] && [ "$(sd_snapshot)" = "$before" ]; then
+    pass "param: answering a decided row again → UNKNOWN_QUESTION_ID"
+  else
+    fail "param: answering a decided row again → UNKNOWN_QUESTION_ID" "rc=$RC err=$ERR"
+  fi
+
+  # A hand edit racing a mixed round: neither substitution is applied.
+  pp_fresh pp-race
+  sd_answers "${WORK}/pp.json" 1 "decision-O1-$(sd_hash O1)" "Finance managers" client \
+    "param-billing.total_rounding" "half-up" client
+  out=$(LIB_DIR="$LIB_DIR" INIT="$INIT" F="${WORK}/pp.json" bash -c '
+    source "${LIB_DIR}/planner-answers.sh"
+    _planner_answers_pre_proposal_write() { sed -i "s/^None\.\$/None (edited by hand)./" "$1"; }
+    planner_answers_apply "$INIT" "$F"' 2>&1)
+  rc=$?
+  if [ "$rc" -eq 2 ] && [[ "$out" == *UNKNOWN_QUESTION_ID* ]] &&
+    grep -q '^None (edited by hand)\.$' "$(sd_proposal)" &&
+    grep -q '^\*\*Outcome:\*\* NEEDS_HUMAN_DECISION — which role' "$(sd_proposal)" &&
+    [[ "$(pp_row billing.total_rounding)" == *"| NEEDS_HUMAN_DECISION — round each line"* ]] &&
+    ! log_has '|META|human-hold|done|round=1 '; then
+    pass "param: a hand edit racing a mixed round leaves both substitutions unapplied"
+  else
+    fail "param: a hand edit racing a mixed round leaves both substitutions unapplied" "rc=$rc out=$out"
+  fi
+
+  # Crash after a mixed round's proposal write, before done.
+  pp_fresh pp-crash
+  sd_answers "${WORK}/pp.json" 1 "decision-O1-$(sd_hash O1)" "Finance managers" client \
+    "param-billing.total_rounding" "half-up" client "param-payments.retry_delay" "5 minutes" operator
+  apply "${WORK}/pp.json"
+  sed -i '$d' "$(planner_state_log "$INIT")"
+  prop_before=$(sha256sum <"$(sd_proposal)")
+  apply "${WORK}/pp.json"
+  if [ "$RC" -eq 0 ] && [[ "$OUT" == *ANSWERS_ALREADY_APPLIED* ]] &&
+    [ "$(grep -c '|META|human-hold|done|round=1 ' "$(planner_state_log "$INIT")")" = "1" ] &&
+    [ "$(sha256sum <"$(sd_proposal)")" = "$prop_before" ] &&
+    [ "$(grep -c 'human:r1:' "$(sd_proposal)")" = "2" ] &&
+    [ "$(grep -c 'Human decision (verbatim, round 1' "$(sd_proposal)")" = "1" ]; then
+    pass "param: replay after a crash in a mixed round appends done once; each substitution appears once"
+  else
+    fail "param: replay after a crash in a mixed round appends done once; each substitution appears once" "rc=$RC out=$OUT err=$ERR"
+  fi
+
+  # Crash before the proposal write: the replay re-applies instead of closing.
+  pp_fresh pp-crash-early
+  sd_answers "${WORK}/pp.json" 1 "param-billing.total_rounding" "half-up" client
+  out=$(LIB_DIR="$LIB_DIR" INIT="$INIT" F="${WORK}/pp.json" bash -c '
+    source "${LIB_DIR}/planner-answers.sh"
+    _planner_answers_pre_proposal_write() { exit 9; }
+    planner_answers_apply "$INIT" "$F"' 2>&1)
+  apply "${WORK}/pp.json"
+  if [ "$RC" -eq 0 ] && [[ "$OUT" == *ANSWERS_APPLIED* ]] && [[ "$OUT" != *ALREADY* ]] &&
+    [[ "$(pp_row billing.total_rounding)" == *"| half-up | human:r1:client |" ]] &&
+    [ "$(grep -c '|META|human-hold|done|round=1 ' "$(planner_state_log "$INIT")")" = "1" ]; then
+    pass "param: a crash before the proposal write is re-applied on replay, not closed empty"
+  else
+    fail "param: a crash before the proposal write is re-applied on replay, not closed empty" "rc=$RC out=$OUT err=$ERR row=$(pp_row billing.total_rounding)"
+  fi
+
+  # A legacy initiative offers no parameter question.
+  sd_fresh pp-legacy
+  printf '%s\n' "$PP_PROPOSAL" >"$(sd_proposal)"
+  sd_answers "${WORK}/pp.json" 1 "param-billing.total_rounding" "half-up" client
+  apply "${WORK}/pp.json"
+  if [ "$RC" -eq 2 ] && [[ "$ERR" == *UNKNOWN_QUESTION_ID* ]]; then
+    pass "param: a legacy initiative refuses a parameter answer (UNKNOWN_QUESTION_ID)"
+  else
+    fail "param: a legacy initiative refuses a parameter answer (UNKNOWN_QUESTION_ID)" "rc=$RC err=$ERR"
+  fi
+fi
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]

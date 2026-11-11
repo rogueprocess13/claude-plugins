@@ -173,6 +173,43 @@ else
   fail "specify: after the answers are applied, a new process sees the gate clear and the answer in proposal.md" "rc=$rc got=$got $(cat "${WORK}/sd-apply.out")"
 fi
 
+# ── Specify parameters (planner-specify-parameters) ────────────────────────
+
+echo "--- specify parameters: describe → answers → gate clears in a new process ---"
+
+INIT4="INIT-1700000000-6666"
+in_new_process "halt_fixture_init specify-param ${INIT4}" >/dev/null 2>&1
+in_new_process "bash \${LIB_DIR}/planner-stop-describe.sh ${INIT4}" >"${WORK}/pp.hold"
+pp_parsed=$(bash "$HOLD_PARSER" --phase PLANNER --return-file "${WORK}/pp.hold")
+if [ "$(printf '%s' "$pp_parsed" | jq -r '.parse_status + " " + ([.questions[].binding] | join(" "))')" = "ok specify-answer:O1 specify-param:billing.total_rounding specify-param:payments.retry_delay" ]; then
+  pass "param: a fresh-process describe asks the outcome and both open rows"
+else
+  fail "param: a fresh-process describe asks the outcome and both open rows" "$(cat "${WORK}/pp.hold")"
+fi
+
+# Answer everything: a value, the typed-back suggestion and the outcome.
+printf '%s' "$pp_parsed" | jq --arg ts "2026-10-11T19:30:00Z" '{schema_version: 1, round: .round,
+  answers: [.questions[] | {id, answered_by: "U123", role: "client", ts: $ts,
+    value: (if (.binding | startswith("specify-answer:")) then "Finance managers"
+            elif .binding == "specify-param:billing.total_rounding" then "round each line half-up"
+            else "5 minutes" end)}]}' >"${WORK}/pp.json"
+in_new_process "bash \${LIB_DIR}/planner-answers.sh ${INIT4} ${WORK}/pp.json" >"${WORK}/pp-apply.out" 2>&1
+rc=$?
+
+got=$(in_new_process "source \${LIB_DIR}/planner-specify-decisions.sh
+  rc=0; planner_specify_gate ${INIT4} || rc=\$?
+  echo \"gate=\$rc\"
+  bash \${LIB_DIR}/planner-stop-describe.sh ${INIT4}")
+if [ "$rc" -eq 0 ] && [ "$got" = "gate=0
+REASON=RUNNING" ] &&
+  grep -qF '| round each line half-up | human:r1:client |' \
+    "${REPOS_ROOT}/.ticket-auto/initiatives/${INIT4}/artifacts/proposal.md" &&
+  ! grep -q 'round each line half-up' "${REPOS_ROOT}/.ticket-auto/initiatives/${INIT4}/state.log"; then
+  pass "param: after the answers, a new process sees the gate clear and the human: rows verify"
+else
+  fail "param: after the answers, a new process sees the gate clear and the human: rows verify" "rc=$rc got=$got $(cat "${WORK}/pp-apply.out")"
+fi
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]
