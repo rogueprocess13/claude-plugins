@@ -501,7 +501,10 @@ _RUNNERS = {
     # `inspector` is a `guidance-extractor` agent spawn. It is a spawn, so it
     # belongs to the dispatch loop that owns spawning (task 4.1), not to a
     # between-phase executor — routing it here would give fleetd two places
-    # that fork phase workers.
+    # that fork phase workers. With FLEET_ROUTER_STEP_SHELL=true the
+    # supervisor's reap path runs it (`router-step.sh inspector`, then an
+    # auxiliary worker; fleetd-shared-router-steps), so this entry stays a
+    # known-absent placeholder for this executor only.
     #
     # `preflight` (verify-preflight.sh) checks only that a `playwright` MCP
     # server is configured. Reachability is a property of the *agent's*

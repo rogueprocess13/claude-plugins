@@ -178,6 +178,20 @@
       "docs": "fleet-controller/CLAUDE.md#phase-level-dispatch-two-invocation-modes"
     },
     {
+      "name": "FLEET_ROUTER_STEP_SHELL",
+      "plugin": "fleet-controller",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "Phase-dispatched fleetd runs the router's own post-spawn, phase-inspector, retro-check and prescan steps (lib/router-step.sh, lib/prescan-run.sh) instead of its Python retro port and its missing post-spawn/inspector/prescan wiring.",
+      "requires": [
+        { "flag": "FLEET_PHASE_DISPATCH_ENABLE" }
+      ],
+      "recommend": "situational",
+      "why": "One implementation of each router step for both the manual router and fleetd. Off until one clean live run; on adds the inspector and prescan agent spawns (token cost) and makes the phase-result channel reach classify_phase. Unset it to roll back; it is read on every call.",
+      "docs": "fleet-controller/CLAUDE.md#router-step-delegation"
+    },
+    {
       "name": "FLEET_STORE_ENABLE",
       "plugin": "fleet-controller",
       "default": "true",

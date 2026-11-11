@@ -630,7 +630,7 @@ def detect_foreign_run(tid, log_lines, activity_log, fleetd_owns_worker,
 # |---|---|---|
 # | `\|waiting\|` line + `META\|model` | **Delegated** to `phase_bracket_open` | The log grammar keeps one writer, as D13 requires for the closing half. An unopened bracket reads to `detect-resume.sh`, the zombie detector and the OTel exporter as "this phase never started". |
 # | spawn-meta + start marker | **fleetd itself** (`write_spawn_meta`, D15) | fleetd's differs: a session id generated before `execvpe`, and `SPAWNED_BY=fleetd` so `token-tracker.sh` picks the authoritative event. |
-# | Agent-return capture | **Delegated** to `capture_phase_return` | `phase-result-parse.sh --return-file` reads `logs/{tid}-{phase}-agent.log`; without it the phase-result channel has no input on the automated path. |
+# | Agent-return capture | **Delegated** to `router-step.sh post-spawn` (`fleetd/router_step.py`, under `FLEET_ROUTER_STEP_SHELL`) | `phase-result-parse.sh --return-file` reads `logs/{tid}-{phase}-agent.log`; without it the phase-result channel has no input on the automated path. `capture_phase_return` below was the earlier delegate and was never wired into the reap path; with the flag off there is still no capture. |
 # | Heartbeat pinger | **Obsolete** | It exists to prove a *router* is still looping while it waits. fleetd is not waiting in a loop it might fall out of. |
 # | Orchestrator watchdog | **Replaced** by `phase_liveness_heartbeat` | Same log line, better evidence: the watchdog's `alive` proves a backgrounded bash loop is looping, whereas fleetd checks the pid it forked. Emitting it is not the monitor reporting on itself — it is a fact fleetd verified, and it is written **only** when the check passes. |
 # | ctx file, progress file | **Obsolete** | The progress file is read only by that watchdog. The ctx file has no reader left at all: `tool-error-capture.sh` moved to session-id resolution and dropped the ctx fallback, so today it is written and swept and nothing consumes it. |
@@ -2201,9 +2201,11 @@ def next_step(table, step_id, result, counters, log_lines=(), is_bug=False):
     not re-fetching per step.
 
     Ported step by step from `SKILL.md`'s Dispatch Loop / `detect-resume.sh`
-    — see design.md D22 for the full transition table and the two things
-    deliberately not ported (STEP_5_5 PR-comment reconciliation, phase
-    inspectors).
+    — see design.md D22 for the full transition table. STEP_5_5 PR-comment
+    reconciliation is deliberately not ported. Phase inspectors are not a
+    transition: with `FLEET_ROUTER_STEP_SHELL=true` the supervisor runs
+    `router-step.sh inspector` between this decision and acting on it
+    (fleetd-shared-router-steps), and the decision itself never changes.
 
     A gate-stop the agent wrote to its own bracket always wins outright,
     for every step_id alike, before any step-specific routing runs
@@ -2350,8 +2352,9 @@ RetroDecision.__doc__ = """Whether STEP_6 should auto-trigger `/ticket-retro`.
 needed         — True if any condition fired.
 reasons        — tuple of the condition names that fired, in check order.
 drift_detected — condition 3 (a heartbeat `|fallback|` event) specifically.
-                 SKILL.md's own check writes `META|drift|warn|...` to the
-                 pipeline log as part of this same condition; that write is
+                 `router-step.sh retro-check` writes `META|drift|warn|...`
+                 to the pipeline log as part of this same condition (unless
+                 called with `--no-drift-log`, as fleetd calls it); that write is
                  the caller's job here (matching every other log-writing
                  side effect in this module — an evaluator reports, the
                  dispatch wiring or `orchestration.finalize_terminal` acts),
@@ -2370,10 +2373,13 @@ def _retro_anchored(line, literal):
 def needs_retro(table, log_file, hb_log_file=''):
     """Should STEP_6 auto-trigger a `/ticket-retro` agent?
 
-    Ports SKILL.md's 5-condition retro-trigger check verbatim: a gate-stop
+    The Python port of `router-step.sh retro-check` (the router's STEP_6
+    check), kept behind `FLEET_ROUTER_STEP_SHELL=false` until the port is
+    deleted; `tests/test_router_step_parity.py` holds the two together. Five
+    conditions: a gate-stop
     fired anywhere in the log; the run lacks a *positive* success marker —
     both a `VERIFY|verify|done|PASS` line AND a `PR-REVIEW|pr-review|done|OK`
-    line — tested as their absence, never as the absence of the STEP_6
+    (or `N/A`) line — tested as their absence, never as the absence of the STEP_6
     outcome line itself (that line is written by this same step, so testing
     for it was tautologically true on every run — GitHub #149); a heartbeat
     `|fallback|` event fired; STEP_4_5's own gate-stop code (`VERIFY_
@@ -2400,8 +2406,12 @@ def needs_retro(table, log_file, hb_log_file=''):
 
     has_verify_pass = any(
         _retro_anchored(line, 'VERIFY|verify|done|PASS') for line in lines)
+    # OK or N/A: N/A is a clean no-diff review (#318), which the router's
+    # `router-step.sh retro-check` already accepted. The parity test
+    # (test_router_step_parity.py) caught this port lagging behind.
     has_pr_review_ok = any(
         _retro_anchored(line, 'PR-REVIEW|pr-review|done|OK')
+        or _retro_anchored(line, 'PR-REVIEW|pr-review|done|N/A')
         for line in lines)
     if not (has_verify_pass and has_pr_review_ok):
         reasons.append(RETRO_REASON_NO_SUCCESS)
