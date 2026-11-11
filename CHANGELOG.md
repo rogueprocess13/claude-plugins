@@ -17,6 +17,12 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.114.1 (2026-11-12) — flow.sh releases the ticket lock before the outbox drain
+
+### Fixed
+
+- `flow.sh` held its per-ticket flock (FD 9) through the exit-time `outbox-drain.sh` call, and the drain inherited the descriptor, so the lock stayed held for the whole board network call. A concurrent `flow.sh` for the same ticket exited 42 (lock busy) until the board answered (October review ARCH-8). The lock is now released and FD 9 closed once the manifest write and the emit are done, before the drain. The drain's own cursor lock still serialises it against fleetd's pusher. New test `test_flow_drain_runs_without_ticket_lock` (phase1.sh) probes the lock from inside a board driver.
+
 ## ticket-planner 0.38.0 (2026-11-12) — Specify ownership tables, first-dispatch contract markers
 
 planner-crosscheck-ownership, PR B of 2. ticket-auto-pipeline and fleet-controller unchanged.
