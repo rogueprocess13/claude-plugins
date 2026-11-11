@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-planner-specify-params.sh — Tests for planner-specify-params.sh
-# (planner-specify-parameters, tasks 2.1–2.4).
+# (planner-specify-parameters, tasks 2.1–2.4, 8.2).
 #
 # Pinned here:
 #   1. The registry parse: a well-formed table, `None.`, an empty section,
@@ -12,6 +12,7 @@
 #   4. The literal tokenizer and canonical forms.
 #   5. Row rendering and substitution (rc 2 on a stale target, injection).
 #   6. mawk runs every awk program, and gawk (when installed) agrees.
+#   7. The Specify and Consensus prompt wording (task 8.2).
 #
 # Every case is guarded on the functions it needs, so on a checkout without
 # the lib this file prints FAIL lines and a non-zero summary, never an
@@ -556,8 +557,6 @@ fi
 
 # ── 6. mawk / gawk ────────────────────────────────────────────────────────────
 
-echo "=== awk portability ==="
-
 # run_all — every awk program over the fixtures, one output.
 run_all() {
   fresh
@@ -572,6 +571,48 @@ run_all() {
     planner_params_substitute "$INIT" "$PROP" "${WORK}/aw.md" 6 billing.total_rounding "X" && cat "${WORK}/aw.md"
   } 2>&1
 }
+
+echo "=== prompt rules ==="
+
+# ── 7. Prompt rules (task 8.2) ───────────────────────────────────────────────
+#
+# The wording lives in two lib functions, each pulled into its prompt by one
+# `$(…)` line (design D10). Pinned: the content D10 lists, the size budget,
+# and that each prompt is byte-identical to its pre-change capture once the
+# inserted lines are removed.
+
+name="Specify prompt rules carry the D10 content"
+if need "$name" planner_params_prompt_rules; then
+  r=$(planner_params_prompt_rules)
+  missing=""
+  for want in '## Parameters' '| Name | Key | Kind | Default | Value | Source |' 'None.' \
+    'policy' 'rounding' 'transaction' 'failure' 'fixed' 'duration' 'limit' 'size' \
+    'NEEDS_HUMAN_DECISION —' 'plain' '<artifact>:"<quote>"' 'code:<path>:"<quote>"' \
+    'verbatim' '## Technical Context' 'Crosscheck' 'Expected' 'human:'; do
+    grep -qF -- "$want" <<<"$r" || missing="${missing} [${want}]"
+  done
+  if [ -z "$missing" ]; then pass "$name"; else fail "$name" "missing:${missing}"; fi
+  words=$(wc -w <<<"$r")
+  if [ "$words" -le 380 ]; then pass "Specify prompt rules stay near 300 words (${words})"; else
+    fail "Specify prompt rules stay near 300 words" "${words} words"
+  fi
+fi
+
+name="Consensus rule carries the D10 content"
+if need "$name" planner_params_consensus_rule; then
+  r=$(planner_params_consensus_rule)
+  missing=""
+  for want in '## Parameters' 'human:' 'NEEDS_HUMAN_DECISION' 'new row' 'spec'; do
+    grep -qF -- "$want" <<<"$r" || missing="${missing} [${want}]"
+  done
+  if [ -z "$missing" ]; then pass "$name"; else fail "$name" "missing:${missing}"; fi
+  words=$(wc -w <<<"$r")
+  if [ "$words" -le 90 ]; then pass "Consensus rule stays near 60 words (${words})"; else
+    fail "Consensus rule stays near 60 words" "${words} words"
+  fi
+fi
+
+echo "=== awk portability ==="
 
 name="mawk runs every awk program"
 if need "$name" planner_params_rows planner_params_scan planner_params_literals; then

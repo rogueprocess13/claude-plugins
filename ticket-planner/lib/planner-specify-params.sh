@@ -44,6 +44,8 @@
 #                                              write <src> with line <line_no> replaced
 #                                              to <out>; rc 0 ok, 1 I/O or usage, 2 the
 #                                              line is no longer the open row for <key>
+#   planner_params_prompt_rules                the Specify prompt's parameter rules
+#   planner_params_consensus_rule              the Consensus prompt's carry-over rule
 #
 # Parsing <TAB> output: the default and suggestion columns may be empty. Bash
 # `read` with IFS=$'\t' collapses empty fields (tab is IFS whitespace), so read
@@ -691,4 +693,66 @@ planner_params_substitute() {
     { print }
   ' "$src" >"$out" || return 1
   return 0
+}
+
+# ── Prompt wording (design D10) ───────────────────────────────────────────────
+#
+# The Specify and Consensus prompts pull these in with one `$(…)` line each,
+# so a later wording change touches this file, not the prompt heredoc. The
+# Specify block starts with a newline: its `$(…)` line follows the Business
+# Outcomes rules directly, and the prompt's own blank line separates it from
+# `### Part 2`. The Consensus block is indented to sit inside step 3.
+
+planner_params_prompt_rules() {
+  cat <<'RULES'
+
+### Parameters (planner-specify-parameters)
+
+Declare once every value the plan depends on that someone could choose
+differently (a timeout, a retry rule, a rounding mode, a fee) in a
+`## Parameters` section directly after `## Business Outcomes`. Write `None.`
+when there are none; otherwise write one table:
+
+```
+## Parameters
+
+| Name | Key | Kind | Default | Value | Source |
+|------|-----|------|---------|-------|--------|
+| Idle session timeout | `auth.session_idle_minutes` | duration | 30 minutes | 30 minutes | default |
+| Invoice rounding | `billing.total_rounding` | rounding | half-up, 2 decimal places | NEEDS_HUMAN_DECISION — Should we round each line, or only the invoice total? | — |
+```
+
+- **Key** — backticked, a letter then letters, digits, `_`, `.` or `-`, at
+  most 64 characters, unique.
+- **Kind** — `policy`, `rounding`, `transaction`, `failure` and `fixed` change
+  what an acceptance criterion means: a person is asked unless a source states
+  the value. `duration`, `limit` and `size` are tuning values and may use
+  Source `default`. A Name or Key word such as retry, round, fee or refund
+  makes a tuning row asked too.
+- **Source** — `default`, `<artifact>:"<quote>"` (artifact `idea`, `intent`,
+  `appraisal`, `discovery` or `architecture`) or `code:<path>:"<quote>"`
+  (relative path). Bash checks the anchor: the quote, 8 to 300 characters, is
+  copied exactly from that file and holds the same number and unit as the
+  Value. A quote that does not check counts as `default`.
+- **Open value** — when no source states a must-ask value, write Value
+  `NEEDS_HUMAN_DECISION — <question>`, Source `—`, and your suggestion in
+  Default. Write the question in plain language a client understands, without
+  key names.
+- Never write a `human:` source. A row that has one was answered by a person:
+  keep it verbatim.
+- **Specs** — write each Value verbatim in the specs that use it, and name its
+  key in backticks in the spec's `## Technical Context` (a `fixed` row covers
+  only specs that name its key). Crosscheck blocks a number with a unit (time,
+  size, percent, attempts, characters, decimal places) in an acceptance
+  criterion or a Verification Notes Expected cell that no decided row declares.
+RULES
+}
+
+planner_params_consensus_rule() {
+  cat <<'RULE'
+   Carry the `## Parameters` section over intact too. Never change a `human:`
+   row: a person answered it. Add a new parameter as a new row, with Value
+   `NEEDS_HUMAN_DECISION — <question>` when no source states it. When you
+   change a row's Value, update every spec literal that held the old value.
+RULE
 }
