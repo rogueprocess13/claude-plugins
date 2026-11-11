@@ -396,6 +396,33 @@ _planner_stop_ownership_question() {
     "resolved" ""
 }
 
+# _planner_stop_acpre_question <INIT> <count>
+# The note question for AC_PRECONDITION_UNREACHABLE (planner-ac-code-
+# precondition D10): the count, the instance tokens read back from each fail
+# message's trailing accept command, the three fixes and the terminal accept
+# forms. AC_PRECONDITION_TABLE_INVALID keeps its flag:accept question.
+_planner_stop_acpre_question() {
+  local init="$1" count="$2" log start lines list="" line tok seen=" "
+  log=$(planner_state_log "$init") || return 1
+  start=$(grep -n '|Crosscheck|check|start|' "$log" | tail -1 | cut -d: -f1)
+  lines=$(tail -n "+$((${start:-0} + 1))" "$log" |
+    grep '^[^|]*|META|crosscheck|fail|AC_PRECONDITION_UNREACHABLE ' | cut -d'|' -f5-)
+  planner_crosscheck_instance_load AC_PRECONDITION_UNREACHABLE >/dev/null 2>&1 || true
+  if declare -f planner_crosscheck_acpre_instance >/dev/null 2>&1; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      tok=$(planner_crosscheck_acpre_instance "${line#* }")
+      [ -n "$tok" ] || continue
+      case "$seen" in *" ${tok} "*) continue ;; esac
+      seen+="${tok} "
+      list+="${list:+; }${tok}"
+    done <<<"$lines"
+  fi
+  _planner_stop_question "ac-precondition-findings" "note" \
+    "Crosscheck found ${count} acceptance criterion precondition(s) the code cannot reach: a criterion needs a starting state the schema forbids. Instances: $(_planner_stop_excerpt "${list:-see state.log}" 300). Fix each in the spec: change the criterion, mark the ## Preconditions row Mode input if the test submits the value, or set Basis spec:<slug> for a spec of this initiative that changes the schema. Then answer 'resolved' to re-run Crosscheck. To accept one instance as genuine, run from a terminal: resume ${init} --accept AC_PRECONDITION_UNREACHABLE@<slug>/<key>/<requires>:\"<reason>\", or AC_PRECONDITION_UNREACHABLE@*:\"<reason>\" for every instance the latest Crosscheck attempt found (there is no headless accept)." \
+    "resolved" ""
+}
+
 _planner_stop_sha() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum | awk '{print $1}'

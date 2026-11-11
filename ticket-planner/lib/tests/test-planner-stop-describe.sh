@@ -717,6 +717,65 @@ else
   fi
 fi
 
+# planner-ac-code-precondition D10: one ac-precondition-findings note for
+# AC_PRECONDITION_UNREACHABLE (no flag:accept for it);
+# AC_PRECONDITION_TABLE_INVALID keeps its accept question.
+echo "--- AC precondition note ---"
+if ! declare -f _planner_stop_acpre_question >/dev/null 2>&1; then
+  fail "_planner_stop_acpre_question missing" "not defined"
+else
+  fresh_root acpre-note
+  halt_fixture_init ac-precondition "$INIT" >/dev/null
+  halt_fixture_run ac-precondition "$INIT" "${WORK}/acpre-run" >/dev/null 2>&1
+  m=$(planner_stop_describe_json "$INIT")
+  got=$(echo "$m" | jq -r '.reason + " " + ([.questions[] | .id + "=" + .binding] | join(" "))')
+  t=$(qtext "$m" ac-precondition-findings)
+  if [ "$got" = "CROSSCHECK_BLOCKED accept-AC_PRECONDITION_TABLE_INVALID=flag:accept:AC_PRECONDITION_TABLE_INVALID ac-precondition-findings=note" ]; then
+    pass "ac-precondition: one note, TABLE_INVALID keeps its accept, no flag:accept:AC_PRECONDITION_UNREACHABLE"
+  else
+    fail "ac-precondition: one note, TABLE_INVALID keeps its accept, no flag:accept:AC_PRECONDITION_UNREACHABLE" "$got"
+  fi
+  if in_order "$t" '2 ' \
+    'AC_PRECONDITION_UNREACHABLE@invoice-needs-date/invoice.due_date/null' \
+    'AC_PRECONDITION_UNREACHABLE@invoice-number-format/invoice.number/number=3000000001' \
+    'change the criterion' 'Mode input' 'Basis spec:<slug>' "'resolved'" \
+    "resume ${INIT} --accept AC_PRECONDITION_UNREACHABLE@<slug>/<key>/<requires>:\"<reason>\"" \
+    'AC_PRECONDITION_UNREACHABLE@*:"<reason>"' 'no headless accept' &&
+    [ "$(echo "$m" | jq -r '.questions[] | select(.id == "ac-precondition-findings") | .options | join("|")')" = "resolved" ]; then
+    pass "ac-precondition: the note counts, lists the instance tokens, names the three fixes and the terminal accept forms; answer resolved"
+  else
+    fail "ac-precondition: the note counts, lists the instance tokens, names the three fixes and the terminal accept forms" "$t"
+  fi
+  planner_stop_describe "$INIT" >"${WORK}/acpre.hold"
+  if [ "$(bash "$HOLD_PARSER" --phase PLANNER --return-file "${WORK}/acpre.hold" 2>&1 | jq -r '.parse_status')" = "ok" ] &&
+    cmp -s "${WORK}/acpre.hold" <(planner_stop_describe "$INIT"); then
+    pass "ac-precondition: block parses and is byte-stable"
+  else
+    fail "ac-precondition: block parses and is byte-stable" "$(cat "${WORK}/acpre.hold")"
+  fi
+
+  # Ownership and AC precondition findings in one attempt: both notes, once each.
+  fresh_root acpre-own
+  planner_state_init "$INIT" "idea" >/dev/null
+  planner_state_write "$INIT" META contract start spec-ownership-v1
+  planner_state_write "$INIT" META contract start ac-precondition-v1
+  _halt_done "$INIT" Appraisal Discovery Architecture Specify Review Consensus
+  planner_state_write "$INIT" Crosscheck check start "x"
+  planner_state_write "$INIT" META crosscheck fail "OWN_NO_WRITER specs/a.md:15 reads \`customer.email\` (source spec) but no other spec writes it — resume ${INIT} --accept OWN_NO_WRITER@a/customer.email:\"<reason>\""
+  planner_state_write "$INIT" META crosscheck fail "AC_PRECONDITION_UNREACHABLE specs/b.md:20 'x' needs invoice.due_date null, but r/c.xml:3 declares it NOT NULL (pinned). Fix: change the criterion. Accept: --accept AC_PRECONDITION_UNREACHABLE@b/invoice.due_date/null:\"<reason>\""
+  planner_state_write "$INIT" META crosscheck fail "OWN_NO_WRITER specs/c.md:15 reads \`customer.email\` (source spec) but no other spec writes it — resume ${INIT} --accept OWN_NO_WRITER@c/customer.email:\"<reason>\""
+  planner_state_write "$INIT" META crosscheck fail "AC_PRECONDITION_UNREACHABLE specs/b.md:21 'y' needs invoice.status value:x, but r/I.java:9 allows only A,B (live). Fix: change the criterion. Accept: --accept AC_PRECONDITION_UNREACHABLE@b/invoice.status/value=x:\"<reason>\""
+  planner_state_write "$INIT" Crosscheck check fail "4 blocking"
+  m=$(planner_stop_describe_json "$INIT")
+  got=$(echo "$m" | jq -r '[.questions[] | .id + "=" + .binding] | join(" ")')
+  if [ "$got" = "ac-precondition-findings=note ownership-findings=note" ] &&
+    in_order "$(qtext "$m" ac-precondition-findings)" '2 ' 'AC_PRECONDITION_UNREACHABLE@b/invoice.due_date/null; AC_PRECONDITION_UNREACHABLE@b/invoice.status/value=x'; then
+    pass "ac-precondition + ownership: both notes, each once"
+  else
+    fail "ac-precondition + ownership: both notes, each once" "$got / $(qtext "$m" ac-precondition-findings)"
+  fi
+fi
+
 # Per-instance accept table (planner-crosscheck-ownership D10): a listed code
 # never gets a flag:accept:<CODE> question. FAKE_INSTANCE is test-only and has
 # no note function, so it gets no question at all; the other code keeps its own.
