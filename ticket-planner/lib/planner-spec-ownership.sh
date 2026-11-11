@@ -18,6 +18,8 @@
 #   planner_ownership_contract_mark <INIT>        append META|contract|start|
 #                                                 spec-ownership-v1 once
 #   planner_ownership_contract_initiative <INIT>  rc 0 when that line is present
+#   planner_ownership_prompt_rules / planner_ownership_consensus_rule
+#                                                 the Specify and Consensus wording
 #   planner_ownership_spec_checked <spec>         rc 0 when the spec is checked:
 #                                                 not INDEX.md, not synth-marked
 #   planner_ownership_writes <spec>               one line per valid Writes row:
@@ -94,6 +96,76 @@ planner_ownership_contract_mark() {
   local init="$1"
   planner_ownership_contract_initiative "$init" && return 0
   planner_state_write "$init" META contract start "$PLANNER_OWNERSHIP_CONTRACT"
+}
+
+# ── Prompt wording (design D15) ───────────────────────────────────────────────
+
+# planner_ownership_prompt_rules — the Specify rules for the two tables,
+# inserted after the Verification Notes rules. Starts with a blank line.
+planner_ownership_prompt_rules() {
+  cat <<'RULES'
+
+### Writes and Reads (planner-crosscheck-ownership)
+
+Every spec also declares the data it writes and reads and the side effects it
+owns or causes: under each of `## Writes` and `## Reads`, `None.` or exactly
+one table directly under the heading.
+
+```
+## Writes
+
+| Key | Op |
+|-----|----|
+| `invoice.status` | transition:sent,overdue->paid |
+| `invoice_history` | append |
+| `payment` | create |
+| `email.payment_receipt` | fire |
+| `email.invoice_overdue` | trigger |
+
+## Reads
+
+| Key | Source |
+|-----|--------|
+| `invoice.amount_due` | spec |
+| `invoice.due_date` | code:billing-service/src/main/resources/db/changelog |
+| `user.id` | framework:auth_user |
+| `bank_holiday.date` | external:public holiday feed |
+```
+
+- **Key** — backticked `entity` or `entity.field`: lower-case letters, digits
+  and `_`, starting with a letter, at most 64 characters, once per table. Use
+  the table and column names from code when the data exists, else the names
+  architecture.md uses. An effect key is `channel.event`, only in `## Writes`.
+- **Op** — `create`, `update`, `delete`, `append` (adds log rows, never changes
+  one), `transition:<from>-><to>` (`<from>`: a comma list of states, or `*`),
+  `fire`, `trigger`. Two specs writing one key conflict, and Crosscheck blocks,
+  unless one row is `append` or both are transitions with no shared from-state;
+  `create`, `update`, `delete` and `*` overlap every from-state.
+- **Effects** — exactly one spec has the `fire` row for an effect, and its
+  acceptance criteria state delivery and idempotency. Every other spec that
+  causes it writes `trigger`. A `trigger` with no `fire` owner blocks.
+- **Source** — `spec` (a sibling spec writes it, or Crosscheck blocks),
+  `code:<path>` (relative, first part the repository; bash checks a file there
+  names every part of the key, else the row counts as `spec`),
+  `framework:<name>` (`auth_user`, `session`, `clock`, `timestamps`, `row_id`
+  or `tenant`) or `external:<name>` (an outside system, named as the idea,
+  intent, discovery or architecture names it).
+- One spec owns each key; another spec that needs it reads it. Declare every
+  write and read the spec makes.
+- Crosscheck adds the `blocked-by` edge for each `spec` read and each `trigger`
+  itself, so do not add a `## Labels` `blocked-by:` only for that.
+RULES
+}
+
+# planner_ownership_consensus_rule — one Consensus rule, inserted after the
+# parameters rule in step 3.
+planner_ownership_consensus_rule() {
+  cat <<'RULE'
+   When an edit changes what a spec writes, reads, fires or triggers, update
+   its `## Writes` and `## Reads` tables in the same edit. Resolve an ownership
+   conflict by moving the write to one owner or narrowing the transitions,
+   never by deleting a row alone.
+RULE
 }
 
 planner_ownership_spec_checked() {

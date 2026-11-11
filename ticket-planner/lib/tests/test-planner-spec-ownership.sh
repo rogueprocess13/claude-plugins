@@ -12,6 +12,7 @@
 #   5. mawk runs every awk program, and gawk (when installed) agrees.
 #   6. Ownership edges (tasks 4.1–4.2): one per spec read and trigger, none
 #      for verified anchors, file bytes, removal, freeze and divergence.
+#   7. The Specify and Consensus prompt wording (task 6.1).
 #
 # Every case is guarded on the functions it needs, so on a checkout without
 # the lib this file prints FAIL lines and a non-zero summary, never an
@@ -792,6 +793,81 @@ if need "$name" planner_ownership_edges_count; then
   ospec digest '' 'invoice.total=spec'
   ew >/dev/null
   check "$name" "$(planner_ownership_edges_count "$INIT")" "2"
+fi
+
+echo "=== prompt rules ==="
+
+# The Specify and Consensus wording (design D15, task 6.1). Pinned: the D1
+# example, the content D15 lists, the size budget, and that the example the
+# prompt shows parses as valid tables.
+
+name="Specify ownership rules carry the D1 example"
+if need "$name" planner_ownership_prompt_rules; then
+  r=$(planner_ownership_prompt_rules)
+  missing=""
+  for want in '## Writes' '## Reads' '| Key | Op |' '| Key | Source |' \
+    '| `invoice.status` | transition:sent,overdue->paid |' \
+    '| `invoice_history` | append |' \
+    '| `payment` | create |' \
+    '| `email.payment_receipt` | fire |' \
+    '| `email.invoice_overdue` | trigger |' \
+    '| `invoice.amount_due` | spec |' \
+    '| `invoice.due_date` | code:billing-service/src/main/resources/db/changelog |' \
+    '| `user.id` | framework:auth_user |' \
+    '| `bank_holiday.date` | external:public holiday feed |'; do
+    grep -qF -- "$want" <<<"$r" || missing="${missing} [${want}]"
+  done
+  if [ -z "$missing" ]; then pass "$name"; else fail "$name" "missing:${missing}"; fi
+fi
+
+name="Specify ownership rules carry the D15 content"
+if need "$name" planner_ownership_prompt_rules; then
+  r=$(planner_ownership_prompt_rules)
+  missing=""
+  for want in 'None.' '64 characters' 'architecture.md' 'create' 'update' 'delete' \
+    'append' 'transition:<from>-><to>' '`*`' 'fire' 'trigger' 'idempotency' \
+    'spec' 'code:<path>' 'framework:<name>' 'external:<name>' \
+    'auth_user' 'session' 'clock' 'timestamps' 'row_id' 'tenant' \
+    'One spec owns each key' 'reads it' 'blocked-by' '## Labels' 'Crosscheck'; do
+    grep -qF -- "$want" <<<"$r" || missing="${missing} [${want}]"
+  done
+  if [ -z "$missing" ]; then pass "$name"; else fail "$name" "missing:${missing}"; fi
+  # The framework names in the prompt are exactly the allowlist bash checks.
+  fw_missing=""
+  for fw in $PLANNER_OWNERSHIP_FRAMEWORK_SOURCES; do
+    grep -qF -- "\`${fw}\`" <<<"$r" || fw_missing="${fw_missing} ${fw}"
+  done
+  check "$name: every framework name is listed" "$fw_missing" ""
+  words=$(wc -w <<<"$r")
+  if [ "$words" -le 400 ]; then pass "Specify ownership rules stay near 300 words (${words})"; else
+    fail "Specify ownership rules stay near 300 words" "${words} words"
+  fi
+  case "$r" in $'\n'*) pass "$name: starts with a blank line" ;; *) fail "$name: starts with a blank line" "no" ;; esac
+fi
+
+name="the prompt's own example parses as valid tables"
+if need "$name" planner_ownership_prompt_rules planner_ownership_writes planner_ownership_reads planner_ownership_invalid; then
+  fresh
+  ex=$(planner_ownership_prompt_rules | awk '/^```/{f=!f; next} f && /^## (Writes|Reads)$/{on=1} f && on')
+  printf '# Example\n\n## Title\n\nExample\n\n%s\n' "$ex" >"${SPECS}/example.md"
+  check "$name: no invalid row" "$(planner_ownership_invalid "${SPECS}/example.md")" ""
+  check "$name: 5 writes" "$(planner_ownership_writes "${SPECS}/example.md" | wc -l | tr -d ' ')" "5"
+  check "$name: 4 reads" "$(planner_ownership_reads "${SPECS}/example.md" | wc -l | tr -d ' ')" "4"
+fi
+
+name="Consensus ownership rule carries the D15 content"
+if need "$name" planner_ownership_consensus_rule; then
+  r=$(planner_ownership_consensus_rule)
+  missing=""
+  for want in '## Writes' '## Reads' 'writes, reads, fires or triggers' 'same edit' \
+    'one owner' 'transitions' 'never by deleting a row'; do
+    grep -qF -- "$want" <<<"$r" || missing="${missing} [${want}]"
+  done
+  if [ -z "$missing" ]; then pass "$name"; else fail "$name" "missing:${missing}"; fi
+  words=$(wc -w <<<"$r")
+  if [ "$words" -le 70 ]; then pass "Consensus ownership rule stays near 50 words (${words})"; else
+    fail "Consensus ownership rule stays near 50 words" "${words} words"
+  fi
 fi
 
 echo ""

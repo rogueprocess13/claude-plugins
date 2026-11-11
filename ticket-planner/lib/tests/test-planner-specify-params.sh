@@ -12,7 +12,9 @@
 #   4. The literal tokenizer and canonical forms.
 #   5. Row rendering and substitution (rc 2 on a stale target, injection).
 #   6. mawk runs every awk program, and gawk (when installed) agrees.
-#   7. The Specify and Consensus prompt wording (task 8.2).
+#   7. The Specify and Consensus prompt wording (task 8.2), and the
+#      planner-crosscheck-ownership insertions (Specify, Consensus, TicketGen;
+#      that change's task 6.2): no residue once stripped.
 #
 # Every case is guarded on the functions it needs, so on a checkout without
 # the lib this file prints FAIL lines and a non-zero summary, never an
@@ -38,6 +40,8 @@ source "${LIB_DIR}/planner-specify-decisions.sh"
 if [ -f "$SP_LIB" ]; then
   source "$SP_LIB"
 fi
+# The ownership prompt wording (planner-crosscheck-ownership, task 6.2).
+source "${LIB_DIR}/planner-spec-ownership.sh"
 
 PASS=0
 FAIL=0
@@ -613,50 +617,129 @@ if need "$name" planner_params_consensus_rule; then
 fi
 
 # Pre-change captures, scratch REPOS_ROOT normalised (the same normalisation
-# test-planner-business-framing.sh uses for SPECIFY_PROMPT_SHA).
+# test-planner-business-framing.sh uses for SPECIFY_PROMPT_SHA). Still the
+# captures from before planner-specify-parameters: the strip below also removes
+# what planner-crosscheck-ownership inserted, so both changes together leave
+# no residue. Each later prompt change adds its blocks to the strip lists.
 SPECIFY_PRE_SHA="4b9ab2f059255bb3c2b6c79edd3b66e43a999d78823a593e3ea26126537b3bd9"
 CONSENSUS_PRE_SHA="11161f4ce2736099fcaddbed6fd92cbc247050f69ec351183f1bd0016535c9d9"
 SPECIFY_BULLET='- **Parameters** — a `## Parameters` section directly after Business Outcomes (rules below)'
 
-# _strip_block <prompt> <block> — the prompt with the one occurrence of
-# <block> (and the newline before it) removed; empty when it occurs other
-# than once.
-_strip_block() {
-  local p="$1" b=$'\n'"$2" rest
+# The prompts as they were before planner-crosscheck-ownership (main @ 3e6016e),
+# and the lines that change inserted (design D15, task 6.2).
+OWN_SPECIFY_PRE_SHA="7cfd5cf7c9b36538867befaf774ca8895f638039aa46e425f1cec505d3f29e89"
+OWN_CONSENSUS_PRE_SHA="565edca03c6edaf7b791e4de973a75345875350631c3aab67b52a3c89df0b703"
+OWN_TICKETGEN_PRE_SHA="b7815809eac92d3aed028292c3f38ea19d1a7263345f843d74f1f6fa63197f0b"
+OWN_SPECIFY_BULLET='7. **## Writes** and **## Reads** — the data the ticket writes and reads, and the side effects it owns or causes (rules below)'
+OWN_SPECIFY_HEADINGS=', `## Writes`, `## Reads`'
+OWN_TICKETGEN_LINE='  Then the ownership edges in `artifacts/ownership-edges.json`: a spec blocked by the sibling that writes what it reads, or by the `fire` owner of an effect it triggers.'
+
+# _strip_once <prompt> <text> — the prompt with the one occurrence of <text>
+# removed; empty when <text> occurs other than once.
+_strip_once() {
+  local p="$1" b="$2" rest
   [[ "$p" == *"$b"* ]] || return 0
   rest="${p#*"$b"}"
   [[ "$rest" != *"$b"* ]] || return 0
   printf '%s%s' "${p%%"$b"*}" "$rest"
 }
 
-name="Specify prompt is the pre-change prompt plus the rules block and one bullet"
-if need "$name" planner_params_prompt_rules && [ -f "${LIB_DIR}/planner-phase-prompts.sh" ]; then
+# _strip_block <prompt> <block> — _strip_once of <block> with the newline
+# before it (an inserted line or `$(…)` block).
+_strip_block() {
+  _strip_once "$1" $'\n'"$2"
+}
+
+# _strip_blocks <prompt> <block>... — strip each block in turn (_strip_block);
+# a block starting with `inline:` is stripped with _strip_once instead. Empty
+# when any block is not found exactly once.
+_strip_blocks() {
+  local p="$1" b
+  shift
+  for b in "$@"; do
+    case "$b" in
+    inline:*) p=$(_strip_once "$p" "${b#inline:}") ;;
+    *) p=$(_strip_block "$p" "$b") ;;
+    esac
+    [ -n "$p" ] || return 0
+  done
+  printf '%s' "$p"
+}
+
+_sha() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
+
+# The ownership blocks of each prompt, in strip order.
+own_specify_blocks() {
+  OWN_BLOCKS=("$(planner_ownership_prompt_rules)" "$OWN_SPECIFY_BULLET" "inline:${OWN_SPECIFY_HEADINGS}")
+}
+
+name="Specify prompt is the pre-change prompt plus the rules blocks and bullets"
+if need "$name" planner_params_prompt_rules planner_ownership_prompt_rules && [ -f "${LIB_DIR}/planner-phase-prompts.sh" ]; then
   source "${LIB_DIR}/planner-phase-prompts.sh"
   sp=$(planner_prompt_specify "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
   sp="${sp//$REPOS_ROOT/<REPOS_ROOT>}"
-  st=$(_strip_block "$sp" "$(planner_params_prompt_rules)")
-  [ -n "$st" ] && st=$(_strip_block "$st" "$SPECIFY_BULLET")
-  got=$(printf '%s' "$st" | sha256sum | cut -d' ' -f1)
+  own_specify_blocks
+  st=$(_strip_blocks "$sp" "$(planner_params_prompt_rules)" "$SPECIFY_BULLET" "${OWN_BLOCKS[@]}")
+  got=$(_sha "$st")
   if [ -n "$st" ] && [ "$got" = "$SPECIFY_PRE_SHA" ]; then pass "$name"; else
-    fail "$name" "block or bullet not found once, or sha ${got}"
+    fail "$name" "a block or bullet not found once, or sha ${got}"
   fi
   if [[ "$sp" == *"$(planner_params_prompt_rules)"$'\n\n### Part 2: Write per-ticket spec files'* ]]; then
     pass "Specify rules sit directly before Part 2"
   else fail "Specify rules sit directly before Part 2" "not adjacent"; fi
+
+  name="Specify prompt without the ownership lines is the pre-ownership prompt (no residue)"
+  st=$(_strip_blocks "$sp" "${OWN_BLOCKS[@]}")
+  got=$(_sha "$st")
+  if [ -n "$st" ] && [ "$got" = "$OWN_SPECIFY_PRE_SHA" ]; then pass "$name"; else
+    fail "$name" "a block not found once, or sha ${got}"
+  fi
+  if [[ "$sp" == *$'\n```\n'"$(planner_ownership_prompt_rules)"$'\n\n### Confidence signals'* ]]; then
+    pass "Specify ownership rules sit after the Verification Notes rules, before Confidence signals"
+  else fail "Specify ownership rules sit after the Verification Notes rules" "not adjacent"; fi
+  if grep -qF -- '6. **## Test Data Provided**' <<<"$sp" &&
+    [ "$(grep -A2 -F -- '6. **## Test Data Provided**' <<<"$sp" | tail -1)" = "$OWN_SPECIFY_BULLET" ]; then
+    pass "Specify ownership bullet follows the Test Data Provided bullet"
+  else fail "Specify ownership bullet follows the Test Data Provided bullet" "not adjacent"; fi
 fi
 
-name="Consensus prompt is the pre-change prompt plus the rule block"
-if need "$name" planner_params_consensus_rule planner_prompt_consensus; then
+name="Consensus prompt is the pre-change prompt plus the rule blocks"
+if need "$name" planner_params_consensus_rule planner_ownership_consensus_rule planner_prompt_consensus; then
   cp=$(planner_prompt_consensus "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
   cp="${cp//$REPOS_ROOT/<REPOS_ROOT>}"
-  ct=$(_strip_block "$cp" "$(planner_params_consensus_rule)")
-  got=$(printf '%s' "$ct" | sha256sum | cut -d' ' -f1)
+  ct=$(_strip_blocks "$cp" "$(planner_params_consensus_rule)" "$(planner_ownership_consensus_rule)")
+  got=$(_sha "$ct")
   if [ -n "$ct" ] && [ "$got" = "$CONSENSUS_PRE_SHA" ]; then pass "$name"; else
     fail "$name" "block not found once, or sha ${got}"
   fi
   if grep -A1 -F '(planner-business-framing).' <<<"$cp" | grep -qF '## Parameters'; then
     pass "Consensus rule follows the Business Outcomes carry-over sentence"
   else fail "Consensus rule follows the Business Outcomes carry-over sentence" "not adjacent"; fi
+
+  name="Consensus prompt without the ownership rule is the pre-ownership prompt (no residue)"
+  ct=$(_strip_blocks "$cp" "$(planner_ownership_consensus_rule)")
+  got=$(_sha "$ct")
+  if [ -n "$ct" ] && [ "$got" = "$OWN_CONSENSUS_PRE_SHA" ]; then pass "$name"; else
+    fail "$name" "block not found once, or sha ${got}"
+  fi
+  if [[ "$cp" == *"$(planner_params_consensus_rule)"$'\n'"$(planner_ownership_consensus_rule)"$'\n4. Write a consensus digest'* ]]; then
+    pass "Consensus ownership rule follows the parameters rule"
+  else fail "Consensus ownership rule follows the parameters rule" "not adjacent"; fi
+fi
+
+name="TicketGen prompt without the ownership-edges line is the pre-ownership prompt (no residue)"
+declare -f planner_prompt_ticketgen >/dev/null || source "${LIB_DIR}/planner-phase-prompts.sh"
+if need "$name" planner_prompt_ticketgen; then
+  tp=$(planner_prompt_ticketgen "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
+  tp="${tp//$REPOS_ROOT/<REPOS_ROOT>}"
+  tt=$(_strip_blocks "$tp" "$OWN_TICKETGEN_LINE")
+  got=$(_sha "$tt")
+  if [ -n "$tt" ] && [ "$got" = "$OWN_TICKETGEN_PRE_SHA" ]; then pass "$name"; else
+    fail "$name" "line not found once, or sha ${got}"
+  fi
+  if grep -B1 -F -- "$OWN_TICKETGEN_LINE" <<<"$tp" | head -1 | grep -qF 'testdata-synth.json'; then
+    pass "TicketGen ownership-edges line follows the test-data edges"
+  else fail "TicketGen ownership-edges line follows the test-data edges" "not adjacent"; fi
 fi
 
 echo "=== awk portability ==="

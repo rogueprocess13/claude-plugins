@@ -385,13 +385,15 @@ _prompt_has "EpicGen" "$EPICGEN_PROMPT" \
   'Deferred decision:'
 
 # The Specify prompt must not move a byte by accident. Last deliberate
-# re-capture: the parameter registry rules (planner-specify-parameters), one
-# `$(planner_params_prompt_rules)` line and one proposal-section bullet;
-# test-planner-specify-params.sh pins that removing them restores 4b9ab2f0….
+# re-capture: the Writes/Reads rules (planner-crosscheck-ownership), one
+# `$(planner_ownership_prompt_rules)` line, one spec-section bullet and two
+# headings in the "Write them as" list; test-planner-specify-params.sh pins
+# that removing them restores 7cfd5cf7…, and that also removing the parameter
+# registry lines (planner-specify-parameters) restores 4b9ab2f0….
 # Pinned as the sha256 of the prompt captured with that change, with the
 # scratch REPOS_ROOT normalised. If a later change edits the Specify prompt on
 # purpose, re-capture: printf '%s' "${SPECIFY_PROMPT//$TMP_ROOT/<REPOS_ROOT>}" | sha256sum
-SPECIFY_PROMPT_SHA="7cfd5cf7c9b36538867befaf774ca8895f638039aa46e425f1cec505d3f29e89"
+SPECIFY_PROMPT_SHA="93bbc0bb60710543ba7928ade772f06a57e6f82574e997f41d9bfd4a59fee06a"
 got_sha=$(printf '%s' "${SPECIFY_PROMPT//$TMP_ROOT/<REPOS_ROOT>}" | sha256sum | cut -d' ' -f1)
 if [ "$got_sha" = "$SPECIFY_PROMPT_SHA" ]; then
   pass "Specify prompt is byte-identical to the pre-change capture"

@@ -193,36 +193,172 @@ if declare -f planner_params_scan >/dev/null || [ -f "${LIB_DIR}/planner-specify
     fail "contract Review stop" "rc=$RC out='$(head -3 <<<"$OUT")'"
   fi
 
-  if declare -f _planner_dispatch_contract_mark >/dev/null; then
-    param_init mark legacy
-    log=$(planner_state_log "$INIT")
-    _planner_dispatch_contract_mark "$INIT" Review
-    n0=$(grep -c 'specify-parameters-v1' "$log" || true)
-    _planner_dispatch_contract_mark "$INIT" Specify
-    _planner_dispatch_contract_mark "$INIT" Specify
-    n1=$(grep -c 'specify-parameters-v1' "$log" || true)
-    if [ "$n0" -eq 0 ] && [ "$n1" -eq 1 ]; then
-      pass "contract mark: only for Specify, exactly once"
-    else
-      fail "contract mark" "before=$n0 after=$n1"
-    fi
-  else
-    fail "contract mark" "_planner_dispatch_contract_mark missing"
-  fi
-
-  param_init mark-pre legacy
-  log=$(planner_state_log "$INIT")
-  gate_run pre Review
-  n0=$(grep -c 'specify-parameters-v1' "$log" || true)
-  gate_run pre Specify
-  n1=$(grep -c 'specify-parameters-v1' "$log" || true)
-  if [ "$RC" -eq 0 ] && [ "$n0" -eq 0 ] && [ "$n1" -eq 1 ]; then
-    pass "pre gate writes the contract marker when Specify is next, only then"
-  else
-    fail "pre gate contract marker" "rc=$RC before=$n0 after=$n1 err='$ERR'"
-  fi
 else
   fail "second Specify stop" "planner-specify-params.sh missing"
+fi
+
+# ── 3c. Contract markers on the first Specify dispatch only ─────────────────
+
+echo "--- 3c. contract markers: first Specify dispatch only (planner-crosscheck-ownership D12) ---"
+
+# mark_init <root> — a new initiative: Appraisal..Architecture done, no
+# Specify line, no specs.
+mark_init() {
+  fresh_root "$1"
+  planner_state_init "$INIT" "an idea" >/dev/null
+  _halt_done "$INIT" Appraisal Discovery Architecture
+  MLOG=$(planner_state_log "$INIT")
+  MSPECS="$(planner_initiative_dir "$INIT")/artifacts/specs"
+}
+# markers — "<specify-parameters-v1 count> <spec-ownership-v1 count>"
+markers() {
+  printf '%s %s' "$(grep -c '|META|contract|start|specify-parameters-v1$' "$MLOG" || true)" \
+    "$(grep -c '|META|contract|start|spec-ownership-v1$' "$MLOG" || true)"
+}
+# a_spec — write one spec file the way an earlier Specify run left it.
+a_spec() {
+  mkdir -p "$MSPECS"
+  printf '# Spec\n\n## Title\n\nExport invoices\n' >"${MSPECS}/export.md"
+}
+
+if declare -f _planner_specify_first_dispatch >/dev/null; then
+  mark_init first-rc
+  if _planner_specify_first_dispatch "$INIT"; then pass "first dispatch: a new initiative"; else
+    fail "first dispatch: a new initiative" "rc 1"
+  fi
+  planner_state_write "$INIT" Specify synthesize start "x"
+  planner_state_write "$INIT" Specify synthesize fail "x"
+  if _planner_specify_first_dispatch "$INIT"; then pass "first dispatch: a failed Specify with no spec still counts"; else
+    fail "first dispatch: failed Specify, no spec" "rc 1"
+  fi
+  mkdir -p "$MSPECS"
+  printf 'x\n' >"${MSPECS}/notes.txt"
+  if _planner_specify_first_dispatch "$INIT"; then pass "first dispatch: a non-.md file is not a spec"; else
+    fail "first dispatch: non-.md file" "rc 1"
+  fi
+  a_spec
+  if ! _planner_specify_first_dispatch "$INIT"; then pass "not first: a spec file exists"; else
+    fail "not first: a spec file exists" "rc 0"
+  fi
+  mark_init first-done
+  planner_state_write "$INIT" Specify synthesize start "x"
+  planner_state_write "$INIT" Specify synthesize done "x"
+  if ! _planner_specify_first_dispatch "$INIT"; then pass "not first: a Specify done line exists (no specs)"; else
+    fail "not first: Specify done line" "rc 0"
+  fi
+else
+  fail "first dispatch" "_planner_specify_first_dispatch missing"
+fi
+
+if declare -f _planner_dispatch_contract_mark >/dev/null; then
+  mark_init mark-new
+  _planner_dispatch_contract_mark "$INIT" Review
+  m0=$(markers)
+  _planner_dispatch_contract_mark "$INIT" Specify
+  _planner_dispatch_contract_mark "$INIT" Specify
+  m1=$(markers)
+  if [ "$m0" = "0 0" ] && [ "$m1" = "1 1" ]; then
+    pass "new initiative: the first Specify dispatch writes both markers, once"
+  else
+    fail "new initiative markers" "before=$m0 after=$m1"
+  fi
+
+  mark_init mark-redispatch
+  planner_state_write "$INIT" Specify synthesize start "x"
+  planner_state_write "$INIT" Specify synthesize done "x"
+  a_spec
+  _planner_dispatch_contract_mark "$INIT" Specify
+  if [ "$(markers)" = "0 0" ]; then
+    pass "re-dispatch of Specify with specs and no markers writes neither (in-flight initiative stays legacy)"
+  else
+    fail "re-dispatch markers" "markers=$(markers)"
+  fi
+
+  mark_init mark-partial
+  planner_state_write "$INIT" Specify synthesize start "x"
+  planner_state_write "$INIT" Specify synthesize fail "x"
+  a_spec
+  _planner_dispatch_contract_mark "$INIT" Specify
+  if [ "$(markers)" = "0 0" ]; then
+    pass "a retry after a failed Specify that wrote specs writes neither"
+  else
+    fail "retry after partial Specify" "markers=$(markers)"
+  fi
+
+  mark_init mark-crash
+  planner_state_write "$INIT" Specify synthesize start "x"
+  _planner_dispatch_contract_mark "$INIT" Specify
+  if [ "$(markers)" = "1 1" ]; then
+    pass "a crash before any spec was written: the next dispatch still marks"
+  else
+    fail "crash then re-dispatch" "markers=$(markers)"
+  fi
+
+  mark_init mark-crash-after
+  _planner_dispatch_contract_mark "$INIT" Specify
+  planner_state_write "$INIT" Specify synthesize start "x"
+  a_spec
+  _planner_dispatch_contract_mark "$INIT" Specify
+  if [ "$(markers)" = "1 1" ]; then
+    pass "marked, then a crash after specs were written: the retry adds nothing"
+  else
+    fail "marked then crash" "markers=$(markers)"
+  fi
+
+  mark_init mark-later
+  for ph in Appraisal Discovery Architecture Review Consensus Crosscheck EpicGen TicketGen Completed; do
+    _planner_dispatch_contract_mark "$INIT" "$ph"
+  done
+  if [ "$(markers)" = "0 0" ]; then pass "every other phase writes nothing"; else
+    fail "other phases" "markers=$(markers)"
+  fi
+
+  mark_init mark-params-fail
+  RC=0
+  (
+    planner_params_contract_mark() { return 1; }
+    _planner_dispatch_contract_mark "$INIT" Specify
+  ) || RC=$?
+  if [ "$RC" -ne 0 ] && [ "$(markers)" = "0 0" ]; then
+    pass "a failed parameters mark fails the call and writes no ownership marker"
+  else
+    fail "params mark failure" "rc=$RC markers=$(markers)"
+  fi
+
+  mark_init mark-own-fail
+  RC=0
+  (
+    planner_ownership_contract_mark() { return 1; }
+    _planner_dispatch_contract_mark "$INIT" Specify
+  ) || RC=$?
+  if [ "$RC" -ne 0 ]; then pass "a failed ownership mark fails the call"; else
+    fail "ownership mark failure" "rc=$RC"
+  fi
+else
+  fail "contract mark" "_planner_dispatch_contract_mark missing"
+fi
+
+mark_init mark-pre
+gate_run pre Review
+m0=$(markers)
+gate_run pre Specify
+m1=$(markers)
+if [ "$RC" -eq 0 ] && [ "$m0" = "0 0" ] && [ "$m1" = "1 1" ]; then
+  pass "pre gate writes both markers when Specify is next on a new initiative, only then"
+else
+  fail "pre gate contract markers" "rc=$RC before=$m0 after=$m1 err='$ERR'"
+fi
+
+mark_init mark-pre-fail
+RC=0
+(
+  planner_ownership_contract_mark() { return 1; }
+  planner_dispatch_gate pre "$INIT" Specify "$(planner_initiative_dir "$INIT")"
+) >"${WORK}/g.out" 2>"${WORK}/g.err" || RC=$?
+if [ "$RC" -eq 1 ] && grep -qF "could not record the" "${WORK}/g.err"; then
+  pass "pre gate: a failed mark is an error (rc 1, stderr)"
+else
+  fail "pre gate failed mark" "rc=$RC err='$(cat "${WORK}/g.err")'"
 fi
 
 # ── 4. Refinement finish ─────────────────────────────────────────────────────

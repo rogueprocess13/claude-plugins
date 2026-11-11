@@ -43,6 +43,10 @@ _source_if_missing "planner_config_get" \
 _source_if_missing "planner_params_prompt_rules" \
   "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-specify-params.sh"
 
+# The Specify and Consensus Writes/Reads wording (planner-crosscheck-ownership, D15).
+_source_if_missing "planner_ownership_prompt_rules" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-spec-ownership.sh"
+
 # Resolved plugin root, memoized per shell. Empty until first resolution.
 _PLANNER_PROMPT_LIB_ROOT="${_PLANNER_PROMPT_LIB_ROOT:-}"
 
@@ -849,9 +853,10 @@ ${state_dir}/artifacts/specs/<ticket-slug>.md. Each spec must include:
    verifiable (see below)
 6. **## Test Data Provided** — only on a spec that produces test data other specs
    (or itself) name with Source \`seeded-by:<slug>\`: what it generates or seeds
+7. **## Writes** and **## Reads** — the data the ticket writes and reads, and the side effects it owns or causes (rules below)
 
 Write them as \`## Title\`, \`## Description\` (the body sections follow as their own
-\`##\` headings), \`## Labels\`, \`## Signals\`, \`## Verification Notes\` — TicketGen reads
+\`##\` headings), \`## Labels\`, \`## Signals\`, \`## Verification Notes\`, \`## Writes\`, \`## Reads\` — TicketGen reads
 each by heading.
 
 ### Ticket kind (planner-business-framing)
@@ -1072,6 +1077,7 @@ CLAUDE_PLUGIN_ROOT="${_PLANNER_PROMPT_LIB_ROOT}"
 source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-testdata.sh"
 planner_testdata_no_tests_rule "${initiative_id}" && echo " — no-tests rule active: never self-seed; write Source: generate for those needs"
 \`\`\`
+$(planner_ownership_prompt_rules)
 
 ### Confidence signals (RAW VALUES ONLY — do NOT compute confidence)
 
@@ -1323,6 +1329,7 @@ sweep would misread.
    finding requires it, never renumber existing ids, and update every spec's
    \`Serves\`/\`Enables\` if you add or remove one (planner-business-framing).
 $(planner_params_consensus_rule)
+$(planner_ownership_consensus_rule)
 4. Write a consensus digest to ${state_dir}/artifacts/consensus.md:
    - **Findings Addressed** — each review finding, its disposition (accepted/rejected/deferred),
      and what changed (if anything), naming the acceptance criterion you added or
@@ -2088,6 +2095,7 @@ is left to judgement:
   tokens (a sibling slug, an unambiguous \`-\`-bounded prefix of one, or an existing
   Linear identifier for a cross-initiative prerequisite), plus the test-data
   synthesis edges in \`artifacts/testdata-synth.json\` (consumer blocked by its TD spec).
+  Then the ownership edges in \`artifacts/ownership-edges.json\`: a spec blocked by the sibling that writes what it reads, or by the \`fire\` owner of an effect it triggers.
 - **Title / type** — \`planner_ticketgen_spec_title\` (the spec's \`## Title\`) and
   \`planner_ticketgen_spec_type\` (the type token on its \`## Labels\` line).
 - **Priority** — \`planner_ticketgen_priority\`: a synthesized test-data spec (it carries
