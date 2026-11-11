@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-planner-ac-precondition.sh — Tests for planner-ac-precondition.sh
-# (planner-ac-code-precondition, tasks 1.2–1.3).
+# (planner-ac-code-precondition, tasks 1.2–1.3, 2.2).
 #
 # Pinned here:
 #   1. The `## Preconditions` table parse: well-formed table, `None.`,
@@ -12,6 +12,9 @@
 #      dependency, one with no Writes row.
 #   4. Synth-marked specs and INDEX.md are skipped; the contract marker.
 #   5. mawk runs every awk program, and gawk (when installed) agrees.
+#   6. Schema facts (JPA, Liquibase XML), the decision per row, decimal
+#      comparison, nearest names, the file cap, the cache (task 2.2), over the
+#      fixture tree fixtures/ac-precondition/billing/.
 #
 # Every case is guarded on the functions it needs, so on a checkout without
 # the lib this file prints FAIL lines and a non-zero summary, never an
@@ -409,6 +412,484 @@ if need "$name" planner_acpre_rows; then
     fi
   else
     echo "  SKIP mawk runs every awk program (mawk not installed)"
+  fi
+fi
+
+# ── 6. Schema facts and the decision (task 2.2) ───────────────────────────────
+
+echo "=== schema facts ==="
+
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
+FX="${SCRIPT_DIR}/fixtures/ac-precondition/billing"
+BT="${REPOS_ROOT}/billing"
+cp -R "$FX" "$BT"
+git -C "$BT" init -q -b main
+git -C "$BT" add -A
+git -C "$BT" commit -qm fixture
+fresh
+INIT_LIVE="$INIT"
+CL=src/main/resources/db/changelog
+JV=src/main/java/com/example/billing
+X1="billing/${CL}/001-invoice.xml"
+X2="billing/${CL}/002-customer.xml"
+X3="billing/${CL}/003-relax.xml"
+JI="billing/${JV}/Invoice.java"
+JC="billing/${JV}/Customer.java"
+FACT_RE='^(nullable|primitive|enum|enum-unchecked|min|max|transient|unparsed)'"$TAB"
+
+# facts <sub> <key> — every facts line; kinds <sub> <key> — the fact lines only.
+facts() { planner_acpre_facts "$BT" "$1" "$2" billing 2>/dev/null || true; }
+kinds() { facts "$@" | grep -E "$FACT_RE" || true; }
+# dec <key> <requires> — the decision for a `code:billing/<changelog>` row.
+dec() { planner_acpre_check_row "$INIT_LIVE" "billing/${CL}" "$1" "$2" 2>/dev/null | cut -f3- || true; }
+fl() { lineof "${BT}/${1#billing/}" "$2"; }
+# starts <name> <got> <prefix>
+starts() {
+  case "$2" in "$3"*) pass "$1" ;; *) fail "$1" "got [$2] want prefix [$3]" ;; esac
+}
+
+name="constants"
+if need "$name" planner_acpre_facts; then
+  check "$name" "${PLANNER_ACPRE_ENTITY_MAX_FILES:-}|${PLANNER_ACPRE_EXTRACTORS:-}" \
+    "2000|_planner_acpre_facts_liquibase_xml _planner_acpre_facts_jpa"
+fi
+
+name="facts: multi-line Liquibase column and constraints give nullable no at the attribute line"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(kinds "$CL" invoice.due_date)" "nullable${TAB}no${TAB}${X1}:$(fl "$X1" '    nullable="false"')"
+fi
+
+name="facts: primaryKey and @Id both give nullable no; bigint gives min and max"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(kinds "$CL" invoice.id)" "nullable${TAB}no${TAB}${X1}:$(fl "$X1" 'primaryKey="true"')
+min${TAB}-9223372036854775808${TAB}${X1}:$(fl "$X1" '<column name="id"')
+max${TAB}9223372036854775807${TAB}${X1}:$(fl "$X1" '<column name="id"')
+nullable${TAB}no${TAB}${JI}:$(fl "$JI" 'private Long id;')"
+fi
+
+name="facts: dropNotNullConstraint gives nullable yes next to the createTable no"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(kinds "$CL" invoice.paid_at)" "nullable${TAB}no${TAB}${X1}:19
+nullable${TAB}yes${TAB}${X3}:$(fl "$X3" 'dropNotNullConstraint')"
+fi
+
+name="facts: addNotNullConstraint gives nullable no"
+if need "$name" planner_acpre_facts; then
+  starts "$name" "$(kinds "$CL" invoice.priority)" "nullable${TAB}no${TAB}${X3}:$(fl "$X3" 'addNotNullConstraint')"
+fi
+
+name="facts: every column of the multi-column addColumn is found"
+if need "$name" planner_acpre_facts; then
+  got=""
+  for k in reference note priority; do
+    grep -q "^found${TAB}field${TAB}${X1}:" <<<"$(facts "$CL" "invoice.$k")" && got="${got}${k} "
+  done
+  check "$name" "$got" "reference note priority "
+fi
+
+name="facts: comments and rollback blocks give nothing (reference none, note only nullable yes)"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(kinds "$CL" invoice.reference)|$(kinds "$CL" invoice.note)" \
+    "|nullable${TAB}yes${TAB}${X1}:$(fl "$X1" 'nullable="true"')"
+fi
+
+name="facts: int column and primitive int field"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(kinds "$CL" invoice.number)" "min${TAB}-2147483648${TAB}${X1}:$(fl "$X1" '<column name="number"')
+max${TAB}2147483647${TAB}${X1}:$(fl "$X1" '<column name="number"')
+primitive${TAB}int${TAB}${JI}:$(fl "$JI" 'private int number;')"
+fi
+
+name="facts: smallint column"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(kinds "$CL" customer.visits | grep -E "^(min|max)")" "min${TAB}-32768${TAB}${X2}:13
+max${TAB}32767${TAB}${X2}:13"
+fi
+
+name="facts: modifyDataType adds a second type"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(kinds "$CL" invoice.reminder_count | cut -f1,2 | tr '\n' ' ')" \
+    "min	-2147483648 max	2147483647 min	-9223372036854775808 max	9223372036854775807 primitive	int "
+fi
+
+name="facts: due_date matches the dueDate field"
+if need "$name" planner_acpre_facts; then
+  if grep -q "^found${TAB}field${TAB}${JI}:$(fl "$JI" 'private LocalDate dueDate;')\$" <<<"$(facts "$CL" invoice.due_date)"; then
+    pass "$name"
+  else fail "$name" "$(facts "$CL" invoice.due_date)"; fi
+fi
+
+name="facts: STRING enum lists its constants; a multi-line @Enumerated is read"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(kinds "$CL" invoice.status)" "enum${TAB}DRAFT,SENT,PAID${TAB}${JI}:$(fl "$JI" 'private InvoiceStatus status;')"
+fi
+
+name="facts: unannotated, @Convert, constructor-valued and ambiguous enums are enum-unchecked"
+if need "$name" planner_acpre_facts; then
+  got="$(kinds "$CL" invoice.priority | grep '^enum' | cut -f1,2)|$(kinds "$CL" invoice.channel | cut -f1,2)|$(kinds "$CL" invoice.reply_channel | cut -f1,2)|$(kinds "$CL" invoice.urgency | cut -f1,2)"
+  check "$name" "$got" "enum-unchecked${TAB}no @Enumerated (ordinal by default)|enum-unchecked${TAB}@Convert|enum-unchecked${TAB}enum Channel has constructor arguments|enum-unchecked${TAB}ambiguous enum Priority (2 declarations)"
+fi
+
+name="facts: @Transient and @Formula give transient"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(kinds "$CL" invoice.label | cut -f1)|$(kinds "$CL" invoice.line_count | cut -f1 | head -1)" "transient|transient"
+fi
+
+name="facts: an unparsed change on the table (renameColumn)"
+if need "$name" planner_acpre_facts; then
+  if grep -q "^unparsed${TAB}renameColumn${TAB}${X2}:$(fl "$X2" '<renameColumn')\$" <<<"$(kinds "$CL" customer.name)"; then
+    pass "$name"
+  else fail "$name" "$(kinds "$CL" customer.name)"; fi
+fi
+
+name="facts: @Table name and class name both match"
+if need "$name" planner_acpre_facts; then
+  w="nullable${TAB}no${TAB}${JC}:$(fl "$JC" 'private Long id;')"
+  got="$(kinds "$CL" customer_account.id | grep -F "$JC")|$(kinds "$CL" customer.id | grep -F "$JC")"
+  check "$name" "$got" "${w}|${w}"
+fi
+
+name="facts: invoices does not match invoice"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(facts "$CL" invoices.status | grep -c "^found${TAB}" || true)" "0"
+fi
+
+name="facts: pruned directories are ignored"
+if need "$name" planner_acpre_facts; then
+  got=$(for k in invoice.reminder_count invoice.status invoice.note; do facts "" "$k"; done | grep -c 'target/\|build/' || true)
+  check "$name" "$got" "0"
+fi
+
+name="facts: a constant annotation argument gives no fact"
+if need "$name" planner_acpre_facts; then
+  check "$name" "$(kinds "$JV/Invoice.java" invoice.reference)" ""
+fi
+
+name="facts: whole-repository entity fallback from the changelog directory"
+if need "$name" planner_acpre_facts; then
+  if grep -q "^nullable${TAB}no${TAB}${JI}:" <<<"$(facts "$CL" invoice.id)"; then pass "$name"; else fail "$name" "$(facts "$CL" invoice.id)"; fi
+fi
+
+name="facts: an entity-file anchor still finds the changelog"
+if need "$name" planner_acpre_facts; then
+  starts "$name" "$(kinds "$JV/Invoice.java" invoice.due_date)" "nullable${TAB}no${TAB}${X1}:"
+fi
+
+name="facts: the cap counts only .java/.xml files; a cap hit is unchecked with its reason"
+if need "$name" planner_acpre_facts planner_acpre_check_row; then
+  CT="${REPOS_ROOT}/capped"
+  mkdir -p "${CT}/src/notes"
+  for i in 1 2 3 4 5 6 7 8 9; do printf 'n\n' >"${CT}/src/notes/n${i}.txt"; done
+  printf '@Entity\nclass Invoice {\n  @Id\n  Long id;\n}\n' >"${CT}/src/Invoice.java"
+  printf '<databaseChangeLog/>\n' >"${CT}/src/a.xml"
+  git -C "$CT" init -q -b main
+  git -C "$CT" add -A
+  git -C "$CT" commit -qm c
+  old="$PLANNER_OWNERSHIP_CODE_MAX_FILES"
+  PLANNER_OWNERSHIP_CODE_MAX_FILES=2
+  r1=$(planner_acpre_facts "$CT" src invoice.id capped | grep -c "^unchecked" || true)
+  printf 'class A {}\n' >"${CT}/src/A.java"
+  r2=$(planner_acpre_facts "$CT" src invoice.id capped | grep "^unchecked" || true)
+  r3=$(planner_acpre_check_row "$INIT_LIVE" capped/src invoice.id null 2>/dev/null || true)
+  PLANNER_OWNERSHIP_CODE_MAX_FILES="$old"
+  check "$name: under the cap" "$r1" "0"
+  check "$name: over the cap" "$r2" "unchecked${TAB}more than 2 candidate files under capped/src${TAB}-"
+  check "$name: decision" "$r3" "live${TAB}-${TAB}unchecked${TAB}more than 2 candidate files under capped/src"
+fi
+
+name="facts: the entity fallback has its own cap"
+if need "$name" planner_acpre_facts; then
+  old="$PLANNER_ACPRE_ENTITY_MAX_FILES"
+  PLANNER_ACPRE_ENTITY_MAX_FILES=1
+  got=$(facts "$CL" invoice.id | grep "^unchecked" || true)
+  PLANNER_ACPRE_ENTITY_MAX_FILES="$old"
+  check "$name" "$got" "unchecked${TAB}more than 1 entity files in the repository${TAB}-"
+fi
+
+name="facts: an unsupported tree (only .py files) gives no facts and no source"
+if need "$name" planner_acpre_facts planner_acpre_check_row; then
+  PT="${REPOS_ROOT}/pyapp"
+  mkdir -p "${PT}/app"
+  printf 'class Invoice:\n    due_date = None\n' >"${PT}/app/models.py"
+  git -C "$PT" init -q -b main
+  git -C "$PT" add -A
+  git -C "$PT" commit -qm p
+  check "$name" "$(planner_acpre_facts "$PT" app invoice.due_date pyapp | grep -cE "$FACT_RE|^source" || true)" "0"
+  check "$name: decision" "$(planner_acpre_check_row "$INIT_LIVE" pyapp/app invoice.due_date null 2>/dev/null)" \
+    "live${TAB}none${TAB}unchecked${TAB}entity not found"
+fi
+
+name="facts: placeholders and constant arguments give no fact, never 0"
+if need "$name" planner_acpre_facts; then
+  HT="${REPOS_ROOT}/holders"
+  mkdir -p "${HT}/src/db"
+  cat >"${HT}/src/Ledger.java" <<'EOF'
+@Entity
+@Table(name = "${ledger.table}")
+public class Ledger {
+    @Enumerated(MODE)
+    private Kind kind;
+    @Column(name = PREFIX + "x")
+    private Long amount;
+}
+EOF
+  printf 'public enum Kind { A, B }\n' >"${HT}/src/Kind.java"
+  cat >"${HT}/src/db/changelog.xml" <<'EOF'
+<databaseChangeLog>
+  <changeSet id="1" author="t">
+    <createTable tableName="ledger">
+      <column name="total" type="${int.type}">
+        <constraints nullable="${total.nullable}"/>
+      </column>
+      <column name="amount" type="int"/>
+    </createTable>
+    <modifyDataType tableName="ledger" columnName="amount" newDataType="${big}"/>
+  </changeSet>
+</databaseChangeLog>
+EOF
+  got="$(planner_acpre_facts "$HT" src ledger.total holders | grep -E "$FACT_RE" || true)|$(planner_acpre_facts "$HT" src ledger.amount holders | grep -E "$FACT_RE" || true)|$(planner_acpre_facts "$HT" src ledger.kind holders | grep -E "$FACT_RE" | cut -f1,2 || true)|$(planner_acpre_facts "$HT" src ledger_table.kind holders | grep -c "^found" || true)"
+  check "$name" "$got" "||enum-unchecked${TAB}unreadable @Enumerated argument|0"
+fi
+
+echo "=== decision ==="
+
+name="decide: null on a NOT NULL column is unreachable"
+if need "$name" planner_acpre_check_row; then
+  check "$name" "$(planner_acpre_check_row "$INIT_LIVE" "billing/${CL}" invoice.due_date null 2>/dev/null)" \
+    "live${TAB}jpa,liquibase${TAB}unreachable${TAB}nullable${TAB}no${TAB}${X1}:$(fl "$X1" '    nullable="false"')"
+fi
+name="decide: null on a primitive-only field is unchecked"
+if need "$name" planner_acpre_check_row; then
+  starts "$name" "$(dec invoice.reminder_count null)" "unchecked${TAB}only a primitive type (int) at ${JI}:"
+fi
+name="decide: null on an @Id / primary key is unreachable"
+if need "$name" planner_acpre_check_row; then
+  starts "$name" "$(dec invoice.id null)" "unreachable${TAB}nullable${TAB}no${TAB}"
+fi
+name="decide: contradictory nullable facts are unchecked"
+if need "$name" planner_acpre_check_row; then
+  check "$name" "$(dec invoice.paid_at null)" "unchecked${TAB}nullable facts disagree (${X1}:19, ${X3}:$(fl "$X3" 'dropNotNullConstraint'))"
+fi
+name="decide: any row on a renamed table's column is unchecked"
+if need "$name" planner_acpre_check_row; then
+  w="unchecked${TAB}changelog has an unparsed change (renameColumn) at ${X2}:$(fl "$X2" '<renameColumn')"
+  check "$name" "$(dec customer.name null)|$(dec customer.visits number:5)" "${w}|${w}"
+fi
+name="decide: a value the STRING enum lacks is unreachable, one it has is reachable"
+if need "$name" planner_acpre_check_row; then
+  check "$name" "$(dec invoice.status value:overdue)|$(dec invoice.status value:paid)" \
+    "unreachable${TAB}enum${TAB}DRAFT,SENT,PAID${TAB}${JI}:$(fl "$JI" 'private InvoiceStatus status;')|reachable"
+fi
+name="decide: unannotated, @Convert, constructor and ambiguous enums are unchecked"
+if need "$name" planner_acpre_check_row; then
+  got="$(dec invoice.priority value:x | cut -f1,2)|$(dec invoice.channel value:x | cut -f1,2)|$(dec invoice.reply_channel value:x | cut -f1,2)|$(dec invoice.urgency value:x | cut -f1,2)"
+  check "$name" "$got" "unchecked${TAB}no @Enumerated (ordinal by default) at ${JI}:$(fl "$JI" 'private InvoicePriority priority;')|unchecked${TAB}@Convert at ${JI}:$(fl "$JI" 'private Channel channel;')|unchecked${TAB}enum Channel has constructor arguments at ${JI}:$(fl "$JI" 'private Channel replyChannel;')|unchecked${TAB}ambiguous enum Priority (2 declarations) at ${JI}:$(fl "$JI" 'private Priority urgency;')"
+fi
+name="decide: @Transient and @Formula fields are unchecked"
+if need "$name" planner_acpre_check_row; then
+  got="$(dec invoice.label null | cut -f1)|$(dec invoice.line_count number:5 | cut -f1)"
+  check "$name" "$got" "unchecked|unchecked"
+  starts "$name: reason" "$(dec invoice.label null)" "unchecked${TAB}transient or computed field at ${JI}:"
+fi
+name="decide: a number above the int range is unreachable, -5 is reachable"
+if need "$name" planner_acpre_check_row; then
+  check "$name" "$(dec invoice.number number:3000000000)|$(dec invoice.number number:-5)|$(dec invoice.number number:-2147483649 | cut -f1-3)" \
+    "unreachable${TAB}max${TAB}2147483647${TAB}${X1}:$(fl "$X1" '<column name="number"')|reachable|unreachable${TAB}min${TAB}-2147483648"
+fi
+name="decide: two integer types are unchecked; a non-integer column is unchecked"
+if need "$name" planner_acpre_check_row; then
+  check "$name" "$(dec invoice.reminder_count number:5)|$(dec invoice.status number:5)" \
+    "unchecked${TAB}integer types disagree|unchecked${TAB}no integer column type"
+fi
+name="decide: a null row with no nullable fact is reachable"
+if need "$name" planner_acpre_check_row; then
+  check "$name" "$(dec invoice.reference null)" "reachable"
+fi
+name="decide: a pin-failed tree is unchecked"
+if need "$name" planner_acpre_check_row; then
+  fresh
+  planner_state_write "$INIT" META discovery repo-ref "billing@main@0000000000000000000000000000000000000001" >/dev/null
+  check "$name" "$(planner_acpre_check_row "$INIT" "billing/${CL}" invoice.due_date null 2>/dev/null)" \
+    "pin-failed${TAB}-${TAB}unchecked${TAB}the pinned worktree could not be created"
+fi
+name="decide: an invalid path or unknown repository is unchecked with the reason"
+if need "$name" planner_acpre_check_row; then
+  check "$name" "$(planner_acpre_check_row "$INIT_LIVE" nosuchrepo/src invoice.due_date null 2>/dev/null)" \
+    "-${TAB}-${TAB}unchecked${TAB}repository not found"
+fi
+name="decide: a missing path is unchecked"
+if need "$name" planner_acpre_check_row; then
+  check "$name" "$(planner_acpre_check_row "$INIT_LIVE" billing/src/nope invoice.due_date null 2>/dev/null)" \
+    "live${TAB}-${TAB}unchecked${TAB}path not found: billing/src/nope"
+fi
+name="decide: the pinned tree is read when the live checkout has moved"
+if need "$name" planner_acpre_check_row; then
+  B2="${REPOS_ROOT}/billing2"
+  cp -R "$FX" "$B2"
+  git -C "$B2" init -q -b main
+  git -C "$B2" add -A
+  git -C "$B2" commit -qm pinned
+  sha=$(git -C "$B2" rev-parse HEAD)
+  sed -i 's/nullable="false"/nullable="true"/' "${B2}/${CL}/001-invoice.xml"
+  git -C "$B2" commit -qam relaxed
+  fresh
+  planner_state_write "$INIT" META discovery repo-ref "billing2@main@${sha}" >/dev/null
+  got=$(planner_acpre_check_row "$INIT" "billing2/${CL}" invoice.due_date null 2>/dev/null | cut -f1,3)
+  live=$(planner_acpre_check_row "$INIT_LIVE" "billing2/${CL}" invoice.due_date null 2>/dev/null | cut -f1,3)
+  check "$name" "${got}|${live}" "pinned${TAB}unreachable|live${TAB}reachable"
+fi
+
+echo "=== decide (direct) ==="
+
+name="decide: primitive alone never blocks; Liquibase agreeing does"
+if need "$name" planner_acpre_decide; then
+  base="found${TAB}entity${TAB}f:1
+found${TAB}field${TAB}f:2"
+  a=$(planner_acpre_decide null "${base}
+primitive${TAB}int${TAB}f:2" | cut -f1)
+  b=$(planner_acpre_decide null "${base}
+primitive${TAB}int${TAB}f:2
+nullable${TAB}no${TAB}x:3" | cut -f1)
+  c=$(planner_acpre_decide null "${base}
+nullable${TAB}yes${TAB}x:3
+primitive${TAB}int${TAB}f:2" | cut -f1)
+  check "$name" "$a $b $c" "unchecked unreachable unchecked"
+fi
+name="decide: an unparsed fact never blocks a null row; a value row ignores it"
+if need "$name" planner_acpre_decide; then
+  base="found${TAB}entity${TAB}f:1
+found${TAB}field${TAB}f:2
+nullable${TAB}no${TAB}x:3
+enum${TAB}A,B_C${TAB}f:2
+unparsed${TAB}sql${TAB}x:9"
+  check "$name" "$(planner_acpre_decide null "$base" | cut -f1)|$(planner_acpre_decide value:bc "$base")|$(planner_acpre_decide value:d "$base" | cut -f1)" \
+    "unchecked|reachable|unreachable"
+fi
+name="decide: an enum-unchecked fact wins over an enum fact"
+if need "$name" planner_acpre_decide; then
+  check "$name" "$(planner_acpre_decide value:z "found${TAB}entity${TAB}f:1
+found${TAB}field${TAB}f:2
+enum${TAB}A${TAB}f:2
+enum-unchecked${TAB}@Convert${TAB}f:2")" "unchecked${TAB}@Convert at f:2"
+fi
+
+echo "=== decimal comparison ==="
+
+# cmpall — every pair, one result per line.
+cmpall() {
+  local p
+  for p in "-0 0" "007 7" "0.50 .5" "2147483647 2147483648" "2147483648 2147483647" \
+    "-9223372036854775808 -9223372036854775809" "-9223372036854775809 -9223372036854775808" \
+    "0.5 0" "-0.5 0" "-1 1" "1.10 1.1" "1.01 1.1" "12 9" "-12 -9" "3000000000 2147483647"; do
+    # shellcheck disable=SC2086  # the pair splits on purpose
+    printf '%s=%s\n' "$p" "$(_planner_acpre_num_cmp $p)"
+  done
+}
+CMP_WANT="-0 0=0
+007 7=0
+0.50 .5=0
+2147483647 2147483648=-1
+2147483648 2147483647=1
+-9223372036854775808 -9223372036854775809=1
+-9223372036854775809 -9223372036854775808=-1
+0.5 0=1
+-0.5 0=-1
+-1 1=-1
+1.10 1.1=0
+1.01 1.1=-1
+12 9=1
+-12 -9=-1
+3000000000 2147483647=1"
+name="decimal comparison under the default awk"
+if need "$name" _planner_acpre_num_cmp; then
+  check "$name" "$(cmpall)" "$CMP_WANT"
+fi
+name="decimal comparison under mawk"
+if need "$name" _planner_acpre_num_cmp; then
+  if command -v mawk >/dev/null 2>&1; then
+    check "$name" "$(PLANNER_ACPRE_AWK=mawk cmpall)" "$CMP_WANT"
+  else echo "  SKIP $name (mawk not installed)"; fi
+fi
+name="decimal comparison under gawk"
+if need "$name" _planner_acpre_num_cmp; then
+  if command -v gawk >/dev/null 2>&1; then
+    check "$name" "$(PLANNER_ACPRE_AWK=gawk cmpall)" "$CMP_WANT"
+  else echo "  SKIP $name (gawk not installed)"; fi
+fi
+
+echo "=== nearest names ==="
+
+name="nearest: invoices.status lists invoice"
+if need "$name" planner_acpre_check_row; then
+  check "$name" "$(dec invoices.status value:x)" "unchecked${TAB}entity not found; nearest: invoice"
+fi
+name="nearest: invoice.duedate_at lists due_date"
+if need "$name" planner_acpre_check_row; then
+  check "$name" "$(dec invoice.duedate_at null)" "unchecked${TAB}field not found; nearest: due_date"
+fi
+name="nearest: at most three, plural rule first"
+if need "$name" _planner_acpre_nearest; then
+  check "$name" "$(printf 'statuses\nstatus_code\nStatus\nstatement\nstat\nother\n' | _planner_acpre_nearest statu)" "Status, statuses, status_code"
+  check "$name (plural first)" "$(printf 'invoice_line\nInvoice\ninvoice\nother\n' | _planner_acpre_nearest invoices)" "Invoice, invoice_line"
+  check "$name (none)" "$(printf 'other\nabc\n' | _planner_acpre_nearest invoices)" ""
+fi
+
+echo "=== performance and cache ==="
+
+name="performance: every fixture decision under 5 seconds"
+if need "$name" planner_acpre_check_row; then
+  t0=$(date +%s%N)
+  for kr in "invoice.due_date null" "invoice.reminder_count null" "invoice.id null" "invoice.paid_at null" \
+    "customer.name null" "invoice.status value:overdue" "invoice.status value:paid" "invoice.priority value:x" \
+    "invoice.channel value:x" "invoice.reply_channel value:x" "invoice.urgency value:x" "invoice.label null" \
+    "invoice.line_count number:5" "invoice.number number:3000000000" "invoice.number number:-5"; do
+    # shellcheck disable=SC2086  # key and requires split on purpose
+    dec $kr >/dev/null
+  done
+  ms=$((($(date +%s%N) - t0) / 1000000))
+  if [ "$ms" -lt 5000 ]; then pass "$name (${ms} ms)"; else fail "$name" "${ms} ms"; fi
+fi
+
+name="cache: facts for one (tree, entity) are computed once per run"
+if need "$name" planner_acpre_facts; then
+  B3="${REPOS_ROOT}/billing3"
+  cp -R "$FX" "$B3"
+  export PLANNER_ACPRE_CACHE_DIR="${WORK}/acp-cache"
+  mkdir -p "$PLANNER_ACPRE_CACHE_DIR"
+  planner_acpre_facts "$B3" "$CL" invoice.due_date billing3 >/dev/null
+  sed -i 's/name="number" type="int"/name="number" type="bigint"/' "${B3}/${CL}/001-invoice.xml"
+  cached=$(planner_acpre_facts "$B3" "$CL" invoice.number billing3 | grep '^max' | cut -f2)
+  unset PLANNER_ACPRE_CACHE_DIR
+  fresh_out=$(planner_acpre_facts "$B3" "$CL" invoice.number billing3 | grep '^max' | cut -f2)
+  check "$name" "${cached}|${fresh_out}" "2147483647|9223372036854775807"
+fi
+
+echo "=== facts awk portability ==="
+
+facts_all() {
+  local k
+  for k in invoice.due_date invoice.id invoice.paid_at invoice.status invoice.priority invoice.channel \
+    invoice.reply_channel invoice.urgency invoice.number invoice.note invoice.reference customer.name \
+    invoices.status invoice.duedate_at; do
+    printf '%s\n' "$k"
+    facts "$CL" "$k"
+    dec "$k" value:x
+  done
+}
+name="mawk runs the facts programs"
+if need "$name" planner_acpre_facts; then
+  if command -v mawk >/dev/null 2>&1; then
+    m=$(PLANNER_ACPRE_AWK=mawk facts_all 2>&1)
+    if [ -n "$m" ] && ! grep -qi 'syntax error\|mawk:' <<<"$m"; then pass "$name"; else fail "$name" "$(head -3 <<<"$m")"; fi
+    check "facts: mawk output equals the default awk output" "$m" "$(facts_all 2>&1)"
+    if command -v gawk >/dev/null 2>&1; then
+      g=$(PLANNER_ACPRE_AWK=gawk facts_all 2>&1)
+      if [ "$m" = "$g" ]; then pass "facts: mawk output equals gawk output"; else fail "facts: mawk output equals gawk output" "$(diff <(echo "$m") <(echo "$g") | head -5)"; fi
+    else
+      echo "  SKIP facts: mawk output equals gawk output (gawk not installed)"
+    fi
+  else
+    echo "  SKIP $name (mawk not installed)"
   fi
 fi
 
