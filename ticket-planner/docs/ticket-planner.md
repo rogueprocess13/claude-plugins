@@ -671,7 +671,7 @@ written only when its bytes change, removed when empty) and one
 give none. A consumer whose ticket exists keeps its recorded edges (`"frozen": true`); a
 differing recompute is the `OWN_EDGES_DIVERGED` warning. `planner_ticketgen_spec_deps` adds
 these edges after Labels and test-data edges, so TicketGen, draft readiness drafts,
-`## Related Tickets`, the cycle check and epic UAT policy (`epic`, reason `chain`) all see
+`## Related Tickets`, the cycle check and the epic UAT policy (resolved to epic-level, reason `chain`) all see
 them. Ticket bodies never carry the two tables: `writes` and `reads` are in the composer's
 drop list. Draft revise cannot change them: they are outside the editable sections.
 
