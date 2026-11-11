@@ -1232,8 +1232,10 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
 - [ ] 6. `planner-crosscheck-ownership` (ticket-planner) — **specced 2026-11-11, reviewed (3
       reviewers), revised. PR A MERGED 2026-11-12 as #696 (3e6016e, ticket-planner 0.37.0; dormant
       family, edges, wildcard accept, and a fix that reads the accept instance only from the
-      trailing command, for ownership and `PARAM_LITERAL`). PR B (prompts, first-dispatch
-      markers, SHA re-pins, 0.38.0) in progress.** Change at `openspec/changes/planner-crosscheck-ownership/`
+      trailing command, for ownership and `PARAM_LITERAL`). PR B MERGED 2026-11-12 as #697
+      (4c8e161, ticket-planner 0.38.0): Specify asks for the tables, so the family is live for new
+      initiatives; both contract markers are now written only on the first Specify dispatch. Left:
+      group 7 (seed-numbers decision) and group 8 (live check on the tickets host), then archive.** Change at `openspec/changes/planner-crosscheck-ownership/`
       (local; validates `--strict`; design.md § Review round 1 records every finding). Each spec
       declares `## Writes` (Key, Op) and `## Reads` (Key, Source) tables; bash checks them, no prose
       parsing. Ops: `create`/`update`/`delete`, `append` (never conflicts),
