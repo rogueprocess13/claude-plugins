@@ -1,22 +1,22 @@
 dor-semantic	88790
-guidance-extractor	96312
+guidance-extractor	94938
 # allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
-ticket-appraise	155149
-ticket-appraise-exec	121530
+ticket-appraise	154917
+ticket-appraise-exec	121298
 ticket-appraise-exec:conditional	14328
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
 ticket-appraise:conditional	35324
-ticket-document	79252
+ticket-document	79020
 ticket-gate-reconcile	6789
-ticket-implement	145128
+ticket-implement	144896
 ticket-implement:conditional	9949
-ticket-pr-iterate	104378
-ticket-pr-review	131345
-ticket-reproduce	107942
+ticket-pr-iterate	104146
+ticket-pr-review	131113
+ticket-reproduce	107710
 ticket-reproduce:conditional	2641
-ticket-retro	18359
+ticket-retro	18240
 ticket-retro:conditional	4179
-ticket-verify	176408
+ticket-verify	176176
 ticket-verify:conditional	16693
-wiki-maintenance	92155
+wiki-maintenance	91923
 wiki-maintenance:conditional	5060

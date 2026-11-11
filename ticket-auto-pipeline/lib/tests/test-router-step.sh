@@ -6,6 +6,10 @@
 # pre-extraction ticket-auto SKILL.md blocks (main @ 3f64658) against the
 # workspaces the _case_* functions below build — never by this script.
 # Timestamps are masked to TS and the workspace path to $WS.
+# Exception: insp-verify_ready.* and insp-pr_ready.* were regenerated from
+# router-step.sh itself when the verdict moved into bash (DET-SU-1): the log
+# gains the "source":"bash" META|phase-inspector line and the instructions
+# hand the agent that verdict instead of the detection rules.
 #
 # Also carries the behavioural replacements for the STEP_6 retro-condition
 # prose tests that lived in test-pipeline-phases.sh (#149, #318).
@@ -377,6 +381,81 @@ test_skill_uses_router_step() {
     ! grep -q 'phase-result-parse.sh"' "$skill"
 }
 
+# ── DET-SU-1: inspector-done validates an agent-written verdict ─────────────
+# _insp_validate_case CLAIM [--log-file] — bash writes the VERIFY verdict
+# (flaky_tests + trivial_pass), CLAIM (if any) is appended as the agent's own line,
+# then inspector-done runs. _vr's criteria_total=1 also fires trivial_pass, so
+# bash's verdict is WARN/2. Leaves the workspace for the caller to inspect.
+_insp_validate_case() {
+  local claim="$1" flag="${2:-}"
+  _ws_new
+  (
+    cd "$WS"
+    _vr IMPLEMENT unit_tests PASS
+    _vr VERIFY playwright_uat FAIL
+    bash "$RS" inspector VERIFY $TID --log-file "$LOG" >/dev/null 2>&1
+    [ -z "$claim" ] || printf '2026-11-10T10:05:00Z|META|phase-inspector|info|%s\n' "$claim" >>"$LOG"
+    printf 'inspector return\n' >"$WS/logs/$TID-agent-return.txt"
+    if [ "$flag" = --log-file ]; then
+      bash "$RS" inspector-done VERIFY $TID --log-file "$LOG" >/dev/null 2>&1
+    else
+      bash "$RS" inspector-done VERIFY $TID >/dev/null 2>&1
+    fi
+  )
+}
+_pi_lines() { grep -c '|META|phase-inspector|' "$LOG" || true; }
+_pi_last() { grep '|META|phase-inspector|' "$LOG" | tail -1 | cut -d'|' -f5-; }
+
+test_inspector_done_overrides_disagreeing_agent() {
+  _insp_validate_case '{"phase":"VERIFY","verdict":"WARN","signals":1,"detail":"1 pattern","verifiers_consulted":["unit_tests","playwright_uat"],"patterns":[]}'
+  local rc=0 j
+  j=$(_pi_last)
+  [ "$(_pi_lines)" = 3 ] || rc=1
+  jq -e '.agent_overridden == true and .signals == 2 and .verdict == "WARN"
+    and .agent_claim.signals == 1 and .bash_validated == true and .phase == "VERIFY"' <<<"$j" >/dev/null || rc=1
+  [ $rc -eq 0 ] || echo "  last line: $j" >&2
+  _ws_rm
+  return $rc
+}
+
+test_inspector_done_keeps_agreeing_agent() {
+  _insp_validate_case '{"phase":"VERIFY","verdict":"WARN","signals":2,"detail":"two","verifiers_consulted":[],"patterns":[]}' --log-file
+  local rc=0
+  [ "$(_pi_lines)" = 2 ] || rc=1
+  _ws_rm
+  return $rc
+}
+
+test_inspector_done_no_agent_line_adds_nothing() {
+  _insp_validate_case ''
+  local rc=0
+  [ "$(_pi_lines)" = 1 ] || rc=1
+  jq -e '.source == "bash"' <<<"$(_pi_last)" >/dev/null || rc=1
+  _ws_rm
+  return $rc
+}
+
+test_inspector_done_ignores_other_phase_claim() {
+  _insp_validate_case '{"phase":"IMPLEMENT","verdict":"PASS","signals":0,"detail":"x","verifiers_consulted":[],"patterns":[]}'
+  local rc=0
+  [ "$(_pi_lines)" = 2 ] || rc=1
+  _ws_rm
+  return $rc
+}
+
+test_inspector_done_without_log_is_noop() {
+  _ws_new
+  local rc=0
+  (
+    cd "$WS"
+    rm -f "$LOG"
+    printf 'r\n' >"$WS/logs/$TID-agent-return.txt"
+    bash "$RS" inspector-done VERIFY $TID >/dev/null 2>&1
+  ) || rc=1
+  _ws_rm
+  return $rc
+}
+
 for c in $RS_POST_CASES; do _run "post-spawn $c matches the pre-extraction block" test_post_spawn "$c"; done
 for c in $RS_INSP_CASES; do _run "inspector $c matches the pre-extraction block" test_inspector "$c"; done
 _run "inspector-done matches the pre-extraction block" test_inspector_done
@@ -388,6 +467,11 @@ _run "retro-check: missing log, unfilled HB placeholder" test_retro_missing_log_
 _run "inspector failure is non-blocking (exit 0, skip)" test_inspector_failure_is_non_blocking
 _run "post-spawn tolerates a missing return file" test_post_spawn_tolerates_missing_return_file
 _run "usage errors exit 2" test_usage
+_run "DET-SU-1 inspector-done overrides a disagreeing agent verdict" test_inspector_done_overrides_disagreeing_agent
+_run "DET-SU-1 inspector-done keeps an agreeing agent verdict" test_inspector_done_keeps_agreeing_agent
+_run "DET-SU-1 inspector-done adds nothing without an agent line" test_inspector_done_no_agent_line_adds_nothing
+_run "DET-SU-1 inspector-done ignores another phase's line" test_inspector_done_ignores_other_phase_claim
+_run "DET-SU-1 inspector-done with no log is a no-op" test_inspector_done_without_log_is_noop
 _run "ticket-auto SKILL.md calls router-step.sh" test_skill_uses_router_step
 
 echo ""
