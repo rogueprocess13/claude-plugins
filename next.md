@@ -1306,7 +1306,7 @@ debugging-strategies, brunoborges/jdb-agentic-debugger.
 
 ---
 
-## Step 15 — Skill size reduction programme — changes 1–3 merged (#561, #562, #659–#665), change 4 merged except group 14 (#668–#675), next `skill-deterministic-extraction`
+## Step 15 — Skill size reduction programme — changes 1–3 and 5 merged (#561, #562, #659–#665, #678–#688), change 4 merged except group 14 (#668–#675), next `fleetd-shared-router-steps`
 
 42 `SKILL.md` files total 825 KB; the four largest (ticket-planner 96 KB, ticket-verify 93 KB,
 ticket-auto 75 KB, ticket-appraise 72 KB) are 41%. Anthropic's authoring guidance is a body under
@@ -1380,7 +1380,19 @@ Chained openspec changes (each its own PR(s), version bump, `make skill-baseline
       appraise-exec, implement, critique, setup, retro, wiki, document, grill-me, reproduce, kc.
       Target Symbols → Specify prompt **waits for Step 12 items 5-7**. critique/setup register under
       the appraise/reproduce manifests; grill-me/kc/planner have no manifest.
-- [ ] 5. `skill-deterministic-extraction` (24 specs, 151 tasks, 6 PR groups) — planner
+- [x] 5. `skill-deterministic-extraction` (24 specs, 151 tasks, 6 PR groups) — **MERGED
+      #678–#686 (2026-11-10, groups 1–6c) + follow-up #688 (b490338, 0.113.0: handoff decisions
+      1(b) and 3 — shared `verify-readiness.sh`, appraise-exec 3.8 advisory only, one mode
+      classifier with `verify_mode_gate_profile`, infra-only gone; 21/65 gate verdicts changed,
+      mostly stricter browser holds when context.md has UI repro steps); archived 2026-11-11, delta
+      specs synced (+63/~3).** Open, tickets host: tasks 1.22 (`/ticket-planner status` output
+      unchanged), 3.19 (one real `/ticket-auto` run, log lines unchanged, `META|outcome` last),
+      4.29 (browser verify end to end with forced mid-run failure, lock released), the per-group
+      live checklist in the archived `handoff.md` § Summary (local only), and one ticket with UI
+      repro steps to confirm #688's stricter hold. Open decisions (handoff § Decisions): 2 rework
+      trigger is dead, 4 ticket-document PASS strictness, 5 prescan Step 0 env checks, 6 retro
+      "(complex, confounded)" tag, 7 planner status mode as a deterministic report. Decision 8 is
+      void (kc removed, #687). Original scope: planner
       (`planner-invocation.sh`, `planner_dispatch_gate` composes across 4 planner libs),
       pr-review (`pr-merge-gate.sh` mock-`gh`), router (`router-step.sh`, `prescan-run.sh`),
       verify (`verify-mode.sh` carved from inline gate-check 2.6; staged `verify-env-up.sh`),
@@ -1637,6 +1649,55 @@ ticket-auto 635s, fleet-controller 240s, the rest < 40s.
   #655 (kc-render) and #657 (exit-path, closes #656) fixed the two `while … break` SIGPIPE
   readers left after #644.
 
+---
+
+## Step 18 — Context-withheld ("goldfish") review, borrowed from EGM — proposed 2026-11-11, not started
+
+Source: [google/elephant-goldfish-model](https://github.com/google/elephant-goldfish-model)
+(Apache-2.0), evaluated 2026-11-11. Its core idea: a reviewer that never saw how a document was
+produced cannot inherit the producer's blind spots, so reviewers get only the document, the files
+it links, and the code. EGM itself is an interactive, human-gated plugin (one question per turn,
+approval at each stage), so it is not installed into the pipeline. Three ideas are borrowed. No
+openspec change exists yet for any item. Ordered cheapest first.
+
+Which plugins each item touches (bump the version of every plugin an item edits):
+
+| Item | Plugin(s) | Where |
+| --- | --- | --- |
+| 1 | ticket-planner | Review prompt in `lib/planner-phase-prompts.sh`; Consensus reads the extra findings |
+| 2 | ticket-planner + ticket-auto-pipeline | spawned from planner `lib/planner-refinement.sh`; `dor-semantic-agent` and `ticket-critique` live in ticket-auto-pipeline |
+| 3 | none (repo tooling) | a script under `scripts/`, run on demand or nightly; packaging it as a skill for other projects is a separate decision |
+
+- [ ] 1. **Goldfish lens for the planner's Review phase.** `planner_prompt_review`
+      (`ticket-planner/lib/planner-phase-prompts.sh`) tells the reviewer to re-read
+      appraisal, discovery and architecture, so it reviews with the generator's framing. Add a
+      second, context-withheld lens that reads only `artifacts/proposal.md` and the code, and
+      writes its own section (or file) that Consensus consumes alongside `review.md`. Open
+      questions: one extra agent spawn per run (cost), and whether Consensus treats goldfish-only
+      findings differently. Copy EGM's rule: a lens that fails or times out is recorded as
+      "not run", never as zero findings.
+- [ ] 2. **Paraphrase test on planned tickets.** From EGM's comprehension reviewer: before
+      listing findings, the reviewer writes what the ticket proposes in its own words; a
+      paraphrase that disagrees with the sealed intent / epic is a finding. A document whose
+      terms are all defined but whose parts don't connect passes a definitions check and fails
+      this one. Extend the existing body-only `dor-semantic-agent` scan
+      (`ticket-planner/lib/planner-refinement.sh`) rather than adding an agent. While there,
+      check that DoR semantic and `ticket-critique` treat a failed/timed-out evaluator as
+      "not run", not "no findings". EGM's "Zero-Decision Rule" (a plan fails if the implementer
+      must make any design choice) is a candidate one-line wording for TicketGen/strict DoR.
+- [ ] 3. **Spec/doc drift report.** An LLM pass that compares each `openspec/specs/*` capability
+      and each `*/docs/*.md` against the current code and reports only divergences (missing
+      behaviour, missing fields, hardcoded values where logic was specified, different
+      pattern/library). CI only checks the state diagram against `workflow.json`; nothing checks
+      the ~120 specs or the docs, and stale ones have bitten before (the RLVR plan cited 4 docs
+      that did not exist). Run on demand or nightly with a dated report, never as a CI gate
+      (non-deterministic). Process one document per subagent to bound context.
+
+Not borrowed: brainstorm/draft (grill-me and the planner cover them), bootstrap (overlaps
+prescan), the TRIZ "inventive catalyst" lens, and transcript-regex scenario tests. EGM can still be
+installed as-is for reviewing our own openspec `design.md` files (`/egm:egm-review`,
+"Consolidated report" preset); that needs no work here.
+
 **Housekeeping, 2026-11-09:** checkboxes brought in line with `main`. Step 12 item 1 (#535 → PR
 #537) and the three issues in item 3 (#524 → #538, #529 → #539, #525 → #541) were fixed on
 2026-10-22; Step 15 item 2 (`skill-glue-collapse`) merged as #562; Step 17 closed with `ci-ok` the
@@ -1655,6 +1716,11 @@ unchanged.
 (`skill-progressive-disclosure`) groups 1–13 merged as #668–#675 the same day; the change stays
 active for group 14 (waits on Step 12 items 5–7) and its live checks. Next in the programme is
 `skill-deterministic-extraction`.
+
+**Housekeeping, 2026-11-11:** Step 15 item 5 (`skill-deterministic-extraction`) merged as #678–#686
+plus the #688 follow-up, and archived locally with its delta specs synced. `knowledge-curator` was
+removed from the marketplace (#687); every kc item in this file is void. Next in the programme is
+item 6, `fleetd-shared-router-steps`, started 2026-11-11.
 
 ---
 
@@ -1695,6 +1761,10 @@ active for group 14 (waits on Step 12 items 5–7) and its live checks. Next in 
 10. **Step 13 tranche 1 is active harm by rule 1.** Several items are confirmed silent failures
    (frozen manifests after a fleet kill, events lost for good, wrong plan picked by substring). It
    was started by explicit instruction on 2026-10-23, ahead of Step 12 items 1–3.
+11. **Step 18 (goldfish review) is quality improvement, not harm reduction**, so it queues
+   behind the active Step 15 programme and the Step 16 rehearsal. Item 1 edits
+   `planner-phase-prompts.sh`, which Step 12 items 5–7 also edit (and re-pin its sha) — land
+   those first. The operator decides the final slot.
 
 ### Parallel track
 
