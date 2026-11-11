@@ -268,7 +268,8 @@ Every value the plan depends on that someone could choose differently — a time
 a retry rule, a rounding mode, a fee — is declared once per initiative
 (planner-specify-parameters). It applies to **contract initiatives** only: those whose
 state.log holds `META|contract|start|specify-parameters-v1`, which
-`planner_params_contract_mark` writes once when Specify is about to be dispatched.
+`planner_params_contract_mark` writes once when Specify is about to be dispatched for the
+first time (no Specify `done` line, no spec file yet).
 An initiative that ran Specify before the change has no marker and behaves exactly as
 before: no registry, no second stop, no parameter Crosscheck family.
 
@@ -596,11 +597,15 @@ now run as their own check families (see the parenthetical above).
 
 ### Data ownership: Writes and Reads tables
 
-planner-crosscheck-ownership. **Dormant:** no initiative carries the
-`META|contract|start|spec-ownership-v1` marker yet. The Specify prompt change that writes the
-tables and the marker comes in a later release; until then the family, the edges step and the
-describer note are reachable only from tests and from `scripts/e2e-preflight.sh` with a
-hand-written marker. A legacy initiative (no marker) gets no finding, no edges line and no file.
+planner-crosscheck-ownership. It applies to initiatives whose state.log holds
+`META|contract|start|spec-ownership-v1`. `_planner_dispatch_contract_mark` writes it, together
+with `specify-parameters-v1`, on the **first** Specify dispatch only: when the log has no
+`|Specify|<step>|done|` line and `artifacts/specs/` holds no `*.md` file
+(`_planner_specify_first_dispatch`). A re-dispatch of an initiative whose Specify already wrote
+specs therefore stays legacy, so its specs are never failed for tables the older prompt did not
+ask for. The Specify prompt asks for both tables (`planner_ownership_prompt_rules`), and
+Consensus keeps them in step with its edits (`planner_ownership_consensus_rule`). A legacy
+initiative (no marker) gets no finding, no edges line and no file.
 
 **Format.** Every spec except synth-marked test-data specs and `INDEX.md` has two sections.
 Each holds `None.` or exactly one pipe table directly under the heading:

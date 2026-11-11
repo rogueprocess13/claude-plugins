@@ -17,6 +17,27 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.38.0 (2026-11-12) — Specify ownership tables, first-dispatch contract markers
+
+planner-crosscheck-ownership, PR B of 2. ticket-auto-pipeline and fleet-controller unchanged.
+
+### Changed
+
+- The data-ownership family is now active for new initiatives. On an initiative's first
+  Specify dispatch, `_planner_dispatch_contract_mark` writes `META|contract|start|spec-ownership-v1`
+  right after `specify-parameters-v1`. The Specify prompt asks every spec for `## Writes` and
+  `## Reads` tables (`planner_ownership_prompt_rules`: the format, ops and conflict rule, `fire`
+  and `trigger`, read sources and the `framework:` names); Consensus keeps the tables in step
+  with its edits (`planner_ownership_consensus_rule`); the TicketGen prompt names the ownership
+  edges as a dependency source. Existing and in-flight initiatives stay legacy.
+- Both contract markers are written only on the **first** Specify dispatch: no
+  `|Specify|<step>|done|` line and no `artifacts/specs/*.md` (`_planner_specify_first_dispatch`).
+  This also fixes `specify-parameters-v1`, which was written on every Specify dispatch, so a
+  retry or re-dispatch of an initiative whose Specify had already written specs flipped it into
+  the parameter contract. A retry after a crash that wrote no spec still marks.
+- Halt goldens and ticket bodies are byte-identical. The Specify prompt SHA pin is re-captured;
+  stripping the inserted lines restores each prompt's previous bytes (tests pin this).
+
 ## ticket-planner 0.37.0 (2026-11-11) — Crosscheck data-ownership family (dormant)
 
 planner-crosscheck-ownership, PR A of 2. Specs of a `spec-ownership-v1` initiative declare a
