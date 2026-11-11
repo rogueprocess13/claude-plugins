@@ -29,6 +29,63 @@ fleet-controller 0.48.1.
 
 During the upgrade window an old `flow.sh` copy (not yet re-synced, or a worker started before the upgrade) still locks beside itself, while upgraded copies lock under `$REPOS_ROOT/.ticket-auto/locks`. The two do not exclude each other until every copy runs the new code. Restart fleetd and open a new Claude Code session (which re-syncs `~/.claude/skills`) on each host once no ticket is mid-transition. To cover that window, `_flow_mutex_held` checks both the resolved path and the legacy `~/.claude/skills/ticket-flow/locks/.ticket-flow-<TID>.lock` and defers a kill if either is held. When the new path cannot be resolved (resolver missing, or neither `TICKET_FLOW_LOCK_DIR` nor `REPOS_ROOT` set), it writes one stderr warning and checks the legacy path alone, rather than reporting "not held". Remove the legacy check one release after this one. New tests: `test_flow_mutex_held_legacy_path_held`, `test_flow_mutex_held_unresolvable_legacy_held_warns`.
 
+## ticket-auto-pipeline 0.114.2, fleet-controller 0.49.1 (2026-11-12) — bash writes the phase-inspector verdict; retro names the tickets behind each failure code
+
+Two determinism fixes from the 2026-10-23 review (DET-SU-1, DET-SU-2).
+
+**Phase inspector (DET-SU-1).** `lib/inspect-verifiers.sh` already computed the five defect
+patterns and the verdict, but nothing called it: the guidance-extractor agent re-derived the
+verdict by eye from rules that had drifted from the lib's (`trivial_pass` at `criteria_total ≤ 1`
+vs `== 1`; `verdict_disagreement` firing on PASS+FAIL as well as `flaky_tests`).
+`assemble_inspector_context` (`lib/phase-inspector.sh`) now runs `inspect_verifiers` and writes the
+phase's `META|phase-inspector` line itself, with `"source":"bash"` (a rerun with the same verdict
+writes nothing). The agent's instructions carry that verdict and the lib's rule set, and tell it to
+classify the patterns only. `router-step.sh inspector-done` now runs `validate_phase_inspector` on
+any line the agent writes for the phase anyway; when it disagrees, bash's verdict is appended again
+with `agent_overridden:true`, so the last line for the phase is always bash's. It reads the log
+from the new optional `--log-file`, else `./logs/<TID>-pipeline.log`; fleetd's
+`router_step.inspector_done` passes `--log-file`. The canonical rule set is the lib's, so a
+consumer counting `signals` may see different counts than the agent produced. The spawn, its
+`--mode extract` flags and the `PHASE_INSPECTOR_READY`/`INSPECTOR_INSTRUCTIONS_FILE` contract are
+unchanged. `lib/tests/test-phase-inspector.sh` and `test-router-step.sh` cover the new paths; the
+`insp-verify_ready`/`insp-pr_ready` router-step fixtures were regenerated.
+
+**Retro attribution (DET-SU-2).** `retro.sh` emitted only `{CODE: count}`, so ticket-retro guessed
+which tickets produced each code. Its JSON now adds `failure_tickets` (`{CODE: [tid]}`, sorted and
+unique; a planner code carries its initiative id) and `failure_context`
+(`{CODE: [{ticket, errors, transcripts}]}` — the ticket's `errors_by_ticket` events and its existing
+`<logs>/<tid>-*-agent.log` captures). Both are built where `FAILURE_COUNT` is, so a cursor-skipped
+log adds nothing, as before. Additive; every other field is unchanged. ticket-retro Step 3a.5 reads
+`failure_context` instead of guessing. New test: `lib/tests/test-retro-failure-tickets.sh`.
+
+## fleet-controller 0.49.0 (2026-11-12) — `FLEET_WORKER_AUTONOMY`
+
+Review finding PO-9: fleetd dispatched every ticket with `--auto` and had no setting for it, and
+fleet-controller/CLAUDE.md claimed the approval gate stopped every auto-dispatched ticket.
+ticket-auto-pipeline unchanged.
+
+### Added
+- `FLEET_WORKER_AUTONOMY` (`auto` | `semi-auto` | `manual`, **default `auto` on the
+  whole-ticket path**, so it behaves as before). The whole-ticket spawn, KILL+RESTART included, now runs
+  `/ticket-auto {tid} --{mode} --from-planned`. `fleet-env-check.sh` reports the row and refuses
+  fleetd startup on any other value; with `FLEET_STARTUP_ENV_CHECK=false`, fleetd falls back to
+  `auto` with a stderr warning.
+- `features.json` catalog entry. The catalog accepts enum settings: an entry with `values` is
+  matched by the drift gate on `${NAME:-v}` and `os.environ.get('NAME', 'v')` with any literal
+  default, and checked for default drift and staleness like a boolean flag.
+
+### Changed
+- The phase-dispatch path passes the setting to `preamble.run_preamble` as `AUTONOMY`, but only
+  when `FLEET_WORKER_AUTONOMY` is set explicitly. Unset, nothing changes there: the preamble
+  uses `TICKET_AUTONOMY`, else `manual`. The two defaults therefore differ when the setting is
+  unset — whole-ticket spawn `auto`, phase dispatch `TICKET_AUTONOMY` → `manual` — and setting
+  it makes both paths agree.
+
+### Fixed
+- fleet-controller/CLAUDE.md `FLEET_AUTO_DISPATCH` row: under the default `auto`, a simple
+  dispatched ticket is auto-approved and auto-merged; only a complex ticket without
+  `/ticket-approve` stops at the gate.
+
 ## 0.114.1 (2026-11-12) — flow.sh releases the ticket lock before the outbox drain
 
 ### Fixed

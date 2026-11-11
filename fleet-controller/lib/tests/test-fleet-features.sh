@@ -77,6 +77,8 @@ IGNORE_FLAGS=(
 #   shell:  ${NAME:-false|0|off|true|on}
 #   python: os.environ.get('NAME', 'D')[.lower()] ==|!= 'true|false|1|0|on|off'
 #           (multi-line calls included)
+#   enum:   names listed in ENUM_NAMES (catalog entries with `values`) also
+#           match ${NAME:-v} and os.environ.get('NAME', 'v') with any literal v
 # Scope: *.sh, *.py and skills/**/SKILL.md (they hold executed bash) inside
 # the plugin directories; tests, fixtures and openspec are excluded.
 _scan() {
@@ -90,6 +92,15 @@ sh = re.compile(r"\$\{([A-Z][A-Z0-9_]*):-(false|0|off|true|on)\}")
 py = re.compile(r"(?:os\.environ\.get|os\.getenv)\(\s*['\"]([A-Z][A-Z0-9_]*)['\"]\s*,"
                 r"\s*['\"]([^'\"]*)['\"]\s*\)\s*(?:\.lower\(\)\s*)?(?:==|!=)\s*"
                 r"['\"](?:true|false|1|0|on|off)['\"]")
+# Enum settings (catalog entries with `values`, passed in ENUM_NAMES): any
+# literal default counts, since there is no boolean comparison to anchor on.
+enums = os.environ.get("ENUM_NAMES", "").split()
+enum_sh = enum_py = None
+if enums:
+    alt = "|".join(map(re.escape, enums))
+    enum_sh = re.compile(r"\$\{(" + alt + r"):-([A-Za-z0-9_.-]+)\}")
+    enum_py = re.compile(r"(?:os\.environ\.get|os\.getenv)\(\s*['\"](" + alt +
+                         r")['\"]\s*,\s*['\"]([^'\"]*)['\"]\s*\)")
 for p in plugins:
     base = os.path.join(root, p)
     for d, dirs, files in os.walk(base):
@@ -100,25 +111,30 @@ for p in plugins:
             if skip.search(rel):
                 continue
             if f.endswith(".sh") or (f == "SKILL.md" and "/skills/" in "/" + rel):
-                rx = sh
+                rxs = [sh, enum_sh]
             elif f.endswith(".py"):
-                rx = py
+                rxs = [py, enum_py]
             else:
                 continue
             try:
                 text = open(os.path.join(root, rel), encoding="utf-8", errors="replace").read()
             except OSError:
                 continue
-            for m in rx.finditer(text):
-                line = text.count("\n", 0, m.start()) + 1
-                print(f"{m.group(1)}\t{m.group(2)}\t{rel}:{line}")
+            for rx in rxs:
+                if rx is None:
+                    continue
+                for m in rx.finditer(text):
+                    line = text.count("\n", 0, m.start()) + 1
+                    print(f"{m.group(1)}\t{m.group(2)}\t{rel}:{line}")
 PY
 }
 
 # _gate_problems ROOT CATALOG — prints one line per drift problem; empty = clean.
 _gate_problems() {
   local root="$1" catalog="$2"
-  _scan "$root" | IGNORE="${IGNORE_FLAGS[*]}" python3 -c '
+  local enum_names
+  enum_names=$(jq -r '[.flags[] | select(has("values")) | .name] | join(" ")' "$catalog") || return 1
+  ENUM_NAMES="$enum_names" _scan "$root" | IGNORE="${IGNORE_FLAGS[*]}" python3 -c '
 import json, os, sys
 cat = {f["name"]: f for f in json.load(open(sys.argv[1]))["flags"]}
 ignore = set(os.environ.get("IGNORE", "").split())
@@ -204,6 +220,33 @@ EOF
   return $rc
 }
 
+# An enum setting (catalog entry with `values`) has no boolean default for the
+# scanner to see; the gate must still find its default in code (shell
+# ${NAME:-v} or python os.environ.get('NAME', 'v')), check it against the
+# catalog, and report it STALE once the code no longer reads it.
+test_gate_checks_enum_settings() {
+  local tmp rc=0 problems
+  tmp=$(mktemp -d)
+  mkdir -p "$tmp/fleet-controller/lib" "$tmp/fleet-controller/fleetd"
+  echo 'M="${FAKE_MODE:-auto}"' >"$tmp/fleet-controller/lib/x.sh"
+  printf "import os\nM = os.environ.get(\n    'FAKE_MODE', 'auto')\n" >"$tmp/fleet-controller/fleetd/x.py"
+  cat >"$tmp/catalog.json" <<'EOF'
+{"flags": [{"name": "FAKE_MODE", "default": "auto", "values": ["auto", "manual"]}]}
+EOF
+  problems=$(_gate_problems "$tmp" "$tmp/catalog.json") || rc=1
+  [ -z "$problems" ] || rc=1
+  cat >"$tmp/catalog.json" <<'EOF'
+{"flags": [{"name": "FAKE_MODE", "default": "manual", "values": ["auto", "manual"]}]}
+EOF
+  problems=$(_gate_problems "$tmp" "$tmp/catalog.json") || rc=1
+  [ "$(grep -c "DEFAULT MISMATCH FAKE_MODE" <<<"$problems")" -eq 2 ] || rc=1
+  rm -f "$tmp/fleet-controller/lib/x.sh" "$tmp/fleet-controller/fleetd/x.py"
+  problems=$(_gate_problems "$tmp" "$tmp/catalog.json") || rc=1
+  grep -q "STALE FAKE_MODE" <<<"$problems" || rc=1
+  rm -rf "$tmp"
+  return $rc
+}
+
 test_catalog_schema() {
   jq -e '
     .flags | length > 0 and all(
@@ -215,7 +258,10 @@ test_catalog_schema() {
       (.summary | type == "string" and length > 0) and
       (.why | type == "string" and length > 0) and
       (.docs | type == "string" and length > 0) and
-      (.requires | type == "array"))
+      (.requires | type == "array") and
+      ((has("values") | not) or
+       (.values | type == "array" and length > 1 and all(type == "string")) and
+       (.default as $d | .values | index($d) != null)))
     and ([.[].name] | length == (unique | length))
   ' "$CATALOG" >/dev/null
 }
@@ -390,6 +436,7 @@ FILTER="${1:-}"
 _run test_gate_repo_clean test_gate_repo_clean
 _run test_gate_scanner_finds_known_shapes test_gate_scanner_finds_known_shapes
 _run test_gate_rejects_uncatalogued_and_mismatch test_gate_rejects_uncatalogued_and_mismatch
+_run test_gate_checks_enum_settings test_gate_checks_enum_settings
 _run test_catalog_schema test_catalog_schema
 _run test_catalog_docs_paths_exist test_catalog_docs_paths_exist
 _run test_catalog_flag_requires_resolve test_catalog_flag_requires_resolve

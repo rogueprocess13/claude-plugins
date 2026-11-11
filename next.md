@@ -1334,6 +1334,26 @@ after, where a test is possible. Per-WP handoff notes go in `review-2026-10-23/f
 network calls while holding the lock (ARCH-8), migration replay (ARCH-9), fleetd autonomy setting
 (PO-9), and the determinism backlog (review README "top high-value, small-effort items").
 
+**Tranche 2 triage, 2026-11-12** (checked against `main` @ 7d31fe0):
+- ARCH-8 — was still live: `outbox-drain.sh` inherited flow.sh's FD 9, so the ticket lock was held
+  through the board call. **Fixed, PR #700** (0.114.1).
+- ARCH-3 (lock dir next to whichever flow.sh ran, `flow.sh:83` vs `fleet-intervene.sh:83`) and
+  ARCH-4 (`set_ticket_transition`/`clear_pending_event`/`set_ticket_approval` write the manifest
+  with no lock; flow.sh reads `rev` outside any lock) — live, paired; ARCH-3 must land first. One
+  PR each is plausible, ARCH-4 needs a concurrency test.
+- ARCH-5 (cwd-relative `./logs` state root) — live, **needs design**: changing the default moves
+  live state on existing hosts.
+- ARCH-9 — live, **needs design**. The review's "missing cursor → start at outbox max seq" would
+  also skip a brand-new ticket's first event (its first drain has no cursor either), so it needs a
+  host-level marker or similar.
+- PO-9 (fleetd always `--auto`) — live; `FLEET_WORKER_AUTONOMY` in progress (2026-11-12).
+- Determinism backlog: DET-RV-1, DET-IP-1/RV-20, DET-IP-2, DET-AP-6, DET-PL-26 fixed; DET-AP-1
+  partial (score still LLM); DET-PL-20 moot (knowledge-curator removed). Live: DET-SU-1
+  (`inspect_verifiers` unused) and DET-SU-2 (`retro.sh` has no `failure_tickets`) — in progress
+  2026-11-12; DET-AP-5 (`complexity-score.sh`), DET-PL-4 (render `COMPLETED.md`; waits for Step 12
+  item 7 PR 2 and Step 18 item 1, same prompt file), DET-PL-2 (TicketGen script, own PR, needs
+  care). DET-AP-2 unclear (critique may still check by eye).
+
 **Merging.** WPs do not bump versions; bump each plugin once per PR at PR time. WP-2 and WP-7
 both edit skill markdown, and WP-1 and WP-2 touch the flow call path, so merge WP-1 first, then
 WP-2, then rebase the rest. Expect routine Makefile `test-lib` conflicts.
@@ -1748,7 +1768,10 @@ Which plugins each item touches (bump the version of every plugin an item edits)
       questions: one extra agent spawn per run (cost), and whether Consensus treats goldfish-only
       findings differently. Copy EGM's rule: a lens that fails or times out is recorded as
       "not run", never as zero findings.
-- [ ] 2. **Paraphrase test on planned tickets.** From EGM's comprehension reviewer: before
+- [ ] 2. **Paraphrase test on planned tickets.** Specced 2026-11-12 as openspec
+      `dor-semantic-paraphrase` (local): required `PARAPHRASE` scan line, new advisory-only code
+      `INCOHERENT_CHANGE`, evaluator v4 without forced rescan, critique not-run audit; epic/intent
+      comparison deferred. Implementation in progress. Original note: From EGM's comprehension reviewer: before
       listing findings, the reviewer writes what the ticket proposes in its own words; a
       paraphrase that disagrees with the sealed intent / epic is a finding. A document whose
       terms are all defined but whose parts don't connect passes a definitions check and fails
