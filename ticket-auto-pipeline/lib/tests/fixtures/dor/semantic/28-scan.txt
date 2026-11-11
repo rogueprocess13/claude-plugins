@@ -2,6 +2,7 @@
 SCHEMA_VERSION: 1
 TICKET: @TICKET@
 BODY_HASH: @BODY_HASH@
+PARAPHRASE: Expire idle sign-in sessions after a fixed period and lock an account after repeated failed sign-in attempts.
 GAP_REQUIREMENT_COMPLETENESS: clear
 GAP_REQUIREMENT_COMPLETENESS_REASON: every described behavior has a criterion
 GAP_CONTRADICTORY_REQUIREMENTS: clear

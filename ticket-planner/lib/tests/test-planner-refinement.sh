@@ -79,6 +79,7 @@ _write_clean_scan() {
 SCHEMA_VERSION: 1
 TICKET: ${tid}
 BODY_HASH: ${hash}
+PARAPHRASE: The ticket makes one change, described consistently.
 GAP_REQUIREMENT_COMPLETENESS: clear
 GAP_REQUIREMENT_COMPLETENESS_REASON: covered
 GAP_CONTRADICTORY_REQUIREMENTS: clear
@@ -98,6 +99,7 @@ _write_blocking_scan() {
 SCHEMA_VERSION: 1
 TICKET: ${tid}
 BODY_HASH: ${hash}
+PARAPHRASE: The ticket makes one change, described consistently.
 FINDING_1_CODE: MISSING_CORE_AC
 FINDING_1_QUOTE: ${quote}
 FINDING_1_DETAIL: no acceptance criterion covers this behavior
@@ -321,6 +323,7 @@ for tid_fixture in "PRO-401:01-excellent" "PRO-402:02-minimal"; do
 SCHEMA_VERSION: 1
 TICKET: ${tid}
 BODY_HASH: ${h}
+PARAPHRASE: The ticket makes one change, described consistently.
 GAP_REQUIREMENT_COMPLETENESS: clear
 GAP_REQUIREMENT_COMPLETENESS_REASON: covered
 GAP_CONTRADICTORY_REQUIREMENTS: clear
@@ -359,6 +362,7 @@ cat >"$pdir/semantic-scan-result.txt" <<EOF
 SCHEMA_VERSION: 1
 TICKET: PRO-403
 BODY_HASH: ${h403}
+PARAPHRASE: The ticket makes one change, described consistently.
 FINDING_1_CODE: MISSING_CORE_AC
 FINDING_1_QUOTE: ${quote}
 FINDING_1_DETAIL: no acceptance criterion covers this behavior
@@ -503,6 +507,7 @@ cat >"$dispute_pdir/semantic-scan-result.txt" <<EOF
 SCHEMA_VERSION: 1
 TICKET: PRO-501
 BODY_HASH: ${h501}
+PARAPHRASE: The ticket makes one change, described consistently.
 GAP_REQUIREMENT_COMPLETENESS: clear
 GAP_REQUIREMENT_COMPLETENESS_REASON: covered
 GAP_CONTRADICTORY_REQUIREMENTS: clear
@@ -952,13 +957,41 @@ _tdg_canned "$TDG2_INIT" "PRO-712" "${SEMANTIC_FIXTURES_DIR}/28-scan.txt" "${SEM
 DOR_SEMANTIC_EVALUATOR="dor-semantic-v1" planner_refinement_apply "$TDG2_INIT" "PRO-712" >/dev/null 2>&1 || true
 needs_v1=$(planner_refinement_scan "$TDG2_INIT")
 planner_refinement_apply "$TDG2_INIT" "PRO-712" >/dev/null 2>&1 || true
-needs_v3=$(planner_refinement_scan "$TDG2_INIT")
-if grep -qx "PRO-712" <<<"$needs_v1" && ! grep -qx "PRO-712" <<<"$needs_v3" &&
-  get_ticket_manifest_field "PRO-712" ready 2>/dev/null | jq -e '.semantic.evaluator == "dor-semantic-v3"' >/dev/null; then
-  pass "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges on v3"
+needs_cur=$(planner_refinement_scan "$TDG2_INIT")
+if grep -qx "PRO-712" <<<"$needs_v1" && ! grep -qx "PRO-712" <<<"$needs_cur" &&
+  get_ticket_manifest_field "PRO-712" ready 2>/dev/null | jq -e '.semantic.evaluator == "dor-semantic-v4"' >/dev/null; then
+  pass "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges on v4"
 else
-  fail "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges on v3" "v1 scan: $needs_v1 / v3 scan: $needs_v3"
+  fail "TEST_DATA_GAP: a cached v1 verdict is re-run once and then converges on v4" "v1 scan: $needs_v1 / v4 scan: $needs_cur"
 fi
+
+# (g2) dor-semantic-paraphrase: a cached dor-semantic-v3 verdict whose body
+# hash still matches is kept — the v3 → v4 bump forces no rescan — and
+# converge accepts it as current.
+_tdg_canned "$TDG2_INIT" "PRO-712" "${SEMANTIC_FIXTURES_DIR}/28-scan.txt" "${SEMANTIC_FIXTURES_DIR}/28-audit.txt"
+DOR_SEMANTIC_EVALUATOR="dor-semantic-v3" planner_refinement_apply "$TDG2_INIT" "PRO-712" >/dev/null 2>&1 || true
+needs_cached_v3=$(planner_refinement_scan "$TDG2_INIT")
+if get_ticket_manifest_field "PRO-712" ready 2>/dev/null | jq -e '.semantic.evaluator == "dor-semantic-v3"' >/dev/null &&
+  ! grep -qx "PRO-712" <<<"$needs_cached_v3"; then
+  pass "paraphrase: a cached v3 verdict on an unchanged body is not rescanned"
+else
+  fail "paraphrase: a cached v3 verdict on an unchanged body is not rescanned" "scan: $needs_cached_v3"
+fi
+conv_v3=$(planner_refinement_converge "$TDG2_INIT" "PRO-712" tester 2>/dev/null) || conv_v3=""
+if ! grep -q "refused PRO-712" <<<"$conv_v3"; then
+  pass "paraphrase: converge accepts a cached v3 verdict"
+else
+  fail "paraphrase: converge accepts a cached v3 verdict" "got: $conv_v3"
+fi
+printf '\nEdited after the v3 verdict.\n' >>"$(_tdg_pdir "$TDG2_INIT" "PRO-712")/body.md"
+needs_edited_v3=$(planner_refinement_scan "$TDG2_INIT")
+if grep -qx "PRO-712" <<<"$needs_edited_v3"; then
+  pass "paraphrase: a v3 verdict on an edited body is rescanned"
+else
+  fail "paraphrase: a v3 verdict on an edited body is rescanned" "scan: $needs_edited_v3"
+fi
+_tdg_canned "$TDG2_INIT" "PRO-712" "${SEMANTIC_FIXTURES_DIR}/28-scan.txt" "${SEMANTIC_FIXTURES_DIR}/28-audit.txt"
+planner_refinement_apply "$TDG2_INIT" "PRO-712" >/dev/null 2>&1 || true
 
 # (h) the warn write failing does not change planner_refinement_apply's rc
 _tdg_child "$TDG2_INIT" "$TDG2_EPIC" "PRO-713" "26-contract-implied-miss"
@@ -1209,6 +1242,80 @@ PLANNER_REFINEMENT_SEMANTIC=false PLANNER_REFINEMENT_DRIFT_CHECK=false planner_r
 sl_rc=0
 planner_refinement_prepare "$LEGACY_INIT" >/dev/null 2>&1 || sl_rc=$?
 [ "$sl_rc" -eq 2 ] && pass "prepare: legacy initiative rc 2" || fail "prepare legacy" "rc=$sl_rc"
+
+# ── dor-semantic-paraphrase: paraphrase and INCOHERENT_CHANGE shown ─────────
+
+echo "--- paraphrase and INCOHERENT_CHANGE in the Refinement output ---"
+
+INC_INIT="INIT-1700000009-9999"
+INC_EPIC="PRO-720"
+_tdg_setup "$INC_INIT" "$INC_EPIC"
+_tdg_child "$INC_INIT" "$INC_EPIC" "PRO-721" "28-threshold-only-none"
+_tdg_child "$INC_INIT" "$INC_EPIC" "PRO-722" "14-typo-fix"
+planner_refinement_scan "$INC_INIT" >/dev/null
+INC_QUOTE="A sign-in to a locked account returns HTTP 423"
+INC_DETAIL="a response-code rule, not a session or lockout limit"
+INC_PARA="Expire idle sign-in sessions after a fixed period and lock an account after repeated failed sign-in attempts."
+awk -v q="$INC_QUOTE" -v d="$INC_DETAIL" '{ print } /^PARAPHRASE:/ {
+    print "FINDING_1_CODE: INCOHERENT_CHANGE"; print "FINDING_1_QUOTE: " q; print "FINDING_1_DETAIL: " d }' \
+  "${SEMANTIC_FIXTURES_DIR}/28-scan.txt" >"${TMPDIR}/inc-scan.txt"
+_tdg_canned "$INC_INIT" "PRO-721" "${TMPDIR}/inc-scan.txt" "${SEMANTIC_FIXTURES_DIR}/28-audit.txt"
+planner_refinement_apply "$INC_INIT" "PRO-721" >/dev/null 2>&1 || true
+# PRO-722 is held on deterministic codes; its audit must agree with each one.
+_tdg_canned "$INC_INIT" "PRO-722" "${SEMANTIC_FIXTURES_DIR}/28-scan.txt" "${SEMANTIC_FIXTURES_DIR}/28-audit.txt"
+inc_pdir=$(_tdg_pdir "$INC_INIT" "PRO-722")
+{
+  echo "=== DOR_SEMANTIC_AUDIT ==="
+  echo "SCHEMA_VERSION: 1"
+  echo "TICKET: PRO-722"
+  echo "BODY_HASH: $(_dor_body_hash "$(cat "${inc_pdir}/body.md")")"
+  n=0
+  for c in $(jq -r '.missing // [] | .[]' "${inc_pdir}/dor-result.json"); do
+    n=$((n + 1))
+    echo "AUDIT_${n}_CODE: ${c}"
+    echo "AUDIT_${n}_VERDICT: agree"
+  done
+  echo "SCORE_PLAUSIBLE: yes"
+  echo "SCORE_REASON: matches"
+  echo "=== END DOR_SEMANTIC_AUDIT ==="
+} >"${inc_pdir}/semantic-audit-result.txt"
+planner_refinement_apply "$INC_INIT" "PRO-722" >/dev/null 2>&1 || true
+
+if get_ticket_manifest_field "PRO-721" ready 2>/dev/null |
+  jq -e --arg p "$INC_PARA" '.status == "ready" and .semantic.paraphrase == $p
+    and .semantic.findings[0].code == "INCOHERENT_CHANGE" and .semantic.findings[0].severity == "advisory"' >/dev/null; then
+  pass "paraphrase: stored, and an INCOHERENT_CHANGE finding leaves the ticket ready"
+else
+  fail "paraphrase: stored, and an INCOHERENT_CHANGE finding leaves the ticket ready" \
+    "got: $(get_ticket_manifest_field "PRO-721" ready 2>/dev/null | jq -c '{status, missing, semantic}')"
+fi
+
+inc_summary=$(planner_refinement_advisory_summary "$INC_INIT" 2>/dev/null) || inc_summary=""
+if grep -qxF "Advisory (does not block) PRO-721 INCOHERENT_CHANGE: \"${INC_QUOTE}\" — ${INC_DETAIL}" <<<"$inc_summary" &&
+  grep -qxF "  Paraphrase: ${INC_PARA}" <<<"$inc_summary"; then
+  pass "planner_refinement_advisory_summary: INCOHERENT_CHANGE listed with the ticket's paraphrase"
+else
+  fail "planner_refinement_advisory_summary: INCOHERENT_CHANGE listed with the ticket's paraphrase" "got: $inc_summary"
+fi
+
+inc_report=$(planner_refinement_report "$INC_INIT")
+inc_section=$(echo "$inc_report" | sed -n '/^## PRO-722/,/^## /p')
+if grep -qxF "Paraphrase: ${INC_PARA}" <<<"$inc_section"; then
+  pass "planner_refinement_report: a not-ready ticket shows its paraphrase"
+else
+  fail "planner_refinement_report: a not-ready ticket shows its paraphrase" "got: $inc_report"
+fi
+inc_adv=$(echo "$inc_report" | sed -n '/^## Advisory incoherent-change findings/,$p')
+if grep -qF "PRO-721 INCOHERENT_CHANGE: \"${INC_QUOTE}\"" <<<"$inc_adv"; then
+  pass "planner_refinement_report: halt report lists a ready child's INCOHERENT_CHANGE"
+else
+  fail "planner_refinement_report: halt report lists a ready child's INCOHERENT_CHANGE" "got: $inc_report"
+fi
+if ! grep -q "Advisory incoherent-change findings" <<<"$(planner_refinement_report "$INIT_ID")"; then
+  pass "planner_refinement_report: no incoherent-change heading when there is no such finding"
+else
+  fail "planner_refinement_report: no incoherent-change heading when there is no such finding" "heading present"
+fi
 
 # ── Summary ─────────────────────────────────────────────────────────────────
 
