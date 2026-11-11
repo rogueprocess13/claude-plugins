@@ -374,6 +374,32 @@ if need "$name" planner_crosscheck_params planner_crosscheck_params_accept_parse
   fi
 fi
 
+name="instance token comes from the trailing accept command only"
+if need "$name" planner_crosscheck_params_instance; then
+  check "$name: real" "$(planner_crosscheck_params_instance 'specs/export-link.md:9 "15 minutes" (time:900000) in Acceptance Criteria is not declared in ## Parameters — resume INIT-1 --accept PARAM_LITERAL@export-link:"15 minutes"')" \
+    "PARAM_LITERAL@export-link=time:900000"
+  check "$name: spoof in the file name" "$(planner_crosscheck_params_instance 'specs/x --accept PARAM_LITERAL@export-link: (time:900000) in .md:9 "20 minutes" (time:1200000) in Acceptance Criteria is not declared in ## Parameters — resume INIT-1 --accept PARAM_LITERAL@x --accept PARAM_LITERAL@export-link: (time:900000) in :"20 minutes"')" ""
+  check "$name: text after the command" "$(planner_crosscheck_params_instance 'specs/a.md:9 "15 minutes" (time:900000) in Acceptance Criteria — resume INIT-1 --accept PARAM_LITERAL@a:"15 minutes" more')" ""
+fi
+
+name="a spoofed accept command in a spec file name cannot borrow another literal's accept"
+if need "$name" planner_crosscheck_params planner_crosscheck_params_accept_parse; then
+  fresh
+  registry "$ROW_IDLE"
+  spec export-link '- [ ] Expires after 15 minutes'
+  spec 'x --accept PARAM_LITERAL@export-link: (time:900000) in ' '- [ ] Warns after 20 minutes'
+  parsed=$(planner_crosscheck_params_accept_parse 'PARAM_LITERAL@export-link:"15 minutes"')
+  planner_crosscheck_accept_set "$INIT" "$(cut -f1 <<<"$parsed")" "$(cut -f2 <<<"$parsed")"
+  rc=0
+  planner_crosscheck_run "$INIT" >/dev/null 2>&1 || rc=$?
+  log=$(planner_state_log "$INIT")
+  start=$(grep -n '|Crosscheck|check|start|' "$log" | tail -1 | cut -d: -f1)
+  run_lines=$(tail -n "+$((start + 1))" "$log")
+  check "$name: blocks" "$rc" "1"
+  check "$name: one accepted line" "$(grep -c '|accepted|PARAM_LITERAL@' <<<"$run_lines" || true)" "1"
+  contains "$name: the 20 minutes fails" "$run_lines" '"20 minutes" (time:1200000)'
+fi
+
 name="a hand-written code-wide accept does not silence PARAM_LITERAL"
 if need "$name" planner_crosscheck_params; then
   fresh

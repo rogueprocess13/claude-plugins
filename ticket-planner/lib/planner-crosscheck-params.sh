@@ -274,9 +274,12 @@ planner_crosscheck_params_literal() {
 
 planner_crosscheck_params_instance() {
   local msg="$1" slug canon
-  [[ "$msg" =~ --accept\ PARAM_LITERAL@([A-Za-z0-9_-]+): ]] || return 0
+  # Anchored at both ends: the slug from the trailing accept command, the
+  # canonical from the head of a message whose file is that slug's spec, so
+  # text in a spec file name cannot name another instance.
+  [[ "$msg" =~ \ --accept\ PARAM_LITERAL@([A-Za-z0-9_-]+):\"[^\"]*\"$ ]] || return 0
   slug="${BASH_REMATCH[1]}"
-  [[ "$msg" =~ \ \(([a-z]+:[0-9]+)\)\ in\  ]] || return 0
+  [[ "$msg" =~ ^specs/${slug}\.md:[0-9]+\ \"[^\"]*\"\ \(([a-z]+:[0-9]+)\)\ in\  ]] || return 0
   canon="${BASH_REMATCH[1]}"
   printf 'PARAM_LITERAL@%s=%s\n' "$slug" "$canon"
 }

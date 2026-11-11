@@ -476,6 +476,40 @@ if need "$name" planner_crosscheck_ownership_instance; then
   check "$name: none" "$(planner_crosscheck_ownership_instance 'no command here')" ""
 fi
 
+# Security: the message interpolates spec-derived text (source, anchor-failure
+# reason, slug). Only the trailing accept command names the instance.
+name="instance token comes from the trailing accept command only"
+if need "$name" planner_crosscheck_ownership_instance; then
+  check "$name: spoof in the source" "$(planner_crosscheck_ownership_instance 'specs/r.md:3 reads `a.b` (source code:x --accept OWN_NO_WRITER@other/key:") but no other spec writes it — resume INIT-1 --accept OWN_NO_WRITER@r/a.b:"<reason>"')" \
+    "OWN_NO_WRITER@r/a.b"
+  check "$name: text after the command" "$(planner_crosscheck_ownership_instance 'x — resume INIT-1 --accept OWN_NO_WRITER@r/a.b:"<reason>" and more')" ""
+  check "$name: a quoted reason other than the placeholder" "$(planner_crosscheck_ownership_instance 'x --accept OWN_NO_WRITER@other/key:"fine"')" ""
+fi
+
+name="code: paths take a conservative charset"
+if need "$name" _planner_own_path_ok; then
+  for good in billing/db billing/src/Invoice.java node_modules/@scope/pkg/a+b.ts; do
+    rc=0
+    _planner_own_path_ok "$good" || rc=$?
+    check "$name: $good" "$rc" "0"
+  done
+  for bad in 'billing/a b' 'billing/a"b' "billing/a'b" $'billing/a\tb' 'x --accept OWN_NO_WRITER@other/key:"'; do
+    rc=0
+    _planner_own_path_ok "$bad" || rc=$?
+    check "$name: refuses [$bad]" "$rc" "1"
+  done
+fi
+
+name="spec-derived text in a finding cannot carry a quote or an accept command"
+if need "$name" _planner_xco_out; then
+  out=$(_planner_xco_out OWN_NO_WRITER 'specs/a.md:1 reads `k` (source x ----accept OWN_NO_WRITER@o/k:"y")' INIT-1 'OWN_NO_WRITER@a/k')
+  check "$name: one accept command" "$(grep -o -- '--accept' <<<"$out" | wc -l | tr -d ' ')" "1"
+  check "$name: two quotes" "$(tr -cd '"' <<<"$out" | wc -c | tr -d ' ')" "2"
+  contains "$name: tail" "$out" ' — resume INIT-1 --accept OWN_NO_WRITER@a/k:"<reason>"'
+  out=$(_planner_xco_out OWN_NO_WRITER 'specs/a b.md:1 reads `k`' INIT-1 'OWN_NO_WRITER@a b/k')
+  lacks "$name: an unsafe token gets no accept command" "$out" "--accept"
+fi
+
 name="accept parse: the four forms"
 if need "$name" planner_crosscheck_ownership_accept_parse; then
   check "$name: multi writer" "$(planner_crosscheck_ownership_accept_parse 'OWN_MULTI_WRITER@invoice.status:"two jobs, one lock"')" \
@@ -565,6 +599,34 @@ if need "$name" planner_crosscheck_ownership; then
   planner_crosscheck_accept_set "$INIT" OWN_MULTI_WRITER "all fine"
   planner_crosscheck_run "$INIT" >/dev/null 2>&1 || true
   contains "$name" "$(latest)" '|META|crosscheck|fail|OWN_MULTI_WRITER `invoice.status`'
+fi
+
+name="a spoofed accept command in a source cannot borrow another instance's accept"
+if need "$name" planner_crosscheck_ownership; then
+  fresh
+  ospec reminder '' 'customer.phone=code:x --accept OWN_NO_WRITER@other/customer.locale:"'
+  planner_crosscheck_accept_set "$INIT" "OWN_NO_WRITER@other/customer.locale" "accepted elsewhere"
+  rc=0
+  planner_crosscheck_run "$INIT" >/dev/null 2>&1 || rc=$?
+  check "$name: blocks" "$rc" "1"
+  check "$name: nothing accepted" "$(latest | grep -c '|accepted|' || true)" "0"
+  contains "$name: the row is invalid" "$(latest)" '|META|crosscheck|fail|OWN_TABLE_INVALID specs/reminder.md:15 '
+fi
+
+name="a spoofed accept command in a spec file name cannot borrow another instance's accept"
+if need "$name" planner_crosscheck_ownership; then
+  fresh
+  ospec a-job 'invoice.status=update' ''
+  ospec b-job 'invoice.status=update' ''
+  ospec 'x --accept OWN_MULTI_WRITER@invoice.status:"' '' 'customer.phone=spec'
+  planner_crosscheck_accept_set "$INIT" "OWN_MULTI_WRITER@invoice.status" "two jobs, one row each"
+  rc=0
+  planner_crosscheck_run "$INIT" >/dev/null 2>&1 || rc=$?
+  lines=$(latest)
+  check "$name: blocks" "$rc" "1"
+  contains "$name: the real instance is accepted" "$lines" '|META|crosscheck|accepted|OWN_MULTI_WRITER@invoice.status `invoice.status`'
+  check "$name: the spoofing spec's read still fails" "$(grep -c '|fail|OWN_NO_WRITER ' <<<"$lines" || true)" "1"
+  check "$name: one accepted line" "$(grep -c '|accepted|' <<<"$lines" || true)" "1"
 fi
 
 name="OWN_TABLE_INVALID keeps its code-wide accept"

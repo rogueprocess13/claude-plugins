@@ -67,9 +67,26 @@ PLANNER_OWNERSHIP_UNDECLARED_MAX=300
 
 _PLANNER_XCO_PREFIX="planner-crosscheck-ownership:"
 
-# _planner_xco_out <CODE> <message> — one finding line, `|` → `/`, CR/LF → space.
+# _planner_xco_safe <text> — spec-derived text made inert for the instance
+# token reader: `"` → `'`, and every `--accept` loses a dash until none is left.
+_planner_xco_safe() {
+  local s="$1"
+  s="${s//\"/\'}"
+  while [[ "$s" == *--accept* ]]; do s="${s//--accept/-accept}"; done
+  printf '%s' "$s"
+}
+
+# _planner_xco_out <CODE> <message> [<INIT> <instance>] — one finding line,
+# `|` → `/`, CR/LF → space. The message is passed through _planner_xco_safe,
+# so the only `"` and the only `--accept` in the line are those of the
+# trailing accept command, appended when an instance is given and its token
+# is in the safe charset (an unsafe slug gets no command: the finding blocks).
 _planner_xco_out() {
-  local msg="$2"
+  local msg
+  msg=$(_planner_xco_safe "$2")
+  if [ -n "${4:-}" ] && [[ "$4" =~ ^[A-Z_]+@[A-Za-z0-9_./-]+$ ]]; then
+    msg+=" — resume ${3} --accept ${4}:\"<reason>\""
+  fi
   msg="${msg//|//}"
   msg="${msg//$'\r'/ }"
   msg="${msg//$'\n'/ }"
@@ -270,7 +287,7 @@ planner_crosscheck_ownership() {
       [ "$found" -eq 1 ] && continue
       msg="${spec_ref}:${ln} reads \`${key}\` (source ${src}) but no other spec writes it"
       [ -n "$reason" ] && msg+=" (${src} did not anchor: ${reason})"
-      _planner_xco_out OWN_NO_WRITER "${msg} — add the write to the spec that owns it, or anchor the read with code:, framework: or external: — resume ${init} --accept OWN_NO_WRITER@${slug}/${key}:\"<reason>\""
+      _planner_xco_out OWN_NO_WRITER "${msg} — add the write to the spec that owns it, or anchor the read with code:, framework: or external:" "$init" "OWN_NO_WRITER@${slug}/${key}"
       blocking=1
       near=$(_planner_xco_strip "$key")
       while IFS= read -r wk; do
@@ -287,7 +304,7 @@ planner_crosscheck_ownership() {
     while IFS=$'\t' read -r ln key val; do
       [ "$val" = trigger ] || continue
       [ -n "${FIRE[$key]:-}" ] && continue
-      _planner_xco_out OWN_TRIGGER_UNOWNED "${spec_ref}:${ln} triggers \`${key}\` but no spec fires it — add a fire row to the spec that owns the effect, or remove the trigger — resume ${init} --accept OWN_TRIGGER_UNOWNED@${slug}/${key}:\"<reason>\""
+      _planner_xco_out OWN_TRIGGER_UNOWNED "${spec_ref}:${ln} triggers \`${key}\` but no spec fires it — add a fire row to the spec that owns the effect, or remove the trigger" "$init" "OWN_TRIGGER_UNOWNED@${slug}/${key}"
       blocking=1
     done <<<"${W[$slug]}"
 
@@ -343,7 +360,7 @@ planner_crosscheck_ownership() {
     for ((i = 0; i < ${#wsl[@]}; i++)); do
       names+="${names:+, }${wsl[$i]} (${ops[$i]})"
     done
-    _planner_xco_out OWN_MULTI_WRITER "\`${key}\` has conflicting writers: ${names} — give the key one owner and have the others read it, or make each transition leave different states — resume ${init} --accept OWN_MULTI_WRITER@${key}:\"<reason>\""
+    _planner_xco_out OWN_MULTI_WRITER "\`${key}\` has conflicting writers: ${names} — give the key one owner and have the others read it, or make each transition leave different states" "$init" "OWN_MULTI_WRITER@${key}"
     blocking=1
   done < <(printf '%s\n' "${!DW[@]}" | LC_ALL=C sort)
 
@@ -351,7 +368,7 @@ planner_crosscheck_ownership() {
   while IFS= read -r key; do
     [ -n "$key" ] || continue
     [[ "${FIRE[$key]}" == *", "* ]] || continue
-    _planner_xco_out OWN_MULTI_FIRE "\`${key}\` is fired by ${FIRE[$key]} — keep one fire owner and make the others trigger it — resume ${init} --accept OWN_MULTI_FIRE@${key}:\"<reason>\""
+    _planner_xco_out OWN_MULTI_FIRE "\`${key}\` is fired by ${FIRE[$key]} — keep one fire owner and make the others trigger it" "$init" "OWN_MULTI_FIRE@${key}"
     blocking=1
   done < <(printf '%s\n' "${!FIRE[@]}" | LC_ALL=C sort)
 
@@ -359,7 +376,8 @@ planner_crosscheck_ownership() {
 }
 
 planner_crosscheck_ownership_instance() {
-  [[ "$1" =~ --accept\ (OWN_(MULTI_WRITER|MULTI_FIRE|NO_WRITER|TRIGGER_UNOWNED)@[A-Za-z0-9_./-]+):\" ]] || return 0
+  # Anchored to the end: only the trailing command names the instance.
+  [[ "$1" =~ \ --accept\ (OWN_(MULTI_WRITER|MULTI_FIRE|NO_WRITER|TRIGGER_UNOWNED)@[A-Za-z0-9_./-]+):\"\<reason\>\"$ ]] || return 0
   printf '%s\n' "${BASH_REMATCH[1]}"
 }
 

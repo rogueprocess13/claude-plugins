@@ -208,10 +208,13 @@ _planner_own_op_ok() {
   [[ "$from" =~ ^${_PLANNER_OWN_SEG_RE}(,${_PLANNER_OWN_SEG_RE})*$ ]]
 }
 
-# _planner_own_path_ok <path> — relative, no `..` component, not empty.
+# _planner_own_path_ok <path> — relative, no `..` component, not empty, and
+# only letters, digits and `._/@+-` (no whitespace or quotes: the path is
+# quoted back in finding messages).
 _planner_own_path_ok() {
   local p="$1"
   [ -n "$p" ] || return 1
+  [[ "$p" =~ ^[A-Za-z0-9._/@+-]+$ ]] || return 1
   case "$p" in /* | ~*) return 1 ;; esac
   case "/${p}/" in */../*) return 1 ;; esac
   return 0

@@ -358,7 +358,7 @@ _planner_stop_param_literals_question() {
   log=$(planner_state_log "$init") || return 1
   start=$(grep -n '|Crosscheck|check|start|' "$log" | tail -1 | cut -d: -f1)
   list=$(tail -n "+$((${start:-0} + 1))" "$log" | grep '^[^|]*|META|crosscheck|fail|PARAM_LITERAL ' |
-    grep -o 'PARAM_LITERAL@[A-Za-z0-9_-]*:"[^"]*"' | awk '!seen[$0]++' |
+    grep -o 'PARAM_LITERAL@[A-Za-z0-9_-]*:"[^"]*"$' | awk '!seen[$0]++' |
     sed 's/^PARAM_LITERAL@\([^:]*\):/\1 /' | paste -sd';' - | sed 's/;/; /g')
   _planner_stop_question "param-literals" "note" \
     "Crosscheck found ${count} unit literal(s) in acceptance criteria or Expected cells that no ## Parameters row declares: $(_planner_stop_excerpt "${list:-see state.log}" 300). Declare each value in proposal.md ## Parameters, or change the spec to a declared value, then answer 'resolved' to re-run Crosscheck. To accept one literal as genuine, run from a terminal: resume ${init} --accept PARAM_LITERAL@<slug>:\"<literal>\" (there is no headless accept)." \
