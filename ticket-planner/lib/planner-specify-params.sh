@@ -72,6 +72,19 @@ PLANNER_PARAMS_KEY_MAX=64
 PLANNER_PARAMS_QUOTE_MIN=8
 PLANNER_PARAMS_QUOTE_MAX=300
 
+# The unit list (design D7), one `<word>:<class>:<multiplier>` entry each. It
+# is added by this change on purpose, not derived from
+# PLANNER_TESTDATA_UNIT_DENYLIST, which answers a different question (review
+# round 1, C4). The tokenizer matches each word case-insensitively, singular
+# or with an `s`; `retries` is spelled out. `businessday` and `dp` stand for
+# the two-word units `business day` and `decimal place`, and `pct` for `%`:
+# none of the three is reachable as a single word. Count words (`thread`,
+# `connection`, `worker`, `request`, `time`, `try`, `px`) are left out, so a
+# count assertion never blocks (review round 1, F3). Canonical classes: time
+# in ms, month (year = 12), size in bytes (1024-based), pct in hundredths of
+# a percent, attempt, char and dp as counts.
+PLANNER_PARAMS_UNITS="ms:time:1 millisecond:time:1 s:time:1000 sec:time:1000 second:time:1000 min:time:60000 minute:time:60000 h:time:3600000 hr:time:3600000 hour:time:3600000 d:time:86400000 day:time:86400000 businessday:time:86400000 week:time:604800000 month:month:1 year:month:12 byte:size:1 kb:size:1024 mb:size:1048576 gb:size:1073741824 tb:size:1099511627776 percent:pct:100 pct:pct:100 attempt:attempt:1 retry:attempt:1 character:char:1 char:char:1 dp:dp:1"
+
 # Keyword cross-check (design D2): one line per implied must-ask kind, then
 # its token prefixes. Matched by prefix against the row's Name words and its
 # Key split on `._-`, lowercased. `timeout` and `pool` are left out on
@@ -357,7 +370,7 @@ planner_params_invalid() {
 planner_params_literals() {
   local f="${1:--}"
   # shellcheck disable=SC2016  # awk program, not shell
-  LC_ALL=C _planner_params_awk '
+  LC_ALL=C PLANNER_PARAMS_UNITS="$PLANNER_PARAMS_UNITS" _planner_params_awk '
     function fence_char(s) {
       sub(/^(   |  | )?/, "", s)
       if (substr(s, 1, 3) == "```") return "`"
@@ -390,7 +403,7 @@ planner_params_literals() {
     }
     BEGIN {
       fence = ""
-      n = split("ms:time:1 millisecond:time:1 s:time:1000 sec:time:1000 second:time:1000 min:time:60000 minute:time:60000 h:time:3600000 hr:time:3600000 hour:time:3600000 d:time:86400000 day:time:86400000 businessday:time:86400000 week:time:604800000 month:month:1 year:month:12 byte:size:1 kb:size:1024 mb:size:1048576 gb:size:1073741824 tb:size:1099511627776 percent:pct:100 pct:pct:100 attempt:attempt:1 retry:attempt:1 character:char:1 char:char:1 dp:dp:1", U, " ")
+      n = split(ENVIRON["PLANNER_PARAMS_UNITS"], U, " ")
       for (k = 1; k <= n; k++) {
         split(U[k], P, ":")
         CLS[P[1]] = P[2]; MUL[P[1]] = P[3]

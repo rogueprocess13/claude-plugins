@@ -17,6 +17,9 @@
 #   - planner-crosscheck-testdata.sh    (#503/#504 — unowned test data, cited
 #                                        external artifacts never raised/answered;
 #                                        planner-test-data-derivation tripwires)
+#   - planner-crosscheck-ac-coverage.sh (rehearsal F16 — uncovered status codes)
+#   - planner-crosscheck-params.sh      (planner-specify-parameters — undeclared
+#                                        unit literals against ## Parameters)
 #
 # Before every family, the test-data synthesis sub-step
 # (planner-testdata-synth.sh, planner-test-data-derivation) writes the TD
@@ -88,6 +91,8 @@ _planner_crosscheck_source_if_missing "planner_crosscheck_testdata" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-testdata.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_ac_coverage" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ac-coverage.sh"
+_planner_crosscheck_source_if_missing "planner_crosscheck_params" \
+  "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-params.sh"
 _planner_crosscheck_source_if_missing "planner_testdata_synthesize" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-testdata-synth.sh"
 _planner_crosscheck_source_if_missing "planner_state_write" \
@@ -192,6 +197,22 @@ _planner_crosscheck_emit_finding() {
   code=$(echo "$body" | awk '{print $1}')
   [[ "$code" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 2
   message="${body#"$code" }"
+
+  # planner-specify-parameters D7: PARAM_LITERAL is accepted per literal only.
+  # A matching instance record (`PARAM_LITERAL@<slug>=<canonical>`) makes this
+  # one finding `accepted`, written with the instance token first so no reader
+  # takes it for a code-wide accept; a bare `PARAM_LITERAL` accept is ignored.
+  if [ "$code" = "PARAM_LITERAL" ]; then
+    local instance=""
+    declare -f planner_crosscheck_params_instance >/dev/null 2>&1 &&
+      instance=$(planner_crosscheck_params_instance "$message")
+    if [ -n "$instance" ] && _planner_crosscheck_code_accepted "$initiative_id" "$instance"; then
+      planner_state_write "$initiative_id" "META" "crosscheck" "accepted" "${instance} ${message}"
+      return 3
+    fi
+    planner_state_write "$initiative_id" "META" "crosscheck" "fail" "${code} ${message}"
+    return 0
+  fi
 
   if _planner_crosscheck_is_warn_code "$code"; then
     planner_state_write "$initiative_id" "META" "crosscheck" "warn" "info ${code} ${message}"
@@ -339,6 +360,11 @@ planner_crosscheck_run() {
   total_warn=$((total_warn + w))
   total_accepted=$((total_accepted + a))
 
+  read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_params "$initiative_id")
+  total_blocking=$((total_blocking + b))
+  total_warn=$((total_warn + w))
+  total_accepted=$((total_accepted + a))
+
   if [ "$total_blocking" -gt 0 ]; then
     planner_state_write "$initiative_id" "Crosscheck" "check" "fail" \
       "${total_blocking} blocking finding(s), ${total_warn} warn, ${total_accepted} accepted — see META|crosscheck entries"
@@ -473,6 +499,15 @@ planner_crosscheck_fix_hint() {
     ;;
   AC_STATUS_UNCOVERED)
     echo "the spec states this status code as a response but no acceptance criterion checks it — add an AC (and its Verification Notes row) for that response; never delete the behaviour sentence to clear this"
+    ;;
+  PARAM_TABLE_INVALID)
+    echo "proposal.md ## Parameters is missing or malformed — write the table (Name | Key | Kind | Default | Value | Source) right after ## Business Outcomes, or None., and fix the named row"
+    ;;
+  PARAM_UNDECIDED)
+    echo "a ## Parameters row is still open — answer it through the SPECIFY_DECISION round (resume --answers), or source its Value with a quote the artifact really holds"
+    ;;
+  PARAM_LITERAL | PARAM_LITERAL@*)
+    echo "the spec states a unit value no decided ## Parameters row declares — declare it as a row (and name its key in backticks in ## Technical Context), or change the spec to the declared value; accept one genuine literal with the per-literal --accept the message prints"
     ;;
   CARVE_SCOPE_LOST)
     echo "the spec-file count no longer matches the ticket count Specify declared — record the rescope in consensus.md, or restore the missing spec"
