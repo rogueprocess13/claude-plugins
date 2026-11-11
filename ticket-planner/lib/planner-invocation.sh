@@ -47,6 +47,23 @@ _planner_invocation_accept_instance() {
   "$fn" "$arg"
 }
 
+# _planner_invocation_wildcard_reason <code> <arg> — the reason of a
+# wildcard accept `<CODE>@*:"<reason>"` (surrounding double quotes and
+# whitespace removed), or rc 1 when it is empty.
+_planner_invocation_wildcard_reason() {
+  local code="$1" reason="${2#*@\*:}"
+  if [ "${#reason}" -ge 2 ] && [ "${reason:0:1}" = '"' ] && [ "${reason: -1}" = '"' ]; then
+    reason="${reason:1:${#reason}-2}"
+  fi
+  reason="${reason#"${reason%%[![:space:]]*}"}"
+  reason="${reason%"${reason##*[![:space:]]}"}"
+  if [ -z "$reason" ]; then
+    echo "ERROR: --accept ${code}@*: requires a non-empty reason: ${code}@*:\"<reason>\"" >&2
+    return 1
+  fi
+  printf '%s\n' "$reason"
+}
+
 planner_flags_parse() {
   local mode="${1:-}"
   shift || true
@@ -234,6 +251,14 @@ planner_flags_parse() {
     _accept_code="${_accept_arg%%:*}"
     _accept_code="${_accept_code%%@*}"
     if planner_crosscheck_is_instance_code "$_accept_code"; then
+      # Wildcard (planner-crosscheck-ownership D10): <CODE>@*:"<reason>",
+      # expanded per instance at persist time.
+      case "$_accept_arg" in
+      "${_accept_code}@*:"*)
+        _planner_invocation_wildcard_reason "$_accept_code" "$_accept_arg" >/dev/null || return 1
+        continue
+        ;;
+      esac
       _planner_invocation_accept_instance "$_accept_code" "$_accept_arg" >/dev/null || return 1
       continue
     fi
@@ -329,6 +354,13 @@ planner_flags_persist() {
       local _code="${_accept_arg%%:*}" _pl
       _code="${_code%%@*}"
       if planner_crosscheck_is_instance_code "$_code"; then
+        case "$_accept_arg" in
+        "${_code}@*:"*)
+          _pl=$(_planner_invocation_wildcard_reason "$_code" "$_accept_arg") || return 1
+          planner_crosscheck_instance_accept_all "$initiative_id" "$_code" "$_pl" || return 1
+          continue
+          ;;
+        esac
         # Recorded as `<token> <record text>` from the code's parse function
         # (PARAM_LITERAL: PARAM_LITERAL@<slug>=<canonical> <literal>): the
         # instance token Crosscheck matches each finding against.

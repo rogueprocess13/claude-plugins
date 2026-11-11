@@ -60,6 +60,10 @@
 #     rc 1 with the reason on stderr.
 #   planner_crosscheck_params_instance <message>
 #     The instance token of a PARAM_LITERAL finding message, or nothing.
+#   planner_crosscheck_params_literal <message>
+#     The literal a PARAM_LITERAL finding message quotes, or nothing: the text
+#     a wildcard accept (`PARAM_LITERAL@*:"<reason>"`) records ahead of the
+#     reason, `PARAM_LITERAL@<slug>=<canonical> <literal> — <reason>`.
 #
 # Sourceable library — no set -euo pipefail.
 
@@ -233,7 +237,7 @@ planner_crosscheck_params_accept_parse() {
   case "$arg" in
   PARAM_LITERAL@*:*) ;;
   *)
-    echo "ERROR: --accept PARAM_LITERAL is per literal: --accept PARAM_LITERAL@<slug>:\"<literal>\" (got '${arg}')" >&2
+    echo "ERROR: --accept PARAM_LITERAL is per literal: --accept PARAM_LITERAL@<slug>:\"<literal>\", or --accept PARAM_LITERAL@*:\"<reason>\" for every literal the latest Crosscheck attempt found (got '${arg}')" >&2
     return 1
     ;;
   esac
@@ -261,6 +265,11 @@ planner_crosscheck_params_accept_parse() {
     return 1
   fi
   printf 'PARAM_LITERAL@%s=%s\t%s\n' "$slug" "$canon" "$lit"
+}
+
+planner_crosscheck_params_literal() {
+  [[ "$1" =~ ^[^\"]*\"([^\"]*)\" ]] || return 0
+  printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
 planner_crosscheck_params_instance() {

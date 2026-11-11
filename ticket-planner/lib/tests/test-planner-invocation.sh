@@ -144,10 +144,10 @@ expect_reject "--accept with an empty reason" \
   "ERROR: --accept requires a non-empty reason: CODE:\"reason\"" \
   resume INIT-1-2 --accept CARVE_SCOPE_LOST:
 expect_reject "--accept PARAM_LITERAL code-wide" \
-  "ERROR: --accept PARAM_LITERAL is per literal: --accept PARAM_LITERAL@<slug>:\"<literal>\" (got 'PARAM_LITERAL:all fine')" \
+  "ERROR: --accept PARAM_LITERAL is per literal: --accept PARAM_LITERAL@<slug>:\"<literal>\", or --accept PARAM_LITERAL@*:\"<reason>\" for every literal the latest Crosscheck attempt found (got 'PARAM_LITERAL:all fine')" \
   resume INIT-1-2 --accept "PARAM_LITERAL:all fine"
 expect_reject "--accept PARAM_LITERAL with no colon" \
-  "ERROR: --accept PARAM_LITERAL is per literal: --accept PARAM_LITERAL@<slug>:\"<literal>\" (got 'PARAM_LITERAL')" \
+  "ERROR: --accept PARAM_LITERAL is per literal: --accept PARAM_LITERAL@<slug>:\"<literal>\", or --accept PARAM_LITERAL@*:\"<reason>\" for every literal the latest Crosscheck attempt found (got 'PARAM_LITERAL')" \
   resume INIT-1-2 --accept PARAM_LITERAL
 expect_reject "--accept PARAM_LITERAL@ with text that is not one literal" \
   "ERROR: --accept PARAM_LITERAL@export-link: 'about half an hour' is not exactly one unit literal, e.g. PARAM_LITERAL@export-link:\"15 minutes\"" \
@@ -155,6 +155,9 @@ expect_reject "--accept PARAM_LITERAL@ with text that is not one literal" \
 expect_reject "--accept PARAM_LITERAL@ with a bad slug" \
   "ERROR: --accept PARAM_LITERAL@<slug>: 'a/b' is not a spec slug (letters, digits, - and _)" \
   resume INIT-1-2 --accept 'PARAM_LITERAL@a/b:15 minutes'
+expect_reject "--accept PARAM_LITERAL@* with an empty reason" \
+  "ERROR: --accept PARAM_LITERAL@*: requires a non-empty reason: PARAM_LITERAL@*:\"<reason>\"" \
+  resume INIT-1-2 --accept 'PARAM_LITERAL@*:""'
 expect_reject "--no-tests-rule with a non-boolean" \
   "ERROR: --no-tests-rule takes true or false, got 'maybe'" \
   resume INIT-1-2 --no-tests-rule=maybe
@@ -265,6 +268,86 @@ if [ "$rc" -eq 1 ] && [ "$err" = "ERROR: --accept FAKE_INSTANCE is per instance 
   pass "a registered per-instance code is refused code-wide at parsing"
 else
   fail "instance table: code-wide refusal" "rc=$rc err='$err'"
+fi
+
+# Wildcard accept (planner-crosscheck-ownership D10, user decision D):
+# `<CODE>@*:"<reason>"` records one accept per distinct instance in the latest
+# Crosscheck attempt's fail lines, never `<CODE>@*` itself.
+WILD_SETUP='source "${LIB_DIR}/planner-crosscheck.sh"
+  pl() { echo "PARAM_LITERAL specs/$1.md:$2 \"$3\" ($4) in Acceptance Criteria is not declared in ## Parameters — resume $INIT --accept PARAM_LITERAL@$1:\"$3\""; }
+  planner_state_init "$INIT" "an idea" >/dev/null
+  planner_state_write "$INIT" Crosscheck check start "x"
+  planner_state_write "$INIT" META crosscheck fail "$(pl old-spec 3 "2 hours" time:7200000)"
+  planner_state_write "$INIT" Crosscheck check fail "1 blocking"
+  planner_state_write "$INIT" Crosscheck check start "x"
+  planner_state_write "$INIT" META crosscheck fail "$(pl export-link 9 "15 minutes" time:900000)"
+  planner_state_write "$INIT" META crosscheck fail "$(pl export-link 12 "15 min" time:900000)"
+  planner_state_write "$INIT" META crosscheck fail "$(pl other 4 "2 GB" size:2147483648)"
+  planner_state_write "$INIT" META crosscheck fail "SIGNALS_UNIFORM a.md b.md share a Signals block"
+  planner_state_write "$INIT" Crosscheck check fail "4 blocking"
+'
+rc=0
+out=$(in_new_process "${WILD_SETUP}"'
+  planner_flags_parse resume "$INIT" --accept "PARAM_LITERAL@*:\"all reviewed\"" || exit 9
+  planner_flags_persist "$INIT" || exit 7
+  planner_flags_persist "$INIT" || exit 6' INIT=INIT-W1 2>&1) || rc=$?
+log_w1="${REPOS_ROOT}/.ticket-auto/initiatives/INIT-W1/state.log"
+got_w1=$(grep '|META|crosscheck|accepted|' "$log_w1" 2>/dev/null | cut -d'|' -f5- | paste -sd';' -) || true
+if [ "$rc" -eq 0 ] &&
+  [ "$got_w1" = "PARAM_LITERAL@export-link=time:900000 15 minutes — all reviewed;PARAM_LITERAL@other=size:2147483648 2 GB — all reviewed" ]; then
+  pass "--accept PARAM_LITERAL@* records one accept per distinct instance of the latest attempt, once"
+else
+  fail "wildcard PARAM_LITERAL accept" "rc=$rc got '$got_w1' $out"
+fi
+if ! grep -q '|META|crosscheck|accepted|PARAM_LITERAL@\*' "$log_w1" 2>/dev/null; then
+  pass "--accept PARAM_LITERAL@* never writes a PARAM_LITERAL@* record"
+else
+  fail "wildcard record" "$(grep accepted "$log_w1")"
+fi
+
+# The wildcard accepts only what the attempt found: a literal that first
+# appears in a later run still fails.
+got=$(in_new_process 'source "${LIB_DIR}/planner-crosscheck.sh"
+  m() { echo "planner-crosscheck-params: PARAM_LITERAL specs/$1.md:$2 \"$3\" ($4) in Acceptance Criteria is not declared in ## Parameters — resume INIT-W1 --accept PARAM_LITERAL@$1:\"$3\""; }
+  rc1=0 rc2=0
+  _planner_crosscheck_emit_finding INIT-W1 "$(m export-link 9 "15 minutes" time:900000)" || rc1=$?
+  _planner_crosscheck_emit_finding INIT-W1 "$(m export-link 20 "30 minutes" time:1800000)" || rc2=$?
+  echo "$rc1 $rc2"')
+if [ "$got" = "3 0" ] && grep -qF '|META|crosscheck|fail|PARAM_LITERAL specs/export-link.md:20 "30 minutes"' "$log_w1"; then
+  pass "after a wildcard accept, a literal first seen in a later run still fails"
+else
+  fail "wildcard later instance" "got '$got'"
+fi
+
+rc=0
+err=$(in_new_process 'planner_state_init INIT-W2 "an idea" >/dev/null
+  planner_state_write INIT-W2 Crosscheck check start "x"
+  planner_state_write INIT-W2 META crosscheck fail "SIGNALS_UNIFORM a.md b.md share a Signals block"
+  planner_flags_parse resume INIT-W2 --accept "PARAM_LITERAL@*:fine" || exit 9
+  planner_flags_persist INIT-W2' 2>&1 >/dev/null) || rc=$?
+if [ "$rc" -eq 1 ] && [ "$err" = "ERROR: --accept PARAM_LITERAL@*: no PARAM_LITERAL finding in the latest Crosscheck attempt" ] &&
+  ! grep -q 'crosscheck|accepted' "${REPOS_ROOT}/.ticket-auto/initiatives/INIT-W2/state.log" 2>/dev/null; then
+  pass "--accept PARAM_LITERAL@* with no instance in the latest attempt is refused and writes nothing"
+else
+  fail "wildcard with no instance" "rc=$rc err='$err'"
+fi
+
+# A registered code with no detail function records `<token> <reason>`.
+rc=0
+out=$(in_new_process "${FAKE_SETUP}"'
+  planner_state_init INIT-W3 "an idea" >/dev/null
+  _fake_instance() { [[ "$1" =~ --accept\ FAKE_INSTANCE@([a-z0-9-]+): ]] && printf "FAKE_INSTANCE@%s\n" "${BASH_REMATCH[1]}"; }
+  PLANNER_CROSSCHECK_INSTANCE_CODES="${PLANNER_CROSSCHECK_INSTANCE_CODES% FAKE_INSTANCE:*} FAKE_INSTANCE:_fake_instance:_fake_parse:::"
+  planner_state_write INIT-W3 Crosscheck check start "x"
+  planner_state_write INIT-W3 META crosscheck fail "FAKE_INSTANCE alpha is wrong — resume INIT-W3 --accept FAKE_INSTANCE@alpha:\"<reason>\""
+  planner_state_write INIT-W3 META crosscheck fail "FAKE_INSTANCE beta is wrong — resume INIT-W3 --accept FAKE_INSTANCE@beta:\"<reason>\""
+  planner_flags_parse resume INIT-W3 --accept "FAKE_INSTANCE@*:both genuine" || exit 9
+  planner_flags_persist INIT-W3' 2>&1) || rc=$?
+got_w3=$(grep '|META|crosscheck|accepted|' "${REPOS_ROOT}/.ticket-auto/initiatives/INIT-W3/state.log" 2>/dev/null | cut -d'|' -f5- | paste -sd';' -) || true
+if [ "$rc" -eq 0 ] && [ "$got_w3" = "FAKE_INSTANCE@alpha both genuine;FAKE_INSTANCE@beta both genuine" ]; then
+  pass "a wildcard accept works for any registered per-instance code"
+else
+  fail "wildcard generic code" "rc=$rc got '$got_w3' $out"
 fi
 
 # A resume that re-supplies nothing changes nothing.

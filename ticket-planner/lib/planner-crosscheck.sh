@@ -129,7 +129,7 @@ PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_
 # a `flag:accept:<CODE>` question for it. One space-separated entry per code,
 # fields separated by `:`
 #
-#   <CODE>:<instance_fn>:<parse_fn>:<note_fn>:<lib>
+#   <CODE>:<instance_fn>:<parse_fn>:<note_fn>:<lib>:<detail_fn>
 #
 #   instance_fn <message>  the instance token of one finding message (the
 #                          text after the code), or nothing
@@ -139,24 +139,34 @@ PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_
 #   note_fn <INIT> <count> the describer's note question for the code
 #                          (planner-stop-describe.sh), or empty for none;
 #                          codes sharing a note get it once
-#   lib                    the lib/ file defining instance_fn and parse_fn,
-#                          sourced on demand (empty: already defined)
-PLANNER_CROSSCHECK_INSTANCE_CODES="PARAM_LITERAL:planner_crosscheck_params_instance:planner_crosscheck_params_accept_parse:_planner_stop_param_literals_question:planner-crosscheck-params.sh"
+#   lib                    the lib/ file defining instance_fn, parse_fn and
+#                          detail_fn, sourced on demand (empty: already defined)
+#   detail_fn <message>    optional: the text a wildcard accept records ahead
+#                          of the reason (PARAM_LITERAL: the literal), so its
+#                          record is `<token> <detail> — <reason>`
+#
+# Wildcard accept: `--accept <CODE>@*:"<reason>"` is valid for every listed
+# code. At persist time it records one `accepted|<token> …` line per distinct
+# instance in the latest Crosscheck attempt's `fail|<CODE>` lines
+# (planner_crosscheck_instance_accept_all); it never writes `<CODE>@*`, so an
+# instance first seen in a later run still fails.
+PLANNER_CROSSCHECK_INSTANCE_CODES="PARAM_LITERAL:planner_crosscheck_params_instance:planner_crosscheck_params_accept_parse:_planner_stop_param_literals_question:planner-crosscheck-params.sh:planner_crosscheck_params_literal"
 
-# Usage: planner_crosscheck_instance_field <code> <instance|parse|note|lib>
+# Usage: planner_crosscheck_instance_field <code> <instance|parse|note|lib|detail>
 # Prints the field of <code>'s entry (possibly empty); rc 1 when <code> is
 # not a per-instance code or the field name is unknown.
 planner_crosscheck_instance_field() {
-  local code="$1" want="$2" entry rest i p n l
+  local code="$1" want="$2" entry rest i p n l d
   for entry in $PLANNER_CROSSCHECK_INSTANCE_CODES; do
     [ "${entry%%:*}" = "$code" ] || continue
     rest="${entry#*:}"
-    IFS=: read -r i p n l <<<"$rest"
+    IFS=: read -r i p n l d <<<"$rest"
     case "$want" in
     instance) printf '%s\n' "$i" ;;
     parse) printf '%s\n' "$p" ;;
     note) printf '%s\n' "$n" ;;
     lib) printf '%s\n' "$l" ;;
+    detail) printf '%s\n' "$d" ;;
     *) return 1 ;;
     esac
     return 0
@@ -179,6 +189,47 @@ planner_crosscheck_instance_load() {
   [ -n "$fn" ] && declare -f "$fn" >/dev/null 2>&1 && return 0
   # shellcheck source=/dev/null
   source "${_PLANNER_CROSSCHECK_LIB_DIR}/${lib}"
+}
+
+# Wildcard accept (planner-crosscheck-ownership D10): record one accept per
+# distinct instance of <code> in the latest Crosscheck attempt (every line
+# after the last `Crosscheck|check|start`), as `<token> <reason>`, or
+# `<token> <detail> — <reason>` when the code has a detail function. An
+# instance already accepted is not recorded again. Never writes `<code>@*`.
+# Usage: planner_crosscheck_instance_accept_all <initiative_id> <code> <reason>
+# rc 1 (reason on stderr) when the latest attempt has no <code> finding.
+planner_crosscheck_instance_accept_all() {
+  local initiative_id="$1" code="$2" reason="$3"
+  local log start instance_fn detail_fn msg token detail found=0 seen=" "
+  planner_crosscheck_instance_load "$code" || return 1
+  instance_fn=$(planner_crosscheck_instance_field "$code" instance)
+  detail_fn=$(planner_crosscheck_instance_field "$code" detail)
+  log=$(planner_state_log "$initiative_id") || return 1
+  start=""
+  [ -f "$log" ] && start=$(grep -n '^[^|]*|Crosscheck|check|start|' "$log" | tail -1 | cut -d: -f1)
+  if [ -n "$start" ] && [ -n "$instance_fn" ] && declare -f "$instance_fn" >/dev/null 2>&1; then
+    while IFS= read -r msg; do
+      msg="${msg#"$code" }"
+      token=$("$instance_fn" "$msg")
+      [ -n "$token" ] || continue
+      found=1
+      case "$seen" in *" ${token} "*) continue ;; esac
+      seen="${seen}${token} "
+      _planner_crosscheck_code_accepted "$initiative_id" "$token" && continue
+      detail=""
+      [ -n "$detail_fn" ] && declare -f "$detail_fn" >/dev/null 2>&1 && detail=$("$detail_fn" "$msg")
+      if [ -n "$detail" ]; then
+        planner_crosscheck_accept_set "$initiative_id" "$token" "${detail} — ${reason}"
+      else
+        planner_crosscheck_accept_set "$initiative_id" "$token" "$reason"
+      fi
+    done < <(tail -n "+$((start + 1))" "$log" | grep "^[^|]*|META|crosscheck|fail|${code} " | cut -d'|' -f5-)
+  fi
+  if [ "$found" -eq 0 ]; then
+    echo "ERROR: --accept ${code}@*: no ${code} finding in the latest Crosscheck attempt" >&2
+    return 1
+  fi
+  return 0
 }
 
 # Is <code> a warn-level code?
