@@ -1306,7 +1306,7 @@ debugging-strategies, brunoborges/jdb-agentic-debugger.
 
 ---
 
-## Step 15 — Skill size reduction programme — changes 1–3 and 5 merged (#561, #562, #659–#665, #678–#688), change 4 merged except group 14 (#668–#675), next `fleetd-shared-router-steps`
+## Step 15 — Skill size reduction programme — changes 1–3 and 5 merged (#561, #562, #659–#665, #678–#688), change 4 merged except group 14 (#668–#675), change 6 code merged (#689), live run + port removal open
 
 42 `SKILL.md` files total 825 KB; the four largest (ticket-planner 96 KB, ticket-verify 93 KB,
 ticket-auto 75 KB, ticket-appraise 72 KB) are 41%. Anthropic's authoring guidance is a body under
@@ -1397,7 +1397,18 @@ Chained openspec changes (each its own PR(s), version bump, `make skill-baseline
       pr-review (`pr-merge-gate.sh` mock-`gh`), router (`router-step.sh`, `prescan-run.sh`),
       verify (`verify-mode.sh` carved from inline gate-check 2.6; staged `verify-env-up.sh`),
       appraise/exec/implement, long tail. Live checks after router and verify groups.
-- [ ] 6. `fleetd-shared-router-steps` (3 specs, 20 tasks) — fleetd calls `router-step.sh` behind
+- [ ] 6. `fleetd-shared-router-steps` (3 specs, 20 tasks) — **code MERGED PR #689 (4d91767,
+      2026-11-11; fleet-controller 0.48.0, ticket-auto-pipeline 0.113.1), flag default off; change
+      kept open.** Built without the 3.19 live check (user's choice); it folds into 5.1. Parity
+      fixes on the Python side: `needs_retro` now accepts PR-REVIEW `N/A`; drift text matches the
+      router. Design amendments A1–A7 in design.md: `classify_phase` stays in Python (post-spawn
+      only captures and records), so turning the flag on starts writing `META|phase-result` and
+      PR-REVIEW can classify `OK` for the first time. Open, tickets host: old 3.19 (manual router),
+      then 5.1 (fleetd with `FLEET_ROUTER_STEP_SHELL=true`, one real ticket, diff against a flag-off
+      run) and 5.2 (inspector `cost_usd`). Then 6.1: delete the port (`needs_retro`, retro helpers,
+      `capture_phase_return`, parity test) and flip the default; decide whether inspector/prescan
+      stay switchable. Handoff: `openspec/changes/fleetd-shared-router-steps/handoff.md` (local).
+      Original scope: fleetd calls `router-step.sh` behind
       `FLEET_ROUTER_STEP_SHELL` (catalog entry required). Only `needs_retro` and the post-spawn
       judgement (`classify_phase`, `apply_verifier_overrides`, `missing_phase_result`) are true
       ports; inspector is `_unsupported_runner` today and prescan has no fleetd code, so those are
@@ -1720,7 +1731,7 @@ active for group 14 (waits on Step 12 items 5–7) and its live checks. Next in 
 **Housekeeping, 2026-11-11:** Step 15 item 5 (`skill-deterministic-extraction`) merged as #678–#686
 plus the #688 follow-up, and archived locally with its delta specs synced. `knowledge-curator` was
 removed from the marketplace (#687); every kc item in this file is void. Next in the programme is
-item 6, `fleetd-shared-router-steps`, started 2026-11-11.
+item 6, `fleetd-shared-router-steps`, started 2026-11-11; its code merged the same day as #689, and its live run and port removal are open.
 
 ---
 
