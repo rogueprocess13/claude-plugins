@@ -679,6 +679,31 @@ else
   fi
 fi
 
+# Per-instance accept table (planner-crosscheck-ownership D10): a listed code
+# never gets a flag:accept:<CODE> question. FAKE_INSTANCE is test-only and has
+# no note function, so it gets no question at all; the other code keeps its own.
+declare -f planner_crosscheck_instance_field >/dev/null 2>&1 ||
+  source "${LIB_DIR}/planner-crosscheck.sh"
+if ! declare -f planner_crosscheck_instance_field >/dev/null 2>&1; then
+  fail "planner_crosscheck_instance_field missing" "not defined"
+else
+  PLANNER_CROSSCHECK_INSTANCE_CODES="${PLANNER_CROSSCHECK_INSTANCE_CODES} FAKE_INSTANCE::::"
+  fresh_root fake-instance
+  planner_state_init "$INIT" "idea" >/dev/null
+  _halt_done "$INIT" Appraisal Discovery Architecture Specify Review Consensus
+  planner_state_write "$INIT" Crosscheck check start "x"
+  planner_state_write "$INIT" META crosscheck fail "FAKE_INSTANCE alpha is wrong — resume ${INIT} --accept FAKE_INSTANCE@alpha:\"<reason>\""
+  planner_state_write "$INIT" META crosscheck fail "SIGNALS_UNIFORM a.md b.md share a Signals block"
+  planner_state_write "$INIT" Crosscheck check fail "2 blocking"
+  got=$(planner_stop_describe_json "$INIT" | jq -r '.reason + " " + ([.questions[] | .id + "=" + .binding] | join(" "))')
+  if [ "$got" = "CROSSCHECK_BLOCKED accept-SIGNALS_UNIFORM=flag:accept:SIGNALS_UNIFORM" ]; then
+    pass "instance table: a listed code gets no flag:accept question"
+  else
+    fail "instance table: a listed code gets no flag:accept question" "$got"
+  fi
+  PLANNER_CROSSCHECK_INSTANCE_CODES="${PLANNER_CROSSCHECK_INSTANCE_CODES% FAKE_INSTANCE:*}"
+fi
+
 # CREATE_GATE output, captured before SPECIFY_DECISION was added (L5): the
 # new optional kind/audience arguments must not move a byte.
 fresh_root create-bytes

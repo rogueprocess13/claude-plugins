@@ -121,6 +121,66 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # TEST_DATA_SYNTH_FAILED (the synthesis sub-step could not write its specs).
 PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY"
 
+# Per-instance codes (planner-crosscheck-ownership D10). A listed code is
+# accepted one instance at a time and never code-wide: emit matches each
+# finding's instance token against `accepted|<token> …` records and ignores a
+# bare `accepted|<CODE>` record; `--accept` sends `<CODE>@…` (and the refused
+# code-wide form) to the code's parse function; the stop describer never asks
+# a `flag:accept:<CODE>` question for it. One space-separated entry per code,
+# fields separated by `:`
+#
+#   <CODE>:<instance_fn>:<parse_fn>:<note_fn>:<lib>
+#
+#   instance_fn <message>  the instance token of one finding message (the
+#                          text after the code), or nothing
+#   parse_fn <arg>         <arg> is the whole --accept value; prints
+#                          `<token>\t<record text>`, or rc 1 with the reason
+#                          on stderr (the code-wide form included)
+#   note_fn <INIT> <count> the describer's note question for the code
+#                          (planner-stop-describe.sh), or empty for none;
+#                          codes sharing a note get it once
+#   lib                    the lib/ file defining instance_fn and parse_fn,
+#                          sourced on demand (empty: already defined)
+PLANNER_CROSSCHECK_INSTANCE_CODES="PARAM_LITERAL:planner_crosscheck_params_instance:planner_crosscheck_params_accept_parse:_planner_stop_param_literals_question:planner-crosscheck-params.sh"
+
+# Usage: planner_crosscheck_instance_field <code> <instance|parse|note|lib>
+# Prints the field of <code>'s entry (possibly empty); rc 1 when <code> is
+# not a per-instance code or the field name is unknown.
+planner_crosscheck_instance_field() {
+  local code="$1" want="$2" entry rest i p n l
+  for entry in $PLANNER_CROSSCHECK_INSTANCE_CODES; do
+    [ "${entry%%:*}" = "$code" ] || continue
+    rest="${entry#*:}"
+    IFS=: read -r i p n l <<<"$rest"
+    case "$want" in
+    instance) printf '%s\n' "$i" ;;
+    parse) printf '%s\n' "$p" ;;
+    note) printf '%s\n' "$n" ;;
+    lib) printf '%s\n' "$l" ;;
+    *) return 1 ;;
+    esac
+    return 0
+  done
+  return 1
+}
+
+# Usage: planner_crosscheck_is_instance_code <code>
+planner_crosscheck_is_instance_code() {
+  planner_crosscheck_instance_field "$1" lib >/dev/null
+}
+
+# Source <code>'s lib into the current shell when its parse function is not
+# defined yet. Usage: planner_crosscheck_instance_load <code>
+planner_crosscheck_instance_load() {
+  local lib fn
+  lib=$(planner_crosscheck_instance_field "$1" lib) || return 1
+  [ -n "$lib" ] || return 0
+  fn=$(planner_crosscheck_instance_field "$1" parse)
+  [ -n "$fn" ] && declare -f "$fn" >/dev/null 2>&1 && return 0
+  # shellcheck source=/dev/null
+  source "${_PLANNER_CROSSCHECK_LIB_DIR}/${lib}"
+}
+
 # Is <code> a warn-level code?
 # Usage: _planner_crosscheck_is_warn_code <code>
 _planner_crosscheck_is_warn_code() {
@@ -198,14 +258,16 @@ _planner_crosscheck_emit_finding() {
   [[ "$code" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 2
   message="${body#"$code" }"
 
-  # planner-specify-parameters D7: PARAM_LITERAL is accepted per literal only.
-  # A matching instance record (`PARAM_LITERAL@<slug>=<canonical>`) makes this
-  # one finding `accepted`, written with the instance token first so no reader
-  # takes it for a code-wide accept; a bare `PARAM_LITERAL` accept is ignored.
-  if [ "$code" = "PARAM_LITERAL" ]; then
-    local instance=""
-    declare -f planner_crosscheck_params_instance >/dev/null 2>&1 &&
-      instance=$(planner_crosscheck_params_instance "$message")
+  # Per-instance codes (PLANNER_CROSSCHECK_INSTANCE_CODES; PARAM_LITERAL,
+  # planner-specify-parameters D7) are accepted one instance at a time. A
+  # matching instance record (e.g. `PARAM_LITERAL@<slug>=<canonical>`) makes
+  # this one finding `accepted`, written with the instance token first so no
+  # reader takes it for a code-wide accept; a bare `<CODE>` accept is ignored.
+  if planner_crosscheck_is_instance_code "$code"; then
+    local instance="" instance_fn
+    instance_fn=$(planner_crosscheck_instance_field "$code" instance)
+    [ -n "$instance_fn" ] && declare -f "$instance_fn" >/dev/null 2>&1 &&
+      instance=$("$instance_fn" "$message")
     if [ -n "$instance" ] && _planner_crosscheck_code_accepted "$initiative_id" "$instance"; then
       planner_state_write "$initiative_id" "META" "crosscheck" "accepted" "${instance} ${message}"
       return 3

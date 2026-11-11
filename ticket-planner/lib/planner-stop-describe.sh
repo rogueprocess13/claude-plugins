@@ -626,9 +626,24 @@ planner_stop_describe_json() {
   if [ "$pos" = "Crosscheck" ] &&
     [ "$(grep '|Crosscheck|check|' "$log" | tail -1 | cut -d'|' -f4)" = "fail" ]; then
     local code count msg
-    local cited
+    local cited note notes_done=" "
+    declare -f planner_crosscheck_instance_field >/dev/null 2>&1 ||
+      source "${_PLANNER_STOP_DESCRIBE_DIR}/planner-crosscheck.sh"
     while IFS=$'\t' read -r code count msg; do
       [ -n "$code" ] || continue
+      # A per-instance code (PLANNER_CROSSCHECK_INSTANCE_CODES — PARAM_LITERAL,
+      # planner-specify-parameters) never gets a blanket accept: a new
+      # instance must always block. Its note question (for PARAM_LITERAL, one
+      # naming each literal and the terminal per-literal accept), once per note.
+      if planner_crosscheck_is_instance_code "$code"; then
+        note=$(planner_crosscheck_instance_field "$code" note)
+        [ -n "$note" ] || continue
+        case "$notes_done" in *" ${note} "*) continue ;; esac
+        notes_done="${notes_done}${note} "
+        q=$("$note" "$init" "$count")
+        questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
+        continue
+      fi
       case "$code" in
       CITED_ARTIFACT_*)
         # #515: an unanswered artifact gets its own question, whose answer is
@@ -645,12 +660,6 @@ planner_stop_describe_json() {
         cited=$(_planner_stop_cited_names "$init" "$code")
         q=$(_planner_stop_question "accept-${code}" "flag:accept:${code}" \
           "Crosscheck blocking finding ${code} (${count}x) for cited artifact(s): ${cited:-see state.log} — answer each in consensus.md ## Open Questions (Answer: exists:<where>, external:<who> or generate), set the matching specs' Source to it, and resume. Or accept the code for every artifact as genuine and expected: answer with the reason, or __skip__ to fix the artifacts instead.")
-        ;;
-      PARAM_LITERAL)
-        # planner-specify-parameters: never a blanket accept — a new literal
-        # must always block. One note naming each literal and the terminal
-        # per-literal accept.
-        q=$(_planner_stop_param_literals_question "$init" "$count")
         ;;
       *)
         # planner-test-data-derivation: one TESTDATA_CONFIRM question per

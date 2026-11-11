@@ -33,6 +33,20 @@ _planner_invocation_source() {
   source "${_PLANNER_INVOCATION_LIB_DIR}/${file}"
 }
 
+# _planner_invocation_accept_instance <code> <arg> — run a per-instance
+# code's parse function (PLANNER_CROSSCHECK_INSTANCE_CODES) on one --accept
+# value: `<token>\t<record text>` on stdout, or rc 1 with the reason on stderr.
+_planner_invocation_accept_instance() {
+  local code="$1" arg="$2" fn
+  planner_crosscheck_instance_load "$code" || return 1
+  fn=$(planner_crosscheck_instance_field "$code" parse)
+  if [ -z "$fn" ] || ! declare -f "$fn" >/dev/null 2>&1; then
+    echo "ERROR: --accept ${code}: no accept parser is defined for this code" >&2
+    return 1
+  fi
+  "$fn" "$arg"
+}
+
 planner_flags_parse() {
   local mode="${1:-}"
   shift || true
@@ -212,16 +226,17 @@ planner_flags_parse() {
   local _accept_arg _accept_code _accept_reason
   for _accept_arg in "${ACCEPT_FLAGS[@]}"; do
     [ -z "$_accept_arg" ] && continue
-    # PARAM_LITERAL is accepted one literal at a time (planner-specify-
-    # parameters D7): PARAM_LITERAL@<slug>:"<literal>". The code-wide form is
-    # refused, so a new literal always blocks.
-    case "${_accept_arg%%:*}" in
-    PARAM_LITERAL | PARAM_LITERAL@*)
-      _planner_invocation_source planner_crosscheck_params_accept_parse planner-crosscheck-params.sh || return 1
-      planner_crosscheck_params_accept_parse "$_accept_arg" >/dev/null || return 1
+    # Per-instance codes (PLANNER_CROSSCHECK_INSTANCE_CODES, e.g. PARAM_LITERAL
+    # per literal, planner-specify-parameters D7) go to the code's own parse
+    # function, which also refuses the code-wide form, so a new instance
+    # always blocks.
+    _planner_invocation_source planner_crosscheck_instance_field planner-crosscheck.sh || return 1
+    _accept_code="${_accept_arg%%:*}"
+    _accept_code="${_accept_code%%@*}"
+    if planner_crosscheck_is_instance_code "$_accept_code"; then
+      _planner_invocation_accept_instance "$_accept_code" "$_accept_arg" >/dev/null || return 1
       continue
-      ;;
-    esac
+    fi
     case "$_accept_arg" in
     *:*)
       _accept_code="${_accept_arg%%:*}"
@@ -311,17 +326,16 @@ planner_flags_persist() {
     _planner_invocation_source planner_crosscheck_accept_set planner-crosscheck.sh || return 1
     for _accept_arg in "${ACCEPT_FLAGS[@]}"; do
       [ -z "$_accept_arg" ] && continue
-      case "${_accept_arg%%:*}" in
-      PARAM_LITERAL@*)
-        # Recorded as PARAM_LITERAL@<slug>=<canonical> <literal>: the instance
-        # token Crosscheck matches each finding against.
-        _planner_invocation_source planner_crosscheck_params_accept_parse planner-crosscheck-params.sh || return 1
-        local _pl
-        _pl=$(planner_crosscheck_params_accept_parse "$_accept_arg") || return 1
+      local _code="${_accept_arg%%:*}" _pl
+      _code="${_code%%@*}"
+      if planner_crosscheck_is_instance_code "$_code"; then
+        # Recorded as `<token> <record text>` from the code's parse function
+        # (PARAM_LITERAL: PARAM_LITERAL@<slug>=<canonical> <literal>): the
+        # instance token Crosscheck matches each finding against.
+        _pl=$(_planner_invocation_accept_instance "$_code" "$_accept_arg") || return 1
         planner_crosscheck_accept_set "$initiative_id" "${_pl%%$'\t'*}" "${_pl#*$'\t'}"
         continue
-        ;;
-      esac
+      fi
       if [ "${_accept_arg%%:*}" = "DRAFT_NOT_READY" ]; then
         # Own branch: bound to the drafts' hashes now, never a Crosscheck accept.
         _planner_invocation_source planner_draft_readiness_accept planner-draft-readiness-gate.sh || return 1

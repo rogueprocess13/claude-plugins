@@ -434,6 +434,82 @@ case "$long_report" in
 *) fail "report: PLANNER_CROSSCHECK_REPORT_WIDTH truncates long detail lines" "got: $long_report" ;;
 esac
 
+# ── Per-instance accept table (planner-crosscheck-ownership D10) ────────────
+#
+# A test-only code, FAKE_INSTANCE, registered with its own instance and parse
+# functions: the table, not a PARAM_LITERAL special case, decides how it is
+# accepted.
+
+echo "--- per-instance accept table ---"
+
+_fake_instance() {
+  [[ "$1" =~ --accept\ FAKE_INSTANCE@([a-z0-9-]+): ]] || return 0
+  printf 'FAKE_INSTANCE@%s\n' "${BASH_REMATCH[1]}"
+}
+_fake_parse() {
+  case "$1" in
+  FAKE_INSTANCE@?*:?*) ;;
+  *)
+    echo "ERROR: --accept FAKE_INSTANCE is per instance (got '$1')" >&2
+    return 1
+    ;;
+  esac
+  local rest="${1#FAKE_INSTANCE@}"
+  printf 'FAKE_INSTANCE@%s\t%s\n' "${rest%%:*}" "${rest#*:}"
+}
+
+for fn in planner_crosscheck_instance_field planner_crosscheck_is_instance_code; do
+  declare -f "$fn" >/dev/null || fail "$fn missing" "not defined"
+done
+if declare -f planner_crosscheck_instance_field >/dev/null; then
+  PLANNER_CROSSCHECK_INSTANCE_CODES="${PLANNER_CROSSCHECK_INSTANCE_CODES} FAKE_INSTANCE:_fake_instance:_fake_parse::"
+
+  if [ "$(planner_crosscheck_instance_field PARAM_LITERAL instance)" = "planner_crosscheck_params_instance" ] &&
+    [ "$(planner_crosscheck_instance_field PARAM_LITERAL parse)" = "planner_crosscheck_params_accept_parse" ] &&
+    [ "$(planner_crosscheck_instance_field FAKE_INSTANCE parse)" = "_fake_parse" ] &&
+    planner_crosscheck_is_instance_code FAKE_INSTANCE && ! planner_crosscheck_is_instance_code CITATION_UNRESOLVED; then
+    pass "instance table: PARAM_LITERAL and a registered test code are listed, other codes are not"
+  else
+    fail "instance table: lookup" "$(planner_crosscheck_instance_field FAKE_INSTANCE parse)"
+  fi
+
+  INIT_ID5="INIT-1700000000-5555"
+  planner_state_init "$INIT_ID5" "test idea for the instance table" >/dev/null
+  log_file5=$(planner_state_log "$INIT_ID5")
+  fake_a="planner-crosscheck-fake: FAKE_INSTANCE alpha is wrong — resume ${INIT_ID5} --accept FAKE_INSTANCE@alpha:\"<reason>\""
+  fake_b="planner-crosscheck-fake: FAKE_INSTANCE beta is wrong — resume ${INIT_ID5} --accept FAKE_INSTANCE@beta:\"<reason>\""
+
+  rc=0
+  _planner_crosscheck_emit_finding "$INIT_ID5" "$fake_a" || rc=$?
+  if [ "$rc" -eq 0 ] && grep -qF "|META|crosscheck|fail|FAKE_INSTANCE alpha is wrong" "$log_file5"; then
+    pass "instance table: an unaccepted instance fails"
+  else
+    fail "instance table: an unaccepted instance fails" "rc=$rc $(grep crosscheck "$log_file5")"
+  fi
+
+  planner_crosscheck_accept_set "$INIT_ID5" FAKE_INSTANCE "accepted code-wide by hand"
+  rc=0
+  _planner_crosscheck_emit_finding "$INIT_ID5" "$fake_a" || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$(grep -c '|META|crosscheck|fail|FAKE_INSTANCE alpha' "$log_file5")" -eq 2 ]; then
+    pass "instance table: a code-wide accept record is ignored"
+  else
+    fail "instance table: a code-wide accept record is ignored" "rc=$rc"
+  fi
+
+  planner_crosscheck_accept_set "$INIT_ID5" FAKE_INSTANCE@alpha "genuine"
+  rc_a=0 rc_b=0
+  _planner_crosscheck_emit_finding "$INIT_ID5" "$fake_a" || rc_a=$?
+  _planner_crosscheck_emit_finding "$INIT_ID5" "$fake_b" || rc_b=$?
+  if [ "$rc_a" -eq 3 ] && [ "$rc_b" -eq 0 ] &&
+    grep -qF "|META|crosscheck|accepted|FAKE_INSTANCE@alpha alpha is wrong" "$log_file5" &&
+    grep -qF "|META|crosscheck|fail|FAKE_INSTANCE beta is wrong" "$log_file5"; then
+    pass "instance table: an accepted instance is accepted under its token, another instance still fails"
+  else
+    fail "instance table: per-instance accept" "rc_a=$rc_a rc_b=$rc_b $(grep crosscheck "$log_file5")"
+  fi
+  PLANNER_CROSSCHECK_INSTANCE_CODES="${PLANNER_CROSSCHECK_INSTANCE_CODES% FAKE_INSTANCE:*}"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

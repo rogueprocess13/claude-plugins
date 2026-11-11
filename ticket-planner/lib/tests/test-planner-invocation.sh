@@ -231,6 +231,42 @@ else
   fail "code-wide PARAM_LITERAL accept" "rc=$rc"
 fi
 
+# Per-instance accept table (planner-crosscheck-ownership D10): a test-only
+# code registered with its own parse function goes through the table — its
+# per-instance form is recorded as the parse function prints it, and its
+# code-wide form is refused at parsing.
+FAKE_SETUP='source "${LIB_DIR}/planner-crosscheck.sh"
+  declare -f planner_crosscheck_instance_field >/dev/null || { echo MISSING; exit 8; }
+  _fake_parse() {
+    case "$1" in FAKE_INSTANCE@?*:?*) ;; *) echo "ERROR: --accept FAKE_INSTANCE is per instance (got '"'"'$1'"'"')" >&2; return 1 ;; esac
+    local rest="${1#FAKE_INSTANCE@}"
+    printf "FAKE_INSTANCE@%s\t%s\n" "${rest%%:*}" "${rest#*:}"
+  }
+  PLANNER_CROSSCHECK_INSTANCE_CODES="${PLANNER_CROSSCHECK_INSTANCE_CODES} FAKE_INSTANCE::_fake_parse::"
+'
+rc=0
+got=$(in_new_process "${FAKE_SETUP}"'
+  planner_state_init INIT-F1 "an idea" >/dev/null
+  planner_flags_parse resume INIT-F1 --accept "FAKE_INSTANCE@alpha:genuine" || exit 9
+  planner_flags_persist INIT-F1' 2>&1) || rc=$?
+log_f1="${REPOS_ROOT}/.ticket-auto/initiatives/INIT-F1/state.log"
+got_f1=$(grep '|META|crosscheck|accepted|' "$log_f1" 2>/dev/null | cut -d'|' -f5- | paste -sd';' -) || true
+if [ "$rc" -eq 0 ] && [ "$got_f1" = "FAKE_INSTANCE@alpha genuine" ]; then
+  pass "a registered per-instance code is parsed and recorded through its own parse function"
+else
+  fail "instance table: per-instance accept persisted" "rc=$rc got '$got_f1' $got"
+fi
+rc=0
+err=$(in_new_process "${FAKE_SETUP}"'
+  planner_state_init INIT-F2 "an idea" >/dev/null
+  planner_flags_parse resume INIT-F2 --accept "FAKE_INSTANCE:all fine" && planner_flags_persist INIT-F2' 2>&1 >/dev/null) || rc=$?
+if [ "$rc" -eq 1 ] && [ "$err" = "ERROR: --accept FAKE_INSTANCE is per instance (got 'FAKE_INSTANCE:all fine')" ] &&
+  ! grep -q 'crosscheck|accepted' "${REPOS_ROOT}/.ticket-auto/initiatives/INIT-F2/state.log" 2>/dev/null; then
+  pass "a registered per-instance code is refused code-wide at parsing"
+else
+  fail "instance table: code-wide refusal" "rc=$rc err='$err'"
+fi
+
 # A resume that re-supplies nothing changes nothing.
 in_new_process 'planner_flags_parse resume INIT-P1; planner_flags_persist INIT-P1' >/dev/null
 got=$(in_new_process 'planner_config_get INIT-P1 linear-project; planner_create_authorized INIT-P1 && echo authorized')
