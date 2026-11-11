@@ -23,8 +23,12 @@
 #   planner_draft_revise_source_check <INIT> <slug> <dispositions-json> [<before-spec>]
 #       ids whose `source:` quote is not in intent/idea/consensus/spec
 #       (advisory — never reverts; escaped and curly quotes normalised)
-#   planner_draft_revise_check_text <before-spec> <after-spec> [<revise-file> [<findings-file>]]
-#       text guards; prints "<CODE> <detail>" per failure, rc 1 on any
+#   planner_draft_revise_check_text <before-spec> <after-spec> [<revise-file> [<findings-file> [<legacy|contract>]]]
+#       text guards; prints "<CODE> <detail>" per failure, rc 1 on any.
+#       The fifth argument is the ac-precondition mode (_pdrv_acpre_mode):
+#       `legacy` (default) keeps ## Preconditions frozen; `contract` lets a
+#       revise edit Criterion cells only (FROZEN_CHANGED `preconditions changed`
+#       when the (Key, Mode, Requires, Basis) rows change)
 #   planner_draft_revise_assumptions <spec>
 #       the `- Assumption: <text>` rows of the spec's `## Scope`, normalised
 #   planner_draft_security_def
@@ -119,7 +123,11 @@ esac
 
 PLANNER_DRAFT_REVISE_AGENT="ticket-planner:draft-revise-agent"
 # Sections a revision may touch (D10). Everything else is byte-compared.
-PLANNER_DRAFT_EDITABLE_SECTIONS="Acceptance Criteria|Verification Notes|Scope"
+# Preconditions (planner-ac-code-precondition D10) is editable only for an
+# ac-precondition-v1 initiative, and there only its Criterion cells: the
+# sorted (Key, Mode, Requires, Basis) rows must stay byte-identical. For any
+# other initiative the section stays frozen (_pdrv_editable legacy).
+PLANNER_DRAFT_EDITABLE_SECTIONS="Acceptance Criteria|Verification Notes|Scope|Preconditions"
 # Negation, exception and hedge tokens an extension may not contain (D10).
 PLANNER_DRAFT_EXTEND_FORBIDDEN="except|unless|only if|optional|not required|may|when feasible|if possible"
 # Assumption limits (ASSUMPTION_INVALID). Constants, not env knobs.
@@ -187,9 +195,57 @@ _pdrv_quote_norm() {
 # _dor_section_records (and CommonMark) uses. A looser rule here would let a
 # 4-space "fence" hide a `## ` heading the ticket body and the evaluator see.
 
+# _pdrv_editable <legacy|contract> — the editable sections for that mode.
+_pdrv_editable() {
+  if [ "$1" = contract ]; then
+    printf '%s' "$PLANNER_DRAFT_EDITABLE_SECTIONS"
+  else
+    printf '%s' "${PLANNER_DRAFT_EDITABLE_SECTIONS//|Preconditions/}"
+  fi
+}
+
+# _pdrv_acpre_mode <INIT> — `contract` for an ac-precondition-v1 initiative,
+# else `legacy`.
+_pdrv_acpre_mode() {
+  if ! declare -f planner_acpre_contract_initiative >/dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    source "${_PLANNER_DRAFT_REVISE_LIB_DIR}/planner-ac-precondition.sh" 2>/dev/null || {
+      echo legacy
+      return 0
+    }
+  fi
+  if planner_acpre_contract_initiative "$1"; then echo contract; else echo legacy; fi
+}
+
+# _pdrv_acpre_projection <spec> — the ## Preconditions section without its
+# Criterion cells, sorted: one `row` line of cells 2-5 per table row (header
+# and separator included), one `text` line per other non-blank line (None.).
+_pdrv_acpre_projection() {
+  _pdrv_section "$1" Preconditions | LC_ALL=C awk '
+    {
+      t = $0
+      sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+      if (t == "") next
+      if (substr(t, 1, 1) != "|") { print "text\t" t; next }
+      gsub(/\\\|/, "\001", t)
+      t = substr(t, 2)
+      if (substr(t, length(t), 1) == "|") t = substr(t, 1, length(t) - 1)
+      n = split(t, c, "|")
+      out = "row"
+      for (i = 2; i <= n; i++) {
+        x = c[i]
+        sub(/^[ \t]+/, "", x); sub(/[ \t]+$/, "", x)
+        gsub(/\001/, "\\|", x)
+        out = out "\t" x
+      }
+      print out
+    }' | LC_ALL=C sort
+}
+
 # Lines outside the editable sections, each prefixed "<heading>\037".
+# _pdrv_frozen_text <spec> [<editable-sections>]
 _pdrv_frozen_text() {
-  tr -d '\r' <"$1" | awk -v allow="$PLANNER_DRAFT_EDITABLE_SECTIONS" '
+  tr -d '\r' <"$1" | awk -v allow="${2:-$PLANNER_DRAFT_EDITABLE_SECTIONS}" '
     BEGIN { n = split(allow, a, "|"); for (i = 1; i <= n; i++) ok["## " a[i]] = 1; cur = "(text before the first heading)" }
     /^ ? ? ?(```|~~~)/ { fence = !fence }
     !fence && /^## / { h = $0; sub(/[[:space:]]+$/, "", h); cur = h }
@@ -445,7 +501,7 @@ _pdrv_assumption_check() {
 
 # planner_draft_revise_check_text <before-spec> <after-spec> [<revise-file> [<findings-file>]]
 planner_draft_revise_check_text() {
-  local before="$1" after="$2" disp="${3:-}" ffile="${4:-}" fails=""
+  local before="$1" after="$2" disp="${3:-}" ffile="${4:-}" acpre="${5:-legacy}" fails=""
   [ -f "$before" ] && [ -f "$after" ] || {
     echo "SPEC_INVALID spec file missing"
     return 1
@@ -456,11 +512,19 @@ planner_draft_revise_check_text() {
 
   # FROZEN_CHANGED — every non-editable section byte-identical; AC prose kept.
   local fo fn first
-  fo=$(_pdrv_frozen_text "$before")
-  fn=$(_pdrv_frozen_text "$after")
+  local editable
+  editable=$(_pdrv_editable "$acpre")
+  fo=$(_pdrv_frozen_text "$before" "$editable")
+  fn=$(_pdrv_frozen_text "$after" "$editable")
   if [ "$fo" != "$fn" ]; then
     first=$(diff <(printf '%s\n' "$fo") <(printf '%s\n' "$fn") | grep -m1 '^[<>]' | cut -c3- | cut -d$'\037' -f1)
     fails+="FROZEN_CHANGED ${first:-a frozen section} changed"$'\n'
+  fi
+  # planner-ac-code-precondition D10: a contract revise may only follow an
+  # AC extension in the Criterion cells.
+  if [ "$acpre" = contract ] &&
+    [ "$(_pdrv_acpre_projection "$before")" != "$(_pdrv_acpre_projection "$after")" ]; then
+    fails+="FROZEN_CHANGED preconditions changed"$'\n'
   fi
   local l
   while IFS= read -r l; do
@@ -1244,7 +1308,7 @@ planner_draft_revise_check() {
     return 1
   fi
 
-  out=$(planner_draft_revise_check_text "$before" "$spec" "$d/revise.r${n}.md" "$d/findings.r${n}.json")
+  out=$(planner_draft_revise_check_text "$before" "$spec" "$d/revise.r${n}.md" "$d/findings.r${n}.json" "$(_pdrv_acpre_mode "$init")")
   [ -n "$out" ] && fails+="${out}"$'\n'
 
   if ! out=$(planner_spec_validate_one "$spec" 2>&1 >/dev/null); then
