@@ -1204,12 +1204,12 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
       - fold in body drift: `BODY_DRIFT` when the Linear description differs from `body.md`, and
         `--refresh-bodies` covers every ticket, not only not-ready ones. Same file
         (`planner-refinement.sh`), so not a separate branch.
-- [ ] 5. `planner-specify-parameters` — **specced 2026-11-11, reviewed (3 reviewers), revised;
-      in progress.** PR 1 (#692, ticket-auto-pipeline 0.114.0, `specify-param:<key>` binding) is
-      open, held only by a GitHub runner outage (apt cannot resolve security.ubuntu.com). PR 2
-      (all planner work, ticket-planner 0.36.0) is being built in chained slices on
-      `feat/planner-specify-parameters`: groups 2–7 done, group 8 (SKILL.md, prompts, SHA re-pin,
-      marker) in progress; it rebases onto main once #692 merges. Change at `openspec/changes/planner-specify-parameters/` (local; validates
+- [ ] 5. `planner-specify-parameters` — **MERGED 2026-11-11: PR 1 #692 (afbde02,
+      ticket-auto-pipeline 0.114.0, `specify-param:<key>` binding) and PR 2 #694 (30a9ced,
+      ticket-planner 0.36.0, all planner work). Groups 1–8 done; only group 9 is open (live check
+      on the tickets host, which also measures the per-initiative bounds of 12 rows / 6
+      questions), then archive.** Specify prompt rules came out at ~560 tokens (target ≈500).
+      Change at `openspec/changes/planner-specify-parameters/` (local; validates
       `--strict`; design.md § Review round 1 records all 30 findings). User decisions: no `{{key}}`
       placeholders or ticket-body rendering (specs keep real values; follow-up
       `planner-param-rendering` only if the live check shows values change after TicketGen);
@@ -1229,13 +1229,29 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
       - which parameter kinds must be asked: durations, limits, pool sizes, rounding rules,
         transaction boundaries, failure behaviour;
       - a Crosscheck check against literal values in ACs and seeds that are not declared keys.
-- [ ] 6. `planner-crosscheck-ownership` (ticket-planner). Open design questions:
-      - how writes are extracted from spec text (deterministic grammar vs a declared
-        `## Writes` / `## Reads` section);
-      - findings: two writers or no writer is blocking; a reader of another spec's write gets a
-        `blocked-by` edge (reuse the sidecar from `planner-testdata-synth.sh`); a side effect
-        fired from two triggers needs an idempotency AC;
-      - numbers in ACs (counts, day offsets) checked against the seed data they reference.
+- [ ] 6. `planner-crosscheck-ownership` (ticket-planner) — **specced 2026-11-11, reviewed (3
+      reviewers), revised; not started.** Change at `openspec/changes/planner-crosscheck-ownership/`
+      (local; validates `--strict`; design.md § Review round 1 records every finding). Each spec
+      declares `## Writes` (Key, Op) and `## Reads` (Key, Source) tables; bash checks them, no prose
+      parsing. Ops: `create`/`update`/`delete`, `append` (never conflicts),
+      `transition:<from>-><to>` (conflicts only on a shared from-state; `*` overlaps all), `fire`
+      (exactly one owner per side effect) and `trigger` (causes another spec's effect, gets a
+      `blocked-by` edge to it). Read sources: `spec`, `code:<file-or-dir>` (word-boundary match in
+      the pinned repo-ref worktree), `framework:<name>` (fixed allowlist), `external:<name>`
+      (warning only). Blocking codes `OWN_TABLE_INVALID`, `OWN_MULTI_WRITER`, `OWN_NO_WRITER`,
+      `OWN_MULTI_FIRE`, `OWN_TRIGGER_UNOWNED`, `OWN_EDGES_FAILED`; warnings `OWN_NEAR_MATCH`,
+      `OWN_UNDECLARED_REF`, `OWN_EXTERNAL_UNANCHORED`, `OWN_EDGES_DIVERGED`. Edges only from
+      `spec` reads and trigger→fire, in a second sidecar (`artifacts/ownership-edges.json`; the
+      test-data sidecar reader drops non-test-data edges), frozen once a consumer's ticket exists;
+      they can flip shared-branch epics to epic UAT (rule `chain`). Tables are dropped from ticket
+      bodies. New marker `spec-ownership-v1`, written only on the first Specify dispatch (the same
+      fix is applied to `specify-parameters-v1`, whose re-dispatch would flip legacy initiatives).
+      User decisions: declared lists, not prose parsing; 2 PRs (A: accept-table refactor + wildcard
+      accept + family + edges + body drop, dormant, 21 tasks; B: prompts, both SHA re-pins, marker,
+      4 tasks), then 7 live-check tasks; AC-vs-seed number checks cut (follow-up
+      `planner-seed-numbers` only if the live check shows the need); wildcard accept
+      `--accept CODE@*:"reason"` records one accept per current instance. Open: `framework:` names
+      configurable per host (recommend a code constant for now); headless accept deferred.
 - [ ] 7. `planner-ac-code-precondition` (ticket-planner). Hardest to make deterministic; do last.
       Open design questions:
       - which checks are bash (nullability from entity/Liquibase, enum or band limits) and which
