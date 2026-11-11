@@ -161,14 +161,13 @@ PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_
 # (planner_crosscheck_instance_accept_all); it never writes `<CODE>@*`, so an
 # instance first seen in a later run still fails.
 #
-# The four ownership codes share one instance and one parse function. Their
-# note field stays empty until the describer's `ownership-findings` note
-# exists (task 5.3); until then the describer asks no question for them.
+# The four ownership codes share one instance function, one parse function
+# and one note (`ownership-findings`, asked once for all four).
 PLANNER_CROSSCHECK_INSTANCE_CODES="PARAM_LITERAL:planner_crosscheck_params_instance:planner_crosscheck_params_accept_parse:_planner_stop_param_literals_question:planner-crosscheck-params.sh:planner_crosscheck_params_literal"
-PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_MULTI_WRITER:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse::planner-crosscheck-ownership.sh:"
-PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_NO_WRITER:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse::planner-crosscheck-ownership.sh:"
-PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_MULTI_FIRE:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse::planner-crosscheck-ownership.sh:"
-PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_TRIGGER_UNOWNED:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse::planner-crosscheck-ownership.sh:"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_MULTI_WRITER:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_NO_WRITER:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_MULTI_FIRE:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_TRIGGER_UNOWNED:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
 
 # Usage: planner_crosscheck_instance_field <code> <instance|parse|note|lib|detail>
 # Prints the field of <code>'s entry (possibly empty); rc 1 when <code> is

@@ -365,6 +365,37 @@ _planner_stop_param_literals_question() {
     "resolved" ""
 }
 
+# _planner_stop_ownership_question <INIT> <count>
+# The note question for the four ownership instance codes
+# (planner-crosscheck-ownership D11), asked once for all of them: counts per
+# code, the instance tokens read back from each fail message's trailing
+# accept command, how to fix each kind, and the terminal accept forms.
+_planner_stop_ownership_question() {
+  local init="$1" log start lines code n counts="" list="" line tok seen=" "
+  log=$(planner_state_log "$init") || return 1
+  start=$(grep -n '|Crosscheck|check|start|' "$log" | tail -1 | cut -d: -f1)
+  lines=$(tail -n "+$((${start:-0} + 1))" "$log" |
+    grep -E '^[^|]*\|META\|crosscheck\|fail\|OWN_(MULTI_WRITER|MULTI_FIRE|NO_WRITER|TRIGGER_UNOWNED) ' | cut -d'|' -f5-)
+  for code in OWN_MULTI_WRITER OWN_MULTI_FIRE OWN_NO_WRITER OWN_TRIGGER_UNOWNED; do
+    n=$(grep -c "^${code} " <<<"$lines" || true)
+    [ "${n:-0}" -gt 0 ] && counts+="${counts:+, }${n} ${code}"
+  done
+  planner_crosscheck_instance_load OWN_NO_WRITER >/dev/null 2>&1 || true
+  if declare -f planner_crosscheck_ownership_instance >/dev/null 2>&1; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      tok=$(planner_crosscheck_ownership_instance "${line#* }")
+      [ -n "$tok" ] || continue
+      case "$seen" in *" ${tok} "*) continue ;; esac
+      seen+="${tok} "
+      list+="${list:+; }${tok}"
+    done <<<"$lines"
+  fi
+  _planner_stop_question "ownership-findings" "note" \
+    "Crosscheck found data-ownership conflicts in the specs' ## Writes and ## Reads tables: ${counts:-see state.log}. Instances: $(_planner_stop_excerpt "${list:-see state.log}" 300). Fix each in the specs: OWN_MULTI_WRITER, give the key one owner and have the others read it, or make each transition leave different states; OWN_NO_WRITER, add the write to the spec that owns the key, or anchor the read with code:, framework: or external:; OWN_MULTI_FIRE, keep one fire owner and make the others trigger it; OWN_TRIGGER_UNOWNED, add a fire row to the spec that owns the effect, or remove the trigger. Then answer 'resolved' to re-run Crosscheck. To accept one instance as genuine, run from a terminal: resume ${init} --accept <CODE>@<instance>:\"<reason>\", or <CODE>@*:\"<reason>\" for every instance the latest Crosscheck attempt found (there is no headless accept)." \
+    "resolved" ""
+}
+
 _planner_stop_sha() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum | awk '{print $1}'

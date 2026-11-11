@@ -671,6 +671,44 @@ else
   else
     fail "PARAM_LITERAL: other codes' accept questions are unchanged" "$(qtext "$m" accept-SIGNALS_UNIFORM)"
   fi
+  # planner-crosscheck-ownership D11: one ownership-findings note for the four
+  # instance codes, no flag:accept for them; OWN_TABLE_INVALID keeps its accept.
+  fresh_root own-note
+  halt_fixture_init ownership "$INIT" >/dev/null
+  halt_fixture_run ownership "$INIT" "${WORK}/own-run" >/dev/null 2>&1
+  m=$(planner_stop_describe_json "$INIT")
+  got=$(echo "$m" | jq -r '.reason + " " + ([.questions[] | .id + "=" + .binding] | join(" "))')
+  t=$(qtext "$m" ownership-findings)
+  if [ "$got" = "CROSSCHECK_BLOCKED ownership-findings=note accept-OWN_TABLE_INVALID=flag:accept:OWN_TABLE_INVALID" ]; then
+    pass "ownership: one ownership-findings note, OWN_TABLE_INVALID keeps its accept, no flag:accept for instance codes"
+  else
+    fail "ownership: one ownership-findings note, OWN_TABLE_INVALID keeps its accept, no flag:accept for instance codes" "$got"
+  fi
+  if in_order "$t" '1 OWN_MULTI_WRITER' '2 OWN_NO_WRITER' \
+    'OWN_NO_WRITER@overdue-reminder/customer.email' 'OWN_NO_WRITER@payment-receipt/customer.email' 'OWN_MULTI_WRITER@invoice.status' \
+    'one owner' 'add the write' 'one fire owner' 'remove the trigger' \
+    "resume ${INIT} --accept <CODE>@<instance>:\"<reason>\"" '<CODE>@*:"<reason>"' 'no headless accept' &&
+    [ "$(echo "$m" | jq -r '.questions[] | select(.id == "ownership-findings") | .options | join("|")')" = "resolved" ]; then
+    pass "ownership: the note counts each code, lists the instances, says how to fix and how to accept; answer resolved"
+  else
+    fail "ownership: the note counts each code, lists the instances, says how to fix and how to accept" "$t"
+  fi
+  planner_stop_describe "$INIT" >"${WORK}/own.hold"
+  if [ "$(bash "$HOLD_PARSER" --phase PLANNER --return-file "${WORK}/own.hold" 2>&1 | jq -r '.parse_status')" = "ok" ] &&
+    cmp -s "${WORK}/own.hold" <(planner_stop_describe "$INIT"); then
+    pass "ownership: block parses and is byte-stable"
+  else
+    fail "ownership: block parses and is byte-stable" "$(cat "${WORK}/own.hold")"
+  fi
+
+  fresh_root pp-literal-parse
+  planner_state_init "$INIT" "idea" >/dev/null
+  planner_state_write "$INIT" META contract start specify-parameters-v1
+  _halt_done "$INIT" Appraisal Discovery Architecture Specify Review Consensus
+  printf '# Proposal\n\n## Parameters\n\nNone.\n' >"$(planner_initiative_dir "$INIT")/artifacts/proposal.md"
+  planner_state_write "$INIT" Crosscheck check start "x"
+  planner_state_write "$INIT" META crosscheck fail "PARAM_LITERAL export-link.md: \"30 seconds\" (time:30000) in Acceptance Criteria is not declared in ## Parameters — resume ${INIT} --accept PARAM_LITERAL@export-link:\"30 seconds\""
+  planner_state_write "$INIT" Crosscheck check fail "1 blocking"
   planner_stop_describe "$INIT" >"${WORK}/pl.hold"
   if [ "$(bash "$HOLD_PARSER" --phase PLANNER --return-file "${WORK}/pl.hold" 2>&1 | jq -r '.parse_status')" = "ok" ]; then
     pass "PARAM_LITERAL: block parses"

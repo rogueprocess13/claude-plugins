@@ -345,6 +345,32 @@ if awk 'prev=="" && $0=="" {bad=1} {prev=$0} END {exit bad}' <<<"$body"; then
 else
   fail "blank-line squeeze" "double blank line found"
 fi
+# planner-crosscheck-ownership D14: ## Writes / ## Reads stay out of bodies.
+OWNDIR="${TMP_ROOT}/own-body"
+mkdir -p "$OWNDIR"
+cp "${SPECS}/c-ui.md" "${OWNDIR}/c-ui.md"
+awk '
+  /^## Acceptance Criteria$/ && !done {
+    print "## Writes\n\n| Key | Op |\n|-----|----|\n| `invoice.status` | update |\n"
+    print "## Reads\n\n| Key | Source |\n|-----|--------|\n| `customer.email` | spec |\n"
+    done = 1
+  }
+  { print }
+' "${SPECS}/c-ui.md" >"${OWNDIR}/c-ui-tables.md"
+plain_body=$(planner_ticket_body_compose "${OWNDIR}/c-ui.md" "$ctx" $'CRE-12\tFinance can export invoices' $'WIL-83\t' 2>/dev/null)
+tables_body=$(planner_ticket_body_compose "${OWNDIR}/c-ui-tables.md" "$ctx" $'CRE-12\tFinance can export invoices' $'WIL-83\t' 2>/dev/null)
+grep -q '^## Writes$' "${OWNDIR}/c-ui-tables.md" && [ -n "$tables_body" ] && [ "$tables_body" = "$plain_body" ] &&
+  pass "## Writes and ## Reads are dropped from the body (byte-identical to the spec without them)" ||
+  fail "ownership tables dropped" "$(diff <(echo "$plain_body") <(echo "$tables_body") | head -5)"
+[ "$plain_body" = "$body" ] && pass "a spec without the tables composes byte-identically" || fail "no-tables body" "differs"
+awk '
+  /^## Acceptance Criteria$/ && !done { print "### Writes\n\nThe export writes a CSV file.\n"; done = 1 }
+  { print }
+' "${SPECS}/c-ui.md" >"${OWNDIR}/c-ui-sub.md"
+sub_body=$(planner_ticket_body_compose "${OWNDIR}/c-ui-sub.md" "$ctx" 2>/dev/null)
+grep -qxF '### Writes' <<<"$sub_body" && grep -qxF 'The export writes a CSV file.' <<<"$sub_body" &&
+  pass "a ### Writes subheading inside another section is kept" || fail "### Writes kept" "dropped"
+
 none_body=$(planner_ticket_body_compose "${SPECS}/a-schema.md" "$ctx" 2>/dev/null)
 sed -n '/^## Related Tickets$/,/^## Planner Context$/p' <<<"$none_body" | grep -qxF 'None.' &&
   pass "no dependencies → Related Tickets: None." || fail "None." "$(sed -n '/^## Related Tickets$/,/^## Planner/p' <<<"$none_body")"

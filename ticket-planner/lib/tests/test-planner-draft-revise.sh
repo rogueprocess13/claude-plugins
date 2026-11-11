@@ -299,6 +299,24 @@ _disp a-export "$DISP_OK"
 out=$(_check)
 _has "$out" SCOPE_DROPPED && pass "SCOPE_DROPPED: Scope row removed" || fail "scope" "$out"
 
+# planner-crosscheck-ownership D14: ## Writes / ## Reads are outside the
+# editable sections, so a revise that touches them is FROZEN_CHANGED.
+for sec in Writes Reads; do
+  {
+    cat "${TMP_ROOT}/a.base"
+    printf '\n## Writes\n\n| Key | Op |\n|-----|----|\n| `invoice.status` | update |\n'
+    printf '\n## Reads\n\n| Key | Source |\n|-----|--------|\n| `customer.email` | spec |\n'
+  } >"${TMP_ROOT}/own-before.md"
+  if [ "$sec" = Writes ]; then
+    sed 's/^| `invoice.status` | update |$/| `invoice.status` | transition:sent->paid |/' "${TMP_ROOT}/own-before.md" >"${TMP_ROOT}/own-after.md"
+  else
+    sed 's/^| `customer.email` | spec |$/| `customer.email` | framework:session |/' "${TMP_ROOT}/own-before.md" >"${TMP_ROOT}/own-after.md"
+  fi
+  out=$(planner_draft_revise_check_text "${TMP_ROOT}/own-before.md" "${TMP_ROOT}/own-after.md")
+  ! cmp -s "${TMP_ROOT}/own-before.md" "${TMP_ROOT}/own-after.md" && _has "$out" FROZEN_CHANGED &&
+    pass "FROZEN_CHANGED: a revise that edits ## ${sec} is refused" || fail "FROZEN_CHANGED ${sec}" "$out"
+done
+
 _round
 sed -i 's/^- \[ \] The Export button appears on the invoice list$/- [ ] The Export button appears; the `exportInvoices` handler runs/' "$A"
 cp "$A" "${TMP_ROOT}/with-token.md"
