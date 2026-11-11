@@ -24,8 +24,8 @@ fleet-controller/CLAUDE.md claimed the approval gate stopped every auto-dispatch
 ticket-auto-pipeline unchanged.
 
 ### Added
-- `FLEET_WORKER_AUTONOMY` (`auto` | `semi-auto` | `manual`, **default `auto`**, so the
-  whole-ticket path behaves as before). The whole-ticket spawn, KILL+RESTART included, now runs
+- `FLEET_WORKER_AUTONOMY` (`auto` | `semi-auto` | `manual`, **default `auto` on the
+  whole-ticket path**, so it behaves as before). The whole-ticket spawn, KILL+RESTART included, now runs
   `/ticket-auto {tid} --{mode} --from-planned`. `fleet-env-check.sh` reports the row and refuses
   fleetd startup on any other value; with `FLEET_STARTUP_ENV_CHECK=false`, fleetd falls back to
   `auto` with a stderr warning.
@@ -34,10 +34,11 @@ ticket-auto-pipeline unchanged.
   default, and checked for default drift and staleness like a boolean flag.
 
 ### Changed
-- The phase-dispatch path passes the same setting to `preamble.run_preamble` as `AUTONOMY`.
-  Before, it passed none, so the preamble used `TICKET_AUTONOMY`, else `manual`, and the two
-  dispatch paths disagreed. A host that runs phase dispatch without `TICKET_AUTONOMY` set now
-  gets `auto` there too; set `FLEET_WORKER_AUTONOMY=manual` to keep the old gating.
+- The phase-dispatch path passes the setting to `preamble.run_preamble` as `AUTONOMY`, but only
+  when `FLEET_WORKER_AUTONOMY` is set explicitly. Unset, nothing changes there: the preamble
+  uses `TICKET_AUTONOMY`, else `manual`. The two defaults therefore differ when the setting is
+  unset — whole-ticket spawn `auto`, phase dispatch `TICKET_AUTONOMY` → `manual` — and setting
+  it makes both paths agree.
 
 ### Fixed
 - fleet-controller/CLAUDE.md `FLEET_AUTO_DISPATCH` row: under the default `auto`, a simple

@@ -219,7 +219,7 @@ _var "FLEET_EPIC_AUTO_PR" "info" "$_epic_auto_pr" "env" "gh + GITHUB_PERSONAL_AC
 # permissive mode, for an operator who clearly meant to pick something else.
 _worker_autonomy="${FLEET_WORKER_AUTONOMY:-auto}"
 if [ -z "${FLEET_WORKER_AUTONOMY:-}" ]; then
-  _var "FLEET_WORKER_AUTONOMY" "info" "$_worker_autonomy" "env" "unset — fleetd dispatches workers with --auto (simple tickets auto-approve and auto-merge)"
+  _var "FLEET_WORKER_AUTONOMY" "info" "$_worker_autonomy" "env" "unset — whole-ticket workers get --auto (simple tickets auto-approve and auto-merge); phase dispatch keeps TICKET_AUTONOMY, else manual"
 else
   case "$_worker_autonomy" in
   auto | semi-auto | manual)
