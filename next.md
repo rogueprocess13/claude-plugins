@@ -1204,7 +1204,25 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
       - fold in body drift: `BODY_DRIFT` when the Linear description differs from `body.md`, and
         `--refresh-bodies` covers every ticket, not only not-ready ones. Same file
         (`planner-refinement.sh`), so not a separate branch.
-- [ ] 5. `planner-specify-parameters` (ticket-planner). Extends `planner-specify-waiting-on-human`;
+- [ ] 5. `planner-specify-parameters` — **specced 2026-11-11, reviewed (3 reviewers), revised;
+      in progress.** PR 1 (#692, ticket-auto-pipeline 0.114.0, `specify-param:<key>` binding) is
+      open, held only by a GitHub runner outage (apt cannot resolve security.ubuntu.com). PR 2
+      (all planner work, ticket-planner 0.36.0) is being built in chained slices on
+      `feat/planner-specify-parameters`: groups 2–7 done, group 8 (SKILL.md, prompts, SHA re-pin,
+      marker) in progress; it rebases onto main once #692 merges. Change at `openspec/changes/planner-specify-parameters/` (local; validates
+      `--strict`; design.md § Review round 1 records all 30 findings). User decisions: no `{{key}}`
+      placeholders or ticket-body rendering (specs keep real values; follow-up
+      `planner-param-rendering` only if the live check shows values change after TicketGen);
+      non-human sources must quote a phrase bash finds in the named artifact, else a must-ask row
+      is asked; `fixed` rows cover only the specs that name them; per-literal Crosscheck accept
+      (`PARAM_LITERAL@<slug>:"<literal>"`), base-unit comparison. Shape: one `## Parameters` table
+      in `proposal.md`; questions batched through the existing Specify stop, plus a second stop at
+      Crosscheck only for initiatives with the new contract marker; Crosscheck codes
+      `PARAM_TABLE_INVALID`/`PARAM_UNDECIDED`/`PARAM_LITERAL` on AC lines and Expected cells only.
+      38 tasks: PR 1 ticket-auto-pipeline only (the `specify-param:<key>` answer binding, 4 tasks),
+      PR 2 all planner work (25 tasks; prompt, SHA re-pin and marker last), then 7 live-check tasks
+      on the tickets host. Open: headless per-literal accept (wait until dexter needs it).
+      Original note: (ticket-planner). Extends `planner-specify-waiting-on-human`;
       start after that branch merges. Open design questions:
       - a `## Parameters` table in Specify (name, config key, default, value or
         `NEEDS_HUMAN_DECISION`), asked as one batch through the existing Specify gate;
