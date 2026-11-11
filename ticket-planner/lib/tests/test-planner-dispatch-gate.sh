@@ -209,6 +209,18 @@ if declare -f planner_params_scan >/dev/null || [ -f "${LIB_DIR}/planner-specify
   else
     fail "contract mark" "_planner_dispatch_contract_mark missing"
   fi
+
+  param_init mark-pre legacy
+  log=$(planner_state_log "$INIT")
+  gate_run pre Review
+  n0=$(grep -c 'specify-parameters-v1' "$log" || true)
+  gate_run pre Specify
+  n1=$(grep -c 'specify-parameters-v1' "$log" || true)
+  if [ "$RC" -eq 0 ] && [ "$n0" -eq 0 ] && [ "$n1" -eq 1 ]; then
+    pass "pre gate writes the contract marker when Specify is next, only then"
+  else
+    fail "pre gate contract marker" "rc=$RC before=$n0 after=$n1 err='$ERR'"
+  fi
 else
   fail "second Specify stop" "planner-specify-params.sh missing"
 fi

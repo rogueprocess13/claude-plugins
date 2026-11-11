@@ -17,6 +17,39 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.36.0 (2026-11-11) — Specify parameters: one registry, a second stop, a Crosscheck family
+
+Specify now declares every value the plan depends on that someone could choose differently (a
+timeout, a retry rule, a rounding mode, a fee) once per initiative, as a `## Parameters` table in
+`proposal.md` (planner-specify-parameters, PR 2 of 2; needs ticket-auto-pipeline 0.114.0 for the
+`specify-param:<key>` binding). It applies only to initiatives whose Specify is dispatched from this
+release on: `planner_dispatch_gate pre` writes `META|contract|start|specify-parameters-v1` when
+Specify is next. An initiative that ran Specify earlier behaves exactly as before.
+ticket-auto-pipeline unchanged.
+
+### Changed
+
+- New initiatives may stop after Specify **and after Consensus** for parameter values. Open rows
+  (a `NEEDS_HUMAN_DECISION` Value, or a must-ask kind — `policy`, `rounding`, `transaction`,
+  `failure`, `fixed` — with no verified source) are asked in the same `SPECIFY_DECISION` round as
+  open outcomes, one question per row (`specify-param:<key>`). The second stop, before Crosscheck,
+  catches rows Consensus added or reopened.
+- Crosscheck blocks undeclared unit literals in acceptance criteria and Verification Notes
+  `Expected` cells: `PARAM_TABLE_INVALID`, `PARAM_UNDECIDED`, `PARAM_LITERAL`. A single literal is
+  accepted with `--accept PARAM_LITERAL@<slug>:"<literal>"`; the code-wide accept is refused.
+- The Specify and Consensus prompt wording lives in `planner_params_prompt_rules` and
+  `planner_params_consensus_rule` (`lib/planner-specify-params.sh`), one `$(…)` line per prompt.
+  `SPECIFY_PROMPT_SHA` is re-pinned.
+
+### Added
+
+- `lib/planner-specify-params.sh` (registry parse, anchors, open-row scan, unit-literal tokenizer,
+  row rendering) and `lib/planner-crosscheck-params.sh` (the Crosscheck family), with
+  `test-planner-specify-params.sh` and `test-planner-crosscheck-params.sh`.
+- Answer intake takes `specify-param` answers (validated by kind; the row is rewritten with Source
+  `human:r<N>:<role>`); the describer asks open rows with a plain question and a suggestion.
+- `docs/ticket-planner.md` § Parameters: one registry, asked with the outcomes.
+
 ## ticket-auto-pipeline 0.114.0 (2026-11-11) — `specify-param:<key>` human-hold binding
 
 The version-2 human-hold grammar accepts a new binding, `specify-param:<key>`, for a

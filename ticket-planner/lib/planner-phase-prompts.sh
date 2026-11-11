@@ -39,6 +39,10 @@ _source_if_missing "planner_resolve_lib_root" \
 _source_if_missing "planner_config_get" \
   "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-state.sh"
 
+# The Specify and Consensus parameter wording (planner-specify-parameters, D10).
+_source_if_missing "planner_params_prompt_rules" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-specify-params.sh"
+
 # Resolved plugin root, memoized per shell. Empty until first resolution.
 _PLANNER_PROMPT_LIB_ROOT="${_PLANNER_PROMPT_LIB_ROOT:-}"
 
@@ -762,6 +766,7 @@ Synthesize into a proposal document at ${state_dir}/artifacts/proposal.md. Keep 
 - **Business Outcomes** — a \`## Business Outcomes\` section (format and rules below),
   written *before* the Technical Approach: the problem and the desired result come
   before how the system will achieve it
+- **Parameters** — a \`## Parameters\` section directly after Business Outcomes (rules below)
 - **Scope** — in scope, out of scope, explicit boundaries
 - **Technical Approach** — the architecture decision, key files/symbols that change
 - **Work Breakdown** — logical decomposition into tickets (one ticket = one coherent change)
@@ -817,6 +822,7 @@ business outcome.
 percentage improvements, customer commitments, regulatory requirements or
 actors unless the idea, intent, appraisal, repository evidence or other
 planning evidence supports them.
+$(planner_params_prompt_rules)
 
 ### Part 2: Write per-ticket spec files
 
@@ -1316,6 +1322,7 @@ sweep would misread.
    read it, and specs reference its outcome ids. Change an outcome only when a
    finding requires it, never renumber existing ids, and update every spec's
    \`Serves\`/\`Enables\` if you add or remove one (planner-business-framing).
+$(planner_params_consensus_rule)
 4. Write a consensus digest to ${state_dir}/artifacts/consensus.md:
    - **Findings Addressed** — each review finding, its disposition (accepted/rejected/deferred),
      and what changed (if anything), naming the acceptance criterion you added or

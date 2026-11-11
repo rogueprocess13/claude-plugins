@@ -323,7 +323,8 @@ planner_until_validate() {
 # bytes. A halt is a normal terminal outcome, never a retry.
 #
 # Usage: planner_dispatch_gate <gate> <initiative_id> <phase> <state_dir>
-#   pre        step 1 (create gate), then the Consensus readiness gate (only
+#   pre        the parameter-contract marker (only when <phase> is Specify),
+#              step 1 (create gate), then the Consensus readiness gate (only
 #              when <phase> is Crosscheck), then step 1c (open Specify
 #              decisions and parameter rows, when <phase> is Review, and
 #              again when it is Crosscheck for a contract initiative —
@@ -339,6 +340,12 @@ planner_dispatch_gate() {
   local gate="$1" initiative_id="$2" phase="$3" state_dir="$4" rc g
   case "$gate" in
   pre)
+    # Specify about to run: mark the initiative as a parameter-contract one
+    # (planner-specify-parameters). Before the gates, so a halt cannot skip it.
+    _planner_dispatch_contract_mark "$initiative_id" "$phase" || {
+      echo "ERROR: could not record the parameter contract for '${initiative_id}'" >&2
+      return 1
+    }
     for g in create consensus specify; do
       rc=0
       planner_dispatch_gate "$g" "$initiative_id" "$phase" "$state_dir" || rc=$?
@@ -451,9 +458,8 @@ planner_dispatch_gate() {
 # _planner_dispatch_contract_mark <initiative_id> <phase> — before the
 # Specify agent is dispatched, record that this initiative's Specify runs
 # under the parameter contract (planner_params_contract_mark, written once).
-# Every other phase: nothing. planner-specify-parameters task 8.3 wires this
-# into `planner_dispatch_gate pre` together with the Specify prompt change;
-# until then only tests call it.
+# Every other phase: nothing. `planner_dispatch_gate pre` calls it first, so
+# every initiative whose Specify is dispatched from now on is a contract one.
 _planner_dispatch_contract_mark() {
   [ "$2" = "Specify" ] || return 0
   _source_if_missing planner_params_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-specify-params.sh"

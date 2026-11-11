@@ -612,6 +612,53 @@ if need "$name" planner_params_consensus_rule; then
   fi
 fi
 
+# Pre-change captures, scratch REPOS_ROOT normalised (the same normalisation
+# test-planner-business-framing.sh uses for SPECIFY_PROMPT_SHA).
+SPECIFY_PRE_SHA="4b9ab2f059255bb3c2b6c79edd3b66e43a999d78823a593e3ea26126537b3bd9"
+CONSENSUS_PRE_SHA="11161f4ce2736099fcaddbed6fd92cbc247050f69ec351183f1bd0016535c9d9"
+SPECIFY_BULLET='- **Parameters** — a `## Parameters` section directly after Business Outcomes (rules below)'
+
+# _strip_block <prompt> <block> — the prompt with the one occurrence of
+# <block> (and the newline before it) removed; empty when it occurs other
+# than once.
+_strip_block() {
+  local p="$1" b=$'\n'"$2" rest
+  [[ "$p" == *"$b"* ]] || return 0
+  rest="${p#*"$b"}"
+  [[ "$rest" != *"$b"* ]] || return 0
+  printf '%s%s' "${p%%"$b"*}" "$rest"
+}
+
+name="Specify prompt is the pre-change prompt plus the rules block and one bullet"
+if need "$name" planner_params_prompt_rules && [ -f "${LIB_DIR}/planner-phase-prompts.sh" ]; then
+  source "${LIB_DIR}/planner-phase-prompts.sh"
+  sp=$(planner_prompt_specify "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
+  sp="${sp//$REPOS_ROOT/<REPOS_ROOT>}"
+  st=$(_strip_block "$sp" "$(planner_params_prompt_rules)")
+  [ -n "$st" ] && st=$(_strip_block "$st" "$SPECIFY_BULLET")
+  got=$(printf '%s' "$st" | sha256sum | cut -d' ' -f1)
+  if [ -n "$st" ] && [ "$got" = "$SPECIFY_PRE_SHA" ]; then pass "$name"; else
+    fail "$name" "block or bullet not found once, or sha ${got}"
+  fi
+  if [[ "$sp" == *"$(planner_params_prompt_rules)"$'\n\n### Part 2: Write per-ticket spec files'* ]]; then
+    pass "Specify rules sit directly before Part 2"
+  else fail "Specify rules sit directly before Part 2" "not adjacent"; fi
+fi
+
+name="Consensus prompt is the pre-change prompt plus the rule block"
+if need "$name" planner_params_consensus_rule planner_prompt_consensus; then
+  cp=$(planner_prompt_consensus "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
+  cp="${cp//$REPOS_ROOT/<REPOS_ROOT>}"
+  ct=$(_strip_block "$cp" "$(planner_params_consensus_rule)")
+  got=$(printf '%s' "$ct" | sha256sum | cut -d' ' -f1)
+  if [ -n "$ct" ] && [ "$got" = "$CONSENSUS_PRE_SHA" ]; then pass "$name"; else
+    fail "$name" "block not found once, or sha ${got}"
+  fi
+  if grep -A1 -F '(planner-business-framing).' <<<"$cp" | grep -qF '## Parameters'; then
+    pass "Consensus rule follows the Business Outcomes carry-over sentence"
+  else fail "Consensus rule follows the Business Outcomes carry-over sentence" "not adjacent"; fi
+fi
+
 echo "=== awk portability ==="
 
 name="mawk runs every awk program"
