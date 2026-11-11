@@ -17,9 +17,9 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## 0.114.2 (2026-11-12) — flow.sh's ticket lock no longer depends on which flow.sh copy ran
+## ticket-auto-pipeline 0.114.3, fleet-controller 0.49.2 (2026-11-12) — flow.sh's ticket lock no longer depends on which flow.sh copy ran
 
-fleet-controller 0.48.1.
+fleet-controller 0.49.2.
 
 ### Fixed
 
