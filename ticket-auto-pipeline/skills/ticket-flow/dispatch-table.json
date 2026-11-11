@@ -455,7 +455,7 @@
       "aliases": [],
       "retro_trigger_conditions": [
         "a META|gate-stop|fail| line fired during this run",
-        "the run lacks both a VERIFY|verify|done|PASS line and a PR-REVIEW|pr-review|done|OK line",
+        "the run lacks a VERIFY|verify|done|PASS line or a PR-REVIEW|pr-review|done|OK (or N/A) line",
         "a |fallback| event appears in the heartbeat log (also writes META|drift|warn|)",
         "VERIFY_EXHAUSTED appears anywhere in the log (sub-shell visibility safety net)",
         "a VERIFY|verify|fail| line appears (same sub-shell concern)"

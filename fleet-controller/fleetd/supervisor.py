@@ -87,6 +87,26 @@ try:
 except ImportError:  # pragma: no cover - preamble unavailable
     _preamble_mod = None
 
+# The router's own deterministic step scripts (fleetd-shared-router-steps):
+# `router-step.sh` post-spawn / inspector / retro-check and `prescan-run.sh`,
+# behind FLEET_ROUTER_STEP_SHELL. Imported defensively like the modules
+# above: without it every call site takes its flag-off path.
+try:
+    from fleetd import router_step as _router_step_mod
+except ImportError:  # pragma: no cover - router_step unavailable
+    _router_step_mod = None
+
+# The `META|drift|warn` message the router's retro-check writes for a
+# heartbeat fallback event. The supervisor writes the same text when it owns
+# the write (`--no-drift-log`, or the Python port), so the line does not
+# depend on which implementation ran (test_router_step_parity.py).
+RETRO_DRIFT_MSG = 'drift detected — heartbeat fallback events present'
+
+
+def _router_step_on():
+    """FLEET_ROUTER_STEP_SHELL, read per call (rollback is unsetting it)."""
+    return _router_step_mod is not None and _router_step_mod.enabled()
+
 # Tracker event-board pusher (tracker-event-board-pusher, Phase B2). Imported
 # defensively like the modules above: without it the pusher pass simply
 # cannot run this cycle — a ticket's outbox stays undrained by fleetd and is
@@ -286,7 +306,8 @@ class ChildTable:
 
     def add(self, tid, pid, generation=0, reason='', adopted=False, phase='',
             anomalies='', session_id=None, start_ticks=None, hb_log_file='',
-            step_id='', log_file='', env_file='', log_line_offset=0):
+            step_id='', log_file='', env_file='', log_line_offset=0,
+            aux=None):
         self._workers[tid] = {
             'tid': tid,
             'pid': pid,
@@ -310,6 +331,10 @@ class ChildTable:
             'log_file': log_file,
             'env_file': env_file,
             'log_line_offset': log_line_offset,
+            # An inspector/prescan worker's deferred work
+            # (fleetd-shared-router-steps): what to do once it is reaped.
+            # None for every other worker.
+            'aux': aux,
         }
 
     def remove(self, tid):
@@ -4632,6 +4657,15 @@ class Supervisor:
             return False
         step_id, source, _adopted_fields = position
 
+        if _router_step_on() and self._router_step_prescan_locked(
+                tid, step_id, table, log_file, hb_log_file, env_file, reason,
+                fields.get('REPOS_ROOT', ''), fields.get('BASE_BRANCH', '')):
+            # The router's prescan gate runs before its dispatch loop. A
+            # stale repo's prescan worker goes first; its reap dispatches
+            # step_id.
+            print(f"fleetd[{os.getpid()}]: {tid} prescan before {step_id}")
+            return True
+
         dispatched = self._dispatch_step_locked(
             tid, step_id, table, log_file, hb_log_file, env_file, reason)
         if dispatched:
@@ -4653,8 +4687,9 @@ class Supervisor:
         `next_step` decision right here, synchronously, with no reap in
         between: `STEP_2_5`/`STEP_3` (`action: bash` — `gate-check.sh`,
         deterministic, no agent involved), `STEP_6` (`action:
-        bash_then_optional_agent` — `needs_retro` decides whether `/ticket-
-        retro` runs at all before the unconditional finalize), and the
+        bash_then_optional_agent` — `router-step.sh retro-check`, or the
+        `needs_retro` port with FLEET_ROUTER_STEP_SHELL off, decides whether
+        `/ticket-retro` runs at all before the unconditional finalize), and the
         synthetic `PR_ITERATE` (no table row — `build_pr_iterate_spawn`
         instead of `build_phase_spawn`). `STEP_5` (`action: agent_sequence`
         — two sequential agents with no per-sub-step `next_step` case) is a
@@ -4710,15 +4745,19 @@ class Supervisor:
                 reason, counters)
 
         if action == 'bash_then_optional_agent':
-            retro = _phase_mod.needs_retro(table, log_file, hb_log_file)
+            if _router_step_on():
+                # The router's own check, called with --no-drift-log; a
+                # script failure reads as not needed (retro is advisory).
+                retro = _router_step_mod.retro_check(log_file, hb_log_file)
+            else:
+                retro = _phase_mod.needs_retro(table, log_file, hb_log_file)
             if retro.drift_detected:
-                # needs_retro reports the drift condition read-only by
-                # design — writing the log side effect is the caller's job
-                # (its own docstring), matching this module's evaluator/
-                # actor split everywhere else.
+                # Both evaluators report the drift condition read-only —
+                # writing the log side effect is the caller's job, matching
+                # this module's evaluator/actor split everywhere else.
                 _append_pipeline_log_line(
                     str(self._state_dir), tid, 'META', 'drift', 'warn',
-                    'heartbeat fallback event detected')
+                    RETRO_DRIFT_MSG)
             if retro.needed:
                 try:
                     self.spawn_phase(
@@ -4851,16 +4890,39 @@ class Supervisor:
                   f"{tid} stalled mid-phase-dispatch: {exc}", file=sys.stderr)
             return
 
-        try:
-            all_lines = Path(log_file).read_text().splitlines() if log_file else []
-        except OSError:
-            all_lines = []
+        if entry.get('aux') and _router_step_mod is not None:
+            # An inspector/prescan worker spawned by the router-step wiring.
+            # Finished regardless of the flag's current value: the work it
+            # deferred was started under the flag and must still happen.
+            self._advance_router_aux_locked(tid, entry, table)
+            return
+
+        def _read_lines():
+            try:
+                return (Path(log_file).read_text().splitlines()
+                        if log_file else [])
+            except OSError:
+                return []
+
+        all_lines = _read_lines()
+        counters = _phase_mod.resolve_loop_counters(
+            all_lines, _phase_mod.read_verify_ctl(log_file))
+
+        router_steps = (_router_step_on() and (phase_token or '').upper()
+                        in _router_step_mod.INSPECTED_PHASES)
+        if router_steps:
+            # The router's post-spawn tail: capture, META|phase-result,
+            # verdict recompute, return completeness. It writes the record
+            # classify_phase's rung 2 reads, so re-read the log after it.
+            self._router_step_post_spawn_locked(
+                tid, entry, phase_token, log_file, env_file, counters)
+            all_lines = _read_lines()
+            counters = _phase_mod.resolve_loop_counters(
+                all_lines, _phase_mod.read_verify_ctl(log_file))
         # Scoped to this phase's own bracket (classify_phase's contract) —
         # an earlier attempt's gate-stop/phase-result must never decide a
         # fresh one's outcome.
         bracket_lines = all_lines[offset:]
-        counters = _phase_mod.resolve_loop_counters(
-            all_lines, _phase_mod.read_verify_ctl(log_file))
 
         result = _phase_mod.classify_phase(
             phase_token, bracket_lines, exit_code=exit_code)
@@ -4872,9 +4934,181 @@ class Supervisor:
         decision = _phase_mod.next_step(
             table, step_id, result, counters, log_lines=bracket_lines,
             is_bug=is_bug)
+        if router_steps and self._router_step_inspect_locked(
+                tid, phase_token, decision, log_file, hb_log_file, env_file,
+                reason, counters):
+            # The inspector worker is running; its reap acts on `decision`.
+            return
         self._act_on_next_step_locked(
             tid, decision, table, log_file, hb_log_file, env_file, reason,
             counters)
+
+    # ── Router steps (fleetd-shared-router-steps) ───────────────────────────
+    #
+    # The router's deterministic tails, run through the same scripts the
+    # manual router calls (`fleetd/router_step.py`). Every one is advisory on
+    # this path: a script failure is logged by router_step and the phase
+    # transition goes ahead exactly as it would with the flag off.
+
+    def _router_step_post_spawn_locked(self, tid, entry, phase_token,
+                                       log_file, env_file, counters):
+        phase = (phase_token or '').upper()
+        gen_file = _worker_gen_file(str(self._state_dir), tid, phase_token,
+                                    entry.get('generation', 0))
+        text = _phase_mod.worker_return_text(gen_file) or ''
+        # The router's own attempt numbering: the counter as read before
+        # this attempt's terminal line, plus one. IMPLEMENT has no attempt.
+        attempt = None
+        if phase == 'VERIFY':
+            attempt = int((counters or {}).get('VERIFY_ATTEMPTS', 0)) + 1
+        elif phase == 'PR-REVIEW':
+            attempt = int((counters or {}).get('ITERATION', 0)) + 1
+        repos_root = _phase_mod._parse_env_file(env_file).get('REPOS_ROOT', '')
+        ticket_dir = _phase_mod._resolve_ticket_dir(tid, repos_root) or ''
+        return _router_step_mod.post_spawn(
+            phase, tid, log_file, text, attempt=attempt,
+            ticket_dir=ticket_dir, repos_root=repos_root)
+
+    def _router_step_inspect_locked(self, tid, phase_token, decision,
+                                    log_file, hb_log_file, env_file, reason,
+                                    counters):
+        """Run the inspector prelude; spawn the inspector agent if it asks.
+
+        Returns True when an inspector worker was spawned — the caller must
+        then NOT act on `decision`; the inspector's reap does. False (no
+        verifier results, script failure, spawn failure) means act now: the
+        inspector never blocks or changes a transition.
+        """
+        phase = (phase_token or '').upper()
+        prelude = _router_step_mod.inspector(phase, tid, log_file,
+                                             hb_log_file=hb_log_file)
+        if prelude.ready == _router_step_mod.INSPECTOR_SKIP:
+            return False
+        try:
+            instructions = Path(prelude.instructions_file).read_text()
+        except OSError as exc:
+            print(f"fleetd[{os.getpid()}]: {tid} inspector instructions "
+                  f"unreadable, skipping: {exc}", file=sys.stderr)
+            return False
+        spawn = _router_step_mod.build_inspector_spawn(
+            tid, phase, instructions, log_file, hb_log_file=hb_log_file,
+            env_file=env_file)
+        aux = {'kind': 'inspector', 'phase': phase, 'decision': decision,
+               'counters': dict(counters or {})}
+        try:
+            self.spawn_router_aux(tid, spawn, log_file,
+                                  hb_log_file=hb_log_file, env_file=env_file,
+                                  reason=reason, aux=aux)
+        except (OSError, SpawnError) as exc:
+            print(f"fleetd[{os.getpid()}]: {tid} inspector spawn failed "
+                  f"(advisory, continuing): {exc}", file=sys.stderr)
+            return False
+        if decision.kind == _phase_mod.NEXT_ADVANCE and decision.step_id:
+            # The parked decision lives only in memory. Record where it
+            # goes, so a fleetd restart mid-inspector resumes at the next
+            # step (losing only the advisory inspector), not the inspected
+            # phase.
+            _store_record_position(str(self._state_dir), tid,
+                                   decision.step_id, source='dispatch')
+        return True
+
+    def _router_step_prescan_locked(self, tid, pending_step_id, table,
+                                    log_file, hb_log_file, env_file, reason,
+                                    repos_root, branch, after=''):
+        """The router's prescan gate, before the first dispatch.
+
+        Returns True when a ticket-prescan worker was spawned (its reap
+        re-runs the gate with `--after` and dispatches `pending_step_id` when
+        no stale repo is left), False when there is nothing to spawn and the
+        caller should dispatch `pending_step_id` now.
+        """
+        gate = _router_step_mod.prescan_gate(
+            log_file, repos_root, branch=branch,
+            resume_step=pending_step_id, after=after)
+        if not gate.repo:
+            return False
+        spawn = _router_step_mod.build_prescan_spawn(
+            tid, gate.repo, gate.slug, gate.status, log_file,
+            hb_log_file=hb_log_file, env_file=env_file)
+        aux = {'kind': 'prescan', 'repo': gate.repo, 'slug': gate.slug,
+               'status': gate.status, 'pending_step_id': pending_step_id,
+               'repos_root': repos_root, 'branch': branch}
+        try:
+            self.spawn_router_aux(tid, spawn, log_file,
+                                  hb_log_file=hb_log_file, env_file=env_file,
+                                  reason=reason, aux=aux)
+        except (OSError, SpawnError) as exc:
+            print(f"fleetd[{os.getpid()}]: {tid} prescan spawn failed "
+                  f"(advisory, continuing): {exc}", file=sys.stderr)
+            return False
+        _store_record_position(str(self._state_dir), tid, pending_step_id,
+                               source='dispatch')
+        return True
+
+    def _advance_router_aux_locked(self, tid, entry, table):
+        """An inspector or prescan worker was reaped: close it out with its
+        `*-done` script, then do the work it deferred."""
+        aux = entry['aux']
+        log_file = entry.get('log_file', '')
+        hb_log_file = entry.get('hb_log_file', '')
+        env_file = entry.get('env_file', '')
+        reason = entry.get('reason', 'phase-dispatch')
+        gen_file = _worker_gen_file(str(self._state_dir), tid,
+                                    entry.get('phase', ''),
+                                    entry.get('generation', 0))
+        text = _phase_mod.worker_return_text(gen_file) or ''
+
+        if aux.get('kind') == 'inspector':
+            _router_step_mod.inspector_done(aux['phase'], tid, log_file, text)
+            self._act_on_next_step_locked(
+                tid, aux['decision'], table, log_file, hb_log_file, env_file,
+                reason, aux.get('counters') or {})
+            return
+
+        if aux.get('kind') == 'prescan':
+            _router_step_mod.prescan_done(tid, aux['slug'], aux['status'],
+                                          log_file, text)
+            pending = aux['pending_step_id']
+            if self._router_step_prescan_locked(
+                    tid, pending, table, log_file, hb_log_file, env_file,
+                    reason, aux.get('repos_root', ''), aux.get('branch', ''),
+                    after=aux['repo']):
+                return
+            self._dispatch_step_locked(tid, pending, table, log_file,
+                                       hb_log_file, env_file, reason)
+            return
+
+        print(f"fleetd[{os.getpid()}]: {tid} reaped an auxiliary worker of "
+              f"unknown kind {aux.get('kind')!r} — leaving as is",
+              file=sys.stderr)
+
+    def spawn_router_aux(self, tid, spawn, log_file, hb_log_file='',
+                         env_file='', reason='phase-dispatch', aux=None,
+                         cmd_override=None):
+        """Fork an inspector or prescan agent worker (`router_step.build_*_
+        spawn`). The `spawn_pr_iterate` shape: no dispatch-table row, so no
+        phase contract, and the position is left where the caller put it."""
+        generation = self._resolve_generation(tid)
+        log_line_offset = _count_log_lines(log_file)
+        session_id = str(uuid.uuid4())
+        _phase_write_identity(tid, spawn, session_id)
+        pid, session_id = spawn_worker(
+            tid, generation, str(self._state_dir), reason=reason,
+            cmd_override=cmd_override, claude_bin=self._claude_bin,
+            claude_cmd=self._claude_cmd, prompt=spawn.prompt,
+            phase=spawn.phase, extra_env=spawn.env, session_id=session_id,
+            agent=spawn.agent,
+        )
+        _store_record_spawn(str(self._state_dir), tid, pid, generation,
+                            reason, session_id, phase=spawn.phase)
+        self._children.add(
+            tid=tid, pid=pid, generation=generation, reason=reason,
+            adopted=False, phase=spawn.phase, session_id=session_id,
+            start_ticks=_pid_start_time(pid), hb_log_file=hb_log_file,
+            step_id=spawn.step_id, log_file=log_file, env_file=env_file,
+            log_line_offset=log_line_offset, aux=aux,
+        )
+        return pid, session_id, spawn
 
     def _resolve_is_bug_locked(self, tid):
         """STEP_1's bug/non-bug routing condition, cached per ticket (task

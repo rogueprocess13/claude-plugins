@@ -24,6 +24,7 @@ fleet-controller/
   fleetd/gate_hold.py             # Hold reconciliation on its own cadence, kind-dispatched (a hold is a row, not a process)
   fleetd/orchestration.py         # Executor for the table's declared between-phase steps — bash gates, flow triggers, auto-merge
   fleetd/preamble.py              # Once-per-ticket preamble caller — env file, log init, branch context, preflight
+  fleetd/router_step.py           # Caller for the router's own lib/router-step.sh and lib/prescan-run.sh (FLEET_ROUTER_STEP_SHELL)
   fleetd/pusher.py                # Tracker event-board pusher (tracker-event-board-pusher) — drains ticket outboxes to board drivers
   fleetd/otel.py                  # OTel exporter — the ONLY module with a third-party dep
   fleetd/requirements-otel.txt    # That dep, optional and deliberately not project-wide
@@ -86,6 +87,60 @@ slice of what the router (an LLM) does inline on the manual path:
 | `phase_dispatch.py` | The router's step-to-step sequencing | Loads the dispatch table, builds and forks each phase's `claude -p` command, records dispatch position and worker rows in the state store as it goes (so resume never needs to re-derive position from the log), evaluates the four loop-type steps' caps, and opens/closes each phase's log bracket. |
 | `gate_hold.py` | The router's `GATE_HELD`/`RECONCILE_CYCLE` handling | A held ticket as a kind-agnostic `tickets` row (`held`, `hold_kind`, `hold_id`, `reconcile_cycle`), reconciled from `run_observe`'s live loop on its own `FLEET_GATE_RECONCILE_INTERVAL` cadence rather than every detection sweep or the (still dormant) phase-dispatch path — an indefinite human-approval wait survives a fleetd restart because it was never a process to begin with. Release-predicate dispatch is keyed on `hold_kind`: `'gate'` maps to `run_entry_gate` (`gate-check.sh --mode entry`, unchanged); `'human'` (human-hold-protocol) maps to `_reconcile_human_hold`, which reads Linear comments via `probe_human_answer` (three conditions: posted after `held_at`, non-bot author, body contains `hold_id`) instead of re-running a bash gate. After a `human` hold is released, `_hold_reconcile_pass` calls `clear_needs_info_on_release`, which runs `flow.sh <tid> needs-info-resolved` only when the manifest carries `needs-info` — the release-side mirror of the `needs-info` that `post_human_hold_comment` applied at creation, so an answered ticket does not stay `FLAG_NEEDS_INFO`/not-ready. Any other kind still resolves to `UNAVAILABLE`, never a release or a gate-stop. |
 | `orchestration.py` | The non-agent steps the router interleaves between phase spawns | Executor for each step's `pre_dispatch`/`post_dispatch` array in the dispatch table — `return-completeness-check.sh`, `outcome-label-check.sh`, `flow.sh` triggers, auto-merge, worktree release. Declared in the table, not enumerated in Python, for the same reason `phase_dispatch.py` loads the table instead of transcribing it. |
+
+### Router-step delegation
+
+`fleetd/router_step.py` (fleetd-shared-router-steps) is a fifth, thin module in
+the `preamble.py` mould: it calls the scripts the manual router calls —
+`ticket-auto-pipeline/lib/router-step.sh` (`post-spawn`, `inspector`,
+`inspector-done`, `retro-check`) and `lib/prescan-run.sh` (`gate`, `done`) —
+parses their eval-safe output, and maps every failure (missing script,
+`OSError`, timeout, non-zero exit, output without the result keys) to the
+fail-closed or advisory value. It holds no decision logic.
+
+Gated by `FLEET_ROUTER_STEP_SHELL` (default `false`, read on every call, so
+unsetting it is a full rollback). With it on, under phase-level dispatch:
+
+- **STEP_6** uses `router-step.sh retro-check --no-drift-log` instead of
+  `phase_dispatch.needs_retro`. The supervisor still writes the
+  `META|drift|warn` line, with the router's own text (`RETRO_DRIFT_MSG`). A
+  script failure reads as "retro not needed".
+- **After an IMPLEMENT, VERIFY or PR-REVIEW worker is reaped**, fleetd runs
+  `router-step.sh post-spawn` on the worker's return text (capture,
+  `META|phase-result`, VERIFY verdict recompute, IMPLEMENT return
+  completeness) and then re-reads the log, so `classify_phase` rung 2 sees the
+  phase-result record. With the flag off nothing writes that record on the
+  phase-dispatch path, and classification falls to the exit-code rung.
+  `classify_phase` and `next_step` stay Python: the router has no bash
+  counterpart, because its RESULT/VERDICT is the agent's judgement.
+- **Then `router-step.sh inspector`.** When it asks for an inspector, fleetd
+  forks a `guidance-extractor-agent` worker (`spawn_router_aux`, synthetic
+  step `INSPECTOR`) and parks the already-computed `next_step` decision on the
+  child entry's `aux`. That worker's reap runs `inspector-done` and then acts
+  on the parked decision. The inspector never changes or blocks a decision; a
+  failed prelude or spawn acts on it at once.
+- **Before the first dispatch** (`_dispatch_phase_locked`), `prescan-run.sh
+  gate` runs with the dispatch position as `--resume-step`. A stale repo gets
+  a `ticket-prescan-agent` worker (synthetic step `PRESCAN`); its reap runs
+  `done`, re-runs the gate with `--after`, and dispatches the parked step when
+  no stale repo is left.
+
+Timeouts: 30s (post-spawn, retro-check, inspector-done, prescan done), 60s
+(inspector), 180s (prescan gate); `FLEET_ROUTER_STEP_TIMEOUT` overrides all.
+The script runs in its own session and a timeout kills its process group.
+Calls run from the directory that holds the pipeline log's `logs/`, because
+the scripts write `./logs/<tid>-<phase>-agent.log` the way `spawn_capture`
+does. Known gap: an `INSPECTOR`/`PRESCAN` child entry lives only in memory,
+so a fleetd restart while one runs loses the parked decision. An inspector
+parked on an advance records the next step as the store position first, so a
+restart loses only the advisory inspection; otherwise the ticket resumes from
+its recorded position, as any interrupted phase does.
+
+Tests: `tests/test_router_step.py` (wrapper, stubbed `_run`, plus a real
+process-group kill), `tests/test_router_step_supervisor.py` (wiring, every
+call stubbed, no worker forked) and `tests/test_router_step_parity.py`
+(the bash scripts against the retained Python port; deleted with the port).
+`test_supervisor.py` is not to grow.
 
 **Rollout is not yet switched on.** Both paths are fully implemented and
 tested; fleetd still dispatches every ticket through the ticket-level path
@@ -525,6 +580,8 @@ All settings use `${VAR:-default}` pattern for env-var overrides:
 | `FLEET_HOLD_MAX_ATTEMPTS` | 3 | Bound on the ask → partial-answer → re-ask loop (`gate_hold.human_hold_attempt_exceeds_max`). A request that would push a ticket's `hold_attempts` past this writes `META\|gate-stop\|fail\|HUMAN_HOLD_EXHAUSTED` instead of creating another hold — matches `RECONCILE_EXHAUSTED`'s shape. `hold_attempts` never resets on release |
 | `FLEET_STORE_ENABLE` | true | Set `false` to disable the state store entirely — fleetd stops writing it and every detection engine falls back to reading the log files, which is the pre-store behaviour |
 | `FLEET_STORE_EVENT_RETENTION_DAYS` | 30 | Age past which `log_events`/`activity_events` projection rows are pruned. Projections only — nothing fleetd authored is ever pruned, and anything dropped returns on a rebuild |
+| `FLEET_ROUTER_STEP_SHELL` | false | Phase-level dispatch runs the router's own `router-step.sh`/`prescan-run.sh` steps (post-spawn, inspector, retro-check, prescan) — see "Router-step delegation". Off: the Python retro port, and no post-spawn, inspector or prescan on that path |
+| `FLEET_ROUTER_STEP_TIMEOUT` | (per step) | Seconds; overrides every router-step call's timeout (defaults 30/60/180) |
 | `FLEET_ACTIVITY_LOG_MAX_LINES` | 500 | Ring cap on `{tid}-activity.log`. Read by the hook, not the detector: only the last line's age and the current bracket's line count have consumers |
 | `FLEET_RUNAWAY_CALL_THRESHOLD` | 300 | Tool calls within one open spawn bracket above which `detect_runaway_calls` emits WARN. The mirror image of the activity-stall signal: a stalled agent stops calling tools, a runaway one never stops, and both keep the router's watchdog chirping. Counted per bracket rather than per log, so a long ticket is not flagged for being long. Must stay below `FLEET_ACTIVITY_LOG_MAX_LINES` — the activity log is ring-capped, so the count saturates there and a threshold above the cap is unreachable. WARN-only by design; a high call count is evidence, never proof |
 | `FLEET_MAX_RESTARTS` | 2 | Max automatic restarts before giving up |

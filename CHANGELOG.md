@@ -17,6 +17,43 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.48.0, ticket-auto-pipeline 0.113.1 (2026-11-11) — fleetd calls the router's own step scripts
+
+`fleetd-shared-router-steps`: phase-level dispatch can now run the router's deterministic step
+tails through the same scripts the manual router calls (`lib/router-step.sh`, `lib/prescan-run.sh`)
+instead of a Python port. Behind `FLEET_ROUTER_STEP_SHELL`, **default `false`**: with the flag
+unset, fleetd behaves as before except for the two parity fixes below.
+
+### Added
+- `fleetd/router_step.py`: subprocess caller for `router-step.sh` (`post-spawn`, `inspector`,
+  `inspector-done`, `retro-check`) and `prescan-run.sh` (`gate`, `done`). A missing script,
+  timeout, non-zero exit or unparseable output never crashes the supervisor and never invents a
+  pass: retro reads as not needed, post-spawn leaves classification to the exit-code rung, the
+  inspector and prescan are skipped. A timeout kills the script's process group.
+  `FLEET_ROUTER_STEP_TIMEOUT` overrides the 30/60/180 s defaults.
+- With `FLEET_ROUTER_STEP_SHELL=true`:
+  - STEP_6 uses `router-step.sh retro-check` instead of `phase_dispatch.needs_retro`.
+  - A reaped IMPLEMENT/VERIFY/PR-REVIEW worker gets `router-step.sh post-spawn` before
+    classification. This writes the `META|phase-result` record `classify_phase` rung 2 reads,
+    which nothing wrote on the phase-dispatch path before (`capture_phase_return` was never
+    called), so a PR-REVIEW `PASS` claim can now advance instead of ending as "blocked".
+  - The phase inspector runs: `router-step.sh inspector`, then a `guidance-extractor-agent`
+    worker when it asks for one. The next-step decision is computed first and acted on after the
+    inspector's reap; it is never changed. Expect inspector token spend.
+  - The prescan gate runs before the first dispatch and forks a `ticket-prescan-agent` worker per
+    stale repo. Expect prescan token spend.
+- `FLEET_ROUTER_STEP_SHELL` catalogued in `fleet-controller/features.json`.
+- Tests: `test_router_step.py`, `test_router_step_supervisor.py`, and
+  `test_router_step_parity.py` (the bash scripts against the Python port; deleted with the port).
+
+### Fixed (parity, found by the new parity test; the router script was the authority)
+- `needs_retro` now accepts `PR-REVIEW|pr-review|done|N/A` as the success marker, as the router
+  has since #318. A clean no-diff review no longer triggers a retro under fleetd.
+- The supervisor's `META|drift|warn` line now uses the router's text
+  (`drift detected — heartbeat fallback events present`), not `heartbeat fallback event detected`.
+- `dispatch-table.json` STEP_6 `retro_trigger_conditions[1]` (descriptive only) said "lacks both …
+  OK"; it now says "lacks … or … OK (or N/A)", matching the check (ticket-auto-pipeline 0.113.1).
+
 ## 0.113.0 (2026-11-10) — one readiness scorer and one mode classifier
 
 The entry gate (`gate-check.sh` Check 2.6) and ticket-appraise-exec Step 3.8 scored verification
