@@ -323,7 +323,8 @@ def inspector_done(phase, tid, log_file, return_text, lib_dir=None,
     def _go(result_file):
         return _call('router-step.sh',
                      ['inspector-done', phase, str(tid),
-                      '--result-file', result_file],
+                      '--result-file', result_file,
+                      '--log-file', str(log_file)],
                      timeout or _timeout(TIMEOUT_INSPECTOR_DONE), (),
                      cwd=project_dir_for(log_file), lib_dir=lib_dir)
 

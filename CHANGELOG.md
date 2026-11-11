@@ -17,6 +17,35 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-auto-pipeline 0.114.1, fleet-controller 0.48.1 (2026-11-12) — bash writes the phase-inspector verdict; retro names the tickets behind each failure code
+
+Two determinism fixes from the 2026-10-23 review (DET-SU-1, DET-SU-2).
+
+**Phase inspector (DET-SU-1).** `lib/inspect-verifiers.sh` already computed the five defect
+patterns and the verdict, but nothing called it: the guidance-extractor agent re-derived the
+verdict by eye from rules that had drifted from the lib's (`trivial_pass` at `criteria_total ≤ 1`
+vs `== 1`; `verdict_disagreement` firing on PASS+FAIL as well as `flaky_tests`).
+`assemble_inspector_context` (`lib/phase-inspector.sh`) now runs `inspect_verifiers` and writes the
+phase's `META|phase-inspector` line itself, with `"source":"bash"` (a rerun with the same verdict
+writes nothing). The agent's instructions carry that verdict and the lib's rule set, and tell it to
+classify the patterns only. `router-step.sh inspector-done` now runs `validate_phase_inspector` on
+any line the agent writes for the phase anyway; when it disagrees, bash's verdict is appended again
+with `agent_overridden:true`, so the last line for the phase is always bash's. It reads the log
+from the new optional `--log-file`, else `./logs/<TID>-pipeline.log`; fleetd's
+`router_step.inspector_done` passes `--log-file`. The canonical rule set is the lib's, so a
+consumer counting `signals` may see different counts than the agent produced. The spawn, its
+`--mode extract` flags and the `PHASE_INSPECTOR_READY`/`INSPECTOR_INSTRUCTIONS_FILE` contract are
+unchanged. `lib/tests/test-phase-inspector.sh` and `test-router-step.sh` cover the new paths; the
+`insp-verify_ready`/`insp-pr_ready` router-step fixtures were regenerated.
+
+**Retro attribution (DET-SU-2).** `retro.sh` emitted only `{CODE: count}`, so ticket-retro guessed
+which tickets produced each code. Its JSON now adds `failure_tickets` (`{CODE: [tid]}`, sorted and
+unique; a planner code carries its initiative id) and `failure_context`
+(`{CODE: [{ticket, errors, transcripts}]}` — the ticket's `errors_by_ticket` events and its existing
+`<logs>/<tid>-*-agent.log` captures). Both are built where `FAILURE_COUNT` is, so a cursor-skipped
+log adds nothing, as before. Additive; every other field is unchanged. ticket-retro Step 3a.5 reads
+`failure_context` instead of guessing. New test: `lib/tests/test-retro-failure-tickets.sh`.
+
 ## ticket-planner 0.38.0 (2026-11-12) — Specify ownership tables, first-dispatch contract markers
 
 planner-crosscheck-ownership, PR B of 2. ticket-auto-pipeline and fleet-controller unchanged.
