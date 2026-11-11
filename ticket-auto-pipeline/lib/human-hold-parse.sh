@@ -118,10 +118,16 @@ _hh_is_question_attr_key() {
 # (planner-specify-waiting-on-human) addresses a Specify business decision
 # by its outcome id, `O1`..`O999` with no leading zero — the same pattern the
 # planner's decision scan accepts for a `### O<n>` heading, so the scan can
-# never emit a binding this parser rejects. Question text never appears in it.
+# never emit a binding this parser rejects. `specify-param:<key>`
+# (planner-specify-parameters) addresses one open row of the planner's
+# proposal.md `## Parameters` registry by its key: a letter, then up to 63
+# letters, digits, `_`, `.` or `-` (64 characters at most). It may share a
+# SPECIFY_DECISION block with `specify-answer:O<n>`. The interval is safe
+# here because this is bash `[[ =~ ]]` ERE, not awk. Question text never
+# appears in any binding.
 _hh_binding_ok() {
   local LC_ALL=C
-  [[ "$1" =~ ^(note|flag:create|flag:refresh-bodies|flag:project|flag:accept:[A-Z][A-Z0-9_]*|waive:[A-Za-z0-9-]+:[A-Z][A-Z0-9_]*|adr:[A-Za-z0-9-]+|grill:[a-z][a-z0-9_-]*|consensus-answer:cited:[1-9][0-9]{0,3}|consensus-answer:testdata:[A-Za-z0-9][A-Za-z0-9_-]{0,127}|specify-answer:O[1-9][0-9]{0,2})$ ]]
+  [[ "$1" =~ ^(note|flag:create|flag:refresh-bodies|flag:project|flag:accept:[A-Z][A-Z0-9_]*|waive:[A-Za-z0-9-]+:[A-Z][A-Z0-9_]*|adr:[A-Za-z0-9-]+|grill:[a-z][a-z0-9_-]*|consensus-answer:cited:[1-9][0-9]{0,3}|consensus-answer:testdata:[A-Za-z0-9][A-Za-z0-9_-]{0,127}|specify-answer:O[1-9][0-9]{0,2}|specify-param:[A-Za-z][A-Za-z0-9_.-]{0,63})$ ]]
 }
 
 _hh_question_id_ok() {

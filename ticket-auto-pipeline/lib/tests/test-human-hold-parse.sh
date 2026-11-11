@@ -730,6 +730,113 @@ test_v2_rejects_malformed_specify_answer_binding() {
   return $rc
 }
 
+# ── Specify parameter (planner-specify-parameters) ──────────────────────────
+
+# One SPECIFY_DECISION round that mixes an outcome question with a
+# parameter question — the shape the planner's describer emits once a
+# proposal has both an open O<n> and an open `## Parameters` row.
+_specify_mixed_block() {
+  cat <<'EOF'
+=== HUMAN_HOLD ===
+SCHEMA_VERSION: 2
+PHASE: PLANNER
+REASON: SPECIFY_DECISION
+BLOCKS: artifacts/proposal.md
+ROUND: 1
+KIND: input
+AUDIENCE: either
+QUESTION_1: Specify could not source business outcome O1 and needs a decision: which role consumes the classified documents?
+QUESTION_1_ID: decision-O1-0123abcd
+QUESTION_1_BINDING: specify-answer:O1
+QUESTION_2: How should invoice totals be rounded? Suggested: "half-up to 2 decimals" — reply with exactly that text to accept it, or give your own value. (Total rounding; key billing.total_rounding, rounding; used by invoice-totals)
+QUESTION_2_ID: param-billing.total_rounding
+QUESTION_2_BINDING: specify-param:billing.total_rounding
+=== END HUMAN_HOLD ===
+EOF
+}
+
+test_v2_specify_mixed_answer_and_param_block_parses() {
+  _setup
+  _specify_mixed_block | _write_ret ret.txt
+  _parse PLANNER ret.txt
+  [ "$_RC" -eq 0 ] &&
+    [ "$(_json .parse_status)" = "ok" ] &&
+    [ "$(_json .reason)" = "SPECIFY_DECISION" ] &&
+    [ "$(_json '.questions | length')" = "2" ] &&
+    [ "$(_json '.questions[0].binding')" = "specify-answer:O1" ] &&
+    [ "$(_json '.questions[1].id')" = "param-billing.total_rounding" ] &&
+    [ "$(_json '.questions[1].binding')" = "specify-param:billing.total_rounding" ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_v2_accepts_specify_param_binding_keys() {
+  _setup
+  local b rc=0 k64
+  k64="a$(printf 'b%.0s' $(seq 1 63))"
+  for b in "specify-param:a" "specify-param:Z" "specify-param:billing.total_rounding" \
+    "specify-param:retry-delay" "specify-param:api.v2.page_size" "specify-param:x9" \
+    "specify-param:${k64}"; do
+    _specify_mixed_block | sed "s/^QUESTION_2_BINDING: .*/QUESTION_2_BINDING: ${b}/" | _write_ret ret.txt
+    _parse PLANNER ret.txt
+    if ! { [ "$_RC" -eq 0 ] && [ "$(_json '.questions[1].binding')" = "$b" ]; }; then
+      echo "    rejected valid binding: ${b}" >&2
+      rc=1
+    fi
+  done
+  _teardown
+  return $rc
+}
+
+test_v2_rejects_malformed_specify_param_binding() {
+  _setup
+  local b rc=0 k65
+  k65="a$(printf 'b%.0s' $(seq 1 64))"
+  for b in "specify-param:" "specify-param:1abc" "specify-param:has space" \
+    "specify-param:${k65}" "specify-param:_lead" "specify-param:.lead" \
+    "specify-param:-lead" "specify-param:a/b" "specify-param:a:b" "specify-params:a" \
+    "specify-param :a" "Specify-param:a"; do
+    _specify_mixed_block | sed "s|^QUESTION_2_BINDING: .*|QUESTION_2_BINDING: ${b}|" | _write_ret ret.txt
+    _parse PLANNER ret.txt
+    if ! { [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"binding grammar"* ]]; }; then
+      echo "    accepted malformed binding: ${b}" >&2
+      rc=1
+    fi
+  done
+  _teardown
+  return $rc
+}
+
+# Regression: every binding form that parsed before specify-param still
+# parses, and the near-misses of each still fail.
+test_v2_existing_bindings_unchanged_by_specify_param() {
+  _setup
+  local b rc=0
+  for b in "note" "flag:create" "flag:refresh-bodies" "flag:project" "flag:accept:PARAM_LITERAL" \
+    "waive:WIL-1:AC_VAGUE" "adr:ADR-0001" "grill:scope_1" "consensus-answer:cited:1" \
+    "consensus-answer:cited:9999" "consensus-answer:testdata:spec-slug_1" \
+    "specify-answer:O1" "specify-answer:O999"; do
+    _specify_mixed_block | sed "s|^QUESTION_2_BINDING: .*|QUESTION_2_BINDING: ${b}|" | _write_ret ret.txt
+    _parse PLANNER ret.txt
+    if ! { [ "$_RC" -eq 0 ] && [ "$(_json '.questions[1].binding')" = "$b" ]; }; then
+      echo "    rejected previously valid binding: ${b}" >&2
+      rc=1
+    fi
+  done
+  for b in "flag:accept:lower" "consensus-answer:cited:0" "consensus-answer:cited:10000" \
+    "specify-answer:O0" "specify-answer:Okey" "specify-answer:billing.total_rounding" "grill:Upper"; do
+    _specify_mixed_block | sed "s|^QUESTION_2_BINDING: .*|QUESTION_2_BINDING: ${b}|" | _write_ret ret.txt
+    _parse PLANNER ret.txt
+    if ! { [ "$_RC" -eq 1 ] && [[ "$(_json .parse_error)" == *"binding grammar"* ]]; }; then
+      echo "    accepted previously invalid binding: ${b}" >&2
+      rc=1
+    fi
+  done
+  _teardown
+  return $rc
+}
+
 # A v1 block may not name the v2-only SPECIFY_DECISION reason, even with a
 # v1 phase — the rejection must be on the reason, not the phase.
 test_v1_block_rejects_specify_decision_reason() {

@@ -17,6 +17,20 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-auto-pipeline 0.114.0 (2026-11-11) — `specify-param:<key>` human-hold binding
+
+The version-2 human-hold grammar accepts a new binding, `specify-param:<key>`, for a
+`SPECIFY_DECISION` question about one open row of the planner's `proposal.md` `## Parameters`
+registry (planner-specify-parameters, PR 1 of 2). `<key>` is a letter followed by letters, digits,
+`_`, `.` or `-`, 64 characters at most. One block may mix it with `specify-answer:O<n>` questions.
+`docs/human-hold-schema.md` documents the answer contract: one line of at most 500 characters; a
+suggestion is accepted by sending its text back, with no new sentinel; `__defer__` is refused;
+`duration`/`limit`/`size` answers must be a number with a unit; a client may answer it.
+
+No behaviour changes until ticket-planner emits the binding (PR 2). Every existing binding parses
+exactly as before; `lib/tests/test-human-hold-parse.sh` adds acceptance, rejection and regression
+cases. Consumers such as dexter should pin this version before the planner release that emits it.
+
 ## ticket-auto-pipeline 0.113.2 (2026-11-11) — critique tells the user how to clear `needs-info`
 
 When `ticket-critique` blocks a ticket it adds `needs-info` and tells the user to update the ticket

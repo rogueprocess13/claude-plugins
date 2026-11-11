@@ -333,6 +333,7 @@ answer. An agent never reads an answer and decides what to do with it.
 | `adr:<ADR_ID>` | `accept` or `reject` | Reserved. No consumer binds it yet: `adr-store.sh accept` refuses to run inside an agent session, so the planner asks an ADR question as `note`. |
 | `grill:<dimension>` | free text | grill-me: folds the answer into `resolved[]` for that dimension. |
 | `specify-answer:O<n>` | one line of free text, at most 500 characters, or `__defer__` | Planner: replaces business outcome `O<n>`'s `**Outcome:** NEEDS_HUMAN_DECISION` line in `proposal.md` with `**Outcome:** Human decision (verbatim, round <N>, <role>): "<answer>"`, or with `**Outcome:** Deferred decision: <question>` for `__defer__`. `<n>` is 1–999 with no leading zero. A longer value is rejected, never cut. Used for `SPECIFY_DECISION` (`KIND: input`, `AUDIENCE: either`), one question per open decision (id `decision-O<n>-<hash8>`); an answer to a decision that is already answered, or whose question was edited, is refused as `UNKNOWN_QUESTION_ID`. |
+| `specify-param:<key>` | one line of free text, at most 500 characters | Planner: writes the answer into the Value cell of the open row for `<key>` in `proposal.md`'s `## Parameters` table, and sets its Source to `human:r<N>:<role>`. `<key>` is a letter followed by letters, digits, `_`, `.` or `-`, 64 characters at most. Used for `SPECIFY_DECISION` (`KIND: input`, `AUDIENCE: either`, so a client may answer it), one question per open row (id `param-<key>`); one block may mix it with `specify-answer:O<n>` questions. To accept the suggestion the question quotes, send its text back exactly: there is no sentinel for it. `__defer__` is refused for this binding (`INVALID_VALUE`). For a `duration`, `limit` or `size` row the answer must be a number with a unit (for example `30 minutes`), or the refusal names an example; other kinds take free text. A longer value is rejected, never cut. An answer for a row that is no longer open is refused as `UNKNOWN_QUESTION_ID`. |
 | `note` | free text | Recorded only. |
 
 The parser checks the shape of a binding. Whether the consumer recognises it is the
@@ -355,7 +356,8 @@ A sentinel is offered in the question text only, never in `QUESTION_n_OPTIONS`: 
 questions take free text, and listing a sentinel as an option would turn them into a
 closed choice. `__defer__` may come from either audience. A `SPECIFY_DECISION` question is
 `AUDIENCE: either`, so a client may answer or defer it, and the operator may answer for
-the client. Deferring only keeps the behaviour from before the decision gate existed.
+the client. Deferring only keeps the behaviour from before the decision gate existed. A `specify-param:<key>` question takes no sentinel at all: `__defer__` is refused, and a
+suggestion is accepted by sending its quoted text, not by a `__default__`-style value.
 
 ### Canonical JSON (version 2)
 
