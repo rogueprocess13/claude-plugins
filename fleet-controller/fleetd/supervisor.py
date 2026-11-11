@@ -2369,10 +2369,10 @@ FLEET_WORKER_PERMISSION_MODE = os.environ.get(
 FLEET_WORKER_DISALLOWED_TOOLS = os.environ.get('FLEET_WORKER_DISALLOWED_TOOLS', '')
 
 # Autonomy every fleetd-dispatched ticket runs under (review finding PO-9).
-# The whole-ticket spawn passes it as `--{mode}` to `/ticket-auto`; the
-# phase-dispatch path passes it to `preamble.run_preamble` as AUTONOMY, so both
-# paths agree. `auto` keeps the behaviour fleetd always had: simple tickets
-# auto-approve and auto-merge, complex tickets still gate. `fleet-env-check.sh`
+# The whole-ticket spawn passes it as `--{mode}` to `/ticket-auto`, default
+# `auto` (the behaviour that path always had: simple tickets auto-approve and
+# auto-merge, complex tickets still gate). The phase-dispatch path passes it to
+# `preamble.run_preamble` as AUTONOMY only when it is set explicitly. `fleet-env-check.sh`
 # (fleetd's startup gate) refuses any other value; the fallback below only
 # matters when that gate is off (FLEET_STARTUP_ENV_CHECK=false).
 FLEET_WORKER_AUTONOMY_VALUES = ('auto', 'semi-auto', 'manual')
@@ -2395,6 +2395,15 @@ def _resolve_worker_autonomy(raw):
 
 FLEET_WORKER_AUTONOMY = _resolve_worker_autonomy(
     os.environ.get('FLEET_WORKER_AUTONOMY', 'auto'))
+# The phase-dispatch path only passes the setting when the operator set it.
+# Unset, the preamble keeps its own chain (TICKET_AUTONOMY, else `manual`), so
+# an unconfigured host does not lose human gating on that path.
+def _worker_autonomy_explicit(environ):
+    """True only when FLEET_WORKER_AUTONOMY is set to a non-blank value."""
+    return bool((environ.get('FLEET_WORKER_AUTONOMY') or '').strip())
+
+
+FLEET_WORKER_AUTONOMY_EXPLICIT = _worker_autonomy_explicit(os.environ)
 
 # Worker settings isolation (headless-worker-isolation Task B). Live-probed
 # (`claude -p ... --setting-sources project,local`, WIL-77 investigation):
@@ -4633,7 +4642,10 @@ class Supervisor:
         from_planned = reason.startswith('planned-dispatch')
         try:
             result = _preamble_mod.run_preamble(
-                tid, autonomy=FLEET_WORKER_AUTONOMY, from_planned=from_planned)
+                tid,
+                autonomy=(FLEET_WORKER_AUTONOMY
+                          if FLEET_WORKER_AUTONOMY_EXPLICIT else ''),
+                from_planned=from_planned)
         except _preamble_mod.PreambleError as exc:
             print(f"fleetd[{os.getpid()}]: preamble failed for {tid}: {exc}",
                   file=sys.stderr)
