@@ -125,6 +125,38 @@ test_flow_mutex_held_lock_held() {
   [ "$outer_rc" -eq 0 ]
 }
 
+# Review ARCH-3: with no TICKET_FLOW_LOCK_DIR the check must look where every
+# flow.sh copy locks — $REPOS_ROOT/.ticket-auto/locks, via lib/flow-lock.sh —
+# not at a path tied to one copy of flow.sh.
+test_flow_mutex_held_anchored_at_repos_root() {
+  local ws
+  ws=$(_setup_workspace)
+  (
+    cd "$ws"
+    source "$LIB_DIR/fleet-intervene.sh"
+    unset TICKET_FLOW_LOCK_DIR
+    export REPOS_ROOT="$ws/repos"
+    local tid="TEST-MUTEX-04"
+    mkdir -p "$REPOS_ROOT/.ticket-auto/locks"
+    local lockfile="$REPOS_ROOT/.ticket-auto/locks/.ticket-flow-${tid}.lock"
+    (
+      exec 9>"$lockfile"
+      flock -x 9
+      sleep 5
+    ) &
+    local holder_pid=$!
+    sleep 0.5
+    local rc=0
+    _flow_mutex_held "$tid" || rc=$?
+    kill "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    [ "$rc" -eq 0 ]
+  )
+  local outer_rc=$?
+  rm -rf "$ws"
+  [ "$outer_rc" -eq 0 ]
+}
+
 test_flow_mutex_held_stale_lockfile() {
   local ws
   ws=$(_setup_workspace)
@@ -1051,6 +1083,7 @@ for fn in \
   test_flow_mutex_held_lockfile_absent \
   test_flow_mutex_held_lock_held \
   test_flow_mutex_held_stale_lockfile \
+  test_flow_mutex_held_anchored_at_repos_root \
   test_fleet_kill_pipeline_nonexistent_ticket \
   test_fleet_kill_pipeline_normal \
   test_fleet_kill_pipeline_dry_run_does_not_mutate \

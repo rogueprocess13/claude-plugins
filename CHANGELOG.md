@@ -17,6 +17,18 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.114.2 (2026-11-12) — flow.sh's ticket lock no longer depends on which flow.sh copy ran
+
+fleet-controller 0.48.1.
+
+### Fixed
+
+- `flow.sh` locked `<its own directory>/locks/.ticket-flow-<TID>.lock`, so the plugin-cache copy (fleetd orchestration, `gate_hold.py`, `fleet-detect.sh`), the `~/.claude/skills` sync (the router, `/ticket-approve`) and a repo checkout each locked a different file and did not exclude each other. fleet-controller's `_flow_mutex_held` checked a fourth path, `~/.claude/skills/ticket-flow/locks` (October review ARCH-3). New `ticket-auto-pipeline/lib/flow-lock.sh` is the one resolver: `TICKET_FLOW_LOCK_DIR` when set, else `$REPOS_ROOT/.ticket-auto/locks`, beside the manifests the lock protects. `flow.sh` and `_flow_mutex_held` both use it. `flow.sh` now takes the lock after its `REPOS_ROOT` refusal (exit 13), so an unset `REPOS_ROOT` exits 13 without creating a lock directory, and an unknown trigger reports exit 3 before a busy lock's exit 42. No Python code opens the lock, so there is no Python twin. New tests: `test_flow_lock_shared_across_copies`, `test_flow_lock_unresolvable_refuses_13`, `test_flow_lock_resolver` (phase1.sh), `test_flow_mutex_held_anchored_at_repos_root` (test-fleet-intervene.sh).
+
+### Upgrade note
+
+During the upgrade window an old `flow.sh` copy (not yet re-synced, or a worker started before the upgrade) still locks beside itself, while upgraded copies lock under `$REPOS_ROOT/.ticket-auto/locks`. The two do not exclude each other until every copy runs the new code. Restart fleetd and open a new Claude Code session (which re-syncs `~/.claude/skills`) on each host once no ticket is mid-transition. The old `skills/ticket-flow/locks/` directories are no longer used and can be deleted.
+
 ## 0.114.1 (2026-11-12) — flow.sh releases the ticket lock before the outbox drain
 
 ### Fixed

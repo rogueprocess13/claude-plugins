@@ -36,6 +36,14 @@ if ! declare -f emit_event >/dev/null 2>&1; then
   done
 fi
 
+# flow-lock.sh: the one resolver for flow.sh's per-ticket lock (review
+# ARCH-3) — monorepo sibling first, then the SessionStart-synced copy.
+if ! declare -f flow_lock_path >/dev/null 2>&1; then
+  for _fl in "$_INTERVENE_DIR/../../ticket-auto-pipeline/lib/flow-lock.sh" "$HOME/.claude/skills/lib/flow-lock.sh"; do
+    [ -f "$_fl" ] && source "$_fl" && break
+  done
+fi
+
 # fleet-intervene.sh is the fence WRITER for a kill, not a fenced
 # participant — it does not have its own FLEET_GENERATION to be fenced
 # against, so ticket-killed is emitted with FLEET_GENERATION overridden to
@@ -76,12 +84,13 @@ _log_pipeline() {
 # Check if a flock mutex is held by flow.sh for a given ticket ID.
 # Returns 0 if mutex is held (should defer), 1 otherwise.
 _flow_mutex_held() {
-  local tid="$1"
-  # Lock path matches flow.sh's anchored resolution: TICKET_FLOW_LOCK_DIR
-  # env var first, then $HOME/.claude/skills/ticket-flow/locks as fallback.
-  # Must resolve to the same directory flow.sh uses or the mutex check is blind.
-  local lock_dir="${TICKET_FLOW_LOCK_DIR:-$HOME/.claude/skills/ticket-flow/locks}"
-  local lockfile="${lock_dir}/.ticket-flow-${tid}.lock"
+  local tid="$1" lockfile
+  # Lock path comes from the same resolver flow.sh uses (review ARCH-3):
+  # TICKET_FLOW_LOCK_DIR, else $REPOS_ROOT/.ticket-auto/locks. Unresolvable
+  # (resolver not installed, or neither variable set) means no flow.sh can
+  # hold this ticket's lock either, so report "not held".
+  declare -f flow_lock_path >/dev/null 2>&1 || return 1
+  lockfile=$(flow_lock_path "$tid") || return 1
   # Try to acquire the same lock flow.sh holds. If we can't get it
   # (exit 42 = EWOULDBLOCK), flow.sh is mid-mutation.
   if [ -f "$lockfile" ]; then
