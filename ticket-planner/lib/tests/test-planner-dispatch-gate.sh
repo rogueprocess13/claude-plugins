@@ -137,6 +137,82 @@ else
   fail "unknown gate" "rc=$RC err='$ERR'"
 fi
 
+# ── 3b. Specify parameters at the Crosscheck position ────────────────────────
+
+echo "--- 3b. second Specify stop at Crosscheck (planner-specify-parameters) ---"
+
+# param_init <root> <contract|legacy> — Consensus done, an open failure row.
+param_init() {
+  fresh_root "$1"
+  planner_state_init "$INIT" "an idea" >/dev/null
+  _halt_done "$INIT" Appraisal Discovery Architecture Specify Review Consensus
+  [ "$2" = contract ] && planner_state_write "$INIT" META contract start specify-parameters-v1
+  mkdir -p "$(planner_initiative_dir "$INIT")/artifacts"
+  cat >"$(planner_initiative_dir "$INIT")/artifacts/proposal.md" <<'PROPOSAL'
+# Proposal
+
+## Business Outcomes
+
+### O1
+**Outcome:** Finance users export invoices.
+
+## Parameters
+
+| Name | Key | Kind | Default | Value | Source |
+|------|-----|------|---------|-------|--------|
+| Export failure handling | `export.on_failure` | failure | retry twice, then email the operator | NEEDS_HUMAN_DECISION — what happens when an export fails? | — |
+PROPOSAL
+}
+
+if declare -f planner_params_scan >/dev/null || [ -f "${LIB_DIR}/planner-specify-params.sh" ]; then
+  param_init xc-contract contract
+  gate_run pre Crosscheck
+  log=$(planner_state_log "$INIT")
+  if [ "$RC" -eq 3 ] &&
+    [ "$(head -1 <<<"$OUT")" = "Consensus left 1 decision(s) open — this is a second stop, after Consensus and before Crosscheck." ] &&
+    grep -qF "  export.on_failure  what happens when an export fails?" <<<"$OUT" &&
+    ! grep -q '|Crosscheck|check|start|' "$log"; then
+    pass "contract initiative: open row at Crosscheck halts (rc 3), no Crosscheck|check|start"
+  else
+    fail "contract Crosscheck stop" "rc=$RC out='$(head -3 <<<"$OUT")' err='$ERR'"
+  fi
+
+  param_init xc-legacy legacy
+  gate_run pre Crosscheck
+  if [ "$RC" -eq 0 ] && [ -z "$OUT" ] && [ -z "$ERR" ]; then
+    pass "legacy initiative at Crosscheck: the specify gate does not run"
+  else
+    fail "legacy Crosscheck" "rc=$RC out='$OUT' err='$ERR'"
+  fi
+
+  param_init xc-review contract
+  gate_run specify Review
+  if [ "$RC" -eq 3 ] && grep -qF "Specify is waiting on 0 business decision(s) and 1 parameter value(s)" <<<"$OUT"; then
+    pass "contract initiative at Review: a parameter-only open row halts"
+  else
+    fail "contract Review stop" "rc=$RC out='$(head -3 <<<"$OUT")'"
+  fi
+
+  if declare -f _planner_dispatch_contract_mark >/dev/null; then
+    param_init mark legacy
+    log=$(planner_state_log "$INIT")
+    _planner_dispatch_contract_mark "$INIT" Review
+    n0=$(grep -c 'specify-parameters-v1' "$log" || true)
+    _planner_dispatch_contract_mark "$INIT" Specify
+    _planner_dispatch_contract_mark "$INIT" Specify
+    n1=$(grep -c 'specify-parameters-v1' "$log" || true)
+    if [ "$n0" -eq 0 ] && [ "$n1" -eq 1 ]; then
+      pass "contract mark: only for Specify, exactly once"
+    else
+      fail "contract mark" "before=$n0 after=$n1"
+    fi
+  else
+    fail "contract mark" "_planner_dispatch_contract_mark missing"
+  fi
+else
+  fail "second Specify stop" "planner-specify-params.sh missing"
+fi
+
 # ── 4. Refinement finish ─────────────────────────────────────────────────────
 
 echo "--- 4. planner_refinement_finish ---"

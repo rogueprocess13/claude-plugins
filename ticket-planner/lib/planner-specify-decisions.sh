@@ -23,14 +23,19 @@
 #   planner_specify_decisions_stray <INIT>   tripwire: <line_no>\t<reason> for every
 #                                            non-fenced NEEDS_HUMAN_DECISION line the
 #                                            scan did not take; reason is one of
-#                                            outside|heading|duplicate|variant|prose
+#                                            outside|heading|duplicate|variant|prose|param
+#                                            (param: an invalid `## Parameters` row of a
+#                                            contract initiative; valid rows are skipped)
 #                                            rc 0, 1 cannot read
-#   planner_specify_gate <INIT>              rc 0 clear, 3 at least one open decision,
-#                                            1 cannot scan. Writes no phase line; its
+#   planner_specify_gate <INIT>              rc 0 clear, 3 at least one open decision
+#                                            or open parameter row (planner_params_scan,
+#                                            contract initiatives only), 1 cannot scan. Writes no phase line; its
 #                                            only write is one deduplicated
 #                                            META|specify-gate|warn line per proposal sha8
-#   planner_specify_halt_report <INIT> <STATE_DIR>
-#                                            the halt prose (stdout); rc 0, 1 cannot scan
+#   planner_specify_halt_report <INIT> <STATE_DIR> [<position>]
+#                                            the halt prose (stdout); rc 0, 1 cannot scan.
+#                                            <position> Crosscheck words the first line
+#                                            as the second stop after Consensus
 #   planner_specify_render_answer <value> <round> <role>
 #                                            the answered Outcome line; rc 1 bad round/role
 #   planner_specify_render_defer <question>  the deferred Outcome line
@@ -214,12 +219,26 @@ planner_specify_decisions_open() {
 }
 
 planner_specify_decisions_stray() {
-  local init="$1" p rc=0 raw
+  local init="$1" p rc=0 raw valid="" invalid=""
   p=$(_planner_specify_proposal "$init") || rc=$?
   [ "$rc" -eq 2 ] && return 0
   [ "$rc" -eq 0 ] || return 1
   raw=$(_planner_specify_awk "$p") || return 1
-  printf '%s\n' "$raw" | awk -F'\t' '$1 == "S" { print $2 "\t" $3 }'
+  # A contract initiative's `## Parameters` table (planner-specify-parameters):
+  # a valid row's marker is a parameter question the scan takes there, so it
+  # is not listed; an invalid row's marker is never asked, reason `param`. A
+  # legacy initiative's table is not looked at, so its lines stay `outside`.
+  if declare -f planner_params_contract_initiative >/dev/null 2>&1 &&
+    planner_params_contract_initiative "$init"; then
+    valid=$(planner_params_rows "$init" | cut -f1 | tr '\n' ' ') || valid=""
+    invalid=$(planner_params_invalid "$init" | cut -f1 | tr '\n' ' ') || invalid=""
+  fi
+  # shellcheck disable=SC2016  # awk program, not shell
+  printf '%s\n' "$raw" | _PSD_VALID=" ${valid}" _PSD_INVALID=" ${invalid}" awk -F'\t' '
+    $1 != "S" { next }
+    index(ENVIRON["_PSD_VALID"], " " $2 " ") { next }
+    index(ENVIRON["_PSD_INVALID"], " " $2 " ") { print $2 "\tparam"; next }
+    { print $2 "\t" $3 }'
   return 0
 }
 
@@ -242,27 +261,51 @@ _planner_specify_tripwire() {
 }
 
 planner_specify_gate() {
-  local init="$1" p rc=0 open
+  local init="$1" p rc=0 open params
   p=$(_planner_specify_proposal "$init") || rc=$?
   [ "$rc" -eq 2 ] && return 0
   [ "$rc" -eq 0 ] || return 1
   open=$(planner_specify_decisions_scan "$init") || return 1
+  params=$(_planner_specify_params_open "$init") || return 1
   _planner_specify_tripwire "$init" "$p"
   [ -n "$open" ] && return 3
+  [ -n "$params" ] && return 3
   return 0
 }
 
+# _planner_specify_params_open <INIT> — the open parameter rows
+# (planner_params_scan); nothing for a legacy initiative or when the
+# parameter lib is not installed alongside this one.
+_planner_specify_params_open() {
+  declare -f planner_params_scan >/dev/null 2>&1 || return 0
+  planner_params_scan "$1"
+}
+
 planner_specify_halt_report() {
-  local init="$1" state_dir="$2" open n oid h lno q
+  local init="$1" state_dir="$2" pos="${3:-Review}" open params n m oid h lno q
   open=$(planner_specify_decisions_scan "$init") || return 1
+  params=$(_planner_specify_params_open "$init") || return 1
   n=0
+  m=0
   [ -n "$open" ] && n=$(printf '%s\n' "$open" | grep -c .)
-  echo "Specify is waiting on ${n} business decision(s) — the proposal could not source them."
+  [ -n "$params" ] && m=$(printf '%s\n' "$params" | grep -c .)
+  if [ "$pos" = "Crosscheck" ]; then
+    echo "Consensus left $((n + m)) decision(s) open — this is a second stop, after Consensus and before Crosscheck."
+  elif [ "$m" -gt 0 ]; then
+    echo "Specify is waiting on ${n} business decision(s) and ${m} parameter value(s) — the plan could not source them."
+  else
+    echo "Specify is waiting on ${n} business decision(s) — the proposal could not source them."
+  fi
   echo ""
   if [ -n "$open" ]; then
     while IFS=$'\t' read -r oid h lno q; do
       printf '  %s  %s\n' "$oid" "$q"
     done <<<"$open"
+  fi
+  # The suggestion column may be empty, so not `IFS=$'\t' read` (tab is IFS
+  # whitespace and would collapse it): key is field 1, question field 6.
+  if [ -n "$params" ]; then
+    printf '%s\n' "$params" | awk -F'\t' '{ printf "  %s  %s\n", $1, $6 }'
   fi
   echo ""
   echo "Answer:     bash lib/planner-stop-describe.sh ${init}, then /ticket-planner resume ${init} --answers <file>"
@@ -352,3 +395,10 @@ planner_specify_substitute() {
   ' "$proposal" >"$out" || return 1
   return 0
 }
+
+# The parameter registry (planner-specify-parameters). Sourced last: it sources
+# this file back when loaded first, and needs these functions defined.
+if ! declare -f planner_params_scan >/dev/null 2>&1 && [ -z "${_PLANNER_SPECIFY_PARAMS_DIR:-}" ] &&
+  [ -f "${_PLANNER_SPECIFY_DECISIONS_DIR}/planner-specify-params.sh" ]; then
+  source "${_PLANNER_SPECIFY_DECISIONS_DIR}/planner-specify-params.sh"
+fi

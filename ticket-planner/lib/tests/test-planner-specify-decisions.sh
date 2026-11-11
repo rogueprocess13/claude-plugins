@@ -644,6 +644,151 @@ if need "$name" planner_specify_substitute; then
   if [ "$rc" -eq 2 ] && [ "$rc2" -eq 2 ]; then pass "$name"; else fail "$name" "rc=$rc rc2=$rc2"; fi
 fi
 
+# ── 3.1 Parameters (planner-specify-parameters) ───────────────────────────────
+
+echo "=== parameters ==="
+
+PARAM_HDR='| Name | Key | Kind | Default | Value | Source |
+|------|-----|------|---------|-------|--------|'
+
+# contract — mark the current initiative as a contract initiative.
+contract() { printf '%s|META|contract|start|specify-parameters-v1\n' "2026-01-01T00:00:00Z" >>"$LOG"; }
+
+name="gate rc 3 on a parameter-only open row (contract)"
+if need "$name" planner_specify_gate planner_params_scan; then
+  fresh
+  contract
+  prop <<EOF
+## Business Outcomes
+### O1
+**Outcome:** Accountants export invoices.
+
+## Parameters
+
+${PARAM_HDR}
+| Invoice rounding | \`billing.total_rounding\` | rounding | half-up | NEEDS_HUMAN_DECISION — round each line, or only the invoice total? | — |
+EOF
+  rc=0
+  planner_specify_gate "$INIT" || rc=$?
+  if [ "$rc" -eq 3 ] && ! grep -q 'specify-gate' "$LOG"; then pass "$name"; else fail "$name" "rc=$rc log=[$(grep specify-gate "$LOG")]"; fi
+fi
+
+name="halt report lists outcome and parameter lines (Review, mixed)"
+if need "$name" planner_specify_gate planner_specify_halt_report planner_params_scan; then
+  fresh
+  contract
+  prop <<EOF
+## Business Outcomes
+### O1
+**Outcome:** NEEDS_HUMAN_DECISION — which role signs off?
+
+## Parameters
+
+${PARAM_HDR}
+| Invoice rounding | \`billing.total_rounding\` | rounding | half-up | NEEDS_HUMAN_DECISION — round each line, or only the invoice total? | — |
+| Idle timeout | \`auth.idle\` | duration | 30 minutes | 30 minutes | default |
+EOF
+  rc=0
+  planner_specify_gate "$INIT" || rc=$?
+  report=$(planner_specify_halt_report "$INIT" "$IDIR")
+  want="Specify is waiting on 1 business decision(s) and 1 parameter value(s) — the plan could not source them.
+
+  O1  which role signs off?
+  billing.total_rounding  round each line, or only the invoice total?
+
+Answer:     bash lib/planner-stop-describe.sh ${INIT}, then /ticket-planner resume ${INIT} --answers <file>
+            (or edit the Outcome line in proposal.md by hand, then /ticket-planner resume ${INIT})
+Proposal:   ${IDIR}/artifacts/proposal.md"
+  if [ "$rc" -eq 3 ] && [ "$report" = "$want" ]; then pass "$name"; else fail "$name" "rc=$rc report=[$report]"; fi
+fi
+
+name="halt report at Crosscheck names the second stop"
+if need "$name" planner_specify_halt_report planner_params_scan; then
+  report=$(planner_specify_halt_report "$INIT" "$IDIR" Crosscheck)
+  first=$(head -1 <<<"$report")
+  if [ "$first" = "Consensus left 2 decision(s) open — this is a second stop, after Consensus and before Crosscheck." ] &&
+    [ "$(tail -n +2 <<<"$report")" = "$(planner_specify_halt_report "$INIT" "$IDIR" | tail -n +2)" ]; then
+    pass "$name"
+  else fail "$name" "report=[$report]"; fi
+fi
+
+name="outcome-only halt is unchanged for a contract initiative"
+if need "$name" planner_specify_halt_report; then
+  fresh
+  printf '%s' "$OPEN_PROP" >"$PROP"
+  legacy=$(planner_specify_halt_report "$INIT" "$IDIR")
+  contract
+  now=$(planner_specify_halt_report "$INIT" "$IDIR")
+  if [ "$legacy" = "$now" ] && grep -qx "Specify is waiting on 1 business decision(s) — the proposal could not source them." <<<"$now"; then
+    pass "$name"
+  else fail "$name" "[$legacy] vs [$now]"; fi
+fi
+
+name="legacy initiative ignores a hand-written table"
+if need "$name" planner_specify_gate planner_specify_decisions_stray; then
+  fresh
+  prop <<EOF
+## Business Outcomes
+### O1
+**Outcome:** Fine.
+
+## Parameters
+
+${PARAM_HDR}
+| Invoice rounding | \`billing.total_rounding\` | rounding | half-up | NEEDS_HUMAN_DECISION — per line? | — |
+EOF
+  rc=0
+  planner_specify_gate "$INIT" || rc=$?
+  st=$(stray)
+  if [ "$rc" -eq 0 ] && [ "$st" = "$(printf '9\toutside')" ]; then
+    pass "$name"
+  else fail "$name" "rc=$rc stray=[$st]"; fi
+fi
+
+name="tripwire skips valid parameter rows and lists an invalid one as param, once per sha8"
+if need "$name" planner_specify_gate planner_specify_decisions_stray planner_params_scan; then
+  fresh
+  contract
+  prop <<EOF
+## Business Outcomes
+### O1
+**Outcome:** Fine.
+
+## Parameters
+
+${PARAM_HDR}
+| Invoice rounding | \`billing.total_rounding\` | rounding | half-up | NEEDS_HUMAN_DECISION — per line? | — |
+| Bad kind | \`misc.other\` | other | x | NEEDS_HUMAN_DECISION — never asked | — |
+
+## Risks
+**Outcome:** NEEDS_HUMAN_DECISION — stray
+EOF
+  st=$(stray)
+  rc1=0
+  planner_specify_gate "$INIT" || rc1=$?
+  rc2=0
+  planner_specify_gate "$INIT" || rc2=$?
+  n=$(grep -c '|META|specify-gate|warn|' "$LOG" || true)
+  line=$(grep '|META|specify-gate|warn|' "$LOG" | head -1 | cut -d'|' -f5)
+  sha=$(sha256sum "$PROP" | cut -c1-8)
+  if [ "$st" = "$(printf '10\tparam\n13\toutside')" ] && [ "$rc1" -eq 3 ] && [ "$rc2" -eq 3 ] && [ "$n" -eq 1 ] &&
+    [ "$line" = "2 NEEDS_HUMAN_DECISION line(s) not asked: L10 param, L13 outside [proposal ${sha}]" ]; then
+    pass "$name"
+  else fail "$name" "stray=[$st] rc=$rc1/$rc2 n=$n line=[$line] sha=$sha"; fi
+fi
+
+name="gate under set -euo pipefail survives rc 3 from a parameter row"
+if need "$name" planner_specify_gate planner_params_scan; then
+  # shellcheck disable=SC2016  # inner script, expanded by the child shell
+  out=$(REPOS_ROOT="$REPOS_ROOT" _SD_LIB="$SD_LIB" _LIB_DIR="$LIB_DIR" _INIT="$INIT" bash -c '
+    set -euo pipefail
+    source "${_LIB_DIR}/planner-state.sh"
+    source "${_SD_LIB}"
+    rc=0; planner_specify_gate "$_INIT" || rc=$?
+    echo "rc=$rc"' 2>&1) || true
+  if [ "$out" = "rc=3" ]; then pass "$name"; else fail "$name" "[$out]"; fi
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
