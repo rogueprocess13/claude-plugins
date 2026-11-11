@@ -144,6 +144,12 @@ for fixture_dir in "$FIXTURES_DIR"/*/; do
   # What SKILL.md's argument-persistence step does on every plan/resume: record
   # the no-tests rule once (#503), here by detection from repo-stub/CLAUDE.md.
   planner_testdata_no_tests_rule_persist "$init_id" >/dev/null 2>&1
+  # contracts — optional artifact-contract markers the fixture's initiative
+  # carries (e.g. spec-ownership-v1), written as META|contract|start|<name>.
+  while IFS= read -r contract; do
+    [ -n "$contract" ] || continue
+    planner_state_write "$init_id" META contract start "$contract" >/dev/null 2>&1
+  done < <(jq -r '.contracts // [] | .[]' "$expected_file")
 
   planner_crosscheck_run "$init_id" >/dev/null 2>&1
   rc=$?

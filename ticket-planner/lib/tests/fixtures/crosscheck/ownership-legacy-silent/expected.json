@@ -1,0 +1,6 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "notes": "planner-crosscheck-ownership: the same specs with no spec-ownership-v1 marker. The ownership family stays silent, so a legacy or in-flight initiative is unchanged even when its specs carry tables."
+}

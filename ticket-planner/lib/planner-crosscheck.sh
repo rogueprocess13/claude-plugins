@@ -20,6 +20,9 @@
 #   - planner-crosscheck-ac-coverage.sh (rehearsal F16 — uncovered status codes)
 #   - planner-crosscheck-params.sh      (planner-specify-parameters — undeclared
 #                                        unit literals against ## Parameters)
+#   - planner-crosscheck-ownership.sh   (planner-crosscheck-ownership — the
+#                                        ## Writes / ## Reads tables judged
+#                                        against each other)
 #
 # Before every family, the test-data synthesis sub-step
 # (planner-testdata-synth.sh, planner-test-data-derivation) writes the TD
@@ -93,6 +96,8 @@ _planner_crosscheck_source_if_missing "planner_crosscheck_ac_coverage" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ac-coverage.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_params" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-params.sh"
+_planner_crosscheck_source_if_missing "planner_crosscheck_ownership" \
+  "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ownership.sh"
 _planner_crosscheck_source_if_missing "planner_testdata_synthesize" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-testdata-synth.sh"
 _planner_crosscheck_source_if_missing "planner_state_write" \
@@ -119,7 +124,9 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # match in a legacy initiative) and VERIFICATION_NOTES_MISSING_LEGACY are
 # warn-level; VERIFICATION_NOTES_MISSING and TEST_DATA_IMPLIED block, as does
 # TEST_DATA_SYNTH_FAILED (the synthesis sub-step could not write its specs).
-PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY"
+# planner-crosscheck-ownership: OWN_NEAR_MATCH, OWN_UNDECLARED_REF,
+# OWN_EXTERNAL_UNANCHORED and OWN_EDGES_DIVERGED are tripwires, warn-level.
+PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY OWN_NEAR_MATCH OWN_UNDECLARED_REF OWN_EXTERNAL_UNANCHORED OWN_EDGES_DIVERGED"
 
 # Per-instance codes (planner-crosscheck-ownership D10). A listed code is
 # accepted one instance at a time and never code-wide: emit matches each
@@ -150,7 +157,15 @@ PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_
 # instance in the latest Crosscheck attempt's `fail|<CODE>` lines
 # (planner_crosscheck_instance_accept_all); it never writes `<CODE>@*`, so an
 # instance first seen in a later run still fails.
+#
+# The four ownership codes share one instance and one parse function. Their
+# note field stays empty until the describer's `ownership-findings` note
+# exists (task 5.3); until then the describer asks no question for them.
 PLANNER_CROSSCHECK_INSTANCE_CODES="PARAM_LITERAL:planner_crosscheck_params_instance:planner_crosscheck_params_accept_parse:_planner_stop_param_literals_question:planner-crosscheck-params.sh:planner_crosscheck_params_literal"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_MULTI_WRITER:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse::planner-crosscheck-ownership.sh:"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_NO_WRITER:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse::planner-crosscheck-ownership.sh:"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_MULTI_FIRE:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse::planner-crosscheck-ownership.sh:"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_TRIGGER_UNOWNED:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse::planner-crosscheck-ownership.sh:"
 
 # Usage: planner_crosscheck_instance_field <code> <instance|parse|note|lib|detail>
 # Prints the field of <code>'s entry (possibly empty); rc 1 when <code> is
@@ -478,6 +493,13 @@ planner_crosscheck_run() {
   total_warn=$((total_warn + w))
   total_accepted=$((total_accepted + a))
 
+  # Ownership family (planner-crosscheck-ownership): silent without the
+  # spec-ownership-v1 marker.
+  read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_ownership "$initiative_id")
+  total_blocking=$((total_blocking + b))
+  total_warn=$((total_warn + w))
+  total_accepted=$((total_accepted + a))
+
   if [ "$total_blocking" -gt 0 ]; then
     planner_state_write "$initiative_id" "Crosscheck" "check" "fail" \
       "${total_blocking} blocking finding(s), ${total_warn} warn, ${total_accepted} accepted — see META|crosscheck entries"
@@ -584,7 +606,7 @@ planner_crosscheck_findings_summary() {
 # Codes whose findings are inherently about a set of artifacts rather than one
 # — grouping them under whichever filename happens to appear first in the
 # message would point the operator at an arbitrary member of the set.
-PLANNER_CROSSCHECK_CROSS_FILE_CODES="RESOLUTION_NOT_PROPAGATED CARVE_SCOPE_LOST SIGNALS_UNIFORM TEST_DATA_UNOWNED TEST_DATA_UNSOURCED_LEGACY"
+PLANNER_CROSSCHECK_CROSS_FILE_CODES="RESOLUTION_NOT_PROPAGATED CARVE_SCOPE_LOST SIGNALS_UNIFORM TEST_DATA_UNOWNED TEST_DATA_UNSOURCED_LEGACY OWN_MULTI_WRITER OWN_MULTI_FIRE"
 
 # One-line remediation hint per finding code. Deliberately canned and code-
 # scoped: it says what shape the fix takes, not what the specific fix is —
@@ -621,6 +643,24 @@ planner_crosscheck_fix_hint() {
     ;;
   PARAM_LITERAL | PARAM_LITERAL@*)
     echo "the spec states a unit value no decided ## Parameters row declares — declare it as a row (and name its key in backticks in ## Technical Context), or change the spec to the declared value; accept one genuine literal with the per-literal --accept the message prints"
+    ;;
+  OWN_TABLE_INVALID)
+    echo "a spec's ## Writes or ## Reads section is missing or malformed — write each as None. or one table (Writes: columns Key and Op, Reads: columns Key and Source) right under the heading, and fix the named rows; an effect is caused with a trigger row in ## Writes, never read"
+    ;;
+  OWN_MULTI_WRITER | OWN_MULTI_WRITER@*)
+    echo "two specs claim the same key in conflicting ways — give the key one owner and have the others read it, or narrow each transition so they leave different states (append never conflicts); accept a genuine overlap with the per-key --accept the message prints"
+    ;;
+  OWN_NO_WRITER | OWN_NO_WRITER@*)
+    echo "a spec reads a key no other spec writes — add the write to the spec that owns it, or anchor the read: code:<path> where it already exists, framework:<name> when the platform provides it, external:<name> when an outside system does; accept a known gap with the per-read --accept the message prints"
+    ;;
+  OWN_MULTI_FIRE | OWN_MULTI_FIRE@*)
+    echo "more than one spec owns the same side effect — keep one fire row (that spec's ACs carry delivery and idempotency) and make the others trigger"
+    ;;
+  OWN_TRIGGER_UNOWNED | OWN_TRIGGER_UNOWNED@*)
+    echo "a spec triggers a side effect no spec owns — add a fire row to the spec that delivers the effect, or remove the trigger"
+    ;;
+  OWN_EDGES_FAILED)
+    echo "Crosscheck could not write artifacts/ownership-edges.json — check the artifacts directory is writable, then resume"
     ;;
   CARVE_SCOPE_LOST)
     echo "the spec-file count no longer matches the ticket count Specify declared — record the rescope in consensus.md, or restore the missing spec"
