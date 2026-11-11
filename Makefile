@@ -225,6 +225,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-retro-gate-held.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-complexity-calibration.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-lib-layout.sh
+	bash ticket-auto-pipeline/lib/tests/test-retro-failure-tickets.sh
 	# ticket-audit tests
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-split-detection.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-drift.sh
