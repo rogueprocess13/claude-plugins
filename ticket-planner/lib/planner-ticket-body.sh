@@ -80,6 +80,10 @@ if ! declare -f _planner_tds_edges_of >/dev/null 2>&1; then
   # shellcheck source=planner-testdata-synth.sh
   source "${_PLANNER_TICKET_BODY_LIB_DIR}/planner-testdata-synth.sh"
 fi
+if ! declare -f _planner_own_edges_of >/dev/null 2>&1; then
+  # shellcheck source=planner-ownership-edges.sh
+  source "${_PLANNER_TICKET_BODY_LIB_DIR}/planner-ownership-edges.sh"
+fi
 if ! declare -f planner_state_log >/dev/null 2>&1; then
   # shellcheck source=planner-state.sh
   source "${_PLANNER_TICKET_BODY_LIB_DIR}/planner-state.sh"
@@ -93,7 +97,7 @@ PLANNER_TICKET_TYPES="feature bug improvement chore security"
 # planning metadata; Title is the issue title; Verification Plan, Related
 # Tickets and Planner Context are regenerated from the spec, so a hand-written
 # copy in the spec never reaches the ticket twice.
-_PLANNER_TB_DROP="|title|description|labels|signals|verification notes|verification plan|related tickets|planner context|"
+_PLANNER_TB_DROP="|title|description|labels|signals|verification notes|verification plan|related tickets|planner context|writes|reads|"
 
 # ── Spec reading helpers ─────────────────────────────────────────────────────
 
@@ -174,9 +178,11 @@ planner_ticketgen_slugs() {
 # vanishing. Then the spec's test-data synthesis edges (sidecar
 # `edges[].blocked_by` for this consumer, sorted; planner-test-data-derivation
 # 4.8) not already listed — the consumer spec never names its TD spec, so the
-# sidecar is the only place that edge lives. Every reader of the dependency
-# set (deps_json, order, dep_refs, Crosscheck's cycle check) goes through
-# here.
+# sidecar is the only place that edge lives. Then the ownership edges
+# (artifacts/ownership-edges.json, planner-crosscheck-ownership D6) for this
+# consumer, sorted, not already listed. Every reader of the dependency set
+# (deps_json, order, dep_refs, Crosscheck's cycle check, draft readiness,
+# planner_uat_policy_resolve) goes through here.
 planner_ticketgen_spec_deps() {
   local spec_file="$1" specs_dir="$2"
   local -a slugs matches
@@ -209,6 +215,12 @@ planner_ticketgen_spec_deps() {
     seen[$b]=1
     echo "$b"
   done < <(_planner_tds_edges_of "$(_planner_tb_sidecar "$specs_dir")" "$specs_dir")
+  while IFS=$'\037' read -r c b; do
+    [ "$c" = "$slug" ] && [ -n "$b" ] || continue
+    [ -n "${seen[$b]:-}" ] && continue
+    seen[$b]=1
+    echo "$b"
+  done < <(_planner_own_edges_of "$(_planner_tb_own_sidecar "$specs_dir")" "$specs_dir")
 }
 
 planner_ticketgen_deps_json() {

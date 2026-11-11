@@ -20,11 +20,17 @@
 #   - planner-crosscheck-ac-coverage.sh (rehearsal F16 — uncovered status codes)
 #   - planner-crosscheck-params.sh      (planner-specify-parameters — undeclared
 #                                        unit literals against ## Parameters)
+#   - planner-crosscheck-ownership.sh   (planner-crosscheck-ownership — the
+#                                        ## Writes / ## Reads tables judged
+#                                        against each other)
 #
 # Before every family, the test-data synthesis sub-step
 # (planner-testdata-synth.sh, planner-test-data-derivation) writes the TD
 # specs, artifacts/testdata-synth.json and the INDEX.md block, so every
-# family validates the synthesized state. See planner_crosscheck_run.
+# family validates the synthesized state. Then, for a spec-ownership-v1
+# initiative, the edges step (planner_ownership_edges_write) writes
+# artifacts/ownership-edges.json, so the deps family's cycle check sees those
+# edges too. See planner_crosscheck_run.
 #
 # Adding a check later means adding one more call in planner_crosscheck_run
 # and, if it can emit a non-blocking finding, adding its codes to
@@ -93,6 +99,8 @@ _planner_crosscheck_source_if_missing "planner_crosscheck_ac_coverage" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ac-coverage.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_params" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-params.sh"
+_planner_crosscheck_source_if_missing "planner_crosscheck_ownership" \
+  "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ownership.sh"
 _planner_crosscheck_source_if_missing "planner_testdata_synthesize" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-testdata-synth.sh"
 _planner_crosscheck_source_if_missing "planner_state_write" \
@@ -119,7 +127,127 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # match in a legacy initiative) and VERIFICATION_NOTES_MISSING_LEGACY are
 # warn-level; VERIFICATION_NOTES_MISSING and TEST_DATA_IMPLIED block, as does
 # TEST_DATA_SYNTH_FAILED (the synthesis sub-step could not write its specs).
-PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY"
+# planner-crosscheck-ownership: OWN_NEAR_MATCH, OWN_UNDECLARED_REF,
+# OWN_EXTERNAL_UNANCHORED and OWN_EDGES_DIVERGED are tripwires, warn-level.
+PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY OWN_NEAR_MATCH OWN_UNDECLARED_REF OWN_EXTERNAL_UNANCHORED OWN_EDGES_DIVERGED"
+
+# Per-instance codes (planner-crosscheck-ownership D10). A listed code is
+# accepted one instance at a time and never code-wide: emit matches each
+# finding's instance token against `accepted|<token> …` records and ignores a
+# bare `accepted|<CODE>` record; `--accept` sends `<CODE>@…` (and the refused
+# code-wide form) to the code's parse function; the stop describer never asks
+# a `flag:accept:<CODE>` question for it. One space-separated entry per code,
+# fields separated by `:`
+#
+#   <CODE>:<instance_fn>:<parse_fn>:<note_fn>:<lib>:<detail_fn>
+#
+#   instance_fn <message>  the instance token of one finding message (the
+#                          text after the code), or nothing
+#   parse_fn <arg>         <arg> is the whole --accept value; prints
+#                          `<token>\t<record text>`, or rc 1 with the reason
+#                          on stderr (the code-wide form included)
+#   note_fn <INIT> <count> the describer's note question for the code
+#                          (planner-stop-describe.sh), or empty for none;
+#                          codes sharing a note get it once
+#   lib                    the lib/ file defining instance_fn, parse_fn and
+#                          detail_fn, sourced on demand (empty: already defined)
+#   detail_fn <message>    optional: the text a wildcard accept records ahead
+#                          of the reason (PARAM_LITERAL: the literal), so its
+#                          record is `<token> <detail> — <reason>`
+#
+# Wildcard accept: `--accept <CODE>@*:"<reason>"` is valid for every listed
+# code. At persist time it records one `accepted|<token> …` line per distinct
+# instance in the latest Crosscheck attempt's `fail|<CODE>` lines
+# (planner_crosscheck_instance_accept_all); it never writes `<CODE>@*`, so an
+# instance first seen in a later run still fails.
+#
+# The four ownership codes share one instance function, one parse function
+# and one note (`ownership-findings`, asked once for all four).
+PLANNER_CROSSCHECK_INSTANCE_CODES="PARAM_LITERAL:planner_crosscheck_params_instance:planner_crosscheck_params_accept_parse:_planner_stop_param_literals_question:planner-crosscheck-params.sh:planner_crosscheck_params_literal"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_MULTI_WRITER:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_NO_WRITER:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_MULTI_FIRE:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
+PLANNER_CROSSCHECK_INSTANCE_CODES+=" OWN_TRIGGER_UNOWNED:planner_crosscheck_ownership_instance:planner_crosscheck_ownership_accept_parse:_planner_stop_ownership_question:planner-crosscheck-ownership.sh:"
+
+# Usage: planner_crosscheck_instance_field <code> <instance|parse|note|lib|detail>
+# Prints the field of <code>'s entry (possibly empty); rc 1 when <code> is
+# not a per-instance code or the field name is unknown.
+planner_crosscheck_instance_field() {
+  local code="$1" want="$2" entry rest i p n l d
+  for entry in $PLANNER_CROSSCHECK_INSTANCE_CODES; do
+    [ "${entry%%:*}" = "$code" ] || continue
+    rest="${entry#*:}"
+    IFS=: read -r i p n l d <<<"$rest"
+    case "$want" in
+    instance) printf '%s\n' "$i" ;;
+    parse) printf '%s\n' "$p" ;;
+    note) printf '%s\n' "$n" ;;
+    lib) printf '%s\n' "$l" ;;
+    detail) printf '%s\n' "$d" ;;
+    *) return 1 ;;
+    esac
+    return 0
+  done
+  return 1
+}
+
+# Usage: planner_crosscheck_is_instance_code <code>
+planner_crosscheck_is_instance_code() {
+  planner_crosscheck_instance_field "$1" lib >/dev/null
+}
+
+# Source <code>'s lib into the current shell when its parse function is not
+# defined yet. Usage: planner_crosscheck_instance_load <code>
+planner_crosscheck_instance_load() {
+  local lib fn
+  lib=$(planner_crosscheck_instance_field "$1" lib) || return 1
+  [ -n "$lib" ] || return 0
+  fn=$(planner_crosscheck_instance_field "$1" parse)
+  [ -n "$fn" ] && declare -f "$fn" >/dev/null 2>&1 && return 0
+  # shellcheck source=/dev/null
+  source "${_PLANNER_CROSSCHECK_LIB_DIR}/${lib}"
+}
+
+# Wildcard accept (planner-crosscheck-ownership D10): record one accept per
+# distinct instance of <code> in the latest Crosscheck attempt (every line
+# after the last `Crosscheck|check|start`), as `<token> <reason>`, or
+# `<token> <detail> — <reason>` when the code has a detail function. An
+# instance already accepted is not recorded again. Never writes `<code>@*`.
+# Usage: planner_crosscheck_instance_accept_all <initiative_id> <code> <reason>
+# rc 1 (reason on stderr) when the latest attempt has no <code> finding.
+planner_crosscheck_instance_accept_all() {
+  local initiative_id="$1" code="$2" reason="$3"
+  local log start instance_fn detail_fn msg token detail found=0 seen=" "
+  planner_crosscheck_instance_load "$code" || return 1
+  instance_fn=$(planner_crosscheck_instance_field "$code" instance)
+  detail_fn=$(planner_crosscheck_instance_field "$code" detail)
+  log=$(planner_state_log "$initiative_id") || return 1
+  start=""
+  [ -f "$log" ] && start=$(grep -n '^[^|]*|Crosscheck|check|start|' "$log" | tail -1 | cut -d: -f1)
+  if [ -n "$start" ] && [ -n "$instance_fn" ] && declare -f "$instance_fn" >/dev/null 2>&1; then
+    while IFS= read -r msg; do
+      msg="${msg#"$code" }"
+      token=$("$instance_fn" "$msg")
+      [ -n "$token" ] || continue
+      found=1
+      case "$seen" in *" ${token} "*) continue ;; esac
+      seen="${seen}${token} "
+      _planner_crosscheck_code_accepted "$initiative_id" "$token" && continue
+      detail=""
+      [ -n "$detail_fn" ] && declare -f "$detail_fn" >/dev/null 2>&1 && detail=$("$detail_fn" "$msg")
+      if [ -n "$detail" ]; then
+        planner_crosscheck_accept_set "$initiative_id" "$token" "${detail} — ${reason}"
+      else
+        planner_crosscheck_accept_set "$initiative_id" "$token" "$reason"
+      fi
+    done < <(tail -n "+$((start + 1))" "$log" | grep "^[^|]*|META|crosscheck|fail|${code} " | cut -d'|' -f5-)
+  fi
+  if [ "$found" -eq 0 ]; then
+    echo "ERROR: --accept ${code}@*: no ${code} finding in the latest Crosscheck attempt" >&2
+    return 1
+  fi
+  return 0
+}
 
 # Is <code> a warn-level code?
 # Usage: _planner_crosscheck_is_warn_code <code>
@@ -198,14 +326,16 @@ _planner_crosscheck_emit_finding() {
   [[ "$code" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 2
   message="${body#"$code" }"
 
-  # planner-specify-parameters D7: PARAM_LITERAL is accepted per literal only.
-  # A matching instance record (`PARAM_LITERAL@<slug>=<canonical>`) makes this
-  # one finding `accepted`, written with the instance token first so no reader
-  # takes it for a code-wide accept; a bare `PARAM_LITERAL` accept is ignored.
-  if [ "$code" = "PARAM_LITERAL" ]; then
-    local instance=""
-    declare -f planner_crosscheck_params_instance >/dev/null 2>&1 &&
-      instance=$(planner_crosscheck_params_instance "$message")
+  # Per-instance codes (PLANNER_CROSSCHECK_INSTANCE_CODES; PARAM_LITERAL,
+  # planner-specify-parameters D7) are accepted one instance at a time. A
+  # matching instance record (e.g. `PARAM_LITERAL@<slug>=<canonical>`) makes
+  # this one finding `accepted`, written with the instance token first so no
+  # reader takes it for a code-wide accept; a bare `<CODE>` accept is ignored.
+  if planner_crosscheck_is_instance_code "$code"; then
+    local instance="" instance_fn
+    instance_fn=$(planner_crosscheck_instance_field "$code" instance)
+    [ -n "$instance_fn" ] && declare -f "$instance_fn" >/dev/null 2>&1 &&
+      instance=$("$instance_fn" "$message")
     if [ -n "$instance" ] && _planner_crosscheck_code_accepted "$initiative_id" "$instance"; then
       planner_state_write "$initiative_id" "META" "crosscheck" "accepted" "${instance} ${message}"
       return 3
@@ -310,6 +440,39 @@ planner_crosscheck_run() {
   fi
   [ "$synth_err" = /dev/null ] || rm -f "$synth_err"
 
+  # Ownership edges (planner-crosscheck-ownership D6/D7): right after
+  # synthesis and before every family, so the deps family's DEPENDENCY_CYCLE
+  # check reads artifacts/ownership-edges.json with the rest of the graph.
+  # Gated on the spec-ownership-v1 marker: a legacy initiative gets no line
+  # and no file. `META|ownership-edges` is not a `Crosscheck|<step>` line, so
+  # planner_position_derive needs no skip for it. A divergence warning
+  # (OWN_EDGES_DIVERGED) goes through the normal finding path; a read or
+  # write failure is the blocking OWN_EDGES_FAILED and writes no done line.
+  if planner_ownership_contract_initiative "$initiative_id" 2>/dev/null; then
+    local own_out own_err own_rc own_msg
+    own_err=$(mktemp) || own_err=/dev/null
+    own_rc=0
+    own_out=$(planner_ownership_edges_write "$initiative_id" 2>"$own_err") || own_rc=$?
+    b=0 w=0 a=0
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      _planner_crosscheck_emit_finding "$initiative_id" "$line"
+      case $? in 0) b=$((b + 1)) ;; 1) w=$((w + 1)) ;; 3) a=$((a + 1)) ;; esac
+    done <<<"$own_out"
+    if [ "$own_rc" -eq 0 ]; then
+      planner_state_write "$initiative_id" "META" "ownership-edges" "done" "$(planner_ownership_edges_count "$initiative_id") edge(s)"
+    else
+      own_msg=$(head -1 "$own_err" 2>/dev/null)
+      own_msg="${own_msg#planner-spec-ownership: }"
+      _planner_crosscheck_emit_finding "$initiative_id" "planner-ownership-edges: OWN_EDGES_FAILED ${own_msg:-the edges step exited ${own_rc} with no message — see artifacts/ownership-edges.json}"
+      case $? in 0) b=$((b + 1)) ;; 3) a=$((a + 1)) ;; esac
+    fi
+    total_blocking=$((total_blocking + b))
+    total_warn=$((total_warn + w))
+    total_accepted=$((total_accepted + a))
+    [ "$own_err" = /dev/null ] || rm -f "$own_err"
+  fi
+
   read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_citations "$initiative_id")
   total_blocking=$((total_blocking + b))
   total_warn=$((total_warn + w))
@@ -361,6 +524,13 @@ planner_crosscheck_run() {
   total_accepted=$((total_accepted + a))
 
   read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_params "$initiative_id")
+  total_blocking=$((total_blocking + b))
+  total_warn=$((total_warn + w))
+  total_accepted=$((total_accepted + a))
+
+  # Ownership family (planner-crosscheck-ownership): silent without the
+  # spec-ownership-v1 marker.
+  read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_ownership "$initiative_id")
   total_blocking=$((total_blocking + b))
   total_warn=$((total_warn + w))
   total_accepted=$((total_accepted + a))
@@ -471,7 +641,7 @@ planner_crosscheck_findings_summary() {
 # Codes whose findings are inherently about a set of artifacts rather than one
 # — grouping them under whichever filename happens to appear first in the
 # message would point the operator at an arbitrary member of the set.
-PLANNER_CROSSCHECK_CROSS_FILE_CODES="RESOLUTION_NOT_PROPAGATED CARVE_SCOPE_LOST SIGNALS_UNIFORM TEST_DATA_UNOWNED TEST_DATA_UNSOURCED_LEGACY"
+PLANNER_CROSSCHECK_CROSS_FILE_CODES="RESOLUTION_NOT_PROPAGATED CARVE_SCOPE_LOST SIGNALS_UNIFORM TEST_DATA_UNOWNED TEST_DATA_UNSOURCED_LEGACY OWN_MULTI_WRITER OWN_MULTI_FIRE"
 
 # One-line remediation hint per finding code. Deliberately canned and code-
 # scoped: it says what shape the fix takes, not what the specific fix is —
@@ -509,6 +679,24 @@ planner_crosscheck_fix_hint() {
   PARAM_LITERAL | PARAM_LITERAL@*)
     echo "the spec states a unit value no decided ## Parameters row declares — declare it as a row (and name its key in backticks in ## Technical Context), or change the spec to the declared value; accept one genuine literal with the per-literal --accept the message prints"
     ;;
+  OWN_TABLE_INVALID)
+    echo "a spec's ## Writes or ## Reads section is missing or malformed — write each as None. or one table (Writes: columns Key and Op, Reads: columns Key and Source) right under the heading, and fix the named rows; an effect is caused with a trigger row in ## Writes, never read"
+    ;;
+  OWN_MULTI_WRITER | OWN_MULTI_WRITER@*)
+    echo "two specs claim the same key in conflicting ways — give the key one owner and have the others read it, or narrow each transition so they leave different states (append never conflicts); accept a genuine overlap with the per-key --accept the message prints"
+    ;;
+  OWN_NO_WRITER | OWN_NO_WRITER@*)
+    echo "a spec reads a key no other spec writes — add the write to the spec that owns it, or anchor the read: code:<path> where it already exists, framework:<name> when the platform provides it, external:<name> when an outside system does; accept a known gap with the per-read --accept the message prints"
+    ;;
+  OWN_MULTI_FIRE | OWN_MULTI_FIRE@*)
+    echo "more than one spec owns the same side effect — keep one fire row (that spec's ACs carry delivery and idempotency) and make the others trigger"
+    ;;
+  OWN_TRIGGER_UNOWNED | OWN_TRIGGER_UNOWNED@*)
+    echo "a spec triggers a side effect no spec owns — add a fire row to the spec that delivers the effect, or remove the trigger"
+    ;;
+  OWN_EDGES_FAILED)
+    echo "Crosscheck could not write artifacts/ownership-edges.json — check the artifacts directory is writable, then resume"
+    ;;
   CARVE_SCOPE_LOST)
     echo "the spec-file count no longer matches the ticket count Specify declared — record the rescope in consensus.md, or restore the missing spec"
     ;;
@@ -534,7 +722,7 @@ planner_crosscheck_fix_hint() {
     echo "the blocked-by target matches no sibling spec (or is an ambiguous prefix) — use the exact spec slug, or an existing Linear issue ID"
     ;;
   DEPENDENCY_CYCLE)
-    echo "these specs block each other in a cycle (## Labels blocked-by plus the test-data synthesis edges in artifacts/testdata-synth.json), so TicketGen can create none of them — remove one blocked-by from a Labels line; a TD spec never blocks on its own consumer"
+    echo "these specs block each other in a cycle (## Labels blocked-by plus the test-data synthesis edges in artifacts/testdata-synth.json and the ownership edges in artifacts/ownership-edges.json), so TicketGen can create none of them — remove one blocked-by from a Labels line, or change the ## Writes / ## Reads rows that give an ownership edge (a verified code: read gives none); a TD spec never blocks on its own consumer"
     ;;
   TEST_DATA_UNOWNED)
     echo "these Verification Notes needs have no owner and Crosscheck's test-data synthesis could not take them — give each a valid Source: generate (synthesis then writes and owns the TD spec; do not hand-write a test-data pack), exists:<where>, external:<who>, or seeded-by:<slug> naming a spec with ## Test Data Provided — see docs/test-data-source.md"

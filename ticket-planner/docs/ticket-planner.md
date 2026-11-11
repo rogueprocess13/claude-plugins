@@ -121,6 +121,7 @@ ${REPOS_ROOT}/.ticket-auto/initiatives/{INITIATIVE_ID}/
     ticket-1.json
   artifacts/          # Per-phase artifacts (proposal.md, specs/, etc.)
     testdata-synth.json  # Crosscheck synthesis sidecar: TD specs, Source overrides, blocked_by edges
+    ownership-edges.json # Crosscheck ownership edges (spec-ownership-v1 initiatives only)
   feedback/           # Feedback aggregation (written by fleet-feedback.sh)
     2026-07-21.json
 ```
@@ -438,8 +439,14 @@ Dependencies are expressed as `blocked-by:{ID}` labels. `planner-deps-check.sh` 
 3. Topological sort determines dispatch order.
 
 Crosscheck adds the blocking `DEPENDENCY_CYCLE` code: it runs the TicketGen dependency reader
-(`planner_ticketgen_deps_json`) after test-data synthesis, so a cycle through a sidecar edge
-(consumer → TD spec) is caught before the first Linear write.
+(`planner_ticketgen_deps_json`) after test-data synthesis and the ownership edges step, so a
+cycle through a sidecar edge (consumer → TD spec, or reader → writer from
+`artifacts/ownership-edges.json`) is caught before the first Linear write. The message counts
+`## Labels` blocked-by, the test-data synthesis edges in `artifacts/testdata-synth.json` and
+the ownership edges in `artifacts/ownership-edges.json`.
+
+`planner_replan_validate_deps` (re-planning) still sees `## Labels` refs only, not either
+sidecar. That gap predates the ownership edges.
 
 ### Cross-initiative prerequisites
 
@@ -560,6 +567,8 @@ directly instead of spawning one (SKILL.md step 1a). Its check families include:
 
 - **Parameters** (planner-specify-parameters, `lib/planner-crosscheck-params.sh`; contract initiatives only) — `PARAM_TABLE_INVALID` (no `## Parameters` section, a bad header or an invalid row), `PARAM_UNDECIDED` (an open row; normally the second Specify stop halts first) and `PARAM_LITERAL` (a unit literal — `15 minutes`, `10s`, `30-day`, `2 GB`, `3 retries`, `2.5%` — in an acceptance criterion or a Verification Notes `Expected` cell that no closed row declares), all blocking. Literals are compared canonically (`86400 seconds` = `24 hours` = `1 day`); a `fixed` row covers only the specs that name its key. Not checked: `0`, `100%`, decades, code spans, URLs, criterion labels like `10h.`, numbered notes lines, Test data cells, and other sections. Synth-marked TD specs and `INDEX.md` are skipped.
 
+- **Data ownership** (planner-crosscheck-ownership, `lib/planner-crosscheck-ownership.sh`; `spec-ownership-v1` initiatives only) — see [Data ownership](#data-ownership-writes-and-reads-tables) below.
+
 (Bypass, contract, Signals and dangling-dependency checks also run — see `lib/planner-crosscheck.sh`.)
 
 The citation + precedent linter also runs once earlier, as a self-lint at the end of
@@ -584,6 +593,95 @@ to fixing the artifact — see [Accepting a genuine Crosscheck finding](#accepti
 
 `#174` (bypass sweep for guarded fields) and `#175` (cross-initiative contract check)
 now run as their own check families (see the parenthetical above).
+
+### Data ownership: Writes and Reads tables
+
+planner-crosscheck-ownership. **Dormant:** no initiative carries the
+`META|contract|start|spec-ownership-v1` marker yet. The Specify prompt change that writes the
+tables and the marker comes in a later release; until then the family, the edges step and the
+describer note are reachable only from tests and from `scripts/e2e-preflight.sh` with a
+hand-written marker. A legacy initiative (no marker) gets no finding, no edges line and no file.
+
+**Format.** Every spec except synth-marked test-data specs and `INDEX.md` has two sections.
+Each holds `None.` or exactly one pipe table directly under the heading:
+
+```
+## Writes
+
+| Key | Op |
+|-----|----|
+| `invoice.status` | transition:sent,overdue->paid |
+| `invoice_history` | append |
+| `email.payment_receipt` | fire |
+| `email.invoice_overdue` | trigger |
+
+## Reads
+
+| Key | Source |
+|-----|--------|
+| `invoice.amount_due` | spec |
+| `invoice.due_date` | code:billing-service/src/main/resources/db/changelog |
+| `user.id` | framework:auth_user |
+| `bank_holiday.date` | external:public holiday feed |
+```
+
+A key is backticked `<segment>` or `<segment>.<segment>`, each segment a lower-case letter then
+lower-case letters, digits or `_`, at most 64 characters, once per table. Data keys are entity
+and field; effect keys (`fire`, `trigger`) are channel and event, a separate namespace, and are
+never read. A read of `invoice.status` matches a write of `invoice` or `invoice.status`; a read
+of `invoice` matches a write of `invoice` or any `invoice.<field>` (entity rule, reads only).
+
+**Ops and the conflict rule.** `create`, `update`, `delete`, `append`,
+`transition:<from>-><to>` (`<from>` a comma list or `*`), `fire`, `trigger`. Two specs with a
+data row for the same exact key conflict unless either row is `append`, or both are
+transitions with disjoint from-sets. `create`/`update`/`delete` count as `transition:*->…`, and
+`*` overlaps everything.
+
+**Sources.** `spec` (a sibling writes it); `code:<path>` (relative, no `..`, letters, digits and
+`._/@+-` only — the anchor holds when one file under the path, in the Discovery-pinned tree,
+names every key segment as a word, at most 200 files); `framework:<name>` (`auth_user`,
+`session`, `clock`, `timestamps`, `row_id`, `tenant`); `external:<name>` (3–80 characters,
+anchored when the name appears in idea.txt, intent.md, discovery.md or architecture.md). A
+failed `code:` anchor counts as `spec`. A read of a key the spec writes itself is ignored.
+
+**Codes.**
+
+| Code | Tier | Accept |
+|---|---|---|
+| `OWN_TABLE_INVALID` | blocking, one per spec | code-wide `--accept OWN_TABLE_INVALID:"…"` |
+| `OWN_MULTI_WRITER` | blocking, cross-file, one per key | `--accept OWN_MULTI_WRITER@<key>:"<reason>"` |
+| `OWN_NO_WRITER` | blocking, one per spec and key | `--accept OWN_NO_WRITER@<slug>/<key>:"<reason>"` |
+| `OWN_MULTI_FIRE` | blocking, cross-file, one per key | `--accept OWN_MULTI_FIRE@<key>:"<reason>"` |
+| `OWN_TRIGGER_UNOWNED` | blocking, one per spec and key | `--accept OWN_TRIGGER_UNOWNED@<slug>/<key>:"<reason>"` |
+| `OWN_EDGES_FAILED` | blocking (the sidecar could not be written) | code-wide |
+| `OWN_NEAR_MATCH`, `OWN_UNDECLARED_REF`, `OWN_EXTERNAL_UNANCHORED`, `OWN_EDGES_DIVERGED` | warn | — |
+
+The four instance codes take only the per-instance form or the wildcard
+`<CODE>@*:"<reason>"` (see [Accepting a genuine Crosscheck finding](#accepting-a-genuine-crosscheck-finding---accept)).
+Each finding message ends with its own accept command. Spec-derived text in a message has `"`
+replaced by `'` and `--accept` defused, and the instance is read only from that trailing
+command, so a spec cannot name another instance.
+
+**Edges and freeze.** Right after test-data synthesis, Crosscheck writes
+`artifacts/ownership-edges.json` (`{"version":1,"edges":[{"consumer","blocked_by","keys","frozen"}]}`,
+written only when its bytes change, removed when empty) and one
+`META|ownership-edges|done|<n> edge(s)` line. A read whose effective source is `spec` gives
+`reader blocked_by writer` for every other spec with a matching data write; a `trigger` gives
+`trigger-spec blocked_by fire-owner`. Verified `code:`, `framework:` and `external:` reads
+give none. A consumer whose ticket exists keeps its recorded edges (`"frozen": true`); a
+differing recompute is the `OWN_EDGES_DIVERGED` warning. `planner_ticketgen_spec_deps` adds
+these edges after Labels and test-data edges, so TicketGen, draft readiness drafts,
+`## Related Tickets`, the cycle check and the epic UAT policy (resolved to epic-level, reason `chain`) all see
+them. Ticket bodies never carry the two tables: `writes` and `reads` are in the composer's
+drop list. Draft revise cannot change them: they are outside the editable sections.
+
+**Not checked.** A write or read the spec does not declare (only `OWN_UNDECLARED_REF` warns,
+for backticked `entity.field` tokens in Technical Context); two names for one thing beyond
+the one-trailing-`s` near-match warning; writes or effects by existing code outside the
+initiative; whether a `code:` file defines the field rather than mentioning its words;
+whether transition states exist or form a valid state machine; whether the `fire` owner's
+ACs state idempotency; ordering between writers of different fields of one entity; AC
+numbers against seed or test data.
 
 ### Resolving against the ref Discovery explored, not whatever REPOS_ROOT is now ([#217](https://github.com/willard-pro/claude-plugins/issues/217))
 
@@ -1092,6 +1190,17 @@ at parsing (rc 1, nothing written). Each finding message ends with its own accep
 command. Headless callers get no accept for this code: the `CROSSCHECK_BLOCKED` block
 asks one `param-literals` note instead.
 
+The four ownership instance codes work the same way: `OWN_MULTI_WRITER@<key>`,
+`OWN_MULTI_FIRE@<key>`, `OWN_NO_WRITER@<slug>/<key>` and `OWN_TRIGGER_UNOWNED@<slug>/<key>`,
+each with a non-empty `:"<reason>"`; the code-wide form is refused.
+
+**Wildcard.** `--accept <CODE>@*:"<reason>"` is valid for `PARAM_LITERAL` and the four
+ownership instance codes. At `resume`, before the loop, it reads the `fail|<CODE>` lines of
+the latest Crosscheck attempt and records one `accepted|<instance-token> <reason>` line per
+distinct instance (for `PARAM_LITERAL`, `PARAM_LITERAL@<slug>=<canonical> <literal> — <reason>`).
+It never writes `<CODE>@*`, so an instance first found by a later run still blocks. With no
+current instance it is refused (rc 1, "no <CODE> finding in the latest Crosscheck attempt").
+
 `--accept DRAFT_NOT_READY:"reason"` is not a Crosscheck accept: it passes a draft
 readiness halt (SKILL.md step 1d) by writing `META|draft-readiness|accepted|<hash> <reason>`,
 where `<hash>` covers the current drafts, so any spec edit re-arms the gate.
@@ -1156,6 +1265,7 @@ script — cannot read the halt prose. It runs this loop instead:
 | `CREATE_GATE` | `flag:create` | `yes` = `--create`. `no` records the round; the run stops at the gate again |
 | `CROSSCHECK_BLOCKED` | `flag:accept:<CODE>` | the reason = `--accept CODE:"reason"`. `__skip__` declines |
 | `CROSSCHECK_BLOCKED` (`PARAM_LITERAL`) | `note`, id `param-literals`, option `resolved` — replaces the code's `flag:accept` question | recorded only. The text names each undeclared literal and the terminal command `resume <INIT> --accept PARAM_LITERAL@<slug>:"<literal>"`; declare the value in `## Parameters` or change the spec, then resume |
+| `CROSSCHECK_BLOCKED` (`OWN_MULTI_WRITER`, `OWN_NO_WRITER`, `OWN_MULTI_FIRE`, `OWN_TRIGGER_UNOWNED`) | one `note`, id `ownership-findings`, option `resolved` — replaces those codes' `flag:accept` questions | recorded only. The text counts each code, lists the instance tokens (up to 300 characters), says how to fix each kind and gives the terminal per-instance and wildcard accept forms; there is no headless accept. `OWN_TABLE_INVALID` and `OWN_EDGES_FAILED` keep the standard `flag:accept` question |
 | `CROSSCHECK_BLOCKED` (`CITED_ARTIFACT_UNRESOLVED`) | `consensus-answer:cited:<n>`, one per unanswered artifact | `exists:<where>`, `external:<who>` or `generate`, written into the `Answer:` field of consensus.md's `n`th `CITED_ARTIFACT:` question. Any other value, or one with `\|`, CR or LF, is `INVALID_VALUE`. Specs are not edited: a spec need whose `Source` disagrees is `CITED_ARTIFACT_SOURCE_MISMATCH` on the re-run. The code's `flag:accept` question is still offered |
 | `CROSSCHECK_BLOCKED` (`TEST_DATA_IMPLIED`) | `consensus-answer:testdata:<slug>`, one per blocking spec, id `testdata-<slug>-<hash8>` | `none`, `generate: <desc>` (default `generate: <match phrase>`), `exists:<where>` or `external:<who>`, written as consensus.md's ``TESTDATA_CONFIRM: `<slug>` [<hash8>] — Answer: <value>`` line. `hash8` is re-derived from the spec's current trigger criterion at intake; a mismatch is `STALE_QUESTION` (exit 2, nothing written). The code's `flag:accept` question is still offered |
 | `CONSENSUS_BLOCKED` | `note` | recorded only — fix the plan and change consensus.md's Readiness from `blocked` (or re-run Consensus); the gate re-reads consensus.md on resume |

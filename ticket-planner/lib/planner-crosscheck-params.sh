@@ -60,6 +60,10 @@
 #     rc 1 with the reason on stderr.
 #   planner_crosscheck_params_instance <message>
 #     The instance token of a PARAM_LITERAL finding message, or nothing.
+#   planner_crosscheck_params_literal <message>
+#     The literal a PARAM_LITERAL finding message quotes, or nothing: the text
+#     a wildcard accept (`PARAM_LITERAL@*:"<reason>"`) records ahead of the
+#     reason, `PARAM_LITERAL@<slug>=<canonical> <literal> — <reason>`.
 #
 # Sourceable library — no set -euo pipefail.
 
@@ -233,7 +237,7 @@ planner_crosscheck_params_accept_parse() {
   case "$arg" in
   PARAM_LITERAL@*:*) ;;
   *)
-    echo "ERROR: --accept PARAM_LITERAL is per literal: --accept PARAM_LITERAL@<slug>:\"<literal>\" (got '${arg}')" >&2
+    echo "ERROR: --accept PARAM_LITERAL is per literal: --accept PARAM_LITERAL@<slug>:\"<literal>\", or --accept PARAM_LITERAL@*:\"<reason>\" for every literal the latest Crosscheck attempt found (got '${arg}')" >&2
     return 1
     ;;
   esac
@@ -263,11 +267,19 @@ planner_crosscheck_params_accept_parse() {
   printf 'PARAM_LITERAL@%s=%s\t%s\n' "$slug" "$canon" "$lit"
 }
 
+planner_crosscheck_params_literal() {
+  [[ "$1" =~ ^[^\"]*\"([^\"]*)\" ]] || return 0
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
 planner_crosscheck_params_instance() {
   local msg="$1" slug canon
-  [[ "$msg" =~ --accept\ PARAM_LITERAL@([A-Za-z0-9_-]+): ]] || return 0
+  # Anchored at both ends: the slug from the trailing accept command, the
+  # canonical from the head of a message whose file is that slug's spec, so
+  # text in a spec file name cannot name another instance.
+  [[ "$msg" =~ \ --accept\ PARAM_LITERAL@([A-Za-z0-9_-]+):\"[^\"]*\"$ ]] || return 0
   slug="${BASH_REMATCH[1]}"
-  [[ "$msg" =~ \ \(([a-z]+:[0-9]+)\)\ in\  ]] || return 0
+  [[ "$msg" =~ ^specs/${slug}\.md:[0-9]+\ \"[^\"]*\"\ \(([a-z]+:[0-9]+)\)\ in\  ]] || return 0
   canon="${BASH_REMATCH[1]}"
   printf 'PARAM_LITERAL@%s=%s\n' "$slug" "$canon"
 }

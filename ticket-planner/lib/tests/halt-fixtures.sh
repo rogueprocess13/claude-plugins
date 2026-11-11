@@ -25,7 +25,7 @@ _HALT_FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _HALT_LIB_DIR="${_HALT_FIXTURES_DIR}/.."
 
 # Every halt the stop describer must recognise, with the reason it must name.
-HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT refinement-body-drift:REFINEMENT_HALT refinement-demoted:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION consensus-blocked:CONSENSUS_BLOCKED specify-param:SPECIFY_DECISION specify-param-crosscheck:SPECIFY_DECISION"
+HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT refinement-body-drift:REFINEMENT_HALT refinement-demoted:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION consensus-blocked:CONSENSUS_BLOCKED specify-param:SPECIFY_DECISION specify-param-crosscheck:SPECIFY_DECISION ownership:CROSSCHECK_BLOCKED"
 
 # _halt_done <init> <phase...> — mark phases done, in order.
 _halt_done() {
@@ -50,6 +50,13 @@ halt_fixture_init() {
     _halt_done "$init" Appraisal Discovery Architecture Specify Review Consensus
     # Crosscheck's own findings are written by halt_fixture_run's stub of
     # planner_crosscheck_run, exactly as the real run records them.
+    ;;
+  ownership)
+    # planner-crosscheck-ownership: a contract initiative (spec-ownership-v1)
+    # whose Crosscheck found ownership instances plus one invalid table.
+    # Added after the other goldens; they predate it.
+    planner_state_write "$init" META contract start spec-ownership-v1
+    _halt_done "$init" Appraisal Discovery Architecture Specify Review Consensus
     ;;
   crosscheck-testdata)
     # planner-test-data-derivation: two specs whose every Verification Notes
@@ -307,13 +314,24 @@ halt_fixture_run() {
       # SKILL.md step 1, a plain `resume` reaching EpicGen.
       planner_dispatch_gate pre "$INITIATIVE_ID" EpicGen "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       ;;
-    crosscheck | crosscheck-testdata)
+    crosscheck | crosscheck-testdata | ownership)
       # SKILL.md step 1a. planner_crosscheck_run is stubbed after sourcing:
       # the check families need real artifacts and a repo, and the halt's
       # output depends only on what the run recorded. The gate sources the
       # lib only when the function is missing, so the stub stands.
       source "${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck.sh"
-      if [ "$name" = "crosscheck-testdata" ]; then
+      if [ "$name" = "ownership" ]; then
+        planner_crosscheck_run() {
+          local init="$1" p="planner-crosscheck-ownership:"
+          planner_state_write "$init" "Crosscheck" "check" "start" "running citation + propagation + bypass + contracts + signals + deps checks"
+          _planner_crosscheck_emit_finding "$init" "${p} OWN_TABLE_INVALID specs/history-log.md ## Reads is missing"
+          _planner_crosscheck_emit_finding "$init" "${p} OWN_NO_WRITER specs/overdue-reminder.md:15 reads \`customer.email\` (source spec) but no other spec writes it — add the write to the spec that owns it, or anchor the read with code:, framework: or external: — resume ${init} --accept OWN_NO_WRITER@overdue-reminder/customer.email:\"<reason>\""
+          _planner_crosscheck_emit_finding "$init" "${p} OWN_NO_WRITER specs/payment-receipt.md:15 reads \`customer.email\` (source spec) but no other spec writes it — add the write to the spec that owns it, or anchor the read with code:, framework: or external: — resume ${init} --accept OWN_NO_WRITER@payment-receipt/customer.email:\"<reason>\""
+          _planner_crosscheck_emit_finding "$init" "${p} OWN_MULTI_WRITER \`invoice.status\` has conflicting writers: cancel-invoice (transition:sent,overdue->cancelled), record-payment (transition:sent,overdue->paid) — give the key one owner and have the others read it, or make each transition leave different states — resume ${init} --accept OWN_MULTI_WRITER@invoice.status:\"<reason>\""
+          planner_state_write "$init" "Crosscheck" "check" "fail" "4 blocking finding(s), 0 warn, 0 accepted — see META|crosscheck entries"
+          return 1
+        }
+      elif [ "$name" = "crosscheck-testdata" ]; then
         planner_crosscheck_run() {
           # Only the test-data tripwires run for real — over the fixture specs.
           local init="$1" line

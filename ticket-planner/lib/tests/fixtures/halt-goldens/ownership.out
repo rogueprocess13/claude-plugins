@@ -1,0 +1,29 @@
+Crosscheck found blocking findings — fix the cited artifacts and resume.
+
+Crosscheck findings — INIT-1700000000-4242 (most recent attempt)
+
+specs/history-log.md
+  OWN_TABLE_INVALID — 1 blocking
+    fix: a spec's ## Writes or ## Reads section is missing or malformed — write each as None. or one table (Writes: columns Key and Op, Reads: columns Key and Source) right under the heading, and fix the named rows; an effect is caused with a trigger row in ## Writes, never read
+    specs/history-log.md ## Reads is missing
+
+specs/overdue-reminder.md
+  OWN_NO_WRITER — 1 blocking
+    fix: a spec reads a key no other spec writes — add the write to the spec that owns it, or anchor the read: code:<path> where it already exists, framework:<name> when the platform provides it, external:<name> when an outside system does; accept a known gap with the per-read --accept the message prints
+    L15  reads `customer.email` (source spec) but no other spec writes it — add the write to the spec that owns it, or anchor the read with code:, framework: or...
+
+specs/payment-receipt.md
+  OWN_NO_WRITER — 1 blocking
+    fix: a spec reads a key no other spec writes — add the write to the spec that owns it, or anchor the read: code:<path> where it already exists, framework:<name> when the platform provides it, external:<name> when an outside system does; accept a known gap with the per-read --accept the message prints
+    L15  reads `customer.email` (source spec) but no other spec writes it — add the write to the spec that owns it, or anchor the read with code:, framework: or...
+
+(cross-file)
+  OWN_MULTI_WRITER — 1 blocking
+    fix: two specs claim the same key in conflicting ways — give the key one owner and have the others read it, or narrow each transition so they leave different states (append never conflicts); accept a genuine overlap with the per-key --accept the message prints
+    `invoice.status` has conflicting writers: cancel-invoice (transition:sent,overdue->cancelled), record-payment (transition:sent,overdue->paid) — give the key...
+
+TOTAL: 4 blocking, 0 warn, 0 accepted across 4 artifact group(s), 3 code(s)
+
+Raw log:    grep 'META|crosscheck|fail' <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/state.log
+Artifacts:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/
+Resume:     /ticket-planner resume INIT-1700000000-4242

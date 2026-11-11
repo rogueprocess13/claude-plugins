@@ -338,6 +338,8 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-crosscheck-fixtures.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-ac-coverage.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-params.sh
+	bash ticket-planner/lib/tests/test-planner-spec-ownership.sh
+	bash ticket-planner/lib/tests/test-planner-crosscheck-ownership.sh
 	bash ticket-planner/lib/tests/test-planner-uat-policy.sh
 	bash ticket-planner/lib/tests/test-planner-doctor.sh
 	bash ticket-planner/lib/tests/test-planner-body-template-humanizer.sh

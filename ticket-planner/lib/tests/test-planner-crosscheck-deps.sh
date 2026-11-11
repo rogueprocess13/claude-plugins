@@ -285,6 +285,33 @@ else
   fail "lowercase wil-83: still reported as dangling" "returned $rc, out: $out"
 fi
 
+echo "--- ownership-only cycle (planner-crosscheck-ownership 4.4) ---"
+INIT_O="init-o"
+SPECS_O="${REPOS_ROOT}/.ticket-auto/initiatives/${INIT_O}/artifacts/specs"
+mkdir -p "$SPECS_O"
+write_spec "$SPECS_O" "own-a" "type:backend"
+write_spec "$SPECS_O" "own-b" "type:backend"
+printf '%s\n' '{"version":1,"edges":[
+  {"consumer":"own-a","blocked_by":"own-b","keys":["b.x"],"frozen":false},
+  {"consumer":"own-b","blocked_by":"own-a","keys":["a.x"],"frozen":false}]}' \
+  >"${REPOS_ROOT}/.ticket-auto/initiatives/${INIT_O}/artifacts/ownership-edges.json"
+out=$(planner_crosscheck_deps "$INIT_O")
+rc=$?
+if [ "$rc" -eq 1 ] && [ "$(grep -c 'DEPENDENCY_CYCLE' <<<"$out")" -eq 2 ]; then
+  pass "ownership-only cycle: DEPENDENCY_CYCLE for both specs"
+else
+  fail "ownership-only cycle: DEPENDENCY_CYCLE for both specs" "returned $rc, out: $out"
+fi
+case "$out" in
+*"testdata-synth.json"*"ownership-edges.json"*) pass "cycle message names both sidecar files" ;;
+*) fail "cycle message names both sidecar files" "got: $out" ;;
+esac
+hint=$(source "${LIB_DIR}/planner-crosscheck.sh" && planner_crosscheck_fix_hint DEPENDENCY_CYCLE)
+case "$hint" in
+*"testdata-synth.json"*"ownership-edges.json"*) pass "DEPENDENCY_CYCLE fix hint names both sidecar files" ;;
+*) fail "DEPENDENCY_CYCLE fix hint names both sidecar files" "got: $hint" ;;
+esac
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

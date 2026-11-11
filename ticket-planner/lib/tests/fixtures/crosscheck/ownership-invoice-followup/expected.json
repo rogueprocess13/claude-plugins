@@ -1,0 +1,9 @@
+{
+  "contracts": ["spec-ownership-v1"],
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["OWN_MULTI_WRITER"],
+  "message_contains": ["`invoice.status` has conflicting writers: overdue-job (transition:sent->overdue), payment (transition:sent,overdue->paid)", "--accept OWN_MULTI_WRITER@invoice.status:"],
+  "notes": "planner-crosscheck-ownership: the live-check invoice shape. Both the overdue job and the payment move invoice.status out of sent, so OWN_MULTI_WRITER is genuine; the history log is append on both sides (no conflict), the overdue email has one fire owner plus one trigger, reads resolve through the entity rule (invoice create covers invoice.due_date) or framework:."
+}

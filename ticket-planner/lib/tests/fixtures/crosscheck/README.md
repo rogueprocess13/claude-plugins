@@ -91,6 +91,9 @@ exercises.
 - `sidecar_jq` — optional. jq expressions that must be true against
   `artifacts/testdata-synth.json`.
 - `log_contains` — optional. Substrings the state log must contain.
+- `contracts` — optional. Artifact-contract markers the initiative carries,
+  each written as `META|contract|start|<name>` before the run (for example
+  `spec-ownership-v1`, which turns on the ownership family).
 - `idempotent` — optional, `true`: run `planner_crosscheck_run` a second time
   and assert no file under `artifacts/` changed (content, size or mtime).
 - `notes` — free text. Say what real false-positive class this is modeled
@@ -145,6 +148,8 @@ Crosscheck never edits a consumer spec.
 | `testdata-synth-dispatched-keep` | A synth-marked TD spec with `intents/ticket-<slug>.json` | 4.5 — kept byte-for-byte, the need whose key it owns re-attached to it |
 | `testdata-synth-cited-generate` | A NOT FOUND cited artifact answered `generate`, need cites it with `Source: generate` | 4.7 — the cited-artifact remedy routes through synthesis; clean |
 | `testdata-synth-cycle-guard` | A dispatched TD spec whose Labels say `blocked-by:audit-log`; `audit-log` needs the key it owns | 4.9 — the TD↔consumer cycle exists only in Labels ∪ sidecar edges; blocking `DEPENDENCY_CYCLE` on both specs |
+| `ownership-invoice-followup` | Invoice follow-up specs with `## Writes`/`## Reads` and the `spec-ownership-v1` marker: two transitions out of `sent`, an append-only history, one `fire` owner plus a `trigger` | planner-crosscheck-ownership — one blocking `OWN_MULTI_WRITER` on `invoice.status`; appends, the trigger and entity-rule reads stay clean |
+| `ownership-legacy-silent` | The same specs without the marker | planner-crosscheck-ownership — the family is silent; must stay clean |
 | `contract-undefined-warn-only` | A structure that "gains new fields for ..." in prose with no backtick-quoted field names | [#175](https://github.com/willard-pro/claude-plugins/issues/175) — `CONTRACT_UNDEFINED` is deliberately warn-level, not blocking |
 
 ## Adding a real fixture
