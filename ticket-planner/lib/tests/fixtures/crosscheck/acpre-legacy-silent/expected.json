@@ -1,0 +1,6 @@
+{
+  "blocking": 0,
+  "warn": 0,
+  "accepted": 0,
+  "notes": "planner-ac-code-precondition: the same spec with no ac-precondition-v1 marker. The family stays silent (no finding, no META|ac-precondition line), so a legacy or in-flight initiative is unchanged even when its specs carry the table."
+}
