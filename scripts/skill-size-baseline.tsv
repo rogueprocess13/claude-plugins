@@ -65,7 +65,8 @@ ticket-auto-pipeline/skills/ticket-auto/SKILL.md	43206	789
 ticket-auto-pipeline/skills/ticket-batch-appraise/SKILL.md	4841	135
 ticket-auto-pipeline/skills/ticket-batch-verify/SKILL.md	9399	207
 ticket-auto-pipeline/skills/ticket-create/SKILL.md	6781	71
-ticket-auto-pipeline/skills/ticket-critique/SKILL.md	19169	423
+# allow-growth: critique BLOCKED message must name the needs-info-resolved trigger, or a passing re-run leaves the ticket gate-blocked (0.113.2)
+ticket-auto-pipeline/skills/ticket-critique/SKILL.md	19253	423
 ticket-auto-pipeline/skills/ticket-detect-resume/SKILL.md	1296	20
 ticket-auto-pipeline/skills/ticket-document/SKILL.md	7076	142
 ticket-auto-pipeline/skills/ticket-env-check/SKILL.md	4657	84

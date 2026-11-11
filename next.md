@@ -1170,14 +1170,21 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
 
 - [x] 1. #535 — VPLAN_ROW_GAP counts Environment checkboxes as ACs (ticket-auto-pipeline,
       `dor-check.sh`). **Fixed by PR #537 (2026-10-22).**
-- [ ] 2. File and fix: `FLAG_NEEDS_INFO` stays set after the questions are answered
-      (`dor-check.sh:1302`, `gate-check.sh:425`).
-- [ ] 3. Dispatch path: ~~#524 (epic manifest lookup), #525 (no `META|pr-created` from VERIFY),
+- [x] 2. File and fix: `FLAG_NEEDS_INFO` stays set after the questions are answered
+      (`dor-check.sh:1302`, `gate-check.sh:425`). **Already fixed by #540 (0faed14, 0.69.4,
+      2026-10-22); re-verified on main f914dfa 2026-11-11.** Gap left open (decision): a passing
+      re-run of `ticket-critique` does not clear `needs-info`, yet the critique comment tells the
+      user to re-run `/ticket-appraise`; `dor-readiness.md` said `/ticket-approve` clears it, which
+      would also approve an unreviewed ticket. Fixed in 0.113.2: the critique message and the doc
+      now name `/ticket-flow {ID} needs-info-resolved`.
+- [x] 3. Dispatch path: ~~#524 (epic manifest lookup), #525 (no `META|pr-created` from VERIFY),
       #529 (hold-reconcile on an empty scratch log)~~ fixed by PRs #538, #541, #539 (2026-10-22).
       ~~File and fix `/ticket-flow needs-info` failing on claimed tickets~~ — already fixed by
       #396/#423, and `flow.sh` no longer writes to Linear at all. **Left:** check the four
       unverified items in the report (reconcile double-count, openspec path, heartbeat `start`,
-      dropped `|` lines) against `main`, then file only those that reproduce.
+      dropped `|` lines) against `main`, then file only those that reproduce. **All four already
+      fixed by #542 (e0338cd, 0.69.1, 2026-10-22); re-verified on main f914dfa 2026-11-11. Item
+      closed.**
 
 **Openspec changes: one branch each. Review each plan with 3 Sonnet reviewers before implementing.**
 
