@@ -1799,6 +1799,44 @@ test_flow_pending_replay_failure_refuses_transition() {
     [ "$pending" = "appraise-started" ] && [ "$outbox_lines" -eq 0 ]
 }
 
+# ── test_flow_drain_runs_without_ticket_lock (review ARCH-8) ────────────────
+# The exit-time outbox drain does board network I/O. It must run after
+# flow.sh has released its per-ticket flock (FD 9), and must not inherit
+# FD 9 — otherwise a concurrent flow.sh for the same ticket exits 42 for as
+# long as the board call takes. A probe driver tries the flow lock with
+# `flock -n` from inside apply and records whether it was free.
+
+test_flow_drain_runs_without_ticket_lock() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/logs" "$tmpdir/drivers"
+  _flow_seed_manifest "$tmpdir/repos" WIL-99
+  cat >"$tmpdir/drivers/probe.sh" <<'PROBE'
+#!/usr/bin/env bash
+if flock -n "$PROBE_LOCK" true; then echo free >>"$PROBE_OUT"; else echo held >>"$PROBE_OUT"; fi
+[ -e /proc/self/fd/9 ] && echo fd9-inherited >>"$PROBE_OUT"
+exit 0
+PROBE
+  FLEET_FENCE_ENFORCE=false FLEET_BOARD_DRIVERS=probe \
+    OUTBOX_DRAIN_DRIVER_DIR_OVERRIDE="$tmpdir/drivers" \
+    PROBE_LOCK="$tmpdir/logs/.ticket-flow-WIL-99.lock" PROBE_OUT="$tmpdir/probe.out" \
+    CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" LOG_FILE="$tmpdir/logs/WIL-99-pipeline.log" \
+    TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
+    FLEET_PIPELINE_LOG_DIR="$tmpdir/logs" \
+    "$FLOW_SH" WIL-99 implement-outcome --data outcome=Hard >/dev/null 2>&1
+  local rc=$? out
+  out=$(cat "$tmpdir/probe.out" 2>/dev/null)
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ] || {
+    echo "flow.sh rc=$rc" >&2
+    return 1
+  }
+  [ "$out" = "free" ] || {
+    echo "probe saw: ${out:-<driver never ran>}" >&2
+    return 1
+  }
+}
+
 # ── argument parsing and --dry-run (review QA-4 / QA-5) ──────────────────────
 
 # --dry-run on a ticket with no manifest and an empty log dir must write
@@ -1933,6 +1971,7 @@ for fn in \
   test_flow_malformed_generation_refused \
   test_flow_emit_failure_keeps_pending_event \
   test_flow_pending_replay_failure_refuses_transition \
+  test_flow_drain_runs_without_ticket_lock \
   test_flow_dry_run_writes_nothing \
   test_flow_dry_run_leaves_pending_event \
   test_flow_unknown_flag_rejected \

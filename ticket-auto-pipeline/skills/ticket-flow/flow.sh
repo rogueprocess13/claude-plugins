@@ -612,6 +612,12 @@ fi
 # failure SHALL NOT fail the transition" / "not gated on any inferred
 # daemon-liveness signal"). Correctness rests on the cursor lock shared
 # with fleetd's own pusher pass, not on avoiding concurrency.
+# The manifest write and the emit are done, so release the per-ticket flow
+# lock first: the drain does board network I/O, and holding FD 9 through it
+# (or letting the drain inherit it) makes every concurrent flow.sh for this
+# ticket exit 42 until the board answers (review ARCH-8).
+flock -u 9 2>/dev/null || true
+exec 9>&-
 bash "$SCRIPT_DIR/outbox-drain.sh" "$TICKET_ID" >/dev/null 2>&1 || true
 
 jq -n \

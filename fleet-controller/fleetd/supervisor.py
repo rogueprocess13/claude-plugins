@@ -2368,6 +2368,43 @@ FLEET_WORKER_PERMISSION_MODE = os.environ.get(
     'FLEET_WORKER_PERMISSION_MODE', 'bypassPermissions')
 FLEET_WORKER_DISALLOWED_TOOLS = os.environ.get('FLEET_WORKER_DISALLOWED_TOOLS', '')
 
+# Autonomy every fleetd-dispatched ticket runs under (review finding PO-9).
+# The whole-ticket spawn passes it as `--{mode}` to `/ticket-auto`, default
+# `auto` (the behaviour that path always had: simple tickets auto-approve and
+# auto-merge, complex tickets still gate). The phase-dispatch path passes it to
+# `preamble.run_preamble` as AUTONOMY only when it is set explicitly. `fleet-env-check.sh`
+# (fleetd's startup gate) refuses any other value; the fallback below only
+# matters when that gate is off (FLEET_STARTUP_ENV_CHECK=false).
+FLEET_WORKER_AUTONOMY_VALUES = ('auto', 'semi-auto', 'manual')
+
+
+def _resolve_worker_autonomy(raw):
+    """`raw` if it is a known autonomy mode, `auto` when unset, and `auto`
+    with a loud stderr warning for anything else."""
+    value = (raw or '').strip()
+    if not value:
+        return 'auto'
+    if value in FLEET_WORKER_AUTONOMY_VALUES:
+        return value
+    print(
+        f"fleetd: WARNING: FLEET_WORKER_AUTONOMY={value!r} is not one of "
+        f"{', '.join(FLEET_WORKER_AUTONOMY_VALUES)} — dispatching workers "
+        f"with 'auto'", file=sys.stderr)
+    return 'auto'
+
+
+FLEET_WORKER_AUTONOMY = _resolve_worker_autonomy(
+    os.environ.get('FLEET_WORKER_AUTONOMY', 'auto'))
+# The phase-dispatch path only passes the setting when the operator set it.
+# Unset, the preamble keeps its own chain (TICKET_AUTONOMY, else `manual`), so
+# an unconfigured host does not lose human gating on that path.
+def _worker_autonomy_explicit(environ):
+    """True only when FLEET_WORKER_AUTONOMY is set to a non-blank value."""
+    return bool((environ.get('FLEET_WORKER_AUTONOMY') or '').strip())
+
+
+FLEET_WORKER_AUTONOMY_EXPLICIT = _worker_autonomy_explicit(os.environ)
+
 # Worker settings isolation (headless-worker-isolation Task B). Live-probed
 # (`claude -p ... --setting-sources project,local`, WIL-77 investigation):
 # dropping the "user" settings source is what actually silences a worker's
@@ -2515,8 +2552,8 @@ def _build_worker_cmd(tid, claude_bin=None, claude_cmd=None, session_id=None,
                       prompt=None, agent=None, is_phase_worker=False):
     """Build the argument list for spawning a worker.
 
-    `prompt` replaces the default whole-ticket `/ticket-auto` invocation with
-    a single-phase one built by `phase_dispatch.build_phase_spawn` (task 4.4).
+    `prompt` replaces the default whole-ticket `/ticket-auto` invocation
+    (`--{FLEET_WORKER_AUTONOMY} --from-planned`) with a single-phase one built by `phase_dispatch.build_phase_spawn` (task 4.4).
     Only the `-p` payload differs: session id, output format and permission
     handling are identical, because a phase worker is the same kind of
     headless session as a ticket worker — it simply runs one step of the
@@ -2578,7 +2615,8 @@ def _build_worker_cmd(tid, claude_bin=None, claude_cmd=None, session_id=None,
         output_format_args = ['--output-format', 'stream-json', '--verbose']
     else:
         output_format_args = ['--output-format', 'json']
-    args = ['-p', prompt or f'/ticket-auto-pipeline:ticket-auto {tid} --auto --from-planned',
+    args = ['-p', prompt or (f'/ticket-auto-pipeline:ticket-auto {tid} '
+                             f'--{FLEET_WORKER_AUTONOMY} --from-planned'),
             *output_format_args]
     if session_id:
         args += ['--session-id', session_id]
@@ -4603,7 +4641,11 @@ class Supervisor:
 
         from_planned = reason.startswith('planned-dispatch')
         try:
-            result = _preamble_mod.run_preamble(tid, from_planned=from_planned)
+            result = _preamble_mod.run_preamble(
+                tid,
+                autonomy=(FLEET_WORKER_AUTONOMY
+                          if FLEET_WORKER_AUTONOMY_EXPLICIT else ''),
+                from_planned=from_planned)
         except _preamble_mod.PreambleError as exc:
             print(f"fleetd[{os.getpid()}]: preamble failed for {tid}: {exc}",
                   file=sys.stderr)

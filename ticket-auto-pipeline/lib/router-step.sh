@@ -8,7 +8,7 @@
 #                  [--attempt N] [--ticket-dir D] [--repos-root R] [--result-file P]
 #   router-step.sh inspector <PHASE> <TICKET-ID> --log-file F
 #                  [--hb-log-file H] [--out P]
-#   router-step.sh inspector-done <PHASE> <TICKET-ID> [--result-file P]
+#   router-step.sh inspector-done <PHASE> <TICKET-ID> [--result-file P] [--log-file F]
 #   router-step.sh retro-check --log-file F [--hb-log-file H] [--no-drift-log]
 #
 # Every option value that is still an unfilled `{PLACEHOLDER}` reads as empty.
@@ -32,6 +32,8 @@
 # inspector — RLVR Phase 1 advisory inspection prelude. Calls
 # spawn_phase_inspector (lib/phase-inspector.sh) `|| true` with the phase's
 # cross-phase context (VERIFY adds IMPLEMENT; PR-REVIEW adds IMPLEMENT VERIFY).
+# With verifier results, the library itself writes the deterministic
+# META|phase-inspector verdict (inspect_verifiers, "source":"bash"; DET-SU-1).
 # With no verifier results the function writes its own
 # META|phase-inspector|info|{... "verdict":"WARN" ...} skip line and this prints
 #   PHASE_INSPECTOR_READY=skip
@@ -42,6 +44,11 @@
 # The guidance-extractor-agent spawn itself stays with the caller.
 #
 # inspector-done — after the inspector agent returns:
+#   validate: when the log (--log-file, else ./logs/<TID>-pipeline.log) holds
+#     a META|phase-inspector line for <PHASE> written after this phase's bash
+#     verdict, validate_phase_inspector (lib/inspect-verifiers.sh) checks it;
+#     a disagreeing line is followed by bash's corrected verdict
+#     ("agent_overridden":true), so the last line for the phase is bash's.
 #   spawn_capture ... ATTEMPT=inspector   (appends; never overwrites the phase
 #                                          agent's own capture)
 #   spawn_agent_post RESULT=done MSG="Phase inspector completed for <PHASE>"
@@ -221,7 +228,38 @@ _rs_inspector() {
 }
 
 # ── inspector-done ────────────────────────────────────────────────────────────
+# _rs_inspector_validate — DET-SU-1: bash has the final word on the verdict.
+# Fail-soft: every failure leaves the log as it is.
+_rs_inspector_validate() {
+  local log="${_rs_log_file:-./logs/${_rs_tid}-pipeline.log}"
+  [ -f "$log" ] && command -v jq >/dev/null 2>&1 || return 0
+  local det="" claim="" j="" ph="" src=""
+  while IFS= read -r j; do
+    ph=$(jq -r '.phase // empty' <<<"$j" 2>/dev/null) || continue
+    [ "$ph" = "$_rs_phase" ] || continue
+    src=$(jq -r '.source // empty' <<<"$j" 2>/dev/null) || src=""
+    if [ "$src" = bash ]; then
+      det="$j"
+      claim=""
+    elif [ -n "$det" ]; then
+      claim="$j"
+    fi
+  done < <(grep '^[^|]*|META|phase-inspector|' "$log" 2>/dev/null |
+    awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}')
+  [ -n "$det" ] && [ -n "$claim" ] || return 0
+  # shellcheck source=/dev/null
+  source "$_RS_DIR/inspect-verifiers.sh" 2>/dev/null || return 0
+  local out=""
+  out=$(validate_phase_inspector "$claim" "$det" "$_rs_phase" 2>/dev/null) || return 0
+  if jq -e '.agent_overridden == true' <<<"$out" >/dev/null 2>&1; then
+    printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$out" >>"$log" 2>/dev/null || true
+    echo "router-step: $_rs_phase inspector verdict overridden by bash (agent claim disagreed)" >&2
+  fi
+  return 0
+}
+
 _rs_inspector_done() {
+  _rs_inspector_validate || true
   _rs_spawn_helper
   spawn_capture TICKET_ID="$_rs_tid" PHASE="$_rs_phase" \
     RESULT_FILE="$_rs_result_file" ATTEMPT=inspector ||

@@ -1029,7 +1029,7 @@ skip the checks. Both were implemented and merged on 2026-10-03.
       run `/opsx:archive ticket-create-skill`.
 - [ ] 4. Live: one planner run on a real idea, confirming the business-framed titles and sections
       survive TicketGen into Linear. Roll into Step 8's consolidated live pass (item 4).
-- [ ] 5. Follow-up, not yet specced: two existing mismatches found while building `create.sh`.
+- [x] 5. **Already fixed by #528 (9f84431, 2026-10-22)** — checked 2026-11-12: `dor-check.sh`'s outcome aliases include `Desired Behaviour`, the security template carries `## Impact` + `## Proposed Changes`, and `_has_section_nav_path` no longer accepts the column header. Original note: two existing mismatches found while building `create.sh`.
       (a) The `improvement` template's `## Desired Behaviour` is not in `dor-check.sh`'s outcome
       aliases, and the `security` template has neither a why heading nor an outcome heading, so a
       body written straight from either template fails with `INTENT_MISSING`. The skill currently
@@ -1230,7 +1230,12 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
         transaction boundaries, failure behaviour;
       - a Crosscheck check against literal values in ACs and seeds that are not declared keys.
 - [ ] 6. `planner-crosscheck-ownership` (ticket-planner) — **specced 2026-11-11, reviewed (3
-      reviewers), revised; not started.** Change at `openspec/changes/planner-crosscheck-ownership/`
+      reviewers), revised. PR A MERGED 2026-11-12 as #696 (3e6016e, ticket-planner 0.37.0; dormant
+      family, edges, wildcard accept, and a fix that reads the accept instance only from the
+      trailing command, for ownership and `PARAM_LITERAL`). PR B MERGED 2026-11-12 as #697
+      (4c8e161, ticket-planner 0.38.0): Specify asks for the tables, so the family is live for new
+      initiatives; both contract markers are now written only on the first Specify dispatch. Left:
+      group 7 (seed-numbers decision) and group 8 (live check on the tickets host), then archive.** Change at `openspec/changes/planner-crosscheck-ownership/`
       (local; validates `--strict`; design.md § Review round 1 records every finding). Each spec
       declares `## Writes` (Key, Op) and `## Reads` (Key, Source) tables; bash checks them, no prose
       parsing. Ops: `create`/`update`/`delete`, `append` (never conflicts),
@@ -1252,13 +1257,28 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
       `planner-seed-numbers` only if the live check shows the need); wildcard accept
       `--accept CODE@*:"reason"` records one accept per current instance. Open: `framework:` names
       configurable per host (recommend a code constant for now); headless accept deferred.
-- [ ] 7. `planner-ac-code-precondition` (ticket-planner). Hardest to make deterministic; do last.
-      Open design questions:
-      - which checks are bash (nullability from entity/Liquibase, enum or band limits) and which
-        are agent judgement (context across thread pools or transactions);
-      - where it runs (end of Specify vs a Crosscheck sub-check) and the finding code
-        (`AC_PRECONDITION_UNREACHABLE`);
-      - false-positive budget: the report already notes 33 accepted Crosscheck false positives.
+- [ ] 7. `planner-ac-code-precondition` (ticket-planner) — **specced 2026-11-11, reviewed (3
+      reviewers), revised; not started.** Change at `openspec/changes/planner-ac-code-precondition/`
+      (local; validates `--strict`; design.md § Review round 1 records every finding). Checks that
+      each acceptance criterion's starting state is reachable in the real code. Each spec declares a
+      `## Preconditions` table (Criterion, Key, Mode, Requires, Basis): `Mode` `state` rows are
+      checked, `input` rows (a value the test submits expecting rejection) are never flagged;
+      `Requires` is `null`, `value:<v>` or `number:<n>`; `Basis` is `code:<path>` (item 6's pinned
+      repo-ref worktree; a failed pin or the live checkout is marked) or `spec:<slug>` (`spec:<self>`
+      only when the spec's own `## Writes` declares the key). Strong facts only, JPA entities and
+      Liquibase XML first: Liquibase constraints/types, `@Id`, enum types; a primitive Java type
+      blocks only when Liquibase or `@Id` agrees; ordinal/converted enums, unparsed changes to the
+      table, and a hit file cap are unchecked (one info line per run, listing the nearest names).
+      Blocking `AC_PRECONDITION_TABLE_INVALID`, `AC_PRECONDITION_UNREACHABLE` (per-instance and
+      wildcard accept); warnings `AC_PRECONDITION_PLANNED` (another spec's `## Writes` declares the
+      key, so a planned schema change is downgraded) and `AC_PRECONDITION_NO_SOURCE` (once per
+      initiative). User decisions: cut to the incident's cases (weak facts, the undeclared tripwire,
+      `length:` and Liquibase YAML are follow-ups only if the live check shows the need); `Mode`
+      column; planned changes downgrade; 2 PRs (PR 1 dormant, 20 tasks; PR 2 prompts ~150 words, a
+      third marker `ac-precondition-v1` as a plain call, SHA re-pins, 5 tasks, after item 6 PR B),
+      then 8 live-check tasks including one real-project run, with a stop rule: more than 2
+      accepted false positives means narrowing the family. Thread/transaction visibility handed to
+      Step 18 item 1. Open: whether any `## Writes` op counts as a planned change (recommend any op).
 
 **Order and conflicts.** Items 1–3 first: small, and they block the next epic today. Then 4.
 Items 5, 6 and 7 all edit the Specify prompt in `planner-phase-prompts.sh` and re-pin its sha
@@ -1313,6 +1333,26 @@ after, where a test is possible. Per-WP handoff notes go in `review-2026-10-23/f
 **Tranche 2: needs design (openspec first).** Lock and state-root split (ARCH-3/4/5), `flow.sh`
 network calls while holding the lock (ARCH-8), migration replay (ARCH-9), fleetd autonomy setting
 (PO-9), and the determinism backlog (review README "top high-value, small-effort items").
+
+**Tranche 2 triage, 2026-11-12** (checked against `main` @ 7d31fe0):
+- ARCH-8 — was still live: `outbox-drain.sh` inherited flow.sh's FD 9, so the ticket lock was held
+  through the board call. **Fixed, PR #700** (0.114.1).
+- ARCH-3 (lock dir next to whichever flow.sh ran, `flow.sh:83` vs `fleet-intervene.sh:83`) and
+  ARCH-4 (`set_ticket_transition`/`clear_pending_event`/`set_ticket_approval` write the manifest
+  with no lock; flow.sh reads `rev` outside any lock) — live, paired; ARCH-3 must land first. One
+  PR each is plausible, ARCH-4 needs a concurrency test.
+- ARCH-5 (cwd-relative `./logs` state root) — live, **needs design**: changing the default moves
+  live state on existing hosts.
+- ARCH-9 — live, **needs design**. The review's "missing cursor → start at outbox max seq" would
+  also skip a brand-new ticket's first event (its first drain has no cursor either), so it needs a
+  host-level marker or similar.
+- PO-9 (fleetd always `--auto`) — live; `FLEET_WORKER_AUTONOMY` in progress (2026-11-12).
+- Determinism backlog: DET-RV-1, DET-IP-1/RV-20, DET-IP-2, DET-AP-6, DET-PL-26 fixed; DET-AP-1
+  partial (score still LLM); DET-PL-20 moot (knowledge-curator removed). Live: DET-SU-1
+  (`inspect_verifiers` unused) and DET-SU-2 (`retro.sh` has no `failure_tickets`) — in progress
+  2026-11-12; DET-AP-5 (`complexity-score.sh`), DET-PL-4 (render `COMPLETED.md`; waits for Step 12
+  item 7 PR 2 and Step 18 item 1, same prompt file), DET-PL-2 (TicketGen script, own PR, needs
+  care). DET-AP-2 unclear (critique may still check by eye).
 
 **Merging.** WPs do not bump versions; bump each plugin once per PR at PR time. WP-2 and WP-7
 both edit skill markdown, and WP-1 and WP-2 touch the flow call path, so merge WP-1 first, then
@@ -1728,7 +1768,10 @@ Which plugins each item touches (bump the version of every plugin an item edits)
       questions: one extra agent spawn per run (cost), and whether Consensus treats goldfish-only
       findings differently. Copy EGM's rule: a lens that fails or times out is recorded as
       "not run", never as zero findings.
-- [ ] 2. **Paraphrase test on planned tickets.** From EGM's comprehension reviewer: before
+- [ ] 2. **Paraphrase test on planned tickets.** Specced 2026-11-12 as openspec
+      `dor-semantic-paraphrase` (local): required `PARAPHRASE` scan line, new advisory-only code
+      `INCOHERENT_CHANGE`, evaluator v4 without forced rescan, critique not-run audit; epic/intent
+      comparison deferred. Implementation in progress. Original note: From EGM's comprehension reviewer: before
       listing findings, the reviewer writes what the ticket proposes in its own words; a
       paraphrase that disagrees with the sealed intent / epic is a finding. A document whose
       terms are all defined but whose parts don't connect passes a definitions check and fails
@@ -1737,7 +1780,10 @@ Which plugins each item touches (bump the version of every plugin an item edits)
       check that DoR semantic and `ticket-critique` treat a failed/timed-out evaluator as
       "not run", not "no findings". EGM's "Zero-Decision Rule" (a plan fails if the implementer
       must make any design choice) is a candidate one-line wording for TicketGen/strict DoR.
-- [ ] 3. **Spec/doc drift report.** An LLM pass that compares each `openspec/specs/*` capability
+- [x] 3. **Spec/doc drift report.** DONE 2026-11-12: `scripts/drift-report.sh` + prompt + stub-claude test
+      (openspec change `spec-doc-drift-report`, local). Smoke run on one doc: 16 s, $0.42, one real
+      finding. Live task 4.1 (one `--only 'ticket-auto-pipeline/docs/*'` sweep, spot-check three
+      findings) is the operator's call — a full sweep is ~140 docs ≈ $60. Original note: An LLM pass that compares each `openspec/specs/*` capability
       and each `*/docs/*.md` against the current code and reports only divergences (missing
       behaviour, missing fields, hardcoded values where logic was specified, different
       pattern/library). CI only checks the state diagram against `workflow.json`; nothing checks

@@ -1,11 +1,11 @@
 ---
 name: guidance-extractor
-description: Reads verifier-result entries for a completed pipeline phase, inspects for known defect patterns (flaky tests, missing requirements, trivial passes, verdict disagreement, incomplete implementation), writes structured META|phase-inspector PASS/WARN/FAIL verdicts to the pipeline log, and (in extract mode) classifies root causes, writes guidance store entries, and appends CORRECTIONS blocks. Shared agent type — used by Phase 1 (Phase Inspector) and Phase 2 (Guidance Store).
+description: Reads the deterministic META|phase-inspector verdict bash wrote for a completed pipeline phase (defect patterns: flaky tests, missing requirements, trivial passes, verdict disagreement, incomplete implementation) and, in extract mode, classifies root causes, writes guidance store entries, and appends CORRECTIONS blocks. Shared agent type — used by Phase 1 (Phase Inspector) and Phase 2 (Guidance Store).
 ---
 
 # Guidance Extractor — Phase Inspector Agent
 
-You are the guidance-extractor-agent in the ticket-auto-pipeline. Your scope is read-only inspection of verifier-result entries for a single pipeline phase. You MUST NOT modify code, create branches, make commits, or call Linear API mutations. All output goes to the pipeline log via `META|phase-inspector` entries.
+You are the guidance-extractor-agent in the ticket-auto-pipeline. Your scope is read-only inspection of verifier-result entries for a single pipeline phase. You MUST NOT modify code, create branches, make commits, or call Linear API mutations. Bash (`lib/inspect-verifiers.sh`) has already written the phase's `META|phase-inspector` verdict; never write another.
 
 ## Pipeline Preamble
 
@@ -15,17 +15,16 @@ If `--from-auto` is present in the arguments, follow the auto-pipeline preamble 
 
 This agent is shared between Phase 1 (Phase Inspector) and Phase 2 (Guidance Store). The behavioral split is controlled by the spawn mode:
 
-- **Phase 1 (`--mode inspect`, default)**: Read pre-parsed verifier results from prompt context. Write one `META|phase-inspector` line. No file reads, no API calls, no mutations. This is the advisory-only observer mode.
-- **Phase 2 (`--mode extract`)**: After producing the `META|phase-inspector` verdict, run a second classification pass. Classify each detected pattern's root cause (`skill-file | lib-script | agent-prompt | network-flake`). For `skill-file` and `lib-script` causes, write structured entries to the guidance store and append CORRECTIONS blocks to the ticket's notes.md (`guidance-store.sh record-finding`). For `agent-prompt` and `network-flake`, log findings only — no store writes.
+- **Phase 1 (`--mode inspect`, default)**: Read the verdict from prompt context. Write nothing.
+- **Phase 2 (`--mode extract`)**: Classify each pattern in the verdict's root cause (`skill-file | lib-script | agent-prompt | network-flake`). For `skill-file` and `lib-script` causes, write structured entries to the guidance store and append CORRECTIONS blocks to the ticket's notes.md (`guidance-store.sh record-finding`). For `agent-prompt` and `network-flake`, log findings only — no store writes.
 
 When `--mode extract` is active:
 - Bash tool calls ARE allowed: `guidance-store.sh record-finding`, `guidance_query`
-- Multiple log lines may be written: `META|phase-inspector` + `META|guidance-extractor` + per-classification upserts
-- Root cause classification is the primary task; the inspector verdict is still written first
+- Log lines written: `META|guidance-extractor` + per-classification upserts
 
 ### Root Cause Classification
 
-After producing the `META|phase-inspector` verdict, classify each detected pattern. The classification determines whether and how the finding is stored.
+Classify each pattern in the bash verdict. The classification determines whether and how the finding is stored.
 
 **Classification taxonomy:**
 
@@ -55,7 +54,7 @@ After producing the `META|phase-inspector` verdict, classify each detected patte
    - `agent-prompt`: the router skill path (`skills/ticket-auto/SKILL.md`)
    - `network-flake`: the verifier that produced the flake (e.g., `lib/inspect-verifiers.sh`)
 
-3. **Pattern identifier:** use the pattern ID from the inspector verdict directly (snake_case).
+3. **Pattern identifier:** the verdict's pattern ID (snake_case).
 
 ### Guidance Store Writes and CORRECTIONS
 
@@ -92,11 +91,11 @@ When invoked by Phase 3's `pipeline-postmortem.sh`, the agent receives post-mort
 
 ### Phase 1 Behavior Preserved
 
-Without `--mode extract`, only the inspector verdict is produced, following the instructions injected into the prompt by `lib/phase-inspector.sh`: no classification, no guidance store writes, no CORRECTIONS blocks.
+Without `--mode extract` there is nothing to do: no classification, no store writes, no CORRECTIONS.
 
 ## Guardrails
 
-- **Fail-soft**: if you cannot produce a valid verdict (corrupted input, unparseable JSON), write a WARN skip entry and exit. Never block the pipeline. Guidance store write failures (lock timeout, disk full) exit 0 — the inspector verdict is unaffected.
-- **Phase 1 — No tool calls**: in inspect mode (default), you receive all context in the prompt. Do not read files or call APIs. One `META|phase-inspector` line only.
-- **Phase 2 — Tool calls allowed**: in extract mode (`--mode extract`), Bash tool calls to `guidance-store.sh record-finding` and `guidance_query` are permitted. Multiple log lines may be written (`META|phase-inspector` + `META|guidance-extractor` + per-classification entries). The inspector verdict is written FIRST — classification failures do not affect it.
-- **Deterministic**: same input → same verdict. No sampling, no creativity. Pattern matching is mechanical. Classification follows the heuristics table — no guessing.
+- **Fail-soft**: unreadable context or a store write failure (lock timeout, disk full) → exit 0. Never block the pipeline; the bash verdict is unaffected.
+- **Phase 1 — No tool calls**: all context is in the prompt. Do not read files, call APIs or write log lines.
+- **Phase 2 — Tool calls allowed**: Bash calls to `guidance-store.sh record-finding` and `guidance_query` only.
+- **Never write `META|phase-inspector`**: `router-step.sh inspector-done` validates any such line with `validate_phase_inspector` and bash overrides it. Classification follows the heuristics table — no guessing.
