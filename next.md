@@ -1230,7 +1230,12 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
         transaction boundaries, failure behaviour;
       - a Crosscheck check against literal values in ACs and seeds that are not declared keys.
 - [ ] 6. `planner-crosscheck-ownership` (ticket-planner) — **specced 2026-11-11, reviewed (3
-      reviewers), revised; not started.** Change at `openspec/changes/planner-crosscheck-ownership/`
+      reviewers), revised. PR A MERGED 2026-11-12 as #696 (3e6016e, ticket-planner 0.37.0; dormant
+      family, edges, wildcard accept, and a fix that reads the accept instance only from the
+      trailing command, for ownership and `PARAM_LITERAL`). PR B MERGED 2026-11-12 as #697
+      (4c8e161, ticket-planner 0.38.0): Specify asks for the tables, so the family is live for new
+      initiatives; both contract markers are now written only on the first Specify dispatch. Left:
+      group 7 (seed-numbers decision) and group 8 (live check on the tickets host), then archive.** Change at `openspec/changes/planner-crosscheck-ownership/`
       (local; validates `--strict`; design.md § Review round 1 records every finding). Each spec
       declares `## Writes` (Key, Op) and `## Reads` (Key, Source) tables; bash checks them, no prose
       parsing. Ops: `create`/`update`/`delete`, `append` (never conflicts),
@@ -1252,13 +1257,28 @@ fixed (item 0). Items 1–3 are bugs, specced as issues. Items 4–7 need an ope
       `planner-seed-numbers` only if the live check shows the need); wildcard accept
       `--accept CODE@*:"reason"` records one accept per current instance. Open: `framework:` names
       configurable per host (recommend a code constant for now); headless accept deferred.
-- [ ] 7. `planner-ac-code-precondition` (ticket-planner). Hardest to make deterministic; do last.
-      Open design questions:
-      - which checks are bash (nullability from entity/Liquibase, enum or band limits) and which
-        are agent judgement (context across thread pools or transactions);
-      - where it runs (end of Specify vs a Crosscheck sub-check) and the finding code
-        (`AC_PRECONDITION_UNREACHABLE`);
-      - false-positive budget: the report already notes 33 accepted Crosscheck false positives.
+- [ ] 7. `planner-ac-code-precondition` (ticket-planner) — **specced 2026-11-11, reviewed (3
+      reviewers), revised; not started.** Change at `openspec/changes/planner-ac-code-precondition/`
+      (local; validates `--strict`; design.md § Review round 1 records every finding). Checks that
+      each acceptance criterion's starting state is reachable in the real code. Each spec declares a
+      `## Preconditions` table (Criterion, Key, Mode, Requires, Basis): `Mode` `state` rows are
+      checked, `input` rows (a value the test submits expecting rejection) are never flagged;
+      `Requires` is `null`, `value:<v>` or `number:<n>`; `Basis` is `code:<path>` (item 6's pinned
+      repo-ref worktree; a failed pin or the live checkout is marked) or `spec:<slug>` (`spec:<self>`
+      only when the spec's own `## Writes` declares the key). Strong facts only, JPA entities and
+      Liquibase XML first: Liquibase constraints/types, `@Id`, enum types; a primitive Java type
+      blocks only when Liquibase or `@Id` agrees; ordinal/converted enums, unparsed changes to the
+      table, and a hit file cap are unchecked (one info line per run, listing the nearest names).
+      Blocking `AC_PRECONDITION_TABLE_INVALID`, `AC_PRECONDITION_UNREACHABLE` (per-instance and
+      wildcard accept); warnings `AC_PRECONDITION_PLANNED` (another spec's `## Writes` declares the
+      key, so a planned schema change is downgraded) and `AC_PRECONDITION_NO_SOURCE` (once per
+      initiative). User decisions: cut to the incident's cases (weak facts, the undeclared tripwire,
+      `length:` and Liquibase YAML are follow-ups only if the live check shows the need); `Mode`
+      column; planned changes downgrade; 2 PRs (PR 1 dormant, 20 tasks; PR 2 prompts ~150 words, a
+      third marker `ac-precondition-v1` as a plain call, SHA re-pins, 5 tasks, after item 6 PR B),
+      then 8 live-check tasks including one real-project run, with a stop rule: more than 2
+      accepted false positives means narrowing the family. Thread/transaction visibility handed to
+      Step 18 item 1. Open: whether any `## Writes` op counts as a planned change (recommend any op).
 
 **Order and conflicts.** Items 1–3 first: small, and they block the next epic today. Then 4.
 Items 5, 6 and 7 all edit the Specify prompt in `planner-phase-prompts.sh` and re-pin its sha
