@@ -302,25 +302,13 @@ If the symbol is ambiguous (multiple candidates), pick the highest-relevance res
 
 **Edit column:** record `additive` only when the planned edit to that target is purely additive — new union members, new `case`/`switch` arms placed before an unchanged `default`, new optional parameters, or new exports — so that no existing caller's inputs or outputs can change. Anything else (changed signature, changed return value, changed branch an existing input already reaches, removed member, reordered arms) is `modifying`. When unsure, write `modifying`.
 
-**Re-evaluate complexity:** the thresholds are applied by bash, not by judgement. Run:
+**Re-evaluate complexity:** bash applies the thresholds and writes the result; do not re-judge it or edit `## Complexity` by hand. Run:
 
 ```bash
-eval "$(bash -c "source ~/.claude/skills/lib/notes-parse.sh; get_blast_radius_override '{ticket-dir}'")"
+bash ~/.claude/skills/lib/complexity-score.sh blast '{ticket-dir}'
 ```
 
-The thresholds are in `get_blast_radius_override`'s header (`lib/notes-parse.sh`). `BLAST_OVERRIDE=complex` **is** the Step 2.5 **Blast radius** axis (weight 3) firing; do not re-judge it. When it fires, add `blast-radius:3` to `**Axes fired:**`, add 3 to `**Weighted score:**`, and recompute `**Score:**` against the threshold (any score with blast radius fired is ≥ 3, so `complex`). Append `BLAST_REASON` to `**Reason:**`. **Fast-path interaction:** If fast-path set complexity to `simple` (from Conservative strategy), blast radius still runs and can escalate to `complex`. It reads from notes.md and applies regardless of how complexity was originally set; on a fast-path `**Weighted score:** n/a` line, write `3 (threshold 3)`.
-
-```markdown
-**Score:** complex (escalated from simple — blast radius: {BLAST_REASON})
-**Weighted score:** {N+3} (threshold 3)
-**Axes fired:** {existing list}, blast-radius:3
-```
-
-**Additive-change exemption (caller-count trigger only):** if `BLAST_ADDITIVE_SKIP` is non-empty, record it in `## Complexity`:
-
-```markdown
-**blast-radius:** additive — caller-count override skipped ({BLAST_ADDITIVE_SKIP})
-```
+It reads the table through `get_blast_radius_override` (thresholds in its header, `lib/notes-parse.sh`). `BLAST_OVERRIDE=complex` **is** the Step 2.5 **Blast radius** axis (weight 3): the script adds `blast-radius:3` and 3 to the weighted score (a fast-path `n/a` counts as 0), escalates a `simple` Score and appends `BLAST_REASON`, once. A non-empty `BLAST_ADDITIVE_SKIP` (additive edits, caller-count trigger only) adds a `**blast-radius:** additive` line. This applies on the fast path too. Its `COMPLEXITY=` line is the classification from here on.
 
 **Framework-migration:** no separate override any more. The `cross-layer (framework-migration):3` entry from Step 2.5 already scored `complex` on its own, so a LOW blast-radius result here changes nothing — the `impact()` thresholds are edge counts, and this class of defect has no edge. Such tickets take the Step 3-Agent (delegated) path so the bean-wiring surface is planned adversarially rather than inline.
 
@@ -499,7 +487,7 @@ If ticket-setup reported workspace already exists in Step 1:
    - New comments from Linear (N since last appraisal):
      - **{author}** ({timestamp}): {body excerpt}
    ```
-6. **Re-evaluate complexity** — first load `references/full-investigation.md` as Step 1.3e says (it holds the Step 2.5 procedure), then run Step 2.5 (complexity sweep) again, considering the new comments as additional input. If the score changes, update the `## Complexity` section in notes.md and note the change in the session log.
+6. **Re-evaluate complexity** — first load `references/full-investigation.md` as Step 1.3e says (it holds the Step 2.5 procedure), then run Step 2.5 (complexity sweep) again, considering the new comments as additional input, then re-run the Step 2.8 `complexity-score.sh blast` command so a blast-radius escalation survives the rewrite. Note any score change in the session log.
 7. **Check artifact staleness:**
    ```bash
    bash ~/.claude/skills/lib/ticket-dir.sh plan "{TICKET-ID}" --root . --ticket-dir "{ticket-dir}"
