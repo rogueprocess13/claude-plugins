@@ -25,7 +25,7 @@ _HALT_FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _HALT_LIB_DIR="${_HALT_FIXTURES_DIR}/.."
 
 # Every halt the stop describer must recognise, with the reason it must name.
-HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT refinement-body-drift:REFINEMENT_HALT refinement-demoted:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION consensus-blocked:CONSENSUS_BLOCKED"
+HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT refinement-body-drift:REFINEMENT_HALT refinement-demoted:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION consensus-blocked:CONSENSUS_BLOCKED specify-param:SPECIFY_DECISION specify-param-crosscheck:SPECIFY_DECISION"
 
 # _halt_done <init> <phase...> — mark phases done, in order.
 _halt_done() {
@@ -122,6 +122,16 @@ APPRAISAL
 None.
 PROPOSAL
     ;;
+  specify-param | specify-param-crosscheck)
+    # planner-specify-parameters: a contract initiative (the marker Specify
+    # start writes) with one open outcome and open parameter rows — at Review
+    # (the first stop), or after Consensus (the second stop, before
+    # Crosscheck). Added after the other goldens; they predate it.
+    planner_state_write "$init" META contract start specify-parameters-v1
+    _halt_done "$init" Appraisal Discovery Architecture Specify
+    [ "$name" = specify-param-crosscheck ] && _halt_done "$init" Review Consensus
+    _halt_param_proposal "$init"
+    ;;
   consensus-blocked)
     # DET-PL-11: Consensus finished but marked the plan Readiness: blocked.
     # Added after the other goldens; they predate it.
@@ -141,6 +151,35 @@ CONSENSUS
     return 1
     ;;
   esac
+}
+
+# A proposal with one open outcome, a must-ask row with no source, a tuning
+# row the keyword table promotes, and a closed tuning row; one spec names a key.
+_halt_param_proposal() {
+  local art
+  art="$(planner_initiative_dir "$1")/artifacts"
+  mkdir -p "${art}/specs"
+  cat >"${art}/proposal.md" <<'PROPOSAL'
+# Proposal
+
+## Business Outcomes
+
+### O1
+**Outcome:** NEEDS_HUMAN_DECISION — which role signs off the exported invoices?
+
+## Parameters
+
+| Name | Key | Kind | Default | Value | Source |
+|------|-----|------|---------|-------|--------|
+| Invoice rounding | `billing.total_rounding` | rounding | half-up, 2 decimal places | NEEDS_HUMAN_DECISION — round each line, or only the invoice total? | — |
+| Idle session timeout | `auth.session_idle_minutes` | duration | 30 minutes | 30 minutes | default |
+| Payment retry delay | `payments.retry_delay` | duration | 5 minutes | 5 minutes | default |
+
+## Out of Scope
+
+None.
+PROPOSAL
+  printf '# Invoice total\n\n## Technical Context\n\nRounds per `billing.total_rounding`.\n' >"${art}/specs/invoice-total.md"
 }
 
 # _halt_testdata_spec <slug> <criterion> — a spec with one all-`none` row.
@@ -338,6 +377,12 @@ halt_fixture_run() {
     specify-decision)
       # SKILL.md step 1 (pre gate, see 1c), when the loop is about to dispatch Review.
       planner_dispatch_gate pre "$INITIATIVE_ID" Review "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
+      ;;
+    specify-param)
+      planner_dispatch_gate pre "$INITIATIVE_ID" Review "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
+      ;;
+    specify-param-crosscheck)
+      planner_dispatch_gate pre "$INITIATIVE_ID" Crosscheck "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       ;;
     consensus-blocked)
       # SKILL.md step 1 (pre gate), when the loop is about to run Crosscheck.
