@@ -471,6 +471,214 @@ else
   fi
 fi
 
+# ── Specify parameters (planner-specify-parameters) ────────────────────────
+
+echo "--- Specify parameters ---"
+
+PP_PROPOSAL='# Proposal
+
+## Business Outcomes
+
+### O1
+**Outcome:** NEEDS_HUMAN_DECISION — which role signs off the exported invoices?
+
+## Parameters
+
+| Name | Key | Kind | Default | Value | Source |
+|------|-----|------|---------|-------|--------|
+| Invoice rounding | `billing.total_rounding` | rounding | half-up, 2 decimal places | NEEDS_HUMAN_DECISION — round each line, or only the invoice total? | — |
+| Idle session timeout | `auth.session_idle_minutes` | duration | 30 minutes | 30 minutes | default |
+| Payment retry delay | `payments.retry_delay` | duration | 5 minutes | 5 minutes | default |
+| Export link lifetime | `export.link_ttl` | policy | — | NEEDS_HUMAN_DECISION | — |
+
+## Risks
+
+None.'
+
+# param_fixture <name> [legacy] — specify_fixture plus the contract marker
+# (unless legacy) and two specs that name billing.total_rounding.
+param_fixture() {
+  specify_fixture "$1" <<<"$PP_PROPOSAL"
+  [ "${2:-}" = legacy ] || planner_state_write "$INIT" META contract start specify-parameters-v1
+  local sd
+  sd="$(planner_initiative_dir "$INIT")/artifacts/specs"
+  mkdir -p "$sd"
+  printf '# Invoice total\n\n## Technical Context\n\nRounds per `billing.total_rounding`.\n' >"${sd}/invoice-total.md"
+  printf '# Export link\n\nUses `billing.total_rounding` and `export.link_ttl`.\n' >"${sd}/export-link.md"
+  printf '# Index\n\n`billing.total_rounding`\n' >"${sd}/INDEX.md"
+}
+
+# qtext <model> <id>
+qtext() { echo "$1" | jq -r --arg id "$2" '.questions[] | select(.id == $id) | .text'; }
+
+# in_order <text> <needle...> — every needle occurs, each after the previous.
+in_order() {
+  local t="$1" n rest
+  shift
+  rest="$t"
+  for n in "$@"; do
+    case "$rest" in *"$n"*) rest="${rest#*"$n"}" ;; *) return 1 ;; esac
+  done
+  return 0
+}
+
+if ! declare -f planner_params_scan >/dev/null 2>&1; then
+  fail "SPECIFY_DECISION parameters: tests" "planner_params_scan missing"
+else
+  param_fixture pp-review
+  m=$(planner_stop_describe_json "$INIT")
+  h1=$(planner_specify_decisions_open "$INIT" | awk -F'\t' '$1 == "O1" { print $2 }')
+  got=$(echo "$m" | jq -r '.reason + " " + .kind + " " + .audience + " " + ([.questions[] | .id + "=" + .binding] | join(" "))')
+  want="SPECIFY_DECISION input either decision-O1-${h1}=specify-answer:O1 param-billing.total_rounding=specify-param:billing.total_rounding param-payments.retry_delay=specify-param:payments.retry_delay param-export.link_ttl=specify-param:export.link_ttl"
+  if [ "$got" = "$want" ]; then
+    pass "SPECIFY_DECISION parameters: outcomes first, then one question per open row in table order"
+  else
+    fail "SPECIFY_DECISION parameters: outcomes first, then one question per open row in table order" "$got"
+  fi
+
+  t=$(qtext "$m" param-billing.total_rounding)
+  if [[ "$t" == "round each line, or only the invoice total? "* ]] &&
+    in_order "$t" 'Suggested: "half-up, 2 decimal places"' 'reply with exactly that text' \
+      '(Invoice rounding; key billing.total_rounding, rounding; used by export-link, invoice-total)' &&
+    [[ "$t" != *"number with a unit"* ]] && [[ "$t" != *"__defer__"* ]]; then
+    pass "parameter question: plain question, suggestion, then name/key/kind/used-by; no format hint for rounding"
+  else
+    fail "parameter question: plain question, suggestion, then name/key/kind/used-by; no format hint for rounding" "$t"
+  fi
+
+  t=$(qtext "$m" param-payments.retry_delay)
+  if [[ "$t" == 'Specify assumed "5 minutes" — is that right? '* ]] &&
+    in_order "$t" 'Suggested: "5 minutes"' 'as a number with a unit, e.g. 30 minutes' \
+      '(Payment retry delay; key payments.retry_delay, duration)'; then
+    pass "parameter question: keyword-promoted duration row gets the number+unit hint after the suggestion"
+  else
+    fail "parameter question: keyword-promoted duration row gets the number+unit hint after the suggestion" "$t"
+  fi
+
+  t=$(qtext "$m" param-export.link_ttl)
+  if [[ "$t" == "(no question was written — what should Export link lifetime be?)"* ]] &&
+    [[ "$t" != *"Suggested:"* ]] && [[ "$t" == *"(Export link lifetime; key export.link_ttl, policy; used by export-link)" ]]; then
+    pass "parameter question: no suggestion → no Suggested sentence"
+  else
+    fail "parameter question: no suggestion → no Suggested sentence" "$t"
+  fi
+
+  if echo "$m" | jq -e '[.questions[] | has("options") or has("default")] | any | not' >/dev/null 2>&1 &&
+    echo "$m" | jq -e '[.questions[].text | length <= 601] | all' >/dev/null 2>&1; then
+    pass "parameter questions: no OPTIONS, no DEFAULT, text capped at 600"
+  else
+    fail "parameter questions: no OPTIONS, no DEFAULT, text capped at 600" "$(echo "$m" | jq -c '.questions')"
+  fi
+
+  planner_stop_describe "$INIT" >"${WORK}/pp.hold"
+  parsed=$(bash "$HOLD_PARSER" --phase PLANNER --return-file "${WORK}/pp.hold" 2>&1)
+  if [ "$(printf '%s' "$parsed" | jq -r '.parse_status' 2>/dev/null)" = "ok" ] &&
+    [ "$(printf '%s' "$parsed" | jq -r '[.questions[].binding] | join(" ")')" = "specify-answer:O1 specify-param:billing.total_rounding specify-param:payments.retry_delay specify-param:export.link_ttl" ]; then
+    pass "mixed SPECIFY_DECISION block parses with this checkout's human-hold-parse.sh"
+  else
+    fail "mixed SPECIFY_DECISION block parses with this checkout's human-hold-parse.sh" "$parsed"
+  fi
+  if cmp -s "${WORK}/pp.hold" <(planner_stop_describe "$INIT"); then
+    pass "mixed SPECIFY_DECISION: re-describing is byte-identical"
+  else
+    fail "mixed SPECIFY_DECISION: re-describing is byte-identical" "output changed with no change"
+  fi
+
+  # The outcome question keeps its pre-parameter text.
+  t=$(qtext "$m" "decision-O1-${h1}")
+  if [ "$t" = "Specify could not source business outcome O1 and needs a decision: which role signs off the exported invoices?. Answer in one line (at most 500 characters); it is written into proposal.md as a verbatim human decision. Answer __defer__ to leave it open and carry the question into the epic unresolved." ]; then
+    pass "mixed SPECIFY_DECISION: the outcome question text is unchanged"
+  else
+    fail "mixed SPECIFY_DECISION: the outcome question text is unchanged" "$t"
+  fi
+
+  # An earlier round's answer for the key is a hint only.
+  mkdir -p "$(planner_initiative_dir "$INIT")/artifacts/answers"
+  jq -n '{schema_version: 1, round: 1, answers: [
+    {id: "param-export.link_ttl", binding: "specify-param:export.link_ttl", value: "7 days", role: "client"}]}' \
+    >"$(planner_initiative_dir "$INIT")/artifacts/answers/round-1.json"
+  t=$(qtext "$(planner_stop_describe_json "$INIT")" param-export.link_ttl)
+  if in_order "$t" 'what should Export link lifetime be?)' 'Previously answered in round 1: "7 days".' '(Export link lifetime;'; then
+    pass "parameter question: an earlier round's answer is shown as a hint"
+  else
+    fail "parameter question: an earlier round's answer is shown as a hint" "$t"
+  fi
+
+  # Legacy initiative: the same table asks nothing.
+  param_fixture pp-legacy legacy
+  got=$(planner_stop_describe_json "$INIT" | jq -r '[.questions[].binding] | join(" ")')
+  if [ "$got" = "specify-answer:O1" ]; then
+    pass "legacy initiative: a hand-written ## Parameters table asks nothing"
+  else
+    fail "legacy initiative: a hand-written ## Parameters table asks nothing" "$got"
+  fi
+
+  # Second stop: position Crosscheck, contract initiative.
+  param_fixture pp-cc
+  _halt_done "$INIT" Review Consensus
+  m=$(planner_stop_describe_json "$INIT")
+  if [ "$(echo "$m" | jq -r '.reason + " " + (.questions | length | tostring)')" = "SPECIFY_DECISION 4" ]; then
+    pass "Crosscheck position: open items report SPECIFY_DECISION"
+  else
+    fail "Crosscheck position: open items report SPECIFY_DECISION" "$(echo "$m" | jq -c '{reason, n: (.questions | length)}')"
+  fi
+  # A failed Crosscheck run on record still reports the decision first.
+  planner_state_write "$INIT" Crosscheck check start "x"
+  planner_state_write "$INIT" META crosscheck fail "SIGNALS_UNIFORM a.md b.md share a Signals block"
+  planner_state_write "$INIT" Crosscheck check fail "1 blocking"
+  if [ "$(reason_of "$INIT")" = "SPECIFY_DECISION" ]; then
+    pass "Crosscheck position: SPECIFY_DECISION is reported ahead of CROSSCHECK_BLOCKED"
+  else
+    fail "Crosscheck position: SPECIFY_DECISION is reported ahead of CROSSCHECK_BLOCKED" "$(reason_of "$INIT")"
+  fi
+  printf '# Consensus\n\n## Readiness\nblocked — no.\n' >"$(planner_initiative_dir "$INIT")/artifacts/consensus.md"
+  if [ "$(reason_of "$INIT")" = "CONSENSUS_BLOCKED" ]; then
+    pass "Crosscheck position: consensus readiness is checked before the second stop"
+  else
+    fail "Crosscheck position: consensus readiness is checked before the second stop" "$(reason_of "$INIT")"
+  fi
+
+  param_fixture pp-cc-legacy legacy
+  _halt_done "$INIT" Review Consensus
+  if [ "$(reason_of "$INIT")" = "RUNNING" ]; then
+    pass "Crosscheck position: a legacy initiative never stops there"
+  else
+    fail "Crosscheck position: a legacy initiative never stops there" "$(reason_of "$INIT")"
+  fi
+
+  # PARAM_LITERAL: no blanket accept; one param-literals note instead.
+  fresh_root pp-literal
+  planner_state_init "$INIT" "idea" >/dev/null
+  planner_state_write "$INIT" META contract start specify-parameters-v1
+  _halt_done "$INIT" Appraisal Discovery Architecture Specify Review Consensus
+  printf '# Proposal\n\n## Parameters\n\nNone.\n' >"$(planner_initiative_dir "$INIT")/artifacts/proposal.md"
+  planner_state_write "$INIT" Crosscheck check start "x"
+  planner_state_write "$INIT" META crosscheck fail "PARAM_LITERAL export-link.md: \"30 seconds\" (time:30000) in Acceptance Criteria is not declared in ## Parameters — resume ${INIT} --accept PARAM_LITERAL@export-link:\"30 seconds\""
+  planner_state_write "$INIT" META crosscheck fail "PARAM_LITERAL export-link.md: \"2 GB\" (size:2147483648) in Expected is not declared in ## Parameters — resume ${INIT} --accept PARAM_LITERAL@export-link:\"2 GB\""
+  planner_state_write "$INIT" META crosscheck fail "SIGNALS_UNIFORM a.md b.md share a Signals block"
+  planner_state_write "$INIT" Crosscheck check fail "3 blocking"
+  m=$(planner_stop_describe_json "$INIT")
+  got=$(echo "$m" | jq -r '.reason + " " + ([.questions[] | .id + "=" + .binding] | join(" "))')
+  t=$(qtext "$m" param-literals)
+  if [ "$got" = "CROSSCHECK_BLOCKED param-literals=note accept-SIGNALS_UNIFORM=flag:accept:SIGNALS_UNIFORM" ] &&
+    in_order "$t" 'export-link "30 seconds"' 'export-link "2 GB"' "resume ${INIT} --accept PARAM_LITERAL@<slug>:\"<literal>\""; then
+    pass "PARAM_LITERAL: a param-literals note naming each literal and the per-literal command, no flag:accept:PARAM_LITERAL"
+  else
+    fail "PARAM_LITERAL: a param-literals note naming each literal and the per-literal command, no flag:accept:PARAM_LITERAL" "$got / $t"
+  fi
+  if [ "$(qtext "$m" accept-SIGNALS_UNIFORM)" = "Crosscheck blocking finding SIGNALS_UNIFORM (1x): a.md b.md share a Signals block — Accept it as genuine and expected? Answer with the reason, or __skip__ to fix the artifacts instead." ]; then
+    pass "PARAM_LITERAL: other codes' accept questions are unchanged"
+  else
+    fail "PARAM_LITERAL: other codes' accept questions are unchanged" "$(qtext "$m" accept-SIGNALS_UNIFORM)"
+  fi
+  planner_stop_describe "$INIT" >"${WORK}/pl.hold"
+  if [ "$(bash "$HOLD_PARSER" --phase PLANNER --return-file "${WORK}/pl.hold" 2>&1 | jq -r '.parse_status')" = "ok" ]; then
+    pass "PARAM_LITERAL: block parses"
+  else
+    fail "PARAM_LITERAL: block parses" "$(cat "${WORK}/pl.hold")"
+  fi
+fi
+
 # CREATE_GATE output, captured before SPECIFY_DECISION was added (L5): the
 # new optional kind/audience arguments must not move a byte.
 fresh_root create-bytes

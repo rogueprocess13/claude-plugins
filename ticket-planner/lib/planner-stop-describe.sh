@@ -252,6 +252,119 @@ _planner_stop_testdata_questions() {
   done < <(_planner_stop_testdata_slugs "$init")
 }
 
+# _planner_stop_param_hint <kind> — the format hint for a tuning kind
+# (planner-specify-parameters D5), matching what intake accepts for it.
+_planner_stop_param_hint() {
+  case "$1" in
+  duration) printf ' as a number with a unit, e.g. 30 minutes' ;;
+  limit) printf ' as a number, or a number with a unit, e.g. 50 or 500 characters' ;;
+  size) printf ' as a number, or a number with a unit, e.g. 20 or 2 GB' ;;
+  esac
+}
+
+# _planner_stop_param_used_by <INIT> <key> — the spec slugs that name the key
+# in backticks, comma-separated, sorted (INDEX.md is not a spec).
+_planner_stop_param_used_by() {
+  local sd f
+  sd="$(planner_initiative_dir "$1")/artifacts/specs"
+  [ -d "$sd" ] || return 0
+  for f in "$sd"/*.md; do
+    [ -f "$f" ] || continue
+    [ "${f##*/}" = "INDEX.md" ] && continue
+    grep -qF -- "\`$2\`" "$f" 2>/dev/null && printf '%s\n' "$(basename "$f" .md)"
+  done | LC_ALL=C sort | paste -sd, - | sed 's/,/, /g'
+}
+
+# _planner_stop_param_previous <INIT> <key> — "<N>\t<value>" for the latest
+# round file holding a specify-param:<key> answer, or nothing. A hint only.
+_planner_stop_param_previous() {
+  local ad f n best=0 v bestv=""
+  ad="$(planner_initiative_dir "$1")/artifacts/answers"
+  [ -d "$ad" ] || return 0
+  for f in "$ad"/round-*.json; do
+    [ -f "$f" ] || continue
+    n="${f##*/round-}"
+    n="${n%.json}"
+    [[ "$n" =~ ^[1-9][0-9]*$ ]] || continue
+    [ "$n" -gt "$best" ] || continue
+    v=$(jq -r --arg b "specify-param:$2" \
+      '[(.answers // [])[] | select(.binding == $b) | (.value // "" | tostring)] | last // empty' "$f" 2>/dev/null)
+    [ -n "$v" ] || continue
+    best="$n"
+    bestv="$v"
+  done
+  [ "$best" -gt 0 ] && printf '%s\t%s\n' "$best" "$bestv"
+  return 0
+}
+
+# _planner_stop_specify_questions <INIT>
+# The SPECIFY_DECISION questions as one JSON array: open outcome decisions in
+# file order, then open parameter rows in table order (planner-specify-
+# parameters D5). `[]` when nothing is open; rc 1 when proposal.md cannot be
+# scanned. Read-only: the scans, never the gate (which writes the tripwire).
+_planner_stop_specify_questions() {
+  local init="$1" open params qs="[]" q oid h8 lno dq line
+  local key kind name sugg pq text prev used hint
+  open=$(planner_specify_decisions_open "$init") || return 1
+  params=""
+  if declare -f planner_params_scan >/dev/null 2>&1; then
+    params=$(planner_params_scan "$init") || return 1
+  fi
+  if [ -n "$open" ]; then
+    while IFS=$'\t' read -r oid h8 lno dq; do
+      [ -n "$oid" ] || continue
+      q=$(_planner_stop_question "decision-${oid}-${h8}" "specify-answer:${oid}" \
+        "Specify could not source business outcome ${oid} and needs a decision: $(_planner_stop_excerpt "$dq" "$_PLANNER_STOP_DECISION_MAX"). Answer in one line (at most 500 characters); it is written into proposal.md as a verbatim human decision. Answer __defer__ to leave it open and carry the question into the epic unresolved.")
+      qs=$(jq -nc --argjson a "$qs" --argjson q "$q" '$a + [$q]')
+    done <<<"$open"
+  fi
+  # Scan columns: key, line, kind, name, suggestion (may be empty), question.
+  # Not `IFS=$'\t' read`: an empty suggestion would shift the columns.
+  if [ -n "$params" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      key=$(cut -f1 <<<"$line")
+      kind=$(cut -f3 <<<"$line")
+      name=$(cut -f4 <<<"$line")
+      sugg=$(cut -f5 <<<"$line")
+      pq=$(cut -f6- <<<"$line")
+      hint=$(_planner_stop_param_hint "$kind")
+      text="$pq"
+      if [ -n "$sugg" ]; then
+        text="${text} Suggested: \"${sugg}\" — reply with exactly that text to accept it, or give your own value${hint}."
+      else
+        text="${text} Give a value${hint}."
+      fi
+      prev=$(_planner_stop_param_previous "$init" "$key")
+      [ -n "$prev" ] &&
+        text="${text} Previously answered in round $(cut -f1 <<<"$prev"): \"$(_planner_stop_excerpt "$(cut -f2- <<<"$prev")")\"."
+      used=$(_planner_stop_param_used_by "$init" "$key")
+      text="${text} (${name}; key ${key}, ${kind}${used:+; used by ${used}})"
+      q=$(_planner_stop_question "param-${key}" "specify-param:${key}" \
+        "$(_planner_stop_excerpt "$text" "$_PLANNER_STOP_DECISION_MAX")")
+      qs=$(jq -nc --argjson a "$qs" --argjson q "$q" '$a + [$q]')
+    done <<<"$params"
+  fi
+  printf '%s\n' "$qs"
+}
+
+# _planner_stop_param_literals_question <INIT> <count>
+# The note question that replaces flag:accept:PARAM_LITERAL (planner-specify-
+# parameters D5/D7): headless callers get no blanket accept. Each finding
+# message carries its own accept command, `--accept PARAM_LITERAL@<slug>:"<literal>"`;
+# the literals are read back from those.
+_planner_stop_param_literals_question() {
+  local init="$1" count="$2" log start list
+  log=$(planner_state_log "$init") || return 1
+  start=$(grep -n '|Crosscheck|check|start|' "$log" | tail -1 | cut -d: -f1)
+  list=$(tail -n "+$((${start:-0} + 1))" "$log" | grep '^[^|]*|META|crosscheck|fail|PARAM_LITERAL ' |
+    grep -o 'PARAM_LITERAL@[A-Za-z0-9_-]*:"[^"]*"' | awk '!seen[$0]++' |
+    sed 's/^PARAM_LITERAL@\([^:]*\):/\1 /' | paste -sd';' - | sed 's/;/; /g')
+  _planner_stop_question "param-literals" "note" \
+    "Crosscheck found ${count} unit literal(s) in acceptance criteria or Expected cells that no ## Parameters row declares: $(_planner_stop_excerpt "${list:-see state.log}" 300). Declare each value in proposal.md ## Parameters, or change the spec to a declared value, then answer 'resolved' to re-run Crosscheck. To accept one literal as genuine, run from a terminal: resume ${init} --accept PARAM_LITERAL@<slug>:\"<literal>\" (there is no headless accept)." \
+    "resolved" ""
+}
+
 _planner_stop_sha() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum | awk '{print $1}'
@@ -390,19 +503,14 @@ planner_stop_describe_json() {
   # so a run stopped by --until Specify surfaces the decision in the same
   # run. No OPTIONS and no DEFAULT: a default would be a business outcome
   # the planner made up.
+  # Parameter rows (planner-specify-parameters) follow the outcomes in the
+  # same block; a legacy initiative's scan prints none.
   if [ "$pos" = "Review" ]; then
-    local open oid h8 lno dq
-    if ! open=$(planner_specify_decisions_open "$init"); then
+    if ! questions=$(_planner_stop_specify_questions "$init"); then
       echo "planner-stop-describe: cannot scan proposal.md for '${init}'" >&2
       return 1
     fi
-    if [ -n "$open" ]; then
-      while IFS=$'\t' read -r oid h8 lno dq; do
-        [ -n "$oid" ] || continue
-        q=$(_planner_stop_question "decision-${oid}-${h8}" "specify-answer:${oid}" \
-          "Specify could not source business outcome ${oid} and needs a decision: $(_planner_stop_excerpt "$dq" "$_PLANNER_STOP_DECISION_MAX"). Answer in one line (at most 500 characters); it is written into proposal.md as a verbatim human decision. Answer __defer__ to leave it open and carry the question into the epic unresolved.")
-        questions=$(jq -nc --argjson a "$questions" --argjson q "$q" '$a + [$q]')
-      done <<<"$open"
+    if [ "$questions" != "[]" ]; then
       _planner_stop_model SPECIFY_DECISION "artifacts/proposal.md" "$round" "$questions" input either
       return 0
     fi
@@ -421,6 +529,23 @@ planner_stop_describe_json() {
         "resolved" "")
       questions=$(jq -nc --argjson q "$q" '[$q]')
       _planner_stop_model CONSENSUS_BLOCKED "artifacts/consensus.md" "$round" "$questions"
+      return 0
+    fi
+  fi
+
+  # ── Specify decisions, second stop (planner-specify-parameters D4) ─────
+  # After Consensus, before Crosscheck: rows and outcome markers Consensus
+  # added or reopened. Contract initiatives only — the describer does not go
+  # through the gate, so it checks the marker itself. A separate block: the
+  # Review guard above is not widened.
+  if [ "$pos" = "Crosscheck" ] && declare -f planner_params_contract_initiative >/dev/null 2>&1 &&
+    planner_params_contract_initiative "$init"; then
+    if ! questions=$(_planner_stop_specify_questions "$init"); then
+      echo "planner-stop-describe: cannot scan proposal.md for '${init}'" >&2
+      return 1
+    fi
+    if [ "$questions" != "[]" ]; then
+      _planner_stop_model SPECIFY_DECISION "artifacts/proposal.md" "$round" "$questions" input either
       return 0
     fi
   fi
@@ -520,6 +645,12 @@ planner_stop_describe_json() {
         cited=$(_planner_stop_cited_names "$init" "$code")
         q=$(_planner_stop_question "accept-${code}" "flag:accept:${code}" \
           "Crosscheck blocking finding ${code} (${count}x) for cited artifact(s): ${cited:-see state.log} — answer each in consensus.md ## Open Questions (Answer: exists:<where>, external:<who> or generate), set the matching specs' Source to it, and resume. Or accept the code for every artifact as genuine and expected: answer with the reason, or __skip__ to fix the artifacts instead.")
+        ;;
+      PARAM_LITERAL)
+        # planner-specify-parameters: never a blanket accept — a new literal
+        # must always block. One note naming each literal and the terminal
+        # per-literal accept.
+        q=$(_planner_stop_param_literals_question "$init" "$count")
         ;;
       *)
         # planner-test-data-derivation: one TESTDATA_CONFIRM question per

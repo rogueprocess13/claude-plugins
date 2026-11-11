@@ -323,9 +323,12 @@ planner_until_validate() {
 # bytes. A halt is a normal terminal outcome, never a retry.
 #
 # Usage: planner_dispatch_gate <gate> <initiative_id> <phase> <state_dir>
-#   pre        step 1 (create gate), then the Consensus readiness gate (only
+#   pre        the parameter-contract marker (only when <phase> is Specify),
+#              step 1 (create gate), then the Consensus readiness gate (only
 #              when <phase> is Crosscheck), then step 1c (open Specify
-#              decisions, only when <phase> is Review)
+#              decisions and parameter rows, when <phase> is Review, and
+#              again when it is Crosscheck for a contract initiative —
+#              planner-specify-parameters' second stop)
 #   create | consensus | specify   one of those alone
 #   crosscheck step 1a: runs Crosscheck; halts on a blocking finding
 #   adr        step 4a: Architecture parked on the ADR gate (Architecture only)
@@ -337,6 +340,12 @@ planner_dispatch_gate() {
   local gate="$1" initiative_id="$2" phase="$3" state_dir="$4" rc g
   case "$gate" in
   pre)
+    # Specify about to run: mark the initiative as a parameter-contract one
+    # (planner-specify-parameters). Before the gates, so a halt cannot skip it.
+    _planner_dispatch_contract_mark "$initiative_id" "$phase" || {
+      echo "ERROR: could not record the parameter contract for '${initiative_id}'" >&2
+      return 1
+    }
     for g in create consensus specify; do
       rc=0
       planner_dispatch_gate "$g" "$initiative_id" "$phase" "$state_dir" || rc=$?
@@ -366,14 +375,24 @@ planner_dispatch_gate() {
     fi
     ;;
   specify)
-    [ "$phase" = "Review" ] || return 0
     _source_if_missing planner_specify_gate "${_PLANNER_ROUTER_LIB_DIR}/planner-specify-decisions.sh"
+    case "$phase" in
+    Review) ;;
+    # The second stop (planner-specify-parameters): after Consensus, before
+    # Crosscheck — only for an initiative whose Specify ran under the
+    # parameter contract, so an in-flight legacy one never newly halts here.
+    Crosscheck)
+      declare -f planner_params_contract_initiative >/dev/null 2>&1 || return 0
+      planner_params_contract_initiative "$initiative_id" || return 0
+      ;;
+    *) return 0 ;;
+    esac
     rc=0
     planner_specify_gate "$initiative_id" || rc=$?
     case "$rc" in
     0) ;;
     3)
-      planner_specify_halt_report "$initiative_id" "$state_dir"
+      planner_specify_halt_report "$initiative_id" "$state_dir" "$phase"
       return 3
       ;;
     *)
@@ -434,6 +453,18 @@ planner_dispatch_gate() {
     ;;
   esac
   return 0
+}
+
+# _planner_dispatch_contract_mark <initiative_id> <phase> — before the
+# Specify agent is dispatched, record that this initiative's Specify runs
+# under the parameter contract (planner_params_contract_mark, written once).
+# Every other phase: nothing. `planner_dispatch_gate pre` calls it first, so
+# every initiative whose Specify is dispatched from now on is a contract one.
+_planner_dispatch_contract_mark() {
+  [ "$2" = "Specify" ] || return 0
+  _source_if_missing planner_params_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-specify-params.sh"
+  declare -f planner_params_contract_mark >/dev/null 2>&1 || return 0
+  planner_params_contract_mark "$1"
 }
 
 # ── Retry budget ───────────────────────────────────────────────────────────────

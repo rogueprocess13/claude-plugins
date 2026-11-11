@@ -143,6 +143,18 @@ expect_reject "--accept with a lower-case code" \
 expect_reject "--accept with an empty reason" \
   "ERROR: --accept requires a non-empty reason: CODE:\"reason\"" \
   resume INIT-1-2 --accept CARVE_SCOPE_LOST:
+expect_reject "--accept PARAM_LITERAL code-wide" \
+  "ERROR: --accept PARAM_LITERAL is per literal: --accept PARAM_LITERAL@<slug>:\"<literal>\" (got 'PARAM_LITERAL:all fine')" \
+  resume INIT-1-2 --accept "PARAM_LITERAL:all fine"
+expect_reject "--accept PARAM_LITERAL with no colon" \
+  "ERROR: --accept PARAM_LITERAL is per literal: --accept PARAM_LITERAL@<slug>:\"<literal>\" (got 'PARAM_LITERAL')" \
+  resume INIT-1-2 --accept PARAM_LITERAL
+expect_reject "--accept PARAM_LITERAL@ with text that is not one literal" \
+  "ERROR: --accept PARAM_LITERAL@export-link: 'about half an hour' is not exactly one unit literal, e.g. PARAM_LITERAL@export-link:\"15 minutes\"" \
+  resume INIT-1-2 --accept 'PARAM_LITERAL@export-link:"about half an hour"'
+expect_reject "--accept PARAM_LITERAL@ with a bad slug" \
+  "ERROR: --accept PARAM_LITERAL@<slug>: 'a/b' is not a spec slug (letters, digits, - and _)" \
+  resume INIT-1-2 --accept 'PARAM_LITERAL@a/b:15 minutes'
 expect_reject "--no-tests-rule with a non-boolean" \
   "ERROR: --no-tests-rule takes true or false, got 'maybe'" \
   resume INIT-1-2 --no-tests-rule=maybe
@@ -194,6 +206,29 @@ if grep -qF '|META|no-tests-rule|done|true' "$log"; then
   pass "--no-tests-rule is persisted"
 else
   fail "--no-tests-rule persisted" "absent from $log"
+fi
+
+# Per-literal accept (planner-specify-parameters D7): parsed, then recorded
+# with its canonical form; a code-wide accept writes nothing.
+rc=0
+in_new_process 'planner_state_init INIT-P2 "an idea" >/dev/null
+  planner_flags_parse resume INIT-P2 --accept "PARAM_LITERAL@export-link:15 minutes" \
+    --accept=PARAM_LITERAL@export-link:\"24h\" || exit 9
+  planner_flags_persist INIT-P2' >/dev/null 2>&1 || rc=$?
+log2="${REPOS_ROOT}/.ticket-auto/initiatives/INIT-P2/state.log"
+got=$(grep '|META|crosscheck|accepted|' "$log2" 2>/dev/null | cut -d'|' -f5- | paste -sd';' -)
+if [ "$rc" -eq 0 ] && [ "$got" = "PARAM_LITERAL@export-link=time:900000 15 minutes;PARAM_LITERAL@export-link=time:86400000 24h" ]; then
+  pass "--accept PARAM_LITERAL@<slug>:<literal> is recorded with its canonical form"
+else
+  fail "per-literal accept persisted" "rc=$rc got '$got'"
+fi
+rc=0
+in_new_process 'planner_state_init INIT-P3 "an idea" >/dev/null
+  planner_flags_parse resume INIT-P3 --accept "PARAM_LITERAL:all fine" 2>/dev/null && planner_flags_persist INIT-P3' >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 1 ] && ! grep -q 'crosscheck|accepted' "${REPOS_ROOT}/.ticket-auto/initiatives/INIT-P3/state.log"; then
+  pass "a code-wide PARAM_LITERAL accept fails with rc 1 and writes nothing"
+else
+  fail "code-wide PARAM_LITERAL accept" "rc=$rc"
 fi
 
 # A resume that re-supplies nothing changes nothing.

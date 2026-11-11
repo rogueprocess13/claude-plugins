@@ -337,6 +337,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-crosscheck.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-fixtures.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-ac-coverage.sh
+	bash ticket-planner/lib/tests/test-planner-crosscheck-params.sh
 	bash ticket-planner/lib/tests/test-planner-uat-policy.sh
 	bash ticket-planner/lib/tests/test-planner-doctor.sh
 	bash ticket-planner/lib/tests/test-planner-body-template-humanizer.sh
@@ -348,6 +349,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-body-drift.sh
 	bash ticket-planner/lib/tests/test-planner-stop-describe.sh
 	bash ticket-planner/lib/tests/test-planner-specify-decisions.sh
+	bash ticket-planner/lib/tests/test-planner-specify-params.sh
 	bash ticket-planner/lib/tests/test-planner-consensus-gate.sh
 	bash ticket-planner/lib/tests/test-planner-dispatch-gate.sh
 	bash ticket-planner/lib/tests/test-planner-invocation.sh

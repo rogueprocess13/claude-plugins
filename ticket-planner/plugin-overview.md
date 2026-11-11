@@ -80,8 +80,10 @@ User invokes /ticket-planner plan "idea"
             spawns, then planner_refinement_gate stamps the epic and decides
             halt vs. proceed (steps 3-5 skipped)
         2c. At Review, planner_specify_gate scans proposal.md for an open
-            NEEDS_HUMAN_DECISION marker and halts (exit 0, no agent spawned,
-            no phase line) until it is answered, deferred or edited away
+            NEEDS_HUMAN_DECISION marker or (new initiatives) an open
+            ## Parameters row and halts (exit 0, no agent spawned, no phase
+            line) until it is answered, deferred or edited away; for those
+            initiatives it runs again at Crosscheck (the second stop)
         3. planner_prompt_for_phase → agent prompt, config read back off disk
         4. Spawn isolated agent with prompt
         5. Agent writes state log entries via planner_state_write
@@ -125,6 +127,7 @@ The merge reduced phase count from 12 to 10 (11 after planner-refinement-phase a
 - **Confidence from signals, not self-assessment.** The LLM writes raw signal values (services count, symbols count, prior art boolean, complexity enum, exploration depth enum). A deterministic bash function computes confidence from these. The LLM never sees its own confidence score — it can't game it.
 - **Regenerate is an explicit flag.** Feedback is not read by default. The `Regenerate` flag must be set on the Planner Context block before `replan` will ingest feedback. This keeps planner runs reproducible and feedback ingestion a deliberate act.
 - **Creation is authorized separately from planning.** `plan` ends at Crosscheck, the last artifact-only phase; EpicGen is the first Linear write and runs only for an initiative carrying `META|create-authorized|done`, written by `resume <ID> --create`. The default is a constant in the phase sequence rather than a flag, so nothing has to propagate correctly for the safe outcome to hold — and the authorization, being a log entry, survives a crashed router.
+- **Parameters are declared once and checked deterministically (planner-specify-parameters).** For an initiative whose Specify started under `META|contract|start|specify-parameters-v1`, proposal.md carries a `## Parameters` registry (key, kind, value, anchored source). Must-ask kinds (policy, rounding, transaction, failure, fixed) with no verified source are asked in the same `SPECIFY_DECISION` round as open outcomes, and again before Crosscheck if Consensus left any open. Crosscheck's parameter family (`planner-crosscheck-params.sh`) then blocks any unit literal in an acceptance criterion or Expected cell that no decided row declares; `PARAM_LITERAL` can only be accepted per literal. Values are not rendered into tickets — specs hold the real values, and the check catches drift before Epic Gen.
 - **Crosscheck (#178) is the one phase that isn't an agent.** It runs the citation (#172) and cross-ticket propagation (#173) linters as plain bash, writes `META|crosscheck` findings, and stops the loop immediately on a blocking one rather than folding it into the phase-retry budget — a deterministic check re-run against unedited artifacts can't produce a different answer.
 - **The epic is made dispatch-eligible by Refinement, not EpicGen or TicketGen.** Every issue the planner creates carries no labels. Dispatch eligibility is the epic manifest's `dispatch` field, a one-way `false`→`true` flag. Refinement's gate (`planner_refinement_gate` in `lib/planner-refinement.sh`) sets it through `stamp_epic_dispatch` only after every child ticket has a deterministic-and-semantic readiness verdict. This prevents fleet-controller from dispatching a partially-created or not-yet-evaluated initiative. (Historical: this flag replaced the retired `state:execution` Linear label, which TicketGen used to apply.)
 - **Cross-plugin dependency on `planned-ticket-check.sh`.** The planner does not bundle its own ticket validator. It resolves `planned-ticket-check.sh` from ticket-auto-pipeline via a three-level fallback. This is deliberate — schema drift between planner output and pipeline consumption is a hard stop, not a silent degradation.

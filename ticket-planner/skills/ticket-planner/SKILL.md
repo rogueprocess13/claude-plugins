@@ -655,15 +655,14 @@ For each phase to run:
     After a crash, rerun the step (state is on disk). A failed agent is retried once,
     then recorded unavailable.
 
-1c. **Open business decisions halt the loop before Review** (planner-specify-waiting-on-human).
-    Specify writes `**Outcome:** NEEDS_HUMAN_DECISION — <question>` in proposal.md's
-    `## Business Outcomes` when no source states an outcome; step 1's `pre` gate halts
-    on one before the Review prompt is generated. It holds no state and runs again on
-    every dispatch at `Review`, so a crash between Specify and here is safe. A person
-    releases a decision by answering it (`--answers`, binding `specify-answer:O<n>`),
-    by answering `__defer__` (the question goes into the epic unresolved), or by editing
-    the Outcome line in proposal.md by hand. Its only write is a `META|specify-gate|warn`
-    line, once per proposal version, naming malformed `NEEDS_HUMAN_DECISION` text.
+1c. **Open business decisions halt the loop** (planner-specify-waiting-on-human,
+    planner-specify-parameters). Specify writes `NEEDS_HUMAN_DECISION — <question>` for
+    an unstated Outcome in `## Business Outcomes` or an open row in `## Parameters`;
+    step 1's `pre` gate halts on one before Review, and again before Crosscheck for rows
+    Consensus opened. It holds no state and reruns on every dispatch. A person releases a
+    decision with `--answers` (`specify-answer:O<n>` / `specify-param:<key>`), `__defer__`
+    or a hand edit of proposal.md. Its only write is one `META|specify-gate|warn` line
+    per proposal version for malformed text. Detail: `docs/ticket-planner.md` § Parameters.
 
 2. **Get the prompt** for the current phase:
    ```bash
