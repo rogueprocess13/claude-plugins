@@ -209,6 +209,7 @@ test-lib:
 	bash scripts/tests/test-select-tests.sh
 	bash scripts/tests/test-ci-nightly-issue.sh
 	bash scripts/tests/test-check-grep-q-pipe.sh
+	bash scripts/tests/test-drift-report.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \
 	bash ticket-auto-pipeline/lib/tests/test-gate-check.sh
 	CLAUDE_SKILLS_LIB="$(CURDIR)/ticket-auto-pipeline/lib" \

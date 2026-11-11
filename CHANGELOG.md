@@ -17,7 +17,7 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
-## ticket-auto-pipeline 0.114.1, fleet-controller 0.48.1 (2026-11-12) — bash writes the phase-inspector verdict; retro names the tickets behind each failure code
+## ticket-auto-pipeline 0.114.2, fleet-controller 0.49.1 (2026-11-12) — bash writes the phase-inspector verdict; retro names the tickets behind each failure code
 
 Two determinism fixes from the 2026-10-23 review (DET-SU-1, DET-SU-2).
 
@@ -45,6 +45,40 @@ unique; a planner code carries its initiative id) and `failure_context`
 `<logs>/<tid>-*-agent.log` captures). Both are built where `FAILURE_COUNT` is, so a cursor-skipped
 log adds nothing, as before. Additive; every other field is unchanged. ticket-retro Step 3a.5 reads
 `failure_context` instead of guessing. New test: `lib/tests/test-retro-failure-tickets.sh`.
+
+## fleet-controller 0.49.0 (2026-11-12) — `FLEET_WORKER_AUTONOMY`
+
+Review finding PO-9: fleetd dispatched every ticket with `--auto` and had no setting for it, and
+fleet-controller/CLAUDE.md claimed the approval gate stopped every auto-dispatched ticket.
+ticket-auto-pipeline unchanged.
+
+### Added
+- `FLEET_WORKER_AUTONOMY` (`auto` | `semi-auto` | `manual`, **default `auto` on the
+  whole-ticket path**, so it behaves as before). The whole-ticket spawn, KILL+RESTART included, now runs
+  `/ticket-auto {tid} --{mode} --from-planned`. `fleet-env-check.sh` reports the row and refuses
+  fleetd startup on any other value; with `FLEET_STARTUP_ENV_CHECK=false`, fleetd falls back to
+  `auto` with a stderr warning.
+- `features.json` catalog entry. The catalog accepts enum settings: an entry with `values` is
+  matched by the drift gate on `${NAME:-v}` and `os.environ.get('NAME', 'v')` with any literal
+  default, and checked for default drift and staleness like a boolean flag.
+
+### Changed
+- The phase-dispatch path passes the setting to `preamble.run_preamble` as `AUTONOMY`, but only
+  when `FLEET_WORKER_AUTONOMY` is set explicitly. Unset, nothing changes there: the preamble
+  uses `TICKET_AUTONOMY`, else `manual`. The two defaults therefore differ when the setting is
+  unset — whole-ticket spawn `auto`, phase dispatch `TICKET_AUTONOMY` → `manual` — and setting
+  it makes both paths agree.
+
+### Fixed
+- fleet-controller/CLAUDE.md `FLEET_AUTO_DISPATCH` row: under the default `auto`, a simple
+  dispatched ticket is auto-approved and auto-merged; only a complex ticket without
+  `/ticket-approve` stops at the gate.
+
+## 0.114.1 (2026-11-12) — flow.sh releases the ticket lock before the outbox drain
+
+### Fixed
+
+- `flow.sh` held its per-ticket flock (FD 9) through the exit-time `outbox-drain.sh` call, and the drain inherited the descriptor, so the lock stayed held for the whole board network call. A concurrent `flow.sh` for the same ticket exited 42 (lock busy) until the board answered (October review ARCH-8). The lock is now released and FD 9 closed once the manifest write and the emit are done, before the drain. The drain's own cursor lock still serialises it against fleetd's pusher. New test `test_flow_drain_runs_without_ticket_lock` (phase1.sh) probes the lock from inside a board driver.
 
 ## ticket-planner 0.38.0 (2026-11-12) — Specify ownership tables, first-dispatch contract markers
 
