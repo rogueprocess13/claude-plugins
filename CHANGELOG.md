@@ -17,6 +17,16 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-auto-pipeline 0.113.2 (2026-11-11) — critique tells the user how to clear `needs-info`
+
+When `ticket-critique` blocks a ticket it adds `needs-info` and tells the user to update the ticket
+and re-run `/ticket-appraise`. A passing re-run never cleared the flag, so a planned ticket still
+failed the entry gate's readiness check (`FLAG_NEEDS_INFO`) and fleet dispatch kept skipping it.
+The critique comment and terminal message now say to run
+`/ticket-flow {TICKET-ID} needs-info-resolved` before re-running `/ticket-appraise`.
+`docs/dor-readiness.md` said to use `/ticket-approve` for this; that also fires `human-approve` and
+would approve a ticket with no reviewed plan, so the doc now names the trigger instead. Text only.
+
 ## fleet-controller 0.48.0, ticket-auto-pipeline 0.113.1 (2026-11-11) — fleetd calls the router's own step scripts
 
 `fleetd-shared-router-steps`: phase-level dispatch can now run the router's deterministic step

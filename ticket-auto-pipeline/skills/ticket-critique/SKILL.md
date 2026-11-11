@@ -371,7 +371,7 @@ The following must be provided before this ticket can be appraised:
 {bulleted list of BLOCKER items with plain-language description}
 
 Please update the ticket description or add a comment with the missing details,
-then re-run `/ticket-appraise {TICKET-ID}`.
+then run `/ticket-flow {TICKET-ID} needs-info-resolved` and re-run `/ticket-appraise {TICKET-ID}`.
 ```
 
 2. Add `needs-info` label:
@@ -393,7 +393,7 @@ _rc=$?
 {WARNING items, one per line}
 
 Linear updated — `needs-info` label added and comment posted.
-Resolve the blockers in the Linear ticket, then re-run /ticket-appraise {TICKET-ID}.
+Resolve the blockers, run /ticket-flow {TICKET-ID} needs-info-resolved, then re-run /ticket-appraise {TICKET-ID}.
 ```
 
 4. **Stop.** Do not continue to codebase investigation.

@@ -319,12 +319,14 @@ touched.
 
 **What clears the flag.** `needs-info` is added by `ticket-critique` and by fleetd when it creates a
 human hold (`post_human_hold_comment`). It is cleared only by the `needs-info-resolved` trigger,
-which has two callers: `/ticket-approve` (`approve.sh`) and fleetd's hold-reconcile pass when a
-`human` hold is released by a qualifying answer (`gate_hold.clear_needs_info_on_release`, called
-from `Supervisor._hold_reconcile_pass` after the store release succeeds). An answer typed in
-Linear with no hold to release — e.g. a reply to a `ticket-critique` comment — still needs
-`/ticket-approve`; the manifest flag is authoritative and the tracker only receives its
-projection.
+which has two automatic callers: `/ticket-approve` (`approve.sh`) and fleetd's hold-reconcile pass
+when a `human` hold is released by a qualifying answer (`gate_hold.clear_needs_info_on_release`,
+called from `Supervisor._hold_reconcile_pass` after the store release succeeds). An answer typed in
+Linear with no hold to release — e.g. a reply to a `ticket-critique` comment — needs the operator
+to fire the trigger by hand: `/ticket-flow {TICKET-ID} needs-info-resolved`, then re-run
+`/ticket-appraise {TICKET-ID}`. Do not use `/ticket-approve` for this: it also fires
+`human-approve`, which approves a ticket that has no reviewed plan yet (`flow.sh`'s from-check only
+warns). The manifest flag is authoritative and the tracker only receives its projection.
 
 ## Manifest `ready` object
 
