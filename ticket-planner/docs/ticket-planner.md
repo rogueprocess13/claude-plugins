@@ -261,6 +261,91 @@ the Review, Consensus and Epic Gen agents and the Linear epic.
 often "Not specified". Review and Consensus see the decision and may refine them. This
 avoids re-running Specify.
 
+#### Parameters: one registry, asked with the outcomes
+
+Every value the plan depends on that someone could choose differently — a timeout,
+a retry rule, a rounding mode, a fee — is declared once per initiative
+(planner-specify-parameters). It applies to **contract initiatives** only: those whose
+state.log holds `META|contract|start|specify-parameters-v1`, which
+`planner_params_contract_mark` writes once when Specify is about to be dispatched.
+An initiative that ran Specify before the change has no marker and behaves exactly as
+before: no registry, no second stop, no parameter Crosscheck family.
+
+Specify writes `## Parameters` in proposal.md, directly after `## Business Outcomes`:
+either `None.` or one table.
+
+```
+| Name | Key | Kind | Default | Value | Source |
+|------|-----|------|---------|-------|--------|
+| Idle session timeout | `auth.session_idle_minutes` | duration | 30 minutes | 30 minutes | default |
+| Invoice rounding | `billing.total_rounding` | rounding | half-up, 2 decimal places | NEEDS_HUMAN_DECISION — round each line, or only the invoice total? | — |
+| Provider API timeout | `payments.provider_timeout` | fixed | — | 10 seconds | discovery:"the provider closes the connection after 10 seconds" |
+```
+
+- **Kind** is one of `policy`, `rounding`, `transaction`, `failure`, `fixed` (the
+  *must-ask* kinds — they change what an acceptance criterion means) or `duration`,
+  `limit`, `size` (tuning kinds — cheap to change, may be `default`).
+- **Key** is backticked, a letter then letters, digits, `_`, `.` or `-`, at most 64
+  characters, unique. Specs write the Value verbatim and name the key in backticks in
+  `## Technical Context`.
+- **Source** is `default`; `—` (only while Value is open); `<artifact>:"<quote>"` with
+  artifact `idea`, `intent`, `appraisal`, `discovery` or `architecture`;
+  `code:<path>:"<quote>"` (relative, no `..`); or `human:r<N>:<client|operator>`, which
+  only answer intake writes.
+- **Anchors.** Bash checks each source (`planner_params_anchor_ok`): a quote of 8 to 300
+  characters must appear in the file (whitespace normalised, case-sensitive), and must
+  hold a literal equal to the Value's; a `human:` source must match a `specify-param`
+  record in `artifacts/answers/round-N.json`. A source that does not verify counts as
+  `default`. Nothing fails at this step.
+- **Open rows.** A row is open when its Value starts with `NEEDS_HUMAN_DECISION`, or when
+  its effective source is `default` and its kind is must-ask. A keyword in the Name or
+  Key (`round`/`decimal`/`precision`, `retry`/`attempt`/`backoff`/`fallback`/`fail`…,
+  `rollback`/`transaction`/`atomic`/`commit`/`idempot`, `refund`/`fee`/`price`/`trial`/
+  `retention`/`grace`/`quota`/`tax`…; the full list is `PLANNER_PARAMS_KIND_KEYWORDS`)
+  makes a tuning row must-ask, so "Payment retry delay" (`duration`) is asked. An
+  invalid row is never asked; the tripwire lists it as `param`, and Crosscheck reports
+  it.
+
+**One round, two stops.** `planner_specify_gate` counts open rows with the open
+outcomes, so the stop before Review asks both in one `SPECIFY_DECISION` round. For a
+contract initiative the same gate runs again when Crosscheck is about to be dispatched,
+to catch rows and markers Consensus added or reopened. That halt's first line is
+`Consensus left <n> decision(s) open — this is a second stop, after Consensus and before
+Crosscheck.`
+
+**Answering a parameter.** Each open row is one question, id `param-<key>`, binding
+`specify-param:<key>`. The text puts the plain question first, then
+`Suggested: "<suggestion>" — reply with exactly that text to accept it`, then the
+format hint and `(<Name>; key <key>, <kind>; used by <slugs>)`. There is no sentinel:
+accept a suggestion by sending its text back. `__defer__` is refused. A `duration`
+answer must be one number with a unit (`30 minutes`); a `limit` or `size` answer may
+also be a bare number. A must-ask kind takes free text. A refused answer is
+`INVALID_VALUE` with an example, and nothing is written. An accepted answer rewrites
+the row line, with Source `human:r<N>:<role>`, and writes
+`META|specify-param|step|<key> answered (round N, by <who>, <role>)` — never the value.
+
+**Hand edits.** A tuning row may be edited at any time; it stays `default`, so it
+stays closed. A must-ask row cannot be edited to closed: set its Value back to
+`NEEDS_HUMAN_DECISION — <question>` and answer it through `--answers`, so every human
+source stays verifiable.
+
+**Changing a value later.** Specs hold real values, not placeholders, so a changed
+value is a change to text:
+
+| Situation | What happens |
+|---|---|
+| Answer before Review | Intake rewrites the row. Consensus uses the registry Value in specs. Crosscheck then blocks any spec literal that no closed row declares, so a spec still holding the old suggestion fails with `PARAM_LITERAL`. |
+| Answer at the second stop | Same path: Crosscheck runs on the decided registry. |
+| Changing a decided value before Epic Gen | Tuning row: edit the row and the specs. Must-ask row: reopen it and answer it, then edit the specs. Crosscheck catches a spec left behind. |
+| Changing a value after tickets exist | Manual: edit the row, the specs and the Linear tickets, or use re-plan (`Regenerate`), which regenerates undispatched Backlog tickets. Crosscheck does not run after Epic Gen, so nothing checks a post-creation edit. |
+| Specify re-run after answers | The prompt keeps `human:` rows verbatim. A dropped or altered row fails its anchor, reopens, and is asked again with the earlier answer as a hint. |
+
+**Prompt edits.** The Specify and Consensus prompt wording for parameters lives in lib
+functions (`planner_params_prompt_rules`, `planner_params_consensus_rule` in
+`lib/planner-specify-params.sh`), each pulled into its prompt by one `$(…)` line. Keep
+that rule — one function per prompt block — for any later Specify prompt edit, so the
+prompt diff stays one line and the `SPECIFY_PROMPT_SHA` re-pin is the only other change.
+
 ### 3. Local manifest facts (tracker-planner-and-fallback-cutover)
 
 Every issue the planner creates carries **no labels at all** — Epic Gen and Ticket Gen both pass
@@ -472,6 +557,8 @@ directly instead of spawning one (SKILL.md step 1a). Its check families include:
 - **Cross-ticket propagation linter** ([#173](https://github.com/willard-pro/claude-plugins/issues/173)) — a Consensus resolution or in-spec forward reference naming 2+ tickets must actually reach all of them; a post-Specify ticket-count change is flagged for manual scope audit.
 - **Test-data provenance + cited artifacts** ([#503](https://github.com/willard-pro/claude-plugins/issues/503)/[#504](https://github.com/willard-pro/claude-plugins/issues/504)) — every Verification Notes test-data need (a row of the Criterion table, `Source` column) must name an owned Source (`TEST_DATA_UNOWNED`), and every external artifact Discovery could not retrieve must be raised and answered in consensus.md `## Open Questions` (`CITED_ARTIFACT_UNRAISED`/`CITED_ARTIFACT_UNRESOLVED`). Contract: [docs/test-data-source.md](test-data-source.md).
 - **Test-data derivation** (planner-test-data-derivation, contract §3) — first, the `testdata-synth` sub-step (`Crosscheck|testdata-synth|start`/`done|<N> TD spec(s), <M> need(s)`, before every family) turns `generate` needs and `generate:` answers into synth-marked test-data specs (`<prefix>-test-data-pack` / `<slug>-test-data`, type chore, Seed/Verify `make` targets, Seed channel) plus `artifacts/testdata-synth.json` (Source overrides + `blocked_by` edges; consumer specs untouched). Then: `VERIFICATION_NOTES_MISSING` (blocking — a spec with ACs and no notes rows), `TEST_DATA_IMPLIED` (blocking — rows all `none` but a criterion clearly implies data; answerable via `TESTDATA_CONFIRM`) / `TEST_DATA_IMPLIED_WEAK` (warn), `TEST_DATA_INVENTORY_MISSING` (warn — discovery.md lacks `## Test Data Inventory`), `TEST_DATA_SYNTH_FAILED` (blocking — an unmarked file holds a TD slug) and `DEPENDENCY_CYCLE` (blocking — cycle in the blocked-by graph including sidecar edges).
+
+- **Parameters** (planner-specify-parameters, `lib/planner-crosscheck-params.sh`; contract initiatives only) — `PARAM_TABLE_INVALID` (no `## Parameters` section, a bad header or an invalid row), `PARAM_UNDECIDED` (an open row; normally the second Specify stop halts first) and `PARAM_LITERAL` (a unit literal — `15 minutes`, `10s`, `30-day`, `2 GB`, `3 retries`, `2.5%` — in an acceptance criterion or a Verification Notes `Expected` cell that no closed row declares), all blocking. Literals are compared canonically (`86400 seconds` = `24 hours` = `1 day`); a `fixed` row covers only the specs that name its key. Not checked: `0`, `100%`, decades, code spans, URLs, criterion labels like `10h.`, numbered notes lines, Test data cells, and other sections. Synth-marked TD specs and `INDEX.md` are skipped.
 
 (Bypass, contract, Signals and dangling-dependency checks also run — see `lib/planner-crosscheck.sh`.)
 
@@ -937,7 +1024,7 @@ process per phase and an `export` does not survive that (#144).
 | Flag | Effect |
 |------|--------|
 | `--create` | **`resume` only.** Authorize Linear creation, then run Epic Gen → Ticket Gen → Completed |
-| `--accept CODE:"reason"` | **`resume` only.** Mark a Crosscheck finding genuine-and-expected; non-blocking on the next Crosscheck run. Repeatable |
+| `--accept CODE:"reason"` | **`resume` only.** Mark a Crosscheck finding genuine-and-expected; non-blocking on the next Crosscheck run. Repeatable. `PARAM_LITERAL` takes only the per-literal form `PARAM_LITERAL@<slug>:"<literal>"` |
 | `--shared-branch` | Force a shared-branch directive on the epic regardless of the heuristic |
 | `--no-shared-branch` | Suppress the shared-branch directive regardless of the heuristic |
 | `--until <Phase>` | Stop the dispatch loop once `<Phase>` completes; `resume` continues |
@@ -989,6 +1076,21 @@ recurs, so it stays visible in `status` mode's Crosscheck findings section and i
 `COMPLETED.md`'s Warnings section exactly like an automated pass or fail, with the
 operator's reason attached. Only the code named survives — a new finding under a
 different code still blocks normally.
+
+`PARAM_LITERAL` is accepted one literal at a time, never by code:
+
+```
+/ticket-planner resume INIT-42 --accept PARAM_LITERAL@export-link:"15 minutes"
+```
+
+The quoted text must be exactly one unit literal. It is recorded as
+`META|crosscheck|accepted|PARAM_LITERAL@export-link=time:900000 15 minutes`, and only a
+finding in that spec with that canonical value becomes `accepted` (written with the
+instance token first, `PARAM_LITERAL@<slug>=<canonical> <message>`). A new literal, or
+the same literal in another spec, still blocks. `--accept PARAM_LITERAL:"…"` is refused
+at parsing (rc 1, nothing written). Each finding message ends with its own accept
+command. Headless callers get no accept for this code: the `CROSSCHECK_BLOCKED` block
+asks one `param-literals` note instead.
 
 `--accept DRAFT_NOT_READY:"reason"` is not a Crosscheck accept: it passes a draft
 readiness halt (SKILL.md step 1d) by writing `META|draft-readiness|accepted|<hash> <reason>`,
@@ -1053,6 +1155,7 @@ script — cannot read the halt prose. It runs this loop instead:
 |---|---|---|
 | `CREATE_GATE` | `flag:create` | `yes` = `--create`. `no` records the round; the run stops at the gate again |
 | `CROSSCHECK_BLOCKED` | `flag:accept:<CODE>` | the reason = `--accept CODE:"reason"`. `__skip__` declines |
+| `CROSSCHECK_BLOCKED` (`PARAM_LITERAL`) | `note`, id `param-literals`, option `resolved` — replaces the code's `flag:accept` question | recorded only. The text names each undeclared literal and the terminal command `resume <INIT> --accept PARAM_LITERAL@<slug>:"<literal>"`; declare the value in `## Parameters` or change the spec, then resume |
 | `CROSSCHECK_BLOCKED` (`CITED_ARTIFACT_UNRESOLVED`) | `consensus-answer:cited:<n>`, one per unanswered artifact | `exists:<where>`, `external:<who>` or `generate`, written into the `Answer:` field of consensus.md's `n`th `CITED_ARTIFACT:` question. Any other value, or one with `\|`, CR or LF, is `INVALID_VALUE`. Specs are not edited: a spec need whose `Source` disagrees is `CITED_ARTIFACT_SOURCE_MISMATCH` on the re-run. The code's `flag:accept` question is still offered |
 | `CROSSCHECK_BLOCKED` (`TEST_DATA_IMPLIED`) | `consensus-answer:testdata:<slug>`, one per blocking spec, id `testdata-<slug>-<hash8>` | `none`, `generate: <desc>` (default `generate: <match phrase>`), `exists:<where>` or `external:<who>`, written as consensus.md's ``TESTDATA_CONFIRM: `<slug>` [<hash8>] — Answer: <value>`` line. `hash8` is re-derived from the spec's current trigger criterion at intake; a mismatch is `STALE_QUESTION` (exit 2, nothing written). The code's `flag:accept` question is still offered |
 | `CONSENSUS_BLOCKED` | `note` | recorded only — fix the plan and change consensus.md's Readiness from `blocked` (or re-run Consensus); the gate re-reads consensus.md on resume |
@@ -1062,6 +1165,7 @@ script — cannot read the halt prose. It runs this loop instead:
 | `ADR_GATE` | `note` | recorded only — accept the ADR out of band (`adr-store.sh accept` refuses inside an agent session) |
 | `UNTIL_STOP` | `note` | recorded only — resuming is what continues past the `--until` phase |
 | `SPECIFY_DECISION` | `specify-answer:O<n>`, one per open decision, id `decision-O<n>-<hash8>`; `KIND input`, `AUDIENCE either`, no options or default | one line of at most 500 characters, written into proposal.md as `**Outcome:** Human decision (verbatim, round N, <role>): "<answer>"`. `__defer__` writes `**Outcome:** Deferred decision: <question>` and keeps the old outcome: the epic carries the question unresolved. Either a client or an operator may answer |
+| `SPECIFY_DECISION` (parameters) | `specify-param:<key>`, one per open `## Parameters` row, id `param-<key>`; same block as the outcome questions, and also at the second stop before Crosscheck | one line of at most 500 characters. Send the `Suggested:` text back to accept it. `__defer__` and a blank value are `INVALID_VALUE`; a `duration` answer must be a number with a unit, a `limit`/`size` answer a number with a unit or a bare number. The row line is rewritten with Source `human:r<N>:<role>`; `round-N.json` stores `question`, `suggestion` and `value` |
 
 `lib/planner-answers.sh` checks the file before it writes anything: the round must be
 the open one (exit 4, `STALE_ROUND`), every id must belong to it and an operator

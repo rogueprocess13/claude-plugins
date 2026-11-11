@@ -273,7 +273,7 @@
       <div class="phase-role">Critique proposal — find gaps, risks, feasibility issues</div>
       <div class="phase-section">
         <div class="phase-section-title">Gate</div>
-        <div class="item">Deterministic bash — halts before Review on an open NEEDS_HUMAN_DECISION</div>
+        <div class="item">Deterministic bash — halts before Review on an open NEEDS_HUMAN_DECISION or an open ## Parameters row</div>
       </div>
       <div class="phase-section">
         <div class="phase-section-title">Dimensions</div>
@@ -325,6 +325,11 @@
         <div class="phase-section-title">Checks (bash)</div>
         <div class="item">Citation + precedent resolution (#172)</div>
         <div class="item">Cross-ticket propagation (#173)</div>
+        <div class="item">Undeclared unit literals vs ## Parameters</div>
+      </div>
+      <div class="phase-section">
+        <div class="phase-section-title">Gate</div>
+        <div class="item">Second Specify stop — open decisions Consensus left (new initiatives)</div>
       </div>
       <div class="phase-section">
         <div class="phase-section-title">Output</div>
@@ -485,7 +490,7 @@ const DETAILS = {
       ["Agent role", "Synthesizes all upstream analysis into a proposal AND produces per-ticket spec files in a single pass"],
       ["Output", "proposal.md (summary, scope, technical approach, work breakdown, affected services, target symbols, risk register, strategy), per-ticket spec files with Signals JSON blocks, spec INDEX.md"],
       ["Input", "appraisal.md + discovery.md + architecture.md"],
-      ["Gate", "None inside the phase — an open NEEDS_HUMAN_DECISION is gated before Review is dispatched (see Review)"],
+      ["Gate", "None inside the phase — an open NEEDS_HUMAN_DECISION or ## Parameters row is gated before Review is dispatched (see Review)"],
       ["Constraint", "Every ticket spec must have a ## Signals JSON block with 5 raw values. Do NOT compute Confidence — that's deterministic bash. Signals: services_identified, symbols_resolved, prior_art_found, complexity, exploration_depth."],
       ["Merge note", "This phase combines the original Proposal phase (synthesize proposal) and OpenSpec phase (write spec files). Single pass avoids context loss between phases."],
     ]
@@ -497,7 +502,7 @@ const DETAILS = {
       ["Agent role", "Skeptical critique of the proposal — finds gaps, risks, and infeasibilities before committing to build"],
       ["Output", "Review findings with severities (blocker/major/minor/nit), missing-from-proposal items, dependency review, ticket shape review, verdict (ready/needs-revision/blocked)"],
       ["Input", "proposal.md + upstream artifacts (appraisal, discovery, architecture)"],
-      ["Gate", "Specify decision gate — deterministic bash (planner_specify_gate), run before Review is dispatched. Halts before Review on an open NEEDS_HUMAN_DECISION in proposal.md's Business Outcomes; the run resumes once each decision is answered, deferred (__defer__) or edited away. No agent runs, and no phase line is written."],
+      ["Gate", "Specify decision gate — deterministic bash (planner_specify_gate), run before Review is dispatched. Halts before Review on an open NEEDS_HUMAN_DECISION in proposal.md's Business Outcomes and, for initiatives planned under specify-parameters-v1, on an open ## Parameters row (a must-ask value with no verified source) — one SPECIFY_DECISION round asks both; the run resumes once each decision is answered, deferred (__defer__, outcomes only) or edited away. No agent runs, and no phase line is written."],
       ["Hold", "PLANNER_REVIEW_HOLD=true stops the run after Review — read once at argument parsing and persisted as --until Review; resume continues"],
       ["Constraint", "Be adversarial — find problems, don't validate. Every finding must cite a specific part of the proposal. Don't suggest solutions (that's Consensus's job)."],
     ]
@@ -520,7 +525,8 @@ const DETAILS = {
       ["Role", "Deterministic bash — not an agent. Runs the citation/precedent linter (#172) and the cross-ticket propagation linter (#173) against the settled artifacts and the live repo."],
       ["Output", "One META|crosscheck|fail|<CODE> line per blocking finding in state.log (META|crosscheck|warn|info for non-blocking codes, none exist yet)"],
       ["Input", "consensus.md + every spec in specs/*.md + REPOS_ROOT (the live repo)"],
-      ["Gate", "A blocking finding halts the dispatch loop immediately — before the create gate is even checked, since Crosscheck runs unconditionally as the last artifact-only phase."],
+      ["Gate", "A blocking finding halts the dispatch loop immediately — before the create gate is even checked, since Crosscheck runs unconditionally as the last artifact-only phase. Before it runs, for initiatives planned under specify-parameters-v1, the Specify decision gate runs a second time and halts on any decision or ## Parameters row Consensus left open (a second SPECIFY_DECISION stop)."],
+      ["Parameters", "planner-crosscheck-params.sh (new initiatives only): PARAM_TABLE_INVALID, PARAM_UNDECIDED, and PARAM_LITERAL — a unit literal (15 minutes, 10s, 30-day, 2 GB) in an acceptance criterion or Verification Notes Expected cell that no decided ## Parameters row declares. Accepted only per literal: resume --accept PARAM_LITERAL@<slug>:\"<literal>\"."],
       ["Resume", "NOT the phase-retry budget. The check is deterministic: re-running it against unedited artifacts can't change the answer. Fix the cited artifact, then resume — Crosscheck re-runs and advances once clean."],
     ]
   },
