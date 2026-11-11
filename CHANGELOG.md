@@ -27,7 +27,7 @@ fleet-controller 0.48.1.
 
 ### Upgrade note
 
-During the upgrade window an old `flow.sh` copy (not yet re-synced, or a worker started before the upgrade) still locks beside itself, while upgraded copies lock under `$REPOS_ROOT/.ticket-auto/locks`. The two do not exclude each other until every copy runs the new code. Restart fleetd and open a new Claude Code session (which re-syncs `~/.claude/skills`) on each host once no ticket is mid-transition. The old `skills/ticket-flow/locks/` directories are no longer used and can be deleted.
+During the upgrade window an old `flow.sh` copy (not yet re-synced, or a worker started before the upgrade) still locks beside itself, while upgraded copies lock under `$REPOS_ROOT/.ticket-auto/locks`. The two do not exclude each other until every copy runs the new code. Restart fleetd and open a new Claude Code session (which re-syncs `~/.claude/skills`) on each host once no ticket is mid-transition. To cover that window, `_flow_mutex_held` checks both the resolved path and the legacy `~/.claude/skills/ticket-flow/locks/.ticket-flow-<TID>.lock` and defers a kill if either is held. When the new path cannot be resolved (resolver missing, or neither `TICKET_FLOW_LOCK_DIR` nor `REPOS_ROOT` set), it writes one stderr warning and checks the legacy path alone, rather than reporting "not held". Remove the legacy check one release after this one. New tests: `test_flow_mutex_held_legacy_path_held`, `test_flow_mutex_held_unresolvable_legacy_held_warns`.
 
 ## 0.114.1 (2026-11-12) — flow.sh releases the ticket lock before the outbox drain
 
