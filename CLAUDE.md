@@ -132,6 +132,10 @@ Pipe-delimited: `ISO|PHASE|STEP|STATUS|MSG`. Statuses: `start`, `done`, `fail`, 
 
 Exit 0 PASS/PARTIAL, 1 FAIL, 2 usage. Test: `scripts/tests/test-e2e-preflight.sh`.
 
+## Spec/doc drift report
+
+`scripts/drift-report.sh [--only GLOB] [-j N] [--list] [--resume] [--out DIR]` runs one headless, read-only `claude -p` per `openspec/specs/*/spec.md` and tracked `*/docs/*.md`, and writes `drift-reports/YYYY-MM-DD/report.md` (gitignored). It is a maintainer tool, run by hand, never a CI gate: findings are advisory and never change the exit code. A document whose agent fails, times out or returns a malformed `DRIFT_RESULT v1` block is **not run** (exit 1), never clean. Each finding's code reference is checked in bash and marked `ok` or `unverified`. Cost is about $0.40 per document on Sonnet, so narrow with `--only`. Prompt: `scripts/drift-report-prompt.md`. Test: `scripts/tests/test-drift-report.sh` (stub `claude`, no model call).
+
 ## Commit conventions
 
 - Standard git commit messages — no Co-Authored-By trailers. The harness default `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` is blocked by the auto mode Content Integrity classifier. Omit it.
