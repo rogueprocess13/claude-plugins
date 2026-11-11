@@ -17,6 +17,52 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.37.0 (2026-11-11) — Crosscheck data-ownership family (dormant)
+
+planner-crosscheck-ownership, PR A of 2. Specs of a `spec-ownership-v1` initiative declare a
+`## Writes` (key, op) and a `## Reads` (key, source) table, and Crosscheck checks them. Nothing
+writes that marker yet: the Specify prompt change (PR B) turns it on for new initiatives. Until
+then no initiative changes behaviour, every existing halt golden and ticket body is byte-identical,
+and the new code is reachable only from tests and `scripts/e2e-preflight.sh` with a hand-written
+marker. ticket-auto-pipeline and fleet-controller unchanged.
+
+### Added, dormant until the Specify prompt change
+
+- Crosscheck ownership family (`lib/planner-crosscheck-ownership.sh`, parser in
+  `lib/planner-spec-ownership.sh`): blocking `OWN_TABLE_INVALID`, `OWN_MULTI_WRITER`,
+  `OWN_NO_WRITER`, `OWN_MULTI_FIRE`, `OWN_TRIGGER_UNOWNED`, `OWN_EDGES_FAILED`; warnings
+  `OWN_NEAR_MATCH`, `OWN_UNDECLARED_REF`, `OWN_EXTERNAL_UNANCHORED`, `OWN_EDGES_DIVERGED`.
+  Reads anchor on `spec`, `code:<path>` (Discovery-pinned tree), `framework:<name>` (closed list)
+  or `external:<name>`.
+- Ownership edges: reads of a sibling's write and triggers of a sibling's effect become
+  `blocked_by` edges in `artifacts/ownership-edges.json` (`META|ownership-edges|done|<n> edge(s)`),
+  frozen per consumer once its ticket exists. TicketGen, draft readiness, Related Tickets, the
+  `DEPENDENCY_CYCLE` check and epic UAT policy read them (`lib/planner-ownership-edges.sh`).
+- The four instance codes are accepted one instance at a time (`OWN_MULTI_WRITER@<key>`,
+  `OWN_NO_WRITER@<slug>/<key>`, …); the code-wide form is refused. The stop describer asks one
+  `ownership-findings` note for them instead of `flag:accept`.
+- `## Writes` and `## Reads` never reach ticket bodies; a draft revise that edits them is
+  `FROZEN_CHANGED`.
+
+### Changed
+
+- Wildcard `--accept CODE@*:"<reason>"` for every per-instance code (`PARAM_LITERAL` and the four
+  ownership instance codes): at `resume` it records one accept per instance in the latest
+  Crosscheck attempt and never a code-wide record, so a later instance still blocks. Refused when
+  the latest attempt has none. Per-instance codes now live in one table
+  (`PLANNER_CROSSCHECK_INSTANCE_CODES`).
+- `DEPENDENCY_CYCLE` names the ownership edges file next to `testdata-synth.json`.
+
+### Security
+
+- A per-instance finding's instance token is now read only from the trailing accept command of
+  its message. Before, the first `--accept CODE@token:"` anywhere in the message won, and spec-
+  derived text (a `code:` source, a spec file name) could carry a forged one, so accepting one
+  instance could silence another. Applies to the ownership codes and to `PARAM_LITERAL` (whose
+  canonical value is also read only from a message head naming the same spec). Ownership findings
+  replace `"` with `'` and defuse `--accept` in spec-derived text, and `code:` paths take only
+  letters, digits and `._/@+-`.
+
 ## ticket-planner 0.36.0 (2026-11-11) — Specify parameters: one registry, a second stop, a Crosscheck family
 
 Specify now declares every value the plan depends on that someone could choose differently (a
