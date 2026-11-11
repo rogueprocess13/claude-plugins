@@ -1029,7 +1029,7 @@ skip the checks. Both were implemented and merged on 2026-10-03.
       run `/opsx:archive ticket-create-skill`.
 - [ ] 4. Live: one planner run on a real idea, confirming the business-framed titles and sections
       survive TicketGen into Linear. Roll into Step 8's consolidated live pass (item 4).
-- [ ] 5. Follow-up, not yet specced: two existing mismatches found while building `create.sh`.
+- [x] 5. **Already fixed by #528 (9f84431, 2026-10-22)** — checked 2026-11-12: `dor-check.sh`'s outcome aliases include `Desired Behaviour`, the security template carries `## Impact` + `## Proposed Changes`, and `_has_section_nav_path` no longer accepts the column header. Original note: two existing mismatches found while building `create.sh`.
       (a) The `improvement` template's `## Desired Behaviour` is not in `dor-check.sh`'s outcome
       aliases, and the `security` template has neither a why heading nor an outcome heading, so a
       body written straight from either template fails with `INTENT_MISSING`. The skill currently
@@ -1757,7 +1757,10 @@ Which plugins each item touches (bump the version of every plugin an item edits)
       check that DoR semantic and `ticket-critique` treat a failed/timed-out evaluator as
       "not run", not "no findings". EGM's "Zero-Decision Rule" (a plan fails if the implementer
       must make any design choice) is a candidate one-line wording for TicketGen/strict DoR.
-- [ ] 3. **Spec/doc drift report.** An LLM pass that compares each `openspec/specs/*` capability
+- [x] 3. **Spec/doc drift report.** DONE 2026-11-12: `scripts/drift-report.sh` + prompt + stub-claude test
+      (openspec change `spec-doc-drift-report`, local). Smoke run on one doc: 16 s, $0.42, one real
+      finding. Live task 4.1 (one `--only 'ticket-auto-pipeline/docs/*'` sweep, spot-check three
+      findings) is the operator's call — a full sweep is ~140 docs ≈ $60. Original note: An LLM pass that compares each `openspec/specs/*` capability
       and each `*/docs/*.md` against the current code and reports only divergences (missing
       behaviour, missing fields, hardcoded values where logic was specified, different
       pattern/library). CI only checks the state diagram against `workflow.json`; nothing checks
