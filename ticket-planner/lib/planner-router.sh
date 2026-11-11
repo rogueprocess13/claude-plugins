@@ -323,7 +323,7 @@ planner_until_validate() {
 # bytes. A halt is a normal terminal outcome, never a retry.
 #
 # Usage: planner_dispatch_gate <gate> <initiative_id> <phase> <state_dir>
-#   pre        the parameter-contract marker (only when <phase> is Specify),
+#   pre        the contract markers (only on the first Specify dispatch),
 #              step 1 (create gate), then the Consensus readiness gate (only
 #              when <phase> is Crosscheck), then step 1c (open Specify
 #              decisions and parameter rows, when <phase> is Review, and
@@ -340,10 +340,11 @@ planner_dispatch_gate() {
   local gate="$1" initiative_id="$2" phase="$3" state_dir="$4" rc g
   case "$gate" in
   pre)
-    # Specify about to run: mark the initiative as a parameter-contract one
-    # (planner-specify-parameters). Before the gates, so a halt cannot skip it.
+    # Specify about to run for the first time: mark the initiative as a
+    # parameter- and ownership-contract one (planner-specify-parameters,
+    # planner-crosscheck-ownership). Before the gates, so a halt cannot skip it.
     _planner_dispatch_contract_mark "$initiative_id" "$phase" || {
-      echo "ERROR: could not record the parameter contract for '${initiative_id}'" >&2
+      echo "ERROR: could not record the parameter and ownership contracts for '${initiative_id}'" >&2
       return 1
     }
     for g in create consensus specify; do
@@ -455,16 +456,47 @@ planner_dispatch_gate() {
   return 0
 }
 
+# _planner_specify_first_dispatch <initiative_id> — rc 0 when Specify has
+# never produced anything: the state log has no `|Specify|<step>|done|` line
+# and artifacts/specs/ holds no `*.md` file. A retry after a crash that wrote
+# no spec still counts as the first dispatch; a re-dispatch of an initiative
+# whose Specify already wrote specs (under an older prompt) does not
+# (planner-crosscheck-ownership, design D12).
+_planner_specify_first_dispatch() {
+  local log specs f
+  log=$(planner_state_log "$1") || return 1
+  if [ -f "$log" ] && grep -q '^[^|]*|Specify|[^|]*|done|' "$log" 2>/dev/null; then
+    return 1
+  fi
+  specs="$(planner_initiative_dir "$1")/artifacts/specs"
+  for f in "$specs"/*.md; do
+    [ -e "$f" ] && return 1
+  done
+  return 0
+}
+
 # _planner_dispatch_contract_mark <initiative_id> <phase> — before the
-# Specify agent is dispatched, record that this initiative's Specify runs
-# under the parameter contract (planner_params_contract_mark, written once).
-# Every other phase: nothing. `planner_dispatch_gate pre` calls it first, so
-# every initiative whose Specify is dispatched from now on is a contract one.
+# Specify agent is first dispatched, record that this initiative's Specify
+# runs under the current prompt's contracts: specify-parameters-v1
+# (planner_params_contract_mark) and then spec-ownership-v1
+# (planner_ownership_contract_mark), each written once. Only on the first
+# dispatch (_planner_specify_first_dispatch), so a re-dispatch never flips an
+# initiative whose specs were written without them. Every other phase:
+# nothing. rc 1 when a marker could not be written (the parameters marker
+# first: when it fails, the ownership marker is not tried).
+# `planner_dispatch_gate pre` calls it first.
 _planner_dispatch_contract_mark() {
   [ "$2" = "Specify" ] || return 0
+  _planner_specify_first_dispatch "$1" || return 0
   _source_if_missing planner_params_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-specify-params.sh"
-  declare -f planner_params_contract_mark >/dev/null 2>&1 || return 0
-  planner_params_contract_mark "$1"
+  _source_if_missing planner_ownership_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-spec-ownership.sh"
+  if declare -f planner_params_contract_mark >/dev/null 2>&1; then
+    planner_params_contract_mark "$1" || return 1
+  fi
+  if declare -f planner_ownership_contract_mark >/dev/null 2>&1; then
+    planner_ownership_contract_mark "$1" || return 1
+  fi
+  return 0
 }
 
 # ── Retry budget ───────────────────────────────────────────────────────────────
