@@ -36,6 +36,12 @@
 #                                                 an anchor failed (a failed `code:`
 #                                                 prints `spec\t<reason>`, a failed
 #                                                 `external:` `external\t<reason>`)
+#   planner_ownership_edges_write <INIT>          Crosscheck's edges step: recompute
+#                                                 artifacts/ownership-edges.json,
+#                                                 freeze consumers with a ticket,
+#                                                 print OWN_EDGES_DIVERGED lines;
+#                                                 rc 1 on a read/write failure
+#   planner_ownership_edges_count <INIT>          edges in that file (0 if none)
 #
 # A skipped spec (planner_ownership_spec_checked rc 1) prints nothing from the
 # three parse functions. Cells are trimmed, `\|` is a literal pipe, CRLF is
@@ -508,4 +514,210 @@ planner_ownership_read_effective() {
     ;;
   esac
   return 0
+}
+
+# ── Ownership edges (design D6, D7) ───────────────────────────────────────────
+
+# _planner_own_key_matches <read-key> <write-key> — the entity rule (design
+# D2): equal keys, the read's entity, or a field of the read entity.
+_planner_own_key_matches() {
+  local r="$1" w="$2"
+  [ "$w" = "$r" ] && return 0
+  [[ "$r" == *.* ]] && [ "$w" = "${r%%.*}" ] && return 0
+  [[ "$w" == "${r}."* ]] && return 0
+  return 1
+}
+
+# _planner_own_edges_compute <INIT> <specs_dir> — `<consumer>\t<blocked_by>\t<key>`
+# per edge key, sorted and unique under LC_ALL=C, from valid rows of checked
+# specs only:
+#   - a read whose effective source is `spec` (written `spec`, or a failed
+#     `code:` anchor) → every other spec with a matching data write;
+#   - a `trigger` row → every other spec that fires the key.
+# A verified `code:`, a `framework:` or an `external:` read gives none, nor
+# does a read of an effect key or of a key the spec writes itself (the same
+# filters as the family's read loop).
+_planner_own_edges_compute() {
+  local init="$1" specs_dir="$2"
+  local -a slugs=()
+  local -A W=() R=() FIRE=() EFFECT=() DW=()
+  local f slug ln key val
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    planner_ownership_spec_checked "$f" || continue
+    slug="$(basename "$f" .md)"
+    slugs+=("$slug")
+    W[$slug]=$(planner_ownership_writes "$f") || W[$slug]=""
+    R[$slug]=$(planner_ownership_reads "$f") || R[$slug]=""
+    while IFS=$'\t' read -r ln key val; do
+      [ -n "$key" ] || continue
+      case "$val" in
+      fire)
+        FIRE[$key]+="${slug}"$'\n'
+        EFFECT[$key]=1
+        ;;
+      trigger) EFFECT[$key]=1 ;;
+      *) DW[$key]+="${slug}"$'\n' ;;
+      esac
+    done <<<"${W[$slug]}"
+  done < <(find "$specs_dir" -maxdepth 1 -type f -name '*.md' 2>/dev/null | LC_ALL=C sort)
+
+  local src wk wop own eff ws
+  for slug in "${slugs[@]}"; do
+    while IFS=$'\t' read -r ln key src; do
+      [ -n "$key" ] || continue
+      [ -n "${EFFECT[$key]:-}" ] && continue
+      own=0
+      while IFS=$'\t' read -r _ wk wop; do
+        [ -n "$wk" ] || continue
+        case "$wop" in fire | trigger) continue ;; esac
+        _planner_own_key_matches "$key" "$wk" && own=1 && break
+      done <<<"${W[$slug]}"
+      [ "$own" -eq 1 ] && continue
+      eff=$(planner_ownership_read_effective "$init" "$src" "$key")
+      [ "${eff%%$'\t'*}" = spec ] || continue
+      for wk in "${!DW[@]}"; do
+        _planner_own_key_matches "$key" "$wk" || continue
+        while IFS= read -r ws; do
+          [ -n "$ws" ] && [ "$ws" != "$slug" ] || continue
+          printf '%s\t%s\t%s\n' "$slug" "$ws" "$key"
+        done <<<"${DW[$wk]}"
+      done
+    done <<<"${R[$slug]}"
+    while IFS=$'\t' read -r ln key val; do
+      [ "$val" = trigger ] || continue
+      while IFS= read -r ws; do
+        [ -n "$ws" ] && [ "$ws" != "$slug" ] || continue
+        printf '%s\t%s\t%s\n' "$slug" "$ws" "$key"
+      done <<<"${FIRE[$key]:-}"
+    done <<<"${W[$slug]}"
+  done | LC_ALL=C sort -u
+}
+
+# planner_ownership_edges_write <INIT> — Crosscheck's edges step. A full
+# recompute into artifacts/ownership-edges.json:
+#   {"version": 1, "edges": [{"consumer", "blocked_by", "keys", "frozen"}]}
+# (jq -S, edges sorted by consumer then blocked_by, keys sorted, LC_ALL=C).
+# Written through tmp + mv only when the bytes change; removed when there are
+# no edges. No spec file is edited.
+#
+# Freeze (D7): a consumer whose ticket exists (.intents/ticket-<slug>.json,
+# the same test as planner_testdata_synth_has_ticket) keeps the edges the
+# previous file recorded for it, marked frozen, keys included. When this
+# run's recomputed blocked_by set for it differs, one warning line is printed:
+#   planner-ownership-edges: OWN_EDGES_DIVERGED specs/<slug>.md … added <c>
+#   blocked_by <b>, …; removed <c> blocked_by <b>, … — …
+# Divergence compares blocked_by targets, not keys.
+#
+# Legacy initiative (no spec-ownership-v1 marker): does nothing, rc 0.
+# rc 1 with a message on stderr when the file cannot be read back or written.
+planner_ownership_edges_write() {
+  local init="$1"
+  [ -n "${REPOS_ROOT:-}" ] || {
+    echo "ERROR: REPOS_ROOT is not set — refusing to guess (#459)" >&2
+    return 1
+  }
+  planner_ownership_contract_initiative "$init" || return 0
+  local dir specs_dir sc
+  dir=$(planner_initiative_dir "$init") || return 1
+  specs_dir="${dir}/artifacts/specs"
+  sc="${dir}/artifacts/ownership-edges.json"
+  if [ -e "$sc" ] && [ ! -f "$sc" ]; then
+    echo "planner-spec-ownership: could not write artifacts/ownership-edges.json — it is not a regular file" >&2
+    return 1
+  fi
+
+  local computed prev=""
+  computed=$(_planner_own_edges_compute "$init" "$specs_dir")
+  if [ -f "$sc" ]; then
+    prev=$(jq -r '.edges[] | .consumer as $c | .blocked_by as $b | .keys[] | [$c, $b, .] | join("\t")' "$sc" 2>/dev/null) || {
+      echo "planner-spec-ownership: could not read artifacts/ownership-edges.json back — fix or delete it, then resume" >&2
+      return 1
+    }
+  fi
+
+  # Consumers with a ticket.
+  local -A frozen=()
+  local c b k
+  while IFS=$'\t' read -r c _ _; do
+    [ -n "$c" ] || continue
+    [ -f "${dir}/.intents/ticket-${c}.json" ] && frozen[$c]=1
+  done < <(printf '%s\n%s\n' "$computed" "$prev")
+
+  local rows="" added removed old new
+  for c in $(printf '%s\n' "${!frozen[@]}" | LC_ALL=C sort); do
+    old=$(awk -F'\t' -v c="$c" '$1 == c { print $2 }' <<<"$prev" | LC_ALL=C sort -u)
+    new=$(awk -F'\t' -v c="$c" '$1 == c { print $2 }' <<<"$computed" | LC_ALL=C sort -u)
+    if [ "$old" != "$new" ]; then
+      added=$(LC_ALL=C comm -13 <(printf '%s\n' "$old" | sed '/^$/d') <(printf '%s\n' "$new" | sed '/^$/d') |
+        sed "s/^/${c} blocked_by /" | paste -sd',' - | sed 's/,/, /g')
+      removed=$(LC_ALL=C comm -23 <(printf '%s\n' "$old" | sed '/^$/d') <(printf '%s\n' "$new" | sed '/^$/d') |
+        sed "s/^/${c} blocked_by /" | paste -sd',' - | sed 's/,/, /g')
+      printf 'planner-ownership-edges: OWN_EDGES_DIVERGED specs/%s.md has a ticket, so its edges stay as recorded%s%s — edit the ticket'"'"'s blocked-by by hand if the new order matters, or restore the ## Writes / ## Reads rows\n' \
+        "$c" "${added:+; this run added ${added}}" "${removed:+; removed ${removed}}"
+    fi
+    rows+=$(awk -F'\t' -v c="$c" '$1 == c { print $0 "\ttrue" }' <<<"$prev")$'\n'
+  done
+  while IFS=$'\t' read -r c b k; do
+    [ -n "$c" ] || continue
+    [ -n "${frozen[$c]:-}" ] && continue
+    rows+="${c}"$'\t'"${b}"$'\t'"${k}"$'\tfalse\n'
+  done <<<"$computed"
+
+  if [ -z "$(sed '/^$/d' <<<"$rows")" ]; then
+    rm -f "$sc" 2>/dev/null || {
+      echo "planner-spec-ownership: could not remove artifacts/ownership-edges.json" >&2
+      return 1
+    }
+    return 0
+  fi
+
+  local tmp
+  tmp=$(mktemp "${sc}.XXXXXX" 2>/dev/null) || {
+    echo "planner-spec-ownership: could not write artifacts/ownership-edges.json" >&2
+    return 1
+  }
+  # shellcheck disable=SC2016  # jq program, not shell
+  if ! printf '%s' "$rows" | LC_ALL=C jq -R -s '
+      split("\n") | map(select(length > 0) | split("\t"))
+      | group_by([.[0], .[1]])
+      | map({consumer: .[0][0], blocked_by: .[0][1],
+             keys: (map(.[2]) | unique), frozen: (.[0][3] == "true")})
+      | {version: 1, edges: .}' 2>/dev/null | LC_ALL=C jq -S . >"$tmp" 2>/dev/null || [ ! -s "$tmp" ]; then
+    rm -f "$tmp"
+    echo "planner-spec-ownership: could not render artifacts/ownership-edges.json" >&2
+    return 1
+  fi
+  if [ -f "$sc" ] && cmp -s "$tmp" "$sc"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  if [ -f "$sc" ]; then
+    chmod --reference="$sc" "$tmp" 2>/dev/null
+  else
+    chmod "$(printf '%o' $((0666 & ~$(umask))))" "$tmp" 2>/dev/null
+  fi
+  mv -f "$tmp" "$sc" || {
+    rm -f "$tmp"
+    echo "planner-spec-ownership: could not write artifacts/ownership-edges.json" >&2
+    return 1
+  }
+  return 0
+}
+
+# planner_ownership_edges_count <INIT> — edges in artifacts/ownership-edges.json
+# (0 when there is none).
+planner_ownership_edges_count() {
+  local dir sc n
+  dir=$(planner_initiative_dir "$1" 2>/dev/null) || {
+    echo 0
+    return 0
+  }
+  sc="${dir}/artifacts/ownership-edges.json"
+  [ -f "$sc" ] || {
+    echo 0
+    return 0
+  }
+  n=$(jq -r '.edges | length' "$sc" 2>/dev/null) || n=0
+  echo "${n:-0}"
 }

@@ -119,14 +119,9 @@ _planner_xco_conflict() {
   return 1
 }
 
-# _planner_xco_matches <read-key> <write-key> — the entity rule (design D2).
-_planner_xco_matches() {
-  local r="$1" w="$2"
-  [ "$w" = "$r" ] && return 0
-  [[ "$r" == *.* ]] && [ "$w" = "${r%%.*}" ] && return 0
-  [[ "$w" == "${r}."* ]] && return 0
-  return 1
-}
+# _planner_xco_matches <read-key> <write-key> — the entity rule (design D2),
+# shared with the edges step.
+_planner_xco_matches() { _planner_own_key_matches "$1" "$2"; }
 
 # _planner_xco_strip <key> — one trailing `s` removed from each segment.
 _planner_xco_strip() {

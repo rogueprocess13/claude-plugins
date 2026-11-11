@@ -27,7 +27,10 @@
 # Before every family, the test-data synthesis sub-step
 # (planner-testdata-synth.sh, planner-test-data-derivation) writes the TD
 # specs, artifacts/testdata-synth.json and the INDEX.md block, so every
-# family validates the synthesized state. See planner_crosscheck_run.
+# family validates the synthesized state. Then, for a spec-ownership-v1
+# initiative, the edges step (planner_ownership_edges_write) writes
+# artifacts/ownership-edges.json, so the deps family's cycle check sees those
+# edges too. See planner_crosscheck_run.
 #
 # Adding a check later means adding one more call in planner_crosscheck_run
 # and, if it can emit a non-blocking finding, adding its codes to
@@ -438,6 +441,39 @@ planner_crosscheck_run() {
   fi
   [ "$synth_err" = /dev/null ] || rm -f "$synth_err"
 
+  # Ownership edges (planner-crosscheck-ownership D6/D7): right after
+  # synthesis and before every family, so the deps family's DEPENDENCY_CYCLE
+  # check reads artifacts/ownership-edges.json with the rest of the graph.
+  # Gated on the spec-ownership-v1 marker: a legacy initiative gets no line
+  # and no file. `META|ownership-edges` is not a `Crosscheck|<step>` line, so
+  # planner_position_derive needs no skip for it. A divergence warning
+  # (OWN_EDGES_DIVERGED) goes through the normal finding path; a read or
+  # write failure is the blocking OWN_EDGES_FAILED and writes no done line.
+  if planner_ownership_contract_initiative "$initiative_id" 2>/dev/null; then
+    local own_out own_err own_rc own_msg
+    own_err=$(mktemp) || own_err=/dev/null
+    own_rc=0
+    own_out=$(planner_ownership_edges_write "$initiative_id" 2>"$own_err") || own_rc=$?
+    b=0 w=0 a=0
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      _planner_crosscheck_emit_finding "$initiative_id" "$line"
+      case $? in 0) b=$((b + 1)) ;; 1) w=$((w + 1)) ;; 3) a=$((a + 1)) ;; esac
+    done <<<"$own_out"
+    if [ "$own_rc" -eq 0 ]; then
+      planner_state_write "$initiative_id" "META" "ownership-edges" "done" "$(planner_ownership_edges_count "$initiative_id") edge(s)"
+    else
+      own_msg=$(head -1 "$own_err" 2>/dev/null)
+      own_msg="${own_msg#planner-spec-ownership: }"
+      _planner_crosscheck_emit_finding "$initiative_id" "planner-ownership-edges: OWN_EDGES_FAILED ${own_msg:-the edges step exited ${own_rc} with no message — see artifacts/ownership-edges.json}"
+      case $? in 0) b=$((b + 1)) ;; 3) a=$((a + 1)) ;; esac
+    fi
+    total_blocking=$((total_blocking + b))
+    total_warn=$((total_warn + w))
+    total_accepted=$((total_accepted + a))
+    [ "$own_err" = /dev/null ] || rm -f "$own_err"
+  fi
+
   read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_citations "$initiative_id")
   total_blocking=$((total_blocking + b))
   total_warn=$((total_warn + w))
@@ -687,7 +723,7 @@ planner_crosscheck_fix_hint() {
     echo "the blocked-by target matches no sibling spec (or is an ambiguous prefix) — use the exact spec slug, or an existing Linear issue ID"
     ;;
   DEPENDENCY_CYCLE)
-    echo "these specs block each other in a cycle (## Labels blocked-by plus the test-data synthesis edges in artifacts/testdata-synth.json), so TicketGen can create none of them — remove one blocked-by from a Labels line; a TD spec never blocks on its own consumer"
+    echo "these specs block each other in a cycle (## Labels blocked-by plus the test-data synthesis edges in artifacts/testdata-synth.json and the ownership edges in artifacts/ownership-edges.json), so TicketGen can create none of them — remove one blocked-by from a Labels line, or change the ## Writes / ## Reads rows that give an ownership edge (a verified code: read gives none); a TD spec never blocks on its own consumer"
     ;;
   TEST_DATA_UNOWNED)
     echo "these Verification Notes needs have no owner and Crosscheck's test-data synthesis could not take them — give each a valid Source: generate (synthesis then writes and owns the TD spec; do not hand-write a test-data pack), exists:<where>, external:<who>, or seeded-by:<slug> naming a spec with ## Test Data Provided — see docs/test-data-source.md"

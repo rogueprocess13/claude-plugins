@@ -10,6 +10,8 @@
 #      limit, word boundaries, a missing segment; `external:` found and not.
 #   4. Synth-marked specs and INDEX.md are skipped; the contract marker.
 #   5. mawk runs every awk program, and gawk (when installed) agrees.
+#   6. Ownership edges (tasks 4.1–4.2): one per spec read and trigger, none
+#      for verified anchors, file bytes, removal, freeze and divergence.
 #
 # Every case is guarded on the functions it needs, so on a checkout without
 # the lib this file prints FAIL lines and a non-zero summary, never an
@@ -618,6 +620,178 @@ if need "$name" planner_ownership_writes planner_ownership_read_effective; then
   else
     echo "  SKIP mawk runs every awk program (mawk not installed)"
   fi
+fi
+
+# ── 6. Ownership edges (tasks 4.1–4.2) ────────────────────────────────────────
+
+echo "=== ownership edges ==="
+
+# ospec <slug> <writes> <reads> — a spec with both tables; rows `key=val;…`,
+# empty gives `None.`.
+_orows() {
+  local hdr="$1" rows="$2" r
+  if [ -z "$rows" ]; then
+    printf 'None.\n'
+    return
+  fi
+  printf '%s\n' "$hdr"
+  local IFS=';'
+  for r in $rows; do
+    printf '| `%s` | %s |\n' "${r%%=*}" "${r#*=}"
+  done
+}
+ospec() {
+  {
+    printf '# %s\n\n## Writes\n\n' "$1"
+    _orows "$WH" "$2"
+    printf '\n## Reads\n\n'
+    _orows "$RH" "$3"
+    printf '\n## Acceptance Criteria\n\n- [ ] It works\n'
+  } >"${SPECS}/$1.md"
+}
+SC() { printf '%s' "${IDIR}/artifacts/ownership-edges.json"; }
+# edges — `consumer>blocked_by:keys,…[*]` per edge (`*` = frozen), space-separated.
+edges() {
+  [ -f "$(SC)" ] || return 0
+  jq -r '.edges[] | "\(.consumer)>\(.blocked_by):\(.keys | join(","))\(if .frozen then "*" else "" end)"' "$(SC)" | paste -sd' ' -
+}
+ew() { planner_ownership_edges_write "$INIT" 2>/dev/null; }
+
+name="spec read → one edge per writer, with its keys"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  planner_ownership_contract_mark "$INIT"
+  ospec overdue-job 'invoice.status=transition:sent->overdue' ''
+  ospec payment 'invoice.status=transition:sent,overdue->paid;payment=create' ''
+  ospec reminder '' 'invoice.status=spec;payment.amount=spec'
+  out=$(ew)
+  check "$name" "$(edges)" "reminder>overdue-job:invoice.status reminder>payment:invoice.status,payment.amount"
+  check "$name: no finding" "$out" ""
+fi
+
+name="trigger → fire owner; verified code:, framework:, external: give none"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  planner_ownership_contract_mark "$INIT"
+  printf 'The billing platform sends mail.\n' >"${IDIR}/artifacts/idea.txt"
+  ospec overdue-job 'email.invoice_overdue=fire;user=create' ''
+  ospec resend 'email.invoice_overdue=trigger' 'user.name=code:billing/src/model/Invoice.java;user.id=framework:auth_user;user.email=external:billing platform'
+  ew >/dev/null
+  check "$name" "$(edges)" "resend>overdue-job:email.invoice_overdue"
+fi
+
+name="a failed code: anchor that finds a writer gives an edge; no self-edge"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  planner_ownership_contract_mark "$INIT"
+  ospec import 'invoice=create' ''
+  ospec reminder 'reminder=create' 'invoice.due_date=code:billing/nope;reminder.id=spec'
+  ew >/dev/null
+  check "$name" "$(edges)" "reminder>import:invoice.due_date"
+fi
+
+name="file bytes: jq -S, deterministic, unchanged run does not rewrite"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  planner_ownership_contract_mark "$INIT"
+  ospec import 'invoice=create' ''
+  ospec reminder '' 'invoice.due_date=spec'
+  ew >/dev/null
+  want='{
+  "edges": [
+    {
+      "blocked_by": "import",
+      "consumer": "reminder",
+      "frozen": false,
+      "keys": [
+        "invoice.due_date"
+      ]
+    }
+  ],
+  "version": 1
+}'
+  check "$name" "$(cat "$(SC)")" "$want"
+  touch -d '2000-01-01' "$(SC)"
+  ew >/dev/null
+  check "$name: mtime kept" "$(stat -c %Y "$(SC)")" "$(date -d '2000-01-01' +%s)"
+  # Draft readiness re-run: a spec edit is recomputed on the next run.
+  ospec reminder '' 'invoice.due_date=spec;invoice.total=spec'
+  ew >/dev/null
+  check "$name: recomputed after a spec edit" "$(edges)" "reminder>import:invoice.due_date,invoice.total"
+  # Edges vanish → file removed.
+  ospec reminder '' ''
+  ew >/dev/null
+  check "$name: removed when no edges" "$([ -e "$(SC)" ] && echo present || echo absent)" "absent"
+fi
+
+name="no edges → no file"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  planner_ownership_contract_mark "$INIT"
+  ospec import 'invoice=create' ''
+  ew >/dev/null
+  check "$name" "$([ -e "$(SC)" ] && echo present || echo absent)" "absent"
+fi
+
+name="legacy initiative: no file"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  ospec import 'invoice=create' ''
+  ospec reminder '' 'invoice.due_date=spec'
+  rc=0
+  out=$(ew) || rc=$?
+  check "$name" "${rc}:${out}:$([ -e "$(SC)" ] && echo present || echo absent)" "0::absent"
+fi
+
+name="freeze: a consumer with a ticket keeps its edges; divergence warns"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  planner_ownership_contract_mark "$INIT"
+  ospec overdue-job 'invoice.status=update' ''
+  ospec import 'customer=create' ''
+  ospec reminder '' 'invoice.status=spec'
+  ospec digest '' 'invoice.status=spec'
+  ew >/dev/null
+  mkdir -p "${IDIR}/.intents"
+  printf '{}\n' >"${IDIR}/.intents/ticket-reminder.json"
+  ospec reminder '' 'customer.email=spec'
+  ospec digest '' 'customer.email=spec'
+  out=$(ew)
+  check "$name" "$(edges)" "digest>import:customer.email reminder>overdue-job:invoice.status*"
+  case "$out" in
+  *"OWN_EDGES_DIVERGED specs/reminder.md"*"added reminder blocked_by import"*"removed reminder blocked_by overdue-job"*) pass "$name: divergence names added and removed" ;;
+  *) fail "$name: divergence names added and removed" "$out" ;;
+  esac
+  check "$name: one warning" "$(grep -c . <<<"$out")" "1"
+  # Same recomputation as frozen → no warning.
+  ospec reminder '' 'invoice.status=spec'
+  check "$name: no warning when equal" "$(ew)" ""
+  check "$name: still frozen" "$(edges)" "digest>import:customer.email reminder>overdue-job:invoice.status*"
+fi
+
+name="a write failure returns 1 with a message"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  planner_ownership_contract_mark "$INIT"
+  ospec import 'invoice=create' ''
+  ospec reminder '' 'invoice.due_date=spec'
+  mkdir -p "$(SC)"
+  rc=0
+  err=$(planner_ownership_edges_write "$INIT" 2>&1 >/dev/null) || rc=$?
+  check "$name" "$rc" "1"
+  case "$err" in *ownership-edges.json*) pass "$name: names the file" ;; *) fail "$name: names the file" "$err" ;; esac
+fi
+
+name="edges count"
+if need "$name" planner_ownership_edges_count; then
+  fresh
+  planner_ownership_contract_mark "$INIT"
+  check "$name: none" "$(planner_ownership_edges_count "$INIT")" "0"
+  ospec import 'invoice=create' ''
+  ospec reminder '' 'invoice.due_date=spec'
+  ospec digest '' 'invoice.total=spec'
+  ew >/dev/null
+  check "$name" "$(planner_ownership_edges_count "$INIT")" "2"
 fi
 
 echo ""

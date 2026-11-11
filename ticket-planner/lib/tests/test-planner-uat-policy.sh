@@ -83,6 +83,14 @@ echo '{"version":1,"td_specs":[{"slug":"a-one-test-data","kind":"single"}],"over
   >"${REPOS_ROOT}/.ticket-auto/initiatives/INIT-TD/artifacts/testdata-synth.json"
 assert_eq "TD spec → epic (td-spec)" "$(planner_uat_policy_resolve INIT-TD true "")" $'epic\ttd-spec'
 
+echo "--- ownership edge (planner-crosscheck-ownership 4.4) ---"
+_spec INIT-OWN a-import
+_spec INIT-OWN b-reminder
+printf '%s\n' '{"version":1,"edges":[{"consumer":"b-reminder","blocked_by":"a-import","keys":["invoice.due_date"],"frozen":false}]}' \
+  >"${REPOS_ROOT}/.ticket-auto/initiatives/INIT-OWN/artifacts/ownership-edges.json"
+assert_eq "only sibling edge is an ownership edge → epic (chain)" "$(planner_uat_policy_resolve INIT-OWN true "")" $'epic\tchain'
+assert_eq "explicit per-ticket beats an ownership edge" "$(planner_uat_policy_resolve INIT-OWN true per-ticket)" $'per-ticket\texplicit'
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

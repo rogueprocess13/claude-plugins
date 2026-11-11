@@ -18,7 +18,10 @@
 #   - findings free of `|`, CR and LF; mawk runs the family;
 #   - registrations (instance, cross-file and warn codes, fix hints);
 #   - per-instance and wildcard accept for the four instance codes;
-#   - the family runs inside planner_crosscheck_run, after the params family.
+#   - the family runs inside planner_crosscheck_run, after the params family;
+#   - the edges step (tasks 4.1, 4.3): before the deps family, so
+#     DEPENDENCY_CYCLE sees ownership edges; legacy silence; OWN_EDGES_FAILED;
+#     OWN_EDGES_DIVERGED as a warning.
 #
 # Every case is guarded on the functions it needs, so on a checkout without
 # the lib this file prints FAIL lines and a non-zero summary, never an
@@ -605,6 +608,77 @@ if need "$name" planner_crosscheck_ownership && declare -f planner_flags_parse >
   err=$(planner_flags_parse resume "$INIT" --accept 'OWN_MULTI_FIRE:"fine"' 2>&1 >/dev/null) || rc=$?
   check "$name" "$rc" "1"
   contains "$name: wildcard named" "$err" 'OWN_MULTI_FIRE@*:"<reason>"'
+fi
+
+# ── Edges step inside planner_crosscheck_run (tasks 4.1, 4.3) ─────────────────
+
+echo "=== edges step ==="
+
+name="edges step runs before the deps family; DEPENDENCY_CYCLE sees ownership edges"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  ospec ledger 'ledger=create' 'invoice.total=spec'
+  ospec invoicing 'invoice=create' 'ledger.balance=spec'
+  rc=0
+  planner_crosscheck_run "$INIT" >/dev/null 2>&1 || rc=$?
+  check "$name: blocks" "$rc" "1"
+  lines=$(latest)
+  e=$(grep -n '|META|ownership-edges|done|2 edge(s)$' <<<"$lines" | head -1 | cut -d: -f1)
+  c=$(grep -n '|fail|DEPENDENCY_CYCLE ' <<<"$lines" | head -1 | cut -d: -f1)
+  if [ -n "$e" ] && [ -n "$c" ] && [ "$e" -lt "$c" ]; then pass "$name: order"; else fail "$name: order" "edges=$e cycle=$c"; fi
+  check "$name: one per spec" "$(grep -c '|fail|DEPENDENCY_CYCLE ' <<<"$lines")" "2"
+  cyc=$(grep '|fail|DEPENDENCY_CYCLE ' <<<"$lines" | head -1)
+  contains "$name: keeps testdata-synth.json" "$cyc" "artifacts/testdata-synth.json"
+  contains "$name: names ownership-edges.json" "$cyc" "artifacts/ownership-edges.json"
+  check "$name: no ownership finding" "$(grep -c '|crosscheck|[a-z]*|.*OWN_' <<<"$lines" || true)" "0"
+fi
+
+name="legacy initiative: no ownership-edges line, no file"
+if need "$name" planner_ownership_edges_write; then
+  fresh legacy
+  ospec ledger 'ledger=create' 'invoice.total=spec'
+  ospec invoicing 'invoice=create' ''
+  planner_crosscheck_run "$INIT" >/dev/null 2>&1 || true
+  check "$name" "$(grep -c '|ownership-edges|' "$(planner_state_log "$INIT")" || true):$([ -e "${IDIR}/artifacts/ownership-edges.json" ] && echo present || echo absent)" "0:absent"
+fi
+
+name="a contract initiative with no edges writes the line with 0 and no file"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  ospec invoicing 'invoice=create' ''
+  planner_crosscheck_run "$INIT" >/dev/null 2>&1 || true
+  contains "$name" "$(latest)" "|META|ownership-edges|done|0 edge(s)"
+  check "$name: no file" "$([ -e "${IDIR}/artifacts/ownership-edges.json" ] && echo present || echo absent)" "absent"
+fi
+
+name="a sidecar write failure is the blocking OWN_EDGES_FAILED"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  ospec ledger 'ledger=create' 'invoice.total=spec'
+  ospec invoicing 'invoice=create' ''
+  mkdir -p "${IDIR}/artifacts/ownership-edges.json"
+  rc=0
+  planner_crosscheck_run "$INIT" >/dev/null 2>&1 || rc=$?
+  check "$name: blocks" "$rc" "1"
+  lines=$(latest)
+  contains "$name" "$lines" "|META|crosscheck|fail|OWN_EDGES_FAILED "
+  check "$name: no done line" "$(grep -c '|ownership-edges|done|' <<<"$lines" || true)" "0"
+fi
+
+name="OWN_EDGES_DIVERGED is a warning through planner_crosscheck_run"
+if need "$name" planner_ownership_edges_write; then
+  fresh
+  ospec ledger 'ledger=create' ''
+  ospec import 'customer=create' ''
+  ospec invoicing 'invoice=create' 'ledger.balance=spec'
+  planner_crosscheck_run "$INIT" >/dev/null 2>&1 || true
+  mkdir -p "${IDIR}/.intents"
+  printf '{}\n' >"${IDIR}/.intents/ticket-invoicing.json"
+  ospec invoicing 'invoice=create' 'customer.email=spec'
+  planner_crosscheck_run "$INIT" >/dev/null 2>&1 || true
+  lines=$(latest)
+  check "$name: never a fail line" "$(grep -c '|fail|OWN_EDGES_DIVERGED' <<<"$lines" || true)" "0"
+  contains "$name" "$lines" "|META|crosscheck|warn|info OWN_EDGES_DIVERGED specs/invoicing.md "
 fi
 
 echo ""

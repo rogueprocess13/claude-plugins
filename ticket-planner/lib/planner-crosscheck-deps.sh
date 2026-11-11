@@ -43,10 +43,12 @@
 # family also checks the full dependency graph TicketGen will order — read
 # through planner_ticketgen_deps_json, i.e. the specs on disk AFTER
 # Crosscheck's test-data synthesis sub-step (TD specs included) plus the
-# synthesis edges in artifacts/testdata-synth.json — is acyclic. A consumer
-# never names its TD spec in Labels, so a TD <-> consumer cycle exists only
-# in the union, and TicketGen would refuse it (zero tickets) after EpicGen
-# already ran. One finding per spec on a cycle.
+# synthesis edges in artifacts/testdata-synth.json, plus the ownership edges
+# in artifacts/ownership-edges.json (planner-crosscheck-ownership D6, written
+# by the edges step right after synthesis) — is acyclic. A consumer never
+# names its TD spec or the writer it reads in Labels, so such a cycle exists
+# only in the union, and TicketGen would refuse it (zero tickets) after
+# EpicGen already ran. One finding per spec on a cycle.
 #
 # Usage:
 #   planner_crosscheck_deps <initiative_id>
@@ -169,7 +171,7 @@ planner_crosscheck_deps() {
       members=$(paste -sd, - <<<"$cyc" | sed 's/,/, /g')
       while IFS= read -r s; do
         [ -n "$s" ] || continue
-        out_lines+=("planner-crosscheck-deps: DEPENDENCY_CYCLE ${s}.md is on a blocked-by cycle among: ${members} — counting ## Labels blocked-by and the test-data synthesis edges in artifacts/testdata-synth.json; TicketGen can order none of them")
+        out_lines+=("planner-crosscheck-deps: DEPENDENCY_CYCLE ${s}.md is on a blocked-by cycle among: ${members} — counting ## Labels blocked-by, the test-data synthesis edges in artifacts/testdata-synth.json and the ownership edges in artifacts/ownership-edges.json; TicketGen can order none of them")
       done <<<"$cyc"
     fi
   fi

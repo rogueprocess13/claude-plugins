@@ -1300,6 +1300,44 @@ planner_ticketgen_order "$TD_SPECS" >/dev/null 2>&1 || tg_rc=$?
 grep -qF 'audit-export.md' <<<"$cc_out" && fail "cycle members" "downstream audit-export reported: $cc_out" ||
   pass "only specs on the cycle are reported (not a spec merely downstream of it)"
 
+echo "--- ownership edges reader (planner-crosscheck-ownership 4.4) ---"
+OWN_SPECS="${TMP_ROOT}/own/artifacts/specs"
+mkdir -p "$OWN_SPECS"
+_own_spec() { printf '# %s\n\n## Labels\n\nfeature%s\n' "$1" "${2:+, $2}" >"${OWN_SPECS}/$1.md"; }
+_own_spec a-reader "blocked-by:b-labels"
+_own_spec b-labels
+_own_spec c-writer
+_own_spec d-writer
+printf '%s\n# a-reader-test-data\n' "$PLANNER_TESTDATA_SYNTH_MARKER" >"${OWN_SPECS}/a-reader-test-data.md"
+printf '{"version":1,"td_specs":[],"overrides":[],"edges":[{"consumer":"a-reader","blocked_by":"a-reader-test-data"}]}\n' \
+  >"${TMP_ROOT}/own/artifacts/testdata-synth.json"
+printf '%s\n' '{"version":1,"edges":[
+  {"consumer":"a-reader","blocked_by":"d-writer","keys":["invoice"],"frozen":false},
+  {"consumer":"a-reader","blocked_by":"b-labels","keys":["invoice.total"],"frozen":false},
+  {"consumer":"a-reader","blocked_by":"a-reader-test-data","keys":["x"],"frozen":false},
+  {"consumer":"a-reader","blocked_by":"c-writer","keys":["invoice.status"],"frozen":true},
+  {"consumer":"a-reader","blocked_by":"gone","keys":["y"],"frozen":false},
+  {"consumer":"gone","blocked_by":"c-writer","keys":["y"],"frozen":false},
+  {"consumer":"c-writer","blocked_by":"c-writer","keys":["z"],"frozen":false}]}' \
+  >"${TMP_ROOT}/own/artifacts/ownership-edges.json"
+if declare -f _planner_tb_own_sidecar >/dev/null && declare -f _planner_own_edges_of >/dev/null; then
+  [ "$(_planner_tb_own_sidecar "$OWN_SPECS")" = "${TMP_ROOT}/own/artifacts/ownership-edges.json" ] &&
+    pass "_planner_tb_own_sidecar names artifacts/ownership-edges.json" || fail "own sidecar path" "$(_planner_tb_own_sidecar "$OWN_SPECS")"
+  got=$(_planner_own_edges_of "$(_planner_tb_own_sidecar "$OWN_SPECS")" "$OWN_SPECS" | tr '\037' '>' | paste -sd' ')
+  [ "$got" = "a-reader>a-reader-test-data a-reader>b-labels a-reader>c-writer a-reader>d-writer" ] &&
+    pass "_planner_own_edges_of drops edges to missing specs and self-edges, sorted" || fail "own edges_of" "$got"
+  [ -z "$(_planner_own_edges_of "${TMP_ROOT}/own/none.json" "$OWN_SPECS")" ] &&
+    pass "_planner_own_edges_of: no sidecar → nothing" || fail "own edges_of none" "printed"
+else
+  fail "ownership reader" "_planner_tb_own_sidecar / _planner_own_edges_of missing"
+fi
+got=$(planner_ticketgen_spec_deps "${OWN_SPECS}/a-reader.md" "$OWN_SPECS" | paste -sd' ')
+[ "$got" = "b-labels a-reader-test-data c-writer d-writer" ] &&
+  pass "spec_deps: Labels, then test-data edges, then ownership edges, each once" || fail "own spec_deps" "$got"
+rm -f "${TMP_ROOT}/own/artifacts/ownership-edges.json"
+got=$(planner_ticketgen_spec_deps "${OWN_SPECS}/a-reader.md" "$OWN_SPECS" | paste -sd' ')
+[ "$got" = "b-labels a-reader-test-data" ] && pass "spec_deps without an ownership sidecar is unchanged" || fail "no own sidecar" "$got"
+
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]
