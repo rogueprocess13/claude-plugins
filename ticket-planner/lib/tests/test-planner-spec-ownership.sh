@@ -542,6 +542,78 @@ if need "$name" planner_ownership_read_effective; then
   case "$got" in "external${TAB}"?*) pass "$name" ;; *) fail "$name" "got [$got]" ;; esac
 fi
 
+# ── 3b. Code target pin field (planner-ac-code-precondition, task 1.1) ────────
+
+echo "=== code target pin field ==="
+
+# tree3 <INIT> <path> — _planner_own_code_tree's line, or `rc=<n>`.
+tree3() {
+  local out rc=0
+  out=$(_planner_own_code_tree "$1" "$REPOS_ROOT" "$2" 2>/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then printf 'rc=%s' "$rc"; else printf '%s' "$out"; fi
+}
+# target3 <INIT> <path> — planner_ownership_code_target's line, or `rc=<n>`.
+target3() {
+  local out rc=0
+  out=$(planner_ownership_code_target "$1" "$2" 2>/dev/null) || rc=$?
+  if [ "$rc" -ne 0 ]; then printf 'rc=%s' "$rc"; else printf '%s' "$out"; fi
+}
+PIN_WT=$(planner_crosscheck_repo_ref_worktree_dir "$BR" main "$PINNED")
+LIVE_SHA=$(git -C "$BR" rev-parse HEAD)
+
+name="code tree: a pinned sha the live checkout has moved from reads the worktree, pin pinned"
+if need "$name" _planner_own_code_tree; then
+  check "$name" "$(tree3 "$INIT_PIN" billing/src/main/resources/db)" "${PIN_WT}${TAB}src/main/resources/db${TAB}pinned"
+fi
+name="code tree: nothing pinned reads the live checkout, pin live"
+if need "$name" _planner_own_code_tree; then
+  fresh
+  check "$name" "$(tree3 "$INIT" billing/src)" "${BR}${TAB}src${TAB}live"
+fi
+name="code tree: a pin equal to the live HEAD is pinned, live tree"
+if need "$name" _planner_own_code_tree; then
+  fresh
+  planner_state_write "$INIT" META discovery repo-ref "billing@main@${LIVE_SHA}" >/dev/null
+  check "$name" "$(tree3 "$INIT" billing/src)" "${BR}${TAB}src${TAB}pinned"
+fi
+name="code tree: a pin whose worktree cannot be created is pin-failed, live tree"
+if need "$name" _planner_own_code_tree; then
+  fresh
+  INIT_PINFAIL="$INIT"
+  planner_state_write "$INIT" META discovery repo-ref "billing@main@0000000000000000000000000000000000000001" >/dev/null
+  check "$name" "$(tree3 "$INIT" billing/src/model)" "${BR}${TAB}src/model${TAB}pin-failed"
+fi
+name="code tree: the repository root alone keeps an empty sub field"
+if need "$name" _planner_own_code_tree; then
+  check "$name" "$(tree3 "$INIT_PINFAIL" billing)" "${BR}${TAB}${TAB}pin-failed"
+fi
+name="code anchor: pin-failed keeps today's result (live tree used)"
+if need "$name" planner_ownership_read_effective; then
+  got="$(eff "$INIT_PINFAIL" code:billing/src/model/Invoice.java user.name)|$(eff "$INIT_PINFAIL" code:billing/src/main/resources/db invoice.due_date)"
+  check "$name" "$got" "code|spec${TAB}key not named in any file under the path"
+fi
+name="code anchor: a repository-root path still resolves"
+if need "$name" planner_ownership_read_effective; then
+  check "$name" "$(eff "$INIT_PINFAIL" code:billing reminder.due_date)" "code"
+fi
+
+name="code target: prints the same three fields"
+if need "$name" planner_ownership_code_target; then
+  check "$name" "$(target3 "$INIT_PIN" billing/src/main/resources/db)" "${PIN_WT}${TAB}src/main/resources/db${TAB}pinned"
+  check "$name (pin-failed)" "$(target3 "$INIT_PINFAIL" billing/src)" "${BR}${TAB}src${TAB}pin-failed"
+fi
+name="code target: rc 1 for .., a leading / and an unknown repository"
+if need "$name" planner_ownership_code_target; then
+  got="$(target3 "$INIT_PIN" billing/../billing/src) $(target3 "$INIT_PIN" /billing/src) $(target3 "$INIT_PIN" nosuchrepo/src)"
+  check "$name" "$got" "rc=1 rc=1 rc=1"
+fi
+name="code target: the reason goes to stderr"
+if need "$name" planner_ownership_code_target; then
+  e1=$(planner_ownership_code_target "$INIT_PIN" billing/../x 2>&1 >/dev/null || true)
+  e2=$(planner_ownership_code_target "$INIT_PIN" nosuchrepo/src 2>&1 >/dev/null || true)
+  check "$name" "${e1}|${e2}" "invalid path|repository not found"
+fi
+
 # ── 4. Skips and contract ─────────────────────────────────────────────────────
 
 echo "=== skips and contract ==="
