@@ -348,6 +348,7 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-body-drift.sh
 	bash ticket-planner/lib/tests/test-planner-stop-describe.sh
 	bash ticket-planner/lib/tests/test-planner-specify-decisions.sh
+	bash ticket-planner/lib/tests/test-planner-specify-params.sh
 	bash ticket-planner/lib/tests/test-planner-consensus-gate.sh
 	bash ticket-planner/lib/tests/test-planner-dispatch-gate.sh
 	bash ticket-planner/lib/tests/test-planner-invocation.sh
