@@ -150,7 +150,7 @@ OBSERVE (0) → WARN (1) → KILL (2) → KILL+RESTART (3)
 - **OBSERVE** — record only
 - **WARN** — surface on the dashboard, nothing destructive
 - **KILL** — verified escalation: stop-file → grace → `SIGTERM` → grace → `SIGKILL` → re-verify. The pipeline log is finalized **only after the PID is confirmed gone**, then a generation fence marker blocks any superseded zombie from mutating Linear.
-- **KILL+RESTART** — kill, then spawn a fresh `/ticket-auto {ID} --auto`. Enabled unless `FLEET_AUTO_RESTART=false`, and restart count below `FLEET_MAX_RESTARTS`.
+- **KILL+RESTART** — kill, then spawn a fresh `/ticket-auto {ID} --auto` (the autonomy flag is `FLEET_WORKER_AUTONOMY`, default `auto`; the ticket's earlier mode is not reused). Enabled unless `FLEET_AUTO_RESTART=false`, and restart count below `FLEET_MAX_RESTARTS`.
 
 ## fleetd — the supervisor daemon
 
@@ -285,6 +285,7 @@ All settings live in `lib/fleet-config.sh` using `${VAR:-default}` — override 
 | `EPIC_BRANCH_PUSH_VERIFY` | false | `true` runs the repo's pre-push hook when creating an epic branch. Default skips it: the pushed ref is identical to `origin/<base>` (zero new commits), so the hook has nothing to check and would run its preflight against whatever the shared clone has checked out. Commit pushes by implement agents are always verified. |
 | `FLEET_AUTO_DISPATCH` | false | `true` = global sweep of dispatch-eligible epics (manifest `dispatch=true`) on each cycle; `false` = idle until explicit dispatch (skill or `POST /dispatch`) |
 | `FLEETD_SPAWN_ENABLED` | unset | `1` enables fleetd worker spawning |
+| `FLEET_WORKER_AUTONOMY` | auto | Autonomy fleetd dispatches every ticket with: `auto`, `semi-auto` or `manual`. Under `auto`, simple tickets auto-approve and auto-merge (Smooth outcome) and complex tickets stop until `/ticket-approve`; `manual` stops every ticket. Any other value refuses fleetd startup |
 
 ## Where state lives
 

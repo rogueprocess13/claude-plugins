@@ -211,6 +211,27 @@ fi
 _var "FLEETD_SPAWN_ENABLED" "info" "${FLEETD_SPAWN_ENABLED:-0}" "env" "must be 1 to enable worker spawning (default: observe-only)"
 _var "FLEET_EPIC_AUTO_PR" "info" "$_epic_auto_pr" "env" "gh + GITHUB_PERSONAL_ACCESS_TOKEN only required when true"
 
+# ── Worker autonomy (review finding PO-9) ───────────────────────────────────
+# Autonomy every fleetd-dispatched ticket runs under (supervisor.py
+# FLEET_WORKER_AUTONOMY). Unset means fleetd's own default `auto`, which must
+# not stop fleetd from starting zero-config, so it is `info`. An unknown value
+# is an issue: fleetd would otherwise fall back to `auto`, which is the most
+# permissive mode, for an operator who clearly meant to pick something else.
+_worker_autonomy="${FLEET_WORKER_AUTONOMY:-auto}"
+if [ -z "${FLEET_WORKER_AUTONOMY:-}" ]; then
+  _var "FLEET_WORKER_AUTONOMY" "info" "$_worker_autonomy" "env" "unset — fleetd dispatches workers with --auto (simple tickets auto-approve and auto-merge)"
+else
+  case "$_worker_autonomy" in
+  auto | semi-auto | manual)
+    _var "FLEET_WORKER_AUTONOMY" "ok" "$_worker_autonomy" "env" "fleetd dispatches workers with --${_worker_autonomy}"
+    ;;
+  *)
+    _var "FLEET_WORKER_AUTONOMY" "missing" "$_worker_autonomy" "env" "must be auto, semi-auto or manual"
+    issues=$((issues + 1))
+    ;;
+  esac
+fi
+
 # ── Worker permission mode (worker-reap-recovery) ────────────────────────────
 # fleetd itself always emits an explicit --permission-mode unless CLAUDE_CMD
 # already supplies one (see supervisor.py _cmd_already_sets_permission_mode) —

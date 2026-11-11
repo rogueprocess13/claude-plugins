@@ -17,6 +17,33 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.49.0 (2026-11-12) — `FLEET_WORKER_AUTONOMY`
+
+Review finding PO-9: fleetd dispatched every ticket with `--auto` and had no setting for it, and
+fleet-controller/CLAUDE.md claimed the approval gate stopped every auto-dispatched ticket.
+ticket-auto-pipeline unchanged.
+
+### Added
+- `FLEET_WORKER_AUTONOMY` (`auto` | `semi-auto` | `manual`, **default `auto`**, so the
+  whole-ticket path behaves as before). The whole-ticket spawn, KILL+RESTART included, now runs
+  `/ticket-auto {tid} --{mode} --from-planned`. `fleet-env-check.sh` reports the row and refuses
+  fleetd startup on any other value; with `FLEET_STARTUP_ENV_CHECK=false`, fleetd falls back to
+  `auto` with a stderr warning.
+- `features.json` catalog entry. The catalog accepts enum settings: an entry with `values` is
+  matched by the drift gate on `${NAME:-v}` and `os.environ.get('NAME', 'v')` with any literal
+  default, and checked for default drift and staleness like a boolean flag.
+
+### Changed
+- The phase-dispatch path passes the same setting to `preamble.run_preamble` as `AUTONOMY`.
+  Before, it passed none, so the preamble used `TICKET_AUTONOMY`, else `manual`, and the two
+  dispatch paths disagreed. A host that runs phase dispatch without `TICKET_AUTONOMY` set now
+  gets `auto` there too; set `FLEET_WORKER_AUTONOMY=manual` to keep the old gating.
+
+### Fixed
+- fleet-controller/CLAUDE.md `FLEET_AUTO_DISPATCH` row: under the default `auto`, a simple
+  dispatched ticket is auto-approved and auto-merged; only a complex ticket without
+  `/ticket-approve` stops at the gate.
+
 ## ticket-planner 0.38.0 (2026-11-12) — Specify ownership tables, first-dispatch contract markers
 
 planner-crosscheck-ownership, PR B of 2. ticket-auto-pipeline and fleet-controller unchanged.

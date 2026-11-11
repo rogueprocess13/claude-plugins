@@ -314,6 +314,52 @@ test_permission_probe_skipped_by_default() {
   [[ "$(_row "$out" "FLEET_WORKER_PERMISSION_PROBE")" == *"|info|"* ]]
 }
 
+# ── Worker autonomy (FLEET_WORKER_AUTONOMY, review finding PO-9) ────────────
+
+_autonomy_env_check() {
+  # _autonomy_env_check TMPDIR [VALUE] — runs env-check with every other row
+  # pinned to a passing value, so the exit code isolates the autonomy row.
+  local dir="$1"
+  if [ "$#" -ge 2 ]; then
+    LINEAR_API_KEY=x CLAUDE_BIN=bash FLEET_WORKER_AUTONOMY="$2" bash "$LIB_DIR/fleet-env-check.sh" "$dir" 2>/dev/null
+  else
+    (
+      unset FLEET_WORKER_AUTONOMY
+      LINEAR_API_KEY=x CLAUDE_BIN=bash bash "$LIB_DIR/fleet-env-check.sh" "$dir" 2>/dev/null
+    )
+  fi
+}
+
+test_worker_autonomy_default_is_auto_and_not_an_issue() {
+  local tmpdir out exit_code=0
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  out=$(unset CLAUDE_CMD && _autonomy_env_check "$tmpdir") || exit_code=$?
+  rm -rf "$tmpdir"
+  [[ "$(_row "$out" "FLEET_WORKER_AUTONOMY")" == "FLEET_WORKER_AUTONOMY|info|auto|"* ]] && [ "$exit_code" -eq 0 ]
+}
+
+test_worker_autonomy_valid_values_ok() {
+  local tmpdir out v rc=0
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  for v in auto semi-auto manual; do
+    out=$(unset CLAUDE_CMD && _autonomy_env_check "$tmpdir" "$v") || rc=1
+    [[ "$(_row "$out" "FLEET_WORKER_AUTONOMY")" == "FLEET_WORKER_AUTONOMY|ok|$v|"* ]] || rc=1
+  done
+  rm -rf "$tmpdir"
+  [ "$rc" -eq 0 ]
+}
+
+test_worker_autonomy_invalid_value_refuses() {
+  local tmpdir out exit_code=0
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  out=$(unset CLAUDE_CMD && _autonomy_env_check "$tmpdir" "--auto") || exit_code=$?
+  rm -rf "$tmpdir"
+  [[ "$(_row "$out" "FLEET_WORKER_AUTONOMY")" == *"|missing|"* ]] && [ "$exit_code" -gt 0 ]
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Runner
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -343,7 +389,10 @@ for fn in \
   test_claude_code_simple_ok_when_unset \
   test_claude_code_simple_missing_when_bare_active \
   test_restricted_missing_when_active \
-  test_permission_probe_skipped_by_default; do
+  test_permission_probe_skipped_by_default \
+  test_worker_autonomy_default_is_auto_and_not_an_issue \
+  test_worker_autonomy_valid_values_ok \
+  test_worker_autonomy_invalid_value_refuses; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

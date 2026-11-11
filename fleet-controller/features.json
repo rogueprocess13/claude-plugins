@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Catalog of every boolean opt-in/opt-out feature flag across the marketplace. Read by lib/fleet-features.sh (value resolution) and enforced by lib/tests/test-fleet-features.sh (drift gate: every boolean `${NAME:-false|0|off|true|on}` / os.environ.get boolean in plugin source must be catalogued here or in the test's ignore list, and every `default` must match the code). Field reference: fleet-controller/CLAUDE.md, section 'Feature catalog'.",
+  "description": "Catalog of every boolean opt-in/opt-out feature flag across the marketplace, plus enum settings (entries with `values`, checked the same way). Read by lib/fleet-features.sh (value resolution) and enforced by lib/tests/test-fleet-features.sh (drift gate: every boolean `${NAME:-false|0|off|true|on}` / os.environ.get boolean in plugin source must be catalogued here or in the test's ignore list, and every `default` must match the code). Field reference: fleet-controller/CLAUDE.md, section 'Feature catalog'.",
   "flags": [
     {
       "name": "FLEETD_SPAWN_ENABLED",
@@ -32,6 +32,19 @@
       "default_exceptions": [
         { "file": "fleet-controller/lib/fleet-intervene.sh", "default": "true", "why": "fleet_can_restart (used by orphan reconciliation and fleet_restart_pipeline) treats unset as enabled" }
       ]
+    },
+    {
+      "name": "FLEET_WORKER_AUTONOMY",
+      "plugin": "fleet-controller",
+      "default": "auto",
+      "on_value": "auto",
+      "values": ["auto", "semi-auto", "manual"],
+      "category": "safety",
+      "summary": "Autonomy fleetd dispatches every ticket with (/ticket-auto --auto, --semi-auto or --manual), on both the whole-ticket and the phase-dispatch path. Shown as on when it is auto: simple tickets auto-approve and auto-merge.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "auto is the old fixed behaviour and keeps a fleet hands-off; complex tickets still stop at the approval gate until /ticket-approve. Use manual to hold every ticket at that gate and leave every PR merge to a person. semi-auto currently gates and merges exactly like auto. fleet-env-check refuses any other value at fleetd startup.",
+      "docs": "fleet-controller/CLAUDE.md#configuration"
     },
     {
       "name": "FLEET_AUTO_DISPATCH",
