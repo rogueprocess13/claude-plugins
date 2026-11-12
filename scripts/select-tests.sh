@@ -48,7 +48,8 @@
 #                         outbox-drain source its fleet-config/fleet-notify,
 #                         and ticket-auto tests read fleetd's schema.sql,
 #                         pusher.py and fleet-detect.sh; ticket-planner's
-#                         run-telemetry test sources its lib/ and otel.py;
+#                         run-telemetry test sources its lib/ and otel.py, and
+#                         planner-completed.sh runs its fleet-features.sh;
 #                         scripts/e2e-preflight.sh runs a fleet dry-run.
 #   ticket-planner        only test-ticket-create.sh outside it reads its files
 #                         (the business-framing fixtures).
