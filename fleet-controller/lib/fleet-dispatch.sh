@@ -128,7 +128,7 @@ _registry_pid_alive() {
 # agree on capacity.
 # Args: workspace
 _active_pipeline_count() {
-  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local count=0
   if [ -d "$workspace" ]; then
     local log_file tid
@@ -435,7 +435,7 @@ _fleet_stop_pinned_tids() {
 # before scanning; without it a stopped epic early-exits with a message.
 fleet_dispatch_initiative() {
   local initiative_id="$1"
-  local workspace="${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  local workspace="$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")"
   local resume=false
   local arg
   for arg in "${@:2}"; do
@@ -470,7 +470,7 @@ fleet_dispatch_initiative() {
 
 _fleet_dispatch_initiative_locked() {
   local initiative_id="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local resume="${3:-false}"
   local queue_file
   queue_file=$(_fleet_queue_file "$workspace")
@@ -880,7 +880,7 @@ _fleet_dispatch_initiative_locked() {
 fleet_stop_initiative() {
   local epic_id="$1"
   local reason="${2:-}"
-  local workspace="${3:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${3:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   if [ -z "$epic_id" ]; then
     echo "ERROR: epic_id required" >&2
@@ -1121,6 +1121,6 @@ _fleet_stop_initiative_locked() {
 # ── Sourceable/executable guard ──────────────────────────────────────────────────
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   INITIATIVE_ID="${1:-}"
-  WORKSPACE="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  WORKSPACE="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   fleet_dispatch_initiative "$INITIATIVE_ID" "$WORKSPACE"
 fi

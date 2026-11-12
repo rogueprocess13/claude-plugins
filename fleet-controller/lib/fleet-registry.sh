@@ -23,7 +23,7 @@ registry_write() {
   local pid="$2"
   local generation="$3"
   local reason="$4"
-  local state_dir="${5:-$(_fleet_state_dir ./logs)}"
+  local state_dir="${5:-$(_fleet_state_dir "$(fleet_log_dir_or ./logs)")}"
   local registry_file
   registry_file=$(_fleet_run_file "$tid" "$state_dir")
 
@@ -42,7 +42,7 @@ registry_write() {
 # Returns JSON on stdout, empty string if no registry exists.
 registry_read() {
   local tid="$1"
-  local state_dir="${2:-$(_fleet_state_dir ./logs)}"
+  local state_dir="${2:-$(_fleet_state_dir "$(fleet_log_dir_or ./logs)")}"
   local registry_file
   registry_file=$(_fleet_run_file "$tid" "$state_dir")
 
@@ -56,7 +56,7 @@ registry_read() {
 # Returns PID string, empty if no registry.
 registry_pid() {
   local tid="$1"
-  local state_dir="${2:-$(_fleet_state_dir ./logs)}"
+  local state_dir="${2:-$(_fleet_state_dir "$(fleet_log_dir_or ./logs)")}"
   local registry_file
   registry_file=$(_fleet_run_file "$tid" "$state_dir")
 
@@ -70,7 +70,7 @@ registry_pid() {
 # Returns generation integer, 0 if no registry.
 registry_generation() {
   local tid="$1"
-  local state_dir="${2:-$(_fleet_state_dir ./logs)}"
+  local state_dir="${2:-$(_fleet_state_dir "$(fleet_log_dir_or ./logs)")}"
   local registry_file
   registry_file=$(_fleet_run_file "$tid" "$state_dir")
 
@@ -86,7 +86,7 @@ registry_generation() {
 # Returns 0 if exists, 1 otherwise.
 registry_exists() {
   local tid="$1"
-  local state_dir="${2:-$(_fleet_state_dir ./logs)}"
+  local state_dir="${2:-$(_fleet_state_dir "$(fleet_log_dir_or ./logs)")}"
   local registry_file
   registry_file=$(_fleet_run_file "$tid" "$state_dir")
 
@@ -97,7 +97,7 @@ registry_exists() {
 # Usage: registry_clear <tid> <state_dir>
 registry_clear() {
   local tid="$1"
-  local state_dir="${2:-$(_fleet_state_dir ./logs)}"
+  local state_dir="${2:-$(_fleet_state_dir "$(fleet_log_dir_or ./logs)")}"
   local registry_file
   registry_file=$(_fleet_run_file "$tid" "$state_dir")
 
@@ -111,7 +111,7 @@ registry_clear() {
 fence_write() {
   local tid="$1"
   local fenced_generation="$2"
-  local state_dir="${3:-$(_fleet_state_dir ./logs)}"
+  local state_dir="${3:-$(_fleet_state_dir "$(fleet_log_dir_or ./logs)")}"
   local fence_file
   fence_file=$(_fleet_fence_file "$tid" "$state_dir")
 
@@ -128,7 +128,7 @@ fence_write() {
 # Returns JSON on stdout, empty if no fence.
 fence_read() {
   local tid="$1"
-  local state_dir="${2:-$(_fleet_state_dir ./logs)}"
+  local state_dir="${2:-$(_fleet_state_dir "$(fleet_log_dir_or ./logs)")}"
   local fence_file
   fence_file=$(_fleet_fence_file "$tid" "$state_dir")
 
@@ -143,7 +143,7 @@ fence_read() {
 fence_is_superseded() {
   local tid="$1"
   local caller_generation="$2"
-  local state_dir="${3:-$(_fleet_state_dir ./logs)}"
+  local state_dir="${3:-$(_fleet_state_dir "$(fleet_log_dir_or ./logs)")}"
   local fence_file
   fence_file=$(_fleet_fence_file "$tid" "$state_dir")
 
@@ -167,7 +167,7 @@ fence_is_superseded() {
 # Usage: fence_clear <tid> <state_dir>
 fence_clear() {
   local tid="$1"
-  local state_dir="${2:-$(_fleet_state_dir ./logs)}"
+  local state_dir="${2:-$(_fleet_state_dir "$(fleet_log_dir_or ./logs)")}"
   local fence_file
   fence_file=$(_fleet_fence_file "$tid" "$state_dir")
 

@@ -9,10 +9,15 @@
 # Output: pipe-delimited rows between ---BEGIN_VARS--- / ---END_VARS---
 # Format: NAME|STATUS|VALUE|LOCATION|NOTE
 #   STATUS  ok=present  missing=required+absent  auto=derivable  warn=optional+absent  info=fyi
+#           fail=present but wrong (LOG_DIR_ANCHOR log-dir-anchor-mismatch)
 #
-# Usage: fleet-env-check.sh [PROJECT_DIR] [--summary-file PATH] [--show]
+# Usage: fleet-env-check.sh [PROJECT_DIR] [--summary-file PATH] [--show] [--log-dir PATH]
 #   --summary-file PATH   Write delimited block to PATH; print only "Written to PATH"
 #   --show                Also print a human-readable table to stdout
+#   --log-dir PATH        fleetd's own per-ticket log dir, compared with the
+#                         log-dir anchor (default: FLEET_ENV_CHECK_LOG_DIR, which
+#                         fleetd sets for its boot gate, else FLEET_PIPELINE_LOG_DIR,
+#                         else FLEET_STATE_DIR; none of them -> not compared)
 # -u (nounset) intentionally omitted — see ticket-auto-pipeline/lib/env-check.sh
 # for the harness shell-snapshot rationale.
 set -eo pipefail
@@ -21,7 +26,18 @@ SUMMARY_FILE=""
 SHOW=""
 PROJECT_DIR=""
 _EXPECTING_SUMMARY_PATH=false
+_EXPECTING_LOG_DIR=false
+LOG_DIR_ARG=""
 for arg in "${@}"; do
+  if $_EXPECTING_LOG_DIR; then
+    if [[ "$arg" == --* ]]; then
+      echo "fleet-env-check: --log-dir requires a path argument (got flag: $arg)" >&2
+      exit 12
+    fi
+    LOG_DIR_ARG="$arg"
+    _EXPECTING_LOG_DIR=false
+    continue
+  fi
   if $_EXPECTING_SUMMARY_PATH; then
     if [[ "$arg" == --* ]]; then
       echo "fleet-env-check: --summary-file requires a path argument (got flag: $arg)" >&2
@@ -35,6 +51,8 @@ for arg in "${@}"; do
   --summary-file) _EXPECTING_SUMMARY_PATH=true ;;
   --summary-file=*) SUMMARY_FILE="${arg#*=}" ;;
   --show) SHOW="1" ;;
+  --log-dir) _EXPECTING_LOG_DIR=true ;;
+  --log-dir=*) LOG_DIR_ARG="${arg#*=}" ;;
   *)
     if [ -z "$PROJECT_DIR" ]; then
       PROJECT_DIR="$arg"
@@ -48,6 +66,10 @@ done
 
 if $_EXPECTING_SUMMARY_PATH; then
   echo "fleet-env-check: --summary-file requires a path argument" >&2
+  exit 12
+fi
+if $_EXPECTING_LOG_DIR; then
+  echo "fleet-env-check: --log-dir requires a path argument" >&2
   exit 12
 fi
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
@@ -158,6 +180,7 @@ if [ ! -f "$PROJECT_DIR/CLAUDE.md" ]; then
 else
   if grep -qE '^`?REPOS_ROOT`?\s*[=:]\s*.' "$PROJECT_DIR/CLAUDE.md" 2>/dev/null; then
     VAL=$(grep -oP '^`?REPOS_ROOT`?\s*[=:]\s*`?\K[^`\s]+' "$PROJECT_DIR/CLAUDE.md" | head -1 | tr -d ' ' || true)
+    _CLAUDE_MD_REPOS_ROOT="$VAL"
     _var "REPOS_ROOT" "ok" "$VAL" "CLAUDE.md" "used by fleet-dispatch.sh + fleet-feedback.sh"
   else
     DERIVED="$(_derive_repos_root "$PROJECT_DIR")"
@@ -167,6 +190,52 @@ else
       _var "REPOS_ROOT" "missing" "" "CLAUDE.md" "parent directory of all project repos"
       issues=$((issues + 1))
     fi
+  fi
+fi
+
+# ── Log-dir anchor (state-root-anchor) ──────────────────────────────────────
+# $REPOS_ROOT/.ticket-auto/log-dir records the one per-ticket log dir every
+# process resolves (ticket-auto-pipeline/lib/log-dir.sh). The router preamble
+# anchors its $PWD/logs; fleetd anchors its own log dir at boot when absent.
+# When the anchor exists and names another dir than fleetd's own, fleetd and
+# the router write two state roots: FAIL log-dir-anchor-mismatch, which fails
+# fleetd's startup gate. Absent (or fleetd's dir unknown here) is not an issue.
+
+_abs_real() {
+  realpath -m -- "$1" 2>/dev/null || printf '%s\n' "$1"
+}
+
+_ld_repos_root="${REPOS_ROOT:-${_CLAUDE_MD_REPOS_ROOT:-}}"
+_ld_own="" _ld_own_src=""
+if [ -n "$LOG_DIR_ARG" ]; then
+  _ld_own="$LOG_DIR_ARG" _ld_own_src="--log-dir"
+elif [ -n "${FLEET_ENV_CHECK_LOG_DIR:-}" ]; then
+  _ld_own="$FLEET_ENV_CHECK_LOG_DIR" _ld_own_src="fleetd"
+elif [ -n "${FLEET_PIPELINE_LOG_DIR:-}" ]; then
+  _ld_own="$FLEET_PIPELINE_LOG_DIR" _ld_own_src="FLEET_PIPELINE_LOG_DIR"
+elif [ -n "${FLEET_STATE_DIR:-}" ]; then
+  _ld_own="$FLEET_STATE_DIR" _ld_own_src="FLEET_STATE_DIR"
+fi
+
+if [ -z "$_ld_repos_root" ]; then
+  _var "LOG_DIR_ANCHOR" "info" "" "REPOS_ROOT/.ticket-auto/log-dir" "REPOS_ROOT unknown — anchor not checked"
+else
+  _ld_file="${_ld_repos_root%/}/.ticket-auto/log-dir"
+  _ld_anchor=""
+  if [ -f "$_ld_file" ]; then
+    IFS= read -r _ld_anchor <"$_ld_file" || true
+  fi
+  if [ ! -f "$_ld_file" ]; then
+    _var "LOG_DIR_ANCHOR" "info" "(none)" "$_ld_file" "absent — the router preamble or fleetd writes it on first start"
+  elif [[ "$_ld_anchor" != /* ]]; then
+    _var "LOG_DIR_ANCHOR" "warn" "$_ld_anchor" "$_ld_file" "not an absolute path — ignored by every resolver; fix it by hand (state-root-doctor.sh)"
+  elif [ -z "$_ld_own" ]; then
+    _var "LOG_DIR_ANCHOR" "info" "$_ld_anchor" "$_ld_file" "fleetd log dir unknown here (set --log-dir); fleetd compares it at boot"
+  elif [ "$(_abs_real "$_ld_anchor")" = "$(_abs_real "$_ld_own")" ]; then
+    _var "LOG_DIR_ANCHOR" "ok" "$_ld_anchor" "$_ld_file" "matches fleetd log dir (${_ld_own_src})"
+  else
+    _var "LOG_DIR_ANCHOR" "fail" "$_ld_anchor" "$_ld_file" "FAIL log-dir-anchor-mismatch: fleetd log dir is $(_abs_real "$_ld_own") (${_ld_own_src}); run fleetd so its log dir is the anchored one, or stop the fleet and fix the anchor (state-root-doctor.sh)"
+    issues=$((issues + 1))
   fi
 fi
 

@@ -6,6 +6,15 @@
 
 _DASH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Per-ticket log-dir resolver (state-root-anchor): fleet_log_dir_or.
+if ! declare -f fleet_log_dir_or >/dev/null 2>&1; then
+  if [ -f "$_DASH_DIR/fleet-log-dir.sh" ]; then
+    source "$_DASH_DIR/fleet-log-dir.sh"
+  else
+    fleet_log_dir_or() { printf '%s\n' "${1:-./logs}"; }
+  fi
+fi
+
 # Source heartbeat from canonical path (synced by ticket-auto-pipeline SessionStart hook)
 if ! declare -f _plog >/dev/null 2>&1; then
   for _hp in "$_DASH_DIR/heartbeat.sh" "$HOME/.claude/skills/lib/heartbeat.sh"; do
@@ -72,7 +81,7 @@ _fleet_dashboard_dispatch_status() {
 # never a new read. "-" when the ticket carries no hold.
 _fleet_dashboard_hold_reason() {
   local tid="$1"
-  local workspace="${2:-./logs}"
+  local workspace="${2:-$(fleet_log_dir_or ./logs)}"
   local log_file="${workspace}/${tid}-pipeline.log"
   [ -f "$log_file" ] || {
     echo "-"
@@ -108,7 +117,7 @@ _fleet_dashboard_hold_reason() {
 # Usage: _postmortem_issue_count <tid> <workspace>
 _postmortem_issue_count() {
   local tid="$1"
-  local workspace="${2:-./logs}"
+  local workspace="${2:-$(fleet_log_dir_or ./logs)}"
   local log_file="${workspace}/${tid}-pipeline.log"
 
   if [ ! -f "$log_file" ]; then
@@ -131,7 +140,7 @@ _postmortem_issue_count() {
 # Usage: _observer_findings_summary <tid> <workspace>
 _observer_findings_summary() {
   local tid="$1"
-  local workspace="${2:-./logs}"
+  local workspace="${2:-$(fleet_log_dir_or ./logs)}"
   local high=0 warn=0 f h w
   for f in "${workspace}/${tid}"-*-findings.jsonl; do
     [ -f "$f" ] || continue
@@ -169,7 +178,7 @@ _severity_info() {
 # Thin wrapper — runs detection then delegates to _from_data variant.
 # Usage: fleet_render_dashboard [workspace]
 fleet_render_dashboard() {
-  local workspace="${1:-./logs}"
+  local workspace="${1:-$(fleet_log_dir_or ./logs)}"
   local data
 
   if ! data=$(fleet_detect_all "$workspace" 2>/dev/null); then
@@ -189,7 +198,7 @@ fleet_render_dashboard() {
 # Usage: fleet_render_dashboard_from_data <data_json> <workspace>
 fleet_render_dashboard_from_data() {
   local data="$1"
-  local workspace="${2:-./logs}"
+  local workspace="${2:-$(fleet_log_dir_or ./logs)}"
 
   local total healthy warn kill restart
   total=$(echo "$data" | jq -r '.summary.total // 0')
@@ -293,7 +302,7 @@ _fleet_dashboard_age() {
 # Usage: fleet_write_report_from_data <data_json> <workspace>
 fleet_write_report_from_data() {
   local data="$1"
-  local workspace="${2:-./logs}"
+  local workspace="${2:-$(fleet_log_dir_or ./logs)}"
   local report_dir="${workspace}/reports"
   local report_file="${report_dir}/fleet-dashboard.md"
 
@@ -414,7 +423,7 @@ fleet_write_report_from_data() {
 # Thin wrapper — runs detection then delegates to _from_data variant.
 # Usage: fleet_write_report [workspace]
 fleet_write_report() {
-  local workspace="${1:-./logs}"
+  local workspace="${1:-$(fleet_log_dir_or ./logs)}"
   local report_dir="${workspace}/reports"
   local report_file="${report_dir}/fleet-dashboard.md"
 

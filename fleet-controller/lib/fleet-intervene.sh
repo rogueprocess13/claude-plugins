@@ -281,7 +281,7 @@ _count_restarts() {
 # Usage: fleet_stop_background <tid> [workspace]
 fleet_stop_background() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local pinger_stop watchdog_stop
   pinger_stop=$(_fleet_stop_file "$tid" "pinger" "$workspace")
   watchdog_stop=$(_fleet_stop_file "$tid" "watchdog" "$workspace")
@@ -327,7 +327,7 @@ _fleet_postmortem() {
 fleet_kill_pipeline() {
   local tid="$1"
   local reason="${2:-fleet-kill}"
-  local workspace="${3:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${3:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local state_dir
   state_dir=$(_fleet_state_dir "$workspace")
   local log_file="${workspace}/${tid}-pipeline.log"
@@ -530,7 +530,7 @@ fleet_kill_pipeline() {
 # Usage: fleet_can_restart <tid> [workspace]
 fleet_can_restart() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local log_file="${workspace}/${tid}-pipeline.log"
 
   # Check auto-restart enabled. Default is enabled; set FLEET_AUTO_RESTART=false
@@ -567,7 +567,7 @@ fleet_can_restart() {
 fleet_restart_pipeline() {
   local tid="$1"
   local reason="${2:-fleet-restart}"
-  local workspace="${3:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${3:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local log_file="${workspace}/${tid}-pipeline.log"
   local hb_file="${workspace}/${tid}-heartbeat.log"
 

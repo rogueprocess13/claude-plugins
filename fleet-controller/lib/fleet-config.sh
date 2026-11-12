@@ -9,6 +9,19 @@
 # Default: {workspace} as resolved by each script's caller.
 FLEET_STATE_DIR="${FLEET_STATE_DIR:-}"
 
+# ── Per-ticket log dir resolver (state-root-anchor) ─────────────────────────────
+# fleet_log_dir_or FALLBACK: the anchored/absolute per-ticket log dir, else the
+# caller's own pre-anchor default. Bridged from ticket-auto-pipeline's
+# lib/log-dir.sh; see fleet-log-dir.sh.
+if ! declare -f fleet_log_dir_or >/dev/null 2>&1; then
+  _FC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ -f "$_FC_DIR/fleet-log-dir.sh" ]; then
+    source "$_FC_DIR/fleet-log-dir.sh"
+  else
+    fleet_log_dir_or() { printf '%s\n' "${1:-./logs}"; }
+  fi
+fi
+
 # ── Kill escalation thresholds ──────────────────────────────────────────────────
 # How long to wait for cooperative shutdown (after touching stop-files) before
 # sending SIGTERM, and again after SIGTERM before sending SIGKILL.
