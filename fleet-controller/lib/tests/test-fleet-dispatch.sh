@@ -116,8 +116,8 @@ _seed_epic() {
 # Reaches directly into the manifest's `ready` field via jq rather than
 # set_ticket_readiness — several existing tests in this suite stub `flock`
 # globally to exercise the queue-append contention/dead-letter paths, and
-# set_ticket_readiness takes its own readiness flock internally
-# (_manifest_readiness_lock); a fixture helper must not silently no-op under
+# set_ticket_readiness takes its own manifest flock internally
+# (_manifest_lock); a fixture helper must not silently no-op under
 # an unrelated test's flock mock. Same "no dedicated writer for this shape —
 # reach in directly" precedent test-gate-check.sh already uses for the
 # `flags` field.
@@ -511,7 +511,10 @@ test_dead_letter_on_exhausted_retries() {
   repos_root=$(mktemp -d)
   local output
   output=$(bash -c "
-    flock() { return 1; }
+    # FD 200 is manifest-write.sh's per-manifest lock (review ARCH-4): the
+    # seeders and the dispatch stamp take it, so it passes through to the
+    # real flock. Only the queue lock is mocked.
+    flock() { [ \"\${*: -1}\" = 200 ] && { command flock \"\$@\"; return; }; return 1; }
     export -f flock
     FLEET_INSTANCE_ID=test-dl
     FLEET_QUEUE_LOCK_TIMEOUT=1
@@ -709,7 +712,10 @@ test_contended_append_retried_then_dead_lettered() {
   local output
   output=$(bash -c "
     # Mock flock to always fail (simulate permanent lock contention)
-    flock() { return 1; }
+    # FD 200 is manifest-write.sh's per-manifest lock (review ARCH-4): the
+    # seeders and the dispatch stamp take it, so it passes through to the
+    # real flock. Only the queue lock is mocked.
+    flock() { [ \"\${*: -1}\" = 200 ] && { command flock \"\$@\"; return; }; return 1; }
     export -f flock
 
     FLEET_INSTANCE_ID='$instance_id'
@@ -772,7 +778,8 @@ test_contended_append_retried_and_lands() {
       [ \"\$_count\" -le 1 ] && return 1
       return 0
     }
-    flock() { _mock_flock \"\$@\"; }
+    # FD 200 (manifest lock, review ARCH-4) passes through uncounted.
+    flock() { [ \"\${*: -1}\" = 200 ] && { command flock \"\$@\"; return; }; _mock_flock \"\$@\"; }
     export -f flock _mock_flock
 
     rm -f '${ws}/.flock-attempts'

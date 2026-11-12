@@ -305,7 +305,7 @@ the parser never enables `errexit` in the caller.
 
 Written by `manifest-write.sh`'s `set_ticket_semantic <TID> <semantic_json>` — the third
 writer of a ticket manifest's `ready` object, alongside `set_ticket_readiness` and
-`waive_ticket_readiness_code`, under the same `_manifest_readiness_lock`:
+`waive_ticket_readiness_code`, under the same `_manifest_lock` (the one per-manifest lock every manifest writer takes):
 
 ```json
 "ready": {
