@@ -346,6 +346,8 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-crosscheck-ownership.sh
 	bash ticket-planner/lib/tests/test-planner-ac-precondition.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-ac-precondition.sh
+	bash ticket-planner/lib/tests/test-planner-goldfish.sh
+	bash ticket-planner/lib/tests/test-planner-crosscheck-goldfish.sh
 	bash ticket-planner/lib/tests/test-planner-uat-policy.sh
 	bash ticket-planner/lib/tests/test-planner-doctor.sh
 	bash ticket-planner/lib/tests/test-planner-body-template-humanizer.sh

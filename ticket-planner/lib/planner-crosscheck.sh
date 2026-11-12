@@ -26,6 +26,9 @@
 #   - planner-crosscheck-ac-precondition.sh (planner-ac-code-precondition —
 #                                        ## Preconditions rows judged against
 #                                        the pinned schema)
+#   - planner-crosscheck-goldfish.sh   (planner-goldfish-review — goldfish
+#                                        blocker/major findings dispositioned
+#                                        in consensus.md; warn only)
 #
 # Before every family, the test-data synthesis sub-step
 # (planner-testdata-synth.sh, planner-test-data-derivation) writes the TD
@@ -106,6 +109,8 @@ _planner_crosscheck_source_if_missing "planner_crosscheck_ownership" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ownership.sh"
 _planner_crosscheck_source_if_missing "planner_crosscheck_ac_precondition" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-ac-precondition.sh"
+_planner_crosscheck_source_if_missing "planner_crosscheck_goldfish" \
+  "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-crosscheck-goldfish.sh"
 _planner_crosscheck_source_if_missing "planner_testdata_synthesize" \
   "${_PLANNER_CROSSCHECK_LIB_DIR}/planner-testdata-synth.sh"
 _planner_crosscheck_source_if_missing "planner_state_write" \
@@ -136,7 +141,9 @@ _planner_crosscheck_source_if_missing "planner_state_write" \
 # OWN_EXTERNAL_UNANCHORED and OWN_EDGES_DIVERGED are tripwires, warn-level.
 # planner-ac-code-precondition: AC_PRECONDITION_PLANNED (another spec writes
 # the key) and AC_PRECONDITION_NO_SOURCE (an unsupported stack) never block.
-PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY OWN_NEAR_MATCH OWN_UNDECLARED_REF OWN_EXTERNAL_UNANCHORED OWN_EDGES_DIVERGED AC_PRECONDITION_PLANNED AC_PRECONDITION_NO_SOURCE"
+# planner-goldfish-review: GOLDFISH_UNADDRESSED judges Consensus's bookkeeping
+# of the goldfish findings, never the plan, so it never blocks.
+PLANNER_CROSSCHECK_WARN_CODES="DISCOVERY_GAP_UNRESOLVED CONTRACT_UNDEFINED TEST_DATA_UNSOURCED_LEGACY CITED_ARTIFACTS_SECTION_MISSING TEST_DATA_INVENTORY_MISSING TEST_DATA_IMPLIED_WEAK VERIFICATION_NOTES_MISSING_LEGACY OWN_NEAR_MATCH OWN_UNDECLARED_REF OWN_EXTERNAL_UNANCHORED OWN_EDGES_DIVERGED AC_PRECONDITION_PLANNED AC_PRECONDITION_NO_SOURCE GOLDFISH_UNADDRESSED"
 
 # Per-instance codes (planner-crosscheck-ownership D10). A listed code is
 # accepted one instance at a time and never code-wide: emit matches each
@@ -555,6 +562,13 @@ planner_crosscheck_run() {
   total_warn=$((total_warn + w))
   total_accepted=$((total_accepted + a))
 
+  # Goldfish family (planner-goldfish-review): silent without a terminal
+  # META|goldfish line; warn only.
+  read -r b w a < <(_planner_crosscheck_run_family "$initiative_id" planner_crosscheck_goldfish "$initiative_id")
+  total_blocking=$((total_blocking + b))
+  total_warn=$((total_warn + w))
+  total_accepted=$((total_accepted + a))
+
   if [ "$total_blocking" -gt 0 ]; then
     planner_state_write "$initiative_id" "Crosscheck" "check" "fail" \
       "${total_blocking} blocking finding(s), ${total_warn} warn, ${total_accepted} accepted — see META|crosscheck entries"
@@ -788,6 +802,9 @@ planner_crosscheck_fix_hint() {
     ;;
   TEST_DATA_IMPLIED)
     echo "every Verification Notes row says none but a criterion implies data — derive the need with a Source, or answer the spec's TESTDATA_CONFIRM line in consensus.md (none, generate: <what>, exists:<where>, external:<who>)"
+    ;;
+  GOLDFISH_UNADDRESSED)
+    echo "Consensus left a goldfish blocker or major finding without a disposition, or left out the status line — under ## Goldfish Findings Addressed in consensus.md, copy the planner_goldfish_status line first, then write ### G<n> — <severity> — <title> — <accepted | rejected (… covered in …) | deferred | clarified> per named finding; warn only"
     ;;
   TEST_DATA_IMPLIED_WEAK)
     echo "a criterion may imply test data (weak match) while every row says none — check it; answer TESTDATA_CONFIRM: none in consensus.md to silence it"

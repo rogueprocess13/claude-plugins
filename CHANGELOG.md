@@ -17,6 +17,16 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.42.0 (2026-11-12) — goldfish review lens, dormant
+
+planner-goldfish-review PR A of 2 (next.md Step 18 item 1). ticket-auto-pipeline and fleet-controller unchanged.
+
+### Added (dormant)
+
+- A context-withheld ("goldfish") reviewer for `proposal.md`: `lib/planner-goldfish.sh` and `agents/goldfish-review-agent.md` (Read, Grep, Glob, Write; Grep/Glob scoped to the code repos, so planning artifacts stay out of view — best-effort). Runs once per proposal version and survives a crash; a failed or timed-out run is recorded as not run, never as zero findings; at most 8 findings, ranked by severity.
+- Warn-only Crosscheck family `GOLDFISH_UNADDRESSED` (blocker/major goldfish findings Consensus did not disposition); silent without a goldfish line.
+- New flag `PLANNER_GOLDFISH_REVIEW`, **off by default** (features.json entry). Nothing calls the lens until PR B wires it before the Review phase.
+
 ## ticket-auto-pipeline 0.115.4 (2026-11-12) — a crashed critique no longer passes the entry gate
 
 ### Fixed

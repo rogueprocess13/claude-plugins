@@ -1,0 +1,8 @@
+{
+  "blocking": 0,
+  "warn": 1,
+  "accepted": 0,
+  "log_lines": ["META|goldfish|done|abcdef012345 findings=3 bm=G1,G2"],
+  "log_contains": ["GOLDFISH_UNADDRESSED consensus.md ## Goldfish Findings Addressed: no disposition for G2"],
+  "notes": "planner-goldfish-review: the latest goldfish run recorded blocker/major findings G1 and G2; consensus.md dispositions only G1 (plus a batched minor line). One warn-level GOLDFISH_UNADDRESSED names G2; nothing blocks."
+}
