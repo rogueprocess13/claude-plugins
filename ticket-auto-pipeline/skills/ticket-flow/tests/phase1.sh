@@ -197,7 +197,7 @@ test_flow_concurrent_lock() {
   # Second invocation should exit 42. Point flow.sh at the same lock
   # directory the test holder is using so the mutex conflict is detected.
   local exit_code=0
-  TICKET_FLOW_LOCK_DIR="$tmpdir/logs" \
+  TICKET_FLOW_LOCK_DIR="$tmpdir/logs" REPOS_ROOT="$tmpdir/repos" \
     CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" \
     bash -c "cd \"$tmpdir\" && \"$FLOW_SH\" WIL-99 appraise-start" >/dev/null 2>&1 || exit_code=$?
 
@@ -205,6 +205,102 @@ test_flow_concurrent_lock() {
   wait "$holder" 2>/dev/null || true
   rm -rf "$tmpdir"
   [ "$exit_code" -eq 42 ]
+}
+
+# ── test_flow_lock_shared_across_copies (review ARCH-3) ──────────────────────
+# Two flow.sh copies in different directories (plugin cache vs the
+# ~/.claude/skills sync vs a checkout) must lock the same file. With no
+# TICKET_FLOW_LOCK_DIR the lock is anchored at $REPOS_ROOT/.ticket-auto/locks,
+# never beside the running script.
+
+test_flow_lock_shared_across_copies() {
+  local tmpdir ok=0 copy rc
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/repos/.ticket-auto/locks" "$tmpdir/a" "$tmpdir/b"
+  for copy in a b; do
+    cp -p "$SCRIPT_DIR"/../*.sh "$SCRIPT_DIR"/../*.json "$tmpdir/$copy/"
+  done
+
+  (
+    exec 9>"$tmpdir/repos/.ticket-auto/locks/.ticket-flow-WIL-97.lock"
+    flock 9 || exit 1
+    sleep 5
+  ) &
+  local holder=$!
+  sleep 0.2
+
+  for copy in a b; do
+    rc=0
+    env -u TICKET_FLOW_LOCK_DIR REPOS_ROOT="$tmpdir/repos" \
+      CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" FLEET_FENCE_ENFORCE=false \
+      bash -c "cd \"$tmpdir\" && bash \"$tmpdir/$copy/flow.sh\" WIL-97 appraise-start" \
+      >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ne 42 ]; then
+      echo "  copy $copy -> rc=$rc (want 42)" >&2
+      ok=1
+    fi
+    if [ -e "$tmpdir/$copy/locks" ]; then
+      echo "  copy $copy created a script-relative locks dir" >&2
+      ok=1
+    fi
+  done
+
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  rm -rf "$tmpdir"
+  return $ok
+}
+
+# ── test_flow_lock_unresolvable_refuses_13 (review ARCH-3) ───────────────────
+# REPOS_ROOT unset and no TICKET_FLOW_LOCK_DIR: there is no anchor for the
+# lock, so flow.sh must refuse with exit 13 and create no lock directory
+# beside itself.
+
+test_flow_lock_unresolvable_refuses_13() {
+  local tmpdir rc=0 ok=0
+  tmpdir=$(mktemp -d)
+  mkdir -p "$tmpdir/a"
+  cp -p "$SCRIPT_DIR"/../*.sh "$SCRIPT_DIR"/../*.json "$tmpdir/a/"
+  env -u TICKET_FLOW_LOCK_DIR -u REPOS_ROOT CLAUDE_SKILLS_LIB="$PLUGIN_DIR/lib" \
+    bash -c "cd \"$tmpdir\" && bash \"$tmpdir/a/flow.sh\" WIL-96 appraise-start" \
+    >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 13 ] || {
+    echo "  rc=$rc (want 13)" >&2
+    ok=1
+  }
+  [ -e "$tmpdir/a/locks" ] && {
+    echo "  script-relative locks dir created" >&2
+    ok=1
+  }
+  rm -rf "$tmpdir"
+  return $ok
+}
+
+# ── test_flow_lock_resolver (review ARCH-3) ──────────────────────────────────
+
+test_flow_lock_resolver() {
+  local ok=0 out
+  # shellcheck source=/dev/null
+  source "$PLUGIN_DIR/lib/flow-lock.sh"
+  out=$(TICKET_FLOW_LOCK_DIR="" REPOS_ROOT=/r/ flow_lock_path WIL-1)
+  [ "$out" = "/r/.ticket-auto/locks/.ticket-flow-WIL-1.lock" ] || {
+    echo "  anchored: $out" >&2
+    ok=1
+  }
+  out=$(TICKET_FLOW_LOCK_DIR=/o REPOS_ROOT=/r flow_lock_path WIL-1)
+  [ "$out" = "/o/.ticket-flow-WIL-1.lock" ] || {
+    echo "  override: $out" >&2
+    ok=1
+  }
+  (TICKET_FLOW_LOCK_DIR="" REPOS_ROOT="" flow_lock_dir >/dev/null) && {
+    echo "  unresolvable dir returned 0" >&2
+    ok=1
+  }
+  (REPOS_ROOT=/r flow_lock_path '../x' >/dev/null) && {
+    echo "  bad TID accepted" >&2
+    ok=1
+  }
+  return $ok
 }
 
 # ── test_flow_dispatcher_unknown_trigger ─────────────────────────────────────
@@ -1910,6 +2006,9 @@ for fn in \
   test_validate_linear_config_missing_item_writes_no_sentinel \
   test_preflight_aborts_on_unset_key \
   test_flow_concurrent_lock \
+  test_flow_lock_shared_across_copies \
+  test_flow_lock_unresolvable_refuses_13 \
+  test_flow_lock_resolver \
   test_flow_dispatcher_unknown_trigger \
   test_linear_api_retry_on_503 \
   test_spawn_agent_post_loop_bearing_requires_verdict \

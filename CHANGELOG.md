@@ -51,6 +51,18 @@ planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controll
   `pinned`, `live` or `pin-failed`, and the new `planner_ownership_code_target` wraps it. The
   ownership anchor behaves as before for all three.
 
+## ticket-auto-pipeline 0.114.3, fleet-controller 0.49.2 (2026-11-12) — flow.sh's ticket lock no longer depends on which flow.sh copy ran
+
+fleet-controller 0.49.2.
+
+### Fixed
+
+- `flow.sh` locked `<its own directory>/locks/.ticket-flow-<TID>.lock`, so the plugin-cache copy (fleetd orchestration, `gate_hold.py`, `fleet-detect.sh`), the `~/.claude/skills` sync (the router, `/ticket-approve`) and a repo checkout each locked a different file and did not exclude each other. fleet-controller's `_flow_mutex_held` checked a fourth path, `~/.claude/skills/ticket-flow/locks` (October review ARCH-3). New `ticket-auto-pipeline/lib/flow-lock.sh` is the one resolver: `TICKET_FLOW_LOCK_DIR` when set, else `$REPOS_ROOT/.ticket-auto/locks`, beside the manifests the lock protects. `flow.sh` and `_flow_mutex_held` both use it. `flow.sh` now takes the lock after its `REPOS_ROOT` refusal (exit 13), so an unset `REPOS_ROOT` exits 13 without creating a lock directory, and an unknown trigger reports exit 3 before a busy lock's exit 42. No Python code opens the lock, so there is no Python twin. New tests: `test_flow_lock_shared_across_copies`, `test_flow_lock_unresolvable_refuses_13`, `test_flow_lock_resolver` (phase1.sh), `test_flow_mutex_held_anchored_at_repos_root` (test-fleet-intervene.sh).
+
+### Upgrade note
+
+During the upgrade window an old `flow.sh` copy (not yet re-synced, or a worker started before the upgrade) still locks beside itself, while upgraded copies lock under `$REPOS_ROOT/.ticket-auto/locks`. The two do not exclude each other until every copy runs the new code. Restart fleetd and open a new Claude Code session (which re-syncs `~/.claude/skills`) on each host once no ticket is mid-transition. To cover that window, `_flow_mutex_held` checks both the resolved path and the legacy `~/.claude/skills/ticket-flow/locks/.ticket-flow-<TID>.lock` and defers a kill if either is held. When the new path cannot be resolved (resolver missing, or neither `TICKET_FLOW_LOCK_DIR` nor `REPOS_ROOT` set), it writes one stderr warning and checks the legacy path alone, rather than reporting "not held". Remove the legacy check one release after this one. New tests: `test_flow_mutex_held_legacy_path_held`, `test_flow_mutex_held_unresolvable_legacy_held_warns`.
+
 ## ticket-auto-pipeline 0.114.2, fleet-controller 0.49.1 (2026-11-12) — bash writes the phase-inspector verdict; retro names the tickets behind each failure code
 
 Two determinism fixes from the 2026-10-23 review (DET-SU-1, DET-SU-2).
