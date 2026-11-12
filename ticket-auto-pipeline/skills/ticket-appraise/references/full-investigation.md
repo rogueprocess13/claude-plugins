@@ -59,25 +59,19 @@ Read the persona file at `$PERSONA_BASE`. Inject its content as role context for
 
 bash ~/.claude/skills/lib/plog.sh APPRAISE complexity-sweep start "Scoring complexity axes"
 
-Score the ticket on the axes of the scoring rubric in SKILL.md Step 2.5 (kept inline there because the fast path uses it), using only what ticket-setup already returned (title, description, labels, comments, epic). No codebase reads yet.
+Judge which axes of the scoring rubric in SKILL.md Step 2.5 (kept inline there because the fast path uses it) fire, using only what ticket-setup already returned (title, description, labels, comments, epic). No codebase reads yet. The script does the sum, the threshold and the `## Complexity` block; never write that section by hand:
 
-**If the weighted score is below 3 → proceed to Step 2.6, then Step 3 (inline).**
-
-**If the weighted score is 3 or more → proceed to Step 2.6, then Step 3-Agent (delegated) instead.**
-
-Record the decision in notes.md under a `## Complexity` heading — four fields, in this order:
-
-```markdown
-## Complexity
-**Score:** {simple | complex}
-**Weighted score:** {N} (threshold 3)
-**Axes fired:** {comma-separated axis:weight list, e.g. "multi-service:2, reversibility:3" — or "none"}
-**Reason:** {one sentence; name the Reversibility trigger when it fired}
+```bash
+bash ~/.claude/skills/lib/complexity-score.sh write "{TICKET-DIR}" --axes "{axes}" --reason "{one sentence; name the Reversibility trigger when it fired}"
 ```
 
-`**Score:**` stays exactly `simple` or `complex` — it is the line every downstream parser reads. The other three lines are the audit trail: a false `simple` found later by `/ticket-retro` (`false_simple_tickets`) is traced back to the axis that failed to fire through them.
+`{axes}` is comma-separated from `multi-service`, `cross-layer`, `cross-layer:framework-migration`, `reversibility:{trigger}`, `prior-rejection`, or `none`. Exit 2 means an axis was refused (unknown, repeated, or `cross-layer` qualified with a migration or payment trigger, which is Reversibility only): fix the list and re-run. It prints `COMPLEXITY`, `WEIGHTED` and `AXES`.
 
-bash ~/.claude/skills/lib/plog.sh APPRAISE complexity-sweep done "{simple|complex}, score: {N}/3, axes: {axis:weight list}"
+**If `COMPLEXITY=simple` → proceed to Step 2.6, then Step 3 (inline).**
+
+**If `COMPLEXITY=complex` → proceed to Step 2.6, then Step 3-Agent (delegated) instead.**
+
+bash ~/.claude/skills/lib/plog.sh APPRAISE complexity-sweep done "{COMPLEXITY}, score: {WEIGHTED}/3, axes: {AXES}"
 
 ---
 

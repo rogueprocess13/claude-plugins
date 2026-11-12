@@ -17,6 +17,12 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-auto-pipeline 0.115.1 (2026-11-12) — complexity arithmetic moves into `lib/complexity-score.sh`
+
+### Changed
+
+- ticket-appraise's complexity arithmetic moves into `lib/complexity-score.sh` (review finding DET-AP-5). The agent now only judges which axes fire. `write <dir> --axes <list> --reason <s>` adds up the weights, applies the threshold of 3 and writes or replaces the `## Complexity` block in the shape `get_complexity` reads. It refuses an unknown or repeated axis, `none` combined with another axis, and a double-counted `cross-layer` (exit 2, file untouched). `blast <dir>` applies the Step 2.8 blast-radius override once per ticket. The notes.md format and scoring outcomes are unchanged; `lib/tests/test-complexity-score.sh` (27 cases) replays the rubric examples and the Blast Radius tables `test-notes-parse.sh` pins.
+
 ## ticket-planner 0.40.0 (2026-11-12) — AC preconditions: table, schema facts, Crosscheck family (dormant)
 
 planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controller unchanged.

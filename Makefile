@@ -63,6 +63,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-linear-api-transport.sh
 	bash ticket-auto-pipeline/lib/tests/test-env-check.sh
 	bash ticket-auto-pipeline/lib/tests/test-notes-parse.sh
+	bash ticket-auto-pipeline/lib/tests/test-complexity-score.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-rounds.sh
 	bash ticket-auto-pipeline/lib/tests/test-adversarial-override.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-dir.sh
