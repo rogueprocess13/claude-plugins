@@ -112,6 +112,76 @@ if [ "$rc" -eq 13 ] && [ ! -e "$AWAY/logs" ]; then
   pass "detect-resume: strict + unresolved -> exit 13, nothing created"
 else fail "detect-resume strict" "rc=$rc"; fi
 
+# ── operator CLIs: a person runs these from any directory ──────────────────
+
+# adversarial-override.sh: log found in the anchored dir -> exit 5 (no live
+# BLOCK to override), not 3 (log not found).
+_anchored
+printf '2026-07-05T10:00:00Z|META|schema|info|1\n' >"$STATE/T-4-pipeline.log"
+rc=0
+(cd "$AWAY" && REPOS_ROOT="$ROOT" bash "$LIB_DIR/adversarial-override.sh" T-4 --reason "test" >/dev/null 2>&1) || rc=$?
+if [ "$rc" -eq 5 ]; then
+  pass "adversarial-override: finds the anchored pipeline log from a foreign cwd"
+else fail "adversarial-override anchored" "rc=$rc (3 = log not found)"; fi
+
+# verify-attempts-reset.sh: records the reset beside the anchored log.
+_anchored
+printf '2026-07-05T10:00:00Z|META|schema|info|1\n' >"$STATE/T-5-pipeline.log"
+rc=0
+(cd "$AWAY" && REPOS_ROOT="$ROOT" bash "$LIB_DIR/verify-attempts-reset.sh" T-5 env fixed >/dev/null 2>&1) || rc=$?
+if [ "$rc" -eq 0 ] && grep -q '^reset|' "$STATE/T-5-pipeline.log.verify-ctl" 2>/dev/null &&
+  [ ! -e "$AWAY/logs" ]; then
+  pass "verify-attempts-reset: writes the control file beside the anchored log"
+else fail "verify-attempts-reset anchored" "rc=$rc"; fi
+_anchored
+rm -f "$ROOT/.ticket-auto/log-dir"
+rc=0
+(cd "$AWAY" && REPOS_ROOT="$ROOT" STATE_ROOT_STRICT=true bash "$LIB_DIR/verify-attempts-reset.sh" T-5 env fixed >/dev/null 2>&1) || rc=$?
+if [ "$rc" -eq 13 ]; then
+  pass "verify-attempts-reset: strict + unresolved -> exit 13"
+else fail "verify-attempts-reset strict" "rc=$rc"; fi
+
+# manifest-backfill.sh: with no LOG-DIR argument it scans the anchored dir.
+_anchored
+rc=0
+err=$(cd "$AWAY" && REPOS_ROOT="$ROOT" bash "$LIB_DIR/manifest-backfill.sh" --dry-run 2>&1 >/dev/null) || rc=$?
+if [ "$rc" -eq 0 ] && [[ "$err" != *"no such log directory"* ]]; then
+  pass "manifest-backfill: defaults to the anchored dir"
+else fail "manifest-backfill anchored" "rc=$rc err=$err"; fi
+
+# pipeline-postmortem.sh: with no LOG_FILE it appends to the anchored log.
+_anchored
+printf '2026-07-05T10:00:00Z|META|schema|info|1\n' >"$STATE/T-6-pipeline.log"
+(cd "$AWAY" && REPOS_ROOT="$ROOT" POSTMORTEM_ENABLED=true POSTMORTEM_FILE_ISSUES=false \
+  POSTMORTEM_STATE_DIR="$ROOT/pm-state" bash "$LIB_DIR/pipeline-postmortem.sh" T-6 --exit-code 1 >/dev/null 2>&1) || true
+if grep -q '|META|postmortem|info|' "$STATE/T-6-pipeline.log" && [ ! -e "$AWAY/logs" ]; then
+  pass "pipeline-postmortem: reads and appends to the anchored log"
+else fail "pipeline-postmortem anchored"; fi
+
+# retro.sh: discovery mode (no positional log) scans the anchored dir.
+_anchored
+printf '%s\n' "2026-07-05T10:00:00Z|META|schema|info|1" \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)|IMPLEMENT|implement|fail|boom" >"$STATE/T-7-pipeline.log"
+_iso_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+export -f _iso_now
+out=$(cd "$AWAY" && REPOS_ROOT="$ROOT" CURSOR_FILE="$ROOT/cursor.json" \
+  PLANNER_INITIATIVES_DIR="$ROOT/no-planner" \
+  bash "$PLUGIN_DIR/skills/ticket-retro/retro.sh" --window 30 --force 2>/dev/null) || true
+if [[ "$out" == *"T-7"* ]]; then
+  pass "retro: discovery mode finds the anchored pipeline logs"
+else fail "retro anchored" "out=${out:0:200}"; fi
+
+# trajectory.sh: traj_generate with no LOG_DIR reads the anchored logs and
+# writes its default output beside them.
+_anchored
+printf '%s\n' "2026-07-05T10:00:00Z|META|schema|info|1" \
+  "2026-07-05T10:00:01Z|APPRAISE|appraise|done|ok" >"$STATE/T-8-pipeline.log"
+rc=0
+(cd "$AWAY" && export REPOS_ROOT="$ROOT" && source "$LIB_DIR/trajectory.sh" && traj_generate T-8 >/dev/null 2>&1) || rc=$?
+if [ "$rc" -eq 0 ] && [ -s "$STATE/T-8-trajectory.jsonl" ] && [ ! -e "$AWAY/logs" ]; then
+  pass "trajectory: reads the anchored logs, writes beside them"
+else fail "trajectory anchored" "rc=$rc"; fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

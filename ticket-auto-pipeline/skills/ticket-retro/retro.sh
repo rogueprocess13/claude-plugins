@@ -433,7 +433,20 @@ source "$LIBS_DIR/notes-parse.sh" 2>/dev/null || {
 }
 
 WINDOW_DAYS="${WINDOW%d}"
+# The anchored per-ticket state dir (lib/log-dir.sh, state-root-anchor),
+# else (legacy, with a warning) today's ./logs; STATE_ROOT_STRICT=true and
+# unresolved exits 13.
 LOGS_DIR="./logs"
+if [ -f "$LIBS_DIR/log-dir.sh" ]; then
+  # shellcheck source=../../lib/log-dir.sh
+  source "$LIBS_DIR/log-dir.sh"
+  _ld_rc=0
+  ticket_log_dir_or_legacy_set "./logs" || _ld_rc=$?
+  if [ "$_ld_rc" -ne 0 ]; then
+    exit "$_ld_rc"
+  fi
+  LOGS_DIR="$TICKET_LOG_DIR_RESOLVED"
+fi
 # ticket-planner writes its own append-only state.log (same ISO|PHASE|STEP|STATUS|MSG
 # convention) to a different root, filename, and identity key than ticket-auto's
 # pipeline logs — see GitHub #177. PLANNER_INITIATIVES_DIR is overridable for tests;

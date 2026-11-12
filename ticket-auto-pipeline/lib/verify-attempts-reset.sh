@@ -46,7 +46,23 @@ if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -n "${FLEET_WORKER_PID:-}" ]; then
   exit 4
 fi
 
-[ -n "$log_file" ] || log_file="${FLEET_PIPELINE_LOG_DIR:-./logs}/${tid}-pipeline.log"
+if [ -z "$log_file" ]; then
+  # The anchored per-ticket state dir (lib/log-dir.sh, state-root-anchor),
+  # else (legacy, with a warning) ${FLEET_PIPELINE_LOG_DIR:-./logs};
+  # STATE_ROOT_STRICT=true and unresolved exits 13.
+  _ld_dir="${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  if [ -f "$(dirname "${BASH_SOURCE[0]}")/log-dir.sh" ]; then
+    # shellcheck source=log-dir.sh
+    source "$(dirname "${BASH_SOURCE[0]}")/log-dir.sh"
+    _ld_rc=0
+    ticket_log_dir_or_legacy_set || _ld_rc=$?
+    if [ "$_ld_rc" -ne 0 ]; then
+      exit "$_ld_rc"
+    fi
+    _ld_dir="$TICKET_LOG_DIR_RESOLVED"
+  fi
+  log_file="${_ld_dir}/${tid}-pipeline.log"
+fi
 if [ ! -f "$log_file" ]; then
   echo "verify-attempts-reset: pipeline log not found: $log_file" >&2
   exit 3
