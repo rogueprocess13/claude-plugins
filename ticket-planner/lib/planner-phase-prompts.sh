@@ -50,6 +50,8 @@ _source_if_missing "planner_ownership_prompt_rules" \
 # The Specify and Consensus Preconditions wording (planner-ac-code-precondition, D12).
 _source_if_missing "planner_acpre_prompt_rules" \
   "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-ac-precondition.sh"
+_source_if_missing "planner_goldfish_consensus_rule" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-goldfish.sh"
 
 # Resolved plugin root, memoized per shell. Empty until first resolution.
 _PLANNER_PROMPT_LIB_ROOT="${_PLANNER_PROMPT_LIB_ROOT:-}"
@@ -1346,6 +1348,7 @@ $(planner_acpre_consensus_rule)
    - **Open Questions** — questions only the operator can answer, including one
      line per cited artifact Discovery could not retrieve (see below)
    - **Readiness** — ready-for-spec / needs-further-discovery / blocked
+$(planner_goldfish_consensus_rule)
 
 ## A prose edit carries its acceptance criterion
 

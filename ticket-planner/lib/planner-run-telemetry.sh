@@ -235,19 +235,28 @@ _prt_phase_records() {
     def target($a):
       ($a.description | capture("^Run planner phase: (?<p>[A-Za-z]+) for (?<i>\\S+)$")) as $m
         | if $m.i == $init then $m.p else null end;
+    # A goldfish lens (`lens: <INIT>`, planner-goldfish-review) runs before
+    # the Review agent and belongs to Review.
     def spawn_target($a):
-      ($a.description | capture("^(?<k>scan|audit|revise): (?<id>\\S+)$")) as $m
-        | if ($tids | index($m.id)) then "Refinement"
+      ($a.description | capture("^(?<k>scan|audit|revise|lens): (?<id>\\S+)$")) as $m
+        | if $m.k == "lens" then (if $m.id == $init then "Review" else null end)
+          elif ($tids | index($m.id)) then "Refinement"
           elif ($slugs | index($m.id)) then "DraftReadiness" else null end;
     # Each transcript names its phase; it belongs to the latest attempt of that
     # phase that started before the transcript ended (5s grace: state.log
-    # stamps whole seconds).
+    # stamps whole seconds). A lens ends before its Review attempt writes a
+    # line, so it belongs to the first attempt that started at or after its
+    # end, less the same grace.
     [ $agents[] | select(.usage != null)
-      | . + {phase: ((try target(.) catch null) // (try spawn_target(.) catch null))}
+      | . + {phase: ((try target(.) catch null) // (try spawn_target(.) catch null)),
+             lens: (.description | startswith("lens: "))}
       | select(.phase != null) ] as $tagged
     | [ $tagged[] | . as $t
-        | ([$atts[] | select(.phase == $t.phase and (.started_at | epoch) <= (($t.usage.last_ts | epoch) + 5))]
-           | last) as $hit
+        | (if $t.lens then
+             [$atts[] | select(.phase == $t.phase and (.started_at | epoch) >= (($t.usage.last_ts | epoch) - 5))] | first
+           else
+             [$atts[] | select(.phase == $t.phase and (.started_at | epoch) <= (($t.usage.last_ts | epoch) + 5))] | last
+           end) as $hit
         | select($hit != null)
         | {phase: $hit.phase, attempt: $hit.attempt, agent_type: $t.agent_type, usage: $t.usage} ] as $assigned
     | $atts[] | select(.closed) | . as $a

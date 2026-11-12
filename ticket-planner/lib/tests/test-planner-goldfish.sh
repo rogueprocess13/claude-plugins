@@ -475,6 +475,34 @@ else
   fail "agent file exists" "missing"
 fi
 
+echo "=== planner-goldfish: Consensus block (5.3) ==="
+
+if need "consensus rule" planner_goldfish_consensus_rule; then
+  r=$(planner_goldfish_consensus_rule)
+  check "consensus rule is static" "$(planner_goldfish_consensus_rule)" "$r"
+  words=$(wc -w <<<"$r")
+  if [ "$words" -ge 80 ] && [ "$words" -le 160 ]; then pass "consensus rule is about 120 words (${words})"; else
+    fail "consensus rule is about 120 words" "${words} words"
+  fi
+  for want in 'planner_goldfish_status' 'verbatim' '## Goldfish Findings Addressed' \
+    '### G<n> — <severity> — <title> — <disposition>' 'blocker or major' \
+    'Minor/nit G<a>, G<b>: deferred' '`accepted`' '`rejected (' 'covered in' '`deferred`' \
+    '`clarified`' 'upstream artifact' 'proposal.md' 'NOT RUN' 'disabled' 'goldfish-clean' \
+    'goldfish/review-goldfish.md'; do
+    contains "consensus rule names [${want}]" "$r" "$want"
+  done
+  lacks "consensus rule names no initiative id" "$r" "INIT-"
+fi
+
+if need "consensus prompt" planner_goldfish_consensus_rule && [ -f "${LIB_DIR}/planner-phase-prompts.sh" ]; then
+  # shellcheck source=../planner-phase-prompts.sh
+  source "${LIB_DIR}/planner-phase-prompts.sh"
+  cp=$(planner_prompt_consensus "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
+  if [[ "$cp" == *$'   - **Readiness** — ready-for-spec / needs-further-discovery / blocked\n'"$(planner_goldfish_consensus_rule)"$'\n\n## A prose edit'* ]]; then
+    pass "Consensus prompt: the goldfish block follows the Readiness bullet"
+  else fail "Consensus prompt: the goldfish block follows the Readiness bullet" "not adjacent"; fi
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
