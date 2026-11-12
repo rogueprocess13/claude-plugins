@@ -559,6 +559,8 @@ All settings use `${VAR:-default}` pattern for env-var overrides:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FLEET_STATE_DIR` | (workspace) | Directory for spawn queue, stop files, run registry, fence markers — survives reboot |
+| `FLEET_PIPELINE_LOG_DIR` | (anchor) | The per-ticket log dir. bash honours it only when absolute; otherwise `ticket-auto-pipeline/lib/log-dir.sh` reads the anchor `$REPOS_ROOT/.ticket-auto/log-dir` (state-root-anchor). fleetd turns every log dir it hands to bash or reads itself into an absolute path (`supervisor._abs_log_dir`, `pusher._pipeline_log_dir`), because a relative value would lose to the anchor in bash while fleetd kept reading the relative dir. |
+| `STATE_ROOT_STRICT` | false | When `true`, a process that cannot resolve the per-ticket log dir (no absolute `FLEET_PIPELINE_LOG_DIR`, no anchor) exits 13 instead of warning `log dir not anchored; using ./logs (legacy)`. Stays `false` for this release; run `state-root-doctor.sh` on each host before turning it on. |
 | `FLEET_STARTUP_ENV_CHECK` | true | Gates fleetd process startup on `lib/fleet-env-check.sh` — a nonzero exit refuses to start. Set `false` to skip (used by fleetd's own subprocess-spawning tests) |
 | `FLEET_KILL_GRACE_SECS` | 10 | Wait for cooperative shutdown before SIGTERM |
 | `FLEET_KILL_VERIFY` | true | Fall back to stop-file-only kill when false |
