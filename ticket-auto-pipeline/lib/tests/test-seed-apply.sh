@@ -258,6 +258,30 @@ seed_apply CON-1 "$WT" 2>/dev/null || rc=$?
   _pass "usage: malformed manifest is a failure, never 'no blockers'" ||
   _fail "malformed manifest: rc=$rc log=$(_lastlog)"
 
+# ── state-root-anchor: no LOG_FILE/TAP_LOG -> blockers' logs are read from
+# the anchored log dir, not ./logs under the caller's cwd ──────────────────
+_reset
+_body CON-2 "Seed command: make seed-x"
+mkdir -p "$TMP_ROOT/anchored" "$TMP_ROOT/away" "$REPOS_ROOT/.ticket-auto"
+printf '%s\n' "$TMP_ROOT/anchored" >"$REPOS_ROOT/.ticket-auto/log-dir"
+ws_seen=$(
+  get_ticket_manifest_field() {
+    [ "$2" = "blocked_by" ] && echo '["CON-2"]'
+  }
+  ticket_pipeline_merge_state() {
+    echo "$2" >"$TMP_ROOT/ws-seen"
+    echo "not-complete"
+    return 1
+  }
+  unset LOG_FILE TAP_LOG FLEET_PIPELINE_LOG_DIR
+  cd "$TMP_ROOT/away" && seed_apply CON-1 "$WT" >/dev/null 2>&1 || true
+  cat "$TMP_ROOT/ws-seen" 2>/dev/null || true
+)
+rm -f "$REPOS_ROOT/.ticket-auto/log-dir" "$TMP_ROOT/ws-seen"
+[ "$ws_seen" = "$TMP_ROOT/anchored" ] &&
+  _pass "anchor: blocker logs read from the anchored dir" ||
+  _fail "anchor: workspace=$ws_seen"
+
 # ── CLI entry ────────────────────────────────────────────────────────────
 cli_out=$(LOG_FILE="" bash "$LIB_DIR/seed-apply.sh" 2>&1) && cli_rc=0 || cli_rc=$?
 [ "$cli_rc" = "2" ] && grep -q "Usage: seed-apply.sh" <<<"$cli_out" &&

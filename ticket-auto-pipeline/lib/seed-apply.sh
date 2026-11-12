@@ -206,7 +206,12 @@ seed_apply() {
     return 2
   fi
 
+  # Blockers' logs: the anchored per-ticket state dir (lib/log-dir.sh,
+  # state-root-anchor) unless this ticket's own log names the dir.
   local workspace="${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  if declare -f ticket_log_dir_or >/dev/null 2>&1; then
+    workspace=$(ticket_log_dir_or "$workspace")
+  fi
   local _sa_lf="${LOG_FILE:-${TAP_LOG:-}}"
   [ -n "$_sa_lf" ] && workspace=$(dirname "$_sa_lf")
 

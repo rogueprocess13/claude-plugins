@@ -36,6 +36,9 @@
 #   ticket_log_dir_or_legacy_set [LEGACY]
 #                                     same, but sets TICKET_LOG_DIR_RESOLVED in
 #                                     the current shell and warns once per shell
+#   ticket_log_dir_or FALLBACK        print the dir, else FALLBACK; always rc 0,
+#                                     never warns (sourced readers whose
+#                                     caller already enforced strict mode)
 #   ticket_log_dir_note_stray TID DIR one META|state-root-stray|warn line per
 #                                     (TID, stray outbox) in DIR's pipeline log
 # Resolving creates nothing; the caller makes the directory.
@@ -168,6 +171,17 @@ ticket_log_dir_or_legacy() {
   ticket_log_dir_or_legacy_set "$@" || _rc=$?
   [ "$_rc" -eq 0 ] || return "$_rc"
   printf '%s\n' "$TICKET_LOG_DIR_RESOLVED"
+}
+
+# ticket_log_dir_or <fallback>
+#
+# Quiet form for sourced readers (fence-check, spawn-helper, the board
+# driver, manifest-read, seed-apply, trajectory): the resolved dir, else the
+# caller's own pre-anchor default. No warning and no strict refusal, because
+# these run inside a caller (flow.sh, a drain, a router step) that resolved
+# or refused already, and a library must not exit its caller.
+ticket_log_dir_or() {
+  ticket_log_dir 2>/dev/null || printf '%s\n' "${1:-./logs}"
 }
 
 # ticket_log_dir_note_stray <tid> <resolved-dir>

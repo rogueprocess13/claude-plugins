@@ -78,6 +78,24 @@ else
   fail "or_legacy LEGACY" "ticket_log_dir_or_legacy missing"
 fi
 
+# ── log-dir.sh: the quiet form for sourced readers ─────────────────────────
+
+if declare -f ticket_log_dir_or >/dev/null; then
+  _anchored
+  out=$(REPOS_ROOT="$ROOT" ticket_log_dir_or ./x 2>"$ROOT/err")
+  if [ "$out" = "$STATE" ] && [ ! -s "$ROOT/err" ]; then
+    pass "ticket_log_dir_or: anchored -> the anchor"
+  else fail "ticket_log_dir_or anchored" "out=$out"; fi
+  rm -f "$ROOT/.ticket-auto/log-dir"
+  rc=0
+  out=$(REPOS_ROOT="$ROOT" STATE_ROOT_STRICT=true ticket_log_dir_or ./x 2>"$ROOT/err") || rc=$?
+  if [ "$rc" -eq 0 ] && [ "$out" = "./x" ] && [ ! -s "$ROOT/err" ]; then
+    pass "ticket_log_dir_or: unresolved -> fallback, rc 0, silent even in strict"
+  else fail "ticket_log_dir_or unresolved" "rc=$rc out=$out"; fi
+else
+  fail "ticket_log_dir_or" "missing"
+fi
+
 # ── detect-resume.sh (crash-recovery checkpoint reader) ─────────────────────
 
 _anchored
@@ -181,6 +199,37 @@ rc=0
 if [ "$rc" -eq 0 ] && [ -s "$STATE/T-8-trajectory.jsonl" ] && [ ! -e "$AWAY/logs" ]; then
   pass "trajectory: reads the anchored logs, writes beside them"
 else fail "trajectory anchored" "rc=$rc"; fi
+
+# ── sourced libraries: quiet resolution, ./logs fallback ───────────────────
+
+# manifest-read.sh: ticket_pipeline_merge_state with no workspace argument.
+_anchored
+printf '%s\n' "2026-07-05T10:00:00Z|META|schema|info|1" \
+  "2026-07-05T10:00:01Z|META|outcome|info|completed: ok" >"$STATE/T-9-pipeline.log"
+out=$(cd "$AWAY" && export REPOS_ROOT="$ROOT" && source "$LIB_DIR/manifest-read.sh" &&
+  ticket_pipeline_merge_state T-9 2>/dev/null) || true
+if [ "$out" = "no-pr" ]; then
+  pass "manifest-read: merge state reads the anchored pipeline log"
+else fail "manifest-read anchored" "out=$out"; fi
+
+# fence-check.sh: with no state dir argument the fence marker is read from
+# the anchored dir (where fleet state sits when FLEET_STATE_DIR is unset).
+_anchored
+printf '{"fenced_generation": 5}\n' >"$STATE/T-10-fence"
+rc=0
+(cd "$AWAY" && export REPOS_ROOT="$ROOT" FLEET_WORKER_PID=$$ && source "$LIB_DIR/fence-check.sh" &&
+  check_generation_fence T-10 3 "") >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 10 ]; then
+  pass "fence-check: reads the fence marker in the anchored dir"
+else fail "fence-check anchored" "rc=$rc (0 = marker not found)"; fi
+
+# spawn-helper.sh: the worker's stop file lives in the anchored dir.
+_anchored
+out=$(cd "$AWAY" && export REPOS_ROOT="$ROOT" TICKET_TMP_DIR="$ROOT/scratch" &&
+  source "$LIB_DIR/spawn-helper.sh" >/dev/null 2>&1 && TICKET_ID=T-11 && _worker_stop_file pinger 2>/dev/null) || true
+if [ "$out" = "$STATE/ticket-auto-T-11-pinger-stop" ]; then
+  pass "spawn-helper: stop file resolves under the anchored dir"
+else fail "spawn-helper anchored" "out=$out"; fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

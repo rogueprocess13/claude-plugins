@@ -32,6 +32,10 @@
 # Callers that need to distinguish "no manifest" from "field absent" must
 # check the exit code — never assume empty output means "not planned".
 
+# log-dir.sh — the per-ticket state dir resolver (state-root-anchor).
+declare -f ticket_log_dir_or >/dev/null 2>&1 ||
+  source "$(dirname "${BASH_SOURCE[0]}")/log-dir.sh" 2>/dev/null || true
+
 # Leading `_` is allowed (and only meaningful) on an initiative name — the
 # reserved `_adhoc` initiative (tracker-approval-by-script) must pass this
 # same check every ordinary ticket/epic/initiative ID does.
@@ -365,9 +369,18 @@ ticket_pipeline_pr_ref() {
 # that branch — exactly what a sibling, or the epic's integration PR, needs.
 # The base check compares the merge event's `base` against the log's recorded
 # `base=`; either side absent (evidence predating the field) skips the check.
+# The default workspace is the anchored per-ticket state dir (lib/log-dir.sh,
+# state-root-anchor), else today's ${FLEET_PIPELINE_LOG_DIR:-./logs}.
 ticket_pipeline_merge_state() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-}"
+  if [ -z "$workspace" ]; then
+    if declare -f ticket_log_dir_or >/dev/null 2>&1; then
+      workspace=$(ticket_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")
+    else
+      workspace="${FLEET_PIPELINE_LOG_DIR:-./logs}"
+    fi
+  fi
   local log_file="$workspace/${tid}-pipeline.log"
 
   if [ ! -f "$log_file" ]; then
