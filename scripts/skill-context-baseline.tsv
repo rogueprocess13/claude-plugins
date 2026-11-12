@@ -21,4 +21,24 @@ ticket-retro:conditional	4179
 ticket-verify	176172
 ticket-verify:conditional	16693
 wiki-maintenance	91919
+guidance-extractor	94891
+# allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
+ticket-appraise	154375
+ticket-appraise-exec	121295
+ticket-appraise-exec:conditional	14328
+# allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
+ticket-appraise:conditional	35284
+ticket-document	79017
+ticket-gate-reconcile	6789
+ticket-implement	144893
+ticket-implement:conditional	9949
+ticket-pr-iterate	104143
+ticket-pr-review	131110
+ticket-reproduce	107707
+ticket-reproduce:conditional	2641
+ticket-retro	18240
+ticket-retro:conditional	4179
+ticket-verify	176173
+ticket-verify:conditional	16693
+wiki-maintenance	91920
 wiki-maintenance:conditional	5060

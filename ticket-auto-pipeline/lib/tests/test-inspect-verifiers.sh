@@ -142,6 +142,26 @@ test_validate_preserves_matching_verdict() {
   [ "$verdict" = "PASS" ] && [ "$validated" = "true" ]
 }
 
+test_validate_type_mismatch_is_override() {
+  local result
+  result=$(validate_phase_inspector '{"verdict":"WARN","signals":"2","detail":"s"}' \
+    '{"verdict":"WARN","signals":2,"detail":"d","patterns":[]}' "IMPLEMENT")
+  jq -e '.agent_overridden == true and .signals == 2 and .agent_claim.signals == "2"' <<<"$result" >/dev/null
+}
+
+test_validate_non_numeric_signals_still_overrides() {
+  local result
+  result=$(validate_phase_inspector '{"verdict":"PASS","signals":"abc","detail":"x","verifiers_consulted":"nope"}' \
+    '{"verdict":"WARN","signals":1,"detail":"d","patterns":[]}' "IMPLEMENT")
+  jq -e '.agent_overridden == true and .verdict == "WARN" and .verifiers_consulted == []' <<<"$result" >/dev/null
+}
+
+test_validate_unparseable_phase_is_escaped() {
+  local result
+  result=$(validate_phase_inspector 'not json' 'also not json' 'X"Y')
+  jq -e '.phase == "X\"Y" and .verdict == "WARN"' <<<"$result" >/dev/null
+}
+
 # ── Run ─────────────────────────────────────────────────────────────────────────
 
 echo "=== test-inspect-verifiers.sh ==="
@@ -158,6 +178,9 @@ _run "unparseable JSON returns WARN" test_unparseable_json_returns_warn
 _run "missing_requirement detected" test_missing_requirement_detected
 _run "validate corrects mismatched verdict" test_validate_corrects_mismatched_verdict
 _run "validate preserves matching verdict" test_validate_preserves_matching_verdict
+_run "validate treats a signals type mismatch as override" test_validate_type_mismatch_is_override
+_run "validate overrides with non-numeric agent signals" test_validate_non_numeric_signals_still_overrides
+_run "validate escapes phase in the unparseable fallback" test_validate_unparseable_phase_is_escaped
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

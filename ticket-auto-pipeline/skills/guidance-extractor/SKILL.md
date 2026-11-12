@@ -98,4 +98,4 @@ Without `--mode extract` there is nothing to do: no classification, no store wri
 - **Fail-soft**: unreadable context or a store write failure (lock timeout, disk full) → exit 0. Never block the pipeline; the bash verdict is unaffected.
 - **Phase 1 — No tool calls**: all context is in the prompt. Do not read files, call APIs or write log lines.
 - **Phase 2 — Tool calls allowed**: Bash calls to `guidance-store.sh record-finding` and `guidance_query` only.
-- **Never write `META|phase-inspector`**: `router-step.sh inspector-done` validates any such line with `validate_phase_inspector` and bash overrides it. Classification follows the heuristics table — no guessing.
+- **Never write `META|phase-inspector`**: `router-step.sh inspector-done` re-asserts bash's verdict over it. Classification follows the heuristics table — no guessing.

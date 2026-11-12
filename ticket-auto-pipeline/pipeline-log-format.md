@@ -616,7 +616,7 @@ the pipeline log's own schema version, and this section is purely additive.
 
 ### Phase-inspector entries (Phase 1 RLVR)
 
-Written by bash (DET-SU-1): after IMPLEMENT, VERIFY and PR-REVIEW, `router-step.sh inspector` runs `inspect_verifiers` (`lib/inspect-verifiers.sh`) over the phase's `META|verifier-result` entries and appends the verdict with `"source":"bash"` (skipped when identical to the log's last line). The `guidance-extractor-agent` only classifies its patterns. If the agent writes its own line anyway, `router-step.sh inspector-done` runs `validate_phase_inspector`; on disagreement bash re-appends its verdict with `agent_overridden:true` and `agent_claim`, so the phase's last line is bash's. Advisory only — never gates the pipeline.
+Written by bash (DET-SU-1): after IMPLEMENT, VERIFY and PR-REVIEW, `router-step.sh inspector` runs `inspect_verifiers` (`lib/inspect-verifiers.sh`) over the phase's `META|verifier-result` entries and appends the verdict with `"source":"bash"` (skipped when identical to the log's last line). The `guidance-extractor-agent` only classifies its patterns. `router-step.sh inspector-done` recomputes that verdict (never trusting `source`); if the phase's last line is missing or differs in `verdict`/`signals`, bash re-appends it with `agent_overridden:true`, so the last line is bash's. Advisory only — never gates the pipeline.
 
 JSON fields:
 - `phase` (string): pipeline phase being inspected — IMPLEMENT, VERIFY, or PR-REVIEW

@@ -44,11 +44,13 @@
 # The guidance-extractor-agent spawn itself stays with the caller.
 #
 # inspector-done — after the inspector agent returns:
-#   validate: when the log (--log-file, else ./logs/<TID>-pipeline.log) holds
-#     a META|phase-inspector line for <PHASE> written after this phase's bash
-#     verdict, validate_phase_inspector (lib/inspect-verifiers.sh) checks it;
-#     a disagreeing line is followed by bash's corrected verdict
-#     ("agent_overridden":true), so the last line for the phase is bash's.
+#   validate: recomputes bash's verdict from the verifier results in the log
+#     (--log-file, else ./logs/<TID>-pipeline.log) with
+#     compute_inspector_verdict (lib/phase-inspector.sh); a "source":"bash"
+#     field is never trusted. If <PHASE>'s last META|phase-inspector line is
+#     missing, malformed, or differs in .verdict/.signals, bash's verdict is
+#     appended ("agent_overridden":true), so the last line for the phase is
+#     bash's. Validation failure fails closed (still appends).
 #   spawn_capture ... ATTEMPT=inspector   (appends; never overwrites the phase
 #                                          agent's own capture)
 #   spawn_agent_post RESULT=done MSG="Phase inspector completed for <PHASE>"
@@ -193,13 +195,18 @@ _rs_post_spawn() {
 }
 
 # ── inspector ─────────────────────────────────────────────────────────────────
+# _rs_extra_phases — the phase's cross-phase inspector context.
+_rs_extra_phases() {
+  case "$_rs_phase" in
+  VERIFY) echo "IMPLEMENT" ;;
+  PR-REVIEW) echo "IMPLEMENT VERIFY" ;;
+  esac
+}
+
 _rs_inspector() {
   [ -n "$_rs_log_file" ] || _rs_usage
   local _extra=""
-  case "$_rs_phase" in
-  VERIFY) _extra="IMPLEMENT" ;;
-  PR-REVIEW) _extra="IMPLEMENT VERIFY" ;;
-  esac
+  _extra=$(_rs_extra_phases)
   local _pi_out=""
   # Sourced and called in a subshell: nothing the library does (an `exit`, a
   # stray `set -e` failure) can end this script or change its exit code.
@@ -229,32 +236,60 @@ _rs_inspector() {
 
 # ── inspector-done ────────────────────────────────────────────────────────────
 # _rs_inspector_validate — DET-SU-1: bash has the final word on the verdict.
-# Fail-soft: every failure leaves the log as it is.
+# Bash's verdict is recomputed here from the log's verifier results
+# (compute_inspector_verdict, the same call the inspector prelude makes) and
+# never read back from the log, so a line claiming "source":"bash" earns no
+# trust. When the phase has verifier results and its last META|phase-inspector
+# line is missing, malformed, or differs from the recomputed verdict in
+# .verdict or .signals (typed jq comparison, so "2" is not 2), the
+# recomputed verdict is appended with "agent_overridden":true. Fails closed:
+# an unparseable claim or a failing validate_phase_inspector still appends.
+# With no verifier results, or no jq, the log is left as it is.
 _rs_inspector_validate() {
   local log="${_rs_log_file:-./logs/${_rs_tid}-pipeline.log}"
   [ -f "$log" ] && command -v jq >/dev/null 2>&1 || return 0
-  local det="" claim="" j="" ph="" src=""
+  local det=""
+  det=$(
+    # shellcheck source=/dev/null
+    source "$_RS_DIR/phase-inspector.sh" 2>/dev/null || exit 0
+    compute_inspector_verdict "$_rs_phase" "$log" "$(_rs_extra_phases)"
+  ) || det=""
+  jq -e 'type == "object" and has("verdict") and has("signals")' <<<"$det" >/dev/null 2>&1 || return 0
+  # Last line for this phase, whatever its claimed source. A line with no
+  # parseable .phase cannot be attributed elsewhere, so it counts as a claim
+  # for this phase (at worst bash re-asserts its own verdict).
+  local claim="" j="" ph=""
   while IFS= read -r j; do
-    ph=$(jq -r '.phase // empty' <<<"$j" 2>/dev/null) || continue
-    [ "$ph" = "$_rs_phase" ] || continue
-    src=$(jq -r '.source // empty' <<<"$j" 2>/dev/null) || src=""
-    if [ "$src" = bash ]; then
-      det="$j"
-      claim=""
-    elif [ -n "$det" ]; then
+    if ph=$(jq -er '.phase' <<<"$j" 2>/dev/null); then
+      [ "$ph" = "$_rs_phase" ] && claim="$j"
+    else
       claim="$j"
     fi
   done < <(grep '^[^|]*|META|phase-inspector|' "$log" 2>/dev/null |
     awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}')
-  [ -n "$det" ] && [ -n "$claim" ] || return 0
-  # shellcheck source=/dev/null
-  source "$_RS_DIR/inspect-verifiers.sh" 2>/dev/null || return 0
-  local out=""
-  out=$(validate_phase_inspector "$claim" "$det" "$_rs_phase" 2>/dev/null) || return 0
-  if jq -e '.agent_overridden == true' <<<"$out" >/dev/null 2>&1; then
-    printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$out" >>"$log" 2>/dev/null || true
-    echo "router-step: $_rs_phase inspector verdict overridden by bash (agent claim disagreed)" >&2
+  if [ -n "$claim" ] && jq -e --argjson d "$det" \
+    'type == "object" and .verdict == $d.verdict and .signals == $d.signals' \
+    <<<"$claim" >/dev/null 2>&1; then
+    return 0
   fi
+  # Disagreement. validate_phase_inspector builds the override line; its
+  # output is used only if it really re-asserts bash's verdict.
+  local out=""
+  out=$(
+    # shellcheck source=/dev/null
+    source "$_RS_DIR/inspect-verifiers.sh" 2>/dev/null || exit 0
+    validate_phase_inspector "$claim" "$det" "$_rs_phase" 2>/dev/null
+  ) || out=""
+  if ! jq -e --argjson d "$det" --arg p "$_rs_phase" \
+    'type == "object" and .agent_overridden == true and .phase == $p
+     and .verdict == $d.verdict and .signals == $d.signals' <<<"$out" >/dev/null 2>&1; then
+    out=$(jq -c --arg p "$_rs_phase" \
+      '. + {phase: $p, bash_validated: true, agent_overridden: true, agent_claim: null}' \
+      <<<"$det" 2>/dev/null) || return 0
+  fi
+  out=$(jq -c . <<<"$out" 2>/dev/null) || return 0
+  printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$out" >>"$log" 2>/dev/null || true
+  echo "router-step: $_rs_phase inspector verdict re-asserted by bash (last line missing or disagreed)" >&2
   return 0
 }
 
