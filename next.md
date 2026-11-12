@@ -11,6 +11,13 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 (CRITIQUE_NOT_RUN), #712/#714 (goldfish review lens, wired, flag off), #715 (DET-PL-4). Step 9 item 5 was already fixed by #528.
 Every merged change's live check is on the tickets host. Still needs design: ARCH-5, ARCH-9.
 
+**Evening 2026-11-12:** ARCH-9 **merged #717** (board cursors start at the outbox origin sidecar;
+ticket-auto-pipeline 0.116.0 / fleet-controller 0.50.0). Its live check (tasks 5.2–5.4) passed on a
+demo Linear project, so the board pusher now defaults **on**: **merged #718** (fleet-controller
+0.51.0). ARCH-5 design decided by the operator (fleetd fails its boot gate on an anchor mismatch;
+no relocation tool, manual move documented; `FLEET_STATE_DIR` out of scope; strays re-projected by
+hand) and is being built as two PRs (`fix/state-root-anchor`, then `fix/state-root-anchor-fleetd`).
+
 Last reviewed: 2026-11-09 (see the 2026-11-09 housekeeping note below). Earlier: 2026-09-23 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
 CI green on #386. Step 7b Track B Phase B1 merged and archived — PR #388, plus a CI-caught
 shell-flags fix. Phase B2 (pusher/drivers) merged and archived — PR #392, CI green
@@ -840,7 +847,8 @@ just a size-limiting convention:
    `branch-resolve.sh`'s `uat_decide_trigger` (a decision helper) onto `flow.sh` itself, after the
    verdict gate. **One-way door** — no kill switch, rollback is `git revert` with a caveat (see
    design.md Migration Plan / `fleet-controller/README.md`'s new "Migrating to board projection"
-   section). `FLEET_BOARD_PUSHER_ENABLE` deliberately still defaults `false` in the shipped code —
+   section). `FLEET_BOARD_PUSHER_ENABLE` deliberately still defaulted `false` here (flipped to
+   `true` in #718 once board-cursor-first-drain #717 removed the replay hazard) —
    the migration hazard caught in review (every existing host's outbox cursors sit at 0, so
    enabling projection against them replays full history) is real and the fast-forward step
    (`skills/ticket-flow/board-cursor-fastforward.sh`, new, tested against a counting stub driver
@@ -1351,11 +1359,14 @@ network calls while holding the lock (ARCH-8), migration replay (ARCH-9), fleetd
   ARCH-4 (`set_ticket_transition`/`clear_pending_event`/`set_ticket_approval` write the manifest
   with no lock; flow.sh reads `rev` outside any lock) — live, paired; ARCH-3 must land first. One
   PR each is plausible, ARCH-4 needs a concurrency test.
-- ARCH-5 (cwd-relative `./logs` state root) — live, **needs design**: changing the default moves
-  live state on existing hosts.
-- ARCH-9 — live, **needs design**. The review's "missing cursor → start at outbox max seq" would
-  also skip a brand-new ticket's first event (its first drain has no cursor either), so it needs a
-  host-level marker or similar.
+- ARCH-5 (cwd-relative `./logs` state root) — **designed** (`openspec/changes/state-root-anchor`,
+  anchor file `$REPOS_ROOT/.ticket-auto/log-dir`, nothing moves), operator questions decided
+  2026-11-12, **in progress**: PR A (resolver, writers, preamble, doctor) then PR B (fleetd export
+  and boot gate). Live check on the tickets host after PR B.
+- ARCH-9 — **fixed, PR #717** (`board-cursor-first-drain`): `emit_event` writes a per-outbox
+  origin sidecar; a board with no cursor starts there (or at the outbox tail), so no drain replays
+  pre-0.55.0 history and a new ticket still projects from seq 1. Live check passed (demo Linear
+  project). Pusher default flipped on in **#718**. Open: tickets-host inventory (task 0.2).
 - PO-9 — **fixed, PR #702** (fleet-controller 0.49.0): `FLEET_WORKER_AUTONOMY`; phase dispatch
   unchanged unless it is set. Follow-up: reuse a ticket's recorded `META|autonomy` on restart;
   `semi-auto` currently behaves exactly like `auto`.
