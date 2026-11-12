@@ -2421,20 +2421,13 @@ terminal phase (${_pos} of ${_count}). No further transitions are permitted afte
 
 ## Your task
 
-1. Read the full state log (${state_dir}/state.log) and summarize the run.
-2. Write a completion summary to ${state_dir}/artifacts/COMPLETED.md:
-   - **Initiative** — ID, idea summary
-   - **Tickets Created** — count, with Linear IDs
-   - **Epic** — Linear ID
-   - **Execution Status** — whether auto-dispatch was enabled
-   - **Phase Timeline** — start/end ISO timestamps per phase
-   - **Warnings** — anything the operator should know (e.g., tickets that
-     failed validation and were skipped; any \`META|crosscheck|accepted\` entry
-     in the state log — report the code and the operator's reason, same as an
-     automated Crosscheck pass or fail; every \`META|refinement-testdata|warn\`
-     entry — the ticket, the quoted criterion and the missing data. These are
-     advisory and never blocked the run)
-3. Record the terminal state log entry.
+Run the block below exactly as written. \`planner-completed.sh\` renders
+${state_dir}/artifacts/COMPLETED.md in bash (DET-PL-4) from the state log, the
+epic manifest and fleet-features.sh: Initiative, Tickets Created, Epic,
+Execution Status (FLEET_AUTO_DISPATCH and its source, with a warning when it is
+not \`true\`), Phase Timeline and Warnings. Do not write or edit COMPLETED.md
+yourself — no part of it is left to judgement. If the renderer exits non-zero,
+stop: no \`done\` line is written, so the run is not reported complete.
 
 ## State log
 
@@ -2451,21 +2444,18 @@ source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-state.sh"
 
 planner_state_write "${initiative_id}" "Completed" "summarize" "start" "Writing completion summary"
 
-# Read the state log, count phases, extract timeline
-# Write COMPLETED.md
+RENDER_OUT=\$(bash "\${CLAUDE_PLUGIN_ROOT}/lib/planner-completed.sh" "${initiative_id}") || exit 1
+COMPLETED_EPIC=\$(sed -n 's/^COMPLETED_EPIC=//p' <<<"\$RENDER_OUT")
+COMPLETED_TICKETS=\$(sed -n 's/^COMPLETED_TICKETS=//p' <<<"\$RENDER_OUT")
 
-planner_state_write "${initiative_id}" "Completed" "summarize" "done" "Initiative complete. N tickets created, epic: <EPIC_ID>. State log: <path>"
+planner_state_write "${initiative_id}" "Completed" "summarize" "done" "Initiative complete. \${COMPLETED_TICKETS} tickets created, epic: \${COMPLETED_EPIC}. State log: ${state_dir}/state.log"
 \`\`\`
 
 ## Constraints
 - This is a terminal phase — after \`done\` is written, \`planner_position_derive\`
   returns empty string and the router stops.
-- **Handoff verification (P2-41):** Check whether \`FLEET_AUTO_DISPATCH\` is set to
-  \`true\`. If not, include a warning in the completion summary: "WARNING:
-  FLEET_AUTO_DISPATCH is not true — initiative will NOT be auto-dispatched.
-  Set FLEET_AUTO_DISPATCH=true or manually dispatch tickets."
-- The completion summary is the operator's primary artifact for understanding
-  what the planner produced. Make it comprehensive.
+- Report the renderer's output in one line; do not re-read the environment for
+  \`FLEET_AUTO_DISPATCH\` — the renderer already resolved it from the workspace.
 - Do not create or modify any Linear entities in this phase.
 AGENT_PROMPT
 }
