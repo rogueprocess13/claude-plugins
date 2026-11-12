@@ -1,0 +1,24 @@
+Crosscheck found blocking findings — fix the cited artifacts and resume.
+
+Crosscheck findings — INIT-1700000000-4242 (most recent attempt)
+
+specs/invoice-form.md
+  AC_PRECONDITION_TABLE_INVALID — 1 blocking
+    fix: a spec's ## Preconditions section is missing or malformed — write None. or one table (Criterion | Key | Mode | Requires | Basis) right under the heading, repeat each Criterion verbatim from ## Acceptance Criteria, and fix the named rows; a spec: Basis needs a ## Writes row for the key in that spec, and that spec in blocked-by
+    L24  line 24 mode — state or input
+
+specs/invoice-needs-date.md
+  AC_PRECONDITION_UNREACHABLE — 1 blocking
+    fix: a criterion needs a starting state the pinned code forbids — change the criterion, mark the row Mode input if the test submits the value, or set Basis spec:<slug> for a spec of this initiative that changes the schema; accept a genuine case with the per-instance --accept the message prints
+    L31  'An invoice with no due date is listed on the Needs date page.' needs invoice.due_date null, but billing/src/main/resources/db/changelog/001-invoice.xm...
+
+specs/invoice-number-format.md
+  AC_PRECONDITION_UNREACHABLE — 1 blocking
+    fix: a criterion needs a starting state the pinned code forbids — change the criterion, mark the row Mode input if the test submits the value, or set Basis spec:<slug> for a spec of this initiative that changes the schema; accept a genuine case with the per-instance --accept the message prints
+    L28  'An invoice numbered 3000000001 shows 3,000,000,001.' needs invoice.number number:3000000001, but billing/src/main/resources/db/changelog/001-invoice.x...
+
+TOTAL: 3 blocking, 0 warn, 0 accepted across 3 artifact group(s), 2 code(s)
+
+Raw log:    grep 'META|crosscheck|fail' <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/state.log
+Artifacts:  <REPOS_ROOT>/.ticket-auto/initiatives/INIT-1700000000-4242/artifacts/
+Resume:     /ticket-planner resume INIT-1700000000-4242

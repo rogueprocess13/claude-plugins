@@ -1,0 +1,10 @@
+{
+  "contracts": ["ac-precondition-v1"],
+  "blocking": 1,
+  "warn": 0,
+  "accepted": 0,
+  "codes": ["AC_PRECONDITION_TABLE_INVALID"],
+  "message_contains": ["specs/invoice-form.md:24 line 24 mode — state or input"],
+  "log_contains": ["|META|ac-precondition|done|0 checked, 0 unchecked, 0 planned, 1 input"],
+  "notes": "planner-ac-code-precondition: a Preconditions row with Mode given is one AC_PRECONDITION_TABLE_INVALID for the spec; the valid input row is counted on the info line and never flagged."
+}

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog">
+    <changeSet id="020" author="billing">
+        <dropNotNullConstraint tableName="invoice"
+            columnName="paid_at"
+            columnDataType="timestamp"/>
+    </changeSet>
+    <changeSet id="021" author="billing">
+        <addNotNullConstraint tableName="invoice" columnName="priority"
+            columnDataType="varchar(8)" defaultNullValue="LOW"/>
+        <modifyDataType tableName="invoice" columnName="reminder_count"
+            newDataType="bigint"/>
+    </changeSet>
+</databaseChangeLog>
