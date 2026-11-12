@@ -8,7 +8,6 @@ ticket-appraise-exec:conditional	14328
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
 ticket-appraise:conditional	35284
 ticket-document	79020
-# allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
 ticket-gate-reconcile	6789
 ticket-implement	144896
 ticket-implement:conditional	9949
