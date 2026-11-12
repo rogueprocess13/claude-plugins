@@ -342,7 +342,7 @@ A ticket manifest gains a `ready` object once `dor-check.sh`'s `ensure_ticket_re
 `set_ticket_readiness` re-derives it on every re-scan, and `waive_ticket_readiness_code` (the only
 writer of `waived`) re-derives it again from the manifest's own current `missing` so a waiver can
 never be silently clobbered by a concurrent re-scan or vice versa. All three writers share the same
-per-manifest readiness lock.
+per-manifest lock (`_manifest_lock`), which every manifest writer — transitions, approval, stage, dispatch stamps included — takes too (review ARCH-4).
 
 `score`/`dimensions`/`gaps`/`body_hash` (dor-quality-score) are all optional — a manifest predating
 that change, or a legacy-backfill waiver, simply has no `score` key. They are written via

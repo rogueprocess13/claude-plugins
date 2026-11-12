@@ -17,6 +17,12 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-auto-pipeline 0.115.2 (2026-11-12) — manifest writes no longer lose updates (ARCH-4)
+
+### Fixed
+
+- **Manifest writes no longer lose updates (review ARCH-4).** Every writer in `lib/manifest-write.sh` now reads and rewrites the manifest under one lock per manifest (`_manifest_lock`, renamed from `_manifest_readiness_lock`). Before, only the readiness writers locked, so a transition, approval or dispatch stamp overlapping a readiness re-scan could drop either update. The lock is re-entrant within one process only. `set_ticket_transition` bumps `rev` under the lock and reports it in `MANIFEST_TRANSITION_REV`. `flow.sh` builds its `{tid}:{rev}` idempotency key from that value, or logs `META|flow-warn|warn|REV_UNREPORTED` when no rev comes back. Running `write_ticket_manifest`/`write_epic_manifest` again on an existing manifest (a planner resume) now keeps `rev`, stage, flags, pending event, approval, readiness and the dispatch stamp; before, `rev` restarted at 1 and a later idempotency key could collide with an event already in the outbox. `clear_pending_event` accepts an expected rev. **Behaviour change:** if the lock stays busy past `MANIFEST_LOCK_TIMEOUT_SECS` (15s), `flow.sh` exits 1 with `MANIFEST_WRITE_FAILED` instead of writing unlocked. New `lib/tests/test-manifest-write-lock.sh` (24 checks, including 13 parallel writers of 6 kinds against one manifest).
+
 ## ticket-auto-pipeline 0.115.1 (2026-11-12) — complexity arithmetic moves into `lib/complexity-score.sh`
 
 ### Changed
