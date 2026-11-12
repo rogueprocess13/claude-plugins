@@ -107,13 +107,19 @@
 #     reason (round-limit, drift, converge, audit dispute), missed/disputed
 #     codes with the exact waive command, and the --refresh-bodies note
 #     (design.md Decision 8), then an "## Advisory test-data findings"
-#     section when any child carries one and a "## Demoted findings on ready
-#     tickets" section when a ready child carries a demotion.
+#     section when any child carries one, an "## Advisory incoherent-change
+#     findings" section likewise (dor-semantic-paraphrase), and a "## Demoted
+#     findings on ready tickets" section when a ready child carries a
+#     demotion. Each ticket's stored paraphrase, when present, is printed as
+#     "Paraphrase: ..." above its findings.
 #
 #   planner_refinement_advisory_summary <INIT>
 #     Prints one "Advisory (does not block) <TID> TEST_DATA_GAP: ..." line per
 #     verified advisory TEST_DATA_GAP finding on any child, ready or not
-#     (dor-semantic-test-data-gap), then one "Advisory (does not block) <TID>
+#     (dor-semantic-test-data-gap), one "Advisory (does not block) <TID>
+#     INCOHERENT_CHANGE: ..." line per verified advisory INCOHERENT_CHANGE
+#     finding followed by "  Paraphrase: <the ticket's paraphrase>"
+#     (dor-semantic-paraphrase), then one "Advisory (does not block) <TID>
 #     <CODE> (demoted: <reason>)..." line per demotion on a ready child;
 #     nothing when there are none.
 #
@@ -228,6 +234,20 @@ _planner_refinement_source_deps() {
     return 1
   fi
   return 0
+}
+
+# _planner_refinement_evaluator_current <evaluator> — true when a stored
+# verdict from <evaluator> needs no rescan for the evaluator alone: the
+# current one or one dor-semantic.sh lists as compatible
+# (dor_semantic_evaluator_compatible, dor-semantic-paraphrase).
+_planner_refinement_evaluator_current() {
+  local e="${1:-}"
+  if declare -f dor_semantic_evaluator_compatible >/dev/null 2>&1; then
+    dor_semantic_evaluator_compatible "$e"
+    return $?
+  fi
+  # An older resolved dor-semantic.sh: exact match only, as before.
+  [ -n "$e" ] && [ "$e" = "${DOR_SEMANTIC_EVALUATOR:-}" ]
 }
 
 # ── Epic resolution (design.md Decision 4) ───────────────────────────────
@@ -522,7 +542,9 @@ planner_refinement_scan() {
       sem_hash=$(echo "$ready_after" | jq -r '.semantic.body_hash // ""' 2>/dev/null)
       sem_eval=$(echo "$ready_after" | jq -r '.semantic.evaluator // ""' 2>/dev/null)
       [ "$sem_hash" = "$hash" ] || needs="true"
-      [ "$sem_eval" = "${DOR_SEMANTIC_EVALUATOR:-}" ] || needs="true"
+      # An earlier evaluator listed as compatible (dor-semantic-paraphrase:
+      # v3 under v4) is current on an unchanged body — no forced rescan.
+      _planner_refinement_evaluator_current "$sem_eval" || needs="true"
     fi
     if echo "$ready_after" | jq -e '(.missing // []) | index("SEMANTIC_STALE") != null' >/dev/null 2>&1; then
       needs="true"
@@ -827,8 +849,34 @@ planner_refinement_advisory_summary() {
   # fresh shell the manifest readers were undefined and every line silently lost.
   _planner_refinement_source_deps 2>/dev/null || return 0
   _planner_refinement_testdata_summary "$initiative_id"
+  _planner_refinement_incoherent_summary "$initiative_id"
   _planner_refinement_demoted_summary "$initiative_id"
   _planner_refinement_missed_summary "$initiative_id"
+  return 0
+}
+
+# _planner_refinement_incoherent_summary <INIT> — per verified advisory
+# INCOHERENT_CHANGE finding on any child (dor-semantic-paraphrase):
+#   Advisory (does not block) <TID> INCOHERENT_CHANGE: "<quote>" — <detail>
+# then, when the verdict carries one, the ticket's paraphrase on its own
+# line, indented, so the divergent part reads against what the evaluator
+# thinks the ticket does:
+#     Paraphrase: <paraphrase>
+# A demoted finding is listed by the demotion summary instead. Exit 0.
+_planner_refinement_incoherent_summary() {
+  local initiative_id="$1" tid
+  for tid in $(_planner_refinement_children "$initiative_id"); do
+    get_ticket_manifest_field "$tid" ready 2>/dev/null | jq -r --arg t "$tid" '
+      def clean: tostring | gsub("[[:cntrl:]]"; " ") | .[0:500];
+      (.semantic.paraphrase // "") as $p
+      | [(.semantic.findings // [])[]
+          | select(.code == "INCOHERENT_CHANGE" and .severity == "advisory"
+                   and .verified == true and (.demoted // null) == null)] as $f
+      | select(($f | length) > 0)
+      | ($f[] | "Advisory (does not block) \($t) INCOHERENT_CHANGE: \"\(.quote | clean)\""
+                + (if (.detail // "") != "" then " — \(.detail | clean)" else "" end)),
+        (if ($p | type) == "string" and $p != "" then "  Paraphrase: \($p | clean)" else empty end)' 2>/dev/null || true
+  done
   return 0
 }
 
@@ -985,18 +1033,21 @@ planner_refinement_converge() {
       reason="not a child of epic ${epic_id}"
     fi
 
-    local ready_json="" body_file cur_hash=""
+    local ready_json="" body_file cur_hash="" eval_ok="false"
     body_file="${REPOS_ROOT:-}/.ticket-auto/initiatives/${initiative_id}/tickets/${tid}/planner/body.md"
     if [ -z "$reason" ]; then
       ready_json=$(get_ticket_manifest_field "$tid" ready 2>/dev/null) || ready_json=""
       [ -f "$body_file" ] && cur_hash=$(_dor_body_hash "$(cat "$body_file")" 2>/dev/null)
-      reason=$(echo "$ready_json" | jq -r --arg h "$cur_hash" --arg e "${DOR_SEMANTIC_EVALUATOR:-}" '
+      if _planner_refinement_evaluator_current "$(echo "$ready_json" | jq -r '.semantic.evaluator // ""' 2>/dev/null)"; then
+        eval_ok="true"
+      fi
+      reason=$(echo "$ready_json" | jq -r --arg h "$cur_hash" --argjson eok "$eval_ok" '
         if (.semantic // null) == null then "no semantic verdict — it needs a scan first"
         elif .semantic.unavailable == true then "the semantic verdict is unavailable — it needs a scan first"
         elif (.semantic.stale // false) or (((.missing // []) | index("SEMANTIC_STALE")) != null)
           then "the semantic verdict is stale — it needs a scan first"
         elif .semantic.body_hash != $h then "body.md changed since the verdict — it needs a scan first"
-        elif .semantic.evaluator != $e then "the verdict is from another evaluator — it needs a scan first"
+        elif $eok | not then "the verdict is from another evaluator — it needs a scan first"
         else "" end' 2>/dev/null) || reason="no readiness verdict — it needs a scan first"
       [ -n "$ready_json" ] && [ "$ready_json" != "null" ] || reason="no readiness verdict — it needs a scan first"
     fi
@@ -1219,6 +1270,16 @@ planner_refinement_report() {
       echo "$round_line"
     fi
 
+    # What the evaluator thinks the ticket does (dor-semantic-paraphrase),
+    # shown before its findings so a reader can judge them against it.
+    local paraphrase_line
+    paraphrase_line=$(echo "$ready_json" | jq -r '
+      .semantic.paraphrase // "" | select(type == "string" and . != "")
+      | "Paraphrase: " + (gsub("[[:cntrl:]]"; " ") | .[0:500])' 2>/dev/null) || paraphrase_line=""
+    if [ -n "$paraphrase_line" ]; then
+      echo "$paraphrase_line"
+    fi
+
     local waived_keys missing
     waived_keys=$(echo "$ready_json" | jq -r '.waived // {} | keys | join(" ")' 2>/dev/null)
     missing=$(echo "$ready_json" | jq -r '.missing // [] | .[]' 2>/dev/null)
@@ -1356,6 +1417,16 @@ planner_refinement_report() {
     echo ""
     echo "## Advisory test-data findings"
     echo "$advisory_summary"
+  fi
+
+  # INCOHERENT_CHANGE is advisory-only (dor-semantic-paraphrase), so a ready
+  # child's finding would otherwise go unreported here too.
+  local incoherent_summary
+  incoherent_summary=$(_planner_refinement_incoherent_summary "$initiative_id") || incoherent_summary=""
+  if [ -n "$incoherent_summary" ]; then
+    echo ""
+    echo "## Advisory incoherent-change findings"
+    echo "$incoherent_summary"
   fi
 
   # Demotions on ready children (not-ready ones list theirs above).

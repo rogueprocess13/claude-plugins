@@ -2,6 +2,7 @@
 SCHEMA_VERSION: 1
 TICKET: @TICKET@
 BODY_HASH: @BODY_HASH@
+PARAPHRASE: Show a confirmation or an error toast with Retry after every save on the handover settings page.
 GAP_REQUIREMENT_COMPLETENESS: clear
 GAP_REQUIREMENT_COMPLETENESS_REASON: every behaviour in the summary has a criterion
 GAP_CONTRADICTORY_REQUIREMENTS: clear

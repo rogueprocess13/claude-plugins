@@ -96,8 +96,10 @@ PLANNER_TICKET_TYPES="feature bug improvement chore security"
 # Sections the composer owns or drops. Labels/Signals/Verification Notes are
 # planning metadata; Title is the issue title; Verification Plan, Related
 # Tickets and Planner Context are regenerated from the spec, so a hand-written
-# copy in the spec never reaches the ticket twice.
-_PLANNER_TB_DROP="|title|description|labels|signals|verification notes|verification plan|related tickets|planner context|writes|reads|"
+# copy in the spec never reaches the ticket twice. Writes/Reads
+# (planner-crosscheck-ownership) and Preconditions (planner-ac-code-precondition)
+# are Crosscheck inputs, never ticket text.
+_PLANNER_TB_DROP="|title|description|labels|signals|verification notes|verification plan|related tickets|planner context|writes|reads|preconditions|"
 
 # ── Spec reading helpers ─────────────────────────────────────────────────────
 

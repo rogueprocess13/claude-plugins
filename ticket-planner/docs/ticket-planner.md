@@ -570,6 +570,8 @@ directly instead of spawning one (SKILL.md step 1a). Its check families include:
 
 - **Data ownership** (planner-crosscheck-ownership, `lib/planner-crosscheck-ownership.sh`; `spec-ownership-v1` initiatives only) — see [Data ownership](#data-ownership-writes-and-reads-tables) below.
 
+- **AC preconditions** (planner-ac-code-precondition, `lib/planner-crosscheck-ac-precondition.sh`; `ac-precondition-v1` initiatives only, dormant until the Specify prompt change) — see [AC preconditions](#ac-preconditions-the-preconditions-table) below.
+
 (Bypass, contract, Signals and dangling-dependency checks also run — see `lib/planner-crosscheck.sh`.)
 
 The citation + precedent linter also runs once earlier, as a self-lint at the end of
@@ -647,7 +649,9 @@ transitions with disjoint from-sets. `create`/`update`/`delete` count as `transi
 names every key segment as a word, at most 200 files); `framework:<name>` (`auth_user`,
 `session`, `clock`, `timestamps`, `row_id`, `tenant`); `external:<name>` (3–80 characters,
 anchored when the name appears in idea.txt, intent.md, discovery.md or architecture.md). A
-failed `code:` anchor counts as `spec`. A read of a key the spec writes itself is ignored.
+failed `code:` anchor counts as `spec`. A read of a key the spec writes itself is ignored. The resolver (`_planner_own_code_tree`) also reports a pin state, `pinned`, `live` or
+`pin-failed` (a pinned sha whose worktree could not be created: the live tree is used); the
+ownership anchor treats all three alike, the AC precondition family does not.
 
 **Codes.**
 
@@ -687,6 +691,133 @@ initiative; whether a `code:` file defines the field rather than mentioning its 
 whether transition states exist or form a valid state machine; whether the `fire` owner's
 ACs state idempotency; ordering between writers of different fields of one entity; AC
 numbers against seed or test data.
+
+### AC preconditions: the Preconditions table
+
+planner-ac-code-precondition. It applies to initiatives whose state.log holds
+`META|contract|start|ac-precondition-v1`. **Dormant for now:** `planner_acpre_contract_mark`
+exists but nothing calls it yet. The Specify prompt change will call it on the first Specify
+dispatch, after `spec-ownership-v1`, and add the prompt rules. Until then no initiative gets the
+family, the describer note or the revise check, and every spec, body and halt is unchanged. The
+one exception is the body composer: `## Preconditions` is always in its drop list.
+
+**Format.** Every spec except synth-marked test-data specs and `INDEX.md` has a
+`## Preconditions` section. It holds `None.` or exactly one pipe table directly under the
+heading. Each row names the stored starting state that one acceptance criterion needs:
+
+```
+## Preconditions
+
+| Criterion | Key | Mode | Requires | Basis |
+|-----------|-----|------|----------|-------|
+| An invoice with no due date is listed on the Needs date page. | `invoice.due_date` | state | null | code:billing/src/main/resources/db/changelog |
+| Saving the invoice form without a customer shows "Customer is required". | `invoice.customer_id` | input | null | — |
+```
+
+- **Criterion** repeats one `## Acceptance Criteria` line (after `- [ ]`), matched as Verification
+  Notes rows are: trimmed, whitespace runs collapsed. Several rows may share one criterion.
+- **Key** uses the `## Writes`/`## Reads` key grammar with exactly two segments, `<entity>.<field>`.
+- **Mode** is `state` (a stored record must hold the value before the criterion is checked; this
+  is checked) or `input` (a value the test submits and expects to be rejected; recorded, never
+  flagged). Anything else is invalid.
+- **Requires** is `null`, `value:<v>` (`<v>` a lower-case letter, then lower-case letters, digits
+  or `_`) or `number:<n>` (optional `-`, digits, optional `.` and digits; at most 30 characters).
+- **Basis** is `code:<path>` or `spec:<slug>` for a `state` row, and `—` for an `input` row.
+  `code:` uses the ownership path grammar (relative, no `..`).
+- A `(Criterion, Key, Mode, Requires)` tuple appears at most once.
+
+**`spec:` Basis.** It says a spec of this initiative changes the schema so the state becomes
+reachable. The slug must name an existing, non-synthesized spec; that spec's `## Writes` must
+have a row for the key or its entity (`basis-spec-no-write`); and if it is another spec, it must
+be in this spec's dependencies (`planner_ticketgen_spec_deps`; `basis-not-a-dependency`, add
+`blocked-by:<slug>`). `spec:<own slug>` follows the same Writes rule against the spec itself. A
+valid `spec:` row is never checked against code and counts as planned on the info line.
+
+**Planned change without the Basis.** When a `code:` row is unreachable but another
+non-synthesized spec writes the key (any op), the finding is downgraded to the warning
+`AC_PRECONDITION_PLANNED`, naming that spec, with the hint to set `spec:<slug>`.
+
+**Code and pin.** `code:` resolves through `planner_ownership_code_target`, against the
+Discovery-pinned tree. A `pinned` tree prints `(pinned)` in messages, a `live` tree (nothing was
+pinned) prints `(unpinned)`, and `pin-failed` makes the row unchecked. Candidate files are found
+with `.git`, `target`, `build`, `node_modules`, `out`, `.gradle` and `.idea` pruned, filtered to
+`.java` and `.xml`, sorted, and capped at `PLANNER_OWNERSHIP_CODE_MAX_FILES` (200); over the cap,
+the row is unchecked. When the path holds no matching `@Entity` (often it is a changelog
+directory), entity lookup repeats over the whole repository, capped at
+`PLANNER_ACPRE_ENTITY_MAX_FILES` (2000); changelogs are found the same way. Java enums are
+always looked up in the whole repository.
+
+**Supported stacks and facts.** Only JPA (`.java`) and Liquibase XML changelogs are read, and
+only strong facts. Names compare lower-cased with `_` removed (no plural folding): an `@Entity`
+class or its `@Table(name)`, a field or its `@Column`/`@JoinColumn(name)`, a Liquibase
+`tableName` or column `name`.
+
+| Fact | Source |
+|---|---|
+| `nullable no` | Liquibase `nullable="false"`, `primaryKey="true"`, `<addNotNullConstraint>`; JPA `@Id` |
+| `nullable yes` | Liquibase `<dropNotNullConstraint>`, `nullable="true"` |
+| `primitive` | a Java primitive field type (agrees only, never decides) |
+| `enum` | an `@Enumerated(EnumType.STRING)` field whose type is exactly one `enum` in the repository with no constructor arguments |
+| `enum-unchecked` | an ordinal enum (also no `@Enumerated`), `@Convert`, or an enum with constructor arguments or constant bodies |
+| `min` / `max` | Liquibase `smallint`, `int`/`integer`, `bigint` (their SQL ranges); `modifyDataType` gives a type too |
+| `transient` | `@Transient`, `@Formula` or the `transient` keyword: the field's other facts are dropped |
+| `unparsed` | a changelog touches the table with a change the parser does not model (`<sql>`, `<sqlFile>`, `<renameColumn>`, `<update>`, `<loadData>`, …) |
+
+XML comments and `<rollback>` blocks are blanked first; multi-line `<column>` and
+`<constraints>` elements and multi-column `<addColumn>` are read. Changelog order and includes
+are not followed: facts are pooled, and a contradiction (`nullable no` with `nullable yes`, two
+integer types) makes the row unchecked. A Java annotation argument that is not a literal gives no
+fact.
+
+**Decision** (`planner_acpre_decide`). `null` is unreachable on a `nullable no` fact with no
+`nullable yes` fact. `value:<v>` is unreachable on an `enum` fact with no constant equal to `<v>`
+(lower-cased, `_` removed). `number:<n>` is unreachable below `min` or above `max`, compared as
+decimal strings, never as floating point. Anything uncertain is unchecked: field or table not
+found, contradictory facts, only a `primitive` fact, `enum-unchecked`, an ambiguous enum, an
+`unparsed` change (for `null` and `number:` rows), a `transient` field, a pin failure, a cap hit.
+
+**Codes.**
+
+| Code | Tier | Accept |
+|---|---|---|
+| `AC_PRECONDITION_TABLE_INVALID` | blocking, one per spec, every problem listed | code-wide `--accept AC_PRECONDITION_TABLE_INVALID:"…"` |
+| `AC_PRECONDITION_UNREACHABLE` | blocking, one per row | `--accept AC_PRECONDITION_UNREACHABLE@<slug>/<key>/<requires>:"<reason>"`, `<requires>` with its `:` written `=` (`null`, `value=disputed`, `number=-5`), or the wildcard `@*` |
+| `AC_PRECONDITION_PLANNED` | warn, one per row | — |
+| `AC_PRECONDITION_NO_SOURCE` | warn, once per initiative: no scanned row found an `@Entity` class or a Liquibase changelog | — |
+
+An `AC_PRECONDITION_UNREACHABLE` message reads `specs/<slug>.md:<line> '<criterion excerpt>' needs
+<key> <requires>, but <file>:<line> declares it NOT NULL | allows only <constants> | is an integer
+column with min/max <n> (pinned|unpinned). Fix: … Accept: --accept …`. Spec text in a message has
+`"` replaced by `'`, every `--` shortened, and `|`, CR and LF removed; the instance token is read
+only from the trailing accept command, and it holds no criterion text, so an accept survives an
+AC extension but not a change of key or value. The code-wide form is refused.
+
+**Info line.** Unchecked rows are not findings. Each run writes one
+`META|ac-precondition|done|<c> checked, <u> unchecked, <p> planned, <i> input[: <details>]` line,
+before its findings, where `<details>` lists up to 300 characters of `<slug>/<key> (<reason>)`.
+For a missing entity or field the reason names up to three nearest names, for example
+`invoice-list/invoices.status (entity not found; nearest: invoice)`.
+
+**Revise and body.** Draft revise may update a row's Criterion cell when it extends that AC (the
+AC guard still allows only keep and extend). Any change to the sorted `(Key, Mode, Requires,
+Basis)` rows, or `None.` turned into a table, is refused as `FROZEN_CHANGED preconditions
+changed`. A Criterion cell left stale after an extension passes the revise guard and comes back
+from the readiness Crosscheck re-run as `AC_PRECONDITION_TABLE_INVALID` (`criterion not
+found`). A legacy initiative keeps the section frozen. Ticket bodies never carry the table.
+
+**Not checked.** Preconditions the spec does not declare; `input` rows; names that differ from
+the code beyond case and `_`; fields on a `@MappedSuperclass`, `@Embeddable`, Lombok-generated
+or record component, or mapped in `orm.xml`/`hbm.xml`; changelog include and changeset order;
+tables touched by unmodelled changes; ordinal, converted or constructor-valued enums;
+nullability only a Java primitive implies; database check constraints, enum types, triggers,
+defaults and computed columns; config-driven limits (`application.yml`,
+`@ConfigurationProperties`); whether a `spec:` Basis spec really changes the schema; visibility
+across threads, transactions or async boundaries.
+
+**Follow-ups, decided after the live check.** Weak facts (`@NotNull`, `@Column(nullable/length)`,
+Bean Validation) as warnings; `length:<n>` with `varchar(n)`; decimal scale and precision;
+Liquibase YAML, JSON and SQL changelogs; an under-declaration keyword tripwire; a second stack
+(Flyway SQL, Kotlin JPA, a non-JVM ORM); a headless per-instance accept.
 
 ### Resolving against the ref Discovery explored, not whatever REPOS_ROOT is now ([#217](https://github.com/willard-pro/claude-plugins/issues/217))
 
@@ -796,9 +927,18 @@ normalised quote) and is labelled `new`, `carried` or `drift`:
 - Each round writes one `META|refinement-round|done` trend line per ticket and
   body hash (`round=`, `new=`, `carried=`, `drift=`, `resolved=`,
   `unverified=`, `reset=`).
-- The evaluator is now `dor-semantic-v3`. An unchanged v2 verdict is migrated
-  in place at the start of the scan, so only tickets edited since are
+- The evaluator is now `dor-semantic-v4` (dor-semantic-paraphrase). An
+  unchanged v2 verdict is migrated in place at the start of the scan, and an
+  unchanged v3 verdict is kept as current
+  (`dor_semantic_evaluator_compatible`), so only tickets edited since are
   rescanned.
+- Each scan writes a `PARAPHRASE` — the one change the ticket makes, in the
+  evaluator's words — stored as `ready.semantic.paraphrase`. The halt report
+  prints it as `Paraphrase:` above a ticket's findings. A part of the ticket
+  that describes a different change is `INCOHERENT_CHANGE`, advisory-only:
+  it never blocks, and the advisory summary (and the halt report's
+  `## Advisory incoherent-change findings` section) lists it with the
+  ticket's paraphrase.
 
 Demoted and other advisory findings are not lost: ticket-auto appraisal
 writes them into the ticket's notes as a `## Refinement Carry-over` section
@@ -1198,9 +1338,11 @@ asks one `param-literals` note instead.
 The four ownership instance codes work the same way: `OWN_MULTI_WRITER@<key>`,
 `OWN_MULTI_FIRE@<key>`, `OWN_NO_WRITER@<slug>/<key>` and `OWN_TRIGGER_UNOWNED@<slug>/<key>`,
 each with a non-empty `:"<reason>"`; the code-wide form is refused.
+So does `AC_PRECONDITION_UNREACHABLE@<slug>/<key>/<requires>` (planner-ac-code-precondition),
+where `<requires>` is `null`, `value=<v>` or `number=<n>`.
 
-**Wildcard.** `--accept <CODE>@*:"<reason>"` is valid for `PARAM_LITERAL` and the four
-ownership instance codes. At `resume`, before the loop, it reads the `fail|<CODE>` lines of
+**Wildcard.** `--accept <CODE>@*:"<reason>"` is valid for `PARAM_LITERAL`, the four
+ownership instance codes and `AC_PRECONDITION_UNREACHABLE`. At `resume`, before the loop, it reads the `fail|<CODE>` lines of
 the latest Crosscheck attempt and records one `accepted|<instance-token> <reason>` line per
 distinct instance (for `PARAM_LITERAL`, `PARAM_LITERAL@<slug>=<canonical> <literal> — <reason>`).
 It never writes `<CODE>@*`, so an instance first found by a later run still blocks. With no
@@ -1271,6 +1413,7 @@ script — cannot read the halt prose. It runs this loop instead:
 | `CROSSCHECK_BLOCKED` | `flag:accept:<CODE>` | the reason = `--accept CODE:"reason"`. `__skip__` declines |
 | `CROSSCHECK_BLOCKED` (`PARAM_LITERAL`) | `note`, id `param-literals`, option `resolved` — replaces the code's `flag:accept` question | recorded only. The text names each undeclared literal and the terminal command `resume <INIT> --accept PARAM_LITERAL@<slug>:"<literal>"`; declare the value in `## Parameters` or change the spec, then resume |
 | `CROSSCHECK_BLOCKED` (`OWN_MULTI_WRITER`, `OWN_NO_WRITER`, `OWN_MULTI_FIRE`, `OWN_TRIGGER_UNOWNED`) | one `note`, id `ownership-findings`, option `resolved` — replaces those codes' `flag:accept` questions | recorded only. The text counts each code, lists the instance tokens (up to 300 characters), says how to fix each kind and gives the terminal per-instance and wildcard accept forms; there is no headless accept. `OWN_TABLE_INVALID` and `OWN_EDGES_FAILED` keep the standard `flag:accept` question |
+| `CROSSCHECK_BLOCKED` (`AC_PRECONDITION_UNREACHABLE`) | one `note`, id `ac-precondition-findings`, option `resolved` — replaces the code's `flag:accept` question | recorded only. The text gives the count, the instance tokens (up to 300 characters), the three fixes (change the criterion, Mode `input`, Basis `spec:<slug>`) and the terminal per-instance and wildcard accept forms; there is no headless accept. `AC_PRECONDITION_TABLE_INVALID` keeps the standard `flag:accept` question. With ownership findings in the same attempt, both notes are asked, each once |
 | `CROSSCHECK_BLOCKED` (`CITED_ARTIFACT_UNRESOLVED`) | `consensus-answer:cited:<n>`, one per unanswered artifact | `exists:<where>`, `external:<who>` or `generate`, written into the `Answer:` field of consensus.md's `n`th `CITED_ARTIFACT:` question. Any other value, or one with `\|`, CR or LF, is `INVALID_VALUE`. Specs are not edited: a spec need whose `Source` disagrees is `CITED_ARTIFACT_SOURCE_MISMATCH` on the re-run. The code's `flag:accept` question is still offered |
 | `CROSSCHECK_BLOCKED` (`TEST_DATA_IMPLIED`) | `consensus-answer:testdata:<slug>`, one per blocking spec, id `testdata-<slug>-<hash8>` | `none`, `generate: <desc>` (default `generate: <match phrase>`), `exists:<where>` or `external:<who>`, written as consensus.md's ``TESTDATA_CONFIRM: `<slug>` [<hash8>] — Answer: <value>`` line. `hash8` is re-derived from the spec's current trigger criterion at intake; a mismatch is `STALE_QUESTION` (exit 2, nothing written). The code's `flag:accept` question is still offered |
 | `CONSENSUS_BLOCKED` | `note` | recorded only — fix the plan and change consensus.md's Readiness from `blocked` (or re-run Consensus); the gate re-reads consensus.md on resume |

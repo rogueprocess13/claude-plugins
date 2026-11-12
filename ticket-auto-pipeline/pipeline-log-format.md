@@ -616,21 +616,7 @@ the pipeline log's own schema version, and this section is purely additive.
 
 ### Phase-inspector entries (Phase 1 RLVR)
 
-Written by the `guidance-extractor-agent` after each pipeline phase completes (post-IMPLEMENT, post-VERIFY, post-PR-REVIEW). Provides per-phase inspection verdicts by reading `META|verifier-result` entries and checking for known defect patterns. The inspector is advisory only — it never gates the pipeline.
-
-```bash
-_pi_json=$(cat <<'PHASE_INSPECTOR_VERDICT_EOF'
-{"phase":"IMPLEMENT","verdict":"PASS","signals":0,"detail":"All verifiers clean: unit_tests PASS, return_completeness complete, gate_check PASS","verifiers_consulted":["unit_tests","return_completeness","gate_check"],"patterns":[]}
-PHASE_INSPECTOR_VERDICT_EOF
-)
-if _pi_line=$(printf '%s' "$_pi_json" | jq -c . 2>/dev/null) && [ -n "$_pi_line" ]; then
-  printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_pi_line" >>"$LOG_FILE"
-fi
-```
-
-`detail` and `evidence` quote verifier output, so the JSON goes through a quoted
-`<<'PHASE_INSPECTOR_VERDICT_EOF'` heredoc and `jq -c`, never a double-quoted `echo` string — that would
-execute any `$(...)` or backtick in the quoted text.
+Written by bash (DET-SU-1): after IMPLEMENT, VERIFY and PR-REVIEW, `router-step.sh inspector` runs `inspect_verifiers` (`lib/inspect-verifiers.sh`) over the phase's `META|verifier-result` entries and appends the verdict with `"source":"bash"` (skipped when identical to the log's last line). The `guidance-extractor-agent` only classifies its patterns. If the agent writes its own line anyway, `router-step.sh inspector-done` runs `validate_phase_inspector`; on disagreement bash re-appends its verdict with `agent_overridden:true` and `agent_claim`, so the phase's last line is bash's. Advisory only — never gates the pipeline.
 
 JSON fields:
 - `phase` (string): pipeline phase being inspected — IMPLEMENT, VERIFY, or PR-REVIEW
@@ -639,12 +625,13 @@ JSON fields:
 - `detail` (string): human-readable summary, ≤ 200 characters
 - `verifiers_consulted` (array of strings): verifier IDs read for this inspection
 - `patterns` (array of objects): detected patterns, each with `pattern` (identifier), `severity` (warn/fail), `evidence` (specific citation)
+- `source` (string): `bash` on library-written verdicts
 
-Detection patterns (Phase 1, all WARN severity):
-1. `flaky_tests` — PASS verifier + FAIL verifier on overlapping criteria
-2. `missing_requirement` — PR review OK but critique/audit found gaps
-3. `trivial_pass` — any verifier PASS with criteria_total ≤ 1
-4. `verdict_disagreement` — two verifiers in same phase disagree
+Detection patterns (Phase 1, all WARN severity; the rules are `inspect_verifiers`'):
+1. `flaky_tests` — a PASS verifier and a FAIL verifier in the inspected results
+2. `missing_requirement` — a review verifier PASS while a critique/audit verifier is WARN or FAIL
+3. `trivial_pass` — a PASS with criteria_total == 1 (0 is outcome-scored; `gate_check` and `return_completeness` excluded)
+4. `verdict_disagreement` — a PASS and a BLOCK, only when `flaky_tests` did not fire
 5. `incomplete_implementation` — PASS verifier + RETURN_INCOMPLETE gate-warn (IMPLEMENT inspection only — the gate-warn is attributed to the phase that writes it, not to the VERIFY / PR-REVIEW windows that span it)
 
 **MSG parsing rule**: use awk-join (`awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}'`), never `cut -f5`. JSON payloads contain `|` characters.

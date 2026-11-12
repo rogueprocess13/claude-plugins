@@ -25,7 +25,7 @@ _HALT_FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _HALT_LIB_DIR="${_HALT_FIXTURES_DIR}/.."
 
 # Every halt the stop describer must recognise, with the reason it must name.
-HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT refinement-body-drift:REFINEMENT_HALT refinement-demoted:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION consensus-blocked:CONSENSUS_BLOCKED specify-param:SPECIFY_DECISION specify-param-crosscheck:SPECIFY_DECISION ownership:CROSSCHECK_BLOCKED"
+HALT_FIXTURE_REASONS="create-gate-stop:CREATE_GATE create-gate-dispatch:CREATE_GATE crosscheck:CROSSCHECK_BLOCKED crosscheck-testdata:CROSSCHECK_BLOCKED adr-gate:ADR_GATE project-gate:PROJECT_GATE refinement:REFINEMENT_HALT refinement-body-drift:REFINEMENT_HALT refinement-demoted:REFINEMENT_HALT until:UNTIL_STOP specify-decision:SPECIFY_DECISION consensus-blocked:CONSENSUS_BLOCKED specify-param:SPECIFY_DECISION specify-param-crosscheck:SPECIFY_DECISION ownership:CROSSCHECK_BLOCKED ac-precondition:CROSSCHECK_BLOCKED"
 
 # _halt_done <init> <phase...> — mark phases done, in order.
 _halt_done() {
@@ -56,6 +56,16 @@ halt_fixture_init() {
     # whose Crosscheck found ownership instances plus one invalid table.
     # Added after the other goldens; they predate it.
     planner_state_write "$init" META contract start spec-ownership-v1
+    _halt_done "$init" Appraisal Discovery Architecture Specify Review Consensus
+    ;;
+  ac-precondition)
+    # planner-ac-code-precondition: a contract initiative (ac-precondition-v1)
+    # whose Crosscheck found two unreachable preconditions plus one invalid
+    # table. The findings are written by halt_fixture_run's stub (a code:
+    # row needs a git repository; the halt depends only on the log). Added
+    # after the other goldens; they predate it.
+    planner_state_write "$init" META contract start spec-ownership-v1
+    planner_state_write "$init" META contract start ac-precondition-v1
     _halt_done "$init" Appraisal Discovery Architecture Specify Review Consensus
     ;;
   crosscheck-testdata)
@@ -314,7 +324,7 @@ halt_fixture_run() {
       # SKILL.md step 1, a plain `resume` reaching EpicGen.
       planner_dispatch_gate pre "$INITIATIVE_ID" EpicGen "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
       ;;
-    crosscheck | crosscheck-testdata | ownership)
+    crosscheck | crosscheck-testdata | ownership | ac-precondition)
       # SKILL.md step 1a. planner_crosscheck_run is stubbed after sourcing:
       # the check families need real artifacts and a repo, and the halt's
       # output depends only on what the run recorded. The gate sources the
@@ -329,6 +339,17 @@ halt_fixture_run() {
           _planner_crosscheck_emit_finding "$init" "${p} OWN_NO_WRITER specs/payment-receipt.md:15 reads \`customer.email\` (source spec) but no other spec writes it — add the write to the spec that owns it, or anchor the read with code:, framework: or external: — resume ${init} --accept OWN_NO_WRITER@payment-receipt/customer.email:\"<reason>\""
           _planner_crosscheck_emit_finding "$init" "${p} OWN_MULTI_WRITER \`invoice.status\` has conflicting writers: cancel-invoice (transition:sent,overdue->cancelled), record-payment (transition:sent,overdue->paid) — give the key one owner and have the others read it, or make each transition leave different states — resume ${init} --accept OWN_MULTI_WRITER@invoice.status:\"<reason>\""
           planner_state_write "$init" "Crosscheck" "check" "fail" "4 blocking finding(s), 0 warn, 0 accepted — see META|crosscheck entries"
+          return 1
+        }
+      elif [ "$name" = "ac-precondition" ]; then
+        planner_crosscheck_run() {
+          local init="$1" p="planner-crosscheck-ac-precondition:"
+          planner_state_write "$init" "Crosscheck" "check" "start" "running citation + propagation + bypass + contracts + signals + deps checks"
+          planner_state_write "$init" META ac-precondition done "1 checked, 0 unchecked, 0 planned, 1 input"
+          _planner_crosscheck_emit_finding "$init" "${p} AC_PRECONDITION_TABLE_INVALID specs/invoice-form.md:24 line 24 mode — state or input"
+          _planner_crosscheck_emit_finding "$init" "${p} AC_PRECONDITION_UNREACHABLE specs/invoice-needs-date.md:31 'An invoice with no due date is listed on the Needs date page.' needs invoice.due_date null, but billing/src/main/resources/db/changelog/001-invoice.xml:14 declares it NOT NULL (pinned). Fix: change the criterion, mark it Mode input if the test submits the value, or set Basis spec:<slug> for a spec that changes the schema. Accept: --accept AC_PRECONDITION_UNREACHABLE@invoice-needs-date/invoice.due_date/null:\"<reason>\""
+          _planner_crosscheck_emit_finding "$init" "${p} AC_PRECONDITION_UNREACHABLE specs/invoice-number-format.md:28 'An invoice numbered 3000000001 shows 3,000,000,001.' needs invoice.number number:3000000001, but billing/src/main/resources/db/changelog/001-invoice.xml:16 is an integer column with max 2147483647 (pinned). Fix: change the criterion, mark it Mode input if the test submits the value, or set Basis spec:<slug> for a spec that changes the schema. Accept: --accept AC_PRECONDITION_UNREACHABLE@invoice-number-format/invoice.number/number=3000000001:\"<reason>\""
+          planner_state_write "$init" "Crosscheck" "check" "fail" "3 blocking finding(s), 0 warn, 0 accepted — see META|crosscheck entries"
           return 1
         }
       elif [ "$name" = "crosscheck-testdata" ]; then

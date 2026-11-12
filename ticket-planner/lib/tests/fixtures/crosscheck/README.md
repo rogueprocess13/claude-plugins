@@ -150,6 +150,8 @@ Crosscheck never edits a consumer spec.
 | `testdata-synth-cycle-guard` | A dispatched TD spec whose Labels say `blocked-by:audit-log`; `audit-log` needs the key it owns | 4.9 — the TD↔consumer cycle exists only in Labels ∪ sidecar edges; blocking `DEPENDENCY_CYCLE` on both specs |
 | `ownership-invoice-followup` | Invoice follow-up specs with `## Writes`/`## Reads` and the `spec-ownership-v1` marker: two transitions out of `sent`, an append-only history, one `fire` owner plus a `trigger` | planner-crosscheck-ownership — one blocking `OWN_MULTI_WRITER` on `invoice.status`; appends, the trigger and entity-rule reads stay clean |
 | `ownership-legacy-silent` | The same specs without the marker | planner-crosscheck-ownership — the family is silent; must stay clean |
+| `acpre-table-invalid` | One spec with a `## Preconditions` table and the `ac-precondition-v1` marker: one valid `input` row, one row with Mode `given` | planner-ac-code-precondition — one blocking `AC_PRECONDITION_TABLE_INVALID`; the info line counts the input row |
+| `acpre-legacy-silent` | The same spec without the marker | planner-ac-code-precondition — the family is silent; must stay clean |
 | `contract-undefined-warn-only` | A structure that "gains new fields for ..." in prose with no backtick-quoted field names | [#175](https://github.com/willard-pro/claude-plugins/issues/175) — `CONTRACT_UNDEFINED` is deliberately warn-level, not blocking |
 
 ## Adding a real fixture

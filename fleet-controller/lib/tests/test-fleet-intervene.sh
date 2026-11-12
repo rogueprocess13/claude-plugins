@@ -125,6 +125,83 @@ test_flow_mutex_held_lock_held() {
   [ "$outer_rc" -eq 0 ]
 }
 
+# Review ARCH-3: with no TICKET_FLOW_LOCK_DIR the check must look where every
+# flow.sh copy locks — $REPOS_ROOT/.ticket-auto/locks, via lib/flow-lock.sh —
+# not at a path tied to one copy of flow.sh.
+test_flow_mutex_held_anchored_at_repos_root() {
+  local ws
+  ws=$(_setup_workspace)
+  (
+    cd "$ws"
+    source "$LIB_DIR/fleet-intervene.sh"
+    unset TICKET_FLOW_LOCK_DIR
+    export REPOS_ROOT="$ws/repos"
+    local tid="TEST-MUTEX-04"
+    mkdir -p "$REPOS_ROOT/.ticket-auto/locks"
+    local lockfile="$REPOS_ROOT/.ticket-auto/locks/.ticket-flow-${tid}.lock"
+    (
+      exec 9>"$lockfile"
+      flock -x 9
+      sleep 5
+    ) &
+    local holder_pid=$!
+    sleep 0.5
+    local rc=0
+    _flow_mutex_held "$tid" || rc=$?
+    kill "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    [ "$rc" -eq 0 ]
+  )
+  local outer_rc=$?
+  rm -rf "$ws"
+  [ "$outer_rc" -eq 0 ]
+}
+
+# Upgrade window (ARCH-3): an old flow.sh copy still locks the legacy
+# $HOME/.claude/skills/ticket-flow/locks file. A held legacy lock defers too,
+# with the new path resolvable or not.
+_mutex_legacy_case() {
+  local ws="$1" repos_root="$2" tid="$3"
+  (
+    cd "$ws"
+    source "$LIB_DIR/fleet-intervene.sh"
+    unset TICKET_FLOW_LOCK_DIR
+    if [ -n "$repos_root" ]; then export REPOS_ROOT="$repos_root"; else unset REPOS_ROOT; fi
+    export HOME="$ws/home"
+    mkdir -p "$HOME/.claude/skills/ticket-flow/locks"
+    local lockfile="$HOME/.claude/skills/ticket-flow/locks/.ticket-flow-${tid}.lock"
+    (
+      exec 9>"$lockfile"
+      flock -x 9
+      sleep 5
+    ) &
+    local holder_pid=$!
+    sleep 0.5
+    local rc=0
+    _flow_mutex_held "$tid" 2>"$ws/err" || rc=$?
+    kill "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    [ "$rc" -eq 0 ]
+  )
+}
+
+test_flow_mutex_held_legacy_path_held() {
+  local ws rc=0
+  ws=$(_setup_workspace)
+  _mutex_legacy_case "$ws" "$ws/repos" TEST-MUTEX-05 || rc=1
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ]
+}
+
+test_flow_mutex_held_unresolvable_legacy_held_warns() {
+  local ws rc=0
+  ws=$(_setup_workspace)
+  _mutex_legacy_case "$ws" "" TEST-MUTEX-06 || rc=1
+  grep -q "cannot resolve" "$ws/err" || rc=1
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ]
+}
+
 test_flow_mutex_held_stale_lockfile() {
   local ws
   ws=$(_setup_workspace)
@@ -1051,6 +1128,9 @@ for fn in \
   test_flow_mutex_held_lockfile_absent \
   test_flow_mutex_held_lock_held \
   test_flow_mutex_held_stale_lockfile \
+  test_flow_mutex_held_anchored_at_repos_root \
+  test_flow_mutex_held_legacy_path_held \
+  test_flow_mutex_held_unresolvable_legacy_held_warns \
   test_fleet_kill_pipeline_nonexistent_ticket \
   test_fleet_kill_pipeline_normal \
   test_fleet_kill_pipeline_dry_run_does_not_mutate \

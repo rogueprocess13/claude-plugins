@@ -38,6 +38,10 @@
 #                                                 an anchor failed (a failed `code:`
 #                                                 prints `spec\t<reason>`, a failed
 #                                                 `external:` `external\t<reason>`)
+#   planner_ownership_code_target <INIT> <path>   the tree a `code:` path reads:
+#                                                 <tree>\t<sub>\t<pinned|live|
+#                                                 pin-failed>; rc 1 for an invalid
+#                                                 path or unknown repository
 #   planner_ownership_edges_write <INIT>          Crosscheck's edges step: recompute
 #                                                 artifacts/ownership-edges.json,
 #                                                 freeze consumers with a ticket,
@@ -467,10 +471,17 @@ _planner_own_words_in() {
 # shortest leading part of <path> that is a git checkout under <repos_root>
 # (a bare first component is also searched for, like Discovery's legacy
 # names); when Discovery pinned a sha for it and the live checkout has moved,
-# the pinned worktree is used (created if missing). rc 1 when no repository
-# resolves.
+# the pinned worktree is used (created if missing). A third <TAB> field names
+# the pin state (planner-ac-code-precondition D4):
+#   pinned      the worktree at the pinned sha, or the live checkout at it
+#   live        Discovery pinned nothing for this repository
+#   pin-failed  a sha was pinned but its worktree could not be created; the
+#               live tree is printed
+# The sub field may be empty, so read the line with parameter expansion,
+# never `IFS=$'\t' read` (tab is IFS whitespace: an empty field collapses).
+# rc 1 when no repository resolves.
 _planner_own_code_tree() {
-  local init="$1" root="$2" path="$3" prefix="" rest="$3" comp live="" tree dir repo ref sha wt
+  local init="$1" root="$2" path="$3" prefix="" rest="$3" comp live="" tree dir repo ref sha wt pin=live
   while [ -n "$rest" ]; do
     comp="${rest%%/*}"
     if [ "$comp" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
@@ -488,13 +499,34 @@ _planner_own_code_tree() {
   tree="$live"
   while IFS=$'\037' read -r dir repo ref sha; do
     [ "$dir" = "$live" ] && [ -n "$sha" ] || continue
+    pin=pinned
     [ "$(git -C "$live" rev-parse HEAD 2>/dev/null)" = "$sha" ] && break
     wt=$(planner_crosscheck_repo_ref_worktree_dir "$live" "$ref" "$sha")
     [ -d "$wt" ] || planner_crosscheck_repo_ref_ensure "$root" "$repo" "$ref" "$sha" "$live" >/dev/null
-    [ -d "$wt" ] && tree="$wt"
+    if [ -d "$wt" ]; then tree="$wt"; else pin=pin-failed; fi
     break
   done < <(planner_crosscheck_repo_refs_resolved "$init" "$root")
-  printf '%s\t%s\n' "$tree" "$rest"
+  printf '%s\t%s\t%s\n' "$tree" "$rest" "$pin"
+}
+
+# planner_ownership_code_target <INIT> <path> — the public form of
+# _planner_own_code_tree for a `code:` path: checks the path grammar,
+# resolves REPOS_ROOT, then prints `<tree>\t<sub>\t<pinned|live|pin-failed>`.
+# rc 1 with the reason (`invalid path`, `repository not found`) on stderr.
+planner_ownership_code_target() {
+  local init="$1" path="$2" root
+  _planner_own_path_ok "$path" || {
+    echo "invalid path" >&2
+    return 1
+  }
+  root=$(planner_repos_root 2>/dev/null) || {
+    echo "repository not found" >&2
+    return 1
+  }
+  _planner_own_code_tree "$init" "${root%/}" "$path" || {
+    echo "repository not found" >&2
+    return 1
+  }
 }
 
 # _planner_own_code_anchor <INIT> <path> <key> — empty on success, else the
@@ -515,8 +547,11 @@ _planner_own_code_anchor() {
     printf 'repository not found'
     return
   }
+  # Three fields (tree, sub, pin); every pin value keeps today's behaviour,
+  # including the live tree on pin-failed. Sub may be empty.
   tree="${out%%$'\t'*}"
   sub="${out#*$'\t'}"
+  sub="${sub%$'\t'*}"
   target="${tree}${sub:+/${sub}}"
   IFS=. read -r -a segs <<<"$key"
   max="$PLANNER_OWNERSHIP_CODE_MAX_FILES"

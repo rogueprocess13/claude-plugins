@@ -23,6 +23,117 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 
 - ticket-appraise's complexity arithmetic moves into `lib/complexity-score.sh` (review finding DET-AP-5). The agent now only judges which axes fire. `write <dir> --axes <list> --reason <s>` adds up the weights, applies the threshold of 3 and writes or replaces the `## Complexity` block in the shape `get_complexity` reads. It refuses an unknown or repeated axis, `none` combined with another axis, and a double-counted `cross-layer` (exit 2, file untouched). `blast <dir>` applies the Step 2.8 blast-radius override once per ticket. The notes.md format and scoring outcomes are unchanged; `lib/tests/test-complexity-score.sh` (27 cases) replays the rubric examples and the Blast Radius tables `test-notes-parse.sh` pins.
 
+## ticket-planner 0.40.0 (2026-11-12) — AC preconditions: table, schema facts, Crosscheck family (dormant)
+
+planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controller unchanged.
+(0.39.0 is taken by the dor-semantic-paraphrase branch.)
+
+### Added, dormant until the Specify prompt change
+
+- `lib/planner-ac-precondition.sh`: the `## Preconditions` table (Criterion, Key, Mode `state` or
+  `input`, Requires `null` / `value:<v>` / `number:<n>`, Basis `code:<path>` / `spec:<slug>` / `—`)
+  and its Basis rules (a `spec:` Basis needs a matching `## Writes` row in that spec, and that spec
+  as a dependency). Strong schema facts from JPA entities and Liquibase XML changelogs only
+  (NOT NULL, `@Id`, `STRING` enum constants, integer column ranges), with comments, rollback
+  blocks and build directories ignored. A decision per row: `reachable`, `unreachable` or
+  `unchecked` with a reason. Numbers are compared as decimal strings.
+- `lib/planner-crosscheck-ac-precondition.sh`: the Crosscheck family, gated on
+  `META|contract|start|ac-precondition-v1`. `AC_PRECONDITION_TABLE_INVALID` and
+  `AC_PRECONDITION_UNREACHABLE` block; `AC_PRECONDITION_PLANNED` (another spec writes the key) and
+  `AC_PRECONDITION_NO_SOURCE` (no JPA or Liquibase found) warn. Unchecked rows are never findings:
+  each run writes one `META|ac-precondition|done` info line with counts and nearest names.
+  `AC_PRECONDITION_UNREACHABLE` is accepted one instance at a time
+  (`--accept AC_PRECONDITION_UNREACHABLE@<slug>/<key>/<requires>:"<reason>"`) or with `@*`.
+- The stop describer asks one `ac-precondition-findings` note for `AC_PRECONDITION_UNREACHABLE`
+  instead of a blanket accept. Draft revise may update a Preconditions row's Criterion cell when
+  it extends that AC, and refuses any other change to the rows (`FROZEN_CHANGED preconditions
+  changed`). A new `ac-precondition` halt golden.
+- Nothing writes the `ac-precondition-v1` marker yet, so no initiative changes behaviour. The one
+  unconditional change: ticket bodies drop a `## Preconditions` section (none exists today).
+
+### Changed
+
+- The code-target resolver reports its pin state: `_planner_own_code_tree` prints a third field,
+  `pinned`, `live` or `pin-failed`, and the new `planner_ownership_code_target` wraps it. The
+  ownership anchor behaves as before for all three.
+
+## ticket-auto-pipeline 0.115.0, ticket-planner 0.39.0 (2026-11-12) — DoR scan paraphrase and `INCOHERENT_CHANGE`
+
+dor-semantic-paraphrase (next.md Step 18, item 2). A ticket can pass every existing check and
+still not describe one change: the intent says one thing, the scope bounds another, the criteria
+test a third. The DoR semantic scan now writes what the ticket changes in its own words first, and
+flags a part that describes a different change.
+
+### Added
+
+- **`PARAPHRASE` scan line.** Every `=== DOR_SEMANTIC_SCAN ===` block must carry `PARAPHRASE:`,
+  one line of 1 to 400 characters, asked for before any finding. A scan without one is an invalid
+  block (re-spawn once, then `SEMANTIC_UNAVAILABLE`, as for any invalid block). The audit block
+  carries none. `dor_semantic_apply` stores it as `ready.semantic.paraphrase`.
+- **`INCOHERENT_CHANGE`** (dimension `intent`, directly after `INTENT_AC_MISMATCH`): the summary or
+  intent, the scope, a criterion or a Verification Plan row describes a different change from the
+  paraphrase. It is in `DOR_SEMANTIC_ADVISORY_ONLY_CODES`, so it never blocks until a live run
+  calibrates it; its quote is verified like any other.
+- ticket-planner: the Refinement halt report prints each not-ready ticket's `Paraphrase:` above its
+  findings and ends with an `## Advisory incoherent-change findings` section; the advisory summary
+  printed on a gate pass lists each `INCOHERENT_CHANGE` with the ticket's paraphrase.
+  `PLANNER_AC_CHECKLIST_SEMANTIC_NA` lists the new code.
+
+### Changed
+
+- `DOR_SEMANTIC_EVALUATOR` is `dor-semantic-v4`. A v3 verdict on an unchanged body is **not**
+  rescanned: `DOR_SEMANTIC_COMPATIBLE_EVALUATORS` lists `dor-semantic-v3`, and the planner's
+  needs-pass decision and converge check now call `dor_semantic_evaluator_compatible` instead of
+  comparing the evaluator string. Lineage still resets across the bump, and a draft import still
+  needs the exact evaluator. An unchanged v2 verdict now migrates straight to v4.
+
+### Audited, unchanged
+
+- `ticket-critique` never reports `CLEAR` for a critique that did not run: a failed fetch stops the
+  run (or, with `--no-post`, writes `STATUS: UNAVAILABLE`), and the dispatch-rehearsal preflight
+  fails a missing or unavailable result.
+
+## ticket-auto-pipeline 0.114.3, fleet-controller 0.49.2 (2026-11-12) — flow.sh's ticket lock no longer depends on which flow.sh copy ran
+
+fleet-controller 0.49.2.
+
+### Fixed
+
+- `flow.sh` locked `<its own directory>/locks/.ticket-flow-<TID>.lock`, so the plugin-cache copy (fleetd orchestration, `gate_hold.py`, `fleet-detect.sh`), the `~/.claude/skills` sync (the router, `/ticket-approve`) and a repo checkout each locked a different file and did not exclude each other. fleet-controller's `_flow_mutex_held` checked a fourth path, `~/.claude/skills/ticket-flow/locks` (October review ARCH-3). New `ticket-auto-pipeline/lib/flow-lock.sh` is the one resolver: `TICKET_FLOW_LOCK_DIR` when set, else `$REPOS_ROOT/.ticket-auto/locks`, beside the manifests the lock protects. `flow.sh` and `_flow_mutex_held` both use it. `flow.sh` now takes the lock after its `REPOS_ROOT` refusal (exit 13), so an unset `REPOS_ROOT` exits 13 without creating a lock directory, and an unknown trigger reports exit 3 before a busy lock's exit 42. No Python code opens the lock, so there is no Python twin. New tests: `test_flow_lock_shared_across_copies`, `test_flow_lock_unresolvable_refuses_13`, `test_flow_lock_resolver` (phase1.sh), `test_flow_mutex_held_anchored_at_repos_root` (test-fleet-intervene.sh).
+
+### Upgrade note
+
+During the upgrade window an old `flow.sh` copy (not yet re-synced, or a worker started before the upgrade) still locks beside itself, while upgraded copies lock under `$REPOS_ROOT/.ticket-auto/locks`. The two do not exclude each other until every copy runs the new code. Restart fleetd and open a new Claude Code session (which re-syncs `~/.claude/skills`) on each host once no ticket is mid-transition. To cover that window, `_flow_mutex_held` checks both the resolved path and the legacy `~/.claude/skills/ticket-flow/locks/.ticket-flow-<TID>.lock` and defers a kill if either is held. When the new path cannot be resolved (resolver missing, or neither `TICKET_FLOW_LOCK_DIR` nor `REPOS_ROOT` set), it writes one stderr warning and checks the legacy path alone, rather than reporting "not held". Remove the legacy check one release after this one. New tests: `test_flow_mutex_held_legacy_path_held`, `test_flow_mutex_held_unresolvable_legacy_held_warns`.
+
+## ticket-auto-pipeline 0.114.2, fleet-controller 0.49.1 (2026-11-12) — bash writes the phase-inspector verdict; retro names the tickets behind each failure code
+
+Two determinism fixes from the 2026-10-23 review (DET-SU-1, DET-SU-2).
+
+**Phase inspector (DET-SU-1).** `lib/inspect-verifiers.sh` already computed the five defect
+patterns and the verdict, but nothing called it: the guidance-extractor agent re-derived the
+verdict by eye from rules that had drifted from the lib's (`trivial_pass` at `criteria_total ≤ 1`
+vs `== 1`; `verdict_disagreement` firing on PASS+FAIL as well as `flaky_tests`).
+`assemble_inspector_context` (`lib/phase-inspector.sh`) now runs `inspect_verifiers` and writes the
+phase's `META|phase-inspector` line itself, with `"source":"bash"` (a rerun with the same verdict
+writes nothing). The agent's instructions carry that verdict and the lib's rule set, and tell it to
+classify the patterns only. `router-step.sh inspector-done` now runs `validate_phase_inspector` on
+any line the agent writes for the phase anyway; when it disagrees, bash's verdict is appended again
+with `agent_overridden:true`, so the last line for the phase is always bash's. It reads the log
+from the new optional `--log-file`, else `./logs/<TID>-pipeline.log`; fleetd's
+`router_step.inspector_done` passes `--log-file`. The canonical rule set is the lib's, so a
+consumer counting `signals` may see different counts than the agent produced. The spawn, its
+`--mode extract` flags and the `PHASE_INSPECTOR_READY`/`INSPECTOR_INSTRUCTIONS_FILE` contract are
+unchanged. `lib/tests/test-phase-inspector.sh` and `test-router-step.sh` cover the new paths; the
+`insp-verify_ready`/`insp-pr_ready` router-step fixtures were regenerated.
+
+**Retro attribution (DET-SU-2).** `retro.sh` emitted only `{CODE: count}`, so ticket-retro guessed
+which tickets produced each code. Its JSON now adds `failure_tickets` (`{CODE: [tid]}`, sorted and
+unique; a planner code carries its initiative id) and `failure_context`
+(`{CODE: [{ticket, errors, transcripts}]}` — the ticket's `errors_by_ticket` events and its existing
+`<logs>/<tid>-*-agent.log` captures). Both are built where `FAILURE_COUNT` is, so a cursor-skipped
+log adds nothing, as before. Additive; every other field is unchanged. ticket-retro Step 3a.5 reads
+`failure_context` instead of guessing. New test: `lib/tests/test-retro-failure-tickets.sh`.
+
 ## fleet-controller 0.49.0 (2026-11-12) — `FLEET_WORKER_AUTONOMY`
 
 Review finding PO-9: fleetd dispatched every ticket with `--auto` and had no setting for it, and

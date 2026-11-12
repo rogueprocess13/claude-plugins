@@ -96,6 +96,7 @@ _scan_clean() {
   hash=$(_hash "$1" "$2")
   {
     printf '=== DOR_SEMANTIC_SCAN ===\nSCHEMA_VERSION: 1\nTICKET: %s\nBODY_HASH: %s\n' "$2" "$hash"
+    printf 'PARAPHRASE: The ticket makes one change, described consistently.\n'
     for gap in REQUIREMENT_COMPLETENESS CONTRADICTORY_REQUIREMENTS DEEP_SCOPE_AMBIGUITY EDGE_CASE_SUFFICIENCY; do
       printf 'GAP_%s: clear\nGAP_%s_REASON: canned\n' "$gap" "$gap"
     done

@@ -55,6 +55,7 @@ Parse the JSON output into the following variables:
 - `{LOGS_SCANNED}`, `{LOGS_SKIPPED}`, `{LOGS_WITH_FAILURES}` — counts. `LOGS_SCANNED` counts only newly-scanned logs (not cursor-skipped). `LOGS_SKIPPED` counts logs that were skipped because their mtime matched the cursor. This cursor dedup applies to the failure histogram only — it does not gate `{COMPLEXITY_CALIBRATION}` (see above).
 - `{LOGS_BY_SOURCE}` — object `{"ticket-auto": {scanned, skipped, with_failures}, "planner": {scanned, skipped, with_failures}}`. `ticket-auto` scans `./logs/*-pipeline.log`; `planner` scans `${REPOS_ROOT}/.ticket-auto/initiatives/*/state.log` ([#177](https://github.com/willard-pro/claude-plugins/issues/177)). Both sources feed the same `{FAILURE_HISTOGRAM}` — this field is purely for reporting where each count came from. `planner` counts are `0` when `REPOS_ROOT` is unset or no initiatives exist; nothing else about ticket-auto scanning changes in that case.
 - `{ERROR_DIAGNOSTICS}` — object with `total_errors`, `errors_by_ticket`, `error_category_histogram` (from heartbeat structured error events)
+- `{FAILURE_CONTEXT}` — `failure_context`, `{CODE: [{ticket, errors, transcripts}]}`: who produced each code (single-occurrence notes name it)
 
 ---
 
@@ -122,13 +123,7 @@ If the template file exists, read it. If not, use the generic fallback: "Investi
 
 ### 3a.5 — Extract heartbeat error context for this failure code
 
-Before reading the implicated skill file, look up `{ERROR_DIAGNOSTICS}.errors_by_ticket[ticket]` for each ticket that contributed to this failure code (field catalogue: `retro.sh` header). Store as `{ERROR_CONTEXT}` for use in steps 3b and 3c.
-
-Also check if an agent transcript file exists on disk for any implicated ticket:
-```bash
-TRANSCRIPT_PATH="./logs/{TICKET-ID}-{phase}-agent.log"  # e.g. logs/ABC-47-exec-agent.log
-```
-Store the path as `{TRANSCRIPT_PATH}` if the file exists (used in Step 4 proposal — reference only, never grep the content).
+`{FAILURE_CONTEXT}[CODE]` lists each ticket (planner: initiative) behind this code, with its heartbeat `errors` (catalogue: `retro.sh` header) and existing `transcripts`. Never guess tickets. Store it as `{ERROR_CONTEXT}` for 3b/3c; cite transcripts in Step 4 by path only, never grep them.
 
 ### 3b — Read the implicated skill file
 

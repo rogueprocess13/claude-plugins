@@ -209,6 +209,7 @@ _scan_block() {
   echo "SCHEMA_VERSION: 1"
   echo "TICKET: ${tid}"
   echo "BODY_HASH: ${h}"
+  echo "PARAPHRASE: The ticket makes one change, described consistently."
   local rest
   for f in "${list[@]}"; do
     i=$((i + 1))

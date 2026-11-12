@@ -227,6 +227,7 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-retro-gate-held.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-complexity-calibration.sh
 	bash ticket-auto-pipeline/lib/tests/test-retro-lib-layout.sh
+	bash ticket-auto-pipeline/lib/tests/test-retro-failure-tickets.sh
 	# ticket-audit tests
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-split-detection.sh
 	bash ticket-auto-pipeline/lib/tests/test-ticket-audit-drift.sh
@@ -342,6 +343,8 @@ test-planner:
 	bash ticket-planner/lib/tests/test-planner-crosscheck-params.sh
 	bash ticket-planner/lib/tests/test-planner-spec-ownership.sh
 	bash ticket-planner/lib/tests/test-planner-crosscheck-ownership.sh
+	bash ticket-planner/lib/tests/test-planner-ac-precondition.sh
+	bash ticket-planner/lib/tests/test-planner-crosscheck-ac-precondition.sh
 	bash ticket-planner/lib/tests/test-planner-uat-policy.sh
 	bash ticket-planner/lib/tests/test-planner-doctor.sh
 	bash ticket-planner/lib/tests/test-planner-body-template-humanizer.sh

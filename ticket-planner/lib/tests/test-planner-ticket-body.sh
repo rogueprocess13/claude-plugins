@@ -370,6 +370,25 @@ awk '
 sub_body=$(planner_ticket_body_compose "${OWNDIR}/c-ui-sub.md" "$ctx" 2>/dev/null)
 grep -qxF '### Writes' <<<"$sub_body" && grep -qxF 'The export writes a CSV file.' <<<"$sub_body" &&
   pass "a ### Writes subheading inside another section is kept" || fail "### Writes kept" "dropped"
+# planner-ac-code-precondition D10: ## Preconditions stays out of bodies.
+awk '
+  /^## Acceptance Criteria$/ && !done {
+    print "## Preconditions\n\n| Criterion | Key | Mode | Requires | Basis |\n|-----------|-----|------|----------|-------|\n| It works | `invoice.due_date` | state | null | code:billing/src |\n"
+    done = 1
+  }
+  { print }
+' "${SPECS}/c-ui.md" >"${OWNDIR}/c-ui-pre.md"
+pre_body=$(planner_ticket_body_compose "${OWNDIR}/c-ui-pre.md" "$ctx" $'CRE-12\tFinance can export invoices' $'WIL-83\t' 2>/dev/null)
+grep -q '^## Preconditions$' "${OWNDIR}/c-ui-pre.md" && [ -n "$pre_body" ] && [ "$pre_body" = "$plain_body" ] &&
+  pass "## Preconditions is dropped from the body (byte-identical to the spec without it)" ||
+  fail "preconditions dropped" "$(diff <(echo "$plain_body") <(echo "$pre_body") | head -5)"
+awk '
+  /^## Acceptance Criteria$/ && !done { print "### Preconditions\n\nThe export needs a signed-in user.\n"; done = 1 }
+  { print }
+' "${SPECS}/c-ui.md" >"${OWNDIR}/c-ui-presub.md"
+presub_body=$(planner_ticket_body_compose "${OWNDIR}/c-ui-presub.md" "$ctx" 2>/dev/null)
+grep -qxF '### Preconditions' <<<"$presub_body" && grep -qxF 'The export needs a signed-in user.' <<<"$presub_body" &&
+  pass "a ### Preconditions subheading inside another section is kept" || fail "### Preconditions kept" "dropped"
 
 none_body=$(planner_ticket_body_compose "${SPECS}/a-schema.md" "$ctx" 2>/dev/null)
 sed -n '/^## Related Tickets$/,/^## Planner Context$/p' <<<"$none_body" | grep -qxF 'None.' &&
