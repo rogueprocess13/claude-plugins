@@ -224,50 +224,37 @@ validate_phase_inspector() {
   local _inspect_json="$2"
   local _phase="${3:-unknown}"
 
-  # If agent output is unparseable, use the deterministic result
-  if [ -z "$_agent_json" ] || ! echo "$_agent_json" | jq -e . >/dev/null 2>&1; then
-    echo "$_inspect_json" | jq -c --arg phase "$_phase" \
-      '. + {phase: $phase, verifiers_consulted: [], bash_validated: true, agent_overridden: "unparseable"}' 2>/dev/null ||
-      printf '{"phase":"%s","verdict":"WARN","signals":0,"detail":"Agent output unparseable","verifiers_consulted":[],"patterns":[],"bash_validated":true}\n' "$_phase"
+  # Deterministic side must be a JSON object; otherwise emit a WARN skeleton.
+  if ! jq -e 'type == "object"' <<<"$_inspect_json" >/dev/null 2>&1; then
+    jq -cn --arg phase "$_phase" \
+      '{phase: $phase, verdict: "WARN", signals: 0, detail: "Deterministic verdict unavailable",
+        verifiers_consulted: [], patterns: [], bash_validated: true}'
     return 0
   fi
 
-  # Extract agent's claimed verdict and patterns
-  local _agent_verdict _agent_signals
-  _agent_verdict=$(echo "$_agent_json" | jq -r '.verdict // "WARN"' 2>/dev/null || echo "WARN")
-  _agent_signals=$(echo "$_agent_json" | jq -r '.signals // 0' 2>/dev/null || echo "0")
-
-  # Extract deterministic verdict and signals
-  local _det_verdict _det_signals
-  _det_verdict=$(echo "$_inspect_json" | jq -r '.verdict // "WARN"' 2>/dev/null || echo "WARN")
-  _det_signals=$(echo "$_inspect_json" | jq -r '.signals // 0' 2>/dev/null || echo "0")
-
-  # If agent and deterministic agree on verdict, trust agent's detail/patterns
-  if [ "$_agent_verdict" = "$_det_verdict" ] && [ "$_agent_signals" = "$_det_signals" ]; then
-    echo "$_agent_json" | jq -c --arg phase "$_phase" \
-      '. + {phase: $phase, bash_validated: true}' 2>/dev/null || echo "$_inspect_json"
+  # If agent output is unparseable (or not an object), use the deterministic result
+  if [ -z "$_agent_json" ] || ! jq -e 'type == "object"' <<<"$_agent_json" >/dev/null 2>&1; then
+    jq -c --arg phase "$_phase" \
+      '. + {phase: $phase, verifiers_consulted: [], bash_validated: true, agent_overridden: "unparseable"}' \
+      <<<"$_inspect_json"
     return 0
   fi
 
-  # Mismatch: use deterministic result, preserve agent's detail if compatible
-  local _agent_detail
-  _agent_detail=$(echo "$_agent_json" | jq -r '.detail // ""' 2>/dev/null || echo "")
-  local _agent_consulted
-  _agent_consulted=$(echo "$_agent_json" | jq -r '.verifiers_consulted // []' 2>/dev/null || echo "[]")
-
-  echo "$_inspect_json" | jq -c \
-    --arg phase "$_phase" \
-    --arg agent_verdict "$_agent_verdict" \
-    --argjson agent_signals "$_agent_signals" \
-    --arg agent_detail "$_agent_detail" \
-    --argjson agent_consulted "$_agent_consulted" \
-    '. + {
-      phase: $phase,
-      verifiers_consulted: $agent_consulted,
-      bash_validated: true,
-      agent_overridden: true,
-      agent_claim: {verdict: $agent_verdict, signals: $agent_signals, detail: $agent_detail}
-    }' 2>/dev/null || echo "$_inspect_json"
-
+  # Both sides parsed: compare and build in one jq program over --argjson
+  # values (typed comparison; no raw agent strings re-enter the JSON).
+  # Agreement on verdict and signals keeps the agent's detail/patterns;
+  # anything else re-asserts the deterministic result.
+  jq -cn --argjson a "$_agent_json" --argjson d "$_inspect_json" --arg phase "$_phase" '
+    if $a.verdict == $d.verdict and $a.signals == $d.signals then
+      $a + {phase: $phase, bash_validated: true}
+    else
+      $d + {
+        phase: $phase,
+        verifiers_consulted: (if ($a.verifiers_consulted | type) == "array" then $a.verifiers_consulted else [] end),
+        bash_validated: true,
+        agent_overridden: true,
+        agent_claim: {verdict: ($a.verdict // null), signals: ($a.signals // null), detail: ($a.detail // null)}
+      }
+    end'
   return 0
 }

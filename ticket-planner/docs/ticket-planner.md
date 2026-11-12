@@ -1011,9 +1011,18 @@ normalised quote) and is labelled `new`, `carried` or `drift`:
 - Each round writes one `META|refinement-round|done` trend line per ticket and
   body hash (`round=`, `new=`, `carried=`, `drift=`, `resolved=`,
   `unverified=`, `reset=`).
-- The evaluator is now `dor-semantic-v3`. An unchanged v2 verdict is migrated
-  in place at the start of the scan, so only tickets edited since are
+- The evaluator is now `dor-semantic-v4` (dor-semantic-paraphrase). An
+  unchanged v2 verdict is migrated in place at the start of the scan, and an
+  unchanged v3 verdict is kept as current
+  (`dor_semantic_evaluator_compatible`), so only tickets edited since are
   rescanned.
+- Each scan writes a `PARAPHRASE` — the one change the ticket makes, in the
+  evaluator's words — stored as `ready.semantic.paraphrase`. The halt report
+  prints it as `Paraphrase:` above a ticket's findings. A part of the ticket
+  that describes a different change is `INCOHERENT_CHANGE`, advisory-only:
+  it never blocks, and the advisory summary (and the halt report's
+  `## Advisory incoherent-change findings` section) lists it with the
+  ticket's paraphrase.
 
 Demoted and other advisory findings are not lost: ticket-auto appraisal
 writes them into the ticket's notes as a `## Refinement Carry-over` section

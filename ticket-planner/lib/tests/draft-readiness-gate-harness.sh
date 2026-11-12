@@ -198,6 +198,7 @@ _spawn_list() {
         echo "SCHEMA_VERSION: 1"
         echo "TICKET: ${tid}"
         echo "BODY_HASH: ${h}"
+        echo "PARAPHRASE: The ticket makes one change, described consistently."
         if [ -n "${!var:-}" ]; then
           code="${!var%%|*}"
           quote="${!var#*|}"
