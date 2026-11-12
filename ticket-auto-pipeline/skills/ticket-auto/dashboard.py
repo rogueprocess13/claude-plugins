@@ -22,6 +22,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -682,6 +683,45 @@ def run_fleet(log_dir: str) -> None:
             time.sleep(0.25)
 
 
+def _log_dir_sh() -> Optional[str]:
+    """lib/log-dir.sh beside this checkout or the synced skills lib."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = []
+    if os.environ.get("CLAUDE_SKILLS_LIB"):
+        candidates.append(os.path.join(os.environ["CLAUDE_SKILLS_LIB"], "log-dir.sh"))
+    candidates += [
+        os.path.join(here, "..", "..", "lib", "log-dir.sh"),  # plugin checkout
+        os.path.join(here, "..", "lib", "log-dir.sh"),  # ~/.claude/skills
+    ]
+    for cand in candidates:
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def default_fleet_log_dir() -> str:
+    """--fleet's default: the anchored per-ticket state dir, else the old default.
+
+    Resolved by the one bash resolver, lib/log-dir.sh (state-root-anchor):
+    an absolute FLEET_PIPELINE_LOG_DIR, else $REPOS_ROOT/.ticket-auto/log-dir.
+    Unresolved keeps today's $FLEET_PIPELINE_LOG_DIR, else ./logs.
+    """
+    legacy = os.environ.get("FLEET_PIPELINE_LOG_DIR") or "./logs"
+    script = _log_dir_sh()
+    if script is None:
+        return legacy
+    try:
+        proc = subprocess.run(
+            ["bash", script, "resolve"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return legacy
+    value = proc.stdout.strip()
+    if proc.returncode == 0 and value.startswith("/"):
+        return value
+    return legacy
+
+
 def main():
     parser = argparse.ArgumentParser(description="ticket-auto pipeline dashboard")
     parser.add_argument("log_file", nargs="?", help="Path to pipeline log file")
@@ -692,7 +732,8 @@ def main():
         const="",
         metavar="LOG_DIR",
         help="Fleet mode: one row per active pipeline in LOG_DIR "
-        "(default: $FLEET_PIPELINE_LOG_DIR, else ./logs)",
+        "(default: the anchored log dir from lib/log-dir.sh, else "
+        "$FLEET_PIPELINE_LOG_DIR, else ./logs)",
     )
     args = parser.parse_args()
 
@@ -700,7 +741,7 @@ def main():
         parser.error(f"the dashboard needs the 'rich' package to render: {_RICH_ERROR}")
 
     if args.fleet is not None:
-        log_dir = args.fleet or os.environ.get("FLEET_PIPELINE_LOG_DIR") or "./logs"
+        log_dir = args.fleet or default_fleet_log_dir()
         if not os.path.isdir(log_dir):
             parser.error(f"fleet log directory not found: {log_dir}")
         run_fleet(log_dir)

@@ -328,3 +328,38 @@ class TestFormatting:
         assert dashboard._age_style(300, 240, 900) == "yellow"
         assert dashboard._age_style(1000, 240, 900) == "bold red"
         assert dashboard._age_style(None, 240, 900) == "dim"
+
+
+# ── state-root-anchor: --fleet with no LOG_DIR reads the anchored dir ─────────
+
+
+def _anchor(tmp_path, target):
+    root = tmp_path / "root"
+    (root / ".ticket-auto").mkdir(parents=True)
+    (root / ".ticket-auto" / "log-dir").write_text(f"{target}\n")
+    return root
+
+
+def test_default_fleet_log_dir_reads_the_anchor(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    root = _anchor(tmp_path, state)
+    monkeypatch.setenv("REPOS_ROOT", str(root))
+    monkeypatch.delenv("FLEET_PIPELINE_LOG_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert dashboard.default_fleet_log_dir() == str(state)
+
+
+def test_default_fleet_log_dir_absolute_env_wins(tmp_path, monkeypatch):
+    root = _anchor(tmp_path, tmp_path / "state")
+    monkeypatch.setenv("REPOS_ROOT", str(root))
+    monkeypatch.setenv("FLEET_PIPELINE_LOG_DIR", str(tmp_path / "env"))
+    assert dashboard.default_fleet_log_dir() == str(tmp_path / "env")
+
+
+def test_default_fleet_log_dir_unanchored_keeps_old_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("REPOS_ROOT", str(tmp_path / "no-anchor"))
+    monkeypatch.setenv("FLEET_PIPELINE_LOG_DIR", "rel-logs")
+    assert dashboard.default_fleet_log_dir() == "rel-logs"
+    monkeypatch.delenv("FLEET_PIPELINE_LOG_DIR")
+    assert dashboard.default_fleet_log_dir() == "./logs"
