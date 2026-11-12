@@ -2182,21 +2182,17 @@ FLEET_MERGE_POLL_CYCLES = _env_int('FLEET_MERGE_POLL_CYCLES', 10)
 
 # Tracker event-board pusher (tracker-event-board-pusher Phase B2;
 # real mappings landed in tracker-flow-projection-cutover, Change 2 of the
-# tracker-decoupling authority-flip programme). Still disabled by default
-# HERE, deliberately — this is the one env default this change does NOT
-# flip, per its own migration plan (design.md, tracker-board-pusher spec
-# "Cursors are fast-forwarded before an existing installation begins
-# projecting"): every existing host's outbox cursors sit at 0 (the pusher
-# has been opt-in since B2), so flipping this default without first running
-# `skills/ticket-flow/board-cursor-fastforward.sh` on that host would
-# replay each ticket's entire transition history and flap its board column
-# through every past state before settling — visible to everyone watching
-# the board, and undoable by nothing. The three-step order (land code ->
-# fast-forward cursors -> flip this default and restart fleetd) is a
-# per-host operator action, not part of this code landing — see
-# CHANGELOG.md and README.md. FLEET_BOARD_PUSHER_INTERVAL defaults to the
-# same value as the hold-reconciliation cadence — both are periodic passes
-# over ticket state with no sub-minute-latency requirement.
+# tracker-decoupling authority-flip programme). Off by default. Since
+# board-cursor-first-drain this flag no longer guards correctness: a board
+# with no cursor starts at the outbox's origin sidecar (or its tail, for a
+# legacy outbox), so no drain replays pre-projection history and no
+# fast-forward is required first. The flag only decides whether fleetd runs
+# a periodic pass, which catches tickets whose own exit-time drain failed.
+# The default flips in a follow-up once the live check passes on the tickets
+# host (board-cursor-first-drain design.md, Open Question 1).
+# FLEET_BOARD_PUSHER_INTERVAL defaults to the same value as the
+# hold-reconciliation cadence — both are periodic passes over ticket state
+# with no sub-minute-latency requirement.
 FLEET_BOARD_PUSHER_ENABLE = os.environ.get(
     'FLEET_BOARD_PUSHER_ENABLE', 'false') == 'true'
 FLEET_BOARD_PUSHER_INTERVAL = _env_int('FLEET_BOARD_PUSHER_INTERVAL', 300)

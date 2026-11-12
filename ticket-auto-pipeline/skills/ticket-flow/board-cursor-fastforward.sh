@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# board-cursor-fastforward.sh — one-shot migration step
-# (tracker-flow-projection-cutover task 10.1): before the board pusher's
-# default flips on, every existing (ticket, board) cursor must be advanced
-# to that ticket's outbox tail. Without this, enabling projection replays
-# each ticket's entire transition history and flaps its board column
-# through every past state before settling — visible to everyone watching
-# the board, and undoable by nothing (tracker-board-pusher spec).
+# board-cursor-fastforward.sh — optional cursor fast-forward
+# (tracker-flow-projection-cutover task 10.1). Sets every existing
+# (ticket, board) cursor to that ticket's outbox tail.
+#
+# No longer a required migration step (board-cursor-first-drain): a board
+# with no cursor now starts at the outbox's origin sidecar, or at the tail
+# for a legacy outbox, so neither drain replays pre-projection history.
+# Still useful to make cursors explicit, to see with --dry-run what was at
+# risk on a host, and to repair a host whose origin sidecars were lost.
 #
 # Usage: board-cursor-fastforward.sh [--dry-run]
 #

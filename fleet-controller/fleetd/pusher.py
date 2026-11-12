@@ -33,6 +33,7 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -166,6 +167,12 @@ def _read_outbox_entries(log_dir, tid, after_seq):
 
 
 def _cursor_get(env, lib_dir, tid, board_id):
+    """The authoritative cursor read, or None when it cannot be read.
+
+    Never 0 on error (board-cursor-first-drain): 0 means "replay the whole
+    outbox", the one answer that is never safe to guess. A None makes
+    `drain_ticket` skip this (ticket, board) for the pass.
+    """
     script = _board_cursor_script(lib_dir)
     try:
         proc = subprocess.run(
@@ -173,11 +180,14 @@ def _cursor_get(env, lib_dir, tid, board_id):
             capture_output=True, text=True, timeout=30, env=env,
         )
     except (subprocess.TimeoutExpired, OSError):
-        return 0
+        return None
+    if proc.returncode != 0:
+        return None
     try:
-        return int(proc.stdout.strip())
+        seq = int(proc.stdout.strip())
     except (TypeError, ValueError):
-        return 0
+        return None
+    return seq if seq >= 0 else None
 
 
 def _cursor_advance(env, lib_dir, tid, board_id, new_seq):
@@ -364,6 +374,12 @@ def drain_ticket(tid, log_dir=None, lib_dir=None, driver_dir_override=None,
         try:
             with _CursorLock(log_dir, tid, board_id):
                 cursor = _cursor_get(env, lib_dir, tid, board_id)
+                if cursor is None:
+                    print(f'fleetd: board pusher: cursor read failed for '
+                          f'{tid}/{board_id}; skipped this pass',
+                          file=sys.stderr)
+                    overall_ok = False
+                    continue
                 entries = _read_outbox_entries(log_dir, tid, cursor)
                 for rec in entries:
                     seq = rec['seq']

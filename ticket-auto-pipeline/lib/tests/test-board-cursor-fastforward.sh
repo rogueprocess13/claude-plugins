@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # test-board-cursor-fastforward.sh — proves the migration ordering itself
 # (tracker-flow-projection-cutover task 10.2a): a fixture ticket with a
-# multi-entry outbox and a cursor at 0, plus a counting stub driver.
+# legacy multi-entry outbox and no cursor, plus a counting stub driver.
+# Since board-cursor-first-drain the fast-forward is optional: case (a)
+# proves a drain without it replays nothing.
 #
 # The evidence is the driver's INVOCATION COUNT, not the final cursor
 # value or column — a replay that ends on the correct cursor position
@@ -49,7 +51,7 @@ _setup() {
   cat >"$_driver_dir/counting.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 # Counting stub driver — appends one line per dispatch, never fails.
-echo "$1 $2 $3" >>"${COUNTING_DRIVER_LOG}"
+echo "$1 $2 $3 $4" >>"${COUNTING_DRIVER_LOG}"
 exit 0
 SCRIPT
   chmod +x "$_driver_dir/counting.sh"
@@ -61,11 +63,23 @@ _teardown() {
 }
 
 _seed_outbox() {
-  # A 3-entry outbox for T-1, cursor at 0 (never drained — the pre-B2-opt-in
-  # shape every existing host's tickets are in).
-  emit_event T-1 gate-held '{"reason":"a"}' >/dev/null
-  emit_event T-1 gate-released '{"provenance":"human"}' >/dev/null
-  emit_event T-1 human-hold-requested '{"question":"x"}' >/dev/null
+  # A legacy 3-entry outbox for T-1, no cursor: written before projection
+  # existed (< 0.55.0), so it has no origin sidecar. Written directly, not
+  # through emit_event, which would write a `new` sidecar.
+  _seed_legacy_n T-1 3
+}
+
+_seed_legacy_n() {
+  local tid="$1" n="$2" i
+  for i in $(seq 1 "$n"); do
+    printf '{"seq":%d,"tid":"%s","ts":"2026-01-01T00:00:00Z","gen":0,"event":"gate-held","data":{"reason":"a"},"from_hint":null,"idem":null}\n' \
+      "$i" "$tid" >>"$_ws/${tid}-outbox.jsonl"
+  done
+}
+
+_drain_tid() {
+  OUTBOX_DRAIN_DRIVER_DIR_OVERRIDE="$_driver_dir" \
+    bash "$LIB_DIR/../skills/ticket-flow/outbox-drain.sh" "$1" >/dev/null 2>&1 || true
 }
 
 _drain() {
@@ -75,16 +89,50 @@ _drain() {
     bash "$LIB_DIR/../skills/ticket-flow/outbox-drain.sh" T-1 >/dev/null 2>&1 || true
 }
 
-# (a) drain with the pusher enabled and no fast-forward → the stub records
-# one invocation per historical entry.
-test_no_fastforward_replays_every_historical_entry() {
+# (a) drain with no fast-forward → the stub records zero. Before
+# board-cursor-first-drain a missing cursor read as 0 and this replayed every
+# historical entry; a legacy outbox with no origin sidecar now starts at its
+# tail, so fast-forward is optional.
+test_no_fastforward_replays_nothing() {
   _setup
   _seed_outbox
   _drain
   local count
   count=$(wc -l <"$COUNTING_DRIVER_LOG" 2>/dev/null || echo 0)
   _teardown
-  [ "$count" -eq 3 ]
+  [ "$count" -eq 0 ]
+}
+
+# A new ticket (emit_event writes a `new` sidecar): two emit+drain rounds, the
+# way flow.sh emits then drains at exit, dispatch both events.
+test_new_ticket_projects_every_event() {
+  _setup
+  export COUNTING_DRIVER_LOG="$_ws/counting-calls.log"
+  : >"$COUNTING_DRIVER_LOG"
+  emit_event T-N gate-held '{"reason":"a"}' >/dev/null
+  _drain_tid T-N
+  emit_event T-N gate-released '{"provenance":"human"}' >/dev/null
+  _drain_tid T-N
+  local seqs
+  seqs=$(awk '{print $4}' "$COUNTING_DRIVER_LOG" | tr '\n' ,)
+  _teardown
+  [ "$seqs" = "1,2," ]
+}
+
+# A legacy ticket with 6 records gets one new event: exactly that one is
+# dispatched, none of the history.
+test_legacy_ticket_projects_only_new_event() {
+  _setup
+  export COUNTING_DRIVER_LOG="$_ws/counting-calls.log"
+  : >"$COUNTING_DRIVER_LOG"
+  _seed_legacy_n T-L 6
+  emit_event T-L gate-released '{"provenance":"human"}' >/dev/null
+  _drain_tid T-L
+  local seqs sidecar
+  seqs=$(awk '{print $4}' "$COUNTING_DRIVER_LOG" | tr '\n' ,)
+  sidecar=$(jq -c '[.origin_seq, .kind]' "$_ws/.T-L-outbox-origin.json")
+  _teardown
+  [ "$seqs" = "7," ] && [ "$sidecar" = '[6,"legacy"]' ]
 }
 
 # (b) fast-forward, then drain → the stub records zero.
@@ -135,7 +183,9 @@ test_already_drained_ticket_is_skipped() {
   grep -q '^SKIPPED T-1 counting already at 3$' <<<"$out"
 }
 
-_run "(a) no fast-forward replays every historical entry" test_no_fastforward_replays_every_historical_entry
+_run "(a) no fast-forward: a legacy outbox replays nothing" test_no_fastforward_replays_nothing
+_run "new ticket: two emit+drain rounds dispatch both events" test_new_ticket_projects_every_event
+_run "legacy ticket: one new event, exactly one dispatch" test_legacy_ticket_projects_only_new_event
 _run "(b) fast-forward then drain records zero dispatches" test_fastforward_then_drain_records_zero
 _run "(c) fast-forward twice: second run advances nothing" test_fastforward_twice_second_run_advances_nothing
 _run "(d) --dry-run writes no cursor file" test_dry_run_writes_no_cursor_file

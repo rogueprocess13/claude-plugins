@@ -286,6 +286,93 @@ _run "idem: distinct keys append two consecutive seqs" test_idem_distinct_keys_a
 _run "idem: suppressed append does not advance seq" test_idem_suppressed_append_does_not_advance_seq
 _run "idem: concurrent same-key emission appends exactly once" test_idem_concurrent_same_key_appends_exactly_once
 
+# ── origin sidecar (board-cursor-first-drain, review ARCH-9) ───────────────
+_origin() { echo "$_ws/.${1}-outbox-origin.json"; }
+
+# A legacy outbox: records written before projection existed, no sidecar.
+_seed_legacy() {
+  local tid="$1" n="$2" i
+  for i in $(seq 1 "$n"); do
+    printf '{"seq":%d,"tid":"%s","ts":"2026-01-01T00:00:00Z","gen":0,"event":"gate-held","data":{},"from_hint":null,"idem":null}\n' \
+      "$i" "$tid" >>"$(_outbox "$tid")"
+  done
+}
+
+test_origin_new_outbox_is_new_zero() {
+  _setup
+  emit_event T-O1 gate-held '{}' >/dev/null
+  local got
+  got=$(jq -c '[.origin_seq, .kind, .tid]' "$(_origin T-O1)" 2>/dev/null)
+  _teardown
+  [ "$got" = '[0,"new","T-O1"]' ]
+}
+
+test_origin_legacy_outbox_is_tail() {
+  _setup
+  _seed_legacy T-O2 5
+  printf '{"seq":6,"tid":"T-O2","ev' >>"$(_outbox T-O2)" # torn last line
+  emit_event T-O2 gate-held '{}' >/dev/null
+  local got
+  got=$(jq -c '[.origin_seq, .kind]' "$(_origin T-O2)" 2>/dev/null)
+  _teardown
+  [ "$got" = '[5,"legacy"]' ]
+}
+
+test_origin_not_rewritten_by_later_emit() {
+  _setup
+  emit_event T-O3 gate-held '{}' >/dev/null
+  local before after
+  before=$(cat "$(_origin T-O3)")
+  sleep 1
+  emit_event T-O3 gate-released '{"provenance":"human"}' >/dev/null
+  after=$(cat "$(_origin T-O3)")
+  _teardown
+  [ -n "$before" ] && [ "$before" = "$after" ]
+}
+
+test_origin_not_written_by_idem_dropped_emit() {
+  _setup
+  _seed_legacy T-O4 2
+  # Record 2 carries idem k; re-emitting k is dropped, so no sidecar.
+  jq -c 'if .seq == 2 then .idem = "k" else . end' "$(_outbox T-O4)" >"$_ws/t" &&
+    mv "$_ws/t" "$(_outbox T-O4)"
+  emit_event --idem k T-O4 gate-held '{}' >/dev/null
+  local rc=0
+  [ ! -e "$(_origin T-O4)" ] || rc=1
+  _teardown
+  return $rc
+}
+
+test_origin_reset_when_outbox_missing() {
+  _setup
+  printf '{"tid":"T-O5","origin_seq":7,"created_at":"x","kind":"legacy"}' >"$(_origin T-O5)"
+  emit_event T-O5 gate-held '{}' >/dev/null
+  local got
+  got=$(jq -c '[.origin_seq, .kind]' "$(_origin T-O5)" 2>/dev/null)
+  _teardown
+  [ "$got" = '[0,"new"]' ]
+}
+
+test_origin_write_failure_does_not_block_append() {
+  _setup
+  # A directory squatting on the sidecar path makes the mv fail.
+  mkdir -p "$(_origin T-O6)/x"
+  local rc=0
+  emit_event T-O6 gate-held '{}' >/dev/null 2>"$_ws/err" || rc=1
+  local n
+  n=$(wc -l <"$(_outbox T-O6)" 2>/dev/null || echo 0)
+  grep -q "origin sidecar" "$_ws/err" || rc=1
+  _teardown
+  [ "$rc" -eq 0 ] && [ "$n" -eq 1 ]
+}
+
+_run "origin: a new outbox gets new/0" test_origin_new_outbox_is_new_zero
+_run "origin: a legacy outbox gets legacy/max seq, torn line ignored" test_origin_legacy_outbox_is_tail
+_run "origin: a later emit does not rewrite it" test_origin_not_rewritten_by_later_emit
+_run "origin: an idem-dropped emit writes none" test_origin_not_written_by_idem_dropped_emit
+_run "origin: reset to new/0 when the outbox is gone" test_origin_reset_when_outbox_missing
+_run "origin: a write failure still appends, warns on stderr" test_origin_write_failure_does_not_block_append
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

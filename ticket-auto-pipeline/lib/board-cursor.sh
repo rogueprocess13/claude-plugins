@@ -97,9 +97,44 @@ board_cursor_unlock() {
   return 0
 }
 
+# _board_cursor_start <tid>
+#
+# Start point for a board with no cursor file yet (board-cursor-first-drain,
+# review ARCH-9). "Never drained" and "brand new" look the same from the
+# cursor, so the outbox's origin sidecar (written by events.sh's emit_event
+# before a new outbox's first record) decides:
+#   sidecar present -> its origin_seq (0 for a new outbox, so seq 1 projects)
+#   no sidecar      -> the outbox tail: a legacy outbox no emit has touched
+#                      since the upgrade; every record in it was already
+#                      applied by the old direct Linear path.
+# Read order is load-bearing: tail first, sidecar second. emit_event writes
+# the sidecar before it appends, so if the tail read saw a new record, the
+# sidecar read sees the sidecar, and the result is below that record.
+_board_cursor_start() {
+  local tid="$1" dir outbox origin tail=0 seq
+  dir=$(_board_cursor_dir)
+  outbox="${dir}/${tid}-outbox.jsonl"
+  origin="${dir}/.${tid}-outbox-origin.json"
+  if [ -f "$outbox" ]; then
+    tail=$(jq -Rn '[inputs | fromjson? | objects | .seq | numbers] | max // 0' \
+      "$outbox" 2>/dev/null) || tail=0
+    [[ "$tail" =~ ^[0-9]+$ ]] || tail=0
+  fi
+  if [ -f "$origin" ]; then
+    seq=$(jq -r '.origin_seq' "$origin" 2>/dev/null) || seq=""
+    if [[ "$seq" =~ ^[0-9]+$ ]]; then
+      echo "$seq"
+      return 0
+    fi
+  fi
+  echo "$tail"
+}
+
 # board_cursor_get <tid> <board_id>
 #
-# Echoes the persisted seq (0 if the cursor has never been written). Does
+# Echoes the persisted seq. With no cursor file, echoes _board_cursor_start
+# (the origin sidecar, else the outbox tail) and writes nothing; the first
+# board_cursor_advance or board_cursor_note_failure persists it. Does
 # NOT lock — a caller needing a consistent read-modify-write sequence must
 # hold board_cursor_lock across this call and the matching
 # board_cursor_advance (and, per design.md, across the driver invocation in
@@ -113,7 +148,7 @@ board_cursor_get() {
   local file
   file=$(_board_cursor_file "$tid" "$board_id")
   [ -f "$file" ] || {
-    echo 0
+    _board_cursor_start "$tid"
     return 0
   }
   local seq

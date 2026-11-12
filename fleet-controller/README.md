@@ -316,35 +316,36 @@ Both are sourced from `~/.claude/skills/lib/` (synced by the ticket-auto-pipelin
 As of `ticket-auto-pipeline` 0.55.0 / `fleet-controller` 0.36.0, `flow.sh` no longer touches
 Linear at all — the board's column and four human-signal labels (`needs-info`, `needs-adr`,
 `rejected`, `reviewed`) are written asynchronously by `lib/board-drivers/linear.sh`, draining each
-ticket's event outbox. `FLEET_BOARD_PUSHER_ENABLE` still defaults `false` in this release,
-deliberately: every host that has been running `fleetd` has outbox cursors sitting at 0 for every
-ticket (the pusher has been opt-in since Phase B2, and every board mapping was a no-op until this
-release), so flipping the default without first fast-forwarding them would replay each ticket's
-entire transition history and flap its board column through every past state before settling on
-the correct one — visible to everyone watching the board, and undoable by nothing.
+ticket's event outbox. Two callers drain: `flow.sh`'s own exit-time drain
+(`skills/ticket-flow/outbox-drain.sh`, always on) and `fleetd`'s periodic pusher pass (only when
+`FLEET_BOARD_PUSHER_ENABLE=true`).
 
-Enable projection on a host in this order, not any other:
+Every outbox record written before 0.55.0 was already applied to Linear by the old direct path, so
+replaying it would flap the ticket's column through every past state. Since board-cursor-first-drain
+(`ticket-auto-pipeline` 0.116.0 / `fleet-controller` 0.50.0) no drain replays that history, and **no
+operator step is needed**:
 
-1. **Deploy the new code with the pusher still off.** Nothing about this step changes observable
-   behaviour — `flow.sh` still emits and drains its own ticket's outbox at every invocation
-   (`skills/ticket-flow/outbox-drain.sh`, unconditional), so a person's own commands already
-   project immediately; only `fleetd`'s periodic pusher pass stays gated off.
-2. **Fast-forward every existing cursor.** Run, from the tickets repo root:
-   ```
-   FLEET_PIPELINE_LOG_DIR=<your pipeline log dir> \
-     bash ticket-auto-pipeline/skills/ticket-flow/board-cursor-fastforward.sh --dry-run
-   ```
-   Confirm the reported `advanced=` count against your expectation (non-zero on a host that has
-   real ticket history is the expected, confirming result — a zero count means either a fresh
-   host or that the fast-forward already ran). Then re-run without `--dry-run` to actually advance
-   the cursors. The script is idempotent — safe to run again, and a second run advances nothing.
-3. **Enable the pusher and restart `fleetd`.**
-   ```
-   export FLEET_BOARD_PUSHER_ENABLE=true
-   # restart fleetd
-   ```
-   Verify on one real ticket that a transition moves the board column within one router exit
-   (or within `FLEET_BOARD_PUSHER_INTERVAL`, default 300s, if only `fleetd` is draining it).
+- `emit_event` writes an **origin sidecar** (`.{TID}-outbox-origin.json`) the first time it touches
+  an outbox: `origin_seq: 0` (`kind: new`) for a new outbox, or the outbox's current max seq
+  (`kind: legacy`) for one that already had records.
+- A board with no cursor yet starts at the sidecar's `origin_seq`. With no sidecar (a legacy outbox
+  no emit has touched since the upgrade) it starts at the outbox tail, so nothing is replayed.
+
+To enable the periodic pusher, set `FLEET_BOARD_PUSHER_ENABLE=true` and restart `fleetd`. Verify on
+one real ticket that a transition moves the board column within one router exit (or within
+`FLEET_BOARD_PUSHER_INTERVAL`, default 300s, if only `fleetd` is draining it). The default stays
+`false` until that check has passed on the tickets host.
+
+`board-cursor-fastforward.sh` is now optional. It makes every cursor explicit, and it is the repair
+tool if a sidecar is ever lost. To see what was at risk on a host:
+
+```
+FLEET_PIPELINE_LOG_DIR=<your pipeline log dir> \
+  bash ticket-auto-pipeline/skills/ticket-flow/board-cursor-fastforward.sh --dry-run
+```
+
+**Do not roll back below 0.116.0 on a host that has not been fast-forwarded.** Older code ignores
+the sidecar and reads a missing cursor as 0, so its drains replay full history.
 
 **Rollback caveat.** Every earlier change in the tracker-decoupling programme was a clean
 `git revert` — no label was ever removed from an existing issue, only stopped being written to new
