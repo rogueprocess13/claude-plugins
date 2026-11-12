@@ -643,6 +643,12 @@ SPECIFY_PRE_ACPRE_SHA="93bbc0bb60710543ba7928ade772f06a57e6f82574e997f41d9bfd4a5
 CONSENSUS_PRE_ACPRE_SHA="5273988daab593aa79d78e700c9ac45ca52467ccd1f25fc908be24f9b9abf570"
 ACPRE_SPECIFY_BULLET='8. **## Preconditions** — the stored starting state each acceptance criterion needs (rules below)'
 ACPRE_SPECIFY_HEADINGS=', `## Preconditions`'
+# The Consensus prompt as it was before planner-goldfish-review (main after
+# planner-ac-code-precondition PR 2, f3b6adb; re-captured on PR B's base and
+# equal to PR A's provisional capture), and that change's one inserted block,
+# `$(planner_goldfish_consensus_rule)` after the Readiness bullet. Every
+# Consensus strip below also strips it, so the earlier pins keep their values.
+CONSENSUS_PRE_GOLDFISH_SHA="432de2ef9564bbcba7381cb8ad88b57066b2ee0a9255953f6d2885ac7564f6d0"
 OWN_TICKETGEN_LINE='  Then the ownership edges in `artifacts/ownership-edges.json`: a spec blocked by the sibling that writes what it reads, or by the `fire` owner of an effect it triggers.'
 
 # _strip_once <prompt> <text> — the prompt with the one occurrence of <text>
@@ -691,6 +697,7 @@ acpre_specify_blocks() {
 }
 
 [ -f "${LIB_DIR}/planner-ac-precondition.sh" ] && source "${LIB_DIR}/planner-ac-precondition.sh"
+[ -f "${LIB_DIR}/planner-goldfish.sh" ] && source "${LIB_DIR}/planner-goldfish.sh"
 
 name="Specify prompt is the pre-change prompt plus the rules blocks and bullets"
 if need "$name" planner_params_prompt_rules planner_ownership_prompt_rules planner_acpre_prompt_rules && [ -f "${LIB_DIR}/planner-phase-prompts.sh" ]; then
@@ -737,10 +744,11 @@ if need "$name" planner_params_prompt_rules planner_ownership_prompt_rules plann
 fi
 
 name="Consensus prompt is the pre-change prompt plus the rule blocks"
-if need "$name" planner_params_consensus_rule planner_ownership_consensus_rule planner_acpre_consensus_rule planner_prompt_consensus; then
+if need "$name" planner_params_consensus_rule planner_ownership_consensus_rule planner_acpre_consensus_rule planner_goldfish_consensus_rule planner_prompt_consensus; then
   cp=$(planner_prompt_consensus "INIT-TEST" "an idea" "/repos/.ticket-auto/initiatives/INIT-TEST")
   cp="${cp//$REPOS_ROOT/<REPOS_ROOT>}"
-  ct=$(_strip_inserted_blocks "$cp" "$(planner_params_consensus_rule)" "$(planner_acpre_consensus_rule)" "$(planner_ownership_consensus_rule)")
+  GOLDFISH_BLOCKS=("$(planner_goldfish_consensus_rule)")
+  ct=$(_strip_inserted_blocks "$cp" "${GOLDFISH_BLOCKS[@]}" "$(planner_params_consensus_rule)" "$(planner_acpre_consensus_rule)" "$(planner_ownership_consensus_rule)")
   got=$(_sha "$ct")
   if [ -n "$ct" ] && [ "$got" = "$CONSENSUS_PRE_SHA" ]; then pass "$name"; else
     fail "$name" "block not found once, or sha ${got}"
@@ -750,14 +758,14 @@ if need "$name" planner_params_consensus_rule planner_ownership_consensus_rule p
   else fail "Consensus rule follows the Business Outcomes carry-over sentence" "not adjacent"; fi
 
   name="Consensus prompt without the precondition rule is the pre-precondition prompt (no residue)"
-  ct=$(_strip_inserted_blocks "$cp" "$(planner_acpre_consensus_rule)")
+  ct=$(_strip_inserted_blocks "$cp" "${GOLDFISH_BLOCKS[@]}" "$(planner_acpre_consensus_rule)")
   got=$(_sha "$ct")
   if [ -n "$ct" ] && [ "$got" = "$CONSENSUS_PRE_ACPRE_SHA" ]; then pass "$name"; else
     fail "$name" "block not found once, or sha ${got}"
   fi
 
   name="Consensus prompt without the ownership and precondition rules is the pre-ownership prompt (no residue)"
-  ct=$(_strip_inserted_blocks "$cp" "$(planner_acpre_consensus_rule)" "$(planner_ownership_consensus_rule)")
+  ct=$(_strip_inserted_blocks "$cp" "${GOLDFISH_BLOCKS[@]}" "$(planner_acpre_consensus_rule)" "$(planner_ownership_consensus_rule)")
   got=$(_sha "$ct")
   if [ -n "$ct" ] && [ "$got" = "$OWN_CONSENSUS_PRE_SHA" ]; then pass "$name"; else
     fail "$name" "block not found once, or sha ${got}"
@@ -765,6 +773,16 @@ if need "$name" planner_params_consensus_rule planner_ownership_consensus_rule p
   if [[ "$cp" == *"$(planner_params_consensus_rule)"$'\n'"$(planner_ownership_consensus_rule)"$'\n'"$(planner_acpre_consensus_rule)"$'\n4. Write a consensus digest'* ]]; then
     pass "Consensus ownership rule follows the parameters rule; the precondition rule follows it"
   else fail "Consensus ownership and precondition rules follow the parameters rule" "not adjacent"; fi
+
+  name="Consensus prompt without the goldfish block is the pre-goldfish prompt (no residue)"
+  ct=$(_strip_inserted_blocks "$cp" "${GOLDFISH_BLOCKS[@]}")
+  got=$(_sha "$ct")
+  if [ -n "$ct" ] && [ "$got" = "$CONSENSUS_PRE_GOLDFISH_SHA" ]; then pass "$name"; else
+    fail "$name" "block not found once, or sha ${got}"
+  fi
+  if [[ "$cp" == *$'   - **Readiness** — ready-for-spec / needs-further-discovery / blocked\n'"$(planner_goldfish_consensus_rule)"$'\n'* ]]; then
+    pass "Consensus goldfish block follows the Readiness bullet"
+  else fail "Consensus goldfish block follows the Readiness bullet" "not adjacent"; fi
 fi
 
 name="TicketGen prompt without the ownership-edges line is the pre-ownership prompt (no residue)"

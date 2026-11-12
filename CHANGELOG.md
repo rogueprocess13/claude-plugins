@@ -23,6 +23,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 
 - COMPLETED.md is now rendered deterministically by `lib/planner-completed.sh` (`planner_completed_render <INIT>`, also a CLI; review finding DET-PL-4) from the state log, the epic manifest and `fleet-features.sh --json --no-env`, under the same six headings. The Completed agent only runs the renderer, and `FLEET_AUTO_DISPATCH` is no longer read from the agent's environment. With no EPIC_ID it writes nothing and exits 1, so `planner_completion_verify` still fails. The planner now runs one fleet-controller script; if neither the checkout nor the plugin cache has it, the summary reports "unknown" with a warning.
 
+## ticket-planner 0.43.0 (2026-11-12) — goldfish review wired (off by default)
+
+planner-goldfish-review PR B of 2 (next.md Step 18 item 1). ticket-auto-pipeline and fleet-controller unchanged.
+
+### Changed
+
+- **Goldfish review wired.** With `PLANNER_GOLDFISH_REVIEW=true`, the Review `pre` gate asks SKILL.md to spawn the context-withheld goldfish lens before the Review agent (`SPAWN NEXT=planner_goldfish_next APPLY=planner_goldfish_apply TIMEOUT=<ms>`), through the shared spawn-list loop with timeout `PLANNER_GOLDFISH_TIMEOUT`. Consensus copies the goldfish status line into a `## Goldfish Findings Addressed` section and records a decision for each blocker and major finding. Run telemetry counts the lens under Review. With the flag off (the default), each proposal version gets one `META|goldfish|skip … DISABLED` line and consensus.md shows `Goldfish review: disabled`. The router now sources `planner-goldfish.sh` at load time (step 1e runs NEXT/APPLY in fresh Bash calls); a missing lib prints nothing. Stdout, halt goldens and the Review prompt are unchanged; Consensus no-residue tests strip the goldfish block, so earlier pins keep their values. SKILL.md shrinks by 293 bytes.
+
 ## ticket-planner 0.42.0 (2026-11-12) — goldfish review lens, dormant
 
 planner-goldfish-review PR A of 2 (next.md Step 18 item 1). ticket-auto-pipeline and fleet-controller unchanged.

@@ -453,6 +453,81 @@ fi
 
 # ── 4. Refinement finish ─────────────────────────────────────────────────────
 
+echo "--- 3d. goldfish spawn line before Review (planner-goldfish-review) ---"
+
+# gf_init <root> — Specify done, a proposal on disk, Review next.
+gf_init() {
+  fresh_root "$1"
+  planner_state_init "$INIT" "an idea" >/dev/null
+  _halt_done "$INIT" Appraisal Discovery Architecture Specify
+  mkdir -p "$(planner_initiative_dir "$INIT")/artifacts"
+  printf '# Proposal\n\n## Scope\nPause subscriptions.\n' >"$(planner_initiative_dir "$INIT")/artifacts/proposal.md"
+}
+gf_log() { grep '|META|goldfish|' "$(planner_state_log "$INIT")" | cut -d'|' -f4- | cut -d' ' -f1-2; }
+GF_SPAWN='SPAWN NEXT=planner_goldfish_next APPLY=planner_goldfish_apply TIMEOUT='
+
+if declare -f planner_goldfish_due >/dev/null; then
+  gf_init gf-on
+  PLANNER_GOLDFISH_REVIEW=true gate_run pre Review
+  if [ "$RC" -eq 0 ] && [ "$OUT" = "${GF_SPAWN}600000" ] && [ -z "$ERR" ]; then
+    pass "flag on, run due: exactly one SPAWN line, TIMEOUT=600000, rc 0"
+  else fail "goldfish SPAWN line" "rc=$RC out='$OUT' err='$ERR'"; fi
+  if [ -z "$(gf_log)" ]; then pass "a due run writes no goldfish line at pre"; else
+    fail "due run writes no line" "$(gf_log)"
+  fi
+  PLANNER_GOLDFISH_REVIEW=true PLANNER_GOLDFISH_TIMEOUT=120 gate_run pre Review
+  if [ "$OUT" = "${GF_SPAWN}120000" ]; then pass "PLANNER_GOLDFISH_TIMEOUT=120 gives TIMEOUT=120000"; else
+    fail "goldfish timeout" "out='$OUT'"
+  fi
+  for ph in Appraisal Specify Consensus Crosscheck; do
+    PLANNER_GOLDFISH_REVIEW=true gate_run pre "$ph"
+    if [[ "$OUT" != *SPAWN* ]]; then pass "pre ${ph}: no SPAWN line"; else fail "pre ${ph} SPAWN" "out='$OUT'"; fi
+  done
+
+  gf_init gf-off
+  (
+    unset PLANNER_GOLDFISH_REVIEW
+    gate_run pre Review
+    [ "$RC" -eq 0 ] && [ -z "$OUT" ] && [ -z "$ERR" ]
+  ) && pass "flag off: pre Review is silent, rc 0" || fail "flag off pre Review" "not silent"
+  sha=$(planner_goldfish_sha12 "$INIT")
+  if [ "$(gf_log)" = "skip|${sha} DISABLED" ]; then pass "flag off: one skip DISABLED line for the proposal version"; else
+    fail "flag off skip line" "$(gf_log)"
+  fi
+  PLANNER_GOLDFISH_REVIEW=true gate_run pre Review
+  if [ "$RC" -eq 0 ] && [ -z "$OUT" ]; then pass "not due (decision recorded for this version): nothing printed"; else
+    fail "not due" "rc=$RC out='$OUT'"
+  fi
+  if [ "$(gf_log | wc -l | tr -d ' ')" = 1 ]; then pass "a second pre writes no second goldfish line"; else
+    fail "second pre" "$(gf_log)"
+  fi
+
+  param_init gf-halt contract
+  PLANNER_GOLDFISH_REVIEW=true gate_run pre Review
+  if [ "$RC" -eq 3 ] && [[ "$OUT" != *SPAWN* ]] && [ -z "$(gf_log)" ]; then
+    pass "an open Specify decision halts first: no SPAWN line, no goldfish line"
+  else fail "halt before goldfish" "rc=$RC out='$(tail -1 <<<"$OUT")' log='$(gf_log)'"; fi
+else
+  fail "goldfish spawn line" "planner_goldfish_due not loaded by planner-router.sh"
+fi
+
+# A missing lib: no SPAWN line and no error. A fresh shell sourcing only the
+# router has NEXT and APPLY (step 1e re-sources the step's lib).
+GF_LIBCOPY="${WORK}/lib-nogoldfish"
+mkdir -p "$GF_LIBCOPY"
+cp "${LIB_DIR}"/*.sh "$GF_LIBCOPY"/
+rm -f "${GF_LIBCOPY}/planner-goldfish.sh"
+gf_init gf-nolib
+out=$(PLANNER_GOLDFISH_REVIEW=true bash -c 'source "$1/planner-router.sh"; planner_dispatch_gate pre "$2" Review "$3"' _ \
+  "$GF_LIBCOPY" "$INIT" "$(planner_initiative_dir "$INIT")" 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then pass "missing goldfish lib: no SPAWN line, no error"; else
+  fail "missing goldfish lib" "rc=$rc out='$out'"
+fi
+if bash -c 'source "$1/planner-router.sh"; declare -f planner_goldfish_next planner_goldfish_apply >/dev/null' _ "$LIB_DIR"; then
+  pass "a shell sourcing planner-router.sh has planner_goldfish_next and _apply"
+else fail "router sources the goldfish lib" "planner_goldfish_next/_apply undefined"; fi
+
 echo "--- 4. planner_refinement_finish ---"
 
 source "${LIB_DIR}/planner-refinement.sh"

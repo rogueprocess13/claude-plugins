@@ -13,7 +13,7 @@
 #
 # Bash never spawns an agent. SKILL.md's spawn-list loop (step 1e) does, with
 # NEXT=planner_goldfish_next and APPLY=planner_goldfish_apply, when the Review
-# `pre` gate asks for it (PR B). Until then nothing calls these functions.
+# `pre` gate (planner_dispatch_gate, planner-router.sh) prints its SPAWN line.
 #
 # Every decision is a META|goldfish line, bound to the proposal version:
 # sha12 = the first 12 hex digits of the sha256 of artifacts/proposal.md (of
@@ -41,6 +41,7 @@
 #                                         `malformed <reason>` (D6)
 #   planner_goldfish_status <INIT>        the one status line (D8)
 #   planner_goldfish_timeout_ms           PLANNER_GOLDFISH_TIMEOUT (s) × 1000
+#   planner_goldfish_consensus_rule       the Consensus prompt block (D9)
 #
 # Flag: PLANNER_GOLDFISH_REVIEW (default false), read by planner_goldfish_due
 # only, recorded once per proposal version so a resume never re-decides it.
@@ -454,6 +455,28 @@ planner_goldfish_apply() {
     _planner_goldfish_write "$init" warn "${sha} attempt=${n} ${reason}"
   fi
   return 0
+}
+
+# planner_goldfish_consensus_rule — the static Consensus block, inserted
+# directly after step 4's Readiness bullet (design D9). Static, so the
+# Consensus prompt pins can strip it.
+planner_goldfish_consensus_rule() {
+  cat <<'RULE'
+   - **Goldfish Findings Addressed** — a `## Goldfish Findings Addressed`
+     section. Its first line is what `planner_goldfish_status "<initiative ID>"`
+     prints (source `lib/planner-goldfish.sh` as in the State log block),
+     copied verbatim. When it says `ran`, read goldfish/review-goldfish.md in
+     the state directory and, per blocker or major finding, write one
+     `### G<n> — <severity> — <title> — <disposition>` heading; minor and nit
+     findings may share one
+     `Minor/nit G<a>, G<b>: deferred` line. A disposition is `accepted`
+     (proposal or spec changed), `rejected (<why>, covered in <proposal § |
+     spec <slug> | upstream artifact § | code path>)`, `deferred`, or
+     `clarified`: only for a fact in an upstream artifact and in no spec or
+     proposal section, which you then add to proposal.md. When it says
+     `NOT RUN` or `disabled`, write nothing else under the heading and never
+     call the proposal goldfish-clean.
+RULE
 }
 
 # planner_goldfish_status <INIT> — exactly one line, from the latest terminal
