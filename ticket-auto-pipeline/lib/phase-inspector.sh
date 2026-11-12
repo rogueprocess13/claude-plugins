@@ -2,8 +2,11 @@
 # phase-inspector.sh — Per-phase inspection context assembler for ticket-auto-pipeline.
 # Phase 1 of the RLVR program.
 #
-# Reads META|verifier-result entries for a completed phase and assembles prompt
-# context for the guidance-extractor-agent. The router handles the actual agent
+# Reads META|verifier-result entries for a completed phase, computes the
+# deterministic verdict with lib/inspect-verifiers.sh and writes it as the
+# phase's META|phase-inspector line itself (DET-SU-1), then assembles prompt
+# context for the guidance-extractor-agent, which classifies the verdict's
+# patterns and never writes the verdict. The router handles the actual agent
 # spawn using the standard 3-step pattern (spawn_agent_pre → Agent → spawn_agent_post).
 #
 # Usage: source this file, then call assemble_inspector_context.
@@ -18,6 +21,41 @@
 # Setting -e, -u, or -o pipefail would poison every consumer that sources this file
 # (repo convention: heartbeat.sh, spawn-helper.sh, verifier-result.sh all omit flags).
 # Every failure path inside the function carries its own guard (|| true, if-else).
+
+_PI_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
+# ── Deterministic verdict (DET-SU-1) ──────────────────────────────────────────
+
+# _pi_write_verdict PHASE LOG_FILE VR_JSON_ARRAY HAS_RETURN_INCOMPLETE
+# Runs inspect_verifiers and appends the result as this phase's
+# META|phase-inspector line ({phase, verdict, signals, detail,
+# verifiers_consulted, patterns, source:"bash"}). Prints the JSON (empty on
+# failure). Skips the write when the log's last line already is this exact
+# verdict (resume/rerun). Fail-soft: always returns 0.
+_pi_write_verdict() {
+  local phase="$1" log_file="$2" vr_json="$3" has_ri="$4"
+  if ! declare -f inspect_verifiers >/dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    source "$_PI_LIB_DIR/inspect-verifiers.sh" 2>/dev/null || return 0
+  fi
+  local det="" line=""
+  det=$(inspect_verifiers "$vr_json" "$has_ri" "$phase" 2>/dev/null) || det=""
+  [ -n "$det" ] || return 0
+  line=$(jq -c --arg phase "$phase" --argjson vr "$vr_json" \
+    '{phase: $phase, verdict, signals, detail,
+      verifiers_consulted: ([$vr[] | .verifier // empty] | unique),
+      patterns, source: "bash"}' <<<"$det" 2>/dev/null) || line=""
+  [ -n "$line" ] || return 0
+  if [ -n "$log_file" ]; then
+    local last=""
+    last=$(tail -1 "$log_file" 2>/dev/null | awk -F'|' '$2 == "META" && $3 == "phase-inspector" {s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}') || last=""
+    if [ "$last" != "$line" ]; then
+      printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$line" >>"$log_file" 2>/dev/null || true
+    fi
+  fi
+  printf '%s\n' "$line"
+  return 0
+}
 
 # ── Primary function ───────────────────────────────────────────────────────────
 
@@ -159,62 +197,42 @@ assemble_inspector_context() {
     fi
   fi
 
+  # ── Deterministic verdict: bash writes it, the agent only reads it ──────
+  local _verdict_json=""
+  _verdict_json=$(_pi_write_verdict "$PHASE" "$LOG_FILE" \
+    "$(printf '%s\n' "$_vr_entries" | jq -c -s '.' 2>/dev/null || echo '[]')" \
+    "$_has_return_incomplete") || _verdict_json=""
+
   # ── Assemble context block for the agent ────────────────────────────────
   # Data section: built with printf %s — no format-string injection, no shell
   # expansion of log-derived content (_vr_json_array, _gate_warns).
   local _data_block
-  _data_block=$(printf '## Phase Inspector Context\n\n**Phase**: %s\n**Ticket**: %s\n**Verifier Results** (JSON array):\n```json\n%s\n```\n\n**Gate Warnings**:\n```\n%s\n```\n\n**RETURN_INCOMPLETE present**: %s\n' \
-    "$PHASE" "$TICKET_ID" "$_vr_json_array" "${_gate_warns:-none}" "$_has_return_incomplete")
+  _data_block=$(printf '## Phase Inspector Context\n\n**Phase**: %s\n**Ticket**: %s\n**Verifier Results** (JSON array):\n```json\n%s\n```\n\n**Gate Warnings**:\n```\n%s\n```\n\n**RETURN_INCOMPLETE present**: %s\n\n**Deterministic verdict** (already in the pipeline log):\n```json\n%s\n```\n' \
+    "$PHASE" "$TICKET_ID" "$_vr_json_array" "${_gate_warns:-none}" "$_has_return_incomplete" "${_verdict_json:-unavailable}")
 
   # Instructions section: quoted heredoc — no shell expansion at all.
   # Safe against backticks, $(), and ${} in the template text itself.
-  # This block is the single owner of the detection-pattern definitions
-  # (skills/guidance-extractor/SKILL.md no longer repeats them). To add a
-  # pattern, add a numbered entry here with id, severity, detection logic and
-  # evidence format; no router change is needed. Prefer WARN; promote a
-  # pattern to FAIL only after >=5 confirmed true positives.
+  # The detection rules live in lib/inspect-verifiers.sh (DET-SU-1); this
+  # block only names them for the agent's classification pass. To add a
+  # pattern, add it there and list it here. Prefer WARN; promote a pattern to
+  # FAIL only after >=5 confirmed true positives.
   local _instructions_block
   _instructions_block=$(
     cat <<'PHASEINSPECT'
 
 ## Instructions
 
-Inspect the verifier results above. Check for these known defect patterns. Each one is listed with its id (the `pattern` value), severity, detection logic and evidence-format template. Evidence must cite specific verifier IDs and values, never vague text.
+The deterministic verdict above was computed by `lib/inspect-verifiers.sh` and is already written as this phase's `META|phase-inspector` line. Bash owns it: do not recompute it and do not write another `META|phase-inspector` line. `router-step.sh inspector-done` checks any line you add with `validate_phase_inspector`, and bash overrides a line that disagrees.
 
-1. **flaky_tests** (WARN): A PASS verifier followed by a FAIL verifier on overlapping criteria (cross-phase — check for PASS+FAIL pairs within the available results or across phases when multi-phase context is provided)
-   - Detection logic: flag it if any verifier has verdict PASS and another verifier in the results has verdict FAIL. The canonical case is IMPLEMENT unit tests PASS but VERIFY browser UAT FAIL.
-   - Evidence format: `"{pass_verifier} PASS but {fail_verifier} FAIL — possible flaky test"`
-2. **missing_requirement** (WARN): PR review OK but critique/audit found gaps
-   - Detection logic: flag it if any verifier with "review" in its ID reports PASS and any verifier with "critique" or "audit" in its ID reports WARN or FAIL.
-   - Evidence format: `"{review_verifier} PASS but {critique_verifier} {critique_verdict} — possible missed requirement"`
-3. **trivial_pass** (WARN): Any non-gate verifier PASS with criteria_total between 1 and 1 (single-criterion verification). Exclude verifiers with criteria_total=0 (outcome-scored) and known single-criterion gates (gate_check, return_completeness).
-   - Detection logic: for each verifier with verdict PASS, flag it if criteria_total == 1 and the verifier is not excluded above. Only PASS verdicts count (a FAIL with one criterion is not a trivial pass).
-   - Evidence format: `"{verifier} PASS with criteria_total={N} — verification too shallow"`
-4. **verdict_disagreement** (WARN): Two verifiers in the inspected phase(s) disagree (e.g., one PASS and one FAIL/BLOCK)
-   - Detection logic: collect the unique verdicts across verifiers; flag it if the set holds PASS and (FAIL or BLOCK).
-   - Evidence format: `"verdicts diverge: {verifier1}={v1}, {verifier2}={v2}"`
-5. **incomplete_implementation** (WARN): PASS verifier + "RETURN_INCOMPLETE present" is true above. Only the IMPLEMENT inspection ever reports it true — unchecked boxes left at VERIFY / PR-REVIEW time belong to those later phases and are not an implementation gap, so never raise this pattern from the gate-warn text alone.
-   - Detection logic: flag it if "RETURN_INCOMPLETE present" is true and any verifier has verdict PASS.
-   - Evidence format: `"{verifier} PASS but RETURN_INCOMPLETE gate-warn present — unchecked boxes remain"`
+The pattern ids bash applies (reference for classification):
 
-Verdict computation: worst severity wins across all detected patterns (PASS if 0 patterns, WARN if ≥1 WARN and 0 FAIL, FAIL if ≥1 FAIL). `signals` is the number of patterns found. Write `detail` as one line: for PASS "All verifiers clean: {summary}", for WARN "{N} pattern(s) detected: {list}", for FAIL "BLOCKING: {pattern} — {brief reason}".
+1. **flaky_tests** — a PASS verifier and a FAIL verifier in the inspected results (VERIFY also reads IMPLEMENT's results; PR-REVIEW reads both).
+2. **missing_requirement** — a review verifier PASS while a critique or audit verifier is WARN or FAIL.
+3. **trivial_pass** — a PASS with criteria_total == 1; gate_check and return_completeness are excluded, and criteria_total=0 (outcome-scored) never counts.
+4. **verdict_disagreement** — a PASS and a BLOCK, only when flaky_tests did not fire.
+5. **incomplete_implementation** — a PASS while RETURN_INCOMPLETE is present; IMPLEMENT only.
 
-Write exactly one line to the pipeline log (`$LOG_FILE`) with this command block, filling in only the single JSON line between the `JSON` markers. The written line MUST start with the ISO-8601 UTC timestamp field — the pipeline log format is `ISO|PHASE|STEP|STATUS|MSG`, and a line without its leading timestamp breaks every consumer that splits on `|`. Keep the rest of the block exactly as written:
-```bash
-_pi_json=$(cat <<'PHASE_INSPECTOR_VERDICT_EOF'
-{"phase":"<phase>","verdict":"<PASS|WARN|FAIL>","signals":<N>,"detail":"<summary ≤ 200 chars>","verifiers_consulted":["<id1>","<id2>"],"patterns":[{"pattern":"<id>","severity":"<warn|fail>","evidence":"<specific>"}]}
-PHASE_INSPECTOR_VERDICT_EOF
-)
-if _pi_line=$(printf '%s' "$_pi_json" | jq -c . 2>/dev/null) && [ -n "$_pi_line" ]; then
-  printf '%s|META|phase-inspector|info|%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_pi_line" >>"$LOG_FILE"
-else
-  echo "[phase-inspector] WARN: verdict JSON invalid or jq unavailable, nothing written" >&2
-fi
-```
-
-Never put the JSON inside a double-quoted `echo` string: `detail` and `evidence` quote verifier output (test names, PR text), and a double-quoted string would run any `$(...)` or backtick in that text. The quoted `<<'PHASE_INSPECTOR_VERDICT_EOF'` heredoc keeps it literal; `jq -c` rejects invalid JSON so no partial line is ever written. Keep the JSON on that single line: JSON strings never hold a raw newline (escape it as `\n`), so verifier text can never form a line equal to the heredoc delimiter and end the heredoc early.
-
-The JSON must be valid (jq-parseable) and on one line. Detail must be ≤ 200 chars. Use the phase value from the context above for the "phase" field.
+In `--mode extract`, classify each entry of the verdict's `patterns` array as the guidance-extractor skill describes. With an empty `patterns` array there is nothing to classify: write the `META|guidance-extractor` summary with zero counts and return.
 PHASEINSPECT
   ) || _instructions_block=""
 

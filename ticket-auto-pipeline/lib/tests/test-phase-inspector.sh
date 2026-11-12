@@ -485,74 +485,24 @@ test_log_writes_carry_iso_timestamp() {
   out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
   instructions=$(_extract_instructions "$out")
 
-  # Every template line naming the phase-inspector record must be a write
-  # command that starts with the timestamp — never a bare META| line.
-  local bare
-  bare=$(printf '%s\n' "$instructions" | grep -E '^META\|phase-inspector\|' || true)
-  if [ -n "$bare" ]; then
-    echo "template still instructs a bare (untimestamped) line: $bare"
+  # The agent no longer writes the verdict (DET-SU-1): no template line and
+  # no write block for a META|phase-inspector record may remain.
+  if grep -qE '^META\|phase-inspector\||phase-inspector\|info\|%s' <<<"$instructions"; then
+    echo "instructions still carry a phase-inspector write template"
     _teardown
     return 1
   fi
 
-  # Run the template's write block against a scratch log, filled the way an
-  # agent fills it — with verifier-derived text that carries shell syntax.
-  # The block must keep that text literal (no command substitution, no
-  # backtick execution, no variable expansion).
-  local block agent_log="$_ws/agent.log"
-  block=$(printf '%s\n' "$instructions" | awk '
-    /^```bash/ {inb=1; buf=""; next}
-    inb && /^```/ {inb=0; if (buf ~ /phase-inspector\|info/) {printf "%s", buf; exit}; next}
-    inb {buf = buf $0 "\n"}')
-  if [ -z "$block" ]; then
-    echo "template carries no phase-inspector write block"
-    _teardown
-    return 1
-  fi
-  local pwn_cs="$_ws/pwn-cmdsubst" pwn_bt="$_ws/pwn-backtick"
-  local detail_txt="flaky \`touch ${pwn_bt}\` seen"
-  local evidence_txt="evidence \$(touch ${pwn_cs}) and \$HOME"
-  block=${block//"<phase>"/IMPLEMENT}
-  block=${block//"<PASS|WARN|FAIL>"/WARN}
-  block=${block//"<N>"/1}
-  block=${block//"<summary ≤ 200 chars>"/"$detail_txt"}
-  block=${block//"<id1>"/unit_tests}
-  block=${block//"<id2>"/playwright_uat}
-  block=${block//"<id>"/flaky_tests}
-  block=${block//"<warn|fail>"/warn}
-  block=${block//"<specific>"/"$evidence_txt"}
-  : >"$agent_log"
-  (cd "$_ws" && LOG_FILE="$agent_log" bash -c "$block") >/dev/null 2>&1 || true
-
-  if [ -e "$pwn_cs" ] || [ -e "$pwn_bt" ]; then
-    echo "template write block executed shell syntax from verifier text"
-    _teardown
-    return 1
-  fi
-  local logged_evidence logged_detail
-  logged_evidence=$(cut -d'|' -f5- "$agent_log" | jq -r '.patterns[0].evidence' 2>/dev/null || true)
-  logged_detail=$(cut -d'|' -f5- "$agent_log" | jq -r '.detail' 2>/dev/null || true)
-  if [ "$logged_evidence" != "$evidence_txt" ] || [ "$logged_detail" != "$detail_txt" ]; then
-    echo "logged line lost the literal verifier text: $(cat "$agent_log")"
-    _teardown
-    return 1
-  fi
-  if [ "$(wc -l <"$agent_log" | tr -d ' ')" -ne 1 ]; then
-    echo "template block must append exactly one line: $(cat "$agent_log")"
-    _teardown
-    return 1
-  fi
-
-  # Skip path: the lib's own write.
+  # Both lib writes — the verdict line and the skip line — carry the timestamp.
   local skip_log="$_ws/skip.log"
   : >"$skip_log"
   assemble_inspector_context "VERIFY" "CRE-123" "$skip_log" >/dev/null 2>&1 || true
 
   local f line n
-  for f in "$agent_log" "$skip_log"; do
-    n=$(wc -l <"$f" | tr -d ' ')
-    if [ "$n" -lt 1 ]; then
-      echo "no line written to $(basename "$f")"
+  for f in "$_log" "$skip_log"; do
+    n=$(grep -c '|META|phase-inspector|' "$f" || true)
+    if [ "$n" -ne 1 ]; then
+      echo "expected exactly one phase-inspector line in $(basename "$f"), got $n"
       _teardown
       return 1
     fi
@@ -562,77 +512,144 @@ test_log_writes_carry_iso_timestamp() {
         _teardown
         return 1
       fi
-      if [ "$(printf '%s\n' "$line" | cut -d'|' -f2-3)" != "META|phase-inspector" ]; then
-        echo "line has wrong PHASE|STEP in $(basename "$f"): $line"
-        _teardown
-        return 1
-      fi
-    done <"$f"
+    done < <(grep '|META|phase-inspector|' "$f")
   done
 
   _teardown
   return 0
 }
 
-# ── Test: injected instructions own the detection-pattern definitions ─────────
-# skill-prose-dedupe D3: guidance-extractor SKILL.md no longer carries the
-# per-pattern detection logic and evidence templates, so the injected
-# INSPECTOR_INSTRUCTIONS must. Each pattern needs its id, a detection-logic
-# line and an evidence-format template; the trivial_pass wording must match
-# lib/inspect-verifiers.sh (criteria_total == 1, 0 excluded).
+# ── DET-SU-1: bash writes the deterministic verdict itself ────────────────────
 
-test_instructions_carry_detection_patterns() {
+# _verdict_line LOG — the JSON of the last META|phase-inspector line.
+_verdict_line() {
+  grep '|META|phase-inspector|' "$1" | tail -1 | awk -F'|' '{s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print s}'
+}
+
+test_verdict_written_by_bash_clean() {
   _setup
   _vr_write "unit_tests" "PASS" "IMPLEMENT" 5 5
+  _vr_write "gate_check" "PASS" "IMPLEMENT" 1 1
+  assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" >/dev/null 2>&1 || true
+  local j rc=0
+  j=$(_verdict_line "$_log")
+  [ "$(jq -r '.verdict' <<<"$j")" = PASS ] || rc=1
+  [ "$(jq -r '.signals' <<<"$j")" = 0 ] || rc=1
+  [ "$(jq -r '.phase' <<<"$j")" = IMPLEMENT ] || rc=1
+  [ "$(jq -r '.source' <<<"$j")" = bash ] || rc=1
+  [ "$(jq -c '.verifiers_consulted' <<<"$j")" = '["gate_check","unit_tests"]' ] || rc=1
+  [ $rc -eq 0 ] || echo "unexpected verdict line: $j"
+  _teardown
+  return $rc
+}
 
-  local out instructions
+test_verdict_flaky_tests_warn() {
+  _setup
+  _vr_write "unit_tests" "PASS" "IMPLEMENT" 5 5
+  _vr_write "playwright_uat" "FAIL" "VERIFY" 2 3
+  assemble_inspector_context "VERIFY" "CRE-123" "$_log" "IMPLEMENT" >/dev/null 2>&1 || true
+  local j
+  j=$(_verdict_line "$_log")
+  [ "$(jq -r '.verdict' <<<"$j")" = WARN ] &&
+    [ "$(jq -c '[.patterns[].pattern]' <<<"$j")" = '["flaky_tests"]' ] &&
+    [ "$(jq -r '.phase' <<<"$j")" = VERIFY ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_verdict_criteria_zero_not_trivial() {
+  _setup
+  _vr_write "outcome_scored" "PASS" "IMPLEMENT" 0 0
+  assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" >/dev/null 2>&1 || true
+  local j
+  j=$(_verdict_line "$_log")
+  [ "$(jq -r '.verdict' <<<"$j")" = PASS ] && [ "$(jq -r '.signals' <<<"$j")" = 0 ]
+  local rc=$?
+  _teardown
+  return $rc
+}
+
+test_verdict_return_incomplete_only_implement() {
+  _setup
+  _vr_write "unit_tests" "PASS" "IMPLEMENT" 5 5
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|META|gate-warn|info|RETURN_INCOMPLETE — x (unchecked=8/36, artifact=openspec)" >>"$_log"
+  _vr_write "playwright_uat" "PASS" "VERIFY" 3 3
+  local rc=0 j
+  assemble_inspector_context "VERIFY" "CRE-123" "$_log" "IMPLEMENT" >/dev/null 2>&1 || true
+  j=$(_verdict_line "$_log")
+  jq -e '[.patterns[].pattern] | index("incomplete_implementation") | not' <<<"$j" >/dev/null || rc=1
+  assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" >/dev/null 2>&1 || true
+  j=$(_verdict_line "$_log")
+  jq -e '[.patterns[].pattern] | index("incomplete_implementation")' <<<"$j" >/dev/null || rc=1
+  _teardown
+  return $rc
+}
+
+test_verdict_rerun_is_idempotent() {
+  _setup
+  _vr_write "unit_tests" "PASS" "IMPLEMENT" 5 5
+  assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" >/dev/null 2>&1 || true
+  assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" >/dev/null 2>&1 || true
+  local n
+  n=$(grep -c '|META|phase-inspector|' "$_log" || true)
+  _teardown
+  [ "$n" -eq 1 ]
+}
+
+test_verdict_evidence_with_shell_syntax_kept_literal() {
+  _setup
+  local pwn="$_ws/pwn"
+  _vr_write "unit_tests" "PASS" "IMPLEMENT" 5 5
+  # A verifier id carrying shell syntax lands in evidence; it must stay data.
+  printf '%s|META|verifier-result|info|{"verifier":"x$(touch %s)","verdict":"FAIL","criteria_met":0,"criteria_total":2,"attempt":1,"phase":"IMPLEMENT"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$pwn" >>"$_log"
+  assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" >/dev/null 2>&1 || true
+  local j rc=0
+  j=$(_verdict_line "$_log")
+  [ ! -e "$pwn" ] || rc=1
+  grep -qF 'x$(touch' <<<"$(jq -r '.patterns[0].evidence' <<<"$j")" || rc=1
+  _teardown
+  return $rc
+}
+
+test_instructions_hand_agent_the_verdict() {
+  _setup
+  _vr_write "unit_tests" "PASS" "IMPLEMENT" 5 5
+  _vr_write "playwright_uat" "FAIL" "IMPLEMENT" 1 3
+
+  local out instructions rc=0
   out=$(assemble_inspector_context "IMPLEMENT" "CRE-123" "$_log" 2>/dev/null) || true
   instructions=$(_extract_instructions "$out")
 
   local p
   for p in flaky_tests missing_requirement trivial_pass verdict_disagreement incomplete_implementation; do
-    if ! grep -qF "**${p}**" <<<"$instructions"; then
+    grep -qF "**${p}**" <<<"$instructions" || {
       echo "pattern id missing from instructions: $p"
-      _teardown
-      return 1
-    fi
+      rc=1
+    }
   done
-
-  local n_logic n_evidence
-  n_logic=$(grep -c 'Detection logic:' <<<"$instructions" || true)
-  n_evidence=$(grep -c 'Evidence format: `"' <<<"$instructions" || true)
-  if [ "$n_logic" -lt 5 ] || [ "$n_evidence" -lt 5 ]; then
-    echo "expected 5 detection-logic and 5 evidence-format lines, got $n_logic / $n_evidence"
-    _teardown
-    return 1
-  fi
-
   local needle
   for needle in \
-    '"review" in its ID' \
-    '"critique" or "audit"' \
-    '{pass_verifier} PASS but {fail_verifier} FAIL — possible flaky test' \
-    '{review_verifier} PASS but {critique_verifier} {critique_verdict} — possible missed requirement' \
+    'Deterministic verdict' \
+    '"flaky_tests"' \
+    'do not write another `META|phase-inspector` line' \
+    'validate_phase_inspector' \
     'criteria_total == 1' \
-    'criteria_total=0 (outcome-scored)' \
-    '{verifier} PASS with criteria_total={N} — verification too shallow' \
-    'verdicts diverge: {verifier1}={v1}, {verifier2}={v2}' \
-    'PASS but RETURN_INCOMPLETE gate-warn present — unchecked boxes remain' \
-    'Only the IMPLEMENT inspection ever reports it true'; do
-    if ! grep -qF -- "$needle" <<<"$instructions"; then
+    'only when flaky_tests did not fire' \
+    'IMPLEMENT only'; do
+    grep -qF -- "$needle" <<<"$instructions" || {
       echo "instructions missing: $needle"
-      _teardown
-      return 1
-    fi
+      rc=1
+    }
   done
-  if grep -qF 'criteria_total <= 1' <<<"$instructions" || grep -qF 'criteria_total ≤ 1' <<<"$instructions"; then
-    echo "instructions carry the stale <= 1 trivial_pass wording"
-    _teardown
-    return 1
+  if grep -qF 'criteria_total <= 1' <<<"$instructions" || grep -qF 'criteria_total ≤ 1' <<<"$instructions" ||
+    grep -qF 'Detection logic:' <<<"$instructions"; then
+    echo "instructions still ask the agent to detect patterns"
+    rc=1
   fi
-
   _teardown
-  return 0
+  return $rc
 }
 
 # ── Run ─────────────────────────────────────────────────────────────────────────
@@ -659,7 +676,13 @@ _run "jq absence handled gracefully" test_jq_absence_skip
 _run "sourcing preserves shell flags" test_sourcing_preserves_shell_flags
 _run "100-entry stress test extracts correct phase" test_large_verifier_count
 _run "every log line written carries the ISO timestamp (#421)" test_log_writes_carry_iso_timestamp
-_run "instructions carry detection logic and evidence formats (D3)" test_instructions_carry_detection_patterns
+_run "DET-SU-1 clean run: bash writes PASS/0 with phase and source" test_verdict_written_by_bash_clean
+_run "DET-SU-1 PASS+FAIL across phases: flaky_tests WARN" test_verdict_flaky_tests_warn
+_run "DET-SU-1 criteria_total=0 PASS is not trivial_pass" test_verdict_criteria_zero_not_trivial
+_run "DET-SU-1 RETURN_INCOMPLETE fires for IMPLEMENT only" test_verdict_return_incomplete_only_implement
+_run "DET-SU-1 rerun writes no duplicate verdict line" test_verdict_rerun_is_idempotent
+_run "DET-SU-1 verifier text with shell syntax stays literal" test_verdict_evidence_with_shell_syntax_kept_literal
+_run "DET-SU-1 instructions hand the agent the verdict, not the rules" test_instructions_hand_agent_the_verdict
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
