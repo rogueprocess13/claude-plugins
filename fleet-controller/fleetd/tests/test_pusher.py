@@ -17,6 +17,7 @@ prove the ENABLE gate at the run_observe call site itself.
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -498,10 +499,11 @@ class DiscoverOutboxTicketsTest(unittest.TestCase):
 
 
 class BoardPusherEnableGateTest(unittest.TestCase):
-    """5.7: with FLEET_BOARD_PUSHER_ENABLE unset (the default),
-    run_observe never invokes the pusher pass — proven at the actual
-    run_observe call site, not merely by checking the flag's default
-    value, using the same stub-and-SystemExit pattern
+    """FLEET_BOARD_PUSHER_ENABLE defaults on (fleet-controller 0.51.0,
+    after board-cursor-first-drain's live check); only an explicit
+    `false` turns it off. With the flag false, run_observe never invokes
+    the pusher pass — proven at the actual run_observe call site, using
+    the same stub-and-SystemExit pattern
     test_supervisor.py's HoldReconcilePassTest uses for the analogous
     hold-reconcile pass."""
 
@@ -543,10 +545,34 @@ class BoardPusherEnableGateTest(unittest.TestCase):
         sup._board_pusher_pass = _board_pusher_pass
         return sup
 
-    def test_disabled_by_default_never_calls_board_pusher_pass(self):
+    def _flag_value(self, env_value):
+        """The module-level flag as a fresh interpreter parses it, with
+        FLEET_BOARD_PUSHER_ENABLE unset (None) or set to env_value."""
+        env = {k: v for k, v in os.environ.items()
+               if k != 'FLEET_BOARD_PUSHER_ENABLE'}
+        if env_value is not None:
+            env['FLEET_BOARD_PUSHER_ENABLE'] = env_value
+        fleet_root = Path(__file__).resolve().parents[2]
+        proc = subprocess.run(
+            [sys.executable, '-c',
+             'import fleetd.supervisor as s; '
+             'print(s.FLEET_BOARD_PUSHER_ENABLE)'],
+            cwd=str(fleet_root), env=env, capture_output=True, text=True,
+            timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout.strip().splitlines()[-1]
+
+    def test_default_is_on_and_only_false_disables(self):
+        self.assertEqual(self._flag_value(None), 'True',
+                         'FLEET_BOARD_PUSHER_ENABLE must default to true')
+        self.assertEqual(self._flag_value('true'), 'True')
+        self.assertEqual(self._flag_value('false'), 'False')
+
+    def test_disabled_never_calls_board_pusher_pass(self):
         import fleetd.supervisor as sup_mod
-        self.assertFalse(sup_mod.FLEET_BOARD_PUSHER_ENABLE,
-                         'FLEET_BOARD_PUSHER_ENABLE must default to false')
+        old = sup_mod.FLEET_BOARD_PUSHER_ENABLE
+        sup_mod.FLEET_BOARD_PUSHER_ENABLE = False
+        self.addCleanup(setattr, sup_mod, 'FLEET_BOARD_PUSHER_ENABLE', old)
 
         calls = []
         sup = self._stubbed_supervisor(calls)
@@ -572,7 +598,7 @@ class BoardPusherEnableGateTest(unittest.TestCase):
 
         self.assertNotIn('_board_pusher_pass', calls,
                          'run_observe must not call _board_pusher_pass '
-                         'while FLEET_BOARD_PUSHER_ENABLE is false/unset')
+                         'while FLEET_BOARD_PUSHER_ENABLE is false')
 
     def test_enabled_calls_board_pusher_pass(self):
         import fleetd.supervisor as sup_mod

@@ -111,8 +111,8 @@ def _router_step_on():
 # defensively like the modules above: without it the pusher pass simply
 # cannot run this cycle — a ticket's outbox stays undrained by fleetd and is
 # picked up by outbox-drain.sh at the router's own exit instead, never a
-# reason to take the supervisor down. Ships gated behind
-# FLEET_BOARD_PUSHER_ENABLE regardless of whether the import succeeds.
+# reason to take the supervisor down. Gated behind FLEET_BOARD_PUSHER_ENABLE
+# (default on) regardless of whether the import succeeds.
 try:
     from fleetd import pusher as _pusher_mod
 except ImportError:  # pragma: no cover - pusher unavailable
@@ -2195,19 +2195,18 @@ FLEET_MERGE_POLL_CYCLES = _env_int('FLEET_MERGE_POLL_CYCLES', 10)
 
 # Tracker event-board pusher (tracker-event-board-pusher Phase B2;
 # real mappings landed in tracker-flow-projection-cutover, Change 2 of the
-# tracker-decoupling authority-flip programme). Off by default. Since
+# tracker-decoupling authority-flip programme). On by default since
+# fleet-controller 0.51.0; only an explicit `false` turns it off. Since
 # board-cursor-first-drain this flag no longer guards correctness: a board
 # with no cursor starts at the outbox's origin sidecar (or its tail, for a
 # legacy outbox), so no drain replays pre-projection history and no
 # fast-forward is required first. The flag only decides whether fleetd runs
 # a periodic pass, which catches tickets whose own exit-time drain failed.
-# The default flips in a follow-up once the live check passes on the tickets
-# host (board-cursor-first-drain design.md, Open Question 1).
 # FLEET_BOARD_PUSHER_INTERVAL defaults to the same value as the
 # hold-reconciliation cadence — both are periodic passes over ticket state
 # with no sub-minute-latency requirement.
 FLEET_BOARD_PUSHER_ENABLE = os.environ.get(
-    'FLEET_BOARD_PUSHER_ENABLE', 'false') == 'true'
+    'FLEET_BOARD_PUSHER_ENABLE', 'true') != 'false'
 FLEET_BOARD_PUSHER_INTERVAL = _env_int('FLEET_BOARD_PUSHER_INTERVAL', 300)
 
 CLAUDE_BIN = os.environ.get('CLAUDE_BIN', 'claude')
@@ -3619,7 +3618,7 @@ class Supervisor:
         # Same `None`-means-never-run-yet convention as the two timers above
         # — the first cycle always attempts a drain rather than waiting a
         # full interval after a restart. No-op regardless while
-        # FLEET_BOARD_PUSHER_ENABLE is unset (the default).
+        # FLEET_BOARD_PUSHER_ENABLE is false.
         self._board_pusher_last_run = None
         # Deterministic-failure circuit breaker (worker-reap-recovery task
         # 3.8): a streak of fast, non-zero exits across the fleet — expired
@@ -5439,8 +5438,9 @@ class Supervisor:
 
         Called from `run_observe`'s cycle body only, on its own cadence
         (`_board_pusher_last_run`), gated behind
-        `FLEET_BOARD_PUSHER_ENABLE` (default `false`, design.md Decision
-        6) — this method is never called at all while the flag is unset,
+        `FLEET_BOARD_PUSHER_ENABLE` (default `true` since 0.51.0; only an
+        explicit `false` disables it) — this method is never called at all
+        while the flag is false,
         the same shape `FLEET_PHASE_DISPATCH_ENABLE` uses elsewhere in this
         file.
 
@@ -6040,9 +6040,9 @@ class Supervisor:
 
                 # 4a-3. Board pusher pass (tracker-event-board-pusher, Phase
                 # B2) — its own cadence, gated behind
-                # FLEET_BOARD_PUSHER_ENABLE (default false, design.md
-                # Decision 6). `run_observe` SHALL NOT call this pass at all
-                # when the flag is unset or false — checked before is_due so
+                # FLEET_BOARD_PUSHER_ENABLE (default true; `false` disables).
+                # `run_observe` SHALL NOT call this pass at all when the
+                # flag is false — checked before is_due so
                 # a disabled pusher never even starts its own timer.
                 if (FLEET_BOARD_PUSHER_ENABLE and _gate_hold_mod is not None
                         and _gate_hold_mod.is_due(
