@@ -36,6 +36,11 @@ try:
 except ImportError:  # pragma: no cover - store unavailable
     _store_mod = None
 
+# The per-ticket log-dir resolver (state-root-anchor). Pure stdlib and the
+# one Python twin of ticket-auto-pipeline's lib/log-dir.sh, so a missing file
+# is a broken install, not a degraded mode: imported plainly.
+from fleetd import log_dir as _log_dir_mod  # noqa: E402
+
 # The OTel exporter module. otel.py is pure stdlib at import time — its
 # opentelemetry dependency is imported lazily inside the exporter *process*,
 # never here — so this only fails when the file itself is missing.
@@ -177,6 +182,33 @@ def _abs_log_dir(value):
     which is what the relative value meant to fleetd already.
     """
     return str(Path(value).resolve())
+
+
+def _resolved_log_dir(state_dir):
+    """The per-ticket log dir fleetd uses and hands to bash, always absolute.
+
+    `log_dir.resolve_log_dir` (absolute `FLEET_PIPELINE_LOG_DIR`, then the
+    `$REPOS_ROOT/.ticket-auto/log-dir` anchor), with today's value as the
+    last resort (design D6): `FLEET_PIPELINE_LOG_DIR`, else `state_dir`.
+    Same order as bash's `ticket_log_dir`, so a script fleetd runs and fleetd
+    itself always land on one directory, and a host with no anchor keeps
+    exactly the dir it used before.
+    """
+    today = os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(state_dir)
+    return _abs_log_dir(_log_dir_mod.resolve_log_dir(fallback=today))
+
+
+def fleetd_own_log_dir(state_dir=None):
+    """fleetd's *own* log dir (design D3), absolute: `FLEET_PIPELINE_LOG_DIR`,
+    else the state dir (`--state-dir`, else `_resolve_state_dir`), resolved
+    against fleetd's cwd. That is the dir fleetd used before the anchor
+    existed, so it, not the anchor, is what fleetd writes as the anchor at
+    boot and what the startup env check compares the anchor with
+    (`fleet-env-check.sh` `log-dir-anchor-mismatch`)."""
+    env = os.environ.get('FLEET_PIPELINE_LOG_DIR') or ''
+    if env:
+        return _abs_log_dir(env)
+    return _abs_log_dir(state_dir if state_dir else _resolve_state_dir())
 
 
 def _resolve_state_dir():
@@ -1164,7 +1196,7 @@ class DetectionCycle:
                 capture_output=True,
                 text=True,
                 timeout=self._timeout,
-                env={**os.environ, 'FLEET_PIPELINE_LOG_DIR': _abs_log_dir(ws)},
+                env={**os.environ, 'FLEET_PIPELINE_LOG_DIR': _resolved_log_dir(ws)},
             )
         except subprocess.TimeoutExpired:
             self._last_error = f"detection cycle timed out after {self._timeout}s"
@@ -2799,6 +2831,8 @@ def spawn_worker(tid, generation, state_dir, reason='dispatched',
                   file=sys.stderr)
             run_id = None
 
+    worker_log_dir = _resolved_log_dir(state_dir)
+
     pid = os.fork()
     if pid == 0:
         # Child: create new process group, exec the worker.
@@ -2843,6 +2877,10 @@ def spawn_worker(tid, generation, state_dir, reason='dispatched',
         # process having FLEET_STATE_DIR set — it may have resolved state_dir
         # via the DEFAULT_WORKSPACE fallback instead.
         worker_env['FLEET_STATE_DIR'] = str(state_dir)
+        # state-root-anchor D6: the resolved, absolute per-ticket log dir,
+        # computed in the parent before the fork (see `worker_log_dir`), so
+        # a worker never falls back to its own cwd's ./logs.
+        worker_env['FLEET_PIPELINE_LOG_DIR'] = worker_log_dir
         if run_id:
             worker_env['TICKET_RUN_ID'] = run_id
         # Worker telemetry env (WE1-WE5) — best-effort, never blocks a spawn.
@@ -3402,8 +3440,7 @@ def _find_unreleased_gate_hold(state_dir, tid):
     Returns the raw outbox record dict for the latest matching, unreleased
     `gate-held` event, or `None` when there is not one.
     """
-    log_dir = _abs_log_dir(
-        os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(state_dir))
+    log_dir = _resolved_log_dir(state_dir)
     outbox = Path(log_dir) / f'{tid}-outbox.jsonl'
     if not outbox.is_file():
         return None
@@ -3779,7 +3816,7 @@ class Supervisor:
                 timeout=120,
                 env={
                     **os.environ,
-                    'FLEET_PIPELINE_LOG_DIR': _abs_log_dir(self._state_dir),
+                    'FLEET_PIPELINE_LOG_DIR': _resolved_log_dir(self._state_dir),
                     'FLEET_RECONCILE_SCRIPT': str(reconcile_script),
                     'FLEET_RECONCILE_STATE_DIR': str(self._state_dir),
                     'FLEET_RECONCILE_QUEUE_FILE': str(queue_file),
@@ -4013,7 +4050,7 @@ class Supervisor:
         try:
             env = {
                 **os.environ,
-                'FLEET_PIPELINE_LOG_DIR': _abs_log_dir(self._state_dir),
+                'FLEET_PIPELINE_LOG_DIR': _resolved_log_dir(self._state_dir),
                 'FLEET_STATE_DIR': str(self._state_dir),
             }
             if extra_env:
@@ -5424,8 +5461,7 @@ class Supervisor:
         host where the two are configured to differ. Same pattern as
         `_otel_log_dir`/`_observer_log_dir` above.
         """
-        return _abs_log_dir(
-            os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(self._state_dir))
+        return _resolved_log_dir(self._state_dir)
 
     def _board_pusher_pass(self):
         """Tracker event-board pusher pass (tracker-event-board-pusher,
@@ -5777,8 +5813,7 @@ class Supervisor:
     # ── OTel exporter supervision ──────────────────────────────────────────
 
     def _otel_log_dir(self):
-        return _abs_log_dir(
-            os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(self._state_dir))
+        return _resolved_log_dir(self._state_dir)
 
     def maybe_spawn_otel(self, now=None):
         """Start the exporter if enabled, not running, and past its backoff.
@@ -5859,8 +5894,7 @@ class Supervisor:
     # supervision pattern.
 
     def _observer_log_dir(self):
-        return _abs_log_dir(
-            os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(self._state_dir))
+        return _resolved_log_dir(self._state_dir)
 
     def maybe_spawn_observer(self, now=None):
         """Start the sidecar if enabled, not running, and past its backoff.
@@ -5936,6 +5970,41 @@ class Supervisor:
                   file=sys.stderr)
         self._children.remove(sid)
 
+    def ensure_log_dir_anchor(self):
+        """Write the log-dir anchor at boot when it is absent (design D3).
+
+        The value is fleetd's own log dir (`fleetd_own_log_dir`), the same
+        dir the router preamble anchors on a correctly run host. Write-once:
+        an existing anchor is kept, never replaced. The startup env check has
+        already refused to boot on a mismatch (`log-dir-anchor-mismatch`), so
+        a differing anchor here means a race with a router or a gate that was
+        switched off; it is logged, and the anchor wins for every resolver.
+        REPOS_ROOT comes from fleetd's own environment; unset, nothing is
+        written. Never raises. Returns the anchored value, or None.
+        """
+        own = fleetd_own_log_dir(self._state_dir)
+        if not os.environ.get('REPOS_ROOT'):
+            print(f"fleetd[{os.getpid()}]: REPOS_ROOT unset; log-dir anchor not "
+                  f"written (own log dir {own})", file=sys.stderr)
+            return None
+        try:
+            value = _log_dir_mod.write_anchor(own)
+        except (ValueError, OSError) as exc:
+            print(f"fleetd[{os.getpid()}]: log-dir anchor not written: {exc}",
+                  file=sys.stderr)
+            return None
+        if value is None:
+            print(f"fleetd[{os.getpid()}]: log-dir anchor "
+                  f"{_log_dir_mod.anchor_file()} is unusable; not replaced",
+                  file=sys.stderr)
+            return None
+        if not _log_dir_mod.same_dir(value, own):
+            print(f"fleetd[{os.getpid()}]: log-dir anchor {value} differs from "
+                  f"fleetd's own log dir {own}; the anchor is used", file=sys.stderr)
+        else:
+            print(f"fleetd[{os.getpid()}]: log dir {value} (anchored)")
+        return value
+
     def run_observe(self, cmd_override=None):
         """Daemon main loop: detect, reap, spawn (if enabled), repeat.
 
@@ -5947,6 +6016,7 @@ class Supervisor:
         This allows tests to substitute a simple Python process for claude.
         """
         self.acquire_lock()
+        self.ensure_log_dir_anchor()
         mode = 'spawn' if self._spawn_enabled else 'observe'
         print(
             f"fleetd[{os.getpid()}]: lock acquired, state_dir={self._state_dir}, "

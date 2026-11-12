@@ -22,6 +22,16 @@ if ! declare -f _fleet_state_dir >/dev/null 2>&1; then
   [ -f "$_FLEET_STORE_DIR/fleet-config.sh" ] && source "$_FLEET_STORE_DIR/fleet-config.sh"
 fi
 
+# Per-ticket log-dir resolver (state-root-anchor): fleet_log_dir_or.
+if ! declare -f fleet_log_dir_or >/dev/null 2>&1; then
+  _FLEET_STORE_LD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fleet-log-dir.sh"
+  if [ -f "$_FLEET_STORE_LD" ]; then
+    source "$_FLEET_STORE_LD"
+  else
+    fleet_log_dir_or() { printf '%s\n' "${1:-./logs}"; }
+  fi
+fi
+
 FLEET_STORE_DB_NAME="${FLEET_STORE_DB_NAME:-fleet-state.db}"
 
 # Path to the database. Lives beside the rest of fleet's durable state, so it
@@ -29,7 +39,7 @@ FLEET_STORE_DB_NAME="${FLEET_STORE_DB_NAME:-fleet-state.db}"
 # a second one.
 # Usage: _fleet_store_path [workspace]
 _fleet_store_path() {
-  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local dir
   if declare -f _fleet_state_dir >/dev/null 2>&1; then
     dir=$(_fleet_state_dir "$workspace")

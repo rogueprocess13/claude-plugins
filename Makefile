@@ -163,6 +163,7 @@ test-lib:
 	bash fleet-controller/lib/tests/test-fleet-monitor-dispatch.sh
 	bash fleet-controller/lib/tests/test-plugin-structure.sh
 	bash fleet-controller/lib/tests/test-fleet-env-check.sh
+	bash fleet-controller/lib/tests/test-fleet-log-dir.sh
 	bash fleet-controller/lib/tests/test-fleet-features.sh
 	bash fleet-controller/lib/tests/test-fleet-notify.sh
 	bash fleet-controller/lib/tests/test-run-score-export.sh
@@ -308,6 +309,7 @@ test-fleetd:
 	python3 -m pytest fleet-controller/fleetd/tests/test_worker_telemetry_env.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_http_control_auth.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_router_step.py -v
+	python3 -m pytest fleet-controller/fleetd/tests/test_log_dir.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_router_step_parity.py -v
 	python3 -m pytest fleet-controller/fleetd/tests/test_router_step_supervisor.py -v
 	python3 -m pytest ticket-auto-pipeline/skills/ticket-auto/tests/test_dashboard_fleet.py -v

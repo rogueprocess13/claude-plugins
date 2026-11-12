@@ -38,6 +38,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from fleetd import log_dir as _log_dir_mod
 from fleetd import phase_dispatch
 
 DEFAULT_DRIVERS = 'linear'
@@ -97,13 +98,15 @@ def _pipeline_log_dir(log_dir=None):
     anchor while this module keeps locking and reading the relative dir.
     Resolving it here, against fleetd's own cwd, keeps both sides on one
     directory.
+
+    With no argument: `log_dir.resolve_log_dir` (absolute env, then the
+    `$REPOS_ROOT/.ticket-auto/log-dir` anchor), else today's
+    `${FLEET_PIPELINE_LOG_DIR:-./logs}`.
     """
     if log_dir:
         return Path(log_dir).resolve()
-    env = os.environ.get('FLEET_PIPELINE_LOG_DIR')
-    if env:
-        return Path(env).resolve()
-    return Path('./logs').resolve()
+    return Path(_log_dir_mod.resolve_log_dir(
+        fallback=os.environ.get('FLEET_PIPELINE_LOG_DIR') or './logs')).resolve()
 
 
 def _configured_drivers():

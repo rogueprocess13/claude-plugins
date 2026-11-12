@@ -36,6 +36,7 @@ if str(_fleetd_dir) not in sys.path:
 
 from fleetd.supervisor import (  # noqa: E402
     Supervisor, _DEFAULT_FLEET_LIB, _notify_gate_stop, _resolve_state_dir,
+    fleetd_own_log_dir,
 )
 
 _ENV_CHECK_SCRIPT = _fleetd_dir.parent / 'lib' / 'fleet-env-check.sh'
@@ -85,10 +86,15 @@ def _run_startup_env_check(state_dir=None):
             file=sys.stderr,
         )
         return
+    # fleetd's own log dir (state-root-anchor D3/D4): the env check compares
+    # it with `$REPOS_ROOT/.ticket-auto/log-dir` and fails the boot on a
+    # mismatch (`log-dir-anchor-mismatch`), the two-roots bug itself.
     result = subprocess.run(
         ['bash', str(_ENV_CHECK_SCRIPT)],
         capture_output=True,
         text=True,
+        env={**os.environ,
+             'FLEET_ENV_CHECK_LOG_DIR': fleetd_own_log_dir(state_dir)},
     )
     if result.returncode != 0:
         print('fleetd: startup env check failed — refusing to start.', file=sys.stderr)

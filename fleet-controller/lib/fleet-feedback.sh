@@ -8,6 +8,15 @@
 
 _FEEDBACK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Per-ticket log-dir resolver (state-root-anchor): fleet_log_dir_or.
+if ! declare -f fleet_log_dir_or >/dev/null 2>&1; then
+  if [ -f "$_FEEDBACK_DIR/fleet-log-dir.sh" ]; then
+    source "$_FEEDBACK_DIR/fleet-log-dir.sh"
+  else
+    fleet_log_dir_or() { printf '%s\n' "${1:-./logs}"; }
+  fi
+fi
+
 # manifest-read.sh backs the initiative lookup below (tracker-planner-and-
 # fallback-cutover, 4.6) — no live Linear read for this any more.
 if ! declare -f get_ticket_manifest_field >/dev/null 2>&1; then
@@ -105,7 +114,7 @@ _drift_label() {
 # Main entry point: aggregate planner feedback across all active pipeline logs.
 # Usage: fleet_aggregate_feedback [workspace] [--initiative ID]
 fleet_aggregate_feedback() {
-  local workspace="${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  local workspace="$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")"
   local filter_initiative=""
   local dry_run="${FLEET_DRY_RUN:-false}"
 

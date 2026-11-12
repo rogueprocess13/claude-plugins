@@ -17,6 +17,25 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.53.0 (2026-11-12) — fleetd resolves, exports and checks the anchored log dir (state-root-anchor, PR B)
+
+Review finding ARCH-5, second half. Needs ticket-auto-pipeline 0.117.0 (`lib/log-dir.sh`).
+
+### Before you upgrade
+
+- **A host whose fleetd log dir differs from the router's now fails fleetd's boot gate.** fleetd's own log dir is `FLEET_PIPELINE_LOG_DIR`, else its state dir (`--state-dir`, `FLEET_STATE_DIR`, else `FLEETD_WORKSPACE`). If `$REPOS_ROOT/.ticket-auto/log-dir` names another dir, `fleet-env-check.sh` reports `LOG_DIR_ANCHOR|fail|… FAIL log-dir-anchor-mismatch` and fleetd refuses to start. Such a host was already writing two state roots.
+- Check first, read-only: run `ticket-auto-pipeline/skills/ticket-flow/state-root-doctor.sh --repos-root <REPOS_ROOT>`, then `fleet-controller/lib/fleet-env-check.sh <workspace> --log-dir <fleetd's log dir>` and look at the `LOG_DIR_ANCHOR` row. `ok` or `info` is safe to upgrade.
+- To fix a mismatch: stop the fleet, move the dir or start fleetd with the anchored dir as its state dir (or rewrite the one-line anchor by hand), then start the fleet.
+
+### Changed
+
+- New `fleetd/log_dir.py`: `resolve_log_dir(fallback=None)` resolves like bash's `ticket_log_dir` (absolute `FLEET_PIPELINE_LOG_DIR`, then the anchor), and `write_anchor` writes once like `ticket_log_dir_anchor_write`. `fleetd/tests/test_log_dir.py` reads bash's shared case table.
+- Every worker gets an absolute `FLEET_PIPELINE_LOG_DIR`: the resolved dir, else today's value (`FLEET_PIPELINE_LOG_DIR` or the state dir). Script subprocesses, the gate-hold outbox reader and the pusher, otel and observer use the same resolver instead of `./logs`.
+- At boot, after the lock, fleetd writes its own log dir as the anchor when none exists. REPOS_ROOT comes from fleetd's environment; when it is unset, fleetd logs a line and writes nothing.
+- `fleet-env-check.sh` has a `LOG_DIR_ANCHOR` row and a `--log-dir PATH` option; fleetd passes its own dir as `FLEET_ENV_CHECK_LOG_DIR`.
+- The fleet bash readers (`fleet-detect`, `fleet-dashboard`, `fleet-monitor`, `fleet-dispatch`, `fleet-intervene`, `fleet-feedback`, `fleet-registry`, `fleet-store`) default through the new `lib/fleet-log-dir.sh` (`fleet_log_dir_or`), with their old default as the fallback, so a host with no anchor reads the same dir as before.
+- `router_step.project_dir_for` logs on stderr when its `logs` dir is not the resolved dir. Dispatch carries on.
+
 ## 0.117.0 (2026-11-12) — one per-ticket log dir, anchored to REPOS_ROOT (state-root-anchor)
 
 Also fleet-controller 0.52.0. Review finding ARCH-5.

@@ -83,7 +83,7 @@ _spawn_queue_write() {
   local tid="$1"
   local reason="$2"
   local restarts="${3:-0}"
-  local workspace="${4:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${4:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local queue_file
   queue_file=$(_fleet_queue_file "$workspace")
   local entry
@@ -107,7 +107,7 @@ _spawn_restart() {
   local tid="$1"
   local reason="$2"
   local restarts="${3:-0}"
-  local workspace="${4:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${4:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   _spawn_queue_write "$tid" "$reason" "$restarts" "$workspace"
   echo "PENDING:spawn tid=${tid} reason=${reason} (queued for fleetd; monitor does not start workers)"
@@ -232,7 +232,7 @@ _spawn_queue_consume() {
 # Returns JSON detection results to stdout.
 # Usage: fleet_monitor_cycle <workspace>
 fleet_monitor_cycle() {
-  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   fl_write "INFO" "monitor" "Starting monitor cycle"
 
@@ -314,7 +314,7 @@ fleet_monitor_cycle() {
 # gating. Exits cleanly when the namespaced stop file exists.
 # Usage: fleet_monitor_loop <workspace>
 fleet_monitor_loop() {
-  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local instance_id="${FLEET_INSTANCE_ID:-default}"
   local state_dir
   state_dir=$(_fleet_state_dir "$workspace")
@@ -383,6 +383,6 @@ fleet_monitor_loop() {
 # When executed directly (not sourced), run the monitor loop.
 # ${BASH_SOURCE[0]} == "$0" means this script is the entry point.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  WORKSPACE="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  WORKSPACE="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   fleet_monitor_loop "$WORKSPACE"
 fi

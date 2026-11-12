@@ -53,6 +53,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from fleetd.log_dir import resolve_log_dir as _resolve_log_dir
+except ImportError:  # run as a plain script: its own dir is sys.path[0]
+    from log_dir import resolve_log_dir as _resolve_log_dir
+
 # ── Configuration ───────────────────────────────────────────────────────────
 # Same FLEET_* convention as every other knob in fleet-config.sh.
 
@@ -98,7 +103,8 @@ class ObserverConfig:
     @classmethod
     def from_env(cls, log_dir=None):
         return cls(
-            log_dir=log_dir or os.environ.get('FLEET_PIPELINE_LOG_DIR') or './logs',
+            log_dir=log_dir or _resolve_log_dir(
+                fallback=os.environ.get('FLEET_PIPELINE_LOG_DIR') or './logs'),
             poll_secs=_env_int('FLEET_OBSERVER_POLL_SECS', DEFAULT_POLL_SECS),
             grace_secs=_env_int('FLEET_OBSERVER_GRACE_SECS', DEFAULT_GRACE_SECS),
             max_field=_env_int('FLEET_OBSERVER_MAX_FIELD', DEFAULT_MAX_FIELD),
@@ -1147,7 +1153,7 @@ def main(argv=None):
         description='Agent Observer sidecar for the ticket-auto pipeline')
     parser.add_argument('--log-dir', default=None,
                         help='Pipeline log / worker-stdio directory '
-                             '(default: $FLEET_PIPELINE_LOG_DIR, else ./logs)')
+                             '(default: absolute $FLEET_PIPELINE_LOG_DIR, else the $REPOS_ROOT/.ticket-auto/log-dir anchor, else $FLEET_PIPELINE_LOG_DIR or ./logs)')
     parser.add_argument('--once', action='store_true',
                         help='Run a single poll and exit (for testing)')
     args = parser.parse_args(argv)

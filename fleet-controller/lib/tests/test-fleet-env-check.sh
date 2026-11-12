@@ -360,6 +360,128 @@ test_worker_autonomy_invalid_value_refuses() {
   [[ "$(_row "$out" "FLEET_WORKER_AUTONOMY")" == *"|missing|"* ]] && [ "$exit_code" -gt 0 ]
 }
 
+# ── Log-dir anchor (state-root-anchor, PR B) ─────────────────────────────────
+# fleetd passes its own log dir as FLEET_ENV_CHECK_LOG_DIR; the check compares
+# it with $REPOS_ROOT/.ticket-auto/log-dir (realpath both sides). A mismatch is
+# the two-roots bug and must fail fleetd's boot gate (any nonzero exit).
+
+_anchor() {
+  # _anchor REPOS_ROOT VALUE
+  mkdir -p "$1/.ticket-auto"
+  printf '%s\n' "$2" >"$1/.ticket-auto/log-dir"
+}
+
+# _anchor_rc PROJECT ENV... — run the check with a clean log-dir env, print rc.
+_anchor_rc() {
+  local dir="$1" rc=0
+  shift
+  env -u REPOS_ROOT -u FLEET_PIPELINE_LOG_DIR -u FLEET_STATE_DIR -u FLEET_ENV_CHECK_LOG_DIR \
+    "$@" bash "$LIB_DIR/fleet-env-check.sh" "$dir" >/dev/null 2>&1 || rc=$?
+  echo "$rc"
+}
+
+_anchor_out() {
+  local dir="$1"
+  shift
+  env -u REPOS_ROOT -u FLEET_PIPELINE_LOG_DIR -u FLEET_STATE_DIR -u FLEET_ENV_CHECK_LOG_DIR \
+    "$@" bash "$LIB_DIR/fleet-env-check.sh" "$dir" 2>/dev/null || true
+}
+
+test_log_dir_anchor_absent_passes() {
+  local tmpdir out row rc_base rc
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  out=$(_anchor_out "$tmpdir" FLEET_ENV_CHECK_LOG_DIR="$tmpdir/logs")
+  rc=$(_anchor_rc "$tmpdir" FLEET_ENV_CHECK_LOG_DIR="$tmpdir/logs")
+  rc_base=$(_anchor_rc "$tmpdir")
+  row=$(_row "$out" "LOG_DIR_ANCHOR")
+  rm -rf "$tmpdir"
+  [[ "$row" == "LOG_DIR_ANCHOR|info|"* ]] && [ "$rc" = "$rc_base" ]
+}
+
+test_log_dir_anchor_equal_passes() {
+  local tmpdir out row rc_mis rc_eq
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  mkdir -p "$tmpdir/logs"
+  ln -s "$tmpdir/logs" "$tmpdir/logs-link"
+  _anchor "$tmpdir" "$tmpdir/logs-link"
+  out=$(_anchor_out "$tmpdir" FLEET_ENV_CHECK_LOG_DIR="$tmpdir/logs")
+  rc_eq=$(_anchor_rc "$tmpdir" FLEET_ENV_CHECK_LOG_DIR="$tmpdir/logs")
+  rc_mis=$(_anchor_rc "$tmpdir" FLEET_ENV_CHECK_LOG_DIR="$tmpdir/other")
+  row=$(_row "$out" "LOG_DIR_ANCHOR")
+  rm -rf "$tmpdir"
+  [[ "$row" == "LOG_DIR_ANCHOR|ok|"* ]] && [ "$rc_mis" -eq $((rc_eq + 1)) ]
+}
+
+test_log_dir_anchor_mismatch_fails() {
+  local tmpdir out row rc
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  _anchor "$tmpdir" "$tmpdir/router/logs"
+  out=$(_anchor_out "$tmpdir" FLEET_ENV_CHECK_LOG_DIR="$tmpdir/fleetd/logs")
+  rc=$(_anchor_rc "$tmpdir" FLEET_ENV_CHECK_LOG_DIR="$tmpdir/fleetd/logs")
+  row=$(_row "$out" "LOG_DIR_ANCHOR")
+  rm -rf "$tmpdir"
+  [[ "$row" == "LOG_DIR_ANCHOR|fail|$tmpdir/router/logs|"* ]] &&
+    [[ "$row" == *"log-dir-anchor-mismatch"* ]] &&
+    [[ "$row" == *"$tmpdir/fleetd/logs"* ]] && [ "$rc" -ne 0 ]
+}
+
+test_log_dir_anchor_flag_and_state_dir_sources() {
+  local tmpdir row1 row2 row3
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  _anchor "$tmpdir" "$tmpdir/a/logs"
+  row1=$(_row "$(_anchor_out "$tmpdir" FLEET_STATE_DIR="$tmpdir/b")" "LOG_DIR_ANCHOR")
+  row2=$(_row "$(env -u REPOS_ROOT -u FLEET_PIPELINE_LOG_DIR -u FLEET_STATE_DIR -u FLEET_ENV_CHECK_LOG_DIR \
+    bash "$LIB_DIR/fleet-env-check.sh" "$tmpdir" --log-dir "$tmpdir/a/logs" 2>/dev/null || true)" "LOG_DIR_ANCHOR")
+  row3=$(_row "$(_anchor_out "$tmpdir" FLEET_PIPELINE_LOG_DIR="$tmpdir/a/logs" FLEET_STATE_DIR="$tmpdir/b")" "LOG_DIR_ANCHOR")
+  rm -rf "$tmpdir"
+  [[ "$row1" == "LOG_DIR_ANCHOR|fail|"* ]] && [[ "$row2" == "LOG_DIR_ANCHOR|ok|"* ]] &&
+    [[ "$row3" == "LOG_DIR_ANCHOR|ok|"* ]]
+}
+
+test_log_dir_anchor_unknown_fleetd_dir_is_info() {
+  local tmpdir row rc rc_base
+  tmpdir=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  _anchor "$tmpdir" "$tmpdir/a/logs"
+  row=$(_row "$(_anchor_out "$tmpdir")" "LOG_DIR_ANCHOR")
+  rc=$(_anchor_rc "$tmpdir")
+  rc_base=$(_anchor_rc "$tmpdir" FLEET_ENV_CHECK_LOG_DIR="$tmpdir/a/logs")
+  rm -rf "$tmpdir"
+  [[ "$row" == "LOG_DIR_ANCHOR|info|$tmpdir/a/logs|"* ]] && [ "$rc" = "$rc_base" ]
+}
+
+test_log_dir_anchor_env_repos_root_wins() {
+  local tmpdir other row
+  tmpdir=$(mktemp -d)
+  other=$(mktemp -d)
+  _mk_project_dir "$tmpdir"
+  _anchor "$tmpdir" "$tmpdir/x/logs"
+  _anchor "$other" "$tmpdir/y/logs"
+  row=$(_row "$(_anchor_out "$tmpdir" REPOS_ROOT="$other" FLEET_ENV_CHECK_LOG_DIR="$tmpdir/y/logs")" "LOG_DIR_ANCHOR")
+  rm -rf "$tmpdir" "$other"
+  [[ "$row" == "LOG_DIR_ANCHOR|ok|"* ]]
+}
+
+# The tickets host: fleetd's cwd and FLEETD_WORKSPACE = the workspace,
+# --state-dir <workspace>/logs, REPOS_ROOT exported, FLEET_PIPELINE_LOG_DIR
+# unset; the router preamble anchored <workspace>/logs.
+test_log_dir_anchor_tickets_host_layout_passes() {
+  local root ws row
+  root=$(mktemp -d)
+  ws="$root/tickets"
+  mkdir -p "$ws/logs"
+  _mk_project_dir "$ws"
+  _anchor "$root" "$ws/logs"
+  row=$(_row "$(cd "$ws" && _anchor_out "$ws" REPOS_ROOT="$root" FLEETD_WORKSPACE="$ws" \
+    FLEET_ENV_CHECK_LOG_DIR="$ws/logs")" "LOG_DIR_ANCHOR")
+  rm -rf "$root"
+  [[ "$row" == "LOG_DIR_ANCHOR|ok|$ws/logs|"* ]]
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Runner
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -392,7 +514,14 @@ for fn in \
   test_permission_probe_skipped_by_default \
   test_worker_autonomy_default_is_auto_and_not_an_issue \
   test_worker_autonomy_valid_values_ok \
-  test_worker_autonomy_invalid_value_refuses; do
+  test_worker_autonomy_invalid_value_refuses \
+  test_log_dir_anchor_absent_passes \
+  test_log_dir_anchor_equal_passes \
+  test_log_dir_anchor_mismatch_fails \
+  test_log_dir_anchor_flag_and_state_dir_sources \
+  test_log_dir_anchor_unknown_fleetd_dir_is_info \
+  test_log_dir_anchor_env_repos_root_wins \
+  test_log_dir_anchor_tickets_host_layout_passes; do
   [ -z "$FILTER" ] || [[ "$fn" == *"$FILTER"* ]] || continue
   _run "$fn" "$fn"
 done

@@ -59,7 +59,7 @@ _HARMLESS_TRAILING_META_STEPS='^(worker-exit|fleet-restart|fleet-intervention|ma
 # Usage: _pipeline_rows <tid> [workspace]
 _pipeline_rows() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   if declare -f fleet_store_pipeline_rows >/dev/null 2>&1 &&
     declare -f fleet_store_ready >/dev/null 2>&1 &&
@@ -88,7 +88,7 @@ _pipeline_lines() {
 # Usage: _pipeline_has_history <tid> [workspace]
 _pipeline_has_history() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   [ -f "${workspace}/${tid}-pipeline.log" ] && return 0
   local first
   first=$(_pipeline_rows "$tid" "$workspace" | head -1)
@@ -100,7 +100,7 @@ _pipeline_has_history() {
 # Usage: _pipeline_last_age_secs <tid> [workspace]
 _pipeline_last_age_secs() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local last_iso
   last_iso=$(_pipeline_lines "$tid" "$workspace" | tail -1 | awk -F'|' '{print $1}')
   if [ -z "$last_iso" ]; then
@@ -211,7 +211,7 @@ _last_effective_line() {
 # Usage: _pipeline_last_effective_line <tid> [workspace]
 _pipeline_last_effective_line() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   _pipeline_lines "$tid" "$workspace" | tac | awk -F'|' -v allow="$_HARMLESS_TRAILING_META_STEPS" '$3 !~ allow {print; exit}'
 }
 
@@ -220,7 +220,7 @@ _pipeline_last_effective_line() {
 # Usage: _pipeline_last_outcome_msg <tid> [workspace]
 _pipeline_last_outcome_msg() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local last
   last=$(_pipeline_last_effective_line "$tid" "$workspace")
   [ -z "$last" ] && return
@@ -239,7 +239,7 @@ _pipeline_last_outcome_msg() {
 # Usage: _pipeline_genuinely_terminal <tid> [workspace]
 _pipeline_genuinely_terminal() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local last_step
   last_step=$(_pipeline_last_effective_line "$tid" "$workspace" | awk -F'|' '{print $3}')
   [ "$last_step" = "dead-letter" ] && return 0
@@ -261,7 +261,7 @@ _pipeline_genuinely_terminal() {
 # Usage: _pipeline_attention_entry <tid> [workspace]
 _pipeline_attention_entry() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local last
   last=$(_pipeline_last_effective_line "$tid" "$workspace")
   [ -z "$last" ] && return 0
@@ -307,7 +307,7 @@ _pipeline_attention_entry() {
 # Usage: _pipeline_is_held <tid> [workspace]
 _pipeline_is_held() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local msg
   msg=$(_pipeline_last_outcome_msg "$tid" "$workspace")
   case "$msg" in
@@ -323,7 +323,7 @@ _pipeline_is_held() {
 # 1. Phase failure detection
 detect_phase_failures() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   if ! _pipeline_has_history "$tid" "$workspace"; then
     echo "0"
@@ -379,7 +379,7 @@ detect_phase_failures() {
 # function so the two can never disagree about which bracket is open.
 _spawn_bracket_info() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local rows
   rows=$(_pipeline_rows "$tid" "$workspace") || return 1
   [ -n "$rows" ] || return 1
@@ -421,7 +421,7 @@ _spawn_bracket_open() {
 # Returns 0 (true) when fleetd owns the ticket.
 _fleet_owns_ticket() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local run_file=""
 
   # The store is the durable form of this question: it records ownership at
@@ -454,7 +454,7 @@ _fleet_owns_ticket() {
 # Prints a severity (0-2).
 _detect_activity_stall() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local act_log="${workspace}/${tid}-activity.log"
 
   # No activity log at all — the hook never resolved this ticket (an older
@@ -511,7 +511,7 @@ _detect_activity_stall() {
 # a possible problem, never proof of one, and severity >=2 drives real kills.
 detect_runaway_calls() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local act_log="${workspace}/${tid}-activity.log"
 
   if [ ! -f "$act_log" ] || [ ! -s "$act_log" ]; then
@@ -554,7 +554,7 @@ detect_runaway_calls() {
 # 2. Stall detection via stale heartbeats and stale agent activity
 detect_stalls() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local hb_file="${workspace}/${tid}-heartbeat.log"
 
   # Activity dimension is independent of the heartbeat dimension: it is
@@ -622,7 +622,7 @@ detect_stalls() {
 # 3. Zombie step detection — unresolved |waiting| entries
 detect_zombies() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   if ! _pipeline_has_history "$tid" "$workspace"; then
     echo "0"
@@ -683,7 +683,7 @@ detect_zombies() {
 # 4. Loop detection via excessive retries
 detect_loops() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local hb_file="${workspace}/${tid}-heartbeat.log"
 
   if [ ! -f "$hb_file" ]; then
@@ -721,7 +721,7 @@ detect_loops() {
 # 5. Abandonment detection — pipeline log exists but no genuine resolution
 detect_abandoned() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   if ! _pipeline_has_history "$tid" "$workspace"; then
     echo "0"
@@ -782,7 +782,7 @@ detect_abandoned() {
 # long-unanswered hold lives in `fleet_notify_hold` instead, not here.
 detect_human_hold() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   if ! _pipeline_has_history "$tid" "$workspace"; then
     echo "0"
@@ -862,7 +862,7 @@ detect_human_hold() {
 # of the outbox and cursor files, not of a live process.
 detect_outbox_staleness() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   local outbox="${workspace}/${tid}-outbox.jsonl"
   [ -f "$outbox" ] || {
@@ -926,7 +926,7 @@ detect_outbox_staleness() {
 # phase is not repeatedly re-flagged on every later cycle.
 detect_observer_findings() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   if ! _pipeline_has_history "$tid" "$workspace"; then
     echo "0"
@@ -979,7 +979,7 @@ detect_observer_findings() {
 # fixed for detect_tool_errors).
 detect_worker_api_errors() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   if ! _pipeline_has_history "$tid" "$workspace"; then
     echo "0"
@@ -1030,7 +1030,7 @@ detect_flow_failures() {
 #    Severity: 0 = none, 1 = WARN (1 block), 2 = KILL (2+ blocks).
 detect_auto_mode_blocks() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   if ! _pipeline_has_history "$tid" "$workspace"; then
     echo "0"
@@ -1081,7 +1081,7 @@ detect_auto_mode_blocks() {
 # this fix — the normal case for a human running the pipeline by hand.
 detect_tool_errors() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local err_file="${workspace}/${tid}-tool-errors.log"
 
   if [ ! -f "$err_file" ] || [ ! -s "$err_file" ]; then
@@ -1149,7 +1149,7 @@ detect_tool_errors() {
 #    Severity: 0 = OBSERVE (none), 1 = WARN (uncollected feedback found).
 detect_planner_feedback() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   if ! _pipeline_has_history "$tid" "$workspace"; then
     echo "0"
@@ -1198,7 +1198,7 @@ detect_planner_feedback() {
 #     Severity: 0 = OBSERVE, 1 = WARN (unblocked tickets found).
 detect_blocked_by() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local log_file="${workspace}/${tid}-pipeline.log"
 
   # This is primarily a fleet-wide detector — per-ticket invocation
@@ -1252,7 +1252,7 @@ detect_blocked_by() {
 #     Severity: 0 = OBSERVE, 1 = WARN (undispatched tickets found).
 detect_initiative_dispatch() {
   local tid="$1"
-  local workspace="${2:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${2:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   # This is a fleet-wide detector. Per-ticket invocation is a no-op —
   # the fleet-wide scan in fleet_detect_all runs it once separately.
@@ -1303,7 +1303,7 @@ _fleet_initiative_dispatch_auto_dispatch() {
 # path under the caller's CWD — auto-dispatched entries were otherwise written
 # somewhere fleetd never reads.
 _fleet_scan_initiative_dispatch() {
-  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   # tracker-planner-and-fallback-cutover (1.2, 3.11): population comes from
   # the shared fleet_local_epics helper (fleet-config.sh, D2) — no inline
@@ -1445,7 +1445,7 @@ _fleet_advance_epic_state() {
 # Checks state:execution epics with Branch Directives: are all children Done?
 # Usage: _fleet_scan_epic_branch_ready <workspace>
 _fleet_scan_epic_branch_ready() {
-  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   # Ensure linear-api.sh and epic-branch deps are available
   if ! declare -f get_issue >/dev/null 2>&1; then
@@ -1784,7 +1784,7 @@ _fleet_sa_report_not_ready() {
 }
 
 _fleet_scan_stalled_approved_children() {
-  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   # Queue inspection (_queue_has_ticket/_fleet_queue_append), liveness
   # fallback (_fleet_tid_live/_registry_pid_alive) and the actuation entry
@@ -1904,7 +1904,7 @@ _fleet_scan_stalled_approved_children() {
 # Checks all active tickets for resolved blocked-by dependencies.
 # Usage: _fleet_scan_blocked_by <workspace>
 _fleet_scan_blocked_by() {
-  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   # tracker-planner-and-fallback-cutover (3.8): detect_blocked_by is
   # manifest-only now — no linear-api.sh sourcing needed here at all. A
@@ -1957,7 +1957,7 @@ _fleet_scan_blocked_by() {
 extract_diagnostics() {
   local tid="$1"
   local phase="${2:-}"
-  local workspace="${3:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${3:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local claude_log="${workspace}/${tid}-claude.log"
   local agent_log=""
 
@@ -1998,18 +1998,26 @@ extract_diagnostics() {
 # ── Workspace guard ──────────────────────────────────────────────────────────────
 # A misconfigured fleet and an idle fleet look identical from the aggregator's
 # point of view: both produce zero pipeline rows. The difference is whether the
-# directory is there at all. FLEET_PIPELINE_LOG_DIR defaults to the *relative*
-# path ./logs, so a fleetd started from the wrong working directory silently
+# directory is there at all. With no absolute FLEET_PIPELINE_LOG_DIR and no
+# log-dir anchor ($REPOS_ROOT/.ticket-auto/log-dir, state-root-anchor) the
+# default is the *relative* path ./logs, so a fleetd started from the wrong working directory silently
 # monitors nothing and reports a clean bill of health forever — the worst
 # possible failure mode for a health monitor.
 #
 # Emits {"severity":N,"findings":"..."} — WARN (1) when the directory cannot be
 # read, silent (0) when it exists and is simply idle.
 _fleet_workspace_guard() {
-  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
   local configured="${FLEET_PIPELINE_LOG_DIR:-}"
-  local origin
-  if [ -n "$configured" ]; then
+  local origin _anchor_file=""
+  if declare -f ticket_log_dir_anchor_file >/dev/null 2>&1; then
+    _anchor_file=$(ticket_log_dir_anchor_file 2>/dev/null) || _anchor_file=""
+  fi
+  if [[ "$configured" == /* ]]; then
+    origin="FLEET_PIPELINE_LOG_DIR=${configured}"
+  elif [ -n "$_anchor_file" ] && [ "$(fleet_log_dir_or "")" = "$workspace" ]; then
+    origin="anchored in ${_anchor_file}"
+  elif [ -n "$configured" ]; then
     origin="FLEET_PIPELINE_LOG_DIR=${configured}"
   else
     origin="FLEET_PIPELINE_LOG_DIR unset — default ./logs resolved against $(pwd)"
@@ -2048,7 +2056,7 @@ _fleet_workspace_guard() {
 # Outputs JSON results array.
 # Usage: fleet_detect_all <workspace>
 fleet_detect_all() {
-  local workspace="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+  local workspace="${1:-$(fleet_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}")}"
 
   # The guard runs before the directory check, not after it: a missing workspace
   # is exactly the case it exists to report, and the old early return discarded
