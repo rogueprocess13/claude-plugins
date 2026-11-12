@@ -17,6 +17,12 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-auto-pipeline 0.115.3 (2026-11-12) — inspector verdict recomputed, never read back
+
+### Fixed
+
+- **Inspector verdict recompute (DET-SU-1 hardening).** `router-step.sh inspector-done` recomputes the deterministic phase-inspector verdict (`compute_inspector_verdict`, the same inputs as `assemble_inspector_context`) instead of trusting a log line's `"source":"bash"`, which an agent could also write. It re-asserts bash's verdict (`agent_overridden:true`) when the phase's last verdict line is missing, malformed or differs in `.verdict`/`.signals` (typed jq comparison). Validation failures fail closed. `validate_phase_inspector` builds its output in one jq program from `--argjson` values. Flagged by an automated security review of #703.
+
 ## ticket-planner 0.41.0 (2026-11-12) — AC precondition checks switched on for new initiatives
 
 planner-ac-code-precondition, PR 2 of 2. ticket-auto-pipeline and fleet-controller unchanged.

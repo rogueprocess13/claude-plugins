@@ -26,25 +26,33 @@ _PI_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
 # ── Deterministic verdict (DET-SU-1) ──────────────────────────────────────────
 
-# _pi_write_verdict PHASE LOG_FILE VR_JSON_ARRAY HAS_RETURN_INCOMPLETE
-# Runs inspect_verifiers and appends the result as this phase's
-# META|phase-inspector line ({phase, verdict, signals, detail,
-# verifiers_consulted, patterns, source:"bash"}). Prints the JSON (empty on
-# failure). Skips the write when the log's last line already is this exact
-# verdict (resume/rerun). Fail-soft: always returns 0.
-_pi_write_verdict() {
-  local phase="$1" log_file="$2" vr_json="$3" has_ri="$4"
+# _pi_verdict_line PHASE VR_JSON_ARRAY HAS_RETURN_INCOMPLETE
+# Runs inspect_verifiers and prints this phase's deterministic
+# META|phase-inspector JSON ({phase, verdict, signals, detail,
+# verifiers_consulted, patterns, source:"bash"}); empty on failure.
+_pi_verdict_line() {
+  local phase="$1" vr_json="$2" has_ri="$3"
   if ! declare -f inspect_verifiers >/dev/null 2>&1; then
     # shellcheck source=/dev/null
     source "$_PI_LIB_DIR/inspect-verifiers.sh" 2>/dev/null || return 0
   fi
-  local det="" line=""
+  local det=""
   det=$(inspect_verifiers "$vr_json" "$has_ri" "$phase" 2>/dev/null) || det=""
   [ -n "$det" ] || return 0
-  line=$(jq -c --arg phase "$phase" --argjson vr "$vr_json" \
+  jq -c --arg phase "$phase" --argjson vr "$vr_json" \
     '{phase: $phase, verdict, signals, detail,
       verifiers_consulted: ([$vr[] | .verifier // empty] | unique),
-      patterns, source: "bash"}' <<<"$det" 2>/dev/null) || line=""
+      patterns, source: "bash"}' <<<"$det" 2>/dev/null || true
+  return 0
+}
+
+# _pi_write_verdict PHASE LOG_FILE VR_JSON_ARRAY HAS_RETURN_INCOMPLETE
+# Appends _pi_verdict_line's JSON as this phase's META|phase-inspector line
+# and prints it. Skips the write when the log's last line already is this
+# exact verdict (resume/rerun). Fail-soft: always returns 0.
+_pi_write_verdict() {
+  local phase="$1" log_file="$2" line=""
+  line=$(_pi_verdict_line "$phase" "$3" "$4") || line=""
   [ -n "$line" ] || return 0
   if [ -n "$log_file" ]; then
     local last=""
@@ -54,6 +62,56 @@ _pi_write_verdict() {
     fi
   fi
   printf '%s\n' "$line"
+  return 0
+}
+
+# _pi_vr_entries_ts LOG_FILE "PHASE [EXTRA ...]"
+# Prints "<ts>\t<json>" for every META|verifier-result line whose .phase is
+# one of the listed phases. Awk-join (never cut -f5) recovers JSON holding
+# pipes; per-line jq drops a torn line while its neighbours survive.
+_pi_vr_entries_ts() {
+  local log_file="$1" target_phases="$2"
+  [ -n "$log_file" ] && [ -f "$log_file" ] || return 0
+  grep '^[^|]*|META|verifier-result|info|' "$log_file" 2>/dev/null |
+    awk -F'|' '{ts=$1; s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print ts "\t" s}' |
+    while IFS=$'\t' read -r _ts json_line; do
+      _phase=$(echo "$json_line" | jq -r '.phase // empty' 2>/dev/null || true)
+      [ -n "$_phase" ] || continue
+      case " $target_phases " in
+      *" $_phase "*) printf '%s\t%s\n' "$_ts" "$json_line" ;;
+      esac
+    done || true
+  return 0
+}
+
+# _pi_return_incomplete_warn LOG_FILE FIRST_TS
+# Prints the last RETURN_INCOMPLETE gate-warn at or after FIRST_TS (empty if
+# none). Only the IMPLEMENT inspector consults it (#418, see below).
+_pi_return_incomplete_warn() {
+  local log_file="$1" ts_first="$2"
+  [ -n "$ts_first" ] && [ -f "$log_file" ] || return 0
+  grep '^[^|]*|META|gate-warn|[^|]*|RETURN_INCOMPLETE' "$log_file" 2>/dev/null |
+    awk -F'|' -v ts_first="$ts_first" '$1 >= ts_first {print}' | tail -1 || true
+  return 0
+}
+
+# compute_inspector_verdict PHASE LOG_FILE [EXTRA_PHASES]
+# Recomputes, from the log's verifier results, the exact deterministic
+# verdict assemble_inspector_context writes — without writing anything.
+# Prints nothing when the phases have no verifier results. Fail-soft.
+compute_inspector_verdict() {
+  local phase="$1" log_file="$2" extra="${3:-}"
+  command -v jq >/dev/null 2>&1 || return 0
+  local targets="$phase" entries_ts="" ts_first="" has_ri="false"
+  [ -n "$extra" ] && targets="$targets $extra"
+  entries_ts=$(_pi_vr_entries_ts "$log_file" "$targets")
+  [ -n "$entries_ts" ] || return 0
+  if [ "$phase" = "IMPLEMENT" ]; then
+    ts_first=$(printf '%s\n' "$entries_ts" | head -1 | cut -f1)
+    [ -z "$(_pi_return_incomplete_warn "$log_file" "$ts_first")" ] || has_ri="true"
+  fi
+  _pi_verdict_line "$phase" \
+    "$(printf '%s\n' "$entries_ts" | cut -f2- | jq -c -s '.' 2>/dev/null || echo '[]')" "$has_ri"
   return 0
 }
 
@@ -91,18 +149,7 @@ assemble_inspector_context() {
     # every verifier-result in the whole log (P1-6 regression: a stale
     # gate-warn from an earlier phase kept reappearing in every later
     # phase's inspection context because the window was unscoped).
-    _vr_entries_ts=$(grep '^[^|]*|META|verifier-result|info|' "$LOG_FILE" 2>/dev/null |
-      awk -F'|' '{ts=$1; s=$5; for(i=6;i<=NF;i++) s=s"|"$i; print ts "\t" s}' |
-      while IFS=$'\t' read -r _ts json_line; do
-        _phase=$(echo "$json_line" | jq -r '.phase // empty' 2>/dev/null || true)
-        if [ -z "$_phase" ]; then
-          continue
-        fi
-        # Match against primary phase + any extra phases (space-delimited)
-        case " $_target_phases " in
-        *" $_phase "*) printf '%s\t%s\n' "$_ts" "$json_line" ;;
-        esac
-      done || true)
+    _vr_entries_ts=$(_pi_vr_entries_ts "$LOG_FILE" "$_target_phases")
     if [ -n "$_vr_entries_ts" ]; then
       _vr_entries=$(printf '%s\n' "$_vr_entries_ts" | cut -f2-)
     fi
@@ -182,10 +229,7 @@ assemble_inspector_context() {
     _gate_warns=$(printf '%s\n' "$_gate_warns" | grep -v '|META|gate-warn|[^|]*|RETURN_INCOMPLETE' || true)
     if [ "$PHASE" = "IMPLEMENT" ]; then
       local _ri_warns=""
-      if [ -n "$_vr_ts_first" ]; then
-        _ri_warns=$(grep '^[^|]*|META|gate-warn|[^|]*|RETURN_INCOMPLETE' "$LOG_FILE" 2>/dev/null |
-          awk -F'|' -v ts_first="$_vr_ts_first" '$1 >= ts_first {print}' | tail -1 || true)
-      fi
+      _ri_warns=$(_pi_return_incomplete_warn "$LOG_FILE" "$_vr_ts_first")
       if [ -n "$_ri_warns" ]; then
         _has_return_incomplete="true"
         if [ -n "$_gate_warns" ]; then
