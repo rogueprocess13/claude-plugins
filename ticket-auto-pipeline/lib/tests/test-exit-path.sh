@@ -167,6 +167,19 @@ test_class_orchestration_failure_via_named_gate_stop() {
   return $ok
 }
 
+# CRITIQUE_NOT_RUN — the evaluator failed, so nothing about the ticket's
+# readiness is known: it must not classify as readiness (a ticket fault).
+test_class_orchestration_failure_via_critique_not_run() {
+  local log
+  log=$(_tmp_log)
+  echo '2026-01-01T00:01:01Z|META|gate-stop|fail|CRITIQUE_NOT_RUN — critique started but wrote no section' >"$log"
+  local ok
+  [ "$(bash -c "source '$LIB_DIR/exit-path.sh'; derive_failure_class '$log'")" = "orchestration_failure" ]
+  ok=$?
+  rm -rf "$(dirname "$log")"
+  return $ok
+}
+
 test_class_orchestration_failure_via_unnamed_gate_stop_catchall() {
   local log
   log=$(_tmp_log)
@@ -648,6 +661,7 @@ _run "class: review_failure via blocked adversarial review" test_class_review_fa
 _run "class: test_failure" test_class_test_failure
 _run "class: orchestration_failure via router error" test_class_orchestration_failure_via_router_error
 _run "class: orchestration_failure via named gate-stop" test_class_orchestration_failure_via_named_gate_stop
+_run "class: orchestration_failure via CRITIQUE_NOT_RUN gate-stop" test_class_orchestration_failure_via_critique_not_run
 _run "class: orchestration_failure via unnamed gate-stop catch-all" test_class_orchestration_failure_via_unnamed_gate_stop_catchall
 _run "class: timeout on stall kill" test_class_timeout_on_stall_kill
 _run "class: infrastructure_failure on non-stall kill" test_class_infrastructure_failure_on_non_stall_kill

@@ -1,24 +1,26 @@
 # allow-growth: dor-semantic-paraphrase — scan PARAPHRASE line and INCOHERENT_CHANGE in the prompt, schema doc and evaluator compatibility (+5,393 bytes, 0.115.0)
 # allow-growth: ARCH-4 manifest write lock — lib/manifest-write.sh is in the dor-semantic manifest (+46 bytes, 0.115.2)
 dor-semantic	94229
-guidance-extractor	94891
+guidance-extractor	94887
 # allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
-ticket-appraise	154375
-ticket-appraise-exec	121295
+ticket-appraise	154367
+ticket-appraise-exec	121291
 ticket-appraise-exec:conditional	14328
 # allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
 ticket-appraise:conditional	35284
-ticket-document	79017
+ticket-document	79013
 ticket-gate-reconcile	6789
-ticket-implement	144893
+ticket-implement	144889
 ticket-implement:conditional	9949
-ticket-pr-iterate	104143
-ticket-pr-review	131110
-ticket-reproduce	107707
+ticket-pr-iterate	104139
+ticket-pr-review	131106
+ticket-reproduce	107703
 ticket-reproduce:conditional	2641
 ticket-retro	18240
 ticket-retro:conditional	4179
-ticket-verify	176173
+ticket-verify	176169
 ticket-verify:conditional	16693
-wiki-maintenance	91920
+wiki-maintenance	91916
+# allow-growth: ticket-critique BLOCKED message names the needs-info-resolved trigger (+84 bytes, 0.113.2)
+# allow-growth: ticket-setup/references/project-init.md (Step 0.4, read only when CLAUDE.md is missing) registered in the ticket-appraise manifest; the always-loaded row drops by 2,042
 wiki-maintenance:conditional	5060

@@ -27,6 +27,12 @@ planner-goldfish-review PR A of 2 (next.md Step 18 item 1). ticket-auto-pipeline
 - Warn-only Crosscheck family `GOLDFISH_UNADDRESSED` (blocker/major goldfish findings Consensus did not disposition); silent without a goldfish line.
 - New flag `PLANNER_GOLDFISH_REVIEW`, **off by default** (features.json entry). Nothing calls the lens until PR B wires it before the Review phase.
 
+## ticket-auto-pipeline 0.115.4 (2026-11-12) — a crashed critique no longer passes the entry gate
+
+### Fixed
+
+- Entry-gate Check 2.5 no longer lets a failed critique through. Before, a missing `## Readiness Critique` section always skipped the check, so a critique that crashed or failed its fetch reached the gate with no critique check at all. Now, if `APPRAISE|critique|start` was logged but no section was written, the gate stops with `CRITIQUE_NOT_RUN` (failure class `orchestration_failure`; a crashed critique says nothing about the ticket). Paths that never start a critique pass as before. ticket-appraise Step 2.7 treats an UNAVAILABLE or missing critique result as not run, never as CLEAR. Found by the dor-semantic-paraphrase not-run audit.
+
 ## ticket-auto-pipeline 0.115.3 (2026-11-12) — inspector verdict recomputed, never read back
 
 ### Fixed
