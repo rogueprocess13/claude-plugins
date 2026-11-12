@@ -1247,6 +1247,87 @@ test_critique_score_below_40_held() {
   }
 }
 
+# 29a. Critique started (APPRAISE|critique|start) but no ## Readiness Critique
+# section → gate-stop CRITIQUE_NOT_RUN. A failed evaluator is "not run",
+# never "no findings" (fail-closed).
+test_critique_started_but_missing_gate_stops() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _scaffold_context_md 2 "feature" "true"
+  _scaffold_artifact_with_prereqs "${_ws}/simple-fix.md"
+  _plog_raw "APPRAISE" "critique" "start" "Validating ticket completeness"
+  # notes.md from _scaffold_default_ticket_files: no critique section
+
+  _gate_entry
+  local rc=$?
+
+  local gate_stop
+  gate_stop=$(grep '|META|gate-stop|fail|CRITIQUE_NOT_RUN' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 2 ] || {
+    echo "expected exit 2 (gate-stop), got $rc"
+    return 1
+  }
+  [ -n "$gate_stop" ] || {
+    echo "expected CRITIQUE_NOT_RUN gate-stop in log"
+    return 1
+  }
+}
+
+# 29b. No critique start marker and no section (critique legitimately never
+# ran — pre-marker run, manual exec) → still skips Check 2.5 and passes.
+test_critique_never_started_missing_passes() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _scaffold_context_md 2 "feature" "true"
+  _scaffold_artifact_with_prereqs "${_ws}/simple-fix.md"
+
+  _gate_entry
+  local rc=$?
+
+  local gate_stop
+  gate_stop=$(grep 'CRITIQUE_NOT_RUN' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 0 ] || {
+    echo "expected exit 0 (auto-approve), got $rc"
+    return 1
+  }
+  [ -z "$gate_stop" ] || {
+    echo "unexpected CRITIQUE_NOT_RUN without a critique start marker"
+    return 1
+  }
+}
+
+# 29c. Critique started and wrote its section (CLEAR) → passes as before.
+test_critique_started_and_written_passes() {
+  _setup
+  _scaffold_exec_done "simple" "auto" "simple-fix" "${_ws}/simple-fix.md"
+  _scaffold_context_md 2 "feature" "true"
+  _scaffold_critique 75 "CLEAR"
+  _scaffold_verify_plan_full
+  _scaffold_artifact_with_prereqs "${_ws}/simple-fix.md"
+  _plog_raw "APPRAISE" "critique" "start" "Validating ticket completeness"
+  _plog_raw "APPRAISE" "critique" "done" "CLEAR"
+
+  _gate_entry
+  local rc=$?
+
+  local gate_stop
+  gate_stop=$(grep 'CRITIQUE_NOT_RUN' "$LOG_FILE" 2>/dev/null || true)
+
+  _teardown
+  [ "$rc" -eq 0 ] || {
+    echo "expected exit 0 (auto-approve), got $rc"
+    return 1
+  }
+  [ -z "$gate_stop" ] || {
+    echo "unexpected CRITIQUE_NOT_RUN when the section exists"
+    return 1
+  }
+}
+
 # 30. Score implausibility: 2 BLOCKERs but score > 50 → gate-stop
 test_critique_score_implausible_2_blockers() {
   _setup
@@ -2983,6 +3064,9 @@ for fn in \
   test_bug_no_repro_high_score_still_stops \
   test_critique_blocked_gate_stop \
   test_critique_score_below_40_held \
+  test_critique_started_but_missing_gate_stops \
+  test_critique_never_started_missing_passes \
+  test_critique_started_and_written_passes \
   test_critique_score_implausible_2_blockers \
   test_critique_score_implausible_1_blocker \
   test_critique_score_plausible_1_blocker_passes \

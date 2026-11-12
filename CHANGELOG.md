@@ -17,6 +17,12 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-auto-pipeline 0.115.4 (2026-11-12) — a crashed critique no longer passes the entry gate
+
+### Fixed
+
+- Entry-gate Check 2.5 no longer lets a failed critique through. Before, a missing `## Readiness Critique` section always skipped the check, so a critique that crashed or failed its fetch reached the gate with no critique check at all. Now, if `APPRAISE|critique|start` was logged but no section was written, the gate stops with `CRITIQUE_NOT_RUN` (failure class `orchestration_failure`; a crashed critique says nothing about the ticket). Paths that never start a critique pass as before. ticket-appraise Step 2.7 treats an UNAVAILABLE or missing critique result as not run, never as CLEAR. Found by the dor-semantic-paraphrase not-run audit.
+
 ## ticket-auto-pipeline 0.115.3 (2026-11-12) — inspector verdict recomputed, never read back
 
 ### Fixed

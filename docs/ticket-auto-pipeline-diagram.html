@@ -1255,6 +1255,7 @@ const DATA = {
         { verdict: "fail",  label: "human-reject",  desc: "A person runs /ticket-reject: approval cleared, loops back to Todo for re-appraisal." },
       ],
       stopCodes: [
+        { code: "CRITIQUE_NOT_RUN",           desc: "Appraise logged a critique start but notes.md has no Readiness Critique section — the critique crashed or its fetch failed. A failed evaluator is not run, never no findings." },
         { code: "CRITIQUE_SCORE_MISSING",     desc: "Critique section exists in notes.md but no **Score:** line found — structural failure, cannot evaluate content quality." },
         { code: "CRITIQUE_BLOCKED",           desc: "Critique status is BLOCKED (cumulative warnings escalated or explicit blockers present) — requires human revision." },
         { code: "CRITIQUE_SCORE_IMPLAUSIBLE", desc: "Score is inconsistent with BLOCKER count (e.g., score 80 with 2 BLOCKERs, max plausible 50) — indicates LLM scoring error." },

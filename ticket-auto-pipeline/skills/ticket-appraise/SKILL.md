@@ -268,10 +268,10 @@ Run:
 /ticket-critique {TICKET-ID} --from-appraise
 ```
 
-- If the skill reports **BLOCKED** → the ticket is missing required information. Stop here — do not proceed to Step 3. The skill has already posted a comment to Linear and added `needs-info`.
-- If the skill reports **WARNINGS** or **CLEAR** → proceed to Step 3 or Step 3-Agent per the complexity decision from Step 2.5.
+- **BLOCKED** → stop here, not Step 3 (the skill posted and added `needs-info`). **WARNINGS**/**CLEAR** → Step 3 or 3-Agent per Step 2.5.
+- Anything else (UNAVAILABLE, error, no result, no `## Readiness Critique`) → **not run**, never CLEAR: log `NOT_RUN` and stop as for BLOCKED (gate: `CRITIQUE_NOT_RUN`).
 
-bash ~/.claude/skills/lib/plog.sh APPRAISE critique done "{BLOCKED|WARNINGS|CLEAR}"
+bash ~/.claude/skills/lib/plog.sh APPRAISE critique done "{BLOCKED|WARNINGS|CLEAR|NOT_RUN}"
 
 ---
 

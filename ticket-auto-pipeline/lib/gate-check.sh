@@ -535,7 +535,11 @@ _gate_entry() {
   fi
 
   # Check 2.5: Content quality score (from critique in notes.md)
-  # Distinguish: critique never ran (section absent → skip, backward compat) vs.
+  # Distinguish: critique never ran (section absent, no start marker → skip,
+  #              backward compat / paths that never critique) vs.
+  #              critique started but wrote no section (APPRAISE|critique|start
+  #              logged → gate-stop CRITIQUE_NOT_RUN: a failed evaluator is
+  #              "not run", never "no findings") vs.
   #              critique ran but failed (section present but no score → gate-stop)
   local critique_score critique_status td has_critique
   if command -v resolve_ticket_dir &>/dev/null; then
@@ -551,6 +555,12 @@ _gate_entry() {
     has_critique="true"
   else
     has_critique="false"
+  fi
+
+  if [ "${has_critique}" = "false" ] && grep -q '|APPRAISE|critique|start|' "$LOG_FILE" 2>/dev/null; then
+    _plog "$LOG_FILE" "META" "gate-stop" "fail" "CRITIQUE_NOT_RUN — appraise started the readiness critique but notes.md has no ## Readiness Critique section (critique crashed or its fetch failed); re-run /ticket-critique {ID} --from-appraise"
+    hb_gate "entry-gate" "fail" "critique not run" "{\"has_critique\":\"false\",\"critique_started\":\"true\"}"
+    return 2
   fi
 
   if [ "${has_critique}" = "true" ] && [ -z "$critique_score" ]; then
