@@ -29,10 +29,12 @@
 #   ticket_log_dir_anchor_file        print the anchor path; 1 if no REPOS_ROOT
 #   ticket_log_dir_anchor_write PATH  write-once; print the value now anchored
 #                                     (the winner's on a race); 2 usage, 1 I/O
-#   ticket_log_dir_or_legacy          print the dir; unresolved and
+#   ticket_log_dir_or_legacy [LEGACY] print the dir; unresolved and
 #                                     STATE_ROOT_STRICT=true -> message, 13;
-#                                     unresolved otherwise -> warning, legacy
-#   ticket_log_dir_or_legacy_set      same, but sets TICKET_LOG_DIR_RESOLVED in
+#                                     unresolved otherwise -> warning, LEGACY
+#                                     (default ${FLEET_PIPELINE_LOG_DIR:-./logs})
+#   ticket_log_dir_or_legacy_set [LEGACY]
+#                                     same, but sets TICKET_LOG_DIR_RESOLVED in
 #                                     the current shell and warns once per shell
 #   ticket_log_dir_note_stray TID DIR one META|state-root-stray|warn line per
 #                                     (TID, stray outbox) in DIR's pipeline log
@@ -131,19 +133,20 @@ ticket_log_dir_anchor_write() {
   return 1
 }
 
-# ticket_log_dir_or_legacy_set
+# ticket_log_dir_or_legacy_set [LEGACY]
 #
 # Sets TICKET_LOG_DIR_RESOLVED in the calling shell (no subshell, so the
 # legacy warning is printed once per shell, not once per lookup).
 #   resolved                      -> the resolved dir, return 0
 #   unresolved, STATE_ROOT_STRICT=true -> message on stderr, return 13
-#   unresolved otherwise          -> warning on stderr, today's
-#                                    ${FLEET_PIPELINE_LOG_DIR:-./logs}, return 0
-# The legacy value keeps a relative FLEET_PIPELINE_LOG_DIR as it was, so a
-# host with no anchor behaves exactly as before this change.
+#   unresolved otherwise          -> warning on stderr, LEGACY, return 0
+# LEGACY is the caller's own pre-anchor default; it defaults to today's
+# ${FLEET_PIPELINE_LOG_DIR:-./logs}. A reader whose old default was something
+# else (detect-resume.sh's $PWD/logs) passes it, so a host with no anchor
+# behaves exactly as before this change.
 ticket_log_dir_or_legacy_set() {
   TICKET_LOG_DIR_RESOLVED=""
-  local dir
+  local dir legacy="${1:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
   if dir=$(ticket_log_dir); then
     TICKET_LOG_DIR_RESOLVED="$dir"
     return 0
@@ -152,7 +155,7 @@ ticket_log_dir_or_legacy_set() {
     echo "$TICKET_LOG_DIR_STRICT_MSG" >&2
     return 13
   fi
-  TICKET_LOG_DIR_RESOLVED="${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  TICKET_LOG_DIR_RESOLVED="$legacy"
   if [ -z "${_TLD_LEGACY_WARNED:-}" ]; then
     echo "log dir not anchored; using ${TICKET_LOG_DIR_RESOLVED} (legacy)" >&2
     _TLD_LEGACY_WARNED=1
@@ -162,7 +165,7 @@ ticket_log_dir_or_legacy_set() {
 
 ticket_log_dir_or_legacy() {
   local _rc=0
-  ticket_log_dir_or_legacy_set || _rc=$?
+  ticket_log_dir_or_legacy_set "$@" || _rc=$?
   [ "$_rc" -eq 0 ] || return "$_rc"
   printf '%s\n' "$TICKET_LOG_DIR_RESOLVED"
 }

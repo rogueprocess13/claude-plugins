@@ -5,8 +5,9 @@
 # Usage:
 #   gate-reconcile-prep.sh <TICKET-ID> [--comments-file F]
 #
-# 1. Sources the ticket env file; the pipeline log is ./logs/<TID>-pipeline.log
-#    and the heartbeat log ./logs/<TID>-heartbeat.log.
+# 1. Sources the ticket env file; the pipeline log is <log-dir>/<TID>-pipeline.log
+#    and the heartbeat log <log-dir>/<TID>-heartbeat.log (<log-dir>: the
+#    lib/log-dir.sh anchor, else ./logs).
 # 2. Resolves the ticket dir, notes.md, COMPLEXITY (get_complexity), the
 #    artifact type (EXEC create-artifact line, else notes.md, else
 #    simple-fix) and the plan artifact (lib/ticket-dir.sh's one resolver).
@@ -48,8 +49,22 @@ done
 
 # shellcheck source=ticket-env.sh
 source "$_GR_DIR/ticket-env.sh" "$TID"
-export TAP_LOG="$PWD/logs/$TID-pipeline.log"
-export HB_LOG_FILE="$PWD/logs/$TID-heartbeat.log"
+# The logs live in the anchored per-ticket state dir (lib/log-dir.sh,
+# state-root-anchor), else (legacy, with a warning) ./logs under the tickets
+# repo root; STATE_ROOT_STRICT=true and unresolved exits 13.
+_gr_log_dir="$PWD/logs"
+if [ -f "$_GR_DIR/log-dir.sh" ]; then
+  # shellcheck source=log-dir.sh
+  source "$_GR_DIR/log-dir.sh"
+  _gr_ld_rc=0
+  ticket_log_dir_or_legacy_set "$PWD/logs" || _gr_ld_rc=$?
+  if [ "$_gr_ld_rc" -ne 0 ]; then
+    exit "$_gr_ld_rc"
+  fi
+  _gr_log_dir="$TICKET_LOG_DIR_RESOLVED"
+fi
+export TAP_LOG="$_gr_log_dir/$TID-pipeline.log"
+export HB_LOG_FILE="$_gr_log_dir/$TID-heartbeat.log"
 # Sourced libs set errexit/pipefail at file scope; this script decides its
 # own exits.
 # shellcheck source=ticket-dir.sh

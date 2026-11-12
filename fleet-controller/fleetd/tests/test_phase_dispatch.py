@@ -1167,6 +1167,15 @@ class TestAdoptPositionAgainstTheRealScript(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.project_dir = Path(self._tmp.name)
         (self.project_dir / 'logs').mkdir()
+        # detect-resume.sh reads the per-ticket dir lib/log-dir.sh resolves
+        # (state-root-anchor): an absolute FLEET_PIPELINE_LOG_DIR wins over
+        # $PWD/logs, and _hermetic points it at a scratch dir. Name this
+        # fixture's logs dir instead.
+        env_patch = mock.patch.dict(
+            os.environ,
+            {'FLEET_PIPELINE_LOG_DIR': str(self.project_dir / 'logs')})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -1409,6 +1418,15 @@ class TestVerifyCheckpointParity(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.project_dir = Path(self._tmp.name)
         (self.project_dir / 'logs').mkdir()
+        # detect-resume.sh reads the per-ticket dir lib/log-dir.sh resolves
+        # (state-root-anchor): an absolute FLEET_PIPELINE_LOG_DIR wins over
+        # $PWD/logs, and _hermetic points it at a scratch dir. Name this
+        # fixture's logs dir instead.
+        env_patch = mock.patch.dict(
+            os.environ,
+            {'FLEET_PIPELINE_LOG_DIR': str(self.project_dir / 'logs')})
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
 
     def tearDown(self):
         self._tmp.cleanup()

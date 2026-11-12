@@ -28,6 +28,13 @@ if [ -f "$LIB_DIR/verify-checkpoint.sh" ]; then
 elif [ -f "$(dirname "${BASH_SOURCE[0]}")/../../lib/verify-checkpoint.sh" ]; then
   source "$(dirname "${BASH_SOURCE[0]}")/../../lib/verify-checkpoint.sh"
 fi
+# log-dir.sh — the per-ticket state dir resolver (state-root-anchor, ARCH-5).
+# Same two-location lookup; a LIB_DIR without it keeps the old $PWD/logs.
+if [ -f "$LIB_DIR/log-dir.sh" ]; then
+  source "$LIB_DIR/log-dir.sh"
+elif [ -f "$(dirname "${BASH_SOURCE[0]}")/../../lib/log-dir.sh" ]; then
+  source "$(dirname "${BASH_SOURCE[0]}")/../../lib/log-dir.sh"
+fi
 
 CURRENT_SCHEMA_VERSION=1
 
@@ -82,16 +89,31 @@ _log_effectively_done() {
 
 usage() {
   echo "Usage: $0 <TICKET-ID>" >&2
-  echo "  Reads \$PWD/logs/{TICKET-ID}-pipeline.log to determine where the last" >&2
-  echo "  ticket-auto run left off." >&2
+  echo "  Reads {LOG-DIR}/{TICKET-ID}-pipeline.log to determine where the last" >&2
+  echo "  ticket-auto run left off. LOG-DIR is the anchored per-ticket state dir" >&2
+  echo "  (lib/log-dir.sh), else \$PWD/logs." >&2
   exit 1
 }
 
 TICKET_ID="${1:-}"
 [ -z "$TICKET_ID" ] && usage
 
-LOG_FILE="$PWD/logs/${TICKET_ID}-pipeline.log"
-HB_LOG_FILE="$PWD/logs/${TICKET_ID}-heartbeat.log"
+# The pipeline log is the crash-recovery checkpoint, so it is read from the
+# same anchored dir every writer resolves (state-root-anchor): an absolute
+# FLEET_PIPELINE_LOG_DIR, else $REPOS_ROOT/.ticket-auto/log-dir, else (legacy,
+# with a warning) today's $PWD/logs. STATE_ROOT_STRICT=true and unresolved
+# exits 13 rather than read a cwd-relative log.
+_DR_LOG_DIR="$PWD/logs"
+if declare -f ticket_log_dir_or_legacy_set >/dev/null 2>&1; then
+  _dr_rc=0
+  ticket_log_dir_or_legacy_set "$PWD/logs" || _dr_rc=$?
+  if [ "$_dr_rc" -ne 0 ]; then
+    exit "$_dr_rc"
+  fi
+  _DR_LOG_DIR="$TICKET_LOG_DIR_RESOLVED"
+fi
+LOG_FILE="${_DR_LOG_DIR}/${TICKET_ID}-pipeline.log"
+HB_LOG_FILE="${_DR_LOG_DIR}/${TICKET_ID}-heartbeat.log"
 hb_init
 
 # ── Heartbeat log validation ─────────────────────────────────────────────────
@@ -359,7 +381,9 @@ _ticket_worker_alive() {
 
   # 1. Fleet run registry (authoritative when fleetd spawned the run).
   #    Both the ticket-level file and any phase-scoped sibling count.
-  local state_dir="${FLEET_STATE_DIR:-$PWD/logs}"
+  #    With FLEET_STATE_DIR unset the fleet state files sit in the
+  #    per-ticket log dir resolved above (state-root-anchor).
+  local state_dir="${FLEET_STATE_DIR:-$_DR_LOG_DIR}"
   if [ -d "$state_dir" ]; then
     local run_file pid ticks current
     for run_file in "${state_dir}/${tid}-run.json" "${state_dir}/${tid}-"*"-run.json"; do
