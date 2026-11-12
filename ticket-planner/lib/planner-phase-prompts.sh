@@ -47,6 +47,10 @@ _source_if_missing "planner_params_prompt_rules" \
 _source_if_missing "planner_ownership_prompt_rules" \
   "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-spec-ownership.sh"
 
+# The Specify and Consensus Preconditions wording (planner-ac-code-precondition, D12).
+_source_if_missing "planner_acpre_prompt_rules" \
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/planner-ac-precondition.sh"
+
 # Resolved plugin root, memoized per shell. Empty until first resolution.
 _PLANNER_PROMPT_LIB_ROOT="${_PLANNER_PROMPT_LIB_ROOT:-}"
 
@@ -854,9 +858,10 @@ ${state_dir}/artifacts/specs/<ticket-slug>.md. Each spec must include:
 6. **## Test Data Provided** — only on a spec that produces test data other specs
    (or itself) name with Source \`seeded-by:<slug>\`: what it generates or seeds
 7. **## Writes** and **## Reads** — the data the ticket writes and reads, and the side effects it owns or causes (rules below)
+8. **## Preconditions** — the stored starting state each acceptance criterion needs (rules below)
 
 Write them as \`## Title\`, \`## Description\` (the body sections follow as their own
-\`##\` headings), \`## Labels\`, \`## Signals\`, \`## Verification Notes\`, \`## Writes\`, \`## Reads\` — TicketGen reads
+\`##\` headings), \`## Labels\`, \`## Signals\`, \`## Verification Notes\`, \`## Writes\`, \`## Reads\`, \`## Preconditions\` — TicketGen reads
 each by heading.
 
 ### Ticket kind (planner-business-framing)
@@ -1078,6 +1083,7 @@ source "\${CLAUDE_PLUGIN_ROOT}/lib/planner-crosscheck-testdata.sh"
 planner_testdata_no_tests_rule "${initiative_id}" && echo " — no-tests rule active: never self-seed; write Source: generate for those needs"
 \`\`\`
 $(planner_ownership_prompt_rules)
+$(planner_acpre_prompt_rules)
 
 ### Confidence signals (RAW VALUES ONLY — do NOT compute confidence)
 
@@ -1330,6 +1336,7 @@ sweep would misread.
    \`Serves\`/\`Enables\` if you add or remove one (planner-business-framing).
 $(planner_params_consensus_rule)
 $(planner_ownership_consensus_rule)
+$(planner_acpre_consensus_rule)
 4. Write a consensus digest to ${state_dir}/artifacts/consensus.md:
    - **Findings Addressed** — each review finding, its disposition (accepted/rejected/deferred),
      and what changed (if anything), naming the acceptance criterion you added or

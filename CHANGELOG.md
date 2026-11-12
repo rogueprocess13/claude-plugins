@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.41.0 (2026-11-12) — AC precondition checks switched on for new initiatives
+
+planner-ac-code-precondition, PR 2 of 2. ticket-auto-pipeline and fleet-controller unchanged.
+
+### Changed
+
+- New initiatives now get AC precondition checks. The Specify prompt asks every spec for a `## Preconditions` table, Consensus keeps it in step with its edits, and the draft revise prompt updates a row's Criterion cell when it extends that criterion. The first Specify dispatch writes `ac-precondition-v1` after `spec-ownership-v1`. Initiatives that already ran Specify stay legacy. `SPECIFY_PROMPT_SHA` is re-captured; new intermediate pins `SPECIFY_PRE_ACPRE_SHA`/`CONSENSUS_PRE_ACPRE_SHA`; the no-residue tests strip items 5, 6 and 7. The pre-gate error message names all three contracts.
+
 ## ticket-auto-pipeline 0.115.2 (2026-11-12) — manifest writes no longer lose updates (ARCH-4)
 
 ### Fixed
@@ -62,6 +70,8 @@ planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controll
 - The code-target resolver reports its pin state: `_planner_own_code_tree` prints a third field,
   `pinned`, `live` or `pin-failed`, and the new `planner_ownership_code_target` wraps it. The
   ownership anchor behaves as before for all three.
+
+
 
 ## ticket-auto-pipeline 0.115.0, ticket-planner 0.39.0 (2026-11-12) — DoR scan paraphrase and `INCOHERENT_CHANGE`
 

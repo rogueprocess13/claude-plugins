@@ -341,10 +341,11 @@ planner_dispatch_gate() {
   case "$gate" in
   pre)
     # Specify about to run for the first time: mark the initiative as a
-    # parameter- and ownership-contract one (planner-specify-parameters,
-    # planner-crosscheck-ownership). Before the gates, so a halt cannot skip it.
+    # parameter-, ownership- and AC-precondition-contract one
+    # (planner-specify-parameters, planner-crosscheck-ownership,
+    # planner-ac-code-precondition). Before the gates, so a halt cannot skip it.
     _planner_dispatch_contract_mark "$initiative_id" "$phase" || {
-      echo "ERROR: could not record the parameter and ownership contracts for '${initiative_id}'" >&2
+      echo "ERROR: could not record the parameter, ownership and AC precondition contracts for '${initiative_id}'" >&2
       return 1
     }
     for g in create consensus specify; do
@@ -478,23 +479,29 @@ _planner_specify_first_dispatch() {
 # _planner_dispatch_contract_mark <initiative_id> <phase> — before the
 # Specify agent is first dispatched, record that this initiative's Specify
 # runs under the current prompt's contracts: specify-parameters-v1
-# (planner_params_contract_mark) and then spec-ownership-v1
-# (planner_ownership_contract_mark), each written once. Only on the first
-# dispatch (_planner_specify_first_dispatch), so a re-dispatch never flips an
-# initiative whose specs were written without them. Every other phase:
-# nothing. rc 1 when a marker could not be written (the parameters marker
-# first: when it fails, the ownership marker is not tried).
+# (planner_params_contract_mark), then spec-ownership-v1
+# (planner_ownership_contract_mark), then ac-precondition-v1
+# (planner_acpre_contract_mark, planner-ac-code-precondition D11), each
+# written once. Only on the first dispatch (_planner_specify_first_dispatch),
+# so a re-dispatch never flips an initiative whose specs were written without
+# them. Every other phase: nothing. A mark function that is not defined is
+# skipped. rc 1 when a marker could not be written (in order: when one fails,
+# the later ones are not tried).
 # `planner_dispatch_gate pre` calls it first.
 _planner_dispatch_contract_mark() {
   [ "$2" = "Specify" ] || return 0
   _planner_specify_first_dispatch "$1" || return 0
   _source_if_missing planner_params_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-specify-params.sh"
   _source_if_missing planner_ownership_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-spec-ownership.sh"
+  _source_if_missing planner_acpre_contract_mark "${_PLANNER_ROUTER_LIB_DIR}/planner-ac-precondition.sh"
   if declare -f planner_params_contract_mark >/dev/null 2>&1; then
     planner_params_contract_mark "$1" || return 1
   fi
   if declare -f planner_ownership_contract_mark >/dev/null 2>&1; then
     planner_ownership_contract_mark "$1" || return 1
+  fi
+  if declare -f planner_acpre_contract_mark >/dev/null 2>&1; then
+    planner_acpre_contract_mark "$1" || return 1
   fi
   return 0
 }

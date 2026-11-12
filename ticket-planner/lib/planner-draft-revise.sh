@@ -113,6 +113,10 @@ if ! declare -f _planner_intent_has_brief >/dev/null 2>&1; then
   # shellcheck source=planner-phase-prompts.sh
   source "${_PLANNER_DRAFT_REVISE_LIB_DIR}/planner-phase-prompts.sh"
 fi
+if ! declare -f planner_acpre_revise_rule >/dev/null 2>&1; then
+  # shellcheck source=planner-ac-precondition.sh
+  source "${_PLANNER_DRAFT_REVISE_LIB_DIR}/planner-ac-precondition.sh"
+fi
 
 # Concurrent revise agents finish one by one, each writing its own
 # `META|draft-revise|done` line: a per-spec record, never a progress marker.
@@ -833,6 +837,7 @@ In the spec, edit only these regions:
 - \`## Verification Notes\`: add rows; when you extend a criterion, extend that
   row's Criterion cell with the same appended text. Never change any other cell
   of an existing row, and never remove a row.
+$(planner_acpre_revise_rule)
 - \`## Scope\`: add rows only. An assumption (below) is a Scope row of exactly the
   form \`- Assumption: <one plain sentence>\`; nowhere else.
 
