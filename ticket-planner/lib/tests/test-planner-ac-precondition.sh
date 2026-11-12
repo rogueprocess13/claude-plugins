@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-planner-ac-precondition.sh — Tests for planner-ac-precondition.sh
-# (planner-ac-code-precondition, tasks 1.2–1.3, 2.2).
+# (planner-ac-code-precondition, tasks 1.2–1.3, 2.2, 5.1).
 #
 # Pinned here:
 #   1. The `## Preconditions` table parse: well-formed table, `None.`,
@@ -15,6 +15,8 @@
 #   6. Schema facts (JPA, Liquibase XML), the decision per row, decimal
 #      comparison, nearest names, the file cap, the cache (task 2.2), over the
 #      fixture tree fixtures/ac-precondition/billing/.
+#   7. The prompt wording (task 5.1): Specify rules, Consensus rule, revise
+#      rule; the Specify example parses.
 #
 # Every case is guarded on the functions it needs, so on a checkout without
 # the lib this file prints FAIL lines and a non-zero summary, never an
@@ -378,6 +380,75 @@ fi
 name="constants"
 if need "$name" planner_acpre_rows; then
   check "$name" "${PLANNER_ACPRE_CONTRACT:-}|${PLANNER_ACPRE_NUMBER_MAX:-}" "ac-precondition-v1|30"
+fi
+
+# ── 4b. Prompt wording (task 5.1) ─────────────────────────────────────────────
+
+echo "=== prompt wording ==="
+
+# The Specify rules (design D12): the two-row D1 example (one state row, one
+# input row), the key grammar by reference to Writes/Reads, the three Requires
+# forms, both Basis forms, None., and that Crosscheck blocks.
+name="Specify rules carry the D12 content"
+if need "$name" planner_acpre_prompt_rules; then
+  r=$(planner_acpre_prompt_rules)
+  missing=""
+  for want in '## Preconditions' '| Criterion | Key | Mode | Requires | Basis |' \
+    '| state | null | code:' '| input | null | — |' '## Writes' '## Reads' \
+    'state' 'input' 'rejected' 'null' 'value:<v>' 'number:<n>' 'code:<path>' \
+    'spec:<slug>' 'depends on' 'None.' 'Crosscheck' 'verbatim'; do
+    grep -qF -- "$want" <<<"$r" || missing="${missing} [${want}]"
+  done
+  if [ -z "$missing" ]; then pass "$name"; else fail "$name" "missing:${missing}"; fi
+  words=$(wc -w <<<"$r")
+  if [ "$words" -le 220 ]; then pass "Specify rules stay near 150 words (${words})"; else
+    fail "Specify rules stay near 150 words" "${words} words"
+  fi
+  case "$r" in $'\n'*) pass "$name: starts with a blank line" ;; *) fail "$name: starts with a blank line" "no" ;; esac
+  # The key grammar is referenced, not restated (item 6 owns it).
+  if ! grep -qF -- '64 characters' <<<"$r"; then pass "$name: key grammar by reference"; else
+    fail "$name: key grammar by reference" "restates the 64-character rule"
+  fi
+  # Stripping relies on these texts occurring once in the Specify prompt.
+  if ! grep -qF -- ', `## Preconditions`' <<<"$r"; then pass "$name: no heading-list fragment inside"; else
+    fail "$name: no heading-list fragment inside" "contains it"
+  fi
+fi
+
+name="the Specify rules' own example parses as one state and one input row"
+if need "$name" planner_acpre_prompt_rules planner_acpre_rows planner_acpre_invalid; then
+  fresh
+  ex=$(planner_acpre_prompt_rules | awk '/^```/{f=!f; next} f && /^## Preconditions$/{on=1} f && on')
+  acs=$(printf '%s\n' "$ex" | awk -F'|' 'NR > 4 && NF > 5 { c = $2; sub(/^ +/, "", c); sub(/ +$/, "", c); print "- [ ] " c }')
+  printf '# Example\n\n## Title\n\nExample\n\n## Acceptance Criteria\n\n%s\n\n%s\n' "$acs" "$ex" >"${SPECS}/example.md"
+  check "$name: no invalid row" "$(inv "${SPECS}/example.md")" ""
+  check "$name: modes" "$(rows "${SPECS}/example.md" | cut -f4 | tr '\n' ' ')" "state input "
+fi
+
+name="Consensus rule carries the D12 content"
+if need "$name" planner_acpre_consensus_rule; then
+  r=$(planner_acpre_consensus_rule)
+  missing=""
+  for want in '## Preconditions' 'acceptance criterion' 'key' 'schema' 'same edit' 'Never delete a' 'row alone'; do
+    grep -qF -- "$want" <<<"$r" || missing="${missing} [${want}]"
+  done
+  if [ -z "$missing" ]; then pass "$name"; else fail "$name" "missing:${missing}"; fi
+  words=$(wc -w <<<"$r")
+  if [ "$words" -le 60 ]; then pass "Consensus rule stays near 40 words (${words})"; else
+    fail "Consensus rule stays near 40 words" "${words} words"
+  fi
+  case "$r" in "   "[!\ ]*) pass "$name: indented as a step-3 rule" ;; *) fail "$name: indented as a step-3 rule" "no" ;; esac
+fi
+
+name="revise rule is one sentence about Criterion cells"
+if need "$name" planner_acpre_revise_rule; then
+  r=$(planner_acpre_revise_rule)
+  missing=""
+  for want in '## Preconditions' 'extend' 'Criterion cell' 'nothing else'; do
+    grep -qF -- "$want" <<<"$r" || missing="${missing} [${want}]"
+  done
+  if [ -z "$missing" ]; then pass "$name"; else fail "$name" "missing:${missing}"; fi
+  check "$name: one sentence" "$(tr -cd '.' <<<"${r%.}" | wc -c | tr -d ' ')" "0"
 fi
 
 # ── 5. mawk / gawk ────────────────────────────────────────────────────────────
