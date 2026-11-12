@@ -188,6 +188,109 @@ test_unlock_keeps_caller_stderr() {
 }
 _run "1.11 unlock keeps the caller's stderr" test_unlock_keeps_caller_stderr
 
+# ── missing-cursor start point (board-cursor-first-drain, review ARCH-9) ────
+_seed_outbox_n() {
+  local tid="$1" n="$2" i
+  for i in $(seq 1 "$n"); do
+    printf '{"seq":%d,"tid":"%s","event":"gate-held","data":{}}\n' "$i" "$tid" \
+      >>"$_ws/${tid}-outbox.jsonl"
+  done
+}
+_seed_origin() {
+  printf '{"tid":"%s","origin_seq":%d,"created_at":"x","kind":"%s"}' "$1" "$2" "$3" \
+    >"$_ws/.${1}-outbox-origin.json"
+}
+
+test_start_no_outbox_is_zero() {
+  _setup
+  local got
+  got=$(board_cursor_get T-S1 linear)
+  _teardown
+  [ "$got" = "0" ]
+}
+
+test_start_sidecar_wins_over_tail() {
+  _setup
+  _seed_outbox_n T-S2 5
+  _seed_origin T-S2 3 legacy
+  local got
+  got=$(board_cursor_get T-S2 linear)
+  _teardown
+  [ "$got" = "3" ]
+}
+
+test_start_no_sidecar_is_tail() {
+  _setup
+  _seed_outbox_n T-S3 5
+  printf '{"seq":9,"tid' >>"$_ws/T-S3-outbox.jsonl" # torn line ignored
+  local got
+  got=$(board_cursor_get T-S3 linear)
+  _teardown
+  [ "$got" = "5" ]
+}
+
+test_start_cursor_file_wins() {
+  _setup
+  _seed_outbox_n T-S4 5
+  _seed_origin T-S4 4 legacy
+  board_cursor_advance T-S4 linear 2
+  local got
+  got=$(board_cursor_get T-S4 linear)
+  _teardown
+  [ "$got" = "2" ]
+}
+
+test_start_get_writes_no_file() {
+  _setup
+  _seed_outbox_n T-S5 3
+  board_cursor_get T-S5 linear >/dev/null
+  local rc=0
+  [ ! -e "$_ws/.T-S5-cursor-linear.json" ] || rc=1
+  _teardown
+  return $rc
+}
+
+test_start_note_failure_on_legacy_seeds_tail() {
+  _setup
+  _seed_outbox_n T-S6 4
+  board_cursor_note_failure T-S6 linear
+  local got
+  got=$(jq -c '[.seq, .attempts]' "$_ws/.T-S6-cursor-linear.json")
+  _teardown
+  [ "$got" = "[4,1]" ]
+}
+
+# emit_event writes the sidecar, then appends. A get that runs between the
+# two, or after both, must return a start below the new record's seq.
+test_start_race_with_emit_never_skips_new_record() {
+  local i got bad=0
+  for i in $(seq 1 20); do
+    _setup
+    _seed_outbox_n T-R 5
+    (
+      source "$LIB_DIR/events.sh"
+      EVENTS_TEST_PAUSE_AFTER_ORIGIN=0.2 emit_event T-R gate-held '{}' >/dev/null 2>&1
+    ) &
+    local pid=$!
+    sleep "0.$((i % 3))"
+    got=$(board_cursor_get T-R linear)
+    [ "$got" -lt 6 ] 2>/dev/null || bad=1
+    wait "$pid"
+    got=$(board_cursor_get T-R linear)
+    [ "$got" -lt 6 ] 2>/dev/null || bad=1
+    _teardown
+  done
+  [ "$bad" -eq 0 ]
+}
+
+_run "start: no outbox, no cursor -> 0" test_start_no_outbox_is_zero
+_run "start: sidecar origin 3 wins over outbox tail 5" test_start_sidecar_wins_over_tail
+_run "start: no sidecar -> outbox tail (legacy, torn line ignored)" test_start_no_sidecar_is_tail
+_run "start: an existing cursor file wins over the sidecar" test_start_cursor_file_wins
+_run "start: get writes no cursor file" test_start_get_writes_no_file
+_run "start: note_failure on a legacy ticket seeds seq = tail" test_start_note_failure_on_legacy_seeds_tail
+_run "start: get racing an emit never skips the new record (20 runs)" test_start_race_with_emit_never_skips_new_record
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

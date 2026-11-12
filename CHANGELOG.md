@@ -17,6 +17,23 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.116.0 (2026-11-12) — board cursors start at the outbox origin (board-cursor-first-drain)
+
+Also fleet-controller 0.50.0. Review finding ARCH-9.
+
+### Fixed
+
+- **No drain replays pre-projection history any more.** A board with no cursor file used to start at seq 0, so the first drain of a ticket whose outbox predated `ticket-auto-pipeline` 0.55.0 re-applied every past transition to Linear (columns flapping, labels cycling, people notified). The exit-time drain (`outbox-drain.sh`) never read `FLEET_BOARD_PUSHER_ENABLE`, so the documented fast-forward step protected only the pusher.
+  - `emit_event` writes an origin sidecar, `.{TID}-outbox-origin.json`, once per outbox, under its own lock and before the append: `origin_seq: 0` (`kind: new`) for an empty outbox, the current max seq (`kind: legacy`) otherwise. A sidecar left behind by a deleted outbox is reset to `new`/0. A sidecar write failure warns on stderr and never blocks the append.
+  - `board_cursor_get` with no cursor file returns the sidecar's `origin_seq`, else the outbox tail, and writes nothing. It reads the tail before the sidecar; with `emit_event` writing the sidecar before the append, a drain racing an emit can never skip the new record.
+  - A new ticket still projects from seq 1. The review's suggested fix (missing cursor → outbox max) would have skipped every new ticket's first event.
+- **fleetd pusher:** `_cursor_get` returns `None` instead of 0 on a timeout, non-zero exit or unparseable output, and `drain_ticket` skips that (ticket, board) for the pass with one stderr line. 0 meant "replay everything".
+
+### Changed
+
+- `board-cursor-fastforward.sh` is optional. README "Migrating to board projection" no longer requires deploy → fast-forward → enable. `FLEET_BOARD_PUSHER_ENABLE` still defaults to `false`; it flips in a follow-up after the live check on the tickets host.
+- **Do not roll back below this version on a host that has not been fast-forwarded:** older code ignores the sidecar and replays full history.
+
 ## ticket-planner 0.43.1 (2026-11-12) — COMPLETED.md rendered by bash (DET-PL-4)
 
 ### Changed

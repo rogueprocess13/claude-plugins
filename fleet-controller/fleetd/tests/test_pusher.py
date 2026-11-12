@@ -33,10 +33,20 @@ TICKET_AUTO_LIB = REPO_ROOT / 'ticket-auto-pipeline' / 'lib'
 FIXTURES_DRIVER_DIR = TICKET_AUTO_LIB / 'tests' / 'fixtures' / 'board-drivers'
 
 
-def _write_outbox(log_dir, tid, events):
+def _write_outbox(log_dir, tid, events, legacy=False):
     """events: list of (event, data) tuples. Writes seq 1..N in order,
     matching events.sh's record shape closely enough for pusher.py's own
-    reader (seq, event, data are the only fields it consumes)."""
+    reader (seq, event, data are the only fields it consumes).
+
+    Also writes the origin sidecar a new outbox gets from emit_event
+    (board-cursor-first-drain), so every record counts as unprojected.
+    legacy=True leaves it out: an outbox written before projection existed,
+    which no emit has touched since, so a cursor-less board starts at its
+    tail."""
+    if not legacy:
+        (Path(log_dir) / f'.{tid}-outbox-origin.json').write_text(json.dumps(
+            {'tid': tid, 'origin_seq': 0, 'created_at': '2026-09-20T00:00:00Z',
+             'kind': 'new'}))
     outbox = Path(log_dir) / f'{tid}-outbox.jsonl'
     with open(outbox, 'w') as f:
         for i, (event, data) in enumerate(events, start=1):
@@ -74,6 +84,90 @@ class DrainTicketTest(unittest.TestCase):
         ok = pusher.drain_ticket('T-NONE', log_dir=self.ws,
                                   lib_dir=TICKET_AUTO_LIB, drivers=['linear'])
         self.assertTrue(ok)
+
+
+class FirstDrainTest(unittest.TestCase):
+    """board-cursor-first-drain (review ARCH-9): a cursor-less board starts at
+    the outbox's origin sidecar, else its tail, so the pusher never replays
+    pre-projection history. Same fixtures as the bash drain cases in
+    test-board-cursor-fastforward.sh, same expected dispatch lists."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.ws = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _audit_seqs(self, tid):
+        path = self.ws / f'{tid}-board-dispatch-jsonl-audit.jsonl'
+        if not path.is_file():
+            return []
+        return [json.loads(line)['seq'] for line in path.read_text().splitlines()
+                if line.strip()]
+
+    def _drain(self, tid):
+        return pusher.drain_ticket(
+            tid, log_dir=self.ws, lib_dir=TICKET_AUTO_LIB,
+            driver_dir_override=FIXTURES_DRIVER_DIR, drivers=['jsonl-audit'])
+
+    def _emit(self, tid, event, data='{}'):
+        import subprocess
+        env = {**os.environ, 'FLEET_PIPELINE_LOG_DIR': str(self.ws)}
+        for k in ('FLEET_GENERATION', 'FLEET_STATE_DIR', 'FLEET_WORKER_PID'):
+            env.pop(k, None)
+        subprocess.run(['bash', str(TICKET_AUTO_LIB / 'events.sh'), 'emit',
+                        tid, event, data], check=True, env=env,
+                       capture_output=True)
+
+    def test_new_ticket_projects_every_event(self):
+        self._emit('T-N', 'gate-held', '{"reason":"a"}')
+        self.assertTrue(self._drain('T-N'))
+        self._emit('T-N', 'gate-released', '{"provenance":"human"}')
+        self.assertTrue(self._drain('T-N'))
+        self.assertEqual(self._audit_seqs('T-N'), [1, 2])
+
+    def test_idle_legacy_ticket_dispatches_nothing(self):
+        _write_outbox(self.ws, 'T-L', [('gate-held', {})] * 6, legacy=True)
+        self.assertTrue(self._drain('T-L'))
+        self.assertEqual(self._audit_seqs('T-L'), [])
+
+    def test_legacy_ticket_projects_only_new_event(self):
+        _write_outbox(self.ws, 'T-L', [('gate-held', {})] * 6, legacy=True)
+        self._emit('T-L', 'gate-released', '{"provenance":"human"}')
+        self.assertTrue(self._drain('T-L'))
+        self.assertEqual(self._audit_seqs('T-L'), [7])
+
+    def _assert_skipped(self, run_result):
+        _write_outbox(self.ws, 'T-E', [('gate-held', {})] * 3)
+        with mock.patch.object(pusher.subprocess, 'run',
+                               wraps=pusher.subprocess.run) as run:
+            real = pusher.subprocess.run
+
+            def fake(cmd, *a, **kw):
+                if len(cmd) > 2 and cmd[2] == 'get':
+                    return run_result(cmd)
+                return real(cmd, *a, **kw)
+            run.side_effect = fake
+            with mock.patch('sys.stderr') as err:
+                ok = self._drain('T-E')
+        self.assertFalse(ok)
+        self.assertEqual(self._audit_seqs('T-E'), [])
+        self.assertFalse((self.ws / '.T-E-cursor-jsonl-audit.json').exists())
+        self.assertTrue(any('cursor read failed' in str(c)
+                            for c in err.write.call_args_list))
+
+    def test_cursor_get_timeout_skips_ticket(self):
+        import subprocess
+
+        def boom(cmd):
+            raise subprocess.TimeoutExpired(cmd, 30)
+        self._assert_skipped(boom)
+
+    def test_cursor_get_garbage_skips_ticket(self):
+        import subprocess
+        self._assert_skipped(lambda cmd: subprocess.CompletedProcess(
+            cmd, 0, stdout='not-a-number\n', stderr=''))
 
 
 class PusherPassOrderingTest(unittest.TestCase):

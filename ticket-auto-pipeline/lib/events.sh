@@ -91,6 +91,53 @@ _events_lock_file() {
   echo "$(_events_outbox_dir)/.${1}-outbox.lock"
 }
 
+# ── origin sidecar (board-cursor-first-drain, review ARCH-9) ─────────────────
+# .{TID}-outbox-origin.json records, once per outbox, the seq at or below
+# which records count as already projected. Records written before
+# projection existed (ticket-auto-pipeline < 0.55.0) were applied to Linear
+# directly, so replaying them is pure damage. board_cursor_get uses the
+# sidecar as the start point for a board that has no cursor yet:
+#   new outbox (no records yet)   -> {"origin_seq": 0, "kind": "new"}
+#   legacy outbox (records exist) -> {"origin_seq": <max seq>, "kind": "legacy"}
+# A sidecar left behind by a deleted outbox is reset to new/0, or the
+# outbox's fresh seq 1 would sit at or below a stale origin and never project.
+_events_origin_file() {
+  echo "$(_events_outbox_dir)/.${1}-outbox-origin.json"
+}
+
+# _events_write_origin <tid> <dir> <last_seq>
+# Called by emit_event under FD 7, after _last_seq and before the append.
+# Never fails emit_event: a write error is logged to stderr and the append
+# still runs (a missing sidecar reads as "start at the tail", the no-replay
+# direction).
+_events_write_origin() {
+  local tid="$1" dir="$2" last_seq="$3"
+  local file
+  file=$(_events_origin_file "$tid")
+  if [ -f "$file" ]; then
+    [ "$last_seq" -eq 0 ] || return 0
+    local cur
+    cur=$(jq -r '.origin_seq // 0' "$file" 2>/dev/null) || cur=""
+    [ "$cur" = "0" ] && return 0
+  fi
+  local kind=new
+  [ "$last_seq" -gt 0 ] && kind=legacy
+  find "$dir" -maxdepth 1 -name ".${tid}-outbox-origin.json.tmp.*" -mmin +60 \
+    -delete 2>/dev/null || true
+  local tmp="${file}.tmp.$$"
+  # A directory at the sidecar path would swallow the mv (tmp moves inside
+  # it and mv reports success), so treat it as a write failure.
+  if [ ! -d "$file" ] && jq -nc --arg tid "$tid" --argjson origin "$last_seq" --arg kind "$kind" \
+    --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{tid: $tid, origin_seq: $origin, created_at: $created_at, kind: $kind}' \
+    >"$tmp" 2>/dev/null && mv "$tmp" "$file" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  echo "emit_event: failed to write origin sidecar ${file}" >&2
+  return 0
+}
+
 # emit_event [--idem KEY] <TID> <EVENT> <JSON_DATA>
 #
 # JSON_DATA defaults to "{}". Must be a valid, flat-or-nested JSON value (an
@@ -226,6 +273,13 @@ emit_event() {
   fi
   [[ "$_last_seq" =~ ^[0-9]+$ ]] || _last_seq=0
   _next_seq=$((_last_seq + 1))
+
+  # Origin sidecar (board-cursor-first-drain): written before the append, so
+  # a drain that sees this record also sees the sidecar.
+  _events_write_origin "$tid" "$_outbox_dir" "$_last_seq"
+  if [[ "${EVENTS_TEST_PAUSE_AFTER_ORIGIN:-}" =~ ^[0-9.]+$ ]]; then
+    sleep "$EVENTS_TEST_PAUSE_AFTER_ORIGIN"
+  fi
 
   local _record
   _record=$(jq -nc \
