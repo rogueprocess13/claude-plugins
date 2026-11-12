@@ -27,7 +27,6 @@ UAT_TEST_PASSWORD="${UAT_TEST_PASSWORD:-}"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-PIPELINE_LOGS_DIR="${PIPELINE_LOGS_DIR:-./logs}"
 # Matches validate-linear-config.sh's default (tracker-client-consolidation
 # D/R5) — a cross-run sentinel must not be working-directory dependent.
 # config.sh is sourced transitively by linear-api.sh before
