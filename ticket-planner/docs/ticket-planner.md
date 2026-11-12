@@ -830,11 +830,16 @@ Review agent re-reads appraisal, discovery and architecture before it critiques
 `proposal.md`, so a gap the proposal inherited from them is a gap the reviewer shares. The
 goldfish lens is a second reviewer that never saw how the plan was produced.
 
-**Status: dormant.** The lib (`lib/planner-goldfish.sh`), the agent
-(`agents/goldfish-review-agent.md`) and the Crosscheck family are in place, but nothing
-calls `planner_goldfish_next` yet: the `pre`-gate `SPAWN` line, the SKILL.md sentence and
-the Consensus block land in a later release. Until then no goldfish line is written and
-the Crosscheck family stays silent.
+**Wiring.** `planner_dispatch_gate pre <INIT> Review` calls `planner_goldfish_due` after
+every other `pre` check passed. When a run is due it prints one line,
+`SPAWN NEXT=planner_goldfish_next APPLY=planner_goldfish_apply TIMEOUT=<ms>`, and SKILL.md
+step 1 runs the step 1e spawn-list loop with those, passing `timeout_ms` = `<ms>` to the
+spawn (description `lens: <INIT>`). Otherwise it prints nothing, so a flag-off run's
+stdout and the halt goldens are unchanged; only the one `skip … DISABLED` line is new. A
+halt of an earlier `pre` check (an open Specify decision) prints no `SPAWN` line and
+writes no goldfish line. The Consensus prompt carries `planner_goldfish_consensus_rule`
+directly after step 4's Readiness bullet. Run telemetry assigns a `lens: <INIT>`
+transcript to the first Review attempt that started at or after its end (5s grace).
 
 **When it runs.** Just before the Review agent, once per proposal version: `sha12` is the
 first 12 hex digits of the sha256 of `artifacts/proposal.md`. `planner_goldfish_due`

@@ -17,6 +17,14 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.43.0 (2026-11-12) — goldfish review wired (off by default)
+
+planner-goldfish-review PR B of 2 (next.md Step 18 item 1). ticket-auto-pipeline and fleet-controller unchanged.
+
+### Changed
+
+- **Goldfish review wired.** With `PLANNER_GOLDFISH_REVIEW=true`, the Review `pre` gate asks SKILL.md to spawn the context-withheld goldfish lens before the Review agent (`SPAWN NEXT=planner_goldfish_next APPLY=planner_goldfish_apply TIMEOUT=<ms>`), through the shared spawn-list loop with timeout `PLANNER_GOLDFISH_TIMEOUT`. Consensus copies the goldfish status line into a `## Goldfish Findings Addressed` section and records a decision for each blocker and major finding. Run telemetry counts the lens under Review. With the flag off (the default), each proposal version gets one `META|goldfish|skip … DISABLED` line and consensus.md shows `Goldfish review: disabled`. The router now sources `planner-goldfish.sh` at load time (step 1e runs NEXT/APPLY in fresh Bash calls); a missing lib prints nothing. Stdout, halt goldens and the Review prompt are unchanged; Consensus no-residue tests strip the goldfish block, so earlier pins keep their values. SKILL.md shrinks by 293 bytes.
+
 ## ticket-planner 0.42.0 (2026-11-12) — goldfish review lens, dormant
 
 planner-goldfish-review PR A of 2 (next.md Step 18 item 1). ticket-auto-pipeline and fleet-controller unchanged.

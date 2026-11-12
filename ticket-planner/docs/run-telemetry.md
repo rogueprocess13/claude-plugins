@@ -16,6 +16,7 @@ tool. The planner's spawns already use fixed descriptions:
 |---|---|---|
 | Phase agent (SKILL.md step 7.3) | `Run planner phase: <Phase> for <INIT>` | that phase |
 | Spawn-list agent (step 1e) | `<scan\|audit\|revise>: <id>` | `Refinement` when `<id>` is a ticket of the initiative, `DraftReadiness` when it is one of its draft slugs |
+| Goldfish lens (step 1e, planner-goldfish-review) | `lens: <INIT>` | `Review`, for this initiative only: the first Review attempt that started at or after the transcript ended (less 5s), since the lens finishes before Review writes its first line |
 
 A transcript is added to the latest attempt of its phase that started before the
 transcript ended. Usage is summed once per message id: Claude Code writes one

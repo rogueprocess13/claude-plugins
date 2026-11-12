@@ -570,12 +570,9 @@ For each phase to run:
    planner_dispatch_gate pre "$INITIATIVE_ID" "$PHASE" "$STATE_DIR" || exit $(($? == 3 ? 0 : 1))
    ```
 
-   It runs, in order: the **create gate** (Epic Gen and Ticket Gen write to Linear; an
-   unauthorized initiative stops with "Planning complete — nothing was created in
-   Linear", the normal end of a `plan` run); for `Crosscheck`, the **Consensus
-   readiness gate** (DET-PL-11: only an explicit `Readiness: blocked` in consensus.md
-   halts; it holds no state and releases once a person changes Readiness or Consensus
-   re-runs); for `Review`, the **open business decisions gate** (step 1c).
+   Its checks, in order, are in `planner_dispatch_gate`'s header comment. If it
+   printed `SPAWN NEXT=<n> APPLY=<a> TIMEOUT=<ms>`, run step 1e with those, passing
+   `timeout_ms` = `<ms>` to each spawn.
 
 1a. **Crosscheck is not an agent phase.** If `$PHASE` is `Crosscheck`, run the check
     directly and skip steps 2–5 entirely — there is no prompt for it in

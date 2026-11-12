@@ -22,6 +22,9 @@ _source_if_missing() {
 # silently unsourced (it fell back to "." — the caller's cwd).
 _PLANNER_ROUTER_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _source_if_missing "planner_initiative_dir" "${_PLANNER_ROUTER_LIB_DIR}/planner-state.sh"
+# The goldfish lens (planner-goldfish-review): sourced here too, so a shell
+# that sources only the router has the NEXT and APPLY its `pre` gate names.
+_source_if_missing "planner_goldfish_due" "${_PLANNER_ROUTER_LIB_DIR}/planner-goldfish.sh"
 
 # ── Phase dispatch ─────────────────────────────────────────────────────────────
 
@@ -328,7 +331,10 @@ planner_until_validate() {
 #              when <phase> is Crosscheck), then step 1c (open Specify
 #              decisions and parameter rows, when <phase> is Review, and
 #              again when it is Crosscheck for a contract initiative —
-#              planner-specify-parameters' second stop)
+#              planner-specify-parameters' second stop); last, for Review
+#              only, once every check passed: when a goldfish run is due
+#              (planner_goldfish_due, planner-goldfish-review), one line
+#              `SPAWN NEXT=<fn> APPLY=<fn> TIMEOUT=<ms>` for SKILL.md step 1e
 #   create | consensus | specify   one of those alone
 #   crosscheck step 1a: runs Crosscheck; halts on a blocking finding
 #   adr        step 4a: Architecture parked on the ADR gate (Architecture only)
@@ -353,6 +359,15 @@ planner_dispatch_gate() {
       planner_dispatch_gate "$g" "$initiative_id" "$phase" "$state_dir" || rc=$?
       [ "$rc" -eq 0 ] || return "$rc"
     done
+    # The goldfish lens runs before Review through step 1e. With the flag off
+    # planner_goldfish_due records `skip … DISABLED` and nothing is printed; a
+    # missing lib prints nothing either.
+    [ "$phase" = "Review" ] || return 0
+    _source_if_missing planner_goldfish_due "${_PLANNER_ROUTER_LIB_DIR}/planner-goldfish.sh"
+    declare -f planner_goldfish_due >/dev/null 2>&1 || return 0
+    if planner_goldfish_due "$initiative_id" 2>/dev/null; then
+      echo "SPAWN NEXT=planner_goldfish_next APPLY=planner_goldfish_apply TIMEOUT=$(planner_goldfish_timeout_ms)"
+    fi
     ;;
   create)
     if ! planner_create_gate_check "$initiative_id" "$phase"; then

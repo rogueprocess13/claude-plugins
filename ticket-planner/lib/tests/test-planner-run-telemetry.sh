@@ -222,6 +222,40 @@ _eq "bad session id -> exit 0" "$?" "0"
 echo 'not json' | bash "$HOOK"
 _eq "bad payload -> exit 0" "$?" "0"
 
+echo "=== 7. spawn-list attribution: goldfish lens and Refinement scan (planner-goldfish-review) ==="
+# shift_tx <hour> <description> <agentType> <name> — the appraisal fixture
+# with its timestamps moved to <hour> (10:00:02–10:01:04 → <hour>:00:02–:01:04).
+shift_tx() {
+  sed "s/T10:/T$1:/g" "$FIX/subagent-appraisal.jsonl" >"$SUB/agent-$4.jsonl"
+  jq -nc --arg d "$2" --arg a "$3" '{agentType: $a, description: $d, finished: true}' >"$SUB/agent-$4.meta.json"
+}
+rm -rf "$REPOS_ROOT" "$PLANNER_TRANSCRIPT_ROOT"
+mkdir -p "$IDIR/tickets/T-1" "$SUB" "$WORK/tdir"
+echo sess-1 >"$WORK/tdir/sessions"
+# The lens ends 13:01:04; Review attempt 1 starts 13:01:30 (outside the 5s
+# grace the other rule uses) and fails; attempt 2 is the retry.
+cat >"$IDIR/state.log" <<'EOF'
+2026-11-01T13:00:00Z|META|goldfish|start|abcdef012345 attempt=1
+2026-11-01T13:01:10Z|META|goldfish|done|abcdef012345 findings=2 bm=G1
+2026-11-01T13:01:30Z|Review|critique|start|x
+2026-11-01T14:05:00Z|Review|critique|fail|x
+2026-11-01T14:06:00Z|Review|critique|start|x
+2026-11-01T14:09:00Z|Review|critique|done|x
+2026-11-01T16:00:00Z|META|refinement|step|scan
+2026-11-01T16:02:00Z|META|refinement-gate|fail|1 not ready
+EOF
+shift_tx 13 "lens: ${INIT}" ticket-planner:goldfish-review-agent gf
+shift_tx 13 "lens: INIT-other" ticket-planner:goldfish-review-agent gf-other
+shift_tx 14 "Run planner phase: Review for ${INIT}" general-purpose rv
+shift_tx 16 "scan: T-1" ticket-auto-pipeline:dor-semantic-agent sc
+recs=$(_prt_phase_records "$INIT" "$WORK/tdir" '[]')
+rv1=$(jq -c 'select(.phase == "Review" and .attempt == 1) | {agents, agent_types}' <<<"$recs")
+_eq "lens transcript goes to the first Review attempt after it; another initiative's lens is ignored" "$rv1" \
+  '{"agents":2,"agent_types":["general-purpose","ticket-planner:goldfish-review-agent"]}'
+_eq "the Review retry gets no lens transcript" "$(jq -c 'select(.phase == "Review" and .attempt == 2) | .agents' <<<"$recs")" "0"
+_eq "scan attribution unchanged" "$(jq -c 'select(.phase == "Refinement") | {agents, agent_types}' <<<"$recs")" \
+  '{"agents":1,"agent_types":["ticket-auto-pipeline:dor-semantic-agent"]}'
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]
