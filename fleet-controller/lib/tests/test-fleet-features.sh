@@ -187,7 +187,7 @@ test_gate_scanner_finds_known_shapes() {
   hits=$(_scan "$REPO_DIR") || return 1
   grep -q $'^FLEET_EPIC_AUTO_PR\tfalse\t' <<<"$hits" &&
     grep -q $'^FLEET_STORE_ENABLE\ttrue\tfleet-controller/fleetd/' <<<"$hits" &&
-    grep -q $'^FLEET_BOARD_PUSHER_ENABLE\tfalse\tfleet-controller/fleetd/supervisor.py' <<<"$hits" &&
+    grep -q $'^FLEET_BOARD_PUSHER_ENABLE\ttrue\tfleet-controller/fleetd/supervisor.py' <<<"$hits" &&
     grep -q $'^FLEETD_SPAWN_ENABLED\t\tfleet-controller/fleetd/' <<<"$hits"
 }
 

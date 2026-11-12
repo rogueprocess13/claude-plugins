@@ -317,8 +317,8 @@ As of `ticket-auto-pipeline` 0.55.0 / `fleet-controller` 0.36.0, `flow.sh` no lo
 Linear at all — the board's column and four human-signal labels (`needs-info`, `needs-adr`,
 `rejected`, `reviewed`) are written asynchronously by `lib/board-drivers/linear.sh`, draining each
 ticket's event outbox. Two callers drain: `flow.sh`'s own exit-time drain
-(`skills/ticket-flow/outbox-drain.sh`, always on) and `fleetd`'s periodic pusher pass (only when
-`FLEET_BOARD_PUSHER_ENABLE=true`).
+(`skills/ticket-flow/outbox-drain.sh`, always on) and `fleetd`'s periodic pusher pass (on by
+default since `fleet-controller` 0.51.0; `FLEET_BOARD_PUSHER_ENABLE=false` turns it off).
 
 Every outbox record written before 0.55.0 was already applied to Linear by the old direct path, so
 replaying it would flap the ticket's column through every past state. Since board-cursor-first-drain
@@ -331,10 +331,9 @@ operator step is needed**:
 - A board with no cursor yet starts at the sidecar's `origin_seq`. With no sidecar (a legacy outbox
   no emit has touched since the upgrade) it starts at the outbox tail, so nothing is replayed.
 
-To enable the periodic pusher, set `FLEET_BOARD_PUSHER_ENABLE=true` and restart `fleetd`. Verify on
-one real ticket that a transition moves the board column within one router exit (or within
-`FLEET_BOARD_PUSHER_INTERVAL`, default 300s, if only `fleetd` is draining it). The default stays
-`false` until that check has passed on the tickets host.
+The periodic pusher needs no setup: it runs every `FLEET_BOARD_PUSHER_INTERVAL` (default 300s) and
+catches any ticket whose own exit-time drain failed. To turn it off, set
+`FLEET_BOARD_PUSHER_ENABLE=false` and restart `fleetd`.
 
 `board-cursor-fastforward.sh` is now optional. It makes every cursor explicit, and it is the repair
 tool if a sidecar is ever lost. To see what was at risk on a host:
@@ -344,8 +343,10 @@ FLEET_PIPELINE_LOG_DIR=<your pipeline log dir> \
   bash ticket-auto-pipeline/skills/ticket-flow/board-cursor-fastforward.sh --dry-run
 ```
 
-**Do not roll back below 0.116.0 on a host that has not been fast-forwarded.** Older code ignores
-the sidecar and reads a missing cursor as 0, so its drains replay full history.
+**Do not roll back `ticket-auto-pipeline` below 0.116.0 on a host that has not been
+fast-forwarded.** Older code ignores the sidecar and reads a missing cursor as 0, so its drains
+replay full history. With `fleet-controller` 0.51.0+ the pusher is on by default, so it would
+replay every idle ticket's history too, not only tickets that transition.
 
 **Rollback caveat.** Every earlier change in the tracker-decoupling programme was a clean
 `git revert` — no label was ever removed from an existing issue, only stopped being written to new

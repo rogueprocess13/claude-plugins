@@ -17,6 +17,24 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## fleet-controller 0.51.0 (2026-11-12) — the board pusher is on by default
+
+- `FLEET_BOARD_PUSHER_ENABLE` now defaults to `true`. `fleetd` runs its periodic
+  board pusher pass every `FLEET_BOARD_PUSHER_INTERVAL` (default 300s), so a
+  ticket whose own exit-time drain failed still reaches the board. Only an
+  explicit `false` turns it off.
+- This is safe because of board-cursor-first-drain (ticket-auto-pipeline
+  0.116.0): a board with no cursor starts at the outbox's origin, so the pass
+  never replays history written before 0.55.0. That was checked live on a demo
+  Linear project: an idle legacy ticket got no dispatches, a legacy ticket's one
+  new transition was the only one applied, and a new ticket projected from its
+  first event.
+- Do not run this fleet-controller with ticket-auto-pipeline below 0.116.0. The
+  older board cursor reads a missing cursor as 0, and the pusher would replay
+  every idle ticket's history.
+- `/fleet-controller:fleet-features` no longer tells you to fast-forward board
+  cursors before turning the pusher on.
+
 ## 0.116.0 (2026-11-12) — board cursors start at the outbox origin (board-cursor-first-drain)
 
 Also fleet-controller 0.50.0. Review finding ARCH-9.
