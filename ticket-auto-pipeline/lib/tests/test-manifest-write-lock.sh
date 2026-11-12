@@ -178,6 +178,55 @@ rc=0
   _pass "lock: another process's writer waits on (and times out behind) a held lock" ||
   _fail "lock: another process wrote through a held lock (rc $rc)"
 
+# ── A forked subshell does not inherit the parent's hold ────────────────────
+# `( writer ) &` copies the depth counter, so without a pid check the child
+# skipped flock and wrote while the parent still held the lock.
+
+write_ticket_manifest "LOCK-5" "INIT-L" "bug" '[]'
+p5=$(get_ticket_manifest_path LOCK-5)
+_manifest_lock "$p5"
+(MANIFEST_LOCK_TIMEOUT_SECS=10 write_ticket_outcome_label "LOCK-5" Smooth) &
+fork_pid=$!
+sleep 1
+early=$(jq -r '.outcome_label // "absent"' "$p5")
+_manifest_unlock
+wait "$fork_pid" || true
+[ "$early" = "absent" ] && _pass "lock: a forked writer waits while the parent holds the lock" ||
+  _fail "lock: a forked writer wrote through the parent's lock (saw '$early')"
+[ "$(jq -r '.outcome_label // "absent"' "$p5")" = "Smooth" ] &&
+  _pass "lock: the forked writer lands once the parent releases" ||
+  _fail "lock: the forked writer's update is missing"
+
+# ── Re-running creation keeps lifecycle fields ──────────────────────────────
+# A planner resume calls write_ticket_manifest/write_epic_manifest again on an
+# existing manifest. Replacing the whole file restarted rev at 1, so the next
+# `{tid}:1` idem key collided with an event already in the outbox.
+
+write_ticket_manifest "LOCK-6" "INIT-L" "bug" '[]'
+set_ticket_transition "LOCK-6" "Todo" '[]' ''
+set_ticket_transition "LOCK-6" "Approve" '["needs-info"]' '{"event":"x","data":{}}'
+set_ticket_approval "LOCK-6" true human
+stamp_ticket_dispatch "LOCK-6"
+write_ticket_manifest "LOCK-6" "INIT-L" "feature" '["LOCK-1"]'
+m6=$(get_ticket_manifest_path LOCK-6)
+jq -e '.rev == 2 and .stage == "Approve" and .flags == ["needs-info"] and .pending_event.event == "x"
+       and .approved == true and .dispatch == true' "$m6" >/dev/null &&
+  _pass "write_ticket_manifest: re-run keeps rev/stage/flags/pending_event/approved/dispatch" ||
+  _fail "write_ticket_manifest: re-run dropped lifecycle fields ($(jq -c . "$m6"))"
+jq -e '.type == "feature" and .blocked_by == ["LOCK-1"] and .initiative == "INIT-L"' "$m6" >/dev/null &&
+  _pass "write_ticket_manifest: re-run refreshes the creation fields" ||
+  _fail "write_ticket_manifest: re-run should refresh type/blocked_by ($(jq -c . "$m6"))"
+
+write_epic_manifest "EPIC-L" "epic/a" "per-ticket" "manual" '["C-1"]'
+stamp_epic_dispatch "EPIC-L"
+set_epic_transition "EPIC-L" "Review" '[]' ''
+write_epic_manifest "EPIC-L" "epic/b" "epic" "manual"
+me=$(get_epic_manifest_path EPIC-L)
+jq -e '.rev == 1 and .stage == "Review" and .dispatch == true and .children == ["C-1"]
+       and .branch == "epic/b" and .uat_policy == "epic"' "$me" >/dev/null &&
+  _pass "write_epic_manifest: re-run keeps rev/stage/dispatch/children, refreshes branch/policy" ||
+  _fail "write_epic_manifest: re-run lost fields ($(jq -c . "$me"))"
+
 echo "---"
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

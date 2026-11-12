@@ -359,8 +359,9 @@ _ready POL-2 | jq -e '.lineage.policy.structural == ["NEEDS_HUMAN_DECISION"] and
   _fail "policy: override snapshot wrong (got $(_ready POL-2 | jq -c .lineage.policy))"
 
 # A readiness write must not swallow the caller's own stderr afterwards
-# (_manifest_unlock (then _manifest_readiness_unlock) once ran `exec 200>&- 2>/dev/null`, which made
-# every later warning in the same shell vanish).
+# (the manifest unlock, then named _manifest_readiness_unlock, once ran
+# `exec 200>&- 2>/dev/null`, which made every later warning in the same
+# shell vanish).
 {
   _write_body "POL-3" "$base_body"
   echo "stderr-probe" >&2

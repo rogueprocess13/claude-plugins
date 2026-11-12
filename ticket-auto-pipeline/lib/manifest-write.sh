@@ -37,7 +37,10 @@ _manifest_atomic_write() {
     rm -f "$tmp"
     return 1
   }
-  mv -f "$tmp" "$path"
+  mv -f "$tmp" "$path" || {
+    rm -f "$tmp"
+    return 1
+  }
 }
 
 # write_initiative_index <TID> <INIT>
@@ -84,14 +87,26 @@ write_ticket_manifest() {
   write_initiative_index "$tid" "$init" || return 1
 
   local manifest_path="$repos_root/.ticket-auto/initiatives/$init/tickets/$tid/planner/manifest.json"
-  local content
-  content=$(jq -nc \
-    --arg type "$type" --arg init "$init" --argjson blocked_by "$blocked_by" \
-    '{type: $type, initiative: $init, blocked_by: $blocked_by, dispatch: false}') || return 1
-
-  local rc=0
+  # A re-run on an existing manifest (planner resume) refreshes only the
+  # fields creation owns and keeps everything the pipeline has written since
+  # — rev, stage, flags, pending_event, approved, ready, a dispatch stamp.
+  # Replacing the whole file restarted rev at 1, and the next `{tid}:1` idem
+  # key then collided with an event already in the outbox (review ARCH-4).
+  # The jq runs on the file read under the lock, or on `{}` for a new one.
+  local rc=0 base content
   _manifest_lock "$manifest_path" || return 1
-  _manifest_atomic_write "$manifest_path" "$content" || rc=$?
+  base='{}'
+  if [ -f "$manifest_path" ]; then
+    base=$(jq -c 'if type == "object" then . else {} end' "$manifest_path" 2>/dev/null) || base='{}'
+  fi
+  if content=$(jq -c \
+    --arg type "$type" --arg init "$init" --argjson blocked_by "$blocked_by" \
+    '. + {type: $type, initiative: $init, blocked_by: $blocked_by}
+     | .dispatch = (.dispatch // false)' <<<"$base"); then
+    _manifest_atomic_write "$manifest_path" "$content" || rc=$?
+  else
+    rc=1
+  fi
   _manifest_unlock
   return "$rc"
 }
@@ -126,11 +141,16 @@ write_epic_manifest() {
     [ -n "$children" ] || children='[]'
   fi
 
-  local content rc=0
-  content=$(jq -nc \
+  # Like write_ticket_manifest, a refresh merges the fields this writer owns
+  # into the existing object and keeps dispatch/stage/rev/pending_event.
+  local base='{}' content rc=0
+  if [ -f "$manifest_path" ]; then
+    base=$(jq -c 'if type == "object" then . else {} end' "$manifest_path" 2>/dev/null) || base='{}'
+  fi
+  content=$(jq -c \
     --arg branch "$branch" --arg uat "$uat_policy" --arg merge "$merge_policy" \
     --argjson children "$children" \
-    '{branch: $branch, uat_policy: $uat, merge_policy: $merge, children: $children}') || rc=1
+    '. + {branch: $branch, uat_policy: $uat, merge_policy: $merge, children: $children}' <<<"$base") || rc=1
 
   if [ "$rc" -eq 0 ]; then
     _manifest_atomic_write "$manifest_path" "$content" || rc=$?
@@ -524,14 +544,25 @@ _manifest_drop_pending() {
 # nested lock on a *different* manifest is refused (rc 1): FD 200 holds one
 # lock at a time. No writer in this file calls another writer while holding
 # the lock, so neither case arises today; the guard keeps a future one safe.
-# A subshell inherits both the depth and FD 200 (the same open file
-# description), so `$(writer)` under a held lock is covered too.
+# Re-entrancy is per process (the holder's BASHPID is recorded): a subshell,
+# `( writer ) &` or `$(writer)` alike, takes the lock afresh on a new open
+# file description, so it waits while its parent holds the lock — a
+# `$(writer)` called under a held lock therefore times out instead of
+# writing concurrently. Nothing in this file does that.
 _MANIFEST_LOCK_DEPTH=0
 _MANIFEST_LOCK_HELD=""
+_MANIFEST_LOCK_PID=""
 
 # _manifest_lock <manifest_path>
 _manifest_lock() {
   local lock_file="${1}.lock"
+  # The hold belongs to the process that took it. A subshell copies the
+  # depth counter but is another process: `( writer ) &` must take the lock
+  # itself, never ride on a parent that may release it mid-write.
+  if [ "${_MANIFEST_LOCK_PID:-}" != "${BASHPID:-$$}" ]; then
+    _MANIFEST_LOCK_DEPTH=0
+    _MANIFEST_LOCK_HELD=""
+  fi
   if [ "${_MANIFEST_LOCK_DEPTH:-0}" -gt 0 ]; then
     if [ "$_MANIFEST_LOCK_HELD" = "$lock_file" ]; then
       _MANIFEST_LOCK_DEPTH=$((_MANIFEST_LOCK_DEPTH + 1))
@@ -551,16 +582,20 @@ _manifest_lock() {
     return 1
   fi
   _MANIFEST_LOCK_HELD="$lock_file"
+  _MANIFEST_LOCK_PID="${BASHPID:-$$}"
   _MANIFEST_LOCK_DEPTH=1
 }
 
 # _manifest_unlock — releases one level of _manifest_lock; closes FD 200
 # (dropping the flock) only at depth 0.
 _manifest_unlock() {
+  # A depth inherited from a parent process is not ours to release.
+  [ "${_MANIFEST_LOCK_PID:-}" = "${BASHPID:-$$}" ] || return 0
   [ "${_MANIFEST_LOCK_DEPTH:-0}" -gt 0 ] || return 0
   _MANIFEST_LOCK_DEPTH=$((_MANIFEST_LOCK_DEPTH - 1))
   [ "$_MANIFEST_LOCK_DEPTH" -eq 0 ] || return 0
   _MANIFEST_LOCK_HELD=""
+  _MANIFEST_LOCK_PID=""
   # The group scopes 2>/dev/null to the close. A bare `exec 200>&- 2>/dev/null`
   # would also redirect the caller shell's own stderr to /dev/null for good.
   { exec 200>&-; } 2>/dev/null || true
@@ -782,8 +817,8 @@ set_ticket_readiness() {
     _manifest_unlock
     return 1
   }
-  _manifest_atomic_write "$manifest_path" "$content"
-  write_rc=$?
+  write_rc=0
+  _manifest_atomic_write "$manifest_path" "$content" || write_rc=$?
   _manifest_unlock
   return "$write_rc"
 }
@@ -829,8 +864,8 @@ waive_ticket_readiness_code() {
     _manifest_unlock
     return 1
   }
-  _manifest_atomic_write "$manifest_path" "$content"
-  write_rc=$?
+  write_rc=0
+  _manifest_atomic_write "$manifest_path" "$content" || write_rc=$?
   _manifest_unlock
   return "$write_rc"
 }
@@ -915,8 +950,8 @@ set_ticket_semantic() {
     _manifest_unlock
     return 1
   }
-  _manifest_atomic_write "$manifest_path" "$content"
-  write_rc=$?
+  write_rc=0
+  _manifest_atomic_write "$manifest_path" "$content" || write_rc=$?
   _manifest_unlock
   return "$write_rc"
 }
@@ -957,8 +992,8 @@ set_ticket_lineage() {
     _manifest_unlock
     return 1
   }
-  _manifest_atomic_write "$manifest_path" "$content"
-  write_rc=$?
+  write_rc=0
+  _manifest_atomic_write "$manifest_path" "$content" || write_rc=$?
   _manifest_unlock
   return "$write_rc"
 }
@@ -1027,8 +1062,8 @@ set_ticket_demotions() {
     _manifest_unlock
     return 1
   }
-  _manifest_atomic_write "$manifest_path" "$content"
-  write_rc=$?
+  write_rc=0
+  _manifest_atomic_write "$manifest_path" "$content" || write_rc=$?
   _manifest_unlock
   return "$write_rc"
 }

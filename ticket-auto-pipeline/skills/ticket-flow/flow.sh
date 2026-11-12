@@ -621,6 +621,11 @@ fi
 if [[ "${MANIFEST_TRANSITION_REV:-}" =~ ^[0-9]+$ ]]; then
   NEXT_REV="$MANIFEST_TRANSITION_REV"
   IDEM_KEY="${TICKET_ID}:${NEXT_REV}"
+else
+  # An older manifest-write.sh (a stale synced copy) does not report the rev.
+  # Fall back to the pre-read prediction, but say so: under concurrency it
+  # may not be the rev that was written.
+  _log "META|flow-warn|warn|REV_UNREPORTED trigger=${TRIGGER} using predicted rev=${NEXT_REV}"
 fi
 
 if [ "$TRIGGER" = "implement-outcome" ] && [ -n "${DATA[outcome]:-}" ]; then
