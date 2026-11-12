@@ -91,13 +91,13 @@ planner_crosscheck_goldfish() {
     if [ -n "$bm" ] && [ "$bm" != "-" ]; then
       for id in $(printf '%s' "$bm" | tr ',' ' '); do
         case "$id" in G[0-9]*) ;; *) continue ;; esac
-        printf '%s\n' "$sec" | grep -qxF "disp ${id}" && continue
+        grep -qxF "disp ${id}" <<<"$sec" && continue
         missing="${missing:+${missing}, }${id}"
       done
     fi
   fi
   [ -n "$missing" ] && parts="no disposition for ${missing}"
-  if ! printf '%s\n' "$sec" | grep -qx "status"; then
+  if ! grep -qx "status" <<<"$sec"; then
     parts="${parts:+${parts}; }status line missing"
   fi
   [ -n "$parts" ] || return 0
