@@ -8,7 +8,7 @@ bottom. Update the checkboxes as work lands; move completed steps to the archive
 **Overnight 2026-11-12 (autonomous, 01:10–05:00):** merged #699 (drift report, Step 18 item 3),
 #700 (ARCH-8), #701 (triage), #702 (PO-9), #703/#710 (DET-SU-1/2), #704 (ARCH-3), #705
 (paraphrase, Step 18 item 2), #706/#709 (Step 12 item 7), #707 (DET-AP-5), #708 (ARCH-4), #711
-(CRITIQUE_NOT_RUN), #712 (goldfish lens PR A, dormant). Step 9 item 5 was already fixed by #528.
+(CRITIQUE_NOT_RUN), #712/#714 (goldfish review lens, wired, flag off), #715 (DET-PL-4). Step 9 item 5 was already fixed by #528.
 Every merged change's live check is on the tickets host. Still needs design: ARCH-5, ARCH-9.
 
 Last reviewed: 2026-11-09 (see the 2026-11-09 housekeeping note below). Earlier: 2026-09-23 (Step 7 Track A merged and archived — all 3 changes landed, PRs #385/#386;
@@ -1366,8 +1366,7 @@ network calls while holding the lock (ARCH-8), migration replay (ARCH-9), fleetd
   partial (score still LLM); DET-PL-20 moot (knowledge-curator removed). DET-SU-1 and DET-SU-2
   **fixed, PR #703**, hardened in #710 (inspector-done recomputes the verdict); DET-AP-5 **fixed,
   PR #707** (`complexity-score.sh`). Also fixed: a crashed critique passed the entry gate
-  (`CRITIQUE_NOT_RUN`, PR #711). Still live: DET-PL-4 (render `COMPLETED.md`; waits for Step 12
-  item 7 PR 2 and Step 18 item 1, same prompt file), DET-PL-2 (TicketGen script, own PR, needs
+  (`CRITIQUE_NOT_RUN`, PR #711). Still live: DET-PL-4 **fixed, PR #715** (`planner-completed.sh`), DET-PL-2 (TicketGen script, own PR, needs
   care). DET-AP-2 unclear (critique may still check by eye).
 
 **Merging.** WPs do not bump versions; bump each plugin once per PR at PR time. WP-2 and WP-7
@@ -1779,8 +1778,8 @@ Which plugins each item touches (bump the version of every plugin an item edits)
 - [ ] 1. **Goldfish lens for the planner's Review phase.** Specced 2026-11-12 as openspec
       `planner-goldfish-review` (local; reviewed once, revised): an extra agent before Review via
       the spawn-list loop, `goldfish/review-goldfish.md`, max 8 findings, not-run never zero,
-      warn-only `GOLDFISH_UNADDRESSED`, flag `PLANNER_GOLDFISH_REVIEW` default **false**. PR A
-      (dormant) #712; PR B (wiring) see status below. **Operator questions Q1–Q5 in design.md**
+      warn-only `GOLDFISH_UNADDRESSED`, flag `PLANNER_GOLDFISH_REVIEW` default **false**. **MERGED** PR A #712
+      (0.42.0) and PR B #714 (0.43.0); off until the operator sets the flag. **Operator questions Q1–Q5 in design.md**
       (default on/off, warn vs block, read specs too, serial vs parallel, the `clarified` rule).
       Original note: `planner_prompt_review`
       (`ticket-planner/lib/planner-phase-prompts.sh`) tells the reviewer to re-read
