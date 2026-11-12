@@ -43,16 +43,20 @@ _DSP_AUDIT_CLOSE="=== END DOR_SEMANTIC_AUDIT ==="
 # Kept in sync with dor-semantic.sh's DOR_SEMANTIC_CODES, but self-contained
 # — a caller that only needs the parser is not forced to pull in
 # dor-check.sh/manifest-write.sh's heavier dependency chain.
-_DSP_KNOWN_CODES="MISSING_CORE_AC NEEDS_HUMAN_DECISION INTENT_AC_MISMATCH CONTRADICTORY_REQUIREMENTS SCOPE_AMBIGUOUS EDGE_CASE_GAP TEST_DATA_GAP UNSTATED_DEPENDENCY AC_NOT_TESTABLE"
+_DSP_KNOWN_CODES="MISSING_CORE_AC NEEDS_HUMAN_DECISION INTENT_AC_MISMATCH INCOHERENT_CHANGE CONTRADICTORY_REQUIREMENTS SCOPE_AMBIGUOUS EDGE_CASE_GAP TEST_DATA_GAP UNSTATED_DEPENDENCY AC_NOT_TESTABLE"
 
 _DSP_GAP_NAMES="REQUIREMENT_COMPLETENESS CONTRADICTORY_REQUIREMENTS DEEP_SCOPE_AMBIGUITY EDGE_CASE_SUFFICIENCY"
 _DSP_GAP_VERDICTS="clear finding not-applicable"
 _DSP_AUDIT_VERDICTS="agree disputed uncertain"
 
+# dor-semantic-paraphrase: the scan's PARAPHRASE line is required, one line,
+# 1 to this many characters (after trimming).
+_DSP_PARAPHRASE_MAX=400
+
 _dsp_code_dimension() {
   case "$1" in
   MISSING_CORE_AC | NEEDS_HUMAN_DECISION) echo "requirement_completeness" ;;
-  INTENT_AC_MISMATCH) echo "intent" ;;
+  INTENT_AC_MISMATCH | INCOHERENT_CHANGE) echo "intent" ;;
   CONTRADICTORY_REQUIREMENTS) echo "acceptance_criteria" ;;
   SCOPE_AMBIGUOUS) echo "scope" ;;
   EDGE_CASE_GAP) echo "edge_cases" ;;
@@ -281,7 +285,11 @@ parse_dor_semantic() {
   # ── validate top-level fields ─────────────────────────────────────────
   if [ "$status" = "ok" ]; then
     local f _required="SCHEMA_VERSION TICKET BODY_HASH"
-    [ "$kind" = "audit" ] && _required="$_required SCORE_PLAUSIBLE SCORE_REASON"
+    if [ "$kind" = "audit" ]; then
+      _required="$_required SCORE_PLAUSIBLE SCORE_REASON"
+    else
+      _required="$_required PARAPHRASE"
+    fi
     for f in $_required; do
       if [ -z "${fields[$f]+set}" ] || [ -z "${fields[$f]}" ]; then
         status="invalid"
@@ -294,6 +302,14 @@ parse_dor_semantic() {
   if [ "$status" = "ok" ] && [ "${fields[SCHEMA_VERSION]}" != "$DOR_SEMANTIC_PARSE_SCHEMA_VERSION" ]; then
     status="invalid"
     err="unsupported SCHEMA_VERSION: ${fields[SCHEMA_VERSION]} (parser supports ${DOR_SEMANTIC_PARSE_SCHEMA_VERSION})"
+  fi
+
+  # A multi-line paraphrase never reaches here: its continuation line has no
+  # ':' (malformed line) or an invalid key. Length is counted in characters.
+  if [ "$status" = "ok" ] && [ "$kind" = "scan" ] &&
+    [ "${#fields[PARAPHRASE]}" -gt "$_DSP_PARAPHRASE_MAX" ]; then
+    status="invalid"
+    err="PARAPHRASE longer than ${_DSP_PARAPHRASE_MAX} characters (${#fields[PARAPHRASE]})"
   fi
 
   if [ "$status" = "ok" ] && [ "$kind" = "audit" ] &&
@@ -502,13 +518,16 @@ parse_dor_semantic() {
   body_hash="${fields[BODY_HASH]:-}"
 
   if [ "$kind" = "scan" ]; then
+    local paraphrase
+    paraphrase=$(_dsp_redact "${fields[PARAPHRASE]:-}")
     json=$(jq -nc \
       --argjson schema_version "$DOR_SEMANTIC_PARSE_SCHEMA_VERSION" \
       --arg kind "scan" --arg ticket "$ticket" --arg body_hash "$body_hash" \
+      --arg paraphrase "$paraphrase" \
       --argjson findings "$findings_json" --argjson gaps "$gaps_json" \
       --arg parse_status "$status" --arg parse_error "$err" \
       '{schema_version:$schema_version, kind:$kind, ticket:$ticket,
-        body_hash:$body_hash, findings:$findings, gaps:$gaps,
+        body_hash:$body_hash, paraphrase:$paraphrase, findings:$findings, gaps:$gaps,
         parse_status:$parse_status, parse_error:$parse_error}' 2>/dev/null) || json=""
   else
     score_plausible="${fields[SCORE_PLAUSIBLE]:-}"

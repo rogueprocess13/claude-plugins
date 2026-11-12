@@ -31,6 +31,7 @@ restate the field set or the grammar.
 | `MISSING_CORE_AC` | `requirement_completeness` |
 | `NEEDS_HUMAN_DECISION` | `requirement_completeness` |
 | `INTENT_AC_MISMATCH` | `intent` |
+| `INCOHERENT_CHANGE` | `intent` — **advisory only**, scan paraphrase check (see below) |
 | `CONTRADICTORY_REQUIREMENTS` | `acceptance_criteria` |
 | `SCOPE_AMBIGUOUS` | `scope` |
 | `EDGE_CASE_GAP` | `edge_cases` |
@@ -53,6 +54,16 @@ data. `UNSTATED_DEPENDENCY` no longer covers "prior state": a flag, a service or
 ticket is a dependency, test data is `TEST_DATA_GAP`. `DETAIL` is **required** for this code
 (what data, in what state, how many) — an empty `DETAIL` rejects the whole block.
 
+`INCOHERENT_CHANGE` (dor-semantic-paraphrase) fires when a part of the ticket — the
+summary or intent, the scope, an acceptance criterion or a Verification Plan row —
+describes a different change from the scan's own `PARAPHRASE` (see the scan block).
+`QUOTE` is the divergent part, `DETAIL` says what change it describes instead. It sits
+directly after `INTENT_AC_MISMATCH`, so a single criterion that misses the intent still
+uses the older, more specific code. A ticket that legitimately makes two related changes
+is not incoherent if its intent says so. Bash cannot compare prose: the model judges the
+divergence, and the ordinary verbatim-quote check verifies the quote. It is advisory-only
+until a live run calibrates it.
+
 Three further codes are **bash-owned** — never emitted by the model, always blocking,
 unaffected by `DOR_SEMANTIC_ADVISORY_CODES`:
 
@@ -66,7 +77,7 @@ unaffected by `DOR_SEMANTIC_ADVISORY_CODES`:
 
 A semantic result never carries a severity field. `_dor_semantic_severity` decides, in
 this order: a bash-owned code is `blocking`; a code in the fixed in-code constant
-`DOR_SEMANTIC_ADVISORY_ONLY_CODES` (currently `TEST_DATA_GAP`) is `advisory` — no env var,
+`DOR_SEMANTIC_ADVISORY_ONLY_CODES` (currently `TEST_DATA_GAP INCOHERENT_CHANGE`) is `advisory` — no env var,
 strict flag or ticket type can make it blocking, and promotion is a code change that
 removes it from the constant; otherwise a finding is `blocking` unless its code is listed
 in the space-separated env var `DOR_SEMANTIC_ADVISORY_CODES` (default empty), read the same
@@ -87,6 +98,7 @@ that names a sibling code for the same gap. Advisory findings are stored in
 SCHEMA_VERSION: 1
 TICKET: WIL-123
 BODY_HASH: sha256:ab12...
+PARAPHRASE: Let finance export the invoice list as a CSV file from the invoices screen.
 FINDING_1_CODE: MISSING_CORE_AC
 FINDING_1_QUOTE: the export should work correctly
 FINDING_1_DETAIL: no AC states what "correctly" means for a partial-page export
@@ -109,6 +121,16 @@ GAP_EDGE_CASE_SUFFICIENCY_REASON: ticket has no branching behaviour
 raw text (the parser sorts by `n`, gaps are tolerated). A finding needs `CODE` and
 `QUOTE`; `QUOTE_B` is mandatory for `CONTRADICTORY_REQUIREMENTS` (any other code may
 carry it too, harmlessly); `DETAIL` is optional free text.
+
+`PARAPHRASE` (dor-semantic-paraphrase, `dor-semantic-v4`) is **required on every scan
+block** and absent from the audit: the one change the ticket makes, in the scanner's own
+words, written before any finding (the prompt asks for it first, so the scanner commits
+to a reading before it hunts for findings). One line, 1 to 400 characters after
+trimming. A missing, empty or over-long value rejects the block (exit 1); a multi-line
+value is a malformed line and rejects it too. The caller treats that like any other
+invalid block: re-spawn once, then `SEMANTIC_UNAVAILABLE`. The parser emits it as
+`paraphrase` (redacted like `DETAIL`), and `dor_semantic_apply` stores it as
+`ready.semantic.paraphrase`. Readers that do not know the field ignore it.
 
 All four `GAP_*` verdicts are **mandatory on every scan block**, each one of
 `clear|finding|not-applicable`, each with a matching `GAP_<NAME>_REASON`. This is the
@@ -184,7 +206,7 @@ dropping the finding.
 
 `dor_semantic_apply` rejects (exit 1, nothing written) a result whose `TICKET` differs
 from the ticket id it was called with, or whose `BODY_HASH` differs from
-`_dor_body_hash` of the body file it is given. `DOR_SEMANTIC_EVALUATOR="dor-semantic-v3"`
+`_dor_body_hash` of the body file it is given. `DOR_SEMANTIC_EVALUATOR="dor-semantic-v4"`
 is stamped into `ready.semantic.evaluator` on every stored result; it changes whenever
 the prompt, code vocabulary, or block schema changes, so a caller can decide whether a
 cached verdict is current by comparing body hash and evaluator string. `v2`
@@ -200,7 +222,17 @@ finding's units and id, labels every finding `new`, starts `ready.lineage` at ro
 and stamps `migrated_from: "dor-semantic-v2"` on both. Exit 0 migrated, 2 nothing to
 migrate (no verdict, another evaluator, a changed, stale or unavailable verdict), 1
 error. A `v2` verdict on a changed body is rescanned as usual, so the bump only
-rescans edited tickets.
+rescans edited tickets. (Since `v4`, migration stamps `v4`.)
+
+`v4` (dor-semantic-paraphrase) adds the required scan `PARAPHRASE` line and the
+advisory-only `INCOHERENT_CHANGE` code. It forces **no rescan**: `v3` is listed in
+`DOR_SEMANTIC_COMPATIBLE_EVALUATORS`, and `dor_semantic_evaluator_compatible <evaluator>`
+(true for the current evaluator or a listed one) is what the planner's needs-pass
+decision and converge check use instead of string equality. A `v3` verdict on an
+unchanged body therefore stays current; it simply has no paraphrase. A changed body is
+rescanned as always, and the new verdict is `v4`. Lineage still resets across the bump
+(it compares the exact evaluator), and `dor_semantic_import` still refuses a draft from
+another evaluator — drafts and their import run in one planner run.
 
 ## Finding identity, lineage and rounds (`v3`)
 
@@ -241,7 +273,7 @@ rescans edited tickets.
 
 ```json
 "lineage": {
-  "round": 2, "reset": false, "evaluator": "dor-semantic-v3",
+  "round": 2, "reset": false, "evaluator": "dor-semantic-v4",
   "body_hash": "sha256:…", "section_hashes": {"Summary": "sha256:…"},
   "units": {"Acceptance Criteria/ac:1a2b3c4d": "sha256:…"},
   "findings": [{"id": "f-0123456789ab", "code": "EDGE_CASE_GAP",
@@ -250,7 +282,7 @@ rescans edited tickets.
                 "first_round": 1, "lineage": "carried"}],
   "resolved": [],
   "counts": {"new": 0, "carried": 1, "drift": 0, "resolved": 0, "unverified": 0},
-  "first_audit": {"body_hash": "sha256:…", "evaluator": "dor-semantic-v3", "audit": []},
+  "first_audit": {"body_hash": "sha256:…", "evaluator": "dor-semantic-v4", "audit": []},
   "policy": {"structural": ["NEEDS_HUMAN_DECISION", "…"], "overridden": false,
              "drift_demote": false, "max_rounds": null, "round_reset_share": 0.5,
              "inert": ["Related Tickets"],
@@ -305,15 +337,16 @@ the parser never enables `errexit` in the caller.
 
 Written by `manifest-write.sh`'s `set_ticket_semantic <TID> <semantic_json>` — the third
 writer of a ticket manifest's `ready` object, alongside `set_ticket_readiness` and
-`waive_ticket_readiness_code`, under the same `_manifest_readiness_lock`:
+`waive_ticket_readiness_code`, under the same `_manifest_lock` (the one per-manifest lock every manifest writer takes):
 
 ```json
 "ready": {
   "...": "...",
   "semantic": {
-    "evaluator": "dor-semantic-v3",
+    "evaluator": "dor-semantic-v4",
     "checked_at": "2026-10-01T00:00:00Z",
     "body_hash": "sha256:ab12...",
+    "paraphrase": "Let finance export the invoice list as a CSV file from the invoices screen.",
     "findings": [
       {"code": "MISSING_CORE_AC", "dimension": "requirement_completeness",
        "severity": "blocking", "quote": "the export should work correctly",
@@ -431,7 +464,7 @@ printed one per line; more demotes none and exits 4. The writer is
 ```json
 "demoted": {"VPLAN_ROW_GAP": {"by": "dor-semantic-audit", "reason": "…",
             "quote": "- [ ] Criteria 2 and 3 are verified together in row 2",
-            "body_hash": "sha256:…", "evaluator": "dor-semantic-v3"}}
+            "body_hash": "sha256:…", "evaluator": "dor-semantic-v4"}}
 ```
 
 It moves the code from `missing` to `advisory` and recomputes `status`. It refuses an
@@ -458,7 +491,8 @@ The planner sets the round and drift ones as call prefixes; see `ticket-planner`
 | `DOR_AUDIT_DEMOTABLE_CODES` | `DOR_AUDIT_DEMOTABLE_CODES_DEFAULT`: `VPLAN_ROW_GAP VPLAN_UNVERIFIABLE AC_VAGUE AC_IMPLEMENTATION_ONLY NAV_PATH_MISSING` | Deterministic codes `dor_audit_demote` may demote. Empty means the default. Never-demote codes are refused whatever this says. An override warns at apply time and is snapshotted as `lineage.policy.audit_demotable`/`audit_demotable_overridden` |
 | `DOR_AUDIT_DEMOTE_MAX` | `2` | More qualifying codes than this on one ticket is a blanket dispute: nothing is demoted, exit 4. Empty or invalid means 2 |
 
-Fixed constants, not overridable: `DOR_SEMANTIC_EVALUATOR` (`dor-semantic-v3`),
+Fixed constants, not overridable: `DOR_SEMANTIC_EVALUATOR` (`dor-semantic-v4`),
+`DOR_SEMANTIC_COMPATIBLE_EVALUATORS` (`dor-semantic-v3`), `DOR_SEMANTIC_ADVISORY_ONLY_CODES`,
 `DOR_AUDIT_NEVER_DEMOTE`, `DOR_AUDIT_CODE_SECTIONS`.
 
 ## Reads and consumers

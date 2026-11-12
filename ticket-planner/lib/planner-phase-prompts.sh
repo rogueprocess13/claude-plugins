@@ -194,7 +194,7 @@ _planner_prompt_config() {
 # PLANNER_AC_CHECKLIST_SEMANTIC_NA (not about how a single criterion is written);
 # test-planner-ac-checklist.sh fails when the evaluator's list changes without
 # this table changing. Format: "<codes>|<rule text>".
-PLANNER_AC_CHECKLIST_SEMANTIC_NA="NEEDS_HUMAN_DECISION INTENT_AC_MISMATCH CONTRADICTORY_REQUIREMENTS SCOPE_AMBIGUOUS UNSTATED_DEPENDENCY"
+PLANNER_AC_CHECKLIST_SEMANTIC_NA="NEEDS_HUMAN_DECISION INTENT_AC_MISMATCH INCOHERENT_CHANGE CONTRADICTORY_REQUIREMENTS SCOPE_AMBIGUOUS UNSTATED_DEPENDENCY"
 PLANNER_AC_CHECKLIST_RULES=(
   "AC_NOT_TESTABLE AC_IMPLEMENTATION_ONLY|**Observable pass/fail** — an outsider can watch it hold or fail: a status, a shown value, a row, a message, a file. Never an internal fact (a method exists, a column is added)."
   "TEST_DATA_GAP TEST_DATA_MISSING|**Names its input** — the concrete record, user, file or value it acts on (\"a \`client\` in state archived\", \"5 \`invoice\` records in state paid\"), and its Verification Notes row names the same data with a Source (\`none\` only when nothing must exist first)."

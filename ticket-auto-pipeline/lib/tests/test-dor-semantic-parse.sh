@@ -55,6 +55,7 @@ _canonical_scan() {
 SCHEMA_VERSION: 1
 TICKET: WIL-123
 BODY_HASH: sha256:abc123
+PARAPHRASE: Export the report as CSV from the reports screen.
 FINDING_1_CODE: MISSING_CORE_AC
 FINDING_1_QUOTE: the export should work correctly
 FINDING_1_DETAIL: no AC states what correctly means
@@ -143,6 +144,7 @@ GAP_CONTRADICTORY_REQUIREMENTS_REASON: covered
 GAP_REQUIREMENT_COMPLETENESS: clear
 GAP_REQUIREMENT_COMPLETENESS_REASON: covered
 BODY_HASH: sha256:abc123
+PARAPHRASE: Export the report as CSV from the reports screen.
 SCHEMA_VERSION: 1
 === END DOR_SEMANTIC_SCAN ===
 EOF
@@ -184,6 +186,7 @@ test_last_block_wins() {
     echo "SCHEMA_VERSION: 1"
     echo "TICKET: WIL-000-FIRST"
     echo "BODY_HASH: sha256:first"
+    echo "PARAPHRASE: Export the report as CSV from the reports screen."
     echo "GAP_REQUIREMENT_COMPLETENESS: clear"
     echo "GAP_REQUIREMENT_COMPLETENESS_REASON: r"
     echo "GAP_CONTRADICTORY_REQUIREMENTS: clear"
@@ -396,6 +399,7 @@ test_contradiction_without_quote_b_rejected() {
 SCHEMA_VERSION: 1
 TICKET: WIL-123
 BODY_HASH: sha256:abc123
+PARAPHRASE: Export the report as CSV from the reports screen.
 FINDING_1_CODE: CONTRADICTORY_REQUIREMENTS
 FINDING_1_QUOTE: all fields are optional
 GAP_REQUIREMENT_COMPLETENESS: clear
@@ -550,7 +554,7 @@ test_schema_doc_enums_match_parser() {
   local c
   for c in MISSING_CORE_AC NEEDS_HUMAN_DECISION INTENT_AC_MISMATCH \
     CONTRADICTORY_REQUIREMENTS SCOPE_AMBIGUOUS EDGE_CASE_GAP \
-    UNSTATED_DEPENDENCY AC_NOT_TESTABLE; do
+    UNSTATED_DEPENDENCY AC_NOT_TESTABLE INCOHERENT_CHANGE PARAPHRASE; do
     grep -q "$c" "$schema_doc" || {
       echo "code $c not in schema doc" >&2
       ok=0
@@ -571,6 +575,99 @@ test_schema_doc_enums_match_parser() {
   [ "$ok" = "1" ]
 }
 
+# ── dor-semantic-paraphrase: PARAPHRASE line ─────────────────────────────
+
+test_paraphrase_in_output() {
+  _setup
+  _canonical_scan
+  _parse scan "$_ws/scan.txt"
+  local ok=1
+  [ "$_RC" -eq 0 ] || ok=0
+  grep -q '"paraphrase":"Export the report as CSV from the reports screen."' <<<"$_OUT" || ok=0
+  _teardown
+  [ "$ok" = "1" ]
+}
+
+test_paraphrase_missing_rejected() {
+  _setup
+  _canonical_scan
+  grep -v '^PARAPHRASE:' "$_ws/scan.txt" >"$_ws/scan-np.txt"
+  _parse scan "$_ws/scan-np.txt"
+  local ok=1
+  [ "$_RC" -eq 1 ] || ok=0
+  grep -q '"parse_status":"invalid"' <<<"$_OUT" || ok=0
+  grep -q 'PARAPHRASE' <<<"$_OUT" || ok=0
+  _teardown
+  [ "$ok" = "1" ]
+}
+
+test_paraphrase_empty_rejected() {
+  _setup
+  _canonical_scan
+  sed 's/^PARAPHRASE:.*/PARAPHRASE:   /' "$_ws/scan.txt" >"$_ws/scan-pe.txt"
+  _parse scan "$_ws/scan-pe.txt"
+  local ok=1
+  [ "$_RC" -eq 1 ] || ok=0
+  grep -q 'PARAPHRASE' <<<"$_OUT" || ok=0
+  _teardown
+  [ "$ok" = "1" ]
+}
+
+test_paraphrase_multiline_rejected() {
+  _setup
+  _canonical_scan
+  sed 's/^PARAPHRASE:.*/PARAPHRASE: export the report\nand also email it to the owner/' "$_ws/scan.txt" >"$_ws/scan-pm.txt"
+  _parse scan "$_ws/scan-pm.txt"
+  local ok=1
+  [ "$_RC" -eq 1 ] || ok=0
+  grep -q '"parse_status":"invalid"' <<<"$_OUT" || ok=0
+  _teardown
+  [ "$ok" = "1" ]
+}
+
+test_paraphrase_too_long_rejected() {
+  _setup
+  _canonical_scan
+  local long
+  long=$(printf 'x%.0s' $(seq 1 401))
+  sed "s/^PARAPHRASE:.*/PARAPHRASE: ${long}/" "$_ws/scan.txt" >"$_ws/scan-pl.txt"
+  _parse scan "$_ws/scan-pl.txt"
+  local ok=1
+  [ "$_RC" -eq 1 ] || ok=0
+  grep -q 'PARAPHRASE' <<<"$_OUT" || ok=0
+  # exactly 400 characters is accepted
+  long=$(printf 'y%.0s' $(seq 1 400))
+  sed "s/^PARAPHRASE:.*/PARAPHRASE: ${long}/" "$_ws/scan.txt" >"$_ws/scan-p4.txt"
+  _parse scan "$_ws/scan-p4.txt"
+  [ "$_RC" -eq 0 ] || ok=0
+  _teardown
+  [ "$ok" = "1" ]
+}
+
+test_incoherent_change_parsed() {
+  _setup
+  _canonical_scan
+  sed -e 's/^FINDING_1_CODE:.*/FINDING_1_CODE: INCOHERENT_CHANGE/' \
+    "$_ws/scan.txt" >"$_ws/scan-ic.txt"
+  _parse scan "$_ws/scan-ic.txt"
+  local ok=1
+  [ "$_RC" -eq 0 ] || ok=0
+  grep -q '"code":"INCOHERENT_CHANGE","dimension":"intent"' <<<"$_OUT" || ok=0
+  _teardown
+  [ "$ok" = "1" ]
+}
+
+test_audit_needs_no_paraphrase() {
+  _setup
+  _canonical_audit
+  _parse audit "$_ws/audit.txt"
+  local ok=1
+  [ "$_RC" -eq 0 ] || ok=0
+  grep -q '"paraphrase"' <<<"$_OUT" && ok=0
+  _teardown
+  [ "$ok" = "1" ]
+}
+
 # ── run ──────────────────────────────────────────────────────────────────
 
 FILTER="${1:-}"
@@ -588,7 +685,10 @@ for t in test_canonical_scan_valid test_canonical_audit_valid \
   test_advisory_code_not_audited_accepted test_disputed_without_reason_rejected \
   test_secret_shaped_value_redacted test_sourcing_does_not_enable_errexit \
   test_schema_doc_enums_match_parser test_audit_quote_parsed \
-  test_audit_quote_fixture_pair; do
+  test_audit_quote_fixture_pair test_paraphrase_in_output \
+  test_paraphrase_missing_rejected test_paraphrase_empty_rejected \
+  test_paraphrase_multiline_rejected test_paraphrase_too_long_rejected \
+  test_incoherent_change_parsed test_audit_needs_no_paraphrase; do
   if [ -n "$FILTER" ] && [[ "$t" != *"$FILTER"* ]]; then continue; fi
   _run "$t" "$t"
 done

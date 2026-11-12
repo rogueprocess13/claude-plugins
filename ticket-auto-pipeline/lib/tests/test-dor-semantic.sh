@@ -184,9 +184,9 @@ dor_semantic_apply "APPLY-7" "$ws/body.md" "$scan" "$audit" >/dev/null
 
 # ── evaluator stamped ───────────────────────────────────────────────────────
 
-[ "$(get_ticket_manifest_field APPLY-7 ready | jq -r '.semantic.evaluator')" = "dor-semantic-v3" ] &&
+[ "$(get_ticket_manifest_field APPLY-7 ready | jq -r '.semantic.evaluator')" = "dor-semantic-v4" ] &&
   _pass "dor_semantic_apply: evaluator stamped" ||
-  _fail "dor_semantic_apply: evaluator should be dor-semantic-v3"
+  _fail "dor_semantic_apply: evaluator should be dor-semantic-v4"
 
 # ── canned-result case over real fixtures (task 5.3) ────────────────────────
 
@@ -292,6 +292,128 @@ spacey_prompt=$(dor_semantic_prompt scan "WIL-1" "/tmp/a dir with \$HOME and spa
 grep -qF '/tmp/a dir with $HOME and spaces/body.md' <<<"$spacey_prompt" &&
   _pass "dor_semantic_prompt: path with spaces and \$ printed literally" ||
   _fail "dor_semantic_prompt: path with spaces/\$ should print literally"
+
+# ── dor-semantic-paraphrase ─────────────────────────────────────────────────
+
+# Vocabulary: INCOHERENT_CHANGE (dimension intent) directly after
+# INTENT_AC_MISMATCH, always advisory.
+[ "${DOR_SEMANTIC_CODES[INCOHERENT_CHANGE]:-}" = "intent" ] &&
+  _pass "vocabulary: INCOHERENT_CHANGE maps to dimension intent" ||
+  _fail "vocabulary: INCOHERENT_CHANGE should map to intent (got '${DOR_SEMANTIC_CODES[INCOHERENT_CHANGE]:-}')"
+_order=" ${DOR_SEMANTIC_CODE_ORDER[*]} "
+[[ "$_order" == *" INTENT_AC_MISMATCH INCOHERENT_CHANGE "* ]] &&
+  _pass "vocabulary: INCOHERENT_CHANGE ordered right after INTENT_AC_MISMATCH" ||
+  _fail "vocabulary: order should have INCOHERENT_CHANGE after INTENT_AC_MISMATCH (got${_order})"
+_dor_semantic_in_list intent "${DOR_DIMENSION_KEYS[*]}" &&
+  _pass "vocabulary: intent is a DOR_DIMENSION_KEYS member" ||
+  _fail "vocabulary: intent should be in DOR_DIMENSION_KEYS"
+[ "${#DOR_SEMANTIC_CODE_ORDER[@]}" = "${#DOR_SEMANTIC_CODES[@]}" ] &&
+  _pass "vocabulary: order and code map have the same size" ||
+  _fail "vocabulary: order (${#DOR_SEMANTIC_CODE_ORDER[@]}) and map (${#DOR_SEMANTIC_CODES[@]}) differ"
+_p_codes=$(bash -c 'source "$1"; echo "$_DSP_KNOWN_CODES"' _ "$LIB_DIR/dor-semantic-parse.sh")
+[ "$(tr ' ' '\n' <<<"$_p_codes" | grep . | sort | tr '\n' ' ')" = "$(printf '%s\n' "${DOR_SEMANTIC_CODE_ORDER[@]}" | sort | tr '\n' ' ')" ] &&
+  _pass "vocabulary: parser's known codes match DOR_SEMANTIC_CODE_ORDER" ||
+  _fail "vocabulary: parser codes (${_p_codes}) differ from DOR_SEMANTIC_CODE_ORDER"
+for _adv in "" "EDGE_CASE_GAP" "MISSING_CORE_AC SCOPE_AMBIGUOUS"; do
+  [ "$(DOR_SEMANTIC_ADVISORY_CODES="$_adv" _dor_semantic_severity INCOHERENT_CHANGE)" = "advisory" ] &&
+    _pass "severity: INCOHERENT_CHANGE advisory with DOR_SEMANTIC_ADVISORY_CODES='${_adv}'" ||
+    _fail "severity: INCOHERENT_CHANGE should be advisory with DOR_SEMANTIC_ADVISORY_CODES='${_adv}'"
+done
+
+cat >"$ws/body-para.md" <<'BODY'
+## Intent
+Let finance export unpaid invoices as CSV.
+
+## Acceptance Criteria
+- The export downloads a file named invoices.csv
+- Users can change their password from the profile page
+BODY
+_para="Add a CSV export of unpaid invoices for finance."
+_para_scan() {
+  local tid="$1" h="$2" f="$3"
+  _scan_result "$tid" "$h" "$f" "$_ALL_CLEAR_GAPS" | jq -c --arg p "$_para" '. + {paraphrase: $p}'
+}
+
+# Paraphrase stored; a verified INCOHERENT_CHANGE is advisory and not in
+# ready.missing, with and without DOR_SEMANTIC_ADVISORY_CODES.
+for _case in unset other; do
+  tid="PARA-${_case}"
+  ph=$(_ready_tid "$tid" "$ws/body-para.md")
+  f=$(jq -nc '[{code:"INCOHERENT_CHANGE", dimension:"intent",
+    quote:"Users can change their password from the profile page",
+    detail:"describes a password change, not an invoice export"}]')
+  scan=$(_para_scan "$tid" "$ph" "$f")
+  audit=$(_audit_result "$tid" "$ph")
+  if [ "$_case" = "unset" ]; then
+    (unset DOR_SEMANTIC_ADVISORY_CODES && dor_semantic_apply "$tid" "$ws/body-para.md" "$scan" "$audit" >/dev/null)
+  else
+    DOR_SEMANTIC_ADVISORY_CODES="EDGE_CASE_GAP" dor_semantic_apply "$tid" "$ws/body-para.md" "$scan" "$audit" >/dev/null
+  fi
+  r=$(get_ticket_manifest_field "$tid" ready)
+  [ "$(jq -r '.semantic.paraphrase' <<<"$r")" = "$_para" ] &&
+    _pass "paraphrase: stored in ready.semantic.paraphrase (${_case})" ||
+    _fail "paraphrase: should be stored (${_case}, got $(jq -c '.semantic.paraphrase' <<<"$r"))"
+  [ "$(jq -r '.semantic.findings[0].severity + " " + (.semantic.findings[0].verified | tostring)' <<<"$r")" = "advisory true" ] &&
+    _pass "INCOHERENT_CHANGE: verified and advisory (${_case})" ||
+    _fail "INCOHERENT_CHANGE: should be verified advisory (${_case}, got $(jq -c '.semantic.findings' <<<"$r"))"
+  [ "$(jq -c '.missing' <<<"$r")" = '[]' ] && [ "$(jq -r '.status' <<<"$r")" = "ready" ] &&
+    _pass "INCOHERENT_CHANGE: not in ready.missing, ticket stays ready (${_case})" ||
+    _fail "INCOHERENT_CHANGE: should not block (${_case}, got $(jq -c '{status, missing}' <<<"$r"))"
+done
+
+# An unverified INCOHERENT_CHANGE quote is recorded unverified, like any other.
+tid="PARA-unverified"
+ph=$(_ready_tid "$tid" "$ws/body-para.md")
+f=$(jq -nc '[{code:"INCOHERENT_CHANGE", dimension:"intent",
+  quote:"this sentence is not in the ticket", detail:"d"}]')
+dor_semantic_apply "$tid" "$ws/body-para.md" "$(_para_scan "$tid" "$ph" "$f")" "$(_audit_result "$tid" "$ph")" >/dev/null
+r=$(get_ticket_manifest_field "$tid" ready)
+[ "$(jq -r '.semantic.findings[0].verified' <<<"$r")" = "false" ] &&
+  _pass "INCOHERENT_CHANGE: fabricated quote recorded verified:false" ||
+  _fail "INCOHERENT_CHANGE: fabricated quote should be verified:false (got $(jq -c '.semantic.findings' <<<"$r"))"
+grep -q SEMANTIC_UNVERIFIED <<<"$(jq -c '.missing' <<<"$r")" &&
+  _pass "INCOHERENT_CHANGE: unverified quote raises SEMANTIC_UNVERIFIED like any finding" ||
+  _fail "INCOHERENT_CHANGE: unverified quote should raise SEMANTIC_UNVERIFIED (got $(jq -c '.missing' <<<"$r"))"
+
+# A scan result with no paraphrase (an older caller) stores none.
+tid="PARA-none"
+ph=$(_ready_tid "$tid" "$ws/body-para.md")
+dor_semantic_apply "$tid" "$ws/body-para.md" "$(_scan_result "$tid" "$ph" '[]' "$_ALL_CLEAR_GAPS")" "$(_audit_result "$tid" "$ph")" >/dev/null
+[ "$(get_ticket_manifest_field "$tid" ready | jq -r 'if .semantic | has("paraphrase") then "has" else "none" end')" = "none" ] &&
+  _pass "paraphrase: absent from the scan result means absent from the verdict" ||
+  _fail "paraphrase: should not be stored when the scan carries none"
+
+# Prompt: PARAPHRASE first, INCOHERENT_CHANGE described; audit asks for none.
+grep -q "^PARAPHRASE: " <<<"$scan_prompt" &&
+  _pass "dor_semantic_prompt: scan block asks for PARAPHRASE" ||
+  _fail "dor_semantic_prompt: scan block should ask for PARAPHRASE"
+_pl=$(grep -n "^PARAPHRASE: " <<<"$scan_prompt" | cut -d: -f1)
+_fl=$(grep -n "^FINDING_1_CODE: " <<<"$scan_prompt" | cut -d: -f1)
+[ -n "$_pl" ] && [ -n "$_fl" ] && [ "$_pl" -lt "$_fl" ] &&
+  _pass "dor_semantic_prompt: PARAPHRASE comes before the first finding" ||
+  _fail "dor_semantic_prompt: PARAPHRASE should precede FINDING_1_CODE"
+grep -q "INCOHERENT_CHANGE" <<<"$scan_prompt" && grep -q "Write PARAPHRASE first" <<<"$scan_prompt" &&
+  _pass "dor_semantic_prompt: scan explains PARAPHRASE and INCOHERENT_CHANGE" ||
+  _fail "dor_semantic_prompt: scan should explain PARAPHRASE and INCOHERENT_CHANGE"
+grep -q "PARAPHRASE" <<<"$audit_prompt" &&
+  _fail "dor_semantic_prompt: audit should not ask for PARAPHRASE" ||
+  _pass "dor_semantic_prompt: audit does not ask for PARAPHRASE"
+
+# Evaluator compatibility: v3 verdicts stay valid, other versions do not.
+if declare -f dor_semantic_evaluator_compatible >/dev/null &&
+  dor_semantic_evaluator_compatible "dor-semantic-v4" &&
+  dor_semantic_evaluator_compatible "dor-semantic-v3"; then
+  _pass "dor_semantic_evaluator_compatible: v4 and v3 accepted"
+else
+  _fail "dor_semantic_evaluator_compatible: v4 and v3 should be accepted"
+fi
+if declare -f dor_semantic_evaluator_compatible >/dev/null &&
+  ! dor_semantic_evaluator_compatible "dor-semantic-v2" &&
+  ! dor_semantic_evaluator_compatible ""; then
+  _pass "dor_semantic_evaluator_compatible: v2 and empty refused"
+else
+  _fail "dor_semantic_evaluator_compatible: v2 and empty should be refused"
+fi
 
 echo "---"
 echo "$PASS passed, $FAIL failed"

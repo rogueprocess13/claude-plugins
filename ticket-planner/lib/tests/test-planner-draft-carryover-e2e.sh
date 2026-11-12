@@ -187,6 +187,7 @@ _scan_block() {
   echo "SCHEMA_VERSION: 1"
   echo "TICKET: ${tid}"
   echo "BODY_HASH: ${h}"
+  echo "PARAPHRASE: The ticket makes one change, described consistently."
   for f in "${list[@]}"; do
     i=$((i + 1))
     echo "FINDING_${i}_CODE: ${f%%|*}"
@@ -352,6 +353,7 @@ hashA=$(_dor_body_hash "$(cat "${PA}/body.md")")
   echo "SCHEMA_VERSION: 1"
   echo "TICKET: CRE-11"
   echo "BODY_HASH: ${hashA}"
+  echo "PARAPHRASE: The ticket makes one change, described consistently."
   echo "FINDING_1_CODE: EDGE_CASE_GAP"
   echo "FINDING_1_QUOTE: The Export button appears on the invoice list"
   echo "FINDING_1_DETAIL: no criterion for an empty list"
@@ -435,6 +437,7 @@ hashA2=$(_dor_body_hash "$(cat "${PA2}/body.md")")
   echo "SCHEMA_VERSION: 1"
   echo "TICKET: CRE-21"
   echo "BODY_HASH: ${hashA2}"
+  echo "PARAPHRASE: The ticket makes one change, described consistently."
   echo "FINDING_1_CODE: INTENT_AC_MISMATCH"
   echo "FINDING_1_QUOTE: Scheduled exports"
   echo "FINDING_1_DETAIL: fixture gap"

@@ -25,6 +25,18 @@ planner-ac-code-precondition, PR 2 of 2. ticket-auto-pipeline and fleet-controll
 
 - New initiatives now get AC precondition checks. The Specify prompt asks every spec for a `## Preconditions` table, Consensus keeps it in step with its edits, and the draft revise prompt updates a row's Criterion cell when it extends that criterion. The first Specify dispatch writes `ac-precondition-v1` after `spec-ownership-v1`. Initiatives that already ran Specify stay legacy. `SPECIFY_PROMPT_SHA` is re-captured; new intermediate pins `SPECIFY_PRE_ACPRE_SHA`/`CONSENSUS_PRE_ACPRE_SHA`; the no-residue tests strip items 5, 6 and 7. The pre-gate error message names all three contracts.
 
+## ticket-auto-pipeline 0.115.2 (2026-11-12) — manifest writes no longer lose updates (ARCH-4)
+
+### Fixed
+
+- **Manifest writes no longer lose updates (review ARCH-4).** Every writer in `lib/manifest-write.sh` now reads and rewrites the manifest under one lock per manifest (`_manifest_lock`, renamed from `_manifest_readiness_lock`). Before, only the readiness writers locked, so a transition, approval or dispatch stamp overlapping a readiness re-scan could drop either update. The lock is re-entrant within one process only. `set_ticket_transition` bumps `rev` under the lock and reports it in `MANIFEST_TRANSITION_REV`. `flow.sh` builds its `{tid}:{rev}` idempotency key from that value, or logs `META|flow-warn|warn|REV_UNREPORTED` when no rev comes back. Running `write_ticket_manifest`/`write_epic_manifest` again on an existing manifest (a planner resume) now keeps `rev`, stage, flags, pending event, approval, readiness and the dispatch stamp; before, `rev` restarted at 1 and a later idempotency key could collide with an event already in the outbox. `clear_pending_event` accepts an expected rev. **Behaviour change:** if the lock stays busy past `MANIFEST_LOCK_TIMEOUT_SECS` (15s), `flow.sh` exits 1 with `MANIFEST_WRITE_FAILED` instead of writing unlocked. New `lib/tests/test-manifest-write-lock.sh` (24 checks, including 13 parallel writers of 6 kinds against one manifest).
+
+## ticket-auto-pipeline 0.115.1 (2026-11-12) — complexity arithmetic moves into `lib/complexity-score.sh`
+
+### Changed
+
+- ticket-appraise's complexity arithmetic moves into `lib/complexity-score.sh` (review finding DET-AP-5). The agent now only judges which axes fire. `write <dir> --axes <list> --reason <s>` adds up the weights, applies the threshold of 3 and writes or replaces the `## Complexity` block in the shape `get_complexity` reads. It refuses an unknown or repeated axis, `none` combined with another axis, and a double-counted `cross-layer` (exit 2, file untouched). `blast <dir>` applies the Step 2.8 blast-radius override once per ticket. The notes.md format and scoring outcomes are unchanged; `lib/tests/test-complexity-score.sh` (27 cases) replays the rubric examples and the Blast Radius tables `test-notes-parse.sh` pins.
+
 ## ticket-planner 0.40.0 (2026-11-12) — AC preconditions: table, schema facts, Crosscheck family (dormant)
 
 planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controller unchanged.
@@ -58,6 +70,56 @@ planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controll
 - The code-target resolver reports its pin state: `_planner_own_code_tree` prints a third field,
   `pinned`, `live` or `pin-failed`, and the new `planner_ownership_code_target` wraps it. The
   ownership anchor behaves as before for all three.
+
+
+
+## ticket-auto-pipeline 0.115.0, ticket-planner 0.39.0 (2026-11-12) — DoR scan paraphrase and `INCOHERENT_CHANGE`
+
+dor-semantic-paraphrase (next.md Step 18, item 2). A ticket can pass every existing check and
+still not describe one change: the intent says one thing, the scope bounds another, the criteria
+test a third. The DoR semantic scan now writes what the ticket changes in its own words first, and
+flags a part that describes a different change.
+
+### Added
+
+- **`PARAPHRASE` scan line.** Every `=== DOR_SEMANTIC_SCAN ===` block must carry `PARAPHRASE:`,
+  one line of 1 to 400 characters, asked for before any finding. A scan without one is an invalid
+  block (re-spawn once, then `SEMANTIC_UNAVAILABLE`, as for any invalid block). The audit block
+  carries none. `dor_semantic_apply` stores it as `ready.semantic.paraphrase`.
+- **`INCOHERENT_CHANGE`** (dimension `intent`, directly after `INTENT_AC_MISMATCH`): the summary or
+  intent, the scope, a criterion or a Verification Plan row describes a different change from the
+  paraphrase. It is in `DOR_SEMANTIC_ADVISORY_ONLY_CODES`, so it never blocks until a live run
+  calibrates it; its quote is verified like any other.
+- ticket-planner: the Refinement halt report prints each not-ready ticket's `Paraphrase:` above its
+  findings and ends with an `## Advisory incoherent-change findings` section; the advisory summary
+  printed on a gate pass lists each `INCOHERENT_CHANGE` with the ticket's paraphrase.
+  `PLANNER_AC_CHECKLIST_SEMANTIC_NA` lists the new code.
+
+### Changed
+
+- `DOR_SEMANTIC_EVALUATOR` is `dor-semantic-v4`. A v3 verdict on an unchanged body is **not**
+  rescanned: `DOR_SEMANTIC_COMPATIBLE_EVALUATORS` lists `dor-semantic-v3`, and the planner's
+  needs-pass decision and converge check now call `dor_semantic_evaluator_compatible` instead of
+  comparing the evaluator string. Lineage still resets across the bump, and a draft import still
+  needs the exact evaluator. An unchanged v2 verdict now migrates straight to v4.
+
+### Audited, unchanged
+
+- `ticket-critique` never reports `CLEAR` for a critique that did not run: a failed fetch stops the
+  run (or, with `--no-post`, writes `STATUS: UNAVAILABLE`), and the dispatch-rehearsal preflight
+  fails a missing or unavailable result.
+
+## ticket-auto-pipeline 0.114.3, fleet-controller 0.49.2 (2026-11-12) — flow.sh's ticket lock no longer depends on which flow.sh copy ran
+
+fleet-controller 0.49.2.
+
+### Fixed
+
+- `flow.sh` locked `<its own directory>/locks/.ticket-flow-<TID>.lock`, so the plugin-cache copy (fleetd orchestration, `gate_hold.py`, `fleet-detect.sh`), the `~/.claude/skills` sync (the router, `/ticket-approve`) and a repo checkout each locked a different file and did not exclude each other. fleet-controller's `_flow_mutex_held` checked a fourth path, `~/.claude/skills/ticket-flow/locks` (October review ARCH-3). New `ticket-auto-pipeline/lib/flow-lock.sh` is the one resolver: `TICKET_FLOW_LOCK_DIR` when set, else `$REPOS_ROOT/.ticket-auto/locks`, beside the manifests the lock protects. `flow.sh` and `_flow_mutex_held` both use it. `flow.sh` now takes the lock after its `REPOS_ROOT` refusal (exit 13), so an unset `REPOS_ROOT` exits 13 without creating a lock directory, and an unknown trigger reports exit 3 before a busy lock's exit 42. No Python code opens the lock, so there is no Python twin. New tests: `test_flow_lock_shared_across_copies`, `test_flow_lock_unresolvable_refuses_13`, `test_flow_lock_resolver` (phase1.sh), `test_flow_mutex_held_anchored_at_repos_root` (test-fleet-intervene.sh).
+
+### Upgrade note
+
+During the upgrade window an old `flow.sh` copy (not yet re-synced, or a worker started before the upgrade) still locks beside itself, while upgraded copies lock under `$REPOS_ROOT/.ticket-auto/locks`. The two do not exclude each other until every copy runs the new code. Restart fleetd and open a new Claude Code session (which re-syncs `~/.claude/skills`) on each host once no ticket is mid-transition. To cover that window, `_flow_mutex_held` checks both the resolved path and the legacy `~/.claude/skills/ticket-flow/locks/.ticket-flow-<TID>.lock` and defers a kill if either is held. When the new path cannot be resolved (resolver missing, or neither `TICKET_FLOW_LOCK_DIR` nor `REPOS_ROOT` set), it writes one stderr warning and checks the legacy path alone, rather than reporting "not held". Remove the legacy check one release after this one. New tests: `test_flow_mutex_held_legacy_path_held`, `test_flow_mutex_held_unresolvable_legacy_held_warns`.
 
 ## ticket-auto-pipeline 0.114.2, fleet-controller 0.49.1 (2026-11-12) — bash writes the phase-inspector verdict; retro names the tickets behind each failure code
 
