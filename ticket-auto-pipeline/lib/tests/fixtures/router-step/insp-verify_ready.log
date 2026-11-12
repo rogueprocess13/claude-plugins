@@ -2,3 +2,4 @@ TS|META|schema|info|1
 TS|META|verifier-result|info|{"phase":"IMPLEMENT","verifier":"return_completeness","verdict":"PASS","criteria_met":1,"criteria_total":1,"attempt":1,"detail":"a|b"}
 TS|META|verifier-result|info|{"phase":"VERIFY","verifier":"playwright_uat","verdict":"PASS","criteria_met":1,"criteria_total":1,"attempt":1,"detail":"a|b"}
 TS|META|verifier-result|info|{"phase":"PR-REVIEW","verifier":"pr_review","verdict":"PASS","criteria_met":1,"criteria_total":1,"attempt":1,"detail":"a|b"}
+TS|META|phase-inspector|info|{"phase":"VERIFY","verdict":"WARN","signals":1,"detail":"1 pattern detected: trivial_pass","verifiers_consulted":["playwright_uat","return_completeness"],"patterns":[{"pattern":"trivial_pass","severity":"warn","evidence":"playwright_uat PASS with criteria_total=1 — verification too shallow"}],"source":"bash"}

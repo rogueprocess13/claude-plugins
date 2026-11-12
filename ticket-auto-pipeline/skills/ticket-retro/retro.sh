@@ -493,6 +493,17 @@ fi
 # ── Aggregation state ────────────────────────────────────────────────────
 
 declare -A FAILURE_COUNT=()
+# DET-SU-2: which tickets (or planner initiatives) produced each code, as
+# "CODE<TAB>TID" lines, and each id's agent transcripts. Built at the same
+# sites as FAILURE_COUNT, so a cursor-skipped log adds nothing to either.
+FAILURE_PAIRS=""
+declare -A TICKET_TRANSCRIPTS=() # tid -> newline-delimited capture paths
+
+# _count_failure CODE — one occurrence of CODE in the current log ($ticket_id).
+_count_failure() {
+  FAILURE_COUNT["$1"]=$((${FAILURE_COUNT["$1"]:-0} + 1))
+  FAILURE_PAIRS+="$1"$'\t'"$ticket_id"$'\n'
+}
 GATE_STOP_TOTAL=0
 GATE_WARN_TOTAL=0
 CROSSCHECK_BLOCKING_TOTAL=0
@@ -649,7 +660,7 @@ for _i in "${!LOG_FILES[@]}"; do
           ;;
         esac
         code="GATE_HELD_${_gate_hold_key}"
-        FAILURE_COUNT["$code"]=$((${FAILURE_COUNT["$code"]:-0} + 1))
+        _count_failure "$code"
         local_has_failure=1
         continue
       fi
@@ -659,7 +670,7 @@ for _i in "${!LOG_FILES[@]}"; do
       if [ "$step" = "gate-stop" ] && [ "$status" = "fail" ]; then
         GATE_STOP_TOTAL=$((GATE_STOP_TOTAL + 1))
         code=$(echo "$msg" | awk '{print $1}')
-        FAILURE_COUNT["$code"]=$((${FAILURE_COUNT["$code"]:-0} + 1))
+        _count_failure "$code"
         local_has_failure=1
       elif [ "$step" = "gate-warn" ] && [ "$status" = "info" ]; then
         # Warn-only completeness-gate telemetry (RETURN_INCOMPLETE) — kept
@@ -673,7 +684,7 @@ for _i in "${!LOG_FILES[@]}"; do
         # PROPAGATED, ...) into one bucket and lose the signal #176 wants.
         CROSSCHECK_BLOCKING_TOTAL=$((CROSSCHECK_BLOCKING_TOTAL + 1))
         code=$(echo "$msg" | awk '{print $1}')
-        FAILURE_COUNT["$code"]=$((${FAILURE_COUNT["$code"]:-0} + 1))
+        _count_failure "$code"
         local_has_failure=1
       elif [ "$step" = "crosscheck" ] && [ "$status" = "warn" ]; then
         # Non-blocking Crosscheck finding, written as "info <CODE> <message>"
@@ -683,13 +694,18 @@ for _i in "${!LOG_FILES[@]}"; do
         # AC4).
         CROSSCHECK_WARN_TOTAL=$((CROSSCHECK_WARN_TOTAL + 1))
       elif [ "$status" = "fail" ] && [ "$step" != "schema" ] && [ "$step" != "migration" ]; then
-        FAILURE_COUNT["$step"]=$((${FAILURE_COUNT["$step"]:-0} + 1))
+        _count_failure "$step"
         local_has_failure=1
       fi
     done <"$log_file"
   fi
 
   if [ "$local_has_failure" -eq 1 ]; then
+    if [ "$log_source" != "planner" ]; then
+      for _tr in "$(dirname "$log_file")/${ticket_id}"-*-agent.log; do
+        [ -f "$_tr" ] && TICKET_TRANSCRIPTS["$ticket_id"]+="$_tr"$'\n'
+      done
+    fi
     LOGS_WITH_FAILURES=$((LOGS_WITH_FAILURES + 1))
     LOGS_WITH_FAILURES_BY_SOURCE["$log_source"]=$((${LOGS_WITH_FAILURES_BY_SOURCE[$log_source]:-0} + 1))
   fi
@@ -965,6 +981,22 @@ LOGS_BY_SOURCE_JSON=$(jq -n \
     "planner": {scanned: $pl_scanned, skipped: $pl_skipped, with_failures: $pl_failures}
   }')
 
+# ── Build failure attribution JSON (DET-SU-2) ────────────────────────────
+# failure_tickets: {CODE: [tid, ...]} sorted and unique. Transcripts are
+# keyed by tid; failure_context joins both with errors_by_ticket at emit.
+FAILURE_TICKETS_JSON=$(printf '%s' "$FAILURE_PAIRS" | jq -R -s -c '
+  split("\n") | map(select(length > 0) | split("\t") | select(length == 2))
+  | group_by(.[0]) | map({key: .[0][0], value: (map(.[1]) | unique)})
+  | from_entries' 2>/dev/null || echo '{}')
+[ -n "$FAILURE_TICKETS_JSON" ] || FAILURE_TICKETS_JSON='{}'
+TRANSCRIPTS_JSON=$(
+  for _tid in "${!TICKET_TRANSCRIPTS[@]}"; do
+    printf '%s' "${TICKET_TRANSCRIPTS[$_tid]}" | jq -R -s -c --arg t "$_tid" \
+      '{($t): (split("\n") | map(select(length > 0)) | sort)}'
+  done | jq -s -c 'add // {}' 2>/dev/null || echo '{}'
+)
+[ -n "$TRANSCRIPTS_JSON" ] || TRANSCRIPTS_JSON='{}'
+
 # ── Emit final JSON ──────────────────────────────────────────────────────
 
 jq -n \
@@ -988,13 +1020,19 @@ jq -n \
   --argjson total_errors "$TOTAL_ERROR_COUNT" \
   --arg errors_by_ticket_str "$ERRORS_BY_TICKET_JSON" \
   --arg error_hist_str "$ERROR_HIST_JSON" \
-  '{
+  --argjson failure_tickets "$FAILURE_TICKETS_JSON" \
+  --argjson transcripts "$TRANSCRIPTS_JSON" \
+  '($errors_by_ticket_str | fromjson) as $ebt | {
     window_days: $window_days,
     logs_scanned: $logs_scanned,
     logs_skipped: $logs_skipped,
     logs_with_failures: $logs_with_failures,
     logs_by_source: $logs_by_source,
     failure_histogram: ($histogram_str | fromjson),
+    failure_tickets: $failure_tickets,
+    failure_context: ($failure_tickets | with_entries(.value |= map({
+      ticket: ., errors: ($ebt[.] // []), transcripts: ($transcripts[.] // [])
+    }))),
     gate_stop_total: $gate_stop_total,
     gate_warn_total: $gate_warn_total,
     crosscheck_blocking_total: $crosscheck_blocking_total,

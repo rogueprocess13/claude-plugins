@@ -915,6 +915,56 @@ class PhaseDispatchFirstDispatchTest(unittest.TestCase):
 
         self.assertTrue(run_preamble.call_args.kwargs['from_planned'])
 
+    def test_phase_dispatch_passes_worker_autonomy_to_preamble(self):
+        """PO-9: an explicitly set FLEET_WORKER_AUTONOMY reaches the
+        phase-dispatch preamble as AUTONOMY."""
+        from unittest import mock
+        from fleetd import supervisor as sup_mod
+        from fleetd import preamble as preamble_mod
+
+        sup_mod._store_record_position(str(self.state_dir), 'CRE-26', 'STEP_1')
+        result = self._preamble_result(
+            preamble_mod.ACTION_PROCEED,
+            fields={'LOG_FILE': str(self.state_dir / 'CRE-26-pipeline.log')})
+        sup = self._supervisor()
+        for mode in ('auto', 'semi-auto', 'manual'):
+            with mock.patch.object(sup_mod, 'FLEET_WORKER_AUTONOMY', mode), \
+                 mock.patch.object(sup_mod, 'FLEET_WORKER_AUTONOMY_EXPLICIT', True), \
+                 mock.patch.object(sup_mod._preamble_mod, 'run_preamble',
+                                   return_value=result) as run_preamble, \
+                 mock.patch.object(sup, 'spawn_phase'):
+                sup._dispatch_phase_locked('CRE-26', 'dispatched')
+            self.assertEqual(run_preamble.call_args.kwargs['autonomy'], mode)
+
+    def test_phase_dispatch_unset_worker_autonomy_leaves_preamble_chain(self):
+        """PO-9: with FLEET_WORKER_AUTONOMY unset, phase dispatch passes no
+        autonomy, so the preamble keeps TICKET_AUTONOMY, else `manual` — the
+        whole-ticket default `auto` must not leak onto this path."""
+        from unittest import mock
+        from fleetd import supervisor as sup_mod
+        from fleetd import preamble as preamble_mod
+
+        sup_mod._store_record_position(str(self.state_dir), 'CRE-27', 'STEP_1')
+        result = self._preamble_result(
+            preamble_mod.ACTION_PROCEED,
+            fields={'LOG_FILE': str(self.state_dir / 'CRE-27-pipeline.log')})
+        sup = self._supervisor()
+        with mock.patch.object(sup_mod, 'FLEET_WORKER_AUTONOMY', 'auto'), \
+             mock.patch.object(sup_mod, 'FLEET_WORKER_AUTONOMY_EXPLICIT', False), \
+             mock.patch.object(sup_mod._preamble_mod, 'run_preamble',
+                               return_value=result) as run_preamble, \
+             mock.patch.object(sup, 'spawn_phase'):
+            sup._dispatch_phase_locked('CRE-27', 'dispatched')
+        self.assertEqual(run_preamble.call_args.kwargs['autonomy'], '')
+
+    def test_worker_autonomy_explicit_reads_the_environment(self):
+        """Explicit only for a non-blank FLEET_WORKER_AUTONOMY."""
+        from fleetd.supervisor import _worker_autonomy_explicit
+
+        self.assertFalse(_worker_autonomy_explicit({}))
+        self.assertFalse(_worker_autonomy_explicit({'FLEET_WORKER_AUTONOMY': ' '}))
+        self.assertTrue(_worker_autonomy_explicit({'FLEET_WORKER_AUTONOMY': 'auto'}))
+
     def _append_queue_entry(self, tid, reason='dispatched'):
         queue_file = self.state_dir / 'fleet-default-spawn-queue.jsonl'
         entry = {
@@ -3987,6 +4037,36 @@ class WorkerStdioAndEnvTest(unittest.TestCase):
             return [a for a in cmd if not a.startswith('/ticket-')]
 
         self.assertEqual(strip(default), strip(phased))
+
+    def test_ticket_worker_prompt_carries_worker_autonomy(self):
+        """PO-9: FLEET_WORKER_AUTONOMY picks the whole-ticket autonomy flag."""
+        from unittest import mock
+        from fleetd import supervisor as sup_mod
+
+        for mode in ('auto', 'semi-auto', 'manual'):
+            with mock.patch.object(sup_mod, 'FLEET_WORKER_AUTONOMY', mode):
+                cmd = sup_mod._build_worker_cmd('CRE-9', claude_bin='claude')
+            self.assertIn(
+                f'/ticket-auto-pipeline:ticket-auto CRE-9 --{mode} --from-planned', cmd)
+
+    def test_resolve_worker_autonomy(self):
+        """Valid values pass through; unset is `auto`; anything else falls
+        back to `auto` with a loud stderr warning (env-check refuses it at
+        startup, this is the guard for FLEET_STARTUP_ENV_CHECK=false)."""
+        import io
+        from contextlib import redirect_stderr
+        from fleetd.supervisor import _resolve_worker_autonomy
+
+        for mode in ('auto', 'semi-auto', 'manual'):
+            self.assertEqual(_resolve_worker_autonomy(mode), mode)
+        self.assertEqual(_resolve_worker_autonomy(' manual '), 'manual')
+        self.assertEqual(_resolve_worker_autonomy(None), 'auto')
+        self.assertEqual(_resolve_worker_autonomy(''), 'auto')
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(_resolve_worker_autonomy('--manual'), 'auto')
+        self.assertIn('FLEET_WORKER_AUTONOMY', err.getvalue())
+        self.assertIn('--manual', err.getvalue())
 
     def test_build_worker_cmd_adds_agent_flag_when_given(self):
         """--agent binds the phase's tool allowlist/system prompt."""

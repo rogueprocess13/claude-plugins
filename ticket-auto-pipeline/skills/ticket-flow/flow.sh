@@ -79,15 +79,6 @@ shift 2 2>/dev/null || true
   exit 1
 }
 
-# ── Concurrent-execution lock (flock FD 9) ──────────────────────────────────
-FLOW_LOCK_DIR="${TICKET_FLOW_LOCK_DIR:-$SCRIPT_DIR/locks}"
-mkdir -p "$FLOW_LOCK_DIR"
-exec 9>"${FLOW_LOCK_DIR}/.ticket-flow-${TICKET_ID}.lock"
-if ! flock -n -E 42 9; then
-  echo "ticket already in flight: $TICKET_ID" >&2
-  exit 42
-fi
-
 # ── Parse optional flags ────────────────────────────────────────────────────
 
 DRY_RUN=false
@@ -273,12 +264,40 @@ fi
 # run refuses too: its "current" stage would be just as wrong. The key is
 # flow-refused, not flow-error: flow-run.sh writes its own flow-error line
 # for the same exit, and pipeline-postmortem.sh counts each flow-error line.
-_emit_schema_header
 if [ -z "${REPOS_ROOT:-}" ]; then
+  _emit_schema_header
   echo "flow.sh: REPOS_ROOT is not set — cannot read or write the ticket manifest for ${TICKET_ID}; '${TRIGGER}' not applied. Run 'source ~/.claude/skills/lib/ticket-env.sh ${TICKET_ID}' or export REPOS_ROOT, then retry." >&2
   _log "META|flow-refused|fail|REPOS_ROOT_UNSET trigger=${TRIGGER} — manifest root unresolvable, nothing applied"
   exit 13
 fi
+
+# ── Concurrent-execution lock (flock FD 9) ──────────────────────────────────
+# One resolver for every caller (review ARCH-3): lib/flow-lock.sh anchors the
+# lock at $REPOS_ROOT/.ticket-auto/locks (TICKET_FLOW_LOCK_DIR overrides), so
+# every flow.sh copy — plugin cache, ~/.claude/skills sync, a checkout — and
+# fleet-intervene.sh's _flow_mutex_held open the same file. It used to sit
+# beside the running script, so two copies never excluded each other. Taken
+# after the REPOS_ROOT refusal above, which is what makes the anchor
+# resolvable; nothing before this point writes ticket state.
+if ! declare -f flow_lock_path >/dev/null 2>&1; then
+  if [ -f "$LIB_DIR/flow-lock.sh" ]; then
+    source "$LIB_DIR/flow-lock.sh"
+  elif [ -f "$SCRIPT_DIR/../../lib/flow-lock.sh" ]; then
+    source "$SCRIPT_DIR/../../lib/flow-lock.sh"
+  fi
+fi
+if ! declare -f flow_lock_path >/dev/null 2>&1 ||
+  ! FLOW_LOCK_FILE=$(flow_lock_path "$TICKET_ID"); then
+  echo "flow.sh: cannot resolve the flow lock for ${TICKET_ID} (lib/flow-lock.sh missing or TICKET_FLOW_LOCK_DIR/REPOS_ROOT unusable)" >&2
+  exit 1
+fi
+mkdir -p "$(dirname "$FLOW_LOCK_FILE")"
+exec 9>"$FLOW_LOCK_FILE"
+if ! flock -n -E 42 9; then
+  echo "ticket already in flight: $TICKET_ID" >&2
+  exit 42
+fi
+_emit_schema_header
 
 _log "META|trigger-def|info|${TRIGGER}:$(echo "$def" | jq -c '.')"
 _hb_gate "trigger-dispatch" "fired" "trigger ${TRIGGER} dispatched" "$(_hb_detail trigger "$TRIGGER")"
@@ -612,6 +631,12 @@ fi
 # failure SHALL NOT fail the transition" / "not gated on any inferred
 # daemon-liveness signal"). Correctness rests on the cursor lock shared
 # with fleetd's own pusher pass, not on avoiding concurrency.
+# The manifest write and the emit are done, so release the per-ticket flow
+# lock first: the drain does board network I/O, and holding FD 9 through it
+# (or letting the drain inherit it) makes every concurrent flow.sh for this
+# ticket exit 42 until the board answers (review ARCH-8).
+flock -u 9 2>/dev/null || true
+exec 9>&-
 bash "$SCRIPT_DIR/outbox-drain.sh" "$TICKET_ID" >/dev/null 2>&1 || true
 
 jq -n \

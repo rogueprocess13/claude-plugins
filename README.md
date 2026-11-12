@@ -14,7 +14,7 @@ Four installable plugins. Install only what you need — they work standalone an
 |--------|---------|--------------|
 | [`ticket-auto-pipeline`](ticket-auto-pipeline/README.md) | 0.115.0 | **The core.** Takes a Linear ticket and appraises, implements, verifies, and merges it with zero user input. 20+ slash commands, state-machine flow control, deterministic safety gates. |
 | [`ticket-planner`](ticket-planner/README.md) | 0.39.0 | **Upstream of the core.** Turns a one-sentence business idea into dependency-ordered, ready-to-execute tickets across 11 planning phases. Supports grill-me validated intent files as optional pre-flight gate. |
-| [`fleet-controller`](fleet-controller/README.md) | 0.48.0 | **Above the core.** Dispatches planned tickets, monitors every running pipeline via 19 detection engines, kills and restarts stuck runs, feeds results back to the planner. Bash-only. |
+| [`fleet-controller`](fleet-controller/README.md) | 0.49.2 | **Above the core.** Dispatches planned tickets, monitors every running pipeline via 19 detection engines, kills and restarts stuck runs, feeds results back to the planner. Bash-only. |
 | [`grill-me`](grill-me/README.md) | 0.5.2 | **Before the core.** Pre-work readiness gate — assesses ideas against profile-driven dimensions, asks ranked clarification questions, and produces cryptographically sealed Validated Business Intent documents. |
 
 ---
