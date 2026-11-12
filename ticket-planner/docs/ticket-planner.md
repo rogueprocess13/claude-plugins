@@ -570,7 +570,7 @@ directly instead of spawning one (SKILL.md step 1a). Its check families include:
 
 - **Data ownership** (planner-crosscheck-ownership, `lib/planner-crosscheck-ownership.sh`; `spec-ownership-v1` initiatives only) — see [Data ownership](#data-ownership-writes-and-reads-tables) below.
 
-- **AC preconditions** (planner-ac-code-precondition, `lib/planner-crosscheck-ac-precondition.sh`; `ac-precondition-v1` initiatives only, dormant until the Specify prompt change) — see [AC preconditions](#ac-preconditions-the-preconditions-table) below.
+- **AC preconditions** (planner-ac-code-precondition, `lib/planner-crosscheck-ac-precondition.sh`; `ac-precondition-v1` initiatives only) — see [AC preconditions](#ac-preconditions-the-preconditions-table) below.
 
 (Bypass, contract, Signals and dangling-dependency checks also run — see `lib/planner-crosscheck.sh`.)
 
@@ -695,11 +695,15 @@ numbers against seed or test data.
 ### AC preconditions: the Preconditions table
 
 planner-ac-code-precondition. It applies to initiatives whose state.log holds
-`META|contract|start|ac-precondition-v1`. **Dormant for now:** `planner_acpre_contract_mark`
-exists but nothing calls it yet. The Specify prompt change will call it on the first Specify
-dispatch, after `spec-ownership-v1`, and add the prompt rules. Until then no initiative gets the
-family, the describer note or the revise check, and every spec, body and halt is unchanged. The
-one exception is the body composer: `## Preconditions` is always in its drop list.
+`META|contract|start|ac-precondition-v1`. `_planner_dispatch_contract_mark` writes it with
+`planner_acpre_contract_mark` on the first Specify dispatch, right after `spec-ownership-v1`
+(a missing mark function is skipped; a failing one fails the dispatch). An initiative that ran
+Specify before that gets no family, describer note or revise check, and its specs, bodies and
+halts are unchanged. The one exception is the body composer: `## Preconditions` is always in its
+drop list. The Specify prompt asks for the table (`planner_acpre_prompt_rules`, after the
+Writes/Reads rules), Consensus keeps it in step with its edits (`planner_acpre_consensus_rule`),
+and the draft revise prompt tells the agent to extend a row's Criterion cell when it extends that
+criterion (`planner_acpre_revise_rule`).
 
 **Format.** Every spec except synth-marked test-data specs and `INDEX.md` has a
 `## Preconditions` section. It holds `None.` or exactly one pipe table directly under the

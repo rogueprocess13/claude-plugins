@@ -549,6 +549,17 @@ for need in "${SPECS}/a-export.md" "${DR}/a-export/body.md" "${DR}/a-export/find
 done
 [ "$ok" -eq 1 ] && pass "inputs, untrusted fences, forbidden sections, roles and disposition format named" || fail "prompt" "see above"
 grep -qx '````' <<<"$p" && pass "fence outgrows a backtick run inside a finding" || fail "fence length" "no 4-backtick fence"
+# planner-ac-code-precondition task 5.2: the revise rule sits in the editable
+# regions list, after the Verification Notes bullet, before the Scope bullet.
+declare -f planner_acpre_revise_rule >/dev/null 2>&1 || source "${LIB_DIR}/planner-ac-precondition.sh"
+if ! declare -f planner_acpre_revise_rule >/dev/null 2>&1; then
+  fail "revise prompt carries the Preconditions rule" "planner_acpre_revise_rule missing"
+elif [ "$(grep -c -F -- "$(planner_acpre_revise_rule | head -1)" <<<"$p")" = 1 ] &&
+  [[ "$p" == *"row, and never remove a row."$'\n'"$(planner_acpre_revise_rule)"$'\n'"- \`## Scope\`"* ]]; then
+  pass "revise prompt carries the Preconditions rule once, between Verification Notes and Scope"
+else
+  fail "revise prompt carries the Preconditions rule" "not found once, or not between Verification Notes and Scope"
+fi
 mv "${IDIR}/artifacts/idea.txt" "${TMP_ROOT}/idea.keep"
 p=$(planner_prompt_spec_revise "$INIT" a-export "${DR}/a-export/findings.r1.json")
 if ! grep -q 'original-brief' <<<"$p" && ! grep -q 'Ignore all previous' <<<"$p"; then

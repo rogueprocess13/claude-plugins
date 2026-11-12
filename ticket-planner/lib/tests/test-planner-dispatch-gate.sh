@@ -199,7 +199,7 @@ fi
 
 # ── 3c. Contract markers on the first Specify dispatch only ─────────────────
 
-echo "--- 3c. contract markers: first Specify dispatch only (planner-crosscheck-ownership D12) ---"
+echo "--- 3c. contract markers: first Specify dispatch only (planner-crosscheck-ownership D12, planner-ac-code-precondition D11) ---"
 
 # mark_init <root> — a new initiative: Appraisal..Architecture done, no
 # Specify line, no specs.
@@ -215,6 +215,11 @@ markers() {
   printf '%s %s' "$(grep -c '|META|contract|start|specify-parameters-v1$' "$MLOG" || true)" \
     "$(grep -c '|META|contract|start|spec-ownership-v1$' "$MLOG" || true)"
 }
+# acmark — the ac-precondition-v1 marker count (planner-ac-code-precondition).
+acmark() { grep -c '|META|contract|start|ac-precondition-v1$' "$MLOG" || true; }
+# contract_lines — the first-dispatch contract markers in log order, the
+# timestamp field cut (test-data-source-v1, written at init, left out).
+contract_lines() { grep '|META|contract|start|' "$MLOG" | cut -d'|' -f2- | grep -v 'test-data-source-v1$'; }
 # a_spec — write one spec file the way an earlier Specify run left it.
 a_spec() {
   mkdir -p "$MSPECS"
@@ -334,6 +339,79 @@ if declare -f _planner_dispatch_contract_mark >/dev/null; then
   if [ "$RC" -ne 0 ]; then pass "a failed ownership mark fails the call"; else
     fail "ownership mark failure" "rc=$RC"
   fi
+
+  # ac-precondition-v1 (planner-ac-code-precondition D11, task 5.3): a third
+  # plain call after spec-ownership-v1, under the same first-dispatch rule.
+  mark_init acpre-new
+  _planner_dispatch_contract_mark "$INIT" Review
+  a0=$(acmark)
+  _planner_dispatch_contract_mark "$INIT" Specify
+  _planner_dispatch_contract_mark "$INIT" Specify
+  if [ "$a0" = "0" ] && [ "$(acmark)" = "1" ] && [ "$(markers)" = "1 1" ]; then
+    pass "first Specify dispatch writes ac-precondition-v1 once"
+  else
+    fail "ac-precondition-v1 first dispatch" "before=$a0 after=$(acmark) markers=$(markers)"
+  fi
+  # The three markers in order, timestamps cut: the first two lines are the
+  # ones item 6 PR B wrote, byte for byte.
+  want=$'META|contract|start|specify-parameters-v1\nMETA|contract|start|spec-ownership-v1\nMETA|contract|start|ac-precondition-v1'
+  if [ "$(contract_lines)" = "$want" ]; then
+    pass "ac-precondition-v1 follows spec-ownership-v1; the first two lines are unchanged"
+  else
+    fail "marker order" "$(contract_lines | tr '\n' ' ')"
+  fi
+
+  mark_init acpre-crash
+  planner_state_write "$INIT" Specify synthesize start "x"
+  _planner_dispatch_contract_mark "$INIT" Specify
+  _planner_dispatch_contract_mark "$INIT" Specify
+  if [ "$(acmark)" = "1" ]; then
+    pass "a second first-dispatch (crash before any spec) does not write ac-precondition-v1 twice"
+  else
+    fail "acpre crash re-dispatch" "acmark=$(acmark)"
+  fi
+
+  mark_init acpre-redispatch
+  planner_state_write "$INIT" Specify synthesize start "x"
+  planner_state_write "$INIT" Specify synthesize done "x"
+  a_spec
+  _planner_dispatch_contract_mark "$INIT" Specify
+  if [ "$(acmark)" = "0" ]; then pass "a re-dispatch with specs writes no ac-precondition-v1"; else
+    fail "acpre re-dispatch" "acmark=$(acmark)"
+  fi
+
+  mark_init acpre-later
+  for ph in Appraisal Discovery Architecture Review Consensus Crosscheck EpicGen TicketGen Completed; do
+    _planner_dispatch_contract_mark "$INIT" "$ph"
+  done
+  if [ "$(acmark)" = "0" ]; then pass "later phases write no ac-precondition-v1"; else
+    fail "acpre later phases" "acmark=$(acmark)"
+  fi
+
+  mark_init acpre-missing
+  RC=0
+  (
+    unset -f planner_acpre_contract_mark
+    _PLANNER_ROUTER_LIB_DIR="${WORK}/no-such-lib"
+    _planner_dispatch_contract_mark "$INIT" Specify
+  ) || RC=$?
+  if [ "$RC" -eq 0 ] && [ "$(markers)" = "1 1" ] && [ "$(acmark)" = "0" ]; then
+    pass "a missing ac-precondition mark function is skipped silently"
+  else
+    fail "acpre missing fn" "rc=$RC markers=$(markers) acmark=$(acmark)"
+  fi
+
+  mark_init acpre-fail
+  RC=0
+  (
+    planner_acpre_contract_mark() { return 1; }
+    _planner_dispatch_contract_mark "$INIT" Specify
+  ) || RC=$?
+  if [ "$RC" -ne 0 ] && [ "$(markers)" = "1 1" ] && [ "$(acmark)" = "0" ]; then
+    pass "a failed ac-precondition mark fails the call, after the first two markers"
+  else
+    fail "acpre mark failure" "rc=$RC markers=$(markers) acmark=$(acmark)"
+  fi
 else
   fail "contract mark" "_planner_dispatch_contract_mark missing"
 fi
@@ -343,10 +421,10 @@ gate_run pre Review
 m0=$(markers)
 gate_run pre Specify
 m1=$(markers)
-if [ "$RC" -eq 0 ] && [ "$m0" = "0 0" ] && [ "$m1" = "1 1" ]; then
-  pass "pre gate writes both markers when Specify is next on a new initiative, only then"
+if [ "$RC" -eq 0 ] && [ "$m0" = "0 0" ] && [ "$m1" = "1 1" ] && [ "$(acmark)" = "1" ]; then
+  pass "pre gate writes the three markers when Specify is next on a new initiative, only then"
 else
-  fail "pre gate contract markers" "rc=$RC before=$m0 after=$m1 err='$ERR'"
+  fail "pre gate contract markers" "rc=$RC before=$m0 after=$m1 acpre=$(acmark) err='$ERR'"
 fi
 
 mark_init mark-pre-fail
@@ -359,6 +437,18 @@ if [ "$RC" -eq 1 ] && grep -qF "could not record the" "${WORK}/g.err"; then
   pass "pre gate: a failed mark is an error (rc 1, stderr)"
 else
   fail "pre gate failed mark" "rc=$RC err='$(cat "${WORK}/g.err")'"
+fi
+
+mark_init mark-pre-acpre-fail
+RC=0
+(
+  planner_acpre_contract_mark() { return 1; }
+  planner_dispatch_gate pre "$INIT" Specify "$(planner_initiative_dir "$INIT")"
+) >"${WORK}/g.out" 2>"${WORK}/g.err" || RC=$?
+if [ "$RC" -eq 1 ] && grep -qF "could not record the" "${WORK}/g.err" && [ "$(acmark)" = "0" ]; then
+  pass "pre gate: a failed ac-precondition mark is the same error (rc 1, stderr)"
+else
+  fail "pre gate failed acpre mark" "rc=$RC acmark=$(acmark) err='$(cat "${WORK}/g.err")'"
 fi
 
 # ── 4. Refinement finish ─────────────────────────────────────────────────────
