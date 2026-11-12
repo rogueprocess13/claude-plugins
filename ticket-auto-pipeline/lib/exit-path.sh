@@ -236,6 +236,7 @@ _derive_failure_class_evidence() {
   fi
   case "$exit_path" in
   gate-stop:EXEC_NO_ARTIFACT* | gate-stop:COMPLEXITY_ARTIFACT_MISMATCH* | \
+    gate-stop:CRITIQUE_NOT_RUN* | gate-stop:CRITIQUE_SCORE_MISSING* | \
     gate-stop:BRANCH_DIRECTIVE_INVALID* | gate-stop:REMEDIATION_BRIEF_TRUNCATED* | \
     gate-stop:RECONCILE_EXHAUSTED*)
     echo "orchestration_failure"
