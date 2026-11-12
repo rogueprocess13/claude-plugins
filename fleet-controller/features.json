@@ -92,7 +92,7 @@
     {
       "name": "FLEET_BOARD_PUSHER_ENABLE",
       "plugin": "fleet-controller",
-      "default": "false",
+      "default": "true",
       "on_value": "true",
       "category": "feature",
       "summary": "fleetd periodically drains every ticket's event outbox to the board driver, so the Linear column/labels catch up even when no flow.sh exit drained it.",
@@ -100,7 +100,7 @@
         { "step": "Run fleet-controller 0.50.0+ / ticket-auto-pipeline 0.116.0+ (board-cursor-first-drain): older code replays every ticket's full history to the board" }
       ],
       "recommend": "on",
-      "why": "The board is otherwise only projected at flow.sh exits, so a dead-lettered or missed drain never heals. Since board-cursor-first-drain no drain replays pre-projection history, so no cursor fast-forward is needed first.",
+      "why": "Leave on. The board is otherwise only projected at flow.sh exits, so a dead-lettered or missed drain never heals. Since board-cursor-first-drain no drain replays pre-projection history, so no cursor fast-forward is needed.",
       "docs": "fleet-controller/README.md#migrating-to-board-projection-tracker-flow-projection-cutover"
     },
     {
