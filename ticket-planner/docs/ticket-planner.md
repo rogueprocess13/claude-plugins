@@ -731,7 +731,7 @@ reachable. The slug must name an existing, non-synthesized spec; that spec's `##
 have a row for the key or its entity (`basis-spec-no-write`); and if it is another spec, it must
 be in this spec's dependencies (`planner_ticketgen_spec_deps`; `basis-not-a-dependency`, add
 `blocked-by:<slug>`). `spec:<own slug>` follows the same Writes rule against the spec itself. A
-valid `spec:` row is never checked against code and counts as `planned`.
+valid `spec:` row is never checked against code and counts as planned on the info line.
 
 **Planned change without the Basis.** When a `code:` row is unreachable but another
 non-synthesized spec writes the key (any op), the finding is downgraded to the warning

@@ -17,6 +17,40 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## ticket-planner 0.40.0 (2026-11-12) — AC preconditions: table, schema facts, Crosscheck family (dormant)
+
+planner-ac-code-precondition, PR 1 of 2. ticket-auto-pipeline and fleet-controller unchanged.
+(0.39.0 is taken by the dor-semantic-paraphrase branch.)
+
+### Added, dormant until the Specify prompt change
+
+- `lib/planner-ac-precondition.sh`: the `## Preconditions` table (Criterion, Key, Mode `state` or
+  `input`, Requires `null` / `value:<v>` / `number:<n>`, Basis `code:<path>` / `spec:<slug>` / `—`)
+  and its Basis rules (a `spec:` Basis needs a matching `## Writes` row in that spec, and that spec
+  as a dependency). Strong schema facts from JPA entities and Liquibase XML changelogs only
+  (NOT NULL, `@Id`, `STRING` enum constants, integer column ranges), with comments, rollback
+  blocks and build directories ignored. A decision per row: `reachable`, `unreachable` or
+  `unchecked` with a reason. Numbers are compared as decimal strings.
+- `lib/planner-crosscheck-ac-precondition.sh`: the Crosscheck family, gated on
+  `META|contract|start|ac-precondition-v1`. `AC_PRECONDITION_TABLE_INVALID` and
+  `AC_PRECONDITION_UNREACHABLE` block; `AC_PRECONDITION_PLANNED` (another spec writes the key) and
+  `AC_PRECONDITION_NO_SOURCE` (no JPA or Liquibase found) warn. Unchecked rows are never findings:
+  each run writes one `META|ac-precondition|done` info line with counts and nearest names.
+  `AC_PRECONDITION_UNREACHABLE` is accepted one instance at a time
+  (`--accept AC_PRECONDITION_UNREACHABLE@<slug>/<key>/<requires>:"<reason>"`) or with `@*`.
+- The stop describer asks one `ac-precondition-findings` note for `AC_PRECONDITION_UNREACHABLE`
+  instead of a blanket accept. Draft revise may update a Preconditions row's Criterion cell when
+  it extends that AC, and refuses any other change to the rows (`FROZEN_CHANGED preconditions
+  changed`). A new `ac-precondition` halt golden.
+- Nothing writes the `ac-precondition-v1` marker yet, so no initiative changes behaviour. The one
+  unconditional change: ticket bodies drop a `## Preconditions` section (none exists today).
+
+### Changed
+
+- The code-target resolver reports its pin state: `_planner_own_code_tree` prints a third field,
+  `pinned`, `live` or `pin-failed`, and the new `planner_ownership_code_target` wraps it. The
+  ownership anchor behaves as before for all three.
+
 ## ticket-auto-pipeline 0.114.2, fleet-controller 0.49.1 (2026-11-12) — bash writes the phase-inspector verdict; retro names the tickets behind each failure code
 
 Two determinism fixes from the 2026-10-23 review (DET-SU-1, DET-SU-2).
