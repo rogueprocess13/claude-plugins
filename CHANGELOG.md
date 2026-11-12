@@ -17,6 +17,33 @@ marketplace. Where a release also moved `ticket-planner`, `fleet-controller`, or
 > - **0.19.0 never existed.** `plugin.json` went 0.18.0 → 0.20.0. The Phase 2
 >   commit message claims `0.19.0→0.20.0`, but no 0.19.0 was ever committed.
 
+## 0.117.0 (2026-11-12) — one per-ticket log dir, anchored to REPOS_ROOT (state-root-anchor)
+
+Also fleet-controller 0.52.0. Review finding ARCH-5.
+
+### Before you upgrade
+
+- On each host, run `skills/ticket-flow/state-root-doctor.sh --repos-root <REPOS_ROOT>` from the new version (it is read-only). With no anchor yet it lists every directory under `REPOS_ROOT` that holds outboxes or pipeline logs. One `STATE_DIR:` line is the normal case. Two or more mean events were already split: note them, and re-project the strays by hand. There is no merge tool.
+- `STATE_ROOT_STRICT` stays `false` in this release. Turn it on only after the anchor exists on the host and the doctor reports no strays.
+
+### Fixed
+
+- **A command run from the wrong directory no longer writes a stray outbox.** The outbox, its lock, the origin sidecar and the board cursors used to resolve from `${FLEET_PIPELINE_LOG_DIR:-./logs}`, so a `/ticket-approve` from a repo subdirectory wrote its event into a `./logs` that no pusher read. They now resolve through `lib/log-dir.sh`: an absolute `FLEET_PIPELINE_LOG_DIR`, else the one-line anchor `$REPOS_ROOT/.ticket-auto/log-dir`. A relative `FLEET_PIPELINE_LOG_DIR` is ignored, and `config.sh` no longer exports `./logs`.
+- `flow.sh` exports the resolved dir, so the event and the exit-time drain agree. A stray `./logs/{TID}-outbox.jsonl` is noted once as `META|state-root-stray|warn|path=…` in the anchored pipeline log; it is never moved.
+- detect-resume, gate-reconcile, the operator CLIs (`adversarial-override.sh`, `verify-attempts-reset.sh`, `manifest-backfill.sh`, `retro.sh`, `pipeline-postmortem.sh`, `trajectory.sh`), the sourced readers and `dashboard.py --fleet` read the same dir.
+- fleetd hands bash only absolute log dirs (`supervisor._abs_log_dir`, `pusher._pipeline_log_dir`), because a relative one would lose to the anchor in bash while fleetd kept the relative dir.
+
+### Added
+
+- **The anchor is written once, and nothing moves.** The router preamble writes it on its first run with the dir it already uses (`PROJECT_DIR/logs`). `/ticket-env-check` reports it as `LOG_DIR_ANCHOR` and asks before writing it when run in a terminal; `env-check.sh --anchor-log-dir PATH` writes it directly. An existing anchor is never replaced.
+- **The router refuses a wrong cwd.** If the anchor (or an absolute `FLEET_PIPELINE_LOG_DIR`) names another dir, `ticket-preamble.sh` exits 1 before it writes anything: `log dir anchored at <A>; run /ticket-auto from <dirname A>`. The router's own `./logs/{TID}-*` files are cwd-relative, so this is what keeps them in the anchored dir. fleetd reads the exit as retry-later.
+- `skills/ticket-flow/state-root-doctor.sh`: prints the anchor and the resolved dir and lists `STRAY:` files outside it (exit 1 when any).
+- `STATE_ROOT_STRICT` (default `false`, cataloged in `fleet-controller/features.json`): when `true`, a writer or entry-point reader that cannot resolve the dir exits 13 instead of warning `log dir not anchored; using ./logs (legacy)`.
+
+### Moving the log dir
+
+There is no tool for this. Stop the fleet, `mv` the dir, rewrite the one line in `$REPOS_ROOT/.ticket-auto/log-dir`, and start the fleet.
+
 ## fleet-controller 0.51.0 (2026-11-12) — the board pusher is on by default
 
 - `FLEET_BOARD_PUSHER_ENABLE` now defaults to `true`. `fleetd` runs its periodic
