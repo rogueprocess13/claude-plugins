@@ -31,6 +31,14 @@ Maintainer-facing overview of the ticket-planner plugin. Read this before adding
 | Spec validation | `lib/planner-spec-validate.sh` | Deterministic spec file validation — required sections + parseable Signals JSON |
 | Context generation | `lib/planner-context-gen.sh` | Deterministic Planner Context block generation, confidence derivation from 5 concrete signals |
 
+### Goldfish review (dormant until the pre-gate hook lands)
+
+| Component | File | Role |
+|-----------|------|------|
+| Goldfish lens | `lib/planner-goldfish.sh` | Context-withheld review before Review (planner-goldfish-review): due decision per proposal version, prompt and input copy, spawn-list NEXT/APPLY, result parse, not-run recording, status line. Flag `PLANNER_GOLDFISH_REVIEW` (default off) |
+| Goldfish agent | `agents/goldfish-review-agent.md` | `tools: Read, Grep, Glob, Write`; reads only the proposal copy and the listed repositories; writes `goldfish/review-goldfish.md` |
+| Goldfish Crosscheck family | `lib/planner-crosscheck-goldfish.sh` | `GOLDFISH_UNADDRESSED` (warn only): undispositioned blocker/major goldfish findings or a missing status line in consensus.md |
+
 ### Linear integration
 
 | Component | File | Role |

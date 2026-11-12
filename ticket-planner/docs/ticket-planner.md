@@ -823,6 +823,86 @@ Bean Validation) as warnings; `length:<n>` with `varchar(n)`; decimal scale and 
 Liquibase YAML, JSON and SQL changelogs; an under-declaration keyword tripwire; a second stack
 (Flyway SQL, Kotlin JPA, a non-JVM ORM); a headless per-instance accept.
 
+### Goldfish review: a context-withheld lens before Review
+
+planner-goldfish-review. **Opt-in:** `PLANNER_GOLDFISH_REVIEW=true` (default `false`). The
+Review agent re-reads appraisal, discovery and architecture before it critiques
+`proposal.md`, so a gap the proposal inherited from them is a gap the reviewer shares. The
+goldfish lens is a second reviewer that never saw how the plan was produced.
+
+**Status: dormant.** The lib (`lib/planner-goldfish.sh`), the agent
+(`agents/goldfish-review-agent.md`) and the Crosscheck family are in place, but nothing
+calls `planner_goldfish_next` yet: the `pre`-gate `SPAWN` line, the SKILL.md sentence and
+the Consensus block land in a later release. Until then no goldfish line is written and
+the Crosscheck family stays silent.
+
+**When it runs.** Just before the Review agent, once per proposal version: `sha12` is the
+first 12 hex digits of the sha256 of `artifacts/proposal.md`. `planner_goldfish_due`
+decides, in order: a terminal goldfish line for this `sha12` already exists (not due); a
+valid result for it is already on disk, after a crash (recorded `done`, no spawn); the
+flag is off (`META|goldfish|skip|<sha12> DISABLED`); `proposal.md` is missing or empty
+(`fail … NOT_RUN no-proposal`); both attempts were handed out and none was recorded
+(`fail … NOT_RUN no-result`); otherwise due. The decision is recorded, so a resume or a
+Review retry never re-decides or re-spawns it. A new proposal version is due again, and
+every version's lines are kept (`goldfish` is in `PLANNER_REPEATABLE_META_STEPS`).
+
+**Inputs.** `planner_goldfish_next` copies proposal.md to `goldfish/input/proposal.md`,
+writes `goldfish/prompt.txt`, records `start|<sha12> attempt=<n>` and prints one spawn-list
+line (`<INIT>\tlens\tticket-planner:goldfish-review-agent\t<prompt>\t<result>`). The prompt
+names only the input copy, the absolute path of every git repository directly under
+`REPOS_ROOT` (dot-directories such as `.ticket-auto/` left out) and the result path. It never
+names the idea, the intent, appraisal, discovery, architecture, the specs, `review.md` or
+`REPOS_ROOT` itself. The agent has `tools: Read, Grep, Glob, Write` (no Bash), and every
+Grep and Glob call must pass `path` = one of the listed repositories.
+
+**Withholding is best-effort.** The prompt, the tool scope and the `## Files Read` tripwire
+enforce it, not a sandbox: Read can still open any path. A `## Files Read` entry under
+`.ticket-auto/` other than the input copy (or the result itself) makes the result
+`contaminated`. The list is self-reported; bash does not read transcripts.
+
+**Result.** `<state_dir>/goldfish/review-goldfish.md`, outside `artifacts/`:
+`**Proposal:** <sha12>`, `## Findings` with `None.` or at most 8 headings
+`### G<n> — <blocker|major|minor|nit> — <title>` ranked by severity, then `## Files Read`.
+`planner_goldfish_parse` is fence-aware and CRLF-tolerant; it prints `ok <N> <ids|->[ capped]`
+or `malformed <reason>`. More than 8 findings keeps the first 8 and adds `capped`; gaps in
+numbering are allowed; a duplicate id is malformed.
+
+**Not run is recorded, never zero findings.** `planner_goldfish_apply` writes
+`done|<sha12> findings=<N> bm=<blocker and major ids>` for a valid result. A missing, empty,
+malformed or contaminated result is a failed attempt: the file is deleted and
+`warn|<sha12> attempt=1 <reason>` keeps the run due; the second failure writes
+`fail|<sha12> NOT_RUN <reason>`. A proposal edited between NEXT and APPLY gives
+`NOT_RUN proposal-changed` for the old version. Reasons: `no-result`, `malformed:<why>`,
+`contaminated:<path>`, `no-proposal`, `proposal-changed`. A `fail` on a META step is not a
+phase failure: position derivation and Review's retry budget ignore it, and Review runs either
+way.
+
+**Timeout.** Each spawn gets `timeout_ms` = `PLANNER_GOLDFISH_TIMEOUT` (seconds, default 600)
+× 1000 (`planner_goldfish_timeout_ms`). A timed-out agent leaves no result, so the worst case
+is two timeouts before Review starts.
+
+**Status line.** `planner_goldfish_status <INIT>` prints one line from the latest terminal
+line: `Goldfish review: ran — <N> finding(s), proposal <sha12>, see goldfish/review-goldfish.md`,
+`Goldfish review: NOT RUN — <reason>. Its findings are unknown, not zero.` (reason `no record`
+with no line at all), or `Goldfish review: disabled`.
+
+**Dispositions.** Consensus copies the status line as the first line under
+`## Goldfish Findings Addressed`, then writes one `### G<n> — <severity> — <title> — <disposition>`
+per blocker or major finding. Minor and nit findings may share one `Minor/nit G<a>, …: deferred`
+line. The dispositions are `accepted`, `rejected (<why>, covered in <proposal § | spec <slug> |
+upstream artifact § | code path>)`, `deferred` and `clarified` (add the fact to proposal.md; only
+for a fact that exists in an upstream artifact and in no spec or proposal section). After
+`NOT RUN` or `disabled`, nothing else goes under the heading.
+
+**`GOLDFISH_UNADDRESSED` (Crosscheck, warn only).** `planner_crosscheck_goldfish`
+(`lib/planner-crosscheck-goldfish.sh`, after the AC precondition family) emits at most one
+warning naming each `bm=` id of the latest `done` line that has no disposition heading in that
+section, and `status line missing` when the section has no `Goldfish review:` line. A
+disposition is the first word of a ` — ` segment after the id: `accepted`, `rejected`,
+`deferred` or `clarified`. Headings outside the section and fenced lines do not count; minor
+and nit findings are never checked. Without any terminal goldfish line the family is silent,
+so legacy initiatives and the halt goldens are unchanged. It never blocks.
+
 ### Resolving against the ref Discovery explored, not whatever REPOS_ROOT is now ([#217](https://github.com/willard-pro/claude-plugins/issues/217))
 
 REPOS_ROOT is a shared checkout — it can move to a different branch between
