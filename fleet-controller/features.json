@@ -529,6 +529,18 @@
       "docs": "ticket-planner/docs/ticket-planner.md"
     },
     {
+      "name": "PLANNER_GOLDFISH_REVIEW",
+      "plugin": "ticket-planner",
+      "default": "false",
+      "on_value": "true",
+      "category": "feature",
+      "summary": "Before Review, a context-withheld goldfish agent reviews only proposal.md and the code; Consensus dispositions its findings.",
+      "requires": [],
+      "recommend": "situational",
+      "why": "One extra agent spawn (about 3-5 min, serial) per proposal version, in exchange for findings a reviewer that read the upstream artifacts would share the blind spots for. Enable per run for the live check; PLANNER_GOLDFISH_TIMEOUT (seconds, default 600) bounds each spawn.",
+      "docs": "ticket-planner/docs/ticket-planner.md"
+    },
+    {
       "name": "PLANNER_REFINEMENT_SEMANTIC",
       "plugin": "ticket-planner",
       "default": "true",
