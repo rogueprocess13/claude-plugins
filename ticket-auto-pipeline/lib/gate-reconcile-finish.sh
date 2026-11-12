@@ -7,8 +7,8 @@
 #   gate-reconcile-finish.sh <TICKET-ID> hold --reason R
 #   gate-reconcile-finish.sh <TICKET-ID> clean
 #
-# The pipeline log is ./logs/<TID>-pipeline.log and the heartbeat log
-# ./logs/<TID>-heartbeat.log, as in gate-reconcile-prep.sh. RECONCILE_N is
+# The pipeline log is <log-dir>/<TID>-pipeline.log and the heartbeat log
+# <log-dir>/<TID>-heartbeat.log, as in gate-reconcile-prep.sh. RECONCILE_N is
 # recomputed from the log the same way (this cycle's done line is not written
 # yet, so prep and finish agree).
 #
@@ -38,8 +38,22 @@ shift 2 2>/dev/null || _gf_usage
 
 # shellcheck source=ticket-env.sh
 source "$_GF_DIR/ticket-env.sh" "$TID"
-export TAP_LOG="$PWD/logs/$TID-pipeline.log"
-export HB_LOG_FILE="$PWD/logs/$TID-heartbeat.log"
+# The logs live in the anchored per-ticket state dir (lib/log-dir.sh,
+# state-root-anchor), else (legacy, with a warning) ./logs under the tickets
+# repo root; STATE_ROOT_STRICT=true and unresolved exits 13.
+_gr_log_dir="$PWD/logs"
+if [ -f "$_GF_DIR/log-dir.sh" ]; then
+  # shellcheck source=log-dir.sh
+  source "$_GF_DIR/log-dir.sh"
+  _gr_ld_rc=0
+  ticket_log_dir_or_legacy_set "$PWD/logs" || _gr_ld_rc=$?
+  if [ "$_gr_ld_rc" -ne 0 ]; then
+    exit "$_gr_ld_rc"
+  fi
+  _gr_log_dir="$TICKET_LOG_DIR_RESOLVED"
+fi
+export TAP_LOG="$_gr_log_dir/$TID-pipeline.log"
+export HB_LOG_FILE="$_gr_log_dir/$TID-heartbeat.log"
 # shellcheck source=ticket-dir.sh
 source "$_GF_DIR/ticket-dir.sh"
 set +eo pipefail

@@ -13,6 +13,10 @@ LIB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PASS=0
 FAIL=0
 
+# env-check asks before writing the log-dir anchor when stdin is a terminal;
+# a test run must never block on that prompt.
+exec </dev/null
+
 # Speed + hermeticity. Validate mode walks the whole filesystem for a stale
 # Docker jgit lock (seconds per call) and probes api.github.com with the PAT.
 # Point the walk at an empty scratch dir and shim curl to fail fast, the way

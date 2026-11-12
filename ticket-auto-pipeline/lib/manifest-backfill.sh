@@ -27,7 +27,8 @@ _BACKFILL_KNOWN_TYPES=("bug" "feature" "improvement" "security" "chore" "refacto
 
 usage() {
   echo "Usage: $0 [--dry-run] [LOG-DIR]" >&2
-  echo "  LOG-DIR defaults to \$FLEET_PIPELINE_LOG_DIR, else ./logs" >&2
+  echo "  LOG-DIR defaults to the anchored log dir (lib/log-dir.sh), else" >&2
+  echo "  \$FLEET_PIPELINE_LOG_DIR, else ./logs" >&2
   exit 1
 }
 
@@ -44,7 +45,22 @@ for arg in "$@"; do
   *) LOG_DIR="$arg" ;;
   esac
 done
-LOG_DIR="${LOG_DIR:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
+# No LOG-DIR argument: the anchored per-ticket state dir (lib/log-dir.sh,
+# state-root-anchor), else (legacy, with a warning)
+# ${FLEET_PIPELINE_LOG_DIR:-./logs}; STATE_ROOT_STRICT=true and unresolved
+# exits 13.
+if [ -z "$LOG_DIR" ]; then
+  LOG_DIR="${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  if [ -f "$SCRIPT_DIR/log-dir.sh" ]; then
+    source "$SCRIPT_DIR/log-dir.sh"
+    _ld_rc=0
+    ticket_log_dir_or_legacy_set || _ld_rc=$?
+    if [ "$_ld_rc" -ne 0 ]; then
+      exit "$_ld_rc"
+    fi
+    LOG_DIR="$TICKET_LOG_DIR_RESOLVED"
+  fi
+fi
 
 [ -d "$LOG_DIR" ] || {
   echo "manifest-backfill: no such log directory: $LOG_DIR" >&2

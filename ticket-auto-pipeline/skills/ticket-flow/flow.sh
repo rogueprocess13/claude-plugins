@@ -61,7 +61,7 @@ usage() {
   echo "" >&2
   echo "Exit codes: 0 ok, 1 usage, 3 unknown trigger, 8 precondition, 9/10 generation fence," >&2
   echo "  11 verdict gate, 12 an earlier pending event could not be emitted," >&2
-  echo "  13 REPOS_ROOT unset (manifest root unresolvable), 42 ticket in flight" >&2
+  echo "  13 REPOS_ROOT unset or log dir unresolvable (STATE_ROOT_STRICT=true), 42 ticket in flight" >&2
   echo "" >&2
   echo "Valid triggers (from workflow.json):" >&2
   jq -r '.triggers | keys[]' "$SM" 2>/dev/null | sed 's/^/  /' >&2
@@ -269,6 +269,34 @@ if [ -z "${REPOS_ROOT:-}" ]; then
   echo "flow.sh: REPOS_ROOT is not set — cannot read or write the ticket manifest for ${TICKET_ID}; '${TRIGGER}' not applied. Run 'source ~/.claude/skills/lib/ticket-env.sh ${TICKET_ID}' or export REPOS_ROOT, then retry." >&2
   _log "META|flow-refused|fail|REPOS_ROOT_UNSET trigger=${TRIGGER} — manifest root unresolvable, nothing applied"
   exit 13
+fi
+
+# ── Per-ticket log dir (state-root-anchor, review ARCH-5) ───────────────────
+# The outbox, its lock, the origin sidecar and the board cursors live in the
+# dir lib/log-dir.sh resolves from FLEET_PIPELINE_LOG_DIR (absolute) or the
+# $REPOS_ROOT/.ticket-auto/log-dir anchor — never from this process's cwd.
+# Resolved here, before the flow lock and any manifest write, so that under
+# STATE_ROOT_STRICT=true an unresolvable dir refuses with exit 13 and writes
+# nothing at all (not even the lock). In legacy mode it warns once and the
+# writers keep today's ./logs. A resolved dir is exported, so emit_event and
+# the exit-time drain name the same directory.
+if ! declare -f ticket_log_dir_or_legacy_set >/dev/null 2>&1; then
+  if [ -f "$LIB_DIR/log-dir.sh" ]; then
+    source "$LIB_DIR/log-dir.sh"
+  elif [ -f "$SCRIPT_DIR/../../lib/log-dir.sh" ]; then
+    source "$SCRIPT_DIR/../../lib/log-dir.sh"
+  fi
+fi
+if declare -f ticket_log_dir_or_legacy_set >/dev/null 2>&1; then
+  _ld_rc=0
+  ticket_log_dir_or_legacy_set || _ld_rc=$?
+  if [ "$_ld_rc" -ne 0 ]; then
+    echo "flow.sh: '${TRIGGER}' not applied for ${TICKET_ID} — set FLEET_PIPELINE_LOG_DIR to an absolute path or run /ticket-env-check to anchor the log dir, then retry." >&2
+    exit 13
+  fi
+  if _ld_abs=$(ticket_log_dir 2>/dev/null); then
+    export FLEET_PIPELINE_LOG_DIR="$_ld_abs"
+  fi
 fi
 
 # ── Concurrent-execution lock (flock FD 9) ──────────────────────────────────

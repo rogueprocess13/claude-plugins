@@ -140,6 +140,10 @@ test-lib:
 	bash ticket-auto-pipeline/lib/tests/test-outbox-drain.sh
 	bash ticket-auto-pipeline/lib/tests/test-board-pusher-integration.sh
 	bash ticket-auto-pipeline/lib/tests/test-board-cursor-fastforward.sh
+	# state-root-anchor
+	bash ticket-auto-pipeline/lib/tests/test-log-dir.sh
+	bash ticket-auto-pipeline/lib/tests/test-log-dir-readers.sh
+	bash ticket-auto-pipeline/lib/tests/test-state-root-anchor.sh
 	# fleet-controller tests
 	bash fleet-controller/lib/tests/test-fleet-detect.sh
 	bash fleet-controller/lib/tests/test-fleet-detect-new.sh

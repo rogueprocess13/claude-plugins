@@ -34,6 +34,7 @@
 #   1  a driver failed on some entry — its cursor is left at the last
 #      successful entry to retry next drain; never fatal to the caller
 #   2  usage error
+#   13 per-ticket log dir unresolvable under STATE_ROOT_STRICT=true
 #
 # -u intentionally omitted — see events.sh's identical note.
 set -eo pipefail
@@ -146,8 +147,12 @@ _outbox_drain_dead_letter() {
   board_cursor_advance "$tid" "$board_id" "$seq" 2>/dev/null || true
 }
 
+# The ticket's per-ticket dir, resolved once by outbox_drain_ticket through
+# board-cursor.sh's _board_cursor_resolve (lib/log-dir.sh, state-root-anchor),
+# so the outbox read here and the cursors board-cursor.sh writes name the
+# same directory whatever this process's cwd is.
 _outbox_drain_dir() {
-  echo "${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  printf '%s\n' "${_OD_LOG_DIR:-${FLEET_PIPELINE_LOG_DIR:-./logs}}"
 }
 
 _outbox_drain_file() {
@@ -232,6 +237,12 @@ outbox_drain_ticket() {
     return 2
   fi
 
+  if ! _board_cursor_resolve; then
+    echo "outbox-drain.sh: per-ticket log dir unresolvable for ${tid} — nothing drained" >&2
+    return 13
+  fi
+  _OD_LOG_DIR="$_BC_DIR"
+
   local drivers="${FLEET_BOARD_DRIVERS:-linear}"
   local overall_rc=0
   local driver_name driver_script
@@ -252,5 +263,7 @@ outbox_drain_ticket() {
 
 # ── CLI entrypoint ───────────────────────────────────────────────────────
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
-  outbox_drain_ticket "${1:-}"
+  _od_rc=0
+  outbox_drain_ticket "${1:-}" || _od_rc=$?
+  exit "$_od_rc"
 fi

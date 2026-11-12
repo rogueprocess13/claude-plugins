@@ -86,7 +86,9 @@ EOF
   printf 'desc\n## Acceptance Criteria\n1. works\n' >"$WS/$TID--fix/artifacts/tracker-description.md"
 }
 _ws_rm() { [ -n "${WS:-}" ] && rm -rf "$WS" 2>/dev/null || true; }
-_mask() { sed -e "s|$WS|\$WS|g" -e 's/[0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z/TS/g'; }
+# The scripts warn once on stderr when no log-dir anchor exists
+# (state-root-anchor legacy mode); the pre-extraction oracle never did.
+_mask() { sed -e '/^log dir not anchored; using .* (legacy)$/d' -e "s|$WS|\$WS|g" -e 's/[0-9]\{4\}-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z/TS/g'; }
 _logs() {
   _mask <"$WS/logs/$TID-pipeline.log"
   echo "--- hb"
@@ -192,6 +194,22 @@ _same "prep: no key and no --comments-file exits 4" 4 "$rc"
 rc=0
 bash "$GR_LIB_DIR/gate-reconcile-prep.sh" >/dev/null 2>&1 || rc=$?
 _same "prep: usage exits 2" 2 "$rc"
+_ws_rm
+
+# state-root-anchor: with a log-dir anchor, prep and finish read and write the
+# anchored dir, not ./logs under the tickets repo root.
+_ws_new simple
+mkdir -p "$WS/root/.ticket-auto" "$WS/state"
+mv "$WS/logs/$TID-pipeline.log" "$WS/state/"
+printf '%s\n' "$WS/state" >"$WS/root/.ticket-auto/log-dir"
+out=$(cd "$WS" && REPOS_ROOT="$WS/root" bash "$GR_LIB_DIR/gate-reconcile-prep.sh" "$TID" --comments-file comments.json 2>/dev/null) || true
+grep -qx "TAP_LOG=$WS/state/$TID-pipeline.log" <<<"$out" && grep -qx 'RECONCILE_N=2' <<<"$out" &&
+  [ -s "$WS/state/$TID-heartbeat.log" ] && [ ! -e "$WS/logs/$TID-heartbeat.log" ] &&
+  _ok "prep: anchored log dir wins over ./logs" || _ko "prep: anchored: $out"
+(cd "$WS" && REPOS_ROOT="$WS/root" bash "$GR_LIB_DIR/gate-reconcile-finish.sh" "$TID" hold --reason open_questions >/dev/null 2>&1) || true
+grep -q '|GATE|reconcile|done|cycle#2 held: open_questions' "$WS/state/$TID-pipeline.log" &&
+  [ ! -e "$WS/logs/$TID-pipeline.log" ] &&
+  _ok "finish: anchored log dir wins over ./logs" || _ko "finish: anchored"
 _ws_rm
 
 echo "=== finish: parity with Steps 7-8 ==="

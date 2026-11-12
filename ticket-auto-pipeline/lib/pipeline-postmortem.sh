@@ -84,8 +84,20 @@ EXIT_CODE="${EXIT_CODE:-0}"
 
 # ── Resolve log paths ────────────────────────────────────────────────────────────
 
-LOG_FILE="${LOG_FILE:-${TAP_LOG:-./logs/${TICKET_ID}-pipeline.log}}"
-HB_FILE="${HB_FILE:-./logs/${TICKET_ID}-heartbeat.log}"
+# Default dir: the anchored per-ticket state dir (lib/log-dir.sh,
+# state-root-anchor), else today's ./logs. Fail-soft like the rest of this
+# script: no strict refusal and no legacy warning here.
+_PM_LOG_DIR="./logs"
+_PM_LD_LIB="$(_resolve_lib "log-dir.sh")"
+if [ -f "$_PM_LD_LIB" ]; then
+  # shellcheck source=log-dir.sh
+  source "$_PM_LD_LIB"
+  if _pm_ld=$(ticket_log_dir 2>/dev/null); then
+    _PM_LOG_DIR="$_pm_ld"
+  fi
+fi
+LOG_FILE="${LOG_FILE:-${TAP_LOG:-${_PM_LOG_DIR}/${TICKET_ID}-pipeline.log}}"
+HB_FILE="${HB_FILE:-${_PM_LOG_DIR}/${TICKET_ID}-heartbeat.log}"
 TICKET_DIR="${TICKET_DIR:-}"
 
 if [ ! -f "$LOG_FILE" ]; then

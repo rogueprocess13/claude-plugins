@@ -76,8 +76,21 @@ _linear_driver_resolve_workflow_json() {
   return 1
 }
 
+# The per-ticket dir: the anchored state dir (lib/log-dir.sh,
+# state-root-anchor), else today's ${FLEET_PIPELINE_LOG_DIR:-./logs}. Quiet:
+# the drain that runs this driver already resolved (and refused in strict).
+declare -f ticket_log_dir_or >/dev/null 2>&1 ||
+  source "$_LD_LIB_DIR/log-dir.sh" 2>/dev/null || true
+_linear_driver_log_dir() {
+  if declare -f ticket_log_dir_or >/dev/null 2>&1; then
+    ticket_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  else
+    echo "${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  fi
+}
+
 _linear_driver_pipeline_log() {
-  echo "${FLEET_PIPELINE_LOG_DIR:-./logs}/${1}-pipeline.log"
+  echo "$(_linear_driver_log_dir)/${1}-pipeline.log"
 }
 
 # Records a permanent (non-retryable) projection failure and returns —
@@ -92,7 +105,7 @@ _linear_driver_permanent_fail() {
 }
 
 _linear_driver_team_cache_file() {
-  echo "${FLEET_PIPELINE_LOG_DIR:-./logs}/.linear-team-${1}.json"
+  echo "$(_linear_driver_log_dir)/.linear-team-${1}.json"
 }
 
 # Fetches (or reuses a fresh cached copy of) a team's states+labels

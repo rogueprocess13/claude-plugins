@@ -1,0 +1,35 @@
+# log-dir-cases.tsv — shared resolver case table (state-root-anchor).
+# Read by lib/tests/test-log-dir.sh (bash ticket_log_dir) and by
+# fleet-controller's fleetd/tests/test_log_dir.py (Python resolve_log_dir), so
+# both resolvers answer every row the same way.
+#
+# Format: one case per line, exactly 6 fields separated by a single TAB.
+# Lines starting with "#" and blank lines are skipped. No field is ever empty.
+#   1 id          case name
+#   2 repos_root  "set" (REPOS_ROOT = a fresh temp dir) or "unset"
+#   3 env         FLEET_PIPELINE_LOG_DIR: "-" = unset, "<empty>" = set to "",
+#                 anything else is the literal value
+#   4 anchor      content of $REPOS_ROOT/.ticket-auto/log-dir:
+#                 "-" = no file, "<empty>" = zero-byte file,
+#                 otherwise the text plus a trailing newline, where a literal
+#                 two-character "\n" stands for a newline and a leading
+#                 "<nonl>" means "no trailing newline" (the marker is dropped)
+#   5 expect      resolver output, or "UNRESOLVED" (bash rc 1, Python None)
+#   6 legacy      bash ticket_log_dir_or_legacy output with STATE_ROOT_STRICT
+#                 unset (the resolved value, or today's ${FLEET_PIPELINE_LOG_DIR:-./logs})
+# "@ROOT@" in env/anchor/expect/legacy is replaced by the temp REPOS_ROOT path
+# (or by a fresh temp dir when repos_root is "unset").
+env_abs_wins	set	@ROOT@/env-logs	@ROOT@/anchored	@ROOT@/env-logs	@ROOT@/env-logs
+env_relative_ignored	set	./logs	@ROOT@/anchored	@ROOT@/anchored	@ROOT@/anchored
+env_empty_ignored	set	<empty>	@ROOT@/anchored	@ROOT@/anchored	@ROOT@/anchored
+anchor_only	set	-	@ROOT@/anchored	@ROOT@/anchored	@ROOT@/anchored
+anchor_no_newline	set	-	<nonl>@ROOT@/anchored	@ROOT@/anchored	@ROOT@/anchored
+anchor_first_line_wins	set	-	@ROOT@/first\n@ROOT@/second	@ROOT@/first	@ROOT@/first
+anchor_relative_ignored	set	-	logs	UNRESOLVED	./logs
+anchor_leading_space_ignored	set	-	 @ROOT@/anchored	UNRESOLVED	./logs
+anchor_empty_file	set	-	<empty>	UNRESOLVED	./logs
+nothing	set	-	-	UNRESOLVED	./logs
+env_relative_no_anchor	set	./logs	-	UNRESOLVED	./logs
+env_other_relative_no_anchor	set	logs-x	-	UNRESOLVED	logs-x
+no_repos_root_env_abs	unset	@ROOT@/env-logs	-	@ROOT@/env-logs	@ROOT@/env-logs
+no_repos_root	unset	-	-	UNRESOLVED	./logs

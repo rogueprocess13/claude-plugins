@@ -397,6 +397,85 @@ class BoardPusherLogDirTest(unittest.TestCase):
                 os.environ['FLEET_PIPELINE_LOG_DIR'] = old
 
 
+class RelativeLogDirIsResolvedTest(unittest.TestCase):
+    """state-root-anchor rollout safety: bash's lib/log-dir.sh ignores a
+    relative FLEET_PIPELINE_LOG_DIR once a log-dir anchor exists, so fleetd
+    must never hand one to its scripts — the pusher would otherwise lock and
+    read one directory while board-cursor.sh / the driver use another."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name).resolve()
+        (self.root / 'rel-logs').mkdir()
+        self._cwd = os.getcwd()
+        os.chdir(self.root)
+        self._old_env = os.environ.pop('FLEET_PIPELINE_LOG_DIR', None)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        if self._old_env is not None:
+            os.environ['FLEET_PIPELINE_LOG_DIR'] = self._old_env
+        else:
+            os.environ.pop('FLEET_PIPELINE_LOG_DIR', None)
+        self._tmp.cleanup()
+
+    def _drain_recording_envs(self, **kwargs):
+        seen = []
+        real_run = pusher.subprocess.run
+
+        def recording_run(*args, **kw):
+            env = kw.get('env') or {}
+            seen.append(env.get('FLEET_PIPELINE_LOG_DIR'))
+            return real_run(*args, **kw)
+
+        _write_outbox(self.root / 'rel-logs', 'T-1', [
+            ('gate-held', {'reason': 'a'}),
+        ])
+        with mock.patch.object(pusher.subprocess, 'run', recording_run):
+            ok = pusher.drain_ticket('T-1', lib_dir=TICKET_AUTO_LIB,
+                                      drivers=['linear'], **kwargs)
+        return ok, seen
+
+    def test_relative_log_dir_argument_reaches_subprocesses_absolute(self):
+        ok, seen = self._drain_recording_envs(log_dir='rel-logs')
+        self.assertTrue(ok)
+        self.assertTrue(seen, 'expected the pusher to run bash subprocesses')
+        self.assertEqual(set(seen), {str(self.root / 'rel-logs')})
+        cursor = json.loads(
+            (self.root / 'rel-logs' / '.T-1-cursor-linear.json').read_text())
+        self.assertEqual(cursor['seq'], 1)
+
+    def test_relative_env_reaches_subprocesses_absolute(self):
+        os.environ['FLEET_PIPELINE_LOG_DIR'] = 'rel-logs'
+        ok, seen = self._drain_recording_envs()
+        self.assertTrue(ok)
+        self.assertTrue(seen)
+        self.assertEqual(set(seen), {str(self.root / 'rel-logs')})
+
+    def test_pipeline_log_dir_is_absolute_for_every_input(self):
+        self.assertEqual(pusher._pipeline_log_dir('rel-logs'),
+                         self.root / 'rel-logs')
+        self.assertEqual(pusher._pipeline_log_dir(), self.root / 'logs')
+        os.environ['FLEET_PIPELINE_LOG_DIR'] = 'x'
+        self.assertEqual(pusher._pipeline_log_dir(), self.root / 'x')
+
+    def test_supervisor_log_dir_accessors_are_absolute(self):
+        from fleetd.supervisor import Supervisor
+        (self.root / 'state').mkdir()
+        sup = Supervisor(
+            state_dir='state',
+            pidfile=str(self.root / 'state' / 'test.pid'),
+            port=_find_free_port(),
+        )
+        for accessor in (sup._board_pusher_log_dir, sup._otel_log_dir,
+                         sup._observer_log_dir):
+            self.assertEqual(accessor(), str(self.root / 'state'))
+        os.environ['FLEET_PIPELINE_LOG_DIR'] = 'rel-logs'
+        for accessor in (sup._board_pusher_log_dir, sup._otel_log_dir,
+                         sup._observer_log_dir):
+            self.assertEqual(accessor(), str(self.root / 'rel-logs'))
+
+
 class DiscoverOutboxTicketsTest(unittest.TestCase):
     """The pusher discovers work by glob, not a registry (design.md
     Decision 4) — this is what makes a from-cold-start sweep total."""

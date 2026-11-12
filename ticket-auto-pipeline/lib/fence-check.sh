@@ -26,6 +26,9 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 fi
 
 _FENCE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# log-dir.sh — the per-ticket state dir resolver (state-root-anchor).
+declare -f ticket_log_dir_or >/dev/null 2>&1 ||
+  source "$_FENCE_LIB_DIR/log-dir.sh" 2>/dev/null || true
 
 # check_generation_fence <TICKET_ID> <CALLER_GENERATION> <FLEET_STATE_DIR>
 #
@@ -85,6 +88,12 @@ check_generation_fence() {
       break
     }
   done
+
+  # No state dir given: fleet state sits in the per-ticket log dir, so use
+  # the anchored one (lib/log-dir.sh, state-root-anchor), else ./logs.
+  if [ -z "$fleet_state_dir" ] && declare -f ticket_log_dir_or >/dev/null 2>&1; then
+    fleet_state_dir=$(ticket_log_dir_or ./logs)
+  fi
 
   local _fence_file
   if [ -n "$_fence_config_sh" ]; then

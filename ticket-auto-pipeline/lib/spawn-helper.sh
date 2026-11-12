@@ -57,6 +57,21 @@ for _w_cand in \
   }
 done
 
+# log-dir.sh — the per-ticket state dir resolver (state-root-anchor).
+declare -f ticket_log_dir_or >/dev/null 2>&1 ||
+  source "$(dirname "${BASH_SOURCE[0]}")/log-dir.sh" 2>/dev/null || true
+
+# The workspace handed to the fleet-config.sh constructors: the anchored
+# per-ticket state dir (state-root-anchor), else today's
+# ${FLEET_PIPELINE_LOG_DIR:-./logs}.
+_worker_workspace() {
+  if declare -f ticket_log_dir_or >/dev/null 2>&1; then
+    ticket_log_dir_or "${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  else
+    echo "${FLEET_PIPELINE_LOG_DIR:-./logs}"
+  fi
+}
+
 _worker_state_dir() {
   # Delegate to config.sh resolver when available — ensures the worker and
   # fleet controller agree on the state directory regardless of whether
@@ -64,7 +79,7 @@ _worker_state_dir() {
   # cases, so FLEET_STATE_DIR unset resolves to the workspace, matching
   # what fleet-intervene.sh writes to.
   if [ -n "$_worker_config_sh" ] && declare -f _fleet_state_dir >/dev/null 2>&1; then
-    _fleet_state_dir "${FLEET_PIPELINE_LOG_DIR:-./logs}"
+    _fleet_state_dir "$(_worker_workspace)"
   elif [ -n "${FLEET_STATE_DIR:-}" ]; then
     echo "$FLEET_STATE_DIR"
   else
@@ -80,7 +95,7 @@ _worker_stop_file() {
   # the workspace under the default config — cooperative kill never reached
   # the worker.
   if [ -n "$_worker_config_sh" ] && declare -f _fleet_stop_file >/dev/null 2>&1; then
-    _fleet_stop_file "$TICKET_ID" "$type" "${FLEET_PIPELINE_LOG_DIR:-./logs}"
+    _fleet_stop_file "$TICKET_ID" "$type" "$(_worker_workspace)"
   else
     echo "$(_worker_state_dir)/ticket-auto-${TICKET_ID}-${type}-stop"
   fi

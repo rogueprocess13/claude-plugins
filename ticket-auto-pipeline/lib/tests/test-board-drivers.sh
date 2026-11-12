@@ -255,6 +255,23 @@ test_permanent_failure_logs_and_exits_zero() {
   [ "$rc" -eq 0 ] && [ "$logged" -eq 0 ]
 }
 
+# ── state-root-anchor: no FLEET_PIPELINE_LOG_DIR -> the anchored dir ─────────
+test_permanent_failure_logs_to_anchored_dir() {
+  local ws issue rc=0
+  issue=$(_issue_with_labels "" "s-todo" "Todo")
+  ws=$(_mk_workspace '{"appraise-completed":{"column":"NoSuchColumn"}}' "$issue" "$TEAM_JSON")
+  cp "$PLUGIN_DIR/lib/log-dir.sh" "$ws/lib/log-dir.sh"
+  mkdir -p "$ws/root/.ticket-auto" "$ws/state" "$ws/away"
+  printf '%s\n' "$ws/state" >"$ws/root/.ticket-auto/log-dir"
+  (cd "$ws/away" && unset FLEET_PIPELINE_LOG_DIR && REPOS_ROOT="$ws/root" \
+    bash "$ws/lib/board-drivers/linear.sh" apply WIL-1 appraise-completed 43 '{}') >/dev/null 2>&1 || rc=$?
+  local logged=1
+  grep -q 'META|board-projection|fail|event=appraise-completed seq=43' "$ws/state/WIL-1-pipeline.log" 2>/dev/null &&
+    [ ! -e "$ws/away/logs" ] && logged=0
+  rm -rf "$ws"
+  [ "$rc" -eq 0 ] && [ "$logged" -eq 0 ]
+}
+
 # ── explicit-null entry → no-op ──────────────────────────────────────────────
 test_explicit_null_entry_noop() {
   local ws issue rc=0
@@ -410,6 +427,7 @@ _run "from_data column: false branch" test_from_data_column_false_branch
 _run "assignee resolution" test_assignee_resolution
 _run "transient failure -> non-zero" test_transient_failure_nonzero
 _run "permanent failure -> META|board-projection|fail, exit 0" test_permanent_failure_logs_and_exits_zero
+_run "permanent failure from a foreign cwd -> anchored pipeline log" test_permanent_failure_logs_to_anchored_dir
 _run "explicit-null entry -> no-op" test_explicit_null_entry_noop
 _run "grouped sibling displaced on add (#423)" test_grouped_sibling_displaced_on_add
 _run "grouped sibling displaced via team lookup (#423)" test_grouped_sibling_displaced_via_team_lookup

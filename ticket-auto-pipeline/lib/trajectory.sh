@@ -11,7 +11,8 @@
 #   source this file
 #   traj_generate <TICKET_ID> [--output <path>]
 #
-# Output: ./logs/{TICKET-ID}-trajectory.jsonl (one JSON object per entry)
+# Output: {log-dir}/{TICKET-ID}-trajectory.jsonl (one JSON object per entry;
+#   {log-dir} = the lib/log-dir.sh anchor, else ./logs)
 # Deterministic: byte-identical on re-run over same logs.
 
 # -u (nounset) intentionally omitted: Claude Code shell snapshots inject
@@ -19,6 +20,10 @@
 # errors in this bash version when nounset is active. Repo convention
 # across 10+ lib files omits -u for this reason.
 set -eo pipefail
+
+# log-dir.sh — the per-ticket state dir resolver (state-root-anchor).
+declare -f ticket_log_dir >/dev/null 2>&1 ||
+  source "$(dirname "${BASH_SOURCE[0]}")/log-dir.sh" 2>/dev/null || true
 
 # ── Helper: join fields 5+ from a pipe-delimited line ──────────────────────────
 # awk join (never cut -f5 — JSON payloads contain |)
@@ -65,13 +70,21 @@ traj_generate() {
     esac
   done
 
+  # Default dir: the anchored per-ticket state dir (lib/log-dir.sh,
+  # state-root-anchor), else today's ./logs. Quiet: no strict refusal and no
+  # legacy warning from a library function.
+  local state_dir="./logs" _td
+  if declare -f ticket_log_dir >/dev/null 2>&1 && _td=$(ticket_log_dir 2>/dev/null); then
+    state_dir="$_td"
+  fi
+
   # Default output path
   if [ -z "$output" ]; then
-    output="./logs/${ticket_id}-trajectory.jsonl"
+    output="${state_dir}/${ticket_id}-trajectory.jsonl"
   fi
 
   # Resolve log paths
-  local log_dir="${LOG_DIR:-./logs}"
+  local log_dir="${LOG_DIR:-$state_dir}"
   local plog="${log_dir}/${ticket_id}-pipeline.log"
   local hlog="${log_dir}/${ticket_id}-heartbeat.log"
 

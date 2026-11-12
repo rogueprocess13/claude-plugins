@@ -104,6 +104,20 @@
       "docs": "fleet-controller/README.md#migrating-to-board-projection-tracker-flow-projection-cutover"
     },
     {
+      "name": "STATE_ROOT_STRICT",
+      "plugin": "ticket-auto-pipeline",
+      "default": "false",
+      "on_value": "true",
+      "category": "strictness",
+      "summary": "A per-ticket state writer or reader that cannot resolve the log dir (no absolute FLEET_PIPELINE_LOG_DIR, no $REPOS_ROOT/.ticket-auto/log-dir anchor) exits 13 instead of warning and using ./logs.",
+      "requires": [
+        { "step": "The log-dir anchor exists on this host: one router run or fleetd boot writes it (state-root-anchor)" }
+      ],
+      "recommend": "situational",
+      "why": "Off is the one-release grace: an unanchored host keeps working with a warning. On stops a command run from the wrong directory from writing a stray outbox no pusher reads. Planned to default on in a later release.",
+      "docs": "ticket-auto-pipeline/lib/log-dir.sh"
+    },
+    {
       "name": "FLEET_POSTMORTEM_ON_KILL",
       "plugin": "fleet-controller",
       "default": "false",

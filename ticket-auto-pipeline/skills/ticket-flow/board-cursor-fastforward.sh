@@ -21,6 +21,7 @@
 # Exit codes:
 #   0  ran cleanly (including "nothing to advance")
 #   2  usage error
+#   13 per-ticket log dir unresolvable under STATE_ROOT_STRICT=true
 #
 # -u intentionally omitted — see events.sh's identical note.
 set -eo pipefail
@@ -29,10 +30,6 @@ _FF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _FF_LIB_DIR="$(cd "$_FF_DIR/../../lib" && pwd)"
 
 source "$_FF_LIB_DIR/board-cursor.sh"
-
-_ff_log_dir() {
-  echo "${FLEET_PIPELINE_LOG_DIR:-./logs}"
-}
 
 _ff_configured_drivers() {
   local drivers="${FLEET_BOARD_DRIVERS:-linear}"
@@ -65,7 +62,11 @@ board_cursor_fastforward_sweep() {
   esac
 
   local log_dir
-  log_dir=$(_ff_log_dir)
+  if ! _board_cursor_resolve; then
+    echo "board-cursor-fastforward.sh: per-ticket log dir unresolvable — nothing swept" >&2
+    return 13
+  fi
+  log_dir="$_BC_DIR"
   local -a drivers=()
   mapfile -t drivers < <(_ff_configured_drivers)
 
