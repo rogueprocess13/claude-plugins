@@ -89,12 +89,21 @@ def _notify_stalled(fleet_lib_dir, state_dir, tid, board_id, seq, max_attempts):
 
 
 def _pipeline_log_dir(log_dir=None):
+    """The per-ticket log dir, always absolute (state-root-anchor).
+
+    bash's lib/log-dir.sh ignores a relative FLEET_PIPELINE_LOG_DIR once a
+    `$REPOS_ROOT/.ticket-auto/log-dir` anchor exists, so a relative value
+    handed to board-cursor.sh / outbox-drain.sh would send bash to the
+    anchor while this module keeps locking and reading the relative dir.
+    Resolving it here, against fleetd's own cwd, keeps both sides on one
+    directory.
+    """
     if log_dir:
-        return Path(log_dir)
+        return Path(log_dir).resolve()
     env = os.environ.get('FLEET_PIPELINE_LOG_DIR')
     if env:
-        return Path(env)
-    return Path('./logs')
+        return Path(env).resolve()
+    return Path('./logs').resolve()
 
 
 def _configured_drivers():

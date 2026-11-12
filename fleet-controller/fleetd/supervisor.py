@@ -166,6 +166,19 @@ def _default_pidfile():
     return _phase_mod.ticket_tmp_dir() / 'fleetd.pid'
 
 
+def _abs_log_dir(value):
+    """`value` as an absolute path string (state-root-anchor).
+
+    Every `FLEET_PIPELINE_LOG_DIR` fleetd hands to bash, and every log dir
+    it reads itself, goes through this. bash's lib/log-dir.sh ignores a
+    relative value once a `$REPOS_ROOT/.ticket-auto/log-dir` anchor exists,
+    and `FLEETD_WORKSPACE` defaults to `.`, so a relative state dir would
+    split fleetd from the scripts it runs. Resolved against fleetd's cwd,
+    which is what the relative value meant to fleetd already.
+    """
+    return str(Path(value).resolve())
+
+
 def _resolve_state_dir():
     """Resolve the fleet state directory using the same rule as fleet-config.sh."""
     if FLEET_STATE_DIR:
@@ -1151,7 +1164,7 @@ class DetectionCycle:
                 capture_output=True,
                 text=True,
                 timeout=self._timeout,
-                env={**os.environ, 'FLEET_PIPELINE_LOG_DIR': ws},
+                env={**os.environ, 'FLEET_PIPELINE_LOG_DIR': _abs_log_dir(ws)},
             )
         except subprocess.TimeoutExpired:
             self._last_error = f"detection cycle timed out after {self._timeout}s"
@@ -3390,7 +3403,8 @@ def _find_unreleased_gate_hold(state_dir, tid):
     Returns the raw outbox record dict for the latest matching, unreleased
     `gate-held` event, or `None` when there is not one.
     """
-    log_dir = os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(state_dir)
+    log_dir = _abs_log_dir(
+        os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(state_dir))
     outbox = Path(log_dir) / f'{tid}-outbox.jsonl'
     if not outbox.is_file():
         return None
@@ -3766,7 +3780,7 @@ class Supervisor:
                 timeout=120,
                 env={
                     **os.environ,
-                    'FLEET_PIPELINE_LOG_DIR': str(self._state_dir),
+                    'FLEET_PIPELINE_LOG_DIR': _abs_log_dir(self._state_dir),
                     'FLEET_RECONCILE_SCRIPT': str(reconcile_script),
                     'FLEET_RECONCILE_STATE_DIR': str(self._state_dir),
                     'FLEET_RECONCILE_QUEUE_FILE': str(queue_file),
@@ -4000,7 +4014,7 @@ class Supervisor:
         try:
             env = {
                 **os.environ,
-                'FLEET_PIPELINE_LOG_DIR': str(self._state_dir),
+                'FLEET_PIPELINE_LOG_DIR': _abs_log_dir(self._state_dir),
                 'FLEET_STATE_DIR': str(self._state_dir),
             }
             if extra_env:
@@ -5411,7 +5425,8 @@ class Supervisor:
         host where the two are configured to differ. Same pattern as
         `_otel_log_dir`/`_observer_log_dir` above.
         """
-        return os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(self._state_dir)
+        return _abs_log_dir(
+            os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(self._state_dir))
 
     def _board_pusher_pass(self):
         """Tracker event-board pusher pass (tracker-event-board-pusher,
@@ -5762,7 +5777,8 @@ class Supervisor:
     # ── OTel exporter supervision ──────────────────────────────────────────
 
     def _otel_log_dir(self):
-        return os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(self._state_dir)
+        return _abs_log_dir(
+            os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(self._state_dir))
 
     def maybe_spawn_otel(self, now=None):
         """Start the exporter if enabled, not running, and past its backoff.
@@ -5843,7 +5859,8 @@ class Supervisor:
     # supervision pattern.
 
     def _observer_log_dir(self):
-        return os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(self._state_dir)
+        return _abs_log_dir(
+            os.environ.get('FLEET_PIPELINE_LOG_DIR') or str(self._state_dir))
 
     def maybe_spawn_observer(self, now=None):
         """Start the sidecar if enabled, not running, and past its backoff.
